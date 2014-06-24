@@ -1,0 +1,55 @@
+# Object files
+*.o
+*.ko
+*.lo
+
+# Libraries
+*.lib
+*.a
+*.la
+
+# Shared objects (inc. Windows DLLs)
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# autoconf misc
+aclocal.m4
+lt*.m4
+*.cache
+config.*
+configure
+libtool
+libtool.m4
+*.log
+*.gz
+Makefile
+Makefile.in
+*.deps
+.dirstamp
+*.libs
+stamp-h
+src/stamp-h1
+build-aux/
+wolfssh-config
+aminclude.am
+
+# vim
+*.swp
+tags
+diff
+.vimrc
+
+# examples
+examples/server/server
+
+# test output
+
+# scan-build
+client.plist
