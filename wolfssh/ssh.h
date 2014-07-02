@@ -42,11 +42,30 @@ WOLFSSH_API int  wolfSSH_Cleanup(void);
 WOLFSSH_API int  wolfSSH_Debugging_ON(void);
 WOLFSSH_API void wolfSSH_Debugging_OFF(void);
 
+/* context functions */
+WOLFSSH_API WOLFSSH_CTX* wolfSSH_CTX_new(void*);
+WOLFSSH_API void         wolfSSH_CTX_free(WOLFSSH_CTX*);
+
+/* ssh session functions */
+WOLFSSH_API WOLFSSH* wolfSSH_new(WOLFSSH_CTX*);
+WOLFSSH_API void     wolfSSH_free(WOLFSSH*);
+
+/* ssh channel functions */
+WOLFSSH_API WOLFSSH_CHAN* wolfSSH_CHAN_new(WOLFSSH*);
+WOLFSSH_API void          wolfSSH_CHAN_free(WOLFSSH_CHAN*);
+
+WOLFSSH_API int  wolfSSH_set_fd(WOLFSSH*, int);
+WOLFSSH_API int  wolfSSH_get_fd(const WOLFSSH*);
+
 WOLFSSH_API const char* wolfSSH_get_error(int);
 
 /* I/O callbacks */
 typedef int (*WS_CallbackIORecv)(WOLFSSH*, void* buf, uint32_t sz, void* ctx);
 typedef int (*WS_CallbackIOSend)(WOLFSSH*, void* buf, uint32_t sz, void* ctx);
+
+/* Channel I/O callbacks */
+typedef int (*WSH_CallbackChanRecv)();
+typedef int (*WSH_CallbackChanSend)();
 
 WOLFSSH_API void wolfSSH_SetIORecv(WOLFSSH_CTX*, WS_CallbackIORecv);
 WOLFSSH_API void wolfSSH_SetIOSend(WOLFSSH_CTX*, WS_CallbackIOSend);
@@ -57,6 +76,7 @@ WOLFSSH_API void wolfSSH_SetIOWriteCtx(WOLFSSH* ssh, void *ctx);
 WOLFSSH_API void* wolfSSH_GetIOReadCtx(WOLFSSH* ssh);
 WOLFSSH_API void* wolfSSH_GetIOWriteCtx(WOLFSSH* ssh);
 
+WOLFSSH_API int wolfSSH_accept(WOLFSSH* ssh);
 
 
 /* dynamic memory types */
