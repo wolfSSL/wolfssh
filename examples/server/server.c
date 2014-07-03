@@ -21,20 +21,20 @@
 
 
 #include <ctype.h>
-    #include <string.h>
-    #include <unistd.h>
-    #include <netdb.h>
-    #include <netinet/in.h>
-    #include <netinet/tcp.h>
-    #include <arpa/inet.h>
-    #include <sys/ioctl.h>
-    #include <sys/time.h>
-    #include <sys/socket.h>
+#include <string.h>
+#include <unistd.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <arpa/inet.h>
+#include <sys/ioctl.h>
+#include <sys/time.h>
+#include <sys/socket.h>
 #include <stdio.h>
+#include <pthread.h>
 #include <wolfssh/ssh.h>
 
 
-typedef unsigned short word16;
 typedef int SOCKET_T;
 #ifdef TEST_IPV6
     typedef struct sockaddr_in6 SOCKADDR_IN_T;
@@ -54,14 +54,36 @@ typedef int SOCKET_T;
 /* HPUX doesn't use socklent_t for third parameter to accept, unless
    _XOPEN_SOURCE_EXTENDED is defined */
 #if !defined(__hpux__) && !defined(CYASSL_MDK_ARM) && !defined(CYASSL_IAR_ARM)
-    typedef socklen_t* ACCEPT_THIRD_T;
+    typedef socklen_t SOCKLEN_T;
 #else
     #if defined _XOPEN_SOURCE_EXTENDED
-        typedef socklen_t* ACCEPT_THIRD_T;
+        typedef socklen_t SOCKLEN_T;
     #else
-        typedef int*       ACCEPT_THIRD_T;
+        typedef int       SOCKLEN_T;
     #endif
 #endif
+
+
+#if defined(_POSIX_THREADS) && !defined(__MINGW32__)
+    typedef void*         THREAD_RETURN;
+    typedef pthread_t     THREAD_TYPE;
+    #define CYASSL_THREAD
+    #define INFINITE -1
+    #define WAIT_OBJECT_0 0L
+#elif defined(CYASSL_MDK_ARM)
+    typedef unsigned int  THREAD_RETURN;
+    typedef int           THREAD_TYPE;
+    #define CYASSL_THREAD
+#else
+    typedef unsigned int  THREAD_RETURN;
+    typedef intptr_t      THREAD_TYPE;
+    #define CYASSL_THREAD __stdcall
+#endif
+
+
+typedef struct {
+    SOCKET_T clientFd;
+} thread_ctx_t;
 
 
 static WINLINE void err_sys(const char* msg)
@@ -73,7 +95,7 @@ static WINLINE void err_sys(const char* msg)
 
 
 static WINLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
-                              word16 port)
+                              uint16_t port)
 {
     int useLookup = 0;
     (void)useLookup;
@@ -99,7 +121,6 @@ static WINLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
             err_sys("no entry for host");
     }
 #endif
-
 
 #ifndef TEST_IPV6
     #if defined(CYASSL_MDK_ARM)
@@ -150,15 +171,15 @@ static WINLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
 }
 
 
-static WINLINE void tcp_socket(SOCKET_T* sockfd)
+static WINLINE void tcp_socket(SOCKET_T* sockFd)
 {
-    *sockfd = socket(AF_INET_V, SOCK_STREAM, 0);
+    *sockFd = socket(AF_INET_V, SOCK_STREAM, 0);
 
 #ifdef USE_WINDOWS_API
-    if (*sockfd == INVALID_SOCKET)
+    if (*sockFd == INVALID_SOCKET)
         err_sys("socket failed\n");
 #else
-    if (*sockfd < 0)
+    if (*sockFd < 0)
         err_sys("socket failed\n");
 #endif
 
@@ -167,7 +188,7 @@ static WINLINE void tcp_socket(SOCKET_T* sockfd)
     {
         int       on = 1;
         socklen_t len = sizeof(on);
-        int       res = setsockopt(*sockfd, SOL_SOCKET, SO_NOSIGPIPE, &on, len);
+        int       res = setsockopt(*sockFd, SOL_SOCKET, SO_NOSIGPIPE, &on, len);
         if (res < 0)
             err_sys("setsockopt SO_NOSIGPIPE failed\n");
     }
@@ -181,7 +202,7 @@ static WINLINE void tcp_socket(SOCKET_T* sockfd)
     {
         int       on = 1;
         socklen_t len = sizeof(on);
-        int       res = setsockopt(*sockfd, IPPROTO_TCP, TCP_NODELAY, &on, len);
+        int       res = setsockopt(*sockFd, IPPROTO_TCP, TCP_NODELAY, &on, len);
         if (res < 0)
             err_sys("setsockopt TCP_NODELAY failed\n");
     }
@@ -190,73 +211,89 @@ static WINLINE void tcp_socket(SOCKET_T* sockfd)
 }
 
 
-static WINLINE void tcp_listen(SOCKET_T* sockfd, word16* port, int useAnyAddr)
+static WINLINE void tcp_bind(SOCKET_T* sockFd, uint16_t port, int useAnyAddr)
 {
     SOCKADDR_IN_T addr;
 
     /* don't use INADDR_ANY by default, firewall may block, make user switch
        on */
-    build_addr(&addr, (useAnyAddr ? INADDR_ANY : wolfsshIP), *port);
-    tcp_socket(sockfd);
+    build_addr(&addr, (useAnyAddr ? INADDR_ANY : wolfsshIP), port);
+    tcp_socket(sockFd);
 
 #if !defined(USE_WINDOWS_API) && !defined(CYASSL_MDK_ARM)
     {
         int       res, on  = 1;
         socklen_t len = sizeof(on);
-        res = setsockopt(*sockfd, SOL_SOCKET, SO_REUSEADDR, &on, len);
+        res = setsockopt(*sockFd, SOL_SOCKET, SO_REUSEADDR, &on, len);
         if (res < 0)
             err_sys("setsockopt SO_REUSEADDR failed\n");
     }
 #endif
 
-    if (bind(*sockfd, (const struct sockaddr*)&addr, sizeof(addr)) != 0)
+    if (bind(*sockFd, (const struct sockaddr*)&addr, sizeof(addr)) != 0)
         err_sys("tcp bind failed");
-    if (listen(*sockfd, 5) != 0)
-        err_sys("tcp listen failed");
-    #if !defined(USE_WINDOWS_API)
-        if (*port == 0) {
-            socklen_t len = sizeof(addr);
-            if (getsockname(*sockfd, (struct sockaddr*)&addr, &len) == 0) {
-                #ifndef TEST_IPV6
-                    *port = ntohs(addr.sin_port);
-                #else
-                    *port = ntohs(addr.sin6_port);
-                #endif
-            }
-        }
-    #endif
 }
 
 
-static WINLINE void tcp_accept(SOCKET_T* sockfd, SOCKET_T* clientfd, word16 port)
+static THREAD_RETURN CYASSL_THREAD server_worker(void* vArgs)
 {
-    SOCKADDR_IN_T client;
-    socklen_t client_len = sizeof(client);
+    thread_ctx_t* threadCtx = (thread_ctx_t*)vArgs;
+    SOCKET_T clientFd = threadCtx->clientFd;
+    const char* msgA = "Who's there?!\n";
+    const char* msgB = "Go away!\n";
 
-    tcp_listen(sockfd, &port, 1);
+    send(clientFd, msgA, strlen(msgA), 0);
+    sleep(1);
+    send(clientFd, msgB, strlen(msgB), 0);
+    close(clientFd);
+    free(threadCtx);
 
-    *clientfd = accept(*sockfd, (struct sockaddr*)&client,
-                      (ACCEPT_THIRD_T)&client_len);
-
-    if (*clientfd == -1)
-        err_sys("tcp accept failed");
+    return 0;
 }
 
 
 int main(void)
 {
-    SOCKET_T sockfd   = 0;
-    SOCKET_T clientfd = 0;
+    SOCKET_T listenFd = 0;
 
     #ifdef DEBUG_WOLFSSH
         wolfSSH_Debugging_ON();
     #endif
+
     if (wolfSSH_Init() != WS_SUCCESS) {
         fprintf(stderr, "Couldn't initialize wolfSSH.\n");
         exit(EXIT_FAILURE);
     }
 
-    tcp_accept(&sockfd, &clientfd, 22222);
+    tcp_bind(&listenFd, 22222, 0);
+
+    for (;;) {
+        SOCKET_T      clientFd = 0;
+        SOCKADDR_IN_T clientAddr;
+        SOCKLEN_T     clientAddrSz = sizeof(clientAddr);
+        THREAD_TYPE   thread;
+        thread_ctx_t* threadCtx =
+                                 (thread_ctx_t*)calloc(1, sizeof(thread_ctx_t));
+
+        if (threadCtx == NULL) {
+            fprintf(stderr, "Couldn't allocate thread data.\n");
+            exit(EXIT_FAILURE);
+        }
+
+        if (listen(listenFd, 5) != 0)
+            err_sys("tcp listen failed");
+
+        clientFd = accept(listenFd, (struct sockaddr*)&clientAddr,
+                                                                 &clientAddrSz);
+
+        if (clientFd == -1)
+            err_sys("tcp accept failed");
+
+        threadCtx->clientFd = clientFd;
+
+        pthread_create(&thread, 0, server_worker, threadCtx);
+        pthread_detach(thread);
+    }
 
     if (wolfSSH_Cleanup() != WS_SUCCESS) {
         fprintf(stderr, "Couldn't clean up wolfSSH.\n");

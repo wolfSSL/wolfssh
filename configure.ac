@@ -82,6 +82,8 @@ AS_IF([test "x$ax_enable_debug" = "xyes"],
       [AM_CFLAGS="$AM_CFLAGS -O2"
        AM_CPPFLAGS="-DNDEBUG $AM_CFLAGS"])
 
+AX_PTHREAD([AM_CFLAGS="$AM_CFLAGS $PTHREAD_CFLAGS"])
+
 # Checks for typedefs, structures, and compiler characteristics.
 if test "$ac_cv_sizeof_long" = "8"; then
    AM_CPPFLAGS="$AM_CPPFLAGS -DSIZEOF_LONG=8"
