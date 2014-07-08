@@ -24,6 +24,20 @@
 
 #include <wolfssh/ssh.h>
 
+
+#if !defined (ALIGN16)
+    #if defined (__GNUC__)
+        #define ALIGN16 __attribute__ ( (aligned (16)))
+    #elif defined(_MSC_VER)
+        /* disable align warning, we want alignment ! */
+        #pragma warning(disable: 4324)
+        #define ALIGN16 __declspec (align (16))
+    #else
+        #define ALIGN16
+    #endif
+#endif
+
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -110,6 +124,29 @@ enum {
     CLIENT_VERSION_DONE,
     SERVER_VERSION_SENT,
 };
+
+
+#define STATIC_BUFFER_LEN 16
+/* This is one AES block size. We always grab one
+ * block size first to decrypt to find the size of
+ * the rest of the data. */
+
+
+typedef struct Buffer {
+    void*           heap;         /* Heap for allocations */
+    uint32_t        length;       /* total buffer length used */
+    uint32_t        idx;          /* idx to part of length already consumed */
+    uint8_t*        buffer;       /* place holder for actual buffer */
+    uint32_t        bufferSz;     /* current buffer size */
+    ALIGN16 uint8_t staticBuffer[STATIC_BUFFER_LEN];
+    uint8_t         dynamicFlag;  /* dynamic memory currently in use */
+    uint32_t        offset;       /* Offset from start of buffer to data. */
+} Buffer;
+
+
+WOLFSSH_LOCAL Buffer* BufferNew(int size, void* heap);
+WOLFSSH_LOCAL void BufferFree(Buffer* buf);
+WOLFSSH_LOCAL  int GrowBuffer(Buffer* buf, int size);
 
 
 #ifdef __cplusplus

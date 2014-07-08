@@ -81,3 +81,69 @@ const char* IdToName(uint8_t id)
 }
 
 
+Buffer* BufferNew(int size, void* heap)
+{
+    Buffer* newBuffer = NULL;
+
+    if (size <= STATIC_BUFFER_LEN)
+        size = STATIC_BUFFER_LEN;
+
+    newBuffer = (Buffer*)WMALLOC(sizeof(Buffer), heap, WOLFSSH_TYPE_BUFFER);
+    if (newBuffer != NULL) {
+        WMEMSET(newBuffer, 0, sizeof(Buffer));
+        newBuffer->heap = heap;
+        newBuffer->bufferSz = size;
+        if (size > STATIC_BUFFER_LEN) {
+            newBuffer->buffer = (uint8_t*)WMALLOC(size,
+                                                     heap, WOLFSSH_TYPE_BUFFER);
+            if (newBuffer->buffer == NULL) {
+                WFREE(newBuffer, heap, WOLFSSH_TYPE_BUFFER);
+                newBuffer = NULL;
+            }
+            else
+                newBuffer->dynamicFlag = 1;
+        }
+        else
+            newBuffer->buffer = newBuffer->staticBuffer;
+    }
+
+    return newBuffer;
+}
+
+
+void BufferFree(Buffer* buf)
+{
+    if (buf != NULL) {
+        if (buf->dynamicFlag)
+            WFREE(buf->buffer, buf->heap, WOLFSSH_TYPE_BUFFER);
+        WFREE(buf, bug->heap, WOLFSSH_TYPE_BUFFER);
+    }
+}
+
+
+int GrowBuffer(Buffer *buf, int newSize)
+{
+    if (buf != NULL) {
+        if (newSize > buf->bufferSz) {
+            uint8_t* newBuffer = (uint8_t*)WMALLOC(newSize,
+                                                buf->heap, WOLFSSH_TYPE_BUFFER);
+            if (newBuffer == NULL)
+                return WS_MEMORY_E;
+
+            if (buf->length > 0)
+                WMEMCPY(newBuffer, buf->buffer, buf->length);
+
+            if (!buf->dynamicFlag)
+                buf->dynamicFlag = 1;
+            else
+                WFREE(buf->buffer, buf->heap, WOLFSSH_TYPE_BUFFER);
+
+            buf->buffer = newBuffer;
+            buf->bufferSz = newSize;
+        }
+    }
+
+    return WS_SUCCESS;
+}
+
+

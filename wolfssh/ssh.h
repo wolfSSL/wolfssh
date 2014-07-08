@@ -81,9 +81,10 @@ WOLFSSH_API int wolfSSH_accept(WOLFSSH* ssh);
 
 /* dynamic memory types */
 enum WS_DynamicTypes {
-    WOLFSSH_CTX_TYPE  = 1,
-    WOLFSSH_TYPE      = 2,
-    WOLFSSH_CHAN_TYPE = 3
+    WOLFSSH_CTX_TYPE    = 1,
+    WOLFSSH_TYPE        = 2,
+    WOLFSSH_CHAN_TYPE   = 3,
+    WOLFSSH_TYPE_BUFFER = 4
 };
 
 
