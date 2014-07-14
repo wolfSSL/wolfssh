@@ -237,16 +237,18 @@ static WINLINE void tcp_bind(SOCKET_T* sockFd, uint16_t port, int useAnyAddr)
 
 static THREAD_RETURN CYASSL_THREAD server_worker(void* vArgs)
 {
-    thread_ctx_t* threadCtx = (thread_ctx_t*)vArgs;
-    SOCKET_T clientFd = threadCtx->clientFd;
+    WOLFSSH* ssh = (WOLFSSH*)vArgs;
+    SOCKET_T clientFd = wolfSSH_get_fd(ssh);
     const char* msgA = "Who's there?!\n";
     const char* msgB = "Go away!\n";
 
-    send(clientFd, msgA, strlen(msgA), 0);
-    sleep(1);
-    send(clientFd, msgB, strlen(msgB), 0);
+    if (wolfSSH_accept(ssh) == WS_SUCCESS) {
+        send(clientFd, msgA, strlen(msgA), 0);
+        sleep(1);
+        send(clientFd, msgB, strlen(msgB), 0);
+    }
     close(clientFd);
-    free(threadCtx);
+    wolfSSH_free(ssh);
 
     return 0;
 }
@@ -254,6 +256,7 @@ static THREAD_RETURN CYASSL_THREAD server_worker(void* vArgs)
 
 int main(void)
 {
+    WOLFSSH_CTX* ctx = NULL;
     SOCKET_T listenFd = 0;
 
     #ifdef DEBUG_WOLFSSH
@@ -265,6 +268,12 @@ int main(void)
         exit(EXIT_FAILURE);
     }
 
+    ctx = wolfSSH_CTX_new(NULL);
+    if (ctx == NULL) {
+        fprintf(stderr, "Couldn't allocate SSH CTX data.\n");
+        exit(EXIT_FAILURE);
+    }
+
     tcp_bind(&listenFd, 22222, 0);
 
     for (;;) {
@@ -272,11 +281,11 @@ int main(void)
         SOCKADDR_IN_T clientAddr;
         SOCKLEN_T     clientAddrSz = sizeof(clientAddr);
         THREAD_TYPE   thread;
-        thread_ctx_t* threadCtx =
-                                 (thread_ctx_t*)calloc(1, sizeof(thread_ctx_t));
+        WOLFSSH*      ssh;
 
-        if (threadCtx == NULL) {
-            fprintf(stderr, "Couldn't allocate thread data.\n");
+        ssh = wolfSSH_new(ctx);
+        if (ssh == NULL) {
+            fprintf(stderr, "Couldn't allocate SSH data.\n");
             exit(EXIT_FAILURE);
         }
 
@@ -285,13 +294,12 @@ int main(void)
 
         clientFd = accept(listenFd, (struct sockaddr*)&clientAddr,
                                                                  &clientAddrSz);
-
         if (clientFd == -1)
             err_sys("tcp accept failed");
 
-        threadCtx->clientFd = clientFd;
+        wolfSSH_set_fd(ssh, clientFd);
 
-        pthread_create(&thread, 0, server_worker, threadCtx);
+        pthread_create(&thread, 0, server_worker, ssh);
         pthread_detach(thread);
     }
 
