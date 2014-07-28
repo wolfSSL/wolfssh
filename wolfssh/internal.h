@@ -45,7 +45,7 @@ extern "C" {
 
 enum {
     /* Any of the items can be none. */
-    ID_NONE,
+    ID_NONE = 0,
 
     /* Encryption IDs */
     ID_AES128_CBC,
@@ -67,6 +67,12 @@ enum {
 };
 
 
+#define MAX_ENCRYPTION   3
+#define MAX_INTEGRITY    2
+#define MAX_KEY_EXCHANGE 2
+#define MAX_PUBLIC_KEY   1
+
+
 WOLFSSH_LOCAL uint8_t     NameToId(const char*);
 WOLFSSH_LOCAL const char* IdToName(uint8_t);
 
@@ -76,24 +82,47 @@ struct WOLFSSH_CTX {
     void*             heap;        /* heap hint */
     WS_CallbackIORecv ioRecvCb;    /* I/O Receive Callback */
     WS_CallbackIOSend ioSendCb;    /* I/O Send    Callback */
-    uint8_t           compression;
 };
 
 
 /* our wolfSSH session */
 struct WOLFSSH {
-    WOLFSSH_CTX*  ctx;            /* owner context */
-    int           error;
-    int           rfd;
-    int           wfd;
-    void*         ioReadCtx;      /* I/O Read  Context handle */
-    void*         ioWriteCtx;     /* I/O Write Context handle */
-    int           rflags;         /* optional read  flags */
-    int           wflags;         /* optional write flags */
-    WOLFSSH_CHAN  *channel;       /* single data channel */
-    uint8_t       blockSz;
-    uint8_t       acceptState;
-    uint8_t       processReply;
+    WOLFSSH_CTX*   ctx;            /* owner context */
+    int            error;
+    int            rfd;
+    int            wfd;
+    void*          ioReadCtx;      /* I/O Read  Context handle */
+    void*          ioWriteCtx;     /* I/O Write Context handle */
+    int            rflags;         /* optional read  flags */
+    int            wflags;         /* optional write flags */
+    WOLFSSH_CHAN*  channel;        /* single data channel */
+    uint32_t       curSz;
+    uint8_t        blockSz;
+    uint8_t        acceptState;
+    uint8_t        clientState;
+    uint8_t        processReplyState;
+    uint8_t        connReset;
+    uint8_t        isClosed;
+
+    uint8_t        encryptionId;
+    uint8_t        integrityId;
+    uint8_t        keyExchangeId;
+    uint8_t        publicKeyId;
+
+    char*          peerId;
+    /* The lengths of the lists are contrained to how many of choices
+     * we actually support. */
+    uint8_t        peerEncryptionList[MAX_ENCRYPTION];
+    uint8_t        peerEncryptionListSz;
+    uint8_t        peerIntegrityList[MAX_INTEGRITY];
+    uint8_t        peerIntegrityListSz;
+    uint8_t        peerKeyExchangeList[MAX_KEY_EXCHANGE];
+    uint8_t        peerKeyExchangeListSz;
+    uint8_t        peerPublicKeyList[MAX_PUBLIC_KEY];
+    uint8_t        peerPublicKeyListSz;
+
+    struct Buffer* inputBuffer;
+    struct Buffer* outputBuffer;
 };
 
 
@@ -119,10 +148,33 @@ WOLFSSH_LOCAL int SendServerVersion(WOLFSSH*);
 WOLFSSH_LOCAL int DoClientVersion(WOLFSSH*);
 
 
-enum {
+enum AcceptStates {
     ACCEPT_BEGIN = 0,
-    CLIENT_VERSION_DONE,
+    ACCEPT_CLIENT_VERSION_DONE,
     SERVER_VERSION_SENT,
+    ACCEPT_CLIENT_ALGO_DONE,
+    SERVER_ALGO_SENT
+};
+
+
+enum ClientStates {
+    CLIENT_BEGIN = 0,
+    CLIENT_VERSION_DONE,
+    CLIENT_ALGO_DONE
+};
+
+
+enum ProcessReplyStates {
+    PROCESS_INIT,
+    PROCESS_PACKET_LENGTH,
+    PROCESS_PACKET_FINISH,
+    PROCESS_PACKET
+};
+
+
+enum SshMessageIds {
+    SSH_MSG_KEXINIT = 20,
+    SSH_MSG_NEWKEYS = 21
 };
 
 
@@ -144,10 +196,14 @@ typedef struct Buffer {
 } Buffer;
 
 
-WOLFSSH_LOCAL Buffer* BufferNew(int size, void* heap);
-WOLFSSH_LOCAL void BufferFree(Buffer* buf);
-WOLFSSH_LOCAL  int GrowBuffer(Buffer* buf, int size);
+WOLFSSH_LOCAL Buffer* BufferNew(uint32_t, void*);
+WOLFSSH_LOCAL void BufferFree(Buffer*);
+WOLFSSH_LOCAL int GrowBuffer(Buffer*, uint32_t);
+WOLFSSH_LOCAL int ShrinkBuffer(Buffer* buf);
 
+
+WOLFSSH_LOCAL int ProcessClientVersion(WOLFSSH*);
+WOLFSSH_LOCAL int SendServerVersion(WOLFSSH*);
 
 #ifdef __cplusplus
 }

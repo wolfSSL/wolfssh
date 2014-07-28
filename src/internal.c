@@ -30,12 +30,12 @@
 
 
 typedef struct {
-    byte id;
+    uint8_t id;
     const char* name;
 } NameIdPair;
 
 
-static const NameIdMap[] = {
+static const NameIdPair NameIdMap[] = {
     { ID_NONE, "none" },
     { ID_AES128_CBC, "aes128-cbc" },
     { ID_AES128_CTR, "aes128-ctr" },
@@ -52,10 +52,11 @@ uint8_t NameToId(const char* name)
 {
     uint8_t id = ID_UNKNOWN;
     size_t  nameSz = WSTRLEN(name);
+    uint32_t i;
 
-    for (i = 0; i < (sizeof(NameIdName)/sizeof(NameIdPair)); i++) {
-        if (nameSz == WSTRLEN(NameIdMap[i].name &&
-            XSTRNCMP(name, NameIdMap[i].name, nameSz) == 0)) {
+    for (i = 0; i < (sizeof(NameIdMap)/sizeof(NameIdPair)); i++) {
+        if (nameSz == WSTRLEN(NameIdMap[i].name) &&
+            WSTRNCMP(name, NameIdMap[i].name, nameSz) == 0) {
 
             id = NameIdMap[i].id;
             break;
@@ -69,8 +70,9 @@ uint8_t NameToId(const char* name)
 const char* IdToName(uint8_t id)
 {
     const char* name = NULL;
+    uint32_t i;
 
-    for (i = 0; i < (sizeof(NameIdName)/sizeof(NameIdPair)); i++) {
+    for (i = 0; i < (sizeof(NameIdMap)/sizeof(NameIdPair)); i++) {
         if (NameIdMap[i].id == id) {
             name = NameIdMap[i].name;
             break;
@@ -81,7 +83,7 @@ const char* IdToName(uint8_t id)
 }
 
 
-Buffer* BufferNew(int size, void* heap)
+Buffer* BufferNew(uint32_t size, void* heap)
 {
     Buffer* newBuffer = NULL;
 
@@ -121,7 +123,7 @@ void BufferFree(Buffer* buf)
 }
 
 
-int GrowBuffer(Buffer *buf, int newSize)
+int GrowBuffer(Buffer* buf, uint32_t newSize)
 {
     if (buf != NULL) {
         if (newSize > buf->bufferSz) {
@@ -141,6 +143,18 @@ int GrowBuffer(Buffer *buf, int newSize)
             buf->buffer = newBuffer;
             buf->bufferSz = newSize;
         }
+    }
+
+    return WS_SUCCESS;
+}
+
+
+int ShrinkBuffer(Buffer* buf)
+{
+    if (buf != NULL && buf->dynamicFlag) {
+        WFREE(buf->buffer, buf->heap, WOLFSSH_TYPE_BUFFER);
+        buf->buffer = NULL;
+        buf->bufferSz = STATIC_BUFFER_LEN;
     }
 
     return WS_SUCCESS;

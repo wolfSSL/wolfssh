@@ -45,6 +45,7 @@ typedef int SOCKET_T;
     #define AF_INET_V           AF_INET
     static const char*          wolfsshIP = "127.0.0.1";
 #endif
+#define SERVER_PORT_NUMBER      22222
 
 #if defined(__MACH__) || defined(USE_WINDOWS_API)
     #ifndef _SOCKLEN_T
@@ -274,7 +275,7 @@ int main(void)
         exit(EXIT_FAILURE);
     }
 
-    tcp_bind(&listenFd, 22222, 0);
+    tcp_bind(&listenFd, SERVER_PORT_NUMBER, 0);
 
     for (;;) {
         SOCKET_T      clientFd = 0;

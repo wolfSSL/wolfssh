@@ -5,6 +5,7 @@
 
 lib_LTLIBRARIES+=  src/libwolfssh.la
 src_libwolfssh_la_SOURCES = src/ssh.c \
+                            src/internal.c \
                             src/memory.c \
                             src/log.c \
                             src/io.c \

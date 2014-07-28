@@ -61,28 +61,19 @@ const char* wolfSSH_get_error(int err)
         case WS_BAD_USAGE:
             return "bad example usage";
 
-        case WS_CBIO_ERR_GENERAL:
-            return "general I/O callback error";
+        case WS_SOCKET_ERROR_E:
+            return "socket error";
 
-        case WS_CBIO_ERR_WANT_READ:
+        case WS_WANT_READ:
             return "I/O callback would read block error";
 
-        case WS_CBIO_ERR_WANT_WRITE:
+        case WS_WANT_WRITE:
             return "I/O callback would write block error";
 
-        case WS_CBIO_ERR_CONN_RST:
-            return "I/O callback connection reset error";
-
-        case WS_CBIO_ERR_ISR:
-            return "I/O callback interrupt error";
-
-        case WS_CBIO_ERR_CONN_CLOSE:
-            return "I/O callback connection closed error";
-
-        case WS_CBIO_ERR_TIMEOUT:
-            return "I/O callback timeout error";
-
+        case WS_RECV_OVERFLOW_E:
+            return "receive buffer overflow";
         default:
+
             return "Unknown error code";
     }
 #endif

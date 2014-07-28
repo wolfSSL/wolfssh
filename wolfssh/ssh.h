@@ -60,18 +60,18 @@ WOLFSSH_API int  wolfSSH_get_fd(const WOLFSSH*);
 WOLFSSH_API const char* wolfSSH_get_error(int);
 
 /* I/O callbacks */
-typedef int (*WS_CallbackIORecv)(WOLFSSH*, void* buf, uint32_t sz, void* ctx);
-typedef int (*WS_CallbackIOSend)(WOLFSSH*, void* buf, uint32_t sz, void* ctx);
+typedef int (*WS_CallbackIORecv)(WOLFSSH*, void*, uint32_t, void*);
+typedef int (*WS_CallbackIOSend)(WOLFSSH*, void*, uint32_t, void*);
 
 /* Channel I/O callbacks */
-typedef int (*WSH_CallbackChanRecv)();
-typedef int (*WSH_CallbackChanSend)();
+typedef int (*WSH_CallbackChanRecv)(WOLFSSH*, void*, uint32_t, void*);
+typedef int (*WSH_CallbackChanSend)(WOLFSSH*, void*, uint32_t, void*);
 
 WOLFSSH_API void wolfSSH_SetIORecv(WOLFSSH_CTX*, WS_CallbackIORecv);
 WOLFSSH_API void wolfSSH_SetIOSend(WOLFSSH_CTX*, WS_CallbackIOSend);
 
-WOLFSSH_API void wolfSSH_SetIOReadCtx(WOLFSSH* ssh, void *ctx);
-WOLFSSH_API void wolfSSH_SetIOWriteCtx(WOLFSSH* ssh, void *ctx);
+WOLFSSH_API void wolfSSH_SetIOReadCtx(WOLFSSH* ssh, void* ctx);
+WOLFSSH_API void wolfSSH_SetIOWriteCtx(WOLFSSH* ssh, void* ctx);
 
 WOLFSSH_API void* wolfSSH_GetIOReadCtx(WOLFSSH* ssh);
 WOLFSSH_API void* wolfSSH_GetIOWriteCtx(WOLFSSH* ssh);
@@ -84,18 +84,10 @@ enum WS_DynamicTypes {
     WOLFSSH_CTX_TYPE    = 1,
     WOLFSSH_TYPE        = 2,
     WOLFSSH_CHAN_TYPE   = 3,
-    WOLFSSH_TYPE_BUFFER = 4
+    WOLFSSH_TYPE_BUFFER = 4,
+    WOLFSSH_ID_TYPE     = 5
 };
 
-
-/* defaults */
-#ifndef WOLFSSH_PORT
-    #define WOLFSSH_PORT 22222
-#endif
-
-#ifndef WOLFSSH_HOST
-    #define WOLFSSH_HOST "localhost"
-#endif
 
 #ifdef __cplusplus
 }

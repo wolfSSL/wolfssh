@@ -33,27 +33,34 @@ extern "C" {
 
 /* main public return values */
 enum WS_ReturnValues {
-    WS_SUCCESS      =  0,            /* function success */
-    WS_FATAL_ERROR  = -1,            /* general function failure */
-    WS_BAD_ARGUMENT = -2,            /* bad function argument */
-    WS_MEMORY_E     = -3,            /* memory allocation failure */
-    WS_BUFFER_E     = -4,            /* input/output buffer size error */
-    WS_PARSE_E      = -5,            /* general parsing error */
-    WS_NOT_COMPILED = -6,            /* feature not compiled in */
-    WS_OVERFLOW_E   = -7,            /* would overflow if continued */
-    WS_BAD_USAGE    = -8             /* bad example usage */
+    WS_SUCCESS         =  0,            /* function success */
+    WS_FATAL_ERROR     = -1,            /* general function failure */
+    WS_BAD_ARGUMENT    = -2,            /* bad function argument */
+    WS_MEMORY_E        = -3,            /* memory allocation failure */
+    WS_BUFFER_E        = -4,            /* input/output buffer size error */
+    WS_PARSE_E         = -5,            /* general parsing error */
+    WS_NOT_COMPILED    = -6,            /* feature not compiled in */
+    WS_OVERFLOW_E      = -7,            /* would overflow if continued */
+    WS_BAD_USAGE       = -8,            /* bad example usage */
+    WS_SOCKET_ERROR_E  = -9,
+    WS_WANT_READ       = -10,
+    WS_WANT_WRITE      = -11,
+    WS_RECV_OVERFLOW_E = -12,
+    WS_VERSION_E       = -13,           /* Peer using wrong version of SSH */
+    WS_SEND_OOB_READ_E = -14,
+    WS_INPUT_CASE_E    = -15
 };
 
 
 /* I/O Callback default errors */
 enum WS_IOerrors {
-    WS_CBIO_ERR_GENERAL    = -301,     /* general unexpected err */
-    WS_CBIO_ERR_WANT_READ  = -302,     /* need to call read  again */
-    WS_CBIO_ERR_WANT_WRITE = -303,     /* need to call write again */
-    WS_CBIO_ERR_CONN_RST   = -304,     /* connection reset */
-    WS_CBIO_ERR_ISR        = -305,     /* interrupt */
-    WS_CBIO_ERR_CONN_CLOSE = -306,     /* connection closed or epipe */
-    WS_CBIO_ERR_TIMEOUT    = -307      /* socket timeout */
+    WS_CBIO_ERR_GENERAL    = -1,     /* general unexpected err */
+    WS_CBIO_ERR_WANT_READ  = -2,     /* need to call read  again */
+    WS_CBIO_ERR_WANT_WRITE = -2,     /* need to call write again */
+    WS_CBIO_ERR_CONN_RST   = -3,     /* connection reset */
+    WS_CBIO_ERR_ISR        = -4,     /* interrupt */
+    WS_CBIO_ERR_CONN_CLOSE = -5,     /* connection closed or epipe */
+    WS_CBIO_ERR_TIMEOUT    = -6      /* socket timeout */
 };
 
 
