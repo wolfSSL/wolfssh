@@ -48,12 +48,11 @@ static const NameIdPair NameIdMap[] = {
 };
 
 
-uint8_t NameToId(const char* name)
+uint8_t NameToId(const char* name, uint32_t nameSz)
 {
     uint8_t id = ID_UNKNOWN;
-    size_t  nameSz = WSTRLEN(name);
     uint32_t i;
-
+(void)nameSz;
     for (i = 0; i < (sizeof(NameIdMap)/sizeof(NameIdPair)); i++) {
         if (nameSz == WSTRLEN(NameIdMap[i].name) &&
             WSTRNCMP(name, NameIdMap[i].name, nameSz) == 0) {
@@ -123,17 +122,29 @@ void BufferFree(Buffer* buf)
 }
 
 
-int GrowBuffer(Buffer* buf, uint32_t newSize)
+int GrowBuffer(Buffer* buf, uint32_t sz, uint32_t usedSz)
 {
+    WLOG(WS_LOG_DEBUG, "GB: buf = %p", buf);
+    WLOG(WS_LOG_DEBUG, "GB: sz = %d", sz);
+    WLOG(WS_LOG_DEBUG, "GB: usedSz = %d", usedSz);
+    /* New buffer will end up being sz+usedSz long
+     * empty space at the head of the buffer will be compressed */
     if (buf != NULL) {
-        if (newSize > buf->bufferSz) {
-            uint8_t* newBuffer = (uint8_t*)WMALLOC(newSize,
+        uint32_t newSz = sz + usedSz;
+        WLOG(WS_LOG_DEBUG, "GB: newSz = %d", newSz);
+
+        if (newSz > buf->bufferSz) {
+            uint8_t* newBuffer = (uint8_t*)WMALLOC(newSz,
                                                 buf->heap, WOLFSSH_TYPE_BUFFER);
+
+            WLOG(WS_LOG_DEBUG, "Growing buffer");
+
             if (newBuffer == NULL)
                 return WS_MEMORY_E;
 
+            WLOG(WS_LOG_DEBUG, "GB: resizing buffer");
             if (buf->length > 0)
-                WMEMCPY(newBuffer, buf->buffer, buf->length);
+                WMEMCPY(newBuffer, buf->buffer + buf->idx, buf->length);
 
             if (!buf->dynamicFlag)
                 buf->dynamicFlag = 1;
@@ -141,7 +152,9 @@ int GrowBuffer(Buffer* buf, uint32_t newSize)
                 WFREE(buf->buffer, buf->heap, WOLFSSH_TYPE_BUFFER);
 
             buf->buffer = newBuffer;
-            buf->bufferSz = newSize;
+            buf->bufferSz = newSz;
+            buf->length = usedSz;
+            buf->idx = 0;
         }
     }
 
@@ -149,15 +162,26 @@ int GrowBuffer(Buffer* buf, uint32_t newSize)
 }
 
 
-int ShrinkBuffer(Buffer* buf)
+void ShrinkBuffer(Buffer* buf)
 {
-    if (buf != NULL && buf->dynamicFlag) {
-        WFREE(buf->buffer, buf->heap, WOLFSSH_TYPE_BUFFER);
-        buf->buffer = NULL;
-        buf->bufferSz = STATIC_BUFFER_LEN;
-    }
+    if (buf != NULL) {
+        uint32_t usedSz = buf->length - buf->idx;
 
-    return WS_SUCCESS;
+        if (usedSz > STATIC_BUFFER_LEN)
+            return;
+
+        WLOG(WS_LOG_DEBUG, "Shrinking buffer");
+
+        if (usedSz)
+            WMEMCPY(buf->staticBuffer, buf->buffer + buf->idx, usedSz);
+
+        WFREE(buf->buffer, buf->heap, WOLFSSH_TYPE_BUFFER);
+        buf->dynamicFlag = 0;
+        buf->buffer = buf->staticBuffer;
+        buf->bufferSz = STATIC_BUFFER_LEN;
+        buf->length = usedSz;
+        buf->idx = 0;
+    }
 }
 
 

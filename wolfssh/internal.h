@@ -71,9 +71,12 @@ enum {
 #define MAX_INTEGRITY    2
 #define MAX_KEY_EXCHANGE 2
 #define MAX_PUBLIC_KEY   1
+#define COOKIE_SZ        16
+#define LENGTH_SZ        4
+#define PAD_LENGTH_SZ    1
 
 
-WOLFSSH_LOCAL uint8_t     NameToId(const char*);
+WOLFSSH_LOCAL uint8_t     NameToId(const char*, uint32_t);
 WOLFSSH_LOCAL const char* IdToName(uint8_t);
 
 
@@ -104,22 +107,16 @@ struct WOLFSSH {
     uint8_t        connReset;
     uint8_t        isClosed;
 
-    uint8_t        encryptionId;
-    uint8_t        integrityId;
     uint8_t        keyExchangeId;
     uint8_t        publicKeyId;
+    uint8_t        encryptionId;
+    uint8_t        integrityId;
+    uint8_t        kexPacketFollows;
 
     char*          peerId;
-    /* The lengths of the lists are contrained to how many of choices
-     * we actually support. */
-    uint8_t        peerEncryptionList[MAX_ENCRYPTION];
-    uint8_t        peerEncryptionListSz;
-    uint8_t        peerIntegrityList[MAX_INTEGRITY];
-    uint8_t        peerIntegrityListSz;
-    uint8_t        peerKeyExchangeList[MAX_KEY_EXCHANGE];
-    uint8_t        peerKeyExchangeListSz;
-    uint8_t        peerPublicKeyList[MAX_PUBLIC_KEY];
-    uint8_t        peerPublicKeyListSz;
+
+    uint8_t        peerCookie[COOKIE_SZ];
+    uint8_t        myCookie[COOKIE_SZ];
 
     struct Buffer* inputBuffer;
     struct Buffer* outputBuffer;
@@ -198,8 +195,8 @@ typedef struct Buffer {
 
 WOLFSSH_LOCAL Buffer* BufferNew(uint32_t, void*);
 WOLFSSH_LOCAL void BufferFree(Buffer*);
-WOLFSSH_LOCAL int GrowBuffer(Buffer*, uint32_t);
-WOLFSSH_LOCAL int ShrinkBuffer(Buffer* buf);
+WOLFSSH_LOCAL int GrowBuffer(Buffer*, uint32_t, uint32_t);
+WOLFSSH_LOCAL void ShrinkBuffer(Buffer* buf);
 
 
 WOLFSSH_LOCAL int ProcessClientVersion(WOLFSSH*);

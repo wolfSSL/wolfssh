@@ -283,6 +283,7 @@ static int Receive(WOLFSSH* ssh, uint8_t* buf, uint32_t sz)
 
 retry:
     recvd = ssh->ctx->ioRecvCb(ssh, buf, sz, ssh->ioReadCtx);
+    WLOG(WS_LOG_DEBUG, "Receive: recvd = %d", recvd);
     if (recvd < 0)
         switch (recvd) {
             case WS_CBIO_ERR_GENERAL:        /* general/unknown error */
@@ -319,7 +320,7 @@ static int GetInputText(WOLFSSH* ssh)
     int inSz = 255;
     int in;
 
-    if (GrowBuffer(ssh->inputBuffer, inSz) < 0)
+    if (GrowBuffer(ssh->inputBuffer, inSz, 0) < 0)
         return WS_MEMORY_E;
 
     do {
@@ -385,7 +386,7 @@ static int SendBuffer(WOLFSSH* ssh)
 
 static int SendText(WOLFSSH* ssh, const char* text, uint32_t textLen)
 {
-    GrowBuffer(ssh->outputBuffer, textLen);
+    GrowBuffer(ssh->outputBuffer, textLen, 0);
     WMEMCPY(ssh->outputBuffer->buffer, text, textLen);
     ssh->outputBuffer->length = textLen;
 
@@ -406,14 +407,38 @@ static int GetInputData(WOLFSSH* ssh, uint32_t size)
     maxLength  = ssh->inputBuffer->bufferSz - usedLength;
     inSz       = (int)(size - usedLength);      /* from last partial read */
 
+    WLOG(WS_LOG_DEBUG, "GID: size = %d", size);
+    WLOG(WS_LOG_DEBUG, "GID: usedLength = %d", usedLength);
+    WLOG(WS_LOG_DEBUG, "GID: maxLength = %d", maxLength);
+    WLOG(WS_LOG_DEBUG, "GID: inSz = %d", inSz);
+
+    /*
+     * usedLength - how much untouched data is in the buffer
+     * maxLength - how much empty space is in the buffer
+     * inSz - difference between requested data and empty space in the buffer
+     *        how much more we need to allocate
+     */
+
     if (inSz <= 0)
         return WS_BUFFER_E;
     
+    /*
+     * If we need more space than there is left in the buffer grow buffer.
+     * Growing the buffer also compresses empty space at the head of the
+     * buffer and resets idx to 0.
+     */
+    if (inSz > maxLength) {
+        if (GrowBuffer(ssh->inputBuffer, size, usedLength) < 0)
+            return WS_MEMORY_E;
+    }
+
     /* Put buffer data at start if not there */
-    if (usedLength > 0 && ssh->inputBuffer->idx != 0)
+    /* Compress the buffer if needed, i.e. buffer idx is non-zero */
+    if (usedLength > 0 && ssh->inputBuffer->idx != 0) {
         WMEMMOVE(ssh->inputBuffer->buffer,
                 ssh->inputBuffer->buffer + ssh->inputBuffer->idx,
                 usedLength);
+    }
     
     /* remove processed data */
     ssh->inputBuffer->idx    = 0;
@@ -441,8 +466,124 @@ static int GetInputData(WOLFSSH* ssh, uint32_t size)
 }
 
 
-static int DoKexInit(uint8_t* buf, uint32_t len, uint32_t* idx)
+static int DoNameList(uint8_t* list, uint8_t* listSz,
+                                      uint8_t* buf, uint32_t len, uint32_t* idx)
 {
+    uint8_t i = 0;
+    uint32_t nameListSz;
+    uint32_t begin = *idx;
+    (void)list;
+
+    if (begin >= len || begin + 4 >= len)
+        return -1;
+
+    ato32(buf + begin, &nameListSz);
+    begin += 4;
+    if (begin + nameListSz > len)
+        return -1;
+
+    begin += nameListSz;
+    /* list[0] = NameToId(nextName, 0); */
+
+    *listSz = i;
+    *idx = begin;
+
+    return WS_SUCCESS;
+}
+
+
+static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
+{
+    uint8_t list[3];
+    uint8_t listSz;
+    uint32_t skipSz;
+    uint32_t begin = *idx;
+
+    /*
+     * I don't need to save what the client sends here. I should decode
+     * each list into a local array of IDs, and pick the one the peer is
+     * using that's on my known list, or verify that the one the peer can
+     * support the other direction is on my known list. All I need to do
+     * is save the actual values.
+     *
+     * Save the cookie for now. Maybe that is used in KEX.
+     *
+     * byte[16]     cookie
+     * name-list    kex_algorithms (2)
+     * name-list    server_host_key_algorithms (1)
+     * name-list    encryption_algorithms_client_to_server (3)
+     * name-list    encryption_algorithms_server_to_client (3)
+     * name-list    mac_algorithms_client_to_server (2)
+     * name-list    mac_algorithms_server_to_client (2)
+     * name-list    compression_algorithms_client_to_server (1)
+     * name-list    compression_algorithms_server_to_client (1)
+     * name-list    languages_client_to_server (0, skip)
+     * name-list    languages_server_to_client (0, skip)
+     * boolean      first_kex_packet_follows
+     * uint32       0 (reserved for future extension)
+     */
+
+    /* Save the peer's cookie. */
+    if (begin + COOKIE_SZ > len) {
+        /* error, out of bounds */
+        return -1;
+    }
+    WMEMCPY(ssh->peerCookie, buf + begin, COOKIE_SZ);
+    begin += COOKIE_SZ;
+
+    /* KEX Algorithms */
+    listSz = 2;
+    DoNameList(list, &listSz, buf, len, &begin);
+
+    /* Server Host Key Algorithms */
+    listSz = 1;
+    DoNameList(list, &listSz, buf, len, &begin);
+
+    /* Enc Algorithms - Client to Server */
+    listSz = 3;
+    DoNameList(list, &listSz, buf, len, &begin);
+
+    /* Enc Algorithms - Server to Client */
+    listSz = 3;
+    DoNameList(list, &listSz, buf, len, &begin);
+
+    /* MAC Algorithms - Client to Server */
+    listSz = 2;
+    DoNameList(list, &listSz, buf, len, &begin);
+
+    /* MAC Algorithms - Server to Client */
+    listSz = 2;
+    DoNameList(list, &listSz, buf, len, &begin);
+
+    /* Compression Algorithms - Client to Server */
+    listSz = 1;
+    DoNameList(list, &listSz, buf, len, &begin);
+    /* verify the list contains "none" */
+
+    /* Compression Algorithms - Server to Client */
+    listSz = 1;
+    DoNameList(list, &listSz, buf, len, &begin);
+    /* verify the list contains "none" */
+
+    /* Languages - Client to Server, skip */
+    ato32(buf + begin, &skipSz);
+    begin += 4 + skipSz;
+
+    /* Languages - Server to Client, skip */
+    ato32(buf + begin, &skipSz);
+    begin += 4 + skipSz;
+
+    /* First KEX Packet Follows */
+    ssh->kexPacketFollows = buf[begin];
+    begin += 1;
+
+    /* Skip the "for future use" length. */
+    ato32(buf + begin, &skipSz);
+    begin += 4 + skipSz;
+
+    *idx = begin;
+
+    return WS_SUCCESS;
 }
 
 
@@ -452,22 +593,27 @@ static int DoPacket(WOLFSSH* ssh)
     uint32_t idx = ssh->inputBuffer->idx;
     uint32_t len = ssh->inputBuffer->length;
     uint8_t msg;
+    uint8_t padSz;
 
-    /* Advance past packet size and padding size */
-    idx += 5;
+    padSz = buf[idx++];
 
     msg = buf[idx++];
     switch (msg) {
 
         case SSH_MSG_KEXINIT:
-            WLOG(WS_LOG_DEBUG, "Decoding SSH_MSG_KEXINIT (%d)", len);
-            DoKexInit(buf, len, &idx);
+            WLOG(WS_LOG_DEBUG, "Decoding SSH_MSG_KEXINIT (len = %d)", len);
+            DoKexInit(ssh, buf, len, &idx);
             break;
 
         default:
-            WLOG(WS_LOG_DEBUG, "Unsupported message ID");
+            WLOG(WS_LOG_DEBUG, "Unsupported message ID (%d)", msg);
             break;
     }
+
+    if (idx + padSz > len) {
+        return -1;
+    }
+    idx += padSz;
 
     ssh->inputBuffer->idx = idx;
     return WS_SUCCESS;
@@ -484,6 +630,7 @@ int ProcessReply(WOLFSSH* ssh)
         switch (ssh->processReplyState) {
             case PROCESS_INIT:
                 readSz = ssh->blockSz;
+                WLOG(WS_LOG_DEBUG, "PR1: size = %d", readSz);
                 if ((ret = GetInputData(ssh, readSz)) < 0) {
                     return ret;
                 }
@@ -493,9 +640,11 @@ int ProcessReply(WOLFSSH* ssh)
 
             case PROCESS_PACKET_LENGTH:
                 ato32(ssh->inputBuffer->buffer + ssh->inputBuffer->idx, &ssh->curSz);
+                ssh->inputBuffer->idx += LENGTH_SZ;
                 ssh->processReplyState = PROCESS_PACKET_FINISH;
 
             case PROCESS_PACKET_FINISH:
+                WLOG(WS_LOG_DEBUG, "PR2: size = %d", ssh->curSz);
                 if ((ret = GetInputData(ssh, ssh->curSz)) < 0) {
 
                     return ret;
@@ -542,7 +691,10 @@ int wolfSSH_accept(WOLFSSH* ssh)
 
         case SERVER_VERSION_SENT:
             while (ssh->clientState < CLIENT_ALGO_DONE) {
-                ProcessReply(ssh);
+                if ( (ssh->error = ProcessReply(ssh)) < 0) {
+                    WLOG(WS_LOG_DEBUG, "accept reply error: %d", ssh->error);
+                    return WS_FATAL_ERROR;
+                }
             }
             break;
     }
