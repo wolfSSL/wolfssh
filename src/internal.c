@@ -36,6 +36,58 @@ static /*INLINE*/ void ato32(const uint8_t* c, uint32_t* u32)
 }
 
 
+const char* GetErrorString(int err)
+{
+#ifdef NO_WOLFSSH_STRINGS
+    return "No wolfSSH strings available";
+#else
+    switch (err) {
+        case WS_SUCCESS:
+            return "function success";
+
+        case WS_FATAL_ERROR:
+            return "general function failure";
+
+        case WS_BAD_ARGUMENT:
+            return "bad function argument";
+
+        case WS_MEMORY_E:
+            return "memory allocation failure";
+
+        case WS_BUFFER_E:
+            return "input/output buffer size error";
+
+        case WS_PARSE_E:
+            return "general parsing error";
+
+        case WS_NOT_COMPILED:
+            return "feature not compiled in";
+
+        case WS_OVERFLOW_E:
+            return "would overflow if continued failure";
+
+        case WS_BAD_USAGE:
+            return "bad example usage";
+
+        case WS_SOCKET_ERROR_E:
+            return "socket error";
+
+        case WS_WANT_READ:
+            return "I/O callback would read block error";
+
+        case WS_WANT_WRITE:
+            return "I/O callback would write block error";
+
+        case WS_RECV_OVERFLOW_E:
+            return "receive buffer overflow";
+
+        default:
+            return "Unknown error code";
+    }
+#endif
+}
+
+
 typedef struct {
     uint8_t id;
     const char* name;

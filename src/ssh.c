@@ -209,6 +209,26 @@ int wolfSSH_get_fd(const WOLFSSH* ssh)
 }
 
 
+int wolfSSH_get_error(const WOLFSSH* ssh)
+{
+    WLOG(WS_LOG_DEBUG, "Enter wolfSSH_get_error()");
+    if (ssh)
+        return ssh->error;
+
+    return WS_BAD_ARGUMENT;
+}
+
+
+const char* wolfSSH_get_error_name(const WOLFSSH* ssh)
+{
+    WLOG(WS_LOG_DEBUG, "Enter wolfSSH_get_error_name()");
+    if (ssh)
+        return GetErrorString(ssh->error);
+
+    return NULL;
+}
+
+
 int wolfSSH_accept(WOLFSSH* ssh)
 {
     switch (ssh->acceptState) {

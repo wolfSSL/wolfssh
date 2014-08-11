@@ -44,6 +44,9 @@ extern "C" {
 #endif
 
 
+WOLFSSH_LOCAL const char* GetErrorString(int);
+
+
 enum {
     /* Any of the items can be none. */
     ID_NONE = 0,
@@ -135,8 +138,8 @@ struct WOLFSSH {
 #ifndef WOLFSSH_USER_IO
 
 /* default I/O handlers */
-WOLFSSH_LOCAL int wsEmbedRecv(WOLFSSH* ssh, void*, uint32_t sz, void* ctx);
-WOLFSSH_LOCAL int wsEmbedSend(WOLFSSH* ssh, void*, uint32_t sz, void* ctx);
+WOLFSSH_LOCAL int wsEmbedRecv(WOLFSSH*, void*, uint32_t, void*);
+WOLFSSH_LOCAL int wsEmbedSend(WOLFSSH*, void*, uint32_t, void*);
 
 #endif /* WOLFSSH_USER_IO */
 
