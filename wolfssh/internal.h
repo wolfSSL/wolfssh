@@ -142,8 +142,8 @@ WOLFSSH_LOCAL int wsEmbedSend(WOLFSSH* ssh, void*, uint32_t sz, void* ctx);
 
 
 WOLFSSH_LOCAL int ProcessReply(WOLFSSH*);
+WOLFSSH_LOCAL int ProcessClientVersion(WOLFSSH*);
 WOLFSSH_LOCAL int SendServerVersion(WOLFSSH*);
-WOLFSSH_LOCAL int DoClientVersion(WOLFSSH*);
 
 
 enum AcceptStates {
