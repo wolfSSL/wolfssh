@@ -44,7 +44,7 @@ WOLFSSH_API int  wolfSSH_Debugging_ON(void);
 WOLFSSH_API void wolfSSH_Debugging_OFF(void);
 
 /* context functions */
-WOLFSSH_API WOLFSSH_CTX* wolfSSH_CTX_new(void*);
+WOLFSSH_API WOLFSSH_CTX* wolfSSH_CTX_new(uint8_t, void*);
 WOLFSSH_API void         wolfSSH_CTX_free(WOLFSSH_CTX*);
 
 /* ssh session functions */
@@ -71,6 +71,12 @@ WOLFSSH_API void* wolfSSH_GetIOReadCtx(WOLFSSH* ssh);
 WOLFSSH_API void* wolfSSH_GetIOWriteCtx(WOLFSSH* ssh);
 
 WOLFSSH_API int wolfSSH_accept(WOLFSSH* ssh);
+
+
+enum WS_EndpointTypes {
+    WOLFSSH_SERVER = 0,
+    WOLFSSH_CLIENT = 1
+};
 
 
 /* dynamic memory types */

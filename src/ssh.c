@@ -66,11 +66,16 @@ static WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, void* heap)
 }
 
 
-WOLFSSH_CTX* wolfSSH_CTX_new(void* heap)
+WOLFSSH_CTX* wolfSSH_CTX_new(uint8_t side, void* heap)
 {
     WOLFSSH_CTX* ctx;
 
     WLOG(WS_LOG_DEBUG, "Enter wolfSSH_CTX_new()");
+
+    if (side != WOLFSSH_SERVER && side != WOLFSSH_CLIENT) {
+        WLOG(WS_LOG_DEBUG, "Invalid endpoint type");
+        return NULL;
+    }
 
     ctx = (WOLFSSH_CTX*)WMALLOC(sizeof(WOLFSSH_CTX), heap, WOLFSSH_CTX_TYPE);
     ctx = CtxInit(ctx, heap);

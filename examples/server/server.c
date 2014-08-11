@@ -269,7 +269,7 @@ int main(void)
         exit(EXIT_FAILURE);
     }
 
-    ctx = wolfSSH_CTX_new(NULL);
+    ctx = wolfSSH_CTX_new(WOLFSSH_SERVER, NULL);
     if (ctx == NULL) {
         fprintf(stderr, "Couldn't allocate SSH CTX data.\n");
         exit(EXIT_FAILURE);
