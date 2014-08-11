@@ -23,6 +23,7 @@
 #pragma once
 
 #include <wolfssh/ssh.h>
+#include <cyassl/ctaocrypt/sha.h>
 
 
 #if !defined (ALIGN16)
@@ -98,12 +99,14 @@ struct WOLFSSH {
     void*          ioWriteCtx;     /* I/O Write Context handle */
     int            rflags;         /* optional read  flags */
     int            wflags;         /* optional write flags */
-    WOLFSSH_CHAN*  channel;        /* single data channel */
     uint32_t       curSz;
+    uint32_t       seq;
+    uint32_t       peerSeq;
     uint8_t        blockSz;
     uint8_t        acceptState;
     uint8_t        clientState;
     uint8_t        processReplyState;
+
     uint8_t        connReset;
     uint8_t        isClosed;
 
@@ -115,19 +118,17 @@ struct WOLFSSH {
 
     char*          peerId;
 
-    uint8_t        peerCookie[COOKIE_SZ];
-    uint8_t        myCookie[COOKIE_SZ];
+    uint8_t        pendingKeyExchangeId;
+    uint8_t        pendingPublicKeyId;
+    uint8_t        pendingEncryptionId;
+    uint8_t        pendingIntegrityId;
 
     struct Buffer* inputBuffer;
     struct Buffer* outputBuffer;
-};
 
-
-/* wolfSSH channel */
-struct WOLFSSH_CHAN {
-    WOLFSSH_CTX* ctx;
-    WOLFSSH*     ssh;
-    int          id;
+    Sha            handshakeHash;
+    uint8_t        session_id[SHA_DIGEST_SIZE];
+    uint8_t        H[SHA_DIGEST_SIZE];
 };
 
 

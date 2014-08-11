@@ -31,9 +31,10 @@
 extern "C" {
 #endif
 
+
 typedef struct WOLFSSH_CTX  WOLFSSH_CTX;
 typedef struct WOLFSSH      WOLFSSH;
-typedef struct WOLFSSH_CHAN WOLFSSH_CHAN;
+
 
 WOLFSSH_API int  wolfSSH_Init(void);
 WOLFSSH_API int  wolfSSH_Cleanup(void);
@@ -50,10 +51,6 @@ WOLFSSH_API void         wolfSSH_CTX_free(WOLFSSH_CTX*);
 WOLFSSH_API WOLFSSH* wolfSSH_new(WOLFSSH_CTX*);
 WOLFSSH_API void     wolfSSH_free(WOLFSSH*);
 
-/* ssh channel functions */
-WOLFSSH_API WOLFSSH_CHAN* wolfSSH_CHAN_new(WOLFSSH*);
-WOLFSSH_API void          wolfSSH_CHAN_free(WOLFSSH_CHAN*);
-
 WOLFSSH_API int  wolfSSH_set_fd(WOLFSSH*, int);
 WOLFSSH_API int  wolfSSH_get_fd(const WOLFSSH*);
 
@@ -62,10 +59,6 @@ WOLFSSH_API const char* wolfSSH_get_error(int);
 /* I/O callbacks */
 typedef int (*WS_CallbackIORecv)(WOLFSSH*, void*, uint32_t, void*);
 typedef int (*WS_CallbackIOSend)(WOLFSSH*, void*, uint32_t, void*);
-
-/* Channel I/O callbacks */
-typedef int (*WSH_CallbackChanRecv)(WOLFSSH*, void*, uint32_t, void*);
-typedef int (*WSH_CallbackChanSend)(WOLFSSH*, void*, uint32_t, void*);
 
 WOLFSSH_API void wolfSSH_SetIORecv(WOLFSSH_CTX*, WS_CallbackIORecv);
 WOLFSSH_API void wolfSSH_SetIOSend(WOLFSSH_CTX*, WS_CallbackIOSend);
@@ -83,9 +76,8 @@ WOLFSSH_API int wolfSSH_accept(WOLFSSH* ssh);
 enum WS_DynamicTypes {
     WOLFSSH_CTX_TYPE    = 1,
     WOLFSSH_TYPE        = 2,
-    WOLFSSH_CHAN_TYPE   = 3,
-    WOLFSSH_TYPE_BUFFER = 4,
-    WOLFSSH_ID_TYPE     = 5
+    WOLFSSH_TYPE_BUFFER = 3,
+    WOLFSSH_ID_TYPE     = 4
 };
 
 

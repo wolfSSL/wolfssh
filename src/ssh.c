@@ -130,6 +130,14 @@ static WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->ioReadCtx   = &ssh->rfd;  /* prevent invalid access if not correctly */
     ssh->ioWriteCtx  = &ssh->wfd;  /* set */
     ssh->blockSz     = 8;
+    ssh->keyExchangeId = ID_NONE;
+    ssh->publicKeyId   = ID_NONE;
+    ssh->encryptionId  = ID_NONE;
+    ssh->integrityId   = ID_NONE;
+    ssh->pendingKeyExchangeId = ID_NONE;
+    ssh->pendingPublicKeyId   = ID_NONE;
+    ssh->pendingEncryptionId  = ID_NONE;
+    ssh->pendingIntegrityId   = ID_NONE;
     ssh->inputBuffer = BufferNew(0, ctx->heap);
     ssh->outputBuffer = BufferNew(0, ctx->heap);
 
@@ -176,70 +184,6 @@ void wolfSSH_free(WOLFSSH* ssh)
     if (ssh) {
         SshResourceFree(ssh, heap);
         WFREE(ssh, heap, WOLFSSH_TYPE);
-    }
-}
-
-
-static WOLFSSH_CHAN* SshChanInit(WOLFSSH_CHAN* chan, WOLFSSH* ssh)
-{
-    WLOG(WS_LOG_DEBUG, "Enter SshChanInit()");
-
-    if (chan == NULL)
-        return chan;
-
-    WMEMSET(chan, 0, sizeof(WOLFSSH_CHAN));  /* default init to zeros */
-
-    if (ssh) {
-        chan->ssh = ssh;
-        chan->ctx = ssh->ctx;
-    }
-    else {
-        WLOG(WS_LOG_ERROR, "Trying to init a wolfSSH_CHAN w/o wolfSSH");
-        wolfSSH_CHAN_free(chan);
-        return NULL; 
-    }
-
-    return chan;
-}
-
-
-WOLFSSH_CHAN* wolfSSH_CHAN_new(WOLFSSH* ssh)
-{
-    WOLFSSH_CHAN* chan;
-    void*         heap = NULL;
-
-    WLOG(WS_LOG_DEBUG, "Enter wolfSSH_CHAN_new()");
-
-    if (ssh != NULL && ssh->ctx != NULL)
-        heap = ssh->ctx->heap;
-
-    chan = (WOLFSSH_CHAN*)WMALLOC(sizeof(WOLFSSH_CHAN),
-                                                       heap, WOLFSSH_CHAN_TYPE);
-
-    chan = SshChanInit(chan, ssh);
-
-    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_CHAN_new(), chan = %p", chan);
-
-    return chan;
-}
-
-
-static void SshChanResourceFree(WOLFSSH_CHAN* chan)
-{
-    /* when ssh channel holds resources, free here */
-    (void)chan;
-
-    WLOG(WS_LOG_DEBUG, "Enter SshChanResourceFree()");
-}
-
-
-void wolfSSH_CHAN_free(WOLFSSH_CHAN* chan)
-{
-    WLOG(WS_LOG_DEBUG, "Enter wolfSCEP_free()");
-
-    if (chan) {
-        SshChanResourceFree(chan);
-        WFREE(chan, chan->ctx ? chan->ctx->heap : NULL, WOLFSCEP_TYPE);
     }
 }
 
@@ -523,12 +467,12 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
      * uint32       0 (reserved for future extension)
      */
 
-    /* Save the peer's cookie. */
+    /* Check that the cookie exists inside the message */
     if (begin + COOKIE_SZ > len) {
         /* error, out of bounds */
         return -1;
     }
-    WMEMCPY(ssh->peerCookie, buf + begin, COOKIE_SZ);
+    /* Move past the cookie. */
     begin += COOKIE_SZ;
 
     /* KEX Algorithms */
