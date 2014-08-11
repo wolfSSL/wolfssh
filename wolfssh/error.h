@@ -16,7 +16,13 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ * Boston, MA  02110-1301, USA.
+ */
+
+
+/*
+ * The error header file provides the error codes used in the library.
  */
 
 
@@ -62,7 +68,6 @@ enum WS_IOerrors {
     WS_CBIO_ERR_CONN_CLOSE = -5,     /* connection closed or epipe */
     WS_CBIO_ERR_TIMEOUT    = -6      /* socket timeout */
 };
-
 
 
 #ifdef __cplusplus

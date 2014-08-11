@@ -16,7 +16,16 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ * Boston, MA  02110-1301, USA.
+ */
+
+
+/*
+ * The version header provides the current version number to the code
+ * based and is updated automatically by the configure script. A copy
+ * of the last generated copy of version.h is included with the
+ * distribution for environments that do not use configure.
  */
 
 
