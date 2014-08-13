@@ -91,6 +91,28 @@ WOLFSSH_LOCAL uint8_t     NameToId(const char*, uint32_t);
 WOLFSSH_LOCAL const char* IdToName(uint8_t);
 
 
+#define STATIC_BUFFER_LEN 16
+/* This is one AES block size. We always grab one
+ * block size first to decrypt to find the size of
+ * the rest of the data. */
+
+
+typedef struct Buffer {
+    void*           heap;         /* Heap for allocations */
+    uint32_t        length;       /* total buffer length used */
+    uint32_t        idx;          /* idx to part of length already consumed */
+    uint8_t*        buffer;       /* place holder for actual buffer */
+    uint32_t        bufferSz;     /* current buffer size */
+    ALIGN16 uint8_t staticBuffer[STATIC_BUFFER_LEN];
+    uint8_t         dynamicFlag;  /* dynamic memory currently in use */
+    uint32_t        offset;       /* Offset from start of buffer to data. */
+} Buffer;
+
+WOLFSSH_LOCAL int BufferInit(Buffer*, uint32_t, void*);
+WOLFSSH_LOCAL int GrowBuffer(Buffer*, uint32_t, uint32_t);
+WOLFSSH_LOCAL void ShrinkBuffer(Buffer* buf, int);
+
+
 /* our wolfSSH Context */
 struct WOLFSSH_CTX {
     void*             heap;        /* heap hint */
@@ -133,8 +155,8 @@ struct WOLFSSH {
     uint8_t        pendingEncryptionId;
     uint8_t        pendingIntegrityId;
 
-    struct Buffer* inputBuffer;
-    struct Buffer* outputBuffer;
+    Buffer         inputBuffer;
+    Buffer         outputBuffer;
 
     Sha            handshakeHash;
     uint8_t        session_id[SHA_DIGEST_SIZE];
@@ -184,30 +206,6 @@ enum SshMessageIds {
     SSH_MSG_KEXINIT = 20,
     SSH_MSG_NEWKEYS = 21
 };
-
-
-#define STATIC_BUFFER_LEN 16
-/* This is one AES block size. We always grab one
- * block size first to decrypt to find the size of
- * the rest of the data. */
-
-
-typedef struct Buffer {
-    void*           heap;         /* Heap for allocations */
-    uint32_t        length;       /* total buffer length used */
-    uint32_t        idx;          /* idx to part of length already consumed */
-    uint8_t*        buffer;       /* place holder for actual buffer */
-    uint32_t        bufferSz;     /* current buffer size */
-    ALIGN16 uint8_t staticBuffer[STATIC_BUFFER_LEN];
-    uint8_t         dynamicFlag;  /* dynamic memory currently in use */
-    uint32_t        offset;       /* Offset from start of buffer to data. */
-} Buffer;
-
-
-WOLFSSH_LOCAL Buffer* BufferNew(uint32_t, void*);
-WOLFSSH_LOCAL void BufferFree(Buffer*);
-WOLFSSH_LOCAL int GrowBuffer(Buffer*, uint32_t, uint32_t);
-WOLFSSH_LOCAL void ShrinkBuffer(Buffer* buf);
 
 
 WOLFSSH_LOCAL int ProcessClientVersion(WOLFSSH*);

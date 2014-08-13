@@ -121,14 +121,7 @@ static WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
 
     WMEMSET(ssh, 0, sizeof(WOLFSSH));  /* default init to zeros */
 
-    if (ctx)
-        ssh->ctx = ctx;
-    else {
-        WLOG(WS_LOG_ERROR, "Trying to init a wolfSSH w/o wolfSSH_CTX");
-        wolfSSH_free(ssh);
-        return NULL;
-    }
-
+    ssh->ctx         = ctx;
     ssh->rfd         = -1;         /* set to invalid */
     ssh->wfd         = -1;         /* set to invalid */
     ssh->ioReadCtx   = &ssh->rfd;  /* prevent invalid access if not correctly */
@@ -142,8 +135,11 @@ static WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->pendingPublicKeyId   = ID_NONE;
     ssh->pendingEncryptionId  = ID_NONE;
     ssh->pendingIntegrityId   = ID_NONE;
-    ssh->inputBuffer = BufferNew(0, ctx->heap);
-    ssh->outputBuffer = BufferNew(0, ctx->heap);
+    if (BufferInit(&ssh->inputBuffer, 0, ctx->heap) != WS_SUCCESS ||
+        BufferInit(&ssh->outputBuffer, 0, ctx->heap) != WS_SUCCESS) {
+        wolfSSH_free(ssh);
+        ssh = NULL;
+    }
 
     return ssh;
 }
@@ -156,6 +152,10 @@ WOLFSSH* wolfSSH_new(WOLFSSH_CTX* ctx)
 
     if (ctx)
         heap = ctx->heap;
+    else {
+        WLOG(WS_LOG_ERROR, "Trying to init a wolfSSH w/o wolfSSH_CTX");
+        return NULL;
+    }
 
     WLOG(WS_LOG_DEBUG, "Enter wolfSSH_new()");
 
@@ -175,8 +175,8 @@ static void SshResourceFree(WOLFSSH* ssh, void* heap)
 
     WLOG(WS_LOG_DEBUG, "Enter sshResourceFree()");
     WFREE(ssh->peerId, heap, WOLFSSH_ID_TYPE);
-    BufferFree(ssh->inputBuffer);
-    BufferFree(ssh->outputBuffer);
+    ShrinkBuffer(&ssh->inputBuffer, 1);
+    ShrinkBuffer(&ssh->outputBuffer, 1);
 }
 
 
