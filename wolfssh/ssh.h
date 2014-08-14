@@ -87,10 +87,11 @@ enum WS_EndpointTypes {
 
 /* dynamic memory types */
 enum WS_DynamicTypes {
-    WOLFSSH_CTX_TYPE    = 1,
-    WOLFSSH_TYPE        = 2,
-    WOLFSSH_TYPE_BUFFER = 3,
-    WOLFSSH_ID_TYPE     = 4
+    WOLFSSH_CTX_TYPE       = 1,
+    WOLFSSH_TYPE           = 2,
+    WOLFSSH_TYPE_BUFFER    = 3,
+    WOLFSSH_ID_TYPE        = 4,
+    WOLFSSH_HANDSHAKE_TYPE = 5
 };
 
 

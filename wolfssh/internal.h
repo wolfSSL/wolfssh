@@ -121,6 +121,19 @@ struct WOLFSSH_CTX {
 };
 
 
+typedef struct HandshakeInfo {
+    char*          peerId;
+    uint8_t        keyExchangeId;
+    uint8_t        publicKeyId;
+    uint8_t        encryptionId;
+    uint8_t        integrityId;
+    uint8_t        kexPacketFollows;
+
+    Sha            hash;
+    uint8_t        session_id[SHA_DIGEST_SIZE];
+} HandshakeInfo;
+
+
 /* our wolfSSH session */
 struct WOLFSSH {
     WOLFSSH_CTX*   ctx;            /* owner context */
@@ -146,21 +159,13 @@ struct WOLFSSH {
     uint8_t        publicKeyId;
     uint8_t        encryptionId;
     uint8_t        integrityId;
-    uint8_t        kexPacketFollows;
-
-    char*          peerId;
-
-    uint8_t        pendingKeyExchangeId;
-    uint8_t        pendingPublicKeyId;
-    uint8_t        pendingEncryptionId;
-    uint8_t        pendingIntegrityId;
 
     Buffer         inputBuffer;
     Buffer         outputBuffer;
 
-    Sha            handshakeHash;
-    uint8_t        session_id[SHA_DIGEST_SIZE];
     uint8_t        H[SHA_DIGEST_SIZE];
+
+    HandshakeInfo* handshake;
 };
 
 

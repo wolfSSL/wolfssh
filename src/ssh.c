@@ -114,12 +114,21 @@ void wolfSSH_CTX_free(WOLFSSH_CTX* ctx)
 
 static WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
 {
+    HandshakeInfo* handshake;
+
     WLOG(WS_LOG_DEBUG, "Enter SshInit()");
 
     if (ssh == NULL)
         return ssh;
 
+    handshake = (HandshakeInfo*)WMALLOC(sizeof(HandshakeInfo), ctx->heap, WOLFSSH_HANDSHAKE_TYPE);
+    if (handshake == NULL) {
+        wolfSSH_free(ssh);
+        return NULL;
+    }
+
     WMEMSET(ssh, 0, sizeof(WOLFSSH));  /* default init to zeros */
+    WMEMSET(handshake, 0, sizeof(HandshakeInfo));
 
     ssh->ctx         = ctx;
     ssh->rfd         = -1;         /* set to invalid */
@@ -131,12 +140,16 @@ static WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->publicKeyId   = ID_NONE;
     ssh->encryptionId  = ID_NONE;
     ssh->integrityId   = ID_NONE;
-    ssh->pendingKeyExchangeId = ID_NONE;
-    ssh->pendingPublicKeyId   = ID_NONE;
-    ssh->pendingEncryptionId  = ID_NONE;
-    ssh->pendingIntegrityId   = ID_NONE;
+    ssh->handshake = handshake;
+    handshake->keyExchangeId = ID_NONE;
+    handshake->publicKeyId   = ID_NONE;
+    handshake->encryptionId  = ID_NONE;
+    handshake->integrityId   = ID_NONE;
+
     if (BufferInit(&ssh->inputBuffer, 0, ctx->heap) != WS_SUCCESS ||
-        BufferInit(&ssh->outputBuffer, 0, ctx->heap) != WS_SUCCESS) {
+        BufferInit(&ssh->outputBuffer, 0, ctx->heap) != WS_SUCCESS ||
+        InitSha(&ssh->handshake->hash) != 0) {
+
         wolfSSH_free(ssh);
         ssh = NULL;
     }
@@ -174,9 +187,13 @@ static void SshResourceFree(WOLFSSH* ssh, void* heap)
     (void)heap;
 
     WLOG(WS_LOG_DEBUG, "Enter sshResourceFree()");
-    WFREE(ssh->peerId, heap, WOLFSSH_ID_TYPE);
     ShrinkBuffer(&ssh->inputBuffer, 1);
     ShrinkBuffer(&ssh->outputBuffer, 1);
+    if (ssh->handshake) {
+        XFREE(ssh->handshake->peerId, heap, WOLFSSH_ID_TYPE);
+        XMEMSET(ssh->handshake, 0, sizeof(HandshakeInfo));
+        XFREE(ssh->handshake, heap, WOLFSSH_HANDSHAKE_TYPE);
+    }
 }
 
 

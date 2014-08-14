@@ -537,7 +537,7 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
     begin += 4 + skipSz;
 
     /* First KEX Packet Follows */
-    ssh->kexPacketFollows = buf[begin];
+    ssh->handshake->kexPacketFollows = buf[begin];
     begin += 1;
 
     /* Skip the "for future use" length. */
@@ -656,15 +656,15 @@ int ProcessClientVersion(WOLFSSH* ssh)
         return WS_VERSION_E;
     }
 
-    ssh->peerId = (char*)WMALLOC(ssh->inputBuffer.length-1, ssh->ctx->heap, WOLFSSH_ID_TYPE);
-    if (ssh->peerId == NULL) {
+    ssh->handshake->peerId = (char*)WMALLOC(ssh->inputBuffer.length-1, ssh->ctx->heap, WOLFSSH_ID_TYPE);
+    if (ssh->handshake->peerId == NULL) {
         return WS_MEMORY_E;
     }
 
-    WMEMCPY(ssh->peerId, ssh->inputBuffer.buffer, ssh->inputBuffer.length-2);
-    ssh->peerId[ssh->inputBuffer.length - 1] = 0;
+    WMEMCPY(ssh->handshake->peerId, ssh->inputBuffer.buffer, ssh->inputBuffer.length-2);
+    ssh->handshake->peerId[ssh->inputBuffer.length - 1] = 0;
     ssh->inputBuffer.idx += ssh->inputBuffer.length;
-    WLOG(WS_LOG_DEBUG, "%s", ssh->peerId);
+    WLOG(WS_LOG_DEBUG, "%s", ssh->handshake->peerId);
 
     return WS_SUCCESS;
 }
