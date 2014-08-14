@@ -34,6 +34,9 @@
 #include <stdio.h>
 #include <pthread.h>
 #include <wolfssh/ssh.h>
+#ifndef SO_NOSIGPIPE
+    #include <signal.h>
+#endif
 
 
 typedef int SOCKET_T;

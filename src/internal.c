@@ -527,8 +527,9 @@ static int DoNameList(uint8_t* idList, uint32_t* idListSz,
             id = NameToId((char*)name, nameSz);
             {
                 const char* displayName = IdToName(id);
-                if (displayName)
+                if (displayName) {
                     WLOG(WS_LOG_DEBUG, "DNL: name ID = %s", displayName);
+		}
             }
             if (id != ID_UNKNOWN)
                 idList[idListIdx++] = id;
@@ -1295,6 +1296,8 @@ int SendKexDhReply(WOLFSSH* ssh)
     /* Hash in the server's RSA key. */
     InitRsaKey(&rsaKey, ssh->ctx->heap);
     ret = RsaPrivateKeyDecode(ssh->ctx->privateKey, &scratch, &rsaKey, (int)ssh->ctx->privateKeySz);
+    if (ret < 0)
+        return ret;
     RsaFlattenPublicKey(&rsaKey, rsaE, &rsaESz, rsaN, &rsaNSz);
     if (rsaE[0] & 0x80) rsaEPad = 1;
     if (rsaN[0] & 0x80) rsaNPad = 1;

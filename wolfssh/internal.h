@@ -262,10 +262,6 @@ enum WS_MessageIds {
 };
 
 
-WOLFSSH_LOCAL int ProcessClientVersion(WOLFSSH*);
-WOLFSSH_LOCAL int SendServerVersion(WOLFSSH*);
-
-
 /* dynamic memory types */
 enum WS_DynamicTypes {
     DYNTYPE_CTX,
