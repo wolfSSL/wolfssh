@@ -160,7 +160,7 @@ int BufferInit(Buffer* buffer, uint32_t size, void* heap)
     buffer->heap = heap;
     buffer->bufferSz = size;
     if (size > STATIC_BUFFER_LEN) {
-        buffer->buffer = (uint8_t*)WMALLOC(size, heap, WOLFSSH_TYPE_BUFFER);
+        buffer->buffer = (uint8_t*)WMALLOC(size, heap, DYNTYPE_BUFFER);
         if (buffer->buffer == NULL)
             return WS_MEMORY_E;
         buffer->dynamicFlag = 1;
@@ -185,7 +185,7 @@ int GrowBuffer(Buffer* buf, uint32_t sz, uint32_t usedSz)
 
         if (newSz > buf->bufferSz) {
             uint8_t* newBuffer = (uint8_t*)WMALLOC(newSz,
-                                                buf->heap, WOLFSSH_TYPE_BUFFER);
+                                                     buf->heap, DYNTYPE_BUFFER);
 
             WLOG(WS_LOG_DEBUG, "Growing buffer");
 
@@ -199,7 +199,7 @@ int GrowBuffer(Buffer* buf, uint32_t sz, uint32_t usedSz)
             if (!buf->dynamicFlag)
                 buf->dynamicFlag = 1;
             else
-                WFREE(buf->buffer, buf->heap, WOLFSSH_TYPE_BUFFER);
+                WFREE(buf->buffer, buf->heap, DYNTYPE_BUFFER);
 
             buf->buffer = newBuffer;
             buf->bufferSz = newSz;
@@ -226,7 +226,7 @@ void ShrinkBuffer(Buffer* buf, int forcedFree)
             WMEMCPY(buf->staticBuffer, buf->buffer + buf->idx, usedSz);
 
         if (buf->dynamicFlag)
-            WFREE(buf->buffer, buf->heap, WOLFSSH_TYPE_BUFFER);
+            WFREE(buf->buffer, buf->heap, DYNTYPE_BUFFER);
         buf->dynamicFlag = 0;
         buf->buffer = buf->staticBuffer;
         buf->bufferSz = STATIC_BUFFER_LEN;

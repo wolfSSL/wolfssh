@@ -87,18 +87,15 @@ WOLFSSH_API int wolfSSH_accept(WOLFSSH* ssh);
 
 
 enum WS_EndpointTypes {
-    WOLFSSH_SERVER = 0,
-    WOLFSSH_CLIENT = 1
+    WOLFSSH_ENDPOINT_SERVER,
+    WOLFSSH_ENDPOINT_CLIENT
 };
 
 
-/* dynamic memory types */
-enum WS_DynamicTypes {
-    WOLFSSH_CTX_TYPE       = 1,
-    WOLFSSH_TYPE           = 2,
-    WOLFSSH_TYPE_BUFFER    = 3,
-    WOLFSSH_ID_TYPE        = 4,
-    WOLFSSH_HANDSHAKE_TYPE = 5
+enum WS_FormatTypes {
+    WOLFSSH_FORMAT_ASN1,
+    WOLFSSH_FORMAT_PEM,
+    WOLFSSH_FORMAT_RAW
 };
 
 

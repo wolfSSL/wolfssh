@@ -56,7 +56,7 @@ WOLFSSH_LOCAL const char* GetErrorString(int);
 
 enum {
     /* Any of the items can be none. */
-    ID_NONE = 0,
+    ID_NONE,
 
     /* Encryption IDs */
     ID_AES128_CBC,
@@ -214,6 +214,27 @@ enum SshMessageIds {
 
 WOLFSSH_LOCAL int ProcessClientVersion(WOLFSSH*);
 WOLFSSH_LOCAL int SendServerVersion(WOLFSSH*);
+
+
+/* dynamic memory types */
+enum WS_DynamicTypes {
+    DYNTYPE_CTX,
+    DYNTYPE_SSH,
+    DYNTYPE_BUFFER,
+    DYNTYPE_ID,
+    DYNTYPE_HS,
+    DYNTYPE_CA,
+    DYNTYPE_CERT,
+    DYNTYPE_KEY
+};
+
+
+enum WS_BufferTypes {
+    BUFTYPE_CA,
+    BUFTYPE_CERT,
+    BUFTYPE_PRIVKEY
+};
+
 
 #ifdef __cplusplus
 }

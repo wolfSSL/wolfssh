@@ -78,12 +78,12 @@ WOLFSSH_CTX* wolfSSH_CTX_new(uint8_t side, void* heap)
 
     WLOG(WS_LOG_DEBUG, "Enter wolfSSH_CTX_new()");
 
-    if (side != WOLFSSH_SERVER && side != WOLFSSH_CLIENT) {
+    if (side != WOLFSSH_ENDPOINT_SERVER && side != WOLFSSH_ENDPOINT_CLIENT) {
         WLOG(WS_LOG_DEBUG, "Invalid endpoint type");
         return NULL;
     }
 
-    ctx = (WOLFSSH_CTX*)WMALLOC(sizeof(WOLFSSH_CTX), heap, WOLFSSH_CTX_TYPE);
+    ctx = (WOLFSSH_CTX*)WMALLOC(sizeof(WOLFSSH_CTX), heap, DYNTYPE_CTX);
     ctx = CtxInit(ctx, heap);
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_CTX_new(), ctx = %p", ctx);
@@ -107,7 +107,7 @@ void wolfSSH_CTX_free(WOLFSSH_CTX* ctx)
 
     if (ctx) {
         CtxResourceFree(ctx);
-        WFREE(ctx, ctx->heap, WOLFSSH_CTX_TYPE);
+        WFREE(ctx, ctx->heap, DYNTYPE_CTX);
     }
 }
 
@@ -121,7 +121,7 @@ static WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     if (ssh == NULL)
         return ssh;
 
-    handshake = (HandshakeInfo*)WMALLOC(sizeof(HandshakeInfo), ctx->heap, WOLFSSH_HANDSHAKE_TYPE);
+    handshake = (HandshakeInfo*)WMALLOC(sizeof(HandshakeInfo), ctx->heap, DYNTYPE_HS);
     if (handshake == NULL) {
         wolfSSH_free(ssh);
         return NULL;
@@ -172,7 +172,7 @@ WOLFSSH* wolfSSH_new(WOLFSSH_CTX* ctx)
 
     WLOG(WS_LOG_DEBUG, "Enter wolfSSH_new()");
 
-    ssh = (WOLFSSH*)WMALLOC(sizeof(WOLFSSH), heap, WOLFSSH_TYPE);
+    ssh = (WOLFSSH*)WMALLOC(sizeof(WOLFSSH), heap, DYNTYPE_SSH);
     ssh = SshInit(ssh, ctx);
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_new(), ssh = %p", ssh);
@@ -191,7 +191,7 @@ static void SshResourceFree(WOLFSSH* ssh, void* heap)
     ShrinkBuffer(&ssh->outputBuffer, 1);
     if (ssh->handshake) {
         XMEMSET(ssh->handshake, 0, sizeof(HandshakeInfo));
-        XFREE(ssh->handshake, heap, WOLFSSH_HANDSHAKE_TYPE);
+        XFREE(ssh->handshake, heap, DYNTYPE_HS);
     }
 }
 
@@ -203,7 +203,7 @@ void wolfSSH_free(WOLFSSH* ssh)
 
     if (ssh) {
         SshResourceFree(ssh, heap);
-        WFREE(ssh, heap, WOLFSSH_TYPE);
+        WFREE(ssh, heap, DYNTYPE_SSH);
     }
 }
 
@@ -305,7 +305,7 @@ int wolfSSH_CTX_use_private_key_buffer(WOLFSSH_CTX* ctx,
                                    const uint8_t* in, uint32_t inSz, int format)
 {
     WLOG(WS_LOG_DEBUG, "Enter wolfSSH_CTX_use_private_key_buffer()");
-    return ProcessBuffer(ctx, in, inSz, format, 0); /* 0 should key PRIVATE_KEY_TYPE */
+    return ProcessBuffer(ctx, in, inSz, format, BUFTYPE_PRIVKEY); 
 }
 
 
@@ -313,7 +313,7 @@ int wolfSSH_CTX_use_cert_buffer(WOLFSSH_CTX* ctx,
                                    const uint8_t* in, uint32_t inSz, int format)
 {
     WLOG(WS_LOG_DEBUG, "Enter wolfSSH_CTX_use_certificate_buffer()");
-    return ProcessBuffer(ctx, in, inSz, format, 0); /* 0 should key CERT_TYPE */
+    return ProcessBuffer(ctx, in, inSz, format, BUFTYPE_CERT);
 }
 
 
@@ -321,7 +321,7 @@ int wolfSSH_CTX_use_ca_cert_buffer(WOLFSSH_CTX* ctx,
                                    const uint8_t* in, uint32_t inSz, int format)
 {
     WLOG(WS_LOG_DEBUG, "Enter wolfSSH_CTX_use_ca_certificate_buffer()");
-    return ProcessBuffer(ctx, in, inSz, format, 0); /* 0 should key CA_TYPE */
+    return ProcessBuffer(ctx, in, inSz, format, BUFTYPE_CA);
 }
 
 
