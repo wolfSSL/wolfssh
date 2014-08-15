@@ -76,11 +76,11 @@ WOLFSSH_API void wolfSSH_SetIOWriteCtx(WOLFSSH*, void*);
 WOLFSSH_API void* wolfSSH_GetIOReadCtx(WOLFSSH*);
 WOLFSSH_API void* wolfSSH_GetIOWriteCtx(WOLFSSH*);
 
-WOLFSSH_API int wolfSSH_CTX_use_private_key_buffer(WOLFSSH_CTX*,
+WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX*,
                                                  const uint8_t*, uint32_t, int);
-WOLFSSH_API int wolfSSH_CTX_use_cert_buffer(WOLFSSH_CTX*,
+WOLFSSH_API int wolfSSH_CTX_UseCert_buffer(WOLFSSH_CTX*,
                                                  const uint8_t*, uint32_t, int);
-WOLFSSH_API int wolfSSH_CTX_use_ca_cert_buffer(WOLFSSH_CTX*,
+WOLFSSH_API int wolfSSH_CTX_UseCaCert_buffer(WOLFSSH_CTX*,
                                                  const uint8_t*, uint32_t, int);
 
 WOLFSSH_API int wolfSSH_accept(WOLFSSH* ssh);

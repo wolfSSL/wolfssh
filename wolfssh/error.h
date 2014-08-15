@@ -38,7 +38,7 @@ extern "C" {
 
 
 /* main public return values */
-enum WS_ReturnValues {
+enum WS_ErrorCodes {
     WS_SUCCESS         =  0,            /* function success */
     WS_FATAL_ERROR     = -1,            /* general function failure */
     WS_BAD_ARGUMENT    = -2,            /* bad function argument */
@@ -54,7 +54,11 @@ enum WS_ReturnValues {
     WS_RECV_OVERFLOW_E = -12,
     WS_VERSION_E       = -13,           /* Peer using wrong version of SSH */
     WS_SEND_OOB_READ_E = -14,
-    WS_INPUT_CASE_E    = -15
+    WS_INPUT_CASE_E    = -15,
+    WS_BAD_FILETYPE_E  = -16,
+    WS_UNIMPLEMENTED_E = -17,
+    WS_RSA_E           = -18,
+    WS_BAD_FILE_E      = -19
 };
 
 

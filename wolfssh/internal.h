@@ -118,6 +118,13 @@ struct WOLFSSH_CTX {
     void*             heap;        /* heap hint */
     WS_CallbackIORecv ioRecvCb;    /* I/O Receive Callback */
     WS_CallbackIOSend ioSendCb;    /* I/O Send    Callback */
+
+    uint8_t*          cert;        /* Owned by CTX */
+    uint32_t          certSz;
+    uint8_t*          caCert;      /* Owned by CTX */
+    uint32_t          caCertSz;
+    uint8_t*          privateKey;  /* Owned by CTX */
+    uint32_t          privateKeySz;
 };
 
 

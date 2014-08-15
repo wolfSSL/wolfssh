@@ -33,6 +33,9 @@
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/log.h>
+#include <cyassl/options.h>
+#include <cyassl/ctaocrypt/rsa.h>
+#include <cyassl/ctaocrypt/asn.h>
 
 
 int wolfSSH_Init(void)
@@ -94,10 +97,13 @@ WOLFSSH_CTX* wolfSSH_CTX_new(uint8_t side, void* heap)
 
 static void CtxResourceFree(WOLFSSH_CTX* ctx)
 {
-    /* when context holds resources, free here */
-    (void)ctx;
-
     WLOG(WS_LOG_DEBUG, "Enter CtxResourceFree()");
+    if (ctx->privateKey) {
+        WMEMSET(ctx->privateKey, 0, ctx->privateKeySz);
+        WFREE(ctx->privateKey, heap, DYNTYPE_KEY);
+    }
+    WFREE(ctx->cert, heap, DYNTYPE_CERT);
+    WFREE(ctx->caCert, heap, DYNTYPE_CA);
 }
 
 
@@ -291,17 +297,78 @@ int wolfSSH_accept(WOLFSSH* ssh)
 static int ProcessBuffer(WOLFSSH_CTX* ctx, const uint8_t* in, uint32_t inSz,
                                                            int format, int type)
 {
-    (void)ctx;
-    (void)in;
-    (void)inSz;
-    (void)format;
-    (void)type;
+    int dynamicType;
+    void* heap;
+    uint8_t* der;
+    uint32_t derSz;
+
+    if (ctx == NULL || in == NULL || inSz == 0)
+        return WS_BAD_ARGUMENT;
+
+    if (format != WOLFSSH_FORMAT_ASN1 && format != WOLFSSH_FORMAT_PEM &&
+                                         format != WOLFSSH_FORMAT_RAW)
+        return WS_BAD_FILETYPE_E;
+
+    if (type == BUFTYPE_CA)
+        dynamicType = DYNTYPE_CA;
+    else if (type == BUFTYPE_CERT)
+        dynamicType = DYNTYPE_CERT;
+    else if (type == BUFTYPE_PRIVKEY)
+        dynamicType = DYNTYPE_KEY;
+    else
+        return WS_BAD_ARGUMENT;
+
+    heap = ctx->heap;
+
+    if (format == WOLFSSH_FORMAT_PEM)
+        return WS_UNIMPLEMENTED_E;
+    else {
+        /* format is ASN1 or RAW */
+        der = (uint8_t*)WMALLOC(inSz, heap, dynamicType);
+        if (der == NULL)
+            return WS_MEMORY_E;
+        WMEMCPY(der, in, inSz);
+        derSz = inSz;
+    }
+
+    /* Maybe decrypt */
+
+    if (type == BUFTYPE_CERT) {
+        if (ctx->cert)
+            WFREE(ctx->cert, heap, dynamicType);
+        ctx->cert = der;
+        ctx->certSz = derSz;
+    }
+    else if (type == BUFTYPE_PRIVKEY) {
+        if (ctx->privateKey)
+            WFREE(ctx->privateKey, heap, dynamicType);
+        ctx->privateKey = der;
+        ctx->privateKeySz = derSz;
+    }
+    else {
+        WFREE(der, heap, dynamicType);
+        return WS_UNIMPLEMENTED_E;
+    }
+
+    if (type == BUFTYPE_PRIVKEY && format != WOLFSSH_FORMAT_RAW) {
+        /* Check RSA key */
+        RsaKey key;
+        uint32_t scratch = 0;
+
+        if (InitRsaKey(&key, NULL) < 0)
+            return WS_RSA_E;
+
+        if (RsaPrivateKeyDecode(der, &scratch, &key, derSz) < 0)
+            return WS_BAD_FILE_E;
+
+        FreeRsaKey(&key);
+    }
 
     return WS_SUCCESS;
 }
 
 
-int wolfSSH_CTX_use_private_key_buffer(WOLFSSH_CTX* ctx,
+int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX* ctx,
                                    const uint8_t* in, uint32_t inSz, int format)
 {
     WLOG(WS_LOG_DEBUG, "Enter wolfSSH_CTX_use_private_key_buffer()");
@@ -309,7 +376,7 @@ int wolfSSH_CTX_use_private_key_buffer(WOLFSSH_CTX* ctx,
 }
 
 
-int wolfSSH_CTX_use_cert_buffer(WOLFSSH_CTX* ctx,
+int wolfSSH_CTX_UseCert_buffer(WOLFSSH_CTX* ctx,
                                    const uint8_t* in, uint32_t inSz, int format)
 {
     WLOG(WS_LOG_DEBUG, "Enter wolfSSH_CTX_use_certificate_buffer()");
@@ -317,7 +384,7 @@ int wolfSSH_CTX_use_cert_buffer(WOLFSSH_CTX* ctx,
 }
 
 
-int wolfSSH_CTX_use_ca_cert_buffer(WOLFSSH_CTX* ctx,
+int wolfSSH_CTX_UseCaCert_buffer(WOLFSSH_CTX* ctx,
                                    const uint8_t* in, uint32_t inSz, int format)
 {
     WLOG(WS_LOG_DEBUG, "Enter wolfSSH_CTX_use_ca_certificate_buffer()");

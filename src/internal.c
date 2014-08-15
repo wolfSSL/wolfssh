@@ -88,6 +88,27 @@ const char* GetErrorString(int err)
         case WS_RECV_OVERFLOW_E:
             return "receive buffer overflow";
 
+        case WS_VERSION_E:
+            return "peer version unsupported";
+
+        case WS_SEND_OOB_READ_E:
+            return "attempted to read buffer out of bounds";
+
+        case WS_INPUT_CASE_E:
+            return "bad process input state, programming error";
+
+        case WS_BAD_FILETYPE_E:
+            return "bad filetype";
+
+        case WS_UNIMPLEMENTED_E:
+            return "feature not implemented";
+
+        case WS_RSA_E:
+            return "RSA buffer error";
+
+        case WS_BAD_FILE_E:
+            return "bad file";
+
         default:
             return "Unknown error code";
     }

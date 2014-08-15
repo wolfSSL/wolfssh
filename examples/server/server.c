@@ -47,6 +47,7 @@ typedef int SOCKET_T;
     static const char*          wolfsshIP = "127.0.0.1";
 #endif
 #define SERVER_PORT_NUMBER      22222
+#define SCRATCH_BUFFER_SIZE     1200
 
 #if defined(__MACH__) || defined(USE_WINDOWS_API)
     #ifndef _SOCKLEN_T
@@ -256,6 +257,35 @@ static THREAD_RETURN CYASSL_THREAD server_worker(void* vArgs)
 }
 
 
+static int load_file(const char* fileName, uint8_t* buf, uint32_t bufSz)
+{
+    FILE* file;
+    uint32_t fileSz;
+    uint32_t readSz;
+
+    if (fileName == NULL) return 0;
+
+    file = fopen(fileName, "rb");
+    if (file == NULL) return 0;
+    fseek(file, 0, SEEK_END);
+    fileSz = (uint32_t)ftell(file);
+    rewind(file);
+
+    if (fileSz > bufSz) {
+        fclose(file);
+        return 0;
+    }
+
+    readSz = (uint32_t)fread(buf, 1, fileSz, file);
+    if (readSz < fileSz) {
+        fclose(file);
+        return 0;
+    }
+
+    return fileSz;
+}
+
+
 int main(void)
 {
     WOLFSSH_CTX* ctx = NULL;
@@ -274,6 +304,33 @@ int main(void)
     if (ctx == NULL) {
         fprintf(stderr, "Couldn't allocate SSH CTX data.\n");
         exit(EXIT_FAILURE);
+    }
+
+    {
+        uint8_t buf[SCRATCH_BUFFER_SIZE];
+        uint32_t bufSz;
+
+        bufSz = load_file("./certs/server-cert.der", buf, SCRATCH_BUFFER_SIZE);
+        if (bufSz == 0) {
+            fprintf(stderr, "Couldn't load certificate file.\n");
+            exit(EXIT_FAILURE);
+        }
+        if (wolfSSH_CTX_UseCert_buffer(ctx,
+                                         buf, bufSz, WOLFSSH_FORMAT_ASN1) < 0) {
+            fprintf(stderr, "Couldn't use certificate buffer.\n");
+            exit(EXIT_FAILURE);
+        }
+
+        bufSz = load_file("./certs/server-key.der", buf, SCRATCH_BUFFER_SIZE);
+        if (bufSz == 0) {
+            fprintf(stderr, "Couldn't load key file.\n");
+            exit(EXIT_FAILURE);
+        }
+        if (wolfSSH_CTX_UsePrivateKey_buffer(ctx,
+                                         buf, bufSz, WOLFSSH_FORMAT_ASN1) < 0) {
+            fprintf(stderr, "Couldn't use key buffer.\n");
+            exit(EXIT_FAILURE);
+        }
     }
 
     tcp_bind(&listenFd, SERVER_PORT_NUMBER, 0);
