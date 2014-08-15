@@ -656,15 +656,9 @@ int ProcessClientVersion(WOLFSSH* ssh)
         return WS_VERSION_E;
     }
 
-    ssh->handshake->peerId = (char*)WMALLOC(ssh->inputBuffer.length-1, ssh->ctx->heap, WOLFSSH_ID_TYPE);
-    if (ssh->handshake->peerId == NULL) {
-        return WS_MEMORY_E;
-    }
-
-    WMEMCPY(ssh->handshake->peerId, ssh->inputBuffer.buffer, ssh->inputBuffer.length-2);
-    ssh->handshake->peerId[ssh->inputBuffer.length - 1] = 0;
+    ShaUpdate(&ssh->handshake->hash, ssh->inputBuffer.buffer,
+                                                   ssh->inputBuffer.length - 2);
     ssh->inputBuffer.idx += ssh->inputBuffer.length;
-    WLOG(WS_LOG_DEBUG, "%s", ssh->handshake->peerId);
 
     return WS_SUCCESS;
 }
@@ -672,10 +666,11 @@ int ProcessClientVersion(WOLFSSH* ssh)
 
 int SendServerVersion(WOLFSSH* ssh)
 {
-    (void)ssh;
+    uint32_t sshIdStrSz = (uint32_t)WSTRLEN(sshIdStr);
 
     WLOG(WS_LOG_DEBUG, "%s", sshIdStr);
     SendText(ssh, sshIdStr, (uint32_t)WSTRLEN(sshIdStr));
+    ShaUpdate(&ssh->handshake->hash, (const uint8_t*)sshIdStr, sshIdStrSz);
 
     return WS_FATAL_ERROR;
 }

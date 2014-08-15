@@ -70,11 +70,18 @@ typedef int (*WS_CallbackIOSend)(WOLFSSH*, void*, uint32_t, void*);
 WOLFSSH_API void wolfSSH_SetIORecv(WOLFSSH_CTX*, WS_CallbackIORecv);
 WOLFSSH_API void wolfSSH_SetIOSend(WOLFSSH_CTX*, WS_CallbackIOSend);
 
-WOLFSSH_API void wolfSSH_SetIOReadCtx(WOLFSSH* ssh, void* ctx);
-WOLFSSH_API void wolfSSH_SetIOWriteCtx(WOLFSSH* ssh, void* ctx);
+WOLFSSH_API void wolfSSH_SetIOReadCtx(WOLFSSH*, void*);
+WOLFSSH_API void wolfSSH_SetIOWriteCtx(WOLFSSH*, void*);
 
-WOLFSSH_API void* wolfSSH_GetIOReadCtx(WOLFSSH* ssh);
-WOLFSSH_API void* wolfSSH_GetIOWriteCtx(WOLFSSH* ssh);
+WOLFSSH_API void* wolfSSH_GetIOReadCtx(WOLFSSH*);
+WOLFSSH_API void* wolfSSH_GetIOWriteCtx(WOLFSSH*);
+
+WOLFSSH_API int wolfSSH_CTX_use_private_key_buffer(WOLFSSH_CTX*,
+                                                 const uint8_t*, uint32_t, int);
+WOLFSSH_API int wolfSSH_CTX_use_cert_buffer(WOLFSSH_CTX*,
+                                                 const uint8_t*, uint32_t, int);
+WOLFSSH_API int wolfSSH_CTX_use_ca_cert_buffer(WOLFSSH_CTX*,
+                                                 const uint8_t*, uint32_t, int);
 
 WOLFSSH_API int wolfSSH_accept(WOLFSSH* ssh);
 

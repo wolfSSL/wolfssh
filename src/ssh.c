@@ -190,7 +190,6 @@ static void SshResourceFree(WOLFSSH* ssh, void* heap)
     ShrinkBuffer(&ssh->inputBuffer, 1);
     ShrinkBuffer(&ssh->outputBuffer, 1);
     if (ssh->handshake) {
-        XFREE(ssh->handshake->peerId, heap, WOLFSSH_ID_TYPE);
         XMEMSET(ssh->handshake, 0, sizeof(HandshakeInfo));
         XFREE(ssh->handshake, heap, WOLFSSH_HANDSHAKE_TYPE);
     }
@@ -286,6 +285,43 @@ int wolfSSH_accept(WOLFSSH* ssh)
     }
 
     return WS_FATAL_ERROR;
+}
+
+
+static int ProcessBuffer(WOLFSSH_CTX* ctx, const uint8_t* in, uint32_t inSz,
+                                                           int format, int type)
+{
+    (void)ctx;
+    (void)in;
+    (void)inSz;
+    (void)format;
+    (void)type;
+
+    return WS_SUCCESS;
+}
+
+
+int wolfSSH_CTX_use_private_key_buffer(WOLFSSH_CTX* ctx,
+                                   const uint8_t* in, uint32_t inSz, int format)
+{
+    WLOG(WS_LOG_DEBUG, "Enter wolfSSH_CTX_use_private_key_buffer()");
+    return ProcessBuffer(ctx, in, inSz, format, 0); /* 0 should key PRIVATE_KEY_TYPE */
+}
+
+
+int wolfSSH_CTX_use_cert_buffer(WOLFSSH_CTX* ctx,
+                                   const uint8_t* in, uint32_t inSz, int format)
+{
+    WLOG(WS_LOG_DEBUG, "Enter wolfSSH_CTX_use_certificate_buffer()");
+    return ProcessBuffer(ctx, in, inSz, format, 0); /* 0 should key CERT_TYPE */
+}
+
+
+int wolfSSH_CTX_use_ca_cert_buffer(WOLFSSH_CTX* ctx,
+                                   const uint8_t* in, uint32_t inSz, int format)
+{
+    WLOG(WS_LOG_DEBUG, "Enter wolfSSH_CTX_use_ca_certificate_buffer()");
+    return ProcessBuffer(ctx, in, inSz, format, 0); /* 0 should key CA_TYPE */
 }
 
 

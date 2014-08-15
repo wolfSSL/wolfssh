@@ -122,7 +122,6 @@ struct WOLFSSH_CTX {
 
 
 typedef struct HandshakeInfo {
-    char*          peerId;
     uint8_t        keyExchangeId;
     uint8_t        publicKeyId;
     uint8_t        encryptionId;
