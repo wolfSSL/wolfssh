@@ -139,7 +139,7 @@ uint8_t NameToId(const char* name, uint32_t nameSz)
 {
     uint8_t id = ID_UNKNOWN;
     uint32_t i;
-(void)nameSz;
+
     for (i = 0; i < (sizeof(NameIdMap)/sizeof(NameIdPair)); i++) {
         if (nameSz == WSTRLEN(NameIdMap[i].name) &&
             WSTRNCMP(name, NameIdMap[i].name, nameSz) == 0) {
@@ -450,13 +450,19 @@ static int GetInputData(WOLFSSH* ssh, uint32_t size)
 }
 
 
-static int DoNameList(uint8_t* list, uint8_t* listSz,
+static int DoNameList(uint8_t* idList, uint8_t* idListSz,
                                       uint8_t* buf, uint32_t len, uint32_t* idx)
 {
-    uint8_t i = 0;
-    uint32_t nameListSz;
+    uint8_t idListIdx;
+    uint32_t nameListSz, nameListIdx;
     uint32_t begin = *idx;
-    (void)list;
+    uint8_t* name;
+    uint32_t nameSz;
+
+    /*
+     * This iterates across a name list and finds names that end in either the
+     * comma delimeter or with the end of the list.
+     */
 
     if (begin >= len || begin + 4 >= len)
         return -1;
@@ -466,10 +472,41 @@ static int DoNameList(uint8_t* list, uint8_t* listSz,
     if (begin + nameListSz > len)
         return -1;
 
-    begin += nameListSz;
-    /* list[0] = NameToId(nextName, 0); */
+    /* The strings we want are now in the bounds of the message, and the
+     * length of the list. Find the commas, or end of list, and then decode
+     * the values. */
+    name = buf + begin;
+    nameSz = 0;
+    nameListIdx = 0;
+    idListIdx = 0;
 
-    *listSz = i;
+    while (nameListIdx < nameListSz) {
+        nameListIdx++;
+
+        if (nameListIdx == nameListSz)
+            nameSz++;
+
+        if (nameListIdx == nameListSz || name[nameSz] == ',') {
+            uint8_t id;
+
+            id = NameToId((char*)name, nameSz);
+            {
+                const char* displayName = IdToName(id);
+                if (displayName)
+                    WLOG(WS_LOG_DEBUG, "DNL: name ID = %s", displayName);
+            }
+            if (id != ID_UNKNOWN)
+                idList[idListIdx++] = id;
+
+            name += 1 + nameSz;
+            nameSz = 0;
+        }
+        else
+            nameSz++;
+    }
+
+    begin += nameListSz;
+    *idListSz = idListIdx;
     *idx = begin;
 
     return WS_SUCCESS;
@@ -516,35 +553,43 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
     begin += COOKIE_SZ;
 
     /* KEX Algorithms */
+    WLOG(WS_LOG_DEBUG, "DKI: KEX Algorithms");
     listSz = 2;
     DoNameList(list, &listSz, buf, len, &begin);
 
     /* Server Host Key Algorithms */
+    WLOG(WS_LOG_DEBUG, "DKI: Server Host Key Algorithms");
     listSz = 1;
     DoNameList(list, &listSz, buf, len, &begin);
 
     /* Enc Algorithms - Client to Server */
+    WLOG(WS_LOG_DEBUG, "DKI: Enc Algorithms - Client to Server");
     listSz = 3;
     DoNameList(list, &listSz, buf, len, &begin);
 
     /* Enc Algorithms - Server to Client */
+    WLOG(WS_LOG_DEBUG, "DKI: Enc Algorithms - Server to Client");
     listSz = 3;
     DoNameList(list, &listSz, buf, len, &begin);
 
     /* MAC Algorithms - Client to Server */
+    WLOG(WS_LOG_DEBUG, "DKI: MAC Algorithms - Client to Server");
     listSz = 2;
     DoNameList(list, &listSz, buf, len, &begin);
 
     /* MAC Algorithms - Server to Client */
+    WLOG(WS_LOG_DEBUG, "DKI: MAC Algorithms - Server to Client");
     listSz = 2;
     DoNameList(list, &listSz, buf, len, &begin);
 
     /* Compression Algorithms - Client to Server */
+    WLOG(WS_LOG_DEBUG, "DKI: Compression Algorithms - Client to Server");
     listSz = 1;
     DoNameList(list, &listSz, buf, len, &begin);
     /* verify the list contains "none" */
 
     /* Compression Algorithms - Server to Client */
+    WLOG(WS_LOG_DEBUG, "DKI: Compression Algorithms - Server to Client");
     listSz = 1;
     DoNameList(list, &listSz, buf, len, &begin);
     /* verify the list contains "none" */
