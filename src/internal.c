@@ -124,13 +124,21 @@ typedef struct {
 
 static const NameIdPair NameIdMap[] = {
     { ID_NONE, "none" },
+
+    /* Encryption IDs */
     { ID_AES128_CBC, "aes128-cbc" },
     { ID_AES128_CTR, "aes128-ctr" },
     { ID_AES128_GCM_WOLF, "aes128-gcm@wolfssl.com" },
+
+    /* Integrity IDs */
     { ID_HMAC_SHA1, "hmac-sha1" },
     { ID_HMAC_SHA1_96, "hmac-sha1-96" },
+
+    /* Key Exchange IDs */
     { ID_DH_GROUP1_SHA1, "diffie-hellman-group1-sha1" },
     { ID_DH_GROUP14_SHA1, "diffie-hellman-group14-sha1" },
+
+    /* Public Key IDs */
     { ID_SSH_RSA, "ssh-rsa" }
 };
 
@@ -450,7 +458,7 @@ static int GetInputData(WOLFSSH* ssh, uint32_t size)
 }
 
 
-static int DoNameList(uint8_t* idList, uint8_t* idListSz,
+static int DoNameList(uint8_t* idList, uint32_t* idListSz,
                                       uint8_t* buf, uint32_t len, uint32_t* idx)
 {
     uint8_t idListIdx;
@@ -513,10 +521,42 @@ static int DoNameList(uint8_t* idList, uint8_t* idListSz,
 }
 
 
+static const uint8_t  cannedEncAlgo[] = {ID_AES128_CBC};
+static const uint8_t  cannedMacAlgo[] = {ID_HMAC_SHA1_96, ID_HMAC_SHA1};
+static const uint8_t  cannedKeyAlgo[] = {ID_SSH_RSA};
+static const uint8_t  cannedKexAlgo[] = {ID_DH_GROUP14_SHA1, ID_DH_GROUP1_SHA1};
+
+static const uint32_t cannedEncAlgoSz = sizeof(cannedEncAlgo);
+static const uint32_t cannedMacAlgoSz = sizeof(cannedMacAlgo);
+static const uint32_t cannedKeyAlgoSz = sizeof(cannedKeyAlgo);
+static const uint32_t cannedKexAlgoSz = sizeof(cannedKexAlgo);
+
+
+static uint8_t MatchIdLists(const uint8_t* left, uint32_t leftSz,
+                            const uint8_t* right, uint32_t rightSz)
+{
+    uint32_t i, j;
+
+    if (left != NULL && leftSz > 0 && right != NULL && rightSz > 0) {
+        for (i = 0; i < leftSz; i++) {
+            for (j = 0; i < rightSz; j++) {
+                if (left[i] == right[j]) {
+                    WLOG(WS_LOG_DEBUG, "MID: matched %s", IdToName(left[i]));
+                    return left[i];
+                }
+            }
+        }
+    }
+
+    return ID_UNKNOWN;
+}
+
+
 static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 {
+    uint8_t algoId;
     uint8_t list[3];
-    uint8_t listSz;
+    uint32_t listSz;
     uint32_t skipSz;
     uint32_t begin = *idx;
 
@@ -526,8 +566,6 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
      * using that's on my known list, or verify that the one the peer can
      * support the other direction is on my known list. All I need to do
      * is save the actual values.
-     *
-     * Save the cookie for now. Maybe that is used in KEX.
      *
      * byte[16]     cookie
      * name-list    kex_algorithms (2)
@@ -547,7 +585,7 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
     /* Check that the cookie exists inside the message */
     if (begin + COOKIE_SZ > len) {
         /* error, out of bounds */
-        return -1;
+        return WS_FATAL_ERROR;
     }
     /* Move past the cookie. */
     begin += COOKIE_SZ;
@@ -556,43 +594,88 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
     WLOG(WS_LOG_DEBUG, "DKI: KEX Algorithms");
     listSz = 2;
     DoNameList(list, &listSz, buf, len, &begin);
+    algoId = MatchIdLists(cannedKexAlgo, cannedKexAlgoSz, list, listSz);
+    if (algoId == ID_UNKNOWN) {
+        WLOG(WS_LOG_DEBUG, "Unable to negotiate KEX Algo");
+        return WS_INVALID_ALGO_ID;
+    }
+    else
+        ssh->handshake->keyExchangeId = algoId;
 
     /* Server Host Key Algorithms */
     WLOG(WS_LOG_DEBUG, "DKI: Server Host Key Algorithms");
     listSz = 1;
     DoNameList(list, &listSz, buf, len, &begin);
+    algoId = MatchIdLists(cannedKeyAlgo, cannedKeyAlgoSz, list, listSz);
+    if (algoId == ID_UNKNOWN) {
+        WLOG(WS_LOG_DEBUG, "Unable to negotiate Server Host Key Algo");
+        return WS_INVALID_ALGO_ID;
+    }
+    else
+        ssh->handshake->publicKeyId = algoId;
 
     /* Enc Algorithms - Client to Server */
     WLOG(WS_LOG_DEBUG, "DKI: Enc Algorithms - Client to Server");
     listSz = 3;
     DoNameList(list, &listSz, buf, len, &begin);
+    algoId = MatchIdLists(cannedEncAlgo, cannedEncAlgoSz, list, listSz);
+    if (algoId == ID_UNKNOWN) {
+        WLOG(WS_LOG_DEBUG, "Unable to negotiate Encryption Algo C2S");
+        return WS_INVALID_ALGO_ID;
+    }
 
     /* Enc Algorithms - Server to Client */
     WLOG(WS_LOG_DEBUG, "DKI: Enc Algorithms - Server to Client");
     listSz = 3;
     DoNameList(list, &listSz, buf, len, &begin);
+    if (MatchIdLists(&algoId, 1, list, listSz) == ID_UNKNOWN) {
+        WLOG(WS_LOG_DEBUG, "Unable to negotiate Encryption Algo S2C");
+        return WS_INVALID_ALGO_ID;
+    }
+    else
+        ssh->handshake->encryptionId = algoId;
 
     /* MAC Algorithms - Client to Server */
     WLOG(WS_LOG_DEBUG, "DKI: MAC Algorithms - Client to Server");
     listSz = 2;
     DoNameList(list, &listSz, buf, len, &begin);
+    algoId = MatchIdLists(cannedMacAlgo, cannedMacAlgoSz, list, listSz);
+    if (algoId == ID_UNKNOWN) {
+        WLOG(WS_LOG_DEBUG, "Unable to negotiate MAC Algo C2S");
+        return WS_INVALID_ALGO_ID;
+    }
 
     /* MAC Algorithms - Server to Client */
     WLOG(WS_LOG_DEBUG, "DKI: MAC Algorithms - Server to Client");
     listSz = 2;
     DoNameList(list, &listSz, buf, len, &begin);
+    if (MatchIdLists(&algoId, 1, list, listSz) == ID_UNKNOWN) {
+        WLOG(WS_LOG_DEBUG, "Unable to negotiate MAC Algo S2C");
+        return WS_INVALID_ALGO_ID;
+    }
+    else
+        ssh->handshake->integrityId = algoId;
+
+    /* The compression algorithm lists should have none as a value. */
+    algoId = ID_NONE;
 
     /* Compression Algorithms - Client to Server */
     WLOG(WS_LOG_DEBUG, "DKI: Compression Algorithms - Client to Server");
     listSz = 1;
     DoNameList(list, &listSz, buf, len, &begin);
-    /* verify the list contains "none" */
+    if (MatchIdLists(&algoId, 1, list, listSz) == ID_UNKNOWN) {
+        WLOG(WS_LOG_DEBUG, "Unable to negotiate Compression Algo C2S");
+        return WS_INVALID_ALGO_ID;
+    }
 
     /* Compression Algorithms - Server to Client */
     WLOG(WS_LOG_DEBUG, "DKI: Compression Algorithms - Server to Client");
     listSz = 1;
     DoNameList(list, &listSz, buf, len, &begin);
-    /* verify the list contains "none" */
+    if (MatchIdLists(&algoId, 1, list, listSz) == ID_UNKNOWN) {
+        WLOG(WS_LOG_DEBUG, "Unable to negotiate Compression Algo S2C");
+        return WS_INVALID_ALGO_ID;
+    }
 
     /* Languages - Client to Server, skip */
     ato32(buf + begin, &skipSz);
