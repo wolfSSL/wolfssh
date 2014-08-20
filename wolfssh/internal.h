@@ -135,6 +135,9 @@ typedef struct HandshakeInfo {
     uint8_t        integrityId;
     uint8_t        kexPacketFollows;
 
+    uint8_t        blockSz;
+    uint8_t        macSz;
+
     Sha            hash;
     uint8_t        session_id[SHA_DIGEST_SIZE];
 } HandshakeInfo;
@@ -154,6 +157,7 @@ struct WOLFSSH {
     uint32_t       seq;
     uint32_t       peerSeq;
     uint8_t        blockSz;
+    uint8_t        macSz;
     uint8_t        acceptState;
     uint8_t        clientState;
     uint8_t        processReplyState;

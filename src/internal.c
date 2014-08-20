@@ -34,6 +34,7 @@
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/log.h>
+#include <cyassl/ctaocrypt/aes.h>
 
 
 /* convert opaque to 32 bit integer */
@@ -552,6 +553,31 @@ static uint8_t MatchIdLists(const uint8_t* left, uint32_t leftSz,
 }
 
 
+static uint8_t BlockSzForId(uint8_t id)
+{
+    switch (id) {
+        case ID_AES128_CBC:
+        case ID_AES128_CTR:
+            return AES_BLOCK_SIZE;
+        default:
+            return 0;
+    }
+}
+
+
+static uint8_t MacSzForId(uint8_t id)
+{
+    switch (id) {
+        case ID_HMAC_SHA1:
+            return SHA_DIGEST_SIZE;
+        case ID_HMAC_SHA1_96:
+            return (96/8); /* 96 bits */
+        default:
+            return 0;
+    }
+}
+
+
 static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 {
     uint8_t algoId;
@@ -599,8 +625,8 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
         WLOG(WS_LOG_DEBUG, "Unable to negotiate KEX Algo");
         return WS_INVALID_ALGO_ID;
     }
-    else
-        ssh->handshake->keyExchangeId = algoId;
+
+    ssh->handshake->keyExchangeId = algoId;
 
     /* Server Host Key Algorithms */
     WLOG(WS_LOG_DEBUG, "DKI: Server Host Key Algorithms");
@@ -611,8 +637,8 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
         WLOG(WS_LOG_DEBUG, "Unable to negotiate Server Host Key Algo");
         return WS_INVALID_ALGO_ID;
     }
-    else
-        ssh->handshake->publicKeyId = algoId;
+
+    ssh->handshake->publicKeyId = algoId;
 
     /* Enc Algorithms - Client to Server */
     WLOG(WS_LOG_DEBUG, "DKI: Enc Algorithms - Client to Server");
@@ -632,8 +658,9 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
         WLOG(WS_LOG_DEBUG, "Unable to negotiate Encryption Algo S2C");
         return WS_INVALID_ALGO_ID;
     }
-    else
-        ssh->handshake->encryptionId = algoId;
+
+    ssh->handshake->encryptionId = algoId;
+    ssh->handshake->blockSz = BlockSzForId(algoId);
 
     /* MAC Algorithms - Client to Server */
     WLOG(WS_LOG_DEBUG, "DKI: MAC Algorithms - Client to Server");
@@ -653,8 +680,9 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
         WLOG(WS_LOG_DEBUG, "Unable to negotiate MAC Algo S2C");
         return WS_INVALID_ALGO_ID;
     }
-    else
-        ssh->handshake->integrityId = algoId;
+
+    ssh->handshake->integrityId = algoId;
+    ssh->handshake->macSz = MacSzForId(algoId);
 
     /* The compression algorithm lists should have none as a value. */
     algoId = ID_NONE;
@@ -763,9 +791,9 @@ int ProcessReply(WOLFSSH* ssh)
                 }
                 ssh->processReplyState = PROCESS_PACKET;
 
-            /* Decrypt rest of packet here */
+                /* Decrypt rest of packet here */
 
-            /* Check MAC here. */
+                /* Check MAC here. */
 
             case PROCESS_PACKET:
                 if ( (ret = DoPacket(ssh)) < 0) {
