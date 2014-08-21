@@ -121,6 +121,7 @@ void wolfSSH_CTX_free(WOLFSSH_CTX* ctx)
 static WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
 {
     HandshakeInfo* handshake;
+    RNG*           rng;
 
     WLOG(WS_LOG_DEBUG, "Enter SshInit()");
 
@@ -129,6 +130,12 @@ static WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
 
     handshake = (HandshakeInfo*)WMALLOC(sizeof(HandshakeInfo), ctx->heap, DYNTYPE_HS);
     if (handshake == NULL) {
+        wolfSSH_free(ssh);
+        return NULL;
+    }
+
+    rng = (RNG*)WMALLOC(sizeof(RNG), ctx->heap, DYNTYPE_RNG);
+    if (rng == NULL || InitRng(rng) != 0) {
         wolfSSH_free(ssh);
         return NULL;
     }
@@ -198,6 +205,10 @@ static void SshResourceFree(WOLFSSH* ssh, void* heap)
     if (ssh->handshake) {
         XMEMSET(ssh->handshake, 0, sizeof(HandshakeInfo));
         XFREE(ssh->handshake, heap, DYNTYPE_HS);
+    }
+    if (ssh->rng) {
+        /* FreeRng(ssh->rng); */
+        WFREE(ssh->rng, heap, DYNTYPE_RNG);
     }
 }
 

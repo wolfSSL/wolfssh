@@ -31,6 +31,7 @@
 
 #include <wolfssh/ssh.h>
 #include <cyassl/ctaocrypt/sha.h>
+#include <cyassl/ctaocrypt/random.h>
 
 
 #if !defined (ALIGN16)
@@ -172,6 +173,7 @@ struct WOLFSSH {
 
     Buffer         inputBuffer;
     Buffer         outputBuffer;
+    RNG*           rng;
 
     uint8_t        H[SHA_DIGEST_SIZE];
 
@@ -236,7 +238,8 @@ enum WS_DynamicTypes {
     DYNTYPE_HS,
     DYNTYPE_CA,
     DYNTYPE_CERT,
-    DYNTYPE_KEY
+    DYNTYPE_KEY,
+    DYNTYPE_RNG
 };
 
 
