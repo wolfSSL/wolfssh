@@ -346,7 +346,7 @@ static int GetInputText(WOLFSSH* ssh)
 }
 
 
-static int SendBuffer(WOLFSSH* ssh)
+static int SendBuffered(WOLFSSH* ssh)
 {
     if (ssh->ctx->ioSendCb == NULL) {
         WLOG(WS_LOG_DEBUG, "Your IO Send callback is null, please set");
@@ -384,7 +384,7 @@ static int SendText(WOLFSSH* ssh, const char* text, uint32_t textLen)
     WMEMCPY(ssh->outputBuffer.buffer, text, textLen);
     ssh->outputBuffer.length = textLen;
 
-    return SendBuffer(ssh);
+    return SendBuffered(ssh);
 }
 
 
