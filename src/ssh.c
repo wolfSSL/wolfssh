@@ -203,8 +203,8 @@ static void SshResourceFree(WOLFSSH* ssh, void* heap)
     ShrinkBuffer(&ssh->inputBuffer, 1);
     ShrinkBuffer(&ssh->outputBuffer, 1);
     if (ssh->handshake) {
-        XMEMSET(ssh->handshake, 0, sizeof(HandshakeInfo));
-        XFREE(ssh->handshake, heap, DYNTYPE_HS);
+        WMEMSET(ssh->handshake, 0, sizeof(HandshakeInfo));
+        WFREE(ssh->handshake, heap, DYNTYPE_HS);
     }
     if (ssh->rng) {
         /* FreeRng(ssh->rng); */
