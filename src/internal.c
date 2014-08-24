@@ -38,9 +38,19 @@
 
 
 /* convert opaque to 32 bit integer */
-static /*INLINE*/ void ato32(const uint8_t* c, uint32_t* u32)
+static INLINE void ato32(const uint8_t* c, uint32_t* u32)
 {
     *u32 = (c[0] << 24) | (c[1] << 16) | (c[2] << 8) | c[3];
+}
+
+
+/* convert 32 bit integer to opaque */
+static INLINE void c32toa(uint32_t u32, uint8_t* c)
+{
+    c[0] = (u32 >> 24) & 0xff;
+    c[1] = (u32 >> 16) & 0xff;
+    c[2] = (u32 >>  8) & 0xff;
+    c[3] =  u32 & 0xff;
 }
 
 
@@ -740,8 +750,8 @@ static int DoPacket(WOLFSSH* ssh)
     msg = buf[idx++];
     switch (msg) {
 
-        case SSH_MSG_KEXINIT:
-            WLOG(WS_LOG_DEBUG, "Decoding SSH_MSG_KEXINIT (len = %d)", len);
+        case MSGID_KEXINIT:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXINIT (len = %d)", len);
             DoKexInit(ssh, buf, len, &idx);
             break;
 
@@ -850,6 +860,151 @@ int SendServerVersion(WOLFSSH* ssh)
     ShaUpdate(&ssh->handshake->hash, (const uint8_t*)sshIdStr, sshIdStrSz);
 
     return WS_FATAL_ERROR;
+}
+
+
+static int PreparePacket(WOLFSSH* ssh, uint32_t payloadSz)
+{
+    int      ret;
+    uint8_t* output;
+    uint32_t outputSz;
+    uint32_t packetSz;
+    uint8_t  paddingSz;
+
+    /* Minimum value for paddingSz is 4. */
+    paddingSz = (LENGTH_SZ + PAD_LENGTH_SZ + payloadSz) % ssh->blockSz;
+    if (paddingSz < 4)
+        paddingSz += ssh->blockSz;
+    ssh->paddingSz = paddingSz;
+    packetSz = PAD_LENGTH_SZ + payloadSz + paddingSz;
+    outputSz = LENGTH_SZ + packetSz + ssh->macSz;
+
+    if ( (ret = GrowBuffer(&ssh->outputBuffer, outputSz, 0)) != WS_SUCCESS)
+        return ret;
+
+    output = ssh->outputBuffer.buffer + ssh->outputBuffer.length;
+
+    /* fill in the packetSz, paddingSz */
+    c32toa(packetSz, output);
+    output[LENGTH_SZ] = paddingSz;
+
+    ssh->outputBuffer.length += LENGTH_SZ + PAD_LENGTH_SZ;
+
+    return ret;
+}
+
+
+static int BundlePacket(WOLFSSH* ssh)
+{
+    uint8_t* output;
+    uint32_t outputSz, i;
+    uint8_t  paddingSz;
+
+    outputSz = ssh->outputBuffer.length;
+    output = ssh->outputBuffer.buffer + outputSz;
+    paddingSz = ssh->paddingSz;
+
+    for (i = 0; i < ssh->paddingSz; i++)
+        output[i] = i + 1;
+    outputSz += paddingSz;
+
+    switch (ssh->integrityId) {
+        case ID_NONE:
+            break;
+
+        case ID_HMAC_SHA1_96:
+            break;
+
+        case ID_HMAC_SHA1:
+            break;
+
+        default:
+            break;
+    }
+
+    return WS_SUCCESS;
+}
+
+
+static int SendPacket(WOLFSSH* ssh)
+{
+    (void)ssh;
+    return WS_SUCCESS;
+}
+
+
+/*
+ * MAX_MSG_EXTRA = 4 (packet_length)
+ *               + 1 (padding_length)
+ *               + ssh->blockSz (worst case padding size)
+ *               + ssh->macSz
+ */
+
+
+static const char     cannedEncAlgoNames[] = "aes128-cbc";
+static const char     cannedMacAlgoNames[] = "hmac-sha1-96,hmac-sha1";
+static const char     cannedKeyAlgoNames[] = "ssh-rsa";
+static const char     cannedKexAlgoNames[] = "diffie-hellman-group14-sha1,"
+                                             "diffie-hellman-group1-sha1";
+static const char     cannedNoneNames[]    = "none";
+
+static const uint32_t cannedEncAlgoNamesSz = sizeof(cannedEncAlgoNames) - 1;
+static const uint32_t cannedMacAlgoNamesSz = sizeof(cannedMacAlgoNames) - 1;
+static const uint32_t cannedKeyAlgoNamesSz = sizeof(cannedKeyAlgoNames) - 1;
+static const uint32_t cannedKexAlgoNamesSz = sizeof(cannedKexAlgoNames) - 1;
+static const uint32_t cannedNoneNamesSz    = sizeof(cannedNoneNames) - 1;
+
+
+    /*
+     * byte[16]     cookie
+     * name-list    kex_algorithms (2)
+     * name-list    server_host_key_algorithms (1)
+     * name-list    encryption_algorithms_client_to_server (3)
+     * name-list    encryption_algorithms_server_to_client (3)
+     * name-list    mac_algorithms_client_to_server (2)
+     * name-list    mac_algorithms_server_to_client (2)
+     * name-list    compression_algorithms_client_to_server (1)
+     * name-list    compression_algorithms_server_to_client (1)
+     * name-list    languages_client_to_server (0, skip)
+     * name-list    languages_server_to_client (0, skip)
+     * boolean      first_kex_packet_follows
+     * uint32       0 (reserved for future extension)
+     */
+
+int SendKexInit(WOLFSSH* ssh)
+{
+    uint8_t* output;
+    uint32_t length, idx = 0;
+    uint32_t payloadSz;
+    int ret = WS_SUCCESS;
+
+    (void)length;
+    (void)idx;
+    (void)cannedEncAlgoNames;
+    (void)cannedMacAlgoNames;
+    (void)cannedKeyAlgoNames;
+    (void)cannedKexAlgoNames;
+    (void)cannedNoneNames;
+
+    payloadSz = MSG_ID_SZ + COOKIE_SZ + (LENGTH_SZ * 11) + BOOLEAN_SZ +
+               cannedKexAlgoNamesSz + cannedKeyAlgoNamesSz +
+               (cannedEncAlgoNamesSz * 2) +
+               (cannedMacAlgoNamesSz * 2) +
+               (cannedNoneNamesSz * 2);
+    PreparePacket(ssh, payloadSz);
+
+    output = ssh->outputBuffer.buffer + ssh->outputBuffer.length;
+    idx = ssh->outputBuffer.length;
+
+    output[idx++] = MSGID_KEXINIT;
+
+    RNG_GenerateBlock(ssh->rng, output + idx, COOKIE_SZ);
+    idx += COOKIE_SZ;
+
+    BundlePacket(ssh);
+    SendPacket(ssh);
+
+    return ret;
 }
 
 

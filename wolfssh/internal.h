@@ -86,6 +86,8 @@ enum {
 #define COOKIE_SZ        16
 #define LENGTH_SZ        4
 #define PAD_LENGTH_SZ    1
+#define BOOLEAN_SZ       1
+#define MSG_ID_SZ        1
 
 
 WOLFSSH_LOCAL uint8_t     NameToId(const char*, uint32_t);
@@ -159,6 +161,7 @@ struct WOLFSSH {
     uint32_t       peerSeq;
     uint8_t        blockSz;
     uint8_t        macSz;
+    uint8_t        paddingSz;
     uint8_t        acceptState;
     uint8_t        clientState;
     uint8_t        processReplyState;
@@ -193,6 +196,7 @@ WOLFSSH_LOCAL int wsEmbedSend(WOLFSSH*, void*, uint32_t, void*);
 WOLFSSH_LOCAL int ProcessReply(WOLFSSH*);
 WOLFSSH_LOCAL int ProcessClientVersion(WOLFSSH*);
 WOLFSSH_LOCAL int SendServerVersion(WOLFSSH*);
+WOLFSSH_LOCAL int SendKexInit(WOLFSSH*);
 
 
 enum AcceptStates {
@@ -220,8 +224,8 @@ enum ProcessReplyStates {
 
 
 enum SshMessageIds {
-    SSH_MSG_KEXINIT = 20,
-    SSH_MSG_NEWKEYS = 21
+    MSGID_KEXINIT = 20,
+    MSGID_NEWKEYS = 21
 };
 
 

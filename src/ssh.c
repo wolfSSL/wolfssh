@@ -153,6 +153,7 @@ static WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->publicKeyId   = ID_NONE;
     ssh->encryptionId  = ID_NONE;
     ssh->integrityId   = ID_NONE;
+    ssh->rng         = rng;
     ssh->handshake = handshake;
     handshake->keyExchangeId = ID_NONE;
     handshake->publicKeyId   = ID_NONE;
@@ -297,6 +298,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
                     WLOG(WS_LOG_DEBUG, "accept reply error: %d", ssh->error);
                     return WS_FATAL_ERROR;
                 }
+            SendKexInit(ssh);
             }
             break;
     }
