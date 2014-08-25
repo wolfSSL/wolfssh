@@ -602,21 +602,9 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
      * using that's on my known list, or verify that the one the peer can
      * support the other direction is on my known list. All I need to do
      * is save the actual values.
-     *
-     * byte[16]     cookie
-     * name-list    kex_algorithms (2)
-     * name-list    server_host_key_algorithms (1)
-     * name-list    encryption_algorithms_client_to_server (3)
-     * name-list    encryption_algorithms_server_to_client (3)
-     * name-list    mac_algorithms_client_to_server (2)
-     * name-list    mac_algorithms_server_to_client (2)
-     * name-list    compression_algorithms_client_to_server (1)
-     * name-list    compression_algorithms_server_to_client (1)
-     * name-list    languages_client_to_server (0, skip)
-     * name-list    languages_server_to_client (0, skip)
-     * boolean      first_kex_packet_follows
-     * uint32       0 (reserved for future extension)
      */
+
+    /* UpdateSha(ssh->handhshake->hash, begin, len); */
 
     /* Check that the cookie exists inside the message */
     if (begin + COOKIE_SZ > len) {
@@ -904,7 +892,7 @@ static int BundlePacket(WOLFSSH* ssh)
     output = ssh->outputBuffer.buffer + outputSz;
     paddingSz = ssh->paddingSz;
 
-    for (i = 0; i < ssh->paddingSz; i++)
+    for (i = 0; i < paddingSz; i++)
         output[i] = i + 1;
     outputSz += paddingSz;
 
@@ -919,6 +907,8 @@ static int BundlePacket(WOLFSSH* ssh)
             break;
 
         default:
+            WLOG(WS_LOG_DEBUG, "Invalid Mac ID");
+            return WS_FATAL_ERROR;
             break;
     }
 
@@ -932,6 +922,18 @@ static int SendPacket(WOLFSSH* ssh)
     return WS_SUCCESS;
 }
 
+static INLINE void CopyNameList(uint8_t* buf, uint32_t* idx,
+                                                const char* src, uint32_t srcSz)
+{
+    uint32_t begin = *idx;
+
+    c32toa(srcSz, buf + begin);
+    begin += LENGTH_SZ;
+    WMEMCPY(buf + begin, src, srcSz);
+    begin += srcSz;
+
+    *idx = begin;
+}
 
 /*
  * MAX_MSG_EXTRA = 4 (packet_length)
@@ -955,36 +957,15 @@ static const uint32_t cannedKexAlgoNamesSz = sizeof(cannedKexAlgoNames) - 1;
 static const uint32_t cannedNoneNamesSz    = sizeof(cannedNoneNames) - 1;
 
 
-    /*
-     * byte[16]     cookie
-     * name-list    kex_algorithms (2)
-     * name-list    server_host_key_algorithms (1)
-     * name-list    encryption_algorithms_client_to_server (3)
-     * name-list    encryption_algorithms_server_to_client (3)
-     * name-list    mac_algorithms_client_to_server (2)
-     * name-list    mac_algorithms_server_to_client (2)
-     * name-list    compression_algorithms_client_to_server (1)
-     * name-list    compression_algorithms_server_to_client (1)
-     * name-list    languages_client_to_server (0, skip)
-     * name-list    languages_server_to_client (0, skip)
-     * boolean      first_kex_packet_follows
-     * uint32       0 (reserved for future extension)
-     */
-
 int SendKexInit(WOLFSSH* ssh)
 {
     uint8_t* output;
+    uint8_t* payload;
     uint32_t length, idx = 0;
     uint32_t payloadSz;
     int ret = WS_SUCCESS;
 
     (void)length;
-    (void)idx;
-    (void)cannedEncAlgoNames;
-    (void)cannedMacAlgoNames;
-    (void)cannedKeyAlgoNames;
-    (void)cannedKexAlgoNames;
-    (void)cannedNoneNames;
 
     payloadSz = MSG_ID_SZ + COOKIE_SZ + (LENGTH_SZ * 11) + BOOLEAN_SZ +
                cannedKexAlgoNamesSz + cannedKeyAlgoNamesSz +
@@ -995,11 +976,30 @@ int SendKexInit(WOLFSSH* ssh)
 
     output = ssh->outputBuffer.buffer + ssh->outputBuffer.length;
     idx = ssh->outputBuffer.length;
+    payload = output;
 
     output[idx++] = MSGID_KEXINIT;
 
     RNG_GenerateBlock(ssh->rng, output + idx, COOKIE_SZ);
     idx += COOKIE_SZ;
+
+    CopyNameList(output + idx, &idx, cannedKexAlgoNames, cannedKexAlgoNamesSz);
+    CopyNameList(output + idx, &idx, cannedKeyAlgoNames, cannedKeyAlgoNamesSz);
+    CopyNameList(output + idx, &idx, cannedEncAlgoNames, cannedEncAlgoNamesSz);
+    CopyNameList(output + idx, &idx, cannedEncAlgoNames, cannedEncAlgoNamesSz);
+    CopyNameList(output + idx, &idx, cannedMacAlgoNames, cannedMacAlgoNamesSz);
+    CopyNameList(output + idx, &idx, cannedMacAlgoNames, cannedMacAlgoNamesSz);
+    CopyNameList(output + idx, &idx, cannedNoneNames, cannedNoneNamesSz);
+    CopyNameList(output + idx, &idx, cannedNoneNames, cannedNoneNamesSz);
+    c32toa(0, output + idx); /* Languages - Client To Server (0) */
+    idx += LENGTH_SZ;
+    c32toa(0, output + idx); /* Languages - Server To Client (0) */
+    idx += LENGTH_SZ;
+    output[idx++] = 0;       /* First KEX packet follows (false) */
+    c32toa(0, output + idx); /* Reserved (0) */
+    idx += LENGTH_SZ;
+
+    /* UpdateSha(ssh->handshake->hash, payload, payloadSz); */
 
     BundlePacket(ssh);
     SendPacket(ssh);
