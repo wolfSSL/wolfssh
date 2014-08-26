@@ -360,20 +360,32 @@ static int SendBuffered(WOLFSSH* ssh)
 {
     if (ssh->ctx->ioSendCb == NULL) {
         WLOG(WS_LOG_DEBUG, "Your IO Send callback is null, please set");
-        return -1;
+        return WS_SOCKET_ERROR_E;
     }
 
     while (ssh->outputBuffer.length > 0) {
         int sent = ssh->ctx->ioSendCb(ssh,
-                             ssh->outputBuffer.buffer + ssh->outputBuffer.idx,
-                             ssh->outputBuffer.length, ssh->ioWriteCtx);
+                               ssh->outputBuffer.buffer + ssh->outputBuffer.idx,
+                               ssh->outputBuffer.length, ssh->ioReadCtx);
 
         if (sent < 0) {
+            switch (sent) {
+                case WS_CBIO_ERR_WANT_WRITE:     /* want write, would block */
+                    return WS_WANT_WRITE;
+
+                case WS_CBIO_ERR_CONN_RST:       /* connection reset */
+                    ssh->connReset = 1;
+                    break;
+
+                case WS_CBIO_ERR_CONN_CLOSE:     /* peer closed connection */
+                    ssh->isClosed = 1;
+                    break;
+            }
             return WS_SOCKET_ERROR_E;
         }
 
-        if (sent > (int)ssh->outputBuffer.length) {
-            WLOG(WS_LOG_DEBUG, "Out of bounds read");
+        if ((uint32_t)sent > ssh->outputBuffer.length) {
+            WLOG(WS_LOG_DEBUG, "SendBuffered() out of bounds read");
             return WS_SEND_OOB_READ_E;
         }
 
@@ -382,6 +394,7 @@ static int SendBuffered(WOLFSSH* ssh)
     }
 
     ssh->outputBuffer.idx = 0;
+
     ShrinkBuffer(&ssh->outputBuffer, 0);
 
     return WS_SUCCESS;
@@ -563,7 +576,7 @@ static uint8_t MatchIdLists(const uint8_t* left, uint32_t leftSz,
 }
 
 
-static uint8_t BlockSzForId(uint8_t id)
+static INLINE uint8_t BlockSzForId(uint8_t id)
 {
     switch (id) {
         case ID_AES128_CBC:
@@ -575,7 +588,7 @@ static uint8_t BlockSzForId(uint8_t id)
 }
 
 
-static uint8_t MacSzForId(uint8_t id)
+static INLINE uint8_t MacSzForId(uint8_t id)
 {
     switch (id) {
         case ID_HMAC_SHA1:
@@ -604,7 +617,8 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
      * is save the actual values.
      */
 
-    /* UpdateSha(ssh->handhshake->hash, begin, len); */
+    ShaUpdate(&ssh->handshake->hash, buf - 1, len + 1);
+    /* The -1/+1 adjustment is for the message ID. */
 
     /* Check that the cookie exists inside the message */
     if (begin + COOKIE_SZ > len) {
@@ -721,6 +735,7 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 
     *idx = begin;
 
+    ssh->clientState = CLIENT_ALGO_DONE;
     return WS_SUCCESS;
 }
 
@@ -730,17 +745,22 @@ static int DoPacket(WOLFSSH* ssh)
     uint8_t* buf = (uint8_t*)ssh->inputBuffer.buffer;
     uint32_t idx = ssh->inputBuffer.idx;
     uint32_t len = ssh->inputBuffer.length;
-    uint8_t msg;
-    uint8_t padSz;
+    uint32_t payloadSz;
+    uint8_t  padSz;
+    uint8_t  msg;
 
+    /* Problem: len is equal to the amount of data left in the input buffer.
+     *          The beginning part of that data is the packet we want to
+     *          decode. The remainder is the pad and the MAC. */
     padSz = buf[idx++];
+    payloadSz = ssh->curSz - PAD_LENGTH_SZ - padSz;
 
     msg = buf[idx++];
     switch (msg) {
 
         case MSGID_KEXINIT:
-            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXINIT (len = %d)", len);
-            DoKexInit(ssh, buf, len, &idx);
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXINIT (len = %d)", payloadSz);
+            DoKexInit(ssh, buf, payloadSz, &idx);
             break;
 
         default:
@@ -885,42 +905,53 @@ static int PreparePacket(WOLFSSH* ssh, uint32_t payloadSz)
 static int BundlePacket(WOLFSSH* ssh)
 {
     uint8_t* output;
-    uint32_t outputSz, i;
+    uint32_t idx;
     uint8_t  paddingSz;
 
-    outputSz = ssh->outputBuffer.length;
-    output = ssh->outputBuffer.buffer + outputSz;
+    output = ssh->outputBuffer.buffer;
+    idx = ssh->outputBuffer.length;
     paddingSz = ssh->paddingSz;
 
-    for (i = 0; i < paddingSz; i++)
-        output[i] = i + 1;
-    outputSz += paddingSz;
+    /* Add the padding */
+    WMEMSET(output + idx, 0, paddingSz);
+    idx += paddingSz;
 
+    /* Need to MAC the sequence number and the unencrypted packet */
     switch (ssh->integrityId) {
         case ID_NONE:
             break;
-
+#if 0
         case ID_HMAC_SHA1_96:
             break;
 
         case ID_HMAC_SHA1:
             break;
-
+#endif
         default:
             WLOG(WS_LOG_DEBUG, "Invalid Mac ID");
             return WS_FATAL_ERROR;
-            break;
     }
 
+    ssh->seq++;
+
+    /* Encrypt the packet */
+    switch (ssh->encryptionId) {
+        case ID_NONE:
+            break;
+#if 0
+        case ID_AES128_CBC:
+            break;
+#endif
+        default:
+            WLOG(WS_LOG_DEBUG, "Invalid Encrypt ID");
+            return WS_FATAL_ERROR;
+    }
+
+    ssh->outputBuffer.length = idx;
+
     return WS_SUCCESS;
 }
 
-
-static int SendPacket(WOLFSSH* ssh)
-{
-    (void)ssh;
-    return WS_SUCCESS;
-}
 
 static INLINE void CopyNameList(uint8_t* buf, uint32_t* idx,
                                                 const char* src, uint32_t srcSz)
@@ -934,13 +965,6 @@ static INLINE void CopyNameList(uint8_t* buf, uint32_t* idx,
 
     *idx = begin;
 }
-
-/*
- * MAX_MSG_EXTRA = 4 (packet_length)
- *               + 1 (padding_length)
- *               + ssh->blockSz (worst case padding size)
- *               + ssh->macSz
- */
 
 
 static const char     cannedEncAlgoNames[] = "aes128-cbc";
@@ -961,11 +985,9 @@ int SendKexInit(WOLFSSH* ssh)
 {
     uint8_t* output;
     uint8_t* payload;
-    uint32_t length, idx = 0;
+    uint32_t idx = 0;
     uint32_t payloadSz;
     int ret = WS_SUCCESS;
-
-    (void)length;
 
     payloadSz = MSG_ID_SZ + COOKIE_SZ + (LENGTH_SZ * 11) + BOOLEAN_SZ +
                cannedKexAlgoNamesSz + cannedKeyAlgoNamesSz +
@@ -974,23 +996,23 @@ int SendKexInit(WOLFSSH* ssh)
                (cannedNoneNamesSz * 2);
     PreparePacket(ssh, payloadSz);
 
-    output = ssh->outputBuffer.buffer + ssh->outputBuffer.length;
+    output = ssh->outputBuffer.buffer;
     idx = ssh->outputBuffer.length;
-    payload = output;
+    payload = output + idx;
 
     output[idx++] = MSGID_KEXINIT;
 
     RNG_GenerateBlock(ssh->rng, output + idx, COOKIE_SZ);
     idx += COOKIE_SZ;
 
-    CopyNameList(output + idx, &idx, cannedKexAlgoNames, cannedKexAlgoNamesSz);
-    CopyNameList(output + idx, &idx, cannedKeyAlgoNames, cannedKeyAlgoNamesSz);
-    CopyNameList(output + idx, &idx, cannedEncAlgoNames, cannedEncAlgoNamesSz);
-    CopyNameList(output + idx, &idx, cannedEncAlgoNames, cannedEncAlgoNamesSz);
-    CopyNameList(output + idx, &idx, cannedMacAlgoNames, cannedMacAlgoNamesSz);
-    CopyNameList(output + idx, &idx, cannedMacAlgoNames, cannedMacAlgoNamesSz);
-    CopyNameList(output + idx, &idx, cannedNoneNames, cannedNoneNamesSz);
-    CopyNameList(output + idx, &idx, cannedNoneNames, cannedNoneNamesSz);
+    CopyNameList(output, &idx, cannedKexAlgoNames, cannedKexAlgoNamesSz);
+    CopyNameList(output, &idx, cannedKeyAlgoNames, cannedKeyAlgoNamesSz);
+    CopyNameList(output, &idx, cannedEncAlgoNames, cannedEncAlgoNamesSz);
+    CopyNameList(output, &idx, cannedEncAlgoNames, cannedEncAlgoNamesSz);
+    CopyNameList(output, &idx, cannedMacAlgoNames, cannedMacAlgoNamesSz);
+    CopyNameList(output, &idx, cannedMacAlgoNames, cannedMacAlgoNamesSz);
+    CopyNameList(output, &idx, cannedNoneNames, cannedNoneNamesSz);
+    CopyNameList(output, &idx, cannedNoneNames, cannedNoneNamesSz);
     c32toa(0, output + idx); /* Languages - Client To Server (0) */
     idx += LENGTH_SZ;
     c32toa(0, output + idx); /* Languages - Server To Client (0) */
@@ -999,10 +1021,12 @@ int SendKexInit(WOLFSSH* ssh)
     c32toa(0, output + idx); /* Reserved (0) */
     idx += LENGTH_SZ;
 
-    /* UpdateSha(ssh->handshake->hash, payload, payloadSz); */
+    ssh->outputBuffer.length = idx;
+
+    ShaUpdate(&ssh->handshake->hash, payload, payloadSz);
 
     BundlePacket(ssh);
-    SendPacket(ssh);
+    SendBuffered(ssh);
 
     return ret;
 }

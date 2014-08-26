@@ -298,8 +298,8 @@ int wolfSSH_accept(WOLFSSH* ssh)
                     WLOG(WS_LOG_DEBUG, "accept reply error: %d", ssh->error);
                     return WS_FATAL_ERROR;
                 }
-            SendKexInit(ssh);
             }
+            SendKexInit(ssh);
             break;
     }
 
