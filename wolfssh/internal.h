@@ -30,8 +30,10 @@
 #pragma once
 
 #include <wolfssh/ssh.h>
+#include <cyassl/options.h>
 #include <cyassl/ctaocrypt/sha.h>
 #include <cyassl/ctaocrypt/random.h>
+#include <cyassl/ctaocrypt/dh.h>
 
 
 #if !defined (ALIGN16)
@@ -142,7 +144,8 @@ typedef struct HandshakeInfo {
     uint8_t        macSz;
 
     Sha            hash;
-    uint8_t        session_id[SHA_DIGEST_SIZE];
+    uint8_t        e[257]; /* May have a leading zero, for unsigned. */
+    uint32_t       eSz;
 } HandshakeInfo;
 
 
@@ -169,7 +172,7 @@ struct WOLFSSH {
     uint8_t        connReset;
     uint8_t        isClosed;
 
-    uint8_t        keyExchangeId;
+    uint8_t        keyExchangeId; /* not needed after handshake */
     uint8_t        publicKeyId;
     uint8_t        encryptionId;
     uint8_t        integrityId;
@@ -178,7 +181,25 @@ struct WOLFSSH {
     Buffer         outputBuffer;
     RNG*           rng;
 
-    uint8_t        H[SHA_DIGEST_SIZE];
+    uint8_t        h[SHA_DIGEST_SIZE];
+    uint32_t       hSz;
+    uint8_t        k[257]; /* May have a leading zero, for unsigned. */
+    uint32_t       kSz;
+    uint8_t        sessionId[SHA_DIGEST_SIZE];
+    uint32_t       sessionIdSz;
+
+    uint8_t        ivClient[16];
+    uint8_t        ivClientSz;
+    uint8_t        ivServer[16];
+    uint8_t        ivServerSz;
+    uint8_t        encKeyClient[16];
+    uint8_t        encKeyClientSz;
+    uint8_t        encKeyServer[16];
+    uint8_t        encKeyServerSz;
+    uint8_t        macKeyClient[20];
+    uint8_t        macKeyClientSz;
+    uint8_t        macKeyServer[20];
+    uint8_t        macKeyServerSz;
 
     HandshakeInfo* handshake;
 };
@@ -197,6 +218,7 @@ WOLFSSH_LOCAL int ProcessReply(WOLFSSH*);
 WOLFSSH_LOCAL int ProcessClientVersion(WOLFSSH*);
 WOLFSSH_LOCAL int SendServerVersion(WOLFSSH*);
 WOLFSSH_LOCAL int SendKexInit(WOLFSSH*);
+WOLFSSH_LOCAL int SendKexDhAccept(WOLFSSH*);
 
 
 enum AcceptStates {
@@ -204,14 +226,17 @@ enum AcceptStates {
     ACCEPT_CLIENT_VERSION_DONE,
     SERVER_VERSION_SENT,
     ACCEPT_CLIENT_ALGO_DONE,
-    SERVER_ALGO_SENT
+    SERVER_ALGO_SENT,
+    ACCEPT_CLIENT_KEXDH_INIT_DONE,
+    SERVER_KEXDH_ACCEPT_SENT
 };
 
 
 enum ClientStates {
     CLIENT_BEGIN = 0,
     CLIENT_VERSION_DONE,
-    CLIENT_ALGO_DONE
+    CLIENT_ALGO_DONE,
+    CLIENT_KEXDHINIT_DONE
 };
 
 
@@ -223,9 +248,17 @@ enum ProcessReplyStates {
 };
 
 
-enum SshMessageIds {
-    MSGID_KEXINIT = 20,
-    MSGID_NEWKEYS = 21
+enum WS_MessageIds {
+    MSGID_DISCONNECT      = 1,
+    MSGID_IGNORE          = 2,
+    MSGID_UNIMPLEMENTED   = 3,
+    MSGID_DEBUG           = 4,
+    MSGID_SERVICE_REQUEST = 5,
+    MSGID_SERVICE_ACCEPT  = 6,
+    MSGID_KEXINIT         = 20,
+    MSGID_NEWKEYS         = 21,
+    MSGID_KEXDH_INIT      = 30,
+    MSGID_KEXDH_REPLY     = 31
 };
 
 
@@ -243,6 +276,7 @@ enum WS_DynamicTypes {
     DYNTYPE_CA,
     DYNTYPE_CERT,
     DYNTYPE_KEY,
+    DYNTYPE_DH,
     DYNTYPE_RNG
 };
 
@@ -252,6 +286,9 @@ enum WS_BufferTypes {
     BUFTYPE_CERT,
     BUFTYPE_PRIVKEY
 };
+
+
+WOLFSSH_LOCAL void DumpOctetString(const uint8_t*, uint32_t);
 
 
 #ifdef __cplusplus

@@ -33,7 +33,6 @@
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/log.h>
-#include <cyassl/options.h>
 #include <cyassl/ctaocrypt/rsa.h>
 #include <cyassl/ctaocrypt/asn.h>
 
@@ -154,7 +153,8 @@ static WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->encryptionId  = ID_NONE;
     ssh->integrityId   = ID_NONE;
     ssh->rng         = rng;
-    ssh->handshake = handshake;
+    ssh->kSz         = sizeof(ssh->k);
+    ssh->handshake   = handshake;
     handshake->keyExchangeId = ID_NONE;
     handshake->publicKeyId   = ID_NONE;
     handshake->encryptionId  = ID_NONE;
@@ -203,6 +203,10 @@ static void SshResourceFree(WOLFSSH* ssh, void* heap)
     WLOG(WS_LOG_DEBUG, "Enter sshResourceFree()");
     ShrinkBuffer(&ssh->inputBuffer, 1);
     ShrinkBuffer(&ssh->outputBuffer, 1);
+    if (ssh->k) {
+        WMEMSET(ssh->k, 0, ssh->kSz);
+        WFREE(ssh->k, heap, DYNTYPE_KEY);
+    }
     if (ssh->handshake) {
         WMEMSET(ssh->handshake, 0, sizeof(HandshakeInfo));
         WFREE(ssh->handshake, heap, DYNTYPE_HS);
@@ -300,6 +304,15 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 }
             }
             SendKexInit(ssh);
+            ssh->acceptState = SERVER_ALGO_SENT;
+
+        case SERVER_ALGO_SENT:
+            while (ssh->clientState < CLIENT_KEXDHINIT_DONE) {
+                if ( (ssh->error = ProcessReply(ssh)) < 0) {
+                    WLOG(WS_LOG_DEBUG, "accept reply error: %d", ssh->error);
+                    return WS_FATAL_ERROR;
+                }
+            }
             break;
     }
 

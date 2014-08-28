@@ -601,6 +601,22 @@ static INLINE uint8_t MacSzForId(uint8_t id)
 }
 
 
+static INLINE uint8_t KeySzForId(uint8_t id)
+{
+    switch (id) {
+        case ID_HMAC_SHA1:
+            return SHA_DIGEST_SIZE;
+        case ID_HMAC_SHA1_96:
+            return (96/8); /* 96 bits */
+        case ID_AES128_CBC:
+        case ID_AES128_CTR:
+            return AES_BLOCK_SIZE;
+        default:
+            return 0;
+    }
+}
+
+
 static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 {
     uint8_t algoId;
@@ -616,9 +632,6 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
      * support the other direction is on my known list. All I need to do
      * is save the actual values.
      */
-
-    ShaUpdate(&ssh->handshake->hash, buf - 1, len + 1);
-    /* The -1/+1 adjustment is for the message ID. */
 
     /* Check that the cookie exists inside the message */
     if (begin + COOKIE_SZ > len) {
@@ -672,7 +685,9 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
     }
 
     ssh->handshake->encryptionId = algoId;
-    ssh->handshake->blockSz = BlockSzForId(algoId);
+    ssh->handshake->blockSz = ssh->ivClientSz = ssh->ivServerSz
+                                                         = BlockSzForId(algoId);
+    ssh->encKeyClientSz = ssh->encKeyServerSz = KeySzForId(algoId);
 
     /* MAC Algorithms - Client to Server */
     WLOG(WS_LOG_DEBUG, "DKI: MAC Algorithms - Client to Server");
@@ -695,6 +710,7 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 
     ssh->handshake->integrityId = algoId;
     ssh->handshake->macSz = MacSzForId(algoId);
+    ssh->macKeyClientSz = ssh->macKeyServerSz = KeySzForId(algoId);
 
     /* The compression algorithm lists should have none as a value. */
     algoId = ID_NONE;
@@ -740,6 +756,221 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 }
 
 
+static const uint8_t dhGenerator[] = { 2 };
+static const uint8_t dhPrimeGroup1[] = {
+    /* SSH DH Group 1 (Oakley Group 2, 1024-bit MODP Group, RFC 2409) */
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xC9, 0x0F, 0xDA, 0xA2, 0x21, 0x68, 0xC2, 0x34,
+    0xC4, 0xC6, 0x62, 0x8B, 0x80, 0xDC, 0x1C, 0xD1,
+    0x29, 0x02, 0x4E, 0x08, 0x8A, 0x67, 0xCC, 0x74,
+    0x02, 0x0B, 0xBE, 0xA6, 0x3B, 0x13, 0x9B, 0x22,
+    0x51, 0x4A, 0x08, 0x79, 0x8E, 0x34, 0x04, 0xDD,
+    0xEF, 0x95, 0x19, 0xB3, 0xCD, 0x3A, 0x43, 0x1B,
+    0x30, 0x2B, 0x0A, 0x6D, 0xF2, 0x5F, 0x14, 0x37,
+    0x4F, 0xE1, 0x35, 0x6D, 0x6D, 0x51, 0xC2, 0x45,
+    0xE4, 0x85, 0xB5, 0x76, 0x62, 0x5E, 0x7E, 0xC6,
+    0xF4, 0x4C, 0x42, 0xE9, 0xA6, 0x37, 0xED, 0x6B,
+    0x0B, 0xFF, 0x5C, 0xB6, 0xF4, 0x06, 0xB7, 0xED,
+    0xEE, 0x38, 0x6B, 0xFB, 0x5A, 0x89, 0x9F, 0xA5,
+    0xAE, 0x9F, 0x24, 0x11, 0x7C, 0x4B, 0x1F, 0xE6,
+    0x49, 0x28, 0x66, 0x51, 0xEC, 0xE6, 0x53, 0x81,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
+};
+static const uint8_t dhPrimeGroup14[] = {
+    /* SSH DH Group 14 (Oakley Group 14, 2048-bit MODP Group, RFC 3526) */
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xC9, 0x0F, 0xDA, 0xA2, 0x21, 0x68, 0xC2, 0x34,
+    0xC4, 0xC6, 0x62, 0x8B, 0x80, 0xDC, 0x1C, 0xD1,
+    0x29, 0x02, 0x4E, 0x08, 0x8A, 0x67, 0xCC, 0x74,
+    0x02, 0x0B, 0xBE, 0xA6, 0x3B, 0x13, 0x9B, 0x22,
+    0x51, 0x4A, 0x08, 0x79, 0x8E, 0x34, 0x04, 0xDD,
+    0xEF, 0x95, 0x19, 0xB3, 0xCD, 0x3A, 0x43, 0x1B,
+    0x30, 0x2B, 0x0A, 0x6D, 0xF2, 0x5F, 0x14, 0x37,
+    0x4F, 0xE1, 0x35, 0x6D, 0x6D, 0x51, 0xC2, 0x45,
+    0xE4, 0x85, 0xB5, 0x76, 0x62, 0x5E, 0x7E, 0xC6,
+    0xF4, 0x4C, 0x42, 0xE9, 0xA6, 0x37, 0xED, 0x6B,
+    0x0B, 0xFF, 0x5C, 0xB6, 0xF4, 0x06, 0xB7, 0xED,
+    0xEE, 0x38, 0x6B, 0xFB, 0x5A, 0x89, 0x9F, 0xA5,
+    0xAE, 0x9F, 0x24, 0x11, 0x7C, 0x4B, 0x1F, 0xE6,
+    0x49, 0x28, 0x66, 0x51, 0xEC, 0xE4, 0x5B, 0x3D,
+    0xC2, 0x00, 0x7C, 0xB8, 0xA1, 0x63, 0xBF, 0x05,
+    0x98, 0xDA, 0x48, 0x36, 0x1C, 0x55, 0xD3, 0x9A,
+    0x69, 0x16, 0x3F, 0xA8, 0xFD, 0x24, 0xCF, 0x5F,
+    0x83, 0x65, 0x5D, 0x23, 0xDC, 0xA3, 0xAD, 0x96,
+    0x1C, 0x62, 0xF3, 0x56, 0x20, 0x85, 0x52, 0xBB,
+    0x9E, 0xD5, 0x29, 0x07, 0x70, 0x96, 0x96, 0x6D,
+    0x67, 0x0C, 0x35, 0x4E, 0x4A, 0xBC, 0x98, 0x04,
+    0xF1, 0x74, 0x6C, 0x08, 0xCA, 0x18, 0x21, 0x7C,
+    0x32, 0x90, 0x5E, 0x46, 0x2E, 0x36, 0xCE, 0x3B,
+    0xE3, 0x9E, 0x77, 0x2C, 0x18, 0x0E, 0x86, 0x03,
+    0x9B, 0x27, 0x83, 0xA2, 0xEC, 0x07, 0xA2, 0x8F,
+    0xB5, 0xC5, 0x5D, 0xF0, 0x6F, 0x4C, 0x52, 0xC9,
+    0xDE, 0x2B, 0xCB, 0xF6, 0x95, 0x58, 0x17, 0x18,
+    0x39, 0x95, 0x49, 0x7C, 0xEA, 0x95, 0x6A, 0xE5,
+    0x15, 0xD2, 0x26, 0x18, 0x98, 0xFA, 0x05, 0x10,
+    0x15, 0x72, 0x8E, 0x5A, 0x8A, 0xAC, 0xAA, 0x68,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
+};
+static const uint32_t dhGeneratorSz = sizeof(dhGenerator);
+static const uint32_t dhPrimeGroup1Sz = sizeof(dhPrimeGroup1);
+static const uint32_t dhPrimeGroup14Sz = sizeof(dhPrimeGroup14);
+
+
+static int DoKexDhInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
+{
+    /* First get the length of the MP_INT, and then add in the hash of the
+     * mp_int value of e as it appears in the packet. After that, decode e
+     * into an mp_int struct for the DH calculation by wolfCrypt. */
+    /* DYNTYPE_DH */
+
+    uint8_t* e;
+    uint32_t eSz;
+    uint32_t begin = *idx;
+
+    ShaUpdate(&ssh->handshake->hash, buf, len);
+
+    ato32(buf + begin, &eSz);
+    begin += LENGTH_SZ;
+
+    e = buf + begin;
+    begin += eSz;
+
+    if (eSz <= ssh->handshake->eSz) {
+        WMEMCPY(ssh->handshake->e, e, eSz);
+        ssh->handshake->eSz = eSz;
+    }
+
+    ssh->clientState = CLIENT_KEXDHINIT_DONE;
+    *idx = begin;
+    return WS_SUCCESS;
+}
+
+
+static int GenerateKey(uint8_t* key, uint32_t keySz, uint8_t keyId,
+                       const uint8_t* k, uint32_t kSz,
+                       const uint8_t* h, uint32_t hSz,
+                       const uint8_t* sessionId, uint32_t sessionIdSz)
+{
+    uint32_t blocks, remainder, curBlock, runningKeySz;
+    Sha sha;
+
+    blocks = keySz / SHA_DIGEST_SIZE;
+    remainder = keySz % SHA_DIGEST_SIZE;
+
+    InitSha(&sha);
+    ShaUpdate(&sha, k, kSz);
+    ShaUpdate(&sha, h, hSz);
+    ShaUpdate(&sha, &keyId, sizeof(keyId));
+    ShaUpdate(&sha, sessionId, sessionIdSz);
+    ShaFinal(&sha, key);
+    runningKeySz = SHA_DIGEST_SIZE;
+
+    for (curBlock = 1; curBlock < blocks; curBlock++) {
+        InitSha(&sha);
+        ShaUpdate(&sha, k, kSz);
+        ShaUpdate(&sha, h, hSz);
+        ShaUpdate(&sha, key, runningKeySz);
+        ShaFinal(&sha, key + runningKeySz);
+        runningKeySz += SHA_DIGEST_SIZE;
+    }
+
+    if (remainder > 0) {
+        uint8_t lastBlock[SHA_DIGEST_SIZE];
+        InitSha(&sha);
+        ShaUpdate(&sha, k, kSz);
+        ShaUpdate(&sha, h, hSz);
+        ShaUpdate(&sha, key, runningKeySz);
+        ShaFinal(&sha, lastBlock);
+        WMEMCPY(key + runningKeySz, lastBlock, remainder);
+    }
+
+    return 0;
+}
+
+
+static int GenerateKeys(WOLFSSH* ssh)
+{
+    GenerateKey(ssh->ivClient, ssh->ivClientSz, 'A', ssh->k, ssh->kSz,
+                ssh->h, ssh->hSz, ssh->sessionId, ssh->sessionIdSz);
+    GenerateKey(ssh->ivServer, ssh->ivServerSz, 'B', ssh->k, ssh->kSz,
+                ssh->h, ssh->hSz, ssh->sessionId, ssh->sessionIdSz);
+    GenerateKey(ssh->encKeyClient, ssh->encKeyClientSz, 'C', ssh->k, ssh->kSz,
+                ssh->h, ssh->hSz, ssh->sessionId, ssh->sessionIdSz);
+    GenerateKey(ssh->encKeyServer, ssh->encKeyServerSz, 'D', ssh->k, ssh->kSz,
+                ssh->h, ssh->hSz, ssh->sessionId, ssh->sessionIdSz);
+    GenerateKey(ssh->macKeyClient, ssh->macKeyClientSz, 'E', ssh->k, ssh->kSz,
+                ssh->h, ssh->hSz, ssh->sessionId, ssh->sessionIdSz);
+    GenerateKey(ssh->macKeyServer, ssh->macKeyServerSz, 'F', ssh->k, ssh->kSz,
+                ssh->h, ssh->hSz, ssh->sessionId, ssh->sessionIdSz);
+
+    return 0;
+}
+
+
+int SendKexDhAccept(WOLFSSH* ssh)
+{
+    DhKey    dhKey;
+    uint8_t  f[256];
+    uint32_t fSz = sizeof(f);
+    uint8_t  fPad;
+    uint8_t  y[256];
+    uint32_t ySz = sizeof(y);
+    uint32_t payloadSz;
+    uint8_t  sig[512];
+    uint32_t sigSz = sizeof(sig);
+
+    InitDhKey(&dhKey);
+
+    switch (ssh->handshake->keyExchangeId) {
+        case ID_DH_GROUP1_SHA1:
+            DhSetKey(&dhKey, dhPrimeGroup1, dhPrimeGroup1Sz,
+                                                    dhGenerator, dhGeneratorSz);
+            break;
+
+        case ID_DH_GROUP14_SHA1:
+            DhSetKey(&dhKey, dhPrimeGroup14, dhPrimeGroup14Sz,
+                                                    dhGenerator, dhGeneratorSz);
+            break;
+
+        default:
+            return -1;
+    }
+
+    /* e always starts with a 0x00, why?
+     * It doesn't. Like good and proper unsigned values, it always starts
+     * with a leading 0-bit. So, when writing the f value into the message
+     * for the client ensure the leading bit is 0. */
+    DhGenerateKeyPair(&dhKey, ssh->rng, y, &ySz, f, &fSz);
+    fPad = (f[0] & 0x80) != 0;
+    DhAgree(&dhKey, ssh->k, &ssh->kSz, f, fSz,
+                                        ssh->handshake->e, ssh->handshake->eSz);
+
+    FreeDhKey(&dhKey);
+
+    ssh->hSz = SHA_DIGEST_SIZE;
+    if (ssh->sessionIdSz == 0) {
+        WMEMCPY(ssh->sessionId, ssh->h, ssh->hSz);
+        ssh->sessionIdSz = ssh->hSz;
+    }
+
+    GenerateKeys(ssh);
+
+    payloadSz = MSG_ID_SZ +
+                LENGTH_SZ + ssh->ctx->certSz +
+                LENGTH_SZ + fSz + (fPad ? 1 : 0) +
+                LENGTH_SZ + sigSz;
+
+    /* Fill in the packet here. */
+    /* Get the buffer, copy the packet data, once f is laid into the buffer,
+     * add it to the hash and then add K. */
+
+    ShaFinal(&ssh->handshake->hash, ssh->h);
+    /* Sign H. Add sig to the buffer */
+
+    return 0;
+}
+
+
 static int DoPacket(WOLFSSH* ssh)
 {
     uint8_t* buf = (uint8_t*)ssh->inputBuffer.buffer;
@@ -759,8 +990,18 @@ static int DoPacket(WOLFSSH* ssh)
     switch (msg) {
 
         case MSGID_KEXINIT:
-            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXINIT (len = %d)", payloadSz);
-            DoKexInit(ssh, buf, payloadSz, &idx);
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXINIT (len = %d)", payloadSz - 1);
+            ShaUpdate(&ssh->handshake->hash, buf + idx - 1, payloadSz + 1);
+            DoKexInit(ssh, buf, payloadSz - 1, &idx);
+            break;
+
+        case MSGID_KEXDH_INIT:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT (len = %d)", payloadSz - 1);
+            /* The mpint is 256 bytes long, the length is the standard 4 bytes,
+             * and the msg ID is 1 byte. We pass the start of the payload data,
+             * after the msg ID, to the Do function, but the length is the
+             * payloadSz, which is +1 than the actual data. */
+            DoKexDhInit(ssh, buf, payloadSz - 1, &idx);
             break;
 
         default:
@@ -1031,4 +1272,27 @@ int SendKexInit(WOLFSSH* ssh)
     return ret;
 }
 
+
+#define LINE_WIDTH 16
+void DumpOctetString(const uint8_t* input, uint32_t inputSz)
+{
+    int rows = inputSz / LINE_WIDTH;
+    int remainder = inputSz % LINE_WIDTH;
+    int i,j;
+
+    for (i = 0; i < rows; i++) {
+        printf("%04X: ", i * LINE_WIDTH);
+        for (j = 0; j < LINE_WIDTH; j++) {
+            printf("%02X ", input[i * LINE_WIDTH + j]);
+        }
+        printf("\n");
+    }
+    if (remainder) {
+        printf("%04X: ", i * LINE_WIDTH);
+        for (j = 0; j < remainder; j++) {
+            printf("%02X ", input[i * LINE_WIDTH + j]);
+        }
+        printf("\n");
+    }
+}
 
