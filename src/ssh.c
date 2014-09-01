@@ -313,6 +313,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
                     return WS_FATAL_ERROR;
                 }
             }
+            SendKexDhAccept(ssh);
             break;
     }
 

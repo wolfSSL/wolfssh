@@ -35,6 +35,7 @@
 #include <wolfssh/internal.h>
 #include <wolfssh/log.h>
 #include <cyassl/ctaocrypt/aes.h>
+#include <cyassl/ctaocrypt/rsa.h>
 
 
 /* convert opaque to 32 bit integer */
@@ -827,7 +828,7 @@ static int DoKexDhInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
     uint32_t eSz;
     uint32_t begin = *idx;
 
-    ShaUpdate(&ssh->handshake->hash, buf, len);
+    (void)len;
 
     ato32(buf + begin, &eSz);
     begin += LENGTH_SZ;
@@ -835,7 +836,7 @@ static int DoKexDhInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
     e = buf + begin;
     begin += eSz;
 
-    if (eSz <= ssh->handshake->eSz) {
+    if (eSz <= sizeof(ssh->handshake->eSz)) {
         WMEMCPY(ssh->handshake->e, e, eSz);
         ssh->handshake->eSz = eSz;
     }
@@ -910,14 +911,19 @@ static int GenerateKeys(WOLFSSH* ssh)
 int SendKexDhAccept(WOLFSSH* ssh)
 {
     DhKey    dhKey;
+    RsaKey   rsaKey;
     uint8_t  f[256];
     uint32_t fSz = sizeof(f);
     uint8_t  fPad;
     uint8_t  y[256];
     uint32_t ySz = sizeof(y);
+    uint8_t  kPad;
     uint32_t payloadSz;
     uint8_t  sig[512];
     uint32_t sigSz = sizeof(sig);
+    uint8_t  scratchLen[LENGTH_SZ];
+    uint32_t scratch = 0;
+    int ret;
 
     InitDhKey(&dhKey);
 
@@ -936,6 +942,13 @@ int SendKexDhAccept(WOLFSSH* ssh)
             return -1;
     }
 
+    c32toa(ssh->ctx->certSz, scratchLen);
+    ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
+    ShaUpdate(&ssh->handshake->hash, ssh->ctx->cert, ssh->ctx->certSz);
+    c32toa(ssh->handshake->eSz, scratchLen);
+    ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
+    ShaUpdate(&ssh->handshake->hash, ssh->handshake->e, ssh->handshake->eSz);
+
     /* e always starts with a 0x00, why?
      * It doesn't. Like good and proper unsigned values, it always starts
      * with a leading 0-bit. So, when writing the f value into the message
@@ -944,16 +957,32 @@ int SendKexDhAccept(WOLFSSH* ssh)
     fPad = (f[0] & 0x80) != 0;
     DhAgree(&dhKey, ssh->k, &ssh->kSz, f, fSz,
                                         ssh->handshake->e, ssh->handshake->eSz);
-
+    kPad = (ssh->k[0] & 0x80) != 0;
     FreeDhKey(&dhKey);
 
+    c32toa(fSz + fPad, scratchLen);
+    ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
+    if (fPad) {
+        scratchLen[0] = 0;
+        ShaUpdate(&ssh->handshake->hash, scratchLen, 1);
+    }
+
+    ShaUpdate(&ssh->handshake->hash, f, fSz);
+
+    c32toa(ssh->kSz + kPad, scratchLen);
+    ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
+    if (kPad) {
+        scratchLen[0] = 0;
+        ShaUpdate(&ssh->handshake->hash, scratchLen, 1);
+    }
+    ShaUpdate(&ssh->handshake->hash, ssh->k, ssh->kSz);
+
+    ShaFinal(&ssh->handshake->hash, ssh->h);
     ssh->hSz = SHA_DIGEST_SIZE;
     if (ssh->sessionIdSz == 0) {
         WMEMCPY(ssh->sessionId, ssh->h, ssh->hSz);
         ssh->sessionIdSz = ssh->hSz;
     }
-
-    GenerateKeys(ssh);
 
     payloadSz = MSG_ID_SZ +
                 LENGTH_SZ + ssh->ctx->certSz +
@@ -963,9 +992,16 @@ int SendKexDhAccept(WOLFSSH* ssh)
     /* Fill in the packet here. */
     /* Get the buffer, copy the packet data, once f is laid into the buffer,
      * add it to the hash and then add K. */
-
     ShaFinal(&ssh->handshake->hash, ssh->h);
+
     /* Sign H. Add sig to the buffer */
+
+    InitRsaKey(&rsaKey, ssh->ctx->heap);
+    ret = RsaPrivateKeyDecode(ssh->ctx->privateKey, &scratch, &rsaKey, (int)ssh->ctx->privateKeySz);
+    ret = RsaSSL_Sign(ssh->h, ssh->hSz, sig, (int)sigSz, &rsaKey, ssh->rng);
+    FreeRsaKey(&rsaKey);
+
+    GenerateKeys(ssh);
 
     return 0;
 }
