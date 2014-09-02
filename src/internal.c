@@ -852,7 +852,7 @@ static int GenerateKey(uint8_t* key, uint32_t keySz, uint8_t keyId,
                        const uint8_t* h, uint32_t hSz,
                        const uint8_t* sessionId, uint32_t sessionIdSz)
 {
-    uint32_t blocks, remainder, curBlock, runningKeySz;
+    uint32_t blocks, remainder;
     Sha sha;
 
     blocks = keySz / SHA_DIGEST_SIZE;
@@ -863,26 +863,38 @@ static int GenerateKey(uint8_t* key, uint32_t keySz, uint8_t keyId,
     ShaUpdate(&sha, h, hSz);
     ShaUpdate(&sha, &keyId, sizeof(keyId));
     ShaUpdate(&sha, sessionId, sessionIdSz);
-    ShaFinal(&sha, key);
-    runningKeySz = SHA_DIGEST_SIZE;
 
-    for (curBlock = 1; curBlock < blocks; curBlock++) {
-        InitSha(&sha);
-        ShaUpdate(&sha, k, kSz);
-        ShaUpdate(&sha, h, hSz);
-        ShaUpdate(&sha, key, runningKeySz);
-        ShaFinal(&sha, key + runningKeySz);
-        runningKeySz += SHA_DIGEST_SIZE;
+    if (blocks == 0) {
+        if (remainder > 0) {
+            uint8_t lastBlock[SHA_DIGEST_SIZE];
+            ShaFinal(&sha, lastBlock);
+            WMEMCPY(key, lastBlock, remainder);
+        }
     }
+    else {
+        uint32_t runningKeySz, curBlock;
 
-    if (remainder > 0) {
-        uint8_t lastBlock[SHA_DIGEST_SIZE];
-        InitSha(&sha);
-        ShaUpdate(&sha, k, kSz);
-        ShaUpdate(&sha, h, hSz);
-        ShaUpdate(&sha, key, runningKeySz);
-        ShaFinal(&sha, lastBlock);
-        WMEMCPY(key + runningKeySz, lastBlock, remainder);
+        ShaFinal(&sha, key);
+        runningKeySz = SHA_DIGEST_SIZE;
+
+        for (curBlock = 1; curBlock < blocks; curBlock++) {
+            InitSha(&sha);
+            ShaUpdate(&sha, k, kSz);
+            ShaUpdate(&sha, h, hSz);
+            ShaUpdate(&sha, key, runningKeySz);
+            ShaFinal(&sha, key + runningKeySz);
+            runningKeySz += SHA_DIGEST_SIZE;
+        }
+
+        if (remainder > 0) {
+            uint8_t lastBlock[SHA_DIGEST_SIZE];
+            InitSha(&sha);
+            ShaUpdate(&sha, k, kSz);
+            ShaUpdate(&sha, h, hSz);
+            ShaUpdate(&sha, key, runningKeySz);
+            ShaFinal(&sha, lastBlock);
+            WMEMCPY(key + runningKeySz, lastBlock, remainder);
+        }
     }
 
     return 0;
