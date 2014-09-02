@@ -836,7 +836,7 @@ static int DoKexDhInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
     e = buf + begin;
     begin += eSz;
 
-    if (eSz <= sizeof(ssh->handshake->eSz)) {
+    if (eSz <= sizeof(ssh->handshake->e)) {
         WMEMCPY(ssh->handshake->e, e, eSz);
         ssh->handshake->eSz = eSz;
     }
@@ -1275,6 +1275,10 @@ int SendKexDhReply(WOLFSSH* ssh)
                                         ssh->handshake->e, ssh->handshake->eSz);
     kPad = (ssh->k[0] & 0x80) != 0;
     FreeDhKey(&dhKey);
+#ifdef SHOW_MASTER_SECRET
+    printf("Master secret:\n");
+    DumpOctetString(ssh->k, ssh->kSz);
+#endif
 
     c32toa(fSz + fPad, scratchLen);
     ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
