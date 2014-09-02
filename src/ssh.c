@@ -205,7 +205,6 @@ static void SshResourceFree(WOLFSSH* ssh, void* heap)
     ShrinkBuffer(&ssh->outputBuffer, 1);
     if (ssh->k) {
         WMEMSET(ssh->k, 0, ssh->kSz);
-        WFREE(ssh->k, heap, DYNTYPE_KEY);
     }
     if (ssh->handshake) {
         WMEMSET(ssh->handshake, 0, sizeof(HandshakeInfo));
@@ -313,7 +312,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
                     return WS_FATAL_ERROR;
                 }
             }
-            SendKexDhAccept(ssh);
+            SendKexDhReply(ssh);
             break;
     }
 

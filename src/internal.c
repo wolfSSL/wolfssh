@@ -908,105 +908,6 @@ static int GenerateKeys(WOLFSSH* ssh)
 }
 
 
-int SendKexDhAccept(WOLFSSH* ssh)
-{
-    DhKey    dhKey;
-    RsaKey   rsaKey;
-    uint8_t  f[256];
-    uint32_t fSz = sizeof(f);
-    uint8_t  fPad;
-    uint8_t  y[256];
-    uint32_t ySz = sizeof(y);
-    uint8_t  kPad;
-    uint32_t payloadSz;
-    uint8_t  sig[512];
-    uint32_t sigSz = sizeof(sig);
-    uint8_t  scratchLen[LENGTH_SZ];
-    uint32_t scratch = 0;
-    int ret;
-
-    InitDhKey(&dhKey);
-
-    switch (ssh->handshake->keyExchangeId) {
-        case ID_DH_GROUP1_SHA1:
-            DhSetKey(&dhKey, dhPrimeGroup1, dhPrimeGroup1Sz,
-                                                    dhGenerator, dhGeneratorSz);
-            break;
-
-        case ID_DH_GROUP14_SHA1:
-            DhSetKey(&dhKey, dhPrimeGroup14, dhPrimeGroup14Sz,
-                                                    dhGenerator, dhGeneratorSz);
-            break;
-
-        default:
-            return -1;
-    }
-
-    c32toa(ssh->ctx->certSz, scratchLen);
-    ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
-    ShaUpdate(&ssh->handshake->hash, ssh->ctx->cert, ssh->ctx->certSz);
-    c32toa(ssh->handshake->eSz, scratchLen);
-    ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
-    ShaUpdate(&ssh->handshake->hash, ssh->handshake->e, ssh->handshake->eSz);
-
-    /* e always starts with a 0x00, why?
-     * It doesn't. Like good and proper unsigned values, it always starts
-     * with a leading 0-bit. So, when writing the f value into the message
-     * for the client ensure the leading bit is 0. */
-    DhGenerateKeyPair(&dhKey, ssh->rng, y, &ySz, f, &fSz);
-    fPad = (f[0] & 0x80) != 0;
-    DhAgree(&dhKey, ssh->k, &ssh->kSz, f, fSz,
-                                        ssh->handshake->e, ssh->handshake->eSz);
-    kPad = (ssh->k[0] & 0x80) != 0;
-    FreeDhKey(&dhKey);
-
-    c32toa(fSz + fPad, scratchLen);
-    ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
-    if (fPad) {
-        scratchLen[0] = 0;
-        ShaUpdate(&ssh->handshake->hash, scratchLen, 1);
-    }
-
-    ShaUpdate(&ssh->handshake->hash, f, fSz);
-
-    c32toa(ssh->kSz + kPad, scratchLen);
-    ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
-    if (kPad) {
-        scratchLen[0] = 0;
-        ShaUpdate(&ssh->handshake->hash, scratchLen, 1);
-    }
-    ShaUpdate(&ssh->handshake->hash, ssh->k, ssh->kSz);
-
-    ShaFinal(&ssh->handshake->hash, ssh->h);
-    ssh->hSz = SHA_DIGEST_SIZE;
-    if (ssh->sessionIdSz == 0) {
-        WMEMCPY(ssh->sessionId, ssh->h, ssh->hSz);
-        ssh->sessionIdSz = ssh->hSz;
-    }
-
-    payloadSz = MSG_ID_SZ +
-                LENGTH_SZ + ssh->ctx->certSz +
-                LENGTH_SZ + fSz + (fPad ? 1 : 0) +
-                LENGTH_SZ + sigSz;
-
-    /* Fill in the packet here. */
-    /* Get the buffer, copy the packet data, once f is laid into the buffer,
-     * add it to the hash and then add K. */
-    ShaFinal(&ssh->handshake->hash, ssh->h);
-
-    /* Sign H. Add sig to the buffer */
-
-    InitRsaKey(&rsaKey, ssh->ctx->heap);
-    ret = RsaPrivateKeyDecode(ssh->ctx->privateKey, &scratch, &rsaKey, (int)ssh->ctx->privateKeySz);
-    ret = RsaSSL_Sign(ssh->h, ssh->hSz, sig, (int)sigSz, &rsaKey, ssh->rng);
-    FreeRsaKey(&rsaKey);
-
-    GenerateKeys(ssh);
-
-    return 0;
-}
-
-
 static int DoPacket(WOLFSSH* ssh)
 {
     uint8_t* buf = (uint8_t*)ssh->inputBuffer.buffer;
@@ -1306,6 +1207,133 @@ int SendKexInit(WOLFSSH* ssh)
     SendBuffered(ssh);
 
     return ret;
+}
+
+
+int SendKexDhReply(WOLFSSH* ssh)
+{
+    DhKey    dhKey;
+    RsaKey   rsaKey;
+    uint8_t  f[256];
+    uint32_t fSz = sizeof(f);
+    uint8_t  fPad;
+    uint8_t  y[256];
+    uint32_t ySz = sizeof(y);
+    uint8_t  kPad;
+    uint32_t payloadSz;
+    uint8_t  sig[512];
+    uint32_t sigSz = sizeof(sig);
+    uint8_t  scratchLen[LENGTH_SZ];
+    uint32_t scratch = 0;
+    uint8_t* output;
+    uint32_t idx;
+    int ret;
+
+    InitDhKey(&dhKey);
+
+    switch (ssh->handshake->keyExchangeId) {
+        case ID_DH_GROUP1_SHA1:
+            DhSetKey(&dhKey, dhPrimeGroup1, dhPrimeGroup1Sz,
+                                                    dhGenerator, dhGeneratorSz);
+            break;
+
+        case ID_DH_GROUP14_SHA1:
+            DhSetKey(&dhKey, dhPrimeGroup14, dhPrimeGroup14Sz,
+                                                    dhGenerator, dhGeneratorSz);
+            break;
+
+        default:
+            return -1;
+    }
+
+    c32toa(ssh->ctx->certSz, scratchLen);
+    ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
+    ShaUpdate(&ssh->handshake->hash, ssh->ctx->cert, ssh->ctx->certSz);
+    c32toa(ssh->handshake->eSz, scratchLen);
+    ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
+    ShaUpdate(&ssh->handshake->hash, ssh->handshake->e, ssh->handshake->eSz);
+
+    /* e always starts with a 0x00, why?
+     * It doesn't. Like good and proper unsigned values, it always starts
+     * with a leading 0-bit. So, when writing the f value into the message
+     * for the client ensure the leading bit is 0. */
+    DhGenerateKeyPair(&dhKey, ssh->rng, y, &ySz, f, &fSz);
+    fPad = (f[0] & 0x80) != 0;
+    DhAgree(&dhKey, ssh->k, &ssh->kSz, f, fSz,
+                                        ssh->handshake->e, ssh->handshake->eSz);
+    kPad = (ssh->k[0] & 0x80) != 0;
+    FreeDhKey(&dhKey);
+
+    c32toa(fSz + fPad, scratchLen);
+    ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
+    if (fPad) {
+        scratchLen[0] = 0;
+        ShaUpdate(&ssh->handshake->hash, scratchLen, 1);
+    }
+
+    ShaUpdate(&ssh->handshake->hash, f, fSz);
+
+    c32toa(ssh->kSz + kPad, scratchLen);
+    ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
+    if (kPad) {
+        scratchLen[0] = 0;
+        ShaUpdate(&ssh->handshake->hash, scratchLen, 1);
+    }
+    ShaUpdate(&ssh->handshake->hash, ssh->k, ssh->kSz);
+
+    ShaFinal(&ssh->handshake->hash, ssh->h);
+    ssh->hSz = SHA_DIGEST_SIZE;
+    if (ssh->sessionIdSz == 0) {
+        WMEMCPY(ssh->sessionId, ssh->h, ssh->hSz);
+        ssh->sessionIdSz = ssh->hSz;
+    }
+
+    /* Fill in the packet here. */
+    /* Get the buffer, copy the packet data, once f is laid into the buffer,
+     * add it to the hash and then add K. */
+    ShaFinal(&ssh->handshake->hash, ssh->h);
+
+    /* Sign H. Add sig to the buffer */
+
+    InitRsaKey(&rsaKey, ssh->ctx->heap);
+    ret = RsaPrivateKeyDecode(ssh->ctx->privateKey, &scratch, &rsaKey, (int)ssh->ctx->privateKeySz);
+    sigSz = (uint32_t)RsaSSL_Sign(ssh->h, ssh->hSz, sig, (int)sigSz, &rsaKey, ssh->rng);
+    FreeRsaKey(&rsaKey);
+
+    GenerateKeys(ssh);
+
+    payloadSz = MSG_ID_SZ +
+                LENGTH_SZ + ssh->ctx->certSz +
+                LENGTH_SZ + fSz + (fPad ? 1 : 0) +
+                LENGTH_SZ + sigSz;
+    PreparePacket(ssh, payloadSz);
+    output = ssh->outputBuffer.buffer;
+    idx = ssh->outputBuffer.length;
+
+    output[idx++] = MSGID_KEXDH_REPLY;
+
+    c32toa(ssh->ctx->certSz, output + idx);
+    idx += LENGTH_SZ;
+    WMEMCPY(output + idx, ssh->ctx->cert, ssh->ctx->certSz);
+    idx += ssh->ctx->certSz;
+
+    c32toa(fSz + fPad, output + idx);
+    idx += LENGTH_SZ;
+    if (fPad) output[idx++] = 0;
+    WMEMCPY(output + idx, f, fSz);
+    idx += fSz;
+
+    c32toa(sigSz, output + idx);
+    idx += LENGTH_SZ;
+    WMEMCPY(output + idx, sig, sigSz);
+    idx += sigSz;
+
+    ssh->outputBuffer.length = idx;
+
+    BundlePacket(ssh);
+    SendBuffered(ssh);
+
+    return 0;
 }
 
 

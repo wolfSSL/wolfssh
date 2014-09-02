@@ -218,7 +218,7 @@ WOLFSSH_LOCAL int ProcessReply(WOLFSSH*);
 WOLFSSH_LOCAL int ProcessClientVersion(WOLFSSH*);
 WOLFSSH_LOCAL int SendServerVersion(WOLFSSH*);
 WOLFSSH_LOCAL int SendKexInit(WOLFSSH*);
-WOLFSSH_LOCAL int SendKexDhAccept(WOLFSSH*);
+WOLFSSH_LOCAL int SendKexDhReply(WOLFSSH*);
 
 
 enum AcceptStates {
