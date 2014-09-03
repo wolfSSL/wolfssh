@@ -37,6 +37,7 @@
 #include <cyassl/ctaocrypt/aes.h>
 #include <cyassl/ctaocrypt/rsa.h>
 #include <cyassl/openssl/rsa.h>
+#include <cyassl/openssl/evp.h>
 
 
 /* convert opaque to 32 bit integer */
@@ -904,6 +905,9 @@ static int GenerateKey(uint8_t* key, uint32_t keySz, uint8_t keyId,
 
 static int GenerateKeys(WOLFSSH* ssh)
 {
+    if (ssh == NULL)
+        return WS_BAD_ARGUMENT;
+
     GenerateKey(ssh->ivClient, ssh->ivClientSz, 'A', ssh->k, ssh->kSz,
                 ssh->h, ssh->hSz, ssh->sessionId, ssh->sessionIdSz);
     GenerateKey(ssh->ivServer, ssh->ivServerSz, 'B', ssh->k, ssh->kSz,
@@ -940,9 +944,15 @@ static int DoPacket(WOLFSSH* ssh)
     switch (msg) {
 
         case MSGID_KEXINIT:
-            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXINIT (len = %d)", payloadSz - 1);
-            ShaUpdate(&ssh->handshake->hash, buf + idx - 1, payloadSz + 1);
-            DoKexInit(ssh, buf, payloadSz - 1, &idx);
+            {
+                uint8_t scratchLen[LENGTH_SZ];
+
+                WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXINIT (len = %d)", payloadSz - 1);
+                c32toa(payloadSz, scratchLen);
+                ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
+                ShaUpdate(&ssh->handshake->hash, buf + idx - 1, payloadSz);
+                DoKexInit(ssh, buf, payloadSz - 1, &idx);
+            }
             break;
 
         case MSGID_KEXDH_INIT:
@@ -1027,6 +1037,7 @@ int ProcessClientVersion(WOLFSSH* ssh)
 {
     int error;
     size_t protoLen = 7; /* Length of the SSH-2.0 portion of the ID str */
+    uint8_t scratch[LENGTH_SZ];
 
     if ( (error = GetInputText(ssh)) < 0) {
         WLOG(WS_LOG_DEBUG, "get input text failed");
@@ -1042,6 +1053,8 @@ int ProcessClientVersion(WOLFSSH* ssh)
         return WS_VERSION_E;
     }
 
+    c32toa(ssh->inputBuffer.length - 2, scratch);
+    ShaUpdate(&ssh->handshake->hash, scratch, LENGTH_SZ);
     ShaUpdate(&ssh->handshake->hash, ssh->inputBuffer.buffer,
                                                    ssh->inputBuffer.length - 2);
     ssh->inputBuffer.idx += ssh->inputBuffer.length;
@@ -1053,9 +1066,13 @@ int ProcessClientVersion(WOLFSSH* ssh)
 int SendServerVersion(WOLFSSH* ssh)
 {
     uint32_t sshIdStrSz = (uint32_t)WSTRLEN(sshIdStr);
+    uint8_t  scratch[LENGTH_SZ];
 
     WLOG(WS_LOG_DEBUG, "%s", sshIdStr);
     SendText(ssh, sshIdStr, (uint32_t)WSTRLEN(sshIdStr));
+    sshIdStrSz -= 2; /* Remove the CRLF */
+    c32toa(sshIdStrSz, scratch);
+    ShaUpdate(&ssh->handshake->hash, scratch, LENGTH_SZ);
     ShaUpdate(&ssh->handshake->hash, (const uint8_t*)sshIdStr, sshIdStrSz);
 
     return WS_FATAL_ERROR;
@@ -1214,6 +1231,11 @@ int SendKexInit(WOLFSSH* ssh)
 
     ssh->outputBuffer.length = idx;
 
+    {
+        uint8_t scratchLen[LENGTH_SZ];
+        c32toa(payloadSz, scratchLen);
+        ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
+    }
     ShaUpdate(&ssh->handshake->hash, payload, payloadSz);
 
     BundlePacket(ssh);
@@ -1276,12 +1298,9 @@ int SendKexDhReply(WOLFSSH* ssh)
     RsaFlattenPublicKey(&rsaKey, rsaE, &rsaESz, rsaN, &rsaNSz);
     if (rsaE[0] & 0x80) rsaEPad = 1;
     if (rsaN[0] & 0x80) rsaNPad = 1;
-    printf("XXX rsaESz = %d, rsaNSz = %d\n", rsaESz, rsaNSz);
-    DumpOctetString(rsaE, rsaESz);
-    DumpOctetString(rsaN, rsaNSz);
     rsaKeyBlockSz = (LENGTH_SZ * 3) + 7 + rsaESz + rsaEPad + rsaNSz + rsaNPad;
         /* The 7 is for the name "ssh-rsa". */
-    c32toa(rsaKeyBlockSz + LENGTH_SZ, scratchLen);
+    c32toa(rsaKeyBlockSz, scratchLen);
     ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
     c32toa(7, scratchLen);
     ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
@@ -1292,7 +1311,7 @@ int SendKexDhReply(WOLFSSH* ssh)
         scratchLen[0] = 0;
         ShaUpdate(&ssh->handshake->hash, scratchLen, 1);
     }
-    ShaUpdate(&ssh->handshake->hash, rsaN, rsaNSz);
+    ShaUpdate(&ssh->handshake->hash, rsaE, rsaESz);
     c32toa(rsaNSz + rsaNPad, scratchLen);
     ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
     if (rsaNPad) {
@@ -1309,7 +1328,7 @@ int SendKexDhReply(WOLFSSH* ssh)
     /* Make the server's DH f-value, and the shared secret k. */
     DhGenerateKeyPair(&dhKey, ssh->rng, y, &ySz, f, &fSz);
     if (f[0] & 0x80) fPad = 1;
-    DhAgree(&dhKey, ssh->k, &ssh->kSz, f, fSz,
+    DhAgree(&dhKey, ssh->k, &ssh->kSz, y, ySz,
                                         ssh->handshake->e, ssh->handshake->eSz);
     if (ssh->k[0] & 0x80) kPad = 1;
     FreeDhKey(&dhKey);
@@ -1340,23 +1359,31 @@ int SendKexDhReply(WOLFSSH* ssh)
     /* Save the handshake hash value h, and session ID. */
     ShaFinal(&ssh->handshake->hash, ssh->h);
     ssh->hSz = SHA_DIGEST_SIZE;
+#ifdef SHOW_MASTER_SECRET
+    printf("Handshake hash:\n");
+    DumpOctetString(ssh->h, ssh->hSz);
+#endif
     if (ssh->sessionIdSz == 0) {
         WMEMCPY(ssh->sessionId, ssh->h, ssh->hSz);
         ssh->sessionIdSz = ssh->hSz;
     }
 
     /* Sign h with the server's RSA private key. */
-    {
+    if (1) {
         CYASSL_RSA* altKey = CyaSSL_RSA_new();
         ret = CyaSSL_RSA_LoadDer(altKey, ssh->ctx->privateKey, (int)ssh->ctx->privateKeySz);
-        ret = CyaSSL_RSA_sign(64, ssh->h, ssh->hSz, sig, &sigSz, altKey);
+        ret = CyaSSL_RSA_sign(NID_sha1, ssh->h, ssh->hSz, sig, &sigSz, altKey);
         CyaSSL_RSA_free(altKey);
     }
-    //sigSz = (uint32_t)RsaSSL_Sign(ssh->h, ssh->hSz, sig, (int)sigSz, &rsaKey, ssh->rng);
+    else
+        sigSz = (uint32_t)RsaSSL_Sign(ssh->h, ssh->hSz, sig, (int)sigSz, &rsaKey, ssh->rng);
     FreeRsaKey(&rsaKey);
     sigBlockSz = (LENGTH_SZ * 2) + 7 + sigSz;
 
-    GenerateKeys(ssh);
+    if (0)
+        GenerateKeys(ssh);
+    else
+        GenerateKeys(NULL);
 
     /* Get the buffer, copy the packet data, once f is laid into the buffer,
      * add it to the hash and then add K. */
