@@ -1370,13 +1370,25 @@ int SendKexDhReply(WOLFSSH* ssh)
 
     /* Sign h with the server's RSA private key. */
     if (1) {
+        Sha sha;
         CYASSL_RSA* altKey = CyaSSL_RSA_new();
+        uint8_t digest[SHA_DIGEST_SIZE];
+        /* The message we want to sign is the exhange hash, h.
+         * According to RFC 3447, the first step in signing the message
+         * is to hash it, then apply DER encoding around it, then the
+         * RSA encryption. I looked at the client code, and that is
+         * definitely happening.
+         *
+         * wolfCrypt needs a function to do what CyaSSL_RSA_sign() is doing.
+         */
+
+        InitSha(&sha);
+        ShaUpdate(&sha, ssh->h, ssh->hSz);
+        ShaFinal(&sha, digest);
         ret = CyaSSL_RSA_LoadDer(altKey, ssh->ctx->privateKey, (int)ssh->ctx->privateKeySz);
-        ret = CyaSSL_RSA_sign(NID_sha1, ssh->h, ssh->hSz, sig, &sigSz, altKey);
+        ret = CyaSSL_RSA_sign(NID_sha1, digest, SHA_DIGEST_SIZE, sig, &sigSz, altKey);
         CyaSSL_RSA_free(altKey);
     }
-    else
-        sigSz = (uint32_t)RsaSSL_Sign(ssh->h, ssh->hSz, sig, (int)sigSz, &rsaKey, ssh->rng);
     FreeRsaKey(&rsaKey);
     sigBlockSz = (LENGTH_SZ * 2) + 7 + sigSz;
 
