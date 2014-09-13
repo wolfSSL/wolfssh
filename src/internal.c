@@ -655,7 +655,7 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
         return WS_INVALID_ALGO_ID;
     }
 
-    ssh->handshake->keyExchangeId = algoId;
+    ssh->handshake->kexId = algoId;
 
     /* Server Host Key Algorithms */
     WLOG(WS_LOG_DEBUG, "DKI: Server Host Key Algorithms");
@@ -667,7 +667,7 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
         return WS_INVALID_ALGO_ID;
     }
 
-    ssh->handshake->publicKeyId = algoId;
+    ssh->handshake->pubKeyId = algoId;
 
     /* Enc Algorithms - Client to Server */
     WLOG(WS_LOG_DEBUG, "DKI: Enc Algorithms - Client to Server");
@@ -688,7 +688,7 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
         return WS_INVALID_ALGO_ID;
     }
 
-    ssh->handshake->encryptionId = algoId;
+    ssh->handshake->encryptId = algoId;
     ssh->handshake->blockSz = ssh->ivClientSz = ssh->ivServerSz
                                                          = BlockSzForId(algoId);
     ssh->encKeyClientSz = ssh->encKeyServerSz = KeySzForId(algoId);
@@ -712,7 +712,7 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
         return WS_INVALID_ALGO_ID;
     }
 
-    ssh->handshake->integrityId = algoId;
+    ssh->handshake->macId = algoId;
     ssh->handshake->macSz = MacSzForId(algoId);
     ssh->macKeyClientSz = ssh->macKeyServerSz = KeySzForId(algoId);
 
@@ -850,6 +850,21 @@ static int DoKexDhInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 }
 
 
+static int DoNewKeys(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
+{
+    (void)buf;
+    (void)len;
+    (void)idx;
+
+    ssh->peerEncryptId = ssh->handshake->encryptId;
+    ssh->peerMacId = ssh->handshake->macId;
+
+    ssh->clientState = CLIENT_USING_KEYS;
+
+    return WS_SUCCESS;
+}
+
+
 static int GenerateKey(uint8_t* key, uint32_t keySz, uint8_t keyId,
                        const uint8_t* k, uint32_t kSz,
                        const uint8_t* h, uint32_t hSz,
@@ -857,11 +872,19 @@ static int GenerateKey(uint8_t* key, uint32_t keySz, uint8_t keyId,
 {
     uint32_t blocks, remainder;
     Sha sha;
+    uint8_t kPad = 0;
+    uint8_t pad = 0;
+    uint8_t kSzFlat[LENGTH_SZ];
+
+    if (k[0] & 0x80) kPad = 1;
+    c32toa(kSz, kSzFlat);
 
     blocks = keySz / SHA_DIGEST_SIZE;
     remainder = keySz % SHA_DIGEST_SIZE;
 
     InitSha(&sha);
+    ShaUpdate(&sha, kSzFlat, LENGTH_SZ);
+    if (kPad) ShaUpdate(&sha, &pad, 1);
     ShaUpdate(&sha, k, kSz);
     ShaUpdate(&sha, h, hSz);
     ShaUpdate(&sha, &keyId, sizeof(keyId));
@@ -882,6 +905,8 @@ static int GenerateKey(uint8_t* key, uint32_t keySz, uint8_t keyId,
 
         for (curBlock = 1; curBlock < blocks; curBlock++) {
             InitSha(&sha);
+            ShaUpdate(&sha, kSzFlat, LENGTH_SZ);
+            if (kPad) ShaUpdate(&sha, &pad, 1);
             ShaUpdate(&sha, k, kSz);
             ShaUpdate(&sha, h, hSz);
             ShaUpdate(&sha, key, runningKeySz);
@@ -892,6 +917,8 @@ static int GenerateKey(uint8_t* key, uint32_t keySz, uint8_t keyId,
         if (remainder > 0) {
             uint8_t lastBlock[SHA_DIGEST_SIZE];
             InitSha(&sha);
+            ShaUpdate(&sha, kSzFlat, LENGTH_SZ);
+            if (kPad) ShaUpdate(&sha, &pad, 1);
             ShaUpdate(&sha, k, kSz);
             ShaUpdate(&sha, h, hSz);
             ShaUpdate(&sha, key, runningKeySz);
@@ -899,6 +926,9 @@ static int GenerateKey(uint8_t* key, uint32_t keySz, uint8_t keyId,
             WMEMCPY(key + runningKeySz, lastBlock, remainder);
         }
     }
+
+    printf("Key ID %c:", keyId);
+    DumpOctetString(key, keySz);
 
     return 0;
 }
@@ -935,6 +965,7 @@ static int DoPacket(WOLFSSH* ssh)
     uint8_t  padSz;
     uint8_t  msg;
 
+    WLOG(WS_LOG_DEBUG, "DoPacket sequence number: %d", ssh->peerSeq);
     /* Problem: len is equal to the amount of data left in the input buffer.
      *          The beginning part of that data is the packet we want to
      *          decode. The remainder is the pad and the MAC. */
@@ -943,6 +974,22 @@ static int DoPacket(WOLFSSH* ssh)
 
     msg = buf[idx++];
     switch (msg) {
+
+        case MSGID_DISCONNECT:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT (len = %d)", payloadSz - 1);
+            break;
+
+        case MSGID_IGNORE:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT (len = %d)", payloadSz - 1);
+            break;
+
+        case MSGID_UNIMPLEMENTED:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT (len = %d)", payloadSz - 1);
+            break;
+
+        case MSGID_DEBUG:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT (len = %d)", payloadSz - 1);
+            break;
 
         case MSGID_KEXINIT:
             {
@@ -954,6 +1001,11 @@ static int DoPacket(WOLFSSH* ssh)
                 ShaUpdate(&ssh->handshake->hash, buf + idx - 1, payloadSz);
                 DoKexInit(ssh, buf, payloadSz - 1, &idx);
             }
+            break;
+
+        case MSGID_NEWKEYS:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_NEWKEYS (len = %d)", payloadSz - 1);
+            DoNewKeys(ssh, buf, payloadSz - 1, &idx);
             break;
 
         case MSGID_KEXDH_INIT:
@@ -1116,24 +1168,44 @@ static int BundlePacket(WOLFSSH* ssh)
     uint8_t* output;
     uint32_t idx;
     uint8_t  paddingSz;
+    uint8_t  flatSeq[LENGTH_SZ];
 
     output = ssh->outputBuffer.buffer;
     idx = ssh->outputBuffer.length;
     paddingSz = ssh->paddingSz;
+    c32toa(ssh->seq++, flatSeq);
 
     /* Add the padding */
     WMEMSET(output + idx, 0, paddingSz);
     idx += paddingSz;
 
     /* Need to MAC the sequence number and the unencrypted packet */
-    switch (ssh->integrityId) {
+    switch (ssh->macId) {
         case ID_NONE:
             break;
 #if 0
         case ID_HMAC_SHA1_96:
+            {
+                Hmac hmac;
+                uint8_t digest[SHA_DIGEST_SIZE];
+
+                HmacSetKey(&hmac, SHA, ssh->macKeyServer, ssh->macKeyServerSz);
+                HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
+                HmacUpdate(&sha,);
+                HmacFinal(&sha, digest);
+                WMEMCPY(, digest, SHA1_96_SIZE);
+            }
             break;
 
         case ID_HMAC_SHA1:
+            {
+                Hmac hmac;
+
+                HmacSetKey(&hmac, SHA, ssh->macKeyServer, ssh->macKeyServerSz);
+                HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
+                HmacUpdate(&hmac,);
+                HmacFinal(&hmac, );
+            }
             break;
 #endif
         default:
@@ -1144,7 +1216,7 @@ static int BundlePacket(WOLFSSH* ssh)
     ssh->seq++;
 
     /* Encrypt the packet */
-    switch (ssh->encryptionId) {
+    switch (ssh->encryptId) {
         case ID_NONE:
             break;
 #if 0
@@ -1278,7 +1350,7 @@ int SendKexDhReply(WOLFSSH* ssh)
 
     InitDhKey(&dhKey);
 
-    switch (ssh->handshake->keyExchangeId) {
+    switch (ssh->handshake->kexId) {
         case ID_DH_GROUP1_SHA1:
             DhSetKey(&dhKey, dhPrimeGroup1, dhPrimeGroup1Sz,
                                                     dhGenerator, dhGeneratorSz);
@@ -1395,10 +1467,7 @@ int SendKexDhReply(WOLFSSH* ssh)
     FreeRsaKey(&rsaKey);
     sigBlockSz = (LENGTH_SZ * 2) + 7 + sigSz;
 
-    if (0)
-        GenerateKeys(ssh);
-    else
-        GenerateKeys(NULL);
+    GenerateKeys(ssh);
 
     /* Get the buffer, copy the packet data, once f is laid into the buffer,
      * add it to the hash and then add K. */
@@ -1451,6 +1520,30 @@ int SendKexDhReply(WOLFSSH* ssh)
     SendBuffered(ssh);
 
     return 0;
+}
+
+
+int SendNewKeys(WOLFSSH* ssh)
+{
+    uint8_t* output;
+    uint32_t idx = 0;
+
+    PreparePacket(ssh, 1);
+
+    output = ssh->outputBuffer.buffer;
+    idx = ssh->outputBuffer.length;
+
+    output[idx] = MSGID_NEWKEYS;
+    
+    ssh->outputBuffer.length = idx;
+
+    BundlePacket(ssh);
+    SendBuffered(ssh);
+
+    ssh->encryptId = ssh->handshake->encryptId;
+    ssh->macId = ssh->handshake->macId;
+
+    return WS_SUCCESS;
 }
 
 

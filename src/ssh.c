@@ -148,17 +148,15 @@ static WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->ioReadCtx   = &ssh->rfd;  /* prevent invalid access if not correctly */
     ssh->ioWriteCtx  = &ssh->wfd;  /* set */
     ssh->blockSz     = 8;
-    ssh->keyExchangeId = ID_NONE;
-    ssh->publicKeyId   = ID_NONE;
-    ssh->encryptionId  = ID_NONE;
-    ssh->integrityId   = ID_NONE;
+    ssh->encryptId   = ID_NONE;
+    ssh->macId       = ID_NONE;
     ssh->rng         = rng;
     ssh->kSz         = sizeof(ssh->k);
     ssh->handshake   = handshake;
-    handshake->keyExchangeId = ID_NONE;
-    handshake->publicKeyId   = ID_NONE;
-    handshake->encryptionId  = ID_NONE;
-    handshake->integrityId   = ID_NONE;
+    handshake->kexId = ID_NONE;
+    handshake->pubKeyId  = ID_NONE;
+    handshake->encryptId = ID_NONE;
+    handshake->macId = ID_NONE;
 
     if (BufferInit(&ssh->inputBuffer, 0, ctx->heap) != WS_SUCCESS ||
         BufferInit(&ssh->outputBuffer, 0, ctx->heap) != WS_SUCCESS ||

@@ -90,6 +90,7 @@ enum {
 #define PAD_LENGTH_SZ    1
 #define BOOLEAN_SZ       1
 #define MSG_ID_SZ        1
+#define SHA1_96_SZ       (96/8)
 
 
 WOLFSSH_LOCAL uint8_t     NameToId(const char*, uint32_t);
@@ -134,10 +135,10 @@ struct WOLFSSH_CTX {
 
 
 typedef struct HandshakeInfo {
-    uint8_t        keyExchangeId;
-    uint8_t        publicKeyId;
-    uint8_t        encryptionId;
-    uint8_t        integrityId;
+    uint8_t        kexId;
+    uint8_t        pubKeyId;
+    uint8_t        encryptId;
+    uint8_t        macId;
     uint8_t        kexPacketFollows;
 
     uint8_t        blockSz;
@@ -172,10 +173,10 @@ struct WOLFSSH {
     uint8_t        connReset;
     uint8_t        isClosed;
 
-    uint8_t        keyExchangeId; /* not needed after handshake */
-    uint8_t        publicKeyId;
-    uint8_t        encryptionId;
-    uint8_t        integrityId;
+    uint8_t        encryptId;
+    uint8_t        macId;
+    uint8_t        peerEncryptId;
+    uint8_t        peerMacId;
 
     Buffer         inputBuffer;
     Buffer         outputBuffer;
@@ -219,6 +220,7 @@ WOLFSSH_LOCAL int ProcessClientVersion(WOLFSSH*);
 WOLFSSH_LOCAL int SendServerVersion(WOLFSSH*);
 WOLFSSH_LOCAL int SendKexInit(WOLFSSH*);
 WOLFSSH_LOCAL int SendKexDhReply(WOLFSSH*);
+WOLFSSH_LOCAL int SendNewKeys(WOLFSSH*);
 
 
 enum AcceptStates {
@@ -236,7 +238,8 @@ enum ClientStates {
     CLIENT_BEGIN = 0,
     CLIENT_VERSION_DONE,
     CLIENT_ALGO_DONE,
-    CLIENT_KEXDHINIT_DONE
+    CLIENT_KEXDHINIT_DONE,
+    CLIENT_USING_KEYS
 };
 
 
