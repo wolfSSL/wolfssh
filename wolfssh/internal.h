@@ -91,6 +91,7 @@ enum {
 #define BOOLEAN_SZ       1
 #define MSG_ID_SZ        1
 #define SHA1_96_SZ       (96/8)
+#define UINT32_SZ        4
 
 
 WOLFSSH_LOCAL uint8_t     NameToId(const char*, uint32_t);
@@ -221,6 +222,10 @@ WOLFSSH_LOCAL int SendServerVersion(WOLFSSH*);
 WOLFSSH_LOCAL int SendKexInit(WOLFSSH*);
 WOLFSSH_LOCAL int SendKexDhReply(WOLFSSH*);
 WOLFSSH_LOCAL int SendNewKeys(WOLFSSH*);
+WOLFSSH_LOCAL int SendUnimplemented(WOLFSSH*);
+WOLFSSH_LOCAL int SendDisconnect(WOLFSSH*, uint32_t);
+WOLFSSH_LOCAL int SendIgnore(WOLFSSH*, const unsigned char*, uint32_t);
+WOLFSSH_LOCAL int SendDebug(WOLFSSH*, byte, const char*);
 
 
 enum AcceptStates {
@@ -276,7 +281,8 @@ enum WS_DynamicTypes {
     DYNTYPE_CERT,
     DYNTYPE_KEY,
     DYNTYPE_DH,
-    DYNTYPE_RNG
+    DYNTYPE_RNG,
+    DYNTYPE_STRING
 };
 
 

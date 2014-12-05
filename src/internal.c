@@ -956,6 +956,154 @@ static int GenerateKeys(WOLFSSH* ssh)
 }
 
 
+static int DoIgnore(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
+{
+    uint32_t dataSz;
+    uint32_t begin = *idx;
+
+    (void)ssh;
+    (void)len;
+
+    ato32(buf + begin, &dataSz);
+    begin += LENGTH_SZ + dataSz;
+
+    *idx = begin;
+
+    return WS_SUCCESS;
+}
+
+
+static int DoDebug(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
+{
+    uint8_t  alwaysDisplay;
+    char*    msg = NULL;
+    char*    lang = NULL;
+    uint32_t strSz;
+    uint32_t begin = *idx;
+
+    (void)ssh;
+    (void)len;
+
+    alwaysDisplay = buf[begin++];
+
+    ato32(buf + begin, &strSz);
+    begin += LENGTH_SZ;
+    if (strSz > 0) {
+        msg = (char*)WMALLOC(strSz + 1, ssh->ctx->heap, DYNTYPE_STRING);
+        if (msg != NULL) {
+            WMEMCPY(msg, buf + begin, strSz);
+            msg[strSz] = 0;
+        }
+        else {
+            return WS_MEMORY_E;
+        }
+        begin += strSz;
+    }
+
+    ato32(buf + begin, &strSz);
+    begin += LENGTH_SZ;
+    if (strSz > 0) {
+        lang = (char*)WMALLOC(strSz + 1, ssh->ctx->heap, DYNTYPE_STRING);
+        if (lang != NULL) {
+            WMEMCPY(lang, buf + begin, strSz);
+            lang[strSz] = 0;
+        }
+        else {
+            WFREE(msg, ssh->ctx->heap, DYNTYPE_STRING);
+            return WS_MEMORY_E;
+        }
+        begin += strSz;
+    }
+
+    if (alwaysDisplay) {
+        WLOG(WS_LOG_DEBUG, "DEBUG MSG (%s): %s",
+             (lang == NULL) ? "none" : lang,
+             (msg == NULL) ? "no message" : msg);
+    }
+
+    *idx = begin;
+
+    WFREE(msg, ssh->ctx->heap, DYNTYPE_STRING);
+    WFREE(lang, ssh->ctx->heap, DYNTYPE_STRING);
+
+    return WS_SUCCESS;
+}
+
+
+static int DoUnimplemented(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
+{
+    uint32_t seq;
+    uint32_t begin = *idx;
+
+    (void)ssh;
+    (void)len;
+
+    ato32(buf + begin, &seq);
+    begin += UINT32_SZ;
+
+    WLOG(WS_LOG_DEBUG, "UNIMPLEMENTED: seq %u", seq);
+
+    *idx = begin;
+
+    return WS_SUCCESS;
+}
+
+
+static int DoDisconnect(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
+{
+    uint32_t    reason;
+    const char* reasonStr;
+    uint32_t    begin = *idx;
+
+    (void)ssh;
+    (void)len;
+
+    ato32(buf + begin, &reason);
+    begin += UINT32_SZ;
+
+    switch (reason) {
+        case WOLFSSH_DISCONNECT_HOST_NOT_ALLOWED_TO_CONNECT:
+            reasonStr = "host not allowed to connect"; break;
+        case WOLFSSH_DISCONNECT_PROTOCOL_ERROR:
+            reasonStr = "protocol error"; break;
+        case WOLFSSH_DISCONNECT_KEY_EXCHANGE_FAILED:
+            reasonStr = "key exchange failed"; break;
+        case WOLFSSH_DISCONNECT_RESERVED:
+            reasonStr = "reserved"; break;
+        case WOLFSSH_DISCONNECT_MAC_ERROR:
+            reasonStr = "mac error"; break;
+        case WOLFSSH_DISCONNECT_COMPRESSION_ERROR:
+            reasonStr = "compression error"; break;
+        case WOLFSSH_DISCONNECT_SERVICE_NOT_AVAILABLE:
+            reasonStr = "service not available"; break;
+        case WOLFSSH_DISCONNECT_PROTOCOL_VERSION_NOT_SUPPORTED:
+            reasonStr = "protocol version not supported"; break;
+        case WOLFSSH_DISCONNECT_HOST_KEY_NOT_VERIFIABLE:
+            reasonStr = "host key not verifiable"; break;
+        case WOLFSSH_DISCONNECT_CONNECTION_LOST:
+            reasonStr = "connection lost"; break;
+        case WOLFSSH_DISCONNECT_BY_APPLICATION:
+            reasonStr = "disconnect by application"; break;
+        case WOLFSSH_DISCONNECT_TOO_MANY_CONNECTIONS:
+            reasonStr = "too many connections"; break;
+        case WOLFSSH_DISCONNECT_AUTH_CANCELLED_BY_USER:
+            reasonStr = "auth cancelled by user"; break;
+        case WOLFSSH_DISCONNECT_NO_MORE_AUTH_METHODS_AVAILABLE:
+            reasonStr = "no more auth methods available"; break;
+        case WOLFSSH_DISCONNECT_ILLEGAL_USER_NAME:
+            reasonStr = "illegal user name"; break;
+        default:
+            reasonStr = "unknown reason";
+    }
+
+    WLOG(WS_LOG_DEBUG, "DISCONNECT: (%u) %s", reason, reasonStr);
+
+    *idx = begin;
+
+    return WS_SUCCESS;
+}
+
+
 static int DoPacket(WOLFSSH* ssh)
 {
     uint8_t* buf = (uint8_t*)ssh->inputBuffer.buffer;
@@ -977,18 +1125,22 @@ static int DoPacket(WOLFSSH* ssh)
 
         case MSGID_DISCONNECT:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT (len = %d)", payloadSz - 1);
+            DoDisconnect(ssh, buf, payloadSz - 1, &idx);
             break;
 
         case MSGID_IGNORE:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT (len = %d)", payloadSz - 1);
+            DoIgnore(ssh, buf, payloadSz - 1, &idx);
             break;
 
         case MSGID_UNIMPLEMENTED:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT (len = %d)", payloadSz - 1);
+            DoUnimplemented(ssh, buf, payloadSz - 1, &idx);
             break;
 
         case MSGID_DEBUG:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT (len = %d)", payloadSz - 1);
+            DoDebug(ssh, buf, payloadSz - 1, &idx);
             break;
 
         case MSGID_KEXINIT:
@@ -1018,7 +1170,8 @@ static int DoPacket(WOLFSSH* ssh)
             break;
 
         default:
-            WLOG(WS_LOG_DEBUG, "Unsupported message ID (%d)", msg);
+            WLOG(WS_LOG_DEBUG, "Unimplemented message ID (%d)", msg);
+            SendUnimplemented(ssh);
             break;
     }
 
@@ -1089,7 +1242,7 @@ static const char sshIdStr[] = "SSH-2.0-wolfSSHv" LIBWOLFSSH_VERSION_STRING "\r\
 int ProcessClientVersion(WOLFSSH* ssh)
 {
     int error;
-    size_t protoLen = 7; /* Length of the SSH-2.0 portion of the ID str */
+    uint32_t protoLen = 7; /* Length of the SSH-2.0 portion of the ID str */
     uint8_t scratch[LENGTH_SZ];
 
     if ( (error = GetInputText(ssh)) < 0) {
@@ -1528,12 +1681,12 @@ int SendNewKeys(WOLFSSH* ssh)
     uint8_t* output;
     uint32_t idx = 0;
 
-    PreparePacket(ssh, 1);
+    PreparePacket(ssh, MSG_ID_SZ);
 
     output = ssh->outputBuffer.buffer;
     idx = ssh->outputBuffer.length;
 
-    output[idx] = MSGID_NEWKEYS;
+    output[idx++] = MSGID_NEWKEYS;
     
     ssh->outputBuffer.length = idx;
 
@@ -1542,6 +1695,128 @@ int SendNewKeys(WOLFSSH* ssh)
 
     ssh->encryptId = ssh->handshake->encryptId;
     ssh->macId = ssh->handshake->macId;
+
+    return WS_SUCCESS;
+}
+
+
+int SendUnimplemented(WOLFSSH* ssh)
+{
+    uint8_t* output;
+    uint32_t idx = 0;
+
+    PreparePacket(ssh, MSG_ID_SZ + LENGTH_SZ);
+
+    output = ssh->outputBuffer.buffer;
+    idx = ssh->outputBuffer.length;
+
+    output[idx++] = MSGID_UNIMPLEMENTED;
+    c32toa(ssh->peerSeq, output + idx);
+    idx += UINT32_SZ;
+
+    ssh->outputBuffer.length = idx;
+
+    BundlePacket(ssh);
+    SendBuffered(ssh);
+
+    return WS_SUCCESS;
+}
+
+
+int SendDisconnect(WOLFSSH* ssh, uint32_t reason)
+{
+    uint8_t* output;
+    uint32_t idx = 0;
+
+    PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ + (LENGTH_SZ * 2));
+
+    output = ssh->outputBuffer.buffer;
+    idx = ssh->outputBuffer.length;
+
+    output[idx++] = MSGID_DISCONNECT;
+    c32toa(reason, output + idx);
+    idx += UINT32_SZ;
+    c32toa(0, output + idx);
+    idx += LENGTH_SZ;
+    c32toa(0, output + idx);
+    idx += LENGTH_SZ;
+
+    ssh->outputBuffer.length = idx;
+
+    BundlePacket(ssh);
+    SendBuffered(ssh);
+
+    return WS_SUCCESS;
+}
+
+
+int SendIgnore(WOLFSSH* ssh, const unsigned char* data, uint32_t dataSz)
+{
+    uint8_t* output;
+    uint32_t idx = 0;
+
+    if (ssh == NULL || (data == NULL && dataSz > 0))
+        return WS_BAD_ARGUMENT;
+
+    PreparePacket(ssh, MSG_ID_SZ + LENGTH_SZ + dataSz);
+
+    output = ssh->outputBuffer.buffer;
+    idx = ssh->outputBuffer.length;
+
+    output[idx++] = MSGID_IGNORE;
+    c32toa(dataSz, output + idx);
+    idx += LENGTH_SZ;
+    if (dataSz > 0) {
+        WMEMCPY(output + idx, data, dataSz);
+        idx += dataSz;
+    }
+
+    ssh->outputBuffer.length = idx;
+
+    BundlePacket(ssh);
+    SendBuffered(ssh);
+
+    return WS_SUCCESS;
+}
+
+
+static const char     cannedLangTag[] = "en-us";
+static const uint32_t cannedLangTagSz = sizeof(cannedLangTag) - 1;
+
+
+int SendDebug(WOLFSSH* ssh, byte alwaysDisplay, const char* msg)
+{
+    uint32_t msgSz;
+    uint8_t* output;
+    uint32_t idx = 0;
+
+    if (ssh == NULL)
+        return WS_BAD_ARGUMENT;
+
+    msgSz = (msg != NULL) ? (uint32_t)WSTRLEN(msg) : 0;
+
+    PreparePacket(ssh, MSG_ID_SZ + BOOLEAN_SZ + (LENGTH_SZ * 2) + msgSz + cannedLangTagSz);
+
+    output = ssh->outputBuffer.buffer;
+    idx = ssh->outputBuffer.length;
+
+    output[idx++] = MSGID_DEBUG;
+    output[idx++] = (alwaysDisplay != 0);
+    c32toa(msgSz, output + idx);
+    idx += LENGTH_SZ;
+    if (msgSz > 0) {
+        WMEMCPY(output + idx, msg, msgSz);
+        idx += msgSz;
+    }
+    c32toa(cannedLangTagSz, output + idx);
+    idx += LENGTH_SZ;
+    WMEMCPY(output + idx, cannedLangTag, cannedLangTagSz);
+    idx += cannedLangTagSz;
+
+    ssh->outputBuffer.length = idx;
+
+    BundlePacket(ssh);
+    SendBuffered(ssh);
 
     return WS_SUCCESS;
 }
