@@ -59,6 +59,8 @@ static INLINE void c32toa(uint32_t u32, uint8_t* c)
 
 const char* GetErrorString(int err)
 {
+    (void)err;
+
 #ifdef NO_WOLFSSH_STRINGS
     return "No wolfSSH strings available";
 #else
@@ -1057,10 +1059,14 @@ static int DoDisconnect(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 
     (void)ssh;
     (void)len;
+    (void)reasonStr;
 
     ato32(buf + begin, &reason);
     begin += UINT32_SZ;
 
+#ifdef NO_WOLFSSH_STRINGS
+    WLOG(WS_LOG_DEBUG, "DISCONNECT: (%u)", reason);
+#else
     switch (reason) {
         case WOLFSSH_DISCONNECT_HOST_NOT_ALLOWED_TO_CONNECT:
             reasonStr = "host not allowed to connect"; break;
@@ -1095,8 +1101,9 @@ static int DoDisconnect(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
         default:
             reasonStr = "unknown reason";
     }
-
     WLOG(WS_LOG_DEBUG, "DISCONNECT: (%u) %s", reason, reasonStr);
+#endif
+
 
     *idx = begin;
 
