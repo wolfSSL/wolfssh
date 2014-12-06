@@ -35,9 +35,8 @@
 #include <wolfssh/internal.h>
 #include <wolfssh/log.h>
 #include <cyassl/ctaocrypt/aes.h>
+#include <cyassl/ctaocrypt/asn.h>
 #include <cyassl/ctaocrypt/rsa.h>
-#include <cyassl/openssl/rsa.h>
-#include <cyassl/openssl/evp.h>
 
 
 /* convert opaque to 32 bit integer */
@@ -1104,7 +1103,6 @@ static int DoDisconnect(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
     WLOG(WS_LOG_DEBUG, "DISCONNECT: (%u) %s", reason, reasonStr);
 #endif
 
-
     *idx = begin;
 
     return WS_SUCCESS;
@@ -1604,25 +1602,30 @@ int SendKexDhReply(WOLFSSH* ssh)
     }
 
     /* Sign h with the server's RSA private key. */
-    if (1) {
+    {
         Sha sha;
-        CYASSL_RSA* altKey = CyaSSL_RSA_new();
         uint8_t digest[SHA_DIGEST_SIZE];
-        /* The message we want to sign is the exhange hash, h.
-         * According to RFC 3447, the first step in signing the message
-         * is to hash it, then apply DER encoding around it, then the
-         * RSA encryption. I looked at the client code, and that is
-         * definitely happening.
-         *
-         * wolfCrypt needs a function to do what CyaSSL_RSA_sign() is doing.
-         */
+        uint8_t encSig[512];
+        uint32_t encSigSz;
 
         InitSha(&sha);
         ShaUpdate(&sha, ssh->h, ssh->hSz);
         ShaFinal(&sha, digest);
-        ret = CyaSSL_RSA_LoadDer(altKey, ssh->ctx->privateKey, (int)ssh->ctx->privateKeySz);
-        ret = CyaSSL_RSA_sign(NID_sha1, digest, SHA_DIGEST_SIZE, sig, &sigSz, altKey);
-        CyaSSL_RSA_free(altKey);
+
+        encSigSz = EncodeSignature(encSig, digest, sizeof(digest), SHAh);
+        if (encSigSz <= 0) {
+            WLOG(WS_LOG_DEBUG, "SendKexDhReply: Bad Encode Sig");
+        }
+        else {
+            /* At this point, sigSz should already be sizeof(sig) */
+            sigSz = RsaSSL_Sign(encSig, encSigSz, sig, sigSz, &rsaKey, ssh->rng);
+            if (sigSz <= 0) {
+                WLOG(WS_LOG_DEBUG, "SendKexDhReply: Bad RSA Sign");
+            }
+            else {
+                /* Success */
+            }
+        }
     }
     FreeRsaKey(&rsaKey);
     sigBlockSz = (LENGTH_SZ * 2) + 7 + sigSz;
