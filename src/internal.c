@@ -34,9 +34,9 @@
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/log.h>
-#include <cyassl/ctaocrypt/aes.h>
 #include <cyassl/ctaocrypt/asn.h>
 #include <cyassl/ctaocrypt/rsa.h>
+#include <cyassl/ctaocrypt/hmac.h>
 
 
 /* convert opaque to 32 bit integer */
@@ -123,6 +123,9 @@ const char* GetErrorString(int err)
 
         case WS_BAD_FILE_E:
             return "bad file";
+
+        case WS_DECRYPT_E:
+            return "decrypt error";
 
         default:
             return "Unknown error code";
@@ -860,6 +863,21 @@ static int DoNewKeys(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
     ssh->peerEncryptId = ssh->handshake->encryptId;
     ssh->peerMacId = ssh->handshake->macId;
 
+    switch (ssh->peerEncryptId) {
+        case ID_NONE:
+            WLOG(WS_LOG_DEBUG, "DNK: peer using cipher none");
+            break;
+
+        case ID_AES128_CBC:
+            WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes128-cbc");
+            AesSetKey(&ssh->decryptCipher.aes, ssh->encKeyClient, ssh->encKeyClientSz, ssh->ivClient, AES_DECRYPTION);
+            break;
+
+        default:
+            WLOG(WS_LOG_DEBUG, "DNK: peer using cipher invalid");
+            break;
+    }
+
     ssh->clientState = CLIENT_USING_KEYS;
 
     return WS_SUCCESS;
@@ -1122,6 +1140,8 @@ static int DoPacket(WOLFSSH* ssh)
     /* Problem: len is equal to the amount of data left in the input buffer.
      *          The beginning part of that data is the packet we want to
      *          decode. The remainder is the pad and the MAC. */
+    /* Skip the packet_length field. */
+    idx += LENGTH_SZ;
     padSz = buf[idx++];
     payloadSz = ssh->curSz - PAD_LENGTH_SZ - padSz;
 
@@ -1181,7 +1201,8 @@ static int DoPacket(WOLFSSH* ssh)
     }
 
     if (idx + padSz > len) {
-        return -1;
+        WLOG(WS_LOG_DEBUG, "Not enough data in buffer for pad.");
+        return WS_BUFFER_E;
     }
     idx += padSz;
 
@@ -1190,12 +1211,46 @@ static int DoPacket(WOLFSSH* ssh)
 }
 
 
+static INLINE int Decrypt(WOLFSSH* ssh, uint8_t* plain, const uint8_t* input,
+                          uint16_t sz)
+{
+    int ret = WS_SUCCESS;
+
+    if (ssh == NULL || plain == NULL || input == NULL || sz == 0)
+        return WS_BAD_ARGUMENT;
+
+    switch (ssh->peerEncryptId) {
+        case ID_NONE:
+            WLOG(WS_LOG_DEBUG, "Decrypt none");
+            break;
+
+        case ID_AES128_CBC:
+            WLOG(WS_LOG_DEBUG, "Decrypt aes128-cbc");
+            if (AesCbcDecrypt(&ssh->decryptCipher.aes, plain, input, sz) < 0)
+                ret = WS_DECRYPT_E;
+
+        default:
+            WLOG(WS_LOG_DEBUG, "Decrypt invalid algo ID");
+            ret = WS_INVALID_ALGO_ID;
+    }
+
+    return ret;
+}
+
+
+static INLINE int VerifyMac(WOLFSSH* ssh)
+{
+    (void)ssh;
+    /* Verify the buffer is big enough for the data plus the mac. */
+    return WS_SUCCESS;
+}
+
+
 int ProcessReply(WOLFSSH* ssh)
 {
     int ret = WS_FATAL_ERROR;
-    int readSz;
+    uint32_t readSz;
 
-    (void)readSz;
     for (;;) {
         switch (ssh->processReplyState) {
             case PROCESS_INIT:
@@ -1205,30 +1260,43 @@ int ProcessReply(WOLFSSH* ssh)
                     return ret;
                 }
                 ssh->processReplyState = PROCESS_PACKET_LENGTH;
+                    WLOG(WS_LOG_DEBUG, "idx = %u, length = %u", ssh->inputBuffer.idx, ssh->inputBuffer.length);
 
-            /* Decrypt first block if encrypted */
+                /* Decrypt first block if encrypted */
+                ret = Decrypt(ssh,
+                              ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
+                              ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
+                              readSz);
 
             case PROCESS_PACKET_LENGTH:
+                /* Peek at the packet_length field. */
                 ato32(ssh->inputBuffer.buffer + ssh->inputBuffer.idx, &ssh->curSz);
-                ssh->inputBuffer.idx += LENGTH_SZ;
                 ssh->processReplyState = PROCESS_PACKET_FINISH;
 
             case PROCESS_PACKET_FINISH:
-                WLOG(WS_LOG_DEBUG, "PR2: size = %d", ssh->curSz);
-                if ((ret = GetInputData(ssh, ssh->curSz)) < 0) {
+                readSz = ssh->curSz + LENGTH_SZ + ssh->macSz;
+                WLOG(WS_LOG_DEBUG, "PR2: size = %d", readSz);
+                if (readSz > 0) {
+                    if ((ret = GetInputData(ssh, readSz)) < 0) {
+                        return ret;
+                    }
 
-                    return ret;
+                    ret = Decrypt(ssh,
+                                  ssh->inputBuffer.buffer + ssh->inputBuffer.idx + ssh->blockSz - LENGTH_SZ,
+                                  ssh->inputBuffer.buffer + ssh->inputBuffer.idx + ssh->blockSz - LENGTH_SZ,
+                                  ssh->curSz - ssh->blockSz);
+
+
+                    ret = VerifyMac(ssh);
                 }
+
                 ssh->processReplyState = PROCESS_PACKET;
-
-                /* Decrypt rest of packet here */
-
-                /* Check MAC here. */
 
             case PROCESS_PACKET:
                 if ( (ret = DoPacket(ssh)) < 0) {
                     return ret;
                 }
+                ssh->inputBuffer.idx += ssh->macSz;
                 break;
 
             default:
@@ -1349,8 +1417,8 @@ static int BundlePacket(WOLFSSH* ssh)
 
                 HmacSetKey(&hmac, SHA, ssh->macKeyServer, ssh->macKeyServerSz);
                 HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
-                HmacUpdate(&sha,);
-                HmacFinal(&sha, digest);
+                HmacUpdate(&hmac,);
+                HmacFinal(&hmac, digest);
                 WMEMCPY(, digest, SHA1_96_SIZE);
             }
             break;
@@ -1370,8 +1438,6 @@ static int BundlePacket(WOLFSSH* ssh)
             WLOG(WS_LOG_DEBUG, "Invalid Mac ID");
             return WS_FATAL_ERROR;
     }
-
-    ssh->seq++;
 
     /* Encrypt the packet */
     switch (ssh->encryptId) {
@@ -1705,6 +1771,21 @@ int SendNewKeys(WOLFSSH* ssh)
 
     ssh->encryptId = ssh->handshake->encryptId;
     ssh->macId = ssh->handshake->macId;
+
+    switch (ssh->encryptId) {
+        case ID_NONE:
+            WLOG(WS_LOG_DEBUG, "SNK: using cipher none");
+            break;
+
+        case ID_AES128_CBC:
+            WLOG(WS_LOG_DEBUG, "SNK: using cipher aes128-cbc");
+            AesSetKey(&ssh->encryptCipher.aes, ssh->encKeyServer, ssh->encKeyServerSz, ssh->ivServer, AES_ENCRYPTION);
+            break;
+
+        default:
+            WLOG(WS_LOG_DEBUG, "SNK: using cipher invalid");
+            break;
+    }
 
     return WS_SUCCESS;
 }

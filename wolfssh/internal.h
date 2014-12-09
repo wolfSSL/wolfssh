@@ -34,6 +34,7 @@
 #include <cyassl/ctaocrypt/sha.h>
 #include <cyassl/ctaocrypt/random.h>
 #include <cyassl/ctaocrypt/dh.h>
+#include <cyassl/ctaocrypt/aes.h>
 
 
 #if !defined (ALIGN16)
@@ -135,6 +136,11 @@ struct WOLFSSH_CTX {
 };
 
 
+typedef struct Ciphers {
+    Aes aes;
+} Ciphers;
+
+
 typedef struct HandshakeInfo {
     uint8_t        kexId;
     uint8_t        pubKeyId;
@@ -178,6 +184,9 @@ struct WOLFSSH {
     uint8_t        macId;
     uint8_t        peerEncryptId;
     uint8_t        peerMacId;
+
+    Ciphers        encryptCipher;
+    Ciphers        decryptCipher;
 
     Buffer         inputBuffer;
     Buffer         outputBuffer;
@@ -235,7 +244,9 @@ enum AcceptStates {
     ACCEPT_CLIENT_ALGO_DONE,
     SERVER_ALGO_SENT,
     ACCEPT_CLIENT_KEXDH_INIT_DONE,
-    SERVER_KEXDH_ACCEPT_SENT
+    SERVER_KEXDH_REPLY_SENT,
+    SERVER_KEXDH_ACCEPT_SENT,
+    SERVER_USING_KEYS
 };
 
 

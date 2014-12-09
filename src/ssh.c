@@ -281,7 +281,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
         case ACCEPT_BEGIN:
             while (ssh->clientState < CLIENT_VERSION_DONE) {
                 if ( (ssh->error = ProcessClientVersion(ssh)) < 0) {
-                    WLOG(WS_LOG_DEBUG, "accept reply error: %d", ssh->error);
+                    WLOG(WS_LOG_DEBUG, "accept reply error 1: %d", ssh->error);
                     return WS_FATAL_ERROR;
                 }
             }
@@ -296,7 +296,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
         case SERVER_VERSION_SENT:
             while (ssh->clientState < CLIENT_ALGO_DONE) {
                 if ( (ssh->error = ProcessReply(ssh)) < 0) {
-                    WLOG(WS_LOG_DEBUG, "accept reply error: %d", ssh->error);
+                    WLOG(WS_LOG_DEBUG, "accept reply error 2: %d", ssh->error);
                     return WS_FATAL_ERROR;
                 }
             }
@@ -306,12 +306,22 @@ int wolfSSH_accept(WOLFSSH* ssh)
         case SERVER_ALGO_SENT:
             while (ssh->clientState < CLIENT_KEXDHINIT_DONE) {
                 if ( (ssh->error = ProcessReply(ssh)) < 0) {
-                    WLOG(WS_LOG_DEBUG, "accept reply error: %d", ssh->error);
+                    WLOG(WS_LOG_DEBUG, "accept reply error 3: %d", ssh->error);
                     return WS_FATAL_ERROR;
                 }
             }
             SendKexDhReply(ssh);
-            break;
+            ssh->acceptState = SERVER_KEXDH_REPLY_SENT;
+
+        case SERVER_KEXDH_REPLY_SENT:
+            while (ssh->clientState < CLIENT_USING_KEYS) {
+                if ( (ssh->error = ProcessReply(ssh)) < 0) {
+                    WLOG(WS_LOG_DEBUG, "accept reply error 4: %d", ssh->error);
+                    return WS_FATAL_ERROR;
+                }
+            }
+            SendNewKeys(ssh);
+            ssh->acceptState = SERVER_USING_KEYS;
     }
 
     return WS_FATAL_ERROR;
