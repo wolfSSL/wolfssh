@@ -127,6 +127,9 @@ const char* GetErrorString(int err)
         case WS_DECRYPT_E:
             return "decrypt error";
 
+        case WS_MAC_E:
+            return "verify mac error";
+
         default:
             return "Unknown error code";
     }
@@ -181,7 +184,7 @@ uint8_t NameToId(const char* name, uint32_t nameSz)
 
 const char* IdToName(uint8_t id)
 {
-    const char* name = NULL;
+    const char* name = "unknown";
     uint32_t i;
 
     for (i = 0; i < (sizeof(NameIdMap)/sizeof(NameIdPair)); i++) {
@@ -430,7 +433,7 @@ static int GetInputData(WOLFSSH* ssh, uint32_t size)
     maxLength  = ssh->inputBuffer.bufferSz - usedLength;
     inSz       = (int)(size - usedLength);      /* from last partial read */
 
-    WLOG(WS_LOG_DEBUG, "GID: size = %d", size);
+    WLOG(WS_LOG_DEBUG, "GID: size = %u", size);
     WLOG(WS_LOG_DEBUG, "GID: usedLength = %d", usedLength);
     WLOG(WS_LOG_DEBUG, "GID: maxLength = %d", maxLength);
     WLOG(WS_LOG_DEBUG, "GID: inSz = %d", inSz);
@@ -571,7 +574,7 @@ static uint8_t MatchIdLists(const uint8_t* left, uint32_t leftSz,
 
     if (left != NULL && leftSz > 0 && right != NULL && rightSz > 0) {
         for (i = 0; i < leftSz; i++) {
-            for (j = 0; i < rightSz; j++) {
+            for (j = 0; j < rightSz; j++) {
                 if (left[i] == right[j]) {
                     WLOG(WS_LOG_DEBUG, "MID: matched %s", IdToName(left[i]));
                     return left[i];
@@ -602,7 +605,7 @@ static INLINE uint8_t MacSzForId(uint8_t id)
         case ID_HMAC_SHA1:
             return SHA_DIGEST_SIZE;
         case ID_HMAC_SHA1_96:
-            return (96/8); /* 96 bits */
+            return SHA1_96_SZ;
         default:
             return 0;
     }
@@ -613,9 +616,8 @@ static INLINE uint8_t KeySzForId(uint8_t id)
 {
     switch (id) {
         case ID_HMAC_SHA1:
-            return SHA_DIGEST_SIZE;
         case ID_HMAC_SHA1_96:
-            return (96/8); /* 96 bits */
+            return SHA_DIGEST_SIZE;
         case ID_AES128_CBC:
         case ID_AES128_CTR:
             return AES_BLOCK_SIZE;
@@ -653,7 +655,7 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
     WLOG(WS_LOG_DEBUG, "DKI: KEX Algorithms");
     listSz = 2;
     DoNameList(list, &listSz, buf, len, &begin);
-    algoId = MatchIdLists(cannedKexAlgo, cannedKexAlgoSz, list, listSz);
+    algoId = MatchIdLists(list, listSz, cannedKexAlgo, cannedKexAlgoSz);
     if (algoId == ID_UNKNOWN) {
         WLOG(WS_LOG_DEBUG, "Unable to negotiate KEX Algo");
         return WS_INVALID_ALGO_ID;
@@ -665,7 +667,7 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
     WLOG(WS_LOG_DEBUG, "DKI: Server Host Key Algorithms");
     listSz = 1;
     DoNameList(list, &listSz, buf, len, &begin);
-    algoId = MatchIdLists(cannedKeyAlgo, cannedKeyAlgoSz, list, listSz);
+    algoId = MatchIdLists(list, listSz, cannedKeyAlgo, cannedKeyAlgoSz);
     if (algoId == ID_UNKNOWN) {
         WLOG(WS_LOG_DEBUG, "Unable to negotiate Server Host Key Algo");
         return WS_INVALID_ALGO_ID;
@@ -677,7 +679,7 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
     WLOG(WS_LOG_DEBUG, "DKI: Enc Algorithms - Client to Server");
     listSz = 3;
     DoNameList(list, &listSz, buf, len, &begin);
-    algoId = MatchIdLists(cannedEncAlgo, cannedEncAlgoSz, list, listSz);
+    algoId = MatchIdLists(list, listSz, cannedEncAlgo, cannedEncAlgoSz);
     if (algoId == ID_UNKNOWN) {
         WLOG(WS_LOG_DEBUG, "Unable to negotiate Encryption Algo C2S");
         return WS_INVALID_ALGO_ID;
@@ -687,7 +689,7 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
     WLOG(WS_LOG_DEBUG, "DKI: Enc Algorithms - Server to Client");
     listSz = 3;
     DoNameList(list, &listSz, buf, len, &begin);
-    if (MatchIdLists(&algoId, 1, list, listSz) == ID_UNKNOWN) {
+    if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
         WLOG(WS_LOG_DEBUG, "Unable to negotiate Encryption Algo S2C");
         return WS_INVALID_ALGO_ID;
     }
@@ -701,7 +703,7 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
     WLOG(WS_LOG_DEBUG, "DKI: MAC Algorithms - Client to Server");
     listSz = 2;
     DoNameList(list, &listSz, buf, len, &begin);
-    algoId = MatchIdLists(cannedMacAlgo, cannedMacAlgoSz, list, listSz);
+    algoId = MatchIdLists(list, listSz, cannedMacAlgo, cannedMacAlgoSz);
     if (algoId == ID_UNKNOWN) {
         WLOG(WS_LOG_DEBUG, "Unable to negotiate MAC Algo C2S");
         return WS_INVALID_ALGO_ID;
@@ -711,7 +713,7 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
     WLOG(WS_LOG_DEBUG, "DKI: MAC Algorithms - Server to Client");
     listSz = 2;
     DoNameList(list, &listSz, buf, len, &begin);
-    if (MatchIdLists(&algoId, 1, list, listSz) == ID_UNKNOWN) {
+    if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
         WLOG(WS_LOG_DEBUG, "Unable to negotiate MAC Algo S2C");
         return WS_INVALID_ALGO_ID;
     }
@@ -727,7 +729,7 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
     WLOG(WS_LOG_DEBUG, "DKI: Compression Algorithms - Client to Server");
     listSz = 1;
     DoNameList(list, &listSz, buf, len, &begin);
-    if (MatchIdLists(&algoId, 1, list, listSz) == ID_UNKNOWN) {
+    if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
         WLOG(WS_LOG_DEBUG, "Unable to negotiate Compression Algo C2S");
         return WS_INVALID_ALGO_ID;
     }
@@ -736,7 +738,7 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
     WLOG(WS_LOG_DEBUG, "DKI: Compression Algorithms - Server to Client");
     listSz = 1;
     DoNameList(list, &listSz, buf, len, &begin);
-    if (MatchIdLists(&algoId, 1, list, listSz) == ID_UNKNOWN) {
+    if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
         WLOG(WS_LOG_DEBUG, "Unable to negotiate Compression Algo S2C");
         return WS_INVALID_ALGO_ID;
     }
@@ -759,7 +761,7 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 
     *idx = begin;
 
-    ssh->clientState = CLIENT_ALGO_DONE;
+    ssh->clientState = CLIENT_KEXINIT_DONE;
     return WS_SUCCESS;
 }
 
@@ -848,7 +850,7 @@ static int DoKexDhInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
         ssh->handshake->eSz = eSz;
     }
 
-    ssh->clientState = CLIENT_KEXDHINIT_DONE;
+    ssh->clientState = CLIENT_KEXDH_INIT_DONE;
     *idx = begin;
     return WS_SUCCESS;
 }
@@ -862,6 +864,8 @@ static int DoNewKeys(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 
     ssh->peerEncryptId = ssh->handshake->encryptId;
     ssh->peerMacId = ssh->handshake->macId;
+    ssh->peerBlockSz = ssh->handshake->blockSz;
+    ssh->peerMacSz = ssh->handshake->macSz;
 
     switch (ssh->peerEncryptId) {
         case ID_NONE:
@@ -896,7 +900,7 @@ static int GenerateKey(uint8_t* key, uint32_t keySz, uint8_t keyId,
     uint8_t kSzFlat[LENGTH_SZ];
 
     if (k[0] & 0x80) kPad = 1;
-    c32toa(kSz, kSzFlat);
+    c32toa(kSz + kPad, kSzFlat);
 
     blocks = keySz / SHA_DIGEST_SIZE;
     remainder = keySz % SHA_DIGEST_SIZE;
@@ -1196,6 +1200,7 @@ static int DoPacket(WOLFSSH* ssh)
 
         default:
             WLOG(WS_LOG_DEBUG, "Unimplemented message ID (%d)", msg);
+            DumpOctetString(buf + idx, payloadSz - 1);
             SendUnimplemented(ssh);
             break;
     }
@@ -1207,6 +1212,8 @@ static int DoPacket(WOLFSSH* ssh)
     idx += padSz;
 
     ssh->inputBuffer.idx = idx;
+    ssh->peerSeq++;
+
     return WS_SUCCESS;
 }
 
@@ -1219,18 +1226,18 @@ static INLINE int Decrypt(WOLFSSH* ssh, uint8_t* plain, const uint8_t* input,
     if (ssh == NULL || plain == NULL || input == NULL || sz == 0)
         return WS_BAD_ARGUMENT;
 
+    WLOG(WS_LOG_DEBUG, "Decrypt %s", IdToName(ssh->peerEncryptId));
+
     switch (ssh->peerEncryptId) {
         case ID_NONE:
-            WLOG(WS_LOG_DEBUG, "Decrypt none");
             break;
 
         case ID_AES128_CBC:
-            WLOG(WS_LOG_DEBUG, "Decrypt aes128-cbc");
             if (AesCbcDecrypt(&ssh->decryptCipher.aes, plain, input, sz) < 0)
                 ret = WS_DECRYPT_E;
+            break;
 
         default:
-            WLOG(WS_LOG_DEBUG, "Decrypt invalid algo ID");
             ret = WS_INVALID_ALGO_ID;
     }
 
@@ -1238,11 +1245,42 @@ static INLINE int Decrypt(WOLFSSH* ssh, uint8_t* plain, const uint8_t* input,
 }
 
 
-static INLINE int VerifyMac(WOLFSSH* ssh)
+static INLINE int VerifyMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
+                            const uint8_t* mac)
 {
-    (void)ssh;
-    /* Verify the buffer is big enough for the data plus the mac. */
-    return WS_SUCCESS;
+    int     ret = WS_SUCCESS;
+    uint8_t flatSeq[LENGTH_SZ];
+    uint8_t checkMac[SHA_DIGEST_SIZE];
+    Hmac    hmac;
+
+    c32toa(ssh->peerSeq, flatSeq);
+
+    WLOG(WS_LOG_DEBUG, "VerifyMac %s", IdToName(ssh->peerMacId));
+    WLOG(WS_LOG_DEBUG, "VM: inSz = %u", inSz);
+    WLOG(WS_LOG_DEBUG, "VM: seq = %u", ssh->peerSeq);
+    WLOG(WS_LOG_DEBUG, "VM: keyLen = %u", ssh->macKeyClientSz);
+
+    switch (ssh->peerMacId) {
+        case ID_NONE:
+            break;
+
+        case ID_HMAC_SHA1:
+        case ID_HMAC_SHA1_96:
+            HmacSetKey(&hmac, SHA, ssh->macKeyClient, ssh->macKeyClientSz);
+            HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
+            HmacUpdate(&hmac, in, inSz);
+            HmacFinal(&hmac, checkMac);
+            DumpOctetString(mac, ssh->peerMacSz);
+            DumpOctetString(checkMac, ssh->peerMacSz);
+            if (WMEMCMP(checkMac, mac, ssh->peerMacSz) != 0)
+                ret = WS_MAC_E;
+            break;
+
+        default:
+            ret = WS_INVALID_ALGO_ID;
+    }
+
+    return ret;
 }
 
 
@@ -1250,17 +1288,19 @@ int ProcessReply(WOLFSSH* ssh)
 {
     int ret = WS_FATAL_ERROR;
     uint32_t readSz;
+    uint8_t peerBlockSz = ssh->peerBlockSz;
+    uint8_t peerMacSz = ssh->peerMacSz;
 
     for (;;) {
         switch (ssh->processReplyState) {
             case PROCESS_INIT:
-                readSz = ssh->blockSz;
-                WLOG(WS_LOG_DEBUG, "PR1: size = %d", readSz);
+                readSz = peerBlockSz;
+                WLOG(WS_LOG_DEBUG, "PR1: size = %u", readSz);
                 if ((ret = GetInputData(ssh, readSz)) < 0) {
                     return ret;
                 }
                 ssh->processReplyState = PROCESS_PACKET_LENGTH;
-                    WLOG(WS_LOG_DEBUG, "idx = %u, length = %u", ssh->inputBuffer.idx, ssh->inputBuffer.length);
+                WLOG(WS_LOG_DEBUG, "idx = %u, length = %u", ssh->inputBuffer.idx, ssh->inputBuffer.length);
 
                 /* Decrypt first block if encrypted */
                 ret = Decrypt(ssh,
@@ -1274,29 +1314,40 @@ int ProcessReply(WOLFSSH* ssh)
                 ssh->processReplyState = PROCESS_PACKET_FINISH;
 
             case PROCESS_PACKET_FINISH:
-                readSz = ssh->curSz + LENGTH_SZ + ssh->macSz;
-                WLOG(WS_LOG_DEBUG, "PR2: size = %d", readSz);
+                readSz = ssh->curSz + LENGTH_SZ + peerMacSz;
+                WLOG(WS_LOG_DEBUG, "PR2: size = %u", readSz);
                 if (readSz > 0) {
                     if ((ret = GetInputData(ssh, readSz)) < 0) {
                         return ret;
                     }
 
                     ret = Decrypt(ssh,
-                                  ssh->inputBuffer.buffer + ssh->inputBuffer.idx + ssh->blockSz - LENGTH_SZ,
-                                  ssh->inputBuffer.buffer + ssh->inputBuffer.idx + ssh->blockSz - LENGTH_SZ,
-                                  ssh->curSz - ssh->blockSz);
+                                  ssh->inputBuffer.buffer + ssh->inputBuffer.idx + peerBlockSz,
+                                  ssh->inputBuffer.buffer + ssh->inputBuffer.idx + peerBlockSz,
+                                  ssh->curSz + LENGTH_SZ - peerBlockSz);
+                    if (ret != WS_SUCCESS) {
+                        WLOG(WS_LOG_DEBUG, "PR: Decrypt fail");
+                        return ret;
+                    }
 
-
-                    ret = VerifyMac(ssh);
+                    /* Verify the buffer is big enough for the data plus the mac. */
+                    ret = VerifyMac(ssh,
+                                    ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
+                                    ssh->curSz + LENGTH_SZ,
+                                    ssh->inputBuffer.buffer + ssh->inputBuffer.idx + LENGTH_SZ + ssh->curSz);
+                    if (ret != WS_SUCCESS) {
+                        WLOG(WS_LOG_DEBUG, "PR: VerifyMac fail");
+                        return ret;
+                    }
                 }
-
                 ssh->processReplyState = PROCESS_PACKET;
 
             case PROCESS_PACKET:
                 if ( (ret = DoPacket(ssh)) < 0) {
                     return ret;
                 }
-                ssh->inputBuffer.idx += ssh->macSz;
+                WLOG(WS_LOG_DEBUG, "PR3: peerMacSz = %u", peerMacSz);
+                ssh->inputBuffer.idx += peerMacSz;
                 break;
 
             default:
@@ -1769,7 +1820,9 @@ int SendNewKeys(WOLFSSH* ssh)
     BundlePacket(ssh);
     SendBuffered(ssh);
 
+    ssh->blockSz = ssh->handshake->blockSz;
     ssh->encryptId = ssh->handshake->encryptId;
+    ssh->macSz = ssh->handshake->macSz;
     ssh->macId = ssh->handshake->macId;
 
     switch (ssh->encryptId) {

@@ -60,7 +60,8 @@ enum WS_ErrorCodes {
     WS_RSA_E           = -18,
     WS_BAD_FILE_E      = -19,
     WS_INVALID_ALGO_ID = -20,
-    WS_DECRYPT_E       = -21
+    WS_DECRYPT_E       = -21,
+    WS_MAC_E           = -22
 };
 
 

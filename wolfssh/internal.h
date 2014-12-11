@@ -86,12 +86,13 @@ enum {
 #define MAX_INTEGRITY    2
 #define MAX_KEY_EXCHANGE 2
 #define MAX_PUBLIC_KEY   1
+#define MIN_BLOCK_SZ     8
 #define COOKIE_SZ        16
 #define LENGTH_SZ        4
 #define PAD_LENGTH_SZ    1
 #define BOOLEAN_SZ       1
 #define MSG_ID_SZ        1
-#define SHA1_96_SZ       (96/8)
+#define SHA1_96_SZ       12
 #define UINT32_SZ        4
 
 
@@ -170,8 +171,6 @@ struct WOLFSSH {
     uint32_t       curSz;
     uint32_t       seq;
     uint32_t       peerSeq;
-    uint8_t        blockSz;
-    uint8_t        macSz;
     uint8_t        paddingSz;
     uint8_t        acceptState;
     uint8_t        clientState;
@@ -180,10 +179,14 @@ struct WOLFSSH {
     uint8_t        connReset;
     uint8_t        isClosed;
 
+    uint8_t        blockSz;
     uint8_t        encryptId;
     uint8_t        macId;
+    uint8_t        macSz;
+    uint8_t        peerBlockSz;
     uint8_t        peerEncryptId;
     uint8_t        peerMacId;
+    uint8_t        peerMacSz;
 
     Ciphers        encryptCipher;
     Ciphers        decryptCipher;
@@ -199,17 +202,17 @@ struct WOLFSSH {
     uint8_t        sessionId[SHA_DIGEST_SIZE];
     uint32_t       sessionIdSz;
 
-    uint8_t        ivClient[16];
+    uint8_t        ivClient[AES_BLOCK_SIZE];
     uint8_t        ivClientSz;
-    uint8_t        ivServer[16];
+    uint8_t        ivServer[AES_BLOCK_SIZE];
     uint8_t        ivServerSz;
-    uint8_t        encKeyClient[16];
+    uint8_t        encKeyClient[AES_BLOCK_SIZE];
     uint8_t        encKeyClientSz;
-    uint8_t        encKeyServer[16];
+    uint8_t        encKeyServer[AES_BLOCK_SIZE];
     uint8_t        encKeyServerSz;
-    uint8_t        macKeyClient[20];
+    uint8_t        macKeyClient[SHA_DIGEST_SIZE];
     uint8_t        macKeyClientSz;
-    uint8_t        macKeyServer[20];
+    uint8_t        macKeyServer[SHA_DIGEST_SIZE];
     uint8_t        macKeyServerSz;
 
     HandshakeInfo* handshake;
@@ -240,21 +243,21 @@ WOLFSSH_LOCAL int SendDebug(WOLFSSH*, byte, const char*);
 enum AcceptStates {
     ACCEPT_BEGIN = 0,
     ACCEPT_CLIENT_VERSION_DONE,
-    SERVER_VERSION_SENT,
-    ACCEPT_CLIENT_ALGO_DONE,
-    SERVER_ALGO_SENT,
+    ACCEPT_SERVER_VERSION_SENT,
+    ACCEPT_CLIENT_KEXINIT_DONE,
+    ACCEPT_SERVER_KEXINIT_SENT,
     ACCEPT_CLIENT_KEXDH_INIT_DONE,
-    SERVER_KEXDH_REPLY_SENT,
-    SERVER_KEXDH_ACCEPT_SENT,
-    SERVER_USING_KEYS
+    ACCEPT_SERVER_KEXDH_REPLY_SENT,
+    ACCEPT_USING_KEYS,
+    ACCEPT_CLIENT_USERAUTH_DONE
 };
 
 
 enum ClientStates {
     CLIENT_BEGIN = 0,
     CLIENT_VERSION_DONE,
-    CLIENT_ALGO_DONE,
-    CLIENT_KEXDHINIT_DONE,
+    CLIENT_KEXINIT_DONE,
+    CLIENT_KEXDH_INIT_DONE,
     CLIENT_USING_KEYS
 };
 

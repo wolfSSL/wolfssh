@@ -143,13 +143,17 @@ static WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     WMEMSET(handshake, 0, sizeof(HandshakeInfo));
 
     ssh->ctx         = ctx;
+    ssh->error       = WS_SUCCESS;
     ssh->rfd         = -1;         /* set to invalid */
     ssh->wfd         = -1;         /* set to invalid */
     ssh->ioReadCtx   = &ssh->rfd;  /* prevent invalid access if not correctly */
     ssh->ioWriteCtx  = &ssh->wfd;  /* set */
-    ssh->blockSz     = 8;
+    ssh->acceptState = ACCEPT_BEGIN;
+    ssh->clientState = CLIENT_BEGIN;
+    ssh->blockSz     = MIN_BLOCK_SZ;
     ssh->encryptId   = ID_NONE;
     ssh->macId       = ID_NONE;
+    ssh->peerBlockSz = MIN_BLOCK_SZ;
     ssh->rng         = rng;
     ssh->kSz         = sizeof(ssh->k);
     ssh->handshake   = handshake;
@@ -157,6 +161,7 @@ static WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     handshake->pubKeyId  = ID_NONE;
     handshake->encryptId = ID_NONE;
     handshake->macId = ID_NONE;
+    handshake->blockSz = MIN_BLOCK_SZ;
 
     if (BufferInit(&ssh->inputBuffer, 0, ctx->heap) != WS_SUCCESS ||
         BufferInit(&ssh->outputBuffer, 0, ctx->heap) != WS_SUCCESS ||
@@ -286,42 +291,53 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 }
             }
             ssh->acceptState = ACCEPT_CLIENT_VERSION_DONE;
-            WLOG(WS_LOG_DEBUG, "accept state ACCEPT_CLIENT_VERSION_DONE");
+            WLOG(WS_LOG_DEBUG, "accept state CLIENT_VERSION_DONE");
 
         case ACCEPT_CLIENT_VERSION_DONE:
             SendServerVersion(ssh);
-            ssh->acceptState = SERVER_VERSION_SENT;
+            ssh->acceptState = ACCEPT_SERVER_VERSION_SENT;
             WLOG(WS_LOG_DEBUG, "accept state SERVER_VERSION_SENT");
 
-        case SERVER_VERSION_SENT:
-            while (ssh->clientState < CLIENT_ALGO_DONE) {
+        case ACCEPT_SERVER_VERSION_SENT:
+            while (ssh->clientState < CLIENT_KEXINIT_DONE) {
                 if ( (ssh->error = ProcessReply(ssh)) < 0) {
                     WLOG(WS_LOG_DEBUG, "accept reply error 2: %d", ssh->error);
                     return WS_FATAL_ERROR;
                 }
             }
             SendKexInit(ssh);
-            ssh->acceptState = SERVER_ALGO_SENT;
+            ssh->acceptState = ACCEPT_SERVER_KEXINIT_SENT;
+            WLOG(WS_LOG_DEBUG, "accept state SERVER_KEXINIT_SENT");
 
-        case SERVER_ALGO_SENT:
-            while (ssh->clientState < CLIENT_KEXDHINIT_DONE) {
+        case ACCEPT_SERVER_KEXINIT_SENT:
+            while (ssh->clientState < CLIENT_KEXDH_INIT_DONE) {
                 if ( (ssh->error = ProcessReply(ssh)) < 0) {
                     WLOG(WS_LOG_DEBUG, "accept reply error 3: %d", ssh->error);
                     return WS_FATAL_ERROR;
                 }
             }
             SendKexDhReply(ssh);
-            ssh->acceptState = SERVER_KEXDH_REPLY_SENT;
+            SendNewKeys(ssh);
+            ssh->acceptState = ACCEPT_SERVER_KEXDH_REPLY_SENT;
+            WLOG(WS_LOG_DEBUG, "accept state SERVER_KEXDH_REPLY_SENT");
 
-        case SERVER_KEXDH_REPLY_SENT:
+        case ACCEPT_SERVER_KEXDH_REPLY_SENT:
             while (ssh->clientState < CLIENT_USING_KEYS) {
                 if ( (ssh->error = ProcessReply(ssh)) < 0) {
                     WLOG(WS_LOG_DEBUG, "accept reply error 4: %d", ssh->error);
                     return WS_FATAL_ERROR;
                 }
             }
-            SendNewKeys(ssh);
-            ssh->acceptState = SERVER_USING_KEYS;
+            ssh->acceptState = ACCEPT_USING_KEYS;
+            WLOG(WS_LOG_DEBUG, "accept state ACCEPT_USING_KEYS");
+
+        case ACCEPT_USING_KEYS:
+            while (ssh->clientState < ACCEPT_CLIENT_USERAUTH_DONE) {
+                if ( (ssh->error = ProcessReply(ssh)) < 0) {
+                    WLOG(WS_LOG_DEBUG, "accept reply error 5: %d", ssh->error);
+                    return WS_FATAL_ERROR;
+                }
+            }
     }
 
     return WS_FATAL_ERROR;
