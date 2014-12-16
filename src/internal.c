@@ -127,7 +127,13 @@ const char* GetErrorString(int err)
         case WS_DECRYPT_E:
             return "decrypt error";
 
-        case WS_MAC_E:
+        case WS_ENCRYPT_E:
+            return "encrypt error";
+
+        case WS_VERIFY_MAC_E:
+            return "verify mac error";
+
+        case WS_CREATE_MAC_E:
             return "verify mac error";
 
         default:
@@ -1218,6 +1224,33 @@ static int DoPacket(WOLFSSH* ssh)
 }
 
 
+static INLINE int Encrypt(WOLFSSH* ssh, uint8_t* cipher, const uint8_t* input,
+                          uint16_t sz)
+{
+    int ret = WS_SUCCESS;
+
+    if (ssh == NULL || cipher == NULL || input == NULL || sz == 0)
+        return WS_BAD_ARGUMENT;
+
+    WLOG(WS_LOG_DEBUG, "Encrypt %s", IdToName(ssh->encryptId));
+
+    switch (ssh->encryptId) {
+        case ID_NONE:
+            break;
+
+        case ID_AES128_CBC:
+            if (AesCbcEncrypt(&ssh->encryptCipher.aes, cipher, input, sz) < 0)
+                ret = WS_ENCRYPT_E;
+            break;
+
+        default:
+            ret = WS_INVALID_ALGO_ID;
+    }
+
+    return ret;
+}
+
+
 static INLINE int Decrypt(WOLFSSH* ssh, uint8_t* plain, const uint8_t* input,
                           uint16_t sz)
 {
@@ -1242,6 +1275,51 @@ static INLINE int Decrypt(WOLFSSH* ssh, uint8_t* plain, const uint8_t* input,
     }
 
     return ret;
+}
+
+
+static INLINE int CreateMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
+                            uint8_t* mac)
+{
+    uint8_t  flatSeq[LENGTH_SZ];
+
+    c32toa(ssh->seq++, flatSeq);
+
+    /* Need to MAC the sequence number and the unencrypted packet */
+    switch (ssh->macId) {
+        case ID_NONE:
+            break;
+
+        case ID_HMAC_SHA1_96:
+            {
+                Hmac hmac;
+                uint8_t digest[SHA_DIGEST_SIZE];
+
+                HmacSetKey(&hmac, SHA, ssh->macKeyServer, ssh->macKeyServerSz);
+                HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
+                HmacUpdate(&hmac, in, inSz);
+                HmacFinal(&hmac, digest);
+                WMEMCPY(mac, digest, SHA1_96_SZ);
+            }
+            break;
+
+        case ID_HMAC_SHA1:
+            {
+                Hmac hmac;
+
+                HmacSetKey(&hmac, SHA, ssh->macKeyServer, ssh->macKeyServerSz);
+                HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
+                HmacUpdate(&hmac, in, inSz);
+                HmacFinal(&hmac, mac);
+            }
+            break;
+
+        default:
+            WLOG(WS_LOG_DEBUG, "Invalid Mac ID");
+            return WS_FATAL_ERROR;
+    }
+
+    return WS_SUCCESS;
 }
 
 
@@ -1270,10 +1348,8 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
             HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
             HmacUpdate(&hmac, in, inSz);
             HmacFinal(&hmac, checkMac);
-            DumpOctetString(mac, ssh->peerMacSz);
-            DumpOctetString(checkMac, ssh->peerMacSz);
             if (WMEMCMP(checkMac, mac, ssh->peerMacSz) != 0)
-                ret = WS_MAC_E;
+                ret = WS_VERIFY_MAC_E;
             break;
 
         default:
@@ -1418,7 +1494,8 @@ static int PreparePacket(WOLFSSH* ssh, uint32_t payloadSz)
     uint8_t  paddingSz;
 
     /* Minimum value for paddingSz is 4. */
-    paddingSz = ssh->blockSz - (LENGTH_SZ + PAD_LENGTH_SZ + payloadSz) % ssh->blockSz;
+    paddingSz = ssh->blockSz -
+                (LENGTH_SZ + PAD_LENGTH_SZ + payloadSz) % ssh->blockSz;
     if (paddingSz < 4)
         paddingSz += ssh->blockSz;
     ssh->paddingSz = paddingSz;
@@ -1428,6 +1505,7 @@ static int PreparePacket(WOLFSSH* ssh, uint32_t payloadSz)
     if ( (ret = GrowBuffer(&ssh->outputBuffer, outputSz, 0)) != WS_SUCCESS)
         return ret;
 
+    ssh->packetStartIdx = ssh->outputBuffer.length;
     output = ssh->outputBuffer.buffer + ssh->outputBuffer.length;
 
     /* fill in the packetSz, paddingSz */
@@ -1445,63 +1523,37 @@ static int BundlePacket(WOLFSSH* ssh)
     uint8_t* output;
     uint32_t idx;
     uint8_t  paddingSz;
-    uint8_t  flatSeq[LENGTH_SZ];
 
     output = ssh->outputBuffer.buffer;
     idx = ssh->outputBuffer.length;
     paddingSz = ssh->paddingSz;
-    c32toa(ssh->seq++, flatSeq);
 
     /* Add the padding */
-    WMEMSET(output + idx, 0, paddingSz);
+    if (ssh->encryptId == ID_NONE)
+        WMEMSET(output + idx, 0, paddingSz);
+    else
+        RNG_GenerateBlock(ssh->rng, output + idx, paddingSz);
     idx += paddingSz;
 
-    /* Need to MAC the sequence number and the unencrypted packet */
-    switch (ssh->macId) {
-        case ID_NONE:
-            break;
-#if 0
-        case ID_HMAC_SHA1_96:
-            {
-                Hmac hmac;
-                uint8_t digest[SHA_DIGEST_SIZE];
+    CreateMac(ssh, ssh->outputBuffer.buffer + ssh->packetStartIdx,
+              ssh->outputBuffer.length - ssh->packetStartIdx + paddingSz,
+              output + idx);
+    idx += ssh->macSz;
 
-                HmacSetKey(&hmac, SHA, ssh->macKeyServer, ssh->macKeyServerSz);
-                HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
-                HmacUpdate(&hmac,);
-                HmacFinal(&hmac, digest);
-                WMEMCPY(, digest, SHA1_96_SIZE);
-            }
-            break;
+    WLOG(WS_LOG_DEBUG, "packetStartIdx = %u", ssh->packetStartIdx);
+    WLOG(WS_LOG_DEBUG, "length = %u", ssh->outputBuffer.length);
+    WLOG(WS_LOG_DEBUG, "Before encrypt:");
+    DumpOctetString(ssh->outputBuffer.buffer + ssh->packetStartIdx,
+                    ssh->outputBuffer.length - ssh->packetStartIdx + paddingSz);
 
-        case ID_HMAC_SHA1:
-            {
-                Hmac hmac;
+    Encrypt(ssh,
+            ssh->outputBuffer.buffer + ssh->packetStartIdx,
+            ssh->outputBuffer.buffer + ssh->packetStartIdx,
+            ssh->outputBuffer.length - ssh->packetStartIdx + paddingSz);
 
-                HmacSetKey(&hmac, SHA, ssh->macKeyServer, ssh->macKeyServerSz);
-                HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
-                HmacUpdate(&hmac,);
-                HmacFinal(&hmac, );
-            }
-            break;
-#endif
-        default:
-            WLOG(WS_LOG_DEBUG, "Invalid Mac ID");
-            return WS_FATAL_ERROR;
-    }
-
-    /* Encrypt the packet */
-    switch (ssh->encryptId) {
-        case ID_NONE:
-            break;
-#if 0
-        case ID_AES128_CBC:
-            break;
-#endif
-        default:
-            WLOG(WS_LOG_DEBUG, "Invalid Encrypt ID");
-            return WS_FATAL_ERROR;
-    }
+    WLOG(WS_LOG_DEBUG, "After encrypt:");
+    DumpOctetString(ssh->outputBuffer.buffer + ssh->packetStartIdx,
+                    ssh->outputBuffer.length - ssh->packetStartIdx + paddingSz);
 
     ssh->outputBuffer.length = idx;
 

@@ -100,7 +100,7 @@ WOLFSSH_LOCAL uint8_t     NameToId(const char*, uint32_t);
 WOLFSSH_LOCAL const char* IdToName(uint8_t);
 
 
-#define STATIC_BUFFER_LEN 16
+#define STATIC_BUFFER_LEN AES_BLOCK_SIZE
 /* This is one AES block size. We always grab one
  * block size first to decrypt to find the size of
  * the rest of the data. */
@@ -171,7 +171,8 @@ struct WOLFSSH {
     uint32_t       curSz;
     uint32_t       seq;
     uint32_t       peerSeq;
-    uint8_t        paddingSz;
+    uint32_t       packetStartIdx; /* Current send packet start index */
+    uint8_t        paddingSz;      /* Current send packet padding size */
     uint8_t        acceptState;
     uint8_t        clientState;
     uint8_t        processReplyState;

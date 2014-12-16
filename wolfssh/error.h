@@ -61,7 +61,9 @@ enum WS_ErrorCodes {
     WS_BAD_FILE_E      = -19,
     WS_INVALID_ALGO_ID = -20,
     WS_DECRYPT_E       = -21,
-    WS_MAC_E           = -22
+    WS_ENCRYPT_E       = -22,
+    WS_VERIFY_MAC_E    = -23,
+    WS_CREATE_MAC_E    = -24
 };
 
 
