@@ -239,6 +239,7 @@ WOLFSSH_LOCAL int SendUnimplemented(WOLFSSH*);
 WOLFSSH_LOCAL int SendDisconnect(WOLFSSH*, uint32_t);
 WOLFSSH_LOCAL int SendIgnore(WOLFSSH*, const unsigned char*, uint32_t);
 WOLFSSH_LOCAL int SendDebug(WOLFSSH*, byte, const char*);
+WOLFSSH_LOCAL int SendServiceAccept(WOLFSSH*, const char*);
 
 
 enum AcceptStates {

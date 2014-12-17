@@ -1137,6 +1137,33 @@ static int DoDisconnect(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 }
 
 
+static const char serviceNameUserAuth[] = "ssh-userauth";
+/*static const char serviceNameConnection[] = "ssh-connection";*/
+
+
+static int DoServiceRequest(WOLFSSH* ssh,
+                            uint8_t* buf, uint32_t len, uint32_t* idx)
+{
+    uint32_t    begin = *idx;
+    uint32_t    nameSz;
+    char foo[32];
+    (void)ssh;
+    (void)buf;
+    (void)len;
+
+    ato32(buf + begin, &nameSz);
+    begin += LENGTH_SZ;
+
+    XMEMCPY(foo, buf + begin, nameSz);
+    foo[nameSz] = 0;
+
+    printf("Requesting service: %s\n", foo);
+    SendServiceAccept(ssh, serviceNameUserAuth);
+
+    return WS_SUCCESS;
+}
+
+
 static int DoPacket(WOLFSSH* ssh)
 {
     uint8_t* buf = (uint8_t*)ssh->inputBuffer.buffer;
@@ -1202,6 +1229,12 @@ static int DoPacket(WOLFSSH* ssh)
              * after the msg ID, to the Do function, but the length is the
              * payloadSz, which is +1 than the actual data. */
             DoKexDhInit(ssh, buf, payloadSz - 1, &idx);
+            break;
+
+        case MSGID_SERVICE_REQUEST:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_SERVICE_REQUEST (len = %d)",
+                 payloadSz - 1);
+            DoServiceRequest(ssh, buf, payloadSz - 1, &idx);
             break;
 
         default:
@@ -1529,6 +1562,7 @@ static int BundlePacket(WOLFSSH* ssh)
     paddingSz = ssh->paddingSz;
 
     /* Add the padding */
+    WLOG(WS_LOG_DEBUG, "paddingSz = %u", paddingSz);
     if (ssh->encryptId == ID_NONE)
         WMEMSET(output + idx, 0, paddingSz);
     else
@@ -2008,6 +2042,36 @@ int SendDebug(WOLFSSH* ssh, byte alwaysDisplay, const char* msg)
     idx += LENGTH_SZ;
     WMEMCPY(output + idx, cannedLangTag, cannedLangTagSz);
     idx += cannedLangTagSz;
+
+    ssh->outputBuffer.length = idx;
+
+    BundlePacket(ssh);
+    SendBuffered(ssh);
+
+    return WS_SUCCESS;
+}
+
+
+int SendServiceAccept(WOLFSSH* ssh, const char* name)
+{
+    uint32_t nameSz;
+    uint8_t* output;
+    uint32_t idx;
+
+    if (ssh == NULL || name == NULL)
+        return WS_BAD_ARGUMENT;
+
+    nameSz = (uint32_t)WSTRLEN(name);
+    PreparePacket(ssh, MSG_ID_SZ + LENGTH_SZ + nameSz);
+
+    output = ssh->outputBuffer.buffer;
+    idx = ssh->outputBuffer.length;
+
+    output[idx++] = MSGID_SERVICE_ACCEPT;
+    c32toa(nameSz, output + idx);
+    idx += LENGTH_SZ;
+    WMEMCPY(output + idx, name, nameSz);
+    idx += nameSz;
 
     ssh->outputBuffer.length = idx;
 
