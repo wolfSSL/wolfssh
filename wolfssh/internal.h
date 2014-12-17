@@ -114,7 +114,6 @@ typedef struct Buffer {
     uint32_t        bufferSz;     /* current buffer size */
     ALIGN16 uint8_t staticBuffer[STATIC_BUFFER_LEN];
     uint8_t         dynamicFlag;  /* dynamic memory currently in use */
-    uint32_t        offset;       /* Offset from start of buffer to data. */
 } Buffer;
 
 WOLFSSH_LOCAL int BufferInit(Buffer*, uint32_t, void*);
