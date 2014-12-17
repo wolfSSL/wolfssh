@@ -127,7 +127,8 @@ static WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     if (ssh == NULL)
         return ssh;
 
-    handshake = (HandshakeInfo*)WMALLOC(sizeof(HandshakeInfo), ctx->heap, DYNTYPE_HS);
+    handshake = (HandshakeInfo*)WMALLOC(sizeof(HandshakeInfo),
+                                        ctx->heap, DYNTYPE_HS);
     if (handshake == NULL) {
         wolfSSH_free(ssh);
         return NULL;

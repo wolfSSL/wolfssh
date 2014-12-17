@@ -880,7 +880,9 @@ static int DoNewKeys(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 
         case ID_AES128_CBC:
             WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes128-cbc");
-            AesSetKey(&ssh->decryptCipher.aes, ssh->encKeyClient, ssh->encKeyClientSz, ssh->ivClient, AES_DECRYPTION);
+            AesSetKey(&ssh->decryptCipher.aes,
+                      ssh->encKeyClient, ssh->encKeyClientSz,
+                      ssh->ivClient, AES_DECRYPTION);
             break;
 
         default:
@@ -1059,7 +1061,8 @@ static int DoDebug(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 }
 
 
-static int DoUnimplemented(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
+static int DoUnimplemented(WOLFSSH* ssh,
+                           uint8_t* buf, uint32_t len, uint32_t* idx)
 {
     uint32_t seq;
     uint32_t begin = *idx;
@@ -1183,63 +1186,64 @@ static int DoPacket(WOLFSSH* ssh)
     payloadSz = ssh->curSz - PAD_LENGTH_SZ - padSz;
 
     msg = buf[idx++];
+    payloadSz -= MSG_ID_SZ;
+
     switch (msg) {
 
         case MSGID_DISCONNECT:
-            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT (len = %d)", payloadSz - 1);
-            DoDisconnect(ssh, buf, payloadSz - 1, &idx);
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT");
+            DoDisconnect(ssh, buf, payloadSz, &idx);
             break;
 
         case MSGID_IGNORE:
-            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT (len = %d)", payloadSz - 1);
-            DoIgnore(ssh, buf, payloadSz - 1, &idx);
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT");
+            DoIgnore(ssh, buf, payloadSz, &idx);
             break;
 
         case MSGID_UNIMPLEMENTED:
-            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT (len = %d)", payloadSz - 1);
-            DoUnimplemented(ssh, buf, payloadSz - 1, &idx);
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT");
+            DoUnimplemented(ssh, buf, payloadSz, &idx);
             break;
 
         case MSGID_DEBUG:
-            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT (len = %d)", payloadSz - 1);
-            DoDebug(ssh, buf, payloadSz - 1, &idx);
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT");
+            DoDebug(ssh, buf, payloadSz, &idx);
             break;
 
         case MSGID_KEXINIT:
             {
                 uint8_t scratchLen[LENGTH_SZ];
 
-                WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXINIT (len = %d)", payloadSz - 1);
+                WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXINIT");
                 c32toa(payloadSz, scratchLen);
                 ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
-                ShaUpdate(&ssh->handshake->hash, buf + idx - 1, payloadSz);
-                DoKexInit(ssh, buf, payloadSz - 1, &idx);
+                ShaUpdate(&ssh->handshake->hash, buf + idx - 1, payloadSz + 1);
+                DoKexInit(ssh, buf, payloadSz, &idx);
             }
             break;
 
         case MSGID_NEWKEYS:
-            WLOG(WS_LOG_DEBUG, "Decoding MSGID_NEWKEYS (len = %d)", payloadSz - 1);
-            DoNewKeys(ssh, buf, payloadSz - 1, &idx);
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_NEWKEYS");
+            DoNewKeys(ssh, buf, payloadSz, &idx);
             break;
 
         case MSGID_KEXDH_INIT:
-            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT (len = %d)", payloadSz - 1);
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT");
             /* The mpint is 256 bytes long, the length is the standard 4 bytes,
              * and the msg ID is 1 byte. We pass the start of the payload data,
              * after the msg ID, to the Do function, but the length is the
              * payloadSz, which is +1 than the actual data. */
-            DoKexDhInit(ssh, buf, payloadSz - 1, &idx);
+            DoKexDhInit(ssh, buf, payloadSz, &idx);
             break;
 
         case MSGID_SERVICE_REQUEST:
-            WLOG(WS_LOG_DEBUG, "Decoding MSGID_SERVICE_REQUEST (len = %d)",
-                 payloadSz - 1);
-            DoServiceRequest(ssh, buf, payloadSz - 1, &idx);
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_SERVICE_REQUEST");
+            DoServiceRequest(ssh, buf, payloadSz, &idx);
             break;
 
         default:
             WLOG(WS_LOG_DEBUG, "Unimplemented message ID (%d)", msg);
-            DumpOctetString(buf + idx, payloadSz - 1);
+            DumpOctetString(buf + idx, payloadSz);
             SendUnimplemented(ssh);
             break;
     }
@@ -1409,7 +1413,8 @@ int ProcessReply(WOLFSSH* ssh)
                     return ret;
                 }
                 ssh->processReplyState = PROCESS_PACKET_LENGTH;
-                WLOG(WS_LOG_DEBUG, "idx = %u, length = %u", ssh->inputBuffer.idx, ssh->inputBuffer.length);
+                WLOG(WS_LOG_DEBUG, "idx = %u, length = %u",
+                     ssh->inputBuffer.idx, ssh->inputBuffer.length);
 
                 /* Decrypt first block if encrypted */
                 ret = Decrypt(ssh,
@@ -1419,7 +1424,8 @@ int ProcessReply(WOLFSSH* ssh)
 
             case PROCESS_PACKET_LENGTH:
                 /* Peek at the packet_length field. */
-                ato32(ssh->inputBuffer.buffer + ssh->inputBuffer.idx, &ssh->curSz);
+                ato32(ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
+                      &ssh->curSz);
                 ssh->processReplyState = PROCESS_PACKET_FINISH;
 
             case PROCESS_PACKET_FINISH:
@@ -1431,19 +1437,24 @@ int ProcessReply(WOLFSSH* ssh)
                     }
 
                     ret = Decrypt(ssh,
-                                  ssh->inputBuffer.buffer + ssh->inputBuffer.idx + peerBlockSz,
-                                  ssh->inputBuffer.buffer + ssh->inputBuffer.idx + peerBlockSz,
+                                  ssh->inputBuffer.buffer +
+                                     ssh->inputBuffer.idx + peerBlockSz,
+                                  ssh->inputBuffer.buffer +
+                                     ssh->inputBuffer.idx + peerBlockSz,
                                   ssh->curSz + LENGTH_SZ - peerBlockSz);
                     if (ret != WS_SUCCESS) {
                         WLOG(WS_LOG_DEBUG, "PR: Decrypt fail");
                         return ret;
                     }
 
-                    /* Verify the buffer is big enough for the data plus the mac. */
+                    /* Verify the buffer is big enough for the data and mac. */
                     ret = VerifyMac(ssh,
-                                    ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
+                                    ssh->inputBuffer.buffer +
+                                        ssh->inputBuffer.idx,
                                     ssh->curSz + LENGTH_SZ,
-                                    ssh->inputBuffer.buffer + ssh->inputBuffer.idx + LENGTH_SZ + ssh->curSz);
+                                    ssh->inputBuffer.buffer +
+                                        ssh->inputBuffer.idx +
+                                        LENGTH_SZ + ssh->curSz);
                     if (ret != WS_SUCCESS) {
                         WLOG(WS_LOG_DEBUG, "PR: VerifyMac fail");
                         return ret;
@@ -1460,7 +1471,7 @@ int ProcessReply(WOLFSSH* ssh)
                 break;
 
             default:
-                WLOG(WS_LOG_DEBUG, "Bad process input state, programming error");
+                WLOG(WS_LOG_DEBUG, "Bad process input state, program error");
                 return WS_INPUT_CASE_E;
         }
         ssh->processReplyState = PROCESS_INIT;
@@ -1469,7 +1480,9 @@ int ProcessReply(WOLFSSH* ssh)
 }
 
 
-static const char sshIdStr[] = "SSH-2.0-wolfSSHv" LIBWOLFSSH_VERSION_STRING "\r\n";
+static const char sshIdStr[] = "SSH-2.0-wolfSSHv"
+                               LIBWOLFSSH_VERSION_STRING
+                               "\r\n";
 
 
 int ProcessClientVersion(WOLFSSH* ssh)
@@ -1483,8 +1496,7 @@ int ProcessClientVersion(WOLFSSH* ssh)
         return error;
     }
 
-    if (WSTRNCASECMP((char*)ssh->inputBuffer.buffer,
-                                                     sshIdStr, protoLen) == 0) {
+    if (WSTRNCASECMP((char*)ssh->inputBuffer.buffer, sshIdStr, protoLen) == 0) {
         ssh->clientState = CLIENT_VERSION_DONE;
     }
     else {
@@ -1714,12 +1726,12 @@ int SendKexDhReply(WOLFSSH* ssh)
     switch (ssh->handshake->kexId) {
         case ID_DH_GROUP1_SHA1:
             DhSetKey(&dhKey, dhPrimeGroup1, dhPrimeGroup1Sz,
-                                                    dhGenerator, dhGeneratorSz);
+                     dhGenerator, dhGeneratorSz);
             break;
 
         case ID_DH_GROUP14_SHA1:
             DhSetKey(&dhKey, dhPrimeGroup14, dhPrimeGroup14Sz,
-                                                    dhGenerator, dhGeneratorSz);
+                     dhGenerator, dhGeneratorSz);
             break;
 
         default:
@@ -1728,7 +1740,8 @@ int SendKexDhReply(WOLFSSH* ssh)
 
     /* Hash in the server's RSA key. */
     InitRsaKey(&rsaKey, ssh->ctx->heap);
-    ret = RsaPrivateKeyDecode(ssh->ctx->privateKey, &scratch, &rsaKey, (int)ssh->ctx->privateKeySz);
+    ret = RsaPrivateKeyDecode(ssh->ctx->privateKey, &scratch,
+                              &rsaKey, (int)ssh->ctx->privateKeySz);
     if (ret < 0)
         return ret;
     RsaFlattenPublicKey(&rsaKey, rsaE, &rsaESz, rsaN, &rsaNSz);
@@ -1764,8 +1777,10 @@ int SendKexDhReply(WOLFSSH* ssh)
     /* Make the server's DH f-value, and the shared secret k. */
     DhGenerateKeyPair(&dhKey, ssh->rng, y, &ySz, f, &fSz);
     if (f[0] & 0x80) fPad = 1;
-    DhAgree(&dhKey, ssh->k, &ssh->kSz, y, ySz,
-                                        ssh->handshake->e, ssh->handshake->eSz);
+    DhAgree(&dhKey,
+            ssh->k, &ssh->kSz,
+            y, ySz,
+            ssh->handshake->e, ssh->handshake->eSz);
     if (ssh->k[0] & 0x80) kPad = 1;
     FreeDhKey(&dhKey);
 
@@ -1821,7 +1836,8 @@ int SendKexDhReply(WOLFSSH* ssh)
         }
         else {
             /* At this point, sigSz should already be sizeof(sig) */
-            sigSz = RsaSSL_Sign(encSig, encSigSz, sig, sigSz, &rsaKey, ssh->rng);
+            sigSz = RsaSSL_Sign(encSig, encSigSz,
+                                sig, sigSz, &rsaKey, ssh->rng);
             if (sigSz <= 0) {
                 WLOG(WS_LOG_DEBUG, "SendKexDhReply: Bad RSA Sign");
             }
@@ -1918,7 +1934,9 @@ int SendNewKeys(WOLFSSH* ssh)
 
         case ID_AES128_CBC:
             WLOG(WS_LOG_DEBUG, "SNK: using cipher aes128-cbc");
-            AesSetKey(&ssh->encryptCipher.aes, ssh->encKeyServer, ssh->encKeyServerSz, ssh->ivServer, AES_ENCRYPTION);
+            AesSetKey(&ssh->encryptCipher.aes,
+                      ssh->encKeyServer, ssh->encKeyServerSz,
+                      ssh->ivServer, AES_ENCRYPTION);
             break;
 
         default:
@@ -2025,7 +2043,9 @@ int SendDebug(WOLFSSH* ssh, byte alwaysDisplay, const char* msg)
 
     msgSz = (msg != NULL) ? (uint32_t)WSTRLEN(msg) : 0;
 
-    PreparePacket(ssh, MSG_ID_SZ + BOOLEAN_SZ + (LENGTH_SZ * 2) + msgSz + cannedLangTagSz);
+    PreparePacket(ssh,
+                  MSG_ID_SZ + BOOLEAN_SZ + (LENGTH_SZ * 2) +
+                  msgSz + cannedLangTagSz);
 
     output = ssh->outputBuffer.buffer;
     idx = ssh->outputBuffer.length;
