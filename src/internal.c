@@ -1146,7 +1146,7 @@ static int DoServiceRequest(WOLFSSH* ssh,
 {
     uint32_t    begin = *idx;
     uint32_t    nameSz;
-    char foo[32];
+    char serviceName[32];
     (void)ssh;
     (void)buf;
     (void)len;
@@ -1154,11 +1154,15 @@ static int DoServiceRequest(WOLFSSH* ssh,
     ato32(buf + begin, &nameSz);
     begin += LENGTH_SZ;
 
-    XMEMCPY(foo, buf + begin, nameSz);
-    foo[nameSz] = 0;
+    XMEMCPY(serviceName, buf + begin, nameSz);
+    begin += nameSz;
 
-    printf("Requesting service: %s\n", foo);
+    serviceName[nameSz] = 0;
+
+    WLOG(WS_LOG_DEBUG, "Requesting service: %s\n", serviceName);
     SendServiceAccept(ssh, serviceNameUserAuth);
+
+    *idx = begin;
 
     return WS_SUCCESS;
 }
