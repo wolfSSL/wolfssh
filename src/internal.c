@@ -1241,7 +1241,10 @@ static int DoPacket(WOLFSSH* ssh)
 
         default:
             WLOG(WS_LOG_DEBUG, "Unimplemented message ID (%d)", msg);
+#ifdef SHOW_UNIMPLEMENTED
             DumpOctetString(buf + idx, payloadSz);
+#endif
+            idx += payloadSz;
             SendUnimplemented(ssh);
             break;
     }
