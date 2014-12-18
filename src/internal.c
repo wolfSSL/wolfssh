@@ -958,9 +958,6 @@ static int GenerateKey(uint8_t* key, uint32_t keySz, uint8_t keyId,
         }
     }
 
-    printf("Key ID %c:", keyId);
-    DumpOctetString(key, keySz);
-
     return 0;
 }
 
@@ -1410,8 +1407,6 @@ int ProcessReply(WOLFSSH* ssh)
                     return ret;
                 }
                 ssh->processReplyState = PROCESS_PACKET_LENGTH;
-                WLOG(WS_LOG_DEBUG, "idx = %u, length = %u",
-                     ssh->inputBuffer.idx, ssh->inputBuffer.length);
 
                 /* Decrypt first block if encrypted */
                 ret = Decrypt(ssh,
@@ -1583,20 +1578,10 @@ static int BundlePacket(WOLFSSH* ssh)
               output + idx);
     idx += ssh->macSz;
 
-    WLOG(WS_LOG_DEBUG, "packetStartIdx = %u", ssh->packetStartIdx);
-    WLOG(WS_LOG_DEBUG, "length = %u", ssh->outputBuffer.length);
-    WLOG(WS_LOG_DEBUG, "Before encrypt:");
-    DumpOctetString(ssh->outputBuffer.buffer + ssh->packetStartIdx,
-                    ssh->outputBuffer.length - ssh->packetStartIdx + paddingSz);
-
     Encrypt(ssh,
             ssh->outputBuffer.buffer + ssh->packetStartIdx,
             ssh->outputBuffer.buffer + ssh->packetStartIdx,
             ssh->outputBuffer.length - ssh->packetStartIdx + paddingSz);
-
-    WLOG(WS_LOG_DEBUG, "After encrypt:");
-    DumpOctetString(ssh->outputBuffer.buffer + ssh->packetStartIdx,
-                    ssh->outputBuffer.length - ssh->packetStartIdx + paddingSz);
 
     ssh->outputBuffer.length = idx;
 
