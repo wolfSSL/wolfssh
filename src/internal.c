@@ -1177,16 +1177,12 @@ static int DoPacket(WOLFSSH* ssh)
     uint8_t  msg;
 
     WLOG(WS_LOG_DEBUG, "DoPacket sequence number: %d", ssh->peerSeq);
-    /* Problem: len is equal to the amount of data left in the input buffer.
-     *          The beginning part of that data is the packet we want to
-     *          decode. The remainder is the pad and the MAC. */
-    /* Skip the packet_length field. */
+
     idx += LENGTH_SZ;
     padSz = buf[idx++];
-    payloadSz = ssh->curSz - PAD_LENGTH_SZ - padSz;
+    payloadSz = ssh->curSz - PAD_LENGTH_SZ - padSz - MSG_ID_SZ;
 
     msg = buf[idx++];
-    payloadSz -= MSG_ID_SZ;
 
     switch (msg) {
 
@@ -1215,9 +1211,10 @@ static int DoPacket(WOLFSSH* ssh)
                 uint8_t scratchLen[LENGTH_SZ];
 
                 WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXINIT");
-                c32toa(payloadSz, scratchLen);
+                c32toa(payloadSz + sizeof(msg), scratchLen);
                 ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
-                ShaUpdate(&ssh->handshake->hash, buf + idx - 1, payloadSz + 1);
+                ShaUpdate(&ssh->handshake->hash, &msg, sizeof(msg));
+                ShaUpdate(&ssh->handshake->hash, buf + idx, payloadSz);
                 DoKexInit(ssh, buf, payloadSz, &idx);
             }
             break;
