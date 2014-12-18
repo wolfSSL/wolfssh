@@ -1523,7 +1523,7 @@ int SendServerVersion(WOLFSSH* ssh)
     ShaUpdate(&ssh->handshake->hash, scratch, LENGTH_SZ);
     ShaUpdate(&ssh->handshake->hash, (const uint8_t*)sshIdStr, sshIdStrSz);
 
-    return WS_FATAL_ERROR;
+    return WS_SUCCESS;
 }
 
 
