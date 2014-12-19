@@ -243,8 +243,6 @@ int GrowBuffer(Buffer* buf, uint32_t sz, uint32_t usedSz)
             uint8_t* newBuffer = (uint8_t*)WMALLOC(newSz,
                                                      buf->heap, DYNTYPE_BUFFER);
 
-            WLOG(WS_LOG_DEBUG, "Growing buffer");
-
             if (newBuffer == NULL)
                 return WS_MEMORY_E;
 
@@ -1227,10 +1225,6 @@ static int DoPacket(WOLFSSH* ssh)
 
         case MSGID_KEXDH_INIT:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT");
-            /* The mpint is 256 bytes long, the length is the standard 4 bytes,
-             * and the msg ID is 1 byte. We pass the start of the payload data,
-             * after the msg ID, to the Do function, but the length is the
-             * payloadSz, which is +1 than the actual data. */
             DoKexDhInit(ssh, buf, payloadSz, &idx);
             break;
 
@@ -1238,6 +1232,9 @@ static int DoPacket(WOLFSSH* ssh)
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_SERVICE_REQUEST");
             DoServiceRequest(ssh, buf, payloadSz, &idx);
             break;
+
+        case MSGID_USERAUTH_REQUEST:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_USERAUTH_REQUEST");
 
         default:
             WLOG(WS_LOG_DEBUG, "Unimplemented message ID (%d)", msg);
@@ -1322,6 +1319,8 @@ static INLINE int CreateMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
     uint8_t  flatSeq[LENGTH_SZ];
 
     c32toa(ssh->seq++, flatSeq);
+
+    WLOG(WS_LOG_DEBUG, "CreateMac %s", IdToName(ssh->macId));
 
     /* Need to MAC the sequence number and the unencrypted packet */
     switch (ssh->macId) {
@@ -1535,6 +1534,7 @@ static int PreparePacket(WOLFSSH* ssh, uint32_t payloadSz)
     uint8_t* output;
     uint32_t outputSz;
     uint32_t packetSz;
+    uint32_t usedSz;
     uint8_t  paddingSz;
 
     /* Minimum value for paddingSz is 4. */
@@ -1545,8 +1545,9 @@ static int PreparePacket(WOLFSSH* ssh, uint32_t payloadSz)
     ssh->paddingSz = paddingSz;
     packetSz = PAD_LENGTH_SZ + payloadSz + paddingSz;
     outputSz = LENGTH_SZ + packetSz + ssh->macSz;
+    usedSz = ssh->outputBuffer.length - ssh->outputBuffer.idx;
 
-    if ( (ret = GrowBuffer(&ssh->outputBuffer, outputSz, 0)) != WS_SUCCESS)
+    if ( (ret = GrowBuffer(&ssh->outputBuffer, outputSz, usedSz)) != WS_SUCCESS)
         return ret;
 
     ssh->packetStartIdx = ssh->outputBuffer.length;
@@ -1573,7 +1574,7 @@ static int BundlePacket(WOLFSSH* ssh)
     paddingSz = ssh->paddingSz;
 
     /* Add the padding */
-    WLOG(WS_LOG_DEBUG, "paddingSz = %u", paddingSz);
+    WLOG(WS_LOG_DEBUG, "BP: paddingSz = %u", paddingSz);
     if (ssh->encryptId == ID_NONE)
         WMEMSET(output + idx, 0, paddingSz);
     else
@@ -2081,6 +2082,49 @@ int SendServiceAccept(WOLFSSH* ssh, const char* name)
     idx += LENGTH_SZ;
     WMEMCPY(output + idx, name, nameSz);
     idx += nameSz;
+
+    ssh->outputBuffer.length = idx;
+
+    BundlePacket(ssh);
+    /*SendBuffered(ssh);*/
+    SendUserAuthBanner(ssh);
+
+    return WS_SUCCESS;
+}
+
+
+static const char cannedBanner[] =
+    "CANNED BANNER\r\n"
+    "This server is an example test server. "
+    "It should have its own banner, but\r\n"
+    "it is currently using a canned one in "
+    "the library. Be happy or not.\r\n";
+static const uint32_t cannedBannerSz= sizeof(cannedBanner) - 1;
+
+
+int SendUserAuthBanner(WOLFSSH* ssh)
+{
+    uint8_t* output;
+    uint32_t idx;
+
+    if (ssh == NULL)
+        return WS_BAD_ARGUMENT;
+
+    PreparePacket(ssh, MSG_ID_SZ + (LENGTH_SZ * 2) +
+                       cannedBannerSz + cannedLangTagSz);
+
+    output = ssh->outputBuffer.buffer;
+    idx = ssh->outputBuffer.length;
+
+    output[idx++] = MSGID_USERAUTH_BANNER;
+    c32toa(cannedBannerSz, output + idx);
+    idx += LENGTH_SZ;
+    WMEMCPY(output + idx, cannedBanner, cannedBannerSz);
+    idx += cannedBannerSz;
+    c32toa(cannedLangTagSz, output + idx);
+    idx += LENGTH_SZ;
+    WMEMCPY(output + idx, cannedLangTag, cannedLangTagSz);
+    idx += cannedLangTagSz;
 
     ssh->outputBuffer.length = idx;
 

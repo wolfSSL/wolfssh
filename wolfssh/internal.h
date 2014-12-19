@@ -239,6 +239,7 @@ WOLFSSH_LOCAL int SendDisconnect(WOLFSSH*, uint32_t);
 WOLFSSH_LOCAL int SendIgnore(WOLFSSH*, const unsigned char*, uint32_t);
 WOLFSSH_LOCAL int SendDebug(WOLFSSH*, byte, const char*);
 WOLFSSH_LOCAL int SendServiceAccept(WOLFSSH*, const char*);
+WOLFSSH_LOCAL int SendUserAuthBanner(WOLFSSH*);
 
 
 enum AcceptStates {
@@ -280,10 +281,17 @@ enum WS_MessageIds {
     MSGID_DEBUG           = 4,
     MSGID_SERVICE_REQUEST = 5,
     MSGID_SERVICE_ACCEPT  = 6,
+
     MSGID_KEXINIT         = 20,
     MSGID_NEWKEYS         = 21,
+
     MSGID_KEXDH_INIT      = 30,
-    MSGID_KEXDH_REPLY     = 31
+    MSGID_KEXDH_REPLY     = 31,
+
+    MSGID_USERAUTH_REQUEST = 50,
+    MSGID_USERAUTH_FAILURE = 51,
+    MSGID_USERAUTH_SUCCESS = 52,
+    MSGID_USERAUTH_BANNER  = 53
 };
 
 
