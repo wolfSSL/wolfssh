@@ -1888,7 +1888,7 @@ int SendKexDhReply(WOLFSSH* ssh)
     ssh->outputBuffer.length = idx;
 
     BundlePacket(ssh);
-    SendBuffered(ssh);
+    SendNewKeys(ssh);
 
     return 0;
 }

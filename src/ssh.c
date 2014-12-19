@@ -281,61 +281,99 @@ const char* wolfSSH_get_error_name(const WOLFSSH* ssh)
 }
 
 
+const char acceptError[] = "accept error: %s, %d";
+const char acceptState[] = "accept state: %s";
+
+
 int wolfSSH_accept(WOLFSSH* ssh)
 {
     switch (ssh->acceptState) {
         case ACCEPT_BEGIN:
             while (ssh->clientState < CLIENT_VERSION_DONE) {
-                if ( (ssh->error = ProcessClientVersion(ssh)) < 0) {
-                    WLOG(WS_LOG_DEBUG, "accept reply error 1: %d", ssh->error);
+                if ( (ssh->error = ProcessClientVersion(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, acceptError, "BEGIN", ssh->error);
                     return WS_FATAL_ERROR;
                 }
             }
             ssh->acceptState = ACCEPT_CLIENT_VERSION_DONE;
-            WLOG(WS_LOG_DEBUG, "accept state CLIENT_VERSION_DONE");
+            WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_VERSION_DONE");
 
         case ACCEPT_CLIENT_VERSION_DONE:
-            SendServerVersion(ssh);
+            if ( (ssh->error = SendServerVersion(ssh)) < WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, acceptError,
+                     "CLIENT_VERSION_DONE", ssh->error);
+                return WS_FATAL_ERROR;
+            }
             ssh->acceptState = ACCEPT_SERVER_VERSION_SENT;
-            WLOG(WS_LOG_DEBUG, "accept state SERVER_VERSION_SENT");
+            WLOG(WS_LOG_DEBUG, acceptState, "SERVER_VERSION_SENT");
 
         case ACCEPT_SERVER_VERSION_SENT:
             while (ssh->clientState < CLIENT_KEXINIT_DONE) {
-                if ( (ssh->error = ProcessReply(ssh)) < 0) {
-                    WLOG(WS_LOG_DEBUG, "accept reply error 2: %d", ssh->error);
+                if ( (ssh->error = ProcessReply(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, acceptError,
+                         "SERVER_VERSION_SENT", ssh->error);
                     return WS_FATAL_ERROR;
                 }
             }
-            SendKexInit(ssh);
+            ssh->acceptState = ACCEPT_CLIENT_KEXINIT_DONE;
+            WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_KEXINIT_DONE");
+
+        case ACCEPT_CLIENT_KEXINIT_DONE:
+            if ( (ssh->error = SendKexInit(ssh)) < WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, acceptError,
+                     "CLIENT_KEXINIT_DONE", ssh->error);
+                return WS_FATAL_ERROR;
+            }
             ssh->acceptState = ACCEPT_SERVER_KEXINIT_SENT;
-            WLOG(WS_LOG_DEBUG, "accept state SERVER_KEXINIT_SENT");
+            WLOG(WS_LOG_DEBUG, acceptState, "SERVER_KEXINIT_SENT");
 
         case ACCEPT_SERVER_KEXINIT_SENT:
             while (ssh->clientState < CLIENT_KEXDH_INIT_DONE) {
                 if ( (ssh->error = ProcessReply(ssh)) < 0) {
-                    WLOG(WS_LOG_DEBUG, "accept reply error 3: %d", ssh->error);
+                    WLOG(WS_LOG_DEBUG, acceptError,
+                         "SERVER_KEXINIT_SENT", ssh->error);
                     return WS_FATAL_ERROR;
                 }
             }
-            SendKexDhReply(ssh);
-            SendNewKeys(ssh);
+            ssh->acceptState = ACCEPT_CLIENT_KEXDH_INIT_DONE;
+            WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_KEXDH_INIT_DONE");
+
+        case ACCEPT_CLIENT_KEXDH_INIT_DONE:
+            if ( (ssh->error = SendKexDhReply(ssh)) < WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, acceptError,
+                     "CLIENT_KEXDH_INIT_DONE", ssh->error);
+                return WS_FATAL_ERROR;
+            }
             ssh->acceptState = ACCEPT_SERVER_KEXDH_REPLY_SENT;
-            WLOG(WS_LOG_DEBUG, "accept state SERVER_KEXDH_REPLY_SENT");
+            WLOG(WS_LOG_DEBUG, acceptState, "SERVER_KEXDH_REPLY_SENT");
 
         case ACCEPT_SERVER_KEXDH_REPLY_SENT:
             while (ssh->clientState < CLIENT_USING_KEYS) {
                 if ( (ssh->error = ProcessReply(ssh)) < 0) {
-                    WLOG(WS_LOG_DEBUG, "accept reply error 4: %d", ssh->error);
+                    WLOG(WS_LOG_DEBUG, acceptError,
+                         "SERVER_KEXDH_REPLY_SENT", ssh->error);
                     return WS_FATAL_ERROR;
                 }
             }
             ssh->acceptState = ACCEPT_USING_KEYS;
-            WLOG(WS_LOG_DEBUG, "accept state ACCEPT_USING_KEYS");
+            WLOG(WS_LOG_DEBUG, acceptState, "USING_KEYS");
 
         case ACCEPT_USING_KEYS:
-            while (ssh->clientState < ACCEPT_CLIENT_USERAUTH_DONE) {
+            while (ssh->clientState < CLIENT_USERAUTH_DONE) {
                 if ( (ssh->error = ProcessReply(ssh)) < 0) {
-                    WLOG(WS_LOG_DEBUG, "accept reply error 5: %d", ssh->error);
+                    WLOG(WS_LOG_DEBUG, acceptError,
+                         "USING_KEYS", ssh->error);
+                    return WS_FATAL_ERROR;
+                }
+            }
+            ssh->acceptState = ACCEPT_CLIENT_USERAUTH_DONE;
+            WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_USERAUTH_DONE");
+
+        case ACCEPT_CLIENT_USERAUTH_DONE:
+            while (ssh->clientState < CLIENT_DONE) {
+                if ( (ssh->error = ProcessReply(ssh)) < 0) {
+                    WLOG(WS_LOG_DEBUG, acceptError,
+                         "CLIENT_USERAUTH_DONE", ssh->error);
                     return WS_FATAL_ERROR;
                 }
             }
