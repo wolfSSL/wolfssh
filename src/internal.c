@@ -166,7 +166,10 @@ static const NameIdPair NameIdMap[] = {
     { ID_DH_GROUP14_SHA1, "diffie-hellman-group14-sha1" },
 
     /* Public Key IDs */
-    { ID_SSH_RSA, "ssh-rsa" }
+    { ID_SSH_RSA, "ssh-rsa" },
+
+    /* UserAuth IDs */
+    { ID_USERAUTH_PASSWORD, "password" }
 };
 
 
@@ -230,14 +233,16 @@ int BufferInit(Buffer* buffer, uint32_t size, void* heap)
 
 int GrowBuffer(Buffer* buf, uint32_t sz, uint32_t usedSz)
 {
+#if 0
     WLOG(WS_LOG_DEBUG, "GB: buf = %p", buf);
     WLOG(WS_LOG_DEBUG, "GB: sz = %d", sz);
     WLOG(WS_LOG_DEBUG, "GB: usedSz = %d", usedSz);
+#endif
     /* New buffer will end up being sz+usedSz long
      * empty space at the head of the buffer will be compressed */
     if (buf != NULL) {
         uint32_t newSz = sz + usedSz;
-        WLOG(WS_LOG_DEBUG, "GB: newSz = %d", newSz);
+        /*WLOG(WS_LOG_DEBUG, "GB: newSz = %d", newSz);*/
 
         if (newSz > buf->bufferSz) {
             uint8_t* newBuffer = (uint8_t*)WMALLOC(newSz,
@@ -246,7 +251,7 @@ int GrowBuffer(Buffer* buf, uint32_t sz, uint32_t usedSz)
             if (newBuffer == NULL)
                 return WS_MEMORY_E;
 
-            WLOG(WS_LOG_DEBUG, "GB: resizing buffer");
+            /*WLOG(WS_LOG_DEBUG, "GB: resizing buffer");*/
             if (buf->length > 0)
                 WMEMCPY(newBuffer, buf->buffer + buf->idx, buf->length);
 
@@ -268,25 +273,33 @@ int GrowBuffer(Buffer* buf, uint32_t sz, uint32_t usedSz)
 
 void ShrinkBuffer(Buffer* buf, int forcedFree)
 {
+    WLOG(WS_LOG_DEBUG, "Entering %s", __func__);
+
     if (buf != NULL) {
         uint32_t usedSz = buf->length - buf->idx;
 
-        if (!forcedFree && usedSz > STATIC_BUFFER_LEN)
+        WLOG(WS_LOG_DEBUG, "SB: usedSz = %u, forcedFree = %u", usedSz, forcedFree);
+        if (!forcedFree && usedSz > STATIC_BUFFER_LEN) {
+            WLOG(WS_LOG_DEBUG, "SB: shifting down");
             return;
+        }
 
-        WLOG(WS_LOG_DEBUG, "Shrinking buffer");
-
-        if (!forcedFree && usedSz)
+        if (!forcedFree && usedSz) {
+            WLOG(WS_LOG_DEBUG, "SB: shifting down");
             WMEMCPY(buf->staticBuffer, buf->buffer + buf->idx, usedSz);
+        }
 
-        if (buf->dynamicFlag)
+        if (buf->dynamicFlag) {
+            WLOG(WS_LOG_DEBUG, "SB: releasing dynamic buffer");
             WFREE(buf->buffer, buf->heap, DYNTYPE_BUFFER);
+        }
         buf->dynamicFlag = 0;
         buf->buffer = buf->staticBuffer;
         buf->bufferSz = STATIC_BUFFER_LEN;
         buf->length = forcedFree ? 0 : usedSz;
         buf->idx = 0;
     }
+    WLOG(WS_LOG_DEBUG, "Leaving %s", __func__);
 }
 
 
@@ -409,6 +422,7 @@ static int SendBuffered(WOLFSSH* ssh)
 
     ssh->outputBuffer.idx = 0;
 
+    WLOG(WS_LOG_DEBUG, "SB: Shrinking output buffer");
     ShrinkBuffer(&ssh->outputBuffer, 0);
 
     return WS_SUCCESS;
@@ -436,12 +450,12 @@ static int GetInputData(WOLFSSH* ssh, uint32_t size)
     usedLength = ssh->inputBuffer.length - ssh->inputBuffer.idx;
     maxLength  = ssh->inputBuffer.bufferSz - usedLength;
     inSz       = (int)(size - usedLength);      /* from last partial read */
-
+#if 0
     WLOG(WS_LOG_DEBUG, "GID: size = %u", size);
     WLOG(WS_LOG_DEBUG, "GID: usedLength = %d", usedLength);
     WLOG(WS_LOG_DEBUG, "GID: maxLength = %d", maxLength);
     WLOG(WS_LOG_DEBUG, "GID: inSz = %d", inSz);
-
+#endif
     /*
      * usedLength - how much untouched data is in the buffer
      * maxLength - how much empty space is in the buffer
@@ -539,8 +553,8 @@ static int DoNameList(uint8_t* idList, uint32_t* idListSz,
             {
                 const char* displayName = IdToName(id);
                 if (displayName) {
-                    WLOG(WS_LOG_DEBUG, "DNL: name ID = %s", displayName);
-		}
+                    /*WLOG(WS_LOG_DEBUG, "DNL: name ID = %s", displayName);*/
+                }
             }
             if (id != ID_UNKNOWN)
                 idList[idListIdx++] = id;
@@ -580,7 +594,9 @@ static uint8_t MatchIdLists(const uint8_t* left, uint32_t leftSz,
         for (i = 0; i < leftSz; i++) {
             for (j = 0; j < rightSz; j++) {
                 if (left[i] == right[j]) {
+#if 0
                     WLOG(WS_LOG_DEBUG, "MID: matched %s", IdToName(left[i]));
+#endif
                     return left[i];
                 }
             }
@@ -1134,19 +1150,19 @@ static int DoDisconnect(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
     return WS_SUCCESS;
 }
 
-
+#if 0
 static const char serviceNameUserAuth[] = "ssh-userauth";
-/*static const char serviceNameConnection[] = "ssh-connection";*/
-
+static const char serviceNameConnection[] = "ssh-connection";
+#endif
 
 static int DoServiceRequest(WOLFSSH* ssh,
                             uint8_t* buf, uint32_t len, uint32_t* idx)
 {
-    uint32_t    begin = *idx;
-    uint32_t    nameSz;
-    char serviceName[32];
+    uint32_t begin = *idx;
+    uint32_t nameSz;
+    char     serviceName[32];
+
     (void)ssh;
-    (void)buf;
     (void)len;
 
     ato32(buf + begin, &nameSz);
@@ -1154,11 +1170,87 @@ static int DoServiceRequest(WOLFSSH* ssh,
 
     XMEMCPY(serviceName, buf + begin, nameSz);
     begin += nameSz;
-
     serviceName[nameSz] = 0;
 
-    WLOG(WS_LOG_DEBUG, "Requesting service: %s\n", serviceName);
-    SendServiceAccept(ssh, serviceNameUserAuth);
+    WLOG(WS_LOG_DEBUG, "Requesting service: %s", serviceName);
+
+    SendServiceAccept(ssh, serviceName);
+
+    *idx = begin;
+
+    return WS_SUCCESS;
+}
+
+
+static int DoUserAuthRequest(WOLFSSH* ssh,
+                             uint8_t* buf, uint32_t len, uint32_t* idx)
+{
+    uint32_t begin = *idx;
+    uint32_t valueSz;
+    char     value[32];
+
+    (void)ssh;
+    (void)len;
+
+    ato32(buf + begin, &valueSz);
+    begin += LENGTH_SZ;
+
+    XMEMCPY(value, buf + begin, valueSz);
+    begin += valueSz;
+    value[valueSz] = 0;
+
+    ato32(buf + begin, &valueSz);
+    begin += LENGTH_SZ;
+
+    XMEMCPY(value, buf + begin, valueSz);
+    begin += valueSz;
+    value[valueSz] = 0;
+
+    ato32(buf + begin, &valueSz);
+    begin += LENGTH_SZ;
+
+    XMEMCPY(value, buf + begin, valueSz);
+    begin += valueSz;
+    value[valueSz] = 0;
+
+    *idx = begin;
+
+    SendUserAuthSuccess(ssh);
+
+    return WS_SUCCESS;
+}
+
+
+static int DoChannelOpen(WOLFSSH* ssh,
+                         uint8_t* buf, uint32_t len, uint32_t* idx)
+{
+    uint32_t begin = *idx;
+    uint32_t value;
+    uint32_t typeSz;
+    char     type[32];
+
+    (void)ssh;
+    (void)len;
+
+    ato32(buf + begin, &typeSz);
+    begin += LENGTH_SZ;
+
+    XMEMCPY(type, buf + begin, typeSz);
+    begin += typeSz;
+    type[typeSz] = 0;
+    WLOG(WS_LOG_DEBUG, "%s: type = %s", __func__, type);
+
+    ato32(buf + begin, &value);
+    begin += UINT32_SZ;
+    WLOG(WS_LOG_DEBUG, "%s: channel = %u", __func__, value);
+
+    ato32(buf + begin, &value);
+    begin += UINT32_SZ;
+    WLOG(WS_LOG_DEBUG, "%s: initialWindowSz = %u", __func__, value);
+
+    ato32(buf + begin, &value);
+    begin += UINT32_SZ;
+    WLOG(WS_LOG_DEBUG, "%s: maxPacketSz = %u", __func__, value);
 
     *idx = begin;
 
@@ -1235,6 +1327,13 @@ static int DoPacket(WOLFSSH* ssh)
 
         case MSGID_USERAUTH_REQUEST:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_USERAUTH_REQUEST");
+            DoUserAuthRequest(ssh, buf, payloadSz, &idx);
+            break;
+
+        case MSGID_CHANNEL_OPEN:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_OPEN");
+            DoChannelOpen(ssh, buf, payloadSz, &idx);
+            break;
 
         default:
             WLOG(WS_LOG_DEBUG, "Unimplemented message ID (%d)", msg);
@@ -1472,6 +1571,8 @@ int ProcessReply(WOLFSSH* ssh)
                 WLOG(WS_LOG_DEBUG, "Bad process input state, program error");
                 return WS_INPUT_CASE_E;
         }
+        WLOG(WS_LOG_DEBUG, "PR4: Shrinking input buffer");
+        ShrinkBuffer(&ssh->inputBuffer, 1);
         ssh->processReplyState = PROCESS_INIT;
         return WS_SUCCESS;
     }
@@ -2086,8 +2187,43 @@ int SendServiceAccept(WOLFSSH* ssh, const char* name)
     ssh->outputBuffer.length = idx;
 
     BundlePacket(ssh);
-    /*SendBuffered(ssh);*/
     SendUserAuthBanner(ssh);
+
+    return WS_SUCCESS;
+}
+
+#if 0
+static const char cannedAuths[] = "password";
+static const uint32_t cannedAuthsSz = sizeof(cannedAuths) - 1;
+
+
+int SendUserAuthFailure(WOLFSSH* ssh, uint8_t partialSuccess)
+{
+    (void)ssh;
+    (void)partialSuccess;
+    return WS_SUCCESS;
+}
+#endif
+
+int SendUserAuthSuccess(WOLFSSH* ssh)
+{
+    uint8_t* output;
+    uint32_t idx;
+
+    if (ssh == NULL)
+        return WS_BAD_ARGUMENT;
+
+    PreparePacket(ssh, MSG_ID_SZ);
+
+    output = ssh->outputBuffer.buffer;
+    idx = ssh->outputBuffer.length;
+
+    output[idx++] = MSGID_USERAUTH_SUCCESS;
+
+    ssh->outputBuffer.length = idx;
+
+    BundlePacket(ssh);
+    SendBuffered(ssh);
 
     return WS_SUCCESS;
 }
@@ -2099,7 +2235,7 @@ static const char cannedBanner[] =
     "It should have its own banner, but\r\n"
     "it is currently using a canned one in "
     "the library. Be happy or not.\r\n";
-static const uint32_t cannedBannerSz= sizeof(cannedBanner) - 1;
+static const uint32_t cannedBannerSz = sizeof(cannedBanner) - 1;
 
 
 int SendUserAuthBanner(WOLFSSH* ssh)

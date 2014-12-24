@@ -78,6 +78,9 @@ enum {
     /* Public Key IDs */
     ID_SSH_RSA,
 
+    /* UserAuth IDs */
+    ID_USERAUTH_PASSWORD,
+
     ID_UNKNOWN
 };
 
@@ -155,6 +158,15 @@ typedef struct HandshakeInfo {
     uint8_t        e[257]; /* May have a leading zero, for unsigned. */
     uint32_t       eSz;
 } HandshakeInfo;
+
+
+typedef struct Channel {
+    uint32_t windowSz;
+    uint32_t maxPacketSz;
+    uint8_t  channelType;
+    uint32_t sender; /* Note for John: client's channel number for session */
+    uint32_t recipient; /* server's channel number for session */
+} Channel;
 
 
 /* our wolfSSH session */
@@ -239,6 +251,8 @@ WOLFSSH_LOCAL int SendDisconnect(WOLFSSH*, uint32_t);
 WOLFSSH_LOCAL int SendIgnore(WOLFSSH*, const unsigned char*, uint32_t);
 WOLFSSH_LOCAL int SendDebug(WOLFSSH*, byte, const char*);
 WOLFSSH_LOCAL int SendServiceAccept(WOLFSSH*, const char*);
+WOLFSSH_LOCAL int SendUserAuthSuccess(WOLFSSH*);
+WOLFSSH_LOCAL int SendUserAuthFailure(WOLFSSH*, uint8_t);
 WOLFSSH_LOCAL int SendUserAuthBanner(WOLFSSH*);
 
 
@@ -291,7 +305,9 @@ enum WS_MessageIds {
     MSGID_USERAUTH_REQUEST = 50,
     MSGID_USERAUTH_FAILURE = 51,
     MSGID_USERAUTH_SUCCESS = 52,
-    MSGID_USERAUTH_BANNER  = 53
+    MSGID_USERAUTH_BANNER  = 53,
+
+    MSGID_CHANNEL_OPEN     = 90
 };
 
 
