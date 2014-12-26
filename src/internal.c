@@ -1221,6 +1221,40 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
 }
 
 
+static int GetUint32(uint32_t* v, uint8_t* buf, uint32_t len, uint32_t* idx)
+{
+    int result = WS_BUFFER_E;
+
+    if (*idx < len && *idx + UINT32_SZ <= len) {
+        ato32(buf + *idx, v);
+        *idx += UINT32_SZ;
+        result = WS_SUCCESS;
+    }
+    return result;
+}
+
+
+static int GetString(char* s, uint32_t* sSz,
+                     uint8_t* buf, uint32_t len, uint32_t *idx)
+{
+    int result;
+
+    result = GetUint32(sSz, buf, len, idx);
+
+    if (result == WS_SUCCESS) {
+        result = WS_BUFFER_E;
+        if (*idx < len && *idx + *sSz <= len) {
+            XMEMCPY(s, buf + *idx, *sSz);
+            *idx += *sSz;
+            s[*sSz] = 0;
+            result = WS_SUCCESS;
+        }
+    }
+
+    return result;
+}
+
+
 static int DoChannelOpen(WOLFSSH* ssh,
                          uint8_t* buf, uint32_t len, uint32_t* idx)
 {
@@ -1228,29 +1262,32 @@ static int DoChannelOpen(WOLFSSH* ssh,
     uint32_t value;
     uint32_t typeSz;
     char     type[32];
+    int      ret;
 
     (void)ssh;
     (void)len;
 
-    ato32(buf + begin, &typeSz);
-    begin += LENGTH_SZ;
+    ret = GetString(type, &typeSz, buf, len, &begin);
 
-    XMEMCPY(type, buf + begin, typeSz);
-    begin += typeSz;
-    type[typeSz] = 0;
-    WLOG(WS_LOG_DEBUG, "%s: type = %s", __func__, type);
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "%s: type = %s", __func__, type);
+        ret = GetUint32(&value, buf, len, &begin);
+    }
 
-    ato32(buf + begin, &value);
-    begin += UINT32_SZ;
-    WLOG(WS_LOG_DEBUG, "%s: channel = %u", __func__, value);
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "%s: channel = %u", __func__, value);
+        ret = GetUint32(&value, buf, len, &begin);
+    }
 
-    ato32(buf + begin, &value);
-    begin += UINT32_SZ;
-    WLOG(WS_LOG_DEBUG, "%s: initialWindowSz = %u", __func__, value);
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "%s: initialWindowSz = %u", __func__, value);
+        ret = GetUint32(&value, buf, len, &begin);
+    }
 
-    ato32(buf + begin, &value);
-    begin += UINT32_SZ;
-    WLOG(WS_LOG_DEBUG, "%s: maxPacketSz = %u", __func__, value);
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "%s: maxPacketSz = %u", __func__, value);
+    }
+
 
     *idx = begin;
 
@@ -1266,6 +1303,7 @@ static int DoPacket(WOLFSSH* ssh)
     uint32_t payloadSz;
     uint8_t  padSz;
     uint8_t  msg;
+    uint32_t payloadIdx = 0;
 
     WLOG(WS_LOG_DEBUG, "DoPacket sequence number: %d", ssh->peerSeq);
 
@@ -1274,6 +1312,7 @@ static int DoPacket(WOLFSSH* ssh)
     payloadSz = ssh->curSz - PAD_LENGTH_SZ - padSz - MSG_ID_SZ;
 
     msg = buf[idx++];
+    /* At this point, payload starts at "buf + idx". */
 
     switch (msg) {
 
@@ -1332,7 +1371,8 @@ static int DoPacket(WOLFSSH* ssh)
 
         case MSGID_CHANNEL_OPEN:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_OPEN");
-            DoChannelOpen(ssh, buf, payloadSz, &idx);
+            DoChannelOpen(ssh, buf + idx, payloadSz, &payloadIdx);
+            idx += payloadIdx;
             break;
 
         default:
