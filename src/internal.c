@@ -1163,7 +1163,6 @@ static int DoServiceRequest(WOLFSSH* ssh,
     uint32_t nameSz;
     char     serviceName[32];
 
-    (void)ssh;
     (void)len;
 
     ato32(buf + begin, &nameSz);
@@ -1173,11 +1172,10 @@ static int DoServiceRequest(WOLFSSH* ssh,
     begin += nameSz;
     serviceName[nameSz] = 0;
 
-    WLOG(WS_LOG_DEBUG, "Requesting service: %s", serviceName);
-
-    SendServiceAccept(ssh, serviceName);
-
     *idx = begin;
+
+    WLOG(WS_LOG_DEBUG, "Requesting service: %s", serviceName);
+    ssh->clientState = CLIENT_USERAUTH_REQUEST_DONE;
 
     return WS_SUCCESS;
 }
@@ -1216,7 +1214,7 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
 
     *idx = begin;
 
-    SendUserAuthSuccess(ssh);
+    ssh->clientState = CLIENT_USERAUTH_DONE;
 
     return WS_SUCCESS;
 }
@@ -1265,32 +1263,35 @@ static int DoChannelOpen(WOLFSSH* ssh,
     char     type[32];
     int      ret;
 
+    WLOG(WS_LOG_DEBUG, "Entering DoChannelOpen()");
+
     (void)ssh;
     (void)len;
 
     ret = GetString(type, &typeSz, buf, len, &begin);
 
-    if (ret == WS_SUCCESS) {
-        WLOG(WS_LOG_DEBUG, "%s: type = %s", __func__, type);
+    if (ret == WS_SUCCESS)
         ret = GetUint32(&value, buf, len, &begin);
-    }
 
-    if (ret == WS_SUCCESS) {
-        WLOG(WS_LOG_DEBUG, "%s: channel = %u", __func__, value);
+    if (ret == WS_SUCCESS)
         ret = GetUint32(&value, buf, len, &begin);
-    }
 
-    if (ret == WS_SUCCESS) {
-        WLOG(WS_LOG_DEBUG, "%s: initialWindowSz = %u", __func__, value);
+    if (ret == WS_SUCCESS)
         ret = GetUint32(&value, buf, len, &begin);
+
+    if (ret != WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "Leaving DoChannelOpen(), ret = %d", ret);
+        return ret;
     }
 
-    if (ret == WS_SUCCESS) {
-        WLOG(WS_LOG_DEBUG, "%s: maxPacketSz = %u", __func__, value);
-    }
-
+    WLOG(WS_LOG_DEBUG, "  type = %s", type);
+    WLOG(WS_LOG_DEBUG, "  channel = %u", value);
+    WLOG(WS_LOG_DEBUG, "  initialWindowSz = %u", value);
+    WLOG(WS_LOG_DEBUG, "  maxPacketSz = %u", value);
 
     *idx = begin;
+
+    ssh->clientState = CLIENT_CHANNEL_REQUEST_DONE;
 
     return WS_SUCCESS;
 }
@@ -1619,8 +1620,10 @@ int ProcessReply(WOLFSSH* ssh)
         WLOG(WS_LOG_DEBUG, "PR4: Shrinking input buffer");
         ShrinkBuffer(&ssh->inputBuffer, 1);
         ssh->processReplyState = PROCESS_INIT;
+
         WLOG(WS_LOG_DEBUG, "PR5: txCount = %u, rxCount = %u",
              ssh->txCount, ssh->rxCount);
+
         return WS_SUCCESS;
     }
 }
@@ -2212,16 +2215,19 @@ int SendDebug(WOLFSSH* ssh, byte alwaysDisplay, const char* msg)
 }
 
 
-int SendServiceAccept(WOLFSSH* ssh, const char* name)
+const char userAuthName[] = "ssh-userauth";
+
+
+int SendServiceAccept(WOLFSSH* ssh)
 {
     uint32_t nameSz;
     uint8_t* output;
     uint32_t idx;
 
-    if (ssh == NULL || name == NULL)
+    if (ssh == NULL)
         return WS_BAD_ARGUMENT;
 
-    nameSz = (uint32_t)WSTRLEN(name);
+    nameSz = (uint32_t)WSTRLEN(userAuthName);
     PreparePacket(ssh, MSG_ID_SZ + LENGTH_SZ + nameSz);
 
     output = ssh->outputBuffer.buffer;
@@ -2230,7 +2236,7 @@ int SendServiceAccept(WOLFSSH* ssh, const char* name)
     output[idx++] = MSGID_SERVICE_ACCEPT;
     c32toa(nameSz, output + idx);
     idx += LENGTH_SZ;
-    WMEMCPY(output + idx, name, nameSz);
+    WMEMCPY(output + idx, userAuthName, nameSz);
     idx += nameSz;
 
     ssh->outputBuffer.length = idx;
@@ -2310,6 +2316,40 @@ int SendUserAuthBanner(WOLFSSH* ssh)
     idx += LENGTH_SZ;
     WMEMCPY(output + idx, cannedLangTag, cannedLangTagSz);
     idx += cannedLangTagSz;
+
+    ssh->outputBuffer.length = idx;
+
+    BundlePacket(ssh);
+    SendBuffered(ssh);
+
+    return WS_SUCCESS;
+}
+
+
+int SendChannelOpenConf(WOLFSSH* ssh)
+{
+    uint8_t* output;
+    uint32_t idx;
+
+    WLOG(WS_LOG_DEBUG, "Entering SendChannelOpenConf()");
+
+    if (ssh == NULL)
+        return WS_BAD_ARGUMENT;
+
+    PreparePacket(ssh, MSG_ID_SZ + (UINT32_SZ * 4));
+
+    output = ssh->outputBuffer.buffer;
+    idx = ssh->outputBuffer.length;
+
+    output[idx++] = MSGID_CHANNEL_OPEN_CONF;
+    c32toa(0, output + idx); /* recipient channel */
+    idx += UINT32_SZ;
+    c32toa(0, output + idx); /* sender channel */
+    idx += UINT32_SZ;
+    c32toa(DEFAULT_WINDOW_SZ, output + idx);
+    idx += UINT32_SZ;
+    c32toa(DEFAULT_MAX_PACKET_SZ, output + idx);
+    idx += UINT32_SZ;
 
     ssh->outputBuffer.length = idx;
 

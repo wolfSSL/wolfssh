@@ -97,6 +97,8 @@ enum {
 #define MSG_ID_SZ        1
 #define SHA1_96_SZ       12
 #define UINT32_SZ        4
+#define DEFAULT_WINDOW_SZ     (1024 * 1024)
+#define DEFAULT_MAX_PACKET_SZ (16 * 1024)
 
 
 WOLFSSH_LOCAL uint8_t     NameToId(const char*, uint32_t);
@@ -161,11 +163,13 @@ typedef struct HandshakeInfo {
 
 
 typedef struct Channel {
+    uint8_t  channelType;
     uint32_t windowSz;
     uint32_t maxPacketSz;
-    uint8_t  channelType;
-    uint32_t sender; /* Note for John: client's channel number for session */
-    uint32_t recipient; /* server's channel number for session */
+    uint32_t peerWindowSz;
+    uint32_t peerMaxPacketSz;
+    uint32_t channel;
+    uint32_t peerChannel;
 } Channel;
 
 
@@ -253,10 +257,11 @@ WOLFSSH_LOCAL int SendUnimplemented(WOLFSSH*);
 WOLFSSH_LOCAL int SendDisconnect(WOLFSSH*, uint32_t);
 WOLFSSH_LOCAL int SendIgnore(WOLFSSH*, const unsigned char*, uint32_t);
 WOLFSSH_LOCAL int SendDebug(WOLFSSH*, byte, const char*);
-WOLFSSH_LOCAL int SendServiceAccept(WOLFSSH*, const char*);
+WOLFSSH_LOCAL int SendServiceAccept(WOLFSSH*);
 WOLFSSH_LOCAL int SendUserAuthSuccess(WOLFSSH*);
 WOLFSSH_LOCAL int SendUserAuthFailure(WOLFSSH*, uint8_t);
 WOLFSSH_LOCAL int SendUserAuthBanner(WOLFSSH*);
+WOLFSSH_LOCAL int SendChannelOpenConf(WOLFSSH* ssh);
 
 
 enum AcceptStates {
@@ -268,7 +273,12 @@ enum AcceptStates {
     ACCEPT_CLIENT_KEXDH_INIT_DONE,
     ACCEPT_SERVER_KEXDH_REPLY_SENT,
     ACCEPT_USING_KEYS,
-    ACCEPT_CLIENT_USERAUTH_DONE
+    ACCEPT_CLIENT_USERAUTH_REQUEST_DONE,
+    ACCEPT_SERVER_USERAUTH_ACCEPT_SENT,
+    ACCEPT_CLIENT_USERAUTH_DONE,
+    ACCEPT_SERVER_USERAUTH_SENT,
+    ACCEPT_CLIENT_CHANNEL_REQUEST_DONE,
+    ACCEPT_SERVER_CHANNEL_ACCEPT_SENT
 };
 
 
@@ -278,7 +288,10 @@ enum ClientStates {
     CLIENT_KEXINIT_DONE,
     CLIENT_KEXDH_INIT_DONE,
     CLIENT_USING_KEYS,
+    CLIENT_USERAUTH_REQUEST_DONE,
     CLIENT_USERAUTH_DONE,
+    CLIENT_CHANNEL_REQUEST_DONE,
+    CLIENT_CHANNEL_PTY_OPEN,
     CLIENT_DONE
 };
 
@@ -310,7 +323,8 @@ enum WS_MessageIds {
     MSGID_USERAUTH_SUCCESS = 52,
     MSGID_USERAUTH_BANNER  = 53,
 
-    MSGID_CHANNEL_OPEN     = 90
+    MSGID_CHANNEL_OPEN      = 90,
+    MSGID_CHANNEL_OPEN_CONF = 91
 };
 
 

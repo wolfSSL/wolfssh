@@ -288,6 +288,7 @@ const char acceptState[] = "accept state: %s";
 int wolfSSH_accept(WOLFSSH* ssh)
 {
     switch (ssh->acceptState) {
+
         case ACCEPT_BEGIN:
             while (ssh->clientState < CLIENT_VERSION_DONE) {
                 if ( (ssh->error = ProcessClientVersion(ssh)) < WS_SUCCESS) {
@@ -359,10 +360,31 @@ int wolfSSH_accept(WOLFSSH* ssh)
             WLOG(WS_LOG_DEBUG, acceptState, "USING_KEYS");
 
         case ACCEPT_USING_KEYS:
-            while (ssh->clientState < CLIENT_USERAUTH_DONE) {
+            while (ssh->clientState < CLIENT_USERAUTH_REQUEST_DONE) {
                 if ( (ssh->error = ProcessReply(ssh)) < 0) {
                     WLOG(WS_LOG_DEBUG, acceptError,
                          "USING_KEYS", ssh->error);
+                    return WS_FATAL_ERROR;
+                }
+            }
+            ssh->acceptState = ACCEPT_CLIENT_USERAUTH_REQUEST_DONE;
+            WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_USERAUTH_REQUEST_DONE");
+
+        case ACCEPT_CLIENT_USERAUTH_REQUEST_DONE:
+            if ( (ssh->error = SendServiceAccept(ssh)) < WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, acceptError,
+                     "CLIENT_USERAUTH_REQUEST_DONE", ssh->error);
+                return WS_FATAL_ERROR;
+            }
+            ssh->acceptState = ACCEPT_SERVER_USERAUTH_ACCEPT_SENT;
+            WLOG(WS_LOG_DEBUG, acceptState,
+                 "ACCEPT_SERVER_USERAUTH_ACCEPT_SENT");
+
+        case ACCEPT_SERVER_USERAUTH_ACCEPT_SENT:
+            while (ssh->clientState < CLIENT_USERAUTH_DONE) {
+                if ( (ssh->error = ProcessReply(ssh)) < 0) {
+                    WLOG(WS_LOG_DEBUG, acceptError,
+                         "SERVER_USERAUTH_ACCEPT_SENT", ssh->error);
                     return WS_FATAL_ERROR;
                 }
             }
@@ -370,10 +392,39 @@ int wolfSSH_accept(WOLFSSH* ssh)
             WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_USERAUTH_DONE");
 
         case ACCEPT_CLIENT_USERAUTH_DONE:
+            if ( (ssh->error = SendUserAuthSuccess(ssh)) < WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, acceptError,
+                     "CLIENT_USERAUTH_DONE", ssh->error);
+                return WS_FATAL_ERROR;
+            }
+            ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+            WLOG(WS_LOG_DEBUG, acceptState, "SERVER_USERAUTH_SENT");
+
+        case ACCEPT_SERVER_USERAUTH_SENT:
+            while (ssh->clientState < CLIENT_CHANNEL_REQUEST_DONE) {
+                if ( (ssh->error = ProcessReply(ssh)) < 0) {
+                    WLOG(WS_LOG_DEBUG, acceptError,
+                         "SERVER_USERAUTH_SENT", ssh->error);
+                    return WS_FATAL_ERROR;
+                }
+            }
+            ssh->acceptState = ACCEPT_CLIENT_CHANNEL_REQUEST_DONE;
+            WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_CHANNEL_REQUEST_DONE");
+
+        case ACCEPT_CLIENT_CHANNEL_REQUEST_DONE:
+            if ( (ssh->error = SendChannelOpenConf(ssh)) < WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, acceptError,
+                     "CLIENT_CHANNEL_REQUEST_DONE", ssh->error);
+                return WS_FATAL_ERROR;
+            }
+            ssh->acceptState = ACCEPT_SERVER_CHANNEL_ACCEPT_SENT;
+            WLOG(WS_LOG_DEBUG, acceptState, "SERVER_CHANNEL_ACCEPT_SENT");
+
+        case ACCEPT_SERVER_CHANNEL_ACCEPT_SENT:
             while (ssh->clientState < CLIENT_DONE) {
                 if ( (ssh->error = ProcessReply(ssh)) < 0) {
                     WLOG(WS_LOG_DEBUG, acceptError,
-                         "CLIENT_USERAUTH_DONE", ssh->error);
+                         "SERVER_CHANNEL_ACCEPT_SENT", ssh->error);
                     return WS_FATAL_ERROR;
                 }
             }
