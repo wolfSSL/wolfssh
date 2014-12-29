@@ -179,6 +179,9 @@ struct WOLFSSH {
     void*          ioWriteCtx;     /* I/O Write Context handle */
     int            rflags;         /* optional read  flags */
     int            wflags;         /* optional write flags */
+    uint32_t       txCount;
+    uint32_t       rxCount;
+    uint32_t       countHighwater;
     uint32_t       curSz;
     uint32_t       seq;
     uint32_t       peerSeq;

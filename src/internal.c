@@ -904,6 +904,7 @@ static int DoNewKeys(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
             break;
     }
 
+    ssh->rxCount = 0;
     ssh->clientState = CLIENT_USING_KEYS;
 
     return WS_SUCCESS;
@@ -1421,6 +1422,8 @@ static INLINE int Encrypt(WOLFSSH* ssh, uint8_t* cipher, const uint8_t* input,
             ret = WS_INVALID_ALGO_ID;
     }
 
+    ssh->txCount += sz;
+
     return ret;
 }
 
@@ -1447,6 +1450,8 @@ static INLINE int Decrypt(WOLFSSH* ssh, uint8_t* plain, const uint8_t* input,
         default:
             ret = WS_INVALID_ALGO_ID;
     }
+
+    ssh->rxCount += sz;
 
     return ret;
 }
@@ -1614,6 +1619,8 @@ int ProcessReply(WOLFSSH* ssh)
         WLOG(WS_LOG_DEBUG, "PR4: Shrinking input buffer");
         ShrinkBuffer(&ssh->inputBuffer, 1);
         ssh->processReplyState = PROCESS_INIT;
+        WLOG(WS_LOG_DEBUG, "PR5: txCount = %u, rxCount = %u",
+             ssh->txCount, ssh->rxCount);
         return WS_SUCCESS;
     }
 }
@@ -2074,6 +2081,8 @@ int SendNewKeys(WOLFSSH* ssh)
             WLOG(WS_LOG_DEBUG, "SNK: using cipher invalid");
             break;
     }
+
+    ssh->txCount = 0;
 
     return WS_SUCCESS;
 }
