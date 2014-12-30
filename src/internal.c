@@ -1220,6 +1220,19 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
 }
 
 
+static int GetBoolean(uint8_t* v, uint8_t* buf, uint32_t len, uint32_t* idx)
+{
+    int result = WS_BUFFER_E;
+
+    if (*idx < len) {
+        *v = buf[*idx];
+        *idx += BOOLEAN_SZ;
+        result = WS_SUCCESS;
+    }
+    return result;
+}
+
+
 static int GetUint32(uint32_t* v, uint8_t* buf, uint32_t len, uint32_t* idx)
 {
     int result = WS_BUFFER_E;
@@ -1258,9 +1271,11 @@ static int DoChannelOpen(WOLFSSH* ssh,
                          uint8_t* buf, uint32_t len, uint32_t* idx)
 {
     uint32_t begin = *idx;
-    uint32_t value;
     uint32_t typeSz;
     char     type[32];
+    uint32_t channel;
+    uint32_t initialWindowSz;
+    uint32_t maxPacketSz;
     int      ret;
 
     WLOG(WS_LOG_DEBUG, "Entering DoChannelOpen()");
@@ -1271,13 +1286,13 @@ static int DoChannelOpen(WOLFSSH* ssh,
     ret = GetString(type, &typeSz, buf, len, &begin);
 
     if (ret == WS_SUCCESS)
-        ret = GetUint32(&value, buf, len, &begin);
+        ret = GetUint32(&channel, buf, len, &begin);
 
     if (ret == WS_SUCCESS)
-        ret = GetUint32(&value, buf, len, &begin);
+        ret = GetUint32(&initialWindowSz, buf, len, &begin);
 
     if (ret == WS_SUCCESS)
-        ret = GetUint32(&value, buf, len, &begin);
+        ret = GetUint32(&maxPacketSz, buf, len, &begin);
 
     if (ret != WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "Leaving DoChannelOpen(), ret = %d", ret);
@@ -1285,14 +1300,127 @@ static int DoChannelOpen(WOLFSSH* ssh,
     }
 
     WLOG(WS_LOG_DEBUG, "  type = %s", type);
-    WLOG(WS_LOG_DEBUG, "  channel = %u", value);
-    WLOG(WS_LOG_DEBUG, "  initialWindowSz = %u", value);
-    WLOG(WS_LOG_DEBUG, "  maxPacketSz = %u", value);
+    WLOG(WS_LOG_DEBUG, "  channel = %u", channel);
+    WLOG(WS_LOG_DEBUG, "  initialWindowSz = %u", initialWindowSz);
+    WLOG(WS_LOG_DEBUG, "  maxPacketSz = %u", maxPacketSz);
 
     *idx = begin;
 
     ssh->clientState = CLIENT_CHANNEL_REQUEST_DONE;
 
+    return WS_SUCCESS;
+}
+
+
+static int DoChannelRequest(WOLFSSH* ssh,
+                            uint8_t* buf, uint32_t len, uint32_t* idx)
+{
+    uint32_t begin = *idx;
+    uint32_t channel;
+    uint32_t typeSz;
+    char     type[32];
+    uint8_t  wantReply;
+    int      ret;
+
+    WLOG(WS_LOG_DEBUG, "Entering DoChannelRequest()");
+
+    (void)ssh;
+
+    ret = GetUint32(&channel, buf, len, &begin);
+
+    if (ret == WS_SUCCESS)
+        ret = GetString(type, &typeSz, buf, len, &begin);
+
+    if (ret == WS_SUCCESS)
+        ret = GetBoolean(&wantReply, buf, len, &begin);
+
+    if (ret != WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "Leaving DoChannelRequest(), ret = %d", ret);
+        return ret;
+    }
+
+    WLOG(WS_LOG_DEBUG, "  channel = %u", channel);
+    WLOG(WS_LOG_DEBUG, "  type = %s", type);
+    WLOG(WS_LOG_DEBUG, "  wantReply = %u", wantReply);
+
+    if (WSTRNCMP(type, "pty-req", typeSz) == 0) {
+        char     term[32];
+        uint32_t termSz;
+        uint32_t widthChar, heightRows, widthPixels, heightPixels;
+        uint32_t modesSz;
+
+        ret = GetString(term, &termSz, buf, len, &begin);
+        if (ret == WS_SUCCESS)
+            ret = GetUint32(&widthChar, buf, len, &begin);
+        if (ret == WS_SUCCESS)
+            ret = GetUint32(&heightRows, buf, len, &begin);
+        if (ret == WS_SUCCESS)
+            ret = GetUint32(&widthPixels, buf, len, &begin);
+        if (ret == WS_SUCCESS)
+            ret = GetUint32(&heightPixels, buf, len, &begin);
+        if (ret == WS_SUCCESS)
+            ret = GetUint32(&modesSz, buf, len, &begin);
+
+        if (ret != WS_SUCCESS) {
+            WLOG(WS_LOG_DEBUG, "Leaving DoChannelRequest(), ret = %d", ret);
+            return ret;
+        }
+
+        WLOG(WS_LOG_DEBUG, "  term = %s", term);
+        WLOG(WS_LOG_DEBUG, "  widthChar = %u", widthChar);
+        WLOG(WS_LOG_DEBUG, "  heightRows = %u", heightRows);
+        WLOG(WS_LOG_DEBUG, "  widthPixels = %u", widthPixels);
+        WLOG(WS_LOG_DEBUG, "  heightPixels = %u", heightPixels);
+        WLOG(WS_LOG_DEBUG, "  modes = %u", (modesSz - 1) / 5);
+    }
+    else if (WSTRNCMP(type, "env", typeSz) == 0) {
+        char     name[32];
+        uint32_t nameSz;
+        char     value[32];
+        uint32_t valueSz;
+
+        ret = GetString(name, &nameSz, buf, len, &begin);
+        if (ret == WS_SUCCESS)
+            ret = GetString(value, &valueSz, buf, len, &begin);
+
+        if (ret != WS_SUCCESS) {
+            WLOG(WS_LOG_DEBUG, "Leaving DoChannelRequest(), ret = %d", ret);
+            return ret;
+        }
+
+        WLOG(WS_LOG_DEBUG, "  %s = %s", name, value);
+    }
+
+    *idx = len;
+
+    WLOG(WS_LOG_DEBUG, "Leaving DoChannelRequest()");
+    return WS_SUCCESS;
+}
+
+
+static int DoChannelData(WOLFSSH* ssh,
+                         uint8_t* buf, uint32_t len, uint32_t* idx)
+{
+    uint32_t begin = *idx;
+    uint32_t channel, dataSz;
+    int      ret;
+
+    WLOG(WS_LOG_DEBUG, "Entering DoChannelData()");
+
+    ret = GetUint32(&channel, buf, len, &begin);
+    if (ret == WS_SUCCESS)
+        ret = GetUint32(&dataSz, buf, len, &begin);
+
+    if (ret != WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "Leaving DoChannelData(), ret = %d", ret);
+        return ret;
+    }
+
+    SendChannelData(ssh, channel, buf + begin, dataSz);
+
+    *idx = begin + dataSz;
+
+    WLOG(WS_LOG_DEBUG, "Leaving DoChannelData()");
     return WS_SUCCESS;
 }
 
@@ -1374,6 +1502,18 @@ static int DoPacket(WOLFSSH* ssh)
         case MSGID_CHANNEL_OPEN:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_OPEN");
             DoChannelOpen(ssh, buf + idx, payloadSz, &payloadIdx);
+            idx += payloadIdx;
+            break;
+
+        case MSGID_CHANNEL_DATA:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_DATA");
+            DoChannelData(ssh, buf + idx, payloadSz, &payloadIdx);
+            idx += payloadSz;
+            break;
+
+        case MSGID_CHANNEL_REQUEST:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_REQUEST");
+            DoChannelRequest(ssh, buf + idx, payloadSz, &payloadIdx);
             idx += payloadIdx;
             break;
 
@@ -2356,6 +2496,40 @@ int SendChannelOpenConf(WOLFSSH* ssh)
     BundlePacket(ssh);
     SendBuffered(ssh);
 
+    return WS_SUCCESS;
+}
+
+
+int SendChannelData(WOLFSSH* ssh, uint32_t channel,
+                    uint8_t* data, uint32_t dataSz)
+{
+    uint8_t* output;
+    uint32_t idx;
+
+    WLOG(WS_LOG_DEBUG, "Entering SendChannelData()");
+
+    if (ssh == NULL)
+        return WS_BAD_ARGUMENT;
+
+    PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ + LENGTH_SZ + dataSz);
+
+    output = ssh->outputBuffer.buffer;
+    idx = ssh->outputBuffer.length;
+
+    output[idx++] = MSGID_CHANNEL_DATA;
+    c32toa(channel, output + idx);
+    idx += UINT32_SZ;
+    c32toa(dataSz, output + idx);
+    idx += LENGTH_SZ;
+    WMEMCPY(output + idx, data, dataSz);
+    idx += dataSz;
+
+    ssh->outputBuffer.length = idx;
+
+    BundlePacket(ssh);
+    SendBuffered(ssh);
+
+    WLOG(WS_LOG_DEBUG, "Leaving SendChannelData()");
     return WS_SUCCESS;
 }
 

@@ -262,6 +262,7 @@ WOLFSSH_LOCAL int SendUserAuthSuccess(WOLFSSH*);
 WOLFSSH_LOCAL int SendUserAuthFailure(WOLFSSH*, uint8_t);
 WOLFSSH_LOCAL int SendUserAuthBanner(WOLFSSH*);
 WOLFSSH_LOCAL int SendChannelOpenConf(WOLFSSH* ssh);
+WOLFSSH_LOCAL int SendChannelData(WOLFSSH* ssh, uint32_t, uint8_t*, uint32_t);
 
 
 enum AcceptStates {
@@ -324,7 +325,9 @@ enum WS_MessageIds {
     MSGID_USERAUTH_BANNER  = 53,
 
     MSGID_CHANNEL_OPEN      = 90,
-    MSGID_CHANNEL_OPEN_CONF = 91
+    MSGID_CHANNEL_OPEN_CONF = 91,
+    MSGID_CHANNEL_DATA      = 94,
+    MSGID_CHANNEL_REQUEST   = 98
 };
 
 
