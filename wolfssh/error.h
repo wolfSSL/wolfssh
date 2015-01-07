@@ -39,20 +39,20 @@ extern "C" {
 
 /* main public return values */
 enum WS_ErrorCodes {
-    WS_SUCCESS         =  0,            /* function success */
-    WS_FATAL_ERROR     = -1,            /* general function failure */
-    WS_BAD_ARGUMENT    = -2,            /* bad function argument */
-    WS_MEMORY_E        = -3,            /* memory allocation failure */
-    WS_BUFFER_E        = -4,            /* input/output buffer size error */
-    WS_PARSE_E         = -5,            /* general parsing error */
-    WS_NOT_COMPILED    = -6,            /* feature not compiled in */
-    WS_OVERFLOW_E      = -7,            /* would overflow if continued */
-    WS_BAD_USAGE       = -8,            /* bad example usage */
+    WS_SUCCESS         =  0,    /* function success */
+    WS_FATAL_ERROR     = -1,    /* general function failure */
+    WS_BAD_ARGUMENT    = -2,    /* bad function argument */
+    WS_MEMORY_E        = -3,    /* memory allocation failure */
+    WS_BUFFER_E        = -4,    /* input/output buffer size error */
+    WS_PARSE_E         = -5,    /* general parsing error */
+    WS_NOT_COMPILED    = -6,    /* feature not compiled in */
+    WS_OVERFLOW_E      = -7,    /* would overflow if continued */
+    WS_BAD_USAGE       = -8,    /* bad example usage */
     WS_SOCKET_ERROR_E  = -9,
     WS_WANT_READ       = -10,
     WS_WANT_WRITE      = -11,
     WS_RECV_OVERFLOW_E = -12,
-    WS_VERSION_E       = -13,           /* Peer using wrong version of SSH */
+    WS_VERSION_E       = -13,   /* Peer using wrong version of SSH */
     WS_SEND_OOB_READ_E = -14,
     WS_INPUT_CASE_E    = -15,
     WS_BAD_FILETYPE_E  = -16,
@@ -63,7 +63,9 @@ enum WS_ErrorCodes {
     WS_DECRYPT_E       = -21,
     WS_ENCRYPT_E       = -22,
     WS_VERIFY_MAC_E    = -23,
-    WS_CREATE_MAC_E    = -24
+    WS_CREATE_MAC_E    = -24,
+    WS_RESOURCE_E      = -25,   /* insufficient resources for new channel */
+    WS_INVALID_CHANTYPE = -26,  /* invalid channel type */
 };
 
 

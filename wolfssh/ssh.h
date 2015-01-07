@@ -83,7 +83,9 @@ WOLFSSH_API int wolfSSH_CTX_UseCert_buffer(WOLFSSH_CTX*,
 WOLFSSH_API int wolfSSH_CTX_UseCaCert_buffer(WOLFSSH_CTX*,
                                                  const uint8_t*, uint32_t, int);
 
-WOLFSSH_API int wolfSSH_accept(WOLFSSH* ssh);
+WOLFSSH_API int wolfSSH_accept(WOLFSSH*);
+WOLFSSH_API int wolfSSH_stream_read(WOLFSSH*, uint8_t*, uint32_t);
+WOLFSSH_API int wolfSSH_stream_send(WOLFSSH*, uint8_t*, uint32_t);
 
 
 enum WS_EndpointTypes {

@@ -81,6 +81,9 @@ enum {
     /* UserAuth IDs */
     ID_USERAUTH_PASSWORD,
 
+    /* Channel Type IDs */
+    ID_CHANTYPE_SESSION,
+
     ID_UNKNOWN
 };
 
@@ -99,6 +102,7 @@ enum {
 #define UINT32_SZ        4
 #define DEFAULT_WINDOW_SZ     (1024 * 1024)
 #define DEFAULT_MAX_PACKET_SZ (16 * 1024)
+#define DEFAULT_NEXT_CHANNEL  13013
 
 
 WOLFSSH_LOCAL uint8_t     NameToId(const char*, uint32_t);
@@ -163,13 +167,14 @@ typedef struct HandshakeInfo {
 
 
 typedef struct Channel {
+    uint8_t  inUse;
     uint8_t  channelType;
+    uint32_t channel;
     uint32_t windowSz;
     uint32_t maxPacketSz;
+    uint32_t peerChannel;
     uint32_t peerWindowSz;
     uint32_t peerMaxPacketSz;
-    uint32_t channel;
-    uint32_t peerChannel;
 } Channel;
 
 
@@ -209,6 +214,9 @@ struct WOLFSSH {
 
     Ciphers        encryptCipher;
     Ciphers        decryptCipher;
+
+    uint32_t       nextChannel;
+    Channel        channel;
 
     Buffer         inputBuffer;
     Buffer         outputBuffer;
@@ -291,8 +299,6 @@ enum ClientStates {
     CLIENT_USING_KEYS,
     CLIENT_USERAUTH_REQUEST_DONE,
     CLIENT_USERAUTH_DONE,
-    CLIENT_CHANNEL_REQUEST_DONE,
-    CLIENT_CHANNEL_PTY_OPEN,
     CLIENT_DONE
 };
 
@@ -326,6 +332,7 @@ enum WS_MessageIds {
 
     MSGID_CHANNEL_OPEN      = 90,
     MSGID_CHANNEL_OPEN_CONF = 91,
+    MSGID_CHANNEL_WINDOW_ADJUST = 93,
     MSGID_CHANNEL_DATA      = 94,
     MSGID_CHANNEL_REQUEST   = 98
 };

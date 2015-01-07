@@ -245,13 +245,13 @@ static THREAD_RETURN CYASSL_THREAD server_worker(void* vArgs)
 {
     WOLFSSH* ssh = (WOLFSSH*)vArgs;
     SOCKET_T clientFd = wolfSSH_get_fd(ssh);
-    const char* msgA = "Who's there?!\n";
-    const char* msgB = "Go away!\n";
+    const char* msgA = "Who's there?!\r\n";
+    const char* msgB = "Go away!\r\n";
 
     if (wolfSSH_accept(ssh) == WS_SUCCESS) {
-        send(clientFd, msgA, strlen(msgA), 0);
+        wolfSSH_stream_send(ssh, (uint8_t*)msgA, (uint32_t)strlen(msgA));
         sleep(1);
-        send(clientFd, msgB, strlen(msgB), 0);
+        wolfSSH_stream_send(ssh, (uint8_t*)msgB, (uint32_t)strlen(msgB));
     }
     close(clientFd);
     wolfSSH_free(ssh);

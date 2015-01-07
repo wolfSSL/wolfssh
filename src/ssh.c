@@ -151,6 +151,7 @@ static WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->ioWriteCtx  = &ssh->wfd;  /* set */
     ssh->acceptState = ACCEPT_BEGIN;
     ssh->clientState = CLIENT_BEGIN;
+    ssh->nextChannel = DEFAULT_NEXT_CHANNEL;
     ssh->blockSz     = MIN_BLOCK_SZ;
     ssh->encryptId   = ID_NONE;
     ssh->macId       = ID_NONE;
@@ -401,7 +402,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
             WLOG(WS_LOG_DEBUG, acceptState, "SERVER_USERAUTH_SENT");
 
         case ACCEPT_SERVER_USERAUTH_SENT:
-            while (ssh->clientState < CLIENT_CHANNEL_REQUEST_DONE) {
+            while (ssh->clientState < CLIENT_DONE) {
                 if ( (ssh->error = ProcessReply(ssh)) < 0) {
                     WLOG(WS_LOG_DEBUG, acceptError,
                          "SERVER_USERAUTH_SENT", ssh->error);
@@ -419,18 +420,31 @@ int wolfSSH_accept(WOLFSSH* ssh)
             }
             ssh->acceptState = ACCEPT_SERVER_CHANNEL_ACCEPT_SENT;
             WLOG(WS_LOG_DEBUG, acceptState, "SERVER_CHANNEL_ACCEPT_SENT");
-
-        case ACCEPT_SERVER_CHANNEL_ACCEPT_SENT:
-            while (ssh->clientState < CLIENT_DONE) {
-                if ( (ssh->error = ProcessReply(ssh)) < 0) {
-                    WLOG(WS_LOG_DEBUG, acceptError,
-                         "SERVER_CHANNEL_ACCEPT_SENT", ssh->error);
-                    return WS_FATAL_ERROR;
-                }
-            }
     }
 
-    return WS_FATAL_ERROR;
+    return WS_SUCCESS;
+}
+
+
+int wolfSSH_stream_read(WOLFSSH* ssh, uint8_t* buf, uint32_t bufSz)
+{
+    int bytesRxd = 0;
+
+    (void)ssh;
+    (void)buf;
+    (void)bufSz;
+
+    return bytesRxd;
+}
+
+
+int wolfSSH_stream_send(WOLFSSH* ssh, uint8_t* buf, uint32_t bufSz)
+{
+    int bytesTxd = 0;
+
+    bytesTxd = SendChannelData(ssh, ssh->channel.peerChannel, buf, bufSz);
+
+    return bytesTxd;
 }
 
 
