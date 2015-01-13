@@ -64,7 +64,7 @@ AC_CHECK_FUNCS([socket])
 AC_CHECK_LIB(network,socket)
 
 # Requirements
-TAO_REQUIRE_LIBCYASSL
+TAO_REQUIRE_LIBWOLFSSL
 #REQUIRE_CYASSL([scep])
 #REQUIRE_WOLFCRYPT([aes rsa dh])
 
