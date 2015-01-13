@@ -456,7 +456,7 @@ int wolfSSH_stream_send(WOLFSSH* ssh, uint8_t* buf, uint32_t bufSz)
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_stream_send()");
 
-    if (ssh == NULL || data == NULL)
+    if (ssh == NULL || buf == NULL)
         return WS_BAD_ARGUMENT;
 
     bytesTxd = SendChannelData(ssh, ssh->channel.peerChannel, buf, bufSz);
