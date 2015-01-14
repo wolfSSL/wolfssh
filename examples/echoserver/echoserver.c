@@ -245,25 +245,22 @@ static THREAD_RETURN CYASSL_THREAD server_worker(void* vArgs)
 {
     WOLFSSH* ssh = (WOLFSSH*)vArgs;
     SOCKET_T clientFd = wolfSSH_get_fd(ssh);
-    const char* msgA = "Who's there?!\r\n";
-    const char* msgB = "Go away!\r\n";
 
-    char rxBuf[4096];
-    int  rxBufSz;
+    char buf[4096];
+    int  bufSz;
 
     if (wolfSSH_accept(ssh) == WS_SUCCESS) {
 
-        wolfSSH_stream_send(ssh, (uint8_t*)msgA, (uint32_t)strlen(msgA));
-
-        rxBufSz = wolfSSH_stream_read(ssh, (uint8_t*)rxBuf, sizeof(rxBuf));
-        if (rxBufSz > 0) {
-            rxBuf[rxBufSz] = 0;
-            printf("client sent %d bytes\n%s", rxBufSz, rxBuf);
+        while (1) {
+            bufSz = wolfSSH_stream_read(ssh, (uint8_t*)buf, sizeof(buf));
+            if (bufSz > 0) {
+                wolfSSH_stream_send(ssh, (uint8_t*)buf, bufSz);
+            }
+            else {
+                printf("wolfSSH_stream_read returned %d\n", bufSz);
+                break;
+            }
         }
-        else
-            printf("wolfSSH_stream_read returned %d\n", rxBufSz);
-
-        wolfSSH_stream_send(ssh, (uint8_t*)msgB, (uint32_t)strlen(msgB));
     }
     close(clientFd);
     wolfSSH_free(ssh);
