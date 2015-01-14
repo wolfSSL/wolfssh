@@ -1,4 +1,4 @@
-/* server.c 
+/* server.c
  *
  * Copyright (C) 2014 wolfSSL Inc.
  *
@@ -189,7 +189,7 @@ static WINLINE void tcp_socket(SOCKET_T* sockFd)
         err_sys("socket failed\n");
 #endif
 
-#ifndef USE_WINDOWS_API 
+#ifndef USE_WINDOWS_API
 #ifdef SO_NOSIGPIPE
     {
         int       on = 1;
@@ -248,9 +248,21 @@ static THREAD_RETURN CYASSL_THREAD server_worker(void* vArgs)
     const char* msgA = "Who's there?!\r\n";
     const char* msgB = "Go away!\r\n";
 
+    char rxBuf[4096];
+    int  rxBufSz;
+
     if (wolfSSH_accept(ssh) == WS_SUCCESS) {
+
         wolfSSH_stream_send(ssh, (uint8_t*)msgA, (uint32_t)strlen(msgA));
-        sleep(1);
+
+        rxBufSz = wolfSSH_stream_read(ssh, (uint8_t*)rxBuf, sizeof(rxBuf));
+        if (rxBufSz > 0) {
+            rxBuf[rxBufSz] = 0;
+            printf("client sent %d bytes\n%s", rxBufSz, rxBuf);
+        }
+        else
+            printf("wolfSSH_stream_read returned %d\n", rxBufSz);
+
         wolfSSH_stream_send(ssh, (uint8_t*)msgB, (uint32_t)strlen(msgB));
     }
     close(clientFd);

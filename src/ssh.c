@@ -1,4 +1,4 @@
-/* ssh.c 
+/* ssh.c
  *
  * Copyright (C) 2014 wolfSSL Inc.
  *
@@ -35,6 +35,14 @@
 #include <wolfssh/log.h>
 #include <cyassl/ctaocrypt/rsa.h>
 #include <cyassl/ctaocrypt/asn.h>
+
+
+#ifndef min
+static INLINE uint32_t min(uint32_t a, uint32_t b)
+{
+    return a > b ? b : a;
+}
+#endif /* min */
 
 
 int wolfSSH_Init(void)
@@ -437,16 +445,29 @@ int wolfSSH_accept(WOLFSSH* ssh)
 
 int wolfSSH_stream_read(WOLFSSH* ssh, uint8_t* buf, uint32_t bufSz)
 {
-    int bytesRxd = 0;
+    Buffer* inputBuffer;
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_stream_read()");
 
-    (void)ssh;
-    (void)buf;
-    (void)bufSz;
+    if (ssh == NULL || buf == NULL || bufSz == 0)
+        return WS_BAD_ARGUMENT;
 
-    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_stream_read(), rxd = %u", bytesRxd);
-    return bytesRxd;
+    inputBuffer = &ssh->channel.inputBuffer;
+
+    while (inputBuffer->length - inputBuffer->idx == 0) {
+        int ret = ProcessReply(ssh);
+        if (ret < 0) {
+            WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_stream_read(), ret = %d", ret);
+            return ret;
+        }
+    }
+
+    bufSz = min(bufSz, inputBuffer->length - inputBuffer->idx);
+    WMEMCPY(buf, inputBuffer->buffer + inputBuffer->idx, bufSz);
+    inputBuffer->idx += bufSz;
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_stream_read(), rxd = %u", bufSz);
+    return bufSz;
 }
 
 

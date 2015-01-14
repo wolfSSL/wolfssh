@@ -125,6 +125,7 @@ typedef struct Buffer {
     uint8_t         dynamicFlag;  /* dynamic memory currently in use */
 } Buffer;
 
+
 WOLFSSH_LOCAL int BufferInit(Buffer*, uint32_t, void*);
 WOLFSSH_LOCAL int GrowBuffer(Buffer*, uint32_t, uint32_t);
 WOLFSSH_LOCAL void ShrinkBuffer(Buffer* buf, int);
@@ -171,10 +172,12 @@ typedef struct Channel {
     uint8_t  channelType;
     uint32_t channel;
     uint32_t windowSz;
+    uint32_t highwaterMark;
     uint32_t maxPacketSz;
     uint32_t peerChannel;
     uint32_t peerWindowSz;
     uint32_t peerMaxPacketSz;
+    Buffer   inputBuffer;
 } Channel;
 
 

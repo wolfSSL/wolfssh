@@ -1,4 +1,4 @@
-/* internal.c 
+/* internal.c
  *
  * Copyright (C) 2014 wolfSSL Inc.
  *
@@ -223,20 +223,75 @@ static Channel* ChannelNew(WOLFSSH* ssh, uint8_t channelType,
     WLOG(WS_LOG_DEBUG, "Entering ChannelNew()");
 
     if (!ssh->channel.inUse) {
-        newChannel = &ssh->channel;
-        newChannel->inUse = 1;
-        newChannel->channelType = channelType;
-        newChannel->channel = ssh->nextChannel++;
-        newChannel->windowSz = DEFAULT_WINDOW_SZ;
-        newChannel->maxPacketSz = DEFAULT_MAX_PACKET_SZ;
-        newChannel->peerChannel = peerChannel;
-        newChannel->peerWindowSz = peerInitialWindowSz;
-        newChannel->peerMaxPacketSz = peerMaxPacketSz;
+        uint8_t* buffer = (uint8_t*)WMALLOC(DEFAULT_WINDOW_SZ,
+                                            ssh->ctx->heap, DYNTYPE_BUFFER);
+        if (buffer != NULL) {
+            newChannel = &ssh->channel;
+            newChannel->inUse = 1;
+            newChannel->channelType = channelType;
+            newChannel->channel = ssh->nextChannel++;
+            newChannel->windowSz = DEFAULT_WINDOW_SZ;
+            newChannel->maxPacketSz = DEFAULT_MAX_PACKET_SZ;
+            newChannel->peerChannel = peerChannel;
+            newChannel->peerWindowSz = peerInitialWindowSz;
+            newChannel->peerMaxPacketSz = peerMaxPacketSz;
+            /*
+             * In the context of the channel input buffer, the buffer is
+             * a fixed size. The property length will be the insert point
+             * for new received data. The property idx will be the pull
+             * point for the data.
+             */
+            newChannel->inputBuffer.heap = ssh->ctx->heap;
+            newChannel->inputBuffer.length = 0;
+            newChannel->inputBuffer.idx = 0;
+            newChannel->inputBuffer.buffer = buffer;
+            newChannel->inputBuffer.bufferSz = DEFAULT_WINDOW_SZ;
+            newChannel->inputBuffer.dynamicFlag = 1;
+        }
     }
 
     WLOG(WS_LOG_INFO, "Leaving ChannelNew(), ret = %p", newChannel);
 
     return newChannel;
+}
+
+
+static Channel* ChannelFind(WOLFSSH* ssh, uint32_t channel, uint8_t peer)
+{
+    Channel* findChannel = NULL;
+
+    if (channel == (peer ? ssh->channel.peerChannel : ssh->channel.channel) &&
+        ssh->channel.inUse) {
+
+        findChannel = &ssh->channel;
+    }
+
+    return findChannel;
+}
+
+
+static int ChannelPutData(Channel* channel, uint8_t* data, uint32_t dataSz)
+{
+    Buffer* inBuf;
+
+    WLOG(WS_LOG_DEBUG, "Entering ChannelPutData()");
+
+    if (channel == NULL || data == NULL)
+        return WS_BAD_ARGUMENT;
+
+    inBuf = &channel->inputBuffer;
+
+    if (inBuf->length < inBuf->bufferSz &&
+        inBuf->length + dataSz <= inBuf->bufferSz) {
+
+        WMEMCPY(inBuf->buffer + inBuf->length, data, dataSz);
+        inBuf->length += dataSz;
+    }
+    else {
+        return WS_RECV_OVERFLOW_E;
+    }
+
+    return WS_SUCCESS;
 }
 
 
@@ -1478,7 +1533,9 @@ static int DoChannelData(WOLFSSH* ssh,
     uint32_t begin = *idx;
     uint32_t channel, dataSz;
     int      ret;
+    Channel* chan = NULL;
 
+    (void)ssh;
     WLOG(WS_LOG_DEBUG, "Entering DoChannelData()");
 
     ret = GetUint32(&channel, buf, len, &begin);
@@ -1490,7 +1547,14 @@ static int DoChannelData(WOLFSSH* ssh,
         return ret;
     }
 
-    SendChannelData(ssh, ssh->channel.peerChannel, buf + begin, dataSz);
+    chan = ChannelFind(ssh, channel, 0);
+    if (chan != NULL) {
+        ret = ChannelPutData(chan, buf + begin, dataSz);
+        if (ret != WS_SUCCESS) {
+            WLOG(WS_LOG_DEBUG, "Leaving DoChannelData(), ret = %d", ret);
+            return ret;
+        }
+    }
 
     *idx = begin + dataSz;
 
