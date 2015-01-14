@@ -30,6 +30,7 @@ ACLOCAL_AMFLAGS= -I m4
 
 include src/include.am
 include wolfssh/include.am
+include examples/echoserver/include.am
 include examples/server/include.am
 
 

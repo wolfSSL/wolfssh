@@ -47,6 +47,7 @@ diff
 .vimrc
 
 # examples
+examples/echoserver/echoserver
 examples/server/server
 
 # test output
