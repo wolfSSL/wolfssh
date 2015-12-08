@@ -220,9 +220,7 @@ static void SshResourceFree(WOLFSSH* ssh, void* heap)
 
     ShrinkBuffer(&ssh->inputBuffer, 1);
     ShrinkBuffer(&ssh->outputBuffer, 1);
-    if (ssh->k) {
-        WMEMSET(ssh->k, 0, ssh->kSz);
-    }
+    WMEMSET(ssh->k, 0, ssh->kSz);
     if (ssh->handshake) {
         WMEMSET(ssh->handshake, 0, sizeof(HandshakeInfo));
         WFREE(ssh->handshake, heap, DYNTYPE_HS);
