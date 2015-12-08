@@ -51,6 +51,8 @@ examples/echoserver/echoserver
 examples/server/server
 
 # test output
+*.test
+*.trs
 
 # scan-build
 client.plist

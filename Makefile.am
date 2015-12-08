@@ -32,8 +32,10 @@ include src/include.am
 include wolfssh/include.am
 include examples/echoserver/include.am
 include examples/server/include.am
+include test/include.am
 
 
+TEST_EXTENSIONS = .test
 TESTS += $(check_PROGRAMS)
 test: check
 

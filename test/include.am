@@ -1,0 +1,14 @@
+# vim:ft=automake
+# included from Top Level Makefile.am
+# All paths should be given relative to the root
+
+check_PROGRAMS += test/unit.test
+noinst_PROGRAMS += test/unit.test
+
+test_unit_test_SOURCES = test/unit.c
+
+test_unit_test_CFLAGS       = -DNO_MAIN_DRIVER $(AM_CFLAGS)
+test_unit_test_LDADD        = src/libwolfssh.la $(LIB_STATIC_ADD)
+test_unit_test_DEPENDENCIES = src/libwolfssh.la
+
+DISTCLEANFILES+= test/.libs/unit.test
