@@ -45,6 +45,15 @@ static INLINE uint32_t min(uint32_t a, uint32_t b)
 #endif /* min */
 
 
+/* Make sure compiler doesn't skip */
+static INLINE void ForceZero(const void* mem, uint32_t length)
+{
+    volatile byte* z = (volatile byte*)mem;
+
+    while (length--) *z++ = 0;
+}
+
+
 int wolfSSH_Init(void)
 {
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_Init()");
@@ -107,7 +116,7 @@ static void CtxResourceFree(WOLFSSH_CTX* ctx)
     WLOG(WS_LOG_DEBUG, "Entering CtxResourceFree()");
 
     if (ctx->privateKey) {
-        WMEMSET(ctx->privateKey, 0, ctx->privateKeySz);
+        ForceZero(ctx->privateKey, ctx->privateKeySz);
         WFREE(ctx->privateKey, heap, DYNTYPE_KEY);
     }
     WFREE(ctx->cert, heap, DYNTYPE_CERT);
@@ -220,7 +229,7 @@ static void SshResourceFree(WOLFSSH* ssh, void* heap)
 
     ShrinkBuffer(&ssh->inputBuffer, 1);
     ShrinkBuffer(&ssh->outputBuffer, 1);
-    WMEMSET(ssh->k, 0, ssh->kSz);
+    ForceZero(ssh->k, ssh->kSz);
     if (ssh->handshake) {
         WMEMSET(ssh->handshake, 0, sizeof(HandshakeInfo));
         WFREE(ssh->handshake, heap, DYNTYPE_HS);

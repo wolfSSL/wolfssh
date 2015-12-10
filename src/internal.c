@@ -56,6 +56,21 @@ static INLINE void c32toa(uint32_t u32, uint8_t* c)
 }
 
 
+/* check all length bytes for equality, return 0 on success */
+static INLINE int ConstantCompare(const uint8_t* a, const uint8_t* b,
+                                  uint32_t length)
+{
+    uint32_t i;
+    uint32_t compareSum = 0;
+
+    for (i = 0; i < length; i++) {
+        compareSum |= a[i] ^ b[i];
+    }
+
+    return compareSum;
+}
+
+
 const char* GetErrorString(int err)
 {
     (void)err;
@@ -1814,7 +1829,7 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
             HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
             HmacUpdate(&hmac, in, inSz);
             HmacFinal(&hmac, checkMac);
-            if (WMEMCMP(checkMac, mac, ssh->peerMacSz) != 0)
+            if (ConstantCompare(checkMac, mac, ssh->peerMacSz) != 0)
                 ret = WS_VERIFY_MAC_E;
             break;
 
