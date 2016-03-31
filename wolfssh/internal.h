@@ -274,6 +274,10 @@ WOLFSSH_LOCAL int SendUserAuthFailure(WOLFSSH*, uint8_t);
 WOLFSSH_LOCAL int SendUserAuthBanner(WOLFSSH*);
 WOLFSSH_LOCAL int SendChannelOpenConf(WOLFSSH* ssh);
 WOLFSSH_LOCAL int SendChannelData(WOLFSSH* ssh, uint32_t, uint8_t*, uint32_t);
+WOLFSSH_LOCAL int GenerateKey(uint8_t, uint8_t, uint8_t*, uint32_t,
+                              const uint8_t*, uint32_t,
+                              const uint8_t*, uint32_t,
+                              const uint8_t*, uint32_t);
 
 
 enum AcceptStates {

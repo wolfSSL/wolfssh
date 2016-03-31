@@ -592,3 +592,14 @@ int wolfSSH_CTX_UseCaCert_buffer(WOLFSSH_CTX* ctx,
 }
 
 
+int wolfSSH_KDF(uint8_t hashId, uint8_t keyId,
+                uint8_t* key, uint32_t keySz,
+                const uint8_t* k, uint32_t kSz,
+                const uint8_t* h, uint32_t hSz,
+                const uint8_t* sessionId, uint32_t sessionIdSz)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_KDF()");
+    return GenerateKey(hashId, keyId, key, keySz, k, kSz, h, hSz,
+                       sessionId, sessionIdSz);
+}
+

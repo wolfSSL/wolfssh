@@ -1014,16 +1014,19 @@ static int DoNewKeys(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 }
 
 
-static int GenerateKey(uint8_t* key, uint32_t keySz, uint8_t keyId,
-                       const uint8_t* k, uint32_t kSz,
-                       const uint8_t* h, uint32_t hSz,
-                       const uint8_t* sessionId, uint32_t sessionIdSz)
+int GenerateKey(uint8_t hashId, uint8_t keyId,
+                uint8_t* key, uint32_t keySz,
+                const uint8_t* k, uint32_t kSz,
+                const uint8_t* h, uint32_t hSz,
+                const uint8_t* sessionId, uint32_t sessionIdSz)
 {
     uint32_t blocks, remainder;
     Sha sha;
     uint8_t kPad = 0;
     uint8_t pad = 0;
     uint8_t kSzFlat[LENGTH_SZ];
+
+    (void)hashId;
 
     if (k[0] & 0x80) kPad = 1;
     c32toa(kSz + kPad, kSzFlat);
@@ -1085,18 +1088,30 @@ static int GenerateKeys(WOLFSSH* ssh)
     if (ssh == NULL)
         return WS_BAD_ARGUMENT;
 
-    GenerateKey(ssh->ivClient, ssh->ivClientSz, 'A', ssh->k, ssh->kSz,
-                ssh->h, ssh->hSz, ssh->sessionId, ssh->sessionIdSz);
-    GenerateKey(ssh->ivServer, ssh->ivServerSz, 'B', ssh->k, ssh->kSz,
-                ssh->h, ssh->hSz, ssh->sessionId, ssh->sessionIdSz);
-    GenerateKey(ssh->encKeyClient, ssh->encKeyClientSz, 'C', ssh->k, ssh->kSz,
-                ssh->h, ssh->hSz, ssh->sessionId, ssh->sessionIdSz);
-    GenerateKey(ssh->encKeyServer, ssh->encKeyServerSz, 'D', ssh->k, ssh->kSz,
-                ssh->h, ssh->hSz, ssh->sessionId, ssh->sessionIdSz);
-    GenerateKey(ssh->macKeyClient, ssh->macKeyClientSz, 'E', ssh->k, ssh->kSz,
-                ssh->h, ssh->hSz, ssh->sessionId, ssh->sessionIdSz);
-    GenerateKey(ssh->macKeyServer, ssh->macKeyServerSz, 'F', ssh->k, ssh->kSz,
-                ssh->h, ssh->hSz, ssh->sessionId, ssh->sessionIdSz);
+    GenerateKey(0, 'A',
+                ssh->ivClient, ssh->ivClientSz,
+                ssh->k, ssh->kSz, ssh->h, ssh->hSz,
+                ssh->sessionId, ssh->sessionIdSz);
+    GenerateKey(0, 'B',
+                ssh->ivServer, ssh->ivServerSz,
+                ssh->k, ssh->kSz, ssh->h, ssh->hSz,
+                ssh->sessionId, ssh->sessionIdSz);
+    GenerateKey(0, 'C',
+                ssh->encKeyClient, ssh->encKeyClientSz,
+                ssh->k, ssh->kSz, ssh->h, ssh->hSz,
+                ssh->sessionId, ssh->sessionIdSz);
+    GenerateKey(0, 'D',
+                ssh->encKeyServer, ssh->encKeyServerSz,
+                ssh->k, ssh->kSz, ssh->h, ssh->hSz,
+                ssh->sessionId, ssh->sessionIdSz);
+    GenerateKey(0, 'E',
+                ssh->macKeyClient, ssh->macKeyClientSz,
+                ssh->k, ssh->kSz, ssh->h, ssh->hSz,
+                ssh->sessionId, ssh->sessionIdSz);
+    GenerateKey(0, 'F',
+                ssh->macKeyServer, ssh->macKeyServerSz,
+                ssh->k, ssh->kSz, ssh->h, ssh->hSz,
+                ssh->sessionId, ssh->sessionIdSz);
 
     return 0;
 }
