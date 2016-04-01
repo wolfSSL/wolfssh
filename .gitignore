@@ -42,6 +42,7 @@ aminclude.am
 
 # vim
 *.swp
+*.swo
 tags
 diff
 .vimrc

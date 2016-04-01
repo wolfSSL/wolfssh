@@ -92,7 +92,7 @@ typedef struct {
 } thread_ctx_t;
 
 
-static WINLINE void err_sys(const char* msg)
+static INLINE void err_sys(const char* msg)
 {
     printf("server error: %s\n", msg);
     if (msg)
@@ -100,7 +100,7 @@ static WINLINE void err_sys(const char* msg)
 }
 
 
-static WINLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
+static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
                               uint16_t port)
 {
     int useLookup = 0;
@@ -177,7 +177,7 @@ static WINLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
 }
 
 
-static WINLINE void tcp_socket(SOCKET_T* sockFd)
+static INLINE void tcp_socket(SOCKET_T* sockFd)
 {
     *sockFd = socket(AF_INET_V, SOCK_STREAM, 0);
 
@@ -217,7 +217,7 @@ static WINLINE void tcp_socket(SOCKET_T* sockFd)
 }
 
 
-static WINLINE void tcp_bind(SOCKET_T* sockFd, uint16_t port, int useAnyAddr)
+static INLINE void tcp_bind(SOCKET_T* sockFd, uint16_t port, int useAnyAddr)
 {
     SOCKADDR_IN_T addr;
 
