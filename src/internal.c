@@ -38,37 +38,12 @@
 #include <cyassl/ctaocrypt/rsa.h>
 #include <cyassl/ctaocrypt/hmac.h>
 
-
-/* convert opaque to 32 bit integer */
-static INLINE void ato32(const uint8_t* c, uint32_t* u32)
-{
-    *u32 = (c[0] << 24) | (c[1] << 16) | (c[2] << 8) | c[3];
-}
-
-
-/* convert 32 bit integer to opaque */
-static INLINE void c32toa(uint32_t u32, uint8_t* c)
-{
-    c[0] = (u32 >> 24) & 0xff;
-    c[1] = (u32 >> 16) & 0xff;
-    c[2] = (u32 >>  8) & 0xff;
-    c[3] =  u32 & 0xff;
-}
-
-
-/* check all length bytes for equality, return 0 on success */
-static INLINE int ConstantCompare(const uint8_t* a, const uint8_t* b,
-                                  uint32_t length)
-{
-    uint32_t i;
-    uint32_t compareSum = 0;
-
-    for (i = 0; i < length; i++) {
-        compareSum |= a[i] ^ b[i];
-    }
-
-    return compareSum;
-}
+#ifdef NO_INLINE
+    #include <wolfssh/misc.h>
+#else
+    #define WOLFSSH_MISC_INCLUDED
+    #include "src/misc.c"
+#endif
 
 
 const char* GetErrorString(int err)

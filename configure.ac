@@ -84,6 +84,20 @@ AS_IF([test "x$ax_enable_debug" = "xyes"],
 
 AX_PTHREAD([AM_CFLAGS="$AM_CFLAGS $PTHREAD_CFLAGS"])
 
+
+# Inline Build
+AC_ARG_ENABLE([inline],
+    [AS_HELP_STRING([--enable-inline],[Enable inline functions (default: enabled)])],
+    [ENABLED_INLINE=$enableval],[ENABLED_INLINE=yes])
+
+if test "$ENABLED_INLINE" = "no"
+then
+    AM_CFLAGS="$AM_CFLAGS -DNO_INLINE"
+fi
+
+AM_CONDITIONAL([BUILD_INLINE], [test "x$ENABLED_INLINE" = "xyes"])
+
+
 # Checks for typedefs, structures, and compiler characteristics.
 if test "$ac_cv_sizeof_long" = "8"; then
    AM_CPPFLAGS="$AM_CPPFLAGS -DSIZEOF_LONG=8"

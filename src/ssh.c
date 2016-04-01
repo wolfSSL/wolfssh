@@ -36,22 +36,12 @@
 #include <cyassl/ctaocrypt/rsa.h>
 #include <cyassl/ctaocrypt/asn.h>
 
-
-#ifndef min
-static INLINE uint32_t min(uint32_t a, uint32_t b)
-{
-    return a > b ? b : a;
-}
-#endif /* min */
-
-
-/* Make sure compiler doesn't skip */
-static INLINE void ForceZero(const void* mem, uint32_t length)
-{
-    volatile byte* z = (volatile byte*)mem;
-
-    while (length--) *z++ = 0;
-}
+#ifdef NO_INLINE
+    #include <wolfssh/misc.h>
+#else
+    #define WOLFSSH_MISC_INCLUDED
+    #include "src/misc.c"
+#endif
 
 
 int wolfSSH_Init(void)

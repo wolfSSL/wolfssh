@@ -85,23 +85,23 @@ extern "C" {
 
 
 /* setup compiler inlining */
-#ifndef WINLINE
+#ifndef INLINE
 #ifndef NO_INLINE
     #ifdef _MSC_VER
-        #define WINLINE __inline
+        #define INLINE __inline
     #elif defined(__GNUC__)
-        #define WINLINE inline
+        #define INLINE inline
     #elif defined(__IAR_SYSTEMS_ICC__)
-        #define WINLINE inline
+        #define INLINE inline
     #elif defined(THREADX)
-        #define WINLINE _Inline
+        #define INLINE _Inline
     #else
-        #define WINLINE 
+        #define INLINE
     #endif
 #else
-    #define WINLINE 
+    #define INLINE
 #endif
-#endif /* WINLINE */
+#endif /* INLINE */
 
 
 
