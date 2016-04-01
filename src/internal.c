@@ -1028,6 +1028,15 @@ int GenerateKey(uint8_t hashId, uint8_t keyId,
 
     (void)hashId;
 
+    if (key == NULL || keySz == 0 ||
+        k == NULL || kSz == 0 ||
+        h == NULL || hSz == 0 ||
+        sessionId == NULL || sessionIdSz == 0) {
+
+        WLOG(WS_LOG_DEBUG, "GK: bad argument");
+        return WS_BAD_ARGUMENT;
+    }
+
     if (k[0] & 0x80) kPad = 1;
     c32toa(kSz + kPad, kSzFlat);
 
@@ -1112,6 +1121,28 @@ static int GenerateKeys(WOLFSSH* ssh)
                 ssh->macKeyServer, ssh->macKeyServerSz,
                 ssh->k, ssh->kSz, ssh->h, ssh->hSz,
                 ssh->sessionId, ssh->sessionIdSz);
+
+#ifdef SHOW_SECRETS
+    printf("\n** Showing Secrets **\nK:\n");
+    DumpOctetString(ssh->k, ssh->kSz);
+    printf("H:\n");
+    DumpOctetString(ssh->h, ssh->hSz);
+    printf("Session ID:\n");
+    DumpOctetString(ssh->sessionId, ssh->sessionIdSz);
+    printf("A:\n");
+    DumpOctetString(ssh->ivClient, ssh->ivClientSz);
+    printf("B:\n");
+    DumpOctetString(ssh->ivServer, ssh->ivServerSz);
+    printf("C:\n");
+    DumpOctetString(ssh->encKeyClient, ssh->encKeyClientSz);
+    printf("D:\n");
+    DumpOctetString(ssh->encKeyServer, ssh->encKeyServerSz);
+    printf("E:\n");
+    DumpOctetString(ssh->macKeyClient, ssh->macKeyClientSz);
+    printf("F:\n");
+    DumpOctetString(ssh->macKeyServer, ssh->macKeyServerSz);
+    printf("\n");
+#endif /* SHOW_SECRETS */
 
     return 0;
 }
