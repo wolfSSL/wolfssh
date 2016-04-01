@@ -87,6 +87,9 @@ WOLFSSH_API int wolfSSH_accept(WOLFSSH*);
 WOLFSSH_API int wolfSSH_stream_read(WOLFSSH*, uint8_t*, uint32_t);
 WOLFSSH_API int wolfSSH_stream_send(WOLFSSH*, uint8_t*, uint32_t);
 
+WOLFSSH_API int wolfSSH_KDF(uint8_t, uint8_t, uint8_t*, uint32_t,
+                const uint8_t*, uint32_t, const uint8_t*, uint32_t,
+                const uint8_t*, uint32_t);
 
 enum WS_EndpointTypes {
     WOLFSSH_ENDPOINT_SERVER,
