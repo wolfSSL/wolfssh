@@ -1257,7 +1257,7 @@ static int DoDisconnect(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 
 #ifdef NO_WOLFSSH_STRINGS
     WLOG(WS_LOG_DEBUG, "DISCONNECT: (%u)", reason);
-#else
+#elif defined(DEBUG_WOLFSSH)
     switch (reason) {
         case WOLFSSH_DISCONNECT_HOST_NOT_ALLOWED_TO_CONNECT:
             reasonStr = "host not allowed to connect"; break;
@@ -1909,6 +1909,10 @@ int ProcessReply(WOLFSSH* ssh)
                               ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
                               ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
                               readSz);
+                if (ret != WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, "PR: First decrypt fail");
+                    return ret;
+                }
 
             case PROCESS_PACKET_LENGTH:
                 /* Peek at the packet_length field. */
