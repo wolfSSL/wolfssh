@@ -30,11 +30,11 @@
 #pragma once
 
 #include <wolfssh/ssh.h>
-#include <cyassl/options.h>
-#include <cyassl/ctaocrypt/sha.h>
-#include <cyassl/ctaocrypt/random.h>
-#include <cyassl/ctaocrypt/dh.h>
-#include <cyassl/ctaocrypt/aes.h>
+#include <wolfssl/options.h>
+#include <wolfssl/wolfcrypt/sha.h>
+#include <wolfssl/wolfcrypt/random.h>
+#include <wolfssl/wolfcrypt/dh.h>
+#include <wolfssl/wolfcrypt/aes.h>
 
 
 #if !defined (ALIGN16)
