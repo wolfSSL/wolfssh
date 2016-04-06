@@ -117,10 +117,10 @@ static void CtxResourceFree(WOLFSSH_CTX* ctx)
 
     if (ctx->privateKey) {
         ForceZero(ctx->privateKey, ctx->privateKeySz);
-        WFREE(ctx->privateKey, heap, DYNTYPE_KEY);
+        WFREE(ctx->privateKey, ctx->heap, DYNTYPE_KEY);
     }
-    WFREE(ctx->cert, heap, DYNTYPE_CERT);
-    WFREE(ctx->caCert, heap, DYNTYPE_CA);
+    WFREE(ctx->cert, ctx->heap, DYNTYPE_CERT);
+    WFREE(ctx->caCert, ctx->heap, DYNTYPE_CA);
 }
 
 
