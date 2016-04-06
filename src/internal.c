@@ -2076,6 +2076,7 @@ static int BundlePacket(WOLFSSH* ssh)
     uint8_t* output;
     uint32_t idx;
     uint8_t  paddingSz;
+    int      ret = WS_SUCCESS;
 
     output = ssh->outputBuffer.buffer;
     idx = ssh->outputBuffer.length;
@@ -2086,20 +2087,31 @@ static int BundlePacket(WOLFSSH* ssh)
     if (ssh->encryptId == ID_NONE)
         WMEMSET(output + idx, 0, paddingSz);
     else
-        wc_RNG_GenerateBlock(ssh->rng, output + idx, paddingSz);
+        ret = wc_RNG_GenerateBlock(ssh->rng, output + idx, paddingSz);
     idx += paddingSz;
+    if (ret != WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "BP: failed to add padding");
+        return ret;
+    }
 
-    CreateMac(ssh, ssh->outputBuffer.buffer + ssh->packetStartIdx,
-              ssh->outputBuffer.length - ssh->packetStartIdx + paddingSz,
-              output + idx);
+    ret = CreateMac(ssh, ssh->outputBuffer.buffer + ssh->packetStartIdx,
+                    ssh->outputBuffer.length - ssh->packetStartIdx + paddingSz,
+                    output + idx);
     idx += ssh->macSz;
+    if (ret != WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "BP: failed to add mac");
+        return ret;
+    }
 
-    Encrypt(ssh,
-            ssh->outputBuffer.buffer + ssh->packetStartIdx,
-            ssh->outputBuffer.buffer + ssh->packetStartIdx,
-            ssh->outputBuffer.length - ssh->packetStartIdx + paddingSz);
-
+    ret = Encrypt(ssh,
+                  ssh->outputBuffer.buffer + ssh->packetStartIdx,
+                  ssh->outputBuffer.buffer + ssh->packetStartIdx,
+                  ssh->outputBuffer.length - ssh->packetStartIdx + paddingSz);
     ssh->outputBuffer.length = idx;
+    if (ret != WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "BP: failed to encrypt buffer");
+        return ret;
+    }
 
     return WS_SUCCESS;
 }
@@ -2146,7 +2158,9 @@ int SendKexInit(WOLFSSH* ssh)
                (cannedEncAlgoNamesSz * 2) +
                (cannedMacAlgoNamesSz * 2) +
                (cannedNoneNamesSz * 2);
-    PreparePacket(ssh, payloadSz);
+    ret = PreparePacket(ssh, payloadSz);
+    if (ret != WS_SUCCESS)
+        return ret;
 
     output = ssh->outputBuffer.buffer;
     idx = ssh->outputBuffer.length;
@@ -2154,8 +2168,10 @@ int SendKexInit(WOLFSSH* ssh)
 
     output[idx++] = MSGID_KEXINIT;
 
-    wc_RNG_GenerateBlock(ssh->rng, output + idx, COOKIE_SZ);
+    ret = wc_RNG_GenerateBlock(ssh->rng, output + idx, COOKIE_SZ);
     idx += COOKIE_SZ;
+    if (ret != 0)
+        return ret;
 
     CopyNameList(output, &idx, cannedKexAlgoNames, cannedKexAlgoNamesSz);
     CopyNameList(output, &idx, cannedKeyAlgoNames, cannedKeyAlgoNamesSz);
@@ -2178,17 +2194,23 @@ int SendKexInit(WOLFSSH* ssh)
     {
         uint8_t scratchLen[LENGTH_SZ];
         c32toa(payloadSz, scratchLen);
-        wc_ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
+        ret = wc_ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
+        if (ret != 0)
+            return ret;
     }
-    wc_ShaUpdate(&ssh->handshake->hash, payload, payloadSz);
+    ret = wc_ShaUpdate(&ssh->handshake->hash, payload, payloadSz);
+    if (ret != 0)
+        return ret;
 
-    BundlePacket(ssh);
-    SendBuffered(ssh);
+    ret = BundlePacket(ssh);
+    if (ret == WS_SUCCESS)
+        ret = SendBuffered(ssh);
 
     return ret;
 }
 
 
+/* This function is clunky, but outdated. */
 int SendKexDhReply(WOLFSSH* ssh)
 {
     DhKey    dhKey;
@@ -2342,7 +2364,9 @@ int SendKexDhReply(WOLFSSH* ssh)
      * add it to the hash and then add K. */
     payloadSz = MSG_ID_SZ + (LENGTH_SZ * 3) +
                 rsaKeyBlockSz + fSz + fPad + sigBlockSz;
-    PreparePacket(ssh, payloadSz);
+    ret = PreparePacket(ssh, payloadSz);
+    if (ret != WS_SUCCESS)
+        return ret;
     output = ssh->outputBuffer.buffer;
     idx = ssh->outputBuffer.length;
 
@@ -2385,10 +2409,11 @@ int SendKexDhReply(WOLFSSH* ssh)
 
     ssh->outputBuffer.length = idx;
 
-    BundlePacket(ssh);
-    SendNewKeys(ssh);
+    ret = BundlePacket(ssh);
+    if (ret == WS_SUCCESS)
+        ret = SendNewKeys(ssh);
 
-    return 0;
+    return ret;
 }
 
 
@@ -2396,8 +2421,11 @@ int SendNewKeys(WOLFSSH* ssh)
 {
     uint8_t* output;
     uint32_t idx = 0;
+    int ret;
 
-    PreparePacket(ssh, MSG_ID_SZ);
+    ret = PreparePacket(ssh, MSG_ID_SZ);
+    if (ret != WS_SUCCESS)
+        return ret;
 
     output = ssh->outputBuffer.buffer;
     idx = ssh->outputBuffer.length;
@@ -2406,8 +2434,12 @@ int SendNewKeys(WOLFSSH* ssh)
 
     ssh->outputBuffer.length = idx;
 
-    BundlePacket(ssh);
-    SendBuffered(ssh);
+    ret = BundlePacket(ssh);
+    if (ret == WS_SUCCESS)
+        ret = SendBuffered(ssh);
+
+    if (ret != WS_SUCCESS)
+        return ret;
 
     ssh->blockSz = ssh->handshake->blockSz;
     ssh->encryptId = ssh->handshake->encryptId;
@@ -2421,9 +2453,9 @@ int SendNewKeys(WOLFSSH* ssh)
 
         case ID_AES128_CBC:
             WLOG(WS_LOG_DEBUG, "SNK: using cipher aes128-cbc");
-            wc_AesSetKey(&ssh->encryptCipher.aes,
-                         ssh->encKeyServer, ssh->encKeyServerSz,
-                         ssh->ivServer, AES_ENCRYPTION);
+            ret = wc_AesSetKey(&ssh->encryptCipher.aes,
+                              ssh->encKeyServer, ssh->encKeyServerSz,
+                              ssh->ivServer, AES_ENCRYPTION);
             break;
 
         default:
@@ -2433,7 +2465,7 @@ int SendNewKeys(WOLFSSH* ssh)
 
     ssh->txCount = 0;
 
-    return WS_SUCCESS;
+    return ret;
 }
 
 
@@ -2441,8 +2473,11 @@ int SendUnimplemented(WOLFSSH* ssh)
 {
     uint8_t* output;
     uint32_t idx = 0;
+    int      ret;
 
-    PreparePacket(ssh, MSG_ID_SZ + LENGTH_SZ);
+    ret = PreparePacket(ssh, MSG_ID_SZ + LENGTH_SZ);
+    if (ret != WS_SUCCESS)
+        return ret;
 
     output = ssh->outputBuffer.buffer;
     idx = ssh->outputBuffer.length;
@@ -2453,10 +2488,11 @@ int SendUnimplemented(WOLFSSH* ssh)
 
     ssh->outputBuffer.length = idx;
 
-    BundlePacket(ssh);
-    SendBuffered(ssh);
+    ret = BundlePacket(ssh);
+    if (ret == WS_SUCCESS)
+        ret = SendBuffered(ssh);
 
-    return WS_SUCCESS;
+    return ret;
 }
 
 
@@ -2464,8 +2500,11 @@ int SendDisconnect(WOLFSSH* ssh, uint32_t reason)
 {
     uint8_t* output;
     uint32_t idx = 0;
+    int      ret;
 
-    PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ + (LENGTH_SZ * 2));
+    ret = PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ + (LENGTH_SZ * 2));
+    if (ret != WS_SUCCESS)
+        return ret;
 
     output = ssh->outputBuffer.buffer;
     idx = ssh->outputBuffer.length;
@@ -2480,10 +2519,11 @@ int SendDisconnect(WOLFSSH* ssh, uint32_t reason)
 
     ssh->outputBuffer.length = idx;
 
-    BundlePacket(ssh);
-    SendBuffered(ssh);
+    ret = BundlePacket(ssh);
+    if (ret == WS_SUCCESS)
+        ret = SendBuffered(ssh);
 
-    return WS_SUCCESS;
+    return ret;
 }
 
 
@@ -2491,11 +2531,14 @@ int SendIgnore(WOLFSSH* ssh, const unsigned char* data, uint32_t dataSz)
 {
     uint8_t* output;
     uint32_t idx = 0;
+    int      ret;
 
     if (ssh == NULL || (data == NULL && dataSz > 0))
         return WS_BAD_ARGUMENT;
 
-    PreparePacket(ssh, MSG_ID_SZ + LENGTH_SZ + dataSz);
+    ret = PreparePacket(ssh, MSG_ID_SZ + LENGTH_SZ + dataSz);
+    if (ret != WS_SUCCESS)
+        return ret;
 
     output = ssh->outputBuffer.buffer;
     idx = ssh->outputBuffer.length;
@@ -2510,10 +2553,11 @@ int SendIgnore(WOLFSSH* ssh, const unsigned char* data, uint32_t dataSz)
 
     ssh->outputBuffer.length = idx;
 
-    BundlePacket(ssh);
-    SendBuffered(ssh);
+    ret = BundlePacket(ssh);
+    if (ret == WS_SUCCESS)
+        ret = SendBuffered(ssh);
 
-    return WS_SUCCESS;
+    return ret;
 }
 
 
@@ -2526,15 +2570,18 @@ int SendDebug(WOLFSSH* ssh, byte alwaysDisplay, const char* msg)
     uint32_t msgSz;
     uint8_t* output;
     uint32_t idx = 0;
+    int      ret;
 
     if (ssh == NULL)
         return WS_BAD_ARGUMENT;
 
     msgSz = (msg != NULL) ? (uint32_t)WSTRLEN(msg) : 0;
 
-    PreparePacket(ssh,
-                  MSG_ID_SZ + BOOLEAN_SZ + (LENGTH_SZ * 2) +
-                  msgSz + cannedLangTagSz);
+    ret = PreparePacket(ssh,
+                        MSG_ID_SZ + BOOLEAN_SZ + (LENGTH_SZ * 2) +
+                        msgSz + cannedLangTagSz);
+    if (ret != WS_SUCCESS)
+        return ret;
 
     output = ssh->outputBuffer.buffer;
     idx = ssh->outputBuffer.length;
@@ -2554,10 +2601,11 @@ int SendDebug(WOLFSSH* ssh, byte alwaysDisplay, const char* msg)
 
     ssh->outputBuffer.length = idx;
 
-    BundlePacket(ssh);
-    SendBuffered(ssh);
+    ret = BundlePacket(ssh);
+    if (ret == WS_SUCCESS)
+        ret = SendBuffered(ssh);
 
-    return WS_SUCCESS;
+    return ret;
 }
 
 
@@ -2569,12 +2617,15 @@ int SendServiceAccept(WOLFSSH* ssh)
     uint32_t nameSz;
     uint8_t* output;
     uint32_t idx;
+    int      ret;
 
     if (ssh == NULL)
         return WS_BAD_ARGUMENT;
 
     nameSz = (uint32_t)WSTRLEN(userAuthName);
-    PreparePacket(ssh, MSG_ID_SZ + LENGTH_SZ + nameSz);
+    ret = PreparePacket(ssh, MSG_ID_SZ + LENGTH_SZ + nameSz);
+    if (ret != WS_SUCCESS)
+        return ret;
 
     output = ssh->outputBuffer.buffer;
     idx = ssh->outputBuffer.length;
@@ -2587,10 +2638,11 @@ int SendServiceAccept(WOLFSSH* ssh)
 
     ssh->outputBuffer.length = idx;
 
-    BundlePacket(ssh);
-    SendUserAuthBanner(ssh);
+    ret = BundlePacket(ssh);
+    if (ret == WS_SUCCESS)
+        ret = SendUserAuthBanner(ssh);
 
-    return WS_SUCCESS;
+    return ret;
 }
 
 #if 0
@@ -2610,11 +2662,14 @@ int SendUserAuthSuccess(WOLFSSH* ssh)
 {
     uint8_t* output;
     uint32_t idx;
+    int      ret;
 
     if (ssh == NULL)
         return WS_BAD_ARGUMENT;
 
-    PreparePacket(ssh, MSG_ID_SZ);
+    ret = PreparePacket(ssh, MSG_ID_SZ);
+    if (ret != WS_SUCCESS)
+        return ret;
 
     output = ssh->outputBuffer.buffer;
     idx = ssh->outputBuffer.length;
@@ -2623,10 +2678,11 @@ int SendUserAuthSuccess(WOLFSSH* ssh)
 
     ssh->outputBuffer.length = idx;
 
-    BundlePacket(ssh);
-    SendBuffered(ssh);
+    ret = BundlePacket(ssh);
+    if (ret == WS_SUCCESS)
+        ret = SendBuffered(ssh);
 
-    return WS_SUCCESS;
+    return ret;
 }
 
 
@@ -2643,12 +2699,15 @@ int SendUserAuthBanner(WOLFSSH* ssh)
 {
     uint8_t* output;
     uint32_t idx;
+    int      ret;
 
     if (ssh == NULL)
         return WS_BAD_ARGUMENT;
 
-    PreparePacket(ssh, MSG_ID_SZ + (LENGTH_SZ * 2) +
-                       cannedBannerSz + cannedLangTagSz);
+    ret = PreparePacket(ssh, MSG_ID_SZ + (LENGTH_SZ * 2) +
+                        cannedBannerSz + cannedLangTagSz);
+    if (ret != WS_SUCCESS)
+        return ret;
 
     output = ssh->outputBuffer.buffer;
     idx = ssh->outputBuffer.length;
@@ -2665,10 +2724,11 @@ int SendUserAuthBanner(WOLFSSH* ssh)
 
     ssh->outputBuffer.length = idx;
 
-    BundlePacket(ssh);
-    SendBuffered(ssh);
+    ret = BundlePacket(ssh);
+    if (ret == WS_SUCCESS)
+        ret = SendBuffered(ssh);
 
-    return WS_SUCCESS;
+    return ret;
 }
 
 
@@ -2676,6 +2736,7 @@ int SendChannelOpenConf(WOLFSSH* ssh)
 {
     uint8_t* output;
     uint32_t idx;
+    int      ret;
     Channel* channel;
 
     WLOG(WS_LOG_DEBUG, "Entering SendChannelOpenConf()");
@@ -2688,7 +2749,11 @@ int SendChannelOpenConf(WOLFSSH* ssh)
 
     channel = &ssh->channel;
 
-    PreparePacket(ssh, MSG_ID_SZ + (UINT32_SZ * 4));
+    ret = PreparePacket(ssh, MSG_ID_SZ + (UINT32_SZ * 4));
+    if (ret != WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "Leaving SendChannelOpenConf(), ret = %d", ret);
+        return ret;
+    }
 
     output = ssh->outputBuffer.buffer;
     idx = ssh->outputBuffer.length;
@@ -2705,11 +2770,12 @@ int SendChannelOpenConf(WOLFSSH* ssh)
 
     ssh->outputBuffer.length = idx;
 
-    BundlePacket(ssh);
-    SendBuffered(ssh);
+    ret = BundlePacket(ssh);
+    if (ret == WS_SUCCESS)
+        ret = SendBuffered(ssh);
 
-    WLOG(WS_LOG_DEBUG, "Leaving SendChannelOpenConf()");
-    return WS_SUCCESS;
+    WLOG(WS_LOG_DEBUG, "Leaving SendChannelOpenConf(), ret = %d", ret);
+    return ret;
 }
 
 
@@ -2718,6 +2784,7 @@ int SendChannelData(WOLFSSH* ssh, uint32_t peerChannel,
 {
     uint8_t* output;
     uint32_t idx;
+    int      ret;
     Channel* channel;
 
     WLOG(WS_LOG_DEBUG, "Entering SendChannelData()");
@@ -2734,7 +2801,9 @@ int SendChannelData(WOLFSSH* ssh, uint32_t peerChannel,
         WLOG(WS_LOG_DEBUG, "Peer window too small");
     }
 
-    PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ + LENGTH_SZ + dataSz);
+    ret = PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ + LENGTH_SZ + dataSz);
+    if (ret != WS_SUCCESS)
+        return ret;
 
     output = ssh->outputBuffer.buffer;
     idx = ssh->outputBuffer.length;
@@ -2749,8 +2818,9 @@ int SendChannelData(WOLFSSH* ssh, uint32_t peerChannel,
 
     ssh->outputBuffer.length = idx;
 
-    BundlePacket(ssh);
-    SendBuffered(ssh);
+    ret = BundlePacket(ssh);
+    if (ret == WS_SUCCESS)
+        ret = SendBuffered(ssh);
 
     WLOG(WS_LOG_INFO, "  dataSz = %u", dataSz);
     WLOG(WS_LOG_INFO, "  peerWindowSz = %u", channel->peerWindowSz);
@@ -2758,7 +2828,7 @@ int SendChannelData(WOLFSSH* ssh, uint32_t peerChannel,
     WLOG(WS_LOG_INFO, "  update peerWindowSz = %u", channel->peerWindowSz);
 
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelData()");
-    return WS_SUCCESS;
+    return ret;
 }
 
 
