@@ -1898,6 +1898,7 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
 int ProcessReply(WOLFSSH* ssh)
 {
     int ret = WS_FATAL_ERROR;
+    int verifyResult;
     uint32_t readSz;
     uint8_t peerBlockSz = ssh->peerBlockSz;
     uint8_t peerMacSz = ssh->peerMacSz;
@@ -1942,20 +1943,22 @@ int ProcessReply(WOLFSSH* ssh)
                                   ssh->inputBuffer.buffer +
                                      ssh->inputBuffer.idx + peerBlockSz,
                                   ssh->curSz + LENGTH_SZ - peerBlockSz);
+
+                    /* Verify the buffer is big enough for the data and mac.
+                     * Even if the decrypt step fails, verify the MAC anyway.
+                     * This keeps consistent timing. */
+                    verifyResult = VerifyMac(ssh,
+                                             ssh->inputBuffer.buffer +
+                                                 ssh->inputBuffer.idx,
+                                             ssh->curSz + LENGTH_SZ,
+                                             ssh->inputBuffer.buffer +
+                                                 ssh->inputBuffer.idx +
+                                                 LENGTH_SZ + ssh->curSz);
                     if (ret != WS_SUCCESS) {
                         WLOG(WS_LOG_DEBUG, "PR: Decrypt fail");
                         return ret;
                     }
-
-                    /* Verify the buffer is big enough for the data and mac. */
-                    ret = VerifyMac(ssh,
-                                    ssh->inputBuffer.buffer +
-                                        ssh->inputBuffer.idx,
-                                    ssh->curSz + LENGTH_SZ,
-                                    ssh->inputBuffer.buffer +
-                                        ssh->inputBuffer.idx +
-                                        LENGTH_SZ + ssh->curSz);
-                    if (ret != WS_SUCCESS) {
+                    if (verifyResult != WS_SUCCESS) {
                         WLOG(WS_LOG_DEBUG, "PR: VerifyMac fail");
                         return ret;
                     }
