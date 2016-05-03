@@ -228,6 +228,9 @@ static void SshResourceFree(WOLFSSH* ssh, void* heap)
         /* FreeRng(ssh->rng); */
         WFREE(ssh->rng, heap, DYNTYPE_RNG);
     }
+    if (ssh->userName) {
+        WFREE(ssh->userName, heap, DYNTYPE_STRING);
+    }
 }
 
 

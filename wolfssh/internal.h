@@ -80,6 +80,7 @@ enum {
 
     /* UserAuth IDs */
     ID_USERAUTH_PASSWORD,
+    ID_USERAUTH_PUBLICKEY,
 
     /* Channel Type IDs */
     ID_CHANTYPE_SESSION,
@@ -246,6 +247,9 @@ struct WOLFSSH {
     uint8_t        macKeyServerSz;
 
     HandshakeInfo* handshake;
+
+    uint8_t*       userName;
+    uint32_t       userNameSz;
 };
 
 
