@@ -1654,22 +1654,22 @@ static int DoPacket(WOLFSSH* ssh)
 
         case MSGID_DISCONNECT:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT");
-            DoDisconnect(ssh, buf, payloadSz, &idx);
+            DoDisconnect(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_IGNORE:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT");
-            DoIgnore(ssh, buf, payloadSz, &idx);
+            DoIgnore(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_UNIMPLEMENTED:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT");
-            DoUnimplemented(ssh, buf, payloadSz, &idx);
+            DoUnimplemented(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_DEBUG:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT");
-            DoDebug(ssh, buf, payloadSz, &idx);
+            DoDebug(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_KEXINIT:
@@ -1681,53 +1681,48 @@ static int DoPacket(WOLFSSH* ssh)
                 wc_ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
                 wc_ShaUpdate(&ssh->handshake->hash, &msg, sizeof(msg));
                 wc_ShaUpdate(&ssh->handshake->hash, buf + idx, payloadSz);
-                DoKexInit(ssh, buf, payloadSz, &idx);
+                DoKexInit(ssh, buf + idx, payloadSz, &payloadIdx);
             }
             break;
 
         case MSGID_NEWKEYS:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_NEWKEYS");
-            DoNewKeys(ssh, buf, payloadSz, &idx);
+            DoNewKeys(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_KEXDH_INIT:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT");
-            DoKexDhInit(ssh, buf, payloadSz, &idx);
+            DoKexDhInit(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_SERVICE_REQUEST:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_SERVICE_REQUEST");
-            DoServiceRequest(ssh, buf, payloadSz, &idx);
+            DoServiceRequest(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_USERAUTH_REQUEST:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_USERAUTH_REQUEST");
             DoUserAuthRequest(ssh, buf + idx, payloadSz, &payloadIdx);
-            idx += payloadIdx;
             break;
 
         case MSGID_CHANNEL_OPEN:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_OPEN");
             DoChannelOpen(ssh, buf + idx, payloadSz, &payloadIdx);
-            idx += payloadIdx;
             break;
 
         case MSGID_CHANNEL_WINDOW_ADJUST:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_WINDOW_ADJUST");
             DoChannelWindowAdjust(ssh, buf + idx, payloadSz, &payloadIdx);
-            idx += payloadIdx;
             break;
 
         case MSGID_CHANNEL_DATA:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_DATA");
             DoChannelData(ssh, buf + idx, payloadSz, &payloadIdx);
-            idx += payloadSz;
             break;
 
         case MSGID_CHANNEL_REQUEST:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_REQUEST");
             DoChannelRequest(ssh, buf + idx, payloadSz, &payloadIdx);
-            idx += payloadIdx;
             break;
 
         default:
@@ -1735,10 +1730,10 @@ static int DoPacket(WOLFSSH* ssh)
 #ifdef SHOW_UNIMPLEMENTED
             DumpOctetString(buf + idx, payloadSz);
 #endif
-            idx += payloadSz;
             SendUnimplemented(ssh);
             break;
     }
+    idx += payloadIdx;
 
     if (idx + padSz > len) {
         WLOG(WS_LOG_DEBUG, "Not enough data in buffer for pad.");
