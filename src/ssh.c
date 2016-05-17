@@ -487,6 +487,31 @@ int wolfSSH_stream_send(WOLFSSH* ssh, uint8_t* buf, uint32_t bufSz)
 }
 
 
+void wolfSSH_SetUserAuth(WOLFSSH_CTX* ctx, WS_CallbackUserAuth cb)
+{
+    if (ctx != NULL) {
+        ctx->userAuthCb = cb;
+    }
+}
+
+
+void wolfSSH_SetUserAuthCtx(WOLFSSH* ssh, void* userAuthCtx)
+{
+    if (ssh != NULL) {
+        ssh->userAuthCtx = userAuthCtx;
+    }
+}
+
+
+void* wolfSSH_GetUserAuthCtx(WOLFSSH* ssh)
+{
+    if (ssh != NULL) {
+        return ssh->userAuthCtx;
+    }
+    return NULL;
+}
+
+
 static int ProcessBuffer(WOLFSSH_CTX* ctx, const uint8_t* in, uint32_t inSz,
                                                            int format, int type)
 {

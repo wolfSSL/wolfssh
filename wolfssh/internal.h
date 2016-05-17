@@ -134,16 +134,17 @@ WOLFSSH_LOCAL void ShrinkBuffer(Buffer* buf, int);
 
 /* our wolfSSH Context */
 struct WOLFSSH_CTX {
-    void*             heap;        /* heap hint */
-    WS_CallbackIORecv ioRecvCb;    /* I/O Receive Callback */
-    WS_CallbackIOSend ioSendCb;    /* I/O Send    Callback */
+    void*               heap;        /* heap hint */
+    WS_CallbackIORecv   ioRecvCb;    /* I/O Receive Callback */
+    WS_CallbackIOSend   ioSendCb;    /* I/O Send Callback */
+    WS_CallbackUserAuth userAuthCb;  /* User Authentication Callback */
 
-    uint8_t*          cert;        /* Owned by CTX */
-    uint32_t          certSz;
-    uint8_t*          caCert;      /* Owned by CTX */
-    uint32_t          caCertSz;
-    uint8_t*          privateKey;  /* Owned by CTX */
-    uint32_t          privateKeySz;
+    uint8_t*            cert;        /* Owned by CTX */
+    uint32_t            certSz;
+    uint8_t*            caCert;      /* Owned by CTX */
+    uint32_t            caCertSz;
+    uint8_t*            privateKey;  /* Owned by CTX */
+    uint32_t            privateKeySz;
 };
 
 
@@ -248,8 +249,11 @@ struct WOLFSSH {
 
     HandshakeInfo* handshake;
 
+    void*          userAuthCtx;
     uint8_t*       userName;
     uint32_t       userNameSz;
+    uint8_t*       pkBlob;
+    uint32_t       pkBlobSz;
 };
 
 

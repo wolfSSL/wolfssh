@@ -1360,64 +1360,175 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
                              uint8_t* buf, uint32_t len, uint32_t* idx)
 {
     uint32_t begin = *idx;
-    int      ret;
-    uint32_t valueSz;
-    char     value[32];
-    uint8_t  authNameId;
+    int ret;
+    uint8_t authNameId;
+    uint32_t authNameSz;
+    WS_UserAuthData authData;
 
-    (void)ssh;
-    (void)len;
+    GetUint32(&authData.usernameSz, buf, len, &begin);
+    authData.username = buf + begin;
+    begin += authData.usernameSz;
 
-    DumpOctetString(buf, len);
-    ato32(buf + begin, &valueSz);
-    begin += LENGTH_SZ;
+    GetUint32(&authData.serviceNameSz, buf, len, &begin);
+    authData.serviceName = buf + begin;
+    begin += authData.serviceNameSz;
 
-    XMEMCPY(value, buf + begin, valueSz);
-    begin += valueSz;
-    value[valueSz] = 0;
-    WLOG(WS_LOG_DEBUG, "DUAR: userName = %s", value);
-
-    ato32(buf + begin, &valueSz);
-    begin += LENGTH_SZ;
-
-    XMEMCPY(value, buf + begin, valueSz);
-    begin += valueSz;
-    value[valueSz] = 0;
-    WLOG(WS_LOG_DEBUG, "DUAR: serviceName = %s", value);
-
-    ato32(buf + begin, &valueSz);
-    begin += LENGTH_SZ;
-
-    XMEMCPY(value, buf + begin, valueSz);
-    begin += valueSz;
-    value[valueSz] = 0;
-    WLOG(WS_LOG_DEBUG, "DUAR: authName = %s", value);
-    authNameId = NameToId(value, valueSz);
+    GetUint32(&authNameSz, buf, len, &begin);
+    authNameId = NameToId((const char*)(buf + begin), authNameSz);
+    begin += authNameSz;
 
     if (authNameId == ID_USERAUTH_PASSWORD) {
-        uint8_t pwChanged;
-        ret = GetBoolean(&pwChanged, buf, len, &begin);
-        WLOG(WS_LOG_DEBUG, "DUAR: pwChanged = %s",
-             (pwChanged ? "TRUE" : "FALSE"));
-        if (!pwChanged) {
-            ret = GetString(value, &valueSz, buf, len, &begin);
-            if (ret == WS_SUCCESS)
-                WLOG(WS_LOG_DEBUG, "DUAR: password = %s", value);
-            else
-                WLOG(WS_LOG_DEBUG, "DUAR: password = error? %d", ret);
-        }
-        else {
+        WS_UserAuthData_Password* pw = &authData.sf.password;
+
+        authData.type = WOLFSSH_USERAUTH_PASSWORD;
+        ret = GetBoolean(&pw->hasNewPassword, buf, len, &begin);
+        ret = GetUint32(&pw->passwordSz, buf, len, &begin);
+        pw->password = buf + begin;
+        begin += pw->passwordSz;
+
+        if (pw->hasNewPassword) {
             /* Skip the password change. Maybe error out since we aren't
              * supporting password changes at this time. */
+            ret = GetUint32(&pw->newPasswordSz, buf, len, &begin);
+            pw->newPassword = buf + begin;
+            begin += pw->newPasswordSz;
+        }
+        else {
+            pw->newPassword = NULL;
+            pw->newPasswordSz = 0;
+        }
+
+        if (ssh->ctx->userAuthCb != NULL) {
+            WLOG(WS_LOG_DEBUG, "DUAR: Checking the password");
+            ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PASSWORD,
+                                       &authData, ssh->userAuthCtx);
+            if (ret == WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, "DUAR: password check successful");
+                ssh->clientState = CLIENT_USERAUTH_DONE;
+            }
+            else {
+                WLOG(WS_LOG_DEBUG, "DUAR: password check failed");
+                SendUserAuthFailure(ssh, 0);
+            }
+        }
+        else {
+            WLOG(WS_LOG_DEBUG, "DUAR: No user auth callback");
         }
     }
     else if (authNameId == ID_USERAUTH_PUBLICKEY) {
-    } else
+        WS_UserAuthData_PublicKey* pk = &authData.sf.publicKey;
+
+        authData.type = WOLFSSH_USERAUTH_PUBLICKEY;
+        ret = GetBoolean(&pk->hasSignature, buf, len, &begin);
+        GetUint32(&pk->publicKeyTypeSz, buf, len, &begin);
+        pk->publicKeyType = buf + begin;
+        begin += pk->publicKeyTypeSz;
+        GetUint32(&pk->publicKeySz, buf, len, &begin);
+        pk->publicKey = buf + begin;
+        begin += pk->publicKeySz;
+
+        if (pk->hasSignature) {
+            GetUint32(&pk->signatureSz, buf, len, &begin);
+            pk->signature = buf + begin;
+            begin += pk->signatureSz;
+        }
+        else {
+            pk->signature = NULL;
+            pk->signatureSz = 0;
+        }
+
+        if (ssh->ctx->userAuthCb != NULL) {
+            ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PUBLICKEY,
+                                       &authData, ssh->userAuthCtx);
+        }
+
+        if (pk->signature == NULL) {
+            WLOG(WS_LOG_DEBUG, "DUAR: Send the PK OK!");
+        }
+        else {
+            uint8_t checkDigest[MAX_ENCODED_SIG_SZ];
+            uint32_t checkDigestSz = 0;
+            uint8_t encDigest[MAX_ENCODED_SIG_SZ];
+            uint32_t encDigestSz;
+
+            {
+                RsaKey key;
+                uint8_t* n;
+                uint32_t nSz;
+                uint8_t* e;
+                uint32_t eSz;
+                uint32_t i = 0;
+
+                GetUint32(&nSz, pk->publicKey, pk->publicKeySz, &i);
+                i += nSz;
+                GetUint32(&eSz, pk->publicKey, pk->publicKeySz, &i);
+                e = pk->publicKey + i;
+                i += eSz;
+                GetUint32(&nSz, pk->publicKey, pk->publicKeySz, &i);
+                n = authData.sf.publicKey.publicKey + i;
+
+                wc_InitRsaKey(&key, ssh->ctx->heap);
+                ret = wc_RsaPublicKeyDecodeRaw(n, nSz, e, eSz, &key);
+
+                i = 0;
+                GetUint32(&nSz, pk->signature, pk->signatureSz, &i);
+                i += nSz;
+                GetUint32(&nSz, pk->signature, pk->signatureSz, &i);
+                n = pk->signature + i;
+                ret = wc_RsaSSL_Verify(n, nSz, checkDigest,
+                                       sizeof(checkDigest), &key);
+                wc_FreeRsaKey(&key);
+            }
+
+            if (ret > 0) {
+                checkDigestSz = (uint32_t)ret;
+                ret = 0;
+            }
+
+            {
+                Sha sha;
+                uint8_t digest[SHA_DIGEST_SIZE];
+
+                wc_InitSha(&sha);
+                c32toa(ssh->sessionIdSz, digest);
+                wc_ShaUpdate(&sha, digest, UINT32_SZ);
+                wc_ShaUpdate(&sha, ssh->sessionId, ssh->sessionIdSz);
+                digest[0] = MSGID_USERAUTH_REQUEST;
+                wc_ShaUpdate(&sha, digest, MSG_ID_SZ);
+
+                /* The rest of the fields in the signature are already
+                 * in the buffer. Just need to account for the sizes. */
+                wc_ShaUpdate(&sha, buf + *idx,
+                             authData.usernameSz + authData.serviceNameSz +
+                             authNameSz + BOOLEAN_SZ +
+                             authData.sf.publicKey.publicKeyTypeSz +
+                             authData.sf.publicKey.publicKeySz + (UINT32_SZ * 5));
+                ShaFinal(&sha, digest);
+
+                encDigestSz = wc_EncodeSignature(encDigest, digest,
+                                                 SHA_DIGEST_SIZE, SHAh);
+            }
+
+            {
+                volatile int compare;
+                volatile int sizeCompare;
+
+                compare = ConstantCompare(encDigest, checkDigest, encDigestSz);
+                sizeCompare = encDigestSz != checkDigestSz;
+
+                if (compare || sizeCompare || ret < 0) {
+                    SendUserAuthFailure(ssh, 0);
+                }
+                else {
+                    ssh->clientState = CLIENT_USERAUTH_DONE;
+                }
+            }
+        }
+    }
+    else
         SendUserAuthFailure(ssh, 0);
 
     *idx = begin;
-
-    ssh->clientState = CLIENT_USERAUTH_DONE;
 
     return WS_SUCCESS;
 }
@@ -2652,7 +2763,7 @@ int SendServiceAccept(WOLFSSH* ssh)
 }
 
 
-static const char cannedAuths[] = "password";
+static const char cannedAuths[] = "publickey";
 static const uint32_t cannedAuthsSz = sizeof(cannedAuths) - 1;
 
 

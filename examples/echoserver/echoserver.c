@@ -33,6 +33,8 @@
 #include <sys/socket.h>
 #include <stdio.h>
 #include <pthread.h>
+#include <wolfssl/wolfcrypt/sha256.h>
+#include <wolfssl/wolfcrypt/coding.h>
 #include <wolfssh/ssh.h>
 #ifndef SO_NOSIGPIPE
     #include <signal.h>
@@ -315,9 +317,253 @@ static int load_file(const char* fileName, uint8_t* buf, uint32_t bufSz)
 }
 
 
+static inline void c32toa(uint32_t u32, uint8_t* c)
+{
+    c[0] = (u32 >> 24) & 0xff;
+    c[1] = (u32 >> 16) & 0xff;
+    c[2] = (u32 >>  8) & 0xff;
+    c[3] =  u32 & 0xff;
+}
+
+
+/* Map user names to passwords */
+/* Use arrays for username and p. The password or public key can
+ * be hashed and the hash stored here. Then I won't need the type. */
+typedef struct PwMap {
+    uint8_t type;
+    uint8_t username[32];
+    uint32_t usernameSz;
+    uint8_t p[SHA256_DIGEST_SIZE];
+    struct PwMap* next;
+} PwMap;
+
+
+typedef struct PwMapList {
+    PwMap* head;
+} PwMapList;
+
+
+static PwMap* PwMapNew(PwMapList* list, uint8_t type, const uint8_t* username,
+                       uint32_t usernameSz, const uint8_t* p, uint32_t pSz)
+{
+    PwMap* map;
+
+    map = (PwMap*)malloc(sizeof(PwMap));
+    if (map != NULL) {
+        Sha256 sha;
+        uint8_t flatSz[4];
+
+        map->type = type;
+        if (usernameSz >= sizeof(map->username))
+            usernameSz = sizeof(map->username) - 1;
+        memcpy(map->username, username, usernameSz + 1);
+        map->username[usernameSz] = 0;
+        map->usernameSz = usernameSz;
+
+        wc_InitSha256(&sha);
+        c32toa(pSz, flatSz);
+        wc_Sha256Update(&sha, flatSz, sizeof(flatSz));
+        wc_Sha256Update(&sha, p, pSz);
+        wc_Sha256Final(&sha, map->p);
+
+        map->next = list->head;
+        list->head = map;
+    }
+
+    return map;
+}
+
+
+static void PwMapListDelete(PwMapList* list)
+{
+    if (list != NULL) {
+        PwMap* head = list->head;
+
+        while (head != NULL) {
+            PwMap* cur = head;
+            head = head->next;
+            memset(cur, 0, sizeof(PwMap));
+        }
+    }
+}
+
+
+static const char samplePasswordBuffer[] =
+    "jill:upthehill\n"
+    "jack:fetchapail\n";
+
+
+static const char samplePublicKeyBuffer[] =
+    "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC9P3ZFowOsONXHD5MwWiCciXytBRZGho"
+    "MNiisWSgUs5HdHcACuHYPi2W6Z1PBFmBWT9odOrGRjoZXJfDDoPi+j8SSfDGsc/hsCmc3G"
+    "p2yEhUZUEkDhtOXyqjns1ickC9Gh4u80aSVtwHRnJZh9xPhSq5tLOhId4eP61s+a5pwjTj"
+    "nEhBaIPUJO2C/M0pFnnbZxKgJlX7t1Doy7h5eXxviymOIvaCZKU+x5OopfzM/wFkey0EPW"
+    "NmzI5y/+pzU5afsdeEWdiQDIQc80H6Pz8fsoFPvYSG+s4/wz0duu7yeeV1Ypoho65Zr+pE"
+    "nIf7dO0B8EblgWt+ud+JI8wrAhfE4x hansel\n"
+    "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCqDwRVTRVk/wjPhoo66+Mztrc31KsxDZ"
+    "+kAV0139PHQ+wsueNpba6jNn5o6mUTEOrxrz0LMsDJOBM7CmG0983kF4gRIihECpQ0rcjO"
+    "P6BSfbVTE9mfIK5IsUiZGd8SoE9kSV2pJ2FvZeBQENoAxEFk0zZL9tchPS+OCUGbK4SDjz"
+    "uNZl/30Mczs73N3MBzi6J1oPo7sFlqzB6ecBjK2Kpjus4Y1rYFphJnUxtKvB0s+hoaadru"
+    "biE57dK6BrH5iZwVLTQKux31uCJLPhiktI3iLbdlGZEctJkTasfVSsUizwVIyRjhVKmbdI"
+    "RGwkU38D043AR1h0mUoGCPIKuqcFMf gretel\n";
+
+
+static int LoadPasswordBuffer(uint8_t* buf, uint32_t bufSz, PwMapList* list)
+{
+    char* str = (char*)buf;
+    char* delimiter;
+    char* username;
+    char* password;
+
+    /* Each line of passwd.txt is in the format
+     *     username:password\n
+     * This function modifies the passed-in buffer. */
+
+    if (list == NULL)
+        return -1;
+
+    if (buf == NULL || bufSz == 0)
+        return 0;
+
+    while (*str != 0) {
+        delimiter = strchr(str, ':');
+        username = str;
+        *delimiter = 0;
+        password = delimiter + 1;
+        str = strchr(password, '\n');
+        *str = 0;
+        str++;
+        if (PwMapNew(list, WOLFSSH_USERAUTH_PASSWORD,
+                     (uint8_t*)username, (uint32_t)strlen(username),
+                     (uint8_t*)password, (uint32_t)strlen(password)) == NULL ) {
+
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+
+static int LoadPublicKeyBuffer(uint8_t* buf, uint32_t bufSz, PwMapList* list)
+{
+    char* str = (char*)buf;
+    char* delimiter;
+    uint8_t* publicKey64;
+    uint32_t publicKey64Sz;
+    uint8_t* username;
+    uint32_t usernameSz;
+    uint8_t  publicKey[300];
+    uint32_t publicKeySz;
+    int decodeResult;
+
+    /* Each line of passwd.txt is in the format
+     *     ssh-rsa AAAB3BASE64ENCODEDPUBLICKEYBLOB username\n
+     * This function modifies the passed-in buffer. */
+    if (list == NULL)
+        return -1;
+
+    if (buf == NULL || bufSz == 0)
+        return 0;
+
+    while (*str != 0) {
+        /* Skip the public key type. This example will always be ssh-rsa. */
+        delimiter = strchr(str, ' ');
+        str = delimiter + 1;
+        delimiter = strchr(str, ' ');
+        publicKey64 = (uint8_t*)str;
+        publicKey64Sz = (uint32_t)(delimiter - str);
+        str = delimiter + 1;
+        delimiter = strchr(str, '\n');
+        username = (uint8_t*)str;
+        usernameSz = (uint32_t)(delimiter - str);
+        str = delimiter + 1;
+        publicKeySz = sizeof(publicKey);
+
+        decodeResult = Base64_Decode(publicKey64, publicKey64Sz,
+                                     publicKey, &publicKeySz);
+
+        printf("Base64_Decode = %d\n", decodeResult);
+
+        if (PwMapNew(list, WOLFSSH_USERAUTH_PUBLICKEY,
+                     username, usernameSz,
+                     publicKey, publicKeySz) == NULL ) {
+
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+
+static int wsUserAuth(uint8_t authType,
+                      const WS_UserAuthData* authData,
+                      void* ctx)
+{
+    PwMapList* list;
+    PwMap* map;
+    uint8_t authHash[SHA256_DIGEST_SIZE];
+
+    if (ctx == NULL) {
+        fprintf(stderr, "wsUserAuth: ctx not set");
+        return WOLFSSH_USERAUTH_FAILURE;
+    }
+
+    if (authType != WOLFSSH_USERAUTH_PASSWORD &&
+        authType != WOLFSSH_USERAUTH_PUBLICKEY) {
+
+        return WOLFSSH_USERAUTH_FAILURE;
+    }
+
+    /* Hash the password or public key with its length. */
+    {
+        Sha256 sha;
+        uint8_t flatSz[4];
+        wc_InitSha256(&sha);
+        if (authType == WOLFSSH_USERAUTH_PASSWORD) {
+            c32toa(authData->sf.password.passwordSz, flatSz);
+            wc_Sha256Update(&sha, flatSz, sizeof(flatSz));
+            wc_Sha256Update(&sha,
+                            authData->sf.password.password,
+                            authData->sf.password.passwordSz);
+        }
+        else if (authType == WOLFSSH_USERAUTH_PUBLICKEY) {
+            c32toa(authData->sf.publicKey.publicKeySz, flatSz);
+            wc_Sha256Update(&sha, flatSz, sizeof(flatSz));
+            wc_Sha256Update(&sha,
+                            authData->sf.publicKey.publicKey,
+                            authData->sf.publicKey.publicKeySz);
+        }
+        wc_Sha256Final(&sha, authHash);
+    }
+
+    list = (PwMapList*)ctx;
+    map = list->head;
+
+    while (map != NULL) {
+        if (authData->type == map->type &&
+            authData->usernameSz == map->usernameSz &&
+            memcmp(authData->username, map->username, map->usernameSz) == 0) {
+            if (memcmp(map->p, authHash, SHA256_DIGEST_SIZE) != 0) {
+                return (authType == WOLFSSH_USERAUTH_PASSWORD ?
+                            WOLFSSH_USERAUTH_INVALID_PASSWORD :
+                            WOLFSSH_USERAUTH_INVALID_PUBLICKEY);
+            }
+
+            return WOLFSSH_USERAUTH_SUCCESS;
+        }
+        map = map->next;
+    }
+
+    return WOLFSSH_USERAUTH_INVALID_USER;
+}
+
+
 int main(void)
 {
     WOLFSSH_CTX* ctx = NULL;
+    PwMapList pwMapList;
     SOCKET_T listenFd = 0;
 
     #ifdef DEBUG_WOLFSSH
@@ -334,6 +580,9 @@ int main(void)
         fprintf(stderr, "Couldn't allocate SSH CTX data.\n");
         exit(EXIT_FAILURE);
     }
+
+    memset(&pwMapList, 0, sizeof(pwMapList));
+    wolfSSH_SetUserAuth(ctx, wsUserAuth);
 
     {
         uint8_t buf[SCRATCH_BUFFER_SIZE];
@@ -360,6 +609,16 @@ int main(void)
             fprintf(stderr, "Couldn't use key buffer.\n");
             exit(EXIT_FAILURE);
         }
+
+        bufSz = (uint32_t)strlen((char*)samplePasswordBuffer);
+        memcpy(buf, samplePasswordBuffer, bufSz);
+        buf[bufSz] = 0;
+        LoadPasswordBuffer(buf, bufSz, &pwMapList);
+
+        bufSz = (uint32_t)strlen((char*)samplePublicKeyBuffer);
+        memcpy(buf, samplePublicKeyBuffer, bufSz);
+        buf[bufSz] = 0;
+        LoadPublicKeyBuffer(buf, bufSz, &pwMapList);
     }
 
     tcp_bind(&listenFd, SERVER_PORT_NUMBER, 0);
@@ -376,6 +635,7 @@ int main(void)
             fprintf(stderr, "Couldn't allocate SSH data.\n");
             exit(EXIT_FAILURE);
         }
+        wolfSSH_SetUserAuthCtx(ssh, &pwMapList);
 
         if (listen(listenFd, 5) != 0)
             err_sys("tcp listen failed");
@@ -391,6 +651,7 @@ int main(void)
         pthread_detach(thread);
     }
 
+    PwMapListDelete(&pwMapList);
     if (wolfSSH_Cleanup() != WS_SUCCESS) {
         fprintf(stderr, "Couldn't clean up wolfSSH.\n");
         exit(EXIT_FAILURE);
