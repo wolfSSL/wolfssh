@@ -483,8 +483,6 @@ static int LoadPublicKeyBuffer(uint8_t* buf, uint32_t bufSz, PwMapList* list)
         decodeResult = Base64_Decode(publicKey64, publicKey64Sz,
                                      publicKey, &publicKeySz);
 
-        printf("Base64_Decode = %d\n", decodeResult);
-
         if (PwMapNew(list, WOLFSSH_USERAUTH_PUBLICKEY,
                      username, usernameSz,
                      publicKey, publicKeySz) == NULL ) {

@@ -85,6 +85,7 @@ typedef struct WS_UserAuthData_Password {
 } WS_UserAuthData_Password;
 
 typedef struct WS_UserAuthData_PublicKey {
+    uint8_t* dataToSign;
     uint8_t* publicKeyType;
     uint32_t publicKeyTypeSz;
     uint8_t* publicKey;
@@ -100,6 +101,8 @@ typedef struct WS_UserAuthData {
     uint32_t usernameSz;
     uint8_t* serviceName;
     uint32_t serviceNameSz;
+    uint8_t* authName;
+    uint32_t authNameSz;
     union {
         WS_UserAuthData_Password password;
         WS_UserAuthData_PublicKey publicKey;

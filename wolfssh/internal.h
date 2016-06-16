@@ -280,6 +280,8 @@ WOLFSSH_LOCAL int SendServiceAccept(WOLFSSH*);
 WOLFSSH_LOCAL int SendUserAuthSuccess(WOLFSSH*);
 WOLFSSH_LOCAL int SendUserAuthFailure(WOLFSSH*, uint8_t);
 WOLFSSH_LOCAL int SendUserAuthBanner(WOLFSSH*);
+WOLFSSH_LOCAL int SendUserAuthPkOk(WOLFSSH*, const uint8_t*, uint32_t,
+                                   const uint8_t*, uint32_t);
 WOLFSSH_LOCAL int SendChannelOpenConf(WOLFSSH* ssh);
 WOLFSSH_LOCAL int SendChannelData(WOLFSSH* ssh, uint32_t, uint8_t*, uint32_t);
 WOLFSSH_LOCAL int GenerateKey(uint8_t, uint8_t, uint8_t*, uint32_t,
@@ -344,6 +346,7 @@ enum WS_MessageIds {
     MSGID_USERAUTH_FAILURE = 51,
     MSGID_USERAUTH_SUCCESS = 52,
     MSGID_USERAUTH_BANNER  = 53,
+    MSGID_USERAUTH_PK_OK   = 60,
 
     MSGID_CHANNEL_OPEN      = 90,
     MSGID_CHANNEL_OPEN_CONF = 91,
