@@ -33,8 +33,8 @@
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/log.h>
-#include <cyassl/ctaocrypt/rsa.h>
-#include <cyassl/ctaocrypt/asn.h>
+#include <wolfssl/wolfcrypt/rsa.h>
+#include <wolfssl/wolfcrypt/asn.h>
 
 #ifdef NO_INLINE
     #include <wolfssh/misc.h>
@@ -107,10 +107,10 @@ static void CtxResourceFree(WOLFSSH_CTX* ctx)
 
     if (ctx->privateKey) {
         ForceZero(ctx->privateKey, ctx->privateKeySz);
-        WFREE(ctx->privateKey, heap, DYNTYPE_KEY);
+        WFREE(ctx->privateKey, ctx->heap, DYNTYPE_KEY);
     }
-    WFREE(ctx->cert, heap, DYNTYPE_CERT);
-    WFREE(ctx->caCert, heap, DYNTYPE_CA);
+    WFREE(ctx->cert, ctx->heap, DYNTYPE_CERT);
+    WFREE(ctx->caCert, ctx->heap, DYNTYPE_CA);
 }
 
 
@@ -143,7 +143,7 @@ static WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     }
 
     rng = (RNG*)WMALLOC(sizeof(RNG), ctx->heap, DYNTYPE_RNG);
-    if (rng == NULL || InitRng(rng) != 0) {
+    if (rng == NULL || wc_InitRng(rng) != 0) {
         wolfSSH_free(ssh);
         return NULL;
     }
@@ -175,7 +175,7 @@ static WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
 
     if (BufferInit(&ssh->inputBuffer, 0, ctx->heap) != WS_SUCCESS ||
         BufferInit(&ssh->outputBuffer, 0, ctx->heap) != WS_SUCCESS ||
-        InitSha(&ssh->handshake->hash) != 0) {
+        wc_InitSha(&ssh->handshake->hash) != 0) {
 
         wolfSSH_free(ssh);
         ssh = NULL;
@@ -545,13 +545,13 @@ static int ProcessBuffer(WOLFSSH_CTX* ctx, const uint8_t* in, uint32_t inSz,
         RsaKey key;
         uint32_t scratch = 0;
 
-        if (InitRsaKey(&key, NULL) < 0)
+        if (wc_InitRsaKey(&key, NULL) < 0)
             return WS_RSA_E;
 
-        if (RsaPrivateKeyDecode(der, &scratch, &key, derSz) < 0)
+        if (wc_RsaPrivateKeyDecode(der, &scratch, &key, derSz) < 0)
             return WS_BAD_FILE_E;
 
-        FreeRsaKey(&key);
+        wc_FreeRsaKey(&key);
     }
 
     return WS_SUCCESS;

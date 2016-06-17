@@ -116,7 +116,10 @@ int test_KDF(void)
     uint32_t i;
     uint32_t tc = sizeof(kdfTestVectors)/sizeof(KdfTestVector);
     const KdfTestVector* tv = NULL;
-    uint8_t *k, *h, *sId, *eKey;
+    uint8_t* k = NULL;
+    uint8_t* h = NULL;
+    uint8_t* sId = NULL;
+    uint8_t* eKey = NULL;
     uint32_t kSz, hSz, sIdSz, eKeySz;
     uint8_t cKey[20]; /* Greater of SHA_DIGEST_SIZE and AES_BLOCK_SIZE */
     /* sId - Session ID, eKey - Expected Key, cKey - Calculated Key */

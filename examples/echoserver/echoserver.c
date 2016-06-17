@@ -241,20 +241,37 @@ static INLINE void tcp_bind(SOCKET_T* sockFd, uint16_t port, int useAnyAddr)
 }
 
 
+static int find_char(uint8_t ch, const uint8_t* buf, uint32_t bufSz)
+{
+    while (bufSz) {
+        if (ch == *buf)
+            return 1;
+        else {
+            buf++;
+            bufSz--;
+        }
+    }
+
+    return 0;
+}
+
+
 static THREAD_RETURN CYASSL_THREAD server_worker(void* vArgs)
 {
     WOLFSSH* ssh = (WOLFSSH*)vArgs;
     SOCKET_T clientFd = wolfSSH_get_fd(ssh);
 
-    char buf[4096];
-    int  bufSz;
+    uint8_t  buf[4096];
+    uint32_t bufSz;
 
     if (wolfSSH_accept(ssh) == WS_SUCCESS) {
 
         while (1) {
-            bufSz = wolfSSH_stream_read(ssh, (uint8_t*)buf, sizeof(buf));
+            bufSz = wolfSSH_stream_read(ssh, buf, sizeof(buf));
             if (bufSz > 0) {
-                wolfSSH_stream_send(ssh, (uint8_t*)buf, bufSz);
+                wolfSSH_stream_send(ssh, buf, bufSz);
+                if (find_char(0x03, buf, bufSz))
+                    break;
             }
             else {
                 printf("wolfSSH_stream_read returned %d\n", bufSz);
