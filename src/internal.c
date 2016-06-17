@@ -1410,6 +1410,8 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
                                 uint8_t* digest, uint32_t digestSz)
 {
     RsaKey key;
+    uint8_t* publicKeyType;
+    uint32_t publicKeyTypeSz;
     uint8_t* n;
     uint32_t nSz;
     uint8_t* e;
@@ -1417,10 +1419,17 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     uint32_t i = 0;
     int ret;
 
-    /* Skip the type string */
-    GetUint32(&nSz, pk->publicKey, pk->publicKeySz, &i);
-    i += nSz;
+    /* First check that the public key's type matches the one we are
+     * expecting. */
+    GetUint32(&publicKeyTypeSz, pk->publicKey, pk->publicKeySz, &i);
+    publicKeyType = pk->publicKey + i;
+    i += publicKeyTypeSz;
+    if (publicKeyTypeSz != pk->publicKeyTypeSz &&
+        WMEMCMP(publicKeyType, pk->publicKeyType, publicKeyTypeSz) != 0) {
 
+        WLOG(WS_LOG_DEBUG, "Public Key's type does not match public key type");
+        return WS_INVALID_ALGO_ID;
+    }
     GetUint32(&eSz, pk->publicKey, pk->publicKeySz, &i);
     e = pk->publicKey + i;
     i += eSz;
@@ -1431,9 +1440,17 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     ret = wc_RsaPublicKeyDecodeRaw(n, nSz, e, eSz, &key);
 
     i = 0;
-    /* Skip the type string */
-    GetUint32(&nSz, pk->signature, pk->signatureSz, &i);
-    i += nSz;
+    /* First check that the signature's public key type matches the one
+     * we are expecting. */
+    GetUint32(&publicKeyTypeSz, pk->publicKey, pk->publicKeySz, &i);
+    publicKeyType = pk->publicKey + i;
+    i += publicKeyTypeSz;
+    if (publicKeyTypeSz != pk->publicKeyTypeSz &&
+        WMEMCMP(publicKeyType, pk->publicKeyType, publicKeyTypeSz) != 0) {
+
+        WLOG(WS_LOG_DEBUG, "Signature's type does not match public key type");
+        return WS_INVALID_ALGO_ID;
+    }
 
     GetUint32(&nSz, pk->signature, pk->signatureSz, &i);
     n = pk->signature + i;
