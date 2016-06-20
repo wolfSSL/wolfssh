@@ -80,6 +80,7 @@ enum {
 
     /* UserAuth IDs */
     ID_USERAUTH_PASSWORD,
+    ID_USERAUTH_PUBLICKEY,
 
     /* Channel Type IDs */
     ID_CHANTYPE_SESSION,
@@ -133,16 +134,17 @@ WOLFSSH_LOCAL void ShrinkBuffer(Buffer* buf, int);
 
 /* our wolfSSH Context */
 struct WOLFSSH_CTX {
-    void*             heap;        /* heap hint */
-    WS_CallbackIORecv ioRecvCb;    /* I/O Receive Callback */
-    WS_CallbackIOSend ioSendCb;    /* I/O Send    Callback */
+    void*               heap;        /* heap hint */
+    WS_CallbackIORecv   ioRecvCb;    /* I/O Receive Callback */
+    WS_CallbackIOSend   ioSendCb;    /* I/O Send Callback */
+    WS_CallbackUserAuth userAuthCb;  /* User Authentication Callback */
 
-    uint8_t*          cert;        /* Owned by CTX */
-    uint32_t          certSz;
-    uint8_t*          caCert;      /* Owned by CTX */
-    uint32_t          caCertSz;
-    uint8_t*          privateKey;  /* Owned by CTX */
-    uint32_t          privateKeySz;
+    uint8_t*            cert;        /* Owned by CTX */
+    uint32_t            certSz;
+    uint8_t*            caCert;      /* Owned by CTX */
+    uint32_t            caCertSz;
+    uint8_t*            privateKey;  /* Owned by CTX */
+    uint32_t            privateKeySz;
 };
 
 
@@ -246,6 +248,12 @@ struct WOLFSSH {
     uint8_t        macKeyServerSz;
 
     HandshakeInfo* handshake;
+
+    void*          userAuthCtx;
+    uint8_t*       userName;
+    uint32_t       userNameSz;
+    uint8_t*       pkBlob;
+    uint32_t       pkBlobSz;
 };
 
 
@@ -272,6 +280,8 @@ WOLFSSH_LOCAL int SendServiceAccept(WOLFSSH*);
 WOLFSSH_LOCAL int SendUserAuthSuccess(WOLFSSH*);
 WOLFSSH_LOCAL int SendUserAuthFailure(WOLFSSH*, uint8_t);
 WOLFSSH_LOCAL int SendUserAuthBanner(WOLFSSH*);
+WOLFSSH_LOCAL int SendUserAuthPkOk(WOLFSSH*, const uint8_t*, uint32_t,
+                                   const uint8_t*, uint32_t);
 WOLFSSH_LOCAL int SendChannelOpenConf(WOLFSSH* ssh);
 WOLFSSH_LOCAL int SendChannelData(WOLFSSH* ssh, uint32_t, uint8_t*, uint32_t);
 WOLFSSH_LOCAL int GenerateKey(uint8_t, uint8_t, uint8_t*, uint32_t,
@@ -336,6 +346,7 @@ enum WS_MessageIds {
     MSGID_USERAUTH_FAILURE = 51,
     MSGID_USERAUTH_SUCCESS = 52,
     MSGID_USERAUTH_BANNER  = 53,
+    MSGID_USERAUTH_PK_OK   = 60,
 
     MSGID_CHANNEL_OPEN      = 90,
     MSGID_CHANNEL_OPEN_CONF = 91,

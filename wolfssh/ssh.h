@@ -66,15 +66,53 @@ WOLFSSH_API const char* wolfSSH_get_error_name(const WOLFSSH*);
 /* I/O callbacks */
 typedef int (*WS_CallbackIORecv)(WOLFSSH*, void*, uint32_t, void*);
 typedef int (*WS_CallbackIOSend)(WOLFSSH*, void*, uint32_t, void*);
-
 WOLFSSH_API void wolfSSH_SetIORecv(WOLFSSH_CTX*, WS_CallbackIORecv);
 WOLFSSH_API void wolfSSH_SetIOSend(WOLFSSH_CTX*, WS_CallbackIOSend);
-
 WOLFSSH_API void wolfSSH_SetIOReadCtx(WOLFSSH*, void*);
 WOLFSSH_API void wolfSSH_SetIOWriteCtx(WOLFSSH*, void*);
-
 WOLFSSH_API void* wolfSSH_GetIOReadCtx(WOLFSSH*);
 WOLFSSH_API void* wolfSSH_GetIOWriteCtx(WOLFSSH*);
+
+/* User Authentication callback */
+
+typedef struct WS_UserAuthData_Password {
+    uint8_t* password;
+    uint32_t passwordSz;
+    /* The following are present for future use. */
+    uint8_t hasNewPassword;
+    uint8_t* newPassword;
+    uint32_t newPasswordSz;
+} WS_UserAuthData_Password;
+
+typedef struct WS_UserAuthData_PublicKey {
+    uint8_t* dataToSign;
+    uint8_t* publicKeyType;
+    uint32_t publicKeyTypeSz;
+    uint8_t* publicKey;
+    uint32_t publicKeySz;
+    uint8_t hasSignature;
+    uint8_t* signature;
+    uint32_t signatureSz;
+} WS_UserAuthData_PublicKey;
+
+typedef struct WS_UserAuthData {
+    uint8_t type;
+    uint8_t* username;
+    uint32_t usernameSz;
+    uint8_t* serviceName;
+    uint32_t serviceNameSz;
+    uint8_t* authName;
+    uint32_t authNameSz;
+    union {
+        WS_UserAuthData_Password password;
+        WS_UserAuthData_PublicKey publicKey;
+    } sf;
+} WS_UserAuthData;
+
+typedef int (*WS_CallbackUserAuth)(uint8_t, const WS_UserAuthData*, void*);
+WOLFSSH_API void wolfSSH_SetUserAuth(WOLFSSH_CTX*, WS_CallbackUserAuth);
+WOLFSSH_API void wolfSSH_SetUserAuthCtx(WOLFSSH*, void*);
+WOLFSSH_API void* wolfSSH_GetUserAuthCtx(WOLFSSH*);
 
 WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX*,
                                                  const uint8_t*, uint32_t, int);
@@ -101,6 +139,21 @@ enum WS_FormatTypes {
     WOLFSSH_FORMAT_ASN1,
     WOLFSSH_FORMAT_PEM,
     WOLFSSH_FORMAT_RAW
+};
+
+
+enum WS_UserAuthTypes {
+    WOLFSSH_USERAUTH_PASSWORD,
+    WOLFSSH_USERAUTH_PUBLICKEY
+};
+
+
+enum WS_UserAuthResults {
+    WOLFSSH_USERAUTH_SUCCESS,
+    WOLFSSH_USERAUTH_FAILURE,
+    WOLFSSH_USERAUTH_INVALID_USER,
+    WOLFSSH_USERAUTH_INVALID_PASSWORD,
+    WOLFSSH_USERAUTH_INVALID_PUBLICKEY
 };
 
 

@@ -228,6 +228,9 @@ static void SshResourceFree(WOLFSSH* ssh, void* heap)
         /* FreeRng(ssh->rng); */
         WFREE(ssh->rng, heap, DYNTYPE_RNG);
     }
+    if (ssh->userName) {
+        WFREE(ssh->userName, heap, DYNTYPE_STRING);
+    }
 }
 
 
@@ -481,6 +484,31 @@ int wolfSSH_stream_send(WOLFSSH* ssh, uint8_t* buf, uint32_t bufSz)
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_stream_send(), txd = %u", bytesTxd);
     return bytesTxd;
+}
+
+
+void wolfSSH_SetUserAuth(WOLFSSH_CTX* ctx, WS_CallbackUserAuth cb)
+{
+    if (ctx != NULL) {
+        ctx->userAuthCb = cb;
+    }
+}
+
+
+void wolfSSH_SetUserAuthCtx(WOLFSSH* ssh, void* userAuthCtx)
+{
+    if (ssh != NULL) {
+        ssh->userAuthCtx = userAuthCtx;
+    }
+}
+
+
+void* wolfSSH_GetUserAuthCtx(WOLFSSH* ssh)
+{
+    if (ssh != NULL) {
+        return ssh->userAuthCtx;
+    }
+    return NULL;
 }
 
 
