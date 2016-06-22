@@ -101,6 +101,7 @@ enum {
 #define MSG_ID_SZ        1
 #define SHA1_96_SZ       12
 #define UINT32_SZ        4
+#define DEFAULT_COUNT_HIGHWATER (1024 * 1024 * 1024)
 #define DEFAULT_WINDOW_SZ     (1024 * 1024)
 #define DEFAULT_MAX_PACKET_SZ (16 * 1024)
 #define DEFAULT_NEXT_CHANNEL  13013

@@ -155,6 +155,7 @@ static WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->wfd         = -1;         /* set to invalid */
     ssh->ioReadCtx   = &ssh->rfd;  /* prevent invalid access if not correctly */
     ssh->ioWriteCtx  = &ssh->wfd;  /* set */
+    ssh->countHighwater = DEFAULT_COUNT_HIGHWATER;
     ssh->acceptState = ACCEPT_BEGIN;
     ssh->clientState = CLIENT_BEGIN;
     ssh->nextChannel = DEFAULT_NEXT_CHANNEL;
@@ -277,6 +278,31 @@ int wolfSSH_get_fd(const WOLFSSH* ssh)
 
     if (ssh)
         return ssh->rfd;
+
+    return WS_BAD_ARGUMENT;
+}
+
+
+int wolfSSH_set_highwater(WOLFSSH* ssh, uint32_t highwater)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_set_highwater()");
+
+    if (ssh) {
+        ssh->countHighwater = highwater;
+
+        return WS_SUCCESS;
+    }
+
+    return WS_BAD_ARGUMENT;
+}
+
+
+uint32_t wolfSSH_get_highwater(WOLFSSH* ssh)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_get_highwater()");
+
+    if (ssh)
+        return ssh->countHighwater;
 
     return WS_BAD_ARGUMENT;
 }

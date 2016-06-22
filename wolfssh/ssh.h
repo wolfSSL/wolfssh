@@ -59,6 +59,9 @@ WOLFSSH_API void     wolfSSH_free(WOLFSSH*);
 WOLFSSH_API int  wolfSSH_set_fd(WOLFSSH*, int);
 WOLFSSH_API int  wolfSSH_get_fd(const WOLFSSH*);
 
+WOLFSSH_API int wolfSSH_set_highwater(WOLFSSH*, uint32_t);
+WOLFSSH_API uint32_t wolfSSH_get_highwater(WOLFSSH*);
+
 WOLFSSH_API int wolfSSH_get_error(const WOLFSSH*);
 WOLFSSH_API const char* wolfSSH_get_error_name(const WOLFSSH*);
 

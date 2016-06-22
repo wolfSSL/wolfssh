@@ -2258,6 +2258,9 @@ static INLINE int Encrypt(WOLFSSH* ssh, uint8_t* cipher, const uint8_t* input,
     }
 
     ssh->txCount += sz;
+    if (ssh->countHighwater && ssh->txCount > ssh->countHighwater) {
+        WLOG(WS_LOG_DEBUG, "Transmit over high water mark");
+    }
 
     return ret;
 }
@@ -2290,6 +2293,9 @@ static INLINE int Decrypt(WOLFSSH* ssh, uint8_t* plain, const uint8_t* input,
     }
 
     ssh->rxCount += sz;
+    if (ssh->countHighwater && ssh->rxCount > ssh->countHighwater) {
+        WLOG(WS_LOG_DEBUG, "Receive over high water mark");
+    }
 
     return ret;
 }
