@@ -70,6 +70,7 @@ enum {
     /* Integrity IDs */
     ID_HMAC_SHA1,
     ID_HMAC_SHA1_96,
+    ID_HMAC_SHA2_256,
 
     /* Key Exchange IDs */
     ID_DH_GROUP1_SHA1,
@@ -93,6 +94,7 @@ enum {
 #define MAX_INTEGRITY    2
 #define MAX_KEY_EXCHANGE 2
 #define MAX_PUBLIC_KEY   1
+#define MAX_HMAC_SZ      SHA256_DIGEST_SIZE
 #define MIN_BLOCK_SZ     8
 #define COOKIE_SZ        16
 #define LENGTH_SZ        4
@@ -242,9 +244,9 @@ struct WOLFSSH {
     uint8_t        encKeyClientSz;
     uint8_t        encKeyServer[AES_BLOCK_SIZE];
     uint8_t        encKeyServerSz;
-    uint8_t        macKeyClient[SHA_DIGEST_SIZE];
+    uint8_t        macKeyClient[MAX_HMAC_SZ];
     uint8_t        macKeyClientSz;
-    uint8_t        macKeyServer[SHA_DIGEST_SIZE];
+    uint8_t        macKeyServer[MAX_HMAC_SZ];
     uint8_t        macKeyServerSz;
 
     HandshakeInfo* handshake;

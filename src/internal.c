@@ -153,6 +153,7 @@ static const NameIdPair NameIdMap[] = {
     /* Integrity IDs */
     { ID_HMAC_SHA1, "hmac-sha1" },
     { ID_HMAC_SHA1_96, "hmac-sha1-96" },
+    { ID_HMAC_SHA2_256, "hmac-sha2-256" },
 
     /* Key Exchange IDs */
     { ID_DH_GROUP1_SHA1, "diffie-hellman-group1-sha1" },
@@ -654,7 +655,8 @@ static int DoNameList(uint8_t* idList, uint32_t* idListSz,
 
 
 static const uint8_t  cannedEncAlgo[] = {ID_AES128_CBC};
-static const uint8_t  cannedMacAlgo[] = {ID_HMAC_SHA1_96, ID_HMAC_SHA1};
+static const uint8_t  cannedMacAlgo[] = {ID_HMAC_SHA2_256, ID_HMAC_SHA1_96,
+                                         ID_HMAC_SHA1};
 static const uint8_t  cannedKeyAlgo[] = {ID_SSH_RSA};
 static const uint8_t  cannedKexAlgo[] = {ID_DH_GROUP14_SHA1, ID_DH_GROUP1_SHA1};
 
@@ -705,6 +707,8 @@ static INLINE uint8_t MacSzForId(uint8_t id)
             return SHA_DIGEST_SIZE;
         case ID_HMAC_SHA1_96:
             return SHA1_96_SZ;
+        case ID_HMAC_SHA2_256:
+            return SHA256_DIGEST_SIZE;
         default:
             return 0;
     }
@@ -717,6 +721,8 @@ static INLINE uint8_t KeySzForId(uint8_t id)
         case ID_HMAC_SHA1:
         case ID_HMAC_SHA1_96:
             return SHA_DIGEST_SIZE;
+        case ID_HMAC_SHA2_256:
+            return SHA256_DIGEST_SIZE;
         case ID_AES128_CBC:
         case ID_AES128_CTR:
             return AES_BLOCK_SIZE;
@@ -2031,6 +2037,18 @@ static INLINE int CreateMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
             }
             break;
 
+        case ID_HMAC_SHA2_256:
+            {
+                Hmac hmac;
+
+                wc_HmacSetKey(&hmac, SHA256,
+                              ssh->macKeyServer, ssh->macKeyServerSz);
+                wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
+                wc_HmacUpdate(&hmac, in, inSz);
+                wc_HmacFinal(&hmac, mac);
+            }
+            break;
+
         default:
             WLOG(WS_LOG_DEBUG, "Invalid Mac ID");
             return WS_FATAL_ERROR;
@@ -2045,7 +2063,7 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
 {
     int     ret = WS_SUCCESS;
     uint8_t flatSeq[LENGTH_SZ];
-    uint8_t checkMac[SHA_DIGEST_SIZE];
+    uint8_t checkMac[MAX_HMAC_SZ];
     Hmac    hmac;
 
     c32toa(ssh->peerSeq, flatSeq);
@@ -2069,6 +2087,16 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
                 ret = WS_VERIFY_MAC_E;
             break;
 
+        case ID_HMAC_SHA2_256:
+            wc_HmacSetKey(&hmac, SHA256,
+                          ssh->macKeyClient, ssh->macKeyClientSz);
+            wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
+            wc_HmacUpdate(&hmac, in, inSz);
+            wc_HmacFinal(&hmac, checkMac);
+            if (ConstantCompare(checkMac, mac, ssh->peerMacSz) != 0)
+                ret = WS_VERIFY_MAC_E;
+            break;
+
         default:
             ret = WS_INVALID_ALGO_ID;
     }
@@ -2084,6 +2112,7 @@ int ProcessReply(WOLFSSH* ssh)
     uint32_t readSz;
     uint8_t peerBlockSz = ssh->peerBlockSz;
     uint8_t peerMacSz = ssh->peerMacSz;
+    printf("PR: peerMacSz = %u\n", peerMacSz);
 
     for (;;) {
         switch (ssh->processReplyState) {
@@ -2317,7 +2346,8 @@ static INLINE void CopyNameList(uint8_t* buf, uint32_t* idx,
 
 
 static const char     cannedEncAlgoNames[] = "aes128-cbc";
-static const char     cannedMacAlgoNames[] = "hmac-sha1-96,hmac-sha1";
+static const char     cannedMacAlgoNames[] = "hmac-sha2-256,hmac-sha1-96,"
+                                             "hmac-sha1";
 static const char     cannedKeyAlgoNames[] = "ssh-rsa";
 static const char     cannedKexAlgoNames[] = "diffie-hellman-group14-sha1,"
                                              "diffie-hellman-group1-sha1";
