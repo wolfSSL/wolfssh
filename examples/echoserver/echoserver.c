@@ -455,7 +455,6 @@ static int LoadPublicKeyBuffer(uint8_t* buf, uint32_t bufSz, PwMapList* list)
     uint32_t usernameSz;
     uint8_t  publicKey[300];
     uint32_t publicKeySz;
-    int decodeResult;
 
     /* Each line of passwd.txt is in the format
      *     ssh-rsa AAAB3BASE64ENCODEDPUBLICKEYBLOB username\n
@@ -480,8 +479,11 @@ static int LoadPublicKeyBuffer(uint8_t* buf, uint32_t bufSz, PwMapList* list)
         str = delimiter + 1;
         publicKeySz = sizeof(publicKey);
 
-        decodeResult = Base64_Decode(publicKey64, publicKey64Sz,
-                                     publicKey, &publicKeySz);
+        if (Base64_Decode(publicKey64, publicKey64Sz,
+                          publicKey, &publicKeySz) != 0) {
+
+            return -1;
+        }
 
         if (PwMapNew(list, WOLFSSH_USERAUTH_PUBLICKEY,
                      username, usernameSz,
