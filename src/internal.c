@@ -129,6 +129,9 @@ const char* GetErrorString(int err)
         case WS_RESOURCE_E:
             return "insufficient resources for new channel";
 
+        case WS_INVALID_USERNAME:
+            return "invalid user name";
+
         default:
             return "Unknown error code";
     }
@@ -1389,20 +1392,30 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
     }
 
     if (ssh->ctx->userAuthCb != NULL) {
-        WLOG(WS_LOG_DEBUG, "DUAR: Checking the password");
+        WLOG(WS_LOG_DEBUG, "DUARPW: Calling the userauth callback");
         ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PASSWORD,
                                    authData, ssh->userAuthCtx);
-        if (ret == WS_SUCCESS) {
-            WLOG(WS_LOG_DEBUG, "DUAR: password check successful");
+        if (ret == WOLFSSH_USERAUTH_SUCCESS) {
+            WLOG(WS_LOG_DEBUG, "DUARPW: password check successful");
             ssh->clientState = CLIENT_USERAUTH_DONE;
         }
         else {
-            WLOG(WS_LOG_DEBUG, "DUAR: password check failed");
-            SendUserAuthFailure(ssh, 0);
+            WLOG(WS_LOG_DEBUG, "DUARPW: password check failed");
+            if (ret != WOLFSSH_USERAUTH_SUCCESS) {
+                switch (ret) {
+                    case WOLFSSH_USERAUTH_INVALID_USER:
+                        SendDisconnect(ssh,
+                                       WOLFSSH_DISCONNECT_ILLEGAL_USER_NAME);
+                        break;
+                    default:
+                        SendUserAuthFailure(ssh, 0);
+                }
+            }
         }
     }
     else {
-        WLOG(WS_LOG_DEBUG, "DUAR: No user auth callback");
+        WLOG(WS_LOG_DEBUG, "DUARPW: No user auth callback");
+        SendUserAuthFailure(ssh, 0);
     }
 
     *idx = begin;
@@ -1425,6 +1438,7 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     uint32_t i = 0;
     int ret;
 
+    WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequestRsa()");
     /* First check that the public key's type matches the one we are
      * expecting. */
     GetUint32(&publicKeyTypeSz, pk->publicKey, pk->publicKeySz, &i);
@@ -1475,6 +1489,8 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
     WS_UserAuthData_PublicKey* pk = &authData->sf.publicKey;
     int ret = WS_SUCCESS;
 
+    WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequestPublicKey()");
+
     authData->type = WOLFSSH_USERAUTH_PUBLICKEY;
     GetBoolean(&pk->hasSignature, buf, len, &begin);
     GetUint32(&pk->publicKeyTypeSz, buf, len, &begin);
@@ -1495,12 +1511,26 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
     }
 
     if (ssh->ctx->userAuthCb != NULL) {
+        WLOG(WS_LOG_DEBUG, "DUARPK: Calling the userauth callback");
         ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PUBLICKEY,
                                    authData, ssh->userAuthCtx);
+        WLOG(WS_LOG_DEBUG, "DUARPK: callback result = %d", ret);
+        if (ret != WOLFSSH_USERAUTH_SUCCESS) {
+            switch (ret) {
+                case WOLFSSH_USERAUTH_INVALID_USER:
+                    SendDisconnect(ssh, WOLFSSH_DISCONNECT_ILLEGAL_USER_NAME);
+                    break;
+                default:
+                    SendUserAuthFailure(ssh, 0);
+            }
+        }
+    }
+    else {
+        WLOG(WS_LOG_DEBUG, "DUARPK: no userauth callback set");
     }
 
     if (pk->signature == NULL) {
-        WLOG(WS_LOG_DEBUG, "DUAR: Send the PK OK");
+        WLOG(WS_LOG_DEBUG, "DUARPK: Send the PK OK");
         ret = SendUserAuthPkOk(ssh, pk->publicKeyType, pk->publicKeyTypeSz,
                                pk->publicKey, pk->publicKeySz);
     }
@@ -1555,7 +1585,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             sizeCompare = encDigestSz != checkDigestSz;
 
             if (compare || sizeCompare || ret < 0) {
-                WLOG(WS_LOG_DEBUG, "signature compare failure");
+                WLOG(WS_LOG_DEBUG, "DUARPK: signature compare failure");
                 SendUserAuthFailure(ssh, 0);
             }
             else {
@@ -2860,7 +2890,7 @@ int SendServiceAccept(WOLFSSH* ssh)
 }
 
 
-static const char cannedAuths[] = "publickey";
+static const char cannedAuths[] = "publickey,password";
 static const uint32_t cannedAuthsSz = sizeof(cannedAuths) - 1;
 
 
