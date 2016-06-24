@@ -1491,6 +1491,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
 
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequestPublicKey()");
 
+    DumpOctetString(buf + begin, len - begin);
     authData->type = WOLFSSH_USERAUTH_PUBLICKEY;
     GetBoolean(&pk->hasSignature, buf, len, &begin);
     GetUint32(&pk->publicKeyTypeSz, buf, len, &begin);
@@ -1510,6 +1511,8 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
         pk->signatureSz = 0;
     }
 
+    *idx = begin;
+
     if (ssh->ctx->userAuthCb != NULL) {
         WLOG(WS_LOG_DEBUG, "DUARPK: Calling the userauth callback");
         ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PUBLICKEY,
@@ -1518,10 +1521,12 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
         if (ret != WOLFSSH_USERAUTH_SUCCESS) {
             switch (ret) {
                 case WOLFSSH_USERAUTH_INVALID_USER:
-                    SendDisconnect(ssh, WOLFSSH_DISCONNECT_ILLEGAL_USER_NAME);
-                    break;
+                    return SendDisconnect(ssh,
+                                          WOLFSSH_DISCONNECT_ILLEGAL_USER_NAME);
                 default:
-                    SendUserAuthFailure(ssh, 0);
+                    return SendUserAuthFailure(ssh, 0);
+                    /* XXX Need to tell User Auth layer to disallow
+                     * public key user auth */
             }
         }
     }
@@ -1593,8 +1598,6 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             }
         }
     }
-
-    *idx = begin;
 
     return ret;
 }

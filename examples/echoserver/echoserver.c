@@ -542,16 +542,22 @@ static int wsUserAuth(uint8_t authType,
     map = list->head;
 
     while (map != NULL) {
-        if (authData->type == map->type &&
-            authData->usernameSz == map->usernameSz &&
+        if (authData->usernameSz == map->usernameSz &&
             memcmp(authData->username, map->username, map->usernameSz) == 0) {
-            if (memcmp(map->p, authHash, SHA256_DIGEST_SIZE) != 0) {
-                return (authType == WOLFSSH_USERAUTH_PASSWORD ?
+
+            if (authData->type == map->type) {
+                if (memcmp(map->p, authHash, SHA256_DIGEST_SIZE) == 0) {
+                    return WOLFSSH_USERAUTH_SUCCESS;
+                }
+                else {
+                    return (authType == WOLFSSH_USERAUTH_PASSWORD ?
                             WOLFSSH_USERAUTH_INVALID_PASSWORD :
                             WOLFSSH_USERAUTH_INVALID_PUBLICKEY);
+                }
             }
-
-            return WOLFSSH_USERAUTH_SUCCESS;
+            else {
+                return WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
+            }
         }
         map = map->next;
     }
