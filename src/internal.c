@@ -2112,7 +2112,6 @@ int ProcessReply(WOLFSSH* ssh)
     uint32_t readSz;
     uint8_t peerBlockSz = ssh->peerBlockSz;
     uint8_t peerMacSz = ssh->peerMacSz;
-    printf("PR: peerMacSz = %u\n", peerMacSz);
 
     for (;;) {
         switch (ssh->processReplyState) {
