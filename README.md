@@ -56,3 +56,34 @@ To use public key authentication use the command line:
     $ ssh_client -l ./certs/key-USER.pem -p 22222 USER@localhost
 
 Where the user can be `gretel` or `hansel`.
+
+
+coding standard
+---------------
+
+1. Follow the existing style.
+
+2. Try not to shorthand variables, except for ijk as indicies.
+
+3. Lengths of arrays should have the array name followed by Sz.
+
+4. Single return per function.
+
+5. Check all incoming parameters.
+
+6. No gotos.
+
+7. Check all return codes. It feels a little tedious, but the preferred method
+is running:
+
+    ret = functionCall(parameter);
+    if (ret == SUCCESS)
+        ret = secondFunctionCall(otherParameter);
+    if (ret == SUCCESS)
+        ret = thirdFunctionCall(aParameter, anotherParameter);
+    cleanUp();
+    return ret;
+
+This way if a function returns an error, the code will drop to the end.
+
+8. Exceptions are allowed with good reason.
