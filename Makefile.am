@@ -30,9 +30,9 @@ ACLOCAL_AMFLAGS= -I m4
 
 include src/include.am
 include wolfssh/include.am
-include examples/echoserver/include.am
-include examples/server/include.am
+include examples/include.am
 include test/include.am
+include certs/include.am
 
 
 TEST_EXTENSIONS = .test

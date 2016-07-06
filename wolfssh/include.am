@@ -5,12 +5,15 @@
 
 nobase_include_HEADERS+= \
                          wolfssh/version.h \
-						 wolfssh/internal.h \
                          wolfssh/ssh.h \
                          wolfssh/port.h \
                          wolfssh/memory.h \
                          wolfssh/settings.h \
                          wolfssh/error.h \
                          wolfssh/visibility.h \
+                         wolfssh/misc.h \
                          wolfssh/log.h
+
+noinst_HEADERS+= \
+                         wolfssh/internal.h
 

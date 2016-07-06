@@ -1,0 +1,16 @@
+# vim:ft=automake
+# included from Top Level Makefile.am
+# All paths should be given relative to the root
+
+
+EXTRA_DIST+= \
+            certs/key-gretel.pem \
+            certs/publickeys.txt \
+            certs/server-key.der \
+            certs/key-ecc.pem \
+            certs/key-hansel.pem \
+            certs/server-cert.der \
+            certs/server-key.pem \
+            certs/key-ecc.pub \
+            certs/passwd.txt \
+            certs/server-cert.pem
