@@ -61,21 +61,25 @@ Where the user can be `gretel` or `hansel`.
 coding standard
 ---------------
 
-1. Follow the existing style.
+1. Exceptions are allowed with good reason.
 
-2. Try not to shorthand variables, except for ijk as indicies.
+2. Follow the existing style.
 
-3. Lengths of arrays should have the array name followed by Sz.
+3. Try not to shorthand variables, except for ijk as indicies.
 
-4. Single return per function.
+4. Lengths of arrays should have the array name followed by Sz.
 
-5. Check all incoming parameters.
+5. Single return per function.
 
-6. No gotos.
+6. Check all incoming parameters.
 
-7. Check all return codes. It feels a little tedious, but the preferred method
-is running:
+7. No gotos.
 
+8. Check all return codes. It feels a little tedious, but the preferred method
+is running checks against success. This way if a function returns an error, the
+code will drop to the end.
+
+```
     ret = functionCall(parameter);
     if (ret == SUCCESS)
         ret = secondFunctionCall(otherParameter);
@@ -83,7 +87,6 @@ is running:
         ret = thirdFunctionCall(aParameter, anotherParameter);
     cleanUp();
     return ret;
+```
 
-This way if a function returns an error, the code will drop to the end.
 
-8. Exceptions are allowed with good reason.
