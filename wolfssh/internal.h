@@ -171,20 +171,6 @@ typedef struct HandshakeInfo {
 } HandshakeInfo;
 
 
-typedef struct Channel {
-    uint8_t  inUse;
-    uint8_t  channelType;
-    uint32_t channel;
-    uint32_t windowSz;
-    uint32_t highwaterMark;
-    uint32_t maxPacketSz;
-    uint32_t peerChannel;
-    uint32_t peerWindowSz;
-    uint32_t peerMaxPacketSz;
-    Buffer   inputBuffer;
-} Channel;
-
-
 /* our wolfSSH session */
 struct WOLFSSH {
     WOLFSSH_CTX*   ctx;            /* owner context */
@@ -223,7 +209,8 @@ struct WOLFSSH {
     Ciphers        decryptCipher;
 
     uint32_t       nextChannel;
-    Channel        channel;
+    WOLFSSH_CHANNEL* channelList;
+    uint32_t       channelListSz;
 
     Buffer         inputBuffer;
     Buffer         outputBuffer;
@@ -257,6 +244,29 @@ struct WOLFSSH {
     uint8_t*       pkBlob;
     uint32_t       pkBlobSz;
 };
+
+
+struct WOLFSSH_CHANNEL {
+    uint8_t  channelType;
+    uint32_t channel;
+    uint32_t windowSz;
+    uint32_t highwaterMark;
+    uint32_t maxPacketSz;
+    uint32_t peerChannel;
+    uint32_t peerWindowSz;
+    uint32_t peerMaxPacketSz;
+    Buffer   inputBuffer;
+    struct WOLFSSH* ssh;
+    struct WOLFSSH_CHANNEL* next;
+};
+
+
+WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelNew(WOLFSSH*, uint8_t, uint32_t,
+                                          uint32_t, uint32_t);
+WOLFSSH_LOCAL void ChannelDelete(WOLFSSH_CHANNEL*, void*);
+WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelFind(WOLFSSH*,
+                                    uint32_t, uint8_t);
+WOLFSSH_LOCAL int ChannelPutData(WOLFSSH_CHANNEL*, uint8_t*, uint32_t);
 
 
 #ifndef WOLFSSH_USER_IO
@@ -363,6 +373,7 @@ enum WS_MessageIds {
 enum WS_DynamicTypes {
     DYNTYPE_CTX,
     DYNTYPE_SSH,
+    DYNTYPE_CHANNEL,
     DYNTYPE_BUFFER,
     DYNTYPE_ID,
     DYNTYPE_HS,
