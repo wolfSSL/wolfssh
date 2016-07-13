@@ -1491,7 +1491,6 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
 
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequestPublicKey()");
 
-    DumpOctetString(buf + begin, len - begin);
     authData->type = WOLFSSH_USERAUTH_PUBLICKEY;
     GetBoolean(&pk->hasSignature, buf, len, &begin);
     GetUint32(&pk->publicKeyTypeSz, buf, len, &begin);
