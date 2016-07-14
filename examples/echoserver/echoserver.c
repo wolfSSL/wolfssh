@@ -313,6 +313,8 @@ static int load_file(const char* fileName, uint8_t* buf, uint32_t bufSz)
         return 0;
     }
 
+    fclose(file);
+
     return fileSz;
 }
 
@@ -383,6 +385,7 @@ static void PwMapListDelete(PwMapList* list)
             PwMap* cur = head;
             head = head->next;
             memset(cur, 0, sizeof(PwMap));
+            free(cur);
         }
     }
 }
@@ -471,10 +474,12 @@ static int LoadPublicKeyBuffer(uint8_t* buf, uint32_t bufSz, PwMapList* list)
         str = delimiter + 1;
         delimiter = strchr(str, ' ');
         publicKey64 = (uint8_t*)str;
+        *delimiter = 0;
         publicKey64Sz = (uint32_t)(delimiter - str);
         str = delimiter + 1;
         delimiter = strchr(str, '\n');
         username = (uint8_t*)str;
+        *delimiter = 0;
         usernameSz = (uint32_t)(delimiter - str);
         str = delimiter + 1;
         publicKeySz = sizeof(publicKey);
@@ -658,6 +663,7 @@ int main(void)
     }
 
     PwMapListDelete(&pwMapList);
+    wolfSSH_CTX_free(ctx);
     if (wolfSSH_Cleanup() != WS_SUCCESS) {
         fprintf(stderr, "Couldn't clean up wolfSSH.\n");
         exit(EXIT_FAILURE);
