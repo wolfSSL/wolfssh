@@ -1430,11 +1430,11 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 {
     RsaKey key;
     uint8_t* publicKeyType;
-    uint32_t publicKeyTypeSz;
+    uint32_t publicKeyTypeSz = 0;
     uint8_t* n;
-    uint32_t nSz;
+    uint32_t nSz = 0;
     uint8_t* e;
-    uint32_t eSz;
+    uint32_t eSz = 0;
     uint32_t i = 0;
     int ret;
 
@@ -1609,6 +1609,8 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
     int ret;
     uint8_t authNameId;
     WS_UserAuthData authData;
+
+    WMEMSET(&authData, 0, sizeof(authData));
 
     GetUint32(&authData.usernameSz, buf, len, &begin);
     authData.username = buf + begin;
