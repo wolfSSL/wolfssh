@@ -2167,12 +2167,17 @@ int ProcessReply(WOLFSSH* ssh)
                         return ret;
                     }
 
-                    ret = Decrypt(ssh,
-                                  ssh->inputBuffer.buffer +
-                                     ssh->inputBuffer.idx + peerBlockSz,
-                                  ssh->inputBuffer.buffer +
-                                     ssh->inputBuffer.idx + peerBlockSz,
-                                  ssh->curSz + LENGTH_SZ - peerBlockSz);
+                    if (ssh->curSz + LENGTH_SZ - peerBlockSz > 0) {
+                        ret = Decrypt(ssh,
+                                      ssh->inputBuffer.buffer +
+                                         ssh->inputBuffer.idx + peerBlockSz,
+                                      ssh->inputBuffer.buffer +
+                                         ssh->inputBuffer.idx + peerBlockSz,
+                                      ssh->curSz + LENGTH_SZ - peerBlockSz);
+                    }
+                    else {
+                        WLOG(WS_LOG_INFO, "Not trying to decrypt short message.");
+                    }
 
                     /* Verify the buffer is big enough for the data and mac.
                      * Even if the decrypt step fails, verify the MAC anyway.
