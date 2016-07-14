@@ -1402,20 +1402,13 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
         else {
             WLOG(WS_LOG_DEBUG, "DUARPW: password check failed");
             if (ret != WOLFSSH_USERAUTH_SUCCESS) {
-                switch (ret) {
-                    case WOLFSSH_USERAUTH_INVALID_USER:
-                        SendDisconnect(ssh,
-                                       WOLFSSH_DISCONNECT_ILLEGAL_USER_NAME);
-                        break;
-                    default:
-                        SendUserAuthFailure(ssh, 0);
-                }
+                return SendUserAuthFailure(ssh, 0);
             }
         }
     }
     else {
         WLOG(WS_LOG_DEBUG, "DUARPW: No user auth callback");
-        SendUserAuthFailure(ssh, 0);
+        return SendUserAuthFailure(ssh, 0);
     }
 
     *idx = begin;
@@ -1518,19 +1511,12 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                                    authData, ssh->userAuthCtx);
         WLOG(WS_LOG_DEBUG, "DUARPK: callback result = %d", ret);
         if (ret != WOLFSSH_USERAUTH_SUCCESS) {
-            switch (ret) {
-                case WOLFSSH_USERAUTH_INVALID_USER:
-                    return SendDisconnect(ssh,
-                                          WOLFSSH_DISCONNECT_ILLEGAL_USER_NAME);
-                default:
-                    return SendUserAuthFailure(ssh, 0);
-                    /* XXX Need to tell User Auth layer to disallow
-                     * public key user auth */
-            }
+            return SendUserAuthFailure(ssh, 0);
         }
     }
     else {
         WLOG(WS_LOG_DEBUG, "DUARPK: no userauth callback set");
+        return SendUserAuthFailure(ssh, 0);
     }
 
     if (pk->signature == NULL) {
@@ -1590,7 +1576,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
 
             if (compare || sizeCompare || ret < 0) {
                 WLOG(WS_LOG_DEBUG, "DUARPK: signature compare failure");
-                SendUserAuthFailure(ssh, 0);
+                return SendUserAuthFailure(ssh, 0);
             }
             else {
                 ssh->clientState = CLIENT_USERAUTH_DONE;
