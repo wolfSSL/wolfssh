@@ -3102,6 +3102,7 @@ int SendChannelData(WOLFSSH* ssh, uint32_t peerChannel,
 
     if (channel->peerWindowSz < dataSz) {
         WLOG(WS_LOG_DEBUG, "Peer window too small");
+        return WS_OVERFLOW_E;
     }
 
     ret = PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ + LENGTH_SZ + dataSz);

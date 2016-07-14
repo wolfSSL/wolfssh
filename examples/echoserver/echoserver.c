@@ -263,8 +263,8 @@ static THREAD_RETURN CYASSL_THREAD server_worker(void* vArgs)
     WOLFSSH* ssh = (WOLFSSH*)vArgs;
     SOCKET_T clientFd = wolfSSH_get_fd(ssh);
 
-    uint8_t  buf[4096];
-    uint32_t bufSz;
+    uint8_t buf[4096];
+    int bufSz;
 
     if (wolfSSH_accept(ssh) == WS_SUCCESS) {
 
