@@ -348,7 +348,8 @@ enum WS_MessageIds {
     MSGID_USERAUTH_FAILURE = 51,
     MSGID_USERAUTH_SUCCESS = 52,
     MSGID_USERAUTH_BANNER  = 53,
-    MSGID_USERAUTH_PK_OK   = 60,
+    MSGID_USERAUTH_PK_OK   = 60, /* Public Key OK */
+    MSGID_USERAUTH_PW_CHRQ = 60, /* Password Change Request */
 
     MSGID_CHANNEL_OPEN      = 90,
     MSGID_CHANNEL_OPEN_CONF = 91,

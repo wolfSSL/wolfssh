@@ -129,6 +129,9 @@ const char* GetErrorString(int err)
         case WS_RESOURCE_E:
             return "insufficient resources for new channel";
 
+        case WS_INVALID_USERNAME:
+            return "invalid user name";
+
         default:
             return "Unknown error code";
     }
@@ -1389,20 +1392,23 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
     }
 
     if (ssh->ctx->userAuthCb != NULL) {
-        WLOG(WS_LOG_DEBUG, "DUAR: Checking the password");
+        WLOG(WS_LOG_DEBUG, "DUARPW: Calling the userauth callback");
         ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PASSWORD,
                                    authData, ssh->userAuthCtx);
-        if (ret == WS_SUCCESS) {
-            WLOG(WS_LOG_DEBUG, "DUAR: password check successful");
+        if (ret == WOLFSSH_USERAUTH_SUCCESS) {
+            WLOG(WS_LOG_DEBUG, "DUARPW: password check successful");
             ssh->clientState = CLIENT_USERAUTH_DONE;
         }
         else {
-            WLOG(WS_LOG_DEBUG, "DUAR: password check failed");
-            SendUserAuthFailure(ssh, 0);
+            WLOG(WS_LOG_DEBUG, "DUARPW: password check failed");
+            if (ret != WOLFSSH_USERAUTH_SUCCESS) {
+                return SendUserAuthFailure(ssh, 0);
+            }
         }
     }
     else {
-        WLOG(WS_LOG_DEBUG, "DUAR: No user auth callback");
+        WLOG(WS_LOG_DEBUG, "DUARPW: No user auth callback");
+        return SendUserAuthFailure(ssh, 0);
     }
 
     *idx = begin;
@@ -1417,14 +1423,15 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 {
     RsaKey key;
     uint8_t* publicKeyType;
-    uint32_t publicKeyTypeSz;
+    uint32_t publicKeyTypeSz = 0;
     uint8_t* n;
-    uint32_t nSz;
+    uint32_t nSz = 0;
     uint8_t* e;
-    uint32_t eSz;
+    uint32_t eSz = 0;
     uint32_t i = 0;
     int ret;
 
+    WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequestRsa()");
     /* First check that the public key's type matches the one we are
      * expecting. */
     GetUint32(&publicKeyTypeSz, pk->publicKey, pk->publicKeySz, &i);
@@ -1475,6 +1482,8 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
     WS_UserAuthData_PublicKey* pk = &authData->sf.publicKey;
     int ret = WS_SUCCESS;
 
+    WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequestPublicKey()");
+
     authData->type = WOLFSSH_USERAUTH_PUBLICKEY;
     GetBoolean(&pk->hasSignature, buf, len, &begin);
     GetUint32(&pk->publicKeyTypeSz, buf, len, &begin);
@@ -1494,13 +1503,24 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
         pk->signatureSz = 0;
     }
 
+    *idx = begin;
+
     if (ssh->ctx->userAuthCb != NULL) {
+        WLOG(WS_LOG_DEBUG, "DUARPK: Calling the userauth callback");
         ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PUBLICKEY,
                                    authData, ssh->userAuthCtx);
+        WLOG(WS_LOG_DEBUG, "DUARPK: callback result = %d", ret);
+        if (ret != WOLFSSH_USERAUTH_SUCCESS) {
+            return SendUserAuthFailure(ssh, 0);
+        }
+    }
+    else {
+        WLOG(WS_LOG_DEBUG, "DUARPK: no userauth callback set");
+        return SendUserAuthFailure(ssh, 0);
     }
 
     if (pk->signature == NULL) {
-        WLOG(WS_LOG_DEBUG, "DUAR: Send the PK OK");
+        WLOG(WS_LOG_DEBUG, "DUARPK: Send the PK OK");
         ret = SendUserAuthPkOk(ssh, pk->publicKeyType, pk->publicKeyTypeSz,
                                pk->publicKey, pk->publicKeySz);
     }
@@ -1555,16 +1575,14 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             sizeCompare = encDigestSz != checkDigestSz;
 
             if (compare || sizeCompare || ret < 0) {
-                WLOG(WS_LOG_DEBUG, "signature compare failure");
-                SendUserAuthFailure(ssh, 0);
+                WLOG(WS_LOG_DEBUG, "DUARPK: signature compare failure");
+                return SendUserAuthFailure(ssh, 0);
             }
             else {
                 ssh->clientState = CLIENT_USERAUTH_DONE;
             }
         }
     }
-
-    *idx = begin;
 
     return ret;
 }
@@ -1577,6 +1595,8 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
     int ret;
     uint8_t authNameId;
     WS_UserAuthData authData;
+
+    WMEMSET(&authData, 0, sizeof(authData));
 
     GetUint32(&authData.usernameSz, buf, len, &begin);
     authData.username = buf + begin;
@@ -2147,12 +2167,17 @@ int ProcessReply(WOLFSSH* ssh)
                         return ret;
                     }
 
-                    ret = Decrypt(ssh,
-                                  ssh->inputBuffer.buffer +
-                                     ssh->inputBuffer.idx + peerBlockSz,
-                                  ssh->inputBuffer.buffer +
-                                     ssh->inputBuffer.idx + peerBlockSz,
-                                  ssh->curSz + LENGTH_SZ - peerBlockSz);
+                    if (ssh->curSz + LENGTH_SZ - peerBlockSz > 0) {
+                        ret = Decrypt(ssh,
+                                      ssh->inputBuffer.buffer +
+                                         ssh->inputBuffer.idx + peerBlockSz,
+                                      ssh->inputBuffer.buffer +
+                                         ssh->inputBuffer.idx + peerBlockSz,
+                                      ssh->curSz + LENGTH_SZ - peerBlockSz);
+                    }
+                    else {
+                        WLOG(WS_LOG_INFO, "Not trying to decrypt short message.");
+                    }
 
                     /* Verify the buffer is big enough for the data and mac.
                      * Even if the decrypt step fails, verify the MAC anyway.
@@ -2860,7 +2885,7 @@ int SendServiceAccept(WOLFSSH* ssh)
 }
 
 
-static const char cannedAuths[] = "publickey";
+static const char cannedAuths[] = "publickey,password";
 static const uint32_t cannedAuthsSz = sizeof(cannedAuths) - 1;
 
 
@@ -3082,6 +3107,7 @@ int SendChannelData(WOLFSSH* ssh, uint32_t peerChannel,
 
     if (channel->peerWindowSz < dataSz) {
         WLOG(WS_LOG_DEBUG, "Peer window too small");
+        return WS_OVERFLOW_E;
     }
 
     ret = PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ + LENGTH_SZ + dataSz);

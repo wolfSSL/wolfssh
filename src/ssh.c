@@ -225,11 +225,15 @@ static void SshResourceFree(WOLFSSH* ssh, void* heap)
         WFREE(ssh->handshake, heap, DYNTYPE_HS);
     }
     if (ssh->rng) {
-        /* FreeRng(ssh->rng); */
+        wc_FreeRng(ssh->rng);
         WFREE(ssh->rng, heap, DYNTYPE_RNG);
     }
     if (ssh->userName) {
         WFREE(ssh->userName, heap, DYNTYPE_STRING);
+    }
+    if (ssh->channel.inputBuffer.buffer) {
+        WFREE(ssh->channel.inputBuffer.buffer,
+              ssh->channel.inputBuffer.heap, DYNTYPE_BUFFER);
     }
 }
 
