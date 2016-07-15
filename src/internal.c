@@ -1686,20 +1686,19 @@ static int DoChannelOpen(WOLFSSH* ssh,
     uint32_t begin = *idx;
     uint32_t typeSz;
     char     type[32];
-    uint8_t  typeId;
-    uint32_t peerChannel;
+    uint8_t  typeId = ID_UNKNOWN;
+    uint32_t peerChannelId;
     uint32_t peerInitialWindowSz;
     uint32_t peerMaxPacketSz;
     int      ret;
     WOLFSSH_CHANNEL* newChannel;
 
     WLOG(WS_LOG_DEBUG, "Entering DoChannelOpen()");
-    printf("Entering DoChannelOpen()");
 
     ret = GetString(type, &typeSz, buf, len, &begin);
 
     if (ret == WS_SUCCESS)
-        ret = GetUint32(&peerChannel, buf, len, &begin);
+        ret = GetUint32(&peerChannelId, buf, len, &begin);
 
     if (ret == WS_SUCCESS)
         ret = GetUint32(&peerInitialWindowSz, buf, len, &begin);
@@ -1707,34 +1706,35 @@ static int DoChannelOpen(WOLFSSH* ssh,
     if (ret == WS_SUCCESS)
         ret = GetUint32(&peerMaxPacketSz, buf, len, &begin);
 
-    if (ret != WS_SUCCESS) {
-        WLOG(WS_LOG_DEBUG, "Leaving DoChannelOpen(), ret = %d", ret);
-        return ret;
+    if (ret == WS_SUCCESS) {
+        *idx = begin;
+
+        WLOG(WS_LOG_INFO, "  type = %s", type);
+        WLOG(WS_LOG_INFO, "  peerChannelId = %u", peerChannelId);
+        WLOG(WS_LOG_INFO, "  peerInitialWindowSz = %u", peerInitialWindowSz);
+        WLOG(WS_LOG_INFO, "  peerMaxPacketSz = %u", peerMaxPacketSz);
+
+        typeId = NameToId(type, typeSz);
+        if (typeId != ID_CHANTYPE_SESSION)
+            ret = WS_INVALID_CHANTYPE;
     }
 
-    WLOG(WS_LOG_INFO, "  type = %s", type);
-    WLOG(WS_LOG_INFO, "  peerChannel = %u", peerChannel);
-    WLOG(WS_LOG_INFO, "  peerInitialWindowSz = %u", peerInitialWindowSz);
-    WLOG(WS_LOG_INFO, "  peerMaxPacketSz = %u", peerMaxPacketSz);
+    if (ret == WS_SUCCESS) {
+        newChannel = ChannelNew(ssh, typeId, peerChannelId,
+                                peerInitialWindowSz, peerMaxPacketSz);
+        if (newChannel == NULL)
+            ret = WS_RESOURCE_E;
+        else {
+            newChannel->next = ssh->channelList;
+            ssh->channelList = newChannel;
+            ssh->channelListSz++;
 
-    *idx = begin;
+            ssh->clientState = CLIENT_DONE;
+        }
+    }
 
-    typeId = NameToId(type, typeSz);
-    if (typeId != ID_CHANTYPE_SESSION)
-        return WS_INVALID_CHANTYPE;
-
-    newChannel = ChannelNew(ssh, typeId,
-                            peerChannel, peerInitialWindowSz, peerMaxPacketSz);
-    if (newChannel == NULL)
-        return WS_RESOURCE_E;
-
-    newChannel->next = ssh->channelList;
-    ssh->channelList = newChannel;
-    ssh->channelListSz++;
-
-    ssh->clientState = CLIENT_DONE;
-
-    return WS_SUCCESS;
+    WLOG(WS_LOG_DEBUG, "Leaving DoChannelOpen(), ret = %d", ret);
+    return ret;
 }
 
 
@@ -1742,7 +1742,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
                             uint8_t* buf, uint32_t len, uint32_t* idx)
 {
     uint32_t begin = *idx;
-    uint32_t channel;
+    uint32_t channelId;
     uint32_t typeSz;
     char     type[32];
     uint8_t  wantReply;
@@ -1752,7 +1752,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
 
     (void)ssh;
 
-    ret = GetUint32(&channel, buf, len, &begin);
+    ret = GetUint32(&channelId, buf, len, &begin);
 
     if (ret == WS_SUCCESS)
         ret = GetString(type, &typeSz, buf, len, &begin);
@@ -1765,7 +1765,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
         return ret;
     }
 
-    WLOG(WS_LOG_DEBUG, "  channel = %u", channel);
+    WLOG(WS_LOG_DEBUG, "  channelId = %u", channelId);
     WLOG(WS_LOG_DEBUG, "  type = %s", type);
     WLOG(WS_LOG_DEBUG, "  wantReply = %u", wantReply);
 
@@ -1827,66 +1827,67 @@ static int DoChannelRequest(WOLFSSH* ssh,
 static int DoChannelWindowAdjust(WOLFSSH* ssh,
                                  uint8_t* buf, uint32_t len, uint32_t* idx)
 {
+    WOLFSSH_CHANNEL* channel = NULL;
     uint32_t begin = *idx;
-    uint32_t channel, bytesToAdd;
+    uint32_t channelId, bytesToAdd;
     int      ret;
 
     WLOG(WS_LOG_DEBUG, "Entering DoChannelWindowAdjust()");
 
-    ret = GetUint32(&channel, buf, len, &begin);
+    ret = GetUint32(&channelId, buf, len, &begin);
     if (ret == WS_SUCCESS)
         ret = GetUint32(&bytesToAdd, buf, len, &begin);
 
-    if (ret != WS_SUCCESS) {
-        WLOG(WS_LOG_DEBUG, "Leaving DoChannelWindowAdjust(), ret = %d", ret);
-        return ret;
+    if (ret == WS_SUCCESS) {
+        *idx = begin;
+
+        channel = ChannelFind(ssh, channelId, FIND_SELF);
+        if (channel == NULL)
+            ret = WS_INVALID_CHANID;
+        else {
+            WLOG(WS_LOG_INFO, "  channelId = %u", channelId);
+            WLOG(WS_LOG_INFO, "  bytesToAdd = %u", bytesToAdd);
+            WLOG(WS_LOG_INFO, "  peerWindowSz = %u",
+                 channel->peerWindowSz);
+            WLOG(WS_LOG_INFO, "  update peerWindowSz = %u",
+                 channel->peerWindowSz + bytesToAdd);
+
+            channel->peerWindowSz += bytesToAdd;
+        }
     }
 
-    WLOG(WS_LOG_INFO, "  channel = %u", channel);
-    WLOG(WS_LOG_INFO, "  bytesToAdd = %u", bytesToAdd);
-    WLOG(WS_LOG_INFO, "  peerWindowSz = %u", ssh->channelList->peerWindowSz);
-
-    ssh->channelList->peerWindowSz += bytesToAdd;
-    WLOG(WS_LOG_INFO, "  update peerWindowSz = %u",
-         ssh->channelList->peerWindowSz);
-
-    WLOG(WS_LOG_DEBUG, "Leaving DoChannelWindowAdjust()");
-    return WS_SUCCESS;
+    WLOG(WS_LOG_DEBUG, "Leaving DoChannelWindowAdjust(), ret = %d", ret);
+    return ret;
 }
 
 
 static int DoChannelData(WOLFSSH* ssh,
                          uint8_t* buf, uint32_t len, uint32_t* idx)
 {
+    WOLFSSH_CHANNEL* channel = NULL;
     uint32_t begin = *idx;
-    uint32_t channel, dataSz;
+    uint32_t dataSz = 0;
+    uint32_t channelId;
     int      ret;
-    WOLFSSH_CHANNEL* chan = NULL;
 
     WLOG(WS_LOG_DEBUG, "Entering DoChannelData()");
 
-    ret = GetUint32(&channel, buf, len, &begin);
+    ret = GetUint32(&channelId, buf, len, &begin);
     if (ret == WS_SUCCESS)
         ret = GetUint32(&dataSz, buf, len, &begin);
 
-    if (ret != WS_SUCCESS) {
-        WLOG(WS_LOG_DEBUG, "Leaving DoChannelData(), ret = %d", ret);
-        return ret;
+    if (ret == WS_SUCCESS) {
+        *idx = begin + dataSz;
+
+        channel = ChannelFind(ssh, channelId, FIND_SELF);
+        if (channel == NULL)
+            ret = WS_INVALID_CHANID;
+        else
+            ret = ChannelPutData(channel, buf + begin, dataSz);
     }
 
-    chan = ChannelFind(ssh, channel, FIND_SELF);
-    if (chan != NULL) {
-        ret = ChannelPutData(chan, buf + begin, dataSz);
-        if (ret != WS_SUCCESS) {
-            WLOG(WS_LOG_DEBUG, "Leaving DoChannelData(), ret = %d", ret);
-            return ret;
-        }
-    }
-
-    *idx = begin + dataSz;
-
-    WLOG(WS_LOG_DEBUG, "Leaving DoChannelData()");
-    return WS_SUCCESS;
+    WLOG(WS_LOG_DEBUG, "Leaving DoChannelData(), ret = %d", ret);
+    return ret;
 }
 
 
@@ -1899,6 +1900,7 @@ static int DoPacket(WOLFSSH* ssh)
     uint8_t  padSz;
     uint8_t  msg;
     uint32_t payloadIdx = 0;
+    int ret;
 
     WLOG(WS_LOG_DEBUG, "DoPacket sequence number: %d", ssh->peerSeq);
 
@@ -1913,22 +1915,22 @@ static int DoPacket(WOLFSSH* ssh)
 
         case MSGID_DISCONNECT:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT");
-            DoDisconnect(ssh, buf + idx, payloadSz, &payloadIdx);
+            ret = DoDisconnect(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_IGNORE:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT");
-            DoIgnore(ssh, buf + idx, payloadSz, &payloadIdx);
+            ret = DoIgnore(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_UNIMPLEMENTED:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT");
-            DoUnimplemented(ssh, buf + idx, payloadSz, &payloadIdx);
+            ret = DoUnimplemented(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_DEBUG:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT");
-            DoDebug(ssh, buf + idx, payloadSz, &payloadIdx);
+            ret = DoDebug(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_KEXINIT:
@@ -1940,48 +1942,48 @@ static int DoPacket(WOLFSSH* ssh)
                 wc_ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
                 wc_ShaUpdate(&ssh->handshake->hash, &msg, sizeof(msg));
                 wc_ShaUpdate(&ssh->handshake->hash, buf + idx, payloadSz);
-                DoKexInit(ssh, buf + idx, payloadSz, &payloadIdx);
+                ret = DoKexInit(ssh, buf + idx, payloadSz, &payloadIdx);
             }
             break;
 
         case MSGID_NEWKEYS:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_NEWKEYS");
-            DoNewKeys(ssh, buf + idx, payloadSz, &payloadIdx);
+            ret = DoNewKeys(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_KEXDH_INIT:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT");
-            DoKexDhInit(ssh, buf + idx, payloadSz, &payloadIdx);
+            ret = DoKexDhInit(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_SERVICE_REQUEST:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_SERVICE_REQUEST");
-            DoServiceRequest(ssh, buf + idx, payloadSz, &payloadIdx);
+            ret = DoServiceRequest(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_USERAUTH_REQUEST:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_USERAUTH_REQUEST");
-            DoUserAuthRequest(ssh, buf + idx, payloadSz, &payloadIdx);
+            ret = DoUserAuthRequest(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_CHANNEL_OPEN:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_OPEN");
-            DoChannelOpen(ssh, buf + idx, payloadSz, &payloadIdx);
+            ret = DoChannelOpen(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_CHANNEL_WINDOW_ADJUST:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_WINDOW_ADJUST");
-            DoChannelWindowAdjust(ssh, buf + idx, payloadSz, &payloadIdx);
+            ret = DoChannelWindowAdjust(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_CHANNEL_DATA:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_DATA");
-            DoChannelData(ssh, buf + idx, payloadSz, &payloadIdx);
+            ret = DoChannelData(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_CHANNEL_REQUEST:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_REQUEST");
-            DoChannelRequest(ssh, buf + idx, payloadSz, &payloadIdx);
+            ret = DoChannelRequest(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         default:
@@ -1989,21 +1991,26 @@ static int DoPacket(WOLFSSH* ssh)
 #ifdef SHOW_UNIMPLEMENTED
             DumpOctetString(buf + idx, payloadSz);
 #endif
-            SendUnimplemented(ssh);
+            ret = SendUnimplemented(ssh);
             break;
     }
-    idx += payloadIdx;
 
-    if (idx + padSz > len) {
-        WLOG(WS_LOG_DEBUG, "Not enough data in buffer for pad.");
-        return WS_BUFFER_E;
+    if (ret == WS_SUCCESS) {
+        idx += payloadIdx;
+
+        if (idx + padSz > len) {
+            WLOG(WS_LOG_DEBUG, "Not enough data in buffer for pad.");
+            ret = WS_BUFFER_E;
+        }
     }
-    idx += padSz;
 
-    ssh->inputBuffer.idx = idx;
-    ssh->peerSeq++;
+    if (ret == WS_SUCCESS) {
+        idx += padSz;
+        ssh->inputBuffer.idx = idx;
+        ssh->peerSeq++;
+    }
 
-    return WS_SUCCESS;
+    return ret;
 }
 
 
@@ -2075,6 +2082,7 @@ static INLINE int CreateMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
                             uint8_t* mac)
 {
     uint8_t  flatSeq[LENGTH_SZ];
+    int ret = WS_SUCCESS;
 
     c32toa(ssh->seq++, flatSeq);
 
@@ -2125,10 +2133,10 @@ static INLINE int CreateMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
 
         default:
             WLOG(WS_LOG_DEBUG, "Invalid Mac ID");
-            return WS_FATAL_ERROR;
+            ret = WS_FATAL_ERROR;
     }
 
-    return WS_SUCCESS;
+    return ret;
 }
 
 
