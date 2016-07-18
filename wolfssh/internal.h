@@ -211,6 +211,7 @@ struct WOLFSSH {
     uint32_t       nextChannel;
     WOLFSSH_CHANNEL* channelList;
     uint32_t       channelListSz;
+    uint32_t       defaultPeerChannelId;
 
     Buffer         inputBuffer;
     Buffer         outputBuffer;

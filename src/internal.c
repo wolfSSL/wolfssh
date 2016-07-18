@@ -1728,6 +1728,7 @@ static int DoChannelOpen(WOLFSSH* ssh,
             newChannel->next = ssh->channelList;
             ssh->channelList = newChannel;
             ssh->channelListSz++;
+            ssh->defaultPeerChannelId = peerChannelId;
 
             ssh->clientState = CLIENT_DONE;
         }
@@ -3106,41 +3107,42 @@ int SendChannelOpenConf(WOLFSSH* ssh)
 {
     uint8_t* output;
     uint32_t idx;
-    int      ret;
+    int      ret = WS_SUCCESS;
     WOLFSSH_CHANNEL* channel;
 
     WLOG(WS_LOG_DEBUG, "Entering SendChannelOpenConf()");
 
-    if (ssh == NULL) {
-        WLOG(WS_LOG_DEBUG, "Leaving SendChannelOpenConf(), ret = %d",
-             WS_BAD_ARGUMENT);
-        return WS_BAD_ARGUMENT;
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        channel = ChannelFind(ssh, ssh->defaultPeerChannelId, FIND_PEER);
+        if (channel == NULL)
+            ret = WS_INVALID_CHANID;
     }
 
-    channel = ssh->channelList;
+    if (ret == WS_SUCCESS)
+        ret = PreparePacket(ssh, MSG_ID_SZ + (UINT32_SZ * 4));
 
-    ret = PreparePacket(ssh, MSG_ID_SZ + (UINT32_SZ * 4));
-    if (ret != WS_SUCCESS) {
-        WLOG(WS_LOG_DEBUG, "Leaving SendChannelOpenConf(), ret = %d", ret);
-        return ret;
+    if (ret == WS_SUCCESS) {
+        output = ssh->outputBuffer.buffer;
+        idx = ssh->outputBuffer.length;
+
+        output[idx++] = MSGID_CHANNEL_OPEN_CONF;
+        c32toa(channel->peerChannel, output + idx);
+        idx += UINT32_SZ;
+        c32toa(channel->channel, output + idx);
+        idx += UINT32_SZ;
+        c32toa(channel->windowSz, output + idx);
+        idx += UINT32_SZ;
+        c32toa(channel->maxPacketSz, output + idx);
+        idx += UINT32_SZ;
+
+        ssh->outputBuffer.length = idx;
+
+        ret = BundlePacket(ssh);
     }
 
-    output = ssh->outputBuffer.buffer;
-    idx = ssh->outputBuffer.length;
-
-    output[idx++] = MSGID_CHANNEL_OPEN_CONF;
-    c32toa(channel->peerChannel, output + idx);
-    idx += UINT32_SZ;
-    c32toa(channel->channel, output + idx);
-    idx += UINT32_SZ;
-    c32toa(channel->windowSz, output + idx);
-    idx += UINT32_SZ;
-    c32toa(channel->maxPacketSz, output + idx);
-    idx += UINT32_SZ;
-
-    ssh->outputBuffer.length = idx;
-
-    ret = BundlePacket(ssh);
     if (ret == WS_SUCCESS)
         ret = SendBuffered(ssh);
 
@@ -3154,51 +3156,55 @@ int SendChannelData(WOLFSSH* ssh, uint32_t peerChannel,
 {
     uint8_t* output;
     uint32_t idx;
-    int      ret;
+    int      ret = WS_SUCCESS;
     WOLFSSH_CHANNEL* channel;
 
     WLOG(WS_LOG_DEBUG, "Entering SendChannelData()");
 
     if (ssh == NULL)
-        return WS_BAD_ARGUMENT;
-    channel = ssh->channelList;
+        ret = WS_BAD_ARGUMENT;
 
-    if (channel->peerChannel != peerChannel) {
+    channel = ChannelFind(ssh, peerChannel, FIND_PEER);
+    if (channel == NULL) {
         WLOG(WS_LOG_DEBUG, "Invalid peer channel");
+        ret = WS_INVALID_CHANID;
     }
-
-    if (channel->peerWindowSz < dataSz) {
+    else if (channel->peerWindowSz < dataSz) {
         WLOG(WS_LOG_DEBUG, "Peer window too small");
-        return WS_OVERFLOW_E;
+        ret = WS_OVERFLOW_E;
     }
 
-    ret = PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ + LENGTH_SZ + dataSz);
-    if (ret != WS_SUCCESS)
-        return ret;
-
-    output = ssh->outputBuffer.buffer;
-    idx = ssh->outputBuffer.length;
-
-    output[idx++] = MSGID_CHANNEL_DATA;
-    c32toa(channel->peerChannel, output + idx);
-    idx += UINT32_SZ;
-    c32toa(dataSz, output + idx);
-    idx += LENGTH_SZ;
-    WMEMCPY(output + idx, data, dataSz);
-    idx += dataSz;
-
-    ssh->outputBuffer.length = idx;
-
-    ret = BundlePacket(ssh);
     if (ret == WS_SUCCESS)
+        ret = PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ + LENGTH_SZ + dataSz);
+
+    if (ret == WS_SUCCESS) {
+        output = ssh->outputBuffer.buffer;
+        idx = ssh->outputBuffer.length;
+
+        output[idx++] = MSGID_CHANNEL_DATA;
+        c32toa(channel->peerChannel, output + idx);
+        idx += UINT32_SZ;
+        c32toa(dataSz, output + idx);
+        idx += LENGTH_SZ;
+        WMEMCPY(output + idx, data, dataSz);
+        idx += dataSz;
+
+        ssh->outputBuffer.length = idx;
+
+        ret = BundlePacket(ssh);
+    }
+
+    if (ret == WS_SUCCESS) {
         ret = SendBuffered(ssh);
 
-    WLOG(WS_LOG_INFO, "  dataSz = %u", dataSz);
-    WLOG(WS_LOG_INFO, "  peerWindowSz = %u", channel->peerWindowSz);
-    channel->peerWindowSz -= dataSz;
-    WLOG(WS_LOG_INFO, "  update peerWindowSz = %u", channel->peerWindowSz);
+        WLOG(WS_LOG_INFO, "  dataSz = %u", dataSz);
+        WLOG(WS_LOG_INFO, "  peerWindowSz = %u", channel->peerWindowSz);
+        WLOG(WS_LOG_INFO, "  update peerWindowSz = %u",
+                          channel->peerWindowSz - dataSz);
+        channel->peerWindowSz -= dataSz;
+    }
 
-    WLOG(WS_LOG_DEBUG, "Leaving SendChannelData()");
+    WLOG(WS_LOG_DEBUG, "Leaving SendChannelData(), ret = %d", ret);
     return ret;
 }
 
