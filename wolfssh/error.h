@@ -66,7 +66,9 @@ enum WS_ErrorCodes {
     WS_CREATE_MAC_E    = -24,
     WS_RESOURCE_E      = -25,   /* insufficient resources for new channel */
     WS_INVALID_CHANTYPE = -26,  /* invalid channel type */
-    WS_INVALID_USERNAME = -28
+    WS_INVALID_CHANID   = -27,
+    WS_INVALID_USERNAME = -28,
+    WS_CRYPTO_FAILED   = -29    /* crypto action failed */
 };
 
 

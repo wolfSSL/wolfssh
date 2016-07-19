@@ -231,9 +231,14 @@ static void SshResourceFree(WOLFSSH* ssh, void* heap)
     if (ssh->userName) {
         WFREE(ssh->userName, heap, DYNTYPE_STRING);
     }
-    if (ssh->channel.inputBuffer.buffer) {
-        WFREE(ssh->channel.inputBuffer.buffer,
-              ssh->channel.inputBuffer.heap, DYNTYPE_BUFFER);
+    if (ssh->channelList) {
+        WOLFSSH_CHANNEL* cur = ssh->channelList;
+        WOLFSSH_CHANNEL* next;
+        while (cur) {
+            next = cur->next;
+            ChannelDelete(cur, heap);
+            cur = next;
+        }
     }
 }
 
@@ -453,10 +458,10 @@ int wolfSSH_stream_read(WOLFSSH* ssh, uint8_t* buf, uint32_t bufSz)
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_stream_read()");
 
-    if (ssh == NULL || buf == NULL || bufSz == 0)
+    if (ssh == NULL || buf == NULL || bufSz == 0 || ssh->channelList == NULL)
         return WS_BAD_ARGUMENT;
 
-    inputBuffer = &ssh->channel.inputBuffer;
+    inputBuffer = &ssh->channelList->inputBuffer;
 
     while (inputBuffer->length - inputBuffer->idx == 0) {
         int ret = ProcessReply(ssh);
@@ -481,10 +486,10 @@ int wolfSSH_stream_send(WOLFSSH* ssh, uint8_t* buf, uint32_t bufSz)
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_stream_send()");
 
-    if (ssh == NULL || buf == NULL)
+    if (ssh == NULL || buf == NULL || ssh->channelList == NULL)
         return WS_BAD_ARGUMENT;
 
-    bytesTxd = SendChannelData(ssh, ssh->channel.peerChannel, buf, bufSz);
+    bytesTxd = SendChannelData(ssh, ssh->channelList->peerChannel, buf, bufSz);
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_stream_send(), txd = %u", bytesTxd);
     return bytesTxd;
