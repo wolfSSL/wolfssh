@@ -1605,6 +1605,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
     uint32_t begin;
     WS_UserAuthData_PublicKey* pk;
     int ret = WS_SUCCESS;
+    int authFailure = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequestPublicKey()");
 
@@ -1640,36 +1641,36 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                 pk->signature = buf + begin;
                 begin += pk->signatureSz;
             }
-            else
-                goto onError;
         }
         else {
             pk->signature = NULL;
             pk->signatureSz = 0;
         }
 
-        *idx = begin;
+        if (ret == WS_SUCCESS) {
+            *idx = begin;
 
-        if (ssh->ctx->userAuthCb != NULL) {
-            WLOG(WS_LOG_DEBUG, "DUARPK: Calling the userauth callback");
-            ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PUBLICKEY,
-                                       authData, ssh->userAuthCtx);
-            WLOG(WS_LOG_DEBUG, "DUARPK: callback result = %d", ret);
-            if (ret == WOLFSSH_USERAUTH_SUCCESS)
-                ret = WS_SUCCESS;
-            else {
-                ret = SendUserAuthFailure(ssh, 0);
-                goto onError;
+            if (ssh->ctx->userAuthCb != NULL) {
+                WLOG(WS_LOG_DEBUG, "DUARPK: Calling the userauth callback");
+                ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PUBLICKEY,
+                                           authData, ssh->userAuthCtx);
+                WLOG(WS_LOG_DEBUG, "DUARPK: callback result = %d", ret);
+                if (ret == WOLFSSH_USERAUTH_SUCCESS)
+                    ret = WS_SUCCESS;
+                else {
+                    ret = SendUserAuthFailure(ssh, 0);
+                    authFailure = 1;
+                }
             }
-        }
-        else {
-            WLOG(WS_LOG_DEBUG, "DUARPK: no userauth callback set");
-            ret = SendUserAuthFailure(ssh, 0);
-            goto onError;
+            else {
+                WLOG(WS_LOG_DEBUG, "DUARPK: no userauth callback set");
+                ret = SendUserAuthFailure(ssh, 0);
+                authFailure = 1;
+            }
         }
     }
 
-    if (ret == WS_SUCCESS) {
+    if (ret == WS_SUCCESS && !authFailure) {
         if (pk->signature == NULL) {
             WLOG(WS_LOG_DEBUG, "DUARPK: Send the PK OK");
             ret = SendUserAuthPkOk(ssh, pk->publicKeyType, pk->publicKeyTypeSz,
@@ -1733,7 +1734,6 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
         }
     }
 
-onError:
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthRequestPublicKey(), ret = %d", ret);
     return ret;
 }
