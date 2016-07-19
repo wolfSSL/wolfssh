@@ -1,5 +1,5 @@
 # wolfssh
-# Copyright (C) 2014 wolfSSL Inc.
+# Copyright (C) 2014-2016 wolfSSL Inc.
 # All right reserved.
 
 AC_INIT([wolfssh], [0.2.0], [http://wolfssl.com], [wolfssh])
