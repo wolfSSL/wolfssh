@@ -27,6 +27,8 @@ dist_example_DATA=
 
 ACLOCAL_AMFLAGS= -I m4
 
+EXTRA_DIST+= README.md
+EXTRA_DIST+= LICENSING
 
 include src/include.am
 include wolfssh/include.am
