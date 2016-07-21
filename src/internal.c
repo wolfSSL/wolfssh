@@ -658,6 +658,54 @@ static int GetInputData(WOLFSSH* ssh, uint32_t size)
 }
 
 
+static int GetBoolean(uint8_t* v, uint8_t* buf, uint32_t len, uint32_t* idx)
+{
+    int result = WS_BUFFER_E;
+
+    if (*idx < len) {
+        *v = buf[*idx];
+        *idx += BOOLEAN_SZ;
+        result = WS_SUCCESS;
+    }
+    return result;
+}
+
+
+static int GetUint32(uint32_t* v, uint8_t* buf, uint32_t len, uint32_t* idx)
+{
+    int result = WS_BUFFER_E;
+
+    if (*idx < len && *idx + UINT32_SZ <= len) {
+        ato32(buf + *idx, v);
+        *idx += UINT32_SZ;
+        result = WS_SUCCESS;
+    }
+
+    return result;
+}
+
+
+static int GetString(char* s, uint32_t* sSz,
+                     uint8_t* buf, uint32_t len, uint32_t *idx)
+{
+    int result;
+
+    result = GetUint32(sSz, buf, len, idx);
+
+    if (result == WS_SUCCESS) {
+        result = WS_BUFFER_E;
+        if (*idx < len && *idx + *sSz <= len) {
+            XMEMCPY(s, buf + *idx, *sSz);
+            *idx += *sSz;
+            s[*sSz] = 0;
+            result = WS_SUCCESS;
+        }
+    }
+
+    return result;
+}
+
+
 static int DoNameList(uint8_t* idList, uint32_t* idListSz,
                                       uint8_t* buf, uint32_t len, uint32_t* idx)
 {
@@ -673,12 +721,12 @@ static int DoNameList(uint8_t* idList, uint32_t* idListSz,
      */
 
     if (begin >= len || begin + 4 >= len)
-        return -1;
+        return WS_FATAL_ERROR;
 
     ato32(buf + begin, &nameListSz);
     begin += 4;
     if (begin + nameListSz > len)
-        return -1;
+        return WS_FATAL_ERROR;
 
     /* The strings we want are now in the bounds of the message, and the
      * length of the list. Find the commas, or end of list, and then decode
@@ -802,12 +850,15 @@ static INLINE uint8_t KeySzForId(uint8_t id)
 
 static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 {
+    int ret = WS_SUCCESS;
     uint8_t algoId;
     uint8_t list[3];
     uint32_t listSz;
     uint32_t skipSz;
     uint32_t begin = *idx;
 
+    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
+        ret = WS_BAD_ARGUMENT;
     /*
      * I don't need to save what the client sends here. I should decode
      * each list into a local array of IDs, and pick the one the peer is
@@ -1008,59 +1059,81 @@ static int DoKexDhInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 
     uint8_t* e;
     uint32_t eSz;
-    uint32_t begin = *idx;
+    uint32_t begin;
+    int ret = WS_SUCCESS;
 
     (void)len;
 
-    ato32(buf + begin, &eSz);
-    begin += LENGTH_SZ;
+    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
+        ret = WS_BAD_ARGUMENT;
 
-    e = buf + begin;
-    begin += eSz;
-
-    if (eSz <= sizeof(ssh->handshake->e)) {
-        WMEMCPY(ssh->handshake->e, e, eSz);
-        ssh->handshake->eSz = eSz;
+    if (ret == WS_SUCCESS) {
+        begin = *idx;
+        ret = GetUint32(&eSz, buf, len, &begin);
     }
 
-    ssh->clientState = CLIENT_KEXDH_INIT_DONE;
-    *idx = begin;
-    return WS_SUCCESS;
+    if (ret == WS_SUCCESS) {
+        e = buf + begin;
+        begin += eSz;
+
+        if (eSz <= sizeof(ssh->handshake->e)) {
+            WMEMCPY(ssh->handshake->e, e, eSz);
+            ssh->handshake->eSz = eSz;
+        }
+
+        ssh->clientState = CLIENT_KEXDH_INIT_DONE;
+        *idx = begin;
+    }
+    return ret;
 }
 
 
 static int DoNewKeys(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 {
+    int ret = WS_SUCCESS;
+
     (void)buf;
     (void)len;
     (void)idx;
 
-    ssh->peerEncryptId = ssh->handshake->encryptId;
-    ssh->peerMacId = ssh->handshake->macId;
-    ssh->peerBlockSz = ssh->handshake->blockSz;
-    ssh->peerMacSz = ssh->handshake->macSz;
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
 
-    switch (ssh->peerEncryptId) {
-        case ID_NONE:
-            WLOG(WS_LOG_DEBUG, "DNK: peer using cipher none");
-            break;
+    if (ret == WS_SUCCESS) {
+        ssh->peerEncryptId = ssh->handshake->encryptId;
+        ssh->peerMacId = ssh->handshake->macId;
+        ssh->peerBlockSz = ssh->handshake->blockSz;
+        ssh->peerMacSz = ssh->handshake->macSz;
 
-        case ID_AES128_CBC:
-            WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes128-cbc");
-            wc_AesSetKey(&ssh->decryptCipher.aes,
-                         ssh->encKeyClient, ssh->encKeyClientSz,
-                         ssh->ivClient, AES_DECRYPTION);
-            break;
+        switch (ssh->peerEncryptId) {
+            case ID_NONE:
+                WLOG(WS_LOG_DEBUG, "DNK: peer using cipher none");
+                break;
 
-        default:
-            WLOG(WS_LOG_DEBUG, "DNK: peer using cipher invalid");
-            break;
+            case ID_AES128_CBC:
+                WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes128-cbc");
+                ret = wc_AesSetKey(&ssh->decryptCipher.aes,
+                                   ssh->encKeyClient, ssh->encKeyClientSz,
+                                   ssh->ivClient, AES_DECRYPTION);
+                break;
+
+            default:
+                WLOG(WS_LOG_DEBUG, "DNK: peer using cipher invalid");
+                break;
+        }
+
+        if (ret == 0)
+            ret = WS_SUCCESS;
+        else
+            ret = WS_CRYPTO_FAILED;
     }
 
-    ssh->rxCount = 0;
-    ssh->clientState = CLIENT_USING_KEYS;
+    if (ret == WS_SUCCESS) {
+        ssh->rxCount = 0;
+        ssh->clientState = CLIENT_USING_KEYS;
+    }
 
-    return WS_SUCCESS;
+    return ret;
 }
 
 
@@ -1379,54 +1452,6 @@ static int DoServiceRequest(WOLFSSH* ssh,
     ssh->clientState = CLIENT_USERAUTH_REQUEST_DONE;
 
     return WS_SUCCESS;
-}
-
-
-static int GetBoolean(uint8_t* v, uint8_t* buf, uint32_t len, uint32_t* idx)
-{
-    int result = WS_BUFFER_E;
-
-    if (*idx < len) {
-        *v = buf[*idx];
-        *idx += BOOLEAN_SZ;
-        result = WS_SUCCESS;
-    }
-    return result;
-}
-
-
-static int GetUint32(uint32_t* v, uint8_t* buf, uint32_t len, uint32_t* idx)
-{
-    int result = WS_BUFFER_E;
-
-    if (*idx < len && *idx + UINT32_SZ <= len) {
-        ato32(buf + *idx, v);
-        *idx += UINT32_SZ;
-        result = WS_SUCCESS;
-    }
-
-    return result;
-}
-
-
-static int GetString(char* s, uint32_t* sSz,
-                     uint8_t* buf, uint32_t len, uint32_t *idx)
-{
-    int result;
-
-    result = GetUint32(sSz, buf, len, idx);
-
-    if (result == WS_SUCCESS) {
-        result = WS_BUFFER_E;
-        if (*idx < len && *idx + *sSz <= len) {
-            XMEMCPY(s, buf + *idx, *sSz);
-            *idx += *sSz;
-            s[*sSz] = 0;
-            result = WS_SUCCESS;
-        }
-    }
-
-    return result;
 }
 
 
