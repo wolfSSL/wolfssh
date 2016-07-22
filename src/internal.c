@@ -409,16 +409,16 @@ int GrowBuffer(Buffer* buf, uint32_t sz, uint32_t usedSz)
 
 void ShrinkBuffer(Buffer* buf, int forcedFree)
 {
-    WLOG(WS_LOG_DEBUG, "Entering %s", __func__);
+    WLOG(WS_LOG_DEBUG, "Entering ShrinkBuffer()");
 
     if (buf != NULL) {
         uint32_t usedSz = buf->length - buf->idx;
 
-        WLOG(WS_LOG_DEBUG, "SB: usedSz = %u, forcedFree = %u", usedSz, forcedFree);
-        if (!forcedFree && usedSz > STATIC_BUFFER_LEN) {
-            WLOG(WS_LOG_DEBUG, "SB: shifting down");
+        WLOG(WS_LOG_DEBUG, "SB: usedSz = %u, forcedFree = %u",
+             usedSz, forcedFree);
+
+        if (!forcedFree && usedSz > STATIC_BUFFER_LEN)
             return;
-        }
 
         if (!forcedFree && usedSz) {
             WLOG(WS_LOG_DEBUG, "SB: shifting down");
@@ -435,7 +435,8 @@ void ShrinkBuffer(Buffer* buf, int forcedFree)
         buf->length = forcedFree ? 0 : usedSz;
         buf->idx = 0;
     }
-    WLOG(WS_LOG_DEBUG, "Leaving %s", __func__);
+
+    WLOG(WS_LOG_DEBUG, "Leaving ShrinkBuffer()");
 }
 
 
@@ -656,67 +657,130 @@ static int GetInputData(WOLFSSH* ssh, uint32_t size)
 }
 
 
+static int GetBoolean(uint8_t* v, uint8_t* buf, uint32_t len, uint32_t* idx)
+{
+    int result = WS_BUFFER_E;
+
+    if (*idx < len) {
+        *v = buf[*idx];
+        *idx += BOOLEAN_SZ;
+        result = WS_SUCCESS;
+    }
+
+    return result;
+}
+
+
+static int GetUint32(uint32_t* v, uint8_t* buf, uint32_t len, uint32_t* idx)
+{
+    int result = WS_BUFFER_E;
+
+    if (*idx < len && *idx + UINT32_SZ <= len) {
+        ato32(buf + *idx, v);
+        *idx += UINT32_SZ;
+        result = WS_SUCCESS;
+    }
+
+    return result;
+}
+
+
+static int GetString(char* s, uint32_t* sSz,
+                     uint8_t* buf, uint32_t len, uint32_t *idx)
+{
+    int result;
+
+    result = GetUint32(sSz, buf, len, idx);
+
+    if (result == WS_SUCCESS) {
+        result = WS_BUFFER_E;
+        if (*idx < len && *idx + *sSz <= len) {
+            WMEMCPY(s, buf + *idx, *sSz);
+            *idx += *sSz;
+            s[*sSz] = 0;
+            result = WS_SUCCESS;
+        }
+    }
+
+    return result;
+}
+
+
 static int DoNameList(uint8_t* idList, uint32_t* idListSz,
                                       uint8_t* buf, uint32_t len, uint32_t* idx)
 {
     uint8_t idListIdx;
     uint32_t nameListSz, nameListIdx;
-    uint32_t begin = *idx;
+    uint32_t begin;
     uint8_t* name;
     uint32_t nameSz;
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering DoNameList()");
+
+    if (idList == NULL || idListSz == NULL ||
+        buf == NULL || len == 0 || idx == NULL) {
+
+        ret = WS_BAD_ARGUMENT;
+    }
 
     /*
      * This iterates across a name list and finds names that end in either the
      * comma delimeter or with the end of the list.
      */
 
-    if (begin >= len || begin + 4 >= len)
-        return -1;
+    if (ret == WS_SUCCESS) {
+        begin = *idx;
+        if (begin >= len || begin + 4 >= len)
+            ret = WS_BUFFER_E;
+    }
 
-    ato32(buf + begin, &nameListSz);
-    begin += 4;
-    if (begin + nameListSz > len)
-        return -1;
+    if (ret == WS_SUCCESS)
+        ret = GetUint32(&nameListSz, buf, len, &begin);
 
     /* The strings we want are now in the bounds of the message, and the
      * length of the list. Find the commas, or end of list, and then decode
      * the values. */
-    name = buf + begin;
-    nameSz = 0;
-    nameListIdx = 0;
-    idListIdx = 0;
+    if (ret == WS_SUCCESS) {
+        name = buf + begin;
+        nameSz = 0;
+        nameListIdx = 0;
+        idListIdx = 0;
 
-    while (nameListIdx < nameListSz) {
-        nameListIdx++;
+        while (nameListIdx < nameListSz) {
+            nameListIdx++;
 
-        if (nameListIdx == nameListSz)
-            nameSz++;
+            if (nameListIdx == nameListSz)
+                nameSz++;
 
-        if (nameListIdx == nameListSz || name[nameSz] == ',') {
-            uint8_t id;
+            if (nameListIdx == nameListSz || name[nameSz] == ',') {
+                uint8_t id;
 
-            id = NameToId((char*)name, nameSz);
-            {
-                const char* displayName = IdToName(id);
-                if (displayName) {
-                    /*WLOG(WS_LOG_DEBUG, "DNL: name ID = %s", displayName);*/
+                id = NameToId((char*)name, nameSz);
+                {
+                    const char* displayName = IdToName(id);
+                    if (displayName) {
+                        /*WLOG(WS_LOG_DEBUG,
+                               "DNL: name ID = %s", displayName);*/
+                    }
                 }
-            }
-            if (id != ID_UNKNOWN)
-                idList[idListIdx++] = id;
+                if (id != ID_UNKNOWN)
+                    idList[idListIdx++] = id;
 
-            name += 1 + nameSz;
-            nameSz = 0;
+                name += 1 + nameSz;
+                nameSz = 0;
+            }
+            else
+                nameSz++;
         }
-        else
-            nameSz++;
+
+        begin += nameListSz;
+        *idListSz = idListIdx;
+        *idx = begin;
     }
 
-    begin += nameListSz;
-    *idListSz = idListIdx;
-    *idx = begin;
-
-    return WS_SUCCESS;
+    WLOG(WS_LOG_DEBUG, "Leaving DoNameList(), ret = %d", ret);
+    return ret;
 }
 
 
@@ -800,12 +864,17 @@ static INLINE uint8_t KeySzForId(uint8_t id)
 
 static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 {
+    int ret = WS_SUCCESS;
     uint8_t algoId;
     uint8_t list[3];
     uint32_t listSz;
     uint32_t skipSz;
-    uint32_t begin = *idx;
+    uint32_t begin;
 
+    WLOG(WS_LOG_DEBUG, "Entering DoKexInit()");
+
+    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
+        ret = WS_BAD_ARGUMENT;
     /*
      * I don't need to save what the client sends here. I should decode
      * each list into a local array of IDs, and pick the one the peer is
@@ -814,126 +883,182 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
      * is save the actual values.
      */
 
-    /* Check that the cookie exists inside the message */
-    if (begin + COOKIE_SZ > len) {
-        /* error, out of bounds */
-        return WS_FATAL_ERROR;
+    if (ret == WS_SUCCESS) {
+        begin = *idx;
+
+        /* Check that the cookie exists inside the message */
+        if (begin + COOKIE_SZ > len) {
+            /* error, out of bounds */
+            ret = WS_PARSE_E;
+        }
+        else {
+            /* Move past the cookie. */
+            begin += COOKIE_SZ;
+        }
     }
-    /* Move past the cookie. */
-    begin += COOKIE_SZ;
 
     /* KEX Algorithms */
-    WLOG(WS_LOG_DEBUG, "DKI: KEX Algorithms");
-    listSz = 2;
-    DoNameList(list, &listSz, buf, len, &begin);
-    algoId = MatchIdLists(list, listSz, cannedKexAlgo, cannedKexAlgoSz);
-    if (algoId == ID_UNKNOWN) {
-        WLOG(WS_LOG_DEBUG, "Unable to negotiate KEX Algo");
-        return WS_INVALID_ALGO_ID;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "DKI: KEX Algorithms");
+        listSz = 2;
+        ret = DoNameList(list, &listSz, buf, len, &begin);
+        if (ret == WS_SUCCESS) {
+            algoId = MatchIdLists(list, listSz, cannedKexAlgo, cannedKexAlgoSz);
+            if (algoId == ID_UNKNOWN) {
+                WLOG(WS_LOG_DEBUG, "Unable to negotiate KEX Algo");
+                ret = WS_INVALID_ALGO_ID;
+            }
+            else
+                ssh->handshake->kexId = algoId;
+        }
     }
-
-    ssh->handshake->kexId = algoId;
 
     /* Server Host Key Algorithms */
-    WLOG(WS_LOG_DEBUG, "DKI: Server Host Key Algorithms");
-    listSz = 1;
-    DoNameList(list, &listSz, buf, len, &begin);
-    algoId = MatchIdLists(list, listSz, cannedKeyAlgo, cannedKeyAlgoSz);
-    if (algoId == ID_UNKNOWN) {
-        WLOG(WS_LOG_DEBUG, "Unable to negotiate Server Host Key Algo");
-        return WS_INVALID_ALGO_ID;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "DKI: Server Host Key Algorithms");
+        listSz = 1;
+        ret = DoNameList(list, &listSz, buf, len, &begin);
+        if (ret == WS_SUCCESS) {
+            algoId = MatchIdLists(list, listSz, cannedKeyAlgo, cannedKeyAlgoSz);
+            if (algoId == ID_UNKNOWN) {
+                WLOG(WS_LOG_DEBUG, "Unable to negotiate Server Host Key Algo");
+                return WS_INVALID_ALGO_ID;
+            }
+            else
+                ssh->handshake->pubKeyId = algoId;
+        }
     }
 
-    ssh->handshake->pubKeyId = algoId;
-
     /* Enc Algorithms - Client to Server */
-    WLOG(WS_LOG_DEBUG, "DKI: Enc Algorithms - Client to Server");
-    listSz = 3;
-    DoNameList(list, &listSz, buf, len, &begin);
-    algoId = MatchIdLists(list, listSz, cannedEncAlgo, cannedEncAlgoSz);
-    if (algoId == ID_UNKNOWN) {
-        WLOG(WS_LOG_DEBUG, "Unable to negotiate Encryption Algo C2S");
-        return WS_INVALID_ALGO_ID;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "DKI: Enc Algorithms - Client to Server");
+        listSz = 3;
+        ret = DoNameList(list, &listSz, buf, len, &begin);
+        if (ret == WS_SUCCESS) {
+            algoId = MatchIdLists(list, listSz, cannedEncAlgo, cannedEncAlgoSz);
+            if (algoId == ID_UNKNOWN) {
+                WLOG(WS_LOG_DEBUG, "Unable to negotiate Encryption Algo C2S");
+                ret = WS_INVALID_ALGO_ID;
+            }
+        }
     }
 
     /* Enc Algorithms - Server to Client */
-    WLOG(WS_LOG_DEBUG, "DKI: Enc Algorithms - Server to Client");
-    listSz = 3;
-    DoNameList(list, &listSz, buf, len, &begin);
-    if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
-        WLOG(WS_LOG_DEBUG, "Unable to negotiate Encryption Algo S2C");
-        return WS_INVALID_ALGO_ID;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "DKI: Enc Algorithms - Server to Client");
+        listSz = 3;
+        ret = DoNameList(list, &listSz, buf, len, &begin);
+        if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
+            WLOG(WS_LOG_DEBUG, "Unable to negotiate Encryption Algo S2C");
+            ret = WS_INVALID_ALGO_ID;
+        }
+        else {
+            ssh->handshake->encryptId = algoId;
+            ssh->handshake->blockSz = ssh->ivClientSz = ssh->ivServerSz
+                = BlockSzForId(algoId);
+            ssh->encKeyClientSz = ssh->encKeyServerSz = KeySzForId(algoId);
+        }
     }
 
-    ssh->handshake->encryptId = algoId;
-    ssh->handshake->blockSz = ssh->ivClientSz = ssh->ivServerSz
-                                                         = BlockSzForId(algoId);
-    ssh->encKeyClientSz = ssh->encKeyServerSz = KeySzForId(algoId);
-
     /* MAC Algorithms - Client to Server */
-    WLOG(WS_LOG_DEBUG, "DKI: MAC Algorithms - Client to Server");
-    listSz = 2;
-    DoNameList(list, &listSz, buf, len, &begin);
-    algoId = MatchIdLists(list, listSz, cannedMacAlgo, cannedMacAlgoSz);
-    if (algoId == ID_UNKNOWN) {
-        WLOG(WS_LOG_DEBUG, "Unable to negotiate MAC Algo C2S");
-        return WS_INVALID_ALGO_ID;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "DKI: MAC Algorithms - Client to Server");
+        listSz = 2;
+        ret = DoNameList(list, &listSz, buf, len, &begin);
+        if (ret == WS_SUCCESS) {
+            algoId = MatchIdLists(list, listSz, cannedMacAlgo, cannedMacAlgoSz);
+            if (algoId == ID_UNKNOWN) {
+                WLOG(WS_LOG_DEBUG, "Unable to negotiate MAC Algo C2S");
+                ret = WS_INVALID_ALGO_ID;
+            }
+        }
     }
 
     /* MAC Algorithms - Server to Client */
-    WLOG(WS_LOG_DEBUG, "DKI: MAC Algorithms - Server to Client");
-    listSz = 2;
-    DoNameList(list, &listSz, buf, len, &begin);
-    if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
-        WLOG(WS_LOG_DEBUG, "Unable to negotiate MAC Algo S2C");
-        return WS_INVALID_ALGO_ID;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "DKI: MAC Algorithms - Server to Client");
+        listSz = 2;
+        ret = DoNameList(list, &listSz, buf, len, &begin);
+        if (ret == WS_SUCCESS) {
+            if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
+                WLOG(WS_LOG_DEBUG, "Unable to negotiate MAC Algo S2C");
+                ret = WS_INVALID_ALGO_ID;
+            }
+            else {
+                ssh->handshake->macId = algoId;
+                ssh->handshake->macSz = MacSzForId(algoId);
+                ssh->macKeyClientSz = ssh->macKeyServerSz = KeySzForId(algoId);
+            }
+        }
     }
 
-    ssh->handshake->macId = algoId;
-    ssh->handshake->macSz = MacSzForId(algoId);
-    ssh->macKeyClientSz = ssh->macKeyServerSz = KeySzForId(algoId);
-
-    /* The compression algorithm lists should have none as a value. */
-    algoId = ID_NONE;
 
     /* Compression Algorithms - Client to Server */
-    WLOG(WS_LOG_DEBUG, "DKI: Compression Algorithms - Client to Server");
-    listSz = 1;
-    DoNameList(list, &listSz, buf, len, &begin);
-    if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
-        WLOG(WS_LOG_DEBUG, "Unable to negotiate Compression Algo C2S");
-        return WS_INVALID_ALGO_ID;
+    if (ret == WS_SUCCESS) {
+        /* The compression algorithm lists should have none as a value. */
+        algoId = ID_NONE;
+
+        WLOG(WS_LOG_DEBUG, "DKI: Compression Algorithms - Client to Server");
+        listSz = 1;
+        ret = DoNameList(list, &listSz, buf, len, &begin);
+        if (ret == WS_SUCCESS) {
+            if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
+                WLOG(WS_LOG_DEBUG, "Unable to negotiate Compression Algo C2S");
+                ret = WS_INVALID_ALGO_ID;
+            }
+        }
     }
 
     /* Compression Algorithms - Server to Client */
-    WLOG(WS_LOG_DEBUG, "DKI: Compression Algorithms - Server to Client");
-    listSz = 1;
-    DoNameList(list, &listSz, buf, len, &begin);
-    if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
-        WLOG(WS_LOG_DEBUG, "Unable to negotiate Compression Algo S2C");
-        return WS_INVALID_ALGO_ID;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "DKI: Compression Algorithms - Server to Client");
+        listSz = 1;
+        ret = DoNameList(list, &listSz, buf, len, &begin);
+        if (ret == WS_SUCCESS) {
+            if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
+                WLOG(WS_LOG_DEBUG, "Unable to negotiate Compression Algo S2C");
+                ret = WS_INVALID_ALGO_ID;
+            }
+        }
     }
 
     /* Languages - Client to Server, skip */
-    ato32(buf + begin, &skipSz);
-    begin += 4 + skipSz;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "DKI: Languages - Client to Server");
+        ret = GetUint32(&skipSz, buf, len, &begin);
+        if (ret == WS_SUCCESS)
+            begin += skipSz;
+    }
 
     /* Languages - Server to Client, skip */
-    ato32(buf + begin, &skipSz);
-    begin += 4 + skipSz;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "DKI: Languages - Server to Client");
+        ret = GetUint32(&skipSz, buf, len, &begin);
+        if (ret == WS_SUCCESS)
+            begin += skipSz;
+    }
 
     /* First KEX Packet Follows */
-    ssh->handshake->kexPacketFollows = buf[begin];
-    begin += 1;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "DKI: KEX Packet Follows");
+        ret = GetBoolean(&ssh->handshake->kexPacketFollows, buf, len, &begin);
+    }
 
     /* Skip the "for future use" length. */
-    ato32(buf + begin, &skipSz);
-    begin += 4 + skipSz;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "DKI: For Future Use");
+        ret = GetUint32(&skipSz, buf, len, &begin);
+        if (ret == WS_SUCCESS)
+            begin += skipSz;
+    }
 
-    *idx = begin;
+    if (ret == WS_SUCCESS) {
+        *idx = begin;
+        ssh->clientState = CLIENT_KEXINIT_DONE;
+    }
 
-    ssh->clientState = CLIENT_KEXINIT_DONE;
-    return WS_SUCCESS;
+    WLOG(WS_LOG_DEBUG, "Leaving DoKexInit(), ret = %d", ret);
+    return ret;
 }
 
 
@@ -1006,59 +1131,81 @@ static int DoKexDhInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 
     uint8_t* e;
     uint32_t eSz;
-    uint32_t begin = *idx;
+    uint32_t begin;
+    int ret = WS_SUCCESS;
 
     (void)len;
 
-    ato32(buf + begin, &eSz);
-    begin += LENGTH_SZ;
+    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
+        ret = WS_BAD_ARGUMENT;
 
-    e = buf + begin;
-    begin += eSz;
-
-    if (eSz <= sizeof(ssh->handshake->e)) {
-        WMEMCPY(ssh->handshake->e, e, eSz);
-        ssh->handshake->eSz = eSz;
+    if (ret == WS_SUCCESS) {
+        begin = *idx;
+        ret = GetUint32(&eSz, buf, len, &begin);
     }
 
-    ssh->clientState = CLIENT_KEXDH_INIT_DONE;
-    *idx = begin;
-    return WS_SUCCESS;
+    if (ret == WS_SUCCESS) {
+        e = buf + begin;
+        begin += eSz;
+
+        if (eSz <= sizeof(ssh->handshake->e)) {
+            WMEMCPY(ssh->handshake->e, e, eSz);
+            ssh->handshake->eSz = eSz;
+        }
+
+        ssh->clientState = CLIENT_KEXDH_INIT_DONE;
+        *idx = begin;
+    }
+    return ret;
 }
 
 
 static int DoNewKeys(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 {
+    int ret = WS_SUCCESS;
+
     (void)buf;
     (void)len;
     (void)idx;
 
-    ssh->peerEncryptId = ssh->handshake->encryptId;
-    ssh->peerMacId = ssh->handshake->macId;
-    ssh->peerBlockSz = ssh->handshake->blockSz;
-    ssh->peerMacSz = ssh->handshake->macSz;
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
 
-    switch (ssh->peerEncryptId) {
-        case ID_NONE:
-            WLOG(WS_LOG_DEBUG, "DNK: peer using cipher none");
-            break;
+    if (ret == WS_SUCCESS) {
+        ssh->peerEncryptId = ssh->handshake->encryptId;
+        ssh->peerMacId = ssh->handshake->macId;
+        ssh->peerBlockSz = ssh->handshake->blockSz;
+        ssh->peerMacSz = ssh->handshake->macSz;
 
-        case ID_AES128_CBC:
-            WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes128-cbc");
-            wc_AesSetKey(&ssh->decryptCipher.aes,
-                         ssh->encKeyClient, ssh->encKeyClientSz,
-                         ssh->ivClient, AES_DECRYPTION);
-            break;
+        switch (ssh->peerEncryptId) {
+            case ID_NONE:
+                WLOG(WS_LOG_DEBUG, "DNK: peer using cipher none");
+                break;
 
-        default:
-            WLOG(WS_LOG_DEBUG, "DNK: peer using cipher invalid");
-            break;
+            case ID_AES128_CBC:
+                WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes128-cbc");
+                ret = wc_AesSetKey(&ssh->decryptCipher.aes,
+                                   ssh->encKeyClient, ssh->encKeyClientSz,
+                                   ssh->ivClient, AES_DECRYPTION);
+                break;
+
+            default:
+                WLOG(WS_LOG_DEBUG, "DNK: peer using cipher invalid");
+                break;
+        }
+
+        if (ret == 0)
+            ret = WS_SUCCESS;
+        else
+            ret = WS_CRYPTO_FAILED;
     }
 
-    ssh->rxCount = 0;
-    ssh->clientState = CLIENT_USING_KEYS;
+    if (ret == WS_SUCCESS) {
+        ssh->rxCount = 0;
+        ssh->clientState = CLIENT_USING_KEYS;
+    }
 
-    return WS_SUCCESS;
+    return ret;
 }
 
 
@@ -1367,7 +1514,7 @@ static int DoServiceRequest(WOLFSSH* ssh,
     ato32(buf + begin, &nameSz);
     begin += LENGTH_SZ;
 
-    XMEMCPY(serviceName, buf + begin, nameSz);
+    WMEMCPY(serviceName, buf + begin, nameSz);
     begin += nameSz;
     serviceName[nameSz] = 0;
 
@@ -1377,54 +1524,6 @@ static int DoServiceRequest(WOLFSSH* ssh,
     ssh->clientState = CLIENT_USERAUTH_REQUEST_DONE;
 
     return WS_SUCCESS;
-}
-
-
-static int GetBoolean(uint8_t* v, uint8_t* buf, uint32_t len, uint32_t* idx)
-{
-    int result = WS_BUFFER_E;
-
-    if (*idx < len) {
-        *v = buf[*idx];
-        *idx += BOOLEAN_SZ;
-        result = WS_SUCCESS;
-    }
-    return result;
-}
-
-
-static int GetUint32(uint32_t* v, uint8_t* buf, uint32_t len, uint32_t* idx)
-{
-    int result = WS_BUFFER_E;
-
-    if (*idx < len && *idx + UINT32_SZ <= len) {
-        ato32(buf + *idx, v);
-        *idx += UINT32_SZ;
-        result = WS_SUCCESS;
-    }
-
-    return result;
-}
-
-
-static int GetString(char* s, uint32_t* sSz,
-                     uint8_t* buf, uint32_t len, uint32_t *idx)
-{
-    int result;
-
-    result = GetUint32(sSz, buf, len, idx);
-
-    if (result == WS_SUCCESS) {
-        result = WS_BUFFER_E;
-        if (*idx < len && *idx + *sSz <= len) {
-            XMEMCPY(s, buf + *idx, *sSz);
-            *idx += *sSz;
-            s[*sSz] = 0;
-            result = WS_SUCCESS;
-        }
-    }
-
-    return result;
 }
 
 
@@ -1603,6 +1702,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
     uint32_t begin;
     WS_UserAuthData_PublicKey* pk;
     int ret = WS_SUCCESS;
+    int authFailure = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequestPublicKey()");
 
@@ -1638,36 +1738,36 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                 pk->signature = buf + begin;
                 begin += pk->signatureSz;
             }
-            else
-                goto onError;
         }
         else {
             pk->signature = NULL;
             pk->signatureSz = 0;
         }
 
-        *idx = begin;
+        if (ret == WS_SUCCESS) {
+            *idx = begin;
 
-        if (ssh->ctx->userAuthCb != NULL) {
-            WLOG(WS_LOG_DEBUG, "DUARPK: Calling the userauth callback");
-            ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PUBLICKEY,
-                                       authData, ssh->userAuthCtx);
-            WLOG(WS_LOG_DEBUG, "DUARPK: callback result = %d", ret);
-            if (ret == WOLFSSH_USERAUTH_SUCCESS)
-                ret = WS_SUCCESS;
-            else {
-                ret = SendUserAuthFailure(ssh, 0);
-                goto onError;
+            if (ssh->ctx->userAuthCb != NULL) {
+                WLOG(WS_LOG_DEBUG, "DUARPK: Calling the userauth callback");
+                ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PUBLICKEY,
+                                           authData, ssh->userAuthCtx);
+                WLOG(WS_LOG_DEBUG, "DUARPK: callback result = %d", ret);
+                if (ret == WOLFSSH_USERAUTH_SUCCESS)
+                    ret = WS_SUCCESS;
+                else {
+                    ret = SendUserAuthFailure(ssh, 0);
+                    authFailure = 1;
+                }
             }
-        }
-        else {
-            WLOG(WS_LOG_DEBUG, "DUARPK: no userauth callback set");
-            ret = SendUserAuthFailure(ssh, 0);
-            goto onError;
+            else {
+                WLOG(WS_LOG_DEBUG, "DUARPK: no userauth callback set");
+                ret = SendUserAuthFailure(ssh, 0);
+                authFailure = 1;
+            }
         }
     }
 
-    if (ret == WS_SUCCESS) {
+    if (ret == WS_SUCCESS && !authFailure) {
         if (pk->signature == NULL) {
             WLOG(WS_LOG_DEBUG, "DUARPK: Send the PK OK");
             ret = SendUserAuthPkOk(ssh, pk->publicKeyType, pk->publicKeyTypeSz,
@@ -1731,7 +1831,6 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
         }
     }
 
-onError:
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthRequestPublicKey(), ret = %d", ret);
     return ret;
 }
@@ -2053,11 +2152,11 @@ static int DoPacket(WOLFSSH* ssh)
 
         case MSGID_KEXINIT:
             {
-                uint8_t scratchLen[LENGTH_SZ];
+                uint8_t szFlat[LENGTH_SZ];
 
                 WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXINIT");
-                c32toa(payloadSz + sizeof(msg), scratchLen);
-                wc_ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
+                c32toa(payloadSz + sizeof(msg), szFlat);
+                wc_ShaUpdate(&ssh->handshake->hash, szFlat, LENGTH_SZ);
                 wc_ShaUpdate(&ssh->handshake->hash, &msg, sizeof(msg));
                 wc_ShaUpdate(&ssh->handshake->hash, buf + idx, payloadSz);
                 ret = DoKexInit(ssh, buf + idx, payloadSz, &payloadIdx);
