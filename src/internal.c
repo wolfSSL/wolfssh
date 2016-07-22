@@ -697,7 +697,7 @@ static int GetString(char* s, uint32_t* sSz,
     if (result == WS_SUCCESS) {
         result = WS_BUFFER_E;
         if (*idx < len && *idx + *sSz <= len) {
-            XMEMCPY(s, buf + *idx, *sSz);
+            WMEMCPY(s, buf + *idx, *sSz);
             *idx += *sSz;
             s[*sSz] = 0;
             result = WS_SUCCESS;
@@ -1516,7 +1516,7 @@ static int DoServiceRequest(WOLFSSH* ssh,
     ato32(buf + begin, &nameSz);
     begin += LENGTH_SZ;
 
-    XMEMCPY(serviceName, buf + begin, nameSz);
+    WMEMCPY(serviceName, buf + begin, nameSz);
     begin += nameSz;
     serviceName[nameSz] = 0;
 
