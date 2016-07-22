@@ -411,16 +411,16 @@ int GrowBuffer(Buffer* buf, uint32_t sz, uint32_t usedSz)
 
 void ShrinkBuffer(Buffer* buf, int forcedFree)
 {
-    WLOG(WS_LOG_DEBUG, "Entering %s", __func__);
+    WLOG(WS_LOG_DEBUG, "Entering ShrinkBuffer()");
 
     if (buf != NULL) {
         uint32_t usedSz = buf->length - buf->idx;
 
-        WLOG(WS_LOG_DEBUG, "SB: usedSz = %u, forcedFree = %u", usedSz, forcedFree);
-        if (!forcedFree && usedSz > STATIC_BUFFER_LEN) {
-            WLOG(WS_LOG_DEBUG, "SB: shifting down");
+        WLOG(WS_LOG_DEBUG, "SB: usedSz = %u, forcedFree = %u",
+             usedSz, forcedFree);
+
+        if (!forcedFree && usedSz > STATIC_BUFFER_LEN)
             return;
-        }
 
         if (!forcedFree && usedSz) {
             WLOG(WS_LOG_DEBUG, "SB: shifting down");
@@ -437,7 +437,8 @@ void ShrinkBuffer(Buffer* buf, int forcedFree)
         buf->length = forcedFree ? 0 : usedSz;
         buf->idx = 0;
     }
-    WLOG(WS_LOG_DEBUG, "Leaving %s", __func__);
+
+    WLOG(WS_LOG_DEBUG, "Leaving ShrinkBuffer()");
 }
 
 
@@ -667,6 +668,7 @@ static int GetBoolean(uint8_t* v, uint8_t* buf, uint32_t len, uint32_t* idx)
         *idx += BOOLEAN_SZ;
         result = WS_SUCCESS;
     }
+
     return result;
 }
 
@@ -711,62 +713,76 @@ static int DoNameList(uint8_t* idList, uint32_t* idListSz,
 {
     uint8_t idListIdx;
     uint32_t nameListSz, nameListIdx;
-    uint32_t begin = *idx;
+    uint32_t begin;
     uint8_t* name;
     uint32_t nameSz;
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering DoNameList()");
+
+    if (idList == NULL || idListSz == NULL ||
+        buf == NULL || len == 0 || idx == NULL) {
+
+        ret = WS_BAD_ARGUMENT;
+    }
 
     /*
      * This iterates across a name list and finds names that end in either the
      * comma delimeter or with the end of the list.
      */
 
-    if (begin >= len || begin + 4 >= len)
-        return WS_FATAL_ERROR;
+    if (ret == WS_SUCCESS) {
+        begin = *idx;
+        if (begin >= len || begin + 4 >= len)
+            ret = WS_BUFFER_E;
+    }
 
-    ato32(buf + begin, &nameListSz);
-    begin += 4;
-    if (begin + nameListSz > len)
-        return WS_FATAL_ERROR;
+    if (ret == WS_SUCCESS)
+        ret = GetUint32(&nameListSz, buf, len, &begin);
 
     /* The strings we want are now in the bounds of the message, and the
      * length of the list. Find the commas, or end of list, and then decode
      * the values. */
-    name = buf + begin;
-    nameSz = 0;
-    nameListIdx = 0;
-    idListIdx = 0;
+    if (ret == WS_SUCCESS) {
+        name = buf + begin;
+        nameSz = 0;
+        nameListIdx = 0;
+        idListIdx = 0;
 
-    while (nameListIdx < nameListSz) {
-        nameListIdx++;
+        while (nameListIdx < nameListSz) {
+            nameListIdx++;
 
-        if (nameListIdx == nameListSz)
-            nameSz++;
+            if (nameListIdx == nameListSz)
+                nameSz++;
 
-        if (nameListIdx == nameListSz || name[nameSz] == ',') {
-            uint8_t id;
+            if (nameListIdx == nameListSz || name[nameSz] == ',') {
+                uint8_t id;
 
-            id = NameToId((char*)name, nameSz);
-            {
-                const char* displayName = IdToName(id);
-                if (displayName) {
-                    /*WLOG(WS_LOG_DEBUG, "DNL: name ID = %s", displayName);*/
+                id = NameToId((char*)name, nameSz);
+                {
+                    const char* displayName = IdToName(id);
+                    if (displayName) {
+                        /*WLOG(WS_LOG_DEBUG,
+                               "DNL: name ID = %s", displayName);*/
+                    }
                 }
-            }
-            if (id != ID_UNKNOWN)
-                idList[idListIdx++] = id;
+                if (id != ID_UNKNOWN)
+                    idList[idListIdx++] = id;
 
-            name += 1 + nameSz;
-            nameSz = 0;
+                name += 1 + nameSz;
+                nameSz = 0;
+            }
+            else
+                nameSz++;
         }
-        else
-            nameSz++;
+
+        begin += nameListSz;
+        *idListSz = idListIdx;
+        *idx = begin;
     }
 
-    begin += nameListSz;
-    *idListSz = idListIdx;
-    *idx = begin;
-
-    return WS_SUCCESS;
+    WLOG(WS_LOG_DEBUG, "Leaving DoNameList(), ret = %d", ret);
+    return ret;
 }
 
 
@@ -855,7 +871,9 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
     uint8_t list[3];
     uint32_t listSz;
     uint32_t skipSz;
-    uint32_t begin = *idx;
+    uint32_t begin;
+
+    WLOG(WS_LOG_DEBUG, "Entering DoKexInit()");
 
     if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
         ret = WS_BAD_ARGUMENT;
@@ -867,126 +885,182 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
      * is save the actual values.
      */
 
-    /* Check that the cookie exists inside the message */
-    if (begin + COOKIE_SZ > len) {
-        /* error, out of bounds */
-        return WS_FATAL_ERROR;
+    if (ret == WS_SUCCESS) {
+        begin = *idx;
+
+        /* Check that the cookie exists inside the message */
+        if (begin + COOKIE_SZ > len) {
+            /* error, out of bounds */
+            ret = WS_PARSE_E;
+        }
+        else {
+            /* Move past the cookie. */
+            begin += COOKIE_SZ;
+        }
     }
-    /* Move past the cookie. */
-    begin += COOKIE_SZ;
 
     /* KEX Algorithms */
-    WLOG(WS_LOG_DEBUG, "DKI: KEX Algorithms");
-    listSz = 2;
-    DoNameList(list, &listSz, buf, len, &begin);
-    algoId = MatchIdLists(list, listSz, cannedKexAlgo, cannedKexAlgoSz);
-    if (algoId == ID_UNKNOWN) {
-        WLOG(WS_LOG_DEBUG, "Unable to negotiate KEX Algo");
-        return WS_INVALID_ALGO_ID;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "DKI: KEX Algorithms");
+        listSz = 2;
+        ret = DoNameList(list, &listSz, buf, len, &begin);
+        if (ret == WS_SUCCESS) {
+            algoId = MatchIdLists(list, listSz, cannedKexAlgo, cannedKexAlgoSz);
+            if (algoId == ID_UNKNOWN) {
+                WLOG(WS_LOG_DEBUG, "Unable to negotiate KEX Algo");
+                ret = WS_INVALID_ALGO_ID;
+            }
+            else
+                ssh->handshake->kexId = algoId;
+        }
     }
-
-    ssh->handshake->kexId = algoId;
 
     /* Server Host Key Algorithms */
-    WLOG(WS_LOG_DEBUG, "DKI: Server Host Key Algorithms");
-    listSz = 1;
-    DoNameList(list, &listSz, buf, len, &begin);
-    algoId = MatchIdLists(list, listSz, cannedKeyAlgo, cannedKeyAlgoSz);
-    if (algoId == ID_UNKNOWN) {
-        WLOG(WS_LOG_DEBUG, "Unable to negotiate Server Host Key Algo");
-        return WS_INVALID_ALGO_ID;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "DKI: Server Host Key Algorithms");
+        listSz = 1;
+        ret = DoNameList(list, &listSz, buf, len, &begin);
+        if (ret == WS_SUCCESS) {
+            algoId = MatchIdLists(list, listSz, cannedKeyAlgo, cannedKeyAlgoSz);
+            if (algoId == ID_UNKNOWN) {
+                WLOG(WS_LOG_DEBUG, "Unable to negotiate Server Host Key Algo");
+                return WS_INVALID_ALGO_ID;
+            }
+            else
+                ssh->handshake->pubKeyId = algoId;
+        }
     }
 
-    ssh->handshake->pubKeyId = algoId;
-
     /* Enc Algorithms - Client to Server */
-    WLOG(WS_LOG_DEBUG, "DKI: Enc Algorithms - Client to Server");
-    listSz = 3;
-    DoNameList(list, &listSz, buf, len, &begin);
-    algoId = MatchIdLists(list, listSz, cannedEncAlgo, cannedEncAlgoSz);
-    if (algoId == ID_UNKNOWN) {
-        WLOG(WS_LOG_DEBUG, "Unable to negotiate Encryption Algo C2S");
-        return WS_INVALID_ALGO_ID;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "DKI: Enc Algorithms - Client to Server");
+        listSz = 3;
+        ret = DoNameList(list, &listSz, buf, len, &begin);
+        if (ret == WS_SUCCESS) {
+            algoId = MatchIdLists(list, listSz, cannedEncAlgo, cannedEncAlgoSz);
+            if (algoId == ID_UNKNOWN) {
+                WLOG(WS_LOG_DEBUG, "Unable to negotiate Encryption Algo C2S");
+                ret = WS_INVALID_ALGO_ID;
+            }
+        }
     }
 
     /* Enc Algorithms - Server to Client */
-    WLOG(WS_LOG_DEBUG, "DKI: Enc Algorithms - Server to Client");
-    listSz = 3;
-    DoNameList(list, &listSz, buf, len, &begin);
-    if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
-        WLOG(WS_LOG_DEBUG, "Unable to negotiate Encryption Algo S2C");
-        return WS_INVALID_ALGO_ID;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "DKI: Enc Algorithms - Server to Client");
+        listSz = 3;
+        ret = DoNameList(list, &listSz, buf, len, &begin);
+        if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
+            WLOG(WS_LOG_DEBUG, "Unable to negotiate Encryption Algo S2C");
+            ret = WS_INVALID_ALGO_ID;
+        }
+        else {
+            ssh->handshake->encryptId = algoId;
+            ssh->handshake->blockSz = ssh->ivClientSz = ssh->ivServerSz
+                = BlockSzForId(algoId);
+            ssh->encKeyClientSz = ssh->encKeyServerSz = KeySzForId(algoId);
+        }
     }
 
-    ssh->handshake->encryptId = algoId;
-    ssh->handshake->blockSz = ssh->ivClientSz = ssh->ivServerSz
-                                                         = BlockSzForId(algoId);
-    ssh->encKeyClientSz = ssh->encKeyServerSz = KeySzForId(algoId);
-
     /* MAC Algorithms - Client to Server */
-    WLOG(WS_LOG_DEBUG, "DKI: MAC Algorithms - Client to Server");
-    listSz = 2;
-    DoNameList(list, &listSz, buf, len, &begin);
-    algoId = MatchIdLists(list, listSz, cannedMacAlgo, cannedMacAlgoSz);
-    if (algoId == ID_UNKNOWN) {
-        WLOG(WS_LOG_DEBUG, "Unable to negotiate MAC Algo C2S");
-        return WS_INVALID_ALGO_ID;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "DKI: MAC Algorithms - Client to Server");
+        listSz = 2;
+        ret = DoNameList(list, &listSz, buf, len, &begin);
+        if (ret == WS_SUCCESS) {
+            algoId = MatchIdLists(list, listSz, cannedMacAlgo, cannedMacAlgoSz);
+            if (algoId == ID_UNKNOWN) {
+                WLOG(WS_LOG_DEBUG, "Unable to negotiate MAC Algo C2S");
+                ret = WS_INVALID_ALGO_ID;
+            }
+        }
     }
 
     /* MAC Algorithms - Server to Client */
-    WLOG(WS_LOG_DEBUG, "DKI: MAC Algorithms - Server to Client");
-    listSz = 2;
-    DoNameList(list, &listSz, buf, len, &begin);
-    if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
-        WLOG(WS_LOG_DEBUG, "Unable to negotiate MAC Algo S2C");
-        return WS_INVALID_ALGO_ID;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "DKI: MAC Algorithms - Server to Client");
+        listSz = 2;
+        ret = DoNameList(list, &listSz, buf, len, &begin);
+        if (ret == WS_SUCCESS) {
+            if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
+                WLOG(WS_LOG_DEBUG, "Unable to negotiate MAC Algo S2C");
+                ret = WS_INVALID_ALGO_ID;
+            }
+            else {
+                ssh->handshake->macId = algoId;
+                ssh->handshake->macSz = MacSzForId(algoId);
+                ssh->macKeyClientSz = ssh->macKeyServerSz = KeySzForId(algoId);
+            }
+        }
     }
 
-    ssh->handshake->macId = algoId;
-    ssh->handshake->macSz = MacSzForId(algoId);
-    ssh->macKeyClientSz = ssh->macKeyServerSz = KeySzForId(algoId);
-
-    /* The compression algorithm lists should have none as a value. */
-    algoId = ID_NONE;
 
     /* Compression Algorithms - Client to Server */
-    WLOG(WS_LOG_DEBUG, "DKI: Compression Algorithms - Client to Server");
-    listSz = 1;
-    DoNameList(list, &listSz, buf, len, &begin);
-    if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
-        WLOG(WS_LOG_DEBUG, "Unable to negotiate Compression Algo C2S");
-        return WS_INVALID_ALGO_ID;
+    if (ret == WS_SUCCESS) {
+        /* The compression algorithm lists should have none as a value. */
+        algoId = ID_NONE;
+
+        WLOG(WS_LOG_DEBUG, "DKI: Compression Algorithms - Client to Server");
+        listSz = 1;
+        ret = DoNameList(list, &listSz, buf, len, &begin);
+        if (ret == WS_SUCCESS) {
+            if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
+                WLOG(WS_LOG_DEBUG, "Unable to negotiate Compression Algo C2S");
+                ret = WS_INVALID_ALGO_ID;
+            }
+        }
     }
 
     /* Compression Algorithms - Server to Client */
-    WLOG(WS_LOG_DEBUG, "DKI: Compression Algorithms - Server to Client");
-    listSz = 1;
-    DoNameList(list, &listSz, buf, len, &begin);
-    if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
-        WLOG(WS_LOG_DEBUG, "Unable to negotiate Compression Algo S2C");
-        return WS_INVALID_ALGO_ID;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "DKI: Compression Algorithms - Server to Client");
+        listSz = 1;
+        ret = DoNameList(list, &listSz, buf, len, &begin);
+        if (ret == WS_SUCCESS) {
+            if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
+                WLOG(WS_LOG_DEBUG, "Unable to negotiate Compression Algo S2C");
+                ret = WS_INVALID_ALGO_ID;
+            }
+        }
     }
 
     /* Languages - Client to Server, skip */
-    ato32(buf + begin, &skipSz);
-    begin += 4 + skipSz;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "DKI: Languages - Client to Server");
+        ret = GetUint32(&skipSz, buf, len, &begin);
+        if (ret == WS_SUCCESS)
+            begin += skipSz;
+    }
 
     /* Languages - Server to Client, skip */
-    ato32(buf + begin, &skipSz);
-    begin += 4 + skipSz;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "DKI: Languages - Server to Client");
+        ret = GetUint32(&skipSz, buf, len, &begin);
+        if (ret == WS_SUCCESS)
+            begin += skipSz;
+    }
 
     /* First KEX Packet Follows */
-    ssh->handshake->kexPacketFollows = buf[begin];
-    begin += 1;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "DKI: KEX Packet Follows");
+        ret = GetBoolean(&ssh->handshake->kexPacketFollows, buf, len, &begin);
+    }
 
     /* Skip the "for future use" length. */
-    ato32(buf + begin, &skipSz);
-    begin += 4 + skipSz;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "DKI: For Future Use");
+        ret = GetUint32(&skipSz, buf, len, &begin);
+        if (ret == WS_SUCCESS)
+            begin += skipSz;
+    }
 
-    *idx = begin;
+    if (ret == WS_SUCCESS) {
+        *idx = begin;
+        ssh->clientState = CLIENT_KEXINIT_DONE;
+    }
 
-    ssh->clientState = CLIENT_KEXINIT_DONE;
-    return WS_SUCCESS;
+    WLOG(WS_LOG_DEBUG, "Leaving DoKexInit(), ret = %d", ret);
+    return ret;
 }
 
 
@@ -2080,11 +2154,11 @@ static int DoPacket(WOLFSSH* ssh)
 
         case MSGID_KEXINIT:
             {
-                uint8_t scratchLen[LENGTH_SZ];
+                uint8_t szFlat[LENGTH_SZ];
 
                 WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXINIT");
-                c32toa(payloadSz + sizeof(msg), scratchLen);
-                wc_ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
+                c32toa(payloadSz + sizeof(msg), szFlat);
+                wc_ShaUpdate(&ssh->handshake->hash, szFlat, LENGTH_SZ);
                 wc_ShaUpdate(&ssh->handshake->hash, &msg, sizeof(msg));
                 wc_ShaUpdate(&ssh->handshake->hash, buf + idx, payloadSz);
                 ret = DoKexInit(ssh, buf + idx, payloadSz, &payloadIdx);
