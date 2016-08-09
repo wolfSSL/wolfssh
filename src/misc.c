@@ -49,8 +49,10 @@
 
 /* Check for if compiling misc.c when not needed. */
 #if !defined(WOLFSSH_MISC_INCLUDED) && !defined(NO_INLINE)
-    #error misc.c does not need to be compiled when not defined NO_INLINE
-#endif
+
+    #warning misc.c does not need to be compiled when using inline (NO_INLINE not defined)
+
+#else /* !WOLFSSL_MISC_INCLUDED && !NO_INLINE */
 
 
 #ifndef min
@@ -103,6 +105,9 @@ STATIC INLINE int ConstantCompare(const uint8_t* a, const uint8_t* b,
 
 
 #undef STATIC
+
+
+#endif /* !WOLFSSL_MISC_INCLUDED && !NO_INLINE */
 
 
 #endif /* WOLFSSH_MISC_C */
