@@ -86,17 +86,22 @@ typedef int SOCKET_T;
     #define CYASSL_THREAD __stdcall
 #endif
 
+#ifdef __GNUC__
+    #define NORETURN __attribute__((noreturn))
+#else
+    #define NORETURN
+#endif
+
 
 typedef struct {
     SOCKET_T clientFd;
 } thread_ctx_t;
 
 
-static INLINE void err_sys(const char* msg)
+static INLINE NORETURN void err_sys(const char* msg)
 {
     printf("server error: %s\n", msg);
-    if (msg)
-        exit(EXIT_FAILURE);
+    exit(EXIT_FAILURE);
 }
 
 
