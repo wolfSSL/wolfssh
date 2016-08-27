@@ -86,22 +86,34 @@ typedef int SOCKET_T;
     #define CYASSL_THREAD __stdcall
 #endif
 
-#ifdef __GNUC__
-    #define NORETURN __attribute__((noreturn))
-#else
-    #define NORETURN
-#endif
-
-
 typedef struct {
     SOCKET_T clientFd;
 } thread_ctx_t;
 
 
-static INLINE NORETURN void err_sys(const char* msg)
+#ifdef __GNUC__
+    #define WS_NORETURN __attribute__((noreturn))
+#else
+    #define WS_NORETURN
+#endif
+
+
+static INLINE WS_NORETURN void err_sys(const char* msg)
 {
     printf("server error: %s\n", msg);
-    exit(EXIT_FAILURE);
+
+#ifndef __GNUC__
+    /* scan-build (which pretends to be gnuc) can get confused and think the
+     * msg pointer can be null even when hardcoded and then it won't exit,
+     * making null pointer checks above the err_sys() call useless.
+     * We could just always exit() but some compilers will complain about no
+     * possible return, with gcc we know the attribute to handle that with
+     * WS_NORETURN. */
+    if (msg)
+#endif
+    {
+        exit(EXIT_FAILURE);
+    }
 }
 
 
@@ -674,4 +686,3 @@ int main(void)
 
     return 0;
 }
-
