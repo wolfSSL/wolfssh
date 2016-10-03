@@ -125,23 +125,25 @@ void wolfSSH_CTX_free(WOLFSSH_CTX* ctx)
 
 static WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
 {
-    HandshakeInfo* handshake;
-    RNG*           rng;
+    HandshakeInfo* handshake = NULL;
+    RNG*           rng = NULL;
+    void*          heap;
 
     WLOG(WS_LOG_DEBUG, "Entering SshInit()");
 
-    if (ssh == NULL)
+    if (ssh == NULL || ctx == NULL)
         return ssh;
+    heap = ctx->heap;
 
     handshake = (HandshakeInfo*)WMALLOC(sizeof(HandshakeInfo),
-                                        ctx->heap, DYNTYPE_HS);
-    if (handshake == NULL) {
-        wolfSSH_free(ssh);
-        return NULL;
-    }
+                                        heap, DYNTYPE_HS);
+    rng = (RNG*)WMALLOC(sizeof(RNG), heap, DYNTYPE_RNG);
 
-    rng = (RNG*)WMALLOC(sizeof(RNG), ctx->heap, DYNTYPE_RNG);
-    if (rng == NULL || wc_InitRng(rng) != 0) {
+    if (handshake == NULL || rng == NULL || wc_InitRng(rng) != 0) {
+
+        WLOG(WS_LOG_DEBUG, "SshInit: Cannot allocate memory.\n");
+        WFREE(handshake, heap, DYNTYPE_HS);
+        WFREE(rng, heap, DYNTYPE_RNG);
         wolfSSH_free(ssh);
         return NULL;
     }
@@ -220,9 +222,11 @@ static void SshResourceFree(WOLFSSH* ssh, void* heap)
     ShrinkBuffer(&ssh->outputBuffer, 1);
     ForceZero(ssh->k, ssh->kSz);
     if (ssh->handshake) {
-        WMEMSET(ssh->handshake, 0, sizeof(HandshakeInfo));
+        ForceZero(ssh->handshake, sizeof(HandshakeInfo));
         WFREE(ssh->handshake, heap, DYNTYPE_HS);
     }
+    ForceZero(&ssh->clientKeys, sizeof(Keys));
+    ForceZero(&ssh->serverKeys, sizeof(Keys));
     if (ssh->rng) {
         wc_FreeRng(ssh->rng);
         WFREE(ssh->rng, heap, DYNTYPE_RNG);
@@ -244,11 +248,10 @@ static void SshResourceFree(WOLFSSH* ssh, void* heap)
 
 void wolfSSH_free(WOLFSSH* ssh)
 {
-    void* heap = ssh->ctx ? ssh->ctx->heap : NULL;
-
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_free()");
 
     if (ssh) {
+        void* heap = ssh->ctx ? ssh->ctx->heap : NULL;
         SshResourceFree(ssh, heap);
         WFREE(ssh, heap, DYNTYPE_SSH);
     }

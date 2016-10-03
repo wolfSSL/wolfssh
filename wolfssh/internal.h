@@ -154,6 +154,16 @@ typedef struct Ciphers {
 } Ciphers;
 
 
+typedef struct Keys {
+    uint8_t        iv[AES_BLOCK_SIZE];
+    uint8_t        ivSz;
+    uint8_t        encKey[AES_BLOCK_SIZE];
+    uint8_t        encKeySz;
+    uint8_t        macKey[MAX_HMAC_SZ];
+    uint8_t        macKeySz;
+} Keys;
+
+
 typedef struct HandshakeInfo {
     uint8_t        kexId;
     uint8_t        pubKeyId;
@@ -164,6 +174,8 @@ typedef struct HandshakeInfo {
     uint8_t        blockSz;
     uint8_t        macSz;
 
+    Keys           clientKeys;
+    Keys           serverKeys;
     Sha            hash;
     uint8_t        e[257]; /* May have a leading zero, for unsigned. */
     uint32_t       eSz;
@@ -223,19 +235,8 @@ struct WOLFSSH {
     uint8_t        sessionId[SHA_DIGEST_SIZE];
     uint32_t       sessionIdSz;
 
-    uint8_t        ivClient[AES_BLOCK_SIZE];
-    uint8_t        ivClientSz;
-    uint8_t        ivServer[AES_BLOCK_SIZE];
-    uint8_t        ivServerSz;
-    uint8_t        encKeyClient[AES_BLOCK_SIZE];
-    uint8_t        encKeyClientSz;
-    uint8_t        encKeyServer[AES_BLOCK_SIZE];
-    uint8_t        encKeyServerSz;
-    uint8_t        macKeyClient[MAX_HMAC_SZ];
-    uint8_t        macKeyClientSz;
-    uint8_t        macKeyServer[MAX_HMAC_SZ];
-    uint8_t        macKeyServerSz;
-
+    Keys           clientKeys;
+    Keys           serverKeys;
     HandshakeInfo* handshake;
 
     void*          userAuthCtx;
