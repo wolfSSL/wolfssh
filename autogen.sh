@@ -26,9 +26,16 @@ if test ! -f build-aux/config.rpath; then
   touch build-aux/config.rpath
 fi
 
+# Git hooks should come before autoreconf.
+if test -d .git; then
+  if ! test -d .git/hooks; then
+    mkdir .git/hooks
+  fi
+  ln -s -f ../../scripts/pre-commit.sh .git/hooks/pre-commit
+fi
 
 # If this is a source checkout then call autoreconf with error as well
-if test -d .git; then
+if test -e .git; then
   WARNINGS="all,error"
 else
   WARNINGS="all"
