@@ -162,6 +162,7 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, void* heap)
     ctx->ioRecvCb = wsEmbedRecv;
     ctx->ioSendCb = wsEmbedSend;
 #endif /* WOLFSSH_USER_IO */
+    ctx->countHighwater = DEFAULT_COUNT_HIGHWATER;
 
     return ctx;
 }
@@ -214,7 +215,7 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->wfd         = -1;         /* set to invalid */
     ssh->ioReadCtx   = &ssh->rfd;  /* prevent invalid access if not correctly */
     ssh->ioWriteCtx  = &ssh->wfd;  /* set */
-    ssh->countHighwater = DEFAULT_COUNT_HIGHWATER;
+    ssh->countHighwater = ctx->countHighwater;
     ssh->acceptState = ACCEPT_BEGIN;
     ssh->clientState = CLIENT_BEGIN;
     ssh->nextChannel = DEFAULT_NEXT_CHANNEL;
@@ -2406,6 +2407,8 @@ static INLINE int Encrypt(WOLFSSH* ssh, uint8_t* cipher, const uint8_t* input,
     ssh->txCount += sz;
     if (ssh->countHighwater && ssh->txCount > ssh->countHighwater) {
         WLOG(WS_LOG_DEBUG, "Transmit over high water mark");
+        if (ssh->ctx->highwaterCb)
+            ssh->ctx->highwaterCb(WOLFSSH_HWSIDE_TRANSMIT, ssh->highwaterCtx);
     }
 
     return ret;
@@ -2441,6 +2444,8 @@ static INLINE int Decrypt(WOLFSSH* ssh, uint8_t* plain, const uint8_t* input,
     ssh->rxCount += sz;
     if (ssh->countHighwater && ssh->rxCount > ssh->countHighwater) {
         WLOG(WS_LOG_DEBUG, "Receive over high water mark");
+        if (ssh->ctx->highwaterCb)
+            ssh->ctx->highwaterCb(WOLFSSH_HWSIDE_RECEIVE, ssh->highwaterCtx);
     }
 
     return ret;

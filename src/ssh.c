@@ -154,9 +154,9 @@ int wolfSSH_get_fd(const WOLFSSH* ssh)
 }
 
 
-int wolfSSH_set_highwater(WOLFSSH* ssh, uint32_t highwater)
+int wolfSSH_SetHighwater(WOLFSSH* ssh, uint32_t highwater)
 {
-    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_set_highwater()");
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetHighwater()");
 
     if (ssh) {
         ssh->countHighwater = highwater;
@@ -168,14 +168,46 @@ int wolfSSH_set_highwater(WOLFSSH* ssh, uint32_t highwater)
 }
 
 
-uint32_t wolfSSH_get_highwater(WOLFSSH* ssh)
+uint32_t wolfSSH_GetHighwater(WOLFSSH* ssh)
 {
-    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_get_highwater()");
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_GetHighwater()");
 
     if (ssh)
         return ssh->countHighwater;
 
-    return WS_BAD_ARGUMENT;
+    return 0;
+}
+
+
+void wolfSSH_SetHighwaterCb(WOLFSSH_CTX* ctx, uint32_t highwater,
+                            WS_CallbackHighwater cb)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetHighwaterCb()");
+
+    if (ctx) {
+        ctx->countHighwater = highwater;
+        ctx->highwaterCb = cb;
+    }
+}
+
+
+void wolfSSH_SetHighwaterCtx(WOLFSSH* ssh, void* ctx)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetHighwaterCtx()");
+
+    if (ssh)
+        ssh->highwaterCtx = ctx;
+}
+
+
+void* wolfSSH_GetHighwaterCtx(WOLFSSH* ssh)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_GetHighwaterCtx()");
+
+    if (ssh)
+        return ssh->highwaterCtx;
+
+    return NULL;
 }
 
 

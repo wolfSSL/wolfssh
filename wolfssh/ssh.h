@@ -59,8 +59,16 @@ WOLFSSH_API void     wolfSSH_free(WOLFSSH*);
 WOLFSSH_API int  wolfSSH_set_fd(WOLFSSH*, int);
 WOLFSSH_API int  wolfSSH_get_fd(const WOLFSSH*);
 
-WOLFSSH_API int wolfSSH_set_highwater(WOLFSSH*, uint32_t);
-WOLFSSH_API uint32_t wolfSSH_get_highwater(WOLFSSH*);
+/* data high water mark functions */
+WOLFSSH_API int wolfSSH_SetHighwater(WOLFSSH*, uint32_t);
+WOLFSSH_API uint32_t wolfSSH_GetHighwater(WOLFSSH*);
+
+typedef int (*WS_CallbackHighwater)(uint8_t, void*);
+WOLFSSH_API void wolfSSH_SetHighwaterCb(WOLFSSH_CTX*, uint32_t,
+                                        WS_CallbackHighwater);
+WOLFSSH_API void wolfSSH_SetHighwaterCtx(WOLFSSH*, void*);
+WOLFSSH_API void* wolfSSH_GetHighwaterCtx(WOLFSSH*);
+
 
 WOLFSSH_API int wolfSSH_get_error(const WOLFSSH*);
 WOLFSSH_API const char* wolfSSH_get_error_name(const WOLFSSH*);
@@ -133,6 +141,13 @@ WOLFSSH_API int wolfSSH_worker(WOLFSSH*);
 WOLFSSH_API int wolfSSH_KDF(uint8_t, uint8_t, uint8_t*, uint32_t,
                 const uint8_t*, uint32_t, const uint8_t*, uint32_t,
                 const uint8_t*, uint32_t);
+
+
+enum WS_HighwaterSide {
+    WOLFSSH_HWSIDE_TRANSMIT,
+    WOLFSSH_HWSIDE_RECEIVE
+};
+
 
 enum WS_EndpointTypes {
     WOLFSSH_ENDPOINT_SERVER,

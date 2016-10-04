@@ -139,6 +139,7 @@ struct WOLFSSH_CTX {
     WS_CallbackIORecv   ioRecvCb;    /* I/O Receive Callback */
     WS_CallbackIOSend   ioSendCb;    /* I/O Send Callback */
     WS_CallbackUserAuth userAuthCb;  /* User Authentication Callback */
+    WS_CallbackHighwater highwaterCb; /* Data Highwater Mark Callback */
 
     uint8_t*            cert;        /* Owned by CTX */
     uint32_t            certSz;
@@ -146,6 +147,7 @@ struct WOLFSSH_CTX {
     uint32_t            caCertSz;
     uint8_t*            privateKey;  /* Owned by CTX */
     uint32_t            privateKeySz;
+    uint32_t            countHighwater;
 };
 
 
@@ -195,6 +197,7 @@ struct WOLFSSH {
     uint32_t       txCount;
     uint32_t       rxCount;
     uint32_t       countHighwater;
+    void*          highwaterCtx;
     uint32_t       curSz;
     uint32_t       seq;
     uint32_t       peerSeq;
