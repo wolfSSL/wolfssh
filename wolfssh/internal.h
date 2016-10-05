@@ -265,10 +265,10 @@ struct WOLFSSH_CHANNEL {
 };
 
 
-WOLFSSL_LOCAL WOLFSSH_CTX* CtxInit(WOLFSSH_CTX*, void*);
-WOLFSSL_LOCAL void CtxResourceFree(WOLFSSH_CTX*);
+WOLFSSH_LOCAL WOLFSSH_CTX* CtxInit(WOLFSSH_CTX*, void*);
+WOLFSSH_LOCAL void CtxResourceFree(WOLFSSH_CTX*);
 WOLFSSH_LOCAL WOLFSSH* SshInit(WOLFSSH*, WOLFSSH_CTX*);
-WOLFSSL_LOCAL void SshResourceFree(WOLFSSH*, void*);
+WOLFSSH_LOCAL void SshResourceFree(WOLFSSH*, void*);
 
 WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelNew(WOLFSSH*, uint8_t, uint32_t,
                                           uint32_t, uint32_t);

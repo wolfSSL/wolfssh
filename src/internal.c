@@ -1927,6 +1927,9 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             uint32_t encDigestSz;
             uint8_t pkTypeId;
 
+            WMEMSET(checkDigest, 0, sizeof(checkDigest));
+            WMEMSET(encDigest, 0, sizeof(encDigest));
+
             pkTypeId = NameToId((char*)pk->publicKeyType, pk->publicKeyTypeSz);
 
             if (pkTypeId == ID_SSH_RSA)
