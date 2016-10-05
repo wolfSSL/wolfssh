@@ -64,27 +64,6 @@ int wolfSSH_Cleanup(void)
 }
 
 
-static WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, void* heap)
-{
-    WLOG(WS_LOG_DEBUG, "Entering CtxInit()");
-
-    if (ctx == NULL)
-        return ctx;
-
-    WMEMSET(ctx, 0, sizeof(WOLFSSH_CTX));
-
-    if (heap)
-        ctx->heap = heap;
-
-#ifndef WOLFSSH_USER_IO
-    ctx->ioRecvCb = wsEmbedRecv;
-    ctx->ioSendCb = wsEmbedSend;
-#endif /* WOLFSSH_USER_IO */
-
-    return ctx;
-}
-
-
 WOLFSSH_CTX* wolfSSH_CTX_new(uint8_t side, void* heap)
 {
     WOLFSSH_CTX* ctx;
@@ -105,19 +84,6 @@ WOLFSSH_CTX* wolfSSH_CTX_new(uint8_t side, void* heap)
 }
 
 
-static void CtxResourceFree(WOLFSSH_CTX* ctx)
-{
-    WLOG(WS_LOG_DEBUG, "Entering CtxResourceFree()");
-
-    if (ctx->privateKey) {
-        ForceZero(ctx->privateKey, ctx->privateKeySz);
-        WFREE(ctx->privateKey, ctx->heap, DYNTYPE_KEY);
-    }
-    WFREE(ctx->cert, ctx->heap, DYNTYPE_CERT);
-    WFREE(ctx->caCert, ctx->heap, DYNTYPE_CA);
-}
-
-
 void wolfSSH_CTX_free(WOLFSSH_CTX* ctx)
 {
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CTX_free()");
@@ -126,66 +92,6 @@ void wolfSSH_CTX_free(WOLFSSH_CTX* ctx)
         CtxResourceFree(ctx);
         WFREE(ctx, ctx->heap, DYNTYPE_CTX);
     }
-}
-
-
-static WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
-{
-    HandshakeInfo* handshake;
-    RNG*           rng;
-
-    WLOG(WS_LOG_DEBUG, "Entering SshInit()");
-
-    if (ssh == NULL)
-        return ssh;
-
-    handshake = (HandshakeInfo*)WMALLOC(sizeof(HandshakeInfo),
-                                        ctx->heap, DYNTYPE_HS);
-    if (handshake == NULL) {
-        wolfSSH_free(ssh);
-        return NULL;
-    }
-
-    rng = (RNG*)WMALLOC(sizeof(RNG), ctx->heap, DYNTYPE_RNG);
-    if (rng == NULL || wc_InitRng(rng) != 0) {
-        wolfSSH_free(ssh);
-        return NULL;
-    }
-
-    WMEMSET(ssh, 0, sizeof(WOLFSSH));  /* default init to zeros */
-    WMEMSET(handshake, 0, sizeof(HandshakeInfo));
-
-    ssh->ctx         = ctx;
-    ssh->error       = WS_SUCCESS;
-    ssh->rfd         = -1;         /* set to invalid */
-    ssh->wfd         = -1;         /* set to invalid */
-    ssh->ioReadCtx   = &ssh->rfd;  /* prevent invalid access if not correctly */
-    ssh->ioWriteCtx  = &ssh->wfd;  /* set */
-    ssh->acceptState = ACCEPT_BEGIN;
-    ssh->clientState = CLIENT_BEGIN;
-    ssh->nextChannel = DEFAULT_NEXT_CHANNEL;
-    ssh->blockSz     = MIN_BLOCK_SZ;
-    ssh->encryptId   = ID_NONE;
-    ssh->macId       = ID_NONE;
-    ssh->peerBlockSz = MIN_BLOCK_SZ;
-    ssh->rng         = rng;
-    ssh->kSz         = sizeof(ssh->k);
-    ssh->handshake   = handshake;
-    handshake->kexId = ID_NONE;
-    handshake->pubKeyId  = ID_NONE;
-    handshake->encryptId = ID_NONE;
-    handshake->macId = ID_NONE;
-    handshake->blockSz = MIN_BLOCK_SZ;
-
-    if (BufferInit(&ssh->inputBuffer, 0, ctx->heap) != WS_SUCCESS ||
-        BufferInit(&ssh->outputBuffer, 0, ctx->heap) != WS_SUCCESS ||
-        wc_InitSha(&ssh->handshake->hash) != 0) {
-
-        wolfSSH_free(ssh);
-        ssh = NULL;
-    }
-
-    return ssh;
 }
 
 
@@ -214,46 +120,12 @@ WOLFSSH* wolfSSH_new(WOLFSSH_CTX* ctx)
 }
 
 
-static void SshResourceFree(WOLFSSH* ssh, void* heap)
-{
-    /* when ssh holds resources, free here */
-    (void)heap;
-
-    WLOG(WS_LOG_DEBUG, "Entering sshResourceFree()");
-
-    ShrinkBuffer(&ssh->inputBuffer, 1);
-    ShrinkBuffer(&ssh->outputBuffer, 1);
-    ForceZero(ssh->k, ssh->kSz);
-    if (ssh->handshake) {
-        WMEMSET(ssh->handshake, 0, sizeof(HandshakeInfo));
-        WFREE(ssh->handshake, heap, DYNTYPE_HS);
-    }
-    if (ssh->rng) {
-        wc_FreeRng(ssh->rng);
-        WFREE(ssh->rng, heap, DYNTYPE_RNG);
-    }
-    if (ssh->userName) {
-        WFREE(ssh->userName, heap, DYNTYPE_STRING);
-    }
-    if (ssh->channelList) {
-        WOLFSSH_CHANNEL* cur = ssh->channelList;
-        WOLFSSH_CHANNEL* next;
-        while (cur) {
-            next = cur->next;
-            ChannelDelete(cur, heap);
-            cur = next;
-        }
-    }
-}
-
-
 void wolfSSH_free(WOLFSSH* ssh)
 {
-    void* heap = ssh->ctx ? ssh->ctx->heap : NULL;
-
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_free()");
 
     if (ssh) {
+        void* heap = ssh->ctx ? ssh->ctx->heap : NULL;
         SshResourceFree(ssh, heap);
         WFREE(ssh, heap, DYNTYPE_SSH);
     }
@@ -285,6 +157,63 @@ int wolfSSH_get_fd(const WOLFSSH* ssh)
         return ssh->rfd;
 
     return WS_BAD_ARGUMENT;
+}
+
+
+int wolfSSH_SetHighwater(WOLFSSH* ssh, uint32_t highwater)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetHighwater()");
+
+    if (ssh) {
+        ssh->countHighwater = highwater;
+
+        return WS_SUCCESS;
+    }
+
+    return WS_BAD_ARGUMENT;
+}
+
+
+uint32_t wolfSSH_GetHighwater(WOLFSSH* ssh)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_GetHighwater()");
+
+    if (ssh)
+        return ssh->countHighwater;
+
+    return 0;
+}
+
+
+void wolfSSH_SetHighwaterCb(WOLFSSH_CTX* ctx, uint32_t highwater,
+                            WS_CallbackHighwater cb)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetHighwaterCb()");
+
+    if (ctx) {
+        ctx->countHighwater = highwater;
+        ctx->highwaterCb = cb;
+    }
+}
+
+
+void wolfSSH_SetHighwaterCtx(WOLFSSH* ssh, void* ctx)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetHighwaterCtx()");
+
+    if (ssh)
+        ssh->highwaterCtx = ctx;
+}
+
+
+void* wolfSSH_GetHighwaterCtx(WOLFSSH* ssh)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_GetHighwaterCtx()");
+
+    if (ssh)
+        return ssh->highwaterCtx;
+
+    return NULL;
 }
 
 

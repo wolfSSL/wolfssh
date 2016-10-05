@@ -101,6 +101,7 @@ enum {
 #define MSG_ID_SZ        1
 #define SHA1_96_SZ       12
 #define UINT32_SZ        4
+#define DEFAULT_COUNT_HIGHWATER (1024 * 1024 * 1024)
 #define DEFAULT_WINDOW_SZ     (1024 * 1024)
 #define DEFAULT_MAX_PACKET_SZ (16 * 1024)
 #define DEFAULT_NEXT_CHANNEL  13013
@@ -138,6 +139,7 @@ struct WOLFSSH_CTX {
     WS_CallbackIORecv   ioRecvCb;    /* I/O Receive Callback */
     WS_CallbackIOSend   ioSendCb;    /* I/O Send Callback */
     WS_CallbackUserAuth userAuthCb;  /* User Authentication Callback */
+    WS_CallbackHighwater highwaterCb; /* Data Highwater Mark Callback */
 
     uint8_t*            cert;        /* Owned by CTX */
     uint32_t            certSz;
@@ -145,12 +147,23 @@ struct WOLFSSH_CTX {
     uint32_t            caCertSz;
     uint8_t*            privateKey;  /* Owned by CTX */
     uint32_t            privateKeySz;
+    uint32_t            countHighwater;
 };
 
 
 typedef struct Ciphers {
     Aes aes;
 } Ciphers;
+
+
+typedef struct Keys {
+    uint8_t        iv[AES_BLOCK_SIZE];
+    uint8_t        ivSz;
+    uint8_t        encKey[AES_BLOCK_SIZE];
+    uint8_t        encKeySz;
+    uint8_t        macKey[MAX_HMAC_SZ];
+    uint8_t        macKeySz;
+} Keys;
 
 
 typedef struct HandshakeInfo {
@@ -163,6 +176,8 @@ typedef struct HandshakeInfo {
     uint8_t        blockSz;
     uint8_t        macSz;
 
+    Keys           clientKeys;
+    Keys           serverKeys;
     Sha            hash;
     uint8_t        e[257]; /* May have a leading zero, for unsigned. */
     uint32_t       eSz;
@@ -182,6 +197,7 @@ struct WOLFSSH {
     uint32_t       txCount;
     uint32_t       rxCount;
     uint32_t       countHighwater;
+    void*          highwaterCtx;
     uint32_t       curSz;
     uint32_t       seq;
     uint32_t       peerSeq;
@@ -222,19 +238,8 @@ struct WOLFSSH {
     uint8_t        sessionId[SHA_DIGEST_SIZE];
     uint32_t       sessionIdSz;
 
-    uint8_t        ivClient[AES_BLOCK_SIZE];
-    uint8_t        ivClientSz;
-    uint8_t        ivServer[AES_BLOCK_SIZE];
-    uint8_t        ivServerSz;
-    uint8_t        encKeyClient[AES_BLOCK_SIZE];
-    uint8_t        encKeyClientSz;
-    uint8_t        encKeyServer[AES_BLOCK_SIZE];
-    uint8_t        encKeyServerSz;
-    uint8_t        macKeyClient[MAX_HMAC_SZ];
-    uint8_t        macKeyClientSz;
-    uint8_t        macKeyServer[MAX_HMAC_SZ];
-    uint8_t        macKeyServerSz;
-
+    Keys           clientKeys;
+    Keys           serverKeys;
     HandshakeInfo* handshake;
 
     void*          userAuthCtx;
@@ -259,6 +264,11 @@ struct WOLFSSH_CHANNEL {
     struct WOLFSSH_CHANNEL* next;
 };
 
+
+WOLFSSL_LOCAL WOLFSSH_CTX* CtxInit(WOLFSSH_CTX*, void*);
+WOLFSSL_LOCAL void CtxResourceFree(WOLFSSH_CTX*);
+WOLFSSH_LOCAL WOLFSSH* SshInit(WOLFSSH*, WOLFSSH_CTX*);
+WOLFSSL_LOCAL void SshResourceFree(WOLFSSH*, void*);
 
 WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelNew(WOLFSSH*, uint8_t, uint32_t,
                                           uint32_t, uint32_t);

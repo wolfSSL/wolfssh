@@ -146,6 +146,139 @@ const char* GetErrorString(int err)
 }
 
 
+WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, void* heap)
+{
+    WLOG(WS_LOG_DEBUG, "Entering CtxInit()");
+
+    if (ctx == NULL)
+        return ctx;
+
+    WMEMSET(ctx, 0, sizeof(WOLFSSH_CTX));
+
+    if (heap)
+        ctx->heap = heap;
+
+#ifndef WOLFSSH_USER_IO
+    ctx->ioRecvCb = wsEmbedRecv;
+    ctx->ioSendCb = wsEmbedSend;
+#endif /* WOLFSSH_USER_IO */
+    ctx->countHighwater = DEFAULT_COUNT_HIGHWATER;
+
+    return ctx;
+}
+
+
+void CtxResourceFree(WOLFSSH_CTX* ctx)
+{
+    WLOG(WS_LOG_DEBUG, "Entering CtxResourceFree()");
+
+    if (ctx->privateKey) {
+        ForceZero(ctx->privateKey, ctx->privateKeySz);
+        WFREE(ctx->privateKey, ctx->heap, DYNTYPE_KEY);
+    }
+    WFREE(ctx->cert, ctx->heap, DYNTYPE_CERT);
+    WFREE(ctx->caCert, ctx->heap, DYNTYPE_CA);
+}
+
+
+WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
+{
+    HandshakeInfo* handshake = NULL;
+    RNG*           rng = NULL;
+    void*          heap;
+
+    WLOG(WS_LOG_DEBUG, "Entering SshInit()");
+
+    if (ssh == NULL || ctx == NULL)
+        return ssh;
+    heap = ctx->heap;
+
+    handshake = (HandshakeInfo*)WMALLOC(sizeof(HandshakeInfo),
+                                        heap, DYNTYPE_HS);
+    rng = (RNG*)WMALLOC(sizeof(RNG), heap, DYNTYPE_RNG);
+
+    if (handshake == NULL || rng == NULL || wc_InitRng(rng) != 0) {
+
+        WLOG(WS_LOG_DEBUG, "SshInit: Cannot allocate memory.\n");
+        WFREE(handshake, heap, DYNTYPE_HS);
+        WFREE(rng, heap, DYNTYPE_RNG);
+        wolfSSH_free(ssh);
+        return NULL;
+    }
+
+    WMEMSET(ssh, 0, sizeof(WOLFSSH));  /* default init to zeros */
+    WMEMSET(handshake, 0, sizeof(HandshakeInfo));
+
+    ssh->ctx         = ctx;
+    ssh->error       = WS_SUCCESS;
+    ssh->rfd         = -1;         /* set to invalid */
+    ssh->wfd         = -1;         /* set to invalid */
+    ssh->ioReadCtx   = &ssh->rfd;  /* prevent invalid access if not correctly */
+    ssh->ioWriteCtx  = &ssh->wfd;  /* set */
+    ssh->countHighwater = ctx->countHighwater;
+    ssh->acceptState = ACCEPT_BEGIN;
+    ssh->clientState = CLIENT_BEGIN;
+    ssh->nextChannel = DEFAULT_NEXT_CHANNEL;
+    ssh->blockSz     = MIN_BLOCK_SZ;
+    ssh->encryptId   = ID_NONE;
+    ssh->macId       = ID_NONE;
+    ssh->peerBlockSz = MIN_BLOCK_SZ;
+    ssh->rng         = rng;
+    ssh->kSz         = sizeof(ssh->k);
+    ssh->handshake   = handshake;
+    handshake->kexId = ID_NONE;
+    handshake->pubKeyId  = ID_NONE;
+    handshake->encryptId = ID_NONE;
+    handshake->macId = ID_NONE;
+    handshake->blockSz = MIN_BLOCK_SZ;
+
+    if (BufferInit(&ssh->inputBuffer, 0, ctx->heap) != WS_SUCCESS ||
+        BufferInit(&ssh->outputBuffer, 0, ctx->heap) != WS_SUCCESS ||
+        wc_InitSha(&ssh->handshake->hash) != 0) {
+
+        wolfSSH_free(ssh);
+        ssh = NULL;
+    }
+
+    return ssh;
+}
+
+
+void SshResourceFree(WOLFSSH* ssh, void* heap)
+{
+    /* when ssh holds resources, free here */
+    (void)heap;
+
+    WLOG(WS_LOG_DEBUG, "Entering sshResourceFree()");
+
+    ShrinkBuffer(&ssh->inputBuffer, 1);
+    ShrinkBuffer(&ssh->outputBuffer, 1);
+    ForceZero(ssh->k, ssh->kSz);
+    if (ssh->handshake) {
+        ForceZero(ssh->handshake, sizeof(HandshakeInfo));
+        WFREE(ssh->handshake, heap, DYNTYPE_HS);
+    }
+    ForceZero(&ssh->clientKeys, sizeof(Keys));
+    ForceZero(&ssh->serverKeys, sizeof(Keys));
+    if (ssh->rng) {
+        wc_FreeRng(ssh->rng);
+        WFREE(ssh->rng, heap, DYNTYPE_RNG);
+    }
+    if (ssh->userName) {
+        WFREE(ssh->userName, heap, DYNTYPE_STRING);
+    }
+    if (ssh->channelList) {
+        WOLFSSH_CHANNEL* cur = ssh->channelList;
+        WOLFSSH_CHANNEL* next;
+        while (cur) {
+            next = cur->next;
+            ChannelDelete(cur, heap);
+            cur = next;
+        }
+    }
+}
+
+
 typedef struct {
     uint8_t id;
     const char* name;
@@ -954,9 +1087,13 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
         }
         else {
             ssh->handshake->encryptId = algoId;
-            ssh->handshake->blockSz = ssh->ivClientSz = ssh->ivServerSz
-                = BlockSzForId(algoId);
-            ssh->encKeyClientSz = ssh->encKeyServerSz = KeySzForId(algoId);
+            ssh->handshake->blockSz =
+                ssh->handshake->clientKeys.ivSz =
+                ssh->handshake->serverKeys.ivSz =
+                BlockSzForId(algoId);
+            ssh->handshake->clientKeys.encKeySz =
+                ssh->handshake->serverKeys.encKeySz =
+                KeySzForId(algoId);
         }
     }
 
@@ -987,7 +1124,9 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
             else {
                 ssh->handshake->macId = algoId;
                 ssh->handshake->macSz = MacSzForId(algoId);
-                ssh->macKeyClientSz = ssh->macKeyServerSz = KeySzForId(algoId);
+                ssh->handshake->clientKeys.macKeySz =
+                    ssh->handshake->serverKeys.macKeySz =
+                    KeySzForId(algoId);
             }
         }
     }
@@ -1176,6 +1315,7 @@ static int DoNewKeys(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
         ssh->peerMacId = ssh->handshake->macId;
         ssh->peerBlockSz = ssh->handshake->blockSz;
         ssh->peerMacSz = ssh->handshake->macSz;
+        WMEMCPY(&ssh->clientKeys, &ssh->handshake->clientKeys, sizeof(Keys));
 
         switch (ssh->peerEncryptId) {
             case ID_NONE:
@@ -1185,8 +1325,9 @@ static int DoNewKeys(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
             case ID_AES128_CBC:
                 WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes128-cbc");
                 ret = wc_AesSetKey(&ssh->decryptCipher.aes,
-                                   ssh->encKeyClient, ssh->encKeyClientSz,
-                                   ssh->ivClient, AES_DECRYPTION);
+                                   ssh->clientKeys.encKey,
+                                   ssh->clientKeys.encKeySz,
+                                   ssh->clientKeys.iv, AES_DECRYPTION);
                 break;
 
             default:
@@ -1289,31 +1430,37 @@ int GenerateKey(uint8_t hashId, uint8_t keyId,
 
 static int GenerateKeys(WOLFSSH* ssh)
 {
+    Keys* cK;
+    Keys* sK;
+
     if (ssh == NULL)
         return WS_BAD_ARGUMENT;
 
+    cK = &ssh->handshake->clientKeys;
+    sK = &ssh->handshake->serverKeys;
+
     GenerateKey(0, 'A',
-                ssh->ivClient, ssh->ivClientSz,
+                cK->iv, cK->ivSz,
                 ssh->k, ssh->kSz, ssh->h, ssh->hSz,
                 ssh->sessionId, ssh->sessionIdSz);
     GenerateKey(0, 'B',
-                ssh->ivServer, ssh->ivServerSz,
+                sK->iv, sK->ivSz,
                 ssh->k, ssh->kSz, ssh->h, ssh->hSz,
                 ssh->sessionId, ssh->sessionIdSz);
     GenerateKey(0, 'C',
-                ssh->encKeyClient, ssh->encKeyClientSz,
+                cK->encKey, cK->encKeySz,
                 ssh->k, ssh->kSz, ssh->h, ssh->hSz,
                 ssh->sessionId, ssh->sessionIdSz);
     GenerateKey(0, 'D',
-                ssh->encKeyServer, ssh->encKeyServerSz,
+                sK->encKey, sK->encKeySz,
                 ssh->k, ssh->kSz, ssh->h, ssh->hSz,
                 ssh->sessionId, ssh->sessionIdSz);
     GenerateKey(0, 'E',
-                ssh->macKeyClient, ssh->macKeyClientSz,
+                cK->macKey, cK->macKeySz,
                 ssh->k, ssh->kSz, ssh->h, ssh->hSz,
                 ssh->sessionId, ssh->sessionIdSz);
     GenerateKey(0, 'F',
-                ssh->macKeyServer, ssh->macKeyServerSz,
+                sK->macKey, sK->macKeySz,
                 ssh->k, ssh->kSz, ssh->h, ssh->hSz,
                 ssh->sessionId, ssh->sessionIdSz);
 
@@ -1325,17 +1472,17 @@ static int GenerateKeys(WOLFSSH* ssh)
     printf("Session ID:\n");
     DumpOctetString(ssh->sessionId, ssh->sessionIdSz);
     printf("A:\n");
-    DumpOctetString(ssh->ivClient, ssh->ivClientSz);
+    DumpOctetString(cK->iv, cK->ivSz);
     printf("B:\n");
-    DumpOctetString(ssh->ivServer, ssh->ivServerSz);
+    DumpOctetString(sK->iv, sK->ivSz);
     printf("C:\n");
-    DumpOctetString(ssh->encKeyClient, ssh->encKeyClientSz);
+    DumpOctetString(cK->encKey, cK->encKeySz);
     printf("D:\n");
-    DumpOctetString(ssh->encKeyServer, ssh->encKeyServerSz);
+    DumpOctetString(sK->encKey, sK->encKeySz);
     printf("E:\n");
-    DumpOctetString(ssh->macKeyClient, ssh->macKeyClientSz);
+    DumpOctetString(cK->macKey, cK->macKeySz);
     printf("F:\n");
-    DumpOctetString(ssh->macKeyServer, ssh->macKeyServerSz);
+    DumpOctetString(sK->macKey, sK->macKeySz);
     printf("\n");
 #endif /* SHOW_SECRETS */
 
@@ -2258,6 +2405,11 @@ static INLINE int Encrypt(WOLFSSH* ssh, uint8_t* cipher, const uint8_t* input,
     }
 
     ssh->txCount += sz;
+    if (ssh->countHighwater && ssh->txCount > ssh->countHighwater) {
+        WLOG(WS_LOG_DEBUG, "Transmit over high water mark");
+        if (ssh->ctx->highwaterCb)
+            ssh->ctx->highwaterCb(WOLFSSH_HWSIDE_TRANSMIT, ssh->highwaterCtx);
+    }
 
     return ret;
 }
@@ -2290,6 +2442,11 @@ static INLINE int Decrypt(WOLFSSH* ssh, uint8_t* plain, const uint8_t* input,
     }
 
     ssh->rxCount += sz;
+    if (ssh->countHighwater && ssh->rxCount > ssh->countHighwater) {
+        WLOG(WS_LOG_DEBUG, "Receive over high water mark");
+        if (ssh->ctx->highwaterCb)
+            ssh->ctx->highwaterCb(WOLFSSH_HWSIDE_RECEIVE, ssh->highwaterCtx);
+    }
 
     return ret;
 }
@@ -2316,7 +2473,8 @@ static INLINE int CreateMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
                 uint8_t digest[SHA_DIGEST_SIZE];
 
                 wc_HmacSetKey(&hmac, SHA,
-                              ssh->macKeyServer, ssh->macKeyServerSz);
+                              ssh->serverKeys.macKey,
+                              ssh->serverKeys.macKeySz);
                 wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
                 wc_HmacUpdate(&hmac, in, inSz);
                 wc_HmacFinal(&hmac, digest);
@@ -2329,7 +2487,8 @@ static INLINE int CreateMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
                 Hmac hmac;
 
                 wc_HmacSetKey(&hmac, SHA,
-                              ssh->macKeyServer, ssh->macKeyServerSz);
+                              ssh->serverKeys.macKey,
+                              ssh->serverKeys.macKeySz);
                 wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
                 wc_HmacUpdate(&hmac, in, inSz);
                 wc_HmacFinal(&hmac, mac);
@@ -2341,7 +2500,8 @@ static INLINE int CreateMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
                 Hmac hmac;
 
                 wc_HmacSetKey(&hmac, SHA256,
-                              ssh->macKeyServer, ssh->macKeyServerSz);
+                              ssh->serverKeys.macKey,
+                              ssh->serverKeys.macKeySz);
                 wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
                 wc_HmacUpdate(&hmac, in, inSz);
                 wc_HmacFinal(&hmac, mac);
@@ -2370,7 +2530,7 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
     WLOG(WS_LOG_DEBUG, "VerifyMac %s", IdToName(ssh->peerMacId));
     WLOG(WS_LOG_DEBUG, "VM: inSz = %u", inSz);
     WLOG(WS_LOG_DEBUG, "VM: seq = %u", ssh->peerSeq);
-    WLOG(WS_LOG_DEBUG, "VM: keyLen = %u", ssh->macKeyClientSz);
+    WLOG(WS_LOG_DEBUG, "VM: keyLen = %u", ssh->clientKeys.macKeySz);
 
     switch (ssh->peerMacId) {
         case ID_NONE:
@@ -2378,7 +2538,8 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
 
         case ID_HMAC_SHA1:
         case ID_HMAC_SHA1_96:
-            wc_HmacSetKey(&hmac, SHA, ssh->macKeyClient, ssh->macKeyClientSz);
+            wc_HmacSetKey(&hmac, SHA,
+                          ssh->clientKeys.macKey, ssh->clientKeys.macKeySz);
             wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
             wc_HmacUpdate(&hmac, in, inSz);
             wc_HmacFinal(&hmac, checkMac);
@@ -2388,7 +2549,7 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
 
         case ID_HMAC_SHA2_256:
             wc_HmacSetKey(&hmac, SHA256,
-                          ssh->macKeyClient, ssh->macKeyClientSz);
+                          ssh->clientKeys.macKey, ssh->clientKeys.macKeySz);
             wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
             wc_HmacUpdate(&hmac, in, inSz);
             wc_HmacFinal(&hmac, checkMac);
@@ -2996,6 +3157,7 @@ int SendNewKeys(WOLFSSH* ssh)
         ssh->encryptId = ssh->handshake->encryptId;
         ssh->macSz = ssh->handshake->macSz;
         ssh->macId = ssh->handshake->macId;
+        WMEMCPY(&ssh->serverKeys, &ssh->handshake->serverKeys, sizeof(Keys));
 
         switch (ssh->encryptId) {
             case ID_NONE:
@@ -3005,8 +3167,9 @@ int SendNewKeys(WOLFSSH* ssh)
             case ID_AES128_CBC:
                 WLOG(WS_LOG_DEBUG, "SNK: using cipher aes128-cbc");
                 ret = wc_AesSetKey(&ssh->encryptCipher.aes,
-                                  ssh->encKeyServer, ssh->encKeyServerSz,
-                                  ssh->ivServer, AES_ENCRYPTION);
+                                  ssh->serverKeys.encKey,
+                                  ssh->serverKeys.encKeySz,
+                                  ssh->serverKeys.iv, AES_ENCRYPTION);
                 break;
 
             default:
