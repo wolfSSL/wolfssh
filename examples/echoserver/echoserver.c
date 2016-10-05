@@ -91,6 +91,11 @@ typedef struct {
 } thread_ctx_t;
 
 
+#ifndef DEFAULT_HIGHWATER_MARK
+    #define DEFAULT_HIGHWATER_MARK 0
+#endif
+
+
 #ifdef __GNUC__
     #define WS_NORETURN __attribute__((noreturn))
 #else
@@ -586,11 +591,29 @@ static int wsUserAuth(uint8_t authType,
 }
 
 
+static int wsHighwater(uint8_t side, void* ctx)
+{
+    if (ctx) {
+        WOLFSSH* ssh = (WOLFSSH*)ctx;
+        uint32_t highwaterMark = wolfSSH_GetHighwater(ssh);
+
+        printf("HIGHWATER ALERT: (%u) %s\n", highwaterMark,
+                (side == WOLFSSH_HWSIDE_RECEIVE) ? "receive" : "transmit");
+        highwaterMark *= 2;
+        printf("  Doubling the highwater mark to %u.\n", highwaterMark);
+        wolfSSH_SetHighwater(ssh, highwaterMark);
+    }
+
+    return 0;
+}
+
+
 int main(void)
 {
     WOLFSSH_CTX* ctx = NULL;
     PwMapList pwMapList;
     SOCKET_T listenFd = 0;
+    uint32_t defaultHighwater = DEFAULT_HIGHWATER_MARK;
 
     #ifdef DEBUG_WOLFSSH
         wolfSSH_Debugging_ON();
@@ -609,6 +632,8 @@ int main(void)
 
     memset(&pwMapList, 0, sizeof(pwMapList));
     wolfSSH_SetUserAuth(ctx, wsUserAuth);
+    if (defaultHighwater > 0)
+        wolfSSH_SetHighwaterCb(ctx, defaultHighwater, wsHighwater);
 
     {
         uint8_t buf[SCRATCH_BUFFER_SIZE];
@@ -662,6 +687,9 @@ int main(void)
             exit(EXIT_FAILURE);
         }
         wolfSSH_SetUserAuthCtx(ssh, &pwMapList);
+        /* Use the session object for its own highwater callback ctx */
+        if (defaultHighwater > 0)
+            wolfSSH_SetHighwaterCtx(ssh, (void*)ssh);
 
         if (listen(listenFd, 5) != 0)
             err_sys("tcp listen failed");
