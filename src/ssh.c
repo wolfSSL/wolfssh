@@ -33,6 +33,7 @@
 #include <wolfssh/log.h>
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/asn.h>
+#include <wolfssl/wolfcrypt/wc_port.h>
 
 #ifdef NO_INLINE
     #include <wolfssh/misc.h>
@@ -44,9 +45,14 @@
 
 int wolfSSH_Init(void)
 {
+    int ret = WS_SUCCESS;
+
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_Init()");
-    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_Init(), returning %d", WS_SUCCESS);
-    return WS_SUCCESS;
+    if (wolfCrypt_Init() != 0)
+        ret = WS_CRYPTO_FAILED;
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_Init(), returning %d", ret);
+    return ret;
 }
 
 
