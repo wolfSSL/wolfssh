@@ -31,6 +31,7 @@
 #include <sys/socket.h>
 #include <stdio.h>
 #include <pthread.h>
+#include <wolfssl/options.h>
 #include <wolfssl/wolfcrypt/sha256.h>
 #include <wolfssl/wolfcrypt/coding.h>
 #include <wolfssh/ssh.h>
