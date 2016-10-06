@@ -465,6 +465,11 @@ int ChannelPutData(WOLFSSH_CHANNEL* channel, uint8_t* data, uint32_t dataSz)
 
         WMEMCPY(inBuf->buffer + inBuf->length, data, dataSz);
         inBuf->length += dataSz;
+
+        WLOG(WS_LOG_INFO, "  dataSz = %u", dataSz);
+        WLOG(WS_LOG_INFO, "  windowSz = %u", channel->windowSz);
+        channel->windowSz -= dataSz;
+        WLOG(WS_LOG_INFO, "  windowSz = %u", channel->windowSz);
     }
     else {
         return WS_RECV_OVERFLOW_E;
@@ -2214,10 +2219,12 @@ static int DoChannelWindowAdjust(WOLFSSH* ssh,
             WLOG(WS_LOG_INFO, "  bytesToAdd = %u", bytesToAdd);
             WLOG(WS_LOG_INFO, "  peerWindowSz = %u",
                  channel->peerWindowSz);
-            WLOG(WS_LOG_INFO, "  update peerWindowSz = %u",
-                 channel->peerWindowSz + bytesToAdd);
 
             channel->peerWindowSz += bytesToAdd;
+
+            WLOG(WS_LOG_INFO, "  update peerWindowSz = %u",
+                 channel->peerWindowSz);
+
         }
     }
 
@@ -3642,9 +3649,8 @@ int SendChannelData(WOLFSSH* ssh, uint32_t peerChannel,
 
         WLOG(WS_LOG_INFO, "  dataSz = %u", dataSz);
         WLOG(WS_LOG_INFO, "  peerWindowSz = %u", channel->peerWindowSz);
-        WLOG(WS_LOG_INFO, "  update peerWindowSz = %u",
-                          channel->peerWindowSz - dataSz);
         channel->peerWindowSz -= dataSz;
+        WLOG(WS_LOG_INFO, "  update peerWindowSz = %u", channel->peerWindowSz);
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelData(), ret = %d", ret);
