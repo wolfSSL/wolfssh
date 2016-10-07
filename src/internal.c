@@ -3658,6 +3658,60 @@ int SendChannelData(WOLFSSH* ssh, uint32_t peerChannel,
 }
 
 
+int SendChannelWindowAdjust(WOLFSSH* ssh, uint32_t peerChannel,
+                            uint32_t bytesToAdd)
+{
+    uint8_t* output;
+    uint32_t idx;
+    int ret = WS_SUCCESS;
+    WOLFSSH_CHANNEL* channel;
+
+    WLOG(WS_LOG_DEBUG, "Entering SendChannelWindowAdjust()");
+
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    channel = ChannelFind(ssh, peerChannel, FIND_PEER);
+    if (channel == NULL) {
+        WLOG(WS_LOG_DEBUG, "Invalid peer channel");
+        ret = WS_INVALID_CHANID;
+    }
+#if 0
+    /* Check bytesToAdd against the buffer size */
+    if (bytesToAdd > ssh->inputBuffer.bufferSz - ssh->inputBuffer.length)
+        ret = WS_BAD_ARGUMENT;
+#endif
+    if (ret == WS_SUCCESS)
+        ret = PreparePacket(ssh, MSG_ID_SZ + (UINT32_SZ * 2));
+
+    if (ret == WS_SUCCESS) {
+        output = ssh->outputBuffer.buffer;
+        idx = ssh->outputBuffer.length;
+
+        output[idx++] = MSGID_CHANNEL_WINDOW_ADJUST;
+        c32toa(channel->peerChannel, output + idx);
+        idx += UINT32_SZ;
+        c32toa(bytesToAdd, output + idx);
+        idx += UINT32_SZ;
+
+        ssh->outputBuffer.length = idx;
+
+        ret = BundlePacket(ssh);
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = SendBuffered(ssh);
+
+        WLOG(WS_LOG_INFO, "  bytesToAdd = %u", bytesToAdd);
+        WLOG(WS_LOG_INFO, "  windowSz = %u", channel->windowSz);
+        channel->windowSz += bytesToAdd;
+        WLOG(WS_LOG_INFO, "  update windowSz = %u", channel->windowSz);
+    }
+    WLOG(WS_LOG_DEBUG, "Leaving SendChannelWindowAdjust(), ret = %d", ret);
+    return ret;
+}
+
+
 #define LINE_WIDTH 16
 void DumpOctetString(const uint8_t* input, uint32_t inputSz)
 {

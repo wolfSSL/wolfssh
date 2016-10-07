@@ -303,6 +303,7 @@ WOLFSSH_LOCAL int SendUserAuthPkOk(WOLFSSH*, const uint8_t*, uint32_t,
                                    const uint8_t*, uint32_t);
 WOLFSSH_LOCAL int SendChannelOpenConf(WOLFSSH*);
 WOLFSSH_LOCAL int SendChannelData(WOLFSSH*, uint32_t, uint8_t*, uint32_t);
+WOLFSSH_LOCAL int SendChannelWindowAdjust(WOLFSSH*, uint32_t, uint32_t);
 WOLFSSH_LOCAL int GenerateKey(uint8_t, uint8_t, uint8_t*, uint32_t,
                               const uint8_t*, uint32_t,
                               const uint8_t*, uint32_t,
