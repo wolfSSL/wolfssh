@@ -165,7 +165,7 @@ int wolfSSH_SetHighwater(WOLFSSH* ssh, uint32_t highwater)
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetHighwater()");
 
     if (ssh) {
-        ssh->countHighwater = highwater;
+        ssh->highwaterMark = highwater;
 
         return WS_SUCCESS;
     }
@@ -179,7 +179,7 @@ uint32_t wolfSSH_GetHighwater(WOLFSSH* ssh)
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_GetHighwater()");
 
     if (ssh)
-        return ssh->countHighwater;
+        return ssh->highwaterMark;
 
     return 0;
 }
@@ -191,7 +191,7 @@ void wolfSSH_SetHighwaterCb(WOLFSSH_CTX* ctx, uint32_t highwater,
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetHighwaterCb()");
 
     if (ctx) {
-        ctx->countHighwater = highwater;
+        ctx->highwaterMark = highwater;
         ctx->highwaterCb = cb;
     }
 }
@@ -269,61 +269,21 @@ int wolfSSH_accept(WOLFSSH* ssh)
             WLOG(WS_LOG_DEBUG, acceptState, "SERVER_VERSION_SENT");
 
         case ACCEPT_SERVER_VERSION_SENT:
-            while (ssh->clientState < CLIENT_KEXINIT_DONE) {
+            while (ssh->keyingState < KEYING_KEYED) {
                 if ( (ssh->error = ProcessReply(ssh)) < WS_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, acceptError,
                          "SERVER_VERSION_SENT", ssh->error);
                     return WS_FATAL_ERROR;
                 }
             }
-            ssh->acceptState = ACCEPT_CLIENT_KEXINIT_DONE;
-            WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_KEXINIT_DONE");
+            ssh->acceptState = ACCEPT_KEYED;
+            WLOG(WS_LOG_DEBUG, acceptState, "KEYED");
 
-        case ACCEPT_CLIENT_KEXINIT_DONE:
-            if ( (ssh->error = SendKexInit(ssh)) < WS_SUCCESS) {
-                WLOG(WS_LOG_DEBUG, acceptError,
-                     "CLIENT_KEXINIT_DONE", ssh->error);
-                return WS_FATAL_ERROR;
-            }
-            ssh->acceptState = ACCEPT_SERVER_KEXINIT_SENT;
-            WLOG(WS_LOG_DEBUG, acceptState, "SERVER_KEXINIT_SENT");
-
-        case ACCEPT_SERVER_KEXINIT_SENT:
-            while (ssh->clientState < CLIENT_KEXDH_INIT_DONE) {
-                if ( (ssh->error = ProcessReply(ssh)) < 0) {
-                    WLOG(WS_LOG_DEBUG, acceptError,
-                         "SERVER_KEXINIT_SENT", ssh->error);
-                    return WS_FATAL_ERROR;
-                }
-            }
-            ssh->acceptState = ACCEPT_CLIENT_KEXDH_INIT_DONE;
-            WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_KEXDH_INIT_DONE");
-
-        case ACCEPT_CLIENT_KEXDH_INIT_DONE:
-            if ( (ssh->error = SendKexDhReply(ssh)) < WS_SUCCESS) {
-                WLOG(WS_LOG_DEBUG, acceptError,
-                     "CLIENT_KEXDH_INIT_DONE", ssh->error);
-                return WS_FATAL_ERROR;
-            }
-            ssh->acceptState = ACCEPT_SERVER_KEXDH_REPLY_SENT;
-            WLOG(WS_LOG_DEBUG, acceptState, "SERVER_KEXDH_REPLY_SENT");
-
-        case ACCEPT_SERVER_KEXDH_REPLY_SENT:
-            while (ssh->clientState < CLIENT_USING_KEYS) {
-                if ( (ssh->error = ProcessReply(ssh)) < 0) {
-                    WLOG(WS_LOG_DEBUG, acceptError,
-                         "SERVER_KEXDH_REPLY_SENT", ssh->error);
-                    return WS_FATAL_ERROR;
-                }
-            }
-            ssh->acceptState = ACCEPT_USING_KEYS;
-            WLOG(WS_LOG_DEBUG, acceptState, "USING_KEYS");
-
-        case ACCEPT_USING_KEYS:
+        case ACCEPT_KEYED:
             while (ssh->clientState < CLIENT_USERAUTH_REQUEST_DONE) {
                 if ( (ssh->error = ProcessReply(ssh)) < 0) {
                     WLOG(WS_LOG_DEBUG, acceptError,
-                         "USING_KEYS", ssh->error);
+                         "KEYED", ssh->error);
                     return WS_FATAL_ERROR;
                 }
             }
@@ -381,6 +341,13 @@ int wolfSSH_accept(WOLFSSH* ssh)
             WLOG(WS_LOG_DEBUG, acceptState, "SERVER_CHANNEL_ACCEPT_SENT");
     }
 
+    return WS_SUCCESS;
+}
+
+
+int wolfSSH_TriggerKeyExchange(WOLFSSH* ssh)
+{
+    (void)ssh;
     return WS_SUCCESS;
 }
 

@@ -97,11 +97,14 @@ enum {
 #define COOKIE_SZ        16
 #define LENGTH_SZ        4
 #define PAD_LENGTH_SZ    1
+#define MIN_PAD_LENGTH   4
 #define BOOLEAN_SZ       1
 #define MSG_ID_SZ        1
 #define SHA1_96_SZ       12
 #define UINT32_SZ        4
-#define DEFAULT_COUNT_HIGHWATER ((1024 * 1024 * 1024) - (32 * 1024))
+#define SSH_PROTO_SZ     7    /* "SSH-2.0" */
+#define SSH_PROTO_EOL_SZ 2    /* Just the CRLF */
+#define DEFAULT_HIGHWATER_MARK ((1024 * 1024 * 1024) - (32 * 1024))
 #ifndef DEFAULT_WINDOW_SZ
     #define DEFAULT_WINDOW_SZ (1024 * 1024)
 #endif
@@ -145,7 +148,7 @@ struct WOLFSSH_CTX {
 
     uint8_t*            privateKey;  /* Owned by CTX */
     uint32_t            privateKeySz;
-    uint32_t            countHighwater;
+    uint32_t            highwaterMark;
 };
 
 
@@ -179,6 +182,8 @@ typedef struct HandshakeInfo {
     Sha            hash;
     uint8_t        e[257]; /* May have a leading zero, for unsigned. */
     uint32_t       eSz;
+    uint8_t*       serverKexInit;   /* Used for server initiated rekey. */
+    uint32_t       serverKeyInitSz;
 } HandshakeInfo;
 
 
@@ -194,7 +199,8 @@ struct WOLFSSH {
     int            wflags;         /* optional write flags */
     uint32_t       txCount;
     uint32_t       rxCount;
-    uint32_t       countHighwater;
+    uint32_t       highwaterMark;
+    uint8_t        highwaterFlag;  /* Set when highwater CB called */
     void*          highwaterCtx;
     uint32_t       curSz;
     uint32_t       seq;
@@ -204,6 +210,7 @@ struct WOLFSSH {
     uint8_t        acceptState;
     uint8_t        clientState;
     uint8_t        processReplyState;
+    uint8_t        keyingState;
 
     uint8_t        connReset;
     uint8_t        isClosed;
@@ -245,6 +252,8 @@ struct WOLFSSH {
     uint32_t       userNameSz;
     uint8_t*       pkBlob;
     uint32_t       pkBlobSz;
+    uint8_t*       clientId;   /* Save for rekey */
+    uint32_t       clientIdSz;
 };
 
 
@@ -252,7 +261,6 @@ struct WOLFSSH_CHANNEL {
     uint8_t  channelType;
     uint32_t channel;
     uint32_t windowSz;
-    uint32_t highwaterMark;
     uint32_t maxPacketSz;
     uint32_t peerChannel;
     uint32_t peerWindowSz;
@@ -310,15 +318,27 @@ WOLFSSH_LOCAL int GenerateKey(uint8_t, uint8_t, uint8_t*, uint32_t,
                               const uint8_t*, uint32_t);
 
 
+enum KeyingStates {
+    KEYING_UNKEYED = 0,
+
+    KEYING_KEXINIT_SENT,
+    KEYING_KEXINIT_RECV,
+    KEYING_KEXINIT_DONE,
+
+    KEYING_KEXDH_INIT_RECV,
+    KEYING_KEXDH_DONE,
+
+    KEYING_USING_KEYS_SENT,
+    KEYING_USING_KEYS_RECV,
+    KEYING_KEYED
+};
+
+
 enum AcceptStates {
     ACCEPT_BEGIN = 0,
     ACCEPT_CLIENT_VERSION_DONE,
     ACCEPT_SERVER_VERSION_SENT,
-    ACCEPT_CLIENT_KEXINIT_DONE,
-    ACCEPT_SERVER_KEXINIT_SENT,
-    ACCEPT_CLIENT_KEXDH_INIT_DONE,
-    ACCEPT_SERVER_KEXDH_REPLY_SENT,
-    ACCEPT_USING_KEYS,
+    ACCEPT_KEYED,
     ACCEPT_CLIENT_USERAUTH_REQUEST_DONE,
     ACCEPT_SERVER_USERAUTH_ACCEPT_SENT,
     ACCEPT_CLIENT_USERAUTH_DONE,
