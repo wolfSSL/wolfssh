@@ -6,6 +6,7 @@
 nobase_include_HEADERS+= \
                          wolfssh/version.h \
                          wolfssh/ssh.h \
+                         wolfssh/keygen.h \
                          wolfssh/port.h \
                          wolfssh/memory.h \
                          wolfssh/settings.h \

@@ -474,7 +474,7 @@ static int ProcessBuffer(WOLFSSH_CTX* ctx, const uint8_t* in, uint32_t inSz,
     else if (type == BUFTYPE_CERT)
         dynamicType = DYNTYPE_CERT;
     else if (type == BUFTYPE_PRIVKEY)
-        dynamicType = DYNTYPE_KEY;
+        dynamicType = DYNTYPE_PRIVKEY;
     else
         return WS_BAD_ARGUMENT;
 
@@ -493,13 +493,7 @@ static int ProcessBuffer(WOLFSSH_CTX* ctx, const uint8_t* in, uint32_t inSz,
 
     /* Maybe decrypt */
 
-    if (type == BUFTYPE_CERT) {
-        if (ctx->cert)
-            WFREE(ctx->cert, heap, dynamicType);
-        ctx->cert = der;
-        ctx->certSz = derSz;
-    }
-    else if (type == BUFTYPE_PRIVKEY) {
+    if (type == BUFTYPE_PRIVKEY) {
         if (ctx->privateKey)
             WFREE(ctx->privateKey, heap, dynamicType);
         ctx->privateKey = der;
@@ -531,24 +525,8 @@ static int ProcessBuffer(WOLFSSH_CTX* ctx, const uint8_t* in, uint32_t inSz,
 int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX* ctx,
                                    const uint8_t* in, uint32_t inSz, int format)
 {
-    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CTX_use_private_key_buffer()");
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CTX_UsePrivateKey_buffer()");
     return ProcessBuffer(ctx, in, inSz, format, BUFTYPE_PRIVKEY); 
-}
-
-
-int wolfSSH_CTX_UseCert_buffer(WOLFSSH_CTX* ctx,
-                                   const uint8_t* in, uint32_t inSz, int format)
-{
-    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CTX_use_certificate_buffer()");
-    return ProcessBuffer(ctx, in, inSz, format, BUFTYPE_CERT);
-}
-
-
-int wolfSSH_CTX_UseCaCert_buffer(WOLFSSH_CTX* ctx,
-                                   const uint8_t* in, uint32_t inSz, int format)
-{
-    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CTX_use_ca_certificate_buffer()");
-    return ProcessBuffer(ctx, in, inSz, format, BUFTYPE_CA);
 }
 
 

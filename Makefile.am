@@ -34,7 +34,7 @@ include src/include.am
 include wolfssh/include.am
 include examples/include.am
 include test/include.am
-include certs/include.am
+include keys/include.am
 
 
 TEST_EXTENSIONS = .test

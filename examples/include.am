@@ -3,4 +3,3 @@
 # All paths should be given relative to the root
 
 include examples/echoserver/include.am
-include examples/server/include.am
