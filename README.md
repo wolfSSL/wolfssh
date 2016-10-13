@@ -44,8 +44,7 @@ testing notes
 After cloning the repository, be sure to make the testing private keys read-
 only for the user, otherwise ssh_client will tell you to do it.
 
-    $ chmod 0600 ./certs/key-gretel.pem ./certs/key-hansel.pem \
-                 ./certs/key-ecc.pem
+    $ chmod 0600 ./certs/key-gretel.pem ./certs/key-hansel.pem
 
 Authentication against the example echoserver can be done with a password or
 public key. To use a password the command line:

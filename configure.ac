@@ -97,6 +97,14 @@ fi
 
 AM_CONDITIONAL([BUILD_INLINE], [test "x$ENABLED_INLINE" = "xyes"])
 
+# Key Generation
+AC_ARG_ENABLE([keygen],
+    [AS_HELP_STRING([--enable-keygen],[Enable key generation (default: disabled)])],
+    [ENABLED_KEYGEN=$enableval],[ENABLED_KEYGEN=no])
+
+AS_IF([test "x$ENABLED_KEYGEN" = "xyes"],
+      [AM_CFLAGS="$AM_CFLAGS -DWOLFSSH_KEYGEN"])
+
 
 # Checks for typedefs, structures, and compiler characteristics.
 if test "$ac_cv_sizeof_long" = "8"; then
@@ -142,4 +150,7 @@ echo "   * C Flags:                   $CFLAGS"
 echo "   * CPP Flags:                 $CPPFLAGS"
 echo "   * Linker Flags:              $LDFLAGS"
 echo "   * LIB Flags:                 $LIB"
+echo
+echo "   Features "
+echo "   * keygen:                    $ENABLED_KEYGEN"
 

@@ -126,10 +126,6 @@ WOLFSSH_API void* wolfSSH_GetUserAuthCtx(WOLFSSH*);
 
 WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX*,
                                                  const uint8_t*, uint32_t, int);
-WOLFSSH_API int wolfSSH_CTX_UseCert_buffer(WOLFSSH_CTX*,
-                                                 const uint8_t*, uint32_t, int);
-WOLFSSH_API int wolfSSH_CTX_UseCaCert_buffer(WOLFSSH_CTX*,
-                                                 const uint8_t*, uint32_t, int);
 
 WOLFSSH_API int wolfSSH_accept(WOLFSSH*);
 WOLFSSH_API int wolfSSH_stream_read(WOLFSSH*, uint8_t*, uint32_t);

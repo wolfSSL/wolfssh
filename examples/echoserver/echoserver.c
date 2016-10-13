@@ -640,18 +640,7 @@ int main(void)
         uint8_t buf[SCRATCH_BUFFER_SIZE];
         uint32_t bufSz;
 
-        bufSz = load_file("./certs/server-cert.der", buf, SCRATCH_BUFFER_SIZE);
-        if (bufSz == 0) {
-            fprintf(stderr, "Couldn't load certificate file.\n");
-            exit(EXIT_FAILURE);
-        }
-        if (wolfSSH_CTX_UseCert_buffer(ctx,
-                                         buf, bufSz, WOLFSSH_FORMAT_ASN1) < 0) {
-            fprintf(stderr, "Couldn't use certificate buffer.\n");
-            exit(EXIT_FAILURE);
-        }
-
-        bufSz = load_file("./certs/server-key.der", buf, SCRATCH_BUFFER_SIZE);
+        bufSz = load_file("./keys/server-key.der", buf, SCRATCH_BUFFER_SIZE);
         if (bufSz == 0) {
             fprintf(stderr, "Couldn't load key file.\n");
             exit(EXIT_FAILURE);

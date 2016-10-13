@@ -141,10 +141,6 @@ struct WOLFSSH_CTX {
     WS_CallbackUserAuth userAuthCb;  /* User Authentication Callback */
     WS_CallbackHighwater highwaterCb; /* Data Highwater Mark Callback */
 
-    uint8_t*            cert;        /* Owned by CTX */
-    uint32_t            certSz;
-    uint8_t*            caCert;      /* Owned by CTX */
-    uint32_t            caCertSz;
     uint8_t*            privateKey;  /* Owned by CTX */
     uint32_t            privateKeySz;
     uint32_t            countHighwater;
@@ -388,7 +384,8 @@ enum WS_DynamicTypes {
     DYNTYPE_HS,
     DYNTYPE_CA,
     DYNTYPE_CERT,
-    DYNTYPE_KEY,
+    DYNTYPE_PRIVKEY,
+    DYNTYPE_PUBKEY,
     DYNTYPE_DH,
     DYNTYPE_RNG,
     DYNTYPE_STRING
@@ -398,7 +395,8 @@ enum WS_DynamicTypes {
 enum WS_BufferTypes {
     BUFTYPE_CA,
     BUFTYPE_CERT,
-    BUFTYPE_PRIVKEY
+    BUFTYPE_PRIVKEY,
+    BUFTYPE_PUBKEY
 };
 
 
