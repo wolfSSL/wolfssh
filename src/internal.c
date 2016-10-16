@@ -3676,11 +3676,6 @@ int SendChannelWindowAdjust(WOLFSSH* ssh, uint32_t peerChannel,
         WLOG(WS_LOG_DEBUG, "Invalid peer channel");
         ret = WS_INVALID_CHANID;
     }
-#if 0
-    /* Check bytesToAdd against the buffer size */
-    if (bytesToAdd > ssh->inputBuffer.bufferSz - ssh->inputBuffer.length)
-        ret = WS_BAD_ARGUMENT;
-#endif
     if (ret == WS_SUCCESS)
         ret = PreparePacket(ssh, MSG_ID_SZ + (UINT32_SZ * 2));
 
@@ -3699,14 +3694,9 @@ int SendChannelWindowAdjust(WOLFSSH* ssh, uint32_t peerChannel,
         ret = BundlePacket(ssh);
     }
 
-    if (ret == WS_SUCCESS) {
+    if (ret == WS_SUCCESS)
         ret = SendBuffered(ssh);
 
-        WLOG(WS_LOG_INFO, "  bytesToAdd = %u", bytesToAdd);
-        WLOG(WS_LOG_INFO, "  windowSz = %u", channel->windowSz);
-        channel->windowSz += bytesToAdd;
-        WLOG(WS_LOG_INFO, "  update windowSz = %u", channel->windowSz);
-    }
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelWindowAdjust(), ret = %d", ret);
     return ret;
 }
