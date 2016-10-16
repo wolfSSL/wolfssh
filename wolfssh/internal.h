@@ -101,8 +101,10 @@ enum {
 #define MSG_ID_SZ        1
 #define SHA1_96_SZ       12
 #define UINT32_SZ        4
-#define DEFAULT_COUNT_HIGHWATER (1024 * 1024 * 1024)
-#define DEFAULT_WINDOW_SZ     (1024 * 1024)
+#define DEFAULT_COUNT_HIGHWATER ((1024 * 1024 * 1024) - (32 * 1024))
+#ifndef DEFAULT_WINDOW_SZ
+    #define DEFAULT_WINDOW_SZ (1024 * 1024)
+#endif
 #define DEFAULT_MAX_PACKET_SZ (16 * 1024)
 #define DEFAULT_NEXT_CHANNEL  13013
 
@@ -299,8 +301,9 @@ WOLFSSH_LOCAL int SendUserAuthFailure(WOLFSSH*, uint8_t);
 WOLFSSH_LOCAL int SendUserAuthBanner(WOLFSSH*);
 WOLFSSH_LOCAL int SendUserAuthPkOk(WOLFSSH*, const uint8_t*, uint32_t,
                                    const uint8_t*, uint32_t);
-WOLFSSH_LOCAL int SendChannelOpenConf(WOLFSSH* ssh);
-WOLFSSH_LOCAL int SendChannelData(WOLFSSH* ssh, uint32_t, uint8_t*, uint32_t);
+WOLFSSH_LOCAL int SendChannelOpenConf(WOLFSSH*);
+WOLFSSH_LOCAL int SendChannelData(WOLFSSH*, uint32_t, uint8_t*, uint32_t);
+WOLFSSH_LOCAL int SendChannelWindowAdjust(WOLFSSH*, uint32_t, uint32_t);
 WOLFSSH_LOCAL int GenerateKey(uint8_t, uint8_t, uint8_t*, uint32_t,
                               const uint8_t*, uint32_t,
                               const uint8_t*, uint32_t,

@@ -105,6 +105,8 @@ AC_ARG_ENABLE([keygen],
 AS_IF([test "x$ENABLED_KEYGEN" = "xyes"],
       [AM_CFLAGS="$AM_CFLAGS -DWOLFSSH_KEYGEN"])
 
+AM_CONDITIONAL([BUILD_KEYGEN], [test "x$ENABLED_KEYGEN" = "xyes"])
+
 
 # Checks for typedefs, structures, and compiler characteristics.
 if test "$ac_cv_sizeof_long" = "8"; then

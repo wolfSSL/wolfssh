@@ -408,6 +408,33 @@ int wolfSSH_stream_read(WOLFSSH* ssh, uint8_t* buf, uint32_t bufSz)
     WMEMCPY(buf, inputBuffer->buffer + inputBuffer->idx, bufSz);
     inputBuffer->idx += bufSz;
 
+    if (inputBuffer->length > inputBuffer->bufferSz / 2) {
+        uint32_t usedSz = inputBuffer->length - inputBuffer->idx;
+        uint32_t bytesToAdd = inputBuffer->idx;
+        int sendResult;
+
+        WLOG(WS_LOG_DEBUG, "Making more room: %u", usedSz);
+        if (usedSz) {
+            WLOG(WS_LOG_DEBUG, "  ...moving data down");
+            WMEMMOVE(inputBuffer->buffer,
+                     inputBuffer->buffer + bytesToAdd, usedSz);
+        }
+
+        sendResult = SendChannelWindowAdjust(ssh,
+                                             ssh->channelList->peerChannel,
+                                             bytesToAdd);
+        if (sendResult != WS_SUCCESS)
+            bufSz = sendResult;
+
+        WLOG(WS_LOG_INFO, "  bytesToAdd = %u", bytesToAdd);
+        WLOG(WS_LOG_INFO, "  windowSz = %u", ssh->channelList->windowSz);
+        ssh->channelList->windowSz += bytesToAdd;
+        WLOG(WS_LOG_INFO, "  update windowSz = %u", ssh->channelList->windowSz);
+
+        inputBuffer->length = usedSz;
+        inputBuffer->idx = 0;
+    }
+
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_stream_read(), rxd = %u", bufSz);
     return bufSz;
 }
