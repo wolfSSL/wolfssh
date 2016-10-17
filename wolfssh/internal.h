@@ -183,7 +183,7 @@ typedef struct HandshakeInfo {
     uint8_t        e[257]; /* May have a leading zero, for unsigned. */
     uint32_t       eSz;
     uint8_t*       serverKexInit;   /* Used for server initiated rekey. */
-    uint32_t       serverKeyInitSz;
+    uint32_t       serverKexInitSz;
 } HandshakeInfo;
 
 
