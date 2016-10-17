@@ -67,7 +67,8 @@ enum WS_ErrorCodes {
     WS_INVALID_CHANID   = -27,
     WS_INVALID_USERNAME = -28,
     WS_CRYPTO_FAILED   = -29,   /* crypto action failed */
-    WS_INVALID_STATE_E = -30
+    WS_INVALID_STATE_E = -30,
+    WS_REKEYING        = -31
 };
 
 

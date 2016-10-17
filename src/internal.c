@@ -127,20 +127,23 @@ const char* GetErrorString(int err)
         case WS_RESOURCE_E:
             return "insufficient resources for new channel";
 
-        case WS_INVALID_USERNAME:
-            return "invalid user name";
-
         case WS_INVALID_CHANTYPE:
             return "peer requested invalid channel type";
 
         case WS_INVALID_CHANID:
             return "peer requested invalid channel id";
 
+        case WS_INVALID_USERNAME:
+            return "invalid user name";
+
         case WS_CRYPTO_FAILED:
             return "crypto action failed";
 
         case WS_INVALID_STATE_E:
             return "invalid state";
+
+        case WS_REKEYING:
+            return "rekeying with peer";
 
         default:
             return "Unknown error code";
@@ -158,7 +161,7 @@ static int wsHighwater(byte dir, void* ctx)
     if (ctx) {
         WOLFSSH* ssh = (WOLFSSH*)ctx;
 
-        WLOG(WS_LOG_DEBUG, "HIGHWATER MARK: (%u) %s\n",
+        WLOG(WS_LOG_DEBUG, "HIGHWATER MARK: (%u) %s",
              wolfSSH_GetHighwater(ssh),
              (dir == WOLFSSH_HWSIDE_RECEIVE) ? "receive" : "transmit");
 
@@ -169,10 +172,28 @@ static int wsHighwater(byte dir, void* ctx)
 }
 
 
+static INLINE void HighwaterCheck(WOLFSSH* ssh, byte side)
+{
+    if (!ssh->highwaterFlag && ssh->highwaterMark &&
+        (ssh->txCount >= ssh->highwaterMark ||
+         ssh->rxCount >= ssh->highwaterMark)) {
+
+        WLOG(WS_LOG_DEBUG, "%s over high water mark",
+             (side == WOLFSSH_HWSIDE_TRANSMIT) ? "Transmit" : "Receive");
+
+        ssh->highwaterFlag = 1;
+
+        if (ssh->ctx->highwaterCb)
+            ssh->ctx->highwaterCb(side, ssh->highwaterCtx);
+    }
+}
+
+
 static HandshakeInfo* HandshakeInfoNew(void* heap)
 {
     HandshakeInfo* newHs;
 
+    WLOG(WS_LOG_DEBUG, "Entering HandshakeInfoNew()");
     newHs = (HandshakeInfo*)WMALLOC(sizeof(HandshakeInfo),
                                     heap, DYNTYPE_HS);
     if (newHs != NULL) {
@@ -197,6 +218,7 @@ static void HandshakeInfoFree(HandshakeInfo* hs, void* heap)
 {
     (void)heap;
 
+    WLOG(WS_LOG_DEBUG, "Entering HandshakeInfoFree()");
     if (hs) {
         WFREE(hs->serverKexInit, heap, DYNTYPE_STRING);
         ForceZero(hs, sizeof(HandshakeInfo));
@@ -712,6 +734,8 @@ static int GetInputText(WOLFSSH* ssh)
 
 static int SendBuffered(WOLFSSH* ssh)
 {
+    WLOG(WS_LOG_DEBUG, "Entering SendBuffered()");
+
     if (ssh->ctx->ioSendCb == NULL) {
         WLOG(WS_LOG_DEBUG, "Your IO Send callback is null, please set");
         return WS_SOCKET_ERROR_E;
@@ -751,6 +775,8 @@ static int SendBuffered(WOLFSSH* ssh)
 
     WLOG(WS_LOG_DEBUG, "SB: Shrinking output buffer");
     ShrinkBuffer(&ssh->outputBuffer, 0);
+
+    HighwaterCheck(ssh, WOLFSSH_HWSIDE_TRANSMIT);
 
     return WS_SUCCESS;
 }
@@ -1066,8 +1092,6 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
     if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
         ret = WS_BAD_ARGUMENT;
 
-    if (ssh->keyingState != KEYING_UNKEYED && ssh->keyingState != KEYING_KEYED)
-        ret = WS_INVALID_STATE_E;
     /*
      * I don't need to save what the client sends here. I should decode
      * each list into a local array of IDs, and pick the one the peer is
@@ -1256,10 +1280,12 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
         ssh->clientState = CLIENT_KEXINIT_DONE;
 
         if (ssh->keyingState == KEYING_UNKEYED) {
+            WLOG(WS_LOG_DEBUG, "KeyingState now KEXINIT_RECV");
             ssh->keyingState = KEYING_KEXINIT_RECV;
             ret = SendKexInit(ssh);
         }
         else if (KEYING_KEXINIT_SENT) {
+            WLOG(WS_LOG_DEBUG, "KeyingState now KEXINIT_DONE");
             ssh->keyingState = KEYING_KEXINIT_DONE;
         }
     }
@@ -1414,8 +1440,18 @@ static int DoNewKeys(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 
     if (ret == WS_SUCCESS) {
         ssh->rxCount = 0;
-        ssh->clientState = CLIENT_USING_KEYS;
-        ssh->keyingState = KEYING_KEYED;
+        if (ssh->keyingState == KEYING_USING_KEYS_SENT) {
+            ssh->clientState = CLIENT_USING_KEYS;
+            ssh->highwaterFlag = 0;
+            ssh->keyingState = KEYING_KEYED;
+            HandshakeInfoFree(ssh->handshake, ssh->ctx->heap);
+            ssh->handshake = NULL;
+            WLOG(WS_LOG_DEBUG, "KeyingState now KEYED");
+        }
+        else {
+            ssh->keyingState = KEYING_USING_KEYS_RECV;
+            WLOG(WS_LOG_DEBUG, "KeyingState now USING_KEYS_RECV");
+        }
     }
 
     return ret;
@@ -2392,15 +2428,18 @@ static int DoPacket(WOLFSSH* ssh)
                 ret = WS_SUCCESS;
 
                 if (ssh->keyingState == KEYING_KEYED) {
-                    uint32_t idSz;
-
                     ssh->handshake = HandshakeInfoNew(ssh->ctx->heap);
                     if (ssh->handshake == NULL) {
                         WLOG(WS_LOG_DEBUG, "Couldn't allocate handshake info");
                         ret = WS_MEMORY_E;
                     }
-                    c32toa(ssh->clientIdSz, szFlat);
-                    wc_ShaUpdate(&ssh->handshake->hash, szFlat, LENGTH_SZ);
+                }
+
+                if (ssh->keyingState == KEYING_KEYED ||
+                    ssh->keyingState == KEYING_KEXINIT_SENT) {
+
+                    uint32_t idSz;
+
                     wc_ShaUpdate(&ssh->handshake->hash,
                                  ssh->clientId, ssh->clientIdSz);
 
@@ -2418,14 +2457,15 @@ static int DoPacket(WOLFSSH* ssh)
                     wc_ShaUpdate(&ssh->handshake->hash, buf + idx, payloadSz);
                 }
 
-                if (ssh->keyingState == KEYING_KEXINIT_SENT) {
+                if (ret == WS_SUCCESS)
+                    ret = DoKexInit(ssh, buf + idx, payloadSz, &payloadIdx);
+
+                if (ssh->keyingState == KEYING_KEXINIT_DONE) {
                     wc_ShaUpdate(&ssh->handshake->hash,
                                  ssh->handshake->serverKexInit,
                                  ssh->handshake->serverKexInitSz);
                 }
 
-                if (ret == WS_SUCCESS)
-                    ret = DoKexInit(ssh, buf + idx, payloadSz, &payloadIdx);
             }
             break;
 
@@ -2524,14 +2564,6 @@ static INLINE int Encrypt(WOLFSSH* ssh, uint8_t* cipher, const uint8_t* input,
     }
 
     ssh->txCount += sz;
-    if (ssh->highwaterMark && !ssh->highwaterFlag &&
-        ssh->txCount > ssh->highwaterMark) {
-
-        WLOG(WS_LOG_DEBUG, "Transmit over high water mark");
-        if (ssh->ctx->highwaterCb)
-            ssh->ctx->highwaterCb(WOLFSSH_HWSIDE_TRANSMIT, ssh->highwaterCtx);
-        ssh->highwaterFlag = 1;
-    }
 
     return ret;
 }
@@ -2564,14 +2596,7 @@ static INLINE int Decrypt(WOLFSSH* ssh, uint8_t* plain, const uint8_t* input,
     }
 
     ssh->rxCount += sz;
-    if (ssh->highwaterMark && !ssh->highwaterFlag &&
-        ssh->rxCount > ssh->highwaterMark) {
-
-        WLOG(WS_LOG_DEBUG, "Receive over high water mark");
-        if (ssh->ctx->highwaterCb)
-            ssh->ctx->highwaterCb(WOLFSSH_HWSIDE_RECEIVE, ssh->highwaterCtx);
-        ssh->highwaterFlag = 1;
-    }
+    HighwaterCheck(ssh, WOLFSSH_HWSIDE_RECEIVE);
 
     return ret;
 }
@@ -2811,23 +2836,17 @@ int ProcessClientVersion(WOLFSSH* ssh)
 
     clientIdSz = ssh->inputBuffer.length - SSH_PROTO_EOL_SZ;
 
-    ssh->clientId = (uint8_t*)WMALLOC(clientIdSz,
+    ssh->clientId = (uint8_t*)WMALLOC(clientIdSz + LENGTH_SZ,
                                       ssh->ctx->heap, DYNTYPE_STRING);
     if (ssh->clientId == NULL)
         ret = WS_MEMORY_E;
     else {
-        uint8_t flatSz[LENGTH_SZ];
-
-        /* Store the client version string. Will need it later during rekey */
-        WMEMCPY(ssh->clientId, ssh->inputBuffer.buffer, clientIdSz);
-        ssh->clientIdSz = clientIdSz;
-        c32toa(clientIdSz, flatSz);
-        ret = wc_ShaUpdate(&ssh->handshake->hash, flatSz, LENGTH_SZ);
+        c32toa(clientIdSz, ssh->clientId);
+        WMEMCPY(ssh->clientId + LENGTH_SZ, ssh->inputBuffer.buffer, clientIdSz);
+        ssh->clientIdSz = clientIdSz + LENGTH_SZ;
+        ret = wc_ShaUpdate(&ssh->handshake->hash,
+                           ssh->clientId, clientIdSz + LENGTH_SZ);
     }
-
-    if (ret == WS_SUCCESS)
-        ret = wc_ShaUpdate(&ssh->handshake->hash, ssh->inputBuffer.buffer,
-                           clientIdSz);
 
     ssh->inputBuffer.idx += ssh->inputBuffer.length;
 
@@ -2997,11 +3016,18 @@ int SendKexInit(WOLFSSH* ssh)
     uint8_t* payload;
     uint32_t idx = 0;
     uint32_t payloadSz;
-    uint8_t payloadSzFlat[LENGTH_SZ];
     int ret = WS_SUCCESS;
 
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
+
+    if (ssh->keyingState == KEYING_KEYED) {
+        ssh->handshake = HandshakeInfoNew(ssh->ctx->heap);
+        if (ssh->handshake == NULL) {
+            WLOG(WS_LOG_DEBUG, "Couldn't allocate handshake info");
+            ret = WS_MEMORY_E;
+        }
+    }
 
     if (ret == WS_SUCCESS) {
         payloadSz = MSG_ID_SZ + COOKIE_SZ + (LENGTH_SZ * 11) + BOOLEAN_SZ +
@@ -3043,7 +3069,6 @@ int SendKexInit(WOLFSSH* ssh)
 
         ssh->outputBuffer.length = idx;
 
-        c32toa(payloadSz, payloadSzFlat);
         if (ssh->keyingState == KEYING_KEYED) {
             uint8_t* buf;
             uint32_t bufSz = payloadSz + LENGTH_SZ;
@@ -3054,14 +3079,16 @@ int SendKexInit(WOLFSSH* ssh)
                 ret = WS_MEMORY_E;
             }
             else {
-                WMEMCPY(buf, payloadSzFlat, LENGTH_SZ);
+                c32toa(payloadSz, buf);
                 WMEMCPY(buf + LENGTH_SZ, payload, payloadSz);
                 ssh->handshake->serverKexInit = buf;
                 ssh->handshake->serverKexInitSz = bufSz;
             }
         }
         else {
-            ret = wc_ShaUpdate(&ssh->handshake->hash, payloadSzFlat, LENGTH_SZ);
+            uint8_t szFlat[LENGTH_SZ];
+            c32toa(payloadSz, szFlat);
+            ret = wc_ShaUpdate(&ssh->handshake->hash, szFlat, LENGTH_SZ);
             if (ret == WS_SUCCESS)
                 ret = wc_ShaUpdate(&ssh->handshake->hash, payload, payloadSz);
         }
@@ -3074,10 +3101,14 @@ int SendKexInit(WOLFSSH* ssh)
         ret = SendBuffered(ssh);
 
     if (ret == WS_SUCCESS) {
-        if (ssh->keyingState == KEYING_KEXINIT_RECV)
+        if (ssh->keyingState == KEYING_KEXINIT_RECV) {
+            WLOG(WS_LOG_DEBUG, "KeyingState now KEXINIT_DONE");
             ssh->keyingState = KEYING_KEXINIT_DONE;
-        else if (ssh->keyingState == KEYING_KEYED)
+        }
+        else if (ssh->keyingState == KEYING_KEYED) {
+            WLOG(WS_LOG_DEBUG, "KeyingState now KEXINIT_SENT");
             ssh->keyingState = KEYING_KEXINIT_SENT;
+        }
     }
 
     return ret;
@@ -3115,6 +3146,7 @@ int SendKexDhReply(WOLFSSH* ssh)
     uint32_t idx;
     int ret;
 
+    WLOG(WS_LOG_DEBUG, "Entering SendKexDhReply()");
     wc_InitDhKey(&dhKey);
 
     switch (ssh->handshake->kexId) {
@@ -3288,6 +3320,7 @@ int SendKexDhReply(WOLFSSH* ssh)
         ret = SendNewKeys(ssh);
     }
 
+    WLOG(WS_LOG_DEBUG, "Leaving SendKexDhReply(), ret = %d", ret);
     return ret;
 }
 
@@ -3298,6 +3331,7 @@ int SendNewKeys(WOLFSSH* ssh)
     uint32_t idx = 0;
     int ret = WS_SUCCESS;
 
+    WLOG(WS_LOG_DEBUG, "Entering SendNewKeys()");
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
@@ -3342,12 +3376,24 @@ int SendNewKeys(WOLFSSH* ssh)
                 WLOG(WS_LOG_DEBUG, "SNK: using cipher invalid");
                 ret = WS_INVALID_ALGO_ID;
         }
-
-        ssh->txCount = 0;
-        ssh->highwaterFlag = 0;
-        ssh->keyingState = KEYING_USING_KEYS_SENT;
     }
 
+    if (ret == WS_SUCCESS) {
+        ssh->txCount = 0;
+        if (ssh->keyingState == KEYING_USING_KEYS_RECV) {
+            ssh->highwaterFlag = 0;
+            ssh->keyingState = KEYING_KEYED;
+            HandshakeInfoFree(ssh->handshake, ssh->ctx->heap);
+            ssh->handshake = NULL;
+            WLOG(WS_LOG_DEBUG, "KeyingState now KEYED");
+        }
+        else {
+            ssh->keyingState = KEYING_USING_KEYS_SENT;
+            WLOG(WS_LOG_DEBUG, "KeyingState now USING_KEYS_SENT");
+        }
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving SendNewKeys(), ret = %d", ret);
     return ret;
 }
 
@@ -3774,18 +3820,31 @@ int SendChannelData(WOLFSSH* ssh, uint32_t peerChannel,
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
-    channel = ChannelFind(ssh, peerChannel, FIND_PEER);
-    if (channel == NULL) {
-        WLOG(WS_LOG_DEBUG, "Invalid peer channel");
-        ret = WS_INVALID_CHANID;
-    }
-    else if (channel->peerWindowSz < dataSz) {
-        WLOG(WS_LOG_DEBUG, "Peer window too small");
-        ret = WS_OVERFLOW_E;
+    if (ret == WS_SUCCESS) {
+        if (ssh->keyingState != KEYING_KEYED)
+            ret = WS_REKEYING;
     }
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
+        channel = ChannelFind(ssh, peerChannel, FIND_PEER);
+        if (channel == NULL) {
+            WLOG(WS_LOG_DEBUG, "Invalid peer channel");
+            ret = WS_INVALID_CHANID;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        uint32_t bound = min(channel->peerWindowSz, channel->peerMaxPacketSz);
+
+        if (dataSz > bound) {
+            WLOG(WS_LOG_DEBUG,
+                 "Trying to send %u, client will only accept %u, limiting",
+                 dataSz, bound);
+            dataSz = bound;
+        }
+
         ret = PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ + LENGTH_SZ + dataSz);
+    }
 
     if (ret == WS_SUCCESS) {
         output = ssh->outputBuffer.buffer;
@@ -3804,13 +3863,15 @@ int SendChannelData(WOLFSSH* ssh, uint32_t peerChannel,
         ret = BundlePacket(ssh);
     }
 
-    if (ret == WS_SUCCESS) {
+    if (ret == WS_SUCCESS)
         ret = SendBuffered(ssh);
 
+    if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_INFO, "  dataSz = %u", dataSz);
         WLOG(WS_LOG_INFO, "  peerWindowSz = %u", channel->peerWindowSz);
         channel->peerWindowSz -= dataSz;
         WLOG(WS_LOG_INFO, "  update peerWindowSz = %u", channel->peerWindowSz);
+        ret = dataSz;
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelData(), ret = %d", ret);

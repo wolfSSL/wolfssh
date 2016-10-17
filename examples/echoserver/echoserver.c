@@ -92,8 +92,11 @@ typedef struct {
 } thread_ctx_t;
 
 
-#ifndef DEFAULT_HIGHWATER_MARK
-    #define DEFAULT_HIGHWATER_MARK 0
+#ifndef EXAMPLE_HIGHWATER_MARK
+    #define EXAMPLE_HIGHWATER_MARK 0x3FFF8000 /* 1GB - 32kB */
+#endif
+#ifndef EXAMPLE_BUFFER_SZ
+    #define EXAMPLE_BUFFER_SZ 4096
 #endif
 
 
@@ -284,23 +287,54 @@ static THREAD_RETURN CYASSL_THREAD server_worker(void* vArgs)
     WOLFSSH* ssh = (WOLFSSH*)vArgs;
     SOCKET_T clientFd = wolfSSH_get_fd(ssh);
 
-    uint8_t buf[4096];
-    int bufSz;
-
     if (wolfSSH_accept(ssh) == WS_SUCCESS) {
+        uint8_t* buf = NULL;
+        uint8_t* tmpBuf;
+        int bufSz, backlogSz = 0, rxSz, txSz, stop = 0, txSum;
 
-        while (1) {
-            bufSz = wolfSSH_stream_read(ssh, buf, sizeof(buf));
-            if (bufSz > 0) {
-                wolfSSH_stream_send(ssh, buf, bufSz);
-                if (find_char(0x03, buf, bufSz))
-                    break;
+        do {
+            bufSz = EXAMPLE_BUFFER_SZ + backlogSz;
+
+            tmpBuf = realloc(buf, bufSz);
+            if (tmpBuf == NULL)
+                stop = 1;
+            else
+                buf = tmpBuf;
+
+            if (!stop) {
+                rxSz = wolfSSH_stream_read(ssh,
+                                           buf + backlogSz,
+                                           EXAMPLE_BUFFER_SZ);
+                if (rxSz > 0) {
+                    backlogSz += rxSz;
+                    txSum = 0;
+                    txSz = 0;
+
+                    while (backlogSz != txSum && txSz >= 0 && !stop) {
+                        txSz = wolfSSH_stream_send(ssh,
+                                                   buf + txSum,
+                                                   backlogSz - txSum);
+
+                        if (txSz > 0) {
+                            if (find_char(0x03, buf + txSum, txSz))
+                                stop = 1;
+                            else
+                                txSum += txSz;
+                        }
+                        else if (txSz != WS_REKEYING)
+                            stop = 1;
+                    }
+
+                    if (txSum < backlogSz)
+                        memmove(buf, buf + txSum, backlogSz - txSum);
+                    backlogSz -= txSum;
+                }
+                else
+                    stop = 1;
             }
-            else {
-                printf("wolfSSH_stream_read returned %d\n", bufSz);
-                break;
-            }
-        }
+        } while (!stop);
+
+        free(buf);
     }
     close(clientFd);
     wolfSSH_free(ssh);
@@ -592,29 +626,12 @@ static int wsUserAuth(uint8_t authType,
 }
 
 
-static int wsHighwater(uint8_t side, void* ctx)
-{
-    if (ctx) {
-        WOLFSSH* ssh = (WOLFSSH*)ctx;
-        uint32_t highwaterMark = wolfSSH_GetHighwater(ssh);
-
-        printf("HIGHWATER ALERT: (%u) %s\n", highwaterMark,
-                (side == WOLFSSH_HWSIDE_RECEIVE) ? "receive" : "transmit");
-        highwaterMark *= 2;
-        printf("  Doubling the highwater mark to %u.\n", highwaterMark);
-        wolfSSH_SetHighwater(ssh, highwaterMark);
-    }
-
-    return 0;
-}
-
-
 int main(void)
 {
     WOLFSSH_CTX* ctx = NULL;
     PwMapList pwMapList;
     SOCKET_T listenFd = 0;
-    uint32_t defaultHighwater = DEFAULT_HIGHWATER_MARK;
+    uint32_t defaultHighwater = EXAMPLE_HIGHWATER_MARK;
 
     #ifdef DEBUG_WOLFSSH
         wolfSSH_Debugging_ON();
@@ -633,8 +650,6 @@ int main(void)
 
     memset(&pwMapList, 0, sizeof(pwMapList));
     wolfSSH_SetUserAuth(ctx, wsUserAuth);
-    if (defaultHighwater > 0)
-        wolfSSH_SetHighwaterCb(ctx, defaultHighwater, wsHighwater);
 
     {
         uint8_t buf[SCRATCH_BUFFER_SIZE];
@@ -678,8 +693,10 @@ int main(void)
         }
         wolfSSH_SetUserAuthCtx(ssh, &pwMapList);
         /* Use the session object for its own highwater callback ctx */
-        if (defaultHighwater > 0)
+        if (defaultHighwater > 0) {
             wolfSSH_SetHighwaterCtx(ssh, (void*)ssh);
+            wolfSSH_SetHighwater(ssh, defaultHighwater);
+        }
 
         if (listen(listenFd, 5) != 0)
             err_sys("tcp listen failed");

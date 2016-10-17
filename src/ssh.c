@@ -347,8 +347,17 @@ int wolfSSH_accept(WOLFSSH* ssh)
 
 int wolfSSH_TriggerKeyExchange(WOLFSSH* ssh)
 {
-    (void)ssh;
-    return WS_SUCCESS;
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_TriggerKeyExchange()");
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS)
+        ret = SendKexInit(ssh);
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_TriggerKeyExchange(), ret = %d", ret);
+    return ret;
 }
 
 
@@ -375,7 +384,9 @@ int wolfSSH_stream_read(WOLFSSH* ssh, uint8_t* buf, uint32_t bufSz)
     WMEMCPY(buf, inputBuffer->buffer + inputBuffer->idx, bufSz);
     inputBuffer->idx += bufSz;
 
-    if (inputBuffer->length > inputBuffer->bufferSz / 2) {
+    if (ssh->keyingState == KEYING_KEYED &&
+        (inputBuffer->length > inputBuffer->bufferSz / 2)) {
+
         uint32_t usedSz = inputBuffer->length - inputBuffer->idx;
         uint32_t bytesToAdd = inputBuffer->idx;
         int sendResult;
@@ -402,7 +413,7 @@ int wolfSSH_stream_read(WOLFSSH* ssh, uint8_t* buf, uint32_t bufSz)
         inputBuffer->idx = 0;
     }
 
-    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_stream_read(), rxd = %u", bufSz);
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_stream_read(), rxd = %d", bufSz);
     return bufSz;
 }
 
@@ -418,7 +429,7 @@ int wolfSSH_stream_send(WOLFSSH* ssh, uint8_t* buf, uint32_t bufSz)
 
     bytesTxd = SendChannelData(ssh, ssh->channelList->peerChannel, buf, bufSz);
 
-    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_stream_send(), txd = %u", bytesTxd);
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_stream_send(), txd = %d", bytesTxd);
     return bytesTxd;
 }
 

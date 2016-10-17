@@ -104,11 +104,15 @@ enum {
 #define UINT32_SZ        4
 #define SSH_PROTO_SZ     7    /* "SSH-2.0" */
 #define SSH_PROTO_EOL_SZ 2    /* Just the CRLF */
-#define DEFAULT_HIGHWATER_MARK ((1024 * 1024 * 1024) - (32 * 1024))
+#ifndef DEFAULT_HIGHWATER_MARK
+    #define DEFAULT_HIGHWATER_MARK ((1024 * 1024 * 1024) - (32 * 1024))
+#endif
 #ifndef DEFAULT_WINDOW_SZ
     #define DEFAULT_WINDOW_SZ (1024 * 1024)
 #endif
-#define DEFAULT_MAX_PACKET_SZ (16 * 1024)
+#ifndef DEFAULT_MAX_PACKET_SZ
+    #define DEFAULT_MAX_PACKET_SZ (16 * 1024)
+#endif
 #define DEFAULT_NEXT_CHANNEL  13013
 
 
