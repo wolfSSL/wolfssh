@@ -250,6 +250,15 @@ int wolfSSH_accept(WOLFSSH* ssh)
     switch (ssh->acceptState) {
 
         case ACCEPT_BEGIN:
+            if ( (ssh->error = SendServerVersion(ssh)) < WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, acceptError,
+                     "CLIENT_VERSION_DONE", ssh->error);
+                return WS_FATAL_ERROR;
+            }
+            ssh->acceptState = ACCEPT_SERVER_VERSION_SENT;
+            WLOG(WS_LOG_DEBUG, acceptState, "SERVER_VERSION_SENT");
+
+        case ACCEPT_SERVER_VERSION_SENT:
             while (ssh->clientState < CLIENT_VERSION_DONE) {
                 if ( (ssh->error = ProcessClientVersion(ssh)) < WS_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, acceptError, "BEGIN", ssh->error);
@@ -260,17 +269,8 @@ int wolfSSH_accept(WOLFSSH* ssh)
             WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_VERSION_DONE");
 
         case ACCEPT_CLIENT_VERSION_DONE:
-            if ( (ssh->error = SendServerVersion(ssh)) < WS_SUCCESS) {
-                WLOG(WS_LOG_DEBUG, acceptError,
-                     "CLIENT_VERSION_DONE", ssh->error);
-                return WS_FATAL_ERROR;
-            }
-            ssh->acceptState = ACCEPT_SERVER_VERSION_SENT;
-            WLOG(WS_LOG_DEBUG, acceptState, "SERVER_VERSION_SENT");
-
-        case ACCEPT_SERVER_VERSION_SENT:
             while (ssh->keyingState < KEYING_KEYED) {
-                if ( (ssh->error = ProcessReply(ssh)) < WS_SUCCESS) {
+                if ( (ssh->error = DoReceive(ssh)) < WS_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, acceptError,
                          "SERVER_VERSION_SENT", ssh->error);
                     return WS_FATAL_ERROR;
@@ -281,7 +281,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
 
         case ACCEPT_KEYED:
             while (ssh->clientState < CLIENT_USERAUTH_REQUEST_DONE) {
-                if ( (ssh->error = ProcessReply(ssh)) < 0) {
+                if ( (ssh->error = DoReceive(ssh)) < 0) {
                     WLOG(WS_LOG_DEBUG, acceptError,
                          "KEYED", ssh->error);
                     return WS_FATAL_ERROR;
@@ -302,7 +302,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
 
         case ACCEPT_SERVER_USERAUTH_ACCEPT_SENT:
             while (ssh->clientState < CLIENT_USERAUTH_DONE) {
-                if ( (ssh->error = ProcessReply(ssh)) < 0) {
+                if ( (ssh->error = DoReceive(ssh)) < 0) {
                     WLOG(WS_LOG_DEBUG, acceptError,
                          "SERVER_USERAUTH_ACCEPT_SENT", ssh->error);
                     return WS_FATAL_ERROR;
@@ -322,7 +322,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
 
         case ACCEPT_SERVER_USERAUTH_SENT:
             while (ssh->clientState < CLIENT_DONE) {
-                if ( (ssh->error = ProcessReply(ssh)) < 0) {
+                if ( (ssh->error = DoReceive(ssh)) < 0) {
                     WLOG(WS_LOG_DEBUG, acceptError,
                          "SERVER_USERAUTH_SENT", ssh->error);
                     return WS_FATAL_ERROR;
@@ -373,7 +373,7 @@ int wolfSSH_stream_read(WOLFSSH* ssh, uint8_t* buf, uint32_t bufSz)
     inputBuffer = &ssh->channelList->inputBuffer;
 
     while (inputBuffer->length - inputBuffer->idx == 0) {
-        int ret = ProcessReply(ssh);
+        int ret = DoReceive(ssh);
         if (ret < 0) {
             WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_stream_read(), ret = %d", ret);
             return ret;

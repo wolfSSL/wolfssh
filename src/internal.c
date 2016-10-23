@@ -2802,7 +2802,7 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
 }
 
 
-int ProcessReply(WOLFSSH* ssh)
+int DoReceive(WOLFSSH* ssh)
 {
     int ret = WS_FATAL_ERROR;
     int verifyResult;
@@ -2904,7 +2904,7 @@ int ProcessReply(WOLFSSH* ssh)
 int ProcessClientVersion(WOLFSSH* ssh)
 {
     int ret;
-    uint32_t clientIdSz;
+    uint32_t idSz;
 
     if ( (ret = GetInputText(ssh)) < 0) {
         WLOG(WS_LOG_DEBUG, "get input text failed");
@@ -2921,19 +2921,31 @@ int ProcessClientVersion(WOLFSSH* ssh)
         return WS_VERSION_E;
     }
 
-    clientIdSz = ssh->inputBuffer.length - SSH_PROTO_EOL_SZ;
+    idSz = ssh->inputBuffer.length - SSH_PROTO_EOL_SZ;
 
-    ssh->clientId = (uint8_t*)WMALLOC(clientIdSz + LENGTH_SZ,
+    ssh->clientId = (uint8_t*)WMALLOC(idSz + LENGTH_SZ,
                                       ssh->ctx->heap, DYNTYPE_STRING);
     if (ssh->clientId == NULL)
         ret = WS_MEMORY_E;
     else {
-        c32toa(clientIdSz, ssh->clientId);
-        WMEMCPY(ssh->clientId + LENGTH_SZ, ssh->inputBuffer.buffer, clientIdSz);
-        ssh->clientIdSz = clientIdSz + LENGTH_SZ;
+        c32toa(idSz, ssh->clientId);
+        WMEMCPY(ssh->clientId + LENGTH_SZ, ssh->inputBuffer.buffer, idSz);
+        ssh->clientIdSz = idSz + LENGTH_SZ;
         ret = wc_ShaUpdate(&ssh->handshake->hash,
-                           ssh->clientId, clientIdSz + LENGTH_SZ);
+                           ssh->clientId, idSz + LENGTH_SZ);
     }
+
+    if (ret == WS_SUCCESS) {
+        uint8_t  idSzFlat[LENGTH_SZ];
+
+        idSz = (uint32_t)WSTRLEN(sshIdStr) - SSH_PROTO_EOL_SZ;
+        c32toa(idSz, idSzFlat);
+        ret = wc_ShaUpdate(&ssh->handshake->hash, idSzFlat, LENGTH_SZ);
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = wc_ShaUpdate(&ssh->handshake->hash,
+                           (const uint8_t*)sshIdStr, idSz);
 
     ssh->inputBuffer.idx += ssh->inputBuffer.length;
 
@@ -2954,18 +2966,6 @@ int SendServerVersion(WOLFSSH* ssh)
         sshIdStrSz = (uint32_t)WSTRLEN(sshIdStr);
         ret = SendText(ssh, sshIdStr, sshIdStrSz);
     }
-
-    if (ret == WS_SUCCESS) {
-        uint8_t  sshIdStrSzFlat[LENGTH_SZ];
-
-        sshIdStrSz -= SSH_PROTO_EOL_SZ;
-        c32toa(sshIdStrSz, sshIdStrSzFlat);
-        ret = wc_ShaUpdate(&ssh->handshake->hash, sshIdStrSzFlat, LENGTH_SZ);
-    }
-
-    if (ret == WS_SUCCESS)
-        ret = wc_ShaUpdate(&ssh->handshake->hash,
-                           (const uint8_t*)sshIdStr, sshIdStrSz);
 
     return ret;
 }

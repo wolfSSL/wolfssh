@@ -297,7 +297,7 @@ WOLFSSH_LOCAL int wsEmbedSend(WOLFSSH*, void*, uint32_t, void*);
 #endif /* WOLFSSH_USER_IO */
 
 
-WOLFSSH_LOCAL int ProcessReply(WOLFSSH*);
+WOLFSSH_LOCAL int DoReceive(WOLFSSH*);
 WOLFSSH_LOCAL int ProcessClientVersion(WOLFSSH*);
 WOLFSSH_LOCAL int SendServerVersion(WOLFSSH*);
 WOLFSSH_LOCAL int SendKexInit(WOLFSSH*);
