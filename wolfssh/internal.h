@@ -283,8 +283,8 @@ WOLFSSH_LOCAL void SshResourceFree(WOLFSSH*, void*);
 WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelNew(WOLFSSH*, uint8_t, uint32_t,
                                           uint32_t, uint32_t);
 WOLFSSH_LOCAL void ChannelDelete(WOLFSSH_CHANNEL*, void*);
-WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelFind(WOLFSSH*,
-                                    uint32_t, uint8_t);
+WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelFind(WOLFSSH*, uint32_t, uint8_t);
+WOLFSSH_LOCAL int ChannelRemove(WOLFSSH*, uint32_t, uint8_t);
 WOLFSSH_LOCAL int ChannelPutData(WOLFSSH_CHANNEL*, uint8_t*, uint32_t);
 
 
@@ -314,6 +314,8 @@ WOLFSSH_LOCAL int SendUserAuthBanner(WOLFSSH*);
 WOLFSSH_LOCAL int SendUserAuthPkOk(WOLFSSH*, const uint8_t*, uint32_t,
                                    const uint8_t*, uint32_t);
 WOLFSSH_LOCAL int SendChannelOpenConf(WOLFSSH*);
+WOLFSSH_LOCAL int SendChannelEof(WOLFSSH*, uint32_t);
+WOLFSSH_LOCAL int SendChannelClose(WOLFSSH*, uint32_t);
 WOLFSSH_LOCAL int SendChannelData(WOLFSSH*, uint32_t, uint8_t*, uint32_t);
 WOLFSSH_LOCAL int SendChannelWindowAdjust(WOLFSSH*, uint32_t, uint32_t);
 WOLFSSH_LOCAL int GenerateKey(uint8_t, uint8_t, uint8_t*, uint32_t,
@@ -397,6 +399,8 @@ enum WS_MessageIds {
     MSGID_CHANNEL_OPEN_CONF = 91,
     MSGID_CHANNEL_WINDOW_ADJUST = 93,
     MSGID_CHANNEL_DATA      = 94,
+    MSGID_CHANNEL_EOF       = 96,
+    MSGID_CHANNEL_CLOSE     = 97,
     MSGID_CHANNEL_REQUEST   = 98
 };
 
