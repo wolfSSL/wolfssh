@@ -2587,8 +2587,7 @@ static int DoPacket(WOLFSSH* ssh)
 
         case MSGID_CHANNEL_CLOSE:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_CLOSE");
-            DoChannelClose(ssh, buf + idx, payloadSz, &payloadIdx);
-            ret = WS_SUCCESS;
+            ret = DoChannelClose(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_CHANNEL_REQUEST:
