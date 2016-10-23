@@ -3,6 +3,24 @@ wolfssh
 
 wolfSSL's Embeddable SSH Server
 
+dependencies
+------------
+
+wolfSSH is dependent on wolfCrypt. The simplest configuration of wolfSSL
+required for wolfSSH is the default build.
+
+    $ cd wolfssl
+    $ ./configure [OPTIONS]
+    $ make check
+    $ sudo make install
+
+To use the key generation function in wolfSSH, wolfSSL will need to be
+configured with keygen: `--enable-keygen`.
+
+If the bulk of wolfSSL code isn't desired, wolfSSL can be configured with
+the crypto only option: `--enable-cryptonly`.
+
+
 building
 --------
 
@@ -16,6 +34,7 @@ From the source directory run:
 The `autogen.sh` script only has to be run the first time after cloning the
 repository. If you have already run it or are using code from a source
 archive, you should skip it.
+
 
 examples
 --------
@@ -37,6 +56,7 @@ The server will send a canned banner to the client:
 
 Characters typed into the client will be echoed to the screen by the server.
 If the characters are echoed twice, the client has local echo enabled.
+
 
 testing notes
 -------------
@@ -63,35 +83,9 @@ To use public key authentication use the command line:
 Where the user can be `gretel` or `hansel`.
 
 
-coding standard
----------------
+release notes
+-------------
 
-1. Exceptions are allowed with good reason.
+### wolfSSH v1.0.0 (10/24/2016)
 
-2. Follow the existing style.
-
-3. Try not to shorthand variables, except for ijk as indicies.
-
-4. Lengths of arrays should have the array name followed by Sz.
-
-5. Single return per function.
-
-6. Check all incoming parameters.
-
-7. No gotos.
-
-8. Check all return codes. It feels a little tedious, but the preferred method
-is running checks against success. This way if a function returns an error, the
-code will drop to the end.
-
-```
-    ret = functionCall(parameter);
-    if (ret == SUCCESS)
-        ret = secondFunctionCall(otherParameter);
-    if (ret == SUCCESS)
-        ret = thirdFunctionCall(aParameter, anotherParameter);
-    cleanUp();
-    return ret;
-```
-
-
+Initial release.
