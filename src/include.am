@@ -6,7 +6,6 @@
 lib_LTLIBRARIES+=  src/libwolfssh.la
 src_libwolfssh_la_SOURCES = src/ssh.c \
                             src/internal.c \
-                            src/keygen.c \
                             src/memory.c \
                             src/log.c \
                             src/io.c \
@@ -19,4 +18,8 @@ EXTRA_DIST +=
 
 if !BUILD_INLINE
 src_libwolfssh_la_SOURCES += src/misc.c
+endif
+
+if BUILD_KEYGEN
+src_libwolfssh_la_SOURCES += src/keygen.c
 endif

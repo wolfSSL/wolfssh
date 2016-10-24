@@ -127,22 +127,103 @@ const char* GetErrorString(int err)
         case WS_RESOURCE_E:
             return "insufficient resources for new channel";
 
-        case WS_INVALID_USERNAME:
-            return "invalid user name";
-
         case WS_INVALID_CHANTYPE:
             return "peer requested invalid channel type";
 
         case WS_INVALID_CHANID:
             return "peer requested invalid channel id";
 
+        case WS_INVALID_USERNAME:
+            return "invalid user name";
+
         case WS_CRYPTO_FAILED:
             return "crypto action failed";
+
+        case WS_INVALID_STATE_E:
+            return "invalid state";
+
+        case WS_REKEYING:
+            return "rekeying with peer";
 
         default:
             return "Unknown error code";
     }
 #endif
+}
+
+
+static int wsHighwater(byte dir, void* ctx)
+{
+    int ret = WS_SUCCESS;
+
+    (void)dir;
+
+    if (ctx) {
+        WOLFSSH* ssh = (WOLFSSH*)ctx;
+
+        WLOG(WS_LOG_DEBUG, "HIGHWATER MARK: (%u) %s",
+             wolfSSH_GetHighwater(ssh),
+             (dir == WOLFSSH_HWSIDE_RECEIVE) ? "receive" : "transmit");
+
+        ret = wolfSSH_TriggerKeyExchange(ssh);
+    }
+
+    return ret;
+}
+
+
+static INLINE void HighwaterCheck(WOLFSSH* ssh, byte side)
+{
+    if (!ssh->highwaterFlag && ssh->highwaterMark &&
+        (ssh->txCount >= ssh->highwaterMark ||
+         ssh->rxCount >= ssh->highwaterMark)) {
+
+        WLOG(WS_LOG_DEBUG, "%s over high water mark",
+             (side == WOLFSSH_HWSIDE_TRANSMIT) ? "Transmit" : "Receive");
+
+        ssh->highwaterFlag = 1;
+
+        if (ssh->ctx->highwaterCb)
+            ssh->ctx->highwaterCb(side, ssh->highwaterCtx);
+    }
+}
+
+
+static HandshakeInfo* HandshakeInfoNew(void* heap)
+{
+    HandshakeInfo* newHs;
+
+    WLOG(WS_LOG_DEBUG, "Entering HandshakeInfoNew()");
+    newHs = (HandshakeInfo*)WMALLOC(sizeof(HandshakeInfo),
+                                    heap, DYNTYPE_HS);
+    if (newHs != NULL) {
+        WMEMSET(newHs, 0, sizeof(HandshakeInfo));
+        newHs->kexId = ID_NONE;
+        newHs->pubKeyId  = ID_NONE;
+        newHs->encryptId = ID_NONE;
+        newHs->macId = ID_NONE;
+        newHs->blockSz = MIN_BLOCK_SZ;
+
+        if (wc_InitSha(&newHs->hash) != 0) {
+            WFREE(newHs, heap, DYNTYPE_HS);
+            newHs = NULL;
+        }
+    }
+
+    return newHs;
+}
+
+
+static void HandshakeInfoFree(HandshakeInfo* hs, void* heap)
+{
+    (void)heap;
+
+    WLOG(WS_LOG_DEBUG, "Entering HandshakeInfoFree()");
+    if (hs) {
+        WFREE(hs->serverKexInit, heap, DYNTYPE_STRING);
+        ForceZero(hs, sizeof(HandshakeInfo));
+        WFREE(hs, heap, DYNTYPE_HS);
+    }
 }
 
 
@@ -162,7 +243,8 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, void* heap)
     ctx->ioRecvCb = wsEmbedRecv;
     ctx->ioSendCb = wsEmbedSend;
 #endif /* WOLFSSH_USER_IO */
-    ctx->countHighwater = DEFAULT_COUNT_HIGHWATER;
+    ctx->highwaterMark = DEFAULT_HIGHWATER_MARK;
+    ctx->highwaterCb = wsHighwater;
 
     return ctx;
 }
@@ -181,8 +263,8 @@ void CtxResourceFree(WOLFSSH_CTX* ctx)
 
 WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
 {
-    HandshakeInfo* handshake = NULL;
-    RNG*           rng = NULL;
+    HandshakeInfo* handshake;
+    RNG*           rng;
     void*          heap;
 
     WLOG(WS_LOG_DEBUG, "Entering SshInit()");
@@ -191,8 +273,7 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
         return ssh;
     heap = ctx->heap;
 
-    handshake = (HandshakeInfo*)WMALLOC(sizeof(HandshakeInfo),
-                                        heap, DYNTYPE_HS);
+    handshake = HandshakeInfoNew(heap);
     rng = (RNG*)WMALLOC(sizeof(RNG), heap, DYNTYPE_RNG);
 
     if (handshake == NULL || rng == NULL || wc_InitRng(rng) != 0) {
@@ -205,7 +286,6 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     }
 
     WMEMSET(ssh, 0, sizeof(WOLFSSH));  /* default init to zeros */
-    WMEMSET(handshake, 0, sizeof(HandshakeInfo));
 
     ssh->ctx         = ctx;
     ssh->error       = WS_SUCCESS;
@@ -213,9 +293,11 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->wfd         = -1;         /* set to invalid */
     ssh->ioReadCtx   = &ssh->rfd;  /* prevent invalid access if not correctly */
     ssh->ioWriteCtx  = &ssh->wfd;  /* set */
-    ssh->countHighwater = ctx->countHighwater;
+    ssh->highwaterMark = ctx->highwaterMark;
+    ssh->highwaterCtx  = (void*)ssh;
     ssh->acceptState = ACCEPT_BEGIN;
     ssh->clientState = CLIENT_BEGIN;
+    ssh->keyingState = KEYING_UNKEYED;
     ssh->nextChannel = DEFAULT_NEXT_CHANNEL;
     ssh->blockSz     = MIN_BLOCK_SZ;
     ssh->encryptId   = ID_NONE;
@@ -224,15 +306,9 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->rng         = rng;
     ssh->kSz         = sizeof(ssh->k);
     ssh->handshake   = handshake;
-    handshake->kexId = ID_NONE;
-    handshake->pubKeyId  = ID_NONE;
-    handshake->encryptId = ID_NONE;
-    handshake->macId = ID_NONE;
-    handshake->blockSz = MIN_BLOCK_SZ;
 
     if (BufferInit(&ssh->inputBuffer, 0, ctx->heap) != WS_SUCCESS ||
-        BufferInit(&ssh->outputBuffer, 0, ctx->heap) != WS_SUCCESS ||
-        wc_InitSha(&ssh->handshake->hash) != 0) {
+        BufferInit(&ssh->outputBuffer, 0, ctx->heap) != WS_SUCCESS) {
 
         wolfSSH_free(ssh);
         ssh = NULL;
@@ -252,10 +328,7 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
     ShrinkBuffer(&ssh->inputBuffer, 1);
     ShrinkBuffer(&ssh->outputBuffer, 1);
     ForceZero(ssh->k, ssh->kSz);
-    if (ssh->handshake) {
-        ForceZero(ssh->handshake, sizeof(HandshakeInfo));
-        WFREE(ssh->handshake, heap, DYNTYPE_HS);
-    }
+    HandshakeInfoFree(ssh->handshake, heap);
     ForceZero(&ssh->clientKeys, sizeof(Keys));
     ForceZero(&ssh->serverKeys, sizeof(Keys));
     if (ssh->rng) {
@@ -264,6 +337,9 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
     }
     if (ssh->userName) {
         WFREE(ssh->userName, heap, DYNTYPE_STRING);
+    }
+    if (ssh->clientId) {
+        WFREE(ssh->clientId, heap, DYNTYPE_STRING);
     }
     if (ssh->channelList) {
         WOLFSSH_CHANNEL* cur = ssh->channelList;
@@ -449,6 +525,50 @@ WOLFSSH_CHANNEL* ChannelFind(WOLFSSH* ssh, uint32_t channel, uint8_t peer)
 }
 
 
+int ChannelRemove(WOLFSSH* ssh, uint32_t channel, uint8_t peer)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSH_CHANNEL* list;
+
+    WLOG(WS_LOG_DEBUG, "Entering ChannelRemove()");
+
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    list = ssh->channelList;
+    if (list == NULL)
+        ret = WS_INVALID_CHANID;
+
+    if (ret == WS_SUCCESS) {
+        WOLFSSH_CHANNEL* prev = NULL;
+        uint32_t listSz = ssh->channelListSz;
+
+        while (list && listSz) {
+            if (channel == ((peer == FIND_PEER) ?
+                            list->peerChannel : list->channel)) {
+                if (prev == NULL)
+                    ssh->channelList = list->next;
+                else
+                    prev->next = list->next;
+                ChannelDelete(list, ssh->ctx->heap);
+                ssh->channelListSz--;
+
+                break;
+            }
+            prev = list;
+            list = list->next;
+            listSz--;
+        }
+
+        if (listSz == 0)
+            ret = WS_INVALID_CHANID;
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving ChannelRemove(), ret = %d", ret);
+    return ret;
+}
+
+
 int ChannelPutData(WOLFSSH_CHANNEL* channel, uint8_t* data, uint32_t dataSz)
 {
     Buffer* inBuf;
@@ -465,6 +585,11 @@ int ChannelPutData(WOLFSSH_CHANNEL* channel, uint8_t* data, uint32_t dataSz)
 
         WMEMCPY(inBuf->buffer + inBuf->length, data, dataSz);
         inBuf->length += dataSz;
+
+        WLOG(WS_LOG_INFO, "  dataSz = %u", dataSz);
+        WLOG(WS_LOG_INFO, "  windowSz = %u", channel->windowSz);
+        channel->windowSz -= dataSz;
+        WLOG(WS_LOG_INFO, "  windowSz = %u", channel->windowSz);
     }
     else {
         return WS_RECV_OVERFLOW_E;
@@ -520,7 +645,7 @@ int GrowBuffer(Buffer* buf, uint32_t sz, uint32_t usedSz)
 
             /*WLOG(WS_LOG_DEBUG, "GB: resizing buffer");*/
             if (buf->length > 0)
-                WMEMCPY(newBuffer, buf->buffer + buf->idx, buf->length);
+                WMEMCPY(newBuffer, buf->buffer + buf->idx, usedSz);
 
             if (!buf->dynamicFlag)
                 buf->dynamicFlag = 1;
@@ -613,11 +738,12 @@ retry:
 }
 
 
-static int GetInputText(WOLFSSH* ssh)
+static int GetInputText(WOLFSSH* ssh, uint8_t** pEol)
 {
     int gotLine = 0;
     int inSz = 255;
     int in;
+    char *eol;
 
     if (GrowBuffer(&ssh->inputBuffer, inSz, 0) < 0)
         return WS_MEMORY_E;
@@ -638,21 +764,25 @@ static int GetInputText(WOLFSSH* ssh)
         ssh->inputBuffer.length += in;
         inSz -= in;
 
-        if (ssh->inputBuffer.length > 2) {
-            if (ssh->inputBuffer.buffer[ssh->inputBuffer.length - 2] == '\r' &&
-                ssh->inputBuffer.buffer[ssh->inputBuffer.length - 1] == '\n') {
+        eol = WSTRNSTR((const char*)ssh->inputBuffer.buffer, "\r\n",
+                       ssh->inputBuffer.length);
 
-                gotLine = 1;
-            }
-        }
-    } while (!gotLine);
+        if (eol)
+            gotLine = 1;
 
-    return WS_SUCCESS;
+    } while (!gotLine && inSz);
+
+    if (pEol)
+        *pEol = (uint8_t*)eol;
+
+    return (gotLine ? WS_SUCCESS : WS_VERSION_E);
 }
 
 
 static int SendBuffered(WOLFSSH* ssh)
 {
+    WLOG(WS_LOG_DEBUG, "Entering SendBuffered()");
+
     if (ssh->ctx->ioSendCb == NULL) {
         WLOG(WS_LOG_DEBUG, "Your IO Send callback is null, please set");
         return WS_SOCKET_ERROR_E;
@@ -692,6 +822,8 @@ static int SendBuffered(WOLFSSH* ssh)
 
     WLOG(WS_LOG_DEBUG, "SB: Shrinking output buffer");
     ShrinkBuffer(&ssh->outputBuffer, 0);
+
+    HighwaterCheck(ssh, WOLFSSH_HWSIDE_TRANSMIT);
 
     return WS_SUCCESS;
 }
@@ -742,7 +874,7 @@ static int GetInputData(WOLFSSH* ssh, uint32_t size)
      */
 
     if (inSz <= 0)
-        return WS_BUFFER_E;
+        return WS_SUCCESS;
 
     /*
      * If we need more space than there is left in the buffer grow buffer.
@@ -1006,6 +1138,7 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 
     if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
         ret = WS_BAD_ARGUMENT;
+
     /*
      * I don't need to save what the client sends here. I should decode
      * each list into a local array of IDs, and pick the one the peer is
@@ -1192,6 +1325,16 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
     if (ret == WS_SUCCESS) {
         *idx = begin;
         ssh->clientState = CLIENT_KEXINIT_DONE;
+
+        if (ssh->keyingState == KEYING_UNKEYED) {
+            WLOG(WS_LOG_DEBUG, "KeyingState now KEXINIT_RECV");
+            ssh->keyingState = KEYING_KEXINIT_RECV;
+            ret = SendKexInit(ssh);
+        }
+        else if (KEYING_KEXINIT_SENT) {
+            WLOG(WS_LOG_DEBUG, "KeyingState now KEXINIT_DONE");
+            ssh->keyingState = KEYING_KEXINIT_DONE;
+        }
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoKexInit(), ret = %d", ret);
@@ -1292,7 +1435,10 @@ static int DoKexDhInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 
         ssh->clientState = CLIENT_KEXDH_INIT_DONE;
         *idx = begin;
+
+        ret = SendKexDhReply(ssh);
     }
+
     return ret;
 }
 
@@ -1341,7 +1487,18 @@ static int DoNewKeys(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 
     if (ret == WS_SUCCESS) {
         ssh->rxCount = 0;
-        ssh->clientState = CLIENT_USING_KEYS;
+        if (ssh->keyingState == KEYING_USING_KEYS_SENT) {
+            ssh->clientState = CLIENT_USING_KEYS;
+            ssh->highwaterFlag = 0;
+            ssh->keyingState = KEYING_KEYED;
+            HandshakeInfoFree(ssh->handshake, ssh->ctx->heap);
+            ssh->handshake = NULL;
+            WLOG(WS_LOG_DEBUG, "KeyingState now KEYED");
+        }
+        else {
+            ssh->keyingState = KEYING_USING_KEYS_RECV;
+            WLOG(WS_LOG_DEBUG, "KeyingState now USING_KEYS_RECV");
+        }
     }
 
     return ret;
@@ -1359,6 +1516,7 @@ int GenerateKey(uint8_t hashId, uint8_t keyId,
     uint8_t kPad = 0;
     uint8_t pad = 0;
     uint8_t kSzFlat[LENGTH_SZ];
+    int ret;
 
     (void)hashId;
 
@@ -1377,52 +1535,80 @@ int GenerateKey(uint8_t hashId, uint8_t keyId,
     blocks = keySz / SHA_DIGEST_SIZE;
     remainder = keySz % SHA_DIGEST_SIZE;
 
-    wc_InitSha(&sha);
-    wc_ShaUpdate(&sha, kSzFlat, LENGTH_SZ);
-    if (kPad) wc_ShaUpdate(&sha, &pad, 1);
-    wc_ShaUpdate(&sha, k, kSz);
-    wc_ShaUpdate(&sha, h, hSz);
-    wc_ShaUpdate(&sha, &keyId, sizeof(keyId));
-    wc_ShaUpdate(&sha, sessionId, sessionIdSz);
+    ret = wc_InitSha(&sha);
+    if (ret == WS_SUCCESS)
+        ret = wc_ShaUpdate(&sha, kSzFlat, LENGTH_SZ);
+    if (ret == WS_SUCCESS && kPad)
+        ret = wc_ShaUpdate(&sha, &pad, 1);
+    if (ret == WS_SUCCESS)
+        ret = wc_ShaUpdate(&sha, k, kSz);
+    if (ret == WS_SUCCESS)
+        ret = wc_ShaUpdate(&sha, h, hSz);
+    if (ret == WS_SUCCESS)
+        ret = wc_ShaUpdate(&sha, &keyId, sizeof(keyId));
+    if (ret == WS_SUCCESS)
+        ret = wc_ShaUpdate(&sha, sessionId, sessionIdSz);
 
-    if (blocks == 0) {
-        if (remainder > 0) {
-            uint8_t lastBlock[SHA_DIGEST_SIZE];
-            wc_ShaFinal(&sha, lastBlock);
-            WMEMCPY(key, lastBlock, remainder);
+    if (ret == WS_SUCCESS) {
+        if (blocks == 0) {
+            if (remainder > 0) {
+                uint8_t lastBlock[SHA_DIGEST_SIZE];
+                ret = wc_ShaFinal(&sha, lastBlock);
+                if (ret == WS_SUCCESS)
+                    WMEMCPY(key, lastBlock, remainder);
+            }
+        }
+        else {
+            uint32_t runningKeySz, curBlock;
+
+            runningKeySz = SHA_DIGEST_SIZE;
+            ret = wc_ShaFinal(&sha, key);
+
+            for (curBlock = 1; curBlock < blocks; curBlock++) {
+                ret = wc_InitSha(&sha);
+                if (ret != WS_SUCCESS) break;
+                ret = wc_ShaUpdate(&sha, kSzFlat, LENGTH_SZ);
+                if (ret != WS_SUCCESS) break;
+                if (kPad)
+                    ret = wc_ShaUpdate(&sha, &pad, 1);
+                if (ret != WS_SUCCESS) break;
+                ret = wc_ShaUpdate(&sha, k, kSz);
+                if (ret != WS_SUCCESS) break;
+                ret = wc_ShaUpdate(&sha, h, hSz);
+                if (ret != WS_SUCCESS) break;
+                ret = wc_ShaUpdate(&sha, key, runningKeySz);
+                if (ret != WS_SUCCESS) break;
+                ret = wc_ShaFinal(&sha, key + runningKeySz);
+                if (ret != WS_SUCCESS) break;
+                runningKeySz += SHA_DIGEST_SIZE;
+            }
+
+            if (remainder > 0) {
+                uint8_t lastBlock[SHA_DIGEST_SIZE];
+                if (ret == WS_SUCCESS)
+                    ret = wc_InitSha(&sha);
+                if (ret == WS_SUCCESS)
+                    ret = wc_ShaUpdate(&sha, kSzFlat, LENGTH_SZ);
+                if (ret == WS_SUCCESS && kPad)
+                    ret = wc_ShaUpdate(&sha, &pad, 1);
+                if (ret == WS_SUCCESS)
+                    ret = wc_ShaUpdate(&sha, k, kSz);
+                if (ret == WS_SUCCESS)
+                    ret = wc_ShaUpdate(&sha, h, hSz);
+                if (ret == WS_SUCCESS)
+                    ret = wc_ShaUpdate(&sha, key, runningKeySz);
+                if (ret == WS_SUCCESS)
+                    ret = wc_ShaFinal(&sha, lastBlock);
+                if (ret == WS_SUCCESS)
+                    WMEMCPY(key + runningKeySz, lastBlock, remainder);
+            }
         }
     }
-    else {
-        uint32_t runningKeySz, curBlock;
 
-        wc_ShaFinal(&sha, key);
-        runningKeySz = SHA_DIGEST_SIZE;
+    if (ret != WS_SUCCESS)
+        ret = WS_CRYPTO_FAILED;
 
-        for (curBlock = 1; curBlock < blocks; curBlock++) {
-            wc_InitSha(&sha);
-            wc_ShaUpdate(&sha, kSzFlat, LENGTH_SZ);
-            if (kPad) wc_ShaUpdate(&sha, &pad, 1);
-            wc_ShaUpdate(&sha, k, kSz);
-            wc_ShaUpdate(&sha, h, hSz);
-            wc_ShaUpdate(&sha, key, runningKeySz);
-            wc_ShaFinal(&sha, key + runningKeySz);
-            runningKeySz += SHA_DIGEST_SIZE;
-        }
-
-        if (remainder > 0) {
-            uint8_t lastBlock[SHA_DIGEST_SIZE];
-            wc_InitSha(&sha);
-            wc_ShaUpdate(&sha, kSzFlat, LENGTH_SZ);
-            if (kPad) wc_ShaUpdate(&sha, &pad, 1);
-            wc_ShaUpdate(&sha, k, kSz);
-            wc_ShaUpdate(&sha, h, hSz);
-            wc_ShaUpdate(&sha, key, runningKeySz);
-            wc_ShaFinal(&sha, lastBlock);
-            WMEMCPY(key + runningKeySz, lastBlock, remainder);
-        }
-    }
-
-    return 0;
+    return ret;
 }
 
 
@@ -1430,37 +1616,45 @@ static int GenerateKeys(WOLFSSH* ssh)
 {
     Keys* cK;
     Keys* sK;
+    int ret = WS_SUCCESS;
 
     if (ssh == NULL)
-        return WS_BAD_ARGUMENT;
+        ret = WS_BAD_ARGUMENT;
+    else {
+        cK = &ssh->handshake->clientKeys;
+        sK = &ssh->handshake->serverKeys;
+    }
 
-    cK = &ssh->handshake->clientKeys;
-    sK = &ssh->handshake->serverKeys;
-
-    GenerateKey(0, 'A',
-                cK->iv, cK->ivSz,
-                ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                ssh->sessionId, ssh->sessionIdSz);
-    GenerateKey(0, 'B',
-                sK->iv, sK->ivSz,
-                ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                ssh->sessionId, ssh->sessionIdSz);
-    GenerateKey(0, 'C',
-                cK->encKey, cK->encKeySz,
-                ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                ssh->sessionId, ssh->sessionIdSz);
-    GenerateKey(0, 'D',
-                sK->encKey, sK->encKeySz,
-                ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                ssh->sessionId, ssh->sessionIdSz);
-    GenerateKey(0, 'E',
-                cK->macKey, cK->macKeySz,
-                ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                ssh->sessionId, ssh->sessionIdSz);
-    GenerateKey(0, 'F',
-                sK->macKey, sK->macKeySz,
-                ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                ssh->sessionId, ssh->sessionIdSz);
+    if (ret == WS_SUCCESS)
+        ret = GenerateKey(0, 'A',
+                          cK->iv, cK->ivSz,
+                          ssh->k, ssh->kSz, ssh->h, ssh->hSz,
+                          ssh->sessionId, ssh->sessionIdSz);
+    if (ret == WS_SUCCESS)
+        ret = GenerateKey(0, 'B',
+                          sK->iv, sK->ivSz,
+                          ssh->k, ssh->kSz, ssh->h, ssh->hSz,
+                          ssh->sessionId, ssh->sessionIdSz);
+    if (ret == WS_SUCCESS)
+        ret = GenerateKey(0, 'C',
+                          cK->encKey, cK->encKeySz,
+                          ssh->k, ssh->kSz, ssh->h, ssh->hSz,
+                          ssh->sessionId, ssh->sessionIdSz);
+    if (ret == WS_SUCCESS)
+        ret = GenerateKey(0, 'D',
+                          sK->encKey, sK->encKeySz,
+                          ssh->k, ssh->kSz, ssh->h, ssh->hSz,
+                          ssh->sessionId, ssh->sessionIdSz);
+    if (ret == WS_SUCCESS)
+        ret = GenerateKey(0, 'E',
+                          cK->macKey, cK->macKeySz,
+                          ssh->k, ssh->kSz, ssh->h, ssh->hSz,
+                          ssh->sessionId, ssh->sessionIdSz);
+    if (ret == WS_SUCCESS)
+        ret = GenerateKey(0, 'F',
+                          sK->macKey, sK->macKeySz,
+                          ssh->k, ssh->kSz, ssh->h, ssh->hSz,
+                          ssh->sessionId, ssh->sessionIdSz);
 
 #ifdef SHOW_SECRETS
     printf("\n** Showing Secrets **\nK:\n");
@@ -1484,7 +1678,7 @@ static int GenerateKeys(WOLFSSH* ssh)
     printf("\n");
 #endif /* SHOW_SECRETS */
 
-    return 0;
+    return ret;
 }
 
 
@@ -1793,8 +1987,9 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     if (ret == WS_SUCCESS) {
         n = pk->publicKey + i;
 
-        wc_InitRsaKey(&key, ssh->ctx->heap);
-        ret = wc_RsaPublicKeyDecodeRaw(n, nSz, e, eSz, &key);
+        ret = wc_InitRsaKey(&key, ssh->ctx->heap);
+        if (ret == 0)
+            ret = wc_RsaPublicKeyDecodeRaw(n, nSz, e, eSz, &key);
         if (ret != 0) {
             WLOG(WS_LOG_DEBUG, "Could not decode public key");
             ret = WS_CRYPTO_FAILED;
@@ -1946,34 +2141,49 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                 volatile int compare;
                 volatile int sizeCompare;
 
-                wc_InitSha(&sha);
-                c32toa(ssh->sessionIdSz, digest);
-                wc_ShaUpdate(&sha, digest, UINT32_SZ);
-                wc_ShaUpdate(&sha, ssh->sessionId, ssh->sessionIdSz);
-                digest[0] = MSGID_USERAUTH_REQUEST;
-                wc_ShaUpdate(&sha, digest, MSG_ID_SZ);
+                ret = wc_InitSha(&sha);
+                if (ret == 0) {
+                    c32toa(ssh->sessionIdSz, digest);
+                    ret = wc_ShaUpdate(&sha, digest, UINT32_SZ);
+                }
+                if (ret == WS_SUCCESS)
+                    ret = wc_ShaUpdate(&sha, ssh->sessionId, ssh->sessionIdSz);
+
+                if (ret == 0) {
+                    digest[0] = MSGID_USERAUTH_REQUEST;
+                    ret = wc_ShaUpdate(&sha, digest, MSG_ID_SZ);
+                }
 
                 /* The rest of the fields in the signature are already
                  * in the buffer. Just need to account for the sizes. */
-                wc_ShaUpdate(&sha, pk->dataToSign,
-                             authData->usernameSz + authData->serviceNameSz +
-                             authData->authNameSz + BOOLEAN_SZ +
-                             pk->publicKeyTypeSz + pk->publicKeySz +
-                             (UINT32_SZ * 5));
-                wc_ShaFinal(&sha, digest);
+                if (ret == 0)
+                    ret = wc_ShaUpdate(&sha, pk->dataToSign,
+                                       authData->usernameSz +
+                                       authData->serviceNameSz +
+                                       authData->authNameSz + BOOLEAN_SZ +
+                                       pk->publicKeyTypeSz + pk->publicKeySz +
+                                       (UINT32_SZ * 5));
+                if (ret == 0)
+                    ret = wc_ShaFinal(&sha, digest);
 
                 encDigestSz = wc_EncodeSignature(encDigest, digest,
                                                  SHA_DIGEST_SIZE, SHAh);
 
-                compare = ConstantCompare(encDigest, checkDigest, encDigestSz);
-                sizeCompare = encDigestSz != checkDigestSz;
+                if (ret != 0)
+                    ret = WS_CRYPTO_FAILED;
 
-                if (compare || sizeCompare || ret < 0) {
-                    WLOG(WS_LOG_DEBUG, "DUARPK: signature compare failure");
-                    ret = SendUserAuthFailure(ssh, 0);
-                }
-                else {
-                    ssh->clientState = CLIENT_USERAUTH_DONE;
+                if (ret == WS_SUCCESS) {
+                    compare = ConstantCompare(encDigest, checkDigest,
+                                              encDigestSz);
+                    sizeCompare = encDigestSz != checkDigestSz;
+
+                    if (compare || sizeCompare || ret < 0) {
+                        WLOG(WS_LOG_DEBUG, "DUARPK: signature compare failure");
+                        ret = SendUserAuthFailure(ssh, 0);
+                    }
+                    else {
+                        ssh->clientState = CLIENT_USERAUTH_DONE;
+                    }
                 }
             }
         }
@@ -2030,6 +2240,11 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
             authData.sf.publicKey.dataToSign = buf + *idx;
             ret = DoUserAuthRequestPublicKey(ssh, &authData, buf, len, &begin);
         }
+#ifdef WOLFSSH_ALLOW_USERAUTH_NONE
+        else if (authNameId == ID_NONE) {
+            ssh->clientState = CLIENT_USERAUTH_DONE;
+        }
+#endif
         else {
             WLOG(WS_LOG_DEBUG,
                  "invalid userauth type: %s", IdToName(authNameId));
@@ -2099,6 +2314,38 @@ static int DoChannelOpen(WOLFSSH* ssh,
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoChannelOpen(), ret = %d", ret);
+    return ret;
+}
+
+
+static int DoChannelClose(WOLFSSH* ssh,
+                          uint8_t* buf, uint32_t len, uint32_t* idx)
+{
+    WOLFSSH_CHANNEL* channel = NULL;
+    uint32_t begin = *idx;
+    uint32_t channelId;
+    int      ret;
+
+    WLOG(WS_LOG_DEBUG, "Entering DoChannelClose()");
+
+    ret = GetUint32(&channelId, buf, len, &begin);
+
+    if (ret == WS_SUCCESS) {
+        *idx = begin;
+
+        channel = ChannelFind(ssh, channelId, FIND_SELF);
+        if (channel == NULL)
+            ret = WS_INVALID_CHANID;
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = SendChannelClose(ssh, channelId);
+
+    if (ret == WS_SUCCESS)
+        ret = ChannelRemove(ssh, channelId, FIND_SELF);
+
+
+    WLOG(WS_LOG_DEBUG, "Leaving DoChannelClose(), ret = %d", ret);
     return ret;
 }
 
@@ -2214,10 +2461,12 @@ static int DoChannelWindowAdjust(WOLFSSH* ssh,
             WLOG(WS_LOG_INFO, "  bytesToAdd = %u", bytesToAdd);
             WLOG(WS_LOG_INFO, "  peerWindowSz = %u",
                  channel->peerWindowSz);
-            WLOG(WS_LOG_INFO, "  update peerWindowSz = %u",
-                 channel->peerWindowSz + bytesToAdd);
 
             channel->peerWindowSz += bytesToAdd;
+
+            WLOG(WS_LOG_INFO, "  update peerWindowSz = %u",
+                 channel->peerWindowSz);
+
         }
     }
 
@@ -2254,6 +2503,11 @@ static int DoChannelData(WOLFSSH* ssh,
     WLOG(WS_LOG_DEBUG, "Leaving DoChannelData(), ret = %d", ret);
     return ret;
 }
+
+
+static const char sshIdStr[] = "SSH-2.0-wolfSSHv"
+                               LIBWOLFSSH_VERSION_STRING
+                               "\r\n";
 
 
 static int DoPacket(WOLFSSH* ssh)
@@ -2303,11 +2557,60 @@ static int DoPacket(WOLFSSH* ssh)
                 uint8_t szFlat[LENGTH_SZ];
 
                 WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXINIT");
-                c32toa(payloadSz + sizeof(msg), szFlat);
-                wc_ShaUpdate(&ssh->handshake->hash, szFlat, LENGTH_SZ);
-                wc_ShaUpdate(&ssh->handshake->hash, &msg, sizeof(msg));
-                wc_ShaUpdate(&ssh->handshake->hash, buf + idx, payloadSz);
-                ret = DoKexInit(ssh, buf + idx, payloadSz, &payloadIdx);
+                ret = WS_SUCCESS;
+
+                if (ssh->keyingState == KEYING_KEYED) {
+                    ssh->handshake = HandshakeInfoNew(ssh->ctx->heap);
+                    if (ssh->handshake == NULL) {
+                        WLOG(WS_LOG_DEBUG, "Couldn't allocate handshake info");
+                        ret = WS_MEMORY_E;
+                    }
+                }
+
+                if (ret == WS_SUCCESS &&
+                    (ssh->keyingState == KEYING_KEYED ||
+                     ssh->keyingState == KEYING_KEXINIT_SENT)) {
+
+                    uint32_t idSz;
+
+                    ret = wc_ShaUpdate(&ssh->handshake->hash,
+                                 ssh->clientId, ssh->clientIdSz);
+
+
+                    if (ret == WS_SUCCESS) {
+                        idSz = (uint32_t)WSTRLEN(sshIdStr) - SSH_PROTO_EOL_SZ;
+                        c32toa(idSz, szFlat);
+                        ret = wc_ShaUpdate(&ssh->handshake->hash, szFlat,
+                                           LENGTH_SZ);
+                    }
+                    if (ret == WS_SUCCESS)
+                        ret = wc_ShaUpdate(&ssh->handshake->hash,
+                                           (const uint8_t*)sshIdStr, idSz);
+                }
+
+                if (ret == WS_SUCCESS) {
+                    c32toa(payloadSz + sizeof(msg), szFlat);
+                    ret = wc_ShaUpdate(&ssh->handshake->hash, szFlat,
+                                       LENGTH_SZ);
+                }
+                if (ret == WS_SUCCESS)
+                    ret = wc_ShaUpdate(&ssh->handshake->hash, &msg,
+                                       sizeof(msg));
+                if (ret == WS_SUCCESS)
+                    ret = wc_ShaUpdate(&ssh->handshake->hash, buf + idx,
+                                       payloadSz);
+
+                if (ret == WS_SUCCESS)
+                    ret = DoKexInit(ssh, buf + idx, payloadSz, &payloadIdx);
+
+                if (ret == WS_SUCCESS &&
+                    ssh->keyingState == KEYING_KEXINIT_DONE) {
+
+                    ret = wc_ShaUpdate(&ssh->handshake->hash,
+                                       ssh->handshake->serverKexInit,
+                                       ssh->handshake->serverKexInitSz);
+                }
+
             }
             break;
 
@@ -2344,6 +2647,16 @@ static int DoPacket(WOLFSSH* ssh)
         case MSGID_CHANNEL_DATA:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_DATA");
             ret = DoChannelData(ssh, buf + idx, payloadSz, &payloadIdx);
+            break;
+
+        case MSGID_CHANNEL_EOF:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_EOF");
+            ret = WS_SUCCESS;
+            break;
+
+        case MSGID_CHANNEL_CLOSE:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_CLOSE");
+            ret = DoChannelClose(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_CHANNEL_REQUEST:
@@ -2406,11 +2719,6 @@ static INLINE int Encrypt(WOLFSSH* ssh, uint8_t* cipher, const uint8_t* input,
     }
 
     ssh->txCount += sz;
-    if (ssh->countHighwater && ssh->txCount > ssh->countHighwater) {
-        WLOG(WS_LOG_DEBUG, "Transmit over high water mark");
-        if (ssh->ctx->highwaterCb)
-            ssh->ctx->highwaterCb(WOLFSSH_HWSIDE_TRANSMIT, ssh->highwaterCtx);
-    }
 
     return ret;
 }
@@ -2443,11 +2751,7 @@ static INLINE int Decrypt(WOLFSSH* ssh, uint8_t* plain, const uint8_t* input,
     }
 
     ssh->rxCount += sz;
-    if (ssh->countHighwater && ssh->rxCount > ssh->countHighwater) {
-        WLOG(WS_LOG_DEBUG, "Receive over high water mark");
-        if (ssh->ctx->highwaterCb)
-            ssh->ctx->highwaterCb(WOLFSSH_HWSIDE_RECEIVE, ssh->highwaterCtx);
-    }
+    HighwaterCheck(ssh, WOLFSSH_HWSIDE_RECEIVE);
 
     return ret;
 }
@@ -2457,7 +2761,7 @@ static INLINE int CreateMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
                             uint8_t* mac)
 {
     uint8_t  flatSeq[LENGTH_SZ];
-    int ret = WS_SUCCESS;
+    int ret;
 
     c32toa(ssh->seq++, flatSeq);
 
@@ -2466,6 +2770,7 @@ static INLINE int CreateMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
     /* Need to MAC the sequence number and the unencrypted packet */
     switch (ssh->macId) {
         case ID_NONE:
+            ret = WS_SUCCESS;
             break;
 
         case ID_HMAC_SHA1_96:
@@ -2473,13 +2778,17 @@ static INLINE int CreateMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
                 Hmac hmac;
                 uint8_t digest[SHA_DIGEST_SIZE];
 
-                wc_HmacSetKey(&hmac, SHA,
-                              ssh->serverKeys.macKey,
-                              ssh->serverKeys.macKeySz);
-                wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
-                wc_HmacUpdate(&hmac, in, inSz);
-                wc_HmacFinal(&hmac, digest);
-                WMEMCPY(mac, digest, SHA1_96_SZ);
+                ret = wc_HmacSetKey(&hmac, SHA,
+                                    ssh->serverKeys.macKey,
+                                    ssh->serverKeys.macKeySz);
+                if (ret == WS_SUCCESS)
+                    ret = wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
+                if (ret == WS_SUCCESS)
+                    ret = wc_HmacUpdate(&hmac, in, inSz);
+                if (ret == WS_SUCCESS)
+                    ret = wc_HmacFinal(&hmac, digest);
+                if (ret == WS_SUCCESS)
+                    WMEMCPY(mac, digest, SHA1_96_SZ);
             }
             break;
 
@@ -2487,12 +2796,15 @@ static INLINE int CreateMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
             {
                 Hmac hmac;
 
-                wc_HmacSetKey(&hmac, SHA,
-                              ssh->serverKeys.macKey,
-                              ssh->serverKeys.macKeySz);
-                wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
-                wc_HmacUpdate(&hmac, in, inSz);
-                wc_HmacFinal(&hmac, mac);
+                ret = wc_HmacSetKey(&hmac, SHA,
+                                    ssh->serverKeys.macKey,
+                                    ssh->serverKeys.macKeySz);
+                if (ret == WS_SUCCESS)
+                    ret = wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
+                if (ret == WS_SUCCESS)
+                    ret = wc_HmacUpdate(&hmac, in, inSz);
+                if (ret == WS_SUCCESS)
+                    ret = wc_HmacFinal(&hmac, mac);
             }
             break;
 
@@ -2500,12 +2812,15 @@ static INLINE int CreateMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
             {
                 Hmac hmac;
 
-                wc_HmacSetKey(&hmac, SHA256,
-                              ssh->serverKeys.macKey,
-                              ssh->serverKeys.macKeySz);
-                wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
-                wc_HmacUpdate(&hmac, in, inSz);
-                wc_HmacFinal(&hmac, mac);
+                ret = wc_HmacSetKey(&hmac, SHA256,
+                                    ssh->serverKeys.macKey,
+                                    ssh->serverKeys.macKeySz);
+                if (ret == WS_SUCCESS)
+                    ret = wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
+                if (ret == WS_SUCCESS)
+                    ret = wc_HmacUpdate(&hmac, in, inSz);
+                if (ret == WS_SUCCESS)
+                    ret = wc_HmacFinal(&hmac, mac);
             }
             break;
 
@@ -2521,7 +2836,7 @@ static INLINE int CreateMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
 static INLINE int VerifyMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
                             const uint8_t* mac)
 {
-    int     ret = WS_SUCCESS;
+    int     ret;
     uint8_t flatSeq[LENGTH_SZ];
     uint8_t checkMac[MAX_HMAC_SZ];
     Hmac    hmac;
@@ -2533,27 +2848,38 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
     WLOG(WS_LOG_DEBUG, "VM: seq = %u", ssh->peerSeq);
     WLOG(WS_LOG_DEBUG, "VM: keyLen = %u", ssh->clientKeys.macKeySz);
 
+    WMEMSET(checkMac, 0, sizeof(checkMac));
+
     switch (ssh->peerMacId) {
         case ID_NONE:
+            ret = WS_SUCCESS;
             break;
 
         case ID_HMAC_SHA1:
         case ID_HMAC_SHA1_96:
-            wc_HmacSetKey(&hmac, SHA,
-                          ssh->clientKeys.macKey, ssh->clientKeys.macKeySz);
-            wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
-            wc_HmacUpdate(&hmac, in, inSz);
-            wc_HmacFinal(&hmac, checkMac);
+            ret = wc_HmacSetKey(&hmac, SHA,
+                                ssh->clientKeys.macKey,
+                                ssh->clientKeys.macKeySz);
+            if (ret == WS_SUCCESS)
+                ret = wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
+            if (ret == WS_SUCCESS)
+                ret = wc_HmacUpdate(&hmac, in, inSz);
+            if (ret == WS_SUCCESS)
+                ret = wc_HmacFinal(&hmac, checkMac);
             if (ConstantCompare(checkMac, mac, ssh->peerMacSz) != 0)
                 ret = WS_VERIFY_MAC_E;
             break;
 
         case ID_HMAC_SHA2_256:
-            wc_HmacSetKey(&hmac, SHA256,
-                          ssh->clientKeys.macKey, ssh->clientKeys.macKeySz);
-            wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
-            wc_HmacUpdate(&hmac, in, inSz);
-            wc_HmacFinal(&hmac, checkMac);
+            ret = wc_HmacSetKey(&hmac, SHA256,
+                                ssh->clientKeys.macKey,
+                                ssh->clientKeys.macKeySz);
+            if (ret == WS_SUCCESS)
+                ret = wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
+            if (ret == WS_SUCCESS)
+                ret = wc_HmacUpdate(&hmac, in, inSz);
+            if (ret == WS_SUCCESS)
+                ret = wc_HmacFinal(&hmac, checkMac);
             if (ConstantCompare(checkMac, mac, ssh->peerMacSz) != 0)
                 ret = WS_VERIFY_MAC_E;
             break;
@@ -2566,7 +2892,7 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
 }
 
 
-int ProcessReply(WOLFSSH* ssh)
+int DoReceive(WOLFSSH* ssh)
 {
     int ret = WS_FATAL_ERROR;
     int verifyResult;
@@ -2665,23 +2991,25 @@ int ProcessReply(WOLFSSH* ssh)
 }
 
 
-static const char sshIdStr[] = "SSH-2.0-wolfSSHv"
-                               LIBWOLFSSH_VERSION_STRING
-                               "\r\n";
-
-
 int ProcessClientVersion(WOLFSSH* ssh)
 {
-    int error;
-    uint32_t protoLen = 7; /* Length of the SSH-2.0 portion of the ID str */
-    uint8_t scratch[LENGTH_SZ];
+    int ret;
+    uint32_t idSz;
+    uint8_t* eol;
 
-    if ( (error = GetInputText(ssh)) < 0) {
+    if ( (ret = GetInputText(ssh, &eol)) < 0) {
         WLOG(WS_LOG_DEBUG, "get input text failed");
-        return error;
+        return ret;
     }
 
-    if (WSTRNCASECMP((char*)ssh->inputBuffer.buffer, sshIdStr, protoLen) == 0) {
+    if (eol == NULL) {
+        WLOG(WS_LOG_DEBUG, "invalid EOL");
+        return WS_VERSION_E;
+    }
+
+    if (WSTRNCASECMP((char*)ssh->inputBuffer.buffer,
+                     sshIdStr, SSH_PROTO_SZ) == 0) {
+
         ssh->clientState = CLIENT_VERSION_DONE;
     }
     else {
@@ -2689,36 +3017,53 @@ int ProcessClientVersion(WOLFSSH* ssh)
         return WS_VERSION_E;
     }
 
-    c32toa(ssh->inputBuffer.length - 2, scratch);
-    wc_ShaUpdate(&ssh->handshake->hash, scratch, LENGTH_SZ);
-    wc_ShaUpdate(&ssh->handshake->hash, ssh->inputBuffer.buffer,
-                                                   ssh->inputBuffer.length - 2);
-    ssh->inputBuffer.idx += ssh->inputBuffer.length;
+    *eol = 0;
 
-    return WS_SUCCESS;
+    idSz = (uint32_t)WSTRLEN((char*)ssh->inputBuffer.buffer);
+
+    ssh->clientId = (uint8_t*)WMALLOC(idSz + LENGTH_SZ,
+                                      ssh->ctx->heap, DYNTYPE_STRING);
+    if (ssh->clientId == NULL)
+        ret = WS_MEMORY_E;
+    else {
+        c32toa(idSz, ssh->clientId);
+        WMEMCPY(ssh->clientId + LENGTH_SZ, ssh->inputBuffer.buffer, idSz);
+        ssh->clientIdSz = idSz + LENGTH_SZ;
+        ret = wc_ShaUpdate(&ssh->handshake->hash,
+                           ssh->clientId, idSz + LENGTH_SZ);
+    }
+    ssh->inputBuffer.idx += idSz + SSH_PROTO_EOL_SZ;
+
+    if (ret == WS_SUCCESS) {
+        uint8_t  idSzFlat[LENGTH_SZ];
+
+        idSz = (uint32_t)WSTRLEN(sshIdStr) - SSH_PROTO_EOL_SZ;
+        c32toa(idSz, idSzFlat);
+        ret = wc_ShaUpdate(&ssh->handshake->hash, idSzFlat, LENGTH_SZ);
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = wc_ShaUpdate(&ssh->handshake->hash,
+                           (const uint8_t*)sshIdStr, idSz);
+
+    ShrinkBuffer(&ssh->inputBuffer, 0);
+
+    return ret;
 }
 
 
 int SendServerVersion(WOLFSSH* ssh)
 {
     int ret = WS_SUCCESS;
-    uint32_t sshIdStrSz = (uint32_t)WSTRLEN(sshIdStr);
-    uint8_t  sshIdStrSzFlat[LENGTH_SZ];
+    uint32_t sshIdStrSz;
 
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "%s", sshIdStr);
-        ret = SendText(ssh, sshIdStr, (uint32_t)WSTRLEN(sshIdStr));
-    }
-
-    if (ret == WS_SUCCESS) {
-        sshIdStrSz -= 2; /* Remove the CRLF */
-        c32toa(sshIdStrSz, sshIdStrSzFlat);
-        wc_ShaUpdate(&ssh->handshake->hash, sshIdStrSzFlat, LENGTH_SZ);
-        wc_ShaUpdate(&ssh->handshake->hash,
-                     (const uint8_t*)sshIdStr, sshIdStrSz);
+        sshIdStrSz = (uint32_t)WSTRLEN(sshIdStr);
+        ret = SendText(ssh, sshIdStr, sshIdStrSz);
     }
 
     return ret;
@@ -2741,7 +3086,7 @@ static int PreparePacket(WOLFSSH* ssh, uint32_t payloadSz)
         /* Minimum value for paddingSz is 4. */
         paddingSz = ssh->blockSz -
                     (LENGTH_SZ + PAD_LENGTH_SZ + payloadSz) % ssh->blockSz;
-        if (paddingSz < 4)
+        if (paddingSz < MIN_PAD_LENGTH)
             paddingSz += ssh->blockSz;
         ssh->paddingSz = paddingSz;
         packetSz = PAD_LENGTH_SZ + payloadSz + paddingSz;
@@ -2857,11 +3202,18 @@ int SendKexInit(WOLFSSH* ssh)
     uint8_t* payload;
     uint32_t idx = 0;
     uint32_t payloadSz;
-    uint8_t payloadSzFlat[LENGTH_SZ];
     int ret = WS_SUCCESS;
 
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
+
+    if (ssh->keyingState == KEYING_KEYED) {
+        ssh->handshake = HandshakeInfoNew(ssh->ctx->heap);
+        if (ssh->handshake == NULL) {
+            WLOG(WS_LOG_DEBUG, "Couldn't allocate handshake info");
+            ret = WS_MEMORY_E;
+        }
+    }
 
     if (ret == WS_SUCCESS) {
         payloadSz = MSG_ID_SZ + COOKIE_SZ + (LENGTH_SZ * 11) + BOOLEAN_SZ +
@@ -2903,18 +3255,47 @@ int SendKexInit(WOLFSSH* ssh)
 
         ssh->outputBuffer.length = idx;
 
-        c32toa(payloadSz, payloadSzFlat);
-        ret = wc_ShaUpdate(&ssh->handshake->hash, payloadSzFlat, LENGTH_SZ);
-    }
+        if (ssh->keyingState == KEYING_KEYED) {
+            uint8_t* buf;
+            uint32_t bufSz = payloadSz + LENGTH_SZ;
 
-    if (ret == WS_SUCCESS)
-        ret = wc_ShaUpdate(&ssh->handshake->hash, payload, payloadSz);
+            buf = (uint8_t*)WMALLOC(bufSz, ssh->ctx->heap, DYNTYPE_STRING);
+            if (buf == NULL) {
+                WLOG(WS_LOG_DEBUG, "Cannot allocate storage for KEX Init msg");
+                ret = WS_MEMORY_E;
+            }
+            else {
+                c32toa(payloadSz, buf);
+                WMEMCPY(buf + LENGTH_SZ, payload, payloadSz);
+                ssh->handshake->serverKexInit = buf;
+                ssh->handshake->serverKexInitSz = bufSz;
+            }
+        }
+        else {
+            uint8_t szFlat[LENGTH_SZ];
+            c32toa(payloadSz, szFlat);
+            ret = wc_ShaUpdate(&ssh->handshake->hash, szFlat, LENGTH_SZ);
+            if (ret == WS_SUCCESS)
+                ret = wc_ShaUpdate(&ssh->handshake->hash, payload, payloadSz);
+        }
+    }
 
     if (ret == WS_SUCCESS)
         ret = BundlePacket(ssh);
 
     if (ret == WS_SUCCESS)
         ret = SendBuffered(ssh);
+
+    if (ret == WS_SUCCESS) {
+        if (ssh->keyingState == KEYING_KEXINIT_RECV) {
+            WLOG(WS_LOG_DEBUG, "KeyingState now KEXINIT_DONE");
+            ssh->keyingState = KEYING_KEXINIT_DONE;
+        }
+        else if (ssh->keyingState == KEYING_KEYED) {
+            WLOG(WS_LOG_DEBUG, "KeyingState now KEXINIT_SENT");
+            ssh->keyingState = KEYING_KEXINIT_SENT;
+        }
+    }
 
     return ret;
 }
@@ -2949,180 +3330,227 @@ int SendKexDhReply(WOLFSSH* ssh)
     uint32_t scratch = 0;
     uint8_t* output;
     uint32_t idx;
-    int ret;
+    int ret = WS_SUCCESS;
 
+    WLOG(WS_LOG_DEBUG, "Entering SendKexDhReply()");
     wc_InitDhKey(&dhKey);
 
     switch (ssh->handshake->kexId) {
         case ID_DH_GROUP1_SHA1:
-            wc_DhSetKey(&dhKey, dhPrimeGroup1, dhPrimeGroup1Sz,
-                        dhGenerator, dhGeneratorSz);
+            if (wc_DhSetKey(&dhKey, dhPrimeGroup1, dhPrimeGroup1Sz,
+                            dhGenerator, dhGeneratorSz) < 0)
+                ret = WS_CRYPTO_FAILED;
             break;
 
         case ID_DH_GROUP14_SHA1:
-            wc_DhSetKey(&dhKey, dhPrimeGroup14, dhPrimeGroup14Sz,
-                        dhGenerator, dhGeneratorSz);
+            if (wc_DhSetKey(&dhKey, dhPrimeGroup14, dhPrimeGroup14Sz,
+                            dhGenerator, dhGeneratorSz) < 0)
+                ret = WS_CRYPTO_FAILED;
             break;
 
         default:
-            return -1;
+            ret = WS_INVALID_ALGO_ID;
     }
 
     /* Hash in the server's RSA key. */
-    wc_InitRsaKey(&rsaKey, ssh->ctx->heap);
-    ret = wc_RsaPrivateKeyDecode(ssh->ctx->privateKey, &scratch,
-                                 &rsaKey, (int)ssh->ctx->privateKeySz);
-    if (ret < 0)
-        return ret;
-    wc_RsaFlattenPublicKey(&rsaKey, rsaE, &rsaESz, rsaN, &rsaNSz);
-    if (rsaE[0] & 0x80) rsaEPad = 1;
-    if (rsaN[0] & 0x80) rsaNPad = 1;
-    rsaKeyBlockSz = (LENGTH_SZ * 3) + 7 + rsaESz + rsaEPad + rsaNSz + rsaNPad;
-        /* The 7 is for the name "ssh-rsa". */
-    c32toa(rsaKeyBlockSz, scratchLen);
-    wc_ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
-    c32toa(7, scratchLen);
-    wc_ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
-    wc_ShaUpdate(&ssh->handshake->hash, (const uint8_t*)"ssh-rsa", 7);
-    c32toa(rsaESz + rsaEPad, scratchLen);
-    wc_ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
-    if (rsaEPad) {
-        scratchLen[0] = 0;
-        wc_ShaUpdate(&ssh->handshake->hash, scratchLen, 1);
-    }
-    wc_ShaUpdate(&ssh->handshake->hash, rsaE, rsaESz);
-    c32toa(rsaNSz + rsaNPad, scratchLen);
-    wc_ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
-    if (rsaNPad) {
-        scratchLen[0] = 0;
-        wc_ShaUpdate(&ssh->handshake->hash, scratchLen, 1);
-    }
-    wc_ShaUpdate(&ssh->handshake->hash, rsaN, rsaNSz);
+    if (ret == WS_SUCCESS) {
+        ret = wc_InitRsaKey(&rsaKey, ssh->ctx->heap);
+        if (ret == 0)
+            ret = wc_RsaPrivateKeyDecode(ssh->ctx->privateKey, &scratch,
+                                         &rsaKey, (int)ssh->ctx->privateKeySz);
+        if (ret == 0)
+            ret = wc_RsaFlattenPublicKey(&rsaKey, rsaE, &rsaESz, rsaN, &rsaNSz);
+        if (ret == 0) {
+            if (rsaE[0] & 0x80) rsaEPad = 1;
+            if (rsaN[0] & 0x80) rsaNPad = 1;
+            rsaKeyBlockSz = (LENGTH_SZ * 3) + 7 + rsaESz + rsaEPad +
+                            rsaNSz + rsaNPad;
+                            /* The 7 is for the name "ssh-rsa". */
+            c32toa(rsaKeyBlockSz, scratchLen);
+            ret = wc_ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
+        }
+        if (ret == 0) {
+            c32toa(7, scratchLen);
+            ret = wc_ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
+        }
+        if (ret == 0)
+            ret = wc_ShaUpdate(&ssh->handshake->hash,
+                               (const uint8_t*)"ssh-rsa", 7);
+        if (ret == 0) {
+            c32toa(rsaESz + rsaEPad, scratchLen);
+            ret = wc_ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
+        }
+        if (ret == 0) {
+            if (rsaEPad) {
+                scratchLen[0] = 0;
+                ret = wc_ShaUpdate(&ssh->handshake->hash, scratchLen, 1);
+            }
+        }
+        if (ret == 0)
+            ret = wc_ShaUpdate(&ssh->handshake->hash, rsaE, rsaESz);
+        if (ret == 0) {
+            c32toa(rsaNSz + rsaNPad, scratchLen);
+            ret = wc_ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
+        }
+        if (ret == 0) {
+            if (rsaNPad) {
+                scratchLen[0] = 0;
+                ret = wc_ShaUpdate(&ssh->handshake->hash, scratchLen, 1);
+            }
+        }
+        if (ret == 0)
+            ret = wc_ShaUpdate(&ssh->handshake->hash, rsaN, rsaNSz);
 
-    /* Hash in the client's DH e-value. */
-    c32toa(ssh->handshake->eSz, scratchLen);
-    wc_ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
-    wc_ShaUpdate(&ssh->handshake->hash, ssh->handshake->e, ssh->handshake->eSz);
+        /* Hash in the client's DH e-value. */
+        if (ret == 0) {
+            c32toa(ssh->handshake->eSz, scratchLen);
+            ret = wc_ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
+        }
+        if (ret == 0)
+            ret = wc_ShaUpdate(&ssh->handshake->hash,
+                               ssh->handshake->e, ssh->handshake->eSz);
 
-    /* Make the server's DH f-value, and the shared secret k. */
-    wc_DhGenerateKeyPair(&dhKey, ssh->rng, y, &ySz, f, &fSz);
-    if (f[0] & 0x80) fPad = 1;
-    wc_DhAgree(&dhKey, ssh->k, &ssh->kSz, y, ySz,
-               ssh->handshake->e, ssh->handshake->eSz);
-    if (ssh->k[0] & 0x80) kPad = 1;
-    wc_FreeDhKey(&dhKey);
+        /* Make the server's DH f-value, and the shared secret k. */
+        if (ret == 0)
+            ret = wc_DhGenerateKeyPair(&dhKey, ssh->rng, y, &ySz, f, &fSz);
+        if (ret == 0) {
+            if (f[0] & 0x80) fPad = 1;
+            ret = wc_DhAgree(&dhKey, ssh->k, &ssh->kSz, y, ySz,
+                             ssh->handshake->e, ssh->handshake->eSz);
+        }
+        if (ret == 0) {
+            if (ssh->k[0] & 0x80) kPad = 1;
+        }
+        wc_FreeDhKey(&dhKey);
 
-    /* Hash in the server's DH f-value. */
-    c32toa(fSz + fPad, scratchLen);
-    wc_ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
-    if (fPad) {
-        scratchLen[0] = 0;
-        wc_ShaUpdate(&ssh->handshake->hash, scratchLen, 1);
-    }
-    wc_ShaUpdate(&ssh->handshake->hash, f, fSz);
+        /* Hash in the server's DH f-value. */
+        c32toa(fSz + fPad, scratchLen);
+        wc_ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
+        if (fPad) {
+            scratchLen[0] = 0;
+            wc_ShaUpdate(&ssh->handshake->hash, scratchLen, 1);
+        }
+        wc_ShaUpdate(&ssh->handshake->hash, f, fSz);
 
-    /* Hash in the shared secret k. */
-    c32toa(ssh->kSz + kPad, scratchLen);
-    wc_ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
-    if (kPad) {
-        scratchLen[0] = 0;
-        wc_ShaUpdate(&ssh->handshake->hash, scratchLen, 1);
-    }
-    wc_ShaUpdate(&ssh->handshake->hash, ssh->k, ssh->kSz);
+        /* Hash in the shared secret k. */
+        c32toa(ssh->kSz + kPad, scratchLen);
+        wc_ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
+        if (kPad) {
+            scratchLen[0] = 0;
+            wc_ShaUpdate(&ssh->handshake->hash, scratchLen, 1);
+        }
+        wc_ShaUpdate(&ssh->handshake->hash, ssh->k, ssh->kSz);
 
-    /* Save the handshake hash value h, and session ID. */
-    wc_ShaFinal(&ssh->handshake->hash, ssh->h);
-    ssh->hSz = SHA_DIGEST_SIZE;
-    if (ssh->sessionIdSz == 0) {
-        WMEMCPY(ssh->sessionId, ssh->h, ssh->hSz);
-        ssh->sessionIdSz = ssh->hSz;
+        /* Save the handshake hash value h, and session ID. */
+        wc_ShaFinal(&ssh->handshake->hash, ssh->h);
+        ssh->hSz = SHA_DIGEST_SIZE;
+        if (ssh->sessionIdSz == 0) {
+            WMEMCPY(ssh->sessionId, ssh->h, ssh->hSz);
+            ssh->sessionIdSz = ssh->hSz;
+        }
+        if (ret != WS_SUCCESS)
+            ret = WS_CRYPTO_FAILED;
     }
 
     /* Sign h with the server's RSA private key. */
-    {
+    if (ret == WS_SUCCESS) {
         Sha sha;
         uint8_t digest[SHA_DIGEST_SIZE];
         uint8_t encSig[512];
         uint32_t encSigSz;
 
-        wc_InitSha(&sha);
-        wc_ShaUpdate(&sha, ssh->h, ssh->hSz);
-        wc_ShaFinal(&sha, digest);
+        ret = wc_InitSha(&sha);
+        if (ret == 0)
+            ret = wc_ShaUpdate(&sha, ssh->h, ssh->hSz);
+        if (ret == 0)
+            ret = wc_ShaFinal(&sha, digest);
+        if (ret != 0)
+            ret = WS_CRYPTO_FAILED;
 
-        encSigSz = wc_EncodeSignature(encSig, digest, sizeof(digest), SHAh);
-        if (encSigSz <= 0) {
-            WLOG(WS_LOG_DEBUG, "SendKexDhReply: Bad Encode Sig");
-        }
-        else {
-            /* At this point, sigSz should already be sizeof(sig) */
-            sigSz = wc_RsaSSL_Sign(encSig, encSigSz,
-                                sig, sigSz, &rsaKey, ssh->rng);
-            if (sigSz <= 0) {
-                WLOG(WS_LOG_DEBUG, "SendKexDhReply: Bad RSA Sign");
+        if (ret == WS_SUCCESS) {
+            encSigSz = wc_EncodeSignature(encSig, digest, sizeof(digest), SHAh);
+            if (encSigSz <= 0) {
+                WLOG(WS_LOG_DEBUG, "SendKexDhReply: Bad Encode Sig");
+                ret = WS_CRYPTO_FAILED;
             }
             else {
-                /* Success */
+                /* At this point, sigSz should already be sizeof(sig) */
+                sigSz = wc_RsaSSL_Sign(encSig, encSigSz,
+                                    sig, sigSz, &rsaKey, ssh->rng);
+                if (sigSz <= 0) {
+                    WLOG(WS_LOG_DEBUG, "SendKexDhReply: Bad RSA Sign");
+                    ret = WS_RSA_E;
+                }
+                else {
+                    /* Success */
+                }
             }
         }
     }
     wc_FreeRsaKey(&rsaKey);
     sigBlockSz = (LENGTH_SZ * 2) + 7 + sigSz;
 
-    GenerateKeys(ssh);
+    if (ret == WS_SUCCESS)
+        ret = GenerateKeys(ssh);
 
     /* Get the buffer, copy the packet data, once f is laid into the buffer,
      * add it to the hash and then add K. */
-    payloadSz = MSG_ID_SZ + (LENGTH_SZ * 3) +
-                rsaKeyBlockSz + fSz + fPad + sigBlockSz;
-    ret = PreparePacket(ssh, payloadSz);
-    if (ret != WS_SUCCESS)
-        return ret;
-    output = ssh->outputBuffer.buffer;
-    idx = ssh->outputBuffer.length;
+    if (ret == WS_SUCCESS) {
+        payloadSz = MSG_ID_SZ + (LENGTH_SZ * 3) +
+                    rsaKeyBlockSz + fSz + fPad + sigBlockSz;
+        ret = PreparePacket(ssh, payloadSz);
+    }
 
-    output[idx++] = MSGID_KEXDH_REPLY;
+    if (ret == WS_SUCCESS) {
+        output = ssh->outputBuffer.buffer;
+        idx = ssh->outputBuffer.length;
 
-    /* Copy the rsaKeyBlock into the buffer. */
-    c32toa(rsaKeyBlockSz, output + idx);
-    idx += LENGTH_SZ;
-    c32toa(7, output + idx);
-    idx += LENGTH_SZ;
-    WMEMCPY(output + idx, "ssh-rsa", 7);
-    idx += 7;
-    c32toa(rsaESz + rsaEPad, output + idx);
-    idx += LENGTH_SZ;
-    if (rsaEPad) output[idx++] = 0;
-    WMEMCPY(output + idx, rsaE, rsaESz);
-    idx += rsaESz;
-    c32toa(rsaNSz + rsaNPad, output + idx);
-    idx += LENGTH_SZ;
-    if (rsaNPad) output[idx++] = 0;
-    WMEMCPY(output + idx, rsaN, rsaNSz);
-    idx += rsaNSz;
+        output[idx++] = MSGID_KEXDH_REPLY;
 
-    c32toa(fSz + fPad, output + idx);
-    idx += LENGTH_SZ;
-    if (fPad) output[idx++] = 0;
-    WMEMCPY(output + idx, f, fSz);
-    idx += fSz;
+        /* Copy the rsaKeyBlock into the buffer. */
+        c32toa(rsaKeyBlockSz, output + idx);
+        idx += LENGTH_SZ;
+        c32toa(7, output + idx);
+        idx += LENGTH_SZ;
+        WMEMCPY(output + idx, "ssh-rsa", 7);
+        idx += 7;
+        c32toa(rsaESz + rsaEPad, output + idx);
+        idx += LENGTH_SZ;
+        if (rsaEPad) output[idx++] = 0;
+        WMEMCPY(output + idx, rsaE, rsaESz);
+        idx += rsaESz;
+        c32toa(rsaNSz + rsaNPad, output + idx);
+        idx += LENGTH_SZ;
+        if (rsaNPad) output[idx++] = 0;
+        WMEMCPY(output + idx, rsaN, rsaNSz);
+        idx += rsaNSz;
 
-    c32toa(sigBlockSz, output + idx);
-    idx += LENGTH_SZ;
-    c32toa(7, output + idx);
-    idx += LENGTH_SZ;
-    WMEMCPY(output + idx, "ssh-rsa", 7);
-    idx += 7;
-    c32toa(sigSz, output + idx);
-    idx += LENGTH_SZ;
-    WMEMCPY(output + idx, sig, sigSz);
-    idx += sigSz;
+        c32toa(fSz + fPad, output + idx);
+        idx += LENGTH_SZ;
+        if (fPad) output[idx++] = 0;
+        WMEMCPY(output + idx, f, fSz);
+        idx += fSz;
 
-    ssh->outputBuffer.length = idx;
+        c32toa(sigBlockSz, output + idx);
+        idx += LENGTH_SZ;
+        c32toa(7, output + idx);
+        idx += LENGTH_SZ;
+        WMEMCPY(output + idx, "ssh-rsa", 7);
+        idx += 7;
+        c32toa(sigSz, output + idx);
+        idx += LENGTH_SZ;
+        WMEMCPY(output + idx, sig, sigSz);
+        idx += sigSz;
 
-    ret = BundlePacket(ssh);
+        ssh->outputBuffer.length = idx;
+
+        ret = BundlePacket(ssh);
+    }
+
     if (ret == WS_SUCCESS)
         ret = SendNewKeys(ssh);
 
+    WLOG(WS_LOG_DEBUG, "Leaving SendKexDhReply(), ret = %d", ret);
     return ret;
 }
 
@@ -3133,6 +3561,7 @@ int SendNewKeys(WOLFSSH* ssh)
     uint32_t idx = 0;
     int ret = WS_SUCCESS;
 
+    WLOG(WS_LOG_DEBUG, "Entering SendNewKeys()");
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
@@ -3177,10 +3606,24 @@ int SendNewKeys(WOLFSSH* ssh)
                 WLOG(WS_LOG_DEBUG, "SNK: using cipher invalid");
                 ret = WS_INVALID_ALGO_ID;
         }
-
-        ssh->txCount = 0;
     }
 
+    if (ret == WS_SUCCESS) {
+        ssh->txCount = 0;
+        if (ssh->keyingState == KEYING_USING_KEYS_RECV) {
+            ssh->highwaterFlag = 0;
+            ssh->keyingState = KEYING_KEYED;
+            HandshakeInfoFree(ssh->handshake, ssh->ctx->heap);
+            ssh->handshake = NULL;
+            WLOG(WS_LOG_DEBUG, "KeyingState now KEYED");
+        }
+        else {
+            ssh->keyingState = KEYING_USING_KEYS_SENT;
+            WLOG(WS_LOG_DEBUG, "KeyingState now USING_KEYS_SENT");
+        }
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving SendNewKeys(), ret = %d", ret);
     return ret;
 }
 
@@ -3190,6 +3633,9 @@ int SendUnimplemented(WOLFSSH* ssh)
     uint8_t* output;
     uint32_t idx = 0;
     int      ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG,
+         "Entering SendUnimplemented(), peerSeq = %u", ssh->peerSeq);
 
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
@@ -3213,6 +3659,7 @@ int SendUnimplemented(WOLFSSH* ssh)
     if (ret == WS_SUCCESS)
         ret = SendBuffered(ssh);
 
+    WLOG(WS_LOG_DEBUG, "Leaving SendUnimplemented(), ret = %d", ret);
     return ret;
 }
 
@@ -3594,6 +4041,90 @@ int SendChannelOpenConf(WOLFSSH* ssh)
 }
 
 
+int SendChannelEof(WOLFSSH* ssh, uint32_t peerChannelId)
+{
+    uint8_t* output;
+    uint32_t idx;
+    int      ret = WS_SUCCESS;
+    WOLFSSH_CHANNEL* channel;
+
+    WLOG(WS_LOG_DEBUG, "Entering SendChannelEof()");
+
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        channel = ChannelFind(ssh, peerChannelId, FIND_PEER);
+        if (channel == NULL)
+            ret = WS_INVALID_CHANID;
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ);
+
+    if (ret == WS_SUCCESS) {
+        output = ssh->outputBuffer.buffer;
+        idx = ssh->outputBuffer.length;
+
+        output[idx++] = MSGID_CHANNEL_EOF;
+        c32toa(channel->peerChannel, output + idx);
+        idx += UINT32_SZ;
+
+        ssh->outputBuffer.length = idx;
+
+        ret = BundlePacket(ssh);
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = SendBuffered(ssh);
+
+    WLOG(WS_LOG_DEBUG, "Leaving SendChannelEof(), ret = %d", ret);
+    return ret;
+}
+
+
+int SendChannelClose(WOLFSSH* ssh, uint32_t peerChannelId)
+{
+    uint8_t* output;
+    uint32_t idx;
+    int      ret = WS_SUCCESS;
+    WOLFSSH_CHANNEL* channel;
+
+    WLOG(WS_LOG_DEBUG, "Entering SendChannelClose()");
+
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        channel = ChannelFind(ssh, peerChannelId, FIND_PEER);
+        if (channel == NULL)
+            ret = WS_INVALID_CHANID;
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ);
+
+    if (ret == WS_SUCCESS) {
+        output = ssh->outputBuffer.buffer;
+        idx = ssh->outputBuffer.length;
+
+        output[idx++] = MSGID_CHANNEL_CLOSE;
+        c32toa(channel->peerChannel, output + idx);
+        idx += UINT32_SZ;
+
+        ssh->outputBuffer.length = idx;
+
+        ret = BundlePacket(ssh);
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = SendBuffered(ssh);
+
+    WLOG(WS_LOG_DEBUG, "Leaving SendChannelClose(), ret = %d", ret);
+    return ret;
+}
+
+
 int SendChannelData(WOLFSSH* ssh, uint32_t peerChannel,
                     uint8_t* data, uint32_t dataSz)
 {
@@ -3607,18 +4138,31 @@ int SendChannelData(WOLFSSH* ssh, uint32_t peerChannel,
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
-    channel = ChannelFind(ssh, peerChannel, FIND_PEER);
-    if (channel == NULL) {
-        WLOG(WS_LOG_DEBUG, "Invalid peer channel");
-        ret = WS_INVALID_CHANID;
-    }
-    else if (channel->peerWindowSz < dataSz) {
-        WLOG(WS_LOG_DEBUG, "Peer window too small");
-        ret = WS_OVERFLOW_E;
+    if (ret == WS_SUCCESS) {
+        if (ssh->keyingState != KEYING_KEYED)
+            ret = WS_REKEYING;
     }
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
+        channel = ChannelFind(ssh, peerChannel, FIND_PEER);
+        if (channel == NULL) {
+            WLOG(WS_LOG_DEBUG, "Invalid peer channel");
+            ret = WS_INVALID_CHANID;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        uint32_t bound = min(channel->peerWindowSz, channel->peerMaxPacketSz);
+
+        if (dataSz > bound) {
+            WLOG(WS_LOG_DEBUG,
+                 "Trying to send %u, client will only accept %u, limiting",
+                 dataSz, bound);
+            dataSz = bound;
+        }
+
         ret = PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ + LENGTH_SZ + dataSz);
+    }
 
     if (ret == WS_SUCCESS) {
         output = ssh->outputBuffer.buffer;
@@ -3637,20 +4181,67 @@ int SendChannelData(WOLFSSH* ssh, uint32_t peerChannel,
         ret = BundlePacket(ssh);
     }
 
-    if (ret == WS_SUCCESS) {
+    if (ret == WS_SUCCESS)
         ret = SendBuffered(ssh);
 
+    if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_INFO, "  dataSz = %u", dataSz);
         WLOG(WS_LOG_INFO, "  peerWindowSz = %u", channel->peerWindowSz);
-        WLOG(WS_LOG_INFO, "  update peerWindowSz = %u",
-                          channel->peerWindowSz - dataSz);
         channel->peerWindowSz -= dataSz;
+        WLOG(WS_LOG_INFO, "  update peerWindowSz = %u", channel->peerWindowSz);
+        ret = dataSz;
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelData(), ret = %d", ret);
     return ret;
 }
 
+
+int SendChannelWindowAdjust(WOLFSSH* ssh, uint32_t peerChannel,
+                            uint32_t bytesToAdd)
+{
+    uint8_t* output;
+    uint32_t idx;
+    int ret = WS_SUCCESS;
+    WOLFSSH_CHANNEL* channel;
+
+    WLOG(WS_LOG_DEBUG, "Entering SendChannelWindowAdjust()");
+
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    channel = ChannelFind(ssh, peerChannel, FIND_PEER);
+    if (channel == NULL) {
+        WLOG(WS_LOG_DEBUG, "Invalid peer channel");
+        ret = WS_INVALID_CHANID;
+    }
+    if (ret == WS_SUCCESS)
+        ret = PreparePacket(ssh, MSG_ID_SZ + (UINT32_SZ * 2));
+
+    if (ret == WS_SUCCESS) {
+        output = ssh->outputBuffer.buffer;
+        idx = ssh->outputBuffer.length;
+
+        output[idx++] = MSGID_CHANNEL_WINDOW_ADJUST;
+        c32toa(channel->peerChannel, output + idx);
+        idx += UINT32_SZ;
+        c32toa(bytesToAdd, output + idx);
+        idx += UINT32_SZ;
+
+        ssh->outputBuffer.length = idx;
+
+        ret = BundlePacket(ssh);
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = SendBuffered(ssh);
+
+    WLOG(WS_LOG_DEBUG, "Leaving SendChannelWindowAdjust(), ret = %d", ret);
+    return ret;
+}
+
+
+#ifdef DEBUG_WOLFSSH
 
 #define LINE_WIDTH 16
 void DumpOctetString(const uint8_t* input, uint32_t inputSz)
@@ -3675,3 +4266,4 @@ void DumpOctetString(const uint8_t* input, uint32_t inputSz)
     }
 }
 
+#endif
