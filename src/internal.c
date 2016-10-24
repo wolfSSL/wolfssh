@@ -2848,6 +2848,8 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
     WLOG(WS_LOG_DEBUG, "VM: seq = %u", ssh->peerSeq);
     WLOG(WS_LOG_DEBUG, "VM: keyLen = %u", ssh->clientKeys.macKeySz);
 
+    WMEMSET(checkMac, 0, sizeof(checkMac));
+
     switch (ssh->peerMacId) {
         case ID_NONE:
             ret = WS_SUCCESS;
