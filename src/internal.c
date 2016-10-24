@@ -645,7 +645,7 @@ int GrowBuffer(Buffer* buf, uint32_t sz, uint32_t usedSz)
 
             /*WLOG(WS_LOG_DEBUG, "GB: resizing buffer");*/
             if (buf->length > 0)
-                WMEMCPY(newBuffer, buf->buffer + buf->idx, buf->length);
+                WMEMCPY(newBuffer, buf->buffer + buf->idx, usedSz);
 
             if (!buf->dynamicFlag)
                 buf->dynamicFlag = 1;
@@ -738,11 +738,12 @@ retry:
 }
 
 
-static int GetInputText(WOLFSSH* ssh)
+static int GetInputText(WOLFSSH* ssh, uint8_t** pEol)
 {
     int gotLine = 0;
     int inSz = 255;
     int in;
+    char *eol;
 
     if (GrowBuffer(&ssh->inputBuffer, inSz, 0) < 0)
         return WS_MEMORY_E;
@@ -763,16 +764,18 @@ static int GetInputText(WOLFSSH* ssh)
         ssh->inputBuffer.length += in;
         inSz -= in;
 
-        if (ssh->inputBuffer.length > 2) {
-            if (ssh->inputBuffer.buffer[ssh->inputBuffer.length - 2] == '\r' &&
-                ssh->inputBuffer.buffer[ssh->inputBuffer.length - 1] == '\n') {
+        eol = WSTRNSTR((const char*)ssh->inputBuffer.buffer, "\r\n",
+                       ssh->inputBuffer.length);
 
-                gotLine = 1;
-            }
-        }
-    } while (!gotLine);
+        if (eol)
+            gotLine = 1;
 
-    return WS_SUCCESS;
+    } while (!gotLine && inSz);
+
+    if (pEol)
+        *pEol = (uint8_t*)eol;
+
+    return (gotLine ? WS_SUCCESS : WS_VERSION_E);
 }
 
 
@@ -871,7 +874,7 @@ static int GetInputData(WOLFSSH* ssh, uint32_t size)
      */
 
     if (inSz <= 0)
-        return WS_BUFFER_E;
+        return WS_SUCCESS;
 
     /*
      * If we need more space than there is left in the buffer grow buffer.
@@ -2904,10 +2907,16 @@ int ProcessClientVersion(WOLFSSH* ssh)
 {
     int ret;
     uint32_t idSz;
+    uint8_t* eol;
 
-    if ( (ret = GetInputText(ssh)) < 0) {
+    if ( (ret = GetInputText(ssh, &eol)) < 0) {
         WLOG(WS_LOG_DEBUG, "get input text failed");
         return ret;
+    }
+
+    if (eol == NULL) {
+        WLOG(WS_LOG_DEBUG, "invalid EOL");
+        return WS_VERSION_E;
     }
 
     if (WSTRNCASECMP((char*)ssh->inputBuffer.buffer,
@@ -2920,7 +2929,9 @@ int ProcessClientVersion(WOLFSSH* ssh)
         return WS_VERSION_E;
     }
 
-    idSz = ssh->inputBuffer.length - SSH_PROTO_EOL_SZ;
+    *eol = 0;
+
+    idSz = (uint32_t)WSTRLEN((char*)ssh->inputBuffer.buffer);
 
     ssh->clientId = (uint8_t*)WMALLOC(idSz + LENGTH_SZ,
                                       ssh->ctx->heap, DYNTYPE_STRING);
@@ -2933,6 +2944,7 @@ int ProcessClientVersion(WOLFSSH* ssh)
         ret = wc_ShaUpdate(&ssh->handshake->hash,
                            ssh->clientId, idSz + LENGTH_SZ);
     }
+    ssh->inputBuffer.idx += idSz + SSH_PROTO_EOL_SZ;
 
     if (ret == WS_SUCCESS) {
         uint8_t  idSzFlat[LENGTH_SZ];
@@ -2946,7 +2958,7 @@ int ProcessClientVersion(WOLFSSH* ssh)
         ret = wc_ShaUpdate(&ssh->handshake->hash,
                            (const uint8_t*)sshIdStr, idSz);
 
-    ssh->inputBuffer.idx += ssh->inputBuffer.length;
+    ShrinkBuffer(&ssh->inputBuffer, 0);
 
     return ret;
 }
