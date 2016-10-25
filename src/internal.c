@@ -3424,30 +3424,46 @@ int SendKexDhReply(WOLFSSH* ssh)
         wc_FreeDhKey(&dhKey);
 
         /* Hash in the server's DH f-value. */
-        c32toa(fSz + fPad, scratchLen);
-        wc_ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
-        if (fPad) {
-            scratchLen[0] = 0;
-            wc_ShaUpdate(&ssh->handshake->hash, scratchLen, 1);
+        if (ret == 0) {
+            c32toa(fSz + fPad, scratchLen);
+            ret = wc_ShaUpdate(&ssh->handshake->hash,
+                               scratchLen, LENGTH_SZ);
         }
-        wc_ShaUpdate(&ssh->handshake->hash, f, fSz);
+        if (ret == 0) {
+            if (fPad) {
+                scratchLen[0] = 0;
+                ret = wc_ShaUpdate(&ssh->handshake->hash, scratchLen, 1);
+            }
+        }
+        if (ret == 0)
+            ret = wc_ShaUpdate(&ssh->handshake->hash, f, fSz);
 
         /* Hash in the shared secret k. */
-        c32toa(ssh->kSz + kPad, scratchLen);
-        wc_ShaUpdate(&ssh->handshake->hash, scratchLen, LENGTH_SZ);
-        if (kPad) {
-            scratchLen[0] = 0;
-            wc_ShaUpdate(&ssh->handshake->hash, scratchLen, 1);
+        if (ret == 0) {
+            c32toa(ssh->kSz + kPad, scratchLen);
+            ret = wc_ShaUpdate(&ssh->handshake->hash,
+                               scratchLen, LENGTH_SZ);
         }
-        wc_ShaUpdate(&ssh->handshake->hash, ssh->k, ssh->kSz);
+        if (ret == 0) {
+            if (kPad) {
+                scratchLen[0] = 0;
+                ret = wc_ShaUpdate(&ssh->handshake->hash, scratchLen, 1);
+            }
+        }
+        if (ret == 0)
+            ret = wc_ShaUpdate(&ssh->handshake->hash, ssh->k, ssh->kSz);
 
         /* Save the handshake hash value h, and session ID. */
-        wc_ShaFinal(&ssh->handshake->hash, ssh->h);
-        ssh->hSz = SHA_DIGEST_SIZE;
-        if (ssh->sessionIdSz == 0) {
-            WMEMCPY(ssh->sessionId, ssh->h, ssh->hSz);
-            ssh->sessionIdSz = ssh->hSz;
+        if (ret == 0)
+            ret = wc_ShaFinal(&ssh->handshake->hash, ssh->h);
+        if (ret == 0) {
+            ssh->hSz = SHA_DIGEST_SIZE;
+            if (ssh->sessionIdSz == 0) {
+                WMEMCPY(ssh->sessionId, ssh->h, ssh->hSz);
+                ssh->sessionIdSz = ssh->hSz;
+            }
         }
+
         if (ret != WS_SUCCESS)
             ret = WS_CRYPTO_FAILED;
     }
