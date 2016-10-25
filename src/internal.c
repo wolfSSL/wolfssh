@@ -2362,8 +2362,6 @@ static int DoChannelRequest(WOLFSSH* ssh,
 
     WLOG(WS_LOG_DEBUG, "Entering DoChannelRequest()");
 
-    (void)ssh;
-
     ret = GetUint32(&channelId, buf, len, &begin);
 
     if (ret == WS_SUCCESS)
@@ -2377,62 +2375,65 @@ static int DoChannelRequest(WOLFSSH* ssh,
         return ret;
     }
 
-    WLOG(WS_LOG_DEBUG, "  channelId = %u", channelId);
-    WLOG(WS_LOG_DEBUG, "  type = %s", type);
-    WLOG(WS_LOG_DEBUG, "  wantReply = %u", wantReply);
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "  channelId = %u", channelId);
+        WLOG(WS_LOG_DEBUG, "  type = %s", type);
+        WLOG(WS_LOG_DEBUG, "  wantReply = %u", wantReply);
 
-    if (WSTRNCMP(type, "pty-req", typeSz) == 0) {
-        char     term[32];
-        uint32_t termSz;
-        uint32_t widthChar, heightRows, widthPixels, heightPixels;
-        uint32_t modesSz;
+        if (WSTRNCMP(type, "pty-req", typeSz) == 0) {
+            char     term[32];
+            uint32_t termSz;
+            uint32_t widthChar, heightRows, widthPixels, heightPixels;
+            uint32_t modesSz;
 
-        ret = GetString(term, &termSz, buf, len, &begin);
-        if (ret == WS_SUCCESS)
-            ret = GetUint32(&widthChar, buf, len, &begin);
-        if (ret == WS_SUCCESS)
-            ret = GetUint32(&heightRows, buf, len, &begin);
-        if (ret == WS_SUCCESS)
-            ret = GetUint32(&widthPixels, buf, len, &begin);
-        if (ret == WS_SUCCESS)
-            ret = GetUint32(&heightPixels, buf, len, &begin);
-        if (ret == WS_SUCCESS)
-            ret = GetUint32(&modesSz, buf, len, &begin);
+            ret = GetString(term, &termSz, buf, len, &begin);
+            if (ret == WS_SUCCESS)
+                ret = GetUint32(&widthChar, buf, len, &begin);
+            if (ret == WS_SUCCESS)
+                ret = GetUint32(&heightRows, buf, len, &begin);
+            if (ret == WS_SUCCESS)
+                ret = GetUint32(&widthPixels, buf, len, &begin);
+            if (ret == WS_SUCCESS)
+                ret = GetUint32(&heightPixels, buf, len, &begin);
+            if (ret == WS_SUCCESS)
+                ret = GetUint32(&modesSz, buf, len, &begin);
 
-        if (ret != WS_SUCCESS) {
-            WLOG(WS_LOG_DEBUG, "Leaving DoChannelRequest(), ret = %d", ret);
-            return ret;
+            if (ret == WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, "  term = %s", term);
+                WLOG(WS_LOG_DEBUG, "  widthChar = %u", widthChar);
+                WLOG(WS_LOG_DEBUG, "  heightRows = %u", heightRows);
+                WLOG(WS_LOG_DEBUG, "  widthPixels = %u", widthPixels);
+                WLOG(WS_LOG_DEBUG, "  heightPixels = %u", heightPixels);
+                WLOG(WS_LOG_DEBUG, "  modes = %u", (modesSz - 1) / 5);
+            }
         }
+        else if (WSTRNCMP(type, "env", typeSz) == 0) {
+            char     name[32];
+            uint32_t nameSz;
+            char     value[32];
+            uint32_t valueSz;
 
-        WLOG(WS_LOG_DEBUG, "  term = %s", term);
-        WLOG(WS_LOG_DEBUG, "  widthChar = %u", widthChar);
-        WLOG(WS_LOG_DEBUG, "  heightRows = %u", heightRows);
-        WLOG(WS_LOG_DEBUG, "  widthPixels = %u", widthPixels);
-        WLOG(WS_LOG_DEBUG, "  heightPixels = %u", heightPixels);
-        WLOG(WS_LOG_DEBUG, "  modes = %u", (modesSz - 1) / 5);
-    }
-    else if (WSTRNCMP(type, "env", typeSz) == 0) {
-        char     name[32];
-        uint32_t nameSz;
-        char     value[32];
-        uint32_t valueSz;
+            ret = GetString(name, &nameSz, buf, len, &begin);
+            if (ret == WS_SUCCESS)
+                ret = GetString(value, &valueSz, buf, len, &begin);
 
-        ret = GetString(name, &nameSz, buf, len, &begin);
-        if (ret == WS_SUCCESS)
-            ret = GetString(value, &valueSz, buf, len, &begin);
-
-        if (ret != WS_SUCCESS) {
-            WLOG(WS_LOG_DEBUG, "Leaving DoChannelRequest(), ret = %d", ret);
-            return ret;
+            WLOG(WS_LOG_DEBUG, "  %s = %s", name, value);
         }
-
-        WLOG(WS_LOG_DEBUG, "  %s = %s", name, value);
     }
 
-    *idx = len;
+    if (ret == WS_SUCCESS)
+        *idx = len;
 
-    WLOG(WS_LOG_DEBUG, "Leaving DoChannelRequest()");
-    return WS_SUCCESS;
+    if (wantReply) {
+        int replyRet;
+
+        replyRet = SendChannelSuccess(ssh, channelId, (ret == WS_SUCCESS));
+        if (replyRet != WS_SUCCESS)
+            ret = replyRet;
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving DoChannelRequest(), ret = %d", ret);
+    return ret;
 }
 
 
@@ -4253,6 +4254,52 @@ int SendChannelWindowAdjust(WOLFSSH* ssh, uint32_t peerChannel,
         ret = SendBuffered(ssh);
 
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelWindowAdjust(), ret = %d", ret);
+    return ret;
+}
+
+
+int SendChannelSuccess(WOLFSSH* ssh, uint32_t channelId, int success)
+{
+    uint8_t* output;
+    uint32_t idx;
+    int ret = WS_SUCCESS;
+    WOLFSSH_CHANNEL* channel;
+
+    WLOG(WS_LOG_DEBUG, "Entering SendChannelSuccess(), %s",
+         success ? "Success" : "Failure");
+
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        channel = ChannelFind(ssh, channelId, FIND_SELF);
+        if (channel == NULL) {
+            WLOG(WS_LOG_DEBUG, "Invalid channel");
+            ret = WS_INVALID_CHANID;
+        }
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ);
+
+    if (ret == WS_SUCCESS) {
+        output = ssh->outputBuffer.buffer;
+        idx = ssh->outputBuffer.length;
+
+        output[idx++] = success ?
+                        MSGID_CHANNEL_SUCCESS : MSGID_CHANNEL_FAILURE;
+        c32toa(channel->peerChannel, output + idx);
+        idx += UINT32_SZ;
+
+        ssh->outputBuffer.length = idx;
+
+        ret = BundlePacket(ssh);
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = SendBuffered(ssh);
+
+    WLOG(WS_LOG_DEBUG, "Leaving SendChannelSuccess(), ret = %d", ret);
     return ret;
 }
 
