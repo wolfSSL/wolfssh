@@ -313,6 +313,7 @@ WOLFSSH_LOCAL int SendUserAuthFailure(WOLFSSH*, uint8_t);
 WOLFSSH_LOCAL int SendUserAuthBanner(WOLFSSH*);
 WOLFSSH_LOCAL int SendUserAuthPkOk(WOLFSSH*, const uint8_t*, uint32_t,
                                    const uint8_t*, uint32_t);
+WOLFSSH_LOCAL int SendRequestSuccess(WOLFSSH*, int);
 WOLFSSH_LOCAL int SendChannelOpenConf(WOLFSSH*);
 WOLFSSH_LOCAL int SendChannelEof(WOLFSSH*, uint32_t);
 WOLFSSH_LOCAL int SendChannelClose(WOLFSSH*, uint32_t);
@@ -395,6 +396,10 @@ enum WS_MessageIds {
     MSGID_USERAUTH_BANNER  = 53,
     MSGID_USERAUTH_PK_OK   = 60, /* Public Key OK */
     MSGID_USERAUTH_PW_CHRQ = 60, /* Password Change Request */
+
+    MSGID_GLOBAL_REQUEST    = 80,
+    MSGID_REQUEST_SUCCESS   = 81,
+    MSGID_REQUEST_FAILURE   = 82,
 
     MSGID_CHANNEL_OPEN      = 90,
     MSGID_CHANNEL_OPEN_CONF = 91,
