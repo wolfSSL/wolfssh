@@ -269,15 +269,19 @@ static INLINE void tcp_bind(SOCKET_T* sockFd, uint16_t port, int useAnyAddr)
 }
 
 
-static int find_char(uint8_t ch, const uint8_t* buf, uint32_t bufSz)
+static uint8_t find_char(const uint8_t* str, const uint8_t* buf, uint32_t bufSz)
 {
+    const uint8_t* cur;
+
     while (bufSz) {
-        if (ch == *buf)
-            return 1;
-        else {
-            buf++;
-            bufSz--;
+        cur = str;
+        while (*cur != '\0') {
+            if (*cur == *buf)
+                return *cur;
+            cur++;
         }
+        buf++;
+        bufSz--;
     }
 
     return 0;
@@ -318,10 +322,19 @@ static THREAD_RETURN CYASSL_THREAD server_worker(void* vArgs)
                                                    backlogSz - txSum);
 
                         if (txSz > 0) {
-                            if (find_char(0x03, buf + txSum, txSz))
-                                stop = 1;
-                            else
-                                txSum += txSz;
+                            uint8_t c;
+                            const uint8_t matches[] = { 0x03, 0x04, 0x05, 0x00 };
+
+                            c = find_char(matches, buf + txSum, txSz);
+                            switch (c) {
+                                case 0x03:
+                                    stop = 1;
+                                    break;
+                                case 0x05:
+                                    fprintf(stderr, "dump stats\n");
+                                default:
+                                    txSum += txSz;
+                            }
                         }
                         else if (txSz != WS_REKEYING)
                             stop = 1;
