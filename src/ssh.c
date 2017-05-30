@@ -527,6 +527,28 @@ static int ProcessBuffer(WOLFSSH_CTX* ctx, const uint8_t* in, uint32_t inSz,
 }
 
 
+int wolfSSH_CTX_SetBanner(WOLFSSH_CTX* ctx,
+                          const char* newBanner)
+{
+    uint32_t newBannerSz = 0;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CTX_SetBanner()");
+
+    if (ctx == NULL)
+        return WS_BAD_ARGUMENT;
+
+    if (newBanner != NULL) {
+        WLOG(WS_LOG_INFO, "  setting banner to: \"%s\"", newBanner);
+        newBannerSz = (uint32_t)WSTRLEN(newBanner);
+    }
+
+    ctx->banner = newBanner;
+    ctx->bannerSz = newBannerSz;
+
+    return WS_SUCCESS;
+}
+
+
 int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX* ctx,
                                    const uint8_t* in, uint32_t inSz, int format)
 {
