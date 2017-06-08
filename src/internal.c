@@ -1529,6 +1529,19 @@ static int DoNewKeys(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 }
 
 
+static int DoKexDhGexRequest(WOLFSSH* ssh,
+                             uint8_t* buf, uint32_t len,
+                             uint32_t* idx)
+{
+    (void)ssh;
+    (void)buf;
+    (void)len;
+    (void)idx;
+    WLOG(WS_LOG_DEBUG, "DoKeyDhGexRequest() not implemented");
+    return 0;
+}
+
+
 int GenerateKey(uint8_t hashId, uint8_t keyId,
                 uint8_t* key, uint32_t keySz,
                 const uint8_t* k, uint32_t kSz,
@@ -2706,6 +2719,16 @@ static int DoPacket(WOLFSSH* ssh)
             ret = DoKexDhInit(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
+        case MSGID_KEXDH_GEX_REQUEST:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_GEX_REQUEST");
+            ret = DoKexDhGexRequest(ssh, buf + idx, payloadSz, &payloadIdx);
+            break;
+
+        case MSGID_KEXDH_GEX_INIT:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_GEX_INIT");
+            ret = DoKexDhInit(ssh, buf + idx, payloadSz, &payloadIdx);
+            break;
+
         case MSGID_SERVICE_REQUEST:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_SERVICE_REQUEST");
             ret = DoServiceRequest(ssh, buf + idx, payloadSz, &payloadIdx);
@@ -3749,6 +3772,14 @@ int SendNewKeys(WOLFSSH* ssh)
 
     WLOG(WS_LOG_DEBUG, "Leaving SendNewKeys(), ret = %d", ret);
     return ret;
+}
+
+
+int SendKexDhGexGroup(WOLFSSH* ssh)
+{
+    (void)ssh;
+    WLOG(WS_LOG_DEBUG, "SendKexDhGexGroup() unimplemented");
+    return WS_UNIMPLEMENTED_E;
 }
 
 
