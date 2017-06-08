@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <wolfssh/ssh.h>
 #include <wolfssh/keygen.h>
+#include <wolfssh/internal.h>
 
 
 /* Utility functions */
@@ -191,7 +192,7 @@ typedef struct {
 } KdfTestVector;
 
 
-/** Test Vector Set #1 **/
+/** Test Vector Set #1: SHA-1 **/
 const char kdfTvSet1k[] =
     "35618FD3AABF980A5F766408961600D4933C60DD7B22D69EEB4D7A987C938F6F"
     "7BB2E60E0F638BB4289297B588E6109057325F010D021DF60EBF8BE67AD9C3E2"
@@ -202,7 +203,7 @@ const char kdfTvSet1k[] =
     "B560FEFDC146B8ED3E73441D05345031C35F9E6911B00319481D80015855BE4D"
     "1C7D7ACC8579B1CC2E5F714109C0882C3B57529ABDA1F2255D2B27C4A83AE11E";
 const char kdfTvSet1h[]         = "40555741F6DE70CDC4E740104A97E75473F49064";
-const char kdfTvSet1sessionId[] = "40555741F6DE70CDC4E740104A97E75473F49064";
+const char kdfTvSet1sid[]       = "40555741F6DE70CDC4E740104A97E75473F49064";
 const char kdfTvSet1a[]         = "B2EC4CF6943632C39972EE2801DC7393";
 const char kdfTvSet1b[]         = "BC92238B6FA69ECC10B2B013C2FC9785";
 const char kdfTvSet1c[]         = "9EF0E2053F66C56F3E4503DA1C2FBD6B";
@@ -210,7 +211,7 @@ const char kdfTvSet1d[]         = "47C8395B08277020A0645DA3959FA1A9";
 const char kdfTvSet1e[]         = "EE436BFDABF9B0313224EC800E7390445E2F575E";
 const char kdfTvSet1f[]         = "FB9FDEEC78B0FB258F1A4F47F6BCE166680994BB";
 
-/** Test Vector Set #2 **/
+/** Test Vector Set #2: SHA-1 **/
 const char kdfTvSet2k[] =
     "19FA2B7C7F4FE7DE61CDE17468C792CCEAB0E3F2CE37CDE2DAA0974BCDFFEDD4"
     "A29415CDB330FA6A97ECA742359DC1223B581D8AC61B43CFFDF66D20952840B0"
@@ -221,7 +222,7 @@ const char kdfTvSet2k[] =
     "BFDA4480432E14F98FFC821F05647693040B07D71DC273121D53866294434D46"
     "0E95CFA4AB4414705BF1F8224655F907A418A6A893F2A71019225869CB7FE988";
 const char kdfTvSet2h[]         = "DFB748905CC8647684C3E0B7F26A3E8E7414AC51";
-const char kdfTvSet2sessionId[] = "DFB748905CC8647684C3E0B7F26A3E8E7414AC51";
+const char kdfTvSet2sid[]       = "DFB748905CC8647684C3E0B7F26A3E8E7414AC51";
 const char kdfTvSet2a[]         = "52EDBFD5E414A3CC6C7F7A0F4EA60503";
 const char kdfTvSet2b[]         = "926C6987696C5FFCC6511BFE34557878";
 const char kdfTvSet2c[]         = "CB6D56EC5B9AFECD326D544DA2D22DED";
@@ -229,19 +230,80 @@ const char kdfTvSet2d[]         = "F712F6451F1BD6CE9BAA597AC87C5A24";
 const char kdfTvSet2e[]         = "E42FC62C76B76B37818F78292D3C2226D0264760";
 const char kdfTvSet2f[]         = "D14BE4DD0093A3E759580233C80BB8399CE4C4E7";
 
+/** Test Vector Set #3: SHA-256 **/
+const char kdfTvSet3k[] =
+    "6AC382EAACA093E125E25C24BEBC84640C11987507344B5C739CEB84A9E0B222"
+    "B9A8B51C839E5EBE49CFADBFB39599764ED522099DC912751950DC7DC97FBDC0"
+    "6328B68F22781FD315AF568009A5509E5B87A11BF527C056DAFFD82AB6CBC25C"
+    "CA37143459E7BC63BCDE52757ADEB7DF01CF12173F1FEF8102EC5AB142C213DD"
+    "9D30696278A8D8BC32DDE9592D28C078C6D92B947D825ACAAB6494846A49DE24"
+    "B9623F4889E8ADC38E8C669EFFEF176040AD945E90A7D3EEC15EFEEE78AE7104"
+    "3C96511103A16BA7CAF0ACD0642EFDBE809934FAA1A5F1BD11043649B25CCD1F"
+    "EE2E38815D4D5F5FC6B4102969F21C22AE1B0E7D3603A556A13262FF628DE222";
+const char kdfTvSet3h[] =
+    "7B7001185E256D4493445F39A55FB905E6321F4B5DD8BBF3100D51BA0BDA3D2D";
+const char kdfTvSet3sid[] =
+    "7B7001185E256D4493445F39A55FB905E6321F4B5DD8BBF3100D51BA0BDA3D2D";
+const char kdfTvSet3a[]         = "81F0330EF6F05361B3823BFDED6E1DE9";
+const char kdfTvSet3b[]         = "3F6FD2065EEB2B0B1D93195A1FED48A5";
+const char kdfTvSet3c[]         = "C35471034E6FD6547613178E23435F21";
+const char kdfTvSet3d[]         = "7E9D79032090D99F98B015634DD9F462";
+const char kdfTvSet3e[] =
+    "24EE559AD7CE712B685D0B2271E443C17AB1D1DCEB5A360569D25D5DC243002F";
+const char kdfTvSet3f[] =
+    "C3419C2B966235869D714BA5AC48DDB7D9E35C8C19AAC73422337A373453607E";
+
+/** Test Vector Set #4: SHA-256 **/
+const char kdfTvSet4k[] =
+    "44708C76616F700BD31B0C155EF74E36390EEB39BC5C32CDC90E21922B0ED930"
+    "B5B519C8AFEBEF0F4E4FB5B41B81D649D2127506620B594E9899F7F0D442ECDD"
+    "D68308307B82F00065E9D75220A5A6F5641795772132215A236064EA965C6493"
+    "C21F89879730EBBC3C20A22D8F5BFD07B525B194323B22D8A49944D1AA58502E"
+    "756101EF1E8A91C9310E71F6DB65A3AD0A542CFA751F83721A99E89F1DBE5497"
+    "1A3620ECFFC967AA55EED1A42D6E7A138B853557AC84689889F6D0C8553575FB"
+    "89B4E13EAB5537DA72EF16F0D72F5E8505D97F110745193D550FA315FE88F672"
+    "DB90D73843E97BA1F3D087BA8EB39025BBFFAD37589A6199227303D9D8E7F1E3";
+const char kdfTvSet4h[] =
+    "FE3727FD99A5AC7987C2CFBE062129E3027BF5E10310C6BCCDE9C916C8329DC2";
+const char kdfTvSet4sid[] =
+    "FFFA598BC0AD2AE84DC8DC05B1F72C5B0134025AE7EDF8A2E8DB11472E18E1FC";
+const char kdfTvSet4a[]         = "36730BAE8DE5CB98898D6B4A00B37058";
+const char kdfTvSet4b[]         = "5DFE446A83F40E8358D28CB97DF8F340";
+const char kdfTvSet4c[]         = "495B7AFED0872B761437728E9E94E2B8";
+const char kdfTvSet4d[]         = "C1474B3925BEC36F0B7F6CC698E949C8";
+const char kdfTvSet4e[] =
+    "B730F8DF6A0697645BE261169486C32A11612229276CBAC5D8B3669AFB2E4262";
+const char kdfTvSet4f[] =
+    "14A5EA98245FB058978B82A3CB092B1CCA7CE0109A4F98C16E1529579D58B819";
+
+#define HASH_SHA WC_HASH_TYPE_SHA
+#define HASH_SHA256 WC_HASH_TYPE_SHA256
+
 static const KdfTestVector kdfTestVectors[] = {
-    {0, 'A', kdfTvSet1k, kdfTvSet1h, kdfTvSet1sessionId, kdfTvSet1a},
-    {0, 'B', kdfTvSet1k, kdfTvSet1h, kdfTvSet1sessionId, kdfTvSet1b},
-    {0, 'C', kdfTvSet1k, kdfTvSet1h, kdfTvSet1sessionId, kdfTvSet1c},
-    {0, 'D', kdfTvSet1k, kdfTvSet1h, kdfTvSet1sessionId, kdfTvSet1d},
-    {0, 'E', kdfTvSet1k, kdfTvSet1h, kdfTvSet1sessionId, kdfTvSet1e},
-    {0, 'F', kdfTvSet1k, kdfTvSet1h, kdfTvSet1sessionId, kdfTvSet1f},
-    {0, 'A', kdfTvSet2k, kdfTvSet2h, kdfTvSet2sessionId, kdfTvSet2a},
-    {0, 'B', kdfTvSet2k, kdfTvSet2h, kdfTvSet2sessionId, kdfTvSet2b},
-    {0, 'C', kdfTvSet2k, kdfTvSet2h, kdfTvSet2sessionId, kdfTvSet2c},
-    {0, 'D', kdfTvSet2k, kdfTvSet2h, kdfTvSet2sessionId, kdfTvSet2d},
-    {0, 'E', kdfTvSet2k, kdfTvSet2h, kdfTvSet2sessionId, kdfTvSet2e},
-    {0, 'F', kdfTvSet2k, kdfTvSet2h, kdfTvSet2sessionId, kdfTvSet2f}
+    {HASH_SHA, 'A', kdfTvSet1k, kdfTvSet1h, kdfTvSet1sid, kdfTvSet1a},
+    {HASH_SHA, 'B', kdfTvSet1k, kdfTvSet1h, kdfTvSet1sid, kdfTvSet1b},
+    {HASH_SHA, 'C', kdfTvSet1k, kdfTvSet1h, kdfTvSet1sid, kdfTvSet1c},
+    {HASH_SHA, 'D', kdfTvSet1k, kdfTvSet1h, kdfTvSet1sid, kdfTvSet1d},
+    {HASH_SHA, 'E', kdfTvSet1k, kdfTvSet1h, kdfTvSet1sid, kdfTvSet1e},
+    {HASH_SHA, 'F', kdfTvSet1k, kdfTvSet1h, kdfTvSet1sid, kdfTvSet1f},
+    {HASH_SHA, 'A', kdfTvSet2k, kdfTvSet2h, kdfTvSet2sid, kdfTvSet2a},
+    {HASH_SHA, 'B', kdfTvSet2k, kdfTvSet2h, kdfTvSet2sid, kdfTvSet2b},
+    {HASH_SHA, 'C', kdfTvSet2k, kdfTvSet2h, kdfTvSet2sid, kdfTvSet2c},
+    {HASH_SHA, 'D', kdfTvSet2k, kdfTvSet2h, kdfTvSet2sid, kdfTvSet2d},
+    {HASH_SHA, 'E', kdfTvSet2k, kdfTvSet2h, kdfTvSet2sid, kdfTvSet2e},
+    {HASH_SHA, 'F', kdfTvSet2k, kdfTvSet2h, kdfTvSet2sid, kdfTvSet2f},
+    {HASH_SHA256, 'A', kdfTvSet3k, kdfTvSet3h, kdfTvSet3sid, kdfTvSet3a},
+    {HASH_SHA256, 'B', kdfTvSet3k, kdfTvSet3h, kdfTvSet3sid, kdfTvSet3b},
+    {HASH_SHA256, 'C', kdfTvSet3k, kdfTvSet3h, kdfTvSet3sid, kdfTvSet3c},
+    {HASH_SHA256, 'D', kdfTvSet3k, kdfTvSet3h, kdfTvSet3sid, kdfTvSet3d},
+    {HASH_SHA256, 'E', kdfTvSet3k, kdfTvSet3h, kdfTvSet3sid, kdfTvSet3e},
+    {HASH_SHA256, 'F', kdfTvSet3k, kdfTvSet3h, kdfTvSet3sid, kdfTvSet3f},
+    {HASH_SHA256, 'A', kdfTvSet4k, kdfTvSet4h, kdfTvSet4sid, kdfTvSet4a},
+    {HASH_SHA256, 'B', kdfTvSet4k, kdfTvSet4h, kdfTvSet4sid, kdfTvSet4b},
+    {HASH_SHA256, 'C', kdfTvSet4k, kdfTvSet4h, kdfTvSet4sid, kdfTvSet4c},
+    {HASH_SHA256, 'D', kdfTvSet4k, kdfTvSet4h, kdfTvSet4sid, kdfTvSet4d},
+    {HASH_SHA256, 'E', kdfTvSet4k, kdfTvSet4h, kdfTvSet4sid, kdfTvSet4e},
+    {HASH_SHA256, 'F', kdfTvSet4k, kdfTvSet4h, kdfTvSet4sid, kdfTvSet4f}
 };
 
 

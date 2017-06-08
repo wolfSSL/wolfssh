@@ -1535,13 +1535,12 @@ int GenerateKey(uint8_t hashId, uint8_t keyId,
                 const uint8_t* sessionId, uint32_t sessionIdSz)
 {
     uint32_t blocks, remainder;
-    Sha sha;
+    wc_HashAlg hash;
     uint8_t kPad = 0;
     uint8_t pad = 0;
     uint8_t kSzFlat[LENGTH_SZ];
+    int digestSz;
     int ret;
-
-    (void)hashId;
 
     if (key == NULL || keySz == 0 ||
         k == NULL || kSz == 0 ||
@@ -1552,31 +1551,37 @@ int GenerateKey(uint8_t hashId, uint8_t keyId,
         return WS_BAD_ARGUMENT;
     }
 
+    digestSz = wc_HashGetDigestSize(hashId);
+    if (digestSz == 0) {
+        WLOG(WS_LOG_DEBUG, "GK: bad hash ID");
+        return WS_BAD_ARGUMENT;
+    }
+
     if (k[0] & 0x80) kPad = 1;
     c32toa(kSz + kPad, kSzFlat);
 
-    blocks = keySz / SHA_DIGEST_SIZE;
-    remainder = keySz % SHA_DIGEST_SIZE;
+    blocks = keySz / digestSz;
+    remainder = keySz % digestSz;
 
-    ret = wc_InitSha(&sha);
+    ret = wc_HashInit(&hash, hashId);
     if (ret == WS_SUCCESS)
-        ret = wc_ShaUpdate(&sha, kSzFlat, LENGTH_SZ);
+        ret = wc_HashUpdate(&hash, hashId, kSzFlat, LENGTH_SZ);
     if (ret == WS_SUCCESS && kPad)
-        ret = wc_ShaUpdate(&sha, &pad, 1);
+        ret = wc_HashUpdate(&hash, hashId, &pad, 1);
     if (ret == WS_SUCCESS)
-        ret = wc_ShaUpdate(&sha, k, kSz);
+        ret = wc_HashUpdate(&hash, hashId, k, kSz);
     if (ret == WS_SUCCESS)
-        ret = wc_ShaUpdate(&sha, h, hSz);
+        ret = wc_HashUpdate(&hash, hashId, h, hSz);
     if (ret == WS_SUCCESS)
-        ret = wc_ShaUpdate(&sha, &keyId, sizeof(keyId));
+        ret = wc_HashUpdate(&hash, hashId, &keyId, sizeof(keyId));
     if (ret == WS_SUCCESS)
-        ret = wc_ShaUpdate(&sha, sessionId, sessionIdSz);
+        ret = wc_HashUpdate(&hash, hashId, sessionId, sessionIdSz);
 
     if (ret == WS_SUCCESS) {
         if (blocks == 0) {
             if (remainder > 0) {
-                uint8_t lastBlock[SHA_DIGEST_SIZE];
-                ret = wc_ShaFinal(&sha, lastBlock);
+                uint8_t lastBlock[WC_MAX_DIGEST_SIZE];
+                ret = wc_HashFinal(&hash, hashId, lastBlock);
                 if (ret == WS_SUCCESS)
                     WMEMCPY(key, lastBlock, remainder);
             }
@@ -1584,44 +1589,44 @@ int GenerateKey(uint8_t hashId, uint8_t keyId,
         else {
             uint32_t runningKeySz, curBlock;
 
-            runningKeySz = SHA_DIGEST_SIZE;
-            ret = wc_ShaFinal(&sha, key);
+            runningKeySz = digestSz;
+            ret = wc_HashFinal(&hash, hashId, key);
 
             for (curBlock = 1; curBlock < blocks; curBlock++) {
-                ret = wc_InitSha(&sha);
+                ret = wc_HashInit(&hash, hashId);
                 if (ret != WS_SUCCESS) break;
-                ret = wc_ShaUpdate(&sha, kSzFlat, LENGTH_SZ);
+                ret = wc_HashUpdate(&hash, hashId, kSzFlat, LENGTH_SZ);
                 if (ret != WS_SUCCESS) break;
                 if (kPad)
-                    ret = wc_ShaUpdate(&sha, &pad, 1);
+                    ret = wc_HashUpdate(&hash, hashId, &pad, 1);
                 if (ret != WS_SUCCESS) break;
-                ret = wc_ShaUpdate(&sha, k, kSz);
+                ret = wc_HashUpdate(&hash, hashId, k, kSz);
                 if (ret != WS_SUCCESS) break;
-                ret = wc_ShaUpdate(&sha, h, hSz);
+                ret = wc_HashUpdate(&hash, hashId, h, hSz);
                 if (ret != WS_SUCCESS) break;
-                ret = wc_ShaUpdate(&sha, key, runningKeySz);
+                ret = wc_HashUpdate(&hash, hashId, key, runningKeySz);
                 if (ret != WS_SUCCESS) break;
-                ret = wc_ShaFinal(&sha, key + runningKeySz);
+                ret = wc_HashFinal(&hash, hashId, key + runningKeySz);
                 if (ret != WS_SUCCESS) break;
-                runningKeySz += SHA_DIGEST_SIZE;
+                runningKeySz += digestSz;
             }
 
             if (remainder > 0) {
-                uint8_t lastBlock[SHA_DIGEST_SIZE];
+                uint8_t lastBlock[WC_MAX_DIGEST_SIZE];
                 if (ret == WS_SUCCESS)
-                    ret = wc_InitSha(&sha);
+                    ret = wc_HashInit(&hash, hashId);
                 if (ret == WS_SUCCESS)
-                    ret = wc_ShaUpdate(&sha, kSzFlat, LENGTH_SZ);
+                    ret = wc_HashUpdate(&hash, hashId, kSzFlat, LENGTH_SZ);
                 if (ret == WS_SUCCESS && kPad)
-                    ret = wc_ShaUpdate(&sha, &pad, 1);
+                    ret = wc_HashUpdate(&hash, hashId, &pad, 1);
                 if (ret == WS_SUCCESS)
-                    ret = wc_ShaUpdate(&sha, k, kSz);
+                    ret = wc_HashUpdate(&hash, hashId, k, kSz);
                 if (ret == WS_SUCCESS)
-                    ret = wc_ShaUpdate(&sha, h, hSz);
+                    ret = wc_HashUpdate(&hash, hashId, h, hSz);
                 if (ret == WS_SUCCESS)
-                    ret = wc_ShaUpdate(&sha, key, runningKeySz);
+                    ret = wc_HashUpdate(&hash, hashId, key, runningKeySz);
                 if (ret == WS_SUCCESS)
-                    ret = wc_ShaFinal(&sha, lastBlock);
+                    ret = wc_HashFinal(&hash, hashId, lastBlock);
                 if (ret == WS_SUCCESS)
                     WMEMCPY(key + runningKeySz, lastBlock, remainder);
             }
@@ -1649,32 +1654,32 @@ static int GenerateKeys(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS)
-        ret = GenerateKey(0, 'A',
+        ret = GenerateKey(WC_HASH_TYPE_SHA, 'A',
                           cK->iv, cK->ivSz,
                           ssh->k, ssh->kSz, ssh->h, ssh->hSz,
                           ssh->sessionId, ssh->sessionIdSz);
     if (ret == WS_SUCCESS)
-        ret = GenerateKey(0, 'B',
+        ret = GenerateKey(WC_HASH_TYPE_SHA, 'B',
                           sK->iv, sK->ivSz,
                           ssh->k, ssh->kSz, ssh->h, ssh->hSz,
                           ssh->sessionId, ssh->sessionIdSz);
     if (ret == WS_SUCCESS)
-        ret = GenerateKey(0, 'C',
+        ret = GenerateKey(WC_HASH_TYPE_SHA, 'C',
                           cK->encKey, cK->encKeySz,
                           ssh->k, ssh->kSz, ssh->h, ssh->hSz,
                           ssh->sessionId, ssh->sessionIdSz);
     if (ret == WS_SUCCESS)
-        ret = GenerateKey(0, 'D',
+        ret = GenerateKey(WC_HASH_TYPE_SHA, 'D',
                           sK->encKey, sK->encKeySz,
                           ssh->k, ssh->kSz, ssh->h, ssh->hSz,
                           ssh->sessionId, ssh->sessionIdSz);
     if (ret == WS_SUCCESS)
-        ret = GenerateKey(0, 'E',
+        ret = GenerateKey(WC_HASH_TYPE_SHA, 'E',
                           cK->macKey, cK->macKeySz,
                           ssh->k, ssh->kSz, ssh->h, ssh->hSz,
                           ssh->sessionId, ssh->sessionIdSz);
     if (ret == WS_SUCCESS)
-        ret = GenerateKey(0, 'F',
+        ret = GenerateKey(WC_HASH_TYPE_SHA, 'F',
                           sK->macKey, sK->macKeySz,
                           ssh->k, ssh->kSz, ssh->h, ssh->hSz,
                           ssh->sessionId, ssh->sessionIdSz);

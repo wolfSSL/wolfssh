@@ -29,7 +29,7 @@
 
 #include <wolfssh/ssh.h>
 #include <wolfssl/options.h>
-#include <wolfssl/wolfcrypt/sha.h>
+#include <wolfssl/wolfcrypt/hash.h>
 #include <wolfssl/wolfcrypt/random.h>
 #include <wolfssl/wolfcrypt/dh.h>
 #include <wolfssl/wolfcrypt/aes.h>
