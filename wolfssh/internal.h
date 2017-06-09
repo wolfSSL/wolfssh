@@ -73,6 +73,7 @@ enum {
     /* Key Exchange IDs */
     ID_DH_GROUP1_SHA1,
     ID_DH_GROUP14_SHA1,
+    ID_DH_GEX_SHA256,
 
     /* Public Key IDs */
     ID_SSH_RSA,
@@ -191,6 +192,10 @@ typedef struct HandshakeInfo {
     uint32_t       eSz;
     uint8_t*       serverKexInit;   /* Used for server initiated rekey. */
     uint32_t       serverKexInitSz;
+
+    uint32_t       dhGexMinSz;
+    uint32_t       dhGexPreferredSz;
+    uint32_t       dhGexMaxSz;
 } HandshakeInfo;
 
 
