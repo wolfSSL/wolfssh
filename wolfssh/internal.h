@@ -178,6 +178,7 @@ typedef struct HandshakeInfo {
     uint8_t        pubKeyId;
     uint8_t        encryptId;
     uint8_t        macId;
+    uint8_t        hashId;
     uint8_t        kexPacketFollows;
 
     uint8_t        blockSz;
@@ -185,7 +186,7 @@ typedef struct HandshakeInfo {
 
     Keys           clientKeys;
     Keys           serverKeys;
-    Sha            hash;
+    wc_HashAlg     hash;
     uint8_t        e[257]; /* May have a leading zero, for unsigned. */
     uint32_t       eSz;
     uint8_t*       serverKexInit;   /* Used for server initiated rekey. */
@@ -242,11 +243,11 @@ struct WOLFSSH {
     Buffer         outputBuffer;
     RNG*           rng;
 
-    uint8_t        h[SHA_DIGEST_SIZE];
+    uint8_t        h[WC_MAX_DIGEST_SIZE];
     uint32_t       hSz;
     uint8_t        k[257]; /* May have a leading zero, for unsigned. */
     uint32_t       kSz;
-    uint8_t        sessionId[SHA_DIGEST_SIZE];
+    uint8_t        sessionId[WC_MAX_DIGEST_SIZE];
     uint32_t       sessionIdSz;
 
     Keys           clientKeys;
