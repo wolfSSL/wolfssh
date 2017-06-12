@@ -2594,22 +2594,22 @@ static int DoPacket(WOLFSSH* ssh)
     switch (msg) {
 
         case MSGID_DISCONNECT:
-            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT");
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_DISCONNECT");
             ret = DoDisconnect(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_IGNORE:
-            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT");
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_IGNORE");
             ret = DoIgnore(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_UNIMPLEMENTED:
-            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT");
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_UNIMPLEMENTED");
             ret = DoUnimplemented(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_DEBUG:
-            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT");
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_DEBUG");
             ret = DoDebug(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
