@@ -965,18 +965,22 @@ static int GetUint32(uint32_t* v, uint8_t* buf, uint32_t len, uint32_t* idx)
 }
 
 
+/* Gets the size of a string, copies it as much of it as will fit in
+ * the provided buffer, and terminates it with a NULL. */
 static int GetString(char* s, uint32_t* sSz,
                      uint8_t* buf, uint32_t len, uint32_t *idx)
 {
     int result;
+    uint32_t strSz;
 
-    result = GetUint32(sSz, buf, len, idx);
+    result = GetUint32(&strSz, buf, len, idx);
 
     if (result == WS_SUCCESS) {
         result = WS_BUFFER_E;
-        if (*idx < len && *idx + *sSz <= len) {
+        if (*idx < len && *idx + strSz <= len) {
+            *sSz = (strSz >= *sSz) ? *sSz : strSz;
             WMEMCPY(s, buf + *idx, *sSz);
-            *idx += *sSz;
+            *idx += strSz;
             s[*sSz] = 0;
             result = WS_SUCCESS;
         }
@@ -2325,6 +2329,7 @@ static int DoChannelOpen(WOLFSSH* ssh,
 
     WLOG(WS_LOG_DEBUG, "Entering DoChannelOpen()");
 
+    typeSz = sizeof(type);
     ret = GetString(type, &typeSz, buf, len, &begin);
 
     if (ret == WS_SUCCESS)
@@ -2415,6 +2420,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
 
     ret = GetUint32(&channelId, buf, len, &begin);
 
+    typeSz = sizeof(type);
     if (ret == WS_SUCCESS)
         ret = GetString(type, &typeSz, buf, len, &begin);
 
@@ -2437,6 +2443,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
             uint32_t widthChar, heightRows, widthPixels, heightPixels;
             uint32_t modesSz;
 
+            termSz = sizeof(term);
             ret = GetString(term, &termSz, buf, len, &begin);
             if (ret == WS_SUCCESS)
                 ret = GetUint32(&widthChar, buf, len, &begin);
@@ -2464,6 +2471,8 @@ static int DoChannelRequest(WOLFSSH* ssh,
             char     value[32];
             uint32_t valueSz;
 
+            nameSz = sizeof(name);
+            valueSz = sizeof(value);
             ret = GetString(name, &nameSz, buf, len, &begin);
             if (ret == WS_SUCCESS)
                 ret = GetString(value, &valueSz, buf, len, &begin);
