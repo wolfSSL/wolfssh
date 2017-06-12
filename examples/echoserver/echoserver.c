@@ -40,6 +40,8 @@
 #endif
 
 
+static const char echoserverBanner[] = "wolfSSH Example Echo Server\n";
+
 typedef int SOCKET_T;
 #ifdef TEST_IPV6
     typedef struct sockaddr_in6 SOCKADDR_IN_T;
@@ -650,6 +652,7 @@ int main(void)
 
     memset(&pwMapList, 0, sizeof(pwMapList));
     wolfSSH_SetUserAuth(ctx, wsUserAuth);
+    wolfSSH_CTX_SetBanner(ctx, echoserverBanner);
 
     {
         uint8_t buf[SCRATCH_BUFFER_SIZE];

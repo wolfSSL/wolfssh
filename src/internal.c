@@ -227,6 +227,19 @@ static void HandshakeInfoFree(HandshakeInfo* hs, void* heap)
 }
 
 
+#ifdef DEBUG_WOLFSSH
+
+static const char cannedBanner[] =
+    "CANNED BANNER\r\n"
+    "This server is an example test server. "
+    "It should have its own banner, but\r\n"
+    "it is currently using a canned one in "
+    "the library. Be happy or not.\r\n";
+static const uint32_t cannedBannerSz = sizeof(cannedBanner) - 1;
+
+#endif /* DEBUG_WOLFSSH */
+
+
 WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, void* heap)
 {
     WLOG(WS_LOG_DEBUG, "Entering CtxInit()");
@@ -245,6 +258,10 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, void* heap)
 #endif /* WOLFSSH_USER_IO */
     ctx->highwaterMark = DEFAULT_HIGHWATER_MARK;
     ctx->highwaterCb = wsHighwater;
+#ifdef DEBUG_WOLFSSH
+    ctx->banner = cannedBanner;
+    ctx->bannerSz = cannedBannerSz;
+#endif /* DEBUG_WOLFSSH */
 
     return ctx;
 }
@@ -4001,37 +4018,36 @@ int SendUserAuthPkOk(WOLFSSH* ssh,
 }
 
 
-static const char cannedBanner[] =
-    "CANNED BANNER\r\n"
-    "This server is an example test server. "
-    "It should have its own banner, but\r\n"
-    "it is currently using a canned one in "
-    "the library. Be happy or not.\r\n";
-static const uint32_t cannedBannerSz = sizeof(cannedBanner) - 1;
-
-
 int SendUserAuthBanner(WOLFSSH* ssh)
 {
     uint8_t* output;
     uint32_t idx;
     int      ret = WS_SUCCESS;
+    const char* banner;
+    uint32_t bannerSz = 0;
 
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
+    if (ssh->ctx->banner != NULL && ssh->ctx->bannerSz > 0) {
+        banner = ssh->ctx->banner;
+        bannerSz = ssh->ctx->bannerSz;
+    }
+
     if (ret == WS_SUCCESS)
         ret = PreparePacket(ssh, MSG_ID_SZ + (LENGTH_SZ * 2) +
-                            cannedBannerSz + cannedLangTagSz);
+                            bannerSz + cannedLangTagSz);
 
     if (ret == WS_SUCCESS) {
         output = ssh->outputBuffer.buffer;
         idx = ssh->outputBuffer.length;
 
         output[idx++] = MSGID_USERAUTH_BANNER;
-        c32toa(cannedBannerSz, output + idx);
+        c32toa(bannerSz, output + idx);
         idx += LENGTH_SZ;
-        WMEMCPY(output + idx, cannedBanner, cannedBannerSz);
-        idx += cannedBannerSz;
+        if (bannerSz > 0)
+            WMEMCPY(output + idx, banner, bannerSz);
+        idx += bannerSz;
         c32toa(cannedLangTagSz, output + idx);
         idx += LENGTH_SZ;
         WMEMCPY(output + idx, cannedLangTag, cannedLangTagSz);

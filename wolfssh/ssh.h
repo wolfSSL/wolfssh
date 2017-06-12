@@ -124,6 +124,7 @@ WOLFSSH_API void wolfSSH_SetUserAuth(WOLFSSH_CTX*, WS_CallbackUserAuth);
 WOLFSSH_API void wolfSSH_SetUserAuthCtx(WOLFSSH*, void*);
 WOLFSSH_API void* wolfSSH_GetUserAuthCtx(WOLFSSH*);
 
+WOLFSSH_API int wolfSSH_CTX_SetBanner(WOLFSSH_CTX*, const char*);
 WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX*,
                                                  const uint8_t*, uint32_t, int);
 

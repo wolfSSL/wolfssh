@@ -153,6 +153,8 @@ struct WOLFSSH_CTX {
     uint8_t*            privateKey;  /* Owned by CTX */
     uint32_t            privateKeySz;
     uint32_t            highwaterMark;
+    const char*         banner;
+    uint32_t            bannerSz;
 };
 
 
