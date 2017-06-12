@@ -190,7 +190,7 @@ typedef struct HandshakeInfo {
     wc_HashAlg     hash;
     uint8_t        e[257]; /* May have a leading zero, for unsigned. */
     uint32_t       eSz;
-    uint8_t*       serverKexInit;   /* Used for server initiated rekey. */
+    uint8_t*       serverKexInit;
     uint32_t       serverKexInitSz;
 
     uint32_t       dhGexMinSz;

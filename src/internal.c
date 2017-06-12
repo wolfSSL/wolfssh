@@ -44,6 +44,11 @@
 #endif
 
 
+static const char sshIdStr[] = "SSH-2.0-wolfSSHv"
+                               LIBWOLFSSH_VERSION_STRING
+                               "\r\n";
+
+
 const char* GetErrorString(int err)
 {
     (void)err;
@@ -203,12 +208,7 @@ static HandshakeInfo* HandshakeInfoNew(void* heap)
         newHs->encryptId = ID_NONE;
         newHs->macId = ID_NONE;
         newHs->blockSz = MIN_BLOCK_SZ;
-        newHs->hashId = WC_HASH_TYPE_SHA;
-
-        if (wc_HashInit(&newHs->hash, newHs->hashId) != 0) {
-            WFREE(newHs, heap, DYNTYPE_HS);
-            newHs = NULL;
-        }
+        newHs->hashId = WC_HASH_TYPE_NONE;
     }
 
     return newHs;
@@ -1153,6 +1153,20 @@ static INLINE uint8_t KeySzForId(uint8_t id)
 }
 
 
+static INLINE uint8_t HashForId(uint8_t id)
+{
+    switch (id) {
+        case ID_DH_GROUP1_SHA1:
+        case ID_DH_GROUP14_SHA1:
+            return WC_HASH_TYPE_SHA;
+        case ID_DH_GEX_SHA256:
+            return WC_HASH_TYPE_SHA256;
+        default:
+            return WC_HASH_TYPE_NONE;
+    }
+}
+
+
 static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 {
     int ret = WS_SUCCESS;
@@ -1174,6 +1188,14 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
      * support the other direction is on my known list. All I need to do
      * is save the actual values.
      */
+
+    if (ssh->handshake == NULL) {
+        ssh->handshake = HandshakeInfoNew(ssh->ctx->heap);
+        if (ssh->handshake == NULL) {
+            WLOG(WS_LOG_DEBUG, "Couldn't allocate handshake info");
+            ret = WS_MEMORY_E;
+        }
+    }
 
     if (ret == WS_SUCCESS) {
         begin = *idx;
@@ -1200,8 +1222,10 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
                 WLOG(WS_LOG_DEBUG, "Unable to negotiate KEX Algo");
                 ret = WS_INVALID_ALGO_ID;
             }
-            else
+            else {
                 ssh->handshake->kexId = algoId;
+                ssh->handshake->hashId = HashForId(algoId);
+            }
         }
     }
 
@@ -1290,7 +1314,6 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
         }
     }
 
-
     /* Compression Algorithms - Client to Server */
     if (ret == WS_SUCCESS) {
         /* The compression algorithm lists should have none as a value. */
@@ -1351,8 +1374,8 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
     }
 
     if (ret == WS_SUCCESS) {
-        *idx = begin;
-        ssh->clientState = CLIENT_KEXINIT_DONE;
+        uint8_t scratchLen[LENGTH_SZ];
+        uint32_t strSz;
 
         if (ssh->keyingState == KEYING_UNKEYED ||
             ssh->keyingState == KEYING_KEYED) {
@@ -1364,6 +1387,50 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
         else if (ssh->keyingState == KEYING_KEXINIT_SENT) {
             WLOG(WS_LOG_DEBUG, "KeyingState now KEXINIT_DONE");
             ssh->keyingState = KEYING_KEXINIT_DONE;
+        }
+
+        if (ret == WS_SUCCESS)
+            ret = wc_HashInit(&ssh->handshake->hash, ssh->handshake->hashId);
+
+        if (ret == WS_SUCCESS)
+            ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
+                                ssh->clientId, ssh->clientIdSz);
+
+        if (ret == WS_SUCCESS) {
+            strSz = (uint32_t)WSTRLEN(sshIdStr) - SSH_PROTO_EOL_SZ;
+            c32toa(strSz, scratchLen);
+            ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
+                                scratchLen, LENGTH_SZ);
+        }
+
+        if (ret == WS_SUCCESS)
+            ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
+                                (const uint8_t*)sshIdStr, strSz);
+
+        if (ret == WS_SUCCESS) {
+            c32toa(len + 1, scratchLen);
+            ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
+                                scratchLen, LENGTH_SZ);
+        }
+
+        if (ret == WS_SUCCESS) {
+            scratchLen[0] = MSGID_KEXINIT;
+            ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
+                                scratchLen, MSG_ID_SZ);
+        }
+
+        if (ret == WS_SUCCESS)
+            ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
+                                buf, len);
+
+        if (ret == WS_SUCCESS)
+            ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
+                                ssh->handshake->serverKexInit,
+                                ssh->handshake->serverKexInitSz);
+
+        if (ret == WS_SUCCESS) {
+            *idx = begin;
+            ssh->clientState = CLIENT_KEXINIT_DONE;
         }
     }
 
@@ -2623,11 +2690,6 @@ static int DoChannelData(WOLFSSH* ssh,
 }
 
 
-static const char sshIdStr[] = "SSH-2.0-wolfSSHv"
-                               LIBWOLFSSH_VERSION_STRING
-                               "\r\n";
-
-
 static int DoPacket(WOLFSSH* ssh)
 {
     uint8_t* buf = (uint8_t*)ssh->inputBuffer.buffer;
@@ -2671,73 +2733,8 @@ static int DoPacket(WOLFSSH* ssh)
             break;
 
         case MSGID_KEXINIT:
-            {
-                uint8_t szFlat[LENGTH_SZ];
-
-                WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXINIT");
-                ret = WS_SUCCESS;
-
-                if (ssh->keyingState == KEYING_KEYED) {
-                    ssh->handshake = HandshakeInfoNew(ssh->ctx->heap);
-                    if (ssh->handshake == NULL) {
-                        WLOG(WS_LOG_DEBUG, "Couldn't allocate handshake info");
-                        ret = WS_MEMORY_E;
-                    }
-                }
-
-                if (ret == WS_SUCCESS &&
-                    (ssh->keyingState == KEYING_KEYED ||
-                     ssh->keyingState == KEYING_KEXINIT_SENT)) {
-
-                    uint32_t idSz;
-
-                    ret = wc_HashUpdate(&ssh->handshake->hash,
-                                        ssh->handshake->hashId,
-                                        ssh->clientId, ssh->clientIdSz);
-
-
-                    if (ret == WS_SUCCESS) {
-                        idSz = (uint32_t)WSTRLEN(sshIdStr) - SSH_PROTO_EOL_SZ;
-                        c32toa(idSz, szFlat);
-                        ret = wc_HashUpdate(&ssh->handshake->hash,
-                                            ssh->handshake->hashId,
-                                            szFlat, LENGTH_SZ);
-                    }
-                    if (ret == WS_SUCCESS)
-                        ret = wc_HashUpdate(&ssh->handshake->hash,
-                                            ssh->handshake->hashId,
-                                            (const uint8_t*)sshIdStr, idSz);
-                }
-
-                if (ret == WS_SUCCESS) {
-                    c32toa(payloadSz + sizeof(msg), szFlat);
-                    ret = wc_HashUpdate(&ssh->handshake->hash,
-                                        ssh->handshake->hashId,
-                                        szFlat, LENGTH_SZ);
-                }
-                if (ret == WS_SUCCESS)
-                    ret = wc_HashUpdate(&ssh->handshake->hash,
-                                        ssh->handshake->hashId,
-                                        &msg, sizeof(msg));
-                if (ret == WS_SUCCESS)
-                    ret = wc_HashUpdate(&ssh->handshake->hash,
-                                        ssh->handshake->hashId,
-                                        buf + idx, payloadSz);
-
-                if (ret == WS_SUCCESS)
-                    ret = DoKexInit(ssh, buf + idx, payloadSz, &payloadIdx);
-
-                if (ret == WS_SUCCESS &&
-                    ssh->keyingState == KEYING_KEXINIT_DONE &&
-                    ssh->handshake->serverKexInit != NULL) {
-
-                    ret = wc_HashUpdate(&ssh->handshake->hash,
-                                        ssh->handshake->hashId,
-                                        ssh->handshake->serverKexInit,
-                                        ssh->handshake->serverKexInitSz);
-                }
-
-            }
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXINIT");
+            ret = DoKexInit(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_NEWKEYS:
@@ -3162,6 +3159,7 @@ int ProcessClientVersion(WOLFSSH* ssh)
 
     idSz = (uint32_t)WSTRLEN((char*)ssh->inputBuffer.buffer);
 
+    /* Store the client ID for later use. It is used in keying and rekeying. */
     ssh->clientId = (uint8_t*)WMALLOC(idSz + LENGTH_SZ,
                                       ssh->ctx->heap, DYNTYPE_STRING);
     if (ssh->clientId == NULL)
@@ -3170,23 +3168,9 @@ int ProcessClientVersion(WOLFSSH* ssh)
         c32toa(idSz, ssh->clientId);
         WMEMCPY(ssh->clientId + LENGTH_SZ, ssh->inputBuffer.buffer, idSz);
         ssh->clientIdSz = idSz + LENGTH_SZ;
-        ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
-                            ssh->clientId, idSz + LENGTH_SZ);
     }
+
     ssh->inputBuffer.idx += idSz + SSH_PROTO_EOL_SZ;
-
-    if (ret == WS_SUCCESS) {
-        uint8_t  idSzFlat[LENGTH_SZ];
-
-        idSz = (uint32_t)WSTRLEN(sshIdStr) - SSH_PROTO_EOL_SZ;
-        c32toa(idSz, idSzFlat);
-        ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
-                            idSzFlat, LENGTH_SZ);
-    }
-
-    if (ret == WS_SUCCESS)
-        ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
-                           (const uint8_t*)sshIdStr, idSz);
     ShrinkBuffer(&ssh->inputBuffer, 0);
 
     return ret;
@@ -3351,10 +3335,12 @@ int SendKexInit(WOLFSSH* ssh)
     uint32_t payloadSz;
     int ret = WS_SUCCESS;
 
+    WLOG(WS_LOG_DEBUG, "Entering SendKexInit()");
+
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
-    if (ssh->keyingState == KEYING_KEYED) {
+    if (ssh->handshake == NULL) {
         ssh->handshake = HandshakeInfoNew(ssh->ctx->heap);
         if (ssh->handshake == NULL) {
             WLOG(WS_LOG_DEBUG, "Couldn't allocate handshake info");
@@ -3382,6 +3368,9 @@ int SendKexInit(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS) {
+        uint8_t* buf;
+        uint32_t bufSz = payloadSz + LENGTH_SZ;
+
         idx += COOKIE_SZ;
 
         CopyNameList(output, &idx, cannedKexAlgoNames, cannedKexAlgoNamesSz);
@@ -3402,30 +3391,16 @@ int SendKexInit(WOLFSSH* ssh)
 
         ssh->outputBuffer.length = idx;
 
-        if (ssh->keyingState == KEYING_KEYED) {
-            uint8_t* buf;
-            uint32_t bufSz = payloadSz + LENGTH_SZ;
-            buf = (uint8_t*)WMALLOC(bufSz, ssh->ctx->heap, DYNTYPE_STRING);
-            if (buf == NULL) {
-                WLOG(WS_LOG_DEBUG, "Cannot allocate storage for KEX Init msg");
-                ret = WS_MEMORY_E;
-            }
-            else {
-                c32toa(payloadSz, buf);
-                WMEMCPY(buf + LENGTH_SZ, payload, payloadSz);
-                ssh->handshake->serverKexInit = buf;
-                ssh->handshake->serverKexInitSz = bufSz;
-            }
+        buf = (uint8_t*)WMALLOC(bufSz, ssh->ctx->heap, DYNTYPE_STRING);
+        if (buf == NULL) {
+            WLOG(WS_LOG_DEBUG, "Cannot allocate storage for KEX Init msg");
+            ret = WS_MEMORY_E;
         }
         else {
-            uint8_t szFlat[LENGTH_SZ];
-            c32toa(payloadSz, szFlat);
-            ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
-                                szFlat, LENGTH_SZ);
-            if (ret == WS_SUCCESS)
-                ret = wc_HashUpdate(&ssh->handshake->hash,
-                                    ssh->handshake->hashId,
-                                    payload, payloadSz);
+            c32toa(payloadSz, buf);
+            WMEMCPY(buf + LENGTH_SZ, payload, payloadSz);
+            ssh->handshake->serverKexInit = buf;
+            ssh->handshake->serverKexInitSz = bufSz;
         }
     }
 
@@ -3446,6 +3421,7 @@ int SendKexInit(WOLFSSH* ssh)
         }
     }
 
+    WLOG(WS_LOG_DEBUG, "Leaving SendKexInit(), ret = %d", ret);
     return ret;
 }
 
