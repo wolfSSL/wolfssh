@@ -29,7 +29,7 @@
 
 #include <wolfssh/ssh.h>
 #include <wolfssl/options.h>
-#include <wolfssl/wolfcrypt/sha.h>
+#include <wolfssl/wolfcrypt/hash.h>
 #include <wolfssl/wolfcrypt/random.h>
 #include <wolfssl/wolfcrypt/dh.h>
 #include <wolfssl/wolfcrypt/aes.h>
@@ -73,6 +73,7 @@ enum {
     /* Key Exchange IDs */
     ID_DH_GROUP1_SHA1,
     ID_DH_GROUP14_SHA1,
+    ID_DH_GEX_SHA256,
 
     /* Public Key IDs */
     ID_SSH_RSA,
@@ -178,6 +179,7 @@ typedef struct HandshakeInfo {
     uint8_t        pubKeyId;
     uint8_t        encryptId;
     uint8_t        macId;
+    uint8_t        hashId;
     uint8_t        kexPacketFollows;
 
     uint8_t        blockSz;
@@ -185,11 +187,15 @@ typedef struct HandshakeInfo {
 
     Keys           clientKeys;
     Keys           serverKeys;
-    Sha            hash;
+    wc_HashAlg     hash;
     uint8_t        e[257]; /* May have a leading zero, for unsigned. */
     uint32_t       eSz;
-    uint8_t*       serverKexInit;   /* Used for server initiated rekey. */
+    uint8_t*       serverKexInit;
     uint32_t       serverKexInitSz;
+
+    uint32_t       dhGexMinSz;
+    uint32_t       dhGexPreferredSz;
+    uint32_t       dhGexMaxSz;
 } HandshakeInfo;
 
 
@@ -242,11 +248,11 @@ struct WOLFSSH {
     Buffer         outputBuffer;
     RNG*           rng;
 
-    uint8_t        h[SHA_DIGEST_SIZE];
+    uint8_t        h[WC_MAX_DIGEST_SIZE];
     uint32_t       hSz;
     uint8_t        k[257]; /* May have a leading zero, for unsigned. */
     uint32_t       kSz;
-    uint8_t        sessionId[SHA_DIGEST_SIZE];
+    uint8_t        sessionId[WC_MAX_DIGEST_SIZE];
     uint32_t       sessionIdSz;
 
     Keys           clientKeys;
@@ -304,6 +310,7 @@ WOLFSSH_LOCAL int ProcessClientVersion(WOLFSSH*);
 WOLFSSH_LOCAL int SendServerVersion(WOLFSSH*);
 WOLFSSH_LOCAL int SendKexInit(WOLFSSH*);
 WOLFSSH_LOCAL int SendKexDhReply(WOLFSSH*);
+WOLFSSH_LOCAL int SendKexDhGexGroup(WOLFSSH*);
 WOLFSSH_LOCAL int SendNewKeys(WOLFSSH*);
 WOLFSSH_LOCAL int SendUnimplemented(WOLFSSH*);
 WOLFSSH_LOCAL int SendDisconnect(WOLFSSH*, uint32_t);
@@ -391,6 +398,11 @@ enum WS_MessageIds {
 
     MSGID_KEXDH_INIT      = 30,
     MSGID_KEXDH_REPLY     = 31,
+
+    MSGID_KEXDH_GEX_REQUEST = 34,
+    MSGID_KEXDH_GEX_GROUP = 31,
+    MSGID_KEXDH_GEX_INIT  = 32,
+    MSGID_KEXDH_GEX_REPLY = 33,
 
     MSGID_USERAUTH_REQUEST = 50,
     MSGID_USERAUTH_FAILURE = 51,
