@@ -1347,12 +1347,14 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
         *idx = begin;
         ssh->clientState = CLIENT_KEXINIT_DONE;
 
-        if (ssh->keyingState == KEYING_UNKEYED) {
+        if (ssh->keyingState == KEYING_UNKEYED ||
+            ssh->keyingState == KEYING_KEYED) {
+
             WLOG(WS_LOG_DEBUG, "KeyingState now KEXINIT_RECV");
             ssh->keyingState = KEYING_KEXINIT_RECV;
             ret = SendKexInit(ssh);
         }
-        else if (KEYING_KEXINIT_SENT) {
+        else if (ssh->keyingState == KEYING_KEXINIT_SENT) {
             WLOG(WS_LOG_DEBUG, "KeyingState now KEXINIT_DONE");
             ssh->keyingState = KEYING_KEXINIT_DONE;
         }
