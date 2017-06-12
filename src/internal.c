@@ -2194,6 +2194,42 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
 }
 
 
+static int DoGlobalRequest(WOLFSSH* ssh,
+                           uint8_t* buf, uint32_t len, uint32_t* idx)
+{
+    uint32_t begin;
+    int ret = WS_SUCCESS;
+    char name[80];
+    uint32_t nameSz = sizeof(name);
+    uint8_t wantReply = 0;
+
+    WLOG(WS_LOG_DEBUG, "Entering DoGlobalRequest()");
+
+    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        begin = *idx;
+        ret = GetString(name, &nameSz, buf, len, &begin);
+    }
+
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "DGR: request name = %s", name);
+        ret = GetBoolean(&wantReply, buf, len, &begin);
+    }
+
+    if (ret == WS_SUCCESS) {
+        *idx += len;
+
+        if (wantReply)
+            ret = SendRequestSuccess(ssh, 0);
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving DoGlobalRequest(), ret = %d", ret);
+    return ret;
+}
+
+
 static int DoUserAuthRequest(WOLFSSH* ssh,
                              uint8_t* buf, uint32_t len, uint32_t* idx)
 {
@@ -2204,10 +2240,8 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
 
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequest()");
 
-
     if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
         ret = WS_BAD_ARGUMENT;
-
 
     if (ret == WS_SUCCESS) {
         begin = *idx;
@@ -2633,6 +2667,11 @@ static int DoPacket(WOLFSSH* ssh)
         case MSGID_USERAUTH_REQUEST:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_USERAUTH_REQUEST");
             ret = DoUserAuthRequest(ssh, buf + idx, payloadSz, &payloadIdx);
+            break;
+
+        case MSGID_GLOBAL_REQUEST:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_GLOBAL_REQUEST");
+            ret = DoGlobalRequest(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_CHANNEL_OPEN:
@@ -4006,6 +4045,41 @@ int SendUserAuthBanner(WOLFSSH* ssh)
     if (ret == WS_SUCCESS)
         ret = SendBuffered(ssh);
 
+    return ret;
+}
+
+
+int SendRequestSuccess(WOLFSSH* ssh, int success)
+{
+    uint8_t* output;
+    uint32_t idx;
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering SendRequestSuccess(), %s",
+         success ? "Success" : "Failure");
+
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS)
+        ret = PreparePacket(ssh, MSG_ID_SZ);
+
+    if (ret == WS_SUCCESS) {
+        output = ssh->outputBuffer.buffer;
+        idx = ssh->outputBuffer.length;
+
+        output[idx++] = success ?
+                        MSGID_REQUEST_SUCCESS : MSGID_REQUEST_FAILURE;
+
+        ssh->outputBuffer.length = idx;
+
+        ret = BundlePacket(ssh);
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = SendBuffered(ssh);
+
+    WLOG(WS_LOG_DEBUG, "Leaving SendRequestSuccess(), ret = %d", ret);
     return ret;
 }
 
