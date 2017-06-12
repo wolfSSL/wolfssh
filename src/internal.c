@@ -1074,12 +1074,8 @@ static const uint8_t  cannedEncAlgo[] = {ID_AES128_CBC};
 static const uint8_t  cannedMacAlgo[] = {ID_HMAC_SHA2_256, ID_HMAC_SHA1_96,
                                          ID_HMAC_SHA1};
 static const uint8_t  cannedKeyAlgo[] = {ID_SSH_RSA};
-#ifdef TEST_GEX
 static const uint8_t  cannedKexAlgo[] = {ID_DH_GEX_SHA256, ID_DH_GROUP14_SHA1,
                                          ID_DH_GROUP1_SHA1};
-#else
-static const uint8_t  cannedKexAlgo[] = {ID_DH_GROUP14_SHA1, ID_DH_GROUP1_SHA1};
-#endif
 
 static const uint32_t cannedEncAlgoSz = sizeof(cannedEncAlgo);
 static const uint32_t cannedMacAlgoSz = sizeof(cannedMacAlgo);
@@ -3310,14 +3306,9 @@ static const char cannedEncAlgoNames[] = "aes128-cbc";
 static const char cannedMacAlgoNames[] = "hmac-sha2-256,hmac-sha1-96,"
                                          "hmac-sha1";
 static const char cannedKeyAlgoNames[] = "ssh-rsa";
-#ifdef TEST_GEX
 static const char cannedKexAlgoNames[] = "diffie-hellman-group-exchange-sha256,"
                                          "diffie-hellman-group14-sha1,"
                                          "diffie-hellman-group1-sha1";
-#else
-static const char cannedKexAlgoNames[] = "diffie-hellman-group14-sha1,"
-                                         "diffie-hellman-group1-sha1";
-#endif
 static const char cannedNoneNames[]    = "none";
 
 static const uint32_t cannedEncAlgoNamesSz = sizeof(cannedEncAlgoNames) - 1;
