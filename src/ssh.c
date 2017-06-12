@@ -557,6 +557,32 @@ int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX* ctx,
 }
 
 
+void wolfSSH_GetStats(WOLFSSH* ssh, uint32_t* txCount, uint32_t* rxCount,
+                      uint32_t* seq, uint32_t* peerSeq)
+{
+    uint32_t rTxCount = 0;
+    uint32_t rRxCount = 0;
+    uint32_t rSeq = 0;
+    uint32_t rPeerSeq = 0;
+
+    if (ssh != NULL) {
+        rTxCount = ssh->txCount;
+        rRxCount = ssh->rxCount;
+        rSeq = ssh->seq;
+        rPeerSeq = ssh->peerSeq;
+    }
+
+    if (txCount != NULL)
+        *txCount = rTxCount;
+    if (rxCount != NULL)
+        *rxCount = rRxCount;
+    if (seq != NULL)
+        *seq = rSeq;
+    if (peerSeq != NULL)
+        *peerSeq = rPeerSeq;
+}
+
+
 int wolfSSH_KDF(uint8_t hashId, uint8_t keyId,
                 uint8_t* key, uint32_t keySz,
                 const uint8_t* k, uint32_t kSz,
