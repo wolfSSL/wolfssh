@@ -90,7 +90,9 @@ typedef int SOCKET_T;
 #endif
 
 typedef struct {
-    SOCKET_T clientFd;
+    WOLFSSH* ssh;
+    SOCKET_T fd;
+    uint32_t id;
 } thread_ctx_t;
 
 
@@ -288,12 +290,30 @@ static uint8_t find_char(const uint8_t* str, const uint8_t* buf, uint32_t bufSz)
 }
 
 
+static int dump_stats(thread_ctx_t* ctx)
+{
+    char stats[1024];
+    uint32_t statsSz;
+    uint32_t txCount, rxCount, seq, peerSeq;
+
+    wolfSSH_GetStats(ctx->ssh, &txCount, &rxCount, &seq, &peerSeq);
+
+    sprintf(stats,
+            "Statistics for Thread #%u:\r\n"
+            "  txCount = %u\r\n  rxCount = %u\r\n"
+            "  seq = %u\r\n  peerSeq = %u\r\n",
+            ctx->id, txCount, rxCount, seq, peerSeq);
+    statsSz = (uint32_t)strlen(stats);
+
+    fprintf(stderr, "%s", stats);
+    return wolfSSH_stream_send(ctx->ssh, (uint8_t*)stats, statsSz);
+}
+
 static THREAD_RETURN CYASSL_THREAD server_worker(void* vArgs)
 {
-    WOLFSSH* ssh = (WOLFSSH*)vArgs;
-    SOCKET_T clientFd = wolfSSH_get_fd(ssh);
+    thread_ctx_t* threadCtx = (thread_ctx_t*)vArgs;
 
-    if (wolfSSH_accept(ssh) == WS_SUCCESS) {
+    if (wolfSSH_accept(threadCtx->ssh) == WS_SUCCESS) {
         uint8_t* buf = NULL;
         uint8_t* tmpBuf;
         int bufSz, backlogSz = 0, rxSz, txSz, stop = 0, txSum;
@@ -308,7 +328,7 @@ static THREAD_RETURN CYASSL_THREAD server_worker(void* vArgs)
                 buf = tmpBuf;
 
             if (!stop) {
-                rxSz = wolfSSH_stream_read(ssh,
+                rxSz = wolfSSH_stream_read(threadCtx->ssh,
                                            buf + backlogSz,
                                            EXAMPLE_BUFFER_SZ);
                 if (rxSz > 0) {
@@ -317,7 +337,7 @@ static THREAD_RETURN CYASSL_THREAD server_worker(void* vArgs)
                     txSz = 0;
 
                     while (backlogSz != txSum && txSz >= 0 && !stop) {
-                        txSz = wolfSSH_stream_send(ssh,
+                        txSz = wolfSSH_stream_send(threadCtx->ssh,
                                                    buf + txSum,
                                                    backlogSz - txSum);
 
@@ -331,7 +351,8 @@ static THREAD_RETURN CYASSL_THREAD server_worker(void* vArgs)
                                     stop = 1;
                                     break;
                                 case 0x05:
-                                    fprintf(stderr, "dump stats\n");
+                                    if (dump_stats(threadCtx) <= 0)
+                                        stop = 1;
                                 default:
                                     txSum += txSz;
                             }
@@ -351,8 +372,9 @@ static THREAD_RETURN CYASSL_THREAD server_worker(void* vArgs)
 
         free(buf);
     }
-    close(clientFd);
-    wolfSSH_free(ssh);
+    close(threadCtx->fd);
+    wolfSSH_free(threadCtx->ssh);
+    free(threadCtx);
 
     return 0;
 }
@@ -647,6 +669,7 @@ int main(void)
     PwMapList pwMapList;
     SOCKET_T listenFd = 0;
     uint32_t defaultHighwater = EXAMPLE_HIGHWATER_MARK;
+    uint32_t threadCount = 0;
 
     #ifdef DEBUG_WOLFSSH
         wolfSSH_Debugging_ON();
@@ -695,12 +718,22 @@ int main(void)
 
     tcp_bind(&listenFd, SERVER_PORT_NUMBER, 0);
 
+    if (listen(listenFd, 5) != 0)
+        err_sys("tcp listen failed");
+
     for (;;) {
         SOCKET_T      clientFd = 0;
         SOCKADDR_IN_T clientAddr;
         SOCKLEN_T     clientAddrSz = sizeof(clientAddr);
         THREAD_TYPE   thread;
         WOLFSSH*      ssh;
+        thread_ctx_t* threadCtx;
+
+        threadCtx = (thread_ctx_t*)malloc(sizeof(thread_ctx_t));
+        if (threadCtx == NULL) {
+            fprintf(stderr, "Couldn't allocate thread context data.\n");
+            exit(EXIT_FAILURE);
+        }
 
         ssh = wolfSSH_new(ctx);
         if (ssh == NULL) {
@@ -714,9 +747,6 @@ int main(void)
             wolfSSH_SetHighwater(ssh, defaultHighwater);
         }
 
-        if (listen(listenFd, 5) != 0)
-            err_sys("tcp listen failed");
-
         clientFd = accept(listenFd, (struct sockaddr*)&clientAddr,
                                                                  &clientAddrSz);
         if (clientFd == -1)
@@ -724,7 +754,11 @@ int main(void)
 
         wolfSSH_set_fd(ssh, clientFd);
 
-        pthread_create(&thread, 0, server_worker, ssh);
+        threadCtx->ssh = ssh;
+        threadCtx->fd = clientFd;
+        threadCtx->id = threadCount++;
+
+        pthread_create(&thread, 0, server_worker, threadCtx);
         pthread_detach(thread);
     }
 
