@@ -394,8 +394,8 @@ int main(void)
     testResult = testResult || unitResult;
 #endif
 
+    printf("Running the API tests\n");
     unitResult = ApiTest();
-    printf("API: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
     return (testResult ? 1 : 0);

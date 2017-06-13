@@ -19,10 +19,48 @@
  */
 
 
+#include <wolfssh/ssh.h>
 #include <tests/unit.h>
+
+
+#define TEST_SUCCESS    (1)
+#define TEST_FAIL       (0)
+
+#define testingFmt "   %s:"
+#define resultFmt  " %s\n"
+static const char* passed = "passed";
+static const char* failed = "failed";
+
+
+static int test_wolfSSH_Init(void)
+{
+    int result;
+
+    printf(testingFmt, "wolfSSH_Init()");
+    result = wolfSSH_Init();
+    printf(resultFmt, result == WS_SUCCESS ? passed : failed);
+
+    return result;
+}
+
+
+static int test_wolfSSH_Cleanup(void)
+{
+    int result;
+
+    printf(testingFmt, "wolfSSH_Cleanup()");
+    result = wolfSSH_Cleanup();
+    printf(resultFmt, result == WS_SUCCESS ? passed : failed);
+
+    return result;
+}
 
 
 int ApiTest(void)
 {
+    printf(" Begin API Tests\n");
+    AssertIntEQ(test_wolfSSH_Init(), WS_SUCCESS);
+    AssertIntEQ(test_wolfSSH_Cleanup(), WS_SUCCESS);
+    printf(" End API Tests\n");
     return 0;
 }
