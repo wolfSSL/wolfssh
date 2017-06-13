@@ -5,7 +5,7 @@
 check_PROGRAMS += tests/unit.test
 noinst_PROGRAMS += tests/unit.test
 
-tests_unit_test_SOURCES = tests/unit.c
+tests_unit_test_SOURCES = tests/unit.c tests/api.c
 
 tests_unit_test_CFLAGS       = -DNO_MAIN_DRIVER $(AM_CFLAGS)
 tests_unit_test_LDADD        = src/libwolfssh.la $(LIB_STATIC_ADD)
