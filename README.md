@@ -86,6 +86,20 @@ Where the user can be `gretel` or `hansel`.
 release notes
 -------------
 
+### wolfSSH v1.1.0 (06/16/2017)
+
+- Added DH Group Exchange with SHA-256 hashing to the key exchange.
+- Removed the canned banner and provided a function to set a banner string.
+  If no sting is provided, no banner is sent.
+- Expanded the make checking to include an API test.
+- Added a function that returns session statistics.
+- When connecting to the echoserver, hitting Ctrl-E will give you some
+  session statistics.
+- Parse and reply to the Global Request message.
+- Fixed a bug with client initiated rekeying.
+- Fixed a bug with the GetString function.
+- Other small bug fixes and enhancements.
+
 ### wolfSSH v1.0.0 (10/24/2016)
 
 Initial release.

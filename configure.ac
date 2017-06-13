@@ -1,8 +1,8 @@
 # wolfssh
-# Copyright (C) 2014-2016 wolfSSL Inc.
+# Copyright (C) 2014-2017 wolfSSL Inc.
 # All right reserved.
 
-AC_INIT([wolfssh], [1.0.0], [http://wolfssl.com], [wolfssh])
+AC_INIT([wolfssh], [1.1.0], [http://wolfssl.com], [wolfssh])
 AC_PREREQ([2.63])
 AC_CONFIG_AUX_DIR([build-aux])
 
@@ -17,7 +17,7 @@ AC_ARG_PROGRAM
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_HEADERS([src/config.h])
 
-WOLFSSH_LIBRARY_VERSION=2:0:1
+WOLFSSH_LIBRARY_VERSION=3:0:2
 #                       | | |
 #                +------+ | +---+
 #                |        |     |
