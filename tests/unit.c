@@ -23,7 +23,6 @@
 #include <wolfssh/ssh.h>
 #include <wolfssh/keygen.h>
 #include <wolfssh/internal.h>
-#include <tests/unit.h>
 
 
 /* Utility functions */
@@ -393,10 +392,6 @@ int main(void)
     printf("RsaKeyGen: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
-
-    printf("Running the API tests\n");
-    unitResult = ApiTest();
-    testResult = testResult || unitResult;
 
     return (testResult ? 1 : 0);
 }

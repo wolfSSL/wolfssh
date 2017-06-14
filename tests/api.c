@@ -19,48 +19,120 @@
  */
 
 
+#include <stdio.h>
 #include <wolfssh/ssh.h>
-#include <tests/unit.h>
 
 
-#define TEST_SUCCESS    (1)
-#define TEST_FAIL       (0)
+#define Fail(description, result) do {                                         \
+    printf("\nERROR - %s line %d failed with:", __FILE__, __LINE__);           \
+    printf("\n    expected: "); printf description;                            \
+    printf("\n    result:   "); printf result; printf("\n\n");                 \
+    abort();                                                                   \
+} while(0)
 
-#define testingFmt "   %s:"
-#define resultFmt  " %s\n"
-static const char* passed = "passed";
-static const char* failed = "failed";
+#define Assert(test, description, result) if (!(test)) Fail(description, result)
+
+#define AssertTrue(x)    Assert( (x), ("%s is true",     #x), (#x " => FALSE"))
+#define AssertFalse(x)   Assert(!(x), ("%s is false",    #x), (#x " => TRUE"))
+#define AssertNotNull(x) Assert( (x), ("%s is not null", #x), (#x " => NULL"))
+
+#define AssertNull(x) do {                                                     \
+    void* _x = (void *) (x);                                                   \
+                                                                               \
+    Assert(!_x, ("%s is null", #x), (#x " => %p", _x));                        \
+} while(0)
+
+#define AssertInt(x, y, op, er) do {                                           \
+    int _x = x;                                                                \
+    int _y = y;                                                                \
+                                                                               \
+    Assert(_x op _y, ("%s " #op " %s", #x, #y), ("%d " #er " %d", _x, _y));    \
+} while(0)
+
+#define AssertIntEQ(x, y) AssertInt(x, y, ==, !=)
+#define AssertIntNE(x, y) AssertInt(x, y, !=, ==)
+#define AssertIntGT(x, y) AssertInt(x, y,  >, <=)
+#define AssertIntLT(x, y) AssertInt(x, y,  <, >=)
+#define AssertIntGE(x, y) AssertInt(x, y, >=,  <)
+#define AssertIntLE(x, y) AssertInt(x, y, <=,  >)
+
+#define AssertStr(x, y, op, er) do {                                           \
+    const char* _x = x;                                                        \
+    const char* _y = y;                                                        \
+    int   _z = strcmp(_x, _y);                                                 \
+                                                                               \
+    Assert(_z op 0, ("%s " #op " %s", #x, #y),                                 \
+                                            ("\"%s\" " #er " \"%s\"", _x, _y));\
+} while(0)
+
+#define AssertStrEQ(x, y) AssertStr(x, y, ==, !=)
+#define AssertStrNE(x, y) AssertStr(x, y, !=, ==)
+#define AssertStrGT(x, y) AssertStr(x, y,  >, <=)
+#define AssertStrLT(x, y) AssertStr(x, y,  <, >=)
+#define AssertStrGE(x, y) AssertStr(x, y, >=,  <)
+#define AssertStrLE(x, y) AssertStr(x, y, <=,  >)
 
 
-static int test_wolfSSH_Init(void)
+enum WS_TestEndpointTypes {
+    TEST_GOOD_ENDPOINT_SERVER = WOLFSSH_ENDPOINT_SERVER,
+    TEST_GOOD_ENDPOINT_CLIENT = WOLFSSH_ENDPOINT_CLIENT,
+    TEST_BAD_ENDPOINT_NEXT,
+    TEST_BAD_ENDPOINT_LAST = 255
+};
+
+static void test_wolfSSH_CTX_new(void)
 {
-    int result;
+    WOLFSSH_CTX* ctx;
 
-    printf(testingFmt, "wolfSSH_Init()");
-    result = wolfSSH_Init();
-    printf(resultFmt, result == WS_SUCCESS ? passed : failed);
+    AssertNull(ctx = wolfSSH_CTX_new(TEST_BAD_ENDPOINT_NEXT, NULL));
+    wolfSSH_CTX_free(ctx);
+    
+    AssertNull(ctx = wolfSSH_CTX_new(TEST_BAD_ENDPOINT_LAST, NULL));
+    wolfSSH_CTX_free(ctx);
+    
+    AssertNotNull(ctx = wolfSSH_CTX_new(TEST_GOOD_ENDPOINT_SERVER, NULL));
+    wolfSSH_CTX_free(ctx);
 
-    return result;
+    AssertNotNull(ctx = wolfSSH_CTX_new(TEST_GOOD_ENDPOINT_CLIENT, NULL));
+    wolfSSH_CTX_free(ctx);
 }
 
 
-static int test_wolfSSH_Cleanup(void)
+static void test_server_wolfSSH_new(void)
 {
-    int result;
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
 
-    printf(testingFmt, "wolfSSH_Cleanup()");
-    result = wolfSSH_Cleanup();
-    printf(resultFmt, result == WS_SUCCESS ? passed : failed);
+    AssertNotNull(ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL));
+    AssertNotNull(ssh = wolfSSH_new(ctx));
 
-    return result;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
 }
 
 
-int ApiTest(void)
+static void test_client_wolfSSH_new(void)
 {
-    printf(" Begin API Tests\n");
-    AssertIntEQ(test_wolfSSH_Init(), WS_SUCCESS);
-    AssertIntEQ(test_wolfSSH_Cleanup(), WS_SUCCESS);
-    printf(" End API Tests\n");
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+
+    AssertNotNull(ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL));
+    AssertNotNull(ssh = wolfSSH_new(ctx));
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
+int main(void)
+{
+    AssertIntEQ(wolfSSH_Init(), WS_SUCCESS);
+
+    test_wolfSSH_CTX_new();
+    test_server_wolfSSH_new();
+    test_client_wolfSSH_new();
+
+    AssertIntEQ(wolfSSH_Cleanup(), WS_SUCCESS);
+
     return 0;
 }
