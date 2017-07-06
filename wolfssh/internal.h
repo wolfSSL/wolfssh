@@ -62,8 +62,6 @@ enum {
 
     /* Encryption IDs */
     ID_AES128_CBC,
-    ID_AES128_CTR,
-    ID_AES128_GCM_WOLF,
 
     /* Integrity IDs */
     ID_HMAC_SHA1,

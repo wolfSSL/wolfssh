@@ -382,8 +382,6 @@ static const NameIdPair NameIdMap[] = {
 
     /* Encryption IDs */
     { ID_AES128_CBC, "aes128-cbc" },
-    { ID_AES128_CTR, "aes128-ctr" },
-    { ID_AES128_GCM_WOLF, "aes128-gcm@wolfssl.com" },
 
     /* Integrity IDs */
     { ID_HMAC_SHA1, "hmac-sha1" },
@@ -1109,7 +1107,6 @@ static INLINE uint8_t BlockSzForId(uint8_t id)
 {
     switch (id) {
         case ID_AES128_CBC:
-        case ID_AES128_CTR:
             return AES_BLOCK_SIZE;
         default:
             return 0;
@@ -1141,7 +1138,6 @@ static INLINE uint8_t KeySzForId(uint8_t id)
         case ID_HMAC_SHA2_256:
             return SHA256_DIGEST_SIZE;
         case ID_AES128_CBC:
-        case ID_AES128_CTR:
             return AES_BLOCK_SIZE;
         default:
             return 0;
