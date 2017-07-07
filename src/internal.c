@@ -382,6 +382,7 @@ static const NameIdPair NameIdMap[] = {
 
     /* Encryption IDs */
     { ID_AES128_CBC, "aes128-cbc" },
+    { ID_AES128_GCM, "aes128-gcm@openssh.com" },
 
     /* Integrity IDs */
     { ID_HMAC_SHA1, "hmac-sha1" },
@@ -1068,7 +1069,7 @@ static int DoNameList(uint8_t* idList, uint32_t* idListSz,
 }
 
 
-static const uint8_t  cannedEncAlgo[] = {ID_AES128_CBC};
+static const uint8_t  cannedEncAlgo[] = {ID_AES128_GCM, ID_AES128_CBC};
 static const uint8_t  cannedMacAlgo[] = {ID_HMAC_SHA2_256, ID_HMAC_SHA1_96,
                                          ID_HMAC_SHA1};
 static const uint8_t  cannedKeyAlgo[] = {ID_SSH_RSA};
@@ -1107,6 +1108,7 @@ static INLINE uint8_t BlockSzForId(uint8_t id)
 {
     switch (id) {
         case ID_AES128_CBC:
+        case ID_AES128_GCM:
             return AES_BLOCK_SIZE;
         default:
             return 0;
@@ -1138,6 +1140,7 @@ static INLINE uint8_t KeySzForId(uint8_t id)
         case ID_HMAC_SHA2_256:
             return SHA256_DIGEST_SIZE;
         case ID_AES128_CBC:
+        case ID_AES128_GCM:
             return AES_BLOCK_SIZE;
         default:
             return 0;
@@ -1156,6 +1159,12 @@ static INLINE uint8_t HashForId(uint8_t id)
         default:
             return WC_HASH_TYPE_NONE;
     }
+}
+
+
+static INLINE uint8_t AeadModeForId(uint8_t id)
+{
+    return (id == ID_AES128_GCM);
 }
 
 
@@ -1262,13 +1271,22 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
         }
         else {
             ssh->handshake->encryptId = algoId;
-            ssh->handshake->blockSz =
-                ssh->handshake->clientKeys.ivSz =
-                ssh->handshake->serverKeys.ivSz =
-                BlockSzForId(algoId);
+            ssh->handshake->aeadMode = AeadModeForId(algoId);
+            ssh->handshake->blockSz = BlockSzForId(algoId);
             ssh->handshake->clientKeys.encKeySz =
                 ssh->handshake->serverKeys.encKeySz =
                 KeySzForId(algoId);
+            if (!ssh->handshake->aeadMode) {
+                ssh->handshake->clientKeys.ivSz =
+                    ssh->handshake->serverKeys.ivSz =
+                    ssh->handshake->blockSz;
+            }
+            else {
+                ssh->handshake->clientKeys.ivSz =
+                    ssh->handshake->serverKeys.ivSz =
+                    AEAD_NONCE_SZ;
+                ssh->handshake->macSz = ssh->handshake->blockSz;
+            }
         }
     }
 
@@ -1277,7 +1295,7 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
         WLOG(WS_LOG_DEBUG, "DKI: MAC Algorithms - Client to Server");
         listSz = 2;
         ret = DoNameList(list, &listSz, buf, len, &begin);
-        if (ret == WS_SUCCESS) {
+        if (ret == WS_SUCCESS && !ssh->aeadMode) {
             algoId = MatchIdLists(list, listSz, cannedMacAlgo, cannedMacAlgoSz);
             if (algoId == ID_UNKNOWN) {
                 WLOG(WS_LOG_DEBUG, "Unable to negotiate MAC Algo C2S");
@@ -1291,7 +1309,7 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
         WLOG(WS_LOG_DEBUG, "DKI: MAC Algorithms - Server to Client");
         listSz = 2;
         ret = DoNameList(list, &listSz, buf, len, &begin);
-        if (ret == WS_SUCCESS) {
+        if (ret == WS_SUCCESS && !ssh->handshake->aeadMode) {
             if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
                 WLOG(WS_LOG_DEBUG, "Unable to negotiate MAC Algo S2C");
                 ret = WS_INVALID_ALGO_ID;
@@ -1549,6 +1567,7 @@ static int DoNewKeys(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
         ssh->peerMacId = ssh->handshake->macId;
         ssh->peerBlockSz = ssh->handshake->blockSz;
         ssh->peerMacSz = ssh->handshake->macSz;
+        ssh->peerAeadMode = ssh->handshake->aeadMode;
         WMEMCPY(&ssh->clientKeys, &ssh->handshake->clientKeys, sizeof(Keys));
 
         switch (ssh->peerEncryptId) {
@@ -1562,6 +1581,13 @@ static int DoNewKeys(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
                                    ssh->clientKeys.encKey,
                                    ssh->clientKeys.encKeySz,
                                    ssh->clientKeys.iv, AES_DECRYPTION);
+                break;
+
+            case ID_AES128_GCM:
+                WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes128-gcm");
+                ret = wc_AesGcmSetKey(&ssh->decryptCipher.aes,
+                                      ssh->clientKeys.encKey,
+                                      ssh->clientKeys.encKeySz);
                 break;
 
             default:
@@ -1779,37 +1805,40 @@ static int GenerateKeys(WOLFSSH* ssh)
                           sK->encKey, sK->encKeySz,
                           ssh->k, ssh->kSz, ssh->h, ssh->hSz,
                           ssh->sessionId, ssh->sessionIdSz);
-    if (ret == WS_SUCCESS)
-        ret = GenerateKey(hashId, 'E',
-                          cK->macKey, cK->macKeySz,
-                          ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                          ssh->sessionId, ssh->sessionIdSz);
-    if (ret == WS_SUCCESS)
-        ret = GenerateKey(hashId, 'F',
-                          sK->macKey, sK->macKeySz,
-                          ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                          ssh->sessionId, ssh->sessionIdSz);
-
+    if (!ssh->handshake->aeadMode) {
+        if (ret == WS_SUCCESS)
+            ret = GenerateKey(hashId, 'E',
+                              cK->macKey, cK->macKeySz,
+                              ssh->k, ssh->kSz, ssh->h, ssh->hSz,
+                              ssh->sessionId, ssh->sessionIdSz);
+        if (ret == WS_SUCCESS)
+            ret = GenerateKey(hashId, 'F',
+                              sK->macKey, sK->macKeySz,
+                              ssh->k, ssh->kSz, ssh->h, ssh->hSz,
+                              ssh->sessionId, ssh->sessionIdSz);
+    }
 #ifdef SHOW_SECRETS
-    printf("\n** Showing Secrets **\nK:\n");
-    DumpOctetString(ssh->k, ssh->kSz);
-    printf("H:\n");
-    DumpOctetString(ssh->h, ssh->hSz);
-    printf("Session ID:\n");
-    DumpOctetString(ssh->sessionId, ssh->sessionIdSz);
-    printf("A:\n");
-    DumpOctetString(cK->iv, cK->ivSz);
-    printf("B:\n");
-    DumpOctetString(sK->iv, sK->ivSz);
-    printf("C:\n");
-    DumpOctetString(cK->encKey, cK->encKeySz);
-    printf("D:\n");
-    DumpOctetString(sK->encKey, sK->encKeySz);
-    printf("E:\n");
-    DumpOctetString(cK->macKey, cK->macKeySz);
-    printf("F:\n");
-    DumpOctetString(sK->macKey, sK->macKeySz);
-    printf("\n");
+    if (ret == WS_SUCCESS) {
+        printf("\n** Showing Secrets **\nK:\n");
+        DumpOctetString(ssh->k, ssh->kSz);
+        printf("H:\n");
+        DumpOctetString(ssh->h, ssh->hSz);
+        printf("Session ID:\n");
+        DumpOctetString(ssh->sessionId, ssh->sessionIdSz);
+        printf("A:\n");
+        DumpOctetString(cK->iv, cK->ivSz);
+        printf("B:\n");
+        DumpOctetString(sK->iv, sK->ivSz);
+        printf("C:\n");
+        DumpOctetString(cK->encKey, cK->encKeySz);
+        printf("D:\n");
+        DumpOctetString(sK->encKey, sK->encKeySz);
+        printf("E:\n");
+        DumpOctetString(cK->macKey, cK->macKeySz);
+        printf("F:\n");
+        DumpOctetString(sK->macKey, sK->macKeySz);
+        printf("\n");
+    }
 #endif /* SHOW_SECRETS */
 
     return ret;
@@ -3022,6 +3051,75 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
 }
 
 
+static INLINE void AeadIncrementExpIv(uint8_t* iv)
+{
+    int i;
+
+    iv += AEAD_IMP_IV_SZ;
+
+    for (i = AEAD_EXP_IV_SZ-1; i >= 0; i--) {
+        if (++iv[i]) return;
+    }
+}
+
+
+static INLINE int EncryptAead(WOLFSSH* ssh, uint8_t* cipher,
+                              const uint8_t* input, uint16_t sz,
+                              uint8_t* authTag, const uint8_t* auth,
+                              uint16_t authSz)
+{
+    int ret = WS_SUCCESS;
+
+    if (ssh == NULL || cipher == NULL || input == NULL || sz == 0 ||
+        authTag == NULL || auth == NULL || authSz == 0)
+        return WS_BAD_ARGUMENT;
+
+    WLOG(WS_LOG_DEBUG, "EncryptAead %s", IdToName(ssh->encryptId));
+
+    if (ssh->encryptId == ID_AES128_GCM) {
+        ret = wc_AesGcmEncrypt(&ssh->encryptCipher.aes, cipher, input, sz,
+                               ssh->serverKeys.iv, ssh->serverKeys.ivSz,
+                               authTag, ssh->macSz, auth, authSz);
+    }
+    else
+        ret = WS_INVALID_ALGO_ID;
+
+    AeadIncrementExpIv(ssh->serverKeys.iv);
+    ssh->txCount += sz;
+
+    return ret;
+}
+
+
+static INLINE int DecryptAead(WOLFSSH* ssh, uint8_t* plain,
+                              const uint8_t* input, uint16_t sz,
+                              const uint8_t* authTag, const uint8_t* auth,
+                              uint16_t authSz)
+{
+    int ret = WS_SUCCESS;
+
+    if (ssh == NULL || plain == NULL || input == NULL || sz == 0 ||
+        authTag == NULL || auth == NULL || authSz == 0)
+        return WS_BAD_ARGUMENT;
+
+    WLOG(WS_LOG_DEBUG, "DecryptAead %s", IdToName(ssh->peerEncryptId));
+
+    if (ssh->peerEncryptId == ID_AES128_GCM) {
+        ret = wc_AesGcmDecrypt(&ssh->decryptCipher.aes, plain, input, sz,
+                               ssh->clientKeys.iv, ssh->clientKeys.ivSz,
+                               authTag, ssh->peerMacSz, auth, authSz);
+    }
+    else
+        ret = WS_INVALID_ALGO_ID;
+
+    AeadIncrementExpIv(ssh->clientKeys.iv);
+    ssh->rxCount += sz;
+    HighwaterCheck(ssh, WOLFSSH_HWSIDE_RECEIVE);
+
+    return ret;
+}
+
+
 int DoReceive(WOLFSSH* ssh)
 {
     int ret = WS_FATAL_ERROR;
@@ -3029,6 +3127,7 @@ int DoReceive(WOLFSSH* ssh)
     uint32_t readSz;
     uint8_t peerBlockSz = ssh->peerBlockSz;
     uint8_t peerMacSz = ssh->peerMacSz;
+    uint8_t aeadMode = ssh->peerAeadMode;
 
     for (;;) {
         switch (ssh->processReplyState) {
@@ -3040,14 +3139,18 @@ int DoReceive(WOLFSSH* ssh)
                 }
                 ssh->processReplyState = PROCESS_PACKET_LENGTH;
 
-                /* Decrypt first block if encrypted */
-                ret = Decrypt(ssh,
-                              ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
-                              ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
-                              readSz);
-                if (ret != WS_SUCCESS) {
-                    WLOG(WS_LOG_DEBUG, "PR: First decrypt fail");
-                    return ret;
+                if (!aeadMode) {
+                    /* Decrypt first block if encrypted */
+                    ret = Decrypt(ssh,
+                                  ssh->inputBuffer.buffer +
+                                     ssh->inputBuffer.idx,
+                                  ssh->inputBuffer.buffer +
+                                     ssh->inputBuffer.idx,
+                                  readSz);
+                    if (ret != WS_SUCCESS) {
+                        WLOG(WS_LOG_DEBUG, "PR: First decrypt fail");
+                        return ret;
+                    }
                 }
 
             case PROCESS_PACKET_LENGTH:
@@ -3064,35 +3167,59 @@ int DoReceive(WOLFSSH* ssh)
                         return ret;
                     }
 
-                    if (ssh->curSz + LENGTH_SZ - peerBlockSz > 0) {
-                        ret = Decrypt(ssh,
-                                      ssh->inputBuffer.buffer +
-                                         ssh->inputBuffer.idx + peerBlockSz,
-                                      ssh->inputBuffer.buffer +
-                                         ssh->inputBuffer.idx + peerBlockSz,
-                                      ssh->curSz + LENGTH_SZ - peerBlockSz);
+                    if (!aeadMode) {
+                        if (ssh->curSz + LENGTH_SZ - peerBlockSz > 0) {
+                            ret = Decrypt(ssh,
+                                          ssh->inputBuffer.buffer +
+                                             ssh->inputBuffer.idx + peerBlockSz,
+                                          ssh->inputBuffer.buffer +
+                                             ssh->inputBuffer.idx + peerBlockSz,
+                                          ssh->curSz + LENGTH_SZ - peerBlockSz);
+                        }
+                        else {
+                            WLOG(WS_LOG_INFO,
+                                 "Not trying to decrypt short message.");
+                        }
+
+                        /* Verify the buffer is big enough for the data and mac.
+                         * Even if the decrypt step fails, verify the MAC anyway.
+                         * This keeps consistent timing. */
+                        verifyResult = VerifyMac(ssh,
+                                                 ssh->inputBuffer.buffer +
+                                                     ssh->inputBuffer.idx,
+                                                 ssh->curSz + LENGTH_SZ,
+                                                 ssh->inputBuffer.buffer +
+                                                     ssh->inputBuffer.idx +
+                                                     LENGTH_SZ + ssh->curSz);
+                        if (ret != WS_SUCCESS) {
+                            WLOG(WS_LOG_DEBUG, "PR: Decrypt fail");
+                            return ret;
+                        }
+                        if (verifyResult != WS_SUCCESS) {
+                            WLOG(WS_LOG_DEBUG, "PR: VerifyMac fail");
+                            return ret;
+                        }
                     }
                     else {
-                        WLOG(WS_LOG_INFO, "Not trying to decrypt short message.");
-                    }
+                        ret = DecryptAead(ssh,
+                                          ssh->inputBuffer.buffer +
+                                             ssh->inputBuffer.idx +
+                                             LENGTH_SZ,
+                                          ssh->inputBuffer.buffer +
+                                             ssh->inputBuffer.idx +
+                                             LENGTH_SZ,
+                                          ssh->curSz,
+                                          ssh->inputBuffer.buffer +
+                                              ssh->inputBuffer.idx +
+                                              ssh->curSz + LENGTH_SZ,
+                                          ssh->inputBuffer.buffer +
+                                              ssh->inputBuffer.idx,
+                                          LENGTH_SZ);
 
-                    /* Verify the buffer is big enough for the data and mac.
-                     * Even if the decrypt step fails, verify the MAC anyway.
-                     * This keeps consistent timing. */
-                    verifyResult = VerifyMac(ssh,
-                                             ssh->inputBuffer.buffer +
-                                                 ssh->inputBuffer.idx,
-                                             ssh->curSz + LENGTH_SZ,
-                                             ssh->inputBuffer.buffer +
-                                                 ssh->inputBuffer.idx +
-                                                 LENGTH_SZ + ssh->curSz);
-                    if (ret != WS_SUCCESS) {
-                        WLOG(WS_LOG_DEBUG, "PR: Decrypt fail");
-                        return ret;
-                    }
-                    if (verifyResult != WS_SUCCESS) {
-                        WLOG(WS_LOG_DEBUG, "PR: VerifyMac fail");
-                        return ret;
+                        if (ret != WS_SUCCESS) {
+                            WLOG(WS_LOG_DEBUG, "PR: DecryptAead fail");
+                            return ret;
+                        }
                     }
                 }
                 ssh->processReplyState = PROCESS_PACKET;
@@ -3202,7 +3329,8 @@ static int PreparePacket(WOLFSSH* ssh, uint32_t payloadSz)
     if (ret == WS_SUCCESS) {
         /* Minimum value for paddingSz is 4. */
         paddingSz = ssh->blockSz -
-                    (LENGTH_SZ + PAD_LENGTH_SZ + payloadSz) % ssh->blockSz;
+                    ((ssh->aeadMode ? 0 : LENGTH_SZ) +
+                     PAD_LENGTH_SZ + payloadSz) % ssh->blockSz;
         if (paddingSz < MIN_PAD_LENGTH)
             paddingSz += ssh->blockSz;
         ssh->paddingSz = paddingSz;
@@ -3251,27 +3379,47 @@ static int BundlePacket(WOLFSSH* ssh)
             ret = WS_CRYPTO_FAILED;
     }
 
-    if (ret == WS_SUCCESS) {
-        idx += paddingSz;
-        ret = CreateMac(ssh, ssh->outputBuffer.buffer + ssh->packetStartIdx,
-                        ssh->outputBuffer.length -
-                            ssh->packetStartIdx + paddingSz,
-                        output + idx);
-    }
-    else {
-        WLOG(WS_LOG_DEBUG, "BP: failed to add padding");
-    }
+    if (!ssh->aeadMode) {
+        if (ret == WS_SUCCESS) {
+            idx += paddingSz;
+            ret = CreateMac(ssh, ssh->outputBuffer.buffer + ssh->packetStartIdx,
+                            ssh->outputBuffer.length -
+                                ssh->packetStartIdx + paddingSz,
+                            output + idx);
+        }
+        else {
+            WLOG(WS_LOG_DEBUG, "BP: failed to add padding");
+        }
 
-    if (ret == WS_SUCCESS) {
-        idx += ssh->macSz;
-        ret = Encrypt(ssh,
-                      ssh->outputBuffer.buffer + ssh->packetStartIdx,
-                      ssh->outputBuffer.buffer + ssh->packetStartIdx,
-                      ssh->outputBuffer.length -
-                          ssh->packetStartIdx + paddingSz);
+        if (ret == WS_SUCCESS) {
+            idx += ssh->macSz;
+            ret = Encrypt(ssh,
+                          ssh->outputBuffer.buffer + ssh->packetStartIdx,
+                          ssh->outputBuffer.buffer + ssh->packetStartIdx,
+                          ssh->outputBuffer.length -
+                              ssh->packetStartIdx + paddingSz);
+        }
+        else {
+            WLOG(WS_LOG_DEBUG, "BP: failed to generate mac");
+        }
     }
     else {
-        WLOG(WS_LOG_DEBUG, "BP: failed to generate mac");
+        if (ret == WS_SUCCESS) {
+            idx += paddingSz;
+            ret = EncryptAead(ssh,
+                              ssh->outputBuffer.buffer +
+                                  ssh->packetStartIdx + LENGTH_SZ,
+                              ssh->outputBuffer.buffer +
+                                  ssh->packetStartIdx + LENGTH_SZ,
+                              ssh->outputBuffer.length -
+                                  ssh->packetStartIdx + paddingSz -
+                                  LENGTH_SZ,
+                              output + idx,
+                              ssh->outputBuffer.buffer +
+                                  ssh->packetStartIdx,
+                              LENGTH_SZ);
+            idx += ssh->macSz;
+        }
     }
 
     if (ret == WS_SUCCESS)
@@ -3298,7 +3446,7 @@ static INLINE void CopyNameList(uint8_t* buf, uint32_t* idx,
 }
 
 
-static const char cannedEncAlgoNames[] = "aes128-cbc";
+static const char cannedEncAlgoNames[] = "aes128-gcm@openssh.com,aes128-cbc";
 static const char cannedMacAlgoNames[] = "hmac-sha2-256,hmac-sha1-96,"
                                          "hmac-sha1";
 static const char cannedKeyAlgoNames[] = "ssh-rsa";
@@ -3829,6 +3977,7 @@ int SendNewKeys(WOLFSSH* ssh)
         ssh->encryptId = ssh->handshake->encryptId;
         ssh->macSz = ssh->handshake->macSz;
         ssh->macId = ssh->handshake->macId;
+        ssh->aeadMode = ssh->handshake->aeadMode;
         WMEMCPY(&ssh->serverKeys, &ssh->handshake->serverKeys, sizeof(Keys));
 
         switch (ssh->encryptId) {
@@ -3842,6 +3991,13 @@ int SendNewKeys(WOLFSSH* ssh)
                                   ssh->serverKeys.encKey,
                                   ssh->serverKeys.encKeySz,
                                   ssh->serverKeys.iv, AES_ENCRYPTION);
+                break;
+
+            case ID_AES128_GCM:
+                WLOG(WS_LOG_DEBUG, "SNK: using cipher aes128-gcm");
+                ret = wc_AesGcmSetKey(&ssh->encryptCipher.aes,
+                                     ssh->serverKeys.encKey,
+                                     ssh->serverKeys.encKeySz);
                 break;
 
             default:
