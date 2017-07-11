@@ -111,6 +111,75 @@ typedef struct {
 #endif
 
 
+#define MY_EX_USAGE 2
+
+extern int   myoptind;
+extern char* myoptarg;
+
+static INLINE int mygetopt(int argc, char** argv, const char* optstring)
+{
+    static char* next = NULL;
+
+    char  c;
+    char* cp;
+
+    if (myoptind == 0)
+        next = NULL;   /* we're starting new/over */
+
+    if (next == NULL || *next == '\0') {
+        if (myoptind == 0)
+            myoptind++;
+
+        if (myoptind >= argc || argv[myoptind][0] != '-' ||
+                                argv[myoptind][1] == '\0') {
+            myoptarg = NULL;
+            if (myoptind < argc)
+                myoptarg = argv[myoptind];
+
+            return -1;
+        }
+
+        if (strcmp(argv[myoptind], "--") == 0) {
+            myoptind++;
+            myoptarg = NULL;
+
+            if (myoptind < argc)
+                myoptarg = argv[myoptind];
+
+            return -1;
+        }
+
+        next = argv[myoptind];
+        next++;                  /* skip - */
+        myoptind++;
+    }
+
+    c  = *next++;
+    /* The C++ strchr can return a different value */
+    cp = (char*)strchr(optstring, c);
+
+    if (cp == NULL || c == ':')
+        return '?';
+
+    cp++;
+
+    if (*cp == ':') {
+        if (*next != '\0') {
+            myoptarg = next;
+            next     = NULL;
+        }
+        else if (myoptind < argc) {
+            myoptarg = argv[myoptind];
+            myoptind++;
+        }
+        else
+            return '?';
+    }
+
+    return c;
+}
+
+
 static INLINE WS_NORETURN void err_sys(const char* msg)
 {
     printf("server error: %s\n", msg);
@@ -663,17 +732,44 @@ static int wsUserAuth(uint8_t authType,
 }
 
 
-int main(void)
+static void ShowUsage(void)
+{
+    printf("echoserver %s\n", LIBWOLFSSH_VERSION_STRING);
+    printf("-h          Help, print this usage\n");
+    printf("-m          Allow multiple connections\n");
+}
+
+
+int main(int argc, char** argv)
 {
     WOLFSSH_CTX* ctx = NULL;
     PwMapList pwMapList;
     SOCKET_T listenFd = 0;
     uint32_t defaultHighwater = EXAMPLE_HIGHWATER_MARK;
     uint32_t threadCount = 0;
+    int multipleConnections = 0;
+    char ch;
 
     #ifdef DEBUG_WOLFSSH
         wolfSSH_Debugging_ON();
     #endif
+
+    while ((ch = mygetopt(argc, argv, "hm")) != -1) {
+        switch (ch) {
+            case 'h' :
+                ShowUsage();
+                exit(EXIT_SUCCESS);
+
+            case 'm' :
+                multipleConnections = 1;
+                break;
+
+            default:
+                ShowUsage();
+                exit(MY_EX_USAGE);
+        }
+    }
+    myoptind = 0;      /* reset for test cases */
 
     if (wolfSSH_Init() != WS_SUCCESS) {
         fprintf(stderr, "Couldn't initialize wolfSSH.\n");
@@ -721,7 +817,7 @@ int main(void)
     if (listen(listenFd, 5) != 0)
         err_sys("tcp listen failed");
 
-    for (;;) {
+    do {
         SOCKET_T      clientFd = 0;
         SOCKADDR_IN_T clientAddr;
         SOCKLEN_T     clientAddrSz = sizeof(clientAddr);
@@ -759,8 +855,13 @@ int main(void)
         threadCtx->id = threadCount++;
 
         pthread_create(&thread, 0, server_worker, threadCtx);
-        pthread_detach(thread);
-    }
+
+        if (multipleConnections)
+            pthread_detach(thread);
+        else
+            pthread_join(thread, NULL);
+
+    } while (multipleConnections);
 
     PwMapListDelete(&pwMapList);
     wolfSSH_CTX_free(ctx);
@@ -771,3 +872,6 @@ int main(void)
 
     return 0;
 }
+
+int myoptind = 0;
+char* myoptarg = NULL;
