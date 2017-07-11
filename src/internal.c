@@ -371,6 +371,74 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
 }
 
 
+int ProcessBuffer(WOLFSSH_CTX* ctx, const uint8_t* in, uint32_t inSz,
+                                                           int format, int type)
+{
+    int dynamicType;
+    void* heap;
+    uint8_t* der;
+    uint32_t derSz;
+
+    if (ctx == NULL || in == NULL || inSz == 0)
+        return WS_BAD_ARGUMENT;
+
+    if (format != WOLFSSH_FORMAT_ASN1 && format != WOLFSSH_FORMAT_PEM &&
+                                         format != WOLFSSH_FORMAT_RAW)
+        return WS_BAD_FILETYPE_E;
+
+    if (type == BUFTYPE_CA)
+        dynamicType = DYNTYPE_CA;
+    else if (type == BUFTYPE_CERT)
+        dynamicType = DYNTYPE_CERT;
+    else if (type == BUFTYPE_PRIVKEY)
+        dynamicType = DYNTYPE_PRIVKEY;
+    else
+        return WS_BAD_ARGUMENT;
+
+    heap = ctx->heap;
+
+    if (format == WOLFSSH_FORMAT_PEM)
+        return WS_UNIMPLEMENTED_E;
+    else {
+        /* format is ASN1 or RAW */
+        der = (uint8_t*)WMALLOC(inSz, heap, dynamicType);
+        if (der == NULL)
+            return WS_MEMORY_E;
+        WMEMCPY(der, in, inSz);
+        derSz = inSz;
+    }
+
+    /* Maybe decrypt */
+
+    if (type == BUFTYPE_PRIVKEY) {
+        if (ctx->privateKey)
+            WFREE(ctx->privateKey, heap, dynamicType);
+        ctx->privateKey = der;
+        ctx->privateKeySz = derSz;
+    }
+    else {
+        WFREE(der, heap, dynamicType);
+        return WS_UNIMPLEMENTED_E;
+    }
+
+    if (type == BUFTYPE_PRIVKEY && format != WOLFSSH_FORMAT_RAW) {
+        /* Check RSA key */
+        RsaKey key;
+        uint32_t scratch = 0;
+
+        if (wc_InitRsaKey(&key, NULL) < 0)
+            return WS_RSA_E;
+
+        if (wc_RsaPrivateKeyDecode(der, &scratch, &key, derSz) < 0)
+            return WS_BAD_FILE_E;
+
+        wc_FreeRsaKey(&key);
+    }
+
+    return WS_SUCCESS;
+}
+
+
 typedef struct {
     uint8_t id;
     const char* name;

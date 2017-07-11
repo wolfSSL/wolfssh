@@ -31,7 +31,6 @@
 #include <wolfssl/options.h>
 #include <wolfssl/wolfcrypt/hash.h>
 #include <wolfssl/wolfcrypt/random.h>
-#include <wolfssl/wolfcrypt/dh.h>
 #include <wolfssl/wolfcrypt/aes.h>
 
 
@@ -251,7 +250,7 @@ struct WOLFSSH {
 
     Buffer         inputBuffer;
     Buffer         outputBuffer;
-    RNG*           rng;
+    WC_RNG*        rng;
 
     uint8_t        h[WC_MAX_DIGEST_SIZE];
     uint32_t       hSz;
@@ -299,6 +298,8 @@ WOLFSSH_LOCAL void ChannelDelete(WOLFSSH_CHANNEL*, void*);
 WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelFind(WOLFSSH*, uint32_t, uint8_t);
 WOLFSSH_LOCAL int ChannelRemove(WOLFSSH*, uint32_t, uint8_t);
 WOLFSSH_LOCAL int ChannelPutData(WOLFSSH_CHANNEL*, uint8_t*, uint32_t);
+WOLFSSH_LOCAL int ProcessBuffer(WOLFSSH_CTX*, const uint8_t*, uint32_t,
+                                int, int);
 
 
 #ifndef WOLFSSH_USER_IO
