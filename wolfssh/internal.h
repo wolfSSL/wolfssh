@@ -62,8 +62,7 @@ enum {
 
     /* Encryption IDs */
     ID_AES128_CBC,
-    ID_AES128_CTR,
-    ID_AES128_GCM_WOLF,
+    ID_AES128_GCM,
 
     /* Integrity IDs */
     ID_HMAC_SHA1,
@@ -105,6 +104,9 @@ enum {
 #define UINT32_SZ        4
 #define SSH_PROTO_SZ     7    /* "SSH-2.0" */
 #define SSH_PROTO_EOL_SZ 2    /* Just the CRLF */
+#define AEAD_IMP_IV_SZ   4
+#define AEAD_EXP_IV_SZ   8
+#define AEAD_NONCE_SZ    (AEAD_IMP_IV_SZ+AEAD_EXP_IV_SZ)
 #ifndef DEFAULT_HIGHWATER_MARK
     #define DEFAULT_HIGHWATER_MARK ((1024 * 1024 * 1024) - (32 * 1024))
 #endif
@@ -181,6 +183,7 @@ typedef struct HandshakeInfo {
     uint8_t        macId;
     uint8_t        hashId;
     uint8_t        kexPacketFollows;
+    uint8_t        aeadMode;
 
     uint8_t        blockSz;
     uint8_t        macSz;
@@ -231,10 +234,12 @@ struct WOLFSSH {
     uint8_t        encryptId;
     uint8_t        macId;
     uint8_t        macSz;
+    uint8_t        aeadMode;
     uint8_t        peerBlockSz;
     uint8_t        peerEncryptId;
     uint8_t        peerMacId;
     uint8_t        peerMacSz;
+    uint8_t        peerAeadMode;
 
     Ciphers        encryptCipher;
     Ciphers        decryptCipher;
