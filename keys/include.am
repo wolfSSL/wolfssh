@@ -4,8 +4,10 @@
 
 
 EXTRA_DIST+= \
-            keys/server-key.der \
-            keys/server-key.pem \
+            keys/server-key-ecdsa.der \
+            keys/server-key-ecdsa.pem \
+            keys/server-key-rsa.der \
+            keys/server-key-rsa.pem \
             keys/key-hansel.pem \
             keys/key-gretel.pem \
             keys/publickeys.txt \
