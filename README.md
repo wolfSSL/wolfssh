@@ -50,12 +50,12 @@ From another terminal run:
 
 The server will send a canned banner to the client:
 
-    CANNED BANNER
-    This server is an example test server. It should have its own banner, but
-    it is currently using a canned one in the library. Be happy or not.
+    wolfSSH Example Echo Server
 
 Characters typed into the client will be echoed to the screen by the server.
-If the characters are echoed twice, the client has local echo enabled.
+If the characters are echoed twice, the client has local echo enabled. The
+echo server isn't being a proper terminal so the CR/LF translation will not
+work as expected.
 
 
 testing notes
@@ -85,6 +85,14 @@ Where the user can be `gretel` or `hansel`.
 
 release notes
 -------------
+
+### wolfSSH v1.2.0 (07/XX/2017)
+
+- Added ECDH Group Exchange with SHA2 hashing and curves nistp256,
+  nistp384, and nistp521. 
+- Changed the echoserver to allow only one connection, but multiple
+  connections are allowed with a command line option.
+- Other small bug fixes and enhancements.
 
 ### wolfSSH v1.1.0 (06/16/2017)
 
