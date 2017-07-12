@@ -34,6 +34,7 @@
 #include <wolfssh/log.h>
 #include <wolfssl/wolfcrypt/asn.h>
 #include <wolfssl/wolfcrypt/rsa.h>
+#include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfssl/wolfcrypt/hmac.h>
 
 #ifdef NO_INLINE
@@ -149,6 +150,9 @@ const char* GetErrorString(int err)
 
         case WS_REKEYING:
             return "rekeying with peer";
+
+        case WS_INVALID_PRIME_CURVE:
+            return "invalid prime curve in ecc";
 
         default:
             return "Unknown error code";
@@ -461,6 +465,9 @@ static const NameIdPair NameIdMap[] = {
     { ID_DH_GROUP1_SHA1, "diffie-hellman-group1-sha1" },
     { ID_DH_GROUP14_SHA1, "diffie-hellman-group14-sha1" },
     { ID_DH_GEX_SHA256, "diffie-hellman-group-exchange-sha256" },
+    { ID_ECDH_SHA2_NISTP256, "ecdh-sha2-nistp256" },
+    { ID_ECDH_SHA2_NISTP384, "ecdh-sha2-nistp384" },
+    { ID_ECDH_SHA2_NISTP521, "ecdh-sha2-nistp521" },
 
     /* Public Key IDs */
     { ID_SSH_RSA, "ssh-rsa" },
@@ -1141,7 +1148,9 @@ static const uint8_t  cannedEncAlgo[] = {ID_AES128_GCM, ID_AES128_CBC};
 static const uint8_t  cannedMacAlgo[] = {ID_HMAC_SHA2_256, ID_HMAC_SHA1_96,
                                          ID_HMAC_SHA1};
 static const uint8_t  cannedKeyAlgo[] = {ID_SSH_RSA};
-static const uint8_t  cannedKexAlgo[] = {ID_DH_GEX_SHA256, ID_DH_GROUP14_SHA1,
+static const uint8_t  cannedKexAlgo[] = {ID_ECDH_SHA2_NISTP256,
+                                         ID_DH_GEX_SHA256,
+                                         ID_DH_GROUP14_SHA1,
                                          ID_DH_GROUP1_SHA1};
 
 static const uint32_t cannedEncAlgoSz = sizeof(cannedEncAlgo);
@@ -1223,9 +1232,29 @@ static INLINE uint8_t HashForId(uint8_t id)
         case ID_DH_GROUP14_SHA1:
             return WC_HASH_TYPE_SHA;
         case ID_DH_GEX_SHA256:
+        case ID_ECDH_SHA2_NISTP256:
             return WC_HASH_TYPE_SHA256;
+        case ID_ECDH_SHA2_NISTP384:
+            return WC_HASH_TYPE_SHA384;
+        case ID_ECDH_SHA2_NISTP521:
+            return WC_HASH_TYPE_SHA512;
         default:
             return WC_HASH_TYPE_NONE;
+    }
+}
+
+
+static INLINE int PrimeForId(uint8_t id)
+{
+    switch (id) {
+        case ID_ECDH_SHA2_NISTP256:
+            return ECC_SECP256R1;
+        case ID_ECDH_SHA2_NISTP384:
+            return ECC_SECP384R1;
+        case ID_ECDH_SHA2_NISTP521:
+            return ECC_SECP521R1;
+        default:
+            return ECC_CURVE_INVALID;
     }
 }
 
@@ -1240,7 +1269,7 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 {
     int ret = WS_SUCCESS;
     uint8_t algoId;
-    uint8_t list[3];
+    uint8_t list[6];
     uint32_t listSz;
     uint32_t skipSz;
     uint32_t begin;
@@ -1582,7 +1611,11 @@ static int DoKexDhInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 {
     /* First get the length of the MP_INT, and then add in the hash of the
      * mp_int value of e as it appears in the packet. After that, decode e
-     * into an mp_int struct for the DH calculation by wolfCrypt. */
+     * into an mp_int struct for the DH calculation by wolfCrypt.
+     *
+     * This function also works as MSGID_KEXECDH_INIT (30). That message
+     * has the same format as MSGID_KEXDH_INIT, except it is the ECDH Q value
+     * in the message isn't of the DH e value. Treat the Q as e. */
     /* DYNTYPE_DH */
 
     uint8_t* e;
@@ -3518,7 +3551,8 @@ static const char cannedEncAlgoNames[] = "aes128-gcm@openssh.com,aes128-cbc";
 static const char cannedMacAlgoNames[] = "hmac-sha2-256,hmac-sha1-96,"
                                          "hmac-sha1";
 static const char cannedKeyAlgoNames[] = "ssh-rsa";
-static const char cannedKexAlgoNames[] = "diffie-hellman-group-exchange-sha256,"
+static const char cannedKexAlgoNames[] = "ecdh-sha2-nistp256,"
+                                         "diffie-hellman-group-exchange-sha256,"
                                          "diffie-hellman-group14-sha1,"
                                          "diffie-hellman-group1-sha1";
 static const char cannedNoneNames[]    = "none";
@@ -3629,7 +3663,14 @@ int SendKexInit(WOLFSSH* ssh)
 }
 
 
-/* This function is clunky, but outdated. */
+/* This function is clunky, but outdated.
+ * It is also the funciton used for MSGID_KEXECDH_REPLY. The parameters
+ * are analogous between the two messages. Where MSGID_KEXDH_REPLY has
+ * server's public host key (K_S), f, and the signature of H;
+ * MSGID_KEXECDH_REPLY has K_S, the server'e ephemeral public key (Q_S),
+ * and the signature of H. This also applies to the GEX version of this.
+ * H is calculated the same for KEXDH and KEXECDH, and has some exceptions
+ * for GEXDH. */
 int SendKexDhReply(WOLFSSH* ssh)
 {
     const uint8_t* primeGroup;
@@ -3637,12 +3678,10 @@ int SendKexDhReply(WOLFSSH* ssh)
     const uint8_t* generator;
     uint32_t generatorSz;
 
-    DhKey    dhKey;
-    uint8_t  f[256];
+    uint8_t  useEcc = 0;
+    uint8_t  f[257];
     uint32_t fSz = sizeof(f);
     uint8_t  fPad = 0;
-    uint8_t  y[256];
-    uint32_t ySz = sizeof(y);
     uint8_t  kPad = 0;
 
     RsaKey   rsaKey;
@@ -3663,47 +3702,45 @@ int SendKexDhReply(WOLFSSH* ssh)
     uint32_t scratch = 0;
     uint8_t* output;
     uint32_t idx;
-    int ret;
+    int ret = WS_SUCCESS;
     uint8_t msgId;
 
     WLOG(WS_LOG_DEBUG, "Entering SendKexDhReply()");
-    ret = wc_InitDhKey(&dhKey);
 
-    if (ret == WS_SUCCESS) {
-        switch (ssh->handshake->kexId) {
-            case ID_DH_GROUP1_SHA1:
-                primeGroup = dhPrimeGroup1;
-                primeGroupSz = dhPrimeGroup1Sz;
-                generator = dhGenerator;
-                generatorSz = dhGeneratorSz;
-                msgId = MSGID_KEXDH_REPLY;
-                break;
+    switch (ssh->handshake->kexId) {
+        case ID_DH_GROUP1_SHA1:
+            primeGroup = dhPrimeGroup1;
+            primeGroupSz = dhPrimeGroup1Sz;
+            generator = dhGenerator;
+            generatorSz = dhGeneratorSz;
+            msgId = MSGID_KEXDH_REPLY;
+            break;
 
-            case ID_DH_GROUP14_SHA1:
-                primeGroup = dhPrimeGroup14;
-                primeGroupSz = dhPrimeGroup14Sz;
-                generator = dhGenerator;
-                generatorSz = dhGeneratorSz;
-                msgId = MSGID_KEXDH_REPLY;
-                break;
+        case ID_DH_GROUP14_SHA1:
+            primeGroup = dhPrimeGroup14;
+            primeGroupSz = dhPrimeGroup14Sz;
+            generator = dhGenerator;
+            generatorSz = dhGeneratorSz;
+            msgId = MSGID_KEXDH_REPLY;
+            break;
 
-            case ID_DH_GEX_SHA256:
-                primeGroup = dhPrimeGroup14;
-                primeGroupSz = dhPrimeGroup14Sz;
-                generator = dhGenerator;
-                generatorSz = dhGeneratorSz;
-                msgId = MSGID_KEXDH_GEX_REPLY;
-                break;
+        case ID_DH_GEX_SHA256:
+            primeGroup = dhPrimeGroup14;
+            primeGroupSz = dhPrimeGroup14Sz;
+            generator = dhGenerator;
+            generatorSz = dhGeneratorSz;
+            msgId = MSGID_KEXDH_GEX_REPLY;
+            break;
 
-            default:
-                ret = WS_INVALID_ALGO_ID;
-        }
-    }
+        case ID_ECDH_SHA2_NISTP256:
+        case ID_ECDH_SHA2_NISTP384:
+        case ID_ECDH_SHA2_NISTP521:
+            useEcc = 1;
+            msgId = MSGID_KEXDH_REPLY;
+            break;
 
-    if (ret == WS_SUCCESS) {
-        if (wc_DhSetKey(&dhKey, primeGroup, primeGroupSz,
-                        generator, generatorSz) < 0)
-            ret = WS_CRYPTO_FAILED;
+        default:
+            ret = WS_INVALID_ALGO_ID;
     }
 
     /* Hash in the server's RSA key. */
@@ -3832,12 +3869,12 @@ int SendKexDhReply(WOLFSSH* ssh)
             }
 
             if (ret == 0)
-                ret  = wc_HashUpdate(&ssh->handshake->hash,
-                                     ssh->handshake->hashId,
-                                     generator, generatorSz);
+                ret = wc_HashUpdate(&ssh->handshake->hash,
+                                    ssh->handshake->hashId,
+                                    generator, generatorSz);
         }
 
-        /* Hash in the client's DH e-value. */
+        /* Hash in the client's DH e-value (ECDH Q-value). */
         if (ret == 0) {
             c32toa(ssh->handshake->eSz, scratchLen);
             ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
@@ -3847,18 +3884,65 @@ int SendKexDhReply(WOLFSSH* ssh)
             ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
                                 ssh->handshake->e, ssh->handshake->eSz);
 
-        /* Make the server's DH f-value, and the shared secret k. */
-        if (ret == 0)
-            ret = wc_DhGenerateKeyPair(&dhKey, ssh->rng, y, &ySz, f, &fSz);
+        /* Make the server's DH f-value and the shared secret k. */
+        /* Or make the server's ECDH private value, and the shared secret. */
         if (ret == 0) {
-            if (f[0] & 0x80) fPad = 1;
-            ret = wc_DhAgree(&dhKey, ssh->k, &ssh->kSz, y, ySz,
-                             ssh->handshake->e, ssh->handshake->eSz);
+            if (!useEcc) {
+                DhKey    privKey;
+                uint8_t  y[256];
+                uint32_t ySz = sizeof(y);
+
+                ret = wc_InitDhKey(&privKey);
+                if (ret == 0)
+                    ret = wc_DhSetKey(&privKey, primeGroup, primeGroupSz,
+                                      generator, generatorSz);
+                if (ret == 0)
+                    ret = wc_DhGenerateKeyPair(&privKey, ssh->rng,
+                                               y, &ySz, f, &fSz);
+                if (ret == 0)
+                    ret = wc_DhAgree(&privKey, ssh->k, &ssh->kSz, y, ySz,
+                                     ssh->handshake->e, ssh->handshake->eSz);
+                ForceZero(y, ySz);
+                wc_FreeDhKey(&privKey);
+            }
+            else {
+                ecc_key pubKey;
+                ecc_key privKey;
+                int primeId = PrimeForId(ssh->handshake->kexId);
+
+                if (ret == 0)
+                    ret = wc_ecc_init_ex(&pubKey, ssh->ctx->heap,
+                                         INVALID_DEVID);
+                if (ret == 0)
+                    ret = wc_ecc_init_ex(&privKey, ssh->ctx->heap,
+                                         INVALID_DEVID);
+
+                if (primeId == ECC_CURVE_INVALID)
+                    ret = WS_INVALID_PRIME_CURVE;
+
+                if (ret == 0)
+                    ret = wc_ecc_import_x963_ex(ssh->handshake->e,
+                                                ssh->handshake->eSz,
+                                                &pubKey, primeId);
+
+                if (ret == 0)
+                    ret = wc_ecc_make_key_ex(ssh->rng,
+                                         wc_ecc_get_curve_size_from_id(primeId),
+                                         &privKey, primeId);
+                if (ret == 0)
+                    ret = wc_ecc_export_x963(&privKey, f, &fSz);
+                if (ret == 0)
+                    ret = wc_ecc_shared_secret(&privKey, &pubKey,
+                                               ssh->k, &ssh->kSz);
+                wc_ecc_free(&privKey);
+                wc_ecc_free(&pubKey);
+            }
         }
+
         if (ret == 0) {
-            if (ssh->k[0] & 0x80) kPad = 1;
+            fPad = (f[0] & 0x80) != 0;
+            kPad = (ssh->k[0] & 0x80) != 0;
         }
-        wc_FreeDhKey(&dhKey);
 
         /* Hash in the server's DH f-value. */
         if (ret == 0) {

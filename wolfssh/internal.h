@@ -72,6 +72,9 @@ enum {
     ID_DH_GROUP1_SHA1,
     ID_DH_GROUP14_SHA1,
     ID_DH_GEX_SHA256,
+    ID_ECDH_SHA2_NISTP256,
+    ID_ECDH_SHA2_NISTP384,
+    ID_ECDH_SHA2_NISTP521,
 
     /* Public Key IDs */
     ID_SSH_RSA,
@@ -190,7 +193,8 @@ typedef struct HandshakeInfo {
     Keys           clientKeys;
     Keys           serverKeys;
     wc_HashAlg     hash;
-    uint8_t        e[257]; /* May have a leading zero, for unsigned. */
+    uint8_t        e[257]; /* May have a leading zero, for unsigned, or
+                            * it is a nistp521 Q_S value. */
     uint32_t       eSz;
     uint8_t*       serverKexInit;
     uint32_t       serverKexInitSz;
