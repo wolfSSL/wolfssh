@@ -451,12 +451,21 @@ int ProcessBuffer(WOLFSSH_CTX* ctx, const uint8_t* in, uint32_t inSz,
 
             ret = wc_EccPrivateKeyDecode(ctx->privateKey, &scratch,
                                          &key.ecc, ctx->privateKeySz);
+            if (ret == 0) {
+                int curveId = wc_ecc_get_curve_id(key.ecc.idx);
+                if (curveId == ECC_SECP256R1 ||
+                    curveId == ECC_SECP384R1 ||
+                    curveId == ECC_SECP521R1) {
+
+                    ctx->useEcc = curveId;
+                }
+                else
+                    ret = WS_BAD_FILE_E;
+            }
             wc_ecc_free(&key.ecc);
 
             if (ret != 0)
                 return WS_BAD_FILE_E;
-
-            ctx->useEcc = 1;
         }
     }
 
@@ -1172,7 +1181,9 @@ static const uint8_t  cannedEncAlgo[] = {ID_AES128_GCM, ID_AES128_CBC};
 static const uint8_t  cannedMacAlgo[] = {ID_HMAC_SHA2_256, ID_HMAC_SHA1_96,
                                          ID_HMAC_SHA1};
 static const uint8_t  cannedKeyAlgoRsa[] = {ID_SSH_RSA};
-static const uint8_t  cannedKeyAlgoEcc[] = {ID_ECDSA_SHA2_NISTP256};
+static const uint8_t  cannedKeyAlgoEcc256[] = {ID_ECDSA_SHA2_NISTP256};
+static const uint8_t  cannedKeyAlgoEcc384[] = {ID_ECDSA_SHA2_NISTP384};
+static const uint8_t  cannedKeyAlgoEcc521[] = {ID_ECDSA_SHA2_NISTP521};
 static const uint8_t  cannedKexAlgo[] = {ID_ECDH_SHA2_NISTP256,
                                          ID_DH_GEX_SHA256,
                                          ID_DH_GROUP14_SHA1,
@@ -1181,7 +1192,9 @@ static const uint8_t  cannedKexAlgo[] = {ID_ECDH_SHA2_NISTP256,
 static const uint32_t cannedEncAlgoSz = sizeof(cannedEncAlgo);
 static const uint32_t cannedMacAlgoSz = sizeof(cannedMacAlgo);
 static const uint32_t cannedKeyAlgoRsaSz = sizeof(cannedKeyAlgoRsa);
-static const uint32_t cannedKeyAlgoEccSz = sizeof(cannedKeyAlgoEcc);
+static const uint32_t cannedKeyAlgoEcc256Sz = sizeof(cannedKeyAlgoEcc256);
+static const uint32_t cannedKeyAlgoEcc384Sz = sizeof(cannedKeyAlgoEcc384);
+static const uint32_t cannedKeyAlgoEcc521Sz = sizeof(cannedKeyAlgoEcc521);
 static const uint32_t cannedKexAlgoSz = sizeof(cannedKexAlgo);
 
 
@@ -1385,13 +1398,22 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
             const uint8_t *cannedKeyAlgo;
             uint32_t cannedKeyAlgoSz;
 
-            if (ssh->ctx->useEcc) {
-                cannedKeyAlgo = cannedKeyAlgoEcc;
-                cannedKeyAlgoSz = cannedKeyAlgoEccSz;
-            }
-            else {
-                cannedKeyAlgo = cannedKeyAlgoRsa;
-                cannedKeyAlgoSz = cannedKeyAlgoRsaSz;
+            switch (ssh->ctx->useEcc) {
+                case ECC_SECP256R1:
+                    cannedKeyAlgo = cannedKeyAlgoEcc256;
+                    cannedKeyAlgoSz = cannedKeyAlgoEcc256Sz;
+                    break;
+                case ECC_SECP384R1:
+                    cannedKeyAlgo = cannedKeyAlgoEcc384;
+                    cannedKeyAlgoSz = cannedKeyAlgoEcc384Sz;
+                    break;
+                case ECC_SECP521R1:
+                    cannedKeyAlgo = cannedKeyAlgoEcc521;
+                    cannedKeyAlgoSz = cannedKeyAlgoEcc521Sz;
+                    break;
+                default:
+                    cannedKeyAlgo = cannedKeyAlgoRsa;
+                    cannedKeyAlgoSz = cannedKeyAlgoRsaSz;
             }
             algoId = MatchIdLists(list, listSz,
                                   cannedKeyAlgo, cannedKeyAlgoSz);
@@ -3612,7 +3634,9 @@ static const char cannedEncAlgoNames[] = "aes128-gcm@openssh.com,aes128-cbc";
 static const char cannedMacAlgoNames[] = "hmac-sha2-256,hmac-sha1-96,"
                                          "hmac-sha1";
 static const char cannedKeyAlgoRsaNames[] = "ssh-rsa";
-static const char cannedKeyAlgoEccNames[] = "ecdsa-sha2-nistp256";
+static const char cannedKeyAlgoEcc256Names[] = "ecdsa-sha2-nistp256";
+static const char cannedKeyAlgoEcc384Names[] = "ecdsa-sha2-nistp384";
+static const char cannedKeyAlgoEcc521Names[] = "ecdsa-sha2-nistp521";
 static const char cannedKexAlgoNames[] = "ecdh-sha2-nistp256,"
                                          "diffie-hellman-group-exchange-sha256,"
                                          "diffie-hellman-group14-sha1,"
@@ -3623,8 +3647,12 @@ static const uint32_t cannedEncAlgoNamesSz = sizeof(cannedEncAlgoNames) - 1;
 static const uint32_t cannedMacAlgoNamesSz = sizeof(cannedMacAlgoNames) - 1;
 static const uint32_t cannedKeyAlgoRsaNamesSz =
                                               sizeof(cannedKeyAlgoRsaNames) - 1;
-static const uint32_t cannedKeyAlgoEccNamesSz =
-                                              sizeof(cannedKeyAlgoEccNames) - 1;
+static const uint32_t cannedKeyAlgoEcc256NamesSz =
+                                           sizeof(cannedKeyAlgoEcc256Names) - 1;
+static const uint32_t cannedKeyAlgoEcc384NamesSz =
+                                           sizeof(cannedKeyAlgoEcc384Names) - 1;
+static const uint32_t cannedKeyAlgoEcc521NamesSz =
+                                           sizeof(cannedKeyAlgoEcc521Names) - 1;
 static const uint32_t cannedKexAlgoNamesSz = sizeof(cannedKexAlgoNames) - 1;
 static const uint32_t cannedNoneNamesSz    = sizeof(cannedNoneNames) - 1;
 
@@ -3653,13 +3681,22 @@ int SendKexInit(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS) {
-        if (ssh->ctx->useEcc) {
-            cannedKeyAlgoNames = cannedKeyAlgoEccNames;
-            cannedKeyAlgoNamesSz = cannedKeyAlgoEccNamesSz;
-        }
-        else {
-            cannedKeyAlgoNames = cannedKeyAlgoRsaNames;
-            cannedKeyAlgoNamesSz = cannedKeyAlgoRsaNamesSz;
+        switch (ssh->ctx->useEcc) {
+            case ECC_SECP256R1:
+                cannedKeyAlgoNames = cannedKeyAlgoEcc256Names;
+                cannedKeyAlgoNamesSz = cannedKeyAlgoEcc256NamesSz;
+                break;
+            case ECC_SECP384R1:
+                cannedKeyAlgoNames = cannedKeyAlgoEcc384Names;
+                cannedKeyAlgoNamesSz = cannedKeyAlgoEcc384NamesSz;
+                break;
+            case ECC_SECP521R1:
+                cannedKeyAlgoNames = cannedKeyAlgoEcc521Names;
+                cannedKeyAlgoNamesSz = cannedKeyAlgoEcc521NamesSz;
+                break;
+            default:
+                cannedKeyAlgoNames = cannedKeyAlgoRsaNames;
+                cannedKeyAlgoNamesSz = cannedKeyAlgoRsaNamesSz;
         }
         payloadSz = MSG_ID_SZ + COOKIE_SZ + (LENGTH_SZ * 11) + BOOLEAN_SZ +
                    cannedKexAlgoNamesSz + cannedKeyAlgoNamesSz +
@@ -4238,7 +4275,8 @@ int SendKexDhReply(WOLFSSH* ssh)
             else {
                 WLOG(WS_LOG_INFO, "Signing hash with ECDSA.");
                 sigSz = sizeof(sig);
-                ret = wc_ecc_sign_hash(digest, SHA256_DIGEST_SIZE, sig, &sigSz,
+                ret = wc_ecc_sign_hash(digest, wc_HashGetDigestSize(sigHashId),
+                                       sig, &sigSz,
                                        ssh->rng, &sigKeyBlock.sk.ecc.key);
                 if (ret != MP_OKAY) {
                     WLOG(WS_LOG_DEBUG, "SendKexDhReply: Bad ECDSA Sign");
