@@ -737,6 +737,7 @@ static void ShowUsage(void)
     printf("echoserver %s\n", LIBWOLFSSH_VERSION_STRING);
     printf("-h          Help, print this usage\n");
     printf("-m          Allow multiple connections\n");
+    printf("-e          Use ECC private key\n");
 }
 
 
@@ -748,13 +749,14 @@ int main(int argc, char** argv)
     uint32_t defaultHighwater = EXAMPLE_HIGHWATER_MARK;
     uint32_t threadCount = 0;
     int multipleConnections = 0;
+    int useEcc = 0;
     char ch;
 
     #ifdef DEBUG_WOLFSSH
         wolfSSH_Debugging_ON();
     #endif
 
-    while ((ch = mygetopt(argc, argv, "hm")) != -1) {
+    while ((ch = mygetopt(argc, argv, "hme")) != -1) {
         switch (ch) {
             case 'h' :
                 ShowUsage();
@@ -762,6 +764,10 @@ int main(int argc, char** argv)
 
             case 'm' :
                 multipleConnections = 1;
+                break;
+
+            case 'e' :
+                useEcc = 1;
                 break;
 
             default:
@@ -790,13 +796,16 @@ int main(int argc, char** argv)
         uint8_t buf[SCRATCH_BUFFER_SIZE];
         uint32_t bufSz;
 
-        bufSz = load_file("./keys/server-key.der", buf, SCRATCH_BUFFER_SIZE);
+        bufSz = load_file(useEcc ?
+                           "./keys/server-key-ecc.der" :
+                           "./keys/server-key-rsa.der",
+                          buf, SCRATCH_BUFFER_SIZE);
         if (bufSz == 0) {
             fprintf(stderr, "Couldn't load key file.\n");
             exit(EXIT_FAILURE);
         }
-        if (wolfSSH_CTX_UsePrivateKey_buffer(ctx,
-                                         buf, bufSz, WOLFSSH_FORMAT_ASN1) < 0) {
+        if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, buf, bufSz,
+                                             WOLFSSH_FORMAT_ASN1) < 0) {
             fprintf(stderr, "Couldn't use key buffer.\n");
             exit(EXIT_FAILURE);
         }

@@ -31,7 +31,6 @@
 #include <wolfssl/options.h>
 #include <wolfssl/wolfcrypt/hash.h>
 #include <wolfssl/wolfcrypt/random.h>
-#include <wolfssl/wolfcrypt/dh.h>
 #include <wolfssl/wolfcrypt/aes.h>
 
 
@@ -73,9 +72,15 @@ enum {
     ID_DH_GROUP1_SHA1,
     ID_DH_GROUP14_SHA1,
     ID_DH_GEX_SHA256,
+    ID_ECDH_SHA2_NISTP256,
+    ID_ECDH_SHA2_NISTP384,
+    ID_ECDH_SHA2_NISTP521,
 
     /* Public Key IDs */
     ID_SSH_RSA,
+    ID_ECDSA_SHA2_NISTP256,
+    ID_ECDSA_SHA2_NISTP384,
+    ID_ECDSA_SHA2_NISTP521,
 
     /* UserAuth IDs */
     ID_USERAUTH_PASSWORD,
@@ -155,6 +160,7 @@ struct WOLFSSH_CTX {
 
     uint8_t*            privateKey;  /* Owned by CTX */
     uint32_t            privateKeySz;
+    uint8_t             useEcc;      /* Depends on the private key */
     uint32_t            highwaterMark;
     const char*         banner;
     uint32_t            bannerSz;
@@ -191,7 +197,8 @@ typedef struct HandshakeInfo {
     Keys           clientKeys;
     Keys           serverKeys;
     wc_HashAlg     hash;
-    uint8_t        e[257]; /* May have a leading zero, for unsigned. */
+    uint8_t        e[257]; /* May have a leading zero, for unsigned, or
+                            * it is a nistp521 Q_S value. */
     uint32_t       eSz;
     uint8_t*       serverKexInit;
     uint32_t       serverKexInitSz;
@@ -251,7 +258,7 @@ struct WOLFSSH {
 
     Buffer         inputBuffer;
     Buffer         outputBuffer;
-    RNG*           rng;
+    WC_RNG*        rng;
 
     uint8_t        h[WC_MAX_DIGEST_SIZE];
     uint32_t       hSz;
@@ -299,6 +306,8 @@ WOLFSSH_LOCAL void ChannelDelete(WOLFSSH_CHANNEL*, void*);
 WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelFind(WOLFSSH*, uint32_t, uint8_t);
 WOLFSSH_LOCAL int ChannelRemove(WOLFSSH*, uint32_t, uint8_t);
 WOLFSSH_LOCAL int ChannelPutData(WOLFSSH_CHANNEL*, uint8_t*, uint32_t);
+WOLFSSH_LOCAL int ProcessBuffer(WOLFSSH_CTX*, const uint8_t*, uint32_t,
+                                int, int);
 
 
 #ifndef WOLFSSH_USER_IO
