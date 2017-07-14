@@ -154,6 +154,9 @@ const char* GetErrorString(int err)
         case WS_INVALID_PRIME_CURVE:
             return "invalid prime curve in ecc";
 
+        case WS_ECC_E:
+            return "ECDSA buffer error";
+
         default:
             return "Unknown error code";
     }
@@ -427,16 +430,34 @@ int ProcessBuffer(WOLFSSH_CTX* ctx, const uint8_t* in, uint32_t inSz,
 
     if (type == BUFTYPE_PRIVKEY && format != WOLFSSH_FORMAT_RAW) {
         /* Check RSA key */
-        RsaKey key;
+        union {
+            RsaKey rsa;
+            ecc_key ecc;
+        } key;
         uint32_t scratch = 0;
+        int ret;
 
-        if (wc_InitRsaKey(&key, NULL) < 0)
+        if (wc_InitRsaKey(&key.rsa, NULL) < 0)
             return WS_RSA_E;
 
-        if (wc_RsaPrivateKeyDecode(der, &scratch, &key, derSz) < 0)
-            return WS_BAD_FILE_E;
+        ret = wc_RsaPrivateKeyDecode(der, &scratch, &key.rsa, derSz);
+        wc_FreeRsaKey(&key.rsa);
 
-        wc_FreeRsaKey(&key);
+        if (ret < 0) {
+            /* Couldn't decode as RSA key. Try decoding as ECC key. */
+            scratch = 0;
+            if (wc_ecc_init_ex(&key.ecc, ctx->heap, INVALID_DEVID) != 0)
+                return WS_ECC_E;
+
+            ret = wc_EccPrivateKeyDecode(ctx->privateKey, &scratch,
+                                         &key.ecc, ctx->privateKeySz);
+            wc_ecc_free(&key.ecc);
+
+            if (ret != 0)
+                return WS_BAD_FILE_E;
+
+            ctx->useEcc = 1;
+        }
     }
 
     return WS_SUCCESS;
@@ -471,6 +492,9 @@ static const NameIdPair NameIdMap[] = {
 
     /* Public Key IDs */
     { ID_SSH_RSA, "ssh-rsa" },
+    { ID_ECDSA_SHA2_NISTP256, "ecdsa-sha2-nistp256" },
+    { ID_ECDSA_SHA2_NISTP384, "ecdsa-sha2-nistp384" },
+    { ID_ECDSA_SHA2_NISTP521, "ecdsa-sha2-nistp521" },
 
     /* UserAuth IDs */
     { ID_USERAUTH_PASSWORD, "password" },
@@ -1147,7 +1171,8 @@ static int DoNameList(uint8_t* idList, uint32_t* idListSz,
 static const uint8_t  cannedEncAlgo[] = {ID_AES128_GCM, ID_AES128_CBC};
 static const uint8_t  cannedMacAlgo[] = {ID_HMAC_SHA2_256, ID_HMAC_SHA1_96,
                                          ID_HMAC_SHA1};
-static const uint8_t  cannedKeyAlgo[] = {ID_SSH_RSA};
+static const uint8_t  cannedKeyAlgoRsa[] = {ID_SSH_RSA};
+static const uint8_t  cannedKeyAlgoEcc[] = {ID_ECDSA_SHA2_NISTP256};
 static const uint8_t  cannedKexAlgo[] = {ID_ECDH_SHA2_NISTP256,
                                          ID_DH_GEX_SHA256,
                                          ID_DH_GROUP14_SHA1,
@@ -1155,7 +1180,8 @@ static const uint8_t  cannedKexAlgo[] = {ID_ECDH_SHA2_NISTP256,
 
 static const uint32_t cannedEncAlgoSz = sizeof(cannedEncAlgo);
 static const uint32_t cannedMacAlgoSz = sizeof(cannedMacAlgo);
-static const uint32_t cannedKeyAlgoSz = sizeof(cannedKeyAlgo);
+static const uint32_t cannedKeyAlgoRsaSz = sizeof(cannedKeyAlgoRsa);
+static const uint32_t cannedKeyAlgoEccSz = sizeof(cannedKeyAlgoEcc);
 static const uint32_t cannedKexAlgoSz = sizeof(cannedKexAlgo);
 
 
@@ -1230,13 +1256,17 @@ static INLINE uint8_t HashForId(uint8_t id)
     switch (id) {
         case ID_DH_GROUP1_SHA1:
         case ID_DH_GROUP14_SHA1:
+        case ID_SSH_RSA:
             return WC_HASH_TYPE_SHA;
         case ID_DH_GEX_SHA256:
         case ID_ECDH_SHA2_NISTP256:
+        case ID_ECDSA_SHA2_NISTP256:
             return WC_HASH_TYPE_SHA256;
         case ID_ECDH_SHA2_NISTP384:
+        case ID_ECDSA_SHA2_NISTP384:
             return WC_HASH_TYPE_SHA384;
         case ID_ECDH_SHA2_NISTP521:
+        case ID_ECDSA_SHA2_NISTP521:
             return WC_HASH_TYPE_SHA512;
         default:
             return WC_HASH_TYPE_NONE;
@@ -1244,17 +1274,36 @@ static INLINE uint8_t HashForId(uint8_t id)
 }
 
 
-static INLINE int PrimeForId(uint8_t id)
+static INLINE int wcPrimeForId(uint8_t id)
 {
     switch (id) {
         case ID_ECDH_SHA2_NISTP256:
+        case ID_ECDSA_SHA2_NISTP256:
             return ECC_SECP256R1;
         case ID_ECDH_SHA2_NISTP384:
+        case ID_ECDSA_SHA2_NISTP384:
             return ECC_SECP384R1;
         case ID_ECDH_SHA2_NISTP521:
+        case ID_ECDSA_SHA2_NISTP521:
             return ECC_SECP521R1;
         default:
             return ECC_CURVE_INVALID;
+    }
+}
+static INLINE const char *PrimeNameForId(uint8_t id)
+{
+    switch (id) {
+        case ID_ECDH_SHA2_NISTP256:
+        case ID_ECDSA_SHA2_NISTP256:
+            return "nistp256";
+        case ID_ECDH_SHA2_NISTP384:
+        case ID_ECDSA_SHA2_NISTP384:
+            return "nistp384";
+        case ID_ECDH_SHA2_NISTP521:
+        case ID_ECDSA_SHA2_NISTP521:
+            return "nistp521";
+        default:
+            return "unknown";
     }
 }
 
@@ -1333,7 +1382,19 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
         listSz = 1;
         ret = DoNameList(list, &listSz, buf, len, &begin);
         if (ret == WS_SUCCESS) {
-            algoId = MatchIdLists(list, listSz, cannedKeyAlgo, cannedKeyAlgoSz);
+            const uint8_t *cannedKeyAlgo;
+            uint32_t cannedKeyAlgoSz;
+
+            if (ssh->ctx->useEcc) {
+                cannedKeyAlgo = cannedKeyAlgoEcc;
+                cannedKeyAlgoSz = cannedKeyAlgoEccSz;
+            }
+            else {
+                cannedKeyAlgo = cannedKeyAlgoRsa;
+                cannedKeyAlgoSz = cannedKeyAlgoRsaSz;
+            }
+            algoId = MatchIdLists(list, listSz,
+                                  cannedKeyAlgo, cannedKeyAlgoSz);
             if (algoId == ID_UNKNOWN) {
                 WLOG(WS_LOG_DEBUG, "Unable to negotiate Server Host Key Algo");
                 return WS_INVALID_ALGO_ID;
@@ -3550,7 +3611,8 @@ static INLINE void CopyNameList(uint8_t* buf, uint32_t* idx,
 static const char cannedEncAlgoNames[] = "aes128-gcm@openssh.com,aes128-cbc";
 static const char cannedMacAlgoNames[] = "hmac-sha2-256,hmac-sha1-96,"
                                          "hmac-sha1";
-static const char cannedKeyAlgoNames[] = "ssh-rsa";
+static const char cannedKeyAlgoRsaNames[] = "ssh-rsa";
+static const char cannedKeyAlgoEccNames[] = "ecdsa-sha2-nistp256";
 static const char cannedKexAlgoNames[] = "ecdh-sha2-nistp256,"
                                          "diffie-hellman-group-exchange-sha256,"
                                          "diffie-hellman-group14-sha1,"
@@ -3559,7 +3621,10 @@ static const char cannedNoneNames[]    = "none";
 
 static const uint32_t cannedEncAlgoNamesSz = sizeof(cannedEncAlgoNames) - 1;
 static const uint32_t cannedMacAlgoNamesSz = sizeof(cannedMacAlgoNames) - 1;
-static const uint32_t cannedKeyAlgoNamesSz = sizeof(cannedKeyAlgoNames) - 1;
+static const uint32_t cannedKeyAlgoRsaNamesSz =
+                                              sizeof(cannedKeyAlgoRsaNames) - 1;
+static const uint32_t cannedKeyAlgoEccNamesSz =
+                                              sizeof(cannedKeyAlgoEccNames) - 1;
 static const uint32_t cannedKexAlgoNamesSz = sizeof(cannedKexAlgoNames) - 1;
 static const uint32_t cannedNoneNamesSz    = sizeof(cannedNoneNames) - 1;
 
@@ -3571,6 +3636,8 @@ int SendKexInit(WOLFSSH* ssh)
     uint32_t idx = 0;
     uint32_t payloadSz;
     int ret = WS_SUCCESS;
+    const char* cannedKeyAlgoNames;
+    uint32_t cannedKeyAlgoNamesSz;
 
     WLOG(WS_LOG_DEBUG, "Entering SendKexInit()");
 
@@ -3586,6 +3653,14 @@ int SendKexInit(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS) {
+        if (ssh->ctx->useEcc) {
+            cannedKeyAlgoNames = cannedKeyAlgoEccNames;
+            cannedKeyAlgoNamesSz = cannedKeyAlgoEccNamesSz;
+        }
+        else {
+            cannedKeyAlgoNames = cannedKeyAlgoRsaNames;
+            cannedKeyAlgoNamesSz = cannedKeyAlgoRsaNamesSz;
+        }
         payloadSz = MSG_ID_SZ + COOKIE_SZ + (LENGTH_SZ * 11) + BOOLEAN_SZ +
                    cannedKexAlgoNamesSz + cannedKeyAlgoNamesSz +
                    (cannedEncAlgoNamesSz * 2) +
@@ -3673,10 +3748,10 @@ int SendKexInit(WOLFSSH* ssh)
  * for GEXDH. */
 int SendKexDhReply(WOLFSSH* ssh)
 {
-    const uint8_t* primeGroup;
-    uint32_t primeGroupSz;
-    const uint8_t* generator;
-    uint32_t generatorSz;
+    const uint8_t* primeGroup = dhPrimeGroup14;
+    uint32_t primeGroupSz = dhPrimeGroup14Sz;
+    const uint8_t* generator = dhGenerator;
+    uint32_t generatorSz = dhGeneratorSz;
 
     uint8_t  useEcc = 0;
     uint8_t  f[257];
@@ -3684,14 +3759,34 @@ int SendKexDhReply(WOLFSSH* ssh)
     uint8_t  fPad = 0;
     uint8_t  kPad = 0;
 
-    RsaKey   rsaKey;
-    uint8_t  rsaE[257];
-    uint32_t rsaESz = sizeof(rsaE);
-    uint8_t  rsaEPad = 0;
-    uint8_t  rsaN[257];
-    uint32_t rsaNSz = sizeof(rsaN);
-    uint8_t  rsaNPad = 0;
-    uint32_t rsaKeyBlockSz;
+    struct {
+        uint8_t useRsa;
+        uint32_t sz;
+        const char *name;
+        uint32_t nameSz;
+        union {
+            struct {
+                RsaKey   key;
+                uint8_t  e[257];
+                uint32_t eSz;
+                uint8_t  ePad;
+                uint8_t  n[257];
+                uint32_t nSz;
+                uint8_t  nPad;
+            } rsa;
+            struct {
+                ecc_key key;
+                uint32_t keyBlobSz;
+                const char *keyBlobName;
+                uint32_t keyBlobNameSz;
+                uint8_t q[257];
+                uint32_t qSz;
+                uint8_t qPad;
+                const char *primeName;
+                uint32_t primeNameSz;
+            } ecc;
+        } sk;
+    } sigKeyBlock;
 
     uint8_t  sig[512];
     uint32_t sigSz = sizeof(sig);
@@ -3703,32 +3798,26 @@ int SendKexDhReply(WOLFSSH* ssh)
     uint8_t* output;
     uint32_t idx;
     int ret = WS_SUCCESS;
-    uint8_t msgId;
+    uint8_t msgId = MSGID_KEXDH_REPLY;
 
     WLOG(WS_LOG_DEBUG, "Entering SendKexDhReply()");
+
+    sigKeyBlock.useRsa = ssh->handshake->pubKeyId == ID_SSH_RSA;
+    sigKeyBlock.name = IdToName(ssh->handshake->pubKeyId);
+    sigKeyBlock.nameSz = (uint32_t)strlen(sigKeyBlock.name);
 
     switch (ssh->handshake->kexId) {
         case ID_DH_GROUP1_SHA1:
             primeGroup = dhPrimeGroup1;
             primeGroupSz = dhPrimeGroup1Sz;
-            generator = dhGenerator;
-            generatorSz = dhGeneratorSz;
             msgId = MSGID_KEXDH_REPLY;
             break;
 
         case ID_DH_GROUP14_SHA1:
-            primeGroup = dhPrimeGroup14;
-            primeGroupSz = dhPrimeGroup14Sz;
-            generator = dhGenerator;
-            generatorSz = dhGeneratorSz;
-            msgId = MSGID_KEXDH_REPLY;
+            /* This is the default case. */
             break;
 
         case ID_DH_GEX_SHA256:
-            primeGroup = dhPrimeGroup14;
-            primeGroupSz = dhPrimeGroup14Sz;
-            generator = dhGenerator;
-            generatorSz = dhGeneratorSz;
             msgId = MSGID_KEXDH_GEX_REPLY;
             break;
 
@@ -3743,98 +3832,210 @@ int SendKexDhReply(WOLFSSH* ssh)
             ret = WS_INVALID_ALGO_ID;
     }
 
-    /* Hash in the server's RSA key. */
+    /* At this point, the exchange hash, H, includes items V_C, V_S, I_C,
+     * and I_S. Next add K_S, the server's public host key. K_S will
+     * either be RSA or ECDSA public key blob. */
     if (ret == WS_SUCCESS) {
-        ret = wc_InitRsaKey(&rsaKey, ssh->ctx->heap);
-        if (ret == 0)
-            ret = wc_RsaPrivateKeyDecode(ssh->ctx->privateKey, &scratch,
-                                         &rsaKey, (int)ssh->ctx->privateKeySz);
-        if (ret == 0)
-            ret = wc_RsaFlattenPublicKey(&rsaKey, rsaE, &rsaESz, rsaN, &rsaNSz);
-        if (ret == 0) {
-            if (rsaE[0] & 0x80) rsaEPad = 1;
-            if (rsaN[0] & 0x80) rsaNPad = 1;
-            rsaKeyBlockSz = (LENGTH_SZ * 3) + 7 + rsaESz + rsaEPad +
-                            rsaNSz + rsaNPad;
-                            /* The 7 is for the name "ssh-rsa". */
-            c32toa(rsaKeyBlockSz, scratchLen);
-            ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
-                                scratchLen, LENGTH_SZ);
-        }
-        if (ret == 0) {
-            c32toa(7, scratchLen);
-            ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
-                                scratchLen, LENGTH_SZ);
-        }
-        if (ret == 0)
-            ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
-                               (const uint8_t*)"ssh-rsa", 7);
-        if (ret == 0) {
-            c32toa(rsaESz + rsaEPad, scratchLen);
-            ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
-                                scratchLen, LENGTH_SZ);
-        }
-        if (ret == 0) {
-            if (rsaEPad) {
-                scratchLen[0] = 0;
+        if (sigKeyBlock.useRsa) {
+            /* Decode the user-configured RSA private key. */
+            sigKeyBlock.sk.rsa.eSz = sizeof(sigKeyBlock.sk.rsa.e);
+            sigKeyBlock.sk.rsa.nSz = sizeof(sigKeyBlock.sk.rsa.n);
+            ret = wc_InitRsaKey(&sigKeyBlock.sk.rsa.key, ssh->ctx->heap);
+            if (ret == 0)
+                ret = wc_RsaPrivateKeyDecode(ssh->ctx->privateKey, &scratch,
+                                             &sigKeyBlock.sk.rsa.key,
+                                             (int)ssh->ctx->privateKeySz);
+            /* Flatten the public key into mpint values for the hash. */
+            if (ret == 0)
+                ret = wc_RsaFlattenPublicKey(&sigKeyBlock.sk.rsa.key,
+                                             sigKeyBlock.sk.rsa.e,
+                                             &sigKeyBlock.sk.rsa.eSz,
+                                             sigKeyBlock.sk.rsa.n,
+                                             &sigKeyBlock.sk.rsa.nSz);
+            if (ret == 0) {
+                /* Add a pad byte if the mpint has the MSB set. */
+                sigKeyBlock.sk.rsa.ePad = (sigKeyBlock.sk.rsa.e[0] & 0x80) ?
+                                           1 : 0;
+                sigKeyBlock.sk.rsa.nPad = (sigKeyBlock.sk.rsa.n[0] & 0x80) ?
+                                           1 : 0;
+                sigKeyBlock.sz = (LENGTH_SZ * 3) + sigKeyBlock.nameSz +
+                                  sigKeyBlock.sk.rsa.eSz +
+                                  sigKeyBlock.sk.rsa.ePad +
+                                  sigKeyBlock.sk.rsa.nSz +
+                                  sigKeyBlock.sk.rsa.nPad;
+                c32toa(sigKeyBlock.sz, scratchLen);
+                /* Hash in the length of the public key block. */
                 ret = wc_HashUpdate(&ssh->handshake->hash,
-                                    ssh->handshake->hashId, scratchLen, 1);
+                                    ssh->handshake->hashId,
+                                    scratchLen, LENGTH_SZ);
             }
-        }
-        if (ret == 0)
-            ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
-                                rsaE, rsaESz);
-        if (ret == 0) {
-            c32toa(rsaNSz + rsaNPad, scratchLen);
-            ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
-                                scratchLen, LENGTH_SZ);
-        }
-        if (ret == 0) {
-            if (rsaNPad) {
-                scratchLen[0] = 0;
+            /* Hash in the length of the key type string. */
+            if (ret == 0) {
+                c32toa(sigKeyBlock.nameSz, scratchLen);
                 ret = wc_HashUpdate(&ssh->handshake->hash,
-                                    ssh->handshake->hashId, scratchLen, 1);
+                                    ssh->handshake->hashId,
+                                    scratchLen, LENGTH_SZ);
             }
+            /* Hash in the key type string. */
+            if (ret == 0)
+                ret = wc_HashUpdate(&ssh->handshake->hash,
+                                    ssh->handshake->hashId,
+                                    (uint8_t*)sigKeyBlock.name,
+                                    sigKeyBlock.nameSz);
+            /* Hash in the length of the RSA public key E value. */
+            if (ret == 0) {
+                c32toa(sigKeyBlock.sk.rsa.eSz + sigKeyBlock.sk.rsa.ePad,
+                       scratchLen);
+                ret = wc_HashUpdate(&ssh->handshake->hash,
+                                    ssh->handshake->hashId,
+                                    scratchLen, LENGTH_SZ);
+            }
+            /* Hash in the pad byte for the RSA public key E value. */
+            if (ret == 0) {
+                if (sigKeyBlock.sk.rsa.ePad) {
+                    scratchLen[0] = 0;
+                    ret = wc_HashUpdate(&ssh->handshake->hash,
+                                        ssh->handshake->hashId, scratchLen, 1);
+                }
+            }
+            /* Hash in the RSA public key E value. */
+            if (ret == 0)
+                ret = wc_HashUpdate(&ssh->handshake->hash,
+                                    ssh->handshake->hashId,
+                                    sigKeyBlock.sk.rsa.e,
+                                    sigKeyBlock.sk.rsa.eSz);
+            /* Hash in the length of the RSA public key N value. */
+            if (ret == 0) {
+                c32toa(sigKeyBlock.sk.rsa.nSz + sigKeyBlock.sk.rsa.nPad,
+                       scratchLen);
+                ret = wc_HashUpdate(&ssh->handshake->hash,
+                                    ssh->handshake->hashId,
+                                    scratchLen, LENGTH_SZ);
+            }
+            /* Hash in the pad byte for the RSA public key N value. */
+            if (ret == 0) {
+                if (sigKeyBlock.sk.rsa.nPad) {
+                    scratchLen[0] = 0;
+                    ret = wc_HashUpdate(&ssh->handshake->hash,
+                                        ssh->handshake->hashId, scratchLen, 1);
+                }
+            }
+            /* Hash in the RSA public key N value. */
+            if (ret == 0)
+                ret = wc_HashUpdate(&ssh->handshake->hash,
+                                    ssh->handshake->hashId,
+                                    sigKeyBlock.sk.rsa.n,
+                                    sigKeyBlock.sk.rsa.nSz);
         }
-        if (ret == 0)
-            ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
-                                rsaN, rsaNSz);
+        else {
+            sigKeyBlock.sk.ecc.primeName =
+                                       PrimeNameForId(ssh->handshake->pubKeyId);
+            sigKeyBlock.sk.ecc.primeNameSz =
+                                 (uint32_t)strlen(sigKeyBlock.sk.ecc.primeName);
+
+            /* Decode the user-configured ECDSA private key. */
+            sigKeyBlock.sk.ecc.qSz = sizeof(sigKeyBlock.sk.ecc.q);
+            ret = wc_ecc_init_ex(&sigKeyBlock.sk.ecc.key, ssh->ctx->heap,
+                                 INVALID_DEVID);
+            scratch = 0;
+            if (ret == 0)
+                ret = wc_EccPrivateKeyDecode(ssh->ctx->privateKey, &scratch,
+                                             &sigKeyBlock.sk.ecc.key,
+                                             ssh->ctx->privateKeySz);
+            /* Flatten the public key into x963 value for the exchange hash. */
+            if (ret == 0)
+                ret = wc_ecc_export_x963(&sigKeyBlock.sk.ecc.key,
+                                         sigKeyBlock.sk.ecc.q,
+                                         &sigKeyBlock.sk.ecc.qSz);
+            /* Hash in the length of the public key block. */
+            if (ret == 0) {
+                sigKeyBlock.sz = (LENGTH_SZ * 3) +
+                                 sigKeyBlock.nameSz +
+                                 sigKeyBlock.sk.ecc.primeNameSz +
+                                 sigKeyBlock.sk.ecc.qSz;
+                c32toa(sigKeyBlock.sz, scratchLen);
+                ret = wc_HashUpdate(&ssh->handshake->hash,
+                                    ssh->handshake->hashId,
+                                    scratchLen, LENGTH_SZ);
+            }
+            /* Hash in the length of the key type string. */
+            if (ret == 0) {
+                c32toa(sigKeyBlock.nameSz, scratchLen);
+                ret = wc_HashUpdate(&ssh->handshake->hash,
+                                    ssh->handshake->hashId,
+                                    scratchLen, LENGTH_SZ);
+            }
+            /* Hash in the key type string. */
+            if (ret == 0)
+                ret = wc_HashUpdate(&ssh->handshake->hash,
+                                    ssh->handshake->hashId,
+                                    (uint8_t*)sigKeyBlock.name,
+                                    sigKeyBlock.nameSz);
+            /* Hash in the length of the name of the prime. */
+            if (ret == 0) {
+                c32toa(sigKeyBlock.sk.ecc.primeNameSz, scratchLen);
+                ret = wc_HashUpdate(&ssh->handshake->hash,
+                                    ssh->handshake->hashId,
+                                    scratchLen, LENGTH_SZ);
+            }
+            /* Hash in the name of the prime. */
+            if (ret == 0)
+                ret = wc_HashUpdate(&ssh->handshake->hash,
+                                   ssh->handshake->hashId,
+                                   (const uint8_t*)sigKeyBlock.sk.ecc.primeName,
+                                   sigKeyBlock.sk.ecc.primeNameSz);
+            /* Hash in the length of the public key. */
+            if (ret == 0) {
+                c32toa(sigKeyBlock.sk.ecc.qSz, scratchLen);
+                ret = wc_HashUpdate(&ssh->handshake->hash,
+                                    ssh->handshake->hashId,
+                                    scratchLen, LENGTH_SZ);
+            }
+            /* Hash in the public key. */
+            if (ret == 0)
+                ret = wc_HashUpdate(&ssh->handshake->hash,
+                                    ssh->handshake->hashId,
+                                    sigKeyBlock.sk.ecc.q,
+                                    sigKeyBlock.sk.ecc.qSz);
+        }
 
         /* If using DH-GEX include the GEX specific values. */
         if (ssh->handshake->kexId == ID_DH_GEX_SHA256) {
             uint8_t primeGroupPad = 0, generatorPad = 0;
 
+            /* Hash in the client's requested minimum key size. */
             if (ret == 0) {
                 c32toa(ssh->handshake->dhGexMinSz, scratchLen);
                 ret = wc_HashUpdate(&ssh->handshake->hash,
                                     ssh->handshake->hashId,
                                     scratchLen, LENGTH_SZ);
             }
-
+            /* Hash in the client's requested preferred key size. */
             if (ret == 0) {
                 c32toa(ssh->handshake->dhGexPreferredSz, scratchLen);
                 ret = wc_HashUpdate(&ssh->handshake->hash,
                                     ssh->handshake->hashId,
                                     scratchLen, LENGTH_SZ);
             }
-
+            /* Hash in the client's requested maximum key size. */
             if (ret == 0) {
                 c32toa(ssh->handshake->dhGexMaxSz, scratchLen);
                 ret = wc_HashUpdate(&ssh->handshake->hash,
                                     ssh->handshake->hashId,
                                     scratchLen, LENGTH_SZ);
             }
-
+            /* Add a pad byte if the mpint has the MSB set. */
             if (ret == 0) {
                 if (primeGroup[0] & 0x80)
                     primeGroupPad = 1;
 
+                /* Hash in the length of the GEX prime group. */
                 c32toa(primeGroupSz + primeGroupPad, scratchLen);
                 ret = wc_HashUpdate(&ssh->handshake->hash,
                                     ssh->handshake->hashId,
                                     scratchLen, LENGTH_SZ);
             }
-
+            /* Hash in the pad byte for the GEX prime group. */
             if (ret == 0) {
                 if (primeGroupPad) {
                     scratchLen[0] = 0;
@@ -3843,22 +4044,23 @@ int SendKexDhReply(WOLFSSH* ssh)
                                         scratchLen, 1);
                 }
             }
-
+            /* Hash in the GEX prime group. */
             if (ret == 0)
                 ret  = wc_HashUpdate(&ssh->handshake->hash,
                                      ssh->handshake->hashId,
                                      primeGroup, primeGroupSz);
-
+            /* Add a pad byte if the mpint has the MSB set. */
             if (ret == 0) {
                 if (generator[0] & 0x80)
                     generatorPad = 1;
 
+                /* Hash in the length of the GEX generator. */
                 c32toa(generatorSz + generatorPad, scratchLen);
                 ret = wc_HashUpdate(&ssh->handshake->hash,
                                     ssh->handshake->hashId,
                                     scratchLen, LENGTH_SZ);
             }
-
+            /* Hash in the pad byte for the GEX generator. */
             if (ret == 0) {
                 if (generatorPad) {
                     scratchLen[0] = 0;
@@ -3867,25 +4069,26 @@ int SendKexDhReply(WOLFSSH* ssh)
                                         scratchLen, 1);
                 }
             }
-
+            /* Hash in the GEX generator. */
             if (ret == 0)
                 ret = wc_HashUpdate(&ssh->handshake->hash,
                                     ssh->handshake->hashId,
                                     generator, generatorSz);
         }
 
-        /* Hash in the client's DH e-value (ECDH Q-value). */
+        /* Hash in the size of the client's DH e-value (ECDH Q-value). */
         if (ret == 0) {
             c32toa(ssh->handshake->eSz, scratchLen);
             ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
                                 scratchLen, LENGTH_SZ);
         }
+        /* Hash in the client's DH e-value (ECDH Q-value). */
         if (ret == 0)
             ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
                                 ssh->handshake->e, ssh->handshake->eSz);
 
-        /* Make the server's DH f-value and the shared secret k. */
-        /* Or make the server's ECDH private value, and the shared secret. */
+        /* Make the server's DH f-value and the shared secret K. */
+        /* Or make the server's ECDH private value, and the shared secret K. */
         if (ret == 0) {
             if (!useEcc) {
                 DhKey    privKey;
@@ -3908,7 +4111,10 @@ int SendKexDhReply(WOLFSSH* ssh)
             else {
                 ecc_key pubKey;
                 ecc_key privKey;
-                int primeId = PrimeForId(ssh->handshake->kexId);
+                int primeId = wcPrimeForId(ssh->handshake->kexId);
+
+                if (primeId == ECC_CURVE_INVALID)
+                    ret = WS_INVALID_PRIME_CURVE;
 
                 if (ret == 0)
                     ret = wc_ecc_init_ex(&pubKey, ssh->ctx->heap,
@@ -3916,9 +4122,6 @@ int SendKexDhReply(WOLFSSH* ssh)
                 if (ret == 0)
                     ret = wc_ecc_init_ex(&privKey, ssh->ctx->heap,
                                          INVALID_DEVID);
-
-                if (primeId == ECC_CURVE_INVALID)
-                    ret = WS_INVALID_PRIME_CURVE;
 
                 if (ret == 0)
                     ret = wc_ecc_import_x963_ex(ssh->handshake->e,
@@ -3939,9 +4142,10 @@ int SendKexDhReply(WOLFSSH* ssh)
             }
         }
 
+        /* Add a pad byte if the mpint has the MSB set. */
         if (ret == 0) {
-            fPad = (f[0] & 0x80) != 0;
-            kPad = (ssh->k[0] & 0x80) != 0;
+            fPad = (f[0] & 0x80) ? 1 : 0;
+            kPad = (ssh->k[0] & 0x80) ? 1 : 0;
         }
 
         /* Hash in the server's DH f-value. */
@@ -3960,8 +4164,7 @@ int SendKexDhReply(WOLFSSH* ssh)
         if (ret == 0)
             ret = wc_HashUpdate(&ssh->handshake->hash,
                                 ssh->handshake->hashId, f, fSz);
-
-        /* Hash in the shared secret k. */
+        /* Hash in the shared secret K. */
         if (ret == 0) {
             c32toa(ssh->kSz + kPad, scratchLen);
             ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
@@ -3978,7 +4181,7 @@ int SendKexDhReply(WOLFSSH* ssh)
             ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
                                 ssh->k, ssh->kSz);
 
-        /* Save the handshake hash value h, and session ID. */
+        /* Save the exchange hash value H, and session ID. */
         if (ret == 0)
             ret = wc_HashFinal(&ssh->handshake->hash,
                                ssh->handshake->hashId, ssh->h);
@@ -3994,43 +4197,91 @@ int SendKexDhReply(WOLFSSH* ssh)
             ret = WS_CRYPTO_FAILED;
     }
 
-    /* Sign h with the server's RSA private key. */
+    /* Sign h with the server's private key. */
     if (ret == WS_SUCCESS) {
         wc_HashAlg digestHash;
         uint8_t digest[WC_MAX_DIGEST_SIZE];
-        uint8_t encSig[MAX_ENCODED_SIG_SZ];
-        uint32_t encSigSz;
+        uint8_t sigHashId;
 
-        ret = wc_HashInit(&digestHash, WC_HASH_TYPE_SHA);
+        sigHashId = HashForId(ssh->handshake->pubKeyId);
+
+        ret = wc_HashInit(&digestHash, sigHashId);
         if (ret == 0)
-            ret = wc_HashUpdate(&digestHash, WC_HASH_TYPE_SHA,
-                                ssh->h, ssh->hSz);
+            ret = wc_HashUpdate(&digestHash, sigHashId, ssh->h, ssh->hSz);
         if (ret == 0)
-            ret = wc_HashFinal(&digestHash, WC_HASH_TYPE_SHA, digest);
+            ret = wc_HashFinal(&digestHash, sigHashId, digest);
         if (ret != 0)
             ret = WS_CRYPTO_FAILED;
 
         if (ret == WS_SUCCESS) {
-            encSigSz = wc_EncodeSignature(encSig, digest,
-                                   wc_HashGetDigestSize(WC_HASH_TYPE_SHA),
-                                   wc_HashGetOID(WC_HASH_TYPE_SHA));
-            if (encSigSz <= 0) {
-                WLOG(WS_LOG_DEBUG, "SendKexDhReply: Bad Encode Sig");
-                ret = WS_CRYPTO_FAILED;
+            if (sigKeyBlock.useRsa) {
+                uint8_t encSig[MAX_ENCODED_SIG_SZ];
+                uint32_t encSigSz;
+
+                encSigSz = wc_EncodeSignature(encSig, digest,
+                                              wc_HashGetDigestSize(sigHashId),
+                                              wc_HashGetOID(sigHashId));
+                if (encSigSz <= 0) {
+                    WLOG(WS_LOG_DEBUG, "SendKexDhReply: Bad Encode Sig");
+                    ret = WS_CRYPTO_FAILED;
+                }
+                else {
+                    WLOG(WS_LOG_INFO, "Signing hash with RSA.");
+                    sigSz = wc_RsaSSL_Sign(encSig, encSigSz, sig, sizeof(sig),
+                                           &sigKeyBlock.sk.rsa.key, ssh->rng);
+                    if (sigSz <= 0) {
+                        WLOG(WS_LOG_DEBUG, "SendKexDhReply: Bad RSA Sign");
+                        ret = WS_RSA_E;
+                    }
+                }
             }
             else {
-                /* At this point, sigSz should already be sizeof(sig) */
-                sigSz = wc_RsaSSL_Sign(encSig, encSigSz,
-                                    sig, sigSz, &rsaKey, ssh->rng);
-                if (sigSz <= 0) {
-                    WLOG(WS_LOG_DEBUG, "SendKexDhReply: Bad RSA Sign");
-                    ret = WS_RSA_E;
+                WLOG(WS_LOG_INFO, "Signing hash with ECDSA.");
+                sigSz = sizeof(sig);
+                ret = wc_ecc_sign_hash(digest, SHA256_DIGEST_SIZE, sig, &sigSz,
+                                       ssh->rng, &sigKeyBlock.sk.ecc.key);
+                if (ret != MP_OKAY) {
+                    WLOG(WS_LOG_DEBUG, "SendKexDhReply: Bad ECDSA Sign");
+                    ret = WS_ECC_E;
+                }
+                else {
+                    uint8_t r[257];
+                    uint32_t rSz = sizeof(r);
+                    uint8_t rPad;
+                    uint8_t s[257];
+                    uint32_t sSz = sizeof(s);
+                    uint8_t sPad;
+
+                    ret = wc_ecc_sig_to_rs(sig, sigSz, r, &rSz, s, &sSz);
+                    if (ret == 0) {
+                        idx = 0;
+                        rPad = (r[0] & 0x80) ? 1 : 0;
+                        sPad = (s[0] & 0x80) ? 1 : 0;
+                        sigSz = (LENGTH_SZ * 2) + rSz + rPad + sSz + sPad;
+
+                        c32toa(rSz + rPad, sig + idx);
+                        idx += LENGTH_SZ;
+                        if (rPad)
+                            sig[idx++] = 0;
+                        WMEMCPY(sig + idx, r, rSz);
+                        idx += rSz;
+                        c32toa(sSz + sPad, sig + idx);
+                        idx += LENGTH_SZ;
+                        if (sPad)
+                            sig[idx++] = 0;
+                        WMEMCPY(sig + idx, s, sSz);
+                    }
                 }
             }
         }
     }
-    wc_FreeRsaKey(&rsaKey);
-    sigBlockSz = (LENGTH_SZ * 2) + 7 + sigSz;
+
+    if (sigKeyBlock.useRsa)
+        wc_FreeRsaKey(&sigKeyBlock.sk.rsa.key);
+    else
+        wc_ecc_free(&sigKeyBlock.sk.ecc.key);
+
+    sigBlockSz = (LENGTH_SZ * 2) + sigKeyBlock.nameSz + sigSz;
 
     if (ret == WS_SUCCESS)
         ret = GenerateKeys(ssh);
@@ -4039,7 +4290,7 @@ int SendKexDhReply(WOLFSSH* ssh)
      * add it to the hash and then add K. */
     if (ret == WS_SUCCESS) {
         payloadSz = MSG_ID_SZ + (LENGTH_SZ * 3) +
-                    rsaKeyBlockSz + fSz + fPad + sigBlockSz;
+                    sigKeyBlock.sz + fSz + fPad + sigBlockSz;
         ret = PreparePacket(ssh, payloadSz);
     }
 
@@ -4050,35 +4301,53 @@ int SendKexDhReply(WOLFSSH* ssh)
         output[idx++] = msgId;
 
         /* Copy the rsaKeyBlock into the buffer. */
-        c32toa(rsaKeyBlockSz, output + idx);
+        c32toa(sigKeyBlock.sz, output + idx);
         idx += LENGTH_SZ;
-        c32toa(7, output + idx);
+        c32toa(sigKeyBlock.nameSz, output + idx);
         idx += LENGTH_SZ;
-        WMEMCPY(output + idx, "ssh-rsa", 7);
-        idx += 7;
-        c32toa(rsaESz + rsaEPad, output + idx);
-        idx += LENGTH_SZ;
-        if (rsaEPad) output[idx++] = 0;
-        WMEMCPY(output + idx, rsaE, rsaESz);
-        idx += rsaESz;
-        c32toa(rsaNSz + rsaNPad, output + idx);
-        idx += LENGTH_SZ;
-        if (rsaNPad) output[idx++] = 0;
-        WMEMCPY(output + idx, rsaN, rsaNSz);
-        idx += rsaNSz;
+        WMEMCPY(output + idx, sigKeyBlock.name, sigKeyBlock.nameSz);
+        idx += sigKeyBlock.nameSz;
+        if (sigKeyBlock.useRsa) {
+            c32toa(sigKeyBlock.sk.rsa.eSz + sigKeyBlock.sk.rsa.ePad,
+                   output + idx);
+            idx += LENGTH_SZ;
+            if (sigKeyBlock.sk.rsa.ePad) output[idx++] = 0;
+            WMEMCPY(output + idx, sigKeyBlock.sk.rsa.e, sigKeyBlock.sk.rsa.eSz);
+            idx += sigKeyBlock.sk.rsa.eSz;
+            c32toa(sigKeyBlock.sk.rsa.nSz + sigKeyBlock.sk.rsa.nPad,
+                   output + idx);
+            idx += LENGTH_SZ;
+            if (sigKeyBlock.sk.rsa.nPad) output[idx++] = 0;
+            WMEMCPY(output + idx, sigKeyBlock.sk.rsa.n, sigKeyBlock.sk.rsa.nSz);
+            idx += sigKeyBlock.sk.rsa.nSz;
+        }
+        else {
+            c32toa(sigKeyBlock.sk.ecc.primeNameSz, output + idx);
+            idx += LENGTH_SZ;
+            WMEMCPY(output + idx, sigKeyBlock.sk.ecc.primeName,
+                    sigKeyBlock.sk.ecc.primeNameSz);
+            idx += sigKeyBlock.sk.ecc.primeNameSz;
+            c32toa(sigKeyBlock.sk.ecc.qSz, output + idx);
+            idx += LENGTH_SZ;
+            WMEMCPY(output + idx, sigKeyBlock.sk.ecc.q,
+                    sigKeyBlock.sk.ecc.qSz);
+            idx += sigKeyBlock.sk.ecc.qSz;
+        }
 
+        /* Copy the server's public key. F for DE, or Q_S for ECDH. */
         c32toa(fSz + fPad, output + idx);
         idx += LENGTH_SZ;
         if (fPad) output[idx++] = 0;
         WMEMCPY(output + idx, f, fSz);
         idx += fSz;
 
+        /* Copy the signature of the exchange hash. */
         c32toa(sigBlockSz, output + idx);
         idx += LENGTH_SZ;
-        c32toa(7, output + idx);
+        c32toa(sigKeyBlock.nameSz, output + idx);
         idx += LENGTH_SZ;
-        WMEMCPY(output + idx, "ssh-rsa", 7);
-        idx += 7;
+        WMEMCPY(output + idx, sigKeyBlock.name, sigKeyBlock.nameSz);
+        idx += sigKeyBlock.nameSz;
         c32toa(sigSz, output + idx);
         idx += LENGTH_SZ;
         WMEMCPY(output + idx, sig, sigSz);

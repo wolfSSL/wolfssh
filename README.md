@@ -90,8 +90,10 @@ release notes
 
 - Added ECDH Group Exchange with SHA2 hashing and curves nistp256,
   nistp384, and nistp521. 
+- Added ECDSA with SHA2 hashing and curve nistp256.
 - Changed the echoserver to allow only one connection, but multiple
   connections are allowed with a command line option.
+- Added option to echoserver to offer an ECC public key.
 - Other small bug fixes and enhancements.
 
 ### wolfSSH v1.1.0 (06/16/2017)

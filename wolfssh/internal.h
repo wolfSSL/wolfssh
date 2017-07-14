@@ -78,6 +78,9 @@ enum {
 
     /* Public Key IDs */
     ID_SSH_RSA,
+    ID_ECDSA_SHA2_NISTP256,
+    ID_ECDSA_SHA2_NISTP384,
+    ID_ECDSA_SHA2_NISTP521,
 
     /* UserAuth IDs */
     ID_USERAUTH_PASSWORD,
@@ -157,6 +160,7 @@ struct WOLFSSH_CTX {
 
     uint8_t*            privateKey;  /* Owned by CTX */
     uint32_t            privateKeySz;
+    uint8_t             useEcc;      /* Depends on the private key */
     uint32_t            highwaterMark;
     const char*         banner;
     uint32_t            bannerSz;
