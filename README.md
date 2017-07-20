@@ -88,6 +88,7 @@ release notes
 
 ### wolfSSH v1.2.0 (07/XX/2017)
 
+- Added client support to library and an example client.
 - Added ECDH Group Exchange with SHA2 hashing and curves nistp256,
   nistp384, and nistp521. 
 - Added ECDSA with SHA2 hashing and curves nistp256, nistp384, and nistp521.

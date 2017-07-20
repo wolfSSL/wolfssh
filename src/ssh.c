@@ -343,6 +343,17 @@ int wolfSSH_accept(WOLFSSH* ssh)
 }
 
 
+const char connectError[] = "connect error: %s, %d";
+const char connectState[] = "connect state: %s";
+
+
+int wolfSSH_connect(WOLFSSH* ssh)
+{
+    (void)ssh;
+    return WS_UNIMPLEMENTED_E;
+}
+
+
 int wolfSSH_TriggerKeyExchange(WOLFSSH* ssh)
 {
     int ret = WS_SUCCESS;
