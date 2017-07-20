@@ -248,7 +248,7 @@ static const uint32_t cannedBannerSz = sizeof(cannedBanner) - 1;
 #endif /* DEBUG_WOLFSSH */
 
 
-WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, void* heap)
+WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, uint8_t side, void* heap)
 {
     WLOG(WS_LOG_DEBUG, "Entering CtxInit()");
 
@@ -260,6 +260,7 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, void* heap)
     if (heap)
         ctx->heap = heap;
 
+    ctx->side = side;
 #ifndef WOLFSSH_USER_IO
     ctx->ioRecvCb = wsEmbedRecv;
     ctx->ioSendCb = wsEmbedSend;

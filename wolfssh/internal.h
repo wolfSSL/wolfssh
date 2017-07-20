@@ -164,6 +164,8 @@ struct WOLFSSH_CTX {
     uint32_t            highwaterMark;
     const char*         banner;
     uint32_t            bannerSz;
+
+    uint8_t             side;        /* client or server */
 };
 
 
@@ -295,7 +297,7 @@ struct WOLFSSH_CHANNEL {
 };
 
 
-WOLFSSH_LOCAL WOLFSSH_CTX* CtxInit(WOLFSSH_CTX*, void*);
+WOLFSSH_LOCAL WOLFSSH_CTX* CtxInit(WOLFSSH_CTX*, uint8_t, void*);
 WOLFSSH_LOCAL void CtxResourceFree(WOLFSSH_CTX*);
 WOLFSSH_LOCAL WOLFSSH* SshInit(WOLFSSH*, WOLFSSH_CTX*);
 WOLFSSH_LOCAL void SshResourceFree(WOLFSSH*, void*);

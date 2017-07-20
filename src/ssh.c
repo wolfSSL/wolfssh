@@ -74,7 +74,7 @@ WOLFSSH_CTX* wolfSSH_CTX_new(uint8_t side, void* heap)
     }
 
     ctx = (WOLFSSH_CTX*)WMALLOC(sizeof(WOLFSSH_CTX), heap, DYNTYPE_CTX);
-    ctx = CtxInit(ctx, heap);
+    ctx = CtxInit(ctx, side, heap);
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_CTX_new(), ctx = %p", ctx);
 
