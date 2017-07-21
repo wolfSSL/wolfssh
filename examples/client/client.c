@@ -351,6 +351,8 @@ int main(int argc, char** argv)
         wolfSSH_Debugging_ON();
     #endif
 
+    wolfSSH_Init();
+
     while ((ch = mygetopt(argc, argv, "?")) != -1) {
         switch (ch) {
             case 'h' :
@@ -366,6 +368,8 @@ int main(int argc, char** argv)
 
     if (runClient() != 0)
         result = 1;
+
+    wolfSSH_Cleanup();
 
     return result;
 }

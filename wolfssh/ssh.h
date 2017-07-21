@@ -133,8 +133,6 @@ WOLFSSH_API int wolfSSH_connect(WOLFSSH*);
 WOLFSSH_API int wolfSSH_shutdown(WOLFSSH*);
 WOLFSSH_API int wolfSSH_stream_read(WOLFSSH*, uint8_t*, uint32_t);
 WOLFSSH_API int wolfSSH_stream_send(WOLFSSH*, uint8_t*, uint32_t);
-WOLFSSH_API int wolfSSH_channel_read(WOLFSSH_CHANNEL*, uint8_t*, uint32_t);
-WOLFSSH_API int wolfSSH_channel_send(WOLFSSH_CHANNEL*, uint8_t*, uint32_t);
 WOLFSSH_API int wolfSSH_TriggerKeyExchange(WOLFSSH*);
 
 WOLFSSH_API void wolfSSH_GetStats(WOLFSSH*,

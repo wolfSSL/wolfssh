@@ -56,9 +56,15 @@ int wolfSSH_Init(void)
 
 int wolfSSH_Cleanup(void)
 {
+    int ret = WS_SUCCESS;
+
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_Cleanup()");
-    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_Cleanup(), returning %d", WS_SUCCESS);
-    return WS_SUCCESS;
+
+    if (wolfCrypt_Cleanup() != 0)
+        ret = WS_CRYPTO_FAILED;
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_Cleanup(), returning %d", ret);
+    return ret;
 }
 
 
