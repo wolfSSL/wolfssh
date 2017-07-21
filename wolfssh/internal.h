@@ -381,6 +381,11 @@ enum AcceptStates {
 };
 
 
+enum ConnectStates {
+    CONNECT_BEGIN = 0
+};
+
+
 enum ClientStates {
     CLIENT_BEGIN = 0,
     CLIENT_VERSION_DONE,
@@ -390,6 +395,13 @@ enum ClientStates {
     CLIENT_USERAUTH_REQUEST_DONE,
     CLIENT_USERAUTH_DONE,
     CLIENT_DONE
+};
+
+
+enum ServerStates {
+    SERVER_BEGIN = 0,
+    SERVER_VERSION_DONE,
+    SERVER_KEXINIT_DONE,
 };
 
 

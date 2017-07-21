@@ -349,8 +349,29 @@ const char connectState[] = "connect state: %s";
 
 int wolfSSH_connect(WOLFSSH* ssh)
 {
-    (void)ssh;
-    return WS_UNIMPLEMENTED_E;
+    int ret = WS_UNIMPLEMENTED_E;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_connect()");
+
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_connect(), ret = %d", ret);
+    return ret;
+}
+
+
+int wolfSSH_shutdown(WOLFSSH* ssh)
+{
+    int ret = WS_UNIMPLEMENTED_E;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_shutdown()");
+
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_shutdown(), ret = %d", ret);
+    return ret;
 }
 
 
