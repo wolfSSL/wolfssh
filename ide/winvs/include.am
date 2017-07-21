@@ -1,0 +1,7 @@
+# vim:ft=automake
+# All paths should be given relative to the root
+
+EXTRA_DIST+= ide/winvs/README.txt
+#EXTRA_DIST+= ide/winvs/api.vcxproj
+#EXTRA_DIST+= ide/winvs/wolfssh.sln
+#EXTRA_DIST+= ide/winvs/wolfssh.vcxproj

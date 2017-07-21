@@ -35,6 +35,7 @@ include wolfssh/include.am
 include examples/include.am
 include tests/include.am
 include keys/include.am
+include ide/include.am
 
 
 TEST_EXTENSIONS = .test
