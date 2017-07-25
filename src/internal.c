@@ -355,8 +355,8 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
     ShrinkBuffer(&ssh->outputBuffer, 1);
     ForceZero(ssh->k, ssh->kSz);
     HandshakeInfoFree(ssh->handshake, heap);
-    ForceZero(&ssh->clientKeys, sizeof(Keys));
-    ForceZero(&ssh->serverKeys, sizeof(Keys));
+    ForceZero(&ssh->keys, sizeof(Keys));
+    ForceZero(&ssh->peerKeys, sizeof(Keys));
     if (ssh->rng) {
         wc_FreeRng(ssh->rng);
         WFREE(ssh->rng, heap, DYNTYPE_RNG);
@@ -1454,17 +1454,17 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
             ssh->handshake->encryptId = algoId;
             ssh->handshake->aeadMode = AeadModeForId(algoId);
             ssh->handshake->blockSz = BlockSzForId(algoId);
-            ssh->handshake->clientKeys.encKeySz =
-                ssh->handshake->serverKeys.encKeySz =
+            ssh->handshake->keys.encKeySz =
+                ssh->handshake->peerKeys.encKeySz =
                 KeySzForId(algoId);
             if (!ssh->handshake->aeadMode) {
-                ssh->handshake->clientKeys.ivSz =
-                    ssh->handshake->serverKeys.ivSz =
+                ssh->handshake->keys.ivSz =
+                    ssh->handshake->peerKeys.ivSz =
                     ssh->handshake->blockSz;
             }
             else {
-                ssh->handshake->clientKeys.ivSz =
-                    ssh->handshake->serverKeys.ivSz =
+                ssh->handshake->keys.ivSz =
+                    ssh->handshake->peerKeys.ivSz =
                     AEAD_NONCE_SZ;
                 ssh->handshake->macSz = ssh->handshake->blockSz;
             }
@@ -1498,8 +1498,8 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
             else {
                 ssh->handshake->macId = algoId;
                 ssh->handshake->macSz = MacSzForId(algoId);
-                ssh->handshake->clientKeys.macKeySz =
-                    ssh->handshake->serverKeys.macKeySz =
+                ssh->handshake->keys.macKeySz =
+                    ssh->handshake->peerKeys.macKeySz =
                     KeySzForId(algoId);
             }
         }
@@ -1753,7 +1753,7 @@ static int DoNewKeys(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
         ssh->peerBlockSz = ssh->handshake->blockSz;
         ssh->peerMacSz = ssh->handshake->macSz;
         ssh->peerAeadMode = ssh->handshake->aeadMode;
-        WMEMCPY(&ssh->clientKeys, &ssh->handshake->clientKeys, sizeof(Keys));
+        WMEMCPY(&ssh->peerKeys, &ssh->handshake->peerKeys, sizeof(Keys));
 
         switch (ssh->peerEncryptId) {
             case ID_NONE:
@@ -1763,16 +1763,15 @@ static int DoNewKeys(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
             case ID_AES128_CBC:
                 WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes128-cbc");
                 ret = wc_AesSetKey(&ssh->decryptCipher.aes,
-                                   ssh->clientKeys.encKey,
-                                   ssh->clientKeys.encKeySz,
-                                   ssh->clientKeys.iv, AES_DECRYPTION);
+                                   ssh->peerKeys.encKey, ssh->peerKeys.encKeySz,
+                                   ssh->peerKeys.iv, AES_DECRYPTION);
                 break;
 
             case ID_AES128_GCM:
                 WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes128-gcm");
                 ret = wc_AesGcmSetKey(&ssh->decryptCipher.aes,
-                                      ssh->clientKeys.encKey,
-                                      ssh->clientKeys.encKeySz);
+                                      ssh->peerKeys.encKey,
+                                      ssh->peerKeys.encKeySz);
                 break;
 
             default:
@@ -1965,8 +1964,14 @@ static int GenerateKeys(WOLFSSH* ssh)
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
     else {
-        cK = &ssh->handshake->clientKeys;
-        sK = &ssh->handshake->serverKeys;
+        if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
+            cK = &ssh->handshake->peerKeys;
+            sK = &ssh->handshake->keys;
+        }
+        else {
+            cK = &ssh->handshake->keys;
+            sK = &ssh->handshake->peerKeys;
+        }
         hashId = ssh->handshake->hashId;
     }
 
@@ -3122,8 +3127,7 @@ static INLINE int CreateMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
                 uint8_t digest[SHA_DIGEST_SIZE];
 
                 ret = wc_HmacSetKey(&hmac, SHA,
-                                    ssh->serverKeys.macKey,
-                                    ssh->serverKeys.macKeySz);
+                                    ssh->keys.macKey, ssh->keys.macKeySz);
                 if (ret == WS_SUCCESS)
                     ret = wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
                 if (ret == WS_SUCCESS)
@@ -3140,8 +3144,7 @@ static INLINE int CreateMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
                 Hmac hmac;
 
                 ret = wc_HmacSetKey(&hmac, SHA,
-                                    ssh->serverKeys.macKey,
-                                    ssh->serverKeys.macKeySz);
+                                    ssh->keys.macKey, ssh->keys.macKeySz);
                 if (ret == WS_SUCCESS)
                     ret = wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
                 if (ret == WS_SUCCESS)
@@ -3156,8 +3159,8 @@ static INLINE int CreateMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
                 Hmac hmac;
 
                 ret = wc_HmacSetKey(&hmac, SHA256,
-                                    ssh->serverKeys.macKey,
-                                    ssh->serverKeys.macKeySz);
+                                    ssh->keys.macKey,
+                                    ssh->keys.macKeySz);
                 if (ret == WS_SUCCESS)
                     ret = wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
                 if (ret == WS_SUCCESS)
@@ -3189,7 +3192,7 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
     WLOG(WS_LOG_DEBUG, "VerifyMac %s", IdToName(ssh->peerMacId));
     WLOG(WS_LOG_DEBUG, "VM: inSz = %u", inSz);
     WLOG(WS_LOG_DEBUG, "VM: seq = %u", ssh->peerSeq);
-    WLOG(WS_LOG_DEBUG, "VM: keyLen = %u", ssh->clientKeys.macKeySz);
+    WLOG(WS_LOG_DEBUG, "VM: keyLen = %u", ssh->peerKeys.macKeySz);
 
     WMEMSET(checkMac, 0, sizeof(checkMac));
 
@@ -3201,8 +3204,7 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
         case ID_HMAC_SHA1:
         case ID_HMAC_SHA1_96:
             ret = wc_HmacSetKey(&hmac, SHA,
-                                ssh->clientKeys.macKey,
-                                ssh->clientKeys.macKeySz);
+                                ssh->peerKeys.macKey, ssh->peerKeys.macKeySz);
             if (ret == WS_SUCCESS)
                 ret = wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
             if (ret == WS_SUCCESS)
@@ -3215,8 +3217,7 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
 
         case ID_HMAC_SHA2_256:
             ret = wc_HmacSetKey(&hmac, SHA256,
-                                ssh->clientKeys.macKey,
-                                ssh->clientKeys.macKeySz);
+                                ssh->peerKeys.macKey, ssh->peerKeys.macKeySz);
             if (ret == WS_SUCCESS)
                 ret = wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
             if (ret == WS_SUCCESS)
@@ -3262,13 +3263,13 @@ static INLINE int EncryptAead(WOLFSSH* ssh, uint8_t* cipher,
 
     if (ssh->encryptId == ID_AES128_GCM) {
         ret = wc_AesGcmEncrypt(&ssh->encryptCipher.aes, cipher, input, sz,
-                               ssh->serverKeys.iv, ssh->serverKeys.ivSz,
+                               ssh->keys.iv, ssh->keys.ivSz,
                                authTag, ssh->macSz, auth, authSz);
     }
     else
         ret = WS_INVALID_ALGO_ID;
 
-    AeadIncrementExpIv(ssh->serverKeys.iv);
+    AeadIncrementExpIv(ssh->keys.iv);
     ssh->txCount += sz;
 
     return ret;
@@ -3290,13 +3291,13 @@ static INLINE int DecryptAead(WOLFSSH* ssh, uint8_t* plain,
 
     if (ssh->peerEncryptId == ID_AES128_GCM) {
         ret = wc_AesGcmDecrypt(&ssh->decryptCipher.aes, plain, input, sz,
-                               ssh->clientKeys.iv, ssh->clientKeys.ivSz,
+                               ssh->peerKeys.iv, ssh->peerKeys.ivSz,
                                authTag, ssh->peerMacSz, auth, authSz);
     }
     else
         ret = WS_INVALID_ALGO_ID;
 
-    AeadIncrementExpIv(ssh->clientKeys.iv);
+    AeadIncrementExpIv(ssh->peerKeys.iv);
     ssh->rxCount += sz;
     HighwaterCheck(ssh, WOLFSSH_HWSIDE_RECEIVE);
 
@@ -4440,7 +4441,7 @@ int SendNewKeys(WOLFSSH* ssh)
         ssh->macSz = ssh->handshake->macSz;
         ssh->macId = ssh->handshake->macId;
         ssh->aeadMode = ssh->handshake->aeadMode;
-        WMEMCPY(&ssh->serverKeys, &ssh->handshake->serverKeys, sizeof(Keys));
+        WMEMCPY(&ssh->keys, &ssh->handshake->keys, sizeof(Keys));
 
         switch (ssh->encryptId) {
             case ID_NONE:
@@ -4450,16 +4451,14 @@ int SendNewKeys(WOLFSSH* ssh)
             case ID_AES128_CBC:
                 WLOG(WS_LOG_DEBUG, "SNK: using cipher aes128-cbc");
                 ret = wc_AesSetKey(&ssh->encryptCipher.aes,
-                                  ssh->serverKeys.encKey,
-                                  ssh->serverKeys.encKeySz,
-                                  ssh->serverKeys.iv, AES_ENCRYPTION);
+                                  ssh->keys.encKey, ssh->keys.encKeySz,
+                                  ssh->keys.iv, AES_ENCRYPTION);
                 break;
 
             case ID_AES128_GCM:
                 WLOG(WS_LOG_DEBUG, "SNK: using cipher aes128-gcm");
                 ret = wc_AesGcmSetKey(&ssh->encryptCipher.aes,
-                                     ssh->serverKeys.encKey,
-                                     ssh->serverKeys.encKeySz);
+                                     ssh->keys.encKey, ssh->keys.encKeySz);
                 break;
 
             default:

@@ -196,8 +196,8 @@ typedef struct HandshakeInfo {
     uint8_t        blockSz;
     uint8_t        macSz;
 
-    Keys           clientKeys;
-    Keys           serverKeys;
+    Keys           keys;
+    Keys           peerKeys;
     wc_HashAlg     hash;
     uint8_t        e[257]; /* May have a leading zero, for unsigned, or
                             * it is a nistp521 Q_S value. */
@@ -269,8 +269,8 @@ struct WOLFSSH {
     uint8_t        sessionId[WC_MAX_DIGEST_SIZE];
     uint32_t       sessionIdSz;
 
-    Keys           clientKeys;
-    Keys           serverKeys;
+    Keys           keys;
+    Keys           peerKeys;
     HandshakeInfo* handshake;
 
     void*          userAuthCtx;
