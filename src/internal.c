@@ -3014,7 +3014,6 @@ static int DoPacket(WOLFSSH* ssh)
             DumpOctetString(buf + idx, payloadSz);
 #endif
             ret = SendUnimplemented(ssh);
-            break;
     }
 
     if (ret == WS_SUCCESS) {
@@ -3337,12 +3336,14 @@ int DoReceive(WOLFSSH* ssh)
                         return ret;
                     }
                 }
+                FALL_THROUGH;
 
             case PROCESS_PACKET_LENGTH:
                 /* Peek at the packet_length field. */
                 ato32(ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
                       &ssh->curSz);
                 ssh->processReplyState = PROCESS_PACKET_FINISH;
+                FALL_THROUGH;
 
             case PROCESS_PACKET_FINISH:
                 readSz = ssh->curSz + LENGTH_SZ + peerMacSz;
@@ -3408,6 +3409,7 @@ int DoReceive(WOLFSSH* ssh)
                     }
                 }
                 ssh->processReplyState = PROCESS_PACKET;
+                FALL_THROUGH;
 
             case PROCESS_PACKET:
                 if ( (ret = DoPacket(ssh)) < 0) {
