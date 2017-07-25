@@ -278,8 +278,8 @@ struct WOLFSSH {
     uint32_t       userNameSz;
     uint8_t*       pkBlob;
     uint32_t       pkBlobSz;
-    uint8_t*       clientId;   /* Save for rekey */
-    uint32_t       clientIdSz;
+    uint8_t*       peerProtoId;   /* Save for rekey */
+    uint32_t       peerProtoIdSz;
 };
 
 
@@ -322,8 +322,8 @@ WOLFSSH_LOCAL int wsEmbedSend(WOLFSSH*, void*, uint32_t, void*);
 
 
 WOLFSSH_LOCAL int DoReceive(WOLFSSH*);
-WOLFSSH_LOCAL int ProcessClientVersion(WOLFSSH*);
-WOLFSSH_LOCAL int SendServerVersion(WOLFSSH*);
+WOLFSSH_LOCAL int DoProtoId(WOLFSSH*);
+WOLFSSH_LOCAL int SendProtoId(WOLFSSH*);
 WOLFSSH_LOCAL int SendKexInit(WOLFSSH*);
 WOLFSSH_LOCAL int SendKexDhReply(WOLFSSH*);
 WOLFSSH_LOCAL int SendKexDhGexGroup(WOLFSSH*);

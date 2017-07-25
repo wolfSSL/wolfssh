@@ -254,7 +254,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
     switch (ssh->acceptState) {
 
         case ACCEPT_BEGIN:
-            if ( (ssh->error = SendServerVersion(ssh)) < WS_SUCCESS) {
+            if ( (ssh->error = SendProtoId(ssh)) < WS_SUCCESS) {
                 WLOG(WS_LOG_DEBUG, acceptError, "BEGIN", ssh->error);
                 return WS_FATAL_ERROR;
             }
@@ -264,7 +264,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
 
         case ACCEPT_SERVER_VERSION_SENT:
             while (ssh->clientState < CLIENT_VERSION_DONE) {
-                if ( (ssh->error = ProcessClientVersion(ssh)) < WS_SUCCESS) {
+                if ( (ssh->error = DoProtoId(ssh)) < WS_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, acceptError,
                          "SERVER_VERSION_SENT", ssh->error);
                     return WS_FATAL_ERROR;

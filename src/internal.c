@@ -45,9 +45,9 @@
 #endif
 
 
-static const char sshIdStr[] = "SSH-2.0-wolfSSHv"
-                               LIBWOLFSSH_VERSION_STRING
-                               "\r\n";
+static const char sshProtoIdStr[] = "SSH-2.0-wolfSSHv"
+                                    LIBWOLFSSH_VERSION_STRING
+                                    "\r\n";
 
 
 const char* GetErrorString(int err)
@@ -364,8 +364,8 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
     if (ssh->userName) {
         WFREE(ssh->userName, heap, DYNTYPE_STRING);
     }
-    if (ssh->clientId) {
-        WFREE(ssh->clientId, heap, DYNTYPE_STRING);
+    if (ssh->peerProtoId) {
+        WFREE(ssh->peerProtoId, heap, DYNTYPE_STRING);
     }
     if (ssh->channelList) {
         WOLFSSH_CHANNEL* cur = ssh->channelList;
@@ -1585,10 +1585,10 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 
         if (ret == WS_SUCCESS)
             ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
-                                ssh->clientId, ssh->clientIdSz);
+                                ssh->peerProtoId, ssh->peerProtoIdSz);
 
         if (ret == WS_SUCCESS) {
-            strSz = (uint32_t)WSTRLEN(sshIdStr) - SSH_PROTO_EOL_SZ;
+            strSz = (uint32_t)WSTRLEN(sshProtoIdStr) - SSH_PROTO_EOL_SZ;
             c32toa(strSz, scratchLen);
             ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
                                 scratchLen, LENGTH_SZ);
@@ -1596,7 +1596,7 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 
         if (ret == WS_SUCCESS)
             ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
-                                (const uint8_t*)sshIdStr, strSz);
+                                (const uint8_t*)sshProtoIdStr, strSz);
 
         if (ret == WS_SUCCESS) {
             c32toa(len + 1, scratchLen);
@@ -3436,7 +3436,7 @@ int DoReceive(WOLFSSH* ssh)
 }
 
 
-int ProcessClientVersion(WOLFSSH* ssh)
+int DoProtoId(WOLFSSH* ssh)
 {
     int ret;
     uint32_t idSz;
@@ -3453,7 +3453,7 @@ int ProcessClientVersion(WOLFSSH* ssh)
     }
 
     if (WSTRNCASECMP((char*)ssh->inputBuffer.buffer,
-                     sshIdStr, SSH_PROTO_SZ) == 0) {
+                     sshProtoIdStr, SSH_PROTO_SZ) == 0) {
 
         ssh->clientState = CLIENT_VERSION_DONE;
     }
@@ -3466,15 +3466,15 @@ int ProcessClientVersion(WOLFSSH* ssh)
 
     idSz = (uint32_t)WSTRLEN((char*)ssh->inputBuffer.buffer);
 
-    /* Store the client ID for later use. It is used in keying and rekeying. */
-    ssh->clientId = (uint8_t*)WMALLOC(idSz + LENGTH_SZ,
-                                      ssh->ctx->heap, DYNTYPE_STRING);
-    if (ssh->clientId == NULL)
+    /* Store the proto ID for later use. It is used in keying and rekeying. */
+    ssh->peerProtoId = (uint8_t*)WMALLOC(idSz + LENGTH_SZ,
+                                         ssh->ctx->heap, DYNTYPE_STRING);
+    if (ssh->peerProtoId == NULL)
         ret = WS_MEMORY_E;
     else {
-        c32toa(idSz, ssh->clientId);
-        WMEMCPY(ssh->clientId + LENGTH_SZ, ssh->inputBuffer.buffer, idSz);
-        ssh->clientIdSz = idSz + LENGTH_SZ;
+        c32toa(idSz, ssh->peerProtoId);
+        WMEMCPY(ssh->peerProtoId + LENGTH_SZ, ssh->inputBuffer.buffer, idSz);
+        ssh->peerProtoIdSz = idSz + LENGTH_SZ;
     }
 
     ssh->inputBuffer.idx += idSz + SSH_PROTO_EOL_SZ;
@@ -3484,18 +3484,18 @@ int ProcessClientVersion(WOLFSSH* ssh)
 }
 
 
-int SendServerVersion(WOLFSSH* ssh)
+int SendProtoId(WOLFSSH* ssh)
 {
     int ret = WS_SUCCESS;
-    uint32_t sshIdStrSz;
+    uint32_t sshProtoIdStrSz;
 
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
-        WLOG(WS_LOG_DEBUG, "%s", sshIdStr);
-        sshIdStrSz = (uint32_t)WSTRLEN(sshIdStr);
-        ret = SendText(ssh, sshIdStr, sshIdStrSz);
+        WLOG(WS_LOG_DEBUG, "%s", sshProtoIdStr);
+        sshProtoIdStrSz = (uint32_t)WSTRLEN(sshProtoIdStr);
+        ret = SendText(ssh, sshProtoIdStr, sshProtoIdStrSz);
     }
 
     return ret;
