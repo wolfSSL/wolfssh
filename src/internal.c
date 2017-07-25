@@ -956,26 +956,6 @@ static int SendBuffered(WOLFSSH* ssh)
 }
 
 
-static int SendText(WOLFSSH* ssh, const char* text, uint32_t textLen)
-{
-    int ret = WS_SUCCESS;
-
-    if (ssh == NULL)
-        ret = WS_BAD_ARGUMENT;
-
-    if (ret == WS_SUCCESS)
-        ret = GrowBuffer(&ssh->outputBuffer, textLen, 0);
-
-    if (ret == WS_SUCCESS) {
-        WMEMCPY(ssh->outputBuffer.buffer, text, textLen);
-        ssh->outputBuffer.length = textLen;
-        ret = SendBuffered(ssh);
-    }
-
-    return ret;
-}
-
-
 static int GetInputData(WOLFSSH* ssh, uint32_t size)
 {
     int in;
@@ -3495,7 +3475,13 @@ int SendProtoId(WOLFSSH* ssh)
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "%s", sshProtoIdStr);
         sshProtoIdStrSz = (uint32_t)WSTRLEN(sshProtoIdStr);
-        ret = SendText(ssh, sshProtoIdStr, sshProtoIdStrSz);
+        ret = GrowBuffer(&ssh->outputBuffer, sshProtoIdStrSz, 0);
+    }
+
+    if (ret == WS_SUCCESS) {
+        WMEMCPY(ssh->outputBuffer.buffer, sshProtoIdStr, sshProtoIdStrSz);
+        ssh->outputBuffer.length = sshProtoIdStrSz;
+        ret = SendBuffered(ssh);
     }
 
     return ret;
