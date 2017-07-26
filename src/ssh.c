@@ -275,7 +275,18 @@ int wolfSSH_accept(WOLFSSH* ssh)
             FALL_THROUGH;
 
         case ACCEPT_CLIENT_VERSION_DONE:
-            while (ssh->keyingState < KEYING_KEYED) {
+            if ( (ssh->error = SendKexInit(ssh)) < WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, acceptError,
+                     "CLIENT_VERSION_DONE", ssh->error);
+                return WS_FATAL_ERROR;
+            }
+            ssh->acceptState = ACCEPT_SERVER_KEXINIT_SENT;
+            WLOG(WS_LOG_DEBUG, acceptState, "SERVER_KEXINIT_SENT");
+            FALL_THROUGH;
+
+
+        case ACCEPT_SERVER_KEXINIT_SENT:
+            while (ssh->isKeying) {
                 if ( (ssh->error = DoReceive(ssh)) < WS_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, acceptError,
                          "CLIENT_VERSION_DONE", ssh->error);
@@ -428,8 +439,7 @@ int wolfSSH_stream_read(WOLFSSH* ssh, uint8_t* buf, uint32_t bufSz)
     WMEMCPY(buf, inputBuffer->buffer + inputBuffer->idx, bufSz);
     inputBuffer->idx += bufSz;
 
-    if (ssh->keyingState == KEYING_KEYED &&
-        (inputBuffer->length > inputBuffer->bufferSz / 2)) {
+    if (!ssh->isKeying && (inputBuffer->length > inputBuffer->bufferSz / 2)) {
 
         uint32_t usedSz = inputBuffer->length - inputBuffer->idx;
         uint32_t bytesToAdd = inputBuffer->idx;

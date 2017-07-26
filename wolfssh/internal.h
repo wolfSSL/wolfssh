@@ -234,7 +234,7 @@ struct WOLFSSH {
     uint8_t        acceptState;
     uint8_t        clientState;
     uint8_t        processReplyState;
-    uint8_t        keyingState;
+    uint8_t        isKeying;
 
     uint8_t        connReset;
     uint8_t        isClosed;
@@ -351,26 +351,11 @@ WOLFSSH_LOCAL int GenerateKey(uint8_t, uint8_t, uint8_t*, uint32_t,
                               const uint8_t*, uint32_t);
 
 
-enum KeyingStates {
-    KEYING_UNKEYED = 0,
-
-    KEYING_KEXINIT_SENT,
-    KEYING_KEXINIT_RECV,
-    KEYING_KEXINIT_DONE,
-
-    KEYING_KEXDH_INIT_RECV,
-    KEYING_KEXDH_DONE,
-
-    KEYING_USING_KEYS_SENT,
-    KEYING_USING_KEYS_RECV,
-    KEYING_KEYED
-};
-
-
 enum AcceptStates {
     ACCEPT_BEGIN = 0,
     ACCEPT_SERVER_VERSION_SENT,
     ACCEPT_CLIENT_VERSION_DONE,
+    ACCEPT_SERVER_KEXINIT_SENT,
     ACCEPT_KEYED,
     ACCEPT_CLIENT_USERAUTH_REQUEST_DONE,
     ACCEPT_SERVER_USERAUTH_ACCEPT_SENT,
@@ -391,7 +376,6 @@ enum ClientStates {
     CLIENT_VERSION_DONE,
     CLIENT_KEXINIT_DONE,
     CLIENT_KEXDH_INIT_DONE,
-    CLIENT_USING_KEYS,
     CLIENT_USERAUTH_REQUEST_DONE,
     CLIENT_USERAUTH_DONE,
     CLIENT_DONE

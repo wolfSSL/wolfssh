@@ -323,7 +323,7 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->highwaterCtx  = (void*)ssh;
     ssh->acceptState = ACCEPT_BEGIN;
     ssh->clientState = CLIENT_BEGIN;
-    ssh->keyingState = KEYING_UNKEYED;
+    ssh->isKeying    = 1;
     ssh->nextChannel = DEFAULT_NEXT_CHANNEL;
     ssh->blockSz     = MIN_BLOCK_SZ;
     ssh->encryptId   = ID_NONE;
@@ -1548,16 +1548,9 @@ static int DoKexInit(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
         uint8_t scratchLen[LENGTH_SZ];
         uint32_t strSz;
 
-        if (ssh->keyingState == KEYING_UNKEYED ||
-            ssh->keyingState == KEYING_KEYED) {
-
-            WLOG(WS_LOG_DEBUG, "KeyingState now KEXINIT_RECV");
-            ssh->keyingState = KEYING_KEXINIT_RECV;
+        if (!ssh->isKeying) {
+            WLOG(WS_LOG_DEBUG, "Keying initiated");
             ret = SendKexInit(ssh);
-        }
-        else if (ssh->keyingState == KEYING_KEXINIT_SENT) {
-            WLOG(WS_LOG_DEBUG, "KeyingState now KEXINIT_DONE");
-            ssh->keyingState = KEYING_KEXINIT_DONE;
         }
 
         if (ret == WS_SUCCESS)
@@ -1767,18 +1760,11 @@ static int DoNewKeys(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 
     if (ret == WS_SUCCESS) {
         ssh->rxCount = 0;
-        if (ssh->keyingState == KEYING_USING_KEYS_SENT) {
-            ssh->clientState = CLIENT_USING_KEYS;
-            ssh->highwaterFlag = 0;
-            ssh->keyingState = KEYING_KEYED;
-            HandshakeInfoFree(ssh->handshake, ssh->ctx->heap);
-            ssh->handshake = NULL;
-            WLOG(WS_LOG_DEBUG, "KeyingState now KEYED");
-        }
-        else {
-            ssh->keyingState = KEYING_USING_KEYS_RECV;
-            WLOG(WS_LOG_DEBUG, "KeyingState now USING_KEYS_RECV");
-        }
+        ssh->highwaterFlag = 0;
+        ssh->isKeying = 0;
+        HandshakeInfoFree(ssh->handshake, ssh->ctx->heap);
+        ssh->handshake = NULL;
+        WLOG(WS_LOG_DEBUG, "Keying completed");
     }
 
     return ret;
@@ -3091,7 +3077,7 @@ static INLINE int CreateMac(WOLFSSH* ssh, const uint8_t* in, uint32_t inSz,
     uint8_t  flatSeq[LENGTH_SZ];
     int ret;
 
-    c32toa(ssh->seq++, flatSeq);
+    c32toa(ssh->seq, flatSeq);
 
     WLOG(WS_LOG_DEBUG, "CreateMac %s", IdToName(ssh->macId));
 
@@ -3596,8 +3582,10 @@ static int BundlePacket(WOLFSSH* ssh)
         }
     }
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
+        ssh->seq++;
         ssh->outputBuffer.length = idx;
+    }
     else {
         WLOG(WS_LOG_DEBUG, "BP: failed to encrypt buffer");
     }
@@ -3662,6 +3650,7 @@ int SendKexInit(WOLFSSH* ssh)
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
+    ssh->isKeying = 1;
     if (ssh->handshake == NULL) {
         ssh->handshake = HandshakeInfoNew(ssh->ctx->heap);
         if (ssh->handshake == NULL) {
@@ -3748,17 +3737,6 @@ int SendKexInit(WOLFSSH* ssh)
 
     if (ret == WS_SUCCESS)
         ret = SendBuffered(ssh);
-
-    if (ret == WS_SUCCESS) {
-        if (ssh->keyingState == KEYING_KEXINIT_RECV) {
-            WLOG(WS_LOG_DEBUG, "KeyingState now KEXINIT_DONE");
-            ssh->keyingState = KEYING_KEXINIT_DONE;
-        }
-        else if (ssh->keyingState == KEYING_KEYED) {
-            WLOG(WS_LOG_DEBUG, "KeyingState now KEXINIT_SENT");
-            ssh->keyingState = KEYING_KEXINIT_SENT;
-        }
-    }
 
     WLOG(WS_LOG_DEBUG, "Leaving SendKexInit(), ret = %d", ret);
     return ret;
@@ -4455,17 +4433,6 @@ int SendNewKeys(WOLFSSH* ssh)
 
     if (ret == WS_SUCCESS) {
         ssh->txCount = 0;
-        if (ssh->keyingState == KEYING_USING_KEYS_RECV) {
-            ssh->highwaterFlag = 0;
-            ssh->keyingState = KEYING_KEYED;
-            HandshakeInfoFree(ssh->handshake, ssh->ctx->heap);
-            ssh->handshake = NULL;
-            WLOG(WS_LOG_DEBUG, "KeyingState now KEYED");
-        }
-        else {
-            ssh->keyingState = KEYING_USING_KEYS_SENT;
-            WLOG(WS_LOG_DEBUG, "KeyingState now USING_KEYS_SENT");
-        }
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving SendNewKeys(), ret = %d", ret);
@@ -5091,7 +5058,7 @@ int SendChannelData(WOLFSSH* ssh, uint32_t peerChannel,
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
-        if (ssh->keyingState != KEYING_KEYED)
+        if (ssh->isKeying)
             ret = WS_REKEYING;
     }
 

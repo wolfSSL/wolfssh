@@ -119,19 +119,24 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
 
                         if (txSz > 0) {
                             uint8_t c;
-                            const uint8_t matches[] = { 0x03, 0x04, 0x05, 0x00 };
+                            const uint8_t matches[] = { 0x03, 0x05, 0x06, 0x00 };
 
                             c = find_char(matches, buf + txSum, txSz);
                             switch (c) {
                                 case 0x03:
                                     stop = 1;
                                     break;
+                                case 0x06:
+                                    if (wolfSSH_TriggerKeyExchange(threadCtx->ssh)
+                                            != WS_SUCCESS)
+                                        stop = 1;
+                                    break;
                                 case 0x05:
                                     if (dump_stats(threadCtx) <= 0)
                                         stop = 1;
-                                default:
-                                    txSum += txSz;
+                                    break;
                             }
+                            txSum += txSz;
                         }
                         else if (txSz != WS_REKEYING)
                             stop = 1;
