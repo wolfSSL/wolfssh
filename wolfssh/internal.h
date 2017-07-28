@@ -32,6 +32,8 @@
 #include <wolfssl/wolfcrypt/hash.h>
 #include <wolfssl/wolfcrypt/random.h>
 #include <wolfssl/wolfcrypt/aes.h>
+#include <wolfssl/wolfcrypt/dh.h>
+#include <wolfssl/wolfcrypt/ecc.h>
 
 
 #if !defined (ALIGN16)
@@ -202,12 +204,24 @@ typedef struct HandshakeInfo {
     uint8_t        e[257]; /* May have a leading zero, for unsigned, or
                             * it is a nistp521 Q_S value. */
     uint32_t       eSz;
-    uint8_t*       serverKexInit;
-    uint32_t       serverKexInitSz;
+    uint8_t        x[257]; /* May have a leading zero, for unsigned. */
+    uint32_t       xSz;
+    uint8_t*       kexInit;
+    uint32_t       kexInitSz;
 
     uint32_t       dhGexMinSz;
     uint32_t       dhGexPreferredSz;
     uint32_t       dhGexMaxSz;
+    uint8_t*       primeGroup;
+    uint32_t       primeGroupSz;
+    uint8_t*       generator;
+    uint32_t       generatorSz;
+
+    uint8_t        useEcc;
+    union {
+        DhKey dh;
+        ecc_key ecc;
+    } privKey;
 } HandshakeInfo;
 
 
@@ -232,7 +246,9 @@ struct WOLFSSH {
     uint32_t       packetStartIdx; /* Current send packet start index */
     uint8_t        paddingSz;      /* Current send packet padding size */
     uint8_t        acceptState;
+    uint8_t        connectState;
     uint8_t        clientState;
+    uint8_t        serverState;
     uint8_t        processReplyState;
     uint8_t        isKeying;
 
@@ -325,7 +341,9 @@ WOLFSSH_LOCAL int DoReceive(WOLFSSH*);
 WOLFSSH_LOCAL int DoProtoId(WOLFSSH*);
 WOLFSSH_LOCAL int SendProtoId(WOLFSSH*);
 WOLFSSH_LOCAL int SendKexInit(WOLFSSH*);
+WOLFSSH_LOCAL int SendKexDhInit(WOLFSSH*);
 WOLFSSH_LOCAL int SendKexDhReply(WOLFSSH*);
+WOLFSSH_LOCAL int SendKexDhGexRequest(WOLFSSH*);
 WOLFSSH_LOCAL int SendKexDhGexGroup(WOLFSSH*);
 WOLFSSH_LOCAL int SendNewKeys(WOLFSSH*);
 WOLFSSH_LOCAL int SendUnimplemented(WOLFSSH*);
@@ -367,7 +385,13 @@ enum AcceptStates {
 
 
 enum ConnectStates {
-    CONNECT_BEGIN = 0
+    CONNECT_BEGIN = 0,
+    CONNECT_CLIENT_VERSION_SENT,
+    CONNECT_SERVER_VERSION_DONE,
+    CONNECT_CLIENT_KEXINIT_SENT,
+    CONNECT_SERVER_KEXINIT_DONE,
+    CONNECT_CLIENT_KEXDH_INIT_SENT,
+    CONNECT_KEYED
 };
 
 
@@ -409,12 +433,14 @@ enum WS_MessageIds {
     MSGID_NEWKEYS         = 21,
 
     MSGID_KEXDH_INIT      = 30,
-    MSGID_KEXDH_REPLY     = 31,
+    MSGID_KEXECDH_INIT    = 30,
 
-    MSGID_KEXDH_GEX_REQUEST = 34,
+    MSGID_KEXDH_REPLY     = 31,
+    MSGID_KEXECDH_REPLY   = 31,
     MSGID_KEXDH_GEX_GROUP = 31,
     MSGID_KEXDH_GEX_INIT  = 32,
     MSGID_KEXDH_GEX_REPLY = 33,
+    MSGID_KEXDH_GEX_REQUEST = 34,
 
     MSGID_USERAUTH_REQUEST = 50,
     MSGID_USERAUTH_FAILURE = 51,
@@ -453,7 +479,8 @@ enum WS_DynamicTypes {
     DYNTYPE_PUBKEY,
     DYNTYPE_DH,
     DYNTYPE_RNG,
-    DYNTYPE_STRING
+    DYNTYPE_STRING,
+    DYNTYPE_MPINT
 };
 
 

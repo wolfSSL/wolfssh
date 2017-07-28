@@ -251,6 +251,9 @@ int wolfSSH_accept(WOLFSSH* ssh)
 {
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_accept()");
 
+    if (ssh == NULL)
+        return WS_BAD_ARGUMENT;
+
     switch (ssh->acceptState) {
 
         case ACCEPT_BEGIN:
@@ -289,7 +292,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
             while (ssh->isKeying) {
                 if ( (ssh->error = DoReceive(ssh)) < WS_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, acceptError,
-                         "CLIENT_VERSION_DONE", ssh->error);
+                         "SERVER_KEXINIT_SENT", ssh->error);
                     return WS_FATAL_ERROR;
                 }
             }
@@ -374,15 +377,83 @@ const char connectState[] = "connect state: %s";
 
 int wolfSSH_connect(WOLFSSH* ssh)
 {
-    int ret = WS_UNIMPLEMENTED_E;
-
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_connect()");
 
     if (ssh == NULL)
-        ret = WS_BAD_ARGUMENT;
+        return WS_BAD_ARGUMENT;
 
-    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_connect(), ret = %d", ret);
-    return ret;
+    switch (ssh->connectState) {
+
+        case CONNECT_BEGIN:
+            if ( (ssh->error = SendProtoId(ssh)) < WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, connectError, "BEGIN", ssh->error);
+                return WS_FATAL_ERROR;
+            }
+            ssh->connectState = CONNECT_CLIENT_VERSION_SENT;
+            WLOG(WS_LOG_DEBUG, connectState, "CLIENT_VERSION_SENT");
+
+        case CONNECT_CLIENT_VERSION_SENT:
+            while (ssh->serverState < SERVER_VERSION_DONE) {
+                if ( (ssh->error = DoProtoId(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, connectError,
+                         "CLIENT_VERSION_SENT", ssh->error);
+                    return WS_FATAL_ERROR;
+                }
+            }
+            ssh->connectState = CONNECT_SERVER_VERSION_DONE;
+            WLOG(WS_LOG_DEBUG, connectState, "SERVER_VERSION_DONE");
+
+        case CONNECT_SERVER_VERSION_DONE:
+            if ( (ssh->error = SendKexInit(ssh)) < WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, acceptError,
+                     "SERVER_VERSION_DONE", ssh->error);
+                return WS_FATAL_ERROR;
+            }
+            ssh->connectState = CONNECT_CLIENT_KEXINIT_SENT;
+            WLOG(WS_LOG_DEBUG, connectState, "CLIENT_KEXINIT_SENT");
+            FALL_THROUGH;
+
+        case CONNECT_CLIENT_KEXINIT_SENT:
+            while (ssh->serverState < SERVER_KEXINIT_DONE) {
+                if ( (ssh->error = DoReceive(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, connectError,
+                         "CLIENT_KEXINIT_SENT", ssh->error);
+                    return WS_FATAL_ERROR;
+                }
+            }
+            ssh->connectState = CONNECT_SERVER_KEXINIT_DONE;
+            WLOG(WS_LOG_DEBUG, connectState, "SERVER_KEXINIT_DONE");
+            FALL_THROUGH;
+
+        case CONNECT_SERVER_KEXINIT_DONE:
+            if (ssh->handshake->kexId == ID_DH_GEX_SHA256)
+                ssh->error = SendKexDhGexRequest(ssh);
+            else
+                ssh->error = SendKexDhInit(ssh);
+            if (ssh->error < WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, connectError,
+                     "SERVER_KEXINIT_DONE", ssh->error);
+                return WS_FATAL_ERROR;
+            }
+            ssh->connectState = CONNECT_CLIENT_KEXDH_INIT_SENT;
+            WLOG(WS_LOG_DEBUG, connectState, "CLIENT_KEXDH_INIT_SENT");
+            FALL_THROUGH;
+
+
+        case CONNECT_CLIENT_KEXDH_INIT_SENT:
+            while (ssh->isKeying) {
+                if ( (ssh->error = DoReceive(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, connectError,
+                         "CLIENT_KEXDH_INIT_SENT", ssh->error);
+                    return WS_FATAL_ERROR;
+                }
+            }
+            ssh->connectState = CONNECT_KEYED;
+            WLOG(WS_LOG_DEBUG, connectState, "KEYED");
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_connect()");
+    return WS_SUCCESS;
 }
 
 
