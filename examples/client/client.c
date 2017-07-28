@@ -25,14 +25,18 @@
 
 
 const char testString[] = "Hello, wolfSSH!";
+int gHasTty = 0; /* Allows client to pretend to be interactive or not. */
 
 
 static void ShowUsage(void)
 {
     printf("client %s\n", LIBWOLFSSH_VERSION_STRING);
-    printf(" -?          display this help and exit\n");
-    printf(" -h <host>   host to connect to, default %s\n", wolfSshIp);
-    printf(" -p <num>    port to connect on, default %d\n", wolfSshPort);
+    printf(" -?            display this help and exit\n");
+    printf(" -h <host>     host to connect to, default %s\n", wolfSshIp);
+    printf(" -p <num>      port to connect on, default %d\n", wolfSshPort);
+    printf(" -u <username> username to authenticate as, default \"nobody\"\n");
+    printf(" -P <password> password for username, default \"password\"\n");
+    printf(" -B            disable banner display\n");
 }
 
 
@@ -48,12 +52,15 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     char ch;
     uint16_t port = wolfSshPort;
     char* host = (char*)wolfSshIp;
+    const char* username = "nobody";
+    const char* password = "password";
+    int displayBanner = 1;
 
     int     argc = ((func_args*)args)->argc;
     char**  argv = ((func_args*)args)->argv;
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?h:p:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?h:p:u:BP:")) != -1) {
         switch (ch) {
             case 'h':
                 host = myoptarg;
@@ -65,6 +72,18 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
                     if (port == 0)
                         err_sys("port number cannot be 0");
                 #endif
+                break;
+
+            case 'u':
+                username = myoptarg;
+                break;
+
+            case 'P':
+                password = myoptarg;
+                break;
+
+            case 'B':
+                displayBanner = 0;
                 break;
 
             case '?':
@@ -134,6 +153,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         args.return_code = 0;
 
         StartTCP();
+        gHasTty = isatty(fileno(stdin));
 
         #ifdef DEBUG_WOLFSSH
             wolfSSH_Debugging_ON();
