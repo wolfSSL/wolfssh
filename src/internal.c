@@ -1370,8 +1370,7 @@ static int DoNameList(uint8_t* idList, uint32_t* idListSz,
                 {
                     const char* displayName = IdToName(id);
                     if (displayName) {
-                        /*WLOG(WS_LOG_DEBUG,
-                               "DNL: name ID = %s", displayName);*/
+                        WLOG(WS_LOG_DEBUG, "DNL: name ID = %s", displayName);
                     }
                 }
                 if (id != ID_UNKNOWN)
@@ -3026,6 +3025,52 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
 }
 
 
+static int DoUserAuthFailure(WOLFSSH* ssh,
+                             uint8_t* buf, uint32_t len, uint32_t* idx)
+{
+    uint8_t authList[3]; /* Should only ever be password, publickey, hostname */
+    uint32_t authListSz;
+    uint8_t partialSuccess;
+    uint8_t authId = ID_USERAUTH_PASSWORD;
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering DoUserAuthFailure()");
+
+    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS)
+        ret = DoNameList(authList, &authListSz, buf, len, idx);
+
+    if (ret == WS_SUCCESS)
+        ret = GetBoolean(&partialSuccess, buf, len, idx);
+
+    if (ret == WS_SUCCESS)
+        ret = SendUserAuthRequest(ssh, authId);
+
+    WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthFailure(), ret = %d", ret);
+    return ret;
+}
+
+
+static int DoUserAuthSuccess(WOLFSSH* ssh,
+                             uint8_t* buf, uint32_t len, uint32_t* idx)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering DoUserAuthSuccess()");
+
+    /* This message does not have any payload. len should be 0. */
+    if (ssh == NULL || buf == NULL || len != 0 || idx == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    ssh->serverState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthSuccess(), ret = %d", ret);
+    return ret;
+}
+
+
 static int DoGlobalRequest(WOLFSSH* ssh,
                            uint8_t* buf, uint32_t len, uint32_t* idx)
 {
@@ -3410,6 +3455,16 @@ static int DoPacket(WOLFSSH* ssh)
         case MSGID_USERAUTH_REQUEST:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_USERAUTH_REQUEST");
             ret = DoUserAuthRequest(ssh, buf + idx, payloadSz, &payloadIdx);
+            break;
+
+        case MSGID_USERAUTH_FAILURE:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_USERAUTH_FAILURE");
+            ret = DoUserAuthFailure(ssh, buf + idx, payloadSz, &payloadIdx);
+            break;
+
+        case MSGID_USERAUTH_SUCCESS:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_USERAUTH_SUCCESS");
+            ret = DoUserAuthSuccess(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_GLOBAL_REQUEST:
