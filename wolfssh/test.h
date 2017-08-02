@@ -271,7 +271,7 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
 
 #ifndef TEST_IPV6
     /* peer could be in human readable form */
-    if ( (peer != INADDR_ANY) && isalpha((int)peer[0])) {
+    if ( ((size_t)peer != INADDR_ANY) && isalpha((int)peer[0])) {
         #ifdef CYASSL_MDK_ARM
             int err;
             struct hostent* entry = gethostbyname(peer, &err);
@@ -296,7 +296,7 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
         addr->sin_family = AF_INET_V;
     #endif
     addr->sin_port = htons(port);
-    if (peer == INADDR_ANY)
+    if ((size_t)peer == INADDR_ANY)
         addr->sin_addr.s_addr = INADDR_ANY;
     else {
         if (!useLookup)
@@ -305,7 +305,7 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
 #else
     addr->sin6_family = AF_INET_V;
     addr->sin6_port = htons(port);
-    if (peer == INADDR_ANY)
+    if ((size_t)peer == INADDR_ANY)
         addr->sin6_addr = in6addr_any;
     else {
         #ifdef HAVE_GETADDRINFO

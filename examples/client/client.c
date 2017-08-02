@@ -97,6 +97,10 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     }
     myoptind = 0;      /* reset for test cases */
 
+    (void)username;
+    (void)password;
+    (void)displayBanner;
+
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
     if (ctx == NULL)
         err_sys("Couldn't create wolfSSH client context.");
