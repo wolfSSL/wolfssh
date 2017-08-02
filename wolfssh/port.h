@@ -36,12 +36,6 @@ extern "C" {
 #endif
 
 
-#ifndef WUSER_TYPE
-    #include <stdint.h>
-    /* we need uint8, uint32, stdint provides them */
-#endif
-
-
 /* setup memory handling */
 #ifndef WMALLOC_USER
     #include <wolfssh/memory.h>

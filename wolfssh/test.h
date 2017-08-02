@@ -105,9 +105,9 @@
 
 
 typedef struct tcp_ready {
-    uint16_t ready;     /* predicate */
-    uint16_t port;
-    char*  srfName;     /* server ready file name */
+    word16 ready;     /* predicate */
+    word16 port;
+    char* srfName;     /* server ready file name */
 #if defined(_POSIX_THREADS) && !defined(__MINGW32__)
     pthread_mutex_t mutex;
     pthread_cond_t  cond;
@@ -164,7 +164,7 @@ typedef struct func_args {
 #else /* TEST_IPV6 */
     static const char* const wolfSshIp = "::1";
 #endif /* TEST_IPV6 */
-static const uint16_t wolfSshPort = 22222;
+static const word16 wolfSshPort = 22222;
 
 
 #ifdef __GNUC__
@@ -262,7 +262,7 @@ static INLINE int mygetopt(int argc, char** argv, const char* optstring)
 
 
 static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
-                              uint16_t port)
+                              word16 port)
 {
     int useLookup = 0;
     (void)useLookup;
@@ -383,7 +383,7 @@ static INLINE void tcp_socket(SOCKET_T* sockFd)
 #endif
 
 
-static INLINE void tcp_listen(SOCKET_T* sockfd, uint16_t* port, int useAnyAddr)
+static INLINE void tcp_listen(SOCKET_T* sockfd, word16* port, int useAnyAddr)
 {
     SOCKADDR_IN_T addr;
 

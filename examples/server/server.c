@@ -116,7 +116,7 @@ static INLINE WS_NORETURN void err_sys(const char* msg)
 
 
 static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
-                              uint16_t port)
+                              word16 port)
 {
     int useLookup = 0;
     (void)useLookup;
@@ -232,7 +232,7 @@ static INLINE void tcp_socket(SOCKET_T* sockFd)
 }
 
 
-static INLINE void tcp_bind(SOCKET_T* sockFd, uint16_t port, int useAnyAddr)
+static INLINE void tcp_bind(SOCKET_T* sockFd, word16 port, int useAnyAddr)
 {
     SOCKADDR_IN_T addr;
 
@@ -268,9 +268,9 @@ static THREAD_RETURN CYASSL_THREAD server_worker(void* vArgs)
 
     if (wolfSSH_accept(ssh) == WS_SUCCESS) {
 
-        wolfSSH_stream_send(ssh, (uint8_t*)msgA, (uint32_t)strlen(msgA));
+        wolfSSH_stream_send(ssh, (byte*)msgA, (word32)strlen(msgA));
 
-        rxBufSz = wolfSSH_stream_read(ssh, (uint8_t*)rxBuf, sizeof(rxBuf));
+        rxBufSz = wolfSSH_stream_read(ssh, (byte*)rxBuf, sizeof(rxBuf));
         if (rxBufSz > 0) {
             rxBuf[rxBufSz] = 0;
             printf("client sent %d bytes\n%s", rxBufSz, rxBuf);
@@ -278,7 +278,7 @@ static THREAD_RETURN CYASSL_THREAD server_worker(void* vArgs)
         else
             printf("wolfSSH_stream_read returned %d\n", rxBufSz);
 
-        wolfSSH_stream_send(ssh, (uint8_t*)msgB, (uint32_t)strlen(msgB));
+        wolfSSH_stream_send(ssh, (byte*)msgB, (word32)strlen(msgB));
     }
     close(clientFd);
     wolfSSH_free(ssh);
@@ -287,18 +287,18 @@ static THREAD_RETURN CYASSL_THREAD server_worker(void* vArgs)
 }
 
 
-static int load_file(const char* fileName, uint8_t* buf, uint32_t bufSz)
+static int load_file(const char* fileName, byte* buf, word32 bufSz)
 {
     FILE* file;
-    uint32_t fileSz;
-    uint32_t readSz;
+    word32 fileSz;
+    word32 readSz;
 
     if (fileName == NULL) return 0;
 
     file = fopen(fileName, "rb");
     if (file == NULL) return 0;
     fseek(file, 0, SEEK_END);
-    fileSz = (uint32_t)ftell(file);
+    fileSz = (word32)ftell(file);
     rewind(file);
 
     if (fileSz > bufSz) {
@@ -306,7 +306,7 @@ static int load_file(const char* fileName, uint8_t* buf, uint32_t bufSz)
         return 0;
     }
 
-    readSz = (uint32_t)fread(buf, 1, fileSz, file);
+    readSz = (word32)fread(buf, 1, fileSz, file);
     if (readSz < fileSz) {
         fclose(file);
         return 0;
@@ -337,8 +337,8 @@ int main(void)
     }
 
     {
-        uint8_t buf[SCRATCH_BUFFER_SIZE];
-        uint32_t bufSz;
+        byte buf[SCRATCH_BUFFER_SIZE];
+        word32 bufSz;
 
         bufSz = load_file("./certs/server-cert.der", buf, SCRATCH_BUFFER_SIZE);
         if (bufSz == 0) {

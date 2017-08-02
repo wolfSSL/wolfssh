@@ -33,7 +33,7 @@ static const char echoserverBanner[] = "wolfSSH Example Echo Server\n";
 typedef struct {
     WOLFSSH* ssh;
     SOCKET_T fd;
-    uint32_t id;
+    word32 id;
 } thread_ctx_t;
 
 
@@ -46,9 +46,9 @@ typedef struct {
 #define SCRATCH_BUFFER_SZ 1200
 
 
-static uint8_t find_char(const uint8_t* str, const uint8_t* buf, uint32_t bufSz)
+static byte find_char(const byte* str, const byte* buf, word32 bufSz)
 {
-    const uint8_t* cur;
+    const byte* cur;
 
     while (bufSz) {
         cur = str;
@@ -68,8 +68,8 @@ static uint8_t find_char(const uint8_t* str, const uint8_t* buf, uint32_t bufSz)
 static int dump_stats(thread_ctx_t* ctx)
 {
     char stats[1024];
-    uint32_t statsSz;
-    uint32_t txCount, rxCount, seq, peerSeq;
+    word32 statsSz;
+    word32 txCount, rxCount, seq, peerSeq;
 
     wolfSSH_GetStats(ctx->ssh, &txCount, &rxCount, &seq, &peerSeq);
 
@@ -78,10 +78,10 @@ static int dump_stats(thread_ctx_t* ctx)
             "  txCount = %u\r\n  rxCount = %u\r\n"
             "  seq = %u\r\n  peerSeq = %u\r\n",
             ctx->id, txCount, rxCount, seq, peerSeq);
-    statsSz = (uint32_t)strlen(stats);
+    statsSz = (word32)strlen(stats);
 
     fprintf(stderr, "%s", stats);
-    return wolfSSH_stream_send(ctx->ssh, (uint8_t*)stats, statsSz);
+    return wolfSSH_stream_send(ctx->ssh, (byte*)stats, statsSz);
 }
 
 
@@ -90,8 +90,8 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
     thread_ctx_t* threadCtx = (thread_ctx_t*)vArgs;
 
     if (wolfSSH_accept(threadCtx->ssh) == WS_SUCCESS) {
-        uint8_t* buf = NULL;
-        uint8_t* tmpBuf;
+        byte* buf = NULL;
+        byte* tmpBuf;
         int bufSz, backlogSz = 0, rxSz, txSz, stop = 0, txSum;
 
         do {
@@ -118,8 +118,8 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
                                                    backlogSz - txSum);
 
                         if (txSz > 0) {
-                            uint8_t c;
-                            const uint8_t matches[] = { 0x03, 0x05, 0x06, 0x00 };
+                            byte c;
+                            const byte matches[] = { 0x03, 0x05, 0x06, 0x00 };
 
                             c = find_char(matches, buf + txSum, txSz);
                             switch (c) {
@@ -161,18 +161,18 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
 }
 
 
-static int load_file(const char* fileName, uint8_t* buf, uint32_t bufSz)
+static int load_file(const char* fileName, byte* buf, word32 bufSz)
 {
     FILE* file;
-    uint32_t fileSz;
-    uint32_t readSz;
+    word32 fileSz;
+    word32 readSz;
 
     if (fileName == NULL) return 0;
 
     file = fopen(fileName, "rb");
     if (file == NULL) return 0;
     fseek(file, 0, SEEK_END);
-    fileSz = (uint32_t)ftell(file);
+    fileSz = (word32)ftell(file);
     rewind(file);
 
     if (fileSz > bufSz) {
@@ -180,7 +180,7 @@ static int load_file(const char* fileName, uint8_t* buf, uint32_t bufSz)
         return 0;
     }
 
-    readSz = (uint32_t)fread(buf, 1, fileSz, file);
+    readSz = (word32)fread(buf, 1, fileSz, file);
     if (readSz < fileSz) {
         fclose(file);
         return 0;
@@ -192,7 +192,7 @@ static int load_file(const char* fileName, uint8_t* buf, uint32_t bufSz)
 }
 
 
-static inline void c32toa(uint32_t u32, uint8_t* c)
+static inline void c32toa(word32 u32, byte* c)
 {
     c[0] = (u32 >> 24) & 0xff;
     c[1] = (u32 >> 16) & 0xff;
@@ -205,10 +205,10 @@ static inline void c32toa(uint32_t u32, uint8_t* c)
 /* Use arrays for username and p. The password or public key can
  * be hashed and the hash stored here. Then I won't need the type. */
 typedef struct PwMap {
-    uint8_t type;
-    uint8_t username[32];
-    uint32_t usernameSz;
-    uint8_t p[SHA256_DIGEST_SIZE];
+    byte type;
+    byte username[32];
+    word32 usernameSz;
+    byte p[SHA256_DIGEST_SIZE];
     struct PwMap* next;
 } PwMap;
 
@@ -218,15 +218,15 @@ typedef struct PwMapList {
 } PwMapList;
 
 
-static PwMap* PwMapNew(PwMapList* list, uint8_t type, const uint8_t* username,
-                       uint32_t usernameSz, const uint8_t* p, uint32_t pSz)
+static PwMap* PwMapNew(PwMapList* list, byte type, const byte* username,
+                       word32 usernameSz, const byte* p, word32 pSz)
 {
     PwMap* map;
 
     map = (PwMap*)malloc(sizeof(PwMap));
     if (map != NULL) {
         Sha256 sha;
-        uint8_t flatSz[4];
+        byte flatSz[4];
 
         map->type = type;
         if (usernameSz >= sizeof(map->username))
@@ -284,7 +284,7 @@ static const char samplePublicKeyBuffer[] =
     "RGwkU38D043AR1h0mUoGCPIKuqcFMf gretel\n";
 
 
-static int LoadPasswordBuffer(uint8_t* buf, uint32_t bufSz, PwMapList* list)
+static int LoadPasswordBuffer(byte* buf, word32 bufSz, PwMapList* list)
 {
     char* str = (char*)buf;
     char* delimiter;
@@ -310,8 +310,8 @@ static int LoadPasswordBuffer(uint8_t* buf, uint32_t bufSz, PwMapList* list)
         *str = 0;
         str++;
         if (PwMapNew(list, WOLFSSH_USERAUTH_PASSWORD,
-                     (uint8_t*)username, (uint32_t)strlen(username),
-                     (uint8_t*)password, (uint32_t)strlen(password)) == NULL ) {
+                     (byte*)username, (word32)strlen(username),
+                     (byte*)password, (word32)strlen(password)) == NULL ) {
 
             return -1;
         }
@@ -321,16 +321,16 @@ static int LoadPasswordBuffer(uint8_t* buf, uint32_t bufSz, PwMapList* list)
 }
 
 
-static int LoadPublicKeyBuffer(uint8_t* buf, uint32_t bufSz, PwMapList* list)
+static int LoadPublicKeyBuffer(byte* buf, word32 bufSz, PwMapList* list)
 {
     char* str = (char*)buf;
     char* delimiter;
-    uint8_t* publicKey64;
-    uint32_t publicKey64Sz;
-    uint8_t* username;
-    uint32_t usernameSz;
-    uint8_t  publicKey[300];
-    uint32_t publicKeySz;
+    byte* publicKey64;
+    word32 publicKey64Sz;
+    byte* username;
+    word32 usernameSz;
+    byte  publicKey[300];
+    word32 publicKeySz;
 
     /* Each line of passwd.txt is in the format
      *     ssh-rsa AAAB3BASE64ENCODEDPUBLICKEYBLOB username\n
@@ -346,14 +346,14 @@ static int LoadPublicKeyBuffer(uint8_t* buf, uint32_t bufSz, PwMapList* list)
         delimiter = strchr(str, ' ');
         str = delimiter + 1;
         delimiter = strchr(str, ' ');
-        publicKey64 = (uint8_t*)str;
+        publicKey64 = (byte*)str;
         *delimiter = 0;
-        publicKey64Sz = (uint32_t)(delimiter - str);
+        publicKey64Sz = (word32)(delimiter - str);
         str = delimiter + 1;
         delimiter = strchr(str, '\n');
-        username = (uint8_t*)str;
+        username = (byte*)str;
         *delimiter = 0;
-        usernameSz = (uint32_t)(delimiter - str);
+        usernameSz = (word32)(delimiter - str);
         str = delimiter + 1;
         publicKeySz = sizeof(publicKey);
 
@@ -375,13 +375,13 @@ static int LoadPublicKeyBuffer(uint8_t* buf, uint32_t bufSz, PwMapList* list)
 }
 
 
-static int wsUserAuth(uint8_t authType,
+static int wsUserAuth(byte authType,
                       const WS_UserAuthData* authData,
                       void* ctx)
 {
     PwMapList* list;
     PwMap* map;
-    uint8_t authHash[SHA256_DIGEST_SIZE];
+    byte authHash[SHA256_DIGEST_SIZE];
 
     if (ctx == NULL) {
         fprintf(stderr, "wsUserAuth: ctx not set");
@@ -397,7 +397,7 @@ static int wsUserAuth(uint8_t authType,
     /* Hash the password or public key with its length. */
     {
         Sha256 sha;
-        uint8_t flatSz[4];
+        byte flatSz[4];
         wc_InitSha256(&sha);
         if (authType == WOLFSSH_USERAUTH_PASSWORD) {
             c32toa(authData->sf.password.passwordSz, flatSz);
@@ -458,12 +458,12 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     WOLFSSH_CTX* ctx = NULL;
     PwMapList pwMapList;
     SOCKET_T listenFd = 0;
-    uint32_t defaultHighwater = EXAMPLE_HIGHWATER_MARK;
-    uint32_t threadCount = 0;
+    word32 defaultHighwater = EXAMPLE_HIGHWATER_MARK;
+    word32 threadCount = 0;
     int multipleConnections = 0;
     int useEcc = 0;
     char ch;
-    uint16_t port = wolfSshPort;
+    word16 port = wolfSshPort;
 
     int     argc = ((func_args*)args)->argc;
     char**  argv = ((func_args*)args)->argv;
@@ -506,8 +506,8 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     wolfSSH_CTX_SetBanner(ctx, echoserverBanner);
 
     {
-        uint8_t buf[SCRATCH_BUFFER_SZ];
-        uint32_t bufSz;
+        byte buf[SCRATCH_BUFFER_SZ];
+        word32 bufSz;
 
         bufSz = load_file(useEcc ?
                            "./keys/server-key-ecc.der" :
@@ -523,12 +523,12 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             exit(EXIT_FAILURE);
         }
 
-        bufSz = (uint32_t)strlen((char*)samplePasswordBuffer);
+        bufSz = (word32)strlen((char*)samplePasswordBuffer);
         memcpy(buf, samplePasswordBuffer, bufSz);
         buf[bufSz] = 0;
         LoadPasswordBuffer(buf, bufSz, &pwMapList);
 
-        bufSz = (uint32_t)strlen((char*)samplePublicKeyBuffer);
+        bufSz = (word32)strlen((char*)samplePublicKeyBuffer);
         memcpy(buf, samplePublicKeyBuffer, bufSz);
         buf[bufSz] = 0;
         LoadPublicKeyBuffer(buf, bufSz, &pwMapList);

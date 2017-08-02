@@ -50,7 +50,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     char rxBuf[80];
     int ret;
     char ch;
-    uint16_t port = wolfSshPort;
+    word16 port = wolfSshPort;
     char* host = (char*)wolfSshIp;
     const char* username = "nobody";
     const char* password = "password";
@@ -67,7 +67,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
                 break;
 
             case 'p':
-                port = (uint16_t)atoi(myoptarg);
+                port = (word16)atoi(myoptarg);
                 #if !defined(NO_MAIN_DRIVER) || defined(USE_WINDOWS_API)
                     if (port == 0)
                         err_sys("port number cannot be 0");
@@ -119,12 +119,12 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     if (ret != WS_SUCCESS)
         err_sys("Couldn't connect SSH stream.");
 
-    ret = wolfSSH_stream_send(ssh, (uint8_t*)testString,
-                              (uint32_t)strlen(testString));
+    ret = wolfSSH_stream_send(ssh, (byte*)testString,
+                              (word32)strlen(testString));
     if (ret != WS_SUCCESS)
         err_sys("Couldn't send test string.");
 
-    ret = wolfSSH_stream_read(ssh, (uint8_t*)rxBuf, sizeof(rxBuf) - 1);
+    ret = wolfSSH_stream_read(ssh, (byte*)rxBuf, sizeof(rxBuf) - 1);
     if (ret <= 0)
         err_sys("Stream read failed.");
     rxBuf[ret] = '\0';

@@ -268,7 +268,7 @@ static INLINE int LastError(void)
 /* The receive embedded callback
  *  return : nb bytes read, or error
  */
-int wsEmbedRecv(WOLFSSH* ssh, void* data, uint32_t sz, void* ctx)
+int wsEmbedRecv(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
 {
     int recvd;
     int err;
@@ -320,7 +320,7 @@ int wsEmbedRecv(WOLFSSH* ssh, void* data, uint32_t sz, void* ctx)
 /* The send embedded callback
  *  return : nb bytes sent, or error
  */
-int wsEmbedSend(WOLFSSH* ssh, void* data, uint32_t sz, void* ctx)
+int wsEmbedSend(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
 {
     int sd = *(int*)ctx;
     int sent;
