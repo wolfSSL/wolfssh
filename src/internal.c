@@ -2963,42 +2963,6 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
 }
 
 
-static int DoGlobalRequest(WOLFSSH* ssh,
-                           uint8_t* buf, uint32_t len, uint32_t* idx)
-{
-    uint32_t begin;
-    int ret = WS_SUCCESS;
-    char name[80];
-    uint32_t nameSz = sizeof(name);
-    uint8_t wantReply = 0;
-
-    WLOG(WS_LOG_DEBUG, "Entering DoGlobalRequest()");
-
-    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
-        ret = WS_BAD_ARGUMENT;
-
-    if (ret == WS_SUCCESS) {
-        begin = *idx;
-        ret = GetString(name, &nameSz, buf, len, &begin);
-    }
-
-    if (ret == WS_SUCCESS) {
-        WLOG(WS_LOG_DEBUG, "DGR: request name = %s", name);
-        ret = GetBoolean(&wantReply, buf, len, &begin);
-    }
-
-    if (ret == WS_SUCCESS) {
-        *idx += len;
-
-        if (wantReply)
-            ret = SendRequestSuccess(ssh, 0);
-    }
-
-    WLOG(WS_LOG_DEBUG, "Leaving DoGlobalRequest(), ret = %d", ret);
-    return ret;
-}
-
-
 static int DoUserAuthRequest(WOLFSSH* ssh,
                              uint8_t* buf, uint32_t len, uint32_t* idx)
 {
@@ -3058,6 +3022,42 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthRequest(), ret = %d", ret);
+    return ret;
+}
+
+
+static int DoGlobalRequest(WOLFSSH* ssh,
+                           uint8_t* buf, uint32_t len, uint32_t* idx)
+{
+    uint32_t begin;
+    int ret = WS_SUCCESS;
+    char name[80];
+    uint32_t nameSz = sizeof(name);
+    uint8_t wantReply = 0;
+
+    WLOG(WS_LOG_DEBUG, "Entering DoGlobalRequest()");
+
+    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        begin = *idx;
+        ret = GetString(name, &nameSz, buf, len, &begin);
+    }
+
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "DGR: request name = %s", name);
+        ret = GetBoolean(&wantReply, buf, len, &begin);
+    }
+
+    if (ret == WS_SUCCESS) {
+        *idx += len;
+
+        if (wantReply)
+            ret = SendRequestSuccess(ssh, 0);
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving DoGlobalRequest(), ret = %d", ret);
     return ret;
 }
 

@@ -287,7 +287,6 @@ int wolfSSH_accept(WOLFSSH* ssh)
             WLOG(WS_LOG_DEBUG, acceptState, "SERVER_KEXINIT_SENT");
             FALL_THROUGH;
 
-
         case ACCEPT_SERVER_KEXINIT_SENT:
             while (ssh->isKeying) {
                 if ( (ssh->error = DoReceive(ssh)) < WS_SUCCESS) {
@@ -392,6 +391,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
             }
             ssh->connectState = CONNECT_CLIENT_VERSION_SENT;
             WLOG(WS_LOG_DEBUG, connectState, "CLIENT_VERSION_SENT");
+            FALL_THROUGH;
 
         case CONNECT_CLIENT_VERSION_SENT:
             while (ssh->serverState < SERVER_VERSION_DONE) {
@@ -403,6 +403,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
             }
             ssh->connectState = CONNECT_SERVER_VERSION_DONE;
             WLOG(WS_LOG_DEBUG, connectState, "SERVER_VERSION_DONE");
+            FALL_THROUGH;
 
         case CONNECT_SERVER_VERSION_DONE:
             if ( (ssh->error = SendKexInit(ssh)) < WS_SUCCESS) {
@@ -439,7 +440,6 @@ int wolfSSH_connect(WOLFSSH* ssh)
             ssh->connectState = CONNECT_CLIENT_KEXDH_INIT_SENT;
             WLOG(WS_LOG_DEBUG, connectState, "CLIENT_KEXDH_INIT_SENT");
             FALL_THROUGH;
-
 
         case CONNECT_CLIENT_KEXDH_INIT_SENT:
             while (ssh->isKeying) {
