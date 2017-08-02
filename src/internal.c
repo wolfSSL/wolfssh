@@ -1316,8 +1316,8 @@ static int GetString(char* s, word32* sSz,
 }
 
 
-static int DoNameList(byte* idList, word32* idListSz,
-                                      byte* buf, word32 len, word32* idx)
+static int GetNameList(byte* idList, word32* idListSz,
+                       byte* buf, word32 len, word32* idx)
 {
     byte idListIdx;
     word32 nameListSz, nameListIdx;
@@ -1326,7 +1326,7 @@ static int DoNameList(byte* idList, word32* idListSz,
     word32 nameSz;
     int ret = WS_SUCCESS;
 
-    WLOG(WS_LOG_DEBUG, "Entering DoNameList()");
+    WLOG(WS_LOG_DEBUG, "Entering GetNameList()");
 
     if (idList == NULL || idListSz == NULL ||
         buf == NULL || len == 0 || idx == NULL) {
@@ -1388,7 +1388,7 @@ static int DoNameList(byte* idList, word32* idListSz,
         *idx = begin;
     }
 
-    WLOG(WS_LOG_DEBUG, "Leaving DoNameList(), ret = %d", ret);
+    WLOG(WS_LOG_DEBUG, "Leaving GetNameList(), ret = %d", ret);
     return ret;
 }
 
@@ -1591,7 +1591,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "DKI: KEX Algorithms");
         listSz = 2;
-        ret = DoNameList(list, &listSz, buf, len, &begin);
+        ret = GetNameList(list, &listSz, buf, len, &begin);
         if (ret == WS_SUCCESS) {
             algoId = MatchIdLists(list, listSz, cannedKexAlgo, cannedKexAlgoSz);
             if (algoId == ID_UNKNOWN) {
@@ -1609,7 +1609,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "DKI: Server Host Key Algorithms");
         listSz = 1;
-        ret = DoNameList(list, &listSz, buf, len, &begin);
+        ret = GetNameList(list, &listSz, buf, len, &begin);
         if (ret == WS_SUCCESS) {
             const byte *cannedKeyAlgo;
             word32 cannedKeyAlgoSz;
@@ -1646,7 +1646,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "DKI: Enc Algorithms - Client to Server");
         listSz = 3;
-        ret = DoNameList(list, &listSz, buf, len, &begin);
+        ret = GetNameList(list, &listSz, buf, len, &begin);
         if (ret == WS_SUCCESS) {
             algoId = MatchIdLists(list, listSz, cannedEncAlgo, cannedEncAlgoSz);
             if (algoId == ID_UNKNOWN) {
@@ -1660,7 +1660,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "DKI: Enc Algorithms - Server to Client");
         listSz = 3;
-        ret = DoNameList(list, &listSz, buf, len, &begin);
+        ret = GetNameList(list, &listSz, buf, len, &begin);
         if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
             WLOG(WS_LOG_DEBUG, "Unable to negotiate Encryption Algo S2C");
             ret = WS_INVALID_ALGO_ID;
@@ -1690,7 +1690,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "DKI: MAC Algorithms - Client to Server");
         listSz = 2;
-        ret = DoNameList(list, &listSz, buf, len, &begin);
+        ret = GetNameList(list, &listSz, buf, len, &begin);
         if (ret == WS_SUCCESS && !ssh->aeadMode) {
             algoId = MatchIdLists(list, listSz, cannedMacAlgo, cannedMacAlgoSz);
             if (algoId == ID_UNKNOWN) {
@@ -1704,7 +1704,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "DKI: MAC Algorithms - Server to Client");
         listSz = 2;
-        ret = DoNameList(list, &listSz, buf, len, &begin);
+        ret = GetNameList(list, &listSz, buf, len, &begin);
         if (ret == WS_SUCCESS && !ssh->handshake->aeadMode) {
             if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
                 WLOG(WS_LOG_DEBUG, "Unable to negotiate MAC Algo S2C");
@@ -1727,7 +1727,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
         WLOG(WS_LOG_DEBUG, "DKI: Compression Algorithms - Client to Server");
         listSz = 1;
-        ret = DoNameList(list, &listSz, buf, len, &begin);
+        ret = GetNameList(list, &listSz, buf, len, &begin);
         if (ret == WS_SUCCESS) {
             if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
                 WLOG(WS_LOG_DEBUG, "Unable to negotiate Compression Algo C2S");
@@ -1740,7 +1740,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "DKI: Compression Algorithms - Server to Client");
         listSz = 1;
-        ret = DoNameList(list, &listSz, buf, len, &begin);
+        ret = GetNameList(list, &listSz, buf, len, &begin);
         if (ret == WS_SUCCESS) {
             if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
                 WLOG(WS_LOG_DEBUG, "Unable to negotiate Compression Algo S2C");
@@ -3040,7 +3040,7 @@ static int DoUserAuthFailure(WOLFSSH* ssh,
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS)
-        ret = DoNameList(authList, &authListSz, buf, len, idx);
+        ret = GetNameList(authList, &authListSz, buf, len, idx);
 
     if (ret == WS_SUCCESS)
         ret = GetBoolean(&partialSuccess, buf, len, idx);
