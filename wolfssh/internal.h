@@ -28,7 +28,6 @@
 #pragma once
 
 #include <wolfssh/ssh.h>
-#include <wolfssl/options.h>
 #include <wolfssl/wolfcrypt/hash.h>
 #include <wolfssl/wolfcrypt/random.h>
 #include <wolfssl/wolfcrypt/aes.h>

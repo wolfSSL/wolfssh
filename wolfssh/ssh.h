@@ -26,6 +26,8 @@
 
 #pragma once
 
+#include <wolfssl/options.h>
+#include <wolfssl/wolfcrypt/types.h>
 #include <wolfssh/settings.h>
 #include <wolfssh/version.h>
 #include <wolfssh/port.h>
