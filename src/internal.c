@@ -715,6 +715,10 @@ static const NameIdPair NameIdMap[] = {
     { ID_ECDSA_SHA2_NISTP384, "ecdsa-sha2-nistp384" },
     { ID_ECDSA_SHA2_NISTP521, "ecdsa-sha2-nistp521" },
 
+    /* Service IDs */
+    { ID_SERVICE_USERAUTH, "ssh-userauth" },
+    { ID_SERVICE_CONNECTION, "ssh-connection" },
+
     /* UserAuth IDs */
     { ID_USERAUTH_PASSWORD, "password" },
     { ID_USERAUTH_PUBLICKEY, "publickey" },
@@ -2578,12 +2582,6 @@ static int DoDisconnect(WOLFSSH* ssh, uint8_t* buf, uint32_t len, uint32_t* idx)
 }
 
 
-#if 0
-static const char serviceNameUserAuth[] = "ssh-userauth";
-static const char serviceNameConnection[] = "ssh-connection";
-#endif
-
-
 static int DoServiceRequest(WOLFSSH* ssh,
                             uint8_t* buf, uint32_t len, uint32_t* idx)
 {
@@ -2604,6 +2602,31 @@ static int DoServiceRequest(WOLFSSH* ssh,
 
     WLOG(WS_LOG_DEBUG, "Requesting service: %s", serviceName);
     ssh->clientState = CLIENT_USERAUTH_REQUEST_DONE;
+
+    return WS_SUCCESS;
+}
+
+
+static int DoServiceAccept(WOLFSSH* ssh,
+                           uint8_t* buf, uint32_t len, uint32_t* idx)
+{
+    uint32_t begin = *idx;
+    uint32_t nameSz;
+    char     serviceName[32];
+
+    (void)len;
+
+    ato32(buf + begin, &nameSz);
+    begin += LENGTH_SZ;
+
+    WMEMCPY(serviceName, buf + begin, nameSz);
+    begin += nameSz;
+    serviceName[nameSz] = 0;
+
+    *idx = begin;
+
+    WLOG(WS_LOG_DEBUG, "Accepted service: %s", serviceName);
+    ssh->serverState = SERVER_USERAUTH_REQUEST_DONE;
 
     return WS_SUCCESS;
 }
@@ -3377,6 +3400,11 @@ static int DoPacket(WOLFSSH* ssh)
         case MSGID_SERVICE_REQUEST:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_SERVICE_REQUEST");
             ret = DoServiceRequest(ssh, buf + idx, payloadSz, &payloadIdx);
+            break;
+
+        case MSGID_SERVICE_ACCEPT:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_SERVER_ACCEPT");
+            ret = DoServiceAccept(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_USERAUTH_REQUEST:
@@ -5279,12 +5307,53 @@ int SendDebug(WOLFSSH* ssh, byte alwaysDisplay, const char* msg)
 }
 
 
-const char userAuthName[] = "ssh-userauth";
-
-
-int SendServiceAccept(WOLFSSH* ssh)
+int SendServiceRequest(WOLFSSH* ssh, uint8_t serviceId)
 {
-    uint32_t nameSz;
+    const char* serviceName;
+    uint32_t serviceNameSz;
+    uint8_t* output;
+    uint32_t idx;
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering SendServiceRequest()");
+
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        serviceName = IdToName(serviceId);
+        serviceNameSz = (uint32_t)WSTRLEN(serviceName);
+
+        ret = PreparePacket(ssh,
+                            MSG_ID_SZ + LENGTH_SZ + serviceNameSz);
+    }
+
+    if (ret == WS_SUCCESS) {
+        output = ssh->outputBuffer.buffer;
+        idx = ssh->outputBuffer.length;
+
+        output[idx++] = MSGID_SERVICE_REQUEST;
+        c32toa(serviceNameSz, output + idx);
+        idx += LENGTH_SZ;
+        WMEMCPY(output + idx, serviceName, serviceNameSz);
+        idx += serviceNameSz;
+
+        ssh->outputBuffer.length = idx;
+        ret = BundlePacket(ssh);
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = SendBuffered(ssh);
+
+    WLOG(WS_LOG_DEBUG, "Leaving SendServiceRequest(), ret = %d", ret);
+    return ret;
+}
+
+
+int SendServiceAccept(WOLFSSH* ssh, uint8_t serviceId)
+{
+    const char* serviceName;
+    uint32_t serviceNameSz;
     uint8_t* output;
     uint32_t idx;
     int      ret = WS_SUCCESS;
@@ -5293,8 +5362,9 @@ int SendServiceAccept(WOLFSSH* ssh)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
-        nameSz = (uint32_t)WSTRLEN(userAuthName);
-        ret = PreparePacket(ssh, MSG_ID_SZ + LENGTH_SZ + nameSz);
+        serviceName = IdToName(serviceId);
+        serviceNameSz = (uint32_t)WSTRLEN(serviceName);
+        ret = PreparePacket(ssh, MSG_ID_SZ + LENGTH_SZ + serviceNameSz);
     }
 
     if (ret == WS_SUCCESS) {
@@ -5302,10 +5372,10 @@ int SendServiceAccept(WOLFSSH* ssh)
         idx = ssh->outputBuffer.length;
 
         output[idx++] = MSGID_SERVICE_ACCEPT;
-        c32toa(nameSz, output + idx);
+        c32toa(serviceNameSz, output + idx);
         idx += LENGTH_SZ;
-        WMEMCPY(output + idx, userAuthName, nameSz);
-        idx += nameSz;
+        WMEMCPY(output + idx, serviceName, serviceNameSz);
+        idx += serviceNameSz;
 
         ssh->outputBuffer.length = idx;
 
@@ -5321,6 +5391,87 @@ int SendServiceAccept(WOLFSSH* ssh)
 
 static const char cannedAuths[] = "publickey,password";
 static const uint32_t cannedAuthsSz = sizeof(cannedAuths) - 1;
+
+
+int SendUserAuthRequest(WOLFSSH* ssh, uint8_t authId)
+{
+    uint8_t* output;
+    uint32_t idx;
+    const char* authName;
+    uint32_t authNameSz;
+    const char userName[] = "jill";
+    uint32_t userNameSz;
+    const char password[] = "upthehill";
+    uint32_t passwordSz;
+    const char* serviceName;
+    uint32_t serviceNameSz;
+    uint32_t payloadSz;
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering SendUserAuthRequest()");
+
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        userNameSz = (uint32_t)WSTRLEN(userName);
+        serviceName = IdToName(ID_SERVICE_CONNECTION);
+        serviceNameSz = (uint32_t)WSTRLEN(serviceName);
+        authName = IdToName(authId);
+        authNameSz = (uint32_t)WSTRLEN(authName);
+        passwordSz = (uint32_t)WSTRLEN(password);
+
+        payloadSz = MSG_ID_SZ + (LENGTH_SZ * 3) +
+                    userNameSz + serviceNameSz + authNameSz;
+
+        if (authId == ID_USERAUTH_PASSWORD)
+            payloadSz += BOOLEAN_SZ + LENGTH_SZ + passwordSz;
+        else if (authId != ID_NONE)
+            ret = WS_INVALID_ALGO_ID;
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = PreparePacket(ssh, payloadSz);
+
+    if (ret == WS_SUCCESS) {
+        output = ssh->outputBuffer.buffer;
+        idx = ssh->outputBuffer.length;
+
+        output[idx++] = MSGID_USERAUTH_REQUEST;
+        c32toa(userNameSz, output + idx);
+        idx += LENGTH_SZ;
+        WMEMCPY(output + idx, userName, userNameSz);
+        idx += userNameSz;
+
+        c32toa(serviceNameSz, output + idx);
+        idx += LENGTH_SZ;
+        WMEMCPY(output + idx, serviceName, serviceNameSz);
+        idx += serviceNameSz;
+
+        c32toa(authNameSz, output + idx);
+        idx += LENGTH_SZ;
+        WMEMCPY(output + idx, authName, authNameSz);
+        idx += authNameSz;
+
+        if (authId == ID_USERAUTH_PASSWORD) {
+            output[idx++] = 0;
+            c32toa(passwordSz, output + idx);
+            idx += LENGTH_SZ;
+            WMEMCPY(output + idx, password, passwordSz);
+            idx += passwordSz;
+        }
+
+        ssh->outputBuffer.length = idx;
+
+        ret = BundlePacket(ssh);
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = SendBuffered(ssh);
+
+    WLOG(WS_LOG_DEBUG, "Leaving SendUserAuthRequest(), ret = %d", ret);
+    return ret;
+}
 
 
 int SendUserAuthFailure(WOLFSSH* ssh, uint8_t partialSuccess)

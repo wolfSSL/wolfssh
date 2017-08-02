@@ -313,7 +313,8 @@ int wolfSSH_accept(WOLFSSH* ssh)
             FALL_THROUGH;
 
         case ACCEPT_CLIENT_USERAUTH_REQUEST_DONE:
-            if ( (ssh->error = SendServiceAccept(ssh)) < WS_SUCCESS) {
+            if ( (ssh->error = SendServiceAccept(ssh, ID_SERVICE_USERAUTH)) <
+                                                                  WS_SUCCESS) {
                 WLOG(WS_LOG_DEBUG, acceptError,
                      "CLIENT_USERAUTH_REQUEST_DONE", ssh->error);
                 return WS_FATAL_ERROR;
@@ -450,6 +451,51 @@ int wolfSSH_connect(WOLFSSH* ssh)
             }
             ssh->connectState = CONNECT_KEYED;
             WLOG(WS_LOG_DEBUG, connectState, "KEYED");
+            FALL_THROUGH;
+
+        case CONNECT_KEYED:
+            if ( (ssh->error = SendServiceRequest(ssh, ID_SERVICE_USERAUTH)) <
+                                                                  WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, connectError, "KEYED", ssh->error);
+                return WS_FATAL_ERROR;
+            }
+            ssh->connectState = CONNECT_CLIENT_USERAUTH_REQUEST_SENT;
+            WLOG(WS_LOG_DEBUG, connectState, "CLIENT_USERAUTH_REQUEST_SENT");
+            FALL_THROUGH;
+
+        case CONNECT_CLIENT_USERAUTH_REQUEST_SENT:
+            while (ssh->serverState < SERVER_USERAUTH_REQUEST_DONE) {
+                if ( (ssh->error = DoReceive(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, connectError,
+                         "CLIENT_USERAUTH_REQUEST_SENT", ssh->error);
+                    return WS_FATAL_ERROR;
+                }
+            }
+            ssh->connectState = CONNECT_SERVER_USERAUTH_REQUEST_DONE;
+            WLOG(WS_LOG_DEBUG, connectState, "SERVER_USERAUTH_REQUEST_DONE");
+            FALL_THROUGH;
+
+        case CONNECT_SERVER_USERAUTH_REQUEST_DONE:
+            if ( (ssh->error = SendUserAuthRequest(ssh, ID_NONE)) <
+                                                                  WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, connectError,
+                     "SERVER_USERAUTH_REQUEST_DONE", ssh->error);
+                return WS_FATAL_ERROR;
+            }
+            ssh->connectState = CONNECT_CLIENT_USERAUTH_SENT;
+            WLOG(WS_LOG_DEBUG, connectState, "CLIENT_USERAUTH_SENT");
+            FALL_THROUGH;
+
+        case CONNECT_CLIENT_USERAUTH_SENT:
+            while (ssh->serverState < SERVER_USERAUTH_ACCEPT_DONE) {
+                if ( (ssh->error = DoReceive(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, connectError,
+                         "CLIENT_USERAUTH_SENT", ssh->error);
+                    return WS_FATAL_ERROR;
+                }
+            }
+            ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+            WLOG(WS_LOG_DEBUG, connectState, "SERVER_USERAUTH_ACCEPT_DONE");
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_connect()");
