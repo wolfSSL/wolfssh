@@ -125,7 +125,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
     ret = wolfSSH_stream_send(ssh, (byte*)testString,
                               (word32)strlen(testString));
-    if (ret != WS_SUCCESS)
+    if (ret <= 0)
         err_sys("Couldn't send test string.");
 
     ret = wolfSSH_stream_read(ssh, (byte*)rxBuf, sizeof(rxBuf) - 1);

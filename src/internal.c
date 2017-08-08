@@ -168,6 +168,9 @@ const char* GetErrorString(int err)
         case WS_ECC_E:
             return "ECDSA buffer error";
 
+        case WS_CHANOPEN_FAILED:
+            return "peer returned channel open failure";
+
         default:
             return "Unknown error code";
     }
@@ -763,9 +766,7 @@ const char* IdToName(byte id)
 
 
 WOLFSSH_CHANNEL* ChannelNew(WOLFSSH* ssh, byte channelType,
-                            word32 peerChannel,
-                            word32 peerInitialWindowSz,
-                            word32 peerMaxPacketSz)
+                            word32 initialWindowSz, word32 maxPacketSz)
 {
     WOLFSSH_CHANNEL* newChannel = NULL;
 
@@ -782,16 +783,13 @@ WOLFSSH_CHANNEL* ChannelNew(WOLFSSH* ssh, byte channelType,
         {
             byte* buffer;
 
-            buffer = (byte*)WMALLOC(DEFAULT_WINDOW_SZ, heap, DYNTYPE_BUFFER);
+            buffer = (byte*)WMALLOC(initialWindowSz, heap, DYNTYPE_BUFFER);
             if (buffer != NULL) {
                 WMEMSET(newChannel, 0, sizeof(WOLFSSH_CHANNEL));
                 newChannel->channelType = channelType;
                 newChannel->channel = ssh->nextChannel++;
-                newChannel->windowSz = DEFAULT_WINDOW_SZ;
-                newChannel->maxPacketSz = DEFAULT_MAX_PACKET_SZ;
-                newChannel->peerChannel = peerChannel;
-                newChannel->peerWindowSz = peerInitialWindowSz;
-                newChannel->peerMaxPacketSz = peerMaxPacketSz;
+                newChannel->windowSz = initialWindowSz;
+                newChannel->maxPacketSz = maxPacketSz;
                 /*
                  * In the context of the channel input buffer, the buffer is
                  * a fixed size. The property length will be the insert point
@@ -800,7 +798,7 @@ WOLFSSH_CHANNEL* ChannelNew(WOLFSSH* ssh, byte channelType,
                  */
                 newChannel->inputBuffer.heap = heap;
                 newChannel->inputBuffer.buffer = buffer;
-                newChannel->inputBuffer.bufferSz = DEFAULT_WINDOW_SZ;
+                newChannel->inputBuffer.bufferSz = initialWindowSz;
                 newChannel->inputBuffer.dynamicFlag = 1;
             }
             else {
@@ -862,6 +860,49 @@ WOLFSSH_CHANNEL* ChannelFind(WOLFSSH* ssh, word32 channel, byte peer)
     WLOG(WS_LOG_DEBUG, "Leaving ChannelFind(): %p", findChannel);
 
     return findChannel;
+}
+
+
+int ChannelUpdate(WOLFSSH_CHANNEL* channel, word32 peerChannelId,
+                  word32 peerInitialWindowSz, word32 peerMaxPacketSz)
+{
+    int ret = WS_SUCCESS;
+
+    if (channel == NULL)
+        ret = WS_BAD_ARGUMENT;
+    else {
+        channel->peerChannel = peerChannelId;
+        channel->peerWindowSz = peerInitialWindowSz;
+        channel->peerMaxPacketSz = peerMaxPacketSz;
+    }
+
+    return ret;
+}
+
+
+static int ChannelAppend(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering ChannelAppend()");
+
+    if (ssh == NULL || channel == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ssh->channelList == NULL) {
+        ssh->channelList = channel;
+        ssh->channelListSz = 1;
+    }
+    else {
+        WOLFSSH_CHANNEL* cur = ssh->channelList;
+        while (cur->next != NULL)
+            cur = cur->next;
+        cur->next = channel;
+        ssh->channelListSz++;
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving ChannelAppend(), ret = %d", ret);
+    return ret;
 }
 
 
@@ -3064,9 +3105,41 @@ static int DoUserAuthSuccess(WOLFSSH* ssh,
     if (ssh == NULL || buf == NULL || len != 0 || idx == NULL)
         ret = WS_BAD_ARGUMENT;
 
-    ssh->serverState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+    ssh->serverState = SERVER_USERAUTH_ACCEPT_DONE;
 
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthSuccess(), ret = %d", ret);
+    return ret;
+}
+
+
+static int DoUserAuthBanner(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
+{
+    word32 begin;
+    char banner[80];
+    word32 bannerSz = sizeof(banner);
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering DoUserAuthBanner()");
+
+    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        begin = *idx;
+        ret = GetString(banner, &bannerSz, buf, len, idx);
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = GetUint32(&bannerSz, buf, len, idx);
+
+    if (ret == WS_SUCCESS) {
+        begin += bannerSz;
+        if (ssh->ctx->showBanner) {
+            WLOG(WS_LOG_INFO, "%s", banner);
+        }
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthBanner(), ret = %d", ret);
     return ret;
 }
 
@@ -3148,21 +3221,119 @@ static int DoChannelOpen(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS) {
-        newChannel = ChannelNew(ssh, typeId, peerChannelId,
-                                peerInitialWindowSz, peerMaxPacketSz);
+        newChannel = ChannelNew(ssh, typeId,
+                                DEFAULT_WINDOW_SZ, DEFAULT_MAX_PACKET_SZ);
         if (newChannel == NULL)
             ret = WS_RESOURCE_E;
         else {
-            newChannel->next = ssh->channelList;
-            ssh->channelList = newChannel;
-            ssh->channelListSz++;
-            ssh->defaultPeerChannelId = peerChannelId;
+            ChannelUpdate(newChannel, peerChannelId,
+                          peerInitialWindowSz, peerMaxPacketSz);
+            if (ssh->channelListSz == 0)
+                ssh->defaultPeerChannelId = peerChannelId;
+            ChannelAppend(ssh, newChannel);
 
             ssh->clientState = CLIENT_DONE;
         }
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoChannelOpen(), ret = %d", ret);
+    return ret;
+}
+
+
+static int DoChannelOpenConf(WOLFSSH* ssh,
+                             byte* buf, word32 len, word32* idx)
+{
+    WOLFSSH_CHANNEL* channel;
+    word32 begin, channelId, peerChannelId,
+           peerInitialWindowSz, peerMaxPacketSz;
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering DoChannelOpenConf()");
+
+    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        begin = *idx;
+        ret = GetUint32(&channelId, buf, len, &begin);
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = GetUint32(&peerChannelId, buf, len, &begin);
+
+    if (ret == WS_SUCCESS)
+        ret = GetUint32(&peerInitialWindowSz, buf, len, &begin);
+
+    if (ret == WS_SUCCESS)
+        ret = GetUint32(&peerMaxPacketSz, buf, len, &begin);
+
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_INFO, "  channelId = %u", channelId);
+        WLOG(WS_LOG_INFO, "  peerChannelId = %u", peerChannelId);
+        WLOG(WS_LOG_INFO, "  peerInitialWindowSz = %u", peerInitialWindowSz);
+        WLOG(WS_LOG_INFO, "  peerMaxPacketSz = %u", peerMaxPacketSz);
+
+        channel = ChannelFind(ssh, channelId, FIND_SELF);
+        if (channel == NULL)
+            ret = WS_INVALID_CHANID;
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = ChannelUpdate(channel, peerChannelId,
+                            peerInitialWindowSz, peerMaxPacketSz);
+
+    if (ret == WS_SUCCESS)
+        ssh->serverState = SERVER_CHANNEL_OPEN_DONE;
+
+    WLOG(WS_LOG_DEBUG, "Leaving DoChannelOpenConf(), ret = %d", ret);
+    return ret;
+}
+
+
+static int DoChannelOpenFail(WOLFSSH* ssh,
+                             byte* buf, word32 len, word32* idx)
+{
+    char desc[80];
+    word32 begin, channelId, reasonId, descSz, langSz;
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering DoChannelOpenFail()");
+
+    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        begin = *idx;
+        ret = GetUint32(&channelId, buf, len, &begin);
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = GetUint32(&reasonId, buf, len, &begin);
+
+    if (ret == WS_SUCCESS) {
+        descSz = sizeof(desc);
+        ret = GetString(desc, &descSz, buf, len, &begin);
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = GetUint32(&langSz, buf, len, &begin);
+
+    if (ret == WS_SUCCESS) {
+        *idx = begin + langSz;
+
+        WLOG(WS_LOG_INFO, "channel open failure reason code: %u", reasonId);
+        if (descSz > 0) {
+            WLOG(WS_LOG_INFO, "description: %s", desc);
+        }
+
+        ret = ChannelRemove(ssh, channelId, FIND_SELF);
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = WS_CHANOPEN_FAILED;
+
+    WLOG(WS_LOG_DEBUG, "Leaving DoChannelOpenFail(), ret = %d", ret);
     return ret;
 }
 
@@ -3286,6 +3457,38 @@ static int DoChannelRequest(WOLFSSH* ssh,
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoChannelRequest(), ret = %d", ret);
+    return ret;
+}
+
+
+static int DoChannelSuccess(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering DoChannelSuccess()");
+
+    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    ssh->serverState = SERVER_DONE;
+
+    WLOG(WS_LOG_DEBUG, "Leaving DoChannelSuccess(), ret = %d", ret);
+    return ret;
+}
+
+
+static int DoChannelFailure(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering DoChannelFailure()");
+
+    if (ssh == NULL || buf == NULL || len != 0 || idx == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS)
+        ret = WS_CHANOPEN_FAILED;
+    WLOG(WS_LOG_DEBUG, "Leaving DoChannelFailure(), ret = %d", ret);
     return ret;
 }
 
@@ -3467,6 +3670,11 @@ static int DoPacket(WOLFSSH* ssh)
             ret = DoUserAuthSuccess(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
+        case MSGID_USERAUTH_BANNER:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_USERAUTH_BANNER");
+            ret = DoUserAuthBanner(ssh, buf + idx, payloadSz, &payloadIdx);
+            break;
+
         case MSGID_GLOBAL_REQUEST:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_GLOBAL_REQUEST");
             ret = DoGlobalRequest(ssh, buf + idx, payloadSz, &payloadIdx);
@@ -3475,6 +3683,16 @@ static int DoPacket(WOLFSSH* ssh)
         case MSGID_CHANNEL_OPEN:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_OPEN");
             ret = DoChannelOpen(ssh, buf + idx, payloadSz, &payloadIdx);
+            break;
+
+        case MSGID_CHANNEL_OPEN_CONF:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_OPEN_CONF");
+            ret = DoChannelOpenConf(ssh, buf + idx, payloadSz, &payloadIdx);
+            break;
+
+        case MSGID_CHANNEL_OPEN_FAIL:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_OPEN_FAIL");
+            ret = DoChannelOpenFail(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_CHANNEL_WINDOW_ADJUST:
@@ -3500,6 +3718,16 @@ static int DoPacket(WOLFSSH* ssh)
         case MSGID_CHANNEL_REQUEST:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_REQUEST");
             ret = DoChannelRequest(ssh, buf + idx, payloadSz, &payloadIdx);
+            break;
+
+        case MSGID_CHANNEL_SUCCESS:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_SUCCESS");
+            ret = DoChannelSuccess(ssh, buf + idx, payloadSz, &payloadIdx);
+            break;
+
+        case MSGID_CHANNEL_FAILURE:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_FAILURE");
+            ret = DoChannelFailure(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         default:
@@ -5724,6 +5952,68 @@ int SendRequestSuccess(WOLFSSH* ssh, int success)
 }
 
 
+int SendChannelOpenSession(WOLFSSH* ssh,
+                           word32 initialWindowSz, word32 maxPacketSz)
+{
+    WOLFSSH_CHANNEL* newChannel;
+    byte* output;
+    const char* channelType;
+    word32 channelTypeSz, channelId, idx;
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering SendChannelOpenSession()");
+
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        channelId = ssh->nextChannel;
+        newChannel = ChannelNew(ssh, ID_CHANTYPE_SESSION,
+                                initialWindowSz, maxPacketSz);
+        if (newChannel == NULL)
+            ret = WS_MEMORY_E;
+
+        if (ret == WS_SUCCESS)
+            ret = ChannelAppend(ssh, newChannel);
+    }
+
+    if (ret == WS_SUCCESS) {
+        channelType = IdToName(ID_CHANTYPE_SESSION);
+        channelTypeSz = (word32)WSTRLEN(channelType);
+
+        ret = PreparePacket(ssh, MSG_ID_SZ + LENGTH_SZ + channelTypeSz +
+                                 (UINT32_SZ * 3));
+    }
+
+    if (ret == WS_SUCCESS) {
+        output = ssh->outputBuffer.buffer;
+        idx = ssh->outputBuffer.length;
+
+        output[idx++] = MSGID_CHANNEL_OPEN;
+        c32toa(channelTypeSz, output + idx);
+        idx += LENGTH_SZ;
+        WMEMCPY(output + idx, channelType, channelTypeSz);
+        idx += channelTypeSz;
+        c32toa(channelId, output + idx);
+        idx += UINT32_SZ;
+        c32toa(initialWindowSz, output + idx);
+        idx += UINT32_SZ;
+        c32toa(maxPacketSz, output + idx);
+        idx += UINT32_SZ;
+
+        ssh->outputBuffer.length = idx;
+
+        ret = BundlePacket(ssh);
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = SendBuffered(ssh);
+
+    WLOG(WS_LOG_DEBUG, "Leaving SendChannelOpenSession(), ret = %d", ret);
+    return ret;
+}
+
+
 int SendChannelOpenConf(WOLFSSH* ssh)
 {
     byte* output;
@@ -5968,6 +6258,58 @@ int SendChannelWindowAdjust(WOLFSSH* ssh, word32 peerChannel,
         ret = SendBuffered(ssh);
 
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelWindowAdjust(), ret = %d", ret);
+    return ret;
+}
+
+
+static const char cannedShellName[] = "shell";
+static const word32 cannedShellNameSz = sizeof(cannedShellName) - 1;
+
+
+int SendChannelRequestShell(WOLFSSH* ssh)
+{
+    byte* output;
+    word32 idx;
+    int ret = WS_SUCCESS;
+    WOLFSSH_CHANNEL* channel;
+
+    WLOG(WS_LOG_DEBUG, "Entering SendChannelRequestShell()");
+
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        channel = ChannelFind(ssh, ssh->defaultPeerChannelId, FIND_PEER);
+        if (channel == NULL)
+            ret = WS_INVALID_CHANID;
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ + LENGTH_SZ +
+                                 cannedShellNameSz + BOOLEAN_SZ);
+
+    if (ret == WS_SUCCESS) {
+        output = ssh->outputBuffer.buffer;
+        idx = ssh->outputBuffer.length;
+
+        output[idx++] = MSGID_CHANNEL_REQUEST;
+        c32toa(channel->peerChannel, output + idx);
+        idx += UINT32_SZ;
+        c32toa(cannedShellNameSz, output + idx);
+        idx += LENGTH_SZ;
+        WMEMCPY(output + idx, cannedShellName, cannedShellNameSz);
+        idx += cannedShellNameSz;
+        output[idx++] = 1;
+
+        ssh->outputBuffer.length = idx;
+
+        ret = BundlePacket(ssh);
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = SendBuffered(ssh);
+
+    WLOG(WS_LOG_DEBUG, "Leaving SendChannelRequestShell(), ret = %d", ret);
     return ret;
 }
 

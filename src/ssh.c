@@ -496,6 +496,55 @@ int wolfSSH_connect(WOLFSSH* ssh)
             }
             ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
             WLOG(WS_LOG_DEBUG, connectState, "SERVER_USERAUTH_ACCEPT_DONE");
+            FALL_THROUGH;
+
+        case CONNECT_SERVER_USERAUTH_ACCEPT_DONE:
+            if ( (ssh->error = SendChannelOpenSession(ssh, DEFAULT_WINDOW_SZ,
+                                        DEFAULT_MAX_PACKET_SZ)) < WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, connectError,
+                     "SERVER_USERAUTH_ACCEPT_DONE", ssh->error);
+                return WS_FATAL_ERROR;
+            }
+            ssh->connectState = CONNECT_CLIENT_CHANNEL_OPEN_SESSION_SENT;
+            WLOG(WS_LOG_DEBUG, connectState,
+                 "CLIENT_CHANNEL_OPEN_SESSION_SENT");
+            FALL_THROUGH;
+
+        case CONNECT_CLIENT_CHANNEL_OPEN_SESSION_SENT:
+            while (ssh->serverState < SERVER_CHANNEL_OPEN_DONE) {
+                if ( (ssh->error = DoReceive(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, connectError,
+                         "CLIENT_CHANNEL_OPEN_SESSION_SENT", ssh->error);
+                    return WS_FATAL_ERROR;
+                }
+            }
+            ssh->connectState = CONNECT_SERVER_CHANNEL_OPEN_SESSION_DONE;
+            WLOG(WS_LOG_DEBUG, connectState,
+                 "SERVER_CHANNEL_OPEN_SESSION_DONE");
+            FALL_THROUGH;
+
+        case CONNECT_SERVER_CHANNEL_OPEN_SESSION_DONE:
+            if ( (ssh->error = SendChannelRequestShell(ssh)) < WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, connectError,
+                     "SERVER_CHANNEL_OPEN_SESSION_DONE", ssh->error);
+                return WS_FATAL_ERROR;
+            }
+            ssh->connectState = CONNECT_CLIENT_CHANNEL_REQUEST_SHELL_SENT;
+            WLOG(WS_LOG_DEBUG, connectState,
+                 "CLIENT_CHANNEL_REQUEST_SHELL_SENT");
+            FALL_THROUGH;
+
+        case CONNECT_CLIENT_CHANNEL_REQUEST_SHELL_SENT:
+            while (ssh->serverState < SERVER_DONE) {
+                if ( (ssh->error = DoReceive(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, connectError,
+                         "CLIENT_CHANNEL_REQUEST_SHELL_SENT", ssh->error);
+                    return WS_FATAL_ERROR;
+                }
+            }
+            ssh->connectState = CONNECT_SERVER_CHANNEL_REQUEST_SHELL_DONE;
+            WLOG(WS_LOG_DEBUG, connectState,
+                 "SERVER_CHANNEL_REQUEST_SHELL_DONE");
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_connect()");
@@ -505,12 +554,21 @@ int wolfSSH_connect(WOLFSSH* ssh)
 
 int wolfSSH_shutdown(WOLFSSH* ssh)
 {
-    int ret = WS_UNIMPLEMENTED_E;
+    int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_shutdown()");
 
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS)
+        ret = SendChannelEof(ssh, 0);
+
+    if (ret == WS_SUCCESS)
+        ret = SendChannelClose(ssh, 0);
+
+    if (ret == WS_SUCCESS)
+        ret = SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION);
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_shutdown(), ret = %d", ret);
     return ret;

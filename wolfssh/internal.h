@@ -126,7 +126,9 @@ enum {
 #ifndef DEFAULT_MAX_PACKET_SZ
     #define DEFAULT_MAX_PACKET_SZ (16 * 1024)
 #endif
-#define DEFAULT_NEXT_CHANNEL 13013
+#ifndef DEFAULT_NEXT_CHANNEL
+    #define DEFAULT_NEXT_CHANNEL 0
+#endif
 
 
 WOLFSSH_LOCAL byte NameToId(const char*, word32);
@@ -169,8 +171,8 @@ struct WOLFSSH_CTX {
     word32 highwaterMark;
     const char* banner;
     word32 bannerSz;
-
     byte side;                        /* client or server */
+    byte showBanner;
 };
 
 
@@ -320,8 +322,8 @@ WOLFSSH_LOCAL void CtxResourceFree(WOLFSSH_CTX*);
 WOLFSSH_LOCAL WOLFSSH* SshInit(WOLFSSH*, WOLFSSH_CTX*);
 WOLFSSH_LOCAL void SshResourceFree(WOLFSSH*, void*);
 
-WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelNew(WOLFSSH*, byte, word32,
-                                          word32, word32);
+WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelNew(WOLFSSH*, byte, word32, word32);
+WOLFSSH_LOCAL int ChannelUpdate(WOLFSSH_CHANNEL*, word32, word32, word32);
 WOLFSSH_LOCAL void ChannelDelete(WOLFSSH_CHANNEL*, void*);
 WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelFind(WOLFSSH*, word32, byte);
 WOLFSSH_LOCAL int ChannelRemove(WOLFSSH*, word32, byte);
@@ -360,11 +362,13 @@ WOLFSSH_LOCAL int SendUserAuthBanner(WOLFSSH*);
 WOLFSSH_LOCAL int SendUserAuthPkOk(WOLFSSH*, const byte*, word32,
                                    const byte*, word32);
 WOLFSSH_LOCAL int SendRequestSuccess(WOLFSSH*, int);
+WOLFSSH_LOCAL int SendChannelOpenSession(WOLFSSH*, word32, word32);
 WOLFSSH_LOCAL int SendChannelOpenConf(WOLFSSH*);
 WOLFSSH_LOCAL int SendChannelEof(WOLFSSH*, word32);
 WOLFSSH_LOCAL int SendChannelClose(WOLFSSH*, word32);
 WOLFSSH_LOCAL int SendChannelData(WOLFSSH*, word32, byte*, word32);
 WOLFSSH_LOCAL int SendChannelWindowAdjust(WOLFSSH*, word32, word32);
+WOLFSSH_LOCAL int SendChannelRequestShell(WOLFSSH*);
 WOLFSSH_LOCAL int SendChannelSuccess(WOLFSSH*, word32, int);
 WOLFSSH_LOCAL int GenerateKey(byte, byte, byte*, word32, const byte*, word32,
                               const byte*, word32, const byte*, word32);
@@ -396,7 +400,11 @@ enum ConnectStates {
     CONNECT_CLIENT_USERAUTH_REQUEST_SENT,
     CONNECT_SERVER_USERAUTH_REQUEST_DONE,
     CONNECT_CLIENT_USERAUTH_SENT,
-    CONNECT_SERVER_USERAUTH_ACCEPT_DONE
+    CONNECT_SERVER_USERAUTH_ACCEPT_DONE,
+    CONNECT_CLIENT_CHANNEL_OPEN_SESSION_SENT,
+    CONNECT_SERVER_CHANNEL_OPEN_SESSION_DONE,
+    CONNECT_CLIENT_CHANNEL_REQUEST_SHELL_SENT,
+    CONNECT_SERVER_CHANNEL_REQUEST_SHELL_DONE
 };
 
 
@@ -416,7 +424,9 @@ enum ServerStates {
     SERVER_VERSION_DONE,
     SERVER_KEXINIT_DONE,
     SERVER_USERAUTH_REQUEST_DONE,
-    SERVER_USERAUTH_ACCEPT_DONE
+    SERVER_USERAUTH_ACCEPT_DONE,
+    SERVER_CHANNEL_OPEN_DONE,
+    SERVER_DONE
 };
 
 
@@ -462,6 +472,7 @@ enum WS_MessageIds {
 
     MSGID_CHANNEL_OPEN = 90,
     MSGID_CHANNEL_OPEN_CONF = 91,
+    MSGID_CHANNEL_OPEN_FAIL = 92,
     MSGID_CHANNEL_WINDOW_ADJUST = 93,
     MSGID_CHANNEL_DATA = 94,
     MSGID_CHANNEL_EOF = 96,
