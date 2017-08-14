@@ -269,7 +269,16 @@ static const char samplePasswordBuffer[] =
     "jack:fetchapail\n";
 
 
-static const char samplePublicKeyBuffer[] =
+static const char samplePublicKeyEccBuffer[] =
+    "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAA"
+    "BBBNkI5JTP6D0lF42tbxX19cE87hztUS6FSDoGvPfiU0CgeNSbI+aFdKIzTP5CQEJSvm25"
+    "qUzgDtH7oyaQROUnNvk= hansel\n"
+    "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAA"
+    "BBBKAtH8cqaDbtJFjtviLobHBmjCtG56DMkP6A4M2H9zX2/YCg1h9bYS7WHd9UQDwXO1Hh"
+    "IZzRYecXh7SG9P4GhRY= gretel\n";
+
+
+static const char samplePublicKeyRsaBuffer[] =
     "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC9P3ZFowOsONXHD5MwWiCciXytBRZGho"
     "MNiisWSgUs5HdHcACuHYPi2W6Z1PBFmBWT9odOrGRjoZXJfDDoPi+j8SSfDGsc/hsCmc3G"
     "p2yEhUZUEkDhtOXyqjns1ickC9Gh4u80aSVtwHRnJZh9xPhSq5tLOhId4eP61s+a5pwjTj"
@@ -506,13 +515,13 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     wolfSSH_CTX_SetBanner(ctx, echoserverBanner);
 
     {
+        const char* bufName;
         byte buf[SCRATCH_BUFFER_SZ];
         word32 bufSz;
 
-        bufSz = load_file(useEcc ?
-                           "./keys/server-key-ecc.der" :
-                           "./keys/server-key-rsa.der",
-                          buf, SCRATCH_BUFFER_SZ);
+        bufName = useEcc ? "./keys/server-key-ecc.der" :
+                           "./keys/server-key-rsa.der" ;
+        bufSz = load_file(bufName, buf, SCRATCH_BUFFER_SZ);
         if (bufSz == 0) {
             fprintf(stderr, "Couldn't load key file.\n");
             exit(EXIT_FAILURE);
@@ -523,13 +532,15 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             exit(EXIT_FAILURE);
         }
 
-        bufSz = (word32)strlen((char*)samplePasswordBuffer);
+        bufSz = (word32)strlen(samplePasswordBuffer);
         memcpy(buf, samplePasswordBuffer, bufSz);
         buf[bufSz] = 0;
         LoadPasswordBuffer(buf, bufSz, &pwMapList);
 
-        bufSz = (word32)strlen((char*)samplePublicKeyBuffer);
-        memcpy(buf, samplePublicKeyBuffer, bufSz);
+        bufName = useEcc ? samplePublicKeyEccBuffer :
+                           samplePublicKeyRsaBuffer;
+        bufSz = (word32)strlen(bufName);
+        memcpy(buf, bufName, bufSz);
         buf[bufSz] = 0;
         LoadPublicKeyBuffer(buf, bufSz, &pwMapList);
     }
