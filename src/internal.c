@@ -5681,14 +5681,11 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId)
     word32 idx;
     const char* authName;
     word32 authNameSz;
-    const char userName[] = "jill";
-    word32 userNameSz;
-    const char password[] = "upthehill";
-    word32 passwordSz;
     const char* serviceName;
     word32 serviceNameSz;
     word32 payloadSz;
     int ret = WS_SUCCESS;
+    WS_UserAuthData authData;
 
     WLOG(WS_LOG_DEBUG, "Entering SendUserAuthRequest()");
 
@@ -5696,18 +5693,30 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
-        userNameSz = (word32)WSTRLEN(userName);
+        if (authId == ID_USERAUTH_PASSWORD && ssh->ctx->userAuthCb != NULL) {
+            WLOG(WS_LOG_DEBUG, "SUARPW: Calling the userauth callback");
+            ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PASSWORD,
+                                       &authData, ssh->userAuthCtx);
+            if (ret != WOLFSSH_USERAUTH_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, "SUARPW: Couldn't get password");
+                ret = WS_FATAL_ERROR;
+            }
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
         serviceName = IdToName(ID_SERVICE_CONNECTION);
         serviceNameSz = (word32)WSTRLEN(serviceName);
         authName = IdToName(authId);
         authNameSz = (word32)WSTRLEN(authName);
-        passwordSz = (word32)WSTRLEN(password);
 
         payloadSz = MSG_ID_SZ + (LENGTH_SZ * 3) +
-                    userNameSz + serviceNameSz + authNameSz;
+                    ssh->userNameSz + serviceNameSz + authNameSz;
 
-        if (authId == ID_USERAUTH_PASSWORD)
-            payloadSz += BOOLEAN_SZ + LENGTH_SZ + passwordSz;
+        if (authId == ID_USERAUTH_PASSWORD) {
+            payloadSz += BOOLEAN_SZ + LENGTH_SZ +
+                         authData.sf.password.passwordSz;
+        }
         else if (authId != ID_NONE)
             ret = WS_INVALID_ALGO_ID;
     }
@@ -5720,10 +5729,10 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId)
         idx = ssh->outputBuffer.length;
 
         output[idx++] = MSGID_USERAUTH_REQUEST;
-        c32toa(userNameSz, output + idx);
+        c32toa(ssh->userNameSz, output + idx);
         idx += LENGTH_SZ;
-        WMEMCPY(output + idx, userName, userNameSz);
-        idx += userNameSz;
+        WMEMCPY(output + idx, ssh->userName, ssh->userNameSz);
+        idx += ssh->userNameSz;
 
         c32toa(serviceNameSz, output + idx);
         idx += LENGTH_SZ;
@@ -5736,11 +5745,12 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId)
         idx += authNameSz;
 
         if (authId == ID_USERAUTH_PASSWORD) {
-            output[idx++] = 0;
-            c32toa(passwordSz, output + idx);
+            output[idx++] = 0; /* Boolean "FALSE" for password change */
+            c32toa(authData.sf.password.passwordSz, output + idx);
             idx += LENGTH_SZ;
-            WMEMCPY(output + idx, password, passwordSz);
-            idx += passwordSz;
+            WMEMCPY(output + idx, authData.sf.password.password,
+                    authData.sf.password.passwordSz);
+            idx += authData.sf.password.passwordSz;
         }
 
         ssh->outputBuffer.length = idx;

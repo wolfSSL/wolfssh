@@ -86,7 +86,6 @@ WOLFSSH_API void* wolfSSH_GetIOReadCtx(WOLFSSH*);
 WOLFSSH_API void* wolfSSH_GetIOWriteCtx(WOLFSSH*);
 
 /* User Authentication callback */
-
 typedef struct WS_UserAuthData_Password {
     byte* password;
     word32 passwordSz;
@@ -121,10 +120,12 @@ typedef struct WS_UserAuthData {
     } sf;
 } WS_UserAuthData;
 
-typedef int (*WS_CallbackUserAuth)(byte, const WS_UserAuthData*, void*);
+typedef int (*WS_CallbackUserAuth)(byte, WS_UserAuthData*, void*);
 WOLFSSH_API void wolfSSH_SetUserAuth(WOLFSSH_CTX*, WS_CallbackUserAuth);
 WOLFSSH_API void wolfSSH_SetUserAuthCtx(WOLFSSH*, void*);
 WOLFSSH_API void* wolfSSH_GetUserAuthCtx(WOLFSSH*);
+
+WOLFSSH_API int wolfSSH_SetUsername(WOLFSSH*, const char*);
 
 WOLFSSH_API int wolfSSH_CTX_SetBanner(WOLFSSH_CTX*, const char*);
 WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX*,

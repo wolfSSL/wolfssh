@@ -21,11 +21,45 @@
 
 #include <wolfssh/ssh.h>
 #include <wolfssh/test.h>
+#include <termios.h>
 #include "examples/client/client.h"
 
 
 const char testString[] = "Hello, wolfSSH!";
 int gHasTty = 0; /* Allows client to pretend to be interactive or not. */
+
+
+static struct termios originalTerm;
+
+static int InitEcho(void)
+{
+    return tcgetattr(STDIN_FILENO, &originalTerm);
+}
+
+
+static int SetEcho(int on)
+{
+    if (on) {
+        if (tcsetattr(STDIN_FILENO, TCSANOW, &originalTerm) != 0) {
+            printf("Couldn't restore the terminal settings.\n");
+            return -1;
+        }
+    }
+    else {
+        struct termios newTerm;
+        memcpy(&newTerm, &originalTerm, sizeof(struct termios));
+
+        newTerm.c_lflag &= ~ECHO;
+        newTerm.c_lflag |= (ICANON | ECHONL);
+
+        if (tcsetattr(STDIN_FILENO, TCSANOW, &newTerm) != 0) {
+            printf("Couldn't turn off echo.\n");
+            return -1;
+        }
+    }
+
+    return 0;
+}
 
 
 static void ShowUsage(void)
@@ -34,9 +68,48 @@ static void ShowUsage(void)
     printf(" -?            display this help and exit\n");
     printf(" -h <host>     host to connect to, default %s\n", wolfSshIp);
     printf(" -p <num>      port to connect on, default %d\n", wolfSshPort);
-    printf(" -u <username> username to authenticate as, default \"nobody\"\n");
-    printf(" -P <password> password for username, default \"password\"\n");
+    printf(" -u <username> username to authenticate as (REQUIRED)\n");
+    printf(" -P <password> password for username, prompted if omitted\n");
     printf(" -B            disable banner display\n");
+}
+
+
+byte userPassword[256];
+
+static int wsUserAuth(byte authType,
+                      WS_UserAuthData* authData,
+                      void* ctx)
+{
+    const char* defaultPassword = (const char*)ctx;
+    word32 passwordSz;
+    int ret = WOLFSSH_USERAUTH_SUCCESS;
+
+    (void)authType;
+    if (defaultPassword != NULL) {
+        passwordSz = (word32)strlen(defaultPassword);
+        memcpy(userPassword, defaultPassword, passwordSz);
+    }
+    else {
+        printf("Password: ");
+        SetEcho(0);
+        if (fgets((char*)userPassword, sizeof(userPassword), stdin) == NULL) {
+            printf("Getting password failed.\n");
+            ret = WOLFSSH_USERAUTH_FAILURE;
+        }
+        else {
+            passwordSz = (word32)strlen((const char*)userPassword);
+            if (userPassword[passwordSz - 1] == '\n')
+                userPassword[--passwordSz] = '\0';
+        }
+        SetEcho(1);
+    }
+
+    if (ret == WOLFSSH_USERAUTH_SUCCESS) {
+        authData->sf.password.password = userPassword;
+        authData->sf.password.passwordSz = passwordSz;
+    }
+
+    return ret;
 }
 
 
@@ -52,8 +125,8 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     char ch;
     word16 port = wolfSshPort;
     char* host = (char*)wolfSshIp;
-    const char* username = "nobody";
-    const char* password = "password";
+    const char* username = NULL;
+    const char* password = NULL;
     int displayBanner = 1;
 
     int     argc = ((func_args*)args)->argc;
@@ -97,17 +170,25 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     }
     myoptind = 0;      /* reset for test cases */
 
-    (void)username;
-    (void)password;
-    (void)displayBanner;
+    if (username == NULL)
+        err_sys("client requires a username parameter.");
 
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
     if (ctx == NULL)
         err_sys("Couldn't create wolfSSH client context.");
 
+    wolfSSH_SetUserAuth(ctx, wsUserAuth);
+
     ssh = wolfSSH_new(ctx);
     if (ssh == NULL)
         err_sys("Couldn't create wolfSSH session.");
+
+    if (password != NULL)
+        wolfSSH_SetUserAuthCtx(ssh, (void*)password);
+
+    ret = wolfSSH_SetUsername(ssh, username);
+    if (ret != WS_SUCCESS)
+        err_sys("Couldn't set the username.");
 
     build_addr(&clientAddr, host, port);
     tcp_socket(&sockFd);
@@ -158,6 +239,8 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
         StartTCP();
         gHasTty = isatty(fileno(stdin));
+        if (InitEcho() != 0)
+            err_sys("Couldn't initialize terminal.");
 
         #ifdef DEBUG_WOLFSSH
             wolfSSH_Debugging_ON();

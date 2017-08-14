@@ -385,7 +385,7 @@ static int LoadPublicKeyBuffer(byte* buf, word32 bufSz, PwMapList* list)
 
 
 static int wsUserAuth(byte authType,
-                      const WS_UserAuthData* authData,
+                      WS_UserAuthData* authData,
                       void* ctx)
 {
     PwMapList* list;

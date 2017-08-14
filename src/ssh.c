@@ -688,6 +688,41 @@ void* wolfSSH_GetUserAuthCtx(WOLFSSH* ssh)
 }
 
 
+int wolfSSH_SetUsername(WOLFSSH* ssh, const char* username)
+{
+    char* value = NULL;
+    word32 valueSz;
+    int ret = WS_SUCCESS;
+
+    if (ssh == NULL || ssh->handshake == NULL ||
+        ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER ||
+        username == NULL) {
+
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        valueSz = (word32)WSTRLEN(username);
+        if (valueSz > 0)
+            value = (char*)WMALLOC(valueSz + 1, ssh->ctx->heap, DYNTYPE_STRING);
+        if (value == NULL)
+            ret = WS_MEMORY_E;
+    }
+
+    if (ret == WS_SUCCESS) {
+        WSTRNCPY(value, username, valueSz + 1);
+        if (ssh->userName != NULL) {
+            WFREE(ssh->userName, heap, DYNTYPE_STRING);
+            ssh->userName = NULL;
+        }
+        ssh->userName = value;
+        ssh->userNameSz = valueSz;
+    }
+
+    return ret;
+}
+
+
 int wolfSSH_CTX_SetBanner(WOLFSSH_CTX* ctx,
                           const char* newBanner)
 {

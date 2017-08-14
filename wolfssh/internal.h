@@ -294,8 +294,10 @@ struct WOLFSSH {
     HandshakeInfo* handshake;
 
     void* userAuthCtx;
-    byte* userName;
+    char* userName;
     word32 userNameSz;
+    char* password;
+    word32 passwordSz;
     byte* pkBlob;
     word32 pkBlobSz;
     byte* peerProtoId;     /* Save for rekey */
