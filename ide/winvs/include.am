@@ -2,6 +2,6 @@
 # All paths should be given relative to the root
 
 EXTRA_DIST+= ide/winvs/README.txt
-#EXTRA_DIST+= ide/winvs/api.vcxproj
-#EXTRA_DIST+= ide/winvs/wolfssh.sln
-#EXTRA_DIST+= ide/winvs/wolfssh.vcxproj
+EXTRA_DIST+= ide/winvs/wolfssh.sln
+EXTRA_DIST+= ide/winvs/wolfssh/wolfssh.vcxproj
+EXTRA_DIST+= ide/winvs/api-test/api-test.vcxproj
