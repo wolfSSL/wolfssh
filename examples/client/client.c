@@ -26,7 +26,6 @@
 
 
 const char testString[] = "Hello, wolfSSH!";
-int gHasTty = 0; /* Allows client to pretend to be interactive or not. */
 
 
 static struct termios originalTerm;
@@ -70,7 +69,6 @@ static void ShowUsage(void)
     printf(" -p <num>      port to connect on, default %d\n", wolfSshPort);
     printf(" -u <username> username to authenticate as (REQUIRED)\n");
     printf(" -P <password> password for username, prompted if omitted\n");
-    printf(" -B            disable banner display\n");
 }
 
 
@@ -127,13 +125,12 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     char* host = (char*)wolfSshIp;
     const char* username = NULL;
     const char* password = NULL;
-    int displayBanner = 1;
 
     int     argc = ((func_args*)args)->argc;
     char**  argv = ((func_args*)args)->argv;
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?h:p:u:BP:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?h:p:u:P:")) != -1) {
         switch (ch) {
             case 'h':
                 host = myoptarg;
@@ -153,10 +150,6 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
             case 'P':
                 password = myoptarg;
-                break;
-
-            case 'B':
-                displayBanner = 0;
                 break;
 
             case '?':
@@ -238,7 +231,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         args.return_code = 0;
 
         StartTCP();
-        gHasTty = isatty(fileno(stdin));
+
         if (InitEcho() != 0)
             err_sys("Couldn't initialize terminal.");
 
