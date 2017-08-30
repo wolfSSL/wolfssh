@@ -28,10 +28,11 @@
 #pragma once
 
 #include <wolfssh/ssh.h>
-#include <wolfssl/options.h>
 #include <wolfssl/wolfcrypt/hash.h>
 #include <wolfssl/wolfcrypt/random.h>
 #include <wolfssl/wolfcrypt/aes.h>
+#include <wolfssl/wolfcrypt/dh.h>
+#include <wolfssl/wolfcrypt/ecc.h>
 
 
 #if !defined (ALIGN16)
@@ -82,6 +83,10 @@ enum {
     ID_ECDSA_SHA2_NISTP384,
     ID_ECDSA_SHA2_NISTP521,
 
+    /* Service IDs */
+    ID_SERVICE_USERAUTH,
+    ID_SERVICE_CONNECTION,
+
     /* UserAuth IDs */
     ID_USERAUTH_PASSWORD,
     ID_USERAUTH_PUBLICKEY,
@@ -93,25 +98,25 @@ enum {
 };
 
 
-#define MAX_ENCRYPTION   3
-#define MAX_INTEGRITY    2
+#define MAX_ENCRYPTION 3
+#define MAX_INTEGRITY 2
 #define MAX_KEY_EXCHANGE 2
-#define MAX_PUBLIC_KEY   1
-#define MAX_HMAC_SZ      SHA256_DIGEST_SIZE
-#define MIN_BLOCK_SZ     8
-#define COOKIE_SZ        16
-#define LENGTH_SZ        4
-#define PAD_LENGTH_SZ    1
-#define MIN_PAD_LENGTH   4
-#define BOOLEAN_SZ       1
-#define MSG_ID_SZ        1
-#define SHA1_96_SZ       12
-#define UINT32_SZ        4
-#define SSH_PROTO_SZ     7    /* "SSH-2.0" */
-#define SSH_PROTO_EOL_SZ 2    /* Just the CRLF */
-#define AEAD_IMP_IV_SZ   4
-#define AEAD_EXP_IV_SZ   8
-#define AEAD_NONCE_SZ    (AEAD_IMP_IV_SZ+AEAD_EXP_IV_SZ)
+#define MAX_PUBLIC_KEY 1
+#define MAX_HMAC_SZ SHA256_DIGEST_SIZE
+#define MIN_BLOCK_SZ 8
+#define COOKIE_SZ 16
+#define LENGTH_SZ 4
+#define PAD_LENGTH_SZ 1
+#define MIN_PAD_LENGTH 4
+#define BOOLEAN_SZ 1
+#define MSG_ID_SZ 1
+#define SHA1_96_SZ 12
+#define UINT32_SZ 4
+#define SSH_PROTO_SZ 7 /* "SSH-2.0" */
+#define SSH_PROTO_EOL_SZ 2 /* Just the CRLF */
+#define AEAD_IMP_IV_SZ 4
+#define AEAD_EXP_IV_SZ 8
+#define AEAD_NONCE_SZ (AEAD_IMP_IV_SZ+AEAD_EXP_IV_SZ)
 #ifndef DEFAULT_HIGHWATER_MARK
     #define DEFAULT_HIGHWATER_MARK ((1024 * 1024 * 1024) - (32 * 1024))
 #endif
@@ -121,11 +126,13 @@ enum {
 #ifndef DEFAULT_MAX_PACKET_SZ
     #define DEFAULT_MAX_PACKET_SZ (16 * 1024)
 #endif
-#define DEFAULT_NEXT_CHANNEL  13013
+#ifndef DEFAULT_NEXT_CHANNEL
+    #define DEFAULT_NEXT_CHANNEL 0
+#endif
 
 
-WOLFSSH_LOCAL uint8_t     NameToId(const char*, uint32_t);
-WOLFSSH_LOCAL const char* IdToName(uint8_t);
+WOLFSSH_LOCAL byte NameToId(const char*, word32);
+WOLFSSH_LOCAL const char* IdToName(byte);
 
 
 #define STATIC_BUFFER_LEN AES_BLOCK_SIZE
@@ -135,35 +142,37 @@ WOLFSSH_LOCAL const char* IdToName(uint8_t);
 
 
 typedef struct Buffer {
-    void*           heap;         /* Heap for allocations */
-    uint32_t        length;       /* total buffer length used */
-    uint32_t        idx;          /* idx to part of length already consumed */
-    uint8_t*        buffer;       /* place holder for actual buffer */
-    uint32_t        bufferSz;     /* current buffer size */
-    ALIGN16 uint8_t staticBuffer[STATIC_BUFFER_LEN];
-    uint8_t         dynamicFlag;  /* dynamic memory currently in use */
+    void* heap;       /* Heap for allocations */
+    word32 length;    /* total buffer length used */
+    word32 idx;       /* idx to part of length already consumed */
+    byte* buffer;     /* place holder for actual buffer */
+    word32 bufferSz;  /* current buffer size */
+    ALIGN16 byte staticBuffer[STATIC_BUFFER_LEN];
+    byte dynamicFlag; /* dynamic memory currently in use */
 } Buffer;
 
 
-WOLFSSH_LOCAL int BufferInit(Buffer*, uint32_t, void*);
-WOLFSSH_LOCAL int GrowBuffer(Buffer*, uint32_t, uint32_t);
+WOLFSSH_LOCAL int BufferInit(Buffer*, word32, void*);
+WOLFSSH_LOCAL int GrowBuffer(Buffer*, word32, word32);
 WOLFSSH_LOCAL void ShrinkBuffer(Buffer* buf, int);
 
 
 /* our wolfSSH Context */
 struct WOLFSSH_CTX {
-    void*               heap;        /* heap hint */
-    WS_CallbackIORecv   ioRecvCb;    /* I/O Receive Callback */
-    WS_CallbackIOSend   ioSendCb;    /* I/O Send Callback */
-    WS_CallbackUserAuth userAuthCb;  /* User Authentication Callback */
+    void* heap;                       /* heap hint */
+    WS_CallbackIORecv ioRecvCb;       /* I/O Receive Callback */
+    WS_CallbackIOSend ioSendCb;       /* I/O Send Callback */
+    WS_CallbackUserAuth userAuthCb;   /* User Authentication Callback */
     WS_CallbackHighwater highwaterCb; /* Data Highwater Mark Callback */
 
-    uint8_t*            privateKey;  /* Owned by CTX */
-    uint32_t            privateKeySz;
-    uint8_t             useEcc;      /* Depends on the private key */
-    uint32_t            highwaterMark;
-    const char*         banner;
-    uint32_t            bannerSz;
+    byte* privateKey;                 /* Owned by CTX */
+    word32 privateKeySz;
+    byte useEcc;                      /* Depends on the private key */
+    word32 highwaterMark;
+    const char* banner;
+    word32 bannerSz;
+    byte side;                        /* client or server */
+    byte showBanner;
 };
 
 
@@ -173,202 +182,205 @@ typedef struct Ciphers {
 
 
 typedef struct Keys {
-    uint8_t        iv[AES_BLOCK_SIZE];
-    uint8_t        ivSz;
-    uint8_t        encKey[AES_BLOCK_SIZE];
-    uint8_t        encKeySz;
-    uint8_t        macKey[MAX_HMAC_SZ];
-    uint8_t        macKeySz;
+    byte iv[AES_BLOCK_SIZE];
+    byte ivSz;
+    byte encKey[AES_BLOCK_SIZE];
+    byte encKeySz;
+    byte macKey[MAX_HMAC_SZ];
+    byte macKeySz;
 } Keys;
 
 
 typedef struct HandshakeInfo {
-    uint8_t        kexId;
-    uint8_t        pubKeyId;
-    uint8_t        encryptId;
-    uint8_t        macId;
-    uint8_t        hashId;
-    uint8_t        kexPacketFollows;
-    uint8_t        aeadMode;
+    byte kexId;
+    byte pubKeyId;
+    byte encryptId;
+    byte macId;
+    byte hashId;
+    byte kexPacketFollows;
+    byte aeadMode;
 
-    uint8_t        blockSz;
-    uint8_t        macSz;
+    byte blockSz;
+    byte macSz;
 
-    Keys           clientKeys;
-    Keys           serverKeys;
-    wc_HashAlg     hash;
-    uint8_t        e[257]; /* May have a leading zero, for unsigned, or
-                            * it is a nistp521 Q_S value. */
-    uint32_t       eSz;
-    uint8_t*       serverKexInit;
-    uint32_t       serverKexInitSz;
+    Keys keys;
+    Keys peerKeys;
+    wc_HashAlg hash;
+    byte e[257]; /* May have a leading zero for unsigned or is a Q_S value. */
+    word32 eSz;
+    byte x[257]; /* May have a leading zero, for unsigned. */
+    word32 xSz;
+    byte* kexInit;
+    word32 kexInitSz;
 
-    uint32_t       dhGexMinSz;
-    uint32_t       dhGexPreferredSz;
-    uint32_t       dhGexMaxSz;
+    word32 dhGexMinSz;
+    word32 dhGexPreferredSz;
+    word32 dhGexMaxSz;
+    byte* primeGroup;
+    word32 primeGroupSz;
+    byte* generator;
+    word32 generatorSz;
+
+    byte useEcc;
+    union {
+        DhKey dh;
+        ecc_key ecc;
+    } privKey;
 } HandshakeInfo;
 
 
 /* our wolfSSH session */
 struct WOLFSSH {
-    WOLFSSH_CTX*   ctx;            /* owner context */
-    int            error;
-    int            rfd;
-    int            wfd;
-    void*          ioReadCtx;      /* I/O Read  Context handle */
-    void*          ioWriteCtx;     /* I/O Write Context handle */
-    int            rflags;         /* optional read  flags */
-    int            wflags;         /* optional write flags */
-    uint32_t       txCount;
-    uint32_t       rxCount;
-    uint32_t       highwaterMark;
-    uint8_t        highwaterFlag;  /* Set when highwater CB called */
-    void*          highwaterCtx;
-    uint32_t       curSz;
-    uint32_t       seq;
-    uint32_t       peerSeq;
-    uint32_t       packetStartIdx; /* Current send packet start index */
-    uint8_t        paddingSz;      /* Current send packet padding size */
-    uint8_t        acceptState;
-    uint8_t        clientState;
-    uint8_t        processReplyState;
-    uint8_t        keyingState;
+    WOLFSSH_CTX* ctx;      /* owner context */
+    int error;
+    int rfd;
+    int wfd;
+    void* ioReadCtx;       /* I/O Read  Context handle */
+    void* ioWriteCtx;      /* I/O Write Context handle */
+    int rflags;            /* optional read  flags */
+    int wflags;            /* optional write flags */
+    word32 txCount;
+    word32 rxCount;
+    word32 highwaterMark;
+    byte highwaterFlag;    /* Set when highwater CB called */
+    void* highwaterCtx;
+    word32 curSz;
+    word32 seq;
+    word32 peerSeq;
+    word32 packetStartIdx; /* Current send packet start index */
+    byte paddingSz;        /* Current send packet padding size */
+    byte acceptState;
+    byte connectState;
+    byte clientState;
+    byte serverState;
+    byte processReplyState;
+    byte isKeying;
 
-    uint8_t        connReset;
-    uint8_t        isClosed;
+    byte connReset;
+    byte isClosed;
 
-    uint8_t        blockSz;
-    uint8_t        encryptId;
-    uint8_t        macId;
-    uint8_t        macSz;
-    uint8_t        aeadMode;
-    uint8_t        peerBlockSz;
-    uint8_t        peerEncryptId;
-    uint8_t        peerMacId;
-    uint8_t        peerMacSz;
-    uint8_t        peerAeadMode;
+    byte blockSz;
+    byte encryptId;
+    byte macId;
+    byte macSz;
+    byte aeadMode;
+    byte peerBlockSz;
+    byte peerEncryptId;
+    byte peerMacId;
+    byte peerMacSz;
+    byte peerAeadMode;
 
-    Ciphers        encryptCipher;
-    Ciphers        decryptCipher;
+    Ciphers encryptCipher;
+    Ciphers decryptCipher;
 
-    uint32_t       nextChannel;
+    word32 nextChannel;
     WOLFSSH_CHANNEL* channelList;
-    uint32_t       channelListSz;
-    uint32_t       defaultPeerChannelId;
+    word32 channelListSz;
+    word32 defaultPeerChannelId;
 
-    Buffer         inputBuffer;
-    Buffer         outputBuffer;
-    WC_RNG*        rng;
+    Buffer inputBuffer;
+    Buffer outputBuffer;
+    WC_RNG* rng;
 
-    uint8_t        h[WC_MAX_DIGEST_SIZE];
-    uint32_t       hSz;
-    uint8_t        k[257]; /* May have a leading zero, for unsigned. */
-    uint32_t       kSz;
-    uint8_t        sessionId[WC_MAX_DIGEST_SIZE];
-    uint32_t       sessionIdSz;
+    byte h[WC_MAX_DIGEST_SIZE];
+    word32 hSz;
+    byte k[257];           /* May have a leading zero, for unsigned. */
+    word32 kSz;
+    byte sessionId[WC_MAX_DIGEST_SIZE];
+    word32 sessionIdSz;
 
-    Keys           clientKeys;
-    Keys           serverKeys;
+    Keys keys;
+    Keys peerKeys;
     HandshakeInfo* handshake;
 
-    void*          userAuthCtx;
-    uint8_t*       userName;
-    uint32_t       userNameSz;
-    uint8_t*       pkBlob;
-    uint32_t       pkBlobSz;
-    uint8_t*       clientId;   /* Save for rekey */
-    uint32_t       clientIdSz;
+    void* userAuthCtx;
+    char* userName;
+    word32 userNameSz;
+    char* password;
+    word32 passwordSz;
+    byte* pkBlob;
+    word32 pkBlobSz;
+    byte* peerProtoId;     /* Save for rekey */
+    word32 peerProtoIdSz;
 };
 
 
 struct WOLFSSH_CHANNEL {
-    uint8_t  channelType;
-    uint32_t channel;
-    uint32_t windowSz;
-    uint32_t maxPacketSz;
-    uint32_t peerChannel;
-    uint32_t peerWindowSz;
-    uint32_t peerMaxPacketSz;
-    Buffer   inputBuffer;
+    byte channelType;
+    word32 channel;
+    word32 windowSz;
+    word32 maxPacketSz;
+    word32 peerChannel;
+    word32 peerWindowSz;
+    word32 peerMaxPacketSz;
+    Buffer inputBuffer;
     struct WOLFSSH* ssh;
     struct WOLFSSH_CHANNEL* next;
 };
 
 
-WOLFSSH_LOCAL WOLFSSH_CTX* CtxInit(WOLFSSH_CTX*, void*);
+WOLFSSH_LOCAL WOLFSSH_CTX* CtxInit(WOLFSSH_CTX*, byte, void*);
 WOLFSSH_LOCAL void CtxResourceFree(WOLFSSH_CTX*);
 WOLFSSH_LOCAL WOLFSSH* SshInit(WOLFSSH*, WOLFSSH_CTX*);
 WOLFSSH_LOCAL void SshResourceFree(WOLFSSH*, void*);
 
-WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelNew(WOLFSSH*, uint8_t, uint32_t,
-                                          uint32_t, uint32_t);
+WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelNew(WOLFSSH*, byte, word32, word32);
+WOLFSSH_LOCAL int ChannelUpdate(WOLFSSH_CHANNEL*, word32, word32, word32);
 WOLFSSH_LOCAL void ChannelDelete(WOLFSSH_CHANNEL*, void*);
-WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelFind(WOLFSSH*, uint32_t, uint8_t);
-WOLFSSH_LOCAL int ChannelRemove(WOLFSSH*, uint32_t, uint8_t);
-WOLFSSH_LOCAL int ChannelPutData(WOLFSSH_CHANNEL*, uint8_t*, uint32_t);
-WOLFSSH_LOCAL int ProcessBuffer(WOLFSSH_CTX*, const uint8_t*, uint32_t,
-                                int, int);
+WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelFind(WOLFSSH*, word32, byte);
+WOLFSSH_LOCAL int ChannelRemove(WOLFSSH*, word32, byte);
+WOLFSSH_LOCAL int ChannelPutData(WOLFSSH_CHANNEL*, byte*, word32);
+WOLFSSH_LOCAL int ProcessBuffer(WOLFSSH_CTX*, const byte*, word32, int, int);
 
 
 #ifndef WOLFSSH_USER_IO
 
 /* default I/O handlers */
-WOLFSSH_LOCAL int wsEmbedRecv(WOLFSSH*, void*, uint32_t, void*);
-WOLFSSH_LOCAL int wsEmbedSend(WOLFSSH*, void*, uint32_t, void*);
+WOLFSSH_LOCAL int wsEmbedRecv(WOLFSSH*, void*, word32, void*);
+WOLFSSH_LOCAL int wsEmbedSend(WOLFSSH*, void*, word32, void*);
 
 #endif /* WOLFSSH_USER_IO */
 
 
 WOLFSSH_LOCAL int DoReceive(WOLFSSH*);
-WOLFSSH_LOCAL int ProcessClientVersion(WOLFSSH*);
-WOLFSSH_LOCAL int SendServerVersion(WOLFSSH*);
+WOLFSSH_LOCAL int DoProtoId(WOLFSSH*);
+WOLFSSH_LOCAL int SendProtoId(WOLFSSH*);
 WOLFSSH_LOCAL int SendKexInit(WOLFSSH*);
+WOLFSSH_LOCAL int SendKexDhInit(WOLFSSH*);
 WOLFSSH_LOCAL int SendKexDhReply(WOLFSSH*);
+WOLFSSH_LOCAL int SendKexDhGexRequest(WOLFSSH*);
 WOLFSSH_LOCAL int SendKexDhGexGroup(WOLFSSH*);
 WOLFSSH_LOCAL int SendNewKeys(WOLFSSH*);
 WOLFSSH_LOCAL int SendUnimplemented(WOLFSSH*);
-WOLFSSH_LOCAL int SendDisconnect(WOLFSSH*, uint32_t);
-WOLFSSH_LOCAL int SendIgnore(WOLFSSH*, const unsigned char*, uint32_t);
+WOLFSSH_LOCAL int SendDisconnect(WOLFSSH*, word32);
+WOLFSSH_LOCAL int SendIgnore(WOLFSSH*, const unsigned char*, word32);
 WOLFSSH_LOCAL int SendDebug(WOLFSSH*, byte, const char*);
-WOLFSSH_LOCAL int SendServiceAccept(WOLFSSH*);
+WOLFSSH_LOCAL int SendServiceRequest(WOLFSSH*, byte);
+WOLFSSH_LOCAL int SendServiceAccept(WOLFSSH*, byte);
+WOLFSSH_LOCAL int SendUserAuthRequest(WOLFSSH*, byte);
 WOLFSSH_LOCAL int SendUserAuthSuccess(WOLFSSH*);
-WOLFSSH_LOCAL int SendUserAuthFailure(WOLFSSH*, uint8_t);
+WOLFSSH_LOCAL int SendUserAuthFailure(WOLFSSH*, byte);
 WOLFSSH_LOCAL int SendUserAuthBanner(WOLFSSH*);
-WOLFSSH_LOCAL int SendUserAuthPkOk(WOLFSSH*, const uint8_t*, uint32_t,
-                                   const uint8_t*, uint32_t);
+WOLFSSH_LOCAL int SendUserAuthPkOk(WOLFSSH*, const byte*, word32,
+                                   const byte*, word32);
 WOLFSSH_LOCAL int SendRequestSuccess(WOLFSSH*, int);
+WOLFSSH_LOCAL int SendChannelOpenSession(WOLFSSH*, word32, word32);
 WOLFSSH_LOCAL int SendChannelOpenConf(WOLFSSH*);
-WOLFSSH_LOCAL int SendChannelEof(WOLFSSH*, uint32_t);
-WOLFSSH_LOCAL int SendChannelClose(WOLFSSH*, uint32_t);
-WOLFSSH_LOCAL int SendChannelData(WOLFSSH*, uint32_t, uint8_t*, uint32_t);
-WOLFSSH_LOCAL int SendChannelWindowAdjust(WOLFSSH*, uint32_t, uint32_t);
-WOLFSSH_LOCAL int SendChannelSuccess(WOLFSSH*, uint32_t, int);
-WOLFSSH_LOCAL int GenerateKey(uint8_t, uint8_t, uint8_t*, uint32_t,
-                              const uint8_t*, uint32_t,
-                              const uint8_t*, uint32_t,
-                              const uint8_t*, uint32_t);
-
-
-enum KeyingStates {
-    KEYING_UNKEYED = 0,
-
-    KEYING_KEXINIT_SENT,
-    KEYING_KEXINIT_RECV,
-    KEYING_KEXINIT_DONE,
-
-    KEYING_KEXDH_INIT_RECV,
-    KEYING_KEXDH_DONE,
-
-    KEYING_USING_KEYS_SENT,
-    KEYING_USING_KEYS_RECV,
-    KEYING_KEYED
-};
+WOLFSSH_LOCAL int SendChannelEof(WOLFSSH*, word32);
+WOLFSSH_LOCAL int SendChannelClose(WOLFSSH*, word32);
+WOLFSSH_LOCAL int SendChannelData(WOLFSSH*, word32, byte*, word32);
+WOLFSSH_LOCAL int SendChannelWindowAdjust(WOLFSSH*, word32, word32);
+WOLFSSH_LOCAL int SendChannelRequestShell(WOLFSSH*);
+WOLFSSH_LOCAL int SendChannelSuccess(WOLFSSH*, word32, int);
+WOLFSSH_LOCAL int GenerateKey(byte, byte, byte*, word32, const byte*, word32,
+                              const byte*, word32, const byte*, word32);
 
 
 enum AcceptStates {
     ACCEPT_BEGIN = 0,
     ACCEPT_SERVER_VERSION_SENT,
     ACCEPT_CLIENT_VERSION_DONE,
+    ACCEPT_SERVER_KEXINIT_SENT,
     ACCEPT_KEYED,
     ACCEPT_CLIENT_USERAUTH_REQUEST_DONE,
     ACCEPT_SERVER_USERAUTH_ACCEPT_SENT,
@@ -379,15 +391,44 @@ enum AcceptStates {
 };
 
 
+enum ConnectStates {
+    CONNECT_BEGIN = 0,
+    CONNECT_CLIENT_VERSION_SENT,
+    CONNECT_SERVER_VERSION_DONE,
+    CONNECT_CLIENT_KEXINIT_SENT,
+    CONNECT_SERVER_KEXINIT_DONE,
+    CONNECT_CLIENT_KEXDH_INIT_SENT,
+    CONNECT_KEYED,
+    CONNECT_CLIENT_USERAUTH_REQUEST_SENT,
+    CONNECT_SERVER_USERAUTH_REQUEST_DONE,
+    CONNECT_CLIENT_USERAUTH_SENT,
+    CONNECT_SERVER_USERAUTH_ACCEPT_DONE,
+    CONNECT_CLIENT_CHANNEL_OPEN_SESSION_SENT,
+    CONNECT_SERVER_CHANNEL_OPEN_SESSION_DONE,
+    CONNECT_CLIENT_CHANNEL_REQUEST_SHELL_SENT,
+    CONNECT_SERVER_CHANNEL_REQUEST_SHELL_DONE
+};
+
+
 enum ClientStates {
     CLIENT_BEGIN = 0,
     CLIENT_VERSION_DONE,
     CLIENT_KEXINIT_DONE,
     CLIENT_KEXDH_INIT_DONE,
-    CLIENT_USING_KEYS,
     CLIENT_USERAUTH_REQUEST_DONE,
     CLIENT_USERAUTH_DONE,
     CLIENT_DONE
+};
+
+
+enum ServerStates {
+    SERVER_BEGIN = 0,
+    SERVER_VERSION_DONE,
+    SERVER_KEXINIT_DONE,
+    SERVER_USERAUTH_REQUEST_DONE,
+    SERVER_USERAUTH_ACCEPT_DONE,
+    SERVER_CHANNEL_OPEN_DONE,
+    SERVER_DONE
 };
 
 
@@ -400,44 +441,47 @@ enum ProcessReplyStates {
 
 
 enum WS_MessageIds {
-    MSGID_DISCONNECT      = 1,
-    MSGID_IGNORE          = 2,
-    MSGID_UNIMPLEMENTED   = 3,
-    MSGID_DEBUG           = 4,
+    MSGID_DISCONNECT = 1,
+    MSGID_IGNORE = 2,
+    MSGID_UNIMPLEMENTED = 3,
+    MSGID_DEBUG = 4,
     MSGID_SERVICE_REQUEST = 5,
-    MSGID_SERVICE_ACCEPT  = 6,
+    MSGID_SERVICE_ACCEPT = 6,
 
-    MSGID_KEXINIT         = 20,
-    MSGID_NEWKEYS         = 21,
+    MSGID_KEXINIT = 20,
+    MSGID_NEWKEYS = 21,
 
-    MSGID_KEXDH_INIT      = 30,
-    MSGID_KEXDH_REPLY     = 31,
+    MSGID_KEXDH_INIT = 30,
+    MSGID_KEXECDH_INIT = 30,
 
-    MSGID_KEXDH_GEX_REQUEST = 34,
+    MSGID_KEXDH_REPLY = 31,
+    MSGID_KEXECDH_REPLY = 31,
     MSGID_KEXDH_GEX_GROUP = 31,
-    MSGID_KEXDH_GEX_INIT  = 32,
+    MSGID_KEXDH_GEX_INIT = 32,
     MSGID_KEXDH_GEX_REPLY = 33,
+    MSGID_KEXDH_GEX_REQUEST = 34,
 
     MSGID_USERAUTH_REQUEST = 50,
     MSGID_USERAUTH_FAILURE = 51,
     MSGID_USERAUTH_SUCCESS = 52,
-    MSGID_USERAUTH_BANNER  = 53,
-    MSGID_USERAUTH_PK_OK   = 60, /* Public Key OK */
+    MSGID_USERAUTH_BANNER = 53,
+    MSGID_USERAUTH_PK_OK = 60, /* Public Key OK */
     MSGID_USERAUTH_PW_CHRQ = 60, /* Password Change Request */
 
-    MSGID_GLOBAL_REQUEST    = 80,
-    MSGID_REQUEST_SUCCESS   = 81,
-    MSGID_REQUEST_FAILURE   = 82,
+    MSGID_GLOBAL_REQUEST = 80,
+    MSGID_REQUEST_SUCCESS = 81,
+    MSGID_REQUEST_FAILURE = 82,
 
-    MSGID_CHANNEL_OPEN      = 90,
+    MSGID_CHANNEL_OPEN = 90,
     MSGID_CHANNEL_OPEN_CONF = 91,
+    MSGID_CHANNEL_OPEN_FAIL = 92,
     MSGID_CHANNEL_WINDOW_ADJUST = 93,
-    MSGID_CHANNEL_DATA      = 94,
-    MSGID_CHANNEL_EOF       = 96,
-    MSGID_CHANNEL_CLOSE     = 97,
-    MSGID_CHANNEL_REQUEST   = 98,
-    MSGID_CHANNEL_SUCCESS   = 99,
-    MSGID_CHANNEL_FAILURE   = 100
+    MSGID_CHANNEL_DATA = 94,
+    MSGID_CHANNEL_EOF = 96,
+    MSGID_CHANNEL_CLOSE = 97,
+    MSGID_CHANNEL_REQUEST = 98,
+    MSGID_CHANNEL_SUCCESS = 99,
+    MSGID_CHANNEL_FAILURE = 100
 };
 
 
@@ -455,7 +499,8 @@ enum WS_DynamicTypes {
     DYNTYPE_PUBKEY,
     DYNTYPE_DH,
     DYNTYPE_RNG,
-    DYNTYPE_STRING
+    DYNTYPE_STRING,
+    DYNTYPE_MPINT
 };
 
 
@@ -467,7 +512,7 @@ enum WS_BufferTypes {
 };
 
 
-WOLFSSH_LOCAL void DumpOctetString(const uint8_t*, uint32_t);
+WOLFSSH_LOCAL void DumpOctetString(const byte*, word32);
 
 
 #ifdef __cplusplus

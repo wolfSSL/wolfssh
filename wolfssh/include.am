@@ -13,7 +13,8 @@ nobase_include_HEADERS+= \
                          wolfssh/error.h \
                          wolfssh/visibility.h \
                          wolfssh/misc.h \
-                         wolfssh/log.h
+                         wolfssh/log.h \
+                         wolfssh/test.h
 
 noinst_HEADERS+= \
                          wolfssh/internal.h

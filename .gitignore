@@ -48,6 +48,7 @@ diff
 .vimrc
 
 # examples
+examples/client/client
 examples/echoserver/echoserver
 examples/server/server
 

@@ -124,6 +124,34 @@ static void test_client_wolfSSH_new(void)
 }
 
 
+static void test_wolfSSH_SetUsername(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    const char username[] = "johnny";
+    const char empty[] = "";
+
+
+    AssertIntNE(WS_SUCCESS, wolfSSH_SetUsername(NULL, NULL));
+
+    AssertNotNull(ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL));
+    AssertNotNull(ssh = wolfSSH_new(ctx));
+    AssertIntNE(WS_SUCCESS, wolfSSH_SetUsername(ssh, username));
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    AssertNotNull(ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL));
+    AssertNotNull(ssh = wolfSSH_new(ctx));
+    AssertIntNE(WS_SUCCESS, wolfSSH_SetUsername(ssh, NULL));
+    AssertIntNE(WS_SUCCESS, wolfSSH_SetUsername(ssh, empty));
+    wolfSSH_free(ssh);
+    AssertNotNull(ssh = wolfSSH_new(ctx));
+    AssertIntEQ(WS_SUCCESS, wolfSSH_SetUsername(ssh, username));
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
 int main(void)
 {
     AssertIntEQ(wolfSSH_Init(), WS_SUCCESS);
@@ -131,6 +159,7 @@ int main(void)
     test_wolfSSH_CTX_new();
     test_server_wolfSSH_new();
     test_client_wolfSSH_new();
+    test_wolfSSH_SetUsername();
 
     AssertIntEQ(wolfSSH_Cleanup(), WS_SUCCESS);
 

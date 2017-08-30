@@ -36,12 +36,6 @@ extern "C" {
 #endif
 
 
-#ifndef WUSER_TYPE
-    #include <stdint.h>
-    /* we need uint8, uint32, stdint provides them */
-#endif
-
-
 /* setup memory handling */
 #ifndef WMALLOC_USER
     #include <wolfssh/memory.h>
@@ -101,6 +95,16 @@ extern "C" {
 #endif
 #endif /* INLINE */
 
+
+/* GCC 7 has new switch() fall-through detection */
+#if defined(__GNUC__)
+    #if ((__GNUC__ > 7) || ((__GNUC__ == 7) && (__GNUC_MINOR__ >= 1)))
+        #define FALL_THROUGH __attribute__ ((fallthrough));
+    #endif
+#endif
+#ifndef FALL_THROUGH
+    #define FALL_THROUGH
+#endif
 
 
 #ifdef __cplusplus
