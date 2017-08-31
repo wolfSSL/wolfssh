@@ -41,6 +41,11 @@ extern "C" {
 #endif /* WMALLOC_USER */
 
 
+#if defined (_WIN32)
+    #define USE_WINDOWS_API
+#endif
+
+
 #ifdef __cplusplus
 }
 #endif

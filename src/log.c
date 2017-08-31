@@ -139,7 +139,7 @@ void WLOG(enum wolfSSH_LogLevel level, const char *const fmt, ...)
         struct  tm local;
 
         current = time(NULL);
-        if (localtime_r(&current, &local)) {
+        if (WLOCALTIME(&current, &local)) {
             /* make pretty */
             strftime(timeStr, sizeof(timeStr), "%b %d %T %Y", &local);
         }        
@@ -149,7 +149,7 @@ void WLOG(enum wolfSSH_LogLevel level, const char *const fmt, ...)
 
     /* format msg */
     va_start(vlist, fmt);
-    vsnprintf(msgStr, sizeof(msgStr), fmt, vlist);
+    WVSNPRINTF(msgStr, sizeof(msgStr), fmt, vlist);
     va_end(vlist);
     msgStr[sizeof(msgStr)-1] = '\0';
 

@@ -75,9 +75,14 @@ extern "C" {
         #include <stdio.h>
         #define WSTRNCASECMP(s1,s2,n) strncasecmp((s1),(s2),(n))
         #define WSNPRINTF snprintf
+        #define WVSNPRINTF(a,b,c,d) vsnprintf(a,b,c,d)
+        #define WLOCALTIME(a,b) (localtime_r(a,b)!=NULL)
+
     #else
         #define WSTRNCASECMP(s1,s2,n) _strnicmp((s1),(s2),(n))
         #define WSNPRINTF _snprintf
+        #define WVSNPRINTF(a,b,c,d) vsnprintf_s(a,b,(b-1),c,d)
+        #define WLOCALTIME(a,b) (localtime_s(b,a)==0)
     #endif
 #endif /* WSTRING_USER */
 

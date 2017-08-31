@@ -16,7 +16,6 @@
     <ClCompile Include="..\..\..\src\keygen.c" />
     <ClCompile Include="..\..\..\src\log.c" />
     <ClCompile Include="..\..\..\src\memory.c" />
-    <ClCompile Include="..\..\..\src\misc.c" />
     <ClCompile Include="..\..\..\src\port.c" />
     <ClCompile Include="..\..\..\src\ssh.c" />
   </ItemGroup>
@@ -59,7 +58,7 @@
       </PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
-      <PreprocessorDefinitions>WIN32;_DEBUG;_LIB;DEBUG_WOLFSSH;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_LIB;DEBUG_WOLFSSH;WOLFSSL_USER_SETTINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>..\..\..;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
