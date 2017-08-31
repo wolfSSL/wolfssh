@@ -8,6 +8,11 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "api-test", "api-test\api-te
 		{7C2CCF0D-A155-4914-BD1C-9A47C0530E65} = {7C2CCF0D-A155-4914-BD1C-9A47C0530E65}
 	EndProjectSection
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "echoserver", "echoserver\echoserver.vcxproj", "{B4E163C2-ECA0-4DA2-9FD9-4CD6599C9D4D}"
+	ProjectSection(ProjectDependencies) = postProject
+		{7C2CCF0D-A155-4914-BD1C-9A47C0530E65} = {7C2CCF0D-A155-4914-BD1C-9A47C0530E65}
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Win32 = Debug|Win32
@@ -22,6 +27,10 @@ Global
 		{07D36DB5-210E-45A6-8270-2DAD9DCDEFD7}.Debug|Win32.Build.0 = Debug|Win32
 		{07D36DB5-210E-45A6-8270-2DAD9DCDEFD7}.Release|Win32.ActiveCfg = Release|Win32
 		{07D36DB5-210E-45A6-8270-2DAD9DCDEFD7}.Release|Win32.Build.0 = Release|Win32
+		{B4E163C2-ECA0-4DA2-9FD9-4CD6599C9D4D}.Debug|Win32.ActiveCfg = Debug|Win32
+		{B4E163C2-ECA0-4DA2-9FD9-4CD6599C9D4D}.Debug|Win32.Build.0 = Debug|Win32
+		{B4E163C2-ECA0-4DA2-9FD9-4CD6599C9D4D}.Release|Win32.ActiveCfg = Release|Win32
+		{B4E163C2-ECA0-4DA2-9FD9-4CD6599C9D4D}.Release|Win32.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

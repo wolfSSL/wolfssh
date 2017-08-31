@@ -11,7 +11,7 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\..\tests\api.c" />
+    <ClCompile Include="..\..\..\examples\echoserver\echoserver.c" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\wolfssh\wolfssh.vcxproj">
@@ -19,9 +19,9 @@
     </ProjectReference>
   </ItemGroup>
   <PropertyGroup Label="Globals">
-    <ProjectGuid>{07D36DB5-210E-45A6-8270-2DAD9DCDEFD7}</ProjectGuid>
+    <ProjectGuid>{B4E163C2-ECA0-4DA2-9FD9-4CD6599C9D4D}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
-    <RootNamespace>apitest</RootNamespace>
+    <RootNamespace>echoserver</RootNamespace>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
