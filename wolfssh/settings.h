@@ -45,6 +45,9 @@ extern "C" {
     #define USE_WINDOWS_API
 #endif
 
+#define WOLFSSH_NO_CLIENT
+    /* The client code is incomplete. */
+
 
 #ifdef __cplusplus
 }

@@ -56,13 +56,19 @@ int wolfSSH_Init(void)
 
 int wolfSSH_Cleanup(void)
 {
+    int ret = WS_SUCCESS;
+
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_Cleanup()");
-    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_Cleanup(), returning %d", WS_SUCCESS);
-    return WS_SUCCESS;
+
+    if (wolfCrypt_Cleanup() != 0)
+        ret = WS_CRYPTO_FAILED;
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_Cleanup(), returning %d", ret);
+    return ret;
 }
 
 
-WOLFSSH_CTX* wolfSSH_CTX_new(uint8_t side, void* heap)
+WOLFSSH_CTX* wolfSSH_CTX_new(byte side, void* heap)
 {
     WOLFSSH_CTX* ctx;
 
@@ -74,7 +80,7 @@ WOLFSSH_CTX* wolfSSH_CTX_new(uint8_t side, void* heap)
     }
 
     ctx = (WOLFSSH_CTX*)WMALLOC(sizeof(WOLFSSH_CTX), heap, DYNTYPE_CTX);
-    ctx = CtxInit(ctx, heap);
+    ctx = CtxInit(ctx, side, heap);
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_CTX_new(), ctx = %p", ctx);
 
@@ -158,7 +164,7 @@ int wolfSSH_get_fd(const WOLFSSH* ssh)
 }
 
 
-int wolfSSH_SetHighwater(WOLFSSH* ssh, uint32_t highwater)
+int wolfSSH_SetHighwater(WOLFSSH* ssh, word32 highwater)
 {
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetHighwater()");
 
@@ -172,7 +178,7 @@ int wolfSSH_SetHighwater(WOLFSSH* ssh, uint32_t highwater)
 }
 
 
-uint32_t wolfSSH_GetHighwater(WOLFSSH* ssh)
+word32 wolfSSH_GetHighwater(WOLFSSH* ssh)
 {
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_GetHighwater()");
 
@@ -183,7 +189,7 @@ uint32_t wolfSSH_GetHighwater(WOLFSSH* ssh)
 }
 
 
-void wolfSSH_SetHighwaterCb(WOLFSSH_CTX* ctx, uint32_t highwater,
+void wolfSSH_SetHighwaterCb(WOLFSSH_CTX* ctx, word32 highwater,
                             WS_CallbackHighwater cb)
 {
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetHighwaterCb()");
@@ -245,19 +251,23 @@ int wolfSSH_accept(WOLFSSH* ssh)
 {
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_accept()");
 
+    if (ssh == NULL)
+        return WS_BAD_ARGUMENT;
+
     switch (ssh->acceptState) {
 
         case ACCEPT_BEGIN:
-            if ( (ssh->error = SendServerVersion(ssh)) < WS_SUCCESS) {
+            if ( (ssh->error = SendProtoId(ssh)) < WS_SUCCESS) {
                 WLOG(WS_LOG_DEBUG, acceptError, "BEGIN", ssh->error);
                 return WS_FATAL_ERROR;
             }
             ssh->acceptState = ACCEPT_SERVER_VERSION_SENT;
             WLOG(WS_LOG_DEBUG, acceptState, "SERVER_VERSION_SENT");
+            FALL_THROUGH;
 
         case ACCEPT_SERVER_VERSION_SENT:
             while (ssh->clientState < CLIENT_VERSION_DONE) {
-                if ( (ssh->error = ProcessClientVersion(ssh)) < WS_SUCCESS) {
+                if ( (ssh->error = DoProtoId(ssh)) < WS_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, acceptError,
                          "SERVER_VERSION_SENT", ssh->error);
                     return WS_FATAL_ERROR;
@@ -265,17 +275,29 @@ int wolfSSH_accept(WOLFSSH* ssh)
             }
             ssh->acceptState = ACCEPT_CLIENT_VERSION_DONE;
             WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_VERSION_DONE");
+            FALL_THROUGH;
 
         case ACCEPT_CLIENT_VERSION_DONE:
-            while (ssh->keyingState < KEYING_KEYED) {
+            if ( (ssh->error = SendKexInit(ssh)) < WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, acceptError,
+                     "CLIENT_VERSION_DONE", ssh->error);
+                return WS_FATAL_ERROR;
+            }
+            ssh->acceptState = ACCEPT_SERVER_KEXINIT_SENT;
+            WLOG(WS_LOG_DEBUG, acceptState, "SERVER_KEXINIT_SENT");
+            FALL_THROUGH;
+
+        case ACCEPT_SERVER_KEXINIT_SENT:
+            while (ssh->isKeying) {
                 if ( (ssh->error = DoReceive(ssh)) < WS_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, acceptError,
-                         "CLIENT_VERSION_DONE", ssh->error);
+                         "SERVER_KEXINIT_SENT", ssh->error);
                     return WS_FATAL_ERROR;
                 }
             }
             ssh->acceptState = ACCEPT_KEYED;
             WLOG(WS_LOG_DEBUG, acceptState, "KEYED");
+            FALL_THROUGH;
 
         case ACCEPT_KEYED:
             while (ssh->clientState < CLIENT_USERAUTH_REQUEST_DONE) {
@@ -287,9 +309,11 @@ int wolfSSH_accept(WOLFSSH* ssh)
             }
             ssh->acceptState = ACCEPT_CLIENT_USERAUTH_REQUEST_DONE;
             WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_USERAUTH_REQUEST_DONE");
+            FALL_THROUGH;
 
         case ACCEPT_CLIENT_USERAUTH_REQUEST_DONE:
-            if ( (ssh->error = SendServiceAccept(ssh)) < WS_SUCCESS) {
+            if ( (ssh->error = SendServiceAccept(ssh, ID_SERVICE_USERAUTH)) <
+                                                                  WS_SUCCESS) {
                 WLOG(WS_LOG_DEBUG, acceptError,
                      "CLIENT_USERAUTH_REQUEST_DONE", ssh->error);
                 return WS_FATAL_ERROR;
@@ -297,6 +321,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
             ssh->acceptState = ACCEPT_SERVER_USERAUTH_ACCEPT_SENT;
             WLOG(WS_LOG_DEBUG, acceptState,
                  "ACCEPT_SERVER_USERAUTH_ACCEPT_SENT");
+            FALL_THROUGH;
 
         case ACCEPT_SERVER_USERAUTH_ACCEPT_SENT:
             while (ssh->clientState < CLIENT_USERAUTH_DONE) {
@@ -308,6 +333,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
             }
             ssh->acceptState = ACCEPT_CLIENT_USERAUTH_DONE;
             WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_USERAUTH_DONE");
+            FALL_THROUGH;
 
         case ACCEPT_CLIENT_USERAUTH_DONE:
             if ( (ssh->error = SendUserAuthSuccess(ssh)) < WS_SUCCESS) {
@@ -317,6 +343,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
             }
             ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
             WLOG(WS_LOG_DEBUG, acceptState, "SERVER_USERAUTH_SENT");
+            FALL_THROUGH;
 
         case ACCEPT_SERVER_USERAUTH_SENT:
             while (ssh->clientState < CLIENT_DONE) {
@@ -328,6 +355,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
             }
             ssh->acceptState = ACCEPT_CLIENT_CHANNEL_REQUEST_DONE;
             WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_CHANNEL_REQUEST_DONE");
+            FALL_THROUGH;
 
         case ACCEPT_CLIENT_CHANNEL_REQUEST_DONE:
             if ( (ssh->error = SendChannelOpenConf(ssh)) < WS_SUCCESS) {
@@ -340,6 +368,29 @@ int wolfSSH_accept(WOLFSSH* ssh)
     }
 
     return WS_SUCCESS;
+}
+
+
+int wolfSSH_shutdown(WOLFSSH* ssh)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_shutdown()");
+
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS)
+        ret = SendChannelEof(ssh, 0);
+
+    if (ret == WS_SUCCESS)
+        ret = SendChannelClose(ssh, 0);
+
+    if (ret == WS_SUCCESS)
+        ret = SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION);
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_shutdown(), ret = %d", ret);
+    return ret;
 }
 
 
@@ -359,7 +410,7 @@ int wolfSSH_TriggerKeyExchange(WOLFSSH* ssh)
 }
 
 
-int wolfSSH_stream_read(WOLFSSH* ssh, uint8_t* buf, uint32_t bufSz)
+int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
 {
     Buffer* inputBuffer;
 
@@ -382,11 +433,10 @@ int wolfSSH_stream_read(WOLFSSH* ssh, uint8_t* buf, uint32_t bufSz)
     WMEMCPY(buf, inputBuffer->buffer + inputBuffer->idx, bufSz);
     inputBuffer->idx += bufSz;
 
-    if (ssh->keyingState == KEYING_KEYED &&
-        (inputBuffer->length > inputBuffer->bufferSz / 2)) {
+    if (!ssh->isKeying && (inputBuffer->length > inputBuffer->bufferSz / 2)) {
 
-        uint32_t usedSz = inputBuffer->length - inputBuffer->idx;
-        uint32_t bytesToAdd = inputBuffer->idx;
+        word32 usedSz = inputBuffer->length - inputBuffer->idx;
+        word32 bytesToAdd = inputBuffer->idx;
         int sendResult;
 
         WLOG(WS_LOG_DEBUG, "Making more room: %u", usedSz);
@@ -416,7 +466,7 @@ int wolfSSH_stream_read(WOLFSSH* ssh, uint8_t* buf, uint32_t bufSz)
 }
 
 
-int wolfSSH_stream_send(WOLFSSH* ssh, uint8_t* buf, uint32_t bufSz)
+int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz)
 {
     int bytesTxd = 0;
 
@@ -460,7 +510,7 @@ void* wolfSSH_GetUserAuthCtx(WOLFSSH* ssh)
 int wolfSSH_CTX_SetBanner(WOLFSSH_CTX* ctx,
                           const char* newBanner)
 {
-    uint32_t newBannerSz = 0;
+    word32 newBannerSz = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CTX_SetBanner()");
 
@@ -469,7 +519,7 @@ int wolfSSH_CTX_SetBanner(WOLFSSH_CTX* ctx,
 
     if (newBanner != NULL) {
         WLOG(WS_LOG_INFO, "  setting banner to: \"%s\"", newBanner);
-        newBannerSz = (uint32_t)WSTRLEN(newBanner);
+        newBannerSz = (word32)WSTRLEN(newBanner);
     }
 
     ctx->banner = newBanner;
@@ -480,20 +530,20 @@ int wolfSSH_CTX_SetBanner(WOLFSSH_CTX* ctx,
 
 
 int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX* ctx,
-                                   const uint8_t* in, uint32_t inSz, int format)
+                                   const byte* in, word32 inSz, int format)
 {
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CTX_UsePrivateKey_buffer()");
     return ProcessBuffer(ctx, in, inSz, format, BUFTYPE_PRIVKEY); 
 }
 
 
-void wolfSSH_GetStats(WOLFSSH* ssh, uint32_t* txCount, uint32_t* rxCount,
-                      uint32_t* seq, uint32_t* peerSeq)
+void wolfSSH_GetStats(WOLFSSH* ssh, word32* txCount, word32* rxCount,
+                      word32* seq, word32* peerSeq)
 {
-    uint32_t rTxCount = 0;
-    uint32_t rRxCount = 0;
-    uint32_t rSeq = 0;
-    uint32_t rPeerSeq = 0;
+    word32 rTxCount = 0;
+    word32 rRxCount = 0;
+    word32 rSeq = 0;
+    word32 rPeerSeq = 0;
 
     if (ssh != NULL) {
         rTxCount = ssh->txCount;
@@ -513,11 +563,11 @@ void wolfSSH_GetStats(WOLFSSH* ssh, uint32_t* txCount, uint32_t* rxCount,
 }
 
 
-int wolfSSH_KDF(uint8_t hashId, uint8_t keyId,
-                uint8_t* key, uint32_t keySz,
-                const uint8_t* k, uint32_t kSz,
-                const uint8_t* h, uint32_t hSz,
-                const uint8_t* sessionId, uint32_t sessionIdSz)
+int wolfSSH_KDF(byte hashId, byte keyId,
+                byte* key, word32 keySz,
+                const byte* k, word32 kSz,
+                const byte* h, word32 hSz,
+                const byte* sessionId, word32 sessionIdSz)
 {
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_KDF()");
     return GenerateKey(hashId, keyId, key, keySz, k, kSz, h, hSz,

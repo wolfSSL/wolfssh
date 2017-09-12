@@ -1,6 +1,6 @@
-/* keygen.h
+/* echoserver.h
  *
- * Copyright (C) 2014-2016 wolfSSL Inc.
+ * Copyright (C) 2014-2017 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -19,34 +19,13 @@
  */
 
 
-/*
- * The keygen module contains utility functions wrapping the wolfCrypt
- * key generation functions to product SSH friendly keys.
- */
-
-
 #pragma once
 
-#ifndef WOLFSSH_KEYGEN_H
-#define WOLFSSH_KEYGEN_H
-
-#include <wolfssh/settings.h>
-#include <wolfssh/port.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
+#ifndef _WOLFSSH_ECHOSERVER_H_
+#define _WOLFSSH_ECHOSERVER_H_
 
 
-#define WOLFSSH_RSAKEY_DEFAULT_SZ 2048
-#define WOLFSSH_RSAKEY_DEFAULT_E  65537
+THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args);
 
 
-WOLFSSH_API int wolfSSH_MakeRsaKey(byte*, word32, word32, word32);
-
-
-#ifdef __cplusplus
-}
-#endif
-
-#endif
+#endif /* _WOLFSSH_ECHOSERVER_H_ */

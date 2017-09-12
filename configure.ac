@@ -68,6 +68,9 @@ TAO_REQUIRE_LIBWOLFSSL
 #REQUIRE_CYASSL([scep])
 #REQUIRE_WOLFCRYPT([aes rsa dh])
 
+# Disable any client code. For size, as nothing calls it.
+AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSL_NO_CLIENT"
+
 # since we have autoconf available, we can use cyassl options header
 AM_CPPFLAGS="$AM_CPPFLAGS -DHAVE_CYASSL_OPTIONS"
 

@@ -19,7 +19,7 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\..\examples\echoserver\echoserver.c" />
+    <ClCompile Include="..\..\..\tests\unit.c" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\wolfssh\wolfssh.vcxproj">
@@ -30,9 +30,9 @@
     <Library Include="..\wolfcrypt\wolfssl.lib" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
-    <ProjectGuid>{B4E163C2-ECA0-4DA2-9FD9-4CD6599C9D4D}</ProjectGuid>
+    <ProjectGuid>{CBF8A91E-C52B-4044-9FDA-B99D5D3CFF02}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
-    <RootNamespace>echoserver</RootNamespace>
+    <RootNamespace>unittest</RootNamespace>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
