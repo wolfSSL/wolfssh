@@ -533,7 +533,7 @@ int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX* ctx,
                                    const byte* in, word32 inSz, int format)
 {
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CTX_UsePrivateKey_buffer()");
-    return ProcessBuffer(ctx, in, inSz, format, BUFTYPE_PRIVKEY); 
+    return wolfSSH_ProcessBuffer(ctx, in, inSz, format, BUFTYPE_PRIVKEY); 
 }
 
 

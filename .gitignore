@@ -66,5 +66,9 @@ client.plist
 *.v11.suo
 *.vcxproj.filters
 *.opensdf
+*.pdb
+*.vcxproj.user
 Debug
 Release
+DLL Debug
+DLL Release

@@ -1,11 +1,10 @@
 # vim:ft=automake
 # All paths should be given relative to the root
 
-EXTRA_DIST+= ide/winvs/README.txt
+EXTRA_DIST+= ide/winvs/README.md
 EXTRA_DIST+= ide/winvs/wolfssh.sln
 EXTRA_DIST+= ide/winvs/wolfssh/wolfssh.vcxproj
 EXTRA_DIST+= ide/winvs/api-test/api-test.vcxproj
 EXTRA_DIST+= ide/winvs/unit-test/unit-test.vcxproj
 EXTRA_DIST+= ide/winvs/echoserver/echoserver.vcxproj
-EXTRA_DIST+= ide/winvs/user_settings.h
-EXTRA_DIST+= ide/winvs/wolfcrypt/README.txt
+EXTRA_DIST+= ide/winvs/wolfcrypt/user_settings.h

@@ -398,8 +398,9 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
 }
 
 
-int ProcessBuffer(WOLFSSH_CTX* ctx, const byte* in, word32 inSz,
-                                                           int format, int type)
+int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
+                          const byte* in, word32 inSz,
+                          int format, int type)
 {
     int dynamicType;
     void* heap;

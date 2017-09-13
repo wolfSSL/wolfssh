@@ -1,1 +1,0 @@
-VisualStudio solution for wolfSSH

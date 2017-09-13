@@ -35,6 +35,9 @@ The `autogen.sh` script only has to be run the first time after cloning the
 repository. If you have already run it or are using code from a source
 archive, you should skip it.
 
+For building under Windows with Visual Studio, see the file
+"ide/winvs/README.md".
+
 
 examples
 --------
@@ -79,15 +82,15 @@ Where the `USER` and password pairs are:
 
 To use public key authentication use the command line:
 
-    $ ssh_client -i ./keys/USER-key-TYPE.pem -p 22222 USER@localhost
+    $ ssh_client -i ./keys/key-USER.pem -p 22222 USER@localhost
 
-Where the user can be `gretel` or `hansel`, and type is `rsa` or `ecc`.
+Where the user can be `gretel` or `hansel`.
 
 
 release notes
 -------------
 
-### wolfSSH v1.2.0 (07/XX/2017)
+### wolfSSH v1.2.0 (09/XX/2017)
 
 - Added ECDH Group Exchange with SHA2 hashing and curves nistp256,
   nistp384, and nistp521.
@@ -95,7 +98,8 @@ release notes
 - Changed the echoserver to allow only one connection, but multiple
   connections are allowed with a command line option.
 - Added option to echoserver to offer an ECC public key.
-- Other small bug fixes and enhancements.
+- Added a Visual Studio solution to build the library, examples, and tests.
+- Other bug fixes and enhancements.
 
 ### wolfSSH v1.1.0 (06/16/2017)
 

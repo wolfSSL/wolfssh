@@ -545,7 +545,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         LoadPublicKeyBuffer(buf, bufSz, &pwMapList);
     }
 
-    tcp_listen(&listenFd, &port, 0);
+    tcp_listen(&listenFd, &port, 1);
 
     do {
         SOCKET_T      clientFd = 0;
@@ -622,9 +622,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
         wolfSSH_Init();
 
-        #ifndef NO_WOLFSSH_CLIENT
-            echoserver_test(&args);
-        #endif /* NO_WOLFSSH_CLIENT */
+        echoserver_test(&args);
 
         wolfSSH_Cleanup();
 
