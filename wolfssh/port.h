@@ -36,12 +36,6 @@ extern "C" {
 #endif
 
 
-#ifndef WUSER_TYPE
-    #include <stdint.h>
-    /* we need uint8, uint32, stdint provides them */
-#endif
-
-
 /* setup memory handling */
 #ifndef WMALLOC_USER
     #include <wolfssh/memory.h>
@@ -56,7 +50,10 @@ extern "C" {
 #ifndef WSTRING_USER
     #include <string.h>
 
-    char* wstrnstr(const char* s1, const char* s2, unsigned int n);
+    #define WFILE FILE
+
+    WOLFSSH_API char* wstrnstr(const char*, const char*, unsigned int);
+    WOLFSSH_API int wfopen(WFILE**, const char*, const char*);
 
     #define WMEMCPY(d,s,l)    memcpy((d),(s),(l))
     #define WMEMSET(b,c,l)    memset((b),(c),(l))
@@ -64,20 +61,28 @@ extern "C" {
     #define WMEMMOVE(d,s,l)   memmove((d),(s),(l))
 
     #define WSTRLEN(s1)       strlen((s1))
-    #define WSTRNCPY(s1,s2,n) strncpy((s1),(s2),(n))
     #define WSTRSTR(s1,s2)    strstr((s1),(s2))
     #define WSTRNSTR(s1,s2,n) wstrnstr((s1),(s2),(n))
     #define WSTRNCMP(s1,s2,n) strncmp((s1),(s2),(n))
     #define WSTRNCAT(s1,s2,n) strncat((s1),(s2),(n))
     #define WSTRSPN(s1,s2)    strspn((s1),(s2))
     #define WSTRCSPN(s1,s2)   strcspn((s1),(s2))
+    #define WFOPEN(f,fn,m)    wfopen((f),(fn),(m))
+    #define WFCLOSE(f)        fclose(f)
+
     #ifndef USE_WINDOWS_API
         #include <stdio.h>
+        #define WSTRNCPY(s1,s2,n) strncpy((s1),(s2),(n))
         #define WSTRNCASECMP(s1,s2,n) strncasecmp((s1),(s2),(n))
-        #define WSNPRINTF snprintf
+        #define WSNPRINTF(s,n,f,...) snprintf((s),(n),(f),##__VA_ARGS__)
+        #define WVSNPRINTF(s,n,f,...) vsnprintf((s),(n),(f),##__VA_ARGS__)
+        #define WLOCALTIME(c,r) (localtime_r((c),(r))!=NULL)
     #else
+        #define WSTRNCPY(s1,s2,n) strncpy_s((s1),(n),(s2),(n))
         #define WSTRNCASECMP(s1,s2,n) _strnicmp((s1),(s2),(n))
-        #define WSNPRINTF _snprintf
+        #define WSNPRINTF(s,n,f,...) _snprintf_s((s),(n),(n),(f),##__VA_ARGS__)
+        #define WVSNPRINTF(s,n,f,...) vsnprintf_s((s),(n),(n),(f),##__VA_ARGS__)
+        #define WLOCALTIME(c,r) (localtime_s((r),(c))==0)
     #endif
 #endif /* WSTRING_USER */
 
@@ -101,6 +106,16 @@ extern "C" {
 #endif
 #endif /* INLINE */
 
+
+/* GCC 7 has new switch() fall-through detection */
+#if defined(__GNUC__)
+    #if ((__GNUC__ > 7) || ((__GNUC__ == 7) && (__GNUC_MINOR__ >= 1)))
+        #define FALL_THROUGH __attribute__ ((fallthrough));
+    #endif
+#endif
+#ifndef FALL_THROUGH
+    #define FALL_THROUGH
+#endif
 
 
 #ifdef __cplusplus

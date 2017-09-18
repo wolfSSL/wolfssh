@@ -35,6 +35,9 @@ The `autogen.sh` script only has to be run the first time after cloning the
 repository. If you have already run it or are using code from a source
 archive, you should skip it.
 
+For building under Windows with Visual Studio, see the file
+"ide/winvs/README.md".
+
 
 examples
 --------
@@ -64,7 +67,8 @@ testing notes
 After cloning the repository, be sure to make the testing private keys read-
 only for the user, otherwise ssh_client will tell you to do it.
 
-    $ chmod 0600 ./keys/key-gretel.pem ./keys/key-hansel.pem
+    $ chmod 0600 ./keys/gretel-key-rsa.pem ./keys/hansel-key-rsa.pem \
+                 ./keys/gretel-key-ecc.pem ./keys/hansel-key-ecc.pem
 
 Authentication against the example echoserver can be done with a password or
 public key. To use a password the command line:
@@ -86,15 +90,16 @@ Where the user can be `gretel` or `hansel`.
 release notes
 -------------
 
-### wolfSSH v1.2.0 (07/XX/2017)
+### wolfSSH v1.2.0 (09/XX/2017)
 
 - Added ECDH Group Exchange with SHA2 hashing and curves nistp256,
-  nistp384, and nistp521. 
+  nistp384, and nistp521.
 - Added ECDSA with SHA2 hashing and curves nistp256, nistp384, and nistp521.
 - Changed the echoserver to allow only one connection, but multiple
   connections are allowed with a command line option.
 - Added option to echoserver to offer an ECC public key.
-- Other small bug fixes and enhancements.
+- Added a Visual Studio solution to build the library, examples, and tests.
+- Other bug fixes and enhancements.
 
 ### wolfSSH v1.1.0 (06/16/2017)
 

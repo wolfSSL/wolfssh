@@ -29,12 +29,12 @@
     #include <config.h>
 #endif
 
-#include <wolfssh/error.h>
-#include <wolfssh/keygen.h>
-#include <wolfssh/log.h>
 #include <wolfssl/options.h>
 #include <wolfssl/wolfcrypt/random.h>
 #include <wolfssl/wolfcrypt/rsa.h>
+#include <wolfssh/error.h>
+#include <wolfssh/keygen.h>
+#include <wolfssh/log.h>
 
 #ifdef WOLFSSH_KEYGEN
 
@@ -46,8 +46,8 @@
 #endif
 
 
-int wolfSSH_MakeRsaKey(uint8_t* out, uint32_t outSz,
-                       uint32_t size, uint32_t e)
+int wolfSSH_MakeRsaKey(byte* out, word32 outSz,
+                       word32 size, word32 e)
 {
     int ret = WS_SUCCESS;
     WC_RNG rng;

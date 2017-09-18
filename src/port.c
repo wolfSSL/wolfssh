@@ -31,7 +31,22 @@
     #include <config.h>
 #endif
 
+#include <stdio.h>
 #include <wolfssh/port.h>
+
+
+int wfopen(WFILE** f, const char* filename, const char* mode)
+{
+#ifdef USE_WINDOWS_API
+    return fopen_s(f, filename, mode) != 0;
+#else
+    if (f != NULL) {
+        *f = fopen(filename, mode);
+        return *f == NULL;
+    }
+    return 1;
+#endif
+}
 
 
 #ifndef WSTRING_USER
@@ -55,4 +70,3 @@ char* wstrnstr(const char* s1, const char* s2, unsigned int n)
 }
 
 #endif /* WSTRING_USER */
-

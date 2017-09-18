@@ -49,14 +49,19 @@
 
 /* Check for if compiling misc.c when not needed. */
 #if !defined(WOLFSSH_MISC_INCLUDED) && !defined(NO_INLINE)
+    #define MISC_WARNING "misc.c does not need to be compiled when using inline (NO_INLINE not defined))"
 
-    #warning misc.c does not need to be compiled when using inline (NO_INLINE not defined)
+    #ifndef _MSC_VER
+        #warning MISC_WARNING
+    #else
+        #pragma message("warning: " MISC_WARNING)
+    #endif
 
 #else /* !WOLFSSL_MISC_INCLUDED && !NO_INLINE */
 
 
 #ifndef min
-STATIC INLINE uint32_t min(uint32_t a, uint32_t b)
+STATIC INLINE word32 min(word32 a, word32 b)
 {
     return a > b ? b : a;
 }
@@ -64,14 +69,14 @@ STATIC INLINE uint32_t min(uint32_t a, uint32_t b)
 
 
 /* convert opaque to 32 bit integer */
-STATIC INLINE void ato32(const uint8_t* c, uint32_t* u32)
+STATIC INLINE void ato32(const byte* c, word32* u32)
 {
     *u32 = (c[0] << 24) | (c[1] << 16) | (c[2] << 8) | c[3];
 }
 
 
 /* convert 32 bit integer to opaque */
-STATIC INLINE void c32toa(uint32_t u32, uint8_t* c)
+STATIC INLINE void c32toa(word32 u32, byte* c)
 {
     c[0] = (u32 >> 24) & 0xff;
     c[1] = (u32 >> 16) & 0xff;
@@ -81,20 +86,20 @@ STATIC INLINE void c32toa(uint32_t u32, uint8_t* c)
 
 
 /* Make sure compiler doesn't skip */
-STATIC INLINE void ForceZero(const void* mem, uint32_t length)
+STATIC INLINE void ForceZero(const void* mem, word32 length)
 {
-    volatile uint8_t* z = (volatile uint8_t*)mem;
+    volatile byte* z = (volatile byte*)mem;
 
     while (length--) *z++ = 0;
 }
 
 
 /* check all length bytes for equality, return 0 on success */
-STATIC INLINE int ConstantCompare(const uint8_t* a, const uint8_t* b,
-                                  uint32_t length)
+STATIC INLINE int ConstantCompare(const byte* a, const byte* b,
+                                  word32 length)
 {
-    uint32_t i;
-    uint32_t compareSum = 0;
+    word32 i;
+    word32 compareSum = 0;
 
     for (i = 0; i < length; i++) {
         compareSum |= a[i] ^ b[i];

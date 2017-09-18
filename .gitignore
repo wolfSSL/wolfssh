@@ -60,3 +60,14 @@ client.plist
 
 # misc
 .DS_Store
+
+# VS debris
+*.sdf
+*.v11.suo
+*.vcxproj.filters
+*.opensdf
+*.pdb
+Debug
+Release
+DLL Debug
+DLL Release

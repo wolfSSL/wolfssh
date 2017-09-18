@@ -41,6 +41,14 @@ extern "C" {
 #endif /* WMALLOC_USER */
 
 
+#if defined (_WIN32)
+    #define USE_WINDOWS_API
+#endif
+
+#define WOLFSSH_NO_CLIENT
+    /* The client code is incomplete. */
+
+
 #ifdef __cplusplus
 }
 #endif
