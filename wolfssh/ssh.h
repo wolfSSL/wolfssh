@@ -125,11 +125,14 @@ WOLFSSH_API void wolfSSH_SetUserAuth(WOLFSSH_CTX*, WS_CallbackUserAuth);
 WOLFSSH_API void wolfSSH_SetUserAuthCtx(WOLFSSH*, void*);
 WOLFSSH_API void* wolfSSH_GetUserAuthCtx(WOLFSSH*);
 
+WOLFSSH_API int wolfSSH_SetUsername(WOLFSSH*, const char*);
+
 WOLFSSH_API int wolfSSH_CTX_SetBanner(WOLFSSH_CTX*, const char*);
 WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX*,
                                                  const byte*, word32, int);
 
 WOLFSSH_API int wolfSSH_accept(WOLFSSH*);
+WOLFSSH_API int wolfSSH_connect(WOLFSSH*);
 WOLFSSH_API int wolfSSH_shutdown(WOLFSSH*);
 WOLFSSH_API int wolfSSH_stream_read(WOLFSSH*, byte*, word32);
 WOLFSSH_API int wolfSSH_stream_send(WOLFSSH*, byte*, word32);
