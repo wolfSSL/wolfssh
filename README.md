@@ -90,13 +90,13 @@ Where the user can be `gretel` or `hansel`.
 release notes
 -------------
 
-### wolfSSH v1.2.0 (09/XX/2017)
+### wolfSSH v1.2.0 (09/26/2017)
 
 - Added ECDH Group Exchange with SHA2 hashing and curves nistp256,
   nistp384, and nistp521.
 - Added ECDSA with SHA2 hashing and curves nistp256, nistp384, and nistp521.
 - Added client support.
-- Added an example client.
+- Added an example client that talks to the echoserver.
 - Changed the echoserver to allow only one connection, but multiple
   connections are allowed with a command line option.
 - Added option to echoserver to offer an ECC public key.
