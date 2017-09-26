@@ -1,4 +1,4 @@
-/* echoserver.h
+/* server.h
  *
  * Copyright (C) 2014-2017 wolfSSL Inc.
  *
@@ -21,11 +21,11 @@
 
 #pragma once
 
-#ifndef _WOLFSSH_ECHOSERVER_H_
-#define _WOLFSSH_ECHOSERVER_H_
+#ifndef _WOLFSSH_SERVER_H_
+#define _WOLFSSH_SERVER_H_
 
 
-THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args);
+THREAD_RETURN WOLFSSH_THREAD server_test(void* args);
 
 
-#endif /* _WOLFSSH_ECHOSERVER_H_ */
+#endif /* _WOLFSSH_SERVER_H_ */

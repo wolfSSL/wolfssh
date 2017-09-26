@@ -10,7 +10,7 @@ wolfSSH is dependent on wolfCrypt. The simplest configuration of wolfSSL
 required for wolfSSH is the default build.
 
     $ cd wolfssl
-    $ ./configure [OPTIONS]
+    $ ./configure [OPTIONS] CPPFLAGS=-DWOLFSSL_PUBLIC_MP
     $ make check
     $ sudo make install
 
@@ -95,6 +95,8 @@ release notes
 - Added ECDH Group Exchange with SHA2 hashing and curves nistp256,
   nistp384, and nistp521.
 - Added ECDSA with SHA2 hashing and curves nistp256, nistp384, and nistp521.
+- Added client support.
+- Added an example client.
 - Changed the echoserver to allow only one connection, but multiple
   connections are allowed with a command line option.
 - Added option to echoserver to offer an ECC public key.

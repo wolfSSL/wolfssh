@@ -371,6 +371,187 @@ int wolfSSH_accept(WOLFSSH* ssh)
 }
 
 
+const char connectError[] = "connect error: %s, %d";
+const char connectState[] = "connect state: %s";
+
+
+int wolfSSH_connect(WOLFSSH* ssh)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_connect()");
+
+    if (ssh == NULL)
+        return WS_BAD_ARGUMENT;
+
+    switch (ssh->connectState) {
+
+        case CONNECT_BEGIN:
+            if ( (ssh->error = SendProtoId(ssh)) < WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, connectError, "BEGIN", ssh->error);
+                return WS_FATAL_ERROR;
+            }
+            ssh->connectState = CONNECT_CLIENT_VERSION_SENT;
+            WLOG(WS_LOG_DEBUG, connectState, "CLIENT_VERSION_SENT");
+            FALL_THROUGH;
+
+        case CONNECT_CLIENT_VERSION_SENT:
+            while (ssh->serverState < SERVER_VERSION_DONE) {
+                if ( (ssh->error = DoProtoId(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, connectError,
+                         "CLIENT_VERSION_SENT", ssh->error);
+                    return WS_FATAL_ERROR;
+                }
+            }
+            ssh->connectState = CONNECT_SERVER_VERSION_DONE;
+            WLOG(WS_LOG_DEBUG, connectState, "SERVER_VERSION_DONE");
+            FALL_THROUGH;
+
+        case CONNECT_SERVER_VERSION_DONE:
+            if ( (ssh->error = SendKexInit(ssh)) < WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, acceptError,
+                     "SERVER_VERSION_DONE", ssh->error);
+                return WS_FATAL_ERROR;
+            }
+            ssh->connectState = CONNECT_CLIENT_KEXINIT_SENT;
+            WLOG(WS_LOG_DEBUG, connectState, "CLIENT_KEXINIT_SENT");
+            FALL_THROUGH;
+
+        case CONNECT_CLIENT_KEXINIT_SENT:
+            while (ssh->serverState < SERVER_KEXINIT_DONE) {
+                if ( (ssh->error = DoReceive(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, connectError,
+                         "CLIENT_KEXINIT_SENT", ssh->error);
+                    return WS_FATAL_ERROR;
+                }
+            }
+            ssh->connectState = CONNECT_SERVER_KEXINIT_DONE;
+            WLOG(WS_LOG_DEBUG, connectState, "SERVER_KEXINIT_DONE");
+            FALL_THROUGH;
+
+        case CONNECT_SERVER_KEXINIT_DONE:
+            if (ssh->handshake->kexId == ID_DH_GEX_SHA256)
+                ssh->error = SendKexDhGexRequest(ssh);
+            else
+                ssh->error = SendKexDhInit(ssh);
+            if (ssh->error < WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, connectError,
+                     "SERVER_KEXINIT_DONE", ssh->error);
+                return WS_FATAL_ERROR;
+            }
+            ssh->connectState = CONNECT_CLIENT_KEXDH_INIT_SENT;
+            WLOG(WS_LOG_DEBUG, connectState, "CLIENT_KEXDH_INIT_SENT");
+            FALL_THROUGH;
+
+        case CONNECT_CLIENT_KEXDH_INIT_SENT:
+            while (ssh->isKeying) {
+                if ( (ssh->error = DoReceive(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, connectError,
+                         "CLIENT_KEXDH_INIT_SENT", ssh->error);
+                    return WS_FATAL_ERROR;
+                }
+            }
+            ssh->connectState = CONNECT_KEYED;
+            WLOG(WS_LOG_DEBUG, connectState, "KEYED");
+            FALL_THROUGH;
+
+        case CONNECT_KEYED:
+            if ( (ssh->error = SendServiceRequest(ssh, ID_SERVICE_USERAUTH)) <
+                                                                  WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, connectError, "KEYED", ssh->error);
+                return WS_FATAL_ERROR;
+            }
+            ssh->connectState = CONNECT_CLIENT_USERAUTH_REQUEST_SENT;
+            WLOG(WS_LOG_DEBUG, connectState, "CLIENT_USERAUTH_REQUEST_SENT");
+            FALL_THROUGH;
+
+        case CONNECT_CLIENT_USERAUTH_REQUEST_SENT:
+            while (ssh->serverState < SERVER_USERAUTH_REQUEST_DONE) {
+                if ( (ssh->error = DoReceive(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, connectError,
+                         "CLIENT_USERAUTH_REQUEST_SENT", ssh->error);
+                    return WS_FATAL_ERROR;
+                }
+            }
+            ssh->connectState = CONNECT_SERVER_USERAUTH_REQUEST_DONE;
+            WLOG(WS_LOG_DEBUG, connectState, "SERVER_USERAUTH_REQUEST_DONE");
+            FALL_THROUGH;
+
+        case CONNECT_SERVER_USERAUTH_REQUEST_DONE:
+            if ( (ssh->error = SendUserAuthRequest(ssh, ID_NONE)) <
+                                                                  WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, connectError,
+                     "SERVER_USERAUTH_REQUEST_DONE", ssh->error);
+                return WS_FATAL_ERROR;
+            }
+            ssh->connectState = CONNECT_CLIENT_USERAUTH_SENT;
+            WLOG(WS_LOG_DEBUG, connectState, "CLIENT_USERAUTH_SENT");
+            FALL_THROUGH;
+
+        case CONNECT_CLIENT_USERAUTH_SENT:
+            while (ssh->serverState < SERVER_USERAUTH_ACCEPT_DONE) {
+                if ( (ssh->error = DoReceive(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, connectError,
+                         "CLIENT_USERAUTH_SENT", ssh->error);
+                    return WS_FATAL_ERROR;
+                }
+            }
+            ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+            WLOG(WS_LOG_DEBUG, connectState, "SERVER_USERAUTH_ACCEPT_DONE");
+            FALL_THROUGH;
+
+        case CONNECT_SERVER_USERAUTH_ACCEPT_DONE:
+            if ( (ssh->error = SendChannelOpenSession(ssh, DEFAULT_WINDOW_SZ,
+                                        DEFAULT_MAX_PACKET_SZ)) < WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, connectError,
+                     "SERVER_USERAUTH_ACCEPT_DONE", ssh->error);
+                return WS_FATAL_ERROR;
+            }
+            ssh->connectState = CONNECT_CLIENT_CHANNEL_OPEN_SESSION_SENT;
+            WLOG(WS_LOG_DEBUG, connectState,
+                 "CLIENT_CHANNEL_OPEN_SESSION_SENT");
+            FALL_THROUGH;
+
+        case CONNECT_CLIENT_CHANNEL_OPEN_SESSION_SENT:
+            while (ssh->serverState < SERVER_CHANNEL_OPEN_DONE) {
+                if ( (ssh->error = DoReceive(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, connectError,
+                         "CLIENT_CHANNEL_OPEN_SESSION_SENT", ssh->error);
+                    return WS_FATAL_ERROR;
+                }
+            }
+            ssh->connectState = CONNECT_SERVER_CHANNEL_OPEN_SESSION_DONE;
+            WLOG(WS_LOG_DEBUG, connectState,
+                 "SERVER_CHANNEL_OPEN_SESSION_DONE");
+            FALL_THROUGH;
+
+        case CONNECT_SERVER_CHANNEL_OPEN_SESSION_DONE:
+            if ( (ssh->error = SendChannelRequestShell(ssh)) < WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, connectError,
+                     "SERVER_CHANNEL_OPEN_SESSION_DONE", ssh->error);
+                return WS_FATAL_ERROR;
+            }
+            ssh->connectState = CONNECT_CLIENT_CHANNEL_REQUEST_SHELL_SENT;
+            WLOG(WS_LOG_DEBUG, connectState,
+                 "CLIENT_CHANNEL_REQUEST_SHELL_SENT");
+            FALL_THROUGH;
+
+        case CONNECT_CLIENT_CHANNEL_REQUEST_SHELL_SENT:
+            while (ssh->serverState < SERVER_DONE) {
+                if ( (ssh->error = DoReceive(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, connectError,
+                         "CLIENT_CHANNEL_REQUEST_SHELL_SENT", ssh->error);
+                    return WS_FATAL_ERROR;
+                }
+            }
+            ssh->connectState = CONNECT_SERVER_CHANNEL_REQUEST_SHELL_DONE;
+            WLOG(WS_LOG_DEBUG, connectState,
+                 "SERVER_CHANNEL_REQUEST_SHELL_DONE");
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_connect()");
+    return WS_SUCCESS;
+}
+
+
 int wolfSSH_shutdown(WOLFSSH* ssh)
 {
     int ret = WS_SUCCESS;
@@ -504,6 +685,41 @@ void* wolfSSH_GetUserAuthCtx(WOLFSSH* ssh)
         return ssh->userAuthCtx;
     }
     return NULL;
+}
+
+
+int wolfSSH_SetUsername(WOLFSSH* ssh, const char* username)
+{
+    char* value = NULL;
+    word32 valueSz;
+    int ret = WS_SUCCESS;
+
+    if (ssh == NULL || ssh->handshake == NULL ||
+        ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER ||
+        username == NULL) {
+
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        valueSz = (word32)WSTRLEN(username);
+        if (valueSz > 0)
+            value = (char*)WMALLOC(valueSz + 1, ssh->ctx->heap, DYNTYPE_STRING);
+        if (value == NULL)
+            ret = WS_MEMORY_E;
+    }
+
+    if (ret == WS_SUCCESS) {
+        WSTRNCPY(value, username, valueSz + 1);
+        if (ssh->userName != NULL) {
+            WFREE(ssh->userName, heap, DYNTYPE_STRING);
+            ssh->userName = NULL;
+        }
+        ssh->userName = value;
+        ssh->userNameSz = valueSz;
+    }
+
+    return ret;
 }
 
 

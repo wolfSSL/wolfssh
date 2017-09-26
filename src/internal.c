@@ -37,6 +37,7 @@
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfssl/wolfcrypt/hmac.h>
+#include <wolfssl/wolfcrypt/integer.h>
 #include <wolfssl/wolfcrypt/signature.h>
 
 #ifdef NO_INLINE
@@ -1310,7 +1311,6 @@ static int GetUint32(word32* v, byte* buf, word32 len, word32* idx)
 }
 
 
-#ifndef WOLFSSH_NO_CLIENT
 /* Gets the size of the mpint, and puts the pointer to the start of
  * buf's number into *mpint. This function does not copy. */
 static int GetMpint(word32* mpintSz, byte** mpint,
@@ -1332,7 +1332,6 @@ static int GetMpint(word32* mpintSz, byte** mpint,
 
     return result;
 }
-#endif /* WOLFSSH_NO_CLIENT */
 
 
 /* Gets the size of a string, copies it as much of it as will fit in
@@ -2008,7 +2007,6 @@ static int DoKexDhInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 }
 
 
-#ifndef WOLFSSH_NO_CLIENT
 static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
     byte* pubKey;
@@ -2316,7 +2314,6 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     WLOG(WS_LOG_DEBUG, "Leaving DoKexDhReply(), ret = %d", ret);
     return ret;
 }
-#endif /* WOLFSSH_NO_CLIENT */
 
 
 static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
@@ -2416,7 +2413,6 @@ static int DoKexDhGexRequest(WOLFSSH* ssh,
 }
 
 
-#ifndef WOLFSSH_NO_CLIENT
 static int DoKexDhGexGroup(WOLFSSH* ssh,
                            byte* buf, word32 len, word32* idx)
 {
@@ -2473,7 +2469,6 @@ static int DoKexDhGexGroup(WOLFSSH* ssh,
 
     return ret;
 }
-#endif /* WOLFSSH_NO_CLIENT */
 
 
 static int DoIgnore(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
@@ -2654,7 +2649,6 @@ static int DoServiceRequest(WOLFSSH* ssh,
 }
 
 
-#ifndef WOLFSSH_NO_CLIENT
 static int DoServiceAccept(WOLFSSH* ssh,
                            byte* buf, word32 len, word32* idx)
 {
@@ -2678,7 +2672,6 @@ static int DoServiceAccept(WOLFSSH* ssh,
 
     return WS_SUCCESS;
 }
-#endif /* WOLFSSH_NO_CLIENT */
 
 
 /* Utility for DoUserAuthRequest() */
@@ -2756,9 +2749,11 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
 /* Utility for DoUserAuthRequestPublicKey() */
 /* returns negative for error, positive is size of digest. */
 static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
-                                byte* digest, word32 digestSz)
+                                byte hashId, byte* digest, word32 digestSz)
 {
     RsaKey key;
+    byte checkDigest[MAX_ENCODED_SIG_SZ];
+    int checkDigestSz;
     byte* publicKeyType;
     word32 publicKeyTypeSz = 0;
     byte* n;
@@ -2836,16 +2831,172 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 
     if (ret == WS_SUCCESS) {
         n = pk->signature + i;
-        ret = wc_RsaSSL_Verify(n, nSz, digest, digestSz, &key);
-        if (ret <= 0) {
+        checkDigestSz = wc_RsaSSL_Verify(n, nSz, checkDigest,
+                                         sizeof(checkDigest), &key);
+        if (checkDigestSz <= 0) {
             WLOG(WS_LOG_DEBUG, "Could not verify signature");
             ret = WS_CRYPTO_FAILED;
         }
     }
 
+    if (ret == WS_SUCCESS) {
+        byte encDigest[MAX_ENCODED_SIG_SZ];
+        word32 encDigestSz;
+        volatile int compare;
+        volatile int sizeCompare;
+
+        encDigestSz = wc_EncodeSignature(encDigest, digest,
+                                         wc_HashGetDigestSize(hashId),
+                                         wc_HashGetOID(hashId));
+
+        compare = ConstantCompare(encDigest, checkDigest,
+                                  encDigestSz);
+        sizeCompare = encDigestSz != (word32)checkDigestSz;
+
+        if ((compare | sizeCompare) == 0)
+            ret = WS_SUCCESS;
+        else
+            ret = WS_RSA_E;
+    }
+
     wc_FreeRsaKey(&key);
 
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthRequestRsa(), ret = %d", ret);
+    return ret;
+}
+
+
+/* Utility for DoUserAuthRequestPublicKey() */
+/* returns negative for error, positive is size of digest. */
+static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
+                                byte hashId, byte* digest, word32 digestSz)
+{
+    ecc_key key;
+    byte* publicKeyType;
+    word32 publicKeyTypeSz = 0;
+    byte* curveName;
+    word32 curveNameSz = 0;
+    mp_int r, s;
+    byte* q;
+    word32 sz, qSz;
+    word32 i = 0;
+    int ret = WS_SUCCESS;
+
+    (void)hashId;
+
+    WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequestRsa()");
+
+    if (ssh == NULL || pk == NULL || digest == NULL || digestSz == 0)
+        ret = WS_BAD_ARGUMENT;
+
+    /* First check that the public key's type matches the one we are
+     * expecting. */
+    if (ret == WS_SUCCESS)
+        ret = GetUint32(&publicKeyTypeSz, pk->publicKey, pk->publicKeySz, &i);
+
+    if (ret == WS_SUCCESS) {
+        publicKeyType = pk->publicKey + i;
+        i += publicKeyTypeSz;
+        if (publicKeyTypeSz != pk->publicKeyTypeSz &&
+            WMEMCMP(publicKeyType, pk->publicKeyType, publicKeyTypeSz) != 0) {
+
+            WLOG(WS_LOG_DEBUG,
+                "Public Key's type does not match public key type");
+            ret = WS_INVALID_ALGO_ID;
+        }
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = GetUint32(&curveNameSz, pk->publicKey, pk->publicKeySz, &i);
+
+    if (ret == WS_SUCCESS) {
+        curveName = pk->publicKey + i;
+        i += curveNameSz;
+        ret = GetUint32(&qSz, pk->publicKey, pk->publicKeySz, &i);
+    }
+
+    if (ret == WS_SUCCESS) {
+        q = pk->publicKey + i;
+        i += qSz;
+        ret = wc_ecc_init_ex(&key, ssh->ctx->heap, INVALID_DEVID);
+    }
+
+    if (ret == 0)
+        ret = wc_ecc_import_x963(q, qSz, &key);
+
+    if (ret != 0) {
+        WLOG(WS_LOG_DEBUG, "Could not decode public key");
+        ret = WS_CRYPTO_FAILED;
+    }
+
+    if (ret == WS_SUCCESS) {
+        i = 0;
+        /* First check that the signature's public key type matches the one
+         * we are expecting. */
+        ret = GetUint32(&publicKeyTypeSz, pk->signature, pk->signatureSz, &i);
+    }
+
+    if (ret == WS_SUCCESS) {
+        publicKeyType = pk->signature + i;
+        i += publicKeyTypeSz;
+
+        if (publicKeyTypeSz != pk->publicKeyTypeSz &&
+            WMEMCMP(publicKeyType, pk->publicKeyType, publicKeyTypeSz) != 0) {
+
+            WLOG(WS_LOG_DEBUG,
+                 "Signature's type does not match public key type");
+            ret = WS_INVALID_ALGO_ID;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        /* Get the size of the signature blob. */
+        ret = GetUint32(&sz, pk->signature, pk->signatureSz, &i);
+    }
+
+    if (ret == WS_SUCCESS) {
+        /* Get R and S. */
+        ret = GetUint32(&sz, pk->signature, pk->signatureSz, &i);
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = mp_read_unsigned_bin(&r, pk->signature + i, sz);
+        if (ret != 0)
+            ret = WS_PARSE_E;
+        else
+            ret = WS_SUCCESS;
+    }
+
+    if (ret == WS_SUCCESS) {
+        i += sz;
+        ret = GetUint32(&sz, pk->signature, pk->signatureSz, &i);
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = mp_read_unsigned_bin(&s, pk->signature + i, sz);
+        if (ret != 0)
+            ret = WS_PARSE_E;
+        else
+            ret = WS_SUCCESS;
+    }
+
+    if (ret == WS_SUCCESS) {
+        int status = 0;
+
+        ret = wc_ecc_verify_hash_ex(&r, &s, digest, digestSz, &status, &key);
+        if (ret != 0) {
+            WLOG(WS_LOG_DEBUG, "Could not verify signature");
+            ret = WS_CRYPTO_FAILED;
+        }
+        else
+            ret = status ? WS_SUCCESS : WS_ECC_E;
+    }
+
+    mp_clear(&r);
+    mp_clear(&s);
+    wc_ecc_free(&key);
+
+    WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthRequestEcc(), ret = %d", ret);
     return ret;
 }
 
@@ -2929,80 +3080,73 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                                    pk->publicKey, pk->publicKeySz);
         }
         else {
-            byte checkDigest[MAX_ENCODED_SIG_SZ];
-            word32 checkDigestSz = sizeof(checkDigest);
-            byte encDigest[MAX_ENCODED_SIG_SZ];
-            word32 encDigestSz;
+            wc_HashAlg hash;
+            byte digest[WC_MAX_DIGEST_SIZE];
+            word32 digestSz;
+            byte hashId = WC_HASH_TYPE_SHA;
             byte pkTypeId;
 
-            WMEMSET(checkDigest, 0, sizeof(checkDigest));
-            WMEMSET(encDigest, 0, sizeof(encDigest));
-
-            pkTypeId = NameToId((char*)pk->publicKeyType, pk->publicKeyTypeSz);
-
-            if (pkTypeId == ID_SSH_RSA)
-                ret = DoUserAuthRequestRsa(ssh, pk, checkDigest, checkDigestSz);
-            else
+            pkTypeId = NameToId((char*)pk->publicKeyType,
+                                pk->publicKeyTypeSz);
+            if (pkTypeId == ID_UNKNOWN)
                 ret = WS_INVALID_ALGO_ID;
 
-            if (ret > 0) {
-                checkDigestSz = (word32)ret;
-                ret = WS_SUCCESS;
+            if (ret == WS_SUCCESS) {
+                hashId = HashForId(pkTypeId);
+                WMEMSET(digest, 0, sizeof(digest));
+                digestSz = wc_HashGetDigestSize(hashId);
+                ret = wc_HashInit(&hash, hashId);
             }
 
-            if (ret == WS_SUCCESS) {
-                wc_HashAlg hash;
-                byte hashId = WC_HASH_TYPE_SHA;
-                byte digest[WC_MAX_DIGEST_SIZE];
-                volatile int compare;
-                volatile int sizeCompare;
+            if (ret == 0) {
+                c32toa(ssh->sessionIdSz, digest);
+                ret = wc_HashUpdate(&hash, hashId, digest, UINT32_SZ);
+            }
 
-                ret = wc_HashInit(&hash, hashId);
-                if (ret == 0) {
-                    c32toa(ssh->sessionIdSz, digest);
-                    ret = wc_HashUpdate(&hash, hashId, digest, UINT32_SZ);
-                }
-                if (ret == WS_SUCCESS)
-                    ret = wc_HashUpdate(&hash, hashId,
-                                        ssh->sessionId, ssh->sessionIdSz);
+            if (ret == 0)
+                ret = wc_HashUpdate(&hash, hashId,
+                                    ssh->sessionId, ssh->sessionIdSz);
 
-                if (ret == 0) {
-                    digest[0] = MSGID_USERAUTH_REQUEST;
-                    ret = wc_HashUpdate(&hash, hashId, digest, MSG_ID_SZ);
-                }
+            if (ret == 0) {
+                digest[0] = MSGID_USERAUTH_REQUEST;
+                ret = wc_HashUpdate(&hash, hashId, digest, MSG_ID_SZ);
+            }
 
-                /* The rest of the fields in the signature are already
-                 * in the buffer. Just need to account for the sizes. */
-                if (ret == 0)
-                    ret = wc_HashUpdate(&hash, hashId, pk->dataToSign,
-                                        authData->usernameSz +
-                                        authData->serviceNameSz +
-                                        authData->authNameSz + BOOLEAN_SZ +
-                                        pk->publicKeyTypeSz + pk->publicKeySz +
-                                        (UINT32_SZ * 5));
-                if (ret == 0)
-                    ret = wc_HashFinal(&hash, hashId, digest);
-
-                encDigestSz = wc_EncodeSignature(encDigest, digest,
-                                                 wc_HashGetDigestSize(hashId),
-                                                 wc_HashGetOID(hashId));
+            /* The rest of the fields in the signature are already
+             * in the buffer. Just need to account for the sizes. */
+            if (ret == 0)
+                ret = wc_HashUpdate(&hash, hashId, pk->dataToSign,
+                                    authData->usernameSz +
+                                    authData->serviceNameSz +
+                                    authData->authNameSz + BOOLEAN_SZ +
+                                    pk->publicKeyTypeSz + pk->publicKeySz +
+                                    (UINT32_SZ * 5));
+            if (ret == 0) {
+                ret = wc_HashFinal(&hash, hashId, digest);
 
                 if (ret != 0)
                     ret = WS_CRYPTO_FAILED;
+                else
+                    ret = WS_SUCCESS;
+            }
 
-                if (ret == WS_SUCCESS) {
-                    compare = ConstantCompare(encDigest, checkDigest,
-                                              encDigestSz);
-                    sizeCompare = encDigestSz != checkDigestSz;
+            if (ret == WS_SUCCESS) {
+                if (pkTypeId == ID_SSH_RSA)
+                    ret = DoUserAuthRequestRsa(ssh, pk,
+                                               hashId, digest, digestSz);
+                else if (pkTypeId == ID_ECDSA_SHA2_NISTP256 ||
+                         pkTypeId == ID_ECDSA_SHA2_NISTP384 ||
+                         pkTypeId == ID_ECDSA_SHA2_NISTP521)
+                    ret = DoUserAuthRequestEcc(ssh, pk,
+                                               hashId, digest, digestSz);
+            }
 
-                    if (compare || sizeCompare || ret < 0) {
-                        WLOG(WS_LOG_DEBUG, "DUARPK: signature compare failure");
-                        ret = SendUserAuthFailure(ssh, 0);
-                    }
-                    else {
-                        ssh->clientState = CLIENT_USERAUTH_DONE;
-                    }
-                }
+            if (ret != WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, "DUARPK: signature compare failure");
+                ret = SendUserAuthFailure(ssh, 0);
+            }
+            else {
+                ssh->clientState = CLIENT_USERAUTH_DONE;
             }
         }
     }
@@ -3075,7 +3219,6 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
 }
 
 
-#ifndef WOLFSSH_NO_CLIENT
 static int DoUserAuthFailure(WOLFSSH* ssh,
                              byte* buf, word32 len, word32* idx)
 {
@@ -3152,7 +3295,6 @@ static int DoUserAuthBanner(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthBanner(), ret = %d", ret);
     return ret;
 }
-#endif /* WOLFSSH_NO_CLIENT */
 
 
 static int DoGlobalRequest(WOLFSSH* ssh,
@@ -3630,6 +3772,17 @@ static int DoPacket(WOLFSSH* ssh)
             ret = DoKexDhInit(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
+        case MSGID_KEXDH_REPLY:
+            if (ssh->handshake->kexId == ID_DH_GEX_SHA256) {
+                WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_GEX_GROUP");
+                ret = DoKexDhGexGroup(ssh, buf + idx, payloadSz, &payloadIdx);
+            }
+            else {
+                WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_REPLY");
+                ret = DoKexDhReply(ssh, buf + idx, payloadSz, &payloadIdx);
+            }
+            break;
+
         case MSGID_KEXDH_GEX_REQUEST:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_GEX_REQUEST");
             ret = DoKexDhGexRequest(ssh, buf + idx, payloadSz, &payloadIdx);
@@ -3640,14 +3793,39 @@ static int DoPacket(WOLFSSH* ssh)
             ret = DoKexDhInit(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
+        case MSGID_KEXDH_GEX_REPLY:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_GEX_INIT");
+            ret = DoKexDhReply(ssh, buf + idx, payloadSz, &payloadIdx);
+            break;
+
         case MSGID_SERVICE_REQUEST:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_SERVICE_REQUEST");
             ret = DoServiceRequest(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
+        case MSGID_SERVICE_ACCEPT:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_SERVER_ACCEPT");
+            ret = DoServiceAccept(ssh, buf + idx, payloadSz, &payloadIdx);
+            break;
+
         case MSGID_USERAUTH_REQUEST:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_USERAUTH_REQUEST");
             ret = DoUserAuthRequest(ssh, buf + idx, payloadSz, &payloadIdx);
+            break;
+
+        case MSGID_USERAUTH_FAILURE:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_USERAUTH_FAILURE");
+            ret = DoUserAuthFailure(ssh, buf + idx, payloadSz, &payloadIdx);
+            break;
+
+        case MSGID_USERAUTH_SUCCESS:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_USERAUTH_SUCCESS");
+            ret = DoUserAuthSuccess(ssh, buf + idx, payloadSz, &payloadIdx);
+            break;
+
+        case MSGID_USERAUTH_BANNER:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_USERAUTH_BANNER");
+            ret = DoUserAuthBanner(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_GLOBAL_REQUEST:
@@ -3704,44 +3882,6 @@ static int DoPacket(WOLFSSH* ssh)
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_FAILURE");
             ret = DoChannelFailure(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
-
-#ifndef WOLFSSH_NO_CLIENT
-        case MSGID_KEXDH_REPLY:
-            if (ssh->handshake->kexId == ID_DH_GEX_SHA256) {
-                WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_GEX_GROUP");
-                ret = DoKexDhGexGroup(ssh, buf + idx, payloadSz, &payloadIdx);
-            }
-            else {
-                WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_REPLY");
-                ret = DoKexDhReply(ssh, buf + idx, payloadSz, &payloadIdx);
-            }
-            break;
-
-        case MSGID_KEXDH_GEX_REPLY:
-            WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_GEX_INIT");
-            ret = DoKexDhReply(ssh, buf + idx, payloadSz, &payloadIdx);
-            break;
-
-        case MSGID_SERVICE_ACCEPT:
-            WLOG(WS_LOG_DEBUG, "Decoding MSGID_SERVER_ACCEPT");
-            ret = DoServiceAccept(ssh, buf + idx, payloadSz, &payloadIdx);
-            break;
-
-        case MSGID_USERAUTH_FAILURE:
-            WLOG(WS_LOG_DEBUG, "Decoding MSGID_USERAUTH_FAILURE");
-            ret = DoUserAuthFailure(ssh, buf + idx, payloadSz, &payloadIdx);
-            break;
-
-        case MSGID_USERAUTH_SUCCESS:
-            WLOG(WS_LOG_DEBUG, "Decoding MSGID_USERAUTH_SUCCESS");
-            ret = DoUserAuthSuccess(ssh, buf + idx, payloadSz, &payloadIdx);
-            break;
-
-        case MSGID_USERAUTH_BANNER:
-            WLOG(WS_LOG_DEBUG, "Decoding MSGID_USERAUTH_BANNER");
-            ret = DoUserAuthBanner(ssh, buf + idx, payloadSz, &payloadIdx);
-            break;
-#endif /* WOLFSSL_NO_CLIENT */
 
         default:
             WLOG(WS_LOG_DEBUG, "Unimplemented message ID (%d)", msg);
@@ -5203,7 +5343,6 @@ int SendNewKeys(WOLFSSH* ssh)
 }
 
 
-#ifndef WOLFSSH_NO_CLIENT
 int SendKexDhGexRequest(WOLFSSH* ssh)
 {
     byte* output;
@@ -5244,7 +5383,6 @@ int SendKexDhGexRequest(WOLFSSH* ssh)
     WLOG(WS_LOG_DEBUG, "Leaving SendKexDhGexRequest(), ret = %d", ret);
     return ret;
 }
-#endif /* WOLFSSH_NO_CLIENT */
 
 
 int SendKexDhGexGroup(WOLFSSH* ssh)
@@ -5318,7 +5456,6 @@ int SendKexDhGexGroup(WOLFSSH* ssh)
 }
 
 
-#ifndef WOLFSSH_NO_CLIENT
 int SendKexDhInit(WOLFSSH* ssh)
 {
     byte* output;
@@ -5444,7 +5581,6 @@ int SendKexDhInit(WOLFSSH* ssh)
     WLOG(WS_LOG_DEBUG, "Leaving SendKexDhInit(), ret = %d", ret);
     return ret;
 }
-#endif /* WOLFSSH_NO_CLIENT */
 
 
 int SendUnimplemented(WOLFSSH* ssh)
@@ -5606,7 +5742,6 @@ int SendDebug(WOLFSSH* ssh, byte alwaysDisplay, const char* msg)
 }
 
 
-#ifndef WOLFSSH_NO_CLIENT
 int SendServiceRequest(WOLFSSH* ssh, byte serviceId)
 {
     const char* serviceName;
@@ -5648,7 +5783,6 @@ int SendServiceRequest(WOLFSSH* ssh, byte serviceId)
     WLOG(WS_LOG_DEBUG, "Leaving SendServiceRequest(), ret = %d", ret);
     return ret;
 }
-#endif /* WOLFSSH_NO_CLIENT */
 
 
 int SendServiceAccept(WOLFSSH* ssh, byte serviceId)
@@ -5694,7 +5828,6 @@ static const char cannedAuths[] = "publickey,password";
 static const word32 cannedAuthsSz = sizeof(cannedAuths) - 1;
 
 
-#ifndef WOLFSSH_NO_CLIENT
 int SendUserAuthRequest(WOLFSSH* ssh, byte authId)
 {
     byte* output;
@@ -5784,7 +5917,6 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId)
     WLOG(WS_LOG_DEBUG, "Leaving SendUserAuthRequest(), ret = %d", ret);
     return ret;
 }
-#endif /* WOLFSSH_NO_CLIENT */
 
 
 int SendUserAuthFailure(WOLFSSH* ssh, byte partialSuccess)
@@ -5983,7 +6115,6 @@ int SendRequestSuccess(WOLFSSH* ssh, int success)
 }
 
 
-#ifndef WOLFSSH_NO_CLIENT
 int SendChannelOpenSession(WOLFSSH* ssh,
                            word32 initialWindowSz, word32 maxPacketSz)
 {
@@ -6044,7 +6175,6 @@ int SendChannelOpenSession(WOLFSSH* ssh,
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelOpenSession(), ret = %d", ret);
     return ret;
 }
-#endif /* WOLFSSH_NO_CLIENT */
 
 
 int SendChannelOpenConf(WOLFSSH* ssh)
@@ -6295,7 +6425,6 @@ int SendChannelWindowAdjust(WOLFSSH* ssh, word32 peerChannel,
 }
 
 
-#ifndef WOLFSSH_NO_CLIENT
 static const char cannedShellName[] = "shell";
 static const word32 cannedShellNameSz = sizeof(cannedShellName) - 1;
 
@@ -6346,7 +6475,6 @@ int SendChannelRequestShell(WOLFSSH* ssh)
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelRequestShell(), ret = %d", ret);
     return ret;
 }
-#endif /* WOLFSSH_NO_CLIENT */
 
 
 int SendChannelSuccess(WOLFSSH* ssh, word32 channelId, int success)
