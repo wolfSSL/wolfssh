@@ -17,6 +17,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "unit-test", "unit-test\unit
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "client", "client\client.vcxproj", "{663A7133-B13B-4C37-A5EC-97CA4D60CA3A}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "testsuite", "testsuite\testsuite.vcxproj", "{BD09DA06-6D2E-4FB0-AE39-1BAE9FDAA9DD}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Win32 = Debug|Win32
@@ -109,6 +111,18 @@ Global
 		{663A7133-B13B-4C37-A5EC-97CA4D60CA3A}.Release|Win32.Build.0 = Release|Win32
 		{663A7133-B13B-4C37-A5EC-97CA4D60CA3A}.Release|x64.ActiveCfg = Release|x64
 		{663A7133-B13B-4C37-A5EC-97CA4D60CA3A}.Release|x64.Build.0 = Release|x64
+		{BD09DA06-6D2E-4FB0-AE39-1BAE9FDAA9DD}.Debug|Win32.ActiveCfg = Debug|Win32
+		{BD09DA06-6D2E-4FB0-AE39-1BAE9FDAA9DD}.Debug|Win32.Build.0 = Debug|Win32
+		{BD09DA06-6D2E-4FB0-AE39-1BAE9FDAA9DD}.Debug|x64.ActiveCfg = Debug|x64
+		{BD09DA06-6D2E-4FB0-AE39-1BAE9FDAA9DD}.DLL Debug|Win32.ActiveCfg = DLL Debug|Win32
+		{BD09DA06-6D2E-4FB0-AE39-1BAE9FDAA9DD}.DLL Debug|Win32.Build.0 = DLL Debug|Win32
+		{BD09DA06-6D2E-4FB0-AE39-1BAE9FDAA9DD}.DLL Debug|x64.ActiveCfg = DLL Debug|x64
+		{BD09DA06-6D2E-4FB0-AE39-1BAE9FDAA9DD}.DLL Release|Win32.ActiveCfg = DLL Release|Win32
+		{BD09DA06-6D2E-4FB0-AE39-1BAE9FDAA9DD}.DLL Release|Win32.Build.0 = DLL Release|Win32
+		{BD09DA06-6D2E-4FB0-AE39-1BAE9FDAA9DD}.DLL Release|x64.ActiveCfg = DLL Release|x64
+		{BD09DA06-6D2E-4FB0-AE39-1BAE9FDAA9DD}.Release|Win32.ActiveCfg = Release|Win32
+		{BD09DA06-6D2E-4FB0-AE39-1BAE9FDAA9DD}.Release|Win32.Build.0 = Release|Win32
+		{BD09DA06-6D2E-4FB0-AE39-1BAE9FDAA9DD}.Release|x64.ActiveCfg = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

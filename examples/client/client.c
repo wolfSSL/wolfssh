@@ -19,9 +19,6 @@
  */
 
 
-#define SINGLE_THREADED
-    /* The client doesn't use threading. */
-
 #include <wolfssh/ssh.h>
 #include <wolfssh/test.h>
 #include "examples/client/client.h"
@@ -33,26 +30,18 @@
 const char testString[] = "Hello, wolfSSH!";
 
 
-#ifndef USE_WINDOWS_API
-    static struct termios originalTerm;
-#else
-    static DWORD originalTerm;
-#endif
-
-static int InitEcho(void)
-{
-#ifndef USE_WINDOWS_API
-    return tcgetattr(STDIN_FILENO, &originalTerm);
-#else
-    HANDLE stdinHandle = GetStdHandle(STD_INPUT_HANDLE);
-    return (GetConsoleMode(stdinHandle, &originalTerm) == 0);
-#endif
-}
-
-
 static int SetEcho(int on)
 {
 #ifndef USE_WINDOWS_API
+    static int echoInit = 0;
+    static struct termios originalTerm;
+    if (!echoInit) {
+        if (tcgetattr(STDIN_FILENO, &originalTerm) != 0) {
+            printf("Couldn't get the original terminal settings.\n");
+            return -1;
+        }
+        echoInit = 1;
+    }
     if (on) {
         if (tcsetattr(STDIN_FILENO, TCSANOW, &originalTerm) != 0) {
             printf("Couldn't restore the terminal settings.\n");
@@ -72,7 +61,16 @@ static int SetEcho(int on)
         }
     }
 #else
+    static int echoInit = 0;
+    static DWORD originalTerm;
     HANDLE stdinHandle = GetStdHandle(STD_INPUT_HANDLE);
+    if (!echoInit) {
+        if (GetConsoleMode(stdinHandle, &originalTerm) == 0) {
+            printf("Couldn't get the original terminal settings.\n");
+            return -1;
+        }
+        echoInit = 1;
+    }
     if (on) {
         if (SetConsoleMode(stdinHandle, originalTerm) == 0) {
             printf("Couldn't restore the terminal settings.\n");
@@ -208,7 +206,10 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     if (ctx == NULL)
         err_sys("Couldn't create wolfSSH client context.");
 
-    wolfSSH_SetUserAuth(ctx, wsUserAuth);
+    if (((func_args*)args)->user_auth == NULL)
+        wolfSSH_SetUserAuth(ctx, wsUserAuth);
+    else
+        wolfSSH_SetUserAuth(ctx, ((func_args*)args)->user_auth);
 
     ssh = wolfSSH_new(ctx);
     if (ssh == NULL)
@@ -267,11 +268,9 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         args.argc = argc;
         args.argv = argv;
         args.return_code = 0;
+        args.user_auth = NULL;
 
         WSTARTTCP();
-
-        if (InitEcho() != 0)
-            err_sys("Couldn't initialize terminal.");
 
         #ifdef DEBUG_WOLFSSH
             wolfSSH_Debugging_ON();
@@ -280,9 +279,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         wolfSSH_Init();
 
         ChangeToWolfSshRoot();
-        #ifndef NO_WOLFSSH_CLIENT
-            client_test(&args);
-        #endif /* NO_WOLFSSH_CLIENT */
+        client_test(&args);
 
         wolfSSH_Cleanup();
 

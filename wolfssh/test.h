@@ -140,94 +140,20 @@ static INLINE void FreeTcpReady(tcp_ready* ready)
 }
 
 
-typedef void (*ctx_callback)(WOLFSSH_CTX*);
-typedef void (*ssh_callback)(WOLFSSH*);
-
-typedef struct callback_functions {
-    ctx_callback ctx_ready;
-    ssh_callback ssh_ready;
-    ssh_callback on_result;
-} callback_functions;
-
 typedef struct func_args {
     int    argc;
     char** argv;
     int    return_code;
     tcp_ready* signal;
-    callback_functions *callbacks;
+    WS_CallbackUserAuth user_auth;
 } func_args;
 
 
-#ifndef SINGLE_THREADED
-
 typedef THREAD_RETURN WOLFSSH_THREAD THREAD_FUNC(void*);
-
-static void start_thread(THREAD_FUNC fun, void* args, THREAD_TYPE* thread)
-{
-#if defined(_POSIX_THREADS) && !defined(__MINGW32__)
-    pthread_create(thread, 0, fun, args);
-    return;
-#elif defined(WOLFSSL_TIRTOS)
-    /* Initialize the defaults and set the parameters. */
-    Task_Params taskParams;
-    Task_Params_init(&taskParams);
-    taskParams.arg0 = (UArg)args;
-    taskParams.stackSize = 65535;
-    *thread = Task_create((Task_FuncPtr)fun, &taskParams, NULL);
-    if (*thread == NULL) {
-        printf("Failed to create new Task\n");
-    }
-    Task_yield();
-#else
-    *thread = (THREAD_TYPE)_beginthreadex(0, 0, fun, args, 0, 0);
-#endif
-}
-
-
-static void join_thread(THREAD_TYPE thread)
-{
-#if defined(_POSIX_THREADS) && !defined(__MINGW32__)
-    pthread_join(thread, 0);
-#elif defined(WOLFSSL_TIRTOS)
-    while(1) {
-        if (Task_getMode(thread) == Task_Mode_TERMINATED) {
-            Task_sleep(5);
-            break;
-        }
-        Task_yield();
-    }
-#else
-    int res = WaitForSingleObject((HANDLE)thread, INFINITE);
-    assert(res == WAIT_OBJECT_0);
-    res = CloseHandle((HANDLE)thread);
-    assert(res);
-    (void)res; /* Suppress un-used variable warning */
-#endif
-}
-
-
-static void detach_thread(THREAD_TYPE thread)
-{
-#if defined(_POSIX_THREADS) && !defined(__MINGW32__)
-    pthread_detach(thread);
-#elif defined(WOLFSSL_TIRTOS)
-#if 0
-    while(1) {
-        if (Task_getMode(thread) == Task_Mode_TERMINATED) {
-            Task_sleep(5);
-            break;
-        }
-        Task_yield();
-    }
-#endif
-#else
-    int res = CloseHandle((HANDLE)thread);
-    assert(res);
-    (void)res; /* Suppress un-used variable warning */
-#endif
-}
-
-#endif /* SINGLE_THREADED */
+void ThreadStart(THREAD_FUNC, void*, THREAD_TYPE*);
+void ThreadJoin(THREAD_TYPE);
+void ThreadDetach(THREAD_TYPE);
+void WaitTcpReady(func_args*);
 
 
 #ifndef TEST_IPV6
