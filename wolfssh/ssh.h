@@ -47,7 +47,7 @@ WOLFSSH_API int wolfSSH_Init(void);
 WOLFSSH_API int wolfSSH_Cleanup(void);
 
 /* debugging output functions */
-WOLFSSH_API int wolfSSH_Debugging_ON(void);
+WOLFSSH_API void wolfSSH_Debugging_ON(void);
 WOLFSSH_API void wolfSSH_Debugging_OFF(void);
 
 /* context functions */
