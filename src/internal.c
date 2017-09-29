@@ -172,6 +172,9 @@ const char* GetErrorString(int err)
         case WS_CHANOPEN_FAILED:
             return "peer returned channel open failure";
 
+        case WS_CHANNEL_CLOSED:
+            return "channel closed";
+
         default:
             return "Unknown error code";
     }
@@ -3517,6 +3520,8 @@ static int DoChannelClose(WOLFSSH* ssh,
     if (ret == WS_SUCCESS)
         ret = ChannelRemove(ssh, channelId, FIND_SELF);
 
+	if (ret == WS_SUCCESS)
+		ret = WS_CHANNEL_CLOSED;
 
     WLOG(WS_LOG_DEBUG, "Leaving DoChannelClose(), ret = %d", ret);
     return ret;
