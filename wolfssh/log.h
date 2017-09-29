@@ -47,20 +47,24 @@ enum wolfSSH_LogLevel {
 
 typedef void (*wolfSSH_LoggingCb)(enum wolfSSH_LogLevel,
                                   const char *const logMsg);
+WOLFSSH_API void wolfSSH_SetLoggingCb(wolfSSH_LoggingCb logF);
+WOLFSSH_API int wolfSSH_LogEnabled(void);
 
-WOLFSSH_API int  wolfSSH_SetLoggingCb(wolfSSH_LoggingCb logF);
 
-
-#ifdef DEBUG_WOLFSSH
-    WOLFSSH_API void WLOG(enum wolfSSH_LogLevel,const char *const logMsg, ...)
-    #ifdef __GNUC__
-        __attribute__((format(printf, 2, 3)));
-    #else
-        ;  /* end decl */
-    #endif /* __GNUC__ */
+#ifdef __GNUC__
+    #define FMTCHECK __attribute__((format(printf,2,3)))
 #else
-    #define WLOG(a, b, ...)
-#endif /* DEBUG_WOLFSSH */
+    #define FMTCHECK
+#endif /* __GNUC__ */
+
+
+WOLFSSH_API void wolfSSH_Log(enum wolfSSH_LogLevel,
+                             const char *const, ...) FMTCHECK;
+
+#define WLOG(...) do { \
+                      if (wolfSSH_LogEnabled()) \
+                          wolfSSH_Log(__VA_ARGS__); \
+                  } while (0)
 
 
 #ifdef __cplusplus
