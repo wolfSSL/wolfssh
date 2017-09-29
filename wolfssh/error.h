@@ -68,10 +68,11 @@ enum WS_ErrorCodes {
     WS_INVALID_USERNAME = -28,
     WS_CRYPTO_FAILED   = -29,   /* crypto action failed */
     WS_INVALID_STATE_E = -30,
-    WS_REKEYING        = -31,
     WS_INVALID_PRIME_CURVE = -32,
     WS_ECC_E           = -33,
-    WS_CHANOPEN_FAILED = -34
+    WS_CHANOPEN_FAILED = -34,
+    WS_REKEYING        = -90,   /* Status: rekey in progress */
+    WS_CHANNEL_CLOSED  = -91    /* Status: channel closed */
 };
 
 
