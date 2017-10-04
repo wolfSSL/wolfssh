@@ -82,7 +82,7 @@ void wolfSSH_SetLoggingCb(wolfSSH_LoggingCb logF)
 }
 
 
-INLINE int wolfSSH_LogEnabled(void)
+int wolfSSH_LogEnabled(void)
 {
 #ifdef DEBUG_WOLFSSH
     return logEnable;
