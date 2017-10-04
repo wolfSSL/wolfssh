@@ -51,7 +51,7 @@ int wolfSSH_SetAllocators(wolfSSH_Malloc_cb  mf,
 
     if (mf)
         malloc_function = mf;
-	else
+    else
         res = WS_BAD_ARGUMENT;
 
     if (ff)

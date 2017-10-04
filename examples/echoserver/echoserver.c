@@ -461,40 +461,66 @@ static int wsUserAuth(byte authType,
 static void ShowUsage(void)
 {
     printf("echoserver %s\n", LIBWOLFSSH_VERSION_STRING);
-    printf("-h          Help, print this usage\n");
-    printf("-m          Allow multiple connections\n");
-    printf("-e          Use ECC private key\n");
+    printf(" -?            display this help and exit\n");
+    printf(" -1            exit after single (one) connection\n");
+    printf(" -e            use ECC private key\n");
+    printf(" -p <num>      port to connect on, default %d\n", wolfSshPort);
+}
+
+
+static void SignalTcpReady(func_args* serverArgs, word16 port)
+{
+#if defined(_POSIX_THREADS) && defined(NO_MAIN_DRIVER) && !defined(__MINGW32__)
+    tcp_ready* ready = serverArgs->signal;
+    pthread_mutex_lock(&ready->mutex);
+    ready->ready = 1;
+    ready->port = port;
+    pthread_cond_signal(&ready->cond);
+    pthread_mutex_unlock(&ready->mutex);
+#else
+    (void)serverArgs;
+    (void)port;
+#endif
 }
 
 
 THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 {
+    func_args* serverArgs = (func_args*)args;
     WOLFSSH_CTX* ctx = NULL;
     PwMapList pwMapList;
     SOCKET_T listenFd = 0;
     word32 defaultHighwater = EXAMPLE_HIGHWATER_MARK;
     word32 threadCount = 0;
-    int multipleConnections = 0;
+    int multipleConnections = 1;
     int useEcc = 0;
     char ch;
     word16 port = wolfSshPort;
 
-    int     argc = ((func_args*)args)->argc;
-    char**  argv = ((func_args*)args)->argv;
-    ((func_args*)args)->return_code = 0;
+    int     argc = serverArgs->argc;
+    char**  argv = serverArgs->argv;
+    serverArgs->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "hme")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?1ep:")) != -1) {
         switch (ch) {
-            case 'h' :
+            case '?' :
                 ShowUsage();
                 exit(EXIT_SUCCESS);
 
-            case 'm' :
-                multipleConnections = 1;
+            case '1':
+                multipleConnections = 0;
                 break;
 
             case 'e' :
                 useEcc = 1;
+                break;
+
+            case 'p':
+                port = (word16)atoi(myoptarg);
+                #if !defined(NO_MAIN_DRIVER) || defined(USE_WINDOWS_API)
+                    if (port == 0)
+                        err_sys("port number cannot be 0");
+                #endif
                 break;
 
             default:
@@ -516,7 +542,10 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     }
 
     memset(&pwMapList, 0, sizeof(pwMapList));
-    wolfSSH_SetUserAuth(ctx, wsUserAuth);
+    if (serverArgs->user_auth == NULL)
+        wolfSSH_SetUserAuth(ctx, wsUserAuth);
+    else
+        wolfSSH_SetUserAuth(ctx, ((func_args*)args)->user_auth);
     wolfSSH_CTX_SetBanner(ctx, echoserverBanner);
 
     {
@@ -556,7 +585,6 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         SOCKET_T      clientFd = 0;
         SOCKADDR_IN_T clientAddr;
         socklen_t     clientAddrSz = sizeof(clientAddr);
-        THREAD_TYPE   thread;
         WOLFSSH*      ssh;
         thread_ctx_t* threadCtx;
 
@@ -578,6 +606,8 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             wolfSSH_SetHighwater(ssh, defaultHighwater);
         }
 
+        SignalTcpReady(serverArgs, port);
+
         clientFd = accept(listenFd, (struct sockaddr*)&clientAddr,
                                                                  &clientAddrSz);
         if (clientFd == -1)
@@ -589,12 +619,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         threadCtx->fd = clientFd;
         threadCtx->id = threadCount++;
 
-        start_thread(server_worker, threadCtx, &thread);
-
-        if (multipleConnections)
-            detach_thread(thread);
-        else
-            join_thread(thread);
+        server_worker(threadCtx);
 
     } while (multipleConnections);
 
@@ -617,16 +642,17 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         args.argc = argc;
         args.argv = argv;
         args.return_code = 0;
+        args.user_auth = NULL;
 
         WSTARTTCP();
 
-        ChangeToWolfSshRoot();
         #ifdef DEBUG_WOLFSSH
             wolfSSH_Debugging_ON();
         #endif
 
         wolfSSH_Init();
 
+        ChangeToWolfSshRoot();
         echoserver_test(&args);
 
         wolfSSH_Cleanup();

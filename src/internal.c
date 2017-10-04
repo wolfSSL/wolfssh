@@ -2914,6 +2914,7 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 
     if (ret == WS_SUCCESS) {
         curveName = pk->publicKey + i;
+        (void)curveName; /* Not used at the moment, hush the compiler. */
         i += curveNameSz;
         ret = GetUint32(&qSz, pk->publicKey, pk->publicKeySz, &i);
     }
