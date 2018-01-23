@@ -68,6 +68,7 @@ enum WS_ErrorCodes {
     WS_INVALID_USERNAME = -28,
     WS_CRYPTO_FAILED   = -29,   /* crypto action failed */
     WS_INVALID_STATE_E = -30,
+    WS_EOF             = -31,
     WS_INVALID_PRIME_CURVE = -32,
     WS_ECC_E           = -33,
     WS_CHANOPEN_FAILED = -34,
