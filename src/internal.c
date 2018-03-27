@@ -4034,7 +4034,7 @@ static INLINE int CreateMac(WOLFSSH* ssh, const byte* in, word32 inSz,
             {
                 Hmac hmac;
 
-                ret = wc_HmacSetKey(&hmac, SHA256,
+                ret = wc_HmacSetKey(&hmac, WC_SHA256,
                                     ssh->keys.macKey,
                                     ssh->keys.macKeySz);
                 if (ret == WS_SUCCESS)
@@ -4092,7 +4092,7 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const byte* in, word32 inSz,
             break;
 
         case ID_HMAC_SHA2_256:
-            ret = wc_HmacSetKey(&hmac, SHA256,
+            ret = wc_HmacSetKey(&hmac, WC_SHA256,
                                 ssh->peerKeys.macKey, ssh->peerKeys.macKeySz);
             if (ret == WS_SUCCESS)
                 ret = wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
