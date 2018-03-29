@@ -346,7 +346,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
             FALL_THROUGH;
 
         case ACCEPT_SERVER_USERAUTH_SENT:
-            while (ssh->clientState < CLIENT_DONE) {
+            while (ssh->clientState < CLIENT_CHANNEL_OPEN_DONE) {
                 if ( (ssh->error = DoReceive(ssh)) < 0) {
                     WLOG(WS_LOG_DEBUG, acceptError,
                          "SERVER_USERAUTH_SENT", ssh->error);
@@ -365,6 +365,18 @@ int wolfSSH_accept(WOLFSSH* ssh)
             }
             ssh->acceptState = ACCEPT_SERVER_CHANNEL_ACCEPT_SENT;
             WLOG(WS_LOG_DEBUG, acceptState, "SERVER_CHANNEL_ACCEPT_SENT");
+
+        case ACCEPT_SERVER_CHANNEL_ACCEPT_SENT:
+            while (ssh->clientState < CLIENT_DONE) {
+                if ( (ssh->error = DoReceive(ssh)) < 0) {
+                    WLOG(WS_LOG_DEBUG, acceptError,
+                         "SERVER_CHANNEL_ACCEPT_SENT", ssh->error);
+                    return WS_FATAL_ERROR;
+                }
+            }
+            ssh->acceptState = ACCEPT_CLIENT_SESSION_ESTABLISHED;
+            WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_SESSION_ESTABLISHED");
+
     }
 
     return WS_SUCCESS;
@@ -604,6 +616,8 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
 
     while (inputBuffer->length - inputBuffer->idx == 0) {
         int ret = DoReceive(ssh);
+        if (ssh->channelList == NULL || ssh->channelList->receivedEof)
+            ret = WS_EOF;
         if (ret < 0) {
             WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_stream_read(), ret = %d", ret);
             return ret;
@@ -660,6 +674,32 @@ int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz)
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_stream_send(), txd = %d", bytesTxd);
     return bytesTxd;
+}
+
+
+int wolfSSH_stream_exit(WOLFSSH* ssh, int status)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_stream_exit(), status = %d", status);
+
+    if (ssh == NULL || ssh->channelList == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS)
+        ret = SendChannelExit(ssh, ssh->channelList->peerChannel, status);
+
+    if (ret == WS_SUCCESS)
+        ret = SendChannelEow(ssh, ssh->channelList->peerChannel);
+
+    if (ret == WS_SUCCESS)
+        ret = SendChannelEof(ssh, ssh->channelList->peerChannel);
+
+    if (ret == WS_SUCCESS)
+        ret = SendChannelClose(ssh, ssh->channelList->peerChannel);
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_stream_exit()");
+    return ret;
 }
 
 
@@ -790,3 +830,24 @@ int wolfSSH_KDF(byte hashId, byte keyId,
                        sessionId, sessionIdSz);
 }
 
+
+WS_SessionType wolfSSH_GetSessionType(const WOLFSSH* ssh)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_GetSessionCommand()");
+
+    if (ssh && ssh->channelList)
+        return ssh->channelList->sessionType;
+
+    return WOLFSSH_SESSION_UNKNOWN;
+}
+
+
+const char* wolfSSH_GetSessionCommand(const WOLFSSH* ssh)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_GetSessionCommand()");
+
+    if (ssh && ssh->channelList)
+        return ssh->channelList->command;
+
+    return NULL;
+}

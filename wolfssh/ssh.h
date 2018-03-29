@@ -136,6 +136,7 @@ WOLFSSH_API int wolfSSH_connect(WOLFSSH*);
 WOLFSSH_API int wolfSSH_shutdown(WOLFSSH*);
 WOLFSSH_API int wolfSSH_stream_read(WOLFSSH*, byte*, word32);
 WOLFSSH_API int wolfSSH_stream_send(WOLFSSH*, byte*, word32);
+WOLFSSH_API int wolfSSH_stream_exit(WOLFSSH*, int);
 WOLFSSH_API int wolfSSH_TriggerKeyExchange(WOLFSSH*);
 
 WOLFSSH_API void wolfSSH_GetStats(WOLFSSH*,
@@ -143,6 +144,17 @@ WOLFSSH_API void wolfSSH_GetStats(WOLFSSH*,
 
 WOLFSSH_API int wolfSSH_KDF(byte, byte, byte*, word32, const byte*, word32,
                             const byte*, word32, const byte*, word32);
+
+
+typedef enum {
+    WOLFSSH_SESSION_UNKNOWN = 0,
+    WOLFSSH_SESSION_SHELL,
+    WOLFSSH_SESSION_EXEC,
+    WOLFSSH_SESSION_SUBSYSTEM,
+} WS_SessionType;
+
+WOLFSSH_API WS_SessionType wolfSSH_GetSessionType(const WOLFSSH*);
+WOLFSSH_API const char* wolfSSH_GetSessionCommand(const WOLFSSH*);
 
 
 enum WS_HighwaterSide {
