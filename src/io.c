@@ -124,6 +124,10 @@ void* wolfSSH_GetIOWriteCtx(WOLFSSH* ssh)
         #define RNG CyaSSL_RNG 
         /* for avoiding name conflict in "stm32f2xx.h" */
         static int errno;
+    #elif defined(MICROCHIP_MPLAB_HARMONY)
+        #include "tcpip/tcpip.h"
+        #include "sys/errno.h"
+        #include <errno.h>
     #else
         #include <sys/types.h>
         #include <errno.h>
@@ -224,6 +228,11 @@ void* wolfSSH_GetIOWriteCtx(WOLFSSH* ssh)
 #elif defined(WOLFSSH_LWIP)
     #define SEND_FUNCTION lwip_send
     #define RECV_FUNCTION lwip_recv
+#elif defined(MICROCHIP_MPLAB_HARMONY)
+    #define SEND_FUNCTION(socket,buf,sz,flags) \
+            TCPIP_TCP_ArrayPut((socket),(uint8_t*)(buf),(sz))
+    #define RECV_FUNCTION(socket,buf,sz,flags) \
+            TCPIP_TCP_ArrayGet((socket),(uint8_t*)(buf),(sz))
 #else
     #define SEND_FUNCTION send
     #define RECV_FUNCTION recv
@@ -250,6 +259,18 @@ static INLINE int TranslateReturnCode(int old, int sd)
     }
 #endif
 
+#ifdef MICROCHIP_MPLAB_HARMONY
+    if (old == 0) {
+        /* check is still connected */
+        if (!TCPIP_TCP_IsConnected(sd))
+        {
+            return 0;
+        }
+
+        errno = SOCKET_EWOULDBLOCK;
+        return -1;
+    }
+#endif
     return old;
 }
 
@@ -329,6 +350,23 @@ int wsEmbedSend(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
 
     WLOG(WS_LOG_DEBUG,"Embed Send trying to send %d", sz);
 
+#ifdef MICROCHIP_MPLAB_HARMONY
+    /* check is still connected */
+    if (!TCPIP_TCP_IsConnected(sd))
+    {
+        return WS_CBIO_ERR_CONN_CLOSE;
+    }
+
+    /* not enough space to send */
+    if ((sent = TCPIP_TCP_PutIsReady(sd)) < sz) {
+        sz = sent;
+    }
+    if (sent == 0) {
+        /* In the case that 0 is returned the main TCP loop needs to be called */
+        return WS_CBIO_ERR_WANT_WRITE;
+    }
+#endif /* MICROCHIP_MPLAB_HARMONY */
+
     sent = (int)SEND_FUNCTION(sd, buf, sz, ssh->wflags);
 
     WLOG(WS_LOG_DEBUG,"Embed Send sent %d", sent);
@@ -358,7 +396,6 @@ int wsEmbedSend(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
             return WS_CBIO_ERR_GENERAL;
         }
     }
- 
     return sent;
 }
 

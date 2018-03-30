@@ -30,6 +30,10 @@
 
 #include <wolfssh/visibility.h>
 
+#ifdef WOLFSSL_USER_SETTINGS
+    #include "user_settings.h"
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif

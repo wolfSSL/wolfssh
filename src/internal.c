@@ -2043,7 +2043,7 @@ static int DoKexDhInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
 static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
-    byte* pubKey;
+    byte* pubKey = NULL;
     word32 pubKeySz;
     byte* f;
     word32 fSz;
@@ -4519,9 +4519,9 @@ static int PreparePacket(WOLFSSH* ssh, word32 payloadSz)
 
 static int BundlePacket(WOLFSSH* ssh)
 {
-    byte* output;
-    word32 idx;
-    byte paddingSz;
+    byte* output = NULL;
+    word32 idx = 0;
+    byte paddingSz = 0;
     int ret = WS_SUCCESS;
 
     if (ssh == NULL)

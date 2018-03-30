@@ -45,15 +45,20 @@ extern "C" {
     #define WREALLOC(p, n, h, t) wolfSSH_Realloc((p), (n))
 #endif /* WMALLOC_USER */
 
+#ifndef NO_FILESYSTEM
+    #define WFILE FILE
+    WOLFSSH_API int wfopen(WFILE**, const char*, const char*);
+
+    #define WFOPEN(f,fn,m)    wfopen((f),(fn),(m))
+    #define WFCLOSE(f)        fclose(f)
+#endif
 
 /* setup string handling */
 #ifndef WSTRING_USER
     #include <string.h>
 
-    #define WFILE FILE
 
     WOLFSSH_API char* wstrnstr(const char*, const char*, unsigned int);
-    WOLFSSH_API int wfopen(WFILE**, const char*, const char*);
 
     #define WMEMCPY(d,s,l)    memcpy((d),(s),(l))
     #define WMEMSET(b,c,l)    memset((b),(c),(l))
@@ -67,25 +72,35 @@ extern "C" {
     #define WSTRNCAT(s1,s2,n) strncat((s1),(s2),(n))
     #define WSTRSPN(s1,s2)    strspn((s1),(s2))
     #define WSTRCSPN(s1,s2)   strcspn((s1),(s2))
-    #define WFOPEN(f,fn,m)    wfopen((f),(fn),(m))
-    #define WFCLOSE(f)        fclose(f)
 
-    #ifndef USE_WINDOWS_API
+    #ifdef USE_WINDOWS_API
+        #define WSTRNCPY(s1,s2,n) strncpy_s((s1),(n),(s2),(n))
+        #define WSTRNCASECMP(s1,s2,n) _strnicmp((s1),(s2),(n))
+        #define WSNPRINTF(s,n,f,...) _snprintf_s((s),(n),(n),(f),##__VA_ARGS__)
+        #define WVSNPRINTF(s,n,f,...) vsnprintf_s((s),(n),(n),(f),##__VA_ARGS__)
+    #elif defined(MICROCHIP_MPLAB_HARMONY) || defined(MICROCHIP_PIC32)
+        #include <stdio.h>
+        #define WSTRNCPY(s1,s2,n) strncpy((s1),(s2),(n))
+        #define WSTRNCASECMP(s1, s2, n) strncmp((s1), (s2), (n))
+        #define WSNPRINTF(s,n,f,...) snprintf((s),(n),(f),##__VA_ARGS__)
+        #define WVSNPRINTF(s,n,f,...) vsnprintf((s),(n),(f),##__VA_ARGS__)
+    #else
         #include <stdio.h>
         #define WSTRNCPY(s1,s2,n) strncpy((s1),(s2),(n))
         #define WSTRNCASECMP(s1,s2,n) strncasecmp((s1),(s2),(n))
         #define WSNPRINTF(s,n,f,...) snprintf((s),(n),(f),##__VA_ARGS__)
         #define WVSNPRINTF(s,n,f,...) vsnprintf((s),(n),(f),##__VA_ARGS__)
-        #define WLOCALTIME(c,r) (localtime_r((c),(r))!=NULL)
-    #else
-        #define WSTRNCPY(s1,s2,n) strncpy_s((s1),(n),(s2),(n))
-        #define WSTRNCASECMP(s1,s2,n) _strnicmp((s1),(s2),(n))
-        #define WSNPRINTF(s,n,f,...) _snprintf_s((s),(n),(n),(f),##__VA_ARGS__)
-        #define WVSNPRINTF(s,n,f,...) vsnprintf_s((s),(n),(n),(f),##__VA_ARGS__)
-        #define WLOCALTIME(c,r) (localtime_s((r),(c))==0)
     #endif
 #endif /* WSTRING_USER */
 
+/* get local time for debug print out */
+#ifdef USE_WINDOWS_API
+    #define WLOCALTIME(c,r) (localtime_s((r),(c))==0)
+#elif defined(MICROCHIP_MPLAB_HARMONY)
+    /* currently not implemneted @TODO */
+#else
+    #define WLOCALTIME(c,r) (localtime_r((c),(r))!=NULL)
+#endif
 
 /* setup compiler inlining */
 #ifndef INLINE
