@@ -22,17 +22,16 @@
 #include <wolfssh/ssh.h>
 #include <wolfssh/test.h>
 #include "examples/client/client.h"
-#ifndef USE_WINDOWS_API
+#if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32)
     #include <termios.h>
 #endif
-
 
 const char testString[] = "Hello, wolfSSH!";
 
 
 static int SetEcho(int on)
 {
-#ifndef USE_WINDOWS_API
+#if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32)
     static int echoInit = 0;
     static struct termios originalTerm;
     if (!echoInit) {

@@ -32,6 +32,11 @@
 #include "examples/echoserver/echoserver.h"
 
 
+#ifdef NO_FILESYSTEM
+    #include <wolfssh/certs_test.h>
+#endif
+
+
 static const char echoserverBanner[] = "wolfSSH Example Echo Server\n";
 
 
@@ -165,7 +170,7 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
     return 0;
 }
 
-
+#ifndef NO_FILESYSTEM
 static int load_file(const char* fileName, byte* buf, word32 bufSz)
 {
     FILE* file;
@@ -195,7 +200,38 @@ static int load_file(const char* fileName, byte* buf, word32 bufSz)
 
     return fileSz;
 }
+#endif /* NO_FILESYSTEM */
 
+/* returns buffer size on success */
+static int load_key(byte isEcc, byte* buf, word32 bufSz)
+{
+    word32 sz = 0;
+
+#ifndef NO_FILESYSTEM
+    const char* bufName;
+    bufName = isEcc ? "./keys/server-key-ecc.der" :
+                       "./keys/server-key-rsa.der" ;
+    sz = load_file(bufName, buf, bufSz);
+#else
+    /* using buffers instead */
+    if (isEcc) {
+        if (sizeof_ecc_key_der_256 > bufSz) {
+            return 0;
+        }
+        WMEMCPY(buf, ecc_key_der_256, sizeof_ecc_key_der_256);
+        sz = sizeof_ecc_key_der_256;
+    }
+    else {
+        if (sizeof_rsa_key_der_2048 > bufSz) {
+            return 0;
+        }
+        WMEMCPY(buf, (byte*)rsa_key_der_2048, sizeof_rsa_key_der_2048);
+        sz = sizeof_rsa_key_der_2048;
+    }
+#endif
+
+    return sz;
+}
 
 static INLINE void c32toa(word32 u32, byte* c)
 {
@@ -555,7 +591,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
         bufName = useEcc ? "./keys/server-key-ecc.der" :
                            "./keys/server-key-rsa.der" ;
-        bufSz = load_file(bufName, buf, SCRATCH_BUFFER_SZ);
+        bufSz = load_key(useEcc, buf, SCRATCH_BUFFER_SZ);
         if (bufSz == 0) {
             fprintf(stderr, "Couldn't load key file.\n");
             exit(EXIT_FAILURE);
