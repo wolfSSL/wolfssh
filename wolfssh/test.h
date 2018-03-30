@@ -171,9 +171,6 @@ typedef struct func_args {
 
 
 typedef THREAD_RETURN WOLFSSH_THREAD THREAD_FUNC(void*);
-void ThreadStart(THREAD_FUNC, void*, THREAD_TYPE*);
-void ThreadJoin(THREAD_TYPE);
-void ThreadDetach(THREAD_TYPE);
 void WaitTcpReady(func_args*);
 
 
@@ -521,5 +518,77 @@ static INLINE void tcp_listen(SOCKET_T* sockfd, word16* port, int useAnyAddr)
 #endif /* !defined(WOLFSSL_MDK_ARM) && !defined(WOLFSSL_KEIL_FS) && !defined(WOL
 FSSL_TIRTOS) */
 
+static INLINE void ThreadStart(THREAD_FUNC fun, void* args, THREAD_TYPE* thread)
+{
+#ifdef SINGLE_THREADED
+    (void)fun;
+    (void)args;
+    (void)thread;
+#elif defined(_POSIX_THREADS) && !defined(__MINGW32__)
+    pthread_create(thread, 0, fun, args);
+    return;
+#elif defined(WOLFSSL_TIRTOS)
+    /* Initialize the defaults and set the parameters. */
+    Task_Params taskParams;
+    Task_Params_init(&taskParams);
+    taskParams.arg0 = (UArg)args;
+    taskParams.stackSize = 65535;
+    *thread = Task_create((Task_FuncPtr)fun, &taskParams, NULL);
+    if (*thread == NULL) {
+        printf("Failed to create new Task\n");
+    }
+    Task_yield();
+#else
+    *thread = (THREAD_TYPE)_beginthreadex(0, 0, fun, args, 0, 0);
+#endif
+}
+
+
+static INLINE void ThreadJoin(THREAD_TYPE thread)
+{
+#ifdef SINGLE_THREADED
+    (void)thread;
+#elif defined(_POSIX_THREADS) && !defined(__MINGW32__)
+    pthread_join(thread, 0);
+#elif defined(WOLFSSL_TIRTOS)
+    while(1) {
+        if (Task_getMode(thread) == Task_Mode_TERMINATED) {
+            Task_sleep(5);
+            break;
+        }
+        Task_yield();
+    }
+#else
+    int res = WaitForSingleObject((HANDLE)thread, INFINITE);
+    assert(res == WAIT_OBJECT_0);
+    res = CloseHandle((HANDLE)thread);
+    assert(res);
+    (void)res; /* Suppress un-used variable warning */
+#endif
+}
+
+
+static INLINE void ThreadDetach(THREAD_TYPE thread)
+{
+#ifdef SINGLE_THREADED
+    (void)thread;
+#elif defined(_POSIX_THREADS) && !defined(__MINGW32__)
+    pthread_detach(thread);
+#elif defined(WOLFSSL_TIRTOS)
+#if 0
+    while(1) {
+        if (Task_getMode(thread) == Task_Mode_TERMINATED) {
+            Task_sleep(5);
+            break;
+        }
+        Task_yield();
+    }
+#endif
+#else
+    int res = CloseHandle((HANDLE)thread);
+    assert(res);
+    (void)res; /* Suppress un-used variable warning */
+#endif
+}
 
 #endif /* _WOLFSSH_TEST_H_ */

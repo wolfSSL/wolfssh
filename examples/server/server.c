@@ -592,7 +592,9 @@ THREAD_RETURN WOLFSSH_THREAD server_test(void* args)
         SOCKET_T      clientFd = 0;
         SOCKADDR_IN_T clientAddr;
         socklen_t     clientAddrSz = sizeof(clientAddr);
+#ifndef SINGLE_THREADED
         THREAD_TYPE   thread;
+#endif
         WOLFSSH*      ssh;
         thread_ctx_t* threadCtx;
 
@@ -626,12 +628,12 @@ THREAD_RETURN WOLFSSH_THREAD server_test(void* args)
         threadCtx->id = threadCount++;
 
 #ifndef SINGLE_THREADED
-        start_thread(server_worker, threadCtx, &thread);
+        ThreadStart(server_worker, threadCtx, &thread);
 
         if (multipleConnections)
-            detach_thread(thread);
+            ThreadDetach(thread);
         else
-            join_thread(thread);
+            ThreadJoin(thread);
 #else
         server_worker(threadCtx);
         (void)thread;
