@@ -95,10 +95,14 @@ extern "C" {
 
 /* get local time for debug print out */
 #ifdef USE_WINDOWS_API
+    #define WTIME time
     #define WLOCALTIME(c,r) (localtime_s((r),(c))==0)
 #elif defined(MICROCHIP_MPLAB_HARMONY)
-    /* currently not implemneted @TODO */
+    #define WTIME XTIME
+    #define WLOCALTIME(c,r) (localtime((c)) != NULL && \
+                             WMEMCPY((r), localtime((c)), sizeof(struct tm)))
 #else
+    #define WTIME time
     #define WLOCALTIME(c,r) (localtime_r((c),(r))!=NULL)
 #endif
 

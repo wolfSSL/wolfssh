@@ -126,7 +126,7 @@ void DefaultLoggingCb(enum wolfSSH_LogLevel level, const char *const msgStr)
         time_t  current;
         struct  tm local;
 
-        current = time(NULL);
+        current = WTIME(NULL);
         if (WLOCALTIME(&current, &local)) {
             /* make pretty */
             strftime(timeStr, sizeof(timeStr), "%b %d %T %Y: ", &local);

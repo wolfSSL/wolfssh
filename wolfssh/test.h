@@ -20,6 +20,19 @@
         #include <wspiapi.h>
     #endif
     #define SOCKET_T SOCKET
+    #define NUM_SOCKETS 5
+#elif defined(MICROCHIP_MPLAB_HARMONY) || defined(MICROCHIP_TCPIP)
+    #include "tcpip/tcpip.h"
+    #include <signal.h>
+    #ifdef MICROCHIP_MPLAB_HARMONY
+        #ifndef htons
+            #define htons TCPIP_Helper_htons
+        #endif
+        #define SOCKET_T TCP_SOCKET
+        #define XNTOHS TCPIP_Helper_ntohs
+    #endif
+    #define socklen_t int
+    #define NUM_SOCKETS 1
 #else /* USE_WINDOWS_API */
     #include <unistd.h>
     #include <netdb.h>
@@ -34,12 +47,13 @@
         #include <signal.h>  /* ignore SIGPIPE */
     #endif
     #define SOCKET_T int
+    #define NUM_SOCKETS 5
 #endif /* USE_WINDOWS_API */
 
 
 /* Socket Handling */
 #ifndef WOLFSSH_SOCKET_INVALID
-#ifdef USE_WINDOWS_API
+#if defined(USE_WINDOWS_API) || defined(MICROCHIP_MPLAB_HARMONY)
     #define WOLFSSH_SOCKET_INVALID  ((SOCKET_T)INVALID_SOCKET)
 #elif defined(WOLFSSH_TIRTOS)
     #define WOLFSSH_SOCKET_INVALID  ((SOCKET_T)-1)
@@ -67,6 +81,13 @@
 #ifdef USE_WINDOWS_API
     #define WCLOSESOCKET(s) closesocket(s)
     #define WSTARTTCP() do { WSADATA wsd; WSAStartup(0x0002, &wsd); } while(0)
+#elif defined(MICROCHIP_TCPIP) || defined(MICROCHIP_MPLAB_HARMONY)
+    #ifdef MICROCHIP_MPLAB_HARMONY
+        #define WCLOSESOCKET(s) TCPIP_TCP_Close((s))
+    #else
+        #define WCLOSESOCKET(s) closesocket((s))
+    #endif
+    #define WSTARTTCP()
 #else
     #define WCLOSESOCKET(s) close(s)
     #define WSTARTTCP()
@@ -279,6 +300,8 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
         #ifdef CYASSL_MDK_ARM
             int err;
             struct hostent* entry = gethostbyname(peer, &err);
+        #elif defined(MICROCHIP_MPLAB_HARMONY)
+            struct hostent* entry = gethostbyname((char*)peer);
         #else
             struct hostent* entry = gethostbyname(peer);
         #endif
@@ -303,8 +326,15 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
     if ((size_t)peer == INADDR_ANY)
         addr->sin_addr.s_addr = INADDR_ANY;
     else {
-        if (!useLookup)
+        if (!useLookup) {
+    #ifdef MICROCHIP_MPLAB_HARMONY
+            IPV4_ADDR ip4;
+            TCPIP_Helper_StringToIPAddress(peer, &ip4);
+            addr->sin_addr.s_addr = ip4.Val;
+    #else
             addr->sin_addr.s_addr = inet_addr(peer);
+    #endif
+        }
     }
 #else
     addr->sin6_family = AF_INET_V;
@@ -348,7 +378,14 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
 
 static INLINE void tcp_socket(SOCKET_T* sockFd)
 {
+#ifdef MICROCHIP_MPLAB_HARMONY
+    /* creates socket in listen or connect */
+    *sockFd = 0;
+#elif defined(MICROCHIP_TCPIP)
+    *sockFd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+#else
     *sockFd = socket(AF_INET_V, SOCK_STREAM, 0);
+#endif
 
 #ifdef USE_WINDOWS_API
     if (*sockFd == INVALID_SOCKET)
@@ -369,17 +406,25 @@ static INLINE void tcp_socket(SOCKET_T* sockFd)
     }
 #elif defined(CYASSL_MDK_ARM)
     /* nothing to define */
+#elif defined(MICROCHIP_MPLAB_HARMONY) && !defined(_FULL_SIGNAL_IMPLEMENTATION)
+    /* not full signal implementation */
 #else  /* no S_NOSIGPIPE */
     signal(SIGPIPE, SIG_IGN);
 #endif /* S_NOSIGPIPE */
 
 #if defined(TCP_NODELAY)
     {
+    #ifdef MICROCHIP_MPLAB_HARMONY
+        if (!TCPIP_TCP_OptionsSet(*sockFd, TCP_OPTION_NODELAY, (void*)1)) {
+            err_sys("setsockopt TCP_NODELAY failed\n");
+        }
+    #else
         int       on = 1;
         socklen_t len = sizeof(on);
         int       res = setsockopt(*sockFd, IPPROTO_TCP, TCP_NODELAY, &on, len);
         if (res < 0)
             err_sys("setsockopt TCP_NODELAY failed\n");
+    #endif
     }
 #endif
 #endif  /* USE_WINDOWS_API */
@@ -390,9 +435,13 @@ static INLINE void tcp_socket(SOCKET_T* sockFd)
     #define XNTOHS(a) ntohs((a))
 #endif
 
-
 static INLINE void tcp_listen(SOCKET_T* sockfd, word16* port, int useAnyAddr)
 {
+#ifdef MICROCHIP_MPLAB_HARMONY
+    /* does bind and listen and returns the socket */
+    *sockfd = TCPIP_TCP_ServerOpen(IP_ADDRESS_TYPE_IPV4, *port, 0);
+    return;
+#else
     SOCKADDR_IN_T addr;
 
     /* don't use INADDR_ANY by default, firewall may block, make user switch
@@ -403,7 +452,12 @@ static INLINE void tcp_listen(SOCKET_T* sockfd, word16* port, int useAnyAddr)
 #if !defined(USE_WINDOWS_API) && !defined(WOLFSSL_MDK_ARM)\
                               && !defined(WOLFSSL_KEIL_TCP_NET)
     {
-        int       res, on  = 1;
+        int res;
+    #ifdef MICROCHIP_TCPIP
+        const byte on = 1; /* account for function signature */
+    #else
+        int on  = 1;
+    #endif
         socklen_t len = sizeof(on);
         res = setsockopt(*sockfd, SOL_SOCKET, SO_REUSEADDR, &on, len);
         if (res < 0)
@@ -413,7 +467,7 @@ static INLINE void tcp_listen(SOCKET_T* sockfd, word16* port, int useAnyAddr)
 
     if (bind(*sockfd, (const struct sockaddr*)&addr, sizeof(addr)) != 0)
         err_sys("tcp bind failed");
-    if (listen(*sockfd, 5) != 0)
+    if (listen(*sockfd, NUM_SOCKETS) != 0)
         err_sys("tcp listen failed");
     #if !defined(USE_WINDOWS_API) && !defined(WOLFSSL_TIRTOS)
         if (*port == 0) {
@@ -427,12 +481,13 @@ static INLINE void tcp_listen(SOCKET_T* sockfd, word16* port, int useAnyAddr)
             }
         }
     #endif
+#endif /* MICROCHIP_MPLAB_HARMONY */
 }
-
 
 /* Wolf Root Directory Helper */
 /* KEIL-RL File System does not support relative directory */
-#if !defined(WOLFSSL_MDK_ARM) && !defined(WOLFSSL_KEIL_FS) && !defined(WOLFSSL_TIRTOS)
+#if !defined(WOLFSSL_MDK_ARM) && !defined(WOLFSSL_KEIL_FS) && !defined(WOLFSSL_TIRTOS) \
+    && !defined(NO_WOLFSSL_DIR)
     /* Maximum depth to search for WolfSSL root */
     #define MAX_WOLF_ROOT_DEPTH 5
 
