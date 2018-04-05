@@ -31,6 +31,10 @@
 #include <wolfssh/test.h>
 #include "examples/server/server.h"
 
+#ifdef NO_FILESYSTEM
+    #include <wolfssh/certs_test.h>
+#endif
+
 
 static const char serverBanner[] = "wolfSSH Example Server\n";
 
@@ -165,7 +169,7 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
     return 0;
 }
 
-
+#ifndef NO_FILESYSTEM
 static int load_file(const char* fileName, byte* buf, word32 bufSz)
 {
     FILE* file;
@@ -194,6 +198,38 @@ static int load_file(const char* fileName, byte* buf, word32 bufSz)
     fclose(file);
 
     return fileSz;
+}
+#endif /* !NO_FILESYSTEM */
+
+/* returns buffer size on success */
+static int load_key(byte isEcc, byte* buf, word32 bufSz)
+{
+    word32 sz = 0;
+
+#ifndef NO_FILESYSTEM
+    const char* bufName;
+    bufName = isEcc ? "./keys/server-key-ecc.der" :
+                       "./keys/server-key-rsa.der" ;
+    sz = load_file(bufName, buf, bufSz);
+#else
+    /* using buffers instead */
+    if (isEcc) {
+        if (sizeof_ecc_key_der_256 > bufSz) {
+            return 0;
+        }
+        WMEMCPY(buf, ecc_key_der_256, sizeof_ecc_key_der_256);
+        sz = sizeof_ecc_key_der_256;
+    }
+    else {
+        if (sizeof_rsa_key_der_2048 > bufSz) {
+            return 0;
+        }
+        WMEMCPY(buf, rsa_key_der_2048, sizeof_rsa_key_der_2048);
+        sz = sizeof_rsa_key_der_2048;
+    }
+#endif
+
+    return sz;
 }
 
 
@@ -526,9 +562,9 @@ THREAD_RETURN WOLFSSH_THREAD server_test(void* args)
 
         bufName = useEcc ? "./keys/server-key-ecc.der" :
                            "./keys/server-key-rsa.der" ;
-        bufSz = load_file(bufName, buf, SCRATCH_BUFFER_SZ);
+        bufSz = load_key(useEcc, buf, SCRATCH_BUFFER_SZ);
         if (bufSz == 0) {
-            fprintf(stderr, "Couldn't load key file.\n");
+            fprintf(stderr, "Couldn't load key.\n");
             exit(EXIT_FAILURE);
         }
         if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, buf, bufSz,
@@ -589,13 +625,17 @@ THREAD_RETURN WOLFSSH_THREAD server_test(void* args)
         threadCtx->fd = clientFd;
         threadCtx->id = threadCount++;
 
+#ifndef SINGLE_THREADED
         start_thread(server_worker, threadCtx, &thread);
 
         if (multipleConnections)
             detach_thread(thread);
         else
             join_thread(thread);
-
+#else
+        server_worker(threadCtx);
+        (void)thread;
+#endif /* SINGLE_THREADED */
     } while (multipleConnections);
 
     PwMapListDelete(&pwMapList);
