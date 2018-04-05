@@ -4367,7 +4367,7 @@ int DoReceive(WOLFSSH* ssh)
                         }
                         if (verifyResult != WS_SUCCESS) {
                             WLOG(WS_LOG_DEBUG, "PR: VerifyMac fail");
-                            return ret;
+                            return verifyResult;
                         }
                     }
                     else {
