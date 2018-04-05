@@ -4038,7 +4038,7 @@ static INLINE int Encrypt(WOLFSSH* ssh, byte* cipher, const byte* input,
             break;
 
         case ID_AES128_CBC:
-            if (wc_AesCbcEncrypt(&ssh->encryptCipher.aes,
+            if (sz % AES_BLOCK_SIZE || wc_AesCbcEncrypt(&ssh->encryptCipher.aes,
                                  cipher, input, sz) < 0) {
 
                 ret = WS_ENCRYPT_E;
@@ -4070,7 +4070,7 @@ static INLINE int Decrypt(WOLFSSH* ssh, byte* plain, const byte* input,
             break;
 
         case ID_AES128_CBC:
-            if (wc_AesCbcDecrypt(&ssh->decryptCipher.aes,
+            if (sz % AES_BLOCK_SIZE || wc_AesCbcDecrypt(&ssh->decryptCipher.aes,
                                  plain, input, sz) < 0) {
 
                 ret = WS_DECRYPT_E;
