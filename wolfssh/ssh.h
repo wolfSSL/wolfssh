@@ -26,7 +26,11 @@
 
 #pragma once
 
+#ifdef WOLFSSL_USER_SETTINGS
+#include <wolfssl/wolfcrypt/settings.h>
+#else
 #include <wolfssl/options.h>
+#endif
 #include <wolfssl/wolfcrypt/types.h>
 #include <wolfssh/settings.h>
 #include <wolfssh/version.h>

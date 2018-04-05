@@ -35,6 +35,7 @@
 #include <wolfssh/port.h>
 
 
+#ifndef NO_FILESYSTEM
 int wfopen(WFILE** f, const char* filename, const char* mode)
 {
 #ifdef USE_WINDOWS_API
@@ -47,7 +48,7 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
     return 1;
 #endif
 }
-
+#endif /* !NO_FILESYSTEM */
 
 #ifndef WSTRING_USER
 

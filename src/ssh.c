@@ -113,8 +113,6 @@ WOLFSSH* wolfSSH_new(WOLFSSH_CTX* ctx)
         return NULL;
     }
 
-    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_new()");
-
     ssh = (WOLFSSH*)WMALLOC(sizeof(WOLFSSH), heap, DYNTYPE_SSH);
     ssh = SshInit(ssh, ctx);
 
