@@ -98,6 +98,7 @@ enum {
 };
 
 
+#define WOLFSSH_MAX_NAMESZ 32
 #define MAX_ENCRYPTION 3
 #define MAX_INTEGRITY 2
 #define MAX_KEY_EXCHANGE 2
