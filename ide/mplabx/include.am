@@ -1,0 +1,6 @@
+# vim:ft=automake
+# All paths should be given relative to the root
+
+EXTRA_DIST+= ide/mplabx/README.md
+EXTRA_DIST+= ide/mplabx/user_settings.h
+EXTRA_DIST+= ide/mplabx/wolfssh.c

@@ -3,6 +3,7 @@
 # All paths should be given relative to the root
 
 include ide/winvs/include.am
+include ide/mplabx/include.am
 include ide/CSBENCH/include.am
 include ide/MQX/include.am
 include ide/IAR-EWARM/include.am
