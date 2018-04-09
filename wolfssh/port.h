@@ -51,6 +51,8 @@ extern "C" {
 
     #define WFOPEN(f,fn,m)    wfopen((f),(fn),(m))
     #define WFCLOSE(f)        fclose(f)
+    #define WFREAD(b,s,a,f)   fread((b),(s),(a),(f))
+    #define WFWRITE(b,s,a,f)  fwrite((b),(s),(a),(f))
 #endif
 
 /* setup string handling */
