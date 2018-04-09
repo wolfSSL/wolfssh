@@ -9,7 +9,8 @@ src_libwolfssh_la_SOURCES = src/ssh.c \
                             src/memory.c \
                             src/log.c \
                             src/io.c \
-                            src/port.c
+                            src/port.c \
+                            src/scp.c
 src_libwolfssh_la_CFLAGS       = -DBUILDING_WOLFSSH $(AM_CFLAGS)
 src_libwolfssh_la_CPPFLAGS     = -DBUILDING_WOLFSSH $(AM_CPPFLAGS)
 src_libwolfssh_la_LDFLAGS      = ${AM_LDFLAGS} -no-undefined -version-info ${WOLFSSH_LIBRARY_VERSION} 

@@ -294,6 +294,9 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
 #endif /* WOLFSSH_USER_IO */
     ctx->highwaterMark = DEFAULT_HIGHWATER_MARK;
     ctx->highwaterCb = wsHighwater;
+#ifdef WOLFSSH_SCP
+    ctx->scpRecvCb = wsScpRecvCallback;
+#endif
 #ifdef DEBUG_WOLFSSH
     ctx->banner = cannedBanner;
     ctx->bannerSz = cannedBannerSz;
@@ -359,6 +362,18 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->rng         = rng;
     ssh->kSz         = sizeof(ssh->k);
     ssh->handshake   = handshake;
+#ifdef WOLFSSH_SCP
+    ssh->scpState = SCP_PARSE_COMMAND;
+    ssh->scpConfirmMsg = NULL;
+    ssh->scpConfirmMsgSz = 0;
+    ssh->scpRecvCtx = NULL;
+    ssh->scpFileBuffer = NULL;
+    ssh->scpFileBufferSz = 0;
+    ssh->scpFileName = NULL;
+    ssh->scpFileNameSz = 0;
+    ssh->scpATime = 0;
+    ssh->scpMTime = 0;
+#endif
 
     if (BufferInit(&ssh->inputBuffer, 0, ctx->heap) != WS_SUCCESS ||
         BufferInit(&ssh->outputBuffer, 0, ctx->heap) != WS_SUCCESS) {
@@ -403,6 +418,24 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
             cur = next;
         }
     }
+#ifdef WOLFSSH_SCP
+    if (ssh->scpConfirmMsg) {
+        WFREE(ssh->scpConfirmMsg, ssh->ctx->heap, DYNTYPE_STRING);
+        ssh->scpConfirmMsg = NULL;
+        ssh->scpConfirmMsgSz = 0;
+    }
+    if (ssh->scpFileBuffer) {
+        ForceZero(ssh->scpFileBuffer, ssh->scpFileBufferSz);
+        WFREE(ssh->scpFileBuffer, ssh->ctx->heap, DYNTYPE_BUFFFER);
+        ssh->scpFileBuffer = NULL;
+        ssh->scpFileBufferSz = 0;
+    }
+    if (ssh->scpFileName) {
+        WFREE(ssh->scpFileName, ssh->ctx->heap, DYNTYPE_STRING);
+        ssh->scpFileName = NULL;
+        ssh->scpFileNameSz = 0;
+    }
+#endif
 }
 
 

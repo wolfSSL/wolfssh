@@ -215,6 +215,31 @@ enum WS_DisconnectReasonCodes {
     WOLFSSH_DISCONNECT_ILLEGAL_USER_NAME              = 15
 };
 
+#ifdef WOLFSSH_SCP
+
+enum WS_ScpFileStates {
+    WOLFSSH_SCP_NEW_REQUEST = 0,
+    WOLFSSH_SCP_NEW_FILE,
+    WOLFSSH_SCP_FILE_PART,
+    WOLFSSH_SCP_FILE_DONE,
+    WOLFSSH_SCP_NEW_DIR,
+    WOLFSSH_SCP_END_DIR
+};
+
+enum WS_ScpConfirmationReturns {
+    WS_SCP_CONTINUE = 0,
+    WS_SCP_ABORT
+};
+
+typedef int (*WS_CallbackScpRecv)(WOLFSSH*, int, const char*, const char*,
+                                  word32, word32, word32, word32, byte*, word32,
+                                  word32, void*);
+WOLFSSH_API void  wolfSSH_SetScpRecv(WOLFSSH_CTX*, WS_CallbackScpRecv);
+WOLFSSH_API void  wolfSSH_SetScpRecvCtx(WOLFSSH*, void*);
+WOLFSSH_API void* wolfSSH_GetScpRecvCtx(WOLFSSH*);
+WOLFSSH_API int   wolfSSH_SetScpErrorMsg(WOLFSSH*, const char*);
+
+#endif /* WOLFSSH_SCP */
 
 #ifdef __cplusplus
 }
