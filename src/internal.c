@@ -2075,6 +2075,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     } sigKeyBlock;
     word32 begin;
     int ret = WS_SUCCESS;
+    int tmpIdx = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering DoKexDhReply()");
 
@@ -2086,6 +2087,10 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         begin = *idx;
         pubKey = buf + begin;
         ret = GetUint32(&pubKeySz, buf, len, &begin);
+        if (ret == WS_SUCCESS && (pubKeySz + LENGTH_SZ + begin > len)) {
+            ret = WS_BUFFER_E;
+        }
+
     }
 
     if (ret == WS_SUCCESS)
@@ -2193,6 +2198,9 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     if (ret == WS_SUCCESS) {
         f = buf + begin;
         ret = GetUint32(&fSz, buf, len, &begin);
+        if (ret == WS_SUCCESS && (begin + fSz + LENGTH_SZ > len)) {
+            ret = WS_BUFFER_E;
+        }
     }
 
     if (ret == WS_SUCCESS)
@@ -2208,6 +2216,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
     if (ret == WS_SUCCESS) {
         sig = buf + begin;
+        tmpIdx = begin;
         begin += sigSz;
         *idx = begin;
 
@@ -2235,6 +2244,9 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 e = pubKey + pubKeyIdx;
                 pubKeyIdx += eSz;
                 ret = GetUint32(&nSz, pubKey, pubKeySz, &pubKeyIdx);
+                if (ret == WS_SUCCESS && (nSz + pubKeyIdx > len)) {
+                    ret = WS_BUFFER_E;
+                }
             }
             if (ret == WS_SUCCESS) {
                 n = pubKey + pubKeyIdx;
@@ -2330,7 +2342,14 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             sig = sig + begin;
             sigSz = scratch;
 
-            ret = wc_SignatureVerify(HashForId(ssh->handshake->pubKeyId),
+            if (sigSz + begin + tmpIdx > len) {
+                WLOG(WS_LOG_DEBUG,
+                        "Signature size found would result in error");
+                ret = WS_BUFFER_E;
+            }
+
+            if (ret == WS_SUCCESS)
+                ret = wc_SignatureVerify(HashForId(ssh->handshake->pubKeyId),
                                      sigKeyBlock.useRsa ?
                                       WC_SIGNATURE_TYPE_RSA_W_ENC :
                                       WC_SIGNATURE_TYPE_ECC,
@@ -4590,6 +4609,7 @@ static int BundlePacket(WOLFSSH* ssh)
     if (!ssh->aeadMode) {
         if (ret == WS_SUCCESS) {
             idx += paddingSz;
+
             ret = CreateMac(ssh, ssh->outputBuffer.buffer + ssh->packetStartIdx,
                             ssh->outputBuffer.length -
                                 ssh->packetStartIdx + paddingSz,
