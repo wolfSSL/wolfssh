@@ -3,4 +3,5 @@
 # All paths should be given relative to the root
 
 include examples/client/include.am
+include examples/server/include.am
 include examples/echoserver/include.am

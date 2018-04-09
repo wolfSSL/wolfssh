@@ -162,6 +162,7 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
 
         free(buf);
     }
+    wolfSSH_stream_exit(threadCtx->ssh, 0);
     WCLOSESOCKET(threadCtx->fd);
     wolfSSH_free(threadCtx->ssh);
     free(threadCtx);
