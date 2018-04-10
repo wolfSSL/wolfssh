@@ -1354,7 +1354,7 @@ static int GetString(char* s, word32* sSz,
     if (result == WS_SUCCESS) {
         result = WS_BUFFER_E;
         if (*idx < len && *idx + strSz <= len) {
-            *sSz = (strSz >= *sSz) ? *sSz : strSz;
+            *sSz = (strSz >= *sSz) ? *sSz - 1 : strSz; /* -1 for null char */
             WMEMCPY(s, buf + *idx, *sSz);
             *idx += strSz;
             s[*sSz] = 0;
@@ -1461,6 +1461,7 @@ static int GetNameList(byte* idList, word32* idListSz,
                     idList[idListIdx++] = id;
                 }
 
+                nameListIdx++;
                 name += 1 + nameSz;
                 nameSz = 0;
             }
@@ -2074,6 +2075,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     } sigKeyBlock;
     word32 begin;
     int ret = WS_SUCCESS;
+    int tmpIdx = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering DoKexDhReply()");
 
@@ -2085,6 +2087,10 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         begin = *idx;
         pubKey = buf + begin;
         ret = GetUint32(&pubKeySz, buf, len, &begin);
+        if (ret == WS_SUCCESS && (pubKeySz + LENGTH_SZ + begin > len)) {
+            ret = WS_BUFFER_E;
+        }
+
     }
 
     if (ret == WS_SUCCESS)
@@ -2192,6 +2198,9 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     if (ret == WS_SUCCESS) {
         f = buf + begin;
         ret = GetUint32(&fSz, buf, len, &begin);
+        if (ret == WS_SUCCESS && (begin + fSz + LENGTH_SZ > len)) {
+            ret = WS_BUFFER_E;
+        }
     }
 
     if (ret == WS_SUCCESS)
@@ -2207,6 +2216,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
     if (ret == WS_SUCCESS) {
         sig = buf + begin;
+        tmpIdx = begin;
         begin += sigSz;
         *idx = begin;
 
@@ -2234,6 +2244,9 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 e = pubKey + pubKeyIdx;
                 pubKeyIdx += eSz;
                 ret = GetUint32(&nSz, pubKey, pubKeySz, &pubKeyIdx);
+                if (ret == WS_SUCCESS && (nSz + pubKeyIdx > len)) {
+                    ret = WS_BUFFER_E;
+                }
             }
             if (ret == WS_SUCCESS) {
                 n = pubKey + pubKeyIdx;
@@ -2329,7 +2342,14 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             sig = sig + begin;
             sigSz = scratch;
 
-            ret = wc_SignatureVerify(HashForId(ssh->handshake->pubKeyId),
+            if (sigSz + begin + tmpIdx > len) {
+                WLOG(WS_LOG_DEBUG,
+                        "Signature size found would result in error");
+                ret = WS_BUFFER_E;
+            }
+
+            if (ret == WS_SUCCESS)
+                ret = wc_SignatureVerify(HashForId(ssh->handshake->pubKeyId),
                                      sigKeyBlock.useRsa ?
                                       WC_SIGNATURE_TYPE_RSA_W_ENC :
                                       WC_SIGNATURE_TYPE_ECC,
@@ -2681,12 +2701,16 @@ static int DoServiceRequest(WOLFSSH* ssh,
 {
     word32 begin = *idx;
     word32 nameSz;
-    char     serviceName[32];
+    char     serviceName[WOLFSSH_MAX_NAMESZ];
 
     (void)len;
 
     ato32(buf + begin, &nameSz);
     begin += LENGTH_SZ;
+
+    if (begin + nameSz > len || nameSz >= WOLFSSH_MAX_NAMESZ) {
+        return WS_BUFFER_E;
+    }
 
     WMEMCPY(serviceName, buf + begin, nameSz);
     begin += nameSz;
@@ -2706,12 +2730,16 @@ static int DoServiceAccept(WOLFSSH* ssh,
 {
     word32 begin = *idx;
     word32 nameSz;
-    char     serviceName[32];
+    char     serviceName[WOLFSSH_MAX_NAMESZ];
 
     (void)len;
 
     ato32(buf + begin, &nameSz);
     begin += LENGTH_SZ;
+
+    if (begin + nameSz > len || nameSz >= WOLFSSH_MAX_NAMESZ) {
+        return WS_BUFFER_E;
+    }
 
     WMEMCPY(serviceName, buf + begin, nameSz);
     begin += nameSz;
@@ -3564,7 +3592,8 @@ static int DoChannelEof(WOLFSSH* ssh,
             ret = WS_INVALID_CHANID;
     }
 
-    channel->receivedEof = 1;
+    if (ret == WS_SUCCESS)
+        channel->receivedEof = 1;
 
     WLOG(WS_LOG_DEBUG, "Leaving DoChannelEof(), ret = %d", ret);
     return ret;
@@ -3672,7 +3701,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
             }
         }
         else if (WSTRNCMP(type, "env", typeSz) == 0) {
-            char name[32];
+            char name[WOLFSSH_MAX_NAMESZ];
             word32 nameSz;
             char value[32];
             word32 valueSz;
@@ -3837,10 +3866,21 @@ static int DoPacket(WOLFSSH* ssh)
 
     idx += LENGTH_SZ;
     padSz = buf[idx++];
+
+    /* check for underflow */
+    if ((word32)(PAD_LENGTH_SZ + padSz + MSG_ID_SZ) > ssh->curSz) {
+        return WS_OVERFLOW_E;
+    }
+
     payloadSz = ssh->curSz - PAD_LENGTH_SZ - padSz - MSG_ID_SZ;
 
     msg = buf[idx++];
     /* At this point, payload starts at "buf + idx". */
+
+    /* sanity check on payloadSz */
+    if (ssh->inputBuffer.bufferSz < payloadSz + idx) {
+        return WS_OVERFLOW_E;
+    }
 
     switch (msg) {
 
@@ -4323,6 +4363,9 @@ int DoReceive(WOLFSSH* ssh)
                 FALL_THROUGH;
 
             case PROCESS_PACKET_LENGTH:
+                if (ssh->inputBuffer.idx + UINT32_SZ > ssh->inputBuffer.bufferSz)
+                    return WS_OVERFLOW_E;
+
                 /* Peek at the packet_length field. */
                 ato32(ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
                       &ssh->curSz);
@@ -4566,6 +4609,7 @@ static int BundlePacket(WOLFSSH* ssh)
     if (!ssh->aeadMode) {
         if (ret == WS_SUCCESS) {
             idx += paddingSz;
+
             ret = CreateMac(ssh, ssh->outputBuffer.buffer + ssh->packetStartIdx,
                             ssh->outputBuffer.length -
                                 ssh->packetStartIdx + paddingSz,
