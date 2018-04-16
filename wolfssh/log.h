@@ -42,6 +42,7 @@ extern "C" {
 
 
 enum wolfSSH_LogLevel {
+    WS_LOG_SFTP  = 6,
     WS_LOG_USER  = 5,
     WS_LOG_ERROR = 4,
     WS_LOG_WARN  = 3,

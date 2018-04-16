@@ -91,8 +91,9 @@ enum WS_ErrorCodes {
     WS_MATCH_KEY_ALGO_E    = -51,   /* cannot match key algo with peer */
     WS_MATCH_ENC_ALGO_E    = -52,   /* cannot match encrypt algo with peer */
     WS_MATCH_MAC_ALGO_E    = -53,   /* cannot match MAC algo with peer */
+    WS_PERMISSIONS         = -54,
 
-    WS_LAST_E              = -53    /* Update this to indicate last error */
+    WS_LAST_E              = -54    /* Update this to indicate last error */
 };
 
 

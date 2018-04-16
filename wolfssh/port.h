@@ -45,6 +45,13 @@ extern "C" {
     #define WREALLOC(p, n, h, t) wolfSSH_Realloc((p), (n))
 #endif /* WMALLOC_USER */
 
+#ifndef WFGETS
+    #define WFGETS fgets
+#endif
+#ifndef WFPUTS
+    #define WFPUTS fputs
+#endif
+
 #ifndef NO_FILESYSTEM
     #define WFILE FILE
     WOLFSSH_API int wfopen(WFILE**, const char*, const char*);
@@ -58,7 +65,8 @@ extern "C" {
     #define WREWIND(s)        rewind((s))
     #define WSEEK_END         SEEK_END
 
-    #if defined(WOLFSSH_SCP) && !defined(WOLFSSH_SCP_USER_CALLBACKS) && \
+    #if (defined(WOLFSSH_SCP) || defined(WOLFSSH_SFTP)) && \
+        !defined(WOLFSSH_SCP_USER_CALLBACKS) && \
         !defined(NO_FILESYSTEM)
         /* for chdir() */
         #include <unistd.h>
@@ -121,6 +129,37 @@ extern "C" {
     #define WTIME time
     #define WLOCALTIME(c,r) (localtime_r((c),(r))!=NULL)
 #endif
+
+#ifdef WOLFSSH_SFTP
+#ifndef NO_WOLFSSH_SERVER
+    #include <unistd.h>   /* used for rmdir */
+    #include <sys/stat.h> /* used for mkdir, stat, and lstat */
+    #include <stdio.h>    /* used for remove and rename */
+    #include <dirent.h>   /* used for opening directory and reading */
+
+    #define WRMDIR(d)   rmdir((d))
+    #define WSTAT(p,b)  stat((p),(b))
+    #define WLSTAT(p,b) lstat((p),(b))
+    #define WREMOVE(d)   remove((d))
+    #define WRENAME(o,n) rename((o),(n))
+    #define WGETCWD(r,rSz) getcwd((r),(rSz))
+
+    #include <fcntl.h> /* used for open, close, pwrite, and pread */
+    #define WFD int
+    #define WOPEN(f,m,p) open((f),(m),(p))
+    #define WCLOSE(fd) close((fd))
+    #define WPWRITE(fd,b,s,o) pwrite((fd),(b),(s),(o))
+    #define WPREAD(fd,b,s,o)  pread((fd),(b),(s),(o))
+
+#ifndef NO_WOLFSSL_DIR
+    #include <dirent.h> /* used for opendir, readdir, and closedir */
+    #define WDIR DIR*
+    #define WOPENDIR(d)  opendir((d))
+    #define WCLOSEDIR(d) closedir((d))
+    #define WREADDIR(d)  readdir((d)) 
+#endif /* NO_WOLFSSL_DIR */
+#endif
+#endif /* WOLFSSH_SFTP */
 
 /* setup compiler inlining */
 #ifndef INLINE

@@ -160,6 +160,7 @@ typedef enum {
 
 WOLFSSH_API WS_SessionType wolfSSH_GetSessionType(const WOLFSSH*);
 WOLFSSH_API const char* wolfSSH_GetSessionCommand(const WOLFSSH*);
+WOLFSSH_API int wolfSSH_SetChannelType(WOLFSSH*, byte, byte*, word32);
 
 
 enum WS_HighwaterSide {
@@ -214,6 +215,12 @@ enum WS_DisconnectReasonCodes {
     WOLFSSH_DISCONNECT_NO_MORE_AUTH_METHODS_AVAILABLE = 14,
     WOLFSSH_DISCONNECT_ILLEGAL_USER_NAME              = 15
 };
+
+
+#ifndef WOLFSSH_MAX_FILENAME
+    #define WOLFSSH_MAX_FILENAME 256
+#endif
+
 
 #ifdef __cplusplus
 }

@@ -117,6 +117,9 @@ static const char* GetLogStr(enum wolfSSH_LogLevel level)
         case WS_LOG_USER:
             return "USER";
 
+        case WS_LOG_SFTP:
+            return "SFTP";
+
         default:
             return "UNKNOWN";
     }

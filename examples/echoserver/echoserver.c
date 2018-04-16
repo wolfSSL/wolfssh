@@ -28,6 +28,7 @@
 #include <wolfssl/wolfcrypt/sha256.h>
 #include <wolfssl/wolfcrypt/coding.h>
 #include <wolfssh/ssh.h>
+#include <wolfssh/wolfsftp.h>
 #include <wolfssh/test.h>
 #include "examples/echoserver/echoserver.h"
 
@@ -95,74 +96,118 @@ static int dump_stats(thread_ctx_t* ctx)
 }
 
 
+/* handle SSH echo operations
+ * returns 0 on success
+ */
+static int ssh_worker(thread_ctx_t* threadCtx) {
+    byte* buf = NULL;
+    byte* tmpBuf;
+    int bufSz, backlogSz = 0, rxSz, txSz, stop = 0, txSum;
+
+    do {
+        bufSz = EXAMPLE_BUFFER_SZ + backlogSz;
+
+        tmpBuf = (byte*)realloc(buf, bufSz);
+        if (tmpBuf == NULL)
+            stop = 1;
+        else
+            buf = tmpBuf;
+
+        if (!stop) {
+            rxSz = wolfSSH_stream_read(threadCtx->ssh,
+                                       buf + backlogSz,
+                                       EXAMPLE_BUFFER_SZ);
+            if (rxSz > 0) {
+                backlogSz += rxSz;
+                txSum = 0;
+                txSz = 0;
+
+                while (backlogSz != txSum && txSz >= 0 && !stop) {
+                    txSz = wolfSSH_stream_send(threadCtx->ssh,
+                                               buf + txSum,
+                                               backlogSz - txSum);
+
+                    if (txSz > 0) {
+                        byte c;
+                        const byte matches[] = { 0x03, 0x05, 0x06, 0x00 };
+
+                        c = find_char(matches, buf + txSum, txSz);
+                        switch (c) {
+                            case 0x03:
+                                stop = 1;
+                                break;
+                            case 0x06:
+                                if (wolfSSH_TriggerKeyExchange(threadCtx->ssh)
+                                        != WS_SUCCESS)
+                                    stop = 1;
+                                break;
+                            case 0x05:
+                                if (dump_stats(threadCtx) <= 0)
+                                    stop = 1;
+                                break;
+                        }
+                        txSum += txSz;
+                    }
+                    else if (txSz != WS_REKEYING)
+                        stop = 1;
+                }
+
+                if (txSum < backlogSz)
+                    memmove(buf, buf + txSum, backlogSz - txSum);
+                backlogSz -= txSum;
+            }
+            else
+                stop = 1;
+        }
+    } while (!stop);
+
+    free(buf);
+    return 0;
+}
+
+
+#ifdef WOLFSSH_SFTP
+/* handle SFTP operations
+ * returns 0 on success
+ */
+static int sftp_worker(thread_ctx_t* threadCtx) {
+    int ret;
+
+    do {
+        ret = wolfSSH_SFTP_read(threadCtx->ssh);
+    } while (ret == WS_SUCCESS);
+
+    return 0;
+}
+#endif
+
 static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
 {
+    int ret;
     thread_ctx_t* threadCtx = (thread_ctx_t*)vArgs;
 
     if (wolfSSH_accept(threadCtx->ssh) == WS_SUCCESS) {
-        byte* buf = NULL;
-        byte* tmpBuf;
-        int bufSz, backlogSz = 0, rxSz, txSz, stop = 0, txSum;
+        const char* cmd = wolfSSH_GetSessionCommand(threadCtx->ssh);
 
-        do {
-            bufSz = EXAMPLE_BUFFER_SZ + backlogSz;
+        /* handle if is SFTP channel */
+        if (WOLFSSH_SESSION_SUBSYSTEM == wolfSSH_GetSessionType(threadCtx->ssh)
+                               && (WMEMCMP(cmd, "sftp", sizeof("sftp")) == 0)) {
+        #ifdef WOLFSSH_SFTP
+            ret = sftp_worker(threadCtx);
+        #else
+            err_sys("SFTP not compiled in. Please use --enable-sftp");
+        #endif
+        }
+        else {
+            ret = ssh_worker(threadCtx);
+        }
 
-            tmpBuf = (byte*)realloc(buf, bufSz);
-            if (tmpBuf == NULL)
-                stop = 1;
-            else
-                buf = tmpBuf;
-
-            if (!stop) {
-                rxSz = wolfSSH_stream_read(threadCtx->ssh,
-                                           buf + backlogSz,
-                                           EXAMPLE_BUFFER_SZ);
-                if (rxSz > 0) {
-                    backlogSz += rxSz;
-                    txSum = 0;
-                    txSz = 0;
-
-                    while (backlogSz != txSum && txSz >= 0 && !stop) {
-                        txSz = wolfSSH_stream_send(threadCtx->ssh,
-                                                   buf + txSum,
-                                                   backlogSz - txSum);
-
-                        if (txSz > 0) {
-                            byte c;
-                            const byte matches[] = { 0x03, 0x05, 0x06, 0x00 };
-
-                            c = find_char(matches, buf + txSum, txSz);
-                            switch (c) {
-                                case 0x03:
-                                    stop = 1;
-                                    break;
-                                case 0x06:
-                                    if (wolfSSH_TriggerKeyExchange(threadCtx->ssh)
-                                            != WS_SUCCESS)
-                                        stop = 1;
-                                    break;
-                                case 0x05:
-                                    if (dump_stats(threadCtx) <= 0)
-                                        stop = 1;
-                                    break;
-                            }
-                            txSum += txSz;
-                        }
-                        else if (txSz != WS_REKEYING)
-                            stop = 1;
-                    }
-
-                    if (txSum < backlogSz)
-                        memmove(buf, buf + txSum, backlogSz - txSum);
-                    backlogSz -= txSum;
-                }
-                else
-                    stop = 1;
-            }
-        } while (!stop);
-
-        free(buf);
+        if (ret != 0) {
+            fprintf(stderr, "Error [%d] with handling connection.\n", ret);
+            exit(EXIT_FAILURE);
+        }
     }
+
     WCLOSESOCKET(threadCtx->fd);
     wolfSSH_free(threadCtx->ssh);
     free(threadCtx);
