@@ -45,6 +45,10 @@
     #include "src/misc.c"
 #endif
 
+#if defined(NO_FILESYSTEM) && !defined(SCP_USER_CALLBACKS)
+    #error "scp with no filesystem requires user callbacks"
+#endif
+
 const char scpError[] = "scp error: %s, %d";
 const char scpState[] = "scp state: %s";
 
@@ -1334,7 +1338,7 @@ void* wolfSSH_GetScpSendCtx(WOLFSSH* ssh)
 }
 
 
-#ifndef SCP_USER_CALLBACKS
+#if !defined(SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
 
 /* for porting to systems without errno */
 static INLINE int wolfSSH_LastError(void)

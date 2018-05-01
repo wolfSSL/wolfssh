@@ -51,7 +51,7 @@ extern "C" {
     #define DEFAULT_SCP_BUFFER_SZ DEFAULT_MAX_PACKET_SZ
 #endif
 
-#ifndef SCP_USER_CALLBACKS
+#if !defined(SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
     /* for utimes() */
     #include <sys/time.h>
     #include <errno.h>

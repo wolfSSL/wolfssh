@@ -289,7 +289,7 @@ struct WOLFSSH {
     word32 scpBufferedSz;         /* bytes buffered to send to peer */
     void*  scpRecvCtx;            /* SCP receive callback context handle */
     void*  scpSendCtx;            /* SCP send callback context handle */
-    #ifndef SCP_USER_CALLBACKS
+    #if !defined(SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
     ScpSendCtx scpSendCbCtx;      /* used in default case to for send cb ctx */
     #endif
 #endif
