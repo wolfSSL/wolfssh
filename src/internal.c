@@ -296,6 +296,7 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
     ctx->highwaterCb = wsHighwater;
 #ifdef WOLFSSH_SCP
     ctx->scpRecvCb = wsScpRecvCallback;
+    ctx->scpSendCb = wsScpSendCallback;
 #endif
 #ifdef DEBUG_WOLFSSH
     ctx->banner = cannedBanner;
@@ -363,16 +364,20 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->kSz         = sizeof(ssh->k);
     ssh->handshake   = handshake;
 #ifdef WOLFSSH_SCP
-    ssh->scpState = SCP_PARSE_COMMAND;
-    ssh->scpConfirmMsg = NULL;
+    ssh->scpRequestState = SCP_PARSE_COMMAND;
+    ssh->scpConfirmMsg   = NULL;
     ssh->scpConfirmMsgSz = 0;
-    ssh->scpRecvCtx = NULL;
-    ssh->scpFileBuffer = NULL;
+    ssh->scpRecvCtx      = NULL;
+    ssh->scpSendCtx      = &(ssh->scpSendCbCtx);
+    ssh->scpFileBuffer   = NULL;
     ssh->scpFileBufferSz = 0;
-    ssh->scpFileName = NULL;
-    ssh->scpFileNameSz = 0;
-    ssh->scpATime = 0;
-    ssh->scpMTime = 0;
+    ssh->scpFileName     = NULL;
+    ssh->scpFileNameSz   = 0;
+    ssh->scpTimestamp    = 0;
+    ssh->scpATime        = 0;
+    ssh->scpMTime        = 0;
+    ssh->scpRequestType  = WOLFSSH_SCP_SINGLE_FILE_REQUEST;
+    ssh->scpIsRecursive  = 0;
 #endif
 
     if (BufferInit(&ssh->inputBuffer, 0, ctx->heap) != WS_SUCCESS ||

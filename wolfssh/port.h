@@ -53,6 +53,10 @@ extern "C" {
     #define WFCLOSE(f)        fclose(f)
     #define WFREAD(b,s,a,f)   fread((b),(s),(a),(f))
     #define WFWRITE(b,s,a,f)  fwrite((b),(s),(a),(f))
+    #define WFSEEK(s,o,w)     fseek((s),(o),(w))
+    #define WFTELL(s)         ftell((s))
+    #define WREWIND(s)        rewind((s))
+    #define WSEEK_END         SEEK_END
 
     #if defined(WOLFSSH_SCP) && !defined(SCP_USER_CALLBACKS)
         /* for chdir() */
