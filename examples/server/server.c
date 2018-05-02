@@ -96,9 +96,10 @@ static int dump_stats(thread_ctx_t* ctx)
 
 static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
 {
+    int ret;
     thread_ctx_t* threadCtx = (thread_ctx_t*)vArgs;
 
-    if (wolfSSH_accept(threadCtx->ssh) == WS_SUCCESS) {
+    if ((ret = wolfSSH_accept(threadCtx->ssh)) == WS_SUCCESS) {
         byte* buf = NULL;
         byte* tmpBuf;
         int bufSz, backlogSz = 0, rxSz, txSz, stop = 0, txSum;
@@ -161,6 +162,8 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
         } while (!stop);
 
         free(buf);
+    } else if (ret == WS_SCP_COMPLETE) {
+        printf("scp file transfer completed\n");
     }
     wolfSSH_stream_exit(threadCtx->ssh, 0);
     WCLOSESOCKET(threadCtx->fd);

@@ -1346,20 +1346,24 @@ static INLINE int wolfSSH_LastError(void)
     return errno;
 }
 
+/* set file access and modification times
+ * Returns WS_SUCCESS on success, or negative upon error */
 static int SetTimestampInfo(const char* fileName, word64 mTime, word64 aTime)
 {
-    int ret;
+    int ret = WS_SUCCESS;
     struct timeval tmp[2];
 
     if (fileName == NULL)
-        return WS_BAD_ARGUMENT;
+        ret= WS_BAD_ARGUMENT;
 
-    tmp[0].tv_sec = aTime;
-    tmp[0].tv_usec = 0;
-    tmp[1].tv_sec = mTime;
-    tmp[1].tv_usec = 0;
+    if (ret == WS_SUCCESS) {
+        tmp[0].tv_sec = aTime;
+        tmp[0].tv_usec = 0;
+        tmp[1].tv_sec = mTime;
+        tmp[1].tv_usec = 0;
 
-    ret = utimes(fileName, tmp);
+        ret = utimes(fileName, tmp);
+    }
 
     return ret;
 }
@@ -1369,8 +1373,29 @@ static int SetTimestampInfo(const char* fileName, word64 mTime, word64 aTime)
  * wolfSSH_accept() and a new SCP request has been received for an incomming
  * file or directory.
  *
- * Handles accepting recursive directories by telling the user when to step
- * into (WOLFSSH_SCP_NEW_DIR) and out of (WOLFSSH_SCP_END_DIR) a directory.
+ * Handles accepting recursive directories by having wolfSSH tell the callback
+ * when to step into and out of a directory.
+ *
+ * When a new file copy "to" request is received, this callback is called in
+ * the WOLFSSH_SCP_NEW_FILE state, where the base directory is placed in
+ * 'basePath'. If the peer sends a recursive directory copy, wolfSSH calls
+ * this callback in the WOLFSSH_SCP_NEW_DIR state, with a directory name in
+ * 'fileName', when a directory should be created and entered.  Directory
+ * mode is located in 'fileMode'. When a directory should be exited, the
+ * callback is called in the WOLFSSH_SCP_END_DIR state.
+ *
+ * When an file transfer is incoming, the callback will first be called in
+ * the WOLFSSH_SCP_NEW_FILE, with the file name in 'fileName', file mode
+ * in 'fileMode', and optionally modification and access times in 'mTime'
+ * and 'aTime', respectively.  These timestamps may or may not be present,
+ * depenidng on the peer command that was executed.  If the peer did not send
+ * these, they will be set to 0 when entering the callback.
+ *
+ * After each state is completed, the callback should return either
+ * WS_SCP_CONTINUE to continue the copy operation, or WS_SCP_ABORT to abort
+ * the copy. When WS_SCP_ABORT is returned, an optional error message can be
+ * sent to the peer. This error message can be set by calling
+ * wolfSSH_SetScpErrorMsg().
  *
  * ssh   - pointer to active WOLFSSH session
  * state - current state of operation, can be one of:
@@ -1399,10 +1424,6 @@ static int SetTimestampInfo(const char* fileName, word64 mTime, word64 aTime)
  * Return SCP status that is sent to client/sender. One of:
  *     WS_SCP_CONTINUE - continue SCP operation
  *     WS_SCP_ABORT    - abort SCP operation, send error to peer
- *
- *     When WS_SCP_ABORT is returned, an optional error message can be sent
- *     to the peer. This error message can be set by calling
- *     wolfSSH_SetScpErrorMsg().
  */
 int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
         const char* fileName, int fileMode, word64 mTime, word64 aTime,
@@ -1463,9 +1484,15 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                 WFCLOSE(fp);
 
             /* set timestamp info */
-            if (mTime != 0 || aTime != 0) {
-                SetTimestampInfo(fileName, mTime, aTime);
+            if (mTime != 0 || aTime != 0)
+                ret = SetTimestampInfo(fileName, mTime, aTime);
+
+            if (ret == WS_SUCCESS) {
+                ret = WS_SCP_CONTINUE;
+            } else {
+                ret = WS_SCP_ABORT;
             }
+
             break;
 
         case WOLFSSH_SCP_NEW_DIR:
@@ -1505,6 +1532,8 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
     return ret;
 }
 
+/* Extract file name from full path, store in fileName.
+ * Return WS_SUCCESS on success, negative upon error */
 static int ExtractFileName(const char* filePath, char* fileName,
                            word32 fileNameSz)
 {
@@ -1537,6 +1566,44 @@ static int ExtractFileName(const char* filePath, char* fileName,
     return ret;
 }
 
+static int GetFileSize(WFILE* fp, word32* fileSz)
+{
+    if (fp == NULL || fileSz == NULL)
+        return WS_BAD_ARGUMENT;
+
+    /* get file size */
+    WFSEEK(fp, 0, WSEEK_END);
+    *fileSz = (word32)WFTELL(fp);
+    WREWIND(fp);
+
+    return WS_SUCCESS;
+}
+
+static int GetFileStats(ScpSendCtx* ctx, const char* fileName,
+                        word64* mTime, word64* aTime, int* fileMode)
+{
+    int ret = WS_SUCCESS;
+
+    if (ctx == NULL || fileName == NULL || mTime == NULL ||
+        aTime == NULL || fileMode == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    /* get file stats for times and mode */
+    if (stat(fileName, &ctx->s) < 0) {
+        ret = WS_BAD_FILE_E;
+
+    } else {
+        *mTime = (word64)ctx->s.st_mtime;
+        *aTime = (word64)ctx->s.st_atime;
+        *fileMode = ctx->s.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO);
+    }
+
+    return ret;
+}
+
+/* Create new ScpDir struct for pushing on directory stack.
+ * Return valid pointer on success, NULL on failure */
 static ScpDir* ScpNewDir(const char* path, void* heap)
 {
     ScpDir* entry = NULL;
@@ -1565,7 +1632,7 @@ static ScpDir* ScpNewDir(const char* path, void* heap)
     return entry;
 }
 
-/* push new ScpDir on stack, append directory to ctx->dirName */
+/* Create and push new ScpDir on stack, append directory to ctx->dirName */
 static int ScpPushDir(ScpSendCtx* ctx, const char* path, void* heap)
 {
     ScpDir* entry;
@@ -1592,6 +1659,7 @@ static int ScpPushDir(ScpSendCtx* ctx, const char* path, void* heap)
     return WS_SUCCESS;
 }
 
+/* Remove top ScpDir from directory stack, remove dir from ctx->dirName */
 static int ScpPopDir(ScpSendCtx* ctx, void* heap)
 {
     ScpDir* entry = NULL;
@@ -1626,42 +1694,9 @@ static int ScpPopDir(ScpSendCtx* ctx, void* heap)
     return WS_SUCCESS;
 }
 
-static int GetFileSize(WFILE* fp, word32* fileSz)
-{
-    if (fp == NULL || fileSz == NULL)
-        return WS_BAD_ARGUMENT;
-
-    /* get file size */
-    WFSEEK(fp, 0, WSEEK_END);
-    *fileSz = (word32)WFTELL(fp);
-    WREWIND(fp);
-
-    return WS_SUCCESS;
-}
-
-static int GetFileStats(ScpSendCtx* ctx, const char* fileName, word64* mTime,
-                        word64* aTime, int* fileMode)
-{
-    int ret = WS_SUCCESS;
-
-    if (ctx == NULL || fileName == NULL || mTime == NULL ||
-        aTime == NULL || fileMode == NULL) {
-        return WS_BAD_ARGUMENT;
-    }
-
-    /* get file stats for times and mode */
-    if (stat(fileName, &ctx->s) < 0) {
-        ret = WS_BAD_FILE_E;
-
-    } else {
-        *mTime = (word64)ctx->s.st_mtime;
-        *aTime = (word64)ctx->s.st_atime;
-        *fileMode = ctx->s.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO);
-    }
-
-    return ret;
-}
-
+/* Get next entry in directory, either file or directory, skips self (.)
+ * and parent (..) directories, stores in ctx->entry.
+ * Return WS_SUCCESS on success or negative upon error */
 static int FindNextDirEntry(ScpSendCtx* ctx)
 {
     if (ctx == NULL)
@@ -1677,6 +1712,7 @@ static int FindNextDirEntry(ScpSendCtx* ctx)
     return WS_SUCCESS;
 }
 
+/* Test if directory stack is empty, return 1 if empty, otherwise 0 */
 static int ScpDirStackIsEmpty(ScpSendCtx* ctx)
 {
     if (ctx && ctx->currentDir == NULL)
@@ -1699,8 +1735,36 @@ static int ScpFileIsFile(ScpSendCtx* ctx)
  * wolfSSH_accept() and a new SCP request has been received requesting a file
  * be copied from the server to the peer.
  *
- * ssh   - pointer to active WOLFSSH session
- * state - current state of operation, can be one of:
+ * Depending on the peer request, this callback can be called in one of
+ * several different states.  If the peer requested a single file, the
+ * WOLFSSH_SCP_SINGLE_FILE_REQUEST state will be passed to the callback, where
+ * the callback is responsible for populating file info and placing the single
+ * file (or file part) into 'buf'.
+ *
+ * If the peer requests a directory of files be transferred, in a recursive
+ * request, WOLFSSH_SCP_RECURSIVE_REQUEST will be passed to the callback. The
+ * callback is then responsible for traversing through the requested directory
+ * one directory or file at a time, returning WS_SCP_ENTER_DIRECTORY when
+ * a new directory is entered, WS_SCP_EXIT_DIRECTORY when a directory is
+ * exited (not including the final directory exit), and
+ * WS_SCP_EXIT_DIRECTORY_FINAL when the final directory is done.
+ *
+ * At any time, the callback can abort the transfer by returning WS_SCP_ABORT.
+ * This will send an error confirmation message to the peer.  When returning
+ * WS_SCP_ABORT, the callback can call wolfSSH_SetScpErrorMsg() with an
+ * optional error message to send back to the peer.
+ *
+ * When sending file data, the callback should copy up to 'bufSz' bytes
+ * into 'buf', and return the number of bytes copied into 'buf'. Less than
+ * 'bufSz' bytes can be copied into buf, which will cause only some file data
+ * to be sent to the peer.  In this scenario, the callback will be called
+ * again with the state set to WOLFSSH_SCP_CONTINUE_FILE_TRANSFER.  In this
+ * state, the callback should again place up to 'bufSz' data in 'buf. The
+ * 'fileOffset' variable holds the current offset into the file where file
+ * bytes should be copied from.
+ *
+ * ssh   - [IN] pointer to active WOLFSSH session
+ * state - [IN] current state of operation, can be one of:
  *         WOLFSSH_SCP_SINGLE_FILE_REQUEST    - peer requested a single file to
  *                                              be copied from the server
  *         WOLFSSH_SCP_RECURSIVE_REQUEST      - peer requested an entire
@@ -1711,8 +1775,9 @@ static int ScpFileIsFile(ScpSendCtx* ctx)
  *                                              data to be sent from server
  *                                              to peer to complete file
  *                                              transfer.
- * peerRequest - name of file/directory the peer is requesting to be copied
- * fileName    - [OUT] name of file/directory callback is sending to peer
+ * peerRequest - [IN] name of file/directory the peer is requesting to be copied
+ * fileName    - [OUT] name of file/directory callback is sending to peer,
+ *               should be NULL terminated.
  * mTime       - [OUT] file modification time, in seconds since
  *               Unix epoch (00:00:00 UTC, Jan. 1, 1970). Optional, and set
  *               to 0 by default.
@@ -1722,25 +1787,24 @@ static int ScpFileIsFile(ScpSendCtx* ctx)
  * fileMode    - [OUT] mode/permission of outgoing file or directory, in
  *               decimal representation (ie: 0644 octal == 420 decimal)
  * fileOffset  - offset into total file size, from where file data should be
- *               into 'buf'.
+ *               read into 'buf'.
  * totalFileSz - total size of file being sent, bytes
  * buf         - [OUT] buffer to place file (or file part) in, of size bufSz
- * bufSz       - size of buf, bytes
- * ctx         - optional user context, stores file pointer in default case
+ * bufSz       - [IN] size of buf, bytes
+ * ctx         - [IN] optional user context, stores file pointer in default
+ *               case. Can be set by calling wolfSSH_SetScpSendCtx().
  *
  * Return number of bytes copied into buf, if doing a file transfer, otherwise
  * one of:
  *     WS_SCP_ENTER_DIRECTORY      - send directory name to peer - fileName,
  *                                   mode (optional), mTime (optional), and
- *                                   aTime (optional) should be set.
- *     WS_SCP_EXIT_DIRECTORY       - return when recursive directory
+ *                                   aTime (optional) should be set. Return
+ *                                   when callback and "entered" a directory.
+ *     WS_SCP_EXIT_DIRECTORY       - return when recursive directory traversal
+ *                                   has "exited" a directory.
  *     WS_SCP_EXIT_DIRECTORY_FINAL - return when recursive directory transfer
  *                                   is complete.
  *     WS_SCP_ABORT                - abort file transfer request
- *
- *     When WS_SCP_ABORT is returned, an optional error message can be sent
- *     to the peer. This error message can be set by calling
- *     wolfSSH_SetScpErrorMsg().
  */
 int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
         char* fileName, word32 fileNameSz, word64* mTime, word64* aTime,
