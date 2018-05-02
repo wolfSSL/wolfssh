@@ -1409,7 +1409,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
         word32 totalFileSz, byte* buf, word32 bufSz, word32 fileOffset,
         void* ctx)
 {
-    WFILE* fp;
+    WFILE* fp = NULL;
     int ret = WS_SCP_CONTINUE;
     word32 bytes;
 
@@ -1442,6 +1442,11 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
 
         case WOLFSSH_SCP_FILE_PART:
 
+            if (fp == NULL) {
+                ret = WS_SCP_ABORT;
+                break;
+            }
+
             /* read file, or file part */
             bytes = (word32)WFWRITE(buf, 1, bufSz, fp);
             if (bytes != bufSz) {
@@ -1454,7 +1459,8 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
         case WOLFSSH_SCP_FILE_DONE:
 
             /* close file */
-            WFCLOSE(fp);
+            if (fp != NULL)
+                WFCLOSE(fp);
 
             /* set timestamp info */
             if (mTime != 0 || aTime != 0) {
@@ -1741,8 +1747,8 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
         int* fileMode, word32 fileOffset, word32* totalFileSz, byte* buf,
         word32 bufSz, void* ctx)
 {
-    ScpSendCtx* sendCtx;
-    int ret = WS_SUCCESS;
+    ScpSendCtx* sendCtx = NULL;
+    int ret = WS_SUCCESS, dirNameLen, dNameLen;
     char filePath[DEFAULT_SCP_FILE_NAME_SZ];
 
     if (ctx != NULL) {
@@ -1755,9 +1761,15 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
 
         case WOLFSSH_SCP_SINGLE_FILE_REQUEST:
 
-            if (WFOPEN(&(sendCtx->fp), peerRequest, "rb") != 0) {
+            if ((sendCtx == NULL) || WFOPEN(&(sendCtx->fp), peerRequest,
+                                            "rb") != 0) {
                 wolfSSH_SetScpErrorMsg(ssh, "unable to open file for reading");
                 ret = WS_SCP_ABORT;
+            }
+
+            if (ret == WS_SUCCESS) {
+                if (sendCtx->fp == NULL)
+                    ret = WS_SCP_ABORT;
             }
 
             if (ret == WS_SUCCESS)
@@ -1769,14 +1781,14 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             if (ret == WS_SUCCESS)
                 ret = ExtractFileName(peerRequest, fileName, fileNameSz);
 
-            if (ret == WS_SUCCESS) {
+            if (ret == WS_SUCCESS && sendCtx != NULL && sendCtx->fp != NULL) {
                 ret = (word32)WFREAD(buf, 1, bufSz, sendCtx->fp);
             } else {
                 ret = WS_SCP_ABORT;
             }
 
             /* keep fp open if no errors and transfer will continue */
-            if ((sendCtx->fp != NULL) &&
+            if ((sendCtx != NULL) && (sendCtx->fp != NULL) &&
                 ((ret < 0) || (*totalFileSz == (word32)ret))) {
                 WFCLOSE(sendCtx->fp);
             }
@@ -1832,14 +1844,25 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             }
 
             if (ret == WS_SUCCESS) {
-                WSTRNCPY(filePath, sendCtx->dirName, DEFAULT_SCP_FILE_NAME_SZ);
-                WSTRNCAT(filePath, "/", 1);
-                WSTRNCAT(filePath, sendCtx->entry->d_name,
-                         DEFAULT_SCP_FILE_NAME_SZ);
-                WSTRNCPY(fileName, sendCtx->entry->d_name,
-                         DEFAULT_SCP_FILE_NAME_SZ);
 
-                ret = GetFileStats(sendCtx, filePath, mTime, aTime, fileMode);
+                dirNameLen = (int)WSTRLEN(sendCtx->dirName);
+                dNameLen   = (int)WSTRLEN(sendCtx->entry->d_name);
+
+                if ((dirNameLen + 1 + dNameLen) > DEFAULT_SCP_FILE_NAME_SZ) {
+                    ret = WS_SCP_ABORT;
+
+                } else {
+                    WSTRNCPY(filePath, sendCtx->dirName,
+                             DEFAULT_SCP_FILE_NAME_SZ);
+                    WSTRNCAT(filePath, "/", 1);
+                    WSTRNCAT(filePath, sendCtx->entry->d_name,
+                             DEFAULT_SCP_FILE_NAME_SZ - 1 - dirNameLen);
+                    WSTRNCPY(fileName, sendCtx->entry->d_name,
+                             DEFAULT_SCP_FILE_NAME_SZ);
+
+                    ret = GetFileStats(sendCtx, filePath, mTime, aTime,
+                                       fileMode);
+                }
             }
 
             if (ret == WS_SUCCESS) {
@@ -1882,6 +1905,11 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             break;
 
         case WOLFSSH_SCP_CONTINUE_FILE_TRANSFER:
+
+            if (sendCtx == NULL) {
+                ret = WS_SCP_ABORT;
+                break;
+            }
 
             ret = (word32)WFREAD(buf, 1, bufSz, sendCtx->fp);
             if ((ret < 0) || (fileOffset + ret == *totalFileSz)) {
