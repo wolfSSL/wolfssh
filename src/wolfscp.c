@@ -45,7 +45,7 @@
     #include "src/misc.c"
 #endif
 
-#if defined(NO_FILESYSTEM) && !defined(SCP_USER_CALLBACKS)
+#if defined(NO_FILESYSTEM) && !defined(WOLFSSH_SCP_USER_CALLBACKS)
     #error "scp with no filesystem requires user callbacks"
 #endif
 
@@ -1338,7 +1338,7 @@ void* wolfSSH_GetScpSendCtx(WOLFSSH* ssh)
 }
 
 
-#if !defined(SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
+#if !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
 
 /* for porting to systems without errno */
 static INLINE int wolfSSH_LastError(void)
@@ -1986,7 +1986,7 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
     return ret;
 }
 
-#endif /* SCP_USER_CALLBACKS */
+#endif /* WOLFSSH_SCP_USER_CALLBACKS */
 
 #endif /* WOLFSSH_SCP */
 

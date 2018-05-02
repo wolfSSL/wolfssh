@@ -51,7 +51,7 @@ extern "C" {
     #define DEFAULT_SCP_BUFFER_SZ DEFAULT_MAX_PACKET_SZ
 #endif
 
-#if !defined(SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
+#if !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
     /* for utimes() */
     #include <sys/time.h>
     #include <errno.h>
@@ -69,7 +69,7 @@ extern "C" {
         struct ScpDir* next;                 /* previous directory in stack */
     } ScpDir;
 
-#endif /* SCP_USER_CALLBACKS */
+#endif /* WOLFSSH_SCP_USER_CALLBACKS */
 
 enum WS_ScpFileStates {
     /* sink */

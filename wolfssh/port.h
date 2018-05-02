@@ -58,7 +58,8 @@ extern "C" {
     #define WREWIND(s)        rewind((s))
     #define WSEEK_END         SEEK_END
 
-    #if defined(WOLFSSH_SCP) && !defined(SCP_USER_CALLBACKS)
+    #if defined(WOLFSSH_SCP) && !defined(WOLFSSH_SCP_USER_CALLBACKS) && \
+        !defined(NO_FILESYSTEM)
         /* for chdir() */
         #include <unistd.h>
         /* for mkdir() */

@@ -368,7 +368,7 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->scpConfirmMsg   = NULL;
     ssh->scpConfirmMsgSz = 0;
     ssh->scpRecvCtx      = NULL;
-    #if !defined(SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
+    #if !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
     ssh->scpSendCtx      = &(ssh->scpSendCbCtx);
     #else
     ssh->scpSendCtx      = NULL;
