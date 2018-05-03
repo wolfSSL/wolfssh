@@ -3350,7 +3350,6 @@ static int DoUserAuthSuccess(WOLFSSH* ssh,
 
 static int DoUserAuthBanner(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
-    word32 begin;
     char banner[80];
     word32 bannerSz = sizeof(banner);
     int ret = WS_SUCCESS;
@@ -3360,16 +3359,13 @@ static int DoUserAuthBanner(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
         ret = WS_BAD_ARGUMENT;
 
-    if (ret == WS_SUCCESS) {
-        begin = *idx;
+    if (ret == WS_SUCCESS)
         ret = GetString(banner, &bannerSz, buf, len, idx);
-    }
 
     if (ret == WS_SUCCESS)
         ret = GetUint32(&bannerSz, buf, len, idx);
 
     if (ret == WS_SUCCESS) {
-        begin += bannerSz;
         if (ssh->ctx->showBanner) {
             WLOG(WS_LOG_INFO, "%s", banner);
         }
