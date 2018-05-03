@@ -2326,47 +2326,49 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
         if (ret != WS_SUCCESS)
             ret = WS_CRYPTO_FAILED;
-    }
 
-    /* Verify h with the server's public key. */
-    if (ret == WS_SUCCESS) {
-        /* Skip past the sig name. Check it, though. Other SSH implementations
-         * do the verify based on the name, despite what was agreed upon. XXX*/
-        begin = 0;
-        ret = GetUint32(&scratch, sig, sigSz, &begin);
+        /* Verify h with the server's public key. */
         if (ret == WS_SUCCESS) {
-            begin += scratch;
+            /* Skip past the sig name. Check it, though. Other SSH
+             * implementations do the verify based on the name, despite what
+             * was agreed upon. XXX*/
+            begin = 0;
             ret = GetUint32(&scratch, sig, sigSz, &begin);
-        }
-        if (ret == WS_SUCCESS) {
-            sig = sig + begin;
-            sigSz = scratch;
-
-            if (sigSz + begin + tmpIdx > len) {
-                WLOG(WS_LOG_DEBUG,
-                        "Signature size found would result in error");
-                ret = WS_BUFFER_E;
+            if (ret == WS_SUCCESS) {
+                begin += scratch;
+                ret = GetUint32(&scratch, sig, sigSz, &begin);
             }
+            if (ret == WS_SUCCESS) {
+                sig = sig + begin;
+                sigSz = scratch;
 
-            if (ret == WS_SUCCESS)
-                ret = wc_SignatureVerify(HashForId(ssh->handshake->pubKeyId),
-                                     sigKeyBlock.useRsa ?
-                                      WC_SIGNATURE_TYPE_RSA_W_ENC :
-                                      WC_SIGNATURE_TYPE_ECC,
-                                     ssh->h, ssh->hSz, sig, sigSz,
-                                     &sigKeyBlock.sk, sigKeyBlock.keySz);
-            if (ret != 0) {
-                WLOG(WS_LOG_DEBUG,
-                     "DoKexDhReply: Signature Verify fail (%d)", ret);
-                ret = sigKeyBlock.useRsa ? WS_RSA_E : WS_ECC_E;
+                if (sigSz + begin + tmpIdx > len) {
+                    WLOG(WS_LOG_DEBUG,
+                            "Signature size found would result in error");
+                    ret = WS_BUFFER_E;
+                }
+
+                if (ret == WS_SUCCESS)
+                    ret = wc_SignatureVerify(
+                                         HashForId(ssh->handshake->pubKeyId),
+                                         sigKeyBlock.useRsa ?
+                                          WC_SIGNATURE_TYPE_RSA_W_ENC :
+                                          WC_SIGNATURE_TYPE_ECC,
+                                         ssh->h, ssh->hSz, sig, sigSz,
+                                         &sigKeyBlock.sk, sigKeyBlock.keySz);
+                if (ret != 0) {
+                    WLOG(WS_LOG_DEBUG,
+                         "DoKexDhReply: Signature Verify fail (%d)", ret);
+                    ret = sigKeyBlock.useRsa ? WS_RSA_E : WS_ECC_E;
+                }
             }
         }
+
+        if (sigKeyBlock.useRsa)
+            wc_FreeRsaKey(&sigKeyBlock.sk.rsa.key);
+        else
+            wc_ecc_free(&sigKeyBlock.sk.ecc.key);
     }
-
-    if (sigKeyBlock.useRsa)
-        wc_FreeRsaKey(&sigKeyBlock.sk.rsa.key);
-    else
-        wc_ecc_free(&sigKeyBlock.sk.ecc.key);
 
     if (ret == WS_SUCCESS)
         ret = GenerateKeys(ssh);
