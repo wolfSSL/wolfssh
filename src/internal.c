@@ -4011,7 +4011,6 @@ static int DoPacket(WOLFSSH* ssh)
         case MSGID_CHANNEL_EOF:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_EOF");
             ret = DoChannelEof(ssh, buf + idx, payloadSz, &payloadIdx);
-            ret = WS_SUCCESS;
             break;
 
         case MSGID_CHANNEL_CLOSE:
