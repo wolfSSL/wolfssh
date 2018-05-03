@@ -2104,7 +2104,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     }
 
     /* If using DH-GEX include the GEX specific values. */
-    if (ssh->handshake->kexId == ID_DH_GEX_SHA256) {
+    if (ret == WS_SUCCESS && ssh->handshake->kexId == ID_DH_GEX_SHA256) {
         byte primeGroupPad = 0, generatorPad = 0;
 
         /* Hash in the client's requested minimum key size. */
@@ -4715,12 +4715,14 @@ int SendKexInit(WOLFSSH* ssh)
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
-    ssh->isKeying = 1;
-    if (ssh->handshake == NULL) {
-        ssh->handshake = HandshakeInfoNew(ssh->ctx->heap);
+    if (ret == WS_SUCCESS) {
+        ssh->isKeying = 1;
         if (ssh->handshake == NULL) {
-            WLOG(WS_LOG_DEBUG, "Couldn't allocate handshake info");
-            ret = WS_MEMORY_E;
+            ssh->handshake = HandshakeInfoNew(ssh->ctx->heap);
+            if (ssh->handshake == NULL) {
+                WLOG(WS_LOG_DEBUG, "Couldn't allocate handshake info");
+                ret = WS_MEMORY_E;
+            }
         }
     }
 
@@ -6443,7 +6445,7 @@ int SendChannelEow(WOLFSSH* ssh, word32 peerChannelId)
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
-    if (!ssh->clientOpenSSH) {
+    if (ret == WS_SUCCESS && !ssh->clientOpenSSH) {
         WLOG(WS_LOG_DEBUG, "Leaving SendChannelEow(), not OpenSSH");
         return ret;
     }
