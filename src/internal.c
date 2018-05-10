@@ -3875,8 +3875,11 @@ static int DoPacket(WOLFSSH* ssh)
     msg = buf[idx++];
     /* At this point, payload starts at "buf + idx". */
 
-    /* sanity check on payloadSz */
-    if (ssh->inputBuffer.bufferSz < payloadSz + idx) {
+    /* sanity check on payloadSz. Uses "or" condition because of the case when
+     * adding idx to payloadSz causes it to overflow.
+     */
+    if ((ssh->inputBuffer.bufferSz < payloadSz + idx) ||
+            (payloadSz + idx < payloadSz)) {
         return WS_OVERFLOW_E;
     }
 
