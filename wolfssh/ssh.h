@@ -78,6 +78,7 @@ WOLFSSH_API void* wolfSSH_GetHighwaterCtx(WOLFSSH*);
 
 WOLFSSH_API int wolfSSH_get_error(const WOLFSSH*);
 WOLFSSH_API const char* wolfSSH_get_error_name(const WOLFSSH*);
+WOLFSSH_API const char* wolfSSH_ErrorToName(int);
 
 /* I/O callbacks */
 typedef int (*WS_CallbackIORecv)(WOLFSSH*, void*, word32, void*);

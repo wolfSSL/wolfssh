@@ -71,9 +71,6 @@ const char* GetErrorString(int err)
     return "No wolfSSH strings available";
 #else
     switch (err) {
-        case WS_SUCCESS:
-            return "function success";
-
         case WS_FATAL_ERROR:
             return "general function failure";
 
@@ -131,6 +128,9 @@ const char* GetErrorString(int err)
         case WS_BAD_FILE_E:
             return "bad file";
 
+        case WS_INVALID_ALGO_ID:
+            return "invalid algorithm id";
+
         case WS_DECRYPT_E:
             return "decrypt error";
 
@@ -141,7 +141,7 @@ const char* GetErrorString(int err)
             return "verify mac error";
 
         case WS_CREATE_MAC_E:
-            return "verify mac error";
+            return "create mac error";
 
         case WS_RESOURCE_E:
             return "insufficient resources for new channel";
@@ -160,6 +160,9 @@ const char* GetErrorString(int err)
 
         case WS_INVALID_STATE_E:
             return "invalid state";
+
+        case WS_EOF:
+            return "end of file";
 
         case WS_REKEYING:
             return "rekeying with peer";
