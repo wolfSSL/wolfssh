@@ -72,8 +72,10 @@ enum WS_ErrorCodes {
     WS_INVALID_PRIME_CURVE = -32,
     WS_ECC_E           = -33,
     WS_CHANOPEN_FAILED = -34,
-    WS_REKEYING        = -90,   /* Status: rekey in progress */
-    WS_CHANNEL_CLOSED  = -91    /* Status: channel closed */
+    WS_REKEYING        = -35,   /* Status: rekey in progress */
+    WS_CHANNEL_CLOSED  = -36,   /* Status: channel closed */
+
+    WS_LAST_E          = -36    /* Update this to indicate last error */
 };
 
 

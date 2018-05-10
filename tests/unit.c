@@ -379,9 +379,66 @@ static int test_RsaKeyGen(void)
 #endif
 
 
+/* Error Code And Message Test */
+
+static int test_Errors(void)
+{
+    const char* errStr;
+    const char* unknownStr = wolfSSH_ErrorToName(1);
+    int result = 0;
+
+#ifdef NO_WOLFSSH_STRINGS
+    /* Ensure a valid error code's string matches an invalid code's.
+     * The string is that error strings are not available.
+     */
+    errStr = wolfSSH_ErrorToName(WS_BAD_ARGUMENT);
+    if (errStr != unknownStr)
+        result = -104;
+#else
+    int i, j = 0;
+    /* Values that are not or no longer error codes. */
+    int missing[] = { WS_SUCCESS };
+
+    /* Check that all errors have a string and it's the same through the two
+     * APIs. Check that the values that are not errors map to the unknown
+     * string.  */
+    for (i = WS_SUCCESS; i >= WS_LAST_E; i--) {
+        errStr = wolfSSH_ErrorToName(i);
+
+        if (i != missing[j]) {
+            if (errStr == unknownStr) {
+                result = -105;
+                break;
+            }
+        }
+        else {
+            j++;
+            if (errStr != unknownStr) {
+                result = -106;
+                break;
+            }
+        }
+    }
+
+    /* Check if the next possible value has been given a string. */
+    if (result == 0) {
+        errStr = wolfSSH_ErrorToName(i);
+        if (errStr != unknownStr)
+            return -107;
+    }
+#endif
+
+    return result;
+}
+
+
 int main(void)
 {
     int testResult = 0, unitResult = 0;
+
+    unitResult = test_Errors();
+    printf("Errors: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
 
     unitResult = test_KDF();
     printf("KDF: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));

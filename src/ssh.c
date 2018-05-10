@@ -241,6 +241,14 @@ const char* wolfSSH_get_error_name(const WOLFSSH* ssh)
 }
 
 
+const char* wolfSSH_ErrorToName(int err)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ErrorToName()");
+
+    return GetErrorString(err);
+}
+
+
 const char acceptError[] = "accept error: %s, %d";
 const char acceptState[] = "accept state: %s";
 
