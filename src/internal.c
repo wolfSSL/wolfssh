@@ -2104,7 +2104,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     }
 
     /* If using DH-GEX include the GEX specific values. */
-    if (ssh->handshake->kexId == ID_DH_GEX_SHA256) {
+    if (ret == WS_SUCCESS && ssh->handshake->kexId == ID_DH_GEX_SHA256) {
         byte primeGroupPad = 0, generatorPad = 0;
 
         /* Hash in the client's requested minimum key size. */
@@ -2326,47 +2326,49 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
         if (ret != WS_SUCCESS)
             ret = WS_CRYPTO_FAILED;
-    }
 
-    /* Verify h with the server's public key. */
-    if (ret == WS_SUCCESS) {
-        /* Skip past the sig name. Check it, though. Other SSH implementations
-         * do the verify based on the name, despite what was agreed upon. XXX*/
-        begin = 0;
-        ret = GetUint32(&scratch, sig, sigSz, &begin);
+        /* Verify h with the server's public key. */
         if (ret == WS_SUCCESS) {
-            begin += scratch;
+            /* Skip past the sig name. Check it, though. Other SSH
+             * implementations do the verify based on the name, despite what
+             * was agreed upon. XXX*/
+            begin = 0;
             ret = GetUint32(&scratch, sig, sigSz, &begin);
-        }
-        if (ret == WS_SUCCESS) {
-            sig = sig + begin;
-            sigSz = scratch;
-
-            if (sigSz + begin + tmpIdx > len) {
-                WLOG(WS_LOG_DEBUG,
-                        "Signature size found would result in error");
-                ret = WS_BUFFER_E;
+            if (ret == WS_SUCCESS) {
+                begin += scratch;
+                ret = GetUint32(&scratch, sig, sigSz, &begin);
             }
+            if (ret == WS_SUCCESS) {
+                sig = sig + begin;
+                sigSz = scratch;
 
-            if (ret == WS_SUCCESS)
-                ret = wc_SignatureVerify(HashForId(ssh->handshake->pubKeyId),
-                                     sigKeyBlock.useRsa ?
-                                      WC_SIGNATURE_TYPE_RSA_W_ENC :
-                                      WC_SIGNATURE_TYPE_ECC,
-                                     ssh->h, ssh->hSz, sig, sigSz,
-                                     &sigKeyBlock.sk, sigKeyBlock.keySz);
-            if (ret != 0) {
-                WLOG(WS_LOG_DEBUG,
-                     "DoKexDhReply: Signature Verify fail (%d)", ret);
-                ret = sigKeyBlock.useRsa ? WS_RSA_E : WS_ECC_E;
+                if (sigSz + begin + tmpIdx > len) {
+                    WLOG(WS_LOG_DEBUG,
+                            "Signature size found would result in error");
+                    ret = WS_BUFFER_E;
+                }
+
+                if (ret == WS_SUCCESS)
+                    ret = wc_SignatureVerify(
+                                         HashForId(ssh->handshake->pubKeyId),
+                                         sigKeyBlock.useRsa ?
+                                          WC_SIGNATURE_TYPE_RSA_W_ENC :
+                                          WC_SIGNATURE_TYPE_ECC,
+                                         ssh->h, ssh->hSz, sig, sigSz,
+                                         &sigKeyBlock.sk, sigKeyBlock.keySz);
+                if (ret != 0) {
+                    WLOG(WS_LOG_DEBUG,
+                         "DoKexDhReply: Signature Verify fail (%d)", ret);
+                    ret = sigKeyBlock.useRsa ? WS_RSA_E : WS_ECC_E;
+                }
             }
         }
+
+        if (sigKeyBlock.useRsa)
+            wc_FreeRsaKey(&sigKeyBlock.sk.rsa.key);
+        else
+            wc_ecc_free(&sigKeyBlock.sk.ecc.key);
     }
-
-    if (sigKeyBlock.useRsa)
-        wc_FreeRsaKey(&sigKeyBlock.sk.rsa.key);
-    else
-        wc_ecc_free(&sigKeyBlock.sk.ecc.key);
 
     if (ret == WS_SUCCESS)
         ret = GenerateKeys(ssh);
@@ -3348,7 +3350,6 @@ static int DoUserAuthSuccess(WOLFSSH* ssh,
 
 static int DoUserAuthBanner(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
-    word32 begin;
     char banner[80];
     word32 bannerSz = sizeof(banner);
     int ret = WS_SUCCESS;
@@ -3358,16 +3359,13 @@ static int DoUserAuthBanner(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
         ret = WS_BAD_ARGUMENT;
 
-    if (ret == WS_SUCCESS) {
-        begin = *idx;
+    if (ret == WS_SUCCESS)
         ret = GetString(banner, &bannerSz, buf, len, idx);
-    }
 
     if (ret == WS_SUCCESS)
         ret = GetUint32(&bannerSz, buf, len, idx);
 
     if (ret == WS_SUCCESS) {
-        begin += bannerSz;
         if (ssh->ctx->showBanner) {
             WLOG(WS_LOG_INFO, "%s", banner);
         }
@@ -4013,7 +4011,6 @@ static int DoPacket(WOLFSSH* ssh)
         case MSGID_CHANNEL_EOF:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_CHANNEL_EOF");
             ret = DoChannelEof(ssh, buf + idx, payloadSz, &payloadIdx);
-            ret = WS_SUCCESS;
             break;
 
         case MSGID_CHANNEL_CLOSE:
@@ -4717,12 +4714,14 @@ int SendKexInit(WOLFSSH* ssh)
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
-    ssh->isKeying = 1;
-    if (ssh->handshake == NULL) {
-        ssh->handshake = HandshakeInfoNew(ssh->ctx->heap);
+    if (ret == WS_SUCCESS) {
+        ssh->isKeying = 1;
         if (ssh->handshake == NULL) {
-            WLOG(WS_LOG_DEBUG, "Couldn't allocate handshake info");
-            ret = WS_MEMORY_E;
+            ssh->handshake = HandshakeInfoNew(ssh->ctx->heap);
+            if (ssh->handshake == NULL) {
+                WLOG(WS_LOG_DEBUG, "Couldn't allocate handshake info");
+                ret = WS_MEMORY_E;
+            }
         }
     }
 
@@ -6445,7 +6444,7 @@ int SendChannelEow(WOLFSSH* ssh, word32 peerChannelId)
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
-    if (!ssh->clientOpenSSH) {
+    if (ret == WS_SUCCESS && !ssh->clientOpenSSH) {
         WLOG(WS_LOG_DEBUG, "Leaving SendChannelEow(), not OpenSSH");
         return ret;
     }

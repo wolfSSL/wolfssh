@@ -589,8 +589,6 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         byte buf[SCRATCH_BUFFER_SZ];
         word32 bufSz;
 
-        bufName = useEcc ? "./keys/server-key-ecc.der" :
-                           "./keys/server-key-rsa.der" ;
         bufSz = load_key(useEcc, buf, SCRATCH_BUFFER_SZ);
         if (bufSz == 0) {
             fprintf(stderr, "Couldn't load key file.\n");
