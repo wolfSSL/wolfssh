@@ -1464,7 +1464,6 @@ static int GetNameList(byte* idList, word32* idListSz,
                     idList[idListIdx++] = id;
                 }
 
-                nameListIdx++;
                 name += 1 + nameSz;
                 nameSz = 0;
             }
