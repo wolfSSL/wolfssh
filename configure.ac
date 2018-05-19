@@ -2,11 +2,15 @@
 # Copyright (C) 2014-2017 wolfSSL Inc.
 # All right reserved.
 
+AC_COPYRIGHT([Copyright (C) 2014-2018 wolfSSL Inc.])
 AC_INIT([wolfssh], [1.2.0], [http://wolfssl.com], [wolfssh])
 AC_PREREQ([2.63])
 AC_CONFIG_AUX_DIR([build-aux])
 
 : ${CFLAGS=""}
+# Test ar for the "U" option. Should be checked before the libtool macros.
+xxx_ar_flags=$((ar --help) 2>&1)
+AS_CASE([$xxx_ar_flags],[*'use actual timestamps and uids/gids'*],[: ${AR_FLAGS="Ucru"}])
 
 AC_CANONICAL_HOST
 AC_CANONICAL_BUILD
@@ -65,8 +69,6 @@ AC_CHECK_LIB(network,socket)
 
 # Requirements
 TAO_REQUIRE_LIBWOLFSSL
-#REQUIRE_CYASSL([scep])
-#REQUIRE_WOLFCRYPT([aes rsa dh])
 
 # since we have autoconf available, we can use cyassl options header
 AM_CPPFLAGS="$AM_CPPFLAGS -DHAVE_CYASSL_OPTIONS"
@@ -82,7 +84,12 @@ AS_IF([test "x$ax_enable_debug" = "xyes"],
       [AM_CFLAGS="$AM_CFLAGS -O2"
        AM_CPPFLAGS="-DNDEBUG $AM_CFLAGS"])
 
-AX_PTHREAD([AM_CFLAGS="$AM_CFLAGS $PTHREAD_CFLAGS"])
+AX_PTHREAD([
+    # If AX_PTHREAD is adding -Qunused-arguments, need to prepend with
+    # -Xcompiler libtool will use it. Newer versions of clang don't need
+    # the -Q flag when using pthreads.
+    AS_CASE([$PTHREAD_CFLAGS],[-Qunused-arguments*],[PTHREAD_CFLAGS="-Xcompiler $PTHREAD_CFLAGS"])
+    AM_CFLAGS="$AM_CFLAGS $PTHREAD_CFLAGS"])
 
 
 # Inline Build
