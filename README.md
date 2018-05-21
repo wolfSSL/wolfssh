@@ -38,6 +38,10 @@ archive, you should skip it.
 For building under Windows with Visual Studio, see the file
 "ide/winvs/README.md".
 
+NOTE: On resource constrained devices the DEFAULT_WINDOW_SZ may need to be set
+to a lower size. By default channels are set to handle 1 Mb of data being sent
+and received. An example of setting a lower window size for new channels would
+be as follows "./configure C_EXTRA_FLAGS=-DDEFAULT_WINDOW_SZ=16384"
 
 examples
 --------
