@@ -179,6 +179,42 @@ const char* GetErrorString(int err)
         case WS_CHANNEL_CLOSED:
             return "channel closed";
 
+        case WS_INVALID_PATH_E:
+            return "invalid file or directory path";
+
+        case WS_SCP_CMD_E:
+            return "invalid scp command";
+
+        case WS_SCP_BAD_MSG_E:
+            return "invalid scp message received from peer";
+
+        case WS_SCP_PATH_LEN_E:
+            return "scp path length error";
+
+        case WS_SCP_TIMESTAMP_E:
+            return "scp timestamp message error";
+
+        case WS_SCP_DIR_STACK_EMPTY_E:
+            return "scp directory stack empty";
+
+        case WS_SCP_CONTINUE:
+            return "scp continue operation";
+
+        case WS_SCP_ABORT:
+            return "scp abort operation";
+
+        case WS_SCP_ENTER_DIR:
+            return "scp enter directory operation";
+
+        case WS_SCP_EXIT_DIR:
+            return "scp exit directory operation";
+
+        case WS_SCP_EXIT_DIR_FINAL:
+            return "scp final exit directory operation";
+
+        case WS_SCP_COMPLETE:
+            return "scp operation complete";
+
         default:
             return "Unknown error code";
     }

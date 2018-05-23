@@ -845,7 +845,7 @@ static int GetScpFileSize(WOLFSSH* ssh, byte* buf, word32 bufSz,
     spaceIdx = idx;
 
     if (FindSpaceInString(buf, bufSz, &spaceIdx) != WS_SUCCESS)
-        ret = WS_SCP_TIMESTAMP_E;
+        ret = WS_SCP_BAD_MSG_E;
 
     if (ret == WS_SUCCESS) {
         /* replace space with newline for atoi */
@@ -1558,7 +1558,7 @@ static int ExtractFileName(const char* filePath, char* fileName,
 
     fileLen = pathLen - separator - 1;
     if (fileLen + 1 > fileNameSz)
-        return WS_SCP_FILE_SZ_E;
+        return WS_SCP_PATH_LEN_E;
 
     WMEMCPY(fileName, filePath + separator + 1, fileLen);
     fileName[fileLen] = '\0';
@@ -1688,7 +1688,7 @@ static int ScpPopDir(ScpSendCtx* ctx, void* heap)
     }
 
     if (ctx->currentDir == NULL)
-        return WS_SCP_STACK_EMPTY_E;
+        return WS_SCP_DIR_STACK_EMPTY_E;
 
     (void)heap;
     return WS_SUCCESS;
@@ -1895,7 +1895,7 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
                     if (ret == WS_SUCCESS) {
                         ret = WS_SCP_EXIT_DIR;
 
-                    } else if (ret == WS_SCP_STACK_EMPTY_E) {
+                    } else if (ret == WS_SCP_DIR_STACK_EMPTY_E) {
                         ret = WS_SCP_EXIT_DIR_FINAL;
 
                     } else {
