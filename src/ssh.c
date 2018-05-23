@@ -597,14 +597,14 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_shutdown()");
 
-    if (ssh == NULL)
+    if (ssh == NULL || ssh->channelList == NULL)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS)
-        ret = SendChannelEof(ssh, 0);
+        ret = SendChannelEof(ssh, ssh->channelList->peerChannel);
 
     if (ret == WS_SUCCESS)
-        ret = SendChannelClose(ssh, 0);
+        ret = SendChannelClose(ssh, ssh->channelList->peerChannel);
 
     if (ret == WS_SUCCESS)
         ret = SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION);

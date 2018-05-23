@@ -215,6 +215,9 @@ const char* GetErrorString(int err)
         case WS_SCP_COMPLETE:
             return "scp operation complete";
 
+        case WS_SCP_INIT:
+            return "scp operation verified";
+
         default:
             return "Unknown error code";
     }
@@ -330,10 +333,11 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
 #endif /* WOLFSSH_USER_IO */
     ctx->highwaterMark = DEFAULT_HIGHWATER_MARK;
     ctx->highwaterCb = wsHighwater;
-#ifdef WOLFSSH_SCP
+#if defined(WOLFSSH_SCP) && !defined(WOLFSSH_SCP_USER_CALLBACKS) && \
+    !defined(NO_FILESYSTEM)
     ctx->scpRecvCb = wsScpRecvCallback;
     ctx->scpSendCb = wsScpSendCallback;
-#endif
+#endif /* WOLFSSH_SCP */
 #ifdef DEBUG_WOLFSSH
     ctx->banner = cannedBanner;
     ctx->bannerSz = cannedBannerSz;
@@ -356,6 +360,11 @@ void CtxResourceFree(WOLFSSH_CTX* ctx)
 
 WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
 {
+#if defined(STM32F2) || defined(STM32F4)
+    /* avoid name conflict in "stm32fnnnxx.h" */
+    #undef  RNG
+    #define RNG WC_RNG
+#endif
     HandshakeInfo* handshake;
     RNG*           rng;
     void*          heap;
@@ -2134,7 +2143,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
     byte* pubKey = NULL;
     word32 pubKeySz;
-    byte* f;
+    byte* f = NULL;
     word32 fSz;
     byte* sig;
     word32 sigSz;
@@ -2920,7 +2929,7 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     word32 publicKeyTypeSz = 0;
     byte* n;
     word32 nSz = 0;
-    byte* e;
+    byte* e = NULL;
     word32 eSz = 0;
     word32 i = 0;
     int ret = WS_SUCCESS;
@@ -3039,7 +3048,7 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     byte* curveName;
     word32 curveNameSz = 0;
     mp_int r, s;
-    byte* q;
+    byte* q = NULL;
     word32 sz, qSz;
     word32 i = 0;
     int ret = WS_SUCCESS;
@@ -4784,13 +4793,13 @@ static const word32 cannedNoneNamesSz = sizeof(cannedNoneNames) - 1;
 
 int SendKexInit(WOLFSSH* ssh)
 {
-    byte* output;
-    byte* payload;
+    byte* output = NULL;
+    byte* payload = NULL;
     word32 idx = 0;
-    word32 payloadSz;
+    word32 payloadSz = 0;
     int ret = WS_SUCCESS;
-    const char* cannedKeyAlgoNames;
-    word32 cannedKeyAlgoNamesSz;
+    const char* cannedKeyAlgoNames = NULL;
+    word32 cannedKeyAlgoNamesSz = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering SendKexInit()");
 

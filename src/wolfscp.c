@@ -466,7 +466,7 @@ int DoScpSource(WOLFSSH* ssh)
                     ssh->scpNextState = SCP_DONE;
                     continue;
 
-                } else if (ssh->scpConfirm > 0) {
+                } else if (ssh->scpConfirm >= 0) {
 
                     /* transfer buffered file data */
                     ssh->scpBufferedSz = ssh->scpConfirm;
@@ -654,13 +654,19 @@ int DoScpRequest(WOLFSSH* ssh)
 
             case SCP_SINK:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SINK");
-                ret = DoScpSink(ssh);
-                break;
+                if ( (ssh->error = DoScpSink(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_ERROR, scpError, "SCP_SINK", ssh->error);
+                    ret = WS_FATAL_ERROR;
+                    break;
+                }
 
             case SCP_SOURCE:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SOURCE");
-                ret = DoScpSource(ssh);
-                break;
+                if ( (ssh->error = DoScpSource(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_ERROR, scpError, "SCP_SOURCE", ssh->error);
+                    ret = WS_FATAL_ERROR;
+                    break;
+                }
         }
     }
 
@@ -745,10 +751,16 @@ static int GetScpFileMode(WOLFSSH* ssh, byte* buf, word32 bufSz,
                           word32* inOutIdx)
 {
     int ret;
-    mp_int tmp;
     word32 idx;
     byte modeOctet[SCP_MODE_OCTET_LEN];
+#if defined(WOLFSSL_KEY_GEN) || defined(HAVE_COMP_KEY) || \
+    defined(WOLFSSL_DEBUG_MATH) || defined(DEBUG_WOLFSSL) || \
+    defined(WOLFSSL_PUBLIC_MP)
+    mp_int tmp;
     char decimalString[SCP_MODE_OCTET_LEN + 1];
+#else
+    int mode, i;
+#endif
 
     if (ssh == NULL || buf == NULL || inOutIdx == NULL ||
         bufSz < (SCP_MODE_OCTET_LEN + 1))
@@ -764,6 +776,9 @@ static int GetScpFileMode(WOLFSSH* ssh, byte* buf, word32 bufSz,
     WMEMCPY(modeOctet, buf + idx, sizeof(modeOctet));
     idx += SCP_MODE_OCTET_LEN;
 
+#if defined(WOLFSSL_KEY_GEN) || defined(HAVE_COMP_KEY) || \
+    defined(WOLFSSL_DEBUG_MATH) || defined(DEBUG_WOLFSSL) || \
+    defined(WOLFSSL_PUBLIC_MP)
     ret = mp_init(&tmp);
     if (ret == MP_OKAY) {
         ret = mp_read_radix(&tmp, (const char*)modeOctet, 8);
@@ -789,6 +804,31 @@ static int GetScpFileMode(WOLFSSH* ssh, byte* buf, word32 bufSz,
     }
 
     mp_clear(&tmp);
+#else
+    ret = WS_SUCCESS;
+    /* convert octal string to int without mp_read_radix() */
+    mode = 0;
+
+    for (i = 0; i < SCP_MODE_OCTET_LEN; i++)
+    {
+        if (modeOctet[i] < '0' || modeOctet[0] > '7') {
+            ret = WS_BAD_ARGUMENT;
+            break;
+        }
+        mode <<= 3;
+        mode |= (modeOctet[i] - '0');
+    }
+
+    if (ret == WS_SUCCESS) {
+        /* store file mode */
+        ssh->scpFileMode = mode;
+        /* eat trailing space */
+        if (bufSz >= (word32)(idx +1))
+            idx++;
+        ret = WS_SUCCESS;
+        *inOutIdx = idx;
+    }
+#endif
 
     return ret;
 }
@@ -1491,13 +1531,14 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                 WFCLOSE(fp);
 
             /* set timestamp info */
-            if (mTime != 0 || aTime != 0)
+            if (mTime != 0 || aTime != 0) {
                 ret = SetTimestampInfo(fileName, mTime, aTime);
 
-            if (ret == WS_SUCCESS) {
-                ret = WS_SCP_CONTINUE;
-            } else {
-                ret = WS_SCP_ABORT;
+                if (ret == WS_SUCCESS) {
+                    ret = WS_SCP_CONTINUE;
+                } else {
+                    ret = WS_SCP_ABORT;
+                }
             }
 
             break;
@@ -1523,7 +1564,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
         case WOLFSSH_SCP_END_DIR:
 
             /* cd out of directory */
-            if (WCHDIR("../") != 0) {
+            if (WCHDIR("..") != 0) {
                 wolfSSH_SetScpErrorMsg(ssh, "unable to cd out of directory");
                 ret = WS_SCP_ABORT;
             }
@@ -1545,8 +1586,8 @@ static int ExtractFileName(const char* filePath, char* fileName,
                            word32 fileNameSz)
 {
     int ret = WS_SUCCESS;
-    word32 pathLen, fileLen;
-    word32 idx = 0, separator = 0;
+    word32 fileLen;
+    int idx = 0, pathLen, separator = -1;
 
     if (filePath == NULL || fileName == NULL)
         return WS_BAD_ARGUMENT;
@@ -1560,7 +1601,7 @@ static int ExtractFileName(const char* filePath, char* fileName,
         idx++;
     }
 
-    if (separator == 0)
+    if (separator < 0)
         return WS_BAD_ARGUMENT;
 
     fileLen = pathLen - separator - 1;

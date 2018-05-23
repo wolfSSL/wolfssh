@@ -86,8 +86,9 @@ enum WS_ErrorCodes {
     WS_SCP_EXIT_DIR    = -46,
     WS_SCP_EXIT_DIR_FINAL = -47,
     WS_SCP_COMPLETE    = -48,   /* SCP transfer complete */
+    WS_SCP_INIT        = -49,   /* SCP transfer verified */
 
-    WS_LAST_E          = -48    /* Update this to indicate last error */
+    WS_LAST_E          = -49    /* Update this to indicate last error */
 };
 
 
