@@ -1185,8 +1185,15 @@ int ReceiveScpFile(WOLFSSH* ssh)
 
         ret = wolfSSH_stream_read(ssh, part, partSz);
         if (ret > 0) {
+            if (ssh->scpFileBuffer != NULL) {
+                WFREE(ssh->scpFileBuffer, ssh->ctx->heap, DYNTYPE_BUFFER);
+                ssh->scpFileBuffer = NULL;
+                ssh->scpFileBufferSz = 0;
+            }
             ssh->scpFileBuffer = part;
             ssh->scpFileBufferSz = ret;
+        } else {
+            WFREE(part, ssh->ctx->heap, DYNTYPE_BUFFER);
         }
     }
 
