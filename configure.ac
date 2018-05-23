@@ -3,7 +3,7 @@
 # All right reserved.
 
 AC_COPYRIGHT([Copyright (C) 2014-2018 wolfSSL Inc.])
-AC_INIT([wolfssh], [1.2.0], [http://wolfssl.com], [wolfssh])
+AC_INIT([wolfssh],[1.2.0],[support@wolfssl.com],[wolfssh],[https://www.wolfssl.com])
 AC_PREREQ([2.63])
 AC_CONFIG_AUX_DIR([build-aux])
 
@@ -13,7 +13,6 @@ xxx_ar_flags=$((ar --help) 2>&1)
 AS_CASE([$xxx_ar_flags],[*'use actual timestamps and uids/gids'*],[: ${AR_FLAGS="Ucru"}])
 
 AC_CANONICAL_HOST
-AC_CANONICAL_BUILD
 
 AM_INIT_AUTOMAKE([1.11 -Wall -Werror -Wno-portability foreign tar-ustar subdir-objects no-define color-tests])
 
@@ -36,8 +35,7 @@ WOLFSSH_LIBRARY_VERSION=3:1:2
 AC_SUBST([WOLFSSH_LIBRARY_VERSION])
 
 LT_PREREQ([2.2])
-LT_INIT([disable-static], [win32-dll])
-LT_LANG([C])
+LT_INIT([disable-static win32-dll])
 
 gl_VISIBILITY
 AS_IF([test -n "$CFLAG_VISIBILITY"],
@@ -50,22 +48,16 @@ m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
 # Checks for programs.
 AC_PROG_CC
 AM_PROG_CC_C_O
-AC_PROG_CC_C_O
 AC_PROG_INSTALL
 
 # Checks for header files.
 AC_HEADER_STDC
-AC_CHECK_SIZEOF(long long, 8)
-AC_CHECK_SIZEOF(long, 4)
+AC_CHECK_SIZEOF([long long])
+AC_CHECK_SIZEOF([long])
 
 # Check headers/libs
-AC_CHECK_FUNCS([gethostbyname])
-AC_CHECK_FUNCS([getaddrinfo])
-AC_CHECK_FUNCS([gettimeofday])
-AC_CHECK_FUNCS([inet_ntoa])
-AC_CHECK_FUNCS([memset])
-AC_CHECK_FUNCS([socket])
-AC_CHECK_LIB(network,socket)
+AC_CHECK_FUNCS([gethostbyname getaddrinfo gettimeofday inet_ntoa memset socket])
+AC_CHECK_LIB([network],[socket])
 
 # Requirements
 TAO_REQUIRE_LIBWOLFSSL
@@ -133,8 +125,7 @@ AC_SUBST([AM_CFLAGS])
 AC_SUBST([AM_LDFLAGS])
 
 # FINAL
-AC_CONFIG_FILES([Makefile])
-AC_CONFIG_FILES([wolfssh/version.h])
+AC_CONFIG_FILES([Makefile wolfssh/version.h])
 
 AX_CREATE_GENERIC_CONFIG
 AX_AM_JOBSERVER([yes])
