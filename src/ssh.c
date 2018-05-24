@@ -839,7 +839,7 @@ int wolfSSH_KDF(byte hashId, byte keyId,
 
 WS_SessionType wolfSSH_GetSessionType(const WOLFSSH* ssh)
 {
-    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_GetSessionCommand()");
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_GetSessionType()");
 
     if (ssh && ssh->channelList)
         return ssh->channelList->sessionType;
