@@ -2344,8 +2344,22 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             begin = 0;
             ret = GetUint32(&scratch, sig, sigSz, &begin);
             if (ret == WS_SUCCESS) {
+                /* Check that scratch isn't larger than the remainder of the
+                 * sig buffer and leaves enough room for another length. */
+                if (scratch > sigSz - begin - LENGTH_SZ) {
+                    WLOG(WS_LOG_DEBUG, "sig name size is too large");
+                    ret = WS_PARSE_E;
+                }
+            }
+            if (ret == WS_SUCCESS) {
                 begin += scratch;
                 ret = GetUint32(&scratch, sig, sigSz, &begin);
+            }
+            if (ret == WS_SUCCESS) {
+                if (scratch > sigSz - begin) {
+                    WLOG(WS_LOG_DEBUG, "sig name size is too large");
+                    ret = WS_PARSE_E;
+                }
             }
             if (ret == WS_SUCCESS) {
                 sig = sig + begin;
