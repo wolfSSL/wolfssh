@@ -1311,7 +1311,7 @@ static int GetUint32(word32* v, byte* buf, word32 len, word32* idx)
 {
     int result = WS_BUFFER_E;
 
-    if (*idx < len && *idx + UINT32_SZ <= len) {
+    if (*idx < len && UINT32_SZ <= len - *idx) {
         ato32(buf + *idx, v);
         *idx += UINT32_SZ;
         result = WS_SUCCESS;
@@ -1333,7 +1333,7 @@ static int GetMpint(word32* mpintSz, byte** mpint,
     if (result == WS_SUCCESS) {
         result = WS_BUFFER_E;
 
-        if (*idx < len && *idx + *mpintSz <= len) {
+        if (*idx < len && *mpintSz <= len - *idx) {
             *mpint = buf + *idx;
             *idx += *mpintSz;
             result = WS_SUCCESS;
@@ -1356,7 +1356,7 @@ static int GetString(char* s, word32* sSz,
 
     if (result == WS_SUCCESS) {
         result = WS_BUFFER_E;
-        if (*idx < len && *idx + strSz <= len) {
+        if (*idx < len && strSz <= len - *idx) {
             *sSz = (strSz >= *sSz) ? *sSz - 1 : strSz; /* -1 for null char */
             WMEMCPY(s, buf + *idx, *sSz);
             *idx += strSz;
@@ -1381,7 +1381,7 @@ static int GetStringAlloc(WOLFSSH* ssh, char** s,
     result = GetUint32(&strSz, buf, len, idx);
 
     if (result == WS_SUCCESS) {
-        if (*idx >= len || *idx + strSz > len)
+        if (*idx >= len || strSz > len - *idx)
             return WS_BUFFER_E;
         str = (char*)WMALLOC(strSz + 1, ssh->ctx->heap, DYNTYPE_STRING);
         if (str == NULL)
@@ -2200,7 +2200,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     if (ret == WS_SUCCESS) {
         f = buf + begin;
         ret = GetUint32(&fSz, buf, len, &begin);
-        if (ret == WS_SUCCESS && (begin + fSz + LENGTH_SZ > len)) {
+        if (ret == WS_SUCCESS && (fSz > len - begin - LENGTH_SZ)) {
             ret = WS_BUFFER_E;
         }
     }
@@ -2214,6 +2214,13 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         f = buf + begin;
         begin += fSz;
         ret = GetUint32(&sigSz, buf, len, &begin);
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (sigSz > len - begin) {
+            WLOG(WS_LOG_DEBUG, "Signature size would result in error 1");
+            ret = WS_PARSE_E;
+        }
     }
 
     if (ret == WS_SUCCESS) {
@@ -2346,7 +2353,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
                 if (sigSz + begin + tmpIdx > len) {
                     WLOG(WS_LOG_DEBUG,
-                            "Signature size found would result in error");
+                            "Signature size found would result in error 2");
                     ret = WS_BUFFER_E;
                 }
 
