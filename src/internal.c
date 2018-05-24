@@ -4392,6 +4392,9 @@ int DoReceive(WOLFSSH* ssh)
                 /* Peek at the packet_length field. */
                 ato32(ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
                       &ssh->curSz);
+                if (ssh->curSz > MAX_PACKET_SZ - (word32)peerMacSz - LENGTH_SZ)
+                    return WS_OVERFLOW_E;
+
                 ssh->processReplyState = PROCESS_PACKET_FINISH;
                 FALL_THROUGH;
 
