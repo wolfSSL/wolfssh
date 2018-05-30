@@ -10,7 +10,7 @@ wolfSSH is dependent on wolfCrypt. The simplest configuration of wolfSSL
 required for wolfSSH is the default build.
 
     $ cd wolfssl
-    $ ./configure [OPTIONS] CPPFLAGS=-DWOLFSSL_PUBLIC_MP
+    $ ./configure [OPTIONS] --enable-ssh
     $ make check
     $ sudo make install
 
