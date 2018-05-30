@@ -4149,9 +4149,9 @@ static INLINE int CreateMac(WOLFSSH* ssh, const byte* in, word32 inSz,
         case ID_HMAC_SHA1_96:
             {
                 Hmac hmac;
-                byte digest[SHA_DIGEST_SIZE];
+                byte digest[WC_SHA_DIGEST_SIZE];
 
-                ret = wc_HmacSetKey(&hmac, SHA,
+                ret = wc_HmacSetKey(&hmac, WC_SHA,
                                     ssh->keys.macKey, ssh->keys.macKeySz);
                 if (ret == WS_SUCCESS)
                     ret = wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
@@ -4168,7 +4168,7 @@ static INLINE int CreateMac(WOLFSSH* ssh, const byte* in, word32 inSz,
             {
                 Hmac hmac;
 
-                ret = wc_HmacSetKey(&hmac, SHA,
+                ret = wc_HmacSetKey(&hmac, WC_SHA,
                                     ssh->keys.macKey, ssh->keys.macKeySz);
                 if (ret == WS_SUCCESS)
                     ret = wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
@@ -4228,7 +4228,7 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const byte* in, word32 inSz,
 
         case ID_HMAC_SHA1:
         case ID_HMAC_SHA1_96:
-            ret = wc_HmacSetKey(&hmac, SHA,
+            ret = wc_HmacSetKey(&hmac, WC_SHA,
                                 ssh->peerKeys.macKey, ssh->peerKeys.macKeySz);
             if (ret == WS_SUCCESS)
                 ret = wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
