@@ -40,6 +40,28 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
 {
 #ifdef USE_WINDOWS_API
     return fopen_s(f, filename, mode) != 0;
+#elif defined(WOLFSSL_NUCLEUS)
+    int m = WOLFSSH_O_CREAT;
+    if (WSTRSTR(mode, "r")) {
+         m |= WOLFSSH_O_RDONLY;
+    }
+    if (WSTRSTR(mode, "w")) {
+        if (m &= WOLFSSH_O_RDONLY) {
+            m ^= WOLFSSH_O_RDONLY;
+            m |= WOLFSSH_O_RDWR;
+        }
+        else {
+            m |= WOLFSSH_O_WRONLY;
+        }
+    }
+
+    if (filename != NULL && f != NULL) {
+        **f = NU_Open(filename, m, 0);
+        return 1;
+    }
+    else {
+        return 0;
+    }
 #else
     if (f != NULL) {
         *f = fopen(filename, mode);

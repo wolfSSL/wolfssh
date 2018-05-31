@@ -53,6 +53,15 @@ extern "C" {
 #endif
 
 #ifndef NO_FILESYSTEM
+#ifdef WOLFSSL_NUCLEUS
+    #define WFILE int
+    WOLFSSH_API int wfopen(WFILE**, const char*, const char*);
+
+    #define WFOPEN(f,fn,m)    wfopen((f),(fn),(m))
+    #define WFCLOSE(f)        NU_Close(*(f))
+    #define WFWRITE(b,x,s,f)  NU_Write(*(f),(const CHAR*)(b),(s))
+    #define WFREAD(b,x,s,f)   NU_Read(*(f),(CHAR*)(b),(s))
+#else
     #define WFILE FILE
     WOLFSSH_API int wfopen(WFILE**, const char*, const char*);
 
@@ -76,7 +85,7 @@ extern "C" {
         #define WMKDIR(p,m)   mkdir((p),(m))
     #endif
 #endif
-
+#endif
 /* setup string handling */
 #ifndef WSTRING_USER
     #include <string.h>
@@ -130,8 +139,153 @@ extern "C" {
     #define WLOCALTIME(c,r) (localtime_r((c),(r))!=NULL)
 #endif
 
-#ifdef WOLFSSH_SFTP
-#ifndef NO_WOLFSSH_SERVER
+#if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_SERVER)
+#ifdef WOLFSSL_NUCLEUS
+    #include "storage/nu_storage.h"
+
+    #define WRMDIR(d)   (NU_Remove_Dir((d)) == NU_SUCCESS)?0:1
+    #define WMKDIR(d,m) (NU_Make_Dir((d)) == NU_SUCCESS)?0:1
+    #define WSTAT(p,b)  NU_Get_First((b),(p))
+    #define WLSTAT(p,b) NU_Get_First((b),(p))
+    #define WREMOVE(d)   NU_Delete((d))
+    #define WRENAME(o,n) NU_Rename((o),(n))
+    #define WS_DELIM '\\'
+
+#ifndef WGETCWD
+    static inline char* wGetCwd(char* buf, unsigned int bufSz)
+    {
+        int ret;
+        MNT_LIST_S* list = NU_NULL;
+
+        if (buf == NULL || bufSz < 3) {
+            return NULL;
+        }
+
+        ret = NU_List_Mount(&list);
+        if (ret != NU_SUCCESS) {
+            return NULL;
+        }
+
+        buf[0] = list->mnt_name[0];
+        buf[1] = ':';
+        buf[2] = '\0';
+
+        return buf;
+    }
+    #define WGETCWD(r,rSz) wGetCwd((r),(rSz))
+#endif
+
+    #define WOLFSSH_O_RDWR   PO_RDWR
+    #define WOLFSSH_O_RDONLY PO_RDONLY
+    #define WOLFSSH_O_WRONLY PO_WRONLY
+    #define WOLFSSH_O_APPEND PO_APPEND
+    #define WOLFSSH_O_CREAT  PO_CREAT
+    #define WOLFSSH_O_TRUNC  PO_TRUNC
+    #define WOLFSSH_O_EXCL   PO_EXCL
+
+    #define WFD int
+
+#ifndef WOPEN
+    static inline int wOpen(char* f, short flag, short mode)
+    {
+        /* @TODO could use PS_IWRITE only or PS_IREAD only? */
+        return NU_Open(f, PO_TEXT | flag, (PS_IWRITE | PS_IREAD));
+    }
+
+    #define WOPEN(f,m,p) wOpen((f),(m),(p))
+#endif
+
+    #define WCLOSE(fd) NU_Close((fd))
+
+#ifndef WPWRITE
+    static inline int wPwrite(WFD fd, unsigned char* buf, unsigned int sz, long ofst)
+    {
+        if (ofst > 0) {
+            NU_Seek(fd, ofst, 0);
+        }
+
+        return NU_Write(fd, (const CHAR*)buf, sz);
+    }
+    #define WPWRITE(fd,b,s,o) wPwrite((fd),(b),(s),(o))
+#endif
+
+#ifndef WPREAD
+    static inline int wPread(WFD fd, unsigned char* buf, unsigned int sz, long ofst)
+    {
+        if (ofst > 0) {
+            NU_Seek(fd, ofst, 0);
+        }
+
+        return NU_Read(fd, (CHAR*)buf, sz);
+    }
+    #define WPREAD(fd,b,s,o)  wPread((fd),(b),(s),(o))
+#endif
+
+    #ifndef NO_WOLFSSL_DIR
+    #define WDIR DSTAT
+
+#ifndef WOPENDIR
+    static inline int wOpenDir(WDIR* d, char* dir)
+    {
+        int ret;
+        int idx = WSTRLEN(dir);
+        char tmp[256]; /* default max file name size */
+
+        if (idx < 3) {
+            return -1;
+        }
+
+        memcpy(tmp, dir, idx);
+        if (tmp[idx - 1] == '.') {
+            tmp[idx - 1] = '*';
+        }
+        else {
+            /* if opening a directory then make sure pattern '/' '*' is used */
+            unsigned char atrib = 0;
+            if (NU_Get_Attributes(&atrib, dir) == NU_SUCCESS) {
+                if (atrib & ADIRENT) {
+                    if (tmp[idx-1] != WS_DELIM) {
+                        if (idx + 2 > sizeof(tmp)) {
+                            /* not enough space */
+                            return -1;
+                        }
+                        tmp[idx++] = WS_DELIM;
+                        tmp[idx++] = '*';
+                    }
+                }
+            }
+        }
+
+        if (tmp[idx - 1] == WS_DELIM) {
+            if (idx + 1 > sizeof(tmp)) {
+                /* not enough space */
+                return -1;
+            }
+            tmp[idx++] = '*';
+        }
+        tmp[idx] = '\0';
+        ret = NU_Get_First(d, tmp);
+
+        /* if back to root directory i.e. A:/ then handle case
+         * where file system has nothing in it. */
+        if (dir[idx - 3] == ':' && ret == NUF_NOFILE) {
+             memset(d, 0, sizeof(WDIR));
+             ret = NU_SUCCESS;
+        }
+
+        if (ret == NU_SUCCESS) {
+            return 0;
+        }
+
+        return -1;
+    }
+    #define WOPENDIR(c,d)  wOpenDir((c),(d))
+#endif
+
+    #define WCLOSEDIR(d) NU_Done((d))
+    #define WREADDIR(d)  (NU_Get_Next((d)) == NU_SUCCESS)?(d):NULL
+    #endif /* NO_WOLFSSL_DIR */
+#else
     #include <unistd.h>   /* used for rmdir */
     #include <sys/stat.h> /* used for mkdir, stat, and lstat */
     #include <stdio.h>    /* used for remove and rename */
@@ -143,9 +297,18 @@ extern "C" {
     #define WREMOVE(d)   remove((d))
     #define WRENAME(o,n) rename((o),(n))
     #define WGETCWD(r,rSz) getcwd((r),(rSz))
+    #define WS_DELIM '/'
 
     #include <fcntl.h> /* used for open, close, pwrite, and pread */
     #define WFD int
+    #define WOLFSSH_O_RDWR   O_RDWR
+    #define WOLFSSH_O_RDONLY O_RDONLY
+    #define WOLFSSH_O_WRONLY O_WRONLY
+    #define WOLFSSH_O_APPEND O_APPEND
+    #define WOLFSSH_O_CREAT  O_CREAT
+    #define WOLFSSH_O_TRUNC  O_TRUNC
+    #define WOLFSSH_O_EXCL   O_EXCL
+
     #define WOPEN(f,m,p) open((f),(m),(p))
     #define WCLOSE(fd) close((fd))
     #define WPWRITE(fd,b,s,o) pwrite((fd),(b),(s),(o))
@@ -154,7 +317,9 @@ extern "C" {
 #ifndef NO_WOLFSSL_DIR
     #include <dirent.h> /* used for opendir, readdir, and closedir */
     #define WDIR DIR*
-    #define WOPENDIR(d)  opendir((d))
+
+    /* returns 0 on success */
+    #define WOPENDIR(c,d)  ((*(c) = opendir((d))) == NULL)
     #define WCLOSEDIR(d) closedir((d))
     #define WREADDIR(d)  readdir((d)) 
 #endif /* NO_WOLFSSL_DIR */

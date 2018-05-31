@@ -33,6 +33,22 @@
     #endif
     #define socklen_t int
     #define NUM_SOCKETS 1
+#elif defined(WOLFSSL_NUCLEUS)
+    #include "nucleus.h"
+    #include "networking/nu_networking.h"
+    #define SOCKET_T int
+    #define socklen_t int
+    #define NUM_SOCKETS 1
+    #define INADDR_ANY IP_ADDR_ANY
+    #define AF_INET NU_FAMILY_IP
+    #define SOCK_STREAM NU_TYPE_STREAM
+
+    #define sin_addr id
+    #define s_addr is_ip_addrs
+
+    #define sin_family family
+    #define sin_port port
+
 #else /* USE_WINDOWS_API */
     #include <unistd.h>
     #include <netdb.h>
@@ -88,6 +104,9 @@
         #define WCLOSESOCKET(s) closesocket((s))
     #endif
     #define WSTARTTCP()
+#elif defined(WOLFSSL_NUCLEUS)
+    #define WCLOSESOCKET(s) NU_Close_Socket((s))
+    #define WSTARTTCP()
 #else
     #define WCLOSESOCKET(s) close(s)
     #define WSTARTTCP()
@@ -105,6 +124,10 @@
         #define WOLFSSH_THREAD
         #define INFINITE -1
         #define WAIT_OBJECT_0 0L
+    #elif defined(WOLFSSL_NUCLEUS)
+        typedef unsigned int  THREAD_RETURN;
+        typedef intptr_t      THREAD_TYPE;
+        #define WOLFSSH_THREAD
     #else
         typedef unsigned int  THREAD_RETURN;
         typedef intptr_t      THREAD_TYPE;
@@ -116,7 +139,9 @@
     typedef struct sockaddr_in6 SOCKADDR_IN_T;
     #define AF_INET_V AF_INET6
 #else
-    typedef struct sockaddr_in  SOCKADDR_IN_T;
+    #ifndef WOLFSSL_NUCLEUS
+        typedef struct sockaddr_in SOCKADDR_IN_T;
+    #endif
     #define AF_INET_V AF_INET
 #endif
 
@@ -179,8 +204,12 @@ void WaitTcpReady(func_args*);
 #else /* TEST_IPV6 */
     static const char* const wolfSshIp = "::1";
 #endif /* TEST_IPV6 */
-static const word16 wolfSshPort = 22222;
-
+#ifdef WOLFSSL_NUCLEUS
+    /* port 8080 was open with QEMU */
+    static const word16 wolfSshPort = 8080;
+#else
+    static const word16 wolfSshPort = 22222;
+#endif
 
 #ifdef __GNUC__
     #define WS_NORETURN __attribute__((noreturn))
@@ -283,6 +312,43 @@ static INLINE int mygetopt(int argc, char** argv, const char* optstring)
     * - 4996: deprecated function */
 #endif
 
+#ifdef WOLFSSL_NUCLEUS
+static INLINE void build_addr(struct addr_struct* addr, const char* peer,
+                              word16 port)
+{
+    int useLookup = 0;
+    (void)useLookup;
+
+    memset(addr, 0, sizeof(struct addr_struct));
+
+#ifndef TEST_IPV6
+    /* peer could be in human readable form */
+    if ( ((size_t)peer != INADDR_ANY) && isalpha((int)peer[0])) {
+
+        NU_HOSTENT* entry;
+        NU_HOSTENT h;
+        entry = &h;
+        NU_Get_Host_By_Name((char*)peer, entry);
+
+        if (entry) {
+            memcpy(&addr->id.is_ip_addrs, entry->h_addr_list[0],
+                entry->h_length);
+            useLookup = 1;
+        }
+        else
+            err_sys("no entry for host");
+    }
+#endif
+
+#ifndef TEST_IPV6
+    addr->family = NU_FAMILY_IP;
+    addr->port = port;
+
+    /* @TODO always setting any ip addr here */
+    PUT32(addr->id.is_ip_addrs, 0, IP_ADDR_ANY);
+#endif
+}
+#else
 static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
                               word16 port)
 {
@@ -299,13 +365,23 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
             struct hostent* entry = gethostbyname(peer, &err);
         #elif defined(MICROCHIP_MPLAB_HARMONY)
             struct hostent* entry = gethostbyname((char*)peer);
-        #else
+        #elif defined(WOLFSSL_NUCLEUS)
+            NU_HOSTENT* entry;
+            NU_HOSTENT h;
+            entry = &h;
+            NU_Get_Host_By_Name((char*)peer, entry);
+            #else
             struct hostent* entry = gethostbyname(peer);
         #endif
 
         if (entry) {
+#ifdef WOLFSSL_NUCLEUS
+        memcpy(&addr->id.is_ip_addrs, entry->h_addr_list[0],
+                entry->h_length);
+#else
             memcpy(&addr->sin_addr.s_addr, entry->h_addr_list[0],
                    entry->h_length);
+#endif
             useLookup = 1;
         }
         else
@@ -321,7 +397,11 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
     #endif
     addr->sin_port = htons(port);
     if ((size_t)peer == INADDR_ANY)
+#ifdef WOLFSSL_NUCLEUS
+        PUT32(addr->id.is_ip_addrs, 0, INADDR_ANY);
+#else
         addr->sin_addr.s_addr = INADDR_ANY;
+#endif
     else {
         if (!useLookup) {
     #ifdef MICROCHIP_MPLAB_HARMONY
@@ -367,6 +447,7 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
     }
 #endif
 }
+#endif /* WOLFSSL_NUCLEUS */
 
 #ifdef USE_WINDOWS_API
     #pragma warning(pop)
@@ -380,6 +461,8 @@ static INLINE void tcp_socket(SOCKET_T* sockFd)
     *sockFd = 0;
 #elif defined(MICROCHIP_TCPIP)
     *sockFd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+#elif defined(WOLFSSL_NUCLEUS)
+    *sockFd = NU_Socket(NU_FAMILY_IP, NU_TYPE_STREAM, 0);
 #else
     *sockFd = socket(AF_INET_V, SOCK_STREAM, 0);
 #endif
@@ -405,6 +488,8 @@ static INLINE void tcp_socket(SOCKET_T* sockFd)
     /* nothing to define */
 #elif defined(MICROCHIP_MPLAB_HARMONY) && !defined(_FULL_SIGNAL_IMPLEMENTATION)
     /* not full signal implementation */
+#elif defined(WOLFSSL_NUCLEUS)
+    /* nothing to define */
 #else  /* no S_NOSIGPIPE */
     signal(SIGPIPE, SIG_IGN);
 #endif /* S_NOSIGPIPE */
@@ -415,6 +500,7 @@ static INLINE void tcp_socket(SOCKET_T* sockFd)
         if (!TCPIP_TCP_OptionsSet(*sockFd, TCP_OPTION_NODELAY, (void*)1)) {
             err_sys("setsockopt TCP_NODELAY failed\n");
         }
+    #elif defined(WOLFSSL_NUCLEUS)
     #else
         int       on = 1;
         socklen_t len = sizeof(on);
@@ -439,15 +525,19 @@ static INLINE void tcp_listen(SOCKET_T* sockfd, word16* port, int useAnyAddr)
     *sockfd = TCPIP_TCP_ServerOpen(IP_ADDRESS_TYPE_IPV4, *port, 0);
     return;
 #else
-    SOCKADDR_IN_T addr;
-
+    #ifdef WOLFSSL_NUCLEUS
+        struct addr_struct addr;
+    #else
+        SOCKADDR_IN_T addr;
+    #endif
     /* don't use INADDR_ANY by default, firewall may block, make user switch
        on */
     build_addr(&addr, (useAnyAddr ? INADDR_ANY : wolfSshIp), *port);
     tcp_socket(sockfd);
 
 #if !defined(USE_WINDOWS_API) && !defined(WOLFSSL_MDK_ARM)\
-                              && !defined(WOLFSSL_KEIL_TCP_NET)
+                              && !defined(WOLFSSL_KEIL_TCP_NET)\
+    						  && !defined(WOLFSSL_NUCLEUS)
     {
         int res;
     #ifdef MICROCHIP_TCPIP
@@ -462,11 +552,19 @@ static INLINE void tcp_listen(SOCKET_T* sockfd, word16* port, int useAnyAddr)
     }
 #endif
 
+#ifdef WOLFSSL_NUCLEUS
+    if (NU_Bind(*sockfd, &addr, sizeof(addr)) <= 0)
+        err_sys("tcp bind failed");
+    if (NU_Listen(*sockfd, NUM_SOCKETS) != NU_SUCCESS)
+        err_sys("tcp listen failed");
+#else
     if (bind(*sockfd, (const struct sockaddr*)&addr, sizeof(addr)) != 0)
         err_sys("tcp bind failed");
     if (listen(*sockfd, NUM_SOCKETS) != 0)
         err_sys("tcp listen failed");
-    #if !defined(USE_WINDOWS_API) && !defined(WOLFSSL_TIRTOS)
+#endif
+
+    #if !defined(USE_WINDOWS_API) && !defined(WOLFSSL_TIRTOS) && !defined(WOLFSSL_NUCLEUS)
         if (*port == 0) {
             socklen_t len = sizeof(addr);
             if (getsockname(*sockfd, (struct sockaddr*)&addr, &len) == 0) {
@@ -484,7 +582,7 @@ static INLINE void tcp_listen(SOCKET_T* sockfd, word16* port, int useAnyAddr)
 /* Wolf Root Directory Helper */
 /* KEIL-RL File System does not support relative directory */
 #if !defined(WOLFSSL_MDK_ARM) && !defined(WOLFSSL_KEIL_FS) && !defined(WOLFSSL_TIRTOS) \
-    && !defined(NO_WOLFSSL_DIR)
+    && !defined(NO_WOLFSSL_DIR) && !defined(WOLFSSL_NUCLEUS)
     /* Maximum depth to search for WolfSSL root */
     #define MAX_WOLF_ROOT_DEPTH 5
 

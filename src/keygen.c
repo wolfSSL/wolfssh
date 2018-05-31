@@ -29,7 +29,13 @@
     #include <config.h>
 #endif
 
+#ifdef WOLFSSL_USER_SETTINGS
+#include <wolfssl/wolfcrypt/settings.h>
+#else
 #include <wolfssl/options.h>
+#endif
+
+
 #include <wolfssl/wolfcrypt/random.h>
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssh/error.h>

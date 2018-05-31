@@ -236,6 +236,9 @@ const char* GetErrorString(int err)
         case WS_SFTP_COMPLETE:
             return "sftp connection established";
 
+        case WS_NEXT_ERROR:
+            return "Getting next value/state results in error";
+
         default:
             return "Unknown error code";
     }
@@ -4502,7 +4505,7 @@ int DoReceive(WOLFSSH* ssh)
                         return ret;
                     }
                 }
-                FALL_THROUGH;
+                FALL_THROUGH /* no break */
 
             case PROCESS_PACKET_LENGTH:
                 if (ssh->inputBuffer.idx + UINT32_SZ > ssh->inputBuffer.bufferSz)
@@ -4515,7 +4518,7 @@ int DoReceive(WOLFSSH* ssh)
                     return WS_OVERFLOW_E;
 
                 ssh->processReplyState = PROCESS_PACKET_FINISH;
-                FALL_THROUGH;
+                FALL_THROUGH /* no break */
 
             case PROCESS_PACKET_FINISH:
                 readSz = ssh->curSz + LENGTH_SZ + peerMacSz;
@@ -4581,7 +4584,7 @@ int DoReceive(WOLFSSH* ssh)
                     }
                 }
                 ssh->processReplyState = PROCESS_PACKET;
-                FALL_THROUGH;
+                FALL_THROUGH /* no break */
 
             case PROCESS_PACKET:
                 if ( (ret = DoPacket(ssh)) < 0) {
@@ -4604,6 +4607,7 @@ int DoReceive(WOLFSSH* ssh)
 
         return WS_SUCCESS;
     }
+    return ret;
 }
 
 

@@ -270,7 +270,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 }
                 ssh->acceptState = ACCEPT_SERVER_VERSION_SENT;
                 WLOG(WS_LOG_DEBUG, acceptState, "SERVER_VERSION_SENT");
-                FALL_THROUGH;
+                FALL_THROUGH /* no break */
 
             case ACCEPT_SERVER_VERSION_SENT:
                 while (ssh->clientState < CLIENT_VERSION_DONE) {
@@ -282,7 +282,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 }
                 ssh->acceptState = ACCEPT_CLIENT_VERSION_DONE;
                 WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_VERSION_DONE");
-                FALL_THROUGH;
+                FALL_THROUGH /* no break */
 
             case ACCEPT_CLIENT_VERSION_DONE:
                 if ( (ssh->error = SendKexInit(ssh)) < WS_SUCCESS) {
@@ -292,7 +292,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 }
                 ssh->acceptState = ACCEPT_SERVER_KEXINIT_SENT;
                 WLOG(WS_LOG_DEBUG, acceptState, "SERVER_KEXINIT_SENT");
-                FALL_THROUGH;
+                FALL_THROUGH /* no break */
 
             case ACCEPT_SERVER_KEXINIT_SENT:
                 while (ssh->isKeying) {
@@ -304,7 +304,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 }
                 ssh->acceptState = ACCEPT_KEYED;
                 WLOG(WS_LOG_DEBUG, acceptState, "KEYED");
-                FALL_THROUGH;
+                FALL_THROUGH /* no break */
 
             case ACCEPT_KEYED:
                 while (ssh->clientState < CLIENT_USERAUTH_REQUEST_DONE) {
@@ -316,7 +316,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 }
                 ssh->acceptState = ACCEPT_CLIENT_USERAUTH_REQUEST_DONE;
                 WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_USERAUTH_REQUEST_DONE");
-                FALL_THROUGH;
+                FALL_THROUGH /* no break */
 
             case ACCEPT_CLIENT_USERAUTH_REQUEST_DONE:
                 if ( (ssh->error = SendServiceAccept(ssh,
@@ -328,7 +328,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 ssh->acceptState = ACCEPT_SERVER_USERAUTH_ACCEPT_SENT;
                 WLOG(WS_LOG_DEBUG, acceptState,
                      "ACCEPT_SERVER_USERAUTH_ACCEPT_SENT");
-                FALL_THROUGH;
+                FALL_THROUGH /* no break */
 
             case ACCEPT_SERVER_USERAUTH_ACCEPT_SENT:
                 while (ssh->clientState < CLIENT_USERAUTH_DONE) {
@@ -340,7 +340,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 }
                 ssh->acceptState = ACCEPT_CLIENT_USERAUTH_DONE;
                 WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_USERAUTH_DONE");
-                FALL_THROUGH;
+                FALL_THROUGH /* no break */
 
             case ACCEPT_CLIENT_USERAUTH_DONE:
                 if ( (ssh->error = SendUserAuthSuccess(ssh)) < WS_SUCCESS) {
@@ -350,7 +350,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 }
                 ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
                 WLOG(WS_LOG_DEBUG, acceptState, "SERVER_USERAUTH_SENT");
-                FALL_THROUGH;
+                FALL_THROUGH /* no break */
 
             case ACCEPT_SERVER_USERAUTH_SENT:
                 while (ssh->clientState < CLIENT_CHANNEL_OPEN_DONE) {
@@ -362,7 +362,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 }
                 ssh->acceptState = ACCEPT_CLIENT_CHANNEL_REQUEST_DONE;
                 WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_CHANNEL_REQUEST_DONE");
-                FALL_THROUGH;
+                FALL_THROUGH /* no break */
 
             case ACCEPT_CLIENT_CHANNEL_REQUEST_DONE:
                 if ( (ssh->error = SendChannelOpenConf(ssh)) < WS_SUCCESS) {
@@ -372,7 +372,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 }
                 ssh->acceptState = ACCEPT_SERVER_CHANNEL_ACCEPT_SENT;
                 WLOG(WS_LOG_DEBUG, acceptState, "SERVER_CHANNEL_ACCEPT_SENT");
-                FALL_THROUGH;
+                FALL_THROUGH /* no break */
 
             case ACCEPT_SERVER_CHANNEL_ACCEPT_SENT:
                 while (ssh->clientState < CLIENT_DONE) {
@@ -440,7 +440,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
             }
             ssh->connectState = CONNECT_CLIENT_VERSION_SENT;
             WLOG(WS_LOG_DEBUG, connectState, "CLIENT_VERSION_SENT");
-            FALL_THROUGH;
+            FALL_THROUGH /* no break */
 
         case CONNECT_CLIENT_VERSION_SENT:
             while (ssh->serverState < SERVER_VERSION_DONE) {
@@ -452,7 +452,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
             }
             ssh->connectState = CONNECT_SERVER_VERSION_DONE;
             WLOG(WS_LOG_DEBUG, connectState, "SERVER_VERSION_DONE");
-            FALL_THROUGH;
+            FALL_THROUGH /* no break */
 
         case CONNECT_SERVER_VERSION_DONE:
             if ( (ssh->error = SendKexInit(ssh)) < WS_SUCCESS) {
@@ -462,7 +462,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
             }
             ssh->connectState = CONNECT_CLIENT_KEXINIT_SENT;
             WLOG(WS_LOG_DEBUG, connectState, "CLIENT_KEXINIT_SENT");
-            FALL_THROUGH;
+            FALL_THROUGH /* no break */
 
         case CONNECT_CLIENT_KEXINIT_SENT:
             while (ssh->serverState < SERVER_KEXINIT_DONE) {
@@ -474,7 +474,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
             }
             ssh->connectState = CONNECT_SERVER_KEXINIT_DONE;
             WLOG(WS_LOG_DEBUG, connectState, "SERVER_KEXINIT_DONE");
-            FALL_THROUGH;
+            FALL_THROUGH /* no break */
 
         case CONNECT_SERVER_KEXINIT_DONE:
             if (ssh->handshake->kexId == ID_DH_GEX_SHA256)
@@ -488,7 +488,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
             }
             ssh->connectState = CONNECT_CLIENT_KEXDH_INIT_SENT;
             WLOG(WS_LOG_DEBUG, connectState, "CLIENT_KEXDH_INIT_SENT");
-            FALL_THROUGH;
+            FALL_THROUGH /* no break */
 
         case CONNECT_CLIENT_KEXDH_INIT_SENT:
             while (ssh->isKeying) {
@@ -500,7 +500,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
             }
             ssh->connectState = CONNECT_KEYED;
             WLOG(WS_LOG_DEBUG, connectState, "KEYED");
-            FALL_THROUGH;
+            FALL_THROUGH /* no break */
 
         case CONNECT_KEYED:
             if ( (ssh->error = SendServiceRequest(ssh, ID_SERVICE_USERAUTH)) <
@@ -510,7 +510,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
             }
             ssh->connectState = CONNECT_CLIENT_USERAUTH_REQUEST_SENT;
             WLOG(WS_LOG_DEBUG, connectState, "CLIENT_USERAUTH_REQUEST_SENT");
-            FALL_THROUGH;
+            FALL_THROUGH /* no break */
 
         case CONNECT_CLIENT_USERAUTH_REQUEST_SENT:
             while (ssh->serverState < SERVER_USERAUTH_REQUEST_DONE) {
@@ -522,7 +522,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
             }
             ssh->connectState = CONNECT_SERVER_USERAUTH_REQUEST_DONE;
             WLOG(WS_LOG_DEBUG, connectState, "SERVER_USERAUTH_REQUEST_DONE");
-            FALL_THROUGH;
+            FALL_THROUGH /* no break */
 
         case CONNECT_SERVER_USERAUTH_REQUEST_DONE:
             if ( (ssh->error = SendUserAuthRequest(ssh, ID_NONE)) <
@@ -533,7 +533,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
             }
             ssh->connectState = CONNECT_CLIENT_USERAUTH_SENT;
             WLOG(WS_LOG_DEBUG, connectState, "CLIENT_USERAUTH_SENT");
-            FALL_THROUGH;
+            FALL_THROUGH /* no break */
 
         case CONNECT_CLIENT_USERAUTH_SENT:
             while (ssh->serverState < SERVER_USERAUTH_ACCEPT_DONE) {
@@ -545,7 +545,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
             }
             ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
             WLOG(WS_LOG_DEBUG, connectState, "SERVER_USERAUTH_ACCEPT_DONE");
-            FALL_THROUGH;
+            FALL_THROUGH /* no break */
 
         case CONNECT_SERVER_USERAUTH_ACCEPT_DONE:
             if ( (ssh->error = SendChannelOpenSession(ssh, DEFAULT_WINDOW_SZ,
@@ -557,7 +557,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
             ssh->connectState = CONNECT_CLIENT_CHANNEL_OPEN_SESSION_SENT;
             WLOG(WS_LOG_DEBUG, connectState,
                  "CLIENT_CHANNEL_OPEN_SESSION_SENT");
-            FALL_THROUGH;
+            FALL_THROUGH /* no break */
 
         case CONNECT_CLIENT_CHANNEL_OPEN_SESSION_SENT:
             while (ssh->serverState < SERVER_CHANNEL_OPEN_DONE) {
@@ -570,7 +570,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
             ssh->connectState = CONNECT_SERVER_CHANNEL_OPEN_SESSION_DONE;
             WLOG(WS_LOG_DEBUG, connectState,
                  "SERVER_CHANNEL_OPEN_SESSION_DONE");
-            FALL_THROUGH;
+            FALL_THROUGH /* no break */
 
         case CONNECT_SERVER_CHANNEL_OPEN_SESSION_DONE:
             if ( (ssh->error = SendChannelRequest(ssh, ssh->channelName,
@@ -582,7 +582,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
             ssh->connectState = CONNECT_CLIENT_CHANNEL_REQUEST_SENT;
             WLOG(WS_LOG_DEBUG, connectState,
                  "CLIENT_CHANNEL_REQUEST_SENT");
-            FALL_THROUGH;
+            FALL_THROUGH /* no break */
 
         case CONNECT_CLIENT_CHANNEL_REQUEST_SENT:
             while (ssh->serverState < SERVER_DONE) {
