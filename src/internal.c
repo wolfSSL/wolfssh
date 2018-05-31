@@ -218,6 +218,18 @@ const char* GetErrorString(int err)
         case WS_SCP_INIT:
             return "scp operation verified";
 
+        case WS_MATCH_KEX_ALGO_E:
+            return "cannot match KEX algo with peer";
+
+        case WS_MATCH_KEY_ALGO_E:
+            return "cannot match key algo with peer";
+
+        case WS_MATCH_ENC_ALGO_E:
+            return "cannot match encrypt algo with peer";
+
+        case WS_MATCH_MAC_ALGO_E:
+            return "cannot match MAC algo with peer";
+
         default:
             return "Unknown error code";
     }
@@ -1771,7 +1783,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             algoId = MatchIdLists(list, listSz, cannedKexAlgo, cannedKexAlgoSz);
             if (algoId == ID_UNKNOWN) {
                 WLOG(WS_LOG_DEBUG, "Unable to negotiate KEX Algo");
-                ret = WS_INVALID_ALGO_ID;
+                ret = WS_MATCH_KEX_ALGO_E;
             }
             else {
                 ssh->handshake->kexId = algoId;
@@ -1810,7 +1822,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                                   cannedKeyAlgo, cannedKeyAlgoSz);
             if (algoId == ID_UNKNOWN) {
                 WLOG(WS_LOG_DEBUG, "Unable to negotiate Server Host Key Algo");
-                return WS_INVALID_ALGO_ID;
+                return WS_MATCH_KEY_ALGO_E;
             }
             else
                 ssh->handshake->pubKeyId = algoId;
@@ -1826,7 +1838,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             algoId = MatchIdLists(list, listSz, cannedEncAlgo, cannedEncAlgoSz);
             if (algoId == ID_UNKNOWN) {
                 WLOG(WS_LOG_DEBUG, "Unable to negotiate Encryption Algo C2S");
-                ret = WS_INVALID_ALGO_ID;
+                ret = WS_MATCH_ENC_ALGO_E;
             }
         }
     }
@@ -1838,7 +1850,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         ret = GetNameList(list, &listSz, buf, len, &begin);
         if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
             WLOG(WS_LOG_DEBUG, "Unable to negotiate Encryption Algo S2C");
-            ret = WS_INVALID_ALGO_ID;
+            ret = WS_MATCH_ENC_ALGO_E;
         }
         else {
             ssh->handshake->encryptId = algoId;
@@ -1870,7 +1882,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             algoId = MatchIdLists(list, listSz, cannedMacAlgo, cannedMacAlgoSz);
             if (algoId == ID_UNKNOWN) {
                 WLOG(WS_LOG_DEBUG, "Unable to negotiate MAC Algo C2S");
-                ret = WS_INVALID_ALGO_ID;
+                ret = WS_MATCH_ENC_ALGO_E;
             }
         }
     }
@@ -1883,7 +1895,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         if (ret == WS_SUCCESS && !ssh->handshake->aeadMode) {
             if (MatchIdLists(list, listSz, &algoId, 1) == ID_UNKNOWN) {
                 WLOG(WS_LOG_DEBUG, "Unable to negotiate MAC Algo S2C");
-                ret = WS_INVALID_ALGO_ID;
+                ret = WS_MATCH_MAC_ALGO_E;
             }
             else {
                 ssh->handshake->macId = algoId;
