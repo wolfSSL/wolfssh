@@ -35,6 +35,12 @@ extern "C" {
 #endif
 
 
+#ifdef NO_TIMESTAMP
+    /* The NO_TIMESTAMP tag is deprecated. Convert to new name. */
+    #define WOLFSSH_NO_TIMESTAMP
+#endif
+
+
 enum wolfSSH_LogLevel {
     WS_LOG_USER  = 5,
     WS_LOG_ERROR = 4,
