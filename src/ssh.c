@@ -640,13 +640,6 @@ int wolfSSH_TriggerKeyExchange(WOLFSSH* ssh)
     return ret;
 }
 
-#if 0
-static void DumpBuf(byte* buf, word32 bufSz) {
-    word32 i;
-    for (i = 0; i < bufSz; i++) printf("%02X", buf[i]);
-    printf("\n");
-}
-#endif
 
 int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
 {
@@ -700,10 +693,6 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
         inputBuffer->length = usedSz;
         inputBuffer->idx = 0;
     }
-#if 0
-    printf("Read : ");
-    DumpBuf(buf, bufSz);
-#endif
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_stream_read(), rxd = %d", bufSz);
     return bufSz;
 }
@@ -717,10 +706,6 @@ int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz)
 
     if (ssh == NULL || buf == NULL || ssh->channelList == NULL)
         return WS_BAD_ARGUMENT;
-#if 0
-    printf("Send : ");
-    DumpBuf(buf, bufSz);
-#endif
     bytesTxd = SendChannelData(ssh, ssh->channelList->peerChannel, buf, bufSz);
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_stream_send(), txd = %d", bytesTxd);

@@ -191,7 +191,7 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
 
         /* handle if is SFTP channel */
         if (WOLFSSH_SESSION_SUBSYSTEM == wolfSSH_GetSessionType(threadCtx->ssh)
-                               && (WMEMCMP(cmd, "sftp", sizeof("sftp")) == 0)) {
+                              && (XSTRNCMP(cmd, "sftp", sizeof("sftp")) == 0)) {
         #ifdef WOLFSSH_SFTP
             ret = sftp_worker(threadCtx);
         #else
