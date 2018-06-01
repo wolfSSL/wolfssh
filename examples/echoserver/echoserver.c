@@ -175,7 +175,7 @@ static int sftp_worker(thread_ctx_t* threadCtx) {
 
     do {
         ret = wolfSSH_SFTP_read(threadCtx->ssh);
-    } while (ret == WS_SUCCESS);
+    } while (ret != WS_FATAL_ERROR);
 
     return 0;
 }

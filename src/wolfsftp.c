@@ -427,7 +427,7 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, int maxSz)
             WLOG(WS_LOG_SFTP, "Unable to get current working directory");
             wolfSSH_SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
                     "Directory error", "English");
-            return WS_FATAL_ERROR;
+            return WS_BAD_FILE_E;
         }
         WSTRNCAT(wd, "/", WOLFSSH_MAX_FILENAME);
         WSTRNCAT(wd, r, WOLFSSH_MAX_FILENAME);
@@ -666,7 +666,7 @@ int wolfSSH_SFTP_RecvRMDIR(WOLFSSH* ssh, int reqId, word32 maxSz)
         WLOG(WS_LOG_SFTP, "Error removing directory %s", dir);
         wolfSSH_SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
                 "Remove Directory Error", "English");
-        return WS_FATAL_ERROR;
+        return WS_BAD_FILE_E;
     }
     else {
         wolfSSH_SFTP_SendStatus(ssh, WOLFSSH_FTP_OK, reqId,
@@ -733,7 +733,7 @@ int wolfSSH_SFTP_RecvMKDIR(WOLFSSH* ssh, int reqId, word32 maxSz)
         WLOG(WS_LOG_SFTP, "Error creating directory %s", dir);
         wolfSSH_SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
                 "Create Directory Error", "English");
-        return WS_FATAL_ERROR;
+        return WS_BAD_FILE_E;
     }
     else {
         wolfSSH_SFTP_SendStatus(ssh, WOLFSSH_FTP_OK, reqId,
@@ -836,7 +836,7 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, word32 maxSz)
         WFREE(dir, ssh->ctx->heap, DYNTYPE_BUFFER);
         wolfSSH_SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
                 "Open File Error", "English");
-        return WS_FATAL_ERROR;
+        return WS_BAD_FILE_E;
     }
 
     WFREE(dir, ssh->ctx->heap, DYNTYPE_BUFFER);
@@ -905,9 +905,6 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, word32 maxSz)
     WMEMCPY(dir, data + idx, sz);
     dir[sz] = '\0';
     WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
-
-    /* this closes the directory before returning */
-    //wc_ReadDirFirst(&ctx, dir, NULL);
 
     /* get directory handle */
     ctx = WOPENDIR(dir);
@@ -985,7 +982,11 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR dir, WS_SFTPNAME* out)
     out->lName[sz] = '\0';
     out->fSz = sz;
     out->lSz = sz;
-    SFTP_GetAttributes(out->fName, &out->atrb, 0);
+
+    /* attempt to get file attributes. Could be directory or have none */
+    if (SFTP_GetAttributes(out->fName, &out->atrb, 0) != WS_SUCCESS) {
+        WLOG(WS_LOG_SFTP, "Unable to get attribute values for %s", out->fName);
+    }
 
     return WS_SUCCESS;
 }
@@ -1240,7 +1241,7 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, word32 maxSz)
         WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
         wolfSSH_SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
                 "Write File Error", "English");
-        return WS_BUFFER_E;
+        return WS_BAD_FILE_E;
     }
     WMEMSET((byte*)&fd, 0, sizeof(WFD));
     WMEMCPY((byte*)&fd, data + idx, sz); idx += sz;
@@ -1326,7 +1327,7 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, word32 maxSz)
         WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
         wolfSSH_SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
                 "Read File Error", "English");
-        return WS_FATAL_ERROR;
+        return WS_BAD_FILE_E;
     }
 
     /* eof */
@@ -1397,7 +1398,7 @@ int wolfSSH_SFTP_RecvClose(WOLFSSH* ssh, int reqId, word32 maxSz)
         WLOG(WS_LOG_SFTP, "Error closing file");
         wolfSSH_SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
                 "Close File Error", "English");
-        return WS_FATAL_ERROR;
+        return WS_BAD_FILE_E;
     }
     else {
         wolfSSH_SFTP_SendStatus(ssh, WOLFSSH_FTP_OK, reqId,
@@ -1568,12 +1569,12 @@ int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr, byte link)
 
     if (link) {
         if (WLSTAT(fileName, &stats) != 0) {
-            return WS_FATAL_ERROR;
+            return WS_BAD_FILE_E;
         }
     }
     else {
         if (WSTAT(fileName, &stats) != 0) {
-            return WS_FATAL_ERROR;
+            return WS_BAD_FILE_E;
         }
     }
 
@@ -1644,7 +1645,13 @@ int wolfSSH_SFTP_RecvSTAT(WOLFSSH* ssh, int reqId, word32 maxSz)
 
     /* try to get file attributes and send back to client */
     WMEMSET((byte*)&atr, 0, sizeof(WS_SFTP_FILEATRB));
-    SFTP_GetAttributes(name, &atr, 0);
+    if (SFTP_GetAttributes(name, &atr, 0) != WS_SUCCESS) {
+        WFREE(name, ssh->ctx->heap, DYNTYPE_BUFFER);
+        WLOG(WS_LOG_SFTP, "Unable to get stat of file/directory");
+        wolfSSH_SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
+                "STAT error", "English");
+        return WS_BAD_FILE_E;
+    }
     WFREE(name, ssh->ctx->heap, DYNTYPE_BUFFER);
 
     sz = SFTP_AtributesSz(ssh, &atr);
@@ -1676,6 +1683,7 @@ int wolfSSH_SFTP_RecvLSTAT(WOLFSSH* ssh, int reqId, word32 maxSz)
 {
     WS_SFTP_FILEATRB atr;
     char* name = NULL;
+    int   ret;
 
     word32 sz;
     byte*  data;
@@ -1714,7 +1722,15 @@ int wolfSSH_SFTP_RecvLSTAT(WOLFSSH* ssh, int reqId, word32 maxSz)
 
     /* try to get file attributes and send back to client */
     WMEMSET((byte*)&atr, 0, sizeof(WS_SFTP_FILEATRB));
-    SFTP_GetAttributes(name, &atr, 1);
+    if ((ret = SFTP_GetAttributes(name, &atr, 1)) != WS_SUCCESS) {
+        WFREE(name, ssh->ctx->heap, DYNTYPE_BUFFER);
+
+        /* tell peer that was not ok */
+        WLOG(WS_LOG_SFTP, "Unable to get lstat of file/directory");
+        wolfSSH_SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
+                "LSTAT error", "English");
+        return WS_BAD_FILE_E;
+    }
     WFREE(name, ssh->ctx->heap, DYNTYPE_BUFFER);
 
     sz = SFTP_AtributesSz(ssh, &atr);
@@ -2293,7 +2309,6 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
     ret = wolfSSH_stream_read(ssh, buf, UINT32_SZ);
     if (ret != UINT32_SZ) return NULL;
 
-    /* @TODO there needs to be sanity checks on maxSz with these reads */
     ato32(buf, &count);
     while (count > 0) {
         word32 sz;
