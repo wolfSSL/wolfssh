@@ -167,11 +167,11 @@ static int SFTP_ServerSendInit(WOLFSSH* ssh) {
 
 /* @TODO
  * state machine for SFTP protocol
- * returns WS_SUCCESS on success
+ * returns WS_SFTP_COMPLETE on success
  */
 int wolfSSH_SFTP_accept(WOLFSSH* ssh)
 {
-    int ret = WS_SUCCESS;
+    int ret = WS_SFTP_COMPLETE;
 
     if (ssh == NULL) {
         return WS_BAD_ARGUMENT;
@@ -1826,11 +1826,11 @@ static int SFTP_ClientSendInit(WOLFSSH* ssh) {
 
 
 /* Completes SFTP connection to server
- * returns WS_SUCCESS on success
+ * returns WS_SFTP_COMPLETE on success
  */
 int wolfSSH_SFTP_connect(WOLFSSH* ssh)
 {
-    int ret = WS_SUCCESS;
+    int ret = WS_SFTP_COMPLETE;
 
     if (ssh == NULL) {
         return WS_BAD_ARGUMENT;

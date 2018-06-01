@@ -186,26 +186,29 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
     int ret;
     thread_ctx_t* threadCtx = (thread_ctx_t*)vArgs;
 
-    if (wolfSSH_accept(threadCtx->ssh) == WS_SUCCESS) {
-        const char* cmd = wolfSSH_GetSessionCommand(threadCtx->ssh);
+    ret = wolfSSH_accept(threadCtx->ssh);
+    switch (ret) {
+        case WS_SCP_COMPLETE:
+            printf("scp file transfer completed\n");
+            ret = 0;
+            break;
 
-        /* handle if is SFTP channel */
-        if (WOLFSSH_SESSION_SUBSYSTEM == wolfSSH_GetSessionType(threadCtx->ssh)
-                              && (XSTRNCMP(cmd, "sftp", sizeof("sftp")) == 0)) {
+        case WS_SFTP_COMPLETE:
         #ifdef WOLFSSH_SFTP
             ret = sftp_worker(threadCtx);
         #else
             err_sys("SFTP not compiled in. Please use --enable-sftp");
         #endif
-        }
-        else {
-            ret = ssh_worker(threadCtx);
-        }
+            break;
 
-        if (ret != 0) {
-            fprintf(stderr, "Error [%d] with handling connection.\n", ret);
-            exit(EXIT_FAILURE);
-        }
+        case WS_SUCCESS:
+            ret = ssh_worker(threadCtx);
+            break;
+    }
+
+    if (ret != 0) {
+        fprintf(stderr, "Error [%d] with handling connection.\n", ret);
+        exit(EXIT_FAILURE);
     }
 
     WCLOSESOCKET(threadCtx->fd);

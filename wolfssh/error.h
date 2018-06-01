@@ -70,15 +70,15 @@ enum WS_ErrorCodes {
     WS_INVALID_STATE_E     = -30,
     WS_EOF                 = -31,
     WS_INVALID_PRIME_CURVE = -32,
-    WS_ECC_E               = -33,
-    WS_CHANOPEN_FAILED     = -34,
-    WS_REKEYING            = -35,   /* Status: rekey in progress */
-    WS_CHANNEL_CLOSED      = -36,   /* Status: channel closed */
-    WS_INVALID_PATH_E      = -37,
-    WS_SCP_CMD_E           = -38,
-    WS_SCP_BAD_MSG_E       = -39,
-    WS_SCP_PATH_LEN_E      = -40,
-    WS_SCP_TIMESTAMP_E     = -41,
+    WS_ECC_E           = -33,
+    WS_CHANOPEN_FAILED = -34,
+    WS_REKEYING        = -35,   /* Status: rekey in progress */
+    WS_CHANNEL_CLOSED  = -36,   /* Status: channel closed */
+    WS_INVALID_PATH_E  = -37,
+    WS_SCP_CMD_E       = -38,
+    WS_SCP_BAD_MSG_E   = -39,
+    WS_SCP_PATH_LEN_E  = -40,
+    WS_SCP_TIMESTAMP_E = -41,
     WS_SCP_DIR_STACK_EMPTY_E = -42,
     WS_SCP_CONTINUE        = -43,
     WS_SCP_ABORT           = -44,
@@ -92,8 +92,9 @@ enum WS_ErrorCodes {
     WS_MATCH_ENC_ALGO_E    = -52,   /* cannot match encrypt algo with peer */
     WS_MATCH_MAC_ALGO_E    = -53,   /* cannot match MAC algo with peer */
     WS_PERMISSIONS         = -54,
+    WS_SFTP_COMPLETE       = -55,   /* SFTP connection established */
 
-    WS_LAST_E              = -54    /* Update this to indicate last error */
+    WS_LAST_E              = -55    /* Update this to indicate last error */
 };
 
 

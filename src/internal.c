@@ -233,6 +233,9 @@ const char* GetErrorString(int err)
         case WS_PERMISSIONS:
             return "file permissions error";
 
+        case WS_SFTP_COMPLETE:
+            return "sftp connection established";
+
         default:
             return "Unknown error code";
     }
