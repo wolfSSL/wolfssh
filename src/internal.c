@@ -1398,7 +1398,7 @@ static int GetUint32(word32* v, byte* buf, word32 len, word32* idx)
 {
     int result = WS_BUFFER_E;
 
-    if (*idx < len && *idx + UINT32_SZ <= len) {
+    if (*idx < len && UINT32_SZ <= len - *idx) {
         ato32(buf + *idx, v);
         *idx += UINT32_SZ;
         result = WS_SUCCESS;
@@ -1420,7 +1420,7 @@ static int GetMpint(word32* mpintSz, byte** mpint,
     if (result == WS_SUCCESS) {
         result = WS_BUFFER_E;
 
-        if (*idx < len && *idx + *mpintSz <= len) {
+        if (*idx < len && *mpintSz <= len - *idx) {
             *mpint = buf + *idx;
             *idx += *mpintSz;
             result = WS_SUCCESS;
@@ -1443,7 +1443,7 @@ static int GetString(char* s, word32* sSz,
 
     if (result == WS_SUCCESS) {
         result = WS_BUFFER_E;
-        if (*idx < len && *idx + strSz <= len) {
+        if (*idx < len && strSz <= len - *idx) {
             *sSz = (strSz >= *sSz) ? *sSz - 1 : strSz; /* -1 for null char */
             WMEMCPY(s, buf + *idx, *sSz);
             *idx += strSz;
@@ -1468,7 +1468,7 @@ static int GetStringAlloc(WOLFSSH* ssh, char** s,
     result = GetUint32(&strSz, buf, len, idx);
 
     if (result == WS_SUCCESS) {
-        if (*idx >= len || *idx + strSz > len)
+        if (*idx >= len || strSz > len - *idx)
             return WS_BUFFER_E;
         str = (char*)WMALLOC(strSz + 1, ssh->ctx->heap, DYNTYPE_STRING);
         if (str == NULL)
@@ -2287,8 +2287,12 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     if (ret == WS_SUCCESS) {
         f = buf + begin;
         ret = GetUint32(&fSz, buf, len, &begin);
-        if (ret == WS_SUCCESS && (begin + fSz + LENGTH_SZ > len)) {
-            ret = WS_BUFFER_E;
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (fSz > len - begin) {
+            WLOG(WS_LOG_DEBUG, "F size would result in error");
+            ret = WS_PARSE_E;
         }
     }
 
@@ -2301,6 +2305,13 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         f = buf + begin;
         begin += fSz;
         ret = GetUint32(&sigSz, buf, len, &begin);
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (sigSz > len - begin) {
+            WLOG(WS_LOG_DEBUG, "Signature size would result in error 1");
+            ret = WS_PARSE_E;
+        }
     }
 
     if (ret == WS_SUCCESS) {
@@ -2424,8 +2435,22 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             begin = 0;
             ret = GetUint32(&scratch, sig, sigSz, &begin);
             if (ret == WS_SUCCESS) {
+                /* Check that scratch isn't larger than the remainder of the
+                 * sig buffer and leaves enough room for another length. */
+                if (scratch > sigSz - begin - LENGTH_SZ) {
+                    WLOG(WS_LOG_DEBUG, "sig name size is too large");
+                    ret = WS_PARSE_E;
+                }
+            }
+            if (ret == WS_SUCCESS) {
                 begin += scratch;
                 ret = GetUint32(&scratch, sig, sigSz, &begin);
+            }
+            if (ret == WS_SUCCESS) {
+                if (scratch > sigSz - begin) {
+                    WLOG(WS_LOG_DEBUG, "sig name size is too large");
+                    ret = WS_PARSE_E;
+                }
             }
             if (ret == WS_SUCCESS) {
                 sig = sig + begin;
@@ -2433,7 +2458,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
                 if (sigSz + begin + tmpIdx > len) {
                     WLOG(WS_LOG_DEBUG,
-                            "Signature size found would result in error");
+                            "Signature size found would result in error 2");
                     ret = WS_BUFFER_E;
                 }
 
@@ -4458,6 +4483,9 @@ int DoReceive(WOLFSSH* ssh)
                 /* Peek at the packet_length field. */
                 ato32(ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
                       &ssh->curSz);
+                if (ssh->curSz > MAX_PACKET_SZ - (word32)peerMacSz - LENGTH_SZ)
+                    return WS_OVERFLOW_E;
+
                 ssh->processReplyState = PROCESS_PACKET_FINISH;
                 FALL_THROUGH;
 

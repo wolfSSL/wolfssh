@@ -133,6 +133,10 @@ enum {
 #ifndef DEFAULT_NEXT_CHANNEL
     #define DEFAULT_NEXT_CHANNEL 0
 #endif
+#ifndef MAX_PACKET_SZ
+    /* This is from RFC 4253 section 6.1. */
+    #define MAX_PACKET_SZ 35000
+#endif
 
 WOLFSSH_LOCAL byte NameToId(const char*, word32);
 WOLFSSH_LOCAL const char* IdToName(byte);
