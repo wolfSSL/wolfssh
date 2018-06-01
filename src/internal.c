@@ -2200,8 +2200,12 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     if (ret == WS_SUCCESS) {
         f = buf + begin;
         ret = GetUint32(&fSz, buf, len, &begin);
-        if (ret == WS_SUCCESS && (fSz > len - begin - LENGTH_SZ)) {
-            ret = WS_BUFFER_E;
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (fSz > len - begin) {
+            WLOG(WS_LOG_DEBUG, "F size would result in error");
+            ret = WS_PARSE_E;
         }
     }
 
