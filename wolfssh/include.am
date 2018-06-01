@@ -12,6 +12,7 @@ nobase_include_HEADERS+= \
                          wolfssh/settings.h \
                          wolfssh/error.h \
                          wolfssh/visibility.h \
+                         wolfssh/wolfscp.h \
                          wolfssh/misc.h \
                          wolfssh/log.h \
                          wolfssh/test.h \

@@ -106,6 +106,16 @@ AS_IF([test "x$ENABLED_KEYGEN" = "xyes"],
 
 AM_CONDITIONAL([BUILD_KEYGEN], [test "x$ENABLED_KEYGEN" = "xyes"])
 
+# SCP
+AC_ARG_ENABLE([scp],
+    [AS_HELP_STRING([--enable-scp],[Enable scp support (default: disabled)])],
+    [ENABLED_SCP=$enableval],[ENABLED_SCP=no])
+
+AS_IF([test "x$ENABLED_SCP" = "xyes"],
+      [AM_CFLAGS="$AM_CFLAGS -DWOLFSSH_SCP"])
+
+AM_CONDITIONAL([BUILD_SCP], [test "x$ENABLED_SCP" = "xyes"])
+
 
 # Checks for typedefs, structures, and compiler characteristics.
 if test "$ac_cv_sizeof_long" = "8"; then
@@ -153,4 +163,5 @@ echo "   * LIB Flags:                 $LIB"
 echo
 echo "   Features "
 echo "   * keygen:                    $ENABLED_KEYGEN"
+echo "   * scp:                       $ENABLED_SCP"
 

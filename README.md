@@ -91,6 +91,54 @@ To use public key authentication use the command line:
 Where the user can be `gretel` or `hansel`.
 
 
+scp support
+-----------
+
+wolfSSH includes server-side support for scp, which includes support for both
+copying files 'to' the server, and copying files 'from' the server. Both
+single file and recursive directory copy are supported with the default
+send and receive callbacks.
+
+To compile wolfSSH with scp support, use the `--enable-scp` build option
+or define `WOLFSSL_SCP`:
+
+    $ ./configure --enable-scp
+    $ make
+
+For full API usage and implementation details, please see the wolfSSH User
+Manual.
+
+The wolfSSL example server has been set up to accept a single scp request,
+and is compiled by default when compiling the wolfSSH library. To start the
+example server, run:
+
+    $ ./examples/server/server
+
+Standard scp commands can be used on the client side. The following are a
+few examples, where `scp` represents the ssh client you are using.
+
+To copy a single file TO the server, using the default example user "jill":
+
+    $ scp -P 22222 <local_file> jill@127.0.0.1:<remote_path>
+
+To copy the same single file TO the server, but with timestamp and in
+verbose mode:
+
+    $ scp -v -p -P 22222 <local_file> jill@127.0.0.1:<remote_path>
+
+To recursively copy a directory TO the server:
+
+    $ scp -P 22222 -r <local_dir> jill@127.0.0.1:<remote_dir>
+
+To copy a single file FROM the server to the local client:
+
+    $ scp -P 22222 jill@127.0.0.1:<remote_file> <local_path>
+
+To recursively copy a directory FROM the server to the local client:
+
+    $ scp -P 22222 -r jill@127.0.0.1:<remote_dir> <local_path>
+
+
 release notes
 -------------
 

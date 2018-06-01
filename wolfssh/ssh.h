@@ -215,7 +215,6 @@ enum WS_DisconnectReasonCodes {
     WOLFSSH_DISCONNECT_ILLEGAL_USER_NAME              = 15
 };
 
-
 #ifdef __cplusplus
 }
 #endif

@@ -74,8 +74,21 @@ enum WS_ErrorCodes {
     WS_CHANOPEN_FAILED = -34,
     WS_REKEYING        = -35,   /* Status: rekey in progress */
     WS_CHANNEL_CLOSED  = -36,   /* Status: channel closed */
+    WS_INVALID_PATH_E  = -37,
+    WS_SCP_CMD_E       = -38,
+    WS_SCP_BAD_MSG_E   = -39,
+    WS_SCP_PATH_LEN_E  = -40,
+    WS_SCP_TIMESTAMP_E = -41,
+    WS_SCP_DIR_STACK_EMPTY_E = -42,
+    WS_SCP_CONTINUE    = -43,
+    WS_SCP_ABORT       = -44,
+    WS_SCP_ENTER_DIR   = -45,
+    WS_SCP_EXIT_DIR    = -46,
+    WS_SCP_EXIT_DIR_FINAL = -47,
+    WS_SCP_COMPLETE    = -48,   /* SCP transfer complete */
+    WS_SCP_INIT        = -49,   /* SCP transfer verified */
 
-    WS_LAST_E          = -36    /* Update this to indicate last error */
+    WS_LAST_E          = -49    /* Update this to indicate last error */
 };
 
 

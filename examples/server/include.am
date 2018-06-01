@@ -1,12 +1,13 @@
 # vim:ft=automake
 # All paths should be given relative to the root
 
-#noinst_PROGRAMS += examples/server/server
-#examples_server_server_SOURCES      = examples/server/server.c
-#examples_server_server_LDADD        = src/libwolfssh.la
-#examples_server_server_DEPENDENCIES = src/libwolfssh.la
-#
-#dist_example_DATA+= examples/server/server.c
-#DISTCLEANFILES+= examples/server/.libs/server
+noinst_PROGRAMS += examples/server/server
+noinst_HEADERS += examples/server/server.h
+examples_server_server_SOURCES      = examples/server/server.c
+examples_server_server_LDADD        = src/libwolfssh.la
+examples_server_server_DEPENDENCIES = src/libwolfssh.la
+
+dist_example_DATA+= examples/server/server.c
+DISTCLEANFILES+= examples/server/.libs/server
 
 EXTRA_DIST+= examples/server/server.c

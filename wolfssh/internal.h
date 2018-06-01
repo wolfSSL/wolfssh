@@ -33,6 +33,9 @@
 #include <wolfssl/wolfcrypt/aes.h>
 #include <wolfssl/wolfcrypt/dh.h>
 #include <wolfssl/wolfcrypt/ecc.h>
+#ifdef WOLFSSH_SCP
+    #include <wolfssh/wolfscp.h>
+#endif
 
 
 #if !defined (ALIGN16)
@@ -131,7 +134,6 @@ enum {
     #define DEFAULT_NEXT_CHANNEL 0
 #endif
 
-
 WOLFSSH_LOCAL byte NameToId(const char*, word32);
 WOLFSSH_LOCAL const char* IdToName(byte);
 
@@ -165,6 +167,10 @@ struct WOLFSSH_CTX {
     WS_CallbackIOSend ioSendCb;       /* I/O Send Callback */
     WS_CallbackUserAuth userAuthCb;   /* User Authentication Callback */
     WS_CallbackHighwater highwaterCb; /* Data Highwater Mark Callback */
+#ifdef WOLFSSH_SCP
+    WS_CallbackScpRecv scpRecvCb;     /* SCP receive callback */
+    WS_CallbackScpSend scpSendCb;     /* SCP send callback */
+#endif
 
     byte* privateKey;                 /* Owned by CTX */
     word32 privateKeySz;
@@ -256,6 +262,37 @@ struct WOLFSSH {
     byte serverState;
     byte processReplyState;
     byte isKeying;
+
+#ifdef WOLFSSH_SCP
+    byte   scpState;
+    byte   scpNextState;
+    byte   scpRequestState;
+    byte   scpFileState;
+    byte   scpDirection;          /* indicates sending TO (t) of FROM (f) */
+    int    scpConfirm;            /* confirmation state (OK|WARN|FATAL) */
+    char*  scpConfirmMsg;         /* dynamic, confirm message string */
+    word32 scpConfirmMsgSz;       /* length of confirmMsg, not including \0 */
+    const char* scpBasePath;      /* base path, ptr into channelList->command */
+    byte   scpIsRecursive;        /* recursive transfer requested */
+    byte   scpRequestType;        /* directory or single file */
+    byte   scpMsgType;
+    int    scpFileMode;           /* mode/permission of file/dir */
+    word32 scpFileSz;             /* total size of file/dir being transferred */
+    char*  scpFileName;           /* file name, dynamic */
+    word32 scpFileNameSz;         /* length of fileName, not including \0 */
+    byte   scpTimestamp;          /* did peer request timestamp? {0:1} */
+    word64 scpATime;              /* scp file access time, secs since epoch */
+    word64 scpMTime;              /* scp file modification time, secs epoch */
+    byte*  scpFileBuffer;         /* transfer buffer, dynamic */
+    word32 scpFileBufferSz;       /* size of transfer buffer, octets */
+    word32 scpFileOffset;         /* current offset into file transfer */
+    word32 scpBufferedSz;         /* bytes buffered to send to peer */
+    void*  scpRecvCtx;            /* SCP receive callback context handle */
+    void*  scpSendCtx;            /* SCP send callback context handle */
+    #if !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
+    ScpSendCtx scpSendCbCtx;      /* used in default case to for send cb ctx */
+    #endif
+#endif
 
     byte connReset;
     byte isClosed;
@@ -398,7 +435,10 @@ enum AcceptStates {
     ACCEPT_SERVER_USERAUTH_SENT,
     ACCEPT_CLIENT_CHANNEL_REQUEST_DONE,
     ACCEPT_SERVER_CHANNEL_ACCEPT_SENT,
-    ACCEPT_CLIENT_SESSION_ESTABLISHED
+    ACCEPT_CLIENT_SESSION_ESTABLISHED,
+#ifdef WOLFSSH_SCP
+    ACCEPT_INIT_SCP_TRANSFER,
+#endif
 };
 
 
@@ -512,7 +552,9 @@ enum WS_DynamicTypes {
     DYNTYPE_DH,
     DYNTYPE_RNG,
     DYNTYPE_STRING,
-    DYNTYPE_MPINT
+    DYNTYPE_MPINT,
+    DYNTYPE_SCPCTX,
+    DYNTYPE_SCPDIR
 };
 
 
@@ -522,6 +564,69 @@ enum WS_BufferTypes {
     BUFTYPE_PRIVKEY,
     BUFTYPE_PUBKEY
 };
+
+
+#ifdef WOLFSSH_SCP
+
+#define SCP_MODE_OCTET_LEN 4     /* file mode is 4 characters (ex: 0777) */
+#define SCP_MIN_CONFIRM_SZ 2     /* [cmd_byte]/0 */
+
+#define SCP_CONFIRM_OK    0x00   /* binary 0 */
+#define SCP_CONFIRM_ERR   0x01   /* binary 1 */
+#define SCP_CONFIRM_FATAL 0x02   /* binary 2 */
+
+enum WS_ScpStates {
+    SCP_PARSE_COMMAND = 0,
+    SCP_SINK,
+    SCP_SINK_BEGIN,
+    SCP_TRANSFER,
+    SCP_SOURCE,
+    SCP_SOURCE_BEGIN,
+    SCP_RECEIVE_MESSAGE,
+    SCP_SEND_CONFIRMATION,
+    SCP_CONFIRMATION_WITH_RECEIPT,
+    SCP_RECEIVE_CONFIRMATION_WITH_RECEIPT,
+    SCP_RECEIVE_CONFIRMATION,
+    SCP_SEND_FILE,
+    SCP_RECEIVE_FILE,
+    SCP_SEND_FILE_HEADER,
+    SCP_SEND_ENTER_DIRECTORY,
+    SCP_SEND_EXIT_DIRECTORY,
+    SCP_SEND_EXIT_DIRECTORY_FINAL,
+    SCP_SEND_TIMESTAMP,
+    SCP_DONE
+};
+
+enum WS_ScpMsgTypes {
+    WOLFSSH_SCP_MSG_FILE = 0,
+    WOLFSSH_SCP_MSG_TIME,
+    WOLFSSH_SCP_MSG_DIR,
+    WOLFSSH_SCP_MSG_END_DIR
+};
+
+enum WS_ScpDirection {
+    WOLFSSH_SCP_TO = 0,
+    WOLFSSH_SCP_FROM
+};
+
+WOLFSSH_LOCAL int ChannelCommandIsScp(WOLFSSH*);
+WOLFSSH_LOCAL int DoScpRequest(WOLFSSH*);
+WOLFSSH_LOCAL int DoScpSink(WOLFSSH* ssh);
+WOLFSSH_LOCAL int DoScpSource(WOLFSSH* ssh);
+WOLFSSH_LOCAL int ParseScpCommand(WOLFSSH*);
+WOLFSSH_LOCAL int ReceiveScpMessage(WOLFSSH*);
+WOLFSSH_LOCAL int ReceiveScpFile(WOLFSSH*);
+WOLFSSH_LOCAL int SendScpConfirmation(WOLFSSH*);
+WOLFSSH_LOCAL int ReceiveScpConfirmation(WOLFSSH*);
+
+/* default SCP callbacks */
+WOLFSSH_LOCAL int wsScpRecvCallback(WOLFSSH*, int, const char*, const char*,
+                                    int, word64, word64, word32, byte*,
+                                    word32, word32, void*);
+WOLFSSH_LOCAL int wsScpSendCallback(WOLFSSH*, int, const char*, char*, word32,
+                                    word64*, word64*, int*, word32, word32*,
+                                    byte*, word32, void*);
+#endif
 
 
 WOLFSSH_LOCAL void DumpOctetString(const byte*, word32);

@@ -51,6 +51,22 @@ extern "C" {
 
     #define WFOPEN(f,fn,m)    wfopen((f),(fn),(m))
     #define WFCLOSE(f)        fclose(f)
+    #define WFREAD(b,s,a,f)   fread((b),(s),(a),(f))
+    #define WFWRITE(b,s,a,f)  fwrite((b),(s),(a),(f))
+    #define WFSEEK(s,o,w)     fseek((s),(o),(w))
+    #define WFTELL(s)         ftell((s))
+    #define WREWIND(s)        rewind((s))
+    #define WSEEK_END         SEEK_END
+
+    #if defined(WOLFSSH_SCP) && !defined(WOLFSSH_SCP_USER_CALLBACKS) && \
+        !defined(NO_FILESYSTEM)
+        /* for chdir() */
+        #include <unistd.h>
+        /* for mkdir() */
+        #include <sys/stat.h>
+        #define WCHDIR(p)     chdir((p))
+        #define WMKDIR(p,m)   mkdir((p),(m))
+    #endif
 #endif
 
 /* setup string handling */

@@ -96,9 +96,10 @@ static int dump_stats(thread_ctx_t* ctx)
 
 static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
 {
+    int ret;
     thread_ctx_t* threadCtx = (thread_ctx_t*)vArgs;
 
-    if (wolfSSH_accept(threadCtx->ssh) == WS_SUCCESS) {
+    if ((ret = wolfSSH_accept(threadCtx->ssh)) == WS_SUCCESS) {
         byte* buf = NULL;
         byte* tmpBuf;
         int bufSz, backlogSz = 0, rxSz, txSz, stop = 0, txSum;
@@ -161,7 +162,10 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
         } while (!stop);
 
         free(buf);
+    } else if (ret == WS_SCP_COMPLETE) {
+        printf("scp file transfer completed\n");
     }
+    wolfSSH_stream_exit(threadCtx->ssh, 0);
     WCLOSESOCKET(threadCtx->fd);
     wolfSSH_free(threadCtx->ssh);
     free(threadCtx);
@@ -592,7 +596,9 @@ THREAD_RETURN WOLFSSH_THREAD server_test(void* args)
         SOCKET_T      clientFd = 0;
         SOCKADDR_IN_T clientAddr;
         socklen_t     clientAddrSz = sizeof(clientAddr);
+#ifndef SINGLE_THREADED
         THREAD_TYPE   thread;
+#endif
         WOLFSSH*      ssh;
         thread_ctx_t* threadCtx;
 
@@ -626,12 +632,12 @@ THREAD_RETURN WOLFSSH_THREAD server_test(void* args)
         threadCtx->id = threadCount++;
 
 #ifndef SINGLE_THREADED
-        start_thread(server_worker, threadCtx, &thread);
+        ThreadStart(server_worker, threadCtx, &thread);
 
         if (multipleConnections)
-            detach_thread(thread);
+            ThreadDetach(thread);
         else
-            join_thread(thread);
+            ThreadJoin(thread);
 #else
         server_worker(threadCtx);
         (void)thread;

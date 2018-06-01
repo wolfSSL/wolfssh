@@ -179,6 +179,45 @@ const char* GetErrorString(int err)
         case WS_CHANNEL_CLOSED:
             return "channel closed";
 
+        case WS_INVALID_PATH_E:
+            return "invalid file or directory path";
+
+        case WS_SCP_CMD_E:
+            return "invalid scp command";
+
+        case WS_SCP_BAD_MSG_E:
+            return "invalid scp message received from peer";
+
+        case WS_SCP_PATH_LEN_E:
+            return "scp path length error";
+
+        case WS_SCP_TIMESTAMP_E:
+            return "scp timestamp message error";
+
+        case WS_SCP_DIR_STACK_EMPTY_E:
+            return "scp directory stack empty";
+
+        case WS_SCP_CONTINUE:
+            return "scp continue operation";
+
+        case WS_SCP_ABORT:
+            return "scp abort operation";
+
+        case WS_SCP_ENTER_DIR:
+            return "scp enter directory operation";
+
+        case WS_SCP_EXIT_DIR:
+            return "scp exit directory operation";
+
+        case WS_SCP_EXIT_DIR_FINAL:
+            return "scp final exit directory operation";
+
+        case WS_SCP_COMPLETE:
+            return "scp operation complete";
+
+        case WS_SCP_INIT:
+            return "scp operation verified";
+
         default:
             return "Unknown error code";
     }
@@ -294,6 +333,11 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
 #endif /* WOLFSSH_USER_IO */
     ctx->highwaterMark = DEFAULT_HIGHWATER_MARK;
     ctx->highwaterCb = wsHighwater;
+#if defined(WOLFSSH_SCP) && !defined(WOLFSSH_SCP_USER_CALLBACKS) && \
+    !defined(NO_FILESYSTEM)
+    ctx->scpRecvCb = wsScpRecvCallback;
+    ctx->scpSendCb = wsScpSendCallback;
+#endif /* WOLFSSH_SCP */
 #ifdef DEBUG_WOLFSSH
     ctx->banner = cannedBanner;
     ctx->bannerSz = cannedBannerSz;
@@ -316,6 +360,11 @@ void CtxResourceFree(WOLFSSH_CTX* ctx)
 
 WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
 {
+#if defined(STM32F2) || defined(STM32F4)
+    /* avoid name conflict in "stm32fnnnxx.h" */
+    #undef  RNG
+    #define RNG WC_RNG
+#endif
     HandshakeInfo* handshake;
     RNG*           rng;
     void*          heap;
@@ -359,6 +408,26 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->rng         = rng;
     ssh->kSz         = sizeof(ssh->k);
     ssh->handshake   = handshake;
+#ifdef WOLFSSH_SCP
+    ssh->scpRequestState = SCP_PARSE_COMMAND;
+    ssh->scpConfirmMsg   = NULL;
+    ssh->scpConfirmMsgSz = 0;
+    ssh->scpRecvCtx      = NULL;
+    #if !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
+    ssh->scpSendCtx      = &(ssh->scpSendCbCtx);
+    #else
+    ssh->scpSendCtx      = NULL;
+    #endif
+    ssh->scpFileBuffer   = NULL;
+    ssh->scpFileBufferSz = 0;
+    ssh->scpFileName     = NULL;
+    ssh->scpFileNameSz   = 0;
+    ssh->scpTimestamp    = 0;
+    ssh->scpATime        = 0;
+    ssh->scpMTime        = 0;
+    ssh->scpRequestType  = WOLFSSH_SCP_SINGLE_FILE_REQUEST;
+    ssh->scpIsRecursive  = 0;
+#endif
 
     if (BufferInit(&ssh->inputBuffer, 0, ctx->heap) != WS_SUCCESS ||
         BufferInit(&ssh->outputBuffer, 0, ctx->heap) != WS_SUCCESS) {
@@ -403,6 +472,24 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
             cur = next;
         }
     }
+#ifdef WOLFSSH_SCP
+    if (ssh->scpConfirmMsg) {
+        WFREE(ssh->scpConfirmMsg, ssh->ctx->heap, DYNTYPE_STRING);
+        ssh->scpConfirmMsg = NULL;
+        ssh->scpConfirmMsgSz = 0;
+    }
+    if (ssh->scpFileBuffer) {
+        ForceZero(ssh->scpFileBuffer, ssh->scpFileBufferSz);
+        WFREE(ssh->scpFileBuffer, ssh->ctx->heap, DYNTYPE_BUFFFER);
+        ssh->scpFileBuffer = NULL;
+        ssh->scpFileBufferSz = 0;
+    }
+    if (ssh->scpFileName) {
+        WFREE(ssh->scpFileName, ssh->ctx->heap, DYNTYPE_STRING);
+        ssh->scpFileName = NULL;
+        ssh->scpFileNameSz = 0;
+    }
+#endif
 }
 
 
@@ -2056,7 +2143,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
     byte* pubKey = NULL;
     word32 pubKeySz;
-    byte* f;
+    byte* f = NULL;
     word32 fSz;
     byte* sig;
     word32 sigSz;
@@ -2842,7 +2929,7 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     word32 publicKeyTypeSz = 0;
     byte* n;
     word32 nSz = 0;
-    byte* e;
+    byte* e = NULL;
     word32 eSz = 0;
     word32 i = 0;
     int ret = WS_SUCCESS;
@@ -2961,7 +3048,7 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     byte* curveName;
     word32 curveNameSz = 0;
     mp_int r, s;
-    byte* q;
+    byte* q = NULL;
     word32 sz, qSz;
     word32 i = 0;
     int ret = WS_SUCCESS;
@@ -4706,13 +4793,13 @@ static const word32 cannedNoneNamesSz = sizeof(cannedNoneNames) - 1;
 
 int SendKexInit(WOLFSSH* ssh)
 {
-    byte* output;
-    byte* payload;
+    byte* output = NULL;
+    byte* payload = NULL;
     word32 idx = 0;
-    word32 payloadSz;
+    word32 payloadSz = 0;
     int ret = WS_SUCCESS;
-    const char* cannedKeyAlgoNames;
-    word32 cannedKeyAlgoNamesSz;
+    const char* cannedKeyAlgoNames = NULL;
+    word32 cannedKeyAlgoNamesSz = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering SendKexInit()");
 
