@@ -429,8 +429,8 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, int maxSz)
                     "Directory error", "English");
             return WS_BAD_FILE_E;
         }
-        WSTRNCAT(wd, "/", WOLFSSH_MAX_FILENAME);
-        WSTRNCAT(wd, r, WOLFSSH_MAX_FILENAME);
+        WSTRNCAT(wd, "/", sizeof("/"));
+        WSTRNCAT(wd, r, WOLFSSH_MAX_FILENAME - 1);
         WMEMCPY(r, wd, WOLFSSH_MAX_FILENAME);
     }
     clean_path(r);
