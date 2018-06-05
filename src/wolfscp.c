@@ -373,6 +373,21 @@ int DoScpSource(WOLFSSH* ssh)
             case SCP_SOURCE_BEGIN:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SOURCE_BEGIN");
 
+                ssh->scpConfirm = ssh->ctx->scpSendCb(ssh,
+                        WOLFSSH_SCP_NEW_REQUEST, NULL, NULL, 0, NULL, NULL,
+                        NULL, 0, NULL, NULL, 0, ssh->scpSendCtx);
+
+                if (ssh->scpConfirm == WS_SCP_ABORT) {
+                    ssh->scpState = SCP_RECEIVE_CONFIRMATION_WITH_RECEIPT;
+                    ssh->scpNextState = SCP_DONE;
+                } else {
+                    ssh->scpState = SCP_SOURCE_INIT;
+                }
+                continue;
+
+            case SCP_SOURCE_INIT:
+                WLOG(WS_LOG_DEBUG, scpState, "SCP_SOURCE_INIT");
+
                 if ( (ret = ScpSourceInit(ssh)) < WS_SUCCESS) {
                     break;
                 }
@@ -1846,6 +1861,16 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
     WMEMSET(filePath, 0, DEFAULT_SCP_FILE_NAME_SZ);
 
     switch (state) {
+
+        case WOLFSSH_SCP_NEW_REQUEST:
+
+            /* new request, user may return WS_SCP_ABORT
+             * to abort/reject transfer attempt, ie:
+             *
+             * wolfSSH_SetScpErrorMsg(ssh, "scp transfer rejected");
+             * ret = WS_SCP_ABORT;
+             */
+            break;
 
         case WOLFSSH_SCP_SINGLE_FILE_REQUEST:
 
