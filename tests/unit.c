@@ -402,7 +402,7 @@ static int test_Errors(void)
     /* Check that all errors have a string and it's the same through the two
      * APIs. Check that the values that are not errors map to the unknown
      * string.  */
-    for (i = WS_SUCCESS; i >= WS_LAST_E; i--) {
+    for (i = WS_FATAL_ERROR; i >= WS_LAST_E; i--) {
         errStr = wolfSSH_ErrorToName(i);
 
         if (i != missing[j]) {
