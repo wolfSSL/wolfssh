@@ -599,13 +599,18 @@ int wolfSSH_SFTP_SendStatus(WOLFSSH* ssh, word32 status, word32 reqId,
 
     c32toa(status, buf + idx); idx += UINT32_SZ;
 
-    sz = (int)WSTRLEN(reason);
+    sz = (reason != NULL)? (int)WSTRLEN(reason): 0;
     c32toa(sz, buf + idx); idx += UINT32_SZ;
-    WMEMCPY(buf + idx, reason, sz); idx += sz;
+    if (reason != NULL) {
+        WMEMCPY(buf + idx, reason, sz); idx += sz;
+    }
 
-    sz = (int)WSTRLEN(lang);
+
+    sz = (lang != NULL)? (int)WSTRLEN(lang): 0;
     c32toa(sz, buf + idx); idx += UINT32_SZ;
-    WMEMCPY(buf + idx, lang, sz);
+    if (lang != NULL) {
+        WMEMCPY(buf + idx, lang, sz);
+    }
 
     if (wolfSSH_stream_send(ssh, buf, maxSz) <= 0) {
         WFREE(buf, ssh->heap, DYNTYPE_BUFFER);
