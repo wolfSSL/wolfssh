@@ -116,6 +116,16 @@ AS_IF([test "x$ENABLED_SCP" = "xyes"],
 
 AM_CONDITIONAL([BUILD_SCP], [test "x$ENABLED_SCP" = "xyes"])
 
+# SFTP
+AC_ARG_ENABLE([sftp],
+    [AS_HELP_STRING([--enable-sftp],[Enable SFTP support (default: disabled)])],
+    [ENABLED_SFTP=$enableval],[ENABLED_SFTP=no])
+
+AS_IF([test "x$ENABLED_SFTP" = "xyes"],
+      [AM_CFLAGS="$AM_CFLAGS -DWOLFSSH_SFTP"])
+
+AM_CONDITIONAL([BUILD_SFTP], [test "x$ENABLED_SFTP" = "xyes"])
+
 
 # Checks for typedefs, structures, and compiler characteristics.
 if test "$ac_cv_sizeof_long" = "8"; then
@@ -164,4 +174,5 @@ echo
 echo "   Features "
 echo "   * keygen:                    $ENABLED_KEYGEN"
 echo "   * scp:                       $ENABLED_SCP"
+echo "   * sftp:                      $ENABLED_SFTP"
 

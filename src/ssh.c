@@ -392,6 +392,16 @@ int wolfSSH_accept(WOLFSSH* ssh)
 #endif
                 ssh->acceptState = ACCEPT_CLIENT_SESSION_ESTABLISHED;
                 WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_SESSION_ESTABLISHED");
+#ifdef WOLFSSH_SFTP
+                {
+                    const char* cmd = wolfSSH_GetSessionCommand(ssh);
+                    if (cmd != NULL &&
+                        WOLFSSH_SESSION_SUBSYSTEM == wolfSSH_GetSessionType(ssh)
+                        && (WMEMCMP(cmd, "sftp", sizeof("sftp")) == 0)) {
+                        return wolfSSH_SFTP_accept(ssh);
+                    }
+                }
+#endif /* WOLFSSH_SFTP*/
                 break;
 
 #ifdef WOLFSSH_SCP
@@ -563,27 +573,28 @@ int wolfSSH_connect(WOLFSSH* ssh)
             FALL_THROUGH;
 
         case CONNECT_SERVER_CHANNEL_OPEN_SESSION_DONE:
-            if ( (ssh->error = SendChannelRequestShell(ssh)) < WS_SUCCESS) {
+            if ( (ssh->error = SendChannelRequest(ssh, ssh->channelName,
+                            ssh->channelNameSz)) < WS_SUCCESS) {
                 WLOG(WS_LOG_DEBUG, connectError,
                      "SERVER_CHANNEL_OPEN_SESSION_DONE", ssh->error);
                 return WS_FATAL_ERROR;
             }
-            ssh->connectState = CONNECT_CLIENT_CHANNEL_REQUEST_SHELL_SENT;
+            ssh->connectState = CONNECT_CLIENT_CHANNEL_REQUEST_SENT;
             WLOG(WS_LOG_DEBUG, connectState,
-                 "CLIENT_CHANNEL_REQUEST_SHELL_SENT");
+                 "CLIENT_CHANNEL_REQUEST_SENT");
             FALL_THROUGH;
 
-        case CONNECT_CLIENT_CHANNEL_REQUEST_SHELL_SENT:
+        case CONNECT_CLIENT_CHANNEL_REQUEST_SENT:
             while (ssh->serverState < SERVER_DONE) {
                 if ( (ssh->error = DoReceive(ssh)) < WS_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, connectError,
-                         "CLIENT_CHANNEL_REQUEST_SHELL_SENT", ssh->error);
+                         "CLIENT_CHANNEL_REQUEST_SENT", ssh->error);
                     return WS_FATAL_ERROR;
                 }
             }
-            ssh->connectState = CONNECT_SERVER_CHANNEL_REQUEST_SHELL_DONE;
+            ssh->connectState = CONNECT_SERVER_CHANNEL_REQUEST_DONE;
             WLOG(WS_LOG_DEBUG, connectState,
-                 "SERVER_CHANNEL_REQUEST_SHELL_DONE");
+                 "SERVER_CHANNEL_REQUEST_DONE");
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_connect()");
@@ -682,7 +693,6 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
         inputBuffer->length = usedSz;
         inputBuffer->idx = 0;
     }
-
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_stream_read(), rxd = %d", bufSz);
     return bufSz;
 }
@@ -696,7 +706,6 @@ int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz)
 
     if (ssh == NULL || buf == NULL || ssh->channelList == NULL)
         return WS_BAD_ARGUMENT;
-
     bytesTxd = SendChannelData(ssh, ssh->channelList->peerChannel, buf, bufSz);
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_stream_send(), txd = %d", bytesTxd);
@@ -754,6 +763,49 @@ void* wolfSSH_GetUserAuthCtx(WOLFSSH* ssh)
     return NULL;
 }
 
+
+/* Used to set the channel request type sent in wolfSSH connect. The default
+ * type set is shell if this function is not called.
+ *
+ * type     channel type i.e. WOLFSSH_SESSION_SUBSYSTEM
+ * name     name or command in the case of subsystem and exec channel types
+ * nameSz   size of name buffer
+ *
+ * returns WS_SUCCESS on success
+ */
+int wolfSSH_SetChannelType(WOLFSSH* ssh, byte type, byte* name, word32 nameSz)
+{
+    if (ssh == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    switch (type) {
+        case WOLFSSH_SESSION_SHELL:
+            ssh->connectChannelId = type;
+            break;
+
+        case WOLFSSH_SESSION_EXEC:
+            WLOG(WS_LOG_DEBUG, "Unsupported yet");
+            return WS_BAD_ARGUMENT;
+
+        case WOLFSSH_SESSION_SUBSYSTEM:
+            ssh->connectChannelId = type;
+            if (name != NULL && nameSz < WOLFSSH_MAX_CHN_NAMESZ) {
+                WMEMCPY(ssh->channelName, name, nameSz);
+                ssh->channelNameSz = nameSz;
+            }
+            else {
+                WLOG(WS_LOG_DEBUG, "No subsystem name or name was too large");
+            }
+            break;
+
+        default:
+            WLOG(WS_LOG_DEBUG, "Unknown channel type");
+            return WS_BAD_ARGUMENT;
+    }
+
+    return WS_SUCCESS;
+} 
 
 int wolfSSH_SetUsername(WOLFSSH* ssh, const char* username)
 {

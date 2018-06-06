@@ -230,6 +230,12 @@ const char* GetErrorString(int err)
         case WS_MATCH_MAC_ALGO_E:
             return "cannot match MAC algo with peer";
 
+        case WS_PERMISSIONS:
+            return "file permissions error";
+
+        case WS_SFTP_COMPLETE:
+            return "sftp connection established";
+
         default:
             return "Unknown error code";
     }
@@ -420,6 +426,7 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->rng         = rng;
     ssh->kSz         = sizeof(ssh->k);
     ssh->handshake   = handshake;
+    ssh->connectChannelId = WOLFSSH_SESSION_SHELL;
 #ifdef WOLFSSH_SCP
     ssh->scpRequestState = SCP_PARSE_COMMAND;
     ssh->scpConfirmMsg   = NULL;
@@ -439,6 +446,10 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->scpMTime        = 0;
     ssh->scpRequestType  = WOLFSSH_SCP_SINGLE_FILE_REQUEST;
     ssh->scpIsRecursive  = 0;
+#endif
+
+#ifdef WOLFSSH_SFTP
+    ssh->sftpState   = SFTP_BEGIN;
 #endif
 
     if (BufferInit(&ssh->inputBuffer, 0, ctx->heap) != WS_SUCCESS ||
@@ -3744,14 +3755,17 @@ static int DoChannelClose(WOLFSSH* ssh,
             ret = WS_INVALID_CHANID;
     }
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
         ret = SendChannelClose(ssh, channel->peerChannel);
+    }
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
         ret = ChannelRemove(ssh, channelId, FIND_SELF);
+    }
 
-    if (ret == WS_SUCCESS)
-        ret = WS_CHANNEL_CLOSED;
+	if (ret == WS_SUCCESS) {
+		ret = WS_CHANNEL_CLOSED;
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoChannelClose(), ret = %d", ret);
     return ret;
@@ -6835,15 +6849,24 @@ int SendChannelWindowAdjust(WOLFSSH* ssh, word32 peerChannel,
 static const char cannedShellName[] = "shell";
 static const word32 cannedShellNameSz = sizeof(cannedShellName) - 1;
 
+static const char cannedSubName[] = "subsystem";
+static const word32 cannedSubNameSz = sizeof(cannedSubName) - 1;
 
-int SendChannelRequestShell(WOLFSSH* ssh)
+static const char cannedExecName[] = "exec";
+static const word32 cannedExecNameSz = sizeof(cannedExecName) - 1;
+
+
+/* name : command for exec and name for subsystem channels */
+int SendChannelRequest(WOLFSSH* ssh, byte* name, word32 nameSz)
 {
     byte* output;
     word32 idx;
     int ret = WS_SUCCESS;
     WOLFSSH_CHANNEL* channel;
+    const char* cType = NULL;
+    word32 typeSz = 0;
 
-    WLOG(WS_LOG_DEBUG, "Entering SendChannelRequestShell()");
+    WLOG(WS_LOG_DEBUG, "Entering SendChannelRequest()");
 
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
@@ -6854,9 +6877,31 @@ int SendChannelRequestShell(WOLFSSH* ssh)
             ret = WS_INVALID_CHANID;
     }
 
+    switch (ssh->connectChannelId) {
+        case WOLFSSH_SESSION_SHELL:
+            cType  = cannedShellName;
+            typeSz = cannedShellNameSz;
+            break;
+
+        case WOLFSSH_SESSION_EXEC:
+            cType  = cannedExecName;
+            typeSz = cannedExecNameSz;
+            break;
+
+        case WOLFSSH_SESSION_SUBSYSTEM:
+            cType  = cannedSubName;
+            typeSz = cannedSubNameSz;
+            break;
+
+        default:
+            WLOG(WS_LOG_DEBUG, "Unknown channel type");
+            return WS_BAD_ARGUMENT;
+    }
+
     if (ret == WS_SUCCESS)
         ret = PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ + LENGTH_SZ +
-                                 cannedShellNameSz + BOOLEAN_SZ);
+                                 typeSz + BOOLEAN_SZ +
+                                 ((nameSz > 0)? UINT32_SZ : 0) + nameSz);
 
     if (ret == WS_SUCCESS) {
         output = ssh->outputBuffer.buffer;
@@ -6865,13 +6910,41 @@ int SendChannelRequestShell(WOLFSSH* ssh)
         output[idx++] = MSGID_CHANNEL_REQUEST;
         c32toa(channel->peerChannel, output + idx);
         idx += UINT32_SZ;
-        c32toa(cannedShellNameSz, output + idx);
+        c32toa(typeSz, output + idx);
         idx += LENGTH_SZ;
-        WMEMCPY(output + idx, cannedShellName, cannedShellNameSz);
-        idx += cannedShellNameSz;
+        WMEMCPY(output + idx, cType, typeSz);
+        idx += typeSz;
         output[idx++] = 1;
 
+        if (nameSz > 0) {
+            c32toa(nameSz, output + idx);
+            idx += UINT32_SZ;
+            WMEMCPY(output + idx, name, nameSz);
+            idx += nameSz;
+        }
+
         ssh->outputBuffer.length = idx;
+
+        WLOG(WS_LOG_INFO, "Sending Channel Request: ");
+        WLOG(WS_LOG_INFO, "  channelId = %u", channel->peerChannel);
+        WLOG(WS_LOG_INFO, "  type = %s", cType);
+        WLOG(WS_LOG_INFO, "  wantReply = %u", 1);
+
+    #ifdef DEBUG_WOLFSSH
+        /* only compile in code for checks on type if in debug mode */
+        switch (ssh->connectChannelId) {
+            case WOLFSSH_SESSION_EXEC:
+                WLOG(WS_LOG_INFO, "  command = %s", name);
+                break;
+
+            case WOLFSSH_SESSION_SUBSYSTEM:
+                WLOG(WS_LOG_INFO, "  subsystem = %s", name);
+                break;
+
+            default:
+                break;
+        }
+    #endif
 
         ret = BundlePacket(ssh);
     }
@@ -6879,7 +6952,7 @@ int SendChannelRequestShell(WOLFSSH* ssh)
     if (ret == WS_SUCCESS)
         ret = SendBuffered(ssh);
 
-    WLOG(WS_LOG_DEBUG, "Leaving SendChannelRequestShell(), ret = %d", ret);
+    WLOG(WS_LOG_DEBUG, "Leaving SendChannelRequest(), ret = %d", ret);
     return ret;
 }
 

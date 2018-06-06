@@ -28,6 +28,8 @@
 #pragma once
 
 #include <wolfssh/ssh.h>
+#include <wolfssh/wolfsftp.h>
+
 #include <wolfssl/wolfcrypt/hash.h>
 #include <wolfssl/wolfcrypt/random.h>
 #include <wolfssl/wolfcrypt/aes.h>
@@ -102,6 +104,7 @@ enum {
 
 
 #define WOLFSSH_MAX_NAMESZ 32
+#define WOLFSSH_MAX_CHN_NAMESZ 256
 #define MAX_ENCRYPTION 3
 #define MAX_INTEGRITY 2
 #define MAX_KEY_EXCHANGE 2
@@ -239,6 +242,15 @@ typedef struct HandshakeInfo {
     } privKey;
 } HandshakeInfo;
 
+#ifdef WOLFSSH_SFTP
+#define WOLFSSH_MAX_SFTPOFST 3
+
+typedef struct SFTP_OFST {
+    word64 offset;
+    char from[WOLFSSH_MAX_FILENAME];
+    char to[WOLFSSH_MAX_FILENAME];
+} SFTP_OFST;
+#endif
 
 /* our wolfSSH session */
 struct WOLFSSH {
@@ -320,6 +332,9 @@ struct WOLFSSH {
     WOLFSSH_CHANNEL* channelList;
     word32 channelListSz;
     word32 defaultPeerChannelId;
+    word32 connectChannelId;
+    byte channelName[WOLFSSH_MAX_CHN_NAMESZ];
+    byte channelNameSz;
 
     Buffer inputBuffer;
     Buffer outputBuffer;
@@ -345,6 +360,13 @@ struct WOLFSSH {
     word32 pkBlobSz;
     byte* peerProtoId;     /* Save for rekey */
     word32 peerProtoIdSz;
+
+#ifdef WOLFSSH_SFTP
+    word32 reqId;
+    byte   sftpState;
+    byte   sftpInt;
+    SFTP_OFST sftpOfst[WOLFSSH_MAX_SFTPOFST];
+#endif
 };
 
 
@@ -421,7 +443,7 @@ WOLFSSH_LOCAL int SendChannelClose(WOLFSSH*, word32);
 WOLFSSH_LOCAL int SendChannelExit(WOLFSSH*, word32, int);
 WOLFSSH_LOCAL int SendChannelData(WOLFSSH*, word32, byte*, word32);
 WOLFSSH_LOCAL int SendChannelWindowAdjust(WOLFSSH*, word32, word32);
-WOLFSSH_LOCAL int SendChannelRequestShell(WOLFSSH*);
+WOLFSSH_LOCAL int SendChannelRequest(WOLFSSH*, byte*, word32);
 WOLFSSH_LOCAL int SendChannelSuccess(WOLFSSH*, word32, int);
 WOLFSSH_LOCAL int GenerateKey(byte, byte, byte*, word32, const byte*, word32,
                               const byte*, word32, const byte*, word32);
@@ -460,8 +482,8 @@ enum ConnectStates {
     CONNECT_SERVER_USERAUTH_ACCEPT_DONE,
     CONNECT_CLIENT_CHANNEL_OPEN_SESSION_SENT,
     CONNECT_SERVER_CHANNEL_OPEN_SESSION_DONE,
-    CONNECT_CLIENT_CHANNEL_REQUEST_SHELL_SENT,
-    CONNECT_SERVER_CHANNEL_REQUEST_SHELL_DONE
+    CONNECT_CLIENT_CHANNEL_REQUEST_SENT,
+    CONNECT_SERVER_CHANNEL_REQUEST_DONE
 };
 
 
@@ -558,7 +580,8 @@ enum WS_DynamicTypes {
     DYNTYPE_STRING,
     DYNTYPE_MPINT,
     DYNTYPE_SCPCTX,
-    DYNTYPE_SCPDIR
+    DYNTYPE_SCPDIR,
+    DYNTYPE_SFTP
 };
 
 

@@ -36,6 +36,7 @@ include examples/include.am
 include tests/include.am
 include keys/include.am
 include ide/include.am
+include wolfsftp/include.am
 
 
 TEST_EXTENSIONS = .test
