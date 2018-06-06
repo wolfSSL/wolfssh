@@ -397,23 +397,24 @@ static int test_Errors(void)
 #else
     int i, j = 0;
     /* Values that are not or no longer error codes. */
-    int missing[] = { WS_SUCCESS };
+    int missing[] = { 0 };
+    int missingSz = (int)sizeof(missing)/sizeof(missing[0]);
 
     /* Check that all errors have a string and it's the same through the two
      * APIs. Check that the values that are not errors map to the unknown
      * string.  */
-    for (i = WS_FATAL_ERROR; i >= WS_LAST_E; i--) {
+    for (i = WS_SUCCESS; i >= WS_LAST_E; i--) {
         errStr = wolfSSH_ErrorToName(i);
 
-        if (i != missing[j]) {
-            if (errStr == unknownStr) {
+        if (j < missingSz && i == missing[j]) {
+            j++;
+            if (errStr != unknownStr) {
                 result = -105;
                 break;
             }
         }
         else {
-            j++;
-            if (errStr != unknownStr) {
+            if (errStr == unknownStr) {
                 result = -106;
                 break;
             }
