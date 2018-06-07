@@ -77,14 +77,14 @@ int DoScpSink(WOLFSSH* ssh)
             case SCP_RECEIVE_MESSAGE:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_RECEIVE_MESSAGE");
 
-                if ( (ssh->error = ReceiveScpMessage(ssh)) < WS_SUCCESS) {
-                    if (ssh->error == WS_EOF) {
+                if ( (ret = ReceiveScpMessage(ssh)) < WS_SUCCESS) {
+                    if (ret == WS_EOF) {
+                        ret = WS_SUCCESS;
                         ssh->scpState = SCP_DONE;
                         break;
                     }
 
-                    WLOG(WS_LOG_ERROR, scpError, "RECEIVE_MESSAGE", ssh->error);
-                    ret = WS_FATAL_ERROR;
+                    WLOG(WS_LOG_ERROR, scpError, "RECEIVE_MESSAGE", ret);
                     break;
                 }
 
@@ -108,9 +108,8 @@ int DoScpSink(WOLFSSH* ssh)
                     ssh->scpFileState = WOLFSSH_SCP_NEW_FILE;
 
                 } else {
-                    ssh->error = WS_SCP_BAD_MSG_E;
-                    WLOG(WS_LOG_ERROR, scpError, "bad msg type", ssh->error);
-                    ret = WS_FATAL_ERROR;
+                    ret = WS_SCP_BAD_MSG_E;
+                    WLOG(WS_LOG_ERROR, scpError, "bad msg type", ret);
                     break;
                 }
 
@@ -125,10 +124,8 @@ int DoScpSink(WOLFSSH* ssh)
             case SCP_SEND_CONFIRMATION:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SEND_CONFIRMATION");
 
-                if ( (ssh->error = SendScpConfirmation(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "SEND_CONFIRMATION",
-                         ssh->error);
-                    ret = WS_FATAL_ERROR;
+                if ( (ret = SendScpConfirmation(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_ERROR, scpError, "SEND_CONFIRMATION", ret);
                     break;
                 }
 
@@ -138,10 +135,8 @@ int DoScpSink(WOLFSSH* ssh)
             case SCP_RECEIVE_CONFIRMATION:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_RECEIVE_CONFIRMATION");
 
-                if ( (ssh->error = ReceiveScpConfirmation(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "RECEIVE_CONFIRMATION",
-                         ssh->error);
-                    ret = WS_FATAL_ERROR;
+                if ( (ret = ReceiveScpConfirmation(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_ERROR, scpError, "RECEIVE_CONFIRMATION", ret);
                     break;
                 }
 
@@ -151,11 +146,13 @@ int DoScpSink(WOLFSSH* ssh)
             case SCP_RECEIVE_FILE:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_RECEIVE_FILE");
 
-                if ( (ssh->error = ReceiveScpFile(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "RECEIVE_FILE", ssh->error);
-                    ret = WS_FATAL_ERROR;
+                if ( (ret = ReceiveScpFile(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_ERROR, scpError, "RECEIVE_FILE", ret);
                     break;
                 }
+
+                /* reset success status */
+                ret = WS_SUCCESS;
 
                 /* scp receive callback, give user file data */
                 ssh->scpConfirm = ssh->ctx->scpRecvCb(ssh,
@@ -265,6 +262,7 @@ static int SendScpTimestamp(WOLFSSH* ssh)
         ret = WS_FATAL_ERROR;
     } else {
         WLOG(WS_LOG_DEBUG, "scp: sent timestamp: %s", buf);
+        ret = WS_SUCCESS;
     }
 
     return ret;
@@ -296,6 +294,7 @@ static int SendScpFileHeader(WOLFSSH* ssh)
         ret = WS_FATAL_ERROR;
     } else {
         WLOG(WS_LOG_DEBUG, "scp: sent file header: %s", buf);
+        ret = WS_SUCCESS;
     }
 
     return ret;
@@ -328,6 +327,7 @@ static int SendScpEnterDirectory(WOLFSSH* ssh)
         ret = WS_FATAL_ERROR;
     } else {
         WLOG(WS_LOG_DEBUG, "scp: sent directory msg: %s", buf);
+        ret = WS_SUCCESS;
     }
 
     return ret;
@@ -353,6 +353,7 @@ static int SendScpExitDirectory(WOLFSSH* ssh)
         ret = WS_FATAL_ERROR;
     } else {
         WLOG(WS_LOG_DEBUG, "scp: sent end directory msg: E");
+        ret = WS_SUCCESS;
     }
 
     return ret;
@@ -372,8 +373,22 @@ int DoScpSource(WOLFSSH* ssh)
             case SCP_SOURCE_BEGIN:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SOURCE_BEGIN");
 
-                if ( (ssh->error = ScpSourceInit(ssh)) < WS_SUCCESS) {
-                    ret = WS_FATAL_ERROR;
+                ssh->scpConfirm = ssh->ctx->scpSendCb(ssh,
+                        WOLFSSH_SCP_NEW_REQUEST, NULL, NULL, 0, NULL, NULL,
+                        NULL, 0, NULL, NULL, 0, ssh->scpSendCtx);
+
+                if (ssh->scpConfirm == WS_SCP_ABORT) {
+                    ssh->scpState = SCP_RECEIVE_CONFIRMATION_WITH_RECEIPT;
+                    ssh->scpNextState = SCP_DONE;
+                } else {
+                    ssh->scpState = SCP_SOURCE_INIT;
+                }
+                continue;
+
+            case SCP_SOURCE_INIT:
+                WLOG(WS_LOG_DEBUG, scpState, "SCP_SOURCE_INIT");
+
+                if ( (ret = ScpSourceInit(ssh)) < WS_SUCCESS) {
                     break;
                 }
 
@@ -384,10 +399,8 @@ int DoScpSource(WOLFSSH* ssh)
             case SCP_SEND_CONFIRMATION:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SEND_CONFIRMATION");
 
-                if ( (ssh->error = SendScpConfirmation(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "SEND_CONFIRMATION",
-                         ssh->error);
-                    ret = WS_FATAL_ERROR;
+                if ( (ret = SendScpConfirmation(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_ERROR, scpError, "SEND_CONFIRMATION", ret);
                     break;
                 }
 
@@ -397,10 +410,8 @@ int DoScpSource(WOLFSSH* ssh)
             case SCP_CONFIRMATION_WITH_RECEIPT:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_CONFIRMATION_WITH_RECEIPT");
 
-                if ( (ssh->error = SendScpConfirmation(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "SEND_CONFIRMATION",
-                         ssh->error);
-                    ret = WS_FATAL_ERROR;
+                if ( (ret = SendScpConfirmation(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_ERROR, scpError, "SEND_CONFIRMATION", ret);
                     break;
                 }
 
@@ -411,10 +422,9 @@ int DoScpSource(WOLFSSH* ssh)
                 WLOG(WS_LOG_DEBUG, scpState,
                      "SCP_RECEIVE_CONFIRMATION_WITH_RECEIPT");
 
-                if ( (ssh->error = ReceiveScpConfirmation(ssh)) < WS_SUCCESS) {
+                if ( (ret = ReceiveScpConfirmation(ssh)) < WS_SUCCESS) {
                     WLOG(WS_LOG_ERROR, scpError,
-                         "RECEIVE_CONFIRMATION_WITH_RECEIPT", ssh->error);
-                    ret = WS_FATAL_ERROR;
+                         "RECEIVE_CONFIRMATION_WITH_RECEIPT", ret);
                     break;
                 }
 
@@ -424,10 +434,8 @@ int DoScpSource(WOLFSSH* ssh)
             case SCP_RECEIVE_CONFIRMATION:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_RECEIVE_CONFIRMATION");
 
-                if ( (ssh->error = ReceiveScpConfirmation(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "RECEIVE_CONFIRMATION",
-                         ssh->error);
-                    ret = WS_FATAL_ERROR;
+                if ( (ret = ReceiveScpConfirmation(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_ERROR, scpError, "RECEIVE_CONFIRMATION", ret);
                     break;
                 }
 
@@ -435,7 +443,7 @@ int DoScpSource(WOLFSSH* ssh)
                 continue;
 
             case SCP_TRANSFER:
-                WLOG(WS_LOG_DEBUG, scpState, "SCP_SINK_TRANSFER");
+                WLOG(WS_LOG_DEBUG, scpState, "SCP_TRANSFER");
 
                 ssh->scpConfirm = ssh->ctx->scpSendCb(ssh,
                         ssh->scpRequestType, ssh->scpBasePath,
@@ -487,8 +495,7 @@ int DoScpSource(WOLFSSH* ssh)
                 } else {
 
                     /* error */
-                    ssh->error = ssh->scpConfirm;
-                    ret = WS_FATAL_ERROR;
+                    ret = ssh->scpConfirm;
                     break;
                 }
 
@@ -497,10 +504,8 @@ int DoScpSource(WOLFSSH* ssh)
             case SCP_SEND_TIMESTAMP:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SEND_TIMESTAMP");
 
-                if ( (ssh->error = SendScpTimestamp(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "SEND_TIMESTAMP",
-                         ssh->error);
-                    ret = WS_FATAL_ERROR;
+                if ( (ret = SendScpTimestamp(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_ERROR, scpError, "SEND_TIMESTAMP", ret);
                     break;
                 }
 
@@ -511,10 +516,8 @@ int DoScpSource(WOLFSSH* ssh)
             case SCP_SEND_ENTER_DIRECTORY:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SEND_ENTER_DIRECTORY");
 
-                if ( (ssh->error = SendScpEnterDirectory(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "SEND_ENTER_DIRECTORY",
-                         ssh->error);
-                    ret = WS_FATAL_ERROR;
+                if ( (ret = SendScpEnterDirectory(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_ERROR, scpError, "SEND_ENTER_DIRECTORY", ret);
                     break;
                 }
 
@@ -525,10 +528,8 @@ int DoScpSource(WOLFSSH* ssh)
             case SCP_SEND_EXIT_DIRECTORY:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SEND_EXIT_DIRECTORY");
 
-                if ( (ssh->error = SendScpExitDirectory(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "SEND_EXIT_DIRECTORY",
-                         ssh->error);
-                    ret = WS_FATAL_ERROR;
+                if ( (ret = SendScpExitDirectory(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_ERROR, scpError, "SEND_EXIT_DIRECTORY", ret);
                     break;
                 }
 
@@ -539,10 +540,8 @@ int DoScpSource(WOLFSSH* ssh)
             case SCP_SEND_EXIT_DIRECTORY_FINAL:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SEND_EXIT_DIRECTORY_FINAL");
 
-                if ( (ssh->error = SendScpExitDirectory(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "SEND_EXIT_DIRECTORY",
-                         ssh->error);
-                    ret = WS_FATAL_ERROR;
+                if ( (ret = SendScpExitDirectory(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_ERROR, scpError, "SEND_EXIT_DIRECTORY", ret);
                     break;
                 }
 
@@ -553,10 +552,8 @@ int DoScpSource(WOLFSSH* ssh)
             case SCP_SEND_FILE_HEADER:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SEND_FILE_HEADER");
 
-                if ( (ssh->error = SendScpFileHeader(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "SEND_FILE_HEADER",
-                         ssh->error);
-                    ret = WS_FATAL_ERROR;
+                if ( (ret = SendScpFileHeader(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_ERROR, scpError, "SEND_FILE_HEADER", ret);
                     break;
                 }
 
@@ -570,10 +567,7 @@ int DoScpSource(WOLFSSH* ssh)
                 ret = wolfSSH_stream_send(ssh, ssh->scpFileBuffer,
                                           ssh->scpBufferedSz);
                 if (ret < 0) {
-                    WLOG(WS_LOG_ERROR, scpError, "failed to send file",
-                         ssh->error);
-                    ssh->error = ret;
-                    ret = WS_FATAL_ERROR;
+                    WLOG(WS_LOG_ERROR, scpError, "failed to send file", ret);
                     break;
                 }
 
@@ -630,9 +624,8 @@ int DoScpRequest(WOLFSSH* ssh)
             case SCP_PARSE_COMMAND:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_PARSE_COMMAND");
 
-                if ( (ssh->error = ParseScpCommand(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "PARSE_COMMAND", ssh->error);
-                    ret = WS_FATAL_ERROR;
+                if ( (ret = ParseScpCommand(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_ERROR, scpError, "PARSE_COMMAND", ret);
                     break;
                 }
 
@@ -654,19 +647,17 @@ int DoScpRequest(WOLFSSH* ssh)
 
             case SCP_SINK:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SINK");
-                if ( (ssh->error = DoScpSink(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "SCP_SINK", ssh->error);
-                    ret = WS_FATAL_ERROR;
-                    break;
+                if ( (ret = DoScpSink(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_ERROR, scpError, "SCP_SINK", ret);
                 }
+                break;
 
             case SCP_SOURCE:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SOURCE");
-                if ( (ssh->error = DoScpSource(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "SCP_SOURCE", ssh->error);
-                    ret = WS_FATAL_ERROR;
-                    break;
+                if ( (ret = DoScpSource(ssh)) < WS_SUCCESS) {
+                    WLOG(WS_LOG_ERROR, scpError, "SCP_SOURCE", ret);
                 }
+                break;
         }
     }
 
@@ -1870,6 +1861,16 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
     WMEMSET(filePath, 0, DEFAULT_SCP_FILE_NAME_SZ);
 
     switch (state) {
+
+        case WOLFSSH_SCP_NEW_REQUEST:
+
+            /* new request, user may return WS_SCP_ABORT
+             * to abort/reject transfer attempt, ie:
+             *
+             * wolfSSH_SetScpErrorMsg(ssh, "scp transfer rejected");
+             * ret = WS_SCP_ABORT;
+             */
+            break;
 
         case WOLFSSH_SCP_SINGLE_FILE_REQUEST:
 
