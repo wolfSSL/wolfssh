@@ -1038,9 +1038,11 @@ int ChannelRemove(WOLFSSH* ssh, word32 channel, byte peer)
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
-    list = ssh->channelList;
-    if (list == NULL)
-        ret = WS_INVALID_CHANID;
+    if (ret == WS_SUCCESS) {
+        list = ssh->channelList;
+        if (list == NULL)
+            ret = WS_INVALID_CHANID;
+    }
 
     if (ret == WS_SUCCESS) {
         WOLFSSH_CHANNEL* prev = NULL;
