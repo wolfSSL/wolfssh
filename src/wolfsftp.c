@@ -1549,7 +1549,7 @@ int wolfSSH_SFTP_RecvRename(WOLFSSH* ssh, int reqId, word32 maxSz)
 
     if (ret == WS_SUCCESS && WRENAME(old, nw) < 0) {
         WLOG(WS_LOG_SFTP, "Error renaming file");
-        ret = WS_FATAL_ERROR;
+        ret = WS_BAD_FILE_E;
     }
 
     /* Let the client know the results from trying to rename the file */
