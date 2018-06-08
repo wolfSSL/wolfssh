@@ -1271,7 +1271,7 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, word32 maxSz)
         WLOG(WS_LOG_SFTP, "Error writing to file");
         wolfSSH_SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
                 "Write File Error", "English");
-        return WS_FATAL_ERROR;
+        return WS_INVALID_STATE_E;
     }
 
     wolfSSH_SFTP_SendStatus(ssh, WOLFSSH_FTP_OK, reqId,
