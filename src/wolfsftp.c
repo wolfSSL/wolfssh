@@ -409,15 +409,18 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, int maxSz)
         return WS_MEMORY_E;
     }
     if (wolfSSH_stream_read(ssh, (byte*)dir, maxSz) < 0) {
+        WFREE(dir, ssh->ctx->heap, DYNTYPE_BUFFER);
         return WS_FATAL_ERROR;
     }
 
     ato32((byte*)dir, &rSz);
     if (rSz > WOLFSSH_MAX_FILENAME) {
+        WFREE(dir, ssh->ctx->heap, DYNTYPE_BUFFER);
         return WS_BUFFER_E;
     }
     WMEMCPY(r, dir + UINT32_SZ, rSz);
     r[rSz] = '\0';
+    WFREE(dir, ssh->ctx->heap, DYNTYPE_BUFFER);
 
     /* get working directory in the case of receiving non absolute path */
     if (r[0] != '/') {
@@ -468,8 +471,10 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, int maxSz)
 
     /* send out buffer */
     if (wolfSSH_stream_send(ssh, out, maxSz) < 0) {
+        WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
         return WS_FATAL_ERROR;
     }
+    WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
 
     return WS_SUCCESS;
 }
@@ -1266,7 +1271,7 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, word32 maxSz)
         WLOG(WS_LOG_SFTP, "Error writing to file");
         wolfSSH_SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
                 "Write File Error", "English");
-        return WS_FATAL_ERROR;
+        return WS_INVALID_STATE_E;
     }
 
     wolfSSH_SFTP_SendStatus(ssh, WOLFSSH_FTP_OK, reqId,
@@ -1544,7 +1549,7 @@ int wolfSSH_SFTP_RecvRename(WOLFSSH* ssh, int reqId, word32 maxSz)
 
     if (ret == WS_SUCCESS && WRENAME(old, nw) < 0) {
         WLOG(WS_LOG_SFTP, "Error renaming file");
-        ret = WS_FATAL_ERROR;
+        ret = WS_BAD_FILE_E;
     }
 
     /* Let the client know the results from trying to rename the file */
@@ -2006,8 +2011,13 @@ static int wolfSSH_SFTP_DoStatus(WOLFSSH* ssh, word32 reqId)
 
     {
         byte* s = (byte*)WMALLOC(sz + 1, ssh->ctx->heap, DYNTYPE_BUFFER);
+        if (s == NULL) {
+            return WS_MEMORY_E;
+        }
+
         ret = wolfSSH_stream_read(ssh, s, sz);
         if (ret < 0) {
+            WFREE(s, ssh->ctx->heap, DYNTYPE_BUFFER);
             return ret;
         }
 
@@ -2026,8 +2036,13 @@ static int wolfSSH_SFTP_DoStatus(WOLFSSH* ssh, word32 reqId)
     if (sz > 0)
     {
         byte* s = (byte*)WMALLOC(sz + 1, ssh->ctx->heap, DYNTYPE_BUFFER);
+        if (s == NULL) {
+            return WS_MEMORY_E;
+        }
+
         ret = wolfSSH_stream_read(ssh, s, sz);
         if (ret < 0) {
+            WFREE(s, ssh->ctx->heap, DYNTYPE_BUFFER);
             return ret;
         }
 
