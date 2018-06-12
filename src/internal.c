@@ -6879,25 +6879,27 @@ int SendChannelRequest(WOLFSSH* ssh, byte* name, word32 nameSz)
             ret = WS_INVALID_CHANID;
     }
 
-    switch (ssh->connectChannelId) {
-        case WOLFSSH_SESSION_SHELL:
-            cType  = cannedShellName;
-            typeSz = cannedShellNameSz;
-            break;
+    if (ret == WS_SUCCESS) {
+        switch (ssh->connectChannelId) {
+            case WOLFSSH_SESSION_SHELL:
+                cType  = cannedShellName;
+                typeSz = cannedShellNameSz;
+                break;
 
-        case WOLFSSH_SESSION_EXEC:
-            cType  = cannedExecName;
-            typeSz = cannedExecNameSz;
-            break;
+            case WOLFSSH_SESSION_EXEC:
+                cType  = cannedExecName;
+                typeSz = cannedExecNameSz;
+                break;
 
-        case WOLFSSH_SESSION_SUBSYSTEM:
-            cType  = cannedSubName;
-            typeSz = cannedSubNameSz;
-            break;
+            case WOLFSSH_SESSION_SUBSYSTEM:
+                cType  = cannedSubName;
+                typeSz = cannedSubNameSz;
+                break;
 
-        default:
-            WLOG(WS_LOG_DEBUG, "Unknown channel type");
-            return WS_BAD_ARGUMENT;
+            default:
+                WLOG(WS_LOG_DEBUG, "Unknown channel type");
+                return WS_BAD_ARGUMENT;
+        }
     }
 
     if (ret == WS_SUCCESS)
