@@ -26,6 +26,8 @@
     #include <wolfssl/options.h>
 #endif
 
+#include <wolfssh/ssh.h>
+
 /* Packet Types */
 enum WS_PacketTypes {
     WOLFSSH_FTP_INIT     = 1,

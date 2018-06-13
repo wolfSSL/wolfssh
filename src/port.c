@@ -42,25 +42,33 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
     return fopen_s(f, filename, mode) != 0;
 #elif defined(WOLFSSL_NUCLEUS)
     int m = WOLFSSH_O_CREAT;
-    if (WSTRSTR(mode, "r")) {
-         m |= WOLFSSH_O_RDONLY;
+
+    if (WSTRSTR(mode, "r") && WSTRSTR(mode, "w")) {
+        m |= WOLFSSH_O_RDWR;
     }
-    if (WSTRSTR(mode, "w")) {
-        if (m &= WOLFSSH_O_RDONLY) {
-            m ^= WOLFSSH_O_RDONLY;
-            m |= WOLFSSH_O_RDWR;
+    else {
+        if (WSTRSTR(mode, "r")) {
+            m |= WOLFSSH_O_RDONLY;
         }
-        else {
+        if (WSTRSTR(mode, "w")) {
             m |= WOLFSSH_O_WRONLY;
         }
     }
 
     if (filename != NULL && f != NULL) {
-        **f = NU_Open(filename, m, 0);
-        return 1;
+        if ((**f = WOPEN(filename, m, 0)) < 0) {
+            return **f;
+        }
+
+        /* fopen defaults to normal */
+        if (NU_Set_Attributes(filename, 0) != NU_SUCCESS) {
+            WCLOSE(**f);
+            return 1;
+        }
+        return 0;
     }
     else {
-        return 0;
+        return 1;
     }
 #else
     if (f != NULL) {

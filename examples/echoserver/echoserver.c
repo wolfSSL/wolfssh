@@ -210,17 +210,19 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
             break;
     }
 
-    if (ret != 0) {
-        fprintf(stderr, "Error [%d] with handling connection.\n", ret);
-        exit(EXIT_FAILURE);
-    }
-
     if (wolfSSH_shutdown(threadCtx->ssh) != WS_SUCCESS) {
         fprintf(stderr, "Error with SSH shutdown.\n");
     }
 
     WCLOSESOCKET(threadCtx->fd);
     wolfSSH_free(threadCtx->ssh);
+
+    if (ret != 0) {
+        fprintf(stderr, "Error [%d] \"%s\" with handling connection.\n", ret,
+                wolfSSH_ErrorToName(ret));
+        exit(EXIT_FAILURE);
+    }
+
     free(threadCtx);
 
     return 0;

@@ -7011,6 +7011,118 @@ int SendChannelSuccess(WOLFSSH* ssh, word32 channelId, int success)
 }
 
 
+#if defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)
+/* cleans up absolute path */
+void clean_path(char* path)
+{
+    int  i;
+    long sz = (long)WSTRLEN(path);
+    byte found;
+
+#ifdef WOLFSSL_NUCLEUS
+    for (i = 0; i < sz; i++) {
+        if (path[i] == '/') path[i] = '\\';
+    }
+#endif
+
+    /* remove any ./ patterns */
+    for (i = 1; i < sz - 1; i++) {
+        if (path[i] == '.' && path[i - 1] != '.' && path[i + 1] == WS_DELIM) {
+            WMEMMOVE(path + i, path + i + 1, sz - i - 1);
+            path[sz - 1] = '\0';
+            i--;
+        }
+    }
+    sz = (int)WSTRLEN(path);
+
+    /* remove any double '/' or '\' chars */
+    for (i = 0; i < sz; i++) {
+        if ((path[i] == WS_DELIM && path[i+1] == WS_DELIM)) {
+            WMEMMOVE(path + i, path + i + 1, sz - i + 1);
+            sz -= 1;
+            i--;
+        }
+    }
+
+    if (path != NULL) {
+        /* go through path until no cases are found */
+        do {
+            sz = WSTRLEN(path);
+            int prIdx = 0; /* begin of cut */
+            int enIdx = 0; /* end of cut */
+
+            found = 0;
+            for (i = 1; i < sz; i++) {
+                if (path[i] == WS_DELIM) {
+                    int z;
+
+                    /* if next two chars are .. then delete */
+                    if (path[i+1] == '.' && path[i+2] == '.') {
+                        enIdx = i + 3;
+
+                        /* start at one char before / and retrace path */
+                        for (z = i - 1; z > 0; z--) {
+                            if (path[z] == WS_DELIM || path[z] == ':') {
+                                prIdx = z;
+                                break;
+                            }
+                        }
+
+                        /* cut out .. and previous */
+                        WMEMMOVE(path + prIdx, path + enIdx, sz - enIdx);
+                        path[sz - (enIdx - prIdx)] = '\0';
+
+                        if (enIdx == sz) {
+                            path[prIdx] = '\0';
+                        }
+
+                        /* case of at / */
+                        if (WSTRLEN(path) == 0) {
+                           path[0] = '/';
+                           path[1] = '\0';
+                        }
+
+                        found = 1;
+                        break;
+                    }
+                }
+            }
+        } while (found);
+
+#ifdef WOLFSSL_NUCLEUS
+        sz = WSTRLEN(path);
+        if (path[sz - 1] == ':') {
+            path[sz] = WS_DELIM;
+            path[sz + 1] = '\0';
+        }
+
+        /* clean up any multiple drive listed i.e. A:/A: */
+        {
+            int i,j;
+            sz = WSTRLEN(path);
+            for (i = 0, j = 0; i < sz; i++) {
+                if (path[i] == ':') {
+                    if (j == 0) j = i;
+                    else {
+                        /* @TODO only checking once */
+                        WMEMMOVE(path, path + i - WS_DRIVE_SIZE,
+                                sz - i + WS_DRIVE_SIZE);
+                        path[sz - i + WS_DRIVE_SIZE] = '\0';
+                        break;
+                    }
+                }
+            }
+        }
+#endif
+        /* remove trailing delimiter */
+        if (sz > 3 && path[sz - 1] == WS_DELIM) {
+            path[sz - 1] = '\0';
+        }
+    }
+}
+#endif /* WOLFSSH_SFTP || WOLFSSH_SCP */
+
+
 #ifdef DEBUG_WOLFSSH
 
 #define LINE_WIDTH 16

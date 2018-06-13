@@ -303,6 +303,9 @@ struct WOLFSSH {
     word32 scpFileBufferSz;       /* size of transfer buffer, octets */
     word32 scpFileOffset;         /* current offset into file transfer */
     word32 scpBufferedSz;         /* bytes buffered to send to peer */
+#ifdef WOLFSSL_NUCLEUS
+    int    scpFd;            /* SCP receive callback context handle */
+#endif
     void*  scpRecvCtx;            /* SCP receive callback context handle */
     void*  scpSendCtx;            /* SCP send callback context handle */
     #if !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
@@ -657,6 +660,7 @@ WOLFSSH_LOCAL int wsScpSendCallback(WOLFSSH*, int, const char*, char*, word32,
 #endif
 
 
+WOLFSSH_LOCAL void clean_path(char* path);
 WOLFSSH_LOCAL void DumpOctetString(const byte*, word32);
 
 

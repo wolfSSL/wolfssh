@@ -54,13 +54,41 @@ extern "C" {
 
 #ifndef NO_FILESYSTEM
 #ifdef WOLFSSL_NUCLEUS
+    #include "storage/nu_storage.h"
+
     #define WFILE int
     WOLFSSH_API int wfopen(WFILE**, const char*, const char*);
 
     #define WFOPEN(f,fn,m)    wfopen((f),(fn),(m))
     #define WFCLOSE(f)        NU_Close(*(f))
-    #define WFWRITE(b,x,s,f)  NU_Write(*(f),(const CHAR*)(b),(s))
+    #define WFWRITE(b,x,s,f)  ((s) != 0)? NU_Write(*(f),(const CHAR*)(b),(s)): 0
     #define WFREAD(b,x,s,f)   NU_Read(*(f),(CHAR*)(b),(s))
+    #define WFSEEK(s,o,w)     NU_Seek(*(s),(o),(w))
+    #define WFTELL(s)         NU_Seek(*(s), 0, PSEEK_CUR)
+    #define WREWIND(s)        NU_Seek(*(s), 0, PSEEK_SET)
+    #define WSEEK_END         PSEEK_END
+
+    #define WS_DELIM '\\'
+    #define WOLFSSH_O_RDWR   PO_RDWR
+    #define WOLFSSH_O_RDONLY PO_RDONLY
+    #define WOLFSSH_O_WRONLY PO_WRONLY
+    #define WOLFSSH_O_APPEND PO_APPEND
+    #define WOLFSSH_O_CREAT  PO_CREAT
+    #define WOLFSSH_O_TRUNC  PO_TRUNC
+    #define WOLFSSH_O_EXCL   PO_EXCL
+
+#ifndef WOPEN
+    static inline int wOpen(const char* f, short flag, short mode)
+    {
+        /* @TODO could use PS_IWRITE only or PS_IREAD only? */
+        return NU_Open(f, PO_TEXT | flag, (PS_IWRITE | PS_IREAD));
+    }
+
+    #define WOPEN(f,m,p) wOpen((f),(m),(p))
+#endif
+
+    #define WCLOSE(fd) NU_Close((fd))
+
 #else
     #define WFILE FILE
     WOLFSSH_API int wfopen(WFILE**, const char*, const char*);
@@ -73,6 +101,7 @@ extern "C" {
     #define WFTELL(s)         ftell((s))
     #define WREWIND(s)        rewind((s))
     #define WSEEK_END         SEEK_END
+    #define WUTIMES(f,t)      utimes((f),(t))
 
     #if (defined(WOLFSSH_SCP) || defined(WOLFSSH_SFTP)) && \
         !defined(WOLFSSH_SCP_USER_CALLBACKS) && \
@@ -139,17 +168,16 @@ extern "C" {
     #define WLOCALTIME(c,r) (localtime_r((c),(r))!=NULL)
 #endif
 
-#if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_SERVER)
+#if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
+        !defined(NO_WOLFSSH_SERVER)
 #ifdef WOLFSSL_NUCLEUS
-    #include "storage/nu_storage.h"
-
     #define WRMDIR(d)   (NU_Remove_Dir((d)) == NU_SUCCESS)?0:1
     #define WMKDIR(d,m) (NU_Make_Dir((d)) == NU_SUCCESS)?0:1
     #define WSTAT(p,b)  NU_Get_First((b),(p))
     #define WLSTAT(p,b) NU_Get_First((b),(p))
     #define WREMOVE(d)   NU_Delete((d))
     #define WRENAME(o,n) NU_Rename((o),(n))
-    #define WS_DELIM '\\'
+    #define WFD int
 
 #ifndef WGETCWD
     static inline char* wGetCwd(char* buf, unsigned int bufSz)
@@ -175,28 +203,6 @@ extern "C" {
     #define WGETCWD(r,rSz) wGetCwd((r),(rSz))
 #endif
 
-    #define WOLFSSH_O_RDWR   PO_RDWR
-    #define WOLFSSH_O_RDONLY PO_RDONLY
-    #define WOLFSSH_O_WRONLY PO_WRONLY
-    #define WOLFSSH_O_APPEND PO_APPEND
-    #define WOLFSSH_O_CREAT  PO_CREAT
-    #define WOLFSSH_O_TRUNC  PO_TRUNC
-    #define WOLFSSH_O_EXCL   PO_EXCL
-
-    #define WFD int
-
-#ifndef WOPEN
-    static inline int wOpen(char* f, short flag, short mode)
-    {
-        /* @TODO could use PS_IWRITE only or PS_IREAD only? */
-        return NU_Open(f, PO_TEXT | flag, (PS_IWRITE | PS_IREAD));
-    }
-
-    #define WOPEN(f,m,p) wOpen((f),(m),(p))
-#endif
-
-    #define WCLOSE(fd) NU_Close((fd))
-
 #ifndef WPWRITE
     static inline int wPwrite(WFD fd, unsigned char* buf, unsigned int sz, long ofst)
     {
@@ -221,11 +227,31 @@ extern "C" {
     #define WPREAD(fd,b,s,o)  wPread((fd),(b),(s),(o))
 #endif
 
+    static inline int wUtimes(const char* f, struct timeval t[2])
+    {
+        DSTAT stat;
+        int ret = -1;
+
+        if (NU_Get_First(&stat, f) == NU_SUCCESS) {
+             ret = NU_Utime(&stat, 0xFFFF, t[0].tv_sec, 0xFFFF, t[1].tv_sec,
+                0xFFFF, 0xFFFF);
+             NU_Done(&stat);
+             if (ret == NU_SUCCESS) {
+                 ret = 0;
+             }
+             else {
+                 ret = -1;
+             }
+        }
+        return ret;
+    }
+    #define WUTIMES(f,t) wUtimes((f), (t))
+
     #ifndef NO_WOLFSSL_DIR
     #define WDIR DSTAT
 
 #ifndef WOPENDIR
-    static inline int wOpenDir(WDIR* d, char* dir)
+    static inline int wOpenDir(WDIR* d, const char* dir)
     {
         int ret;
         int idx = WSTRLEN(dir);
@@ -320,11 +346,11 @@ extern "C" {
 
     /* returns 0 on success */
     #define WOPENDIR(c,d)  ((*(c) = opendir((d))) == NULL)
-    #define WCLOSEDIR(d) closedir((d))
-    #define WREADDIR(d)  readdir((d)) 
+    #define WCLOSEDIR(d) closedir(*(d))
+    #define WREADDIR(d)  readdir(*(d))
 #endif /* NO_WOLFSSL_DIR */
 #endif
-#endif /* WOLFSSH_SFTP */
+#endif /* WOLFSSH_SFTP or WOLFSSH_SCP */
 
 /* setup compiler inlining */
 #ifndef INLINE
