@@ -537,7 +537,7 @@ static INLINE void tcp_listen(SOCKET_T* sockfd, word16* port, int useAnyAddr)
 
 #if !defined(USE_WINDOWS_API) && !defined(WOLFSSL_MDK_ARM)\
                               && !defined(WOLFSSL_KEIL_TCP_NET)\
-    						  && !defined(WOLFSSL_NUCLEUS)
+                              && !defined(WOLFSSL_NUCLEUS)
     {
         int res;
     #ifdef MICROCHIP_TCPIP
