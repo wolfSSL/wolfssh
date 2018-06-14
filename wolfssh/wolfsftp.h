@@ -26,6 +26,8 @@
     #include <wolfssl/options.h>
 #endif
 
+#include <wolfssh/ssh.h>
+
 /* Packet Types */
 enum WS_PacketTypes {
     WOLFSSH_FTP_INIT     = 1,
@@ -107,6 +109,10 @@ enum {
     WOLFSSH_FXF_EXCL    = 0x00000020
 };
 
+#ifndef WS_DRIVE_SIZE
+    #define WS_DRIVE_SIZE 1
+#endif
+
 typedef struct WS_SFTP_FILEATRB_EX WS_SFTP_FILEATRB_EX;
 struct WS_SFTP_FILEATRB_EX {
     char* type;
@@ -118,7 +124,7 @@ struct WS_SFTP_FILEATRB_EX {
 
 typedef struct WS_SFTP_FILEATRB {
     word32 flags;
-    long   sz;
+    word64 sz;
     word32 uid; /* user ID */
     word32 gid; /* group ID */
     word32 per; /* permissions */
@@ -209,6 +215,7 @@ WOLFSSH_LOCAL int wolfSSH_SFTP_RecvRemove(WOLFSSH* ssh, int reqId, word32 maxSz)
 WOLFSSH_LOCAL int wolfSSH_SFTP_RecvRename(WOLFSSH* ssh, int reqId, word32 maxSz);
 WOLFSSH_LOCAL int wolfSSH_SFTP_RecvSTAT(WOLFSSH* ssh, int reqId, word32 maxSz);
 WOLFSSH_LOCAL int wolfSSH_SFTP_RecvLSTAT(WOLFSSH* ssh, int reqId, word32 maxSz);
+WOLFSSH_LOCAL int wolfSSH_SFTP_RecvFSTAT(WOLFSSH* ssh, int reqId, word32 maxSz);
 
 #ifndef NO_WOLFSSL_DIR
 WOLFSSH_LOCAL int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, word32 maxSz);
@@ -216,3 +223,6 @@ WOLFSSH_LOCAL int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, word32 maxSz
 WOLFSSH_LOCAL int wolfSSH_SFTP_RecvCloseDir(WOLFSSH* ssh, byte* handle,
         word32 handleSz);
 #endif /* NO_WOLFSSL_DIR */
+
+WOLFSSL_LOCAL int SFTP_AddHandleNode(WOLFSSH* ssh, byte* handle, word32 handleSz, char* name);
+WOLFSSL_LOCAL int SFTP_RemoveHandleNode(WOLFSSH* ssh, byte* handle, word32 handleSz);

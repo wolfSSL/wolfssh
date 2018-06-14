@@ -24,6 +24,7 @@
 #define WOLFSSH_WOLFSCP_H
 
 #include <wolfssh/settings.h>
+#include <wolfssh/ssh.h>
 #include <wolfssh/port.h>
 
 #ifdef WOLFSSH_SCP
@@ -57,15 +58,20 @@ extern "C" {
     #include <errno.h>
 
     typedef struct ScpSendCtx {
+    #ifndef WOLFSSL_NUCLEUS
         struct dirent* entry;                   /* file entry, from readdir() */
-        struct ScpDir* currentDir;              /* dir being copied, stack */
-        WFILE* fp;                              /* file pointer */
         struct stat s;                          /* stat info from file */
+    #else
+        int   fd; /* file descriptor, in the case of Nucleus fp points to fd */
+        DSTAT s;
+    #endif
+        WFILE* fp;                              /* file pointer */
+        struct ScpDir* currentDir;              /* dir being copied, stack */
         char dirName[DEFAULT_SCP_FILE_NAME_SZ]; /* current dir name */
     } ScpSendCtx;
 
     typedef struct ScpDir {
-        DIR* dir;                            /* dir pointer, from opendir() */
+        WDIR dir;                            /* dir pointer, from opendir() */
         struct ScpDir* next;                 /* previous directory in stack */
     } ScpDir;
 

@@ -93,8 +93,9 @@ enum WS_ErrorCodes {
     WS_MATCH_MAC_ALGO_E    = -53,   /* cannot match MAC algo with peer */
     WS_PERMISSIONS         = -54,
     WS_SFTP_COMPLETE       = -55,   /* SFTP connection established */
+    WS_NEXT_ERROR          = -56,   /* Getting next value/state results in error */
 
-    WS_LAST_E              = -55    /* Update this to indicate last error */
+    WS_LAST_E              = -56    /* Update this to indicate last error */
 };
 
 

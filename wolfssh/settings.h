@@ -49,6 +49,11 @@ extern "C" {
     #define USE_WINDOWS_API
 #endif
 
+#ifdef WOLFSSL_NUCLEUS
+    #ifndef WOLFSSH_STOREHANDLE
+    #define WOLFSSH_STOREHANDLE
+    #endif
+#endif
 
 #ifdef __cplusplus
 }

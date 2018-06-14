@@ -32,6 +32,10 @@
 #include <wolfssh/test.h>
 #include "examples/echoserver/echoserver.h"
 
+#ifdef WOLFSSL_NUCLEUS
+    /* use buffers for keys with server */
+    #define NO_FILESYSTEM
+#endif
 
 #ifdef NO_FILESYSTEM
     #include <wolfssh/certs_test.h>
@@ -206,13 +210,19 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
             break;
     }
 
-    if (ret != 0) {
-        fprintf(stderr, "Error [%d] with handling connection.\n", ret);
-        exit(EXIT_FAILURE);
+    if (wolfSSH_shutdown(threadCtx->ssh) != WS_SUCCESS) {
+        fprintf(stderr, "Error with SSH shutdown.\n");
     }
 
     WCLOSESOCKET(threadCtx->fd);
     wolfSSH_free(threadCtx->ssh);
+
+    if (ret != 0) {
+        fprintf(stderr, "Error [%d] \"%s\" with handling connection.\n", ret,
+                wolfSSH_ErrorToName(ret));
+        exit(EXIT_FAILURE);
+    }
+
     free(threadCtx);
 
     return 0;
@@ -585,6 +595,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     char**  argv = serverArgs->argv;
     serverArgs->return_code = 0;
 
+    if (argc > 0) {
     while ((ch = mygetopt(argc, argv, "?1ep:")) != -1) {
         switch (ch) {
             case '?' :
@@ -611,6 +622,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 ShowUsage();
                 exit(MY_EX_USAGE);
         }
+    }
     }
     myoptind = 0;      /* reset for test cases */
 
@@ -660,13 +672,41 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         buf[bufSz] = 0;
         LoadPublicKeyBuffer(buf, bufSz, &pwMapList);
     }
+#ifdef WOLFSSL_NUCLEUS
+    {
+        int i;
+        int ret = !NU_SUCCESS;
+
+        /* wait for network and storage device */
+        if (NETBOOT_Wait_For_Network_Up(NU_SUSPEND) != NU_SUCCESS) {
+            fprintf(stderr, "Couldn't find network.\r\n");
+            exit(EXIT_FAILURE);
+        }
+
+        for(i = 0; i < 15 && ret != NU_SUCCESS; i++)
+        {
+            fprintf(stdout, "Checking for storage device\r\n");
+
+            ret = NU_Storage_Device_Wait(NU_NULL, NU_PLUS_TICKS_PER_SEC);
+        }
+
+        if (ret != NU_SUCCESS) {
+            fprintf(stderr, "Couldn't find storage device.\r\n");
+            exit(EXIT_FAILURE);
+        }
+    }
+#endif
 
     tcp_listen(&listenFd, &port, 1);
 
     do {
         SOCKET_T      clientFd = 0;
+    #ifdef WOLFSSL_NUCLEUS
+        struct addr_struct clientAddr;
+    #else
         SOCKADDR_IN_T clientAddr;
         socklen_t     clientAddrSz = sizeof(clientAddr);
+    #endif
         WOLFSSH*      ssh;
         thread_ctx_t* threadCtx;
 
@@ -688,10 +728,35 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             wolfSSH_SetHighwater(ssh, defaultHighwater);
         }
 
+    #ifdef WOLFSSL_NUCLEUS
+        {
+            byte   ipaddr[MAX_ADDRESS_SIZE];
+            char   buf[16];
+            short  addrLength;
+            struct sockaddr_struct sock;
+
+            addrLength = sizeof(struct sockaddr_struct);
+
+            /* Get the local IP address for the socket. 0.0.0.0 if ip adder any */
+            if (NU_Get_Sock_Name(listenFd, &sock, &addrLength) != NU_SUCCESS) {
+                fprintf(stderr, "Couldn't find network.\r\n");
+                exit(EXIT_FAILURE);
+            }
+
+            WMEMCPY(ipaddr, &sock.ip_num, MAX_ADDRESS_SIZE);
+            NU_Inet_NTOP(NU_FAMILY_IP, &ipaddr[0], buf, 16);
+            fprintf(stdout, "Listing on %s:%d\r\n", buf, port);
+        }
+    #endif
+
         SignalTcpReady(serverArgs, port);
 
+    #ifdef WOLFSSL_NUCLEUS
+        clientFd = NU_Accept(listenFd, &clientAddr, 0);
+    #else
         clientFd = accept(listenFd, (struct sockaddr*)&clientAddr,
-                                                                 &clientAddrSz);
+                                                         &clientAddrSz);
+    #endif
         if (clientFd == -1)
             err_sys("tcp accept failed");
 
@@ -715,6 +780,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     return 0;
 }
 
+
 #ifndef NO_MAIN_DRIVER
 
     int main(int argc, char** argv)
@@ -734,7 +800,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
         wolfSSH_Init();
 
+#ifndef WOLFSSL_NUCLEUS
         ChangeToWolfSshRoot();
+#endif
         echoserver_test(&args);
 
         wolfSSH_Cleanup();
@@ -747,3 +815,37 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     char* myoptarg = NULL;
 
 #endif /* NO_MAIN_DRIVER */
+
+#ifdef WOLFSSL_NUCLEUS
+
+    #define WS_TASK_SIZE 200000
+    #define WS_TASK_PRIORITY 31
+    static  NU_TASK serverTask;
+
+    /* expecting void return on main function */
+    static VOID main_nucleus(UNSIGNED argc, VOID* argv)
+    {
+        main((int)argc, (char**)argv);
+    }
+
+
+    /* using port 8080 because it was an open port on QEMU */
+    VOID Application_Initialize (NU_MEMORY_POOL* memPool,
+                                 NU_MEMORY_POOL* uncachedPool)
+    {
+        void* pt;
+        int   ret;
+
+        UNUSED_PARAMETER(uncachedPool);
+
+        ret = NU_Allocate_Memory(memPool, &pt, WS_TASK_SIZE, NU_NO_SUSPEND);
+        if (ret == NU_SUCCESS) {
+            ret = NU_Create_Task(&serverTask, "wolfSSH Server", main_nucleus, 0,
+                    NU_NULL, pt, WS_TASK_SIZE, WS_TASK_PRIORITY, 0,
+                    NU_PREEMPT, NU_START);
+            if (ret != NU_SUCCESS) {
+                NU_Deallocate_Memory(pt);
+            }
+        }
+    }
+#endif /* WOLFSSL_NUCLEUS */

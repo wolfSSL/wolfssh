@@ -142,7 +142,7 @@ void DefaultLoggingCb(enum wolfSSH_LogLevel level, const char *const msgStr)
         }
     }
 #endif /* WOLFSSH_NO_TIMESTAMP */
-    fprintf(stdout, "%s[%s] %s\n", timeStr, GetLogStr(level), msgStr);
+    fprintf(stdout, "%s[%s] %s\r\n", timeStr, GetLogStr(level), msgStr);
 }
 #endif /* WOLFSSH_NO_DEFAULT_LOGGING_CB */
 

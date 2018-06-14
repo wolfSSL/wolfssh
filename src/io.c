@@ -128,6 +128,10 @@ void* wolfSSH_GetIOWriteCtx(WOLFSSH* ssh)
         #include "tcpip/tcpip.h"
         #include "sys/errno.h"
         #include <errno.h>
+    #elif defined(WOLFSSL_NUCLEUS)
+        #include "nucleus.h"
+        #include "networking/nu_networking.h"
+        #include <errno.h>
     #else
         #include <sys/types.h>
         #include <errno.h>
@@ -208,6 +212,14 @@ void* wolfSSH_GetIOWriteCtx(WOLFSSH* ssh)
         #define SOCKET_ECONNREFUSED SCK_ERROR
         #define SOCKET_ECONNABORTED SCK_ERROR
     #endif
+#elif defined(WOLFSSL_NUCLEUS)
+    #define SOCKET_EWOULDBLOCK NU_WOULD_BLOCK
+    #define SOCKET_EAGAIN      NU_WOULD_BLOCK
+    #define SOCKET_ECONNRESET  NU_NOT_CONNECTED
+    #define SOCKET_EINTR       NU_NOT_CONNECTED
+    #define SOCKET_EPIPE       NU_NOT_CONNECTED
+    #define SOCKET_ECONNREFUSED NU_CONNECTION_REFUSED
+    #define SOCKET_ECONNABORTED NU_NOT_CONNECTED
 #else
     #define SOCKET_EWOULDBLOCK EWOULDBLOCK
     #define SOCKET_EAGAIN      EAGAIN
@@ -233,6 +245,9 @@ void* wolfSSH_GetIOWriteCtx(WOLFSSH* ssh)
             TCPIP_TCP_ArrayPut((socket),(uint8_t*)(buf),(sz))
     #define RECV_FUNCTION(socket,buf,sz,flags) \
             TCPIP_TCP_ArrayGet((socket),(uint8_t*)(buf),(sz))
+#elif defined(WOLFSSL_NUCLEUS)
+    #define SEND_FUNCTION NU_Send
+    #define RECV_FUNCTION NU_Recv
 #else
     #define SEND_FUNCTION send
     #define RECV_FUNCTION recv
