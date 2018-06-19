@@ -2701,10 +2701,12 @@ static int DoDebug(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     char*    msg = NULL;
     char*    lang = NULL;
     word32 strSz;
-    word32 begin = *idx;
+    word32 begin;
 
-    (void)ssh;
-    (void)len;
+    if (ssh == NULL || buf == NULL || idx == NULL || len < LENGTH_SZ + 1) {
+        return WS_BAD_ARGUMENT;
+    }
+    begin = *idx;
 
     alwaysDisplay = buf[begin++];
 
