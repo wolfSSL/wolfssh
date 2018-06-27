@@ -220,6 +220,7 @@ enum WS_DisconnectReasonCodes {
 #ifndef WOLFSSH_MAX_FILENAME
     #define WOLFSSH_MAX_FILENAME 256
 #endif
+#define WOLFSSH_MAX_OCTET_LEN 6
 
 
 #ifdef __cplusplus

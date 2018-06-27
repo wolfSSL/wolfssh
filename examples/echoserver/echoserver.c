@@ -35,6 +35,7 @@
 #ifdef WOLFSSL_NUCLEUS
     /* use buffers for keys with server */
     #define NO_FILESYSTEM
+    #define WOLFSSH_NO_EXIT
 #endif
 
 #ifdef NO_FILESYSTEM
@@ -210,6 +211,12 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
             break;
     }
 
+    if (ret == WS_FATAL_ERROR && wolfSSH_get_error(threadCtx->ssh) ==
+            WS_VERSION_E) {
+        ret = 0; /* don't break out of loop with version miss match */
+        printf("Unsupported version error\n");
+    }
+
     if (wolfSSH_shutdown(threadCtx->ssh) != WS_SUCCESS) {
         fprintf(stderr, "Error with SSH shutdown.\n");
     }
@@ -220,7 +227,9 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
     if (ret != 0) {
         fprintf(stderr, "Error [%d] \"%s\" with handling connection.\n", ret,
                 wolfSSH_ErrorToName(ret));
+    #ifndef WOLFSSH_NO_EXIT
         exit(EXIT_FAILURE);
+    #endif
     }
 
     free(threadCtx);

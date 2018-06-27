@@ -930,5 +930,3 @@ const char* wolfSSH_GetSessionCommand(const WOLFSSH* ssh)
 
     return NULL;
 }
-
-

@@ -89,6 +89,35 @@ extern "C" {
 
     #define WCLOSE(fd) NU_Close((fd))
 
+    static inline int wChmod(const char* f, int mode) {
+        unsigned char atr = 0;
+
+        if (f == NULL) {
+            return -1;
+        }
+
+        if (NU_Get_Attributes(&atr, f) != NU_SUCCESS) {
+            return -1;
+        }
+
+        /* Set attribute value */
+        atr = atr & 0xF0; /* clear first byte */
+        if (mode == 0x124) {
+            atr |= ARDONLY;   /* set read only value */
+        }
+        else {
+            /* if not setting read only set to normal */
+            atr |= ANORMAL;
+        }
+
+        if (NU_Set_Attributes(f, atr) != NU_SUCCESS) {
+            return -1;
+        }
+        else {
+            return 0;
+        }
+    }
+    #define WCHMOD(f,m) wChmod((f),(m))
 #else
     #define WFILE FILE
     WOLFSSH_API int wfopen(WFILE**, const char*, const char*);
@@ -102,6 +131,7 @@ extern "C" {
     #define WREWIND(s)        rewind((s))
     #define WSEEK_END         SEEK_END
     #define WUTIMES(f,t)      utimes((f),(t))
+    #define WCHMOD(f,m)       chmod((f),(m))
 
     #if (defined(WOLFSSH_SCP) || defined(WOLFSSH_SFTP)) && \
         !defined(WOLFSSH_SCP_USER_CALLBACKS) && \
@@ -247,7 +277,7 @@ extern "C" {
     }
     #define WUTIMES(f,t) wUtimes((f), (t))
 
-    #ifndef NO_WOLFSSL_DIR
+    #ifndef NO_WOLFSSH_DIR
     #define WDIR DSTAT
 
 #ifndef WOPENDIR
@@ -310,7 +340,7 @@ extern "C" {
 
     #define WCLOSEDIR(d) NU_Done((d))
     #define WREADDIR(d)  (NU_Get_Next((d)) == NU_SUCCESS)?(d):NULL
-    #endif /* NO_WOLFSSL_DIR */
+    #endif /* NO_WOLFSSH_DIR */
 #else
     #include <unistd.h>   /* used for rmdir */
     #include <sys/stat.h> /* used for mkdir, stat, and lstat */
@@ -340,7 +370,7 @@ extern "C" {
     #define WPWRITE(fd,b,s,o) pwrite((fd),(b),(s),(o))
     #define WPREAD(fd,b,s,o)  pread((fd),(b),(s),(o))
 
-#ifndef NO_WOLFSSL_DIR
+#ifndef NO_WOLFSSH_DIR
     #include <dirent.h> /* used for opendir, readdir, and closedir */
     #define WDIR DIR*
 
@@ -348,7 +378,7 @@ extern "C" {
     #define WOPENDIR(c,d)  ((*(c) = opendir((d))) == NULL)
     #define WCLOSEDIR(d) closedir(*(d))
     #define WREADDIR(d)  readdir(*(d))
-#endif /* NO_WOLFSSL_DIR */
+#endif /* NO_WOLFSSH_DIR */
 #endif
 #endif /* WOLFSSH_SFTP or WOLFSSH_SCP */
 

@@ -827,6 +827,7 @@ static int GetScpFileMode(WOLFSSH* ssh, byte* buf, word32 bufSz,
     return ret;
 }
 
+
 /* Locates first space present in given string (buf) and sets inOutIdx
  * to that offset.
  *

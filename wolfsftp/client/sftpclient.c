@@ -204,6 +204,7 @@ static void ShowCommands(void)
 {
     printf("\n\nCommands :\n");
     printf("\tcd  <string>                      change directory\n");
+    printf("\tchmod <mode> <path>               change mode\n");
     printf("\tget <remote file> <local file>    pulls file(s) from server\n");
     printf("\tls                                list current directory\n");
     printf("\tmkdir <dir name>                  creates new directory on server\n");
@@ -530,6 +531,61 @@ int doCmds()
 
                 clean_path(workingDir);
             }
+            XFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            continue;
+        }
+
+        if ((pt = WSTRNSTR(msg, "chmod", sizeof(msg))) != NULL) {
+            int sz;
+            char* f = NULL;
+            char mode[WOLFSSH_MAX_OCTET_LEN];
+
+            pt += sizeof("chmod");
+            sz = (int)WSTRLEN(pt);
+
+            if (pt[sz - 1] == '\n') pt[sz - 1] = '\0';
+
+            /* get mode */
+            sz = (sz < WOLFSSH_MAX_OCTET_LEN - 1)? sz :
+                                                   WOLFSSH_MAX_OCTET_LEN -1;
+            WMEMCPY(mode, pt, sz);
+            mode[WOLFSSH_MAX_OCTET_LEN - 1] = '\0';
+            for (i = sz; i > 0; i--) {
+                if (mode[i] == ' ') {
+                    mode[i] = '\0';
+                    break;
+                }
+            }
+            if (i == 0) {
+                printf("error with getting mode\r\n");
+                continue;
+            }
+            pt += (int)WSTRLEN(mode);
+            sz = (int)WSTRLEN(pt);
+            for (i = 0; i < sz && pt[0] == ' '; i++, pt++);
+
+            if (pt[0] != '/') {
+                int maxSz = (int)WSTRLEN(workingDir) + sz + 2;
+                f = XMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                if (f == NULL) {
+                    err_sys("Error malloc'ing");
+                }
+
+                f[0] = '\0';
+                WSTRNCAT(f, workingDir, maxSz);
+                if (WSTRLEN(workingDir) > 1) {
+                    WSTRNCAT(f, "/", maxSz);
+                }
+                WSTRNCAT(f, pt, maxSz);
+
+                pt = f;
+            }
+
+            /* update permissions */
+            if (wolfSSH_SFTP_CHMOD(ssh, pt, mode) != WS_SUCCESS) {
+                printf("unable to change path permissions\n");
+            }
+
             XFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             continue;
         }
