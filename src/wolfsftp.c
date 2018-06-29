@@ -4203,7 +4203,6 @@ int wolfSSH_SFTP_free(WOLFSSH* ssh)
 
         /* go through and free handles and make sure files are closed */
         while (cur != NULL) {
-            printf("closing file....\n");
             WCLOSE(*((WFD*)cur->handle));
             if (SFTP_RemoveHandleNode(ssh, cur->handle, cur->handleSz)
                     != WS_SUCCESS) {
