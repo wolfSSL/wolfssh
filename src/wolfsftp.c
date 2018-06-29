@@ -975,7 +975,7 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
         int   tmpSz;
 
         bufSz = out->fSz + WSTRLEN(dirName) + sizeof(WS_DELIM);
-        buf = (char*)XMALLOC(bufSz + 1, out->heap, DYNTYPE_SFTP);
+        buf = (char*)WMALLOC(bufSz + 1, out->heap, DYNTYPE_SFTP);
         if (buf == NULL) {
             return WS_MEMORY_E;
         }
@@ -1049,7 +1049,7 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
         int   tmpSz;
 
         bufSz = out->fSz + (int)WSTRLEN(dirName) + sizeof(WS_DELIM);
-        buf = (char*)XMALLOC(bufSz + 1, out->heap, DYNTYPE_SFTP);
+        buf = (char*)WMALLOC(bufSz + 1, out->heap, DYNTYPE_SFTP);
         if (buf == NULL) {
             return WS_MEMORY_E;
         }
@@ -2937,7 +2937,7 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
         ato32(buf, &sz);
         tmp->fSz   = sz;
         if (sz > 0) {
-            tmp->fName = (char*)XMALLOC(sz + 1, tmp->heap, DYNTYPE_SFTP);
+            tmp->fName = (char*)WMALLOC(sz + 1, tmp->heap, DYNTYPE_SFTP);
             if (tmp->fName == NULL) {
                 ret = WS_MEMORY_E;
                 break;
@@ -2960,7 +2960,7 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
         ato32(buf, &sz);
         tmp->lSz   = sz;
         if (sz > 0) {
-            tmp->lName = (char*)XMALLOC(sz + 1, tmp->heap, DYNTYPE_SFTP);
+            tmp->lName = (char*)WMALLOC(sz + 1, tmp->heap, DYNTYPE_SFTP);
             if (tmp->lName == NULL) {
                 ret = WS_MEMORY_E;
                 break;
@@ -4189,6 +4189,31 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
     }
 
     return ret;
+}
+
+
+/* called when wolfSSH_free() is called
+ * return WS_SUCCESS on success */
+int wolfSSH_SFTP_free(WOLFSSH* ssh)
+{
+    (void)ssh;
+#ifdef WOLFSSH_STOREHANDLE
+    {
+        WS_HANDLE_LIST* cur = handleList;
+
+        /* go through and free handles and make sure files are closed */
+        while (cur != NULL) {
+            printf("closing file....\n");
+            WCLOSE(*((WFD*)cur->handle));
+            if (SFTP_RemoveHandleNode(ssh, cur->handle, cur->handleSz)
+                    != WS_SUCCESS) {
+                return WS_FATAL_ERROR;
+            }
+            cur = handleList;
+        }
+    }
+#endif
+    return WS_SUCCESS;
 }
 
 #endif /* WOLFSSH_SFTP */

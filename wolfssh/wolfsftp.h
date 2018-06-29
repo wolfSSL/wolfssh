@@ -227,5 +227,6 @@ WOLFSSH_LOCAL int wolfSSH_SFTP_RecvCloseDir(WOLFSSH* ssh, byte* handle,
         word32 handleSz);
 #endif /* NO_WOLFSSH_DIR */
 
+WOLFSSL_LOCAL int wolfSSH_SFTP_free(WOLFSSH* ssh);
 WOLFSSL_LOCAL int SFTP_AddHandleNode(WOLFSSH* ssh, byte* handle, word32 handleSz, char* name);
 WOLFSSL_LOCAL int SFTP_RemoveHandleNode(WOLFSSH* ssh, byte* handle, word32 handleSz);
