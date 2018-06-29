@@ -43,7 +43,8 @@ static int SFTP_ParseAtributes_buffer(WOLFSSH* ssh,  WS_SFTP_FILEATRB* atr,
         byte* buf, word32 bufSz);
 static int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr,
         byte link);
-static int SFTP_GetAttributes_Handle(byte* handle, int handleSz, WS_SFTP_FILEATRB* atr);
+static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
+        WS_SFTP_FILEATRB* atr);
 static WS_SFTPNAME* wolfSSH_SFTPNAME_new(void* heap);
 
 /* Gets packet header information
@@ -1703,21 +1704,21 @@ int wolfSSH_SFTP_RecvRename(WOLFSSH* ssh, int reqId, word32 maxSz)
  * a file descriptor. In those cases we keep track of an internal list matching
  * handles to file names */
 
-typedef struct WS_HANDLE_LIST {
+struct WS_HANDLE_LIST {
     byte handle[WOLFSSH_MAX_HANDLE];
     word32 handleSz;
     char name[WOLFSSH_MAX_FILENAME];
     struct WS_HANDLE_LIST* next;
     struct WS_HANDLE_LIST* prev;
-} WS_HANDLE_LIST;
-static WS_HANDLE_LIST* handleList = NULL;
+};
 
 
 /* get a handle node from the list
  * returns WS_HANDLE_LIST pointer on success and NULL on failure */
-static WS_HANDLE_LIST* SFTP_GetHandleNode(byte* handle, word32 handleSz)
+static WS_HANDLE_LIST* SFTP_GetHandleNode(WOLFSSH* ssh, byte* handle,
+        word32 handleSz)
 {
-    WS_HANDLE_LIST* cur = handleList;
+    WS_HANDLE_LIST* cur = ssh->handleList;
 
     if (handle == NULL) {
         return NULL;
@@ -1764,11 +1765,11 @@ int SFTP_AddHandleNode(WOLFSSH* ssh, byte* handle, word32 handleSz, char* name)
     cur->name[sz] = '\0';
 
     cur->prev = NULL;
-    cur->next = handleList;
-    if (handleList != NULL) {
-         handleList->prev = cur;
+    cur->next = ssh->handleList;
+    if (ssh->handleList != NULL) {
+         ssh->handleList->prev = cur;
     }
-    handleList = cur;
+    ssh->handleList = cur;
 
     return WS_SUCCESS;
 }
@@ -1784,7 +1785,7 @@ int SFTP_RemoveHandleNode(WOLFSSH* ssh, byte* handle, word32 handleSz)
         return WS_BAD_ARGUMENT;
     }
 
-    cur = SFTP_GetHandleNode(handle, handleSz);
+    cur = SFTP_GetHandleNode(ssh, handle, handleSz);
     if (cur == NULL) {
         WLOG(WS_LOG_SFTP, "Fatal Error! Trying to remove a handle that was not in the list");
         return WS_FATAL_ERROR;
@@ -1799,7 +1800,7 @@ int SFTP_RemoveHandleNode(WOLFSSH* ssh, byte* handle, word32 handleSz)
     }
 
     if (cur->next == NULL && cur->prev == NULL) {
-        handleList = NULL;
+        ssh->handleList = NULL;
     }
 
     WFREE(cur, ssh->ctx->heap, DYNTYPE_SFTP);
@@ -1873,7 +1874,8 @@ int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr, byte link)
  * Fills out a WS_SFTP_FILEATRB structure
  * returns WS_SUCCESS on success
  */
-int SFTP_GetAttributes_Handle(byte* handle, int handleSz, WS_SFTP_FILEATRB* atr)
+int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
+        WS_SFTP_FILEATRB* atr)
 {
     DSTAT stats;
     WS_HANDLE_LIST* cur;
@@ -1882,7 +1884,7 @@ int SFTP_GetAttributes_Handle(byte* handle, int handleSz, WS_SFTP_FILEATRB* atr)
         return WS_FATAL_ERROR;
     }
 
-    cur = SFTP_GetHandleNode(handle, handleSz);
+    cur = SFTP_GetHandleNode(ssh, handle, handleSz);
     if (cur == NULL) {
         WLOG(WS_LOG_SFTP, "Unknown handle");
         return WS_BAD_FILE_E;
@@ -1971,7 +1973,8 @@ int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr, byte link)
  * Fills out a WS_SFTP_FILEATRB structure
  * returns WS_SUCCESS on success
  */
-int SFTP_GetAttributes_Handle(byte* handle, int handleSz, WS_SFTP_FILEATRB* atr)
+int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
+        WS_SFTP_FILEATRB* atr)
 {
     struct stat stats;
 
@@ -2004,6 +2007,7 @@ int SFTP_GetAttributes_Handle(byte* handle, int handleSz, WS_SFTP_FILEATRB* atr)
 
     /* @TODO handle attribute extensions */
 
+    (void)ssh;
     return WS_SUCCESS;
 }
 #endif
@@ -2042,7 +2046,7 @@ int wolfSSH_SFTP_RecvFSTAT(WOLFSSH* ssh, int reqId, word32 maxSz)
 
     /* try to get file attributes and send back to client */
     WMEMSET((byte*)&atr, 0, sizeof(WS_SFTP_FILEATRB));
-    if (SFTP_GetAttributes_Handle(handle, handleSz, &atr) != WS_SUCCESS) {
+    if (SFTP_GetAttributes_Handle(ssh, handle, handleSz, &atr) != WS_SUCCESS) {
         WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
         WLOG(WS_LOG_SFTP, "Unable to get fstat of file/directory");
         wolfSSH_SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
@@ -4199,7 +4203,7 @@ int wolfSSH_SFTP_free(WOLFSSH* ssh)
     (void)ssh;
 #ifdef WOLFSSH_STOREHANDLE
     {
-        WS_HANDLE_LIST* cur = handleList;
+        WS_HANDLE_LIST* cur = ssh->handleList;
 
         /* go through and free handles and make sure files are closed */
         while (cur != NULL) {
@@ -4208,7 +4212,7 @@ int wolfSSH_SFTP_free(WOLFSSH* ssh)
                     != WS_SUCCESS) {
                 return WS_FATAL_ERROR;
             }
-            cur = handleList;
+            cur = ssh->handleList;
         }
     }
 #endif

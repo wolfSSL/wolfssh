@@ -245,6 +245,7 @@ typedef struct HandshakeInfo {
 #ifdef WOLFSSH_SFTP
 #define WOLFSSH_MAX_SFTPOFST 3
 
+typedef struct WS_HANDLE_LIST WS_HANDLE_LIST;
 typedef struct SFTP_OFST {
     word64 offset;
     char from[WOLFSSH_MAX_FILENAME];
@@ -312,7 +313,6 @@ struct WOLFSSH {
     ScpSendCtx scpSendCbCtx;      /* used in default case to for send cb ctx */
     #endif
 #endif
-
     byte connReset;
     byte isClosed;
     byte clientOpenSSH;
@@ -369,6 +369,9 @@ struct WOLFSSH {
     byte   sftpState;
     byte   sftpInt;
     SFTP_OFST sftpOfst[WOLFSSH_MAX_SFTPOFST];
+#ifdef WOLFSSH_STOREHANDLE
+    WS_HANDLE_LIST* handleList;
+#endif
 #endif
 };
 
