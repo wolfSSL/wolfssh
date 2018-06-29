@@ -1048,14 +1048,14 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
         int   bufSz;
         int   tmpSz;
 
-        bufSz = out->fSz + WSTRLEN(dirName) + sizeof(WS_DELIM);
+        bufSz = out->fSz + (int)WSTRLEN(dirName) + sizeof(WS_DELIM);
         buf = (char*)XMALLOC(bufSz + 1, out->heap, DYNTYPE_SFTP);
         if (buf == NULL) {
             return WS_MEMORY_E;
         }
         buf[0] = '\0';
         WSTRNCAT(buf, dirName, bufSz);
-        tmpSz = WSTRLEN(buf);
+        tmpSz = (int)WSTRLEN(buf);
 
         /* add delimiter between path and file/dir name */
         if (tmpSz + 1 < bufSz) {
@@ -3116,12 +3116,13 @@ int wolfSSH_SFTP_CHMOD(WOLFSSH* ssh, char* n, char* oct)
     }
 
     /* convert from octal to decimal */
-    mode = wolfSSH_oct2dec(ssh, (byte*)oct, WSTRLEN(oct));
+    mode = wolfSSH_oct2dec(ssh, (byte*)oct, (word32)WSTRLEN(oct));
     if (mode < 0) {
         return mode;
     }
 
     /* get current attributes of path */
+    WMEMSET(&atr, 0, sizeof(WS_SFTP_FILEATRB));
     if ((ret = wolfSSH_SFTP_STAT(ssh, n, &atr)) != WS_SUCCESS) {
         return ret;
     }
