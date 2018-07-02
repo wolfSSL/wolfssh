@@ -6,9 +6,9 @@ user="demo"
 password="password"
 
 if test -n "$WOLFSSH_EXTERNAL_TEST"; then
-    echo "WOLFSSL_EXTERNAH_TEST set, running test..."
+    echo "WOLFSSH_EXTERNAL_TEST set, running test..."
 else
-    echo "WOLFSSL_EXTERNAH_TEST NOT set, won't run"
+    echo "WOLFSSH_EXTERNAL_TEST NOT set, won't run"
     exit 0
 fi
 
@@ -38,7 +38,8 @@ echo -e "Success\n"
 
 
 # not having the sftp client built in is not a failure case
-if [ -x ./wolfsftp/client/wolfsftp ]; then
+./wolfsftp/client/wolfsftp -h
+if [ $? == 0 ]; then
     echo "Testing wolfsftp connection to $host : "
     echo "exit" | ./wolfsftp/client/wolfsftp -u $user -P $password -h $host -p 22
     RESULT=$?
