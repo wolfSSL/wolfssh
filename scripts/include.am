@@ -8,3 +8,5 @@ if BUILD_SFTP
 dist_noinst_SCRIPTS+= scripts/sftp.test
 endif
 
+dist_noinst_SCRIPTS+= scripts/external.test
+

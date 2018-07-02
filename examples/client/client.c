@@ -100,6 +100,8 @@ static void ShowUsage(void)
     printf(" -p <num>      port to connect on, default %d\n", wolfSshPort);
     printf(" -u <username> username to authenticate as (REQUIRED)\n");
     printf(" -P <password> password for username, prompted if omitted\n");
+    printf(" -x            exit after successful connection without doing\n"
+           "               read/write\n");
 }
 
 
@@ -160,12 +162,13 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     char* host = (char*)wolfSshIp;
     const char* username = NULL;
     const char* password = NULL;
+    byte imExit = 0;
 
     int     argc = ((func_args*)args)->argc;
     char**  argv = ((func_args*)args)->argv;
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?h:p:u:P:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?h:p:u:P:x")) != -1) {
         switch (ch) {
             case 'h':
                 host = myoptarg;
@@ -185,6 +188,11 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
             case 'P':
                 password = myoptarg;
+                break;
+
+            case 'x':
+                /* exit after successful connection without read/write */
+                imExit = 1;
                 break;
 
             case '?':
@@ -235,16 +243,18 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     if (ret != WS_SUCCESS)
         err_sys("Couldn't connect SSH stream.");
 
-    ret = wolfSSH_stream_send(ssh, (byte*)testString,
-                              (word32)strlen(testString));
-    if (ret <= 0)
-        err_sys("Couldn't send test string.");
+    if (!imExit) {
+        ret = wolfSSH_stream_send(ssh, (byte*)testString,
+                                  (word32)strlen(testString));
+        if (ret <= 0)
+            err_sys("Couldn't send test string.");
 
-    ret = wolfSSH_stream_read(ssh, (byte*)rxBuf, sizeof(rxBuf) - 1);
-    if (ret <= 0)
-        err_sys("Stream read failed.");
-    rxBuf[ret] = '\0';
-    printf("Server said: %s\n", rxBuf);
+        ret = wolfSSH_stream_read(ssh, (byte*)rxBuf, sizeof(rxBuf) - 1);
+        if (ret <= 0)
+            err_sys("Stream read failed.");
+        rxBuf[ret] = '\0';
+        printf("Server said: %s\n", rxBuf);
+    }
 
     ret = wolfSSH_shutdown(ssh);
     if (ret != WS_SUCCESS)
