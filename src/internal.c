@@ -2531,7 +2531,7 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     (void)len;
     (void)idx;
 
-    if (ssh == NULL)
+    if (ssh == NULL || ssh->handshake == NULL)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
