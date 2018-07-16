@@ -16,6 +16,8 @@ EXTRA_HEADERS =
 BUILT_SOURCES=
 EXTRA_DIST=
 dist_doc_DATA=
+dist_noinst_SCRIPTS=
+check_SCRIPTS=
 
 
 #includes additional rules from aminclude.am
@@ -37,10 +39,15 @@ include tests/include.am
 include keys/include.am
 include ide/include.am
 include wolfsftp/include.am
+include scripts/include.am
 
 
 TEST_EXTENSIONS = .test
 TESTS += $(check_PROGRAMS)
+
+check_SCRIPTS+= $(dist_noinst_SCRIPTS)
+TESTS += $(check_SCRIPTS)
+
 test: check
 
 DISTCLEANFILES+= wolfssh-config

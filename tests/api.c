@@ -21,6 +21,9 @@
 
 #include <stdio.h>
 #include <wolfssh/ssh.h>
+#ifdef WOLFSSH_SCP
+    #include <wolfssh/wolfscp.h>
+#endif
 
 
 #define Fail(description, result) do {                                         \
@@ -154,6 +157,61 @@ static void test_wolfSSH_SetUsername(void)
 }
 
 
+#ifdef WOLFSSH_SCP
+static int my_ScpRecv(WOLFSSH* ssh, int state, const char* basePath,
+    const char* fileName, int fileMode, word64 mTime, word64 aTime,
+    word32 totalFileSz, byte* buf, word32 bufSz, word32 fileOffset,
+    void* ctx)
+{
+    (void)ssh;
+
+    printf("calling scp recv cb with state %d\n", state);
+    printf("\tbase path = %s\n", basePath);
+    printf("\tfile name = %s\n", fileName);
+    printf("\tfile mode = %d\n", fileMode);
+    printf("\tfile size = %d\n", totalFileSz);
+    printf("\tfile offset = %d\n", fileOffset);
+
+    (void)mTime;
+    (void)aTime;
+    (void)buf;
+    (void)bufSz;
+    (void)ctx;
+
+    return WS_SCP_ABORT; /* error out for test function */
+}
+#endif
+
+
+static void test_wolfSSH_SCP_CB(void)
+{
+#ifdef WOLFSSH_SCP
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    int i = 3, j = 4; /* arbitrary value */
+    const char err[] = "test setting error msg";
+
+    AssertIntNE(WS_SUCCESS, wolfSSH_SetUsername(NULL, NULL));
+
+    AssertNotNull(ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL));
+    wolfSSH_SetScpRecv(ctx, my_ScpRecv);
+    AssertNotNull(ssh = wolfSSH_new(ctx));
+
+    wolfSSH_SetScpRecvCtx(ssh, (void*)&i);
+    AssertIntEQ(i, *(int*)wolfSSH_GetScpRecvCtx(ssh));
+
+    wolfSSH_SetScpSendCtx(ssh, (void*)&j);
+    AssertIntEQ(j, *(int*)wolfSSH_GetScpSendCtx(ssh));
+    AssertIntNE(j, *(int*)wolfSSH_GetScpRecvCtx(ssh));
+
+    AssertIntEQ(wolfSSH_SetScpErrorMsg(ssh, err), WS_SUCCESS);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+#endif /* WOLFSSH_NO_CLIENT */
+}
+
+
 int main(void)
 {
     AssertIntEQ(wolfSSH_Init(), WS_SUCCESS);
@@ -162,6 +220,9 @@ int main(void)
     test_server_wolfSSH_new();
     test_client_wolfSSH_new();
     test_wolfSSH_SetUsername();
+
+    /* SCP tests */
+    test_wolfSSH_SCP_CB();
 
     AssertIntEQ(wolfSSH_Cleanup(), WS_SUCCESS);
 

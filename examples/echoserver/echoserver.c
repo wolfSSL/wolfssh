@@ -599,13 +599,14 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     int useEcc = 0;
     char ch;
     word16 port = wolfSshPort;
+    char* readyFile = NULL;
 
     int     argc = serverArgs->argc;
     char**  argv = serverArgs->argv;
     serverArgs->return_code = 0;
 
     if (argc > 0) {
-    while ((ch = mygetopt(argc, argv, "?1ep:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?1ep:R:")) != -1) {
         switch (ch) {
             case '?' :
                 ShowUsage();
@@ -625,6 +626,10 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                     if (port == 0)
                         err_sys("port number cannot be 0");
                 #endif
+                break;
+
+            case 'R':
+                readyFile = myoptarg;
                 break;
 
             default:
@@ -706,7 +711,21 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     }
 #endif
 
+    /* if creating a ready file with port then override port to be 0 */
+    if (readyFile != NULL) {
+        port = 0;
+    }
     tcp_listen(&listenFd, &port, 1);
+    /* write out port number listing to, to user set ready file */
+    if (readyFile != NULL) {
+        WFILE* f = NULL;
+        int    ret;
+        ret = WFOPEN(&f, readyFile, "w");
+        if (f != NULL && ret == 0) {
+            fprintf(f, "%d\n", (int)port);
+            WFCLOSE(f);
+        }
+    }
 
     do {
         SOCKET_T      clientFd = 0;
