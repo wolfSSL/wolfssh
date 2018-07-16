@@ -128,6 +128,11 @@ void wolfSSH_free(WOLFSSH* ssh)
 
     if (ssh) {
         void* heap = ssh->ctx ? ssh->ctx->heap : NULL;
+    #ifdef WOLFSSH_SFTP
+        if (wolfSSH_SFTP_free(ssh) != WS_SUCCESS) {
+            WLOG(WS_LOG_SFTP, "Error cleaning up SFTP connection");
+        }
+    #endif
         SshResourceFree(ssh, heap);
         WFREE(ssh, heap, DYNTYPE_SSH);
     }
@@ -930,5 +935,3 @@ const char* wolfSSH_GetSessionCommand(const WOLFSSH* ssh)
 
     return NULL;
 }
-
-

@@ -169,6 +169,7 @@ WOLFSSH_API int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle,
         word32 handleSz, word64 ofst, byte* out, word32 outSz);
 WOLFSSH_API int wolfSSH_SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr);
 WOLFSSH_API int wolfSSH_SFTP_LSTAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr);
+WOLFSSH_API int wolfSSH_SFTP_SetSTAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr);
 
 WOLFSSH_API void wolfSSH_SFTPNAME_free(WS_SFTPNAME* n);
 WOLFSSH_API void wolfSSH_SFTPNAME_list_free(WS_SFTPNAME* n);
@@ -190,6 +191,7 @@ WOLFSSH_API int wolfSSH_SFTP_RMDIR(WOLFSSH* ssh, char* dir);
 WOLFSSH_API int wolfSSH_SFTP_Rename(WOLFSSH* ssh, const char* old,
         const char* nw);
 WOLFSSH_API WS_SFTPNAME* wolfSSH_SFTP_LS(WOLFSSH* ssh, char* dir);
+WOLFSSH_API int wolfSSH_SFTP_CHMOD(WOLFSSH* ssh, char* n, char* oct);
 
 typedef void(WS_STATUS_CB)(WOLFSSH*, long, char*);
 WOLFSSH_API int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from, char* to,
@@ -215,14 +217,16 @@ WOLFSSH_LOCAL int wolfSSH_SFTP_RecvRemove(WOLFSSH* ssh, int reqId, word32 maxSz)
 WOLFSSH_LOCAL int wolfSSH_SFTP_RecvRename(WOLFSSH* ssh, int reqId, word32 maxSz);
 WOLFSSH_LOCAL int wolfSSH_SFTP_RecvSTAT(WOLFSSH* ssh, int reqId, word32 maxSz);
 WOLFSSH_LOCAL int wolfSSH_SFTP_RecvLSTAT(WOLFSSH* ssh, int reqId, word32 maxSz);
+WOLFSSH_LOCAL int wolfSSH_SFTP_RecvSetSTAT(WOLFSSH* ssh, int reqId, word32 maxSz);
 WOLFSSH_LOCAL int wolfSSH_SFTP_RecvFSTAT(WOLFSSH* ssh, int reqId, word32 maxSz);
 
-#ifndef NO_WOLFSSL_DIR
+#ifndef NO_WOLFSSH_DIR
 WOLFSSH_LOCAL int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, word32 maxSz);
 WOLFSSH_LOCAL int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, word32 maxSz);
 WOLFSSH_LOCAL int wolfSSH_SFTP_RecvCloseDir(WOLFSSH* ssh, byte* handle,
         word32 handleSz);
-#endif /* NO_WOLFSSL_DIR */
+#endif /* NO_WOLFSSH_DIR */
 
+WOLFSSL_LOCAL int wolfSSH_SFTP_free(WOLFSSH* ssh);
 WOLFSSL_LOCAL int SFTP_AddHandleNode(WOLFSSH* ssh, byte* handle, word32 handleSz, char* name);
 WOLFSSL_LOCAL int SFTP_RemoveHandleNode(WOLFSSH* ssh, byte* handle, word32 handleSz);
