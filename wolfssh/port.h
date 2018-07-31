@@ -206,7 +206,71 @@ extern "C" {
     #define WSTAT(p,b)  NU_Get_First((b),(p))
     #define WLSTAT(p,b) NU_Get_First((b),(p))
     #define WREMOVE(d)   NU_Delete((d))
-    #define WRENAME(o,n) NU_Rename((o),(n))
+
+#ifndef WS_MAX_RENAME_BUF
+#define WS_MAX_RENAME_BUF 256
+#endif
+
+    static inline int wRename(char* o, char* n)
+    {
+        int ret;
+
+        if (o == NULL || n == NULL) {
+            return NUF_BADPARM;
+        }
+
+        ret = NU_Rename(o, n);
+
+        /* try to handle case of from one drive to another */
+        if (ret == NUF_BADPARM && o[0] != n[0]) {
+            WFILE* fOld;
+            WFILE* fNew;
+            unsigned char buf[WS_MAX_RENAME_BUF];
+
+            if ((ret = WFOPEN(&fOld, o, "rb")) != 0) {
+                return ret;
+            }
+
+            if ((ret = WFOPEN(&fNew, n, "rwb")) != 0) {
+                WFCLOSE(fOld);
+                return ret;
+            }
+
+            /* read from the file in chunks and write chunks to new file */
+            do {
+                ret = WFREAD(buf, 1, WS_MAX_RENAME_BUF, fOld);
+                if (ret > 0) {
+                    if ((WFWRITE(buf, 1, ret, fNew)) != ret) {
+                        WFCLOSE(fOld);
+                        WFCLOSE(fNew);
+                        WREMOVE(n);
+                        return NUF_BADPARM;
+                    }
+                }
+            } while (ret > 0);
+
+            if (WFTELL(fOld) == WFSEEK(fOld, 0, WSEEK_END)) {
+                /* wrote everything from file */
+                WFCLOSE(fOld);
+                WREMOVE(o);
+                WFCLOSE(fNew);
+            }
+            else {
+                /* unable to write everything to file */
+                WFCLOSE(fNew);
+                WREMOVE(n);
+                WFCLOSE(fOld);
+                return NUF_BADPARM;
+            }
+
+            return 0;
+        }
+
+        /* not special case so just return value from NU_Rename */
+        return ret;
+    }
+
+    #define WRENAME(o,n) wRename((o),(n))
     #define WFD int
 
 #ifndef WGETCWD
@@ -286,6 +350,12 @@ extern "C" {
         int ret;
         int idx = WSTRLEN(dir);
         char tmp[256]; /* default max file name size */
+
+        /* handle special case at "/" to list all drives */
+        if (idx < 3 && dir[0] == WS_DELIM) {
+            d->fsize = 0; /* used to count number of drives */
+            return NU_SUCCESS;
+        }
 
         if (idx < 3) {
             return -1;

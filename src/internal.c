@@ -7093,6 +7093,7 @@ void clean_path(char* path)
 
 #ifdef WOLFSSL_NUCLEUS
         sz = WSTRLEN(path);
+
         if (path[sz - 1] == ':') {
             path[sz] = WS_DELIM;
             path[sz + 1] = '\0';
@@ -7114,6 +7115,14 @@ void clean_path(char* path)
                     }
                 }
             }
+        }
+
+        /* remove leading '/' for nucleus. Preserve case of single "/" */
+        sz = WSTRLEN(path);
+        while (sz > 2 && path[0] == WS_DELIM) {
+            sz--;
+            WMEMMOVE(path, path + 1, sz);
+            path[sz] = '\0';
         }
 #endif
         /* remove trailing delimiter */
