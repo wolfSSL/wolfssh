@@ -51,6 +51,10 @@
     #error "scp with no filesystem requires user callbacks"
 #endif
 
+static int ScpFileIsDir(ScpSendCtx* ctx);
+static int ScpPushDir(ScpSendCtx* ctx, const char* path, void* heap);
+static int ScpPopDir(ScpSendCtx* ctx, void* heap);
+
 const char scpError[] = "scp error: %s, %d";
 const char scpState[] = "scp state: %s";
 
@@ -1041,6 +1045,54 @@ static int GetScpTimestamp(WOLFSSH* ssh, byte* buf, word32 bufSz,
     return ret;
 }
 
+
+/* helps with checking if the base path is a directory or file */
+static int ParseBasePathHelper(WOLFSSH* ssh, int cmdSz)
+{
+    ScpSendCtx ctx;
+    int ret = WS_SUCCESS;
+
+    if (ScpPushDir(&ctx, ssh->scpBasePath, ssh->ctx->heap) != WS_SUCCESS) {
+        /* case of file, not directory */
+        char buf[cmdSz + 4];
+        int  sz = (int)WSTRLEN(ssh->scpBasePath);
+        int  idx;
+
+        if (sz > (int)sizeof(buf)) {
+            return WS_BUFFER_E;
+        }
+
+        WSTRNCPY(buf, ssh->scpBasePath, sz);
+        buf[sz] = '\0';
+        WSTRNCAT(buf, "/..", sizeof("/.."));
+        clean_path(buf);
+
+        idx = WSTRLEN(buf) + 1; /* +1 for delimiter */
+        if (idx > cmdSz || idx > sz) {
+            return WS_BUFFER_E;
+        }
+
+        sz = sz - idx; /* size of file name */
+        ssh->scpFileName = (char*)WMALLOC(sz + 1, ssh->ctx->heap,
+                DYNTYPE_STRING);
+        if (ssh->scpFileName == NULL) {
+            WLOG(WS_LOG_DEBUG, "scp: memory error creaating file name\n");
+            ssh->scpBasePath = NULL;
+            return WS_MEMORY_E;
+        }
+        WSTRNCPY(ssh->scpFileName, ssh->scpBasePath + idx, sz);
+        ssh->scpFileName[sz]  = '\0';
+        *((char*)ssh->scpBasePath + idx) = '\0';
+    }
+    else {
+        ret = ScpPopDir(&ctx, ssh->ctx->heap);
+    }
+
+    /* default case of directory */
+    return ret;
+}
+
+
 /*int GetScpBasePath(WOLFSSH* ssh, const char* in)
 {
     int ret = WS_SUCCESS, len;
@@ -1110,6 +1162,7 @@ int ParseScpCommand(WOLFSSH* ssh)
                             ssh->scpBasePath = cmd + idx;
                             clean_path((char*)ssh->scpBasePath);
                         }
+                        ret = ParseBasePathHelper(ssh, cmdSz);
                         break;
 
                     case 'f':
@@ -1178,7 +1231,9 @@ int ReceiveScpMessage(WOLFSSH* ssh)
             if ((ret = GetScpFileSize(ssh, buf, sz, &idx)) != WS_SUCCESS)
                 break;
 
-            ret = GetScpFileName(ssh, buf, sz, &idx);
+            if (ssh->scpFileName == NULL) {
+                ret = GetScpFileName(ssh, buf, sz, &idx);
+            }
             break;
 
         case 'E':
@@ -1766,7 +1821,7 @@ static ScpDir* ScpNewDir(const char* path, void* heap)
 }
 
 /* Create and push new ScpDir on stack, append directory to ctx->dirName */
-static int ScpPushDir(ScpSendCtx* ctx, const char* path, void* heap)
+int ScpPushDir(ScpSendCtx* ctx, const char* path, void* heap)
 {
     ScpDir* entry;
 
@@ -1793,7 +1848,7 @@ static int ScpPushDir(ScpSendCtx* ctx, const char* path, void* heap)
 }
 
 /* Remove top ScpDir from directory stack, remove dir from ctx->dirName */
-static int ScpPopDir(ScpSendCtx* ctx, void* heap)
+int ScpPopDir(ScpSendCtx* ctx, void* heap)
 {
     ScpDir* entry = NULL;
     int idx = 0, separator = 0;
@@ -1869,7 +1924,7 @@ static int ScpDirStackIsEmpty(ScpSendCtx* ctx)
 }
 
 /* returns 1 if is directory */
-static int ScpFileIsDir(ScpSendCtx* ctx)
+int ScpFileIsDir(ScpSendCtx* ctx)
 {
 #ifdef WOLFSSL_NUCLEUS
     return (ctx->s.fattribute & ADIRENT);
