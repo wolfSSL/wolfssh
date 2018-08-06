@@ -1046,7 +1046,8 @@ static int GetScpTimestamp(WOLFSSH* ssh, byte* buf, word32 bufSz,
 }
 
 
-/* helps with checking if the base path is a directory or file */
+/* helps with checking if the base path is a directory or file
+ * returns WS_SUCCESS on success */
 static int ParseBasePathHelper(WOLFSSH* ssh, int cmdSz)
 {
     ScpSendCtx ctx;
@@ -1067,7 +1068,7 @@ static int ParseBasePathHelper(WOLFSSH* ssh, int cmdSz)
         WSTRNCAT(buf, "/..", sizeof("/.."));
         clean_path(buf);
 
-        idx = WSTRLEN(buf) + 1; /* +1 for delimiter */
+        idx = (int)WSTRLEN(buf) + 1; /* +1 for delimiter */
         if (idx > cmdSz || idx > sz) {
             return WS_BUFFER_E;
         }
