@@ -1087,6 +1087,9 @@ static int ParseBasePathHelper(WOLFSSH* ssh, int cmdSz)
     }
     else {
         ret = ScpPopDir(&ctx, ssh->ctx->heap);
+        if (ret == WS_SCP_DIR_STACK_EMPTY_E) {
+            ret = WS_SUCCESS; /* is ok to empty the directory stack here */
+        }
     }
 
     /* default case of directory */
