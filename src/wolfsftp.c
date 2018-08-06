@@ -945,9 +945,37 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
         char* dirName)
 {
     int sz;
+    byte special = 0;
+    int ret = WS_SUCCESS;
 
     if (dir == NULL || ssh == NULL || out == NULL) {
         return WS_BAD_ARGUMENT;
+    }
+
+    /* special case of getting drives at "/" */
+    if (WSTRLEN(dirName) < 3 && dirName[0] == WS_DELIM) {
+        unsigned int idx = dir->fsize; /* index of current drive */
+        MNT_LIST_S* list = NU_NULL;
+
+        if (NU_List_Mount(&list) != NU_SUCCESS) {
+            return WS_FATAL_ERROR;
+        }
+
+        for (; idx > 0 && list != NU_NULL; idx--) list = list->next;
+        if (list == NULL) {
+            return WS_FATAL_ERROR;
+        }
+
+        if (list->next == NULL) {
+            ret = WS_NEXT_ERROR;
+        }
+
+        dir->lfname[0] =  list->mnt_name[0];
+        dir->lfname[1] =  ':';
+        dir->lfname[2] =  '/';
+        dir->lfname[3] =  '\0';
+        dir->fsize++;
+        special = 1;
     }
 
     /* use long name on Nucleus because sfname has only the file name and in all
@@ -981,13 +1009,16 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
             return WS_MEMORY_E;
         }
         buf[0] = '\0';
-        WSTRNCAT(buf, dirName, bufSz);
-        tmpSz = WSTRLEN(buf);
+        if (!special) { /* do not add dir name in special case */
+            WSTRNCAT(buf, dirName, bufSz);
+            tmpSz = WSTRLEN(buf);
 
-        /* add delimiter between path and file/dir name */
-        if (tmpSz + 1 < bufSz) {
-            buf[tmpSz] = WS_DELIM;
-            buf[tmpSz+1] = '\0';
+            /* add delimiter between path and file/dir name */
+            if (tmpSz + 1 < bufSz) {
+                buf[tmpSz] = WS_DELIM;
+                buf[tmpSz+1] = '\0';
+            }
+
         }
         WSTRNCAT(buf, out->fName, bufSz);
 
@@ -998,11 +1029,11 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
         WFREE(buf, out->heap, DYNTYPE_SFTP);
     }
 
-    if ((WREADDIR(dir)) == NULL) {
-        return WS_NEXT_ERROR;
+    if (!special && (WREADDIR(dir)) == NULL) {
+        ret = WS_NEXT_ERROR;
     }
 
-    return WS_SUCCESS;
+    return ret;
 }
 #else
 /* helper function that gets file information from reading directory
@@ -1831,6 +1862,13 @@ int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr, byte link)
 
     WMEMSET(atr, 0, sizeof(WS_SFTP_FILEATRB));
     if (sz > 2 && fileName[sz - 2] == ':' && ret == NUF_NOFILE) {
+        atr->flags |= WOLFSSH_FILEATRB_PERM;
+        atr->per |= 0x4000;
+        return WS_SUCCESS;
+    }
+
+    /* handle case of "/" */
+    if (sz < 3 && fileName[0] == WS_DELIM && ret == NUF_NOFILE) {
         atr->flags |= WOLFSSH_FILEATRB_PERM;
         atr->per |= 0x4000;
         return WS_SUCCESS;
