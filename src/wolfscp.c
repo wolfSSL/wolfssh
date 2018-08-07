@@ -1074,15 +1074,24 @@ static int ParseBasePathHelper(WOLFSSH* ssh, int cmdSz)
         }
 
         sz = sz - idx; /* size of file name */
-        ssh->scpFileName = (char*)WMALLOC(sz + 1, ssh->ctx->heap,
+        if (ssh->scpFileNameSz < (word32)sz || ssh->scpFileName == NULL) {
+            if (ssh->scpFileName != NULL) {
+                WFREE(ssh->scpFileName, ssh->ctx->heap, DYNTYPE_STRING);
+                ssh->scpFileNameSz = 0;
+            }
+            ssh->scpFileName = (char*)WMALLOC(sz + 1, ssh->ctx->heap,
                 DYNTYPE_STRING);
-        if (ssh->scpFileName == NULL) {
-            WLOG(WS_LOG_DEBUG, "scp: memory error creaating file name\n");
-            ssh->scpBasePath = NULL;
-            return WS_MEMORY_E;
+            if (ssh->scpFileName == NULL) {
+                WLOG(WS_LOG_DEBUG, "scp: memory error creaating file name\n");
+                ssh->scpBasePath = NULL;
+                return WS_MEMORY_E;
+            }
         }
+
+        ssh->scpFileReName = ssh->scpFileName;
         WSTRNCPY(ssh->scpFileName, ssh->scpBasePath + idx, sz);
         ssh->scpFileName[sz]  = '\0';
+        ssh->scpFileNameSz    = sz;
         *((char*)ssh->scpBasePath + idx) = '\0';
     }
     else {
@@ -1235,8 +1244,11 @@ int ReceiveScpMessage(WOLFSSH* ssh)
             if ((ret = GetScpFileSize(ssh, buf, sz, &idx)) != WS_SUCCESS)
                 break;
 
-            if (ssh->scpFileName == NULL) {
+            if (ssh->scpFileReName == NULL) {
                 ret = GetScpFileName(ssh, buf, sz, &idx);
+            }
+            else {
+                ssh->scpFileReName = NULL;
             }
             break;
 

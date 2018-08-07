@@ -296,6 +296,7 @@ struct WOLFSSH {
     int    scpFileMode;           /* mode/permission of file/dir */
     word32 scpFileSz;             /* total size of file/dir being transferred */
     char*  scpFileName;           /* file name, dynamic */
+    char*  scpFileReName;         /* file rename case, points to scpFileName */
     word32 scpFileNameSz;         /* length of fileName, not including \0 */
     byte   scpTimestamp;          /* did peer request timestamp? {0:1} */
     word64 scpATime;              /* scp file access time, secs since epoch */
