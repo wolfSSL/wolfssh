@@ -38,9 +38,7 @@ LT_PREREQ([2.2])
 LT_INIT([disable-static win32-dll])
 
 gl_VISIBILITY
-AS_IF([test -n "$CFLAG_VISIBILITY"],
-      [AM_CPPFLAGS="$AM_CPPFLAGS $CFLAG_VISIBILITY"
-       CPPFLAGS="$CPPFLAGS $CFLAG_VISIBILITY"])
+AS_IF([test -n "$CFLAG_VISIBILITY"],[AM_CFLAGS="$AM_CFLAGS $CFLAG_VISIBILITY"])
 
 # silent
 m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
@@ -74,7 +72,7 @@ AS_IF([test "x$ax_enable_debug" = "xyes"],
       [AM_CFLAGS="$DEBUG_CFLAGS $AM_CFLAGS"
        AM_CPPFLAGS="$DEBUG_CPPFLAGS $AM_CPPFLAGS"],
       [AM_CFLAGS="$AM_CFLAGS -O2"
-       AM_CPPFLAGS="-DNDEBUG $AM_CFLAGS"])
+       AM_CPPFLAGS="-DNDEBUG $AM_CPPFLAGS"])
 
 AX_PTHREAD([
     # If AX_PTHREAD is adding -Qunused-arguments, need to prepend with
@@ -91,7 +89,7 @@ AC_ARG_ENABLE([inline],
 
 if test "$ENABLED_INLINE" = "no"
 then
-    AM_CFLAGS="$AM_CFLAGS -DNO_INLINE"
+    AM_CPPFLAGS="$AM_CPPFLAGS -DNO_INLINE"
 fi
 
 AM_CONDITIONAL([BUILD_INLINE], [test "x$ENABLED_INLINE" = "xyes"])
@@ -102,7 +100,7 @@ AC_ARG_ENABLE([keygen],
     [ENABLED_KEYGEN=$enableval],[ENABLED_KEYGEN=no])
 
 AS_IF([test "x$ENABLED_KEYGEN" = "xyes"],
-      [AM_CFLAGS="$AM_CFLAGS -DWOLFSSH_KEYGEN"])
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_KEYGEN"])
 
 AM_CONDITIONAL([BUILD_KEYGEN], [test "x$ENABLED_KEYGEN" = "xyes"])
 
@@ -112,7 +110,7 @@ AC_ARG_ENABLE([scp],
     [ENABLED_SCP=$enableval],[ENABLED_SCP=no])
 
 AS_IF([test "x$ENABLED_SCP" = "xyes"],
-      [AM_CFLAGS="$AM_CFLAGS -DWOLFSSH_SCP"])
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SCP"])
 
 AM_CONDITIONAL([BUILD_SCP], [test "x$ENABLED_SCP" = "xyes"])
 
@@ -122,14 +120,14 @@ AC_ARG_ENABLE([sftp],
     [ENABLED_SFTP=$enableval],[ENABLED_SFTP=no])
 
 AS_IF([test "x$ENABLED_SFTP" = "xyes"],
-      [AM_CFLAGS="$AM_CFLAGS -DWOLFSSH_SFTP"])
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SFTP"])
 
 AM_CONDITIONAL([BUILD_SFTP], [test "x$ENABLED_SFTP" = "xyes"])
 
 
 # Checks for typedefs, structures, and compiler characteristics.
 if test "$ac_cv_sizeof_long" = "8"; then
-   AM_CPPFLAGS="$AM_CPPFLAGS -DSIZEOF_LONG=8"
+    AM_CPPFLAGS="$AM_CPPFLAGS -DSIZEOF_LONG=8"
 else
     if test "$ac_cv_sizeof_long_long" = "8"; then
         AM_CPPFLAGS="$AM_CPPFLAGS -DSIZEOF_LONG_LONG=8"
