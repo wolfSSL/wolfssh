@@ -1053,6 +1053,7 @@ static int ParseBasePathHelper(WOLFSSH* ssh, int cmdSz)
     ScpSendCtx ctx;
     int ret = WS_SUCCESS;
 
+    WMEMSET(&ctx, 0, sizeof(ScpSendCtx));
     if (ScpPushDir(&ctx, ssh->scpBasePath, ssh->ctx->heap) != WS_SUCCESS) {
         /* case of file, not directory */
         char buf[cmdSz + 4];
@@ -1069,6 +1070,12 @@ static int ParseBasePathHelper(WOLFSSH* ssh, int cmdSz)
         clean_path(buf);
 
         idx = (int)WSTRLEN(buf) + 1; /* +1 for delimiter */
+#ifdef WOLFSSL_NUCLEUS
+        /* no delimiter to skip in case of at base address */
+        if (idx == 4) { /* case of 4 for drive letter plus ":\" + 1 */
+            idx--;
+        }
+#endif
         if (idx > cmdSz || idx > sz) {
             return WS_BUFFER_E;
         }
