@@ -2204,7 +2204,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         begin = *idx;
         pubKey = buf + begin;
         ret = GetUint32(&pubKeySz, buf, len, &begin);
-        if (ret == WS_SUCCESS && (pubKeySz + LENGTH_SZ + begin > len)) {
+        if (ret == WS_SUCCESS && (pubKeySz > len - LENGTH_SZ - begin )) {
             ret = WS_BUFFER_E;
         }
 
