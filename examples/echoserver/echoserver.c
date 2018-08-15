@@ -746,6 +746,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
         ssh = wolfSSH_new(ctx);
         if (ssh == NULL) {
+            free(threadCtx);
             fprintf(stderr, "Couldn't allocate SSH data.\n");
             exit(EXIT_FAILURE);
         }

@@ -317,7 +317,7 @@ static int test_KDF(void)
     byte* h = NULL;
     byte* sId = NULL;
     byte* eKey = NULL;
-    word32 kSz, hSz, sIdSz, eKeySz;
+    word32 kSz = 0, hSz = 0, sIdSz = 0, eKeySz = 0;
     byte cKey[32]; /* Greater of SHA256_DIGEST_SIZE and AES_BLOCK_SIZE */
     /* sId - Session ID, eKey - Expected Key, cKey - Calculated Key */
 
@@ -347,6 +347,10 @@ static int test_KDF(void)
         }
 
         FreeBins(k, h, sId, eKey);
+        k = NULL;
+        h = NULL;
+        sId = NULL;
+        eKey = NULL;
 
         if (result != 0) break;
     }
