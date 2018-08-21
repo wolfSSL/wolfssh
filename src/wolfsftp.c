@@ -1842,6 +1842,35 @@ int SFTP_RemoveHandleNode(WOLFSSH* ssh, byte* handle, word32 handleSz)
 
 
 #ifdef WOLFSSL_NUCLEUS
+
+#ifndef NO_WOLFSSH_MKTIME
+
+#define WS_GETDAY(d) ((d) & 0x001f)
+#define WS_GETMON(d) (((d) >> 5) & 0x000f)
+/* number of years since 1900. year + 1980 - 1900 */
+#define WS_GETYEAR(d) ((((d) >> 9) & 0x007f) + 80)
+#define WS_GETHOUR(t) (((t) >> 11) & 0x001f)
+#define WS_GETMIN(t)  (((t) >> 5 ) & 0x003f)
+#define WS_GETSEC(t)  (((t) << 1 ) & 0x003f)
+
+/* convert nucleus date and time shorts to word32
+ * returns results in Unix time stamp */
+static word32 TimeTo32(word16 d, word16 t)
+{
+    struct tm tmp = {0};
+
+    tmp.tm_mday = WS_GETDAY(d);
+    tmp.tm_mon  = WS_GETMON(d);
+    tmp.tm_year = WS_GETYEAR(d);
+    tmp.tm_hour = WS_GETHOUR(t);
+    tmp.tm_min  = WS_GETMIN(t);
+    tmp.tm_sec  = WS_GETSEC(t);
+
+    return mktime(&tmp);
+}
+#endif /* NO_WOLFSSH_MKTIME */
+
+
 /* @TODO can be overriden by user for portability
  * NOTE: if atr->flags is set to a value of 0 then no attributes are set.
  * Fills out a WS_SFTP_FILEATRB structure
@@ -1899,6 +1928,13 @@ int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr, byte link)
         }
     }
 
+#ifndef NO_WOLFSSH_MKTIME
+    /* get file times */
+    atr->flags |= WOLFSSH_FILEATRB_TIME;
+    atr->atime = TimeTo32(stats.faccdate, 0); /* only access date */
+    atr->mtime = TimeTo32(stats.fupdate, stats.fuptime);
+#endif /* NO_WOLFSSH_MKTIME */
+
     /* @TODO handle attribute extensions */
 
     NU_Done(&stats);
@@ -1953,6 +1989,14 @@ int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
             atr->per |= 0x124; /* octal 444 */
         }
     }
+
+#ifndef NO_WOLFSSH_MKTIME
+    /* get file times */
+    atr->flags |= WOLFSSH_FILEATRB_TIME;
+    atr->atime = TimeTo32(stats.faccdate, 0); /* only access date */
+    atr->mtime = TimeTo32(stats.fupdate, stats.fuptime);
+#endif /* NO_WOLFSSH_MKTIME */
+
     /* @TODO handle attribute extensions */
 
     NU_Done(&stats);
@@ -1992,12 +2036,9 @@ int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr, byte link)
     atr->flags |= WOLFSSH_FILEATRB_PERM;
     atr->per = (word32)stats.st_mode;
 
-#if 0
-    /* @TODO porting time from stat structure */
     atr->flags |= WOLFSSH_FILEATRB_TIME;
-    atr->atime = (word32)stats.st_atimespec.tv_sec;
-    atr->mtime = (word32)stats.st_mtimespec.tv_sec;
-#endif
+    atr->atime = (word32)stats.st_atime;
+    atr->mtime = (word32)stats.st_mtime;
 
     /* @TODO handle attribute extensions */
 
@@ -2036,12 +2077,9 @@ int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
     atr->flags |= WOLFSSH_FILEATRB_PERM;
     atr->per = (word32)stats.st_mode;
 
-#if 0
-    /* @TODO porting time from stat structure */
     atr->flags |= WOLFSSH_FILEATRB_TIME;
-    atr->atime = (word32)stats.st_atimespec.tv_sec;
-    atr->mtime = (word32)stats.st_mtimespec.tv_sec;
-#endif
+    atr->atime = (word32)stats.st_atime;
+    atr->mtime = (word32)stats.st_mtime;
 
     /* @TODO handle attribute extensions */
 
