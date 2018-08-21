@@ -7051,42 +7051,45 @@ int SendChannelData(WOLFSSH* ssh, word32 peerChannel,
             ret = WS_REKEYING;
     }
 
-    if (ret == WS_SUCCESS) {
-        channel = ChannelFind(ssh, peerChannel, WS_CHANNEL_ID_PEER);
-        if (channel == NULL) {
-            WLOG(WS_LOG_DEBUG, "Invalid peer channel");
-            ret = WS_INVALID_CHANID;
-        }
-    }
-
-    if (ret == WS_SUCCESS) {
-        word32 bound = min(channel->peerWindowSz, channel->peerMaxPacketSz);
-
-        if (dataSz > bound) {
-            WLOG(WS_LOG_DEBUG,
-                 "Trying to send %u, client will only accept %u, limiting",
-                 dataSz, bound);
-            dataSz = bound;
+    if (ssh->outputBuffer.length == 0) {
+        if (ret == WS_SUCCESS) {
+            channel = ChannelFind(ssh, peerChannel, WS_CHANNEL_ID_PEER);
+            if (channel == NULL) {
+                WLOG(WS_LOG_DEBUG, "Invalid peer channel");
+                ret = WS_INVALID_CHANID;
+            }
         }
 
-        ret = PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ + LENGTH_SZ + dataSz);
-    }
+        if (ret == WS_SUCCESS) {
+            word32 bound = min(channel->peerWindowSz, channel->peerMaxPacketSz);
 
-    if (ret == WS_SUCCESS) {
-        output = ssh->outputBuffer.buffer;
-        idx = ssh->outputBuffer.length;
+            if (dataSz > bound) {
+                WLOG(WS_LOG_DEBUG,
+                     "Trying to send %u, client will only accept %u, limiting",
+                     dataSz, bound);
+                dataSz = bound;
+            }
 
-        output[idx++] = MSGID_CHANNEL_DATA;
-        c32toa(channel->peerChannel, output + idx);
-        idx += UINT32_SZ;
-        c32toa(dataSz, output + idx);
-        idx += LENGTH_SZ;
-        WMEMCPY(output + idx, data, dataSz);
-        idx += dataSz;
+            ret = PreparePacket(ssh,
+                    MSG_ID_SZ + UINT32_SZ + LENGTH_SZ + dataSz);
+        }
 
-        ssh->outputBuffer.length = idx;
+        if (ret == WS_SUCCESS) {
+            output = ssh->outputBuffer.buffer;
+            idx = ssh->outputBuffer.length;
 
-        ret = BundlePacket(ssh);
+            output[idx++] = MSGID_CHANNEL_DATA;
+            c32toa(channel->peerChannel, output + idx);
+            idx += UINT32_SZ;
+            c32toa(dataSz, output + idx);
+            idx += LENGTH_SZ;
+            WMEMCPY(output + idx, data, dataSz);
+            idx += dataSz;
+
+            ssh->outputBuffer.length = idx;
+
+            ret = BundlePacket(ssh);
+        }
     }
 
     if (ret == WS_SUCCESS)
