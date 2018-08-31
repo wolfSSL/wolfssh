@@ -2591,7 +2591,8 @@ static int DoKexDhGexRequest(WOLFSSH* ssh,
     word32 begin;
     int ret = WS_SUCCESS;
 
-    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
+    if (ssh == NULL || ssh->handshake == NULL || buf == NULL || len == 0 ||
+            idx == NULL)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
@@ -5028,6 +5029,10 @@ int SendKexDhReply(WOLFSSH* ssh)
 
     WLOG(WS_LOG_DEBUG, "Entering SendKexDhReply()");
 
+    if (ssh == NULL || ssh->handshake == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
     sigKeyBlock.useRsa = ssh->handshake->pubKeyId == ID_SSH_RSA;
     sigKeyBlock.name = IdToName(ssh->handshake->pubKeyId);
     sigKeyBlock.nameSz = (word32)strlen(sigKeyBlock.name);
@@ -5665,7 +5670,7 @@ int SendKexDhGexRequest(WOLFSSH* ssh)
     int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Entering SendKexDhGexRequest()");
-    if (ssh == NULL)
+    if (ssh == NULL || ssh->handshake == NULL)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
