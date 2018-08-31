@@ -105,10 +105,12 @@
             [AX_APPEND_COMPILE_FLAGS([-Werror],[AM_CFLAGS])
              ac_cv_warnings_as_errors="yes"])
 
-      AS_IF([test "$ax_enable_debug" = "yes"],
-            [AX_APPEND_COMPILE_FLAGS([-g],[AM_CFLAGS])
-             AX_APPEND_COMPILE_FLAGS([-ggdb],[AM_CFLAGS],[$ax_append_compile_cflags_extra])
-             AX_APPEND_COMPILE_FLAGS([-O0],[AM_CFLAGS],[$ax_append_compile_cflags_extra])])
+dnl      The main configure script handles setting the debugging flags.
+dnl      AS_IF([test "$ax_enable_debug" = "yes"], [
+dnl        AX_APPEND_COMPILE_FLAGS([-g],[AM_CFLAGS])
+dnl        AX_APPEND_COMPILE_FLAGS([-ggdb],[AM_CFLAGS],[$ax_append_compile_cflags_extra])
+dnl        AX_APPEND_COMPILE_FLAGS([-O0],[AM_CFLAGS],[$ax_append_compile_cflags_extra])
+dnl        ],[])
 
       AX_APPEND_COMPILE_FLAGS([-Wno-pragmas],[AM_CFLAGS],[$ax_append_compile_cflags_extra])
 

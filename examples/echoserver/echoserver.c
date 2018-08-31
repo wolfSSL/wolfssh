@@ -827,8 +827,6 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             wolfSSH_Debugging_ON();
         #endif
 
-        wolfSSH_Init();
-
 #ifndef WOLFSSL_NUCLEUS
         ChangeToWolfSshRoot();
 #endif

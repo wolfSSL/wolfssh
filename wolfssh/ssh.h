@@ -62,6 +62,8 @@ WOLFSSH_API void wolfSSH_CTX_free(WOLFSSH_CTX*);
 WOLFSSH_API WOLFSSH* wolfSSH_new(WOLFSSH_CTX*);
 WOLFSSH_API void wolfSSH_free(WOLFSSH*);
 
+WOLFSSH_API int wolfSSH_worker(WOLFSSH*, word32*);
+
 WOLFSSH_API int wolfSSH_set_fd(WOLFSSH*, int);
 WOLFSSH_API int wolfSSH_get_fd(const WOLFSSH*);
 
@@ -74,6 +76,22 @@ WOLFSSH_API void wolfSSH_SetHighwaterCb(WOLFSSH_CTX*, word32,
                                         WS_CallbackHighwater);
 WOLFSSH_API void wolfSSH_SetHighwaterCtx(WOLFSSH*, void*);
 WOLFSSH_API void* wolfSSH_GetHighwaterCtx(WOLFSSH*);
+
+
+#define WS_CHANNEL_ID_SELF 0
+#define WS_CHANNEL_ID_PEER 1
+
+WOLFSSH_API WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNew(WOLFSSH*,
+        const char*, word32, const char*, word32);
+WOLFSSH_API int wolfSSH_ChannelFree(WOLFSSH_CHANNEL*);
+WOLFSSH_API int wolfSSH_ChannelGetId(WOLFSSH_CHANNEL*, word32*, byte);
+WOLFSSH_API WOLFSSH_CHANNEL* wolfSSH_ChannelFind(WOLFSSH*, word32, byte);
+WOLFSSH_API WOLFSSH_CHANNEL* wolfSSH_ChannelNext(WOLFSSH*, WOLFSSH_CHANNEL*);
+WOLFSSH_API int wolfSSH_ChannelSetFwdFd(WOLFSSH_CHANNEL*, int);
+WOLFSSH_API int wolfSSH_ChannelGetFwdFd(const WOLFSSH_CHANNEL*);
+WOLFSSH_API int wolfSSH_ChannelRead(WOLFSSH_CHANNEL*, byte*, word32);
+WOLFSSH_API int wolfSSH_ChannelSend(WOLFSSH_CHANNEL*, const byte*, word32);
+WOLFSSH_API int wolfSSH_ChannelExit(WOLFSSH_CHANNEL*);
 
 
 WOLFSSH_API int wolfSSH_get_error(const WOLFSSH*);
@@ -135,6 +153,7 @@ WOLFSSH_API int wolfSSH_SetUsername(WOLFSSH*, const char*);
 WOLFSSH_API int wolfSSH_CTX_SetBanner(WOLFSSH_CTX*, const char*);
 WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX*,
                                                  const byte*, word32, int);
+WOLFSSH_API int wolfSSH_CTX_SetWindowPacketSize(WOLFSSH_CTX*, word32, word32);
 
 WOLFSSH_API int wolfSSH_accept(WOLFSSH*);
 WOLFSSH_API int wolfSSH_connect(WOLFSSH*);
@@ -143,6 +162,15 @@ WOLFSSH_API int wolfSSH_stream_read(WOLFSSH*, byte*, word32);
 WOLFSSH_API int wolfSSH_stream_send(WOLFSSH*, byte*, word32);
 WOLFSSH_API int wolfSSH_stream_exit(WOLFSSH*, int);
 WOLFSSH_API int wolfSSH_TriggerKeyExchange(WOLFSSH*);
+WOLFSSH_API int wolfSSH_SendIgnore(WOLFSSH*, const byte*, word32);
+
+typedef struct WOLFSSH_TIMEOUT {
+    int sec;
+    int usec;
+} WOLFSSH_TIMEOUT;
+
+WOLFSSH_API WOLFSSH_TIMEOUT wolfSSH_SetTimeout(int, int);
+WOLFSSH_API int wolfSSH_Select(WOLFSSH*, WOLFSSH_TIMEOUT);
 
 WOLFSSH_API void wolfSSH_GetStats(WOLFSSH*,
                                   word32*, word32*, word32*, word32*);
