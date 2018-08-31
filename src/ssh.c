@@ -771,26 +771,6 @@ int wolfSSH_SendIgnore(WOLFSSH* ssh, const byte* buf, word32 bufSz)
 }
 
 
-/* Sets up a timeout wrapper. */
-WOLFSSH_TIMEOUT wolfSSH_SetTimeout(int sec, int usec)
-{
-    WOLFSSH_TIMEOUT to = {sec, usec};
-    return to;
-}
-
-
-int wolfSSH_Select(WOLFSSH* ssh, WOLFSSH_TIMEOUT to)
-{
-    (void)ssh;
-    (void)to;
-
-    WLOG(WS_LOG_INFO, "Entering wolfSSH_Select()");
-    WLOG(WS_LOG_INFO, "Entering wolfSSH_Select(), ret = %d", WS_SUCCESS);
-
-    return WS_SUCCESS;
-}
-
-
 void wolfSSH_SetUserAuth(WOLFSSH_CTX* ctx, WS_CallbackUserAuth cb)
 {
     if (ctx != NULL) {
@@ -1054,12 +1034,15 @@ WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNew(WOLFSSH* ssh,
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelFwdNew()");
 
-    if (ssh == NULL || host == NULL || origin == NULL)
+    if (ssh == NULL || ssh->ctx == NULL || host == NULL || origin == NULL)
         ret = WS_BAD_ARGUMENT;
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
         newChannel = ChannelNew(ssh, ID_CHANTYPE_TCPIP_DIRECT,
                 ssh->ctx->windowSz, ssh->ctx->maxPacketSz);
+        if (newChannel == NULL)
+            ret = WS_MEMORY_E;
+    }
     if (ret == WS_SUCCESS)
         ret = ChannelUpdateForward(newChannel,
                 host, hostPort, origin, originPort);
@@ -1067,7 +1050,8 @@ WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNew(WOLFSSH* ssh,
         ret = SendChannelOpenForward(ssh, newChannel);
 
     if (ret != WS_SUCCESS) {
-        ChannelDelete(newChannel, ssh->ctx->heap);
+        void* heap = (ssh != NULL && ssh->ctx != NULL) ? ssh->ctx->heap : NULL;
+        ChannelDelete(newChannel, heap);
         newChannel = NULL;
     }
 

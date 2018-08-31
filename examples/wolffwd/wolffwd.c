@@ -184,7 +184,7 @@ THREAD_RETURN WOLFSSH_THREAD wolffwd_worker(void* args)
     SOCKADDR_IN_T fwdFromHostAddr;
     socklen_t fwdFromHostAddrSz = sizeof(fwdFromHostAddr);
     SOCKET_T listenFd;
-    SOCKET_T appFd;
+    SOCKET_T appFd = -1;
     int argc = ((func_args*)args)->argc;
     char** argv = ((func_args*)args)->argv;
     int serverMode = 0;
@@ -370,9 +370,12 @@ THREAD_RETURN WOLFSSH_THREAD wolffwd_worker(void* args)
                     ret = wolfSSH_ChannelRead(readChannel, buffer, bufferSz);
                 if (ret > 0) {
                     bufferSz = (word32)ret;
-                    ret = (int)send(appFd, buffer, bufferSz, 0);
+                    if (appFd != -1) {
+                        ret = (int)send(appFd, buffer, bufferSz, 0);
+                        if (ret != (int)bufferSz)
+                            break;
+                    }
                 }
-                ret = (ret != (int)bufferSz) ? -1 : WS_SUCCESS;
             }
         }
         if (!appFdSet && FD_ISSET(listenFd, &rxFds)) {

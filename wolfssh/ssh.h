@@ -164,14 +164,6 @@ WOLFSSH_API int wolfSSH_stream_exit(WOLFSSH*, int);
 WOLFSSH_API int wolfSSH_TriggerKeyExchange(WOLFSSH*);
 WOLFSSH_API int wolfSSH_SendIgnore(WOLFSSH*, const byte*, word32);
 
-typedef struct WOLFSSH_TIMEOUT {
-    int sec;
-    int usec;
-} WOLFSSH_TIMEOUT;
-
-WOLFSSH_API WOLFSSH_TIMEOUT wolfSSH_SetTimeout(int, int);
-WOLFSSH_API int wolfSSH_Select(WOLFSSH*, WOLFSSH_TIMEOUT);
-
 WOLFSSH_API void wolfSSH_GetStats(WOLFSSH*,
                                   word32*, word32*, word32*, word32*);
 
