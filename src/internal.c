@@ -1033,14 +1033,18 @@ int ChannelUpdateForward(WOLFSSH_CHANNEL* channel,
     int ret = WS_SUCCESS;
     char* hostCopy = NULL;
     char* originCopy = NULL;
+    word32 hostSz;
+    word32 originSz;
 
     if (channel == NULL || host == NULL || origin == NULL)
         ret = WS_BAD_ARGUMENT;
     else {
         void* heap = channel->ssh->ctx->heap;
 
-        hostCopy = (char*)WMALLOC(WSTRLEN(host) + 1, heap, DYNTYPE_STRING);
-        originCopy = (char*)WMALLOC(WSTRLEN(origin) + 1, heap, DYNTYPE_STRING);
+        hostSz = (word32)WSTRLEN(host) + 1;
+        originSz = (word32)WSTRLEN(origin) + 1;
+        hostCopy = (char*)WMALLOC(hostSz, heap, DYNTYPE_STRING);
+        originCopy = (char*)WMALLOC(originSz, heap, DYNTYPE_STRING);
         if (hostCopy == NULL || originCopy == NULL) {
             WFREE(hostCopy, heap, DYNTYPE_STRING);
             WFREE(originCopy, heap, DYNTYPE_STRING);
@@ -1049,6 +1053,8 @@ int ChannelUpdateForward(WOLFSSH_CHANNEL* channel,
     }
 
     if (ret == WS_SUCCESS) {
+        WSTRNCPY(hostCopy, host, hostSz);
+        WSTRNCPY(originCopy, origin, originSz);
         channel->host = hostCopy;
         channel->hostPort = hostPort;
         channel->origin = originCopy;
@@ -6719,7 +6725,8 @@ int SendChannelOpenForward(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel)
 
     WLOG(WS_LOG_DEBUG, "Entering SendChannelOpenForward()");
 
-    if (ssh == NULL || channel->host == NULL || channel->origin == NULL)
+    if (ssh == NULL || channel == NULL ||
+            channel->host == NULL || channel->origin == NULL)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
@@ -6739,7 +6746,7 @@ int SendChannelOpenForward(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel)
         idx += hostSz;
         c32toa(channel->hostPort, forwardData + idx);
         idx += UINT32_SZ;
-        c32toa(originSz, forwardData);
+        c32toa(originSz, forwardData + idx);
         idx += LENGTH_SZ;
         WMEMCPY(forwardData + idx, channel->origin, originSz);
         idx += originSz;

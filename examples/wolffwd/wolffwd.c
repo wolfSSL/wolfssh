@@ -327,7 +327,7 @@ THREAD_RETURN WOLFSSH_THREAD wolffwd_worker(void* args)
 
     printf("Entering the run loop...\n");
     while (!done) {
-        FD_COPY(&templateFds, &rxFds);
+        rxFds = templateFds;
         to.tv_sec = 1;
         to.tv_usec = 0;
         ret = select(nFds, &rxFds, NULL, &errFds, &to);
