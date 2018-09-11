@@ -4247,6 +4247,9 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
         ret = WS_SUCCESS;
         do {
             rSz = (int)WFREAD(r, 1, WOLFSSH_MAX_SFTP_RW, fl);
+            if (rSz <= 0 ) {
+                break; /* either at end of file or error */
+            }
             sz = wolfSSH_SFTP_SendWritePacket(ssh, handle, handleSz, pOfst,
                     r, rSz);
             if (sz > 0) {
