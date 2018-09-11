@@ -640,7 +640,8 @@ enum WS_ScpMsgTypes {
 };
 
 enum WS_ScpDirection {
-    WOLFSSH_SCP_TO = 0,
+    WOLFSSH_SCP_DIR_NONE = 0,
+    WOLFSSH_SCP_TO,
     WOLFSSH_SCP_FROM
 };
 

@@ -449,6 +449,7 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->scpMTime        = 0;
     ssh->scpRequestType  = WOLFSSH_SCP_SINGLE_FILE_REQUEST;
     ssh->scpIsRecursive  = 0;
+    ssh->scpDirection    = WOLFSSH_SCP_DIR_NONE;
 #endif
 
 #ifdef WOLFSSH_SFTP
