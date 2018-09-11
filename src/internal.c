@@ -2649,7 +2649,7 @@ static int DoKexDhGexGroup(WOLFSSH* ssh,
     byte* generator = NULL;
     word32 generatorSz;
     word32 begin;
-    int ret = WS_UNIMPLEMENTED_E;
+    int ret = WS_SUCCESS;
 
     if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
         ret = WS_BAD_ARGUMENT;
@@ -3680,8 +3680,10 @@ static int DoChannelOpenConf(WOLFSSH* ssh,
         ret = ChannelUpdate(channel, peerChannelId,
                             peerInitialWindowSz, peerMaxPacketSz);
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
         ssh->serverState = SERVER_CHANNEL_OPEN_DONE;
+        ssh->defaultPeerChannelId = peerChannelId;
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoChannelOpenConf(), ret = %d", ret);
     return ret;
