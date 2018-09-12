@@ -1,3 +1,24 @@
+/* wolffwd.c
+ *
+ * Copyright (C) 2014-2018 wolfSSL Inc.
+ *
+ * This file is part of wolfSSH.
+ *
+ * wolfSSH is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * wolfSSH is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+
 #include <stdio.h>
 #include <termios.h>
 #include <errno.h>
@@ -23,6 +44,10 @@
  */
 
 
+#define INVALID_FWD_PORT 0
+static const char defaultFwdFromHost[] = "0.0.0.0";
+
+
 static inline int max(int a, int b)
 {
     return (a > b) ? a : b;
@@ -36,12 +61,12 @@ static void ShowUsage(void)
            " -p <num>      port to connect on, default %u\n"
            " -u <username> username to authenticate as (REQUIRED)\n"
            " -P <password> password for username, prompted if omitted\n"
-           " -F <host>     host to forward from, default 0.0.0.0\n"
+           " -F <host>     host to forward from, default %s\n"
            " -f <num>      host port to forward from (REQUIRED)\n"
            " -T <host>     host to forward to, default to host\n"
-           " -t <num>      port to forward to (REQUIRED)\n"
-           " -d            server mode\n",
-           LIBWOLFSSH_VERSION_STRING, wolfSshIp, wolfSshPort);
+           " -t <num>      port to forward to (REQUIRED)\n",
+           LIBWOLFSSH_VERSION_STRING,
+           wolfSshIp, wolfSshPort, defaultFwdFromHost);
 }
 
 
@@ -152,9 +177,6 @@ static int wsUserAuth(byte authType,
 }
 
 
-#define INVALID_FWD_PORT 0
-static const char defaultFwdFromHost[] = "0.0.0.0";
-
 /*
  * fwdFromHost - address to bind the local listener socket to (default: any)
  * fwdFromHostPort - port number to bind the local listener socket to
@@ -187,14 +209,12 @@ THREAD_RETURN WOLFSSH_THREAD wolffwd_worker(void* args)
     SOCKET_T appFd = -1;
     int argc = ((func_args*)args)->argc;
     char** argv = ((func_args*)args)->argv;
-    int serverMode = 0;
     fd_set templateFds;
     fd_set rxFds;
     fd_set errFds;
     int nFds;
     int ret;
     char ch;
-    int done = 0;
     int appFdSet = 0;
     struct timeval to;
     WOLFSSH_CHANNEL* fwdChannel = NULL;
@@ -204,12 +224,8 @@ THREAD_RETURN WOLFSSH_THREAD wolffwd_worker(void* args)
 
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?df:h:p:t:u:F:P:T:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?f:h:p:t:u:F:P:T:")) != -1) {
         switch (ch) {
-            case 'd':
-                serverMode = 1;
-                break;
-
             case 'h':
                 host = myoptarg;
                 break;
@@ -272,12 +288,10 @@ THREAD_RETURN WOLFSSH_THREAD wolffwd_worker(void* args)
            " * username: %s\n"
            " * password: %s\n"
            " * forward from: %s:%u\n"
-           " * forward to: %s:%u\n"
-           " * server mode: %s\n",
+           " * forward to: %s:%u\n",
            host, port, username, password,
            fwdFromHost, fwdFromPort,
-           fwdToHost, fwdToPort,
-           serverMode ? "yes" : "no");
+           fwdToHost, fwdToPort);
 
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
     if (ctx == NULL)
@@ -325,30 +339,30 @@ THREAD_RETURN WOLFSSH_THREAD wolffwd_worker(void* args)
     FD_SET(listenFd, &templateFds);
     nFds = max(sshFd, listenFd) + 1;
 
-    printf("Entering the run loop...\n");
-    while (!done) {
+    for (;;) {
         rxFds = templateFds;
         to.tv_sec = 1;
         to.tv_usec = 0;
         ret = select(nFds, &rxFds, NULL, &errFds, &to);
         if (ret == 0) {
-            printf("select timed out\n");
             ret = wolfSSH_SendIgnore(ssh, NULL, 0);
             if (ret != WS_SUCCESS)
-                printf("Couldn't send an ignore message.\n");
+                err_sys("Couldn't send an ignore message.");
             continue;
         }
-        else if (ret < 0) {
-            printf("select failed\n");
-            break;
-        }
-        else
-            printf("select returned something: %d\n", ret);
+        else if (ret < 0)
+            err_sys("select failed\n");
 
+        if ((appFdSet && FD_ISSET(appFd, &errFds)) ||
+            FD_ISSET(sshFd, &errFds) ||
+            FD_ISSET(listenFd, &errFds)) {
+
+                err_sys("some socket had an error");
+            }
         if (appFdSet && FD_ISSET(appFd, &rxFds)) {
             int rxd;
-            printf("application packet received\n");
-            rxd = (int)recv(appFd, buffer + bufferUsed, bufferSz - bufferUsed, 0);
+            rxd = (int)recv(appFd,
+                    buffer + bufferUsed, bufferSz - bufferUsed, 0);
             if (rxd > 0)
                 bufferUsed += rxd;
             else
