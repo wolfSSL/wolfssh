@@ -2400,7 +2400,6 @@ int wolfSSH_SFTP_RecvSetSTAT(WOLFSSH* ssh, int reqId, word32 maxSz)
     clean_path(name);
 
     if (SFTP_ParseAtributes_buffer(ssh, &atr, data + idx, maxSz - idx) != 0) {
-        printf("error parsing attributes\n");
         wolfSSH_SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
                 "Unable to parse attributes error", "English");
         return WS_BAD_FILE_E;
@@ -2623,6 +2622,7 @@ int SendPacketType(WOLFSSH* ssh, byte type, byte* buf, word32 bufSz)
          * one time */
         do {
             ret = wolfSSH_stream_send(ssh, data + sent, idx - sent);
+            wolfSSH_CheckPeerWindow(ssh); /* check for adjust window packet */
             sent += (word32)ret;
         } while (ret > 0 && sent < idx);
 
@@ -4258,6 +4258,7 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                     statusCb(ssh, pOfst, from);
                 }
             }
+            wolfSSH_CheckPeerWindow(ssh); /* check for adjust window packet */
         } while (sz > 0 && ssh->sftpInt == 0);
         if (ssh->sftpInt) {
             wolfSSH_SFTP_SaveOfst(ssh, from, to, pOfst);

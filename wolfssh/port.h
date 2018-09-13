@@ -482,6 +482,29 @@ extern "C" {
     #define FALL_THROUGH
 #endif
 
+/* used for checking bytes on wire for window adjust packet read */
+#ifndef WIOCTL
+#ifdef WOLFSSL_NUCLEUS
+    #include "nucleus.h"
+    #include "networking/nu_networking.h"
+    static inline void ws_Ioctl(int fd, int flag, int* ret)
+    {
+        SCK_IOCTL_OPTION op;
+        op.s_optval = (unsigned char*)&fd;
+        if (NU_Ioctl(flag, &op, sizeof(op)) != NU_SUCCESS) {
+            *ret = 0;
+        }
+        else {
+            *ret = op.s_ret.sck_bytes_pending;
+        }
+    }
+    #define WIOCTL ws_Ioctl
+#else
+    #include <sys/ioctl.h>
+    #define WIOCTL ioctl
+#endif
+#endif
+
 
 #ifdef __cplusplus
 }
