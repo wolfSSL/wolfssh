@@ -341,6 +341,8 @@ THREAD_RETURN WOLFSSH_THREAD wolffwd_worker(void* args)
 
     for (;;) {
         rxFds = templateFds;
+        errFds = templateFds;
+
         to.tv_sec = 1;
         to.tv_usec = 0;
         ret = select(nFds, &rxFds, NULL, &errFds, &to);
@@ -395,6 +397,8 @@ THREAD_RETURN WOLFSSH_THREAD wolffwd_worker(void* args)
         if (!appFdSet && FD_ISSET(listenFd, &rxFds)) {
             appFd = accept(listenFd,
                     (struct sockaddr*)&fwdFromHostAddr, &fwdFromHostAddrSz);
+            if (appFd < 0)
+                break;
             FD_SET(appFd, &templateFds);
             nFds = appFd + 1;
             appFdSet = 1;
