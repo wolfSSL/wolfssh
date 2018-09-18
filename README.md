@@ -159,11 +159,12 @@ Manual.
 The wolffwd example tool will create a "direct-tcpip" style channel. These
 directions assume you have OpenSSH's server running in the background with
 port forwarding enabled. This example forwards the port for the wolfSSL
-client to the server as the applciation. It assumes that all programs are run
+client to the server as the application. It assumes that all programs are run
 on the same machine in different terminals.
 
     src/wolfssl$ ./examples/server/server
-    src/wolfssh$ ./examples/wolffwd/wolffwd -u <username> -f 12345 -t 11111
+    src/wolfssh$ ./examples/wolffwd/wolffwd -p 22 -u <username> \
+                 -f 12345 -t 11111
     src/wolfssl$ ./examples/client/client -p 12345
 
 By default, the wolfSSL server listens on port 11111. The client is set to
