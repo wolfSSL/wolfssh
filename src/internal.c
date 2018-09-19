@@ -3605,19 +3605,6 @@ static int DoGlobalRequest(WOLFSSH* ssh,
         ret = GetBoolean(&wantReply, buf, len, &begin);
     }
 
-#ifdef WOLFSSH_FWD
-    if (ret == WS_SUCCESS) {
-        if (WSTRNCMP(name, "tcpip-forward", nameSz) == 0) {
-            fprintf(stderr, "tcpip-forward requested\n");
-            fflush(stderr);
-        }
-        else if (WSTRNCMP(name, "cancel-tcpip-forward", nameSz) == 0) {
-            fprintf(stderr, "cancel-tcpip-forward requested\n");
-            fflush(stderr);
-        }
-    }
-#endif /* WOLFSSH_FWD */
-
     if (ret == WS_SUCCESS) {
         *idx += len;
 
