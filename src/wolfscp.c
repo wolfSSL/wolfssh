@@ -574,7 +574,7 @@ int DoScpSource(WOLFSSH* ssh)
 
                 ret = wolfSSH_stream_send(ssh, ssh->scpFileBuffer,
                                           ssh->scpBufferedSz);
-                wolfSSH_CheckPeerWindow(ssh); /*check for adjust window packet*/
+                wolfSSH_CheckReceivePending(ssh); /*check for adjust window packet*/
                 if (ret < 0) {
                     WLOG(WS_LOG_ERROR, scpError, "failed to send file", ret);
                     break;

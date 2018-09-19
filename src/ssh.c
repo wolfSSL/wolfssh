@@ -1264,12 +1264,12 @@ WOLFSSH_CHANNEL* wolfSSH_ChannelNext(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel)
  * more data is stored then MAX_PACKET_SZ then no more window adjustment packets
  * are searched for.
  */
-void wolfSSH_CheckPeerWindow(WOLFSSH* ssh)
+void wolfSSH_CheckReceivePending(WOLFSSH* ssh)
 {
     int bytes = 0;
     Buffer* inputBuffer;
 
-    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CheckPeerWindow()");
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CheckReceivePending()");
 
     if (ssh == NULL)
         return;
