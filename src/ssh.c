@@ -988,7 +988,6 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
 {
     int ret = WS_SUCCESS;
 
-    printf("Entering wolfSSH_worker()\n");
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_worker()");
 
     if (ssh == NULL)
@@ -1009,16 +1008,11 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
             *channelId = ssh->lastRxId;
     }
 
-    if (ret == WS_CHAN_RXD) {
-        printf("Leaving wolfSSH_worker(), "
-                           "data received on channel %u\n", ssh->lastRxId);
+    if (ret == WS_CHAN_RXD)
         WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_worker(), "
                            "data received on channel %u", ssh->lastRxId);
-    }
-    else {
-        printf("Leaving wolfSSH_worker(), ret = %d\n", ret);
+    else
         WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_worker(), ret = %d", ret);
-    }
     return ret;
 }
 
