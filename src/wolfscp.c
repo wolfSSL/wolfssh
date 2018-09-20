@@ -1800,6 +1800,7 @@ static int GetFileStats(ScpSendCtx* ctx, const char* fileName,
         }
         *mTime = ctx->s.fupdate;
         *aTime = ctx->s.faccdate;
+        NU_Done(&ctx->s);
     #else
         *mTime = (word64)ctx->s.st_mtime;
         *aTime = (word64)ctx->s.st_atime;
