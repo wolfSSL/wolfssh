@@ -597,7 +597,7 @@ typedef struct func_args {
 } func_args;
 
 
-#ifdef WOLFSSH_TEST_THREADING
+#ifdef WOLFSSH_TEST_LOCKING
 
 static INLINE void InitTcpReady(tcp_ready* ready)
 {
@@ -625,8 +625,14 @@ static INLINE void FreeTcpReady(tcp_ready* ready)
 }
 
 
-typedef THREAD_RETURN WOLFSSH_THREAD THREAD_FUNC(void*);
 void WaitTcpReady(func_args*);
+
+#endif /* WOLFSSH_TEST_LOCKING */
+
+
+#ifdef WOLFSSH_TEST_THREADING
+
+typedef THREAD_RETURN WOLFSSH_THREAD THREAD_FUNC(void*);
 
 
 static INLINE void ThreadStart(THREAD_FUNC fun, void* args, THREAD_TYPE* thread)
