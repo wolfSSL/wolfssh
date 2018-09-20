@@ -553,7 +553,8 @@ static INLINE void tcp_listen(SOCKET_T* sockfd, word16* port, int useAnyAddr)
 #endif
 
 #ifdef WOLFSSL_NUCLEUS
-    if (NU_Bind(*sockfd, &addr, sizeof(addr)) <= 0)
+    /* any NU_Bind return greater than or equal to 0 is a success */
+    if (NU_Bind(*sockfd, &addr, sizeof(addr)) < 0)
         err_sys("tcp bind failed");
     if (NU_Listen(*sockfd, NUM_SOCKETS) != NU_SUCCESS)
         err_sys("tcp listen failed");
