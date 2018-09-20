@@ -98,6 +98,8 @@ enum {
 
     /* Channel Type IDs */
     ID_CHANTYPE_SESSION,
+    ID_CHANTYPE_TCPIP_FORWARD,
+    ID_CHANTYPE_TCPIP_DIRECT,
 
     ID_UNKNOWN
 };
@@ -185,6 +187,8 @@ struct WOLFSSH_CTX {
     word32 highwaterMark;
     const char* banner;
     word32 bannerSz;
+    word32 windowSz;
+    word32 maxPacketSz;
     byte side;                        /* client or server */
     byte showBanner;
 };
@@ -339,6 +343,7 @@ struct WOLFSSH {
     word32 connectChannelId;
     byte channelName[WOLFSSH_MAX_CHN_NAMESZ];
     byte channelNameSz;
+    word32 lastRxId;
 
     Buffer inputBuffer;
     Buffer outputBuffer;
@@ -382,12 +387,20 @@ struct WOLFSSH_CHANNEL {
     byte sessionType;
     byte closeSent;
     byte receivedEof;
+    byte openConfirmed;
     word32 channel;
     word32 windowSz;
     word32 maxPacketSz;
     word32 peerChannel;
     word32 peerWindowSz;
     word32 peerMaxPacketSz;
+#ifdef WOLFSSH_FWD
+    char* host;
+    word32 hostPort;
+    char* origin;
+    word32 originPort;
+    int fwdFd;
+#endif /* WOLFSSH_FWD */
     Buffer inputBuffer;
     char* command;
     struct WOLFSSH* ssh;
@@ -401,7 +414,10 @@ WOLFSSH_LOCAL WOLFSSH* SshInit(WOLFSSH*, WOLFSSH_CTX*);
 WOLFSSH_LOCAL void SshResourceFree(WOLFSSH*, void*);
 
 WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelNew(WOLFSSH*, byte, word32, word32);
-WOLFSSH_LOCAL int ChannelUpdate(WOLFSSH_CHANNEL*, word32, word32, word32);
+WOLFSSH_LOCAL int ChannelUpdatePeer(WOLFSSH_CHANNEL*, word32, word32, word32);
+WOLFSSH_LOCAL int ChannelUpdateForward(WOLFSSH_CHANNEL*,
+        const char*, word32, const char*, word32);
+WOLFSSH_LOCAL int ChannelAppend(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel);
 WOLFSSH_LOCAL void ChannelDelete(WOLFSSH_CHANNEL*, void*);
 WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelFind(WOLFSSH*, word32, byte);
 WOLFSSH_LOCAL int ChannelRemove(WOLFSSH*, word32, byte);
@@ -422,6 +438,7 @@ WOLFSSH_LOCAL int wsEmbedSend(WOLFSSH*, void*, word32, void*);
 
 WOLFSSH_LOCAL int DoReceive(WOLFSSH*);
 WOLFSSH_LOCAL int DoProtoId(WOLFSSH*);
+WOLFSSH_LOCAL int SendBuffered(WOLFSSH*);
 WOLFSSH_LOCAL int SendProtoId(WOLFSSH*);
 WOLFSSH_LOCAL int SendKexInit(WOLFSSH*);
 WOLFSSH_LOCAL int SendKexDhInit(WOLFSSH*);
@@ -442,7 +459,8 @@ WOLFSSH_LOCAL int SendUserAuthBanner(WOLFSSH*);
 WOLFSSH_LOCAL int SendUserAuthPkOk(WOLFSSH*, const byte*, word32,
                                    const byte*, word32);
 WOLFSSH_LOCAL int SendRequestSuccess(WOLFSSH*, int);
-WOLFSSH_LOCAL int SendChannelOpenSession(WOLFSSH*, word32, word32);
+WOLFSSH_LOCAL int SendChannelOpenSession(WOLFSSH*, WOLFSSH_CHANNEL*);
+WOLFSSH_LOCAL int SendChannelOpenForward(WOLFSSH*, WOLFSSH_CHANNEL*);
 WOLFSSH_LOCAL int SendChannelOpenConf(WOLFSSH*);
 WOLFSSH_LOCAL int SendChannelEof(WOLFSSH*, word32);
 WOLFSSH_LOCAL int SendChannelEow(WOLFSSH*, word32);
@@ -562,12 +580,16 @@ enum WS_MessageIds {
     MSGID_CHANNEL_OPEN_FAIL = 92,
     MSGID_CHANNEL_WINDOW_ADJUST = 93,
     MSGID_CHANNEL_DATA = 94,
+    MSGID_CHANNEL_EXTENDED_DATA = 95,
     MSGID_CHANNEL_EOF = 96,
     MSGID_CHANNEL_CLOSE = 97,
     MSGID_CHANNEL_REQUEST = 98,
     MSGID_CHANNEL_SUCCESS = 99,
     MSGID_CHANNEL_FAILURE = 100
 };
+
+
+#define CHANNEL_EXTENDED_DATA_STDERR 1
 
 
 /* dynamic memory types */
@@ -588,7 +610,8 @@ enum WS_DynamicTypes {
     DYNTYPE_MPINT,
     DYNTYPE_SCPCTX,
     DYNTYPE_SCPDIR,
-    DYNTYPE_SFTP
+    DYNTYPE_SFTP,
+    DYNTYPE_TEMP
 };
 
 

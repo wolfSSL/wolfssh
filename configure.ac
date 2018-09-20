@@ -20,7 +20,7 @@ AC_ARG_PROGRAM
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_HEADERS([src/config.h])
 
-WOLFSSH_LIBRARY_VERSION=4:0:3
+WOLFSSH_LIBRARY_VERSION=5:0:1
 #                       | | |
 #                +------+ | +---+
 #                |        |     |
@@ -56,12 +56,7 @@ AC_CHECK_SIZEOF([long])
 # Check headers/libs
 AC_CHECK_FUNCS([gethostbyname getaddrinfo gettimeofday inet_ntoa memset socket])
 AC_CHECK_LIB([network],[socket])
-
-# Requirements
-TAO_REQUIRE_LIBWOLFSSL
-
-# since we have autoconf available, we can use cyassl options header
-AM_CPPFLAGS="$AM_CPPFLAGS -DHAVE_CYASSL_OPTIONS"
+AC_CHECK_LIB([wolfssl],[wolfCrypt_Init],,[AC_MSG_ERROR([libwolfssl is required for ${PACKAGE}. It can be obtained from https://www.wolfssl.com/download.html/ .])])
 
 # DEBUG
 DEBUG_CFLAGS="-g -O0"
@@ -81,10 +76,9 @@ AX_PTHREAD([
     AS_CASE([$PTHREAD_CFLAGS],[-Qunused-arguments*],[PTHREAD_CFLAGS="-Xcompiler $PTHREAD_CFLAGS"])
     AM_CFLAGS="$AM_CFLAGS $PTHREAD_CFLAGS"])
 
-
 # Inline Build
 AC_ARG_ENABLE([inline],
-    [AS_HELP_STRING([--enable-inline],[Enable inline functions (default: enabled)])],
+    [AS_HELP_STRING([--disable-inline],[Enable inline functions (default: enabled)])],
     [ENABLED_INLINE=$enableval],[ENABLED_INLINE=yes])
 
 if test "$ENABLED_INLINE" = "no"
@@ -99,31 +93,37 @@ AC_ARG_ENABLE([keygen],
     [AS_HELP_STRING([--enable-keygen],[Enable key generation (default: disabled)])],
     [ENABLED_KEYGEN=$enableval],[ENABLED_KEYGEN=no])
 
-AS_IF([test "x$ENABLED_KEYGEN" = "xyes"],
-      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_KEYGEN"])
-
-AM_CONDITIONAL([BUILD_KEYGEN], [test "x$ENABLED_KEYGEN" = "xyes"])
-
 # SCP
 AC_ARG_ENABLE([scp],
     [AS_HELP_STRING([--enable-scp],[Enable scp support (default: disabled)])],
     [ENABLED_SCP=$enableval],[ENABLED_SCP=no])
-
-AS_IF([test "x$ENABLED_SCP" = "xyes"],
-      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SCP"])
-
-AM_CONDITIONAL([BUILD_SCP], [test "x$ENABLED_SCP" = "xyes"])
 
 # SFTP
 AC_ARG_ENABLE([sftp],
     [AS_HELP_STRING([--enable-sftp],[Enable SFTP support (default: disabled)])],
     [ENABLED_SFTP=$enableval],[ENABLED_SFTP=no])
 
+# TCP/IP Forwarding
+AC_ARG_ENABLE([fwd],
+    [AS_HELP_STRING([--enable-fwd],[Enable TCP/IP Forwarding support (default: disabled)])],
+    [ENABLED_FWD=$enableval],[ENABLED_FWD=no])
+
+AS_IF([test "x$ENABLED_INLINE" = "xno"],
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DNO_INLINE"])
+AS_IF([test "x$ENABLED_KEYGEN" = "xyes"],
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_KEYGEN"])
+AS_IF([test "x$ENABLED_SCP" = "xyes"],
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SCP"])
 AS_IF([test "x$ENABLED_SFTP" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SFTP"])
+AS_IF([test "x$ENABLED_FWD" = "xyes"],
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_FWD"])
 
-AM_CONDITIONAL([BUILD_SFTP], [test "x$ENABLED_SFTP" = "xyes"])
-
+AM_CONDITIONAL([BUILD_INLINE],[test "x$ENABLED_INLINE" = "xyes"])
+AM_CONDITIONAL([BUILD_KEYGEN],[test "x$ENABLED_KEYGEN" = "xyes"])
+AM_CONDITIONAL([BUILD_SCP],[test "x$ENABLED_SCP" = "xyes"])
+AM_CONDITIONAL([BUILD_SFTP],[test "x$ENABLED_SFTP" = "xyes"])
+AM_CONDITIONAL([BUILD_FWD],[test "x$ENABLED_FWD" = "xyes"])
 
 # Checks for typedefs, structures, and compiler characteristics.
 if test "$ac_cv_sizeof_long" = "8"; then
@@ -154,7 +154,6 @@ AC_OUTPUT
 echo "---"
 echo "Running make clean..."
 make clean >/dev/null 2>&1
-echo
 
 # output config summary
 echo "---"
@@ -167,10 +166,10 @@ echo "   * C Compiler:                $CC"
 echo "   * C Flags:                   $CFLAGS"
 echo "   * CPP Flags:                 $CPPFLAGS"
 echo "   * Linker Flags:              $LDFLAGS"
-echo "   * LIB Flags:                 $LIB"
 echo
-echo "   Features "
+echo "   Features"
 echo "   * keygen:                    $ENABLED_KEYGEN"
 echo "   * scp:                       $ENABLED_SCP"
 echo "   * sftp:                      $ENABLED_SFTP"
+echo "   * TCP/IP Forwarding:         $ENABLED_FWD"
 

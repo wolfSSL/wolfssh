@@ -94,8 +94,11 @@ enum WS_ErrorCodes {
     WS_PERMISSIONS         = -54,
     WS_SFTP_COMPLETE       = -55,   /* SFTP connection established */
     WS_NEXT_ERROR          = -56,   /* Getting next value/state results in error */
+    WS_CHAN_RXD            = -57,   /* Status that channel data received. */
+    WS_INVALID_EXTDATA     = -58,   /* invalid Channel Extended Data Type */
+    WS_CHAN_PENDING        = -59,   /* peer hasn't confirmed channel open */
 
-    WS_LAST_E              = -56    /* Update this to indicate last error */
+    WS_LAST_E              = -59    /* Update this to indicate last error */
 };
 
 

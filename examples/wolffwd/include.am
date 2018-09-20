@@ -1,0 +1,12 @@
+# vim:ft=automake
+# All paths should be given relative to the root
+
+if BUILD_FWD
+noinst_PROGRAMS += examples/wolffwd/wolffwd
+noinst_HEADERS += examples/wolffwd/wolffwd.h
+examples_wolffwd_wolffwd_SOURCES = examples/wolffwd/wolffwd.c
+examples_wolffwd_wolffwd_LDADD = src/libwolfssh.la
+examples_wolffwd_wolffwd_DEPENDENCIES = src/libwolfssh.la
+endif
+
+DISTCLEANFILES+= examples/wolffwd/.libs/wolffwd

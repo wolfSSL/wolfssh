@@ -327,7 +327,7 @@ static int test_KDF(void)
                                  tv->h, &h, &hSz,
                                  tv->sessionId, &sId, &sIdSz,
                                  tv->expectedKey, &eKey, &eKeySz);
-        if (result != 0) {
+        if (result != 0 || eKey == NULL) {
             printf("KDF: Could not convert test vector %u.\n", i);
             return -100;
         }
