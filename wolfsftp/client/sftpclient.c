@@ -888,6 +888,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 
     doCmds();
 
+    XFREE(workingDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     ret = wolfSSH_shutdown(ssh);
     if (ret != WS_SUCCESS)
         err_sys("Closing stream failed.");
