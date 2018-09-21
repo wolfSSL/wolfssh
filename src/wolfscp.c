@@ -383,7 +383,8 @@ int DoScpSource(WOLFSSH* ssh)
                         WOLFSSH_SCP_NEW_REQUEST, NULL, NULL, 0, NULL, NULL,
                         NULL, 0, NULL, NULL, 0, wolfSSH_GetScpSendCtx(ssh));
 
-                if (ssh->scpConfirm == WS_SCP_ABORT) {
+                if (ssh->scpConfirm == WS_SCP_ABORT ||
+                                                    ssh->scpConfirm == WS_EOF) {
                     ssh->scpState = SCP_RECEIVE_CONFIRMATION_WITH_RECEIPT;
                     ssh->scpNextState = SCP_DONE;
                 } else {
@@ -456,7 +457,8 @@ int DoScpSource(WOLFSSH* ssh)
                         ssh->scpFileName, ssh->scpFileNameSz, &(ssh->scpMTime),
                         &(ssh->scpATime), &(ssh->scpFileMode),
                         ssh->scpFileOffset, &(ssh->scpFileSz),
-                        ssh->scpFileBuffer, ssh->scpFileBufferSz,
+                        ssh->scpFileBuffer + ssh->scpBufferedSz,
+                        ssh->scpFileBufferSz - ssh->scpBufferedSz,
                         wolfSSH_GetScpSendCtx(ssh));
 
                 if (ssh->scpConfirm == WS_SCP_ENTER_DIR) {
@@ -483,7 +485,7 @@ int DoScpSource(WOLFSSH* ssh)
                 } else if (ssh->scpConfirm >= 0) {
 
                     /* transfer buffered file data */
-                    ssh->scpBufferedSz = ssh->scpConfirm;
+                    ssh->scpBufferedSz += ssh->scpConfirm;
                     ssh->scpConfirm = WS_SCP_CONTINUE;
 
                     /* only send timestamp and file header first time */
@@ -572,15 +574,20 @@ int DoScpSource(WOLFSSH* ssh)
 
                 ret = wolfSSH_stream_send(ssh, ssh->scpFileBuffer,
                                           ssh->scpBufferedSz);
+                wolfSSH_CheckReceivePending(ssh); /*check for adjust window packet*/
                 if (ret < 0) {
                     WLOG(WS_LOG_ERROR, scpError, "failed to send file", ret);
                     break;
                 }
 
                 ssh->scpFileOffset += ret;
-                ssh->scpBufferedSz = 0;
+                if (ret != (int)ssh->scpBufferedSz) {
+                    /* case where not all of buffer was sent */
+                    WMEMMOVE(ssh->scpFileBuffer, ssh->scpFileBuffer + ret,
+                             ssh->scpBufferedSz - ret);
+                }
+                ssh->scpBufferedSz -= ret;
                 ret = WS_SUCCESS;
-
                 if (ssh->scpFileOffset < ssh->scpFileSz) {
                     ssh->scpState = SCP_TRANSFER;
                     ssh->scpRequestType = WOLFSSH_SCP_CONTINUE_FILE_TRANSFER;
@@ -1352,7 +1359,6 @@ int SendScpConfirmation(WOLFSSH* ssh)
     /* skip first byte for accurate strlen, may be 0 */
     msgSz = (int)XSTRLEN(msg + 1) + 1;
     ret = wolfSSH_stream_send(ssh, (byte*)msg, msgSz);
-
     if (ret != msgSz || ssh->scpConfirm == WS_SCP_ABORT) {
         ret = WS_FATAL_ERROR;
 
@@ -1646,6 +1652,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             if (bytes != bufSz) {
                 WLOG(WS_LOG_ERROR, scpError, "scp receive callback unable "
                      "to write requested size to file", bytes);
+                WFCLOSE(fp);
                 ret = WS_SCP_ABORT;
             }
             break;
@@ -2101,6 +2108,10 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
 
             if (ret == WS_SUCCESS && sendCtx != NULL && sendCtx->fp != NULL) {
                 ret = (word32)WFREAD(buf, 1, bufSz, sendCtx->fp);
+                if (ret == 0) { /* handle unexpected case */
+                    ret = WS_EOF;
+                }
+
             } else {
                 ret = WS_SCP_ABORT;
             }
@@ -2246,6 +2257,10 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             }
 
             ret = (word32)WFREAD(buf, 1, bufSz, sendCtx->fp);
+            if (ret == 0) { /* handle case of EOF */
+                ret = WS_EOF;
+            }
+
             if ((ret <= 0) || (fileOffset + ret == *totalFileSz)) {
                 WFCLOSE(sendCtx->fp);
             }

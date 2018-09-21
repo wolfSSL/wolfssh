@@ -1252,3 +1252,38 @@ WOLFSSH_CHANNEL* wolfSSH_ChannelNext(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel)
             nextChannel == NULL ? "none" : "NEXT!");
     return nextChannel;
 }
+
+
+/* Protocols that have loops over wolfSSH_stream_send without doing any reads
+ * will run into the issue of not checking for a peer window adjustment packet.
+ * This function allows for checking for a peer window adjustment packet without
+ * requiring a read buffer and call to wolfSSH_stream_read.
+ *
+ * Data that is read and is not related to packet headers is stored in the
+ * WOLFSSH input buffer and can be gotten with a call to wolfSSH_stream_read. If
+ * more data is stored then MAX_PACKET_SZ then no more window adjustment packets
+ * are searched for.
+ */
+void wolfSSH_CheckReceivePending(WOLFSSH* ssh)
+{
+    int bytes = 0;
+    Buffer* inputBuffer;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CheckReceivePending()");
+
+    if (ssh == NULL)
+        return;
+
+    inputBuffer = &ssh->channelList->inputBuffer;
+    WIOCTL(wolfSSH_get_fd(ssh), FIONREAD, &bytes);
+    while (bytes > 0) { /* there is something to read off the wire */
+        if (inputBuffer->length - inputBuffer->idx > MAX_PACKET_SZ) {
+            WLOG(WS_LOG_DEBUG, "Application data to be read");
+            break; /* too much application data! */
+        }
+        if (DoReceive(ssh) < 0) {
+            WLOG(WS_LOG_ERROR, "Error trying to read potential window adjust");
+        }
+        WIOCTL(wolfSSH_get_fd(ssh), FIONREAD, &bytes);
+    }
+}

@@ -181,6 +181,7 @@ typedef enum {
 WOLFSSH_API WS_SessionType wolfSSH_GetSessionType(const WOLFSSH*);
 WOLFSSH_API const char* wolfSSH_GetSessionCommand(const WOLFSSH*);
 WOLFSSH_API int wolfSSH_SetChannelType(WOLFSSH*, byte, byte*, word32);
+WOLFSSH_API void wolfSSH_CheckReceivePending(WOLFSSH* ssh);
 
 
 enum WS_HighwaterSide {
