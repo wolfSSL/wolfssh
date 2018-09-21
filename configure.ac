@@ -81,13 +81,6 @@ AC_ARG_ENABLE([inline],
     [AS_HELP_STRING([--disable-inline],[Enable inline functions (default: enabled)])],
     [ENABLED_INLINE=$enableval],[ENABLED_INLINE=yes])
 
-if test "$ENABLED_INLINE" = "no"
-then
-    AM_CPPFLAGS="$AM_CPPFLAGS -DNO_INLINE"
-fi
-
-AM_CONDITIONAL([BUILD_INLINE], [test "x$ENABLED_INLINE" = "xyes"])
-
 # Key Generation
 AC_ARG_ENABLE([keygen],
     [AS_HELP_STRING([--enable-keygen],[Enable key generation (default: disabled)])],
@@ -108,6 +101,20 @@ AC_ARG_ENABLE([fwd],
     [AS_HELP_STRING([--enable-fwd],[Enable TCP/IP Forwarding support (default: disabled)])],
     [ENABLED_FWD=$enableval],[ENABLED_FWD=no])
 
+# Enable All
+AC_ARG_ENABLE([all],
+    [AS_HELP_STRING([--enable-all],[Enable all wolfSSH features (default: disabled)])],
+    [ENABLED_ALL=$enableval],[ENABLED_ALL=no])
+
+# Distro build
+AC_ARG_ENABLE([distro],
+    [AS_HELP_STRING([--enable-distro],[Enable wolfSSH distro build (default: disabled)])],
+    [ENABLED_DISTRO=$enableval],[ENABLED_DISTRO=no])
+
+AS_IF([test "x$ENABLED_DISTRO" = "xyes"],
+      [ENABLED_ALL=yes; enable_shared=yes; enable_static=yes])
+AS_IF([test "x$ENABLED_ALL" = "xyes"],
+      [ENABLED_KEYGEN=yes; ENABLED_SCP=yes; ENABLED_SFTP=yes; ENABLED_FWD=yes])
 AS_IF([test "x$ENABLED_INLINE" = "xno"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DNO_INLINE"])
 AS_IF([test "x$ENABLED_KEYGEN" = "xyes"],
@@ -172,4 +179,4 @@ echo "   * keygen:                    $ENABLED_KEYGEN"
 echo "   * scp:                       $ENABLED_SCP"
 echo "   * sftp:                      $ENABLED_SFTP"
 echo "   * TCP/IP Forwarding:         $ENABLED_FWD"
-
+echo "   * Inline Code:               $ENABLED_INLINE"
