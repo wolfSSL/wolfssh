@@ -18,6 +18,8 @@
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#define WOLFSSH_TEST_CLIENT
+
 #include <wolfssh/ssh.h>
 #include <wolfssh/wolfsftp.h>
 #include <wolfssh/test.h>
