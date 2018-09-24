@@ -29,6 +29,8 @@
 #endif
 
 
+#include <wolfssl/wolfcrypt/types.h>
+#include <wolfssh/settings.h>
 #include <wolfssh/port.h>
 
 

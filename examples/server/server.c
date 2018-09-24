@@ -18,6 +18,9 @@
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#define WOLFSSH_TEST_SERVER
+#define WOLFSSH_TEST_THREADING
+
 
 #ifdef WOLFSSL_USER_SETTINGS
     #include <wolfssl/wolfcrypt/settings.h>

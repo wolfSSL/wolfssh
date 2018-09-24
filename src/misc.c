@@ -29,9 +29,11 @@
     #include <config.h>
 #endif
 
-
-#include <wolfssh/settings.h>
-
+#ifdef WOLFSSL_USER_SETTINGS
+#include <wolfssl/wolfcrypt/settings.h>
+#else
+#include <wolfssl/options.h>
+#endif
 
 #ifndef WOLFSSH_MISC_C
 #define WOLFSSH_MISC_C

@@ -149,56 +149,6 @@
 #define serverKeyRsaPemFile "./keys/server-key-rsa.pem"
 
 
-typedef struct tcp_ready {
-    word16 ready;     /* predicate */
-    word16 port;
-    char* srfName;     /* server ready file name */
-#if defined(_POSIX_THREADS) && !defined(__MINGW32__)
-    pthread_mutex_t mutex;
-    pthread_cond_t  cond;
-#endif
-} tcp_ready;
-
-
-static INLINE void InitTcpReady(tcp_ready* ready)
-{
-    ready->ready = 0;
-    ready->port = 0;
-    ready->srfName = NULL;
-#ifdef SINGLE_THREADED
-#elif defined(_POSIX_THREADS) && !defined(__MINGW32__)
-    pthread_mutex_init(&ready->mutex, 0);
-    pthread_cond_init(&ready->cond, 0);
-#endif
-}
-
-
-static INLINE void FreeTcpReady(tcp_ready* ready)
-{
-#ifdef SINGLE_THREADED
-    (void)ready;
-#elif defined(_POSIX_THREADS) && !defined(__MINGW32__)
-    pthread_mutex_destroy(&ready->mutex);
-    pthread_cond_destroy(&ready->cond);
-#else
-    (void)ready;
-#endif
-}
-
-
-typedef struct func_args {
-    int    argc;
-    char** argv;
-    int    return_code;
-    tcp_ready* signal;
-    WS_CallbackUserAuth user_auth;
-} func_args;
-
-
-typedef THREAD_RETURN WOLFSSH_THREAD THREAD_FUNC(void*);
-void WaitTcpReady(func_args*);
-
-
 #ifndef TEST_IPV6
     static const char* const wolfSshIp = "127.0.0.1";
 #else /* TEST_IPV6 */
@@ -311,6 +261,8 @@ static INLINE int mygetopt(int argc, char** argv, const char* optstring)
     /* For Windows builds, disable compiler warnings for:
     * - 4996: deprecated function */
 #endif
+
+#if defined(WOLFSSH_TEST_CLIENT) || defined(WOLFSSH_TEST_SERVER)
 
 #ifdef WOLFSSL_NUCLEUS
 static INLINE void build_addr(struct addr_struct* addr, const char* peer,
@@ -447,7 +399,7 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
     }
 #endif
 }
-#endif /* WOLFSSL_NUCLEUS */
+#endif /* WOLFSSH_NUCLEUS */
 
 #ifdef USE_WINDOWS_API
     #pragma warning(pop)
@@ -513,10 +465,15 @@ static INLINE void tcp_socket(SOCKET_T* sockFd)
 #endif  /* USE_WINDOWS_API */
 }
 
+#endif /* WOLFSSH_TEST_CLIENT || WOLFSSH_TEST_SERVER */
+
 
 #ifndef XNTOHS
     #define XNTOHS(a) ntohs((a))
 #endif
+
+
+#ifdef WOLFSSH_TEST_SERVER
 
 static INLINE void tcp_listen(SOCKET_T* sockfd, word16* port, int useAnyAddr)
 {
@@ -580,6 +537,8 @@ static INLINE void tcp_listen(SOCKET_T* sockfd, word16* port, int useAnyAddr)
 #endif /* MICROCHIP_MPLAB_HARMONY */
 }
 
+#endif /* WOLFSSH_TEST_SERVER */
+
 /* Wolf Root Directory Helper */
 /* KEIL-RL File System does not support relative directory */
 #if !defined(WOLFSSL_MDK_ARM) && !defined(WOLFSSL_KEIL_FS) && !defined(WOLFSSL_TIRTOS) \
@@ -616,6 +575,65 @@ static INLINE void tcp_listen(SOCKET_T* sockfd, word16* port, int useAnyAddr)
     }
 #endif /* !defined(WOLFSSL_MDK_ARM) && !defined(WOLFSSL_KEIL_FS) && !defined(WOL
 FSSL_TIRTOS) */
+
+
+typedef struct tcp_ready {
+    word16 ready;     /* predicate */
+    word16 port;
+    char* srfName;     /* server ready file name */
+#if defined(_POSIX_THREADS) && !defined(__MINGW32__)
+    pthread_mutex_t mutex;
+    pthread_cond_t  cond;
+#endif
+} tcp_ready;
+
+
+typedef struct func_args {
+    int    argc;
+    char** argv;
+    int    return_code;
+    tcp_ready* signal;
+    WS_CallbackUserAuth user_auth;
+} func_args;
+
+
+#ifdef WOLFSSH_TEST_LOCKING
+
+static INLINE void InitTcpReady(tcp_ready* ready)
+{
+    ready->ready = 0;
+    ready->port = 0;
+    ready->srfName = NULL;
+#ifdef SINGLE_THREADED
+#elif defined(_POSIX_THREADS) && !defined(__MINGW32__)
+    pthread_mutex_init(&ready->mutex, 0);
+    pthread_cond_init(&ready->cond, 0);
+#endif
+}
+
+
+static INLINE void FreeTcpReady(tcp_ready* ready)
+{
+#ifdef SINGLE_THREADED
+    (void)ready;
+#elif defined(_POSIX_THREADS) && !defined(__MINGW32__)
+    pthread_mutex_destroy(&ready->mutex);
+    pthread_cond_destroy(&ready->cond);
+#else
+    (void)ready;
+#endif
+}
+
+
+void WaitTcpReady(func_args*);
+
+#endif /* WOLFSSH_TEST_LOCKING */
+
+
+#ifdef WOLFSSH_TEST_THREADING
+
+typedef THREAD_RETURN WOLFSSH_THREAD THREAD_FUNC(void*);
+
 
 static INLINE void ThreadStart(THREAD_FUNC fun, void* args, THREAD_TYPE* thread)
 {
@@ -689,5 +707,7 @@ static INLINE void ThreadDetach(THREAD_TYPE thread)
     (void)res; /* Suppress un-used variable warning */
 #endif
 }
+
+#endif /* WOLFSSH_TEST_THREADING */
 
 #endif /* _WOLFSSH_TEST_H_ */

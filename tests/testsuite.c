@@ -18,6 +18,11 @@
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#define WOLFSSH_TEST_CLIENT
+#define WOLFSSH_TEST_SERVER
+#define WOLFSSH_TEST_THREADING
+#define WOLFSSH_TEST_LOCKING
+
 
 #include <stdio.h>
 
