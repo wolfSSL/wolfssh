@@ -482,7 +482,10 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
                 WLOG(WS_LOG_SFTP, "Unknown packet type [%d] received", type);
                 data = (byte*)WMALLOC(maxSz, ssh->ctx->heap, DYNTYPE_BUFFER);
                 if (data != NULL) {
-                    wolfSSH_stream_read(ssh, data, maxSz);
+                    if (wolfSSH_stream_read(ssh, data, maxSz) != maxSz){
+                        WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
+                        return WS_FATAL_ERROR;
+                    }
                     WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
                 }
                 wolfSSH_SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
@@ -594,7 +597,11 @@ int wolfSSH_SFTP_RecvRMDIR(WOLFSSH* ssh, int reqId, word32 maxSz)
     if (data == NULL) {
         return WS_MEMORY_E;
     }
-    wolfSSH_stream_read(ssh, data, maxSz);
+    ret = wolfSSH_stream_read(ssh, data, maxSz);
+    if (ret < 0 || ret != (int)maxSz) {
+        WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
+        return WS_FATAL_ERROR;
+    }
 
     ato32(data + idx, &sz); idx += UINT32_SZ;
     if (sz + idx > maxSz) {
@@ -2160,6 +2167,7 @@ int wolfSSH_SFTP_RecvSTAT(WOLFSSH* ssh, int reqId, word32 maxSz)
 {
     WS_SFTP_FILEATRB atr;
     char* name = NULL;
+    int   ret;
 
     word32 sz;
     byte*  data;
@@ -2175,7 +2183,11 @@ int wolfSSH_SFTP_RecvSTAT(WOLFSSH* ssh, int reqId, word32 maxSz)
     if (data == NULL) {
         return WS_MEMORY_E;
     }
-    wolfSSH_stream_read(ssh, data, maxSz);
+    ret = wolfSSH_stream_read(ssh, data, maxSz);
+    if (ret < 0 || ret != (int)maxSz) {
+        WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
+        return WS_FATAL_ERROR;
+    }
 
     ato32(data + idx, &sz); idx += UINT32_SZ;
     if (sz + idx > maxSz) {
