@@ -202,7 +202,8 @@ int wolfSSH_SFTP_accept(WOLFSSH* ssh)
                 return WS_FATAL_ERROR;
             }
             ssh->connectState = SFTP_RECV;
-            FALL_THROUGH /* no break */
+            FALL_THROUGH;
+            /* no break */
 
         case SFTP_RECV:
             if ((ssh->error = SFTP_ServerSendInit(ssh)) != WS_SUCCESS) {
@@ -2540,7 +2541,8 @@ int wolfSSH_SFTP_connect(WOLFSSH* ssh)
                 return WS_FATAL_ERROR;
             }
             ssh->connectState = SFTP_RECV;
-            FALL_THROUGH /* no break */
+            FALL_THROUGH;
+            /* no break */
 
         case SFTP_RECV:
             if ((ssh->error = SFTP_ClientRecvInit(ssh)) != WS_SUCCESS) {
