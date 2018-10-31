@@ -4732,7 +4732,8 @@ int DoReceive(WOLFSSH* ssh)
                         return ret;
                     }
                 }
-                FALL_THROUGH /* no break */
+                FALL_THROUGH;
+                /* no break */
 
             case PROCESS_PACKET_LENGTH:
                 if (ssh->inputBuffer.idx + UINT32_SZ > ssh->inputBuffer.bufferSz)
@@ -4745,7 +4746,8 @@ int DoReceive(WOLFSSH* ssh)
                     return WS_OVERFLOW_E;
 
                 ssh->processReplyState = PROCESS_PACKET_FINISH;
-                FALL_THROUGH /* no break */
+                FALL_THROUGH;
+                /* no break */
 
             case PROCESS_PACKET_FINISH:
                 readSz = ssh->curSz + LENGTH_SZ + peerMacSz;
@@ -4811,7 +4813,8 @@ int DoReceive(WOLFSSH* ssh)
                     }
                 }
                 ssh->processReplyState = PROCESS_PACKET;
-                FALL_THROUGH /* no break */
+                FALL_THROUGH;
+                /* no break */
 
             case PROCESS_PACKET:
                 ret = DoPacket(ssh);
