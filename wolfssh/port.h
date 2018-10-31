@@ -499,6 +499,8 @@ extern "C" {
         }
     }
     #define WIOCTL ws_Ioctl
+#elif defined(USE_WINDOWS_API)
+    #define WIOCTL ioctlsocket
 #else
     #include <sys/ioctl.h>
     #define WIOCTL ioctl
