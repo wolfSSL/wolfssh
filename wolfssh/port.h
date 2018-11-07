@@ -131,24 +131,32 @@ extern "C" {
     #define WREWIND(s)        rewind((s))
     #define WSEEK_END         SEEK_END
     #define WUTIMES(f,t)      utimes((f),(t))
-    #define WCHMOD(f,m)       chmod((f),(m))
+
+    #ifndef USE_WINDOWS_API
+        #define WCHMOD(f,m)   chmod((f),(m))
+    #else
+        #define WCHMOD(f,m)   _chmod((f),(m))
+    #endif
 
     #if (defined(WOLFSSH_SCP) || defined(WOLFSSH_SFTP)) && \
         !defined(WOLFSSH_SCP_USER_CALLBACKS) && \
         !defined(NO_FILESYSTEM)
-        /* for chdir() */
-        #include <unistd.h>
-        /* for mkdir() */
-        #include <sys/stat.h>
-        #define WCHDIR(p)     chdir((p))
-        #define WMKDIR(p,m)   mkdir((p),(m))
+
+        #ifdef USE_WINDOWS_API
+            #include <direct.h>
+            #define WCHDIR(p) _chdir((p))
+            #define WMKDIR(p,m) _mkdir((p))
+        #else
+            #include <unistd.h>
+            #include <sys/stat.h>
+            #define WCHDIR(p)     chdir((p))
+            #define WMKDIR(p,m)   mkdir((p),(m))
     #endif
 #endif
 #endif
 /* setup string handling */
 #ifndef WSTRING_USER
     #include <string.h>
-
 
     WOLFSSH_API char* wstrnstr(const char*, const char*, unsigned int);
 
@@ -411,6 +419,46 @@ extern "C" {
     #define WCLOSEDIR(d) NU_Done((d))
     #define WREADDIR(d)  (NU_Get_Next((d)) == NU_SUCCESS)?(d):NULL
     #endif /* NO_WOLFSSH_DIR */
+#elif defined(USE_WINDOWS_API)
+
+    #include <sys/types.h>
+    #include <sys/stat.h>
+    #include <io.h>
+    #include <direct.h>
+    #include <fcntl.h>
+
+    #define WRMDIR(d)         _rmdir((d))
+    #define WSTAT_T           struct _stat
+    #define WSTAT(p,b)        _stat((p),(b))
+    /*#define WLSTAT(p,b)*/
+    #define WREMOVE(d)        remove((d))
+    #define WRENAME(o,n)      rename((o),(n))
+    #define WGETCWD(r,rSz)    _getcwd((r),(rSz))
+    #define WOPEN(f,m,p)      _open((f),(m),(p))
+    #define WCLOSE(fd)        _close((fd))
+    /*#define WPWRITE(fd,b,s,o)*/
+    /*#define WPREAD(fd,b,s,o)*/
+    #define WS_DELIM          '\\'
+
+    #define WFD int
+    #define WOLFSSH_O_RDWR    _O_RDWR
+    #define WOLFSSH_O_RDONLY  _O_RDONLY
+    #define WOLFSSH_O_WRONLY  _O_WRONLY
+    #define WOLFSSH_O_APPEND  _O_APPEND
+    #define WOLFSSH_O_CREAT   _O_CREAT
+    #define WOLFSSH_O_TRUNC   _O_TRUNC
+    #define WOLFSSH_O_EXCL    _O_EXCL
+
+    #ifndef NO_WOLFSSH_DIR
+        #define WDIR void*
+
+        /* returns 0 on success */
+        #define WOPENDIR(c,d)  (-1)
+        #define WCLOSEDIR(d)   (-1)
+        #define WREADDIR(d)    (-1)
+    #endif /* NO_WOLFSSH_DIR */
+    #endif
+
 #else
     #include <unistd.h>   /* used for rmdir */
     #include <sys/stat.h> /* used for mkdir, stat, and lstat */

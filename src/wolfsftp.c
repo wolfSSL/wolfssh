@@ -18,6 +18,7 @@
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#define _CRT_SECURE_NO_WARNINGS
 
 #ifdef HAVE_CONFIG_H
     #include <config.h>
@@ -523,10 +524,10 @@ int wolfSSH_SFTP_SendStatus(WOLFSSH* ssh, word32 status, word32 reqId,
 
     maxSz = WOLFSSH_SFTP_HEADER + (UINT32_SZ * 3);
     if (reason != NULL) {
-        maxSz += WSTRLEN(reason);
+        maxSz += (word32)WSTRLEN(reason);
     }
     if (lang != NULL) {
-        maxSz += WSTRLEN(lang);
+        maxSz += (word32)WSTRLEN(lang);
     }
 
     buf = (byte*)WMALLOC(maxSz, ssh->ctx->heap, DYNTYPE_BUFFER);
@@ -1044,6 +1045,76 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
     }
 
     return ret;
+}
+#elif defined(USE_WINDOWS_API)
+/* helper function that gets file information from reading directory
+* @TODO allow user to override
+*
+* returns WS_SUCCESS on success
+*/
+static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
+	char* dirName)
+{
+	int sz;
+
+	if (dir == NULL || ssh == NULL || out == NULL) {
+		return WS_BAD_ARGUMENT;
+	}
+
+	dp = WREADDIR(dir);
+	if (dp == NULL) {
+		return WS_FATAL_ERROR;
+	}
+
+	sz = (int)WSTRLEN(dp->d_name);
+	out->fName = (char*)WMALLOC(sz + 1, out->heap, DYNTYPE_SFTP);
+	if (out->fName == NULL) {
+		return WS_MEMORY_E;
+	}
+	out->lName = (char*)WMALLOC(sz + 1, out->heap, DYNTYPE_SFTP);
+	if (out->lName == NULL) {
+		WFREE(out->fName, out->heap, DYNTYPE_SFTP);
+		return WS_MEMORY_E;
+	}
+
+	WMEMCPY(out->fName, dp->d_name, sz);
+	WMEMCPY(out->lName, dp->d_name, sz);
+	out->fName[sz] = '\0';
+	out->lName[sz] = '\0';
+	out->fSz = sz;
+	out->lSz = sz;
+
+	/* attempt to get file attributes. Could be directory or have none */
+	{
+		char* buf;
+		int   bufSz;
+		int   tmpSz;
+
+		bufSz = out->fSz + (int)WSTRLEN(dirName) + sizeof(WS_DELIM);
+		buf = (char*)WMALLOC(bufSz + 1, out->heap, DYNTYPE_SFTP);
+		if (buf == NULL) {
+			return WS_MEMORY_E;
+		}
+		buf[0] = '\0';
+		WSTRNCAT(buf, dirName, bufSz);
+		tmpSz = (int)WSTRLEN(buf);
+
+		/* add delimiter between path and file/dir name */
+		if (tmpSz + 1 < bufSz) {
+			buf[tmpSz] = WS_DELIM;
+			buf[tmpSz + 1] = '\0';
+		}
+		WSTRNCAT(buf, out->fName, bufSz);
+
+		clean_path(buf);
+		if (SFTP_GetAttributes(buf, &out->atrb, 0) != WS_SUCCESS) {
+			WLOG(WS_LOG_SFTP, "Unable to get attribute values for %s",
+				out->fName);
+		}
+		WFREE(buf, out->heap, DYNTYPE_SFTP);
+	}
+
+	return WS_SUCCESS;
 }
 #else
 /* helper function that gets file information from reading directory
@@ -2021,7 +2092,7 @@ int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
  */
 int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr, byte link)
 {
-    struct stat stats;
+    WSTAT_T stats;
 
     if (link) {
         if (WLSTAT(fileName, &stats) != 0) {
@@ -3874,11 +3945,11 @@ int wolfSSH_SFTP_Rename(WOLFSSH* ssh, const char* old, const char* nw)
     /* add old name to the packet */
     idx = WOLFSSH_SFTP_HEADER;
     c32toa((word32)WSTRLEN(old), data + idx); idx += UINT32_SZ;
-    WMEMCPY(data + idx, (byte*)old, WSTRLEN(old)); idx += WSTRLEN(old);
+    WMEMCPY(data + idx, (byte*)old, WSTRLEN(old)); idx += (word32)WSTRLEN(old);
 
     /* add new name to the packet */
     c32toa((word32)WSTRLEN(nw), data + idx); idx += UINT32_SZ;
-    WMEMCPY(data + idx, (byte*)nw, WSTRLEN(nw)); idx += WSTRLEN(nw);
+    WMEMCPY(data + idx, (byte*)nw, WSTRLEN(nw)); idx += (word32)WSTRLEN(nw);
 
     /* send header and type specific data */
     ret = wolfSSH_stream_send(ssh, data, idx);
@@ -4162,7 +4233,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
 
     /* if resuming then check for saved offset */
     if (resume) {
-        gOfst = wolfSSH_SFTP_GetOfst(ssh, from, to);
+        gOfst = (long)wolfSSH_SFTP_GetOfst(ssh, from, to);
     }
 
     if (gOfst > 0) {
@@ -4237,7 +4308,7 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
 
     if (resume) {
         /* check if offset was stored */
-        pOfst = wolfSSH_SFTP_GetOfst(ssh, from, to);
+        pOfst = (long)wolfSSH_SFTP_GetOfst(ssh, from, to);
     }
 
     /* open file and get handle */
