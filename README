@@ -174,3 +174,51 @@ are routed back and forth between the client and server. "Hello, wolfSSL!"
 
 The source for wolffwd provides an example on how to set up and use the
 port forwarding support in wolfSSH.
+
+
+sftp support
+-----------------------
+
+wolfSSH provides server and client side support for SFTP version 3. This
+allows the user to set up an encrypted connection for managing file systems.
+
+To compile wolfSSH with SFTP support, use the `--enable-sftp` build option or
+define `WOLFSSH_SFTP`:
+
+$ ./configure --enable-sftp
+$ make
+
+For full API usage and implementation details, please see the wolfSSH User
+Manual.
+
+The SFTP client created is located in the directory wolfsftp/client/ and the
+server is ran using the same echoserver as with wolfSSH.
+
+src/wolfssh$ ./wolfsftp/client/wolfsftp
+
+A full list of supported commands can be seen with typeing "help" after a
+connection.
+
+
+```
+wolfSSH sftp> help
+
+
+Commands :
+cd  <string>                      change directory
+chmod <mode> <path>               change mode
+get <remote file> <local file>    pulls file(s) from server
+ls                                list current directory
+mkdir <dir name>                  creates new directory on server
+put <local file> <remote file>    push file(s) to server
+pwd                               list current path
+quit                              exit
+rename <old> <new>                renames remote file
+reget <remote file> <local file>  resume pulling file
+reput <remote file> <local file>  resume pushing file
+<crtl + c>                        interrupt get/put cmd
+```
+
+An example of connecting to another system would be
+
+src/wolfssh$ ./wolfsftp/client/wolfsftp -p 22 -u user -h 192.168.1.111
