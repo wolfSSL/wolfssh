@@ -136,10 +136,10 @@ static int SFTP_ServerRecvInit(WOLFSSH* ssh) {
     if (sz > 0) {
         byte* data = (byte*)WMALLOC(sz, NULL, DYNTYPE_BUFFER);
         if (data ==  NULL) return WS_MEMORY_E;
-        if ((len = wolfSSH_stream_read(ssh, data, sz)) != (int)sz) {
-            return len;
-        }
+        len = wolfSSH_stream_read(ssh, data, sz);
         WFREE(data, NULL, DYNTYPE_BUFFER);
+        if (len != (int)sz)
+            return len;
     }
 
     ssh->reqId++;
@@ -903,6 +903,7 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, word32 maxSz)
                 DYNTYPE_SFTP);
         if (dirList == NULL) {
             WFREE(dir, ssh->ctx->heap, DYNTYPE_BUFFER);
+            WCLOSEDIR(&ctx);
             return WS_MEMORY_E;
         }
 #ifdef WOLFSSL_NUCLEUS
@@ -922,6 +923,7 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, word32 maxSz)
                 ssh->ctx->heap, DYNTYPE_SFTP);
         if (cur == NULL) {
             WFREE(dir, ssh->ctx->heap, DYNTYPE_BUFFER);
+			WCLOSEDIR(&ctx);
             return WS_MEMORY_E;
         }
 #ifdef WOLFSSL_NUCLEUS

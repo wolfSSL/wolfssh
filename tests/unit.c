@@ -49,7 +49,7 @@ static int Base16_Decode(const byte* in, word32 inLen,
     word32 outIdx = 0;
 
     if (inLen == 1 && *outLen && in) {
-        byte b = in[inIdx++] - 0x30;  /* 0 starts at 0x30 */
+        byte b = in[inIdx] - 0x30;  /* 0 starts at 0x30 */
 
         /* sanity check */
         if (b >=  sizeof(hexDecode)/sizeof(hexDecode[0]))

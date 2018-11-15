@@ -259,8 +259,8 @@ static int wsUserAuth(byte authType,
             char* c = strpbrk((char*)userPassword, "\r\n");;
             if (c != NULL)
                 *c = '\0';
-            passwordSz = (word32)strlen((const char*)userPassword);
         }
+        passwordSz = (word32)strlen((const char*)userPassword);
         SetEcho(1);
 #ifdef USE_WINDOWS_API
         printf("\r\n");
@@ -308,6 +308,8 @@ int doCmds()
             if (pt[0] != '/') {
                 int maxSz = (int)WSTRLEN(workingDir) + sz + 2;
                 f = XMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                if (f == NULL)
+                    return WS_MEMORY_E;
 
                 f[0] = '\0';
                 WSTRNCAT(f, workingDir, maxSz);
