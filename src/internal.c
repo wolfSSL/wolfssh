@@ -2284,6 +2284,10 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             len == 0 || idx == NULL)
         ret = WS_BAD_ARGUMENT;
 
+    if (ret == WS_SUCCESS && len < LENGTH_SZ*2 + *idx) {
+        ret = WS_BUFFER_E;
+    }
+
     if (ret == WS_SUCCESS) {
         begin = *idx;
         pubKey = buf + begin;
