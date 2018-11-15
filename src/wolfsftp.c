@@ -959,6 +959,7 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, word32 maxSz)
     char* dirName;
     word32 idx = 0;
     HANDLE findHandle;
+    WIN32_FIND_DATAA findData;
 
     if (ssh == NULL) {
         return WS_BAD_ARGUMENT;
@@ -993,12 +994,12 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, word32 maxSz)
     clean_path(dirName);
 
     /* get directory handle */
-    findHandle = FindFirstFileA(dirName, &ctx);
+    findHandle = FindFirstFileA(dirName, &findData);
     if (findHandle == INVALID_HANDLE_VALUE ||
-        !(ctx.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+        !(findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
 
         WLOG(WS_LOG_SFTP, "Error with opening directory");
-        WFREE(dir, ssh->ctx->heap, DYNTYPE_BUFFER);
+        WFREE(dirName, ssh->ctx->heap, DYNTYPE_BUFFER);
 
         wolfSSH_SFTP_SendStatus(ssh, WOLFSSH_FTP_NOFILE, reqId,
                 "Unable To Open Directory", "English");
@@ -1144,23 +1145,33 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
 {
     int sz;
     HANDLE findHandle;
-    WIND32_FIND_DATA findData;
+    WIN32_FIND_DATAA findData;
 
     if (dir == NULL || ssh == NULL || out == NULL) {
         return WS_BAD_ARGUMENT;
     }
 
     if (*dir == INVALID_HANDLE_VALUE) {
-        /* Temporary string name with the dir ending in \* */
-        fileHandle = FindFirstFile(tmpName, &findData);
-        if (fileHandle == INVALID_HANDLE_VALUE)
+        char name[MAX_PATH];
+        word32 nameLen = (word32)WSTRLEN(dirName);
+
+        if (nameLen > MAX_PATH - 3) {
+            WLOG(WS_LOG_DEBUG, "Path name is too long.");
+            return WS_FATAL_ERROR;
+        }
+        WSTRNCPY(name, dirName, MAX_PATH);
+        WSTRNCAT(name, "\\*", MAX_PATH);
+
+        findHandle = FindFirstFileA(name, &findData);
+
+        if (findHandle == INVALID_HANDLE_VALUE)
             return WS_FATAL_ERROR;
         else
-            *dir = fileHandle;
+            *dir = findHandle;
     }
     else {
-        fileHandle = *dir;
-        if (FindNextFile(fileHandle, &findData) != 0)
+        findHandle = *dir;
+        if (FindNextFileA(findHandle, &findData) != 0)
             return WS_FATAL_ERROR;
     }
 
