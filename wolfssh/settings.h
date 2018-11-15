@@ -47,6 +47,7 @@ extern "C" {
 
 #if defined (_WIN32)
     #define USE_WINDOWS_API
+    #define _CRT_SECURE_NO_WARNINGS
 #endif
 
 #ifdef WOLFSSL_NUCLEUS

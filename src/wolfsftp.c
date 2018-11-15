@@ -18,7 +18,6 @@
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#define _CRT_SECURE_NO_WARNINGS
 
 #ifdef HAVE_CONFIG_H
     #include <config.h>
