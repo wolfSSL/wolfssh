@@ -7330,7 +7330,7 @@ void clean_path(char* path)
     long sz = (long)WSTRLEN(path);
     byte found;
 
-#ifdef WOLFSSL_NUCLEUS
+#if defined(WOLFSSL_NUCLEUS) || defined(USE_WINDOWS_API)
     for (i = 0; i < sz; i++) {
         if (path[i] == '/') path[i] = '\\';
     }
@@ -7400,7 +7400,7 @@ void clean_path(char* path)
             }
         } while (found);
 
-#ifdef WOLFSSL_NUCLEUS
+#if defined(WOLFSSL_NUCLEUS) || defined(USE_WINDOWS_API)
         sz = WSTRLEN(path);
 
         if (path[sz - 1] == ':') {

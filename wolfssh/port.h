@@ -139,8 +139,7 @@ extern "C" {
     #endif
 
     #if (defined(WOLFSSH_SCP) || defined(WOLFSSH_SFTP)) && \
-        !defined(WOLFSSH_SCP_USER_CALLBACKS) && \
-        !defined(NO_FILESYSTEM)
+        !defined(WOLFSSH_SCP_USER_CALLBACKS)
 
         #ifdef USE_WINDOWS_API
             #include <direct.h>
@@ -151,9 +150,11 @@ extern "C" {
             #include <sys/stat.h>
             #define WCHDIR(p)     chdir((p))
             #define WMKDIR(p,m)   mkdir((p),(m))
+        #endif
     #endif
 #endif
-#endif
+#endif /* NO_FILESYSTEM */
+
 /* setup string handling */
 #ifndef WSTRING_USER
     #include <string.h>
@@ -209,6 +210,7 @@ extern "C" {
 #if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
         !defined(NO_WOLFSSH_SERVER)
 #ifdef WOLFSSL_NUCLEUS
+    #define WSTAT_T     struct stat
     #define WRMDIR(d)   (NU_Remove_Dir((d)) == NU_SUCCESS)?0:1
     #define WMKDIR(d,m) (NU_Make_Dir((d)) == NU_SUCCESS)?0:1
     #define WSTAT(p,b)  NU_Get_First((b),(p))
@@ -427,10 +429,10 @@ extern "C" {
     #include <direct.h>
     #include <fcntl.h>
 
-    #define WRMDIR(d)         _rmdir((d))
     #define WSTAT_T           struct _stat
+    #define WRMDIR(d)         _rmdir((d))
     #define WSTAT(p,b)        _stat((p),(b))
-    /*#define WLSTAT(p,b)*/
+    #define WLSTAT(p,b)       _stat((p),(b))
     #define WREMOVE(d)        remove((d))
     #define WRENAME(o,n)      rename((o),(n))
     #define WGETCWD(r,rSz)    _getcwd((r),(rSz))
@@ -450,14 +452,8 @@ extern "C" {
     #define WOLFSSH_O_EXCL    _O_EXCL
 
     #ifndef NO_WOLFSSH_DIR
-        #define WDIR void*
-
-        /* returns 0 on success */
-        #define WOPENDIR(c,d)  (-1)
-        #define WCLOSEDIR(d)   (-1)
-        #define WREADDIR(d)    (-1)
+        #define WDIR HANDLE
     #endif /* NO_WOLFSSH_DIR */
-    #endif
 
 #else
     #include <unistd.h>   /* used for rmdir */
@@ -465,6 +461,7 @@ extern "C" {
     #include <stdio.h>    /* used for remove and rename */
     #include <dirent.h>   /* used for opening directory and reading */
 
+    #define WSTAT_T     struct stat
     #define WRMDIR(d)   rmdir((d))
     #define WSTAT(p,b)  stat((p),(b))
     #define WLSTAT(p,b) lstat((p),(b))

@@ -839,6 +839,8 @@ static word64 idCount = 0;
 /* @TODO add locking for thread safety */
 
 
+#ifndef USE_WINDOWS_API
+
 /* Handles packet to open a directory
  *
  * returns WS_SUCCESS on success
@@ -944,6 +946,90 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, word32 maxSz)
     return WS_SUCCESS;
 }
 
+#else /* USE_WINDOWS_API */
+
+/* Handles packet to open a directory
+ *
+ * returns WS_SUCCESS on success
+ */
+int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, word32 maxSz)
+{
+    word32 sz;
+    byte* data;
+    char* dirName;
+    word32 idx = 0;
+    HANDLE findHandle;
+
+    if (ssh == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_OPENDIR");
+
+    data = (byte*)WMALLOC(maxSz, ssh->ctx->heap, DYNTYPE_BUFFER);
+    if (data == NULL) {
+        return WS_MEMORY_E;
+    }
+    wolfSSH_stream_read(ssh, data, maxSz);
+
+    /* get directory name */
+    ato32(data + idx, &sz);
+    idx += UINT32_SZ;
+    if (sz + idx > maxSz) {
+        WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
+        return WS_BUFFER_E;
+    }
+
+    /* plus one to make sure is null terminated */
+    dirName = (char*)WMALLOC(sz + 1, ssh->ctx->heap, DYNTYPE_BUFFER);
+    if (dirName == NULL) {
+        WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
+        return WS_MEMORY_E;
+    }
+    WMEMCPY(dirName, data + idx, sz);
+    dirName[sz] = '\0';
+    WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
+
+    clean_path(dirName);
+
+    /* get directory handle */
+    findHandle = FindFirstFileA(dirName, &ctx);
+    if (findHandle == INVALID_HANDLE_VALUE ||
+        !(ctx.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+
+        WLOG(WS_LOG_SFTP, "Error with opening directory");
+        WFREE(dir, ssh->ctx->heap, DYNTYPE_BUFFER);
+
+        wolfSSH_SFTP_SendStatus(ssh, WOLFSSH_FTP_NOFILE, reqId,
+                "Unable To Open Directory", "English");
+        if (findHandle != INVALID_HANDLE_VALUE)
+            FindClose(findHandle);
+        return WS_BAD_FILE_E;
+    }
+    FindClose(findHandle);
+
+    /* add to directory list @TODO locking for thread safety */
+    {
+        DIR_HANDLE* cur = (DIR_HANDLE*)WMALLOC(sizeof(DIR_HANDLE),
+                ssh->ctx->heap, DYNTYPE_SFTP);
+        if (cur == NULL) {
+            WFREE(dirName, ssh->ctx->heap, DYNTYPE_BUFFER);
+            return WS_MEMORY_E;
+        }
+        cur->dir = INVALID_HANDLE_VALUE;
+        cur->id = idCount++;
+        cur->isEof = 0;
+        cur->dirName = dirName; /* take over ownership of buffer */
+        cur->next = dirList;
+        dirList = cur;
+        SendPacketType(ssh, WOLFSSH_FTP_HANDLE, (byte*)&cur->id,
+                sizeof(word64));
+    }
+
+    return WS_SUCCESS;
+}
+
+#endif
 
 #ifdef WOLFSSL_NUCLEUS
 /* For Nucleus port
@@ -1047,75 +1133,88 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
     return ret;
 }
 #elif defined(USE_WINDOWS_API)
+
 /* helper function that gets file information from reading directory
 * @TODO allow user to override
 *
 * returns WS_SUCCESS on success
 */
 static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
-	char* dirName)
+        char* dirName)
 {
-	int sz;
+    int sz;
+    HANDLE findHandle;
+    WIND32_FIND_DATA findData;
 
-	if (dir == NULL || ssh == NULL || out == NULL) {
-		return WS_BAD_ARGUMENT;
-	}
+    if (dir == NULL || ssh == NULL || out == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
 
-	dp = WREADDIR(dir);
-	if (dp == NULL) {
-		return WS_FATAL_ERROR;
-	}
+    if (*dir == INVALID_HANDLE_VALUE) {
+        /* Temporary string name with the dir ending in \* */
+        fileHandle = FindFirstFile(tmpName, &findData);
+        if (fileHandle == INVALID_HANDLE_VALUE)
+            return WS_FATAL_ERROR;
+        else
+            *dir = fileHandle;
+    }
+    else {
+        fileHandle = *dir;
+        if (FindNextFile(fileHandle, &findData) != 0)
+            return WS_FATAL_ERROR;
+    }
 
-	sz = (int)WSTRLEN(dp->d_name);
-	out->fName = (char*)WMALLOC(sz + 1, out->heap, DYNTYPE_SFTP);
-	if (out->fName == NULL) {
-		return WS_MEMORY_E;
-	}
-	out->lName = (char*)WMALLOC(sz + 1, out->heap, DYNTYPE_SFTP);
-	if (out->lName == NULL) {
-		WFREE(out->fName, out->heap, DYNTYPE_SFTP);
-		return WS_MEMORY_E;
-	}
+    sz = (int)WSTRLEN(findData.cFileName);
+    out->fName = (char*)WMALLOC(sz + 1, out->heap, DYNTYPE_SFTP);
+    if (out->fName == NULL) {
+        return WS_MEMORY_E;
+    }
+    out->lName = (char*)WMALLOC(sz + 1, out->heap, DYNTYPE_SFTP);
+    if (out->lName == NULL) {
+        WFREE(out->fName, out->heap, DYNTYPE_SFTP);
+        return WS_MEMORY_E;
+    }
 
-	WMEMCPY(out->fName, dp->d_name, sz);
-	WMEMCPY(out->lName, dp->d_name, sz);
-	out->fName[sz] = '\0';
-	out->lName[sz] = '\0';
-	out->fSz = sz;
-	out->lSz = sz;
+    WMEMCPY(out->fName, findData.cFileName, sz);
+    WMEMCPY(out->lName, findData.cFileName, sz);
+    out->fName[sz] = '\0';
+    out->lName[sz] = '\0';
+    out->fSz = sz;
+    out->lSz = sz;
 
-	/* attempt to get file attributes. Could be directory or have none */
-	{
-		char* buf;
-		int   bufSz;
-		int   tmpSz;
+    /* attempt to get file attributes. Could be directory or have none */
+    {
+        char* buf;
+        int   bufSz;
+        int   tmpSz;
 
-		bufSz = out->fSz + (int)WSTRLEN(dirName) + sizeof(WS_DELIM);
-		buf = (char*)WMALLOC(bufSz + 1, out->heap, DYNTYPE_SFTP);
-		if (buf == NULL) {
-			return WS_MEMORY_E;
-		}
-		buf[0] = '\0';
-		WSTRNCAT(buf, dirName, bufSz);
-		tmpSz = (int)WSTRLEN(buf);
+        bufSz = out->fSz + (int)WSTRLEN(dirName) + sizeof(WS_DELIM);
+        buf = (char*)WMALLOC(bufSz + 1, out->heap, DYNTYPE_SFTP);
+        if (buf == NULL) {
+            return WS_MEMORY_E;
+        }
+        buf[0] = '\0';
+        WSTRNCAT(buf, dirName, bufSz);
+        tmpSz = (int)WSTRLEN(buf);
 
-		/* add delimiter between path and file/dir name */
-		if (tmpSz + 1 < bufSz) {
-			buf[tmpSz] = WS_DELIM;
-			buf[tmpSz + 1] = '\0';
-		}
-		WSTRNCAT(buf, out->fName, bufSz);
+        /* add delimiter between path and file/dir name */
+        if (tmpSz + 1 < bufSz) {
+            buf[tmpSz] = WS_DELIM;
+            buf[tmpSz + 1] = '\0';
+        }
+        WSTRNCAT(buf, out->fName, bufSz);
 
-		clean_path(buf);
-		if (SFTP_GetAttributes(buf, &out->atrb, 0) != WS_SUCCESS) {
-			WLOG(WS_LOG_SFTP, "Unable to get attribute values for %s",
-				out->fName);
-		}
-		WFREE(buf, out->heap, DYNTYPE_SFTP);
-	}
+        clean_path(buf);
+        if (SFTP_GetAttributes(buf, &out->atrb, 0) != WS_SUCCESS) {
+            WLOG(WS_LOG_SFTP, "Unable to get attribute values for %s",
+                out->fName);
+        }
+        WFREE(buf, out->heap, DYNTYPE_SFTP);
+    }
 
-	return WS_SUCCESS;
+    return WS_SUCCESS;
 }
+
 #else
 /* helper function that gets file information from reading directory
  * @TODO allow user to override
@@ -1269,6 +1368,10 @@ int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, word32 maxSz)
 
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_READDIR");
 
+    #ifdef USE_WINDOWS_API
+        dir = INVALID_HANDLE_VALUE;
+    #endif
+
     data = (byte*)WMALLOC(maxSz, ssh->ctx->heap, DYNTYPE_BUFFER);
     if (data == NULL) {
         return WS_MEMORY_E;
@@ -1309,13 +1412,8 @@ int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, word32 maxSz)
             count++;
             outSz += name->fSz + name->lSz + (UINT32_SZ * 2);
             outSz += SFTP_AtributesSz(ssh, &name->atrb);
-            if (list != NULL) {
-                name->next = list;
-                list = name;
-            }
-            else {
-                list = name;
-            }
+            name->next = list;
+            list = name;
         }
         else {
             wolfSSH_SFTPNAME_free(name);
@@ -1368,7 +1466,6 @@ int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, word32 maxSz)
 int wolfSSH_SFTP_RecvCloseDir(WOLFSSH* ssh, byte* handle, word32 handleSz)
 {
     DIR_HANDLE* cur = dirList;
-    WDIR* dir = NULL;
 
     if (ssh == NULL || handle == NULL || handleSz != sizeof(word64)) {
         return WS_BAD_ARGUMENT;
@@ -1379,7 +1476,6 @@ int wolfSSH_SFTP_RecvCloseDir(WOLFSSH* ssh, byte* handle, word32 handleSz)
     /* find DIR given handle */
     while (cur != NULL) {
         if (cur->id == *((word64*)handle)) {
-            dir = &cur->dir;
             break;
         }
         cur = cur->next;
@@ -1389,7 +1485,11 @@ int wolfSSH_SFTP_RecvCloseDir(WOLFSSH* ssh, byte* handle, word32 handleSz)
         return WS_FATAL_ERROR;
     }
 
-    WCLOSEDIR(dir);
+#ifdef USE_WINDOWS_API
+    FindClose(cur->dir);
+#else
+    WCLOSEDIR(&cur->dir);
+#endif
 
     /* remove directory from list */
     if (cur != NULL) {
@@ -2095,6 +2195,7 @@ int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr, byte link)
     WSTAT_T stats;
 
     if (link) {
+        /* Note, for windows, we treat WSTAT and WLSTAT the same. */
         if (WLSTAT(fileName, &stats) != 0) {
             return WS_BAD_FILE_E;
         }
