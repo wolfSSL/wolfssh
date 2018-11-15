@@ -1846,11 +1846,13 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
      * is save the actual values.
      */
 
-    if (ssh->handshake == NULL) {
-        ssh->handshake = HandshakeInfoNew(ssh->ctx->heap);
+    if (ret == WS_SUCCESS) {
         if (ssh->handshake == NULL) {
-            WLOG(WS_LOG_DEBUG, "Couldn't allocate handshake info");
-            ret = WS_MEMORY_E;
+            ssh->handshake = HandshakeInfoNew(ssh->ctx->heap);
+            if (ssh->handshake == NULL) {
+                WLOG(WS_LOG_DEBUG, "Couldn't allocate handshake info");
+                ret = WS_MEMORY_E;
+            }
         }
     }
 

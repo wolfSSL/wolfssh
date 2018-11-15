@@ -114,7 +114,7 @@ static int wsUserAuth(byte authType,
                       void* ctx)
 {
     const char* defaultPassword = (const char*)ctx;
-    word32 passwordSz;
+    word32 passwordSz = 0;
     int ret = WOLFSSH_USERAUTH_SUCCESS;
 
     (void)authType;
@@ -133,8 +133,8 @@ static int wsUserAuth(byte authType,
             char* c = strpbrk((char*)userPassword, "\r\n");;
             if (c != NULL)
                 *c = '\0';
-            passwordSz = (word32)strlen((const char*)userPassword);
         }
+        passwordSz = (word32)strlen((const char*)userPassword);
         SetEcho(1);
 #ifdef USE_WINDOWS_API
         printf("\r\n");

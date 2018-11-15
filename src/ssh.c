@@ -865,7 +865,7 @@ int wolfSSH_SetChannelType(WOLFSSH* ssh, byte type, byte* name, word32 nameSz)
 int wolfSSH_SetUsername(WOLFSSH* ssh, const char* username)
 {
     char* value = NULL;
-    word32 valueSz;
+    word32 valueSz = 0;
     int ret = WS_SUCCESS;
 
     if (ssh == NULL || ssh->handshake == NULL ||
