@@ -42,6 +42,7 @@
     <ClCompile Include="..\..\..\src\memory.c" />
     <ClCompile Include="..\..\..\src\port.c" />
     <ClCompile Include="..\..\..\src\ssh.c" />
+    <ClCompile Include="..\..\..\src\wolfsftp.c" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{7C2CCF0D-A155-4914-BD1C-9A47C0530E65}</ProjectGuid>
