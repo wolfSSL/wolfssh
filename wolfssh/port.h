@@ -438,11 +438,14 @@ extern "C" {
     #define WGETCWD(r,rSz)    _getcwd((r),(rSz))
     #define WOPEN(f,m,p)      _open((f),(m),(p))
     #define WCLOSE(fd)        _close((fd))
-    /*#define WPWRITE(fd,b,s,o)*/
-    /*#define WPREAD(fd,b,s,o)*/
+
+    #define WFD HANDLE
+    int wPwrite(WFD, unsigned char*, unsigned int, long);
+    int wPread(WFD, unsigned char*, unsigned int, long);
+    #define WPWRITE(fd,b,s,o) wPwrite((fs),(b),(s),(o))
+    #define WPREAD(fd,b,s,o)  wPread((fd),(b),(s),(o))
     #define WS_DELIM          '\\'
 
-    #define WFD int
     #define WOLFSSH_O_RDWR    _O_RDWR
     #define WOLFSSH_O_RDONLY  _O_RDONLY
     #define WOLFSSH_O_WRONLY  _O_WRONLY
