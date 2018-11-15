@@ -496,6 +496,10 @@ int wolfSSH_connect(WOLFSSH* ssh)
             /* no break */
 
         case CONNECT_SERVER_KEXINIT_DONE:
+            if (ssh->handshake == NULL) {
+                return WS_FATAL_ERROR;
+            }
+
             if (ssh->handshake->kexId == ID_DH_GEX_SHA256)
                 ssh->error = SendKexDhGexRequest(ssh);
             else

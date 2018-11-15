@@ -2329,7 +2329,8 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         }
         /* Add a pad byte if the mpint has the MSB set. */
         if (ret == 0) {
-            if (ssh->handshake->primeGroup[0] & 0x80)
+            if (ssh->handshake->primeGroup != NULL &&
+                    ssh->handshake->primeGroup[0] & 0x80)
                 primeGroupPad = 1;
 
             /* Hash in the length of the GEX prime group. */
