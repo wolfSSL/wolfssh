@@ -704,6 +704,23 @@ int wolfSSH_connect(WOLFSSH* ssh)
             /* no break */
 
         case CONNECT_SERVER_CHANNEL_OPEN_SESSION_DONE:
+        #ifdef WOLFSSH_TERM
+            if (ssh->sendTerminalRequest) {
+                if ( (ssh->error = SendChannelTerminalRequest(ssh))
+                        < WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, connectError,
+                     "SERVER_CHANNEL_OPEN_SESSION_DONE", ssh->error);
+                    return WS_FATAL_ERROR;
+                }
+                WLOG(WS_LOG_DEBUG, connectState,
+                 "CLIENT_CHANNEL_TERMINAL_REQUEST_SENT");
+            }
+        #endif
+            ssh->connectState = CONNECT_CLIENT_CHANNEL_TERMINAL_REQUEST_SENT;
+            FALL_THROUGH;
+            /* no break */
+
+        case CONNECT_CLIENT_CHANNEL_TERMINAL_REQUEST_SENT:
             if ( (ssh->error = SendChannelRequest(ssh, ssh->channelName,
                             ssh->channelNameSz)) < WS_SUCCESS) {
                 WLOG(WS_LOG_DEBUG, connectError,
@@ -772,6 +789,26 @@ int wolfSSH_TriggerKeyExchange(WOLFSSH* ssh)
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_TriggerKeyExchange(), ret = %d", ret);
     return ret;
+}
+
+
+/* gets current input buffer if any without advancing the internal index.
+ * returns number of bytes was able to peek at on success */
+int wolfSSH_stream_peek(WOLFSSH* ssh, byte* buf, word32 bufSz)
+{
+    Buffer* inputBuffer;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_stream_peek()");
+
+    if (ssh == NULL || ssh->channelList == NULL)
+        return WS_BAD_ARGUMENT;
+
+    inputBuffer = &ssh->channelList->inputBuffer;
+    bufSz = min(bufSz, inputBuffer->length - inputBuffer->idx);
+    if (buf != NULL) {
+        WMEMCPY(buf, inputBuffer->buffer + inputBuffer->idx, bufSz);
+    }
+    return bufSz;
 }
 
 
@@ -887,6 +924,32 @@ int wolfSSH_stream_exit(WOLFSSH* ssh, int status)
 }
 
 
+
+/* Reads pending data from extended data buffer. Currently can be used to get
+ * STDERR information sent across the channel.
+ * Returns the number of bytes read on success */
+int wolfSSH_extended_data_read(WOLFSSH* ssh, byte* out, word32 outSz)
+{
+    byte*  buf;
+    word32 bufSz;
+
+    if (ssh == NULL || out == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    /* sanity check to make sure idx is not in a bad state */
+    if (ssh->extDataBuffer.idx > ssh->extDataBuffer.length) {
+        WLOG(WS_LOG_ERROR, "Bad internal state for buffer index");
+        return WS_INVALID_STATE_E;
+    }
+    bufSz = min(outSz, ssh->extDataBuffer.length - ssh->extDataBuffer.idx);
+    buf = ssh->extDataBuffer.buffer + ssh->extDataBuffer.idx;
+    WMEMCPY(out, buf, bufSz);
+    ssh->extDataBuffer.idx += bufSz;
+    return bufSz;
+}
+
+
 int wolfSSH_SendIgnore(WOLFSSH* ssh, const byte* buf, word32 bufSz)
 {
     byte scratch[128];
@@ -971,8 +1034,12 @@ int wolfSSH_SetChannelType(WOLFSSH* ssh, byte type, byte* name, word32 nameSz)
             break;
 
         case WOLFSSH_SESSION_EXEC:
-            WLOG(WS_LOG_DEBUG, "Unsupported yet");
-            return WS_BAD_ARGUMENT;
+            if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
+                WLOG(WS_LOG_DEBUG, "Server side exec unsupported");
+                return WS_BAD_ARGUMENT;
+            }
+            FALL_THROUGH;
+            /* no break */
 
         case WOLFSSH_SESSION_SUBSYSTEM:
             ssh->connectChannelId = type;
@@ -984,6 +1051,14 @@ int wolfSSH_SetChannelType(WOLFSSH* ssh, byte type, byte* name, word32 nameSz)
                 WLOG(WS_LOG_DEBUG, "No subsystem name or name was too large");
             }
             break;
+
+#ifdef WOLFSSH_TERM
+        case WOLFSSH_SESSION_TERMINAL:
+            /* send a pseudo-terminal request and shell channel */
+            ssh->sendTerminalRequest = 1;
+            ssh->connectChannelId = WOLFSSH_SESSION_SHELL;
+            break;
+#endif
 
         default:
             WLOG(WS_LOG_DEBUG, "Unknown channel type");

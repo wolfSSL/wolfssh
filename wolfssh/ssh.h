@@ -165,9 +165,11 @@ WOLFSSH_API int wolfSSH_CTX_SetWindowPacketSize(WOLFSSH_CTX*, word32, word32);
 WOLFSSH_API int wolfSSH_accept(WOLFSSH*);
 WOLFSSH_API int wolfSSH_connect(WOLFSSH*);
 WOLFSSH_API int wolfSSH_shutdown(WOLFSSH*);
+WOLFSSH_API int wolfSSH_stream_peek(WOLFSSH*, byte*, word32);
 WOLFSSH_API int wolfSSH_stream_read(WOLFSSH*, byte*, word32);
 WOLFSSH_API int wolfSSH_stream_send(WOLFSSH*, byte*, word32);
 WOLFSSH_API int wolfSSH_stream_exit(WOLFSSH*, int);
+WOLFSSH_API int wolfSSH_extended_data_read(WOLFSSH*, byte*, word32);
 WOLFSSH_API int wolfSSH_TriggerKeyExchange(WOLFSSH*);
 WOLFSSH_API int wolfSSH_SendIgnore(WOLFSSH*, const byte*, word32);
 
@@ -177,12 +179,16 @@ WOLFSSH_API void wolfSSH_GetStats(WOLFSSH*,
 WOLFSSH_API int wolfSSH_KDF(byte, byte, byte*, word32, const byte*, word32,
                             const byte*, word32, const byte*, word32);
 
+#ifdef USE_WINDOWS_API
+WOLFSSH_API int wolfSSH_ConvertConsole(WOLFSSH*, WOLFSSH_HANDLE, byte*, word32);
+#endif
 
 typedef enum {
     WOLFSSH_SESSION_UNKNOWN = 0,
     WOLFSSH_SESSION_SHELL,
     WOLFSSH_SESSION_EXEC,
-    WOLFSSH_SESSION_SUBSYSTEM
+    WOLFSSH_SESSION_SUBSYSTEM,
+    WOLFSSH_SESSION_TERMINAL,
 } WS_SessionType;
 
 WOLFSSH_API WS_SessionType wolfSSH_GetSessionType(const WOLFSSH*);
@@ -249,6 +255,7 @@ enum WS_DisconnectReasonCodes {
     #define WOLFSSH_MAX_FILENAME 256
 #endif
 #define WOLFSSH_MAX_OCTET_LEN 6
+#define WOLFSSH_EXT_DATA_STDERR 1
 
 
 #ifdef __cplusplus

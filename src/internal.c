@@ -269,6 +269,9 @@ const char* GetErrorString(int err)
         case WS_PUBKEY_REJECTED_E:
             return "server's public key is rejected";
 
+        case WS_EXTDATA:
+            return "Extended Data available to be read";
+
         default:
             return "Unknown error code";
     }
@@ -488,8 +491,9 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->sftpState   = SFTP_BEGIN;
 #endif
 
-    if (BufferInit(&ssh->inputBuffer, 0, ctx->heap) != WS_SUCCESS ||
-        BufferInit(&ssh->outputBuffer, 0, ctx->heap) != WS_SUCCESS) {
+    if (BufferInit(&ssh->inputBuffer, 0, ctx->heap) != WS_SUCCESS  ||
+        BufferInit(&ssh->outputBuffer, 0, ctx->heap) != WS_SUCCESS ||
+        BufferInit(&ssh->extDataBuffer, 0, ctx->heap) != WS_SUCCESS) {
 
         wolfSSH_free(ssh);
         ssh = NULL;
@@ -508,6 +512,7 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
 
     ShrinkBuffer(&ssh->inputBuffer, 1);
     ShrinkBuffer(&ssh->outputBuffer, 1);
+    ShrinkBuffer(&ssh->extDataBuffer, 1);
     ForceZero(ssh->k, ssh->kSz);
     HandshakeInfoFree(ssh->handshake, heap);
     ForceZero(&ssh->keys, sizeof(Keys));
@@ -4065,6 +4070,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
         WLOG(WS_LOG_DEBUG, "  type = %s", type);
         WLOG(WS_LOG_DEBUG, "  wantReply = %u", wantReply);
 
+#ifdef WOLFSSH_TERM
         if (WSTRNCMP(type, "pty-req", typeSz) == 0) {
             char term[32];
             word32 termSz;
@@ -4093,7 +4099,9 @@ static int DoChannelRequest(WOLFSSH* ssh,
                 WLOG(WS_LOG_DEBUG, "  modes = %u", (modesSz - 1) / 5);
             }
         }
-        else if (WSTRNCMP(type, "env", typeSz) == 0) {
+        else
+#endif /* WOLFSSH_TERM */
+        if (WSTRNCMP(type, "env", typeSz) == 0) {
             char name[WOLFSSH_MAX_NAMESZ];
             word32 nameSz;
             char value[32];
@@ -4249,6 +4257,28 @@ static int DoChannelData(WOLFSSH* ssh,
 }
 
 
+/* deletes current buffer and updates it
+ * return WS_SUCCESS on success */
+static int PutBuffer(Buffer* buf, byte* data, word32 dataSz)
+{
+    int ret;
+
+    /* reset "used" section of buffer back to 0 */
+    buf->length = 0;
+    buf->idx    = 0;
+
+    if (dataSz > buf->bufferSz) {
+        if ((ret = GrowBuffer(buf, dataSz, 0)) != WS_SUCCESS) {
+            return ret;
+        }
+    }
+    WMEMCPY(buf->buffer, data, dataSz);
+    buf->length = dataSz;
+
+    return WS_SUCCESS;
+}
+
+
 static int DoChannelExtendedData(WOLFSSH* ssh,
                          byte* buf, word32 len, word32* idx)
 {
@@ -4275,16 +4305,27 @@ static int DoChannelExtendedData(WOLFSSH* ssh,
         if (channel == NULL)
             ret = WS_INVALID_CHANID;
         else {
+            switch (dataTypeCode) {
+                case CHANNEL_EXTENDED_DATA_STDERR:
+                    ret = PutBuffer(&ssh->extDataBuffer,  buf + begin, dataSz);
+                    break;
+
+                default:
+                    WLOG(WS_LOG_ERROR, "Unsupported extended data type");
+            }
 #ifdef DEBUG_WOLFSSH
             DumpOctetString(buf + begin, dataSz);
 #endif
-            ret = SendChannelWindowAdjust(ssh, channel->peerChannel, dataSz);
+            if (ret == WS_SUCCESS) {
+                ret = SendChannelWindowAdjust(ssh, channel->peerChannel,dataSz);
+            }
         }
         *idx = begin + dataSz;
     }
 
     if (ret == WS_SUCCESS) {
         ssh->lastRxId = channelId;
+        ret = WS_EXTDATA;
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoChannelExtendedData(), ret = %d", ret);
@@ -4492,7 +4533,7 @@ static int DoPacket(WOLFSSH* ssh)
             ret = SendUnimplemented(ssh);
     }
 
-    if (ret == WS_SUCCESS || ret == WS_CHAN_RXD) {
+    if (ret == WS_SUCCESS || ret == WS_CHAN_RXD || ret == WS_EXTDATA) {
         idx += payloadIdx;
 
         if (idx + padSz > len) {
@@ -4501,7 +4542,7 @@ static int DoPacket(WOLFSSH* ssh)
         }
     }
 
-    if (ret == WS_SUCCESS || ret == WS_CHAN_RXD) {
+    if (ret == WS_SUCCESS || ret == WS_CHAN_RXD || ret == WS_EXTDATA) {
         idx += padSz;
         ssh->inputBuffer.idx = idx;
         ssh->peerSeq++;
@@ -7350,6 +7391,237 @@ int SendChannelRequest(WOLFSSH* ssh, byte* name, word32 nameSz)
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelRequest(), ret = %d", ret);
     return ret;
 }
+
+
+#ifdef WOLFSSH_TERM
+/* sets terminal mode in buffer and advances idx */
+static void TTYSet(word32 isSet, int type, byte* out, word32* idx)
+{
+    if (isSet) isSet = 1;
+    out[*idx] = type; *idx += 1;
+    c32toa(isSet, out + *idx); *idx += UINT32_SZ;
+}
+
+
+static void TTYCharSet(char flag, int type, byte* out, word32* idx)
+{
+    out[*idx] = type; *idx += 1;
+    c32toa(flag, out + *idx); *idx += UINT32_SZ;
+}
+
+
+/* create terminal mode string for pseudo-terminal request
+ * returns size of buffer */
+static int CreateMode(WOLFSSH* ssh, byte* mode)
+{
+    word32 idx = 0;
+#ifndef NO_TERMIOS
+    WOLFSSH_TERMIOS term;
+#endif
+
+    int buad = 38400; /* default speed */
+
+#if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32) && \
+    !defined(NO_TERMIOS)
+    if (tcgetattr(STDIN_FILENO, &term) != 0) {
+        printf("Couldn't get the original terminal settings.\n");
+        return -1;
+    }
+
+    /* set baud rate */
+    buad = (int)cfgetospeed(&term);
+
+    /* char type */
+    TTYCharSet(term.c_cc[VINTR], WOLFSSH_VINTR, mode, &idx);
+    TTYCharSet(term.c_cc[VQUIT], WOLFSSH_VQUIT, mode, &idx);
+    TTYCharSet(term.c_cc[VERASE], WOLFSSH_VERASE, mode, &idx);
+    TTYCharSet(term.c_cc[VKILL], WOLFSSH_VKILL, mode, &idx);
+    TTYCharSet(term.c_cc[VEOF], WOLFSSH_VEOF, mode, &idx);
+    TTYCharSet(term.c_cc[VEOL], WOLFSSH_VEOL, mode, &idx);
+    TTYCharSet(term.c_cc[VEOL2], WOLFSSH_VEOL2, mode, &idx);
+    TTYCharSet(term.c_cc[VSTART], WOLFSSH_VSTART, mode, &idx);
+    TTYCharSet(term.c_cc[VSTOP], WOLFSSH_VSTOP, mode, &idx);
+    TTYCharSet(term.c_cc[VSUSP], WOLFSSH_VSUSP, mode, &idx);
+#ifdef VDSUSP
+    TTYCharSet(term.c_cc[VDSUSP], WOLFSSH_VDSUSP, mode, &idx);
+#endif
+    TTYCharSet(term.c_cc[VREPRINT], WOLFSSH_VREPRINT, mode, &idx);
+    TTYCharSet(term.c_cc[VWERASE], WOLFSSH_VWERASE, mode, &idx);
+    TTYCharSet(term.c_cc[VLNEXT], WOLFSSH_VLNEXT, mode, &idx);
+#ifdef VFLUSH
+    TTYCharSet(term.c_cc[VFLUSH], WOLFSSH_VFLUSH, mode, &idx);
+#endif
+#ifdef VSWTCH
+    TTYCharSet(term.c_cc[VSWTCH], WOLFSSH_VSWTCH, mode, &idx);
+#endif
+#ifdef VSTATUS
+    TTYCharSet(term.c_cc[VSTATUS], WOLFSSH_VSTATUS, mode, &idx);
+#endif
+    TTYCharSet(term.c_cc[VDISCARD], WOLFSSH_VDISCARD, mode, &idx);
+
+
+    /* c_iflag for input modes */
+    TTYSet((term.c_iflag & IGNPAR), WOLFSSH_IGNPAR, mode, &idx);
+    TTYSet((term.c_iflag & PARMRK), WOLFSSH_PARMRK, mode, &idx);
+    TTYSet((term.c_iflag & INPCK), WOLFSSH_INPCK, mode, &idx);
+    TTYSet((term.c_iflag & ISTRIP), WOLFSSH_ISTRIP, mode, &idx);
+    TTYSet((term.c_iflag & INLCR), WOLFSSH_INLCR, mode, &idx);
+    TTYSet((term.c_iflag & IGNCR), WOLFSSH_IGNCR, mode, &idx);
+    TTYSet((term.c_iflag & ICRNL), WOLFSSH_ICRNL, mode, &idx);
+#ifdef IUCLC
+    TTYSet((term.c_iflag & IUCLC), WOLFSSH_IUCLC, mode, &idx);
+#endif
+    TTYSet((term.c_iflag & IXON), WOLFSSH_IXON, mode, &idx);
+    TTYSet((term.c_iflag & IXANY), WOLFSSH_IXANY, mode, &idx);
+    TTYSet((term.c_iflag & IXOFF), WOLFSSH_IXOFF, mode, &idx);
+    TTYSet((term.c_iflag & IMAXBEL), WOLFSSH_IMAXBEL, mode, &idx);
+
+    /* c_lflag */
+    TTYSet((term.c_lflag & ISIG), WOLFSSH_ISIG, mode, &idx);
+    TTYSet((term.c_lflag &  ICANON), WOLFSSH_ICANON, mode, &idx);
+#ifdef XCASE
+    TTYSet((term.c_lflag &  XCASE), WOLFSSH_XCASE, mode, &idx);
+#endif
+    TTYSet((term.c_lflag &  ECHO), WOLFSSH_ECHO, mode, &idx);
+    TTYSet((term.c_lflag &  ECHOE), WOLFSSH_ECHOE, mode, &idx);
+    TTYSet((term.c_lflag &  ECHOK), WOLFSSH_ECHOK, mode, &idx);
+    TTYSet((term.c_lflag &  ECHONL), WOLFSSH_ECHONL, mode, &idx);
+    TTYSet((term.c_lflag &  NOFLSH), WOLFSSH_NOFLSH, mode, &idx);
+    TTYSet((term.c_lflag &  TOSTOP), WOLFSSH_TOSTOP, mode, &idx);
+    TTYSet((term.c_lflag &  IEXTEN), WOLFSSH_IEXTEN, mode, &idx);
+    TTYSet((term.c_lflag &  ECHOCTL), WOLFSSH_ECHOCTL, mode, &idx);
+    TTYSet((term.c_lflag &  ECHOKE), WOLFSSH_ECHOKE, mode, &idx);
+#ifdef PENDIN
+    TTYSet((term.c_lflag &  PENDIN), WOLFSSH_PENDIN, mode, &idx);
+#endif
+
+    /* c_oflag */
+    TTYSet((term.c_oflag &  OPOST), WOLFSSH_OPOST, mode, &idx);
+#ifdef OLCUC
+    TTYSet((term.c_oflag &  OLCUC), WOLFSSH_OLCUC, mode, &idx);
+#endif
+    TTYSet((term.c_oflag &  ONLCR), WOLFSSH_ONLCR, mode, &idx);
+    TTYSet((term.c_oflag &  OCRNL), WOLFSSH_OCRNL, mode, &idx);
+    TTYSet((term.c_oflag &  ONOCR), WOLFSSH_ONOCR, mode, &idx);
+    TTYSet((term.c_oflag &  ONLRET), WOLFSSH_ONLRET, mode, &idx);
+
+    /* c_cflag */
+    TTYSet((term.c_cflag &  CS7), WOLFSSH_CS7, mode, &idx);
+    TTYSet((term.c_cflag &  CS8), WOLFSSH_CS8, mode, &idx);
+    TTYSet((term.c_cflag &  PARENB), WOLFSSH_PARENB, mode, &idx);
+    TTYSet((term.c_cflag &  PARODD), WOLFSSH_PARODD, mode, &idx);
+#endif /* !USE_WINDOWS_API && !MICROCHIP_PIC32 */
+
+
+    mode[idx++] = WOLFSSH_TTY_OP_OSPEED;
+    c32toa(buad, mode + idx); idx += UINT32_SZ;
+    mode[idx++] = WOLFSSH_TTY_OP_ISPEED;
+    c32toa(buad, mode + idx); idx += UINT32_SZ;
+
+    (void)term;
+    (void)ssh;
+    mode[idx++] = WOLFSSH_TTY_OP_END;
+    return idx;
+}
+
+
+/* sends request for pseudo-terminal (rfc 4254)
+ * returns WS_SUCCESS on success */
+int SendChannelTerminalRequest(WOLFSSH* ssh)
+{
+    byte* output;
+    word32 idx;
+    int ret = WS_SUCCESS;
+    WOLFSSH_CHANNEL* channel;
+    const char cType[] = "pty-req";
+    const char envVar[] = "xterm";
+    byte mode[4096];
+    word32 envSz, typeSz, modeSz;
+    word32 w = 80, h = 24;
+    word32 pxW = 0, pxH = 0;
+
+    WLOG(WS_LOG_DEBUG, "Entering SendChannelTerminalRequest()");
+
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    envSz  = (word32)WSTRLEN(envVar);
+    typeSz = (word32)WSTRLEN(cType);
+    modeSz = CreateMode(ssh, mode);
+
+    if (ret == WS_SUCCESS) {
+        channel = ChannelFind(ssh,
+                ssh->defaultPeerChannelId, WS_CHANNEL_ID_PEER);
+        if (channel == NULL)
+            ret = WS_INVALID_CHANID;
+    }
+
+    /*     craft packet with the following structure
+     *     byte      MSGID_CHANNEL_REQUEST
+     *     word32    channel
+     *     string    "pty-req"
+     *     boolean   want_reply
+     *     string    term environment variable
+     *     word32    terminal width
+     *     word32    terminal height
+     *     word32    terminal width (pixels)
+     *     word32    terminal height (pixels)
+     *     string    encoded terminal modes
+     */
+
+    if (ret == WS_SUCCESS)
+        ret = PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ + LENGTH_SZ +
+                                 typeSz + BOOLEAN_SZ +
+                                 ((envSz > 0)? UINT32_SZ : 0) + envSz +
+                                 UINT32_SZ * 4 +
+                                 ((modeSz > 0)? UINT32_SZ : 0) + modeSz);
+
+    if (ret == WS_SUCCESS) {
+        output = ssh->outputBuffer.buffer;
+        idx    = ssh->outputBuffer.length;
+
+        output[idx++] = MSGID_CHANNEL_REQUEST;
+        c32toa(channel->peerChannel, output + idx); idx += UINT32_SZ;
+        c32toa(typeSz, output + idx);               idx += LENGTH_SZ;
+        WMEMCPY(output + idx, cType, typeSz);       idx += typeSz;
+        output[idx++] = 1; /* want reply */
+
+        if (envSz > 0) {
+            c32toa(envSz, output + idx);          idx += UINT32_SZ;
+            WMEMCPY(output + idx, envVar, envSz); idx += envSz;
+        }
+
+        c32toa(w, output + idx);   idx += UINT32_SZ;
+        c32toa(h, output + idx);   idx += UINT32_SZ;
+        c32toa(pxW, output + idx); idx += UINT32_SZ;
+        c32toa(pxH, output + idx); idx += UINT32_SZ;
+
+        if (modeSz > 0) {
+            c32toa(modeSz, output + idx);          idx += UINT32_SZ;
+            WMEMCPY(output + idx, mode, modeSz);   idx += modeSz;
+        }
+
+        ssh->outputBuffer.length = idx;
+
+        WLOG(WS_LOG_INFO, "Sending Pseudo-Terminal Channel Request: ");
+        WLOG(WS_LOG_INFO, "  channelId = %u", channel->peerChannel);
+        WLOG(WS_LOG_INFO, "  type = %s", cType);
+        WLOG(WS_LOG_INFO, "  wantReply = %u", 1);
+        WLOG(WS_LOG_INFO, "  (width , height) = (%d , %d)", w, h);
+        WLOG(WS_LOG_INFO, "  pixels (width , height) = (%d , %d)", pxW, pxH);
+        WLOG(WS_LOG_INFO, "  term mode = %s", mode);
+
+
+        ret = BundlePacket(ssh);
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = wolfSSH_SendPacket(ssh);
+
+    WLOG(WS_LOG_DEBUG, "Leaving SendChannelTerminalRequest(), ret = %d", ret);
+    return ret;
+}
+#endif /* WOLFSSH_TERM */
 
 
 int SendChannelSuccess(WOLFSSH* ssh, word32 channelId, int success)

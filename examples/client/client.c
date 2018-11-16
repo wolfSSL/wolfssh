@@ -32,11 +32,16 @@
 const char testString[] = "Hello, wolfSSH!";
 
 
-static int SetEcho(int on)
+/* type = 2 : shell / execute command settings
+ * type = 0 : password
+ * type = 1 : restore default
+ * return 0 on success */
+static int SetEcho(int type)
 {
 #if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32)
     static int echoInit = 0;
     static struct termios originalTerm;
+
     if (!echoInit) {
         if (tcgetattr(STDIN_FILENO, &originalTerm) != 0) {
             printf("Couldn't get the original terminal settings.\n");
@@ -44,7 +49,7 @@ static int SetEcho(int on)
         }
         echoInit = 1;
     }
-    if (on) {
+    if (type == 1) {
         if (tcsetattr(STDIN_FILENO, TCSANOW, &originalTerm) != 0) {
             printf("Couldn't restore the terminal settings.\n");
             return -1;
@@ -55,7 +60,12 @@ static int SetEcho(int on)
         memcpy(&newTerm, &originalTerm, sizeof(struct termios));
 
         newTerm.c_lflag &= ~ECHO;
-        newTerm.c_lflag |= (ICANON | ECHONL);
+        if (type == 2) {
+            newTerm.c_lflag &= ~(ICANON | ECHOE | ECHOK | ECHONL | ISIG);
+        }
+        else {
+            newTerm.c_lflag |= (ICANON | ECHONL);
+        }
 
         if (tcsetattr(STDIN_FILENO, TCSANOW, &newTerm) != 0) {
             printf("Couldn't turn off echo.\n");
@@ -65,6 +75,7 @@ static int SetEcho(int on)
 #else
     static int echoInit = 0;
     static DWORD originalTerm;
+    static CONSOLE_SCREEN_BUFFER_INFO screenOrig;
     HANDLE stdinHandle = GetStdHandle(STD_INPUT_HANDLE);
     if (!echoInit) {
         if (GetConsoleMode(stdinHandle, &originalTerm) == 0) {
@@ -73,9 +84,23 @@ static int SetEcho(int on)
         }
         echoInit = 1;
     }
-    if (on) {
+    if (type == 1) {
         if (SetConsoleMode(stdinHandle, originalTerm) == 0) {
             printf("Couldn't restore the terminal settings.\n");
+            return -1;
+        }
+    }
+    else if (type == 2) {
+        DWORD newTerm = originalTerm;
+
+        newTerm &= ~ENABLE_PROCESSED_INPUT;
+        newTerm &= ~ENABLE_PROCESSED_OUTPUT;
+        newTerm &= ~ENABLE_LINE_INPUT;
+        newTerm &= ~ENABLE_ECHO_INPUT;
+        newTerm &= ~(ENABLE_EXTENDED_FLAGS | ENABLE_INSERT_MODE);
+
+        if (SetConsoleMode(stdinHandle, newTerm) == 0) {
+            printf("Couldn't turn off echo.\n");
             return -1;
         }
     }
@@ -106,6 +131,15 @@ static void ShowUsage(void)
     printf(" -x            exit after successful connection without doing\n"
            "               read/write\n");
     printf(" -N            use non-blocking sockets\n");
+#ifdef WOLFSSH_TERM
+    printf(" -t            use psuedo terminal\n");
+#endif
+#if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS)
+    printf(" -c <command>  executes remote command and pipe stdin/stdout\n");
+#ifdef USE_WINDOWS_API
+    printf(" -R            raw untranslated output\n");
+#endif
+#endif
 }
 
 
@@ -196,6 +230,133 @@ static int NonBlockSSH_connect(WOLFSSH* ssh)
     return ret;
 }
 
+#if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS)
+
+typedef struct thread_args {
+    WOLFSSH* ssh;
+    wolfSSL_Mutex lock;
+    byte rawMode;
+} thread_args;
+
+#ifdef _POSIX_THREADS
+    #define THREAD_RET void*
+    #define THREAD_RET_SUCCESS NULL
+#elif defined(_MSC_VER)
+    #define THREAD_RET DWORD WINAPI
+    #define THREAD_RET_SUCCESS 0
+#else
+    #define THREAD_RET int
+    #define THREAD_RET_SUCCESS 0
+#endif
+
+static THREAD_RET readInput(void* in)
+{
+    byte buf[256];
+    int  bufSz = sizeof(buf);
+    thread_args* args = (thread_args*)in;
+    int ret = 0;
+    word32 sz = 0;
+#ifdef USE_WINDOWS_API
+    HANDLE stdinHandle = GetStdHandle(STD_INPUT_HANDLE);
+#endif
+
+    while (ret >= 0) {
+        WMEMSET(buf, 0, bufSz);
+    #ifdef USE_WINDOWS_API
+        /* Using A version to avoid potential 2 byte chars */
+        ret = ReadConsoleA(stdinHandle, (void*)buf, bufSz - 1, (DWORD*)&sz,
+                NULL);
+    #else
+        ret = (int)read(STDIN_FILENO, buf, bufSz -1);
+        sz  = (word32)ret;
+    #endif
+        if (ret <= 0) {
+            err_sys("Error reading stdin");
+        }
+        /* lock SSH structure access */
+        wc_LockMutex(&args->lock);
+        ret = wolfSSH_stream_send(args->ssh, buf, sz);
+        wc_UnLockMutex(&args->lock);
+        if (ret <= 0)
+            err_sys("Couldn't send data");
+    }
+
+    return THREAD_RET_SUCCESS;
+}
+
+
+static THREAD_RET readPeer(void* in)
+{
+    byte buf[80];
+    int  bufSz = sizeof(buf);
+    thread_args* args = (thread_args*)in;
+    int ret = 0;
+    int fd = wolfSSH_get_fd(args->ssh);
+    word32 bytes;
+#ifdef USE_WINDOWS_API
+    HANDLE stdoutHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+#endif
+    fd_set readSet;
+    fd_set errSet;
+
+    FD_ZERO(&readSet);
+    FD_ZERO(&errSet);
+    FD_SET(fd, &readSet);
+    FD_SET(fd, &errSet);
+
+    while (ret >= 0) {
+        bytes = select(fd + 1, &readSet, NULL, &errSet, NULL);
+        wc_LockMutex(&args->lock);
+        while (bytes > 0 && (FD_ISSET(fd, &readSet) || FD_ISSET(fd, &errSet))) {
+            /* there is something to read off the wire */
+            WMEMSET(buf, 0, bufSz);
+            ret = wolfSSH_stream_read(args->ssh, buf, bufSz - 1);
+            if (ret == WS_EXTDATA) { /* handle extended data */
+                do {
+                    WMEMSET(buf, 0, bufSz);
+                    ret = wolfSSH_extended_data_read(args->ssh, buf, bufSz - 1);
+                    if (ret < 0)
+                        err_sys("Extended data read failed.");
+                    buf[bufSz - 1] = '\0';
+                    fprintf(stderr, "%s", buf);
+                } while (ret > 0);
+            }
+            else if (ret <= 0) {
+                if (ret != WS_EOF) {
+                    err_sys("Stream read failed.");
+                }
+            }
+            else {
+                buf[bufSz - 1] = '\0';
+
+            #ifdef USE_WINDOWS_API
+                if (args->rawMode == 0) {
+                    ret = wolfSSH_ConvertConsole(args->ssh, stdoutHandle, buf,
+                            ret);
+                    if (ret != WS_SUCCESS && ret != WS_WANT_READ) {
+                        err_sys("issue with print out");
+                    }
+                }
+                else {
+                    printf("%s", buf);
+                    fflush(stdout);
+                }
+            #else
+                printf("%s", buf);
+                fflush(stdout);
+            #endif
+            }
+            if (wolfSSH_stream_peek(args->ssh, buf, bufSz) <= 0) {
+                bytes = 0; /* read it all */
+            }
+        }
+        wc_UnLockMutex(&args->lock);
+    }
+
+    return THREAD_RET_SUCCESS;
+}
+#endif /* !SINGLE_THREADED && !WOLFSSL_NUCLEUS */
+
 
 THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 {
@@ -211,14 +372,19 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     char* host = (char*)wolfSshIp;
     const char* username = NULL;
     const char* password = NULL;
+    const char* cmd      = NULL;
     byte imExit = 0;
     byte nonBlock = 0;
+    byte keepOpen = 0;
+#ifdef USE_WINDOWS_API
+    byte rawMode = 0;
+#endif
 
     int     argc = ((func_args*)args)->argc;
     char**  argv = ((func_args*)args)->argv;
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?NP:h:p:u:x")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?NP:h:p:u:xc:Rt")) != -1) {
         switch (ch) {
             case 'h':
                 host = myoptarg;
@@ -249,6 +415,22 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
                 nonBlock = 1;
                 break;
 
+        #if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS)
+            case 'c':
+                cmd = myoptarg;
+                break;
+        #ifdef USE_WINDOWS_API
+           case 'R':
+                rawMode = 1;
+                break;
+        #endif /* USE_WINDOWS_API */
+        #endif
+
+        #ifdef WOLFSSH_TERM
+            case 't':
+                keepOpen = 1;
+                break;
+        #endif
             case '?':
                 ShowUsage();
                 exit(EXIT_SUCCESS);
@@ -299,6 +481,21 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     if (ret != WS_SUCCESS)
         err_sys("Couldn't set the session's socket.");
 
+    if (cmd != NULL) {
+        ret = wolfSSH_SetChannelType(ssh, WOLFSSH_SESSION_EXEC,
+                            (byte*)cmd, (word32)WSTRLEN((char*)cmd));
+        if (ret != WS_SUCCESS)
+            err_sys("Couldn't set the channel type.");
+    }
+
+#ifdef WOLFSSH_TERM
+    if (keepOpen) {
+        ret = wolfSSH_SetChannelType(ssh, WOLFSSH_SESSION_TERMINAL, NULL, 0);
+        if (ret != WS_SUCCESS)
+            err_sys("Couldn't set the terminal channel type.");
+    }
+#endif
+
     if (!nonBlock)
         ret = wolfSSH_connect(ssh);
     else
@@ -308,6 +505,41 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         err_sys("Couldn't connect SSH stream.");
     }
 
+#if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS)
+    if (keepOpen) /* set up for psuedo-terminal */
+        SetEcho(2);
+
+    if (cmd != NULL || keepOpen == 1) {
+    #if defined(_POSIX_THREADS)
+        thread_args arg;
+        pthread_t   thread[2];
+
+        arg.ssh = ssh;
+        wc_InitMutex(&arg.lock);
+        pthread_create(&thread[0], NULL, readInput, (void*)&arg);
+        pthread_create(&thread[1], NULL, readPeer, (void*)&arg);
+        pthread_join(thread[1], NULL);
+        pthread_cancel(thread[0]);
+    #elif defined(_MSC_VER)
+        thread_args arg;
+        HANDLE thread[2];
+
+        arg.ssh     = ssh;
+        arg.rawMode = rawMode;
+        wc_InitMutex(&arg.lock);
+        thread[0] = CreateThread(NULL, 0, readInput, (void*)&arg, 0, 0);
+        thread[1] = CreateThread(NULL, 0, readPeer, (void*)&arg, 0, 0);
+        WaitForSingleObject(thread[1], INFINITE);
+        CloseHandle(thread[0]);
+        CloseHandle(thread[1]);
+    #else
+        err_sys("No threading to use");
+    #endif
+        if (keepOpen)
+            SetEcho(1);
+    }
+    else
+#endif
     if (!imExit) {
         ret = wolfSSH_stream_send(ssh, (byte*)testString,
                                   (word32)strlen(testString));
@@ -326,14 +558,13 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         rxBuf[ret] = '\0';
         printf("Server said: %s\n", rxBuf);
     }
-
     ret = wolfSSH_shutdown(ssh);
-    if (ret != WS_SUCCESS)
-        err_sys("Closing stream failed.");
-
     WCLOSESOCKET(sockFd);
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
+    if (ret != WS_SUCCESS)
+        err_sys("Closing stream failed. Connection could have been closed by peer");
+
 
     return 0;
 }

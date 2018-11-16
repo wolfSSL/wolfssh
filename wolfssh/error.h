@@ -104,8 +104,9 @@ enum WS_ErrorCodes {
     WS_SIZE_ONLY           = -64,   /* Only getting the size of buffer needed */
     WS_CLOSE_FILE_E        = -65,   /* Unable to close local file */
     WS_PUBKEY_REJECTED_E   = -66,   /* Server public key rejected */
+    WS_EXTDATA             = -67,   /* Extended Data available to be read */
 
-    WS_LAST_E              = -66    /* Update this to indicate last error */
+    WS_LAST_E              = -67    /* Update this to indicate last error */
 };
 
 
