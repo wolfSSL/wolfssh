@@ -177,7 +177,7 @@ port forwarding support in wolfSSH.
 
 
 sftp support
------------------------
+------------
 
 wolfSSH provides server and client side support for SFTP version 3. This
 allows the user to set up an encrypted connection for managing file systems.
