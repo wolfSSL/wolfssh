@@ -539,6 +539,61 @@ static INLINE void tcp_listen(SOCKET_T* sockfd, word16* port, int useAnyAddr)
 
 #endif /* WOLFSSH_TEST_SERVER */
 
+static INLINE void tcp_set_nonblocking(SOCKET_T* sockfd)
+{
+    #ifdef USE_WINDOWS_API
+        unsigned long blocking = 1;
+        int ret = ioctlsocket(*sockfd, FIONBIO, &blocking);
+        if (ret == SOCKET_ERROR)
+            err_sys("ioctlsocket failed");
+    #elif defined(WOLFSSL_MDK_ARM) || defined(WOLFSSL_KEIL_TCP_NET) \
+        || defined (WOLFSSL_TIRTOS)|| defined(WOLFSSL_VXWORKS)
+         /* non blocking not supported, for now */
+    #else
+        int flags = fcntl(*sockfd, F_GETFL, 0);
+        if (flags < 0)
+            err_sys("fcntl get failed");
+        flags = fcntl(*sockfd, F_SETFL, flags | O_NONBLOCK);
+        if (flags < 0)
+            err_sys("fcntl set failed");
+    #endif
+}
+
+
+enum {
+    WS_SELECT_FAIL,
+    WS_SELECT_TIMEOUT,
+    WS_SELECT_RECV_READY,
+    WS_SELECT_ERROR_READY
+};
+
+static INLINE int tcp_select(SOCKET_T socketfd, int to_sec)
+{
+    fd_set recvfds, errfds;
+    SOCKET_T nfds = socketfd + 1;
+    struct timeval timeout = {(to_sec > 0) ? to_sec : 0, 0};
+    int result;
+
+    FD_ZERO(&recvfds);
+    FD_SET(socketfd, &recvfds);
+    FD_ZERO(&errfds);
+    FD_SET(socketfd, &errfds);
+
+    result = select(nfds, &recvfds, NULL, &errfds, &timeout);
+
+    if (result == 0)
+        return WS_SELECT_TIMEOUT;
+    else if (result > 0) {
+        if (FD_ISSET(socketfd, &recvfds))
+            return WS_SELECT_RECV_READY;
+        else if(FD_ISSET(socketfd, &errfds))
+            return WS_SELECT_ERROR_READY;
+    }
+
+    return WS_SELECT_FAIL;
+}
+
+
 /* Wolf Root Directory Helper */
 /* KEIL-RL File System does not support relative directory */
 #if !defined(WOLFSSL_MDK_ARM) && !defined(WOLFSSL_KEIL_FS) && !defined(WOLFSSL_TIRTOS) \
