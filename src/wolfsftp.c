@@ -22,7 +22,7 @@
 #ifdef HAVE_CONFIG_H
     #include <config.h>
 #endif
-
+#define _CRT_SECURE_NO_WARNINGS
 #include <wolfssh/wolfsftp.h>
 
 #ifdef WOLFSSH_SFTP
@@ -1588,7 +1588,7 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, word32 maxSz)
     /* get length to be written */
     ato32(data + idx, &sz); idx += UINT32_SZ;
 
-    ret = (int)WPWRITE(fd, data + idx, sz, ofst);
+    ret = (int)WPWRITE(fd, data + idx, sz, (long)ofst);
     WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
     if (ret < 0) {
 #if defined(WOLFSSL_NUCLEUS) && defined(DEBUG_WOLFSSH)
@@ -1662,7 +1662,7 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, word32 maxSz)
         return WS_MEMORY_E;
     }
 
-    ret = (int)WPREAD(fd, data, sz, ofst);
+    ret = (int)WPREAD(fd, data, sz, (long)ofst);
     if (ret < 0) {
         WLOG(WS_LOG_SFTP, "Error reading from file");
         WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);

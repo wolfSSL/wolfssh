@@ -423,6 +423,7 @@ extern "C" {
     #endif /* NO_WOLFSSH_DIR */
 #elif defined(USE_WINDOWS_API)
 
+    #include <windows.h>
     #include <sys/types.h>
     #include <sys/stat.h>
     #include <io.h>
@@ -442,7 +443,7 @@ extern "C" {
     #define WFD HANDLE
     int wPwrite(WFD, unsigned char*, unsigned int, long);
     int wPread(WFD, unsigned char*, unsigned int, long);
-    #define WPWRITE(fd,b,s,o) wPwrite((fs),(b),(s),(o))
+    #define WPWRITE(fd,b,s,o) wPwrite((fd),(b),(s),(o))
     #define WPREAD(fd,b,s,o)  wPread((fd),(b),(s),(o))
     #define WS_DELIM          '\\'
 

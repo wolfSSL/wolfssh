@@ -88,11 +88,9 @@ int wPwrite(WFD fd, unsigned char* buf, unsigned int sz, long ofst)
     int ret;
 
     WMEMSET(&offset, 0, sizeof(OVERLAPPED));
-    offset.DUMMYUNIONNAME.DUMMYSTRUCTNAME.Offset =
-        (DWORD)(ofst & 0xFFFFFFFF);
-    offset.DUMMYUNIONNAME.DUMMYSTRUCTNAME.OffsetHigh =
-        (DWORD)((ofst 0xFFFFFFFF00000000) >> 32);
-    if (WriteFile(XXX, data, sz, &bytesWritten, &offset) != 0)
+    offset.Offset = (DWORD)(ofst & 0xFFFFFFFF);
+    offset.OffsetHigh = (DWORD)((ofst & 0xFFFFFFFF00000000) >> 32);
+    if (WriteFile(fd, buf, sz, &bytesWritten, &offset) != 0)
         ret = -1;
     else
         ret = (int)bytesWritten;
@@ -108,11 +106,9 @@ int wPread(WFD fd, unsigned char* buf, unsigned int sz, long ofst)
     int ret;
 
     WMEMSET(&offset, 0, sizeof(OVERLAPPED));
-    offset.DUMMYUNIONNAME.DUMMYSTRUCTNAME.Offset =
-        (DWORD)(ofst & 0xFFFFFFFF);
-    offset.DUMMYUNIONNAME.DUMMYSTRUCTNAME.OffsetHigh =
-        (DWORD)((ofst 0xFFFFFFFF00000000) >> 32);
-    if (ReadFile(XXX, data, sz, &bytesRead, &offset) != 0)
+    offset.Offset = (DWORD)(ofst & 0xFFFFFFFF);
+    offset.OffsetHigh = (DWORD)((ofst & 0xFFFFFFFF00000000) >> 32);
+    if (ReadFile(fd, buf, sz, &bytesRead, &offset) != 0)
         ret = -1;
     else
         ret = (int)bytesRead;
