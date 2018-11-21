@@ -7052,6 +7052,11 @@ int SendChannelData(WOLFSSH* ssh, word32 peerChannel,
     }
 
     if (ret == WS_SUCCESS) {
+        if (ssh->outputBuffer.length != 0)
+            ret = wolfSSH_SendPacket(ssh);
+    }
+
+    if (ret == WS_SUCCESS) {
         channel = ChannelFind(ssh, peerChannel, WS_CHANNEL_ID_PEER);
         if (channel == NULL) {
             WLOG(WS_LOG_DEBUG, "Invalid peer channel");
@@ -7069,7 +7074,8 @@ int SendChannelData(WOLFSSH* ssh, word32 peerChannel,
             dataSz = bound;
         }
 
-        ret = PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ + LENGTH_SZ + dataSz);
+        ret = PreparePacket(ssh,
+                MSG_ID_SZ + UINT32_SZ + LENGTH_SZ + dataSz);
     }
 
     if (ret == WS_SUCCESS) {
@@ -7089,16 +7095,18 @@ int SendChannelData(WOLFSSH* ssh, word32 peerChannel,
         ret = BundlePacket(ssh);
     }
 
-    if (ret == WS_SUCCESS)
-        ret = wolfSSH_SendPacket(ssh);
-
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_INFO, "  dataSz = %u", dataSz);
         WLOG(WS_LOG_INFO, "  peerWindowSz = %u", channel->peerWindowSz);
         channel->peerWindowSz -= dataSz;
         WLOG(WS_LOG_INFO, "  update peerWindowSz = %u", channel->peerWindowSz);
-        ret = dataSz;
     }
+
+    if (ret == WS_SUCCESS)
+        ret = wolfSSH_SendPacket(ssh);
+
+    if (ret == WS_SUCCESS)
+        ret = dataSz;
 
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelData(), ret = %d", ret);
     return ret;

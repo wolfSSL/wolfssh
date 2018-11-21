@@ -46,6 +46,7 @@ typedef struct {
     WOLFSSH* ssh;
     SOCKET_T fd;
     word32 id;
+    char nonBlock;
 } thread_ctx_t;
 
 
@@ -97,12 +98,52 @@ static int dump_stats(thread_ctx_t* ctx)
 }
 
 
+static int NonBlockSSH_accept(WOLFSSH* ssh)
+{
+    int ret;
+    int error;
+    SOCKET_T sockfd;
+    int select_ret = 0;
+
+    ret = wolfSSH_accept(ssh);
+    error = wolfSSH_get_error(ssh);
+    sockfd = (SOCKET_T)wolfSSH_get_fd(ssh);
+
+    while (ret != WS_SUCCESS &&
+            (error == WS_WANT_READ || error == WS_WANT_WRITE))
+    {
+        if (error == WS_WANT_READ)
+            printf("... client would read block\n");
+        else if (error == WS_WANT_WRITE)
+            printf("... client would write block\n");
+
+        select_ret = tcp_select(sockfd, 1);
+        if (select_ret == WS_SELECT_RECV_READY ||
+            select_ret == WS_SELECT_ERROR_READY)
+        {
+            ret = wolfSSH_accept(ssh);
+        }
+        else if (select_ret == WS_SELECT_TIMEOUT)
+            error = WS_WANT_READ;
+        else
+            error = WS_FATAL_ERROR;
+    }
+
+    return ret;
+}
+
+
 static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
 {
     int ret;
     thread_ctx_t* threadCtx = (thread_ctx_t*)vArgs;
 
-    if ((ret = wolfSSH_accept(threadCtx->ssh)) == WS_SUCCESS) {
+    if (!threadCtx->nonBlock)
+        ret = wolfSSH_accept(threadCtx->ssh);
+    else
+        ret = NonBlockSSH_accept(threadCtx->ssh);
+
+    if (ret == WS_SUCCESS) {
         byte* buf = NULL;
         byte* tmpBuf;
         int bufSz, backlogSz = 0, rxSz, txSz, stop = 0, txSum;
@@ -117,9 +158,12 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
                 buf = tmpBuf;
 
             if (!stop) {
-                rxSz = wolfSSH_stream_read(threadCtx->ssh,
-                                           buf + backlogSz,
-                                           EXAMPLE_BUFFER_SZ);
+                do {
+                    rxSz = wolfSSH_stream_read(threadCtx->ssh,
+                                               buf + backlogSz,
+                                               EXAMPLE_BUFFER_SZ);
+                } while (rxSz == WS_WANT_READ || rxSz == WS_WANT_WRITE);
+
                 if (rxSz > 0) {
                     backlogSz += rxSz;
                     txSum = 0;
@@ -504,9 +548,10 @@ static int wsUserAuth(byte authType,
 static void ShowUsage(void)
 {
     printf("server %s\n", LIBWOLFSSH_VERSION_STRING);
-    printf("-h          Help, print this usage\n");
-    printf("-m          Allow multiple connections\n");
-    printf("-e          Use ECC private key\n");
+    printf(" -h            display this help and exit\n");
+    printf(" -m            allow multiple connections\n");
+    printf(" -e            use ECC private key\n");
+    printf(" -N            use non-blocking sockets\n");
 }
 
 
@@ -517,16 +562,17 @@ THREAD_RETURN WOLFSSH_THREAD server_test(void* args)
     SOCKET_T listenFd = 0;
     word32 defaultHighwater = EXAMPLE_HIGHWATER_MARK;
     word32 threadCount = 0;
-    int multipleConnections = 0;
-    int useEcc = 0;
-    char ch;
     word16 port = wolfSshPort;
+    char multipleConnections = 0;
+    char useEcc = 0;
+    char ch;
+    char nonBlock = 0;
 
     int     argc = ((func_args*)args)->argc;
     char**  argv = ((func_args*)args)->argv;
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "hme")) != -1) {
+    while ((ch = mygetopt(argc, argv, "hmeN")) != -1) {
         switch (ch) {
             case 'h' :
                 ShowUsage();
@@ -538,6 +584,10 @@ THREAD_RETURN WOLFSSH_THREAD server_test(void* args)
 
             case 'e' :
                 useEcc = 1;
+                break;
+
+            case 'N' :
+                nonBlock = 1;
                 break;
 
             default:
@@ -626,11 +676,15 @@ THREAD_RETURN WOLFSSH_THREAD server_test(void* args)
         if (clientFd == -1)
             err_sys("tcp accept failed");
 
+        if (nonBlock)
+            tcp_set_nonblocking(&clientFd);
+
         wolfSSH_set_fd(ssh, (int)clientFd);
 
         threadCtx->ssh = ssh;
         threadCtx->fd = clientFd;
         threadCtx->id = threadCount++;
+        threadCtx->nonBlock = nonBlock;
 
 #ifndef SINGLE_THREADED
         ThreadStart(server_worker, threadCtx, &thread);

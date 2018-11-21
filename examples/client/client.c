@@ -104,6 +104,7 @@ static void ShowUsage(void)
     printf(" -P <password> password for username, prompted if omitted\n");
     printf(" -x            exit after successful connection without doing\n"
            "               read/write\n");
+    printf(" -N            use non-blocking sockets\n");
 }
 
 
@@ -150,6 +151,41 @@ static int wsUserAuth(byte authType,
 }
 
 
+static int NonBlockSSH_connect(WOLFSSH* ssh)
+{
+    int ret;
+    int error;
+    SOCKET_T sockfd;
+    int select_ret = 0;
+
+    ret = wolfSSH_connect(ssh);
+    error = wolfSSH_get_error(ssh);
+    sockfd = (SOCKET_T)wolfSSH_get_fd(ssh);
+
+    while (ret != WS_SUCCESS &&
+            (error == WS_WANT_READ || error == WS_WANT_WRITE))
+    {
+        if (error == WS_WANT_READ)
+            printf("... client would read block\n");
+        else if (error == WS_WANT_WRITE)
+            printf("... client would write block\n");
+
+        select_ret = tcp_select(sockfd, 1);
+        if (select_ret == WS_SELECT_RECV_READY ||
+            select_ret == WS_SELECT_ERROR_READY)
+        {
+            ret = wolfSSH_connect(ssh);
+        }
+        else if (select_ret == WS_SELECT_TIMEOUT)
+            error = WS_WANT_READ;
+        else
+            error = WS_FATAL_ERROR;
+    }
+
+    return ret;
+}
+
+
 THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 {
     WOLFSSH_CTX* ctx = NULL;
@@ -165,12 +201,13 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     const char* username = NULL;
     const char* password = NULL;
     byte imExit = 0;
+    byte nonBlock = 0;
 
     int     argc = ((func_args*)args)->argc;
     char**  argv = ((func_args*)args)->argv;
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?h:p:u:P:x")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?NP:h:p:u:x")) != -1) {
         switch (ch) {
             case 'h':
                 host = myoptarg;
@@ -195,6 +232,10 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
             case 'x':
                 /* exit after successful connection without read/write */
                 imExit = 1;
+                break;
+
+            case 'N':
+                nonBlock = 1;
                 break;
 
             case '?':
@@ -237,13 +278,21 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     if (ret != 0)
         err_sys("Couldn't connect to server.");
 
+    if (nonBlock)
+        tcp_set_nonblocking(&sockFd);
+
     ret = wolfSSH_set_fd(ssh, (int)sockFd);
     if (ret != WS_SUCCESS)
         err_sys("Couldn't set the session's socket.");
 
-    ret = wolfSSH_connect(ssh);
-    if (ret != WS_SUCCESS)
+    if (!nonBlock)
+        ret = wolfSSH_connect(ssh);
+    else
+        ret = NonBlockSSH_connect(ssh);
+    if (ret != WS_SUCCESS) {
+        printf("err = %s\n", wolfSSH_get_error_name(ssh));
         err_sys("Couldn't connect SSH stream.");
+    }
 
     if (!imExit) {
         ret = wolfSSH_stream_send(ssh, (byte*)testString,
@@ -251,9 +300,14 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         if (ret <= 0)
             err_sys("Couldn't send test string.");
 
-        ret = wolfSSH_stream_read(ssh, (byte*)rxBuf, sizeof(rxBuf) - 1);
-        if (ret <= 0)
-            err_sys("Stream read failed.");
+        do {
+            ret = wolfSSH_stream_read(ssh, (byte*)rxBuf, sizeof(rxBuf) - 1);
+            if (ret <= 0) {
+                if (ret != WS_WANT_READ && ret != WS_WANT_WRITE)
+                    err_sys("Stream read failed.");
+            }
+        } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE);
+
         rxBuf[ret] = '\0';
         printf("Server said: %s\n", rxBuf);
     }
