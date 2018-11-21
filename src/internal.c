@@ -1349,9 +1349,9 @@ static int GetInputText(WOLFSSH* ssh, byte** pEol)
 }
 
 
-int SendBuffered(WOLFSSH* ssh)
+int wolfSSH_SendPacket(WOLFSSH* ssh)
 {
-    WLOG(WS_LOG_DEBUG, "Entering SendBuffered()");
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SendPacket()");
 
     if (ssh->ctx->ioSendCb == NULL) {
         WLOG(WS_LOG_DEBUG, "Your IO Send callback is null, please set");
@@ -1380,7 +1380,7 @@ int SendBuffered(WOLFSSH* ssh)
         }
 
         if ((word32)sent > ssh->outputBuffer.length) {
-            WLOG(WS_LOG_DEBUG, "SendBuffered() out of bounds read");
+            WLOG(WS_LOG_DEBUG, "wolfSSH_SendPacket() out of bounds read");
             return WS_SEND_OOB_READ_E;
         }
 
@@ -4921,7 +4921,7 @@ int SendProtoId(WOLFSSH* ssh)
     if (ret == WS_SUCCESS) {
         WMEMCPY(ssh->outputBuffer.buffer, sshProtoIdStr, sshProtoIdStrSz);
         ssh->outputBuffer.length = sshProtoIdStrSz;
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
     }
 
     return ret;
@@ -5192,7 +5192,7 @@ int SendKexInit(WOLFSSH* ssh)
         ret = BundlePacket(ssh);
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     WLOG(WS_LOG_DEBUG, "Leaving SendKexInit(), ret = %d", ret);
     return ret;
@@ -5854,7 +5854,7 @@ int SendNewKeys(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     if (ret == WS_SUCCESS) {
         ssh->blockSz = ssh->handshake->blockSz;
@@ -5932,7 +5932,7 @@ int SendKexDhGexRequest(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     WLOG(WS_LOG_DEBUG, "Leaving SendKexDhGexRequest(), ret = %d", ret);
     return ret;
@@ -6003,7 +6003,7 @@ int SendKexDhGexGroup(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     WLOG(WS_LOG_DEBUG, "Leaving SendKexDhGexGroup(), ret = %d", ret);
     return ret;
@@ -6130,7 +6130,7 @@ int SendKexDhInit(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     WLOG(WS_LOG_DEBUG, "Leaving SendKexDhInit(), ret = %d", ret);
     return ret;
@@ -6166,7 +6166,7 @@ int SendUnimplemented(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     WLOG(WS_LOG_DEBUG, "Leaving SendUnimplemented(), ret = %d", ret);
     return ret;
@@ -6203,7 +6203,7 @@ int SendDisconnect(WOLFSSH* ssh, word32 reason)
     }
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     return ret;
 }
@@ -6239,7 +6239,7 @@ int SendIgnore(WOLFSSH* ssh, const unsigned char* data, word32 dataSz)
     }
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     return ret;
 }
@@ -6290,7 +6290,7 @@ int SendDebug(WOLFSSH* ssh, byte alwaysDisplay, const char* msg)
     }
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     return ret;
 }
@@ -6332,7 +6332,7 @@ int SendServiceRequest(WOLFSSH* ssh, byte serviceId)
     }
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     WLOG(WS_LOG_DEBUG, "Leaving SendServiceRequest(), ret = %d", ret);
     return ret;
@@ -6466,7 +6466,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId)
     }
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     WLOG(WS_LOG_DEBUG, "Leaving SendUserAuthRequest(), ret = %d", ret);
     return ret;
@@ -6506,7 +6506,7 @@ int SendUserAuthFailure(WOLFSSH* ssh, byte partialSuccess)
     }
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     return ret;
 }
@@ -6536,7 +6536,7 @@ int SendUserAuthSuccess(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     return ret;
 }
@@ -6581,7 +6581,7 @@ int SendUserAuthPkOk(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     return ret;
 }
@@ -6631,7 +6631,7 @@ int SendUserAuthBanner(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     WLOG(WS_LOG_DEBUG, "Leaving SendUserAuthBanner()");
     return ret;
@@ -6666,7 +6666,7 @@ int SendRequestSuccess(WOLFSSH* ssh, int success)
     }
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     WLOG(WS_LOG_DEBUG, "Leaving SendRequestSuccess(), ret = %d", ret);
     return ret;
@@ -6721,7 +6721,7 @@ static int SendChannelOpen(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel,
     }
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelOpen(), ret = %d", ret);
     return ret;
@@ -6831,7 +6831,7 @@ int SendChannelOpenConf(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelOpenConf(), ret = %d", ret);
     return ret;
@@ -6873,7 +6873,7 @@ int SendChannelEof(WOLFSSH* ssh, word32 peerChannelId)
     }
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelEof(), ret = %d", ret);
     return ret;
@@ -6927,7 +6927,7 @@ int SendChannelEow(WOLFSSH* ssh, word32 peerChannelId)
     }
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelEow(), ret = %d", ret);
     return ret;
@@ -6978,7 +6978,7 @@ int SendChannelExit(WOLFSSH* ssh, word32 peerChannelId, int status)
     }
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelExit(), ret = %d", ret);
     return ret;
@@ -7024,7 +7024,7 @@ int SendChannelClose(WOLFSSH* ssh, word32 peerChannelId)
     }
 
     if (ret == WS_SUCCESS) {
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
         channel->closeSent = 1;
     }
 
@@ -7090,7 +7090,7 @@ int SendChannelData(WOLFSSH* ssh, word32 peerChannel,
     }
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_INFO, "  dataSz = %u", dataSz);
@@ -7142,7 +7142,7 @@ int SendChannelWindowAdjust(WOLFSSH* ssh, word32 peerChannel,
     }
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelWindowAdjust(), ret = %d", ret);
     return ret;
@@ -7256,7 +7256,7 @@ int SendChannelRequest(WOLFSSH* ssh, byte* name, word32 nameSz)
     }
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelRequest(), ret = %d", ret);
     return ret;
@@ -7302,7 +7302,7 @@ int SendChannelSuccess(WOLFSSH* ssh, word32 channelId, int success)
     }
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelSuccess(), ret = %d", ret);
     return ret;

@@ -1023,7 +1023,7 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
     /* Attempt to send any data pending in the outputBuffer. */
     if (ret == WS_SUCCESS) {
         if (ssh->outputBuffer.length != 0)
-            ret = SendBuffered(ssh);
+            ret = wolfSSH_SendPacket(ssh);
     }
 
     /* Attempt to receive data from the peer. */
