@@ -16,3 +16,5 @@ EXTRA_DIST+= ide/winvs/echoserver/echoserver.vcxproj
 EXTRA_DIST+= ide/winvs/echoserver/echoserver.vcxproj.user
 EXTRA_DIST+= ide/winvs/testsuite/testsuite.vcxproj
 EXTRA_DIST+= ide/winvs/testsuite/testsuite.vcxproj.user
+EXTRA_DIST+= ide/winvs/wolfsftp-client/wolfsftp-client.vcxproj
+EXTRA_DIST+= ide/winvs/wolfsftp-client/wolfsftp-client.vcxproj.user

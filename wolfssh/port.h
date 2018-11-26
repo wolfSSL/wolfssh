@@ -440,7 +440,7 @@ extern "C" {
     #define WOPEN(f,m,p)      _open((f),(m),(p))
     #define WCLOSE(fd)        _close((fd))
 
-    #define WFD HANDLE
+    #define WFD int
     int wPwrite(WFD, unsigned char*, unsigned int, long);
     int wPread(WFD, unsigned char*, unsigned int, long);
     #define WPWRITE(fd,b,s,o) wPwrite((fd),(b),(s),(o))
