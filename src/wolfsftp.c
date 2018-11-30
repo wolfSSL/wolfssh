@@ -356,8 +356,8 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, int maxSz)
                     "Directory error", "English");
             return WS_BAD_FILE_E;
         }
-        WSTRNCAT(wd, "/", sizeof("/"));
-        WSTRNCAT(wd, r, WOLFSSH_MAX_FILENAME - 1);
+        WSTRNCAT(wd, "/", WOLFSSH_MAX_FILENAME);
+        WSTRNCAT(wd, r, WOLFSSH_MAX_FILENAME);
         WMEMCPY(r, wd, WOLFSSH_MAX_FILENAME);
     }
 
@@ -1107,7 +1107,7 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
         }
         buf[0] = '\0';
         if (!special) { /* do not add dir name in special case */
-            WSTRNCAT(buf, dirName, bufSz);
+            WSTRNCAT(buf, dirName, bufSz + 1);
             tmpSz = WSTRLEN(buf);
 
             /* add delimiter between path and file/dir name */
@@ -1117,7 +1117,7 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
             }
 
         }
-        WSTRNCAT(buf, out->fName, bufSz);
+        WSTRNCAT(buf, out->fName, bufSz + 1);
 
         clean_path(buf);
         if (SFTP_GetAttributes(buf, &out->atrb, 0) != WS_SUCCESS) {
@@ -1204,7 +1204,7 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
             return WS_MEMORY_E;
         }
         buf[0] = '\0';
-        WSTRNCAT(buf, dirName, bufSz);
+        WSTRNCAT(buf, dirName, bufSz + 1);
         tmpSz = (int)WSTRLEN(buf);
 
         /* add delimiter between path and file/dir name */
@@ -1212,7 +1212,7 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
             buf[tmpSz] = WS_DELIM;
             buf[tmpSz + 1] = '\0';
         }
-        WSTRNCAT(buf, out->fName, bufSz);
+        WSTRNCAT(buf, out->fName, bufSz + 1);
 
         clean_path(buf);
         if (SFTP_GetAttributes(buf, &out->atrb, 0) != WS_SUCCESS) {
@@ -1276,7 +1276,7 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
             return WS_MEMORY_E;
         }
         buf[0] = '\0';
-        WSTRNCAT(buf, dirName, bufSz);
+        WSTRNCAT(buf, dirName, bufSz + 1);
         tmpSz = (int)WSTRLEN(buf);
 
         /* add delimiter between path and file/dir name */
@@ -1284,7 +1284,7 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
             buf[tmpSz] = WS_DELIM;
             buf[tmpSz+1] = '\0';
         }
-        WSTRNCAT(buf, out->fName, bufSz);
+        WSTRNCAT(buf, out->fName, bufSz + 1);
 
         clean_path(buf);
         if (SFTP_GetAttributes(buf, &out->atrb, 0) != WS_SUCCESS) {
