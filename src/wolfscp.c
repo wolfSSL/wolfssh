@@ -1183,10 +1183,21 @@ int ParseScpCommand(WOLFSSH* ssh)
 
                     case 't':
                         ssh->scpDirection = WOLFSSH_SCP_TO;
+                    #ifdef WOLFSSL_NUCLEUS
+                        ssh->scpBasePathSz = cmdSz + WOLFSSH_MAX_FILENAME;
+                        ssh->scpBasePathDynamic = (char*)WMALLOC(
+                                ssh->scpBasePathSz,
+                                ssh->ctx->heap, DYNTYPE_BUFFER);
+                    #endif
                         if (idx + 2 < cmdSz) {
                             /* skip space */
                             idx += 2;
+                        #ifdef WOLFSSL_NUCLEUS
+                            ssh->scpBasePath = ssh->scpBasePathDynamic;
+                            WMEMCPY(ssh->scpBasePathDynamic, cmd + idx, cmdSz);
+                        #else
                             ssh->scpBasePath = cmd + idx;
+                        #endif
                             clean_path((char*)ssh->scpBasePath);
                         }
                         ret = ParseBasePathHelper(ssh, cmdSz);
@@ -1194,10 +1205,21 @@ int ParseScpCommand(WOLFSSH* ssh)
 
                     case 'f':
                         ssh->scpDirection = WOLFSSH_SCP_FROM;
+                    #ifdef WOLFSSL_NUCLEUS
+                        ssh->scpBasePathSz = cmdSz + WOLFSSH_MAX_FILENAME;
+                        ssh->scpBasePathDynamic = (char*)WMALLOC(
+                                ssh->scpBasePathSz,
+                                ssh->ctx->heap, DYNTYPE_BUFFER);
+                    #endif
                         if (idx + 2 < cmdSz) {
                             /* skip space */
                             idx += 2;
+                        #ifdef WOLFSSL_NUCLEUS
+                            ssh->scpBasePath = ssh->scpBasePathDynamic;
+                            WMEMCPY(ssh->scpBasePathDynamic, cmd + idx, cmdSz);
+                        #else
                             ssh->scpBasePath = cmd + idx;
+                        #endif
                             clean_path((char*)ssh->scpBasePath);
                         }
                         break;
