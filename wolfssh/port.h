@@ -160,6 +160,7 @@ extern "C" {
     #include <string.h>
 
     WOLFSSH_API char* wstrnstr(const char*, const char*, unsigned int);
+    WOLFSSH_API char* wstrncat(char*, const char*, size_t);
 
     #define WMEMCPY(d,s,l)    memcpy((d),(s),(l))
     #define WMEMSET(b,c,l)    memset((b),(c),(l))
@@ -170,7 +171,7 @@ extern "C" {
     #define WSTRSTR(s1,s2)    strstr((s1),(s2))
     #define WSTRNSTR(s1,s2,n) wstrnstr((s1),(s2),(n))
     #define WSTRNCMP(s1,s2,n) strncmp((s1),(s2),(n))
-    #define WSTRNCAT(s1,s2,n) strncat((s1),(s2),(n))
+    #define WSTRNCAT(s1,s2,n) wstrncat((s1),(s2),(n))
     #define WSTRSPN(s1,s2)    strspn((s1),(s2))
     #define WSTRCSPN(s1,s2)   strcspn((s1),(s2))
 

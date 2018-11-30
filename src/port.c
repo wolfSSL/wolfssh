@@ -139,4 +139,25 @@ char* wstrnstr(const char* s1, const char* s2, unsigned int n)
     return NULL;
 }
 
+
+/* Returns s1 if successful. Returns NULL if unsuccessful.
+ * Copies the characters string s2 onto the end of s1. n is the size of the
+ * buffer s1 is stored in. Returns NULL if s2 is too large to fit onto the
+ * end of s1 including a null terminator. */
+char* wstrncat(char* s1, const char* s2, size_t n)
+{
+    size_t freeSpace = n - strlen(s1) - 1;
+
+    if (freeSpace >= strlen(s2)) {
+        #ifndef USE_WINDOWS_API
+            strncat(s1, s2, freeSpace);
+        #else
+            strncat_s(s1, n, s2, freeSpace);
+        #endif
+        return s1;
+    }
+
+    return NULL;
+}
+
 #endif /* WSTRING_USER */

@@ -212,10 +212,25 @@ static void test_wolfSSH_SCP_CB(void)
 }
 
 
+static void test_wstrcat(void)
+{
+#ifndef WSTRING_USER
+    char dst[5];
+
+    WSTRNCPY(dst, "12", sizeof(dst));
+    AssertNull(wstrncat(dst, "345", sizeof(dst)));
+    AssertStrEQ(dst, "12");
+    AssertNotNull(wstrncat(dst, "67", sizeof(dst)));
+    AssertStrEQ(dst, "1267");
+#endif /* WSTRING_USER */
+}
+
+
 int main(void)
 {
     AssertIntEQ(wolfSSH_Init(), WS_SUCCESS);
 
+    test_wstrcat();
     test_wolfSSH_CTX_new();
     test_server_wolfSSH_new();
     test_client_wolfSSH_new();
