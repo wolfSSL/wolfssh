@@ -294,6 +294,11 @@ struct WOLFSSH {
     char*  scpConfirmMsg;         /* dynamic, confirm message string */
     word32 scpConfirmMsgSz;       /* length of confirmMsg, not including \0 */
     const char* scpBasePath;      /* base path, ptr into channelList->command */
+#ifdef WOLFSSL_NUCLEUS
+    /* alter base path instead of using chdir */
+    char* scpBasePathDynamic;     /* dynamic base path */
+    word32 scpBasePathSz;
+#endif
     byte   scpIsRecursive;        /* recursive transfer requested */
     byte   scpRequestType;        /* directory or single file */
     byte   scpMsgType;
