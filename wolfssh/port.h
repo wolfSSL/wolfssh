@@ -131,26 +131,36 @@ extern "C" {
     #define WREWIND(s)        rewind((s))
     #define WSEEK_END         SEEK_END
     #define WUTIMES(f,t)      utimes((f),(t))
-    #define WCHMOD(f,m)       chmod((f),(m))
+
+    #ifndef USE_WINDOWS_API
+        #define WCHMOD(f,m)   chmod((f),(m))
+    #else
+        #define WCHMOD(f,m)   _chmod((f),(m))
+    #endif
 
     #if (defined(WOLFSSH_SCP) || defined(WOLFSSH_SFTP)) && \
-        !defined(WOLFSSH_SCP_USER_CALLBACKS) && \
-        !defined(NO_FILESYSTEM)
-        /* for chdir() */
-        #include <unistd.h>
-        /* for mkdir() */
-        #include <sys/stat.h>
-        #define WCHDIR(p)     chdir((p))
-        #define WMKDIR(p,m)   mkdir((p),(m))
+        !defined(WOLFSSH_SCP_USER_CALLBACKS)
+
+        #ifdef USE_WINDOWS_API
+            #include <direct.h>
+            #define WCHDIR(p) _chdir((p))
+            #define WMKDIR(p,m) _mkdir((p))
+        #else
+            #include <unistd.h>
+            #include <sys/stat.h>
+            #define WCHDIR(p)     chdir((p))
+            #define WMKDIR(p,m)   mkdir((p),(m))
+        #endif
     #endif
 #endif
-#endif
+#endif /* NO_FILESYSTEM */
+
 /* setup string handling */
 #ifndef WSTRING_USER
     #include <string.h>
 
-
     WOLFSSH_API char* wstrnstr(const char*, const char*, unsigned int);
+    WOLFSSH_API char* wstrncat(char*, const char*, size_t);
 
     #define WMEMCPY(d,s,l)    memcpy((d),(s),(l))
     #define WMEMSET(b,c,l)    memset((b),(c),(l))
@@ -161,7 +171,7 @@ extern "C" {
     #define WSTRSTR(s1,s2)    strstr((s1),(s2))
     #define WSTRNSTR(s1,s2,n) wstrnstr((s1),(s2),(n))
     #define WSTRNCMP(s1,s2,n) strncmp((s1),(s2),(n))
-    #define WSTRNCAT(s1,s2,n) strncat((s1),(s2),(n))
+    #define WSTRNCAT(s1,s2,n) wstrncat((s1),(s2),(n))
     #define WSTRSPN(s1,s2)    strspn((s1),(s2))
     #define WSTRCSPN(s1,s2)   strcspn((s1),(s2))
 
@@ -201,6 +211,7 @@ extern "C" {
 #if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
         !defined(NO_WOLFSSH_SERVER)
 #ifdef WOLFSSL_NUCLEUS
+    #define WSTAT_T     struct stat
     #define WRMDIR(d)   (NU_Remove_Dir((d)) == NU_SUCCESS)?0:1
     #define WMKDIR(d,m) (NU_Make_Dir((d)) == NU_SUCCESS)?0:1
     #define WSTAT(p,b)  NU_Get_First((b),(p))
@@ -411,12 +422,51 @@ extern "C" {
     #define WCLOSEDIR(d) NU_Done((d))
     #define WREADDIR(d)  (NU_Get_Next((d)) == NU_SUCCESS)?(d):NULL
     #endif /* NO_WOLFSSH_DIR */
+#elif defined(USE_WINDOWS_API)
+
+    #include <windows.h>
+    #include <sys/types.h>
+    #include <sys/stat.h>
+    #include <io.h>
+    #include <direct.h>
+    #include <fcntl.h>
+
+    #define WSTAT_T           struct _stat
+    #define WRMDIR(d)         _rmdir((d))
+    #define WSTAT(p,b)        _stat((p),(b))
+    #define WLSTAT(p,b)       _stat((p),(b))
+    #define WREMOVE(d)        remove((d))
+    #define WRENAME(o,n)      rename((o),(n))
+    #define WGETCWD(r,rSz)    _getcwd((r),(rSz))
+    #define WOPEN(f,m,p)      _open((f),(m),(p))
+    #define WCLOSE(fd)        _close((fd))
+
+    #define WFD int
+    int wPwrite(WFD, unsigned char*, unsigned int, long);
+    int wPread(WFD, unsigned char*, unsigned int, long);
+    #define WPWRITE(fd,b,s,o) wPwrite((fd),(b),(s),(o))
+    #define WPREAD(fd,b,s,o)  wPread((fd),(b),(s),(o))
+    #define WS_DELIM          '\\'
+
+    #define WOLFSSH_O_RDWR    _O_RDWR
+    #define WOLFSSH_O_RDONLY  _O_RDONLY
+    #define WOLFSSH_O_WRONLY  _O_WRONLY
+    #define WOLFSSH_O_APPEND  _O_APPEND
+    #define WOLFSSH_O_CREAT   _O_CREAT
+    #define WOLFSSH_O_TRUNC   _O_TRUNC
+    #define WOLFSSH_O_EXCL    _O_EXCL
+
+    #ifndef NO_WOLFSSH_DIR
+        #define WDIR HANDLE
+    #endif /* NO_WOLFSSH_DIR */
+
 #else
     #include <unistd.h>   /* used for rmdir */
     #include <sys/stat.h> /* used for mkdir, stat, and lstat */
     #include <stdio.h>    /* used for remove and rename */
     #include <dirent.h>   /* used for opening directory and reading */
 
+    #define WSTAT_T     struct stat
     #define WRMDIR(d)   rmdir((d))
     #define WSTAT(p,b)  stat((p),(b))
     #define WLSTAT(p,b) lstat((p),(b))

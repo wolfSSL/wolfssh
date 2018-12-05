@@ -29,6 +29,8 @@
     #include <termios.h>
 #endif
 
+#ifdef WOLFSSH_SFTP
+
 int doCmds(void);
 
 
@@ -904,6 +906,14 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     return 0;
 }
 
+#else
+
+THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
+{
+    printf("Not compiled in!\nPlease recompile with WOLFSSH_SFTP or --enable-sftp");
+    return -1;
+}
+#endif /* WOLFSSH_SFTP */
 
 #ifndef NO_MAIN_DRIVER
 

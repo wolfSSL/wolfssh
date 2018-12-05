@@ -7330,7 +7330,7 @@ void clean_path(char* path)
     long sz = (long)WSTRLEN(path);
     byte found;
 
-#ifdef WOLFSSL_NUCLEUS
+#if defined(WOLFSSL_NUCLEUS) || defined(USE_WINDOWS_API)
     for (i = 0; i < sz; i++) {
         if (path[i] == '/') path[i] = '\\';
     }
@@ -7358,9 +7358,9 @@ void clean_path(char* path)
     if (path != NULL) {
         /* go through path until no cases are found */
         do {
-            sz = WSTRLEN(path);
             int prIdx = 0; /* begin of cut */
             int enIdx = 0; /* end of cut */
+            sz = (long)WSTRLEN(path);
 
             found = 0;
             for (i = 1; i < sz; i++) {
@@ -7400,8 +7400,8 @@ void clean_path(char* path)
             }
         } while (found);
 
-#ifdef WOLFSSL_NUCLEUS
-        sz = WSTRLEN(path);
+#if defined(WOLFSSL_NUCLEUS) || defined(USE_WINDOWS_API)
+        sz = (long)WSTRLEN(path);
 
         if (path[sz - 1] == ':') {
             path[sz] = WS_DELIM;
@@ -7411,7 +7411,7 @@ void clean_path(char* path)
         /* clean up any multiple drive listed i.e. A:/A: */
         {
             int i,j;
-            sz = WSTRLEN(path);
+            sz = (long)WSTRLEN(path);
             for (i = 0, j = 0; i < sz; i++) {
                 if (path[i] == ':') {
                     if (j == 0) j = i;
@@ -7427,7 +7427,7 @@ void clean_path(char* path)
         }
 
         /* remove leading '/' for nucleus. Preserve case of single "/" */
-        sz = WSTRLEN(path);
+        sz = (long)WSTRLEN(path);
         while (sz > 2 && path[0] == WS_DELIM) {
             sz--;
             WMEMMOVE(path, path + 1, sz);

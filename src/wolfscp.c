@@ -1651,8 +1651,8 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
         #ifdef WOLFSSL_NUCLEUS
             /* use absolute path */
             WSTRNCAT(abslut, (char*)basePath, WOLFSSH_MAX_FILENAME);
-            WSTRNCAT(abslut, "/", sizeof("/"));
-            WSTRNCAT(abslut, fileName, WSTRLEN(fileName));
+            WSTRNCAT(abslut, "/", WOLFSSH_MAX_FILENAME);
+            WSTRNCAT(abslut, fileName, WOLFSSH_MAX_FILENAME);
             clean_path(abslut);
             if (WFOPEN(&fp, abslut, "wb") != 0) {
         #else
@@ -1708,8 +1708,8 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
 #ifdef WOLFSSL_NUCLEUS
             /* get absolute path */
             WSTRNCAT(abslut, (char*)basePath, WOLFSSH_MAX_FILENAME);
-            WSTRNCAT(abslut, "/", sizeof("/"));
-            WSTRNCAT(abslut, fileName, WSTRLEN(fileName));
+            WSTRNCAT(abslut, "/", WOLFSSH_MAX_FILENAME);
+            WSTRNCAT(abslut, fileName, WOLFSSH_MAX_FILENAME);
             clean_path(abslut);
             if (WMKDIR(abslut, fileMode) != 0) {
 #else
@@ -2216,17 +2216,17 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
                 } else {
                     WSTRNCPY(filePath, sendCtx->dirName,
                              DEFAULT_SCP_FILE_NAME_SZ);
-                    WSTRNCAT(filePath, "/", 1);
+                    WSTRNCAT(filePath, "/", DEFAULT_SCP_FILE_NAME_SZ);
 
                 #ifdef WOLFSSL_NUCLEUS
                     WSTRNCAT(filePath, sendCtx->currentDir->dir.lfname,
-                         DEFAULT_SCP_FILE_NAME_SZ - 1 - dirNameLen);
+                         DEFAULT_SCP_FILE_NAME_SZ);
                     WSTRNCPY(fileName, sendCtx->currentDir->dir.lfname,
                          DEFAULT_SCP_FILE_NAME_SZ);
                     clean_path(filePath);
                 #else
                     WSTRNCAT(filePath, sendCtx->entry->d_name,
-                             DEFAULT_SCP_FILE_NAME_SZ - 1 - dirNameLen);
+                             DEFAULT_SCP_FILE_NAME_SZ);
                     WSTRNCPY(fileName, sendCtx->entry->d_name,
                              DEFAULT_SCP_FILE_NAME_SZ);
                 #endif
