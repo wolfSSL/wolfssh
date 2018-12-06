@@ -547,7 +547,8 @@ static INLINE void tcp_set_nonblocking(SOCKET_T* sockfd)
         if (ret == SOCKET_ERROR)
             err_sys("ioctlsocket failed");
     #elif defined(WOLFSSL_MDK_ARM) || defined(WOLFSSL_KEIL_TCP_NET) \
-        || defined (WOLFSSL_TIRTOS)|| defined(WOLFSSL_VXWORKS)
+        || defined (WOLFSSL_TIRTOS)|| defined(WOLFSSL_VXWORKS) || \
+        defined(WOLFSSL_NUCLEUS)
          /* non blocking not supported, for now */
     #else
         int flags = fcntl(*sockfd, F_GETFL, 0);
