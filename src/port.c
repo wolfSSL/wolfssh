@@ -90,7 +90,7 @@ int wPwrite(WFD fd, unsigned char* buf, unsigned int sz, long ofst)
     WMEMSET(&offset, 0, sizeof(OVERLAPPED));
     offset.Offset = (DWORD)(ofst & 0xFFFFFFFF);
     offset.OffsetHigh = (DWORD)((ofst & 0xFFFFFFFF00000000) >> 32);
-    if (WriteFile((HANDLE)_get_osfhandle(fd), buf, sz, &bytesWritten, &offset) != 0)
+    if (WriteFile((HANDLE)_get_osfhandle(fd), buf, sz, &bytesWritten, &offset) <= 0)
         ret = -1;
     else
         ret = (int)bytesWritten;
@@ -108,8 +108,14 @@ int wPread(WFD fd, unsigned char* buf, unsigned int sz, long ofst)
     WMEMSET(&offset, 0, sizeof(OVERLAPPED));
     offset.Offset = (DWORD)(ofst & 0xFFFFFFFF);
     offset.OffsetHigh = (DWORD)((ofst & 0xFFFFFFFF00000000) >> 32);
-    if (ReadFile((HANDLE)_get_osfhandle(fd), buf, sz, &bytesRead, &offset) != 0)
-        ret = -1;
+    if (ReadFile((HANDLE)_get_osfhandle(fd), buf, sz, &bytesRead, &offset) <= 0) {
+        if (GetLastError() == ERROR_HANDLE_EOF) {
+            ret = 0; /* return 0 for end of file */
+        }
+        else {
+            ret = -1;
+        }
+    }
     else
         ret = (int)bytesRead;
 
