@@ -217,7 +217,7 @@ THREAD_RETURN WOLFSSH_THREAD wolffwd_worker(void* args)
     fd_set errFds;
     int nFds;
     int ret;
-    char ch;
+    int ch;
     int appFdSet = 0;
     struct timeval to;
     WOLFSSH_CHANNEL* fwdChannel = NULL;

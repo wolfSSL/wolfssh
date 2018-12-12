@@ -599,7 +599,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     word32 threadCount = 0;
     int multipleConnections = 1;
     int useEcc = 0;
-    char ch;
+    int ch;
     word16 port = wolfSshPort;
     char* readyFile = NULL;
 

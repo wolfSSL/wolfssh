@@ -195,7 +195,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     socklen_t clientAddrSz = sizeof(clientAddr);
     char rxBuf[80];
     int ret;
-    char ch;
+    int ch;
     word16 port = wolfSshPort;
     char* host = (char*)wolfSshIp;
     const char* username = NULL;
