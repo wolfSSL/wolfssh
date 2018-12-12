@@ -788,7 +788,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     SOCKADDR_IN_T clientAddr;
     socklen_t clientAddrSz = sizeof(clientAddr);
     int ret;
-    char ch;
+    int ch;
     word16 port = wolfSshPort;
     char* host = (char*)wolfSshIp;
     const char* username = NULL;

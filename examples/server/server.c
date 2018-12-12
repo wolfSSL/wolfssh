@@ -565,7 +565,7 @@ THREAD_RETURN WOLFSSH_THREAD server_test(void* args)
     word16 port = wolfSshPort;
     char multipleConnections = 0;
     char useEcc = 0;
-    char ch;
+    int  ch;
     char nonBlock = 0;
 
     int     argc = ((func_args*)args)->argc;
