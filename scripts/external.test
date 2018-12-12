@@ -39,7 +39,7 @@ echo -e "Success\n"
 
 # not having the sftp client built in is not a failure case
 ./wolfsftp/client/wolfsftp -h
-if [ $? == 0 ]; then
+if [ $? -eq 0 ]; then
     echo "Testing wolfsftp connection to $host : "
     echo "exit" | ./wolfsftp/client/wolfsftp -u $user -P $password -h $host -p 22
     RESULT=$?
