@@ -2266,7 +2266,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     word32 sigSz;
     word32 scratch;
     byte  scratchLen[LENGTH_SZ];
-    word32 kPad = 0;
+    byte  kPad = 0;
     struct {
         byte useRsa;
         word32 keySz;
@@ -2515,10 +2515,10 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 wc_ecc_free(&ssh->handshake->privKey.ecc);
             }
         }
+        CreateMpint(ssh->k, &ssh->kSz, &kPad);
 
         /* Hash in the shared secret K. */
         if (ret == 0) {
-            kPad = (ssh->k[0] & 0x80) ? 1 : 0;
             c32toa(ssh->kSz + kPad, scratchLen);
             ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
                                 scratchLen, LENGTH_SZ);
