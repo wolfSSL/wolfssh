@@ -5324,10 +5324,10 @@ int SendKexDhReply(WOLFSSH* ssh)
                                              &sigKeyBlock.sk.rsa.nSz);
             if (ret == 0) {
                 /* Add a pad byte if the mpint has the MSB set. */
-                sigKeyBlock.sk.rsa.ePad = (sigKeyBlock.sk.rsa.e[0] & 0x80) ?
-                                           1 : 0;
-                sigKeyBlock.sk.rsa.nPad = (sigKeyBlock.sk.rsa.n[0] & 0x80) ?
-                                           1 : 0;
+                CreateMpint(sigKeyBlock.sk.rsa.e, &sigKeyBlock.sk.rsa.eSz,
+                        &sigKeyBlock.sk.rsa.ePad);
+                CreateMpint(sigKeyBlock.sk.rsa.n, &sigKeyBlock.sk.rsa.nSz,
+                        &sigKeyBlock.sk.rsa.nPad);
                 sigKeyBlock.sz = (LENGTH_SZ * 3) + sigKeyBlock.nameSz +
                                   sigKeyBlock.sk.rsa.eSz +
                                   sigKeyBlock.sk.rsa.ePad +
@@ -5496,8 +5496,7 @@ int SendKexDhReply(WOLFSSH* ssh)
             }
             /* Add a pad byte if the mpint has the MSB set. */
             if (ret == 0) {
-                if (primeGroup[0] & 0x80)
-                    primeGroupPad = 1;
+                CreateMpint((byte*)primeGroup, &primeGroupSz, &primeGroupPad);
 
                 /* Hash in the length of the GEX prime group. */
                 c32toa(primeGroupSz + primeGroupPad, scratchLen);
@@ -5521,8 +5520,7 @@ int SendKexDhReply(WOLFSSH* ssh)
                                      primeGroup, primeGroupSz);
             /* Add a pad byte if the mpint has the MSB set. */
             if (ret == 0) {
-                if (generator[0] & 0x80)
-                    generatorPad = 1;
+                CreateMpint((byte*)generator, &generatorSz, &generatorPad);
 
                 /* Hash in the length of the GEX generator. */
                 c32toa(generatorSz + generatorPad, scratchLen);
@@ -5614,7 +5612,7 @@ int SendKexDhReply(WOLFSSH* ssh)
 
         /* Hash in the server's DH f-value. */
         if (ret == 0) {
-            fPad = (f[0] & 0x80) ? 1 : 0;
+            CreateMpint(f, &fSz, &fPad);
             c32toa(fSz + fPad, scratchLen);
             ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
                                scratchLen, LENGTH_SZ);
@@ -5632,7 +5630,7 @@ int SendKexDhReply(WOLFSSH* ssh)
 
         /* Hash in the shared secret K. */
         if (ret == 0) {
-            kPad = (ssh->k[0] & 0x80) ? 1 : 0;
+            CreateMpint(ssh->k, &ssh->kSz, &kPad);
             c32toa(ssh->kSz + kPad, scratchLen);
             ret = wc_HashUpdate(&ssh->handshake->hash, ssh->handshake->hashId,
                                 scratchLen, LENGTH_SZ);
@@ -6101,8 +6099,8 @@ int SendKexDhInit(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS) {
-        if (e[0] & 0x80)  {
-            ePad = 1;
+        CreateMpint(e, &eSz, &ePad);
+        if (ePad == 1) {
             ssh->handshake->e[0] = 0;
         }
         WMEMCPY(ssh->handshake->e + ePad, e, eSz);
