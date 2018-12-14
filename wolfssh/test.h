@@ -539,6 +539,10 @@ static INLINE void tcp_listen(SOCKET_T* sockfd, word16* port, int useAnyAddr)
 
 #endif /* WOLFSSH_TEST_SERVER */
 
+
+#if (defined(WOLFSSH_TEST_SERVER) || defined(WOLFSSH_TEST_CLIENT)) && \
+    !defined(WOLFSSH_TEST_ECHOSERVER)
+
 static INLINE void tcp_set_nonblocking(SOCKET_T* sockfd)
 {
     #ifdef USE_WINDOWS_API
@@ -593,6 +597,8 @@ static INLINE int tcp_select(SOCKET_T socketfd, int to_sec)
 
     return WS_SELECT_FAIL;
 }
+
+#endif /* WOLFSSH_TEST_SERVER || WOLFSSH_TEST_CLIENT */
 
 
 /* Wolf Root Directory Helper */
