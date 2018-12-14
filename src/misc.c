@@ -40,6 +40,7 @@
 
 
 #include <wolfssh/misc.h>
+#include <wolfssh/log.h>
 
 
 #ifdef NO_INLINE
