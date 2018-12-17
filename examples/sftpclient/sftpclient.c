@@ -24,7 +24,7 @@
 #include <wolfssh/wolfsftp.h>
 #include <wolfssh/test.h>
 #include <wolfssh/port.h>
-#include "wolfsftp/client/sftpclient.h"
+#include "examples/sftpclient/sftpclient.h"
 #ifndef USE_WINDOWS_API
     #include <termios.h>
 #endif

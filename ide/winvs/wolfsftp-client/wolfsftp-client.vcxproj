@@ -35,7 +35,7 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\..\wolfsftp\client\sftpclient.c" />
+    <ClCompile Include="..\..\..\examples\sftpclient\sftpclient.c" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\wolfssh\wolfssh.vcxproj">

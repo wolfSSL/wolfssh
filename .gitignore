@@ -52,7 +52,7 @@ examples/client/client
 examples/echoserver/echoserver
 examples/server/server
 examples/portfwd/portfwd
-wolfsftp/client/wolfsftp
+examples/sftpclient/wolfsftp
 
 # test output
 *.test

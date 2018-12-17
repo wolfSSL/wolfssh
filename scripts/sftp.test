@@ -7,7 +7,7 @@ server_pid=$no_pid
 ready_file=`pwd`/wolfssh_sftp_ready$$
 counter=0
 
-[ ! -x ./wolfsftp/client/wolfsftp ] && echo -e "\n\nwolfSFTP client doesn't exist" && exit 1
+[ ! -x ./examples/sftpclient/wolfsftp ] && echo -e "\n\nwolfSFTP client doesn't exist" && exit 1
 
 #echo "ready file $ready_file"
 
@@ -56,12 +56,12 @@ do_trap() {
 
 trap do_trap INT TERM
 
-[ ! -x ./wolfsftp/client/wolfsftp ] && echo -e "\n\nClient doesn't exist" && exit 1
+[ ! -x ./examples/sftpclient/wolfsftp ] && echo -e "\n\nClient doesn't exist" && exit 1
 
 ./examples/echoserver/echoserver -1 -R $ready_file &
 server_pid=$!
 create_port
-echo "ls\nexit" | ./wolfsftp/client/wolfsftp -u jill -P upthehill -p $port
+echo "ls\nexit" | ./examples/sftpclient/wolfsftp -u jill -P upthehill -p $port
 RESULT=$?
 remove_ready_file
 # if fail here then is a settings issue so return 0

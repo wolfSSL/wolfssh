@@ -191,10 +191,10 @@ define `WOLFSSH_SFTP`:
 For full API usage and implementation details, please see the wolfSSH User
 Manual.
 
-The SFTP client created is located in the directory wolfsftp/client/ and the
+The SFTP client created is located in the directory examples/sftpclient/ and the
 server is ran using the same echoserver as with wolfSSH.
 
-    src/wolfssh$ ./wolfsftp/client/wolfsftp
+    src/wolfssh$ ./examples/sftpclient/wolfsftp
 
 A full list of supported commands can be seen with typeing "help" after a
 connection.
@@ -221,4 +221,4 @@ reput <remote file> <local file>  resume pushing file
 
 An example of connecting to another system would be
 
-    src/wolfssh$ ./wolfsftp/client/wolfsftp -p 22 -u user -h 192.168.1.111
+    src/wolfssh$ ./examples/sftpclient/wolfsftp -p 22 -u user -h 192.168.1.111

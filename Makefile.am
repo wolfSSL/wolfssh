@@ -37,7 +37,6 @@ include examples/include.am
 include tests/include.am
 include keys/include.am
 include ide/include.am
-include wolfsftp/include.am
 include scripts/include.am
 
 
