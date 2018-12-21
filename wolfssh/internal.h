@@ -255,7 +255,52 @@ typedef struct SFTP_OFST {
     char from[WOLFSSH_MAX_FILENAME];
     char to[WOLFSSH_MAX_FILENAME];
 } SFTP_OFST;
+
+#if 0
+enum WS_SFTP_LSTAT_STATE_ID {
+    STATE_LSTAT_INIT
+};
+
+typedef struct WS_SFTP_LSTAT_STATE {
+    WS_SFTP_LSTAT_STATE_ID state;
+} WS_SFTP_LSTAT_STATE;
+
+enum WS_SFTP_OPEN_STATE_ID {
+    STATE_OPEN_INIT
+};
+
+typedef struct WS_SFTP_OPEN_STATE {
+    enum WS_SFTP_OPEN_STATE_ID state;
+} WS_SFTP_OPEN_STATE;
 #endif
+
+enum WS_SFTP_GET_STATE_ID {
+    STATE_GET_INIT,
+    STATE_GET_LSTAT,
+    STATE_GET_OPEN_REMOTE,
+    STATE_GET_LOOKUP_OFFSET,
+    STATE_GET_OPEN_LOCAL,
+    STATE_GET_READ,
+    STATE_GET_CLOSE_LOCAL,
+    STATE_GET_CLOSE_REMOTE,
+    STATE_GET_CLEANUP
+};
+
+typedef struct WS_SFTP_GET_STATE {
+    enum WS_SFTP_GET_STATE_ID state;
+    WS_SFTP_FILEATRB attrib;
+    byte handle[WOLFSSH_MAX_HANDLE];
+    WFILE* fl;
+    long gOfst;
+    word32 handleSz;
+    byte r[WOLFSSH_MAX_SFTP_RW];
+#if 0
+    WS_SFTP_LSTAT_STATE lstatState;
+    WS_SFTP_OPEN_STATE openState;
+#endif
+} WS_SFTP_GET_STATE;
+
+#endif /* WOLFSSH_SFTP */
 
 /* our wolfSSH session */
 struct WOLFSSH {
@@ -383,6 +428,7 @@ struct WOLFSSH {
 #ifdef WOLFSSH_STOREHANDLE
     WS_HANDLE_LIST* handleList;
 #endif
+    WS_SFTP_GET_STATE* getState;
 #endif
 };
 
@@ -616,6 +662,7 @@ enum WS_DynamicTypes {
     DYNTYPE_SCPCTX,
     DYNTYPE_SCPDIR,
     DYNTYPE_SFTP,
+    DYNTYPE_SFTP_STATE,
     DYNTYPE_TEMP
 };
 

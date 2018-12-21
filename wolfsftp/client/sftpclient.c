@@ -400,8 +400,14 @@ int doCmds()
                     err_sys("fputs error");
             }
 
-            if (wolfSSH_SFTP_Get(ssh, pt, to, resume, &myStatusCb)
-                    != WS_SUCCESS) {
+            do {
+                ret = wolfSSH_SFTP_Get(ssh, pt, to, resume, &myStatusCb);
+                if (ret != WS_SUCCESS) {
+                    ret = wolfSSH_get_error(ssh);
+                }
+            } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE);
+
+            if (ret != WS_SUCCESS) {
                 if (WFPUTS("Error getting file\n", fout) < 0)
                      err_sys("fputs error");
             }
