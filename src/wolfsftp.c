@@ -38,6 +38,14 @@
 #endif
 
 
+/* enum for bit field with an ID of each of the state structures */
+enum WS_SFTP_STATE_ID {
+    STATE_ID_ALL   = 0, /* default to select all */
+    STATE_ID_LSTAT = 0x01,
+    STATE_ID_OPEN  = 0x02,
+    STATE_ID_GET   = 0x04,
+};
+
 enum WS_SFTP_LSTAT_STATE_ID {
     STATE_LSTAT_INIT
 };
@@ -95,6 +103,38 @@ static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
         WS_SFTP_FILEATRB* atr);
 static WS_SFTPNAME* wolfSSH_SFTPNAME_new(void* heap);
 
+
+/* Used to clear and free all states. Should be when returning errors or success
+ * Must be called when free'ing the SFTP. For now static since only used in
+ * wolfsftp.c
+ *
+ * Note: Most cases an error will free all states and a success will free
+ *       specific state ID.
+ */
+static void wolfSSH_SFTP_ClearState(WOLFSSH* ssh, enum WS_SFTP_STATE_ID state)
+{
+    if (ssh) {
+
+        if (state == 0)
+            state = ~state; /* set all bits hot */
+
+        if (state & STATE_ID_GET) {
+            XFREE(ssh->getState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+            ssh->getState   = NULL;
+        }
+        if (state & STATE_ID_LSTAT) {
+            XFREE(ssh->lstatState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+            ssh->lstatState = NULL;
+        }
+
+        if (state & STATE_ID_OPEN) {
+            XFREE(ssh->openState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+            ssh->openState  = NULL;
+        }
+    }
+}
+
+
 /* Gets packet header information
  * request Id, type, and size of type specific data
  * return value is length of type specific data still on the wire to be read
@@ -107,12 +147,14 @@ static int SFTP_GetHeader(WOLFSSH* ssh, word32* reqId, byte* type)
 
     if (type == NULL || reqId == NULL || ssh == NULL) {
         WLOG(WS_LOG_SFTP, "NULL argument error");
+        wolfSSH_SFTP_ClearState(ssh, STATE_ID_ALL);
         return WS_BAD_ARGUMENT;
     }
 
     ret = wolfSSH_stream_read(ssh, buf, sizeof(buf));
-    if (ret < WOLFSSH_SFTP_HEADER) {
+    if (ret < WOLFSSH_SFTP_HEADER && ret != WS_WANT_READ) {
         WLOG(WS_LOG_SFTP, "Unable to read SFTP header");
+        wolfSSH_SFTP_ClearState(ssh, STATE_ID_ALL);
         return WS_FATAL_ERROR;
     }
 
@@ -164,13 +206,15 @@ static int SFTP_ServerRecvInit(WOLFSSH* ssh) {
 
     ato32(buf, &sz);
     if (sz < MSG_ID_SZ + UINT32_SZ) {
-       return WS_BUFFER_E;
+        wolfSSH_SFTP_ClearState(ssh, STATE_ID_ALL);
+        return WS_BUFFER_E;
     }
 
     /* compare versions supported */
     id = buf[LENGTH_SZ];
     if (id != WOLFSSH_FTP_INIT) {
         WLOG(WS_LOG_SFTP, "Unexpected SFTP type received");
+        wolfSSH_SFTP_ClearState(ssh, STATE_ID_ALL);
         return WS_BUFFER_E;
     }
 
@@ -4660,6 +4704,7 @@ int wolfSSH_SFTP_free(WOLFSSH* ssh)
         }
     }
 #endif
+    wolfSSH_SFTP_ClearState(ssh, STATE_ID_ALL);
     return WS_SUCCESS;
 }
 
