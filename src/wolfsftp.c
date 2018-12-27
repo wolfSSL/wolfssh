@@ -152,7 +152,12 @@ static int SFTP_GetHeader(WOLFSSH* ssh, word32* reqId, byte* type)
     }
 
     ret = wolfSSH_stream_read(ssh, buf, sizeof(buf));
-    if (ret < WOLFSSH_SFTP_HEADER && ret != WS_WANT_READ) {
+    if (ret == WS_WANT_READ) {
+        ssh->error = ret;
+        return ret;
+    }
+
+    if (ret < WOLFSSH_SFTP_HEADER) {
         WLOG(WS_LOG_SFTP, "Unable to read SFTP header");
         wolfSSH_SFTP_ClearState(ssh, STATE_ID_ALL);
         return WS_FATAL_ERROR;
@@ -513,10 +518,11 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
     byte   type = 0;
 
 
-    /* wait for packet to come in then handle it */
+    /* Wait for packet to come in then handle it, maxSz is the size of packet
+     * expected to come. */
     maxSz = SFTP_GetHeader(ssh, &reqId, &type);
     if (maxSz <= 0) {
-        return maxSz;
+        return WS_FATAL_ERROR;
     }
 
     ssh->reqId = reqId;
@@ -3261,6 +3267,10 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
     int    ret;
 
     maxSz = SFTP_GetHeader(ssh, &reqId, &type);
+    if (maxSz <= 0) {
+        return NULL;
+    }
+
     if (type != WOLFSSH_FTP_NAME) {
         WLOG(WS_LOG_SFTP, "Unexpected packet type %d", type);
         /* check for status msg */
@@ -3381,6 +3391,10 @@ static int wolfSSH_SFTP_GetHandle(WOLFSSH* ssh, byte* handle, word32* handleSz)
 
     WLOG(WS_LOG_SFTP, "Entering wolfSSH_SFTP_GetHandle");
     bufSz = SFTP_GetHeader(ssh, &reqId, &type);
+    if (bufSz <= 0) {
+        return WS_FATAL_ERROR;
+    }
+
     if (type != WOLFSSH_FTP_HANDLE) {
         if (type == WOLFSSH_FTP_STATUS) {
             return wolfSSH_SFTP_DoStatus(ssh, reqId);
@@ -3633,6 +3647,10 @@ int wolfSSH_SFTP_SetSTAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
     WFREE(data, NULL, DYNTYPE_BUFFER);
 
     maxSz = SFTP_GetHeader(ssh, &reqId, &type);
+    if (maxSz <= 0) {
+        return WS_FATAL_ERROR;
+    }
+
     if (type != WOLFSSH_FTP_STATUS) {
         WLOG(WS_LOG_SFTP, "Unexpected packet type %d", type);
         return WS_FATAL_ERROR;
@@ -4322,6 +4340,7 @@ int wolfSSH_SFTP_RMDIR(WOLFSSH* ssh, char* dir)
     }
     else {
         /* @TODO can return better error value i.e. permissions */
+        ssh->error = ret;
         return WS_FATAL_ERROR;
     }
 }
