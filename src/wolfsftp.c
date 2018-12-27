@@ -298,7 +298,7 @@ int wolfSSH_SFTP_accept(WOLFSSH* ssh)
             if ((ssh->error = SFTP_ServerRecvInit(ssh)) != WS_SUCCESS) {
                 return WS_FATAL_ERROR;
             }
-            ssh->connectState = SFTP_RECV;
+            ssh->sftpState = SFTP_RECV;
             FALL_THROUGH;
             /* no break */
 
@@ -306,7 +306,7 @@ int wolfSSH_SFTP_accept(WOLFSSH* ssh)
             if ((ssh->error = SFTP_ServerSendInit(ssh)) != WS_SUCCESS) {
                 return WS_FATAL_ERROR;
             }
-            ssh->connectState = SFTP_DONE;
+            ssh->sftpState = SFTP_DONE;
             WLOG(WS_LOG_SFTP, "SFTP connection established");
             break;
 
@@ -2735,33 +2735,59 @@ static int SFTP_ClientRecvInit(WOLFSSH* ssh) {
     word32 version = 0;
     byte buf[LENGTH_SZ + MSG_ID_SZ + UINT32_SZ];
 
-    if ((len = wolfSSH_stream_read(ssh, buf, sizeof(buf))) != sizeof(buf)) {
-        return len;
-    }
+    switch (ssh->sftpState) {
+        case SFTP_RECV:
+            if ((len = wolfSSH_stream_read(ssh, buf, sizeof(buf)))
+                    != sizeof(buf)) {
+                /* @TODO partial read on small packet */
+                return len;
+            }
 
-    ato32(buf, &sz);
-    if (sz < MSG_ID_SZ + UINT32_SZ) {
-       return WS_BUFFER_E;
-    }
+            ato32(buf, &sz);
+            if (sz < MSG_ID_SZ + UINT32_SZ) {
+                return WS_BUFFER_E;
+            }
 
-    /* expecting */
-    id = buf[LENGTH_SZ];
-    if (id != WOLFSSH_FTP_VERSION) {
-        WLOG(WS_LOG_SFTP, "Unexpected SFTP type received");
-        return WS_BUFFER_E;
-    }
+            /* expecting */
+            id = buf[LENGTH_SZ];
+            if (id != WOLFSSH_FTP_VERSION) {
+                WLOG(WS_LOG_SFTP, "Unexpected SFTP type received");
+                return WS_BUFFER_E;
+            }
 
-    ato32(buf + LENGTH_SZ + MSG_ID_SZ, &version);
+            ato32(buf + LENGTH_SZ + MSG_ID_SZ, &version);
+            sz = sz - MSG_ID_SZ - UINT32_SZ;
+            ssh->sftpExtSz = sz;
+            ssh->sftpState = SFTP_EXT;
+            FALL_THROUGH;
+            /* no break */
 
-    /* silently ignore extensions if not supported */
-    sz = sz - MSG_ID_SZ - UINT32_SZ;
-    if (sz > 0) {
-        byte* data = (byte*)WMALLOC(sz, NULL, DYNTYPE_BUFFER);
-        if (data ==  NULL) return WS_MEMORY_E;
-        if ((len = wolfSSH_stream_read(ssh, data, sz)) != (int)sz) {
-            return len;
-        }
-        WFREE(data, NULL, DYNTYPE_BUFFER);
+        case SFTP_EXT:
+            /* silently ignore extensions if not supported */
+            if (ssh->sftpExtSz > 0) {
+                byte* data = (byte*)WMALLOC(ssh->sftpExtSz, ssh->ctx->heap,
+                        DYNTYPE_BUFFER);
+                if (data ==  NULL) return WS_MEMORY_E;
+                if ((len = wolfSSH_stream_read(ssh, data, ssh->sftpExtSz))
+                        <= 0) {
+                    WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
+                    return len;
+                }
+                WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
+
+                /* case where expecting more */
+                if (len < ssh->sftpExtSz) {
+                    ssh->sftpExtSz -= len;
+                    ssh->error = WS_WANT_READ;
+                    return WS_FATAL_ERROR;
+                }
+            }
+            break;
+
+        default:
+            WLOG(WS_LOG_SFTP, "Unexpected SFTP connect state");
+            return WS_FATAL_ERROR;
+
     }
 
     ssh->reqId++;
@@ -2791,15 +2817,18 @@ static int SFTP_ClientSendInit(WOLFSSH* ssh) {
 
 
 /* Completes SFTP connection to server
- * returns WS_SFTP_COMPLETE on success
+ * returns WS_SUCCESS on success
  */
 int wolfSSH_SFTP_connect(WOLFSSH* ssh)
 {
-    int ret = WS_SFTP_COMPLETE;
+    int ret = WS_SUCCESS;
 
     if (ssh == NULL) {
         return WS_BAD_ARGUMENT;
     }
+
+    if (ssh->error == WS_WANT_READ || ssh->error == WS_WANT_WRITE)
+        ssh->error = WS_SUCCESS;
 
     /* check connect is done, if not call wolfSSH connect */
     if (ssh->connectState < CONNECT_SERVER_CHANNEL_REQUEST_DONE) {
@@ -2822,15 +2851,16 @@ int wolfSSH_SFTP_connect(WOLFSSH* ssh)
             if ((ssh->error = SFTP_ClientSendInit(ssh)) != WS_SUCCESS) {
                 return WS_FATAL_ERROR;
             }
-            ssh->connectState = SFTP_RECV;
+            ssh->sftpState = SFTP_RECV;
             FALL_THROUGH;
             /* no break */
 
         case SFTP_RECV:
+        case SFTP_EXT:
             if ((ssh->error = SFTP_ClientRecvInit(ssh)) != WS_SUCCESS) {
                 return WS_FATAL_ERROR;
             }
-            ssh->connectState = SFTP_DONE;
+            ssh->sftpState = SFTP_DONE;
             WLOG(WS_LOG_SFTP, "SFTP connection established");
             break;
 
@@ -2891,7 +2921,7 @@ int SendPacketType(WOLFSSH* ssh, byte type, byte* buf, word32 bufSz)
         return WS_BAD_ARGUMENT;
     }
 
-    if (ssh->connectState != SFTP_DONE) {
+    if (ssh->sftpState != SFTP_DONE) {
         WLOG(WS_LOG_SFTP, "SFTP connection not complete, trying to finish");
         ret = wolfSSH_SFTP_negotiate(ssh);
     }

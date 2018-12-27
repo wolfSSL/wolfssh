@@ -385,6 +385,7 @@ struct WOLFSSH {
     word32 reqId;
     byte   sftpState;
     byte   sftpInt;
+    byte   sftpExtSz; /* size of extension buffer (buffer not currently used) */
     SFTP_OFST sftpOfst[WOLFSSH_MAX_SFTPOFST];
 #ifdef WOLFSSH_STOREHANDLE
     WS_HANDLE_LIST* handleList;

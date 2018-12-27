@@ -78,6 +78,7 @@ enum WS_SFTPStatus {
 enum WS_SFTPConnectStates {
     SFTP_BEGIN = 20,
     SFTP_RECV,
+    SFTP_EXT,
     SFTP_DONE,
 };
 
