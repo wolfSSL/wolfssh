@@ -1371,6 +1371,7 @@ int wolfSSH_SendPacket(WOLFSSH* ssh)
         if (sent < 0) {
             switch (sent) {
                 case WS_CBIO_ERR_WANT_WRITE:     /* want write, would block */
+                    ssh->error = WS_WANT_WRITE;
                     return WS_WANT_WRITE;
 
                 case WS_CBIO_ERR_CONN_RST:       /* connection reset */
