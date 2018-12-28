@@ -40,10 +40,13 @@
 
 /* enum for bit field with an ID of each of the state structures */
 enum WS_SFTP_STATE_ID {
-    STATE_ID_ALL   = 0, /* default to select all */
+    STATE_ID_ALL = 0, /* default to select all */
     STATE_ID_LSTAT = 0x01,
-    STATE_ID_OPEN  = 0x02,
-    STATE_ID_GET   = 0x04,
+    STATE_ID_OPEN = 0x02,
+    STATE_ID_GET = 0x04,
+    STATE_ID_SEND_READ = 0x08,
+    STATE_ID_CLOSE = 0x10,
+    STATE_ID_GET_HANDLE = 0x20
 };
 
 enum WS_SFTP_LSTAT_STATE_ID {
@@ -179,8 +182,9 @@ static void wolfSSH_SFTP_ClearState(WOLFSSH* ssh, enum WS_SFTP_STATE_ID state)
 
         if (state & STATE_ID_GET) {
             XFREE(ssh->getState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
-            ssh->getState   = NULL;
+            ssh->getState = NULL;
         }
+
         if (state & STATE_ID_LSTAT) {
             XFREE(ssh->lstatState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
             ssh->lstatState = NULL;
@@ -188,7 +192,22 @@ static void wolfSSH_SFTP_ClearState(WOLFSSH* ssh, enum WS_SFTP_STATE_ID state)
 
         if (state & STATE_ID_OPEN) {
             XFREE(ssh->openState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
-            ssh->openState  = NULL;
+            ssh->openState = NULL;
+        }
+
+        if (state & STATE_ID_SEND_READ) {
+            XFREE(ssh->sendReadState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+            ssh->sendReadState = NULL;
+        }
+
+        if (state & STATE_ID_CLOSE) {
+            XFREE(ssh->closeState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+            ssh->closeState  = NULL;
+        }
+
+        if (state & STATE_ID_GET_HANDLE) {
+            XFREE(ssh->getHandleState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+            ssh->getHandleState = NULL;
         }
     }
 }
