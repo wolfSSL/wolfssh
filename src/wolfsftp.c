@@ -47,11 +47,18 @@ enum WS_SFTP_STATE_ID {
 };
 
 enum WS_SFTP_LSTAT_STATE_ID {
-    STATE_LSTAT_INIT
+    STATE_LSTAT_INIT,
+    STATE_LSTAT_SEND_TYPE_REQ,
+    STATE_LSTAT_GET_HEADER,
+    STATE_LSTAT_CHECK_REQ_ID,
+    STATE_LSTAT_PARSE_REPLY,
+    STATE_LSTAT_CLEANUP
 };
 
 typedef struct WS_SFTP_LSTAT_STATE {
     enum WS_SFTP_LSTAT_STATE_ID state;
+    word32 reqId;
+    word32 dirSz;
 } WS_SFTP_LSTAT_STATE;
 
 
@@ -3553,51 +3560,104 @@ int wolfSSH_SFTP_CHMOD(WOLFSSH* ssh, char* n, char* oct)
  */
 static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
 {
+    WS_SFTP_LSTAT_STATE* state = NULL;
     int ret;
-    word32 reqId;
 
-    if (ssh == NULL || dir == NULL) {
+    WLOG(WS_LOG_SFTP, "Entering SFTP_STAT()");
+    if (ssh == NULL || dir == NULL)
         return WS_BAD_ARGUMENT;
+
+    state = ssh->lstatState;
+    if (state == NULL) {
+        state = (WS_SFTP_LSTAT_STATE*)WMALLOC(sizeof(WS_SFTP_LSTAT_STATE),
+                ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+        if (state == NULL) {
+            ssh->error = WS_MEMORY_E;
+            return WS_FATAL_ERROR;
+        }
+        WMEMSET(state, 0, sizeof(WS_SFTP_GET_STATE));
+        ssh->lstatState = state;
+        state->state = STATE_LSTAT_INIT;
     }
 
     WLOG(WS_LOG_SFTP, "Sending WOLFSSH_FTP_[L]STAT");
 
-    if (SendPacketType(ssh, type, (byte*)dir, (word32)WSTRLEN(dir))
-            != WS_SUCCESS) {
-        return WS_FATAL_ERROR;
-    }
+    for (;;) {
+        switch (state->state) {
 
-    /* get attributes response */
-    if (SFTP_GetHeader(ssh, &reqId, &type) <= 0) {
-        return WS_FATAL_ERROR;
-    }
+            case STATE_LSTAT_INIT:
+                WLOG(WS_LOG_SFTP, "SFTP LSTAT STATE: INIT");
+                state->dirSz = (word32)WSTRLEN(dir);
+                state->state = STATE_LSTAT_SEND_TYPE_REQ;
+                FALL_THROUGH;
 
-    /* check request ID */
-    if (reqId != ssh->reqId) {
-        WLOG(WS_LOG_SFTP, "Bad request ID received");
-        return WS_FATAL_ERROR;
-    }
-    else {
-        ssh->reqId++;
-    }
+            case STATE_LSTAT_SEND_TYPE_REQ:
+                WLOG(WS_LOG_SFTP, "SFTP LSTAT STATE: SEND_TYPE_REQ");
+                ret = SendPacketType(ssh, type, (byte*)dir, state->dirSz);
+                if (ret != WS_SUCCESS) {
+                    return WS_FATAL_ERROR;
+                }
+                state->state = STATE_LSTAT_GET_HEADER;
+                FALL_THROUGH;
 
-    if (type == WOLFSSH_FTP_ATTRS) {
-        ret = SFTP_ParseAtributes(ssh, atr);
-        if (ret != WS_SUCCESS) {
-            return ret;
+            case STATE_LSTAT_GET_HEADER:
+                WLOG(WS_LOG_SFTP, "SFTP LSTAT STATE: GET_HEADER");
+                /* get attributes response */
+                ret = SFTP_GetHeader(ssh, &state->reqId, &type);
+                if (ret <= 0) {
+                    return WS_FATAL_ERROR;
+                }
+                state->state = STATE_LSTAT_CHECK_REQ_ID;
+                FALL_THROUGH;
+
+            case STATE_LSTAT_CHECK_REQ_ID:
+                /* check request ID */
+                if (state->reqId != ssh->reqId) {
+                    WLOG(WS_LOG_SFTP, "Bad request ID received");
+                    return WS_FATAL_ERROR;
+                }
+                else {
+                    ssh->reqId++;
+                }
+                state->state = STATE_LSTAT_PARSE_REPLY;
+                FALL_THROUGH;
+
+            case STATE_LSTAT_PARSE_REPLY:
+                WLOG(WS_LOG_SFTP, "SFTP LSTAT STATE: PARSE_REPLY");
+                if (type == WOLFSSH_FTP_ATTRS) {
+                    ret = SFTP_ParseAtributes(ssh, atr);
+                    if (ret != WS_SUCCESS) {
+                        return ret;
+                    }
+                }
+                else if (type == WOLFSSH_FTP_STATUS) {
+                    ret = wolfSSH_SFTP_DoStatus(ssh, state->reqId);
+                    if (ret != WOLFSSH_FTP_OK) {
+                        if (ret == WOLFSSH_FTP_PERMISSION) {
+                            return WS_PERMISSIONS;
+                        }
+                        return WS_FATAL_ERROR;
+                    }
+                }
+                else {
+                    WLOG(WS_LOG_SFTP, "Unexpected packet received");
+                    return WS_FATAL_ERROR;
+                }
+                state->state = STATE_LSTAT_CLEANUP;
+                FALL_THROUGH;
+
+            case STATE_LSTAT_CLEANUP:
+                WLOG(WS_LOG_SFTP, "SFTP LSTAT STATE: CLEANUP");
+                if (ssh->lstatState != NULL) {
+                    WFREE(ssh->lstatState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+                    ssh->lstatState = NULL;
+                }
+                return WS_SUCCESS;
+
+            default:
+                WLOG(WS_LOG_DEBUG, "Bad SFTP LSTAT state, program error");
+                return WS_INPUT_CASE_E;
         }
-    }
-    else if (type == WOLFSSH_FTP_STATUS) {
-        if ((ret = wolfSSH_SFTP_DoStatus(ssh, reqId)) != WOLFSSH_FTP_OK) {
-            if (ret == WOLFSSH_FTP_PERMISSION) {
-                return WS_PERMISSIONS;
-            }
-            return WS_FATAL_ERROR;
-        }
-    }
-    else {
-        WLOG(WS_LOG_SFTP, "Unexpected packet received");
-        return WS_FATAL_ERROR;
     }
 
     return WS_SUCCESS;
@@ -3723,6 +3783,7 @@ int wolfSSH_SFTP_Open(WOLFSSH* ssh, char* dir, word32 reason,
     if (ssh->error == WS_WANT_READ || ssh->error == WS_WANT_WRITE)
         ssh->error = WS_SUCCESS;
 
+    state = ssh->openState;
     if (ssh->openState == NULL) {
         state = (WS_SFTP_OPEN_STATE*)WMALLOC(sizeof(WS_SFTP_OPEN_STATE),
                 ssh->ctx->heap, DYNTYPE_SFTP_STATE);
@@ -3734,8 +3795,6 @@ int wolfSSH_SFTP_Open(WOLFSSH* ssh, char* dir, word32 reason,
         ssh->openState = state;
         state->state = STATE_OPEN_INIT;
     }
-    else
-        state = ssh->openState;
 
     for (;;) {
         switch (state->state) {
@@ -3805,6 +3864,15 @@ int wolfSSH_SFTP_Open(WOLFSSH* ssh, char* dir, word32 reason,
 
             case STATE_OPEN_CLEANUP:
                 WLOG(WS_LOG_SFTP, "SFTP OPEN STATE: CLEANUP");
+                if (ssh->openState != NULL) {
+                    WFREE(ssh->openState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+                    ssh->openState = NULL;
+                }
+                return WS_SUCCESS;
+
+            default:
+                WLOG(WS_LOG_DEBUG, "Bad SFTP Open state, program error");
+                return WS_INPUT_CASE_E;
         }
     }
 
@@ -3927,9 +3995,8 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
     word32 idx;
 
     WLOG(WS_LOG_SFTP, "Entering wolfSSH_SFTP_SendReadPacket()");
-    if (ssh == NULL || handle == NULL || out == NULL) {
+    if (ssh == NULL || handle == NULL || out == NULL)
         return WS_BAD_ARGUMENT;
-    }
 
     data = (byte*)WMALLOC(handleSz + WOLFSSH_SFTP_HEADER + UINT32_SZ * 4,
             ssh->ctx->heap, DYNTYPE_BUFFER);
@@ -4522,7 +4589,8 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
     if (ssh->error == WS_WANT_READ || ssh->error == WS_WANT_WRITE)
         ssh->error = WS_SUCCESS;
 
-    if (ssh->getState == NULL) {
+    state = ssh->getState;
+    if (state == NULL) {
         state = (WS_SFTP_GET_STATE*)WMALLOC(sizeof(WS_SFTP_GET_STATE),
                 ssh->ctx->heap, DYNTYPE_SFTP_STATE);
         if (state == NULL) {
@@ -4533,8 +4601,6 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
         ssh->getState = state;
         state->state = STATE_GET_INIT;
     }
-    else
-        state = ssh->getState;
 
     for (;;) {
         switch (state->state) {
@@ -4650,7 +4716,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
         }
     }
 
-    return ret;
+    return WS_SUCCESS;
 }
 
 
