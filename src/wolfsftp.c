@@ -4153,7 +4153,7 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                           ssh->ctx->heap, DYNTYPE_SFTP_STATE);
                     ssh->sendReadState = NULL;
                 }
-                return WS_SUCCESS;
+                return ret;
 
             default:
                 WLOG(WS_LOG_DEBUG, "Bad SFTP Send Read Packet state, "
@@ -4760,6 +4760,10 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                         }
                     }
                 } while (sz > 0 && ssh->sftpInt == 0);
+                if (ret != WS_SUCCESS) {
+                    state->state = STATE_GET_CLEANUP;
+                    continue;
+                }
                 if (ssh->sftpInt) {
                     WLOG(WS_LOG_SFTP, "Interrupted, trying to save offset");
                     wolfSSH_SFTP_SaveOfst(ssh, from, to, state->gOfst);
@@ -4791,7 +4795,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                     WFREE(ssh->getState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
                     ssh->getState = NULL;
                 }
-                return WS_SUCCESS;
+                return ret;
 
             default:
                 WLOG(WS_LOG_DEBUG, "Bad SFTP Get state, program error");
