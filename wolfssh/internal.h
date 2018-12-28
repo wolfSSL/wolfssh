@@ -260,6 +260,7 @@ typedef struct SFTP_OFST {
 struct WS_SFTP_GET_STATE;
 struct WS_SFTP_LSTAT_STATE;
 struct WS_SFTP_OPEN_STATE;
+struct WS_SFTP_SEND_READ_STATE;
 
 #endif /* WOLFSSH_SFTP */
 
@@ -393,6 +394,7 @@ struct WOLFSSH {
     struct WS_SFTP_GET_STATE* getState;
     struct WS_SFTP_LSTAT_STATE* lstatState;
     struct WS_SFTP_OPEN_STATE* openState;
+    struct WS_SFTP_SEND_READ_STATE* sendReadState;
 #endif
 };
 
