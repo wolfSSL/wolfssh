@@ -135,6 +135,23 @@ typedef struct WS_SFTP_CLOSE_STATE {
 } WS_SFTP_CLOSE_STATE;
 
 
+enum WS_SFTP_GET_HANDLE_STATE_ID {
+    STATE_GET_HANDLE_INIT,
+    STATE_GET_HANDLE_GET_HEADER,
+    STATE_GET_HANDLE_DO_STATUS,
+    STATE_GET_HANDLE_CHECK_REQ_ID,
+    STATE_GET_HANDLE_READ,
+    STATE_GET_HANDLE_CLEANUP
+};
+
+typedef struct WS_SFTP_GET_HANDLE_STATE {
+    enum WS_SFTP_GET_HANDLE_STATE_ID state;
+    word32 reqId;
+    word32 bufSz;
+    byte buf[WOLFSSH_MAX_HANDLE + UINT32_SZ];
+} WS_SFTP_GET_HANDLE_STATE;
+
+
 static int SendPacketType(WOLFSSH* ssh, byte type, byte* buf, word32 bufSz);
 static int SFTP_ParseAtributes(WOLFSSH* ssh,  WS_SFTP_FILEATRB* atr);
 static int SFTP_ParseAtributes_buffer(WOLFSSH* ssh,  WS_SFTP_FILEATRB* atr,
@@ -3455,50 +3472,129 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
  */
 static int wolfSSH_SFTP_GetHandle(WOLFSSH* ssh, byte* handle, word32* handleSz)
 {
-    /* process handle*/
-    byte buf[WOLFSSH_MAX_HANDLE + UINT32_SZ];
-    word32 reqId;
-    word32 bufSz;
+    WS_SFTP_GET_HANDLE_STATE* state = NULL;
+    int ret = WS_SUCCESS;
     byte type = 0;
 
     WLOG(WS_LOG_SFTP, "Entering wolfSSH_SFTP_GetHandle");
-    bufSz = SFTP_GetHeader(ssh, &reqId, &type);
-    if (bufSz <= 0) {
-        return WS_FATAL_ERROR;
-    }
 
-    if (type != WOLFSSH_FTP_HANDLE) {
-        if (type == WOLFSSH_FTP_STATUS) {
-            return wolfSSH_SFTP_DoStatus(ssh, reqId);
+    state = ssh->getHandleState;
+    if (state == NULL) {
+        state = (WS_SFTP_GET_HANDLE_STATE*)WMALLOC(
+                sizeof(WS_SFTP_GET_HANDLE_STATE),
+                ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+        if (state == NULL) {
+            ssh->error = WS_MEMORY_E;
+            return WS_FATAL_ERROR;
         }
-        WLOG(WS_LOG_SFTP, "Unexpected packet type with getting handle");
-        return WS_FATAL_ERROR;
+        WMEMSET(state, 0, sizeof(WS_SFTP_GET_HANDLE_STATE));
+        ssh->getHandleState = state;
+        state->state = STATE_GET_HANDLE_INIT;
     }
 
-    /* @TODO packets do not need to be in order, may need mechanisim to
-     * handle out of order ID's ?  */
-    if (reqId != ssh->reqId) {
-        WLOG(WS_LOG_SFTP, "Unexpected ID");
-        return WS_FATAL_ERROR;
-    }
-    ssh->reqId += 1;
+    for (;;) {
+        switch (state->state) {
 
-    if (bufSz > sizeof(buf)) {
-        WLOG(WS_LOG_SFTP, "Handle found is too large for buffer");
-        return WS_BUFFER_E;
-    }
-    if (wolfSSH_stream_read(ssh, buf, bufSz) != (int)bufSz) {
-        return WS_FATAL_ERROR;
-    }
+            case STATE_GET_HANDLE_INIT:
+                WLOG(WS_LOG_SFTP, "SFTP GET HANDLE STATE: INIT");
+                state->state = STATE_GET_HANDLE_GET_HEADER;
+                FALL_THROUGH;
 
-    /* RFC specifies that handle size should not be larger than max size */
-    ato32(buf, &bufSz);
-    if (bufSz > WOLFSSH_MAX_HANDLE || *handleSz < bufSz) {
-        WLOG(WS_LOG_SFTP, "Handle size found was too big");
-        return WS_BUFFER_E;
+            case STATE_GET_HANDLE_GET_HEADER:
+                WLOG(WS_LOG_SFTP, "SFTP GET HANDLE STATE: GET_HEADER");
+                state->bufSz = SFTP_GetHeader(ssh, &state->reqId, &type);
+                if (state->bufSz <= 0) {
+                    ret = WS_FATAL_ERROR;
+                    if (ssh->error == WS_WANT_READ ||
+                            ssh->error == WS_WANT_WRITE) {
+                        return WS_FATAL_ERROR;
+                    }
+                }
+
+                if (type == WOLFSSH_FTP_HANDLE)
+                    state->state = STATE_GET_HANDLE_CHECK_REQ_ID;
+                else if (type == WOLFSSH_FTP_STATUS)
+                    state->state = STATE_GET_HANDLE_DO_STATUS;
+                else {
+                    WLOG(WS_LOG_SFTP,
+                         "Unexpected packet type with getting handle");
+                    state->state = STATE_GET_HANDLE_CLEANUP;
+                    ret = WS_FATAL_ERROR;
+                }
+                continue;
+
+            case STATE_GET_HANDLE_DO_STATUS:
+                WLOG(WS_LOG_SFTP, "SFTP GET HANDLE STATE: DO_STATUS");
+                ret = wolfSSH_SFTP_DoStatus(ssh, state->reqId);
+                if (ret == WOLFSSH_FTP_OK)
+                    ret = WS_SUCCESS;
+                else
+                    ret = WS_FATAL_ERROR;
+                state->state = STATE_GET_HANDLE_CLEANUP;
+                continue;
+
+            case STATE_GET_HANDLE_CHECK_REQ_ID:
+                WLOG(WS_LOG_SFTP, "SFTP GET HANDLE STATE: CHECK_REQ_ID");
+                /* @TODO packets do not need to be in order, may need
+                 * mechanism to handle out of order ID's?  */
+                if (state->reqId != ssh->reqId) {
+                    WLOG(WS_LOG_SFTP, "Unexpected ID");
+                    ret = WS_FATAL_ERROR;
+                    state->state = STATE_GET_HANDLE_CLEANUP;
+                    continue;
+                }
+                ssh->reqId++;
+
+                if (state->bufSz > sizeof(state->buf)) {
+                    WLOG(WS_LOG_SFTP, "Handle found is too large for buffer");
+                    ssh->error = WS_BUFFER_E;
+                    ret = WS_FATAL_ERROR;
+                    state->state = STATE_GET_HANDLE_CLEANUP;
+                    continue;
+                }
+                state->state = STATE_GET_HANDLE_READ;
+                FALL_THROUGH;
+
+            case STATE_GET_HANDLE_READ:
+                WLOG(WS_LOG_SFTP, "SFTP GET HANDLE STATE: READ");
+                ret = wolfSSH_stream_read(ssh, state->buf, state->bufSz);
+                if (ret != (int)state->bufSz) {
+                    ret = WS_FATAL_ERROR;
+                    state->state = STATE_GET_HANDLE_CLEANUP;
+                    continue;
+                }
+                ret = WS_SUCCESS;
+
+                /* RFC specifies that handle size should not be larger than
+                 * max size */
+                ato32(state->buf, &state->bufSz);
+                if (state->bufSz > WOLFSSH_MAX_HANDLE ||
+                        *handleSz < state->bufSz) {
+                    WLOG(WS_LOG_SFTP, "Handle size found was too big");
+                    ssh->error = WS_BUFFER_E;
+                    ret = WS_FATAL_ERROR;
+                    state->state = STATE_GET_HANDLE_CLEANUP;
+                    continue;
+                }
+                *handleSz = state->bufSz;
+                WMEMCPY(handle, (state->buf + UINT32_SZ), *handleSz);
+                state->state = STATE_GET_HANDLE_CLEANUP;
+                FALL_THROUGH;
+
+            case STATE_GET_HANDLE_CLEANUP:
+                WLOG(WS_LOG_SFTP, "SFTP GET HANDLE STATE: CLEANUP");
+                if (ssh->getState != NULL) {
+                    WFREE(ssh->getHandleState,
+                          ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+                    ssh->getHandleState = NULL;
+                }
+                return ret;
+
+            default:
+                WLOG(WS_LOG_DEBUG, "Bad SFTP GetHandle state, program error");
+                return WS_INPUT_CASE_E;
+        }
     }
-    *handleSz = bufSz;
-    WMEMCPY(handle, (buf + UINT32_SZ), *handleSz);
 
     return WS_SUCCESS;
 }

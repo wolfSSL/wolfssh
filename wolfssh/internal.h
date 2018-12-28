@@ -262,6 +262,7 @@ struct WS_SFTP_LSTAT_STATE;
 struct WS_SFTP_OPEN_STATE;
 struct WS_SFTP_CLOSE_STATE;
 struct WS_SFTP_SEND_READ_STATE;
+struct WS_SFTP_GET_HANDLE_STATE;
 
 #endif /* WOLFSSH_SFTP */
 
@@ -397,6 +398,7 @@ struct WOLFSSH {
     struct WS_SFTP_OPEN_STATE* openState;
     struct WS_SFTP_CLOSE_STATE* closeState;
     struct WS_SFTP_SEND_READ_STATE* sendReadState;
+    struct WS_SFTP_GET_HANDLE_STATE* getHandleState;
 #endif
 };
 
