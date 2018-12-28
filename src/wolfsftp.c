@@ -3596,7 +3596,7 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
             ssh->error = WS_MEMORY_E;
             return WS_FATAL_ERROR;
         }
-        WMEMSET(state, 0, sizeof(WS_SFTP_GET_STATE));
+        WMEMSET(state, 0, sizeof(WS_SFTP_LSTAT_STATE));
         ssh->lstatState = state;
         state->state = STATE_LSTAT_INIT;
     }
