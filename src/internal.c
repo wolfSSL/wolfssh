@@ -4770,7 +4770,7 @@ int DoReceive(WOLFSSH* ssh)
                       &ssh->curSz);
                 if (ssh->curSz >
                         MAX_PACKET_SZ - (word32)peerMacSz - LENGTH_SZ) {
-                    ret = WS_OVERFLOW_E;
+                    ssh->error = WS_OVERFLOW_E;
                     return WS_FATAL_ERROR;
                 }
                 ssh->processReplyState = PROCESS_PACKET_FINISH;

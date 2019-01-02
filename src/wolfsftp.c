@@ -3494,7 +3494,7 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
     WS_SFTPNAME* n = NULL;
     word32 maxSz;
     word32 count;
-    word32 reqId;
+    word32 reqId = 0;
     byte   type = WOLFSSH_FTP_STATUS;
     int    ret;
 
