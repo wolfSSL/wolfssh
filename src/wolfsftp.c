@@ -2994,7 +2994,7 @@ int wolfSSH_SFTP_connect(WOLFSSH* ssh)
 
         case SFTP_RECV:
         case SFTP_EXT:
-            if ((ssh->error = SFTP_ClientRecvInit(ssh)) != WS_SUCCESS) {
+            if (SFTP_ClientRecvInit(ssh) != WS_SUCCESS) {
                 return WS_FATAL_ERROR;
             }
             ssh->sftpState = SFTP_DONE;

@@ -484,7 +484,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
 
         case CONNECT_CLIENT_KEXINIT_SENT:
             while (ssh->serverState < SERVER_KEXINIT_DONE) {
-                if ( (ssh->error = DoReceive(ssh)) < WS_SUCCESS) {
+                if (DoReceive(ssh) < WS_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, connectError,
                          "CLIENT_KEXINIT_SENT", ssh->error);
                     return WS_FATAL_ERROR;
@@ -516,7 +516,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
 
         case CONNECT_CLIENT_KEXDH_INIT_SENT:
             while (ssh->isKeying) {
-                if ( (ssh->error = DoReceive(ssh)) < WS_SUCCESS) {
+                if (DoReceive(ssh) < WS_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, connectError,
                          "CLIENT_KEXDH_INIT_SENT", ssh->error);
                     return WS_FATAL_ERROR;
@@ -540,7 +540,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
 
         case CONNECT_CLIENT_USERAUTH_REQUEST_SENT:
             while (ssh->serverState < SERVER_USERAUTH_REQUEST_DONE) {
-                if ( (ssh->error = DoReceive(ssh)) < WS_SUCCESS) {
+                if (DoReceive(ssh) < WS_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, connectError,
                          "CLIENT_USERAUTH_REQUEST_SENT", ssh->error);
                     return WS_FATAL_ERROR;
@@ -565,7 +565,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
 
         case CONNECT_CLIENT_USERAUTH_SENT:
             while (ssh->serverState < SERVER_USERAUTH_ACCEPT_DONE) {
-                if ( (ssh->error = DoReceive(ssh)) < WS_SUCCESS) {
+                if (DoReceive(ssh) < WS_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, connectError,
                          "CLIENT_USERAUTH_SENT", ssh->error);
                     return WS_FATAL_ERROR;
@@ -606,7 +606,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
 
         case CONNECT_CLIENT_CHANNEL_OPEN_SESSION_SENT:
             while (ssh->serverState < SERVER_CHANNEL_OPEN_DONE) {
-                if ( (ssh->error = DoReceive(ssh)) < WS_SUCCESS) {
+                if (DoReceive(ssh) < WS_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, connectError,
                          "CLIENT_CHANNEL_OPEN_SESSION_SENT", ssh->error);
                     return WS_FATAL_ERROR;
@@ -633,7 +633,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
 
         case CONNECT_CLIENT_CHANNEL_REQUEST_SENT:
             while (ssh->serverState < SERVER_DONE) {
-                if ( (ssh->error = DoReceive(ssh)) < WS_SUCCESS) {
+                if (DoReceive(ssh) < WS_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, connectError,
                          "CLIENT_CHANNEL_REQUEST_SENT", ssh->error);
                     return WS_FATAL_ERROR;

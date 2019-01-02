@@ -1438,8 +1438,10 @@ static int GetInputData(WOLFSSH* ssh, word32 size)
      * buffer and resets idx to 0.
      */
     if (inSz > maxLength) {
-        if (GrowBuffer(&ssh->inputBuffer, size, usedLength) < 0)
-            return WS_MEMORY_E;
+        if (GrowBuffer(&ssh->inputBuffer, size, usedLength) < 0) {
+            ssh->error = WS_MEMORY_E;
+            return WS_FATAL_ERROR;
+        }
     }
 
     /* Put buffer data at start if not there */
@@ -1458,21 +1460,27 @@ static int GetInputData(WOLFSSH* ssh, word32 size)
     do {
         in = Receive(ssh,
                      ssh->inputBuffer.buffer + ssh->inputBuffer.length, inSz);
-        if (in == -1)
-            return WS_SOCKET_ERROR_E;
+        if (in == -1) {
+            ssh->error = WS_SOCKET_ERROR_E;
+            return WS_FATAL_ERROR;
+        }
 
-        if (in == WS_WANT_READ)
-            return WS_WANT_READ;
+        if (in == WS_WANT_READ) {
+            ssh->error = WS_WANT_READ;
+            return WS_FATAL_ERROR;
+        }
 
-        if (in > inSz)
-            return WS_RECV_OVERFLOW_E;
+        if (in > inSz) {
+            ssh->error = WS_RECV_OVERFLOW_E;
+            return WS_FATAL_ERROR;
+        }
 
         ssh->inputBuffer.length += in;
         inSz -= in;
 
     } while (ssh->inputBuffer.length < size);
 
-    return 0;
+    return WS_SUCCESS;
 }
 
 
