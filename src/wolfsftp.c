@@ -48,6 +48,7 @@ enum WS_SFTP_STATE_ID {
     STATE_ID_CLOSE = 0x10,
     STATE_ID_GET_HANDLE = 0x20,
     STATE_ID_NAME = 0x40,
+    STATE_ID_SEND = 0x80,
 };
 
 enum WS_SFTP_NAME_STATE_ID {
@@ -61,7 +62,7 @@ enum WS_SFTP_REAL_STATE_ID {
     SFTP_REAL_GET_PACKET
 };
 
-enum WS_SFTP_SEND_STATE {
+enum WS_SFTP_SEND_STATE_ID {
     SFTP_BUILD_PACKET,
     SFTP_SEND_PACKET
 };
@@ -108,6 +109,14 @@ typedef struct WS_SFTP_NAME_STATE {
     int sz;
     word32 idx;
 } WS_SFTP_NAME_STATE;
+
+/* similar to open state, could refactor */
+typedef struct WS_SFTP_SEND_STATE {
+    enum WS_SFTP_SEND_STATE_ID state;
+    byte* data;
+    int sz;
+    word32 idx;
+} WS_SFTP_SEND_STATE;
 
 enum WS_SFTP_GET_STATE_ID {
     STATE_GET_INIT,
@@ -246,6 +255,14 @@ static void wolfSSH_SFTP_ClearState(WOLFSSH* ssh, enum WS_SFTP_STATE_ID state)
                 XFREE(ssh->nameState->data, ssh->ctx->heap, DYNTYPE_BUFFER);
                 XFREE(ssh->nameState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
                 ssh->nameState = NULL;
+            }
+        }
+
+        if (state & STATE_ID_SEND) {
+            if (ssh->sendState) {
+                XFREE(ssh->sendState->data, ssh->ctx->heap, DYNTYPE_BUFFER);
+                XFREE(ssh->sendState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+                ssh->sendState = NULL;
             }
         }
     }
@@ -3034,65 +3051,74 @@ int wolfSSH_SFTP_negotiate(WOLFSSH* ssh)
 int SendPacketType(WOLFSSH* ssh, byte type, byte* buf, word32 bufSz)
 {
     int ret = WS_SUCCESS;
-    word32 idx  = 0;
-    word32 sent = 0;
-    byte* data  = NULL;
+    WS_SFTP_SEND_STATE* state = NULL;
 
     if (ssh == NULL || buf == NULL) {
         return WS_BAD_ARGUMENT;
     }
 
-    switch (ssh->sendState) {
+    state = ssh->sendState;
+    if (state == NULL) {
+        state = (WS_SFTP_SEND_STATE*)WMALLOC(sizeof(WS_SFTP_SEND_STATE),
+                ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+        if (state == NULL) {
+            ssh->error = WS_MEMORY_E;
+            return WS_FATAL_ERROR;
+        }
+        WMEMSET(state, 0, sizeof(WS_SFTP_SEND_STATE));
+        ssh->sendState = state;
+        state->state = SFTP_BUILD_PACKET;
+    }
+
+    switch (state->state) {
         case SFTP_BUILD_PACKET:
             if (ssh->sftpState != SFTP_DONE) {
-                WLOG(WS_LOG_SFTP, "SFTP connection not complete, trying to finish");
+                WLOG(WS_LOG_SFTP, "SFTP connection not complete");
                 ret = wolfSSH_SFTP_negotiate(ssh);
             }
 
             if (ret == WS_SUCCESS) {
-                data = (byte*)WMALLOC(bufSz + WOLFSSH_SFTP_HEADER +
-                        UINT32_SZ, NULL, DYNTYPE_BUFFER);
-                if (data == NULL) {
-                    ssh->sendState = SFTP_BUILD_PACKET;
+                state->sz = bufSz + WOLFSSH_SFTP_HEADER + UINT32_SZ;
+                state->data = (byte*)WMALLOC(state->sz, ssh->ctx->heap,
+                        DYNTYPE_BUFFER);
+                if (state->data == NULL) {
+                    wolfSSH_SFTP_ClearState(ssh, STATE_ID_SEND);
                     return WS_MEMORY_E;
                 }
 
-                if (SFTP_SetHeader(ssh, ssh->reqId, type, bufSz + UINT32_SZ, data)
-                        != WS_SUCCESS) {
-                    WFREE(data, NULL, DYNTYPE_BUFFER);
-                    ssh->sendState = SFTP_BUILD_PACKET;
+                if (SFTP_SetHeader(ssh, ssh->reqId, type, bufSz + UINT32_SZ,
+                            state->data) != WS_SUCCESS) {
+                    wolfSSH_SFTP_ClearState(ssh, STATE_ID_SEND);
                     return WS_FATAL_ERROR;
                 }
 
-                idx = WOLFSSH_SFTP_HEADER;
-                c32toa(bufSz, data + idx);       idx += UINT32_SZ;
-                WMEMCPY(data + idx, buf, bufSz); idx += bufSz;
+                state->idx = WOLFSSH_SFTP_HEADER;
+                c32toa(bufSz, state->data + state->idx);
+                state->idx += UINT32_SZ;
+                WMEMCPY(state->data + state->idx, buf, bufSz);
+                state->idx = 0; /* reset state for sending data */
             }
-            ssh->sendState = SFTP_SEND_PACKET;
+            state->state = SFTP_SEND_PACKET;
             FALL_THROUGH;
             /* no break */
 
         case SFTP_SEND_PACKET:
-
-
-                /* send header and type specific data, looping over send because
-                 * channel could have restrictions on how much data can be sent at
-                 * one time */
+                /* send header and type specific state->data, looping over send
+                 * because channel could have restrictions on how much
+                 * state->data can be sent at one time */
                 do {
-                    ret = wolfSSH_stream_send(ssh, data + sent, idx - sent);
+                    ret = wolfSSH_stream_send(ssh, state->data + state->idx,
+                            state->sz - state->idx);
                     if (ssh->error != WS_WANT_WRITE)
-                        wolfSSH_CheckReceivePending(ssh); /* check for adjust window packet */
+                        /* check for adjust window packet */
+                        wolfSSH_CheckReceivePending(ssh);
                     if (ret > 0)
-                        sent += (word32)ret;
-                } while (ret > 0 && sent < idx);
+                        state->idx += (word32)ret;
+                } while (ret > 0 && state->idx < (word32)state->sz);
 
                 if (ret > 0) {
                     ret = WS_SUCCESS;
-                }
-                WFREE(data, NULL, DYNTYPE_BUFFER);
-
-                if (ssh->error != WS_WANT_WRITE) {
-                    ssh->sendState = SFTP_BUILD_PACKET;
+                    wolfSSH_SFTP_ClearState(ssh, STATE_ID_SEND);
                 }
                 break;
 
@@ -3915,6 +3941,11 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                 }
                 state->sz    = (word32)ret;
                 state->state = STATE_LSTAT_CHECK_REQ_ID;
+                state->data  = (byte*)WMALLOC(state->sz, ssh->ctx->heap,
+                        DYNTYPE_BUFFER);
+                if (state->data == NULL) {
+                    return WS_FATAL_ERROR;
+                }
                 FALL_THROUGH;
 
             case STATE_LSTAT_CHECK_REQ_ID:

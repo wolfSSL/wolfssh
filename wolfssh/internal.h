@@ -387,7 +387,6 @@ struct WOLFSSH {
 #ifdef WOLFSSH_SFTP
     word32 reqId;
     byte   sftpState;
-    byte   sendState;
     byte   realState;
     byte   sftpInt;
     byte   sftpExtSz; /* size of extension buffer (buffer not currently used) */
@@ -395,6 +394,7 @@ struct WOLFSSH {
 #ifdef WOLFSSH_STOREHANDLE
     WS_HANDLE_LIST* handleList;
 #endif
+    struct WS_SFTP_SEND_STATE* sendState;
     struct WS_SFTP_NAME_STATE* nameState;
     struct WS_SFTP_GET_STATE* getState;
     struct WS_SFTP_LSTAT_STATE* lstatState;
