@@ -304,7 +304,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
 
             case ACCEPT_SERVER_KEXINIT_SENT:
                 while (ssh->isKeying) {
-                    if ( (ssh->error = DoReceive(ssh)) < WS_SUCCESS) {
+                    if (DoReceive(ssh) < WS_SUCCESS) {
                         WLOG(WS_LOG_DEBUG, acceptError,
                              "SERVER_KEXINIT_SENT", ssh->error);
                         return WS_FATAL_ERROR;
@@ -317,7 +317,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
 
             case ACCEPT_KEYED:
                 while (ssh->clientState < CLIENT_USERAUTH_REQUEST_DONE) {
-                    if ( (ssh->error = DoReceive(ssh)) < 0) {
+                    if (DoReceive(ssh) < 0) {
                         WLOG(WS_LOG_DEBUG, acceptError,
                              "KEYED", ssh->error);
                         return WS_FATAL_ERROR;
@@ -343,7 +343,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
 
             case ACCEPT_SERVER_USERAUTH_ACCEPT_SENT:
                 while (ssh->clientState < CLIENT_USERAUTH_DONE) {
-                    if ( (ssh->error = DoReceive(ssh)) < 0) {
+                    if (DoReceive(ssh) < 0) {
                         WLOG(WS_LOG_DEBUG, acceptError,
                              "SERVER_USERAUTH_ACCEPT_SENT", ssh->error);
                         return WS_FATAL_ERROR;
@@ -367,7 +367,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
 
             case ACCEPT_SERVER_USERAUTH_SENT:
                 while (ssh->clientState < CLIENT_CHANNEL_OPEN_DONE) {
-                    if ( (ssh->error = DoReceive(ssh)) < 0) {
+                    if (DoReceive(ssh) < 0) {
                         WLOG(WS_LOG_DEBUG, acceptError,
                              "SERVER_USERAUTH_SENT", ssh->error);
                         return WS_FATAL_ERROR;
@@ -391,7 +391,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
 
             case ACCEPT_SERVER_CHANNEL_ACCEPT_SENT:
                 while (ssh->clientState < CLIENT_DONE) {
-                    if ( (ssh->error = DoReceive(ssh)) < 0) {
+                    if (DoReceive(ssh) < 0) {
                         WLOG(WS_LOG_DEBUG, acceptError,
                              "SERVER_CHANNEL_ACCEPT_SENT", ssh->error);
                         return WS_FATAL_ERROR;

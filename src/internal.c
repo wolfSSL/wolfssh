@@ -4751,22 +4751,28 @@ int DoReceive(WOLFSSH* ssh)
                                   readSz);
                     if (ret != WS_SUCCESS) {
                         WLOG(WS_LOG_DEBUG, "PR: First decrypt fail");
-                        return ret;
+                        ssh->error = ret;
+                        return WS_FATAL_ERROR;
                     }
                 }
                 FALL_THROUGH;
                 /* no break */
 
             case PROCESS_PACKET_LENGTH:
-                if (ssh->inputBuffer.idx + UINT32_SZ > ssh->inputBuffer.bufferSz)
-                    return WS_OVERFLOW_E;
+                if (ssh->inputBuffer.idx + UINT32_SZ >
+                        ssh->inputBuffer.bufferSz) {
+                    ssh->error = WS_OVERFLOW_E;
+                    return WS_FATAL_ERROR;
+                }
 
                 /* Peek at the packet_length field. */
                 ato32(ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
                       &ssh->curSz);
-                if (ssh->curSz > MAX_PACKET_SZ - (word32)peerMacSz - LENGTH_SZ)
-                    return WS_OVERFLOW_E;
-
+                if (ssh->curSz >
+                        MAX_PACKET_SZ - (word32)peerMacSz - LENGTH_SZ) {
+                    ret = WS_OVERFLOW_E;
+                    return WS_FATAL_ERROR;
+                }
                 ssh->processReplyState = PROCESS_PACKET_FINISH;
                 FALL_THROUGH;
                 /* no break */
@@ -4805,11 +4811,13 @@ int DoReceive(WOLFSSH* ssh)
                                                      LENGTH_SZ + ssh->curSz);
                         if (ret != WS_SUCCESS) {
                             WLOG(WS_LOG_DEBUG, "PR: Decrypt fail");
-                            return ret;
+                            ssh->error = ret;
+                            return WS_FATAL_ERROR;
                         }
                         if (verifyResult != WS_SUCCESS) {
                             WLOG(WS_LOG_DEBUG, "PR: VerifyMac fail");
-                            return verifyResult;
+                            ssh->error = verifyResult;
+                            return WS_FATAL_ERROR;
                         }
                     }
                     else {
@@ -4830,7 +4838,8 @@ int DoReceive(WOLFSSH* ssh)
 
                         if (ret != WS_SUCCESS) {
                             WLOG(WS_LOG_DEBUG, "PR: DecryptAead fail");
-                            return ret;
+                            ssh->error = ret;
+                            return WS_FATAL_ERROR;
                         }
                     }
                 }
@@ -4841,7 +4850,8 @@ int DoReceive(WOLFSSH* ssh)
             case PROCESS_PACKET:
                 ret = DoPacket(ssh);
                 if (ret < 0 && ret != WS_CHAN_RXD) {
-                    return ret;
+                    ssh->error = ret;
+                    return WS_FATAL_ERROR;
                 }
                 WLOG(WS_LOG_DEBUG, "PR3: peerMacSz = %u", peerMacSz);
                 ssh->inputBuffer.idx += peerMacSz;
@@ -4849,7 +4859,8 @@ int DoReceive(WOLFSSH* ssh)
 
             default:
                 WLOG(WS_LOG_DEBUG, "Bad process input state, program error");
-                return WS_INPUT_CASE_E;
+                ssh->error = WS_INPUT_CASE_E;
+                return WS_FATAL_ERROR;
         }
         WLOG(WS_LOG_DEBUG, "PR4: Shrinking input buffer");
         ShrinkBuffer(&ssh->inputBuffer, 1);
@@ -4858,7 +4869,7 @@ int DoReceive(WOLFSSH* ssh)
         WLOG(WS_LOG_DEBUG, "PR5: txCount = %u, rxCount = %u",
              ssh->txCount, ssh->rxCount);
 
-        return ret;
+        return WS_SUCCESS;
     }
     return WS_FATAL_ERROR;
 }
