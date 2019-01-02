@@ -5135,6 +5135,10 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                             state->handle, state->handleSz,
                             state->gOfst, state->r,
                             WOLFSSH_MAX_SFTP_RW);
+                    if (wolfSSH_get_error(ssh) == WS_WANT_READ) {
+                        return WS_FATAL_ERROR;
+                    }
+
                     if (sz > 0) {
                         if ((long)WFWRITE(state->r, 1,
                                           sz, state->fl) != sz) {
@@ -5148,7 +5152,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                         }
                     }
                 } while (sz > 0 && ssh->sftpInt == 0);
-                if (ret != WS_SUCCESS) {
+                if (sz < 0) {
                     state->state = STATE_GET_CLEANUP;
                     continue;
                 }
