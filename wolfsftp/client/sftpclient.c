@@ -977,7 +977,12 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 
     {
         /* get current working directory */
-        WS_SFTPNAME* n = wolfSSH_SFTP_RealPath(ssh, (char*)".");
+        WS_SFTPNAME* n = NULL;
+
+        do {
+            n = wolfSSH_SFTP_RealPath(ssh, (char*)".");
+            ret = wolfSSH_get_error(ssh);
+        } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE);
         if (n == NULL) {
             err_sys("Unable to get real path for working directory");
         }
