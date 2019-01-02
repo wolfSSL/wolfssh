@@ -79,6 +79,10 @@ typedef struct WS_SFTP_LSTAT_STATE {
     enum WS_SFTP_LSTAT_STATE_ID state;
     word32 reqId;
     word32 dirSz;
+
+    byte* data;
+    word32 sz;
+    word32 idx;
 } WS_SFTP_LSTAT_STATE;
 
 
@@ -181,7 +185,6 @@ typedef struct WS_SFTP_GET_HANDLE_STATE {
 
 
 static int SendPacketType(WOLFSSH* ssh, byte type, byte* buf, word32 bufSz);
-static int SFTP_ParseAtributes(WOLFSSH* ssh,  WS_SFTP_FILEATRB* atr);
 static int SFTP_ParseAtributes_buffer(WOLFSSH* ssh,  WS_SFTP_FILEATRB* atr,
         byte* buf, word32* idx, word32 maxIdx);
 static int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr,
@@ -211,8 +214,11 @@ static void wolfSSH_SFTP_ClearState(WOLFSSH* ssh, enum WS_SFTP_STATE_ID state)
         }
 
         if (state & STATE_ID_LSTAT) {
-            XFREE(ssh->lstatState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
-            ssh->lstatState = NULL;
+            if (ssh->lstatState) {
+                XFREE(ssh->lstatState->data, ssh->ctx->heap, DYNTYPE_BUFFER);
+                XFREE(ssh->lstatState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+                ssh->lstatState = NULL;
+            }
         }
 
         if (state & STATE_ID_OPEN) {
@@ -3322,6 +3328,7 @@ int SFTP_ParseAtributes_buffer(WOLFSSH* ssh,  WS_SFTP_FILEATRB* atr, byte* buf,
 }
 
 
+#if 0
 /* parse out file attributes from I/O stream
  *
  * returns WS_SUCCESS on success
@@ -3436,6 +3443,7 @@ int SFTP_ParseAtributes(WOLFSSH* ssh,  WS_SFTP_FILEATRB* atr)
 
     return WS_SUCCESS;
 }
+#endif
 
 
 /* process a name packet. Creates a linked list of WS_SFTPNAME structures
@@ -3905,6 +3913,7 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                 if (ret <= 0) {
                     return WS_FATAL_ERROR;
                 }
+                state->sz    = (word32)ret;
                 state->state = STATE_LSTAT_CHECK_REQ_ID;
                 FALL_THROUGH;
 
@@ -3921,9 +3930,17 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                 FALL_THROUGH;
 
             case STATE_LSTAT_PARSE_REPLY:
+                ret = wolfSSH_stream_read(ssh, state->data, state->sz);
+                if (ret < 0) {
+                    if (ssh->error != WS_WANT_READ) {
+                        wolfSSH_SFTP_ClearState(ssh, STATE_ID_LSTAT);
+                    }
+                    return WS_FATAL_ERROR;
+                }
                 WLOG(WS_LOG_SFTP, "SFTP LSTAT STATE: PARSE_REPLY");
                 if (type == WOLFSSH_FTP_ATTRS) {
-                    ret = SFTP_ParseAtributes(ssh, atr);
+                    ret = SFTP_ParseAtributes_buffer(ssh, atr, state->data,
+                            &state->idx, state->sz);
                     if (ret != WS_SUCCESS) {
                         return ret;
                     }
