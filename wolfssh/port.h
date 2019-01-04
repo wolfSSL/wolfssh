@@ -424,9 +424,14 @@ extern "C" {
     #endif /* NO_WOLFSSH_DIR */
 #elif defined(USE_WINDOWS_API)
 
+    #ifdef _WIN32_WCE
+        #include <winsock2.h>
+    #endif
     #include <windows.h>
-    #include <sys/types.h>
-    #include <sys/stat.h>
+    #ifndef _WIN32_WCE
+        #include <sys/types.h>
+        #include <sys/stat.h>
+    #endif
     #include <io.h>
     #include <direct.h>
     #include <fcntl.h>
