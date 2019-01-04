@@ -346,7 +346,6 @@ static void wolfSSH_SFTP_ClearState(WOLFSSH* ssh, enum WS_SFTP_STATE_ID state)
 
         if (state & STATE_ID_LS) {
             if (ssh->lsState) {
-                printf("freeing ls state\n");
                 XFREE(ssh->lsState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
                 ssh->lsState = NULL;
             }
@@ -3918,7 +3917,7 @@ static int wolfSSH_SFTP_GetHandle(WOLFSSH* ssh, byte* handle, word32* handleSz)
 
             case STATE_GET_HANDLE_CLEANUP:
                 WLOG(WS_LOG_SFTP, "SFTP GET HANDLE STATE: CLEANUP");
-                if (ssh->getState != NULL) {
+                if (ssh->getHandleState != NULL) {
                     WFREE(ssh->getHandleState,
                           ssh->ctx->heap, DYNTYPE_SFTP_STATE);
                     ssh->getHandleState = NULL;
@@ -4466,7 +4465,7 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
         word64 ofst, byte* in, word32 inSz)
 {
     WS_SFTP_SEND_WRITE_STATE* state = NULL;
-    int ret;
+    int ret = WS_FATAL_ERROR;
     int status;
     byte type;
 
