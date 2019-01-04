@@ -248,6 +248,15 @@ const char* GetErrorString(int err)
         case WS_CHAN_PENDING:
             return "channel open pending";
 
+        case WS_SFTP_BAD_REQ_ID:
+            return "sftp bad request id";
+
+        case WS_SFTP_BAD_REQ_TYPE:
+            return "sftp bad request response type";
+
+        case WS_SFTP_STATUS_NOT_OK:
+            return "sftp status not OK";
+
         default:
             return "Unknown error code";
     }
