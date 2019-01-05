@@ -397,6 +397,7 @@ struct WOLFSSH {
 #ifdef WOLFSSH_STOREHANDLE
     WS_HANDLE_LIST* handleList;
 #endif
+    struct WS_SFTP_MKDIR_STATE* mkdirState;
     struct WS_SFTP_RM_STATE* rmState;
     struct WS_SFTP_READDIR_STATE* readDirState;
     struct WS_SFTP_LS_STATE* lsState;
