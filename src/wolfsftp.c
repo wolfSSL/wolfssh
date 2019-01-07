@@ -40,10 +40,10 @@
 
 /* enum for bit field with an ID of each of the state structures */
 enum WS_SFTP_STATE_ID {
-    STATE_ID_ALL   = 0, /* default to select all */
-    STATE_ID_LSTAT = 0x01,
-    STATE_ID_OPEN  = 0x02,
-    STATE_ID_GET   = 0x04,
+    STATE_ID_ALL        = 0, /* default to select all */
+    STATE_ID_LSTAT      = 0x01,
+    STATE_ID_OPEN       = 0x02,
+    STATE_ID_GET        = 0x04,
     STATE_ID_SEND_READ  = 0x08,
     STATE_ID_CLOSE      = 0x10,
     STATE_ID_GET_HANDLE = 0x20,
@@ -55,6 +55,7 @@ enum WS_SFTP_STATE_ID {
     STATE_ID_SEND_WRITE = 0x0800,
     STATE_ID_RM         = 0x1000,
     STATE_ID_MKDIR      = 0x2000,
+    STATE_ID_RENAME     = 0x4000,
 };
 
 enum WS_SFTP_MKDIR_STATE_ID {
@@ -302,6 +303,27 @@ typedef struct WS_SFTP_GET_HANDLE_STATE {
 } WS_SFTP_GET_HANDLE_STATE;
 
 
+enum WS_SFTP_RENAME_STATE_ID {
+    STATE_RENAME_INIT,
+    STATE_RENAME_GET_STAT,
+    STATE_RENAME_SEND,
+    STATE_RENAME_GET_HEADER,
+    STATE_RENAME_READ_STATUS,
+    STATE_RENAME_DO_STATUS,
+    STATE_RENAME_CLEANUP
+};
+
+typedef struct WS_SFTP_RENAME_STATE {
+    enum WS_SFTP_RENAME_STATE_ID state;
+    WS_SFTP_FILEATRB atrb;
+    byte* data;
+    int sz;
+    word32 maxSz;
+    word32 reqId;
+    word32 idx;
+} WS_SFTP_RENAME_STATE;
+
+
 static int SendPacketType(WOLFSSH* ssh, byte type, byte* buf, word32 bufSz);
 static int SFTP_ParseAtributes_buffer(WOLFSSH* ssh,  WS_SFTP_FILEATRB* atr,
         byte* buf, word32* idx, word32 maxIdx);
@@ -411,6 +433,13 @@ static void wolfSSH_SFTP_ClearState(WOLFSSH* ssh, enum WS_SFTP_STATE_ID state)
                 XFREE(ssh->mkdirState->data, ssh->ctx->heap, DYNTYPE_BUFFER);
             XFREE(ssh->mkdirState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
             ssh->mkdirState = NULL;
+        }
+
+        if (state & STATE_ID_RENAME) {
+            if (ssh->renameState != NULL)
+                XFREE(ssh->renameState->data, ssh->ctx->heap, DYNTYPE_BUFFER);
+            XFREE(ssh->renameState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+            ssh->renameState = NULL;
         }
     }
 }
@@ -3877,6 +3906,7 @@ static int wolfSSH_SFTP_GetHandle(WOLFSSH* ssh, byte* handle, word32* handleSz)
                     else {
                         state->state = STATE_GET_HANDLE_CLEANUP;
                         ret = WS_FATAL_ERROR;
+                        continue;
                     }
                 }
                 state->bufSz = (word32)ret;
@@ -4192,6 +4222,7 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                 state->data  = (byte*)WMALLOC(state->sz, ssh->ctx->heap,
                         DYNTYPE_BUFFER);
                 if (state->data == NULL) {
+                    ssh->error = WS_MEMORY_E;
                     return WS_FATAL_ERROR;
                 }
                 FALL_THROUGH;
@@ -5266,83 +5297,197 @@ int wolfSSH_SFTP_OpenDir(WOLFSSH* ssh, byte* dir, word32 dirSz)
  */
 int wolfSSH_SFTP_Rename(WOLFSSH* ssh, const char* old, const char* nw)
 {
-    WS_SFTP_FILEATRB atrb;
-    byte* data;
-    int   sz;
-    int   ret;
-    word32 reqId;
-    word32 idx;
-    byte   type;
+    WS_SFTP_RENAME_STATE* state;
+    int ret;
+    byte type;
 
     WLOG(WS_LOG_SFTP, "Entering wolfSSH_SFTP_Rename");
     if (ssh == NULL || old == NULL || nw == NULL) {
         return WS_BAD_ARGUMENT;
     }
 
-    /* check that file exists */
-    if ((ret = wolfSSH_SFTP_STAT(ssh, (char*)old, &atrb)) != WS_SUCCESS) {
-        WLOG(WS_LOG_SFTP, "Error finding file to rename");
-        return ret;
-    }
+    if (ssh->error == WS_WANT_READ || ssh->error == WS_WANT_WRITE)
+        ssh->error = WS_SUCCESS;
 
-    sz = (int)(WSTRLEN(old) + WSTRLEN(nw));
-    data = (byte*)WMALLOC(sz + WOLFSSH_SFTP_HEADER + UINT32_SZ * 2,
-            ssh->ctx->heap, DYNTYPE_BUFFER);
-    if (data == NULL) {
-        return WS_MEMORY_E;
-    }
-
-    if (SFTP_SetHeader(ssh, ssh->reqId, WOLFSSH_FTP_RENAME,
-                sz + UINT32_SZ * 2, data) != WS_SUCCESS) {
-        return WS_FATAL_ERROR;
-    }
-
-    /* add old name to the packet */
-    idx = WOLFSSH_SFTP_HEADER;
-    c32toa((word32)WSTRLEN(old), data + idx); idx += UINT32_SZ;
-    WMEMCPY(data + idx, (byte*)old, WSTRLEN(old)); idx += (word32)WSTRLEN(old);
-
-    /* add new name to the packet */
-    c32toa((word32)WSTRLEN(nw), data + idx); idx += UINT32_SZ;
-    WMEMCPY(data + idx, (byte*)nw, WSTRLEN(nw)); idx += (word32)WSTRLEN(nw);
-
-    /* send header and type specific data */
-    ret = wolfSSH_stream_send(ssh, data, idx);
-    WFREE(data, NULL, DYNTYPE_BUFFER);
-    if (ret < 0) {
-        return ret;
-    }
-
-    /* Get response */
-    ret = SFTP_GetHeader(ssh, &reqId, &type);
-    if (ret <= 0 || type != WOLFSSH_FTP_STATUS) {
-        return WS_FATAL_ERROR;
-    }
-
-    /* check request ID */
-    if (reqId != ssh->reqId) {
-        WLOG(WS_LOG_SFTP, "Bad request ID received");
-        return WS_FATAL_ERROR;
-    }
-    else {
-        ssh->reqId++;
-    }
-    word32 maxSz = ret;
-    idx = 0;
-
-    data = (byte*)WMALLOC(maxSz, ssh->ctx->heap, DYNTYPE_BUFFER);
-    if ((ret = wolfSSH_stream_read(ssh, data, maxSz)) < 0) {
-        WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
-        return WS_FATAL_ERROR;
-    }
-
-    ret = wolfSSH_SFTP_DoStatus(ssh, reqId, data, &idx, maxSz);
-    WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
-    if (ret != WOLFSSH_FTP_OK) {
-        if (ret == WOLFSSH_FTP_PERMISSION) {
-            return WS_PERMISSIONS;
+    state = ssh->renameState;
+    if (state == NULL) {
+        state = (WS_SFTP_RENAME_STATE*)WMALLOC(sizeof(WS_SFTP_RENAME_STATE),
+                ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+        if (state == NULL) {
+            ssh->error = WS_MEMORY_E;
+            return WS_FATAL_ERROR;
         }
-        return WS_FATAL_ERROR;
+        WMEMSET(state, 0, sizeof(WS_SFTP_RENAME_STATE));
+        ssh->renameState = state;
+        state->state = STATE_RENAME_INIT;
+    }
+
+    for (;;) {
+        switch (state->state) {
+
+            case STATE_RENAME_INIT:
+                WLOG(WS_LOG_SFTP, "SFTP RENAME STATE: INIT");
+                FALL_THROUGH;
+
+            case STATE_RENAME_GET_STAT:
+                WLOG(WS_LOG_SFTP, "SFTP RENAME STATE: GET_STAT");
+                /* check that file exists */
+                ret = wolfSSH_SFTP_STAT(ssh, (char*)old, &state->atrb);
+                if (ret != WS_SUCCESS) {
+                    if (ssh->error == WS_WANT_READ ||
+                            ssh->error == WS_WANT_WRITE) {
+                        return WS_FATAL_ERROR;
+                    }
+                    WLOG(WS_LOG_SFTP, "Error finding file to rename");
+                    state->state = STATE_RENAME_CLEANUP;
+                    continue;
+                }
+
+                state->sz = (int)(WSTRLEN(old) + WSTRLEN(nw));
+                state->data = (byte*)WMALLOC(
+                        state->sz + WOLFSSH_SFTP_HEADER + UINT32_SZ * 2,
+                        ssh->ctx->heap, DYNTYPE_BUFFER);
+                if (state->data == NULL) {
+                    ssh->error = WS_MEMORY_E;
+                    ret = WS_FATAL_ERROR;
+                    state->state = STATE_RENAME_CLEANUP;
+                    continue;
+                }
+
+                ret = SFTP_SetHeader(ssh, ssh->reqId, WOLFSSH_FTP_RENAME,
+                            state->sz + UINT32_SZ * 2, state->data);
+                if (ret != WS_SUCCESS) {
+                    state->state = STATE_RENAME_CLEANUP;
+                    continue;
+                }
+
+                /* add old name to the packet */
+                state->idx = WOLFSSH_SFTP_HEADER;
+                c32toa((word32)WSTRLEN(old), state->data + state->idx);
+                state->idx += UINT32_SZ;
+                WMEMCPY(state->data + state->idx, (byte*)old, WSTRLEN(old));
+                state->idx += (word32)WSTRLEN(old);
+
+                /* add new name to the packet */
+                c32toa((word32)WSTRLEN(nw), state->data + state->idx);
+                state->idx += UINT32_SZ;
+                WMEMCPY(state->data + state->idx, (byte*)nw, WSTRLEN(nw));
+                state->idx += (word32)WSTRLEN(nw);
+
+                state->state = STATE_RENAME_SEND;
+                FALL_THROUGH;
+
+            case STATE_RENAME_SEND:
+                WLOG(WS_LOG_SFTP, "SFTP RENAME STATE: SEND");
+                /* send header and type specific data */
+                ret = wolfSSH_stream_send(ssh, state->data, state->idx);
+                if (ret <= 0) {
+                    if (ssh->error == WS_WANT_READ ||
+                            ssh->error == WS_WANT_WRITE) {
+                        return WS_FATAL_ERROR;
+                    }
+                    state->state = STATE_RENAME_CLEANUP;
+                    continue;
+                }
+                WFREE(state->data, ssh->ctx->heap, DYNTYPE_BUFFER);
+                state->data = NULL;
+                state->state = STATE_RENAME_GET_HEADER;
+                FALL_THROUGH;
+
+            case STATE_RENAME_GET_HEADER:
+                WLOG(WS_LOG_SFTP, "SFTP RENAME STATE: GET_HEADER");
+                /* Get response */
+                state->maxSz = SFTP_GetHeader(ssh, &state->reqId, &type);
+                if (state->maxSz <= 0) {
+                    if (ssh->error == WS_WANT_READ ||
+                            ssh->error == WS_WANT_WRITE) {
+                        return WS_FATAL_ERROR;
+                    }
+                    state->state = STATE_RENAME_CLEANUP;
+                    continue;
+                }
+                /* check request ID */
+                if (state->reqId != ssh->reqId) {
+                    WLOG(WS_LOG_SFTP, "Bad request ID received");
+                    ret = WS_FATAL_ERROR;
+                    ssh->error = WS_SFTP_BAD_REQ_ID;
+                    state->state = STATE_RENAME_CLEANUP;
+                    continue;
+                }
+
+                ssh->reqId++;
+
+                if (type != WOLFSSH_FTP_STATUS) {
+                    WLOG(WS_LOG_SFTP, "Unexpected packet type");
+                    ret = WS_FATAL_ERROR;
+                    ssh->error = WS_SFTP_BAD_REQ_TYPE;
+                    state->state = STATE_RENAME_CLEANUP;
+                    continue;
+                }
+
+                state->idx = 0;
+                state->data = (byte*)WMALLOC(state->maxSz,
+                        ssh->ctx->heap, DYNTYPE_BUFFER);
+                if (state->data == NULL) {
+                    ssh->error = WS_MEMORY_E;
+                    ret = WS_FATAL_ERROR;
+                    state->state = STATE_RENAME_CLEANUP;
+                    continue;
+                }
+                state->state = STATE_RENAME_READ_STATUS;
+                FALL_THROUGH;
+
+            case STATE_RENAME_READ_STATUS:
+                WLOG(WS_LOG_SFTP, "SFTP RENAME STATE: READ_STATUS");
+                ret = wolfSSH_stream_read(ssh, state->data, state->maxSz);
+                if (ret <= 0) {
+                    if (ssh->error == WS_WANT_READ ||
+                            ssh->error == WS_WANT_WRITE) {
+                        return WS_FATAL_ERROR;
+                    }
+                    state->state = STATE_RENAME_CLEANUP;
+                    continue;
+                }
+                state->state = STATE_RENAME_DO_STATUS;
+                FALL_THROUGH;
+
+            case STATE_RENAME_DO_STATUS:
+                WLOG(WS_LOG_SFTP, "SFTP RENAME STATE: DO_STATUS");
+                ret = wolfSSH_SFTP_DoStatus(ssh, state->reqId, state->data,
+                        &state->idx, state->maxSz);
+                WLOG(WS_LOG_SFTP, "Status = %d", ret);
+                if (ret < 0) {
+                    ret = WS_FATAL_ERROR;
+                }
+                else if (ret == WOLFSSH_FTP_PERMISSION) {
+                    ssh->error = WS_PERMISSIONS;
+                    ret = WS_FATAL_ERROR;
+                }
+                else if (ret != WOLFSSH_FTP_OK) {
+                    ssh->error = WS_SFTP_STATUS_NOT_OK;
+                    ret = WS_FATAL_ERROR;
+                }
+                state->state = STATE_RENAME_CLEANUP;
+                FALL_THROUGH;
+
+            case STATE_RENAME_CLEANUP:
+                WLOG(WS_LOG_SFTP, "SFTP RENAME STATE: CLEANUP");
+                if (ssh->renameState != NULL) {
+                    if (ssh->renameState->data != NULL) {
+                        WFREE(ssh->renameState->data, ssh->ctx->heap,
+                                DYNTYPE_SFTP_STATE);
+                        ssh->renameState->data = NULL;
+                    }
+                    WFREE(ssh->renameState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+                    ssh->renameState = NULL;
+                }
+                return ret;
+
+            default:
+                WLOG(WS_LOG_DEBUG, "Bad SFTP Rename state, program error");
+                ssh->error = WS_INPUT_CASE_E;
+                return WS_FATAL_ERROR;
+        }
     }
 
     return WS_SUCCESS;

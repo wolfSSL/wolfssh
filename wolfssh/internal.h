@@ -266,6 +266,7 @@ struct WS_SFTP_SEND_READ_STATE;
 struct WS_SFTP_SEND_WRITE_STATE;
 struct WS_SFTP_GET_HANDLE_STATE;
 struct WS_SFTP_PUT_STATE;
+struct WS_SFTP_RENAME_STATE;
 
 #endif /* WOLFSSH_SFTP */
 
@@ -411,6 +412,7 @@ struct WOLFSSH {
     struct WS_SFTP_SEND_READ_STATE* sendReadState;
     struct WS_SFTP_SEND_WRITE_STATE* sendWriteState;
     struct WS_SFTP_GET_HANDLE_STATE* getHandleState;
+    struct WS_SFTP_RENAME_STATE* renameState;
 #endif
 };
 
