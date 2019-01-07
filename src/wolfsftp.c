@@ -280,7 +280,7 @@ typedef struct WS_SFTP_SEND_WRITE_STATE {
     byte* data;
     word32 reqId;
     word32 idx;
-    word32 maxSz;
+    int maxSz;
     word32 sentSz;
 } WS_SFTP_SEND_WRITE_STATE;
 
@@ -333,7 +333,7 @@ typedef struct WS_SFTP_RENAME_STATE {
     WS_SFTP_FILEATRB atrb;
     byte* data;
     int sz;
-    word32 maxSz;
+    int maxSz;
     word32 reqId;
     word32 idx;
 } WS_SFTP_RENAME_STATE;
@@ -3698,7 +3698,7 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
     /* process name */
     WS_SFTP_NAME_STATE* state = NULL;
     WS_SFTPNAME* n = NULL;
-    word32 maxSz;
+    int maxSz;
     word32 count;
     word32 reqId = 0;
     byte   type = WOLFSSH_FTP_STATUS;
@@ -4356,11 +4356,12 @@ int wolfSSH_SFTP_LSTAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
  */
 int wolfSSH_SFTP_SetSTAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
 {
-    int dirSz, atrSz, status;
-    word32 maxSz, reqId;
-    byte type;
     byte* data;
+    int dirSz, atrSz, status;
+    int maxSz;
+    word32 reqId;
     word32 idx;
+    byte type;
 
     WLOG(WS_LOG_SFTP, "Entering wolfSSH_SFTP_SetSTAT()");
     if (ssh == NULL || dir == NULL || atr == NULL) {
@@ -4666,7 +4667,6 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 if (state->maxSz <= 0) {
                     if (ssh->error == WS_WANT_READ ||
                             ssh->error == WS_WANT_WRITE) {
-                        fprintf(stderr, "WS_WANT_something\n");
                         return WS_FATAL_ERROR;
                     }
                     state->state = STATE_SEND_WRITE_CLEANUP;
