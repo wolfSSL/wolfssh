@@ -5320,7 +5320,7 @@ int wolfSSH_SFTP_OpenDir(WOLFSSH* ssh, byte* dir, word32 dirSz)
 int wolfSSH_SFTP_Rename(WOLFSSH* ssh, const char* old, const char* nw)
 {
     WS_SFTP_RENAME_STATE* state;
-    int ret;
+    int ret = WS_SUCCESS;
     byte type;
 
     WLOG(WS_LOG_SFTP, "Entering wolfSSH_SFTP_Rename");
