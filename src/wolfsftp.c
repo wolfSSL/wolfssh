@@ -6115,6 +6115,9 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                     state->state = STATE_PUT_CLEANUP;
                     continue;
                 }
+                if (resume) {
+                    WFSEEK(state->fl, state->pOfst, 0);
+                }
                 state->rSz = 0;
                 state->state = STATE_PUT_OPEN_REMOTE;
                 FALL_THROUGH;
