@@ -5965,7 +5965,9 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                 if (ret != 0) {
                     WLOG(WS_LOG_SFTP, "Unable to open output file");
                     ssh->error = WS_BAD_FILE_E;
-                    return WS_FATAL_ERROR;
+                    ret = WS_FATAL_ERROR;
+                    state->state = STATE_GET_CLEANUP;
+                    continue;
                 }
                 state->state = STATE_GET_READ;
                 FALL_THROUGH;
@@ -6128,6 +6130,7 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                     WLOG(WS_LOG_SFTP, "Unable to open input file");
                     ssh->error = WS_BAD_FILE_E;
                     ret = WS_FATAL_ERROR;
+                    state->state = STATE_PUT_CLEANUP;
                     continue;
                 }
                 state->rSz = 0;
