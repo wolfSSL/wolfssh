@@ -3840,7 +3840,8 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
                 ato32(state->data + state->idx, &sz); state->idx += UINT32_SZ;
                 tmp->lSz   = sz;
                 if (sz > 0) {
-                    tmp->lName = (char*)WMALLOC(sz + 1, tmp->heap, DYNTYPE_SFTP);
+                    tmp->lName = (char*)WMALLOC(sz + 1,
+                            tmp->heap, DYNTYPE_SFTP);
                     if (tmp->lName == NULL) {
                         ret = WS_MEMORY_E;
                         break;
@@ -3890,7 +3891,9 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
 static int wolfSSH_SFTP_GetHandle(WOLFSSH* ssh, byte* handle, word32* handleSz)
 {
     WS_SFTP_GET_HANDLE_STATE* state = NULL;
+    byte* data = NULL;
     int ret = WS_SUCCESS;
+    word32 idx;
     byte type = 0;
 
     WLOG(WS_LOG_SFTP, "Entering wolfSSH_SFTP_GetHandle");
@@ -3950,15 +3953,18 @@ static int wolfSSH_SFTP_GetHandle(WOLFSSH* ssh, byte* handle, word32* handleSz)
                 WLOG(WS_LOG_SFTP, "SFTP GET HANDLE STATE: DO_STATUS");
 
                 /* @TODO */
-        byte* data = (byte*)WMALLOC(state->bufSz, ssh->ctx->heap, DYNTYPE_BUFFER);
-                if ((ret = wolfSSH_stream_read(ssh, state->buf, state->bufSz)) < 0) {
+                data = (byte*)WMALLOC(state->bufSz,
+                        ssh->ctx->heap, DYNTYPE_BUFFER);
+                ret = wolfSSH_stream_read(ssh, state->buf, state->bufSz);
+                if (ret < 0) {
                     WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
                     return WS_FATAL_ERROR;
                 }
 
-                word32 idx = 0;
-    ret = wolfSSH_SFTP_DoStatus(ssh, state->reqId, state->buf, &idx, state->bufSz);
-        WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
+                idx = 0;
+                ret = wolfSSH_SFTP_DoStatus(ssh, state->reqId, state->buf,
+                        &idx, state->bufSz);
+                WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
                 if (ret == WOLFSSH_FTP_OK)
                     ret = WS_SUCCESS;
                 else
@@ -4286,7 +4292,8 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                 else if (state->type == WOLFSSH_FTP_STATUS) {
                     word32 idx = 0;
 
-                    ret = wolfSSH_SFTP_DoStatus(ssh, state->reqId, state->data, &idx, state->sz);
+                    ret = wolfSSH_SFTP_DoStatus(ssh, state->reqId, state->data,
+                            &idx, state->sz);
                     if (ret != WOLFSSH_FTP_OK) {
                         wolfSSH_SFTP_ClearState(ssh, STATE_ID_LSTAT);
                         if (ret == WOLFSSH_FTP_PERMISSION) {
@@ -4906,19 +4913,20 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
 
             case STATE_SEND_READ_FTP_STATUS:
                 {
-                word32 lidx = 0;
-                byte* data = (byte*)WMALLOC(state->sz, ssh->ctx->heap, DYNTYPE_BUFFER);
-                ret = wolfSSH_stream_read(ssh, data, state->sz);
-                if (ret < 0) {
-                    return WS_FATAL_ERROR;
-                }
-                ret = wolfSSH_SFTP_DoStatus(ssh, state->reqId, data,
-                        &lidx, state->sz);
-                WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
-                if (ret == WOLFSSH_FTP_OK || ret == WOLFSSH_FTP_EOF) {
-                    WLOG(WS_LOG_SFTP, "OK or EOF found");
-                    ret = 0; /* nothing was read */
-                }
+                    word32 lidx = 0;
+                    byte* data = (byte*)WMALLOC(state->sz,
+                            ssh->ctx->heap, DYNTYPE_BUFFER);
+                    ret = wolfSSH_stream_read(ssh, data, state->sz);
+                    if (ret < 0) {
+                        return WS_FATAL_ERROR;
+                    }
+                    ret = wolfSSH_SFTP_DoStatus(ssh, state->reqId, data,
+                            &lidx, state->sz);
+                    WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
+                    if (ret == WOLFSSH_FTP_OK || ret == WOLFSSH_FTP_EOF) {
+                        WLOG(WS_LOG_SFTP, "OK or EOF found");
+                        ret = 0; /* nothing was read */
+                    }
                 }
                 state->state = STATE_SEND_READ_CLEANUP;
                 FALL_THROUGH;
@@ -5200,7 +5208,9 @@ int wolfSSH_SFTP_Close(WOLFSSH* ssh, byte* handle, word32 handleSz)
             case STATE_CLOSE_GET_HEADER:
                 WLOG(WS_LOG_SFTP, "SFTP CLOSE STATE: GET_HEADER");
                 ret = SFTP_GetHeader(ssh, &state->reqId, &type);
-                if (ret <= 0 && (ssh->error == WS_WANT_WRITE || ssh->error == WS_WANT_READ))
+                if (ret <= 0 &&
+                        (ssh->error == WS_WANT_WRITE ||
+                         ssh->error == WS_WANT_READ))
                     return ret;
 
                 if (type != WOLFSSH_FTP_STATUS || ret <= 0) {
@@ -5211,21 +5221,25 @@ int wolfSSH_SFTP_Close(WOLFSSH* ssh, byte* handle, word32 handleSz)
                 }
                 state->sz = ret;
                 state->state = STATE_CLOSE_DO_STATUS;
-                state->data = (byte*)WMALLOC(state->sz, ssh->ctx->heap, DYNTYPE_BUFFER);
+                state->data = (byte*)WMALLOC(state->sz,
+                        ssh->ctx->heap, DYNTYPE_BUFFER);
                 FALL_THROUGH;
 
             case STATE_CLOSE_DO_STATUS:
                 WLOG(WS_LOG_SFTP, "SFTP CLOSE STATE: DO_STATUS");
                 {
                     word32 idx = 0;
-                    if ((ret = wolfSSH_stream_read(ssh, state->data, state->sz)) < 0) {
-                        if (ssh->error != WS_WANT_WRITE && ssh->error != WS_WANT_READ) {
+                    ret = wolfSSH_stream_read(ssh, state->data, state->sz);
+                    if (ret < 0) {
+                        if (ssh->error != WS_WANT_WRITE &&
+                                ssh->error != WS_WANT_READ) {
                             WFREE(state->data, ssh->ctx->heap, DYNTYPE_BUFFER);
                         }
                         return WS_FATAL_ERROR;
                     }
 
-                    ret = wolfSSH_SFTP_DoStatus(ssh, state->reqId, state->data, &idx, state->sz);
+                    ret = wolfSSH_SFTP_DoStatus(ssh, state->reqId, state->data,
+                            &idx, state->sz);
                     WFREE(state->data, ssh->ctx->heap, DYNTYPE_BUFFER);
                     state->data = NULL;
                 }
