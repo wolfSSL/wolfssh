@@ -5969,7 +5969,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                             state->handle, state->handleSz,
                             state->gOfst, state->r,
                             WOLFSSH_MAX_SFTP_RW);
-                    if (sz <= 0) {
+                    if (sz < 0) {
                         if (ssh->error == WS_WANT_READ ||
                                 ssh->error == WS_WANT_WRITE) {
                             return WS_FATAL_ERROR;
