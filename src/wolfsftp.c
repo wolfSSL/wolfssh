@@ -281,7 +281,7 @@ typedef struct WS_SFTP_SEND_WRITE_STATE {
     word32 reqId;
     word32 idx;
     int maxSz;
-    word32 sentSz;
+    int sentSz;
 } WS_SFTP_SEND_WRITE_STATE;
 
 
@@ -4664,6 +4664,8 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                             ssh->error == WS_WANT_WRITE) {
                         return WS_FATAL_ERROR;
                     }
+                    ssh->error = state->sentSz;
+                    ret = WS_FATAL_ERROR;
                     state->state = STATE_SEND_WRITE_CLEANUP;
                     continue;
                 }
@@ -6098,7 +6100,7 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                     state->pOfst = (long)wolfSSH_SFTP_GetOfst(ssh, from, to);
                 }
                 state->handleSz = WOLFSSH_MAX_HANDLE;
-                state->state = STATE_PUT_OPEN_LOCAL;
+                state->state = STATE_PUT_OPEN_REMOTE;
                 FALL_THROUGH;
 
             case STATE_PUT_OPEN_REMOTE:
@@ -6145,7 +6147,12 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                     sz = wolfSSH_SFTP_SendWritePacket(ssh,
                             state->handle, state->handleSz, state->pOfst,
                             state->r, state->rSz);
-                    if (sz > 0) {
+                    if (sz <= 0) {
+                        if (ssh->error == WS_WANT_READ ||
+                                ssh->error == WS_WANT_WRITE)
+                            return WS_FATAL_ERROR;
+                    }
+                    else {
                         state->pOfst += sz;
                         state->rSz -= sz;
                         if (statusCb != NULL) {
