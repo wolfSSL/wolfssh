@@ -4306,6 +4306,11 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
             case STATE_LSTAT_CLEANUP:
                 WLOG(WS_LOG_SFTP, "SFTP LSTAT STATE: CLEANUP");
                 if (ssh->lstatState != NULL) {
+                    if (ssh->lstatState->data != NULL) {
+                        WFREE(ssh->lstatState->data, ssh->ctx->heap,
+                                DYNTYPE_BUFFER);
+                        ssh->lstatState->data = NULL;
+                    }
                     WFREE(ssh->lstatState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
                     ssh->lstatState = NULL;
                 }
