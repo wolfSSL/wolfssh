@@ -4811,6 +4811,7 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
         switch (state->state) {
 
             case STATE_SEND_READ_INIT:
+                WLOG(WS_LOG_SFTP, "SFTP SEND_READ STATE: INIT");
                 state->data = (byte*)WMALLOC(
                             handleSz + WOLFSSH_SFTP_HEADER + UINT32_SZ * 4,
                             ssh->ctx->heap, DYNTYPE_BUFFER);
@@ -4846,6 +4847,7 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 FALL_THROUGH;
 
             case STATE_SEND_READ_SEND_REQ:
+                WLOG(WS_LOG_SFTP, "SFTP SEND_READ STATE: SEND_REQ");
                 /* send header and type specific data */
                 ret = wolfSSH_stream_send(ssh, state->data, state->idx);
                 WFREE(state->data, ssh->ctx->heap, DYNTYPE_BUFFER);
@@ -4858,6 +4860,7 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 FALL_THROUGH;
 
             case STATE_SEND_READ_GET_HEADER:
+                WLOG(WS_LOG_SFTP, "SFTP SEND_READ STATE: GET_HEADER");
                 /* Get response */
                 if ((ret = SFTP_GetHeader(ssh, &state->reqId, &state->type))
                         <= 0)
@@ -4868,6 +4871,7 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 FALL_THROUGH;
 
             case STATE_SEND_READ_CHECK_REQ_ID:
+                WLOG(WS_LOG_SFTP, "SFTP SEND_READ STATE: CHECK_REQ_ID");
                 /* check request ID */
                 if (state->reqId != ssh->reqId) {
                     WLOG(WS_LOG_SFTP, "Bad request ID received");
@@ -4887,6 +4891,7 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 continue;
 
             case STATE_SEND_READ_FTP_DATA:
+                WLOG(WS_LOG_SFTP, "SFTP SEND_READ STATE: FTP_DATA");
                 /* get size of string and place it into out buffer */
                 ret = wolfSSH_stream_read(ssh, szFlat, UINT32_SZ);
                 if (ret < 0) {
@@ -4902,6 +4907,7 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 FALL_THROUGH;
 
             case STATE_SEND_READ_REMAINDER:
+                WLOG(WS_LOG_SFTP, "SFTP SEND_READ STATE: READ_REMAINDER");
                 ret = wolfSSH_stream_read(ssh, out, state->sz);
                 if (ret < 0) {
                     return ret;
@@ -4912,6 +4918,7 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 continue;
 
             case STATE_SEND_READ_FTP_STATUS:
+                WLOG(WS_LOG_SFTP, "SFTP SEND_READ STATE: READ_FTP_STATUS");
                 {
                     word32 lidx = 0;
                     byte* data = (byte*)WMALLOC(state->sz,
