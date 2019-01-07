@@ -6102,6 +6102,20 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                     state->pOfst = (long)wolfSSH_SFTP_GetOfst(ssh, from, to);
                 }
                 state->handleSz = WOLFSSH_MAX_HANDLE;
+                state->state = STATE_PUT_OPEN_LOCAL;
+                FALL_THROUGH;
+
+            case STATE_PUT_OPEN_LOCAL:
+                WLOG(WS_LOG_SFTP, "SFTP PUT STATE: OPEN LOCAL");
+                ret = WFOPEN(&state->fl, from, "rb");
+                if (ret != 0) {
+                    WLOG(WS_LOG_SFTP, "Unable to open input file");
+                    ssh->error = WS_SFTP_FILE_DNE;
+                    ret = WS_FATAL_ERROR;
+                    state->state = STATE_PUT_CLEANUP;
+                    continue;
+                }
+                state->rSz = 0;
                 state->state = STATE_PUT_OPEN_REMOTE;
                 FALL_THROUGH;
 
@@ -6120,20 +6134,6 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                     state->state = STATE_PUT_CLEANUP;
                     continue;
                 }
-                state->state = STATE_PUT_OPEN_LOCAL;
-                FALL_THROUGH;
-
-            case STATE_PUT_OPEN_LOCAL:
-                WLOG(WS_LOG_SFTP, "SFTP PUT STATE: OPEN LOCAL");
-                ret = WFOPEN(&state->fl, from, "rb");
-                if (ret != 0) {
-                    WLOG(WS_LOG_SFTP, "Unable to open input file");
-                    ssh->error = WS_BAD_FILE_E;
-                    ret = WS_FATAL_ERROR;
-                    state->state = STATE_PUT_CLEANUP;
-                    continue;
-                }
-                state->rSz = 0;
                 state->state = STATE_PUT_WRITE;
                 FALL_THROUGH;
 

@@ -257,6 +257,9 @@ const char* GetErrorString(int err)
         case WS_SFTP_STATUS_NOT_OK:
             return "sftp status not OK";
 
+        case WS_SFTP_FILE_DNE:
+            return "sftp file does not exist";
+
         default:
             return "Unknown error code";
     }
