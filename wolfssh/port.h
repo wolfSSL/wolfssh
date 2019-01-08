@@ -431,10 +431,10 @@ extern "C" {
     #ifndef _WIN32_WCE
         #include <sys/types.h>
         #include <sys/stat.h>
+        #include <io.h>
+        #include <direct.h>
+        #include <fcntl.h>
     #endif
-    #include <io.h>
-    #include <direct.h>
-    #include <fcntl.h>
 
     #define WSTAT_T           struct _stat
     #define WRMDIR(d)         _rmdir((d))
