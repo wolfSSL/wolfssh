@@ -179,13 +179,16 @@ static int ssh_worker(thread_ctx_t* threadCtx) {
  * returns 0 on success
  */
 static int sftp_worker(thread_ctx_t* threadCtx) {
-    int ret;
+    int ret = 0;
 
+    (void)threadCtx;
+#ifndef NO_WOLFSSH_SERVER
     do {
         ret = wolfSSH_SFTP_read(threadCtx->ssh);
     } while (ret != WS_FATAL_ERROR);
+#endif
 
-    return 0;
+    return ret;
 }
 #endif
 

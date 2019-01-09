@@ -407,7 +407,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
 #endif
                 ssh->acceptState = ACCEPT_CLIENT_SESSION_ESTABLISHED;
                 WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_SESSION_ESTABLISHED");
-#ifdef WOLFSSH_SFTP
+#if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_SERVER)
                 {
                     const char* cmd = wolfSSH_GetSessionCommand(ssh);
                     if (cmd != NULL &&
@@ -416,7 +416,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
                         return wolfSSH_SFTP_accept(ssh);
                     }
                 }
-#endif /* WOLFSSH_SFTP*/
+#endif /* WOLFSSH_SFTP and !NO_WOLFSSH_SERVER */
                 break;
 
 #ifdef WOLFSSH_SCP

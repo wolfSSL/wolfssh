@@ -342,10 +342,6 @@ typedef struct WS_SFTP_RENAME_STATE {
 static int SendPacketType(WOLFSSH* ssh, byte type, byte* buf, word32 bufSz);
 static int SFTP_ParseAtributes_buffer(WOLFSSH* ssh,  WS_SFTP_FILEATRB* atr,
         byte* buf, word32* idx, word32 maxIdx);
-static int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr,
-        byte link);
-static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
-        WS_SFTP_FILEATRB* atr);
 static WS_SFTPNAME* wolfSSH_SFTPNAME_new(void* heap);
 
 
@@ -522,7 +518,102 @@ static int SFTP_SetHeader(WOLFSSH* ssh, word32 reqId, byte type, word32 len,
 }
 
 
+/* returns the size of buffer needed to hold attributes */
+static int SFTP_AtributesSz(WOLFSSH* ssh, WS_SFTP_FILEATRB* atr)
+{
+    word32 sz = 0;
+
+    (void)ssh;
+
+    sz += UINT32_SZ; /* flag */
+
+    /* check if size attribute present */
+    if (atr->flags & WOLFSSH_FILEATRB_SIZE) {
+        sz += UINT32_SZ * 2;
+    }
+
+    /* check if uid and gid attribute present */
+    if (atr->flags & WOLFSSH_FILEATRB_UIDGID) {
+        sz += UINT32_SZ * 2;
+    }
+
+    /* check if permissions attribute present */
+    if (atr->flags & WOLFSSH_FILEATRB_PERM) {
+        sz += UINT32_SZ;
+    }
+
+    /* check if time attribute present */
+    if (atr->flags & WOLFSSH_FILEATRB_TIME) {
+        sz += UINT32_SZ * 2;
+    }
+
+    /* check if extended attributes are present */
+    if (atr->flags & WOLFSSH_FILEATRB_EXT) {
+        sz += UINT32_SZ;
+
+        /* @TODO handle extended attributes */
+    }
+
+    return sz;
+}
+
+
+/* set attributes in buffer
+ *
+ * returns WS_SUCCESS on success
+ */
+static int SFTP_SetAttributes(WOLFSSH* ssh, byte* buf, word32 bufSz,
+        WS_SFTP_FILEATRB* atr)
+{
+    word32 idx = 0;
+
+    (void)ssh;
+    (void)bufSz;
+
+    /* get flags */
+    c32toa(atr->flags, buf); idx += UINT32_SZ;
+
+    /* check if size attribute present */
+    if (atr->flags & WOLFSSH_FILEATRB_SIZE) {
+        c32toa((word32)(atr->sz << 32), buf + idx);        idx += UINT32_SZ;
+        c32toa((word32)(atr->sz & 0xFFFFFFFF), buf + idx); idx += UINT32_SZ;
+    }
+
+    /* check if uid and gid attribute present */
+    if (atr->flags & WOLFSSH_FILEATRB_UIDGID) {
+        c32toa(atr->uid, buf + idx); idx += UINT32_SZ;
+        c32toa(atr->gid, buf + idx); idx += UINT32_SZ;
+    }
+
+    /* check if permissions attribute present */
+    if (atr->flags & WOLFSSH_FILEATRB_PERM) {
+        c32toa(atr->per, buf + idx); idx += UINT32_SZ;
+    }
+
+
+    /* check if time attribute present */
+    if (atr->flags & WOLFSSH_FILEATRB_TIME) {
+        c32toa(atr->atime, buf + idx); idx += UINT32_SZ;
+        c32toa(atr->mtime, buf + idx); idx += UINT32_SZ;
+    }
+
+    /* check if extended attributes are present */
+    if (atr->flags & WOLFSSH_FILEATRB_EXT) {
+        /* @TODO handle attribute extensions */
+        c32toa(atr->extCount, buf + idx);
+    }
+
+    return WS_SUCCESS;
+}
+
+
 #ifndef NO_WOLFSSH_SERVER
+
+static int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr,
+        byte link);
+static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
+        WS_SFTP_FILEATRB* atr);
+
 /* unique from other packets because the request ID is not also sent.
  *
  * returns WS_SUCCESS on success
@@ -645,95 +736,6 @@ int wolfSSH_SFTP_accept(WOLFSSH* ssh)
 
     return ret;
 }
-
-/* returns the size of buffer needed to hold attributes */
-static int SFTP_AtributesSz(WOLFSSH* ssh, WS_SFTP_FILEATRB* atr)
-{
-    word32 sz = 0;
-
-    (void)ssh;
-
-    sz += UINT32_SZ; /* flag */
-
-    /* check if size attribute present */
-    if (atr->flags & WOLFSSH_FILEATRB_SIZE) {
-        sz += UINT32_SZ * 2;
-    }
-
-    /* check if uid and gid attribute present */
-    if (atr->flags & WOLFSSH_FILEATRB_UIDGID) {
-        sz += UINT32_SZ * 2;
-    }
-
-    /* check if permissions attribute present */
-    if (atr->flags & WOLFSSH_FILEATRB_PERM) {
-        sz += UINT32_SZ;
-    }
-
-    /* check if time attribute present */
-    if (atr->flags & WOLFSSH_FILEATRB_TIME) {
-        sz += UINT32_SZ * 2;
-    }
-
-    /* check if extended attributes are present */
-    if (atr->flags & WOLFSSH_FILEATRB_EXT) {
-        sz += UINT32_SZ;
-
-        /* @TODO handle extended attributes */
-    }
-
-    return sz;
-}
-
-
-/* set attributes in buffer
- *
- * returns WS_SUCCESS on success
- */
-static int SFTP_SetAttributes(WOLFSSH* ssh, byte* buf, word32 bufSz,
-        WS_SFTP_FILEATRB* atr)
-{
-    word32 idx = 0;
-
-    (void)ssh;
-    (void)bufSz;
-
-    /* get flags */
-    c32toa(atr->flags, buf); idx += UINT32_SZ;
-
-    /* check if size attribute present */
-    if (atr->flags & WOLFSSH_FILEATRB_SIZE) {
-        c32toa((word32)(atr->sz << 32), buf + idx);        idx += UINT32_SZ;
-        c32toa((word32)(atr->sz & 0xFFFFFFFF), buf + idx); idx += UINT32_SZ;
-    }
-
-    /* check if uid and gid attribute present */
-    if (atr->flags & WOLFSSH_FILEATRB_UIDGID) {
-        c32toa(atr->uid, buf + idx); idx += UINT32_SZ;
-        c32toa(atr->gid, buf + idx); idx += UINT32_SZ;
-    }
-
-    /* check if permissions attribute present */
-    if (atr->flags & WOLFSSH_FILEATRB_PERM) {
-        c32toa(atr->per, buf + idx); idx += UINT32_SZ;
-    }
-
-
-    /* check if time attribute present */
-    if (atr->flags & WOLFSSH_FILEATRB_TIME) {
-        c32toa(atr->atime, buf + idx); idx += UINT32_SZ;
-        c32toa(atr->mtime, buf + idx); idx += UINT32_SZ;
-    }
-
-    /* check if extended attributes are present */
-    if (atr->flags & WOLFSSH_FILEATRB_EXT) {
-        /* @TODO handle attribute extensions */
-        c32toa(atr->extCount, buf + idx);
-    }
-
-    return WS_SUCCESS;
-}
-
 
 /* returns WS_SUCCESS on success */
 static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, int maxSz)

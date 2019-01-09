@@ -7353,7 +7353,8 @@ int SendChannelSuccess(WOLFSSH* ssh, word32 channelId, int success)
 }
 
 
-#if defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)
+#if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
+    !defined(NO_WOLFSSH_SERVER)
 /* cleans up absolute path */
 void clean_path(char* path)
 {
