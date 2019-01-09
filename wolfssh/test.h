@@ -575,7 +575,7 @@ enum {
 static INLINE int tcp_select(SOCKET_T socketfd, int to_sec)
 {
     fd_set recvfds, errfds;
-    SOCKET_T nfds = socketfd + 1;
+    int nfds = (int)socketfd + 1;
     struct timeval timeout = {(to_sec > 0) ? to_sec : 0, 0};
     int result;
 

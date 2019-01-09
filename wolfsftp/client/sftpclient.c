@@ -119,7 +119,7 @@ static void clean_path(char* path)
     }
 
     /* remove any trailing '/' chars */
-    sz = WSTRLEN(path);
+    sz = (long)WSTRLEN(path);
     for (i = (int)sz - 1; i > 0; i--) {
         if (path[i] == '/') {
             path[i] = '\0';
@@ -132,7 +132,7 @@ static void clean_path(char* path)
     if (path != NULL) {
         /* go through path until no cases are found */
         do {
-            sz = WSTRLEN(path);
+            sz = (long)WSTRLEN(path);
             int prIdx = 0; /* begin of cut */
             int enIdx = 0; /* end of cut */
 
