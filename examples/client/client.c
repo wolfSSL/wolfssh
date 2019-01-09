@@ -20,13 +20,14 @@
 
 #define WOLFSSH_TEST_CLIENT
 
-
 #include <wolfssh/ssh.h>
 #include <wolfssh/test.h>
 #include "examples/client/client.h"
 #if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32)
     #include <termios.h>
 #endif
+
+#ifndef NO_WOLFSSH_CLIENT
 
 const char testString[] = "Hello, wolfSSH!";
 
@@ -323,6 +324,8 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     return 0;
 }
 
+#endif /* NO_WOLFSSH_CLIENT */
+
 
 #ifndef NO_MAIN_DRIVER
 
@@ -344,7 +347,9 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         wolfSSH_Init();
 
         ChangeToWolfSshRoot();
+#ifndef NO_WOLFSSH_CLIENT
         client_test(&args);
+#endif
 
         wolfSSH_Cleanup();
 

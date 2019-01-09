@@ -254,6 +254,8 @@ const char* wolfSSH_ErrorToName(int err)
 }
 
 
+#ifndef NO_WOLFSSH_SERVER
+
 const char acceptError[] = "accept error: %s, %d";
 const char acceptState[] = "accept state: %s";
 
@@ -434,6 +436,10 @@ int wolfSSH_accept(WOLFSSH* ssh)
     return WS_SUCCESS;
 }
 
+#endif /* NO_WOLFSSH_SERVER */
+
+
+#ifndef NO_WOLFSSH_CLIENT
 
 const char connectError[] = "connect error: %s, %d";
 const char connectState[] = "connect state: %s";
@@ -473,7 +479,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
 
         case CONNECT_SERVER_VERSION_DONE:
             if ( (ssh->error = SendKexInit(ssh)) < WS_SUCCESS) {
-                WLOG(WS_LOG_DEBUG, acceptError,
+                WLOG(WS_LOG_DEBUG, connectError,
                      "SERVER_VERSION_DONE", ssh->error);
                 return WS_FATAL_ERROR;
             }
@@ -647,6 +653,8 @@ int wolfSSH_connect(WOLFSSH* ssh)
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_connect()");
     return WS_SUCCESS;
 }
+
+#endif /* NO_WOLFSSH_CLIENT */
 
 
 int wolfSSH_shutdown(WOLFSSH* ssh)
@@ -1232,7 +1240,8 @@ int wolfSSH_ChannelSend(WOLFSSH_CHANNEL* channel,
 {
     int bytesTxd = 0;
 
-    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelSend(), ID = %d, peerID = %d", channel->channel, channel->peerChannel);
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelSend(), ID = %d, peerID = %d",
+            channel->channel, channel->peerChannel);
 
 #ifdef DEBUG_WOLFSSH
     DumpOctetString(buf, bufSz);

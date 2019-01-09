@@ -39,6 +39,8 @@
 #endif
 
 
+#ifndef NO_WOLFSSH_SERVER
+
 static const char serverBanner[] = "wolfSSH Example Server\n";
 
 
@@ -709,6 +711,9 @@ THREAD_RETURN WOLFSSH_THREAD server_test(void* args)
     return 0;
 }
 
+#endif /* NO_WOLFSSH_SERVER */
+
+
 #ifndef NO_MAIN_DRIVER
 
     int main(int argc, char** argv)
@@ -728,7 +733,9 @@ THREAD_RETURN WOLFSSH_THREAD server_test(void* args)
 
         wolfSSH_Init();
 
+#ifndef NO_WOLFSSH_SERVER
         server_test(&args);
+#endif
 
         wolfSSH_Cleanup();
 

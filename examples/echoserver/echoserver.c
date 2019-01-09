@@ -46,6 +46,8 @@
 #endif
 
 
+#ifndef NO_WOLFSSH_SERVER
+
 static const char echoserverBanner[] = "wolfSSH Example Echo Server\n";
 
 
@@ -179,14 +181,11 @@ static int ssh_worker(thread_ctx_t* threadCtx) {
  * returns 0 on success
  */
 static int sftp_worker(thread_ctx_t* threadCtx) {
-    int ret = 0;
+    int ret;
 
-    (void)threadCtx;
-#ifndef NO_WOLFSSH_SERVER
     do {
         ret = wolfSSH_SFTP_read(threadCtx->ssh);
     } while (ret != WS_FATAL_ERROR);
-#endif
 
     return ret;
 }
@@ -815,6 +814,8 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     return 0;
 }
 
+#endif /* NO_WOLFSSH_SERVER */
+
 
 #ifndef NO_MAIN_DRIVER
 
@@ -836,7 +837,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 #ifndef WOLFSSL_NUCLEUS
         ChangeToWolfSshRoot();
 #endif
+#ifndef NO_WOLFSSH_SERVER
         echoserver_test(&args);
+#endif
 
         wolfSSH_Cleanup();
 
