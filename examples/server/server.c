@@ -735,6 +735,8 @@ THREAD_RETURN WOLFSSH_THREAD server_test(void* args)
 
 #ifndef NO_WOLFSSH_SERVER
         server_test(&args);
+#else
+        printf("wolfSSH compiled without server support\n");
 #endif
 
         wolfSSH_Cleanup();
