@@ -119,6 +119,7 @@ extern "C" {
     }
     #define WCHMOD(f,m) wChmod((f),(m))
 #else
+    #include <stdlib.h>
     #define WFILE FILE
     WOLFSSH_API int wfopen(WFILE**, const char*, const char*);
 
@@ -142,9 +143,11 @@ extern "C" {
         !defined(WOLFSSH_SCP_USER_CALLBACKS)
 
         #ifdef USE_WINDOWS_API
-            #include <direct.h>
-            #define WCHDIR(p) _chdir((p))
-            #define WMKDIR(p,m) _mkdir((p))
+            #ifndef _WIN32_WCE
+                #include <direct.h>
+                #define WCHDIR(p) _chdir((p))
+                #define WMKDIR(p,m) _mkdir((p))
+            #endif
         #else
             #include <unistd.h>
             #include <sys/stat.h>
@@ -179,7 +182,7 @@ extern "C" {
         #define WSTRNCPY(s1,s2,n) strncpy_s((s1),(n),(s2),(n))
         #define WSTRNCASECMP(s1,s2,n) _strnicmp((s1),(s2),(n))
         #define WSNPRINTF(s,n,f,...) _snprintf_s((s),(n),(n),(f),##__VA_ARGS__)
-        #define WVSNPRINTF(s,n,f,...) vsnprintf_s((s),(n),(n),(f),##__VA_ARGS__)
+        #define WVSNPRINTF(s,n,f,...) _vsnprintf_s((s),(n),(n),(f),##__VA_ARGS__)
     #elif defined(MICROCHIP_MPLAB_HARMONY) || defined(MICROCHIP_PIC32)
         #include <stdio.h>
         #define WSTRNCPY(s1,s2,n) strncpy((s1),(s2),(n))

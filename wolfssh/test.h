@@ -13,7 +13,9 @@
 
 #ifdef USE_WINDOWS_API
     #include <winsock2.h>
-    #include <process.h>
+    #ifndef _WIN32_WCE
+        #include <process.h>
+    #endif
     #include <assert.h>
     #ifdef TEST_IPV6            /* don't require newer SDK for IPV4 */
         #include <ws2tcpip.h>
