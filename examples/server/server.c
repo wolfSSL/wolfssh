@@ -124,6 +124,7 @@ static int NonBlockSSH_accept(WOLFSSH* ssh)
             select_ret == WS_SELECT_ERROR_READY)
         {
             ret = wolfSSH_accept(ssh);
+            error = wolfSSH_get_error(ssh);
         }
         else if (select_ret == WS_SELECT_TIMEOUT)
             error = WS_WANT_READ;
@@ -213,6 +214,8 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
         free(buf);
     } else if (ret == WS_SCP_COMPLETE) {
         printf("scp file transfer completed\n");
+    } else if (ret == WS_SFTP_COMPLETE) {
+        printf("Use example/echoserver/echoserver for SFTP\n");
     }
     wolfSSH_stream_exit(threadCtx->ssh, 0);
     WCLOSESOCKET(threadCtx->fd);

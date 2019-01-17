@@ -48,6 +48,8 @@
 
 #ifndef NO_WOLFSSH_SERVER
 
+#define TEST_SFTP_TIMEOUT 10
+
 static const char echoserverBanner[] = "wolfSSH Example Echo Server\n";
 
 
@@ -55,6 +57,7 @@ typedef struct {
     WOLFSSH* ssh;
     SOCKET_T fd;
     word32 id;
+    char   nonBlock;
 } thread_ctx_t;
 
 
@@ -181,22 +184,85 @@ static int ssh_worker(thread_ctx_t* threadCtx) {
  * returns 0 on success
  */
 static int sftp_worker(thread_ctx_t* threadCtx) {
-    int ret;
+    int ret   = WS_SUCCESS;
+    int error = WS_SUCCESS;
+    SOCKET_T sockfd;
+    int select_ret = 0;
 
+    sockfd = (SOCKET_T)wolfSSH_get_fd(threadCtx->ssh);
     do {
-        ret = wolfSSH_SFTP_read(threadCtx->ssh);
+        if (error == WS_WANT_READ)
+            printf("... sftp server would read block\n");
+        else if (error == WS_WANT_WRITE)
+            printf("... sftp server would write block\n");
+
+        select_ret = tcp_select(sockfd, TEST_SFTP_TIMEOUT);
+        if (select_ret == WS_SELECT_RECV_READY ||
+            select_ret == WS_SELECT_ERROR_READY)
+        {
+            ret = wolfSSH_SFTP_read(threadCtx->ssh);
+            error = wolfSSH_get_error(threadCtx->ssh);
+        }
+        else if (select_ret == WS_SELECT_TIMEOUT)
+            error = WS_WANT_READ;
+        else
+            error = WS_FATAL_ERROR;
+
+        if (error == WS_WANT_READ || error == WS_WANT_WRITE)
+            ret = WS_WANT_READ;
+
     } while (ret != WS_FATAL_ERROR);
 
     return ret;
 }
 #endif
 
-static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
+static int NonBlockSSH_accept(WOLFSSH* ssh)
 {
     int ret;
+    int error;
+    SOCKET_T sockfd;
+    int select_ret = 0;
+
+    ret = wolfSSH_accept(ssh);
+    error = wolfSSH_get_error(ssh);
+    sockfd = (SOCKET_T)wolfSSH_get_fd(ssh);
+
+    while ((ret != WS_SUCCESS && ret != WS_SCP_COMPLETE && ret != WS_SFTP_COMPLETE)
+            && (error == WS_WANT_READ || error == WS_WANT_WRITE))
+    {
+        if (error == WS_WANT_READ)
+            printf("... server would read block\n");
+        else if (error == WS_WANT_WRITE)
+            printf("... server would write block\n");
+
+        select_ret = tcp_select(sockfd, 1);
+        if (select_ret == WS_SELECT_RECV_READY ||
+            select_ret == WS_SELECT_ERROR_READY)
+        {
+            ret = wolfSSH_accept(ssh);
+            error = wolfSSH_get_error(ssh);
+        }
+        else if (select_ret == WS_SELECT_TIMEOUT)
+            error = WS_WANT_READ;
+        else
+            error = WS_FATAL_ERROR;
+    }
+
+    return ret;
+}
+
+
+static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
+{
+    int ret = 0;
     thread_ctx_t* threadCtx = (thread_ctx_t*)vArgs;
 
-    ret = wolfSSH_accept(threadCtx->ssh);
+    if (!threadCtx->nonBlock)
+        ret = wolfSSH_accept(threadCtx->ssh);
+    else
+        ret = NonBlockSSH_accept(threadCtx->ssh);
+
     switch (ret) {
         case WS_SCP_COMPLETE:
             printf("scp file transfer completed\n");
@@ -573,6 +639,7 @@ static void ShowUsage(void)
     printf(" -1            exit after single (one) connection\n");
     printf(" -e            use ECC private key\n");
     printf(" -p <num>      port to connect on, default %d\n", wolfSshPort);
+    printf(" -N            use non-blocking sockets\n");
 }
 
 
@@ -605,13 +672,14 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     int ch;
     word16 port = wolfSshPort;
     char* readyFile = NULL;
+    char  nonBlock  = 0;
 
     int     argc = serverArgs->argc;
     char**  argv = serverArgs->argv;
     serverArgs->return_code = 0;
 
     if (argc > 0) {
-    while ((ch = mygetopt(argc, argv, "?1ep:R:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?1ep:R:N")) != -1) {
         switch (ch) {
             case '?' :
                 ShowUsage();
@@ -635,6 +703,10 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
             case 'R':
                 readyFile = myoptarg;
+                break;
+
+            case 'N':
+                nonBlock = 1;
                 break;
 
             default:
@@ -794,11 +866,15 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         if (clientFd == -1)
             err_sys("tcp accept failed");
 
+        if (nonBlock)
+            tcp_set_nonblocking(&clientFd);
+
         wolfSSH_set_fd(ssh, (int)clientFd);
 
         threadCtx->ssh = ssh;
         threadCtx->fd = clientFd;
         threadCtx->id = threadCount++;
+        threadCtx->nonBlock = nonBlock;
 
         server_worker(threadCtx);
 

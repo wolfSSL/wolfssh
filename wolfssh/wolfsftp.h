@@ -206,24 +206,26 @@ WOLFSSH_API int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to,
 WOLFSSH_API int wolfSSH_SFTP_read(WOLFSSH* ssh);
 
 
-WOLFSSH_LOCAL int wolfSSH_SFTP_SendStatus(WOLFSSH* ssh, word32 status,
-        word32 reqId, const char* reason, const char* lang);
-WOLFSSH_LOCAL int wolfSSH_SFTP_RecvRMDIR(WOLFSSH* ssh, int reqId, word32 maxSz);
-WOLFSSH_LOCAL int wolfSSH_SFTP_RecvMKDIR(WOLFSSH* ssh, int reqId, word32 maxSz);
-WOLFSSH_LOCAL int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, word32 maxSz);
-WOLFSSH_LOCAL int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, word32 maxSz);
-WOLFSSH_LOCAL int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, word32 maxSz);
-WOLFSSH_LOCAL int wolfSSH_SFTP_RecvClose(WOLFSSH* ssh, int reqId, word32 maxSz);
-WOLFSSH_LOCAL int wolfSSH_SFTP_RecvRemove(WOLFSSH* ssh, int reqId, word32 maxSz);
-WOLFSSH_LOCAL int wolfSSH_SFTP_RecvRename(WOLFSSH* ssh, int reqId, word32 maxSz);
-WOLFSSH_LOCAL int wolfSSH_SFTP_RecvSTAT(WOLFSSH* ssh, int reqId, word32 maxSz);
-WOLFSSH_LOCAL int wolfSSH_SFTP_RecvLSTAT(WOLFSSH* ssh, int reqId, word32 maxSz);
-WOLFSSH_LOCAL int wolfSSH_SFTP_RecvSetSTAT(WOLFSSH* ssh, int reqId, word32 maxSz);
-WOLFSSH_LOCAL int wolfSSH_SFTP_RecvFSTAT(WOLFSSH* ssh, int reqId, word32 maxSz);
+WOLFSSH_LOCAL int wolfSSH_SFTP_CreateStatus(WOLFSSH* ssh, word32 status,
+        word32 reqId, const char* reason, const char* lang, byte* out, word32* outSz);
+WOLFSSH_LOCAL int wolfSSH_SFTP_RecvRMDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz);
+WOLFSSH_LOCAL int wolfSSH_SFTP_RecvMKDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz);
+WOLFSSH_LOCAL int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz);
+WOLFSSH_LOCAL int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz);
+WOLFSSH_LOCAL int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz);
+WOLFSSH_LOCAL int wolfSSH_SFTP_RecvClose(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz);
+WOLFSSH_LOCAL int wolfSSH_SFTP_RecvRemove(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz);
+WOLFSSH_LOCAL int wolfSSH_SFTP_RecvRename(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz);
+WOLFSSH_LOCAL int wolfSSH_SFTP_RecvSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz);
+WOLFSSH_LOCAL int wolfSSH_SFTP_RecvLSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz);
+WOLFSSH_LOCAL int wolfSSH_SFTP_RecvSetSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz);
+WOLFSSH_LOCAL int wolfSSH_SFTP_RecvFSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz);
 
 #ifndef NO_WOLFSSH_DIR
-WOLFSSH_LOCAL int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, word32 maxSz);
-WOLFSSH_LOCAL int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, word32 maxSz);
+WOLFSSH_LOCAL int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data,
+        word32 maxSz);
+WOLFSSH_LOCAL int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, byte* data,
+        word32 maxSz);
 WOLFSSH_LOCAL int wolfSSH_SFTP_RecvCloseDir(WOLFSSH* ssh, byte* handle,
         word32 handleSz);
 #endif /* NO_WOLFSSH_DIR */

@@ -260,6 +260,9 @@ const char* GetErrorString(int err)
         case WS_SFTP_FILE_DNE:
             return "sftp file does not exist";
 
+        case WS_SIZE_ONLY:
+            return "Only getting the size of buffer needed";
+
         default:
             return "Unknown error code";
     }
