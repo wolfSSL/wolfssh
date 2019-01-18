@@ -766,14 +766,13 @@ int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz)
     if (ssh->error == WS_WANT_WRITE && ssh->outputBuffer.length != 0) {
         int ret;
 
-        bytesTxd = ssh->outputBuffer.length;
-        WLOG(WS_LOG_DEBUG, "Trying to resend %d bytes\n", bytesTxd);
+        bytesTxd = ssh->outputBuffer.plainSz;
+        WLOG(WS_LOG_DEBUG, "\n\nTrying to resend %d bytes\n\n\n", bytesTxd);
         ssh->error = WS_SUCCESS;
         ret = wolfSSH_SendPacket(ssh);
 
         /* return the amount sent on success otherwise return error found */
-        return (ret == WS_SUCCESS)?
-            bytesTxd - (int)ssh->outputBuffer.length : ret;
+        return (ret == WS_SUCCESS)? bytesTxd : ret;
     }
 
     bytesTxd = SendChannelData(ssh, ssh->channelList->peerChannel, buf, bufSz);

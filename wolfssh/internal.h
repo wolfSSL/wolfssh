@@ -155,6 +155,7 @@ WOLFSSH_LOCAL const char* IdToName(byte);
 
 typedef struct Buffer {
     void* heap;       /* Heap for allocations */
+    int   plainSz;    /* amount of plain text bytes to send with WANT_WRITE */
     word32 length;    /* total buffer length used */
     word32 idx;       /* idx to part of length already consumed */
     byte* buffer;     /* place holder for actual buffer */

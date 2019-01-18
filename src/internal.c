@@ -1410,6 +1410,7 @@ int wolfSSH_SendPacket(WOLFSSH* ssh)
     }
 
     ssh->outputBuffer.idx = 0;
+    ssh->outputBuffer.plainSz = 0;
 
     WLOG(WS_LOG_DEBUG, "SB: Shrinking output buffer");
     ShrinkBuffer(&ssh->outputBuffer, 0);
@@ -7146,6 +7147,9 @@ int SendChannelData(WOLFSSH* ssh, word32 peerChannel,
 
     if (ret == WS_SUCCESS)
         ret = dataSz;
+
+    if (ssh->error == WS_WANT_WRITE)
+        ssh->outputBuffer.plainSz = dataSz;
 
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelData(), ret = %d", ret);
     return ret;
