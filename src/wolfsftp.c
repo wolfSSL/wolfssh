@@ -1421,14 +1421,12 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     ato32(data + idx, &sz); idx += UINT32_SZ;
     if (sz + idx > maxSz) {
-        WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
         return WS_BUFFER_E;
     }
 
     /* plus one to make sure is null terminated */
     dir = (char*)WMALLOC(sz + 1, ssh->ctx->heap, DYNTYPE_BUFFER);
     if (dir == NULL) {
-        WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
         return WS_MEMORY_E;
     }
     WMEMCPY(dir, data + idx, sz);
@@ -1666,20 +1664,16 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     ato32(data + idx, &sz);
     idx += UINT32_SZ;
     if (sz + idx > maxSz) {
-        WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
         return WS_BUFFER_E;
     }
 
     /* plus one to make sure is null terminated */
     dirName = (char*)WMALLOC(sz + 1, ssh->ctx->heap, DYNTYPE_BUFFER);
     if (dirName == NULL) {
-        WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
         return WS_MEMORY_E;
     }
     WMEMCPY(dirName, data + idx, sz);
     dirName[sz] = '\0';
-    WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
-
     clean_path(dirName);
 
     /* get directory handle */
@@ -2519,7 +2513,6 @@ int wolfSSH_SFTP_RecvRemove(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
     name = (char*)WMALLOC(sz + 1, ssh->ctx->heap, DYNTYPE_BUFFER);
     if (name == NULL) {
-        WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
         return WS_MEMORY_E;
     }
     WMEMCPY(name, data + idx, sz);
@@ -3039,7 +3032,6 @@ int wolfSSH_SFTP_RecvFSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     ato32(data + idx, &handleSz); idx += UINT32_SZ;
     if (handleSz + idx > maxSz) {
-        WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
         return WS_BUFFER_E;
     }
     handle = data + idx;

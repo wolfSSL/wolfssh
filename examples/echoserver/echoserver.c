@@ -127,6 +127,20 @@ static int ssh_worker(thread_ctx_t* threadCtx) {
             buf = tmpBuf;
 
         if (!stop) {
+            if (threadCtx->nonBlock) {
+                SOCKET_T sockfd;
+                int select_ret = 0;
+
+                sockfd = (SOCKET_T)wolfSSH_get_fd(threadCtx->ssh);
+
+                select_ret = tcp_select(sockfd, 1);
+                if (select_ret != WS_SELECT_RECV_READY &&
+                    select_ret != WS_SELECT_ERROR_READY &&
+                    select_ret != WS_SELECT_TIMEOUT) {
+                    break;
+                }
+            }
+
             rxSz = wolfSSH_stream_read(threadCtx->ssh,
                                        buf + backlogSz,
                                        EXAMPLE_BUFFER_SZ);
@@ -161,16 +175,26 @@ static int ssh_worker(thread_ctx_t* threadCtx) {
                         }
                         txSum += txSz;
                     }
-                    else if (txSz != WS_REKEYING)
-                        stop = 1;
+                    else if (txSz != WS_REKEYING) {
+                        int error = wolfSSH_get_error(threadCtx->ssh);
+                        if (error != WS_WANT_WRITE) {
+                            stop = 1;
+                        }
+                        else {
+                            txSz = 0;
+                        }
+                    }
                 }
 
                 if (txSum < backlogSz)
                     memmove(buf, buf + txSum, backlogSz - txSum);
                 backlogSz -= txSum;
             }
-            else
-                stop = 1;
+            else {
+                int error = wolfSSH_get_error(threadCtx->ssh);
+                if (error != WS_WANT_READ)
+                    stop = 1;
+            }
         }
     } while (!stop);
 
