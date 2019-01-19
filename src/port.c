@@ -1,4 +1,4 @@
-/* port.c 
+/* port.c
  *
  * Copyright (C) 2014-2016 wolfSSL Inc.
  *
@@ -31,8 +31,11 @@
     #include <config.h>
 #endif
 
-#include <stdio.h>
+
 #include <wolfssh/port.h>
+#ifndef USE_WINDOWS_API
+    #include <stdio.h>
+#endif
 
 
 #ifndef NO_FILESYSTEM
@@ -79,6 +82,7 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
 #endif
 }
 
+#if 0
 #if defined(USE_WINDOWS_API) && (defined(WOLFSSH_SFTP) || \
     defined(WOLFSSH_SCP)) && !defined(NO_WOLFSSH_SERVER)
 int wPwrite(WFD fd, unsigned char* buf, unsigned int sz, long ofst)
@@ -123,6 +127,7 @@ int wPread(WFD fd, unsigned char* buf, unsigned int sz, long ofst)
 }
 
 #endif /* USE_WINDOWS_API */
+#endif
 #endif /* !NO_FILESYSTEM */
 
 #ifndef WSTRING_USER

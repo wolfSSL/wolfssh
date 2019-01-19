@@ -120,6 +120,9 @@ extern "C" {
     #define WCHMOD(f,m) wChmod((f),(m))
 #else
     #include <stdlib.h>
+    #ifndef _WIN32_WCE
+        #include <stdio.h>
+    #endif
     #define WFILE FILE
     WOLFSSH_API int wfopen(WFILE**, const char*, const char*);
 

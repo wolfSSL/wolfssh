@@ -28,6 +28,10 @@
 
 #include <wolfssh/ssh.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Packet Types */
 enum WS_PacketTypes {
     WOLFSSH_FTP_INIT     = 1,
@@ -79,7 +83,7 @@ enum WS_SFTPConnectStates {
     SFTP_BEGIN = 20,
     SFTP_RECV,
     SFTP_EXT,
-    SFTP_DONE,
+    SFTP_DONE
 };
 
 
@@ -233,3 +237,8 @@ WOLFSSH_LOCAL int wolfSSH_SFTP_RecvCloseDir(WOLFSSH* ssh, byte* handle,
 WOLFSSL_LOCAL int wolfSSH_SFTP_free(WOLFSSH* ssh);
 WOLFSSL_LOCAL int SFTP_AddHandleNode(WOLFSSH* ssh, byte* handle, word32 handleSz, char* name);
 WOLFSSL_LOCAL int SFTP_RemoveHandleNode(WOLFSSH* ssh, byte* handle, word32 handleSz);
+
+
+#ifdef __cplusplus
+}
+#endif
