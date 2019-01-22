@@ -1552,7 +1552,6 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     word32 reason;
     word32 idx = 0;
     DWORD desiredAccess = 0;
-    DWORD shareMode = 0;
     DWORD creationDisp = 0;
     DWORD flagsAndAttrs = 0;
     int ret = WS_SUCCESS;
@@ -1609,10 +1608,10 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     if (reason & WOLFSSH_FXF_CREAT)
         creationDisp |= CREATE_ALWAYS;
-    if (reason & WOLFSSH_FXF_TRUNC)
-        creationDisp |= TRUNCATE_EXISTING;
-    if (reason & WOLFSSH_FXF_EXCL)
-        creationDisp |= CREATE_NEW;
+//    if (reason & WOLFSSH_FXF_TRUNC)
+//        creationDisp |= TRUNCATE_EXISTING;
+//    if (reason & WOLFSSH_FXF_EXCL)
+//        creationDisp |= CREATE_NEW;
 
 #if 0
     /* if file permissions not set then use default */
@@ -1623,8 +1622,8 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     atr.per = FILE_ATTRIBUTE_NORMAL;
 
     clean_path(dir);
-    fileHandle = CreateFileA(dir, desiredAccess, shareMode, NULL, creationDisp,
-            atr.per, NULL);
+    fileHandle = CreateFileA(dir, desiredAccess, 0, NULL, creationDisp,
+            FILE_ATTRIBUTE_NORMAL, NULL);
     if (fileHandle == INVALID_HANDLE_VALUE) {
         WLOG(WS_LOG_SFTP, "Error opening file %s", dir);
         res = oer;
@@ -6961,6 +6960,12 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                 state->fileHandle = CreateFileA(from, GENERIC_READ,
                         FILE_SHARE_READ, NULL, OPEN_EXISTING,
                         FILE_ATTRIBUTE_NORMAL, NULL);
+                if (state->fileHandle == INVALID_HANDLE_VALUE) {
+                    ssh->error = WS_SFTP_FILE_DNE;
+                    ret = WS_FATAL_ERROR;
+                    state->state = STATE_PUT_CLEANUP;
+                    continue;
+                }
                 if (resume) {
                     WMEMSET(&state->offset, 0, sizeof(OVERLAPPED));
                     state->offset.OffsetHigh = 0;
