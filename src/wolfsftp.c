@@ -231,7 +231,12 @@ enum WS_SFTP_GET_STATE_ID {
 typedef struct WS_SFTP_GET_STATE {
     enum WS_SFTP_GET_STATE_ID state;
     WS_SFTP_FILEATRB attrib;
+#ifndef USE_WINDOWS_API
     WFILE* fl;
+#else
+    HANDLE fileHandle;
+    OVERLAPPED offset;
+#endif
     long gOfst;
     word32 handleSz;
     byte handle[WOLFSSH_MAX_HANDLE];
@@ -252,7 +257,12 @@ enum WS_SFTP_PUT_STATE_ID {
 
 typedef struct WS_SFTP_PUT_STATE {
     enum WS_SFTP_PUT_STATE_ID state;
+#ifndef USE_WINDOWS_API
     WFILE* fl;
+#else
+    HANDLE fileHandle;
+    OVERLAPPED offset;
+#endif
     long pOfst;
     word32 handleSz;
     int rSz;
@@ -856,35 +866,39 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, byte* data,
     r[rSz] = '\0';
 
     /* get working directory in the case of receiving non absolute path */
-#ifndef USE_WINDOWS_API
     if (r[0] != '/' && r[1] != ':') {
         char wd[WOLFSSH_MAX_FILENAME];
-
-        if (WGETCWD(wd, WOLFSSH_MAX_FILENAME) == NULL) {
-            WLOG(WS_LOG_SFTP, "Unable to get current working directory");
-            if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
-                    "Directory error", "English", NULL, &outSz)
-                    != WS_SIZE_ONLY) {
-                return WS_FATAL_ERROR;
+        if (ssh->sftpDefaultPath) {
+            XSTRNCPY(wd, ssh->sftpDefaultPath, sizeof(wd));
+        }
+        else {
+        #ifndef USE_WINDOWS_API
+            if (WGETCWD(wd, WOLFSSH_MAX_FILENAME) == NULL) {
+                WLOG(WS_LOG_SFTP, "Unable to get current working directory");
+                if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
+                        "Directory error", "English", NULL, &outSz)
+                        != WS_SIZE_ONLY) {
+                    return WS_FATAL_ERROR;
+                }
+                out = (byte*) WMALLOC(outSz, ssh->ctx->heap, DYNTYPE_BUFFER);
+                if (out == NULL) {
+                    return WS_MEMORY_E;
+                }
+                if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
+                        "Directory error", "English", out, &outSz)
+                        != WS_SUCCESS) {
+                    WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
+                    return WS_FATAL_ERROR;
+                }
+                wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
+                return WS_BAD_FILE_E;
             }
-            out = (byte*) WMALLOC(outSz, ssh->ctx->heap, DYNTYPE_BUFFER);
-            if (out == NULL) {
-                return WS_MEMORY_E;
-            }
-            if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
-                    "Directory error", "English", out, &outSz)
-                    != WS_SUCCESS) {
-                WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
-                return WS_FATAL_ERROR;
-            }
-            wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
-            return WS_BAD_FILE_E;
+        #endif
         }
         WSTRNCAT(wd, "/", WOLFSSH_MAX_FILENAME);
         WSTRNCAT(wd, r, WOLFSSH_MAX_FILENAME);
         WMEMCPY(r, wd, WOLFSSH_MAX_FILENAME);
     }
-#endif /* USE_WINDOWS_API */
 
     clean_path(r);
     rSz = (int)WSTRLEN(r);
@@ -1013,12 +1027,12 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
                     ret = wolfSSH_SFTP_RecvSTAT(ssh, state->reqId,
                             state->data, state->sz);
                     break;
+            #endif
 
                 case WOLFSSH_FTP_LSTAT:
                     ret = wolfSSH_SFTP_RecvLSTAT(ssh, state->reqId,
                             state->data, state->sz);
                     break;
-            #endif
 
             #ifndef USE_WINDOWS_API
                 case WOLFSSH_FTP_FSTAT:
@@ -2197,6 +2211,26 @@ static int wolfSSH_SFTP_SendName(WOLFSSH* ssh, WS_SFTPNAME* list, word32 count,
 }
 
 
+int wolfSSH_SFTP_SetDefaultPath(WOLFSSH* ssh, const char* path)
+{
+    if (ssh == NULL)
+        return WS_BAD_ARGUMENT;
+
+    if (path != NULL) {
+        word32 sftpDefaultPathSz;
+        sftpDefaultPathSz = (word32)XSTRLEN(path) + 1;
+        ssh->sftpDefaultPath = (char*)XMALLOC(sftpDefaultPathSz,
+                ssh->ctx->heap, DYNTYPE_STRING);
+        if (ssh->sftpDefaultPath == NULL) {
+            ssh->error = WS_MEMORY_E;
+            return WS_FATAL_ERROR;
+        }
+        XSTRNCPY(ssh->sftpDefaultPath, path, sftpDefaultPathSz);
+    }
+    return WS_SUCCESS;
+}
+
+
 /* Handles packet to read a directory
  *
  * returns WS_SUCCESS on success
@@ -3365,10 +3399,8 @@ int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr, byte link)
     atr->flags |= WOLFSSH_FILEATRB_SIZE;
     atr->sz = (((word64)stats.nFileSizeHigh << 32) | stats.nFileSizeLow);
 
-#if 0
     atr->flags |= WOLFSSH_FILEATRB_PERM;
     atr->per = (word32)stats.dwFileAttributes;
-#endif
 
 #if 0
     /* @TODO handle the constellation of possible Windows FILETIMEs */
@@ -6729,10 +6761,26 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
 
             case STATE_GET_OPEN_LOCAL:
                 WLOG(WS_LOG_SFTP, "SFTP GET STATE: OPEN LOCAL");
-                if (state->gOfst > 0)
-                    ret = WFOPEN(&state->fl, to, "ab");
-                else
-                    ret = WFOPEN(&state->fl, to, "wb");
+                #ifndef USE_WINDOWS_API
+                    if (state->gOfst > 0)
+                        ret = WFOPEN(&state->fl, to, "ab");
+                    else
+                        ret = WFOPEN(&state->fl, to, "wb");
+                #else /* USE_WINDOWS_API */
+                    {
+                        DWORD desiredAccess = GENERIC_WRITE;
+                        if (state->gOfst > 0)
+                            desiredAccess |= FILE_APPEND_DATA;
+                        state->fileHandle = CreateFileA(to, desiredAccess,
+                                0, NULL, CREATE_NEW,
+                                FILE_ATTRIBUTE_NORMAL, NULL);
+                    }
+                    if (resume) {
+                        WMEMSET(&state->offset, 0, sizeof(OVERLAPPED));
+                        state->offset.OffsetHigh = 0;
+                        state->offset.Offset = (DWORD)state->gOfst;
+                    }
+                #endif /* USE_WINDOWS_API */
                 if (ret != 0) {
                     WLOG(WS_LOG_SFTP, "Unable to open output file");
                     ssh->error = WS_BAD_FILE_E;
@@ -6762,6 +6810,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                         break;
                     }
                     else {
+                    #ifndef USE_WINDOWS_API
                         if ((long)WFWRITE(state->r, 1,
                                           sz, state->fl) != sz) {
                             WLOG(WS_LOG_SFTP, "Error writing to file");
@@ -6770,7 +6819,21 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                             state->state = STATE_GET_CLEANUP;
                             break;
                         }
+                    #else /* USE_WINDOWS_API */
+                        {
+                            DWORD bytesWritten;
+                            if (WriteFile(state->fileHandle, state->r, sz,
+                                         &bytesWritten, &state->offset) == 0 ||
+                                    (DWORD)sz != bytesWritten) {
+                                break; /* either at end of file or error */
+                            }
+                        }
+                    #endif /* USE_WINDOWS_API */
                         state->gOfst += sz;
+                        #ifdef USE_WINDOWS_API
+                            state->offset.OffsetHigh = 0;
+                            state->offset.Offset = (DWORD)state->gOfst;
+                        #endif /* USE_WINDOWS_API */
                         if (statusCb != NULL) {
                             statusCb(ssh, state->gOfst, from);
                         }
@@ -6788,7 +6851,11 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
 
             case STATE_GET_CLOSE_LOCAL:
                 WLOG(WS_LOG_SFTP, "SFTP GET STATE: CLOSE LOCAL");
-                WFCLOSE(state->fl);
+                #ifndef USE_WINDOWS_API
+                    WFCLOSE(state->fl);
+                #else /* USE_WINDOWS_API */
+                    CloseHandle(state->fileHandle);
+                #endif /* USE_WINDOWS_API */
                 state->state = STATE_GET_CLOSE_REMOTE;
                 FALL_THROUGH;
 
@@ -6878,6 +6945,7 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
 
             case STATE_PUT_OPEN_LOCAL:
                 WLOG(WS_LOG_SFTP, "SFTP PUT STATE: OPEN LOCAL");
+            #ifndef USE_WINDOWS_API
                 ret = WFOPEN(&state->fl, from, "rb");
                 if (ret != 0) {
                     WLOG(WS_LOG_SFTP, "Unable to open input file");
@@ -6889,6 +6957,16 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                 if (resume) {
                     WFSEEK(state->fl, state->pOfst, 0);
                 }
+            #else /* USE_WINDOWS_API */
+                state->fileHandle = CreateFileA(from, GENERIC_READ,
+                        FILE_SHARE_READ, NULL, OPEN_EXISTING,
+                        FILE_ATTRIBUTE_NORMAL, NULL);
+                if (resume) {
+                    WMEMSET(&state->offset, 0, sizeof(OVERLAPPED));
+                    state->offset.OffsetHigh = 0;
+                    state->offset.Offset = (DWORD)state->pOfst;
+                }
+            #endif /* USE_WINDOWS_API */
                 state->rSz = 0;
                 state->state = STATE_PUT_OPEN_REMOTE;
                 FALL_THROUGH;
@@ -6915,11 +6993,19 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                 WLOG(WS_LOG_SFTP, "SFTP PUT STATE: WRITE");
                 do {
                     if (state->rSz == 0) {
+                    #ifndef USE_WINDOWS_API
                         state->rSz = (int)WFREAD(state->r,
                                 1, WOLFSSH_MAX_SFTP_RW, state->fl);
                         if (state->rSz <= 0) {
                             break; /* either at end of file or error */
                         }
+                    #else /* USE_WINDOWS_API */
+                        if (ReadFile(state->fileHandle, state->r,
+                                     WOLFSSH_MAX_SFTP_RW, &state->rSz,
+                                     &state->offset) == 0) {
+                            break; /* either at end of file or error */
+                        }
+                    #endif /* USE_WINDOWS_API */
                     }
                     sz = wolfSSH_SFTP_SendWritePacket(ssh,
                             state->handle, state->handleSz, state->pOfst,
@@ -6931,6 +7017,10 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                     }
                     else {
                         state->pOfst += sz;
+                        #ifdef USE_WINDOWS_API
+                            state->offset.OffsetHigh = 0;
+                            state->offset.Offset = (DWORD)state->pOfst;
+                        #endif /* USE_WINDOWS_API */
                         state->rSz -= sz;
                         if (statusCb != NULL) {
                             statusCb(ssh, state->pOfst, from);
@@ -6948,7 +7038,11 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
 
             case STATE_PUT_CLOSE_LOCAL:
                 WLOG(WS_LOG_SFTP, "SFTP PUT STATE: CLOSE LOCAL");
+            #ifndef USE_WINDOWS_API
                 WFCLOSE(state->fl);
+            #else /* USE_WINDOWS_API */
+                CloseHandle(state->fileHandle);
+            #endif /* USE_WINDOWS_API */
                 state->state = STATE_PUT_CLOSE_REMOTE;
                 FALL_THROUGH;
 

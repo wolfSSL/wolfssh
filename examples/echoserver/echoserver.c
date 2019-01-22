@@ -696,6 +696,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     int ch;
     word16 port = wolfSshPort;
     char* readyFile = NULL;
+    const char* defaultSftpPath = NULL;
     char  nonBlock  = 0;
 
     int     argc = serverArgs->argc;
@@ -703,7 +704,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     serverArgs->return_code = 0;
 
     if (argc > 0) {
-    while ((ch = mygetopt(argc, argv, "?1ep:R:N")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?1d:ep:R:N")) != -1) {
         switch (ch) {
             case '?' :
                 ShowUsage();
@@ -731,6 +732,10 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
             case 'N':
                 nonBlock = 1;
+                break;
+
+            case 'd':
+                defaultSftpPath = myoptarg;
                 break;
 
             default:
@@ -857,6 +862,16 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             wolfSSH_SetHighwaterCtx(ssh, (void*)ssh);
             wolfSSH_SetHighwater(ssh, defaultHighwater);
         }
+
+    #ifdef WOLFSSH_SFTP
+        if (defaultSftpPath) {
+            if (wolfSSH_SFTP_SetDefaultPath(ssh, defaultSftpPath)
+                    != WS_SUCCESS) {
+                fprintf(stderr, "Couldn't store default sftp path.\n");
+                exit(EXIT_FAILURE);
+            }
+        }
+    #endif
 
     #ifdef WOLFSSL_NUCLEUS
         {

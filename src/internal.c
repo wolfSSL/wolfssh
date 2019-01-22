@@ -548,6 +548,12 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
     ssh->scpBasePathSz = 0;
 #endif
 #endif
+#ifdef WOLFSSH_SFTP
+    if (ssh->sftpDefaultPath) {
+        WFREE(ssh->sftpDefaultPath, ssh->ctx->heap, DYNTYPE_STRING);
+        ssh->sftpDefaultPath = NULL;
+    }
+#endif
 }
 
 

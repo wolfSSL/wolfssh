@@ -164,6 +164,7 @@ WOLFSSH_LOCAL WS_SFTPNAME* wolfSSH_SFTP_ReadDir(WOLFSSH* ssh, byte* handle,
         word32 handleSz);
 WOLFSSH_LOCAL int wolfSSH_SFTP_OpenDir(WOLFSSH* ssh, byte* buf, word32 bufSz);
 
+WOLFSSH_API int wolfSSH_SFTP_SetDefaultPath(WOLFSSH* ssh, const char* path);
 WOLFSSH_API WS_SFTPNAME* wolfSSH_SFTP_RealPath(WOLFSSH* ssh, char* dir);
 WOLFSSH_API int wolfSSH_SFTP_Close(WOLFSSH* ssh, byte* handle, word32 handleSz);
 WOLFSSH_API int wolfSSH_SFTP_Open(WOLFSSH* ssh, char* dir, word32 reason,

@@ -396,6 +396,7 @@ struct WOLFSSH {
     byte   sftpInt;
     byte   sftpExtSz; /* size of extension buffer (buffer not currently used) */
     SFTP_OFST sftpOfst[WOLFSSH_MAX_SFTPOFST];
+    char* sftpDefaultPath;
 #ifdef WOLFSSH_STOREHANDLE
     WS_HANDLE_LIST* handleList;
 #endif
