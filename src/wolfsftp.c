@@ -1015,7 +1015,7 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
                     ret = wolfSSH_SFTP_RecvRealPath(ssh, state->reqId,
                             state->data, state->sz);
                     break;
-            #ifndef _WIN32_WCE
+
                 case WOLFSSH_FTP_RMDIR:
                     ret = wolfSSH_SFTP_RecvRMDIR(ssh, state->reqId,
                             state->data, state->sz);
@@ -1026,6 +1026,7 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
                             state->data, state->sz);
                     break;
 
+            #ifndef _WIN32_WCE
                 case WOLFSSH_FTP_STAT:
                     ret = wolfSSH_SFTP_RecvSTAT(ssh, state->reqId,
                             state->data, state->sz);
@@ -1253,8 +1254,6 @@ int wolfSSH_SFTP_CreateStatus(WOLFSSH* ssh, word32 status, word32 reqId,
 }
 
 
-#ifndef _WIN32_WCE
-
 /* Handles packet to remove a directory
  *
  * returns WS_SUCCESS on success
@@ -1262,7 +1261,7 @@ int wolfSSH_SFTP_CreateStatus(WOLFSSH* ssh, word32 status, word32 reqId,
 int wolfSSH_SFTP_RecvRMDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 {
     word32 sz;
-    int    ret;
+    int    ret = 0;
     char*  dir;
     word32 idx = 0;
     byte*  out;
@@ -1293,7 +1292,11 @@ int wolfSSH_SFTP_RecvRMDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     dir[sz] = '\0';
 
     clean_path(dir);
+#ifndef USE_WINDOWS_API
     ret = WRMDIR(dir);
+#else /* USE_WINDOWS_API */
+    ret = RemoveDirectoryA(dir) == 0;
+#endif /* USE_WINDOWS_API */
     WFREE(dir, ssh->ctx->heap, DYNTYPE_BUFFER);
 
     res  = (ret != 0)? err : suc;
@@ -1384,7 +1387,11 @@ int wolfSSH_SFTP_RecvMKDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         ato32(data + idx, &mode);
     }
     clean_path(dir);
+#ifndef USE_WINDOWS_API
     ret = WMKDIR(dir, mode);
+#else /* USE_WINDOWS_API */
+    ret = CreateDirectoryA(dir, NULL) == 0;
+#endif /* USE_WINDOWS_API */
     WFREE(dir, ssh->ctx->heap, DYNTYPE_BUFFER);
 
     res  = (ret != 0)? err : suc;
@@ -1414,8 +1421,6 @@ int wolfSSH_SFTP_RecvMKDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
     return ret;
 }
-
-#endif /* _WIN32_WCE */
 
 
 /* Handles packet to open a file
