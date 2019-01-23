@@ -1545,7 +1545,7 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 }
 #else /* USE_WINDOWS_API */
 {
-    WS_SFTP_FILEATRB atr;
+/*    WS_SFTP_FILEATRB atr;*/
     HANDLE fileHandle;
     word32 sz;
     char* dir;
@@ -1603,15 +1603,19 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         desiredAccess |= GENERIC_READ;
     if (reason & WOLFSSH_FXF_WRITE)
         desiredAccess |= GENERIC_WRITE;
+#if 0
     if (reason & WOLFSSH_FXF_APPEND)
         desiredAccess |= FILE_APPEND_DATA;
+#endif
 
     if (reason & WOLFSSH_FXF_CREAT)
         creationDisp |= CREATE_ALWAYS;
-//    if (reason & WOLFSSH_FXF_TRUNC)
-//        creationDisp |= TRUNCATE_EXISTING;
-//    if (reason & WOLFSSH_FXF_EXCL)
-//        creationDisp |= CREATE_NEW;
+#if 0
+    if (reason & WOLFSSH_FXF_TRUNC)
+        creationDisp |= TRUNCATE_EXISTING;
+    if (reason & WOLFSSH_FXF_EXCL)
+        creationDisp |= CREATE_NEW;
+#endif
 
 #if 0
     /* if file permissions not set then use default */
@@ -1619,12 +1623,11 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         atr.per = 0644;
     }
 #endif
-    atr.per = FILE_ATTRIBUTE_NORMAL;
 
     clean_path(dir);
     fileHandle = CreateFileA(dir, desiredAccess, 0, NULL, creationDisp,
             FILE_ATTRIBUTE_NORMAL, NULL);
-    if (fileHandle == INVALID_HANDLE_VALUE) {
+        if (fileHandle == INVALID_HANDLE_VALUE) {
         WLOG(WS_LOG_SFTP, "Error opening file %s", dir);
         res = oer;
         if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId, res,
@@ -1752,7 +1755,7 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
                 ssh->ctx->heap, DYNTYPE_SFTP);
         if (cur == NULL) {
             WFREE(dir, ssh->ctx->heap, DYNTYPE_BUFFER);
-			WCLOSEDIR(&ctx);
+            WCLOSEDIR(&ctx);
             return WS_MEMORY_E;
         }
 #ifdef WOLFSSL_NUCLEUS
@@ -6820,7 +6823,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                         }
                     #else /* USE_WINDOWS_API */
                         {
-                            DWORD bytesWritten;
+                            DWORD bytesWritten = 0;
                             if (WriteFile(state->fileHandle, state->r, sz,
                                          &bytesWritten, &state->offset) == 0 ||
                                     (DWORD)sz != bytesWritten) {
