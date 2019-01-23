@@ -71,6 +71,35 @@ if [ $RESULT -ne 0 ]; then
     exit 1
 fi
 
+# Test non blocking connection
+./examples/echoserver/echoserver -N -1 -R $ready_file &
+server_pid=$!
+create_port
+echo "ls\nexit" | ./examples/sftpclient/wolfsftp -N -u jill -P upthehill -p $port
+RESULT=$?
+remove_ready_file
+# if fail here then is a settings issue so return 0
+if [ $RESULT -ne 0 ]; then
+    echo -e "\n\nfailed to connect"
+    do_cleanup
+    exit 1
+fi
+
+# Test of setting directory
+PWD=`pwd`
+./examples/echoserver/echoserver -d $PWD/examples -1 -R $ready_file &
+server_pid=$!
+create_port
+echo "ls\nexit" | ./examples/sftpclient/wolfsftp -N -u jill -P upthehill -p $port
+RESULT=$?
+remove_ready_file
+# if fail here then is a settings issue so return 0
+if [ $RESULT -ne 0 ]; then
+    echo -e "\n\nfailed to connect"
+    do_cleanup
+    exit 1
+fi
+
 echo -e "\nALL Tests Passed"
 
 exit 0

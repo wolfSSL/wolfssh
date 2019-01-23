@@ -133,9 +133,9 @@ static void clean_path(char* path)
     if (path != NULL) {
         /* go through path until no cases are found */
         do {
-            sz = (long)WSTRLEN(path);
             int prIdx = 0; /* begin of cut */
             int enIdx = 0; /* end of cut */
+            sz = (long)WSTRLEN(path);
 
             found = 0;
             for (i = 0; i < sz; i++) {

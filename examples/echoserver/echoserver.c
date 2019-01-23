@@ -666,6 +666,9 @@ static void ShowUsage(void)
     printf(" -e            use ECC private key\n");
     printf(" -p <num>      port to connect on, default %d\n", wolfSshPort);
     printf(" -N            use non-blocking sockets\n");
+#ifdef WOLFSSH_SFTP
+    printf(" -d <string>   set the home directory for SFTP connections\n");
+#endif
 }
 
 
