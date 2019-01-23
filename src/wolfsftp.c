@@ -1862,7 +1862,7 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             return WS_MEMORY_E;
         }
         cur->dir = INVALID_HANDLE_VALUE;
-        cur->id = idCount++;
+        cur->id = id = idCount++;
         cur->isEof = 0;
         cur->dirName = dirName; /* take over ownership of buffer */
         cur->next = dirList;
