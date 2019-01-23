@@ -1527,7 +1527,6 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         }
     }
 #endif
-    WFREE(dir, ssh->ctx->heap, DYNTYPE_BUFFER);
 
     /* create packet */
     out = (byte*)WMALLOC(outSz, ssh->ctx->heap, DYNTYPE_BUFFER);
@@ -1658,7 +1657,6 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             ret = WS_FATAL_ERROR;
     }
 #endif
-    WFREE(dir, ssh->ctx->heap, DYNTYPE_BUFFER);
 
     /* create packet */
     out = (byte*)WMALLOC(outSz, ssh->ctx->heap, DYNTYPE_BUFFER);
@@ -2549,7 +2547,7 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         ato32(data + idx, &sz);
         idx += UINT32_SZ;
 
-        if (WriteFile(fd, data, sz, &bytesWritten, &offset) == 0) {
+        if (WriteFile(fd, data + idx, sz, &bytesWritten, &offset) == 0) {
             WLOG(WS_LOG_SFTP, "Error writing to file");
             res  = err;
             type = WOLFSSH_FTP_FAILURE;
