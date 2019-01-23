@@ -1603,23 +1603,23 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     SFTP_ParseAtributes_buffer(ssh, &atr, data, &idx, maxSz);
 #endif
 
-    if (reason & WOLFSSH_FXF_READ)
+    if (reason & WOLFSSH_FXF_READ) {
         desiredAccess |= GENERIC_READ;
-    if (reason & WOLFSSH_FXF_WRITE)
+        creationDisp |= OPEN_EXISTING;
+    }
+    if (reason & WOLFSSH_FXF_WRITE) {
         desiredAccess |= GENERIC_WRITE;
-#if 0
-    if (reason & WOLFSSH_FXF_APPEND)
-        desiredAccess |= FILE_APPEND_DATA;
-#endif
-
-    if (reason & WOLFSSH_FXF_CREAT)
-        creationDisp |= CREATE_ALWAYS;
-#if 0
-    if (reason & WOLFSSH_FXF_TRUNC)
-        creationDisp |= TRUNCATE_EXISTING;
-    if (reason & WOLFSSH_FXF_EXCL)
-        creationDisp |= CREATE_NEW;
-#endif
+        if (reason & WOLFSSH_FXF_CREAT)
+            creationDisp |= CREATE_ALWAYS;
+    #if 0
+        if (reason & WOLFSSH_FXF_TRUNC)
+            creationDisp |= TRUNCATE_EXISTING;
+        if (reason & WOLFSSH_FXF_EXCL)
+            creationDisp |= CREATE_NEW;
+        if (reason & WOLFSSH_FXF_APPEND)
+            desiredAccess |= FILE_APPEND_DATA;
+    #endif
+    }
 
 #if 0
     /* if file permissions not set then use default */
@@ -1631,7 +1631,7 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     clean_path(dir);
     fileHandle = CreateFileA(dir, desiredAccess, 0, NULL, creationDisp,
             FILE_ATTRIBUTE_NORMAL, NULL);
-        if (fileHandle == INVALID_HANDLE_VALUE) {
+    if (fileHandle == INVALID_HANDLE_VALUE) {
         WLOG(WS_LOG_SFTP, "Error opening file %s", dir);
         res = oer;
         if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId, res,
@@ -2721,7 +2721,8 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         return WS_MEMORY_E;
     }
 
-    if (ReadFile(fd, data, sz, &bytesRead, &offset) == 0) {
+    if (ReadFile(fd, out + UINT32_SZ + WOLFSSH_SFTP_HEADER, sz,
+                &bytesRead, &offset) == 0) {
         if (GetLastError() == ERROR_HANDLE_EOF) {
             ret = 0; /* return 0 for end of file */
         }
@@ -3392,7 +3393,9 @@ int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr, byte link)
     BOOL error;
     WIN32_FILE_ATTRIBUTE_DATA stats;
 
+    WLOG(WS_LOG_SFTP, "Entering SFTP_GetAttributes()");
     (void)link;
+
     /* @TODO add proper Windows link support */
     /* Note, for windows, we treat WSTAT and WLSTAT the same. */
     error = !GetFileAttributesExA(fileName, GetFileExInfoStandard, &stats);
