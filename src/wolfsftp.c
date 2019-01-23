@@ -754,6 +754,9 @@ int wolfSSH_SFTP_accept(WOLFSSH* ssh)
         return WS_BAD_ARGUMENT;
     }
 
+    if (ssh->error == WS_WANT_READ || ssh->error == WS_WANT_WRITE)
+        ssh->error = WS_SUCCESS;
+
     /* check accept is done, if not call wolfSSH accept */
     if (ssh->acceptState < ACCEPT_CLIENT_SESSION_ESTABLISHED) {
         byte name[] = "sftp";
@@ -772,7 +775,7 @@ int wolfSSH_SFTP_accept(WOLFSSH* ssh)
 
     switch (ssh->sftpState) {
         case SFTP_BEGIN:
-            if ((ssh->error = SFTP_ServerRecvInit(ssh)) != WS_SUCCESS) {
+            if (SFTP_ServerRecvInit(ssh) != WS_SUCCESS) {
                 return WS_FATAL_ERROR;
             }
             ssh->sftpState = SFTP_RECV;
@@ -780,7 +783,7 @@ int wolfSSH_SFTP_accept(WOLFSSH* ssh)
             /* no break */
 
         case SFTP_RECV:
-            if ((ssh->error = SFTP_ServerSendInit(ssh)) != WS_SUCCESS) {
+            if (SFTP_ServerSendInit(ssh) != WS_SUCCESS) {
                 return WS_FATAL_ERROR;
             }
             ssh->sftpState = SFTP_DONE;
@@ -1133,24 +1136,30 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
         case STATE_RECV_SEND:
             if (state->toSend) {
                 do {
-                    int err;
-                    ret = wolfSSH_stream_send(ssh, state->data + state->idx,
-                            state->sz - state->idx);
-                    if (ret < 0) {
-                        if (ssh->error != WS_WANT_READ &&
-                                ssh->error != WS_WANT_WRITE)
-                            wolfSSH_SFTP_ClearState(ssh, STATE_ID_RECV);
-                        return WS_FATAL_ERROR;
+                    if (state->toSend != 2) {
+                        ret = wolfSSH_stream_send(ssh, state->data + state->idx,
+                                state->sz - state->idx);
+                        if (ret < 0) {
+                            if (ssh->error != WS_WANT_READ &&
+                                    ssh->error != WS_WANT_WRITE)
+                                wolfSSH_SFTP_ClearState(ssh, STATE_ID_RECV);
+                            return WS_FATAL_ERROR;
+                        }
+
+                       /* check if there is more to be sent. This could be due to
+                        * limit on channel size when sending / receiving files */
+                        state->idx   += ret;
                     }
+                    state->toSend = 1;
 
-                    /* check if there is more to be sent. This could be due to
-                     * limit on channel size */
-                    state->idx += ret;
-
-                    /* do not block on receive pending */
-                    err = wolfSSH_get_error(ssh);
-                    wolfSSH_CheckReceivePending(ssh);
-                    ssh->error = err;
+                    if ((int)state->idx < state->sz) {
+                        wolfSSH_CheckReceivePending(ssh);
+                        if (ssh->error == WS_WANT_READ) {
+                            /* was something there to read, try again */
+                            state->toSend = 2;
+                            return WS_FATAL_ERROR;
+                        }
+                    }
                 } while ((int)state->idx < state->sz);
                 ret = WS_SUCCESS;
                 state->toSend = 0;

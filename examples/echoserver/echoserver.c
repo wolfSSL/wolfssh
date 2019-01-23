@@ -48,7 +48,7 @@
 
 #ifndef NO_WOLFSSH_SERVER
 
-#define TEST_SFTP_TIMEOUT 10
+#define TEST_SFTP_TIMEOUT 1
 
 static const char echoserverBanner[] = "wolfSSH Example Echo Server\n";
 
@@ -222,7 +222,8 @@ static int sftp_worker(thread_ctx_t* threadCtx) {
 
         select_ret = tcp_select(sockfd, TEST_SFTP_TIMEOUT);
         if (select_ret == WS_SELECT_RECV_READY ||
-            select_ret == WS_SELECT_ERROR_READY)
+            select_ret == WS_SELECT_ERROR_READY ||
+            error == WS_WANT_WRITE)
         {
             ret = wolfSSH_SFTP_read(threadCtx->ssh);
             error = wolfSSH_get_error(threadCtx->ssh);
@@ -261,8 +262,9 @@ static int NonBlockSSH_accept(WOLFSSH* ssh)
             printf("... server would write block\n");
 
         select_ret = tcp_select(sockfd, 1);
-        if (select_ret == WS_SELECT_RECV_READY ||
-            select_ret == WS_SELECT_ERROR_READY)
+        if (select_ret == WS_SELECT_RECV_READY  ||
+            select_ret == WS_SELECT_ERROR_READY ||
+            error      == WS_WANT_WRITE)
         {
             ret = wolfSSH_accept(ssh);
             error = wolfSSH_get_error(ssh);
@@ -926,6 +928,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         exit(EXIT_FAILURE);
     }
 
+    (void)defaultSftpPath;
     return 0;
 }
 

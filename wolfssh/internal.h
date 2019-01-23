@@ -529,6 +529,9 @@ enum AcceptStates {
 #ifdef WOLFSSH_SCP
     ACCEPT_INIT_SCP_TRANSFER,
 #endif
+#ifdef WOLFSSH_SFTP
+    ACCEPT_INIT_SFTP,
+#endif
 };
 
 

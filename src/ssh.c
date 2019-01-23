@@ -267,6 +267,38 @@ int wolfSSH_accept(WOLFSSH* ssh)
     if (ssh == NULL)
         return WS_BAD_ARGUMENT;
 
+    /* check if data pending to be sent */
+    if (ssh->outputBuffer.length > 0 &&
+            ssh->acceptState < ACCEPT_CLIENT_SESSION_ESTABLISHED) {
+        if ((ssh->error = wolfSSH_SendPacket(ssh)) == WS_SUCCESS) {
+            WLOG(WS_LOG_DEBUG, "Sent pending packet");
+
+            /* adjust state, a couple of them use multiple sends */
+            if (ssh->acceptState != ACCEPT_SERVER_VERSION_SENT &&
+                ssh->acceptState != ACCEPT_SERVER_USERAUTH_ACCEPT_SENT &&
+                ssh->acceptState != ACCEPT_SERVER_KEXINIT_SENT &&
+                ssh->acceptState != ACCEPT_KEYED) {
+                WLOG(WS_LOG_DEBUG, "Advancing accept state");
+                ssh->acceptState++;
+            }
+
+            /* handle in process reply state */
+            if (ssh->processReplyState == PROCESS_PACKET) {
+                WLOG(WS_LOG_DEBUG, "PR3: peerMacSz = %u", ssh->peerMacSz);
+                ssh->inputBuffer.idx += ssh->peerMacSz;
+                WLOG(WS_LOG_DEBUG, "PR4: Shrinking input buffer");
+                ShrinkBuffer(&ssh->inputBuffer, 1);
+                ssh->processReplyState = PROCESS_INIT;
+
+                WLOG(WS_LOG_DEBUG, "PR5: txCount = %u, rxCount = %u",
+                    ssh->txCount, ssh->rxCount);
+            }
+        }
+        else {
+            return WS_FATAL_ERROR;
+        }
+    }
+
     while (ssh->acceptState != ACCEPT_CLIENT_SESSION_ESTABLISHED) {
         switch (ssh->acceptState) {
 
@@ -415,6 +447,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
                     if (cmd != NULL &&
                         WOLFSSH_SESSION_SUBSYSTEM == wolfSSH_GetSessionType(ssh)
                         && (WMEMCMP(cmd, "sftp", sizeof("sftp")) == 0)) {
+                        ssh->acceptState = ACCEPT_INIT_SFTP;
                         return wolfSSH_SFTP_accept(ssh);
                     }
                 }
@@ -430,6 +463,11 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 }
                 return WS_SCP_COMPLETE;
 #endif
+#ifdef WOLFSSH_SFTP
+            case ACCEPT_INIT_SFTP:
+                return wolfSSH_SFTP_accept(ssh);
+#endif
+
         }
     } /* end while */
 
@@ -763,11 +801,11 @@ int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz)
         return WS_BAD_ARGUMENT;
 
     /* case of WANT WRITE and data stored in output buffer */
-    if (ssh->error == WS_WANT_WRITE && ssh->outputBuffer.length != 0) {
+    if (ssh->outputBuffer.plainSz && ssh->outputBuffer.length != 0) {
         int ret;
 
         bytesTxd = ssh->outputBuffer.plainSz;
-        WLOG(WS_LOG_DEBUG, "\n\nTrying to resend %d bytes\n\n\n", bytesTxd);
+        WLOG(WS_LOG_DEBUG, "Trying to resend %d bytes", bytesTxd);
         ssh->error = WS_SUCCESS;
         ret = wolfSSH_SendPacket(ssh);
 

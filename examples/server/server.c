@@ -120,8 +120,9 @@ static int NonBlockSSH_accept(WOLFSSH* ssh)
             printf("... client would write block\n");
 
         select_ret = tcp_select(sockfd, 1);
-        if (select_ret == WS_SELECT_RECV_READY ||
-            select_ret == WS_SELECT_ERROR_READY)
+        if (select_ret == WS_SELECT_RECV_READY  ||
+            select_ret == WS_SELECT_ERROR_READY ||
+            error == WS_WANT_WRITE)
         {
             ret = wolfSSH_accept(ssh);
             error = wolfSSH_get_error(ssh);

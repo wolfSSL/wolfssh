@@ -4875,8 +4875,8 @@ int DoReceive(WOLFSSH* ssh)
                     ssh->error = ret;
                     return WS_FATAL_ERROR;
                 }
-                WLOG(WS_LOG_DEBUG, "PR3: peerMacSz = %u", peerMacSz);
-                ssh->inputBuffer.idx += peerMacSz;
+                WLOG(WS_LOG_DEBUG, "PR3: peerMacSz = %u", ssh->peerMacSz);
+                ssh->inputBuffer.idx += ssh->peerMacSz;
                 break;
 
             default:
@@ -5899,9 +5899,6 @@ int SendNewKeys(WOLFSSH* ssh)
         ret = BundlePacket(ssh);
     }
 
-    if (ret == WS_SUCCESS)
-        ret = wolfSSH_SendPacket(ssh);
-
     if (ret == WS_SUCCESS) {
         ssh->blockSz = ssh->handshake->blockSz;
         ssh->encryptId = ssh->handshake->encryptId;
@@ -5937,6 +5934,9 @@ int SendNewKeys(WOLFSSH* ssh)
     if (ret == WS_SUCCESS) {
         ssh->txCount = 0;
     }
+
+    if (ret == WS_SUCCESS)
+        ret = wolfSSH_SendPacket(ssh);
 
     WLOG(WS_LOG_DEBUG, "Leaving SendNewKeys(), ret = %d", ret);
     return ret;
