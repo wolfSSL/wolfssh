@@ -1469,7 +1469,6 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     /* get reason for opening file */
     ato32(data + idx, &reason); idx += UINT32_SZ;
 
-
     /* @TODO handle attributes */
     SFTP_ParseAtributes_buffer(ssh, &atr, data, &idx, maxSz);
     if ((reason & WOLFSSH_FXF_READ) && (reason & WOLFSSH_FXF_WRITE)) {
@@ -1599,13 +1598,10 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     /* get reason for opening file */
     ato32(data + idx, &reason); idx += UINT32_SZ;
 
-
 #if 0
     /* @TODO handle attributes */
     SFTP_ParseAtributes_buffer(ssh, &atr, data, &idx, maxSz);
 #endif
-
-    WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
 
     if (reason & WOLFSSH_FXF_READ)
         desiredAccess |= GENERIC_READ;
@@ -2869,7 +2865,7 @@ int wolfSSH_SFTP_RecvClose(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     HANDLE fd;
     word32 sz;
     word32 idx  = 0;
-    int    ret;
+    int    ret = WS_SUCCESS;
 
     byte* out = NULL;
     word32 outSz = 0;
