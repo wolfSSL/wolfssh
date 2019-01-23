@@ -490,6 +490,42 @@ int wolfSSH_connect(WOLFSSH* ssh)
     if (ssh == NULL)
         return WS_BAD_ARGUMENT;
 
+    /* check if data pending to be sent */
+    if (ssh->outputBuffer.length > 0 &&
+            ssh->connectState < CONNECT_SERVER_CHANNEL_REQUEST_DONE) {
+        if ((ssh->error = wolfSSH_SendPacket(ssh)) == WS_SUCCESS) {
+            WLOG(WS_LOG_DEBUG, "Sent pending packet");
+
+            /* adjust state, a couple of them use multiple sends */
+            if (ssh->connectState != CONNECT_CLIENT_VERSION_SENT &&
+                ssh->connectState != CONNECT_CLIENT_KEXINIT_SENT &&
+                ssh->connectState != CONNECT_CLIENT_KEXDH_INIT_SENT &&
+                ssh->connectState != CONNECT_CLIENT_USERAUTH_REQUEST_SENT &&
+                ssh->connectState != CONNECT_CLIENT_USERAUTH_SENT &&
+                ssh->connectState != CONNECT_CLIENT_CHANNEL_OPEN_SESSION_SENT &&
+                ssh->connectState != CONNECT_CLIENT_CHANNEL_REQUEST_SENT) {
+                WLOG(WS_LOG_DEBUG, "Advancing connect state");
+                printf("advance connect state\n");
+                ssh->connectState++;
+            }
+
+            /* handle in process reply state */
+            if (ssh->processReplyState == PROCESS_PACKET) {
+                WLOG(WS_LOG_DEBUG, "PR3: peerMacSz = %u", ssh->peerMacSz);
+                ssh->inputBuffer.idx += ssh->peerMacSz;
+                WLOG(WS_LOG_DEBUG, "PR4: Shrinking input buffer");
+                ShrinkBuffer(&ssh->inputBuffer, 1);
+                ssh->processReplyState = PROCESS_INIT;
+
+                WLOG(WS_LOG_DEBUG, "PR5: txCount = %u, rxCount = %u",
+                    ssh->txCount, ssh->rxCount);
+            }
+        }
+        else {
+            return WS_FATAL_ERROR;
+        }
+    }
+
     switch (ssh->connectState) {
 
         case CONNECT_BEGIN:
