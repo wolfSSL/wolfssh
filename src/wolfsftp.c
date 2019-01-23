@@ -2038,8 +2038,9 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
     }
     else {
         findHandle = *dir;
-        if (FindNextFileA(findHandle, &findData) != 0)
+        if (FindNextFileA(findHandle, &findData) == 0) {
             return WS_FATAL_ERROR;
+        }
     }
 
     sz = (int)WSTRLEN(findData.cFileName);
@@ -2296,20 +2297,22 @@ int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     /* get directory information */
     outSz += UINT32_SZ + WOLFSSH_SFTP_HEADER; /* hold header+number of files */
-    do {
-        name = wolfSSH_SFTPNAME_new(ssh->ctx->heap);
-        ret = wolfSSH_SFTPNAME_readdir(ssh, &dir, name, dirName);
-        if (ret == WS_SUCCESS || ret == WS_NEXT_ERROR) {
-            count++;
-            outSz += name->fSz + name->lSz + (UINT32_SZ * 2);
-            outSz += SFTP_AtributesSz(ssh, &name->atrb);
-            name->next = list;
-            list = name;
-        }
-        else {
-            wolfSSH_SFTPNAME_free(name);
-        }
-    } while (ret == WS_SUCCESS);
+    if (!cur->isEof) {
+        do {
+            name = wolfSSH_SFTPNAME_new(ssh->ctx->heap);
+            ret = wolfSSH_SFTPNAME_readdir(ssh, &dir, name, dirName);
+            if (ret == WS_SUCCESS || ret == WS_NEXT_ERROR) {
+                count++;
+                outSz += name->fSz + name->lSz + (UINT32_SZ * 2);
+                outSz += SFTP_AtributesSz(ssh, &name->atrb);
+                name->next = list;
+                list = name;
+            }
+            else {
+                wolfSSH_SFTPNAME_free(name);
+            }
+        } while (ret == WS_SUCCESS);
+    }
 
     if (list == NULL || cur->isEof) {
         if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_EOF, reqId,
@@ -2333,10 +2336,7 @@ int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     /* if next state would cause an error then set EOF flag for when called
      * again */
-    if (ret == WS_NEXT_ERROR) {
-        cur->isEof = 1;
-    }
-
+    cur->isEof = 1;
     out = (byte*)WMALLOC(outSz, ssh->ctx->heap, DYNTYPE_BUFFER);
     if (out == NULL) {
         return WS_MEMORY_E;
