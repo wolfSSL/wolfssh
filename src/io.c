@@ -38,6 +38,16 @@
     #include <stddef.h>
 #endif
 
+#ifdef WOLFSSH_TEST_BLOCK
+    #define WOLFSSH_TEST_SERVER
+    #include "wolfssh/test.h"
+
+    /* percent of time that forced want read/write is done */
+    #ifndef WOLFSSH_BLOCK_PROB
+        #define WOLFSSH_BLOCK_PROB 75
+    #endif
+#endif
+
 
 /* allow I/O callback handlers whether user I/O or not */
 
@@ -300,7 +310,6 @@ static INLINE int LastError(void)
 #endif
 }
 
-
 /* The receive embedded callback
  *  return : nb bytes read, or error
  */
@@ -310,6 +319,14 @@ int wsEmbedRecv(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
     int err;
     int sd = *(int*)ctx;
     char* buf = (char*)data;
+
+#ifdef WOLFSSH_TEST_BLOCK
+    if (tcp_select(sd, 1) == WS_SELECT_RECV_READY &&
+            (rand() % 100) < WOLFSSH_BLOCK_PROB) {
+        printf("Forced read block\n");
+        return WS_CBIO_ERR_WANT_READ;
+    }
+#endif
 
     recvd = (int)RECV_FUNCTION(sd, buf, sz, ssh->rflags);
 
@@ -362,6 +379,13 @@ int wsEmbedSend(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
     int sent;
     int err;
     char* buf = (char*)data;
+
+#ifdef WOLFSSH_TEST_BLOCK
+    if ((rand() % 100) < WOLFSSH_BLOCK_PROB) {
+        printf("Forced write block\n");
+        return WS_CBIO_ERR_WANT_WRITE;
+    }
+#endif
 
     WLOG(WS_LOG_DEBUG,"Embed Send trying to send %d", sz);
 

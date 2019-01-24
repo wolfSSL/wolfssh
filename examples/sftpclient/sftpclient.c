@@ -937,6 +937,13 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     if (username == NULL)
         err_sys("client requires a username parameter.");
 
+
+#ifdef WOLFSSH_TEST_BLOCK
+    if (!nonBlock) {
+        err_sys("Use -N when testing forced non blocking");
+    }
+#endif
+
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
     if (ctx == NULL)
         err_sys("Couldn't create wolfSSH client context.");

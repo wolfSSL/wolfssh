@@ -753,6 +753,12 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     }
     myoptind = 0;      /* reset for test cases */
 
+#ifdef WOLFSSH_TEST_BLOCK
+    if (!nonBlock) {
+        err_sys("Use -N when testing forced non blocking");
+    }
+#endif
+
     if (wolfSSH_Init() != WS_SUCCESS) {
         fprintf(stderr, "Couldn't initialize wolfSSH.\n");
         exit(EXIT_FAILURE);

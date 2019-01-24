@@ -277,7 +277,8 @@ int wolfSSH_accept(WOLFSSH* ssh)
             if (ssh->acceptState != ACCEPT_SERVER_VERSION_SENT &&
                 ssh->acceptState != ACCEPT_SERVER_USERAUTH_ACCEPT_SENT &&
                 ssh->acceptState != ACCEPT_SERVER_KEXINIT_SENT &&
-                ssh->acceptState != ACCEPT_KEYED) {
+                ssh->acceptState != ACCEPT_KEYED &&
+                ssh->acceptState != ACCEPT_SERVER_CHANNEL_ACCEPT_SENT) {
                 WLOG(WS_LOG_DEBUG, "Advancing accept state");
                 ssh->acceptState++;
             }
@@ -439,8 +440,6 @@ int wolfSSH_accept(WOLFSSH* ssh)
                     continue;
                 }
 #endif
-                ssh->acceptState = ACCEPT_CLIENT_SESSION_ESTABLISHED;
-                WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_SESSION_ESTABLISHED");
 #if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_SERVER)
                 {
                     const char* cmd = wolfSSH_GetSessionCommand(ssh);
@@ -452,6 +451,8 @@ int wolfSSH_accept(WOLFSSH* ssh)
                     }
                 }
 #endif /* WOLFSSH_SFTP and !NO_WOLFSSH_SERVER */
+                ssh->acceptState = ACCEPT_CLIENT_SESSION_ESTABLISHED;
+                WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_SESSION_ESTABLISHED");
                 break;
 
 #ifdef WOLFSSH_SCP
@@ -505,7 +506,6 @@ int wolfSSH_connect(WOLFSSH* ssh)
                 ssh->connectState != CONNECT_CLIENT_CHANNEL_OPEN_SESSION_SENT &&
                 ssh->connectState != CONNECT_CLIENT_CHANNEL_REQUEST_SENT) {
                 WLOG(WS_LOG_DEBUG, "Advancing connect state");
-                printf("advance connect state\n");
                 ssh->connectState++;
             }
 
@@ -670,8 +670,13 @@ int wolfSSH_connect(WOLFSSH* ssh)
                 }
                 if ( (ssh->error =
                         SendChannelOpenSession(ssh, newChannel)) < WS_SUCCESS) {
-
-                    ChannelDelete(newChannel, ssh->ctx->heap);
+                    if (ssh->error == WS_WANT_WRITE ||
+                            ssh->error == WS_WANT_READ) {
+                        ChannelAppend(ssh, newChannel);
+                    }
+                    else {
+                        ChannelDelete(newChannel, ssh->ctx->heap);
+                    }
                     WLOG(WS_LOG_DEBUG, connectError,
                         "SERVER_USERAUTH_ACCEPT_DONE", ssh->error);
                     return WS_FATAL_ERROR;
