@@ -2994,7 +2994,6 @@ int wolfSSH_SFTP_RecvRemove(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     name[sz] = '\0';
 
     clean_path(name);
-#if 0
     if ((ret = WREMOVE(name)) < 0) {
         WLOG(WS_LOG_SFTP, "Error removing file");
     #if defined(WOLFSSL_NUCLEUS) && defined(DEBUG_WOLFSSH)
@@ -3012,8 +3011,6 @@ int wolfSSH_SFTP_RecvRemove(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     else {
         ret = WS_SUCCESS;
     }
-#endif
-    ret = WS_BAD_FILE_E;
 
     /* Let the client know the results from trying to remove the file */
     WFREE(name, ssh->ctx->heap, DYNTYPE_BUFFER);
@@ -3096,13 +3093,10 @@ int wolfSSH_SFTP_RecvRename(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     clean_path(old);
     clean_path(nw);
-#if 0
     if (ret == WS_SUCCESS && WRENAME(old, nw) < 0) {
         WLOG(WS_LOG_SFTP, "Error renaming file");
         ret = WS_BAD_FILE_E;
     }
-#endif
-    ret = WS_BAD_FILE_E;
 
     /* Let the client know the results from trying to rename the file */
     WFREE(old, ssh->ctx->heap, DYNTYPE_BUFFER);
@@ -5685,6 +5679,9 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 WLOG(WS_LOG_SFTP, "SFTP SEND_READ STATE: SEND_REQ");
                 /* send header and type specific data */
                 ret = wolfSSH_stream_send(ssh, state->data, state->idx);
+                if (ssh->error == WS_WANT_READ || ssh->error == WS_WANT_WRITE) {
+                    return ret;
+                }
                 WFREE(state->data, ssh->ctx->heap, DYNTYPE_BUFFER);
                 state->data = NULL;
                 if (ret < 0) {
