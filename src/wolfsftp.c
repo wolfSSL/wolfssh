@@ -6785,7 +6785,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                         if (state->gOfst > 0)
                             desiredAccess |= FILE_APPEND_DATA;
                         state->fileHandle = CreateFileA(to, desiredAccess,
-                                0, NULL, CREATE_NEW,
+                                0, NULL, CREATE_ALWAYS,
                                 FILE_ATTRIBUTE_NORMAL, NULL);
                     }
                     if (resume) {
@@ -6836,8 +6836,18 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                         {
                             DWORD bytesWritten = 0;
                             if (WriteFile(state->fileHandle, state->r, sz,
-                                         &bytesWritten, &state->offset) == 0 ||
-                                    (DWORD)sz != bytesWritten) {
+                                         &bytesWritten, &state->offset) == 0) {
+                                WLOG(WS_LOG_SFTP, "Error writing to file");
+                                ssh->error = WS_BAD_FILE_E;
+                                ret = WS_FATAL_ERROR;
+                                state->state = STATE_GET_CLEANUP;
+                                break; /* either at end of file or error */
+                            }
+                            if ((DWORD)sz != bytesWritten) {
+                                WLOG(WS_LOG_SFTP, "Error writing to file");
+                                ssh->error = WS_MATCH_KEX_ALGO_E;
+                                ret = WS_FATAL_ERROR;
+                                state->state = STATE_GET_CLEANUP;
                                 break; /* either at end of file or error */
                             }
                         }
@@ -6859,16 +6869,6 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                     wolfSSH_SFTP_SaveOfst(ssh, from, to, state->gOfst);
                 }
                 ssh->sftpInt = 0;
-                state->state = STATE_GET_CLOSE_LOCAL;
-                FALL_THROUGH;
-
-            case STATE_GET_CLOSE_LOCAL:
-                WLOG(WS_LOG_SFTP, "SFTP GET STATE: CLOSE LOCAL");
-                #ifndef USE_WINDOWS_API
-                    WFCLOSE(state->fl);
-                #else /* USE_WINDOWS_API */
-                    CloseHandle(state->fileHandle);
-                #endif /* USE_WINDOWS_API */
                 state->state = STATE_GET_CLOSE_REMOTE;
                 FALL_THROUGH;
 
@@ -6877,9 +6877,26 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                 ret = wolfSSH_SFTP_Close(ssh,
                                          state->handle, state->handleSz);
                 if (ret != WS_SUCCESS) {
-                    WLOG(WS_LOG_SFTP, "Error closing handle");
-                    return WS_FATAL_ERROR;
+                    if (ssh->error == WS_WANT_READ ||
+                            ssh->error == WS_WANT_WRITE) {
+                        return WS_FATAL_ERROR;
+                    }
+                    WLOG(WS_LOG_SFTP, "Error closing remote handle");
                 }
+                state->state = STATE_GET_CLOSE_LOCAL;
+                FALL_THROUGH;
+
+            case STATE_GET_CLOSE_LOCAL:
+                WLOG(WS_LOG_SFTP, "SFTP GET STATE: CLOSE LOCAL");
+                #ifndef USE_WINDOWS_API
+                    WFCLOSE(state->fl);
+                #else /* USE_WINDOWS_API */
+                    if (CloseHandle(state->fileHandle) == 0) {
+                        WLOG(WS_LOG_SFTP, "Error closing file.");
+                        ret = WS_FATAL_ERROR;
+                        ssh->error = WS_CLOSE_FILE_E;
+                    }
+                #endif /* USE_WINDOWS_API */
                 state->state = STATE_GET_CLEANUP;
                 FALL_THROUGH;
 

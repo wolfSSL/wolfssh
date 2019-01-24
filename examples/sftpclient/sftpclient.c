@@ -269,6 +269,7 @@ static void ShowUsage(void)
     printf(" -p <num>      port to connect on, default %d\n", wolfSshPort);
     printf(" -u <username> username to authenticate as (REQUIRED)\n");
     printf(" -P <password> password for username, prompted if omitted\n");
+    printf(" -d <path>     set the default local path\n");
     printf(" -N            use non blocking sockets\n");
 
     ShowCommands();
@@ -885,14 +886,19 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     char* host = (char*)wolfSshIp;
     const char* username = NULL;
     const char* password = NULL;
+    const char* defaultSftpPath = NULL;
     byte nonBlock = 0;
 
     int     argc = ((func_args*)args)->argc;
     char**  argv = ((func_args*)args)->argv;
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?h:p:u:P:N")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?d:h:p:u:P:N")) != -1) {
         switch (ch) {
+            case 'd':
+                defaultSftpPath = myoptarg;
+                break;
+
             case 'h':
                 host = myoptarg;
                 break;
@@ -948,6 +954,14 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     ssh = wolfSSH_new(ctx);
     if (ssh == NULL)
         err_sys("Couldn't create wolfSSH session.");
+
+    if (defaultSftpPath != NULL) {
+        if (wolfSSH_SFTP_SetDefaultPath(ssh, defaultSftpPath)
+                != WS_SUCCESS) {
+            fprintf(stderr, "Couldn't store default sftp path.\n");
+            exit(EXIT_FAILURE);
+        }
+    }
 
     if (password != NULL)
         wolfSSH_SetUserAuthCtx(ssh, (void*)password);

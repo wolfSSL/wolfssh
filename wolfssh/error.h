@@ -102,8 +102,9 @@ enum WS_ErrorCodes {
     WS_SFTP_STATUS_NOT_OK  = -62,   /* SFTP Status not OK */
     WS_SFTP_FILE_DNE       = -63,   /* SFTP File Does Not Exist */
     WS_SIZE_ONLY           = -64,   /* Only getting the size of buffer needed */
+    WS_CLOSE_FILE_E        = -65,   /* Unable to close local file */
 
-    WS_LAST_E              = -64    /* Update this to indicate last error */
+    WS_LAST_E              = -65    /* Update this to indicate last error */
 };
 
 

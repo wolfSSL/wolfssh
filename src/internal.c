@@ -263,6 +263,9 @@ const char* GetErrorString(int err)
         case WS_SIZE_ONLY:
             return "Only getting the size of buffer needed";
 
+        case WS_CLOSE_FILE_E:
+            return "Unable to close local file";
+
         default:
             return "Unknown error code";
     }
