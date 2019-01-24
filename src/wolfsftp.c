@@ -6852,17 +6852,12 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                     #else /* USE_WINDOWS_API */
                         {
                             DWORD bytesWritten = 0;
-                            if (WriteFile(state->fileHandle, state->r, sz,
-                                         &bytesWritten, &state->offset) == 0) {
+                            if ((WriteFile(state->fileHandle, state->r, sz,
+                                         &bytesWritten, &state->offset) == 0) ||
+                                    ((DWORD)sz != bytesWritten))
+                                {
                                 WLOG(WS_LOG_SFTP, "Error writing to file");
                                 ssh->error = WS_BAD_FILE_E;
-                                ret = WS_FATAL_ERROR;
-                                state->state = STATE_GET_CLEANUP;
-                                break; /* either at end of file or error */
-                            }
-                            if ((DWORD)sz != bytesWritten) {
-                                WLOG(WS_LOG_SFTP, "Error writing to file");
-                                ssh->error = WS_MATCH_KEX_ALGO_E;
                                 ret = WS_FATAL_ERROR;
                                 state->state = STATE_GET_CLEANUP;
                                 break; /* either at end of file or error */
