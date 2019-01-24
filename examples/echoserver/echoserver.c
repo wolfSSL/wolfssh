@@ -215,10 +215,12 @@ static int sftp_worker(thread_ctx_t* threadCtx) {
 
     sockfd = (SOCKET_T)wolfSSH_get_fd(threadCtx->ssh);
     do {
-        if (error == WS_WANT_READ)
-            printf("... sftp server would read block\n");
-        else if (error == WS_WANT_WRITE)
-            printf("... sftp server would write block\n");
+        if (threadCtx->nonBlock) {
+            if (error == WS_WANT_READ)
+                printf("... sftp server would read block\n");
+            else if (error == WS_WANT_WRITE)
+                printf("... sftp server would write block\n");
+        }
 
         select_ret = tcp_select(sockfd, TEST_SFTP_TIMEOUT);
         if (select_ret == WS_SELECT_RECV_READY ||
