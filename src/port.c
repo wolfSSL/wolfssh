@@ -130,6 +130,133 @@ int wPread(WFD fd, unsigned char* buf, unsigned int sz, long ofst)
 #endif
 #endif /* !NO_FILESYSTEM */
 
+
+#ifdef USE_WINDOWS_API
+
+void* WS_CreateFileA(const char* fileName, unsigned long desiredAccess,
+        unsigned long shareMode, unsigned long creationDisposition,
+        unsigned long flags, void* heap)
+{
+    HANDLE fileHandle;
+    wchar_t* unicodeFileName;
+    size_t unicodeFileNameSz = 0;
+    size_t returnSz = 0;
+    size_t fileNameSz = 0;
+    errno_t error;
+
+    fileNameSz = WSTRLEN(fileName);
+    error = mbstowcs_s(&unicodeFileNameSz, NULL, 0, fileName, 0);
+    if (error)
+        return INVALID_HANDLE_VALUE;
+
+    unicodeFileName = (wchar_t*)WMALLOC(unicodeFileNameSz, heap, 0);
+    if (unicodeFileName == NULL)
+        return INVALID_HANDLE_VALUE;
+
+    error = mbstowcs_s(&returnSz, unicodeFileName, unicodeFileNameSz,
+        fileName, fileNameSz);
+
+    if (!error)
+        fileHandle = CreateFileW(unicodeFileName, desiredAccess, shareMode,
+                NULL, creationDisposition, flags, NULL);
+
+    WFREE(unicodeFileName, heap, 0);
+
+    return (void*)(error ? INVALID_HANDLE_VALUE : fileHandle);
+}
+
+void* WS_FindFirstFileA(const char* fileName,
+        char* realFileName, size_t realFileNameSz, int* isDir, void* heap)
+{
+    HANDLE findHandle;
+    WIN32_FIND_DATAW findFileData;
+    wchar_t* unicodeFileName;
+    size_t unicodeFileNameSz = 0;
+    size_t returnSz = 0;
+    size_t fileNameSz = 0;
+    errno_t error;
+
+    fileNameSz = WSTRLEN(fileName);
+    error = mbstowcs_s(&unicodeFileNameSz, NULL, 0, fileName, 0);
+    if (error)
+        return INVALID_HANDLE_VALUE;
+
+    unicodeFileName = (wchar_t*)WMALLOC(unicodeFileNameSz, heap, 0);
+    if (unicodeFileName == NULL)
+        return INVALID_HANDLE_VALUE;
+
+    error = mbstowcs_s(&returnSz, unicodeFileName, unicodeFileNameSz,
+        fileName, fileNameSz);
+
+    if (!error)
+        findHandle = FindFirstFileW(unicodeFileName, &findFileData);
+
+    WFREE(unicodeFileName, heap, 0);
+
+    error = wcstombs_s(NULL, realFileName, realFileNameSz,
+        findFileData.cFileName, realFileNameSz);
+
+    if (isDir != NULL) {
+        *isDir =
+            (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    }
+
+    return (void*)findHandle;
+}
+
+
+int WS_FindNextFileA(void* findHandle,
+        char* realFileName, size_t realFileNameSz)
+{
+    BOOL success;
+    WIN32_FIND_DATAW findFileData;
+    errno_t error;
+
+    success = FindNextFileW((HANDLE)findHandle, &findFileData);
+
+    if (success) {
+        error = wcstombs_s(NULL, realFileName, realFileNameSz,
+            findFileData.cFileName, realFileNameSz);
+    }
+
+    return (success != 0) && (error == 0);
+}
+
+
+int WS_GetFileAttributesExA(const char* fileName, void* fileInfo, void* heap)
+{
+    BOOL success = 0;
+    wchar_t* unicodeFileName;
+    size_t unicodeFileNameSz = 0;
+    size_t returnSz = 0;
+    size_t fileNameSz = 0;
+    errno_t error;
+
+    fileNameSz = WSTRLEN(fileName);
+    error = mbstowcs_s(&unicodeFileNameSz, NULL, 0, fileName, 0);
+    if (error != 0)
+        return 0;
+
+    unicodeFileName = (wchar_t*)WMALLOC(unicodeFileNameSz, heap, 0);
+    if (unicodeFileName == NULL)
+        return 0;
+
+    error = mbstowcs_s(&returnSz, unicodeFileName, unicodeFileNameSz,
+        fileName, fileNameSz);
+
+    if (error == 0) {
+        success = GetFileAttributesExW(unicodeFileName,
+                GetFileExInfoStandard, fileInfo);
+    }
+
+    WFREE(unicodeFileName, heap, 0);
+
+    return success != 0;
+}
+
+#endif /* USE_WINDOWS_API */
+
+
 #ifndef WSTRING_USER
 
 char* wstrnstr(const char* s1, const char* s2, unsigned int n)

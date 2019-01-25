@@ -1637,8 +1637,8 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 #endif
 
     clean_path(dir);
-    fileHandle = CreateFileA(dir, desiredAccess, 0, NULL, creationDisp,
-            FILE_ATTRIBUTE_NORMAL, NULL);
+    fileHandle = WS_CreateFileA(dir, desiredAccess, 0, creationDisp,
+            FILE_ATTRIBUTE_NORMAL, ssh->ctx->heap);
     if (fileHandle == INVALID_HANDLE_VALUE) {
         WLOG(WS_LOG_SFTP, "Error opening file %s", dir);
         res = oer;
@@ -1808,7 +1808,8 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     char* dirName;
     word32 idx = 0;
     HANDLE findHandle;
-    WIN32_FIND_DATAA findData;
+    char realName[MAX_PATH];
+    int isDir = 0;
     int ret = WS_SUCCESS;
 
     word32 outSz = sizeof(word64) + WOLFSSH_SFTP_HEADER + UINT32_SZ;
@@ -1843,9 +1844,9 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     clean_path(dirName);
 
     /* get directory handle */
-    findHandle = FindFirstFileA(dirName, &findData);
-    if (findHandle == INVALID_HANDLE_VALUE ||
-        !(findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+    findHandle = (HANDLE)WS_FindFirstFileA(dirName,
+            realName, sizeof(realName), &isDir, ssh->ctx->heap);
+    if (findHandle == INVALID_HANDLE_VALUE || !isDir) {
 
         WLOG(WS_LOG_SFTP, "Error with opening directory");
         WFREE(dirName, ssh->ctx->heap, DYNTYPE_BUFFER);
@@ -2015,7 +2016,7 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
 {
     int sz;
     HANDLE findHandle;
-    WIN32_FIND_DATAA findData;
+    char realFileName[MAX_PATH];
 
     if (dir == NULL || ssh == NULL || out == NULL) {
         return WS_BAD_ARGUMENT;
@@ -2032,7 +2033,8 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
         WSTRNCPY(name, dirName, MAX_PATH);
         WSTRNCAT(name, "\\*", MAX_PATH);
 
-        findHandle = FindFirstFileA(name, &findData);
+        findHandle = (HANDLE)WS_FindFirstFileA(name,
+                realFileName, sizeof(realFileName), NULL, ssh->ctx->heap);
 
         if (findHandle == INVALID_HANDLE_VALUE)
             return WS_FATAL_ERROR;
@@ -2041,12 +2043,13 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
     }
     else {
         findHandle = *dir;
-        if (FindNextFileA(findHandle, &findData) == 0) {
+        if (WS_FindNextFileA(findHandle,
+                    realFileName, sizeof(realFileName)) == 0) {
             return WS_FATAL_ERROR;
         }
     }
 
-    sz = (int)WSTRLEN(findData.cFileName);
+    sz = (int)WSTRLEN(realFileName);
     out->fName = (char*)WMALLOC(sz + 1, out->heap, DYNTYPE_SFTP);
     if (out->fName == NULL) {
         return WS_MEMORY_E;
@@ -2057,8 +2060,8 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
         return WS_MEMORY_E;
     }
 
-    WMEMCPY(out->fName, findData.cFileName, sz);
-    WMEMCPY(out->lName, findData.cFileName, sz);
+    WMEMCPY(out->fName, realFileName, sz);
+    WMEMCPY(out->lName, realFileName, sz);
     out->fName[sz] = '\0';
     out->lName[sz] = '\0';
     out->fSz = sz;
@@ -3414,7 +3417,7 @@ int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr, byte link)
 
     /* @TODO add proper Windows link support */
     /* Note, for windows, we treat WSTAT and WLSTAT the same. */
-    error = !GetFileAttributesExA(fileName, GetFileExInfoStandard, &stats);
+    error = !WS_GetFileAttributesExA(fileName, &stats, NULL);
     if (error)
         return WS_BAD_FILE_E;
 
@@ -6798,9 +6801,9 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                         DWORD desiredAccess = GENERIC_WRITE;
                         if (state->gOfst > 0)
                             desiredAccess |= FILE_APPEND_DATA;
-                        state->fileHandle = CreateFileA(to, desiredAccess,
-                                0, NULL, CREATE_ALWAYS,
-                                FILE_ATTRIBUTE_NORMAL, NULL);
+                        state->fileHandle = WS_CreateFileA(to, desiredAccess,
+                                0, CREATE_ALWAYS,
+                                FILE_ATTRIBUTE_NORMAL, ssh->ctx->heap);
                     }
                     if (resume) {
                         WMEMSET(&state->offset, 0, sizeof(OVERLAPPED));
@@ -6997,9 +7000,9 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                     WFSEEK(state->fl, state->pOfst, 0);
                 }
             #else /* USE_WINDOWS_API */
-                state->fileHandle = CreateFileA(from, GENERIC_READ,
-                        FILE_SHARE_READ, NULL, OPEN_EXISTING,
-                        FILE_ATTRIBUTE_NORMAL, NULL);
+                state->fileHandle = WS_CreateFileA(from, GENERIC_READ,
+                        FILE_SHARE_READ, OPEN_EXISTING,
+                        FILE_ATTRIBUTE_NORMAL, ssh->ctx->heap);
                 if (state->fileHandle == INVALID_HANDLE_VALUE) {
                     ssh->error = WS_SFTP_FILE_DNE;
                     ret = WS_FATAL_ERROR;
