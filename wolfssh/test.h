@@ -12,7 +12,6 @@
 /*#include <wolfssh/error.h>*/
 
 #ifdef USE_WINDOWS_API
-    #include <winsock2.h>
     #ifndef _WIN32_WCE
         #include <process.h>
     #endif

@@ -37,8 +37,8 @@ int doCmds(void);
 /* static so that signal handler can access and interrupt get/put */
 static WOLFSSH* ssh = NULL;
 static char* workingDir;
-WFILE* fin;
-WFILE* fout;
+#define fin stdin
+#define fout stdout
 
 
 static void myStatusCb(WOLFSSH* sshIn, long bytes, char* name)
@@ -326,9 +326,6 @@ int doCmds()
     int ret, err;
     byte resume = 0;
     int i;
-
-    fin   = stdin  ;
-    fout  = stdout ;
 
     while (!quit) {
         char msg[WOLFSSH_MAX_FILENAME * 2];

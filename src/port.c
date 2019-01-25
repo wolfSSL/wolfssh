@@ -149,7 +149,8 @@ void* WS_CreateFileA(const char* fileName, unsigned long desiredAccess,
     if (error)
         return INVALID_HANDLE_VALUE;
 
-    unicodeFileName = (wchar_t*)WMALLOC(unicodeFileNameSz, heap, 0);
+    unicodeFileName = (wchar_t*)WMALLOC((unicodeFileNameSz+1)*sizeof(wchar_t),
+            heap, PORT_DYNTYPE_STRING);
     if (unicodeFileName == NULL)
         return INVALID_HANDLE_VALUE;
 
@@ -181,7 +182,8 @@ void* WS_FindFirstFileA(const char* fileName,
     if (error)
         return INVALID_HANDLE_VALUE;
 
-    unicodeFileName = (wchar_t*)WMALLOC(unicodeFileNameSz, heap, 0);
+    unicodeFileName = (wchar_t*)WMALLOC((unicodeFileNameSz+1)*sizeof(wchar_t),
+            heap, PORT_DYNTYPE_STRING);
     if (unicodeFileName == NULL)
         return INVALID_HANDLE_VALUE;
 
@@ -237,7 +239,8 @@ int WS_GetFileAttributesExA(const char* fileName, void* fileInfo, void* heap)
     if (error != 0)
         return 0;
 
-    unicodeFileName = (wchar_t*)WMALLOC(unicodeFileNameSz, heap, 0);
+    unicodeFileName = (wchar_t*)WMALLOC((unicodeFileNameSz+1)*sizeof(wchar_t),
+            heap, PORT_DYNTYPE_STRING);
     if (unicodeFileName == NULL)
         return 0;
 

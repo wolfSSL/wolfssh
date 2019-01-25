@@ -35,6 +35,9 @@
 extern "C" {
 #endif
 
+#define PORT_DYNTYPE_STRING 12
+/* This value needs to stay in sync with the actual value of DYNTYPE_STRING
+ * from internal.h. */
 
 /* setup memory handling */
 #ifndef WMALLOC_USER
@@ -442,9 +445,6 @@ extern "C" {
     #endif /* NO_WOLFSSH_DIR */
 #elif defined(USE_WINDOWS_API)
 
-    #ifdef _WIN32_WCE
-        #include <winsock2.h>
-    #endif
     #include <windows.h>
     #ifndef _WIN32_WCE
         #include <sys/types.h>
