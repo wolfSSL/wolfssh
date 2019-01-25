@@ -1025,12 +1025,11 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 
     XFREE(workingDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     ret = wolfSSH_shutdown(ssh);
-    if (ret != WS_SUCCESS)
-        err_sys("Closing stream failed.");
-
     WCLOSESOCKET(sockFd);
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
+    if (ret != WS_SUCCESS)
+        err_sys("Closing stream failed.");
 
     return 0;
 }

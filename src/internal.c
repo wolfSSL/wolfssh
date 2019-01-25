@@ -7157,7 +7157,7 @@ int SendChannelData(WOLFSSH* ssh, word32 peerChannel,
     if (ret == WS_SUCCESS)
         ret = dataSz;
 
-    if (ssh->error == WS_WANT_WRITE)
+    if (ssh && ssh->error == WS_WANT_WRITE)
         ssh->outputBuffer.plainSz = dataSz;
 
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelData(), ret = %d", ret);
