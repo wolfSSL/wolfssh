@@ -1299,7 +1299,7 @@ int wolfSSH_SFTP_RecvRMDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 #ifndef USE_WINDOWS_API
     ret = WRMDIR(dir);
 #else /* USE_WINDOWS_API */
-    ret = RemoveDirectoryA(dir) == 0;
+    ret = WS_RemoveDirectoryA(dir, ssh->ctx->heap) == 0;
 #endif /* USE_WINDOWS_API */
     WFREE(dir, ssh->ctx->heap, DYNTYPE_BUFFER);
 
@@ -1394,7 +1394,7 @@ int wolfSSH_SFTP_RecvMKDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 #ifndef USE_WINDOWS_API
     ret = WMKDIR(dir, mode);
 #else /* USE_WINDOWS_API */
-    ret = CreateDirectoryA(dir, NULL) == 0;
+    ret = WS_CreateDirectoryA(dir, ssh->ctx->heap) == 0;
 #endif /* USE_WINDOWS_API */
     WFREE(dir, ssh->ctx->heap, DYNTYPE_BUFFER);
 
@@ -3001,7 +3001,12 @@ int wolfSSH_SFTP_RecvRemove(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     name[sz] = '\0';
 
     clean_path(name);
-    if ((ret = WREMOVE(name)) < 0) {
+#ifndef USE_WINDOWS_API
+    if ((ret = WREMOVE(name)) < 0)
+#else /* USE_WINDOWS_API */
+    if (WS_DeleteFileA(name, ssh->ctx->heap) == 0)
+#endif /* USE_WINDOWS_API */
+    {
         WLOG(WS_LOG_SFTP, "Error removing file");
     #if defined(WOLFSSL_NUCLEUS) && defined(DEBUG_WOLFSSH)
         if (ret == NUF_ACCES)
@@ -3100,9 +3105,16 @@ int wolfSSH_SFTP_RecvRename(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     clean_path(old);
     clean_path(nw);
-    if (ret == WS_SUCCESS && WRENAME(old, nw) < 0) {
-        WLOG(WS_LOG_SFTP, "Error renaming file");
-        ret = WS_BAD_FILE_E;
+    if (ret == WS_SUCCESS) {
+    #ifndef USE_WINDOWS_API
+        if (WRENAME(old, nw) < 0)
+    #else /* USE_WINDOWS_API */
+        if (WS_MoveFileA(old, nw, ssh->ctx->heap) == 0)
+    #endif /* USE_WINDOWS_API */
+        {
+            WLOG(WS_LOG_SFTP, "Error renaming file");
+            ret = WS_BAD_FILE_E;
+        }
     }
 
     /* Let the client know the results from trying to rename the file */

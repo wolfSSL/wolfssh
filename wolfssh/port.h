@@ -160,6 +160,14 @@ extern "C" {
                     char* realFileName, size_t realFileNameSz);
             WOLFSSH_LOCAL int WS_GetFileAttributesExA(const char* fileName,
                     void* fileInfo, void* heap);
+            WOLFSSH_LOCAL int WS_RemoveDirectoryA(const char* dirName,
+                    void* heap);
+            WOLFSSH_LOCAL int WS_CreateDirectoryA(const char* dirName,
+                    void* heap);
+            WOLFSSH_LOCAL int WS_MoveFileA(const char* oldName,
+                    const char* newName, void* heap);
+            WOLFSSH_LOCAL int WS_DeleteFileA(const char* fileName,
+                    void* heap);
 
             #ifndef _WIN32_WCE
                 #include <direct.h>
