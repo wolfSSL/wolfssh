@@ -291,6 +291,7 @@ typedef struct WS_SFTP_SEND_READ_STATE {
     word32 reqId;
     word32 idx;
     word32 sz;
+    word32 recvSz;
     byte type;
 } WS_SFTP_SEND_READ_STATE;
 
@@ -5746,11 +5747,24 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
 
             case STATE_SEND_READ_REMAINDER:
                 WLOG(WS_LOG_SFTP, "SFTP SEND_READ STATE: READ_REMAINDER");
-                ret = wolfSSH_stream_read(ssh, out, state->sz);
-                if (ret < 0) {
-                    return ret;
-                }
-                ret = state->sz;
+                do {
+                    ret = wolfSSH_stream_read(ssh,
+                            out + state->recvSz, state->sz);
+                    if (ret < 0) {
+                        if (ssh->error == WS_WANT_READ ||
+                                ssh->error == WS_WANT_WRITE) {
+                            return WS_FATAL_ERROR;
+                        }
+                        WLOG(WS_LOG_SFTP, "Error reading remainder of data");
+                        state->state = STATE_SEND_READ_CLEANUP;
+                        continue;
+                    }
+
+                    state->recvSz += ret;
+                    state->sz -= ret;
+                } while (state->sz != 0);
+
+                ret = state->recvSz;
 
                 state->state = STATE_SEND_READ_CLEANUP;
                 continue;
