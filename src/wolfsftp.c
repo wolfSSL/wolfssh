@@ -671,7 +671,7 @@ static int SFTP_SetAttributes(WOLFSSH* ssh, byte* buf, word32 bufSz,
 #ifndef NO_WOLFSSH_SERVER
 
 static int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr,
-        byte link);
+        byte link, void* heap);
 static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
         WS_SFTP_FILEATRB* atr);
 
@@ -1030,12 +1030,10 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
                             state->data, state->sz);
                     break;
 
-            #ifndef _WIN32_WCE
                 case WOLFSSH_FTP_STAT:
                     ret = wolfSSH_SFTP_RecvSTAT(ssh, state->reqId,
                             state->data, state->sz);
                     break;
-            #endif
 
                 case WOLFSSH_FTP_LSTAT:
                     ret = wolfSSH_SFTP_RecvLSTAT(ssh, state->reqId,
@@ -1996,7 +1994,8 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
         WSTRNCAT(buf, out->fName, bufSz + 1);
 
         clean_path(buf);
-        if (SFTP_GetAttributes(buf, &out->atrb, 0) != WS_SUCCESS) {
+        if (SFTP_GetAttributes(buf, &out->atrb, 0, ssh->ctx->heap)
+                != WS_SUCCESS) {
             WLOG(WS_LOG_SFTP, "Unable to get attribute values for %s", buf);
         }
         WFREE(buf, out->heap, DYNTYPE_SFTP);
@@ -2094,7 +2093,8 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
         WSTRNCAT(buf, out->fName, bufSz + 1);
 
         clean_path(buf);
-        if (SFTP_GetAttributes(buf, &out->atrb, 0) != WS_SUCCESS) {
+        if (SFTP_GetAttributes(buf, &out->atrb, 0, ssh->ctx->heap)
+                != WS_SUCCESS) {
             WLOG(WS_LOG_SFTP, "Unable to get attribute values for %s",
                 out->fName);
         }
@@ -2166,7 +2166,8 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
         WSTRNCAT(buf, out->fName, bufSz + 1);
 
         clean_path(buf);
-        if (SFTP_GetAttributes(buf, &out->atrb, 0) != WS_SUCCESS) {
+        if (SFTP_GetAttributes(buf, &out->atrb, 0, ssh->ctx->heap)
+                != WS_SUCCESS) {
             WLOG(WS_LOG_SFTP, "Unable to get attribute values for %s",
                     out->fName);
         }
@@ -3289,11 +3290,14 @@ static word32 TimeTo32(word16 d, word16 t)
  * Fills out a WS_SFTP_FILEATRB structure
  * returns WS_SUCCESS on success
  */
-int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr, byte link)
+int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr, byte link,
+        void* heap)
 {
     DSTAT stats;
     int sz = (int)WSTRLEN(fileName);
     int ret;
+
+    (void)heap;
 
     if (link) {
         ret = WLSTAT(fileName, &stats);
@@ -3423,7 +3427,8 @@ int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
  * Fills out a WS_SFTP_FILEATRB structure
  * returns WS_SUCCESS on success
  */
-int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr, byte link)
+int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr, byte link,
+        void* heap)
 {
     BOOL error;
     WIN32_FILE_ATTRIBUTE_DATA stats;
@@ -3433,7 +3438,7 @@ int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr, byte link)
 
     /* @TODO add proper Windows link support */
     /* Note, for windows, we treat WSTAT and WLSTAT the same. */
-    error = !WS_GetFileAttributesExA(fileName, &stats, NULL);
+    error = !WS_GetFileAttributesExA(fileName, &stats, heap);
     if (error)
         return WS_BAD_FILE_E;
 
@@ -3443,7 +3448,8 @@ int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr, byte link)
     atr->sz = (((word64)stats.nFileSizeHigh << 32) | stats.nFileSizeLow);
 
     atr->flags |= WOLFSSH_FILEATRB_PERM;
-    atr->per = (word32)stats.dwFileAttributes;
+    atr->per = 0555 |
+        (stats.dwFileAttributes | FILE_ATTRIBUTE_READONLY ? 0 : 0200);
 
 #if 0
     /* @TODO handle the constellation of possible Windows FILETIMEs */
@@ -3464,9 +3470,12 @@ int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr, byte link)
  * Fills out a WS_SFTP_FILEATRB structure
  * returns WS_SUCCESS on success
  */
-int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr, byte link)
+int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr, byte link,
+        void* heap)
 {
     WSTAT_T stats;
+
+    (void)heap;
 
     if (link) {
         /* Note, for windows, we treat WSTAT and WLSTAT the same. */
@@ -3612,8 +3621,6 @@ int wolfSSH_SFTP_RecvFSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 #endif
 
 
-#ifndef _WIN32_WCE
-
 /* Handles receiving stat packet
  * returns WS_SUCCESS on success
  */
@@ -3651,7 +3658,7 @@ int wolfSSH_SFTP_RecvSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     /* try to get file attributes and send back to client */
     clean_path(name);
     WMEMSET((byte*)&atr, 0, sizeof(WS_SFTP_FILEATRB));
-    if (SFTP_GetAttributes(name, &atr, 0) != WS_SUCCESS) {
+    if (SFTP_GetAttributes(name, &atr, 0, ssh->ctx->heap) != WS_SUCCESS) {
         WLOG(WS_LOG_SFTP, "Unable to get stat of file/directory");
         if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
                 "STAT error", "English", NULL, &outSz) != WS_SIZE_ONLY) {
@@ -3727,7 +3734,8 @@ int wolfSSH_SFTP_RecvLSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     /* try to get file attributes and send back to client */
     WMEMSET((byte*)&atr, 0, sizeof(WS_SFTP_FILEATRB));
-    if ((ret = SFTP_GetAttributes(name, &atr, 1)) != WS_SUCCESS) {
+    if ((ret = SFTP_GetAttributes(name, &atr, 1, ssh->ctx->heap))
+            != WS_SUCCESS) {
         /* tell peer that was not ok */
         WLOG(WS_LOG_SFTP, "Unable to get lstat of file/directory");
         if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
@@ -3765,8 +3773,6 @@ int wolfSSH_SFTP_RecvLSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
     return ret;
 }
-
-#endif /* _WIN32_WCE */
 
 
 #ifndef USE_WINDOWS_API
