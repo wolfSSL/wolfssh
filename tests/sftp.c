@@ -48,7 +48,7 @@ static int commandCb(const char* in, char* out, int outSz)
 
     /* get command input */
     if (out) {
-        int sz = WSTRLEN(cmds[commandIdx]);
+        int sz = (int)WSTRLEN(cmds[commandIdx]);
         if (outSz < sz) {
             ret = -1;
         }
