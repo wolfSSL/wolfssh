@@ -650,12 +650,20 @@ typedef struct tcp_ready {
 } tcp_ready;
 
 
+#ifdef WOLFSSH_SFTP
+typedef int (*WS_CallbackSftpCommand)(const char* in, char* out, int outSz);
+#endif
+
 typedef struct func_args {
     int    argc;
     char** argv;
     int    return_code;
     tcp_ready* signal;
     WS_CallbackUserAuth user_auth;
+#ifdef WOLFSSH_SFTP
+    /* callback for example sftp client commands instead of WFGETS */
+    WS_CallbackSftpCommand sftp_cb;
+#endif
 } func_args;
 
 

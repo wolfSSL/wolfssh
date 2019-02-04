@@ -31,7 +31,7 @@
 
 #ifdef WOLFSSH_SFTP
 
-int doCmds(void);
+int doCmds(func_args* args);
 
 
 /* static so that signal handler can access and interrupt get/put */
@@ -177,7 +177,7 @@ static void clean_path(char* path)
     }
 }
 
-const char testString[] = "Hello, wolfSSH!";
+const char sftpTestString[] = "Hello, wolfSSH!";
 
 #define WS_MAX_EXAMPLE_RW 1024
 
@@ -319,21 +319,51 @@ static int wsUserAuth(byte authType,
 }
 
 
+/* returns 0 on success */
+static INLINE int SFTP_FPUTS(func_args* args, const char* msg)
+{
+    int ret;
+
+    if (args && args->sftp_cb)
+        ret = args->sftp_cb(msg, NULL, 0);
+    else
+        ret = WFPUTS(msg, fout);
+
+    return ret;
+}
+
+
+/* returns pointer on success, NULL on failure */
+static INLINE char* SFTP_FGETS(func_args* args, char* msg, int msgSz)
+{
+    char* ret = NULL;
+
+    if (args && args->sftp_cb) {
+        if (args->sftp_cb(NULL, msg, msgSz) == 0)
+            ret = msg;
+    }
+    else
+        ret = WFGETS(msg, msgSz, fin);
+
+    return ret;
+}
+
+
 /* main loop for handling commands */
-int doCmds()
+int doCmds(func_args* args)
 {
     byte quit = 0;
     int ret, err;
     byte resume = 0;
     int i;
 
-    while (!quit) {
+    do {
         char msg[WOLFSSH_MAX_FILENAME * 2];
         char* pt;
 
-        if (WFPUTS("wolfSSH sftp> ", fout) < 0)
+        if (SFTP_FPUTS(args, "wolfSSH sftp> ") < 0)
             err_sys("fputs error");
-        if (WFGETS(msg, sizeof(msg) - 1, fin) == NULL)
+        if (SFTP_FGETS(args, msg, sizeof(msg) - 1) == NULL)
             err_sys("fgets error");
         msg[WOLFSSH_MAX_FILENAME * 2 - 1] = '\0';
 
@@ -365,11 +395,11 @@ int doCmds()
                 if ((ret = wolfSSH_SFTP_MKDIR(ssh, pt, &atrb)) != WS_SUCCESS) {
                     err = wolfSSH_get_error(ssh);
                     if (ret == WS_PERMISSIONS) {
-                        if (WFPUTS("Insufficient permissions\n", fout) < 0)
+                        if (SFTP_FPUTS(args, "Insufficient permissions\n") < 0)
                             err_sys("fputs error");
                     }
                     else if (err != WS_WANT_READ && err != WS_WANT_WRITE) {
-                        if (WFPUTS("Error writing directory\n", fout) < 0)
+                        if (SFTP_FPUTS(args, "Error writing directory\n") < 0)
                             err_sys("fputs error");
                     }
                 }
@@ -440,7 +470,7 @@ int doCmds()
                 else {
                     WSNPRINTF(buf, sizeof(buf), "fetching %s to %s\n", pt, to);
                 }
-                if (WFPUTS(buf, fout) < 0)
+                if (SFTP_FPUTS(args, buf) < 0)
                     err_sys("fputs error");
             }
 
@@ -452,11 +482,11 @@ int doCmds()
             } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE);
 
             if (ret != WS_SUCCESS) {
-                if (WFPUTS("Error getting file\n", fout) < 0)
+                if (SFTP_FPUTS(args, "Error getting file\n")  < 0)
                      err_sys("fputs error");
             }
             else {
-                if (WFPUTS("\n", fout) < 0) /* new line after status output */
+                if (SFTP_FPUTS(args, "\n") < 0) /* new line after status output */
                      err_sys("fputs error");
             }
             resume = 0;
@@ -525,7 +555,7 @@ int doCmds()
                 else {
                     WSNPRINTF(buf, sizeof(buf), "pushing %s to %s\n", pt, to);
                 }
-                if (WFPUTS(buf, fout) < 0)
+                if (SFTP_FPUTS(args, buf) < 0)
                      err_sys("fputs error");
 
             }
@@ -536,11 +566,11 @@ int doCmds()
             } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
                         && ret != WS_SUCCESS);
             if (ret != WS_SUCCESS) {
-                if (WFPUTS("Error pushing file\n", fout) < 0)
+                if (SFTP_FPUTS(args, "Error pushing file\n") < 0)
                     err_sys("fputs error");
             }
             else {
-                if (WFPUTS("\n", fout) < 0) /* new line after status output */
+                if (SFTP_FPUTS(args, "\n") < 0) /* new line after status output */
                     err_sys("fputs error");
             }
             resume = 0;
@@ -581,7 +611,7 @@ int doCmds()
             } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
                         && ret != WS_SUCCESS);
             if (ret != WS_SUCCESS) {
-                if (WFPUTS("Error changing directory\n", fout) < 0)
+                if (SFTP_FPUTS(args, "Error changing directory\n") < 0)
                     err_sys("fputs error");
             }
 
@@ -654,7 +684,7 @@ int doCmds()
             } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
                         && ret != WS_SUCCESS);
             if (ret != WS_SUCCESS) {
-                if (WFPUTS("Unable to change path permissions\n", fout) < 0)
+                if (SFTP_FPUTS(args, "Unable to change path permissions\n") < 0)
                     err_sys("fputs error");
             }
 
@@ -694,11 +724,11 @@ int doCmds()
                         && ret != WS_SUCCESS);
             if (ret != WS_SUCCESS) {
                 if (ret == WS_PERMISSIONS) {
-                    if (WFPUTS("Insufficient permissions\n", fout) < 0)
+                    if (SFTP_FPUTS(args, "Insufficient permissions\n") < 0)
                         err_sys("fputs error");
                 }
                 else {
-                    if (WFPUTS("Error writing directory\n", fout) < 0)
+                    if (SFTP_FPUTS(args, "Error writing directory\n") < 0)
                         err_sys("fputs error");
                 }
             }
@@ -736,11 +766,11 @@ int doCmds()
                         && ret != WS_SUCCESS);
             if (ret != WS_SUCCESS) {
                 if (ret == WS_PERMISSIONS) {
-                    if (WFPUTS("Insufficient permissions\n", fout) < 0)
+                    if (SFTP_FPUTS(args, "Insufficient permissions\n") < 0)
                         err_sys("fputs error");
                 }
                 else {
-                    if (WFPUTS("Error writing directory\n", fout) < 0)
+                    if (SFTP_FPUTS(args, "Error writing directory\n") < 0)
                         err_sys("fputs error");
                 }
             }
@@ -811,7 +841,7 @@ int doCmds()
             } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
                         && ret != WS_SUCCESS);
             if (ret != WS_SUCCESS) {
-                if (WFPUTS("Error with rename\n", fout) < 0)
+                if (SFTP_FPUTS(args, "Error with rename\n") < 0)
                     err_sys("fputs error");
             }
             XFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -831,9 +861,9 @@ int doCmds()
                         && current == NULL && err != WS_SUCCESS);
             tmp = current;
             while (tmp != NULL) {
-                if (WFPUTS(tmp->fName, fout) < 0)
+                if (SFTP_FPUTS(args, tmp->fName) < 0)
                     err_sys("fputs error");
-                if (WFPUTS("\n", fout) < 0)
+                if (SFTP_FPUTS(args, "\n") < 0)
                     err_sys("fputs error");
                 tmp = tmp->next;
             }
@@ -843,8 +873,8 @@ int doCmds()
 
         /* display current working directory */
         if ((pt = WSTRNSTR(msg, "pwd", sizeof(msg))) != NULL) {
-            if (WFPUTS(workingDir, fout) < 0 ||
-                    WFPUTS("\n", fout) < 0)
+            if (SFTP_FPUTS(args, workingDir) < 0 ||
+                    SFTP_FPUTS(args, "\n") < 0)
                 err_sys("fputs error");
             continue;
         }
@@ -864,8 +894,8 @@ int doCmds()
             continue;
         }
 
-        WFPUTS("Unknown command\n", fout);
-    }
+        SFTP_FPUTS(args, "Unknown command\n");
+    } while (!quit);
 
     return WS_SUCCESS;
 }
@@ -1018,7 +1048,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         n = NULL;
     }
 
-    doCmds();
+    doCmds(args);
 
     XFREE(workingDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     ret = wolfSSH_shutdown(ssh);
@@ -1036,7 +1066,8 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 {
     printf("Not compiled in!\nPlease recompile with WOLFSSH_SFTP or --enable-sftp");
-    return -1;
+    (void)args;
+    return 0;
 }
 #endif /* WOLFSSH_SFTP */
 
@@ -1050,6 +1081,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         args.argv = argv;
         args.return_code = 0;
         args.user_auth = NULL;
+        args.sftp_cb   = NULL;
 
         WSTARTTCP();
 

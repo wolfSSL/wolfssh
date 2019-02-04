@@ -30,6 +30,7 @@
 
 #include <wolfssl/wolfcrypt/sha256.h>
 #include <wolfssl/wolfcrypt/coding.h>
+#include <wolfssl/wolfcrypt/wc_port.h>
 #include <wolfssh/ssh.h>
 #include <wolfssh/wolfsftp.h>
 #include <wolfssh/test.h>
@@ -280,6 +281,8 @@ static int NonBlockSSH_accept(WOLFSSH* ssh)
     return ret;
 }
 
+static int quit = 0;
+wolfSSL_Mutex doneLock;
 
 static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
 {
@@ -327,7 +330,9 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
         fprintf(stderr, "Error [%d] \"%s\" with handling connection.\n", ret,
                 wolfSSH_ErrorToName(ret));
     #ifndef WOLFSSH_NO_EXIT
-        exit(EXIT_FAILURE);
+        wc_LockMutex(&doneLock);
+        quit = 1;
+        wc_UnLockMutex(&doneLock);
     #endif
     }
 
@@ -752,6 +757,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     }
     }
     myoptind = 0;      /* reset for test cases */
+    wc_InitMutex(&doneLock);
 
 #ifdef WOLFSSH_TEST_BLOCK
     if (!nonBlock) {
@@ -930,8 +936,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
         server_worker(threadCtx);
 
-    } while (multipleConnections);
+    } while (multipleConnections && !quit);
 
+    wc_FreeMutex(&doneLock);
     PwMapListDelete(&pwMapList);
     wolfSSH_CTX_free(ctx);
     if (wolfSSH_Cleanup() != WS_SUCCESS) {

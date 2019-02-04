@@ -37,7 +37,7 @@
 #include <wolfssh/test.h>
 #include "examples/echoserver/echoserver.h"
 #include "examples/client/client.h"
-
+#include "tests/testsuite.h"
 
 #ifndef NO_TESTSUITE_MAIN_DRIVER
 
@@ -141,6 +141,14 @@ int TestsuiteTest(int argc, char** argv)
 
     wolfSSH_Cleanup();
     FreeTcpReady(&ready);
+
+#ifdef WOLFSSH_SFTP
+    printf("testing STP blocking\n");
+    test_SFTP(0);
+    printf("testing STP non blocking\n");
+    test_SFTP(1);
+#endif
+
     return EXIT_SUCCESS;
 }
 
