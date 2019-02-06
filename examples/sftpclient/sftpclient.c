@@ -42,10 +42,11 @@ static char* workingDir;
 #define MAX_CMD_SZ 7
 
 
-static void myStatusCb(WOLFSSH* sshIn, long bytes, char* name)
+static void myStatusCb(WOLFSSH* sshIn, word32* bytes, char* name)
 {
     char buf[80];
-    WSNPRINTF(buf, sizeof(buf), "Processed %8ld\t bytes \r", bytes);
+    word64 longBytes = ((word64)bytes[1] << 32) | bytes[0];
+    WSNPRINTF(buf, sizeof(buf), "Processed %8ld\t bytes \r", longBytes);
     WFPUTS(buf, fout);
     (void)name;
     (void)sshIn;

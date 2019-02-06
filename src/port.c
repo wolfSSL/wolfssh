@@ -82,52 +82,78 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
 #endif
 }
 
-#if 0
-#if defined(USE_WINDOWS_API) && (defined(WOLFSSH_SFTP) || \
-    defined(WOLFSSH_SCP)) && !defined(NO_WOLFSSH_SERVER)
-int wPwrite(WFD fd, unsigned char* buf, unsigned int sz, long ofst)
-{
-    OVERLAPPED offset;
-    DWORD bytesWritten;
-    int ret;
+#if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
+    !defined(NO_WOLFSSH_SERVER)
 
-    WMEMSET(&offset, 0, sizeof(OVERLAPPED));
-    offset.Offset = (DWORD)(ofst & 0xFFFFFFFF);
-    offset.OffsetHigh = (DWORD)((ofst & 0xFFFFFFFF00000000) >> 32);
-    if (WriteFile((HANDLE)_get_osfhandle(fd), buf, sz, &bytesWritten, &offset) == 0)
-        ret = -1;
-    else
-        ret = (int)bytesWritten;
+    #ifndef USE_WINDOWS_API
 
-    return ret;
-}
-
-
-int wPread(WFD fd, unsigned char* buf, unsigned int sz, long ofst)
-{
-    OVERLAPPED offset;
-    DWORD bytesRead;
-    int ret;
-
-    WMEMSET(&offset, 0, sizeof(OVERLAPPED));
-    offset.Offset = (DWORD)(ofst & 0xFFFFFFFF);
-    offset.OffsetHigh = (DWORD)((ofst & 0xFFFFFFFF00000000) >> 32);
-    if (ReadFile((HANDLE)_get_osfhandle(fd), buf, sz, &bytesRead, &offset) == 0) {
-        if (GetLastError() == ERROR_HANDLE_EOF) {
-            ret = 0; /* return 0 for end of file */
+        int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
+                const unsigned int* shortOffset)
+        {
+            long offset = ((long)shortOffset[1] << 32) | shortOffset[0];
+            return (int)pwrite(fd, buf, sz, offset);
         }
-        else {
-            ret = -1;
+
+
+        int wPread(WFD fd, unsigned char* buf, unsigned int sz,
+                const unsigned int* shortOffset)
+        {
+            long offset = ((long)shortOffset[1] << 32) | shortOffset[0];
+            return (int)pread(fd, buf, sz, offset);
         }
-    }
-    else
-        ret = (int)bytesRead;
 
-    return ret;
-}
+    #else /* USE_WINDOWS_API */
 
-#endif /* USE_WINDOWS_API */
-#endif
+    #if 0
+        int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
+                const unsigned int* shortOffset)
+        {
+            OVERLAPPED offset;
+            DWORD bytesWritten;
+            int ret;
+
+            WMEMSET(&offset, 0, sizeof(OVERLAPPED));
+            offset.Offset = shortOffset[0];
+            offset.OffsetHigh = shortOffset[1];
+            if (WriteFile((HANDLE)_get_osfhandle(fd), buf, sz, &bytesWritten,
+                        &offset) == 0)
+                ret = -1;
+            else
+                ret = (int)bytesWritten;
+
+            return ret;
+        }
+
+
+        int wPread(WFD fd, unsigned char* buf, unsigned int sz,
+                const unsigned int* shortOffset)
+        {
+            OVERLAPPED offset;
+            DWORD bytesRead;
+            int ret;
+
+            WMEMSET(&offset, 0, sizeof(OVERLAPPED));
+            offset.Offset = shortOffset[0];
+            offset.OffsetHigh = shortOffset[1];
+            if (ReadFile((HANDLE)_get_osfhandle(fd), buf, sz, &bytesRead,
+                        &offset) == 0) {
+                if (GetLastError() == ERROR_HANDLE_EOF) {
+                    ret = 0; /* return 0 for end of file */
+                }
+                else {
+                    ret = -1;
+                }
+            }
+            else
+                ret = (int)bytesRead;
+
+            return ret;
+        }
+    #endif /* 0 */
+
+    #endif /* USE_WINDOWS_API */
+#endif /* WOLFSSH_SFTP WOLFSSH_SCP NO_WOLFSSH_SERVER */
+
 #endif /* !NO_FILESYSTEM */
 
 

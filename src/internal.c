@@ -7573,3 +7573,12 @@ int wolfSSH_oct2dec(WOLFSSH* ssh, byte* oct, word32 octSz)
     return ret;
 }
 
+
+/* addend1 += addend2 */
+void AddAssign64(word32* addend1, word32 addend2)
+{
+    word32 tmp = addend1[0];
+    if ((addend1[0] += addend2) < tmp)
+        addend1[1]++;
+}
+

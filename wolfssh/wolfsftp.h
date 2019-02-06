@@ -129,7 +129,7 @@ struct WS_SFTP_FILEATRB_EX {
 
 typedef struct WS_SFTP_FILEATRB {
     word32 flags;
-    word64 sz;
+    word32 sz[2];
     word32 uid; /* user ID */
     word32 gid; /* group ID */
     word32 per; /* permissions */
@@ -170,9 +170,9 @@ WOLFSSH_API int wolfSSH_SFTP_Close(WOLFSSH* ssh, byte* handle, word32 handleSz);
 WOLFSSH_API int wolfSSH_SFTP_Open(WOLFSSH* ssh, char* dir, word32 reason,
         WS_SFTP_FILEATRB* atr, byte* handle, word32* handleSz);
 WOLFSSH_API int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle,
-        word32 handleSz, word64 ofst, byte* out, word32 outSz);
+        word32 handleSz, const word32* ofst, byte* out, word32 outSz);
 WOLFSSH_API int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle,
-        word32 handleSz, word64 ofst, byte* out, word32 outSz);
+        word32 handleSz, const word32* ofst, byte* out, word32 outSz);
 WOLFSSH_API int wolfSSH_SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr);
 WOLFSSH_API int wolfSSH_SFTP_LSTAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr);
 WOLFSSH_API int wolfSSH_SFTP_SetSTAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr);
@@ -183,8 +183,9 @@ WOLFSSH_API void wolfSSH_SFTPNAME_list_free(WS_SFTPNAME* n);
 
 /* handling reget / reput */
 WOLFSSH_API int wolfSSH_SFTP_SaveOfst(WOLFSSH* ssh, char* frm, char* to,
-        word64 ofst);
-WOLFSSH_API word64 wolfSSH_SFTP_GetOfst(WOLFSSH* ssh, char* frm, char* to);
+        const word32* ofst);
+WOLFSSH_API int wolfSSH_SFTP_GetOfst(WOLFSSH* ssh, char* frm, char* to,
+        word32* ofst);
 WOLFSSH_API int wolfSSH_SFTP_ClearOfst(WOLFSSH* ssh);
 WOLFSSH_API void wolfSSH_SFTP_Interrupt(WOLFSSH* ssh);
 
@@ -199,7 +200,7 @@ WOLFSSH_API int wolfSSH_SFTP_Rename(WOLFSSH* ssh, const char* old,
 WOLFSSH_API WS_SFTPNAME* wolfSSH_SFTP_LS(WOLFSSH* ssh, char* dir);
 WOLFSSH_API int wolfSSH_SFTP_CHMOD(WOLFSSH* ssh, char* n, char* oct);
 
-typedef void(WS_STATUS_CB)(WOLFSSH*, long, char*);
+typedef void(WS_STATUS_CB)(WOLFSSH*, word32*, char*);
 WOLFSSH_API int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from, char* to,
         byte resume, WS_STATUS_CB* statusCb);
 WOLFSSH_API int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to,

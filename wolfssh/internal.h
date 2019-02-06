@@ -252,7 +252,7 @@ typedef struct HandshakeInfo {
 
 typedef struct WS_HANDLE_LIST WS_HANDLE_LIST;
 typedef struct SFTP_OFST {
-    word64 offset;
+    word32 offset[2];
     char from[WOLFSSH_MAX_FILENAME];
     char to[WOLFSSH_MAX_FILENAME];
 } SFTP_OFST;
@@ -734,6 +734,7 @@ WOLFSSH_LOCAL int wsScpSendCallback(WOLFSSH*, int, const char*, char*, word32,
 WOLFSSH_LOCAL void clean_path(char* path);
 WOLFSSH_LOCAL void DumpOctetString(const byte*, word32);
 WOLFSSH_LOCAL int wolfSSH_oct2dec(WOLFSSH* ssh, byte* oct, word32 octSz);
+WOLFSSH_LOCAL void AddAssign64(word32*, word32);
 
 
 #ifdef __cplusplus

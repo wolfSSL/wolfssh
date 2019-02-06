@@ -338,8 +338,10 @@ extern "C" {
 #endif
 
 #ifndef WPWRITE
-    static inline int wPwrite(WFD fd, unsigned char* buf, unsigned int sz, long ofst)
+    static inline int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
+            const unsigned int* shortOffset)
     {
+        long ofst = ((long)shortOffset[1] << 32) | shortOffset[0];
         if (ofst > 0) {
             NU_Seek(fd, ofst, 0);
         }
@@ -350,8 +352,10 @@ extern "C" {
 #endif
 
 #ifndef WPREAD
-    static inline int wPread(WFD fd, unsigned char* buf, unsigned int sz, long ofst)
+    static inline int wPread(WFD fd, unsigned char* buf, unsigned int sz,
+            const unsigned int* shortOffset)
     {
+        long ofst = ((long)shortOffset[1] << 32) | shortOffset[0];
         if (ofst > 0) {
             NU_Seek(fd, ofst, 0);
         }
@@ -473,8 +477,8 @@ extern "C" {
     #define WCLOSE(fd)        _close((fd))
 
     #define WFD int
-    int wPwrite(WFD, unsigned char*, unsigned int, long);
-    int wPread(WFD, unsigned char*, unsigned int, long);
+    int wPwrite(WFD, unsigned char*, unsigned int, const unsigned int*);
+    int wPread(WFD, unsigned char*, unsigned int, const unsigned int*);
     #define WPWRITE(fd,b,s,o) wPwrite((fd),(b),(s),(o))
     #define WPREAD(fd,b,s,o)  wPread((fd),(b),(s),(o))
     #define WS_DELIM          '\\'
@@ -500,7 +504,11 @@ extern "C" {
     #define WSTAT_T     struct stat
     #define WRMDIR(d)   rmdir((d))
     #define WSTAT(p,b)  stat((p),(b))
-    #define WLSTAT(p,b) lstat((p),(b))
+    #ifndef OSE
+        #define WLSTAT(p,b) lstat((p),(b))
+    #else
+        #define WLSTAT(p,b) stat((p),(b))
+    #endif
     #define WREMOVE(d)   remove((d))
     #define WRENAME(o,n) rename((o),(n))
     #define WGETCWD(r,rSz) getcwd((r),(rSz))
@@ -518,8 +526,10 @@ extern "C" {
 
     #define WOPEN(f,m,p) open((f),(m),(p))
     #define WCLOSE(fd) close((fd))
-    #define WPWRITE(fd,b,s,o) pwrite((fd),(b),(s),(o))
-    #define WPREAD(fd,b,s,o)  pread((fd),(b),(s),(o))
+    int wPwrite(WFD, unsigned char*, unsigned int, const unsigned int*);
+    int wPread(WFD, unsigned char*, unsigned int, const unsigned int*);
+    #define WPWRITE(fd,b,s,o) wPwrite((fd),(b),(s),(o))
+    #define WPREAD(fd,b,s,o)  wPread((fd),(b),(s),(o))
 
 #ifndef NO_WOLFSSH_DIR
     #include <dirent.h> /* used for opendir, readdir, and closedir */

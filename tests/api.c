@@ -89,10 +89,10 @@ static void test_wolfSSH_CTX_new(void)
 
     AssertNull(ctx = wolfSSH_CTX_new(TEST_BAD_ENDPOINT_NEXT, NULL));
     wolfSSH_CTX_free(ctx);
-    
+
     AssertNull(ctx = wolfSSH_CTX_new(TEST_BAD_ENDPOINT_LAST, NULL));
     wolfSSH_CTX_free(ctx);
-    
+
     AssertNotNull(ctx = wolfSSH_CTX_new(TEST_GOOD_ENDPOINT_SERVER, NULL));
     wolfSSH_CTX_free(ctx);
 
