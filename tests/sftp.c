@@ -33,10 +33,54 @@
 #if defined(WOLFSSH_SFTP) && !defined(SINGLE_THREADED)
 
 static const char* cmds[] = {
+    "mkdir a",
+    "cd a",
+    "pwd",
     "ls",
+    "put configure",
+    "ls",
+    "get configure test-get",
+    "rm configure",
+    "cd ../",
+    "ls",
+    "rename test-get test-get-2",
+    "rmdir a",
+    "ls",
+    "rm test-get-2",
     "exit"
 };
 static int commandIdx = 0;
+static char inBuf[1024] = {0};
+
+/* return 0 on success */
+static int Expected(int command)
+{
+    switch (command) {
+        case 4:
+            {
+                char expt[] = ".\n..\nwolfSSH sftp> ";
+                return WMEMCMP(expt, inBuf, sizeof(expt));
+            }
+
+        case 6:
+            {
+                char expt[] = ".\n..\nconfigure\nwolfSSH sftp> ";
+                return WMEMCMP(expt, inBuf, sizeof(expt));
+            }
+
+        case 10:
+            return (WSTRNSTR(inBuf, "test-get", sizeof(inBuf)) == NULL);
+
+        case 13:
+            return (WSTRNSTR(inBuf, "test-get-2", sizeof(inBuf)) == NULL);
+
+        default:
+            break;
+    }
+    WMEMSET(inBuf, 0, sizeof(inBuf));
+    return 0;
+}
+
 
 static int commandCb(const char* in, char* out, int outSz)
 {
@@ -44,6 +88,7 @@ static int commandCb(const char* in, char* out, int outSz)
 
     if (in) {
         /* print out */
+        WSTRNCAT(inBuf, in, sizeof(inBuf));
     }
 
     /* get command input */
@@ -54,6 +99,10 @@ static int commandCb(const char* in, char* out, int outSz)
         }
         else {
             WMEMCPY(out, cmds[commandIdx], sz);
+        }
+
+        if (Expected(commandIdx) != 0) {
+            exit(1); /* abort out */
         }
         commandIdx++;
     }

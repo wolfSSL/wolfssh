@@ -39,6 +39,7 @@ static WOLFSSH* ssh = NULL;
 static char* workingDir;
 #define fin stdin
 #define fout stdout
+#define MAX_CMD_SZ 7
 
 
 static void myStatusCb(WOLFSSH* sshIn, long bytes, char* name)
@@ -338,6 +339,7 @@ static INLINE char* SFTP_FGETS(func_args* args, char* msg, int msgSz)
 {
     char* ret = NULL;
 
+    WMEMSET(msg, 0, msgSz);
     if (args && args->sftp_cb) {
         if (args->sftp_cb(NULL, msg, msgSz) == 0)
             ret = msg;
@@ -363,6 +365,8 @@ int doCmds(func_args* args)
 
         if (SFTP_FPUTS(args, "wolfSSH sftp> ") < 0)
             err_sys("fputs error");
+
+        WMEMSET(msg, 0, sizeof(msg));
         if (SFTP_FGETS(args, msg, sizeof(msg) - 1) == NULL)
             err_sys("fgets error");
         msg[WOLFSSH_MAX_FILENAME * 2 - 1] = '\0';
@@ -409,11 +413,11 @@ int doCmds(func_args* args)
             continue;
         }
 
-        if ((pt = WSTRNSTR(msg, "reget", sizeof(msg))) != NULL) {
+        if ((pt = WSTRNSTR(msg, "reget", MAX_CMD_SZ)) != NULL) {
             resume = 1;
         }
 
-        if ((pt = WSTRNSTR(msg, "get", sizeof(msg))) != NULL) {
+        if ((pt = WSTRNSTR(msg, "get", MAX_CMD_SZ)) != NULL) {
             int sz;
             char* f  = NULL;
             char* to = NULL;
@@ -495,11 +499,11 @@ int doCmds(func_args* args)
         }
 
 
-        if ((pt = WSTRNSTR(msg, "reput", sizeof(msg))) != NULL) {
+        if ((pt = WSTRNSTR(msg, "reput", MAX_CMD_SZ)) != NULL) {
             resume = 1;
         }
 
-        if ((pt = WSTRNSTR(msg, "put", sizeof(msg))) != NULL) {
+        if ((pt = WSTRNSTR(msg, "put", MAX_CMD_SZ)) != NULL) {
             int sz;
             char* f  = NULL;
             char* to = NULL;
@@ -578,7 +582,7 @@ int doCmds(func_args* args)
             continue;
         }
 
-        if ((pt = WSTRNSTR(msg, "cd", sizeof(msg))) != NULL) {
+        if ((pt = WSTRNSTR(msg, "cd", MAX_CMD_SZ)) != NULL) {
             WS_SFTP_FILEATRB atrb;
             int sz;
             char* f = NULL;
@@ -631,7 +635,7 @@ int doCmds(func_args* args)
             continue;
         }
 
-        if ((pt = WSTRNSTR(msg, "chmod", sizeof(msg))) != NULL) {
+        if ((pt = WSTRNSTR(msg, "chmod", MAX_CMD_SZ)) != NULL) {
             int sz;
             char* f = NULL;
             char mode[WOLFSSH_MAX_OCTET_LEN];
@@ -692,7 +696,7 @@ int doCmds(func_args* args)
             continue;
         }
 
-        if ((pt = WSTRNSTR(msg, "rmdir", sizeof(msg))) != NULL) {
+        if ((pt = WSTRNSTR(msg, "rmdir", MAX_CMD_SZ)) != NULL) {
             int sz;
             char* f = NULL;
 
@@ -737,7 +741,7 @@ int doCmds(func_args* args)
         }
 
 
-        if ((pt = WSTRNSTR(msg, "rm", sizeof(msg))) != NULL) {
+        if ((pt = WSTRNSTR(msg, "rm", MAX_CMD_SZ)) != NULL) {
             int sz;
             char* f = NULL;
 
@@ -778,7 +782,7 @@ int doCmds(func_args* args)
             continue;
         }
 
-        if ((pt = WSTRNSTR(msg, "rename", sizeof(msg))) != NULL) {
+        if ((pt = WSTRNSTR(msg, "rename", MAX_CMD_SZ)) != NULL) {
             int sz;
             char* f   = NULL;
             char* fTo = NULL;
@@ -850,7 +854,7 @@ int doCmds(func_args* args)
 
         }
 
-        if ((pt = WSTRNSTR(msg, "ls", sizeof(msg))) != NULL) {
+        if ((pt = WSTRNSTR(msg, "ls", MAX_CMD_SZ)) != NULL) {
             WS_SFTPNAME* tmp;
             WS_SFTPNAME* current;
 
@@ -872,24 +876,24 @@ int doCmds(func_args* args)
         }
 
         /* display current working directory */
-        if ((pt = WSTRNSTR(msg, "pwd", sizeof(msg))) != NULL) {
+        if ((pt = WSTRNSTR(msg, "pwd", MAX_CMD_SZ)) != NULL) {
             if (SFTP_FPUTS(args, workingDir) < 0 ||
                     SFTP_FPUTS(args, "\n") < 0)
                 err_sys("fputs error");
             continue;
         }
 
-        if (WSTRNSTR(msg, "help", sizeof(msg)) != NULL) {
+        if (WSTRNSTR(msg, "help", MAX_CMD_SZ) != NULL) {
             ShowCommands();
             continue;
         }
 
-        if (WSTRNSTR(msg, "quit", sizeof(msg)) != NULL) {
+        if (WSTRNSTR(msg, "quit", MAX_CMD_SZ) != NULL) {
             quit = 1;
             continue;
         }
 
-        if (WSTRNSTR(msg, "exit", sizeof(msg)) != NULL) {
+        if (WSTRNSTR(msg, "exit", MAX_CMD_SZ) != NULL) {
             quit = 1;
             continue;
         }
