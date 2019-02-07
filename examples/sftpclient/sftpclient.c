@@ -42,6 +42,11 @@ static char* workingDir;
 #define MAX_CMD_SZ 7
 
 
+static void err_msg(const char* s)
+{
+    printf("%s\n", s);
+}
+
 static void myStatusCb(WOLFSSH* sshIn, word32* bytes, char* name)
 {
     char buf[80];
@@ -356,7 +361,7 @@ static INLINE char* SFTP_FGETS(func_args* args, char* msg, int msgSz)
 int doCmds(func_args* args)
 {
     byte quit = 0;
-    int ret, err;
+    int ret = WS_SUCCESS, err;
     byte resume = 0;
     int i;
 
@@ -364,12 +369,24 @@ int doCmds(func_args* args)
         char msg[WOLFSSH_MAX_FILENAME * 2];
         char* pt;
 
-        if (SFTP_FPUTS(args, "wolfSSH sftp> ") < 0)
-            err_sys("fputs error");
+        if (wolfSSH_get_error(ssh) == WS_SOCKET_ERROR_E) {
+            if (SFTP_FPUTS(args, "peer disconnected\n") < 0) {
+                err_msg("fputs error");
+                return -1;
+            }
+            return WS_SOCKET_ERROR_E;
+        }
+
+        if (SFTP_FPUTS(args, "wolfSSH sftp> ") < 0) {
+            err_msg("fputs error");
+            return -1;
+        }
 
         WMEMSET(msg, 0, sizeof(msg));
-        if (SFTP_FGETS(args, msg, sizeof(msg) - 1) == NULL)
-            err_sys("fgets error");
+        if (SFTP_FGETS(args, msg, sizeof(msg) - 1) == NULL) {
+            err_msg("fgets error");
+            return -1;
+        }
         msg[WOLFSSH_MAX_FILENAME * 2 - 1] = '\0';
 
         if ((pt = WSTRNSTR(msg, "mkdir", sizeof(msg))) != NULL) {
@@ -400,12 +417,16 @@ int doCmds(func_args* args)
                 if ((ret = wolfSSH_SFTP_MKDIR(ssh, pt, &atrb)) != WS_SUCCESS) {
                     err = wolfSSH_get_error(ssh);
                     if (ret == WS_PERMISSIONS) {
-                        if (SFTP_FPUTS(args, "Insufficient permissions\n") < 0)
-                            err_sys("fputs error");
+                        if (SFTP_FPUTS(args, "Insufficient permissions\n") < 0) {
+                            err_msg("fputs error");
+                            return -1;
+                        }
                     }
                     else if (err != WS_WANT_READ && err != WS_WANT_WRITE) {
-                        if (SFTP_FPUTS(args, "Error writing directory\n") < 0)
-                            err_sys("fputs error");
+                        if (SFTP_FPUTS(args, "Error writing directory\n") < 0) {
+                            err_msg("fputs error");
+                            return -1;
+                        }
                     }
                 }
             } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
@@ -454,7 +475,8 @@ int doCmds(func_args* args)
                 int maxSz = (int)(WSTRLEN(workingDir) + sz + 2);
                 f = XMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 if (f == NULL) {
-                    err_sys("Error malloc'ing");
+                    err_msg("Error malloc'ing");
+                    return -1;
                 }
 
                 f[0] = '\0';
@@ -475,8 +497,10 @@ int doCmds(func_args* args)
                 else {
                     WSNPRINTF(buf, sizeof(buf), "fetching %s to %s\n", pt, to);
                 }
-                if (SFTP_FPUTS(args, buf) < 0)
-                    err_sys("fputs error");
+                if (SFTP_FPUTS(args, buf) < 0) {
+                    err_msg("fputs error");
+                    return -1;
+                }
             }
 
             do {
@@ -487,12 +511,16 @@ int doCmds(func_args* args)
             } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE);
 
             if (ret != WS_SUCCESS) {
-                if (SFTP_FPUTS(args, "Error getting file\n")  < 0)
-                     err_sys("fputs error");
+                if (SFTP_FPUTS(args, "Error getting file\n")  < 0) {
+                     err_msg("fputs error");
+                     return -1;
+                }
             }
             else {
-                if (SFTP_FPUTS(args, "\n") < 0) /* new line after status output */
-                     err_sys("fputs error");
+                if (SFTP_FPUTS(args, "\n") < 0) { /* new line after status output */
+                     err_msg("fputs error");
+                     return -1;
+                }
             }
             resume = 0;
             XFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -539,7 +567,8 @@ int doCmds(func_args* args)
                 int maxSz = (int)WSTRLEN(workingDir) + sz + 2;
                 f = XMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 if (f == NULL) {
-                    err_sys("Error malloc'ing");
+                    err_msg("Error malloc'ing");
+                    return -1;
                 }
 
                 f[0] = '\0';
@@ -560,8 +589,10 @@ int doCmds(func_args* args)
                 else {
                     WSNPRINTF(buf, sizeof(buf), "pushing %s to %s\n", pt, to);
                 }
-                if (SFTP_FPUTS(args, buf) < 0)
-                     err_sys("fputs error");
+                if (SFTP_FPUTS(args, buf) < 0) {
+                     err_msg("fputs error");
+                     return -1;
+                }
 
             }
 
@@ -571,12 +602,16 @@ int doCmds(func_args* args)
             } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
                         && ret != WS_SUCCESS);
             if (ret != WS_SUCCESS) {
-                if (SFTP_FPUTS(args, "Error pushing file\n") < 0)
-                    err_sys("fputs error");
+                if (SFTP_FPUTS(args, "Error pushing file\n") < 0) {
+                    err_msg("fputs error");
+                    return -1;
+                }
             }
             else {
-                if (SFTP_FPUTS(args, "\n") < 0) /* new line after status output */
-                    err_sys("fputs error");
+                if (SFTP_FPUTS(args, "\n") < 0) { /* new line after status output */
+                    err_msg("fputs error");
+                    return -1;
+                }
             }
             resume = 0;
             XFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -596,7 +631,8 @@ int doCmds(func_args* args)
                 int maxSz = (int)WSTRLEN(workingDir) + sz + 2;
                 f = XMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 if (f == NULL) {
-                    err_sys("Error malloc'ing");
+                    err_msg("Error malloc'ing");
+                    return -1;
                 }
 
                 f[0] = '\0';
@@ -616,8 +652,10 @@ int doCmds(func_args* args)
             } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
                         && ret != WS_SUCCESS);
             if (ret != WS_SUCCESS) {
-                if (SFTP_FPUTS(args, "Error changing directory\n") < 0)
-                    err_sys("fputs error");
+                if (SFTP_FPUTS(args, "Error changing directory\n") < 0) {
+                    err_msg("fputs error");
+                    return -1;
+                }
             }
 
             if (ret == WS_SUCCESS) {
@@ -625,7 +663,8 @@ int doCmds(func_args* args)
                 XFREE(workingDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 workingDir = (char*)XMALLOC(sz + 1, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 if (workingDir == NULL) {
-                    err_sys("Error malloc'ing");
+                    err_msg("Error malloc'ing");
+                    return -1;
                 }
                 WMEMCPY(workingDir, pt, sz);
                 workingDir[sz] = '\0';
@@ -669,7 +708,8 @@ int doCmds(func_args* args)
                 int maxSz = (int)WSTRLEN(workingDir) + sz + 2;
                 f = XMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 if (f == NULL) {
-                    err_sys("Error malloc'ing");
+                    err_msg("Error malloc'ing");
+                    return -1;
                 }
 
                 f[0] = '\0';
@@ -689,8 +729,10 @@ int doCmds(func_args* args)
             } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
                         && ret != WS_SUCCESS);
             if (ret != WS_SUCCESS) {
-                if (SFTP_FPUTS(args, "Unable to change path permissions\n") < 0)
-                    err_sys("fputs error");
+                if (SFTP_FPUTS(args, "Unable to change path permissions\n") < 0) {
+                    err_msg("fputs error");
+                    return -1;
+                }
             }
 
             XFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -709,7 +751,8 @@ int doCmds(func_args* args)
                 int maxSz = (int)WSTRLEN(workingDir) + sz + 2;
                 f = XMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 if (f == NULL) {
-                    err_sys("Error malloc'ing");
+                    err_msg("Error malloc'ing");
+                    return -1;
                 }
 
                 f[0] = '\0';
@@ -729,12 +772,16 @@ int doCmds(func_args* args)
                         && ret != WS_SUCCESS);
             if (ret != WS_SUCCESS) {
                 if (ret == WS_PERMISSIONS) {
-                    if (SFTP_FPUTS(args, "Insufficient permissions\n") < 0)
-                        err_sys("fputs error");
+                    if (SFTP_FPUTS(args, "Insufficient permissions\n") < 0) {
+                        err_msg("fputs error");
+                        return -1;
+                    }
                 }
                 else {
-                    if (SFTP_FPUTS(args, "Error writing directory\n") < 0)
-                        err_sys("fputs error");
+                    if (SFTP_FPUTS(args, "Error writing directory\n") < 0) {
+                        err_msg("fputs error");
+                        return -1;
+                    }
                 }
             }
             XFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -771,12 +818,16 @@ int doCmds(func_args* args)
                         && ret != WS_SUCCESS);
             if (ret != WS_SUCCESS) {
                 if (ret == WS_PERMISSIONS) {
-                    if (SFTP_FPUTS(args, "Insufficient permissions\n") < 0)
-                        err_sys("fputs error");
+                    if (SFTP_FPUTS(args, "Insufficient permissions\n") < 0) {
+                        err_msg("fputs error");
+                        return -1;
+                    }
                 }
                 else {
-                    if (SFTP_FPUTS(args, "Error writing directory\n") < 0)
-                        err_sys("fputs error");
+                    if (SFTP_FPUTS(args, "Error writing directory\n") < 0) {
+                        err_msg("fputs error");
+                        return -1;
+                    }
                 }
             }
             XFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -814,7 +865,8 @@ int doCmds(func_args* args)
                 int maxSz = (int)WSTRLEN(workingDir) + sz + 2;
                 f = XMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 if (f == NULL) {
-                    err_sys("Error malloc'ing");
+                    err_msg("Error malloc'ing");
+                    return -1;
                 }
 
                 f[0] = '\0';
@@ -846,8 +898,10 @@ int doCmds(func_args* args)
             } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
                         && ret != WS_SUCCESS);
             if (ret != WS_SUCCESS) {
-                if (SFTP_FPUTS(args, "Error with rename\n") < 0)
-                    err_sys("fputs error");
+                if (SFTP_FPUTS(args, "Error with rename\n") < 0) {
+                    err_msg("fputs error");
+                    return -1;
+                }
             }
             XFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             XFREE(fTo, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -866,10 +920,14 @@ int doCmds(func_args* args)
                         && current == NULL && err != WS_SUCCESS);
             tmp = current;
             while (tmp != NULL) {
-                if (SFTP_FPUTS(args, tmp->fName) < 0)
-                    err_sys("fputs error");
-                if (SFTP_FPUTS(args, "\n") < 0)
-                    err_sys("fputs error");
+                if (SFTP_FPUTS(args, tmp->fName) < 0) {
+                    err_msg("fputs error");
+                    return -1;
+                }
+                if (SFTP_FPUTS(args, "\n") < 0) {
+                    err_msg("fputs error");
+                    return -1;
+                }
                 tmp = tmp->next;
             }
             wolfSSH_SFTPNAME_list_free(current);
@@ -879,8 +937,10 @@ int doCmds(func_args* args)
         /* display current working directory */
         if ((pt = WSTRNSTR(msg, "pwd", MAX_CMD_SZ)) != NULL) {
             if (SFTP_FPUTS(args, workingDir) < 0 ||
-                    SFTP_FPUTS(args, "\n") < 0)
-                err_sys("fputs error");
+                    SFTP_FPUTS(args, "\n") < 0) {
+                err_msg("fputs error");
+                return -1;
+            }
             continue;
         }
 
@@ -1053,15 +1113,17 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         n = NULL;
     }
 
-    doCmds(args);
-
+    ret = doCmds(args);
     XFREE(workingDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-    ret = wolfSSH_shutdown(ssh);
+    if (ret == WS_SUCCESS)
+        ret = wolfSSH_shutdown(ssh);
     WCLOSESOCKET(sockFd);
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
-    if (ret != WS_SUCCESS)
-        err_sys("Closing stream failed.");
+    if (ret != WS_SUCCESS) {
+        printf("error %d encountered\n", ret);
+        ((func_args*)args)->return_code = ret;
+    }
 
     return 0;
 }
