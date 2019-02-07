@@ -2289,7 +2289,13 @@ int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     if (sz + idx > maxSz || sz > WOLFSSH_MAX_HANDLE) {
         return WS_BUFFER_E;
     }
-    WMEMCPY((byte*)&handle, data + idx, sz);
+
+    if (sz != (sizeof(word32) * 2)) {
+        WLOG(WS_LOG_SFTP, "Unexpected handle size");
+        return WS_FATAL_ERROR;
+    }
+    ato32(data + idx + UINT32_SZ, &handle[0]);
+    ato32(data + idx, &handle[1]);
 
     /* find DIR given handle */
     while (cur != NULL) {
@@ -2304,9 +2310,6 @@ int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         /* unable to find handle */
         return WS_FATAL_ERROR;
     }
-
-    /* this closes the directory before returning */
-    //wc_ReadDirFirst(&ctx, dir, NULL);
 
     /* get directory information */
     outSz += UINT32_SZ + WOLFSSH_SFTP_HEADER; /* hold header+number of files */
@@ -2373,16 +2376,19 @@ int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 int wolfSSH_SFTP_RecvCloseDir(WOLFSSH* ssh, byte* handle, word32 handleSz)
 {
     DIR_HANDLE* cur = dirList;
+    word32 h[2];
 
-    if (ssh == NULL || handle == NULL || handleSz != sizeof(word64)) {
+    if (ssh == NULL || handle == NULL || handleSz != (sizeof(word32)*2)) {
         return WS_BAD_ARGUMENT;
     }
 
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_CLOSE Directory");
 
     /* find DIR given handle */
+    ato32(handle, &h[1]);
+    ato32(handle + UINT32_SZ, &h[0]);
     while (cur != NULL) {
-        if (cur->id[0] == *((word64*)handle)) {
+        if (cur->id[0] == h[0] && cur->id[1] == h[1]) {
             break;
         }
         cur = cur->next;
@@ -2469,10 +2475,8 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         WMEMCPY((byte*)&fd, data + idx, sz); idx += sz;
 
         /* get offset into file */
-        ato32(data + idx, &sz); idx += UINT32_SZ;
-        ofst[1] = sz;
-        ato32(data + idx, &sz); idx += UINT32_SZ;
-        ofst[0] = sz;
+        ato32(data + idx, &ofst[1]); idx += UINT32_SZ;
+        ato32(data + idx, &ofst[0]); idx += UINT32_SZ;
 
         /* get length to be written */
         ato32(data + idx, &sz); idx += UINT32_SZ;
@@ -2909,7 +2913,7 @@ int wolfSSH_SFTP_RecvClose(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
 #ifndef NO_WOLFSSH_DIR
     /* check if is a handle for a directory */
-    if (sz == (sizeof(word64) * 2)) {
+    if (sz == (sizeof(word32) * 2)) {
         ret = wolfSSH_SFTP_RecvCloseDir(ssh, data + idx, sz);
     }
     if (ret != WS_SUCCESS) {
@@ -6827,7 +6831,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
             case STATE_GET_OPEN_LOCAL:
                 WLOG(WS_LOG_SFTP, "SFTP GET STATE: OPEN LOCAL");
                 #ifndef USE_WINDOWS_API
-                    if (state->gOfst > 0)
+                    if (state->gOfst[0] > 0 || state->gOfst[1] > 0)
                         ret = WFOPEN(&state->fl, to, "ab");
                     else
                         ret = WFOPEN(&state->fl, to, "wb");
