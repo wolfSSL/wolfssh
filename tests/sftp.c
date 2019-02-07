@@ -63,10 +63,7 @@ static int Expected(int command)
             }
 
         case 6:
-            {
-                char expt[] = ".\n..\nconfigure\nwolfSSH sftp> ";
-                return WMEMCMP(expt, inBuf, sizeof(expt));
-            }
+            return (WSTRNSTR(inBuf, "configure", sizeof(inBuf)) == NULL);
 
         case 10:
             return (WSTRNSTR(inBuf, "test-get", sizeof(inBuf)) == NULL);

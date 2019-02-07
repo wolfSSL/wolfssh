@@ -143,9 +143,9 @@ int TestsuiteTest(int argc, char** argv)
     FreeTcpReady(&ready);
 
 #ifdef WOLFSSH_SFTP
-    printf("testing STP blocking\n");
+    printf("testing SFTP blocking\n");
     test_SFTP(0);
-    printf("testing STP non blocking\n");
+    printf("testing SFTP non blocking\n");
     test_SFTP(1);
 #endif
 
