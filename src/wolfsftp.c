@@ -1816,9 +1816,9 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     int isDir = 0;
     int ret = WS_SUCCESS;
 
-    word32 outSz = sizeof(word64) + WOLFSSH_SFTP_HEADER + UINT32_SZ;
+    word32 outSz = sizeof(word32) * 2 + WOLFSSH_SFTP_HEADER + UINT32_SZ;
     byte*  out = NULL;
-    word64 id;
+    word32 id[2];
 
     if (ssh == NULL) {
         return WS_BAD_ARGUMENT;
@@ -1875,7 +1875,9 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             return WS_MEMORY_E;
         }
         cur->dir = INVALID_HANDLE_VALUE;
-        cur->id = id = idCount++;
+        cur->id[0] = id[0] = idCount[0];
+        cur->id[1] = id[1] = idCount[1];
+        AddAssign64(idCount, 1);
         cur->isEof = 0;
         cur->dirName = dirName; /* take over ownership of buffer */
         cur->next = dirList;
@@ -3449,7 +3451,8 @@ int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr, byte link,
     WMEMSET(atr, 0, sizeof(WS_SFTP_FILEATRB));
 
     atr->flags |= WOLFSSH_FILEATRB_SIZE;
-    atr->sz = (((word64)stats.nFileSizeHigh << 32) | stats.nFileSizeLow);
+    atr->sz[1] = stats.nFileSizeHigh;
+    atr->sz[0] = stats.nFileSizeLow;
 
     atr->flags |= WOLFSSH_FILEATRB_PERM;
     atr->per = 0555 |
