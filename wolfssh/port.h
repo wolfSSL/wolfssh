@@ -504,7 +504,7 @@ extern "C" {
     #define WSTAT_T     struct stat
     #define WRMDIR(d)   rmdir((d))
     #define WSTAT(p,b)  stat((p),(b))
-    #ifndef OSE
+    #ifndef USE_OSE_API
         #define WLSTAT(p,b) lstat((p),(b))
     #else
         #define WLSTAT(p,b) stat((p),(b))
