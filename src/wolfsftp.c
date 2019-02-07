@@ -2296,8 +2296,7 @@ int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         WLOG(WS_LOG_SFTP, "Unexpected handle size");
         return WS_FATAL_ERROR;
     }
-    ato32(data + idx + UINT32_SZ, &handle[0]);
-    ato32(data + idx, &handle[1]);
+    WMEMCPY((byte*)&handle, data + idx, sz);
 
     /* find DIR given handle */
     while (cur != NULL) {
@@ -2378,7 +2377,7 @@ int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 int wolfSSH_SFTP_RecvCloseDir(WOLFSSH* ssh, byte* handle, word32 handleSz)
 {
     DIR_HANDLE* cur = dirList;
-    word32 h[2];
+    word32 h[2] = {0,0};
 
     if (ssh == NULL || handle == NULL || handleSz != (sizeof(word32)*2)) {
         return WS_BAD_ARGUMENT;
@@ -2387,8 +2386,7 @@ int wolfSSH_SFTP_RecvCloseDir(WOLFSSH* ssh, byte* handle, word32 handleSz)
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_CLOSE Directory");
 
     /* find DIR given handle */
-    ato32(handle, &h[1]);
-    ato32(handle + UINT32_SZ, &h[0]);
+    WMEMCPY((byte*)&h, handle, sizeof(word32) * 2);
     while (cur != NULL) {
         if (cur->id[0] == h[0] && cur->id[1] == h[1]) {
             break;
@@ -2410,8 +2408,8 @@ int wolfSSH_SFTP_RecvCloseDir(WOLFSSH* ssh, byte* handle, word32 handleSz)
     if (cur != NULL) {
         DIR_HANDLE* pre = dirList;
 
-        WLOG(WS_LOG_SFTP, "Free'ing and closing handle %ld pointer of [%p]",
-                (long)cur->id, cur);
+        WLOG(WS_LOG_SFTP, "Free'ing and closing handle %d%d pointer of [%p]",
+                cur->id[1], cur->id[0], cur);
         /* case where node is at head of list */
         if (pre == cur) {
             dirList = cur->next;
