@@ -1115,8 +1115,11 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 
     ret = doCmds(args);
     XFREE(workingDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-    if (ret == WS_SUCCESS)
-        ret = wolfSSH_shutdown(ssh);
+    if (ret == WS_SUCCESS) {
+        if (wolfSSH_shutdown(ssh) != WS_SUCCESS) {
+            printf("error with wolfSSH_shutdown(), already disconnected?\n");
+        }
+    }
     WCLOSESOCKET(sockFd);
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);

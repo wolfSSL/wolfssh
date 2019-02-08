@@ -405,6 +405,8 @@ struct WOLFSSH {
     struct WS_SFTP_MKDIR_STATE* mkdirState;
     struct WS_SFTP_RM_STATE* rmState;
     struct WS_SFTP_READDIR_STATE* readDirState;
+    struct WS_SFTP_SETATR_STATE* setatrState;
+    struct WS_SFTP_CHMOD_STATE* chmodState;
     struct WS_SFTP_LS_STATE* lsState;
     struct WS_SFTP_SEND_STATE* sendState;
     struct WS_SFTP_NAME_STATE* nameState;

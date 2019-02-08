@@ -46,6 +46,7 @@ static const char* cmds[] = {
     "rename test-get test-get-2",
     "rmdir a",
     "ls",
+    "chmod 600 test-get-2",
     "rm test-get-2",
     "exit"
 };
