@@ -39,9 +39,10 @@ For building under Windows with Visual Studio, see the file
 "ide/winvs/README.md".
 
 NOTE: On resource constrained devices the DEFAULT_WINDOW_SZ may need to be set
-to a lower size. By default channels are set to handle 1 Mb of data being sent
-and received. An example of setting a lower window size for new channels would
-be as follows "./configure CPPFLAGS=-DDEFAULT_WINDOW_SZ=16384"
+to a lower size. It can also be increased in desktop use cases to help with
+large file transfers. By default channels are set to handle 16,384 bytes of data
+being sent and received. An example of setting a window size for new channels
+would be as follows "./configure CPPFLAGS=-DDEFAULT_WINDOW_SZ=16384"
 
 examples
 --------
