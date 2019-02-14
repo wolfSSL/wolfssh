@@ -1764,6 +1764,7 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     word32 outSz = sizeof(word32)*2 + WOLFSSH_SFTP_HEADER + UINT32_SZ;
     byte*  out = NULL;
     word32 id[2];
+    byte idFlat[sizeof(word32) * 2];
 
     if (ssh == NULL) {
         return WS_BAD_ARGUMENT;
@@ -1821,6 +1822,8 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 #endif
         cur->id[0] = id[0] = idCount[0];
         cur->id[1] = id[1] = idCount[1];
+        c32toa(id[0], idFlat);
+        c32toa(id[1], idFlat + UINT32_SZ);
         AddAssign64(idCount, 1);
         cur->isEof = 0;
         cur->next  = dirList;
@@ -1835,7 +1838,7 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     if (ret == WS_SUCCESS) {
         SFTP_CreatePacket(ssh, WOLFSSH_FTP_HANDLE, out, outSz,
-                (byte*)&id, sizeof(word64));
+                idFlat, sizeof(idFlat));
     }
     else {
         if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_NOFILE, reqId,
@@ -2322,7 +2325,7 @@ int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     char* dirName = NULL;
     byte* out;
 
-	if (ssh == NULL) {
+    if (ssh == NULL) {
         return WS_BAD_ARGUMENT;
     }
 
@@ -2359,7 +2362,7 @@ int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         return WS_FATAL_ERROR;
     }
 
-	/* get directory information */
+    /* get directory information */
     outSz += UINT32_SZ + WOLFSSH_SFTP_HEADER; /* hold header+number of files */
     if (!cur->isEof) {
         do {
@@ -2413,7 +2416,7 @@ int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
     wolfSSH_SFTPNAME_list_free(list);
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
-	return WS_SUCCESS;
+    return WS_SUCCESS;
 }
 
 
