@@ -59,8 +59,14 @@ static int Expected(int command)
     switch (command) {
         case 4:
             {
-                char expt[] = ".\n..\nwolfSSH sftp> ";
-                return WMEMCMP(expt, inBuf, sizeof(expt));
+                char expt1[] = ".\n..\nwolfSSH sftp> ";
+                char expt2[] = "..\n.\nwolfSSH sftp> ";
+                if (WMEMCMP(expt1, inBuf, sizeof(expt1)) != 0 &&
+                    WMEMCMP(expt2, inBuf, sizeof(expt2)) != 0)
+                    return -1;
+                else
+                    return 0;
+
             }
 
         case 6:
