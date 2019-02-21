@@ -78,8 +78,13 @@ AX_PTHREAD([
 
 # Inline Build
 AC_ARG_ENABLE([inline],
-    [AS_HELP_STRING([--disable-inline],[Enable inline functions (default: enabled)])],
+    [AS_HELP_STRING([--disable-inline],[Disable inline functions (default: enabled)])],
     [ENABLED_INLINE=$enableval],[ENABLED_INLINE=yes])
+
+# Examples Build
+AC_ARG_ENABLE([examples],
+    [AS_HELP_STRING([--disable-examples],[Disable examples (default: enabled)])],
+    [ENABLED_EXAMPLES=$enableval],[ENABLED_EXAMPLES=yes])
 
 # Key Generation
 AC_ARG_ENABLE([keygen],
@@ -126,6 +131,8 @@ AS_IF([test "x$ENABLED_SFTP" = "xyes"],
 AS_IF([test "x$ENABLED_FWD" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_FWD"])
 
+AM_CONDITIONAL([BUILD_EXAMPLE_SERVERS],[test "x$ENABLED_EXAMPLES" = "xyes"])
+AM_CONDITIONAL([BUILD_EXAMPLE_CLIENTS],[test "x$ENABLED_EXAMPLES" = "xyes"])
 AM_CONDITIONAL([BUILD_INLINE],[test "x$ENABLED_INLINE" = "xyes"])
 AM_CONDITIONAL([BUILD_KEYGEN],[test "x$ENABLED_KEYGEN" = "xyes"])
 AM_CONDITIONAL([BUILD_SCP],[test "x$ENABLED_SCP" = "xyes"])
@@ -180,3 +187,4 @@ echo "   * scp:                       $ENABLED_SCP"
 echo "   * sftp:                      $ENABLED_SFTP"
 echo "   * TCP/IP Forwarding:         $ENABLED_FWD"
 echo "   * Inline Code:               $ENABLED_INLINE"
+echo "   * Examples:                  $ENABLED_EXAMPLES"
