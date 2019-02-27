@@ -20,13 +20,14 @@
 
 #define WOLFSSH_TEST_CLIENT
 
-
 #include <wolfssh/ssh.h>
 #include <wolfssh/test.h>
 #include "examples/client/client.h"
 #if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32)
     #include <termios.h>
 #endif
+
+#ifndef NO_WOLFSSH_CLIENT
 
 const char testString[] = "Hello, wolfSSH!";
 
@@ -303,6 +304,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         do {
             ret = wolfSSH_stream_read(ssh, (byte*)rxBuf, sizeof(rxBuf) - 1);
             if (ret <= 0) {
+                ret = wolfSSH_get_error(ssh);
                 if (ret != WS_WANT_READ && ret != WS_WANT_WRITE)
                     err_sys("Stream read failed.");
             }
@@ -322,6 +324,8 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
     return 0;
 }
+
+#endif /* NO_WOLFSSH_CLIENT */
 
 
 #ifndef NO_MAIN_DRIVER
@@ -344,7 +348,9 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         wolfSSH_Init();
 
         ChangeToWolfSshRoot();
+#ifndef NO_WOLFSSH_CLIENT
         client_test(&args);
+#endif
 
         wolfSSH_Cleanup();
 

@@ -56,6 +56,10 @@ extern "C" {
     #endif
 #endif
 
+#if defined(WOLFSSH_SCP) && defined(NO_WOLFSSH_SERVER)
+    #error only SCP server side supported
+#endif
+
 #ifdef __cplusplus
 }
 #endif

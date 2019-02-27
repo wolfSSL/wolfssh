@@ -248,6 +248,24 @@ const char* GetErrorString(int err)
         case WS_CHAN_PENDING:
             return "channel open pending";
 
+        case WS_SFTP_BAD_REQ_ID:
+            return "sftp bad request id";
+
+        case WS_SFTP_BAD_REQ_TYPE:
+            return "sftp bad request response type";
+
+        case WS_SFTP_STATUS_NOT_OK:
+            return "sftp status not OK";
+
+        case WS_SFTP_FILE_DNE:
+            return "sftp file does not exist";
+
+        case WS_SIZE_ONLY:
+            return "Only getting the size of buffer needed";
+
+        case WS_CLOSE_FILE_E:
+            return "Unable to close local file";
+
         default:
             return "Unknown error code";
     }
@@ -532,6 +550,12 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
     ssh->scpBasePathDynamic = NULL;
     ssh->scpBasePathSz = 0;
 #endif
+#endif
+#ifdef WOLFSSH_SFTP
+    if (ssh->sftpDefaultPath) {
+        WFREE(ssh->sftpDefaultPath, ssh->ctx->heap, DYNTYPE_STRING);
+        ssh->sftpDefaultPath = NULL;
+    }
 #endif
 }
 
@@ -1371,6 +1395,7 @@ int wolfSSH_SendPacket(WOLFSSH* ssh)
         if (sent < 0) {
             switch (sent) {
                 case WS_CBIO_ERR_WANT_WRITE:     /* want write, would block */
+                    ssh->error = WS_WANT_WRITE;
                     return WS_WANT_WRITE;
 
                 case WS_CBIO_ERR_CONN_RST:       /* connection reset */
@@ -1394,6 +1419,7 @@ int wolfSSH_SendPacket(WOLFSSH* ssh)
     }
 
     ssh->outputBuffer.idx = 0;
+    ssh->outputBuffer.plainSz = 0;
 
     WLOG(WS_LOG_DEBUG, "SB: Shrinking output buffer");
     ShrinkBuffer(&ssh->outputBuffer, 0);
@@ -1437,8 +1463,10 @@ static int GetInputData(WOLFSSH* ssh, word32 size)
      * buffer and resets idx to 0.
      */
     if (inSz > maxLength) {
-        if (GrowBuffer(&ssh->inputBuffer, size, usedLength) < 0)
-            return WS_MEMORY_E;
+        if (GrowBuffer(&ssh->inputBuffer, size, usedLength) < 0) {
+            ssh->error = WS_MEMORY_E;
+            return WS_FATAL_ERROR;
+        }
     }
 
     /* Put buffer data at start if not there */
@@ -1457,21 +1485,27 @@ static int GetInputData(WOLFSSH* ssh, word32 size)
     do {
         in = Receive(ssh,
                      ssh->inputBuffer.buffer + ssh->inputBuffer.length, inSz);
-        if (in == -1)
-            return WS_SOCKET_ERROR_E;
+        if (in == -1) {
+            ssh->error = WS_SOCKET_ERROR_E;
+            return WS_FATAL_ERROR;
+        }
 
-        if (in == WS_WANT_READ)
-            return WS_WANT_READ;
+        if (in == WS_WANT_READ) {
+            ssh->error = WS_WANT_READ;
+            return WS_FATAL_ERROR;
+        }
 
-        if (in > inSz)
-            return WS_RECV_OVERFLOW_E;
+        if (in > inSz) {
+            ssh->error = WS_RECV_OVERFLOW_E;
+            return WS_FATAL_ERROR;
+        }
 
         ssh->inputBuffer.length += in;
         inSz -= in;
 
     } while (ssh->inputBuffer.length < size);
 
-    return 0;
+    return WS_SUCCESS;
 }
 
 
@@ -4742,22 +4776,28 @@ int DoReceive(WOLFSSH* ssh)
                                   readSz);
                     if (ret != WS_SUCCESS) {
                         WLOG(WS_LOG_DEBUG, "PR: First decrypt fail");
-                        return ret;
+                        ssh->error = ret;
+                        return WS_FATAL_ERROR;
                     }
                 }
                 FALL_THROUGH;
                 /* no break */
 
             case PROCESS_PACKET_LENGTH:
-                if (ssh->inputBuffer.idx + UINT32_SZ > ssh->inputBuffer.bufferSz)
-                    return WS_OVERFLOW_E;
+                if (ssh->inputBuffer.idx + UINT32_SZ >
+                        ssh->inputBuffer.bufferSz) {
+                    ssh->error = WS_OVERFLOW_E;
+                    return WS_FATAL_ERROR;
+                }
 
                 /* Peek at the packet_length field. */
                 ato32(ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
                       &ssh->curSz);
-                if (ssh->curSz > MAX_PACKET_SZ - (word32)peerMacSz - LENGTH_SZ)
-                    return WS_OVERFLOW_E;
-
+                if (ssh->curSz >
+                        MAX_PACKET_SZ - (word32)peerMacSz - LENGTH_SZ) {
+                    ssh->error = WS_OVERFLOW_E;
+                    return WS_FATAL_ERROR;
+                }
                 ssh->processReplyState = PROCESS_PACKET_FINISH;
                 FALL_THROUGH;
                 /* no break */
@@ -4796,11 +4836,13 @@ int DoReceive(WOLFSSH* ssh)
                                                      LENGTH_SZ + ssh->curSz);
                         if (ret != WS_SUCCESS) {
                             WLOG(WS_LOG_DEBUG, "PR: Decrypt fail");
-                            return ret;
+                            ssh->error = ret;
+                            return WS_FATAL_ERROR;
                         }
                         if (verifyResult != WS_SUCCESS) {
                             WLOG(WS_LOG_DEBUG, "PR: VerifyMac fail");
-                            return verifyResult;
+                            ssh->error = verifyResult;
+                            return WS_FATAL_ERROR;
                         }
                     }
                     else {
@@ -4821,7 +4863,8 @@ int DoReceive(WOLFSSH* ssh)
 
                         if (ret != WS_SUCCESS) {
                             WLOG(WS_LOG_DEBUG, "PR: DecryptAead fail");
-                            return ret;
+                            ssh->error = ret;
+                            return WS_FATAL_ERROR;
                         }
                     }
                 }
@@ -4832,15 +4875,17 @@ int DoReceive(WOLFSSH* ssh)
             case PROCESS_PACKET:
                 ret = DoPacket(ssh);
                 if (ret < 0 && ret != WS_CHAN_RXD) {
-                    return ret;
+                    ssh->error = ret;
+                    return WS_FATAL_ERROR;
                 }
-                WLOG(WS_LOG_DEBUG, "PR3: peerMacSz = %u", peerMacSz);
-                ssh->inputBuffer.idx += peerMacSz;
+                WLOG(WS_LOG_DEBUG, "PR3: peerMacSz = %u", ssh->peerMacSz);
+                ssh->inputBuffer.idx += ssh->peerMacSz;
                 break;
 
             default:
                 WLOG(WS_LOG_DEBUG, "Bad process input state, program error");
-                return WS_INPUT_CASE_E;
+                ssh->error = WS_INPUT_CASE_E;
+                return WS_FATAL_ERROR;
         }
         WLOG(WS_LOG_DEBUG, "PR4: Shrinking input buffer");
         ShrinkBuffer(&ssh->inputBuffer, 1);
@@ -4849,7 +4894,7 @@ int DoReceive(WOLFSSH* ssh)
         WLOG(WS_LOG_DEBUG, "PR5: txCount = %u, rxCount = %u",
              ssh->txCount, ssh->rxCount);
 
-        return ret;
+        return WS_SUCCESS;
     }
     return WS_FATAL_ERROR;
 }
@@ -5857,9 +5902,6 @@ int SendNewKeys(WOLFSSH* ssh)
         ret = BundlePacket(ssh);
     }
 
-    if (ret == WS_SUCCESS)
-        ret = wolfSSH_SendPacket(ssh);
-
     if (ret == WS_SUCCESS) {
         ssh->blockSz = ssh->handshake->blockSz;
         ssh->encryptId = ssh->handshake->encryptId;
@@ -5895,6 +5937,9 @@ int SendNewKeys(WOLFSSH* ssh)
     if (ret == WS_SUCCESS) {
         ssh->txCount = 0;
     }
+
+    if (ret == WS_SUCCESS)
+        ret = wolfSSH_SendPacket(ssh);
 
     WLOG(WS_LOG_DEBUG, "Leaving SendNewKeys(), ret = %d", ret);
     return ret;
@@ -7112,6 +7157,9 @@ int SendChannelData(WOLFSSH* ssh, word32 peerChannel,
     if (ret == WS_SUCCESS)
         ret = dataSz;
 
+    if (ssh && ssh->error == WS_WANT_WRITE)
+        ssh->outputBuffer.plainSz = dataSz;
+
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelData(), ret = %d", ret);
     return ret;
 }
@@ -7321,7 +7369,8 @@ int SendChannelSuccess(WOLFSSH* ssh, word32 channelId, int success)
 }
 
 
-#if defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)
+#if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
+    !defined(NO_WOLFSSH_SERVER)
 /* cleans up absolute path */
 void clean_path(char* path)
 {
@@ -7522,5 +7571,14 @@ int wolfSSH_oct2dec(WOLFSSH* ssh, byte* oct, word32 octSz)
 #endif
 
     return ret;
+}
+
+
+/* addend1 += addend2 */
+void AddAssign64(word32* addend1, word32 addend2)
+{
+    word32 tmp = addend1[0];
+    if ((addend1[0] += addend2) < tmp)
+        addend1[1]++;
 }
 

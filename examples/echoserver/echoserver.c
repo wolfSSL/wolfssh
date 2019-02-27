@@ -30,6 +30,7 @@
 
 #include <wolfssl/wolfcrypt/sha256.h>
 #include <wolfssl/wolfcrypt/coding.h>
+#include <wolfssl/wolfcrypt/wc_port.h>
 #include <wolfssh/ssh.h>
 #include <wolfssh/wolfsftp.h>
 #include <wolfssh/test.h>
@@ -46,6 +47,10 @@
 #endif
 
 
+#ifndef NO_WOLFSSH_SERVER
+
+#define TEST_SFTP_TIMEOUT 1
+
 static const char echoserverBanner[] = "wolfSSH Example Echo Server\n";
 
 
@@ -53,6 +58,7 @@ typedef struct {
     WOLFSSH* ssh;
     SOCKET_T fd;
     word32 id;
+    char   nonBlock;
 } thread_ctx_t;
 
 
@@ -122,6 +128,20 @@ static int ssh_worker(thread_ctx_t* threadCtx) {
             buf = tmpBuf;
 
         if (!stop) {
+            if (threadCtx->nonBlock) {
+                SOCKET_T sockfd;
+                int select_ret = 0;
+
+                sockfd = (SOCKET_T)wolfSSH_get_fd(threadCtx->ssh);
+
+                select_ret = tcp_select(sockfd, 1);
+                if (select_ret != WS_SELECT_RECV_READY &&
+                    select_ret != WS_SELECT_ERROR_READY &&
+                    select_ret != WS_SELECT_TIMEOUT) {
+                    break;
+                }
+            }
+
             rxSz = wolfSSH_stream_read(threadCtx->ssh,
                                        buf + backlogSz,
                                        EXAMPLE_BUFFER_SZ);
@@ -156,16 +176,26 @@ static int ssh_worker(thread_ctx_t* threadCtx) {
                         }
                         txSum += txSz;
                     }
-                    else if (txSz != WS_REKEYING)
-                        stop = 1;
+                    else if (txSz != WS_REKEYING) {
+                        int error = wolfSSH_get_error(threadCtx->ssh);
+                        if (error != WS_WANT_WRITE) {
+                            stop = 1;
+                        }
+                        else {
+                            txSz = 0;
+                        }
+                    }
                 }
 
                 if (txSum < backlogSz)
                     memmove(buf, buf + txSum, backlogSz - txSum);
                 backlogSz -= txSum;
             }
-            else
-                stop = 1;
+            else {
+                int error = wolfSSH_get_error(threadCtx->ssh);
+                if (error != WS_WANT_READ)
+                    stop = 1;
+            }
         }
     } while (!stop);
 
@@ -179,22 +209,91 @@ static int ssh_worker(thread_ctx_t* threadCtx) {
  * returns 0 on success
  */
 static int sftp_worker(thread_ctx_t* threadCtx) {
-    int ret;
+    int ret   = WS_SUCCESS;
+    int error = WS_SUCCESS;
+    SOCKET_T sockfd;
+    int select_ret = 0;
 
+    sockfd = (SOCKET_T)wolfSSH_get_fd(threadCtx->ssh);
     do {
-        ret = wolfSSH_SFTP_read(threadCtx->ssh);
+        if (threadCtx->nonBlock) {
+            if (error == WS_WANT_READ)
+                printf("... sftp server would read block\n");
+            else if (error == WS_WANT_WRITE)
+                printf("... sftp server would write block\n");
+        }
+
+        select_ret = tcp_select(sockfd, TEST_SFTP_TIMEOUT);
+        if (select_ret == WS_SELECT_RECV_READY ||
+            select_ret == WS_SELECT_ERROR_READY ||
+            error == WS_WANT_WRITE)
+        {
+            ret = wolfSSH_SFTP_read(threadCtx->ssh);
+            error = wolfSSH_get_error(threadCtx->ssh);
+        }
+        else if (select_ret == WS_SELECT_TIMEOUT)
+            error = WS_WANT_READ;
+        else
+            error = WS_FATAL_ERROR;
+
+        if (error == WS_WANT_READ || error == WS_WANT_WRITE)
+            ret = WS_WANT_READ;
+
     } while (ret != WS_FATAL_ERROR);
 
-    return 0;
+    return ret;
 }
 #endif
 
-static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
+static int NonBlockSSH_accept(WOLFSSH* ssh)
 {
     int ret;
+    int error;
+    SOCKET_T sockfd;
+    int select_ret = 0;
+
+    ret = wolfSSH_accept(ssh);
+    error = wolfSSH_get_error(ssh);
+    sockfd = (SOCKET_T)wolfSSH_get_fd(ssh);
+
+    while ((ret != WS_SUCCESS && ret != WS_SCP_COMPLETE && ret != WS_SFTP_COMPLETE)
+            && (error == WS_WANT_READ || error == WS_WANT_WRITE))
+    {
+        if (error == WS_WANT_READ)
+            printf("... server would read block\n");
+        else if (error == WS_WANT_WRITE)
+            printf("... server would write block\n");
+
+        select_ret = tcp_select(sockfd, 1);
+        if (select_ret == WS_SELECT_RECV_READY  ||
+            select_ret == WS_SELECT_ERROR_READY ||
+            error      == WS_WANT_WRITE)
+        {
+            ret = wolfSSH_accept(ssh);
+            error = wolfSSH_get_error(ssh);
+        }
+        else if (select_ret == WS_SELECT_TIMEOUT)
+            error = WS_WANT_READ;
+        else
+            error = WS_FATAL_ERROR;
+    }
+
+    return ret;
+}
+
+static int quit = 0;
+wolfSSL_Mutex doneLock;
+
+static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
+{
+    int ret = 0;
     thread_ctx_t* threadCtx = (thread_ctx_t*)vArgs;
 
-    ret = wolfSSH_accept(threadCtx->ssh);
+    if (!threadCtx->nonBlock)
+        ret = wolfSSH_accept(threadCtx->ssh);
+    else
+        ret = NonBlockSSH_accept(threadCtx->ssh);
+
     switch (ret) {
         case WS_SCP_COMPLETE:
             printf("scp file transfer completed\n");
@@ -231,7 +330,9 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
         fprintf(stderr, "Error [%d] \"%s\" with handling connection.\n", ret,
                 wolfSSH_ErrorToName(ret));
     #ifndef WOLFSSH_NO_EXIT
-        exit(EXIT_FAILURE);
+        wc_LockMutex(&doneLock);
+        quit = 1;
+        wc_UnLockMutex(&doneLock);
     #endif
     }
 
@@ -571,6 +672,10 @@ static void ShowUsage(void)
     printf(" -1            exit after single (one) connection\n");
     printf(" -e            use ECC private key\n");
     printf(" -p <num>      port to connect on, default %d\n", wolfSshPort);
+    printf(" -N            use non-blocking sockets\n");
+#ifdef WOLFSSH_SFTP
+    printf(" -d <string>   set the home directory for SFTP connections\n");
+#endif
 }
 
 
@@ -603,13 +708,15 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     int ch;
     word16 port = wolfSshPort;
     char* readyFile = NULL;
+    const char* defaultSftpPath = NULL;
+    char  nonBlock  = 0;
 
     int     argc = serverArgs->argc;
     char**  argv = serverArgs->argv;
     serverArgs->return_code = 0;
 
     if (argc > 0) {
-    while ((ch = mygetopt(argc, argv, "?1ep:R:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?1d:ep:R:N")) != -1) {
         switch (ch) {
             case '?' :
                 ShowUsage();
@@ -635,6 +742,14 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 readyFile = myoptarg;
                 break;
 
+            case 'N':
+                nonBlock = 1;
+                break;
+
+            case 'd':
+                defaultSftpPath = myoptarg;
+                break;
+
             default:
                 ShowUsage();
                 exit(MY_EX_USAGE);
@@ -642,6 +757,13 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     }
     }
     myoptind = 0;      /* reset for test cases */
+    wc_InitMutex(&doneLock);
+
+#ifdef WOLFSSH_TEST_BLOCK
+    if (!nonBlock) {
+        err_sys("Use -N when testing forced non blocking");
+    }
+#endif
 
     if (wolfSSH_Init() != WS_SUCCESS) {
         fprintf(stderr, "Couldn't initialize wolfSSH.\n");
@@ -760,6 +882,16 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             wolfSSH_SetHighwater(ssh, defaultHighwater);
         }
 
+    #ifdef WOLFSSH_SFTP
+        if (defaultSftpPath) {
+            if (wolfSSH_SFTP_SetDefaultPath(ssh, defaultSftpPath)
+                    != WS_SUCCESS) {
+                fprintf(stderr, "Couldn't store default sftp path.\n");
+                exit(EXIT_FAILURE);
+            }
+        }
+    #endif
+
     #ifdef WOLFSSL_NUCLEUS
         {
             byte   ipaddr[MAX_ADDRESS_SIZE];
@@ -792,16 +924,21 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         if (clientFd == -1)
             err_sys("tcp accept failed");
 
+        if (nonBlock)
+            tcp_set_nonblocking(&clientFd);
+
         wolfSSH_set_fd(ssh, (int)clientFd);
 
         threadCtx->ssh = ssh;
         threadCtx->fd = clientFd;
         threadCtx->id = threadCount++;
+        threadCtx->nonBlock = nonBlock;
 
         server_worker(threadCtx);
 
-    } while (multipleConnections);
+    } while (multipleConnections && !quit);
 
+    wc_FreeMutex(&doneLock);
     PwMapListDelete(&pwMapList);
     wolfSSH_CTX_free(ctx);
     if (wolfSSH_Cleanup() != WS_SUCCESS) {
@@ -809,8 +946,11 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         exit(EXIT_FAILURE);
     }
 
+    (void)defaultSftpPath;
     return 0;
 }
+
+#endif /* NO_WOLFSSH_SERVER */
 
 
 #ifndef NO_MAIN_DRIVER
@@ -833,7 +973,11 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 #ifndef WOLFSSL_NUCLEUS
         ChangeToWolfSshRoot();
 #endif
+#ifndef NO_WOLFSSH_SERVER
         echoserver_test(&args);
+#else
+        printf("wolfSSH compiled without server support\n");
+#endif
 
         wolfSSH_Cleanup();
 

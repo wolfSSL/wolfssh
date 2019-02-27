@@ -12,8 +12,9 @@
 /*#include <wolfssh/error.h>*/
 
 #ifdef USE_WINDOWS_API
-    #include <winsock2.h>
-    #include <process.h>
+    #ifndef _WIN32_WCE
+        #include <process.h>
+    #endif
     #include <assert.h>
     #ifdef TEST_IPV6            /* don't require newer SDK for IPV4 */
         #include <ws2tcpip.h>
@@ -540,8 +541,7 @@ static INLINE void tcp_listen(SOCKET_T* sockfd, word16* port, int useAnyAddr)
 #endif /* WOLFSSH_TEST_SERVER */
 
 
-#if (defined(WOLFSSH_TEST_SERVER) || defined(WOLFSSH_TEST_CLIENT)) && \
-    !defined(WOLFSSH_TEST_ECHOSERVER)
+#if (defined(WOLFSSH_TEST_SERVER) || defined(WOLFSSH_TEST_CLIENT))
 
 static INLINE void tcp_set_nonblocking(SOCKET_T* sockfd)
 {
@@ -575,7 +575,7 @@ enum {
 static INLINE int tcp_select(SOCKET_T socketfd, int to_sec)
 {
     fd_set recvfds, errfds;
-    SOCKET_T nfds = socketfd + 1;
+    int nfds = (int)socketfd + 1;
     struct timeval timeout = {(to_sec > 0) ? to_sec : 0, 0};
     int result;
 
@@ -650,12 +650,20 @@ typedef struct tcp_ready {
 } tcp_ready;
 
 
+#ifdef WOLFSSH_SFTP
+typedef int (*WS_CallbackSftpCommand)(const char* in, char* out, int outSz);
+#endif
+
 typedef struct func_args {
     int    argc;
     char** argv;
     int    return_code;
     tcp_ready* signal;
     WS_CallbackUserAuth user_auth;
+#ifdef WOLFSSH_SFTP
+    /* callback for example sftp client commands instead of WFGETS */
+    WS_CallbackSftpCommand sftp_cb;
+#endif
 } func_args;
 
 

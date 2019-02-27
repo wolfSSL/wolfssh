@@ -1,4 +1,4 @@
-/* wolffwd.c
+/* portfwd.c
  *
  * Copyright (C) 2014-2018 wolfSSL Inc.
  *
@@ -29,18 +29,18 @@
 #include <wolfssh/ssh.h>
 #include <wolfssh/test.h>
 #include <wolfssh/port.h>
-#include "examples/wolffwd/wolffwd.h"
+#include "examples/portfwd/wolfssh_portfwd.h"
 
 
-/* The wolffwd tool will be a client or server in the port forwarding
+/* The portfwd tool will be a client or server in the port forwarding
  * interaction.
  *
- * The wolffwd client will connect to an SSH server and request a tunnel.
+ * The portfwd client will connect to an SSH server and request a tunnel.
  * The client acts like a server for the local user application. It forwards
  * the packets received to the SSH server who will then forward the packet
  * to its local application server.
  *
- * The wolffwd server will listen for SSH connections, and when it receives
+ * The portfwd server will listen for SSH connections, and when it receives
  * one will only accept forward requests from the connection. All data for
  * the forwarding channel are sent to the local application server and
  * data from the server is forwarded to the client.
@@ -58,7 +58,7 @@ static inline int max(int a, int b)
 
 static void ShowUsage(void)
 {
-    printf("wolffwd %s\n"
+    printf("portfwd %s\n"
            " -?            display this help and exit\n"
            " -h <host>     host to connect to, default %s\n"
            " -p <num>      port to connect on, default %u\n"
@@ -191,7 +191,7 @@ static int wsUserAuth(byte authType,
  * hostPort - peer SSH server port number to connect to
  */
 
-THREAD_RETURN WOLFSSH_THREAD wolffwd_worker(void* args)
+THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
 {
     WOLFSSH* ssh;
     WOLFSSH_CTX* ctx;
@@ -286,7 +286,7 @@ THREAD_RETURN WOLFSSH_THREAD wolffwd_worker(void* args)
     if (fwdToHost == NULL)
         fwdToHost = host;
 
-    printf("wolffwd options\n"
+    printf("portfwd options\n"
            " * ssh host: %s:%u\n"
            " * username: %s\n"
            " * password: %s\n"
@@ -449,7 +449,7 @@ int main(int argc, char** argv)
     wolfSSH_Init();
 
     ChangeToWolfSshRoot();
-    wolffwd_worker(&args);
+    portfwd_worker(&args);
 
     wolfSSH_Cleanup();
 

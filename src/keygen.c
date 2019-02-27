@@ -44,6 +44,8 @@
 
 #ifdef WOLFSSH_KEYGEN
 
+#ifdef WOLFSSL_KEY_GEN
+
 #ifdef NO_INLINE
     #include <wolfssh/misc.h>
 #else
@@ -105,4 +107,9 @@ int wolfSSH_MakeRsaKey(byte* out, word32 outSz,
     return ret;
 }
 
-#endif
+
+#else /* WOLFSSL_KEY_GEN */
+    #error "wolfSSH keygen requires that keygen is enabled in wolfSSL, use --enable-keygen or #define WOLFSSL_KEY_GEN."
+#endif /* WOLFSSL_KEY_GEN */
+
+#endif /* WOLFSSH_KEYGEN */

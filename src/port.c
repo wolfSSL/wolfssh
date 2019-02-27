@@ -1,4 +1,4 @@
-/* port.c 
+/* port.c
  *
  * Copyright (C) 2014-2016 wolfSSL Inc.
  *
@@ -31,8 +31,11 @@
     #include <config.h>
 #endif
 
-#include <stdio.h>
+
 #include <wolfssh/port.h>
+#ifndef USE_WINDOWS_API
+    #include <stdio.h>
+#endif
 
 
 #ifndef NO_FILESYSTEM
@@ -79,51 +82,340 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
 #endif
 }
 
-#if defined(USE_WINDOWS_API) && (defined(WOLFSSH_SFTP) || \
-    defined(WOLFSSH_SCP)) && !defined(NO_WOLFSSH_SERVER)
-int wPwrite(WFD fd, unsigned char* buf, unsigned int sz, long ofst)
+#if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
+    !defined(NO_WOLFSSH_SERVER)
+
+    #if defined(USE_WINDOWS_API)
+
+        /* This is current inline in the source. */
+
+    #elif defined(USE_OSE_API)
+
+        int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
+                const unsigned int* shortOffset)
+        {
+            int ret;
+
+            ret = (int)lseek(fd, shortOffset[0], SEEK_SET);
+            if (ret != -1)
+                ret = (int)write(fd, buf, sz);
+
+            return ret;
+        }
+
+
+        int wPread(WFD fd, unsigned char* buf, unsigned int sz,
+                const unsigned int* shortOffset)
+        {
+            int ret;
+
+            ret = (int)lseek(fd, shortOffset[0], SEEK_SET);
+            if (ret != -1)
+                ret = (int)read(fd, buf, sz);
+
+            return ret;
+        }
+
+    #else /* USE_WINDOWS_API USE_OSE_API */
+
+        int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
+                const unsigned int* shortOffset)
+        {
+            long offset = ((long)shortOffset[1] << 32) | shortOffset[0];
+            return (int)pwrite(fd, buf, sz, offset);
+        }
+
+
+        int wPread(WFD fd, unsigned char* buf, unsigned int sz,
+                const unsigned int* shortOffset)
+        {
+            long offset = ((long)shortOffset[1] << 32) | shortOffset[0];
+            return (int)pread(fd, buf, sz, offset);
+        }
+
+    #endif /* USE_WINDOWS_API USE_OSE_API */
+#endif /* WOLFSSH_SFTP WOLFSSH_SCP NO_WOLFSSH_SERVER */
+
+#endif /* !NO_FILESYSTEM */
+
+
+#ifdef USE_WINDOWS_API
+
+void* WS_CreateFileA(const char* fileName, unsigned long desiredAccess,
+        unsigned long shareMode, unsigned long creationDisposition,
+        unsigned long flags, void* heap)
 {
-    OVERLAPPED offset;
-    DWORD bytesWritten;
-    int ret;
+    HANDLE fileHandle;
+    wchar_t* unicodeFileName;
+    size_t unicodeFileNameSz = 0;
+    size_t returnSz = 0;
+    size_t fileNameSz = 0;
+    errno_t error;
 
-    WMEMSET(&offset, 0, sizeof(OVERLAPPED));
-    offset.Offset = (DWORD)(ofst & 0xFFFFFFFF);
-    offset.OffsetHigh = (DWORD)((ofst & 0xFFFFFFFF00000000) >> 32);
-    if (WriteFile((HANDLE)_get_osfhandle(fd), buf, sz, &bytesWritten, &offset) == 0)
-        ret = -1;
-    else
-        ret = (int)bytesWritten;
+    fileNameSz = WSTRLEN(fileName);
+    error = mbstowcs_s(&unicodeFileNameSz, NULL, 0, fileName, 0);
+    if (error)
+        return INVALID_HANDLE_VALUE;
 
-    return ret;
+    unicodeFileName = (wchar_t*)WMALLOC((unicodeFileNameSz+1)*sizeof(wchar_t),
+            heap, PORT_DYNTYPE_STRING);
+    if (unicodeFileName == NULL)
+        return INVALID_HANDLE_VALUE;
+
+    error = mbstowcs_s(&returnSz, unicodeFileName, unicodeFileNameSz,
+        fileName, fileNameSz);
+
+    if (!error)
+        fileHandle = CreateFileW(unicodeFileName, desiredAccess, shareMode,
+                NULL, creationDisposition, flags, NULL);
+
+    WFREE(unicodeFileName, heap, PORT_DYNTYPE_STRING);
+
+    return (void*)(error ? INVALID_HANDLE_VALUE : fileHandle);
 }
 
-
-int wPread(WFD fd, unsigned char* buf, unsigned int sz, long ofst)
+void* WS_FindFirstFileA(const char* fileName,
+        char* realFileName, size_t realFileNameSz, int* isDir, void* heap)
 {
-    OVERLAPPED offset;
-    DWORD bytesRead;
-    int ret;
+    HANDLE findHandle;
+    WIN32_FIND_DATAW findFileData;
+    wchar_t* unicodeFileName;
+    size_t unicodeFileNameSz = 0;
+    size_t returnSz = 0;
+    size_t fileNameSz = 0;
+    errno_t error;
 
-    WMEMSET(&offset, 0, sizeof(OVERLAPPED));
-    offset.Offset = (DWORD)(ofst & 0xFFFFFFFF);
-    offset.OffsetHigh = (DWORD)((ofst & 0xFFFFFFFF00000000) >> 32);
-    if (ReadFile((HANDLE)_get_osfhandle(fd), buf, sz, &bytesRead, &offset) == 0) {
-        if (GetLastError() == ERROR_HANDLE_EOF) {
-            ret = 0; /* return 0 for end of file */
-        }
-        else {
-            ret = -1;
-        }
+    fileNameSz = WSTRLEN(fileName);
+    error = mbstowcs_s(&unicodeFileNameSz, NULL, 0, fileName, 0);
+    if (error)
+        return INVALID_HANDLE_VALUE;
+
+    unicodeFileName = (wchar_t*)WMALLOC((unicodeFileNameSz+1)*sizeof(wchar_t),
+            heap, PORT_DYNTYPE_STRING);
+    if (unicodeFileName == NULL)
+        return INVALID_HANDLE_VALUE;
+
+    error = mbstowcs_s(&returnSz, unicodeFileName, unicodeFileNameSz,
+        fileName, fileNameSz);
+
+    if (!error)
+        findHandle = FindFirstFileW(unicodeFileName, &findFileData);
+
+    WFREE(unicodeFileName, heap, PORT_DYNTYPE_STRING);
+
+    error = wcstombs_s(NULL, realFileName, realFileNameSz,
+        findFileData.cFileName, realFileNameSz);
+
+    if (isDir != NULL) {
+        *isDir =
+            (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
     }
-    else
-        ret = (int)bytesRead;
 
-    return ret;
+    return (void*)findHandle;
 }
+
+
+int WS_FindNextFileA(void* findHandle,
+        char* realFileName, size_t realFileNameSz)
+{
+    BOOL success;
+    WIN32_FIND_DATAW findFileData;
+    errno_t error;
+
+    success = FindNextFileW((HANDLE)findHandle, &findFileData);
+
+    if (success) {
+        error = wcstombs_s(NULL, realFileName, realFileNameSz,
+            findFileData.cFileName, realFileNameSz);
+    }
+
+    return (success != 0) && (error == 0);
+}
+
+
+int WS_GetFileAttributesExA(const char* fileName, void* fileInfo, void* heap)
+{
+    BOOL success = 0;
+    wchar_t* unicodeFileName;
+    size_t unicodeFileNameSz = 0;
+    size_t returnSz = 0;
+    size_t fileNameSz = 0;
+    errno_t error;
+
+    fileNameSz = WSTRLEN(fileName);
+    error = mbstowcs_s(&unicodeFileNameSz, NULL, 0, fileName, 0);
+    if (error != 0)
+        return 0;
+
+    unicodeFileName = (wchar_t*)WMALLOC((unicodeFileNameSz+1)*sizeof(wchar_t),
+            heap, PORT_DYNTYPE_STRING);
+    if (unicodeFileName == NULL)
+        return 0;
+
+    error = mbstowcs_s(&returnSz, unicodeFileName, unicodeFileNameSz,
+        fileName, fileNameSz);
+
+    if (error == 0) {
+        success = GetFileAttributesExW(unicodeFileName,
+                GetFileExInfoStandard, fileInfo);
+    }
+
+    WFREE(unicodeFileName, heap, PORT_DYNTYPE_STRING);
+
+    return success != 0;
+}
+
+
+int WS_RemoveDirectoryA(const char* dirName, void* heap)
+{
+    BOOL success = 0;
+    wchar_t* unicodeDirName;
+    size_t unicodeDirNameSz = 0;
+    size_t returnSz = 0;
+    size_t dirNameSz = 0;
+    errno_t error;
+
+    dirNameSz = WSTRLEN(dirName);
+    error = mbstowcs_s(&unicodeDirNameSz, NULL, 0, dirName, 0);
+    if (error != 0)
+        return 0;
+
+    unicodeDirName = (wchar_t*)WMALLOC((unicodeDirNameSz+1)*sizeof(wchar_t),
+            heap, PORT_DYNTYPE_STRING);
+    if (unicodeDirName == NULL)
+        return 0;
+
+    error = mbstowcs_s(&returnSz, unicodeDirName, unicodeDirNameSz,
+        dirName, dirNameSz);
+
+    if (error == 0) {
+        success = RemoveDirectoryW(unicodeDirName);
+    }
+
+    WFREE(unicodeDirName, heap, PORT_DYNTYPE_STRING);
+
+    return success != 0;
+}
+
+
+int WS_CreateDirectoryA(const char* dirName, void* heap)
+{
+    BOOL success = 0;
+    wchar_t* unicodeDirName;
+    size_t unicodeDirNameSz = 0;
+    size_t returnSz = 0;
+    size_t dirNameSz = 0;
+    errno_t error;
+
+    dirNameSz = WSTRLEN(dirName);
+    error = mbstowcs_s(&unicodeDirNameSz, NULL, 0, dirName, 0);
+    if (error != 0)
+        return 0;
+
+    unicodeDirName = (wchar_t*)WMALLOC((unicodeDirNameSz+1)*sizeof(wchar_t),
+            heap, PORT_DYNTYPE_STRING);
+    if (unicodeDirName == NULL)
+        return 0;
+
+    error = mbstowcs_s(&returnSz, unicodeDirName, unicodeDirNameSz,
+        dirName, dirNameSz);
+
+    if (error == 0) {
+        success = CreateDirectoryW(unicodeDirName, NULL);
+    }
+
+    WFREE(unicodeDirName, heap, PORT_DYNTYPE_STRING);
+
+    return success != 0;
+}
+
+
+int WS_MoveFileA(const char* oldName, const char* newName, void* heap)
+{
+    BOOL success = 0;
+    wchar_t* unicodeOldName;
+    wchar_t* unicodeNewName;
+    size_t unicodeOldNameSz = 0;
+    size_t unicodeNewNameSz = 0;
+    size_t oldNameSz = 0;
+    size_t newNameSz = 0;
+    size_t returnSz = 0;
+    errno_t error;
+
+    oldNameSz = WSTRLEN(oldName);
+
+    error = mbstowcs_s(&unicodeOldNameSz, NULL, 0, oldName, 0);
+    if (error != 0)
+        return 0;
+
+    unicodeOldName = (wchar_t*)WMALLOC((unicodeOldNameSz+1)*sizeof(wchar_t),
+            heap, PORT_DYNTYPE_STRING);
+    if (unicodeOldName == NULL)
+        return 0;
+
+    error = mbstowcs_s(&returnSz, unicodeOldName, unicodeOldNameSz,
+        oldName, oldNameSz);
+
+    newNameSz = WSTRLEN(newName);
+    error = mbstowcs_s(&unicodeNewNameSz, NULL, 0, newName, 0);
+    if (error != 0)
+        return 0;
+
+    unicodeNewName = (wchar_t*)WMALLOC((unicodeNewNameSz+1)*sizeof(wchar_t),
+            heap, PORT_DYNTYPE_STRING);
+    if (unicodeNewName == NULL) {
+        WFREE(unicodeOldName, heap, PORT_DYNTYPE_STRING);
+        return 0;
+    }
+
+    error = mbstowcs_s(&returnSz, unicodeNewName, unicodeNewNameSz,
+        newName, newNameSz);
+
+    if (error == 0) {
+        success = MoveFileW(unicodeOldName, unicodeNewName);
+    }
+
+    WFREE(unicodeOldName, heap, PORT_DYNTYPE_STRING);
+    WFREE(unicodeNewName, heap, PORT_DYNTYPE_STRING);
+
+    return success != 0;
+}
+
+
+int WS_DeleteFileA(const char* fileName, void* heap)
+{
+    BOOL success = 0;
+    wchar_t* unicodeFileName;
+    size_t unicodeFileNameSz = 0;
+    size_t returnSz = 0;
+    size_t fileNameSz = 0;
+    errno_t error;
+
+    fileNameSz = WSTRLEN(fileName);
+    error = mbstowcs_s(&unicodeFileNameSz, NULL, 0, fileName, 0);
+    if (error != 0)
+        return 0;
+
+    unicodeFileName = (wchar_t*)WMALLOC((unicodeFileNameSz+1)*sizeof(wchar_t),
+            heap, PORT_DYNTYPE_STRING);
+    if (unicodeFileName == NULL)
+        return 0;
+
+    error = mbstowcs_s(&returnSz, unicodeFileName, unicodeFileNameSz,
+        fileName, fileNameSz);
+
+    if (error == 0) {
+        success = DeleteFileW(unicodeFileName);
+    }
+
+    WFREE(unicodeFileName, heap, PORT_DYNTYPE_STRING);
+
+    return success != 0;
+}
+
 
 #endif /* USE_WINDOWS_API */
-#endif /* !NO_FILESYSTEM */
+
 
 #ifndef WSTRING_USER
 

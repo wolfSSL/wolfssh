@@ -51,8 +51,8 @@ diff
 examples/client/client
 examples/echoserver/echoserver
 examples/server/server
-examples/wolffwd/wolffwd
-wolfsftp/client/wolfsftp
+examples/portfwd/portfwd
+examples/sftpclient/wolfsftp
 
 # test output
 *.test

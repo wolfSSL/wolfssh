@@ -24,30 +24,76 @@
 #include <wolfssh/wolfsftp.h>
 #include <wolfssh/test.h>
 #include <wolfssh/port.h>
-#include "wolfsftp/client/sftpclient.h"
+#include "examples/sftpclient/sftpclient.h"
 #ifndef USE_WINDOWS_API
     #include <termios.h>
 #endif
 
 #ifdef WOLFSSH_SFTP
 
-int doCmds(void);
+int doCmds(func_args* args);
 
 
+/* static so that signal handler can access and interrupt get/put */
 static WOLFSSH* ssh = NULL;
 static char* workingDir;
-WFILE* fin;
-WFILE* fout;
+#define fin stdin
+#define fout stdout
+#define MAX_CMD_SZ 7
 
 
-static void myStatusCb(WOLFSSH* sshIn, long bytes, char* name)
+static void err_msg(const char* s)
+{
+    printf("%s\n", s);
+}
+
+static void myStatusCb(WOLFSSH* sshIn, word32* bytes, char* name)
 {
     char buf[80];
-    WSNPRINTF(buf, sizeof(buf), "Processed %8ld\t bytes \r", bytes);
+    word64 longBytes = ((word64)bytes[1] << 32) | bytes[0];
+    WSNPRINTF(buf, sizeof(buf), "Processed %8ld\t bytes \r", longBytes);
     WFPUTS(buf, fout);
     (void)name;
     (void)sshIn;
 }
+
+
+static int NonBlockSSH_connect(void)
+{
+    int ret;
+    int error;
+    SOCKET_T sockfd;
+    int select_ret = 0;
+
+    ret = wolfSSH_SFTP_connect(ssh);
+    error = wolfSSH_get_error(ssh);
+    sockfd = (SOCKET_T)wolfSSH_get_fd(ssh);
+
+    while (ret != WS_SUCCESS &&
+            (error == WS_WANT_READ || error == WS_WANT_WRITE))
+    {
+        if (error == WS_WANT_READ)
+            printf("... client would read block\n");
+        else if (error == WS_WANT_WRITE)
+            printf("... client would write block\n");
+
+        select_ret = tcp_select(sockfd, 1);
+        if (select_ret == WS_SELECT_RECV_READY ||
+            select_ret == WS_SELECT_ERROR_READY ||
+            error == WS_WANT_WRITE)
+        {
+            ret = wolfSSH_SFTP_connect(ssh);
+            error = wolfSSH_get_error(ssh);
+        }
+        else if (select_ret == WS_SELECT_TIMEOUT)
+            error = WS_WANT_READ;
+        else
+            error = WS_FATAL_ERROR;
+    }
+
+    return ret;
+}
+
 
 #ifndef WS_NO_SIGNAL
 /* for command reget and reput to handle saving offset after interrupt during
@@ -81,7 +127,7 @@ static void clean_path(char* path)
     }
 
     /* remove any trailing '/' chars */
-    sz = WSTRLEN(path);
+    sz = (long)WSTRLEN(path);
     for (i = (int)sz - 1; i > 0; i--) {
         if (path[i] == '/') {
             path[i] = '\0';
@@ -94,9 +140,9 @@ static void clean_path(char* path)
     if (path != NULL) {
         /* go through path until no cases are found */
         do {
-            sz = WSTRLEN(path);
             int prIdx = 0; /* begin of cut */
             int enIdx = 0; /* end of cut */
+            sz = (long)WSTRLEN(path);
 
             found = 0;
             for (i = 0; i < sz; i++) {
@@ -138,7 +184,7 @@ static void clean_path(char* path)
     }
 }
 
-const char testString[] = "Hello, wolfSSH!";
+const char sftpTestString[] = "Hello, wolfSSH!";
 
 #define WS_MAX_EXAMPLE_RW 1024
 
@@ -230,6 +276,8 @@ static void ShowUsage(void)
     printf(" -p <num>      port to connect on, default %d\n", wolfSshPort);
     printf(" -u <username> username to authenticate as (REQUIRED)\n");
     printf(" -P <password> password for username, prompted if omitted\n");
+    printf(" -d <path>     set the default local path\n");
+    printf(" -N            use non blocking sockets\n");
 
     ShowCommands();
 }
@@ -278,24 +326,67 @@ static int wsUserAuth(byte authType,
 }
 
 
+/* returns 0 on success */
+static INLINE int SFTP_FPUTS(func_args* args, const char* msg)
+{
+    int ret;
+
+    if (args && args->sftp_cb)
+        ret = args->sftp_cb(msg, NULL, 0);
+    else
+        ret = WFPUTS(msg, fout);
+
+    return ret;
+}
+
+
+/* returns pointer on success, NULL on failure */
+static INLINE char* SFTP_FGETS(func_args* args, char* msg, int msgSz)
+{
+    char* ret = NULL;
+
+    WMEMSET(msg, 0, msgSz);
+    if (args && args->sftp_cb) {
+        if (args->sftp_cb(NULL, msg, msgSz) == 0)
+            ret = msg;
+    }
+    else
+        ret = WFGETS(msg, msgSz, fin);
+
+    return ret;
+}
+
+
 /* main loop for handling commands */
-int doCmds()
+int doCmds(func_args* args)
 {
     byte quit = 0;
-    int ret;
+    int ret = WS_SUCCESS, err;
     byte resume = 0;
     int i;
 
-    fin   = stdin  ;
-    fout  = stdout ;
-    while (!quit) {
+    do {
         char msg[WOLFSSH_MAX_FILENAME * 2];
         char* pt;
 
-        if (WFPUTS("wolfSSH sftp> ", fout) < 0)
-            err_sys("fputs error");
-        if (WFGETS(msg, sizeof(msg) - 1, fin) == NULL)
-            err_sys("fgets error");
+        if (wolfSSH_get_error(ssh) == WS_SOCKET_ERROR_E) {
+            if (SFTP_FPUTS(args, "peer disconnected\n") < 0) {
+                err_msg("fputs error");
+                return -1;
+            }
+            return WS_SOCKET_ERROR_E;
+        }
+
+        if (SFTP_FPUTS(args, "wolfSSH sftp> ") < 0) {
+            err_msg("fputs error");
+            return -1;
+        }
+
+        WMEMSET(msg, 0, sizeof(msg));
+        if (SFTP_FGETS(args, msg, sizeof(msg) - 1) == NULL) {
+            err_msg("fgets error");
+            return -1;
+        }
         msg[WOLFSSH_MAX_FILENAME * 2 - 1] = '\0';
 
         if ((pt = WSTRNSTR(msg, "mkdir", sizeof(msg))) != NULL) {
@@ -321,25 +412,34 @@ int doCmds()
                 pt = f;
             }
 
-            if ((ret = wolfSSH_SFTP_MKDIR(ssh, pt, &atrb)) != WS_SUCCESS) {
-                if (ret == WS_PERMISSIONS) {
-                    if (WFPUTS("Insufficient permissions\n", fout) < 0)
-                        err_sys("fputs error");
+            do {
+                err = WS_SUCCESS;
+                if ((ret = wolfSSH_SFTP_MKDIR(ssh, pt, &atrb)) != WS_SUCCESS) {
+                    err = wolfSSH_get_error(ssh);
+                    if (ret == WS_PERMISSIONS) {
+                        if (SFTP_FPUTS(args, "Insufficient permissions\n") < 0) {
+                            err_msg("fputs error");
+                            return -1;
+                        }
+                    }
+                    else if (err != WS_WANT_READ && err != WS_WANT_WRITE) {
+                        if (SFTP_FPUTS(args, "Error writing directory\n") < 0) {
+                            err_msg("fputs error");
+                            return -1;
+                        }
+                    }
                 }
-                else {
-                    if (WFPUTS("Error writing directory\n", fout) < 0)
-                        err_sys("fputs error");
-                }
-            }
+            } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
+                        && ret != WS_SUCCESS);
             XFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             continue;
         }
 
-        if ((pt = WSTRNSTR(msg, "reget", sizeof(msg))) != NULL) {
+        if ((pt = WSTRNSTR(msg, "reget", MAX_CMD_SZ)) != NULL) {
             resume = 1;
         }
 
-        if ((pt = WSTRNSTR(msg, "get", sizeof(msg))) != NULL) {
+        if ((pt = WSTRNSTR(msg, "get", MAX_CMD_SZ)) != NULL) {
             int sz;
             char* f  = NULL;
             char* to = NULL;
@@ -375,7 +475,8 @@ int doCmds()
                 int maxSz = (int)(WSTRLEN(workingDir) + sz + 2);
                 f = XMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 if (f == NULL) {
-                    err_sys("Error malloc'ing");
+                    err_msg("Error malloc'ing");
+                    return -1;
                 }
 
                 f[0] = '\0';
@@ -396,18 +497,30 @@ int doCmds()
                 else {
                     WSNPRINTF(buf, sizeof(buf), "fetching %s to %s\n", pt, to);
                 }
-                if (WFPUTS(buf, fout) < 0)
-                    err_sys("fputs error");
+                if (SFTP_FPUTS(args, buf) < 0) {
+                    err_msg("fputs error");
+                    return -1;
+                }
             }
 
-            if (wolfSSH_SFTP_Get(ssh, pt, to, resume, &myStatusCb)
-                    != WS_SUCCESS) {
-                if (WFPUTS("Error getting file\n", fout) < 0)
-                     err_sys("fputs error");
+            do {
+                ret = wolfSSH_SFTP_Get(ssh, pt, to, resume, &myStatusCb);
+                if (ret != WS_SUCCESS) {
+                    ret = wolfSSH_get_error(ssh);
+                }
+            } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE);
+
+            if (ret != WS_SUCCESS) {
+                if (SFTP_FPUTS(args, "Error getting file\n")  < 0) {
+                     err_msg("fputs error");
+                     return -1;
+                }
             }
             else {
-                if (WFPUTS("\n", fout) < 0) /* new line after status output */
-                     err_sys("fputs error");
+                if (SFTP_FPUTS(args, "\n") < 0) { /* new line after status output */
+                     err_msg("fputs error");
+                     return -1;
+                }
             }
             resume = 0;
             XFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -415,11 +528,11 @@ int doCmds()
         }
 
 
-        if ((pt = WSTRNSTR(msg, "reput", sizeof(msg))) != NULL) {
+        if ((pt = WSTRNSTR(msg, "reput", MAX_CMD_SZ)) != NULL) {
             resume = 1;
         }
 
-        if ((pt = WSTRNSTR(msg, "put", sizeof(msg))) != NULL) {
+        if ((pt = WSTRNSTR(msg, "put", MAX_CMD_SZ)) != NULL) {
             int sz;
             char* f  = NULL;
             char* to = NULL;
@@ -454,7 +567,8 @@ int doCmds()
                 int maxSz = (int)WSTRLEN(workingDir) + sz + 2;
                 f = XMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 if (f == NULL) {
-                    err_sys("Error malloc'ing");
+                    err_msg("Error malloc'ing");
+                    return -1;
                 }
 
                 f[0] = '\0';
@@ -475,26 +589,36 @@ int doCmds()
                 else {
                     WSNPRINTF(buf, sizeof(buf), "pushing %s to %s\n", pt, to);
                 }
-                if (WFPUTS(buf, fout) < 0)
-                     err_sys("fputs error");
+                if (SFTP_FPUTS(args, buf) < 0) {
+                     err_msg("fputs error");
+                     return -1;
+                }
 
             }
 
-            if (wolfSSH_SFTP_Put(ssh, pt, to, resume, &myStatusCb)
-                    != WS_SUCCESS) {
-                if (WFPUTS("Error pushing file\n", fout) < 0)
-                     err_sys("fputs error");
+            do {
+                ret = wolfSSH_SFTP_Put(ssh, pt, to, resume, &myStatusCb);
+                err = wolfSSH_get_error(ssh);
+            } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
+                        && ret != WS_SUCCESS);
+            if (ret != WS_SUCCESS) {
+                if (SFTP_FPUTS(args, "Error pushing file\n") < 0) {
+                    err_msg("fputs error");
+                    return -1;
+                }
             }
             else {
-                if (WFPUTS("\n", fout) < 0) /* new line after status output */
-                     err_sys("fputs error");
+                if (SFTP_FPUTS(args, "\n") < 0) { /* new line after status output */
+                    err_msg("fputs error");
+                    return -1;
+                }
             }
             resume = 0;
             XFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             continue;
         }
 
-        if ((pt = WSTRNSTR(msg, "cd", sizeof(msg))) != NULL) {
+        if ((pt = WSTRNSTR(msg, "cd", MAX_CMD_SZ)) != NULL) {
             WS_SFTP_FILEATRB atrb;
             int sz;
             char* f = NULL;
@@ -507,7 +631,8 @@ int doCmds()
                 int maxSz = (int)WSTRLEN(workingDir) + sz + 2;
                 f = XMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 if (f == NULL) {
-                    err_sys("Error malloc'ing");
+                    err_msg("Error malloc'ing");
+                    return -1;
                 }
 
                 f[0] = '\0';
@@ -521,16 +646,25 @@ int doCmds()
             }
 
             /* check directory is valid */
-            if ((ret = wolfSSH_SFTP_STAT(ssh, pt, &atrb)) != WS_SUCCESS) {
-                if (WFPUTS("Error changing directory\n", fout) < 0)
-                     err_sys("fputs error");
+            do {
+                ret = wolfSSH_SFTP_STAT(ssh, pt, &atrb);
+                err = wolfSSH_get_error(ssh);
+            } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
+                        && ret != WS_SUCCESS);
+            if (ret != WS_SUCCESS) {
+                if (SFTP_FPUTS(args, "Error changing directory\n") < 0) {
+                    err_msg("fputs error");
+                    return -1;
+                }
             }
-            else {
+
+            if (ret == WS_SUCCESS) {
                 sz = (int)WSTRLEN(pt);
                 XFREE(workingDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 workingDir = (char*)XMALLOC(sz + 1, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 if (workingDir == NULL) {
-                    err_sys("Error malloc'ing");
+                    err_msg("Error malloc'ing");
+                    return -1;
                 }
                 WMEMCPY(workingDir, pt, sz);
                 workingDir[sz] = '\0';
@@ -541,7 +675,7 @@ int doCmds()
             continue;
         }
 
-        if ((pt = WSTRNSTR(msg, "chmod", sizeof(msg))) != NULL) {
+        if ((pt = WSTRNSTR(msg, "chmod", MAX_CMD_SZ)) != NULL) {
             int sz;
             char* f = NULL;
             char mode[WOLFSSH_MAX_OCTET_LEN];
@@ -574,7 +708,8 @@ int doCmds()
                 int maxSz = (int)WSTRLEN(workingDir) + sz + 2;
                 f = XMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 if (f == NULL) {
-                    err_sys("Error malloc'ing");
+                    err_msg("Error malloc'ing");
+                    return -1;
                 }
 
                 f[0] = '\0';
@@ -588,15 +723,23 @@ int doCmds()
             }
 
             /* update permissions */
-            if (wolfSSH_SFTP_CHMOD(ssh, pt, mode) != WS_SUCCESS) {
-                printf("unable to change path permissions\n");
+            do {
+                ret = wolfSSH_SFTP_CHMOD(ssh, pt, mode);
+                err = wolfSSH_get_error(ssh);
+            } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
+                        && ret != WS_SUCCESS);
+            if (ret != WS_SUCCESS) {
+                if (SFTP_FPUTS(args, "Unable to change path permissions\n") < 0) {
+                    err_msg("fputs error");
+                    return -1;
+                }
             }
 
             XFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             continue;
         }
 
-        if ((pt = WSTRNSTR(msg, "rmdir", sizeof(msg))) != NULL) {
+        if ((pt = WSTRNSTR(msg, "rmdir", MAX_CMD_SZ)) != NULL) {
             int sz;
             char* f = NULL;
 
@@ -608,7 +751,8 @@ int doCmds()
                 int maxSz = (int)WSTRLEN(workingDir) + sz + 2;
                 f = XMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 if (f == NULL) {
-                    err_sys("Error malloc'ing");
+                    err_msg("Error malloc'ing");
+                    return -1;
                 }
 
                 f[0] = '\0';
@@ -621,14 +765,23 @@ int doCmds()
                 pt = f;
             }
 
-            if ((ret = wolfSSH_SFTP_RMDIR(ssh, pt)) != WS_SUCCESS) {
+            do {
+                ret = wolfSSH_SFTP_RMDIR(ssh, pt);
+                err = wolfSSH_get_error(ssh);
+            } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
+                        && ret != WS_SUCCESS);
+            if (ret != WS_SUCCESS) {
                 if (ret == WS_PERMISSIONS) {
-                    if (WFPUTS("Insufficient permissions\n", fout) < 0)
-                        err_sys("fputs error");
+                    if (SFTP_FPUTS(args, "Insufficient permissions\n") < 0) {
+                        err_msg("fputs error");
+                        return -1;
+                    }
                 }
                 else {
-                    if (WFPUTS("Error writing directory\n", fout) < 0)
-                        err_sys("fputs error");
+                    if (SFTP_FPUTS(args, "Error writing directory\n") < 0) {
+                        err_msg("fputs error");
+                        return -1;
+                    }
                 }
             }
             XFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -636,7 +789,7 @@ int doCmds()
         }
 
 
-        if ((pt = WSTRNSTR(msg, "rm", sizeof(msg))) != NULL) {
+        if ((pt = WSTRNSTR(msg, "rm", MAX_CMD_SZ)) != NULL) {
             int sz;
             char* f = NULL;
 
@@ -658,21 +811,30 @@ int doCmds()
                 pt = f;
             }
 
-            if ((ret = wolfSSH_SFTP_Remove(ssh, pt)) != WS_SUCCESS) {
+            do {
+                ret = wolfSSH_SFTP_Remove(ssh, pt);
+                err = wolfSSH_get_error(ssh);
+            } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
+                        && ret != WS_SUCCESS);
+            if (ret != WS_SUCCESS) {
                 if (ret == WS_PERMISSIONS) {
-                    if (WFPUTS("Insufficient permissions\n", fout) < 0)
-                        err_sys("fputs error");
+                    if (SFTP_FPUTS(args, "Insufficient permissions\n") < 0) {
+                        err_msg("fputs error");
+                        return -1;
+                    }
                 }
                 else {
-                    if (WFPUTS("Error writing directory\n", fout) < 0)
-                        err_sys("fputs error");
+                    if (SFTP_FPUTS(args, "Error writing directory\n") < 0) {
+                        err_msg("fputs error");
+                        return -1;
+                    }
                 }
             }
             XFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             continue;
         }
 
-        if ((pt = WSTRNSTR(msg, "rename", sizeof(msg))) != NULL) {
+        if ((pt = WSTRNSTR(msg, "rename", MAX_CMD_SZ)) != NULL) {
             int sz;
             char* f   = NULL;
             char* fTo = NULL;
@@ -703,7 +865,8 @@ int doCmds()
                 int maxSz = (int)WSTRLEN(workingDir) + sz + 2;
                 f = XMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 if (f == NULL) {
-                    err_sys("Error malloc'ing");
+                    err_msg("Error malloc'ing");
+                    return -1;
                 }
 
                 f[0] = '\0';
@@ -729,9 +892,16 @@ int doCmds()
                 to = fTo;
             }
 
-            if ((ret = wolfSSH_SFTP_Rename(ssh, pt, to)) != WS_SUCCESS) {
-                if (WFPUTS("Error with rename\n", fout) < 0)
-                    err_sys("fputs error");
+            do {
+                ret = wolfSSH_SFTP_Rename(ssh, pt, to);
+                err = wolfSSH_get_error(ssh);
+            } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
+                        && ret != WS_SUCCESS);
+            if (ret != WS_SUCCESS) {
+                if (SFTP_FPUTS(args, "Error with rename\n") < 0) {
+                    err_msg("fputs error");
+                    return -1;
+                }
             }
             XFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             XFREE(fTo, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -739,12 +909,25 @@ int doCmds()
 
         }
 
-        if ((pt = WSTRNSTR(msg, "ls", sizeof(msg))) != NULL) {
+        if ((pt = WSTRNSTR(msg, "ls", MAX_CMD_SZ)) != NULL) {
             WS_SFTPNAME* tmp;
-            WS_SFTPNAME* current = wolfSSH_SFTP_LS(ssh, workingDir);
+            WS_SFTPNAME* current;
+
+            do {
+                current = wolfSSH_SFTP_LS(ssh, workingDir);
+                err = wolfSSH_get_error(ssh);
+            } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
+                        && current == NULL && err != WS_SUCCESS);
             tmp = current;
             while (tmp != NULL) {
-                printf("%s\n", tmp->fName);
+                if (SFTP_FPUTS(args, tmp->fName) < 0) {
+                    err_msg("fputs error");
+                    return -1;
+                }
+                if (SFTP_FPUTS(args, "\n") < 0) {
+                    err_msg("fputs error");
+                    return -1;
+                }
                 tmp = tmp->next;
             }
             wolfSSH_SFTPNAME_list_free(current);
@@ -752,30 +935,32 @@ int doCmds()
         }
 
         /* display current working directory */
-        if ((pt = WSTRNSTR(msg, "pwd", sizeof(msg))) != NULL) {
-            if (WFPUTS(workingDir, fout) < 0 ||
-                    WFPUTS("\n", fout) < 0)
-                err_sys("fputs error");
+        if ((pt = WSTRNSTR(msg, "pwd", MAX_CMD_SZ)) != NULL) {
+            if (SFTP_FPUTS(args, workingDir) < 0 ||
+                    SFTP_FPUTS(args, "\n") < 0) {
+                err_msg("fputs error");
+                return -1;
+            }
             continue;
         }
 
-        if (WSTRNSTR(msg, "help", sizeof(msg)) != NULL) {
+        if (WSTRNSTR(msg, "help", MAX_CMD_SZ) != NULL) {
             ShowCommands();
             continue;
         }
 
-        if (WSTRNSTR(msg, "quit", sizeof(msg)) != NULL) {
+        if (WSTRNSTR(msg, "quit", MAX_CMD_SZ) != NULL) {
             quit = 1;
             continue;
         }
 
-        if (WSTRNSTR(msg, "exit", sizeof(msg)) != NULL) {
+        if (WSTRNSTR(msg, "exit", MAX_CMD_SZ) != NULL) {
             quit = 1;
             continue;
         }
 
-        WFPUTS("Unknown command\n", fout);
-    }
+        SFTP_FPUTS(args, "Unknown command\n");
+    } while (!quit);
 
     return WS_SUCCESS;
 }
@@ -793,13 +978,19 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     char* host = (char*)wolfSshIp;
     const char* username = NULL;
     const char* password = NULL;
+    const char* defaultSftpPath = NULL;
+    byte nonBlock = 0;
 
     int     argc = ((func_args*)args)->argc;
     char**  argv = ((func_args*)args)->argv;
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?h:p:u:P:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?d:h:p:u:P:N")) != -1) {
         switch (ch) {
+            case 'd':
+                defaultSftpPath = myoptarg;
+                break;
+
             case 'h':
                 host = myoptarg;
                 break;
@@ -820,6 +1011,10 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
                 password = myoptarg;
                 break;
 
+            case 'N':
+                nonBlock = 1;
+                break;
+
             case '?':
                 ShowUsage();
                 exit(EXIT_SUCCESS);
@@ -833,6 +1028,13 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 
     if (username == NULL)
         err_sys("client requires a username parameter.");
+
+
+#ifdef WOLFSSH_TEST_BLOCK
+    if (!nonBlock) {
+        err_sys("Use -N when testing forced non blocking");
+    }
+#endif
 
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
     if (ctx == NULL)
@@ -852,6 +1054,14 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     if (ssh == NULL)
         err_sys("Couldn't create wolfSSH session.");
 
+    if (defaultSftpPath != NULL) {
+        if (wolfSSH_SFTP_SetDefaultPath(ssh, defaultSftpPath)
+                != WS_SUCCESS) {
+            fprintf(stderr, "Couldn't store default sftp path.\n");
+            exit(EXIT_FAILURE);
+        }
+    }
+
     if (password != NULL)
         wolfSSH_SetUserAuthCtx(ssh, (void*)password);
 
@@ -865,17 +1075,28 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     if (ret != 0)
         err_sys("Couldn't connect to server.");
 
+    if (nonBlock)
+        tcp_set_nonblocking(&sockFd);
+
     ret = wolfSSH_set_fd(ssh, (int)sockFd);
     if (ret != WS_SUCCESS)
         err_sys("Couldn't set the session's socket.");
 
-    ret = wolfSSH_SFTP_connect(ssh);
+    if (!nonBlock)
+        ret = wolfSSH_SFTP_connect(ssh);
+    else
+        ret = NonBlockSSH_connect();
     if (ret != WS_SUCCESS)
         err_sys("Couldn't connect SFTP");
 
     {
         /* get current working directory */
-        WS_SFTPNAME* n = wolfSSH_SFTP_RealPath(ssh, (char*)".");
+        WS_SFTPNAME* n = NULL;
+
+        do {
+            n = wolfSSH_SFTP_RealPath(ssh, (char*)".");
+            ret = wolfSSH_get_error(ssh);
+        } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE);
         if (n == NULL) {
             err_sys("Unable to get real path for working directory");
         }
@@ -892,16 +1113,20 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         n = NULL;
     }
 
-    doCmds();
-
+    ret = doCmds(args);
     XFREE(workingDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-    ret = wolfSSH_shutdown(ssh);
-    if (ret != WS_SUCCESS)
-        err_sys("Closing stream failed.");
-
+    if (ret == WS_SUCCESS) {
+        if (wolfSSH_shutdown(ssh) != WS_SUCCESS) {
+            printf("error with wolfSSH_shutdown(), already disconnected?\n");
+        }
+    }
     WCLOSESOCKET(sockFd);
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
+    if (ret != WS_SUCCESS) {
+        printf("error %d encountered\n", ret);
+        ((func_args*)args)->return_code = ret;
+    }
 
     return 0;
 }
@@ -911,7 +1136,8 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 {
     printf("Not compiled in!\nPlease recompile with WOLFSSH_SFTP or --enable-sftp");
-    return -1;
+    (void)args;
+    return 0;
 }
 #endif /* WOLFSSH_SFTP */
 
@@ -925,6 +1151,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         args.argv = argv;
         args.return_code = 0;
         args.user_auth = NULL;
+        args.sftp_cb   = NULL;
 
         WSTARTTCP();
 

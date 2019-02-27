@@ -39,6 +39,8 @@
 #endif
 
 
+#ifndef NO_WOLFSSH_SERVER
+
 static const char serverBanner[] = "wolfSSH Example Server\n";
 
 
@@ -118,10 +120,12 @@ static int NonBlockSSH_accept(WOLFSSH* ssh)
             printf("... client would write block\n");
 
         select_ret = tcp_select(sockfd, 1);
-        if (select_ret == WS_SELECT_RECV_READY ||
-            select_ret == WS_SELECT_ERROR_READY)
+        if (select_ret == WS_SELECT_RECV_READY  ||
+            select_ret == WS_SELECT_ERROR_READY ||
+            error == WS_WANT_WRITE)
         {
             ret = wolfSSH_accept(ssh);
+            error = wolfSSH_get_error(ssh);
         }
         else if (select_ret == WS_SELECT_TIMEOUT)
             error = WS_WANT_READ;
@@ -162,6 +166,8 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
                     rxSz = wolfSSH_stream_read(threadCtx->ssh,
                                                buf + backlogSz,
                                                EXAMPLE_BUFFER_SZ);
+                    if (rxSz <= 0)
+                        rxSz = wolfSSH_get_error(threadCtx->ssh);
                 } while (rxSz == WS_WANT_READ || rxSz == WS_WANT_WRITE);
 
                 if (rxSz > 0) {
@@ -211,6 +217,8 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
         free(buf);
     } else if (ret == WS_SCP_COMPLETE) {
         printf("scp file transfer completed\n");
+    } else if (ret == WS_SFTP_COMPLETE) {
+        printf("Use example/echoserver/echoserver for SFTP\n");
     }
     wolfSSH_stream_exit(threadCtx->ssh, 0);
     WCLOSESOCKET(threadCtx->fd);
@@ -709,6 +717,9 @@ THREAD_RETURN WOLFSSH_THREAD server_test(void* args)
     return 0;
 }
 
+#endif /* NO_WOLFSSH_SERVER */
+
+
 #ifndef NO_MAIN_DRIVER
 
     int main(int argc, char** argv)
@@ -728,7 +739,11 @@ THREAD_RETURN WOLFSSH_THREAD server_test(void* args)
 
         wolfSSH_Init();
 
+#ifndef NO_WOLFSSH_SERVER
         server_test(&args);
+#else
+        printf("wolfSSH compiled without server support\n");
+#endif
 
         wolfSSH_Cleanup();
 

@@ -97,8 +97,14 @@ enum WS_ErrorCodes {
     WS_CHAN_RXD            = -57,   /* Status that channel data received. */
     WS_INVALID_EXTDATA     = -58,   /* invalid Channel Extended Data Type */
     WS_CHAN_PENDING        = -59,   /* peer hasn't confirmed channel open */
+    WS_SFTP_BAD_REQ_ID     = -60,   /* SFTP Bad request ID */
+    WS_SFTP_BAD_REQ_TYPE   = -61,   /* SFTP Bad request ID */
+    WS_SFTP_STATUS_NOT_OK  = -62,   /* SFTP Status not OK */
+    WS_SFTP_FILE_DNE       = -63,   /* SFTP File Does Not Exist */
+    WS_SIZE_ONLY           = -64,   /* Only getting the size of buffer needed */
+    WS_CLOSE_FILE_E        = -65,   /* Unable to close local file */
 
-    WS_LAST_E              = -59    /* Update this to indicate last error */
+    WS_LAST_E              = -65    /* Update this to indicate last error */
 };
 
 

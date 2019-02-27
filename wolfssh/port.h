@@ -35,6 +35,9 @@
 extern "C" {
 #endif
 
+#define PORT_DYNTYPE_STRING 12
+/* This value needs to stay in sync with the actual value of DYNTYPE_STRING
+ * from internal.h. */
 
 /* setup memory handling */
 #ifndef WMALLOC_USER
@@ -119,6 +122,10 @@ extern "C" {
     }
     #define WCHMOD(f,m) wChmod((f),(m))
 #else
+    #include <stdlib.h>
+    #ifndef _WIN32_WCE
+        #include <stdio.h>
+    #endif
     #define WFILE FILE
     WOLFSSH_API int wfopen(WFILE**, const char*, const char*);
 
@@ -142,9 +149,31 @@ extern "C" {
         !defined(WOLFSSH_SCP_USER_CALLBACKS)
 
         #ifdef USE_WINDOWS_API
-            #include <direct.h>
-            #define WCHDIR(p) _chdir((p))
-            #define WMKDIR(p,m) _mkdir((p))
+            WOLFSSH_LOCAL void* WS_CreateFileA(const char* fileName,
+                    unsigned long desiredAccess, unsigned long shareMode,
+                    unsigned long creationDisposition, unsigned long flags,
+                    void* heap);
+            WOLFSSH_LOCAL void* WS_FindFirstFileA(const char* fileName,
+                    char* realFileName, size_t realFileNameSz, int* isDir,
+                    void* heap);
+            WOLFSSH_LOCAL int WS_FindNextFileA(void* findHandle,
+                    char* realFileName, size_t realFileNameSz);
+            WOLFSSH_LOCAL int WS_GetFileAttributesExA(const char* fileName,
+                    void* fileInfo, void* heap);
+            WOLFSSH_LOCAL int WS_RemoveDirectoryA(const char* dirName,
+                    void* heap);
+            WOLFSSH_LOCAL int WS_CreateDirectoryA(const char* dirName,
+                    void* heap);
+            WOLFSSH_LOCAL int WS_MoveFileA(const char* oldName,
+                    const char* newName, void* heap);
+            WOLFSSH_LOCAL int WS_DeleteFileA(const char* fileName,
+                    void* heap);
+
+            #ifndef _WIN32_WCE
+                #include <direct.h>
+                #define WCHDIR(p) _chdir((p))
+                #define WMKDIR(p,m) _mkdir((p))
+            #endif
         #else
             #include <unistd.h>
             #include <sys/stat.h>
@@ -179,7 +208,7 @@ extern "C" {
         #define WSTRNCPY(s1,s2,n) strncpy_s((s1),(n),(s2),(n))
         #define WSTRNCASECMP(s1,s2,n) _strnicmp((s1),(s2),(n))
         #define WSNPRINTF(s,n,f,...) _snprintf_s((s),(n),(n),(f),##__VA_ARGS__)
-        #define WVSNPRINTF(s,n,f,...) vsnprintf_s((s),(n),(n),(f),##__VA_ARGS__)
+        #define WVSNPRINTF(s,n,f,...) _vsnprintf_s((s),(n),(n),(f),##__VA_ARGS__)
     #elif defined(MICROCHIP_MPLAB_HARMONY) || defined(MICROCHIP_PIC32)
         #include <stdio.h>
         #define WSTRNCPY(s1,s2,n) strncpy((s1),(s2),(n))
@@ -309,8 +338,10 @@ extern "C" {
 #endif
 
 #ifndef WPWRITE
-    static inline int wPwrite(WFD fd, unsigned char* buf, unsigned int sz, long ofst)
+    static inline int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
+            const unsigned int* shortOffset)
     {
+        long ofst = ((long)shortOffset[1] << 32) | shortOffset[0];
         if (ofst > 0) {
             NU_Seek(fd, ofst, 0);
         }
@@ -321,8 +352,10 @@ extern "C" {
 #endif
 
 #ifndef WPREAD
-    static inline int wPread(WFD fd, unsigned char* buf, unsigned int sz, long ofst)
+    static inline int wPread(WFD fd, unsigned char* buf, unsigned int sz,
+            const unsigned int* shortOffset)
     {
+        long ofst = ((long)shortOffset[1] << 32) | shortOffset[0];
         if (ofst > 0) {
             NU_Seek(fd, ofst, 0);
         }
@@ -425,11 +458,13 @@ extern "C" {
 #elif defined(USE_WINDOWS_API)
 
     #include <windows.h>
-    #include <sys/types.h>
-    #include <sys/stat.h>
-    #include <io.h>
-    #include <direct.h>
-    #include <fcntl.h>
+    #ifndef _WIN32_WCE
+        #include <sys/types.h>
+        #include <sys/stat.h>
+        #include <io.h>
+        #include <direct.h>
+        #include <fcntl.h>
+    #endif
 
     #define WSTAT_T           struct _stat
     #define WRMDIR(d)         _rmdir((d))
@@ -442,8 +477,8 @@ extern "C" {
     #define WCLOSE(fd)        _close((fd))
 
     #define WFD int
-    int wPwrite(WFD, unsigned char*, unsigned int, long);
-    int wPread(WFD, unsigned char*, unsigned int, long);
+    int wPwrite(WFD, unsigned char*, unsigned int, const unsigned int*);
+    int wPread(WFD, unsigned char*, unsigned int, const unsigned int*);
     #define WPWRITE(fd,b,s,o) wPwrite((fd),(b),(s),(o))
     #define WPREAD(fd,b,s,o)  wPread((fd),(b),(s),(o))
     #define WS_DELIM          '\\'
@@ -469,7 +504,11 @@ extern "C" {
     #define WSTAT_T     struct stat
     #define WRMDIR(d)   rmdir((d))
     #define WSTAT(p,b)  stat((p),(b))
-    #define WLSTAT(p,b) lstat((p),(b))
+    #ifndef USE_OSE_API
+        #define WLSTAT(p,b) lstat((p),(b))
+    #else
+        #define WLSTAT(p,b) stat((p),(b))
+    #endif
     #define WREMOVE(d)   remove((d))
     #define WRENAME(o,n) rename((o),(n))
     #define WGETCWD(r,rSz) getcwd((r),(rSz))
@@ -487,8 +526,10 @@ extern "C" {
 
     #define WOPEN(f,m,p) open((f),(m),(p))
     #define WCLOSE(fd) close((fd))
-    #define WPWRITE(fd,b,s,o) pwrite((fd),(b),(s),(o))
-    #define WPREAD(fd,b,s,o)  pread((fd),(b),(s),(o))
+    int wPwrite(WFD, unsigned char*, unsigned int, const unsigned int*);
+    int wPread(WFD, unsigned char*, unsigned int, const unsigned int*);
+    #define WPWRITE(fd,b,s,o) wPwrite((fd),(b),(s),(o))
+    #define WPREAD(fd,b,s,o)  wPread((fd),(b),(s),(o))
 
 #ifndef NO_WOLFSSH_DIR
     #include <dirent.h> /* used for opendir, readdir, and closedir */

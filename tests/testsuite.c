@@ -37,7 +37,7 @@
 #include <wolfssh/test.h>
 #include "examples/echoserver/echoserver.h"
 #include "examples/client/client.h"
-
+#include "tests/testsuite.h"
 
 #ifndef NO_TESTSUITE_MAIN_DRIVER
 
@@ -55,6 +55,8 @@ char* myoptarg = NULL;
 #endif /* NO_TESTSUITE_MAIN_DRIVER */
 
 
+#if !defined(NO_WOLFSSH_SERVER) && !defined(NO_WOLFSSH_CLIENT)
+
 static int tsClientUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 {
     static char password[] = "upthehill";
@@ -67,8 +69,6 @@ static int tsClientUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
     return WOLFSSH_USERAUTH_SUCCESS;
 }
 
-
-#if !defined(NO_WOLFSSH_SERVER) && !defined(NO_WOLFSSH_CLIENT)
 
 #define NUMARGS 5
 #define ARGLEN 32
@@ -141,13 +141,21 @@ int TestsuiteTest(int argc, char** argv)
 
     wolfSSH_Cleanup();
     FreeTcpReady(&ready);
+
+#ifdef WOLFSSH_SFTP
+    printf("testing SFTP blocking\n");
+    test_SFTP(0);
+    printf("testing SFTP non blocking\n");
+    test_SFTP(1);
+#endif
+
     return EXIT_SUCCESS;
 }
 
 #else /* !NO_WOLFSSH_SERVER && !NO_WOLFSSH_CLIENT */
 
 int TestsuiteTest(int argc, char** argv)
-
+{
     (void)argc;
     (void)argv;
     return EXIT_SUCCESS;

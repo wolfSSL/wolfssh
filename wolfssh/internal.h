@@ -155,6 +155,7 @@ WOLFSSH_LOCAL const char* IdToName(byte);
 
 typedef struct Buffer {
     void* heap;       /* Heap for allocations */
+    int   plainSz;    /* amount of plain text bytes to send with WANT_WRITE */
     word32 length;    /* total buffer length used */
     word32 idx;       /* idx to part of length already consumed */
     byte* buffer;     /* place holder for actual buffer */
@@ -251,11 +252,24 @@ typedef struct HandshakeInfo {
 
 typedef struct WS_HANDLE_LIST WS_HANDLE_LIST;
 typedef struct SFTP_OFST {
-    word64 offset;
+    word32 offset[2];
     char from[WOLFSSH_MAX_FILENAME];
     char to[WOLFSSH_MAX_FILENAME];
 } SFTP_OFST;
-#endif
+
+
+struct WS_SFTP_GET_STATE;
+struct WS_SFTP_PUT_STATE;
+struct WS_SFTP_LSTAT_STATE;
+struct WS_SFTP_OPEN_STATE;
+struct WS_SFTP_CLOSE_STATE;
+struct WS_SFTP_SEND_READ_STATE;
+struct WS_SFTP_SEND_WRITE_STATE;
+struct WS_SFTP_GET_HANDLE_STATE;
+struct WS_SFTP_PUT_STATE;
+struct WS_SFTP_RENAME_STATE;
+
+#endif /* WOLFSSH_SFTP */
 
 /* our wolfSSH session */
 struct WOLFSSH {
@@ -378,11 +392,33 @@ struct WOLFSSH {
 #ifdef WOLFSSH_SFTP
     word32 reqId;
     byte   sftpState;
+    byte   realState;
     byte   sftpInt;
+    byte   sftpExtSz; /* size of extension buffer (buffer not currently used) */
     SFTP_OFST sftpOfst[WOLFSSH_MAX_SFTPOFST];
+    char* sftpDefaultPath;
 #ifdef WOLFSSH_STOREHANDLE
     WS_HANDLE_LIST* handleList;
 #endif
+    struct WS_SFTP_RECV_STATE* recvState;
+    struct WS_SFTP_RMDIR_STATE* rmdirState;
+    struct WS_SFTP_MKDIR_STATE* mkdirState;
+    struct WS_SFTP_RM_STATE* rmState;
+    struct WS_SFTP_READDIR_STATE* readDirState;
+    struct WS_SFTP_SETATR_STATE* setatrState;
+    struct WS_SFTP_CHMOD_STATE* chmodState;
+    struct WS_SFTP_LS_STATE* lsState;
+    struct WS_SFTP_SEND_STATE* sendState;
+    struct WS_SFTP_NAME_STATE* nameState;
+    struct WS_SFTP_GET_STATE* getState;
+    struct WS_SFTP_PUT_STATE* putState;
+    struct WS_SFTP_LSTAT_STATE* lstatState;
+    struct WS_SFTP_OPEN_STATE* openState;
+    struct WS_SFTP_CLOSE_STATE* closeState;
+    struct WS_SFTP_SEND_READ_STATE* sendReadState;
+    struct WS_SFTP_SEND_WRITE_STATE* sendWriteState;
+    struct WS_SFTP_GET_HANDLE_STATE* getHandleState;
+    struct WS_SFTP_RENAME_STATE* renameState;
 #endif
 };
 
@@ -494,6 +530,9 @@ enum AcceptStates {
     ACCEPT_CLIENT_SESSION_ESTABLISHED,
 #ifdef WOLFSSH_SCP
     ACCEPT_INIT_SCP_TRANSFER,
+#endif
+#ifdef WOLFSSH_SFTP
+    ACCEPT_INIT_SFTP,
 #endif
 };
 
@@ -616,6 +655,7 @@ enum WS_DynamicTypes {
     DYNTYPE_SCPCTX,
     DYNTYPE_SCPDIR,
     DYNTYPE_SFTP,
+    DYNTYPE_SFTP_STATE,
     DYNTYPE_TEMP
 };
 
@@ -696,6 +736,7 @@ WOLFSSH_LOCAL int wsScpSendCallback(WOLFSSH*, int, const char*, char*, word32,
 WOLFSSH_LOCAL void clean_path(char* path);
 WOLFSSH_LOCAL void DumpOctetString(const byte*, word32);
 WOLFSSH_LOCAL int wolfSSH_oct2dec(WOLFSSH* ssh, byte* oct, word32 octSz);
+WOLFSSH_LOCAL void AddAssign64(word32*, word32);
 
 
 #ifdef __cplusplus
