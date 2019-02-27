@@ -166,6 +166,8 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
                     rxSz = wolfSSH_stream_read(threadCtx->ssh,
                                                buf + backlogSz,
                                                EXAMPLE_BUFFER_SZ);
+                    if (rxSz <= 0)
+                        rxSz = wolfSSH_get_error(threadCtx->ssh);
                 } while (rxSz == WS_WANT_READ || rxSz == WS_WANT_WRITE);
 
                 if (rxSz > 0) {
