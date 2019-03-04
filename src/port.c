@@ -139,7 +139,7 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
 #endif /* !NO_FILESYSTEM */
 
 
-#ifdef USE_WINDOWS_API
+#if defined(USE_WINDOWS_API) && (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP))
 
 void* WS_CreateFileA(const char* fileName, unsigned long desiredAccess,
         unsigned long shareMode, unsigned long creationDisposition,
@@ -414,7 +414,7 @@ int WS_DeleteFileA(const char* fileName, void* heap)
 }
 
 
-#endif /* USE_WINDOWS_API */
+#endif /* USE_WINDOWS_API WOLFSSH_SFTP WOLFSSH_SCP */
 
 
 #ifndef WSTRING_USER
