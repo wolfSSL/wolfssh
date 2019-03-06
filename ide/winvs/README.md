@@ -16,6 +16,14 @@ names:
         wolfssl\
 
 
+The file `wolfssh\ide\winvs\user_settings.h` contains the settings used to
+configure wolfSSL with the appropriate settings. This file must be copied
+from the directory `wolfssh\ide\winvs` to `wolfssl\IDE\WIN`. If you change
+one copy you must change both copies. The option `WOLFCRYPT_ONLY` disables
+the build of the wolfSSL files and only builds the wolfCrypt algorithms. To
+also keep wolfSSL, delete that option.
+
+
 User Macros
 -----------
 

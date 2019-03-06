@@ -1151,7 +1151,9 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         args.argv = argv;
         args.return_code = 0;
         args.user_auth = NULL;
-        args.sftp_cb   = NULL;
+        #ifdef WOLFSSH_SFTP
+            args.sftp_cb = NULL;
+        #endif
 
         WSTARTTCP();
 
