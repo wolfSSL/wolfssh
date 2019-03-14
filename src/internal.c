@@ -1499,6 +1499,11 @@ static int GetInputData(WOLFSSH* ssh, word32 size)
             ssh->error = WS_RECV_OVERFLOW_E;
             return WS_FATAL_ERROR;
         }
+        
+        if (in < 0) {
+            ssh->error = WS_SOCKET_ERROR_E;
+            return WS_FATAL_ERROR;
+        }
 
         ssh->inputBuffer.length += in;
         inSz -= in;
