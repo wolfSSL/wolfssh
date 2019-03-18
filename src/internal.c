@@ -1500,8 +1500,15 @@ static int GetInputData(WOLFSSH* ssh, word32 size)
             return WS_FATAL_ERROR;
         }
 
-        ssh->inputBuffer.length += in;
-        inSz -= in;
+        if (in >= 0) {
+            ssh->inputBuffer.length += in;
+            inSz -= in;
+        }
+        else {
+            /* all other unexpected negative values is a failure case */
+            ssh->error = WS_FATAL_ERROR;
+            return WS_FATAL_ERROR;
+        }
 
     } while (ssh->inputBuffer.length < size);
 
