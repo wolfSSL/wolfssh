@@ -326,6 +326,16 @@ static int wsUserAuth(byte authType,
 }
 
 
+static int wsPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
+{
+    printf("Sample public key check callback\n"
+           "  public key = %p\n"
+           "  public key size = %u\n"
+           "  ctx = %s\n", pubKey, pubKeySz, (const char*)ctx);
+    return 0;
+}
+
+
 /* returns 0 on success */
 static INLINE int SFTP_FPUTS(func_args* args, const char* msg)
 {
@@ -1064,6 +1074,9 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 
     if (password != NULL)
         wolfSSH_SetUserAuthCtx(ssh, (void*)password);
+
+    wolfSSH_CTX_SetPublicKeyCheck(ctx, wsPublicKeyCheck);
+    wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)"You've been sampled!");
 
     ret = wolfSSH_SetUsername(ssh, username);
     if (ret != WS_SUCCESS)

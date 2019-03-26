@@ -181,6 +181,8 @@ struct WOLFSSH_CTX {
     WS_CallbackScpRecv scpRecvCb;     /* SCP receive callback */
     WS_CallbackScpSend scpSendCb;     /* SCP send callback */
 #endif
+    WS_CallbackPublicKeyCheck publicKeyCheckCb;
+                                      /* Check server's public key callback */
 
     byte* privateKey;                 /* Owned by CTX */
     word32 privateKeySz;
@@ -388,6 +390,7 @@ struct WOLFSSH {
     word32 pkBlobSz;
     byte* peerProtoId;     /* Save for rekey */
     word32 peerProtoIdSz;
+    void* publicKeyCheckCtx;
 
 #ifdef WOLFSSH_SFTP
     word32 reqId;
