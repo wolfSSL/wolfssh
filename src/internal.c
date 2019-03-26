@@ -266,6 +266,9 @@ const char* GetErrorString(int err)
         case WS_CLOSE_FILE_E:
             return "Unable to close local file";
 
+        case WS_PUBKEY_REJECTED_E:
+            return "server's public key is rejected";
+
         default:
             return "Unknown error code";
     }
@@ -2342,7 +2345,26 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         if (ret == WS_SUCCESS && (pubKeySz > len - LENGTH_SZ - begin )) {
             ret = WS_BUFFER_E;
         }
+    }
 
+    if (ret == WS_SUCCESS) {
+        if (ssh->ctx->publicKeyCheckCb != NULL) {
+            WLOG(WS_LOG_DEBUG, "DKDR: Calling the public key check callback");
+            ret = ssh->ctx->publicKeyCheckCb(pubKey, pubKeySz,
+                    ssh->publicKeyCheckCtx);
+            if (ret == 0) {
+                WLOG(WS_LOG_DEBUG, "DKDR: public key accepted");
+                ret = WS_SUCCESS;
+            }
+            else {
+                WLOG(WS_LOG_DEBUG, "DKDR: public key rejected");
+                ret = WS_PUBKEY_REJECTED_E;
+            }
+        }
+        else {
+            WLOG(WS_LOG_DEBUG, "DKDR: no public key check callback, accepted");
+            ret = WS_SUCCESS;
+        }
     }
 
     if (ret == WS_SUCCESS)

@@ -148,6 +148,13 @@ WOLFSSH_API void wolfSSH_SetUserAuth(WOLFSSH_CTX*, WS_CallbackUserAuth);
 WOLFSSH_API void wolfSSH_SetUserAuthCtx(WOLFSSH*, void*);
 WOLFSSH_API void* wolfSSH_GetUserAuthCtx(WOLFSSH*);
 
+/* Public Key Check Callback */
+typedef int (*WS_CallbackPublicKeyCheck)(const byte*, word32, void*);
+WOLFSSH_API void wolfSSH_CTX_SetPublicKeyCheck(WOLFSSH_CTX*,
+                                               WS_CallbackPublicKeyCheck);
+WOLFSSH_API void wolfSSH_SetPublicKeyCheckCtx(WOLFSSH*, void*);
+WOLFSSH_API void* wolfSSH_GetPublicKeyCheckCtx(WOLFSSH*);
+
 WOLFSSH_API int wolfSSH_SetUsername(WOLFSSH*, const char*);
 
 WOLFSSH_API int wolfSSH_CTX_SetBanner(WOLFSSH_CTX*, const char*);

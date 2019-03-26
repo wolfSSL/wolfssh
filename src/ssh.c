@@ -924,6 +924,32 @@ void* wolfSSH_GetUserAuthCtx(WOLFSSH* ssh)
 }
 
 
+void wolfSSH_CTX_SetPublicKeyCheck(WOLFSSH_CTX* ctx,
+        WS_CallbackPublicKeyCheck cb)
+{
+    if (ctx != NULL) {
+        ctx->publicKeyCheckCb = cb;
+    }
+}
+
+
+void wolfSSH_SetPublicKeyCheckCtx(WOLFSSH* ssh, void* publicKeyCheckCtx)
+{
+    if (ssh != NULL) {
+        ssh->publicKeyCheckCtx = publicKeyCheckCtx;
+    }
+}
+
+
+void* wolfSSH_GetPublicKeyCheckCtx(WOLFSSH* ssh)
+{
+    if (ssh != NULL) {
+        return ssh->publicKeyCheckCtx;
+    }
+    return NULL;
+}
+
+
 /* Used to set the channel request type sent in wolfSSH connect. The default
  * type set is shell if this function is not called.
  *
