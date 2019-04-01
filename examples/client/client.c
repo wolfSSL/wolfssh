@@ -154,33 +154,37 @@ static int wsUserAuth(byte authType,
     word32 passwordSz = 0;
     int ret = WOLFSSH_USERAUTH_SUCCESS;
 
-    (void)authType;
-    if (defaultPassword != NULL) {
-        passwordSz = (word32)strlen(defaultPassword);
-        memcpy(userPassword, defaultPassword, passwordSz);
-    }
-    else {
-        printf("Password: ");
-        SetEcho(0);
-        if (fgets((char*)userPassword, sizeof(userPassword), stdin) == NULL) {
-            printf("Getting password failed.\n");
-            ret = WOLFSSH_USERAUTH_FAILURE;
+    if (authType == WOLFSSH_USERAUTH_PASSWORD) {
+        if (defaultPassword != NULL) {
+            passwordSz = (word32)strlen(defaultPassword);
+            memcpy(userPassword, defaultPassword, passwordSz);
         }
         else {
-            char* c = strpbrk((char*)userPassword, "\r\n");;
-            if (c != NULL)
-                *c = '\0';
+            printf("Password: ");
+            SetEcho(0);
+            if (fgets((char*)userPassword, sizeof(userPassword), stdin) == NULL) {
+                printf("Getting password failed.\n");
+                ret = WOLFSSH_USERAUTH_FAILURE;
+            }
+            else {
+                char* c = strpbrk((char*)userPassword, "\r\n");;
+                if (c != NULL)
+                    *c = '\0';
+            }
+            passwordSz = (word32)strlen((const char*)userPassword);
+            SetEcho(1);
+            #ifdef USE_WINDOWS_API
+                printf("\r\n");
+            #endif
         }
-        passwordSz = (word32)strlen((const char*)userPassword);
-        SetEcho(1);
-#ifdef USE_WINDOWS_API
-        printf("\r\n");
-#endif
-    }
 
-    if (ret == WOLFSSH_USERAUTH_SUCCESS) {
-        authData->sf.password.password = userPassword;
-        authData->sf.password.passwordSz = passwordSz;
+        if (ret == WOLFSSH_USERAUTH_SUCCESS) {
+            authData->sf.password.password = userPassword;
+            authData->sf.password.passwordSz = passwordSz;
+        }
+    }
+    else if (authType == WOLFSSH_USERAUTH_PUBLICKEY) {
+        fprintf(stderr, "username = %p\n", authData->username);
     }
 
     return ret;
