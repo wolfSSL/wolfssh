@@ -555,6 +555,20 @@ static int wolfSSH_DoControlSeq(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf, 
             /* will come back in with a '?' */
             break;
 
+        case 'r': /* @TODO DECSTBM */
+            WLOG(WS_LOG_DEBUG, "DECSTBM not yet supported");
+            if (numArgs == 0) {
+                /* reset scroll window */
+                break;
+            }
+            if (numArgs == 2) {
+                /* set top / bottom for scroll window */
+                break;
+            }
+
+            /* unknown number of args found */
+            break;
+
         case '?':
             numArgs = getArgs(buf, bufSz, &i, args);
 
@@ -599,6 +613,10 @@ int wolfSSH_ConvertConsole(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf,
 
     if (ssh == NULL || buf == NULL) {
         return WS_BAD_ARGUMENT;
+    }
+
+    if (bufSz == 0) { /* nothing to do */
+        return WS_SUCCESS;
     }
 
     if (ssh->defaultAttrSet == 0) { /* store default attributes */
@@ -715,7 +733,6 @@ int wolfSSH_ConvertConsole(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf,
                     WLOG(WS_LOG_DEBUG,
                             "unknown special console code char:%c hex:%02X",
                              c, c);
-                    z = i + 1;
             }
             i = z; /* update index */
 

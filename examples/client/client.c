@@ -336,6 +336,9 @@ static THREAD_RET readPeer(void* in)
                     if (ret != WS_SUCCESS && ret != WS_WANT_READ) {
                         err_sys("issue with print out");
                     }
+                    if (ret == WS_WANT_READ) {
+                        ret = 0;
+                    }
                 }
                 else {
                     printf("%s", buf);
@@ -444,6 +447,11 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
     if (username == NULL)
         err_sys("client requires a username parameter.");
+
+#ifdef SINGLE_THREADED
+    if (keepOpen)
+        err_sys("Threading needed for terminal session\n");
+#endif
 
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
     if (ctx == NULL)
