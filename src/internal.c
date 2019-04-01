@@ -863,6 +863,7 @@ static const NameIdPair NameIdMap[] = {
 
     /* Encryption IDs */
     { ID_AES128_CBC, "aes128-cbc" },
+    { ID_AES128_CTR, "aes128-ctr" },
     { ID_AES128_GCM, "aes128-gcm@openssh.com" },
 
     /* Integrity IDs */
@@ -1707,7 +1708,7 @@ static int GetNameList(byte* idList, word32* idListSz,
 }
 
 
-static const byte  cannedEncAlgo[] = {ID_AES128_GCM, ID_AES128_CBC};
+static const byte  cannedEncAlgo[] = {ID_AES128_GCM, ID_AES128_CTR, ID_AES128_CBC};
 static const byte  cannedMacAlgo[] = {ID_HMAC_SHA2_256, ID_HMAC_SHA1_96,
                                          ID_HMAC_SHA1};
 static const byte  cannedKeyAlgoRsa[] = {ID_SSH_RSA};
@@ -1766,6 +1767,7 @@ static INLINE byte BlockSzForId(byte id)
 {
     switch (id) {
         case ID_AES128_CBC:
+        case ID_AES128_CTR:
         case ID_AES128_GCM:
             return AES_BLOCK_SIZE;
         default:
@@ -1798,6 +1800,7 @@ static INLINE byte KeySzForId(byte id)
         case ID_HMAC_SHA2_256:
             return SHA256_DIGEST_SIZE;
         case ID_AES128_CBC:
+        case ID_AES128_CTR:
         case ID_AES128_GCM:
             return AES_BLOCK_SIZE;
         default:
@@ -2706,6 +2709,7 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 break;
 
             case ID_AES128_CBC:
+            case ID_AES128_CTR:
                 WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes128-cbc");
                 ret = wc_AesSetKey(&ssh->decryptCipher.aes,
                                    ssh->peerKeys.encKey, ssh->peerKeys.encKeySz,
@@ -4533,6 +4537,15 @@ static INLINE int Encrypt(WOLFSSH* ssh, byte* cipher, const byte* input,
             }
             break;
 
+        case ID_AES128_CTR:
+            if (sz % AES_BLOCK_SIZE || wc_AesCtrEncrypt(&ssh->encryptCipher.aes,
+                                                        cipher, input, sz) < 0)
+            {
+
+                ret = WS_ENCRYPT_E;
+            }
+            break;
+
         default:
             ret = WS_INVALID_ALGO_ID;
     }
@@ -4560,6 +4573,15 @@ static INLINE int Decrypt(WOLFSSH* ssh, byte* plain, const byte* input,
         case ID_AES128_CBC:
             if (sz % AES_BLOCK_SIZE || wc_AesCbcDecrypt(&ssh->decryptCipher.aes,
                                  plain, input, sz) < 0) {
+
+                ret = WS_DECRYPT_E;
+            }
+            break;
+
+        case ID_AES128_CTR:
+            if (sz % AES_BLOCK_SIZE || wc_AesCtrEncrypt(&ssh->decryptCipher.aes,
+                                                        plain, input, sz) < 0)
+            {
 
                 ret = WS_DECRYPT_E;
             }
@@ -5945,6 +5967,7 @@ int SendNewKeys(WOLFSSH* ssh)
                 break;
 
             case ID_AES128_CBC:
+            case ID_AES128_CTR:
                 WLOG(WS_LOG_DEBUG, "SNK: using cipher aes128-cbc");
                 ret = wc_AesSetKey(&ssh->encryptCipher.aes,
                                   ssh->keys.encKey, ssh->keys.encKeySz,
