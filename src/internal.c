@@ -1707,18 +1707,46 @@ static int GetNameList(byte* idList, word32* idListSz,
     return ret;
 }
 
-
-static const byte  cannedEncAlgo[] = {ID_AES128_GCM, ID_AES128_CTR, ID_AES128_CBC};
-static const byte  cannedMacAlgo[] = {ID_HMAC_SHA2_256, ID_HMAC_SHA1_96,
-                                         ID_HMAC_SHA1};
+static const byte cannedEncAlgo[] = {
+#ifndef WOLFSSL_NO_AESGCM
+    ID_AES128_GCM, 
+#endif
+#ifndef WOLFSSL_NO_AESCTR
+    ID_AES128_CTR,
+#endif
+#ifndef WOLFSSL_NO_AESCBC
+    ID_AES128_CBC,
+#endif
+};
+static const byte cannedMacAlgo[] = {
+#ifndef WOLFSSL_NO_HMAC_SHA2_256
+    ID_HMAC_SHA2_256,
+#endif
+#ifndef WOLFSSL_NO_HMAC_SHA1_96
+    ID_HMAC_SHA1_96,
+#endif
+#ifndef WOLFSSL_NO_HMAC_SHA1
+    ID_HMAC_SHA1,
+#endif
+};
 static const byte  cannedKeyAlgoRsa[] = {ID_SSH_RSA};
 static const byte  cannedKeyAlgoEcc256[] = {ID_ECDSA_SHA2_NISTP256};
 static const byte  cannedKeyAlgoEcc384[] = {ID_ECDSA_SHA2_NISTP384};
 static const byte  cannedKeyAlgoEcc521[] = {ID_ECDSA_SHA2_NISTP521};
-static const byte  cannedKexAlgo[] = {ID_ECDH_SHA2_NISTP256,
-                                         ID_DH_GEX_SHA256,
-                                         ID_DH_GROUP14_SHA1,
-                                         ID_DH_GROUP1_SHA1};
+static const byte cannedKexAlgo[] = {
+#ifndef WOLFSSL_NO_ECDH_SHA2_NISTP256
+    ID_ECDH_SHA2_NISTP256,
+#endif
+#ifndef WOLFSSL_NO_DH_GEX_SHA256
+    ID_DH_GEX_SHA256,
+#endif
+#ifndef WOLFSSL_NO_DH_GROUP14_SHA1
+    ID_DH_GROUP14_SHA1,
+#endif
+#ifndef WOLFSSL_NO_DH_GROUP1_SHA1
+    ID_DH_GROUP1_SHA1,
+#endif
+};
 
 static const word32 cannedEncAlgoSz = sizeof(cannedEncAlgo);
 static const word32 cannedMacAlgoSz = sizeof(cannedMacAlgo);
