@@ -2737,11 +2737,17 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 break;
 
             case ID_AES128_CBC:
-            case ID_AES128_CTR:
                 WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes128-cbc");
                 ret = wc_AesSetKey(&ssh->decryptCipher.aes,
                                    ssh->peerKeys.encKey, ssh->peerKeys.encKeySz,
                                    ssh->peerKeys.iv, AES_DECRYPTION);
+                break;
+
+            case ID_AES128_CTR:
+                WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes128-ctr");
+                ret = wc_AesSetKey(&ssh->decryptCipher.aes,
+                                   ssh->peerKeys.encKey, ssh->peerKeys.encKeySz,
+                                   ssh->peerKeys.iv, AES_ENCRYPTION);
                 break;
 
             case ID_AES128_GCM:
@@ -4608,8 +4614,7 @@ static INLINE int Decrypt(WOLFSSH* ssh, byte* plain, const byte* input,
 
         case ID_AES128_CTR:
             if (sz % AES_BLOCK_SIZE || wc_AesCtrEncrypt(&ssh->decryptCipher.aes,
-                                                        plain, input, sz) < 0)
-            {
+                                                        plain, input, sz) < 0) {
 
                 ret = WS_DECRYPT_E;
             }
@@ -5996,7 +6001,7 @@ int SendNewKeys(WOLFSSH* ssh)
 
             case ID_AES128_CBC:
             case ID_AES128_CTR:
-                WLOG(WS_LOG_DEBUG, "SNK: using cipher aes128-cbc");
+                WLOG(WS_LOG_DEBUG, "SNK: using cipher aes128-cbc/ctr");
                 ret = wc_AesSetKey(&ssh->encryptCipher.aes,
                                   ssh->keys.encKey, ssh->keys.encKeySz,
                                   ssh->keys.iv, AES_ENCRYPTION);
