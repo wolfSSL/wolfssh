@@ -2862,7 +2862,9 @@ static int DoDebug(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     word32 strSz;
     word32 begin;
 
-    if (ssh == NULL || buf == NULL || idx == NULL || len < LENGTH_SZ + 1) {
+    if (ssh == NULL || buf == NULL || idx == NULL ||
+            len < (2 * LENGTH_SZ) + 1) {
+
         return WS_BAD_ARGUMENT;
     }
     begin = *idx;
