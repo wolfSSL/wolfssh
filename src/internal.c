@@ -4573,8 +4573,7 @@ static INLINE int Encrypt(WOLFSSH* ssh, byte* cipher, const byte* input,
 
         case ID_AES128_CTR:
             if (sz % AES_BLOCK_SIZE || wc_AesCtrEncrypt(&ssh->encryptCipher.aes,
-                                                        cipher, input, sz) < 0)
-            {
+                                                        cipher, input, sz) < 0) {
 
                 ret = WS_ENCRYPT_E;
             }
@@ -5197,8 +5196,7 @@ static INLINE void CopyNameList(byte* buf, word32* idx,
     *idx = begin;
 }
 
-
-static const char cannedEncAlgoNames[] = "aes128-gcm@openssh.com,aes128-cbc";
+static const char cannedEncAlgoNames[] = "aes128-gcm@openssh.com,aes128-ctr,aes128-cbc";
 static const char cannedMacAlgoNames[] = "hmac-sha2-256,hmac-sha1-96,"
                                          "hmac-sha1";
 static const char cannedKeyAlgoRsaNames[] = "ssh-rsa";
