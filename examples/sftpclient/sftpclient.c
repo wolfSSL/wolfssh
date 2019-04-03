@@ -144,7 +144,6 @@ static void clean_path(char* path)
             int enIdx = 0; /* end of cut */
             sz = (long)WSTRLEN(path);
 
-            sz = (long)WSTRLEN(path);
             found = 0;
             for (i = 0; i < sz; i++) {
                 if (path[i] == '/') {
