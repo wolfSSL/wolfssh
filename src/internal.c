@@ -2340,7 +2340,6 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
     if (ret == WS_SUCCESS) {
         begin = *idx;
-        pubKey = buf + begin;
         ret = GetUint32(&pubKeySz, buf, len, &begin);
         if (ret == WS_SUCCESS && (pubKeySz > len - LENGTH_SZ - begin )) {
             ret = WS_BUFFER_E;
@@ -2348,6 +2347,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     }
 
     if (ret == WS_SUCCESS) {
+        pubKey = buf + begin;
         if (ssh->ctx->publicKeyCheckCb != NULL) {
             WLOG(WS_LOG_DEBUG, "DKDR: Calling the public key check callback");
             ret = ssh->ctx->publicKeyCheckCb(pubKey, pubKeySz,
@@ -2368,14 +2368,14 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     }
 
     if (ret == WS_SUCCESS)
+        /* Hash in the raw public key blob from the server including its
+         * length which is at LENGTH_SZ offset ahead of pubKey. */
         ret = wc_HashUpdate(&ssh->handshake->hash,
                             ssh->handshake->hashId,
-                            pubKey, pubKeySz + LENGTH_SZ);
+                            pubKey - LENGTH_SZ, pubKeySz + LENGTH_SZ);
 
-    if (ret == WS_SUCCESS) {
-        pubKey = buf + begin;
+    if (ret == WS_SUCCESS)
         begin += pubKeySz;
-    }
 
     /* If using DH-GEX include the GEX specific values. */
     if (ret == WS_SUCCESS && ssh->handshake->kexId == ID_DH_GEX_SHA256) {
