@@ -25,5 +25,6 @@
 #define ECC_TIMING_RESISTANT
 #define WOLFSSL_PUBLIC_MP
 #define SINGLE_THREADED
+#define WOLFSSH_TERM
 
 #endif /* _WIN_USER_SETTINGS_H_ */

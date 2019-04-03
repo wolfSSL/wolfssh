@@ -55,6 +55,15 @@ extern "C" {
     #define WFPUTS fputs
 #endif
 
+#ifndef WOLFSSH_HANDLE
+    /* handle for console to use during Linux console code translations */
+    #ifdef USE_WINDOWS_API
+        #define WOLFSSH_HANDLE HANDLE
+    #else
+        #define WOLFSSH_HANDLE int
+    #endif
+#endif /* !WOLFSSH_HANDLE */
+
 #ifndef NO_FILESYSTEM
 #ifdef WOLFSSL_NUCLEUS
     #include "storage/nu_storage.h"
@@ -598,6 +607,17 @@ extern "C" {
 #endif
 #endif
 
+
+#if !defined(NO_TERMIOS) && defined(WOLFSSH_TERM)
+    #if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32)
+        #include <termios.h>
+        #define WOLFSSH_TERMIOS struct termios
+    #elif defined(USE_WINDOWS_API)
+        #define WOLFSSH_TERMIOS DWORD
+    #else
+        #define NO_TERMIOS
+    #endif
+#endif
 
 #ifdef __cplusplus
 }

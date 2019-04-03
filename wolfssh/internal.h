@@ -259,7 +259,6 @@ typedef struct SFTP_OFST {
     char to[WOLFSSH_MAX_FILENAME];
 } SFTP_OFST;
 
-
 struct WS_SFTP_GET_STATE;
 struct WS_SFTP_PUT_STATE;
 struct WS_SFTP_LSTAT_STATE;
@@ -272,6 +271,12 @@ struct WS_SFTP_PUT_STATE;
 struct WS_SFTP_RENAME_STATE;
 
 #endif /* WOLFSSH_SFTP */
+#ifdef USE_WINDOWS_API
+#ifndef WOLFSSL_MAX_ESCBUF
+#define WOLFSSL_MAX_ESCBUF 19
+#endif
+#endif
+
 
 /* our wolfSSH session */
 struct WOLFSSH {
@@ -368,6 +373,7 @@ struct WOLFSSH {
 
     Buffer inputBuffer;
     Buffer outputBuffer;
+    Buffer extDataBuffer; /* extended data ready to be read */
     WC_RNG* rng;
 
     byte h[WC_MAX_DIGEST_SIZE];
@@ -391,7 +397,16 @@ struct WOLFSSH {
     byte* peerProtoId;     /* Save for rekey */
     word32 peerProtoIdSz;
     void* publicKeyCheckCtx;
+    byte  sendTerminalRequest;
 
+#ifdef USE_WINDOWS_API
+    word32 defaultAttr; /* default windows attributes */
+    byte   defaultAttrSet;
+    byte   escBuf[WOLFSSL_MAX_ESCBUF]; /* console codes are about 3 byte and
+                                        * have max arguments of 16 */
+    byte   escBufSz;
+    byte   escState; /* current console translation state */
+#endif
 #ifdef WOLFSSH_SFTP
     word32 reqId;
     byte   sftpState;
@@ -513,6 +528,7 @@ WOLFSSH_LOCAL int SendChannelExit(WOLFSSH*, word32, int);
 WOLFSSH_LOCAL int SendChannelData(WOLFSSH*, word32, byte*, word32);
 WOLFSSH_LOCAL int SendChannelWindowAdjust(WOLFSSH*, word32, word32);
 WOLFSSH_LOCAL int SendChannelRequest(WOLFSSH*, byte*, word32);
+WOLFSSH_LOCAL int SendChannelTerminalRequest(WOLFSSH* ssh);
 WOLFSSH_LOCAL int SendChannelSuccess(WOLFSSH*, word32, int);
 WOLFSSH_LOCAL int GenerateKey(byte, byte, byte*, word32, const byte*, word32,
                               const byte*, word32, const byte*, word32);
@@ -554,6 +570,7 @@ enum ConnectStates {
     CONNECT_SERVER_USERAUTH_ACCEPT_DONE,
     CONNECT_CLIENT_CHANNEL_OPEN_SESSION_SENT,
     CONNECT_SERVER_CHANNEL_OPEN_SESSION_DONE,
+    CONNECT_CLIENT_CHANNEL_TERMINAL_REQUEST_SENT,
     CONNECT_CLIENT_CHANNEL_REQUEST_SENT,
     CONNECT_SERVER_CHANNEL_REQUEST_DONE
 };
@@ -636,7 +653,7 @@ enum WS_MessageIds {
 };
 
 
-#define CHANNEL_EXTENDED_DATA_STDERR 1
+#define CHANNEL_EXTENDED_DATA_STDERR WOLFSSH_EXT_DATA_STDERR
 
 
 /* dynamic memory types */
@@ -741,6 +758,67 @@ WOLFSSH_LOCAL void DumpOctetString(const byte*, word32);
 WOLFSSH_LOCAL int wolfSSH_oct2dec(WOLFSSH* ssh, byte* oct, word32 octSz);
 WOLFSSH_LOCAL void AddAssign64(word32*, word32);
 
+#ifdef WOLFSSH_TERM
+/* values from section 8 of rfc 4254 */
+enum TerminalModes {
+    WOLFSSH_TTY_OP_END = 0,
+    WOLFSSH_VINTR,
+    WOLFSSH_VQUIT,
+    WOLFSSH_VERASE,
+    WOLFSSH_VKILL,
+    WOLFSSH_VEOF,
+    WOLFSSH_VEOL,
+    WOLFSSH_VEOL2,
+    WOLFSSH_VSTART,
+    WOLFSSH_VSTOP,
+    WOLFSSH_VSUSP,
+    WOLFSSH_VDSUSP,
+    WOLFSSH_VREPRINT,
+    WOLFSSH_VWERASE,
+    WOLFSSH_VLNEXT,
+    WOLFSSH_VFLUSH,
+    WOLFSSH_VSWTCH,
+    WOLFSSH_VSTATUS,
+    WOLFSSH_VDISCARD,
+    WOLFSSH_IGNPAR = 30,
+    WOLFSSH_PARMRK,
+    WOLFSSH_INPCK,
+    WOLFSSH_ISTRIP,
+    WOLFSSH_INLCR,
+    WOLFSSH_IGNCR,
+    WOLFSSH_ICRNL,
+    WOLFSSH_IUCLC,
+    WOLFSSH_IXON,
+    WOLFSSH_IXANY,
+    WOLFSSH_IXOFF,
+    WOLFSSH_IMAXBEL,
+    WOLFSSH_ISIG = 50,
+    WOLFSSH_ICANON,
+    WOLFSSH_XCASE,
+    WOLFSSH_ECHO,
+    WOLFSSH_ECHOE,
+    WOLFSSH_ECHOK,
+    WOLFSSH_ECHONL,
+    WOLFSSH_NOFLSH,
+    WOLFSSH_TOSTOP,
+    WOLFSSH_IEXTEN,
+    WOLFSSH_ECHOCTL,
+    WOLFSSH_ECHOKE,
+    WOLFSSH_PENDIN,
+    WOLFSSH_OPOST = 70,
+    WOLFSSH_OLCUC,
+    WOLFSSH_ONLCR,
+    WOLFSSH_OCRNL,
+    WOLFSSH_ONOCR,
+    WOLFSSH_ONLRET,
+    WOLFSSH_CS7 = 90,
+    WOLFSSH_CS8,
+    WOLFSSH_PARENB,
+    WOLFSSH_PARODD,
+    WOLFSSH_TTY_OP_ISPEED = 128,
+    WOLFSSH_TTY_OP_OSPEED
+};
+#endif /* WOLFSSH_TERM */
 
 #ifdef __cplusplus
 }

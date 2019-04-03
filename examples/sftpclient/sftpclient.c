@@ -410,7 +410,7 @@ int doCmds(func_args* args)
             if (pt[sz - 1] == '\n') pt[sz - 1] = '\0';
             if (pt[0] != '/') {
                 int maxSz = (int)WSTRLEN(workingDir) + sz + 2;
-                f = XMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                f = (char*)WMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 if (f == NULL)
                     return WS_MEMORY_E;
 
@@ -483,7 +483,7 @@ int doCmds(func_args* args)
 
             if (pt[0] != '/') {
                 int maxSz = (int)(WSTRLEN(workingDir) + sz + 2);
-                f = XMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                f = (char*)WMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 if (f == NULL) {
                     err_msg("Error malloc'ing");
                     return -1;
@@ -575,7 +575,7 @@ int doCmds(func_args* args)
 
             if (to[0] != '/') {
                 int maxSz = (int)WSTRLEN(workingDir) + sz + 2;
-                f = XMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                f = (char*)WMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 if (f == NULL) {
                     err_msg("Error malloc'ing");
                     return -1;
@@ -639,7 +639,7 @@ int doCmds(func_args* args)
             if (pt[sz - 1] == '\n') pt[sz - 1] = '\0';
             if (pt[0] != '/') {
                 int maxSz = (int)WSTRLEN(workingDir) + sz + 2;
-                f = XMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                f = (char*)WMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 if (f == NULL) {
                     err_msg("Error malloc'ing");
                     return -1;
@@ -671,7 +671,7 @@ int doCmds(func_args* args)
             if (ret == WS_SUCCESS) {
                 sz = (int)WSTRLEN(pt);
                 XFREE(workingDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-                workingDir = (char*)XMALLOC(sz + 1, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                workingDir = (char*)WMALLOC(sz + 1, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 if (workingDir == NULL) {
                     err_msg("Error malloc'ing");
                     return -1;
@@ -716,7 +716,7 @@ int doCmds(func_args* args)
 
             if (pt[0] != '/') {
                 int maxSz = (int)WSTRLEN(workingDir) + sz + 2;
-                f = XMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                f = (char*)WMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 if (f == NULL) {
                     err_msg("Error malloc'ing");
                     return -1;
@@ -759,7 +759,7 @@ int doCmds(func_args* args)
             if (pt[sz - 1] == '\n') pt[sz - 1] = '\0';
             if (pt[0] != '/') {
                 int maxSz = (int)WSTRLEN(workingDir) + sz + 2;
-                f = XMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                f = (char*)WMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 if (f == NULL) {
                     err_msg("Error malloc'ing");
                     return -1;
@@ -809,7 +809,7 @@ int doCmds(func_args* args)
             if (pt[sz - 1] == '\n') pt[sz - 1] = '\0';
             if (pt[0] != '/') {
                 int maxSz = (int)WSTRLEN(workingDir) + sz + 2;
-                f = XMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                f = (char*)WMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
 
                 f[0] = '\0';
                 WSTRNCAT(f, workingDir, maxSz);
@@ -873,7 +873,7 @@ int doCmds(func_args* args)
 
             if (pt[0] != '/') {
                 int maxSz = (int)WSTRLEN(workingDir) + sz + 2;
-                f = XMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                f = (char*)WMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 if (f == NULL) {
                     err_msg("Error malloc'ing");
                     return -1;
@@ -890,7 +890,7 @@ int doCmds(func_args* args)
             }
             if (to[0] != '/') {
                 int maxSz = (int)WSTRLEN(workingDir) + toSz + 2;
-                fTo = XMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                fTo = (char*)WMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
 
                 fTo[0] = '\0';
                 WSTRNCAT(fTo, workingDir, maxSz);
@@ -1114,7 +1114,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
             err_sys("Unable to get real path for working directory");
         }
 
-        workingDir = (char*)XMALLOC(n->fSz + 1, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        workingDir = (char*)WMALLOC(n->fSz + 1, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         if (workingDir == NULL) {
             err_sys("Unable to create working directory");
         }

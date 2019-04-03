@@ -27,3 +27,8 @@ endif
 if BUILD_SFTP
 src_libwolfssh_la_SOURCES += src/wolfsftp.c
 endif
+
+if BUILD_TERM
+src_libwolfssh_la_SOURCES += src/wolfterm.c
+endif
+

@@ -106,6 +106,11 @@ AC_ARG_ENABLE([fwd],
     [AS_HELP_STRING([--enable-fwd],[Enable TCP/IP Forwarding support (default: disabled)])],
     [ENABLED_FWD=$enableval],[ENABLED_FWD=no])
 
+# pseudo-terminal
+AC_ARG_ENABLE([term],
+    [AS_HELP_STRING([--enable-term],[Enable pseudo-terminal support (default: enabled)])],
+    [ENABLED_PTERM=$enableval],[ENABLED_PTERM=yes])
+
 # Enable All
 AC_ARG_ENABLE([all],
     [AS_HELP_STRING([--enable-all],[Enable all wolfSSH features (default: disabled)])],
@@ -130,6 +135,8 @@ AS_IF([test "x$ENABLED_SFTP" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SFTP"])
 AS_IF([test "x$ENABLED_FWD" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_FWD"])
+AS_IF([test "x$ENABLED_PTERM" = "xyes"],
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_TERM"])
 
 AM_CONDITIONAL([BUILD_EXAMPLE_SERVERS],[test "x$ENABLED_EXAMPLES" = "xyes"])
 AM_CONDITIONAL([BUILD_EXAMPLE_CLIENTS],[test "x$ENABLED_EXAMPLES" = "xyes"])
@@ -138,6 +145,7 @@ AM_CONDITIONAL([BUILD_KEYGEN],[test "x$ENABLED_KEYGEN" = "xyes"])
 AM_CONDITIONAL([BUILD_SCP],[test "x$ENABLED_SCP" = "xyes"])
 AM_CONDITIONAL([BUILD_SFTP],[test "x$ENABLED_SFTP" = "xyes"])
 AM_CONDITIONAL([BUILD_FWD],[test "x$ENABLED_FWD" = "xyes"])
+AM_CONDITIONAL([BUILD_TERM],[test "x$ENABLED_TERM" = "xyes"])
 
 # Checks for typedefs, structures, and compiler characteristics.
 if test "$ac_cv_sizeof_long" = "8"; then
@@ -182,9 +190,10 @@ echo "   * CPP Flags:                 $CPPFLAGS"
 echo "   * Linker Flags:              $LDFLAGS"
 echo
 echo "   Features"
+echo "   * Inline Code:               $ENABLED_INLINE"
 echo "   * keygen:                    $ENABLED_KEYGEN"
+echo "   * psuedo-terminal:           $ENABLED_PTERM"
 echo "   * scp:                       $ENABLED_SCP"
 echo "   * sftp:                      $ENABLED_SFTP"
 echo "   * TCP/IP Forwarding:         $ENABLED_FWD"
-echo "   * Inline Code:               $ENABLED_INLINE"
 echo "   * Examples:                  $ENABLED_EXAMPLES"
