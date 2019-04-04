@@ -11,7 +11,7 @@
 #define HAVE_ECC
 #define HAVE_AESGCM
 #define HAVE_HASHDRBG
-#define WOLFSSL_AESCTR
+#define WOLFSSL_AES_COUNTER
 #define WOLFSSL_SHA384
 #define WOLFSSL_SHA512
 #define NO_PSK
