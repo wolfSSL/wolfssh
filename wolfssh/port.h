@@ -41,11 +41,10 @@ extern "C" {
 
 /* setup memory handling */
 #ifndef WMALLOC_USER
-    #include <wolfssh/memory.h>
-
-    #define WMALLOC(s, h, t)    ((void)h, (void)t, wolfSSH_Malloc((s)))
-    #define WFREE(p, h, t)      {void* xp = (p); if ((xp)) wolfSSH_Free((xp));}
-    #define WREALLOC(p, n, h, t) wolfSSH_Realloc((p), (n))
+    #define WMALLOC(s, h, t)      XMALLOC(s, h, t)
+    #define WFREE(p, h, t)        XFREE(p, h, t)
+    #define WREALLOC(p, n, h, t)  XREALLOC(p, n, h, t)
+    #define wolfSSH_SetAllocators wolfSSL_SetAllocators
 #endif /* WMALLOC_USER */
 
 #ifndef WFGETS
