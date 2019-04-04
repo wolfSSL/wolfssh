@@ -1368,7 +1368,7 @@ int wolfSSH_SFTP_RecvRMDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     if (wolfSSH_SFTP_CreateStatus(ssh, type, reqId, res, "English", out,
                 &outSz) != WS_SUCCESS) {
-        WFREE(out, ssh->ctx->heap, DYNTPE_BUFFER);
+        WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
         return WS_FATAL_ERROR;
     }
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
@@ -5392,7 +5392,7 @@ int wolfSSH_SFTP_SetSTAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
                 ret = WS_FATAL_ERROR;
                 break;
             }
-            XFREE(state->data, ssh->ctx->heap, DYNTYPE_BUFER);
+            XFREE(state->data, ssh->ctx->heap, DYNTYPE_BUFFER);
             state->data = (byte*)WMALLOC(maxSz, ssh->ctx->heap, DYNTYPE_BUFFER);
             if (state->data == NULL) {
                 ret = WS_MEMORY_E;
