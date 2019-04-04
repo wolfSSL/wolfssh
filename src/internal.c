@@ -5196,17 +5196,86 @@ static INLINE void CopyNameList(byte* buf, word32* idx,
     *idx = begin;
 }
 
-static const char cannedEncAlgoNames[] = "aes128-gcm@openssh.com,aes128-ctr,aes128-cbc";
-static const char cannedMacAlgoNames[] = "hmac-sha2-256,hmac-sha1-96,"
-                                         "hmac-sha1";
+static const char cannedEncAlgoNames[] =
+#if !defined(WOLFSSL_NO_AESGCM)
+    "aes128-gcm@openssh.com"
+#endif
+#if !defined(WOLFSSL_NO_AESGCM) && !defined(WOLFSSL_NO_AESCTR)
+    ","
+#endif
+#if !defined(WOLFSSL_NO_AESCTR)
+    "aes128-ctr"
+#endif
+#if (!defined(WOLFSSL_NO_AESGCM) || !defined(WOLFSSL_NO_AESCTR))\
+                                 && !defined(WOLFSSL_NO_AESCBC)
+    ","
+#endif
+#if !defined(WOLFSSL_NO_AESCBC)
+    "aes128-cbc"
+#endif
+    ;
+#if defined(WOLFSSL_NO_AESGCM) && defined(WOLFSSL_NO_AESCTR) \
+                                && defined(WOLFSSL_NO_AESCBC)
+    #warning "You need at least one of AES-GCM, AES-CTR or AES-CBC." 
+#endif
+
+static const char cannedMacAlgoNames[] =
+#if !defined(WOLFSSL_NO_HMAC_SHA2_256)
+    "hmac-sha2-256"
+#endif
+#if !defined(WOLFSSL_NO_HMAC_SHA2_256) && !defined(WOLFSSL_NO_HMAC_SHA1_96)
+    ","
+#endif
+#if !defined(WOLFSSL_NO_HMAC_SHA1_96)
+    "hmac-sha1-96"
+#endif
+#if (!defined(WOLFSSL_NO_HMAC_SHA2_256) || !defined(WOLFSSL_NO_HMAC_SHA1_96))\
+                                        && !defined(WOLFSSL_NO_HMAC_SHA1)
+    ","
+#endif
+#if !defined(WOLFSSL_NO_HMAC_SHA1)
+    "hmac-sha1"
+#endif
+    ;
+#if defined(WOLFSSL_NO_HMAC_SHA2_256) && defined(WOLFSSL_NO_HMAC_SHA1_96)\
+                                      && defined(WOLFSSL_NO_HMAC_SHA1)
+    #warning "You need at least one of HMAC-SHA2-256, HMAC-SHA1-96 or HMAC-SHA1"
+#endif
+
 static const char cannedKeyAlgoRsaNames[] = "ssh-rsa";
 static const char cannedKeyAlgoEcc256Names[] = "ecdsa-sha2-nistp256";
 static const char cannedKeyAlgoEcc384Names[] = "ecdsa-sha2-nistp384";
 static const char cannedKeyAlgoEcc521Names[] = "ecdsa-sha2-nistp521";
-static const char cannedKexAlgoNames[] = "ecdh-sha2-nistp256,"
-                                         "diffie-hellman-group-exchange-sha256,"
-                                         "diffie-hellman-group14-sha1,"
-                                         "diffie-hellman-group1-sha1";
+static const char cannedKexAlgoNames[] =
+#if !defined(WOLFSSL_NO_ECDH_SHA2_NISTP256)
+    "ecdh-sha2-nistp256"
+#endif
+#if !defined(WOLFSSL_NO_ECDH_SHA2_NISTP256) && !defined(WOLFSSL_NO_ECDH_GEX_SHA256)
+    ","
+#endif
+#if !defined(WOLFSSL_NO_ECDH_GEX_SHA256)
+    "diffie-hellman-group-exchange-sha256"
+#endif
+#if (!defined(WOLFSSL_NO_ECDH_SHA2_NISTP256) || !defined(WOLFSSL_NO_ECDH_GEX_SHA256))\
+                                             && !defined(WOLFSSL_NO_ECDH_GROUP14_SHA1)
+    ","
+#endif
+#if !defined(WOLFSSL_NO_ECDH_GROUP14_SHA1)
+    "diffie-hellman-group14-sha1"
+#endif
+#if (!defined(WOLFSSL_NO_ECDH_SHA2_NISTP256) || !defined(WOLFSSL_NO_ECDH_GEX_SHA256) \
+  || !defined(WOLFSSL_NO_ECDH_GROUP14_SHA1)) && !defined(WOLFSSL_NO_ECDH_GROUP1_SHA1)
+    ","
+#endif
+#if !defined(WOLFSSL_NO_ECDH_GROUP1_SHA1)
+    "diffie-hellman-group1-sha1";
+#endif
+#if defined(WOLFSSL_NO_ECDH_SHA2_NISTP256) && defined(WOLFSSL_NO_ECDH_GEX_SHA256)\
+ && defined(WOLFSSL_NO_ECDH_GROUP14_SHA1)  && defined(WOLFSSL_NO_ECDH_GROUP1_SHA1)
+    #warning "You need at least one of ECDH-SHA2-NISTP256, ECDH-GEX-SHA256, "
+             "ECDH_GROUP14-SHA1 or ECDH-GROUP1-SHA1"
+#endif
+
 static const char cannedNoneNames[] = "none";
 
 static const word32 cannedEncAlgoNamesSz = sizeof(cannedEncAlgoNames) - 1;
