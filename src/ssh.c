@@ -1092,7 +1092,7 @@ int wolfSSH_SetUsername(WOLFSSH* ssh, const char* username)
     if (ret == WS_SUCCESS) {
         WSTRNCPY(value, username, valueSz + 1);
         if (ssh->userName != NULL) {
-            WFREE(ssh->userName, heap, DYNTYPE_STRING);
+            WFREE(ssh->userName, ssh->ctx->heap, DYNTYPE_STRING);
             ssh->userName = NULL;
         }
         ssh->userName = value;

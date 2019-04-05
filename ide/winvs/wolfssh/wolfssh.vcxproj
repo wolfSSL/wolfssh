@@ -39,7 +39,6 @@
     <ClCompile Include="..\..\..\src\io.c" />
     <ClCompile Include="..\..\..\src\keygen.c" />
     <ClCompile Include="..\..\..\src\log.c" />
-    <ClCompile Include="..\..\..\src\memory.c" />
     <ClCompile Include="..\..\..\src\port.c" />
     <ClCompile Include="..\..\..\src\ssh.c" />
     <ClCompile Include="..\..\..\src\wolfsftp.c" />
