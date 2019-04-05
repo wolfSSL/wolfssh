@@ -868,6 +868,7 @@ static const NameIdPair NameIdMap[] = {
 
     /* Encryption IDs */
     { ID_AES128_CBC, "aes128-cbc" },
+    { ID_AES128_CTR, "aes128-ctr" },
     { ID_AES128_GCM, "aes128-gcm@openssh.com" },
 
     /* Integrity IDs */
@@ -1711,18 +1712,71 @@ static int GetNameList(byte* idList, word32* idListSz,
     return ret;
 }
 
+static const byte cannedEncAlgo[] = {
+#ifdef HAVE_AESGCM
+    ID_AES128_GCM, 
+#endif
+#ifdef WOLFSSL_AES_COUNTER
+    ID_AES128_CTR,
+#endif
+#ifdef HAVE_AES_CBC
+    ID_AES128_CBC,
+#endif
+};
 
-static const byte  cannedEncAlgo[] = {ID_AES128_GCM, ID_AES128_CBC};
-static const byte  cannedMacAlgo[] = {ID_HMAC_SHA2_256, ID_HMAC_SHA1_96,
-                                         ID_HMAC_SHA1};
+#if defined(NO_HMAC) || defined(NO_SHA256)
+    #define WOLFSSH_NO_HMAC_SHA2_256
+#endif
+#if defined(NO_HMAC) || defined(NO_SHA)
+#define WOLFSSH_NO_HMAC_SHA1_96
+#endif
+#if defined(NO_HMAC) || defined(NO_SHA)
+    #define WOLFSSH_NO_HMAC_SHA1
+#endif
+
+static const byte cannedMacAlgo[] = {
+#ifndef WOLFSSH_NO_HMAC_SHA2_256
+    ID_HMAC_SHA2_256,
+#endif
+#ifndef WOLFSSH_NO_HMAC_SHA1_96
+    ID_HMAC_SHA1_96,
+#endif
+#ifndef WOLFSSH_NO_HMAC_SHA1
+    ID_HMAC_SHA1,
+#endif
+};
 static const byte  cannedKeyAlgoRsa[] = {ID_SSH_RSA};
 static const byte  cannedKeyAlgoEcc256[] = {ID_ECDSA_SHA2_NISTP256};
 static const byte  cannedKeyAlgoEcc384[] = {ID_ECDSA_SHA2_NISTP384};
 static const byte  cannedKeyAlgoEcc521[] = {ID_ECDSA_SHA2_NISTP521};
-static const byte  cannedKexAlgo[] = {ID_ECDH_SHA2_NISTP256,
-                                         ID_DH_GEX_SHA256,
-                                         ID_DH_GROUP14_SHA1,
-                                         ID_DH_GROUP1_SHA1};
+
+#if !defined(HAVE_ECC) || defined(NO_SHA256)
+    #define WOLFSSH_NO_ECDH_SHA2_NISTP256
+#endif
+#if defined(NO_DH) || defined(NO_SHA256)
+    #define WOLFSSH_NO_DH_GEX_SHA256
+#endif
+#if defined(NO_DH) || defined(NO_SHA)
+    #define WOLFSSH_NO_DH_GROUP14_SHA1
+#endif
+#if defined(NO_DH) || defined(NO_SHA)
+    #define WOLFSSH_NO_DH_GROUP1_SHA1
+#endif
+
+static const byte cannedKexAlgo[] = {
+#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256
+    ID_ECDH_SHA2_NISTP256,
+#endif
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
+    ID_DH_GEX_SHA256,
+#endif
+#ifndef WOLFSSH_NO_DH_GROUP14_SHA1
+    ID_DH_GROUP14_SHA1,
+#endif
+#ifndef WOLFSSH_NO_DH_GROUP1_SHA1
+    ID_DH_GROUP1_SHA1,
+#endif
+};
 
 static const word32 cannedEncAlgoSz = sizeof(cannedEncAlgo);
 static const word32 cannedMacAlgoSz = sizeof(cannedMacAlgo);
@@ -1771,6 +1825,7 @@ static INLINE byte BlockSzForId(byte id)
 {
     switch (id) {
         case ID_AES128_CBC:
+        case ID_AES128_CTR:
         case ID_AES128_GCM:
             return AES_BLOCK_SIZE;
         default:
@@ -1803,6 +1858,7 @@ static INLINE byte KeySzForId(byte id)
         case ID_HMAC_SHA2_256:
             return SHA256_DIGEST_SIZE;
         case ID_AES128_CBC:
+        case ID_AES128_CTR:
         case ID_AES128_GCM:
             return AES_BLOCK_SIZE;
         default:
@@ -2710,19 +2766,32 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 WLOG(WS_LOG_DEBUG, "DNK: peer using cipher none");
                 break;
 
+#ifdef HAVE_AES_CBC
             case ID_AES128_CBC:
                 WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes128-cbc");
                 ret = wc_AesSetKey(&ssh->decryptCipher.aes,
                                    ssh->peerKeys.encKey, ssh->peerKeys.encKeySz,
                                    ssh->peerKeys.iv, AES_DECRYPTION);
                 break;
+#endif
 
+#ifdef WOLFSSL_AES_COUNTER
+            case ID_AES128_CTR:
+                WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes128-ctr");
+                ret = wc_AesSetKey(&ssh->decryptCipher.aes,
+                                   ssh->peerKeys.encKey, ssh->peerKeys.encKeySz,
+                                   ssh->peerKeys.iv, AES_ENCRYPTION);
+                break;
+#endif
+
+#ifdef HAVE_AESGCM
             case ID_AES128_GCM:
                 WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes128-gcm");
                 ret = wc_AesGcmSetKey(&ssh->decryptCipher.aes,
                                       ssh->peerKeys.encKey,
                                       ssh->peerKeys.encKeySz);
                 break;
+#endif
 
             default:
                 WLOG(WS_LOG_DEBUG, "DNK: peer using cipher invalid");
@@ -4568,6 +4637,7 @@ static INLINE int Encrypt(WOLFSSH* ssh, byte* cipher, const byte* input,
         case ID_NONE:
             break;
 
+#ifdef HAVE_AES_CBC
         case ID_AES128_CBC:
             if (sz % AES_BLOCK_SIZE || wc_AesCbcEncrypt(&ssh->encryptCipher.aes,
                                  cipher, input, sz) < 0) {
@@ -4575,6 +4645,17 @@ static INLINE int Encrypt(WOLFSSH* ssh, byte* cipher, const byte* input,
                 ret = WS_ENCRYPT_E;
             }
             break;
+#endif
+
+#ifdef WOLFSSL_AES_COUNTER
+        case ID_AES128_CTR:
+            if (sz % AES_BLOCK_SIZE || wc_AesCtrEncrypt(&ssh->encryptCipher.aes,
+                                                        cipher, input, sz) < 0) {
+
+                ret = WS_ENCRYPT_E;
+            }
+            break;
+#endif
 
         default:
             ret = WS_INVALID_ALGO_ID;
@@ -4600,6 +4681,7 @@ static INLINE int Decrypt(WOLFSSH* ssh, byte* plain, const byte* input,
         case ID_NONE:
             break;
 
+#ifdef HAVE_AES_CBC
         case ID_AES128_CBC:
             if (sz % AES_BLOCK_SIZE || wc_AesCbcDecrypt(&ssh->decryptCipher.aes,
                                  plain, input, sz) < 0) {
@@ -4607,6 +4689,17 @@ static INLINE int Decrypt(WOLFSSH* ssh, byte* plain, const byte* input,
                 ret = WS_DECRYPT_E;
             }
             break;
+#endif
+
+#ifdef WOLFSSL_AES_COUNTER
+        case ID_AES128_CTR:
+            if (sz % AES_BLOCK_SIZE || wc_AesCtrEncrypt(&ssh->decryptCipher.aes,
+                                                        plain, input, sz) < 0) {
+
+                ret = WS_DECRYPT_E;
+            }
+            break;
+#endif
 
         default:
             ret = WS_INVALID_ALGO_ID;
@@ -4775,12 +4868,14 @@ static INLINE int EncryptAead(WOLFSSH* ssh, byte* cipher,
 
     WLOG(WS_LOG_DEBUG, "EncryptAead %s", IdToName(ssh->encryptId));
 
+#ifdef HAVE_AESGCM
     if (ssh->encryptId == ID_AES128_GCM) {
         ret = wc_AesGcmEncrypt(&ssh->encryptCipher.aes, cipher, input, sz,
                                ssh->keys.iv, ssh->keys.ivSz,
                                authTag, ssh->macSz, auth, authSz);
     }
     else
+#endif
         ret = WS_INVALID_ALGO_ID;
 
     AeadIncrementExpIv(ssh->keys.iv);
@@ -4803,12 +4898,14 @@ static INLINE int DecryptAead(WOLFSSH* ssh, byte* plain,
 
     WLOG(WS_LOG_DEBUG, "DecryptAead %s", IdToName(ssh->peerEncryptId));
 
+#ifdef HAVE_AESGCM
     if (ssh->peerEncryptId == ID_AES128_GCM) {
         ret = wc_AesGcmDecrypt(&ssh->decryptCipher.aes, plain, input, sz,
                                ssh->peerKeys.iv, ssh->peerKeys.ivSz,
                                authTag, ssh->peerMacSz, auth, authSz);
     }
     else
+#endif
         ret = WS_INVALID_ALGO_ID;
 
     AeadIncrementExpIv(ssh->peerKeys.iv);
@@ -5185,18 +5282,86 @@ static INLINE void CopyNameList(byte* buf, word32* idx,
     *idx = begin;
 }
 
+static const char cannedEncAlgoNames[] =
+#if defined(HAVE_AESGCM)
+    "aes128-gcm@openssh.com"
+#endif
+#if defined(HAVE_AESGCM) && defined(WOLFSSL_AES_COUNTER)
+    ","
+#endif
+#if defined(WOLFSSL_AES_COUNTER)
+    "aes128-ctr"
+#endif
+#if (defined(HAVE_AESGCM) || defined(WOLFSSL_AES_COUNTER))\
+                                 && defined(HAVE_AES_CBC)
+    ","
+#endif
+#if defined(HAVE_AES_CBC)
+    "aes128-cbc"
+#endif
+    ;
+#if !defined(HAVE_AESGCM) && !defined(WOLFSSL_AES_COUNTER)\
+                               && !defined(HAVE_AES_CBC)
+#warning "You need at least one of AES-GCM, AES-CTR or AES-CBC." 
+#endif
 
-static const char cannedEncAlgoNames[] = "aes128-gcm@openssh.com,aes128-cbc";
-static const char cannedMacAlgoNames[] = "hmac-sha2-256,hmac-sha1-96,"
-                                         "hmac-sha1";
+static const char cannedMacAlgoNames[] =
+#if !defined(WOLFSSH_NO_HMAC_SHA2_256)
+    "hmac-sha2-256"
+#endif
+#if !defined(WOLFSSH_NO_HMAC_SHA2_256) && !defined(WOLFSSH_NO_HMAC_SHA1_96)
+    ","
+#endif
+#if !defined(WOLFSSH_NO_HMAC_SHA1_96)
+    "hmac-sha1-96"
+#endif
+#if (!defined(WOLFSSH_NO_HMAC_SHA2_256) || !defined(WOLFSSH_NO_HMAC_SHA1_96))\
+                                        && !defined(WOLFSSH_NO_HMAC_SHA1)
+    ","
+#endif
+#if !defined(WOLFSSH_NO_HMAC_SHA1)
+    "hmac-sha1"
+#endif
+    ;
+#if defined(WOLFSSH_NO_HMAC_SHA2_256) && defined(WOLFSSH_NO_HMAC_SHA1_96)\
+                                      && defined(WOLFSSH_NO_HMAC_SHA1)
+    #warning "You need at least one of HMAC-SHA2-256, HMAC-SHA1-96 or HMAC-SHA1"
+#endif
+
 static const char cannedKeyAlgoRsaNames[] = "ssh-rsa";
 static const char cannedKeyAlgoEcc256Names[] = "ecdsa-sha2-nistp256";
 static const char cannedKeyAlgoEcc384Names[] = "ecdsa-sha2-nistp384";
 static const char cannedKeyAlgoEcc521Names[] = "ecdsa-sha2-nistp521";
-static const char cannedKexAlgoNames[] = "ecdh-sha2-nistp256,"
-                                         "diffie-hellman-group-exchange-sha256,"
-                                         "diffie-hellman-group14-sha1,"
-                                         "diffie-hellman-group1-sha1";
+static const char cannedKexAlgoNames[] =
+#if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256)
+    "ecdh-sha2-nistp256"
+#endif
+#if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && !defined(WOLFSSH_NO_ECDH_GEX_SHA256)
+    ","
+#endif
+#if !defined(WOLFSSH_NO_ECDH_GEX_SHA256)
+    "diffie-hellman-group-exchange-sha256"
+#endif
+#if (!defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) || !defined(WOLFSSH_NO_ECDH_GEX_SHA256))\
+                                             && !defined(WOLFSSH_NO_ECDH_GROUP14_SHA1)
+    ","
+#endif
+#if !defined(WOLFSSH_NO_ECDH_GROUP14_SHA1)
+    "diffie-hellman-group14-sha1"
+#endif
+#if (!defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) || !defined(WOLFSSH_NO_ECDH_GEX_SHA256) \
+  || !defined(WOLFSSH_NO_ECDH_GROUP14_SHA1)) && !defined(WOLFSSH_NO_ECDH_GROUP1_SHA1)
+    ","
+#endif
+#if !defined(WOLFSSH_NO_ECDH_GROUP1_SHA1)
+    "diffie-hellman-group1-sha1";
+#endif
+#if defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && defined(WOLFSSH_NO_ECDH_GEX_SHA256)\
+ && defined(WOLFSSH_NO_ECDH_GROUP14_SHA1)  && defined(WOLFSSH_NO_ECDH_GROUP1_SHA1)
+    #warning "You need at least one of ECDH-SHA2-NISTP256, ECDH-GEX-SHA256, "
+             "ECDH_GROUP14-SHA1 or ECDH-GROUP1-SHA1"
+#endif
+
 static const char cannedNoneNames[] = "none";
 
 static const word32 cannedEncAlgoNamesSz = sizeof(cannedEncAlgoNames) - 1;
@@ -5987,18 +6152,27 @@ int SendNewKeys(WOLFSSH* ssh)
                 WLOG(WS_LOG_DEBUG, "SNK: using cipher none");
                 break;
 
+#ifdef HAVE_AES_CBC
             case ID_AES128_CBC:
-                WLOG(WS_LOG_DEBUG, "SNK: using cipher aes128-cbc");
+#endif
+#ifdef WOLFSSL_AES_COUNTER
+            case ID_AES128_CTR:
+#endif
+#if defined(HAVE_AES_CBC) && defined(WOLFSSL_AES_COUNTER)
+                WLOG(WS_LOG_DEBUG, "SNK: using cipher aes128-cbc/ctr");
                 ret = wc_AesSetKey(&ssh->encryptCipher.aes,
                                   ssh->keys.encKey, ssh->keys.encKeySz,
                                   ssh->keys.iv, AES_ENCRYPTION);
                 break;
+#endif
 
+#ifdef HAVE_AESGCM
             case ID_AES128_GCM:
                 WLOG(WS_LOG_DEBUG, "SNK: using cipher aes128-gcm");
                 ret = wc_AesGcmSetKey(&ssh->encryptCipher.aes,
                                      ssh->keys.encKey, ssh->keys.encKeySz);
                 break;
+#endif
 
             default:
                 WLOG(WS_LOG_DEBUG, "SNK: using cipher invalid");
