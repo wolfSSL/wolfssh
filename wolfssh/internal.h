@@ -658,6 +658,7 @@ enum WS_MessageIds {
 
 /* dynamic memory types */
 enum WS_DynamicTypes {
+    DYNTYPE_STRING = 500,
     DYNTYPE_CTX,
     DYNTYPE_SSH,
     DYNTYPE_CHANNEL,
@@ -670,7 +671,6 @@ enum WS_DynamicTypes {
     DYNTYPE_PUBKEY,
     DYNTYPE_DH,
     DYNTYPE_RNG,
-    DYNTYPE_STRING,
     DYNTYPE_MPINT,
     DYNTYPE_SCPCTX,
     DYNTYPE_SCPDIR,

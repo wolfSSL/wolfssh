@@ -171,7 +171,7 @@ int DoScpSink(WOLFSSH* ssh)
                 ssh->scpFileOffset += ssh->scpFileBufferSz;
 
                 /* shrink and reset recv buffer */
-                WFREE(ssh->scpFileBuffer, ssh->ctx->heap, DYNTYPE_BUFFFER);
+                WFREE(ssh->scpFileBuffer, ssh->ctx->heap, DYNTYPE_BUFFER);
                 ssh->scpFileBuffer = NULL;
                 ssh->scpFileBufferSz = 0;
 

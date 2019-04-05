@@ -544,7 +544,7 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
     }
     if (ssh->scpFileBuffer) {
         ForceZero(ssh->scpFileBuffer, ssh->scpFileBufferSz);
-        WFREE(ssh->scpFileBuffer, ssh->ctx->heap, DYNTYPE_BUFFFER);
+        WFREE(ssh->scpFileBuffer, ssh->ctx->heap, DYNTYPE_BUFFER);
         ssh->scpFileBuffer = NULL;
         ssh->scpFileBufferSz = 0;
     }

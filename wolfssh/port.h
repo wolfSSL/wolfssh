@@ -35,7 +35,7 @@
 extern "C" {
 #endif
 
-#define PORT_DYNTYPE_STRING 12
+#define PORT_DYNTYPE_STRING 500
 /* This value needs to stay in sync with the actual value of DYNTYPE_STRING
  * from internal.h. */
 
