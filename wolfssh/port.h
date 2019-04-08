@@ -349,7 +349,7 @@ extern "C" {
     static inline int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
             const unsigned int* shortOffset)
     {
-        long ofst = ((long)shortOffset[1] << 32) | shortOffset[0];
+        INT32 ofst = shortOffset[0];
         if (ofst > 0) {
             NU_Seek(fd, ofst, 0);
         }
@@ -363,7 +363,7 @@ extern "C" {
     static inline int wPread(WFD fd, unsigned char* buf, unsigned int sz,
             const unsigned int* shortOffset)
     {
-        long ofst = ((long)shortOffset[1] << 32) | shortOffset[0];
+        INT32 ofst = shortOffset[0];
         if (ofst > 0) {
             NU_Seek(fd, ofst, 0);
         }

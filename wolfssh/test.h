@@ -1,4 +1,22 @@
-/* test.h */
+/* test.h
+ *
+ * Copyright (C) 2014-2019 wolfSSL Inc.
+ *
+ * This file is part of wolfSSH.
+ *
+ * wolfSSH is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * wolfSSH is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
+ */
 
 #pragma once
 
@@ -572,26 +590,54 @@ enum {
     WS_SELECT_ERROR_READY
 };
 
+#ifdef WOLFSSL_NUCLEUS
+	#define WFD_SET_TYPE FD_SET
+	#define WFD_SET NU_FD_Set
+	#define WFD_ZERO NU_FD_Init
+	#define WFD_ISSET NU_FD_Check
+#else
+	#define WFD_SET_TYPE fd_set
+	#define WFD_SET FD_SET
+	#define WFD_ZERO FD_ZERO
+	#define WFD_ISSET FD_ISSET
+#endif
+
+/* returns 1 or greater when something is ready to be read */
+static INLINE int wSelect(int nfds, WFD_SET_TYPE* recvfds,
+        WFD_SET_TYPE *writefds, WFD_SET_TYPE *errfds,  struct timeval* timeout)
+{
+#ifdef WOLFSSL_NUCLEUS
+    int ret = NU_Select (nfds, recvfds,  writefds, errfds,
+            (UNSIGNED)timeout->tv_sec);
+    if (ret == NU_SUCCESS) {
+        return 1;
+    }
+    return 0;
+#else
+    return select(nfds, recvfds, writefds, errfds, timeout);
+#endif
+}
+
 static INLINE int tcp_select(SOCKET_T socketfd, int to_sec)
 {
-    fd_set recvfds, errfds;
+    WFD_SET_TYPE recvfds, errfds;
     int nfds = (int)socketfd + 1;
     struct timeval timeout = {(to_sec > 0) ? to_sec : 0, 0};
     int result;
 
-    FD_ZERO(&recvfds);
-    FD_SET(socketfd, &recvfds);
-    FD_ZERO(&errfds);
-    FD_SET(socketfd, &errfds);
+    WFD_ZERO(&recvfds);
+    WFD_SET(socketfd, &recvfds);
+    WFD_ZERO(&errfds);
+    WFD_SET(socketfd, &errfds);
 
-    result = select(nfds, &recvfds, NULL, &errfds, &timeout);
+    result = wSelect(nfds, &recvfds, NULL, &errfds, &timeout);
 
     if (result == 0)
         return WS_SELECT_TIMEOUT;
     else if (result > 0) {
-        if (FD_ISSET(socketfd, &recvfds))
+        if (WFD_ISSET(socketfd, &recvfds))
             return WS_SELECT_RECV_READY;
-        else if(FD_ISSET(socketfd, &errfds))
+        else if(WFD_ISSET(socketfd, &errfds))
             return WS_SELECT_ERROR_READY;
     }
 

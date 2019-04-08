@@ -85,7 +85,7 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
 #if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
     !defined(NO_WOLFSSH_SERVER)
 
-    #if defined(USE_WINDOWS_API)
+    #if defined(USE_WINDOWS_API) || defined(WOLFSSL_NUCLEUS)
 
         /* This is current inline in the source. */
 

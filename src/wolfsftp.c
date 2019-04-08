@@ -3380,7 +3380,8 @@ int SFTP_GetAttributes(const char* fileName, WS_SFTP_FILEATRB* atr, byte link,
     }
 
     atr->flags |= WOLFSSH_FILEATRB_SIZE;
-    atr->sz     = (word64)stats.fsize;
+    atr->sz[0]  = (word32)(stats.fsize);
+    atr->sz[1]  = (word32)(0);
 
     /* get additional attributes */
     {
@@ -3443,7 +3444,8 @@ int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
     WMEMSET(atr, 0, sizeof(WS_SFTP_FILEATRB));
 
     atr->flags |= WOLFSSH_FILEATRB_SIZE;
-    atr->sz     = (word64)stats.fsize;
+    atr->sz[0]  = (word32)(stats.fsize);
+    atr->sz[1]  = (word32)(0);
 
     {
         byte atrib = stats.fattribute;
