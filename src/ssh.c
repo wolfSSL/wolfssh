@@ -1521,3 +1521,26 @@ void wolfSSH_CheckReceivePending(WOLFSSH* ssh)
         WIOCTL(wolfSSH_get_fd(ssh), FIONREAD, &bytes);
     }
 }
+
+
+#ifdef WOLFSSH_SHOW_SIZES
+
+void wolfSSH_ShowSizes(void)
+{
+    fprintf(stderr, "wolfSSH struct sizes:\n");
+    fprintf(stderr, "  sizeof(struct %s) = %u\n", "WOLFSSH_CTX",
+            (word32)sizeof(struct WOLFSSH_CTX));
+    fprintf(stderr, "  sizeof(struct %s) = %u\n", "WOLFSSH",
+            (word32)sizeof(struct WOLFSSH));
+    fprintf(stderr, "  sizeof(struct %s) = %u\n", "HandshakeInfo",
+            (word32)sizeof(struct HandshakeInfo));
+    fprintf(stderr, "  sizeof(struct %s) = %u\n", "WOLFSSH_CHANNEL",
+            (word32)sizeof(struct WOLFSSH_CHANNEL));
+    fprintf(stderr, "  sizeof(struct %s) = %u\n", "Buffer",
+            (word32)sizeof(struct Buffer));
+    #ifdef WOLFSSH_SFTP
+        wolfSSH_SFTP_ShowSizes();
+    #endif
+}
+
+#endif /* WOLFSSH_SHOW_SIZES */

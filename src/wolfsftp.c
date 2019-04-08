@@ -7384,4 +7384,52 @@ int wolfSSH_SFTP_free(WOLFSSH* ssh)
     return WS_SUCCESS;
 }
 
+
+#ifdef WOLFSSH_SHOW_SIZES
+
+void wolfSSH_SFTP_ShowSizes(void)
+{
+    fprintf(stderr, "wolfSFTP struct sizes:\n");
+    fprintf(stderr, "  sizeof(struct %s) = %u\n", "WS_SFTP_CHMOD_STATE",
+            (word32)sizeof(struct WS_SFTP_CHMOD_STATE));
+    fprintf(stderr, "  sizeof(struct %s) = %u\n", "WS_SFTP_SETATR_STATE",
+            (word32)sizeof(struct WS_SFTP_SETATR_STATE));
+    fprintf(stderr, "  sizeof(struct %s) = %u\n", "WS_SFTP_LSTAT_STATE",
+            (word32)sizeof(struct WS_SFTP_LSTAT_STATE));
+    fprintf(stderr, "  sizeof(struct %s) = %u\n", "WS_SFTP_OPEN_STATE",
+            (word32)sizeof(struct WS_SFTP_OPEN_STATE));
+    fprintf(stderr, "  sizeof(struct %s) = %u\n", "WS_SFTP_NAME_STATE",
+            (word32)sizeof(struct WS_SFTP_NAME_STATE));
+    fprintf(stderr, "  sizeof(struct %s) = %u\n", "WS_SFTP_SEND_STATE",
+            (word32)sizeof(struct WS_SFTP_SEND_STATE));
+    fprintf(stderr, "  sizeof(struct %s) = %u\n", "WS_SFTP_READDIR_STATE",
+            (word32)sizeof(struct WS_SFTP_READDIR_STATE));
+    fprintf(stderr, "  sizeof(struct %s) = %u\n", "WS_SFTP_RM_STATE",
+            (word32)sizeof(struct WS_SFTP_RM_STATE));
+    fprintf(stderr, "  sizeof(struct %s) = %u\n", "WS_SFTP_MKDIR_STATE",
+            (word32)sizeof(struct WS_SFTP_MKDIR_STATE));
+    fprintf(stderr, "  sizeof(struct %s) = %u\n", "WS_SFTP_RMDIR_STATE",
+            (word32)sizeof(struct WS_SFTP_RMDIR_STATE));
+    fprintf(stderr, "  sizeof(struct %s) = %u\n", "WS_SFTP_RECV_STATE",
+            (word32)sizeof(struct WS_SFTP_RECV_STATE));
+    fprintf(stderr, "  sizeof(struct %s) = %u\n", "WS_SFTP_LS_STATE",
+            (word32)sizeof(struct WS_SFTP_LS_STATE));
+    fprintf(stderr, "  sizeof(struct %s) = %u\n", "WS_SFTP_GET_STATE",
+            (word32)sizeof(struct WS_SFTP_GET_STATE));
+    fprintf(stderr, "  sizeof(struct %s) = %u\n", "WS_SFTP_PUT_STATE",
+            (word32)sizeof(struct WS_SFTP_PUT_STATE));
+    fprintf(stderr, "  sizeof(struct %s) = %u\n", "WS_SFTP_SEND_READ_STATE",
+            (word32)sizeof(struct WS_SFTP_SEND_READ_STATE));
+    fprintf(stderr, "  sizeof(struct %s) = %u\n", "WS_SFTP_SEND_WRITE_STATE",
+            (word32)sizeof(struct WS_SFTP_SEND_WRITE_STATE));
+    fprintf(stderr, "  sizeof(struct %s) = %u\n", "WS_SFTP_CLOSE_STATE",
+            (word32)sizeof(struct WS_SFTP_CLOSE_STATE));
+    fprintf(stderr, "  sizeof(struct %s) = %u\n", "WS_SFTP_GET_HANDLE_STATE",
+            (word32)sizeof(struct WS_SFTP_GET_HANDLE_STATE));
+    fprintf(stderr, "  sizeof(struct %s) = %u\n", "WS_SFTP_RENAME_STATE",
+            (word32)sizeof(struct WS_SFTP_RENAME_STATE));
+}
+
+#endif /* WOLFSSH_SHOW_SIZES */
+
 #endif /* WOLFSSH_SFTP */
