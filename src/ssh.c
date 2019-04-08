@@ -1,6 +1,6 @@
 /* ssh.c
  *
- * Copyright (C) 2014-2016 wolfSSL Inc.
+ * Copyright (C) 2014-2019 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
