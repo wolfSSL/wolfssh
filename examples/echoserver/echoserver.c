@@ -34,6 +34,7 @@
 #include <wolfssh/ssh.h>
 #include <wolfssh/wolfsftp.h>
 #include <wolfssh/test.h>
+#include <wolfssl/wolfcrypt/ecc.h>
 #include "examples/echoserver/echoserver.h"
 
 #ifdef WOLFSSL_NUCLEUS
@@ -945,6 +946,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         fprintf(stderr, "Couldn't clean up wolfSSH.\n");
         exit(EXIT_FAILURE);
     }
+#if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
+    wc_ecc_fp_free();  /* free per thread cache */
+#endif
 
     (void)defaultSftpPath;
     return 0;

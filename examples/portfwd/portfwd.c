@@ -29,6 +29,7 @@
 #include <wolfssh/ssh.h>
 #include <wolfssh/test.h>
 #include <wolfssh/port.h>
+#include <wolfssl/wolfcrypt/ecc.h>
 #include "examples/portfwd/wolfssh_portfwd.h"
 
 
@@ -437,6 +438,9 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     WCLOSESOCKET(appFd);
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
+#if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
+    wc_ecc_fp_free();  /* free per thread cache */
+#endif
 
     return 0;
 }

@@ -22,6 +22,7 @@
 
 #include <wolfssh/ssh.h>
 #include <wolfssh/test.h>
+#include <wolfssl/wolfcrypt/ecc.h>
 #include "examples/client/client.h"
 #if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32)
     #include <termios.h>
@@ -280,7 +281,9 @@ static THREAD_RET readInput(void* in)
         if (ret <= 0)
             err_sys("Couldn't send data");
     }
-
+#if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
+    wc_ecc_fp_free();  /* free per thread cache */
+#endif
     return THREAD_RET_SUCCESS;
 }
 
@@ -355,6 +358,9 @@ static THREAD_RET readPeer(void* in)
         }
         wc_UnLockMutex(&args->lock);
     }
+#if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
+    wc_ecc_fp_free();  /* free per thread cache */
+#endif
 
     return THREAD_RET_SUCCESS;
 }
@@ -573,6 +579,9 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     if (ret != WS_SUCCESS)
         err_sys("Closing stream failed. Connection could have been closed by peer");
 
+#if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
+    wc_ecc_fp_free();  /* free per thread cache */
+#endif
 
     return 0;
 }
