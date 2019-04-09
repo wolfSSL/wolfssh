@@ -24,6 +24,7 @@
 #include <wolfssh/wolfsftp.h>
 #include <wolfssh/test.h>
 #include <wolfssh/port.h>
+#include <wolfssl/wolfcrypt/ecc.h>
 #include "examples/sftpclient/sftpclient.h"
 #ifndef USE_WINDOWS_API
     #include <termios.h>
@@ -1140,6 +1141,9 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         printf("error %d encountered\n", ret);
         ((func_args*)args)->return_code = ret;
     }
+#if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
+    wc_ecc_fp_free();  /* free per thread cache */
+#endif
 
     return 0;
 }
