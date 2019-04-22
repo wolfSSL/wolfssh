@@ -186,8 +186,8 @@ allows the user to set up an encrypted connection for managing file systems.
 To compile wolfSSH with SFTP support, use the `--enable-sftp` build option or
 define `WOLFSSH_SFTP`:
 
-$ ./configure --enable-sftp
-$ make
+    $ ./configure --enable-sftp
+    $ make
 
 For full API usage and implementation details, please see the wolfSSH User
 Manual.
@@ -195,31 +195,28 @@ Manual.
 The SFTP client created is located in the directory examples/sftpclient/ and the
 server is ran using the same echoserver as with wolfSSH.
 
-src/wolfssh$ ./examples/sftpclient/wolfsftp
+    src/wolfssh$ ./examples/sftpclient/wolfsftp
 
 A full list of supported commands can be seen with typeing "help" after a
 connection.
 
 
-```
-wolfSSH sftp> help
+    wolfSSH sftp> help
 
-
-Commands :
-cd  <string>                      change directory
-chmod <mode> <path>               change mode
-get <remote file> <local file>    pulls file(s) from server
-ls                                list current directory
-mkdir <dir name>                  creates new directory on server
-put <local file> <remote file>    push file(s) to server
-pwd                               list current path
-quit                              exit
-rename <old> <new>                renames remote file
-reget <remote file> <local file>  resume pulling file
-reput <remote file> <local file>  resume pushing file
-<crtl + c>                        interrupt get/put cmd
-```
+    Commands :
+        cd  <string>                      change directory
+        chmod <mode> <path>               change mode
+        get <remote file> <local file>    pulls file(s) from server
+        ls                                list current directory
+        mkdir <dir name>                  creates new directory on server
+        put <local file> <remote file>    push file(s) to server
+        pwd                               list current path
+        quit                              exit
+        rename <old> <new>                renames remote file
+        reget <remote file> <local file>  resume pulling file
+        reput <remote file> <local file>  resume pushing file
+        <crtl + c>                        interrupt get/put cmd
 
 An example of connecting to another system would be
 
-src/wolfssh$ ./examples/sftpclient/wolfsftp -p 22 -u user -h 192.168.1.111
+    src/wolfssh$ ./examples/sftpclient/wolfsftp -p 22 -u user -h 192.168.1.111
