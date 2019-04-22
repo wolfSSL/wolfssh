@@ -2,14 +2,14 @@
 # Copyright (C) 2014-2018 wolfSSL Inc.
 # All right reserved.
 
-AC_COPYRIGHT([Copyright (C) 2014-2018 wolfSSL Inc.])
+AC_COPYRIGHT([Copyright (C) 2014-2019 wolfSSL Inc.])
 AC_INIT([wolfssh],[1.3.1],[support@wolfssl.com],[wolfssh],[https://www.wolfssl.com])
 AC_PREREQ([2.63])
 AC_CONFIG_AUX_DIR([build-aux])
 
 : ${CFLAGS=""}
 # Test ar for the "U" option. Should be checked before the libtool macros.
-xxx_ar_flags=$((ar --help) 2>&1)
+xxx_ar_flags=$(ar --help 2>&1)
 AS_CASE([$xxx_ar_flags],[*'use actual timestamps and uids/gids'*],[: ${AR_FLAGS="Ucru"}])
 
 AC_CANONICAL_HOST
@@ -20,7 +20,7 @@ AC_ARG_PROGRAM
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_HEADERS([src/config.h])
 
-WOLFSSH_LIBRARY_VERSION=6:0:1
+WOLFSSH_LIBRARY_VERSION=7:0:2
 #                       | | |
 #                +------+ | +---+
 #                |        |     |

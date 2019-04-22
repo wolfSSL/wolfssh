@@ -201,24 +201,21 @@ A full list of supported commands can be seen with typeing "help" after a
 connection.
 
 
-```
-wolfSSH sftp> help
+    wolfSSH sftp> help
 
-
-Commands :
-cd  <string>                      change directory
-chmod <mode> <path>               change mode
-get <remote file> <local file>    pulls file(s) from server
-ls                                list current directory
-mkdir <dir name>                  creates new directory on server
-put <local file> <remote file>    push file(s) to server
-pwd                               list current path
-quit                              exit
-rename <old> <new>                renames remote file
-reget <remote file> <local file>  resume pulling file
-reput <remote file> <local file>  resume pushing file
-<crtl + c>                        interrupt get/put cmd
-```
+    Commands :
+        cd  <string>                      change directory
+        chmod <mode> <path>               change mode
+        get <remote file> <local file>    pulls file(s) from server
+        ls                                list current directory
+        mkdir <dir name>                  creates new directory on server
+        put <local file> <remote file>    push file(s) to server
+        pwd                               list current path
+        quit                              exit
+        rename <old> <new>                renames remote file
+        reget <remote file> <local file>  resume pulling file
+        reput <remote file> <local file>  resume pushing file
+        <crtl + c>                        interrupt get/put cmd
 
 An example of connecting to another system would be
 
