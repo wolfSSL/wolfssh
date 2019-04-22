@@ -413,10 +413,16 @@ static int LoadPasswordBuffer(byte* buf, word32 bufSz, PwMapList* list)
 
     while (*str != 0) {
         delimiter = strchr(str, ':');
+        if (delimiter == NULL) {
+            return -1;
+        }
         username = str;
         *delimiter = 0;
         password = delimiter + 1;
         str = strchr(password, '\n');
+        if (str == NULL) {
+            return -1;
+        }
         *str = 0;
         str++;
         if (PwMapNew(list, WOLFSSH_USERAUTH_PASSWORD,
@@ -454,13 +460,22 @@ static int LoadPublicKeyBuffer(byte* buf, word32 bufSz, PwMapList* list)
     while (*str != 0) {
         /* Skip the public key type. This example will always be ssh-rsa. */
         delimiter = strchr(str, ' ');
+        if (delimiter == NULL) {
+            return -1;
+        }
         str = delimiter + 1;
         delimiter = strchr(str, ' ');
+        if (delimiter == NULL) {
+            return -1;
+        }
         publicKey64 = (byte*)str;
         *delimiter = 0;
         publicKey64Sz = (word32)(delimiter - str);
         str = delimiter + 1;
         delimiter = strchr(str, '\n');
+        if (delimiter == NULL) {
+            return -1;
+        }
         username = (byte*)str;
         *delimiter = 0;
         usernameSz = (word32)(delimiter - str);
