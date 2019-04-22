@@ -1127,7 +1127,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         n = NULL;
     }
 
-    ret = doCmds(args);
+    ret = doCmds((func_args*)args);
     XFREE(workingDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     if (ret == WS_SUCCESS) {
         if (wolfSSH_shutdown(ssh) != WS_SUCCESS) {
