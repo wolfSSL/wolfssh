@@ -223,7 +223,13 @@ extern "C" {
         #define WSTRNCASECMP(s1, s2, n) strncmp((s1), (s2), (n))
         #define WSNPRINTF(s,n,f,...) snprintf((s),(n),(f),##__VA_ARGS__)
         #define WVSNPRINTF(s,n,f,...) vsnprintf((s),(n),(f),##__VA_ARGS__)
-    #else
+    #elif defined(RENESAS_CSPLUS)
+        #include <stdio.h>
+        #define WSTRNCPY(s1,s2,n) strncpy((s1),(s2),(n))
+        #define WSTRNCASECMP(s1,s2,n) strncasecmp((s1),(s2),(n))
+        #define WSNPRINTF(s,n,f,...) snprintf((s),(n),(f),__VA_ARGS__)
+        #define WVSNPRINTF(s,n,f,...) vsnprintf((s),(n),(f),__VA_ARGS__)
+    #else 
         #include <stdio.h>
         #define WSTRNCPY(s1,s2,n) strncpy((s1),(s2),(n))
         #define WSTRNCASECMP(s1,s2,n) strncasecmp((s1),(s2),(n))
