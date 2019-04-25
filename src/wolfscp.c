@@ -697,9 +697,9 @@ WOLFSSH_API int wolfSSH_SetScpErrorMsg(WOLFSSH* ssh, const char* message)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
-        valueSz = (word32)WSTRLEN(message);
+        valueSz = (word32)WSTRLEN(message) + 1;
         if (valueSz > 0)
-            value = (char*)WMALLOC(valueSz + SCP_MIN_CONFIRM_SZ + 1,
+            value = (char*)WMALLOC(valueSz + SCP_MIN_CONFIRM_SZ,
                                    ssh->ctx->heap, DYNTYPE_STRING);
         if (value == NULL)
             ret = WS_MEMORY_E;
@@ -708,8 +708,8 @@ WOLFSSH_API int wolfSSH_SetScpErrorMsg(WOLFSSH* ssh, const char* message)
     if (ret == WS_SUCCESS) {
         /* leave room for cmd at beginning, add \n\0 at end */
         WSTRNCPY(value + 1, message, valueSz);
-        *(value + valueSz + 1) = '\n';
-        *(value + valueSz + 2) = '\0';
+        *(value + valueSz)     = '\n';
+        *(value + valueSz + 1) = '\0';
 
         if (ssh->scpConfirmMsg != NULL) {
             WFREE(ssh->scpConfirmMsg, ssh->ctx->heap, DYNTYPE_STRING);
@@ -1071,7 +1071,7 @@ static int ParseBasePathHelper(WOLFSSH* ssh, int cmdSz)
             return WS_BUFFER_E;
         }
 
-        WSTRNCPY(buf, ssh->scpBasePath, sz);
+        WSTRNCPY(buf, ssh->scpBasePath, cmdSz);
         buf[sz] = '\0';
         WSTRNCAT(buf, "/..", sizeof("/.."));
         clean_path(buf);

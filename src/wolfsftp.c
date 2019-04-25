@@ -919,7 +919,7 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, byte* data,
     if (r[0] != '/' && r[1] != ':') {
         char wd[WOLFSSH_MAX_FILENAME];
         if (ssh->sftpDefaultPath) {
-            XSTRNCPY(wd, ssh->sftpDefaultPath, sizeof(wd));
+            XSTRNCPY(wd, ssh->sftpDefaultPath, WOLFSSH_MAX_FILENAME - 1);
         }
         else {
         #ifndef USE_WINDOWS_API
