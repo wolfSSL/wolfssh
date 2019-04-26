@@ -6700,6 +6700,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
+        WMEMSET(&authData, 0, sizeof(WS_UserAuthData));
         if (authId == ID_USERAUTH_PASSWORD && ssh->ctx->userAuthCb != NULL) {
             WLOG(WS_LOG_DEBUG, "SUARPW: Calling the userauth callback");
             ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PASSWORD,
@@ -6768,6 +6769,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId)
     if (ret == WS_SUCCESS)
         ret = wolfSSH_SendPacket(ssh);
 
+    ForceZero(&authData, sizeof(WS_UserAuthData));
     WLOG(WS_LOG_DEBUG, "Leaving SendUserAuthRequest(), ret = %d", ret);
     return ret;
 }
