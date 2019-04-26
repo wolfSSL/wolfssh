@@ -447,8 +447,13 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
 
     ssh->ctx         = ctx;
     ssh->error       = WS_SUCCESS;
+#ifdef USE_WINDOWS_API
+    ssh->rfd         = INVALID_SOCKET;
+    ssh->wfd         = INVALID_SOCKET;
+#else
     ssh->rfd         = -1;         /* set to invalid */
     ssh->wfd         = -1;         /* set to invalid */
+#endif
     ssh->ioReadCtx   = &ssh->rfd;  /* prevent invalid access if not correctly */
     ssh->ioWriteCtx  = &ssh->wfd;  /* set */
     ssh->highwaterMark = ctx->highwaterMark;

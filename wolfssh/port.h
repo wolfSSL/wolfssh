@@ -607,6 +607,13 @@ extern "C" {
 #endif
 
 
+#if defined(USE_WINDOWS_API)
+    #define WS_SOCKET_T SOCKET
+#else
+    #define WS_SOCKET_T int
+#endif
+
+
 #if !defined(NO_TERMIOS) && defined(WOLFSSH_TERM)
     #if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32)
         #include <termios.h>

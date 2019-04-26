@@ -127,6 +127,29 @@ static void test_client_wolfSSH_new(void)
 }
 
 
+static void test_wolfSSH_set_fd(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    WS_SOCKET_T fd = 23, check;
+
+    AssertNotNull(ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL));
+    AssertNotNull(ssh = wolfSSH_new(ctx));
+
+    AssertIntNE(WS_SUCCESS, wolfSSH_set_fd(NULL, fd));
+    check = wolfSSH_get_fd(NULL);
+    AssertFalse(WS_SUCCESS == check);
+
+    AssertIntEQ(WS_SUCCESS, wolfSSH_set_fd(ssh, fd));
+    check = wolfSSH_get_fd(ssh);
+    AssertTrue(fd == check);
+    AssertTrue(0 != check);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
 static void test_wolfSSH_SetUsername(void)
 {
 #ifndef WOLFSSH_NO_CLIENT
@@ -310,6 +333,7 @@ int main(void)
     test_wolfSSH_CTX_new();
     test_server_wolfSSH_new();
     test_client_wolfSSH_new();
+    test_wolfSSH_set_fd();
     test_wolfSSH_SetUsername();
     test_wolfSSH_ConvertConsole();
 

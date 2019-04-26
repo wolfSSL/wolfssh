@@ -1,4 +1,4 @@
-/* io.c 
+/* io.c
  *
  * Copyright (C) 2014-2016 wolfSSL Inc.
  *
@@ -264,10 +264,8 @@ void* wolfSSH_GetIOWriteCtx(WOLFSSH* ssh)
 #endif
 
 
-/* Translates return codes returned from 
- * send() and recv() if need be. 
- */
-static INLINE int TranslateReturnCode(int old, int sd)
+/* Translates return codes returned from send() and recv() if need be. */
+static INLINE int TranslateReturnCode(int old, WS_SOCKET_T sd)
 {
     (void)sd;
 
@@ -301,7 +299,7 @@ static INLINE int TranslateReturnCode(int old, int sd)
 
 static INLINE int LastError(void)
 {
-#ifdef USE_WINDOWS_API 
+#ifdef USE_WINDOWS_API
     return WSAGetLastError();
 #elif defined(EBSNET)
     return xn_getlasterror();
@@ -317,7 +315,7 @@ int wsEmbedRecv(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
 {
     int recvd;
     int err;
-    int sd = *(int*)ctx;
+    WS_SOCKET_T sd = *(WS_SOCKET_T*)ctx;
     char* buf = (char*)data;
 
 #ifdef WOLFSSH_TEST_BLOCK
@@ -375,7 +373,7 @@ int wsEmbedRecv(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
  */
 int wsEmbedSend(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
 {
-    int sd = *(int*)ctx;
+    WS_SOCKET_T sd = *(WS_SOCKET_T*)ctx;
     int sent;
     int err;
     char* buf = (char*)data;
