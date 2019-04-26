@@ -1,4 +1,4 @@
-/* io.c 
+/* io.c
  *
  * Copyright (C) 2014-2016 wolfSSL Inc.
  *
@@ -317,7 +317,7 @@ int wsEmbedRecv(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
 {
     int recvd;
     int err;
-    int sd = *(int*)ctx;
+    WS_SOCKET_T sd = *(WS_SOCKET_T*)ctx;
     char* buf = (char*)data;
 
 #ifdef WOLFSSH_TEST_BLOCK
@@ -375,7 +375,7 @@ int wsEmbedRecv(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
  */
 int wsEmbedSend(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
 {
-    int sd = *(int*)ctx;
+    WS_SOCKET_T sd = *(WS_SOCKET_T*)ctx;
     int sent;
     int err;
     char* buf = (char*)data;

@@ -139,7 +139,7 @@ void wolfSSH_free(WOLFSSH* ssh)
 }
 
 
-int wolfSSH_set_fd(WOLFSSH* ssh, int fd)
+int wolfSSH_set_fd(WOLFSSH* ssh, WS_SOCKET_T fd)
 {
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_set_fd()");
 
@@ -156,14 +156,18 @@ int wolfSSH_set_fd(WOLFSSH* ssh, int fd)
 }
 
 
-int wolfSSH_get_fd(const WOLFSSH* ssh)
+WS_SOCKET_T wolfSSH_get_fd(const WOLFSSH* ssh)
 {
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_get_fd()");
 
     if (ssh)
         return ssh->rfd;
 
+#ifdef USE_WINDOWS_API
+    return INVALID_SOCKET;
+#else
     return WS_BAD_ARGUMENT;
+#endif
 }
 
 

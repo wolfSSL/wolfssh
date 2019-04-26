@@ -64,8 +64,8 @@ WOLFSSH_API void wolfSSH_free(WOLFSSH*);
 
 WOLFSSH_API int wolfSSH_worker(WOLFSSH*, word32*);
 
-WOLFSSH_API int wolfSSH_set_fd(WOLFSSH*, int);
-WOLFSSH_API int wolfSSH_get_fd(const WOLFSSH*);
+WOLFSSH_API int wolfSSH_set_fd(WOLFSSH*, WS_SOCKET_T);
+WOLFSSH_API WS_SOCKET_T wolfSSH_get_fd(const WOLFSSH*);
 
 /* data high water mark functions */
 WOLFSSH_API int wolfSSH_SetHighwater(WOLFSSH*, word32);

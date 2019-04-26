@@ -283,8 +283,8 @@ struct WS_SFTP_RENAME_STATE;
 struct WOLFSSH {
     WOLFSSH_CTX* ctx;      /* owner context */
     int error;
-    int rfd;
-    int wfd;
+    WS_SOCKET_T rfd;
+    WS_SOCKET_T wfd;
     void* ioReadCtx;       /* I/O Read  Context handle */
     void* ioWriteCtx;      /* I/O Write Context handle */
     int rflags;            /* optional read  flags */
