@@ -264,10 +264,8 @@ void* wolfSSH_GetIOWriteCtx(WOLFSSH* ssh)
 #endif
 
 
-/* Translates return codes returned from 
- * send() and recv() if need be. 
- */
-static INLINE int TranslateReturnCode(int old, int sd)
+/* Translates return codes returned from send() and recv() if need be. */
+static INLINE int TranslateReturnCode(int old, WS_SOCKET_T sd)
 {
     (void)sd;
 
@@ -301,7 +299,7 @@ static INLINE int TranslateReturnCode(int old, int sd)
 
 static INLINE int LastError(void)
 {
-#ifdef USE_WINDOWS_API 
+#ifdef USE_WINDOWS_API
     return WSAGetLastError();
 #elif defined(EBSNET)
     return xn_getlasterror();
