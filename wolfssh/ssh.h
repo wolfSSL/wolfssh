@@ -108,11 +108,11 @@ WOLFSSH_API void wolfSSH_SetIOWriteCtx(WOLFSSH*, void*);
 WOLFSSH_API void* wolfSSH_GetIOReadCtx(WOLFSSH*);
 WOLFSSH_API void* wolfSSH_GetIOWriteCtx(WOLFSSH*);
 
-/* Global Request Sucess callbacks */
+/* Global Request Success callbacks */
 typedef void (*WS_CallbackReqSuccess)(WOLFSSH *, void *, word32, void *);
-WOLFSSH_API void wolfSSH_SetReqSuccess(WOLFSSH_CTX *, WS_CallbackReqSuccess);
-WOLFSSH_API void wolfSSH_SetReqSuccessCtx(WOLFSSH *, void *);
-WOLFSSH_API void* wolfSSH_GetReqSuccessCtx(WOLFSSH *);
+WOLFSSH_API void wolfSSH_SetReqSuccess(WOLFSSH_CTX*, WS_CallbackReqSuccess);
+WOLFSSH_API void wolfSSH_SetReqSuccessCtx(WOLFSSH*, void *);
+WOLFSSH_API void* wolfSSH_GetReqSuccessCtx(WOLFSSH*);
 
 /* User Authentication callback */
 typedef struct WS_UserAuthData_Password {

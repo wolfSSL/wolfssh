@@ -4641,8 +4641,7 @@ static int DoPacket(WOLFSSH* ssh)
             ret = SendUnimplemented(ssh);
     }
 
-    if (ret == WS_SUCCESS || ret == WS_CHAN_RXD || ret == WS_EXTDATA)
-    {
+    if (ret == WS_SUCCESS || ret == WS_CHAN_RXD || ret == WS_EXTDATA) {
         if(payloadSz > 0){
             idx += payloadIdx;
             if (idx + padSz > len)
@@ -6629,7 +6628,7 @@ int SendGlobalRequest(WOLFSSH* ssh, const unsigned char* data, word32 dataSz, in
     WLOG(WS_LOG_DEBUG, "Done BundlePacket");
 
     if (ret == WS_SUCCESS)
-        ret = SendBuffered(ssh);
+        ret = wolfSSH_SendPacket(ssh);
 
     WLOG(WS_LOG_DEBUG, "Leaving SendServiceRequest(), ret = %d", ret);
 
