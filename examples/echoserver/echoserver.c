@@ -119,7 +119,7 @@ static int dump_stats(thread_ctx_t* ctx)
 
 #if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
 
-#define SSH_TIMEOUT 20
+#define SSH_TIMEOUT 10
 
 static void callbackReqSuccess(WOLFSSH *ssh, void *buf, word32 sz, void *ctx)
 {
@@ -147,12 +147,16 @@ static void *global_req(void *ctx)
         if (ret != WS_SUCCESS)
         {
             printf("Global Request Failed.\n");
+            wolfSSH_shutdown(threadCtx->ssh);
+            return NULL;
         }
 
         wolfSSH_stream_read(threadCtx->ssh, buf, 0);
         if (ret != WS_SUCCESS)
         {
             printf("wolfSSH_stream_read Failed.\n");
+            wolfSSH_shutdown(threadCtx->ssh);
+            return NULL;
         }
     }
     return NULL;
@@ -170,10 +174,10 @@ static int ssh_worker(thread_ctx_t* threadCtx) {
     int bufSz, backlogSz = 0, rxSz, txSz, stop = 0, txSum;
 
 #if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
-    pthread_t thread;
+    pthread_t globalReq_th;
     int ret = 0;
     /* submit Global Request for keep-alive */
-    ret = pthread_create(&thread, NULL, global_req, threadCtx);
+    ret = pthread_create(&globalReq_th, NULL, global_req, threadCtx);
     if (ret != 0)
     {
         printf("pthread_create() failed.\n");
@@ -264,7 +268,7 @@ static int ssh_worker(thread_ctx_t* threadCtx) {
     free(buf);
 
 #if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
-    pthread_join(thread, NULL);
+    pthread_join(globalReq_th, NULL);
 #endif
 
     return 0;
