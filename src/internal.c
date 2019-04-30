@@ -458,6 +458,7 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->ioWriteCtx  = &ssh->wfd;  /* set */
     ssh->highwaterMark = ctx->highwaterMark;
     ssh->highwaterCtx  = (void*)ssh;
+    ssh->reqSuccessCtx = (void*)ssh;
     ssh->acceptState = ACCEPT_BEGIN;
     ssh->clientState = CLIENT_BEGIN;
     ssh->isKeying    = 1;
@@ -2938,6 +2939,25 @@ static int DoIgnore(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     return WS_SUCCESS;
 }
 
+static int DoRequestSuccess(WOLFSSH *ssh, byte *buf, word32 len, word32 *idx)
+{
+    word32 dataSz;
+    word32 begin = *idx;
+
+    (void)ssh;
+    (void)len;
+
+    WLOG(WS_LOG_DEBUG, "DoRequestSuccess, *idx=%d, len=%d", *idx, len);
+    ato32(buf + begin, &dataSz);
+    begin += LENGTH_SZ + dataSz;
+
+    if (ssh->ctx->reqSuccessCb != NULL)
+        ssh->ctx->reqSuccessCb(ssh, &(buf[*idx]), len, ssh->reqSuccessCtx);
+
+    *idx = begin;
+
+    return WS_SUCCESS;
+}
 
 static int DoDebug(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
@@ -3795,7 +3815,7 @@ static int DoGlobalRequest(WOLFSSH* ssh,
         *idx += len;
 
         if (wantReply)
-            ret = SendRequestSuccess(ssh, 0);
+            ret = SendRequestSuccess(ssh, 1);
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoGlobalRequest(), ret = %d", ret);
@@ -4467,6 +4487,11 @@ static int DoPacket(WOLFSSH* ssh)
             ret = DoUnimplemented(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
+        case MSGID_REQUEST_SUCCESS:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_REQUEST_SUCCESS");
+            ret = DoRequestSuccess(ssh, buf + idx, payloadSz, &payloadIdx);
+            break;
+
         case MSGID_DEBUG:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_DEBUG");
             ret = DoDebug(ssh, buf + idx, payloadSz, &payloadIdx);
@@ -4616,12 +4641,15 @@ static int DoPacket(WOLFSSH* ssh)
             ret = SendUnimplemented(ssh);
     }
 
-    if (ret == WS_SUCCESS || ret == WS_CHAN_RXD || ret == WS_EXTDATA) {
-        idx += payloadIdx;
-
-        if (idx + padSz > len) {
-            WLOG(WS_LOG_DEBUG, "Not enough data in buffer for pad.");
-            ret = WS_BUFFER_E;
+    if (ret == WS_SUCCESS || ret == WS_CHAN_RXD || ret == WS_EXTDATA)
+    {
+        if(payloadSz > 0){
+            idx += payloadIdx;
+            if (idx + padSz > len)
+            {
+                WLOG(WS_LOG_DEBUG, "Not enough data in buffer for pad.");
+                ret = WS_BUFFER_E;
+            }
         }
     }
 
@@ -6563,6 +6591,50 @@ int SendIgnore(WOLFSSH* ssh, const unsigned char* data, word32 dataSz)
     return ret;
 }
 
+int SendGlobalRequest(WOLFSSH* ssh, const unsigned char* data, word32 dataSz, int reply)
+{
+    byte* output;
+    word32 idx = 0;
+    int ret = WS_SUCCESS;
+
+    if (ssh == NULL || (data == NULL && dataSz > 0))
+        ret = WS_BAD_ARGUMENT;
+
+    WLOG(WS_LOG_DEBUG, "Enter SendGlobalRequest");
+
+    if (ret == WS_SUCCESS)
+        ret = PreparePacket(ssh, MSG_ID_SZ + LENGTH_SZ + dataSz + BOOLEAN_SZ);
+    WLOG(WS_LOG_DEBUG, "Done PreparePacket");
+
+    if (ret == WS_SUCCESS)
+    {
+        output = ssh->outputBuffer.buffer;
+        idx = ssh->outputBuffer.length;
+
+        output[idx++] = MSGID_GLOBAL_REQUEST;
+        c32toa(dataSz, output + idx);
+        idx += LENGTH_SZ;
+        if (dataSz > 0)
+        {
+            WMEMCPY(output + idx, data, dataSz);
+            idx += dataSz;
+        }
+
+        output[idx++] = reply;
+
+        ssh->outputBuffer.length = idx;
+
+        ret = BundlePacket(ssh);
+    }
+    WLOG(WS_LOG_DEBUG, "Done BundlePacket");
+
+    if (ret == WS_SUCCESS)
+        ret = SendBuffered(ssh);
+
+    WLOG(WS_LOG_DEBUG, "Leaving SendServiceRequest(), ret = %d", ret);
+
+    return ret;
+}
 
 static const char cannedLangTag[] = "en-us";
 static const word32 cannedLangTagSz = sizeof(cannedLangTag) - 1;

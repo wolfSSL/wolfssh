@@ -561,7 +561,12 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     }
     else
 #endif
+
+#if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
+    while (!imExit) {
+#else
     if (!imExit) {
+#endif
         ret = wolfSSH_stream_send(ssh, (byte*)testString,
                                   (word32)strlen(testString));
         if (ret <= 0)
@@ -578,6 +583,10 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
         rxBuf[ret] = '\0';
         printf("Server said: %s\n", rxBuf);
+
+#if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
+        sleep(10);
+#endif
     }
     ret = wolfSSH_shutdown(ssh);
     WCLOSESOCKET(sockFd);

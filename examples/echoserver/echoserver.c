@@ -37,6 +37,10 @@
 #include <wolfssl/wolfcrypt/ecc.h>
 #include "examples/echoserver/echoserver.h"
 
+#if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
+    #include <pthread.h>
+#endif
+
 #ifdef WOLFSSL_NUCLEUS
     /* use buffers for keys with server */
     #define NO_FILESYSTEM
@@ -56,6 +60,9 @@ static const char echoserverBanner[] = "wolfSSH Example Echo Server\n";
 
 
 typedef struct {
+#if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
+    WOLFSSH_CTX *ctx;
+#endif
     WOLFSSH* ssh;
     SOCKET_T fd;
     word32 id;
@@ -110,6 +117,49 @@ static int dump_stats(thread_ctx_t* ctx)
     return wolfSSH_stream_send(ctx->ssh, (byte*)stats, statsSz);
 }
 
+#if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
+
+#define SSH_TIMEOUT 20
+
+static void callbackReqSuccess(WOLFSSH *ssh, void *buf, word32 sz, void *ctx)
+{
+    if ((WOLFSSH *)ssh != *(WOLFSSH **)ctx)
+        printf("ssh(%x) != ctx(%x)\n", (unsigned int)ssh, (unsigned int)*(WOLFSSH **)ctx);
+    
+    printf("Global Request Success[%d]: %s\n", sz, sz>0?buf:"No payload");
+}
+
+static void *global_req(void *ctx)
+{
+    int ret;
+    const char str[] = "SampleRequest";
+    thread_ctx_t *threadCtx = (thread_ctx_t *)ctx;
+    byte buf[0];
+
+    wolfSSH_SetReqSuccess(threadCtx->ctx, callbackReqSuccess);
+    wolfSSH_SetReqSuccessCtx(threadCtx->ssh, &threadCtx->ssh); /* dummy ctx */
+    
+    while(1){
+
+        sleep(SSH_TIMEOUT);
+
+        ret = wolfSSH_global_request(threadCtx->ssh, (const unsigned char *)str, strlen(str), 1);
+        if (ret != WS_SUCCESS)
+        {
+            printf("Global Request Failed.\n");
+        }
+
+        wolfSSH_stream_read(threadCtx->ssh, buf, 0);
+        if (ret != WS_SUCCESS)
+        {
+            printf("wolfSSH_stream_read Failed.\n");
+        }
+    }
+    return NULL;
+}
+
+#endif
+
 
 /* handle SSH echo operations
  * returns 0 on success
@@ -118,6 +168,17 @@ static int ssh_worker(thread_ctx_t* threadCtx) {
     byte* buf = NULL;
     byte* tmpBuf;
     int bufSz, backlogSz = 0, rxSz, txSz, stop = 0, txSum;
+
+#if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
+    pthread_t thread;
+    int ret = 0;
+    /* submit Global Request for keep-alive */
+    ret = pthread_create(&thread, NULL, global_req, threadCtx);
+    if (ret != 0)
+    {
+        printf("pthread_create() failed.\n");
+    }
+#endif
 
     do {
         bufSz = EXAMPLE_BUFFER_SZ + backlogSz;
@@ -201,6 +262,11 @@ static int ssh_worker(thread_ctx_t* threadCtx) {
     } while (!stop);
 
     free(buf);
+
+#if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
+    pthread_join(thread, NULL);
+#endif
+
     return 0;
 }
 
@@ -945,6 +1011,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
         wolfSSH_set_fd(ssh, (int)clientFd);
 
+#if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
+        threadCtx->ctx = ctx;
+#endif
         threadCtx->ssh = ssh;
         threadCtx->fd = clientFd;
         threadCtx->id = threadCount++;
