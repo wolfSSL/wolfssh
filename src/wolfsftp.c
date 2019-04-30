@@ -940,6 +940,7 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, byte* data,
                     WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
                     return WS_FATAL_ERROR;
                 }
+                /* take over control of buffer */
                 wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
                 return WS_BAD_FILE_E;
             }
@@ -1164,6 +1165,7 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
                             "Unknown/Unsupported packet type", "English",
                             state->data, (word32*)&state->sz);
                     if (ret == WS_SUCCESS) {
+                        /* set send out buffer, "state->data" is taken by ssh  */
                         wolfSSH_SFTP_RecvSetSend(ssh, state->data, state->sz);
                     }
             }
@@ -1371,6 +1373,8 @@ int wolfSSH_SFTP_RecvRMDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
         return WS_FATAL_ERROR;
     }
+
+    /* set send out buffer, "out" is taken by ssh  */
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
     return ret;
 }
@@ -1416,11 +1420,13 @@ int wolfSSH_SFTP_RecvMKDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     dir[sz] = '\0';
     idx += sz;
     if (idx + UINT32_SZ > maxSz) {
+        WFREE(dir, ssh->ctx->heap, DYNTYPE_BUFFER);
         return WS_BUFFER_E;
     }
 
     ato32(data + idx, &sz); idx += UINT32_SZ;
     if (idx + sz > maxSz) {
+        WFREE(dir, ssh->ctx->heap, DYNTYPE_BUFFER);
         return WS_BUFFER_E;
     }
     if (sz != UINT32_SZ) {
@@ -1463,6 +1469,8 @@ int wolfSSH_SFTP_RecvMKDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
         return WS_FATAL_ERROR;
     }
+
+    /* set send out buffer, "out" is taken by ssh  */
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
     return ret;
 }
@@ -1598,6 +1606,8 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             return WS_FATAL_ERROR;
         }
     }
+
+    /* set send out buffer, "out" is taken by ssh  */
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
 
     (void)ier;
@@ -1725,6 +1735,8 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             return WS_FATAL_ERROR;
         }
     }
+
+    /* set send out buffer, "out" is taken by ssh  */
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
 
     (void)ier;
@@ -1848,6 +1860,8 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             return WS_FATAL_ERROR;
         }
     }
+
+    /* set send out buffer, "out" is taken by ssh  */
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
 
     return ret;
@@ -1951,6 +1965,8 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             return WS_FATAL_ERROR;
         }
     }
+
+    /* set send out buffer, "out" is taken by ssh  */
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
 
     return ret;
@@ -2397,6 +2413,8 @@ int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
             return WS_FATAL_ERROR;
         }
+
+        /* set send out buffer, "out" is taken by ssh  */
         wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
         return WS_SUCCESS;
     }
@@ -2415,6 +2433,8 @@ int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         return WS_FATAL_ERROR;
     }
     wolfSSH_SFTPNAME_list_free(list);
+
+    /* set send out buffer, "out" is taken by ssh  */
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
     return WS_SUCCESS;
 }
@@ -2562,6 +2582,8 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
         return WS_FATAL_ERROR;
     }
+
+    /* set send out buffer, "out" is taken by ssh  */
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
     return ret;
 }
@@ -2640,6 +2662,8 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
         return WS_FATAL_ERROR;
     }
+
+    /* set send out buffer, "out" is taken by ssh  */
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
     return ret;
 }
@@ -2718,6 +2742,7 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     if (res != NULL) {
         if (wolfSSH_SFTP_CreateStatus(ssh, type, reqId, res, "English", NULL,
                 &outSz) != WS_SIZE_ONLY) {
+            WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
             return WS_FATAL_ERROR;
         }
         if (outSz > sz) {
@@ -2738,6 +2763,7 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         SFTP_CreatePacket(ssh, WOLFSSH_FTP_DATA, out, outSz, NULL, 0);
     }
 
+    /* set send out buffer, "out" is taken by ssh  */
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
     return ret;
 }
@@ -2844,6 +2870,7 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         SFTP_CreatePacket(ssh, WOLFSSH_FTP_DATA, out, outSz, NULL, 0);
     }
 
+    /* set send out buffer, "out" is taken by ssh  */
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
     return ret;
 }
@@ -2932,6 +2959,8 @@ int wolfSSH_SFTP_RecvClose(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
         return WS_FATAL_ERROR;
     }
+
+    /* set send out buffer, "out" is taken by ssh  */
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
     return ret;
 }
@@ -3012,6 +3041,8 @@ int wolfSSH_SFTP_RecvClose(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
         return WS_FATAL_ERROR;
     }
+
+    /* set send out buffer, "out" is taken by ssh  */
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
     return ret;
 }
@@ -3100,6 +3131,8 @@ int wolfSSH_SFTP_RecvRemove(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
         return WS_FATAL_ERROR;
     }
+
+    /* set send out buffer, "out" is taken by ssh  */
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
     return ret;
 }
@@ -3194,6 +3227,8 @@ int wolfSSH_SFTP_RecvRename(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
         return WS_FATAL_ERROR;
     }
+
+    /* set send out buffer, "out" is taken by ssh  */
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
     return ret;
 }
@@ -3675,6 +3710,8 @@ int wolfSSH_SFTP_RecvFSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             return WS_FATAL_ERROR;
         }
     }
+
+    /* set send out buffer, "out" is taken by ssh  */
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
     return ret;
 }
@@ -3722,6 +3759,7 @@ int wolfSSH_SFTP_RecvSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         WLOG(WS_LOG_SFTP, "Unable to get stat of file/directory");
         if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
                 "STAT error", "English", NULL, &outSz) != WS_SIZE_ONLY) {
+            WFREE(name, ssh->ctx->heap, DYNTYPE_BUFFER);
             return WS_FATAL_ERROR;
         }
         ret = WS_BAD_FILE_E;
@@ -3752,6 +3790,7 @@ int wolfSSH_SFTP_RecvSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         SFTP_SetAttributes(ssh, out + WOLFSSH_SFTP_HEADER, sz, &atr);
     }
 
+    /* set send out buffer, "out" is taken by ssh  */
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
     return ret;
 }
@@ -3800,6 +3839,7 @@ int wolfSSH_SFTP_RecvLSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         WLOG(WS_LOG_SFTP, "Unable to get lstat of file/directory");
         if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
                 "LSTAT error", "English", NULL, &outSz) != WS_SIZE_ONLY) {
+            WFREE(name, ssh->ctx->heap, DYNTYPE_BUFFER);
             return WS_FATAL_ERROR;
         }
         ret = WS_BAD_FILE_E;
@@ -3830,6 +3870,7 @@ int wolfSSH_SFTP_RecvLSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         SFTP_SetAttributes(ssh, out + WOLFSSH_SFTP_HEADER, sz, &atr);
     }
 
+    /* set send out buffer, "out" is taken by ssh  */
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
     return ret;
 }
@@ -3960,6 +4001,8 @@ int wolfSSH_SFTP_RecvSetSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
         return WS_FATAL_ERROR;
     }
+
+    /* set send out buffer, "out" is taken by ssh  */
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
     return ret;
 }

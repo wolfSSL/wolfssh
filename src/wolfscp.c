@@ -2178,6 +2178,11 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             }
 
             ret = FindNextDirEntry(sendCtx);
+
+            /* help out static analysis tool */
+            if (ret != WS_BAD_ARGUMENT && sendCtx == NULL)
+                ret = WS_BAD_ARGUMENT;
+
             if (ret == WS_SUCCESS || ret == WS_NEXT_ERROR) {
 
             #ifdef WOLFSSL_NUCLEUS

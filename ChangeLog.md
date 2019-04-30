@@ -1,3 +1,33 @@
+### wolfSSH v1.4.0 (04/30/2019)
+
+- SFTP support for time attributes
+- TCP port forwarding feature added (--enable-fwd)
+- Example tcp port forwarding added to /examples/portfwd/portfwd
+- Fixes to SCP, including default direction set
+- Fix to match ID during KEX init
+- Add check for window adjustment packets when sending large transfers
+- Fixes and maintenance to Nucleus port for file closing
+- Add enable all option (--enable-all)
+- Fix for --disable-inline build
+- Fixes for GCC-7 warnings when falling through switch statements
+- Additional sanity checks added from fuzz testing
+- Refactor and fixes for use with non blocking
+- Add extended data read for piping stderr
+- Add client side pseudo terminal connection with ./examples/client/client -t
+- Add some basic Windows terminal conversions with wolfSSH_ConvertConsole
+- Add wolfSSH_stream_peek function to peek at incoming SSH data
+- Change name of internal function SendBuffered() to avoid clash with wolfSSL
+- Add support for SFTP on Windows
+- Use int types for arguments in examples to fix Raspberry Pi build
+- Fix for fail case with leading 0’s on MPINT
+- Default window size (DEFAULT_WINDOW_SZ) lowered from ~ 1 MB to ~ 16 KB
+- Disable examples option added to configure (--disable-examples)
+- Callback function and example use added for checking public key sent
+- AES CTR cipher support added
+- Fix for free’ing ECC caches with examples
+- Renamed example SFTP to be examples/sftpclient/wolfsftp
+
+
 ### wolfSSH v1.3.0 (08/15/2018)
 
 - Accepted code submission from Stephen Casner for SCP support. Thanks Stephen!
