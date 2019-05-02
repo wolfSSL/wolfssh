@@ -102,7 +102,13 @@ void* wolfSSH_GetIOWriteCtx(WOLFSSH* ssh)
     return NULL;
 }
 
-void wolfSSH_SetReqSuccess(WOLFSSH_CTX *ctx, WS_CallbackReqSuccess cb)
+void wolfSSH_SetGlobalReq(WOLFSSH_CTX* ctx, WS_CallbackGlobalReq cb)
+{
+    if (ctx)
+        ctx->globalReqCb = cb;
+}
+
+void wolfSSH_SetReqSuccess(WOLFSSH_CTX* ctx, WS_CallbackReqSuccess cb)
 {
     if (ctx)
         ctx->reqSuccessCb = cb;

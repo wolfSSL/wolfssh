@@ -227,6 +227,24 @@ void* wolfSSH_GetHighwaterCtx(WOLFSSH* ssh)
     return NULL;
 }
 
+void wolfSSH_SetGlobalReqCtx(WOLFSSH* ssh, void *ctx)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetGlobalReqCtx()");
+
+    if (ssh)
+        ssh->globalReqCtx = ctx;
+}
+
+void *wolfSSH_GetGlobalReqCtx(WOLFSSH* ssh)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_GetGlobalReqCtx()");
+
+    if (ssh)
+        return ssh->globalReqCtx;
+
+    return NULL;
+}
+
 void wolfSSH_SetReqSuccessCtx(WOLFSSH *ssh, void *ctx)
 {
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetReqSuccessCtx()");

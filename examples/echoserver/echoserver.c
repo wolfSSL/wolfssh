@@ -121,12 +121,14 @@ static int dump_stats(thread_ctx_t* ctx)
 
 #define SSH_TIMEOUT 10
 
-static void callbackReqSuccess(WOLFSSH *ssh, void *buf, word32 sz, void *ctx)
+static int callbackReqSuccess(WOLFSSH *ssh, void *buf, word32 sz, void *ctx)
 {
-    if ((WOLFSSH *)ssh != *(WOLFSSH **)ctx)
+    if ((WOLFSSH *)ssh != *(WOLFSSH **)ctx){
         printf("ssh(%x) != ctx(%x)\n", (unsigned int)ssh, (unsigned int)*(WOLFSSH **)ctx);
-    
+        return WS_FATAL_ERROR;
+    }
     printf("Global Request Success[%d]: %s\n", sz, sz>0?buf:"No payload");
+    return WS_SUCCESS;
 }
 
 static void *global_req(void *ctx)

@@ -108,8 +108,12 @@ WOLFSSH_API void wolfSSH_SetIOWriteCtx(WOLFSSH*, void*);
 WOLFSSH_API void* wolfSSH_GetIOReadCtx(WOLFSSH*);
 WOLFSSH_API void* wolfSSH_GetIOWriteCtx(WOLFSSH*);
 
-/* Global Request Success callbacks */
-typedef void (*WS_CallbackReqSuccess)(WOLFSSH *, void *, word32, void *);
+/* Global Request callbacks */
+typedef int (*WS_CallbackGlobalReq)(WOLFSSH*, void*, word32, int, void*);
+WOLFSSH_API void wolfSSH_SetGlobalReq(WOLFSSH_CTX*, WS_CallbackGlobalReq);
+WOLFSSH_API void wolfSSH_SetGlobalReqCtx(WOLFSSH*, void*);
+WOLFSSH_API void *wolfSSH_GetGlobalReqCtx(WOLFSSH*);
+typedef int (*WS_CallbackReqSuccess)(WOLFSSH*, void*, word32, void*);
 WOLFSSH_API void wolfSSH_SetReqSuccess(WOLFSSH_CTX*, WS_CallbackReqSuccess);
 WOLFSSH_API void wolfSSH_SetReqSuccessCtx(WOLFSSH*, void *);
 WOLFSSH_API void* wolfSSH_GetReqSuccessCtx(WOLFSSH*);

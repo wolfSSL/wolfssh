@@ -2943,6 +2943,7 @@ static int DoRequestSuccess(WOLFSSH *ssh, byte *buf, word32 len, word32 *idx)
 {
     word32 dataSz;
     word32 begin = *idx;
+    int    ret=WS_SUCCESS;
 
     (void)ssh;
     (void)len;
@@ -2952,11 +2953,12 @@ static int DoRequestSuccess(WOLFSSH *ssh, byte *buf, word32 len, word32 *idx)
     begin += LENGTH_SZ + dataSz;
 
     if (ssh->ctx->reqSuccessCb != NULL)
-        ssh->ctx->reqSuccessCb(ssh, &(buf[*idx]), len, ssh->reqSuccessCtx);
+        ret = ssh->ctx->reqSuccessCb(ssh, &(buf[*idx]), len, ssh->reqSuccessCtx);
 
     *idx = begin;
 
-    return WS_SUCCESS;
+    return ret;
+    
 }
 
 static int DoDebug(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
@@ -3792,6 +3794,7 @@ static int DoGlobalRequest(WOLFSSH* ssh,
 {
     word32 begin;
     int ret = WS_SUCCESS;
+    int cb_ret;
     char name[80];
     word32 nameSz = sizeof(name);
     byte wantReply = 0;
@@ -3811,11 +3814,15 @@ static int DoGlobalRequest(WOLFSSH* ssh,
         ret = GetBoolean(&wantReply, buf, len, &begin);
     }
 
-    if (ret == WS_SUCCESS) {
+    cb_ret = WS_SUCCESS;
+    if (ssh->ctx->globalReqCb != NULL)
+        cb_ret = ssh->ctx->globalReqCb(ssh, name, nameSz, wantReply, (void *)ssh->globalReqCtx);
+
+    if (ret == WS_SUCCESS && (cb_ret == 0 || cb_ret == 1)) {
         *idx += len;
 
         if (wantReply)
-            ret = SendRequestSuccess(ssh, 1);
+            ret = SendRequestSuccess(ssh, cb_ret);
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoGlobalRequest(), ret = %d", ret);
