@@ -1,69 +1,69 @@
-# wolfSSH ƒVƒ“ƒvƒ‹ SSH ƒT[ƒo ƒZƒbƒgƒAƒbƒvƒKƒCƒh
+# wolfSSH ã‚·ãƒ³ãƒ—ãƒ« SSH ã‚µãƒ¼ãƒ ã‚»ãƒƒãƒˆã‚¢ãƒƒãƒ—ã‚¬ã‚¤ãƒ‰
 
-‚±‚Ìƒfƒ‚‚ÍˆÈ‰º‚ÌŠÂ‹«‚ÅƒeƒXƒg‚µ‚Ä‚¢‚Ü‚·B  
+ã“ã®ãƒ‡ãƒ¢ã¯ä»¥ä¸‹ã®ç’°å¢ƒã§ãƒ†ã‚¹ãƒˆã—ã¦ã„ã¾ã™ã€‚  
 
 * Renesas : CS+ v8.01
 * Board   : Alpha Project AP-RX71M-0A w/ Sample program v2.0
 * wolfSSL : 4.0.0
 * wolfSSH : 1.3.1
 
-##ƒZƒbƒgƒAƒbƒvè‡F
-### ‚P ƒ\ƒtƒgƒEƒFƒA‚Ì“üè
+## ã‚»ãƒƒãƒˆã‚¢ãƒƒãƒ—æ‰‹é †ï¼š
+### ï¼‘ ã‚½ãƒ•ãƒˆã‚¦ã‚§ã‚¢ã®å…¥æ‰‹
 
-- APƒ{[ƒh•t‘®‚Ìƒ\ƒtƒgƒEƒFƒAˆê®‚ğ“K“–‚ÈƒtƒHƒ‹ƒ_[‰º‚É‰ğ“€‚µ‚Ü‚·B  
-- “¯‚¶ƒtƒHƒ‹ƒ_[‰º‚Éwolfsslˆê®‚ğ‰ğ“€‚µ‚Ü‚·B
-- “¯‚¶ƒtƒHƒ‹ƒ_[‰º‚Éwolfsshˆê®‚ğ‰ğ“š‚µ‚Ü‚·B
-### ‚Q wolfSSL‹y‚ÑwolfSSH‚ÌƒZƒbƒgƒAƒbƒv
+- APãƒœãƒ¼ãƒ‰ä»˜å±ã®ã‚½ãƒ•ãƒˆã‚¦ã‚§ã‚¢ä¸€å¼ã‚’é©å½“ãªãƒ•ã‚©ãƒ«ãƒ€ãƒ¼ä¸‹ã«è§£å‡ã—ã¾ã™ã€‚  
+- åŒã˜ãƒ•ã‚©ãƒ«ãƒ€ãƒ¼ä¸‹ã«wolfsslä¸€å¼ã‚’è§£å‡ã—ã¾ã™ã€‚
+- åŒã˜ãƒ•ã‚©ãƒ«ãƒ€ãƒ¼ä¸‹ã«wolfsshä¸€å¼ã‚’è§£ç­”ã—ã¾ã™ã€‚
+### ï¼’ wolfSSLåŠã³wolfSSHã®ã‚»ãƒƒãƒˆã‚¢ãƒƒãƒ—
 
-- CS+‚É‚Äwolfssh\ide\Renesas\cs+\‰º‚Ìwolfssl_lib\wolfssl_lib.mtpj‚ğŠJ‚«  
-  wolfSSLƒ‰ƒCƒuƒ‰ƒŠ[‚Ìƒrƒ‹ƒh‚ğ‚µ‚Ü‚·B
-- CS+‚É‚Äwolfssh\ide\Renesas\cs+\‰º‚Ìwolfssh_lib\wolfssj_lib.mtpj‚ğŠJ‚«  
-  wolfSShƒ‰ƒCƒuƒ‰ƒŠ[‚Ìƒrƒ‹ƒh‚ğ‚µ‚Ü‚·B
-- “¯‚¶ƒtƒHƒ‹ƒ_‚Ì‰º‚Ìdemo_server.mtpj‚ğŠJ‚«Aƒfƒ‚ƒvƒƒOƒ‰ƒ€‚Ìƒrƒ‹ƒh‚ğ‚µ‚Ü‚·B  
-  ‚±‚ÌƒvƒƒOƒ‰ƒ€‚àƒ‰ƒCƒuƒ‰ƒŠ[Œ`®‚Åƒrƒ‹ƒh‚³‚ê‚Ü‚·B
+- CS+ã«ã¦wolfssh\ide\Renesas\cs+\ä¸‹ã®wolfssl_lib\wolfssl_lib.mtpjã‚’é–‹ã  
+  wolfSSLãƒ©ã‚¤ãƒ–ãƒ©ãƒªãƒ¼ã®ãƒ“ãƒ«ãƒ‰ã‚’ã—ã¾ã™ã€‚
+- CS+ã«ã¦wolfssh\ide\Renesas\cs+\ä¸‹ã®wolfssh_lib\wolfssj_lib.mtpjã‚’é–‹ã  
+  wolfSShãƒ©ã‚¤ãƒ–ãƒ©ãƒªãƒ¼ã®ãƒ“ãƒ«ãƒ‰ã‚’ã—ã¾ã™ã€‚
+- åŒã˜ãƒ•ã‚©ãƒ«ãƒ€ã®ä¸‹ã®demo_server.mtpjã‚’é–‹ãã€ãƒ‡ãƒ¢ãƒ—ãƒ­ã‚°ãƒ©ãƒ ã®ãƒ“ãƒ«ãƒ‰ã‚’ã—ã¾ã™ã€‚  
+  ã“ã®ãƒ—ãƒ­ã‚°ãƒ©ãƒ ã‚‚ãƒ©ã‚¤ãƒ–ãƒ©ãƒªãƒ¼å½¢å¼ã§ãƒ“ãƒ«ãƒ‰ã•ã‚Œã¾ã™ã€‚
 
-### ‚R AlphaProject‘¤‚ÌƒZƒbƒgƒAƒbƒv
-ƒfƒ‚‚Íap_rx71m_0a_sample_cs\Sample\ap_rx71m_0a_usbfunc_sample_csƒtƒHƒ‹ƒ_‰º‚Ì  
-ap_rx71m_0a_usbfunc_sample_cs.mtpjƒvƒƒWƒFƒNƒg‚ğ—˜—p‚µ‚Ü‚·B
+### ï¼“ AlphaProjectå´ã®ã‚»ãƒƒãƒˆã‚¢ãƒƒãƒ—
+ãƒ‡ãƒ¢ã¯ap_rx71m_0a_sample_cs\Sample\ap_rx71m_0a_usbfunc_sample_csãƒ•ã‚©ãƒ«ãƒ€ä¸‹ã®  
+ap_rx71m_0a_usbfunc_sample_cs.mtpjãƒ—ãƒ­ã‚¸ã‚§ã‚¯ãƒˆã‚’åˆ©ç”¨ã—ã¾ã™ã€‚
 
-- ap_rx71m_0a_sample_cs\Sample\ap_rx71m_0a_ether_sample_cs\srcƒtƒHƒ‹ƒ_‰º‚ÌAP_RX71M_0A.cƒtƒ@ƒCƒ‹‚ğŠJ‚«A  
-  UsbfInit()‚Ì‰º‚ÉwolfSSL_init()‚ğ‘}“ü‚µ‚Ü‚·B
+- ap_rx71m_0a_sample_cs\Sample\ap_rx71m_0a_ether_sample_cs\srcãƒ•ã‚©ãƒ«ãƒ€ä¸‹ã®AP_RX71M_0A.cãƒ•ã‚¡ã‚¤ãƒ«ã‚’é–‹ãã€  
+  UsbfInit()ã®ä¸‹ã«wolfSSL_init()ã‚’æŒ¿å…¥ã—ã¾ã™ã€‚
 
 ```
         CanInit();
         SciInit();
         EthernetAppInit();
         UsbfInit();
-        wolfSSL_init(); <- ‚±‚Ìs‚ğ‘}“ü
+        wolfSSL_init(); <- ã“ã®è¡Œã‚’æŒ¿å…¥
 ```
 - ap_rx71m_0a_sample_cs\Sample\ap_rx71m_0a_usbfunc_sample_cs\src\smc_gen\r_config\r_bsp_config.h  
-  ‚ğŠJ‚«AƒXƒ^ƒbƒNƒTƒCƒY‚Æƒq[ƒvƒTƒCƒY‚ğˆÈ‰º‚Ì‚æ‚¤‚Éİ’è‚µ‚Ü‚·B  
-@154s–Ú #pragma stacksize su=0x2000  
-@175s–Ú #define BSP_CFG_HEAP_BYTES  (0xa000)  
+  ã‚’é–‹ãã€ã‚¹ã‚¿ãƒƒã‚¯ã‚µã‚¤ã‚ºã¨ãƒ’ãƒ¼ãƒ—ã‚µã‚¤ã‚ºã‚’ä»¥ä¸‹ã®ã‚ˆã†ã«è¨­å®šã—ã¾ã™ã€‚  
+ã€€154è¡Œç›® #pragma stacksize su=0x2000  
+ã€€175è¡Œç›® #define BSP_CFG_HEAP_BYTES  (0xa000)  
 
-- IPƒAƒhƒŒƒX‚ÌƒfƒtƒHƒ‹ƒg’l‚ÍˆÈ‰º‚Ì‚æ‚¤‚É‚È‚Á‚Ä‚¢‚Ü‚·B  
-@•K—v‚ª‚ ‚ê‚ÎASample\ap_rx71m_0a_ether_sample_cs\src\tcp_sample\config_tcpudp.c
-@“à‚Ì139s–Ú‚©‚ç‚Ì’è‹`‚ğ•ÏX‚µ‚Ü‚·B
+- IPã‚¢ãƒ‰ãƒ¬ã‚¹ã®ãƒ‡ãƒ•ã‚©ãƒ«ãƒˆå€¤ã¯ä»¥ä¸‹ã®ã‚ˆã†ã«ãªã£ã¦ã„ã¾ã™ã€‚  
+ã€€å¿…è¦ãŒã‚ã‚Œã°ã€Sample\ap_rx71m_0a_ether_sample_cs\src\tcp_sample\config_tcpudp.c
+ã€€å†…ã®139è¡Œç›®ã‹ã‚‰ã®å®šç¾©ã‚’å¤‰æ›´ã—ã¾ã™ã€‚
 
 ```
        #define MY_IP_ADDR0     192,168,1,200           /* Local IP address  */
        #define GATEWAY_ADDR0   192,168,1,254           /* Gateway address (invalid if all 0s) */
        #define SUBNET_MASK0    255,255,255,0           /* Subnet mask  */
 ```
-- CS+‚Åap_rx71m_0a_usbfunc_sample_cs.mtpjƒvƒƒWƒFƒNƒg‚ğŠJ‚«AwolfSSLAwolfSSH‹y‚Ñƒfƒ‚ƒ‰ƒCƒuƒ‰ƒŠ‚ğ  
-@“o˜^‚µ‚Ü‚·BCC-RX(ƒrƒ‹ƒhƒc[ƒ‹)->ƒŠƒ“ƒNEƒIƒvƒVƒ‡ƒ“ƒ^ƒu->g—p‚·‚éƒ‰ƒCƒuƒ‰ƒŠ‚É  
-@ˆÈ‰º‚Ì“ñ‚Â‚Ìƒtƒ@ƒCƒ‹‚ğ“o˜^‚µ‚Ü‚·B
+- CS+ã§ap_rx71m_0a_usbfunc_sample_cs.mtpjãƒ—ãƒ­ã‚¸ã‚§ã‚¯ãƒˆã‚’é–‹ãã€wolfSSLã€wolfSSHåŠã³ãƒ‡ãƒ¢ãƒ©ã‚¤ãƒ–ãƒ©ãƒªã‚’  
+ã€€ç™»éŒ²ã—ã¾ã™ã€‚CC-RX(ãƒ“ãƒ«ãƒ‰ãƒ„ãƒ¼ãƒ«)->ãƒªãƒ³ã‚¯ãƒ»ã‚ªãƒ—ã‚·ãƒ§ãƒ³ã‚¿ãƒ–->ä½¿ç”¨ã™ã‚‹ãƒ©ã‚¤ãƒ–ãƒ©ãƒªã«  
+ã€€ä»¥ä¸‹ã®äºŒã¤ã®ãƒ•ã‚¡ã‚¤ãƒ«ã‚’ç™»éŒ²ã—ã¾ã™ã€‚
 
- - CC-RX(ƒrƒ‹ƒhƒc[ƒ‹)->ƒ‰ƒCƒuƒ‰ƒŠ[ƒWƒFƒlƒŒ[ƒVƒ‡ƒ“ƒ^ƒu->ƒ‰ƒCƒuƒ‰ƒŠ[\¬‚ğuC99v‚ÉA  
-    ctype.h‚ğ—LŒø‚É‚·‚é‚ğu‚Í‚¢v‚Éİ’è‚µ‚Ü‚·B
+ - CC-RX(ãƒ“ãƒ«ãƒ‰ãƒ„ãƒ¼ãƒ«)->ãƒ©ã‚¤ãƒ–ãƒ©ãƒªãƒ¼ã‚¸ã‚§ãƒãƒ¬ãƒ¼ã‚·ãƒ§ãƒ³ã‚¿ãƒ–->ãƒ©ã‚¤ãƒ–ãƒ©ãƒªãƒ¼æ§‹æˆã‚’ã€ŒC99ã€ã«ã€  
+    ctype.hã‚’æœ‰åŠ¹ã«ã™ã‚‹ã‚’ã€Œã¯ã„ã€ã«è¨­å®šã—ã¾ã™ã€‚
 
-- ƒvƒƒWƒFƒNƒg‚Ìƒrƒ‹ƒhAƒ^[ƒQƒbƒg‚Ö‚Ìƒ_ƒEƒ“ƒ[ƒh‚ğ‚µ‚½‚Ì‚¿A•\¦->ƒfƒoƒbƒOEƒRƒ“ƒ\[ƒ‹  
-@‚©‚çƒRƒ“ƒ\[ƒ‹‚ğ•\¦‚³‚¹‚Ü‚·BÀs‚ğŠJn‚·‚é‚ÆƒRƒ“ƒ\[ƒ‹‚ÉˆÈ‰º‚Ì•\¦‚ªo—Í‚³‚ê‚Ü‚·B
+- ãƒ—ãƒ­ã‚¸ã‚§ã‚¯ãƒˆã®ãƒ“ãƒ«ãƒ‰ã€ã‚¿ãƒ¼ã‚²ãƒƒãƒˆã¸ã®ãƒ€ã‚¦ãƒ³ãƒ­ãƒ¼ãƒ‰ã‚’ã—ãŸã®ã¡ã€è¡¨ç¤º->ãƒ‡ãƒãƒƒã‚°ãƒ»ã‚³ãƒ³ã‚½ãƒ¼ãƒ«  
+ã€€ã‹ã‚‰ã‚³ãƒ³ã‚½ãƒ¼ãƒ«ã‚’è¡¨ç¤ºã•ã›ã¾ã™ã€‚å®Ÿè¡Œã‚’é–‹å§‹ã™ã‚‹ã¨ã‚³ãƒ³ã‚½ãƒ¼ãƒ«ã«ä»¥ä¸‹ã®è¡¨ç¤ºãŒå‡ºåŠ›ã•ã‚Œã¾ã™ã€‚
 ```
     Start server_test
 ```
-- ƒVƒ“ƒvƒ‹ wolfSSH ƒT[ƒo‚ÍA50000”Ô‚Ìƒ|[ƒg‚ğŠJ‚¢‚Ä‘Ò‚¿‚Ü‚·BƒT[ƒo‚Ö‚ÍAwolfSSH‚É•tƒTƒ“ƒvƒ‹ƒNƒ‰ƒCƒAƒ“ƒg‚ğ  
-g‚Á‚ÄˆÈ‰º‚Ì‚æ‚¤‚ÉÚ‘±‚·‚é‚±‚Æ‚ª‚Å‚«‚Ü‚·B
+- ã‚·ãƒ³ãƒ—ãƒ« wolfSSH ã‚µãƒ¼ãƒã¯ã€50000ç•ªã®ãƒãƒ¼ãƒˆã‚’é–‹ã„ã¦å¾…ã¡ã¾ã™ã€‚ã‚µãƒ¼ãƒã¸ã¯ã€wolfSSHã«ä»˜ã‚µãƒ³ãƒ—ãƒ«ã‚¯ãƒ©ã‚¤ã‚¢ãƒ³ãƒˆã‚’  
+ä½¿ã£ã¦ä»¥ä¸‹ã®ã‚ˆã†ã«æ¥ç¶šã™ã‚‹ã“ã¨ãŒã§ãã¾ã™ã€‚
 ```
     $ ./examples/client/client -h 192.168.1.200 -p 50000 -u jill
     Sample public key check callback
@@ -74,7 +74,7 @@ ap_rx71m_0a_usbfunc_sample_cs.mtpjƒvƒƒWƒFƒNƒg‚ğ—˜—p‚µ‚Ü‚·B
     Server said: Hello, wolfSSH!
 ```
 
-##@ƒTƒ|[ƒg
-ƒTƒ|[ƒg‚ª•K—v‚Èê‡‚ÍA[support@wolfssl.com](mailto:support@wolfssl.com)‚Ö‚²˜A—‚­‚¾‚³‚¢B
+##ã€€ã‚µãƒãƒ¼ãƒˆ
+ã‚µãƒãƒ¼ãƒˆãŒå¿…è¦ãªå ´åˆã¯ã€[support@wolfssl.com](mailto:support@wolfssl.com)ã¸ã”é€£çµ¡ãã ã•ã„ã€‚
 
-ˆÈã
+ä»¥ä¸Š
