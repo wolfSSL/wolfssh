@@ -4,3 +4,5 @@
 
 include ide/winvs/include.am
 include ide/CSBENCH/include.am
+
+EXTRA_DIST += ide/Renesas

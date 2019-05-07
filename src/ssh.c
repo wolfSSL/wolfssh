@@ -1200,7 +1200,7 @@ WS_SessionType wolfSSH_GetSessionType(const WOLFSSH* ssh)
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_GetSessionType()");
 
     if (ssh && ssh->channelList)
-        return ssh->channelList->sessionType;
+        return (WS_SessionType)ssh->channelList->sessionType;
 
     return WOLFSSH_SESSION_UNKNOWN;
 }
