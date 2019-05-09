@@ -4730,13 +4730,25 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
 
         case SFTP_NAME_GET_PACKET:
             /* get number of files */
-            ret = wolfSSH_stream_read(ssh, state->data, state->sz);
-            if (ret < 0) {
+            /* using idx as an offset for partial reads */
+            ret = wolfSSH_stream_read(ssh,
+                    state->data + state->idx, state->sz - state->idx);
+            if (ret <= 0) {
                 if (ssh->error != WS_WANT_READ) {
                     wolfSSH_SFTP_ClearState(ssh, STATE_ID_NAME);
                 }
                 return NULL;
             }
+            if ((word32)ret < state->sz - state->idx) {
+                /* Partial read, treat like a want-read. */
+                state->idx += ret;
+                ssh->error = WS_WANT_READ;
+                state->state = SFTP_NAME_GET_PACKET;
+                return NULL;
+            }
+
+            /* Reset idx back to 0 for parsing the buffer. */
+            state->idx = 0;
 
             if (state->idx + UINT32_SZ > (word32)state->sz) {
                 ssh->error = WS_BUFFER_E;
