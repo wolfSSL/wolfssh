@@ -9,11 +9,23 @@ noinst_PROGRAMS += tests/unit.test tests/api.test \
 
 tests_unit_test_SOURCES      = tests/unit.c
 tests_unit_test_CPPFLAGS     = -DNO_MAIN_DRIVER
+if BUILD_SCP
+tests_unit_test_CPPFLAGS     += -DWOLFSSH_SCP
+endif
+if BUILD_SFTP
+tests_unit_test_CPPFLAGS     += -DWOLFSSH_SFTP
+endif
 tests_unit_test_LDADD        = src/libwolfssh.la
 tests_unit_test_DEPENDENCIES = src/libwolfssh.la
 
 tests_api_test_SOURCES       = tests/api.c
 tests_api_test_CPPFLAGS      = -DNO_MAIN_DRIVER
+if BUILD_SCP
+tests_api_test_CPPFLAGS     += -DWOLFSSH_SCP
+endif
+if BUILD_SFTP
+tests_api_test_CPPFLAGS     += -DWOLFSSH_SFTP
+endif
 tests_api_test_LDADD         = src/libwolfssh.la
 tests_api_test_DEPENDENCIES  = src/libwolfssh.la
 
@@ -23,8 +35,11 @@ tests_testsuite_test_SOURCES = tests/testsuite.c \
                                examples/client/client.c \
                                examples/sftpclient/sftpclient.c
 tests_testsuite_test_CPPFLAGS  = -DNO_MAIN_DRIVER
+if BUILD_SCP
+tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_SCP
+endif
 if BUILD_SFTP
-tests_testsuite_test_CPPFLAGS += -DWOLFSSH_SFTP
+tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_SFTP
 endif
 tests_testsuite_test_LDADD   = src/libwolfssh.la
 tests_testsuite_test_DEPENDENCIES = src/libwolfssh.la
