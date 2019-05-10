@@ -618,6 +618,7 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
             WFREE(ctx->privateKey, heap, dynamicType);
         ctx->privateKey = der;
         ctx->privateKeySz = derSz;
+        ctx->useEcc = 0;
     }
     else {
         WFREE(der, heap, dynamicType);
