@@ -236,6 +236,7 @@ WOLFSSL_LOCAL int wolfSSH_SFTP_free(WOLFSSH* ssh);
 WOLFSSL_LOCAL int SFTP_AddHandleNode(WOLFSSH* ssh, byte* handle, word32 handleSz, char* name);
 WOLFSSL_LOCAL int SFTP_RemoveHandleNode(WOLFSSH* ssh, byte* handle, word32 handleSz);
 
+WOLFSSH_LOCAL void wolfSSH_SFTP_ShowSizes(void);
 
 #ifdef __cplusplus
 }

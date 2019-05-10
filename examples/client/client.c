@@ -393,10 +393,17 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     char**  argv = ((func_args*)args)->argv;
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?NP:h:p:u:xc:Rt")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?NP:h:p:u:xc:Rtz")) != -1) {
         switch (ch) {
             case 'h':
                 host = myoptarg;
+                break;
+
+            case 'z':
+            #ifdef WOLFSSH_SHOW_SIZES
+                wolfSSH_ShowSizes();
+                exit(EXIT_SUCCESS);
+            #endif
                 break;
 
             case 'p':

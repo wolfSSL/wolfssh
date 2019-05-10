@@ -251,6 +251,9 @@ enum WS_DisconnectReasonCodes {
 };
 
 
+WOLFSSH_API void wolfSSH_ShowSizes(void);
+
+
 #ifndef WOLFSSH_MAX_FILENAME
     #define WOLFSSH_MAX_FILENAME 256
 #endif
