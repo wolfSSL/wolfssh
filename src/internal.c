@@ -5160,26 +5160,20 @@ int SendProtoId(WOLFSSH* ssh)
 }
 
 
+/* payloadSz is an estimate. It should be a worst case. The actual value
+ * will be nailed down when the packet is bundled to be sent. */
 static int PreparePacket(WOLFSSH* ssh, word32 payloadSz)
 {
     int ret = WS_SUCCESS;
-    byte* output;
-    word32 outputSz;
-    word32 packetSz;
-    word32 usedSz;
-    byte paddingSz;
 
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
-        /* Minimum value for paddingSz is 4. */
-        paddingSz = ssh->blockSz -
-                    ((ssh->aeadMode ? 0 : LENGTH_SZ) +
-                     PAD_LENGTH_SZ + payloadSz) % ssh->blockSz;
-        if (paddingSz < MIN_PAD_LENGTH)
-            paddingSz += ssh->blockSz;
-        ssh->paddingSz = paddingSz;
+        word32 packetSz, usedSz, outputSz;
+        byte paddingSz;
+
+        paddingSz = ssh->blockSz * 2;
         packetSz = PAD_LENGTH_SZ + payloadSz + paddingSz;
         outputSz = LENGTH_SZ + packetSz + ssh->macSz;
         usedSz = ssh->outputBuffer.length - ssh->outputBuffer.idx;
@@ -5189,12 +5183,6 @@ static int PreparePacket(WOLFSSH* ssh, word32 payloadSz)
 
     if (ret == WS_SUCCESS) {
         ssh->packetStartIdx = ssh->outputBuffer.length;
-        output = ssh->outputBuffer.buffer + ssh->outputBuffer.length;
-
-        /* fill in the packetSz, paddingSz */
-        c32toa(packetSz, output);
-        output[LENGTH_SZ] = paddingSz;
-
         ssh->outputBuffer.length += LENGTH_SZ + PAD_LENGTH_SZ;
     }
 
@@ -5213,9 +5201,30 @@ static int BundlePacket(WOLFSSH* ssh)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
+        word32 payloadSz, packetSz;
+
         output = ssh->outputBuffer.buffer;
         idx = ssh->outputBuffer.length;
-        paddingSz = ssh->paddingSz;
+
+        /* Calculate the actual payload size based on the data
+         * written into the buffer. packetStartIdx is before the
+         * LENGTH and PAD_LENGTH, subtract those out, as well. */
+        payloadSz = idx - ssh->packetStartIdx - LENGTH_SZ - PAD_LENGTH_SZ;
+
+        /* Minimum value for paddingSz is 4. */
+        paddingSz = ssh->blockSz -
+                    ((ssh->aeadMode ? 0 : LENGTH_SZ) +
+                     PAD_LENGTH_SZ + payloadSz) % ssh->blockSz;
+        if (paddingSz < MIN_PAD_LENGTH)
+            paddingSz += ssh->blockSz;
+
+        packetSz = PAD_LENGTH_SZ + payloadSz + paddingSz;
+
+        /* fill in the packetSz, paddingSz */
+        c32toa(packetSz, output + ssh->packetStartIdx);
+        output[ssh->packetStartIdx + LENGTH_SZ] = paddingSz;
+
+        /* end new */
 
         /* Add the padding */
         WLOG(WS_LOG_DEBUG, "BP: paddingSz = %u", paddingSz);

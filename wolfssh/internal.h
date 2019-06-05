@@ -298,7 +298,6 @@ struct WOLFSSH {
     word32 seq;
     word32 peerSeq;
     word32 packetStartIdx; /* Current send packet start index */
-    byte paddingSz;        /* Current send packet padding size */
     byte acceptState;
     byte connectState;
     byte clientState;
