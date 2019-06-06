@@ -3703,7 +3703,8 @@ static int DoUserAuthFailure(WOLFSSH* ssh,
     byte authList[3]; /* Should only ever be password, publickey, hostname */
     word32 authListSz = 3;
     byte partialSuccess;
-    byte authId = ID_USERAUTH_PUBLICKEY;
+    byte authId = ID_USERAUTH_PASSWORD;
+        /* To use public key authentication, change authId. */
     int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthFailure()");

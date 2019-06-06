@@ -280,6 +280,8 @@ static void ShowUsage(void)
     printf(" -P <password> password for username, prompted if omitted\n");
     printf(" -d <path>     set the default local path\n");
     printf(" -N            use non blocking sockets\n");
+    printf(" -e            use ECC user authentication\n");
+    /*printf(" -E            use ECC server authentication\n");*/
 
     ShowCommands();
 }
@@ -289,6 +291,8 @@ byte userPassword[256];
 byte userPublicKeyType[32];
 byte userPublicKey[512];
 word32 userPublicKeySz;
+const byte* userPrivateKey;
+word32 userPrivateKeySz;
 
 const char hanselPublicRsa[] =
     "AAAAB3NzaC1yc2EAAAADAQABAAABAQC9P3ZFowOsONXHD5MwWiCciXytBRZGho"
@@ -443,7 +447,8 @@ static int wsUserAuth(byte authType,
         else {
             printf("Password: ");
             SetEcho(0);
-            if (WFGETS((char*)userPassword, sizeof(userPassword), stdin) == NULL) {
+            if (WFGETS((char*)userPassword, sizeof(userPassword),
+                        stdin) == NULL) {
                 printf("Getting password failed.\n");
                 ret = WOLFSSH_USERAUTH_FAILURE;
             }
@@ -467,20 +472,12 @@ static int wsUserAuth(byte authType,
     else if (authType == WOLFSSH_USERAUTH_PUBLICKEY) {
         WS_UserAuthData_PublicKey* pk = &authData->sf.publicKey;
 
-        userPublicKeySz = (word32)sizeof(userPublicKey);
-
-        Base64_Decode((byte*)hanselPublicRsa,
-                (word32)WSTRLEN(hanselPublicRsa),
-                (byte*)userPublicKey, &userPublicKeySz);
-
-        strncpy((char*)userPublicKeyType, "ssh-rsa",
-                sizeof(userPublicKeyType));
         pk->publicKeyType = userPublicKeyType;
         pk->publicKeyTypeSz = (word32)WSTRLEN((char*)userPublicKeyType);
         pk->publicKey = userPublicKey;
         pk->publicKeySz = userPublicKeySz;
-        pk->privateKey = hanselPrivateRsa;
-        pk->privateKeySz = hanselPrivateRsaSz;
+        pk->privateKey = userPrivateKey;
+        pk->privateKeySz = userPrivateKeySz;
         ret = WOLFSSH_USERAUTH_SUCCESS;
     }
 
@@ -490,10 +487,16 @@ static int wsUserAuth(byte authType,
 
 static int wsPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 {
-    printf("Sample public key check callback\n"
-           "  public key = %p\n"
-           "  public key size = %u\n"
-           "  ctx = %s\n", pubKey, pubKeySz, (const char*)ctx);
+    #ifdef DEBUG_WOLFSSH
+        printf("Sample public key check callback\n"
+               "  public key = %p\n"
+               "  public key size = %u\n"
+               "  ctx = %s\n", pubKey, pubKeySz, (const char*)ctx);
+    #else
+        (void)pubKey;
+        (void)pubKeySz;
+        (void)ctx;
+    #endif
     return 0;
 }
 
@@ -1146,6 +1149,8 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     socklen_t clientAddrSz = sizeof(clientAddr);
     int ret;
     int ch;
+    int userEcc = 0;
+    /* int peerEcc = 0; */
     word16 port = wolfSshPort;
     char* host = (char*)wolfSshIp;
     const char* username = NULL;
@@ -1157,10 +1162,20 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     char**  argv = ((func_args*)args)->argv;
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?d:h:p:u:P:N")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?d:eEh:p:u:P:N")) != -1) {
         switch (ch) {
             case 'd':
                 defaultSftpPath = myoptarg;
+                break;
+
+            case 'e':
+                userEcc = 1;
+                break;
+
+            case 'E':
+                /* peerEcc = 1; */
+                err_sys("wolfSFTP ECC server authentication "
+                        "not yet supported.");
                 break;
 
             case 'h':
@@ -1207,6 +1222,29 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         err_sys("Use -N when testing forced non blocking");
     }
 #endif
+
+    if (userEcc) {
+        userPublicKeySz = (word32)sizeof(userPublicKey);
+        Base64_Decode((byte*)hanselPublicEcc,
+                (word32)WSTRLEN(hanselPublicEcc),
+                (byte*)userPublicKey, &userPublicKeySz);
+
+        strncpy((char*)userPublicKeyType, "ecdsa-sha2-nistp256",
+                sizeof(userPublicKeyType));
+        userPrivateKey = hanselPrivateEcc;
+        userPrivateKeySz = hanselPrivateEccSz;
+    }
+    else {
+        userPublicKeySz = (word32)sizeof(userPublicKey);
+        Base64_Decode((byte*)hanselPublicRsa,
+                (word32)WSTRLEN(hanselPublicRsa),
+                (byte*)userPublicKey, &userPublicKeySz);
+
+        strncpy((char*)userPublicKeyType, "ssh-rsa",
+                sizeof(userPublicKeyType));
+        userPrivateKey = hanselPrivateRsa;
+        userPrivateKeySz = hanselPrivateRsaSz;
+    }
 
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
     if (ctx == NULL)

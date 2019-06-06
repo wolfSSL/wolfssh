@@ -184,7 +184,7 @@ static int wsUserAuth(byte authType,
         }
     }
     else if (authType == WOLFSSH_USERAUTH_PUBLICKEY) {
-        fprintf(stderr, "username = %p\n", authData->username);
+        ret = WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
     }
 
     return ret;
@@ -193,10 +193,16 @@ static int wsUserAuth(byte authType,
 
 static int wsPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 {
-    printf("Sample public key check callback\n"
-           "  public key = %p\n"
-           "  public key size = %u\n"
-           "  ctx = %s\n", pubKey, pubKeySz, (const char*)ctx);
+    #ifdef DEBUG_WOLFSSH
+        printf("Sample public key check callback\n"
+               "  public key = %p\n"
+               "  public key size = %u\n"
+               "  ctx = %s\n", pubKey, pubKeySz, (const char*)ctx);
+    #else
+        (void)pubKey;
+        (void)pubKeySz;
+        (void)ctx;
+    #endif
     return 0;
 }
 
@@ -525,10 +531,8 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         ret = wolfSSH_connect(ssh);
     else
         ret = NonBlockSSH_connect(ssh);
-    if (ret != WS_SUCCESS) {
-        printf("err = %s\n", wolfSSH_get_error_name(ssh));
+    if (ret != WS_SUCCESS)
         err_sys("Couldn't connect SSH stream.");
-    }
 
 #if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS)
     if (keepOpen) /* set up for psuedo-terminal */
