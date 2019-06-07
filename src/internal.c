@@ -6918,7 +6918,6 @@ static int PrepareUserAuthRequestEcc(WOLFSSH* ssh, word32* payloadSz,
     if (ret == WS_SUCCESS) {
         if (authData->sf.publicKey.hasSignature) {
             int sigSz = wc_ecc_sig_size(&keySig->ks.ecc.key);
-            sigSz = 64;
 
             if (sigSz >= 0) {
                 *payloadSz += (LENGTH_SZ * 5) + (word32)sigSz +
@@ -6949,7 +6948,7 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
     int ret = WS_SUCCESS;
     byte* r;
     byte* s;
-    byte sig[512];
+    byte sig[72]; /* wc_ecc_sig_size() for a prime256 key. */
     word32 sigSz = sizeof(sig), rSz, sSz;
 
     if (ssh == NULL || output == NULL || idx == NULL || authData == NULL ||
