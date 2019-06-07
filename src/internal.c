@@ -1546,7 +1546,7 @@ static int GetBoolean(byte* v, byte* buf, word32 len, word32* idx)
 }
 
 
-static int GetUint32(word32* v, byte* buf, word32 len, word32* idx)
+static int GetUint32(word32* v, const byte* buf, word32 len, word32* idx)
 {
     int result = WS_BUFFER_E;
 
@@ -3227,11 +3227,11 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     enum wc_HashType enmhashId = (enum wc_HashType)hashId;
     byte checkDigest[MAX_ENCODED_SIG_SZ];
     int checkDigestSz;
-    byte* publicKeyType;
+    const byte* publicKeyType;
     word32 publicKeyTypeSz = 0;
-    byte* n;
+    const byte* n;
     word32 nSz = 0;
-    byte* e = NULL;
+    const byte* e = NULL;
     word32 eSz = 0;
     word32 i = 0;
     int ret = WS_SUCCESS;
@@ -3345,12 +3345,12 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
                                 byte hashId, byte* digest, word32 digestSz)
 {
     ecc_key key;
-    byte* publicKeyType;
+    const byte* publicKeyType;
     word32 publicKeyTypeSz = 0;
-    byte* curveName;
+    const byte* curveName;
     word32 curveNameSz = 0;
     mp_int r, s;
-    byte* q = NULL;
+    const byte* q = NULL;
     word32 sz, qSz;
     word32 i = 0;
     int ret = WS_SUCCESS;
@@ -3534,6 +3534,10 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                 WLOG(WS_LOG_DEBUG, "DUARPK: callback result = %d", ret);
                 if (ret == WOLFSSH_USERAUTH_SUCCESS)
                     ret = WS_SUCCESS;
+                else if (ret == WOLFSSH_USERAUTH_INVALID_PUBLICKEY) {
+                    WLOG(WS_LOG_DEBUG, "DUARPK: client key rejected");
+                    ret = WS_PUBKEY_REJECTED_E;
+                }
                 else {
                     ret = SendUserAuthFailure(ssh, 0);
                     authFailure = 1;
@@ -3700,6 +3704,7 @@ static int DoUserAuthFailure(WOLFSSH* ssh,
     word32 authListSz = 3;
     byte partialSuccess;
     byte authId = ID_USERAUTH_PASSWORD;
+        /* To use public key authentication, change authId. */
     int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthFailure()");
@@ -3714,7 +3719,7 @@ static int DoUserAuthFailure(WOLFSSH* ssh,
         ret = GetBoolean(&partialSuccess, buf, len, idx);
 
     if (ret == WS_SUCCESS)
-        ret = SendUserAuthRequest(ssh, authId);
+        ret = SendUserAuthRequest(ssh, authId, 0);
 
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthFailure(), ret = %d", ret);
     return ret;
@@ -6697,11 +6702,440 @@ int SendServiceAccept(WOLFSSH* ssh, byte serviceId)
 }
 
 
-static const char cannedAuths[] = "publickey,password";
+typedef struct WS_KeySignature {
+    byte keySigId;
+    word32 sigSz;
+    const char *name;
+    word32 nameSz;
+    union {
+        struct {
+            RsaKey key;
+            byte e[256];
+            word32 eSz;
+            byte ePad;
+            byte n[256];
+            word32 nSz;
+            byte nPad;
+        } rsa;
+        struct {
+            ecc_key key;
+            word32 keyBlobSz;
+            const char *keyBlobName;
+            word32 keyBlobNameSz;
+            byte q[256];
+            word32 qSz;
+            byte qPad;
+            const char *primeName;
+            word32 primeNameSz;
+        } ecc;
+    } ks;
+} WS_KeySignature;
+
+
+static const char cannedAuths[] = "publickey";
 static const word32 cannedAuthsSz = sizeof(cannedAuths) - 1;
 
 
-int SendUserAuthRequest(WOLFSSH* ssh, byte authId)
+/* Updates the payload size, and maybe loads keys. */
+static int PrepareUserAuthRequestPassword(WOLFSSH* ssh, word32* payloadSz,
+        const WS_UserAuthData* authData)
+{
+    int ret = WS_SUCCESS;
+
+    if (ssh == NULL || payloadSz == NULL || authData == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS)
+        *payloadSz += BOOLEAN_SZ + LENGTH_SZ +
+                authData->sf.password.passwordSz;
+
+    return ret;
+}
+
+
+static int BuildUserAuthRequestPassword(WOLFSSH* ssh,
+        byte* output, word32* idx,
+        const WS_UserAuthData* authData)
+{
+    int ret = WS_SUCCESS;
+    word32 begin;
+
+    if (ssh == NULL || output == NULL || idx == NULL || authData == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        begin = *idx;
+        output[begin++] = 0; /* Boolean "FALSE" for password change */
+        c32toa(authData->sf.password.passwordSz, output + begin);
+        begin += LENGTH_SZ;
+        WMEMCPY(output + begin, authData->sf.password.password,
+                authData->sf.password.passwordSz);
+        begin += authData->sf.password.passwordSz;
+        *idx = begin;
+    }
+
+    return ret;
+}
+
+
+static int PrepareUserAuthRequestRsa(WOLFSSH* ssh, word32* payloadSz,
+        const WS_UserAuthData* authData, WS_KeySignature* keySig)
+{
+    int ret = WS_SUCCESS;
+
+    if (ssh == NULL || payloadSz == NULL || authData == NULL || keySig == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS)
+        ret = wc_InitRsaKey(&keySig->ks.rsa.key, NULL);
+
+    if (ret == WS_SUCCESS) {
+        word32 idx = 0;
+        ret = wc_RsaPrivateKeyDecode(authData->sf.publicKey.privateKey,
+                &idx, &keySig->ks.rsa.key,
+                authData->sf.publicKey.privateKeySz);
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (authData->sf.publicKey.hasSignature) {
+            int sigSz = wc_RsaEncryptSize(&keySig->ks.rsa.key);
+
+            if (sigSz >= 0) {
+                *payloadSz += (LENGTH_SZ * 3) + (word32)sigSz +
+                        authData->sf.publicKey.publicKeyTypeSz;
+                keySig->sigSz = sigSz;
+            }
+            else
+                ret = sigSz;
+        }
+    }
+
+    return ret;
+}
+
+
+static int BuildUserAuthRequestRsa(WOLFSSH* ssh,
+        byte* output, word32* idx,
+        const WS_UserAuthData* authData,
+        const byte* sigStart, word32 sigStartIdx,
+        WS_KeySignature* keySig)
+{
+    wc_HashAlg hash;
+    byte digest[WC_MAX_DIGEST_SIZE];
+    word32 digestSz;
+    word32 begin;
+    enum wc_HashType hashId = WC_HASH_TYPE_SHA;
+    int ret = WS_SUCCESS;
+
+    if (ssh == NULL || output == NULL || idx == NULL || authData == NULL ||
+            sigStart == NULL || keySig == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    begin = *idx;
+
+    if (ret == WS_SUCCESS) {
+        hashId = HashForId(keySig->keySigId);
+        WMEMSET(digest, 0, sizeof(digest));
+        digestSz = wc_HashGetDigestSize(hashId);
+        ret = wc_HashInit(&hash, hashId);
+    }
+
+    if (ret == WS_SUCCESS) {
+        c32toa(ssh->sessionIdSz, digest);
+        ret = wc_HashUpdate(&hash, hashId, digest, UINT32_SZ);
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = wc_HashUpdate(&hash, hashId,
+                ssh->sessionId, ssh->sessionIdSz);
+
+    if (ret == WS_SUCCESS)
+        ret = wc_HashUpdate(&hash, hashId,
+                 sigStart, begin - sigStartIdx);
+
+    if (ret == WS_SUCCESS)
+        ret = wc_HashFinal(&hash, hashId, digest);
+
+    if (ret == WS_SUCCESS) {
+        byte encDigest[MAX_ENCODED_SIG_SZ];
+        int encDigestSz;
+
+        c32toa(keySig->sigSz + 7 + LENGTH_SZ * 2, output + begin);
+        begin += LENGTH_SZ;
+        c32toa(7, output + begin);
+        begin += LENGTH_SZ;
+        WMEMCPY(output + begin, "ssh-rsa", 7);
+        begin += 7;
+        c32toa(keySig->sigSz, output + begin);
+        begin += LENGTH_SZ;
+        encDigestSz = wc_EncodeSignature(encDigest, digest, digestSz,
+                wc_HashGetOID(hashId));
+        if (encDigestSz <= 0) {
+            WLOG(WS_LOG_DEBUG, "SUAR: Bad Encode Sig");
+            ret = WS_CRYPTO_FAILED;
+        }
+        else {
+            int sigSz;
+            WLOG(WS_LOG_INFO, "Signing hash with RSA.");
+            sigSz = wc_RsaSSL_Sign(encDigest, encDigestSz,
+                    output + begin, keySig->sigSz,
+                    &keySig->ks.rsa.key, ssh->rng);
+            if (sigSz <= 0 || (word32)sigSz != keySig->sigSz) {
+                WLOG(WS_LOG_DEBUG, "SUAR: Bad RSA Sign");
+                ret = WS_RSA_E;
+            }
+        }
+
+        if (ret == WS_SUCCESS) {
+            begin += keySig->sigSz;
+            *idx = begin;
+        }
+    }
+
+    return ret;
+}
+
+
+static int PrepareUserAuthRequestEcc(WOLFSSH* ssh, word32* payloadSz,
+        const WS_UserAuthData* authData, WS_KeySignature* keySig)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering PrepareUserAuthRequestEcc()");
+    if (ssh == NULL || payloadSz == NULL || authData == NULL || keySig == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS)
+        ret = wc_ecc_init(&keySig->ks.ecc.key);
+
+    if (ret == WS_SUCCESS) {
+        word32 idx = 0;
+        ret = wc_EccPrivateKeyDecode(authData->sf.publicKey.privateKey,
+                &idx, &keySig->ks.ecc.key,
+                authData->sf.publicKey.privateKeySz);
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (authData->sf.publicKey.hasSignature) {
+            int sigSz = wc_ecc_sig_size(&keySig->ks.ecc.key);
+
+            if (sigSz >= 0) {
+                *payloadSz += (LENGTH_SZ * 5) + (word32)sigSz +
+                        authData->sf.publicKey.publicKeyTypeSz;
+                keySig->sigSz = sigSz;
+            }
+            else
+                ret = sigSz;
+        }
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving PrepareUserAuthRequestEcc(), ret = %d", ret);
+    return ret;
+}
+
+
+static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
+        byte* output, word32* idx,
+        const WS_UserAuthData* authData,
+        const byte* sigStart, word32 sigStartIdx,
+        WS_KeySignature* keySig)
+{
+    wc_HashAlg hash;
+    byte digest[WC_MAX_DIGEST_SIZE];
+    word32 digestSz;
+    word32 begin;
+    enum wc_HashType hashId = WC_HASH_TYPE_SHA;
+    int ret = WS_SUCCESS;
+    byte* r;
+    byte* s;
+    byte sig[72]; /* wc_ecc_sig_size() for a prime256 key. */
+    word32 sigSz = sizeof(sig), rSz, sSz;
+
+    if (ssh == NULL || output == NULL || idx == NULL || authData == NULL ||
+            sigStart == NULL || keySig == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    begin = *idx;
+
+    if (ret == WS_SUCCESS) {
+        hashId = HashForId(keySig->keySigId);
+        WMEMSET(digest, 0, sizeof(digest));
+        digestSz = wc_HashGetDigestSize(hashId);
+        ret = wc_HashInit(&hash, hashId);
+    }
+
+    if (ret == WS_SUCCESS) {
+        c32toa(ssh->sessionIdSz, digest);
+        ret = wc_HashUpdate(&hash, hashId, digest, UINT32_SZ);
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = wc_HashUpdate(&hash, hashId,
+                ssh->sessionId, ssh->sessionIdSz);
+
+    if (ret == WS_SUCCESS)
+        ret = wc_HashUpdate(&hash, hashId,
+                 sigStart, begin - sigStartIdx);
+
+    if (ret == WS_SUCCESS)
+        ret = wc_HashFinal(&hash, hashId, digest);
+
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_INFO, "Signing hash with ECDSA.");
+        ret = wc_ecc_sign_hash(digest, digestSz, sig, &sigSz,
+                ssh->rng, &keySig->ks.ecc.key);
+        if (ret != WS_SUCCESS) {
+            WLOG(WS_LOG_DEBUG, "SUAR: Bad ECC Sign");
+            ret = WS_ECC_E;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        rSz = sSz = sizeof(sig) / 2;
+        r = sig;
+        s = sig + rSz;
+        ret = wc_ecc_sig_to_rs(sig, sigSz, r, &rSz, s, &sSz);
+    }
+
+    if (ret == WS_SUCCESS) {
+        byte rPad = (r[0] & 0x80) ? 1 : 0;
+        byte sPad = (s[0] & 0x80) ? 1 : 0;
+
+        rPad = 0; sPad = 0;
+        c32toa(rSz + rPad + sSz + sPad +
+                cannedKeyAlgoEcc256NamesSz + LENGTH_SZ * 4,
+                output + begin);
+        begin += LENGTH_SZ;
+
+        c32toa(cannedKeyAlgoEcc256NamesSz, output + begin);
+        begin += LENGTH_SZ;
+
+        WMEMCPY(output + begin, cannedKeyAlgoEcc256Names,
+                cannedKeyAlgoEcc256NamesSz);
+        begin += cannedKeyAlgoEcc256NamesSz;
+
+        c32toa(rSz + rPad + sSz + sPad, output + begin);
+        begin += LENGTH_SZ;
+
+        c32toa(rSz + rPad, output + begin);
+        begin += LENGTH_SZ;
+
+        if (rPad)
+            output[begin++] = 0;
+
+        WMEMCPY(output + begin, r, rSz);
+        begin += rSz;
+
+        c32toa(sSz + sPad, output + begin);
+        begin += LENGTH_SZ;
+
+        if (sPad)
+            output[begin++] = 0;
+
+        WMEMCPY(output + begin, s, sSz);
+        begin += sSz;
+    }
+
+    if (ret == WS_SUCCESS)
+        *idx = begin;
+
+    return ret;
+}
+
+
+static int PrepareUserAuthRequestPublicKey(WOLFSSH* ssh, word32* payloadSz,
+        const WS_UserAuthData* authData, WS_KeySignature* keySig)
+{
+    int ret = WS_SUCCESS;
+
+    if (ssh == NULL || payloadSz == NULL || authData == NULL || keySig == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    keySig->keySigId = NameToId(
+            (const char*)authData->sf.publicKey.publicKeyType,
+            authData->sf.publicKey.publicKeyTypeSz);
+
+    if (ret == WS_SUCCESS) {
+        /* Add the boolean size to the payload, and the lengths of
+         * the public key algorithm name, and the public key length. */
+        *payloadSz += BOOLEAN_SZ + (LENGTH_SZ * 2) +
+            authData->sf.publicKey.publicKeyTypeSz +
+            authData->sf.publicKey.publicKeySz;
+    }
+
+    if (keySig->keySigId == ID_SSH_RSA)
+        ret = PrepareUserAuthRequestRsa(ssh, payloadSz, authData, keySig);
+    else if (keySig->keySigId == ID_ECDSA_SHA2_NISTP256 ||
+            keySig->keySigId == ID_ECDSA_SHA2_NISTP384 ||
+            keySig->keySigId == ID_ECDSA_SHA2_NISTP521)
+        ret = PrepareUserAuthRequestEcc(ssh, payloadSz, authData, keySig);
+    else
+        ret = WS_INVALID_ALGO_ID;
+
+    return ret;
+}
+
+
+static int BuildUserAuthRequestPublicKey(WOLFSSH* ssh,
+        byte* output, word32* idx,
+        const WS_UserAuthData* authData,
+        const byte* sigStart, word32 sigStartIdx,
+        WS_KeySignature* keySig)
+{
+    const WS_UserAuthData_PublicKey* pk;
+    word32 begin;
+    int ret = WS_SUCCESS;
+
+    if (ssh == NULL || output == NULL || idx == NULL || authData == NULL ||
+            sigStart == NULL || keySig == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        begin = *idx;
+        pk = &authData->sf.publicKey;
+        output[begin++] = pk->hasSignature;
+        c32toa(pk->publicKeyTypeSz, output + begin);
+        begin += LENGTH_SZ;
+        WMEMCPY(output + begin, pk->publicKeyType, pk->publicKeyTypeSz);
+        begin += pk->publicKeyTypeSz;
+        c32toa(pk->publicKeySz, output + begin);
+        begin += LENGTH_SZ;
+        WMEMCPY(output + begin, pk->publicKey, pk->publicKeySz);
+        begin += pk->publicKeySz;
+
+        if (pk->hasSignature) {
+            if (keySig->keySigId == ID_SSH_RSA)
+                ret = BuildUserAuthRequestRsa(ssh, output, &begin,
+                        authData, sigStart, sigStartIdx, keySig);
+            else if (keySig->keySigId == ID_ECDSA_SHA2_NISTP256 ||
+                    keySig->keySigId == ID_ECDSA_SHA2_NISTP384 ||
+                    keySig->keySigId == ID_ECDSA_SHA2_NISTP521)
+                ret = BuildUserAuthRequestEcc(ssh, output, &begin,
+                        authData, sigStart, sigStartIdx, keySig);
+        }
+        else
+            ret = WS_INVALID_ALGO_ID;
+
+        if (ret == WS_SUCCESS)
+            *idx = begin;
+    }
+
+    return ret;
+}
+
+
+static void CleanupUserAuthRequestPublicKey(WS_KeySignature* keySig)
+{
+    if (keySig != NULL) {
+        if (keySig->keySigId == ID_SSH_RSA)
+            wc_FreeRsaKey(&keySig->ks.rsa.key);
+        else
+            wc_ecc_free(&keySig->ks.ecc.key);
+    }
+}
+
+
+int SendUserAuthRequest(WOLFSSH* ssh, byte authId, int addSig)
 {
     byte* output;
     word32 idx;
@@ -6712,22 +7146,44 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId)
     word32 payloadSz;
     int ret = WS_SUCCESS;
     WS_UserAuthData authData;
+    WS_KeySignature keySig;
+
+    (void)addSig;
 
     WLOG(WS_LOG_DEBUG, "Entering SendUserAuthRequest()");
 
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
+    WMEMSET(&keySig, 0, sizeof(WS_KeySignature));
+
     if (ret == WS_SUCCESS) {
-        WMEMSET(&authData, 0, sizeof(WS_UserAuthData));
-        if (authId == ID_USERAUTH_PASSWORD && ssh->ctx->userAuthCb != NULL) {
-            WLOG(WS_LOG_DEBUG, "SUARPW: Calling the userauth callback");
-            ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PASSWORD,
-                                       &authData, ssh->userAuthCtx);
-            if (ret != WOLFSSH_USERAUTH_SUCCESS) {
-                WLOG(WS_LOG_DEBUG, "SUARPW: Couldn't get password");
-                ret = WS_FATAL_ERROR;
+        if (ssh->ctx->userAuthCb != NULL) {
+            WLOG(WS_LOG_DEBUG, "SUAR: Calling the userauth callback");
+
+            WMEMSET(&authData, 0, sizeof(authData));
+            authData.type = authId;
+
+            if (authId == ID_USERAUTH_PASSWORD) {
+                ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PASSWORD,
+                        &authData, ssh->userAuthCtx);
+                if (ret != WOLFSSH_USERAUTH_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, "SUAR: Couldn't get password");
+                    ret = WS_FATAL_ERROR;
+                }
             }
+            else if (authId == ID_USERAUTH_PUBLICKEY) {
+                ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PUBLICKEY,
+                        &authData, ssh->userAuthCtx);
+                if (ret != WOLFSSH_USERAUTH_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, "SUAR: Couldn't get key");
+                    ret = WS_FATAL_ERROR;
+                }
+            }
+        }
+        else {
+            WLOG(WS_LOG_DEBUG, "SUAR: No user auth callback");
+            ret = WS_FATAL_ERROR;
         }
     }
 
@@ -6740,9 +7196,12 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId)
         payloadSz = MSG_ID_SZ + (LENGTH_SZ * 3) +
                     ssh->userNameSz + serviceNameSz + authNameSz;
 
-        if (authId == ID_USERAUTH_PASSWORD) {
-            payloadSz += BOOLEAN_SZ + LENGTH_SZ +
-                         authData.sf.password.passwordSz;
+        if (authId == ID_USERAUTH_PASSWORD)
+            ret = PrepareUserAuthRequestPassword(ssh, &payloadSz, &authData);
+        else if (authId == ID_USERAUTH_PUBLICKEY) {
+            authData.sf.publicKey.hasSignature = 1;
+            ret = PrepareUserAuthRequestPublicKey(ssh, &payloadSz, &authData,
+                    &keySig);
         }
         else if (authId != ID_NONE)
             ret = WS_INVALID_ALGO_ID;
@@ -6752,8 +7211,14 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId)
         ret = PreparePacket(ssh, payloadSz);
 
     if (ret == WS_SUCCESS) {
+        byte* sigStart;
+        word32 sigStartIdx;
+
         output = ssh->outputBuffer.buffer;
         idx = ssh->outputBuffer.length;
+
+        sigStart = output + idx;
+        sigStartIdx = idx;
 
         output[idx++] = MSGID_USERAUTH_REQUEST;
         c32toa(ssh->userNameSz, output + idx);
@@ -6772,18 +7237,23 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId)
         idx += authNameSz;
 
         if (authId == ID_USERAUTH_PASSWORD) {
-            output[idx++] = 0; /* Boolean "FALSE" for password change */
-            c32toa(authData.sf.password.passwordSz, output + idx);
-            idx += LENGTH_SZ;
-            WMEMCPY(output + idx, authData.sf.password.password,
-                    authData.sf.password.passwordSz);
-            idx += authData.sf.password.passwordSz;
+            (void)sigStart;
+            (void)sigStartIdx;
+
+            ret = BuildUserAuthRequestPassword(ssh, output, &idx, &authData);
         }
+        else if (authId == ID_USERAUTH_PUBLICKEY)
+            ret = BuildUserAuthRequestPublicKey(ssh, output, &idx, &authData,
+                    sigStart, sigStartIdx, &keySig);
 
-        ssh->outputBuffer.length = idx;
-
-        ret = BundlePacket(ssh);
+        if (ret == WS_SUCCESS) {
+            ssh->outputBuffer.length = idx;
+            ret = BundlePacket(ssh);
+        }
     }
+
+    if (authId == ID_USERAUTH_PUBLICKEY)
+        CleanupUserAuthRequestPublicKey(&keySig);
 
     if (ret == WS_SUCCESS)
         ret = wolfSSH_SendPacket(ssh);

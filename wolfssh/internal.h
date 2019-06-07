@@ -511,7 +511,7 @@ WOLFSSH_LOCAL int SendIgnore(WOLFSSH*, const unsigned char*, word32);
 WOLFSSH_LOCAL int SendDebug(WOLFSSH*, byte, const char*);
 WOLFSSH_LOCAL int SendServiceRequest(WOLFSSH*, byte);
 WOLFSSH_LOCAL int SendServiceAccept(WOLFSSH*, byte);
-WOLFSSH_LOCAL int SendUserAuthRequest(WOLFSSH*, byte);
+WOLFSSH_LOCAL int SendUserAuthRequest(WOLFSSH*, byte, int);
 WOLFSSH_LOCAL int SendUserAuthSuccess(WOLFSSH*);
 WOLFSSH_LOCAL int SendUserAuthFailure(WOLFSSH*, byte);
 WOLFSSH_LOCAL int SendUserAuthBanner(WOLFSSH*);

@@ -110,32 +110,34 @@ WOLFSSH_API void* wolfSSH_GetIOWriteCtx(WOLFSSH*);
 
 /* User Authentication callback */
 typedef struct WS_UserAuthData_Password {
-    byte* password;
+    const byte* password;
     word32 passwordSz;
     /* The following are present for future use. */
     byte hasNewPassword;
-    byte* newPassword;
+    const byte* newPassword;
     word32 newPasswordSz;
 } WS_UserAuthData_Password;
 
 typedef struct WS_UserAuthData_PublicKey {
-    byte* dataToSign;
-    byte* publicKeyType;
+    const byte* dataToSign;
+    const byte* publicKeyType;
     word32 publicKeyTypeSz;
-    byte* publicKey;
+    const byte* publicKey;
     word32 publicKeySz;
+    const byte* privateKey;
+    word32 privateKeySz;
     byte hasSignature;
-    byte* signature;
+    const byte* signature;
     word32 signatureSz;
 } WS_UserAuthData_PublicKey;
 
 typedef struct WS_UserAuthData {
     byte type;
-    byte* username;
+    const byte* username;
     word32 usernameSz;
-    byte* serviceName;
+    const byte* serviceName;
     word32 serviceNameSz;
-    byte* authName;
+    const byte* authName;
     word32 authNameSz;
     union {
         WS_UserAuthData_Password password;

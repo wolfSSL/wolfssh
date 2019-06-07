@@ -154,33 +154,37 @@ static int wsUserAuth(byte authType,
     word32 passwordSz = 0;
     int ret = WOLFSSH_USERAUTH_SUCCESS;
 
-    (void)authType;
-    if (defaultPassword != NULL) {
-        passwordSz = (word32)strlen(defaultPassword);
-        memcpy(userPassword, defaultPassword, passwordSz);
-    }
-    else {
-        printf("Password: ");
-        SetEcho(0);
-        if (fgets((char*)userPassword, sizeof(userPassword), stdin) == NULL) {
-            printf("Getting password failed.\n");
-            ret = WOLFSSH_USERAUTH_FAILURE;
+    if (authType == WOLFSSH_USERAUTH_PASSWORD) {
+        if (defaultPassword != NULL) {
+            passwordSz = (word32)strlen(defaultPassword);
+            memcpy(userPassword, defaultPassword, passwordSz);
         }
         else {
-            char* c = strpbrk((char*)userPassword, "\r\n");;
-            if (c != NULL)
-                *c = '\0';
+            printf("Password: ");
+            SetEcho(0);
+            if (fgets((char*)userPassword, sizeof(userPassword), stdin) == NULL) {
+                printf("Getting password failed.\n");
+                ret = WOLFSSH_USERAUTH_FAILURE;
+            }
+            else {
+                char* c = strpbrk((char*)userPassword, "\r\n");;
+                if (c != NULL)
+                    *c = '\0';
+            }
+            passwordSz = (word32)strlen((const char*)userPassword);
+            SetEcho(1);
+            #ifdef USE_WINDOWS_API
+                printf("\r\n");
+            #endif
         }
-        passwordSz = (word32)strlen((const char*)userPassword);
-        SetEcho(1);
-#ifdef USE_WINDOWS_API
-        printf("\r\n");
-#endif
-    }
 
-    if (ret == WOLFSSH_USERAUTH_SUCCESS) {
-        authData->sf.password.password = userPassword;
-        authData->sf.password.passwordSz = passwordSz;
+        if (ret == WOLFSSH_USERAUTH_SUCCESS) {
+            authData->sf.password.password = userPassword;
+            authData->sf.password.passwordSz = passwordSz;
+        }
+    }
+    else if (authType == WOLFSSH_USERAUTH_PUBLICKEY) {
+        ret = WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
     }
 
     return ret;
@@ -189,10 +193,16 @@ static int wsUserAuth(byte authType,
 
 static int wsPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 {
-    printf("Sample public key check callback\n"
-           "  public key = %p\n"
-           "  public key size = %u\n"
-           "  ctx = %s\n", pubKey, pubKeySz, (const char*)ctx);
+    #ifdef DEBUG_WOLFSSH
+        printf("Sample public key check callback\n"
+               "  public key = %p\n"
+               "  public key size = %u\n"
+               "  ctx = %s\n", pubKey, pubKeySz, (const char*)ctx);
+    #else
+        (void)pubKey;
+        (void)pubKeySz;
+        (void)ctx;
+    #endif
     return 0;
 }
 
@@ -521,10 +531,8 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         ret = wolfSSH_connect(ssh);
     else
         ret = NonBlockSSH_connect(ssh);
-    if (ret != WS_SUCCESS) {
-        printf("err = %s\n", wolfSSH_get_error_name(ssh));
+    if (ret != WS_SUCCESS)
         err_sys("Couldn't connect SSH stream.");
-    }
 
 #if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS)
     if (keepOpen) /* set up for psuedo-terminal */

@@ -720,7 +720,8 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     word32 defaultHighwater = EXAMPLE_HIGHWATER_MARK;
     word32 threadCount = 0;
     int multipleConnections = 1;
-    int useEcc = 0;
+    int userEcc = 0;
+    int peerEcc = 0;
     int ch;
     word16 port = wolfSshPort;
     char* readyFile = NULL;
@@ -732,7 +733,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     serverArgs->return_code = 0;
 
     if (argc > 0) {
-    while ((ch = mygetopt(argc, argv, "?1d:ep:R:N")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?1d:eEp:R:N")) != -1) {
         switch (ch) {
             case '?' :
                 ShowUsage();
@@ -743,7 +744,11 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 break;
 
             case 'e' :
-                useEcc = 1;
+                userEcc = 1;
+                break;
+
+            case 'E':
+                peerEcc = 1;
                 break;
 
             case 'p':
@@ -804,7 +809,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         byte buf[SCRATCH_BUFFER_SZ];
         word32 bufSz;
 
-        bufSz = load_key(useEcc, buf, SCRATCH_BUFFER_SZ);
+        bufSz = load_key(peerEcc, buf, SCRATCH_BUFFER_SZ);
         if (bufSz == 0) {
             fprintf(stderr, "Couldn't load key file.\n");
             exit(EXIT_FAILURE);
@@ -820,8 +825,8 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         buf[bufSz] = 0;
         LoadPasswordBuffer(buf, bufSz, &pwMapList);
 
-        bufName = useEcc ? samplePublicKeyEccBuffer :
-                           samplePublicKeyRsaBuffer;
+        bufName = userEcc ? samplePublicKeyEccBuffer :
+                            samplePublicKeyRsaBuffer;
         bufSz = (word32)strlen(bufName);
         memcpy(buf, bufName, bufSz);
         buf[bufSz] = 0;
