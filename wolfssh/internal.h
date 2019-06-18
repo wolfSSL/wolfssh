@@ -178,6 +178,8 @@ struct WOLFSSH_CTX {
     WS_CallbackIOSend ioSendCb;       /* I/O Send Callback */
     WS_CallbackUserAuth userAuthCb;   /* User Authentication Callback */
     WS_CallbackHighwater highwaterCb; /* Data Highwater Mark Callback */
+    WS_CallbackGlobalReq globalReqCb; /* Global Request Callback */
+    WS_CallbackReqSuccess reqSuccessCb; /* Global Request Success Callback */
 #ifdef WOLFSSH_SCP
     WS_CallbackScpRecv scpRecvCb;     /* SCP receive callback */
     WS_CallbackScpSend scpSendCb;     /* SCP send callback */
@@ -294,6 +296,8 @@ struct WOLFSSH {
     word32 highwaterMark;
     byte highwaterFlag;    /* Set when highwater CB called */
     void* highwaterCtx;
+    void* globalReqCtx;    /* Global Request CB context */
+    void* reqSuccessCtx;   /* Global Request Sucess CB context */
     word32 curSz;
     word32 seq;
     word32 peerSeq;
@@ -508,6 +512,7 @@ WOLFSSH_LOCAL int SendNewKeys(WOLFSSH*);
 WOLFSSH_LOCAL int SendUnimplemented(WOLFSSH*);
 WOLFSSH_LOCAL int SendDisconnect(WOLFSSH*, word32);
 WOLFSSH_LOCAL int SendIgnore(WOLFSSH*, const unsigned char*, word32);
+WOLFSSH_LOCAL int SendGlobalRequest(WOLFSSH *, const unsigned char *, word32, int);
 WOLFSSH_LOCAL int SendDebug(WOLFSSH*, byte, const char*);
 WOLFSSH_LOCAL int SendServiceRequest(WOLFSSH*, byte);
 WOLFSSH_LOCAL int SendServiceAccept(WOLFSSH*, byte);

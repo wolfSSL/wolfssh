@@ -227,6 +227,53 @@ void* wolfSSH_GetHighwaterCtx(WOLFSSH* ssh)
     return NULL;
 }
 
+void wolfSSH_SetGlobalReq(WOLFSSH_CTX *ctx, WS_CallbackGlobalReq cb)
+{
+    if (ctx)
+        ctx->globalReqCb = cb;
+}
+
+void wolfSSH_SetReqSuccess(WOLFSSH_CTX *ctx, WS_CallbackReqSuccess cb)
+{
+    if (ctx)
+        ctx->reqSuccessCb = cb;
+}
+
+void wolfSSH_SetGlobalReqCtx(WOLFSSH* ssh, void *ctx)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetGlobalReqCtx()");
+
+    if (ssh)
+        ssh->globalReqCtx = ctx;
+}
+
+void *wolfSSH_GetGlobalReqCtx(WOLFSSH* ssh)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_GetGlobalReqCtx()");
+
+    if (ssh)
+        return ssh->globalReqCtx;
+
+    return NULL;
+}
+
+void wolfSSH_SetReqSuccessCtx(WOLFSSH *ssh, void *ctx)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetReqSuccessCtx()");
+
+    if (ssh)
+        ssh->reqSuccessCtx = ctx;
+}
+
+void *wolfSSH_GetReqSuccessCtx(WOLFSSH *ssh)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_GetReqSuccessCtx()");
+
+    if (ssh)
+        return ssh->reqSuccessCtx;
+
+    return NULL;
+}
 
 int wolfSSH_get_error(const WOLFSSH* ssh)
 {
@@ -927,6 +974,15 @@ int wolfSSH_stream_exit(WOLFSSH* ssh, int status)
     return ret;
 }
 
+int wolfSSH_global_request(WOLFSSH *ssh, const unsigned char* data, word32 dataSz, int reply)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_global_request");
+    if (ssh == NULL || data == NULL)
+        return WS_BAD_ARGUMENT;
+    if (reply != 0 && reply != 1)
+        return WS_BAD_ARGUMENT;
+    return SendGlobalRequest(ssh, data, dataSz, reply);
+}
 
 
 /* Reads pending data from extended data buffer. Currently can be used to get

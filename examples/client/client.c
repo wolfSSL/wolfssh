@@ -376,6 +376,28 @@ static THREAD_RET readPeer(void* in)
 }
 #endif /* !SINGLE_THREADED && !WOLFSSL_NUCLEUS */
 
+#if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
+
+static int callbackGlobalReq(WOLFSSH *ssh, void *buf, word32 sz, int reply, void *ctx)
+{
+    char reqStr[] = "SampleRequest";
+
+    if ((WOLFSSH *)ssh != *(WOLFSSH **)ctx)
+    {
+        printf("ssh(%x) != ctx(%x)\n", (unsigned int)ssh, (unsigned int)*(WOLFSSH **)ctx);
+        return WS_FATAL_ERROR;
+    }
+
+    if (strlen(reqStr) == sz && (strncmp((char *)buf, reqStr, sz) == 0)
+        && reply == 1){
+        printf("Global Request\n");
+        return WS_SUCCESS;
+    } else {
+        return WS_FATAL_ERROR;
+    }
+
+}
+#endif
 
 THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 {
@@ -489,6 +511,11 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     if (ssh == NULL)
         err_sys("Couldn't create wolfSSH session.");
 
+#if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
+    wolfSSH_SetGlobalReq(ctx, callbackGlobalReq);
+    wolfSSH_SetGlobalReqCtx(ssh, &ssh); /* dummy ctx */
+#endif
+
     if (password != NULL)
         wolfSSH_SetUserAuthCtx(ssh, (void*)password);
 
@@ -569,7 +596,12 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     }
     else
 #endif
+
+#if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
+    while (!imExit) {
+#else
     if (!imExit) {
+#endif
         ret = wolfSSH_stream_send(ssh, (byte*)testString,
                                   (word32)strlen(testString));
         if (ret <= 0)
@@ -586,6 +618,10 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
         rxBuf[ret] = '\0';
         printf("Server said: %s\n", rxBuf);
+
+#if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
+        sleep(10);
+#endif
     }
     ret = wolfSSH_shutdown(ssh);
     WCLOSESOCKET(sockFd);

@@ -108,6 +108,16 @@ WOLFSSH_API void wolfSSH_SetIOWriteCtx(WOLFSSH*, void*);
 WOLFSSH_API void* wolfSSH_GetIOReadCtx(WOLFSSH*);
 WOLFSSH_API void* wolfSSH_GetIOWriteCtx(WOLFSSH*);
 
+/* Global Request callbacks */
+typedef int (*WS_CallbackGlobalReq)(WOLFSSH*, void*, word32, int, void*);
+WOLFSSH_API void wolfSSH_SetGlobalReq(WOLFSSH_CTX*, WS_CallbackGlobalReq);
+WOLFSSH_API void wolfSSH_SetGlobalReqCtx(WOLFSSH*, void*);
+WOLFSSH_API void *wolfSSH_GetGlobalReqCtx(WOLFSSH*);
+typedef int (*WS_CallbackReqSuccess)(WOLFSSH*, void*, word32, void*);
+WOLFSSH_API void wolfSSH_SetReqSuccess(WOLFSSH_CTX*, WS_CallbackReqSuccess);
+WOLFSSH_API void wolfSSH_SetReqSuccessCtx(WOLFSSH*, void *);
+WOLFSSH_API void* wolfSSH_GetReqSuccessCtx(WOLFSSH*);
+
 /* User Authentication callback */
 typedef struct WS_UserAuthData_Password {
     const byte* password;
@@ -174,6 +184,7 @@ WOLFSSH_API int wolfSSH_stream_exit(WOLFSSH*, int);
 WOLFSSH_API int wolfSSH_extended_data_read(WOLFSSH*, byte*, word32);
 WOLFSSH_API int wolfSSH_TriggerKeyExchange(WOLFSSH*);
 WOLFSSH_API int wolfSSH_SendIgnore(WOLFSSH*, const byte*, word32);
+WOLFSSH_API int wolfSSH_global_request(WOLFSSH*, const unsigned char*, word32, int);
 
 WOLFSSH_API void wolfSSH_GetStats(WOLFSSH*,
                                   word32*, word32*, word32*, word32*);

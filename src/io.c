@@ -102,7 +102,6 @@ void* wolfSSH_GetIOWriteCtx(WOLFSSH* ssh)
     return NULL;
 }
 
-
 #ifndef WOLFSSH_USER_IO
 
 /* default I/O callbacks, use BSD style sockets */
