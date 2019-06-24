@@ -7076,10 +7076,12 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS) {
-        byte rPad = (r[0] & 0x80) ? 1 : 0;
-        byte sPad = (s[0] & 0x80) ? 1 : 0;
+        byte rPad;
+        byte sPad;
 
-        rPad = 0; sPad = 0;
+        /* adds a byte of padding if needed to avoid negative values */
+        rPad = (r[0] & 0x80) ? 1 : 0;
+        sPad = (s[0] & 0x80) ? 1 : 0;
         c32toa(rSz + rPad + sSz + sPad +
                 cannedKeyAlgoEcc256NamesSz + LENGTH_SZ * 4,
                 output + begin);
