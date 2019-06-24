@@ -2402,8 +2402,10 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     WLOG(WS_LOG_DEBUG, "Entering DoKexDhReply()");
 
     if (ssh == NULL || ssh->handshake == NULL || buf == NULL ||
-            len == 0 || idx == NULL)
+            len == 0 || idx == NULL) {
         ret = WS_BAD_ARGUMENT;
+        return ret;
+    }
 
     if (ret == WS_SUCCESS && len < LENGTH_SZ*2 + *idx) {
         ret = WS_BUFFER_E;
@@ -2437,7 +2439,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             ret = WS_SUCCESS;
         }
     }
-    
+
     enmhashId = (enum wc_HashType)ssh->handshake->hashId;
 
     if (ret == WS_SUCCESS)
@@ -7126,8 +7128,10 @@ static int PrepareUserAuthRequestPublicKey(WOLFSSH* ssh, word32* payloadSz,
 {
     int ret = WS_SUCCESS;
 
-    if (ssh == NULL || payloadSz == NULL || authData == NULL || keySig == NULL)
+    if (ssh == NULL || payloadSz == NULL || authData == NULL || keySig == NULL) {
         ret = WS_BAD_ARGUMENT;
+        return ret;
+    }
 
     keySig->keySigId = NameToId(
             (const char*)authData->sf.publicKey.publicKeyType,
