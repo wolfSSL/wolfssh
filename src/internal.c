@@ -3211,7 +3211,7 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
             pw->newPassword = NULL;
             pw->newPasswordSz = 0;
         }
-
+        
         if (ssh->ctx->userAuthCb != NULL) {
             WLOG(WS_LOG_DEBUG, "DUARPW: Calling the userauth callback");
             ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PASSWORD,
@@ -3221,14 +3221,24 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
                 ssh->clientState = CLIENT_USERAUTH_DONE;
                 ret = WS_SUCCESS;
             }
+            else if (ret == WOLFSSH_USERAUTH_INVALID_PASSWORD) {
+                WLOG(WS_LOG_DEBUG, "DUARPW: password check failed");
+                ret = SendUserAuthFailure(ssh, 0);
+            }
             else {
                 WLOG(WS_LOG_DEBUG, "DUARPW: password check failed");
                 ret = SendUserAuthFailure(ssh, 0);
+                if(ret == WS_SUCCESS){
+                    WLOG(WS_LOG_DEBUG, "DUARPW: WS_INVALID_USERNAME");
+                    ret = WS_INVALID_USERNAME;
+                }
             }
         }
         else {
             WLOG(WS_LOG_DEBUG, "DUARPW: No user auth callback");
             ret = SendUserAuthFailure(ssh, 0);
+            if (ret == WS_SUCCESS)
+                ret = WS_FATAL_ERROR;
         }
     }
 
