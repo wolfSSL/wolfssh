@@ -391,6 +391,11 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
         ret = 0; /* don't break out of loop with version miss match */
         printf("Unsupported version error\n");
     }
+    else if (ret == WS_FATAL_ERROR && wolfSSH_get_error(threadCtx->ssh) ==
+                                          WS_USER_AUTH_E) {
+        ret = 0; /* don't break out of loop with user auth error */
+        printf("User Authentication error\n");
+    }
 
     if (wolfSSH_shutdown(threadCtx->ssh) != WS_SUCCESS) {
         fprintf(stderr, "Error with SSH shutdown.\n");
