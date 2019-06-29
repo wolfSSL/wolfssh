@@ -742,7 +742,7 @@ static int wsUserAuth(byte authType,
                 else {
                     ret = (authType == WOLFSSH_USERAUTH_PASSWORD ? 
                                 (--passwdRetry > 0 ? 
-                                WOLFSSH_USERAUTH_INVALID_PASSWORD : WS_PASSWORD_RETRYOUT)
+                                WOLFSSH_USERAUTH_INVALID_PASSWORD : WOLFSSH_USERAUTH_REJECTED)
                                 : WOLFSSH_USERAUTH_INVALID_PUBLICKEY);
                     if (passwdRetry == 0)passwdRetry = MAX_PASSWD_RETRY;
                     return ret;

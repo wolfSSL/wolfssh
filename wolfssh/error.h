@@ -105,9 +105,8 @@ enum WS_ErrorCodes {
     WS_CLOSE_FILE_E         = -1065, /* Unable to close local file */
     WS_PUBKEY_REJECTED_E    = -1066, /* Server public key rejected */
     WS_EXTDATA              = -1067, /* Extended Data available to be read */
-    WS_PASSWORD_RETRYOUT    = -1068, /* Password retry out */
 
-    WS_LAST_E               = -1068  /* Update this to indicate last error */
+    WS_LAST_E               = -1067  /* Update this to indicate last error */
 };
 
 

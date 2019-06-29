@@ -272,9 +272,6 @@ const char* GetErrorString(int err)
         case WS_EXTDATA:
             return "Extended Data available to be read";
 
-        case WS_PASSWORD_RETRYOUT:
-            return "Password retry out";
-
         default:
             return "Unknown error code";
     }
@@ -3224,11 +3221,11 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
                 ssh->clientState = CLIENT_USERAUTH_DONE;
                 ret = WS_SUCCESS;
             }
-            else if (ret == WS_PASSWORD_RETRYOUT) {
-                WLOG(WS_LOG_DEBUG, "DUARPW: password retry out");
+            else if (ret == WOLFSSH_USERAUTH_REJECTED) {
+                WLOG(WS_LOG_DEBUG, "DUARPW: password rejected");
                 ret = SendUserAuthFailure(ssh, 0);
                 if (ret == WS_SUCCESS)
-                    ret = WS_PASSWORD_RETRYOUT;
+                    ret = WS_FATAL_ERROR;
             }
             else {
                 WLOG(WS_LOG_DEBUG, "DUARPW: password check failed, retry");
