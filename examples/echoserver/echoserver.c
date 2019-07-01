@@ -391,6 +391,11 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
         ret = 0; /* don't break out of loop with version miss match */
         printf("Unsupported version error\n");
     }
+    else if (ret == WS_FATAL_ERROR && wolfSSH_get_error(threadCtx->ssh) ==
+                                          WS_USER_AUTH_E) {
+        ret = 0; /* don't break out of loop with user auth error */
+        printf("User Authentication error\n");
+    }
 
     if (wolfSSH_shutdown(threadCtx->ssh) != WS_SUCCESS) {
         fprintf(stderr, "Error with SSH shutdown.\n");
@@ -683,6 +688,8 @@ static int LoadPublicKeyBuffer(byte* buf, word32 bufSz, PwMapList* list)
     return 0;
 }
 
+#define MAX_PASSWD_RETRY 3
+static int passwdRetry = MAX_PASSWD_RETRY;
 
 static int wsUserAuth(byte authType,
                       WS_UserAuthData* authData,
@@ -691,6 +698,7 @@ static int wsUserAuth(byte authType,
     PwMapList* list;
     PwMap* map;
     byte authHash[SHA256_DIGEST_SIZE];
+    int ret;
 
     if (ctx == NULL) {
         fprintf(stderr, "wsUserAuth: ctx not set");
@@ -737,9 +745,12 @@ static int wsUserAuth(byte authType,
                     return WOLFSSH_USERAUTH_SUCCESS;
                 }
                 else {
-                    return (authType == WOLFSSH_USERAUTH_PASSWORD ?
-                            WOLFSSH_USERAUTH_INVALID_PASSWORD :
-                            WOLFSSH_USERAUTH_INVALID_PUBLICKEY);
+                    ret = (authType == WOLFSSH_USERAUTH_PASSWORD ? 
+                                (--passwdRetry > 0 ? 
+                                WOLFSSH_USERAUTH_INVALID_PASSWORD : WOLFSSH_USERAUTH_REJECTED)
+                                : WOLFSSH_USERAUTH_INVALID_PUBLICKEY);
+                    if (passwdRetry == 0)passwdRetry = MAX_PASSWD_RETRY;
+                    return ret;
                 }
             }
             else {

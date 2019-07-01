@@ -272,6 +272,9 @@ const char* GetErrorString(int err)
         case WS_EXTDATA:
             return "Extended Data available to be read";
 
+        case WS_USER_AUTH_E:
+            return "User authentication error";
+
         default:
             return "Unknown error code";
     }
@@ -3211,7 +3214,7 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
             pw->newPassword = NULL;
             pw->newPasswordSz = 0;
         }
-
+        
         if (ssh->ctx->userAuthCb != NULL) {
             WLOG(WS_LOG_DEBUG, "DUARPW: Calling the userauth callback");
             ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PASSWORD,
@@ -3221,14 +3224,22 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
                 ssh->clientState = CLIENT_USERAUTH_DONE;
                 ret = WS_SUCCESS;
             }
+            else if (ret == WOLFSSH_USERAUTH_REJECTED) {
+                WLOG(WS_LOG_DEBUG, "DUARPW: password rejected");
+                ret = SendUserAuthFailure(ssh, 0);
+                if (ret == WS_SUCCESS)
+                    ret = WS_USER_AUTH_E;
+            }
             else {
-                WLOG(WS_LOG_DEBUG, "DUARPW: password check failed");
+                WLOG(WS_LOG_DEBUG, "DUARPW: password check failed, retry");
                 ret = SendUserAuthFailure(ssh, 0);
             }
         }
         else {
             WLOG(WS_LOG_DEBUG, "DUARPW: No user auth callback");
             ret = SendUserAuthFailure(ssh, 0);
+            if (ret == WS_SUCCESS)
+                ret = WS_FATAL_ERROR;
         }
     }
 
