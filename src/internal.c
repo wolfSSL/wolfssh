@@ -272,6 +272,9 @@ const char* GetErrorString(int err)
         case WS_EXTDATA:
             return "Extended Data available to be read";
 
+        case WS_USER_AUTH_E:
+            return "User authentication error";
+
         default:
             return "Unknown error code";
     }
