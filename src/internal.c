@@ -1122,8 +1122,11 @@ int ChannelAppend(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel)
 
     WLOG(WS_LOG_DEBUG, "Entering ChannelAppend()");
 
-    if (ssh == NULL || channel == NULL)
+    if (ssh == NULL || channel == NULL) {
         ret = WS_BAD_ARGUMENT;
+        WLOG(WS_LOG_DEBUG, "Leaving ChannelAppend(), ret = %d", ret);
+        return ret;
+    }
 
     if (ssh->channelList == NULL) {
         ssh->channelList = channel;
@@ -2407,6 +2410,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     if (ssh == NULL || ssh->handshake == NULL || buf == NULL ||
             len == 0 || idx == NULL) {
         ret = WS_BAD_ARGUMENT;
+        WLOG(WS_LOG_DEBUG, "Leaving DoKexDhReply(), ret = %d", ret);
         return ret;
     }
 
@@ -3769,8 +3773,11 @@ static int DoUserAuthSuccess(WOLFSSH* ssh,
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthSuccess()");
 
     /* This message does not have any payload. len should be 0. */
-    if (ssh == NULL || buf == NULL || len != 0 || idx == NULL)
+    if (ssh == NULL || buf == NULL || len != 0 || idx == NULL) {
         ret = WS_BAD_ARGUMENT;
+        WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthSuccess(), ret = %d", ret);
+        return ret;
+    }
 
     ssh->serverState = SERVER_USERAUTH_ACCEPT_DONE;
 
@@ -3819,8 +3826,11 @@ static int DoGlobalRequest(WOLFSSH* ssh,
 
     WLOG(WS_LOG_DEBUG, "Entering DoGlobalRequest()");
 
-    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
+    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL) {
         ret = WS_BAD_ARGUMENT;
+        WLOG(WS_LOG_DEBUG, "Leaving DoGlobalRequest(), ret = %d", ret);
+        return ret;
+    }
 
     if (ret == WS_SUCCESS) {
         begin = *idx;
@@ -4285,8 +4295,11 @@ static int DoChannelSuccess(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
     WLOG(WS_LOG_DEBUG, "Entering DoChannelSuccess()");
 
-    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
+    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL) {
         ret = WS_BAD_ARGUMENT;
+        WLOG(WS_LOG_DEBUG, "Leaving DoChannelSuccess(), ret = %d", ret);
+        return ret;
+    }
 
     ssh->serverState = SERVER_DONE;
 
@@ -6514,11 +6527,15 @@ int SendUnimplemented(WOLFSSH* ssh)
     word32 idx = 0;
     int ret = WS_SUCCESS;
 
+    if (ssh == NULL) {
+        WLOG(WS_LOG_DEBUG, "Entering SendUnimplemented(), no parameter");
+        ret = WS_BAD_ARGUMENT;
+        WLOG(WS_LOG_DEBUG, "Leaving SendUnimplemented(), ret = %d", ret);
+        return ret;
+    }
+
     WLOG(WS_LOG_DEBUG,
          "Entering SendUnimplemented(), peerSeq = %u", ssh->peerSeq);
-
-    if (ssh == NULL)
-        ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS)
         ret = PreparePacket(ssh, MSG_ID_SZ + LENGTH_SZ);
@@ -6919,8 +6936,10 @@ static int BuildUserAuthRequestRsa(WOLFSSH* ssh,
     int ret = WS_SUCCESS;
 
     if (ssh == NULL || output == NULL || idx == NULL || authData == NULL ||
-            sigStart == NULL || keySig == NULL)
+            sigStart == NULL || keySig == NULL) {
         ret = WS_BAD_ARGUMENT;
+        return ret;
+    }
 
     begin = *idx;
 
@@ -7043,8 +7062,10 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
     word32 sigSz = sizeof(sig), rSz, sSz;
 
     if (ssh == NULL || output == NULL || idx == NULL || authData == NULL ||
-            sigStart == NULL || keySig == NULL)
+            sigStart == NULL || keySig == NULL) {
         ret = WS_BAD_ARGUMENT;
+        return ret;
+    }
 
     begin = *idx;
 
