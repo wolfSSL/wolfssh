@@ -719,7 +719,6 @@ THREAD_RETURN WOLFSSH_THREAD server_test(void* args)
             ThreadJoin(thread);
 #else
         server_worker(threadCtx);
-        (void)thread;
 #endif /* SINGLE_THREADED */
     } while (multipleConnections);
 
