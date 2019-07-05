@@ -6657,7 +6657,7 @@ int wolfSSH_SFTP_Remove(WOLFSSH* ssh, char* f)
         case STATE_RM_LSTAT:
             /* check file is there to be removed */
             if ((ret = wolfSSH_SFTP_LSTAT(ssh, f, &atrb)) != WS_SUCCESS) {
-                if (ssh->error != WS_WANT_READ && ssh->error != WS_WANT_READ) {
+                if (ssh->error != WS_WANT_WRITE && ssh->error != WS_WANT_READ) {
                     WLOG(WS_LOG_SFTP, "Error verifying file");
                     wolfSSH_SFTP_ClearState(ssh, STATE_ID_RM);
                 }
@@ -6671,7 +6671,7 @@ int wolfSSH_SFTP_Remove(WOLFSSH* ssh, char* f)
             ret = SendPacketType(ssh, WOLFSSH_FTP_REMOVE, (byte*)f,
                     (word32)WSTRLEN(f));
             if (ret != WS_SUCCESS) {
-                if (ssh->error != WS_WANT_READ && ssh->error != WS_WANT_READ) {
+                if (ssh->error != WS_WANT_WRITE && ssh->error != WS_WANT_READ) {
                     wolfSSH_SFTP_ClearState(ssh, STATE_ID_RM);
                 }
                 return ret;
@@ -6683,7 +6683,7 @@ int wolfSSH_SFTP_Remove(WOLFSSH* ssh, char* f)
         case STATE_RM_GET:
             ret = SFTP_GetHeader(ssh, &state->reqId, &type);
             if (ret <= 0 || type != WOLFSSH_FTP_STATUS) {
-                if (ssh->error != WS_WANT_READ && ssh->error != WS_WANT_READ) {
+                if (ssh->error != WS_WANT_WRITE && ssh->error != WS_WANT_READ) {
                     WLOG(WS_LOG_SFTP, "Unexpected packet type");
                     wolfSSH_SFTP_ClearState(ssh, STATE_ID_RM);
                 }
@@ -6702,7 +6702,7 @@ int wolfSSH_SFTP_Remove(WOLFSSH* ssh, char* f)
 
        case STATE_RM_DOSTATUS:
             if ((ret = wolfSSH_stream_read(ssh, state->data, state->sz)) < 0) {
-                if (ssh->error != WS_WANT_READ && ssh->error != WS_WANT_READ) {
+                if (ssh->error != WS_WANT_WRITE && ssh->error != WS_WANT_READ) {
                     WLOG(WS_LOG_SFTP, "Unexpected packet type");
                     wolfSSH_SFTP_ClearState(ssh, STATE_ID_RM);
                 }
