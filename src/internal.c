@@ -6840,7 +6840,7 @@ typedef struct WS_KeySignature {
 } WS_KeySignature;
 
 
-static const char cannedAuths[] = "publickey";
+static const char cannedAuths[] = "publickey,password";
 static const word32 cannedAuthsSz = sizeof(cannedAuths) - 1;
 
 
