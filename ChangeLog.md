@@ -5,13 +5,17 @@
 - Added example server with Renesas CS+ port
 - Fix for initializing UserAuthData to all zeros before use
 - Fix for SFTP “LS” operation when setting the default window size to 2048
-- Add structure size print out option -z to example client when the macro WOLFSSH_SHOW_SIZES is defined
-- Additional automated tests of wolfSSH_CTX_UsePrivateKey_buffer and fix for call when key is already loaded
+- Add structure size print out option -z to example client when the macro
+  WOLFSSH_SHOW_SIZES is defined
+- Additional automated tests of wolfSSH_CTX_UsePrivateKey_buffer and fix for
+  call when key is already loaded
 - Refactoring done to internal handling of packet assembly
 - Add client side public key authentication support
 - Support added for global requests
-- Fix for NULL dereference warning, rPad/sPad initialization and SFTP check on want read. Thanks to GitHub user LinuxJedi for the reports
-- Addition of WS_USER_AUTH_E error returned when user authentication callback returns WOLFSSH_USERAUTH_REJECTED
+- Fix for NULL dereference warning, rPad/sPad initialization and SFTP check on
+  want read. Thanks to GitHub user LinuxJedi for the reports
+- Addition of WS_USER_AUTH_E error returned when user authentication callback
+  returns WOLFSSH_USERAUTH_REJECTED
 - Remove void cast on variable not compiled in with single threaded builds
 
 
