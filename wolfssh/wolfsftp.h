@@ -125,7 +125,7 @@ struct WS_SFTP_FILEATRB_EX {
 
 typedef struct WS_SFTP_FILEATRB {
     word32 flags;
-    word32 sz[2];
+    word32 sz[2]; /* sz[0] being the lower and sz[1] being the upper */
     word32 uid; /* user ID */
     word32 gid; /* group ID */
     word32 per; /* permissions */
