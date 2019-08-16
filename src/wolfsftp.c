@@ -4971,6 +4971,7 @@ static int wolfSSH_SFTP_GetHandle(WOLFSSH* ssh, byte* handle, word32* handleSz)
                 if (state->bufSz > WOLFSSH_MAX_HANDLE ||
                         *handleSz < state->bufSz) {
                     WLOG(WS_LOG_SFTP, "Handle size found was too big");
+                    WLOG(WS_LOG_SFTP, "Check size set in input handleSz");
                     ssh->error = WS_BUFFER_E;
                     ret = WS_FATAL_ERROR;
                     state->state = STATE_GET_HANDLE_CLEANUP;
@@ -5626,7 +5627,8 @@ int wolfSSH_SFTP_Open(WOLFSSH* ssh, char* dir, word32 reason,
  *
  * handle   file handle given by sftp server
  * handleSz size of handle
- * ofst     offset to start writing at
+ * ofst     offset to start reading at. 2 word32 array with value at ofst[0]
+ *          being the lower and ofst[1] being the upper.
  * in       data to be written
  * inSz     amount of data to be written from "in" buffer
  *
@@ -5836,7 +5838,8 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
  *
  * handle   file handle given by sftp server
  * handleSz size of handle
- * ofst     offset to start reading at
+ * ofst     offset to start reading at. 2 word32 array with value at ofst[0]
+ *          being the lower and ofst[1] being the upper.
  * out      buffer to hold resulting data read
  * outSz    size of "out" buffer
  *
@@ -6824,7 +6827,8 @@ int wolfSSH_SFTP_RMDIR(WOLFSSH* ssh, char* dir)
  *
  * frm      NULL terminated string holding the from name
  * to       NULL terminated string holding the to name
- * ofst     offset into file that should be saved
+ * ofst     offset into file that should be saved. 2 word32 array with value at
+ *          ofst[0] being the lower and ofst[1] being the upper.
  *
  * return WS_SUCCESS on success
  */
@@ -6875,7 +6879,8 @@ int wolfSSH_SFTP_SaveOfst(WOLFSSH* ssh, char* frm, char* to, const word32* ofst)
  *
  * frm      NULL terminated string holding the from name
  * to       NULL terminated string holding the to name
- * ofst     put the offset here, set to zero then updated
+ * ofst     put the offset here, set to zero then updated. 2 word32 array with
+ *          value at ofst[0] being the lower and ofst[1] being the upper.
  *
  * returns WS_SUCCESS is returned
  */
