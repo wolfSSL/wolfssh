@@ -18,7 +18,8 @@ endif
 tests_unit_test_LDADD        = src/libwolfssh.la
 tests_unit_test_DEPENDENCIES = src/libwolfssh.la
 
-tests_api_test_SOURCES       = tests/api.c
+tests_api_test_SOURCES       = tests/api.c \
+                               examples/echoserver/echoserver.c
 tests_api_test_CPPFLAGS      = -DNO_MAIN_DRIVER
 if BUILD_SCP
 tests_api_test_CPPFLAGS     += -DWOLFSSH_SCP

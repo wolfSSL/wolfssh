@@ -25,6 +25,21 @@
 #ifdef WOLFSSH_SCP
     #include <wolfssh/wolfscp.h>
 #endif
+#ifdef WOLFSSH_SFTP
+    #define WOLFSSH_TEST_LOCKING
+    #define WOLFSSH_TEST_THREADING
+
+    #define WOLFSSH_TEST_SERVER
+    #define WOLFSSH_TEST_ECHOSERVER
+    #include <wolfssh/test.h>
+
+    #include "examples/echoserver/echoserver.h"
+
+#endif
+
+/* for echoserver test cases */
+int myoptind = 0;
+char* myoptarg = NULL;
 
 
 #define Fail(description, result) do {                                         \
@@ -230,6 +245,93 @@ static int ConvertHexToBin(const char* h1, byte** b1, word32* b1Sz,
 
     return 0;
 }
+
+#ifdef WOLFSSH_SFTP
+byte userPassword[256];
+static int sftpUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
+{
+    int ret = WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
+
+    if (authType == WOLFSSH_USERAUTH_PASSWORD) {
+        const char* defaultPassword = (const char*)ctx;
+        word32 passwordSz;
+
+        ret = WOLFSSH_USERAUTH_SUCCESS;
+        if (defaultPassword != NULL) {
+            passwordSz = (word32)strlen(defaultPassword);
+            memcpy(userPassword, defaultPassword, passwordSz);
+        }
+        else {
+            printf("Expecting password set for test cases\n");
+            return ret;
+        }
+
+        if (ret == WOLFSSH_USERAUTH_SUCCESS) {
+            authData->sf.password.password = userPassword;
+            authData->sf.password.passwordSz = passwordSz;
+        }
+    }
+    return ret;
+}
+
+/* preforms connection to port, sets WOLFSSH_CTX and WOLFSSH on success
+ * caller needs to free ctx and ssh when done
+ */
+static void sftp_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
+{
+    SOCKET_T sockFd = WOLFSSH_SOCKET_INVALID;
+    SOCKADDR_IN_T clientAddr;
+    socklen_t clientAddrSz = sizeof(clientAddr);
+    int ret;
+    char* host = (char*)wolfSshIp;
+    const char* username = "jill";
+    const char* password = "upthehill";
+
+    if (ctx == NULL || ssh == NULL) {
+        return;
+    }
+
+    *ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (*ctx == NULL) {
+        return;
+    }
+
+    wolfSSH_SetUserAuth(*ctx, sftpUserAuth);
+    *ssh = wolfSSH_new(*ctx);
+    if (*ssh == NULL) {
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        return;
+    }
+
+    build_addr(&clientAddr, host, port);
+    tcp_socket(&sockFd);
+    ret = connect(sockFd, (const struct sockaddr *)&clientAddr, clientAddrSz);
+    if (ret != 0){
+        wolfSSH_free(*ssh);
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        *ssh = NULL;
+        return;
+    }
+
+    wolfSSH_SetUserAuthCtx(*ssh, (void*)password);
+    ret = wolfSSH_SetUsername(*ssh, username);
+    if (ret == WS_SUCCESS)
+        ret = wolfSSH_set_fd(*ssh, (int)sockFd);
+
+    if (ret == WS_SUCCESS)
+        ret = wolfSSH_SFTP_connect(*ssh);
+
+    if (ret != WS_SUCCESS){
+        wolfSSH_free(*ssh);
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        *ssh = NULL;
+        return;
+    }
+}
+#endif /* WOLFSSH_SFTP */
 
 
 enum WS_TestEndpointTypes {
@@ -529,6 +631,86 @@ static void test_wolfSSH_SCP_CB(void)
 #endif /* WOLFSSH_NO_CLIENT */
 }
 
+static void test_wolfSSH_SFTP_SendReadPacket(void)
+{
+#ifdef WOLFSSH_SFTP
+    func_args ser;
+    tcp_ready ready;
+    int argsCount;
+
+    const char* args[10];
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+
+    THREAD_TYPE serThread;
+
+    WMEMSET(&ser, 0, sizeof(func_args));
+
+    argsCount = 0;
+    args[argsCount++] = ".";
+    args[argsCount++] = "-1";
+#ifndef USE_WINDOWS_API
+    args[argsCount++] = "-p";
+    args[argsCount++] = "0";
+#endif
+    ser.argv   = (char**)args;
+    ser.argc    = argsCount;
+    ser.signal = &ready;
+    InitTcpReady(ser.signal);
+    ThreadStart(echoserver_test, (void*)&ser, &serThread);
+    WaitTcpReady(&ser);
+
+    sftp_client_connect(&ctx, &ssh, ready.port);
+    AssertNotNull(ctx);
+    AssertNotNull(ssh);
+
+    {
+        WS_SFTPNAME* tmp;
+        WS_SFTPNAME* current;
+        byte handle[WOLFSSH_MAX_HANDLE];
+        word32 handleSz = WOLFSSH_MAX_HANDLE;
+        const char* currentDir = ".";
+        byte* out = NULL;
+        int outSz = 18;
+        const word32 ofst[2] = {0};
+
+        current = wolfSSH_SFTP_LS(ssh, (char*)currentDir);
+        tmp = current;
+        while (tmp != NULL) {
+            if (tmp->atrb.sz[0] > 0) {
+                if (WMEMCMP(tmp->fName , ".", sizeof(".")) != 0 &&
+                        WMEMCMP(tmp->fName, "..", sizeof("..")) != 0)
+                break;
+            }
+            tmp = tmp->next;
+        }
+
+        out = (byte*)malloc(tmp->atrb.sz[0]);
+        AssertIntEQ(wolfSSH_SFTP_Open(ssh, tmp->fName, WOLFSSH_FXF_READ, NULL,
+                handle, &handleSz), WS_SUCCESS);
+
+        outSz = 18;
+        AssertIntEQ(wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz, ofst,
+                    out, outSz), outSz);
+
+        outSz = tmp->atrb.sz[0];
+        AssertIntEQ(wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz, ofst,
+                    out, outSz), outSz);
+
+        free(out);
+        wolfSSH_SFTP_Close(ssh, handle, handleSz);
+        wolfSSH_SFTPNAME_list_free(current);
+    }
+
+    AssertIntEQ(wolfSSH_shutdown(ssh), WS_SUCCESS);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    ThreadJoin(serThread);
+#endif
+}
+
+
+
 #ifdef USE_WINDOWS_API
 static byte color_test[] = {
     0x1B, 0x5B, 0x34, 0x6D, 0x75, 0x6E, 0x64, 0x65,
@@ -635,6 +817,10 @@ int main(void)
 
     /* SCP tests */
     test_wolfSSH_SCP_CB();
+
+    /* SFTP tests */
+    test_wolfSSH_SFTP_SendReadPacket();
+
 
     AssertIntEQ(wolfSSH_Cleanup(), WS_SUCCESS);
 
