@@ -689,10 +689,19 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
         AssertIntEQ(wolfSSH_SFTP_Open(ssh, tmp->fName, WOLFSSH_FXF_READ, NULL,
                 handle, &handleSz), WS_SUCCESS);
 
-        outSz = 18;
+        /* read 18 bytes */
+        if (tmp->atrb.sz[0] >= 18) {
+            outSz = 18;
+            AssertIntEQ(wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz, ofst,
+                    out, outSz), outSz);
+        }
+
+        /* partial read */
+        outSz = tmp->atrb.sz[0] / 2;
         AssertIntEQ(wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz, ofst,
                     out, outSz), outSz);
 
+        /* read all */
         outSz = tmp->atrb.sz[0];
         AssertIntEQ(wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz, ofst,
                     out, outSz), outSz);
