@@ -677,38 +677,40 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
         current = wolfSSH_SFTP_LS(ssh, (char*)currentDir);
         tmp = current;
         while (tmp != NULL) {
-            if (tmp->atrb.sz[0] > 0) {
-                if (WMEMCMP(tmp->fName , ".", sizeof(".")) != 0 &&
-                        WMEMCMP(tmp->fName, "..", sizeof("..")) != 0)
+            if ((tmp->atrb.sz[0] > 0) &&
+                    (tmp->atrb.flags & WOLFSSH_FILEATRB_PERM) &&
+                    !(tmp->atrb.per & 0x4000)) {
                 break;
             }
             tmp = tmp->next;
         }
 
-        out = (byte*)malloc(tmp->atrb.sz[0]);
-        AssertIntEQ(wolfSSH_SFTP_Open(ssh, tmp->fName, WOLFSSH_FXF_READ, NULL,
-                handle, &handleSz), WS_SUCCESS);
+        if (tmp != NULL) {
+            out = (byte*)malloc(tmp->atrb.sz[0]);
+            AssertIntEQ(wolfSSH_SFTP_Open(ssh, tmp->fName, WOLFSSH_FXF_READ,
+                        NULL, handle, &handleSz), WS_SUCCESS);
 
-        /* read 18 bytes */
-        if (tmp->atrb.sz[0] >= 18) {
-            outSz = 18;
+            /* read 18 bytes */
+            if (tmp->atrb.sz[0] >= 18) {
+                outSz = 18;
+                AssertIntEQ(wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz,
+                            ofst, out, outSz), outSz);
+            }
+
+            /* partial read */
+            outSz = tmp->atrb.sz[0] / 2;
             AssertIntEQ(wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz, ofst,
                     out, outSz), outSz);
+
+            /* read all */
+            outSz = tmp->atrb.sz[0];
+            AssertIntEQ(wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz, ofst,
+                    out, outSz), outSz);
+
+            free(out);
+            wolfSSH_SFTP_Close(ssh, handle, handleSz);
+            wolfSSH_SFTPNAME_list_free(current);
         }
-
-        /* partial read */
-        outSz = tmp->atrb.sz[0] / 2;
-        AssertIntEQ(wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz, ofst,
-                    out, outSz), outSz);
-
-        /* read all */
-        outSz = tmp->atrb.sz[0];
-        AssertIntEQ(wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz, ofst,
-                    out, outSz), outSz);
-
-        free(out);
-        wolfSSH_SFTP_Close(ssh, handle, handleSz);
-        wolfSSH_SFTPNAME_list_free(current);
     }
 
     AssertIntEQ(wolfSSH_shutdown(ssh), WS_SUCCESS);
