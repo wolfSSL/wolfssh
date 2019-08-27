@@ -4398,7 +4398,8 @@ void wolfSSH_SFTPNAME_free(WS_SFTPNAME* n)
 }
 
 
-/* free's linked list of sftp name structures */
+/* takes in the head of the list and free's all nodes in the list of sftp name
+ * structures */
 void wolfSSH_SFTPNAME_list_free(WS_SFTPNAME* n)
 {
     WS_SFTPNAME* tmp = NULL;
