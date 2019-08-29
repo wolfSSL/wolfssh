@@ -741,7 +741,21 @@ static INLINE void FreeTcpReady(tcp_ready* ready)
 }
 
 
-void WaitTcpReady(func_args*);
+static INLINE void WaitTcpReady(func_args* args)
+{
+#if defined(_POSIX_THREADS) && !defined(__MINGW32__)
+    pthread_mutex_lock(&args->signal->mutex);
+
+    if (!args->signal->ready)
+        pthread_cond_wait(&args->signal->cond, &args->signal->mutex);
+    args->signal->ready = 0; /* reset */
+
+    pthread_mutex_unlock(&args->signal->mutex);
+#else
+    (void)args;
+#endif
+}
+
 
 #endif /* WOLFSSH_TEST_LOCKING */
 

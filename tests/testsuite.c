@@ -164,18 +164,3 @@ int TestsuiteTest(int argc, char** argv)
 #endif /* !NO_WOLFSSH_SERVER && !NO_WOLFSSH_CLIENT */
 
 
-void WaitTcpReady(func_args* args)
-{
-#if defined(_POSIX_THREADS) && !defined(__MINGW32__)
-    pthread_mutex_lock(&args->signal->mutex);
-
-    if (!args->signal->ready)
-        pthread_cond_wait(&args->signal->cond, &args->signal->mutex);
-    args->signal->ready = 0; /* reset */
-
-    pthread_mutex_unlock(&args->signal->mutex);
-#else
-    (void)args;
-#endif
-}
-
