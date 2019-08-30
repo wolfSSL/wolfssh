@@ -607,10 +607,14 @@ extern "C" {
 #elif defined(USE_WINDOWS_API)
     #define WIOCTL ioctlsocket
 #else
+    #if defined(__CYGWIN__) && !defined(FIONREAD)
+        /* Cygwin defines FIONREAD in socket.h instead of ioctl.h */
+        #include <sys/socket.h>
+    #endif
     #include <sys/ioctl.h>
     #define WIOCTL ioctl
 #endif
-#endif
+#endif /* WIOCTL */
 
 
 #if defined(USE_WINDOWS_API)
