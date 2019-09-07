@@ -131,6 +131,17 @@ static int callbackReqSuccess(WOLFSSH *ssh, void *buf, word32 sz, void *ctx)
     return WS_SUCCESS;
 }
 
+static int callbackReqFailure(WOLFSSH *ssh, void *buf, word32 sz, void *ctx)
+{
+    if ((WOLFSSH *)ssh != *(WOLFSSH **)ctx)
+    {
+        printf("ssh(%x) != ctx(%x)\n", (unsigned int)ssh, (unsigned int)*(WOLFSSH **)ctx);
+        return WS_FATAL_ERROR;
+    }
+    printf("Global Request Failure[%d]: %s\n", sz, sz > 0 ? buf : "No payload");
+    return WS_SUCCESS;
+}
+
 static void *global_req(void *ctx)
 {
     int ret;
@@ -140,7 +151,9 @@ static void *global_req(void *ctx)
 
     wolfSSH_SetReqSuccess(threadCtx->ctx, callbackReqSuccess);
     wolfSSH_SetReqSuccessCtx(threadCtx->ssh, &threadCtx->ssh); /* dummy ctx */
-    
+    wolfSSH_SetReqFailure(threadCtx->ctx, callbackReqFailure);
+    wolfSSH_SetReqFailureCtx(threadCtx->ssh, &threadCtx->ssh); /* dummy ctx */
+
     while(1){
 
         sleep(SSH_TIMEOUT);
