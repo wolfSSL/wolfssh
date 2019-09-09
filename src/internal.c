@@ -3232,9 +3232,7 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
             }
             else if (ret == WOLFSSH_USERAUTH_REJECTED) {
                 WLOG(WS_LOG_DEBUG, "DUARPW: password rejected");
-                ret = SendUserAuthFailure(ssh, 0);
-                if (ret == WS_SUCCESS)
-                    ret = WS_USER_AUTH_E;
+                ret = WS_USER_AUTH_E;
             }
             else {
                 WLOG(WS_LOG_DEBUG, "DUARPW: password check failed, retry");
