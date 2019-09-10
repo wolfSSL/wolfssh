@@ -524,8 +524,7 @@ WOLFSSH_LOCAL int SendUserAuthFailure(WOLFSSH*, byte);
 WOLFSSH_LOCAL int SendUserAuthBanner(WOLFSSH*);
 WOLFSSH_LOCAL int SendUserAuthPkOk(WOLFSSH*, const byte*, word32,
                                    const byte*, word32);
-WOLFSSH_LOCAL int SendRequestSuccess(WOLFSSH*);
-WOLFSSH_LOCAL int SendRequestFailure(WOLFSSH *);
+WOLFSSH_LOCAL int SendRequestSuccess(WOLFSSH*, int);
 WOLFSSH_LOCAL int SendChannelOpenSession(WOLFSSH*, WOLFSSH_CHANNEL*);
 WOLFSSH_LOCAL int SendChannelOpenForward(WOLFSSH*, WOLFSSH_CHANNEL*);
 WOLFSSH_LOCAL int SendChannelOpenConf(WOLFSSH*);

@@ -3869,7 +3869,7 @@ static int DoGlobalRequest(WOLFSSH* ssh,
         *idx += len;
 
         if (wantReply)
-            ret = SendRequestFailure(ssh);
+            ret = SendRequestSuccess(ssh, ~WS_SUCCESS);
             /* response SSH_MSG_REQUEST_FAILURE to Keep-Alive. IETF:draft-ssh-global-requests */
     }
 
@@ -7569,14 +7569,14 @@ int SendUserAuthBanner(WOLFSSH* ssh)
     return ret;
 }
 
-
-int SendRequestSuccess(WOLFSSH* ssh)
+int SendRequestSuccess(WOLFSSH *ssh, int success)
 {
-    byte* output;
+    byte *output;
     word32 idx;
     int ret = WS_SUCCESS;
 
-    WLOG(WS_LOG_DEBUG, "Entering SendRequestSuccess");
+    WLOG(WS_LOG_DEBUG, "Entering SendRequestSuccess(), %s",
+         success == WS_SUCCESS ? "Success" : "Failure");
 
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
@@ -7584,11 +7584,13 @@ int SendRequestSuccess(WOLFSSH* ssh)
     if (ret == WS_SUCCESS)
         ret = PreparePacket(ssh, MSG_ID_SZ);
 
-    if (ret == WS_SUCCESS) {
+    if (ret == WS_SUCCESS)
+    {
         output = ssh->outputBuffer.buffer;
         idx = ssh->outputBuffer.length;
 
-        output[idx++] = MSGID_REQUEST_SUCCESS;
+        output[idx++] = success == WS_SUCCESS ? MSGID_REQUEST_SUCCESS : MSGID_REQUEST_FAILURE;
+
         ssh->outputBuffer.length = idx;
 
         ret = BundlePacket(ssh);
@@ -7600,40 +7602,7 @@ int SendRequestSuccess(WOLFSSH* ssh)
     WLOG(WS_LOG_DEBUG, "Leaving SendRequestSuccess(), ret = %d", ret);
     return ret;
 }
-
-int SendRequestFailure(WOLFSSH *ssh)
-{
-    byte *output;
-    word32 idx;
-    int ret = WS_SUCCESS;
-
-    WLOG(WS_LOG_DEBUG, "Entering SendRequestFailure");
-
-    if (ssh == NULL)
-        ret = WS_BAD_ARGUMENT;
-
-    if (ret == WS_SUCCESS)
-        ret = PreparePacket(ssh, MSG_ID_SZ);
-    printf("BundlePacket, ret=%d\n", ret);
-    if (ret == WS_SUCCESS)
-    {
-        output = ssh->outputBuffer.buffer;
-        idx = ssh->outputBuffer.length;
-
-        output[idx++] = MSGID_REQUEST_FAILURE;
-
-        ssh->outputBuffer.length = idx;
-        printf("BundlePacket\n");
-            ret = BundlePacket(ssh);
-    }
-
-    if (ret == WS_SUCCESS)
-        ret = wolfSSH_SendPacket(ssh);
-
-    WLOG(WS_LOG_DEBUG, "Leaving SendRequestFailure(), ret = %d", ret);
-    return ret;
-}
-
+ 
 static int SendChannelOpen(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel,
         byte* channelData, word32 channelDataSz)
 {
