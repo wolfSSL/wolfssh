@@ -2970,6 +2970,27 @@ static int DoRequestSuccess(WOLFSSH *ssh, byte *buf, word32 len, word32 *idx)
     
 }
 
+static int DoRequestFailure(WOLFSSH *ssh, byte *buf, word32 len, word32 *idx)
+{
+    word32 dataSz;
+    word32 begin = *idx;
+    int ret = WS_SUCCESS;
+
+    (void)ssh;
+    (void)len;
+
+    WLOG(WS_LOG_DEBUG, "DoRequestFalure, *idx=%d, len=%d", *idx, len);
+    ato32(buf + begin, &dataSz);
+    begin += LENGTH_SZ + dataSz;
+
+    if (ssh->ctx->reqFailureCb != NULL)
+        ret = ssh->ctx->reqFailureCb(ssh, &(buf[*idx]), len, ssh->reqFailureCtx);
+
+    *idx = begin;
+
+    return ret;
+}
+
 static int DoDebug(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
     byte  alwaysDisplay;
@@ -3819,7 +3840,6 @@ static int DoGlobalRequest(WOLFSSH* ssh,
 {
     word32 begin;
     int ret = WS_SUCCESS;
-    int cb_ret;
     char name[80];
     word32 nameSz = sizeof(name);
     byte wantReply = 0;
@@ -3842,15 +3862,15 @@ static int DoGlobalRequest(WOLFSSH* ssh,
         ret = GetBoolean(&wantReply, buf, len, &begin);
     }
 
-    cb_ret = WS_SUCCESS;
-    if (ssh->ctx->globalReqCb != NULL)
-        cb_ret = ssh->ctx->globalReqCb(ssh, name, nameSz, wantReply, (void *)ssh->globalReqCtx);
+    if (ret == WS_SUCCESS && ssh->ctx->globalReqCb != NULL)
+        ret = ssh->ctx->globalReqCb(ssh, name, nameSz, wantReply, (void *)ssh->globalReqCtx);
 
-    if (ret == WS_SUCCESS && (cb_ret == 0 || cb_ret == 1)) {
+    if (ret == WS_SUCCESS) {
         *idx += len;
 
         if (wantReply)
-            ret = SendRequestSuccess(ssh, cb_ret);
+            ret = SendRequestSuccess(ssh, 0);
+            /* response SSH_MSG_REQUEST_FAILURE to Keep-Alive. IETF:draft-ssh-global-requests */
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoGlobalRequest(), ret = %d", ret);
@@ -4528,6 +4548,11 @@ static int DoPacket(WOLFSSH* ssh)
         case MSGID_REQUEST_SUCCESS:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_REQUEST_SUCCESS");
             ret = DoRequestSuccess(ssh, buf + idx, payloadSz, &payloadIdx);
+            break;
+
+        case MSGID_REQUEST_FAILURE:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_REQUEST_FAILURE");
+            ret = DoRequestFailure(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_DEBUG:
@@ -7544,10 +7569,9 @@ int SendUserAuthBanner(WOLFSSH* ssh)
     return ret;
 }
 
-
-int SendRequestSuccess(WOLFSSH* ssh, int success)
+int SendRequestSuccess(WOLFSSH *ssh, int success)
 {
-    byte* output;
+    byte *output;
     word32 idx;
     int ret = WS_SUCCESS;
 
@@ -7560,12 +7584,12 @@ int SendRequestSuccess(WOLFSSH* ssh, int success)
     if (ret == WS_SUCCESS)
         ret = PreparePacket(ssh, MSG_ID_SZ);
 
-    if (ret == WS_SUCCESS) {
+    if (ret == WS_SUCCESS)
+    {
         output = ssh->outputBuffer.buffer;
         idx = ssh->outputBuffer.length;
 
-        output[idx++] = success ?
-                        MSGID_REQUEST_SUCCESS : MSGID_REQUEST_FAILURE;
+        output[idx++] = success ? MSGID_REQUEST_SUCCESS : MSGID_REQUEST_FAILURE;
 
         ssh->outputBuffer.length = idx;
 
@@ -7578,8 +7602,7 @@ int SendRequestSuccess(WOLFSSH* ssh, int success)
     WLOG(WS_LOG_DEBUG, "Leaving SendRequestSuccess(), ret = %d", ret);
     return ret;
 }
-
-
+ 
 static int SendChannelOpen(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel,
         byte* channelData, word32 channelDataSz)
 {

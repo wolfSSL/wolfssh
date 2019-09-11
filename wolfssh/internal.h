@@ -180,6 +180,7 @@ struct WOLFSSH_CTX {
     WS_CallbackHighwater highwaterCb; /* Data Highwater Mark Callback */
     WS_CallbackGlobalReq globalReqCb; /* Global Request Callback */
     WS_CallbackReqSuccess reqSuccessCb; /* Global Request Success Callback */
+    WS_CallbackReqSuccess reqFailureCb; /* Global Request Failure Callback */
 #ifdef WOLFSSH_SCP
     WS_CallbackScpRecv scpRecvCb;     /* SCP receive callback */
     WS_CallbackScpSend scpSendCb;     /* SCP send callback */
@@ -298,6 +299,7 @@ struct WOLFSSH {
     void* highwaterCtx;
     void* globalReqCtx;    /* Global Request CB context */
     void* reqSuccessCtx;   /* Global Request Sucess CB context */
+    void* reqFailureCtx;   /* Global Request Failure CB context */
     word32 curSz;
     word32 seq;
     word32 peerSeq;

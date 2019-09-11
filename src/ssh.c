@@ -239,6 +239,12 @@ void wolfSSH_SetReqSuccess(WOLFSSH_CTX *ctx, WS_CallbackReqSuccess cb)
         ctx->reqSuccessCb = cb;
 }
 
+void wolfSSH_SetReqFailure(WOLFSSH_CTX *ctx, WS_CallbackReqSuccess cb)
+{
+    if (ctx)
+        ctx->reqFailureCb = cb;
+}
+
 void wolfSSH_SetGlobalReqCtx(WOLFSSH* ssh, void *ctx)
 {
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetGlobalReqCtx()");
@@ -271,6 +277,24 @@ void *wolfSSH_GetReqSuccessCtx(WOLFSSH *ssh)
 
     if (ssh)
         return ssh->reqSuccessCtx;
+
+    return NULL;
+}
+
+void wolfSSH_SetReqFailureCtx(WOLFSSH *ssh, void *ctx)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetReqFailureCtx()");
+
+    if (ssh)
+        ssh->reqFailureCtx = ctx;
+}
+
+void *wolfSSH_GetReqFailureCtx(WOLFSSH *ssh)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_GetReqFailureCtx()");
+
+    if (ssh)
+        return ssh->reqFailureCtx;
 
     return NULL;
 }
