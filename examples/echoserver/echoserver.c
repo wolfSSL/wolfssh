@@ -1013,7 +1013,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
             WMEMCPY(ipaddr, &sock.ip_num, MAX_ADDRESS_SIZE);
             NU_Inet_NTOP(NU_FAMILY_IP, &ipaddr[0], buf, 16);
-            fprintf(stdout, "Listing on %s:%d\r\n", buf, port);
+            fprintf(stdout, "Listening on %s:%d\r\n", buf, port);
         }
     #endif
 
