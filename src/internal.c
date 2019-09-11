@@ -3869,7 +3869,7 @@ static int DoGlobalRequest(WOLFSSH* ssh,
         *idx += len;
 
         if (wantReply)
-            ret = SendRequestSuccess(ssh, ~WS_SUCCESS);
+            ret = SendRequestSuccess(ssh, 0);
             /* response SSH_MSG_REQUEST_FAILURE to Keep-Alive. IETF:draft-ssh-global-requests */
     }
 
@@ -7576,7 +7576,7 @@ int SendRequestSuccess(WOLFSSH *ssh, int success)
     int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Entering SendRequestSuccess(), %s",
-         success == WS_SUCCESS ? "Success" : "Failure");
+         success ? "Success" : "Failure");
 
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
@@ -7589,7 +7589,7 @@ int SendRequestSuccess(WOLFSSH *ssh, int success)
         output = ssh->outputBuffer.buffer;
         idx = ssh->outputBuffer.length;
 
-        output[idx++] = success == WS_SUCCESS ? MSGID_REQUEST_SUCCESS : MSGID_REQUEST_FAILURE;
+        output[idx++] = success ? MSGID_REQUEST_SUCCESS : MSGID_REQUEST_FAILURE;
 
         ssh->outputBuffer.length = idx;
 
