@@ -5124,8 +5124,8 @@ int DoReceive(WOLFSSH* ssh)
                     ssh->error = ret;
                     return WS_FATAL_ERROR;
                 }
-                WLOG(WS_LOG_DEBUG, "PR3: peerMacSz = %u", ssh->peerMacSz);
-                ssh->inputBuffer.idx += ssh->peerMacSz;
+                WLOG(WS_LOG_DEBUG, "PR3: peerMacSz = %u", peerMacSz);
+                ssh->inputBuffer.idx += peerMacSz;
                 break;
 
             default:
