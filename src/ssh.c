@@ -1022,6 +1022,12 @@ int wolfSSH_SendIgnore(WOLFSSH* ssh, const byte* buf, word32 bufSz)
 }
 
 
+int wolfSSH_SendDisconnect(WOLFSSH* ssh, word32 reason)
+{
+    return SendDisconnect(ssh, reason);
+}
+
+
 void wolfSSH_SetUserAuth(WOLFSSH_CTX* ctx, WS_CallbackUserAuth cb)
 {
     if (ctx != NULL) {
