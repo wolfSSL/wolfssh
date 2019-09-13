@@ -1259,7 +1259,7 @@ int ReceiveScpMessage(WOLFSSH* ssh)
         return sz;
 
     /* null-terminate request, replace newline */
-    buf[sz-1] = '\0';
+    buf[sz] = '\0';
 
     switch (buf[0]) {
         case 'C':
