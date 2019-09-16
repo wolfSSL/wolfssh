@@ -406,11 +406,12 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
     }
     else if (ret == WS_FATAL_ERROR && wolfSSH_get_error(threadCtx->ssh) ==
                                           WS_USER_AUTH_E) {
+        wolfSSH_SendDisconnect(threadCtx->ssh, WOLFSSH_DISCONNECT_NO_MORE_AUTH_METHODS_AVAILABLE);
         ret = 0; /* don't break out of loop with user auth error */
         printf("User Authentication error\n");
     }
 
-    if (wolfSSH_shutdown(threadCtx->ssh) != WS_SUCCESS) {
+    if (ret != 0 && wolfSSH_shutdown(threadCtx->ssh) != WS_SUCCESS) {
         fprintf(stderr, "Error with SSH shutdown.\n");
     }
 

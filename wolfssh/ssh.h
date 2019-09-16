@@ -188,6 +188,7 @@ WOLFSSH_API int wolfSSH_stream_exit(WOLFSSH*, int);
 WOLFSSH_API int wolfSSH_extended_data_read(WOLFSSH*, byte*, word32);
 WOLFSSH_API int wolfSSH_TriggerKeyExchange(WOLFSSH*);
 WOLFSSH_API int wolfSSH_SendIgnore(WOLFSSH*, const byte*, word32);
+WOLFSSH_API int wolfSSH_SendDisconnect(WOLFSSH *, word32);
 WOLFSSH_API int wolfSSH_global_request(WOLFSSH*, const unsigned char*, word32, int);
 
 WOLFSSH_API void wolfSSH_GetStats(WOLFSSH*,
