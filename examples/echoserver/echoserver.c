@@ -420,6 +420,8 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
             printf("%s\n", errorStr);
         }
         else if (error == WS_USER_AUTH_E) {
+            wolfSSH_SendDisconnect(threadCtx->ssh,
+                    WOLFSSH_DISCONNECT_NO_MORE_AUTH_METHODS_AVAILABLE);
             ret = 0; /* don't break out of loop with user auth error */
             printf("%s\n", errorStr);
         }
