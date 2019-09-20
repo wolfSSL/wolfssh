@@ -7287,7 +7287,7 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                 if (resume) {
                     WMEMSET(&state->offset, 0, sizeof(OVERLAPPED));
                     state->offset.OffsetHigh = 0;
-                    state->offset.Offset = (DWORD)state->pOfst;
+                    state->offset.Offset = state->pOfst[0];
                 }
             #endif /* USE_WINDOWS_API */
                 state->rSz = 0;
@@ -7342,7 +7342,7 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                         AddAssign64(state->pOfst, sz);
                         #ifdef USE_WINDOWS_API
                             state->offset.OffsetHigh = 0;
-                            state->offset.Offset = (DWORD)state->pOfst;
+                            state->offset.Offset = state->pOfst[0];
                         #endif /* USE_WINDOWS_API */
                         state->rSz -= sz;
                         if (statusCb != NULL) {

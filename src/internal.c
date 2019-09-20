@@ -5091,8 +5091,8 @@ int DoReceive(WOLFSSH* ssh)
                                           ssh->curSz + LENGTH_SZ - peerBlockSz);
                         }
                         else {
-                            WLOG(WS_LOG_INFO,
-                                 "Not trying to decrypt short message.");
+                            /* Entire packet fit in one block, don't need
+                             * to decrypt any more data this packet. */
                         }
 
                         /* Verify the buffer is big enough for the data and mac.
@@ -5149,8 +5149,8 @@ int DoReceive(WOLFSSH* ssh)
                     ssh->error = ret;
                     return WS_FATAL_ERROR;
                 }
-                WLOG(WS_LOG_DEBUG, "PR3: peerMacSz = %u", ssh->peerMacSz);
-                ssh->inputBuffer.idx += ssh->peerMacSz;
+                WLOG(WS_LOG_DEBUG, "PR3: peerMacSz = %u", peerMacSz);
+                ssh->inputBuffer.idx += peerMacSz;
                 break;
 
             default:

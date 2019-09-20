@@ -53,7 +53,8 @@ static void myStatusCb(WOLFSSH* sshIn, word32* bytes, char* name)
 {
     char buf[80];
     word64 longBytes = ((word64)bytes[1] << 32) | bytes[0];
-    WSNPRINTF(buf, sizeof(buf), "Processed %8ld\t bytes \r", longBytes);
+    WSNPRINTF(buf, sizeof(buf), "Processed %8llu\t bytes \r",
+            (unsigned long long)longBytes);
     WFPUTS(buf, fout);
     (void)name;
     (void)sshIn;
@@ -1229,7 +1230,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
                 (word32)WSTRLEN(hanselPublicEcc),
                 (byte*)userPublicKey, &userPublicKeySz);
 
-        strncpy((char*)userPublicKeyType, "ecdsa-sha2-nistp256",
+        WSTRNCPY((char*)userPublicKeyType, "ecdsa-sha2-nistp256",
                 sizeof(userPublicKeyType));
         userPrivateKey = hanselPrivateEcc;
         userPrivateKeySz = hanselPrivateEccSz;
@@ -1240,7 +1241,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
                 (word32)WSTRLEN(hanselPublicRsa),
                 (byte*)userPublicKey, &userPublicKeySz);
 
-        strncpy((char*)userPublicKeyType, "ssh-rsa",
+        WSTRNCPY((char*)userPublicKeyType, "ssh-rsa",
                 sizeof(userPublicKeyType));
         userPrivateKey = hanselPrivateRsa;
         userPrivateKeySz = hanselPrivateRsaSz;
