@@ -1,9 +1,9 @@
 #!/bin/sh
 
 # external tests
-host="test.rebex.net"
-user="demo"
-password="password"
+host="$WOLFSSH_EXTERNAL_HOST"
+user="$WOLFSSH_EXTERNAL_USER"
+password="$WOLFSSH_EXTERNAL_PASSWORD"
 
 if test -n "$WOLFSSH_EXTERNAL_TEST"; then
     echo "WOLFSSH_EXTERNAL_TEST set, running test..."
