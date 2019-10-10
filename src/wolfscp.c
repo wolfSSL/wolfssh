@@ -267,7 +267,7 @@ static int SendScpTimestamp(WOLFSSH* ssh)
     if (ret != bufSz) {
         ret = WS_FATAL_ERROR;
     } else {
-        WLOG(WS_LOG_DEBUG, "scp: sent timestamp: %s", buf);
+        WLOG(WS_LOG_DEBUG, "[SCP ] sent timestamp: %s", buf);
         ret = WS_SUCCESS;
     }
 
@@ -299,7 +299,7 @@ static int SendScpFileHeader(WOLFSSH* ssh)
     if (ret != bufSz) {
         ret = WS_FATAL_ERROR;
     } else {
-        WLOG(WS_LOG_DEBUG, "scp: sent file header: %s", buf);
+        WLOG(WS_LOG_DEBUG, "[SCP ] sent file header: %s", buf);
         ret = WS_SUCCESS;
     }
 
@@ -332,7 +332,7 @@ static int SendScpEnterDirectory(WOLFSSH* ssh)
     if (ret != bufSz) {
         ret = WS_FATAL_ERROR;
     } else {
-        WLOG(WS_LOG_DEBUG, "scp: sent directory msg: %s", buf);
+        WLOG(WS_LOG_DEBUG, "[SCP ] sent directory msg: %s", buf);
         ret = WS_SUCCESS;
     }
 
@@ -358,7 +358,7 @@ static int SendScpExitDirectory(WOLFSSH* ssh)
     if (ret != sizeof(buf)) {
         ret = WS_FATAL_ERROR;
     } else {
-        WLOG(WS_LOG_DEBUG, "scp: sent end directory msg: E");
+        WLOG(WS_LOG_DEBUG, "[SCP ] sent end directory msg: E");
         ret = WS_SUCCESS;
     }
 
@@ -626,7 +626,7 @@ int DoScpRequest(WOLFSSH* ssh)
         return WS_BAD_ARGUMENT;
 
     if (ssh->ctx->scpRecvCb == NULL) {
-        WLOG(WS_LOG_DEBUG, "scp error: receive callback is null, please set");
+        WLOG(WS_LOG_DEBUG, "[SCP ] scp error: receive callback is null, please set");
         return WS_BAD_ARGUMENT;
     }
 
@@ -1096,7 +1096,7 @@ static int ParseBasePathHelper(WOLFSSH* ssh, int cmdSz)
             ssh->scpFileName = (char*)WMALLOC(sz + 1, ssh->ctx->heap,
                 DYNTYPE_STRING);
             if (ssh->scpFileName == NULL) {
-                WLOG(WS_LOG_DEBUG, "scp: memory error creaating file name\n");
+                WLOG(WS_LOG_DEBUG, "[SCP ] memory error creaating file name\n");
                 ssh->scpBasePath = NULL;
                 return WS_MEMORY_E;
             }
@@ -1268,10 +1268,10 @@ int ReceiveScpMessage(WOLFSSH* ssh)
 
         case 'D':
             if (buf[0] == 'C') {
-                WLOG(WS_LOG_DEBUG, "scp: Receiving file: %s\n", buf);
+                WLOG(WS_LOG_DEBUG, "[SCP ] Receiving file: %s\n", buf);
                 ssh->scpMsgType = WOLFSSH_SCP_MSG_FILE;
             } else {
-                WLOG(WS_LOG_DEBUG, "scp: Receiving directory: %s\n", buf);
+                WLOG(WS_LOG_DEBUG, "[SCP ] Receiving directory: %s\n", buf);
                 ssh->scpMsgType = WOLFSSH_SCP_MSG_DIR;
             }
 
@@ -1295,7 +1295,7 @@ int ReceiveScpMessage(WOLFSSH* ssh)
             break;
 
         case 'T':
-            WLOG(WS_LOG_DEBUG, "scp: Receiving timestamp: %s\n", buf);
+            WLOG(WS_LOG_DEBUG, "[SCP ] Receiving timestamp: %s\n", buf);
             ssh->scpMsgType = WOLFSSH_SCP_MSG_TIME;
 
             /* parse access and modification times */
@@ -1304,7 +1304,7 @@ int ReceiveScpMessage(WOLFSSH* ssh)
 
         default:
             ret = WS_SCP_BAD_MSG_E;
-            WLOG(WS_LOG_DEBUG, "scp: Received invalid message\n");
+            WLOG(WS_LOG_DEBUG, "[SCP ] Received invalid message\n");
             break;
     }
 
@@ -1388,7 +1388,7 @@ int SendScpConfirmation(WOLFSSH* ssh)
 
     } else {
         ret = WS_SUCCESS;
-        WLOG(WS_LOG_DEBUG, "scp: sent confirmation (code: %d)", msg[0]);
+        WLOG(WS_LOG_DEBUG, "[SCP ] sent confirmation (code: %d)", msg[0]);
 
         if (ssh->scpConfirmMsg != NULL) {
             WFREE(ssh->scpConfirmMsg, ssh->ctx->heap, DYNTYPE_STRING);
