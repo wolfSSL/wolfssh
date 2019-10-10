@@ -553,6 +553,7 @@ static int SFTP_GetHeader(WOLFSSH* ssh, word32* reqId, byte* type)
     int    ret;
     word32 len;
     byte buf[WOLFSSH_SFTP_HEADER];
+    WLOG(WS_LOG_SFTP, "Entering SFTP_GetHeader()");
 
     if (type == NULL || reqId == NULL || ssh == NULL) {
         WLOG(WS_LOG_SFTP, "NULL argument error");
@@ -573,6 +574,8 @@ static int SFTP_GetHeader(WOLFSSH* ssh, word32* reqId, byte* type)
     *type = buf[LENGTH_SZ];
     ato32(buf + UINT32_SZ + MSG_ID_SZ, reqId);
 
+    WLOG(WS_LOG_SFTP, "Leaving SFTP_GetHeader(), %d",
+            len - UINT32_SZ - MSG_ID_SZ);
     return len - UINT32_SZ - MSG_ID_SZ;
 }
 
@@ -1006,6 +1009,8 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
 {
     int maxSz, ret = WS_SUCCESS;
     WS_SFTP_RECV_STATE* state = NULL;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SFTP_read()");
 
     if (ssh == NULL)
         return WS_BAD_ARGUMENT;
