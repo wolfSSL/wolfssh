@@ -92,6 +92,7 @@ WOLFSSH_API int wolfSSH_ChannelGetFwdFd(const WOLFSSH_CHANNEL*);
 WOLFSSH_API int wolfSSH_ChannelRead(WOLFSSH_CHANNEL*, byte*, word32);
 WOLFSSH_API int wolfSSH_ChannelSend(WOLFSSH_CHANNEL*, const byte*, word32);
 WOLFSSH_API int wolfSSH_ChannelExit(WOLFSSH_CHANNEL*);
+WOLFSSH_API int wolfSSH_ChannelGetEof(WOLFSSH_CHANNEL*);
 
 
 WOLFSSH_API int wolfSSH_get_error(const WOLFSSH*);

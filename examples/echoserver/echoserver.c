@@ -325,6 +325,16 @@ static int sftp_worker(thread_ctx_t* threadCtx) {
         if (error == WS_WANT_READ || error == WS_WANT_WRITE)
             ret = WS_WANT_READ;
 
+        if (ret == WS_FATAL_ERROR && error == 0) {
+            WOLFSSH_CHANNEL* channel =
+                wolfSSH_ChannelNext(threadCtx->ssh, NULL);
+            if (channel && wolfSSH_ChannelGetEof(channel)) {
+                ret = 0;
+                error = 0;
+                break;
+            }
+        }
+
     } while (ret != WS_FATAL_ERROR);
 
     return ret;
@@ -372,7 +382,7 @@ wolfSSL_Mutex doneLock;
 
 static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
 {
-    int ret = 0;
+    int ret = 0, error = 0;
     thread_ctx_t* threadCtx = (thread_ctx_t*)vArgs;
 
     if (!threadCtx->nonBlock)
@@ -399,19 +409,31 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
             break;
     }
 
-    if (ret == WS_FATAL_ERROR && wolfSSH_get_error(threadCtx->ssh) ==
-            WS_VERSION_E) {
-        ret = 0; /* don't break out of loop with version miss match */
-        printf("Unsupported version error\n");
-    }
-    else if (ret == WS_FATAL_ERROR && wolfSSH_get_error(threadCtx->ssh) ==
-                                          WS_USER_AUTH_E) {
-        ret = 0; /* don't break out of loop with user auth error */
-        printf("User Authentication error\n");
+    if (ret == WS_FATAL_ERROR) {
+        const char* errorStr;
+        error = wolfSSH_get_error(threadCtx->ssh);
+
+        errorStr = wolfSSH_ErrorToName(error);
+
+        if (error == WS_VERSION_E) {
+            ret = 0; /* don't break out of loop with version miss match */
+            printf("%s\n", errorStr);
+        }
+        else if (error == WS_USER_AUTH_E) {
+            ret = 0; /* don't break out of loop with user auth error */
+            printf("%s\n", errorStr);
+        }
+        else if (error == WS_SOCKET_ERROR_E) {
+            ret = 0;
+            printf("%s\n", errorStr);
+        }
     }
 
-    if (wolfSSH_shutdown(threadCtx->ssh) != WS_SUCCESS) {
-        fprintf(stderr, "Error with SSH shutdown.\n");
+    if (error != WS_SOCKET_ERROR_E && error != WS_FATAL_ERROR)
+    {
+        if (wolfSSH_shutdown(threadCtx->ssh) != WS_SUCCESS) {
+            fprintf(stderr, "Error with SSH shutdown.\n");
+        }
     }
 
     WCLOSESOCKET(threadCtx->fd);
@@ -419,7 +441,7 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
 
     if (ret != 0) {
         fprintf(stderr, "Error [%d] \"%s\" with handling connection.\n", ret,
-                wolfSSH_ErrorToName(ret));
+                wolfSSH_ErrorToName(error));
     #ifndef WOLFSSH_NO_EXIT
         wc_LockMutex(&doneLock);
         quit = 1;

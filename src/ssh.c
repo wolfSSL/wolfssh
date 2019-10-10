@@ -1574,6 +1574,21 @@ WOLFSSH_CHANNEL* wolfSSH_ChannelNext(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel)
 }
 
 
+int wolfSSH_ChannelGetEof(WOLFSSH_CHANNEL* channel)
+{
+    int eof = 1;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelGetEof()");
+
+    if (channel)
+        eof = (int)channel->receivedEof;
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelGetEof(), %s",
+            eof ? "true" : "false");
+    return eof;
+}
+
+
 /* Protocols that have loops over wolfSSH_stream_send without doing any reads
  * will run into the issue of not checking for a peer window adjustment packet.
  * This function allows for checking for a peer window adjustment packet without

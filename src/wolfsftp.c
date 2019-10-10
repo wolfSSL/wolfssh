@@ -553,6 +553,7 @@ static int SFTP_GetHeader(WOLFSSH* ssh, word32* reqId, byte* type)
     int    ret;
     word32 len;
     byte buf[WOLFSSH_SFTP_HEADER];
+    WLOG(WS_LOG_SFTP, "Entering SFTP_GetHeader()");
 
     if (type == NULL || reqId == NULL || ssh == NULL) {
         WLOG(WS_LOG_SFTP, "NULL argument error");
@@ -573,6 +574,8 @@ static int SFTP_GetHeader(WOLFSSH* ssh, word32* reqId, byte* type)
     *type = buf[LENGTH_SZ];
     ato32(buf + UINT32_SZ + MSG_ID_SZ, reqId);
 
+    WLOG(WS_LOG_SFTP, "Leaving SFTP_GetHeader(), %d",
+            len - UINT32_SZ - MSG_ID_SZ);
     return len - UINT32_SZ - MSG_ID_SZ;
 }
 
@@ -1006,6 +1009,8 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
 {
     int maxSz, ret = WS_SUCCESS;
     WS_SFTP_RECV_STATE* state = NULL;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SFTP_read()");
 
     if (ssh == NULL)
         return WS_BAD_ARGUMENT;
@@ -2099,7 +2104,7 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
         word32 nameLen = (word32)WSTRLEN(dirName);
 
         if (nameLen > MAX_PATH - 3) {
-            WLOG(WS_LOG_DEBUG, "Path name is too long.");
+            WLOG(WS_LOG_SFTP, "Path name is too long.");
             return WS_FATAL_ERROR;
         }
         WSTRNCPY(name, dirName, MAX_PATH);
@@ -4993,7 +4998,7 @@ static int wolfSSH_SFTP_GetHandle(WOLFSSH* ssh, byte* handle, word32* handleSz)
                 return ret;
 
             default:
-                WLOG(WS_LOG_DEBUG, "Bad SFTP GetHandle state, program error");
+                WLOG(WS_LOG_SFTP, "Bad SFTP GetHandle state, program error");
                 return WS_INPUT_CASE_E;
         }
     }
@@ -5323,7 +5328,7 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                 return WS_SUCCESS;
 
             default:
-                WLOG(WS_LOG_DEBUG, "Bad SFTP LSTAT state, program error");
+                WLOG(WS_LOG_SFTP, "Bad SFTP LSTAT state, program error");
                 return WS_INPUT_CASE_E;
         }
     }
@@ -5615,7 +5620,7 @@ int wolfSSH_SFTP_Open(WOLFSSH* ssh, char* dir, word32 reason,
                 return ret;
 
             default:
-                WLOG(WS_LOG_DEBUG, "Bad SFTP Open state, program error");
+                WLOG(WS_LOG_SFTP, "Bad SFTP Open state, program error");
                 return WS_INPUT_CASE_E;
         }
     }
@@ -5824,7 +5829,7 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 return ret;
 
             default:
-                WLOG(WS_LOG_DEBUG, "Bad SFTP Send Write Packet state, "
+                WLOG(WS_LOG_SFTP, "Bad SFTP Send Write Packet state, "
                                    "program error");
                 ssh->error = WS_INPUT_CASE_E;
                 return WS_FATAL_ERROR;
@@ -6056,7 +6061,7 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 return ret;
 
             default:
-                WLOG(WS_LOG_DEBUG, "Bad SFTP Send Read Packet state, "
+                WLOG(WS_LOG_SFTP, "Bad SFTP Send Read Packet state, "
                                    "program error");
                 ssh->error = WS_INPUT_CASE_E;
                 return WS_FATAL_ERROR;
@@ -6368,7 +6373,7 @@ int wolfSSH_SFTP_Close(WOLFSSH* ssh, byte* handle, word32 handleSz)
                 return ret;
 
             default:
-                WLOG(WS_LOG_DEBUG, "Bad SFTP Close state, program error");
+                WLOG(WS_LOG_SFTP, "Bad SFTP Close state, program error");
                 return WS_INPUT_CASE_E;
         }
     }
@@ -6634,7 +6639,7 @@ int wolfSSH_SFTP_Rename(WOLFSSH* ssh, const char* old, const char* nw)
                 return ret;
 
             default:
-                WLOG(WS_LOG_DEBUG, "Bad SFTP Rename state, program error");
+                WLOG(WS_LOG_SFTP, "Bad SFTP Rename state, program error");
                 ssh->error = WS_INPUT_CASE_E;
                 return WS_FATAL_ERROR;
         }
@@ -7193,7 +7198,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                 return ret;
 
             default:
-                WLOG(WS_LOG_DEBUG, "Bad SFTP Get state, program error");
+                WLOG(WS_LOG_SFTP, "Bad SFTP Get state, program error");
                 return WS_INPUT_CASE_E;
         }
     }
@@ -7392,7 +7397,7 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                 return ret;
 
             default:
-                WLOG(WS_LOG_DEBUG, "Bad SFTP Put state, program error");
+                WLOG(WS_LOG_SFTP, "Bad SFTP Put state, program error");
                 return WS_INPUT_CASE_E;
         }
     }
