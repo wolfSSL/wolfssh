@@ -1262,8 +1262,10 @@ int GrowBuffer(Buffer* buf, word32 sz, word32 usedSz)
             byte* newBuffer = (byte*)WMALLOC(newSz,
                                                      buf->heap, DYNTYPE_BUFFER);
 
-            if (newBuffer == NULL)
+            if (newBuffer == NULL) {
+                WLOG(WS_LOG_ERROR, "Not enough memory left to grow buffer");
                 return WS_MEMORY_E;
+            }
 
             /*WLOG(WS_LOG_DEBUG, "GB: resizing buffer");*/
             if (buf->length > 0)

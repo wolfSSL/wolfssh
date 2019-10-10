@@ -41,6 +41,12 @@ extern "C" {
 
 /* setup memory handling */
 #ifndef WMALLOC_USER
+    #ifdef WOLFSSL_USER_SETTINGS
+    #include <wolfssl/wolfcrypt/settings.h>
+    #else
+    #include <wolfssl/options.h>
+    #endif
+    #include <wolfssl/wolfcrypt/types.h>
     #define WMALLOC(s, h, t)      XMALLOC(s, h, t)
     #define WFREE(p, h, t)        XFREE(p, h, t)
     #define WREALLOC(p, n, h, t)  XREALLOC(p, n, h, t)
