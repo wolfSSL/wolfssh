@@ -425,7 +425,7 @@ void CtxResourceFree(WOLFSSH_CTX* ctx)
 
 WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
 {
-#if defined(STM32F2) || defined(STM32F4)
+#if defined(STM32F2) || defined(STM32F4) || defined(FREESCALE_MQX)
     /* avoid name conflict in "stm32fnnnxx.h" */
     #undef  RNG
     #define RNG WC_RNG
@@ -468,6 +468,7 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->highwaterMark = ctx->highwaterMark;
     ssh->highwaterCtx  = (void*)ssh;
     ssh->reqSuccessCtx = (void*)ssh;
+    ssh->fs            = NULL;
     ssh->acceptState = ACCEPT_BEGIN;
     ssh->clientState = CLIENT_BEGIN;
     ssh->isKeying    = 1;
@@ -8542,6 +8543,15 @@ void clean_path(char* path)
     }
     sz = (int)WSTRLEN(path);
 
+    /* remove any /./ patterns */
+    for (i = 0; i < sz; i++) {
+        if (path[i] == '.' && path[i - 1] == WS_DELIM && path[i + 1] == WS_DELIM) {
+            WMEMMOVE(path + i, path + i + 1, sz - i + 1);
+            sz -= 1;
+            i--;
+        }
+    }
+
     /* remove any double '/' or '\' chars */
     for (i = 0; i < sz; i++) {
         if ((path[i] == WS_DELIM && path[i+1] == WS_DELIM)) {
@@ -8630,10 +8640,20 @@ void clean_path(char* path)
             path[sz] = '\0';
         }
 #endif
+
+#ifndef FREESCALE_MQX
         /* remove trailing delimiter */
         if (sz > 3 && path[sz - 1] == WS_DELIM) {
             path[sz - 1] = '\0';
         }
+#endif
+
+#ifdef FREESCALE_MQX
+        /* remove trailing '.' */
+        if (path[sz - 1] == '.') {
+            path[sz - 1] = '\0';
+        }
+#endif
     }
 }
 #endif /* WOLFSSH_SFTP || WOLFSSH_SCP */

@@ -56,6 +56,17 @@ extern "C" {
     #endif
 #endif
 
+#ifdef FREESCALE_MQX
+    #define NO_STDIO_FILESYSTEM
+    #ifndef WOLFSSH_STOREHANDLE
+        #define WOLFSSH_STOREHANDLE
+    #endif
+
+    #ifdef WOLFSSH_SCP
+        #error wolfSSH SCP not ported to MQX yet
+    #endif
+#endif
+
 #if defined(WOLFSSH_SCP) && defined(NO_WOLFSSH_SERVER)
     #error only SCP server side supported
 #endif

@@ -30,6 +30,7 @@
 #pragma once
 
 #include <wolfssh/settings.h>
+#include <wolfssh/log.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -134,10 +135,80 @@ extern "C" {
             return 0;
         }
     }
-    #define WCHMOD(f,m) wChmod((f),(m))
+    #define WCHMOD(fs,f,m) wChmod((f),(m))
+
+#elif defined(FREESCALE_MQX)
+    /* Freescale MQX 4.2 (Classic) */
+    #include "mfs.h"
+    #include "mqx.h"
+    #include "fio.h"
+    #include "rtcs.h"
+
+    #define WFILE         MQX_FILE
+    #define WOLFSSH_MAX_FILENAME PATHNAME_SIZE
+
+    /* default to "a:" drive, user can override */
+    #ifndef MQX_MFS_DEVICE
+        #define MQX_MFS_DEVICE  "a:"
+    #endif
+
+    WOLFSSH_API int wfopen(WFILE**, const char*, const char*);
+
+    #define WFOPEN(f,fn,m)      wfopen((f),(fn),(m))
+    #define WFCLOSE(f)          fclose((f))
+    #define WFREAD(b,s,a,f)     fread((b),(s),(a),(f))
+    #define WFWRITE(b,x,s,f)    fwrite((b),(x),(s),(f))
+    #define WFSEEK(s,o,w)       fseek((s),(o),(w))
+    #define WFTELL(s)           ftell((s))
+    #define WREWIND(s)          fseek((s), 0, IO_SEEK_SET)
+    #define WSEEK_END           IO_SEEK_END
+
+    static inline int wChmod(void* fs, const char* f, int mode)
+    {
+        int err;
+        MQX_FILE_PTR mfs_ptr;
+        MFS_FILE_ATTR_PARAM attr;
+        unsigned char attribute = 0;
+
+        if (fs == NULL || f == NULL) {
+            return -1;
+        }
+        mfs_ptr = (MQX_FILE_PTR)fs;
+
+        attr.ATTRIBUTE_PTR = &attribute;
+        attr.PATHNAME = (char*)f;
+
+        /* check that filesystem handle is valid */
+        if (_io_is_fs_valid(mfs_ptr) == 0) {
+            WLOG(WS_LOG_SFTP, "Invalid file system pointer");
+            return -1;
+        }
+
+        /* get file attributes */
+        err = ioctl(mfs_ptr, IO_IOCTL_GET_FILE_ATTR, (uint32_t*)&attr);
+        if (err != MFS_NO_ERROR) {
+            WLOG(WS_LOG_SFTP, "Unable to get file attributes");
+            return -1;
+        }
+
+        /* set file attributes */
+        if (mode == 0x124) {
+            /* set read only value */
+            attribute |= MFS_ATTR_READ_ONLY;
+            err = ioctl(mfs_ptr, IO_IOCTL_SET_FILE_ATTR, (uint32_t*)&attr);
+            if (err != MFS_NO_ERROR) {
+                WLOG(WS_LOG_SFTP, "Unable to set file attributes");
+                return -1;
+            }
+        }
+
+        return 0;
+    }
+    #define WCHMOD(fs,f,m)         wChmod((fs),(f),(m))
+
 #else
     #include <stdlib.h>
-    #ifndef _WIN32_WCE
+    #if !defined(_WIN32_WCE) && !defined(FREESCALE_MQX)
         #include <stdio.h>
     #endif
     #define WFILE FILE
@@ -154,9 +225,9 @@ extern "C" {
     #define WUTIMES(f,t)      utimes((f),(t))
 
     #ifndef USE_WINDOWS_API
-        #define WCHMOD(f,m)   chmod((f),(m))
+        #define WCHMOD(fs,f,m)   chmod((f),(m))
     #else
-        #define WCHMOD(f,m)   _chmod((f),(m))
+        #define WCHMOD(fs,f,m)   _chmod((f),(m))
     #endif
 
     #if (defined(WOLFSSH_SCP) || defined(WOLFSSH_SFTP)) && \
@@ -185,14 +256,14 @@ extern "C" {
 
             #ifndef _WIN32_WCE
                 #include <direct.h>
-                #define WCHDIR(p) _chdir((p))
-                #define WMKDIR(p,m) _mkdir((p))
+                #define WCHDIR(p)      _chdir((p))
+                #define WMKDIR(fs,p,m) _mkdir((p))
             #endif
         #else
             #include <unistd.h>
             #include <sys/stat.h>
-            #define WCHDIR(p)     chdir((p))
-            #define WMKDIR(p,m)   mkdir((p),(m))
+            #define WCHDIR(p)      chdir((p))
+            #define WMKDIR(fs,p,m) mkdir((p),(m))
         #endif
     #endif
 #endif
@@ -236,7 +307,9 @@ extern "C" {
         #define WSNPRINTF(s,n,f,...) snprintf((s),(n),(f),__VA_ARGS__)
         #define WVSNPRINTF(s,n,f,...) vsnprintf((s),(n),(f),__VA_ARGS__)
     #else 
-        #include <stdio.h>
+        #ifndef FREESCALE_MQX
+            #include <stdio.h>
+        #endif
         #define WSTRNCPY(s1,s2,n) strncpy((s1),(s2),(n))
         #define WSTRNCASECMP(s1,s2,n) strncasecmp((s1),(s2),(n))
         #define WSNPRINTF(s,n,f,...) snprintf((s),(n),(f),##__VA_ARGS__)
@@ -252,6 +325,23 @@ extern "C" {
     #define WTIME XTIME
     #define WLOCALTIME(c,r) (localtime((c)) != NULL && \
                              WMEMCPY((r), localtime((c)), sizeof(struct tm)))
+#elif defined(FREESCALE_MQX)
+    static inline time_t mqx_time(time_t* timer)
+    {
+        time_t localTime;
+        TIME_STRUCT time_s;
+
+        if (timer == NULL)
+            timer = &localTime;
+
+        _time_get(&time_s);
+        *timer = (time_t)time_s.SECONDS;
+
+        return *timer;
+    }
+    #define WTIME(t1)        mqx_time((t1))
+    #define WLOCALTIME(c,r) (localtime_r((c),(r))!=NULL)
+    #define WOLFSSH_NO_TIMESTAMP /* no strftime() */
 #else
     #define WTIME time
     #define WLOCALTIME(c,r) (localtime_r((c),(r))!=NULL)
@@ -260,12 +350,12 @@ extern "C" {
 #if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
         !defined(NO_WOLFSSH_SERVER)
 #ifdef WOLFSSL_NUCLEUS
-    #define WSTAT_T     struct stat
-    #define WRMDIR(d)   (NU_Remove_Dir((d)) == NU_SUCCESS)?0:1
-    #define WMKDIR(d,m) (NU_Make_Dir((d)) == NU_SUCCESS)?0:1
-    #define WSTAT(p,b)  NU_Get_First((b),(p))
-    #define WLSTAT(p,b) NU_Get_First((b),(p))
-    #define WREMOVE(d)   NU_Delete((d))
+    #define WSTAT_T         struct stat
+    #define WRMDIR(fs,d)   (NU_Remove_Dir((d)) == NU_SUCCESS)?0:1
+    #define WMKDIR(fs,d,m) (NU_Make_Dir((d)) == NU_SUCCESS)?0:1
+    #define WSTAT(p,b)     NU_Get_First((b),(p))
+    #define WLSTAT(p,b)    NU_Get_First((b),(p))
+    #define WREMOVE(fs,d)  NU_Delete((d))
 
 #ifndef WS_MAX_RENAME_BUF
 #define WS_MAX_RENAME_BUF 256
@@ -303,7 +393,7 @@ extern "C" {
                     if ((WFWRITE(buf, 1, ret, fNew)) != ret) {
                         WFCLOSE(fOld);
                         WFCLOSE(fNew);
-                        WREMOVE(n);
+                        WREMOVE(NULL, n);
                         return NUF_BADPARM;
                     }
                 }
@@ -312,13 +402,13 @@ extern "C" {
             if (WFTELL(fOld) == WFSEEK(fOld, 0, WSEEK_END)) {
                 /* wrote everything from file */
                 WFCLOSE(fOld);
-                WREMOVE(o);
+                WREMOVE(NULL, o);
                 WFCLOSE(fNew);
             }
             else {
                 /* unable to write everything to file */
                 WFCLOSE(fNew);
-                WREMOVE(n);
+                WREMOVE(NULL, n);
                 WFCLOSE(fOld);
                 return NUF_BADPARM;
             }
@@ -330,7 +420,7 @@ extern "C" {
         return ret;
     }
 
-    #define WRENAME(o,n) wRename((o),(n))
+    #define WRENAME(fs,o,n) wRename((o),(n))
     #define WFD int
 
 #ifndef WGETCWD
@@ -354,7 +444,7 @@ extern "C" {
 
         return buf;
     }
-    #define WGETCWD(r,rSz) wGetCwd((r),(rSz))
+    #define WGETCWD(fs,r,rSz) wGetCwd((r),(rSz))
 #endif
 
 #ifndef WPWRITE
@@ -469,12 +559,384 @@ extern "C" {
 
         return -1;
     }
-    #define WOPENDIR(c,d)  wOpenDir((c),(d))
+    #define WOPENDIR(fs,h,c,d)  wOpenDir((c),(d))
 #endif
 
     #define WCLOSEDIR(d) NU_Done((d))
     #define WREADDIR(d)  (NU_Get_Next((d)) == NU_SUCCESS)?(d):NULL
     #endif /* NO_WOLFSSH_DIR */
+
+#elif defined(FREESCALE_MQX)
+    /* Freescale MQX 4.2 (Classic)
+     * TODO for SCP support:
+     * - implement WUTIMES / wUtimes
+     * - implement WREADDIR() */
+
+    #define WFD         MQX_FILE_PTR
+    #define WS_DELIM    '/'
+
+    #ifndef MQX_DEFAULT_SFTP_NAME_SZ
+        #define MQX_DEFAULT_SFTP_NAME_SZ 256
+    #endif
+
+    /* flags can be accessed through MQX_FILE_PTR->FLAGS & IO_O_RDONLY */
+    /* these are from io.h */
+    #define WOLFSSH_O_RDWR      IO_O_RDWR       /* not used? */
+    #define WOLFSSH_O_RDONLY    IO_O_RDONLY
+    #define WOLFSSH_O_WRONLY    IO_O_WRONLY     /* not used? */
+    #define WOLFSSH_O_APPEND    IO_O_APPEND     /* not used? */
+    #define WOLFSSH_O_CREAT     IO_O_CREAT      /* not used? */
+    #define WOLFSSH_O_TRUNC     IO_O_TRUNC      /* not used? */
+    #define WOLFSSH_O_EXCL      IO_O_EXCL       /* not used? */
+
+    #ifndef WOPEN
+        static inline WFD wOpen(const char* f, int flag, unsigned int per)
+        {
+            char* mode;
+
+            /* translate open() flags to fopen() mode */
+            if (flag & WOLFSSH_O_RDONLY) {
+                mode = "r";
+
+            } else if (flag & WOLFSSH_O_RDWR) {
+                if ((flag & WOLFSSH_O_CREAT) &&
+                    (flag & WOLFSSH_O_TRUNC)) {
+                  mode = "w+";
+
+                } else if ((flag & WOLFSSH_O_CREAT) &&
+                           (flag & WOLFSSH_O_APPEND)) {
+                  mode = "a+";
+
+                } else {
+                  mode = "r+";
+                }
+            } else if (flag & WOLFSSH_O_WRONLY) {
+                if ((flag & WOLFSSH_O_CREAT) &&
+                    (flag & WOLFSSH_O_TRUNC)) {
+                  mode = "w";
+                } else if ((flag & WOLFSSH_O_CREAT) &&
+                           (flag & WOLFSSH_O_APPEND)) {
+                  mode = "a";
+                }
+            } else {
+                return NULL;
+            }
+
+            return fopen(f, mode);
+        }
+
+        #define WOPEN(f,m,p)    wOpen((f),(m),(p))
+    #endif
+
+    #ifndef WRMDIR
+        static inline int wRmDir(void* fs, const char* path)
+        {
+            MQX_FILE_PTR mfs_ptr;
+            uint32_t err;
+
+            if (fs == NULL || path == NULL) {
+                return -1;
+            }
+            mfs_ptr = (MQX_FILE_PTR)fs;
+
+            /* check that filesystem handle is valid */
+            if (_io_is_fs_valid(mfs_ptr) == 0) {
+                WLOG(WS_LOG_SFTP, "Invalid file system pointer");
+                return -1;
+            }
+
+            /* try to delete subdirectory */
+            err = ioctl(mfs_ptr, IO_IOCTL_REMOVE_SUBDIR, (uint32_t*)path);
+            if (err != MFS_NO_ERROR) {
+                return -1;
+            }
+
+            return 0;
+        }
+
+        #define WRMDIR(fs,d)  wRmDir((fs),(d))
+    #endif /* WRMDIR */
+
+    #ifndef WMKDIR
+
+        static inline int wMkDir(void* fs, const char* path)
+        {
+            MQX_FILE_PTR mfs_ptr;
+            uint32_t err;
+
+            if (fs == NULL || path == NULL) {
+                return -1;
+            }
+            mfs_ptr = (MQX_FILE_PTR)fs;
+
+            /* check that filesystem handle is valid */
+            if (_io_is_fs_valid(mfs_ptr) == 0) {
+                WLOG(WS_LOG_SFTP, "Invalid file system pointer");
+                return -1;
+            }
+
+            /* try to create subdirectory */
+            err = ioctl(mfs_ptr, IO_IOCTL_CREATE_SUBDIR, (uint32_t*)path);
+            if (err != MFS_NO_ERROR) {
+                return -1;
+            }
+
+            return 0;
+        }
+
+        #define WMKDIR(fs,d,m)     wMkDir((fs),(d))
+    #endif /* WMKDIR */
+
+    #ifndef WREMOVE
+        static inline int wRemove(void* fs, const char* path)
+        {
+            MQX_FILE_PTR mfs_ptr;
+            uint32_t err;
+
+            if (fs == NULL || path == NULL) {
+                return -1;
+            }
+            mfs_ptr = (MQX_FILE_PTR)fs;
+
+            /* check that filesystem handle is valid */
+            if (_io_is_fs_valid(mfs_ptr) == 0) {
+                WLOG(WS_LOG_SFTP, "Invalid file system pointer");
+                return -1;
+            }
+
+            /* try to create subdirectory */
+            err = ioctl(mfs_ptr, IO_IOCTL_DELETE_FILE, (uint32_t*)path);
+            if (err != MFS_NO_ERROR) {
+                return -1;
+            }
+
+            return 0;
+        }
+        #define WREMOVE(fs,d)      wRemove((fs),(d))
+    #endif /* WREMOVE */
+
+    #ifndef WRENAME
+        static inline int wRename(void* fs, const char* oldpath,
+                                  const char* newpath)
+        {
+            int err;
+            MQX_FILE_PTR mfs_ptr;
+            MFS_RENAME_PARAM rename;
+
+            if (fs == NULL || oldpath == NULL || newpath == NULL) {
+                return -1;
+            }
+            mfs_ptr = (MQX_FILE_PTR)fs;
+
+            /* check that filesystem handle is valid */
+            if (_io_is_fs_valid(mfs_ptr) == 0) {
+                WLOG(WS_LOG_SFTP, "Invalid file system pointer");
+                return -1;
+            }
+
+            rename.OLD_PATHNAME = (char*)oldpath;
+            rename.NEW_PATHNAME = (char*)newpath;
+
+            /* try to create subdirectory */
+            err = ioctl(mfs_ptr, IO_IOCTL_RENAME_FILE, (uint32_t*)&rename);
+            if (err != MFS_NO_ERROR) {
+                return -1;
+            }
+
+            return 0;
+        }
+        #define WRENAME(fs,o,n)    wRename((fs),(o),(n))
+    #endif /* WRENAME */
+
+    #ifndef WGETCWD
+        static inline char* wGetCwd(void* fs, char* buf, unsigned int bufSz)
+        {
+            MQX_FILE_PTR mfs_ptr;
+            int err, dirSz, labelSz;
+
+            if (buf == NULL || bufSz == 0) {
+                return NULL;
+            }
+
+            if (fs == NULL) {
+                WLOG(WS_LOG_SFTP, "Must set MFS file system handle with "
+                     "wolfSSH_SetFilesystemHandle()");
+                return NULL;
+            }
+            mfs_ptr = (MQX_FILE_PTR)fs;
+
+            /* check that filesystem handle is valid */
+            if (_io_is_fs_valid(mfs_ptr) == 0) {
+                WLOG(WS_LOG_SFTP, "Invalid file system pointer");
+                return NULL;
+            }
+
+            /* check bufSz against MFS path size */
+            if (bufSz < PATHNAME_SIZE) {
+                WLOG(WS_LOG_SFTP, "Buf size smaller than max MFS path size");
+                return NULL;
+            }
+
+            /* try to get current directory */
+            err = ioctl(mfs_ptr, IO_IOCTL_GET_CURRENT_DIR, (uint32_t*)buf);
+            if (err != MFS_NO_ERROR) {
+                return NULL;
+            }
+
+            /* add drive to beginning of path */
+            dirSz = WSTRLEN(buf);
+            labelSz = WSTRLEN(MQX_MFS_DEVICE);
+            if (dirSz + labelSz + 1 > bufSz) {
+                WLOG(WS_LOG_SFTP, "Buffer too small to prepend drive label");
+                return NULL;
+            }
+            WMEMMOVE(buf + labelSz, buf, dirSz);
+            WMEMCPY(buf, MQX_MFS_DEVICE, labelSz);
+            buf[labelSz + dirSz] = '\0';
+
+            /* remove trailing '\' if present */
+            if (buf[labelSz + dirSz - 1] == '\\') {
+                buf[labelSz + dirSz - 1] = '\0';
+            }
+
+            return buf;
+        }
+        #define WGETCWD(fs,r,rSz)  wGetCwd((fs),(r),(rSz))
+    #endif /* WGETCWD */
+
+    #define WCLOSE  fclose
+
+    #ifndef WPWRITE
+        static inline int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
+            const unsigned int* shortOffset)
+        {
+            unsigned int ofst;
+
+            ofst = shortOffset[0];
+            if (ofst > 0) {
+                fseek(fd, ofst, 0);
+            }
+
+            return fwrite(buf, sz, 1, fd);
+        }
+        #define WPWRITE(fd,b,s,o) wPwrite((fd),(b),(s),(o))
+    #endif
+
+#ifndef WPREAD
+    static inline int wPread(WFD fd, unsigned char* buf, unsigned int sz,
+            const unsigned int* shortOffset)
+    {
+        unsigned int ofst;
+
+        ofst = shortOffset[0];
+        if (ofst > 0) {
+            fseek(fd, ofst, 0);
+        }
+
+        return fread(buf, 1, sz, fd);
+    }
+    #define WPREAD(fd,b,s,o)  wPread((fd),(b),(s),(o))
+#endif
+
+#ifndef NO_WOLFSSH_DIR
+
+    typedef struct {
+        void* dirStruct;    /* MFS DIR_STRUCT_PTR */
+        char pathname[PATHNAME_SIZE];
+        void* heap;
+    } MQXDIR;
+
+    #define WDIR MQXDIR*
+
+    #ifndef WOPENDIR
+        static inline int wOpenDir(void* fs, void* heap, WDIR* d, char* dir)
+        {
+            int pathSz;
+            MQXDIR* mqxdir;
+            MQX_FILE_PTR mfs_ptr;
+            void* dir_ptr;
+            char* mode_ptr = "f";
+
+            if (fs == NULL || d == NULL || dir == NULL) {
+                return -1;
+            }
+            mfs_ptr = (MQX_FILE_PTR)fs;
+
+            /* check that filesystem handle is valid */
+            if (_io_is_fs_valid(mfs_ptr) == 0) {
+                WLOG(WS_LOG_SFTP, "Invalid file system pointer");
+                return -1;
+            }
+
+            /* allocate MQXDIR struct to hold handle and modified pathname */
+            mqxdir = (MQXDIR*)WMALLOC(sizeof(MQXDIR), mqxdir->heap,
+                                      DYNTYPE_SFTP);
+            if (mqxdir == NULL) {
+                WLOG(WS_LOG_SFTP, "Unable to allocate MQXDIR in wOpenDir");
+                return -1;
+            }
+            WMEMSET(mqxdir, 0, sizeof(MQXDIR));
+            mqxdir->heap = heap;
+
+            /* copy dir to pathname */
+            pathSz = WSTRLEN(dir);
+
+            if (pathSz > sizeof(mqxdir->pathname)) {
+                WLOG(WS_LOG_SFTP, "dir name too large for buffer");
+                WFREE(mqxdir, mqxdir->heap, DYNTYPE_SFTP);
+                return -1;
+            }
+            WMEMCPY(mqxdir->pathname, dir, pathSz);
+
+            /* remove trailing '.' */
+            if (mqxdir->pathname[pathSz-1] == '.' &&
+                mqxdir->pathname[pathSz-2] != '.') {
+                mqxdir->pathname[pathSz-1] = '\0';
+                pathSz--;
+            }
+
+            /* add trailing delimiter if not present */
+            if (mqxdir->pathname[pathSz-1] != WS_DELIM) {
+                if (pathSz + 2 > sizeof(mqxdir->pathname)) {
+                    WFREE(mqxdir, mqxdir->heap, DYNTYPE_SFTP);
+                    return -1;
+                }
+                mqxdir->pathname[pathSz] = WS_DELIM;
+                mqxdir->pathname[pathSz + 1] = '\0';
+            }
+
+            dir_ptr = _io_mfs_dir_open(mfs_ptr, mqxdir->pathname, mode_ptr);
+            if (dir_ptr == NULL) {
+                WLOG(WS_LOG_SFTP, "MFS file not found");
+                WFREE(mqxdir, mqxdir->heap, DYNTYPE_SFTP);
+                return -1;
+            }
+            mqxdir->dirStruct = dir_ptr;
+            *d = mqxdir;
+
+            return 0;
+        }
+        #define WOPENDIR(fs,h,c,d)  wOpenDir((fs),(h),(c),(d))
+    #endif
+
+    #ifndef WCLOSEDIR
+        static inline int wCloseDir(WDIR* d)
+        {
+            MQXDIR* mqxdir = NULL;
+
+            if (d != NULL) {
+                mqxdir = *d;
+
+                _io_mfs_dir_close(mqxdir->dirStruct);
+                WFREE(mqxdir, mqxdir->heap, DYNTYPE_SFTP);
+            }
+
+            return 0;
+        }
+        #define WCLOSEDIR(d)  wCloseDir((d))
+    #endif /* WCLOSEDIR */
+#endif /* NO_WOLFSSH_DIR */
+
 #elif defined(USE_WINDOWS_API)
 
     #include <windows.h>
@@ -487,12 +949,12 @@ extern "C" {
     #endif
 
     #define WSTAT_T           struct _stat
-    #define WRMDIR(d)         _rmdir((d))
+    #define WRMDIR(fs,d)      _rmdir((d))
     #define WSTAT(p,b)        _stat((p),(b))
     #define WLSTAT(p,b)       _stat((p),(b))
-    #define WREMOVE(d)        remove((d))
-    #define WRENAME(o,n)      rename((o),(n))
-    #define WGETCWD(r,rSz)    _getcwd((r),(rSz))
+    #define WREMOVE(fs,d)     remove((d))
+    #define WRENAME(fs,o,n)   rename((o),(n))
+    #define WGETCWD(fs,r,rSz)    _getcwd((r),(rSz))
     #define WOPEN(f,m,p)      _open((f),(m),(p))
     #define WCLOSE(fd)        _close((fd))
 
@@ -521,17 +983,17 @@ extern "C" {
     #include <stdio.h>    /* used for remove and rename */
     #include <dirent.h>   /* used for opening directory and reading */
 
-    #define WSTAT_T     struct stat
-    #define WRMDIR(d)   rmdir((d))
-    #define WSTAT(p,b)  stat((p),(b))
+    #define WSTAT_T      struct stat
+    #define WRMDIR(fs,d) rmdir((d))
+    #define WSTAT(p,b)   stat((p),(b))
     #ifndef USE_OSE_API
         #define WLSTAT(p,b) lstat((p),(b))
     #else
         #define WLSTAT(p,b) stat((p),(b))
     #endif
-    #define WREMOVE(d)   remove((d))
-    #define WRENAME(o,n) rename((o),(n))
-    #define WGETCWD(r,rSz) getcwd((r),(rSz))
+    #define WREMOVE(fs,d)     remove((d))
+    #define WRENAME(fs,o,n)   rename((o),(n))
+    #define WGETCWD(fs,r,rSz) getcwd((r),(rSz))
     #define WS_DELIM '/'
 
     #include <fcntl.h> /* used for open, close, pwrite, and pread */
@@ -556,7 +1018,7 @@ extern "C" {
     #define WDIR DIR*
 
     /* returns 0 on success */
-    #define WOPENDIR(c,d)  ((*(c) = opendir((d))) == NULL)
+    #define WOPENDIR(fs,h,c,d)  ((*(c) = opendir((d))) == NULL)
     #define WCLOSEDIR(d) closedir(*(d))
     #define WREADDIR(d)  readdir(*(d))
 #endif /* NO_WOLFSSH_DIR */
@@ -598,6 +1060,7 @@ extern "C" {
 #ifdef WOLFSSL_NUCLEUS
     #include "nucleus.h"
     #include "networking/nu_networking.h"
+    #define WFIONREAD FIONREAD
     static inline void ws_Ioctl(int fd, int flag, int* ret)
     {
         SCK_IOCTL_OPTION op;
@@ -610,7 +1073,25 @@ extern "C" {
         }
     }
     #define WIOCTL ws_Ioctl
+#elif defined(FREESCALE_MQX)
+    /* MQX does not have FIONREAD, use SO_RCVNUM with getsockopt() instead */
+    #include <ioctl.h>
+    #define WFIONREAD SO_RCVNUM
+    static inline void ws_Ioctl(int fd, int flag, int* ret)
+    {
+        int status;
+        uint32_t bytesSz;
+
+        bytesSz = sizeof(*ret);
+        status = getsockopt(fd, SOL_SOCKET, SO_RCVNUM, ret, &bytesSz);
+        if (status != RTCS_OK) {
+            WLOG(WS_LOG_ERROR, "Error calling getsockopt()");
+            *ret = 0;
+        }
+    }
+    #define WIOCTL ws_Ioctl
 #elif defined(USE_WINDOWS_API)
+    #define WFIONREAD FIONREAD
     #define WIOCTL ioctlsocket
 #else
     #if defined(__CYGWIN__) && !defined(FIONREAD)
@@ -618,6 +1099,7 @@ extern "C" {
         #include <sys/socket.h>
     #endif
     #include <sys/ioctl.h>
+    #define WFIONREAD FIONREAD
     #define WIOCTL ioctl
 #endif
 #endif /* WIOCTL */

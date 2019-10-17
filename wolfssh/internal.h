@@ -300,6 +300,7 @@ struct WOLFSSH {
     void* globalReqCtx;    /* Global Request CB context */
     void* reqSuccessCtx;   /* Global Request Sucess CB context */
     void* reqFailureCtx;   /* Global Request Failure CB context */
+    void* fs;              /* File system handle */
     word32 curSz;
     word32 seq;
     word32 peerSeq;
