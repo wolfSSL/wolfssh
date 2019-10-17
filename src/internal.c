@@ -8707,7 +8707,7 @@ int wolfSSH_oct2dec(WOLFSSH* ssh, byte* oct, word32 octSz)
     /* convert octal string to int without mp_read_radix() */
     ret = 0;
 
-    for (i = 0; i < WOLFSSH_MAX_OCTET_LEN; i++)
+    for (i = 0; i < octSz; i++)
     {
         if (oct[i] < '0' || oct[0] > '7') {
             ret = WS_BAD_ARGUMENT;
