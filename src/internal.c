@@ -593,10 +593,13 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
                           const byte* in, word32 inSz,
                           int format, int type)
 {
-    int dynamicType;
-    void* heap;
+    int dynamicType = 0;
+    void* heap = NULL;
     byte* der;
     word32 derSz;
+
+    (void)dynamicType;
+    (void)heap;
 
     if (ctx == NULL || in == NULL || inSz == 0)
         return WS_BAD_ARGUMENT;
@@ -3098,7 +3101,7 @@ static int DoUnimplemented(WOLFSSH* ssh,
 static int DoDisconnect(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
     word32 reason;
-    const char* reasonStr;
+    const char* reasonStr = NULL;
     word32 begin = *idx;
 
     (void)ssh;
@@ -3404,7 +3407,7 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
                                   encDigestSz);
         sizeCompare = encDigestSz != (word32)checkDigestSz;
 
-        if ((compare | sizeCompare) == 0)
+        if ((compare == 0) && (sizeCompare == 0))
             ret = WS_SUCCESS;
         else
             ret = WS_RSA_E;
@@ -5197,7 +5200,6 @@ int DoReceive(WOLFSSH* ssh)
 
         return WS_SUCCESS;
     }
-    return WS_FATAL_ERROR;
 }
 
 

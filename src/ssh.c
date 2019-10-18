@@ -104,6 +104,8 @@ WOLFSSH* wolfSSH_new(WOLFSSH_CTX* ctx)
     WOLFSSH* ssh;
     void*    heap = NULL;
 
+    (void)heap;
+
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_new()");
 
     if (ctx)

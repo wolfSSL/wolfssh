@@ -5211,8 +5211,6 @@ static int wolfSSH_SFTP_GetHandle(WOLFSSH* ssh, byte* handle, word32* handleSz)
                 return WS_INPUT_CASE_E;
         }
     }
-
-    return WS_SUCCESS;
 }
 
 
@@ -5226,7 +5224,6 @@ WS_SFTPNAME* wolfSSH_SFTP_LS(WOLFSSH* ssh, char* dir)
 {
     struct WS_SFTP_LS_STATE* state = NULL;
     WS_SFTPNAME* name = NULL;
-    int ret;
 
     if (ssh == NULL || dir == NULL) {
         WLOG(WS_LOG_SFTP, "Bad argument passed in");
@@ -5305,7 +5302,7 @@ WS_SFTPNAME* wolfSSH_SFTP_LS(WOLFSSH* ssh, char* dir)
 
         case STATE_LS_CLOSE:
             /* close dir when finished */
-            if ((ret = wolfSSH_SFTP_Close(ssh, state->handle, state->sz))
+            if (wolfSSH_SFTP_Close(ssh, state->handle, state->sz)
                     != WS_SUCCESS) {
                 WLOG(WS_LOG_SFTP, "Error closing handle");
                 if (ssh->error != WS_WANT_READ && ssh->error != WS_WANT_WRITE) {
@@ -5544,8 +5541,6 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                 return WS_INPUT_CASE_E;
         }
     }
-
-    return WS_SUCCESS;
 }
 
 
@@ -5836,8 +5831,6 @@ int wolfSSH_SFTP_Open(WOLFSSH* ssh, char* dir, word32 reason,
                 return WS_INPUT_CASE_E;
         }
     }
-
-    return WS_SUCCESS;
 }
 
 
@@ -6047,8 +6040,6 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 return WS_FATAL_ERROR;
         }
     }
-
-    return WS_SUCCESS;
 }
 
 
@@ -6279,8 +6270,6 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 return WS_FATAL_ERROR;
         }
     }
-
-    return WS_SUCCESS;
 }
 
 
@@ -6589,8 +6578,6 @@ int wolfSSH_SFTP_Close(WOLFSSH* ssh, byte* handle, word32 handleSz)
                 return WS_INPUT_CASE_E;
         }
     }
-
-    return WS_SUCCESS;
 }
 
 
@@ -6856,8 +6843,6 @@ int wolfSSH_SFTP_Rename(WOLFSSH* ssh, const char* old, const char* nw)
                 return WS_FATAL_ERROR;
         }
     }
-
-    return WS_SUCCESS;
 }
 
 
@@ -7414,8 +7399,6 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                 return WS_INPUT_CASE_E;
         }
     }
-
-    return WS_SUCCESS;
 }
 
 
@@ -7613,8 +7596,6 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                 return WS_INPUT_CASE_E;
         }
     }
-
-    return ret;
 }
 
 
