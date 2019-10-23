@@ -562,6 +562,11 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
         ssh->scpFileName = NULL;
         ssh->scpFileNameSz = 0;
     }
+    if (ssh->scpRecvMsg) {
+        WFREE(ssh->scpRecvMsg, ssh->heap, DYNTYPE_STRING);
+        ssh->scpRecvMsg = NULL;
+        ssh->scpRecvMsgSz = 0;
+    }
 #ifdef WOLFSSL_NUCLEUS
     WFREE(ssh->scpBasePathDynamic, ssh->ctx->heap, DYNTYPE_BUFFER);
     ssh->scpBasePathDynamic = NULL;

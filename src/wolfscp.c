@@ -936,7 +936,7 @@ static int GetScpFileName(WOLFSSH* ssh, byte* buf, word32 bufSz,
     idx = *inOutIdx;
     len = (word32)WSTRLEN((char*)(buf + idx));
 
-    if (len == 0 || (idx + len) > bufSz)
+    if ((idx + len) > bufSz)
         ret = WS_SCP_CMD_E;
 
     if (ret == WS_SUCCESS) {
@@ -1249,17 +1249,39 @@ int ReceiveScpMessage(WOLFSSH* ssh)
 {
     int sz, ret = WS_SUCCESS;
     word32 idx = 0;
-    byte buf[DEFAULT_SCP_MSG_SZ];
+    byte* buf;
 
     if (ssh == NULL)
         return WS_BAD_ARGUMENT;
 
-    sz = wolfSSH_stream_read(ssh, buf, sizeof(buf));
-    if (sz < 0)
-        return sz;
+    /* create persistent msg buffer in case of nonblocking */
+    if (ssh->scpRecvMsg == NULL) {
+        ssh->scpRecvMsg = (char*)WMALLOC(DEFAULT_SCP_MSG_SZ, ssh->ctx->heap,
+                DYNTYPE_STRING);
+        if (ssh->scpRecvMsg == NULL) {
+            return WS_MEMORY_E;
+        }
+        ssh->scpRecvMsgSz = 0;
+    }
+    buf = (byte*)ssh->scpRecvMsg;
+
+    /* keep reading until newline found */
+    do {
+        if (ssh->scpRecvMsgSz >= DEFAULT_SCP_MSG_SZ - 1) {
+            WLOG(WS_LOG_ERROR, "scp: buffer not big enough to recv message");
+            return WS_BUFFER_E;
+        }
+
+        sz = wolfSSH_stream_read(ssh, buf + ssh->scpRecvMsgSz,
+                DEFAULT_SCP_MSG_SZ - ssh->scpRecvMsgSz);
+        if (sz < 0)
+            return sz;
+        ssh->scpRecvMsgSz += sz;
+        sz = ssh->scpRecvMsgSz;
+    } while (buf[sz - 1] != 0x0a);
 
     /* null-terminate request, replace newline */
-    buf[sz] = '\0';
+    buf[sz - 1] = '\0';
 
     switch (buf[0]) {
         case 'C':
@@ -1307,6 +1329,10 @@ int ReceiveScpMessage(WOLFSSH* ssh)
             WLOG(WS_LOG_DEBUG, "scp: Received invalid message\n");
             break;
     }
+
+    WFREE(ssh->scpRecvMsg, ssh->ctx->heap, DYNTYPE_STRING);
+    ssh->scpRecvMsg = NULL;
+    ssh->scpRecvMsgSz = 0;
 
     return ret;
 }
@@ -1704,35 +1730,37 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
 
         case WOLFSSH_SCP_NEW_DIR:
 
-            /* try to create new directory */
-#ifdef WOLFSSL_NUCLEUS
-            /* get absolute path */
-            WSTRNCAT(abslut, (char*)basePath, WOLFSSH_MAX_FILENAME);
-            WSTRNCAT(abslut, "/", WOLFSSH_MAX_FILENAME);
-            WSTRNCAT(abslut, fileName, WOLFSSH_MAX_FILENAME);
-            clean_path(abslut);
-            if (WMKDIR(abslut, fileMode) != 0) {
-#else
-            if (WMKDIR(fileName, fileMode) != 0) {
-#endif
-                if (wolfSSH_LastError() != EEXIST) {
-                    wolfSSH_SetScpErrorMsg(ssh, "error creating directory");
-                    ret = WS_SCP_ABORT;
-                    break;
+            if (WSTRLEN(fileName) > 0) {
+                /* try to create new directory */
+            #ifdef WOLFSSL_NUCLEUS
+                /* get absolute path */
+                WSTRNCAT(abslut, (char*)basePath, WOLFSSH_MAX_FILENAME);
+                WSTRNCAT(abslut, "/", WOLFSSH_MAX_FILENAME);
+                WSTRNCAT(abslut, fileName, WOLFSSH_MAX_FILENAME);
+                clean_path(abslut);
+                if (WMKDIR(abslut, fileMode) != 0) {
+            #else
+                if (WMKDIR(fileName, fileMode) != 0) {
+            #endif
+                    if (wolfSSH_LastError() != EEXIST) {
+                        wolfSSH_SetScpErrorMsg(ssh, "error creating directory");
+                        ret = WS_SCP_ABORT;
+                        break;
+                    }
                 }
-            }
 
-            /* cd into directory */
-        #ifdef WOLFSSL_NUCLEUS
-            WSTRNCAT((char*)basePath, "/", sizeof("/"));
-            WSTRNCAT((char*)basePath, fileName, WOLFSSH_MAX_FILENAME);
-            clean_path((char*)basePath);
-        #else
-            if (WCHDIR(fileName) != 0) {
-                wolfSSH_SetScpErrorMsg(ssh, "unable to cd into directory");
-                ret = WS_SCP_ABORT;
+                /* cd into directory */
+            #ifdef WOLFSSL_NUCLEUS
+                WSTRNCAT((char*)basePath, "/", sizeof("/"));
+                WSTRNCAT((char*)basePath, fileName, WOLFSSH_MAX_FILENAME);
+                clean_path((char*)basePath);
+            #else
+                if (WCHDIR(fileName) != 0) {
+                    wolfSSH_SetScpErrorMsg(ssh, "unable to cd into directory");
+                    ret = WS_SCP_ABORT;
+                }
+            #endif
             }
-        #endif
             break;
 
         case WOLFSSH_SCP_END_DIR:

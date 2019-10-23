@@ -320,6 +320,8 @@ struct WOLFSSH {
     int    scpConfirm;            /* confirmation state (OK|WARN|FATAL) */
     char*  scpConfirmMsg;         /* dynamic, confirm message string */
     word32 scpConfirmMsgSz;       /* length of confirmMsg, not including \0 */
+    char*  scpRecvMsg;            /* reading up to newline delimiter */
+    int    scpRecvMsgSz;          /* current size of scp recv message */
     const char* scpBasePath;      /* base path, ptr into channelList->command */
 #ifdef WOLFSSL_NUCLEUS
     /* alter base path instead of using chdir */
