@@ -2110,7 +2110,7 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
     sz = (int)WSTRLEN(tmpName);
 
     /* remove /r/n that _io_mfs_dir_read() adds */
-    if (WSTRNCMP(tmpName + sz - 2, "\r\n", 2) == 0) {
+    if ((sz >= 2) && (WSTRNCMP(tmpName + sz - 2, "\r\n", 2) == 0)) {
         tmpName[sz - 2] = '\0';
         sz -= 2;
     }
@@ -3669,7 +3669,7 @@ int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
     sz = (int)WSTRLEN(fileName);
 
     /* handle case of '<drive>:/.' */
-    if (WSTRNCMP(fileName + sz - 3, ":/.", 3) == 0) {
+    if ((sz >= 3) && (WSTRNCMP(fileName + sz - 3, ":/.", 3) == 0)) {
         atr->flags |= WOLFSSH_FILEATRB_PERM;
         atr->per |= 0x4000;
         return WS_SUCCESS;
