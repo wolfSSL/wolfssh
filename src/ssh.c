@@ -1045,14 +1045,10 @@ int wolfSSH_SendIgnore(WOLFSSH* ssh, const byte* buf, word32 bufSz)
     return SendIgnore(ssh, scratch, sizeof(scratch));
 }
 
+
 int wolfSSH_SendDisconnect(WOLFSSH *ssh, word32 reason)
 {
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SendDisconnect");
-    return SendDisconnect(ssh, reason);
-}
-
-int wolfSSH_SendDisconnect(WOLFSSH* ssh, word32 reason)
-{
     return SendDisconnect(ssh, reason);
 }
 
