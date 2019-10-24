@@ -71,7 +71,7 @@ const char* GetErrorString(int err)
     return "No wolfSSH strings available";
 #else
     switch (err) {
-        case WS_FATAL_ERROR:
+        case WS_ERROR:
             return "general function failure";
 
         case WS_BAD_ARGUMENT:
@@ -274,6 +274,12 @@ const char* GetErrorString(int err)
 
         case WS_USER_AUTH_E:
             return "User authentication error";
+
+        case WS_SSH_NULL_E:
+            return "ssh pointer was null";
+
+        case WS_SSH_CTX_NULL_E:
+            return "ssh ctx pointer was null";
 
         default:
             return "Unknown error code";

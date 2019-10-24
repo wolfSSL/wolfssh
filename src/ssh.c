@@ -306,7 +306,7 @@ int wolfSSH_get_error(const WOLFSSH* ssh)
     if (ssh)
         return ssh->error;
 
-    return WS_BAD_ARGUMENT;
+    return WS_SSH_NULL_E;
 }
 
 
@@ -317,7 +317,7 @@ const char* wolfSSH_get_error_name(const WOLFSSH* ssh)
     if (ssh)
         return GetErrorString(ssh->error);
 
-    return NULL;
+    return GetErrorString(WS_SSH_NULL_E);
 }
 
 

@@ -38,7 +38,8 @@ extern "C" {
 /* main public return values */
 enum WS_ErrorCodes {
     WS_SUCCESS              =  0,    /* function success */
-    WS_FATAL_ERROR          = -1001, /* general function failure */
+    WS_FATAL_ERROR          = -1001, /* name deprecated */
+    WS_ERROR                = -1001, /* general function failure */
     WS_BAD_ARGUMENT         = -1002, /* bad function argument */
     WS_MEMORY_E             = -1003, /* memory allocation failure */
     WS_BUFFER_E             = -1004, /* input/output buffer size error */
@@ -106,8 +107,10 @@ enum WS_ErrorCodes {
     WS_PUBKEY_REJECTED_E    = -1066, /* Server public key rejected */
     WS_EXTDATA              = -1067, /* Extended Data available to be read */
     WS_USER_AUTH_E          = -1068, /* User authentication error */
-    
-    WS_LAST_E               = -1068  /* Update this to indicate last error */
+    WS_SSH_NULL_E           = -1069, /* SSH was null */
+    WS_SSH_CTX_NULL_E       = -1070, /* SSH_CTX was null */
+
+    WS_LAST_E               = -1070  /* Update this to indicate last error */
 };
 
 
