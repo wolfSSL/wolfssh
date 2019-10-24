@@ -4833,6 +4833,7 @@ static INLINE int CreateMac(WOLFSSH* ssh, const byte* in, word32 inSz,
     byte flatSeq[LENGTH_SZ];
     int ret;
 
+    WMEMSET(flatSeq, 0, LENGTH_SZ);
     c32toa(ssh->seq, flatSeq);
 
     WLOG(WS_LOG_DEBUG, "CreateMac %s", IdToName(ssh->macId));
@@ -4848,7 +4849,9 @@ static INLINE int CreateMac(WOLFSSH* ssh, const byte* in, word32 inSz,
                 Hmac hmac;
                 byte digest[WC_SHA_DIGEST_SIZE];
 
-                ret = wc_HmacSetKey(&hmac, WC_SHA,
+                ret = wc_HmacInit(&hmac, ssh->ctx->heap, INVALID_DEVID);
+                if (ret == WS_SUCCESS)
+                    ret = wc_HmacSetKey(&hmac, WC_SHA,
                                     ssh->keys.macKey, ssh->keys.macKeySz);
                 if (ret == WS_SUCCESS)
                     ret = wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
@@ -4865,7 +4868,9 @@ static INLINE int CreateMac(WOLFSSH* ssh, const byte* in, word32 inSz,
             {
                 Hmac hmac;
 
-                ret = wc_HmacSetKey(&hmac, WC_SHA,
+                ret = wc_HmacInit(&hmac, ssh->ctx->heap, INVALID_DEVID);
+                if (ret == WS_SUCCESS)
+                    ret = wc_HmacSetKey(&hmac, WC_SHA,
                                     ssh->keys.macKey, ssh->keys.macKeySz);
                 if (ret == WS_SUCCESS)
                     ret = wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
@@ -4880,7 +4885,9 @@ static INLINE int CreateMac(WOLFSSH* ssh, const byte* in, word32 inSz,
             {
                 Hmac hmac;
 
-                ret = wc_HmacSetKey(&hmac, WC_SHA256,
+                ret = wc_HmacInit(&hmac, ssh->ctx->heap, INVALID_DEVID);
+                if (ret == WS_SUCCESS)
+                    ret = wc_HmacSetKey(&hmac, WC_SHA256,
                                     ssh->keys.macKey,
                                     ssh->keys.macKeySz);
                 if (ret == WS_SUCCESS)
@@ -4917,41 +4924,46 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const byte* in, word32 inSz,
     WLOG(WS_LOG_DEBUG, "VM: keyLen = %u", ssh->peerKeys.macKeySz);
 
     WMEMSET(checkMac, 0, sizeof(checkMac));
+    ret = wc_HmacInit(&hmac, ssh->ctx->heap, INVALID_DEVID);
+    if (ret != WS_SUCCESS) {
+        WLOG(WS_LOG_ERROR, "VM: Error initializing hmac structure");
+    }
+    else {
+        switch (ssh->peerMacId) {
+            case ID_NONE:
+                ret = WS_SUCCESS;
+                break;
 
-    switch (ssh->peerMacId) {
-        case ID_NONE:
-            ret = WS_SUCCESS;
-            break;
+            case ID_HMAC_SHA1:
+            case ID_HMAC_SHA1_96:
+                ret = wc_HmacSetKey(&hmac, WC_SHA, ssh->peerKeys.macKey,
+                        ssh->peerKeys.macKeySz);
+                if (ret == WS_SUCCESS)
+                    ret = wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
+                if (ret == WS_SUCCESS)
+                    ret = wc_HmacUpdate(&hmac, in, inSz);
+                if (ret == WS_SUCCESS)
+                    ret = wc_HmacFinal(&hmac, checkMac);
+                if (ConstantCompare(checkMac, mac, ssh->peerMacSz) != 0)
+                    ret = WS_VERIFY_MAC_E;
+                break;
 
-        case ID_HMAC_SHA1:
-        case ID_HMAC_SHA1_96:
-            ret = wc_HmacSetKey(&hmac, WC_SHA,
-                                ssh->peerKeys.macKey, ssh->peerKeys.macKeySz);
-            if (ret == WS_SUCCESS)
-                ret = wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
-            if (ret == WS_SUCCESS)
-                ret = wc_HmacUpdate(&hmac, in, inSz);
-            if (ret == WS_SUCCESS)
-                ret = wc_HmacFinal(&hmac, checkMac);
-            if (ConstantCompare(checkMac, mac, ssh->peerMacSz) != 0)
-                ret = WS_VERIFY_MAC_E;
-            break;
+            case ID_HMAC_SHA2_256:
+                ret = wc_HmacSetKey(&hmac, WC_SHA256, ssh->peerKeys.macKey,
+                        ssh->peerKeys.macKeySz);
+                if (ret == WS_SUCCESS)
+                    ret = wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
+                if (ret == WS_SUCCESS)
+                    ret = wc_HmacUpdate(&hmac, in, inSz);
+                if (ret == WS_SUCCESS)
+                    ret = wc_HmacFinal(&hmac, checkMac);
+                if (ConstantCompare(checkMac, mac, ssh->peerMacSz) != 0)
+                    ret = WS_VERIFY_MAC_E;
+                break;
 
-        case ID_HMAC_SHA2_256:
-            ret = wc_HmacSetKey(&hmac, WC_SHA256,
-                                ssh->peerKeys.macKey, ssh->peerKeys.macKeySz);
-            if (ret == WS_SUCCESS)
-                ret = wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
-            if (ret == WS_SUCCESS)
-                ret = wc_HmacUpdate(&hmac, in, inSz);
-            if (ret == WS_SUCCESS)
-                ret = wc_HmacFinal(&hmac, checkMac);
-            if (ConstantCompare(checkMac, mac, ssh->peerMacSz) != 0)
-                ret = WS_VERIFY_MAC_E;
-            break;
-
-        default:
-            ret = WS_INVALID_ALGO_ID;
+            default:
+                ret = WS_INVALID_ALGO_ID;
+        }
     }
 
     return ret;
@@ -5339,12 +5351,19 @@ static int BundlePacket(WOLFSSH* ssh)
 
     if (!ssh->aeadMode) {
         if (ret == WS_SUCCESS) {
+            byte macSz = MacSzForId(ssh->macId);
+
             idx += paddingSz;
 
-            ret = CreateMac(ssh, ssh->outputBuffer.buffer + ssh->packetStartIdx,
-                            ssh->outputBuffer.length -
-                                ssh->packetStartIdx + paddingSz,
-                            output + idx);
+            WMEMSET(output + idx, 0, macSz);
+            if (idx + macSz > ssh->outputBuffer.bufferSz) {
+                ret = WS_BUFFER_E;
+            }
+            else {
+                ret = CreateMac(ssh, ssh->outputBuffer.buffer +
+                        ssh->packetStartIdx, ssh->outputBuffer.length -
+                        ssh->packetStartIdx + paddingSz, output + idx);
+            }
         }
         else {
             WLOG(WS_LOG_DEBUG, "BP: failed to add padding");
