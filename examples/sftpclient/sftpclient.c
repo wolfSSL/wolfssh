@@ -861,12 +861,16 @@ int doCmds(func_args* args)
 
             if (pt[sz - 1] == '\n') pt[sz - 1] = '\0';
 
+            /* advance pointer to first location of non space character */
+            for (i = 0; i < sz && pt[0] == ' '; i++, pt++);
+            sz = (int)WSTRLEN(pt);
+
             /* get mode */
             sz = (sz < WOLFSSH_MAX_OCTET_LEN - 1)? sz :
                                                    WOLFSSH_MAX_OCTET_LEN -1;
             WMEMCPY(mode, pt, sz);
             mode[WOLFSSH_MAX_OCTET_LEN - 1] = '\0';
-            for (i = sz; i > 0; i--) {
+            for (i = 0; i < sz; i++) {
                 if (mode[i] == ' ') {
                     mode[i] = '\0';
                     break;
@@ -905,7 +909,15 @@ int doCmds(func_args* args)
             } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
                         && ret != WS_SUCCESS);
             if (ret != WS_SUCCESS) {
-                if (SFTP_FPUTS(args, "Unable to change path permissions\n") < 0) {
+                if (SFTP_FPUTS(args, "Unable to change permissions of ") < 0) {
+                    err_msg("fputs error");
+                    return -1;
+                }
+                if (SFTP_FPUTS(args, pt) < 0) {
+                    err_msg("fputs error");
+                    return -1;
+                }
+                if (SFTP_FPUTS(args, "\n") < 0) {
                     err_msg("fputs error");
                     return -1;
                 }
