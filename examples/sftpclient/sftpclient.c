@@ -41,11 +41,6 @@ static char* workingDir;
 #define MAX_CMD_SZ 7
 
 
-#ifndef WS_MAX_AUTOTEST_COUNT
-    #define WS_MAX_AUTOTEST_COUNT 20
-#endif
-
-
 #define AUTOPILOT_OFF 0
 #define AUTOPILOT_GET 1
 #define AUTOPILOT_PUT 2
@@ -1181,6 +1176,17 @@ static int doAutopilot(int cmd, char* local, char* remote)
         err = wolfSSH_get_error(ssh);
     } while ((err == WS_WANT_READ || err == WS_WANT_WRITE) &&
             ret != WS_SUCCESS);
+
+    if (ret != WS_SUCCESS) {
+        if (cmd == AUTOPILOT_PUT) {
+            fprintf(stderr, "Unable to copy local file %s to remote file %s\n",
+                   local, fullpath);
+        }
+        else if (cmd == AUTOPILOT_GET) {
+            fprintf(stderr, "Unable to copy remote file %s to local file %s\n",
+                    fullpath, local);
+        }
+    }
 
     return ret;
 }
