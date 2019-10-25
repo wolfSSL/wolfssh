@@ -33,15 +33,22 @@
 
 #ifdef WOLFSSH_SFTP
 
-int doCmds(func_args* args);
-
-
 /* static so that signal handler can access and interrupt get/put */
 static WOLFSSH* ssh = NULL;
 static char* workingDir;
 #define fin stdin
 #define fout stdout
 #define MAX_CMD_SZ 7
+
+
+#ifndef WS_MAX_AUTOTEST_COUNT
+    #define WS_MAX_AUTOTEST_COUNT 20
+#endif
+
+
+#define AUTOPILOT_OFF 0
+#define AUTOPILOT_GET 1
+#define AUTOPILOT_PUT 2
 
 
 static void err_msg(const char* s)
@@ -283,6 +290,10 @@ static void ShowUsage(void)
     printf(" -N            use non blocking sockets\n");
     printf(" -e            use ECC user authentication\n");
     /*printf(" -E            use ECC server authentication\n");*/
+    printf(" -l <filename> local filename\n");
+    printf(" -r <filename> remote filename\n");
+    printf(" -g            put local filename as remote filename\n");
+    printf(" -G            get remote filename as local filename\n");
 
     ShowCommands();
 }
@@ -534,7 +545,7 @@ static INLINE char* SFTP_FGETS(func_args* args, char* msg, int msgSz)
 
 
 /* main loop for handling commands */
-int doCmds(func_args* args)
+static int doCmds(func_args* args)
 {
     byte quit = 0;
     int ret = WS_SUCCESS, err;
@@ -1142,6 +1153,39 @@ int doCmds(func_args* args)
 }
 
 
+/* alternate main loop for the autopilot get/receive */
+static int doAutopilot(int cmd, char* local, char* remote)
+{
+    int err;
+    int ret = WS_SUCCESS;
+    char fullpath[128] = ".";
+    WS_SFTPNAME* name;
+
+    do {
+        name = wolfSSH_SFTP_RealPath(ssh, fullpath);
+        err = wolfSSH_get_error(ssh);
+    } while ((err == WS_WANT_READ || err == WS_WANT_WRITE) &&
+            ret != WS_SUCCESS);
+
+    snprintf(fullpath, sizeof(fullpath), "%s/%s",
+            name == NULL ? "." : name->fName,
+            remote);
+
+    do {
+        if (cmd == AUTOPILOT_PUT) {
+            ret = wolfSSH_SFTP_Put(ssh, local, fullpath, 0, NULL);
+        }
+        else if (cmd == AUTOPILOT_GET) {
+            ret = wolfSSH_SFTP_Get(ssh, fullpath, local, 0, NULL);
+        }
+        err = wolfSSH_get_error(ssh);
+    } while ((err == WS_WANT_READ || err == WS_WANT_WRITE) &&
+            ret != WS_SUCCESS);
+
+    return ret;
+}
+
+
 THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 {
     WOLFSSH_CTX* ctx = NULL;
@@ -1158,12 +1202,15 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     const char* password = NULL;
     const char* defaultSftpPath = NULL;
     byte nonBlock = 0;
+    int autopilot = AUTOPILOT_OFF;
+    char* apLocal = NULL;
+    char* apRemote = NULL;
 
     int     argc = ((func_args*)args)->argc;
     char**  argv = ((func_args*)args)->argv;
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?d:eEh:p:u:P:N")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?d:egh:l:p:r:u:AEGNP:")) != -1) {
         switch (ch) {
             case 'd':
                 defaultSftpPath = myoptarg;
@@ -1195,6 +1242,22 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
                 username = myoptarg;
                 break;
 
+            case 'l':
+                apLocal = myoptarg;
+                break;
+
+            case 'r':
+                apRemote = myoptarg;
+                break;
+
+            case 'g':
+                autopilot = AUTOPILOT_PUT;
+                break;
+
+            case 'G':
+                autopilot = AUTOPILOT_GET;
+                break;
+
             case 'P':
                 password = myoptarg;
                 break;
@@ -1217,6 +1280,11 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     if (username == NULL)
         err_sys("client requires a username parameter.");
 
+    if (autopilot != AUTOPILOT_OFF) {
+        if (apLocal == NULL || apRemote == NULL) {
+            err_sys("Options -G and -g require both -l and -r.");
+        }
+    }
 
 #ifdef WOLFSSH_TEST_BLOCK
     if (!nonBlock) {
@@ -1327,7 +1395,13 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         n = NULL;
     }
 
-    ret = doCmds((func_args*)args);
+    if (autopilot == AUTOPILOT_OFF) {
+        ret = doCmds((func_args*)args);
+    }
+    else {
+        ret = doAutopilot(autopilot, apLocal, apRemote);
+    }
+
     XFREE(workingDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     if (ret == WS_SUCCESS) {
         if (wolfSSH_shutdown(ssh) != WS_SUCCESS) {
