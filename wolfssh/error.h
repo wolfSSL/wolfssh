@@ -109,8 +109,9 @@ enum WS_ErrorCodes {
     WS_USER_AUTH_E          = -1068, /* User authentication error */
     WS_SSH_NULL_E           = -1069, /* SSH was null */
     WS_SSH_CTX_NULL_E       = -1070, /* SSH_CTX was null */
+    WS_CHANNEL_NOT_CONF     = -1071, /* Channel open not confirmed. */
 
-    WS_LAST_E               = -1070  /* Update this to indicate last error */
+    WS_LAST_E               = -1071  /* Update this to indicate last error */
 };
 
 

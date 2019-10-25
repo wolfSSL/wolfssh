@@ -1520,7 +1520,7 @@ int wolfSSH_ChannelSend(WOLFSSH_CHANNEL* channel,
         bytesTxd = WS_BAD_ARGUMENT;
     else if (!channel->openConfirmed) {
         WLOG(WS_LOG_DEBUG, "Channel not confirmed yet.");
-        return -666;
+        bytesTxd = WS_CHANNEL_NOT_CONF;
     }
     else {
         WLOG(WS_LOG_DEBUG, "Sending data.");

@@ -281,6 +281,9 @@ const char* GetErrorString(int err)
         case WS_SSH_CTX_NULL_E:
             return "ssh ctx pointer was null";
 
+        case WS_CHANNEL_NOT_CONF:
+            return "channel open not confirmed";
+
         default:
             return "Unknown error code";
     }
