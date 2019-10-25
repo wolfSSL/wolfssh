@@ -33,7 +33,7 @@
 
 
 #include <wolfssh/port.h>
-#ifndef USE_WINDOWS_API
+#if !defined(USE_WINDOWS_API) && !defined(FREESCALE_MQX)
     #include <stdio.h>
 #endif
 
@@ -85,7 +85,8 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
 #if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
     !defined(NO_WOLFSSH_SERVER)
 
-    #if defined(USE_WINDOWS_API) || defined(WOLFSSL_NUCLEUS)
+    #if defined(USE_WINDOWS_API) || defined(WOLFSSL_NUCLEUS) || \
+        defined(FREESCALE_MQX)
 
         /* This is current inline in the source. */
 

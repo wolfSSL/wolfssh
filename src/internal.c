@@ -428,7 +428,7 @@ void CtxResourceFree(WOLFSSH_CTX* ctx)
 
 WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
 {
-#if defined(STM32F2) || defined(STM32F4)
+#if defined(STM32F2) || defined(STM32F4) || defined(FREESCALE_MQX)
     /* avoid name conflict in "stm32fnnnxx.h" */
     #undef  RNG
     #define RNG WC_RNG
@@ -471,6 +471,7 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->highwaterMark = ctx->highwaterMark;
     ssh->highwaterCtx  = (void*)ssh;
     ssh->reqSuccessCtx = (void*)ssh;
+    ssh->fs            = NULL;
     ssh->acceptState = ACCEPT_BEGIN;
     ssh->clientState = CLIENT_BEGIN;
     ssh->isKeying    = 1;
@@ -595,10 +596,13 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
                           const byte* in, word32 inSz,
                           int format, int type)
 {
-    int dynamicType;
-    void* heap;
+    int dynamicType = 0;
+    void* heap = NULL;
     byte* der;
     word32 derSz;
+
+    (void)dynamicType;
+    (void)heap;
 
     if (ctx == NULL || in == NULL || inSz == 0)
         return WS_BAD_ARGUMENT;
@@ -3100,7 +3104,7 @@ static int DoUnimplemented(WOLFSSH* ssh,
 static int DoDisconnect(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
     word32 reason;
-    const char* reasonStr;
+    const char* reasonStr = NULL;
     word32 begin = *idx;
 
     (void)ssh;
@@ -3406,7 +3410,7 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
                                   encDigestSz);
         sizeCompare = encDigestSz != (word32)checkDigestSz;
 
-        if ((compare | sizeCompare) == 0)
+        if ((compare == 0) && (sizeCompare == 0))
             ret = WS_SUCCESS;
         else
             ret = WS_RSA_E;
@@ -5199,7 +5203,6 @@ int DoReceive(WOLFSSH* ssh)
 
         return WS_SUCCESS;
     }
-    return WS_FATAL_ERROR;
 }
 
 
@@ -8545,6 +8548,15 @@ void clean_path(char* path)
     }
     sz = (int)WSTRLEN(path);
 
+    /* remove any /./ patterns */
+    for (i = 0; i < sz; i++) {
+        if (path[i] == '.' && path[i - 1] == WS_DELIM && path[i + 1] == WS_DELIM) {
+            WMEMMOVE(path + i, path + i + 1, sz - i + 1);
+            sz -= 1;
+            i--;
+        }
+    }
+
     /* remove any double '/' or '\' chars */
     for (i = 0; i < sz; i++) {
         if ((path[i] == WS_DELIM && path[i+1] == WS_DELIM)) {
@@ -8633,10 +8645,20 @@ void clean_path(char* path)
             path[sz] = '\0';
         }
 #endif
+
+#ifndef FREESCALE_MQX
         /* remove trailing delimiter */
         if (sz > 3 && path[sz - 1] == WS_DELIM) {
             path[sz - 1] = '\0';
         }
+#endif
+
+#ifdef FREESCALE_MQX
+        /* remove trailing '.' */
+        if (path[sz - 1] == '.') {
+            path[sz - 1] = '\0';
+        }
+#endif
     }
 }
 #endif /* WOLFSSH_SFTP || WOLFSSH_SCP */
@@ -8710,7 +8732,7 @@ int wolfSSH_oct2dec(WOLFSSH* ssh, byte* oct, word32 octSz)
     /* convert octal string to int without mp_read_radix() */
     ret = 0;
 
-    for (i = 0; i < WOLFSSH_MAX_OCTET_LEN; i++)
+    for (i = 0; i < octSz; i++)
     {
         if (oct[i] < '0' || oct[0] > '7') {
             ret = WS_BAD_ARGUMENT;

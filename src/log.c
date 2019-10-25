@@ -35,10 +35,12 @@
 #include <wolfssh/error.h>
 
 #include <stdlib.h>
-#include <stdio.h>
 #include <stdarg.h>
-#ifndef WOLFSSH_NO_TIMESTAMP
-    #include <time.h>
+#ifndef FREESCALE_MQX
+    #include <stdio.h>
+    #ifndef WOLFSSH_NO_TIMESTAMP
+        #include <time.h>
+    #endif
 #endif
 
 

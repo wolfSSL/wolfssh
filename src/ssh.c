@@ -104,6 +104,8 @@ WOLFSSH* wolfSSH_new(WOLFSSH_CTX* ctx)
     WOLFSSH* ssh;
     void*    heap = NULL;
 
+    (void)heap;
+
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_new()");
 
     if (ctx)
@@ -168,6 +170,31 @@ WS_SOCKET_T wolfSSH_get_fd(const WOLFSSH* ssh)
 #else
     return WS_BAD_ARGUMENT;
 #endif
+}
+
+
+int wolfSSH_SetFilesystemHandle(WOLFSSH* ssh, void* handle)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetFilesystemHandle()");
+
+    if (ssh) {
+        ssh->fs = handle;
+
+        return WS_SUCCESS;
+    }
+
+    return WS_BAD_ARGUMENT;
+}
+
+
+void* wolfSSH_GetFilesystemHandle(WOLFSSH* ssh)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_GetFilesystemHandle()");
+
+    if (ssh)
+        return ssh->fs;
+
+    return NULL;
 }
 
 
@@ -1611,7 +1638,7 @@ void wolfSSH_CheckReceivePending(WOLFSSH* ssh)
         return;
 
     inputBuffer = &ssh->channelList->inputBuffer;
-    WIOCTL(wolfSSH_get_fd(ssh), FIONREAD, &bytes);
+    WIOCTL(wolfSSH_get_fd(ssh), WFIONREAD, &bytes);
     while (bytes > 0) { /* there is something to read off the wire */
         if (inputBuffer->length - inputBuffer->idx > MAX_PACKET_SZ) {
             WLOG(WS_LOG_DEBUG, "Application data to be read");
@@ -1620,7 +1647,7 @@ void wolfSSH_CheckReceivePending(WOLFSSH* ssh)
         if (DoReceive(ssh) < 0) {
             WLOG(WS_LOG_ERROR, "Error trying to read potential window adjust");
         }
-        WIOCTL(wolfSSH_get_fd(ssh), FIONREAD, &bytes);
+        WIOCTL(wolfSSH_get_fd(ssh), WFIONREAD, &bytes);
     }
 }
 

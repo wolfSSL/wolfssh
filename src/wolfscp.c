@@ -1738,9 +1738,9 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                 WSTRNCAT(abslut, "/", WOLFSSH_MAX_FILENAME);
                 WSTRNCAT(abslut, fileName, WOLFSSH_MAX_FILENAME);
                 clean_path(abslut);
-                if (WMKDIR(abslut, fileMode) != 0) {
+                if (WMKDIR(ssh->fs, abslut, fileMode) != 0) {
             #else
-                if (WMKDIR(fileName, fileMode) != 0) {
+                if (WMKDIR(ssh->fs, fileName, fileMode) != 0) {
             #endif
                     if (wolfSSH_LastError() != EEXIST) {
                         wolfSSH_SetScpErrorMsg(ssh, "error creating directory");
@@ -1891,7 +1891,7 @@ static ScpDir* ScpNewDir(const char* path, void* heap)
     }
 
     entry->next = NULL;
-    if (WOPENDIR(&entry->dir, path) != 0
+    if (WOPENDIR(NULL, heap, &entry->dir, path) != 0
         #ifndef WOLFSSL_NUCLEUS
             || entry->dir == NULL
         #endif
