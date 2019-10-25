@@ -58,6 +58,12 @@
 
 static const char echoserverBanner[] = "wolfSSH Example Echo Server\n";
 
+static int quit = 0;
+wolfSSL_Mutex doneLock;
+#define MAX_PASSWD_RETRY 3
+static int passwdRetry = MAX_PASSWD_RETRY;
+
+
 
 typedef struct {
 #if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
@@ -124,7 +130,8 @@ static int dump_stats(thread_ctx_t* ctx)
 static int callbackReqSuccess(WOLFSSH *ssh, void *buf, word32 sz, void *ctx)
 {
     if ((WOLFSSH *)ssh != *(WOLFSSH **)ctx){
-        printf("ssh(%x) != ctx(%x)\n", (unsigned int)ssh, (unsigned int)*(WOLFSSH **)ctx);
+        printf("ssh(%x) != ctx(%x)\n", (unsigned int)ssh,
+                (unsigned int)*(WOLFSSH **)ctx);
         return WS_FATAL_ERROR;
     }
     printf("Global Request Success[%d]: %s\n", sz, sz>0?buf:"No payload");
@@ -135,7 +142,8 @@ static int callbackReqFailure(WOLFSSH *ssh, void *buf, word32 sz, void *ctx)
 {
     if ((WOLFSSH *)ssh != *(WOLFSSH **)ctx)
     {
-        printf("ssh(%x) != ctx(%x)\n", (unsigned int)ssh, (unsigned int)*(WOLFSSH **)ctx);
+        printf("ssh(%x) != ctx(%x)\n", (unsigned int)ssh,
+                (unsigned int)*(WOLFSSH **)ctx);
         return WS_FATAL_ERROR;
     }
     printf("Global Request Failure[%d]: %s\n", sz, sz > 0 ? buf : "No payload");
@@ -158,7 +166,8 @@ static void *global_req(void *ctx)
 
         sleep(SSH_TIMEOUT);
 
-        ret = wolfSSH_global_request(threadCtx->ssh, (const unsigned char *)str, strlen(str), 1);
+        ret = wolfSSH_global_request(threadCtx->ssh, (const unsigned char *)str,
+                strlen(str), 1);
         if (ret != WS_SUCCESS)
         {
             printf("Global Request Failed.\n");
@@ -352,9 +361,10 @@ static int NonBlockSSH_accept(WOLFSSH* ssh)
     error = wolfSSH_get_error(ssh);
     sockfd = (SOCKET_T)wolfSSH_get_fd(ssh);
 
-    while ((ret != WS_SUCCESS && ret != WS_SCP_COMPLETE && ret != WS_SFTP_COMPLETE)
-            && (error == WS_WANT_READ || error == WS_WANT_WRITE))
-    {
+    while ((ret != WS_SUCCESS
+                && ret != WS_SCP_COMPLETE && ret != WS_SFTP_COMPLETE)
+            && (error == WS_WANT_READ || error == WS_WANT_WRITE)) {
+
         if (error == WS_WANT_READ)
             printf("... server would read block\n");
         else if (error == WS_WANT_WRITE)
@@ -377,13 +387,13 @@ static int NonBlockSSH_accept(WOLFSSH* ssh)
     return ret;
 }
 
-static int quit = 0;
-wolfSSL_Mutex doneLock;
 
 static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
 {
     int ret = 0, error = 0;
     thread_ctx_t* threadCtx = (thread_ctx_t*)vArgs;
+
+    passwdRetry = MAX_PASSWD_RETRY;
 
     if (!threadCtx->nonBlock)
         ret = wolfSSH_accept(threadCtx->ssh);
@@ -420,6 +430,8 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
             printf("%s\n", errorStr);
         }
         else if (error == WS_USER_AUTH_E) {
+            wolfSSH_SendDisconnect(threadCtx->ssh,
+                    WOLFSSH_DISCONNECT_NO_MORE_AUTH_METHODS_AVAILABLE);
             ret = 0; /* don't break out of loop with user auth error */
             printf("%s\n", errorStr);
         }
@@ -723,8 +735,6 @@ static int LoadPublicKeyBuffer(byte* buf, word32 bufSz, PwMapList* list)
     return 0;
 }
 
-#define MAX_PASSWD_RETRY 3
-static int passwdRetry = MAX_PASSWD_RETRY;
 
 static int wsUserAuth(byte authType,
                       WS_UserAuthData* authData,
@@ -780,11 +790,15 @@ static int wsUserAuth(byte authType,
                     return WOLFSSH_USERAUTH_SUCCESS;
                 }
                 else {
-                    ret = (authType == WOLFSSH_USERAUTH_PASSWORD ? 
-                                (--passwdRetry > 0 ? 
-                                WOLFSSH_USERAUTH_INVALID_PASSWORD : WOLFSSH_USERAUTH_REJECTED)
-                                : WOLFSSH_USERAUTH_INVALID_PUBLICKEY);
-                    if (passwdRetry == 0)passwdRetry = MAX_PASSWD_RETRY;
+                    if (authType == WOLFSSH_USERAUTH_PASSWORD) {
+                        passwdRetry--;
+                        ret = (passwdRetry > 0) ?
+                            WOLFSSH_USERAUTH_INVALID_PASSWORD :
+                            WOLFSSH_USERAUTH_REJECTED;
+                    }
+                    else {
+                        ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
+                    }
                     return ret;
                 }
             }
@@ -1040,7 +1054,8 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
             addrLength = sizeof(struct sockaddr_struct);
 
-            /* Get the local IP address for the socket. 0.0.0.0 if ip adder any */
+            /* Get the local IP address for the socket.
+             * 0.0.0.0 if ip adder any */
             if (NU_Get_Sock_Name(listenFd, &sock, &addrLength) != NU_SUCCESS) {
                 fprintf(stderr, "Couldn't find network.\r\n");
                 exit(EXIT_FAILURE);
