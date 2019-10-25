@@ -55,7 +55,7 @@ examples/portfwd/portfwd
 examples/sftpclient/wolfsftp
 
 # test output
-*.test
+tests/*.test
 *.trs
 
 # scan-build

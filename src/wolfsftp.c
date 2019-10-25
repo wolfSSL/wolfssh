@@ -5197,6 +5197,9 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
     if (ssh == NULL || dir == NULL)
         return WS_BAD_ARGUMENT;
 
+    if (ssh->error == WS_WANT_READ || ssh->error == WS_WANT_WRITE)
+        ssh->error = WS_SUCCESS;
+
     state = ssh->lstatState;
     if (state == NULL) {
         state = (WS_SFTP_LSTAT_STATE*)WMALLOC(sizeof(WS_SFTP_LSTAT_STATE),
