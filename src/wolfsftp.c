@@ -264,6 +264,9 @@ typedef struct WS_SFTP_GET_STATE {
     WS_SFTP_FILEATRB attrib;
 #ifndef USE_WINDOWS_API
     WFILE* fl;
+    #ifdef WOLFSSL_NUCLEUS
+    int   fd; /* file descriptor, in the case of Nucleus fp points to fd */
+    #endif
 #else
     HANDLE fileHandle;
     OVERLAPPED offset;
@@ -290,6 +293,9 @@ typedef struct WS_SFTP_PUT_STATE {
     enum WS_SFTP_PUT_STATE_ID state;
 #ifndef USE_WINDOWS_API
     WFILE* fl;
+    #ifdef WOLFSSL_NUCLEUS
+    int   fd; /* file descriptor, in the case of Nucleus fp points to fd */
+    #endif
 #else
     HANDLE fileHandle;
     OVERLAPPED offset;
@@ -7015,6 +7021,9 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
         WMEMSET(state, 0, sizeof(WS_SFTP_GET_STATE));
         ssh->getState = state;
         state->state = STATE_GET_INIT;
+        #ifdef WOLFSSL_NUCLEUS
+        state->fl = &state->fd;
+        #endif
     }
 
     for (;;) {
@@ -7241,6 +7250,9 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
         WMEMSET(state, 0, sizeof(WS_SFTP_PUT_STATE));
         ssh->putState = state;
         state->state = STATE_PUT_INIT;
+        #ifdef WOLFSSL_NUCLEUS
+        state->fl = &state->fd;
+        #endif
     }
 
     for (;;) {
