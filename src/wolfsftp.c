@@ -927,6 +927,8 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, byte* data,
     /* get working directory in the case of receiving non absolute path */
     if (r[0] != '/' && r[1] != ':') {
         char wd[WOLFSSH_MAX_FILENAME];
+
+        WMEMSET(wd, 0, WOLFSSH_MAX_FILENAME);
         if (ssh->sftpDefaultPath) {
             XSTRNCPY(wd, ssh->sftpDefaultPath, WOLFSSH_MAX_FILENAME - 1);
         }
