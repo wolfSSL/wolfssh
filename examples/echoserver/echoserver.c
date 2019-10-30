@@ -339,7 +339,6 @@ static int sftp_worker(thread_ctx_t* threadCtx) {
                 wolfSSH_ChannelNext(threadCtx->ssh, NULL);
             if (channel && wolfSSH_ChannelGetEof(channel)) {
                 ret = 0;
-                error = 0;
                 break;
             }
         }

@@ -2917,16 +2917,14 @@ static int DoKexDhGexGroup(WOLFSSH* ssh,
 
     if (ret == WS_SUCCESS) {
         ssh->handshake->primeGroup =
-            (byte*)WMALLOC(primeGroupSz + UINT32_SZ,
-                           ssh->ctx->heap, DYNTYPE_MPINT);
+            (byte*)WMALLOC(primeGroupSz, ssh->ctx->heap, DYNTYPE_MPINT);
         if (ssh->handshake->primeGroup == NULL)
             ret = WS_MEMORY_E;
     }
 
     if (ret == WS_SUCCESS) {
         ssh->handshake->generator =
-            (byte*)WMALLOC(generatorSz + UINT32_SZ,
-                           ssh->ctx->heap, DYNTYPE_MPINT);
+            (byte*)WMALLOC(generatorSz, ssh->ctx->heap, DYNTYPE_MPINT);
         if (ssh->handshake->generator == NULL) {
             ret = WS_MEMORY_E;
             WFREE(ssh->handshake->primeGroup, ssh->ctx->heap, DYNTYPE_MPINT);
@@ -2934,14 +2932,10 @@ static int DoKexDhGexGroup(WOLFSSH* ssh,
         }
     }
 
-    if (WS_SUCCESS) {
-        c32toa(primeGroupSz, ssh->handshake->primeGroup);
-        WMEMCPY(ssh->handshake->primeGroup + UINT32_SZ,
-                primeGroup, primeGroupSz);
+    if (ret == WS_SUCCESS) {
+        WMEMCPY(ssh->handshake->primeGroup, primeGroup, primeGroupSz);
         ssh->handshake->primeGroupSz = primeGroupSz;
-        c32toa(generatorSz, ssh->handshake->generator);
-        WMEMCPY(ssh->handshake->generator + UINT32_SZ,
-                generator, generatorSz);
+        WMEMCPY(ssh->handshake->generator, generator, generatorSz);
         ssh->handshake->generatorSz = generatorSz;
 
         *idx = begin;
