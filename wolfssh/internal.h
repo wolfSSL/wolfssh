@@ -143,6 +143,10 @@ enum {
     /* This is from RFC 4253 section 6.1. */
     #define MAX_PACKET_SZ 35000
 #endif
+#ifndef MAX_KEX_KEY_SZ
+    /* This is based on the 3072-bit DH key that is the preferred size. */
+    #define MAX_KEX_KEY_SZ (3072 / 8)
+#endif
 
 WOLFSSH_LOCAL byte NameToId(const char*, word32);
 WOLFSSH_LOCAL const char* IdToName(byte);
@@ -231,9 +235,10 @@ typedef struct HandshakeInfo {
     Keys keys;
     Keys peerKeys;
     wc_HashAlg hash;
-    byte e[257]; /* May have a leading zero for unsigned or is a Q_S value. */
+    byte e[MAX_KEX_KEY_SZ+1]; /* May have a leading zero for unsigned
+                               or is a Q_S value. */
     word32 eSz;
-    byte x[257]; /* May have a leading zero, for unsigned. */
+    byte x[MAX_KEX_KEY_SZ+1]; /* May have a leading zero, for unsigned. */
     word32 xSz;
     byte* kexInit;
     word32 kexInitSz;
@@ -387,7 +392,7 @@ struct WOLFSSH {
 
     byte h[WC_MAX_DIGEST_SIZE];
     word32 hSz;
-    byte k[257];           /* May have a leading zero, for unsigned. */
+    byte k[MAX_KEX_KEY_SZ+1]; /* May have a leading zero, for unsigned. */
     word32 kSz;
     byte sessionId[WC_MAX_DIGEST_SIZE];
     word32 sessionIdSz;

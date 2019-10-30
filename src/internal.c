@@ -5483,30 +5483,30 @@ static const char cannedKexAlgoNames[] =
 #if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256)
     "ecdh-sha2-nistp256"
 #endif
-#if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && !defined(WOLFSSH_NO_ECDH_GEX_SHA256)
+#if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && !defined(WOLFSSH_NO_DH_GEX_SHA256)
     ","
 #endif
-#if !defined(WOLFSSH_NO_ECDH_GEX_SHA256)
+#if !defined(WOLFSSH_NO_DH_GEX_SHA256)
     "diffie-hellman-group-exchange-sha256"
 #endif
-#if (!defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) || !defined(WOLFSSH_NO_ECDH_GEX_SHA256))\
-                                             && !defined(WOLFSSH_NO_ECDH_GROUP14_SHA1)
+#if (!defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) || !defined(WOLFSSH_NO_DH_GEX_SHA256))\
+                                             && !defined(WOLFSSH_NO_DH_GROUP14_SHA1)
     ","
 #endif
-#if !defined(WOLFSSH_NO_ECDH_GROUP14_SHA1)
+#if !defined(WOLFSSH_NO_DH_GROUP14_SHA1)
     "diffie-hellman-group14-sha1"
 #endif
-#if (!defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) || !defined(WOLFSSH_NO_ECDH_GEX_SHA256) \
-  || !defined(WOLFSSH_NO_ECDH_GROUP14_SHA1)) && !defined(WOLFSSH_NO_ECDH_GROUP1_SHA1)
+#if (!defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) || !defined(WOLFSSH_NO_DH_GEX_SHA256) \
+  || !defined(WOLFSSH_NO_DH_GROUP14_SHA1)) && !defined(WOLFSSH_NO_DH_GROUP1_SHA1)
     ","
 #endif
-#if !defined(WOLFSSH_NO_ECDH_GROUP1_SHA1)
+#if !defined(WOLFSSH_NO_DH_GROUP1_SHA1)
     "diffie-hellman-group1-sha1";
 #endif
-#if defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && defined(WOLFSSH_NO_ECDH_GEX_SHA256)\
- && defined(WOLFSSH_NO_ECDH_GROUP14_SHA1)  && defined(WOLFSSH_NO_ECDH_GROUP1_SHA1)
-    #warning "You need at least one of ECDH-SHA2-NISTP256, ECDH-GEX-SHA256, "
-             "ECDH_GROUP14-SHA1 or ECDH-GROUP1-SHA1"
+#if defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && defined(WOLFSSH_NO_DH_GEX_SHA256)\
+ && defined(WOLFSSH_NO_DH_GROUP14_SHA1) && defined(WOLFSSH_NO_DH_GROUP1_SHA1)
+    #warning "You need at least one of ECDH-SHA2-NISTP256, DH-GEX-SHA256, "
+             "DH-GROUP14-SHA1 or DH-GROUP1-SHA1"
 #endif
 
 static const char cannedNoneNames[] = "none";
@@ -5993,7 +5993,7 @@ int SendKexDhReply(WOLFSSH* ssh)
         if (ret == 0) {
             if (!useEcc) {
                 DhKey privKey;
-                byte y[256];
+                byte y[MAX_KEX_KEY_SZ];
                 word32 ySz = sizeof(y);
 
                 ret = wc_InitDhKey(&privKey);
@@ -6364,6 +6364,10 @@ int SendKexDhGexRequest(WOLFSSH* ssh)
 
         output[idx++] = MSGID_KEXDH_GEX_REQUEST;
 
+        WLOG(WS_LOG_INFO, "  min = %u, preferred = %u, max = %u",
+                ssh->handshake->dhGexMinSz,
+                ssh->handshake->dhGexPreferredSz,
+                ssh->handshake->dhGexMaxSz);
         c32toa(ssh->handshake->dhGexMinSz, output + idx);
         idx += UINT32_SZ;
         c32toa(ssh->handshake->dhGexPreferredSz, output + idx);
@@ -6466,7 +6470,7 @@ int SendKexDhInit(WOLFSSH* ssh)
     word32 generatorSz = dhGeneratorSz;
     int ret = WS_SUCCESS;
     byte msgId = MSGID_KEXDH_INIT;
-    byte e[256];
+    byte e[MAX_KEX_KEY_SZ+1]; /* plus 1 in case of padding. */
     word32 eSz = sizeof(e);
     byte  ePad = 0;
 
@@ -6563,7 +6567,7 @@ int SendKexDhInit(WOLFSSH* ssh)
 
         if (ePad) {
             output[idx] = 0;
-            idx += 1;
+            idx++;
         }
 
         WMEMCPY(output + idx, e, eSz);
