@@ -1,3 +1,22 @@
+### wolfSSH v1.4.3 (10/31/2019)
+
+- wolfSFTP port to MQX 4.2 (MQX/MFS/RTCS)
+- Maintenance and bug fixes
+- Improvements and additions to the test cases
+- Fix some portablility between C compilers
+- Fixed an issue in the echoserver example where it would error sometimes
+  on shutdown
+- Improvement to the global request processing
+- Fixed bug in the new keys message handler where it reported the wrong size
+  in the data buffer; invalid value was logged, not used
+- Fixed bug in AES initialization that depended on build settings
+- Improved interoperability with puTTY
+- Added user auth callback error code for too many password failures
+- Improvements to the Nucleus filesystem abstraction
+- Added example for an "autopilot" file get and file put with the wolfSFTP
+  example client
+
+
 ### wolfSSH v1.4.2 (08/06/2019)
 
 - GCC 8 build warning fixes
