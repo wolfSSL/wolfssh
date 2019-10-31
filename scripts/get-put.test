@@ -53,11 +53,7 @@ do_trap() {
 trap do_trap INT TERM
 
 
-if ! ./examples/echoserver/echoserver -d "$(pwd)" -R "$READY_FILE" &
-then
-    echo "Echoserver was unable to start."
-    exit 1
-fi
+./examples/echoserver/echoserver -d "$(pwd)" -R "$READY_FILE" >/dev/null 2>&1 &
 
 SERVER_PID=$!
 wait_for_server
