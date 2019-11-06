@@ -64,6 +64,7 @@ extern "C" {
     #else
         int   fd; /* file descriptor, in the case of Nucleus fp points to fd */
         DSTAT s;
+        int   nextError;
     #endif
         WFILE* fp;                              /* file pointer */
         struct ScpDir* currentDir;              /* dir being copied, stack */
