@@ -817,7 +817,8 @@ static void ShowUsage(void)
     printf("echoserver %s\n", LIBWOLFSSH_VERSION_STRING);
     printf(" -?            display this help and exit\n");
     printf(" -1            exit after single (one) connection\n");
-    printf(" -e            use ECC private key\n");
+    printf(" -e            expect ECC public key from client\n");
+    printf(" -E            use ECC private key\n");
     printf(" -p <num>      port to connect on, default %d\n", wolfSshPort);
     printf(" -N            use non-blocking sockets\n");
 #ifdef WOLFSSH_SFTP
