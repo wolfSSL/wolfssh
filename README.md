@@ -80,16 +80,16 @@ public key. To use a password the command line:
 
     $ ssh_client -p 22222 USER@localhost
 
-Where the `USER` and password pairs are:
+Where the *USER* and password pairs are:
 
     jill:upthehill
     jack:fetchapail
 
 To use public key authentication use the command line:
 
-    $ ssh_client -i ./keys/key-USER.pem -p 22222 USER@localhost
+    $ ssh_client -i ./keys/USER-key-TYPE.pem -p 22222 USER@localhost
 
-Where the user can be `gretel` or `hansel`.
+Where the *USER* can be `gretel` or `hansel`, and *TYPE* is `rsa` or `ecc`.
 
 
 scp support
