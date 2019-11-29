@@ -943,7 +943,7 @@ byte NameToId(const char* name, word32 nameSz)
 
     for (i = 0; i < (sizeof(NameIdMap)/sizeof(NameIdPair)); i++) {
         if (nameSz == WSTRLEN(NameIdMap[i].name) &&
-            WSTRNCMP(name, NameIdMap[i].name, nameSz) == 0) {
+            XMEMCMP(name, NameIdMap[i].name, nameSz) == 0) {
 
             id = NameIdMap[i].id;
             break;
