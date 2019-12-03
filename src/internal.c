@@ -1448,6 +1448,10 @@ int wolfSSH_SendPacket(WOLFSSH* ssh)
                 case WS_CBIO_ERR_CONN_CLOSE:     /* peer closed connection */
                     ssh->isClosed = 1;
                     break;
+
+                case WS_CBIO_ERR_GENERAL:
+                    ShrinkBuffer(&ssh->outputBuffer, 1);
+                    FALL_THROUGH
             }
             return WS_SOCKET_ERROR_E;
         }
@@ -5287,6 +5291,9 @@ static int PreparePacket(WOLFSSH* ssh, word32 payloadSz)
 
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
+
+    if (ssh->outputBuffer.length < ssh->outputBuffer.idx)
+        ret = WS_OVERFLOW_E;
 
     if (ret == WS_SUCCESS) {
         word32 packetSz, usedSz, outputSz;
