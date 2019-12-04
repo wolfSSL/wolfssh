@@ -4416,6 +4416,13 @@ static int DoChannelData(WOLFSSH* ssh,
     if (ret == WS_SUCCESS)
         ret = GetUint32(&dataSz, buf, len, &begin);
 
+    /* Validate dataSz */
+    if (ret == WS_SUCCESS) {
+        if (dataSz + begin > len) {
+            ret = WS_PARSE_E;
+        }
+    }
+
     if (ret == WS_SUCCESS) {
         *idx = begin + dataSz;
 
