@@ -2379,6 +2379,13 @@ static int DoKexDhInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     }
 
     if (ret == WS_SUCCESS) {
+        /* Validate eSz */
+        if (eSz + begin > len) {
+            ret = WS_PARSE_E;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
         e = buf + begin;
         begin += eSz;
 
