@@ -124,6 +124,7 @@ static int ConvertHexToBin(const char* h1, byte** b1, word32* b1Sz,
                             *b1, b1Sz);
         if (ret != 0) {
             FreeBins(*b1, NULL, NULL, NULL);
+            *b1 = NULL;
             return -1;
         }
     }
@@ -134,12 +135,15 @@ static int ConvertHexToBin(const char* h1, byte** b1, word32* b1Sz,
         *b2 = (byte*)malloc(*b2Sz);
         if (*b2 == NULL) {
             FreeBins(b1 ? *b1 : NULL, NULL, NULL, NULL);
+            if (b1) *b1 = NULL;
             return -1;
         }
         ret = Base16_Decode((const byte*)h2, (word32)strlen(h2),
                             *b2, b2Sz);
         if (ret != 0) {
             FreeBins(b1 ? *b1 : NULL, *b2, NULL, NULL);
+            if (b1) *b1 = NULL;
+            *b2 = NULL;
             return -1;
         }
     }
@@ -150,12 +154,17 @@ static int ConvertHexToBin(const char* h1, byte** b1, word32* b1Sz,
         *b3 = (byte*)malloc(*b3Sz);
         if (*b3 == NULL) {
             FreeBins(b1 ? *b1 : NULL, b2 ? *b2 : NULL, NULL, NULL);
+            if (b1) *b1 = NULL;
+            if (b2) *b2 = NULL;
             return -1;
         }
         ret = Base16_Decode((const byte*)h3, (word32)strlen(h3),
                             *b3, b3Sz);
         if (ret != 0) {
             FreeBins(b1 ? *b1 : NULL, b2 ? *b2 : NULL, *b3, NULL);
+            if (b1) *b1 = NULL;
+            if (b2) *b2 = NULL;
+            *b3 = NULL;
             return -1;
         }
     }
@@ -166,12 +175,19 @@ static int ConvertHexToBin(const char* h1, byte** b1, word32* b1Sz,
         *b4 = (byte*)malloc(*b4Sz);
         if (*b4 == NULL) {
             FreeBins(b1 ? *b1 : NULL, b2 ? *b2 : NULL, b3 ? *b3 : NULL, NULL);
+            if (b1) *b1 = NULL;
+            if (b2) *b2 = NULL;
+            if (b3) *b3 = NULL;
             return -1;
         }
         ret = Base16_Decode((const byte*)h4, (word32)strlen(h4),
                             *b4, b4Sz);
         if (ret != 0) {
             FreeBins(b1 ? *b1 : NULL, b2 ? *b2 : NULL, b3 ? *b3 : NULL, *b4);
+            if (b1) *b1 = NULL;
+            if (b2) *b2 = NULL;
+            if (b3) *b3 = NULL;
+            *b4 = NULL;
             return -1;
         }
     }
@@ -329,17 +345,20 @@ static int test_KDF(void)
                                  tv->expectedKey, &eKey, &eKeySz);
         if (result != 0 || eKey == NULL) {
             printf("KDF: Could not convert test vector %u.\n", i);
-            return -100;
+            result = -100;
         }
 
-        result = wolfSSH_KDF(tv->hashId, tv->keyId, cKey, eKeySz,
-                             k, kSz, h, hSz, sId, sIdSz);
+        if (result == 0) {
+            result = wolfSSH_KDF(tv->hashId, tv->keyId, cKey, eKeySz,
+                    k, kSz, h, hSz, sId, sIdSz);
 
-        if (result != 0) {
-            printf("KDF: Could not derive key.\n");
-            result = -101;
+            if (result != 0) {
+                printf("KDF: Could not derive key.\n");
+                result = -101;
+            }
         }
-        else {
+
+        if (result == 0) {
             if (memcmp(cKey, eKey, eKeySz) != 0) {
                 printf("KDF: Calculated Key does not match Expected Key.\n");
                 result = -102;
