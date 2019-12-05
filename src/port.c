@@ -122,7 +122,7 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
         int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
                 const unsigned int* shortOffset)
         {
-            long offset = ((long)shortOffset[1] << 32) | shortOffset[0];
+            off_t offset = ((off_t)shortOffset[1] << 32) | shortOffset[0];
             return (int)pwrite(fd, buf, sz, offset);
         }
 
@@ -130,7 +130,7 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
         int wPread(WFD fd, unsigned char* buf, unsigned int sz,
                 const unsigned int* shortOffset)
         {
-            long offset = ((long)shortOffset[1] << 32) | shortOffset[0];
+            off_t offset = ((off_t)shortOffset[1] << 32) | shortOffset[0];
             return (int)pread(fd, buf, sz, offset);
         }
 
