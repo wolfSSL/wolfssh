@@ -2380,8 +2380,8 @@ static int DoKexDhInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
     if (ret == WS_SUCCESS) {
         /* Validate eSz */
-        if (eSz + begin > len) {
-            ret = WS_PARSE_E;
+        if ((len < begin) || (eSz > len - begin)) {
+            ret = WS_RECV_OVERFLOW_E;
         }
     }
 
@@ -4425,8 +4425,8 @@ static int DoChannelData(WOLFSSH* ssh,
 
     /* Validate dataSz */
     if (ret == WS_SUCCESS) {
-        if (dataSz + begin > len) {
-            ret = WS_PARSE_E;
+        if ((len < begin) || (dataSz > len - begin)) {
+            ret = WS_RECV_OVERFLOW_E;
         }
     }
 
