@@ -85,6 +85,16 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
 #if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
     !defined(NO_WOLFSSH_SERVER)
 
+    #ifndef SIZEOF_OFF_T
+        /* if not using autoconf then make a guess on off_t size based on sizeof
+         * long long */
+        #if defined(SIZEOF_LONG_LONG) && SIZEOF_LONG_LONG == 8
+            #define SIZEOF_OFF_T 8
+        #else
+            #define SIZEOF_OFF_T 4
+        #endif
+    #endif
+
     #if defined(USE_WINDOWS_API) || defined(WOLFSSL_NUCLEUS) || \
         defined(FREESCALE_MQX)
 
@@ -122,7 +132,11 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
         int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
                 const unsigned int* shortOffset)
         {
-            off_t offset = ((off_t)shortOffset[1] << 32) | shortOffset[0];
+            off_t offset = (off_t)shortOffset[0];
+
+        #if SIZEOF_OFF_T == 8
+            offset = ((off_t)shortOffset[1] << 32) | offset;
+        #endif
             return (int)pwrite(fd, buf, sz, offset);
         }
 
@@ -130,7 +144,11 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
         int wPread(WFD fd, unsigned char* buf, unsigned int sz,
                 const unsigned int* shortOffset)
         {
-            off_t offset = ((off_t)shortOffset[1] << 32) | shortOffset[0];
+            off_t offset = (off_t)shortOffset[0];
+
+        #if SIZEOF_OFF_T == 8
+            offset = ((off_t)shortOffset[1] << 32) | offset;
+        #endif
             return (int)pread(fd, buf, sz, offset);
         }
 
