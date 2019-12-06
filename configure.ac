@@ -52,6 +52,7 @@ AC_PROG_INSTALL
 AC_HEADER_STDC
 AC_CHECK_SIZEOF([long long])
 AC_CHECK_SIZEOF([long])
+AC_CHECK_SIZEOF([off_t])
 
 # Check headers/libs
 AC_CHECK_FUNCS([gethostbyname getaddrinfo gettimeofday inet_ntoa memset socket])
