@@ -1565,9 +1565,9 @@ static int SetTimestampInfo(const char* fileName, word64 mTime, word64 aTime)
         ret= WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
-        tmp[0].tv_sec = aTime;
+        tmp[0].tv_sec = (time_t)aTime;
         tmp[0].tv_usec = 0;
-        tmp[1].tv_sec = mTime;
+        tmp[1].tv_sec = (time_t)mTime;
         tmp[1].tv_usec = 0;
 
         ret = WUTIMES(fileName, tmp);
