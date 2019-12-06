@@ -3807,7 +3807,9 @@ int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
 
     atr->flags |= WOLFSSH_FILEATRB_SIZE;
     atr->sz[0] = (word32)(stats.st_size & 0xFFFFFFFF);
+#if SIZEOF_OFF_T == 8
     atr->sz[1] = (word32)((stats.st_size >> 32) & 0xFFFFFFFF);
+#endif
 
     atr->flags |= WOLFSSH_FILEATRB_UIDGID;
     atr->uid = (word32)stats.st_uid;
@@ -3849,7 +3851,9 @@ int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
 
     atr->flags |= WOLFSSH_FILEATRB_SIZE;
     atr->sz[0] = (word32)(stats.st_size & 0xFFFFFFFF);
+#if SIZEOF_OFF_T == 8
     atr->sz[1] = (word32)((stats.st_size >> 32) & 0xFFFFFFFF);
+#endif
 
     atr->flags |= WOLFSSH_FILEATRB_UIDGID;
     atr->uid = (word32)stats.st_uid;

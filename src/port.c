@@ -88,7 +88,7 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
     #ifndef SIZEOF_OFF_T
         /* if not using autoconf then make a guess on off_t size based on sizeof
          * long long */
-        #if defined(SIZEOF_LONG_LONG) && SIZEOF_LONG_LONG == 8
+        #if defined(SIZEOF_LONG) && SIZEOF_LONG == 8
             #define SIZEOF_OFF_T 8
         #else
             #define SIZEOF_OFF_T 4
