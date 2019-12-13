@@ -7488,8 +7488,11 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                     continue;
                 }
                 if (resume) {
-                    word64 offset = (((word64)state->pOfst[1]) << 32) |
-                        state->pOfst[0];
+                    long offset = state->pOfst[0];
+
+                #if SIZEOF_OFF_T == 8
+                    offset = (((word64)state->pOfst[1]) << 32) | offset;
+                #endif
                     WFSEEK(state->fl, offset, 0);
                 }
             #else /* USE_WINDOWS_API */
