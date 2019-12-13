@@ -1949,7 +1949,7 @@ int ScpPushDir(ScpSendCtx* ctx, const char* path, void* heap)
 {
     ScpDir* entry;
 
-    if (ctx == NULL)
+    if (ctx == NULL || path == NULL)
         return WS_BAD_ARGUMENT;
 
     entry = ScpNewDir(path, heap);
@@ -2387,9 +2387,14 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
                 }
             }
 
-            ret = ScpProcessEntry(ssh, fileName,
-                    mTime, aTime, fileMode, totalFileSz, buf,
-                    bufSz, ctx, sendCtx);
+            if (ret != WS_BAD_ARGUMENT && sendCtx == NULL)
+                ret = WS_BAD_ARGUMENT;
+
+            if (ret == WS_SUCCESS) {
+                ret = ScpProcessEntry(ssh, fileName,
+                        mTime, aTime, fileMode, totalFileSz, buf,
+                        bufSz, ctx, sendCtx);
+            }
             break;
 
         case WOLFSSH_SCP_CONTINUE_FILE_TRANSFER:
