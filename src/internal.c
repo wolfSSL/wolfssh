@@ -3764,6 +3764,12 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS) {
+        if (authData.authNameSz > len - begin) {
+            ret = WS_BUFFER_E;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
         authData.authName = buf + begin;
         begin += authData.authNameSz;
         authNameId = NameToId((char*)authData.authName, authData.authNameSz);
