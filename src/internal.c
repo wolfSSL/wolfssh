@@ -4502,6 +4502,11 @@ static int DoChannelExtendedData(WOLFSSH* ssh,
             WS_SUCCESS : WS_INVALID_EXTDATA;
     if (ret == WS_SUCCESS)
         ret = GetUint32(&dataSz, buf, len, &begin);
+    if (ret == WS_SUCCESS) {
+        if (dataSz > (len - begin)) {
+            ret = WS_BUFFER_E;
+        }
+    }
 
     if (ret == WS_SUCCESS) {
         channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
