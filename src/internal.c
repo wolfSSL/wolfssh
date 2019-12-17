@@ -1123,6 +1123,13 @@ int ChannelUpdateForward(WOLFSSH_CHANNEL* channel,
     if (ret == WS_SUCCESS) {
         WSTRNCPY(hostCopy, host, hostSz);
         WSTRNCPY(originCopy, origin, originSz);
+
+        /* delete any existing host and origin in the channel */
+        if (channel->host)
+            WFREE(channel->host, heap, DYNTYPE_STRING);
+        if (channel->origin)
+            WFREE(channel->origin, heap, DYNTYPE_STRING);
+
         channel->host = hostCopy;
         channel->hostPort = hostPort;
         channel->origin = originCopy;
@@ -4044,10 +4051,9 @@ static int DoChannelOpen(WOLFSSH* ssh,
     }
 
 #ifdef WOLFSSH_FWD
-    if (ret != WS_SUCCESS) {
-        WFREE(host, ssh->ctx->heap, DYNTYPE_STRING);
-        WFREE(origin, ssh->ctx->heap, DYNTYPE_STRING);
-    }
+    /* ChannelUpdateForward makes new host and origin buffer */
+    WFREE(host, ssh->ctx->heap, DYNTYPE_STRING);
+    WFREE(origin, ssh->ctx->heap, DYNTYPE_STRING);
 #endif /* WOLFSSH_FWD */
 
     WLOG(WS_LOG_DEBUG, "Leaving DoChannelOpen(), ret = %d", ret);
