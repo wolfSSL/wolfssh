@@ -3058,6 +3058,11 @@ static int DoDebug(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         begin += strSz;
     }
 
+    if (LENGTH_SZ > len - begin) {
+        WFREE(msg, ssh->ctx->heap, DYNTYPE_STRING);
+        return WS_BUFFER_E;
+    }
+
     ato32(buf + begin, &strSz);
     begin += LENGTH_SZ;
     if (strSz > 0) {
