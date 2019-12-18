@@ -1123,6 +1123,13 @@ int ChannelUpdateForward(WOLFSSH_CHANNEL* channel,
     if (ret == WS_SUCCESS) {
         WSTRNCPY(hostCopy, host, hostSz);
         WSTRNCPY(originCopy, origin, originSz);
+
+        /* delete any existing host and origin in the channel */
+        if (channel->host)
+            WFREE(channel->host, heap, DYNTYPE_STRING);
+        if (channel->origin)
+            WFREE(channel->origin, heap, DYNTYPE_STRING);
+
         channel->host = hostCopy;
         channel->hostPort = hostPort;
         channel->origin = originCopy;
@@ -3051,6 +3058,11 @@ static int DoDebug(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         begin += strSz;
     }
 
+    if (LENGTH_SZ > len - begin) {
+        WFREE(msg, ssh->ctx->heap, DYNTYPE_STRING);
+        return WS_BUFFER_E;
+    }
+
     ato32(buf + begin, &strSz);
     begin += LENGTH_SZ;
     if (strSz > 0) {
@@ -3757,6 +3769,12 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS) {
+        if (authData.authNameSz > len - begin) {
+            ret = WS_BUFFER_E;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
         authData.authName = buf + begin;
         begin += authData.authNameSz;
         authNameId = NameToId((char*)authData.authName, authData.authNameSz);
@@ -4044,10 +4062,9 @@ static int DoChannelOpen(WOLFSSH* ssh,
     }
 
 #ifdef WOLFSSH_FWD
-    if (ret != WS_SUCCESS) {
-        WFREE(host, ssh->ctx->heap, DYNTYPE_STRING);
-        WFREE(origin, ssh->ctx->heap, DYNTYPE_STRING);
-    }
+    /* ChannelUpdateForward makes new host and origin buffer */
+    WFREE(host, ssh->ctx->heap, DYNTYPE_STRING);
+    WFREE(origin, ssh->ctx->heap, DYNTYPE_STRING);
 #endif /* WOLFSSH_FWD */
 
     WLOG(WS_LOG_DEBUG, "Leaving DoChannelOpen(), ret = %d", ret);
@@ -4496,6 +4513,11 @@ static int DoChannelExtendedData(WOLFSSH* ssh,
             WS_SUCCESS : WS_INVALID_EXTDATA;
     if (ret == WS_SUCCESS)
         ret = GetUint32(&dataSz, buf, len, &begin);
+    if (ret == WS_SUCCESS) {
+        if (dataSz > (len - begin)) {
+            ret = WS_BUFFER_E;
+        }
+    }
 
     if (ret == WS_SUCCESS) {
         channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
