@@ -4,7 +4,7 @@
 # version 1.0
 # Updated 04/08/2019
 #
-# Copyright (C) 2014-2019 wolfSSL Inc.
+# Copyright (C) 2014-2020 wolfSSL Inc.
 #
 
 use strict;
@@ -40,7 +40,7 @@ open OUT_FILE, "+>", $outputFile  or die $!;
 
 print OUT_FILE "/* certs_test.h\n";
 print OUT_FILE "*\n";
-print OUT_FILE "* Copyright (C) 2014-2019 wolfSSL Inc.\n";
+print OUT_FILE "* Copyright (C) 2014-2020 wolfSSL Inc.\n";
 print OUT_FILE "*\n";
 print OUT_FILE "* This file is part of wolfSSH.\n";
 print OUT_FILE "*\n";

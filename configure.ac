@@ -1,8 +1,8 @@
 # wolfssh
-# Copyright (C) 2014-2019 wolfSSL Inc.
+# Copyright (C) 2014-2020 wolfSSL Inc.
 # All right reserved.
 
-AC_COPYRIGHT([Copyright (C) 2014-2019 wolfSSL Inc.])
+AC_COPYRIGHT([Copyright (C) 2014-2020 wolfSSL Inc.])
 AC_INIT([wolfssh],[1.4.3],[support@wolfssl.com],[wolfssh],[https://www.wolfssl.com])
 AC_PREREQ([2.63])
 AC_CONFIG_AUX_DIR([build-aux])
