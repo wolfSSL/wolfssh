@@ -434,7 +434,7 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     #define RNG WC_RNG
 #endif
     HandshakeInfo* handshake;
-    RNG*           rng;
+    WC_RNG*        rng;
     void*          heap;
 
     WLOG(WS_LOG_DEBUG, "Entering SshInit()");
@@ -444,7 +444,7 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     heap = ctx->heap;
 
     handshake = HandshakeInfoNew(heap);
-    rng = (RNG*)WMALLOC(sizeof(RNG), heap, DYNTYPE_RNG);
+    rng = (WC_RNG*)WMALLOC(sizeof(WC_RNG), heap, DYNTYPE_RNG);
 
     if (handshake == NULL || rng == NULL || wc_InitRng(rng) != 0) {
 
@@ -1883,11 +1883,11 @@ static INLINE byte MacSzForId(byte id)
 {
     switch (id) {
         case ID_HMAC_SHA1:
-            return SHA_DIGEST_SIZE;
+            return WC_SHA_DIGEST_SIZE;
         case ID_HMAC_SHA1_96:
             return SHA1_96_SZ;
         case ID_HMAC_SHA2_256:
-            return SHA256_DIGEST_SIZE;
+            return WC_SHA256_DIGEST_SIZE;
         default:
             return 0;
     }
@@ -1899,9 +1899,9 @@ static INLINE byte KeySzForId(byte id)
     switch (id) {
         case ID_HMAC_SHA1:
         case ID_HMAC_SHA1_96:
-            return SHA_DIGEST_SIZE;
+            return WC_SHA_DIGEST_SIZE;
         case ID_HMAC_SHA2_256:
-            return SHA256_DIGEST_SIZE;
+            return WC_SHA256_DIGEST_SIZE;
         case ID_AES128_CBC:
         case ID_AES128_CTR:
         case ID_AES128_GCM:
