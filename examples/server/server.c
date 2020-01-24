@@ -309,7 +309,7 @@ typedef struct PwMap {
     byte type;
     byte username[32];
     word32 usernameSz;
-    byte p[SHA256_DIGEST_SIZE];
+    byte p[WC_SHA256_DIGEST_SIZE];
     struct PwMap* next;
 } PwMap;
 
@@ -326,7 +326,7 @@ static PwMap* PwMapNew(PwMapList* list, byte type, const byte* username,
 
     map = (PwMap*)malloc(sizeof(PwMap));
     if (map != NULL) {
-        Sha256 sha;
+        wc_Sha256 sha;
         byte flatSz[4];
 
         map->type = type;
@@ -506,7 +506,7 @@ static int wsUserAuth(byte authType,
 {
     PwMapList* list;
     PwMap* map;
-    byte authHash[SHA256_DIGEST_SIZE];
+    byte authHash[WC_SHA256_DIGEST_SIZE];
 
     if (ctx == NULL) {
         fprintf(stderr, "wsUserAuth: ctx not set");
@@ -521,7 +521,7 @@ static int wsUserAuth(byte authType,
 
     /* Hash the password or public key with its length. */
     {
-        Sha256 sha;
+        wc_Sha256 sha;
         byte flatSz[4];
         wc_InitSha256(&sha);
         if (authType == WOLFSSH_USERAUTH_PASSWORD) {
@@ -549,7 +549,7 @@ static int wsUserAuth(byte authType,
             memcmp(authData->username, map->username, map->usernameSz) == 0) {
 
             if (authData->type == map->type) {
-                if (memcmp(map->p, authHash, SHA256_DIGEST_SIZE) == 0) {
+                if (memcmp(map->p, authHash, WC_SHA256_DIGEST_SIZE) == 0) {
                     return WOLFSSH_USERAUTH_SUCCESS;
                 }
                 else {
