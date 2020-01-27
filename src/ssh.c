@@ -734,8 +734,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
             /* no break */
 
         case CONNECT_SERVER_USERAUTH_REQUEST_DONE:
-            if ( (ssh->error = SendUserAuthRequest(ssh, ID_NONE, 0)) <
-                                                                  WS_SUCCESS) {
+            if ( (ssh->error = SendUserAuthRequest(ssh, 0)) < WS_SUCCESS) {
                 WLOG(WS_LOG_DEBUG, connectError,
                      "SERVER_USERAUTH_REQUEST_DONE", ssh->error);
                 return WS_FATAL_ERROR;

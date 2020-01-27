@@ -3810,8 +3810,6 @@ static int DoUserAuthFailure(WOLFSSH* ssh,
     byte authList[3]; /* Should only ever be password, publickey, hostname */
     word32 authListSz = 3;
     byte partialSuccess;
-    byte authId = ID_USERAUTH_PASSWORD;
-        /* To use public key authentication, change authId. */
     int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthFailure()");
@@ -3826,7 +3824,7 @@ static int DoUserAuthFailure(WOLFSSH* ssh,
         ret = GetBoolean(&partialSuccess, buf, len, idx);
 
     if (ret == WS_SUCCESS)
-        ret = SendUserAuthRequest(ssh, authId, 0);
+        ret = SendUserAuthRequest(ssh, 0);
 
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthFailure(), ret = %d", ret);
     return ret;
@@ -7359,7 +7357,7 @@ static void CleanupUserAuthRequestPublicKey(WS_KeySignature* keySig)
 }
 
 
-int SendUserAuthRequest(WOLFSSH* ssh, byte authId, int addSig)
+int SendUserAuthRequest(WOLFSSH* ssh, int addSig)
 {
     byte* output;
     word32 idx;
@@ -7371,6 +7369,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId, int addSig)
     int ret = WS_SUCCESS;
     WS_UserAuthData authData;
     WS_KeySignature keySig;
+    byte authId = ID_NONE;
 
     (void)addSig;
 
@@ -7386,23 +7385,28 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId, int addSig)
             WLOG(WS_LOG_DEBUG, "SUAR: Calling the userauth callback");
 
             WMEMSET(&authData, 0, sizeof(authData));
-            authData.type = authId;
 
-            if (authId == ID_USERAUTH_PASSWORD) {
+            authData.username = (const byte*)ssh->userName;
+            authData.usernameSz = ssh->userNameSz;
+
+            ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PUBLICKEY,
+                    &authData, ssh->userAuthCtx);
+            if (ret != WOLFSSH_USERAUTH_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, "SUAR: Couldn't get key, trying password");
                 ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PASSWORD,
                         &authData, ssh->userAuthCtx);
                 if (ret != WOLFSSH_USERAUTH_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, "SUAR: Couldn't get password");
                     ret = WS_FATAL_ERROR;
                 }
-            }
-            else if (authId == ID_USERAUTH_PUBLICKEY) {
-                ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PUBLICKEY,
-                        &authData, ssh->userAuthCtx);
-                if (ret != WOLFSSH_USERAUTH_SUCCESS) {
-                    WLOG(WS_LOG_DEBUG, "SUAR: Couldn't get key");
-                    ret = WS_FATAL_ERROR;
+                else {
+                    authId = ID_USERAUTH_PASSWORD;
+                    authData.type = authId;
                 }
+            }
+            else {
+                authId = ID_USERAUTH_PUBLICKEY;
+                authData.type = authId;
             }
         }
         else {
