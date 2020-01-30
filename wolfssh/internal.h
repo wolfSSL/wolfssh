@@ -316,6 +316,8 @@ struct WOLFSSH {
     byte serverState;
     byte processReplyState;
     byte isKeying;
+    byte authId;           /* if using public key or password */
+    byte supportedAuth[3]; /* supported auth IDs public key , password */
 
 #ifdef WOLFSSH_SCP
     byte   scpState;
@@ -526,7 +528,7 @@ WOLFSSH_LOCAL int SendGlobalRequest(WOLFSSH *, const unsigned char *, word32, in
 WOLFSSH_LOCAL int SendDebug(WOLFSSH*, byte, const char*);
 WOLFSSH_LOCAL int SendServiceRequest(WOLFSSH*, byte);
 WOLFSSH_LOCAL int SendServiceAccept(WOLFSSH*, byte);
-WOLFSSH_LOCAL int SendUserAuthRequest(WOLFSSH*, int);
+WOLFSSH_LOCAL int SendUserAuthRequest(WOLFSSH*, byte, int);
 WOLFSSH_LOCAL int SendUserAuthSuccess(WOLFSSH*);
 WOLFSSH_LOCAL int SendUserAuthFailure(WOLFSSH*, byte);
 WOLFSSH_LOCAL int SendUserAuthBanner(WOLFSSH*);

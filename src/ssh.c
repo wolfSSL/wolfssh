@@ -734,7 +734,8 @@ int wolfSSH_connect(WOLFSSH* ssh)
             /* no break */
 
         case CONNECT_SERVER_USERAUTH_REQUEST_DONE:
-            if ( (ssh->error = SendUserAuthRequest(ssh, 0)) < WS_SUCCESS) {
+            if ( (ssh->error = SendUserAuthRequest(ssh, ID_NONE, 0)) <
+                                                                  WS_SUCCESS) {
                 WLOG(WS_LOG_DEBUG, connectError,
                      "SERVER_USERAUTH_REQUEST_DONE", ssh->error);
                 return WS_FATAL_ERROR;
@@ -749,6 +750,11 @@ int wolfSSH_connect(WOLFSSH* ssh)
                 if (DoReceive(ssh) < WS_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, connectError,
                          "CLIENT_USERAUTH_SENT", ssh->error);
+                    if (ssh->error == WC_CHANGE_AUTH_E) {
+                        /* retry with supported auth type */
+                        ssh->error = WS_SUCCESS;
+                        continue;
+                    }
                     return WS_FATAL_ERROR;
                 }
             }
