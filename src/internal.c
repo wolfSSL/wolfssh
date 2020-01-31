@@ -8732,20 +8732,13 @@ void DumpOctetString(const byte* input, word32 inputSz)
 
 #endif
 
+#ifdef WOLFSSH_SFTP
+
 /* converts the octal input to decimal. Input is in string format i.e. 0666
  * returns the decimal value on success or negative value on failure */
 int wolfSSH_oct2dec(WOLFSSH* ssh, byte* oct, word32 octSz)
 {
     int ret;
-
-#if defined(WOLFSSL_KEY_GEN) || defined(HAVE_COMP_KEY) || \
-    defined(WOLFSSL_DEBUG_MATH) || defined(DEBUG_WOLFSSL) || \
-    defined(WOLFSSL_PUBLIC_MP)
-    mp_int tmp;
-    char decimalString[WOLFSSH_MAX_OCTET_LEN + 1];
-#else
-    int i;
-#endif
 
     if (octSz > WOLFSSH_MAX_OCTET_LEN || ssh == NULL || oct == NULL) {
         return WS_BAD_ARGUMENT;
@@ -8754,33 +8747,40 @@ int wolfSSH_oct2dec(WOLFSSH* ssh, byte* oct, word32 octSz)
 #if defined(WOLFSSL_KEY_GEN) || defined(HAVE_COMP_KEY) || \
     defined(WOLFSSL_DEBUG_MATH) || defined(DEBUG_WOLFSSL) || \
     defined(WOLFSSL_PUBLIC_MP)
-    ret = mp_init(&tmp);
-    if (ret == MP_OKAY) {
-        ret = mp_read_radix(&tmp, (const char*)oct, 8);
-    }
+    {
+        mp_int tmp;
+        char decimalString[WOLFSSH_MAX_OCTET_LEN + 1];
 
-    if (ret == MP_OKAY) {
-        /* convert octal to decimal */
-        ret = mp_todecimal(&tmp, decimalString);
+        ret = mp_init(&tmp);
+        if (ret == MP_OKAY) {
+            ret = mp_read_radix(&tmp, (const char*)oct, 8);
+        }
 
         if (ret == MP_OKAY) {
-            /* convert string to int */
-            ret = atoi(decimalString);
-        }
-    }
-    mp_clear(&tmp);
-#else
-    /* convert octal string to int without mp_read_radix() */
-    ret = 0;
+            /* convert octal to decimal */
+            ret = mp_todecimal(&tmp, decimalString);
 
-    for (i = 0; i < octSz; i++)
-    {
-        if (oct[i] < '0' || oct[0] > '7') {
-            ret = WS_BAD_ARGUMENT;
-            break;
+            if (ret == MP_OKAY) {
+                /* convert string to int */
+                ret = atoi(decimalString);
+            }
         }
-        ret <<= 3;
-        ret |= (oct[i] - '0');
+        mp_clear(&tmp);
+    }
+#else
+    {
+        /* convert octal string to int without mp_read_radix() */
+        ret = 0;
+
+        for (word32 i = 0; i < octSz; i++)
+        {
+            if (oct[i] < '0' || oct[0] > '7') {
+                ret = WS_BAD_ARGUMENT;
+                break;
+            }
+            ret <<= 3;
+            ret |= (oct[i] - '0');
+        }
     }
 #endif
 
@@ -8796,3 +8796,4 @@ void AddAssign64(word32* addend1, word32 addend2)
         addend1[1]++;
 }
 
+#endif /* WOLFSSH_SFTP */
