@@ -316,6 +316,8 @@ struct WOLFSSH {
     byte serverState;
     byte processReplyState;
     byte isKeying;
+    byte authId;           /* if using public key or password */
+    byte supportedAuth[3]; /* supported auth IDs public key , password */
 
 #ifdef WOLFSSH_SCP
     byte   scpState;

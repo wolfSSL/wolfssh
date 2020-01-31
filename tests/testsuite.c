@@ -64,8 +64,14 @@ static int tsClientUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
     (void)authType;
     (void)ctx;
 
-    authData->sf.password.password = (byte*)password;
-    authData->sf.password.passwordSz = (word32)WSTRLEN(password);
+    if (authType == WOLFSSH_USERAUTH_PASSWORD) {
+        authData->sf.password.password = (byte*)password;
+        authData->sf.password.passwordSz = (word32)WSTRLEN(password);
+    }
+    else {
+        return WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
+    }
+
     return WOLFSSH_USERAUTH_SUCCESS;
 }
 

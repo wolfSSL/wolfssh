@@ -479,13 +479,18 @@ static int wsUserAuth(byte authType,
     else if (authType == WOLFSSH_USERAUTH_PUBLICKEY) {
         WS_UserAuthData_PublicKey* pk = &authData->sf.publicKey;
 
-        pk->publicKeyType = userPublicKeyType;
-        pk->publicKeyTypeSz = (word32)WSTRLEN((char*)userPublicKeyType);
-        pk->publicKey = userPublicKey;
-        pk->publicKeySz = userPublicKeySz;
-        pk->privateKey = userPrivateKey;
-        pk->privateKeySz = userPrivateKeySz;
-        ret = WOLFSSH_USERAUTH_SUCCESS;
+        /* we only have hansel's key loaded */
+        if (authData->username != NULL && authData->usernameSz > 0 &&
+                XSTRNCMP((char*)authData->username, "hansel",
+                    authData->usernameSz) == 0) {
+            pk->publicKeyType = userPublicKeyType;
+            pk->publicKeyTypeSz = (word32)WSTRLEN((char*)userPublicKeyType);
+            pk->publicKey = userPublicKey;
+            pk->publicKeySz = userPublicKeySz;
+            pk->privateKey = userPrivateKey;
+            pk->privateKeySz = userPrivateKeySz;
+            ret = WOLFSSH_USERAUTH_SUCCESS;
+        }
     }
 
     return ret;
