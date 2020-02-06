@@ -37,6 +37,10 @@
     #include "src/misc.c"
 #endif
 
+/* for XGMTIME if defined */
+#include <wolfssl/wolfcrypt/wc_port.h>
+
+
 /* enum for bit field with an ID of each of the state structures */
 enum WS_SFTP_STATE_ID {
     STATE_ID_ALL        = 0, /* default to select all */
@@ -1983,6 +1987,121 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 }
 #endif /* USE_WINDOWS_API */
 
+#define WS_DATE_SIZE 12
+
+#if defined(XGMTIME) && defined(XSNPRINTF)
+/* converts epoch time to recommended calender time from
+ * draft-ietf-secsh-filexfer-02.txt */
+static void getDate(char* buf, int len, struct tm* t)
+{
+    int idx;
+
+    if (len < WS_DATE_SIZE)
+        return;
+
+    /* place month in buffer */
+    buf[0] = '\0';
+    switch(t->tm_mon) {
+        case 0:  XSTRNCAT(buf, "Jan ", 5); break;
+        case 1:  XSTRNCAT(buf, "Feb ", 5); break;
+        case 2:  XSTRNCAT(buf, "Mar ", 5); break;
+        case 3:  XSTRNCAT(buf, "Apr ", 5); break;
+        case 4:  XSTRNCAT(buf, "May ", 5); break;
+        case 5:  XSTRNCAT(buf, "Jun ", 5); break;
+        case 6:  XSTRNCAT(buf, "Jul ", 5); break;
+        case 7:  XSTRNCAT(buf, "Aug ", 5); break;
+        case 8:  XSTRNCAT(buf, "Sep ", 5); break;
+        case 9:  XSTRNCAT(buf, "Oct ", 5); break;
+        case 10: XSTRNCAT(buf, "Nov ", 5); break;
+        case 11: XSTRNCAT(buf, "Dec ", 5); break;
+        default:
+            return;
+
+    }
+    idx = 4; /* use idx now for char buffer */
+
+    XSNPRINTF(buf + idx, len - idx, "%2d %02d:%02d",
+              t->tm_mday, t->tm_hour, t->tm_min);
+
+}
+#endif
+
+/* used by all ports to create a long name given the file attributes and fname
+ * return WS_SUCCESS on success */
+static int SFTP_CreateLongName(WS_SFTPNAME* name)
+{
+    char perm[10];
+    int linkCount = 1; /* @TODO set to correct value */
+#if defined(XGMTIME) && defined(XSNPRINTF)
+    char date[WS_DATE_SIZE + 1]; /* +1 for null terminator */
+    struct tm* localTime = NULL;
+#endif
+    WS_SFTP_FILEATRB* atr;
+    int i;
+
+    int totalSz = 0;
+
+    if (name == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+#if defined(XGMTIME) && defined(XSNPRINTF)
+    atr = &name->atrb;
+
+    /* get date as calendar date */
+    localTime = XGMTIME((const time_t*)&atr->mtime, &localTime);
+    getDate(date, sizeof(date), localTime);
+    totalSz += WS_DATE_SIZE;
+
+    /* set permissions */
+    for (i = 0; i < 10; i++) {
+        perm[i] = '-';
+    }
+
+    if (atr->flags & WOLFSSH_FILEATRB_PERM) {
+        word32 tmp = atr->per;
+
+        i = 0;
+        perm[i++] = (tmp & 0x4000)?'d':'-';
+        perm[i++] = (tmp & 0x100)?'r':'-';
+        perm[i++] = (tmp & 0x080)?'w':'-';
+        perm[i++] = (tmp & 0x040)?'x':'-';
+
+        perm[i++] = (tmp & 0x020)?'r':'-';
+        perm[i++] = (tmp & 0x010)?'w':'-';
+        perm[i++] = (tmp & 0x008)?'x':'-';
+
+        perm[i++] = (tmp & 0x004)?'r':'-';
+        perm[i++] = (tmp & 0x002)?'w':'-';
+        perm[i++] = (tmp & 0x001)?'x':'-';
+    }
+    totalSz += i;
+
+    totalSz += name->fSz; /* size of file name */
+    totalSz += 6; /* for all ' ' spaces */
+    totalSz += 3 + 8 + 8 + 8; /* linkCount + uid + gid + size */
+#else
+    totalSz = name->fSz;
+#endif
+
+    name->lName = (char*)WMALLOC(totalSz + 1, name->heap, DYNTYPE_SFTP);
+    if (name->lName == NULL) {
+        WFREE(name->lName, name->heap, DYNTYPE_SFTP);
+        return WS_MEMORY_E;
+    }
+    name->lSz = totalSz;
+    name->lName[totalSz] = '\0';
+
+#if defined(XGMTIME) && defined(XSNPRINTF)
+    WSNPRINTF(name->lName, totalSz, "%s %3d %8d %8d %8d %s %s",
+            perm, linkCount, atr->uid, atr->gid, atr->sz[0], date, name->fName);
+#else
+    WMEMCPY(name->lName, name->fName, totalSz);
+#endif
+
+    return WS_SUCCESS;
+}
+
 
 #ifdef WOLFSSL_NUCLEUS
 /* For Nucleus port
@@ -2039,15 +2158,6 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
     out->fName[sz] = '\0';
     out->fSz = sz;
 
-    sz = (int)WSTRLEN(dir->lfname);
-    out->lName = (char*)WMALLOC(sz + 1, out->heap, DYNTYPE_SFTP);
-    if (out ->lName == NULL) {
-        return WS_MEMORY_E;
-    }
-    WMEMCPY(out->lName, dir->lfname, sz);
-    out->lName[sz] = '\0';
-    out->lSz = sz;
-
     {
         char* buf;
         int   bufSz;
@@ -2082,6 +2192,13 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
 
     if (!special && (WREADDIR(dir)) == NULL) {
         ret = WS_NEXT_ERROR;
+    }
+
+    /* Use attributes and fName to create long name */
+    if (SFTP_CreateLongName(out) != WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "Error creating long name for %s", out->fName);
+        WFREE(out->fName, out->heap, DYNTYPE_SFTP);
+        return WS_FATAL_ERROR;
     }
 
     return ret;
@@ -2126,18 +2243,9 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
     if (out->fName == NULL) {
         return WS_MEMORY_E;
     }
-    out->lName = (char*)WMALLOC(sz + 1, out->heap, DYNTYPE_SFTP);
-    if (out->lName == NULL) {
-        WFREE(out->fName, out->heap, DYNTYPE_SFTP);
-        return WS_MEMORY_E;
-    }
-
     WMEMCPY(out->fName, tmpName, sz);
-    WMEMCPY(out->lName, tmpName, sz);
     out->fName[sz] = '\0';
-    out->lName[sz] = '\0';
     out->fSz = sz;
-    out->lSz = sz;
 
     /* attempt to get file attributes. Could be directory or have none */
     {
@@ -2168,6 +2276,13 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
                     out->fName);
         }
         WFREE(buf, out->heap, DYNTYPE_SFTP);
+    }
+
+    /* Use attributes and fName to create long name */
+    if (SFTP_CreateLongName(out) != WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "Error creating long name for %s", out->fName);
+        WFREE(out->fName, out->heap, DYNTYPE_SFTP);
+        return WS_FATAL_ERROR;
     }
 
     return WS_SUCCESS;
@@ -2223,18 +2338,9 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
     if (out->fName == NULL) {
         return WS_MEMORY_E;
     }
-    out->lName = (char*)WMALLOC(sz + 1, out->heap, DYNTYPE_SFTP);
-    if (out->lName == NULL) {
-        WFREE(out->fName, out->heap, DYNTYPE_SFTP);
-        return WS_MEMORY_E;
-    }
-
     WMEMCPY(out->fName, realFileName, sz);
-    WMEMCPY(out->lName, realFileName, sz);
     out->fName[sz] = '\0';
-    out->lName[sz] = '\0';
     out->fSz = sz;
-    out->lSz = sz;
 
     /* attempt to get file attributes. Could be directory or have none */
     {
@@ -2267,10 +2373,18 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
         WFREE(buf, out->heap, DYNTYPE_SFTP);
     }
 
+    /* Use attributes and fName to create long name */
+    if (SFTP_CreateLongName(out) != WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "Error creating long name for %s", out->fName);
+        WFREE(out->fName, out->heap, DYNTYPE_SFTP);
+        return WS_FATAL_ERROR;
+    }
+
     return WS_SUCCESS;
 }
 
 #else
+
 /* helper function that gets file information from reading directory
  * @TODO allow user to override
  *
@@ -2296,18 +2410,10 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
     if (out->fName == NULL) {
         return WS_MEMORY_E;
     }
-    out->lName = (char*)WMALLOC(sz + 1, out->heap, DYNTYPE_SFTP);
-    if (out ->lName == NULL) {
-        WFREE(out->fName, out->heap, DYNTYPE_SFTP);
-        return WS_MEMORY_E;
-    }
 
     WMEMCPY(out->fName, dp->d_name, sz);
-    WMEMCPY(out->lName, dp->d_name, sz);
     out->fName[sz] = '\0';
-    out->lName[sz] = '\0';
     out->fSz = sz;
-    out->lSz = sz;
 
     /* attempt to get file attributes. Could be directory or have none */
     {
@@ -2318,6 +2424,7 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
         bufSz = out->fSz + (int)WSTRLEN(dirName) + sizeof(WS_DELIM);
         buf = (char*)WMALLOC(bufSz + 1, out->heap, DYNTYPE_SFTP);
         if (buf == NULL) {
+            WFREE(out->fName, out->heap, DYNTYPE_SFTP);
             return WS_MEMORY_E;
         }
         buf[0] = '\0';
@@ -2338,6 +2445,13 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
                     out->fName);
         }
         WFREE(buf, out->heap, DYNTYPE_SFTP);
+    }
+
+    /* Use attributes and fName to create long name */
+    if (SFTP_CreateLongName(out) != WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "Error creating long name for %s", out->fName);
+        WFREE(out->fName, out->heap, DYNTYPE_SFTP);
+        return WS_FATAL_ERROR;
     }
 
     return WS_SUCCESS;
@@ -2472,6 +2586,7 @@ int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
     if (cur == NULL) {
         /* unable to find handle */
+        WLOG(WS_LOG_SFTP, "Unable to find handle");
         return WS_FATAL_ERROR;
     }
 
