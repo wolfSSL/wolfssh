@@ -349,6 +349,17 @@ extern "C" {
 
 #if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
         !defined(NO_WOLFSSH_SERVER)
+
+    #ifndef SIZEOF_OFF_T
+        /* if not using autoconf then make a guess on off_t size based on sizeof
+         * long long */
+        #if defined(SIZEOF_LONG) && SIZEOF_LONG == 8
+            #define SIZEOF_OFF_T 8
+        #else
+            #define SIZEOF_OFF_T 4
+        #endif
+    #endif
+
 #ifdef WOLFSSL_NUCLEUS
     #define WSTAT_T         struct stat
     #define WRMDIR(fs,d)   (NU_Remove_Dir((d)) == NU_SUCCESS)?0:1
