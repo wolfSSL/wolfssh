@@ -37,18 +37,6 @@
     #include "src/misc.c"
 #endif
 
-
-#ifndef SIZEOF_OFF_T
-    /* if not using autoconf then make a guess on off_t size based on sizeof
-     * long long */
-    #if defined(SIZEOF_LONG) && SIZEOF_LONG == 8
-        #define SIZEOF_OFF_T 8
-    #else
-        #define SIZEOF_OFF_T 4
-    #endif
-#endif
-
-
 /* enum for bit field with an ID of each of the state structures */
 enum WS_SFTP_STATE_ID {
     STATE_ID_ALL        = 0, /* default to select all */
