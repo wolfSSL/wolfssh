@@ -4821,6 +4821,42 @@ static int DoPacket(WOLFSSH* ssh)
 }
 
 
+#if defined(HAVE_FIPS) && defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION == 2)
+    /*
+     * The FIPSv2 version of wc_AesCtrEncrypt() only works if the input and
+     * output are different buffers. This helper copies each block into a
+     * scratch buffer, then calling the AesCtrEncrypt() function on the
+     * single scratch buffer. But, only in FIPS builds.
+     */
+    static INLINE int AesCtrEncryptHelper(Aes* aes,
+        byte* out, const byte* in, word32 sz)
+    {
+        int ret = 0;
+        byte scratch[AES_BLOCK_SIZE];
+
+        if (aes == NULL || in == NULL || out == NULL || sz == 0)
+            return WS_BAD_ARGUMENT;
+
+        if (sz % AES_BLOCK_SIZE)
+            return WS_ENCRYPT_E;
+
+        while (ret == 0 && sz) {
+            XMEMCPY(scratch, in, AES_BLOCK_SIZE);
+            ret = wc_AesCtrEncrypt(aes, out, scratch, AES_BLOCK_SIZE);
+            out += AES_BLOCK_SIZE;
+            in += AES_BLOCK_SIZE;
+            sz -= AES_BLOCK_SIZE;
+        }
+        ForceZero(scratch, sizeof(scratch));
+
+        return ret;
+    }
+    #define AESCTRHELPER(a,b,c,d) AesCtrEncryptHelper((a),(b),(c),(d))
+#else
+    #define AESCTRHELPER(a,b,c,d) wc_AesCtrEncrypt((a),(b),(c),(d))
+#endif
+
+
 static INLINE int Encrypt(WOLFSSH* ssh, byte* cipher, const byte* input,
                           word16 sz)
 {
@@ -4847,7 +4883,7 @@ static INLINE int Encrypt(WOLFSSH* ssh, byte* cipher, const byte* input,
 
 #ifdef WOLFSSL_AES_COUNTER
         case ID_AES128_CTR:
-            if (sz % AES_BLOCK_SIZE || wc_AesCtrEncrypt(&ssh->encryptCipher.aes,
+            if (sz % AES_BLOCK_SIZE || AESCTRHELPER(&ssh->encryptCipher.aes,
                                                        cipher, input, sz) < 0) {
 
                 ret = WS_ENCRYPT_E;
@@ -4891,7 +4927,7 @@ static INLINE int Decrypt(WOLFSSH* ssh, byte* plain, const byte* input,
 
 #ifdef WOLFSSL_AES_COUNTER
         case ID_AES128_CTR:
-            if (sz % AES_BLOCK_SIZE || wc_AesCtrEncrypt(&ssh->decryptCipher.aes,
+            if (sz % AES_BLOCK_SIZE || AESCTRHELPER(&ssh->decryptCipher.aes,
                                                         plain, input, sz) < 0) {
 
                 ret = WS_DECRYPT_E;
