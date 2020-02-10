@@ -9,5 +9,4 @@ examples_client_client_LDADD        = src/libwolfssh.la
 examples_client_client_DEPENDENCIES = src/libwolfssh.la
 endif
 
-dist_example_DATA+= examples/client/client.c
 DISTCLEANFILES+= examples/client/.libs/client
