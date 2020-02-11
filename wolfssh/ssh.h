@@ -238,10 +238,9 @@ enum WS_FormatTypes {
 };
 
 
-enum WS_UserAuthTypes {
-    WOLFSSH_USERAUTH_PASSWORD,
-    WOLFSSH_USERAUTH_PUBLICKEY
-};
+/* bit map */
+#define WOLFSSH_USERAUTH_PASSWORD  0x01
+#define WOLFSSH_USERAUTH_PUBLICKEY 0x02
 
 enum WS_UserAuthResults
 {

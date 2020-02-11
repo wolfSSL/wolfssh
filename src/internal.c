@@ -3817,6 +3817,7 @@ static int DoUserAuthFailure(WOLFSSH* ssh,
     byte authList[3]; /* Should only ever be password, publickey, hostname */
     word32 authListSz = 3;
     byte partialSuccess;
+    byte authType = 0;
     int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthFailure()");
@@ -3835,35 +3836,32 @@ static int DoUserAuthFailure(WOLFSSH* ssh,
 
         /* check authList to see if authId is there */
         for (i = 0; i < authListSz; i++) {
-            if (ssh->authId == authList[i]) {
-                ret = SendUserAuthRequest(ssh, ssh->authId, 0);
-                break;
+            word32 j;
+            for (j = 0; j < sizeof(ssh->supportedAuth); j++) {
+                if (authList[i] == ssh->supportedAuth[j]) {
+                    switch(authList[i]) {
+                        case ID_USERAUTH_PASSWORD:
+                            authType |= WOLFSSH_USERAUTH_PASSWORD;
+                            break;
+                        case ID_USERAUTH_PUBLICKEY:
+                            authType |= WOLFSSH_USERAUTH_PUBLICKEY;
+                            break;
+                        default:
+                            break;
+                    }
+                }
             }
         }
 
         /* the auth type attempted was not in the list */
-        if (ret == WS_SUCCESS && i >= authListSz) {
-            WLOG(WS_LOG_DEBUG, "Auth ID %d did not match any in peers list",
-                    ssh->authId);
+        if (authType == 0) {
+            WLOG(WS_LOG_DEBUG, "Did not match any auth IDs in peers list");
             ret = WS_USER_AUTH_E;
         }
+    }
 
-        /* check if should attempt next auth type */
-        if (ret != WS_SUCCESS) {
-            /* get the current index of the auth type */
-            for (i =0; i < sizeof(ssh->supportedAuth); i++) {
-                if (ssh->authId == ssh->supportedAuth[i]) {
-                    break;
-                }
-            }
-
-            if (i + 1 < sizeof(ssh->supportedAuth)) {
-                ssh->authId = ssh->supportedAuth[i + 1];
-                if (ssh->authId != ID_NONE) {
-                    ret = WC_CHANGE_AUTH_E; /* retry with supported auth type */
-                }
-            }
-        }
+    if (ret == WS_SUCCESS) {
+        ret = SendUserAuthRequest(ssh, authType, 0);
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthFailure(), ret = %d", ret);
@@ -7428,20 +7426,30 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId, int addSig)
             authData.username = (const byte*)ssh->userName;
             authData.usernameSz = ssh->userNameSz;
 
-            if (authId == ID_USERAUTH_PASSWORD) {
+            if (authId & WOLFSSH_USERAUTH_PASSWORD) {
                 ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PASSWORD,
                         &authData, ssh->userAuthCtx);
                 if (ret != WOLFSSH_USERAUTH_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, "SUAR: Couldn't get password");
                     ret = WS_FATAL_ERROR;
                 }
+                else {
+                    WLOG(WS_LOG_DEBUG, "SUAR: Callback successful password");
+                    authData.type = authId = ID_USERAUTH_PASSWORD;
+                }
             }
-            else if (authId == ID_USERAUTH_PUBLICKEY) {
+
+            /* fall into public key case if password case was not successful */
+            if ((ret == WS_FATAL_ERROR) && (authId & WOLFSSH_USERAUTH_PUBLICKEY)) {
                 ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PUBLICKEY,
                         &authData, ssh->userAuthCtx);
                 if (ret != WOLFSSH_USERAUTH_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, "SUAR: Couldn't get key");
                     ret = WS_FATAL_ERROR;
+                }
+                else {
+                    WLOG(WS_LOG_DEBUG, "SUAR: Callback successful public key");
+                    authData.type = authId = ID_USERAUTH_PUBLICKEY;
                 }
             }
         }
