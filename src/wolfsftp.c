@@ -37,7 +37,6 @@
     #include "src/misc.c"
 #endif
 
-
 /* enum for bit field with an ID of each of the state structures */
 enum WS_SFTP_STATE_ID {
     STATE_ID_ALL        = 0, /* default to select all */
