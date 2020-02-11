@@ -442,9 +442,13 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
 
     if (error != WS_SOCKET_ERROR_E && error != WS_FATAL_ERROR)
     {
+        if (wolfSSH_stream_exit(threadCtx->ssh, 0) != WS_SUCCESS) {
+            fprintf(stderr, "Error with SSH stream exit.\n");
+        }
         if (wolfSSH_shutdown(threadCtx->ssh) != WS_SUCCESS) {
             fprintf(stderr, "Error with SSH shutdown.\n");
         }
+
     }
 
     WCLOSESOCKET(threadCtx->fd);
