@@ -1996,7 +1996,7 @@ static void getDate(char* buf, int len, struct tm* t)
 {
     int idx;
 
-    if (len < WS_DATE_SIZE)
+    if (len < WS_DATE_SIZE + 1)
         return;
 
     /* place month in buffer */
@@ -2022,7 +2022,7 @@ static void getDate(char* buf, int len, struct tm* t)
 
     XSNPRINTF(buf + idx, len - idx, "%2d %02d:%02d",
               t->tm_mday, t->tm_hour, t->tm_min);
-
+    buf[WS_DATE_SIZE] = '\0';
 }
 #endif
 
@@ -2030,7 +2030,7 @@ static void getDate(char* buf, int len, struct tm* t)
  * return WS_SUCCESS on success */
 static int SFTP_CreateLongName(WS_SFTPNAME* name)
 {
-    char perm[10];
+    char perm[11];
     int linkCount = 1; /* @TODO set to correct value */
 #if defined(XGMTIME) && defined(XSNPRINTF)
     char date[WS_DATE_SIZE + 1]; /* +1 for null terminator */
@@ -2076,9 +2076,10 @@ static int SFTP_CreateLongName(WS_SFTPNAME* name)
         perm[i++] = (tmp & 0x001)?'x':'-';
     }
     totalSz += i;
+    perm[i] = '\0';
 
     totalSz += name->fSz; /* size of file name */
-    totalSz += 6; /* for all ' ' spaces */
+    totalSz += 7; /* for all ' ' spaces */
     totalSz += 3 + 8 + 8 + 8; /* linkCount + uid + gid + size */
 #else
     totalSz = name->fSz;
