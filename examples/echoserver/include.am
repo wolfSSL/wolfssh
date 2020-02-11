@@ -9,5 +9,4 @@ examples_echoserver_echoserver_LDADD        = src/libwolfssh.la
 examples_echoserver_echoserver_DEPENDENCIES = src/libwolfssh.la
 endif
 
-dist_example_DATA+= examples/echoserver/echoserver.c
 DISTCLEANFILES+= examples/echoserver/.libs/echoserver

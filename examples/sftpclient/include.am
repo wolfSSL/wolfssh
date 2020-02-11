@@ -9,5 +9,4 @@ examples_sftpclient_wolfsftp_LDADD        = src/libwolfssh.la
 examples_sftpclient_wolfsftp_DEPENDENCIES = src/libwolfssh.la
 endif
 
-dist_example_DATA+= examples/sftpclient/sftpclient.c
 DISTCLEANFILES+= examples/sftpclient/.libs/wolfsftp
