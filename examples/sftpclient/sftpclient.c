@@ -442,6 +442,31 @@ static int wsUserAuth(byte authType,
 {
     int ret = WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
 
+#ifdef DEBUG_WOLFSSH
+    /* inspect supported types from server */
+    printf("Server supports ");
+    if (authData->type & WOLFSSH_USERAUTH_PASSWORD) {
+        printf("password authentication");
+    }
+    if (authData->type & WOLFSSH_USERAUTH_PUBLICKEY) {
+        printf(" and public key authentication");
+    }
+    printf("\n");
+    printf("wolfSSH requesting to use type %d\n", authType);
+#endif
+
+    /* We know hansel has a key, wait for request of public key */
+    if (authData->type & WOLFSSH_USERAUTH_PUBLICKEY &&
+            authData->username != NULL &&
+            authData->usernameSz > 0 &&
+            XSTRNCMP((char*)authData->username, "hansel",
+                authData->usernameSz) == 0) {
+        if (authType == WOLFSSH_USERAUTH_PASSWORD) {
+            printf("rejecting password type with hansel in favor of pub key\n");
+            return WOLFSSH_USERAUTH_FAILURE;
+        }
+    }
+
     if (authType == WOLFSSH_USERAUTH_PASSWORD) {
         const char* defaultPassword = (const char*)ctx;
         word32 passwordSz;
