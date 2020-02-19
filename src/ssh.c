@@ -878,7 +878,7 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
     if (ret == WS_SUCCESS)
         ret = SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION);
 
-    if (ssh->channelList == NULL) {
+    if (ssh != NULL && ssh->channelList == NULL) {
         WLOG(WS_LOG_DEBUG, "channel list was already removed");
         ret = WS_SUCCESS;
     }
