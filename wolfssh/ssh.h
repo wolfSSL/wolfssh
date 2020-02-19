@@ -175,7 +175,9 @@ WOLFSSH_API void wolfSSH_CTX_SetPublicKeyCheck(WOLFSSH_CTX*,
 WOLFSSH_API void wolfSSH_SetPublicKeyCheckCtx(WOLFSSH*, void*);
 WOLFSSH_API void* wolfSSH_GetPublicKeyCheckCtx(WOLFSSH*);
 
+WOLFSSH_API int wolfSSH_SetUsernameRaw(WOLFSSH*, const byte*, word32);
 WOLFSSH_API int wolfSSH_SetUsername(WOLFSSH*, const char*);
+WOLFSSH_API char* wolfSSH_GetUsername(WOLFSSH*);
 
 WOLFSSH_API int wolfSSH_CTX_SetBanner(WOLFSSH_CTX*, const char*);
 WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX*,

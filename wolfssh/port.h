@@ -222,7 +222,11 @@ extern "C" {
     #define WFTELL(s)         ftell((s))
     #define WREWIND(s)        rewind((s))
     #define WSEEK_END         SEEK_END
-    #define WUTIMES(f,t)      utimes((f),(t))
+    #ifdef WOLFSSL_VXWORKS
+        #define WUTIMES(f,t)      (WS_SUCCESS)
+    #else
+        #define WUTIMES(f,t)      utimes((f),(t))
+    #endif
 
     #ifndef USE_WINDOWS_API
         #define WCHMOD(fs,f,m)   chmod((f),(m))
@@ -262,8 +266,12 @@ extern "C" {
         #else
             #include <unistd.h>
             #include <sys/stat.h>
-            #define WCHDIR(p)      chdir((p))
-            #define WMKDIR(fs,p,m) mkdir((p),(m))
+            #define WCHDIR(p)     chdir((p))
+            #ifdef WOLFSSL_VXWORKS
+                #define WMKDIR(fs,p,m) mkdir((p))
+            #else
+                #define WMKDIR(fs,p,m) mkdir((p),(m))
+            #endif
         #endif
     #endif
 #endif
@@ -271,7 +279,11 @@ extern "C" {
 
 /* setup string handling */
 #ifndef WSTRING_USER
-    #include <string.h>
+    #ifdef WOLFSSL_VXWORKS
+        #include <strings.h>
+    #else
+        #include <string.h>
+    #endif
 
     WOLFSSH_API char* wstrnstr(const char*, const char*, unsigned int);
     WOLFSSH_API char* wstrncat(char*, const char*, size_t);
@@ -306,7 +318,7 @@ extern "C" {
         #define WSTRNCASECMP(s1,s2,n) strncasecmp((s1),(s2),(n))
         #define WSNPRINTF(s,n,f,...) snprintf((s),(n),(f),__VA_ARGS__)
         #define WVSNPRINTF(s,n,f,...) vsnprintf((s),(n),(f),__VA_ARGS__)
-    #else 
+    #else
         #ifndef FREESCALE_MQX
             #include <stdio.h>
         #endif
@@ -1104,6 +1116,10 @@ extern "C" {
 #elif defined(USE_WINDOWS_API)
     #define WFIONREAD FIONREAD
     #define WIOCTL ioctlsocket
+#elif defined(WOLFSSL_VXWORKS)
+    #include "ioLib.h"
+    #include <sys/ioctl.h>
+    #define WIOCTL ioctl
 #else
     #if defined(__CYGWIN__) && !defined(FIONREAD)
         /* Cygwin defines FIONREAD in socket.h instead of ioctl.h */

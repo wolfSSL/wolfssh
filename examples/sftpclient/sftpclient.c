@@ -478,6 +478,7 @@ static int wsUserAuth(byte authType,
         }
         else {
             printf("Password: ");
+            fflush(stdout);
             SetEcho(0);
             if (WFGETS((char*)userPassword, sizeof(userPassword),
                         stdin) == NULL) {
@@ -593,6 +594,7 @@ static int doCmds(func_args* args)
             err_msg("fputs error");
             return -1;
         }
+        fflush(stdout);
 
         WMEMSET(msg, 0, sizeof(msg));
         if (SFTP_FGETS(args, msg, sizeof(msg) - 1) == NULL) {
