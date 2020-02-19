@@ -21,7 +21,7 @@
 #ifndef WOLFSSL_CERTS_TEST_H
 #define WOLFSSL_CERTS_TEST_H
 
-#ifdef NO_FILESYSTEM
+#if defined(NO_FILESYSTEM)
 
 /* ./keys/server-key-rsa.der, 2048-bit */
 static const unsigned char rsa_key_der_2048[] =

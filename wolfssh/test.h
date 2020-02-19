@@ -40,6 +40,33 @@
     #endif
     #define SOCKET_T SOCKET
     #define NUM_SOCKETS 5
+#elif defined(WOLFSSL_VXWORKS)
+    #include <unistd.h>
+    #include <hostLib.h>
+    #include <sockLib.h>
+    #include <arpa/inet.h>
+    #include <string.h>
+    #include <selectLib.h>
+    #include <sys/types.h>
+    #include <netinet/in.h>
+    #include <fcntl.h>
+    #include <sys/time.h>
+    #include <netdb.h>
+    #include <pthread.h>
+    #define SOCKET_T int
+
+    /*#define SINGLE_THREADED*/
+
+    #ifndef STDIN_FILENO
+    #define STDIN_FILENO   0
+    #endif
+    #ifndef STDOUT_FILENO
+    #define STDOUT_FILENO   1
+    #endif
+    #ifndef STDERR_FILENO
+    #define STDERR_FILENO   2
+    #endif
+    #define NUM_SOCKETS 2
 #elif defined(MICROCHIP_MPLAB_HARMONY) || defined(MICROCHIP_TCPIP)
     #include "tcpip/tcpip.h"
     #include <signal.h>
@@ -173,6 +200,7 @@
 #else /* TEST_IPV6 */
     static const char* const wolfSshIp = "::1";
 #endif /* TEST_IPV6 */
+
 #ifdef WOLFSSL_NUCLEUS
     /* port 8080 was open with QEMU */
     static const word16 wolfSshPort = 8080;
@@ -186,6 +214,13 @@
     #define WS_NORETURN
 #endif
 
+#ifdef WOLFSSL_VXWORKS
+static INLINE void err_sys(const char* msg)
+{
+    printf("wolfSSH error: %s\n", msg);
+    return;
+}
+#else
 static INLINE WS_NORETURN void err_sys(const char* msg)
 {
     printf("wolfSSH error: %s\n", msg);
@@ -203,7 +238,7 @@ static INLINE WS_NORETURN void err_sys(const char* msg)
         exit(EXIT_FAILURE);
     }
 }
-
+#endif
 
 #define MY_EX_USAGE 2
 
@@ -772,7 +807,16 @@ static INLINE void ThreadStart(THREAD_FUNC fun, void* args, THREAD_TYPE* thread)
     (void)args;
     (void)thread;
 #elif defined(_POSIX_THREADS) && !defined(__MINGW32__)
-    pthread_create(thread, 0, fun, args);
+    #ifdef WOLFSSL_VXWORKS
+    {
+        pthread_attr_t myattr;
+        pthread_attr_init(&myattr);
+        pthread_attr_setstacksize(&myattr, 0x10000);
+        pthread_create(thread, &myattr, fun, args);
+    }
+    #else
+        pthread_create(thread, 0, fun, args);
+    #endif
     return;
 #elif defined(WOLFSSL_TIRTOS)
     /* Initialize the defaults and set the parameters. */

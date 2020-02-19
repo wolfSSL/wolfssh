@@ -161,6 +161,7 @@ static int wsUserAuth(byte authType,
         }
         else {
             printf("Password: ");
+            fflush(stdout);
             SetEcho(0);
             if (fgets((char*)userPassword, sizeof(userPassword), stdin) == NULL) {
                 printf("Getting password failed.\n");

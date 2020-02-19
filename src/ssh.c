@@ -1191,38 +1191,61 @@ int wolfSSH_SetChannelType(WOLFSSH* ssh, byte type, byte* name, word32 nameSz)
     return WS_SUCCESS;
 }
 
-int wolfSSH_SetUsername(WOLFSSH* ssh, const char* username)
+
+int wolfSSH_SetUsernameRaw(WOLFSSH* ssh,
+        const byte* username, word32 usernameSz)
 {
-    char* value = NULL;
-    word32 valueSz = 0;
+    char* newUsername = NULL;
     int ret = WS_SUCCESS;
 
-    if (ssh == NULL || ssh->handshake == NULL ||
-        ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER ||
-        username == NULL) {
-
+    if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
-    }
+    if (username == NULL || usernameSz == 0)
+        ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
-        valueSz = (word32)WSTRLEN(username);
-        if (valueSz > 0)
-            value = (char*)WMALLOC(valueSz + 1, ssh->ctx->heap, DYNTYPE_STRING);
-        if (value == NULL)
+        newUsername = (char*)WMALLOC(usernameSz + 1,
+                ssh->ctx->heap, DYNTYPE_STRING);
+        if (newUsername == NULL)
             ret = WS_MEMORY_E;
-    }
-
-    if (ret == WS_SUCCESS) {
-        WSTRNCPY(value, username, valueSz + 1);
-        if (ssh->userName != NULL) {
-            WFREE(ssh->userName, ssh->ctx->heap, DYNTYPE_STRING);
-            ssh->userName = NULL;
+        else {
+            WMEMCPY(newUsername, username, usernameSz);
+            newUsername[usernameSz] = 0;
+            if (ssh->userName != NULL)
+                WFREE(ssh->userName, ssh->ctx->heap, DYNTYPE_STRING);
+            ssh->userName = newUsername;
+            ssh->userNameSz = usernameSz;
         }
-        ssh->userName = value;
-        ssh->userNameSz = valueSz;
     }
 
     return ret;
+}
+
+
+int wolfSSH_SetUsername(WOLFSSH* ssh, const char* username)
+{
+    int ret = WS_SUCCESS;
+
+    if (ssh == NULL || username == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        ret = wolfSSH_SetUsernameRaw(ssh,
+                (const byte*)username, (word32)WSTRLEN(username));
+    }
+
+    return ret;
+}
+
+
+char* wolfSSH_GetUsername(WOLFSSH* ssh)
+{
+    char* name = NULL;
+
+    if (ssh != NULL)
+        name = ssh->userName;
+
+    return name;
 }
 
 
