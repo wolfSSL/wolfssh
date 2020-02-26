@@ -8835,45 +8835,18 @@ int wolfSSH_oct2dec(WOLFSSH* ssh, byte* oct, word32 octSz)
         return WS_BAD_ARGUMENT;
     }
 
-#if defined(WOLFSSL_KEY_GEN) || defined(HAVE_COMP_KEY) || \
-    defined(WOLFSSL_DEBUG_MATH) || defined(DEBUG_WOLFSSL) || \
-    defined(WOLFSSL_PUBLIC_MP)
+    /* convert octal string to int without mp_read_radix() */
+    ret = 0;
+
+    for (word32 i = 0; i < octSz; i++)
     {
-        mp_int tmp;
-        char decimalString[WOLFSSH_MAX_OCTET_LEN + 1];
-
-        ret = mp_init(&tmp);
-        if (ret == MP_OKAY) {
-            ret = mp_read_radix(&tmp, (const char*)oct, 8);
+        if (oct[i] < '0' || oct[0] > '7') {
+            ret = WS_BAD_ARGUMENT;
+            break;
         }
-
-        if (ret == MP_OKAY) {
-            /* convert octal to decimal */
-            ret = mp_todecimal(&tmp, decimalString);
-
-            if (ret == MP_OKAY) {
-                /* convert string to int */
-                ret = atoi(decimalString);
-            }
-        }
-        mp_clear(&tmp);
+        ret <<= 3;
+        ret |= (oct[i] - '0');
     }
-#else
-    {
-        /* convert octal string to int without mp_read_radix() */
-        ret = 0;
-
-        for (word32 i = 0; i < octSz; i++)
-        {
-            if (oct[i] < '0' || oct[0] > '7') {
-                ret = WS_BAD_ARGUMENT;
-                break;
-            }
-            ret <<= 3;
-            ret |= (oct[i] - '0');
-        }
-    }
-#endif
 
     return ret;
 }
