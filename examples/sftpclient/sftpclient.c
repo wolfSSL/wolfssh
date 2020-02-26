@@ -645,7 +645,7 @@ static int doCmds(func_args* args)
                 }
             } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
                         && ret != WS_SUCCESS);
-            XFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             continue;
         }
 
@@ -737,7 +737,7 @@ static int doCmds(func_args* args)
                 }
             }
             resume = 0;
-            XFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             continue;
         }
 
@@ -828,7 +828,7 @@ static int doCmds(func_args* args)
                 }
             }
             resume = 0;
-            XFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             continue;
         }
 
@@ -874,7 +874,7 @@ static int doCmds(func_args* args)
 
             if (ret == WS_SUCCESS) {
                 sz = (int)WSTRLEN(pt);
-                XFREE(workingDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                WFREE(workingDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 workingDir = (char*)WMALLOC(sz + 1, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 if (workingDir == NULL) {
                     err_msg("Error malloc'ing");
@@ -885,7 +885,7 @@ static int doCmds(func_args* args)
 
                 clean_path(workingDir);
             }
-            XFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             continue;
         }
 
@@ -961,7 +961,7 @@ static int doCmds(func_args* args)
                 }
             }
 
-            XFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             continue;
         }
 
@@ -1010,7 +1010,7 @@ static int doCmds(func_args* args)
                     }
                 }
             }
-            XFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             continue;
         }
 
@@ -1056,7 +1056,7 @@ static int doCmds(func_args* args)
                     }
                 }
             }
-            XFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             continue;
         }
 
@@ -1129,8 +1129,8 @@ static int doCmds(func_args* args)
                     return -1;
                 }
             }
-            XFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-            XFREE(fTo, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            WFREE(fTo, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             continue;
 
         }
@@ -1452,7 +1452,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         ret = doAutopilot(autopilot, apLocal, apRemote);
     }
 
-    XFREE(workingDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    WFREE(workingDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     if (ret == WS_SUCCESS) {
         if (wolfSSH_shutdown(ssh) != WS_SUCCESS) {
             printf("error with wolfSSH_shutdown(), already disconnected?\n");
