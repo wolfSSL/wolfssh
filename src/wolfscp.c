@@ -754,17 +754,10 @@ int ChannelCommandIsScp(WOLFSSH* ssh)
 static int GetScpFileMode(WOLFSSH* ssh, byte* buf, word32 bufSz,
                           word32* inOutIdx)
 {
-    int ret;
+    int ret = WS_SUCCESS;
     word32 idx;
     byte modeOctet[SCP_MODE_OCTET_LEN + 1];
-#if defined(WOLFSSL_KEY_GEN) || defined(HAVE_COMP_KEY) || \
-    defined(WOLFSSL_DEBUG_MATH) || defined(DEBUG_WOLFSSL) || \
-    defined(WOLFSSL_PUBLIC_MP)
-    mp_int tmp;
-    char decimalString[SCP_MODE_OCTET_LEN + 1];
-#else
     int mode, i;
-#endif
 
     if (ssh == NULL || buf == NULL || inOutIdx == NULL ||
         bufSz < (SCP_MODE_OCTET_LEN + 1))
@@ -781,36 +774,6 @@ static int GetScpFileMode(WOLFSSH* ssh, byte* buf, word32 bufSz,
     modeOctet[SCP_MODE_OCTET_LEN] = '\0';
     idx += SCP_MODE_OCTET_LEN;
 
-#if defined(WOLFSSL_KEY_GEN) || defined(HAVE_COMP_KEY) || \
-    defined(WOLFSSL_DEBUG_MATH) || defined(DEBUG_WOLFSSL) || \
-    defined(WOLFSSL_PUBLIC_MP)
-    ret = mp_init(&tmp);
-    if (ret == MP_OKAY) {
-        ret = mp_read_radix(&tmp, (const char*)modeOctet, 8);
-    }
-
-    if (ret == MP_OKAY) {
-        /* convert octal to decimal */
-        ret = mp_todecimal(&tmp, decimalString);
-
-        if (ret == MP_OKAY) {
-            /* convert string to int */
-            ssh->scpFileMode = atoi(decimalString);
-        }
-    }
-
-    if (ret == MP_OKAY) {
-        /* eat trailing space */
-        if (bufSz >= (word32)(idx + 1))
-            idx++;
-
-        ret = WS_SUCCESS;
-        *inOutIdx = idx;
-    }
-
-    mp_clear(&tmp);
-#else
-    ret = WS_SUCCESS;
     /* convert octal string to int without mp_read_radix() */
     mode = 0;
 
@@ -833,7 +796,6 @@ static int GetScpFileMode(WOLFSSH* ssh, byte* buf, word32 bufSz,
         ret = WS_SUCCESS;
         *inOutIdx = idx;
     }
-#endif
 
     return ret;
 }
