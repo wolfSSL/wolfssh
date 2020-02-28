@@ -428,124 +428,124 @@ static void wolfSSH_SFTP_ClearState(WOLFSSH* ssh, enum WS_SFTP_STATE_ID state)
             state = ~state; /* set all bits hot */
 
         if (state & STATE_ID_GET) {
-            XFREE(ssh->getState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+            WFREE(ssh->getState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
             ssh->getState = NULL;
         }
 
         if (state & STATE_ID_LSTAT) {
             if (ssh->lstatState) {
-                XFREE(ssh->lstatState->data, ssh->ctx->heap, DYNTYPE_BUFFER);
-                XFREE(ssh->lstatState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+                WFREE(ssh->lstatState->data, ssh->ctx->heap, DYNTYPE_BUFFER);
+                WFREE(ssh->lstatState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
                 ssh->lstatState = NULL;
             }
         }
 
         if (state & STATE_ID_OPEN) {
-            XFREE(ssh->openState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+            WFREE(ssh->openState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
             ssh->openState = NULL;
         }
 
         if (state & STATE_ID_SEND_READ) {
-            XFREE(ssh->sendReadState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+            WFREE(ssh->sendReadState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
             ssh->sendReadState = NULL;
         }
 
         if (state & STATE_ID_CLOSE) {
-            XFREE(ssh->closeState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+            WFREE(ssh->closeState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
             ssh->closeState  = NULL;
         }
 
         if (state & STATE_ID_GET_HANDLE) {
-            XFREE(ssh->getHandleState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+            WFREE(ssh->getHandleState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
             ssh->getHandleState = NULL;
         }
 
         if (state & STATE_ID_NAME) {
             if (ssh->nameState) {
-                XFREE(ssh->nameState->data, ssh->ctx->heap, DYNTYPE_BUFFER);
-                XFREE(ssh->nameState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+                WFREE(ssh->nameState->data, ssh->ctx->heap, DYNTYPE_BUFFER);
+                WFREE(ssh->nameState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
                 ssh->nameState = NULL;
             }
         }
 
         if (state & STATE_ID_SEND) {
             if (ssh->sendState) {
-                XFREE(ssh->sendState->data, ssh->ctx->heap, DYNTYPE_BUFFER);
-                XFREE(ssh->sendState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+                WFREE(ssh->sendState->data, ssh->ctx->heap, DYNTYPE_BUFFER);
+                WFREE(ssh->sendState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
                 ssh->sendState = NULL;
             }
         }
 
         if (state & STATE_ID_LS) {
             if (ssh->lsState) {
-                XFREE(ssh->lsState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+                WFREE(ssh->lsState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
                 ssh->lsState = NULL;
             }
         }
 
         if (state & STATE_ID_READDIR) {
             if (ssh->readDirState) {
-                XFREE(ssh->readDirState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+                WFREE(ssh->readDirState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
                 ssh->readDirState = NULL;
             }
         }
 
         if (state & STATE_ID_PUT) {
-            XFREE(ssh->putState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+            WFREE(ssh->putState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
             ssh->putState = NULL;
         }
 
         if (state & STATE_ID_SEND_WRITE) {
-            XFREE(ssh->sendWriteState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+            WFREE(ssh->sendWriteState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
             ssh->sendWriteState = NULL;
         }
 
         if (state & STATE_ID_RM) {
             if (ssh->rmState != NULL)
-                XFREE(ssh->rmState->data, ssh->ctx->heap, DYNTYPE_BUFFER);
-            XFREE(ssh->rmState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+                WFREE(ssh->rmState->data, ssh->ctx->heap, DYNTYPE_BUFFER);
+            WFREE(ssh->rmState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
             ssh->rmState = NULL;
         }
 
         if (state & STATE_ID_MKDIR) {
             if (ssh->mkdirState != NULL)
-                XFREE(ssh->mkdirState->data, ssh->ctx->heap, DYNTYPE_BUFFER);
-            XFREE(ssh->mkdirState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+                WFREE(ssh->mkdirState->data, ssh->ctx->heap, DYNTYPE_BUFFER);
+            WFREE(ssh->mkdirState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
             ssh->mkdirState = NULL;
         }
 
         if (state & STATE_ID_RMDIR) {
             if (ssh->rmdirState != NULL)
-                XFREE(ssh->rmdirState->data, ssh->ctx->heap, DYNTYPE_BUFFER);
-            XFREE(ssh->rmdirState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+                WFREE(ssh->rmdirState->data, ssh->ctx->heap, DYNTYPE_BUFFER);
+            WFREE(ssh->rmdirState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
             ssh->rmdirState = NULL;
         }
 
         if (state & STATE_ID_RENAME) {
             if (ssh->renameState != NULL)
-                XFREE(ssh->renameState->data, ssh->ctx->heap, DYNTYPE_BUFFER);
-            XFREE(ssh->renameState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+                WFREE(ssh->renameState->data, ssh->ctx->heap, DYNTYPE_BUFFER);
+            WFREE(ssh->renameState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
             ssh->renameState = NULL;
         }
 
         if (state & STATE_ID_RECV) {
             if (ssh->recvState != NULL)
-                XFREE(ssh->recvState->data, ssh->ctx->heap, DYNTYPE_BUFFER);
-            XFREE(ssh->recvState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+                WFREE(ssh->recvState->data, ssh->ctx->heap, DYNTYPE_BUFFER);
+            WFREE(ssh->recvState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
             ssh->recvState = NULL;
         }
 
         if (state & STATE_ID_CHMOD) {
             if (ssh->chmodState) {
-                XFREE(ssh->chmodState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+                WFREE(ssh->chmodState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
                 ssh->chmodState = NULL;
             }
         }
 
         if (state & STATE_ID_SETATR) {
             if (ssh->setatrState) {
-                XFREE(ssh->setatrState->data, ssh->ctx->heap, DYNTYPE_BUFFER);
-                XFREE(ssh->setatrState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+                WFREE(ssh->setatrState->data, ssh->ctx->heap, DYNTYPE_BUFFER);
+                WFREE(ssh->setatrState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
                 ssh->setatrState = NULL;
             }
         }
@@ -2522,7 +2522,7 @@ int wolfSSH_SFTP_SetDefaultPath(WOLFSSH* ssh, const char* path)
     if (path != NULL) {
         word32 sftpDefaultPathSz;
         sftpDefaultPathSz = (word32)XSTRLEN(path) + 1;
-        ssh->sftpDefaultPath = (char*)XMALLOC(sftpDefaultPathSz,
+        ssh->sftpDefaultPath = (char*)WMALLOC(sftpDefaultPathSz,
                 ssh->ctx->heap, DYNTYPE_STRING);
         if (ssh->sftpDefaultPath == NULL) {
             ssh->error = WS_MEMORY_E;
@@ -5791,7 +5791,7 @@ int wolfSSH_SFTP_SetSTAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
                 ret = WS_FATAL_ERROR;
                 break;
             }
-            XFREE(state->data, ssh->ctx->heap, DYNTYPE_BUFFER);
+            WFREE(state->data, ssh->ctx->heap, DYNTYPE_BUFFER);
             state->data = (byte*)WMALLOC(maxSz, ssh->ctx->heap, DYNTYPE_BUFFER);
             if (state->data == NULL) {
                 ret = WS_MEMORY_E;
