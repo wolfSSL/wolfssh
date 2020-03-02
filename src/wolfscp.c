@@ -1508,6 +1508,96 @@ void* wolfSSH_GetScpSendCtx(WOLFSSH* ssh)
 }
 
 
+int wolfSSH_SCP_connect(WOLFSSH* ssh, byte* cmd)
+{
+    int ret = WS_SUCCESS;
+
+    if (ssh == NULL)
+        return WS_BAD_ARGUMENT;
+
+    if (ssh->error == WS_WANT_READ || ssh->error == WS_WANT_WRITE)
+        ssh->error = WS_SUCCESS;
+
+    if (ssh->connectState < CONNECT_SERVER_CHANNEL_REQUEST_DONE) {
+
+        WLOG(WS_LOG_SCP, "Trying to do SSH connect first");
+        WLOG(WS_LOG_SCP, "cmd = %s", (const char*)cmd);
+        if ((ret = wolfSSH_SetChannelType(ssh, WOLFSSH_SESSION_EXEC, cmd,
+                        (word32)WSTRLEN((const char*)cmd))) != WS_SUCCESS) {
+            WLOG(WS_LOG_SCP, "Unable to set subsystem channel type");
+            return ret;
+        }
+
+        if ((ret = wolfSSH_connect(ssh)) != WS_SUCCESS) {
+            return ret;
+        }
+    }
+
+    return ret;
+}
+
+
+static int wolfSSH_SCP_cmd(WOLFSSH* ssh, const char* localName,
+        const char* remoteName, byte dir)
+{
+    char* cmd = NULL;
+    word32 remoteNameSz, cmdSz;
+    int ret = WS_SUCCESS;
+
+    if (ssh == NULL || localName == NULL || remoteName == NULL)
+        return WS_BAD_ARGUMENT;
+
+    if (dir != 't' && dir != 'f')
+        return WS_BAD_ARGUMENT;
+
+    remoteNameSz = (word32)WSTRLEN(remoteName);
+    cmdSz = remoteNameSz + (word32)WSTRLEN("scp -5 ") + 1;
+    cmd = (char*)WMALLOC(cmdSz, ssh->ctx->heap, DYNTYPE_STRING);
+
+    /* Need to set up the context for the local interaction callback. */
+
+    if (cmd != NULL) {
+        WSNPRINTF(cmd, cmdSz, "scp -%c %s", dir, remoteName);
+        ssh->scpBasePath = localName;
+        ret = wolfSSH_SCP_connect(ssh, (byte*)cmd);
+        if (dir == 't') {
+            ssh->scpState = SCP_SOURCE_BEGIN;
+            ssh->scpRequestState = SCP_SOURCE;
+            ret = DoScpSource(ssh);
+        }
+        else {
+            ssh->scpState = SCP_SINK_BEGIN;
+            ssh->scpRequestState = SCP_SINK;
+            ret = DoScpSink(ssh);
+        }
+        WFREE(cmd, ssh->ctx->heap, DYNTYPE_STRING);
+    }
+    else {
+        WLOG(WS_LOG_SCP, "Cannot build scp command");
+        ssh->error = WS_MEMORY_E;
+        ret = WS_FATAL_ERROR;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_SCP_to(WOLFSSH* ssh, const char* src, const char* dst)
+{
+    return wolfSSH_SCP_cmd(ssh, src, dst, 't');
+    /* dst is passed to the server in the scp -t command */
+    /* src is used locally to fopen and read for copy to */
+}
+
+
+int wolfSSH_SCP_from(WOLFSSH* ssh, const char* src, const char* dst)
+{
+    return wolfSSH_SCP_cmd(ssh, dst, src, 'f');
+    /* src is passed to the server in the scp -f command */
+    /* dst is used locally to fopen and write for copy from */
+}
+
+
 #if !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
 
 /* for porting to systems without errno */
