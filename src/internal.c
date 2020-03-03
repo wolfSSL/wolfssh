@@ -3544,6 +3544,12 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
+        if (mp_init(&r) != MP_OKAY) {
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
         ret = mp_read_unsigned_bin(&r, pk->signature + i, sz);
         if (ret != 0)
             ret = WS_PARSE_E;
@@ -3554,6 +3560,12 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     if (ret == WS_SUCCESS) {
         i += sz;
         ret = GetUint32(&sz, pk->signature, pk->signatureSz, &i);
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (mp_init(&s) != MP_OKAY) {
+            ret = WS_FATAL_ERROR;
+        }
     }
 
     if (ret == WS_SUCCESS) {
