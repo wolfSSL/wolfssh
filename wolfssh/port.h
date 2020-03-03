@@ -1099,6 +1099,7 @@ extern "C" {
 #elif defined(FREESCALE_MQX)
     /* MQX does not have FIONREAD, use SO_RCVNUM with getsockopt() instead */
     #include <ioctl.h>
+    #include <rtcs.h>
     #define WFIONREAD SO_RCVNUM
     static inline void ws_Ioctl(int fd, int flag, int* ret)
     {
