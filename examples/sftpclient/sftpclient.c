@@ -1232,6 +1232,7 @@ static int doAutopilot(int cmd, char* local, char* remote)
         }
     }
 
+    wolfSSH_SFTPNAME_list_free(name);
     return ret;
 }
 

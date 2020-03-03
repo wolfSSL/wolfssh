@@ -8693,7 +8693,7 @@ void clean_path(char* path)
     sz = (int)WSTRLEN(path);
 
     /* remove any /./ patterns */
-    for (i = 0; i < sz; i++) {
+    for (i = 1; i + 1 < sz; i++) {
         if (path[i] == '.' && path[i - 1] == WS_DELIM && path[i + 1] == WS_DELIM) {
             WMEMMOVE(path + i, path + i + 1, sz - i + 1);
             sz -= 1;
@@ -8842,6 +8842,7 @@ void DumpOctetString(const byte* input, word32 inputSz)
 int wolfSSH_oct2dec(WOLFSSH* ssh, byte* oct, word32 octSz)
 {
     int ret;
+    word32 i;
 
     if (octSz > WOLFSSH_MAX_OCTET_LEN || ssh == NULL || oct == NULL) {
         return WS_BAD_ARGUMENT;
@@ -8850,7 +8851,7 @@ int wolfSSH_oct2dec(WOLFSSH* ssh, byte* oct, word32 octSz)
     /* convert octal string to int without mp_read_radix() */
     ret = 0;
 
-    for (word32 i = 0; i < octSz; i++)
+    for (i = 0; i < octSz; i++)
     {
         if (oct[i] < '0' || oct[0] > '7') {
             ret = WS_BAD_ARGUMENT;
