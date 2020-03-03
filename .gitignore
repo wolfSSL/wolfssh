@@ -53,6 +53,7 @@ examples/echoserver/echoserver
 examples/server/server
 examples/portfwd/portfwd
 examples/sftpclient/wolfsftp
+examples/scpclient/wolfscp
 
 # test output
 tests/*.test

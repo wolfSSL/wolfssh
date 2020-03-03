@@ -110,6 +110,10 @@ WOLFSSH_API void* wolfSSH_GetScpSendCtx(WOLFSSH*);
 
 WOLFSSH_API int   wolfSSH_SetScpErrorMsg(WOLFSSH*, const char*);
 
+WOLFSSH_API int   wolfSSH_SCP_connect(WOLFSSH*, byte*);
+WOLFSSH_API int   wolfSSH_SCP_to(WOLFSSH*, const char*, const char*);
+WOLFSSH_API int   wolfSSH_SCP_from(WOLFSSH*, const char*, const char*);
+
 
 #ifdef __cplusplus
 }
