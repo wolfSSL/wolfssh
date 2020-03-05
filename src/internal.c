@@ -1404,15 +1404,14 @@ static int GetInputText(WOLFSSH* ssh, byte** pEol)
 
         eol = WSTRNSTR((const char*)ssh->inputBuffer.buffer, "\r\n",
                        ssh->inputBuffer.length);
-#ifndef WOLFSSH_STRICT_PROTOCOL_EXCHANGE
+
         /* section 4.2 in RFC 4253 states that can be lenient on the CR for
          * interop with older or undocumented versions of SSH */
         if (!eol) {
-            WLOG(WS_LOG_DEBUG, "Checking for older version of protocol exchange");
+            WLOG(WS_LOG_DEBUG, "Checking for old version of protocol exchange");
             eol = WSTRNSTR((const char*)ssh->inputBuffer.buffer, "\n",
                        ssh->inputBuffer.length);
         }
-#endif
 
         if (eol)
             gotLine = 1;
