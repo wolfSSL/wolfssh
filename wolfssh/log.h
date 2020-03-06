@@ -42,38 +42,57 @@ extern "C" {
 
 
 enum wolfSSH_LogLevel {
-    WS_LOG_SCP   = 7,
-    WS_LOG_SFTP  = 6,
-    WS_LOG_USER  = 5,
-    WS_LOG_ERROR = 4,
-    WS_LOG_WARN  = 3,
-    WS_LOG_INFO  = 2,
-    WS_LOG_DEBUG = 1,
-    WS_LOG_DEFAULT = WS_LOG_DEBUG
+    WS_LOG_ALL = 0,
+    WS_LOG_TRACE,
+    WS_LOG_DEBUG,
+    WS_LOG_INFO,
+    WS_LOG_WARN,
+    WS_LOG_ERROR,
+    WS_LOG_FATAL,
+    WS_LOG_OFF
+};
+
+
+enum wolfSSH_LogDomain {
+    WS_LOG_DOMAIN_GENERAL = 0,
+    WS_LOG_DOMAIN_INIT,
+    WS_LOG_DOMAIN_SETUP,
+    WS_LOG_DOMAIN_CONNECT,
+    WS_LOG_DOMAIN_ACCEPT,
+    WS_LOG_DOMAIN_CBIO,
+    WS_LOG_DOMAIN_KEX,
+    WS_LOG_DOMAIN_USER_AUTH,
+    WS_LOG_DOMAIN_SFTP,
+    WS_LOG_DOMAIN_SCP,
+    WS_LOG_DOMAIN_KEYGEN,
+    WS_LOG_DOMAIN_TERM
 };
 
 
 typedef void (*wolfSSH_LoggingCb)(enum wolfSSH_LogLevel,
-                                  const char *const logMsg);
-WOLFSSH_API void wolfSSH_SetLoggingCb(wolfSSH_LoggingCb logF);
+                                  const char *const);
+WOLFSSH_API void wolfSSH_SetLoggingCb(wolfSSH_LoggingCb);
 WOLFSSH_API int wolfSSH_LogEnabled(void);
+WOLFSSH_API enum wolfSSH_LogLevel wolfSSH_GetLogLevel(void);
+WOLFSSH_API void wolfSSH_SetLogLevel(enum wolfSSH_LogLevel);
 
 
 #ifdef __GNUC__
-    #define FMTCHECK __attribute__((format(printf,2,3)))
+    #define FMTCHECK __attribute__((format(printf,3,4)))
 #else
     #define FMTCHECK
 #endif /* __GNUC__ */
 
 
 WOLFSSH_API void wolfSSH_Log(enum wolfSSH_LogLevel,
+                             enum wolfSSH_LogDomain,
                              const char *const, ...) FMTCHECK;
 
-#define WLOG(...) do { \
-                      if (wolfSSH_LogEnabled()) \
-                          wolfSSH_Log(__VA_ARGS__); \
-                  } while (0)
-
+#ifndef WOLFSSH_NO_LOGGING
+    #define WLOG(...) do { wolfSSH_Log(__VA_ARGS__); } while (0)
+#else
+    #define WLOG(...) do { ; } while (0)
+#endif
 
 #ifdef __cplusplus
 }

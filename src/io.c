@@ -331,35 +331,36 @@ int wsEmbedRecv(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
 
     if (recvd < 0) {
         err = LastError();
-        WLOG(WS_LOG_DEBUG,"Embed Receive error");
+        WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_CBIO, "Embed Receive error");
 
         if (err == SOCKET_EWOULDBLOCK || err == SOCKET_EAGAIN) {
-            WLOG(WS_LOG_DEBUG,"    Would block");
+            WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_CBIO, "    Would block");
             return WS_CBIO_ERR_WANT_READ;
         }
         else if (err == SOCKET_ECONNRESET) {
-            WLOG(WS_LOG_DEBUG,"    Connection reset");
+            WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_CBIO, "    Connection reset");
             return WS_CBIO_ERR_CONN_RST;
         }
         else if (err == SOCKET_EINTR) {
-            WLOG(WS_LOG_DEBUG,"    Socket interrupted");
+            WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_CBIO, "    Socket interrupted");
             return WS_CBIO_ERR_ISR;
         }
         else if (err == SOCKET_ECONNREFUSED) {
-            WLOG(WS_LOG_DEBUG,"    Connection refused");
+            WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_CBIO, "    Connection refused");
             return WS_CBIO_ERR_WANT_READ;
         }
         else if (err == SOCKET_ECONNABORTED) {
-            WLOG(WS_LOG_DEBUG,"    Connection aborted");
+            WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_CBIO, "    Connection aborted");
             return WS_CBIO_ERR_CONN_CLOSE;
         }
         else {
-            WLOG(WS_LOG_DEBUG,"    General error");
+            WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_CBIO, "    General error");
             return WS_CBIO_ERR_GENERAL;
         }
     }
     else if (recvd == 0) {
-        WLOG(WS_LOG_DEBUG,"Embed receive connection closed");
+        WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_CBIO,
+                "Embed receive connection closed");
         return WS_CBIO_ERR_CONN_CLOSE;
     }
 
@@ -384,7 +385,7 @@ int wsEmbedSend(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
     }
 #endif
 
-    WLOG(WS_LOG_DEBUG,"Embed Send trying to send %d", sz);
+    WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_CBIO, "Embed Send trying to send %d", sz);
 
 #ifdef MICROCHIP_MPLAB_HARMONY
     /* check is still connected */
@@ -405,30 +406,30 @@ int wsEmbedSend(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
 
     sent = (int)SEND_FUNCTION(sd, buf, sz, ssh->wflags);
 
-    WLOG(WS_LOG_DEBUG,"Embed Send sent %d", sent);
+    WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_CBIO, "Embed Send sent %d", sent);
 
     if (sent < 0) {
         err = LastError();
-        WLOG(WS_LOG_DEBUG,"Embed Send error");
+        WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_CBIO, "Embed Send error");
 
         if (err == SOCKET_EWOULDBLOCK || err == SOCKET_EAGAIN) {
-            WLOG(WS_LOG_DEBUG,"    Would Block");
+            WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_CBIO, "    Would Block");
             return WS_CBIO_ERR_WANT_WRITE;
         }
         else if (err == SOCKET_ECONNRESET) {
-            WLOG(WS_LOG_DEBUG,"    Connection reset");
+            WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_CBIO, "    Connection reset");
             return WS_CBIO_ERR_CONN_RST;
         }
         else if (err == SOCKET_EINTR) {
-            WLOG(WS_LOG_DEBUG,"    Socket interrupted");
+            WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_CBIO, "    Socket interrupted");
             return WS_CBIO_ERR_ISR;
         }
         else if (err == SOCKET_EPIPE) {
-            WLOG(WS_LOG_DEBUG,"    Socket EPIPE");
+            WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_CBIO, "    Socket EPIPE");
             return WS_CBIO_ERR_CONN_CLOSE;
         }
         else {
-            WLOG(WS_LOG_DEBUG,"    General error");
+            WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_CBIO, "    General error");
             return WS_CBIO_ERR_GENERAL;
         }
     }

@@ -60,10 +60,10 @@ int wolfSSH_MakeRsaKey(byte* out, word32 outSz,
     int ret = WS_SUCCESS;
     WC_RNG rng;
 
-    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_MakeRsaKey()");
+    WLOG(WS_LOG_TRACE, WS_LOG_DOMAIN_KEYGEN, "Entering wolfSSH_MakeRsaKey()");
 
     if (wc_InitRng(&rng) != 0) {
-        WLOG(WS_LOG_DEBUG, "Couldn't create RNG");
+        WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_KEYGEN, "Couldn't create RNG");
         ret = WS_CRYPTO_FAILED;
     }
 
@@ -75,7 +75,8 @@ int wolfSSH_MakeRsaKey(byte* out, word32 outSz,
 
         if (ret == WS_SUCCESS) {
             if (wc_MakeRsaKey(&key, size, e, &rng) != 0) {
-                WLOG(WS_LOG_DEBUG, "RSA key generation failed");
+                WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_KEYGEN,
+                        "RSA key generation failed");
                 ret = WS_CRYPTO_FAILED;
             }
         }
@@ -85,7 +86,8 @@ int wolfSSH_MakeRsaKey(byte* out, word32 outSz,
 
             keySz = wc_RsaKeyToDer(&key, out, outSz);
             if (keySz < 0) {
-                WLOG(WS_LOG_DEBUG, "RSA key to DER failed");
+                WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_KEYGEN,
+                        "RSA key to DER failed");
                 ret = WS_CRYPTO_FAILED;
             }
             else
@@ -93,17 +95,18 @@ int wolfSSH_MakeRsaKey(byte* out, word32 outSz,
         }
 
         if (wc_FreeRsaKey(&key) != 0) {
-            WLOG(WS_LOG_DEBUG, "RSA key free failed");
+            WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_KEYGEN, "RSA key free failed");
             ret = WS_CRYPTO_FAILED;
         }
 
         if (wc_FreeRng(&rng) != 0) {
-            WLOG(WS_LOG_DEBUG, "Couldn't free RNG");
+            WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_KEYGEN, "Couldn't free RNG");
             ret = WS_CRYPTO_FAILED;
         }
     }
 
-    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_MakeRsaKey(), ret = %d", ret);
+    WLOG(WS_LOG_TRACE, WS_LOG_DOMAIN_KEYGEN,
+            "Leaving wolfSSH_MakeRsaKey(), ret = %d", ret);
     return ret;
 }
 

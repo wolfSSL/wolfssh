@@ -127,7 +127,8 @@ STATIC INLINE void CreateMpint(byte* buf, word32* sz, byte* pad)
     word32 i;
 
     if (buf == NULL || sz == NULL || pad == NULL) {
-        WLOG(WS_LOG_ERROR, "Internal argument error with CreateMpint");
+        WLOG(WS_LOG_ERROR, WS_LOG_DOMAIN_GENERAL,
+                "Internal argument error with CreateMpint");
     }
 
     /* check for leading 0's */

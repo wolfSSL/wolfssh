@@ -32,4 +32,6 @@ code will drop to the end.
     return ret;
 ```
 
-
+9. Error logs have a level and a domain. Noisy log items like Entering and
+Leaving messages should be at level TRACE. Errors in wolfSFTP code should be
+in the SFTP domain, or errors in key exchange should be in domain KEX.

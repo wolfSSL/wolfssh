@@ -34,6 +34,8 @@
 #include <wolfssh/log.h>
 #include <wolfssh/error.h>
 
+#ifndef WOLFSSH_NO_LOGGING
+
 #include <stdlib.h>
 #include <stdarg.h>
 #ifndef FREESCALE_MQX
@@ -57,27 +59,20 @@
 #endif /* WOLFSSH_NO_DEFAULT_LOGGING_CB */
 
 
-static enum wolfSSH_LogLevel logLevel = WS_LOG_DEFAULT;
-#ifdef DEBUG_WOLFSSH
-    static int logEnable = 0;
-#endif
+static enum wolfSSH_LogLevel logLevel = WS_LOG_OFF;
 
 
 /* turn debugging on if supported */
 void wolfSSH_Debugging_ON(void)
 {
-#ifdef DEBUG_WOLFSSH
-    logEnable = 1;
-#endif
+    logLevel = WS_LOG_ALL;
 }
 
 
 /* turn debugging off */
 void wolfSSH_Debugging_OFF(void)
 {
-#ifdef DEBUG_WOLFSSH
-    logEnable = 0;
-#endif
+    logLevel = WS_LOG_OFF;
 }
 
 
@@ -91,44 +86,86 @@ void wolfSSH_SetLoggingCb(wolfSSH_LoggingCb logF)
 
 int wolfSSH_LogEnabled(void)
 {
-#ifdef DEBUG_WOLFSSH
-    return logEnable;
-#else
-    return 0;
-#endif
+    return logLevel != WS_LOG_OFF;
+}
+
+
+enum wolfSSH_LogLevel wolfSSH_GetLogLevel(void)
+{
+    return logLevel;
+}
+
+
+void wolfSSH_SetLogLevel(enum wolfSSH_LogLevel level)
+{
+    if (level >= WS_LOG_OFF) {
+        level = WS_LOG_OFF;
+    }
+    logLevel = level;
 }
 
 
 #ifndef WOLFSSH_NO_DEFAULT_LOGGING_CB
 /* log level string */
-static const char* GetLogStr(enum wolfSSH_LogLevel level)
+static const char* GetLogLevelStr(enum wolfSSH_LogLevel level)
 {
     switch (level) {
-        case WS_LOG_INFO:
-            return "INFO";
-
-        case WS_LOG_WARN:
-            return "WARNING";
-
-        case WS_LOG_ERROR:
-            return "ERROR";
-
+        case WS_LOG_ALL:
+            return "ALL";
+        case WS_LOG_TRACE:
+            return "TRACE";
         case WS_LOG_DEBUG:
             return "DEBUG";
-
-        case WS_LOG_USER:
-            return "USER";
-
-        case WS_LOG_SFTP:
-            return "SFTP";
-
-        case WS_LOG_SCP:
-            return "SCP";
-
+        case WS_LOG_INFO:
+            return "INFO";
+        case WS_LOG_WARN:
+            return "WARNING";
+        case WS_LOG_ERROR:
+            return "ERROR";
+        case WS_LOG_FATAL:
+            return "FATAL";
+        case WS_LOG_OFF:
+            return "OFF";
         default:
             return "UNKNOWN";
     }
 }
+
+
+#if 0 /* Future use */
+/* log domain string */
+static const char* GetLogDomainStr(enum wolfSSH_LogDomain domain)
+{
+    switch (domain) {
+        case WS_LOG_DOMAIN_GENERAL:
+            return "GENERAL";
+        case WS_LOG_DOMAIN_INIT:
+            return "INIT";
+        case WS_LOG_DOMAIN_SETUP:
+            return "SETUP";
+        case WS_LOG_DOMAIN_CONNECT:
+            return "CONNECT";
+        case WS_LOG_DOMAIN_ACCEPT:
+            return "ACCEPT";
+        case WS_LOG_DOMAIN_CBIO:
+            return "CBIO";
+        case WS_LOG_DOMAIN_KEX:
+            return "KEX";
+        case WS_LOG_DOMAIN_USER_AUTH:
+            return "USERAUTH";
+        case WS_LOG_DOMAIN_SFTP:
+            return "SFTP";
+        case WS_LOG_DOMAIN_SCP:
+            return "SCP";
+        case WS_LOG_DOMAIN_KEYGEN:
+            return "KEYGEN";
+        case WS_LOG_DOMAIN_TERM:
+            return "TERM";
+        default:
+            return "UNKNOWN";
+    }
+}
+#endif /* 0 */
 
 
 void DefaultLoggingCb(enum wolfSSH_LogLevel level, const char *const msgStr)
@@ -147,16 +184,19 @@ void DefaultLoggingCb(enum wolfSSH_LogLevel level, const char *const msgStr)
         }
     }
 #endif /* WOLFSSH_NO_TIMESTAMP */
-    fprintf(stdout, "%s[%s] %s\r\n", timeStr, GetLogStr(level), msgStr);
+    fprintf(stdout, "%s[%s] %s\r\n", timeStr, GetLogLevelStr(level), msgStr);
 }
 #endif /* WOLFSSH_NO_DEFAULT_LOGGING_CB */
 
 
 /* our default logger */
-void wolfSSH_Log(enum wolfSSH_LogLevel level, const char *const fmt, ...)
+void wolfSSH_Log(enum wolfSSH_LogLevel level, enum wolfSSH_LogDomain domain,
+        const char *const fmt, ...)
 {
     va_list vlist;
     char    msgStr[WOLFSSH_DEFAULT_LOG_WIDTH];
+
+    (void)domain;
 
     if (level < logLevel)
         return;   /* don't need to output */
@@ -169,3 +209,5 @@ void wolfSSH_Log(enum wolfSSH_LogLevel level, const char *const fmt, ...)
     if (logFunction)
         logFunction(level, msgStr);
 }
+
+#endif /* WOLFSSH_NO_LOGGING */

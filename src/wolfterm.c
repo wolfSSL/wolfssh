@@ -268,7 +268,8 @@ static void doDisplayAttributes(WOLFSSH* ssh, WOLFSSH_HANDLE handle, word32* arg
                 break;
 
             default:
-               WLOG(WS_LOG_DEBUG, "Unknown display attribute %d", args[i]);
+               WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_TERM,
+                       "Unknown display attribute %d", args[i]);
         }
     }
 }
@@ -356,12 +357,14 @@ static int wolfSSH_DoOSC(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf,
         word32 bufSz, word32* idx)
 {
     if (buf[*idx] == 'P') { /* color pallet */
-        WLOG(WS_LOG_DEBUG, "Color pallet not yet supported");
+        WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_TERM,
+                "Color palette not yet supported");
         return WS_SUCCESS;
     }
 
     if (buf[*idx] == 'R') { /* reset color pallet */
-        WLOG(WS_LOG_DEBUG, "Reset color pallet not yet supported");
+        WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_TERM,
+                "Reset color palette not yet supported");
         return WS_SUCCESS;
     }
 
@@ -402,7 +405,7 @@ static int wolfSSH_DoOSC(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf,
             WMEMCPY(tmpBuf, buf + *idx, sz);
             tmpBuf[sz] = '\0';
             *idx += sz + 1;
-            WLOG(WS_LOG_INFO, "terminal name = %s", tmpBuf);
+            WLOG(WS_LOG_INFO, WS_LOG_DOMAIN_TERM, "terminal name = %s", tmpBuf);
             WFREE(tmpBuf, ssh->ctx->heap, DYNTYPE_BUFFER);
         }
     }
@@ -432,7 +435,7 @@ static int wolfSSH_DoControlSeq(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf, 
             if (!isCommand(c)) {
                 /* expecting a command when in CSI state */
                 if (ssh->escBufSz + tmpSz >= WOLFSSH_MAX_CONSOLE_ARGS) {
-                    WLOG(WS_LOG_ERROR,
+                    WLOG(WS_LOG_ERROR, WS_LOG_DOMAIN_TERM,
                             "Bad state when trying to return to CSI command");
                     return WS_FATAL_ERROR;
                 }
@@ -475,7 +478,8 @@ static int wolfSSH_DoControlSeq(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf, 
 
         case 'J': /* erase display */
             if (numArgs == 0) {
-                WLOG(WS_LOG_DEBUG, "CSI 'J' expects an argument");
+                WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_TERM,
+                        "CSI 'J' expects an argument");
                 args[0] = 2; /* default to erase screen */
             }
 
@@ -508,7 +512,8 @@ static int wolfSSH_DoControlSeq(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf, 
                     break;
 
                 default:
-                    WLOG(WS_LOG_DEBUG, "Unexpected erase value %d", args[0]);
+                    WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_TERM,
+                            "Unexpected erase value %d", args[0]);
             }
 
         case 'K':
@@ -556,7 +561,7 @@ static int wolfSSH_DoControlSeq(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf, 
             break;
 
         case 'r': /* @TODO DECSTBM */
-            WLOG(WS_LOG_DEBUG, "DECSTBM not yet supported");
+            WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_TERM, "DECSTBM not yet supported");
             if (numArgs == 0) {
                 /* reset scroll window */
                 break;
@@ -583,7 +588,8 @@ static int wolfSSH_DoControlSeq(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf, 
             break;
 
         default:
-            WLOG(WS_LOG_DEBUG, "Unknown control sequence char:%c", c);
+            WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_TERM,
+                    "Unknown control sequence char:%c", c);
             i = *idx;
             return WS_FATAL_ERROR;
     }
@@ -672,7 +678,7 @@ int wolfSSH_ConvertConsole(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf,
                 if (i + 1 >= bufSz) {
                     /* not enough data to complete operation */
                     if (bufSz - i > WOLFSSL_MAX_ESCBUF) {
-                        WLOG(WS_LOG_ERROR,
+                        WLOG(WS_LOG_ERROR, WS_LOG_DOMAIN_TERM,
                             "Terminal found more left over data then expected");
                         return WS_FATAL_ERROR;
                     }
@@ -703,7 +709,8 @@ int wolfSSH_ConvertConsole(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf,
                     /* linefeed */
                     if (WS_WRITECONSOLE(handle, "\n", sizeof("\n"), &wrt, NULL)
                         == 0) {
-                        WLOG(WS_LOG_DEBUG, "Error writing newline to handle");
+                        WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_TERM,
+                                "Error writing newline to handle");
                         return WS_FATAL_ERROR;
                     }
                     break;
@@ -711,7 +718,8 @@ int wolfSSH_ConvertConsole(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf,
                 case 'E': /* newline */
                     if (WS_WRITECONSOLE(handle, "\n", sizeof("\n"), &wrt, NULL)
                             == 0) {
-                        WLOG(WS_LOG_DEBUG, "Error writing newline to handle");
+                        WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_TERM,
+                                "Error writing newline to handle");
                         return WS_FATAL_ERROR;
                     }
                     break;
@@ -730,7 +738,7 @@ int wolfSSH_ConvertConsole(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf,
                     break;
 
                 default:
-                    WLOG(WS_LOG_DEBUG,
+                    WLOG(WS_LOG_DEBUG, WS_LOG_DOMAIN_TERM,
                             "unknown special console code char:%c hex:%02X",
                              c, c);
             }

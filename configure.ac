@@ -87,6 +87,11 @@ AC_ARG_ENABLE([examples],
     [AS_HELP_STRING([--disable-examples],[Disable examples (default: enabled)])],
     [ENABLED_EXAMPLES=$enableval],[ENABLED_EXAMPLES=yes])
 
+# Logging
+AC_ARG_ENABLE([logging],
+    [AS_HELP_STRING([--disable-logging],[Disable logging (default: enabled)])],
+    [ENABLED_LOGGING=$enableval],[ENABLED_LOGGING=yes])
+
 # Key Generation
 AC_ARG_ENABLE([keygen],
     [AS_HELP_STRING([--enable-keygen],[Enable key generation (default: disabled)])],
@@ -138,6 +143,10 @@ AS_IF([test "x$ENABLED_FWD" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_FWD"])
 AS_IF([test "x$ENABLED_PTERM" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_TERM"])
+AS_IF([test "x$ENABLED_LOGGING" = "xno" && test "x$ax_enable_debug" = "xyes"],
+      [ENABLED_LOGGING="yes"; AS_ECHO(["Debugging enabled, forcing logging back on."])])
+AS_IF([test "x$ENABLED_LOGGING" = "xno"],
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_NO_LOGGING"])
 
 AM_CONDITIONAL([BUILD_EXAMPLE_SERVERS],[test "x$ENABLED_EXAMPLES" = "xyes"])
 AM_CONDITIONAL([BUILD_EXAMPLE_CLIENTS],[test "x$ENABLED_EXAMPLES" = "xyes"])
@@ -181,7 +190,7 @@ make clean >/dev/null 2>&1
 # output config summary
 echo "---"
 echo "Configuration summary for $PACKAGE_NAME version $VERSION"
-echo ""
+echo
 echo "   * Installation prefix:       $prefix"
 echo "   * System type:               $host_vendor-$host_os"
 echo "   * Host CPU:                  $host_cpu"
@@ -193,6 +202,7 @@ echo
 echo "   Features"
 echo "   * Inline Code:               $ENABLED_INLINE"
 echo "   * keygen:                    $ENABLED_KEYGEN"
+echo "   * logging:                   $ENABLED_LOGGING"
 echo "   * psuedo-terminal:           $ENABLED_PTERM"
 echo "   * scp:                       $ENABLED_SCP"
 echo "   * sftp:                      $ENABLED_SFTP"
