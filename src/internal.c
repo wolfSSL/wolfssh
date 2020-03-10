@@ -245,9 +245,6 @@ const char* GetErrorString(int err)
         case WS_INVALID_EXTDATA:
             return "invalid extended data type";
 
-        case WS_CHAN_PENDING:
-            return "channel open pending";
-
         case WS_SFTP_BAD_REQ_ID:
             return "sftp bad request id";
 
@@ -284,11 +281,14 @@ const char* GetErrorString(int err)
         case WS_CHANNEL_NOT_CONF:
             return "channel open not confirmed";
 
-        case WC_CHANGE_AUTH_E:
+        case WS_CHANGE_AUTH_E:
             return "changing auth type attempt";
 
         case WS_WINDOW_FULL:
             return "peer's channel window full";
+
+        case WS_MISSING_CALLBACK:
+            return "missing a callback function";
 
         default:
             return "Unknown error code";
