@@ -5812,8 +5812,7 @@ int DoReceive(WOLFSSH* ssh)
                         return WS_FATAL_ERROR;
                     }
                 }
-                FALL_THROUGH;
-                /* no break */
+                NO_BREAK;
 
             case PROCESS_PACKET_LENGTH:
                 if (ssh->inputBuffer.idx + UINT32_SZ >
@@ -5831,8 +5830,7 @@ int DoReceive(WOLFSSH* ssh)
                     return WS_FATAL_ERROR;
                 }
                 ssh->processReplyState = PROCESS_PACKET_FINISH;
-                FALL_THROUGH;
-                /* no break */
+                NO_BREAK;
 
             case PROCESS_PACKET_FINISH:
                 readSz = ssh->curSz + LENGTH_SZ + peerMacSz;
@@ -5903,8 +5901,7 @@ int DoReceive(WOLFSSH* ssh)
                     }
                 }
                 ssh->processReplyState = PROCESS_PACKET;
-                FALL_THROUGH;
-                /* no break */
+                NO_BREAK;
 
             case PROCESS_PACKET:
                 ret = DoPacket(ssh);
