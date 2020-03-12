@@ -287,6 +287,9 @@ const char* GetErrorString(int err)
         case WC_CHANGE_AUTH_E:
             return "changing auth type attempt";
 
+        case WS_WINDOW_FULL:
+            return "peer's channel window full";
+
         default:
             return "Unknown error code";
     }
@@ -8177,6 +8180,13 @@ int SendChannelData(WOLFSSH* ssh, word32 peerChannel,
         if (channel == NULL) {
             WLOG(WS_LOG_DEBUG, "Invalid peer channel");
             ret = WS_INVALID_CHANID;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (channel->peerWindowSz == 0) {
+            WLOG(WS_LOG_DEBUG, "channel window is full");
+            ret = WS_WINDOW_FULL;
         }
     }
 

@@ -1205,7 +1205,8 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
                                 state->sz - state->idx);
                         if (ret < 0) {
                             if (ssh->error != WS_WANT_READ &&
-                                    ssh->error != WS_WANT_WRITE)
+                                    ssh->error != WS_WANT_WRITE &&
+                                    ssh->error != WS_WINDOW_FULL)
                                 wolfSSH_SFTP_ClearState(ssh, STATE_ID_RECV);
                             return WS_FATAL_ERROR;
                         }
@@ -1217,7 +1218,7 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
                     state->toSend = 1;
 
                     if ((int)state->idx < state->sz) {
-                        wolfSSH_CheckReceivePending(ssh);
+                        ret = wolfSSH_worker(ssh, NULL);
                         if (ssh->error == WS_WANT_READ) {
                             /* was something there to read, try again */
                             state->toSend = 2;
@@ -4607,7 +4608,8 @@ int SendPacketType(WOLFSSH* ssh, byte type, byte* buf, word32 bufSz)
 
                 /* check for adjust window packet */
                 err = wolfSSH_get_error(ssh);
-                wolfSSH_CheckReceivePending(ssh);
+                if (err == WS_WINDOW_FULL)
+                    ret = wolfSSH_worker(ssh, NULL);
                 ssh->error = err; /* don't save potential want read here */
                 if (ret > 0)
                     state->idx += (word32)ret;
@@ -7672,7 +7674,8 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                             state->r, state->rSz);
                     if (sz <= 0) {
                         if (ssh->error == WS_WANT_READ ||
-                                ssh->error == WS_WANT_WRITE)
+                                ssh->error == WS_WANT_WRITE ||
+                                ssh->error == WS_WINDOW_FULL)
                             return WS_FATAL_ERROR;
                     }
                     else {
@@ -7686,8 +7689,6 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                             statusCb(ssh, state->pOfst, from);
                         }
                     }
-                    /* check for adjust window packet */
-                    wolfSSH_CheckReceivePending(ssh);
                 } while (sz > 0 && ssh->sftpInt == 0);
 
                 if (ssh->sftpInt) {

@@ -20,9 +20,7 @@
  */
 
 #define RENESAS_CSPLUS
-#define WIOCTL ws_Ioctl
 //#define DEBUG_WOLFSSH
 #define WOLFSSH_NO_TIMESTAMP
 #define WOLFSSH_USER_IO
-#define FIONREAD 1
 #define WOLFSSH_THREAD 

@@ -1078,60 +1078,6 @@ extern "C" {
     #define FALL_THROUGH
 #endif
 
-/* used for checking bytes on wire for window adjust packet read */
-#ifndef WIOCTL
-#ifdef WOLFSSL_NUCLEUS
-    #include "nucleus.h"
-    #include "networking/nu_networking.h"
-    #define WFIONREAD FIONREAD
-    static inline void ws_Ioctl(int fd, int flag, int* ret)
-    {
-        SCK_IOCTL_OPTION op;
-        op.s_optval = (unsigned char*)&fd;
-        if (NU_Ioctl(flag, &op, sizeof(op)) != NU_SUCCESS) {
-            *ret = 0;
-        }
-        else {
-            *ret = op.s_ret.sck_bytes_pending;
-        }
-    }
-    #define WIOCTL ws_Ioctl
-#elif defined(FREESCALE_MQX)
-    /* MQX does not have FIONREAD, use SO_RCVNUM with getsockopt() instead */
-    #include <ioctl.h>
-    #include <rtcs.h>
-    #define WFIONREAD SO_RCVNUM
-    static inline void ws_Ioctl(int fd, int flag, int* ret)
-    {
-        int status;
-        uint32_t bytesSz;
-
-        bytesSz = sizeof(*ret);
-        status = getsockopt(fd, SOL_SOCKET, SO_RCVNUM, ret, &bytesSz);
-        if (status != RTCS_OK) {
-            WLOG(WS_LOG_ERROR, "Error calling getsockopt()");
-            *ret = 0;
-        }
-    }
-    #define WIOCTL ws_Ioctl
-#elif defined(USE_WINDOWS_API)
-    #define WFIONREAD FIONREAD
-    #define WIOCTL ioctlsocket
-#elif defined(WOLFSSL_VXWORKS)
-    #include "ioLib.h"
-    #include <sys/ioctl.h>
-    #define WIOCTL ioctl
-#else
-    #if defined(__CYGWIN__) && !defined(FIONREAD)
-        /* Cygwin defines FIONREAD in socket.h instead of ioctl.h */
-        #include <sys/socket.h>
-    #endif
-    #include <sys/ioctl.h>
-    #define WFIONREAD FIONREAD
-    #define WIOCTL ioctl
-#endif
-#endif /* WIOCTL */
-
 
 #if defined(USE_WINDOWS_API)
     #define WS_SOCKET_T SOCKET

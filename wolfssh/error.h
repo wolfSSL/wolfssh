@@ -111,8 +111,9 @@ enum WS_ErrorCodes {
     WS_SSH_CTX_NULL_E       = -1070, /* SSH_CTX was null */
     WS_CHANNEL_NOT_CONF     = -1071, /* Channel open not confirmed. */
     WC_CHANGE_AUTH_E        = -1072, /* Changing auth type attempt */
+    WS_WINDOW_FULL          = -1073,
 
-    WS_LAST_E               = -1072  /* Update this to indicate last error */
+    WS_LAST_E               = -1073  /* Update this to indicate last error */
 };
 
 
