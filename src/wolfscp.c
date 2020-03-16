@@ -574,7 +574,11 @@ int DoScpSource(WOLFSSH* ssh)
 
                 ret = wolfSSH_stream_send(ssh, ssh->scpFileBuffer,
                                           ssh->scpBufferedSz);
-                wolfSSH_CheckReceivePending(ssh); /*check for adjust window packet*/
+                if (ret == WS_WINDOW_FULL) {
+                    ret = wolfSSH_worker(ssh, NULL);
+                    if (ret == WS_SUCCESS)
+                        continue;
+                }
                 if (ret < 0) {
                     WLOG(WS_LOG_ERROR, scpError, "failed to send file", ret);
                     break;
@@ -1575,7 +1579,7 @@ static int wolfSSH_SCP_cmd(WOLFSSH* ssh, const char* localName,
     else {
         WLOG(WS_LOG_SCP, "Cannot build scp command");
         ssh->error = WS_MEMORY_E;
-        ret = WS_FATAL_ERROR;
+        ret = WS_ERROR;
     }
 
     return ret;

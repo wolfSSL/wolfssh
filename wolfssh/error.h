@@ -97,7 +97,6 @@ enum WS_ErrorCodes {
     WS_NEXT_ERROR           = -1056, /* Getting next value/state is error */
     WS_CHAN_RXD             = -1057, /* Status that channel data received. */
     WS_INVALID_EXTDATA      = -1058, /* invalid Channel Extended Data Type */
-    WS_CHAN_PENDING         = -1059, /* peer hasn't confirmed channel open */
     WS_SFTP_BAD_REQ_ID      = -1060, /* SFTP Bad request ID */
     WS_SFTP_BAD_REQ_TYPE    = -1061, /* SFTP Bad request ID */
     WS_SFTP_STATUS_NOT_OK   = -1062, /* SFTP Status not OK */
@@ -110,9 +109,11 @@ enum WS_ErrorCodes {
     WS_SSH_NULL_E           = -1069, /* SSH was null */
     WS_SSH_CTX_NULL_E       = -1070, /* SSH_CTX was null */
     WS_CHANNEL_NOT_CONF     = -1071, /* Channel open not confirmed. */
-    WC_CHANGE_AUTH_E        = -1072, /* Changing auth type attempt */
+    WS_CHANGE_AUTH_E        = -1072, /* Changing auth type attempt */
+    WS_WINDOW_FULL          = -1073,
+    WS_MISSING_CALLBACK     = -1074, /* Callback is missing */
 
-    WS_LAST_E               = -1072  /* Update this to indicate last error */
+    WS_LAST_E               = -1074  /* Update this to indicate last error */
 };
 
 
