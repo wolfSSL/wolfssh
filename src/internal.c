@@ -1426,6 +1426,14 @@ static int GetInputText(WOLFSSH* ssh, byte** pEol)
         eol = WSTRNSTR((const char*)ssh->inputBuffer.buffer, "\r\n",
                        ssh->inputBuffer.length);
 
+        /* section 4.2 in RFC 4253 states that can be lenient on the CR for
+         * interop with older or undocumented versions of SSH */
+        if (!eol) {
+            WLOG(WS_LOG_DEBUG, "Checking for old version of protocol exchange");
+            eol = WSTRNSTR((const char*)ssh->inputBuffer.buffer, "\n",
+                       ssh->inputBuffer.length);
+        }
+
         if (eol)
             gotLine = 1;
 
@@ -2254,6 +2262,8 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         }
 
         if (ret == WS_SUCCESS) {
+            byte SSH_PROTO_EOL_SZ = 2;
+
             strSz = (word32)WSTRLEN(sshProtoIdStr) - SSH_PROTO_EOL_SZ;
             c32toa(strSz, scratchLen);
             ret = wc_HashUpdate(&ssh->handshake->hash, enmhashId,
@@ -5339,6 +5349,7 @@ int DoProtoId(WOLFSSH* ssh)
     int ret;
     word32 idSz;
     byte* eol;
+    byte  SSH_PROTO_EOL_SZ = 1;
 
     if ( (ret = GetInputText(ssh, &eol)) < 0) {
         WLOG(WS_LOG_DEBUG, "get input text failed");
@@ -5367,6 +5378,9 @@ int DoProtoId(WOLFSSH* ssh)
         ssh->clientOpenSSH = 1;
     }
 
+    if (*eol == '\r') {
+        SSH_PROTO_EOL_SZ++;
+    }
     *eol = 0;
 
     idSz = (word32)WSTRLEN((char*)ssh->inputBuffer.buffer);

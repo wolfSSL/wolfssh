@@ -123,7 +123,6 @@ enum {
 #define SHA1_96_SZ 12
 #define UINT32_SZ 4
 #define SSH_PROTO_SZ 7 /* "SSH-2.0" */
-#define SSH_PROTO_EOL_SZ 2 /* Just the CRLF */
 #define AEAD_IMP_IV_SZ 4
 #define AEAD_EXP_IV_SZ 8
 #define AEAD_NONCE_SZ (AEAD_IMP_IV_SZ+AEAD_EXP_IV_SZ)
