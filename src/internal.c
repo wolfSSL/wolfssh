@@ -2235,12 +2235,9 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         }
 
         if (ret == WS_SUCCESS) {
-            byte SSH_PROTO_EOL_SZ = 1;
+            byte SSH_PROTO_EOL_SZ = 2;
 
             strSz = (word32)WSTRLEN(sshProtoIdStr) - SSH_PROTO_EOL_SZ;
-            if (strSz > 1 && sshProtoIdStr[strSz - 1] == '\r') {
-                strSz--; /* subtract 1 more for CR */
-            }
             c32toa(strSz, scratchLen);
             ret = wc_HashUpdate(&ssh->handshake->hash, enmhashId,
                                 scratchLen, LENGTH_SZ);
