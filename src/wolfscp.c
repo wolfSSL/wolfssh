@@ -1564,15 +1564,21 @@ static int wolfSSH_SCP_cmd(WOLFSSH* ssh, const char* localName,
         WSNPRINTF(cmd, cmdSz, "scp -%c %s", dir, remoteName);
         ssh->scpBasePath = localName;
         ret = wolfSSH_SCP_connect(ssh, (byte*)cmd);
-        if (dir == 't') {
-            ssh->scpState = SCP_SOURCE_BEGIN;
-            ssh->scpRequestState = SCP_SOURCE;
-            ret = DoScpSource(ssh);
-        }
-        else {
-            ssh->scpState = SCP_SINK_BEGIN;
-            ssh->scpRequestState = SCP_SINK;
-            ret = DoScpSink(ssh);
+        if (ret == WS_SUCCESS) {
+            if (dir == 't') {
+                ssh->scpState = SCP_SOURCE_BEGIN;
+                ssh->scpRequestState = SCP_SOURCE;
+                ret = DoScpSource(ssh);
+            }
+            else {
+                cmdSz = (word32)WSTRLEN(localName);
+                ret = ParseBasePathHelper(ssh, cmdSz);
+                if (ret == WS_SUCCESS) {
+                    ssh->scpState = SCP_SINK_BEGIN;
+                    ssh->scpRequestState = SCP_SINK;
+                    ret = DoScpSink(ssh);
+                }
+            }
         }
         WFREE(cmd, ssh->ctx->heap, DYNTYPE_STRING);
     }
