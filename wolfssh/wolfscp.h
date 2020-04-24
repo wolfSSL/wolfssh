@@ -53,8 +53,10 @@ extern "C" {
 #endif
 
 #if !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
-    /* for utimes() */
-    #include <sys/time.h>
+    #include <time.h>
+    #ifdef HAVE_SYS_TIME_H
+        #include <sys/time.h>
+    #endif
     #include <errno.h>
 
     typedef struct ScpSendCtx {
