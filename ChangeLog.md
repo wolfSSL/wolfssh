@@ -1,4 +1,34 @@
-### wolfSSH v1.4.3 (10/31/2019)
+# wolfSSH v1.4.4 (04/24/2020)
+
+## New Feature Additions
+
+- Added wolfSCP client example
+- Added support for building for VxWorks
+
+## Fixes
+
+- Fixes for some buffer issues discovered with fuzz testing
+- Fixes for some SCP directory issues in Nucleus
+- Fixed an issue where a buffer size went negative, cosmetic
+- Fixed bug in ECDSA when using alt-ecc-size in wolfCrypt
+- Fixed bug with AES-CTR and FIPSv2 build
+- Fixed bug when using single precision
+- Fix for SCP rename action
+
+## Improvements and Optimizations
+
+- Improved interoperability with FireZilla
+- Example tool option clarification
+- Better SFTP support in 32-bit environments
+- SFTP and SCP aren't dependent on ioctl() anymore
+- Add password rejection count
+- Public key vs password authentication chosen by user auth callback
+- MQX maintenance
+
+
+--------------------------------
+
+# wolfSSH v1.4.3 (10/31/2019)
 
 - wolfSFTP port to MQX 4.2 (MQX/MFS/RTCS)
 - Maintenance and bug fixes
@@ -17,7 +47,7 @@
   example client
 
 
-### wolfSSH v1.4.2 (08/06/2019)
+# wolfSSH v1.4.2 (08/06/2019)
 
 - GCC 8 build warning fixes
 - Fix for warning with enums used with SFTP and set socket type
@@ -38,7 +68,7 @@
 - Remove void cast on variable not compiled in with single threaded builds
 
 
-### wolfSSH v1.4.0 (04/30/2019)
+# wolfSSH v1.4.0 (04/30/2019)
 
 - SFTP support for time attributes
 - TCP port forwarding feature added (--enable-fwd)
@@ -68,7 +98,7 @@
 - Renamed example SFTP to be examples/sftpclient/wolfsftp
 
 
-### wolfSSH v1.3.0 (08/15/2018)
+# wolfSSH v1.3.0 (08/15/2018)
 
 - Accepted code submission from Stephen Casner for SCP support. Thanks Stephen!
 - Added SCP server support.
@@ -76,7 +106,7 @@
 - Updated the autoconf scripts.
 - Other bug fixes and enhancements.
 
-### wolfSSH v1.2.0 (09/26/2017)
+# wolfSSH v1.2.0 (09/26/2017)
 
 - Added ECDH Group Exchange with SHA2 hashing and curves nistp256,
   nistp384, and nistp521.
@@ -89,7 +119,7 @@
 - Added a Visual Studio solution to build the library, examples, and tests.
 - Other bug fixes and enhancements.
 
-### wolfSSH v1.1.0 (06/16/2017)
+# wolfSSH v1.1.0 (06/16/2017)
 
 - Added DH Group Exchange with SHA-256 hashing to the key exchange.
 - Removed the canned banner and provided a function to set a banner string.
@@ -103,6 +133,6 @@
 - Fixed a bug with the GetString function.
 - Other small bug fixes and enhancements.
 
-### wolfSSH v1.0.0 (10/24/2016)
+# wolfSSH v1.0.0 (10/24/2016)
 
 Initial release.
