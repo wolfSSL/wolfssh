@@ -1219,7 +1219,7 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
 
                     if ((int)state->idx < state->sz) {
                         ret = wolfSSH_worker(ssh, NULL);
-                        if (ssh->error == WS_WANT_READ) {
+                        if (ret != WS_SUCCESS && ssh->error == WS_WANT_READ) {
                             /* was something there to read, try again */
                             state->toSend = 2;
                             return WS_FATAL_ERROR;

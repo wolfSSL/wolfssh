@@ -175,6 +175,11 @@ AX_CREATE_GENERIC_CONFIG
 
 AC_OUTPUT
 
+# force make clean
+AS_ECHO(["---"])
+AS_ECHO(["Running make clean..."])
+make clean >/dev/null 2>&1
+
 # output config summary
 AS_ECHO(["---"])
 AS_ECHO(["Configuration summary for $PACKAGE_NAME version $VERSION"])
