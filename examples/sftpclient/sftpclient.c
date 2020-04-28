@@ -104,13 +104,13 @@ static int NonBlockSSH_connect(void)
 /* for command reget and reput to handle saving offset after interrupt during
  * get and put */
 #include <signal.h>
-static byte interupt = 0;
+static byte interrupt = 0;
 
 static void sig_handler(const int sig)
 {
     (void)sig;
 
-    interupt = 1;
+    interrupt = 1;
     wolfSSH_SFTP_Interrupt(ssh);
 }
 #endif /* WS_NO_SIGNAL */
@@ -188,8 +188,6 @@ static void clean_path(char* path)
         } while (found);
     }
 }
-
-const char sftpTestString[] = "Hello, wolfSSH!";
 
 #define WS_MAX_EXAMPLE_RW 1024
 
@@ -294,14 +292,14 @@ static void ShowUsage(void)
 }
 
 
-byte userPassword[256];
-byte userPublicKeyType[32];
-byte userPublicKey[512];
-word32 userPublicKeySz;
-const byte* userPrivateKey;
-word32 userPrivateKeySz;
+static byte userPassword[256];
+static byte userPublicKeyType[32];
+static byte userPublicKey[512];
+static word32 userPublicKeySz;
+static const byte* userPrivateKey;
+static word32 userPrivateKeySz;
 
-const char hanselPublicRsa[] =
+static const char hanselPublicRsa[] =
     "AAAAB3NzaC1yc2EAAAADAQABAAABAQC9P3ZFowOsONXHD5MwWiCciXytBRZGho"
     "MNiisWSgUs5HdHcACuHYPi2W6Z1PBFmBWT9odOrGRjoZXJfDDoPi+j8SSfDGsc/hsCmc3G"
     "p2yEhUZUEkDhtOXyqjns1ickC9Gh4u80aSVtwHRnJZh9xPhSq5tLOhId4eP61s+a5pwjTj"
@@ -309,7 +307,7 @@ const char hanselPublicRsa[] =
     "NmzI5y/+pzU5afsdeEWdiQDIQc80H6Pz8fsoFPvYSG+s4/wz0duu7yeeV1Ypoho65Zr+pE"
     "nIf7dO0B8EblgWt+ud+JI8wrAhfE4x";
 
-const byte hanselPrivateRsa[] = {
+static const byte hanselPrivateRsa[] = {
   0x30, 0x82, 0x04, 0xa3, 0x02, 0x01, 0x00, 0x02, 0x82, 0x01, 0x01, 0x00,
   0xbd, 0x3f, 0x76, 0x45, 0xa3, 0x03, 0xac, 0x38, 0xd5, 0xc7, 0x0f, 0x93,
   0x30, 0x5a, 0x20, 0x9c, 0x89, 0x7c, 0xad, 0x05, 0x16, 0x46, 0x86, 0x83,
@@ -412,14 +410,14 @@ const byte hanselPrivateRsa[] = {
   0xec, 0x18, 0xdb
 };
 
-unsigned int hanselPrivateRsaSz = 1191;
+static const unsigned int hanselPrivateRsaSz = 1191;
 
 
-const char hanselPublicEcc[] =
+static const char hanselPublicEcc[] =
     "AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBNkI5JTP6D0lF42tbx"
     "X19cE87hztUS6FSDoGvPfiU0CgeNSbI+aFdKIzTP5CQEJSvm25qUzgDtH7oyaQROUnNvk=";
 
-const byte hanselPrivateEcc[] = {
+static const byte hanselPrivateEcc[] = {
   0x30, 0x77, 0x02, 0x01, 0x01, 0x04, 0x20, 0x03, 0x6e, 0x17, 0xd3, 0xb9,
   0xb8, 0xab, 0xc8, 0xf9, 0x1f, 0xf1, 0x2d, 0x44, 0x4c, 0x3b, 0x12, 0xb1,
   0xa4, 0x77, 0xd8, 0xed, 0x0e, 0x6a, 0xbe, 0x60, 0xc2, 0xf6, 0x8b, 0xe7,
@@ -433,7 +431,7 @@ const byte hanselPrivateEcc[] = {
   0xf9
 };
 
-unsigned int hanselPrivateEccSz = 121;
+static const unsigned int hanselPrivateEccSz = 121;
 
 
 static int wsUserAuth(byte authType,

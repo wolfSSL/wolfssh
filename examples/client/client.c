@@ -30,7 +30,7 @@
 
 #ifndef NO_WOLFSSH_CLIENT
 
-const char testString[] = "Hello, wolfSSH!";
+static const char testString[] = "Hello, wolfSSH!";
 
 
 /* type = 2 : shell / execute command settings
@@ -144,7 +144,7 @@ static void ShowUsage(void)
 }
 
 
-byte userPassword[256];
+static byte userPassword[256];
 
 static int wsUserAuth(byte authType,
                       WS_UserAuthData* authData,

@@ -21,11 +21,10 @@
 #define NO_DSA
 #define NO_MD4
 #define WC_RSA_BLINDING
-#define USE_FAST_MATH
-#define TFM_TIMING_RESISTANT
-#define ECC_TIMING_RESISTANT
 #define WOLFSSL_PUBLIC_MP
 #define SINGLE_THREADED
+#define WC_NO_HARDEN
+
 #define WOLFSSH_TERM
 
 #endif /* _WIN_USER_SETTINGS_H_ */

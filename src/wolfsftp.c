@@ -425,7 +425,7 @@ static void wolfSSH_SFTP_ClearState(WOLFSSH* ssh, enum WS_SFTP_STATE_ID state)
     if (ssh) {
 
         if (state == 0)
-            state = ~state; /* set all bits hot */
+            state = (enum WS_SFTP_STATE_ID)~state; /* set all bits hot */
 
         if (state & STATE_ID_GET) {
             WFREE(ssh->getState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
@@ -1219,7 +1219,7 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
 
                     if ((int)state->idx < state->sz) {
                         ret = wolfSSH_worker(ssh, NULL);
-                        if (ssh->error == WS_WANT_READ) {
+                        if (ret != WS_SUCCESS && ssh->error == WS_WANT_READ) {
                             /* was something there to read, try again */
                             state->toSend = 2;
                             return WS_FATAL_ERROR;
