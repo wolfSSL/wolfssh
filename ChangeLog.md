@@ -1,4 +1,4 @@
-# wolfSSH v1.4.4 (04/24/2020)
+# wolfSSH v1.4.4 (04/28/2020)
 
 ## New Feature Additions
 
