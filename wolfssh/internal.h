@@ -38,6 +38,9 @@
 #ifdef WOLFSSH_SCP
     #include <wolfssh/wolfscp.h>
 #endif
+#ifdef WOLFSSH_AGENT
+    #include <wolfssh/agent.h>
+#endif /* WOLFSSH_AGENT */
 
 
 #if !defined (ALIGN16)
@@ -104,6 +107,7 @@ enum {
     ID_CHANTYPE_SESSION,
     ID_CHANTYPE_TCPIP_FORWARD,
     ID_CHANTYPE_TCPIP_DIRECT,
+    ID_CHANTYPE_AUTH_AGENT,
 
     ID_UNKNOWN
 };
@@ -201,6 +205,10 @@ struct WOLFSSH_CTX {
     WS_CallbackScpRecv scpRecvCb;     /* SCP receive callback */
     WS_CallbackScpSend scpSendCb;     /* SCP send callback */
 #endif
+#ifdef WOLFSSH_AGENT
+    WS_CallbackAgent agentCb;         /* WOLFSSH-AGENT callback */
+    WS_CallbackAgentIO agentIoCb;     /* WOLFSSH-AGENT IO callback */
+#endif /* WOLFSSH_AGENT */
     WS_CallbackPublicKeyCheck publicKeyCheckCb;
                                       /* Check server's public key callback */
 
@@ -214,6 +222,9 @@ struct WOLFSSH_CTX {
     word32 maxPacketSz;
     byte side;                        /* client or server */
     byte showBanner;
+#ifdef WOLFSSH_AGENT
+    byte agentEnabled;
+#endif /* WOLFSSH_AGENT */
 };
 
 
@@ -298,6 +309,8 @@ struct WS_SFTP_RENAME_STATE;
 #define WOLFSSL_MAX_ESCBUF 19
 #endif
 #endif
+
+struct WOLFSSH_AGENT_CTX;
 
 
 /* our wolfSSH session */
@@ -467,6 +480,13 @@ struct WOLFSSH {
     struct WS_SFTP_GET_HANDLE_STATE* getHandleState;
     struct WS_SFTP_RENAME_STATE* renameState;
 #endif
+
+#ifdef WOLFSSH_AGENT
+    struct WOLFSSH_AGENT_CTX* agent;
+    void* agentCbCtx;
+    byte useAgent;
+    byte agentEnabled;
+#endif /* WOLFSSH_AGENT */
 };
 
 
@@ -513,6 +533,13 @@ WOLFSSH_LOCAL int ChannelPutData(WOLFSSH_CHANNEL*, byte*, word32);
 WOLFSSH_LOCAL int wolfSSH_ProcessBuffer(WOLFSSH_CTX*,
                                         const byte*, word32,
                                         int, int);
+/* Parsing functions */
+WOLFSSH_LOCAL int GetBoolean(byte*, byte*, word32, word32*);
+WOLFSSH_LOCAL int GetUint32(word32*, const byte*, word32, word32*);
+WOLFSSH_LOCAL int GetMpint(word32*, byte**, byte*, word32, word32*);
+WOLFSSH_LOCAL int GetString(char*, word32*, byte*, word32, word32*);
+WOLFSSH_LOCAL int GetStringAlloc(void*, char**, byte*, word32, word32*);
+WOLFSSH_LOCAL int GetStringRef(word32*, byte**, byte*, word32, word32*);
 
 
 #ifndef WOLFSSH_USER_IO
@@ -550,7 +577,7 @@ WOLFSSH_LOCAL int SendUserAuthPkOk(WOLFSSH*, const byte*, word32,
 WOLFSSH_LOCAL int SendRequestSuccess(WOLFSSH*, int);
 WOLFSSH_LOCAL int SendChannelOpenSession(WOLFSSH*, WOLFSSH_CHANNEL*);
 WOLFSSH_LOCAL int SendChannelOpenForward(WOLFSSH*, WOLFSSH_CHANNEL*);
-WOLFSSH_LOCAL int SendChannelOpenConf(WOLFSSH*);
+WOLFSSH_LOCAL int SendChannelOpenConf(WOLFSSH*, WOLFSSH_CHANNEL*);
 WOLFSSH_LOCAL int SendChannelEof(WOLFSSH*, word32);
 WOLFSSH_LOCAL int SendChannelEow(WOLFSSH*, word32);
 WOLFSSH_LOCAL int SendChannelClose(WOLFSSH*, word32);
@@ -559,6 +586,7 @@ WOLFSSH_LOCAL int SendChannelData(WOLFSSH*, word32, byte*, word32);
 WOLFSSH_LOCAL int SendChannelWindowAdjust(WOLFSSH*, word32, word32);
 WOLFSSH_LOCAL int SendChannelRequest(WOLFSSH*, byte*, word32);
 WOLFSSH_LOCAL int SendChannelTerminalRequest(WOLFSSH* ssh);
+WOLFSSH_LOCAL int SendChannelAgentRequest(WOLFSSH* ssh);
 WOLFSSH_LOCAL int SendChannelSuccess(WOLFSSH*, word32, int);
 WOLFSSH_LOCAL int GenerateKey(byte, byte, byte*, word32, const byte*, word32,
                               const byte*, word32, const byte*, word32);
@@ -583,6 +611,9 @@ enum AcceptStates {
 #ifdef WOLFSSH_SFTP
     ACCEPT_INIT_SFTP,
 #endif
+#ifdef WOLFSSH_AGENT
+    ACCEPT_INIT_AGENT,
+#endif
 };
 
 
@@ -600,9 +631,13 @@ enum ConnectStates {
     CONNECT_SERVER_USERAUTH_ACCEPT_DONE,
     CONNECT_CLIENT_CHANNEL_OPEN_SESSION_SENT,
     CONNECT_SERVER_CHANNEL_OPEN_SESSION_DONE,
+    CONNECT_CLIENT_CHANNEL_AGENT_REQUEST_SENT,
     CONNECT_CLIENT_CHANNEL_TERMINAL_REQUEST_SENT,
     CONNECT_CLIENT_CHANNEL_REQUEST_SENT,
-    CONNECT_SERVER_CHANNEL_REQUEST_DONE
+    CONNECT_SERVER_CHANNEL_REQUEST_DONE,
+    CONNECT_CLIENT_AGENT_REQUEST_SENT,
+    CONNECT_SERVER_AGENT_REQUEST_DONE,
+    CONNECT_DONE
 };
 
 
@@ -706,6 +741,10 @@ enum WS_DynamicTypes {
     DYNTYPE_SCPDIR,
     DYNTYPE_SFTP,
     DYNTYPE_SFTP_STATE,
+    DYNTYPE_AGENT,
+    DYNTYPE_AGENT_ID,
+    DYNTYPE_AGENT_KEY,
+    DYNTYPE_AGENT_BUFFER,
     DYNTYPE_TEMP
 };
 

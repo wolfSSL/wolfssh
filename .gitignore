@@ -34,8 +34,7 @@ Makefile.in
 *.deps
 .dirstamp
 *.libs
-stamp-h
-src/stamp-h1
+stamp-h*
 build-aux/
 wolfssh-config
 aminclude.am

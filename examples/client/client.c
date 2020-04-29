@@ -22,11 +22,39 @@
 
 #include <wolfssh/ssh.h>
 #include <wolfssh/test.h>
+#ifdef WOLFSSH_AGENT
+    #include <wolfssh/agent.h>
+#endif
 #include <wolfssl/wolfcrypt/ecc.h>
+#include <wolfssl/wolfcrypt/coding.h>
 #include "examples/client/client.h"
 #if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32)
     #include <termios.h>
 #endif
+
+#ifdef WOLFSSH_SHELL
+    #ifdef HAVE_PTY_H
+        #include <pty.h>
+    #endif
+    #ifdef HAVE_UTIL_H
+        #include <util.h>
+    #endif
+    #ifdef HAVE_TERMIOS_H
+        #include <termios.h>
+    #endif
+    #include <errno.h>
+    #include <stdlib.h>
+    #include <sys/select.h>
+    #include <sys/wait.h>
+    #include <sys/types.h>
+    #include <syslog.h>
+    #include <stdarg.h>
+    #include <pwd.h>
+    #include <stddef.h>
+    #include <sys/socket.h>
+    #include <sys/un.h>
+#endif
+
 
 #ifndef NO_WOLFSSH_CLIENT
 
@@ -145,6 +173,16 @@ static void ShowUsage(void)
 
 
 static byte userPassword[256];
+static byte userPublicKeyType[32];
+static byte userPublicKey[512];
+static word32 userPublicKeySz;
+
+
+static const char junkTestKeyEcc[] =
+    "AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBN"
+    "kI5JTP6D0lF42tbxX19cE87hztUS6FSDoGvPfiU0CgeNSbI+aFdKIzT"
+    "P5CQEJSvm25qUzgDtH7oyaQROUnNvk=";
+
 
 static int wsUserAuth(byte authType,
                       WS_UserAuthData* authData,
@@ -153,8 +191,38 @@ static int wsUserAuth(byte authType,
     const char* defaultPassword = (const char*)ctx;
     word32 passwordSz = 0;
     int ret = WOLFSSH_USERAUTH_SUCCESS;
+    (void)authType;
 
-    if (authType == WOLFSSH_USERAUTH_PASSWORD) {
+#ifdef DEBUG_WOLFSSH
+    /* inspect supported types from server */
+    printf("Server supports ");
+    if (authData->type & WOLFSSH_USERAUTH_PASSWORD) {
+        printf("password authentication");
+    }
+    if (authData->type & WOLFSSH_USERAUTH_PUBLICKEY) {
+        printf(" and public key authentication");
+    }
+    printf("\n");
+    printf("wolfSSH requesting to use type %d\n", authType);
+#endif
+
+    if (authData->type & WOLFSSH_USERAUTH_PUBLICKEY) {
+        WS_UserAuthData_PublicKey* pk = &authData->sf.publicKey;
+
+        /* we only have nobody's junk key loaded */
+        if (authData->username != NULL && authData->usernameSz > 0 &&
+                XSTRNCMP((char*)authData->username, "nobody",
+                    authData->usernameSz) == 0) {
+            pk->publicKeyType = userPublicKeyType;
+            pk->publicKeyTypeSz = (word32)WSTRLEN((char*)userPublicKeyType);
+            pk->publicKey = userPublicKey;
+            pk->publicKeySz = userPublicKeySz;
+            pk->privateKey = NULL;
+            pk->privateKeySz = 0;
+            ret = WOLFSSH_USERAUTH_SUCCESS;
+        }
+    }
+    else if (authData->type & WOLFSSH_USERAUTH_PASSWORD) {
         if (defaultPassword != NULL) {
             passwordSz = (word32)strlen(defaultPassword);
             memcpy(userPassword, defaultPassword, passwordSz);
@@ -183,9 +251,6 @@ static int wsUserAuth(byte authType,
             authData->sf.password.password = userPassword;
             authData->sf.password.passwordSz = passwordSz;
         }
-    }
-    else if (authType == WOLFSSH_USERAUTH_PUBLICKEY) {
-        ret = WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
     }
 
     return ret;
@@ -336,6 +401,27 @@ static THREAD_RET readPeer(void* in)
                 } while (ret > 0);
             }
             else if (ret <= 0) {
+                #ifdef WOLFSSH_AGENT
+                if (ret == WS_FATAL_ERROR) {
+                    ret = wolfSSH_get_error(args->ssh);
+                    if (ret == WS_CHAN_RXD) {
+                        byte agentBuf[512];
+                        int rxd, txd;
+
+                        rxd = wolfSSH_ChannelIdRead(args->ssh, 1,
+                                agentBuf, sizeof(agentBuf));
+                        txd = rxd;
+                        rxd = sizeof(agentBuf);
+                        ret = wolfSSH_AGENT_Relay(args->ssh,
+                                agentBuf, (word32*)&txd,
+                                agentBuf, (word32*)&rxd);
+                        txd = wolfSSH_ChannelIdSend(args->ssh, 1,
+                                agentBuf, rxd);
+                        WMEMSET(agentBuf, 0, sizeof(agentBuf));
+                        continue;
+                    }
+                }
+                #endif
                 if (ret != WS_EOF) {
                     err_sys("Stream read failed.");
                 }
@@ -400,6 +486,109 @@ static int callbackGlobalReq(WOLFSSH *ssh, void *buf, word32 sz, int reply, void
 }
 #endif
 
+
+#ifdef WOLFSSH_SHELL
+
+#ifdef WOLFSSH_AGENT
+typedef struct WS_AgentCbActionCtx {
+    struct sockaddr_un name;
+    int fd;
+    int state;
+} WS_AgentCbActionCtx;
+#endif
+
+static const char EnvNameAuthPort[] = "SSH_AUTH_SOCK";
+
+static int wolfSSH_AGENT_DefaultActions(WS_AgentCbAction action, void* vCtx)
+{
+    WS_AgentCbActionCtx* ctx = (WS_AgentCbActionCtx*)vCtx;
+    int ret = WS_AGENT_SUCCESS;
+
+    if (action == WOLFSSH_AGENT_LOCAL_SETUP) {
+        const char* sockName;
+        struct sockaddr_un* name = &ctx->name;
+        size_t size;
+        int err;
+
+        sockName = getenv(EnvNameAuthPort);
+        if (sockName == NULL)
+            ret = WS_AGENT_NOT_AVAILABLE;
+
+        if (ret == WS_AGENT_SUCCESS) {
+            memset(name, 0, sizeof(struct sockaddr_un));
+            name->sun_family = AF_LOCAL;
+            strncpy(name->sun_path, sockName, sizeof(name->sun_path));
+            name->sun_path[sizeof(name->sun_path) - 1] = '\0';
+            size = strlen(sockName) +
+                    offsetof(struct sockaddr_un, sun_path);
+
+            ctx->fd = socket(AF_UNIX, SOCK_STREAM, 0);
+            if (ctx->fd == -1) {
+                ret = WS_AGENT_SETUP_E;
+                err = errno;
+                fprintf(stderr, "socket() = %d\n", err);
+            }
+        }
+
+        if (ret == WS_AGENT_SUCCESS) {
+            ret = connect(ctx->fd,
+                    (struct sockaddr *)name, (socklen_t)size);
+            if (ret < 0) {
+                ret = WS_AGENT_SETUP_E;
+                err = errno;
+                fprintf(stderr, "connect() = %d", err);
+            }
+        }
+
+        if (ret == WS_AGENT_SUCCESS)
+            ctx->state = AGENT_STATE_CONNECTED;
+    }
+    else if (action == WOLFSSH_AGENT_LOCAL_CLEANUP) {
+        int err;
+
+        err = close(ctx->fd);
+        if (err != 0) {
+            err = errno;
+            fprintf(stderr, "close() = %d", err);
+            if (ret == 0)
+                ret = WS_AGENT_SETUP_E;
+        }
+    }
+    else
+        ret = WS_AGENT_INVALID_ACTION;
+
+    return ret;
+}
+
+
+static int wolfSSH_AGENT_IO_Cb(WS_AgentIoCbAction action,
+        void* buf, word32 bufSz, void* vCtx)
+{
+    WS_AgentCbActionCtx* ctx = (WS_AgentCbActionCtx*)vCtx;
+    int ret = WS_AGENT_INVALID_ACTION;
+
+    if (action == WOLFSSH_AGENT_IO_WRITE) {
+        const byte* wBuf = (const byte*)buf;
+        ret = (int)write(ctx->fd, wBuf, bufSz);
+        if (ret < 0) {
+            ret = WS_CBIO_ERR_GENERAL;
+        }
+    }
+    else if (action == WOLFSSH_AGENT_IO_READ) {
+        byte* rBuf = (byte*)buf;
+        ret = (int)read(ctx->fd, rBuf, bufSz);
+        if (ret < 0) {
+            ret = WS_CBIO_ERR_GENERAL;
+        }
+    }
+
+    return ret;
+}
+
+
+#endif /* WOLFSSH_SHELL */
+
+
 THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 {
     WOLFSSH_CTX* ctx = NULL;
@@ -420,6 +609,9 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     byte keepOpen = 0;
 #ifdef USE_WINDOWS_API
     byte rawMode = 0;
+#endif
+#ifdef WOLFSSH_AGENT
+    WS_AgentCbActionCtx agentCbCtx;
 #endif
 
     int     argc = ((func_args*)args)->argc;
@@ -503,10 +695,24 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     if (ctx == NULL)
         err_sys("Couldn't create wolfSSH client context.");
 
+    userPublicKeySz = (word32)sizeof(userPublicKey);
+    Base64_Decode((byte*)junkTestKeyEcc,
+            (word32)WSTRLEN(junkTestKeyEcc),
+            (byte*)userPublicKey, &userPublicKeySz);
+
+    WSTRNCPY((char*)userPublicKeyType, "ecdsa-sha2-nistp256",
+            sizeof(userPublicKeyType));
+
     if (((func_args*)args)->user_auth == NULL)
         wolfSSH_SetUserAuth(ctx, wsUserAuth);
     else
         wolfSSH_SetUserAuth(ctx, ((func_args*)args)->user_auth);
+
+#ifdef WOLFSSH_AGENT
+    wolfSSH_CTX_set_agent_cb(ctx,
+            wolfSSH_AGENT_DefaultActions, wolfSSH_AGENT_IO_Cb);
+    wolfSSH_CTX_AGENT_enable(ctx, 1);
+#endif
 
     ssh = wolfSSH_new(ctx);
     if (ssh == NULL)
@@ -519,6 +725,12 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
     if (password != NULL)
         wolfSSH_SetUserAuthCtx(ssh, (void*)password);
+
+#ifdef WOLFSSH_AGENT
+    memset(&agentCbCtx, 0, sizeof(agentCbCtx));
+    agentCbCtx.state = AGENT_STATE_INIT;
+    wolfSSH_set_agent_cb_ctx(ssh, &agentCbCtx);
+#endif
 
     wolfSSH_CTX_SetPublicKeyCheck(ctx, wsPublicKeyCheck);
     wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)"You've been sampled!");

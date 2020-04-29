@@ -125,6 +125,9 @@ static const char* GetLogStr(enum wolfSSH_LogLevel level)
         case WS_LOG_SCP:
             return "SCP";
 
+        case WS_LOG_AGENT:
+            return "AGENT";
+
         default:
             return "UNKNOWN";
     }

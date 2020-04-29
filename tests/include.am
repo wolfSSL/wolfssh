@@ -15,6 +15,12 @@ endif
 if BUILD_SFTP
 tests_unit_test_CPPFLAGS     += -DWOLFSSH_SFTP
 endif
+if BUILD_SHELL
+tests_unit_test_CPPFLAGS     += -DWOLFSSH_SHELL
+endif
+if BUILD_AGENT
+tests_unit_test_CPPFLAGS     += -DWOLFSSH_AGENT
+endif
 tests_unit_test_LDADD        = src/libwolfssh.la
 tests_unit_test_DEPENDENCIES = src/libwolfssh.la
 
@@ -26,6 +32,12 @@ tests_api_test_CPPFLAGS     += -DWOLFSSH_SCP
 endif
 if BUILD_SFTP
 tests_api_test_CPPFLAGS     += -DWOLFSSH_SFTP
+endif
+if BUILD_SHELL
+tests_api_test_CPPFLAGS     += -DWOLFSSH_SHELL
+endif
+if BUILD_AGENT
+tests_api_test_CPPFLAGS     += -DWOLFSSH_AGENT
 endif
 tests_api_test_LDADD         = src/libwolfssh.la
 tests_api_test_DEPENDENCIES  = src/libwolfssh.la
@@ -41,6 +53,12 @@ tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_SCP
 endif
 if BUILD_SFTP
 tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_SFTP
+endif
+if BUILD_SHELL
+tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_SHELL
+endif
+if BUILD_AGENT
+tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_AGENT
 endif
 tests_testsuite_test_LDADD   = src/libwolfssh.la
 tests_testsuite_test_DEPENDENCIES = src/libwolfssh.la
