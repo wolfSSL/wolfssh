@@ -3,7 +3,7 @@
 # All right reserved.
 
 AC_COPYRIGHT([Copyright (C) 2014-2020 wolfSSL Inc.])
-AC_INIT([wolfssh],[1.4.4],[support@wolfssl.com],[wolfssh],[https://www.wolfssl.com])
+AC_INIT([wolfssh],[1.4.5],[support@wolfssl.com],[wolfssh],[https://www.wolfssl.com])
 AC_PREREQ([2.63])
 AC_CONFIG_AUX_DIR([build-aux])
 
@@ -118,6 +118,11 @@ AC_ARG_ENABLE([shell],
     [AS_HELP_STRING([--enable-shell],[Enable echoserver shell support (default: disabled)])],
     [ENABLED_SHELL=$enableval],[ENABLED_SHELL=no])
 
+# ssh-agent
+AC_ARG_ENABLE([agent],
+    [AS_HELP_STRING([--enable-agent],[Enable ssh-agent support (default: disabled)])],
+    [ENABLED_AGENT=$enableval],[ENABLED_AGENT=no])
+
 # Enable All
 AC_ARG_ENABLE([all],
     [AS_HELP_STRING([--enable-all],[Enable all wolfSSH features (default: disabled)])],
@@ -128,10 +133,13 @@ AC_ARG_ENABLE([distro],
     [AS_HELP_STRING([--enable-distro],[Enable wolfSSH distro build (default: disabled)])],
     [ENABLED_DISTRO=$enableval],[ENABLED_DISTRO=no])
 
+# Update the ENABLED flags for options that affect other options.
 AS_IF([test "x$ENABLED_DISTRO" = "xyes"],
       [ENABLED_ALL=yes; enable_shared=yes; enable_static=yes])
 AS_IF([test "x$ENABLED_ALL" = "xyes"],
-      [ENABLED_KEYGEN=yes; ENABLED_SCP=yes; ENABLED_SFTP=yes; ENABLED_FWD=yes; ENABLED_SHELL=yes])
+      [ENABLED_KEYGEN=yes; ENABLED_SCP=yes; ENABLED_SFTP=yes; ENABLED_FWD=yes; ENABLED_SHELL=yes; ENABLED_AGENT=yes])
+
+# Set the defined flags for the code.
 AS_IF([test "x$ENABLED_INLINE" = "xno"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DNO_INLINE"])
 AS_IF([test "x$ENABLED_KEYGEN" = "xyes"],
@@ -146,7 +154,9 @@ AS_IF([test "x$ENABLED_PTERM" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_TERM"])
 AS_IF([test "x$ENABLED_SHELL" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SHELL"])
+AS_IF([test "x$ENABLED_AGENT" = "xyes"],[AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_AGENT"])
 
+# Set the automake conditionals.
 AM_CONDITIONAL([BUILD_EXAMPLE_SERVERS],[test "x$ENABLED_EXAMPLES" = "xyes"])
 AM_CONDITIONAL([BUILD_EXAMPLE_CLIENTS],[test "x$ENABLED_EXAMPLES" = "xyes"])
 AM_CONDITIONAL([BUILD_INLINE],[test "x$ENABLED_INLINE" = "xyes"])
@@ -155,17 +165,9 @@ AM_CONDITIONAL([BUILD_SCP],[test "x$ENABLED_SCP" = "xyes"])
 AM_CONDITIONAL([BUILD_SFTP],[test "x$ENABLED_SFTP" = "xyes"])
 AM_CONDITIONAL([BUILD_FWD],[test "x$ENABLED_FWD" = "xyes"])
 AM_CONDITIONAL([BUILD_TERM],[test "x$ENABLED_TERM" = "xyes"])
+AM_CONDITIONAL([BUILD_SHELL],[test "x$ENABLED_SHELL" = "xyes"])
+AM_CONDITIONAL([BUILD_AGENT],[test "x$ENABLED_AGENT" = "xyes"])
 
-# Checks for typedefs, structures, and compiler characteristics.
-if test "$ac_cv_sizeof_long" = "8"; then
-    AM_CPPFLAGS="$AM_CPPFLAGS -DSIZEOF_LONG=8"
-else
-    if test "$ac_cv_sizeof_long_long" = "8"; then
-        AM_CPPFLAGS="$AM_CPPFLAGS -DSIZEOF_LONG_LONG=8"
-    fi
-fi
-
-# HARDEN FLAGS
 AX_HARDEN_CC_COMPILER_FLAGS
 
 CREATE_HEX_VERSION
@@ -204,5 +206,6 @@ AS_ECHO(["   * psuedo-terminal:           $ENABLED_PTERM"])
 AS_ECHO(["   * echoserver shell support:  $ENABLED_SHELL"])
 AS_ECHO(["   * scp:                       $ENABLED_SCP"])
 AS_ECHO(["   * sftp:                      $ENABLED_SFTP"])
+AS_ECHO(["   * agent:                     $ENABLED_AGENT"])
 AS_ECHO(["   * TCP/IP Forwarding:         $ENABLED_FWD"])
 AS_ECHO(["   * Examples:                  $ENABLED_EXAMPLES"])

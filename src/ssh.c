@@ -135,6 +135,10 @@ void wolfSSH_free(WOLFSSH* ssh)
             WLOG(WS_LOG_SFTP, "Error cleaning up SFTP connection");
         }
     #endif
+    #ifdef WOLFSSH_AGENT
+        if (ssh->agent != NULL)
+            wolfSSH_AGENT_free(ssh->agent);
+    #endif /* WOLFSSH_AGENT */
         SshResourceFree(ssh, heap);
         WFREE(ssh, heap, DYNTYPE_SSH);
     }
@@ -515,17 +519,6 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 FALL_THROUGH;
                 /* no break */
 
-            case ACCEPT_CLIENT_CHANNEL_REQUEST_DONE:
-                if ( (ssh->error = SendChannelOpenConf(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_DEBUG, acceptError,
-                         "CLIENT_CHANNEL_REQUEST_DONE", ssh->error);
-                    return WS_FATAL_ERROR;
-                }
-                ssh->acceptState = ACCEPT_SERVER_CHANNEL_ACCEPT_SENT;
-                WLOG(WS_LOG_DEBUG, acceptState, "SERVER_CHANNEL_ACCEPT_SENT");
-                FALL_THROUGH;
-                /* no break */
-
             case ACCEPT_SERVER_CHANNEL_ACCEPT_SENT:
                 while (ssh->clientState < CLIENT_DONE) {
                     if (DoReceive(ssh) < 0) {
@@ -553,6 +546,45 @@ int wolfSSH_accept(WOLFSSH* ssh)
                     }
                 }
 #endif /* WOLFSSH_SFTP and !NO_WOLFSSH_SERVER */
+#ifdef WOLFSSH_AGENT
+                if (ssh->useAgent) {
+                    WOLFSSH_AGENT_CTX* newAgent;
+                    WOLFSSH_CHANNEL* newChannel;
+
+                    WLOG(WS_LOG_AGENT, "Starting agent channel");
+
+                    newAgent = wolfSSH_AGENT_new(ssh->ctx->heap);
+
+                    newChannel = ChannelNew(ssh, ID_CHANTYPE_AUTH_AGENT,
+                            ssh->ctx->windowSz, ssh->ctx->maxPacketSz);
+                    if (newChannel == NULL) {
+                        ssh->error = WS_MEMORY_E;
+                        WLOG(WS_LOG_DEBUG, acceptError,
+                            "SERVER_USERAUTH_ACCEPT_DONE", ssh->error);
+                        return WS_FATAL_ERROR;
+                    }
+
+                    ssh->error = SendChannelOpenSession(ssh, newChannel);
+                    if (ssh->error < WS_SUCCESS) {
+                        if (ssh->error == WS_WANT_WRITE ||
+                                ssh->error == WS_WANT_READ) {
+                            ChannelAppend(ssh, newChannel);
+                        }
+                        else {
+                            ChannelDelete(newChannel, ssh->ctx->heap);
+                        }
+                        WLOG(WS_LOG_DEBUG, acceptError,
+                            "SERVER_USERAUTH_ACCEPT_DONE", ssh->error);
+                        return WS_FATAL_ERROR;
+                    }
+                    ChannelAppend(ssh, newChannel);
+                    newAgent->channel = newChannel->channel;
+                    if (ssh->ctx->agentCb) {
+                        ssh->ctx->agentCb(WOLFSSH_AGENT_LOCAL_SETUP,
+                                ssh->agentCbCtx);
+                    }
+                }
+#endif /* WOLFSSH_AGENT */
                 ssh->acceptState = ACCEPT_CLIENT_SESSION_ESTABLISHED;
                 WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_SESSION_ESTABLISHED");
                 break;
@@ -734,6 +766,12 @@ int wolfSSH_connect(WOLFSSH* ssh)
             /* no break */
 
         case CONNECT_SERVER_USERAUTH_REQUEST_DONE:
+            #ifdef WOLFSSH_AGENT
+                if (ssh->agentEnabled) {
+                    ssh->agent = wolfSSH_AGENT_new(ssh->ctx->heap);
+                }
+            #endif
+
             if ( (ssh->error = SendUserAuthRequest(ssh, ID_NONE, 0)) <
                                                                   WS_SUCCESS) {
                 WLOG(WS_LOG_DEBUG, connectError,
@@ -806,18 +844,34 @@ int wolfSSH_connect(WOLFSSH* ssh)
             /* no break */
 
         case CONNECT_SERVER_CHANNEL_OPEN_SESSION_DONE:
-        #ifdef WOLFSSH_TERM
-            if (ssh->sendTerminalRequest) {
-                if ( (ssh->error = SendChannelTerminalRequest(ssh))
+        #ifdef WOLFSSH_AGENT
+            if (ssh->agentEnabled) {
+                if ( (ssh->error = SendChannelAgentRequest(ssh))
                         < WS_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, connectError,
                      "SERVER_CHANNEL_OPEN_SESSION_DONE", ssh->error);
                     return WS_FATAL_ERROR;
                 }
-                WLOG(WS_LOG_DEBUG, connectState,
-                 "CLIENT_CHANNEL_TERMINAL_REQUEST_SENT");
             }
         #endif
+            WLOG(WS_LOG_DEBUG, connectState,
+                    "CLIENT_CHANNEL_AGENT_REQUEST_SENT");
+            ssh->connectState = CONNECT_CLIENT_CHANNEL_AGENT_REQUEST_SENT;
+            FALL_THROUGH;
+
+        case CONNECT_CLIENT_CHANNEL_AGENT_REQUEST_SENT:
+        #ifdef WOLFSSH_TERM
+            if (ssh->sendTerminalRequest) {
+                if ( (ssh->error = SendChannelTerminalRequest(ssh))
+                        < WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, connectError,
+                            "CLIENT_CHANNEL_AGENT_REQUEST_SENT", ssh->error);
+                    return WS_FATAL_ERROR;
+                }
+            }
+        #endif
+            WLOG(WS_LOG_DEBUG, connectState,
+                    "CLIENT_CHANNEL_TERMINAL_REQUEST_SENT");
             ssh->connectState = CONNECT_CLIENT_CHANNEL_TERMINAL_REQUEST_SENT;
             FALL_THROUGH;
             /* no break */
@@ -830,8 +884,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
                 return WS_FATAL_ERROR;
             }
             ssh->connectState = CONNECT_CLIENT_CHANNEL_REQUEST_SENT;
-            WLOG(WS_LOG_DEBUG, connectState,
-                 "CLIENT_CHANNEL_REQUEST_SENT");
+            WLOG(WS_LOG_DEBUG, connectState, "CLIENT_CHANNEL_REQUEST_SENT");
             FALL_THROUGH;
             /* no break */
 
@@ -938,6 +991,10 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
             WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_stream_read(), ret = %d", ret);
             return ret;
         }
+        if (ssh->error == WS_CHAN_RXD &&
+                ssh->lastRxId != ssh->channelList->channel) {
+            return WS_ERROR;
+        }
     }
 
     bufSz = min(bufSz, inputBuffer->length - inputBuffer->idx);
@@ -976,6 +1033,32 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
 }
 
 
+int wolfSSH_ChannelIdRead(WOLFSSH* ssh, word32 channelId,
+        byte* buf, word32 bufSz)
+{
+    WOLFSSH_CHANNEL* chan = NULL;
+    Buffer* inputBuffer;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelIdRead()");
+
+    if (ssh == NULL || buf == NULL)
+        return WS_BAD_ARGUMENT;
+
+    chan = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
+    if (chan == NULL)
+        return WS_INVALID_CHANID;
+
+    inputBuffer = &chan->inputBuffer;
+
+    bufSz = min(bufSz, inputBuffer->length - inputBuffer->idx);
+    WMEMCPY(buf, inputBuffer->buffer + inputBuffer->idx, bufSz);
+    inputBuffer->idx += bufSz;
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelIdRead(), rxd = %d", bufSz);
+    return bufSz;
+}
+
+
 int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz)
 {
     int bytesTxd = 0;
@@ -1001,6 +1084,36 @@ int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz)
     bytesTxd = SendChannelData(ssh, ssh->channelList->peerChannel, buf, bufSz);
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_stream_send(), txd = %d", bytesTxd);
+    return bytesTxd;
+}
+
+
+int wolfSSH_ChannelIdSend(WOLFSSH* ssh, word32 channelId,
+        byte* buf, word32 bufSz)
+{
+    int bytesTxd = 0;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelIdSend()");
+
+    if (ssh == NULL || buf == NULL)
+        return WS_BAD_ARGUMENT;
+
+    /* case of WANT WRITE and data stored in output buffer */
+    if (ssh->outputBuffer.plainSz && ssh->outputBuffer.length != 0) {
+        int ret;
+
+        bytesTxd = ssh->outputBuffer.plainSz;
+        WLOG(WS_LOG_DEBUG, "Trying to resend %d bytes", bytesTxd);
+        ssh->error = WS_SUCCESS;
+        ret = wolfSSH_SendPacket(ssh);
+
+        /* return the amount sent on success otherwise return error found */
+        return (ret == WS_SUCCESS)? bytesTxd : ret;
+    }
+
+    bytesTxd = SendChannelData(ssh, channelId, buf, bufSz);
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelIdSend(), txd = %d", bytesTxd);
     return bytesTxd;
 }
 
