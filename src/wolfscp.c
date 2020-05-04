@@ -85,7 +85,7 @@ int DoScpSink(WOLFSSH* ssh)
 
                 if ( (ret = ReceiveScpMessage(ssh)) < WS_SUCCESS) {
                     if (ret == WS_EOF) {
-                        ret = WS_SUCCESS;
+                        ret = wolfSSH_shutdown(ssh);
                         ssh->scpState = SCP_DONE;
                         break;
                     }
