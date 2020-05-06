@@ -1693,6 +1693,29 @@ static int GetStringAlloc(WOLFSSH* ssh, char** s,
 }
 
 
+/* Gets the size of the string, and puts the pointer to the start of
+ * buf's string into *str. This function does not copy. */
+static int GetStringRef(word32* strSz, byte** str,
+                        byte* buf, word32 len, word32* idx)
+{
+    int result;
+
+    result = GetUint32(strSz, buf, len, idx);
+
+    if (result == WS_SUCCESS) {
+        result = WS_BUFFER_E;
+
+        if (*idx < len && *strSz <= len - *idx) {
+            *str = buf + *idx;
+            *idx += *strSz;
+            result = WS_SUCCESS;
+        }
+    }
+
+    return result;
+}
+
+
 static int GetNameList(byte* idList, word32* idListSz,
                        byte* buf, word32 len, word32* idx)
 {
@@ -1810,6 +1833,7 @@ static const byte cannedMacAlgo[] = {
     ID_HMAC_SHA1,
 #endif
 };
+static const byte  cannedKeyAlgoClient[] = {ID_ECDSA_SHA2_NISTP256, ID_SSH_RSA};
 static const byte  cannedKeyAlgoRsa[] = {ID_SSH_RSA};
 static const byte  cannedKeyAlgoEcc256[] = {ID_ECDSA_SHA2_NISTP256};
 static const byte  cannedKeyAlgoEcc384[] = {ID_ECDSA_SHA2_NISTP384};
@@ -1845,6 +1869,7 @@ static const byte cannedKexAlgo[] = {
 
 static const word32 cannedEncAlgoSz = sizeof(cannedEncAlgo);
 static const word32 cannedMacAlgoSz = sizeof(cannedMacAlgo);
+static const word32 cannedKeyAlgoClientSz = sizeof(cannedKeyAlgoClient);
 static const word32 cannedKeyAlgoRsaSz = sizeof(cannedKeyAlgoRsa);
 static const word32 cannedKeyAlgoEcc256Sz = sizeof(cannedKeyAlgoEcc256);
 static const word32 cannedKeyAlgoEcc384Sz = sizeof(cannedKeyAlgoEcc384);
@@ -2074,22 +2099,28 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             const byte *cannedKeyAlgo;
             word32 cannedKeyAlgoSz;
 
-            switch (ssh->ctx->useEcc) {
-                case ECC_SECP256R1:
-                    cannedKeyAlgo = cannedKeyAlgoEcc256;
-                    cannedKeyAlgoSz = cannedKeyAlgoEcc256Sz;
-                    break;
-                case ECC_SECP384R1:
-                    cannedKeyAlgo = cannedKeyAlgoEcc384;
-                    cannedKeyAlgoSz = cannedKeyAlgoEcc384Sz;
-                    break;
-                case ECC_SECP521R1:
-                    cannedKeyAlgo = cannedKeyAlgoEcc521;
-                    cannedKeyAlgoSz = cannedKeyAlgoEcc521Sz;
-                    break;
-                default:
-                    cannedKeyAlgo = cannedKeyAlgoRsa;
-                    cannedKeyAlgoSz = cannedKeyAlgoRsaSz;
+            if (side == WOLFSSH_ENDPOINT_SERVER) {
+                switch (ssh->ctx->useEcc) {
+                    case ECC_SECP256R1:
+                        cannedKeyAlgo = cannedKeyAlgoEcc256;
+                        cannedKeyAlgoSz = cannedKeyAlgoEcc256Sz;
+                        break;
+                    case ECC_SECP384R1:
+                        cannedKeyAlgo = cannedKeyAlgoEcc384;
+                        cannedKeyAlgoSz = cannedKeyAlgoEcc384Sz;
+                        break;
+                    case ECC_SECP521R1:
+                        cannedKeyAlgo = cannedKeyAlgoEcc521;
+                        cannedKeyAlgoSz = cannedKeyAlgoEcc521Sz;
+                        break;
+                    default:
+                        cannedKeyAlgo = cannedKeyAlgoRsa;
+                        cannedKeyAlgoSz = cannedKeyAlgoRsaSz;
+                }
+            }
+            else {
+                cannedKeyAlgo = cannedKeyAlgoClient;
+                cannedKeyAlgoSz = cannedKeyAlgoClientSz;
             }
             algoId = MatchIdLists(side, list, listSz,
                                   cannedKeyAlgo, cannedKeyAlgoSz);
@@ -2688,15 +2719,45 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 ret = WS_RSA_E;
         }
         else {
+            byte* q;
+            word32 qSz, pubKeyIdx = 0;
+            int primeId;
+
             ret = wc_ecc_init_ex(&sigKeyBlock.sk.ecc.key, ssh->ctx->heap,
                                  INVALID_DEVID);
-            if (ret == 0)
-                ret = wc_ecc_import_x963(pubKey, pubKeySz,
-                                         &sigKeyBlock.sk.ecc.key);
-            if (ret == 0)
-                sigKeyBlock.keySz = sizeof(sigKeyBlock.sk.ecc.key);
-            else
+            if (ret != 0)
                 ret = WS_ECC_E;
+            else
+                ret = GetStringRef(&qSz, &q, pubKey, pubKeySz, &pubKeyIdx);
+
+            if (ret == WS_SUCCESS) {
+                primeId = (int)NameToId((const char*)q, qSz);
+                if (primeId != ID_UNKNOWN) {
+                    primeId = wcPrimeForId((byte)primeId);
+                    if (primeId == ECC_CURVE_INVALID)
+                        ret = WS_INVALID_PRIME_CURVE;
+                }
+                else
+                    ret = WS_INVALID_ALGO_ID;
+            }
+
+            /* Skip the curve name since we're getting it from the algo. */
+            if (ret == WS_SUCCESS)
+                ret = GetUint32(&scratch, pubKey, pubKeySz, &pubKeyIdx);
+
+            if (ret == WS_SUCCESS) {
+                pubKeyIdx += scratch;
+                ret = GetStringRef(&qSz, &q, pubKey, pubKeySz, &pubKeyIdx);
+            }
+
+            if (ret == WS_SUCCESS) {
+                ret = wc_ecc_import_x963_ex(q, qSz,
+                        &sigKeyBlock.sk.ecc.key, primeId);
+                if (ret == 0)
+                    sigKeyBlock.keySz = sizeof(sigKeyBlock.sk.ecc.key);
+                else
+                    ret = WS_ECC_E;
+            }
         }
 
         /* Generate and hash in the shared secret */
@@ -2781,27 +2842,62 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 }
             }
             if (ret == WS_SUCCESS) {
-                sig = sig + begin;
-                sigSz = scratch;
+                if (sigKeyBlock.useRsa) {
+                    sig = sig + begin;
+                    sigSz = scratch;
 
-                if (sigSz + begin + tmpIdx > len) {
-                    WLOG(WS_LOG_DEBUG,
-                            "Signature size found would result in error 2");
-                    ret = WS_BUFFER_E;
-                }
+                    if (sigSz + begin + tmpIdx > len) {
+                        WLOG(WS_LOG_DEBUG,
+                                "Signature size found would result in error 2");
+                        ret = WS_BUFFER_E;
+                    }
 
-                if (ret == WS_SUCCESS)
-                    ret = wc_SignatureVerify(
+                    if (ret == WS_SUCCESS) {
+                        ret = wc_SignatureVerify(
                                          HashForId(ssh->handshake->pubKeyId),
-                                         sigKeyBlock.useRsa ?
-                                          WC_SIGNATURE_TYPE_RSA_W_ENC :
-                                          WC_SIGNATURE_TYPE_ECC,
+                                         WC_SIGNATURE_TYPE_RSA_W_ENC,
                                          ssh->h, ssh->hSz, sig, sigSz,
                                          &sigKeyBlock.sk, sigKeyBlock.keySz);
-                if (ret != 0) {
-                    WLOG(WS_LOG_DEBUG,
-                         "DoKexDhReply: Signature Verify fail (%d)", ret);
-                    ret = sigKeyBlock.useRsa ? WS_RSA_E : WS_ECC_E;
+                        if (ret != 0) {
+                            WLOG(WS_LOG_DEBUG,
+                                "DoKexDhReply: Signature Verify fail (%d)",
+                                ret);
+                            ret = WS_RSA_E;
+                        }
+                    }
+                }
+                else {
+                    byte* r;
+                    byte* s;
+                    word32 rSz, sSz, asnSigSz;
+                    byte asnSig[256];
+
+                    sig = sig + begin;
+                    sigSz = scratch;
+                    begin = 0;
+                    asnSigSz = sizeof(asnSig);
+
+                    ret = GetStringRef(&rSz, &r, sig, sigSz, &begin);
+                    if (ret == WS_SUCCESS)
+                        ret = GetStringRef(&sSz, &s, sig, sigSz, &begin);
+
+                    if (ret == WS_SUCCESS)
+                        ret = wc_ecc_rs_raw_to_sig(r, rSz, s, sSz,
+                                asnSig, &asnSigSz);
+
+                    if (ret == WS_SUCCESS) {
+                        ret = wc_SignatureVerify(
+                                         HashForId(ssh->handshake->pubKeyId),
+                                         WC_SIGNATURE_TYPE_ECC,
+                                         ssh->h, ssh->hSz, asnSig, asnSigSz,
+                                         &sigKeyBlock.sk, sigKeyBlock.keySz);
+                        if (ret != 0) {
+                            WLOG(WS_LOG_DEBUG,
+                                "DoKexDhReply: Signature Verify fail (%d)",
+                                ret);
+                            ret = WS_ECC_E;
+                        }
+                    }
                 }
             }
         }
@@ -5626,6 +5722,7 @@ static const char cannedMacAlgoNames[] =
     #warning "You need at least one of HMAC-SHA2-256, HMAC-SHA1-96 or HMAC-SHA1"
 #endif
 
+static const char cannedKeyAlgoClientNames[] = "ecdsa-sha2-nistp256,ssh-rsa";
 static const char cannedKeyAlgoRsaNames[] = "ssh-rsa";
 static const char cannedKeyAlgoEcc256Names[] = "ecdsa-sha2-nistp256";
 static const char cannedKeyAlgoEcc384Names[] = "ecdsa-sha2-nistp384";
@@ -5664,6 +5761,8 @@ static const char cannedNoneNames[] = "none";
 
 static const word32 cannedEncAlgoNamesSz = sizeof(cannedEncAlgoNames) - 1;
 static const word32 cannedMacAlgoNamesSz = sizeof(cannedMacAlgoNames) - 1;
+static const word32 cannedKeyAlgoClientNamesSz =
+                                           sizeof(cannedKeyAlgoClientNames) - 1;
 static const word32 cannedKeyAlgoRsaNamesSz = sizeof(cannedKeyAlgoRsaNames) - 1;
 static const word32 cannedKeyAlgoEcc256NamesSz =
                                            sizeof(cannedKeyAlgoEcc256Names) - 1;
@@ -5702,22 +5801,28 @@ int SendKexInit(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS) {
-        switch (ssh->ctx->useEcc) {
-            case ECC_SECP256R1:
-                cannedKeyAlgoNames = cannedKeyAlgoEcc256Names;
-                cannedKeyAlgoNamesSz = cannedKeyAlgoEcc256NamesSz;
-                break;
-            case ECC_SECP384R1:
-                cannedKeyAlgoNames = cannedKeyAlgoEcc384Names;
-                cannedKeyAlgoNamesSz = cannedKeyAlgoEcc384NamesSz;
-                break;
-            case ECC_SECP521R1:
-                cannedKeyAlgoNames = cannedKeyAlgoEcc521Names;
-                cannedKeyAlgoNamesSz = cannedKeyAlgoEcc521NamesSz;
-                break;
-            default:
-                cannedKeyAlgoNames = cannedKeyAlgoRsaNames;
-                cannedKeyAlgoNamesSz = cannedKeyAlgoRsaNamesSz;
+        if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
+            switch (ssh->ctx->useEcc) {
+                case ECC_SECP256R1:
+                    cannedKeyAlgoNames = cannedKeyAlgoEcc256Names;
+                    cannedKeyAlgoNamesSz = cannedKeyAlgoEcc256NamesSz;
+                    break;
+                case ECC_SECP384R1:
+                    cannedKeyAlgoNames = cannedKeyAlgoEcc384Names;
+                    cannedKeyAlgoNamesSz = cannedKeyAlgoEcc384NamesSz;
+                    break;
+                case ECC_SECP521R1:
+                    cannedKeyAlgoNames = cannedKeyAlgoEcc521Names;
+                    cannedKeyAlgoNamesSz = cannedKeyAlgoEcc521NamesSz;
+                    break;
+                default:
+                    cannedKeyAlgoNames = cannedKeyAlgoRsaNames;
+                    cannedKeyAlgoNamesSz = cannedKeyAlgoRsaNamesSz;
+            }
+        }
+        else {
+            cannedKeyAlgoNames = cannedKeyAlgoClientNames;
+            cannedKeyAlgoNamesSz = cannedKeyAlgoClientNamesSz;
         }
         payloadSz = MSG_ID_SZ + COOKIE_SZ + (LENGTH_SZ * 11) + BOOLEAN_SZ +
                    cannedKexAlgoNamesSz + cannedKeyAlgoNamesSz +
