@@ -112,8 +112,9 @@ enum WS_ErrorCodes {
     WS_CHANGE_AUTH_E        = -1072, /* Changing auth type attempt */
     WS_WINDOW_FULL          = -1073,
     WS_MISSING_CALLBACK     = -1074, /* Callback is missing */
+    WS_DH_SIZE_E            = -1075, /* DH prime larger than expected */
 
-    WS_LAST_E               = -1074  /* Update this to indicate last error */
+    WS_LAST_E               = -1075  /* Update this to indicate last error */
 };
 
 

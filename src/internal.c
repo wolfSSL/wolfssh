@@ -52,15 +52,6 @@ static const char sshProtoIdStr[] = "SSH-2.0-wolfSSHv"
                                     LIBWOLFSSH_VERSION_STRING
                                     "\r\n";
 static const char OpenSSH[] = "SSH-2.0-OpenSSH";
-#ifndef WOLFSSH_DEFAULT_GEXDH_MIN
-    #define WOLFSSH_DEFAULT_GEXDH_MIN 1024
-#endif
-#ifndef WOLFSSH_DEFAULT_GEXDH_PREFERRED
-    #define WOLFSSH_DEFAULT_GEXDH_PREFERRED 3072
-#endif
-#ifndef WOLFSSH_DEFAULT_GEXDH_MAX
-    #define WOLFSSH_DEFAULT_GEXDH_MAX 8192
-#endif
 
 
 const char* GetErrorString(int err)
@@ -289,6 +280,9 @@ const char* GetErrorString(int err)
 
         case WS_MISSING_CALLBACK:
             return "missing a callback function";
+
+        case WS_DH_SIZE_E:
+            return "DH prime group size larger than expected";
 
         default:
             return "Unknown error code";
@@ -3046,6 +3040,8 @@ static int DoKexDhGexGroup(WOLFSSH* ssh,
     if (ret == WS_SUCCESS) {
         begin = *idx;
         ret = GetMpint(&primeGroupSz, &primeGroup, buf, len, &begin);
+        if (ret == WS_SUCCESS && primeGroupSz > (MAX_KEX_KEY_SZ + 1))
+            ret = WS_DH_SIZE_E;
     }
 
     if (ret == WS_SUCCESS)

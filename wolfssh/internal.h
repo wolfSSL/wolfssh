@@ -142,9 +142,18 @@ enum {
     /* This is from RFC 4253 section 6.1. */
     #define MAX_PACKET_SZ 35000
 #endif
+#ifndef WOLFSSH_DEFAULT_GEXDH_MIN
+    #define WOLFSSH_DEFAULT_GEXDH_MIN 1024
+#endif
+#ifndef WOLFSSH_DEFAULT_GEXDH_PREFERRED
+    #define WOLFSSH_DEFAULT_GEXDH_PREFERRED 3072
+#endif
+#ifndef WOLFSSH_DEFAULT_GEXDH_MAX
+    #define WOLFSSH_DEFAULT_GEXDH_MAX 8192
+#endif
 #ifndef MAX_KEX_KEY_SZ
-    /* This is based on the 3072-bit DH key that is the preferred size. */
-    #define MAX_KEX_KEY_SZ (3072 / 8)
+    /* This is based on the 8192-bit DH key that is the max size. */
+    #define MAX_KEX_KEY_SZ (WOLFSSH_DEFAULT_GEXDH_MAX / 8)
 #endif
 
 WOLFSSH_LOCAL byte NameToId(const char*, word32);
