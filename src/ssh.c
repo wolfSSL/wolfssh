@@ -868,10 +868,10 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
         ret = SendChannelEof(ssh, ssh->channelList->peerChannel);
 
     if (ret == WS_SUCCESS)
-        ret = SendChannelClose(ssh, ssh->channelList->peerChannel);
+        ret = SendChannelExit(ssh, ssh->channelList->peerChannel, 0);
 
     if (ret == WS_SUCCESS)
-        ret = SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION);
+        ret = SendChannelClose(ssh, ssh->channelList->peerChannel);
 
     if (ssh != NULL && ssh->channelList == NULL) {
         WLOG(WS_LOG_DEBUG, "channel list was already removed");
