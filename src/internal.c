@@ -1661,7 +1661,8 @@ static int GetString(char* s, word32* sSz,
 
 
 /* Gets the size of a string, allocates memory to hold it plus a NULL, then
- * copies it into the allocated buffer, and terminates it with a NULL. */
+ * copies it into the allocated buffer, and terminates it with a NULL.
+ * If s points to an already created buffer, than it is free'd first */
 static int GetStringAlloc(WOLFSSH* ssh, char** s,
                           byte* buf, word32 len, word32 *idx)
 {
@@ -1674,12 +1675,16 @@ static int GetStringAlloc(WOLFSSH* ssh, char** s,
     if (result == WS_SUCCESS) {
         if (*idx >= len || strSz > len - *idx)
             return WS_BUFFER_E;
+
         str = (char*)WMALLOC(strSz + 1, ssh->ctx->heap, DYNTYPE_STRING);
         if (str == NULL)
             return WS_MEMORY_E;
         WMEMCPY(str, buf + *idx, strSz);
         *idx += strSz;
         str[strSz] = '\0';
+
+        if (*s != NULL)
+            WFREE(*s, ssh->ctx->heap, DYNTYPE_STRING);
         *s = str;
     }
 
