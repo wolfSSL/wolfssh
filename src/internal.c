@@ -3354,6 +3354,62 @@ static int DoServiceAccept(WOLFSSH* ssh,
 }
 
 
+#ifdef WOLFSSH_ALLOW_USERAUTH_NONE
+/* Utility for DoUserAuthRequest() */
+static int DoUserAuthRequestNone(WOLFSSH* ssh, WS_UserAuthData* authData,
+                                     byte* buf, word32 len, word32* idx)
+{
+    int ret = WS_SUCCESS;
+    WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequestNone()");
+
+    (void)len;
+
+    if (ssh == NULL || authData == NULL ||
+        buf == NULL || idx == NULL) {
+
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        authData->type = WOLFSSH_USERAUTH_NONE;
+        if (ssh->ctx->userAuthCb != NULL) {
+            WLOG(WS_LOG_DEBUG, "DUARN: Calling the userauth callback");
+            ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_NONE,
+                                       authData, ssh->userAuthCtx);
+            if (ret == WOLFSSH_USERAUTH_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, "DUARN: none check successful");
+                ssh->clientState = CLIENT_USERAUTH_DONE;
+                ret = WS_SUCCESS;
+            }
+            else if (ret == WOLFSSH_USERAUTH_REJECTED) {
+                WLOG(WS_LOG_DEBUG, "DUARN: password rejected");
+                #ifndef NO_FAILURE_ON_REJECTED
+                ret = SendUserAuthFailure(ssh, 0);
+                if (ret == WS_SUCCESS)
+                    ret = WS_USER_AUTH_E;
+                #else
+                ret = WS_USER_AUTH_E;
+                #endif
+            }
+            else {
+                WLOG(WS_LOG_DEBUG, "DUARN: none check failed, retry");
+                ret = SendUserAuthFailure(ssh, 0);
+            }
+        }
+        else {
+            WLOG(WS_LOG_DEBUG, "DUARN: No user auth callback");
+            ret = SendUserAuthFailure(ssh, 0);
+            if (ret == WS_SUCCESS)
+                ret = WS_FATAL_ERROR;
+        }
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthRequestNone(), ret = %d", ret);
+    return ret;
+}
+#endif
+
+
 /* Utility for DoUserAuthRequest() */
 static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
                                      byte* buf, word32 len, word32* idx)
@@ -3918,7 +3974,7 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
         }
 #ifdef WOLFSSH_ALLOW_USERAUTH_NONE
         else if (authNameId == ID_NONE) {
-            ssh->clientState = CLIENT_USERAUTH_DONE;
+            ret = DoUserAuthRequestNone(ssh, &authData, buf, len, &begin);
         }
 #endif
         else {

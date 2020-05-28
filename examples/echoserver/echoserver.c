@@ -583,11 +583,13 @@ static PwMap* PwMapNew(PwMapList* list, byte type, const byte* username,
         map->username[usernameSz] = 0;
         map->usernameSz = usernameSz;
 
-        wc_InitSha256(&sha);
-        c32toa(pSz, flatSz);
-        wc_Sha256Update(&sha, flatSz, sizeof(flatSz));
-        wc_Sha256Update(&sha, p, pSz);
-        wc_Sha256Final(&sha, map->p);
+        if (type != WOLFSSH_USERAUTH_NONE) {
+            wc_InitSha256(&sha);
+            c32toa(pSz, flatSz);
+            wc_Sha256Update(&sha, flatSz, sizeof(flatSz));
+            wc_Sha256Update(&sha, p, pSz);
+            wc_Sha256Final(&sha, map->p);
+        }
 
         map->next = list->head;
         list->head = map;
@@ -639,6 +641,45 @@ static const char samplePublicKeyRsaBuffer[] =
     "uNZl/30Mczs73N3MBzi6J1oPo7sFlqzB6ecBjK2Kpjus4Y1rYFphJnUxtKvB0s+hoaadru"
     "biE57dK6BrH5iZwVLTQKux31uCJLPhiktI3iLbdlGZEctJkTasfVSsUizwVIyRjhVKmbdI"
     "RGwkU38D043AR1h0mUoGCPIKuqcFMf gretel\n";
+
+static const char sampleNoneBuffer[] =
+    "holmes\n"
+    "watson\n";
+
+
+static int LoadNoneBuffer(byte* buf, word32 bufSz, PwMapList* list)
+{
+    char* str = (char*)buf;
+    char* username;
+
+    /* Each line of none list is in the format
+     *     username\n
+     * This function modifies the passed-in buffer. */
+
+    if (list == NULL)
+        return -1;
+
+    if (buf == NULL || bufSz == 0)
+        return 0;
+
+    while (*str != 0) {
+        username = str;
+        str = strchr(username, '\n');
+        if (str == NULL) {
+            return -1;
+        }
+        *str = 0;
+        str++;
+        if (PwMapNew(list, WOLFSSH_USERAUTH_NONE,
+                     (byte*)username, (word32)strlen(username),
+                     NULL, 0) == NULL ) {
+
+            return -1;
+        }
+    }
+
+    return 0;
+}
 
 
 static int LoadPasswordBuffer(byte* buf, word32 bufSz, PwMapList* list)
@@ -762,6 +803,9 @@ static int wsUserAuth(byte authType,
     }
 
     if (authType != WOLFSSH_USERAUTH_PASSWORD &&
+#ifdef WOLFSSH_ALLOW_USERAUTH_NONE
+        authType != WOLFSSH_USERAUTH_NONE &&
+#endif
         authType != WOLFSSH_USERAUTH_PUBLICKEY) {
 
         return WOLFSSH_USERAUTH_FAILURE;
@@ -794,7 +838,36 @@ static int wsUserAuth(byte authType,
 
     while (map != NULL) {
         if (authData->usernameSz == map->usernameSz &&
-            memcmp(authData->username, map->username, map->usernameSz) == 0) {
+            memcmp(authData->username, map->username, map->usernameSz) == 0 &&
+            authData->type == map->type) {
+
+            if (authData->type == WOLFSSH_USERAUTH_PUBLICKEY) {
+                if (memcmp(map->p, authHash, WC_SHA256_DIGEST_SIZE) == 0) {
+                    return WOLFSSH_USERAUTH_SUCCESS;
+                }
+                else {
+                   return WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
+                }
+            }
+            else if (authData->type == WOLFSSH_USERAUTH_PASSWORD) {
+                if (memcmp(map->p, authHash, WC_SHA256_DIGEST_SIZE) == 0) {
+                    return WOLFSSH_USERAUTH_SUCCESS;
+                }
+                else {
+                    passwdRetry--;
+                    return (passwdRetry > 0) ?
+                        WOLFSSH_USERAUTH_INVALID_PASSWORD :
+                        WOLFSSH_USERAUTH_REJECTED;
+                 }
+            }
+#ifdef WOLFSSH_ALLOW_USERAUTH_NONE
+            else if (authData->type == WOLFSSH_USERAUTH_NONE) {
+                return WOLFSSH_USERAUTH_SUCCESS;
+            }
+#endif /* WOLFSSH_ALLOW_USERAUTH_NONE */
+            else {
+                 return WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
+            }
 
             if (authData->type == map->type) {
                 if (memcmp(map->p, authHash, WC_SHA256_DIGEST_SIZE) == 0) {
@@ -975,6 +1048,11 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         memcpy(buf, bufName, bufSz);
         buf[bufSz] = 0;
         LoadPublicKeyBuffer(buf, bufSz, &pwMapList);
+
+        bufSz = (word32)strlen(sampleNoneBuffer);
+        memcpy(buf, sampleNoneBuffer, bufSz);
+        buf[bufSz] = 0;
+        LoadNoneBuffer(buf, bufSz, &pwMapList);
     }
 #ifdef WOLFSSL_NUCLEUS
     {

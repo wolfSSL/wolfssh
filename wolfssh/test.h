@@ -49,6 +49,8 @@
     #include <selectLib.h>
     #include <sys/types.h>
     #include <netinet/in.h>
+    #include <netinet/tcp.h>
+    #include <ipcom_sock.h>
     #include <fcntl.h>
     #include <sys/time.h>
     #include <netdb.h>
@@ -376,7 +378,7 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
             NU_HOSTENT h;
             entry = &h;
             NU_Get_Host_By_Name((char*)peer, entry);
-            #else
+        #else
             struct hostent* entry = gethostbyname(peer);
         #endif
 
