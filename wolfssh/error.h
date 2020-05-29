@@ -113,8 +113,9 @@ enum WS_ErrorCodes {
     WS_WINDOW_FULL          = -1073,
     WS_MISSING_CALLBACK     = -1074, /* Callback is missing */
     WS_DH_SIZE_E            = -1075, /* DH prime larger than expected */
+    WS_PUBKEY_SIG_MIN_E     = -1076, /* Signature too small */
 
-    WS_LAST_E               = -1075  /* Update this to indicate last error */
+    WS_LAST_E               = -1076  /* Update this to indicate last error */
 };
 
 
