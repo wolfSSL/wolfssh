@@ -284,6 +284,9 @@ const char* GetErrorString(int err)
         case WS_DH_SIZE_E:
             return "DH prime group size larger than expected";
 
+        case WS_PUBKEY_SIG_MIN_E:
+            return "pubkey signature too small";
+
         default:
             return "Unknown error code";
     }
@@ -2843,7 +2846,13 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             if (ret == WS_SUCCESS) {
                 if (sigKeyBlock.useRsa) {
                     sig = sig + begin;
+                    /* In the fuzz, sigSz ends up 1 and it has issues. */
                     sigSz = scratch;
+
+                    if (sigSz < MIN_RSA_SIG_SZ) {
+                        WLOG(WS_LOG_DEBUG, "Provided signature is too small.");
+                        ret = WS_RSA_E;
+                    }
 
                     if (sigSz + begin + tmpIdx > len) {
                         WLOG(WS_LOG_DEBUG,

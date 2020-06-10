@@ -112,6 +112,7 @@ enum {
 #define MAX_INTEGRITY 2
 #define MAX_KEY_EXCHANGE 2
 #define MAX_PUBLIC_KEY 1
+#define MIN_RSA_SIG_SZ 2
 #define MAX_HMAC_SZ WC_SHA256_DIGEST_SIZE
 #define MIN_BLOCK_SZ 8
 #define COOKIE_SZ 16
