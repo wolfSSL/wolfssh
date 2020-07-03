@@ -109,7 +109,7 @@ AC_ARG_ENABLE([fwd],
 
 # pseudo-terminal
 AC_ARG_ENABLE([term],
-    [AS_HELP_STRING([--disable-term],[Enable pseudo-terminal support (default: enabled)])],
+    [AS_HELP_STRING([--disable-term],[Disable pseudo-terminal support (default: enabled)])],
     [ENABLED_PTERM=$enableval],[ENABLED_PTERM=yes])
 
 # Enable All
