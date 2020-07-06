@@ -82,6 +82,9 @@ enum {
     ID_ECDH_SHA2_NISTP256,
     ID_ECDH_SHA2_NISTP384,
     ID_ECDH_SHA2_NISTP521,
+    ID_ECDH_SHA2_ED25519,
+    ID_ECDH_SHA2_ED25519_LIBSSH,
+    ID_DH_GROUP14_SHA256,
 
     /* Public Key IDs */
     ID_SSH_RSA,
@@ -231,6 +234,7 @@ typedef struct Keys {
 
 typedef struct HandshakeInfo {
     byte kexId;
+    byte kexIdGuess;
     byte pubKeyId;
     byte encryptId;
     byte macId;

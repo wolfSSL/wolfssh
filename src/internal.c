@@ -919,6 +919,9 @@ static const NameIdPair NameIdMap[] = {
     { ID_ECDH_SHA2_NISTP256, "ecdh-sha2-nistp256" },
     { ID_ECDH_SHA2_NISTP384, "ecdh-sha2-nistp384" },
     { ID_ECDH_SHA2_NISTP521, "ecdh-sha2-nistp521" },
+    { ID_ECDH_SHA2_ED25519, "curve25519-sha256" },
+    { ID_ECDH_SHA2_ED25519_LIBSSH, "curve25519-sha256@libssh.org" },
+    { ID_DH_GROUP14_SHA256, "diffie-hellman-group14-sha256" },
 
     /* Public Key IDs */
     { ID_SSH_RSA, "ssh-rsa" },
@@ -2027,7 +2030,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     int ret = WS_SUCCESS;
     int side;
     byte algoId;
-    byte list[6] = {0};
+    byte list[8] = {ID_NONE};
     word32 listSz;
     word32 skipSz;
     word32 begin;
@@ -2079,6 +2082,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         listSz = sizeof(list);
         ret = GetNameList(list, &listSz, buf, len, &begin);
         if (ret == WS_SUCCESS) {
+            ssh->handshake->kexIdGuess = list[0];
             algoId = MatchIdLists(side, list, listSz,
                     cannedKexAlgo, cannedKexAlgoSz);
             if (algoId == ID_UNKNOWN) {
@@ -2264,6 +2268,10 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "DKI: KEX Packet Follows");
         ret = GetBoolean(&ssh->handshake->kexPacketFollows, buf, len, &begin);
+        if (ret == WS_SUCCESS) {
+            WLOG(WS_LOG_DEBUG, " packet follows: %s",
+                    ssh->handshake->kexPacketFollows ? "yes" : "no");
+        }
     }
 
     /* Skip the "for future use" length. */
@@ -2438,6 +2446,17 @@ static int DoKexDhInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     if (ssh == NULL || ssh->handshake == NULL || buf == NULL || len == 0 ||
             idx == NULL)
         ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        if (ssh->handshake->kexPacketFollows
+                && ssh->handshake->kexIdGuess != ssh->handshake->kexId) {
+
+            /* skip this message. */
+            ssh->handshake->kexPacketFollows = 0;
+            *idx += len;
+            return WS_SUCCESS;
+        }
+    }
 
     if (ret == WS_SUCCESS) {
         begin = *idx;
