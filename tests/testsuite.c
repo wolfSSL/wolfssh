@@ -111,6 +111,7 @@ int TestsuiteTest(int argc, char** argv)
 
     WSTRNCPY(serverArgv[serverArgc++], "echoserver", ARGLEN);
     WSTRNCPY(serverArgv[serverArgc++], "-1", ARGLEN);
+    WSTRNCPY(serverArgv[serverArgc++], "-f", ARGLEN);
     #ifndef USE_WINDOWS_API
         WSTRNCPY(serverArgv[serverArgc++], "-p", ARGLEN);
         WSTRNCPY(serverArgv[serverArgc++], "-0", ARGLEN);

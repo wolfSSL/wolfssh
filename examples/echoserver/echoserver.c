@@ -87,6 +87,7 @@ typedef struct {
     WOLFSSH* ssh;
     SOCKET_T fd;
     word32 id;
+    int echo;
     char   nonBlock;
 } thread_ctx_t;
 
@@ -813,7 +814,7 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
         case WS_SUCCESS:
             #ifdef WOLFSSH_SHELL
                 if (wolfSSH_GetSessionType(threadCtx->ssh) ==
-                        WOLFSSH_SESSION_SHELL) {
+                        WOLFSSH_SESSION_SHELL && !threadCtx->echo) {
                     ret = shell_worker(threadCtx);
                 }
                 else {
@@ -1298,6 +1299,7 @@ static void ShowUsage(void)
     printf(" -1            exit after single (one) connection\n");
     printf(" -e            expect ECC public key from client\n");
     printf(" -E            use ECC private key\n");
+    printf(" -f            echo input\n");
     printf(" -p <num>      port to connect on, default %d\n", wolfSshPort);
     printf(" -N            use non-blocking sockets\n");
 #ifdef WOLFSSH_SFTP
@@ -1333,6 +1335,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     int multipleConnections = 1;
     int userEcc = 0;
     int peerEcc = 0;
+    int echo = 0;
     int ch;
     word16 port = wolfSshPort;
     char* readyFile = NULL;
@@ -1344,7 +1347,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     serverArgs->return_code = 0;
 
     if (argc > 0) {
-    while ((ch = mygetopt(argc, argv, "?1d:eEp:R:N")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?1d:efEp:R:N")) != -1) {
         switch (ch) {
             case '?' :
                 ShowUsage();
@@ -1360,6 +1363,10 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
             case 'E':
                 peerEcc = 1;
+                break;
+
+            case 'f':
+                echo = 1;
                 break;
 
             case 'p':
@@ -1395,6 +1402,10 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     if (!nonBlock) {
         err_sys("Use -N when testing forced non blocking");
     }
+#endif
+
+#ifndef WOLFSSH_SHELL
+    echo = 0;
 #endif
 
     if (wolfSSH_Init() != WS_SUCCESS) {
@@ -1574,6 +1585,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         threadCtx->fd = clientFd;
         threadCtx->id = threadCount++;
         threadCtx->nonBlock = nonBlock;
+        threadCtx->echo = echo;
 
         server_worker(threadCtx);
 
