@@ -459,7 +459,10 @@ static int shell_worker(thread_ctx_t* threadCtx)
 
         setenv("HOME", p_passwd->pw_dir, 1);
         setenv("LOGNAME", p_passwd->pw_name, 1);
-        chdir(p_passwd->pw_dir);
+        rc = chdir(p_passwd->pw_dir);
+        if (rc != 0) {
+            return WS_FATAL_ERROR;
+        }
 
         execv("/bin/sh", (char **)args);
     }
