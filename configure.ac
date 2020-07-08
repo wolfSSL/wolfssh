@@ -53,8 +53,9 @@ AC_CHECK_SIZEOF([off_t])
 
 # Check headers/libs
 AC_CHECK_FUNCS([gethostbyname getaddrinfo gettimeofday inet_ntoa memset socket])
-AC_CHECK_HEADERS([sys/time.h])
+AC_CHECK_HEADERS([sys/time.h pty.h util.h termios.h])
 AC_CHECK_LIB([network],[socket])
+AC_CHECK_LIB([util],[forkpty])
 AC_CHECK_LIB([wolfssl],[wolfCrypt_Init],,[AC_MSG_ERROR([libwolfssl is required for ${PACKAGE}. It can be obtained from https://www.wolfssl.com/download.html/ .])])
 
 # DEBUG
@@ -112,6 +113,11 @@ AC_ARG_ENABLE([term],
     [AS_HELP_STRING([--disable-term],[Disable pseudo-terminal support (default: enabled)])],
     [ENABLED_PTERM=$enableval],[ENABLED_PTERM=yes])
 
+# shell support
+AC_ARG_ENABLE([shell],
+    [AS_HELP_STRING([--enable-shell],[Enable echoserver shell support (default: disabled)])],
+    [ENABLED_SHELL=$enableval],[ENABLED_SHELL=no])
+
 # Enable All
 AC_ARG_ENABLE([all],
     [AS_HELP_STRING([--enable-all],[Enable all wolfSSH features (default: disabled)])],
@@ -125,7 +131,7 @@ AC_ARG_ENABLE([distro],
 AS_IF([test "x$ENABLED_DISTRO" = "xyes"],
       [ENABLED_ALL=yes; enable_shared=yes; enable_static=yes])
 AS_IF([test "x$ENABLED_ALL" = "xyes"],
-      [ENABLED_KEYGEN=yes; ENABLED_SCP=yes; ENABLED_SFTP=yes; ENABLED_FWD=yes])
+      [ENABLED_KEYGEN=yes; ENABLED_SCP=yes; ENABLED_SFTP=yes; ENABLED_FWD=yes; ENABLED_SHELL=yes])
 AS_IF([test "x$ENABLED_INLINE" = "xno"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DNO_INLINE"])
 AS_IF([test "x$ENABLED_KEYGEN" = "xyes"],
@@ -138,6 +144,8 @@ AS_IF([test "x$ENABLED_FWD" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_FWD"])
 AS_IF([test "x$ENABLED_PTERM" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_TERM"])
+AS_IF([test "x$ENABLED_SHELL" = "xyes"],
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SHELL"])
 
 AM_CONDITIONAL([BUILD_EXAMPLE_SERVERS],[test "x$ENABLED_EXAMPLES" = "xyes"])
 AM_CONDITIONAL([BUILD_EXAMPLE_CLIENTS],[test "x$ENABLED_EXAMPLES" = "xyes"])
@@ -193,6 +201,7 @@ AS_ECHO(["   Features"])
 AS_ECHO(["   * Inline Code:               $ENABLED_INLINE"])
 AS_ECHO(["   * keygen:                    $ENABLED_KEYGEN"])
 AS_ECHO(["   * psuedo-terminal:           $ENABLED_PTERM"])
+AS_ECHO(["   * echoserver shell support:  $ENABLED_SHELL"])
 AS_ECHO(["   * scp:                       $ENABLED_SCP"])
 AS_ECHO(["   * sftp:                      $ENABLED_SFTP"])
 AS_ECHO(["   * TCP/IP Forwarding:         $ENABLED_FWD"])

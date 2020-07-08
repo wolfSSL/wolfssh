@@ -22,6 +22,10 @@
 #define WOLFSSH_TEST_ECHOSERVER
 
 
+#ifdef HAVE_CONFIG_H
+    #include <config.h>
+#endif
+
 #ifdef WOLFSSL_USER_SETTINGS
     #include <wolfssl/wolfcrypt/settings.h>
 #else
@@ -52,7 +56,15 @@
 #endif
 
 #ifdef WOLFSSH_SHELL
-//    #include <pty.h>
+    #ifdef HAVE_PTY_H
+        #include <pty.h>
+    #endif
+    #ifdef HAVE_UTIL_H
+        #include <util.h>
+    #endif
+    #ifdef HAVE_TERMIOS_H
+        #include <termios.h>
+    #endif
     #include <errno.h>
     #include <stdlib.h>
     #include <sys/select.h>
@@ -62,8 +74,6 @@
     #include <syslog.h>
     #include <stdarg.h>
     #include <pwd.h>
-    #include <util.h>
-    #include <termios.h>
 #endif
 
 
@@ -318,8 +328,6 @@ static int ssh_worker(thread_ctx_t* threadCtx) {
 #ifdef WOLFSSH_SHELL
 
 #define SE_BUF_SIZE         4096
-/* One can put any command to be run at startup in INIT_CMD1 */
-#define INIT_CMD1           " "
 
 typedef struct
 {
@@ -497,10 +505,6 @@ static int shell_worker(thread_ctx_t* threadCtx)
             free(buf_rx.buf);
             return WS_FATAL_ERROR;
         }
-
-        memcpy((void *)buf_rx.buf, (void *)INIT_CMD1, sizeof(INIT_CMD1));
-        buf_rx.rdidx += sizeof(INIT_CMD1);
-        buf_rx.size += sizeof(INIT_CMD1);
 
         /*set sock_fd to non-blocking;
           select() blocks even if socket is set to non-blocking*/
