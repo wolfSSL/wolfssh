@@ -563,6 +563,8 @@ static int shell_worker(thread_ctx_t* threadCtx)
             #ifdef SHELL_DEBUG
                 printf("select return 0x%x\n", rc);
             #endif
+            if (rc == -1)
+                break;
 
             if (FD_ISSET(master, &write_fd)) {
                 #ifdef SHELL_DEBUG
@@ -577,7 +579,6 @@ static int shell_worker(thread_ctx_t* threadCtx)
                             printf("Break:write master returns %d: errno =%x\n",
                                     cnt_w, errno);
                         #endif
-                        rc = 1;
                         break;
                     }
                 }
@@ -606,7 +607,6 @@ static int shell_worker(thread_ctx_t* threadCtx)
                         printf("Break:write sock_fd returns %d: errno =%x\n",
                                 cnt_w, errno);
                     #endif
-                    rc = 1;
                     break;
                 }
                 else {
@@ -635,7 +635,6 @@ static int shell_worker(thread_ctx_t* threadCtx)
                             printf("Break:read master returns %d: errno =%x\n",
                                     cnt_r, errno);
                         #endif
-                        rc = 0;
                         break;
                     }
                 }
@@ -665,7 +664,6 @@ static int shell_worker(thread_ctx_t* threadCtx)
                             printf("Break:read sock_fd returns %d: errno =%x\n",
                                     cnt_r, errno);
                         #endif
-                        rc = 1;
                         break;
                     }
                 }
@@ -1306,7 +1304,9 @@ static void ShowUsage(void)
     printf(" -1            exit after single (one) connection\n");
     printf(" -e            expect ECC public key from client\n");
     printf(" -E            use ECC private key\n");
+#ifdef WOLFSSH_SHELL
     printf(" -f            echo input\n");
+#endif
     printf(" -p <num>      port to connect on, default %d\n", wolfSshPort);
     printf(" -N            use non-blocking sockets\n");
 #ifdef WOLFSSH_SFTP
@@ -1373,7 +1373,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 break;
 
             case 'f':
-                echo = 1;
+                #ifdef WOLFSSH_SHELL
+                    echo = 1;
+                #endif
                 break;
 
             case 'p':
@@ -1409,10 +1411,6 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     if (!nonBlock) {
         err_sys("Use -N when testing forced non blocking");
     }
-#endif
-
-#ifndef WOLFSSH_SHELL
-    echo = 0;
 #endif
 
     if (wolfSSH_Init() != WS_SUCCESS) {
