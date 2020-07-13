@@ -220,3 +220,23 @@ connection.
 An example of connecting to another system would be
 
     src/wolfssh$ ./examples/sftpclient/wolfsftp -p 22 -u user -h 192.168.1.111
+
+
+shell support in example echoserver
+-----------------------------------
+wolfSSH's example echoserver can now fork a shell for the user trying to log
+in. This currently has only been tested on Linux and macOS. The file
+echoserver.c must be modified to have the user's credentials in the user
+authentication callback, or the user authentication callback needs to be
+changed to verify the provided password.
+
+To compile wolfSSH with shell support, use the `--enable-shell` build option
+or define `WOLFSSH_SHELL`:
+
+    $ ./configure --enable-shell
+    $ make
+
+By default, the echoserver will try to start a shell. To use the echo testing
+behavior, give the echoserver the command line option `-f`.
+
+    $ ./examples/echoserver/echoserver -f

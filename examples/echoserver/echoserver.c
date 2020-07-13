@@ -22,6 +22,10 @@
 #define WOLFSSH_TEST_ECHOSERVER
 
 
+#ifdef HAVE_CONFIG_H
+    #include <config.h>
+#endif
+
 #ifdef WOLFSSL_USER_SETTINGS
     #include <wolfssl/wolfcrypt/settings.h>
 #else
@@ -51,6 +55,27 @@
     #include <wolfssh/certs_test.h>
 #endif
 
+#ifdef WOLFSSH_SHELL
+    #ifdef HAVE_PTY_H
+        #include <pty.h>
+    #endif
+    #ifdef HAVE_UTIL_H
+        #include <util.h>
+    #endif
+    #ifdef HAVE_TERMIOS_H
+        #include <termios.h>
+    #endif
+    #include <errno.h>
+    #include <stdlib.h>
+    #include <sys/select.h>
+    #include <sys/wait.h>
+    #include <signal.h>
+    #include <sys/types.h>
+    #include <syslog.h>
+    #include <stdarg.h>
+    #include <pwd.h>
+#endif
+
 
 #ifndef NO_WOLFSSH_SERVER
 
@@ -72,6 +97,7 @@ typedef struct {
     WOLFSSH* ssh;
     SOCKET_T fd;
     word32 id;
+    int echo;
     char   nonBlock;
 } thread_ctx_t;
 
@@ -299,6 +325,371 @@ static int ssh_worker(thread_ctx_t* threadCtx) {
 }
 
 
+#ifdef WOLFSSH_SHELL
+
+#define SE_BUF_SIZE         4096
+
+typedef struct
+{
+    char *buf;
+    int rdidx;
+    int wridx;
+    int size;
+} BUF_T;
+
+
+#ifdef SHELL_DEBUG
+
+static void display_ascii(char *p_buf,
+                          int count)
+{
+  int i;
+
+  printf("  *");
+  for (i = 0; i < count; i++) {
+    char      tmp_char    = p_buf[i];
+
+    if ((isalnum(tmp_char) || ispunct(tmp_char)) && (tmp_char > 0))
+        printf("%c", tmp_char);
+    else
+        printf(".");
+  }
+  printf("*\n");
+}
+
+
+static void buf_dump(char *buf, int len)
+{
+    int i;
+
+    printf("\n");
+    for (i = 0; i<len; i++) {
+        if ((i%16) == 0) {
+            printf("%04x :", i);
+        }
+        printf("%02x ",buf[i]);
+
+        if (((i + 1)%16) == 0) {
+            display_ascii((buf+i - 15), 16);
+        }
+    }
+    if ((len % 16) != 0) {
+        display_ascii((buf +len -len%16), (len%16));
+    }
+    return;
+}
+
+
+static int termios_show(int fd)
+{
+    struct termios tios;
+    int i;
+    int rc;
+
+    memset((void *) &tios, 0, sizeof(tios));
+    rc = tcgetattr(fd, &tios);
+    printf("tcgetattr returns=%x\n", rc);
+
+    printf("iflag/oflag/cflag/lflag = %lx/%lx/%lx/%lx\n",
+            tios.c_iflag, tios.c_oflag, tios.c_cflag, tios.c_lflag);
+    printf("c_ispeed/c_ospeed = %lx/%lx\n",
+            tios.c_ispeed, tios.c_ospeed);
+    for (i = 0; i < NCCS; i++) {
+        printf("c_cc[%d] = %hhx\n", i, tios.c_cc[i]);
+    }
+    return 0;
+}
+
+#endif /* SHELL_DEBUG */
+
+
+int ChildRunning = 0;
+
+static void ChildSig(int sig)
+{
+    (void)sig;
+    ChildRunning = 0;
+}
+
+
+static int shell_worker(thread_ctx_t* threadCtx)
+{
+    WOLFSSH* ssh;
+    int master;
+    int sock_fd;
+    int max_fd = 0;
+    pid_t pid;
+    int rc = 0;
+    const char *userName;
+    struct passwd *p_passwd;
+
+    if (threadCtx == NULL)
+        return 1;
+
+    ssh = threadCtx->ssh;
+    if (ssh == NULL)
+        return WS_FATAL_ERROR;
+
+    sock_fd = wolfSSH_get_fd(ssh);
+    userName = wolfSSH_GetUsername(ssh);
+    p_passwd = getpwnam((const char *)userName);
+    if (p_passwd == NULL) {
+        /* Not actually a user on the system. */
+        return WS_FATAL_ERROR;
+    }
+
+    ChildRunning = 1;
+    pid = forkpty(&master, NULL, NULL, NULL);
+
+    if (pid < 0) {
+        /* forkpty failed, so return */
+        ChildRunning = 0;
+        return WS_FATAL_ERROR;
+    }
+    else if (pid == 0) {
+        /* Child process */
+        const char *args[] = {"-sh", NULL};
+
+        signal(SIGINT, SIG_DFL);
+
+        #ifdef SHELL_DEBUG
+            printf("userName is %s\n", userName);
+            system("env");
+        #endif
+
+        setenv("HOME", p_passwd->pw_dir, 1);
+        setenv("LOGNAME", p_passwd->pw_name, 1);
+        rc = chdir(p_passwd->pw_dir);
+        if (rc != 0) {
+            return WS_FATAL_ERROR;
+        }
+
+        execv("/bin/sh", (char **)args);
+    }
+    else {
+        /* Parent process */
+        BUF_T buf_rx;
+        BUF_T buf_tx;
+        struct termios tios;
+        fd_set read_fd;
+        fd_set write_fd;
+        int flags;
+
+        #ifdef SHELL_DEBUG
+            printf("In pid > 0; getpid=%d\n", (int)getpid());
+        #endif
+        signal(SIGCHLD, ChildSig);
+
+        rc = tcgetattr(master, &tios);
+        if (rc != 0) {
+            printf("tcgetattr failed: rc =%d,errno=%x\n", rc, errno);
+            return WS_FATAL_ERROR;
+        }
+        rc = tcsetattr(master, TCSAFLUSH, &tios);
+        if (rc != 0) {
+            printf("tcsetattr failed: rc =%d,errno=%x\n", rc, errno);
+            return WS_FATAL_ERROR;
+        }
+
+        #ifdef SHELL_DEBUG
+            termios_show(master);
+        #endif
+
+        memset((void *)&buf_rx, 0, sizeof(buf_rx));
+        memset((void *)&buf_tx, 0, sizeof(buf_tx));
+
+        buf_rx.buf = malloc(SE_BUF_SIZE);
+        if (buf_rx.buf == NULL) {
+            return WS_FATAL_ERROR;
+        }
+
+        buf_tx.buf = malloc(SE_BUF_SIZE);
+        if (buf_tx.buf == NULL) {
+            free(buf_rx.buf);
+            return WS_FATAL_ERROR;
+        }
+
+        /*set sock_fd to non-blocking;
+          select() blocks even if socket is set to non-blocking*/
+        flags = fcntl(sock_fd, F_GETFL, 0);
+        #ifdef SHELL_DEBUG
+            printf("flags read = 0x%x\n", flags);
+        #endif
+
+        if (flags == -1) {
+            printf("fcntl F_GETFL failed: errno = 0x%x\n", errno);
+        }
+        else {
+            flags = flags | O_NONBLOCK;
+            rc = fcntl(sock_fd, F_SETFL, flags);
+            if (rc == -1) {
+                printf("fcntl F_SETFL: flags = 0x%x, rc = 0x%x, errno=0x%x\n",
+                        flags, rc, errno);
+            }
+        }
+
+        while (ChildRunning) {
+            FD_ZERO(&read_fd);
+            FD_ZERO(&write_fd);
+            int count;
+            int cnt_r;
+            int cnt_w;
+
+            if (buf_rx.size > 0) {
+                FD_SET(master, &write_fd);
+            }
+            if (buf_rx.size < SE_BUF_SIZE) {
+                FD_SET(sock_fd, &read_fd);
+            }
+            if (buf_tx.size > 0) {
+                FD_SET(sock_fd, &write_fd);
+            }
+            if (buf_tx.size < SE_BUF_SIZE) {
+                FD_SET(master, &read_fd);
+            }
+            #ifdef SHELL_DEBUG
+                printf("Initial buf_rx(r/w/s) = %x/%x/%x:\n",
+                        buf_rx.rdidx, buf_rx.wridx, buf_rx.size);
+                printf("Initial buf_tx(r/w/s) = %x/%x/%x:\n",
+                        buf_tx.rdidx, buf_tx.wridx, buf_tx.size);
+            #endif /* SHELL_DEBUG */
+
+            max_fd = master;
+            if (sock_fd > max_fd) {
+                max_fd = sock_fd;
+            }
+
+            rc = select(max_fd + 1, &read_fd, &write_fd, NULL, NULL);
+            #ifdef SHELL_DEBUG
+                printf("select return 0x%x\n", rc);
+            #endif
+            if (rc == -1)
+                break;
+
+            if (FD_ISSET(master, &write_fd)) {
+                #ifdef SHELL_DEBUG
+                    printf("master set in writefd\n");
+                #endif
+                count = MIN(SE_BUF_SIZE - buf_rx.wridx, buf_rx.size);
+
+                cnt_w = (int)write(master, buf_rx.buf+buf_rx.wridx, count);
+                if (cnt_w < 0) {
+                    if (errno != EAGAIN) {
+                        #ifdef SHELL_DEBUG
+                            printf("Break:write master returns %d: errno =%x\n",
+                                    cnt_w, errno);
+                        #endif
+                        break;
+                    }
+                }
+                else {
+                    buf_rx.wridx += cnt_w;
+                    if (buf_rx.wridx >= SE_BUF_SIZE) {
+                        buf_rx.wridx = 0;
+                    }
+                    buf_rx.size -= cnt_w;
+                    if (buf_rx.size == 0) {
+                        buf_rx.rdidx = 0;
+                        buf_rx.wridx = 0;
+                    }
+                }
+            }
+
+            if (FD_ISSET(sock_fd, &write_fd)) {
+                #ifdef SHELL_DEBUG
+                    printf("sock_fd set in writefd\n");
+                #endif
+                count = MIN(SE_BUF_SIZE - buf_tx.wridx, buf_tx.size);
+                cnt_w = wolfSSH_stream_send(ssh,
+                        (byte *)(buf_tx.buf + buf_tx.wridx), count);
+                if (cnt_w <= 0) {
+                    #ifdef SHELL_DEBUG
+                        printf("Break:write sock_fd returns %d: errno =%x\n",
+                                cnt_w, errno);
+                    #endif
+                    break;
+                }
+                else {
+                    buf_tx.wridx += cnt_w;
+                    if (buf_tx.wridx >= SE_BUF_SIZE) {
+                        buf_tx.wridx = 0;
+                    }
+                    buf_tx.size -= cnt_w;
+                    if (buf_tx.size == 0) {
+                        buf_tx.rdidx = 0;
+                        buf_tx.wridx = 0;
+                    }
+                }
+            }
+
+            if (FD_ISSET(master, &read_fd)) {
+                #ifdef SHELL_DEBUG
+                    printf("master set in readfd\n");
+                #endif
+                count = MIN(SE_BUF_SIZE - buf_tx.rdidx,
+                        SE_BUF_SIZE - buf_tx.size);
+                cnt_r = (int)read(master, buf_tx.buf+buf_tx.rdidx, count);
+                if (cnt_r < 0) {
+                    if (errno != EAGAIN) {
+                        #ifdef SHELL_DEBUG
+                            printf("Break:read master returns %d: errno =%x\n",
+                                    cnt_r, errno);
+                        #endif
+                        break;
+                    }
+                }
+                else {
+                    #ifdef SHELL_DEBUG
+                        buf_dump(buf_tx.buf+buf_tx.rdidx, cnt_r);
+                    #endif
+                    buf_tx.rdidx += cnt_r;
+                    if (buf_tx.rdidx >= SE_BUF_SIZE) {
+                        buf_tx.rdidx = 0;
+                    }
+                    buf_tx.size += cnt_r;
+                }
+            }
+
+            if (FD_ISSET(sock_fd, &read_fd)) {
+                #ifdef SHELL_DEBUG
+                    printf("sock_fd set in readfd\n");
+                #endif
+                count = MIN(SE_BUF_SIZE - buf_rx.rdidx,
+                        SE_BUF_SIZE - buf_rx.size);
+                cnt_r = wolfSSH_stream_read(ssh,
+                        (byte *)buf_rx.buf+buf_rx.rdidx, count);
+                if (cnt_r <= 0) {
+                    if (wolfSSH_get_error(ssh) != WS_WANT_READ) {
+                        #ifdef SHELL_DEBUG
+                            printf("Break:read sock_fd returns %d: errno =%x\n",
+                                    cnt_r, errno);
+                        #endif
+                        break;
+                    }
+                }
+                else {
+                    #ifdef SHELL_DEBUG
+                        buf_dump(buf_rx.buf+buf_rx.rdidx, cnt_r);
+                    #endif
+                    buf_rx.rdidx += cnt_r;
+                    if (buf_rx.rdidx >= SE_BUF_SIZE) {
+                        buf_rx.rdidx = 0;
+                    }
+                    buf_rx.size += cnt_r;
+                }
+            }
+        }
+        free(buf_rx.buf);
+        free(buf_tx.buf);
+        close(master);
+    }
+
+    return 0;
+}
+
+#endif /* WOLFSSH_SHELL */
+
+
 #ifdef WOLFSSH_SFTP
 /* handle SFTP operations
  * returns 0 on success
@@ -426,7 +817,17 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
             break;
 
         case WS_SUCCESS:
-            ret = ssh_worker(threadCtx);
+            #ifdef WOLFSSH_SHELL
+                if (wolfSSH_GetSessionType(threadCtx->ssh) ==
+                        WOLFSSH_SESSION_SHELL && !threadCtx->echo) {
+                    ret = shell_worker(threadCtx);
+                }
+                else {
+                    ret = ssh_worker(threadCtx);
+                }
+            #else
+                ret = ssh_worker(threadCtx);
+            #endif
             break;
     }
 
@@ -452,8 +853,7 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
         }
     }
 
-    if (error != WS_SOCKET_ERROR_E && error != WS_FATAL_ERROR)
-    {
+    if (error != WS_SOCKET_ERROR_E && error != WS_FATAL_ERROR) {
         if (wolfSSH_shutdown(threadCtx->ssh) != WS_SUCCESS) {
             fprintf(stderr, "Error with SSH shutdown.\n");
         }
@@ -904,6 +1304,9 @@ static void ShowUsage(void)
     printf(" -1            exit after single (one) connection\n");
     printf(" -e            expect ECC public key from client\n");
     printf(" -E            use ECC private key\n");
+#ifdef WOLFSSH_SHELL
+    printf(" -f            echo input\n");
+#endif
     printf(" -p <num>      port to connect on, default %d\n", wolfSshPort);
     printf(" -N            use non-blocking sockets\n");
 #ifdef WOLFSSH_SFTP
@@ -939,6 +1342,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     int multipleConnections = 1;
     int userEcc = 0;
     int peerEcc = 0;
+    int echo = 0;
     int ch;
     word16 port = wolfSshPort;
     char* readyFile = NULL;
@@ -950,7 +1354,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     serverArgs->return_code = 0;
 
     if (argc > 0) {
-    while ((ch = mygetopt(argc, argv, "?1d:eEp:R:N")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?1d:efEp:R:N")) != -1) {
         switch (ch) {
             case '?' :
                 ShowUsage();
@@ -966,6 +1370,12 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
             case 'E':
                 peerEcc = 1;
+                break;
+
+            case 'f':
+                #ifdef WOLFSSH_SHELL
+                    echo = 1;
+                #endif
                 break;
 
             case 'p':
@@ -1180,6 +1590,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         threadCtx->fd = clientFd;
         threadCtx->id = threadCount++;
         threadCtx->nonBlock = nonBlock;
+        threadCtx->echo = echo;
 
         server_worker(threadCtx);
 
