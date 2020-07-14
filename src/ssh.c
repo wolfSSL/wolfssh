@@ -514,8 +514,8 @@ int wolfSSH_accept(WOLFSSH* ssh)
                         return WS_FATAL_ERROR;
                     }
                 }
-                ssh->acceptState = ACCEPT_CLIENT_CHANNEL_REQUEST_DONE;
-                WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_CHANNEL_REQUEST_DONE");
+                ssh->acceptState = ACCEPT_SERVER_CHANNEL_ACCEPT_SENT;
+                WLOG(WS_LOG_DEBUG, acceptState, "SERVER_CHANNEL_ACCEPT_SENT");
                 FALL_THROUGH;
                 /* no break */
 
