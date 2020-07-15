@@ -4065,7 +4065,7 @@ static int DoUserAuthFailure(WOLFSSH* ssh,
                 if (authList[i] == ssh->supportedAuth[j]) {
                     switch(authList[i]) {
                         case ID_USERAUTH_PASSWORD:
-//                            authType |= WOLFSSH_USERAUTH_PASSWORD;
+                            authType |= WOLFSSH_USERAUTH_PASSWORD;
                             break;
                         case ID_USERAUTH_PUBLICKEY:
                             authType |= WOLFSSH_USERAUTH_PUBLICKEY;
@@ -4245,7 +4245,7 @@ static int DoChannelOpen(WOLFSSH* ssh,
 #ifdef WOLFSSH_FWD
     char* host = NULL;
     char* origin = NULL;
-    word32 hostPort, originPort;
+    word32 hostPort = 0, originPort = 0;
 #endif /* WOLFSSH_FWD */
     WOLFSSH_CHANNEL* newChannel;
     int ret = WS_SUCCESS;
@@ -7799,8 +7799,20 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId, int addSig)
             authData.username = (const byte*)ssh->userName;
             authData.usernameSz = ssh->userNameSz;
 
+            if (authId & WOLFSSH_USERAUTH_PASSWORD) {
+                ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PASSWORD,
+                        &authData, ssh->userAuthCtx);
+                if (ret != WOLFSSH_USERAUTH_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, "SUAR: Couldn't get password");
+                    ret = WS_FATAL_ERROR;
+                }
+                else {
+                    WLOG(WS_LOG_DEBUG, "SUAR: Callback successful password");
+                    authData.type = authId = ID_USERAUTH_PASSWORD;
+                }
+            }
             /* fall into public key case if password case was not successful */
-            if ((authId & WOLFSSH_USERAUTH_PUBLICKEY)) {
+            if ((ret == WS_FATAL_ERROR) && (authId & WOLFSSH_USERAUTH_PUBLICKEY)) {
                 ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PUBLICKEY,
                         &authData, ssh->userAuthCtx);
                 if (ret != WOLFSSH_USERAUTH_SUCCESS) {
@@ -7813,18 +7825,6 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId, int addSig)
                 }
             }
 
-            if (ret != WS_SUCCESS || authId & WOLFSSH_USERAUTH_PASSWORD) {
-                ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PASSWORD,
-                        &authData, ssh->userAuthCtx);
-                if (ret != WOLFSSH_USERAUTH_SUCCESS) {
-                    WLOG(WS_LOG_DEBUG, "SUAR: Couldn't get password");
-                    ret = WS_FATAL_ERROR;
-                }
-                else {
-                    WLOG(WS_LOG_DEBUG, "SUAR: Callback successful password");
-                    authData.type = authId = ID_USERAUTH_PASSWORD;
-                }
-            }
         }
         else {
             WLOG(WS_LOG_DEBUG, "SUAR: No user auth callback");
