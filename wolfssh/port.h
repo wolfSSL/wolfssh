@@ -222,6 +222,7 @@ extern "C" {
     #define WFTELL(s)         ftell((s))
     #define WREWIND(s)        rewind((s))
     #define WSEEK_END         SEEK_END
+    #define WBADFILE          NULL
     #ifdef WOLFSSL_VXWORKS
         #define WUTIMES(f,t)      (WS_SUCCESS)
     #else

@@ -1362,6 +1362,198 @@ char* wolfSSH_GetUsername(WOLFSSH* ssh)
 }
 
 
+#include <wolfssl/wolfcrypt/rsa.h>
+#include <wolfssl/wolfcrypt/asn_public.h>
+#include <wolfssl/wolfcrypt/coding.h>
+
+#define WSTRDUP(x,y) strdup((x))
+#define WSTRSEP(x,y) strsep((x),(y))
+int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
+        byte** out, word32* outSz, const byte** outType, word32* outTypeSz,
+        void* heap)
+{
+    int ret = WS_SUCCESS;
+
+    (void)heap;
+
+    if (in == NULL || inSz == 0 || out == NULL || outSz == NULL ||
+            outType == NULL || outTypeSz == NULL)
+        return WS_BAD_ARGUMENT;
+
+    if (format == WOLFSSH_FORMAT_SSH) {
+        char* dup;
+        char* c;
+        char* type;
+        char* key;
+
+        /*
+           SSH format is:
+           type AAAABASE64ENCODEDKEYDATA comment
+        */
+        c = dup = WSTRDUP((const char*)in, heap);
+        type = WSTRSEP(&c, " \n");
+        key = WSTRSEP(&c, " \n");
+
+        if (type != NULL && key != NULL) {
+            const char* name;
+            word32 typeSz;
+
+            typeSz = (word32)WSTRLEN(type);
+
+            name = IdToName(ID_SSH_RSA);
+            if (WSTRNCMP(type, name, typeSz) == 0) {
+                *outType = (const byte*)name;
+            }
+            else {
+                name = IdToName(ID_ECDSA_SHA2_NISTP256);
+                if (WSTRNCMP(type, name, typeSz) == 0) {
+                    *outType = (const byte*)name;
+                }
+                else {
+                    name = IdToName(ID_UNKNOWN);
+                    *outType = (const byte*)name;
+                    typeSz = (word32)WSTRLEN(name);
+                }
+            }
+            *outTypeSz = typeSz;
+
+            ret = Base64_Decode((byte*)key, (word32)WSTRLEN(key), *out, outSz);
+        }
+
+        if (ret != 0)
+            ret = WS_ERROR;
+
+        WFREE(dup, heap, DYNTYPE_STRING);
+    }
+    else if (format == WOLFSSH_FORMAT_ASN1) {
+        byte* newKey;
+        union {
+            RsaKey rsa;
+            ecc_key ecc;
+        } testKey;
+        word32 scratch = 0;
+
+        if (*out == NULL) {
+            newKey = (byte*)WMALLOC(inSz, heap, DYNTYPE_PRIVKEY);
+            if (newKey == NULL)
+                return WS_MEMORY_E;
+            *out = newKey;
+        }
+        else {
+            if (*outSz < inSz)
+                return WS_ERROR;
+            newKey = *out;
+        }
+        *outSz = inSz;
+        WMEMCPY(newKey, in, inSz);
+
+        /* TODO: This is copied and modified from a function in src/internal.c.
+           This and that code should be combined into a single function. */
+        if (wc_InitRsaKey(&testKey.rsa, heap) < 0)
+            return WS_RSA_E;
+
+        ret = wc_RsaPrivateKeyDecode(in, &scratch, &testKey.rsa, inSz);
+
+        wc_FreeRsaKey(&testKey.rsa);
+
+        if (ret == 0) {
+            *outType = (const byte*)IdToName(ID_SSH_RSA);
+            *outTypeSz = (word32)WSTRLEN((const char*)*outType);
+        }
+        else {
+            /* Couldn't decode as RSA testKey. Try decoding as ECC testKey. */
+            scratch = 0;
+            if (wc_ecc_init_ex(&testKey.ecc, heap, INVALID_DEVID) != 0)
+                return WS_ECC_E;
+
+            ret = wc_EccPrivateKeyDecode(in, &scratch,
+                                         &testKey.ecc, inSz);
+            wc_ecc_free(&testKey.ecc);
+
+            if (ret == 0) {
+                *outType = (const byte*)IdToName(ID_ECDH_SHA2_NISTP256);
+                *outTypeSz = (word32)WSTRLEN((const char*)*outType);
+            }
+            else
+                return WS_BAD_FILE_E;
+        }
+    }
+    else
+        ret = WS_ERROR;
+
+    return ret;
+}
+
+
+#ifndef NO_FILESYSTEM
+
+int wolfSSH_ReadKey_file(const char* name,
+        byte** out, word32* outSz, const byte** outType, word32* outTypeSz,
+        byte* isPrivate, void* heap)
+{
+    WFILE* file;
+    byte* in;
+    word32 inSz;
+    int format;
+    int ret;
+
+    if (name == NULL)
+        return WS_BAD_FILE_E;
+
+    if (out == NULL || outSz == NULL || outType == NULL || outTypeSz == NULL ||
+            isPrivate == NULL)
+        return WS_BAD_ARGUMENT;
+
+    ret = WFOPEN(&file, name, "rb");
+    if (file == WBADFILE) return WS_BAD_FILE_E;
+    if (WFSEEK(file, 0, WSEEK_END) != 0) {
+        WFCLOSE(file);
+        return WS_BAD_FILE_E;
+    }
+    inSz = (word32)WFTELL(file);
+    WREWIND(file);
+
+    if (inSz > WOLFSSH_MAX_FILE_SIZE || inSz == 0) {
+        WFCLOSE(file);
+        return WS_BAD_FILE_E;
+    }
+
+    in = (byte*)WMALLOC(inSz + 1, heap, DYNTYPE_FILE);
+    if (in == NULL) {
+        WFCLOSE(file);
+        return WS_MEMORY_E;
+    }
+
+    ret = (int)XFREAD(in, 1, inSz, file);
+    if (ret <= 0 || (word32)ret != inSz) {
+        ret = WS_BAD_FILE_E;
+    }
+    else {
+        if (WSTRNSTR((const char*)in,
+                    "ssh-rsa", inSz) == (const char*)in ||
+                WSTRNSTR((const char*)in,
+                    "ecdsa-sha2-nistp", inSz) == (const char*)in) {
+            *isPrivate = 0;
+            format = WOLFSSH_FORMAT_SSH;
+            in[inSz] = 0;
+        }
+        else {
+            *isPrivate = 1;
+            format = WOLFSSH_FORMAT_ASN1;
+        }
+
+        ret = wolfSSH_ReadKey_buffer(in, inSz, format,
+                out, outSz, outType, outTypeSz, heap);
+    }
+
+    WFCLOSE(file);
+    WFREE(in, heap, DYNTYPE_FILE);
+
+    return ret;
+}
+
+#endif
+
 int wolfSSH_CTX_SetBanner(WOLFSSH_CTX* ctx,
                           const char* newBanner)
 {

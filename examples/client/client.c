@@ -26,7 +26,6 @@
     #include <wolfssh/agent.h>
 #endif
 #include <wolfssl/wolfcrypt/ecc.h>
-#include <wolfssl/wolfcrypt/coding.h>
 #include "examples/client/client.h"
 #if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32)
     #include <termios.h>
@@ -158,6 +157,8 @@ static void ShowUsage(void)
     printf(" -u <username> username to authenticate as (REQUIRED)\n");
     printf(" -P <password> password for username, prompted if omitted\n");
     printf(" -e            use sample ecc key for user\n");
+    printf(" -i <filename> filename for the user's private key\n");
+    printf(" -j <filename> filename for the user's public key\n");
     printf(" -x            exit after successful connection without doing\n"
            "               read/write\n");
     printf(" -N            use non-blocking sockets\n");
@@ -174,20 +175,24 @@ static void ShowUsage(void)
 
 
 static byte userPassword[256];
-static byte userPublicKeyType[32];
 static byte userPublicKey[512];
-static word32 userPublicKeySz;
-static const byte* userPrivateKey;
-static word32 userPrivateKeySz;
+static const byte* userPublicKeyType = NULL;
+static byte* userPrivateKey = NULL; /* Will be allocated by Read Key. */
+static const byte* userPrivateKeyType = NULL;
+static word32 userPublicKeySz = 0;
+static word32 userPublicKeyTypeSz = 0;
+static word32 userPrivateKeySz = 0;
+static word32 userPrivateKeyTypeSz = 0;
+static byte isPrivate = 0;
 
 
-static const char hanselPublicRsa[] =
-    "AAAAB3NzaC1yc2EAAAADAQABAAABAQC9P3ZFowOsONXHD5MwWiCciXytBRZGho"
+static const char* hanselPublicRsa =
+    "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC9P3ZFowOsONXHD5MwWiCciXytBRZGho"
     "MNiisWSgUs5HdHcACuHYPi2W6Z1PBFmBWT9odOrGRjoZXJfDDoPi+j8SSfDGsc/hsCmc3G"
     "p2yEhUZUEkDhtOXyqjns1ickC9Gh4u80aSVtwHRnJZh9xPhSq5tLOhId4eP61s+a5pwjTj"
     "nEhBaIPUJO2C/M0pFnnbZxKgJlX7t1Doy7h5eXxviymOIvaCZKU+x5OopfzM/wFkey0EPW"
     "NmzI5y/+pzU5afsdeEWdiQDIQc80H6Pz8fsoFPvYSG+s4/wz0duu7yeeV1Ypoho65Zr+pE"
-    "nIf7dO0B8EblgWt+ud+JI8wrAhfE4x";
+    "nIf7dO0B8EblgWt+ud+JI8wrAhfE4x hansel";
 
 static const byte hanselPrivateRsa[] = {
   0x30, 0x82, 0x04, 0xa3, 0x02, 0x01, 0x00, 0x02, 0x82, 0x01, 0x01, 0x00,
@@ -295,9 +300,10 @@ static const byte hanselPrivateRsa[] = {
 static const unsigned int hanselPrivateRsaSz = 1191;
 
 
-static const char hanselPublicEcc[] =
-    "AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBNkI5JTP6D0lF42tbx"
-    "X19cE87hztUS6FSDoGvPfiU0CgeNSbI+aFdKIzTP5CQEJSvm25qUzgDtH7oyaQROUnNvk=";
+const char* hanselPublicEcc =
+    "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAA"
+    "BBBNkI5JTP6D0lF42tbxX19cE87hztUS6FSDoGvPfiU0CgeNSbI+aFdKIzTP5CQEJSvm25"
+    "qUzgDtH7oyaQROUnNvk= hansel";
 
 static const byte hanselPrivateEcc[] = {
   0x30, 0x77, 0x02, 0x01, 0x01, 0x04, 0x20, 0x03, 0x6e, 0x17, 0xd3, 0xb9,
@@ -336,13 +342,16 @@ static int wsUserAuth(byte authType,
 #endif
 
     /* We know hansel has a key, wait for request of public key */
-    if (authType == WOLFSSH_USERAUTH_PUBLICKEY &&
+    if ((authData->type & WOLFSSH_USERAUTH_PUBLICKEY) &&
             authData->username != NULL &&
             authData->usernameSz > 0 &&
-            XSTRNCMP((char*)authData->username, "hansel",
-                authData->usernameSz) == 0) {
+            (XSTRNCMP((char*)authData->username, "hansel",
+                authData->usernameSz) == 0 ||
+             XSTRNCMP((char*)authData->username, "john",
+                 authData->usernameSz) == 0)) {
         if (authType == WOLFSSH_USERAUTH_PASSWORD) {
-            printf("rejecting password type with hansel in favor of pub key\n");
+            printf("rejecting password type with %s in favor of pub key\n",
+                    (char*)authData->username);
             return WOLFSSH_USERAUTH_FAILURE;
         }
     }
@@ -350,21 +359,14 @@ static int wsUserAuth(byte authType,
     if (authType == WOLFSSH_USERAUTH_PUBLICKEY) {
         WS_UserAuthData_PublicKey* pk = &authData->sf.publicKey;
 
-        /* we only have hansel's sample key loaded */
-        if (authData->username != NULL && authData->usernameSz > 0 &&
-                XSTRNCMP((char*)authData->username, "hansel",
-                    authData->usernameSz) == 0) {
-            pk->publicKeyType = userPublicKeyType;
-            pk->publicKeyTypeSz = (word32)WSTRLEN((char*)userPublicKeyType);
-            pk->publicKey = userPublicKey;
-            pk->publicKeySz = userPublicKeySz;
-            pk->privateKey = userPrivateKey;
-            pk->privateKeySz = userPrivateKeySz;
-            ret = WOLFSSH_USERAUTH_SUCCESS;
-        }
-        else {
-            ret = WOLFSSH_USERAUTH_INVALID_USER;
-        }
+        pk->publicKeyType = userPublicKeyType;
+        pk->publicKeyTypeSz = userPublicKeyTypeSz;
+        pk->publicKey = userPublicKey;
+        pk->publicKeySz = userPublicKeySz;
+        pk->privateKey = userPrivateKey;
+        pk->privateKeySz = userPrivateKeySz;
+
+        ret = WOLFSSH_USERAUTH_SUCCESS;
     }
     else if (authType == WOLFSSH_USERAUTH_PASSWORD) {
         const char* defaultPassword = (const char*)ctx;
@@ -383,7 +385,7 @@ static int wsUserAuth(byte authType,
                 ret = WOLFSSH_USERAUTH_FAILURE;
             }
             else {
-                char* c = strpbrk((char*)userPassword, "\r\n");;
+                char* c = strpbrk((char*)userPassword, "\r\n");
                 if (c != NULL)
                     *c = '\0';
             }
@@ -752,6 +754,8 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     const char* username = NULL;
     const char* password = NULL;
     const char* cmd      = NULL;
+    const char* privKeyName = NULL;
+    const char* pubKeyName = NULL;
     byte imExit = 0;
     byte nonBlock = 0;
     byte keepOpen = 0;
@@ -766,7 +770,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     char**  argv = ((func_args*)args)->argv;
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?c:eh:p:tu:xzNP:R")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?c:eh:i:j:p:tu:xzNP:R")) != -1) {
         switch (ch) {
             case 'h':
                 host = myoptarg;
@@ -797,6 +801,14 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
             case 'P':
                 password = myoptarg;
+                break;
+
+            case 'i':
+                privKeyName = myoptarg;
+                break;
+
+            case 'j':
+                pubKeyName = myoptarg;
                 break;
 
             case 'x':
@@ -843,27 +855,62 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         err_sys("Threading needed for terminal session\n");
 #endif
 
-    if (userEcc) {
-        userPublicKeySz = (word32)sizeof(userPublicKey);
-        Base64_Decode((byte*)hanselPublicEcc,
-                (word32)WSTRLEN(hanselPublicEcc),
-                (byte*)userPublicKey, &userPublicKeySz);
+    if (pubKeyName == NULL && privKeyName != NULL) {
+        err_sys("If setting priv key, need pub key.");
+    }
 
-        WSTRNCPY((char*)userPublicKeyType, "ecdsa-sha2-nistp256",
-                sizeof(userPublicKeyType));
-        userPrivateKey = hanselPrivateEcc;
-        userPrivateKeySz = hanselPrivateEccSz;
+    if (privKeyName == NULL) {
+        if (userEcc) {
+            ret = wolfSSH_ReadKey_buffer(hanselPrivateEcc, hanselPrivateEccSz,
+                    WOLFSSH_FORMAT_ASN1, &userPrivateKey, &userPrivateKeySz,
+                    &userPrivateKeyType, &userPrivateKeyTypeSz, NULL);
+            isPrivate = 1;
+        }
+        else {
+            ret = wolfSSH_ReadKey_buffer(hanselPrivateRsa, hanselPrivateRsaSz,
+                    WOLFSSH_FORMAT_ASN1, &userPrivateKey, &userPrivateKeySz,
+                    &userPrivateKeyType, &userPrivateKeyTypeSz, NULL);
+            isPrivate = 1;
+        }
+        if (ret != 0) err_sys("Couldn't load private key buffer.");
     }
     else {
-        userPublicKeySz = (word32)sizeof(userPublicKey);
-        Base64_Decode((byte*)hanselPublicRsa,
-                (word32)WSTRLEN(hanselPublicRsa),
-                (byte*)userPublicKey, &userPublicKeySz);
+        ret = wolfSSH_ReadKey_file(privKeyName,
+                (byte**)&userPrivateKey, &userPrivateKeySz,
+                (const byte**)&userPrivateKeyType, &userPrivateKeyTypeSz,
+                &isPrivate, NULL);
+        if (ret != 0) err_sys("Couldn't load private key file.");
+    }
 
-        WSTRNCPY((char*)userPublicKeyType, "ssh-rsa",
-                sizeof(userPublicKeyType));
-        userPrivateKey = hanselPrivateRsa;
-        userPrivateKeySz = hanselPrivateRsaSz;
+    if (pubKeyName == NULL) {
+        byte* p = userPublicKey;
+        userPublicKeySz = sizeof(userPublicKey);
+
+        if (userEcc) {
+            ret = wolfSSH_ReadKey_buffer((const byte*)hanselPublicEcc,
+                    (word32)strlen(hanselPublicEcc), WOLFSSH_FORMAT_SSH,
+                    &p, &userPublicKeySz,
+                    &userPublicKeyType, &userPublicKeyTypeSz, NULL);
+            isPrivate = 1;
+        }
+        else {
+            ret = wolfSSH_ReadKey_buffer((const byte*)hanselPublicRsa,
+                    (word32)strlen(hanselPublicRsa), WOLFSSH_FORMAT_SSH,
+                    &p, &userPublicKeySz,
+                    &userPublicKeyType, &userPublicKeyTypeSz, NULL);
+            isPrivate = 1;
+        }
+        if (ret != 0) err_sys("Couldn't load public key buffer.");
+    }
+    else {
+        byte* p = userPublicKey;
+        userPublicKeySz = sizeof(userPublicKey);
+
+        ret = wolfSSH_ReadKey_file(pubKeyName,
+                &p, &userPublicKeySz,
+                (const byte**)&userPublicKeyType, &userPublicKeyTypeSz,
+                &isPrivate, NULL);
+        if (ret != 0) err_sys("Couldn't load public key file.");
     }
 
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
@@ -1007,6 +1054,8 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     WCLOSESOCKET(sockFd);
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
+    if (userPrivateKey != NULL)
+        free(userPrivateKey);
     if (ret != WS_SUCCESS)
         err_sys("Closing stream failed. Connection could have been closed by peer");
 

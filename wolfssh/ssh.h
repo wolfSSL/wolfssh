@@ -80,6 +80,11 @@ WOLFSSH_API void wolfSSH_SetHighwaterCb(WOLFSSH_CTX*, word32,
 WOLFSSH_API void wolfSSH_SetHighwaterCtx(WOLFSSH*, void*);
 WOLFSSH_API void* wolfSSH_GetHighwaterCtx(WOLFSSH*);
 
+WOLFSSH_API int wolfSSH_ReadKey_buffer(const byte*, word32, int,
+        byte**, word32*, const byte**, word32*, void*);
+WOLFSSH_API int wolfSSH_ReadKey_file(const char*,
+        byte**, word32*, const byte**, word32*, byte*, void*);
+
 
 #define WS_CHANNEL_ID_SELF 0
 #define WS_CHANNEL_ID_PEER 1
@@ -237,7 +242,8 @@ enum WS_EndpointTypes {
 enum WS_FormatTypes {
     WOLFSSH_FORMAT_ASN1,
     WOLFSSH_FORMAT_PEM,
-    WOLFSSH_FORMAT_RAW
+    WOLFSSH_FORMAT_RAW,
+    WOLFSSH_FORMAT_SSH,
 };
 
 

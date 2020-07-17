@@ -163,6 +163,9 @@ enum {
     /* This is based on the 8192-bit DH key that is the max size. */
     #define MAX_KEX_KEY_SZ (WOLFSSH_DEFAULT_GEXDH_MAX / 8)
 #endif
+#ifndef WOLFSSH_MAX_FILE_SIZE
+    #define WOLFSSH_MAX_FILE_SIZE (1024ul * 1024ul * 4)
+#endif
 
 WOLFSSH_LOCAL byte NameToId(const char*, word32);
 WOLFSSH_LOCAL const char* IdToName(byte);
@@ -744,6 +747,7 @@ enum WS_DynamicTypes {
     DYNTYPE_AGENT_ID,
     DYNTYPE_AGENT_KEY,
     DYNTYPE_AGENT_BUFFER,
+    DYNTYPE_FILE,
     DYNTYPE_TEMP
 };
 
