@@ -1366,8 +1366,6 @@ char* wolfSSH_GetUsername(WOLFSSH* ssh)
 #include <wolfssl/wolfcrypt/asn_public.h>
 #include <wolfssl/wolfcrypt/coding.h>
 
-#define WSTRDUP(x,y) strdup((x))
-#define WSTRSEP(x,y) strsep((x),(y))
 int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
         byte** out, word32* outSz, const byte** outType, word32* outTypeSz,
         void* heap)
@@ -1381,8 +1379,8 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
         return WS_BAD_ARGUMENT;
 
     if (format == WOLFSSH_FORMAT_SSH) {
-        char* dup;
         char* c;
+        char* last;
         char* type;
         char* key;
 
@@ -1390,9 +1388,9 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
            SSH format is:
            type AAAABASE64ENCODEDKEYDATA comment
         */
-        c = dup = WSTRDUP((const char*)in, heap);
-        type = WSTRSEP(&c, " \n");
-        key = WSTRSEP(&c, " \n");
+        c = WSTRDUP((const char*)in, heap);
+        type = WSTRTOK(c, " \n", &last);
+        key = WSTRTOK(NULL, " \n", &last);
 
         if (type != NULL && key != NULL) {
             const char* name;
@@ -1423,7 +1421,7 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
         if (ret != 0)
             ret = WS_ERROR;
 
-        WFREE(dup, heap, DYNTYPE_STRING);
+        WFREE(c, heap, DYNTYPE_STRING);
     }
     else if (format == WOLFSSH_FORMAT_ASN1) {
         byte* newKey;
@@ -1505,7 +1503,7 @@ int wolfSSH_ReadKey_file(const char* name,
         return WS_BAD_ARGUMENT;
 
     ret = WFOPEN(&file, name, "rb");
-    if (file == WBADFILE) return WS_BAD_FILE_E;
+    if (ret != 0 || file == WBADFILE) return WS_BAD_FILE_E;
     if (WFSEEK(file, 0, WSEEK_END) != 0) {
         WFCLOSE(file);
         return WS_BAD_FILE_E;

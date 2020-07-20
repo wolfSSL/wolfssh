@@ -1670,11 +1670,6 @@ int wolfSSH_AGENT_SignRequest(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS) {
-        if (agent == NULL)
-            ret = WS_AGENT_NULL_E;
-    }
-
-    if (ret == WS_SUCCESS) {
         agent = ssh->agent;
         if (ssh->ctx->agentCb)
             ret = ssh->ctx->agentCb(WOLFSSH_AGENT_LOCAL_SETUP, ssh->agentCbCtx);
