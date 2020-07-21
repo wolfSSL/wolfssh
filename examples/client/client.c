@@ -41,18 +41,17 @@
     #ifdef HAVE_TERMIOS_H
         #include <termios.h>
     #endif
-    #include <errno.h>
-    #include <stdlib.h>
-    #include <sys/select.h>
-    #include <sys/wait.h>
-    #include <sys/types.h>
-    #include <syslog.h>
-    #include <stdarg.h>
     #include <pwd.h>
+#endif /* WOLFSSH_SHELL */
+
+#ifdef WOLFSSH_AGENT
+    #include <errno.h>
     #include <stddef.h>
     #include <sys/socket.h>
     #include <sys/un.h>
-#endif
+#endif /* WOLFSSH_AGENT */
+
+#include <sys/select.h>
 
 
 #ifndef NO_WOLFSSH_CLIENT
@@ -346,9 +345,7 @@ static int wsUserAuth(byte authType,
             authData->username != NULL &&
             authData->usernameSz > 0 &&
             (XSTRNCMP((char*)authData->username, "hansel",
-                authData->usernameSz) == 0 ||
-             XSTRNCMP((char*)authData->username, "john",
-                 authData->usernameSz) == 0)) {
+                authData->usernameSz) == 0)) {
         if (authType == WOLFSSH_USERAUTH_PASSWORD) {
             printf("rejecting password type with %s in favor of pub key\n",
                     (char*)authData->username);
@@ -559,13 +556,16 @@ static THREAD_RET readPeer(void* in)
 
                         rxd = wolfSSH_ChannelIdRead(args->ssh, 1,
                                 agentBuf, sizeof(agentBuf));
-                        txd = rxd;
-                        rxd = sizeof(agentBuf);
-                        ret = wolfSSH_AGENT_Relay(args->ssh,
-                                agentBuf, (word32*)&txd,
-                                agentBuf, (word32*)&rxd);
-                        txd = wolfSSH_ChannelIdSend(args->ssh, 1,
-                                agentBuf, rxd);
+                        if (rxd > 0) {
+                            txd = rxd;
+                            rxd = sizeof(agentBuf);
+                            ret = wolfSSH_AGENT_Relay(args->ssh,
+                                    agentBuf, (word32*)&txd,
+                                    agentBuf, (word32*)&rxd);
+                            if (ret == WS_SUCCESS)
+                                wolfSSH_ChannelIdSend(args->ssh, 1,
+                                        agentBuf, rxd);
+                        }
                         WMEMSET(agentBuf, 0, sizeof(agentBuf));
                         continue;
                     }
@@ -636,15 +636,12 @@ static int callbackGlobalReq(WOLFSSH *ssh, void *buf, word32 sz, int reply, void
 #endif
 
 
-#ifdef WOLFSSH_SHELL
-
 #ifdef WOLFSSH_AGENT
 typedef struct WS_AgentCbActionCtx {
     struct sockaddr_un name;
     int fd;
     int state;
 } WS_AgentCbActionCtx;
-#endif
 
 static const char EnvNameAuthPort[] = "SSH_AUTH_SOCK";
 
@@ -735,7 +732,7 @@ static int wolfSSH_AGENT_IO_Cb(WS_AgentIoCbAction action,
 }
 
 
-#endif /* WOLFSSH_SHELL */
+#endif /* WOLFSSH_AGENT */
 
 
 THREAD_RETURN WOLFSSH_THREAD client_test(void* args)

@@ -4317,10 +4317,6 @@ static int DoChannelOpen(WOLFSSH* ssh,
                         host, hostPort, origin, originPort);
             }
         #endif /* WOLFSSH_FWD */
-        #ifdef WOLFSSH_AGENT
-            if (typeId == ID_CHANTYPE_AUTH_AGENT) {
-            }
-        #endif
             ChannelAppend(ssh, newChannel);
 
             ssh->clientState = CLIENT_CHANNEL_OPEN_DONE;
@@ -6516,10 +6512,10 @@ int SendKexDhReply(WOLFSSH* ssh)
                     ret = WS_ECC_E;
                 }
                 else {
-                    byte r[257];
+                    byte r[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
                     word32 rSz = sizeof(r);
                     byte rPad;
-                    byte s[257];
+                    byte s[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
                     word32 sSz = sizeof(s);
                     byte sPad;
 

@@ -554,10 +554,17 @@ int wolfSSH_accept(WOLFSSH* ssh)
                     WLOG(WS_LOG_AGENT, "Starting agent channel");
 
                     newAgent = wolfSSH_AGENT_new(ssh->ctx->heap);
+                    if (newAgent == NULL) {
+                        ssh->error = WS_MEMORY_E;
+                        WLOG(WS_LOG_DEBUG, acceptError,
+                            "SERVER_USERAUTH_ACCEPT_DONE", ssh->error);
+                        return WS_ERROR;
+                    }
 
                     newChannel = ChannelNew(ssh, ID_CHANTYPE_AUTH_AGENT,
                             ssh->ctx->windowSz, ssh->ctx->maxPacketSz);
                     if (newChannel == NULL) {
+                        wolfSSH_AGENT_free(newAgent);
                         ssh->error = WS_MEMORY_E;
                         WLOG(WS_LOG_DEBUG, acceptError,
                             "SERVER_USERAUTH_ACCEPT_DONE", ssh->error);
@@ -572,6 +579,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
                         }
                         else {
                             ChannelDelete(newChannel, ssh->ctx->heap);
+                            wolfSSH_AGENT_free(newAgent);
                         }
                         WLOG(WS_LOG_DEBUG, acceptError,
                             "SERVER_USERAUTH_ACCEPT_DONE", ssh->error);
@@ -769,6 +777,10 @@ int wolfSSH_connect(WOLFSSH* ssh)
             #ifdef WOLFSSH_AGENT
                 if (ssh->agentEnabled) {
                     ssh->agent = wolfSSH_AGENT_new(ssh->ctx->heap);
+                    if (ssh->agent == NULL) {
+                        ssh->agentEnabled = 0;
+                        WLOG(WS_LOG_INFO, "Unable to create agent. Disabling.");
+                    }
                 }
             #endif
 
@@ -1366,6 +1378,10 @@ char* wolfSSH_GetUsername(WOLFSSH* ssh)
 #include <wolfssl/wolfcrypt/asn_public.h>
 #include <wolfssl/wolfcrypt/coding.h>
 
+/* Reads a key from the buffer in to out. If the out buffer doesn't exist
+   it is created. The type of key is stored in outType. It'll be a pointer
+   to a constant string. Format indicates the format of the key, currently
+   either SSH format (a public key) or ASN.1 in DER format (a private key). */
 int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
         byte** out, word32* outSz, const byte** outType, word32* outTypeSz,
         void* heap)
@@ -1485,6 +1501,10 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
 
 #ifndef NO_FILESYSTEM
 
+/* Reads a key from the file name into a buffer. If the key starts with the
+   string "ssh-rsa" or "ecdsa-sha2-nistp256", it is considered an SSH format
+   public key, otherwise it is considered an ASN.1 private key. The buffer
+   is passed to wolfSSH_ReadKey_buffer() for processing. */
 int wolfSSH_ReadKey_file(const char* name,
         byte** out, word32* outSz, const byte** outType, word32* outTypeSz,
         byte* isPrivate, void* heap)

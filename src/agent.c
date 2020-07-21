@@ -36,7 +36,6 @@
 #include <wolfssh/agent.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/log.h>
-#include <stdio.h>
 
 
 #ifdef NO_INLINE
@@ -729,10 +728,10 @@ static int PostSignRequest(WOLFSSH_AGENT_CTX* agent,
                 ret = WS_ECC_E;
             }
             else {
-                byte r[257];
+                byte r[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
                 word32 rSz = sizeof(r);
                 byte rPad;
-                byte s[257];
+                byte s[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
                 word32 sSz = sizeof(s);
                 byte sPad;
                 int idx;
