@@ -37,6 +37,9 @@
 
 #ifdef NO_FILESYSTEM
     #include <wolfssh/certs_test.h>
+    #ifdef WOLFSSH_SCP
+        #include <wolfssh/wolfscp.h>
+    #endif
 #endif
 
 
@@ -143,6 +146,27 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
     int ret;
     thread_ctx_t* threadCtx = (thread_ctx_t*)vArgs;
 
+#if defined(WOLFSSH_SCP) && defined(NO_FILESYSTEM)
+    ScpBuffer scpBufferRecv, scpBufferSend;
+    byte fileBuffer[1024];
+    byte fileTmp[] = "wolfSSH SCP buffer file";
+
+    WMEMSET(&scpBufferRecv, 0, sizeof(ScpBuffer));
+    scpBufferRecv.buffer   = fileBuffer;
+    scpBufferRecv.bufferSz = 1024;
+    wolfSSH_SetScpRecvCtx(threadCtx->ssh, (void*)&scpBufferRecv);
+
+    /* make buffer file to send if asked */
+    WMEMSET(&scpBufferSend, 0, sizeof(ScpBuffer));
+    WMEMCPY(scpBufferSend.name, "test.txt", sizeof("test.txt"));
+    scpBufferSend.nameSz   = WSTRLEN("test.txt");
+    scpBufferSend.buffer   = fileTmp;
+    scpBufferSend.bufferSz = sizeof(fileTmp);
+    scpBufferSend.fileSz   = sizeof(fileTmp);
+    scpBufferSend.mode     = 0x1A4;
+    wolfSSH_SetScpSendCtx(threadCtx->ssh, (void*)&scpBufferSend);
+#endif
+
     if (!threadCtx->nonBlock)
         ret = wolfSSH_accept(threadCtx->ssh);
     else
@@ -218,6 +242,21 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
         free(buf);
     } else if (ret == WS_SCP_COMPLETE) {
         printf("scp file transfer completed\n");
+    #if defined(WOLFSSH_SCP) && defined(NO_FILESYSTEM)
+        if (scpBufferRecv.fileSz > 0) {
+            word32 z;
+
+            printf("file name : %s\n", scpBufferRecv.name);
+            printf("     size : %d\n", scpBufferRecv.fileSz);
+            printf("     mode : %o\n", scpBufferRecv.mode);
+            printf("    mTime : %lu\n", scpBufferRecv.mTime);
+            printf("\n");
+
+            for (z = 0; z < scpBufferRecv.fileSz; z++)
+                printf("%c", scpBufferRecv.buffer[z]);
+            printf("\n");
+        }
+    #endif
     } else if (ret == WS_SFTP_COMPLETE) {
         printf("Use example/echoserver/echoserver for SFTP\n");
     }

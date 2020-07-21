@@ -52,7 +52,8 @@ extern "C" {
     #define DEFAULT_SCP_BUFFER_SZ DEFAULT_MAX_PACKET_SZ
 #endif
 
-#if !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
+#if !defined(WOLFSSH_SCP_USER_CALLBACKS)
+#if !defined(NO_FILESYSTEM)
     #include <time.h>
     #ifdef HAVE_SYS_TIME_H
         #include <sys/time.h>
@@ -77,7 +78,19 @@ extern "C" {
         WDIR dir;                            /* dir pointer, from opendir() */
         struct ScpDir* next;                 /* previous directory in stack */
     } ScpDir;
-
+#else
+    /* Use a buffer for built in no filesystem send/recv */
+    typedef struct ScpBuffer {
+        char   name[DEFAULT_SCP_FILE_NAME_SZ];
+        byte*  buffer;
+        word64 mTime;
+        word32 bufferSz; /* size of "buffer" */
+        word32 fileSz;   /* size of file in "buffer" */
+        word32 idx;      /* current index into "buffer" */
+        word32 nameSz;
+        int   mode;
+    } ScpBuffer;
+#endif /* NO_FILESYSTEM */
 #endif /* WOLFSSH_SCP_USER_CALLBACKS */
 
 enum WS_ScpFileStates {
