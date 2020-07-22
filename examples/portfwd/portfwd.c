@@ -435,7 +435,7 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
 
     ret = wolfSSH_shutdown(ssh);
     if (ret != WS_SUCCESS)
-        err_sys("Closing stream failed.");
+        err_sys("Closing port forward stream failed.");
 
     WCLOSESOCKET(sshFd);
     WCLOSESOCKET(listenFd);
