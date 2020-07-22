@@ -51,7 +51,9 @@
     #include <sys/un.h>
 #endif /* WOLFSSH_AGENT */
 
-#include <sys/select.h>
+#ifdef HAVE_SYS_SELECT_H
+    #include <sys/select.h>
+#endif
 
 
 #ifndef NO_WOLFSSH_CLIENT
