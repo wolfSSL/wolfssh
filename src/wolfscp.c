@@ -2512,7 +2512,13 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
 
         case WOLFSSH_SCP_NEW_FILE:
             /* create file */
-            WMEMCPY(recvBuffer->name, fileName, WSTRLEN(fileName));
+            sz = (int)WSTRLEN(fileName);
+            if (sz >= DEFAULT_SCP_FILE_NAME_SZ) {
+                wolfSSH_SetScpErrorMsg(ssh, "file name is too large");
+                ret = WS_SCP_ABORT;
+                break;
+            }
+            WMEMCPY(recvBuffer->name, fileName, sz);
             recvBuffer->mTime = mTime;
             recvBuffer->mode = fileMode;
             break;
@@ -2632,7 +2638,7 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
 
     return ret;
 }
-#endif /* NO_FILESYSTME */
+#endif /* NO_FILESYSTEM */
 #endif /* WOLFSSH_SCP_USER_CALLBACKS */
 
 #endif /* WOLFSSH_SCP */
