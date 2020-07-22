@@ -1456,7 +1456,16 @@ int wolfSSH_SendPacket(WOLFSSH* ssh)
     }
 
     while (ssh->outputBuffer.length > 0) {
-        int sent = ssh->ctx->ioSendCb(ssh,
+        int sent;
+
+        /* sanity check on amount requested to be sent */
+        if (ssh->outputBuffer.idx + ssh->outputBuffer.length >
+                ssh->outputBuffer.bufferSz) {
+            WLOG(WS_LOG_ERROR, "Bad buffer state");
+            return WS_BUFFER_E;
+        }
+
+       sent = ssh->ctx->ioSendCb(ssh,
                                ssh->outputBuffer.buffer + ssh->outputBuffer.idx,
                                ssh->outputBuffer.length, ssh->ioWriteCtx);
 
