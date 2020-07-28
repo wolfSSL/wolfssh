@@ -2500,7 +2500,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
     int sz;
 
     if (ctx == NULL) {
-        wolfSSH_SetScpErrorMsg(ssh, "SCP receive ctx not set");
+        WLOG(WS_LOG_DEBUG, scpState, "SCP receive ctx not set");
         return WS_SCP_ABORT;
     }
     recvBuffer = (ScpBuffer*)ctx;
@@ -2521,6 +2521,11 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             WMEMCPY(recvBuffer->name, fileName, sz);
             recvBuffer->mTime = mTime;
             recvBuffer->mode = fileMode;
+            if (recvBuffer->status) {
+                if (recvBuffer->status(ssh, fileName, WOLFSSH_SCP_NEW_FILE,
+                            recvBuffer) != WS_SUCCESS)
+                    ret = WS_SCP_ABORT;
+            }
             break;
 
         case WOLFSSH_SCP_FILE_PART:
@@ -2529,11 +2534,21 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                 bufSz : recvBuffer->bufferSz - recvBuffer->idx;
             WMEMCPY(recvBuffer->buffer + recvBuffer->idx, buf, sz);
             recvBuffer->fileSz += sz;
+            if (recvBuffer->status) {
+                if (recvBuffer->status(ssh, recvBuffer->name,
+                            WOLFSSH_SCP_FILE_PART, recvBuffer) != WS_SUCCESS)
+                    ret = WS_SCP_ABORT;
+            }
             break;
 
         case WOLFSSH_SCP_FILE_DONE:
             recvBuffer->idx   = 0; /* rewind when done */
             recvBuffer->mTime = 0; /* @TODO set time if wanted */
+            if (recvBuffer->status) {
+                if (recvBuffer->status(ssh, recvBuffer->name,
+                            WOLFSSH_SCP_FILE_DONE, recvBuffer) != WS_SUCCESS)
+                    ret = WS_SCP_ABORT;
+            }
             break;
 
         case WOLFSSH_SCP_NEW_DIR:
@@ -2566,7 +2581,7 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
     int ret = WS_SUCCESS;
 
     if (ctx == NULL) {
-        wolfSSH_SetScpErrorMsg(ssh, "no ctx sent to hold file info");
+        WLOG(WS_LOG_DEBUG, scpState, "no ctx sent to hold file info");
         return WS_SCP_ABORT;
     }
     sendBuffer = (ScpBuffer*)ctx;
@@ -2582,17 +2597,26 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
                 break;
             }
 
-            *totalFileSz = sendBuffer->bufferSz;
-            *mTime = sendBuffer->mTime;
-            *aTime = sendBuffer->mTime;
-            *fileMode = sendBuffer->mode;
             ret = ExtractFileName(peerRequest, fileName, fileNameSz);
+            if (ret == WS_SUCCESS && sendBuffer->status) {
+                if ( sendBuffer->status(ssh, fileName,
+                            WOLFSSH_SCP_SINGLE_FILE_REQUEST, sendBuffer)
+                            != WS_SUCCESS) {
+                    ret = WS_SCP_ABORT;
+                    break;
+                }
+            }
+
             if (WSTRLEN(fileName) != sendBuffer->nameSz ||
                 WMEMCMP(sendBuffer->name, fileName, fileNameSz) != 0) {
                 wolfSSH_SetScpErrorMsg(ssh, "file name did not match");
                 ret = WS_SCP_ABORT;
                 break;
             }
+            *totalFileSz = sendBuffer->bufferSz;
+            *mTime = sendBuffer->mTime;
+            *aTime = sendBuffer->mTime;
+            *fileMode = sendBuffer->mode;
 
             /* copy over buffer info */
             if (sendBuffer->idx >= sendBuffer->bufferSz) {
@@ -2626,6 +2650,13 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             }
             if (ret == 0) { /* handle case of EOF */
                 ret = WS_EOF;
+            }
+
+            if (sendBuffer->status(ssh, sendBuffer->name,
+                        WOLFSSH_SCP_CONTINUE_FILE_TRANSFER, sendBuffer)
+                        != WS_SUCCESS) {
+                ret = WS_SCP_ABORT;
+                break;
             }
 
             break;
