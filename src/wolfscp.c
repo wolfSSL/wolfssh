@@ -2613,18 +2613,18 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
                 ret = WS_SCP_ABORT;
                 break;
             }
-            *totalFileSz = sendBuffer->bufferSz;
+            *totalFileSz = sendBuffer->fileSz;
             *mTime = sendBuffer->mTime;
             *aTime = sendBuffer->mTime;
             *fileMode = sendBuffer->mode;
 
             /* copy over buffer info */
-            if (sendBuffer->idx >= sendBuffer->bufferSz) {
+            ret = (bufSz < (sendBuffer->fileSz - sendBuffer->idx))?
+                bufSz : sendBuffer->fileSz - sendBuffer->idx;
+            if (sendBuffer->idx  + ret >= sendBuffer->bufferSz) {
                 ret = WS_SCP_ABORT;
                 break;
             }
-            ret = (bufSz < (sendBuffer->bufferSz - sendBuffer->idx))?
-                bufSz : sendBuffer->bufferSz - sendBuffer->idx;
             WMEMCPY(buf, sendBuffer->buffer + sendBuffer->idx, ret);
             sendBuffer->idx += ret;
 
@@ -2642,9 +2642,13 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
                 ret = WS_SCP_ABORT;
                 break;
             }
-            ret = (bufSz < (sendBuffer->bufferSz - sendBuffer->idx))?
-                bufSz : sendBuffer->bufferSz - sendBuffer->idx;
+            ret = (bufSz < (sendBuffer->fileSz - sendBuffer->idx))?
+                bufSz : sendBuffer->fileSz - sendBuffer->idx;
             if (ret > 0) {
+                if (sendBuffer->idx  + ret >= sendBuffer->bufferSz) {
+                    ret = WS_SCP_ABORT;
+                    break;
+                }
                 WMEMCPY(buf, sendBuffer->buffer + sendBuffer->idx, ret);
                 sendBuffer->idx += ret;
             }
