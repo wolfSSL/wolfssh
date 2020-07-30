@@ -562,6 +562,7 @@ static int shell_worker(thread_ctx_t* threadCtx)
         BUF_T agent_buf;
         int agentFd = -1;
         int listenFd = threadCtx->agentCbCtx.listenFd;
+        word32 agentChannelId = 0;
 #endif
 
         #ifdef SHELL_DEBUG
@@ -789,7 +790,8 @@ static int shell_worker(thread_ctx_t* threadCtx)
                     }
                     #ifdef WOLFSSH_AGENT
                         if (rc == WS_CHAN_RXD) {
-                            cnt_r = wolfSSH_ChannelIdRead(ssh, 1,
+                            wolfSSH_GetLastRxId(ssh, &agentChannelId);
+                            cnt_r = wolfSSH_ChannelIdRead(ssh, agentChannelId,
                                     (byte*)agent_buf.buf, cnt_r);
                             if (cnt_r <= 0)
                                 break;
@@ -839,7 +841,7 @@ static int shell_worker(thread_ctx_t* threadCtx)
                         #ifdef SHELL_DEBUG
                             buf_dump(agent_buf.buf+agent_buf.rdidx, cnt_r);
                         #endif
-                        cnt_w = wolfSSH_ChannelIdSend(ssh, 1,
+                        cnt_w = wolfSSH_ChannelIdSend(ssh, agentChannelId,
                                 (byte*)agent_buf.buf + agent_buf.rdidx, cnt_r);
                         if (cnt_w > 0) {
                             agent_buf.rdidx += cnt_r;

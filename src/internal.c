@@ -8462,7 +8462,7 @@ int SendChannelClose(WOLFSSH* ssh, word32 peerChannelId)
 }
 
 
-int SendChannelData(WOLFSSH* ssh, word32 peerChannel,
+int SendChannelData(WOLFSSH* ssh, word32 channelId,
                     byte* data, word32 dataSz)
 {
     byte* output;
@@ -8486,9 +8486,9 @@ int SendChannelData(WOLFSSH* ssh, word32 peerChannel,
     }
 
     if (ret == WS_SUCCESS) {
-        channel = ChannelFind(ssh, peerChannel, WS_CHANNEL_ID_PEER);
+        channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
         if (channel == NULL) {
-            WLOG(WS_LOG_DEBUG, "Invalid peer channel");
+            WLOG(WS_LOG_DEBUG, "Invalid channel");
             ret = WS_INVALID_CHANID;
         }
     }
@@ -8552,7 +8552,7 @@ int SendChannelData(WOLFSSH* ssh, word32 peerChannel,
 }
 
 
-int SendChannelWindowAdjust(WOLFSSH* ssh, word32 peerChannel,
+int SendChannelWindowAdjust(WOLFSSH* ssh, word32 channelId,
                             word32 bytesToAdd)
 {
     byte* output;
@@ -8565,9 +8565,9 @@ int SendChannelWindowAdjust(WOLFSSH* ssh, word32 peerChannel,
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
-    channel = ChannelFind(ssh, peerChannel, WS_CHANNEL_ID_PEER);
+    channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
     if (channel == NULL) {
-        WLOG(WS_LOG_DEBUG, "Invalid peer channel");
+        WLOG(WS_LOG_DEBUG, "Invalid channel");
         ret = WS_INVALID_CHANID;
     }
     if (ret == WS_SUCCESS)

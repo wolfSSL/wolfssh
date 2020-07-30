@@ -512,6 +512,14 @@ static THREAD_RET readInput(void* in)
 }
 
 
+#ifdef WOLFSSH_AGENT
+static inline void ato32(const byte* c, word32* u32)
+{
+    *u32 = (c[0] << 24) | (c[1] << 16) | (c[2] << 8) | c[3];
+}
+#endif
+
+
 static THREAD_RET readPeer(void* in)
 {
     byte buf[80];
@@ -555,18 +563,30 @@ static THREAD_RET readPeer(void* in)
                     if (ret == WS_CHAN_RXD) {
                         byte agentBuf[512];
                         int rxd, txd;
+                        word32 channel = 0;
 
-                        rxd = wolfSSH_ChannelIdRead(args->ssh, 1,
+                        wolfSSH_GetLastRxId(args->ssh, &channel);
+                        rxd = wolfSSH_ChannelIdRead(args->ssh, channel,
                                 agentBuf, sizeof(agentBuf));
-                        if (rxd > 0) {
+                        if (rxd > 4) {
+                            word32 msgSz = 0;
+
+                            ato32(agentBuf, &msgSz);
+                            if (msgSz > (word32)rxd - 4) {
+                                rxd += wolfSSH_ChannelIdRead(args->ssh, channel,
+                                        agentBuf + rxd,
+                                        sizeof(agentBuf) - rxd);
+                            }
+
                             txd = rxd;
                             rxd = sizeof(agentBuf);
                             ret = wolfSSH_AGENT_Relay(args->ssh,
                                     agentBuf, (word32*)&txd,
                                     agentBuf, (word32*)&rxd);
-                            if (ret == WS_SUCCESS)
-                                wolfSSH_ChannelIdSend(args->ssh, 1,
+                            if (ret == WS_SUCCESS) {
+                                ret = wolfSSH_ChannelIdSend(args->ssh, channel,
                                         agentBuf, rxd);
+                            }
                         }
                         WMEMSET(agentBuf, 0, sizeof(agentBuf));
                         continue;

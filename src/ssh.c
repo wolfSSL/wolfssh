@@ -1715,6 +1715,20 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
 }
 
 
+int wolfSSH_GetLastRxId(WOLFSSH* ssh, word32* channelId)
+{
+    int ret = WS_SUCCESS;
+
+    if (ssh == NULL || channelId == NULL)
+        ret = WS_ERROR;
+
+    if (ret == WS_SUCCESS)
+        *channelId = ssh->lastRxId;
+
+    return ret;
+}
+
+
 #ifdef WOLFSSH_FWD
 
 WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNew(WOLFSSH* ssh,
