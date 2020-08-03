@@ -1043,6 +1043,11 @@ static int ScpCheckForRename(WOLFSSH* ssh, int cmdSz)
     if (idx == 4) { /* case of 4 for drive letter plus ":\" + 1 */
         idx--;
     }
+#else
+    /* allow placing file at base address ':/' */
+    if (sz == 1 && buf[0] == WS_DELIM) {
+        idx--;
+    }
 #endif
     if (idx > cmdSz || idx > sz) {
         return WS_BUFFER_E;
@@ -1057,7 +1062,7 @@ static int ScpCheckForRename(WOLFSSH* ssh, int cmdSz)
         ssh->scpFileName = (char*)WMALLOC(sz + 1, ssh->ctx->heap,
             DYNTYPE_STRING);
         if (ssh->scpFileName == NULL) {
-            WLOG(WS_LOG_DEBUG, scpError, "memory error creaating file name",
+            WLOG(WS_LOG_DEBUG, scpError, "memory error creating file name",
                     WS_MEMORY_E);
             ssh->scpBasePath = NULL;
             return WS_MEMORY_E;
@@ -2533,6 +2538,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             sz = (bufSz < recvBuffer->bufferSz - recvBuffer->idx) ?
                 bufSz : recvBuffer->bufferSz - recvBuffer->idx;
             WMEMCPY(recvBuffer->buffer + recvBuffer->idx, buf, sz);
+            recvBuffer->idx    += sz;
             recvBuffer->fileSz += sz;
             if (recvBuffer->status) {
                 if (recvBuffer->status(ssh, recvBuffer->name,

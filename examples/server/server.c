@@ -148,12 +148,12 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
 
 #if defined(WOLFSSH_SCP) && defined(NO_FILESYSTEM)
     ScpBuffer scpBufferRecv, scpBufferSend;
-    byte fileBuffer[1024];
+    byte fileBuffer[49000];
     byte fileTmp[] = "wolfSSH SCP buffer file";
 
     WMEMSET(&scpBufferRecv, 0, sizeof(ScpBuffer));
     scpBufferRecv.buffer   = fileBuffer;
-    scpBufferRecv.bufferSz = 1024;
+    scpBufferRecv.bufferSz = sizeof(fileBuffer);
     wolfSSH_SetScpRecvCtx(threadCtx->ssh, (void*)&scpBufferRecv);
 
     /* make buffer file to send if asked */
