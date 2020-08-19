@@ -619,6 +619,11 @@ int DoScpSource(WOLFSSH* ssh)
 
     } /* end while */
 
+    if (ret == WS_SUCCESS && ssh->scpState == SCP_DONE) {
+        /* Send SSH_MSG_CHANNEL_CLOSE */
+        ret = wolfSSH_stream_exit(ssh, 0);
+    }
+
     return ret;
 }
 
@@ -675,6 +680,20 @@ int DoScpRequest(WOLFSSH* ssh)
                     WLOG(WS_LOG_ERROR, scpError, "SCP_SOURCE", ret);
                 }
                 break;
+        }
+    }
+
+    if (ret == WS_SUCCESS && ssh->scpState == SCP_DONE) {
+        byte buf[1];
+
+        /* Peer MUST send back a SSH_MSG_CHANNEL_CLOSE unless already
+            sent*/
+        ret = wolfSSH_stream_read(ssh, buf, 1);
+        if (ret != WS_EOF) {
+            WLOG(WS_LOG_DEBUG, scpState, "Did not receive EOF packet");
+        }
+        else {
+            ret = WS_SUCCESS;
         }
     }
 
