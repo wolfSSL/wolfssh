@@ -63,6 +63,7 @@ WOLFSSH_API WOLFSSH* wolfSSH_new(WOLFSSH_CTX*);
 WOLFSSH_API void wolfSSH_free(WOLFSSH*);
 
 WOLFSSH_API int wolfSSH_worker(WOLFSSH*, word32*);
+WOLFSSH_API int wolfSSH_GetLastRxId(WOLFSSH*, word32*);
 
 WOLFSSH_API int wolfSSH_set_fd(WOLFSSH*, WS_SOCKET_T);
 WOLFSSH_API WS_SOCKET_T wolfSSH_get_fd(const WOLFSSH*);
@@ -79,6 +80,11 @@ WOLFSSH_API void wolfSSH_SetHighwaterCb(WOLFSSH_CTX*, word32,
                                         WS_CallbackHighwater);
 WOLFSSH_API void wolfSSH_SetHighwaterCtx(WOLFSSH*, void*);
 WOLFSSH_API void* wolfSSH_GetHighwaterCtx(WOLFSSH*);
+
+WOLFSSH_API int wolfSSH_ReadKey_buffer(const byte*, word32, int,
+        byte**, word32*, const byte**, word32*, void*);
+WOLFSSH_API int wolfSSH_ReadKey_file(const char*,
+        byte**, word32*, const byte**, word32*, byte*, void*);
 
 
 #define WS_CHANNEL_ID_SELF 0
@@ -196,6 +202,8 @@ WOLFSSH_API int wolfSSH_TriggerKeyExchange(WOLFSSH*);
 WOLFSSH_API int wolfSSH_SendIgnore(WOLFSSH*, const byte*, word32);
 WOLFSSH_API int wolfSSH_SendDisconnect(WOLFSSH*, word32);
 WOLFSSH_API int wolfSSH_global_request(WOLFSSH*, const unsigned char*, word32, int);
+WOLFSSH_API int wolfSSH_ChannelIdRead(WOLFSSH*, word32, byte*, word32);
+WOLFSSH_API int wolfSSH_ChannelIdSend(WOLFSSH*, word32, byte*, word32);
 
 WOLFSSH_API void wolfSSH_GetStats(WOLFSSH*,
                                   word32*, word32*, word32*, word32*);
@@ -235,7 +243,8 @@ enum WS_EndpointTypes {
 enum WS_FormatTypes {
     WOLFSSH_FORMAT_ASN1,
     WOLFSSH_FORMAT_PEM,
-    WOLFSSH_FORMAT_RAW
+    WOLFSSH_FORMAT_RAW,
+    WOLFSSH_FORMAT_SSH,
 };
 
 

@@ -23,9 +23,13 @@
 
 
 #include <stdio.h>
-#include <termios.h>
+#ifdef HAVE_TERMIOS_H
+    #include <termios.h>
+#endif
 #include <errno.h>
-#include <sys/select.h>
+#ifdef HAVE_SYS_SELECT_H
+    #include <sys/select.h>
+#endif
 #include <wolfssh/ssh.h>
 #include <wolfssh/test.h>
 #include <wolfssh/port.h>

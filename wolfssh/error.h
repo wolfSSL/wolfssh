@@ -114,8 +114,11 @@ enum WS_ErrorCodes {
     WS_MISSING_CALLBACK     = -1074, /* Callback is missing */
     WS_DH_SIZE_E            = -1075, /* DH prime larger than expected */
     WS_PUBKEY_SIG_MIN_E     = -1076, /* Signature too small */
+    WS_AGENT_NULL_E         = -1077, /* AGENT was null */
+    WS_AGENT_NO_KEY_E       = -1078, /* AGENT doesn't have requested key */
+    WS_AGENT_CXN_FAIL       = -1079, /* Couldn't connect to agent. */
 
-    WS_LAST_E               = -1076  /* Update this to indicate last error */
+    WS_LAST_E               = -1079  /* Update this to indicate last error */
 };
 
 
