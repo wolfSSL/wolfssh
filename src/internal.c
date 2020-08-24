@@ -48,6 +48,16 @@
 #endif
 
 
+/*
+Flags:
+  HAVE_WC_ECC_SET_RNG
+    Set by configure if wc_ecc_set_rng() discovered in wolfCrypt.  Disables
+    use of the function if the flag isn't set. If using wolfCrypt v4.5.0 or
+    later, and not building with configure, set this flag.
+    default: off
+*/
+
+
 static const char sshProtoIdStr[] = "SSH-2.0-wolfSSHv"
                                     LIBWOLFSSH_VERSION_STRING
                                     "\r\n";
