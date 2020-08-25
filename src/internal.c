@@ -48,6 +48,16 @@
 #endif
 
 
+/*
+Flags:
+  HAVE_WC_ECC_SET_RNG
+    Set by configure if wc_ecc_set_rng() discovered in wolfCrypt.  Disables
+    use of the function if the flag isn't set. If using wolfCrypt v4.5.0 or
+    later, and not building with configure, set this flag.
+    default: off
+*/
+
+
 static const char sshProtoIdStr[] = "SSH-2.0-wolfSSHv"
                                     LIBWOLFSSH_VERSION_STRING
                                     "\r\n";
@@ -2766,6 +2776,10 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
             ret = wc_ecc_init_ex(&sigKeyBlock.sk.ecc.key, ssh->ctx->heap,
                                  INVALID_DEVID);
+#ifdef HAVE_WC_ECC_SET_RNG
+            if (ret == WS_SUCCESS)
+                ret = wc_ecc_set_rng(&sigKeyBlock.sk.ecc.key, ssh->rng);
+#endif
             if (ret != 0)
                 ret = WS_ECC_E;
             else
@@ -2814,6 +2828,10 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             else {
                 ecc_key key;
                 ret = wc_ecc_init(&key);
+#ifdef HAVE_WC_ECC_SET_RNG
+            if (ret == WS_SUCCESS)
+                ret = wc_ecc_set_rng(&key, ssh->rng);
+#endif
                 if (ret == 0)
                     ret = wc_ecc_import_x963(f, fSz, &key);
                 if (ret == 0)
@@ -6400,6 +6418,10 @@ int SendKexDhReply(WOLFSSH* ssh)
                 if (ret == 0)
                     ret = wc_ecc_init_ex(&privKey, ssh->ctx->heap,
                                          INVALID_DEVID);
+#ifdef HAVE_WC_ECC_SET_RNG
+                if (ret == 0)
+                    ret = wc_ecc_set_rng(&privKey, ssh->rng);
+#endif
 
                 if (ret == 0)
                     ret = wc_ecc_import_x963_ex(ssh->handshake->e,
@@ -6908,7 +6930,10 @@ int SendKexDhInit(WOLFSSH* ssh)
             if (ret == 0)
                 ret = wc_ecc_init_ex(privKey, ssh->ctx->heap,
                                      INVALID_DEVID);
-
+#ifdef HAVE_WC_ECC_SET_RNG
+            if (ret == 0)
+                ret = wc_ecc_set_rng(privKey, ssh->rng);
+#endif
             if (ret == 0)
                 ret = wc_ecc_make_key_ex(ssh->rng,
                                      wc_ecc_get_curve_size_from_id(primeId),
