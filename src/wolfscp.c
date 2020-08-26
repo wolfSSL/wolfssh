@@ -2537,6 +2537,15 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             /* read file, or file part */
             sz = (bufSz < recvBuffer->bufferSz - recvBuffer->idx) ?
                 bufSz : recvBuffer->bufferSz - recvBuffer->idx;
+
+            if (recvBuffer->idx >= recvBuffer->bufferSz) {
+                wolfSSH_SetScpErrorMsg(ssh,
+                        "buffer is not large enough for file");
+                WLOG(WS_LOG_DEBUG, scpState, "SCP buffer too small for file");
+                ret = WS_SCP_ABORT;
+                break;
+            }
+
             WMEMCPY(recvBuffer->buffer + recvBuffer->idx, buf, sz);
             recvBuffer->idx    += sz;
             recvBuffer->fileSz += sz;
