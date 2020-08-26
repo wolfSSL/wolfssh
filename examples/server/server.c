@@ -161,7 +161,7 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
     WMEMCPY(scpBufferSend.name, "test.txt", sizeof("test.txt"));
     scpBufferSend.nameSz   = WSTRLEN("test.txt");
     scpBufferSend.buffer   = fileTmp;
-    scpBufferSend.bufferSz = sizeof(fileTmp);
+    scpBufferSend.bufferSz = sizeof(fileBuffer);
     scpBufferSend.fileSz   = sizeof(fileTmp);
     scpBufferSend.mode     = 0x1A4;
     wolfSSH_SetScpSendCtx(threadCtx->ssh, (void*)&scpBufferSend);

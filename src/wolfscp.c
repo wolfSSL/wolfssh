@@ -1045,8 +1045,8 @@ static int ScpCheckForRename(WOLFSSH* ssh, int cmdSz)
     }
 #else
     /* allow placing file at base address ':/' */
-    if (sz == 1 && buf[0] == WS_DELIM) {
-        idx--;
+    if (WSTRLEN(buf) == 1 && buf[0] == WS_DELIM) {
+        idx--; /* no delimiter at base */
     }
 #endif
     if (idx > cmdSz || idx > sz) {
@@ -2598,7 +2598,7 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
 
         case WOLFSSH_SCP_SINGLE_FILE_REQUEST:
             if (sendBuffer->buffer == NULL) {
-                wolfSSH_SetScpErrorMsg(ssh, "no buffer to send");
+                WLOG(WS_LOG_DEBUG, scpState, "no buffer to send");
                 ret = WS_SCP_ABORT;
                 break;
             }
@@ -2614,7 +2614,7 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             }
 
             if (WSTRLEN(fileName) != sendBuffer->nameSz ||
-                WMEMCMP(sendBuffer->name, fileName, fileNameSz) != 0) {
+                WMEMCMP(sendBuffer->name, fileName, sendBuffer->nameSz) != 0) {
                 wolfSSH_SetScpErrorMsg(ssh, "file name did not match");
                 ret = WS_SCP_ABORT;
                 break;
@@ -2672,7 +2672,7 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             break;
 
         default:
-            wolfSSH_SetScpErrorMsg(ssh, "bad state");
+            WLOG(WS_LOG_DEBUG, scpState, "bad state");
             ret = WS_SCP_ABORT;
     }
     (void)fileOffset;
