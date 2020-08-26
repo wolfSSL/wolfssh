@@ -993,20 +993,8 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
 
     switch (ret) {
         case WS_SCP_COMPLETE:
-            {
-                byte buf[1];
-                printf("scp file transfer completed\n");
-                if (wolfSSH_stream_exit(threadCtx->ssh, 0) != WS_SUCCESS) {
-                    fprintf(stderr, "Error with SSH stream exit.\n");
-                }
-                /* Peer MUST send back a SSH_MSG_CHANNEL_CLOSE unless already
-                 * sent*/
-                ret = wolfSSH_stream_read(threadCtx->ssh, buf, 1);
-                if (ret != WS_EOF) {
-                    fprintf(stderr, "Was expecting EOF\n");
-                }
-                ret = 0;
-            }
+            printf("scp file transfer completed\n");
+            ret = 0;
             break;
 
         case WS_SFTP_COMPLETE:
