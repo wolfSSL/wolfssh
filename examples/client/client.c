@@ -894,10 +894,15 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         if (ret != 0) err_sys("Couldn't load private key buffer.");
     }
     else {
+    #ifndef NO_FILESYSTEM
         ret = wolfSSH_ReadKey_file(privKeyName,
                 (byte**)&userPrivateKey, &userPrivateKeySz,
                 (const byte**)&userPrivateKeyType, &userPrivateKeyTypeSz,
                 &isPrivate, NULL);
+    #else
+        printf("file system not compiled in!\n");
+        ret = -1;
+    #endif
         if (ret != 0) err_sys("Couldn't load private key file.");
     }
 
@@ -922,6 +927,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         if (ret != 0) err_sys("Couldn't load public key buffer.");
     }
     else {
+    #ifndef NO_FILESYSTEM
         byte* p = userPublicKey;
         userPublicKeySz = sizeof(userPublicKey);
 
@@ -929,6 +935,10 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
                 &p, &userPublicKeySz,
                 (const byte**)&userPublicKeyType, &userPublicKeyTypeSz,
                 &isPrivate, NULL);
+    #else
+        printf("file system not compiled in!\n");
+        ret = -1;
+    #endif
         if (ret != 0) err_sys("Couldn't load public key file.");
     }
 
