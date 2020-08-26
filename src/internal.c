@@ -4839,7 +4839,7 @@ static int DoChannelExtendedData(WOLFSSH* ssh,
             DumpOctetString(buf + begin, dataSz);
 #endif
             if (ret == WS_SUCCESS) {
-                ret = SendChannelWindowAdjust(ssh, channel->peerChannel,dataSz);
+                ret = SendChannelWindowAdjust(ssh, channel->channel, dataSz);
             }
         }
         *idx = begin + dataSz;

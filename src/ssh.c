@@ -1026,8 +1026,7 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
                      inputBuffer->buffer + bytesToAdd, usedSz);
         }
 
-        sendResult = SendChannelWindowAdjust(ssh,
-                                             ssh->channelList->peerChannel,
+        sendResult = SendChannelWindowAdjust(ssh, ssh->channelList->channel,
                                              bytesToAdd);
         if (sendResult != WS_SUCCESS)
             bufSz = sendResult;
@@ -1093,7 +1092,7 @@ int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz)
         return (ret == WS_SUCCESS)? bytesTxd : ret;
     }
 
-    bytesTxd = SendChannelData(ssh, ssh->channelList->peerChannel, buf, bufSz);
+    bytesTxd = SendChannelData(ssh, ssh->channelList->channel, buf, bufSz);
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_stream_send(), txd = %d", bytesTxd);
     return bytesTxd;
@@ -1876,8 +1875,7 @@ int wolfSSH_ChannelRead(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz)
                      inputBuffer->buffer + bytesToAdd, usedSz);
         }
 
-        sendResult = SendChannelWindowAdjust(channel->ssh,
-                                             channel->peerChannel,
+        sendResult = SendChannelWindowAdjust(channel->ssh, channel->channel,
                                              bytesToAdd);
         if (sendResult != WS_SUCCESS)
             bufSz = sendResult;
@@ -1916,7 +1914,7 @@ int wolfSSH_ChannelSend(WOLFSSH_CHANNEL* channel,
     }
     else {
         WLOG(WS_LOG_DEBUG, "Sending data.");
-        bytesTxd = SendChannelData(channel->ssh, channel->peerChannel,
+        bytesTxd = SendChannelData(channel->ssh, channel->channel,
                 (byte*)buf, bufSz);
     }
 
