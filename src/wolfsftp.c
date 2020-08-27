@@ -8040,6 +8040,29 @@ int wolfSSH_SFTP_free(WOLFSSH* ssh)
         }
     }
 #endif
+
+#ifndef NO_WOLFSSH_DIR
+    {
+        /* free all dirs if hung up on */
+        DIR_HANDLE* cur = dirList;
+
+        /* find DIR given handle */
+        while (cur != NULL) {
+            DIR_HANDLE* toFree = cur;
+
+            cur = cur->next;
+        #ifdef USE_WINDOWS_API
+            FindClose(toFree->dir);
+        #else
+            WCLOSEDIR(&toFree->dir);
+        #endif
+            if (toFree->dirName != NULL)
+                WFREE(toFree->dirName, ssh->ctx->heap, DYNTYPE_SFTP);
+            WFREE(toFree, ssh->ctx->heap, DYNTYPE_SFTP);
+        }
+    }
+#endif /* NO_WOLFSSH_DIR */
+
     wolfSSH_SFTP_ClearState(ssh, STATE_ID_ALL);
     return WS_SUCCESS;
 }
