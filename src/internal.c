@@ -421,8 +421,7 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
 #endif /* WOLFSSH_USER_IO */
     ctx->highwaterMark = DEFAULT_HIGHWATER_MARK;
     ctx->highwaterCb = wsHighwater;
-#if defined(WOLFSSH_SCP) && !defined(WOLFSSH_SCP_USER_CALLBACKS) && \
-    !defined(NO_FILESYSTEM)
+#if defined(WOLFSSH_SCP) && !defined(WOLFSSH_SCP_USER_CALLBACKS)
     ctx->scpRecvCb = wsScpRecvCallback;
     ctx->scpSendCb = wsScpSendCallback;
 #endif /* WOLFSSH_SCP */
@@ -8744,7 +8743,7 @@ int SendChannelRequest(WOLFSSH* ssh, byte* name, word32 nameSz)
 }
 
 
-#ifdef WOLFSSH_TERM
+#if defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM)
 
 #if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32) && \
     !defined(NO_TERMIOS)

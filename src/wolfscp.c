@@ -47,13 +47,11 @@
     #include "src/misc.c"
 #endif
 
-#if defined(NO_FILESYSTEM) && !defined(WOLFSSH_SCP_USER_CALLBACKS)
-    #error "scp with no filesystem requires user callbacks"
-#endif
-
+#ifndef NO_FILESYSTEM
 static int ScpFileIsDir(ScpSendCtx* ctx);
 static int ScpPushDir(ScpSendCtx* ctx, const char* path, void* heap);
 static int ScpPopDir(ScpSendCtx* ctx, void* heap);
+#endif
 
 const char scpError[] = "scp error: %s, %d";
 const char scpState[] = "scp state: %s";
@@ -1064,6 +1062,11 @@ static int ScpCheckForRename(WOLFSSH* ssh, int cmdSz)
     if (idx == 4) { /* case of 4 for drive letter plus ":\" + 1 */
         idx--;
     }
+#else
+    /* allow placing file at base address ':/' */
+    if (WSTRLEN(buf) == 1 && buf[0] == WS_DELIM) {
+        idx--; /* no delimiter at base */
+    }
 #endif
     if (idx > cmdSz || idx > sz) {
         return WS_BUFFER_E;
@@ -1078,7 +1081,7 @@ static int ScpCheckForRename(WOLFSSH* ssh, int cmdSz)
         ssh->scpFileName = (char*)WMALLOC(sz + 1, ssh->ctx->heap,
             DYNTYPE_STRING);
         if (ssh->scpFileName == NULL) {
-            WLOG(WS_LOG_DEBUG, scpError, "memory error creaating file name",
+            WLOG(WS_LOG_DEBUG, scpError, "memory error creating file name",
                     WS_MEMORY_E);
             ssh->scpBasePath = NULL;
             return WS_MEMORY_E;
@@ -1110,20 +1113,26 @@ static int ScpCheckForRename(WOLFSSH* ssh, int cmdSz)
  * returns WS_SUCCESS on success */
 static int ParseBasePathHelper(WOLFSSH* ssh, int cmdSz)
 {
-    ScpSendCtx ctx;
     int ret;
 
-    WMEMSET(&ctx, 0, sizeof(ScpSendCtx));
     ret = ScpCheckForRename(ssh, cmdSz);
-    if (ScpPushDir(&ctx, ssh->scpBasePath, ssh->ctx->heap) != WS_SUCCESS) {
-        WLOG(WS_LOG_DEBUG, "scp : issue opening base dir");
-    }
-    else {
-        ret = ScpPopDir(&ctx, ssh->ctx->heap);
-        if (ret == WS_SCP_DIR_STACK_EMPTY_E) {
-            ret = WS_SUCCESS; /* is ok to empty the directory stack here */
+
+#ifndef NO_FILESYSTEM
+    {
+        ScpSendCtx ctx;
+
+        WMEMSET(&ctx, 0, sizeof(ScpSendCtx));
+        if (ScpPushDir(&ctx, ssh->scpBasePath, ssh->ctx->heap) != WS_SUCCESS) {
+            WLOG(WS_LOG_DEBUG, "scp : issue opening base dir");
+        }
+        else {
+            ret = ScpPopDir(&ctx, ssh->ctx->heap);
+            if (ret == WS_SCP_DIR_STACK_EMPTY_E) {
+                ret = WS_SUCCESS; /* is ok to empty the directory stack here */
+            }
         }
     }
+#endif /* NO_FILESYSTEM */
 
     /* default case of directory */
     return ret;
@@ -1627,7 +1636,43 @@ int wolfSSH_SCP_from(WOLFSSH* ssh, const char* src, const char* dst)
 }
 
 
-#if !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
+#if !defined(WOLFSSH_SCP_USER_CALLBACKS)
+
+/* Extract file name from full path, store in fileName.
+ * Return WS_SUCCESS on success, negative upon error */
+static int ExtractFileName(const char* filePath, char* fileName,
+                           word32 fileNameSz)
+{
+    int ret = WS_SUCCESS;
+    word32 fileLen;
+    int idx = 0, pathLen, separator = -1;
+
+    if (filePath == NULL || fileName == NULL)
+        return WS_BAD_ARGUMENT;
+
+    pathLen = (int)WSTRLEN(filePath);
+
+    /* find last separator */
+    while (idx < pathLen) {
+        if (filePath[idx] == '/' || filePath[idx] == '\\')
+            separator = idx;
+        idx++;
+    }
+
+    if (separator < 0)
+        return WS_BAD_ARGUMENT;
+
+    fileLen = pathLen - separator - 1;
+    if (fileLen + 1 > fileNameSz)
+        return WS_SCP_PATH_LEN_E;
+
+    WMEMCPY(fileName, filePath + separator + 1, fileLen);
+    fileName[fileLen] = '\0';
+
+    return ret;
+}
+
+#if !defined(NO_FILESYSTEM)
 
 /* for porting to systems without errno */
 static INLINE int wolfSSH_LastError(void)
@@ -1898,40 +1943,6 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
 
     (void)totalFileSz;
     (void)fileOffset;
-    return ret;
-}
-
-/* Extract file name from full path, store in fileName.
- * Return WS_SUCCESS on success, negative upon error */
-static int ExtractFileName(const char* filePath, char* fileName,
-                           word32 fileNameSz)
-{
-    int ret = WS_SUCCESS;
-    word32 fileLen;
-    int idx = 0, pathLen, separator = -1;
-
-    if (filePath == NULL || fileName == NULL)
-        return WS_BAD_ARGUMENT;
-
-    pathLen = (int)WSTRLEN(filePath);
-
-    /* find last separator */
-    while (idx < pathLen) {
-        if (filePath[idx] == '/' || filePath[idx] == '\\')
-            separator = idx;
-        idx++;
-    }
-
-    if (separator < 0)
-        return WS_BAD_ARGUMENT;
-
-    fileLen = pathLen - separator - 1;
-    if (fileLen + 1 > fileNameSz)
-        return WS_SCP_PATH_LEN_E;
-
-    WMEMCPY(fileName, filePath + separator + 1, fileLen);
-    fileName[fileLen] = '\0';
-
     return ret;
 }
 
@@ -2500,6 +2511,203 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
     return ret;
 }
 
+#else
+
+/* single file transfer with no filesystem */
+int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
+        const char* fileName, int fileMode, word64 mTime, word64 aTime,
+        word32 totalFileSz, byte* buf, word32 bufSz, word32 fileOffset,
+        void* ctx)
+{
+    ScpBuffer* recvBuffer;
+    int ret = WS_SCP_CONTINUE;
+    int sz;
+
+    if (ctx == NULL) {
+        WLOG(WS_LOG_DEBUG, scpState, "SCP receive ctx not set");
+        return WS_SCP_ABORT;
+    }
+    recvBuffer = (ScpBuffer*)ctx;
+
+    switch (state) {
+
+        case WOLFSSH_SCP_NEW_REQUEST:
+            break;
+
+        case WOLFSSH_SCP_NEW_FILE:
+            /* create file */
+            sz = (int)WSTRLEN(fileName);
+            if (sz >= DEFAULT_SCP_FILE_NAME_SZ) {
+                wolfSSH_SetScpErrorMsg(ssh, "file name is too large");
+                ret = WS_SCP_ABORT;
+                break;
+            }
+            WMEMCPY(recvBuffer->name, fileName, sz);
+            recvBuffer->mTime = mTime;
+            recvBuffer->mode = fileMode;
+            if (recvBuffer->status) {
+                if (recvBuffer->status(ssh, fileName, WOLFSSH_SCP_NEW_FILE,
+                            recvBuffer) != WS_SUCCESS)
+                    ret = WS_SCP_ABORT;
+            }
+            break;
+
+        case WOLFSSH_SCP_FILE_PART:
+            /* read file, or file part */
+            sz = (bufSz < recvBuffer->bufferSz - recvBuffer->idx) ?
+                bufSz : recvBuffer->bufferSz - recvBuffer->idx;
+
+            if (recvBuffer->idx >= recvBuffer->bufferSz) {
+                wolfSSH_SetScpErrorMsg(ssh,
+                        "buffer is not large enough for file");
+                WLOG(WS_LOG_DEBUG, scpState, "SCP buffer too small for file");
+                ret = WS_SCP_ABORT;
+                break;
+            }
+
+            WMEMCPY(recvBuffer->buffer + recvBuffer->idx, buf, sz);
+            recvBuffer->idx    += sz;
+            recvBuffer->fileSz += sz;
+            if (recvBuffer->status) {
+                if (recvBuffer->status(ssh, recvBuffer->name,
+                            WOLFSSH_SCP_FILE_PART, recvBuffer) != WS_SUCCESS)
+                    ret = WS_SCP_ABORT;
+            }
+            break;
+
+        case WOLFSSH_SCP_FILE_DONE:
+            recvBuffer->idx   = 0; /* rewind when done */
+            recvBuffer->mTime = 0; /* @TODO set time if wanted */
+            if (recvBuffer->status) {
+                if (recvBuffer->status(ssh, recvBuffer->name,
+                            WOLFSSH_SCP_FILE_DONE, recvBuffer) != WS_SUCCESS)
+                    ret = WS_SCP_ABORT;
+            }
+            break;
+
+        case WOLFSSH_SCP_NEW_DIR:
+        case WOLFSSH_SCP_END_DIR:
+            wolfSSH_SetScpErrorMsg(ssh,
+                    "creating a new directory not supported");
+            ret = WS_SCP_ABORT;
+            break;
+
+        default:
+            wolfSSH_SetScpErrorMsg(ssh, "invalid scp command request");
+            ret = WS_SCP_ABORT;
+    }
+
+    (void)totalFileSz;
+    (void)fileOffset;
+    (void)aTime;
+    (void)basePath;
+    return ret;
+}
+
+
+/* callback for single file transfer with no file system */
+int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
+        char* fileName, word32 fileNameSz, word64* mTime, word64* aTime,
+        int* fileMode, word32 fileOffset, word32* totalFileSz, byte* buf,
+        word32 bufSz, void* ctx)
+{
+    ScpBuffer* sendBuffer= NULL;
+    int ret = WS_SUCCESS;
+
+    if (ctx == NULL) {
+        WLOG(WS_LOG_DEBUG, scpState, "no ctx sent to hold file info");
+        return WS_SCP_ABORT;
+    }
+    sendBuffer = (ScpBuffer*)ctx;
+
+    switch (state) {
+        case WOLFSSH_SCP_NEW_REQUEST:
+            break;
+
+        case WOLFSSH_SCP_SINGLE_FILE_REQUEST:
+            if (sendBuffer->buffer == NULL) {
+                WLOG(WS_LOG_DEBUG, scpState, "no buffer to send");
+                ret = WS_SCP_ABORT;
+                break;
+            }
+
+            ret = ExtractFileName(peerRequest, fileName, fileNameSz);
+            if (ret == WS_SUCCESS && sendBuffer->status) {
+                if ( sendBuffer->status(ssh, fileName,
+                            WOLFSSH_SCP_SINGLE_FILE_REQUEST, sendBuffer)
+                            != WS_SUCCESS) {
+                    ret = WS_SCP_ABORT;
+                    break;
+                }
+            }
+
+            if (WSTRLEN(fileName) != sendBuffer->nameSz ||
+                WMEMCMP(sendBuffer->name, fileName, sendBuffer->nameSz) != 0) {
+                wolfSSH_SetScpErrorMsg(ssh, "file name did not match");
+                ret = WS_SCP_ABORT;
+                break;
+            }
+            *totalFileSz = sendBuffer->fileSz;
+            *mTime = sendBuffer->mTime;
+            *aTime = sendBuffer->mTime;
+            *fileMode = sendBuffer->mode;
+
+            /* copy over buffer info */
+            ret = (bufSz < (sendBuffer->fileSz - sendBuffer->idx))?
+                bufSz : sendBuffer->fileSz - sendBuffer->idx;
+            if (sendBuffer->idx  + ret >= sendBuffer->bufferSz) {
+                ret = WS_SCP_ABORT;
+                break;
+            }
+            WMEMCPY(buf, sendBuffer->buffer + sendBuffer->idx, ret);
+            sendBuffer->idx += ret;
+
+            break;
+
+        case WOLFSSH_SCP_RECURSIVE_REQUEST:
+            wolfSSH_SetScpErrorMsg(ssh,
+                    "recursive request without filesystem not supported");
+            ret = WS_SCP_ABORT;
+            break;
+
+        case WOLFSSH_SCP_CONTINUE_FILE_TRANSFER:
+            /* copy over buffer info */
+            if (sendBuffer->idx >= sendBuffer->bufferSz) {
+                ret = WS_SCP_ABORT;
+                break;
+            }
+            ret = (bufSz < (sendBuffer->fileSz - sendBuffer->idx))?
+                bufSz : sendBuffer->fileSz - sendBuffer->idx;
+            if (ret > 0) {
+                if (sendBuffer->idx  + ret >= sendBuffer->bufferSz) {
+                    ret = WS_SCP_ABORT;
+                    break;
+                }
+                WMEMCPY(buf, sendBuffer->buffer + sendBuffer->idx, ret);
+                sendBuffer->idx += ret;
+            }
+            if (ret == 0) { /* handle case of EOF */
+                ret = WS_EOF;
+            }
+
+            if (sendBuffer->status(ssh, sendBuffer->name,
+                        WOLFSSH_SCP_CONTINUE_FILE_TRANSFER, sendBuffer)
+                        != WS_SUCCESS) {
+                ret = WS_SCP_ABORT;
+                break;
+            }
+
+            break;
+
+        default:
+            WLOG(WS_LOG_DEBUG, scpState, "bad state");
+            ret = WS_SCP_ABORT;
+    }
+    (void)fileOffset;
+
+    return ret;
+}
+#endif /* NO_FILESYSTEM */
 #endif /* WOLFSSH_SCP_USER_CALLBACKS */
 
 #endif /* WOLFSSH_SCP */

@@ -872,7 +872,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
             FALL_THROUGH;
 
         case CONNECT_CLIENT_CHANNEL_AGENT_REQUEST_SENT:
-        #ifdef WOLFSSH_TERM
+        #if defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM)
             if (ssh->sendTerminalRequest) {
                 if ( (ssh->error = SendChannelTerminalRequest(ssh))
                         < WS_SUCCESS) {

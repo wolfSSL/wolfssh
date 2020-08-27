@@ -357,7 +357,7 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
     if (ret != WS_SUCCESS)
-        err_sys("Closing stream failed. Connection could have been closed by peer");
+        err_sys("Closing scp stream failed. Connection could have been closed by peer");
 
 #if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */

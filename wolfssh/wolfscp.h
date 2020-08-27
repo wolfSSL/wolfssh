@@ -52,7 +52,23 @@ extern "C" {
     #define DEFAULT_SCP_BUFFER_SZ DEFAULT_MAX_PACKET_SZ
 #endif
 
-#if !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
+enum WS_ScpFileStates {
+    /* sink */
+    WOLFSSH_SCP_NEW_REQUEST = 0,
+    WOLFSSH_SCP_NEW_FILE,
+    WOLFSSH_SCP_FILE_PART,
+    WOLFSSH_SCP_FILE_DONE,
+    WOLFSSH_SCP_NEW_DIR,
+    WOLFSSH_SCP_END_DIR,
+    /* source */
+    WOLFSSH_SCP_SINGLE_FILE_REQUEST,
+    WOLFSSH_SCP_RECURSIVE_REQUEST,
+    WOLFSSH_SCP_CONTINUE_FILE_TRANSFER
+};
+
+
+#if !defined(WOLFSSH_SCP_USER_CALLBACKS)
+#if !defined(NO_FILESYSTEM)
     #include <time.h>
     #ifdef HAVE_SYS_TIME_H
         #include <sys/time.h>
@@ -77,22 +93,22 @@ extern "C" {
         WDIR dir;                            /* dir pointer, from opendir() */
         struct ScpDir* next;                 /* previous directory in stack */
     } ScpDir;
-
+#else
+    /* Use a buffer for built in no filesystem send/recv */
+    typedef struct ScpBuffer ScpBuffer;
+    struct ScpBuffer {
+        char   name[DEFAULT_SCP_FILE_NAME_SZ];
+        byte*  buffer;
+        word64 mTime;
+        word32 bufferSz; /* size of "buffer" */
+        word32 fileSz;   /* size of file in "buffer" */
+        word32 idx;      /* current index into "buffer" */
+        word32 nameSz;
+        int   mode;
+        int (*status)(WOLFSSH* ssh, const char* fileName, enum WS_ScpFileStates state, ScpBuffer* file);
+    };
+#endif /* NO_FILESYSTEM */
 #endif /* WOLFSSH_SCP_USER_CALLBACKS */
-
-enum WS_ScpFileStates {
-    /* sink */
-    WOLFSSH_SCP_NEW_REQUEST = 0,
-    WOLFSSH_SCP_NEW_FILE,
-    WOLFSSH_SCP_FILE_PART,
-    WOLFSSH_SCP_FILE_DONE,
-    WOLFSSH_SCP_NEW_DIR,
-    WOLFSSH_SCP_END_DIR,
-    /* source */
-    WOLFSSH_SCP_SINGLE_FILE_REQUEST,
-    WOLFSSH_SCP_RECURSIVE_REQUEST,
-    WOLFSSH_SCP_CONTINUE_FILE_TRANSFER
-};
 
 typedef int (*WS_CallbackScpRecv)(WOLFSSH*, int, const char*, const char*,
                                   int, word64, word64, word32, byte*, word32,

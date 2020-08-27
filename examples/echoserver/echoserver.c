@@ -1683,11 +1683,16 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
     /* if creating a ready file with port then override port to be 0 */
     if (readyFile != NULL) {
+    #ifdef NO_FILESYSTEM
+        fprintf(stderr, "cannot create readyFile with no file system.\r\n");
+        exit(EXIT_FAILURE);
+    #endif
         port = 0;
     }
     tcp_listen(&listenFd, &port, 1);
     /* write out port number listing to, to user set ready file */
     if (readyFile != NULL) {
+    #ifndef NO_FILESYSTEM
         WFILE* f = NULL;
         int    ret;
         ret = WFOPEN(&f, readyFile, "w");
@@ -1695,6 +1700,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             fprintf(f, "%d\n", (int)port);
             WFCLOSE(f);
         }
+    #endif
     }
 
     do {

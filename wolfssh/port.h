@@ -70,8 +70,9 @@ extern "C" {
     #endif
 #endif /* !WOLFSSH_HANDLE */
 
-#ifndef NO_FILESYSTEM
-#ifdef WOLFSSL_NUCLEUS
+#ifdef NO_FILESYSTEM
+    #define WS_DELIM '/'
+#elif defined(WOLFSSL_NUCLEUS)
     #include "storage/nu_storage.h"
 
     #define WFILE int
@@ -276,7 +277,6 @@ extern "C" {
         #endif
     #endif
 #endif
-#endif /* NO_FILESYSTEM */
 
 /* setup string handling */
 #ifndef WSTRING_USER
@@ -369,7 +369,7 @@ extern "C" {
 #endif
 
 #if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
-        !defined(NO_WOLFSSH_SERVER)
+        !defined(NO_WOLFSSH_SERVER) && !defined(NO_FILESYSTEM)
 
     #ifndef SIZEOF_OFF_T
         /* if not using autoconf then make a guess on off_t size based on sizeof
