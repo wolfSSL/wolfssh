@@ -501,11 +501,18 @@ static int wolfSSH_SFTP_buffer_send(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer)
         return WS_BUFFER_E;
     }
 
-    ret = wolfSSH_stream_send(ssh, buffer->data + buffer->idx,
+    do {
+        ret = wolfSSH_stream_send(ssh, buffer->data + buffer->idx,
             buffer->sz - buffer->idx);
-    if (ret > 0) {
-        buffer->idx += ret;
-    }
+        if (ret == WS_WINDOW_FULL) {
+            ret = wolfSSH_worker(ssh, NULL);
+            if (ret == WS_SUCCESS)
+                continue; /* skip past increment and send more */
+        }
+        if (ret > 0) {
+            buffer->idx += ret;
+        }
+    } while (buffer->idx < buffer->sz && (ret > 0 || ret == WS_SUCCESS));
 
     return ret;
 }
@@ -6303,6 +6310,12 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
             case STATE_SEND_WRITE_SEND_BODY:
                 WLOG(WS_LOG_SFTP, "SFTP SEND_WRITE STATE: SEND_BODY");
                 state->sentSz = wolfSSH_stream_send(ssh, in, inSz);
+                if (state->sentSz == WS_WINDOW_FULL) {
+                    ret = wolfSSH_worker(ssh, NULL);
+                    if (ret == WS_SUCCESS)
+                        continue; /* skip past rest and send more */
+                }
+
                 if (state->sentSz <= 0) {
                     if (ssh->error == WS_WANT_READ ||
                             ssh->error == WS_WANT_WRITE) {
