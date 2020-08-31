@@ -588,12 +588,12 @@ static int shell_worker(thread_ctx_t* threadCtx)
         memset((void *)&buf_rx, 0, sizeof(buf_rx));
         memset((void *)&buf_tx, 0, sizeof(buf_tx));
 
-        buf_rx.buf = malloc(SE_BUF_SIZE);
+        buf_rx.buf = (char*)malloc(SE_BUF_SIZE);
         if (buf_rx.buf == NULL) {
             return WS_FATAL_ERROR;
         }
 
-        buf_tx.buf = malloc(SE_BUF_SIZE);
+        buf_tx.buf = (char*)malloc(SE_BUF_SIZE);
         if (buf_tx.buf == NULL) {
             free(buf_rx.buf);
             return WS_FATAL_ERROR;
@@ -601,7 +601,7 @@ static int shell_worker(thread_ctx_t* threadCtx)
 
 #ifdef WOLFSSH_AGENT
         memset((void *)&agent_buf, 0, sizeof(agent_buf));
-        agent_buf.buf = malloc(SE_BUF_SIZE);
+        agent_buf.buf = (char*)malloc(SE_BUF_SIZE);
         if (agent_buf.buf == NULL) {
             free(buf_rx.buf);
             free(buf_tx.buf);
