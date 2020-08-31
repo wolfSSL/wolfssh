@@ -17,7 +17,7 @@ AC_ARG_PROGRAM
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_HEADERS([src/config.h])
 
-WOLFSSH_LIBRARY_VERSION=11:0:2
+WOLFSSH_LIBRARY_VERSION=12:0:3
 #                       | | |
 #                +------+ | +---+
 #                |        |     |

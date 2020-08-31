@@ -2058,7 +2058,8 @@ int ScpPushDir(ScpSendCtx* ctx, const char* path, void* heap)
     }
 
     /* append directory name to ctx->dirName */
-    WSTRNCPY(ctx->dirName, path, DEFAULT_SCP_FILE_NAME_SZ);
+    WSTRNCPY(ctx->dirName, path, DEFAULT_SCP_FILE_NAME_SZ-1);
+    ctx->dirName[DEFAULT_SCP_FILE_NAME_SZ-1] = '\0';
 
     return WS_SUCCESS;
 }

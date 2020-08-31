@@ -91,6 +91,14 @@ To use public key authentication use the command line:
 
 Where the *USER* can be `gretel` or `hansel`, and *TYPE* is `rsa` or `ecc`.
 
+Keep in mind, the echoserver has several fake accounts in its wsUserAuth
+callback function. (jack, jill, hansel, and gretel) When the shell support is
+enabled, those fake accounts will not work. They don't exist in the system's
+passwd file. The users will authenticate, but the server will err out because
+they don't exist in the system. You can add your own username to the password
+or public key list in the echoserver. That account will be logged into a shell
+started by the echoserver with the privileges of the user running echoserver.
+
 
 scp support
 -----------

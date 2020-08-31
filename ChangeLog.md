@@ -1,3 +1,33 @@
+# wolfSSH v1.4.5 (August 31, 2020)
+
+## New Feature Additions
+
+- Added SSH-AGENT support to the echoserver and client
+- For testing purposes, add ability to have named users with authentication
+  type of "none"
+- Added support for building for EWARM
+- Echoserver can now spawn a shell and set up a pty with it
+- Added example to the SCP callback for file transfers without a filesystem
+
+## Fixes
+
+- Fixes for clean connection shutdown in the example.
+- Fixes for some issues with DH KEX discovered with fuzz testing
+- Fix for an OOB read around the RSA signature
+- Fix for building with wolfSSL v4.5.0 with respect to `wc_ecc_set_rng()`;
+  configure will detect the function's presence and work around it absence;
+  see note in internal.c regarding the flag `HAVE_WC_ECC_SET_RNG` if not
+  using configure
+
+## Improvements and Optimizations
+
+- Improved interoperability with winSCP
+- Improved interoperability with Dropbear
+- Example client can now authenticate with public keys
+
+
+--------------------------------
+
 # wolfSSH v1.4.4 (04/28/2020)
 
 ## New Feature Additions
