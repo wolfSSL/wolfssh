@@ -25,8 +25,8 @@
  * (exported for the library user) APIs.
  */
 
-
-#pragma once
+#ifndef _WOLFSSH_VISIBILITY_H_
+#define _WOLFSSH_VISIBILITY_H_
 
 
 #ifdef __cplusplus
@@ -77,3 +77,4 @@ extern "C" {
 }
 #endif
 
+#endif /* _WOLFSSH_VISIBILITY_H_ */

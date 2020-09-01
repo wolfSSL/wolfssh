@@ -18,8 +18,6 @@
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#pragma once
-
 #ifndef _WOLFSSH_TEST_H_
 #define _WOLFSSH_TEST_H_
 

@@ -19,8 +19,6 @@
  */
 
 
-#pragma once
-
 #ifndef _WOLFSSH_CLIENT_H_
 #define _WOLFSSH_CLIENT_H_
 

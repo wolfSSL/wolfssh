@@ -24,8 +24,8 @@
  * API calls into this module to do the work of processing the connections.
  */
 
-
-#pragma once
+#ifndef _WOLFSSH_INTERNAL_H_
+#define _WOLFSSH_INTERNAL_H_
 
 #include <wolfssh/ssh.h>
 #include <wolfssh/wolfsftp.h>
@@ -896,3 +896,4 @@ enum TerminalModes {
 }
 #endif
 
+#endif /* _WOLFSSH_INTERNAL_H_ */

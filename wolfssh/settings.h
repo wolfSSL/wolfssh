@@ -25,8 +25,8 @@
  * environments that do not use the configure script.
  */
 
-
-#pragma once
+#ifndef _WOLFSSH_SETTINGS_H_
+#define _WOLFSSH_SETTINGS_H_
 
 #include <wolfssh/visibility.h>
 
@@ -75,3 +75,4 @@ extern "C" {
 }
 #endif
 
+#endif /* _WOLFSSH_SETTINGS_H_ */

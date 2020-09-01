@@ -18,20 +18,16 @@
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#pragma once
-
-#ifndef WOLFSSH_MISC_H
-#define WOLFSSH_MISC_H
-
-
-#ifdef __cplusplus
-    extern "C" {
-#endif
-
+#ifndef _WOLFSSH_MISC_H_
+#define _WOLFSSH_MISC_H_
 
 #include <wolfssl/wolfcrypt/types.h>
 #include <wolfssh/settings.h>
 #include <wolfssh/port.h>
+
+#ifdef __cplusplus
+    extern "C" {
+#endif
 
 
 #ifdef NO_INLINE
@@ -56,5 +52,4 @@ WOLFSSH_LOCAL void CreateMpint(byte*, word32*, byte*);
 #endif
 
 
-#endif /* WOLFSSH_MISC_H */
-
+#endif /* _WOLFSSH_MISC_H_ */

@@ -23,8 +23,8 @@
  * The error header file provides the error codes used in the library.
  */
 
-
-#pragma once
+#ifndef _WOLFSSH_ERROR_H_
+#define _WOLFSSH_ERROR_H_
 
 #include <wolfssh/settings.h>
 
@@ -138,3 +138,4 @@ enum WS_IOerrors {
 }
 #endif
 
+#endif /* _WOLFSSH_ERROR_H_ */

@@ -25,8 +25,8 @@
  * A custom logging callback may be installed.
  */
 
-
-#pragma once
+#ifndef _WOLFSSH_LOG_H_
+#define _WOLFSSH_LOG_H_
 
 #include <wolfssh/settings.h>
 
@@ -80,3 +80,4 @@ WOLFSSH_API void wolfSSH_Log(enum wolfSSH_LogLevel,
 }
 #endif
 
+#endif /* _WOLFSSH_LOG_H_ */

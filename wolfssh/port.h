@@ -26,8 +26,8 @@
  * standard C library functions that are missing on some platforms.
  */
 
-
-#pragma once
+#ifndef _WOLFSSH_PORT_H_
+#define _WOLFSSH_PORT_H_
 
 #include <wolfssh/settings.h>
 #include <wolfssh/log.h>
@@ -1110,3 +1110,4 @@ extern "C" {
 }
 #endif
 
+#endif /* _WOLFSSH_PORT_H_ */

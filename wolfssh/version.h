@@ -26,8 +26,8 @@
  * distribution for environments that do not use configure.
  */
 
-
-#pragma once
+#ifndef _WOLFSSH_VERSION_H_
+#define _WOLFSSH_VERSION_H_
 
 #ifdef __cplusplus
 extern "C" {
@@ -40,3 +40,4 @@ extern "C" {
 }
 #endif
 
+#endif /* _WOLFSSH_VERSION_H_ */
