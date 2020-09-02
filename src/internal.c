@@ -1720,7 +1720,7 @@ int GetStringAlloc(void* heap, char** s, byte* buf, word32 len, word32 *idx)
         str[strSz] = '\0';
 
         if (*s != NULL)
-            WFREE(*s, ssh->ctx->heap, DYNTYPE_STRING);
+            WFREE(*s, heap, DYNTYPE_STRING);
         *s = str;
     }
 

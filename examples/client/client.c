@@ -178,11 +178,12 @@ static void ShowUsage(void)
 static byte userPassword[256];
 static byte userPublicKey[512];
 static const byte* userPublicKeyType = NULL;
-static byte* userPrivateKey = NULL; /* Will be allocated by Read Key. */
+static byte userPrivateKeyBuf[1191]; /* Size equal to hanselPrivateRsaSz. */
+static byte* userPrivateKey = userPrivateKeyBuf;
 static const byte* userPrivateKeyType = NULL;
 static word32 userPublicKeySz = 0;
 static word32 userPublicKeyTypeSz = 0;
-static word32 userPrivateKeySz = 0;
+static word32 userPrivateKeySz = sizeof(userPrivateKeyBuf);
 static word32 userPrivateKeyTypeSz = 0;
 static byte isPrivate = 0;
 
@@ -1083,8 +1084,6 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     WCLOSESOCKET(sockFd);
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
-    if (userPrivateKey != NULL)
-        free(userPrivateKey);
     if (ret != WS_SUCCESS)
         err_sys("Closing client stream failed. Connection could have been closed by peer");
 
