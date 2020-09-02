@@ -2059,7 +2059,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     int ret = WS_SUCCESS;
     int side;
     byte algoId;
-    byte list[8] = {ID_NONE};
+    byte list[16] = {ID_NONE};
     word32 listSz;
     word32 skipSz;
     word32 begin;
