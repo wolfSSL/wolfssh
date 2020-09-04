@@ -570,9 +570,10 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
     AssertNotNull(ctx->privateKey);
     AssertIntNE(0, ctx->privateKeySz);
     AssertIntEQ(ECC_SECP256R1, ctx->useEcc);
+
+#ifndef NO_RSA
     lastKey = ctx->privateKey;
     lastKeySz = ctx->privateKeySz;
-
     AssertIntEQ(WS_SUCCESS,
         wolfSSH_CTX_UsePrivateKey_buffer(ctx, rsaKey, rsaKeySz,
                                          TEST_GOOD_FORMAT_ASN1));
@@ -581,6 +582,10 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
     AssertIntEQ(0, ctx->useEcc);
     AssertIntEQ(0, (lastKey == ctx->privateKey));
     AssertIntNE(lastKeySz, ctx->privateKeySz);
+#else
+    (void)lastKey;
+    (void)lastKeySz;
+#endif
 
     wolfSSH_CTX_free(ctx);
     FreeBins(eccKey, rsaKey, NULL, NULL);

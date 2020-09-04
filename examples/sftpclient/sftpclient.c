@@ -1329,6 +1329,11 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     if (username == NULL)
         err_sys("client requires a username parameter.");
 
+#ifdef NO_RSA
+    userEcc = 1;
+    /* peerEcc = 1; */
+#endif
+
     if (autopilot != AUTOPILOT_OFF) {
         if (apLocal == NULL || apRemote == NULL) {
             err_sys("Options -G and -g require both -l and -r.");

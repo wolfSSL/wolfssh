@@ -869,6 +869,10 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     if (username == NULL)
         err_sys("client requires a username parameter.");
 
+#ifdef NO_RSA
+    userEcc = 1;
+#endif
+
 #ifdef SINGLE_THREADED
     if (keepOpen)
         err_sys("Threading needed for terminal session\n");

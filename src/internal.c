@@ -679,12 +679,15 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
     if (type == BUFTYPE_PRIVKEY && format != WOLFSSH_FORMAT_RAW) {
         /* Check RSA key */
         union {
+#ifndef NO_RSA
             RsaKey rsa;
+#endif
             ecc_key ecc;
         } key;
         word32 scratch = 0;
         int ret;
 
+#ifndef NO_RSA
         if (wc_InitRsaKey(&key.rsa, NULL) < 0)
             return WS_RSA_E;
 
@@ -692,6 +695,7 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
         wc_FreeRsaKey(&key.rsa);
 
         if (ret < 0) {
+#endif
             /* Couldn't decode as RSA key. Try decoding as ECC key. */
             scratch = 0;
             if (wc_ecc_init_ex(&key.ecc, ctx->heap, INVALID_DEVID) != 0)
@@ -714,7 +718,9 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
 
             if (ret != 0)
                 return WS_BAD_FILE_E;
+#ifndef NO_RSA
         }
+#endif
     }
 
     return WS_SUCCESS;
@@ -2534,9 +2540,11 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         byte useRsa;
         word32 keySz;
         union {
+#ifndef NO_RSA
             struct {
                 RsaKey   key;
             } rsa;
+#endif
             struct {
                 ecc_key key;
             } ecc;
@@ -2733,6 +2741,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         sigKeyBlock.useRsa = ssh->handshake->pubKeyId == ID_SSH_RSA;
 
         if (sigKeyBlock.useRsa) {
+#ifndef NO_RSA
             byte* e;
             word32 eSz;
             byte* n;
@@ -2767,6 +2776,9 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 sigKeyBlock.keySz = sizeof(sigKeyBlock.sk.rsa.key);
             else
                 ret = WS_RSA_E;
+#else
+	    (void)tmpIdx;
+#endif
         }
         else {
             byte* q;
@@ -2901,6 +2913,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             }
             if (ret == WS_SUCCESS) {
                 if (sigKeyBlock.useRsa) {
+#ifndef NO_RSA
                     sig = sig + begin;
                     /* In the fuzz, sigSz ends up 1 and it has issues. */
                     sigSz = scratch;
@@ -2929,6 +2942,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                             ret = WS_RSA_E;
                         }
                     }
+#endif
                 }
                 else {
                     byte* r;
@@ -2966,8 +2980,11 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             }
         }
 
-        if (sigKeyBlock.useRsa)
+        if (sigKeyBlock.useRsa) {
+#ifndef NO_RSA
             wc_FreeRsaKey(&sigKeyBlock.sk.rsa.key);
+#endif
+        }
         else
             wc_ecc_free(&sigKeyBlock.sk.ecc.key);
     }
@@ -3558,7 +3575,7 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
     return ret;
 }
 
-
+#ifndef NO_RSA
 /* Utility for DoUserAuthRequestPublicKey() */
 /* returns negative for error, positive is size of digest. */
 static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
@@ -3678,6 +3695,7 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthRequestRsa(), ret = %d", ret);
     return ret;
 }
+#endif
 
 
 /* Utility for DoUserAuthRequestPublicKey() */
@@ -3962,9 +3980,12 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             }
 
             if (ret == WS_SUCCESS) {
-                if (pkTypeId == ID_SSH_RSA)
+                if (pkTypeId == ID_SSH_RSA) {
+#ifndef NO_RSA
                     ret = DoUserAuthRequestRsa(ssh, pk,
                                                hashId, digest, digestSz);
+#endif
+                }
                 else if (pkTypeId == ID_ECDSA_SHA2_NISTP256 ||
                          pkTypeId == ID_ECDSA_SHA2_NISTP384 ||
                          pkTypeId == ID_ECDSA_SHA2_NISTP521)
@@ -6056,6 +6077,7 @@ int SendKexDhReply(WOLFSSH* ssh)
         const char *name;
         word32 nameSz;
         union {
+#ifndef NO_RSA
             struct {
                 RsaKey key;
                 byte e[257];
@@ -6065,6 +6087,7 @@ int SendKexDhReply(WOLFSSH* ssh)
                 word32 nSz;
                 byte nPad;
             } rsa;
+#endif
             struct {
                 ecc_key key;
                 word32 keyBlobSz;
@@ -6134,6 +6157,7 @@ int SendKexDhReply(WOLFSSH* ssh)
      * either be RSA or ECDSA public key blob. */
     if (ret == WS_SUCCESS) {
         if (sigKeyBlock.useRsa) {
+#ifndef NO_RSA
             /* Decode the user-configured RSA private key. */
             sigKeyBlock.sk.rsa.eSz = sizeof(sigKeyBlock.sk.rsa.e);
             sigKeyBlock.sk.rsa.nSz = sizeof(sigKeyBlock.sk.rsa.n);
@@ -6223,6 +6247,7 @@ int SendKexDhReply(WOLFSSH* ssh)
                                     enmhashId,
                                     sigKeyBlock.sk.rsa.n,
                                     sigKeyBlock.sk.rsa.nSz);
+#endif
         }
         else {
             sigKeyBlock.sk.ecc.primeName =
@@ -6511,6 +6536,7 @@ int SendKexDhReply(WOLFSSH* ssh)
 
         if (ret == WS_SUCCESS) {
             if (sigKeyBlock.useRsa) {
+#ifndef NO_RSA
                 byte encSig[MAX_ENCODED_SIG_SZ];
                 word32 encSigSz;
 
@@ -6530,6 +6556,7 @@ int SendKexDhReply(WOLFSSH* ssh)
                         ret = WS_RSA_E;
                     }
                 }
+#endif
             }
             else {
                 WLOG(WS_LOG_INFO, "Signing hash with ECDSA.");
@@ -6573,10 +6600,14 @@ int SendKexDhReply(WOLFSSH* ssh)
         }
     }
 
-    if (sigKeyBlock.useRsa)
+    if (sigKeyBlock.useRsa) {
+#ifndef NO_RSA
         wc_FreeRsaKey(&sigKeyBlock.sk.rsa.key);
-    else
+#endif
+    }
+    else {
         wc_ecc_free(&sigKeyBlock.sk.ecc.key);
+    }
 
     sigBlockSz = (LENGTH_SZ * 2) + sigKeyBlock.nameSz + sigSz;
 
@@ -6605,6 +6636,7 @@ int SendKexDhReply(WOLFSSH* ssh)
         WMEMCPY(output + idx, sigKeyBlock.name, sigKeyBlock.nameSz);
         idx += sigKeyBlock.nameSz;
         if (sigKeyBlock.useRsa) {
+#ifndef NO_RSA
             c32toa(sigKeyBlock.sk.rsa.eSz + sigKeyBlock.sk.rsa.ePad,
                    output + idx);
             idx += LENGTH_SZ;
@@ -6617,6 +6649,7 @@ int SendKexDhReply(WOLFSSH* ssh)
             if (sigKeyBlock.sk.rsa.nPad) output[idx++] = 0;
             WMEMCPY(output + idx, sigKeyBlock.sk.rsa.n, sigKeyBlock.sk.rsa.nSz);
             idx += sigKeyBlock.sk.rsa.nSz;
+#endif
         }
         else {
             c32toa(sigKeyBlock.sk.ecc.primeNameSz, output + idx);
@@ -7282,6 +7315,7 @@ typedef struct WS_KeySignature {
     const char *name;
     word32 nameSz;
     union {
+#ifndef NO_RSA
         struct {
             RsaKey key;
             byte e[256];
@@ -7291,6 +7325,7 @@ typedef struct WS_KeySignature {
             word32 nSz;
             byte nPad;
         } rsa;
+#endif
         struct {
             ecc_key key;
             word32 keyBlobSz;
@@ -7352,6 +7387,7 @@ static int BuildUserAuthRequestPassword(WOLFSSH* ssh,
 }
 
 
+#ifndef NO_RSA
 static int PrepareUserAuthRequestRsa(WOLFSSH* ssh, word32* payloadSz,
         const WS_UserAuthData* authData, WS_KeySignature* keySig)
 {
@@ -7504,6 +7540,7 @@ static int BuildUserAuthRequestRsa(WOLFSSH* ssh,
 
     return ret;
 }
+#endif
 
 
 static int PrepareUserAuthRequestEcc(WOLFSSH* ssh, word32* payloadSz,
@@ -7725,8 +7762,11 @@ static int PrepareUserAuthRequestPublicKey(WOLFSSH* ssh, word32* payloadSz,
             authData->sf.publicKey.publicKeySz;
     }
 
-    if (keySig->keySigId == ID_SSH_RSA)
+    if (keySig->keySigId == ID_SSH_RSA) {
+#ifndef NO_RSA
         ret = PrepareUserAuthRequestRsa(ssh, payloadSz, authData, keySig);
+#endif
+    }
     else if (keySig->keySigId == ID_ECDSA_SHA2_NISTP256 ||
             keySig->keySigId == ID_ECDSA_SHA2_NISTP384 ||
             keySig->keySigId == ID_ECDSA_SHA2_NISTP521)
@@ -7766,9 +7806,12 @@ static int BuildUserAuthRequestPublicKey(WOLFSSH* ssh,
         begin += pk->publicKeySz;
 
         if (pk->hasSignature) {
-            if (keySig->keySigId == ID_SSH_RSA)
+            if (keySig->keySigId == ID_SSH_RSA) {
+#ifndef NO_RSA
                 ret = BuildUserAuthRequestRsa(ssh, output, &begin,
                         authData, sigStart, sigStartIdx, keySig);
+#endif
+            }
             else if (keySig->keySigId == ID_ECDSA_SHA2_NISTP256 ||
                     keySig->keySigId == ID_ECDSA_SHA2_NISTP384 ||
                     keySig->keySigId == ID_ECDSA_SHA2_NISTP521)
@@ -7789,8 +7832,11 @@ static int BuildUserAuthRequestPublicKey(WOLFSSH* ssh,
 static void CleanupUserAuthRequestPublicKey(WS_KeySignature* keySig)
 {
     if (keySig != NULL) {
-        if (keySig->keySigId == ID_SSH_RSA)
+        if (keySig->keySigId == ID_SSH_RSA) {
+#ifndef NO_RSA
             wc_FreeRsaKey(&keySig->ks.rsa.key);
+#endif
+        }
         else
             wc_ecc_free(&keySig->ks.ecc.key);
     }

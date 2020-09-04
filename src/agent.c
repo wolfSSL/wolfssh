@@ -379,6 +379,7 @@ static int PostUnlock(WOLFSSH_AGENT_CTX* agent,
 }
 
 
+#ifndef NO_RSA
 static int PostAddRsaId(WOLFSSH_AGENT_CTX* agent,
         byte keyType, byte* key, word32 keySz,
         word32 nSz, word32 eSz, word32 dSz,
@@ -457,6 +458,7 @@ static int PostAddRsaId(WOLFSSH_AGENT_CTX* agent,
     WLOG_LEAVE(ret);
     return ret;
 }
+#endif
 
 
 static int PostAddEcdsaId(WOLFSSH_AGENT_CTX* agent,
@@ -667,6 +669,7 @@ static int PostSignRequest(WOLFSSH_AGENT_CTX* agent,
         int sigSz = sizeof(sig);
 
         if (cur->keyType == ID_SSH_RSA) {
+#ifndef NO_RSA
             WOLFSSH_AGENT_KEY_RSA* key;
             RsaKey rsa;
             byte encSig[MAX_ENCODED_SIG_SZ];
@@ -708,6 +711,7 @@ static int PostSignRequest(WOLFSSH_AGENT_CTX* agent,
             wc_FreeRsaKey(&rsa);
             if (ret != 0)
                 ret = WS_RSA_E;
+#endif
         }
         else if (cur->keyType == ID_ECDSA_SHA2_NISTP256) {
             WOLFSSH_AGENT_KEY_ECDSA* key;
@@ -942,6 +946,7 @@ static int DoAddIdentity(WOLFSSH_AGENT_CTX* agent,
 
         begin += sz;
         if (keyType == ID_SSH_RSA) {
+#ifndef NO_RSA
             byte* key;
             byte* scratch;
             word32 keySz, nSz, eSz, dSz, iqmpSz, pSz, qSz, commentSz;
@@ -983,6 +988,7 @@ static int DoAddIdentity(WOLFSSH_AGENT_CTX* agent,
                 ret = PostAddRsaId(agent, keyType, key, keySz,
                         nSz, eSz, dSz, iqmpSz, pSz, qSz, commentSz);
             }
+#endif
         }
         else if (keyType == ID_ECDSA_SHA2_NISTP256 ||
                 keyType == ID_ECDSA_SHA2_NISTP384 ||

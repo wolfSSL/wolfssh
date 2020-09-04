@@ -1441,7 +1441,9 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
     else if (format == WOLFSSH_FORMAT_ASN1) {
         byte* newKey;
         union {
-            RsaKey rsa;
+            #ifndef NO_RSA
+                RsaKey rsa;
+            #endif
             ecc_key ecc;
         } testKey;
         word32 scratch = 0;
@@ -1459,7 +1461,7 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
         }
         *outSz = inSz;
         WMEMCPY(newKey, in, inSz);
-
+#ifndef NO_RSA
         /* TODO: This is copied and modified from a function in src/internal.c.
            This and that code should be combined into a single function. */
         if (wc_InitRsaKey(&testKey.rsa, heap) < 0)
@@ -1474,6 +1476,7 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
             *outTypeSz = (word32)WSTRLEN((const char*)*outType);
         }
         else {
+#endif
             /* Couldn't decode as RSA testKey. Try decoding as ECC testKey. */
             scratch = 0;
             if (wc_ecc_init_ex(&testKey.ecc, heap, INVALID_DEVID) != 0)
@@ -1489,7 +1492,9 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
             }
             else
                 return WS_BAD_FILE_E;
+#ifndef NO_RSA
         }
+#endif
     }
     else
         ret = WS_ERROR;
