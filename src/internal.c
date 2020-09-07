@@ -33,7 +33,9 @@
 #include <wolfssh/internal.h>
 #include <wolfssh/log.h>
 #include <wolfssl/wolfcrypt/asn.h>
-#include <wolfssl/wolfcrypt/dh.h>
+#ifndef NO_DH
+    #include <wolfssl/wolfcrypt/dh.h>
+#endif
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfssl/wolfcrypt/hmac.h>
@@ -365,9 +367,11 @@ static HandshakeInfo* HandshakeInfoNew(void* heap)
         newHs->macId = ID_NONE;
         newHs->blockSz = MIN_BLOCK_SZ;
         newHs->hashId = WC_HASH_TYPE_NONE;
+#ifndef NO_DH
         newHs->dhGexMinSz = WOLFSSH_DEFAULT_GEXDH_MIN;
         newHs->dhGexPreferredSz = WOLFSSH_DEFAULT_GEXDH_PREFERRED;
         newHs->dhGexMaxSz = WOLFSSH_DEFAULT_GEXDH_MAX;
+#endif
     }
 
     return newHs;
@@ -381,8 +385,10 @@ static void HandshakeInfoFree(HandshakeInfo* hs, void* heap)
     WLOG(WS_LOG_DEBUG, "Entering HandshakeInfoFree()");
     if (hs) {
         WFREE(hs->kexInit, heap, DYNTYPE_STRING);
+#ifndef NO_DH
         WFREE(hs->primeGroup, heap, DYNTYPE_MPINT);
         WFREE(hs->generator, heap, DYNTYPE_MPINT);
+#endif
         ForceZero(hs, sizeof(HandshakeInfo));
         WFREE(hs, heap, DYNTYPE_HS);
     }
@@ -2400,7 +2406,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     return ret;
 }
 
-
+#ifndef NO_DH
 static const byte dhGenerator[] = { 2 };
 static const byte dhPrimeGroup1[] = {
     /* SSH DH Group 1 (Oakley Group 2, 1024-bit MODP Group, RFC 2409) */
@@ -2460,6 +2466,7 @@ static const byte dhPrimeGroup14[] = {
 static const word32 dhGeneratorSz = sizeof(dhGenerator);
 static const word32 dhPrimeGroup1Sz = sizeof(dhPrimeGroup1);
 static const word32 dhPrimeGroup14Sz = sizeof(dhPrimeGroup14);
+#endif
 
 
 static int DoKexDhInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
@@ -2608,6 +2615,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     if (ret == WS_SUCCESS)
         begin += pubKeySz;
 
+#ifndef NO_DH
     /* If using DH-GEX include the GEX specific values. */
     if (ret == WS_SUCCESS && ssh->handshake->kexId == ID_DH_GEX_SHA256) {
         byte primeGroupPad = 0, generatorPad = 0;
@@ -2688,6 +2696,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                                 ssh->handshake->generator,
                                 ssh->handshake->generatorSz);
     }
+#endif
 
     /* Hash in the size of the client's DH e-value (ECDH Q-value). */
     if (ret == 0) {
@@ -2829,12 +2838,14 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         /* Generate and hash in the shared secret */
         if (ret == 0) {
             if (!ssh->handshake->useEcc) {
+#ifndef NO_DH
                 ret = wc_DhAgree(&ssh->handshake->privKey.dh,
                                  ssh->k, &ssh->kSz,
                                  ssh->handshake->x, ssh->handshake->xSz,
                                  f, fSz);
                 ForceZero(ssh->handshake->x, ssh->handshake->xSz);
                 wc_FreeDhKey(&ssh->handshake->privKey.dh);
+#endif
             }
             else {
                 ecc_key key;
@@ -3075,6 +3086,7 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 }
 
 
+#ifndef NO_DH
 static int DoKexDhGexRequest(WOLFSSH* ssh,
                              byte* buf, word32 len, word32* idx)
 {
@@ -3163,6 +3175,7 @@ static int DoKexDhGexGroup(WOLFSSH* ssh,
 
     return ret;
 }
+#endif
 
 
 static int DoIgnore(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
@@ -4884,7 +4897,7 @@ static int DoPacket(WOLFSSH* ssh)
     byte padSz;
     byte msg;
     word32 payloadIdx = 0;
-    int ret;
+    int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "DoPacket sequence number: %d", ssh->peerSeq);
 
@@ -4963,8 +4976,10 @@ static int DoPacket(WOLFSSH* ssh)
             }
 
             if (ssh->handshake->kexId == ID_DH_GEX_SHA256) {
+#ifndef NO_DH
                 WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_GEX_GROUP");
                 ret = DoKexDhGexGroup(ssh, buf + idx, payloadSz, &payloadIdx);
+#endif
             }
             else {
                 WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_REPLY");
@@ -4972,10 +4987,12 @@ static int DoPacket(WOLFSSH* ssh)
             }
             break;
 
+#ifndef NO_DH
         case MSGID_KEXDH_GEX_REQUEST:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_GEX_REQUEST");
             ret = DoKexDhGexRequest(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
+#endif
 
         case MSGID_KEXDH_GEX_INIT:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_GEX_INIT");
@@ -5908,8 +5925,9 @@ static const char cannedKexAlgoNames[] =
     ","
 #endif
 #if !defined(WOLFSSH_NO_DH_GROUP1_SHA1)
-    "diffie-hellman-group1-sha1";
+    "diffie-hellman-group1-sha1"
 #endif
+    ; /* This is a little awkward. */
 #if defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && defined(WOLFSSH_NO_DH_GEX_SHA256)\
  && defined(WOLFSSH_NO_DH_GROUP14_SHA1) && defined(WOLFSSH_NO_DH_GROUP1_SHA1)
     #warning "You need at least one of ECDH-SHA2-NISTP256, DH-GEX-SHA256, "
@@ -6060,10 +6078,12 @@ int SendKexInit(WOLFSSH* ssh)
 int SendKexDhReply(WOLFSSH* ssh)
 {
 /* This function and DoKexDhReply() are unwieldy and in need of refactoring. */
+#ifndef NO_DH
     const byte* primeGroup = dhPrimeGroup14;
     word32 primeGroupSz = dhPrimeGroup14Sz;
     const byte* generator = dhGenerator;
     word32 generatorSz = dhGeneratorSz;
+#endif
 
     byte useEcc = 0;
     byte f[257];
@@ -6126,6 +6146,7 @@ int SendKexDhReply(WOLFSSH* ssh)
     sigKeyBlock.nameSz = (word32)strlen(sigKeyBlock.name);
 
     switch (ssh->handshake->kexId) {
+#ifndef NO_DH
         case ID_DH_GROUP1_SHA1:
             primeGroup = dhPrimeGroup1;
             primeGroupSz = dhPrimeGroup1Sz;
@@ -6138,6 +6159,7 @@ int SendKexDhReply(WOLFSSH* ssh)
         case ID_DH_GEX_SHA256:
             msgId = MSGID_KEXDH_GEX_REPLY;
             break;
+#endif
 
         case ID_ECDH_SHA2_NISTP256:
         case ID_ECDH_SHA2_NISTP384:
@@ -6320,7 +6342,7 @@ int SendKexDhReply(WOLFSSH* ssh)
                                     sigKeyBlock.sk.ecc.q,
                                     sigKeyBlock.sk.ecc.qSz);
         }
-
+#ifndef NO_DH
         /* If using DH-GEX include the GEX specific values. */
         if (ssh->handshake->kexId == ID_DH_GEX_SHA256) {
             byte primeGroupPad = 0, generatorPad = 0;
@@ -6395,6 +6417,7 @@ int SendKexDhReply(WOLFSSH* ssh)
                                     enmhashId,
                                     generator, generatorSz);
         }
+#endif
 
         /* Hash in the size of the client's DH e-value (ECDH Q-value). */
         if (ret == 0) {
@@ -6411,6 +6434,7 @@ int SendKexDhReply(WOLFSSH* ssh)
         /* Or make the server's ECDH private value, and the shared secret K. */
         if (ret == 0) {
             if (!useEcc) {
+#ifndef NO_DH
                 DhKey privKey;
                 byte y[MAX_KEX_KEY_SZ];
                 word32 ySz = sizeof(y);
@@ -6427,6 +6451,7 @@ int SendKexDhReply(WOLFSSH* ssh)
                                      ssh->handshake->e, ssh->handshake->eSz);
                 ForceZero(y, ySz);
                 wc_FreeDhKey(&privKey);
+#endif
             }
             else {
                 ecc_key pubKey;
@@ -6773,6 +6798,7 @@ int SendNewKeys(WOLFSSH* ssh)
 }
 
 
+#ifndef NO_DH
 int SendKexDhGexRequest(WOLFSSH* ssh)
 {
     byte* output;
@@ -6888,6 +6914,7 @@ int SendKexDhGexGroup(WOLFSSH* ssh)
     WLOG(WS_LOG_DEBUG, "Leaving SendKexDhGexGroup(), ret = %d", ret);
     return ret;
 }
+#endif
 
 
 int SendKexDhInit(WOLFSSH* ssh)
@@ -6895,10 +6922,12 @@ int SendKexDhInit(WOLFSSH* ssh)
     byte* output;
     word32 idx = 0;
     word32 payloadSz;
+#ifndef NO_DH
     const byte* primeGroup = dhPrimeGroup14;
     word32 primeGroupSz = dhPrimeGroup14Sz;
     const byte* generator = dhGenerator;
     word32 generatorSz = dhGeneratorSz;
+#endif
     int ret = WS_SUCCESS;
     byte msgId = MSGID_KEXDH_INIT;
     byte e[MAX_KEX_KEY_SZ+1]; /* plus 1 in case of padding. */
@@ -6908,6 +6937,7 @@ int SendKexDhInit(WOLFSSH* ssh)
     WLOG(WS_LOG_DEBUG, "Entering SendKexDhInit()");
 
     switch (ssh->handshake->kexId) {
+#ifndef NO_DH
         case ID_DH_GROUP1_SHA1:
             primeGroup = dhPrimeGroup1;
             primeGroupSz = dhPrimeGroup1Sz;
@@ -6924,6 +6954,7 @@ int SendKexDhInit(WOLFSSH* ssh)
             generatorSz = ssh->handshake->generatorSz;
             msgId = MSGID_KEXDH_GEX_INIT;
             break;
+#endif
 
         case ID_ECDH_SHA2_NISTP256:
         case ID_ECDH_SHA2_NISTP384:
@@ -6940,6 +6971,7 @@ int SendKexDhInit(WOLFSSH* ssh)
 
     if (ret == WS_SUCCESS) {
         if (!ssh->handshake->useEcc) {
+#ifndef NO_DH
             DhKey* privKey = &ssh->handshake->privKey.dh;
 
             ret = wc_InitDhKey(privKey);
@@ -6951,6 +6983,7 @@ int SendKexDhInit(WOLFSSH* ssh)
                                            ssh->handshake->x,
                                            &ssh->handshake->xSz,
                                            e, &eSz);
+#endif
         }
         else {
             ecc_key* privKey = &ssh->handshake->privKey.ecc;

@@ -722,8 +722,11 @@ int wolfSSH_connect(WOLFSSH* ssh)
                 return WS_FATAL_ERROR;
             }
 
-            if (ssh->handshake->kexId == ID_DH_GEX_SHA256)
+            if (ssh->handshake->kexId == ID_DH_GEX_SHA256) {
+#ifndef NO_DH
                 ssh->error = SendKexDhGexRequest(ssh);
+#endif
+            }
             else
                 ssh->error = SendKexDhInit(ssh);
             if (ssh->error < WS_SUCCESS) {
