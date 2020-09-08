@@ -1403,7 +1403,7 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
            SSH format is:
            type AAAABASE64ENCODEDKEYDATA comment
         */
-        c = WSTRDUP((const char*)in, heap);
+        c = WSTRDUP((const char*)in, heap, DYNTYPE_STRING);
         type = WSTRTOK(c, " \n", &last);
         key = WSTRTOK(NULL, " \n", &last);
 
