@@ -1602,6 +1602,12 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     }
 #endif
 
+#ifdef NO_RSA
+    /* If wolfCrypt isn't built with RSA, force ECC on. */
+    userEcc = 1;
+    peerEcc = 1;
+#endif
+
     if (wolfSSH_Init() != WS_SUCCESS) {
         fprintf(stderr, "Couldn't initialize wolfSSH.\n");
         exit(EXIT_FAILURE);

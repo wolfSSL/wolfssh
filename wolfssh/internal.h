@@ -270,6 +270,7 @@ typedef struct HandshakeInfo {
     byte* kexInit;
     word32 kexInitSz;
 
+#ifndef NO_DH
     word32 dhGexMinSz;
     word32 dhGexPreferredSz;
     word32 dhGexMaxSz;
@@ -277,10 +278,13 @@ typedef struct HandshakeInfo {
     word32 primeGroupSz;
     byte* generator;
     word32 generatorSz;
+#endif
 
     byte useEcc;
     union {
+#ifndef NO_DH
         DhKey dh;
+#endif
         ecc_key ecc;
     } privKey;
 } HandshakeInfo;
