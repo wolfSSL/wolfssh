@@ -5244,6 +5244,7 @@ static INLINE int CreateMac(WOLFSSH* ssh, const byte* in, word32 inSz,
                     ret = wc_HmacFinal(&hmac, digest);
                 if (ret == WS_SUCCESS)
                     WMEMCPY(mac, digest, SHA1_96_SZ);
+                wc_HmacFree(&hmac);
             }
             break;
 
@@ -5261,6 +5262,7 @@ static INLINE int CreateMac(WOLFSSH* ssh, const byte* in, word32 inSz,
                     ret = wc_HmacUpdate(&hmac, in, inSz);
                 if (ret == WS_SUCCESS)
                     ret = wc_HmacFinal(&hmac, mac);
+                wc_HmacFree(&hmac);
             }
             break;
 
@@ -5279,6 +5281,7 @@ static INLINE int CreateMac(WOLFSSH* ssh, const byte* in, word32 inSz,
                     ret = wc_HmacUpdate(&hmac, in, inSz);
                 if (ret == WS_SUCCESS)
                     ret = wc_HmacFinal(&hmac, mac);
+                wc_HmacFree(&hmac);
             }
             break;
 
@@ -5347,6 +5350,7 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const byte* in, word32 inSz,
             default:
                 ret = WS_INVALID_ALGO_ID;
         }
+        wc_HmacFree(&hmac);
     }
 
     return ret;
