@@ -51,12 +51,54 @@ static void err_msg(const char* s)
     printf("%s\n", s);
 }
 
+
+#ifndef WOLFSSH_NO_TIMESTAMP
+    #include <sys/time.h>
+
+    static char   currentFile[WOLFSSH_MAX_FILENAME] = "";
+    static double startTime;
+    #define TIMEOUT_VALUE 60
+
+    double current_time(int);
+    double current_time(int reset)
+    {
+        struct timeval tv;
+
+        (void)reset;
+
+        gettimeofday(&tv, 0);
+
+        return (double)tv.tv_sec + (double)tv.tv_usec / 1000000;
+    }
+#endif
+
+
 static void myStatusCb(WOLFSSH* sshIn, word32* bytes, char* name)
 {
+    double currentTime;
     char buf[80];
     word64 longBytes = ((word64)bytes[1] << 32) | bytes[0];
+
+#ifndef WOLFSSH_NO_TIMESTAMP
+    if (WSTRNCMP(currentFile, name, WSTRLEN(name)) != 0) {
+        startTime = current_time(1);
+        WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
+        WSTRNCPY(currentFile, name, WSTRLEN(name));
+    }
+    currentTime = current_time(0) - startTime;
+    WSNPRINTF(buf, sizeof(buf), "Processed %8llu\t bytes in %.2f seconds\r",
+            (unsigned long long)longBytes, currentTime);
+    if (currentTime > TIMEOUT_VALUE) {
+        WSNPRINTF(buf, sizeof(buf), "\nProcess timed out at %.2fs, stopping\r",
+            currentTime);
+        WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
+        wolfSSH_SFTP_Interrupt(ssh);
+    }
+#else
     WSNPRINTF(buf, sizeof(buf), "Processed %8llu\t bytes \r",
             (unsigned long long)longBytes);
+    (void)currentTime;
+#endif
     WFPUTS(buf, fout);
     (void)name;
     (void)sshIn;
