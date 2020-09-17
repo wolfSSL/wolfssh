@@ -55,9 +55,9 @@ static void err_msg(const char* s)
 #ifndef WOLFSSH_NO_TIMESTAMP
     #include <sys/time.h>
 
-    static char   currentFile[WOLFSSH_MAX_FILENAME] = "";
+    static char   currentFile[WOLFSSH_MAX_FILENAME+1] = "";
     static double startTime;
-    #define TIMEOUT_VALUE 60
+    #define TIMEOUT_VALUE 120
 
     double current_time(int);
     double current_time(int reset)
@@ -83,7 +83,7 @@ static void myStatusCb(WOLFSSH* sshIn, word32* bytes, char* name)
     if (WSTRNCMP(currentFile, name, WSTRLEN(name)) != 0) {
         startTime = current_time(1);
         WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
-        WSTRNCPY(currentFile, name, WSTRLEN(name));
+        WSTRNCPY(currentFile, name, WOLFSSH_MAX_FILENAME);
     }
     currentTime = current_time(0) - startTime;
     WSNPRINTF(buf, sizeof(buf), "Processed %8llu\t bytes in %.2f seconds\r",
