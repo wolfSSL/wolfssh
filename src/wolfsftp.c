@@ -7726,7 +7726,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                         }
                         WLOG(WS_LOG_SFTP, "Error reading packet");
                         ret = WS_FATAL_ERROR;
-                        state->state = STATE_GET_CLEANUP;
+                        state->state = STATE_GET_CLOSE_LOCAL;
                         break;
                     }
                     else {
@@ -7928,7 +7928,7 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                         return WS_FATAL_ERROR;
                     }
                     WLOG(WS_LOG_SFTP, "Error getting handle");
-                    state->state = STATE_PUT_CLEANUP;
+                    state->state = STATE_PUT_CLOSE_LOCAL;
                     continue;
                 }
                 state->state = STATE_PUT_WRITE;
