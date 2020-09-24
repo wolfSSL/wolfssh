@@ -3950,8 +3950,10 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
 
             pkTypeId = NameToId((char*)pk->publicKeyType,
                                 pk->publicKeyTypeSz);
-            if (pkTypeId == ID_UNKNOWN)
+            if (pkTypeId == ID_UNKNOWN) {
+                WLOG(WS_LOG_DEBUG, "DUARPK: Unknown / Unsupported key type");
                 ret = WS_INVALID_ALGO_ID;
+            }
 
             if (ret == WS_SUCCESS) {
                 hashId = HashForId(pkTypeId);
@@ -4007,7 +4009,8 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             }
 
             if (ret != WS_SUCCESS) {
-                WLOG(WS_LOG_DEBUG, "DUARPK: signature compare failure");
+                WLOG(WS_LOG_DEBUG, "DUARPK: signature compare failure : [%d]",
+                        ret);
                 ret = SendUserAuthFailure(ssh, 0);
             }
             else {
