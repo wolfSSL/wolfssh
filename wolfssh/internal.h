@@ -25,7 +25,8 @@
  */
 
 
-#pragma once
+#ifndef _WOLFSSH_INTERNAL_H_
+#define _WOLFSSH_INTERNAL_H_
 
 #include <wolfssh/ssh.h>
 #include <wolfssh/wolfsftp.h>
@@ -899,4 +900,6 @@ enum TerminalModes {
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* _WOLFSSH_INTERNAL_H_ */
 

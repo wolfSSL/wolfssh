@@ -18,7 +18,6 @@
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#pragma once
 
 #ifndef _WOLFSSH_TEST_H_
 #define _WOLFSSH_TEST_H_
@@ -887,3 +886,4 @@ static INLINE void ThreadDetach(THREAD_TYPE thread)
 #endif /* WOLFSSH_TEST_THREADING */
 
 #endif /* _WOLFSSH_TEST_H_ */
+

@@ -18,7 +18,10 @@
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#pragma once
+
+#ifndef _WOLFSSH_WOLFSFTP_H_
+#define _WOLFSSH_WOLFSFTP_H_
+
 
 #ifdef WOLFSSL_USER_SETTINGS
     #include <wolfssl/wolfcrypt/settings.h>
@@ -241,3 +244,6 @@ WOLFSSH_LOCAL void wolfSSH_SFTP_ShowSizes(void);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* _WOLFSSH_WOLFSFTP_H_ */
+
