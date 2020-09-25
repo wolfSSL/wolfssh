@@ -1413,24 +1413,13 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
         if (type != NULL && key != NULL) {
             const char* name;
             word32 typeSz;
+            byte nameId;
 
             typeSz = (word32)WSTRLEN(type);
 
-            name = IdToName(ID_SSH_RSA);
-            if (WSTRNCMP(type, name, typeSz) == 0) {
-                *outType = (const byte*)name;
-            }
-            else {
-                name = IdToName(ID_ECDSA_SHA2_NISTP256);
-                if (WSTRNCMP(type, name, typeSz) == 0) {
-                    *outType = (const byte*)name;
-                }
-                else {
-                    name = IdToName(ID_UNKNOWN);
-                    *outType = (const byte*)name;
-                    typeSz = (word32)WSTRLEN(name);
-                }
-            }
+            nameId = NameToId(type, typeSz);
+            name = IdToName(nameId);
+            *outType = (const byte*)name;
             *outTypeSz = typeSz;
 
             ret = Base64_Decode((byte*)key, (word32)WSTRLEN(key), *out, outSz);
@@ -1480,6 +1469,8 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
         }
         else {
 #endif
+            byte curveId = ID_UNKNOWN;
+
             /* Couldn't decode as RSA testKey. Try decoding as ECC testKey. */
             scratch = 0;
             if (wc_ecc_init_ex(&testKey.ecc, heap, INVALID_DEVID) != 0)
@@ -1487,11 +1478,23 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
 
             ret = wc_EccPrivateKeyDecode(in, &scratch,
                                          &testKey.ecc, inSz);
+            switch (wc_ecc_get_curve_id(testKey.ecc.idx)) {
+                case ECC_SECP256R1:
+                    curveId = ID_ECDSA_SHA2_NISTP256;
+                    break;
+                case ECC_SECP384R1:
+                    curveId = ID_ECDSA_SHA2_NISTP384;
+                    break;
+                case ECC_SECP521R1:
+                    curveId = ID_ECDSA_SHA2_NISTP521;
+                    break;
+            }
             wc_ecc_free(&testKey.ecc);
 
             if (ret == 0) {
-                *outType = (const byte*)IdToName(ID_ECDH_SHA2_NISTP256);
+                *outType = (const byte*)IdToName(curveId);
                 *outTypeSz = (word32)WSTRLEN((const char*)*outType);
+                printf("%s\n", *outType);
             }
             else
                 return WS_BAD_FILE_E;
