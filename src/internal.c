@@ -7650,7 +7650,7 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
     int ret = WS_SUCCESS;
     byte* r;
     byte* s;
-    byte sig[72]; /* wc_ecc_sig_size() for a prime256 key. */
+    byte sig[139]; /* wc_ecc_sig_size() for a prime521 key. */
     word32 sigSz = sizeof(sig), rSz, sSz;
     byte* checkData = NULL;
     word32 checkDataSz = 0;
