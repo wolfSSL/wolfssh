@@ -27,7 +27,8 @@
  */
 
 
-#pragma once
+#ifndef _WOLFSSH_PORT_H_
+#define _WOLFSSH_PORT_H_
 
 #include <wolfssh/settings.h>
 #include <wolfssh/log.h>
@@ -1110,4 +1111,6 @@ extern "C" {
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* _WOLFSSH_PORT_H_ */
 
