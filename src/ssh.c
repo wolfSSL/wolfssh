@@ -1494,7 +1494,6 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
             if (ret == 0) {
                 *outType = (const byte*)IdToName(curveId);
                 *outTypeSz = (word32)WSTRLEN((const char*)*outType);
-                printf("%s\n", *outType);
             }
             else
                 return WS_BAD_FILE_E;
