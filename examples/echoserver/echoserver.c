@@ -896,6 +896,7 @@ static int shell_worker(thread_ctx_t* threadCtx)
  * returns 0 on success
  */
 static int sftp_worker(thread_ctx_t* threadCtx) {
+    byte tmp[1];
     int ret   = WS_SUCCESS;
     int error = WS_SUCCESS;
     SOCKET_T sockfd;
@@ -910,7 +911,13 @@ static int sftp_worker(thread_ctx_t* threadCtx) {
                 printf("... sftp server would write block\n");
         }
 
-        select_ret = tcp_select(sockfd, TEST_SFTP_TIMEOUT);
+        if (wolfSSH_stream_peek(threadCtx->ssh, tmp, 1) > 0) {
+            select_ret = WS_SELECT_RECV_READY;
+        }
+        else {
+            select_ret = tcp_select(sockfd, TEST_SFTP_TIMEOUT);
+        }
+
         if (select_ret == WS_SELECT_RECV_READY ||
             select_ret == WS_SELECT_ERROR_READY ||
             error == WS_WANT_WRITE)
