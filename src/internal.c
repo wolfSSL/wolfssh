@@ -1770,6 +1770,21 @@ int GetUint32(word32* v, const byte* buf, word32 len, word32* idx)
 }
 
 
+int GetSize(word32* v, const byte* buf, word32 len, word32* idx)
+{
+    int result;
+
+    result = GetUint32(v, buf, len, idx);
+    if (result == WS_SUCCESS) {
+        if (*v + *idx > len) {
+            result = WS_BUFFER_E;
+        }
+    }
+
+    return result;
+}
+
+
 /* Gets the size of the mpint, and puts the pointer to the start of
  * buf's number into *mpint. This function does not copy. */
 int GetMpint(word32* mpintSz, byte** mpint, byte* buf, word32 len, word32* idx)
@@ -4140,24 +4155,12 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
     }
 
     if (ret == WS_SUCCESS)
-        ret = GetUint32(&pk->publicKeyTypeSz, buf, len, &begin);
-
-    if (ret == WS_SUCCESS) {
-        if (pk->publicKeyTypeSz > len - begin) {
-            ret = WS_BUFFER_E;
-        }
-    }
+        ret = GetSize(&pk->publicKeyTypeSz, buf, len, &begin);
 
     if (ret == WS_SUCCESS) {
         pk->publicKeyType = buf + begin;
         begin += pk->publicKeyTypeSz;
-        ret = GetUint32(&pk->publicKeySz, buf, len, &begin);
-    }
-
-    if (ret == WS_SUCCESS) {
-        if (pk->publicKeySz > len - begin) {
-            ret = WS_BUFFER_E;
-        }
+        ret = GetSize(&pk->publicKeySz, buf, len, &begin);
     }
 
     if (ret == WS_SUCCESS) {
@@ -4165,12 +4168,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
         begin += pk->publicKeySz;
 
         if (pk->hasSignature) {
-            ret = GetUint32(&pk->signatureSz, buf, len, &begin);
-            if (ret == WS_SUCCESS) {
-                if (pk->signatureSz > len - begin) {
-                    ret = WS_BUFFER_E;
-                }
-            }
+            ret = GetSize(&pk->signatureSz, buf, len, &begin);
             if (ret == WS_SUCCESS) {
                 pk->signature = buf + begin;
                 begin += pk->signatureSz;
