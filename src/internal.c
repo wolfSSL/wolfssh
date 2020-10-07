@@ -3887,9 +3887,21 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
         ret = GetUint32(&pk->publicKeyTypeSz, buf, len, &begin);
 
     if (ret == WS_SUCCESS) {
+        if (pk->publicKeyTypeSz > len - begin) {
+            ret = WS_BUFFER_E;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
         pk->publicKeyType = buf + begin;
         begin += pk->publicKeyTypeSz;
         ret = GetUint32(&pk->publicKeySz, buf, len, &begin);
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (pk->publicKeySz > len - begin) {
+            ret = WS_BUFFER_E;
+        }
     }
 
     if (ret == WS_SUCCESS) {
@@ -3898,6 +3910,11 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
 
         if (pk->hasSignature) {
             ret = GetUint32(&pk->signatureSz, buf, len, &begin);
+            if (ret == WS_SUCCESS) {
+                if (pk->signatureSz > len - begin) {
+                    ret = WS_BUFFER_E;
+                }
+            }
             if (ret == WS_SUCCESS) {
                 pk->signature = buf + begin;
                 begin += pk->signatureSz;
@@ -4044,10 +4061,22 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS) {
+        if (authData.usernameSz > len - begin) {
+            ret = WS_BUFFER_E;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
         authData.username = buf + begin;
         begin += authData.usernameSz;
 
         ret = GetUint32(&authData.serviceNameSz, buf, len, &begin);
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (authData.serviceNameSz > len - begin) {
+            ret = WS_BUFFER_E;
+        }
     }
 
     if (ret == WS_SUCCESS) {
