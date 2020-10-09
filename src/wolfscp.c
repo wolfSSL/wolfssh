@@ -1054,9 +1054,11 @@ static int ScpCheckForRename(WOLFSSH* ssh, int cmdSz)
     WSTRNCPY(buf, ssh->scpBasePath, cmdSz);
     buf[sz] = '\0';
     WSTRNCAT(buf, "/..", sizeof("/.."));
-    clean_path(buf);
-
-    idx = (int)WSTRLEN(buf) + 1; /* +1 for delimiter */
+    idx = wolfSSH_CleanPath(ssh, buf);
+    if (idx < 0) {
+        return WS_FATAL_ERROR;
+    }
+    idx = idx + 1; /* +1 for delimiter */
 #ifdef WOLFSSL_NUCLEUS
     /* no delimiter to skip in case of at base address */
     if (idx == 4) { /* case of 4 for drive letter plus ":\" + 1 */
@@ -1219,7 +1221,8 @@ int ParseScpCommand(WOLFSSH* ssh)
                         #endif
                         }
                         ret = ParseBasePathHelper(ssh, cmdSz);
-                        clean_path((char*)ssh->scpBasePath);
+                        if (wolfSSH_CleanPath(ssh, (char*)ssh->scpBasePath) < 0)
+                            ret = WS_FATAL_ERROR;
                         break;
 
                     case 'f':
@@ -1239,7 +1242,9 @@ int ParseScpCommand(WOLFSSH* ssh)
                         #else
                             ssh->scpBasePath = cmd + idx;
                         #endif
-                            clean_path((char*)ssh->scpBasePath);
+                            if (wolfSSH_CleanPath(ssh,
+                                        (char*)ssh->scpBasePath) < 0)
+                                ret = WS_FATAL_ERROR;
                         }
                         break;
                 } /* end switch */
@@ -1787,8 +1792,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             {
                 DSTAT stat;
 
-                clean_path((char*)basePath);
-
+                wolfSSH_CleanPath(ssh, (char*)basePath);
                 /* make sure is directory */
                 if ((ret = NU_Get_First(&stat, basePath)) != NU_SUCCESS) {
                     /* if back to root directory i.e. A:/ then handle case
@@ -1830,7 +1834,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             WSTRNCAT(abslut, (char*)basePath, WOLFSSH_MAX_FILENAME);
             WSTRNCAT(abslut, "/", WOLFSSH_MAX_FILENAME);
             WSTRNCAT(abslut, fileName, WOLFSSH_MAX_FILENAME);
-            clean_path(abslut);
+            wolfSSH_CleanPath(ssh, abslut);
             if (WFOPEN(&fp, abslut, "wb") != 0) {
         #else
             if (WFOPEN(&fp, fileName, "wb") != 0) {
@@ -1888,7 +1892,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                 WSTRNCAT(abslut, (char*)basePath, WOLFSSH_MAX_FILENAME);
                 WSTRNCAT(abslut, "/", WOLFSSH_MAX_FILENAME);
                 WSTRNCAT(abslut, fileName, WOLFSSH_MAX_FILENAME);
-                clean_path(abslut);
+                wolfSSH_CleanPath(ssh, abslut);
                 if (WMKDIR(ssh->fs, abslut, fileMode) != 0) {
                     /* check if directory already exists */
                     if (NU_Make_Dir(abslut) != NUF_EXIST) {
@@ -1912,7 +1916,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             #ifdef WOLFSSL_NUCLEUS
                 WSTRNCAT((char*)basePath, "/", sizeof("/"));
                 WSTRNCAT((char*)basePath, fileName, WOLFSSH_MAX_FILENAME);
-                clean_path((char*)basePath);
+                wolfSSH_CleanPath(ssh, (char*)basePath);
             #else
                 if (WCHDIR(fileName) != 0) {
                     wolfSSH_SetScpErrorMsg(ssh, "unable to cd into directory");
@@ -1927,7 +1931,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             /* cd out of directory */
         #ifdef WOLFSSL_NUCLEUS
                 WSTRNCAT((char*)basePath, "/..", WOLFSSH_MAX_FILENAME - 1);
-                clean_path((char*)basePath);
+                wolfSSH_CleanPath(ssh, (char*)basePath);
         #else
             if (WCHDIR("..") != 0) {
                 wolfSSH_SetScpErrorMsg(ssh, "unable to cd out of directory");
@@ -2217,15 +2221,18 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
                  DEFAULT_SCP_FILE_NAME_SZ);
             WSTRNCPY(fileName, sendCtx->currentDir->dir.lfname,
                  DEFAULT_SCP_FILE_NAME_SZ);
-            clean_path(filePath);
+            if (wolfSSH_CleanPath(ssh, filePath) < 0) {
+                ret = WS_SCP_ABORT;
+            }
         #else
             WSTRNCAT(filePath, sendCtx->entry->d_name,
                      DEFAULT_SCP_FILE_NAME_SZ);
             WSTRNCPY(fileName, sendCtx->entry->d_name,
                      DEFAULT_SCP_FILE_NAME_SZ);
         #endif
-            ret = GetFileStats(sendCtx, filePath, mTime, aTime,
-                               fileMode);
+            if (ret == WS_SUCCESS) {
+                ret = GetFileStats(sendCtx, filePath, mTime, aTime, fileMode);
+            }
         }
     }
 
