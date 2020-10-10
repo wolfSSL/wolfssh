@@ -164,6 +164,7 @@ extern "C" {
     #define WFTELL(s)           ftell((s))
     #define WREWIND(s)          fseek((s), 0, IO_SEEK_SET)
     #define WSEEK_END           IO_SEEK_END
+    #define WBADFILE            NULL
 
     static inline int wChmod(void* fs, const char* f, int mode)
     {

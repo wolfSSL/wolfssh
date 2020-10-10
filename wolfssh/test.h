@@ -22,11 +22,12 @@
 #ifndef _WOLFSSH_TEST_H_
 #define _WOLFSSH_TEST_H_
 
-
+#ifndef NO_STDIO_FILESYSTEM
 #include <stdio.h>
 /*#include <stdlib.h>*/
 #include <ctype.h>
 /*#include <wolfssh/error.h>*/
+#endif
 
 #ifdef USE_WINDOWS_API
     #ifndef _WIN32_WCE
@@ -95,7 +96,12 @@
 
     #define sin_family family
     #define sin_port port
+#elif defined(FREESCALE_MQX)
+    #ifndef SO_NOSIGPIPE
+        #include <signal.h>  /* ignore SIGPIPE */
+    #endif
 
+    #define NUM_SOCKETS 5
 #else /* USE_WINDOWS_API */
     #include <unistd.h>
     #include <netdb.h>
@@ -134,7 +140,7 @@
 #endif /* WOLFSSL_SOCKET_IS_INVALID */
 
 
-#if defined(__MACH__) || defined(USE_WINDOWS_API)
+#if defined(__MACH__) || defined(USE_WINDOWS_API) || defined(FREESCALE_MQX)
     #ifndef _SOCKLEN_T
         typedef int socklen_t;
     #endif
@@ -171,7 +177,7 @@
         #define WOLFSSH_THREAD
         #define INFINITE -1
         #define WAIT_OBJECT_0 0L
-    #elif defined(WOLFSSL_NUCLEUS)
+    #elif defined(WOLFSSL_NUCLEUS) || defined(FREESCALE_MQX)
         typedef unsigned int  THREAD_RETURN;
         typedef intptr_t      THREAD_TYPE;
         #define WOLFSSH_THREAD
@@ -461,7 +467,7 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
 #endif
 
 
-static INLINE void tcp_socket(SOCKET_T* sockFd)
+static INLINE void tcp_socket(WS_SOCKET_T* sockFd)
 {
 #ifdef MICROCHIP_MPLAB_HARMONY
     /* creates socket in listen or connect */
@@ -530,7 +536,7 @@ static INLINE void tcp_socket(SOCKET_T* sockFd)
 
 #ifdef WOLFSSH_TEST_SERVER
 
-static INLINE void tcp_listen(SOCKET_T* sockfd, word16* port, int useAnyAddr)
+static INLINE void tcp_listen(WS_SOCKET_T* sockfd, word16* port, int useAnyAddr)
 {
 #ifdef MICROCHIP_MPLAB_HARMONY
     /* does bind and listen and returns the socket */
@@ -594,10 +600,16 @@ static INLINE void tcp_listen(SOCKET_T* sockfd, word16* port, int useAnyAddr)
 
 #endif /* WOLFSSH_TEST_SERVER */
 
+enum {
+    WS_SELECT_FAIL,
+    WS_SELECT_TIMEOUT,
+    WS_SELECT_RECV_READY,
+    WS_SELECT_ERROR_READY
+};
 
 #if (defined(WOLFSSH_TEST_SERVER) || defined(WOLFSSH_TEST_CLIENT))
 
-static INLINE void tcp_set_nonblocking(SOCKET_T* sockfd)
+static INLINE void tcp_set_nonblocking(WS_SOCKET_T* sockfd)
 {
     #ifdef USE_WINDOWS_API
         unsigned long blocking = 1;
@@ -618,13 +630,6 @@ static INLINE void tcp_set_nonblocking(SOCKET_T* sockfd)
     #endif
 }
 
-
-enum {
-    WS_SELECT_FAIL,
-    WS_SELECT_TIMEOUT,
-    WS_SELECT_RECV_READY,
-    WS_SELECT_ERROR_READY
-};
 
 #ifdef WOLFSSL_NUCLEUS
 	#define WFD_SET_TYPE FD_SET
