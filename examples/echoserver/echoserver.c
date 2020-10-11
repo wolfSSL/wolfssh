@@ -18,10 +18,8 @@
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef FREESCALE_MQX
 #define WOLFSSH_TEST_SERVER
 #define WOLFSSH_TEST_ECHOSERVER
-#endif
 
 #ifdef HAVE_CONFIG_H
     #include <config.h>
@@ -41,11 +39,6 @@
 #include <wolfssh/agent.h>
 #include <wolfssh/test.h>
 #include <wolfssl/wolfcrypt/ecc.h>
-
-#ifdef FREESCALE_MQX
-#define WOLFSSH_TEST_SERVER
-#define WOLFSSH_TEST_ECHOSERVER
-#endif
 
 #include "examples/echoserver/echoserver.h"
 

@@ -323,7 +323,7 @@ static INLINE int mygetopt(int argc, char** argv, const char* optstring)
     * - 4996: deprecated function */
 #endif
 
-#if defined(WOLFSSH_TEST_CLIENT) || defined(WOLFSSH_TEST_SERVER)
+#if (defined(WOLFSSH_TEST_CLIENT) || defined(WOLFSSH_TEST_SERVER)) && !defined(FREESCALE_MQX)
 
 #ifdef WOLFSSL_NUCLEUS
 static INLINE void build_addr(struct addr_struct* addr, const char* peer,
@@ -534,7 +534,7 @@ static INLINE void tcp_socket(WS_SOCKET_T* sockFd)
 #endif
 
 
-#ifdef WOLFSSH_TEST_SERVER
+#if defined(WOLFSSH_TEST_SERVER) && !defined(FREESCALE_MQX)
 
 static INLINE void tcp_listen(WS_SOCKET_T* sockfd, word16* port, int useAnyAddr)
 {
@@ -607,7 +607,7 @@ enum {
     WS_SELECT_ERROR_READY
 };
 
-#if (defined(WOLFSSH_TEST_SERVER) || defined(WOLFSSH_TEST_CLIENT))
+#if (defined(WOLFSSH_TEST_SERVER) || defined(WOLFSSH_TEST_CLIENT)) && !defined(FREESCALE_MQX)
 
 static INLINE void tcp_set_nonblocking(WS_SOCKET_T* sockfd)
 {
