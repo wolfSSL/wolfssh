@@ -21,7 +21,6 @@
 #define WOLFSSH_TEST_SERVER
 #define WOLFSSH_TEST_ECHOSERVER
 
-
 #ifdef HAVE_CONFIG_H
     #include <config.h>
 #endif
@@ -40,6 +39,7 @@
 #include <wolfssh/agent.h>
 #include <wolfssh/test.h>
 #include <wolfssl/wolfcrypt/ecc.h>
+
 #include "examples/echoserver/echoserver.h"
 
 #if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
@@ -108,7 +108,7 @@ typedef struct WS_AgentCbActionCtx {
 
 typedef struct {
     WOLFSSH* ssh;
-    SOCKET_T fd;
+    WS_SOCKET_T fd;
     word32 id;
     int echo;
     char   nonBlock;
@@ -264,10 +264,10 @@ static int ssh_worker(thread_ctx_t* threadCtx) {
 
         if (!stop) {
             if (threadCtx->nonBlock) {
-                SOCKET_T sockfd;
+                WS_SOCKET_T sockfd;
                 int select_ret = 0;
 
-                sockfd = (SOCKET_T)wolfSSH_get_fd(threadCtx->ssh);
+                sockfd = (WS_SOCKET_T)wolfSSH_get_fd(threadCtx->ssh);
 
                 select_ret = tcp_select(sockfd, 1);
                 if (select_ret != WS_SELECT_RECV_READY &&
@@ -899,10 +899,10 @@ static int sftp_worker(thread_ctx_t* threadCtx) {
     byte tmp[1];
     int ret   = WS_SUCCESS;
     int error = WS_SUCCESS;
-    SOCKET_T sockfd;
+    WS_SOCKET_T sockfd;
     int select_ret = 0;
 
-    sockfd = (SOCKET_T)wolfSSH_get_fd(threadCtx->ssh);
+    sockfd = (WS_SOCKET_T)wolfSSH_get_fd(threadCtx->ssh);
     do {
         if (threadCtx->nonBlock) {
             if (error == WS_WANT_READ)
@@ -952,12 +952,12 @@ static int NonBlockSSH_accept(WOLFSSH* ssh)
 {
     int ret;
     int error;
-    SOCKET_T sockfd;
+    WS_SOCKET_T sockfd;
     int select_ret = 0;
 
     ret = wolfSSH_accept(ssh);
     error = wolfSSH_get_error(ssh);
-    sockfd = (SOCKET_T)wolfSSH_get_fd(ssh);
+    sockfd = (WS_SOCKET_T)wolfSSH_get_fd(ssh);
 
     while ((ret != WS_SUCCESS
                 && ret != WS_SCP_COMPLETE && ret != WS_SFTP_COMPLETE)
@@ -1084,7 +1084,7 @@ static int load_file(const char* fileName, byte* buf, word32 bufSz)
 
     if (WFOPEN(&file, fileName, "rb") != 0)
         return 0;
-    fseek(file, 0, SEEK_END);
+    fseek(file, 0, XSEEK_END);
     fileSz = (word32)ftell(file);
     rewind(file);
 
@@ -1532,7 +1532,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     func_args* serverArgs = (func_args*)args;
     WOLFSSH_CTX* ctx = NULL;
     PwMapList pwMapList;
-    SOCKET_T listenFd = 0;
+    WS_SOCKET_T listenFd = 0;
     word32 defaultHighwater = EXAMPLE_HIGHWATER_MARK;
     word32 threadCount = 0;
     int multipleConnections = 1;
@@ -1717,7 +1717,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     }
 
     do {
-        SOCKET_T      clientFd = 0;
+        WS_SOCKET_T      clientFd = 0;
     #ifdef WOLFSSL_NUCLEUS
         struct addr_struct clientAddr;
     #else
