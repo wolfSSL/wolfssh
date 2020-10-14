@@ -2248,7 +2248,7 @@ static INLINE int wcPrimeForId(byte id)
     switch (id) {
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256
         case ID_ECDH_SHA2_NISTP256:
-            return ECC_SECP521R1;
+            return ECC_SECP256R1;
 #endif
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
         case ID_ECDSA_SHA2_NISTP256:
@@ -2256,7 +2256,7 @@ static INLINE int wcPrimeForId(byte id)
 #endif
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP384
         case ID_ECDH_SHA2_NISTP384:
-            return ECC_SECP521R1;
+            return ECC_SECP384R1;
 #endif
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
         case ID_ECDSA_SHA2_NISTP384:
