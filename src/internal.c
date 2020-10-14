@@ -130,13 +130,13 @@ Flags:
 #if defined(NO_DH) || defined(NO_SHA256)
     #define WOLFSSH_NO_DH_GEX_SHA256
 #endif
-#if !defined(HAVE_ECC) || defined(NO_SHA256)
+#if !defined(HAVE_ECC) || defined(NO_SHA256) || defined(NO_ECC256)
     #define WOLFSSH_NO_ECDH_SHA2_NISTP256
 #endif
-#if !defined(HAVE_ECC) || !defined(WOLFSSL_SHA384)
+#if !defined(HAVE_ECC) || !defined(WOLFSSL_SHA384) || !defined(HAVE_ECC384)
     #define WOLFSSH_NO_ECDH_SHA2_NISTP384
 #endif
-#if !defined(HAVE_ECC) || !defined(WOLFSSL_SHA512)
+#if !defined(HAVE_ECC) || !defined(WOLFSSL_SHA512) || !defined(HAVE_ECC521)
     #define WOLFSSH_NO_ECDH_SHA2_NISTP521
 #endif
 #if !defined(HAVE_ED25519) || defined(NO_SHA256)
@@ -145,13 +145,13 @@ Flags:
 #if defined(NO_RSA) || defined(NO_SHA)
     #define WOLFSSH_NO_SSH_RSA_SHA1
 #endif
-#if !defined(HAVE_ECC) || defined(NO_SHA256)
+#if !defined(HAVE_ECC) || defined(NO_SHA256) || defined(NO_ECC256)
     #define WOLFSSH_NO_ECDSA_SHA2_NISTP256
 #endif
-#if !defined(HAVE_ECC) || !defined(WOLFSSL_SHA384)
+#if !defined(HAVE_ECC) || !defined(WOLFSSL_SHA384) || !defined(HAVE_ECC384)
     #define WOLFSSH_NO_ECDSA_SHA2_NISTP384
 #endif
-#if !defined(HAVE_ECC) || !defined(WOLFSSL_SHA512)
+#if !defined(HAVE_ECC) || !defined(WOLFSSL_SHA512) || !defined(HAVE_ECC521)
     #define WOLFSSH_NO_ECDSA_SHA2_NISTP521
 #endif
 #if defined(NO_AES) || !defined(HAVE_AES_CBC)
@@ -1995,7 +1995,7 @@ static int GetNameList(byte* idList, word32* idListSz,
 
 static const byte cannedEncAlgo[] = {
 #ifndef WOLFSSH_NO_AES_GCM
-    ID_AES128_GCM, 
+    ID_AES128_GCM,
 #endif
 #ifndef WOLFSSH_NO_AES_CTR
     ID_AES128_CTR,
@@ -2016,17 +2016,47 @@ static const byte cannedMacAlgo[] = {
     ID_HMAC_SHA1,
 #endif
 };
-static const byte  cannedKeyAlgoClient[] = {ID_ECDSA_SHA2_NISTP256, ID_SSH_RSA};
+
+static const byte  cannedKeyAlgoClient[] = {
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+    ID_ECDSA_SHA2_NISTP521,
+#endif
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+    ID_ECDSA_SHA2_NISTP384,
+#endif
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    ID_ECDSA_SHA2_NISTP256,
+#endif
+#ifndef WOLFSSH_NO_SSH_RSA_SHA1
+    ID_SSH_RSA,
+#endif
+};
+
 #ifndef WOLFSSH_NO_SSH_RSA_SHA1
 static const byte  cannedKeyAlgoRsa[] = {ID_SSH_RSA};
 static const word32 cannedKeyAlgoRsaSz = sizeof(cannedKeyAlgoRsa);
 #endif
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
 static const byte  cannedKeyAlgoEcc256[] = {ID_ECDSA_SHA2_NISTP256};
+static const word32 cannedKeyAlgoEcc256Sz = sizeof(cannedKeyAlgoEcc256);
+#endif
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
 static const byte  cannedKeyAlgoEcc384[] = {ID_ECDSA_SHA2_NISTP384};
+static const word32 cannedKeyAlgoEcc384Sz = sizeof(cannedKeyAlgoEcc384);
+#endif
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
 static const byte  cannedKeyAlgoEcc521[] = {ID_ECDSA_SHA2_NISTP521};
+static const word32 cannedKeyAlgoEcc521Sz = sizeof(cannedKeyAlgoEcc521);
+#endif
 
 
 static const byte cannedKexAlgo[] = {
+#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP521
+    ID_ECDH_SHA2_NISTP521,
+#endif
+#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP384
+    ID_ECDH_SHA2_NISTP384,
+#endif
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256
     ID_ECDH_SHA2_NISTP256,
 #endif
@@ -2044,9 +2074,6 @@ static const byte cannedKexAlgo[] = {
 static const word32 cannedEncAlgoSz = sizeof(cannedEncAlgo);
 static const word32 cannedMacAlgoSz = sizeof(cannedMacAlgo);
 static const word32 cannedKeyAlgoClientSz = sizeof(cannedKeyAlgoClient);
-static const word32 cannedKeyAlgoEcc256Sz = sizeof(cannedKeyAlgoEcc256);
-static const word32 cannedKeyAlgoEcc384Sz = sizeof(cannedKeyAlgoEcc384);
-static const word32 cannedKeyAlgoEcc521Sz = sizeof(cannedKeyAlgoEcc521);
 static const word32 cannedKexAlgoSz = sizeof(cannedKexAlgo);
 
 
@@ -6162,92 +6189,100 @@ static INLINE void CopyNameList(byte* buf, word32* idx,
 
 static const char cannedEncAlgoNames[] =
 #if !defined(WOLFSSH_NO_AES_GCM)
-    "aes128-gcm@openssh.com"
-#endif
-#if !defined(WOLFSSH_NO_AES_GCM) && !defined(WOLFSSH_NO_AES_CTR)
-    ","
+    "aes128-gcm@openssh.com,"
 #endif
 #if !defined(WOLFSSH_NO_AES_CTR)
-    "aes128-ctr"
-#endif
-#if (!defined(WOLFSSH_NO_AES_GCM) || !defined(WOLFSSH_NO_AES_CTR)) && \
-    !defined(WOLFSSH_NO_AES_CBC)
-    ","
+    "aes128-ctr,"
 #endif
 #if !defined(WOLFSSH_NO_AES_CBC)
-    "aes128-cbc"
+    "aes128-cbc,"
 #endif
-    ;
+    "";
 #if defined(WOLFSSH_NO_AES_GCM) && defined(WOLFSSH_NO_AES_CTR) && \
     defined(WOLFSSH_NO_AES_CBC)
-#warning "You need at least one of AES-GCM, AES-CTR or AES-CBC." 
+#warning "You need at least one encryption algorithm."
 #endif
 
 static const char cannedMacAlgoNames[] =
 #if !defined(WOLFSSH_NO_HMAC_SHA2_256)
-    "hmac-sha2-256"
-#endif
-#if !defined(WOLFSSH_NO_HMAC_SHA2_256) && !defined(WOLFSSH_NO_HMAC_SHA1_96)
-    ","
+    "hmac-sha2-256,"
 #endif
 #if !defined(WOLFSSH_NO_HMAC_SHA1_96)
-    "hmac-sha1-96"
-#endif
-#if (!defined(WOLFSSH_NO_HMAC_SHA2_256) || !defined(WOLFSSH_NO_HMAC_SHA1_96)) \
-    && !defined(WOLFSSH_NO_HMAC_SHA1)
-    ","
+    "hmac-sha1-96,"
 #endif
 #if !defined(WOLFSSH_NO_HMAC_SHA1)
-    "hmac-sha1"
+    "hmac-sha1,"
 #endif
-    ;
-#if defined(WOLFSSH_NO_HMAC_SHA2_256) && defined(WOLFSSH_NO_HMAC_SHA1_96)\
-                                      && defined(WOLFSSH_NO_HMAC_SHA1)
-    #warning "You need at least one of HMAC-SHA2-256, HMAC-SHA1-96 or HMAC-SHA1"
+    "";
+#if defined(WOLFSSH_NO_HMAC_SHA2_256) && \
+        defined(WOLFSSH_NO_HMAC_SHA1_96) && \
+        defined(WOLFSSH_NO_HMAC_SHA1)
+    #warning "You need at least one MAC algorithm."
 #endif
 
-static const char cannedKeyAlgoClientNames[] = "ecdsa-sha2-nistp256,ssh-rsa";
+static const char cannedKeyAlgoClientNames[] =
+#ifndef WOLFSSL_NO_ECDSA_SHA2_NISTP521
+    "ecdsa-sha2-nistp521,"
+#endif
+#ifndef WOLFSSL_NO_ECDSA_SHA2_NISTP384
+    "ecdsa-sha2-nistp384,"
+#endif
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    "ecdsa-sha2-nistp256,"
+#endif
+#ifndef WOLFSSH_NO_SSH_RSA_SHA1
+    "ssh-rsa,"
+#endif
+    "";
+#if defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && \
+        defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && \
+        defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521) && \
+        defined(WOLFSSH_NO_SSH_RSA_SHA2)
+    #warning "You need at least one signing algorithm."
+#endif
+
 static const char cannedKeyAlgoRsaNames[] = "ssh-rsa";
 static const char cannedKeyAlgoEcc256Names[] = "ecdsa-sha2-nistp256";
 static const char cannedKeyAlgoEcc384Names[] = "ecdsa-sha2-nistp384";
 static const char cannedKeyAlgoEcc521Names[] = "ecdsa-sha2-nistp521";
+
 static const char cannedKexAlgoNames[] =
-#if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256)
-    "ecdh-sha2-nistp256"
+#if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP521)
+    "ecdh-sha2-nistp521,"
 #endif
-#if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && !defined(WOLFSSH_NO_DH_GEX_SHA256)
-    ","
+#if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP384)
+    "ecdh-sha2-nistp384,"
+#endif
+#if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256)
+    "ecdh-sha2-nistp256,"
 #endif
 #if !defined(WOLFSSH_NO_DH_GEX_SHA256)
-    "diffie-hellman-group-exchange-sha256"
-#endif
-#if (!defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) || !defined(WOLFSSH_NO_DH_GEX_SHA256))\
-                                             && !defined(WOLFSSH_NO_DH_GROUP14_SHA1)
-    ","
+    "diffie-hellman-group-exchange-sha256,"
 #endif
 #if !defined(WOLFSSH_NO_DH_GROUP14_SHA1)
-    "diffie-hellman-group14-sha1"
-#endif
-#if (!defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) || !defined(WOLFSSH_NO_DH_GEX_SHA256) \
-  || !defined(WOLFSSH_NO_DH_GROUP14_SHA1)) && !defined(WOLFSSH_NO_DH_GROUP1_SHA1)
-    ","
+    "diffie-hellman-group14-sha1,"
 #endif
 #if !defined(WOLFSSH_NO_DH_GROUP1_SHA1)
-    "diffie-hellman-group1-sha1"
+    "diffie-hellman-group1-sha1,"
 #endif
-    ; /* This is a little awkward. */
-#if defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && defined(WOLFSSH_NO_DH_GEX_SHA256)\
- && defined(WOLFSSH_NO_DH_GROUP14_SHA1) && defined(WOLFSSH_NO_DH_GROUP1_SHA1)
-    #warning "You need at least one of ECDH-SHA2-NISTP256, DH-GEX-SHA256, "
-             "DH-GROUP14-SHA1 or DH-GROUP1-SHA1"
+    "";
+
+#if defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && \
+        defined(WOLFSSH_NO_DH_GEX_SHA256) && \
+        defined(WOLFSSH_NO_DH_GROUP14_SHA1) && \
+        defined(WOLFSSH_NO_DH_GROUP1_SHA1) && \
+        defined(WOLFSSH_NO_ECDH_SHA2_NISTP521) && \
+        defined(WOLFSSH_NO_ECDH_SHA2_NISTP384)
+    #warning "You need at least one key exchange algorithm."
 #endif
 
 static const char cannedNoneNames[] = "none";
 
-static const word32 cannedEncAlgoNamesSz = sizeof(cannedEncAlgoNames) - 1;
-static const word32 cannedMacAlgoNamesSz = sizeof(cannedMacAlgoNames) - 1;
+/* -1 for the null, some are -1 for the comma */
+static const word32 cannedEncAlgoNamesSz = sizeof(cannedEncAlgoNames) - 2;
+static const word32 cannedMacAlgoNamesSz = sizeof(cannedMacAlgoNames) - 2;
 static const word32 cannedKeyAlgoClientNamesSz =
-                                           sizeof(cannedKeyAlgoClientNames) - 1;
+                                           sizeof(cannedKeyAlgoClientNames) - 2;
 static const word32 cannedKeyAlgoRsaNamesSz = sizeof(cannedKeyAlgoRsaNames) - 1;
 static const word32 cannedKeyAlgoEcc256NamesSz =
                                            sizeof(cannedKeyAlgoEcc256Names) - 1;
@@ -6255,7 +6290,7 @@ static const word32 cannedKeyAlgoEcc384NamesSz =
                                            sizeof(cannedKeyAlgoEcc384Names) - 1;
 static const word32 cannedKeyAlgoEcc521NamesSz =
                                            sizeof(cannedKeyAlgoEcc521Names) - 1;
-static const word32 cannedKexAlgoNamesSz = sizeof(cannedKexAlgoNames) - 1;
+static const word32 cannedKexAlgoNamesSz = sizeof(cannedKexAlgoNames) - 2;
 static const word32 cannedNoneNamesSz = sizeof(cannedNoneNames) - 1;
 
 

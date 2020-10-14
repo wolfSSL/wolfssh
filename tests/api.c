@@ -462,11 +462,33 @@ enum WS_TestFormatTypes {
 };
 
 
+#ifndef NO_ECC256
 static const char serverKeyEccDer[] =
     "307702010104206109990b79d25f285a0f5d15cca15654f92b3987212da77d85"
     "7bb87f38c66dd5a00a06082a8648ce3d030107a144034200048113ffa42bb79c"
     "45747a834c61f33fad26cf22cda9a3bca561b47ce662d4c2f755439a31fb8011"
     "20b5124b24f578d7fd22ef4635f005586b5f63c8da1bc4f569";
+static const int serverKeyEccCurveId = ECC_SECP256R1;
+#elif defined(HAVE_ECC384)
+static const char serverKeyEccDer[] =
+    "3081a402010104303eadd2bbbf05a7be3a3f7c28151289de5bb3644d7011761d"
+    "b56f2a0362fba64f98e64ff986dc4fb8efdb2d6b8da57142a00706052b810400"
+    "22a1640362000438d62be418ff573fd0e020d48876c4e1121dfb2d6ebee4895d"
+    "7724316d46a23105873f2986d5c712803a6f471ab86850eb063e108961349cf8"
+    "b4c6a4cf5e97bd7e51e975e3e9217261506eb9cf3c493d3eb88d467b5f27ebab"
+    "2161c00066febd";
+static const int serverKeyEccCurveId = ECC_SECP384R1;
+#elif defined(HAVE_ECC521)
+static const char serverKeyEccDer[] =
+    "3081dc0201010442004ca4d86428d9400e7b2df3912eb996c195895043af92e8"
+    "6de70ae4df46f22a291a6bb2748aae82580df6c39f49b3ed82f1789ece1b657d"
+    "45438cff156534354575a00706052b81040023a18189038186000401f8d0a7c3"
+    "c58d841957969f213a94f3da550edf76d8dd171531f35bb069c8bc300d6f6b37"
+    "d18046a9717f2c6f59519c827095b29a6313306218c235769400d0f96d000a19"
+    "3ba346652beb409a9a45c597a3ed932dd5aaae96bf2f317e5a7ac7458b3c6cdb"
+    "aa90c355382cdfcdca7377d92eb20a5e8c74237ca5a345b19e3f1a2290b154";
+static const int serverKeyEccCurveId = ECC_SECP521R1;
+#endif
 
 static const char serverKeyRsaDer[] =
     "308204a30201000282010100da5dad2514761559f340fd3cb86230b36dc0f9ec"
@@ -569,7 +591,7 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
                                          TEST_GOOD_FORMAT_ASN1));
     AssertNotNull(ctx->privateKey);
     AssertIntNE(0, ctx->privateKeySz);
-    AssertIntEQ(ECC_SECP256R1, ctx->useEcc);
+    AssertIntEQ(serverKeyEccCurveId, ctx->useEcc);
 
 #ifndef NO_RSA
     lastKey = ctx->privateKey;

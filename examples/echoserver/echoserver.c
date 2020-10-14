@@ -1105,6 +1105,12 @@ static int load_file(const char* fileName, byte* buf, word32 bufSz)
 }
 #endif /* NO_FILESYSTEM */
 
+#ifdef HAVE_ECC521
+    #define ECC_PATH "./keys/server-key-ecc-521.der"
+#else
+    #define ECC_PATH "./keys/server-key-ecc.der"
+#endif
+
 /* returns buffer size on success */
 static int load_key(byte isEcc, byte* buf, word32 bufSz)
 {
@@ -1112,8 +1118,7 @@ static int load_key(byte isEcc, byte* buf, word32 bufSz)
 
 #ifndef NO_FILESYSTEM
     const char* bufName;
-    bufName = isEcc ? "./keys/server-key-ecc.der" :
-                       "./keys/server-key-rsa.der" ;
+    bufName = isEcc ? ECC_PATH : "./keys/server-key-rsa.der" ;
     sz = load_file(bufName, buf, bufSz);
 #else
     /* using buffers instead */
