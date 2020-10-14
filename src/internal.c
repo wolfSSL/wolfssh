@@ -3023,7 +3023,6 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         /* Load in the server's public signing key */
         sigKeyBlock.useRsa = ssh->handshake->pubKeyId == ID_SSH_RSA;
 
-        ret = WS_INVALID_ALGO_ID;
         if (sigKeyBlock.useRsa) {
 #ifndef NO_RSA
             byte* e;
@@ -3061,7 +3060,8 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             else
                 ret = WS_RSA_E;
 #else
-        (void)tmpIdx;
+            (void)tmpIdx;
+            ret = WS_INVALID_ALGO_ID;
 #endif
         }
         else {
@@ -3109,12 +3109,13 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 else
                     ret = WS_ECC_E;
             }
+#else
+            ret = WS_INVALID_ALGO_ID;
 #endif
         }
 
         /* Generate and hash in the shared secret */
         if (ret == 0) {
-            ret = WS_INVALID_ALGO_ID;
             if (!ssh->handshake->useEcc) {
 #ifndef NO_DH
                 ret = wc_DhAgree(&ssh->handshake->privKey.dh,
@@ -3123,6 +3124,8 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                                  f, fSz);
                 ForceZero(ssh->handshake->x, ssh->handshake->xSz);
                 wc_FreeDhKey(&ssh->handshake->privKey.dh);
+#else
+                ret = WS_INVALID_ALGO_ID;
 #endif
             }
             else {
@@ -3140,6 +3143,8 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                                                &key, ssh->k, &ssh->kSz);
                 wc_ecc_free(&key);
                 wc_ecc_free(&ssh->handshake->privKey.ecc);
+#else
+                ret = WS_INVALID_ALGO_ID;
 #endif
             }
         }
@@ -6142,7 +6147,6 @@ static int BundlePacket(WOLFSSH* ssh)
     }
     else {
         if (ret == WS_SUCCESS) {
-            ret = WS_INVALID_ALGO_ID;
 #ifndef WOLFSSH_NO_AEAD
             idx += paddingSz;
             ret = EncryptAead(ssh,
@@ -6158,6 +6162,8 @@ static int BundlePacket(WOLFSSH* ssh)
                                   ssh->packetStartIdx,
                               LENGTH_SZ);
             idx += ssh->macSz;
+#else
+            ret = WS_INVALID_ALGO_ID;
 #endif
         }
     }
