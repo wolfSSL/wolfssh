@@ -33,7 +33,7 @@
 #include <wolfssh/internal.h>
 #include <wolfssh/log.h>
 #include <wolfssl/wolfcrypt/asn.h>
-#ifndef NO_DH
+#ifndef WOLFSSH_NO_DH
     #include <wolfssl/wolfcrypt/dh.h>
 #endif
 #include <wolfssl/wolfcrypt/rsa.h>
@@ -109,66 +109,11 @@ Flags:
   WOLFSSH_NO_AEAD
     Set when AES-GCM is disabled. Set to disable use of AEAD ciphers for
     encryption. Setting this will force all AEAD ciphers off.
+  WOLFSSH_NO_DH
+    Set when all DH algorithms are disabled. Set to disable use of all DH
+    algorithms for key agreement. Setting this will force all DH key agreement
+    algorithms off.
 */
-
-
-#if defined(NO_HMAC) || defined(NO_SHA)
-    #define WOLFSSH_NO_HMAC_SHA1
-#endif
-#if defined(NO_HMAC) || defined(NO_SHA)
-    #define WOLFSSH_NO_HMAC_SHA1_96
-#endif
-#if defined(NO_HMAC) || defined(NO_SHA256)
-    #define WOLFSSH_NO_HMAC_SHA2_256
-#endif
-#if defined(NO_DH) || defined(NO_SHA)
-    #define WOLFSSH_NO_DH_GROUP1_SHA1
-#endif
-#if defined(NO_DH) || defined(NO_SHA)
-    #define WOLFSSH_NO_DH_GROUP14_SHA1
-#endif
-#if defined(NO_DH) || defined(NO_SHA256)
-    #define WOLFSSH_NO_DH_GEX_SHA256
-#endif
-#if !defined(HAVE_ECC) || defined(NO_SHA256) || defined(NO_ECC256)
-    #define WOLFSSH_NO_ECDH_SHA2_NISTP256
-#endif
-#if !defined(HAVE_ECC) || !defined(WOLFSSL_SHA384) || !defined(HAVE_ECC384)
-    #define WOLFSSH_NO_ECDH_SHA2_NISTP384
-#endif
-#if !defined(HAVE_ECC) || !defined(WOLFSSL_SHA512) || !defined(HAVE_ECC521)
-    #define WOLFSSH_NO_ECDH_SHA2_NISTP521
-#endif
-#if !defined(HAVE_ED25519) || defined(NO_SHA256)
-    #define WOLFSSH_NO_ECDH_SHA2_ED25519
-#endif
-#if defined(NO_RSA) || defined(NO_SHA)
-    #define WOLFSSH_NO_SSH_RSA_SHA1
-#endif
-#if !defined(HAVE_ECC) || defined(NO_SHA256) || defined(NO_ECC256)
-    #define WOLFSSH_NO_ECDSA_SHA2_NISTP256
-#endif
-#if !defined(HAVE_ECC) || !defined(WOLFSSL_SHA384) || !defined(HAVE_ECC384)
-    #define WOLFSSH_NO_ECDSA_SHA2_NISTP384
-#endif
-#if !defined(HAVE_ECC) || !defined(WOLFSSL_SHA512) || !defined(HAVE_ECC521)
-    #define WOLFSSH_NO_ECDSA_SHA2_NISTP521
-#endif
-#if defined(NO_AES) || !defined(HAVE_AES_CBC)
-    #define WOLFSSH_NO_AES_CBC
-#endif
-#if defined(NO_AES) || !defined(WOLFSSL_AES_COUNTER)
-    #define WOLFSSH_NO_AES_CTR
-#endif
-#if defined(NO_AES) || !defined(HAVE_AESGCM)
-    #define WOLFSSH_NO_AES_GCM
-#endif
-#if defined(WOLFSSH_NO_AES_GCM)
-    #define WOLFSSH_NO_AEAD
-    #ifndef WOLFSSH_NO_AES_GCM
-        #define WOLFSSH_AES_GCM
-    #endif
-#endif
 
 
 static const char sshProtoIdStr[] = "SSH-2.0-wolfSSHv"
@@ -478,7 +423,7 @@ static HandshakeInfo* HandshakeInfoNew(void* heap)
         newHs->macId = ID_NONE;
         newHs->blockSz = MIN_BLOCK_SZ;
         newHs->hashId = WC_HASH_TYPE_NONE;
-#ifndef NO_DH
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
         newHs->dhGexMinSz = WOLFSSH_DEFAULT_GEXDH_MIN;
         newHs->dhGexPreferredSz = WOLFSSH_DEFAULT_GEXDH_PREFERRED;
         newHs->dhGexMaxSz = WOLFSSH_DEFAULT_GEXDH_MAX;
@@ -496,7 +441,7 @@ static void HandshakeInfoFree(HandshakeInfo* hs, void* heap)
     WLOG(WS_LOG_DEBUG, "Entering HandshakeInfoFree()");
     if (hs) {
         WFREE(hs->kexInit, heap, DYNTYPE_STRING);
-#ifndef NO_DH
+#ifndef WOLFSSH_NO_DH
         WFREE(hs->primeGroup, heap, DYNTYPE_MPINT);
         WFREE(hs->generator, heap, DYNTYPE_MPINT);
 #endif
@@ -2701,7 +2646,8 @@ static const byte dhPrimeGroup1[] = {
 static const word32 dhPrimeGroup1Sz = sizeof(dhPrimeGroup1);
 #endif
 
-#ifndef WOLFSSH_NO_DH_GROUP14_SHA1
+#if !defined(WOLFSSH_NO_DH_GROUP14_SHA1) || \
+    !defined(WOLFSSH_NO_DH_GEX_SHA256)
 static const byte dhPrimeGroup14[] = {
     /* SSH DH Group 14 (Oakley Group 14, 2048-bit MODP Group, RFC 3526) */
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
@@ -3117,7 +3063,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         /* Generate and hash in the shared secret */
         if (ret == 0) {
             if (!ssh->handshake->useEcc) {
-#ifndef NO_DH
+#ifndef WOLFSSH_NO_DH
                 ret = wc_DhAgree(&ssh->handshake->privKey.dh,
                                  ssh->k, &ssh->kSz,
                                  ssh->handshake->x, ssh->handshake->xSz,
@@ -3326,7 +3272,7 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 WLOG(WS_LOG_DEBUG, "DNK: peer using cipher none");
                 break;
 
-#ifndef WOLFSSH_NO_AES128_CBC
+#ifndef WOLFSSH_NO_AES_CBC
             case ID_AES128_CBC:
                 WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes128-cbc");
                 ret = wc_AesSetKey(&ssh->decryptCipher.aes,
@@ -3335,7 +3281,7 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 break;
 #endif
 
-#ifndef WOLFSSH_NO_AES128_CTR
+#ifndef WOLFSSH_NO_AES_CTR
             case ID_AES128_CTR:
                 WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes128-ctr");
                 ret = wc_AesSetKey(&ssh->decryptCipher.aes,
@@ -3344,7 +3290,7 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 break;
 #endif
 
-#ifndef WOLFSSH_NO_AES128_GCM
+#ifndef WOLFSSH_NO_AES_GCM
             case ID_AES128_GCM:
                 WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes128-gcm");
                 ret = wc_AesGcmSetKey(&ssh->decryptCipher.aes,
@@ -3377,7 +3323,7 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 }
 
 
-#ifndef NO_DH
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
 static int DoKexDhGexRequest(WOLFSSH* ssh,
                              byte* buf, word32 len, word32* idx)
 {
@@ -5299,7 +5245,7 @@ static int DoPacket(WOLFSSH* ssh)
             }
 
             if (ssh->handshake->kexId == ID_DH_GEX_SHA256) {
-#ifndef NO_DH
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
                 WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_GEX_GROUP");
                 ret = DoKexDhGexGroup(ssh, buf + idx, payloadSz, &payloadIdx);
 #endif
@@ -5310,7 +5256,7 @@ static int DoPacket(WOLFSSH* ssh)
             }
             break;
 
-#ifndef NO_DH
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
         case MSGID_KEXDH_GEX_REQUEST:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_GEX_REQUEST");
             ret = DoKexDhGexRequest(ssh, buf + idx, payloadSz, &payloadIdx);
@@ -5446,7 +5392,7 @@ static int DoPacket(WOLFSSH* ssh)
 }
 
 
-#ifdef WOLFSSL_AES_COUNTER
+#ifndef WOLFSSH_NO_AES_CTR
 #if defined(HAVE_FIPS) && defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION == 2)
     /*
      * The FIPSv2 version of wc_AesCtrEncrypt() only works if the input and
@@ -6243,7 +6189,7 @@ static const char cannedKeyAlgoClientNames[] =
 #if defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && \
         defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && \
         defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521) && \
-        defined(WOLFSSH_NO_SSH_RSA_SHA2)
+        defined(WOLFSSH_NO_SSH_RSA_SHA1)
     #warning "You need at least one signing algorithm."
 #endif
 
@@ -6427,11 +6373,11 @@ int SendKexInit(WOLFSSH* ssh)
 int SendKexDhReply(WOLFSSH* ssh)
 {
 /* This function and DoKexDhReply() are unwieldy and in need of refactoring. */
-#ifndef NO_DH
-    const byte* primeGroup = dhPrimeGroup14;
-    word32 primeGroupSz = dhPrimeGroup14Sz;
-    const byte* generator = dhGenerator;
-    word32 generatorSz = dhGeneratorSz;
+#ifndef WOLFSSH_NO_DH
+    const byte* primeGroup = NULL;
+    word32 primeGroupSz = 0;
+    const byte* generator = NULL;
+    word32 generatorSz = 0;
 #endif
 
     byte useEcc = 0;
@@ -6495,28 +6441,49 @@ int SendKexDhReply(WOLFSSH* ssh)
     sigKeyBlock.nameSz = (word32)strlen(sigKeyBlock.name);
 
     switch (ssh->handshake->kexId) {
-#ifndef NO_DH
+#ifndef WOLFSSH_NO_DH_GROUP1_SHA1
         case ID_DH_GROUP1_SHA1:
             primeGroup = dhPrimeGroup1;
             primeGroupSz = dhPrimeGroup1Sz;
+            generator = dhGenerator;
+            generatorSz = dhGeneratorSz;
             break;
-
+#endif
+#ifndef WOLFSSH_NO_DH_GROUP14_SHA1
         case ID_DH_GROUP14_SHA1:
-            /* This is the default case. */
+            primeGroup = dhPrimeGroup14;
+            primeGroupSz = dhPrimeGroup14Sz;
+            generator = dhGenerator;
+            generatorSz = dhGeneratorSz;
             break;
-
+#endif
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
         case ID_DH_GEX_SHA256:
+            primeGroup = dhPrimeGroup14;
+            primeGroupSz = dhPrimeGroup14Sz;
+            generator = dhGenerator;
+            generatorSz = dhGeneratorSz;
             msgId = MSGID_KEXDH_GEX_REPLY;
             break;
 #endif
-
+#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256
         case ID_ECDH_SHA2_NISTP256:
+            useEcc = 1;
+            msgId = MSGID_KEXDH_REPLY;
+            break;
+#endif
+#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP384
         case ID_ECDH_SHA2_NISTP384:
+            useEcc = 1;
+            msgId = MSGID_KEXDH_REPLY;
+            break;
+#endif
+#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP521
         case ID_ECDH_SHA2_NISTP521:
             useEcc = 1;
             msgId = MSGID_KEXDH_REPLY;
             break;
-
+#endif
         default:
             ret = WS_INVALID_ALGO_ID;
     }
@@ -6691,7 +6658,7 @@ int SendKexDhReply(WOLFSSH* ssh)
                                     sigKeyBlock.sk.ecc.q,
                                     sigKeyBlock.sk.ecc.qSz);
         }
-#ifndef NO_DH
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
         /* If using DH-GEX include the GEX specific values. */
         if (ssh->handshake->kexId == ID_DH_GEX_SHA256) {
             byte primeGroupPad = 0, generatorPad = 0;
@@ -6783,7 +6750,7 @@ int SendKexDhReply(WOLFSSH* ssh)
         /* Or make the server's ECDH private value, and the shared secret K. */
         if (ret == 0) {
             if (!useEcc) {
-#ifndef NO_DH
+#ifndef WOLFSSH_NO_DH
                 DhKey privKey;
                 byte y[MAX_KEX_KEY_SZ];
                 word32 ySz = sizeof(y);
@@ -6910,7 +6877,7 @@ int SendKexDhReply(WOLFSSH* ssh)
 
         if (ret == WS_SUCCESS) {
             if (sigKeyBlock.useRsa) {
-#ifndef NO_RSA
+#ifndef WOLFSSH_NO_SSH_RSA_SHA1
                 byte encSig[MAX_ENCODED_SIG_SZ];
                 word32 encSigSz;
 
@@ -6975,7 +6942,7 @@ int SendKexDhReply(WOLFSSH* ssh)
     }
 
     if (sigKeyBlock.useRsa) {
-#ifndef NO_RSA
+#ifndef WOLFSSH_NO_SSH_RSA_SHA1
         wc_FreeRsaKey(&sigKeyBlock.sk.rsa.key);
 #endif
     }
@@ -7010,7 +6977,7 @@ int SendKexDhReply(WOLFSSH* ssh)
         WMEMCPY(output + idx, sigKeyBlock.name, sigKeyBlock.nameSz);
         idx += sigKeyBlock.nameSz;
         if (sigKeyBlock.useRsa) {
-#ifndef NO_RSA
+#ifndef WOLFSSH_NO_SSH_RSA_SHA1
             c32toa(sigKeyBlock.sk.rsa.eSz + sigKeyBlock.sk.rsa.ePad,
                    output + idx);
             idx += LENGTH_SZ;
@@ -7151,7 +7118,7 @@ int SendNewKeys(WOLFSSH* ssh)
 }
 
 
-#ifndef NO_DH
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
 int SendKexDhGexRequest(WOLFSSH* ssh)
 {
     byte* output;
@@ -7275,11 +7242,11 @@ int SendKexDhInit(WOLFSSH* ssh)
     byte* output;
     word32 idx = 0;
     word32 payloadSz;
-#ifndef NO_DH
-    const byte* primeGroup = dhPrimeGroup14;
-    word32 primeGroupSz = dhPrimeGroup14Sz;
-    const byte* generator = dhGenerator;
-    word32 generatorSz = dhGeneratorSz;
+#ifndef WOLFSSH_NO_DH
+    const byte* primeGroup = NULL;
+    word32 primeGroupSz = 0;
+    const byte* generator = NULL;
+    word32 generatorSz = 0;
 #endif
     int ret = WS_SUCCESS;
     byte msgId = MSGID_KEXDH_INIT;
@@ -7290,16 +7257,23 @@ int SendKexDhInit(WOLFSSH* ssh)
     WLOG(WS_LOG_DEBUG, "Entering SendKexDhInit()");
 
     switch (ssh->handshake->kexId) {
-#ifndef NO_DH
+#ifndef WOLFSSH_NO_DH_GROUP1_SHA1
         case ID_DH_GROUP1_SHA1:
             primeGroup = dhPrimeGroup1;
             primeGroupSz = dhPrimeGroup1Sz;
+            generator = dhGenerator;
+            generatorSz = dhGeneratorSz;
             break;
-
+#endif
+#ifndef WOLFSSH_NO_DH_GROUP14_SHA1
         case ID_DH_GROUP14_SHA1:
-            /* This is the default case. */
+            primeGroup = dhPrimeGroup14;
+            primeGroupSz = dhPrimeGroup14Sz;
+            generator = dhGenerator;
+            generatorSz = dhGeneratorSz;
             break;
-
+#endif
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
         case ID_DH_GEX_SHA256:
             primeGroup = ssh->handshake->primeGroup;
             primeGroupSz = ssh->handshake->primeGroupSz;
@@ -7308,14 +7282,24 @@ int SendKexDhInit(WOLFSSH* ssh)
             msgId = MSGID_KEXDH_GEX_INIT;
             break;
 #endif
-
+#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256
         case ID_ECDH_SHA2_NISTP256:
+            ssh->handshake->useEcc = 1;
+            msgId = MSGID_KEXECDH_INIT;
+            break;
+#endif
+#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP384
         case ID_ECDH_SHA2_NISTP384:
+            ssh->handshake->useEcc = 1;
+            msgId = MSGID_KEXECDH_INIT;
+            break;
+#endif
+#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP521
         case ID_ECDH_SHA2_NISTP521:
             ssh->handshake->useEcc = 1;
             msgId = MSGID_KEXECDH_INIT;
             break;
-
+#endif
         default:
             WLOG(WS_LOG_DEBUG, "Invalid algo: %u", ssh->handshake->kexId);
             ret = WS_INVALID_ALGO_ID;
@@ -7324,7 +7308,7 @@ int SendKexDhInit(WOLFSSH* ssh)
 
     if (ret == WS_SUCCESS) {
         if (!ssh->handshake->useEcc) {
-#ifndef NO_DH
+#ifndef WOLFSSH_NO_DH
             DhKey* privKey = &ssh->handshake->privKey.dh;
 
             ret = wc_InitDhKey(privKey);
