@@ -62,6 +62,121 @@ extern "C" {
 #endif
 
 
+/* Check options set by wolfSSL and set wolfSSH options as appropriate. If
+ * the derived options and any override options leave wolfSSH without
+ * at least one algorithm to use, throw an error. */
+
+#if defined(NO_HMAC) || defined(NO_SHA)
+    #define WOLFSSH_NO_HMAC_SHA1
+#endif
+#if defined(NO_HMAC) || defined(NO_SHA)
+    #define WOLFSSH_NO_HMAC_SHA1_96
+#endif
+#if defined(NO_HMAC) || defined(NO_SHA256)
+    #define WOLFSSH_NO_HMAC_SHA2_256
+#endif
+#if defined(WOLFSSH_NO_HMAC_SHA1) && \
+    defined(WOLFSSH_NO_HMAC_SHA1_96) && \
+    defined(WOLFSSH_NO_HMAC_SHA2_256)
+    #error "You need at least one MAC algorithm."
+#endif
+
+
+#ifdef WOLFSSH_NO_DH
+    #undef WOLFSSH_NO_DH_GROUP1_SHA1
+    #define WOLFSSH_NO_DH_GROUP1_SHA1
+    #undef WOLFSSH_NO_DH_GROUP14_SHA1
+    #define WOLFSSH_NO_DH_GROUP14_SHA1
+    #undef WOLFSSH_NO_DH_GEX_SHA256
+    #define WOLFSSH_NO_DH_GEX_SHA256
+#endif
+
+#if defined(NO_DH) || defined(NO_SHA)
+    #define WOLFSSH_NO_DH_GROUP1_SHA1
+#endif
+#if defined(NO_DH) || defined(NO_SHA)
+    #define WOLFSSH_NO_DH_GROUP14_SHA1
+#endif
+#if defined(NO_DH) || defined(NO_SHA256)
+    #define WOLFSSH_NO_DH_GEX_SHA256
+#endif
+#if !defined(HAVE_ECC) || defined(NO_SHA256) || defined(NO_ECC256)
+    #define WOLFSSH_NO_ECDH_SHA2_NISTP256
+#endif
+#if !defined(HAVE_ECC) || !defined(WOLFSSL_SHA384) || !defined(HAVE_ECC384)
+    #define WOLFSSH_NO_ECDH_SHA2_NISTP384
+#endif
+#if !defined(HAVE_ECC) || !defined(WOLFSSL_SHA512) || !defined(HAVE_ECC521)
+    #define WOLFSSH_NO_ECDH_SHA2_NISTP521
+#endif
+#if !defined(HAVE_ED25519) || defined(NO_SHA256) || 1
+    /* ED25519 isn't supported yet. Force disabled. */
+    #define WOLFSSH_NO_ECDH_SHA2_ED25519
+#endif
+
+#if defined(WOLFSSH_NO_DH_GROUP1_SHA1) && \
+    defined(WOLFSSH_NO_DH_GROUP14_SHA1) && \
+    defined(WOLFSSH_NO_DH_GEX_SHA256) && \
+    defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && \
+    defined(WOLFSSH_NO_ECDH_SHA2_NISTP384) && \
+    defined(WOLFSSH_NO_ECDH_SHA2_NISTP521) && \
+    defined(WOLFSSH_NO_ECDH_SHA2_ED25519)
+    #error "You need at least one key agreement algorithm."
+#endif
+
+#if defined(WOLFSSH_NO_DH_GROUP1_SHA1) && \
+    defined(WOLFSSH_NO_DH_GROUP14_SHA1) && \
+    defined(WOLFSSH_NO_DH_GEX_SHA256)
+    #define WOLFSSH_NO_DH
+#endif
+
+
+#if defined(NO_RSA) || defined(NO_SHA)
+    #define WOLFSSH_NO_SSH_RSA_SHA1
+#endif
+#if !defined(HAVE_ECC) || defined(NO_SHA256) || defined(NO_ECC256)
+    #define WOLFSSH_NO_ECDSA_SHA2_NISTP256
+#endif
+#if !defined(HAVE_ECC) || !defined(WOLFSSL_SHA384) || !defined(HAVE_ECC384)
+    #define WOLFSSH_NO_ECDSA_SHA2_NISTP384
+#endif
+#if !defined(HAVE_ECC) || !defined(WOLFSSL_SHA512) || !defined(HAVE_ECC521)
+    #define WOLFSSH_NO_ECDSA_SHA2_NISTP521
+#endif
+#if defined(WOLFSSH_NO_SHA_RSA_SHA1) && \
+    defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && \
+    defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && \
+    defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
+    #error "You need at least one signing algorithm."
+#endif
+
+
+#ifdef WOLFSSH_NO_AEAD
+    #undef WOLFSSH_NO_AES_GCM
+    #define WOLFSSH_NO_AES_GCM
+#endif
+
+#if defined(NO_AES) || !defined(HAVE_AES_CBC)
+    #define WOLFSSH_NO_AES_CBC
+#endif
+#if defined(NO_AES) || !defined(WOLFSSL_AES_COUNTER)
+    #define WOLFSSH_NO_AES_CTR
+#endif
+#if defined(NO_AES) || !defined(HAVE_AESGCM)
+    #define WOLFSSH_NO_AES_GCM
+#endif
+
+#if defined(WOLFSSH_NO_AES_CBC) && \
+    defined(WOLFSSH_NO_AES_CTR) && \
+    defined(WOLFSSH_NO_AES_GCM)
+    #error "You need at least one encryption algorithm."
+#endif
+
+#if defined(WOLFSSH_NO_AES_GCM)
+    #define WOLFSSH_NO_AEAD
+#endif
+
+
 WOLFSSH_LOCAL const char* GetErrorString(int);
 
 
