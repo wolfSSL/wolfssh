@@ -1220,6 +1220,8 @@ static const char samplePasswordBuffer[] =
     "jack:fetchapail\n";
 
 
+#ifdef HAVE_ECC
+#ifndef NO_ECC256
 static const char samplePublicKeyEccBuffer[] =
     "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAA"
     "BBBNkI5JTP6D0lF42tbxX19cE87hztUS6FSDoGvPfiU0CgeNSbI+aFdKIzTP5CQEJSvm25"
@@ -1227,8 +1229,22 @@ static const char samplePublicKeyEccBuffer[] =
     "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAA"
     "BBBKAtH8cqaDbtJFjtviLobHBmjCtG56DMkP6A4M2H9zX2/YCg1h9bYS7WHd9UQDwXO1Hh"
     "IZzRYecXh7SG9P4GhRY= gretel\n";
+#elif defined(HAVE_ECC521)
+static const char samplePublicKeyEccBuffer[] =
+    "ecdsa-sha2-nistp521 AAAAE2VjZHNhLXNoYTItbmlzdHA1MjEAAAAIbmlzdHA1MjEAAA"
+    "CFBAET/BOzBb9Jx9b52VIHFP4g/uk5KceDpz2M+/Ln9WiDjsMfb4NgNCAB+EMNJUX/TNBL"
+    "FFmqr7c6+zUH+QAo2qstvQDsReyFkETRB2vZD//nCZfcAe0RMtKZmgtQLKXzSlimUjXBM4"
+    "/zE5lwE05aXADp88h8nuaT/X4bll9cWJlH0fUykA== hansel\n"
+    "ecdsa-sha2-nistp521 AAAAE2VjZHNhLXNoYTItbmlzdHA1MjEAAAAIbmlzdHA1MjEAAA"
+    "CFBAD3gANmzvkxOBN8MYwRBYO6B//7TTCtA2vwG/W5bqiVVxznXWj0xiFrgayApvH7FDpL"
+    "HiJ8+c1vUsRVEa8PY5QPsgFow+xv0P2WSrRkn4/UUquftPs1ZHPhdr06LjS19ObvWM8xFZ"
+    "YU6n0i28UWCUR5qE+BCTzZDWYT8V24YD8UhpaYIw== gretel\n";
+#else
+    #error "Enable an ECC Curve or disable ECC."
+#endif
+#endif
 
-
+#ifndef NO_RSA
 static const char samplePublicKeyRsaBuffer[] =
     "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC9P3ZFowOsONXHD5MwWiCciXytBRZGho"
     "MNiisWSgUs5HdHcACuHYPi2W6Z1PBFmBWT9odOrGRjoZXJfDDoPi+j8SSfDGsc/hsCmc3G"
@@ -1242,6 +1258,7 @@ static const char samplePublicKeyRsaBuffer[] =
     "uNZl/30Mczs73N3MBzi6J1oPo7sFlqzB6ecBjK2Kpjus4Y1rYFphJnUxtKvB0s+hoaadru"
     "biE57dK6BrH5iZwVLTQKux31uCJLPhiktI3iLbdlGZEctJkTasfVSsUizwVIyRjhVKmbdI"
     "RGwkU38D043AR1h0mUoGCPIKuqcFMf gretel\n";
+#endif
 
 static const char sampleNoneBuffer[] =
     "holmes\n"
@@ -1642,7 +1659,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 #endif
 
     {
-        const char* bufName;
+        const char* bufName = NULL;
         byte buf[SCRATCH_BUFFER_SZ];
         word32 bufSz;
 
@@ -1662,12 +1679,22 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         buf[bufSz] = 0;
         LoadPasswordBuffer(buf, bufSz, &pwMapList);
 
-        bufName = userEcc ? samplePublicKeyEccBuffer :
-                            samplePublicKeyRsaBuffer;
-        bufSz = (word32)strlen(bufName);
-        memcpy(buf, bufName, bufSz);
-        buf[bufSz] = 0;
-        LoadPublicKeyBuffer(buf, bufSz, &pwMapList);
+        if (userEcc) {
+        #ifdef HAVE_ECC
+            bufName = samplePublicKeyEccBuffer;
+        #endif
+        }
+        else {
+        #ifndef NO_RSA
+            bufName = samplePublicKeyRsaBuffer;
+        #endif
+        }
+        if (bufName != NULL) {
+            bufSz = (word32)strlen(bufName);
+            memcpy(buf, bufName, bufSz);
+            buf[bufSz] = 0;
+            LoadPublicKeyBuffer(buf, bufSz, &pwMapList);
+        }
 
         bufSz = (word32)strlen(sampleNoneBuffer);
         memcpy(buf, sampleNoneBuffer, bufSz);

@@ -6227,10 +6227,10 @@ static const char cannedMacAlgoNames[] =
 #endif
 
 static const char cannedKeyAlgoClientNames[] =
-#ifndef WOLFSSL_NO_ECDSA_SHA2_NISTP521
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
     "ecdsa-sha2-nistp521,"
 #endif
-#ifndef WOLFSSL_NO_ECDSA_SHA2_NISTP384
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
     "ecdsa-sha2-nistp384,"
 #endif
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
