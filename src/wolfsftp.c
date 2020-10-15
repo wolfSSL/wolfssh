@@ -1107,6 +1107,7 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, byte* data,
     word32 rSz;
     word32 lidx = 0;
     word32 i;
+    int    ret;
     byte* out;
     word32 outSz = 0;
 
@@ -1168,9 +1169,10 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, byte* data,
         WMEMCPY(r, wd, WOLFSSH_MAX_FILENAME);
     }
 
-    if ((rSz = wolfSSH_CleanPath(ssh, r)) < 0) {
+    if ((ret = wolfSSH_CleanPath(ssh, r)) < 0) {
         return WS_FATAL_ERROR;
     }
+    rSz = (word32)ret;
 
     /* For real path remove ending case of /.
      * Lots of peers send a '.' wanting a return of the current absolute path
