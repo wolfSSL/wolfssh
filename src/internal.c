@@ -6439,6 +6439,8 @@ int SendKexDhReply(WOLFSSH* ssh)
         return WS_BAD_ARGUMENT;
     }
 
+    WMEMSET(&sigKeyBlock, 0, sizeof sigKeyBlock);
+
     sigKeyBlock.useRsa = ssh->handshake->pubKeyId == ID_SSH_RSA;
     sigKeyBlock.name = IdToName(ssh->handshake->pubKeyId);
     sigKeyBlock.nameSz = (word32)strlen(sigKeyBlock.name);
