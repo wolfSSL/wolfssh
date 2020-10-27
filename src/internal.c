@@ -1914,7 +1914,10 @@ static int GetNameList(byte* idList, word32* idListSz,
                         WLOG(WS_LOG_DEBUG, "DNL: name ID = %s", displayName);
                     }
                 }
-                if (id != ID_UNKNOWN) {
+                if (id != ID_UNKNOWN || idListIdx == 0) {
+                    /* Intentionally save the first one if unknown. This helps
+                     * skipping the KexDhInit if the client sends the wrong one
+                     * as a guess. */
                     if (idListIdx >= *idListSz) {
                         WLOG(WS_LOG_ERROR, "No more space left for names");
                         return WS_BUFFER_E;
