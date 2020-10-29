@@ -4623,7 +4623,10 @@ static int DoChannelOpen(WOLFSSH* ssh,
         #ifdef WOLFSSH_AGENT
             case ID_CHANTYPE_AUTH_AGENT:
                 WLOG(WS_LOG_INFO, "agent = %p", ssh->agent);
-                ssh->agent->channel = peerChannelId;
+                if (ssh->agent != NULL)
+                    ssh->agent->channel = peerChannelId;
+                else
+                    ret = WS_AGENT_NULL_E;
                 break;
         #endif
             default:
