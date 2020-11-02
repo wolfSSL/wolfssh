@@ -2721,6 +2721,7 @@ static int DoKexDhInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 && ssh->handshake->kexIdGuess != ssh->handshake->kexId) {
 
             /* skip this message. */
+            WLOG(WS_LOG_DEBUG, "Skipping the client's KEX init function.");
             ssh->handshake->kexPacketFollows = 0;
             *idx += len;
             return WS_SUCCESS;
@@ -6936,7 +6937,8 @@ int SendKexDhReply(WOLFSSH* ssh)
                     ret = WS_CRYPTO_FAILED;
                 }
                 else {
-                    WLOG(WS_LOG_INFO, "Signing hash with RSA.");
+                    WLOG(WS_LOG_INFO, "Signing hash with %s.",
+                            IdToName(ssh->handshake->pubKeyId));
                     sigSz = wc_RsaSSL_Sign(encSig, encSigSz, sig, sizeof(sig),
                                            &sigKeyBlock.sk.rsa.key, ssh->rng);
                     if (sigSz <= 0) {
@@ -6948,7 +6950,8 @@ int SendKexDhReply(WOLFSSH* ssh)
             }
             else {
 #ifndef WOLFSSH_NO_ECDSA
-                WLOG(WS_LOG_INFO, "Signing hash with ECDSA.");
+                WLOG(WS_LOG_INFO, "Signing hash with %s.",
+                        IdToName(ssh->handshake->pubKeyId));
                 sigSz = sizeof(sig);
                 ret = wc_ecc_sign_hash(digest, wc_HashGetDigestSize(sigHashId),
                                        sig, &sigSz,
@@ -8360,8 +8363,9 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId, int addSig)
 
         if (authId == ID_USERAUTH_PASSWORD)
             ret = PrepareUserAuthRequestPassword(ssh, &payloadSz, &authData);
-        else if (authId == ID_USERAUTH_PUBLICKEY) {
+        else if (authId == ID_USERAUTH_PUBLICKEY && !ssh->userAuthPkDone) {
             authData.sf.publicKey.hasSignature = 1;
+            ssh->userAuthPkDone = 1;
             ret = PrepareUserAuthRequestPublicKey(ssh, &payloadSz, &authData,
                     &keySig);
         }

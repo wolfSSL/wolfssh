@@ -610,6 +610,7 @@ struct WOLFSSH {
     word32 peerProtoIdSz;
     void* publicKeyCheckCtx;
     byte  sendTerminalRequest;
+    byte userAuthPkDone;
 
 #ifdef USE_WINDOWS_API
     word32 defaultAttr; /* default windows attributes */
