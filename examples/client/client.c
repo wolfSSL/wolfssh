@@ -172,6 +172,9 @@ static void ShowUsage(void)
     printf(" -R            raw untranslated output\n");
 #endif
 #endif
+#ifdef WOLFSSH_AGENT
+    printf(" -a            Attempt to use SSH-AGENT\n");
+#endif
 }
 
 
@@ -815,6 +818,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     byte rawMode = 0;
 #endif
 #ifdef WOLFSSH_AGENT
+    byte useAgent = 0;
     WS_AgentCbActionCtx agentCbCtx;
 #endif
 
@@ -888,6 +892,13 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
                 keepOpen = 1;
                 break;
         #endif
+
+        #ifdef WOLFSSH_AGENT
+            case 'a':
+                useAgent = 1;
+                break;
+        #endif
+
             case '?':
                 ShowUsage();
                 exit(EXIT_SUCCESS);
@@ -995,9 +1006,11 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         wolfSSH_SetUserAuth(ctx, ((func_args*)args)->user_auth);
 
 #ifdef WOLFSSH_AGENT
-    wolfSSH_CTX_set_agent_cb(ctx,
-            wolfSSH_AGENT_DefaultActions, wolfSSH_AGENT_IO_Cb);
-    wolfSSH_CTX_AGENT_enable(ctx, 1);
+    if (useAgent) {
+        wolfSSH_CTX_set_agent_cb(ctx,
+                wolfSSH_AGENT_DefaultActions, wolfSSH_AGENT_IO_Cb);
+        wolfSSH_CTX_AGENT_enable(ctx, 1);
+    }
 #endif
 
     ssh = wolfSSH_new(ctx);
@@ -1013,9 +1026,11 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         wolfSSH_SetUserAuthCtx(ssh, (void*)password);
 
 #ifdef WOLFSSH_AGENT
-    memset(&agentCbCtx, 0, sizeof(agentCbCtx));
-    agentCbCtx.state = AGENT_STATE_INIT;
-    wolfSSH_set_agent_cb_ctx(ssh, &agentCbCtx);
+    if (useAgent) {
+        memset(&agentCbCtx, 0, sizeof(agentCbCtx));
+        agentCbCtx.state = AGENT_STATE_INIT;
+        wolfSSH_set_agent_cb_ctx(ssh, &agentCbCtx);
+    }
 #endif
 
     wolfSSH_CTX_SetPublicKeyCheck(ctx, wsPublicKeyCheck);
