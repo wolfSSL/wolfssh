@@ -826,7 +826,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     char**  argv = ((func_args*)args)->argv;
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?c:eh:i:j:p:tu:xzNP:R")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?ac:eh:i:j:p:tu:xzNP:R")) != -1) {
         switch (ch) {
             case 'h':
                 host = myoptarg;
