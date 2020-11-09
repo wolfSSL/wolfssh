@@ -9508,12 +9508,26 @@ int SendChannelSuccess(WOLFSSH* ssh, word32 channelId, int success)
 
 #if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
     !defined(NO_WOLFSSH_SERVER)
-/* cleans up absolute path */
-void clean_path(char* path)
+/* cleans up absolute path
+ * returns size of new path on success (strlen sz) and negative values on fail*/
+int wolfSSH_CleanPath(WOLFSSH* ssh, char* in)
 {
     int  i;
-    long sz = (long)WSTRLEN(path);
+    long sz;
     byte found;
+    char *path;
+
+    if (in == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    sz   = (long)WSTRLEN(in);
+    path = (char*)WMALLOC(sz+1, ssh->ctx->heap, DYNTYPE_PATH);
+    if (path == NULL) {
+        return WS_MEMORY_E;
+    }
+    WMEMCPY(path, in, sz);
+    path[sz] = '\0';
 
 #if defined(WOLFSSL_NUCLEUS) || defined(USE_WINDOWS_API)
     for (i = 0; i < sz; i++) {
@@ -9643,6 +9657,18 @@ void clean_path(char* path)
         }
 #endif
     }
+
+    /* copy result back to 'in' buffer */
+    if (WSTRLEN(in) < WSTRLEN(path)) {
+        WLOG(WS_LOG_ERROR, "Fatal error cleaning path");
+        WFREE(path, ssh->ctx->heap, DYNTYPE_PATH);
+        return WS_BUFFER_E;
+    }
+    sz = WSTRLEN(path);
+    WMEMCPY(in, path, sz);
+    in[sz] = '\0';
+    WFREE(path, ssh->ctx->heap, DYNTYPE_PATH);
+    return (int)sz;
 }
 #endif /* WOLFSSH_SFTP || WOLFSSH_SCP */
 
