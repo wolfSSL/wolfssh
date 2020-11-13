@@ -131,6 +131,14 @@ extern "C" {
 #endif
 
 
+#ifdef NO_RSA
+    #define WOLFSSH_NO_RSA
+#endif
+#ifndef HAVE_ECC
+    #define WOLFSSH_NO_ECDSA
+    #define WOLFSSH_NO_ECDHE
+#endif
+
 #if defined(NO_RSA) || defined(NO_SHA)
     #define WOLFSSH_NO_SSH_RSA_SHA1
 #endif
@@ -386,7 +394,7 @@ typedef struct HandshakeInfo {
     byte* kexInit;
     word32 kexInitSz;
 
-#ifndef NO_DH
+#ifndef WOLFSSH_NO_DH
     word32 dhGexMinSz;
     word32 dhGexPreferredSz;
     word32 dhGexMaxSz;
@@ -398,7 +406,7 @@ typedef struct HandshakeInfo {
 
     byte useEcc;
     union {
-#ifndef NO_DH
+#ifndef WOLFSSH_NO_DH
         DhKey dh;
 #endif
         ecc_key ecc;
