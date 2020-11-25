@@ -66,13 +66,34 @@ extern "C" {
  * the derived options and any override options leave wolfSSH without
  * at least one algorithm to use, throw an error. */
 
+#ifdef NO_RSA
+    #undef WOLFSSH_NO_RSA
+    #define WOLFSSH_NO_RSA
+#endif
+
+#ifndef HAVE_ECC
+    #undef WOLFSSH_NO_ECDSA
+    #define WOLFSSH_NO_ECDSA
+    #undef WOLFSSH_NO_ECDHE
+    #define WOLFSSH_NO_ECDHE
+#endif
+
+#ifdef NO_DH
+    #undef WOLFSSH_NO_DH
+    #define WOLFSSH_NO_DH
+#endif
+
+
 #if defined(NO_HMAC) || defined(NO_SHA)
+    #undef WOLFSSH_NO_HMAC_SHA1
     #define WOLFSSH_NO_HMAC_SHA1
 #endif
 #if defined(NO_HMAC) || defined(NO_SHA)
+    #undef WOLFSSH_NO_HMAC_SHA1_96
     #define WOLFSSH_NO_HMAC_SHA1_96
 #endif
 #if defined(NO_HMAC) || defined(NO_SHA256)
+    #undef WOLFSSH_NO_HMAC_SHA2_256
     #define WOLFSSH_NO_HMAC_SHA2_256
 #endif
 #if defined(WOLFSSH_NO_HMAC_SHA1) && \
@@ -82,35 +103,33 @@ extern "C" {
 #endif
 
 
-#ifdef WOLFSSH_NO_DH
+#if defined(WOLFSSH_NO_DH) || defined(NO_SHA)
     #undef WOLFSSH_NO_DH_GROUP1_SHA1
     #define WOLFSSH_NO_DH_GROUP1_SHA1
+#endif
+#if defined(WOLFSSH_NO_DH) || defined(NO_SHA)
     #undef WOLFSSH_NO_DH_GROUP14_SHA1
     #define WOLFSSH_NO_DH_GROUP14_SHA1
+#endif
+#if defined(WOLFSSH_NO_DH) || defined(NO_SHA256)
     #undef WOLFSSH_NO_DH_GEX_SHA256
     #define WOLFSSH_NO_DH_GEX_SHA256
 #endif
-
-#if defined(NO_DH) || defined(NO_SHA)
-    #define WOLFSSH_NO_DH_GROUP1_SHA1
-#endif
-#if defined(NO_DH) || defined(NO_SHA)
-    #define WOLFSSH_NO_DH_GROUP14_SHA1
-#endif
-#if defined(NO_DH) || defined(NO_SHA256)
-    #define WOLFSSH_NO_DH_GEX_SHA256
-#endif
-#if !defined(HAVE_ECC) || defined(NO_SHA256) || defined(NO_ECC256)
+#if defined(WOLFSSH_NO_ECDHE) || defined(NO_SHA256) || defined(NO_ECC256)
+    #undef WOLFSSH_NO_ECDH_SHA2_NISTP256
     #define WOLFSSH_NO_ECDH_SHA2_NISTP256
 #endif
-#if !defined(HAVE_ECC) || !defined(WOLFSSL_SHA384) || !defined(HAVE_ECC384)
+#if defined(WOLFSSH_NO_ECDHE) || !defined(WOLFSSL_SHA384) || !defined(HAVE_ECC384)
+    #undef WOLFSSH_NO_ECDH_SHA2_NISTP384
     #define WOLFSSH_NO_ECDH_SHA2_NISTP384
 #endif
-#if !defined(HAVE_ECC) || !defined(WOLFSSL_SHA512) || !defined(HAVE_ECC521)
+#if defined(WOLFSSH_NO_ECDHE) || !defined(WOLFSSL_SHA512) || !defined(HAVE_ECC521)
+    #undef WOLFSSH_NO_ECDH_SHA2_NISTP521
     #define WOLFSSH_NO_ECDH_SHA2_NISTP521
 #endif
 #if !defined(HAVE_ED25519) || defined(NO_SHA256) || 1
     /* ED25519 isn't supported yet. Force disabled. */
+    #undef WOLFSSH_NO_ECDH_SHA2_ED25519
     #define WOLFSSH_NO_ECDH_SHA2_ED25519
 #endif
 
@@ -127,28 +146,33 @@ extern "C" {
 #if defined(WOLFSSH_NO_DH_GROUP1_SHA1) && \
     defined(WOLFSSH_NO_DH_GROUP14_SHA1) && \
     defined(WOLFSSH_NO_DH_GEX_SHA256)
+    #undef WOLFSSH_NO_DH
     #define WOLFSSH_NO_DH
 #endif
-
-
-#ifdef NO_RSA
-    #define WOLFSSH_NO_RSA
-#endif
-#ifndef HAVE_ECC
-    #define WOLFSSH_NO_ECDSA
+#if defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && \
+    defined(WOLFSSH_NO_ECDH_SHA2_NISTP384) && \
+    defined(WOLFSSH_NO_ECDH_SHA2_NISTP521)
+    #undef WOLFSSH_NO_ECDHE
     #define WOLFSSH_NO_ECDHE
 #endif
 
-#if defined(NO_RSA) || defined(NO_SHA)
+#if defined(WOLFSSH_NO_RSA) || defined(NO_SHA)
+    #undef WOLFSSH_NO_SSH_RSA_SHA1
     #define WOLFSSH_NO_SSH_RSA_SHA1
 #endif
-#if !defined(HAVE_ECC) || defined(NO_SHA256) || defined(NO_ECC256)
+#if defined(WOLFSSH_NO_ECDSA) || \
+    defined(NO_SHA256) || defined(NO_ECC256)
+    #undef WOLFSSH_NO_ECDSA_SHA2_NISTP256
     #define WOLFSSH_NO_ECDSA_SHA2_NISTP256
 #endif
-#if !defined(HAVE_ECC) || !defined(WOLFSSL_SHA384) || !defined(HAVE_ECC384)
+#if defined(WOLFSSH_NO_ECDSA) || \
+    !defined(WOLFSSL_SHA384) || !defined(HAVE_ECC384)
+    #undef WOLFSSH_NO_ECDSA_SHA2_NISTP384
     #define WOLFSSH_NO_ECDSA_SHA2_NISTP384
 #endif
-#if !defined(HAVE_ECC) || !defined(WOLFSSL_SHA512) || !defined(HAVE_ECC521)
+#if defined(WOLFSSH_NO_ECDSA) || \
+    !defined(WOLFSSL_SHA512) || !defined(HAVE_ECC521)
+    #undef WOLFSSH_NO_ECDSA_SHA2_NISTP521
     #define WOLFSSH_NO_ECDSA_SHA2_NISTP521
 #endif
 #if defined(WOLFSSH_NO_SHA_RSA_SHA1) && \
@@ -158,6 +182,17 @@ extern "C" {
     #error "You need at least one signing algorithm."
 #endif
 
+#ifdef WOLFSSH_NO_SHA_RSA_SHA1
+    #undef WOLFSSH_NO_RSA
+    #define WOLFSSH_NO_RSA
+#endif
+#if defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && \
+    defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && \
+    defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
+    #undef WOLFSSH_NO_ECDSA
+    #define WOLFSSH_NO_ECDSA
+#endif
+
 
 #ifdef WOLFSSH_NO_AEAD
     #undef WOLFSSH_NO_AES_GCM
@@ -165,12 +200,15 @@ extern "C" {
 #endif
 
 #if defined(NO_AES) || !defined(HAVE_AES_CBC)
+    #undef WOLFSSH_NO_AES_CBC
     #define WOLFSSH_NO_AES_CBC
 #endif
 #if defined(NO_AES) || !defined(WOLFSSL_AES_COUNTER)
+    #undef WOLFSSH_NO_AES_CTR
     #define WOLFSSH_NO_AES_CTR
 #endif
 #if defined(NO_AES) || !defined(HAVE_AESGCM)
+    #undef WOLFSSH_NO_AES_GCM
     #define WOLFSSH_NO_AES_GCM
 #endif
 
@@ -181,6 +219,7 @@ extern "C" {
 #endif
 
 #if defined(WOLFSSH_NO_AES_GCM)
+    #undef WOLFSSH_NO_AEAD
     #define WOLFSSH_NO_AEAD
 #endif
 
