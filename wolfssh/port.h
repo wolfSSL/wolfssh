@@ -288,9 +288,6 @@ extern "C" {
         #include <string.h>
     #endif
 
-    WOLFSSH_API char* wstrnstr(const char*, const char*, unsigned int);
-    WOLFSSH_API char* wstrncat(char*, const char*, size_t);
-
     #define WMEMCPY(d,s,l)    memcpy((d),(s),(l))
     #define WMEMSET(b,c,l)    memset((b),(c),(l))
     #define WMEMCMP(s1,s2,n)  memcmp((s1),(s2),(n))
@@ -298,11 +295,17 @@ extern "C" {
 
     #define WSTRLEN(s1)       strlen((s1))
     #define WSTRSTR(s1,s2)    strstr((s1),(s2))
-    #define WSTRNSTR(s1,s2,n) wstrnstr((s1),(s2),(n))
     #define WSTRNCMP(s1,s2,n) strncmp((s1),(s2),(n))
-    #define WSTRNCAT(s1,s2,n) wstrncat((s1),(s2),(n))
     #define WSTRSPN(s1,s2)    strspn((s1),(s2))
     #define WSTRCSPN(s1,s2)   strcspn((s1),(s2))
+
+    /* for these string functions use internal versions */
+    WOLFSSH_API char* wstrnstr(const char*, const char*, unsigned int);
+    WOLFSSH_API char* wstrncat(char*, const char*, size_t);
+    WOLFSSL_API char* wstrdup(const char*, void*, int);
+    #define WSTRNSTR(s1,s2,n) wstrnstr((s1),(s2),(n))
+    #define WSTRNCAT(s1,s2,n) wstrncat((s1),(s2),(n))
+    #define WSTRDUP(s,h,t)    wstrdup((s),(h),(t))
 
     #ifdef USE_WINDOWS_API
         #define WSTRNCPY(s1,s2,n) strncpy_s((s1),(n),(s2),(n))
@@ -310,7 +313,6 @@ extern "C" {
         #define WSNPRINTF(s,n,f,...) _snprintf_s((s),(n),(n),(f),##__VA_ARGS__)
         #define WVSNPRINTF(s,n,f,...) _vsnprintf_s((s),(n),(n),(f),##__VA_ARGS__)
         #define WSTRTOK(s1,s2,s3) strtok_s((s1),(s2),(s3))
-        #define WSTRDUP(s,h,t) _strdup((s))
     #elif defined(MICROCHIP_MPLAB_HARMONY) || defined(MICROCHIP_PIC32)
         #include <stdio.h>
         #define WSTRNCPY(s1,s2,n) strncpy((s1),(s2),(n))
@@ -318,7 +320,6 @@ extern "C" {
         #define WSNPRINTF(s,n,f,...) snprintf((s),(n),(f),##__VA_ARGS__)
         #define WVSNPRINTF(s,n,f,...) vsnprintf((s),(n),(f),##__VA_ARGS__)
         #define WSTRTOK(s1,s2,s3) strtok_r((s1),(s2),(s3))
-        #define WSTRDUP(s,h,t) strdup((s))
     #elif defined(RENESAS_CSPLUS)
         #include <stdio.h>
         #define WSTRNCPY(s1,s2,n) strncpy((s1),(s2),(n))
@@ -326,7 +327,6 @@ extern "C" {
         #define WSNPRINTF(s,n,f,...) snprintf((s),(n),(f),__VA_ARGS__)
         #define WVSNPRINTF(s,n,f,...) vsnprintf((s),(n),(f),__VA_ARGS__)
         #define WSTRTOK(s1,s2,s3) strtok_r((s1),(s2),(s3))
-        #define WSTRDUP(s,h,t) strdup((s))
     #else
         #ifndef FREESCALE_MQX
             #include <stdio.h>
@@ -336,8 +336,6 @@ extern "C" {
         #define WSNPRINTF(s,n,f,...) snprintf((s),(n),(f),##__VA_ARGS__)
         #define WVSNPRINTF(s,n,f,...) vsnprintf((s),(n),(f),##__VA_ARGS__)
         #define WSTRTOK(s1,s2,s3) strtok_r((s1),(s2),(s3))
-        WOLFSSL_API char* wstrdup(const char*, void*, int);
-        #define WSTRDUP(s,h,t) wstrdup((s),(h),(t))
     #endif
 #endif /* WSTRING_USER */
 
