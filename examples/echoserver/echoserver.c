@@ -31,7 +31,7 @@
     #include <wolfssl/options.h>
 #endif
 
-#include <wolfssl/wolfcrypt/sha256.h>
+#include <wolfssl/wolfcrypt/hash.h>
 #include <wolfssl/wolfcrypt/coding.h>
 #include <wolfssl/wolfcrypt/wc_port.h>
 #include <wolfssh/ssh.h>
@@ -1141,14 +1141,6 @@ static int load_key(byte isEcc, byte* buf, word32 bufSz)
     return sz;
 }
 
-static INLINE void c32toa(word32 u32, byte* c)
-{
-    c[0] = (u32 >> 24) & 0xff;
-    c[1] = (u32 >> 16) & 0xff;
-    c[2] = (u32 >>  8) & 0xff;
-    c[3] =  u32 & 0xff;
-}
-
 
 /* Map user names to passwords */
 /* Use arrays for username and p. The password or public key can
@@ -1174,9 +1166,6 @@ static PwMap* PwMapNew(PwMapList* list, byte type, const byte* username,
 
     map = (PwMap*)malloc(sizeof(PwMap));
     if (map != NULL) {
-        wc_Sha256 sha;
-        byte flatSz[4];
-
         map->type = type;
         if (usernameSz >= sizeof(map->username))
             usernameSz = sizeof(map->username) - 1;
@@ -1185,11 +1174,7 @@ static PwMap* PwMapNew(PwMapList* list, byte type, const byte* username,
         map->usernameSz = usernameSz;
 
         if (type != WOLFSSH_USERAUTH_NONE) {
-            wc_InitSha256(&sha);
-            c32toa(pSz, flatSz);
-            wc_Sha256Update(&sha, flatSz, sizeof(flatSz));
-            wc_Sha256Update(&sha, p, pSz);
-            wc_Sha256Final(&sha, map->p);
+            wc_Sha256Hash(p, pSz, map->p);
         }
 
         map->next = list->head;
@@ -1429,26 +1414,15 @@ static int wsUserAuth(byte authType,
         return WOLFSSH_USERAUTH_FAILURE;
     }
 
-    /* Hash the password or public key with its length. */
-    {
-        wc_Sha256 sha;
-        byte flatSz[4];
-        wc_InitSha256(&sha);
-        if (authType == WOLFSSH_USERAUTH_PASSWORD) {
-            c32toa(authData->sf.password.passwordSz, flatSz);
-            wc_Sha256Update(&sha, flatSz, sizeof(flatSz));
-            wc_Sha256Update(&sha,
-                            authData->sf.password.password,
-                            authData->sf.password.passwordSz);
-        }
-        else if (authType == WOLFSSH_USERAUTH_PUBLICKEY) {
-            c32toa(authData->sf.publicKey.publicKeySz, flatSz);
-            wc_Sha256Update(&sha, flatSz, sizeof(flatSz));
-            wc_Sha256Update(&sha,
-                            authData->sf.publicKey.publicKey,
-                            authData->sf.publicKey.publicKeySz);
-        }
-        wc_Sha256Final(&sha, authHash);
+    if (authType == WOLFSSH_USERAUTH_PASSWORD) {
+        wc_Sha256Hash(authData->sf.password.password,
+                authData->sf.password.passwordSz,
+                authHash);
+    }
+    else if (authType == WOLFSSH_USERAUTH_PUBLICKEY) {
+        wc_Sha256Hash(authData->sf.publicKey.publicKey,
+                authData->sf.publicKey.publicKeySz,
+                authHash);
     }
 
     list = (PwMapList*)ctx;
