@@ -1439,7 +1439,7 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
             #ifndef WOLFSSH_NO_RSA
                 RsaKey rsa;
             #endif
-            #ifndef WOLFSSH_NO_ECC
+            #ifndef WOLFSSH_NO_ECDSA
                 ecc_key ecc;
             #endif
         } testKey;
@@ -1474,7 +1474,7 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
         }
         else {
 #endif
-#ifndef WOLFSSH_NO_ECC
+#ifndef WOLFSSH_NO_ECDSA
             byte curveId = ID_UNKNOWN;
 
             /* Couldn't decode as RSA testKey. Try decoding as ECC testKey. */

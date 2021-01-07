@@ -74,8 +74,8 @@ extern "C" {
 #ifndef HAVE_ECC
     #undef WOLFSSH_NO_ECDSA
     #define WOLFSSH_NO_ECDSA
-    #undef WOLFSSH_NO_ECDHE
-    #define WOLFSSH_NO_ECDHE
+    #undef WOLFSSH_NO_ECDH
+    #define WOLFSSH_NO_ECDH
 #endif
 
 #ifdef NO_DH
@@ -115,15 +115,15 @@ extern "C" {
     #undef WOLFSSH_NO_DH_GEX_SHA256
     #define WOLFSSH_NO_DH_GEX_SHA256
 #endif
-#if defined(WOLFSSH_NO_ECDHE) || defined(NO_SHA256) || defined(NO_ECC256)
+#if defined(WOLFSSH_NO_ECDH) || defined(NO_SHA256) || defined(NO_ECC256)
     #undef WOLFSSH_NO_ECDH_SHA2_NISTP256
     #define WOLFSSH_NO_ECDH_SHA2_NISTP256
 #endif
-#if defined(WOLFSSH_NO_ECDHE) || !defined(WOLFSSL_SHA384) || !defined(HAVE_ECC384)
+#if defined(WOLFSSH_NO_ECDH) || !defined(WOLFSSL_SHA384) || !defined(HAVE_ECC384)
     #undef WOLFSSH_NO_ECDH_SHA2_NISTP384
     #define WOLFSSH_NO_ECDH_SHA2_NISTP384
 #endif
-#if defined(WOLFSSH_NO_ECDHE) || !defined(WOLFSSL_SHA512) || !defined(HAVE_ECC521)
+#if defined(WOLFSSH_NO_ECDH) || !defined(WOLFSSL_SHA512) || !defined(HAVE_ECC521)
     #undef WOLFSSH_NO_ECDH_SHA2_NISTP521
     #define WOLFSSH_NO_ECDH_SHA2_NISTP521
 #endif
@@ -152,8 +152,8 @@ extern "C" {
 #if defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && \
     defined(WOLFSSH_NO_ECDH_SHA2_NISTP384) && \
     defined(WOLFSSH_NO_ECDH_SHA2_NISTP521)
-    #undef WOLFSSH_NO_ECDHE
-    #define WOLFSSH_NO_ECDHE
+    #undef WOLFSSH_NO_ECDH
+    #define WOLFSSH_NO_ECDH
 #endif
 
 #if defined(WOLFSSH_NO_RSA) || defined(NO_SHA)
