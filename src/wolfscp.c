@@ -2292,10 +2292,10 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
  * If the peer requests a directory of files be transferred, in a recursive
  * request, WOLFSSH_SCP_RECURSIVE_REQUEST will be passed to the callback. The
  * callback is then responsible for traversing through the requested directory
- * one directory or file at a time, returning WS_SCP_ENTER_DIRECTORY when
- * a new directory is entered, WS_SCP_EXIT_DIRECTORY when a directory is
- * exited (not including the final directory exit), and
- * WS_SCP_EXIT_DIRECTORY_FINAL when the final directory is done.
+ * one directory or file at a time, returning WS_SCP_ENTER_DIR when a new
+ * directory is entered, WS_SCP_EXIT_DIR when a directory is exited (not
+ * including the final directory exit), and WS_SCP_EXIT_DIR_FINAL when the
+ * final directory is done.
  *
  * At any time, the callback can abort the transfer by returning WS_SCP_ABORT.
  * This will send an error confirmation message to the peer.  When returning
@@ -2344,13 +2344,13 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
  *
  * Return number of bytes copied into buf, if doing a file transfer, otherwise
  * one of:
- *     WS_SCP_ENTER_DIRECTORY      - send directory name to peer - fileName,
+ *     WS_SCP_ENTER_DIR            - send directory name to peer - fileName,
  *                                   mode (optional), mTime (optional), and
  *                                   aTime (optional) should be set. Return
  *                                   when callback and "entered" a directory.
- *     WS_SCP_EXIT_DIRECTORY       - return when recursive directory traversal
+ *     WS_SCP_EXIT_DIR             - return when recursive directory traversal
  *                                   has "exited" a directory.
- *     WS_SCP_EXIT_DIRECTORY_FINAL - return when recursive directory transfer
+ *     WS_SCP_EXIT_DIR_FINAL       - return when recursive directory transfer
  *                                   is complete.
  *     WS_SCP_ABORT                - abort file transfer request
  */
