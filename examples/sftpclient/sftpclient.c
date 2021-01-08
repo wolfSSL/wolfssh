@@ -168,7 +168,7 @@ static void clean_path(char* path)
     /* remove any double '/' chars */
     for (i = 0; i < sz; i++) {
         if (path[i] == '/' && path[i+1] == '/') {
-            WMEMMOVE(path + i, path + i + 1, sz - i + 1);
+            WMEMMOVE(path + i, path + i + 1, sz - i);
             sz -= 1;
             i--;
         }
