@@ -540,7 +540,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
                     const char* cmd = wolfSSH_GetSessionCommand(ssh);
                     if (cmd != NULL &&
                         WOLFSSH_SESSION_SUBSYSTEM == wolfSSH_GetSessionType(ssh)
-                        && (WMEMCMP(cmd, "sftp", sizeof("sftp")) == 0)) {
+                        && (WSTRNCMP(cmd, "sftp", 4) == 0)) {
                         ssh->acceptState = ACCEPT_INIT_SFTP;
                         return wolfSSH_SFTP_accept(ssh);
                     }
