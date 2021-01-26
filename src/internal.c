@@ -9558,7 +9558,7 @@ int wolfSSH_CleanPath(WOLFSSH* ssh, char* in)
     /* remove any double '/' or '\' chars */
     for (i = 0; i < sz; i++) {
         if ((path[i] == WS_DELIM && path[i+1] == WS_DELIM)) {
-            WMEMMOVE(path + i, path + i + 1, sz - i + 1);
+            WMEMMOVE(path + i, path + i + 1, sz - i);
             sz -= 1;
             i--;
         }
