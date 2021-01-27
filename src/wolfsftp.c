@@ -2305,6 +2305,9 @@ static int SFTP_CreateLongName(WS_SFTPNAME* name)
 
     /* get date as calendar date */
     localTime = XGMTIME((const time_t*)&atr->mtime, &localTime);
+    if (localTime == NULL) {
+        return WS_MEMORY_E;
+    }
     getDate(date, sizeof(date), localTime);
     totalSz += WS_DATE_SIZE;
 
