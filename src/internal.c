@@ -6352,6 +6352,12 @@ int SendKexInit(WOLFSSH* ssh)
 
         ssh->outputBuffer.length = idx;
 
+        if (ssh->handshake->kexInit != NULL) {
+            WFREE(ssh->handshake->kexInit, ssh->ctx->heap, DYNTYPE_STRING);
+            ssh->handshake->kexInit = NULL;
+            ssh->handshake->kexInitSz = 0;
+        }
+
         buf = (byte*)WMALLOC(bufSz, ssh->ctx->heap, DYNTYPE_STRING);
         if (buf == NULL) {
             WLOG(WS_LOG_DEBUG, "Cannot allocate storage for KEX Init msg");
