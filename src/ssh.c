@@ -591,6 +591,9 @@ int wolfSSH_accept(WOLFSSH* ssh)
                         ssh->ctx->agentCb(WOLFSSH_AGENT_LOCAL_SETUP,
                                 ssh->agentCbCtx);
                     }
+                    if (ssh->agent != NULL)
+                        wolfSSH_AGENT_free(ssh->agent);
+                    ssh->agent = newAgent;
                 }
 #endif /* WOLFSSH_AGENT */
                 ssh->acceptState = ACCEPT_CLIENT_SESSION_ESTABLISHED;

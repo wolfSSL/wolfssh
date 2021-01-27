@@ -1395,6 +1395,7 @@ void wolfSSH_AGENT_free(WOLFSSH_AGENT_CTX* agent)
     if (agent != NULL) {
         if (agent->msg != NULL)
             WFREE(agent->msg, agent->heap, DYNTYPE_AGENT_BUFFER);
+        wc_FreeRng(&agent->rng);
         wolfSSH_AGENT_ID_list_free(agent->idList, heap);
         WMEMSET(agent, 0, sizeof(*agent));
         WFREE(agent, heap, DYNTYPE_AGENT);

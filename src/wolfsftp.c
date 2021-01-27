@@ -5643,6 +5643,7 @@ static int wolfSSH_SFTP_GetHandle(WOLFSSH* ssh, byte* handle, word32* handleSz)
 
             case STATE_GET_HANDLE_CLEANUP:
                 WLOG(WS_LOG_SFTP, "SFTP GET HANDLE STATE: CLEANUP");
+                wolfSSH_SFTP_buffer_free(ssh, &state->buffer);
                 if (ssh->getHandleState != NULL) {
                     WFREE(ssh->getHandleState,
                           ssh->ctx->heap, DYNTYPE_SFTP_STATE);
