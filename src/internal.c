@@ -2843,6 +2843,13 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     if (ret == WS_SUCCESS && ssh->handshake->kexId == ID_DH_GEX_SHA256) {
         byte primeGroupPad = 0, generatorPad = 0;
 
+        if (ssh->handshake->primeGroup == NULL ||
+                ssh->handshake->generator == NULL) {
+            WLOG(WS_LOG_DEBUG,
+                    "DKDR: trying GEX without generator or prime group");
+            ret = WS_BAD_ARGUMENT;
+        }
+
         /* Hash in the client's requested minimum key size. */
         if (ret == 0) {
             c32toa(ssh->handshake->dhGexMinSz, scratchLen);
