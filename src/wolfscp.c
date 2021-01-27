@@ -1219,10 +1219,10 @@ int ParseScpCommand(WOLFSSH* ssh)
                         #else
                             ssh->scpBasePath = cmd + idx;
                         #endif
+                            ret = ParseBasePathHelper(ssh, cmdSz);
+                            if (wolfSSH_CleanPath(ssh, (char*)ssh->scpBasePath) < 0)
+                                ret = WS_FATAL_ERROR;
                         }
-                        ret = ParseBasePathHelper(ssh, cmdSz);
-                        if (wolfSSH_CleanPath(ssh, (char*)ssh->scpBasePath) < 0)
-                            ret = WS_FATAL_ERROR;
                         break;
 
                     case 'f':
