@@ -963,7 +963,7 @@ int wolfSSH_TriggerKeyExchange(WOLFSSH* ssh)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS)
-        ret = SendKexInit(ssh);
+        ret = ssh->error = SendKexInit(ssh);
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_TriggerKeyExchange(), ret = %d", ret);
     return ret;

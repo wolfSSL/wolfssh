@@ -391,8 +391,11 @@ static int wsHighwater(byte dir, void* ctx)
 }
 
 
-static INLINE void HighwaterCheck(WOLFSSH* ssh, byte side)
+/* returns WS_SUCCESS on success */
+static INLINE int HighwaterCheck(WOLFSSH* ssh, byte side)
 {
+    int ret = WS_SUCCESS;
+
     if (!ssh->highwaterFlag && ssh->highwaterMark &&
         (ssh->txCount >= ssh->highwaterMark ||
          ssh->rxCount >= ssh->highwaterMark)) {
@@ -403,8 +406,9 @@ static INLINE void HighwaterCheck(WOLFSSH* ssh, byte side)
         ssh->highwaterFlag = 1;
 
         if (ssh->ctx->highwaterCb)
-            ssh->ctx->highwaterCb(side, ssh->highwaterCtx);
+            ret = ssh->ctx->highwaterCb(side, ssh->highwaterCtx);
     }
+    return ret;
 }
 
 
@@ -1433,7 +1437,7 @@ int GrowBuffer(Buffer* buf, word32 sz, word32 usedSz)
             }
 
             /*WLOG(WS_LOG_DEBUG, "GB: resizing buffer");*/
-            if (buf->length > 0)
+            if (buf->length > 0 && usedSz > 0)
                 WMEMCPY(newBuffer, buf->buffer + buf->idx, usedSz);
 
             if (!buf->dynamicFlag)
@@ -1576,6 +1580,7 @@ static int GetInputText(WOLFSSH* ssh, byte** pEol)
 }
 
 
+/* returns WS_SUCCESS on success */
 int wolfSSH_SendPacket(WOLFSSH* ssh)
 {
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SendPacket()");
@@ -1634,10 +1639,7 @@ int wolfSSH_SendPacket(WOLFSSH* ssh)
 
     WLOG(WS_LOG_DEBUG, "SB: Shrinking output buffer");
     ShrinkBuffer(&ssh->outputBuffer, 0);
-
-    HighwaterCheck(ssh, WOLFSSH_HWSIDE_TRANSMIT);
-
-    return WS_SUCCESS;
+    return HighwaterCheck(ssh, WOLFSSH_HWSIDE_TRANSMIT);
 }
 
 
@@ -5527,7 +5529,9 @@ static INLINE int Decrypt(WOLFSSH* ssh, byte* plain, const byte* input,
     }
 
     ssh->rxCount += sz;
-    HighwaterCheck(ssh, WOLFSSH_HWSIDE_RECEIVE);
+
+    if (ret == WS_SUCCESS)
+        ret = HighwaterCheck(ssh, WOLFSSH_HWSIDE_RECEIVE);
 
     return ret;
 }
@@ -5752,7 +5756,9 @@ static INLINE int DecryptAead(WOLFSSH* ssh, byte* plain,
 
     AeadIncrementExpIv(ssh->peerKeys.iv);
     ssh->rxCount += sz;
-    HighwaterCheck(ssh, WOLFSSH_HWSIDE_RECEIVE);
+
+    if (ret == WS_SUCCESS)
+        ret = HighwaterCheck(ssh, WOLFSSH_HWSIDE_RECEIVE);
 
     return ret;
 }
@@ -6350,8 +6356,6 @@ int SendKexInit(WOLFSSH* ssh)
         c32toa(0, output + idx); /* Reserved (0) */
         idx += LENGTH_SZ;
 
-        ssh->outputBuffer.length = idx;
-
         if (ssh->handshake->kexInit != NULL) {
             WFREE(ssh->handshake->kexInit, ssh->ctx->heap, DYNTYPE_STRING);
             ssh->handshake->kexInit = NULL;
@@ -6371,8 +6375,11 @@ int SendKexInit(WOLFSSH* ssh)
         }
     }
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
+        /* increase amount to be sent only if BundlePacket will be called */
+        ssh->outputBuffer.length = idx;
         ret = BundlePacket(ssh);
+    }
 
     if (ret == WS_SUCCESS)
         ret = wolfSSH_SendPacket(ssh);
