@@ -726,7 +726,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
             }
 
             if (ssh->handshake->kexId == ID_DH_GEX_SHA256) {
-#ifndef NO_DH
+#ifndef WOLFSSH_NO_DH
                 ssh->error = SendKexDhGexRequest(ssh);
 #endif
             }
@@ -1436,10 +1436,12 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
     else if (format == WOLFSSH_FORMAT_ASN1) {
         byte* newKey;
         union {
-            #ifndef NO_RSA
+            #ifndef WOLFSSH_NO_RSA
                 RsaKey rsa;
             #endif
-            ecc_key ecc;
+            #ifndef WOLFSSH_NO_ECDSA
+                ecc_key ecc;
+            #endif
         } testKey;
         word32 scratch = 0;
 
@@ -1456,7 +1458,7 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
         }
         *outSz = inSz;
         WMEMCPY(newKey, in, inSz);
-#ifndef NO_RSA
+#ifndef WOLFSSH_NO_RSA
         /* TODO: This is copied and modified from a function in src/internal.c.
            This and that code should be combined into a single function. */
         if (wc_InitRsaKey(&testKey.rsa, heap) < 0)
@@ -1472,6 +1474,7 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
         }
         else {
 #endif
+#ifndef WOLFSSH_NO_ECDSA
             byte curveId = ID_UNKNOWN;
 
             /* Couldn't decode as RSA testKey. Try decoding as ECC testKey. */
@@ -1500,7 +1503,8 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
             }
             else
                 return WS_BAD_FILE_E;
-#ifndef NO_RSA
+#endif
+#ifndef WOLFSSH_NO_RSA
         }
 #endif
     }

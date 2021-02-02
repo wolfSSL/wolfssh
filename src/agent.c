@@ -379,7 +379,7 @@ static int PostUnlock(WOLFSSH_AGENT_CTX* agent,
 }
 
 
-#ifndef NO_RSA
+#ifndef WOLFSSH_NO_RSA
 static int PostAddRsaId(WOLFSSH_AGENT_CTX* agent,
         byte keyType, byte* key, word32 keySz,
         word32 nSz, word32 eSz, word32 dSz,
@@ -461,6 +461,7 @@ static int PostAddRsaId(WOLFSSH_AGENT_CTX* agent,
 #endif
 
 
+#ifndef WOLFSSH_NO_ECDSA
 static int PostAddEcdsaId(WOLFSSH_AGENT_CTX* agent,
         byte keyType, byte* key, word32 keySz,
         word32 curveNameSz, word32 qSz, word32 dSz,
@@ -527,6 +528,7 @@ static int PostAddEcdsaId(WOLFSSH_AGENT_CTX* agent,
     WLOG_LEAVE(ret);
     return ret;
 }
+#endif
 
 
 static int PostRemoveId(WOLFSSH_AGENT_CTX* agent,
@@ -669,7 +671,7 @@ static int PostSignRequest(WOLFSSH_AGENT_CTX* agent,
         int sigSz = sizeof(sig);
 
         if (cur->keyType == ID_SSH_RSA) {
-#ifndef NO_RSA
+#ifndef WOLFSSH_NO_RSA
             WOLFSSH_AGENT_KEY_RSA* key;
             RsaKey rsa;
             byte encSig[MAX_ENCODED_SIG_SZ];
@@ -714,6 +716,7 @@ static int PostSignRequest(WOLFSSH_AGENT_CTX* agent,
 #endif
         }
         else if (cur->keyType == ID_ECDSA_SHA2_NISTP256) {
+#ifndef WOLFSSH_NO_ECDSA
             WOLFSSH_AGENT_KEY_ECDSA* key;
             ecc_key ecc;
             enum wc_HashType hashType = WC_HASH_TYPE_SHA256;
@@ -764,6 +767,7 @@ static int PostSignRequest(WOLFSSH_AGENT_CTX* agent,
             wc_ecc_free(&ecc);
             if (ret != 0)
                 ret = WS_ECC_E;
+#endif
         }
         else
             ret = WS_INVALID_ALGO_ID;
@@ -946,7 +950,7 @@ static int DoAddIdentity(WOLFSSH_AGENT_CTX* agent,
 
         begin += sz;
         if (keyType == ID_SSH_RSA) {
-#ifndef NO_RSA
+#ifndef WOLFSSH_NO_RSA
             byte* key;
             byte* scratch;
             word32 keySz, nSz, eSz, dSz, iqmpSz, pSz, qSz, commentSz;
@@ -993,6 +997,7 @@ static int DoAddIdentity(WOLFSSH_AGENT_CTX* agent,
         else if (keyType == ID_ECDSA_SHA2_NISTP256 ||
                 keyType == ID_ECDSA_SHA2_NISTP384 ||
                 keyType == ID_ECDSA_SHA2_NISTP521) {
+#ifndef WOLFSSH_NO_ECDSA
             byte* key;
             byte* scratch;
             word32 keySz, curveNameSz, qSz, dSz, commentSz;
@@ -1021,6 +1026,7 @@ static int DoAddIdentity(WOLFSSH_AGENT_CTX* agent,
                 ret = PostAddEcdsaId(agent, keyType, key, keySz,
                         curveNameSz, qSz, dSz, commentSz);
             }
+#endif
         }
         else {
             ret = WS_PARSE_E;
