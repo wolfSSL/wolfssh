@@ -1454,13 +1454,13 @@ int ReceiveScpConfirmation(WOLFSSH* ssh)
 {
     int ret = WS_SUCCESS;
     int msgSz;
-    byte msg[DEFAULT_SCP_MSG_SZ];
+    byte msg[DEFAULT_SCP_MSG_SZ + 1];
 
     if (ssh == NULL)
         return WS_BAD_ARGUMENT;
 
     WMEMSET(msg, 0, sizeof(msg));
-    msgSz = wolfSSH_stream_read(ssh, msg, sizeof(msg));
+    msgSz = wolfSSH_stream_read(ssh, msg, DEFAULT_SCP_MSG_SZ);
 
     if (msgSz < 0) {
         ret = msgSz;
