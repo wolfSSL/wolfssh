@@ -1610,6 +1610,11 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     userEcc = 1;
     peerEcc = 1;
 #endif
+#ifndef HAVE_ECC
+    /* If wolfCrypt isn't built with ECC, force ECC off. */
+    userEcc = 0;
+    peerEcc = 0;
+#endif
 
     if (wolfSSH_Init() != WS_SUCCESS) {
         fprintf(stderr, "Couldn't initialize wolfSSH.\n");
