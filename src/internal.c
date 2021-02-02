@@ -1634,7 +1634,6 @@ int wolfSSH_SendPacket(WOLFSSH* ssh)
 
                 case WS_CBIO_ERR_GENERAL:
                     ShrinkBuffer(&ssh->outputBuffer, 1);
-                    FALL_THROUGH;
             }
             return WS_SOCKET_ERROR_E;
         }
