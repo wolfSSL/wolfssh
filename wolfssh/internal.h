@@ -160,6 +160,15 @@ extern "C" {
     #undef WOLFSSH_NO_SSH_RSA_SHA1
     #define WOLFSSH_NO_SSH_RSA_SHA1
 #endif
+#if defined(WOLFSSH_NO_RSA) || defined(NO_SHA256)
+    #undef WOLFSSH_NO_SSH_RSA_SHA2_256
+    #define WOLFSSH_NO_SSH_RSA_SHA2_256
+#endif
+#if defined(WOLFSSH_NO_RSA) || !defined(WOLFSSL_SHA512)
+    #undef WOLFSSH_NO_SSH_RSA_SHA2_512
+    #define WOLFSSH_NO_SSH_RSA_SHA2_512
+#endif
+
 #if defined(WOLFSSH_NO_ECDSA) || \
     defined(NO_SHA256) || defined(NO_ECC256)
     #undef WOLFSSH_NO_ECDSA_SHA2_NISTP256
@@ -610,6 +619,7 @@ struct WOLFSSH {
     word32 peerProtoIdSz;
     void* publicKeyCheckCtx;
     byte  sendTerminalRequest;
+    byte userAuthPkDone;
 
 #ifdef USE_WINDOWS_API
     word32 defaultAttr; /* default windows attributes */
