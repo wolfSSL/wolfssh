@@ -1776,7 +1776,7 @@ int GetSize(word32* v, const byte* buf, word32 len, word32* idx)
 
     result = GetUint32(v, buf, len, idx);
     if (result == WS_SUCCESS) {
-        if (*v + *idx > len) {
+        if (*v > len - *idx) {
             result = WS_BUFFER_E;
         }
     }
@@ -4315,13 +4315,7 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
     if (ret == WS_SUCCESS) {
         begin = *idx;
         WMEMSET(&authData, 0, sizeof(authData));
-        ret = GetUint32(&authData.usernameSz, buf, len, &begin);
-    }
-
-    if (ret == WS_SUCCESS) {
-        if (authData.usernameSz > len - begin) {
-            ret = WS_BUFFER_E;
-        }
+        ret = GetSize(&authData.usernameSz, buf, len, &begin);
     }
 
     if (ret == WS_SUCCESS) {
@@ -4341,13 +4335,7 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
         authData.serviceName = buf + begin;
         begin += authData.serviceNameSz;
 
-        ret = GetUint32(&authData.authNameSz, buf, len, &begin);
-    }
-
-    if (ret == WS_SUCCESS) {
-        if (authData.authNameSz > len - begin) {
-            ret = WS_BUFFER_E;
-        }
+        ret = GetSize(&authData.authNameSz, buf, len, &begin);
     }
 
     if (ret == WS_SUCCESS) {
@@ -4483,7 +4471,7 @@ static int DoUserAuthBanner(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         ret = GetString(banner, &bannerSz, buf, len, idx);
 
     if (ret == WS_SUCCESS)
-        ret = GetUint32(&bannerSz, buf, len, idx);
+        ret = GetSize(&bannerSz, buf, len, idx);
 
     if (ret == WS_SUCCESS) {
         if (ssh->ctx->showBanner) {
@@ -4772,7 +4760,7 @@ static int DoChannelOpenFail(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS)
-        ret = GetUint32(&langSz, buf, len, &begin);
+        ret = GetSize(&langSz, buf, len, &begin);
 
     if (ret == WS_SUCCESS) {
         *idx = begin + langSz;
@@ -5075,11 +5063,11 @@ static int DoChannelData(WOLFSSH* ssh,
 
     ret = GetUint32(&channelId, buf, len, &begin);
     if (ret == WS_SUCCESS)
-        ret = GetUint32(&dataSz, buf, len, &begin);
+        ret = GetSize(&dataSz, buf, len, &begin);
 
     /* Validate dataSz */
     if (ret == WS_SUCCESS) {
-        if ((len < begin) || (dataSz > len - begin)) {
+        if (len < begin) {
             ret = WS_RECV_OVERFLOW_E;
         }
     }
@@ -5145,12 +5133,7 @@ static int DoChannelExtendedData(WOLFSSH* ssh,
         ret = (dataTypeCode == CHANNEL_EXTENDED_DATA_STDERR) ?
             WS_SUCCESS : WS_INVALID_EXTDATA;
     if (ret == WS_SUCCESS)
-        ret = GetUint32(&dataSz, buf, len, &begin);
-    if (ret == WS_SUCCESS) {
-        if (dataSz > (len - begin)) {
-            ret = WS_BUFFER_E;
-        }
-    }
+        ret = GetSize(&dataSz, buf, len, &begin);
 
     if (ret == WS_SUCCESS) {
         channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
