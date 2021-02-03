@@ -2172,7 +2172,7 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
     WMEMCPY(dirName, data + idx, sz);
     dirName[sz] = '\0';
-    if (wolfSSH_CleanPath(ssh, buf) < 0) {
+    if (wolfSSH_CleanPath(ssh, dirName) < 0) {
         WFREE(dirName, ssh->ctx->heap, DYNTYPE_BUFFER);
         return WS_FATAL_ERROR;
     }
