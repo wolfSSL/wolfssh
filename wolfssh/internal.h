@@ -716,6 +716,7 @@ WOLFSSH_LOCAL int wolfSSH_ProcessBuffer(WOLFSSH_CTX*,
 /* Parsing functions */
 WOLFSSH_LOCAL int GetBoolean(byte*, byte*, word32, word32*);
 WOLFSSH_LOCAL int GetUint32(word32*, const byte*, word32, word32*);
+WOLFSSH_LOCAL int GetSize(word32*, const byte*, word32, word32*);
 WOLFSSH_LOCAL int GetMpint(word32*, byte**, byte*, word32, word32*);
 WOLFSSH_LOCAL int GetString(char*, word32*, byte*, word32, word32*);
 WOLFSSH_LOCAL int GetStringAlloc(void*, char**, byte*, word32, word32*);

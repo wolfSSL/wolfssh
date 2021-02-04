@@ -1770,6 +1770,21 @@ int GetUint32(word32* v, const byte* buf, word32 len, word32* idx)
 }
 
 
+int GetSize(word32* v, const byte* buf, word32 len, word32* idx)
+{
+    int result;
+
+    result = GetUint32(v, buf, len, idx);
+    if (result == WS_SUCCESS) {
+        if (*v > len - *idx) {
+            result = WS_BUFFER_E;
+        }
+    }
+
+    return result;
+}
+
+
 /* Gets the size of the mpint, and puts the pointer to the start of
  * buf's number into *mpint. This function does not copy. */
 int GetMpint(word32* mpintSz, byte** mpint, byte* buf, word32 len, word32* idx)
@@ -4141,24 +4156,12 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
     }
 
     if (ret == WS_SUCCESS)
-        ret = GetUint32(&pk->publicKeyTypeSz, buf, len, &begin);
-
-    if (ret == WS_SUCCESS) {
-        if (pk->publicKeyTypeSz > len - begin) {
-            ret = WS_BUFFER_E;
-        }
-    }
+        ret = GetSize(&pk->publicKeyTypeSz, buf, len, &begin);
 
     if (ret == WS_SUCCESS) {
         pk->publicKeyType = buf + begin;
         begin += pk->publicKeyTypeSz;
-        ret = GetUint32(&pk->publicKeySz, buf, len, &begin);
-    }
-
-    if (ret == WS_SUCCESS) {
-        if (pk->publicKeySz > len - begin) {
-            ret = WS_BUFFER_E;
-        }
+        ret = GetSize(&pk->publicKeySz, buf, len, &begin);
     }
 
     if (ret == WS_SUCCESS) {
@@ -4166,12 +4169,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
         begin += pk->publicKeySz;
 
         if (pk->hasSignature) {
-            ret = GetUint32(&pk->signatureSz, buf, len, &begin);
-            if (ret == WS_SUCCESS) {
-                if (pk->signatureSz > len - begin) {
-                    ret = WS_BUFFER_E;
-                }
-            }
+            ret = GetSize(&pk->signatureSz, buf, len, &begin);
             if (ret == WS_SUCCESS) {
                 pk->signature = buf + begin;
                 begin += pk->signatureSz;
@@ -4318,13 +4316,7 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
     if (ret == WS_SUCCESS) {
         begin = *idx;
         WMEMSET(&authData, 0, sizeof(authData));
-        ret = GetUint32(&authData.usernameSz, buf, len, &begin);
-    }
-
-    if (ret == WS_SUCCESS) {
-        if (authData.usernameSz > len - begin) {
-            ret = WS_BUFFER_E;
-        }
+        ret = GetSize(&authData.usernameSz, buf, len, &begin);
     }
 
     if (ret == WS_SUCCESS) {
@@ -4344,13 +4336,7 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
         authData.serviceName = buf + begin;
         begin += authData.serviceNameSz;
 
-        ret = GetUint32(&authData.authNameSz, buf, len, &begin);
-    }
-
-    if (ret == WS_SUCCESS) {
-        if (authData.authNameSz > len - begin) {
-            ret = WS_BUFFER_E;
-        }
+        ret = GetSize(&authData.authNameSz, buf, len, &begin);
     }
 
     if (ret == WS_SUCCESS) {
@@ -4486,7 +4472,7 @@ static int DoUserAuthBanner(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         ret = GetString(banner, &bannerSz, buf, len, idx);
 
     if (ret == WS_SUCCESS)
-        ret = GetUint32(&bannerSz, buf, len, idx);
+        ret = GetSize(&bannerSz, buf, len, idx);
 
     if (ret == WS_SUCCESS) {
         if (ssh->ctx->showBanner) {
@@ -4775,7 +4761,7 @@ static int DoChannelOpenFail(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS)
-        ret = GetUint32(&langSz, buf, len, &begin);
+        ret = GetSize(&langSz, buf, len, &begin);
 
     if (ret == WS_SUCCESS) {
         *idx = begin + langSz;
@@ -5078,11 +5064,11 @@ static int DoChannelData(WOLFSSH* ssh,
 
     ret = GetUint32(&channelId, buf, len, &begin);
     if (ret == WS_SUCCESS)
-        ret = GetUint32(&dataSz, buf, len, &begin);
+        ret = GetSize(&dataSz, buf, len, &begin);
 
     /* Validate dataSz */
     if (ret == WS_SUCCESS) {
-        if ((len < begin) || (dataSz > len - begin)) {
+        if (len < begin) {
             ret = WS_RECV_OVERFLOW_E;
         }
     }
@@ -5148,12 +5134,7 @@ static int DoChannelExtendedData(WOLFSSH* ssh,
         ret = (dataTypeCode == CHANNEL_EXTENDED_DATA_STDERR) ?
             WS_SUCCESS : WS_INVALID_EXTDATA;
     if (ret == WS_SUCCESS)
-        ret = GetUint32(&dataSz, buf, len, &begin);
-    if (ret == WS_SUCCESS) {
-        if (dataSz > (len - begin)) {
-            ret = WS_BUFFER_E;
-        }
-    }
+        ret = GetSize(&dataSz, buf, len, &begin);
 
     if (ret == WS_SUCCESS) {
         channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
