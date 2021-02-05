@@ -1041,12 +1041,18 @@ static const NameIdPair NameIdMap[] = {
     /* Encryption IDs */
 #ifndef WOLFSSH_NO_AES_CBC
     { ID_AES128_CBC, "aes128-cbc" },
+    { ID_AES192_CBC, "aes192-cbc" },
+    { ID_AES256_CBC, "aes256-cbc" },
 #endif
 #ifndef WOLFSSH_NO_AES_CTR
     { ID_AES128_CTR, "aes128-ctr" },
+    { ID_AES192_CTR, "aes192-ctr" },
+    { ID_AES256_CTR, "aes256-ctr" },
 #endif
 #ifndef WOLFSSH_NO_AES_GCM
     { ID_AES128_GCM, "aes128-gcm@openssh.com" },
+    { ID_AES192_GCM, "aes192-gcm@openssh.com" },
+    { ID_AES256_GCM, "aes256-gcm@openssh.com" },
 #endif
 
     /* Integrity IDs */
@@ -2001,12 +2007,18 @@ static int GetNameList(byte* idList, word32* idListSz,
 
 static const byte cannedEncAlgo[] = {
 #ifndef WOLFSSH_NO_AES_GCM
+    ID_AES256_GCM,
+    ID_AES192_GCM,
     ID_AES128_GCM,
 #endif
 #ifndef WOLFSSH_NO_AES_CTR
+    ID_AES256_CTR,
+    ID_AES192_CTR,
     ID_AES128_CTR,
 #endif
 #ifndef WOLFSSH_NO_AES_CBC
+    ID_AES256_CBC,
+    ID_AES192_CBC,
     ID_AES128_CBC,
 #endif
 };
@@ -2122,14 +2134,20 @@ static INLINE byte BlockSzForId(byte id)
     switch (id) {
 #ifndef WOLFSSH_NO_AES_CBC
         case ID_AES128_CBC:
+        case ID_AES192_CBC:
+        case ID_AES256_CBC:
             return AES_BLOCK_SIZE;
 #endif
 #ifndef WOLFSSH_NO_AES_CTR
         case ID_AES128_CTR:
+        case ID_AES192_CTR:
+        case ID_AES256_CTR:
             return AES_BLOCK_SIZE;
 #endif
 #ifndef WOLFSSH_NO_AES_GCM
         case ID_AES128_GCM:
+        case ID_AES192_GCM:
+        case ID_AES256_GCM:
             return AES_BLOCK_SIZE;
 #endif
         default:
@@ -2176,15 +2194,27 @@ static INLINE byte KeySzForId(byte id)
 #endif
 #ifndef WOLFSSH_NO_AES_CBC
         case ID_AES128_CBC:
-            return AES_BLOCK_SIZE;
+            return AES_128_KEY_SIZE;
+        case ID_AES192_CBC:
+            return AES_192_KEY_SIZE;
+        case ID_AES256_CBC:
+            return AES_256_KEY_SIZE;
 #endif
 #ifndef WOLFSSH_NO_AES_CTR
         case ID_AES128_CTR:
-            return AES_BLOCK_SIZE;
+            return AES_128_KEY_SIZE;
+        case ID_AES192_CTR:
+            return AES_192_KEY_SIZE;
+        case ID_AES256_CTR:
+            return AES_256_KEY_SIZE;
 #endif
 #ifndef WOLFSSH_NO_AES_GCM
         case ID_AES128_GCM:
-            return AES_BLOCK_SIZE;
+            return AES_128_KEY_SIZE;
+        case ID_AES192_GCM:
+            return AES_192_KEY_SIZE;
+        case ID_AES256_GCM:
+            return AES_256_KEY_SIZE;
 #endif
         default:
             return 0;
@@ -2306,11 +2336,16 @@ static INLINE const char *PrimeNameForId(byte id)
 
 static INLINE byte AeadModeForId(byte id)
 {
+    switch (id) {
 #ifndef WOLFSSH_NO_AES_GCM
-    return (id == ID_AES128_GCM);
-#else
-    return 0;
+        case ID_AES128_GCM:
+        case ID_AES192_GCM:
+        case ID_AES256_GCM:
+            return 1;
 #endif
+        default:
+            return 0;
+    }
 }
 
 
@@ -3380,7 +3415,9 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
 #ifndef WOLFSSH_NO_AES_CBC
             case ID_AES128_CBC:
-                WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes128-cbc");
+            case ID_AES192_CBC:
+            case ID_AES256_CBC:
+                WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes-cbc");
                 ret = wc_AesSetKey(&ssh->decryptCipher.aes,
                                    ssh->peerKeys.encKey, ssh->peerKeys.encKeySz,
                                    ssh->peerKeys.iv, AES_DECRYPTION);
@@ -3389,7 +3426,9 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
 #ifndef WOLFSSH_NO_AES_CTR
             case ID_AES128_CTR:
-                WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes128-ctr");
+            case ID_AES192_CTR:
+            case ID_AES256_CTR:
+                WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes-ctr");
                 ret = wc_AesSetKey(&ssh->decryptCipher.aes,
                                    ssh->peerKeys.encKey, ssh->peerKeys.encKeySz,
                                    ssh->peerKeys.iv, AES_ENCRYPTION);
@@ -3398,7 +3437,9 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
 #ifndef WOLFSSH_NO_AES_GCM
             case ID_AES128_GCM:
-                WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes128-gcm");
+            case ID_AES192_GCM:
+            case ID_AES256_GCM:
+                WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes-gcm");
                 ret = wc_AesGcmSetKey(&ssh->decryptCipher.aes,
                                       ssh->peerKeys.encKey,
                                       ssh->peerKeys.encKeySz);
@@ -5603,6 +5644,8 @@ static INLINE int Encrypt(WOLFSSH* ssh, byte* cipher, const byte* input,
 
 #ifndef WOLFSSH_NO_AES_CBC
         case ID_AES128_CBC:
+        case ID_AES192_CBC:
+        case ID_AES256_CBC:
             if (sz % AES_BLOCK_SIZE || wc_AesCbcEncrypt(&ssh->encryptCipher.aes,
                                  cipher, input, sz) < 0) {
 
@@ -5613,6 +5656,8 @@ static INLINE int Encrypt(WOLFSSH* ssh, byte* cipher, const byte* input,
 
 #ifndef WOLFSSH_NO_AES_CTR
         case ID_AES128_CTR:
+        case ID_AES192_CTR:
+        case ID_AES256_CTR:
             if (sz % AES_BLOCK_SIZE || AESCTRHELPER(&ssh->encryptCipher.aes,
                                                        cipher, input, sz) < 0) {
 
@@ -5647,6 +5692,8 @@ static INLINE int Decrypt(WOLFSSH* ssh, byte* plain, const byte* input,
 
 #ifndef WOLFSSH_NO_AES_CBC
         case ID_AES128_CBC:
+        case ID_AES192_CBC:
+        case ID_AES256_CBC:
             if (sz % AES_BLOCK_SIZE || wc_AesCbcDecrypt(&ssh->decryptCipher.aes,
                                  plain, input, sz) < 0) {
 
@@ -5657,6 +5704,8 @@ static INLINE int Decrypt(WOLFSSH* ssh, byte* plain, const byte* input,
 
 #ifndef WOLFSSH_NO_AES_CTR
         case ID_AES128_CTR:
+        case ID_AES192_CTR:
+        case ID_AES256_CTR:
             if (sz % AES_BLOCK_SIZE || AESCTRHELPER(&ssh->decryptCipher.aes,
                                                         plain, input, sz) < 0) {
 
@@ -5855,15 +5904,20 @@ static INLINE int EncryptAead(WOLFSSH* ssh, byte* cipher,
 
     WLOG(WS_LOG_DEBUG, "EncryptAead %s", IdToName(ssh->encryptId));
 
+    switch (ssh->encryptId) {
 #ifndef WOLFSSH_NO_AES_GCM
-    if (ssh->encryptId == ID_AES128_GCM) {
-        ret = wc_AesGcmEncrypt(&ssh->encryptCipher.aes, cipher, input, sz,
-                               ssh->keys.iv, ssh->keys.ivSz,
-                               authTag, ssh->macSz, auth, authSz);
-    }
-    else
+        case ID_AES128_GCM:
+        case ID_AES192_GCM:
+        case ID_AES256_GCM:
+            ret = wc_AesGcmEncrypt(&ssh->encryptCipher.aes, cipher, input, sz,
+                    ssh->keys.iv, ssh->keys.ivSz,
+                    authTag, ssh->macSz, auth, authSz);
+            break;
 #endif
-        ret = WS_INVALID_ALGO_ID;
+
+        default:
+            ret = WS_INVALID_ALGO_ID;
+    }
 
     AeadIncrementExpIv(ssh->keys.iv);
     ssh->txCount += sz;
@@ -5885,15 +5939,20 @@ static INLINE int DecryptAead(WOLFSSH* ssh, byte* plain,
 
     WLOG(WS_LOG_DEBUG, "DecryptAead %s", IdToName(ssh->peerEncryptId));
 
+    switch (ssh->peerEncryptId) {
 #ifndef WOLFSSH_NO_AES_GCM
-    if (ssh->peerEncryptId == ID_AES128_GCM) {
-        ret = wc_AesGcmDecrypt(&ssh->decryptCipher.aes, plain, input, sz,
-                               ssh->peerKeys.iv, ssh->peerKeys.ivSz,
-                               authTag, ssh->peerMacSz, auth, authSz);
-    }
-    else
+        case ID_AES128_GCM:
+        case ID_AES192_GCM:
+        case ID_AES256_GCM:
+            ret = wc_AesGcmDecrypt(&ssh->decryptCipher.aes, plain, input, sz,
+                    ssh->peerKeys.iv, ssh->peerKeys.ivSz,
+                    authTag, ssh->peerMacSz, auth, authSz);
+            break;
 #endif
-        ret = WS_INVALID_ALGO_ID;
+
+        default:
+            ret = WS_INVALID_ALGO_ID;
+    }
 
     AeadIncrementExpIv(ssh->peerKeys.iv);
     ssh->rxCount += sz;
@@ -6308,12 +6367,18 @@ static INLINE void CopyNameList(byte* buf, word32* idx,
 
 static const char cannedEncAlgoNames[] =
 #if !defined(WOLFSSH_NO_AES_GCM)
+    "aes256-gcm@openssh.com,"
+    "aes192-gcm@openssh.com,"
     "aes128-gcm@openssh.com,"
 #endif
 #if !defined(WOLFSSH_NO_AES_CTR)
+    "aes256-ctr,"
+    "aes192-ctr,"
     "aes128-ctr,"
 #endif
 #if !defined(WOLFSSH_NO_AES_CBC)
+    "aes256-cbc,"
+    "aes192-cbc,"
     "aes128-cbc,"
 #endif
     "";
@@ -7331,7 +7396,9 @@ int SendNewKeys(WOLFSSH* ssh)
 
 #ifndef WOLFSSH_NO_AES_CBC
             case ID_AES128_CBC:
-                WLOG(WS_LOG_DEBUG, "SNK: using cipher aes128-cbc");
+            case ID_AES192_CBC:
+            case ID_AES256_CBC:
+                WLOG(WS_LOG_DEBUG, "SNK: using cipher aes-cbc");
                 ret = wc_AesSetKey(&ssh->encryptCipher.aes,
                                   ssh->keys.encKey, ssh->keys.encKeySz,
                                   ssh->keys.iv, AES_ENCRYPTION);
@@ -7340,7 +7407,9 @@ int SendNewKeys(WOLFSSH* ssh)
 
 #ifndef WOLFSSH_NO_AES_CTR
             case ID_AES128_CTR:
-                WLOG(WS_LOG_DEBUG, "SNK: using cipher aes128-ctr");
+            case ID_AES192_CTR:
+            case ID_AES256_CTR:
+                WLOG(WS_LOG_DEBUG, "SNK: using cipher aes-ctr");
                 ret = wc_AesSetKey(&ssh->encryptCipher.aes,
                                   ssh->keys.encKey, ssh->keys.encKeySz,
                                   ssh->keys.iv, AES_ENCRYPTION);
@@ -7349,7 +7418,9 @@ int SendNewKeys(WOLFSSH* ssh)
 
 #ifndef WOLFSSH_NO_AES_GCM
             case ID_AES128_GCM:
-                WLOG(WS_LOG_DEBUG, "SNK: using cipher aes128-gcm");
+            case ID_AES192_GCM:
+            case ID_AES256_GCM:
+                WLOG(WS_LOG_DEBUG, "SNK: using cipher aes-gcm");
                 ret = wc_AesGcmSetKey(&ssh->encryptCipher.aes,
                                      ssh->keys.encKey, ssh->keys.encKeySz);
                 break;
