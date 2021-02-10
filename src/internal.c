@@ -3878,13 +3878,19 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequestRsa()");
 
-    if (ssh == NULL || pk == NULL || digest == NULL || digestSz == 0)
-        ret = WS_BAD_ARGUMENT;
+    ret = wc_InitRsaKey(&key, ssh->ctx->heap);
+    if (ret == 0) {
+        if (ssh == NULL || pk == NULL || digest == NULL || digestSz == 0)
+            ret = WS_BAD_ARGUMENT;
+    }
+    else {
+        ret = WS_SUCCESS;
+    }
 
     /* First check that the public key's type matches the one we are
      * expecting. */
     if (ret == WS_SUCCESS)
-        ret = GetUint32(&publicKeyTypeSz, pk->publicKey, pk->publicKeySz, &i);
+        ret = GetSize(&publicKeyTypeSz, pk->publicKey, pk->publicKeySz, &i);
 
     if (ret == WS_SUCCESS) {
         publicKeyType = pk->publicKey + i;
@@ -3899,20 +3905,18 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS)
-        ret = GetUint32(&eSz, pk->publicKey, pk->publicKeySz, &i);
+        ret = GetSize(&eSz, pk->publicKey, pk->publicKeySz, &i);
 
     if (ret == WS_SUCCESS) {
         e = pk->publicKey + i;
         i += eSz;
-        ret = GetUint32(&nSz, pk->publicKey, pk->publicKeySz, &i);
+        ret = GetSize(&nSz, pk->publicKey, pk->publicKeySz, &i);
     }
 
     if (ret == WS_SUCCESS) {
         n = pk->publicKey + i;
 
-        ret = wc_InitRsaKey(&key, ssh->ctx->heap);
-        if (ret == 0)
-            ret = wc_RsaPublicKeyDecodeRaw(n, nSz, e, eSz, &key);
+        ret = wc_RsaPublicKeyDecodeRaw(n, nSz, e, eSz, &key);
         if (ret != 0) {
             WLOG(WS_LOG_DEBUG, "Could not decode public key");
             ret = WS_CRYPTO_FAILED;
@@ -3923,7 +3927,7 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
         i = 0;
         /* First check that the signature's public key type matches the one
          * we are expecting. */
-        ret = GetUint32(&publicKeyTypeSz, pk->publicKey, pk->publicKeySz, &i);
+        ret = GetSize(&publicKeyTypeSz, pk->publicKey, pk->publicKeySz, &i);
     }
 
     if (ret == WS_SUCCESS) {
@@ -3940,7 +3944,7 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS)
-        ret = GetUint32(&nSz, pk->signature, pk->signatureSz, &i);
+        ret = GetSize(&nSz, pk->signature, pk->signatureSz, &i);
 
     if (ret == WS_SUCCESS) {
         n = pk->signature + i;
@@ -4001,13 +4005,20 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequestEcc()");
 
-    if (ssh == NULL || pk == NULL || digest == NULL || digestSz == 0)
-        ret = WS_BAD_ARGUMENT;
+    ret = wc_ecc_init_ex(&key, ssh->ctx->heap, INVALID_DEVID);
+
+    if (ret == 0) {
+        if (ssh == NULL || pk == NULL || digest == NULL || digestSz == 0)
+            ret = WS_BAD_ARGUMENT;
+    }
+    else {
+        ret = WS_SUCCESS;
+    }
 
     /* First check that the public key's type matches the one we are
      * expecting. */
     if (ret == WS_SUCCESS)
-        ret = GetUint32(&publicKeyTypeSz, pk->publicKey, pk->publicKeySz, &i);
+        ret = GetSize(&publicKeyTypeSz, pk->publicKey, pk->publicKeySz, &i);
 
     if (ret == WS_SUCCESS) {
         publicKeyType = pk->publicKey + i;
@@ -4022,23 +4033,20 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS)
-        ret = GetUint32(&curveNameSz, pk->publicKey, pk->publicKeySz, &i);
+        ret = GetSize(&curveNameSz, pk->publicKey, pk->publicKeySz, &i);
 
     if (ret == WS_SUCCESS) {
         curveName = pk->publicKey + i;
         (void)curveName; /* Not used at the moment, hush the compiler. */
         i += curveNameSz;
-        ret = GetUint32(&qSz, pk->publicKey, pk->publicKeySz, &i);
+        ret = GetSize(&qSz, pk->publicKey, pk->publicKeySz, &i);
     }
 
     if (ret == WS_SUCCESS) {
         q = pk->publicKey + i;
         i += qSz;
-        ret = wc_ecc_init_ex(&key, ssh->ctx->heap, INVALID_DEVID);
-    }
-
-    if (ret == 0)
         ret = wc_ecc_import_x963(q, qSz, &key);
+    }
 
     if (ret != 0) {
         WLOG(WS_LOG_DEBUG, "Could not decode public key");
@@ -4049,7 +4057,7 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
         i = 0;
         /* First check that the signature's public key type matches the one
          * we are expecting. */
-        ret = GetUint32(&publicKeyTypeSz, pk->signature, pk->signatureSz, &i);
+        ret = GetSize(&publicKeyTypeSz, pk->signature, pk->signatureSz, &i);
     }
 
     if (ret == WS_SUCCESS) {
@@ -4067,12 +4075,12 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 
     if (ret == WS_SUCCESS) {
         /* Get the size of the signature blob. */
-        ret = GetUint32(&sz, pk->signature, pk->signatureSz, &i);
+        ret = GetSize(&sz, pk->signature, pk->signatureSz, &i);
     }
 
     if (ret == WS_SUCCESS) {
         /* Get R and S. */
-        ret = GetUint32(&sz, pk->signature, pk->signatureSz, &i);
+        ret = GetSize(&sz, pk->signature, pk->signatureSz, &i);
     }
 
     if (ret == WS_SUCCESS) {
@@ -4091,7 +4099,7 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 
     if (ret == WS_SUCCESS) {
         i += sz;
-        ret = GetUint32(&sz, pk->signature, pk->signatureSz, &i);
+        ret = GetSize(&sz, pk->signature, pk->signatureSz, &i);
     }
 
     if (ret == WS_SUCCESS) {
