@@ -99,6 +99,7 @@ int wolfSSH_LogEnabled(void)
 }
 
 
+#ifdef DEBUG_WOLFSSH
 #ifndef WOLFSSH_NO_DEFAULT_LOGGING_CB
 /* log level string */
 static const char* GetLogStr(enum wolfSSH_LogLevel level)
@@ -132,7 +133,6 @@ static const char* GetLogStr(enum wolfSSH_LogLevel level)
             return "UNKNOWN";
     }
 }
-
 
 void DefaultLoggingCb(enum wolfSSH_LogLevel level, const char *const msgStr)
 {
@@ -176,3 +176,14 @@ void wolfSSH_Log(enum wolfSSH_LogLevel level, const char *const fmt, ...)
     if (logFunction)
         logFunction(level, msgStr);
 }
+
+#else
+void DefaultLoggingCb(enum wolfSSH_LogLevel level, const char *const msgStr)
+{
+}
+
+void wolfSSH_Log(enum wolfSSH_LogLevel level, const char *const fmt, ...)
+{
+}
+
+#endif  /* DEBUG_WOLFSSH */
