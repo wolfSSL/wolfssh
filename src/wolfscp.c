@@ -1556,6 +1556,7 @@ void* wolfSSH_GetScpSendCtx(WOLFSSH* ssh)
 }
 
 
+#ifndef NO_WOLFSSH_CLIENT
 int wolfSSH_SCP_connect(WOLFSSH* ssh, byte* cmd)
 {
     int ret = WS_SUCCESS;
@@ -1584,7 +1585,6 @@ int wolfSSH_SCP_connect(WOLFSSH* ssh, byte* cmd)
     return ret;
 }
 
-#ifndef NO_WOLFSSH_CLIENT
 static int wolfSSH_SCP_cmd(WOLFSSH* ssh, const char* localName,
         const char* remoteName, byte dir)
 {
