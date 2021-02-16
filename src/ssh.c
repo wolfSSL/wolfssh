@@ -1379,8 +1379,8 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
     if (format == WOLFSSH_FORMAT_SSH) {
         char* c;
         char* last;
-        char* type;
-        char* key;
+        char* type = NULL;
+        char* key = NULL;
 
         /*
            SSH format is:
