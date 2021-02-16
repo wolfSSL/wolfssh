@@ -57,8 +57,8 @@
 #endif /* WOLFSSH_NO_DEFAULT_LOGGING_CB */
 
 
-static enum wolfSSH_LogLevel logLevel = WS_LOG_DEFAULT;
 #ifdef DEBUG_WOLFSSH
+    static enum wolfSSH_LogLevel logLevel = WS_LOG_DEFAULT;
     static int logEnable = 0;
 #endif
 
@@ -180,10 +180,14 @@ void wolfSSH_Log(enum wolfSSH_LogLevel level, const char *const fmt, ...)
 #else
 void DefaultLoggingCb(enum wolfSSH_LogLevel level, const char *const msgStr)
 {
+    (void)level;
+    (void)msgStr;
 }
 
 void wolfSSH_Log(enum wolfSSH_LogLevel level, const char *const fmt, ...)
 {
+    (void)level;
+    (void)fmt;
 }
 
 #endif  /* DEBUG_WOLFSSH */
