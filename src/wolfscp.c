@@ -894,7 +894,7 @@ static int GetScpFileSize(WOLFSSH* ssh, byte* buf, word32 bufSz,
     if (ret == WS_SUCCESS) {
         /* replace space with newline for atoi */
         buf[spaceIdx] = '\n';
-        ssh->scpFileSz = strtol((char *)(buf + idx), NULL, 10);
+        ssh->scpFileSz = atoi((char *)(buf + idx));
 
         /* restore space, increment idx to space */
         buf[spaceIdx] = ' ';
@@ -1000,7 +1000,7 @@ static int GetScpTimestamp(WOLFSSH* ssh, byte* buf, word32 bufSz,
     if (ret == WS_SUCCESS) {
         /* replace space with newline for atoi */
         buf[spaceIdx] = '\n';
-        ssh->scpMTime = strtol((char*)(buf + idx), NULL, 10);
+        ssh->scpMTime = atoi((char*)(buf + idx));
 
         /* restore space, increment idx past it */
         buf[spaceIdx] = ' ';
@@ -1032,7 +1032,7 @@ static int GetScpTimestamp(WOLFSSH* ssh, byte* buf, word32 bufSz,
     if (ret == WS_SUCCESS) {
         /* replace space with newline for atoi */
         buf[spaceIdx] = '\n';
-        ssh->scpATime = strtol((char*)(buf + idx), NULL, 10);
+        ssh->scpATime = atoi((char*)(buf + idx));
 
         /* restore space, increment idx past it */
         buf[spaceIdx] = ' ';
