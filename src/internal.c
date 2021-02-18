@@ -6780,6 +6780,11 @@ int SendKexDhReply(WOLFSSH* ssh)
             ret = wc_HashUpdate(&ssh->handshake->hash, enmhashId,
                                 ssh->handshake->e, ssh->handshake->eSz);
 
+        /* reset size here because a previous shared secret could potentially be
+         * smaller by a byte than usual and cause buffer issues with re-key */
+        if (ret == 0)
+            ssh->kSz = MAX_KEX_KEY_SZ;
+
         /* Make the server's DH f-value and the shared secret K. */
         /* Or make the server's ECDH private value, and the shared secret K. */
         if (ret == 0) {
@@ -6806,8 +6811,9 @@ int SendKexDhReply(WOLFSSH* ssh)
             else {
                 ecc_key pubKey;
                 ecc_key privKey;
-                int primeId = wcPrimeForId(ssh->handshake->kexId);
+                int primeId;
 
+                primeId  = wcPrimeForId(ssh->handshake->kexId);
                 if (primeId == ECC_CURVE_INVALID)
                     ret = WS_INVALID_PRIME_CURVE;
 

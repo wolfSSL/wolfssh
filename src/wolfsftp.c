@@ -504,7 +504,7 @@ static int wolfSSH_SFTP_buffer_send(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer)
     do {
         ret = wolfSSH_stream_send(ssh, buffer->data + buffer->idx,
             buffer->sz - buffer->idx);
-        if (ret == WS_WINDOW_FULL) {
+        if (ret == WS_WINDOW_FULL || ret == WS_REKEYING) {
             ret = wolfSSH_worker(ssh, NULL);
             if (ret == WS_SUCCESS)
                 continue; /* skip past increment and send more */
@@ -786,8 +786,8 @@ static int SFTP_GetHeader(WOLFSSH* ssh, word32* reqId, byte* type,
     ato32(buffer->data + UINT32_SZ + MSG_ID_SZ, reqId);
 
     wolfSSH_SFTP_buffer_free(ssh, buffer);
-    WLOG(WS_LOG_SFTP, "Leaving SFTP_GetHeader(), %d",
-            len - UINT32_SZ - MSG_ID_SZ);
+    WLOG(WS_LOG_SFTP, "Leaving SFTP_GetHeader(), packet length = %d id = %d"
+           " type = %d", len - UINT32_SZ - MSG_ID_SZ, *reqId, *type);
     return len - UINT32_SZ - MSG_ID_SZ;
 }
 
@@ -1235,7 +1235,7 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
     int maxSz, ret = WS_SUCCESS;
     WS_SFTP_RECV_STATE* state = NULL;
 
-    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SFTP_read()");
+    WLOG(WS_LOG_SFTP, "Entering wolfSSH_SFTP_read()");
 
     if (ssh == NULL)
         return WS_BAD_ARGUMENT;
@@ -1436,6 +1436,7 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
                         if (ret < 0) {
                             if (ssh->error != WS_WANT_READ &&
                                     ssh->error != WS_WANT_WRITE &&
+                                    ssh->error != WS_REKEYING &&
                                     ssh->error != WS_WINDOW_FULL)
                                 wolfSSH_SFTP_ClearState(ssh, STATE_ID_RECV);
                             return WS_FATAL_ERROR;
@@ -4911,7 +4912,7 @@ int SendPacketType(WOLFSSH* ssh, byte type, byte* buf, word32 bufSz)
 
                 /* check for adjust window packet */
                 err = wolfSSH_get_error(ssh);
-                if (err == WS_WINDOW_FULL)
+                if (err == WS_WINDOW_FULL || err == WS_REKEYING)
                     ret = wolfSSH_worker(ssh, NULL);
                 ssh->error = err; /* don't save potential want read here */
             } while (ret > 0 &&
@@ -6382,7 +6383,8 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
             case STATE_SEND_WRITE_SEND_BODY:
                 WLOG(WS_LOG_SFTP, "SFTP SEND_WRITE STATE: SEND_BODY");
                 state->sentSz = wolfSSH_stream_send(ssh, in, inSz);
-                if (state->sentSz == WS_WINDOW_FULL) {
+                if (state->sentSz == WS_WINDOW_FULL ||
+                        state->sentSz == WS_REKEYING) {
                     ret = wolfSSH_worker(ssh, NULL);
                     if (ret == WS_SUCCESS)
                         continue; /* skip past rest and send more */

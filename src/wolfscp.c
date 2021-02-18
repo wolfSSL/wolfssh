@@ -572,7 +572,7 @@ int DoScpSource(WOLFSSH* ssh)
 
                 ret = wolfSSH_stream_send(ssh, ssh->scpFileBuffer,
                                           ssh->scpBufferedSz);
-                if (ret == WS_WINDOW_FULL) {
+                if (ret == WS_WINDOW_FULL || ret == WS_REKEYING) {
                     ret = wolfSSH_worker(ssh, NULL);
                     if (ret == WS_SUCCESS)
                         continue;
