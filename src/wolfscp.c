@@ -236,7 +236,6 @@ static int ScpSourceInit(WOLFSSH* ssh)
 }
 
 
-#ifndef NO_SCP_TIMESTAMP
 /* Sends timestamp information (access, modification) to peer.
  *
  * T<modification_secs> 0 <access_secs> 0
@@ -273,7 +272,6 @@ static int SendScpTimestamp(WOLFSSH* ssh)
 
     return ret;
 }
-#endif
 
 
 
@@ -314,7 +312,6 @@ static int SendScpFileHeader(WOLFSSH* ssh)
     return ret;
 }
 
-#ifndef NO_SCP_ENTER_DIRECTORY
 /* Sends directory message to peer, length is ignored but must
  * be present in message format (set to 0).
  *
@@ -347,7 +344,6 @@ static int SendScpEnterDirectory(WOLFSSH* ssh)
 
     return ret;
 }
-#endif
 
 /* Sends end directory message to peer.
  *
@@ -519,7 +515,6 @@ int DoScpSource(WOLFSSH* ssh)
 
                 continue;
 
-#ifndef NO_SCP_TIMESTAMP
             case SCP_SEND_TIMESTAMP:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SEND_TIMESTAMP");
 
@@ -531,9 +526,7 @@ int DoScpSource(WOLFSSH* ssh)
                 ssh->scpState = SCP_RECEIVE_CONFIRMATION;
                 ssh->scpNextState = SCP_SEND_FILE_HEADER;
                 continue;
-#endif
 
-#ifndef NO_SCP_ENTER_DIRECTORY
             case SCP_SEND_ENTER_DIRECTORY:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SEND_ENTER_DIRECTORY");
 
@@ -545,7 +538,6 @@ int DoScpSource(WOLFSSH* ssh)
                 ssh->scpState = SCP_RECEIVE_CONFIRMATION;
                 ssh->scpNextState = SCP_TRANSFER;
                 continue;
-#endif
 
             case SCP_SEND_EXIT_DIRECTORY:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SEND_EXIT_DIRECTORY");
