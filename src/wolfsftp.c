@@ -926,6 +926,29 @@ static int SFTP_SetAttributes(WOLFSSH* ssh, byte* buf, word32 bufSz,
 }
 
 
+static INLINE int SFTP_GetSz(byte* buf, word32* sz,
+        word32 lowerBound, word32 upperBound)
+{
+    int ret = WS_SUCCESS;
+
+    if (buf == NULL || sz == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        word32 val;
+
+        ato32(buf, &val);
+        if (val < lowerBound || val > upperBound)
+            ret = WS_BUFFER_E;
+        else
+            *sz = val;
+    }
+
+    return ret;
+}
+
+
 #ifndef NO_WOLFSSH_SERVER
 
 static int SFTP_GetAttributes(void* fs, const char* fileName,
@@ -948,8 +971,8 @@ static int SFTP_ServerRecvInit(WOLFSSH* ssh) {
         return len;
     }
 
-    ato32(buf, &sz);
-    if (sz < MSG_ID_SZ + UINT32_SZ) {
+    if (SFTP_GetSz(buf, &sz,
+                MSG_ID_SZ + UINT32_SZ, WOLFSSH_MAX_SFTP_RECV) != WS_SUCCESS) {
         wolfSSH_SFTP_ClearState(ssh, STATE_ID_ALL);
         return WS_BUFFER_E;
     }
@@ -4679,8 +4702,9 @@ static int SFTP_ClientRecvInit(WOLFSSH* ssh) {
                 return len;
             }
 
-            ato32(buf, &sz);
-            if (sz < MSG_ID_SZ + UINT32_SZ) {
+            if (SFTP_GetSz(buf, &sz,
+                        MSG_ID_SZ + UINT32_SZ,
+                        WOLFSSH_MAX_SFTP_RECV) != WS_SUCCESS) {
                 return WS_BUFFER_E;
             }
 

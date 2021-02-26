@@ -152,6 +152,9 @@ struct WS_SFTPNAME {
 #ifndef WOLFSSH_MAX_SFTP_RW
     #define WOLFSSH_MAX_SFTP_RW 1024
 #endif
+#ifndef WOLFSSH_MAX_SFTP_RECV
+    #define WOLFSSH_MAX_SFTP_RECV 32768
+#endif
 
 /* functions for establishing a connection */
 WOLFSSH_API int wolfSSH_SFTP_accept(WOLFSSH* ssh);
