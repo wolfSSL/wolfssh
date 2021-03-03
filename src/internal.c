@@ -5246,6 +5246,16 @@ static int DoPacket(WOLFSSH* ssh)
         case MSGID_KEXINIT:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXINIT");
             ret = DoKexInit(ssh, buf + idx, payloadSz, &payloadIdx);
+            if (ssh->isKeying == 1 &&
+                    ssh->connectState == CONNECT_SERVER_CHANNEL_REQUEST_DONE) {
+                if (ssh->handshake->kexId == ID_DH_GEX_SHA256) {
+        #ifndef WOLFSSH_NO_DH
+                    ssh->error = SendKexDhGexRequest(ssh);
+        #endif
+                }
+                else
+                    ssh->error = SendKexDhInit(ssh);
+            }
             break;
 
         case MSGID_NEWKEYS:
