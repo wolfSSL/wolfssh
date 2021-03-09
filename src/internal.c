@@ -6913,7 +6913,7 @@ int SendKexDhReply(WOLFSSH* ssh)
                 if (y_ptr == NULL)
                     ret = WS_MEMORY_E;
 #else
-                byte y_s[ySz];
+                byte y_s[MAX_KEX_KEY_SZ];
                 y_ptr = y_s;
 #endif
                 if (ret == WS_SUCCESS) {
@@ -6930,7 +6930,7 @@ int SendKexDhReply(WOLFSSH* ssh)
                     ForceZero(y_ptr, ySz);
                     wc_FreeDhKey(&privKey);
                 }
-#endif
+#endif /* ! WOLFSSH_NO_DH */
             }
             else {
                 ecc_key pubKey;
@@ -7086,8 +7086,8 @@ int SendKexDhReply(WOLFSSH* ssh)
                     if (r_ptr == NULL || r_ptr == NULL)
                         ret = WS_MEMORY_E;
 #else
-                    byte r_s[rSz];
-                    byte s_s[sSz];
+                    byte r_s[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
+                    byte s_s[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
                     r_ptr = r_s;
                     s_ptr = s_s;
 #endif
