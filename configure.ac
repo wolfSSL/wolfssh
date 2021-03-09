@@ -123,9 +123,9 @@ AC_ARG_ENABLE([agent],
     [AS_HELP_STRING([--enable-agent],[Enable ssh-agent support (default: disabled)])],
     [ENABLED_AGENT=$enableval],[ENABLED_AGENT=no])
 
-# small-stack
-AC_ARG_ENABLE([small-stack],
-    [AS_HELP_STRING([--enable-small-stack],[Enable small stack (default: disabled)])],
+# smallstack
+AC_ARG_ENABLE([smallstack],
+    [AS_HELP_STRING([--enable-smallstack],[Enable small stack (default: disabled)])],
     [ENABLED_SMALLSTACK=$enableval],[ENABLED_SMALLSTACK=no])
 
 # Enable All
