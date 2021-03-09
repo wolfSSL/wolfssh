@@ -3019,30 +3019,27 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         }
     }
 
-#ifdef WOLFSSH_SMALL_STACK
     if (ret == WS_SUCCESS) {
+#ifdef WOLFSSH_SMALL_STACK
         sigKeyBlock_ptr = WMALLOC(sizeof(struct wolfSSH_sigKeyBlock), ssh->ctx->heap, DYNTYPE_PRIVKEY);
         if (sigKeyBlock_ptr == NULL) {
             ret = WS_MEMORY_E;
         }
-    }
+
 #ifndef WOLFSSH_NO_ECDSA
-    if (ret == WS_SUCCESS) {
         key_ptr = WMALLOC(sizeof(ecc_key), ssh->ctx->heap, DYNTYPE_PRIVKEY);
         if (key_ptr == NULL) {
             ret = WS_MEMORY_E;
         }
-    }
 #endif /* WOLFSSH_NO_ECDSA */
 
 #else /* ! WOLFSSH_SMALL_STACK */
 #ifndef WOLFSSH_NO_ECDSA
-    ecc_key key_s;
-    key_ptr = &key_s;
+        ecc_key key_s;
+        key_ptr = &key_s;
 #endif
-    sigKeyBlock_ptr = &s_sigKeyBlock;
+        sigKeyBlock_ptr = &s_sigKeyBlock;
 #endif
-    if (ret == WS_SUCCESS) {
         sig = buf + begin;
         tmpIdx = begin;
         begin += sigSz;
@@ -3092,8 +3089,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             (void)tmpIdx;
             ret = WS_INVALID_ALGO_ID;
 #endif
-        }
-        else {
+        } else {
 #ifndef WOLFSSH_NO_ECDSA
             byte* q;
             word32 qSz, pubKeyIdx = 0;
