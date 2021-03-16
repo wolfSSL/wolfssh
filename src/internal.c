@@ -3040,6 +3040,8 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 #endif
         sigKeyBlock_ptr = &s_sigKeyBlock;
 #endif
+    }
+    if (ret == WS_SUCCESS) {
         sig = buf + begin;
         tmpIdx = begin;
         begin += sigSz;
@@ -4084,7 +4086,7 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     key_ptr = WMALLOC(sizeof(ecc_key), ssh->ctx->heap, DYNTYPE_PUBKEY);
     sig_r_ptr = WMALLOC(sizeof(mp_int), ssh->ctx->heap, DYNTYPE_MPINT);
     sig_s_ptr = WMALLOC(sizeof(mp_int), ssh->ctx->heap, DYNTYPE_MPINT);
-    if(key_ptr == NULL || sig_r_ptr == NULL || sig_s_ptr == NULL)
+    if (key_ptr == NULL || sig_r_ptr == NULL || sig_s_ptr == NULL)
         ret = WS_MEMORY_E;
 #else
     mp_int sig_r, sig_s;
@@ -5495,7 +5497,7 @@ static int DoPacket(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS || ret == WS_CHAN_RXD || ret == WS_EXTDATA) {
-        if(payloadSz > 0){
+        if (payloadSz > 0){
             idx += payloadIdx;
             if (idx + padSz > len)
             {
@@ -6568,7 +6570,7 @@ int SendKexDhReply(WOLFSSH* ssh)
             ssh->ctx->heap, DYNTYPE_PRIVKEY);
     f_ptr = WMALLOC(KEX_F_SIZE, ssh->ctx->heap, DYNTYPE_BUFFER);
     sig_ptr = WMALLOC(KEX_SIG_SIZE, ssh->ctx->heap, DYNTYPE_BUFFER);
-    if(sigKeyBlock_ptr == NULL || f_ptr == NULL || sig_ptr == NULL)
+    if (sigKeyBlock_ptr == NULL || f_ptr == NULL || sig_ptr == NULL)
         ret = WS_MEMORY_E;
 #else
     struct wolfSSH_sigKeyBlockFull sigKeyBlock_s;
@@ -6583,9 +6585,10 @@ int SendKexDhReply(WOLFSSH* ssh)
 
     if (ret == WS_SUCCESS) {
         if (ssh == NULL || ssh->handshake == NULL) {
-            return WS_BAD_ARGUMENT;
+            ret = WS_BAD_ARGUMENT;
         }
-
+    }
+    if (ret == WS_SUCCESS) {
         WMEMSET(sigKeyBlock_ptr, 0, sizeof(struct wolfSSH_sigKeyBlockFull));
 
         sigKeyBlock_ptr->useRsa = ssh->handshake->pubKeyId == ID_SSH_RSA;
@@ -8456,7 +8459,8 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId, int addSig)
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
-    WMEMSET(keySig_ptr, 0, sizeof(WS_KeySignature));
+    if (ret == WS_SUCCESS)
+        WMEMSET(keySig_ptr, 0, sizeof(WS_KeySignature));
 
     if (ret == WS_SUCCESS) {
         if (ssh->ctx->userAuthCb != NULL) {
