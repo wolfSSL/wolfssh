@@ -2249,7 +2249,11 @@ static INLINE int wcPrimeForId(byte id)
             return ECC_SECP521R1;
 #endif
         default:
+#if !defined(WOLFSSH_NO_ECDSA) && !defined(WOLFSSH_NO_ECDH)
             return ECC_CURVE_INVALID;
+#else
+            return -1;
+#endif
     }
 }
 
@@ -6226,9 +6230,11 @@ static const char cannedKeyAlgoClientNames[] =
 #endif
 
 static const char cannedKeyAlgoRsaNames[] = "ssh-rsa";
+#if !defined(WOLFSSH_NO_ECDSA)
 static const char cannedKeyAlgoEcc256Names[] = "ecdsa-sha2-nistp256";
 static const char cannedKeyAlgoEcc384Names[] = "ecdsa-sha2-nistp384";
 static const char cannedKeyAlgoEcc521Names[] = "ecdsa-sha2-nistp521";
+#endif
 
 static const char cannedKexAlgoNames[] =
 #if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP521)
@@ -6268,12 +6274,14 @@ static const word32 cannedMacAlgoNamesSz = sizeof(cannedMacAlgoNames) - 2;
 static const word32 cannedKeyAlgoClientNamesSz =
                                            sizeof(cannedKeyAlgoClientNames) - 2;
 static const word32 cannedKeyAlgoRsaNamesSz = sizeof(cannedKeyAlgoRsaNames) - 1;
+#if !defined(WOLFSSH_NO_ECDSA) && !defined(WOLFSSH_NO_ECDH)
 static const word32 cannedKeyAlgoEcc256NamesSz =
                                            sizeof(cannedKeyAlgoEcc256Names) - 1;
 static const word32 cannedKeyAlgoEcc384NamesSz =
                                            sizeof(cannedKeyAlgoEcc384Names) - 1;
 static const word32 cannedKeyAlgoEcc521NamesSz =
                                            sizeof(cannedKeyAlgoEcc521Names) - 1;
+#endif
 static const word32 cannedKexAlgoNamesSz = sizeof(cannedKexAlgoNames) - 2;
 static const word32 cannedNoneNamesSz = sizeof(cannedNoneNames) - 1;
 
@@ -6307,6 +6315,7 @@ int SendKexInit(WOLFSSH* ssh)
     if (ret == WS_SUCCESS) {
         if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
             switch (ssh->ctx->useEcc) {
+#if !defined(WOLFSSH_NO_ECDSA) && !defined(WOLFSSH_NO_ECDH)
                 case ECC_SECP256R1:
                     cannedKeyAlgoNames = cannedKeyAlgoEcc256Names;
                     cannedKeyAlgoNamesSz = cannedKeyAlgoEcc256NamesSz;
@@ -6319,6 +6328,7 @@ int SendKexInit(WOLFSSH* ssh)
                     cannedKeyAlgoNames = cannedKeyAlgoEcc521Names;
                     cannedKeyAlgoNamesSz = cannedKeyAlgoEcc521NamesSz;
                     break;
+#endif
                 default:
                     cannedKeyAlgoNames = cannedKeyAlgoRsaNames;
                     cannedKeyAlgoNamesSz = cannedKeyAlgoRsaNamesSz;
@@ -6820,6 +6830,7 @@ int SendKexDhReply(WOLFSSH* ssh)
 #endif
             }
             else {
+#if !defined(WOLFSSH_NO_ECDH)
                 ecc_key pubKey;
                 ecc_key privKey;
                 int primeId;
@@ -6855,6 +6866,7 @@ int SendKexDhReply(WOLFSSH* ssh)
                                                ssh->k, &ssh->kSz);
                 wc_ecc_free(&privKey);
                 wc_ecc_free(&pubKey);
+#endif /* !defined(WOLFSSH_NO_ECDH) */
             }
         }
 
@@ -7382,6 +7394,7 @@ int SendKexDhInit(WOLFSSH* ssh)
 #endif
         }
         else {
+#if !defined(WOLFSSH_NO_ECDH)
             ecc_key* privKey = &ssh->handshake->privKey.ecc;
             int primeId = wcPrimeForId(ssh->handshake->kexId);
 
@@ -7401,6 +7414,7 @@ int SendKexDhInit(WOLFSSH* ssh)
                                      privKey, primeId);
             if (ret == 0)
                 ret = wc_ecc_export_x963(privKey, e, &eSz);
+#endif /* !defined(WOLFSSH_NO_ECDH) */
         }
 
         if (ret == 0)
