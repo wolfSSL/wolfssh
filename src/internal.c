@@ -715,6 +715,9 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
     byte* der;
     word32 derSz, scratch = 0;
     union wolfSSH_key *key_ptr = NULL;
+#ifndef WOLFSSH_SMALL_STACK
+    union wolfSSH_key key;
+#endif
 
     (void)dynamicType;
     (void)heap;
@@ -770,7 +773,6 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
             return WS_MEMORY_E;
         }
 #else
-        union wolfSSH_key key;
         key_ptr = &key;
 #endif /* WOLFSSH_SMALL_STACK */
 
@@ -2831,6 +2833,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     ecc_key *key_ptr;
 #ifndef WOLFSSH_SMALL_STACK
     struct wolfSSH_sigKeyBlock s_sigKeyBlock;
+    ecc_key key_s;
 #endif
 
     WLOG(WS_LOG_DEBUG, "Entering DoKexDhReply()");
@@ -3035,7 +3038,6 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
 #else /* ! WOLFSSH_SMALL_STACK */
 #ifndef WOLFSSH_NO_ECDSA
-        ecc_key key_s;
         key_ptr = &key_s;
 #endif
         sigKeyBlock_ptr = &s_sigKeyBlock;
