@@ -2281,6 +2281,7 @@ static INLINE byte AeadModeForId(byte id)
 #ifndef WOLFSSH_NO_AES_GCM
     return (id == ID_AES128_GCM);
 #else
+    (void)id;
     return 0;
 #endif
 }
