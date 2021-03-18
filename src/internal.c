@@ -2221,6 +2221,7 @@ static INLINE enum wc_HashType HashForId(byte id)
 }
 
 
+#ifndef WOLFSSH_NO_ECDSA
 static INLINE int wcPrimeForId(byte id)
 {
     switch (id) {
@@ -2257,7 +2258,6 @@ static INLINE int wcPrimeForId(byte id)
     }
 }
 
-#ifndef WOLFSSH_NO_ECDSA
 static INLINE const char *PrimeNameForId(byte id)
 {
     switch (id) {
@@ -2277,7 +2277,7 @@ static INLINE const char *PrimeNameForId(byte id)
             return "unknown";
     }
 }
-#endif
+#endif /* WOLFSSH_NO_ECDSA */
 
 
 static INLINE byte AeadModeForId(byte id)
@@ -5707,6 +5707,7 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const byte* in, word32 inSz,
 }
 
 
+#ifndef WOLFSSH_NO_AEAD
 static INLINE void AeadIncrementExpIv(byte* iv)
 {
     int i;
@@ -5719,7 +5720,6 @@ static INLINE void AeadIncrementExpIv(byte* iv)
 }
 
 
-#ifndef WOLFSSH_NO_AEAD
 static INLINE int EncryptAead(WOLFSSH* ssh, byte* cipher,
                               const byte* input, word16 sz,
                               byte* authTag, const byte* auth,
@@ -5781,7 +5781,7 @@ static INLINE int DecryptAead(WOLFSSH* ssh, byte* plain,
 
     return ret;
 }
-#endif
+#endif /* WOLFSSH_NO_AEAD */
 
 
 int DoReceive(WOLFSSH* ssh)
@@ -6230,7 +6230,7 @@ static const char cannedKeyAlgoClientNames[] =
 #endif
 
 static const char cannedKeyAlgoRsaNames[] = "ssh-rsa";
-#if !defined(WOLFSSH_NO_ECDSA)
+#if !defined(WOLFSSH_NO_ECDSA) && !defined(WOLFSSH_NO_ECDH)
 static const char cannedKeyAlgoEcc256Names[] = "ecdsa-sha2-nistp256";
 static const char cannedKeyAlgoEcc384Names[] = "ecdsa-sha2-nistp384";
 static const char cannedKeyAlgoEcc521Names[] = "ecdsa-sha2-nistp521";
@@ -7414,6 +7414,8 @@ int SendKexDhInit(WOLFSSH* ssh)
                                      privKey, primeId);
             if (ret == 0)
                 ret = wc_ecc_export_x963(privKey, e, &eSz);
+#else
+            ret = WS_INVALID_ALGO_ID;
 #endif /* !defined(WOLFSSH_NO_ECDH) */
         }
 
