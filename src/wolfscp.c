@@ -1042,7 +1042,6 @@ static int GetScpTimestamp(WOLFSSH* ssh, byte* buf, word32 bufSz,
     return ret;
 }
 
-#ifndef NO_FILESYSTEM
 /* checks for if directory is being renamed in command
  *
  * returns WS_SUCCESS on success
@@ -1055,6 +1054,10 @@ static int ScpCheckForRename(WOLFSSH* ssh, int cmdSz)
     int  idx;
 
     if (sz > (int)sizeof(buf)) {
+        return WS_BUFFER_E;
+    }
+
+    if (cmdSz + 4 > DEFAULT_SCP_MSG_SZ) {
         return WS_BUFFER_E;
     }
 
@@ -1118,15 +1121,14 @@ static int ScpCheckForRename(WOLFSSH* ssh, int cmdSz)
     return WS_SUCCESS;
 }
 
-#endif
 
 /* helps with checking if the base path is a directory or file
  * returns WS_SUCCESS on success */
 static int ParseBasePathHelper(WOLFSSH* ssh, int cmdSz)
 {
     int ret = 0;
-#ifndef NO_FILESYSTEM
     ret = ScpCheckForRename(ssh, cmdSz);
+#ifndef NO_FILESYSTEM
     {
         ScpSendCtx ctx;
 
