@@ -6556,7 +6556,7 @@ int SendKexDhReply(WOLFSSH* ssh)
 {
     int ret = WS_SUCCESS;
     byte *f_ptr = NULL, *sig_ptr = NULL;
-    byte *y_ptr = NULL, *r_ptr = NULL, *s_ptr = NULL;
+    byte *r_ptr = NULL, *s_ptr = NULL;
     byte scratchLen[LENGTH_SZ];
     word32 fSz = KEX_F_SIZE;
     word32 sigSz = KEX_SIG_SIZE;
@@ -6571,6 +6571,7 @@ int SendKexDhReply(WOLFSSH* ssh)
     byte msgId = MSGID_KEXDH_REPLY;
     enum wc_HashType enmhashId;
 #ifndef WOLFSSH_NO_DH
+    byte *y_ptr = NULL;
     const byte* primeGroup = NULL;
     word32 primeGroupSz = 0;
     const byte* generator = NULL;
@@ -7242,8 +7243,10 @@ int SendKexDhReply(WOLFSSH* ssh)
         WFREE(f_ptr, ssh->ctx->heap, DYNTYPE_BUFFER);
     if (sig_ptr)
         WFREE(sig_ptr, ssh->ctx->heap, DYNTYPE_BUFFER);
+#ifndef WOLFSSH_NO_DH
     if (y_ptr)
         WFREE(r_ptr, ssh->ctx->heap, DYNTYPE_PRIVKEY);
+#endif
     if (r_ptr)
         WFREE(r_ptr, ssh->ctx->heap, DYNTYPE_BUFFER);
     if (s_ptr)
