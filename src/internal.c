@@ -6575,8 +6575,8 @@ int SendKexDhReply(WOLFSSH* ssh)
     word32 primeGroupSz = 0;
     const byte* generator = NULL;
     word32 generatorSz = 0;
-    struct wolfSSH_sigKeyBlockFull *sigKeyBlock_ptr;
 #endif
+    struct wolfSSH_sigKeyBlockFull *sigKeyBlock_ptr;
 #ifdef WOLFSSH_SMALL_STACK
     sigKeyBlock_ptr = WMALLOC(sizeof(struct wolfSSH_sigKeyBlockFull),
             ssh->ctx->heap, DYNTYPE_PRIVKEY);
