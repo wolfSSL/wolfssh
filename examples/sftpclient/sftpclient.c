@@ -31,7 +31,7 @@
     #include <termios.h>
 #endif
 
-#ifdef WOLFSSH_SFTP
+#if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT)
 
 /* static so that signal handler can access and interrupt get/put */
 static WOLFSSH* ssh = NULL;
@@ -1523,7 +1523,12 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 
 THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 {
-    printf("Not compiled in!\nPlease recompile with WOLFSSH_SFTP or --enable-sftp");
+#ifdef NO_WOLFSSH_CLIENT
+    printf("NO_WOLFSSH_CLIENT macro was used. Can not have a client example\n");
+#else
+    printf("Not compiled in!\n"
+           "Please recompile with WOLFSSH_SFTP or --enable-sftp\n");
+#endif
     (void)args;
     return 0;
 }
@@ -1556,7 +1561,11 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 
         wolfSSH_Cleanup();
 
-        return args.return_code;
+        #if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT)
+            return args.return_code;
+        #else
+            return -1; /* return error when not compiled in */
+        #endif
     }
 
     int myoptind = 0;
