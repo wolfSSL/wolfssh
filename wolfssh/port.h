@@ -1010,6 +1010,8 @@ extern "C" {
         #define WDIR HANDLE
     #endif /* NO_WOLFSSH_DIR */
 
+#elif defined(WOLFSSH_USER_IO)
+    /* User-defined I/O support */
 #else
     #include <unistd.h>   /* used for rmdir */
     #include <sys/stat.h> /* used for mkdir, stat, and lstat */
