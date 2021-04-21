@@ -9,6 +9,15 @@ counter=0
 
 [ ! -x ./examples/sftpclient/wolfsftp ] && echo -e "\n\nwolfSFTP client doesn't exist" && exit 1
 
+# test for if the SFTP client works
+./examples/sftpclient/wolfsftp -h | grep NO_WOLFSSH_CLIENT
+if [ $? -eq 0 ]
+then
+    echo "macro NO_WOLFSSH_CLIENT was used"
+    echo "skipping test"
+    exit 0
+fi
+
 #echo "ready file $ready_file"
 
 create_port() {
