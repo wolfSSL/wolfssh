@@ -1572,7 +1572,7 @@ int wolfSSH_ReadKey_file(const char* name,
         return WS_MEMORY_E;
     }
 
-    ret = (int)XFREAD(in, 1, inSz, file);
+    ret = (int)WFREAD(in, 1, inSz, file);
     if (ret <= 0 || (word32)ret != inSz) {
         ret = WS_BAD_FILE_E;
     }
