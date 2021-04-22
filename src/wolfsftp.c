@@ -951,10 +951,12 @@ static INLINE int SFTP_GetSz(byte* buf, word32* sz,
 
 #ifndef NO_WOLFSSH_SERVER
 
+#ifndef WOLFSSH_USER_FILESYSTEM
 static int SFTP_GetAttributes(void* fs, const char* fileName,
         WS_SFTP_FILEATRB* atr, byte link, void* heap);
 static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
         WS_SFTP_FILEATRB* atr);
+#endif
 
 /* unique from other packets because the request ID is not also sent.
  *
@@ -4198,6 +4200,9 @@ int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
     return WS_SUCCESS;
 }
 
+#elif defined(WOLFSSH_USER_FILESYSTEM)
+    /* User-defined I/O support */
+    
 #else
 
 /* @TODO can be overriden by user for portability
