@@ -8,6 +8,5 @@ EXTRA_DIST+= ide/IAR-EWARM/Projects/lib/wolfSSH-Lib.ewp
 EXTRA_DIST+= ide/IAR-EWARM/Projects/lib/wolfSSH-Lib.ewd
 EXTRA_DIST+= ide/IAR-EWARM/Projects/echoserver/echoserver.ewp
 EXTRA_DIST+= ide/IAR-EWARM/Projects/echoserver/echoserver.ewd
-EXTRA_DIST+= ide/IAR-EWARM/Projects/myFilesystem.c
-EXTRA_DIST+= ide/IAR-EWARM/Projects/myFilesystem.h
+EXTRA_DIST+= ide/IAR-EWARM/Projects/lib/myFilesystem.h
 EXTRA_DIST+= ide/IAR-EWARM/Projects/README.md

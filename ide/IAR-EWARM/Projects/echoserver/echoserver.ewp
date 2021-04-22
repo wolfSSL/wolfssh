@@ -40,7 +40,7 @@
                 </option>
                 <option>
                     <name>GOutputBinary</name>
-                    <state>1</state>
+                    <state>0</state>
                 </option>
                 <option>
                     <name>OGCoreOrChip</name>
@@ -58,11 +58,11 @@
                 </option>
                 <option>
                     <name>RTDescription</name>
-                    <state>To be used with the normal configuration of the C/C++ runtime library. No locale interface, C locale, no file descriptor support, no multibytes in printf and scanf, and no hex floats in strtod.</state>
+                    <state>Use the normal configuration of the C/C++ runtime library. No locale interface, C locale, no file descriptor support, no multibytes in printf and scanf, and no hex floats in strtod.</state>
                 </option>
                 <option>
                     <name>OGProductVersion</name>
-                    <state>7.80.4.12487</state>
+                    <state>8.50.1.24770</state>
                 </option>
                 <option>
                     <name>OGLastSavedByProductVersion</name>
@@ -220,7 +220,8 @@
                 <debug>1</debug>
                 <option>
                     <name>CCDefines</name>
-                    <state>WOLFSSL_USER_SETTINGS</state>
+                    <state>WOLFSSL_USER_SETTINGS
+</state>
                 </option>
                 <option>
                     <name>CCPreprocFile</name>
@@ -232,7 +233,7 @@
                 </option>
                 <option>
                     <name>CCPreprocLine</name>
-                    <state>0</state>
+                    <state>1</state>
                 </option>
                 <option>
                     <name>CCListCFile</name>
@@ -281,7 +282,7 @@
                 <option>
                     <name>CCAllowList</name>
                     <version>1</version>
-                    <state>11111110</state>
+                    <state>00000000</state>
                 </option>
                 <option>
                     <name>CCDebugInfo</name>
@@ -337,7 +338,7 @@
                 </option>
                 <option>
                     <name>PreInclude</name>
-                    <state></state>
+                    <state>C:\wolfSupport\PALTEK\wolfssh\ide\IAR-EWARM\Projects\echoserver_user_io.h</state>
                 </option>
                 <option>
                     <name>CompilerMisraOverride</name>
@@ -345,10 +346,11 @@
                 </option>
                 <option>
                     <name>CCIncludePath2</name>
-                    <state>$PROJ_DIR$\..</state>
                     <state>$PROJ_DIR$\..\..\..\..</state>
                     <state>$PROJ_DIR$\..\..\..\..\..\wolfssl</state>
-                    <state>$PROJ_DIR$</state>
+                    <state>$PROJ_DIR$\..</state>
+                    <state>$PROJ_DIR$\..\lib</state>
+                    <state>$PROJ_DIR$\..\dummy_headers</state>
                 </option>
                 <option>
                     <name>CCStdIncCheck</name>
@@ -364,7 +366,7 @@
                 </option>
                 <option>
                     <name>CCOptLevel</name>
-                    <state>3</state>
+                    <state>1</state>
                 </option>
                 <option>
                     <name>CCOptStrategy</name>
@@ -373,7 +375,7 @@
                 </option>
                 <option>
                     <name>CCOptLevelSlave</name>
-                    <state>3</state>
+                    <state>1</state>
                 </option>
                 <option>
                     <name>CompilerMisraRules98</name>
@@ -711,7 +713,7 @@
                 </option>
                 <option>
                     <name>IlinkOutputFile</name>
-                    <state>wolfSSH-Lib.out</state>
+                    <state>echoserver.out</state>
                 </option>
                 <option>
                     <name>IlinkDebugInfoEnable</name>
@@ -775,7 +777,7 @@
                 </option>
                 <option>
                     <name>IlinkIcfFile</name>
-                    <state>lnk0t.icf</state>
+                    <state>$TOOLKIT_DIR$\CONFIG\generic_cortex.icf</state>
                 </option>
                 <option>
                     <name>IlinkIcfFileSlave</name>
@@ -823,7 +825,8 @@
                 </option>
                 <option>
                     <name>IlinkAdditionalLibs</name>
-                    <state></state>
+                    <state>$PROJ_DIR$\..\..\..\..\..\wolfssl\IDE\IAR-EWARM\Projects\lib\ewarm\Exe\wolfSSL-Lib.a</state>
+                    <state>$PROJ_DIR$\..\lib\Debug\Exe\wolfSSH-Lib.a</state>
                 </option>
                 <option>
                     <name>IlinkOverrideProgramEntryLabel</name>
@@ -835,7 +838,7 @@
                 </option>
                 <option>
                     <name>IlinkProgramEntryLabel</name>
-                    <state></state>
+                    <state>__iar_program_start</state>
                 </option>
                 <option>
                     <name>DoFill</name>
@@ -1008,7 +1011,7 @@
                 </option>
                 <option>
                     <name>IlinkTrustzoneImportLibraryOut</name>
-                    <state>###Unitialized###</state>
+                    <state>echoserver_import_lib.o</state>
                 </option>
                 <option>
                     <name>OILinkExtraOption</name>
@@ -1049,7 +1052,7 @@
                 </option>
                 <option>
                     <name>IarchiveOutput</name>
-                    <state>C:\wolfSupport\PALTEK\wolfssh\ide\IAR-EWARM\Projects\lib\Debug\Exe\wolfSSH-Lib.a</state>
+                    <state>###Unitialized###</state>
                 </option>
             </data>
         </settings>
@@ -1120,7 +1123,7 @@
                 </option>
                 <option>
                     <name>OGProductVersion</name>
-                    <state>7.80.4.12487</state>
+                    <state>8.50.1.24770</state>
                 </option>
                 <option>
                     <name>OGLastSavedByProductVersion</name>
@@ -1290,7 +1293,7 @@
                 </option>
                 <option>
                     <name>CCPreprocLine</name>
-                    <state>0</state>
+                    <state>1</state>
                 </option>
                 <option>
                     <name>CCListCFile</name>
@@ -2114,40 +2117,7 @@
             <data />
         </settings>
     </configuration>
-    <group>
-        <name>config</name>
-        <file>
-            <name>$PROJ_DIR$\..\user_settings.h</name>
-        </file>
-    </group>
-    <group>
-        <name>src</name>
-        <file>
-            <name>$PROJ_DIR$\..\..\..\..\src\internal.c</name>
-        </file>
-        <file>
-            <name>$PROJ_DIR$\..\..\..\..\src\io.c</name>
-        </file>
-        <file>
-            <name>$PROJ_DIR$\..\..\..\..\src\keygen.c</name>
-        </file>
-        <file>
-            <name>$PROJ_DIR$\..\..\..\..\src\log.c</name>
-        </file>
-        <file>
-            <name>$PROJ_DIR$\..\..\..\..\src\port.c</name>
-        </file>
-        <file>
-            <name>$PROJ_DIR$\..\..\..\..\src\ssh.c</name>
-        </file>
-        <file>
-            <name>$PROJ_DIR$\..\..\..\..\src\wolfscp.c</name>
-        </file>
-        <file>
-            <name>$PROJ_DIR$\..\..\..\..\src\wolfsftp.c</name>
-        </file>
-        <file>
-            <name>$PROJ_DIR$\..\..\..\..\src\wolfterm.c</name>
-        </file>
-    </group>
+    <file>
+        <name>$PROJ_DIR$\..\..\..\..\examples\echoserver\echoserver.c</name>
+    </file>
 </project>

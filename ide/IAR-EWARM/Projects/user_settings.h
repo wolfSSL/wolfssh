@@ -23,9 +23,6 @@
 #define WC_RSA_BLINDING
 
 #define SINGLE_THREADED /* or define RTOS  option */
-#define WOLFSSH_THREAD
-typedef unsigned int  THREAD_RETURN;
-
 /* #define WOLFSSL_CMSIS_RTOS */
 /* #define NO_FILESYSTEM */
 
@@ -48,21 +45,11 @@ typedef unsigned int  THREAD_RETURN;
 
 /* To be defined for the target Socket API */
 #define WSTARTTCP()
-#define WCLOSESOCKET(s)
-#define ChangeToWolfSshRoot(a)
-
-typedef int SOCKADDR_IN_T;
 
 #define WOLFSSH_LOG_PRINTF
 #define WOLFSSL_LOG_PRINTF
-#define XFPRINTF(err, ... ) printf(__VA_ARGS__)
-#define err_sys(...) printf(__VA_ARGS__)
+#define fprintf(err, ... ) printf(__VA_ARGS__)
 
-enum {
-    WS_SELECT_FAIL,
-    WS_SELECT_TIMEOUT,
-    WS_SELECT_RECV_READY,
-    WS_SELECT_ERROR_READY
-};
+typedef unsigned int size_t;
 
 #endif
