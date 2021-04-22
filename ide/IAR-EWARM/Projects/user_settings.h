@@ -1,4 +1,6 @@
-#define NO_MAIN_DRIVER
+#ifndef USER_SETTINGS_H
+#define USER_SETTINGS_H
+
 #define BENCH_EMBEDDED
 #define NO_WRITEV
 #define WOLFSSL_USER_IO
@@ -21,8 +23,11 @@
 #define WC_RSA_BLINDING
 
 #define SINGLE_THREADED /* or define RTOS  option */
+#define WOLFSSH_THREAD
+typedef unsigned int  THREAD_RETURN;
+
 /* #define WOLFSSL_CMSIS_RTOS */
-#define NO_FILESYSTEM
+/* #define NO_FILESYSTEM */
 
 /* #define NO_DH */
 #define HAVE_AESGCM
@@ -35,5 +40,29 @@
 #define WOLFSSH_USER_IO
 #define WOLFSSL_USER_IO
 
+#define WOLFSSH_SFTP
+
+#define WOLFSSH_USER_FILESYSTEM
+#define WOLFSSL_USER_FILESYSTEM
+#define NO_WOLFSSH_DIR
+
+/* To be defined for the target Socket API */
+#define WSTARTTCP()
+#define WCLOSESOCKET(s)
+#define ChangeToWolfSshRoot(a)
+
+typedef int SOCKADDR_IN_T;
+
 #define WOLFSSH_LOG_PRINTF
 #define WOLFSSL_LOG_PRINTF
+#define XFPRINTF(err, ... ) printf(__VA_ARGS__)
+#define err_sys(...) printf(__VA_ARGS__)
+
+enum {
+    WS_SELECT_FAIL,
+    WS_SELECT_TIMEOUT,
+    WS_SELECT_RECV_READY,
+    WS_SELECT_ERROR_READY
+};
+
+#endif
