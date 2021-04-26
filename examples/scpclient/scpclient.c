@@ -29,6 +29,7 @@
 #include <wolfssh/test.h>
 #include <wolfssh/port.h>
 
+#ifndef NO_WOLFSSH_CLIENT
 #if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     #include <wolfssl/wolfcrypt/ecc.h>
 #endif
@@ -396,3 +397,12 @@ int myoptind = 0;
 char* myoptarg = NULL;
 
 #endif /* NO_MAIN_DRIVER */
+#else
+int main()
+{
+    printf("wolfSSH built with NO_WOLFSSH_CLIENT\n");
+    printf("SCP client unavailable\n");
+    return -1;
+}
+#endif /* NO_WOLFSSH_CLIENT */
+
