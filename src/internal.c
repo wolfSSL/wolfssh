@@ -3329,9 +3329,9 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     if (sigKeyBlock_ptr)
         WFREE(sigKeyBlock_ptr, ssh->ctx->heap, DYNTYPE_PRIVKEY);
     #ifndef WOLFSSH_NO_ECDSA
-        if (key_ptr)
-            WFREE(key_ptr, ssh->ctx->heap, DYNTYPE_PRIVKEY);
-#endif
+    if (key_ptr)
+        WFREE(key_ptr, ssh->ctx->heap, DYNTYPE_PRIVKEY);
+    #endif
 #endif
     WLOG(WS_LOG_DEBUG, "Leaving DoKexDhReply(), ret = %d", ret);
     return ret;
