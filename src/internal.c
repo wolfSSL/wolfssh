@@ -2830,7 +2830,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     int ret = WS_SUCCESS;
     int tmpIdx = 0;
     struct wolfSSH_sigKeyBlock *sigKeyBlock_ptr = NULL;
-    ecc_key *key_ptr;
+    ecc_key *key_ptr = NULL;
 #ifndef WOLFSSH_SMALL_STACK
     struct wolfSSH_sigKeyBlock s_sigKeyBlock;
     ecc_key key_s;
@@ -3328,8 +3328,11 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 #ifdef WOLFSSH_SMALL_STACK
     if (sigKeyBlock_ptr)
         WFREE(sigKeyBlock_ptr, ssh->ctx->heap, DYNTYPE_PRIVKEY);
+    #ifndef WOLFSSH_NO_ECDSA
+    if (key_ptr)
+        WFREE(key_ptr, ssh->ctx->heap, DYNTYPE_PRIVKEY);
+    #endif
 #endif
-
     WLOG(WS_LOG_DEBUG, "Leaving DoKexDhReply(), ret = %d", ret);
     return ret;
 }
