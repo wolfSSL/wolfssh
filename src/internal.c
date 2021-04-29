@@ -1471,6 +1471,10 @@ int GrowBuffer(Buffer* buf, word32 sz, word32 usedSz)
 
             if (newBuffer == NULL) {
                 WLOG(WS_LOG_ERROR, "Not enough memory left to grow buffer");
+
+                /* This is a fatal issue, go ahead and clear the buffer state
+                 * before returning. The connection has failed at this point. */
+                ShrinkBuffer(buf, 1);
                 return WS_MEMORY_E;
             }
 
