@@ -7250,6 +7250,9 @@ int SendKexDhReply(WOLFSSH* ssh)
     if (ret == WS_SUCCESS)
         ret = SendNewKeys(ssh);
 
+    if (ret != WS_WANT_WRITE && ret != WS_SUCCESS)
+        PurgePacket(ssh);
+
     WLOG(WS_LOG_DEBUG, "Leaving SendKexDhReply(), ret = %d", ret);
 #ifdef WOLFSSH_SMALL_STACK
     if (sigKeyBlock_ptr)
@@ -8611,6 +8614,9 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId, int addSig)
 
     if (ret == WS_SUCCESS)
         ret = wolfSSH_SendPacket(ssh);
+
+    if (ret != WS_WANT_WRITE && ret != WS_SUCCESS)
+        PurgePacket(ssh);
 
     ForceZero(&authData, sizeof(WS_UserAuthData));
     WLOG(WS_LOG_DEBUG, "Leaving SendUserAuthRequest(), ret = %d", ret);
