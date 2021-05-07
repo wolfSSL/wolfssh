@@ -3145,6 +3145,10 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
         /* Generate and hash in the shared secret */
         if (ret == 0) {
+            /* reset size here because a previous shared secret could
+             * potentially be smaller by a byte than usual and cause buffer
+             * issues with re-key */
+            ssh->kSz = MAX_KEX_KEY_SZ;
             if (!ssh->handshake->useEcc) {
 #ifndef WOLFSSH_NO_DH
                 ret = wc_DhAgree(&ssh->handshake->privKey.dh,
@@ -3153,6 +3157,10 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                                  f, fSz);
                 ForceZero(ssh->handshake->x, ssh->handshake->xSz);
                 wc_FreeDhKey(&ssh->handshake->privKey.dh);
+                if (ret != 0) {
+                    WLOG(WS_LOG_ERROR,
+                            "Generate DH shared secret failed, %d", ret);
+                }
 #else
                 ret = WS_INVALID_ALGO_ID;
 #endif
@@ -3171,6 +3179,10 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                                                key_ptr, ssh->k, &ssh->kSz);
                 wc_ecc_free(key_ptr);
                 wc_ecc_free(&ssh->handshake->privKey.ecc);
+                if (ret != 0) {
+                    WLOG(WS_LOG_ERROR,
+                            "Generate ECC shared secret failed, %d", ret);
+                }
 #else
                 ret = WS_INVALID_ALGO_ID;
 #endif
