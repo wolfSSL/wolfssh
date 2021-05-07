@@ -6704,7 +6704,7 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                         }
                         WLOG(WS_LOG_SFTP, "Error reading remainder of data");
                         state->state = STATE_SEND_READ_CLEANUP;
-                        continue;
+                        break;
                     }
 
                     state->recvSz += ret;
@@ -6712,6 +6712,11 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                             wolfSSH_SFTP_buffer_size(&state->buffer) - ret);
                 } while (wolfSSH_SFTP_buffer_size(&state->buffer) != 0);
 
+                if (ret < 0) {
+                    /* error state was hit in earlier loop, continue on to
+                     * cleanup */
+                    continue;
+                }
                 ret = state->recvSz;
 
                 state->state = STATE_SEND_READ_CLEANUP;
