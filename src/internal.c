@@ -660,6 +660,9 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
             cur = next;
         }
     }
+    wc_AesFree(&ssh->encryptCipher.aes);
+    wc_AesFree(&ssh->decryptCipher.aes);
+
 #ifdef WOLFSSH_SCP
     if (ssh->scpConfirmMsg) {
         WFREE(ssh->scpConfirmMsg, ssh->ctx->heap, DYNTYPE_STRING);
@@ -939,6 +942,7 @@ int GenerateKey(byte hashId, byte keyId,
 
     if (ret != WS_SUCCESS)
         ret = WS_CRYPTO_FAILED;
+    wc_HashFree(&hash, enmhashId);
 
     return ret;
 }
@@ -2658,8 +2662,8 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             else
                 ssh->serverState = SERVER_KEXINIT_DONE;
         }
+        wc_HashFree(&ssh->handshake->hash, enmhashId);
     }
-
     WLOG(WS_LOG_DEBUG, "Leaving DoKexInit(), ret = %d", ret);
     return ret;
 }
@@ -4395,6 +4399,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                 else
                     ret = WS_SUCCESS;
             }
+            wc_HashFree(&hash, hashId);
 
             if (ret == WS_SUCCESS) {
                 if (pkTypeId == ID_SSH_RSA) {
@@ -7086,6 +7091,7 @@ int SendKexDhReply(WOLFSSH* ssh)
             ret = wc_HashFinal(&digestHash, sigHashId, digest);
         if (ret != 0)
             ret = WS_CRYPTO_FAILED;
+        wc_HashFree(&digestHash, sigHashId);
 
         if (ret == WS_SUCCESS) {
             if (sigKeyBlock_ptr->useRsa) {
