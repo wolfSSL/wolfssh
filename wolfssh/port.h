@@ -208,6 +208,94 @@ extern "C" {
         return 0;
     }
     #define WCHMOD(fs,f,m)         wChmod((fs),(f),(m))
+
+#elif defined(WOLFSSH_FATFS)
+    #include <ff.h>
+    #define WFILE FIL
+    #define WS_DELIM          '/'
+    #define WOLFSSH_O_CREAT (FA_CREATE_NEW | FA_OPEN_ALWAYS)
+    #define WOLFSSH_O_RDWR (FA_READ | FA_WRITE)
+    #define WOLFSSH_O_RDONLY FA_READ
+    #define WOLFSSH_O_WRONLY FA_WRITE
+    #define WOLFSSH_O_TRUNC  FA_CREATE_ALWAYS
+    #define WOLFSSH_O_APPEND FA_OPEN_APPEND
+    #define WOLFSSH_O_EXCL  FA_OPEN_EXISTING
+    #define WSEEK_SET 0
+    #define WSEEK_CUR 1
+    #define WSEEK_END 2
+    static inline int ff_fopen(WFILE** f, const char* filename,
+            const char* mode)
+    {
+        FRESULT ret;
+        BYTE m = FA_CREATE_NEW;
+        if (!f) {
+            return -1;
+        }
+        if (XSTRSTR(mode, "r") && XSTRSTR(mode, "w")) {
+            m |= WOLFSSH_O_RDWR;
+        }
+        else {
+            if (XSTRSTR(mode, "r")) {
+                m |= WOLFSSH_O_RDONLY;
+            }
+            if (XSTRSTR(mode, "w")) {
+                m |= WOLFSSH_O_WRONLY;
+            }
+        }
+        ret = f_open(*f, filename, m);
+        return (int)ret;
+    }
+    #define WFOPEN(f, fn, m) ff_fopen((f),(fn),(m))
+    #define WFCLOSE(f)  f_close(f)
+
+    static inline int ff_read(void *ptr, size_t size, size_t nmemb, WFILE *f)
+    {
+        FRESULT ret;
+        UINT n_bytes;
+        UINT btr = size * nmemb;
+
+        ret = f_read(f, ptr, btr, &n_bytes);
+        if (ret != FR_OK) {
+            return 0;
+        }
+        return (n_bytes / size);
+    }
+    #define WFREAD(b,s,a,f)  ff_read(b,s,a,f)
+    static inline int ff_write(const void *ptr, size_t size, size_t nmemb, WFILE *f)
+    {
+        FRESULT ret;
+        UINT n_bytes;
+        UINT btr = size * nmemb;
+
+        ret = f_write(f, ptr, btr, &n_bytes);
+        if (ret != FR_OK) {
+            return 0;
+        }
+        return (n_bytes / size);
+    }
+    #define WFWRITE(b,s,a,f)  ff_write(b,s,a,f)
+
+    #define WFTELL(s)   f_tell((s))
+    static inline int ff_seek(WFILE *fp, long off, int whence)
+    {
+        switch(whence) {
+            case WSEEK_SET:
+                return f_lseek(fp, off);
+            case WSEEK_CUR:
+                return f_lseek(fp, off + f_tell(fp));
+            case WSEEK_END:
+                return f_lseek(fp, off + f_size(fp));
+        }
+        return -1;
+    }
+    #define WFSEEK(s,o,w) ff_seek((s),(o),(w))
+    #define WREWIND(s) f_rewind(s)
+    #define WBADFILE (-1)
+    #ifndef NO_WOLFSSH_DIR
+        #define WDIR DIR
+        #define WOPENDIR(fs,h,c,d)  f_opendir((c),(d))
+        #define WCLOSEDIR(d)    f_closedir(d)
+    #endif
 #elif defined(WOLFSSH_USER_FILESYSTEM)
     /* User-defined I/O support */
 #else
@@ -971,6 +1059,62 @@ extern "C" {
     #endif /* WCLOSEDIR */
 #endif /* NO_WOLFSSH_DIR */
 
+#elif defined(WOLFSSH_FATFS)
+    #define WSTAT_T FILINFO
+
+    #define WRMDIR(fs, d) f_unlink((d))
+    #define WSTAT(p,b) f_stat(p,b)
+    #define WLSTAT(p,b) f_stat(p,b)
+    #define WREMOVE(fs,d) f_unlink((d))
+    #define WRENAME(fd,o,n) f_rename((o),(n))
+    #define WMKDIR(fs, p, m) f_mkdir(p)
+    #define WFD int
+
+    int ff_open(const char *fname, int mode, int perm);
+    int ff_close(int fd);
+    int ff_pwrite(int fd, const byte *buffer, int sz);
+    int ff_pread(int fd, byte *buffer, int sz);
+    #define WOPEN(f,m,p) ff_open(f,m,p)
+    #define WPWRITE(fd,b,s,o) ff_pwrite(fd,b,s)
+    #define WPREAD(fd,b,s,o)  ff_pread(fd,b,s)
+    #define WCLOSE(fd)  ff_close(fd)
+
+    static inline int ff_chmod(const char *fname, int mode)
+    {
+        unsigned char atr = 0, mask = AM_RDO | AM_ARC;
+        FILINFO info;
+        if (fname == NULL) {
+            return -1;
+        }
+        if (f_stat(fname, &info) != FR_OK) {
+            return -1;
+        }
+
+        /* Set attribute value */
+        atr = atr & 0xF0; /* clear first byte */
+        if (mode == 0x124) {
+            atr |= AM_RDO;   /* set read only value */
+        }
+        else {
+            /* if not setting read only set to normal */
+            atr |= AM_ARC;
+        }
+        if (f_chmod(fname, atr, mask) != FR_OK)
+            return -1;
+        return 0;
+    }
+
+    #define WCHMOD(fs,f,m) ff_chmod(f,m)
+    static inline char *ff_getcwd(char *r, int rSz)
+    {
+        FRESULT ret;
+        ret = f_getcwd(r, rSz);
+        if (ret != FR_OK) {
+            return NULL;
+        }
+        return r;
+    }
+    #define WGETCWD(fs,r,rSz) ff_getcwd(r,(rSz))
 #elif defined(USE_WINDOWS_API)
 
     #include <windows.h>
