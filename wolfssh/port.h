@@ -208,7 +208,8 @@ extern "C" {
         return 0;
     }
     #define WCHMOD(fs,f,m)         wChmod((fs),(f),(m))
-
+#elif defined(WOLFSSH_USER_FILESYSTEM)
+    /* User-defined I/O support */
 #else
     #include <stdlib.h>
     #if !defined(_WIN32_WCE) && !defined(FREESCALE_MQX)
@@ -1010,9 +1011,11 @@ extern "C" {
         #define WDIR HANDLE
     #endif /* NO_WOLFSSH_DIR */
 
-#elif defined(WOLFSSH_USER_IO)
+#elif defined(WOLFSSH_USER_FILESYSTEM)
     /* User-defined I/O support */
+    #include "myFilesystem.h"
 #else
+   
     #include <unistd.h>   /* used for rmdir */
     #include <sys/stat.h> /* used for mkdir, stat, and lstat */
     #include <stdio.h>    /* used for remove and rename */
