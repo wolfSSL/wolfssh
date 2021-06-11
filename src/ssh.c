@@ -360,6 +360,26 @@ const char* wolfSSH_ErrorToName(int err)
 }
 
 
+#ifdef WOLFSSH_TPM
+void wolfSSH_SetTpmDev(WOLFSSH* ssh, WOLFTPM2_DEV* dev)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetTpmDev()");
+
+    if (ssh && ssh->ctx)
+        ssh->ctx->tpmDev = dev;
+}
+
+
+void wolfSSH_SetTpmKey(WOLFSSH* ssh, WOLFTPM2_KEY* key)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetTpmKey()");
+
+    if (ssh && ssh->ctx)
+        ssh->ctx->tpmKey = key;
+}
+#endif /* WOLFSSH_TPM */
+
+
 #ifndef NO_WOLFSSH_SERVER
 
 const char acceptError[] = "accept error: %s, %d";

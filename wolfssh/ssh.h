@@ -39,6 +39,10 @@
 #include <wolfssh/port.h>
 #include <wolfssh/error.h>
 
+#ifdef WOLFSSH_TPM
+#include <wolftpm/tpm2_wrap.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -109,6 +113,12 @@ WOLFSSH_API int wolfSSH_ChannelGetEof(WOLFSSH_CHANNEL*);
 WOLFSSH_API int wolfSSH_get_error(const WOLFSSH*);
 WOLFSSH_API const char* wolfSSH_get_error_name(const WOLFSSH*);
 WOLFSSH_API const char* wolfSSH_ErrorToName(int);
+
+/* TPM 2.0 integration related functions */
+#ifdef WOLFSSH_TPM
+WOLFSSH_API void wolfSSH_SetTpmDev(WOLFSSH* ssh, WOLFTPM2_DEV* dev);
+WOLFSSH_API void wolfSSH_SetTpmKey(WOLFSSH* ssh, WOLFTPM2_KEY* key);
+#endif /* WOLFSSH_TPM */
 
 /* I/O callbacks */
 typedef int (*WS_CallbackIORecv)(WOLFSSH*, void*, word32, void*);
@@ -284,6 +294,14 @@ enum WS_DisconnectReasonCodes {
     WOLFSSH_DISCONNECT_ILLEGAL_USER_NAME              = 15
 };
 
+enum WS_TpmResults
+{
+    WOLFSSH_TPM_SUCCESS,
+    WOLFSSH_TPM_FAILED_INIT,
+    WOLFSSH_TPM_FAILED_LOAD_PRIMARY,
+    WOLFSSH_TPM_FAILED_READ_KEYBLOB,
+    WOLFSSH_TPM_FAILED_LOAD_KEY,
+};
 
 WOLFSSH_API void wolfSSH_ShowSizes(void);
 
