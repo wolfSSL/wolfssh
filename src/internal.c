@@ -6052,7 +6052,7 @@ int DoReceive(WOLFSSH* ssh)
         WLOG(WS_LOG_DEBUG, "PR5: txCount = %u, rxCount = %u",
              ssh->txCount, ssh->rxCount);
 
-        return WS_SUCCESS;
+        return ret;
     }
 }
 

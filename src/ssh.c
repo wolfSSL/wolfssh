@@ -1041,10 +1041,14 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
             if (ret < 0 && ret != WS_CHAN_RXD) {
                 break;
             }
-            if (ssh->error == WS_CHAN_RXD &&
-                    ssh->lastRxId != ssh->channelList->channel) {
-                ret = WS_ERROR;
-                break;
+            if (ssh->error == WS_CHAN_RXD) {
+                if (ssh->lastRxId != ssh->channelList->channel) {
+                    ret = WS_ERROR;
+                    break;
+                }
+                else {
+                    ret = WS_SUCCESS;
+                }
             }
         }
     }
