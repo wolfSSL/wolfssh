@@ -281,6 +281,10 @@ enum {
     ID_CHANTYPE_TCPIP_DIRECT,
     ID_CHANTYPE_AUTH_AGENT,
 
+    /* Global Request IDs */
+    ID_GLOBREQ_TCPIP_FWD,
+    ID_GLOBREQ_TCPIP_FWD_CANCEL,
+
     ID_UNKNOWN
 };
 
@@ -745,6 +749,7 @@ WOLFSSH_LOCAL int SendNewKeys(WOLFSSH*);
 WOLFSSH_LOCAL int SendUnimplemented(WOLFSSH*);
 WOLFSSH_LOCAL int SendDisconnect(WOLFSSH*, word32);
 WOLFSSH_LOCAL int SendIgnore(WOLFSSH*, const unsigned char*, word32);
+WOLFSSH_LOCAL int SendGlobalRequestFwdSuccess(WOLFSSH *, int, word32);
 WOLFSSH_LOCAL int SendGlobalRequest(WOLFSSH *, const unsigned char *, word32, int);
 WOLFSSH_LOCAL int SendDebug(WOLFSSH*, byte, const char*);
 WOLFSSH_LOCAL int SendServiceRequest(WOLFSSH*, byte);
