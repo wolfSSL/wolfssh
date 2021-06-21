@@ -1,0 +1,34 @@
+name: Build Linux
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          repository: j4qfrost/wolfssl
+      - name: Setup wolfssl
+        run: ./autogen.sh && ./configure --enable-keygen --enable-cryptonly --enable-ssh && make && make check && sudo make install && sudo ln -s /usr/local/lib/libwolfssl.so.24 /usr/lib/libwolfssl.so.24
+
+      - uses: actions/checkout@v2
+      - name: autogen
+        run: ./autogen.sh
+      - name: configure
+        run: ./configure
+      - name: make
+        run: make
+      - name: make check
+        run: make check
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: wolfssh-linux
+          path: src/.libs/
+          if-no-files-found: error

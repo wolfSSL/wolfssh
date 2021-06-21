@@ -1,0 +1,45 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+env:
+  BUILD_CONFIGURATION: Release|x64
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Set up Visual Studio shell
+        uses: egor-tensin/vs-shell@v2
+        with:
+          arch: x64
+
+      - name: Get wolfssl
+        run: git clone https://github.com/j4qfrost/wolfssl.git ../wolfssl
+
+      - name: Copy user_settings.h
+        run: copy ide\winvs\user_settings.h ..\wolfssl\IDE\WIN\user_settings.h
+
+      - name: Upgrade wolfssl
+        run: devenv wolfssl64.sln /Upgrade
+        working-directory: ../wolfssl
+
+      - name: Upgrade Project
+        run: devenv ide/winvs/wolfssh.sln /Upgrade
+
+      - name: Build Project
+        run: devenv wolfssh.sln /Build "${{env.BUILD_CONFIGURATION}}" /Project wolfssh
+        working-directory: ide/winvs
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: wolfssh-windows64
+          path: ide/winvs/Release/
+          if-no-files-found: error
