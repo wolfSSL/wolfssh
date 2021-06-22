@@ -92,6 +92,10 @@ WOLFSSH_API int wolfSSH_ReadKey_file(const char*,
 #define WS_CHANNEL_ID_SELF 0
 #define WS_CHANNEL_ID_PEER 1
 
+WOLFSSH_API WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNewLocal(WOLFSSH*,
+        const char*, word32, const char*, word32);
+WOLFSSH_API WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNewRemote(WOLFSSH*,
+        const char*, word32, const char*, word32);
 WOLFSSH_API WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNew(WOLFSSH*,
         const char*, word32, const char*, word32);
 WOLFSSH_API int wolfSSH_ChannelFree(WOLFSSH_CHANNEL*);

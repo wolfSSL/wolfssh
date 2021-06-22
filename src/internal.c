@@ -1288,7 +1288,8 @@ int ChannelUpdatePeer(WOLFSSH_CHANNEL* channel, word32 peerChannelId,
 #ifdef WOLFSSH_FWD
 int ChannelUpdateForward(WOLFSSH_CHANNEL* channel,
                                 const char* host, word32 hostPort,
-                                const char* origin, word32 originPort)
+                                const char* origin, word32 originPort,
+                                int isDirect)
 {
     int ret = WS_SUCCESS;
     char* hostCopy = NULL;
@@ -1326,6 +1327,7 @@ int ChannelUpdateForward(WOLFSSH_CHANNEL* channel,
         channel->hostPort = hostPort;
         channel->origin = originCopy;
         channel->originPort = originPort;
+        channel->isDirect = isDirect;
     }
 
     return ret;
@@ -4787,6 +4789,7 @@ static int DoChannelOpen(WOLFSSH* ssh,
     char* host = NULL;
     char* origin = NULL;
     word32 hostPort = 0, originPort = 0;
+    int isDirect = 0;
 #endif /* WOLFSSH_FWD */
     WOLFSSH_CHANNEL* newChannel;
     int ret = WS_SUCCESS;
@@ -4822,8 +4825,10 @@ static int DoChannelOpen(WOLFSSH* ssh,
             case ID_CHANTYPE_SESSION:
                 break;
         #ifdef WOLFSSH_FWD
-            /*case ID_CHANTYPE_TCPIP_FORWARD:*/
             case ID_CHANTYPE_TCPIP_DIRECT:
+                isDirect = 1;
+                NO_BREAK;
+            case ID_CHANTYPE_TCPIP_FORWARD:
                 ret = DoChannelOpenForward(ssh,
                                 &host, &hostPort, &origin, &originPort,
                                 buf, len, &begin);
@@ -4858,7 +4863,7 @@ static int DoChannelOpen(WOLFSSH* ssh,
         #ifdef WOLFSSH_FWD
             if (typeId == ID_CHANTYPE_TCPIP_DIRECT) {
                 ChannelUpdateForward(newChannel,
-                        host, hostPort, origin, originPort);
+                        host, hostPort, origin, originPort, isDirect);
             }
         #endif /* WOLFSSH_FWD */
             ChannelAppend(ssh, newChannel);

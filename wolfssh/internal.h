@@ -692,6 +692,7 @@ struct WOLFSSH_CHANNEL {
     char* origin;
     word32 originPort;
     int fwdFd;
+    int isDirect;
 #endif /* WOLFSSH_FWD */
     Buffer inputBuffer;
     char* command;
@@ -708,7 +709,7 @@ WOLFSSH_LOCAL void SshResourceFree(WOLFSSH*, void*);
 WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelNew(WOLFSSH*, byte, word32, word32);
 WOLFSSH_LOCAL int ChannelUpdatePeer(WOLFSSH_CHANNEL*, word32, word32, word32);
 WOLFSSH_LOCAL int ChannelUpdateForward(WOLFSSH_CHANNEL*,
-        const char*, word32, const char*, word32);
+        const char*, word32, const char*, word32, int);
 WOLFSSH_LOCAL int ChannelAppend(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel);
 WOLFSSH_LOCAL void ChannelDelete(WOLFSSH_CHANNEL*, void*);
 WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelFind(WOLFSSH*, word32, byte);

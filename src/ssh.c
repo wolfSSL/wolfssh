@@ -1765,14 +1765,14 @@ int wolfSSH_GetLastRxId(WOLFSSH* ssh, word32* channelId)
 
 #ifdef WOLFSSH_FWD
 
-WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNew(WOLFSSH* ssh,
+WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNewLocal(WOLFSSH* ssh,
         const char* host, word32 hostPort,
         const char* origin, word32 originPort)
 {
     WOLFSSH_CHANNEL* newChannel = NULL;
     int ret = WS_SUCCESS;
 
-    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelFwdNew()");
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelFwdNewLocal()");
 
     if (ssh == NULL || ssh->ctx == NULL || host == NULL || origin == NULL)
         ret = WS_BAD_ARGUMENT;
@@ -1785,7 +1785,7 @@ WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNew(WOLFSSH* ssh,
     }
     if (ret == WS_SUCCESS)
         ret = ChannelUpdateForward(newChannel,
-                host, hostPort, origin, originPort);
+                host, hostPort, origin, originPort, 1);
     if (ret == WS_SUCCESS)
         ret = SendChannelOpenForward(ssh, newChannel);
 
@@ -1798,9 +1798,56 @@ WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNew(WOLFSSH* ssh,
     if (newChannel != NULL)
         ChannelAppend(ssh, newChannel);
 
-    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelFwdNew(), newChannel = %p",
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelFwdNewLocal(), newChannel = %p",
             newChannel);
     return newChannel;
+}
+
+
+WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNewRemote(WOLFSSH* ssh,
+        const char* host, word32 hostPort,
+        const char* origin, word32 originPort)
+{
+    WOLFSSH_CHANNEL* newChannel = NULL;
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelFwdNewRemote()");
+
+    if (ssh == NULL || ssh->ctx == NULL || host == NULL || origin == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        newChannel = ChannelNew(ssh, ID_CHANTYPE_TCPIP_FORWARD,
+                ssh->ctx->windowSz, ssh->ctx->maxPacketSz);
+        if (newChannel == NULL)
+            ret = WS_MEMORY_E;
+    }
+    if (ret == WS_SUCCESS)
+        ret = ChannelUpdateForward(newChannel,
+                host, hostPort, origin, originPort, 0);
+    if (ret == WS_SUCCESS)
+        ret = SendChannelOpenForward(ssh, newChannel);
+
+    if (ret != WS_SUCCESS) {
+        void* heap = (ssh != NULL && ssh->ctx != NULL) ? ssh->ctx->heap : NULL;
+        ChannelDelete(newChannel, heap);
+        newChannel = NULL;
+    }
+
+    if (newChannel != NULL)
+        ChannelAppend(ssh, newChannel);
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelFwdNewRemote(), newChannel = %p",
+            newChannel);
+    return newChannel;
+}
+
+
+WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNew(WOLFSSH* ssh,
+        const char* host, word32 hostPort,
+        const char* origin, word32 originPort)
+{
+    return wolfSSH_ChannelFwdNewLocal(ssh, host, hostPort, origin, originPort);
 }
 
 #endif /* WOLFSSH_FWD */
