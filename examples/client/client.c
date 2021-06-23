@@ -57,7 +57,7 @@
 
 #ifdef WOLFSSH_TPM
     #include <wolftpm/tpm2_wrap.h>
-    #include "../tpm/tpm_io.h"
+    #include "../../wolfTPM/examples/tpm_io.h"
 #endif /* WOLFSSH_TPM */
 
 #ifndef NO_WOLFSSH_CLIENT
@@ -589,7 +589,7 @@ static int getPrimaryStoragekey(WOLFTPM2_DEV* pDev,
     else {
         /* specify auth password for storage key */
         pStorageKey->handle.auth.size = sizeof(gStorageKeyAuth)-1;
-        XMEMCPY(pStorageKey->handle.auth.buffer, gStorageKeyAuth,
+        WMEMCPY(pStorageKey->handle.auth.buffer, gStorageKeyAuth,
                 pStorageKey->handle.auth.size);
     }
     if (rc != 0) {
@@ -607,26 +607,25 @@ static int readKeyBlob(const char* filename, WOLFTPM2_KEYBLOB* key)
 {
     int rc = 0;
 #if !defined(NO_FILESYSTEM) && !defined(NO_WRITE_TEMP_FILES)
-    XFILE  fp = NULL;
+    WFILE *fp = NULL;
     size_t fileSz = 0;
     size_t bytes_read = 0;
     byte pubAreaBuffer[sizeof(TPM2B_PUBLIC)];
     int pubAreaSize;
 
-    XMEMSET(key, 0, sizeof(WOLFTPM2_KEYBLOB));
+    WMEMSET(key, 0, sizeof(WOLFTPM2_KEYBLOB));
 
-    fp = XFOPEN(filename, "rb");
-    if (fp != XBADFILE) {
-        XFSEEK(fp, 0, XSEEK_END);
-        fileSz = XFTELL(fp);
-        XREWIND(fp);
+    if (WFOPEN(&fp, filename, "rb") == 0) {
+        WFSEEK(fp, 0, XSEEK_END);
+        fileSz = WFTELL(fp);
+        WREWIND(fp);
         if (fileSz > sizeof(key->priv) + sizeof(key->pub)) {
             printf("File size check failed\n");
             rc = BUFFER_E; goto exit;
         }
         printf("Reading %d bytes from %s\n", (int)fileSz, filename);
 
-        bytes_read = XFREAD(&key->pub.size, 1, sizeof(key->pub.size), fp);
+        bytes_read = WFREAD(&key->pub.size, 1, sizeof(key->pub.size), fp);
         if (bytes_read != sizeof(key->pub.size)) {
             printf("Read %zu, expected size marker of %zu bytes\n",
                 bytes_read, sizeof(key->pub.size));
@@ -634,7 +633,7 @@ static int readKeyBlob(const char* filename, WOLFTPM2_KEYBLOB* key)
         }
         fileSz -= bytes_read;
 
-        bytes_read = XFREAD(pubAreaBuffer, 1, sizeof(UINT16) + key->pub.size, fp);
+        bytes_read = WFREAD(pubAreaBuffer, 1, sizeof(UINT16) + key->pub.size, fp);
         if (bytes_read != sizeof(UINT16) + key->pub.size) {
             printf("Read %zu, expected public blob %zu bytes\n",
                 bytes_read, sizeof(UINT16) + key->pub.size);
@@ -649,7 +648,7 @@ static int readKeyBlob(const char* filename, WOLFTPM2_KEYBLOB* key)
 
         if (fileSz > 0) {
             printf("Reading the private part of the key\n");
-            bytes_read = XFREAD(&key->priv, 1, fileSz, fp);
+            bytes_read = WFREAD(&key->priv, 1, fileSz, fp);
             if (bytes_read != fileSz) {
                 printf("Read %zu, expected private blob %zu bytes\n",
                     bytes_read, fileSz);
@@ -676,7 +675,7 @@ static int readKeyBlob(const char* filename, WOLFTPM2_KEYBLOB* key)
 
 exit:
     if (fp)
-      XFCLOSE(fp);
+      WFCLOSE(fp);
 #else
     (void)filename;
     (void)key;
@@ -964,8 +963,8 @@ static int wolfSSH_TPM_InitKey(WOLFTPM2_DEV* dev, const char* name, WOLFTPM2_KEY
     printf("Loaded key to 0x%x\n", (word32)tpmKeyBlob.handle.hndl);
 #endif
 
-    XMEMCPY(&tpmKey->handle, &tpmKeyBlob.handle, sizeof(tpmKey->handle));
-    XMEMCPY(&tpmKey->pub, &tpmKeyBlob.pub, sizeof(tpmKey->pub));
+    WMEMCPY(&tpmKey->handle, &tpmKeyBlob.handle, sizeof(tpmKey->handle));
+    WMEMCPY(&tpmKey->pub, &tpmKeyBlob.pub, sizeof(tpmKey->pub));
     return WOLFSSH_TPM_SUCCESS;
 }
 

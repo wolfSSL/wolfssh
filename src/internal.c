@@ -7112,22 +7112,8 @@ int SendKexDhReply(WOLFSSH* ssh)
                 else {
                     WLOG(WS_LOG_INFO, "Signing hash with %s.",
                             IdToName(ssh->handshake->pubKeyId));
-#ifdef WOLFSSH_TPM
-                    if(ssh->ctx->tpmDev && ssh->ctx->tpmKey) {
-                        wolfTPM2_SignHashScheme(ssh->ctx->tpmDev,
-                                                ssh->ctx->tpmKey,
-                                                encSig, encSigSz,
-                                                sig_ptr, (int*)&sigSz,
-                                                TPM_ALG_OAEP, TPM_ALG_SHA1);
-                    }
-                    else {
-                        WLOG(WS_LOG_DEBUG, "SendKexDhReply: TPM key or device not set");
-                        ret = WS_CRYPTO_FAILED;
-                    }
-#else /* use wolfCrypt */
                     sigSz = wc_RsaSSL_Sign(encSig, encSigSz, sig_ptr, KEX_SIG_SIZE,
                                            &sigKeyBlock_ptr->sk.rsa.key, ssh->rng);
-#endif /* WOLFSSH_TPM */
                     if (sigSz <= 0) {
                         WLOG(WS_LOG_DEBUG, "SendKexDhReply: Bad RSA Sign");
                         ret = WS_RSA_E;

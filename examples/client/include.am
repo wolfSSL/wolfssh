@@ -9,7 +9,7 @@ examples_client_client_LDADD        = src/libwolfssh.la
 examples_client_client_DEPENDENCIES = src/libwolfssh.la
 
 if BUILD_TPM
-examples_client_client_SOURCES      += examples/tpm/tpm_io.c
+examples_client_client_SOURCES      += ../wolfTPM/examples/tpm_io.c
 endif
 endif
 
