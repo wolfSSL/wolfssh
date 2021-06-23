@@ -263,6 +263,8 @@ enum {
 
     /* Public Key IDs */
     ID_SSH_RSA,
+    ID_RSA_SHA2_256,
+    ID_RSA_SHA2_512,
     ID_ECDSA_SHA2_NISTP256,
     ID_ECDSA_SHA2_NISTP384,
     ID_ECDSA_SHA2_NISTP521,
