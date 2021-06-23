@@ -56,6 +56,7 @@ AC_CHECK_HEADERS([sys/select.h sys/time.h pty.h util.h termios.h])
 AC_CHECK_LIB([network],[socket])
 AC_CHECK_LIB([util],[forkpty])
 AC_CHECK_LIB([wolfssl],[wolfCrypt_Init],,[AC_MSG_ERROR([libwolfssl is required for ${PACKAGE}. It can be obtained from https://www.wolfssl.com/download.html/ .])])
+AC_CHECK_LIB([wolftpm],[wolfTPM2_Init],,[AC_MSG_ERROR([libwolftpm is required for ${PACKAGE}. It can be obtained from https://www.wolfssl.com/download.html/ .])])
 AC_CHECK_FUNCS([gethostbyname getaddrinfo gettimeofday inet_ntoa memset socket wc_ecc_set_rng])
 
 # DEBUG
@@ -126,9 +127,7 @@ AC_ARG_ENABLE([agent],
 # TPM 2.0 Support
 AC_ARG_ENABLE([tpm],
     [AS_HELP_STRING([--enable-tpm],[Enable TPM 2.0 support (default: disabled)])],
-    [ENABLED_TPM=$enableval],[ENABLED_TPM=no],
-    [AC_CHECK_LIB([wolftpm],[wolfTPM2_Init],,[AC_MSG_ERROR([libwolftpm is required for ${PACKAGE}. It can be obtained from https://www.wolfssl.com/download.html/ .])])])
-
+    [ENABLED_TPM=$enableval],[ENABLED_TPM=no])
 
 # smallstack
 AC_ARG_ENABLE([smallstack],
