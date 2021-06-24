@@ -377,6 +377,28 @@ void wolfSSH_SetTpmKey(WOLFSSH* ssh, WOLFTPM2_KEY* key)
     if (ssh && ssh->ctx)
         ssh->ctx->tpmKey = key;
 }
+
+
+void* wolfSSH_GetTpmDev(WOLFSSH* ssh)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetTpmDev()");
+
+    if (ssh && ssh->ctx) {
+        return ssh->ctx->tpmDev;
+    }
+    return NULL;
+}
+
+
+void* wolfSSH_GetTpmKey(WOLFSSH* ssh)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetTpmKey()");
+
+    if (ssh && ssh->ctx) {
+        return ssh->ctx->tpmKey;
+    }
+    return NULL;
+}
 #endif /* WOLFSSH_TPM */
 
 

@@ -969,8 +969,12 @@ static int wolfSSH_TPM_InitKey(WOLFTPM2_DEV* dev, const char* name, WOLFTPM2_KEY
 }
 
 
-static void wolfSSH_TPM_Cleanup(WOLFTPM2_DEV* dev)
+static void wolfSSH_TPM_Cleanup(WOLFTPM2_DEV* dev, WOLFTPM2_KEY* key)
 {
+    if (key != NULL) {
+        wolfTPM2_UnloadHandle(dev, &key->handle);
+    }
+
     if (dev != NULL) {
         wolfTPM2_Cleanup(dev);
     }
@@ -1181,17 +1185,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         if (ret != 0) err_sys("Couldn't load public key buffer.");
     }
     else {
-    #if defined(WOLFSSH_TPM)
-        /* When TPM is used, the PublicKey is available as
-         * a binary buffer and converted to wolfSSH type
-         */
-        byte* p = userPublicKey;
-        userPublicKeySz = sizeof(userPublicKey);
-
-        ret = wolfSSH_ReadKey_buffer((const byte*)tpmKey.pub.publicArea.unique.rsa.buffer,
-               (word32)tpmKey.pub.publicArea.unique.rsa.size, WOLFSSH_FORMAT_SSH,
-               &p, &userPublicKeySz, &userPublicKeyType, &userPublicKeyTypeSz, NULL);
-    #elif !defined(NO_FILESYSTEM)
+    #if !defined(NO_FILESYSTEM)
         byte* p = userPublicKey;
         userPublicKeySz = sizeof(userPublicKey);
 
@@ -1364,7 +1358,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         err_sys("Closing client stream failed. Connection could have been closed by peer");
 
 #ifdef WOLFSSH_TPM
-    wolfSSH_TPM_Cleanup(&tpmDev);
+    wolfSSH_TPM_Cleanup(&tpmDev, &tpmKey);
 #endif
 
 #if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
