@@ -242,8 +242,14 @@ enum {
 
     /* Encryption IDs */
     ID_AES128_CBC,
+    ID_AES192_CBC,
+    ID_AES256_CBC,
     ID_AES128_CTR,
+    ID_AES192_CTR,
+    ID_AES256_CTR,
     ID_AES128_GCM,
+    ID_AES192_GCM,
+    ID_AES256_GCM,
 
     /* Integrity IDs */
     ID_HMAC_SHA1,
@@ -411,7 +417,7 @@ typedef struct Ciphers {
 typedef struct Keys {
     byte iv[AES_BLOCK_SIZE];
     byte ivSz;
-    byte encKey[AES_BLOCK_SIZE];
+    byte encKey[AES_256_KEY_SIZE];
     byte encKeySz;
     byte macKey[MAX_HMAC_SZ];
     byte macKeySz;
