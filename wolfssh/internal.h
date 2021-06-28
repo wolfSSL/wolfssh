@@ -495,6 +495,29 @@ struct WS_SFTP_RENAME_STATE;
 
 struct WOLFSSH_AGENT_CTX;
 
+#ifdef WOLFSSH_FWD
+typedef enum FwdStates {
+    FWD_STATE_INIT,
+    FWD_STATE_LISTEN,
+    FWD_STATE_CONNECTING,
+    FWD_STATE_FORWARDING,
+    FWD_STATE_CLEANUP,
+} WS_FwdStates;
+
+typedef struct WOLFSSH_FWD_CTX {
+    void* heap;
+    struct WOLFSSH_CHANNEL* channel;
+    int error;
+    WS_FwdStates state;
+    const char* hostName;
+    const char* originName;
+    word16 hostPort;
+    word16 originPort;
+    WS_SOCKET_T listenFd;
+    WS_SOCKET_T appFd;
+    int isDirect;
+} WOLFSSH_FWD_CTX;
+#endif /* WOLFSSH_FWD */
 
 /* our wolfSSH session */
 struct WOLFSSH {
@@ -671,6 +694,10 @@ struct WOLFSSH {
     byte useAgent;
     byte agentEnabled;
 #endif /* WOLFSSH_AGENT */
+#ifdef WOLFSSH_FWD
+    struct WOLFSSH_FWD_CTX* fwd;
+    void* fwdCbCtx;
+#endif /* WOLFSSH_FWD */
 };
 
 
@@ -718,6 +745,8 @@ WOLFSSH_LOCAL int ChannelPutData(WOLFSSH_CHANNEL*, byte*, word32);
 WOLFSSH_LOCAL int wolfSSH_ProcessBuffer(WOLFSSH_CTX*,
                                         const byte*, word32,
                                         int, int);
+WOLFSSH_LOCAL int wolfSSH_FwdWorker(WOLFSSH*);
+
 /* Parsing functions */
 WOLFSSH_LOCAL int GetBoolean(byte*, byte*, word32, word32*);
 WOLFSSH_LOCAL int GetUint32(word32*, const byte*, word32, word32*);
