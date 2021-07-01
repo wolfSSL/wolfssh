@@ -4628,6 +4628,7 @@ static int DoUserAuthBanner(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 }
 
 
+#ifdef WOLFSSH_FWD
 static int DoGlobalRequestFwd(WOLFSSH* ssh,
         byte* buf, word32 len, word32* idx, int wantReply, int isCancel)
 {
@@ -4661,11 +4662,19 @@ static int DoGlobalRequestFwd(WOLFSSH* ssh,
         ret = SendGlobalRequestFwdSuccess(ssh, 1, bindPort);
     }
 
-    WFREE(bindAddr, ssh->ctx->heap, DYNTYPE_STRING);
+    if (ret == WS_SUCCESS) {
+        ssh->fwd.hostName = bindAddr;
+        ssh->fwd.hostPort = bindPort;
+
+        if (ssh->ctx->fwdCb) {
+            ret = ssh->ctx->fwdCb(WOLFSSH_FWD_LOCAL_SETUP, &ssh->fwdCbCtx);
+        }
+    }
+
     WLOG(WS_LOG_DEBUG, "Leaving DoGlobalRequestFwd(), ret = %d", ret);
     return ret;
 }
-
+#endif
 
 static int DoGlobalRequest(WOLFSSH* ssh,
                            byte* buf, word32 len, word32* idx)
@@ -4697,25 +4706,29 @@ static int DoGlobalRequest(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS) {
-        if (globReqId == ID_GLOBREQ_TCPIP_FWD) {
-            ret = DoGlobalRequestFwd(ssh, buf, len, &begin, wantReply, 0);
-            wantReply = 0;
-        }
-        else if (globReqId == ID_GLOBREQ_TCPIP_FWD_CANCEL) {
-            ret = DoGlobalRequestFwd(ssh, buf, len, &begin, wantReply, 1);
-            wantReply = 0;
-        }
-        else {
-            if (ssh->ctx->globalReqCb != NULL) {
-                ret = ssh->ctx->globalReqCb(ssh, name, nameSz, wantReply,
-                        (void *)ssh->globalReqCtx);
+        switch (globReqId) {
+#ifdef WOLFSSH_FWD
+            case ID_GLOBREQ_TCPIP_FWD:
+                ret = DoGlobalRequestFwd(ssh, buf, len, &begin, wantReply, 0);
+                wantReply = 0;
+                break;
+            case ID_GLOBREQ_TCPIP_FWD_CANCEL:
+                ret = DoGlobalRequestFwd(ssh, buf, len, &begin, wantReply, 1);
+                wantReply = 0;
+                break;
+#endif
+            default:
+                if (ssh->ctx->globalReqCb != NULL) {
+                    ret = ssh->ctx->globalReqCb(ssh, name, nameSz, wantReply,
+                            (void *)ssh->globalReqCtx);
 
-                if (ret == WS_SUCCESS && wantReply) {
-                    ret = SendRequestSuccess(ssh, 0);
-                    /* response SSH_MSG_REQUEST_FAILURE to Keep-Alive.
-                     * IETF:draft-ssh-global-requests */
+                    if (ret == WS_SUCCESS && wantReply) {
+                        ret = SendRequestSuccess(ssh, 0);
+                        /* response SSH_MSG_REQUEST_FAILURE to Keep-Alive.
+                         * IETF:draft-ssh-global-requests */
+                    }
                 }
-            }
+                break;
         }
     }
 
