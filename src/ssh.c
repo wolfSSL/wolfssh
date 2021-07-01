@@ -1765,6 +1765,38 @@ int wolfSSH_GetLastRxId(WOLFSSH* ssh, word32* channelId)
 
 #ifdef WOLFSSH_FWD
 
+int wolfSSH_CTX_SetFwdCb(WOLFSSH_CTX* ctx,
+        WS_CallbackFwd fwdCb, WS_CallbackFwdIO fwdIoCb)
+{
+    int ret = WS_SUCCESS;
+
+    if (ctx == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        ctx->fwdCb = fwdCb;
+        ctx->fwdIoCb = fwdIoCb;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_SetFwdCbCtx(WOLFSSH* ssh, void* ctx)
+{
+    int ret = WS_SUCCESS;
+
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        ssh->fwdCbCtx = ctx;
+    }
+
+    return ret;
+}
+
+
 WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNewLocal(WOLFSSH* ssh,
         const char* host, word32 hostPort,
         const char* origin, word32 originPort)

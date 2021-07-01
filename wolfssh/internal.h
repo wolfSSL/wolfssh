@@ -388,6 +388,10 @@ struct WOLFSSH_CTX {
     WS_CallbackAgent agentCb;         /* WOLFSSH-AGENT callback */
     WS_CallbackAgentIO agentIoCb;     /* WOLFSSH-AGENT IO callback */
 #endif /* WOLFSSH_AGENT */
+#ifdef WOLFSSH_FWD
+    WS_CallbackFwd fwdCb;             /* WOLFSSH-FWD callback */
+    WS_CallbackFwdIO fwdIoCb;         /* WOLFSSH-FWD IO callback */
+#endif /* WOLFSSH_FWD */
     WS_CallbackPublicKeyCheck publicKeyCheckCb;
                                       /* Check server's public key callback */
 
