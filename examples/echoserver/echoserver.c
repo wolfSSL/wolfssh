@@ -1039,6 +1039,18 @@ static int shell_worker(thread_ctx_t* threadCtx)
             }
 
             if (threadCtx->fwdCbCtx.state == FWD_STATE_CONNECT) {
+                WOLFSSH_CHANNEL* newChannel;
+
+                newChannel = wolfSSH_ChannelFwdNewRemote(ssh,
+                        threadCtx->fwdCbCtx.hostName,
+                        threadCtx->fwdCbCtx.hostPort,
+                        threadCtx->fwdCbCtx.originName,
+                        threadCtx->fwdCbCtx.originPort);
+                if (newChannel != NULL) {
+                    wolfSSH_ChannelGetId(newChannel,
+                            &fwdChannelId, WS_CHANNEL_ID_SELF);
+                    threadCtx->fwdCbCtx.state = FWD_STATE_CONNECTED;
+                }
             }
 
             if (threadCtx->fwdCbCtx.state == FWD_STATE_LISTEN) {
