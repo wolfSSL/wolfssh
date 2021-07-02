@@ -10,6 +10,7 @@ AC_CONFIG_AUX_DIR([build-aux])
 : ${CFLAGS=""}
 
 AC_CANONICAL_HOST
+AC_CANONICAL_TARGET
 
 AM_INIT_AUTOMAKE([1.11 -Wall -Werror -Wno-portability foreign tar-ustar subdir-objects no-define color-tests])
 
@@ -45,8 +46,7 @@ AC_PROG_CC
 AM_PROG_CC_C_O
 AC_PROG_INSTALL
 
-# Checks for header files.
-AC_HEADER_STDC
+# Checks for type sizes.
 AC_CHECK_SIZEOF([long long])
 AC_CHECK_SIZEOF([long])
 AC_CHECK_SIZEOF([off_t])
