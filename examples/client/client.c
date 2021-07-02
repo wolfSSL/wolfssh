@@ -367,14 +367,13 @@ static int wsUserAuth(byte authType,
 
 #ifdef DEBUG_WOLFSSH
     /* inspect supported types from server */
-    printf("Server supports ");
+    printf("Server supports:\n");
     if (authData->type & WOLFSSH_USERAUTH_PASSWORD) {
-        printf("password authentication");
+        printf(" - password\n");
     }
     if (authData->type & WOLFSSH_USERAUTH_PUBLICKEY) {
-        printf(" and public key authentication");
+        printf(" - publickey\n");
     }
-    printf("\n");
     printf("wolfSSH requesting to use type %d\n", authType);
 #endif
 

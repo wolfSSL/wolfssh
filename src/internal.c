@@ -8592,19 +8592,19 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId, int addSig)
 
     if (ret == WS_SUCCESS) {
         if (ssh->ctx->userAuthCb != NULL) {
-            WLOG(WS_LOG_DEBUG, "SUAR: Calling the userauth callback");
+            int cbRet = WOLFSSH_USERAUTH_FAILURE;
 
+            WLOG(WS_LOG_DEBUG, "SUAR: Calling the userauth callback");
             WMEMSET(&authData, 0, sizeof(authData));
             authData.type = authId;
             authData.username = (const byte*)ssh->userName;
             authData.usernameSz = ssh->userNameSz;
 
             if (authId & WOLFSSH_USERAUTH_PASSWORD) {
-                ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PASSWORD,
+                cbRet = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PASSWORD,
                         &authData, ssh->userAuthCtx);
-                if (ret != WOLFSSH_USERAUTH_SUCCESS) {
+                if (cbRet != WOLFSSH_USERAUTH_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, "SUAR: Couldn't get password");
-                    ret = WS_FATAL_ERROR;
                 }
                 else {
                     WLOG(WS_LOG_DEBUG, "SUAR: Callback successful password");
@@ -8612,19 +8612,21 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId, int addSig)
                 }
             }
             /* fall into public key case if password case was not successful */
-            if ((ret == WS_FATAL_ERROR) && (authId & WOLFSSH_USERAUTH_PUBLICKEY)) {
-                ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PUBLICKEY,
+            if (cbRet != WOLFSSH_USERAUTH_SUCCESS &&
+                    (authId & WOLFSSH_USERAUTH_PUBLICKEY)) {
+                cbRet = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PUBLICKEY,
                         &authData, ssh->userAuthCtx);
-                if (ret != WOLFSSH_USERAUTH_SUCCESS) {
+                if (cbRet != WOLFSSH_USERAUTH_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, "SUAR: Couldn't get key");
-                    ret = WS_FATAL_ERROR;
                 }
                 else {
                     WLOG(WS_LOG_DEBUG, "SUAR: Callback successful public key");
                     authData.type = authId = ID_USERAUTH_PUBLICKEY;
                 }
             }
-
+            if (cbRet != WOLFSSH_USERAUTH_SUCCESS) {
+                ret = WS_FATAL_ERROR;
+            }
         }
         else {
             WLOG(WS_LOG_DEBUG, "SUAR: No user auth callback");
