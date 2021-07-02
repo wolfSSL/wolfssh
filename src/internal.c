@@ -4663,11 +4663,11 @@ static int DoGlobalRequestFwd(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS) {
-        ssh->fwd.hostName = bindAddr;
-        ssh->fwd.hostPort = bindPort;
+        ssh->fwdCbCtx->hostName = bindAddr;
+        ssh->fwdCbCtx->hostPort = bindPort;
 
         if (ssh->ctx->fwdCb) {
-            ret = ssh->ctx->fwdCb(WOLFSSH_FWD_LOCAL_SETUP, &ssh->fwd);
+            ret = ssh->ctx->fwdCb(WOLFSSH_FWD_LOCAL_SETUP, ssh->fwdCbCtx);
         }
     }
 

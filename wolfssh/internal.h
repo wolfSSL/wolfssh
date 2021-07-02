@@ -698,8 +698,7 @@ struct WOLFSSH {
     byte agentEnabled;
 #endif /* WOLFSSH_AGENT */
 #ifdef WOLFSSH_FWD
-    struct WOLFSSH_FWD_CTX fwd;
-    void* fwdCbCtx;
+    struct WOLFSSH_FWD_CTX* fwdCbCtx;
 #endif /* WOLFSSH_FWD */
 };
 

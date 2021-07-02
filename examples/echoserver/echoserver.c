@@ -690,7 +690,6 @@ static int shell_worker(thread_ctx_t* threadCtx)
 #endif
 #ifdef WOLFSSH_FWD
         memset((void *)&fwd_buf, 0, sizeof(fwd_buf));
-        threadCtx->fwdCbCtx.state = FWD_STATE_INIT;
         fwd_buf.buf = (char*)malloc(SE_BUF_SIZE);
         if (fwd_buf.buf == NULL) {
             free(buf_rx.buf);
@@ -2026,6 +2025,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         threadCtx->echo = echo;
 #ifdef WOLFSSH_AGENT
         wolfSSH_set_agent_cb_ctx(ssh, &threadCtx->agentCbCtx);
+#endif
+#ifdef WOLFSSH_FWD
+        wolfSSH_SetFwdCbCtx(ssh, &threadCtx->fwdCbCtx);
 #endif
         server_worker(threadCtx);
 
