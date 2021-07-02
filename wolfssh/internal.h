@@ -510,15 +510,14 @@ typedef enum FwdStates {
 
 typedef struct WOLFSSH_FWD_CTX {
     void* heap;
-    struct WOLFSSH_CHANNEL* channel;
-    int error;
-    WS_FwdStates state;
     const char* hostName;
     const char* originName;
     word16 hostPort;
     word16 originPort;
-    WS_SOCKET_T listenFd;
-    WS_SOCKET_T appFd;
+    int listenFd;
+    int appFd;
+    int error;
+    int state;
     int isDirect;
 } WOLFSSH_FWD_CTX;
 #endif /* WOLFSSH_FWD */

@@ -115,10 +115,7 @@ enum FwdStates {
 };
 
 typedef struct WS_FwdCbActionCtx {
-    struct sockaddr_in hostAddr;
-    struct sockaddr_in originAddr;
-    int hostAddrSz;
-    int originAddrSz;
+    void* heap;
     const char* hostName;
     const char* originName;
     word16 hostPort;
@@ -127,6 +124,7 @@ typedef struct WS_FwdCbActionCtx {
     int appFd;
     int error;
     int state;
+    int isDirect;
 } WS_FwdCbActionCtx;
 #endif
 
@@ -444,14 +442,21 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx)
     int ret = 0;
 
     if (action == WOLFSSH_FWD_LOCAL_SETUP) {
-        ctx->listenFd = socket(AF_LOCAL, SOCK_STREAM, 0);
+        ctx->listenFd = socket(AF_INET, SOCK_STREAM, 0);
         if (ctx->listenFd == -1) {
             ret = -1;
         }
 
         if (ret == 0) {
+            struct sockaddr_in addr;
+
+            memset(&addr, 0, sizeof addr);
+            addr.sin_family = AF_INET;
+            addr.sin_port = htons(ctx->hostPort);
+            addr.sin_addr.s_addr = INADDR_ANY;
+
             ret = bind(ctx->listenFd,
-                    (const struct sockaddr*)&ctx->hostAddr, ctx->hostAddrSz);
+                    (const struct sockaddr*)&addr, sizeof addr);
         }
 
         if (ret == 0) {

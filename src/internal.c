@@ -4667,7 +4667,7 @@ static int DoGlobalRequestFwd(WOLFSSH* ssh,
         ssh->fwd.hostPort = bindPort;
 
         if (ssh->ctx->fwdCb) {
-            ret = ssh->ctx->fwdCb(WOLFSSH_FWD_LOCAL_SETUP, &ssh->fwdCbCtx);
+            ret = ssh->ctx->fwdCb(WOLFSSH_FWD_LOCAL_SETUP, &ssh->fwd);
         }
     }
 
