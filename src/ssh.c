@@ -1133,9 +1133,6 @@ int wolfSSH_ChannelIdSend(WOLFSSH* ssh, word32 channelId,
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelIdSend(), ID = %u",
             channelId);
 
-#ifdef DEBUG_WOLFSSH
-    DumpOctetString(buf, bufSz);
-#endif
     if (ssh == NULL || buf == NULL)
         ret = WS_BAD_ARGUMENT;
 

@@ -779,6 +779,100 @@ static int shell_worker(thread_ctx_t* threadCtx)
             if (rc == -1)
                 break;
 
+            if (FD_ISSET(master, &read_fd)) {
+                #ifdef SHELL_DEBUG
+                    printf("master set in readfd\n");
+                #endif
+                count = MIN(SE_BUF_SIZE - buf_tx.rdidx,
+                        SE_BUF_SIZE - buf_tx.size);
+                cnt_r = (int)read(master, buf_tx.buf+buf_tx.rdidx, count);
+                if (cnt_r < 0) {
+                    if (errno != EAGAIN) {
+                        #ifdef SHELL_DEBUG
+                            printf("Break:read master returns %d: errno =%x\n",
+                                    cnt_r, errno);
+                        #endif
+                        break;
+                    }
+                }
+                else {
+                    #ifdef SHELL_DEBUG
+                        buf_dump(buf_tx.buf+buf_tx.rdidx, cnt_r);
+                    #endif
+                    buf_tx.rdidx += cnt_r;
+                    if (buf_tx.rdidx >= SE_BUF_SIZE) {
+                        buf_tx.rdidx = 0;
+                    }
+                    buf_tx.size += cnt_r;
+                }
+            }
+
+            if (FD_ISSET(sock_fd, &read_fd)) {
+                #ifdef SHELL_DEBUG
+                    printf("sock_fd set in readfd\n");
+                #endif
+                count = MIN(SE_BUF_SIZE - buf_rx.rdidx,
+                        SE_BUF_SIZE - buf_rx.size);
+                /* The following tries to read from the first channel inside
+                   the stream. If the pending data in the socket is for
+                   another channel, this will return an error with id
+                   WS_CHAN_RXD. That means the agent has pending data in its
+                   channel. The additional channel is only used with the
+                   agent. */
+                cnt_r = wolfSSH_stream_read(ssh,
+                        (byte *)buf_rx.buf+buf_rx.rdidx, count);
+
+                if (cnt_r <= 0) {
+                    rc = wolfSSH_get_error(ssh);
+                    if (rc == WS_CHAN_RXD) {
+                        word32 lastChannel = 0;
+
+                        wolfSSH_GetLastRxId(ssh, &lastChannel);
+                        #ifdef WOLFSSH_AGENT
+                        if (lastChannel == agentChannelId) {
+                            cnt_r = wolfSSH_ChannelIdRead(ssh, agentChannelId,
+                                    (byte*)agent_buf.buf, cnt_r);
+                            if (cnt_r <= 0)
+                                break;
+                            cnt_w = (int)write(agentFd, (byte*)agent_buf.buf,
+                                    cnt_r);
+                            if (cnt_w <= 0)
+                                break;
+                        }
+                        #endif
+                        #ifdef WOLFSSH_FWD
+                        if (lastChannel == fwdChannelId) {
+                            cnt_r = wolfSSH_ChannelIdRead(ssh, fwdChannelId,
+                                    (byte*)fwd_buf.buf, cnt_r);
+                            if (cnt_r <= 0)
+                                break;
+                            cnt_w = (int)write(fwdFd, (byte*)fwd_buf.buf,
+                                    cnt_r);
+                            if (cnt_w <= 0)
+                                break;
+                        }
+                        #endif
+                    }
+                    else if (rc != WS_WANT_READ) {
+                        #ifdef SHELL_DEBUG
+                            printf("Break:read sock_fd returns %d: errno =%x\n",
+                                    cnt_r, errno);
+                        #endif
+                        break;
+                    }
+                }
+                else {
+                    #ifdef SHELL_DEBUG
+                        buf_dump(buf_rx.buf+buf_rx.rdidx, cnt_r);
+                    #endif
+                    buf_rx.rdidx += cnt_r;
+                    if (buf_rx.rdidx >= SE_BUF_SIZE) {
+                        buf_rx.rdidx = 0;
+                    }
+                    buf_rx.size += cnt_r;
+                }
+            }
+
             count = MIN(SE_BUF_SIZE - buf_rx.wridx, buf_rx.size);
             if (count > 0) {
                 cnt_w = (int)write(master, buf_rx.buf+buf_rx.wridx, count);
@@ -825,99 +919,6 @@ static int shell_worker(thread_ctx_t* threadCtx)
                         buf_tx.rdidx = 0;
                         buf_tx.wridx = 0;
                     }
-                }
-            }
-
-            if (FD_ISSET(master, &read_fd)) {
-                #ifdef SHELL_DEBUG
-                    printf("master set in readfd\n");
-                #endif
-                count = MIN(SE_BUF_SIZE - buf_tx.rdidx,
-                        SE_BUF_SIZE - buf_tx.size);
-                cnt_r = (int)read(master, buf_tx.buf+buf_tx.rdidx, count);
-                if (cnt_r < 0) {
-                    if (errno != EAGAIN) {
-                        #ifdef SHELL_DEBUG
-                            printf("Break:read master returns %d: errno =%x\n",
-                                    cnt_r, errno);
-                        #endif
-                        break;
-                    }
-                }
-                else {
-                    #ifdef SHELL_DEBUG
-                        buf_dump(buf_tx.buf+buf_tx.rdidx, cnt_r);
-                    #endif
-                    buf_tx.rdidx += cnt_r;
-                    if (buf_tx.rdidx >= SE_BUF_SIZE) {
-                        buf_tx.rdidx = 0;
-                    }
-                    buf_tx.size += cnt_r;
-                }
-            }
-
-            if (FD_ISSET(sock_fd, &read_fd)) {
-                #ifdef SHELL_DEBUG
-                    printf("sock_fd set in readfd\n");
-                #endif
-                count = MIN(SE_BUF_SIZE - buf_rx.rdidx,
-                        SE_BUF_SIZE - buf_rx.size);
-                /* The following tries to read from the first channel inside
-                   the stream. If the pending data in the socket is for
-                   another channel, this will return an error with id
-                   WS_CHAN_RXD. That means the agent has pending data in its
-                   channel. The additional channel is only used with the
-                   agent. */
-                cnt_r = wolfSSH_stream_read(ssh,
-                        (byte *)buf_rx.buf+buf_rx.rdidx, count);
-                if (cnt_r <= 0) {
-                    rc = wolfSSH_get_error(ssh);
-                    if (rc != WS_WANT_READ) {
-                        #ifdef SHELL_DEBUG
-                            printf("Break:read sock_fd returns %d: errno =%x\n",
-                                    cnt_r, errno);
-                        #endif
-                        break;
-                    }
-                    if (rc == WS_CHAN_RXD) {
-                        word32 lastChannel = 0;
-
-                        wolfSSH_GetLastRxId(ssh, &lastChannel);
-                        #ifdef WOLFSSH_AGENT
-                        if (lastChannel == agentChannelId) {
-                            cnt_r = wolfSSH_ChannelIdRead(ssh, agentChannelId,
-                                    (byte*)agent_buf.buf, cnt_r);
-                            if (cnt_r <= 0)
-                                break;
-                            cnt_w = (int)write(agentFd, (byte*)agent_buf.buf,
-                                    cnt_r);
-                            if (cnt_w <= 0)
-                                break;
-                        }
-                        #endif
-                        #ifdef WOLFSSH_FWD
-                        if (lastChannel == fwdChannelId) {
-                            cnt_r = wolfSSH_ChannelIdRead(ssh, fwdChannelId,
-                                    (byte*)fwd_buf.buf, cnt_r);
-                            if (cnt_r <= 0)
-                                break;
-                            cnt_w = (int)write(fwdFd, (byte*)fwd_buf.buf,
-                                    cnt_r);
-                            if (cnt_w <= 0)
-                                break;
-                        }
-                        #endif
-                    }
-                }
-                else {
-                    #ifdef SHELL_DEBUG
-                        buf_dump(buf_rx.buf+buf_rx.rdidx, cnt_r);
-                    #endif
-                    buf_rx.rdidx += cnt_r;
-                    if (buf_rx.rdidx >= SE_BUF_SIZE) {
-                        buf_rx.rdidx = 0;
-                    }
-                    buf_rx.size += cnt_r;
                 }
             }
 
@@ -990,10 +991,9 @@ static int shell_worker(thread_ctx_t* threadCtx)
                     #ifdef SHELL_DEBUG
                         printf("fwdFd set in readfd\n");
                     #endif
-                    count = MIN(SE_BUF_SIZE - fwd_buf.rdidx,
-                            SE_BUF_SIZE - fwd_buf.size);
+                    count = SE_BUF_SIZE - fwd_buf.size;
                     cnt_r = (int)read(fwdFd,
-                            (byte *)fwd_buf.buf+fwd_buf.rdidx, count);
+                            (byte *)fwd_buf.buf + fwd_buf.size, count);
                     if (cnt_r == 0) {
                         /* Read zero-returned. Socket is closed. Go back
                            to listening. */
@@ -1008,26 +1008,31 @@ static int shell_worker(thread_ctx_t* threadCtx)
                         break;
                     }
                     else {
-                        #ifdef SHELL_DEBUG
-                            buf_dump(fwd_buf.buf+fwd_buf.rdidx, cnt_r);
-                        #endif
-                        cnt_w = wolfSSH_ChannelIdSend(ssh, fwdChannelId,
-                                (byte*)fwd_buf.buf + fwd_buf.rdidx, cnt_r);
-                        if (cnt_w > 0) {
-                            fwd_buf.rdidx += cnt_r;
-                            if (fwd_buf.rdidx >= SE_BUF_SIZE) {
-                                fwd_buf.rdidx = 0;
-                            }
-                            fwd_buf.size += cnt_r - cnt_w;
+                    #ifdef SHELL_DEBUG
+                        buf_dump(fwd_buf.buf + fwd_buf.size, cnt_r);
+                    #endif
+                        fwd_buf.size += cnt_r;
+                    }
+                }
+
+                if (fwd_buf.size > 0) {
+                    cnt_w = wolfSSH_ChannelIdSend(ssh, fwdChannelId,
+                            (byte*)fwd_buf.buf, fwd_buf.size);
+                    if (cnt_w > 0) {
+                        if (cnt_w < fwd_buf.size) {
+                            memmove(fwd_buf.buf,
+                                    fwd_buf.buf + cnt_w,
+                                    fwd_buf.size - cnt_w);
                         }
-                        else if (cnt_w == -1071) {
-                        #ifdef SHELL_DEBUG
-                            printf("Waiting for channel open confirmation.\n");
-                        #endif
-                        }
-                        else {
-                            break;
-                        }
+                        fwd_buf.size -= cnt_w;
+                    }
+                    else if (cnt_w == -1071 || cnt_w == -1057) {
+                    #ifdef SHELL_DEBUG
+                        printf("Waiting for channel open confirmation.\n");
+                    #endif
+                    }
+                    else {
+                        break;
                     }
                 }
             }
@@ -1054,7 +1059,6 @@ static int shell_worker(thread_ctx_t* threadCtx)
             if (threadCtx->fwdCbCtx.state == FWD_STATE_CONNECT) {
                 WOLFSSH_CHANNEL* newChannel;
 
-                printf("Creating a fwd channel\n");
                 newChannel = wolfSSH_ChannelFwdNewRemote(ssh,
                         threadCtx->fwdCbCtx.hostName,
                         threadCtx->fwdCbCtx.hostPort,
