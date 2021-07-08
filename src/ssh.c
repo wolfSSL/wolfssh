@@ -1127,30 +1127,39 @@ int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz)
 int wolfSSH_ChannelIdSend(WOLFSSH* ssh, word32 channelId,
         byte* buf, word32 bufSz)
 {
-    int bytesTxd = 0;
+    WOLFSSH_CHANNEL* channel;
+    int ret = WS_SUCCESS;
 
-    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelIdSend()");
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelIdSend(), ID = %u",
+            channelId);
 
+#ifdef DEBUG_WOLFSSH
+    DumpOctetString(buf, bufSz);
+#endif
     if (ssh == NULL || buf == NULL)
-        return WS_BAD_ARGUMENT;
+        ret = WS_BAD_ARGUMENT;
 
-    /* case of WANT WRITE and data stored in output buffer */
-    if (ssh->outputBuffer.plainSz && ssh->outputBuffer.length != 0) {
-        int ret;
-
-        bytesTxd = ssh->outputBuffer.plainSz;
-        WLOG(WS_LOG_DEBUG, "Trying to resend %d bytes", bytesTxd);
-        ssh->error = WS_SUCCESS;
-        ret = wolfSSH_SendPacket(ssh);
-
-        /* return the amount sent on success otherwise return error found */
-        return (ret == WS_SUCCESS)? bytesTxd : ret;
+    if (ret == WS_SUCCESS) {
+        channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
+        if (channel == NULL) {
+            WLOG(WS_LOG_DEBUG, "Invalid channel");
+            ret = WS_INVALID_CHANID;
+        }
+        else {
+            if (!channel->openConfirmed) {
+                WLOG(WS_LOG_DEBUG, "Channel not confirmed yet.");
+                ret = WS_CHANNEL_NOT_CONF;
+            }
+        }
     }
 
-    bytesTxd = SendChannelData(ssh, channelId, buf, bufSz);
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "Sending data.");
+        ret = SendChannelData(ssh, channelId, buf, bufSz);
+    }
 
-    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelIdSend(), txd = %d", bytesTxd);
-    return bytesTxd;
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelIdSend(), txd = %d", ret);
+    return ret;
 }
 
 
@@ -1869,8 +1878,8 @@ WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNewRemote(WOLFSSH* ssh,
     if (newChannel != NULL)
         ChannelAppend(ssh, newChannel);
 
-    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelFwdNewRemote(), newChannel = %p",
-            newChannel);
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelFwdNewRemote(), newChannel = %p, ret = %d",
+            newChannel, ret);
     return newChannel;
 }
 

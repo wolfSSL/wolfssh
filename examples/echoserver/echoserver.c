@@ -630,7 +630,6 @@ static int shell_worker(thread_ctx_t* threadCtx)
         BUF_T buf_tx;
         struct termios tios;
         fd_set read_fd;
-        fd_set write_fd;
         int flags;
 #ifdef WOLFSSH_AGENT
         BUF_T agent_buf;
@@ -721,23 +720,16 @@ static int shell_worker(thread_ctx_t* threadCtx)
         }
 
         while (ChildRunning) {
-            FD_ZERO(&read_fd);
-            FD_ZERO(&write_fd);
             int count;
             int cnt_r;
             int cnt_w;
 
-            if (buf_rx.size > 0) {
-                FD_SET(master, &write_fd);
-            }
+            FD_ZERO(&read_fd);
             if (buf_tx.size < SE_BUF_SIZE) {
                 FD_SET(master, &read_fd);
             }
             if (buf_rx.size < SE_BUF_SIZE) {
                 FD_SET(sock_fd, &read_fd);
-            }
-            if (buf_tx.size > 0) {
-                FD_SET(sock_fd, &write_fd);
             }
             max_fd = master;
             if (sock_fd > max_fd) {
@@ -780,19 +772,15 @@ static int shell_worker(thread_ctx_t* threadCtx)
             #endif /* SHELL_DEBUG */
 
 
-            rc = select(max_fd + 1, &read_fd, &write_fd, NULL, NULL);
+            rc = select(max_fd + 1, &read_fd, NULL, NULL, NULL);
             #ifdef SHELL_DEBUG
                 printf("select return 0x%x\n", rc);
             #endif
             if (rc == -1)
                 break;
 
-            if (FD_ISSET(master, &write_fd)) {
-                #ifdef SHELL_DEBUG
-                    printf("master set in writefd\n");
-                #endif
-                count = MIN(SE_BUF_SIZE - buf_rx.wridx, buf_rx.size);
-
+            count = MIN(SE_BUF_SIZE - buf_rx.wridx, buf_rx.size);
+            if (count > 0) {
                 cnt_w = (int)write(master, buf_rx.buf+buf_rx.wridx, count);
                 if (cnt_w < 0) {
                     if (errno != EAGAIN) {
@@ -816,11 +804,8 @@ static int shell_worker(thread_ctx_t* threadCtx)
                 }
             }
 
-            if (FD_ISSET(sock_fd, &write_fd)) {
-                #ifdef SHELL_DEBUG
-                    printf("sock_fd set in writefd\n");
-                #endif
-                count = MIN(SE_BUF_SIZE - buf_tx.wridx, buf_tx.size);
+            count = MIN(SE_BUF_SIZE - buf_tx.wridx, buf_tx.size);
+            if (count > 0) {
                 cnt_w = wolfSSH_stream_send(ssh,
                         (byte *)(buf_tx.buf + buf_tx.wridx), count);
                 if (cnt_w <= 0) {
@@ -1035,25 +1020,15 @@ static int shell_worker(thread_ctx_t* threadCtx)
                             }
                             fwd_buf.size += cnt_r - cnt_w;
                         }
+                        else if (cnt_w == -1071) {
+                        #ifdef SHELL_DEBUG
+                            printf("Waiting for channel open confirmation.\n");
+                        #endif
+                        }
                         else {
                             break;
                         }
                     }
-                }
-            }
-
-            if (threadCtx->fwdCbCtx.state == FWD_STATE_CONNECT) {
-                WOLFSSH_CHANNEL* newChannel;
-
-                newChannel = wolfSSH_ChannelFwdNewRemote(ssh,
-                        threadCtx->fwdCbCtx.hostName,
-                        threadCtx->fwdCbCtx.hostPort,
-                        threadCtx->fwdCbCtx.originName,
-                        threadCtx->fwdCbCtx.originPort);
-                if (newChannel != NULL) {
-                    wolfSSH_ChannelGetId(newChannel,
-                            &fwdChannelId, WS_CHANNEL_ID_SELF);
-                    threadCtx->fwdCbCtx.state = FWD_STATE_CONNECTED;
                 }
             }
 
@@ -1070,9 +1045,25 @@ static int shell_worker(thread_ctx_t* threadCtx)
                         }
                     }
                     else {
-                        threadCtx->fwdCbCtx.state = FWD_STATE_CONNECTED;
+                        threadCtx->fwdCbCtx.state = FWD_STATE_CONNECT;
                         threadCtx->fwdCbCtx.appFd = fwdFd;
                     }
+                }
+            }
+
+            if (threadCtx->fwdCbCtx.state == FWD_STATE_CONNECT) {
+                WOLFSSH_CHANNEL* newChannel;
+
+                printf("Creating a fwd channel\n");
+                newChannel = wolfSSH_ChannelFwdNewRemote(ssh,
+                        threadCtx->fwdCbCtx.hostName,
+                        threadCtx->fwdCbCtx.hostPort,
+                        /*threadCtx->fwdCbCtx.originName*/ "localhost",
+                        /*threadCtx->fwdCbCtx.originPort*/ 11111);
+                if (newChannel != NULL) {
+                    wolfSSH_ChannelGetId(newChannel,
+                            &fwdChannelId, WS_CHANNEL_ID_SELF);
+                    threadCtx->fwdCbCtx.state = FWD_STATE_CONNECTED;
                 }
             }
 #endif
