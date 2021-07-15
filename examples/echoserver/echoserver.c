@@ -573,10 +573,10 @@ static void ChildSig(int sig)
 static int shell_worker(thread_ctx_t* threadCtx)
 {
     WOLFSSH* ssh;
-    int master;
-    int sock_fd;
-    int max_fd = 0;
-    pid_t pid;
+    int childFd;
+    int sshFd;
+    int maxFd = 0;
+    pid_t childPid;
     int rc = 0;
     const char *userName;
     struct passwd *p_passwd;
@@ -588,7 +588,7 @@ static int shell_worker(thread_ctx_t* threadCtx)
     if (ssh == NULL)
         return WS_FATAL_ERROR;
 
-    sock_fd = wolfSSH_get_fd(ssh);
+    sshFd = wolfSSH_get_fd(ssh);
     userName = wolfSSH_GetUsername(ssh);
     p_passwd = getpwnam((const char *)userName);
     if (p_passwd == NULL) {
@@ -597,14 +597,14 @@ static int shell_worker(thread_ctx_t* threadCtx)
     }
 
     ChildRunning = 1;
-    pid = forkpty(&master, NULL, NULL, NULL);
+    childPid = forkpty(&childFd, NULL, NULL, NULL);
 
-    if (pid < 0) {
+    if (childPid < 0) {
         /* forkpty failed, so return */
         ChildRunning = 0;
         return WS_FATAL_ERROR;
     }
-    else if (pid == 0) {
+    else if (childPid == 0) {
         /* Child process */
         const char *args[] = {"-sh", NULL};
 
@@ -629,7 +629,7 @@ static int shell_worker(thread_ctx_t* threadCtx)
         BUF_T buf_rx;
         BUF_T buf_tx;
         struct termios tios;
-        fd_set read_fd;
+        fd_set readFds;
         int flags;
 #ifdef WOLFSSH_AGENT
         BUF_T agent_buf;
@@ -645,23 +645,23 @@ static int shell_worker(thread_ctx_t* threadCtx)
 #endif
 
         #ifdef SHELL_DEBUG
-            printf("In pid > 0; getpid=%d\n", (int)getpid());
+            printf("In childPid > 0; getpid=%d\n", (int)getpid());
         #endif
         signal(SIGCHLD, ChildSig);
 
-        rc = tcgetattr(master, &tios);
+        rc = tcgetattr(childFd, &tios);
         if (rc != 0) {
             printf("tcgetattr failed: rc =%d,errno=%x\n", rc, errno);
             return WS_FATAL_ERROR;
         }
-        rc = tcsetattr(master, TCSAFLUSH, &tios);
+        rc = tcsetattr(childFd, TCSAFLUSH, &tios);
         if (rc != 0) {
             printf("tcsetattr failed: rc =%d,errno=%x\n", rc, errno);
             return WS_FATAL_ERROR;
         }
 
         #ifdef SHELL_DEBUG
-            termios_show(master);
+            termios_show(childFd);
         #endif
 
         memset((void *)&buf_rx, 0, sizeof(buf_rx));
@@ -700,9 +700,9 @@ static int shell_worker(thread_ctx_t* threadCtx)
         }
 #endif
 
-        /*set sock_fd to non-blocking;
+        /*set sshFd to non-blocking;
           select() blocks even if socket is set to non-blocking*/
-        flags = fcntl(sock_fd, F_GETFL, 0);
+        flags = fcntl(sshFd, F_GETFL, 0);
         #ifdef SHELL_DEBUG
             printf("flags read = 0x%x\n", flags);
         #endif
@@ -712,7 +712,7 @@ static int shell_worker(thread_ctx_t* threadCtx)
         }
         else {
             flags = flags | O_NONBLOCK;
-            rc = fcntl(sock_fd, F_SETFL, flags);
+            rc = fcntl(sshFd, F_SETFL, flags);
             if (rc == -1) {
                 printf("fcntl F_SETFL: flags = 0x%x, rc = 0x%x, errno=0x%x\n",
                         flags, rc, errno);
@@ -724,43 +724,43 @@ static int shell_worker(thread_ctx_t* threadCtx)
             int cnt_r;
             int cnt_w;
 
-            FD_ZERO(&read_fd);
+            FD_ZERO(&readFds);
             if (buf_tx.size < SE_BUF_SIZE) {
-                FD_SET(master, &read_fd);
+                FD_SET(childFd, &readFds);
             }
             if (buf_rx.size < SE_BUF_SIZE) {
-                FD_SET(sock_fd, &read_fd);
+                FD_SET(sshFd, &readFds);
             }
-            max_fd = master;
-            if (sock_fd > max_fd) {
-                max_fd = sock_fd;
+            maxFd = childFd;
+            if (sshFd > maxFd) {
+                maxFd = sshFd;
             }
 
 #ifdef WOLFSSH_AGENT
             if (threadCtx->agentCbCtx.state == AGENT_STATE_LISTEN) {
-                FD_SET(threadCtx->agentCbCtx.listenFd, &read_fd);
-                if (threadCtx->agentCbCtx.listenFd > max_fd)
-                    max_fd = threadCtx->agentCbCtx.listenFd;
+                FD_SET(threadCtx->agentCbCtx.listenFd, &readFds);
+                if (threadCtx->agentCbCtx.listenFd > maxFd)
+                    maxFd = threadCtx->agentCbCtx.listenFd;
             }
 
             if (threadCtx->agentCbCtx.state == AGENT_STATE_CONNECTED) {
-                FD_SET(agentFd, &read_fd);
-                if (threadCtx->agentCbCtx.fd > max_fd)
-                    max_fd = agentFd;
+                FD_SET(agentFd, &readFds);
+                if (threadCtx->agentCbCtx.fd > maxFd)
+                    maxFd = agentFd;
             }
 #endif
 
 #ifdef WOLFSSH_FWD
             if (threadCtx->fwdCbCtx.state == FWD_STATE_LISTEN) {
-                FD_SET(threadCtx->fwdCbCtx.listenFd, &read_fd);
-                if (threadCtx->fwdCbCtx.listenFd > max_fd)
-                    max_fd = threadCtx->fwdCbCtx.listenFd;
+                FD_SET(threadCtx->fwdCbCtx.listenFd, &readFds);
+                if (threadCtx->fwdCbCtx.listenFd > maxFd)
+                    maxFd = threadCtx->fwdCbCtx.listenFd;
             }
 
             if (threadCtx->fwdCbCtx.state == FWD_STATE_CONNECTED) {
-                FD_SET(fwdFd, &read_fd);
-                if (fwdFd > max_fd)
-                    max_fd = fwdFd;
+                FD_SET(fwdFd, &readFds);
+                if (fwdFd > maxFd)
+                    maxFd = fwdFd;
             }
 #endif
 
@@ -772,24 +772,24 @@ static int shell_worker(thread_ctx_t* threadCtx)
             #endif /* SHELL_DEBUG */
 
 
-            rc = select(max_fd + 1, &read_fd, NULL, NULL, NULL);
+            rc = select(maxFd + 1, &readFds, NULL, NULL, NULL);
             #ifdef SHELL_DEBUG
                 printf("select return 0x%x\n", rc);
             #endif
             if (rc == -1)
                 break;
 
-            if (FD_ISSET(master, &read_fd)) {
+            if (FD_ISSET(childFd, &readFds)) {
                 #ifdef SHELL_DEBUG
-                    printf("master set in readfd\n");
+                    printf("childFd set in readfd\n");
                 #endif
                 count = MIN(SE_BUF_SIZE - buf_tx.rdidx,
                         SE_BUF_SIZE - buf_tx.size);
-                cnt_r = (int)read(master, buf_tx.buf+buf_tx.rdidx, count);
+                cnt_r = (int)read(childFd, buf_tx.buf+buf_tx.rdidx, count);
                 if (cnt_r < 0) {
                     if (errno != EAGAIN) {
                         #ifdef SHELL_DEBUG
-                            printf("Break:read master returns %d: errno =%x\n",
+                            printf("Break:read childFd returns %d: errno =%x\n",
                                     cnt_r, errno);
                         #endif
                         break;
@@ -807,9 +807,9 @@ static int shell_worker(thread_ctx_t* threadCtx)
                 }
             }
 
-            if (FD_ISSET(sock_fd, &read_fd)) {
+            if (FD_ISSET(sshFd, &readFds)) {
                 #ifdef SHELL_DEBUG
-                    printf("sock_fd set in readfd\n");
+                    printf("sshFd set in readfd\n");
                 #endif
                 count = MIN(SE_BUF_SIZE - buf_rx.rdidx,
                         SE_BUF_SIZE - buf_rx.size);
@@ -855,7 +855,7 @@ static int shell_worker(thread_ctx_t* threadCtx)
                     }
                     else if (rc != WS_WANT_READ) {
                         #ifdef SHELL_DEBUG
-                            printf("Break:read sock_fd returns %d: errno =%x\n",
+                            printf("Break:read sshFd returns %d: errno =%x\n",
                                     cnt_r, errno);
                         #endif
                         break;
@@ -875,12 +875,13 @@ static int shell_worker(thread_ctx_t* threadCtx)
 
             count = MIN(SE_BUF_SIZE - buf_rx.wridx, buf_rx.size);
             if (count > 0) {
-                cnt_w = (int)write(master, buf_rx.buf+buf_rx.wridx, count);
+                cnt_w = (int)write(childFd, buf_rx.buf+buf_rx.wridx, count);
                 if (cnt_w < 0) {
                     if (errno != EAGAIN) {
                         #ifdef SHELL_DEBUG
-                            printf("Break:write master returns %d: errno =%x\n",
-                                    cnt_w, errno);
+                            printf(
+                                "Break:write childFd returns %d: errno =%x\n",
+                                cnt_w, errno);
                         #endif
                         break;
                     }
@@ -904,7 +905,7 @@ static int shell_worker(thread_ctx_t* threadCtx)
                         (byte *)(buf_tx.buf + buf_tx.wridx), count);
                 if (cnt_w <= 0) {
                     #ifdef SHELL_DEBUG
-                        printf("Break:write sock_fd returns %d: errno =%x\n",
+                        printf("Break:write sshFd returns %d: errno =%x\n",
                                 cnt_w, errno);
                     #endif
                     break;
@@ -924,7 +925,7 @@ static int shell_worker(thread_ctx_t* threadCtx)
 
 #ifdef WOLFSSH_AGENT
             if (threadCtx->agentCbCtx.state == AGENT_STATE_CONNECTED) {
-                if (FD_ISSET(agentFd, &read_fd)) {
+                if (FD_ISSET(agentFd, &readFds)) {
                     #ifdef SHELL_DEBUG
                         printf("agentFd set in readfd\n");
                     #endif
@@ -966,7 +967,7 @@ static int shell_worker(thread_ctx_t* threadCtx)
             }
 
             if (threadCtx->agentCbCtx.state == AGENT_STATE_LISTEN) {
-                if (FD_ISSET(agentListenFd, &read_fd)) {
+                if (FD_ISSET(agentListenFd, &readFds)) {
                     #ifdef SHELL_DEBUG
                         printf("accepting agent connection\n");
                     #endif
@@ -987,7 +988,7 @@ static int shell_worker(thread_ctx_t* threadCtx)
 
 #ifdef WOLFSSH_FWD
             if (threadCtx->fwdCbCtx.state == FWD_STATE_CONNECTED) {
-                if (FD_ISSET(fwdFd, &read_fd)) {
+                if (FD_ISSET(fwdFd, &readFds)) {
                     #ifdef SHELL_DEBUG
                         printf("fwdFd set in readfd\n");
                     #endif
@@ -1038,7 +1039,7 @@ static int shell_worker(thread_ctx_t* threadCtx)
             }
 
             if (threadCtx->fwdCbCtx.state == FWD_STATE_LISTEN) {
-                if (FD_ISSET(fwdListenFd, &read_fd)) {
+                if (FD_ISSET(fwdListenFd, &readFds)) {
                     #ifdef SHELL_DEBUG
                         printf("accepting fwd connection\n");
                     #endif
@@ -1080,7 +1081,7 @@ static int shell_worker(thread_ctx_t* threadCtx)
 #ifdef WOLFSSH_FWD
         free(fwd_buf.buf);
 #endif
-        close(master);
+        close(childFd);
     }
 
     return 0;
