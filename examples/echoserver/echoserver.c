@@ -940,10 +940,17 @@ static int shell_worker(thread_ctx_t* threadCtx)
                         continue;
                     }
                     else if (cnt_r < 0) {
+                        int err = errno;
                         #ifdef SHELL_DEBUG
                             printf("Break:read agentFd returns %d: "
-                                   "errno = %d\n", cnt_r, errno);
+                                   "errno = %d\n", cnt_r, err);
                         #endif
+                        if (err == ECONNRESET) {
+                            /* Connection reset. Socket is closed.
+                             * Go back to listening. */
+                            threadCtx->agentCbCtx.state = AGENT_STATE_LISTEN;
+                            continue;
+                        }
                         break;
                     }
                     else {
@@ -1002,10 +1009,17 @@ static int shell_worker(thread_ctx_t* threadCtx)
                         continue;
                     }
                     else if (cnt_r < 0) {
+                        int err = errno;
                         #ifdef SHELL_DEBUG
                             printf("Break:read fwdFd returns %d: "
-                                   "errno = %d\n", cnt_r, errno);
+                                   "errno = %d\n", cnt_r, err);
                         #endif
+                        if (err == ECONNRESET) {
+                            /* Connection reset. Socket is closed.
+                             * Go back to listening. */
+                            threadCtx->fwdCbCtx.state = FWD_STATE_LISTEN;
+                            continue;
+                        }
                         break;
                     }
                     else {
