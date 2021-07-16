@@ -437,6 +437,8 @@ static HandshakeInfo* HandshakeInfoNew(void* heap)
         newHs->macId = ID_NONE;
         newHs->blockSz = MIN_BLOCK_SZ;
         newHs->hashId = WC_HASH_TYPE_NONE;
+        newHs->eSz = sizeof newHs->e;
+        newHs->xSz = sizeof newHs->x;
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
         newHs->dhGexMinSz = WOLFSSH_DEFAULT_GEXDH_MIN;
         newHs->dhGexPreferredSz = WOLFSSH_DEFAULT_GEXDH_PREFERRED;
