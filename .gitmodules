@@ -1,0 +1,3 @@
+[submodule "wolfTPM"]
+	path = wolfTPM
+	url = https://github.com/wolfSSL/wolfTPM.git
