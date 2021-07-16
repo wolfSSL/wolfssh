@@ -92,14 +92,47 @@ WOLFSSH_API int wolfSSH_ReadKey_file(const char*,
 #define WS_CHANNEL_ID_SELF 0
 #define WS_CHANNEL_ID_PEER 1
 
-WOLFSSH_API WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNew(WOLFSSH*,
+
+typedef enum WS_FwdCbAction {
+    WOLFSSH_FWD_LOCAL_SETUP,
+    WOLFSSH_FWD_LOCAL_CLEANUP,
+} WS_FwdCbAction;
+
+typedef enum WS_FwdIoCbAction {
+    WOLFSSH_FWD_IO_WRITE,
+    WOLFSSH_FWD_IO_READ,
+} WS_FwdIoCbAction;
+
+typedef enum WS_FwdCbError {
+    WS_FWD_SUCCESS,
+    WS_FWD_SETUP_E,
+    WS_FWD_NOT_AVAILABLE,
+    WS_FWD_INVALID_ACTION,
+    WS_FWD_PEER_E,
+} WS_FwdCbError;
+
+typedef int (*WS_CallbackFwd)(WS_FwdCbAction, void*);
+typedef int (*WS_CallbackFwdIO)(WS_FwdIoCbAction, void*, word32, void*);
+
+
+WOLFSSH_API WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNewLocal(WOLFSSH*,
         const char*, word32, const char*, word32);
+WOLFSSH_API WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNewRemote(WOLFSSH*,
+        const char*, word32, const char*, word32);
+WOLFSSH_API int wolfSSH_CTX_SetFwdCb(WOLFSSH_CTX*,
+        WS_CallbackFwd, WS_CallbackFwdIO);
+WOLFSSH_API int wolfSSH_SetFwdCbCtx(WOLFSSH*, void*);
+WOLFSSH_API int wolfSSH_CTX_SetFwdEnable(WOLFSSH_CTX*, byte);
+WOLFSSH_API int wolfSSH_SetFwdEnable(WOLFSSH*, byte);
+DEPRECATED WOLFSSH_API WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNew(WOLFSSH*,
+        const char*, word32, const char*, word32);
+DEPRECATED WOLFSSH_API int wolfSSH_ChannelSetFwdFd(WOLFSSH_CHANNEL*, int);
+DEPRECATED WOLFSSH_API int wolfSSH_ChannelGetFwdFd(const WOLFSSH_CHANNEL*);
+
 WOLFSSH_API int wolfSSH_ChannelFree(WOLFSSH_CHANNEL*);
 WOLFSSH_API int wolfSSH_ChannelGetId(WOLFSSH_CHANNEL*, word32*, byte);
 WOLFSSH_API WOLFSSH_CHANNEL* wolfSSH_ChannelFind(WOLFSSH*, word32, byte);
 WOLFSSH_API WOLFSSH_CHANNEL* wolfSSH_ChannelNext(WOLFSSH*, WOLFSSH_CHANNEL*);
-WOLFSSH_API int wolfSSH_ChannelSetFwdFd(WOLFSSH_CHANNEL*, int);
-WOLFSSH_API int wolfSSH_ChannelGetFwdFd(const WOLFSSH_CHANNEL*);
 WOLFSSH_API int wolfSSH_ChannelRead(WOLFSSH_CHANNEL*, byte*, word32);
 WOLFSSH_API int wolfSSH_ChannelSend(WOLFSSH_CHANNEL*, const byte*, word32);
 WOLFSSH_API int wolfSSH_ChannelExit(WOLFSSH_CHANNEL*);

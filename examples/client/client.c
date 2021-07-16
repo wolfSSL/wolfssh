@@ -1125,7 +1125,8 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
             ret = wolfSSH_stream_read(ssh, (byte*)rxBuf, sizeof(rxBuf) - 1);
             if (ret <= 0) {
                 ret = wolfSSH_get_error(ssh);
-                if (ret != WS_WANT_READ && ret != WS_WANT_WRITE)
+                if (ret != WS_WANT_READ && ret != WS_WANT_WRITE &&
+                        ret != WS_CHAN_RXD)
                     err_sys("Stream read failed.");
             }
         } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE);

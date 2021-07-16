@@ -287,6 +287,10 @@ enum {
     ID_CHANTYPE_TCPIP_DIRECT,
     ID_CHANTYPE_AUTH_AGENT,
 
+    /* Global Request IDs */
+    ID_GLOBREQ_TCPIP_FWD,
+    ID_GLOBREQ_TCPIP_FWD_CANCEL,
+
     ID_UNKNOWN
 };
 
@@ -390,6 +394,10 @@ struct WOLFSSH_CTX {
     WS_CallbackAgent agentCb;         /* WOLFSSH-AGENT callback */
     WS_CallbackAgentIO agentIoCb;     /* WOLFSSH-AGENT IO callback */
 #endif /* WOLFSSH_AGENT */
+#ifdef WOLFSSH_FWD
+    WS_CallbackFwd fwdCb;             /* WOLFSSH-FWD callback */
+    WS_CallbackFwdIO fwdIoCb;         /* WOLFSSH-FWD IO callback */
+#endif /* WOLFSSH_FWD */
     WS_CallbackPublicKeyCheck publicKeyCheckCb;
                                       /* Check server's public key callback */
 
@@ -497,6 +505,28 @@ struct WS_SFTP_RENAME_STATE;
 
 struct WOLFSSH_AGENT_CTX;
 
+#ifdef WOLFSSH_FWD
+typedef enum FwdStates {
+    FWD_STATE_INIT,
+    FWD_STATE_LISTEN,
+    FWD_STATE_CONNECTING,
+    FWD_STATE_FORWARDING,
+    FWD_STATE_CLEANUP,
+} WS_FwdStates;
+
+typedef struct WOLFSSH_FWD_CTX {
+    void* heap;
+    const char* hostName;
+    const char* originName;
+    word16 hostPort;
+    word16 originPort;
+    int listenFd;
+    int appFd;
+    int error;
+    int state;
+    int isDirect;
+} WOLFSSH_FWD_CTX;
+#endif /* WOLFSSH_FWD */
 
 /* our wolfSSH session */
 struct WOLFSSH {
@@ -673,6 +703,9 @@ struct WOLFSSH {
     byte useAgent;
     byte agentEnabled;
 #endif /* WOLFSSH_AGENT */
+#ifdef WOLFSSH_FWD
+    struct WOLFSSH_FWD_CTX* fwdCbCtx;
+#endif /* WOLFSSH_FWD */
 };
 
 
@@ -694,6 +727,7 @@ struct WOLFSSH_CHANNEL {
     char* origin;
     word32 originPort;
     int fwdFd;
+    int isDirect;
 #endif /* WOLFSSH_FWD */
     Buffer inputBuffer;
     char* command;
@@ -710,7 +744,7 @@ WOLFSSH_LOCAL void SshResourceFree(WOLFSSH*, void*);
 WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelNew(WOLFSSH*, byte, word32, word32);
 WOLFSSH_LOCAL int ChannelUpdatePeer(WOLFSSH_CHANNEL*, word32, word32, word32);
 WOLFSSH_LOCAL int ChannelUpdateForward(WOLFSSH_CHANNEL*,
-        const char*, word32, const char*, word32);
+        const char*, word32, const char*, word32, int);
 WOLFSSH_LOCAL int ChannelAppend(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel);
 WOLFSSH_LOCAL void ChannelDelete(WOLFSSH_CHANNEL*, void*);
 WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelFind(WOLFSSH*, word32, byte);
@@ -719,6 +753,8 @@ WOLFSSH_LOCAL int ChannelPutData(WOLFSSH_CHANNEL*, byte*, word32);
 WOLFSSH_LOCAL int wolfSSH_ProcessBuffer(WOLFSSH_CTX*,
                                         const byte*, word32,
                                         int, int);
+WOLFSSH_LOCAL int wolfSSH_FwdWorker(WOLFSSH*);
+
 /* Parsing functions */
 WOLFSSH_LOCAL int GetBoolean(byte*, byte*, word32, word32*);
 WOLFSSH_LOCAL int GetUint32(word32*, const byte*, word32, word32*);
@@ -751,6 +787,7 @@ WOLFSSH_LOCAL int SendNewKeys(WOLFSSH*);
 WOLFSSH_LOCAL int SendUnimplemented(WOLFSSH*);
 WOLFSSH_LOCAL int SendDisconnect(WOLFSSH*, word32);
 WOLFSSH_LOCAL int SendIgnore(WOLFSSH*, const unsigned char*, word32);
+WOLFSSH_LOCAL int SendGlobalRequestFwdSuccess(WOLFSSH *, int, word32);
 WOLFSSH_LOCAL int SendGlobalRequest(WOLFSSH *, const unsigned char *, word32, int);
 WOLFSSH_LOCAL int SendDebug(WOLFSSH*, byte, const char*);
 WOLFSSH_LOCAL int SendServiceRequest(WOLFSSH*, byte);
