@@ -758,22 +758,22 @@ static int shell_worker(thread_ctx_t* threadCtx)
 #endif
 #ifdef WOLFSSH_AGENT
             if (threadCtx->agentCbCtx.state == AGENT_STATE_LISTEN) {
-                FD_SET(threadCtx->agentCbCtx.listenFd, &readFds);
-                if (threadCtx->agentCbCtx.listenFd > maxFd)
-                    maxFd = threadCtx->agentCbCtx.listenFd;
+                FD_SET(agentListenFd, &readFds);
+                if (agentListenFd > maxFd)
+                    maxFd = agentListenFd;
             }
 
             if (threadCtx->agentCbCtx.state == AGENT_STATE_CONNECTED) {
                 FD_SET(agentFd, &readFds);
-                if (threadCtx->agentCbCtx.fd > maxFd)
+                if (agentFd > maxFd)
                     maxFd = agentFd;
             }
 #endif
 #ifdef WOLFSSH_FWD
             if (threadCtx->fwdCbCtx.state == FWD_STATE_LISTEN) {
-                FD_SET(threadCtx->fwdCbCtx.listenFd, &readFds);
-                if (threadCtx->fwdCbCtx.listenFd > maxFd)
-                    maxFd = threadCtx->fwdCbCtx.listenFd;
+                FD_SET(fwdListenFd, &readFds);
+                if (fwdListenFd > maxFd)
+                    maxFd = fwdListenFd;
             }
 
             if (threadCtx->fwdCbCtx.state == FWD_STATE_CONNECTED) {
