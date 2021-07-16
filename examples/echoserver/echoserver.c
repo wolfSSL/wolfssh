@@ -630,8 +630,8 @@ static int shell_worker(thread_ctx_t* threadCtx)
         /* Parent process */
 #ifdef WOLFSSH_SHELL
         struct termios tios;
-        word32 shellChannelId = 0;
 #endif
+        word32 shellChannelId = 0;
 #ifdef WOLFSSH_AGENT
         int agentFd = -1;
         int agentListenFd = threadCtx->agentCbCtx.listenFd;
@@ -723,7 +723,6 @@ static int shell_worker(thread_ctx_t* threadCtx)
                 if (cnt_r <= 0) {
                     rc = wolfSSH_get_error(ssh);
                     if (rc == WS_CHAN_RXD) {
-                        #ifdef WOLFSSH_SHELL
                         if (lastChannel == shellChannelId) {
                             cnt_r = wolfSSH_ChannelIdRead(ssh, shellChannelId,
                                     theBuffer, sizeof theBuffer);
@@ -732,11 +731,20 @@ static int shell_worker(thread_ctx_t* threadCtx)
                             #ifdef SHELL_DEBUG
                                 buf_dump(theBuffer, cnt_r);
                             #endif
-                            cnt_w = (int)write(childFd, theBuffer, cnt_r);
+                            #ifdef WOLFSSH_SHELL
+                                if (!thread_ctx->echo)
+                                    cnt_w = (int)write(childFd,
+                                            theBuffer, cnt_r);
+                                else
+                                    cnt_w = wolfSSH_ChannelIdSend(ssh,
+                                            shellChannelId, theBuffer, cnt_r);
+                            #else
+                            cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
+                                    theBuffer, cnt_r);
                             if (cnt_w <= 0)
                                 break;
+                            #endif
                         }
-                        #endif
                         #ifdef WOLFSSH_AGENT
                         if (lastChannel == agentChannelId) {
                             cnt_r = wolfSSH_ChannelIdRead(ssh, agentChannelId,
