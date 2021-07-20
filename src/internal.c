@@ -3533,6 +3533,8 @@ static int DoKexDhGexGroup(WOLFSSH* ssh,
         ret = GetMpint(&generatorSz, &generator, buf, len, &begin);
 
     if (ret == WS_SUCCESS) {
+        if (ssh->handshake->primeGroup)
+            WFREE(ssh->handshake->primeGroup, ssh->ctx->heap, DYNTYPE_MPINT);
         ssh->handshake->primeGroup =
             (byte*)WMALLOC(primeGroupSz, ssh->ctx->heap, DYNTYPE_MPINT);
         if (ssh->handshake->primeGroup == NULL)
@@ -3540,6 +3542,8 @@ static int DoKexDhGexGroup(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS) {
+        if (ssh->handshake->generator)
+            WFREE(ssh->handshake->generator, ssh->ctx->heap, DYNTYPE_MPINT);
         ssh->handshake->generator =
             (byte*)WMALLOC(generatorSz, ssh->ctx->heap, DYNTYPE_MPINT);
         if (ssh->handshake->generator == NULL) {

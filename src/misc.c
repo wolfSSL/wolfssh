@@ -130,6 +130,9 @@ STATIC INLINE void CreateMpint(byte* buf, word32* sz, byte* pad)
         WLOG(WS_LOG_ERROR, "Internal argument error with CreateMpint");
     }
 
+    if (*sz == 0)
+        return;
+
     /* check for leading 0's */
     for (i = 0; i < *sz; i++) {
         if (buf[i] != 0x00)
