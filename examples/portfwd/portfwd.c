@@ -34,6 +34,8 @@
 #include <wolfssh/test.h>
 #include <wolfssh/port.h>
 #include <wolfssl/wolfcrypt/ecc.h>
+
+#ifndef NO_WOLFSSH_CLIENT
 #include "examples/portfwd/wolfssh_portfwd.h"
 
 
@@ -482,3 +484,10 @@ char* myoptarg = NULL;
 
 
 #endif /* NO_MAIN_DRIVER */
+#else
+int main()
+{
+    printf("NO_WOLFSSH_CLIENT macro used, wolfSSH client not compiled in.\n");
+    return -1;
+}
+#endif /* NO_WOLFSSH_CLIENT */

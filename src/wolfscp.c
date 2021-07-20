@@ -235,6 +235,7 @@ static int ScpSourceInit(WOLFSSH* ssh)
     return WS_SUCCESS;
 }
 
+
 /* Sends timestamp information (access, modification) to peer.
  *
  * T<modification_secs> 0 <access_secs> 0
@@ -272,6 +273,9 @@ static int SendScpTimestamp(WOLFSSH* ssh)
     return ret;
 }
 
+
+
+
 /* Sends file header (mode, file name) to peer.
  *
  * C<mode> <length> <filename>
@@ -282,25 +286,29 @@ static int SendScpFileHeader(WOLFSSH* ssh)
 {
     int ret = WS_SUCCESS, bufSz;
     char buf[DEFAULT_SCP_MSG_SZ];
+    char *filehdr;
 
     if (ssh == NULL)
         return WS_BAD_ARGUMENT;
 
+#ifndef WSCPFILEHDR
     WMEMSET(buf, 0, sizeof(buf));
-
     WSNPRINTF(buf, sizeof(buf), "C%04o %u %s\n",
               ssh->scpFileMode, ssh->scpFileSz, ssh->scpFileName);
-
-    bufSz = (int)WSTRLEN(buf);
-
-    ret = wolfSSH_stream_send(ssh, (byte*)buf, bufSz);
+    filehdr = buf;
+#else
+    filehdr = WSCPFILEHDR(ssh);
+    if (!filehdr)
+        return WS_BAD_ARGUMENT;
+#endif
+    bufSz = (int)WSTRLEN(filehdr);
+    ret = wolfSSH_stream_send(ssh, (byte*)filehdr, bufSz);
     if (ret != bufSz) {
         ret = WS_FATAL_ERROR;
     } else {
-        WLOG(WS_LOG_DEBUG, "scp: sent file header: %s", buf);
+        WLOG(WS_LOG_DEBUG, "scp: sent file header: %s", filehdr);
         ret = WS_SUCCESS;
     }
-
     return ret;
 }
 
@@ -554,7 +562,6 @@ int DoScpSource(WOLFSSH* ssh)
                 ssh->scpState = SCP_RECEIVE_CONFIRMATION;
                 ssh->scpNextState = SCP_DONE;
                 continue;
-
             case SCP_SEND_FILE_HEADER:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SEND_FILE_HEADER");
 
@@ -879,7 +886,7 @@ static int GetScpFileSize(WOLFSSH* ssh, byte* buf, word32 bufSz,
     if (ret == WS_SUCCESS) {
         /* replace space with newline for atoi */
         buf[spaceIdx] = '\n';
-        ssh->scpFileSz = atoi((char*)(buf + idx));
+        ssh->scpFileSz = atoi((char *)(buf + idx));
 
         /* restore space, increment idx to space */
         buf[spaceIdx] = ' ';
@@ -1035,7 +1042,6 @@ static int GetScpTimestamp(WOLFSSH* ssh, byte* buf, word32 bufSz,
     return ret;
 }
 
-
 /* checks for if directory is being renamed in command
  *
  * returns WS_SUCCESS on success
@@ -1043,7 +1049,7 @@ static int GetScpTimestamp(WOLFSSH* ssh, byte* buf, word32 bufSz,
 static int ScpCheckForRename(WOLFSSH* ssh, int cmdSz)
 {
     /* case of file, not directory */
-    char buf[cmdSz + 4];
+    char buf[DEFAULT_SCP_MSG_SZ];
     int  sz = (int)WSTRLEN(ssh->scpBasePath);
     int  idx;
 
@@ -1051,9 +1057,14 @@ static int ScpCheckForRename(WOLFSSH* ssh, int cmdSz)
         return WS_BUFFER_E;
     }
 
+    if (cmdSz + 4 > DEFAULT_SCP_MSG_SZ) {
+        return WS_BUFFER_E;
+    }
+
     WSTRNCPY(buf, ssh->scpBasePath, cmdSz);
     buf[sz] = '\0';
     WSTRNCAT(buf, "/..", sizeof("/.."));
+
     idx = wolfSSH_CleanPath(ssh, buf);
     if (idx < 0) {
         return WS_FATAL_ERROR;
@@ -1115,10 +1126,8 @@ static int ScpCheckForRename(WOLFSSH* ssh, int cmdSz)
  * returns WS_SUCCESS on success */
 static int ParseBasePathHelper(WOLFSSH* ssh, int cmdSz)
 {
-    int ret;
-
+    int ret = 0;
     ret = ScpCheckForRename(ssh, cmdSz);
-
 #ifndef NO_FILESYSTEM
     {
         ScpSendCtx ctx;
@@ -1541,6 +1550,7 @@ void* wolfSSH_GetScpSendCtx(WOLFSSH* ssh)
 }
 
 
+#ifndef NO_WOLFSSH_CLIENT
 int wolfSSH_SCP_connect(WOLFSSH* ssh, byte* cmd)
 {
     int ret = WS_SUCCESS;
@@ -1568,7 +1578,6 @@ int wolfSSH_SCP_connect(WOLFSSH* ssh, byte* cmd)
 
     return ret;
 }
-
 
 static int wolfSSH_SCP_cmd(WOLFSSH* ssh, const char* localName,
         const char* remoteName, byte dir)
@@ -1635,6 +1644,7 @@ int wolfSSH_SCP_from(WOLFSSH* ssh, const char* src, const char* dst)
     /* src is passed to the server in the scp -f command */
     /* dst is used locally to fopen and write for copy from */
 }
+#endif /* ! NO_WOLFSSH_CLIENT */
 
 
 #if !defined(WOLFSSH_SCP_USER_CALLBACKS)

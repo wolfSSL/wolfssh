@@ -246,7 +246,7 @@ static int ConvertHexToBin(const char* h1, byte** b1, word32* b1Sz,
     return 0;
 }
 
-#ifdef WOLFSSH_SFTP
+#if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT)
 byte userPassword[256];
 static int sftpUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 {
@@ -274,6 +274,7 @@ static int sftpUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
     return ret;
 }
 
+#ifndef NO_WOLFSSH_CLIENT
 /* preforms connection to port, sets WOLFSSH_CTX and WOLFSSH on success
  * caller needs to free ctx and ssh when done
  */
@@ -331,6 +332,7 @@ static void sftp_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
         return;
     }
 }
+#endif /* NO_WOLFSSH_CLIENT */
 #endif /* WOLFSSH_SFTP */
 
 
@@ -702,7 +704,7 @@ static void test_wolfSSH_SCP_CB(void)
 
 static void test_wolfSSH_SFTP_SendReadPacket(void)
 {
-#ifdef WOLFSSH_SFTP
+#if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT)
     func_args ser;
     tcp_ready ready;
     int argsCount;

@@ -38,7 +38,7 @@
 #endif
 
 
-#ifndef NO_FILESYSTEM
+#if !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM)
 int wfopen(WFILE** f, const char* filename, const char* mode)
 {
 #ifdef USE_WINDOWS_API

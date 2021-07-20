@@ -6,6 +6,22 @@ then
     exit 1
 fi
 
+# test SFTP client is working (that NO_WOLFSSH_CLIENT was not used)
+./examples/sftpclient/wolfsftp -h
+if [ $? -ne 0 ]
+then
+    ./examples/sftpclient/wolfsftp -h | grep NO_WOLFSSH_CLIENT
+    if [ $? -eq 0 ]
+    then
+        echo "macro NO_WOLFSSH_CLIENT was used"
+        echo "skipping test"
+        exit 0
+    else
+        echo "wolfSFTP client not compiled in or not working"
+        exit 1
+    fi
+fi
+
 if test ! -x ./examples/echoserver/echoserver
 then
     echo "This test requires the wolfSSH echoserver."

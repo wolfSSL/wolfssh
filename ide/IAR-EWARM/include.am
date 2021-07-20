@@ -1,0 +1,11 @@
+# vim:ft=automake
+# included from Top Level Makefile.am
+# All paths should be given relative to the root
+
+EXTRA_DIST+= ide/IAR-EWARM/Projects/user_settings.h
+EXTRA_DIST+= ide/IAR-EWARM/Projects/lib/wolfSSH-Lib.ewp
+EXTRA_DIST+= ide/IAR-EWARM/Projects/lib/wolfSSH-Lib.ewd
+EXTRA_DIST+= ide/IAR-EWARM/Projects/echoserver/echoserver.ewp
+EXTRA_DIST+= ide/IAR-EWARM/Projects/echoserver/echoserver.ewd
+EXTRA_DIST+= ide/IAR-EWARM/Projects/lib/myFilesystem.h
+EXTRA_DIST+= ide/IAR-EWARM/Projects/README.md

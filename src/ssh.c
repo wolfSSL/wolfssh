@@ -1416,8 +1416,8 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
     if (format == WOLFSSH_FORMAT_SSH) {
         char* c;
         char* last;
-        char* type;
-        char* key;
+        char* type = NULL;
+        char* key = NULL;
 
         /*
            SSH format is:
@@ -1572,7 +1572,7 @@ int wolfSSH_ReadKey_file(const char* name,
         return WS_MEMORY_E;
     }
 
-    ret = (int)XFREAD(in, 1, inSz, file);
+    ret = (int)WFREAD(in, 1, inSz, file);
     if (ret <= 0 || (word32)ret != inSz) {
         ret = WS_BAD_FILE_E;
     }

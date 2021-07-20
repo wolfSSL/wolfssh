@@ -10,6 +10,7 @@ AC_CONFIG_AUX_DIR([build-aux])
 : ${CFLAGS=""}
 
 AC_CANONICAL_HOST
+AC_CANONICAL_TARGET
 
 AM_INIT_AUTOMAKE([1.11 -Wall -Werror -Wno-portability foreign tar-ustar subdir-objects no-define color-tests])
 
@@ -45,8 +46,7 @@ AC_PROG_CC
 AM_PROG_CC_C_O
 AC_PROG_INSTALL
 
-# Checks for header files.
-AC_HEADER_STDC
+# Checks for type sizes.
 AC_CHECK_SIZEOF([long long])
 AC_CHECK_SIZEOF([long])
 AC_CHECK_SIZEOF([off_t])
@@ -123,6 +123,11 @@ AC_ARG_ENABLE([agent],
     [AS_HELP_STRING([--enable-agent],[Enable ssh-agent support (default: disabled)])],
     [ENABLED_AGENT=$enableval],[ENABLED_AGENT=no])
 
+# smallstack
+AC_ARG_ENABLE([smallstack],
+    [AS_HELP_STRING([--enable-smallstack],[Enable small stack (default: disabled)])],
+    [ENABLED_SMALLSTACK=$enableval],[ENABLED_SMALLSTACK=no])
+
 # Enable All
 AC_ARG_ENABLE([all],
     [AS_HELP_STRING([--enable-all],[Enable all wolfSSH features (default: disabled)])],
@@ -155,6 +160,8 @@ AS_IF([test "x$ENABLED_PTERM" = "xyes"],
 AS_IF([test "x$ENABLED_SHELL" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SHELL"])
 AS_IF([test "x$ENABLED_AGENT" = "xyes"],[AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_AGENT"])
+AS_IF([test "x$ENABLED_SMALLSTACK" = "xyes"],
+       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SMALL_STACK"])
 
 # Set the automake conditionals.
 AM_CONDITIONAL([BUILD_EXAMPLE_SERVERS],[test "x$ENABLED_EXAMPLES" = "xyes"])
@@ -201,6 +208,7 @@ AS_ECHO(["   * Linker Flags:              $LDFLAGS"])
 AS_ECHO
 AS_ECHO(["   Features"])
 AS_ECHO(["   * Inline Code:               $ENABLED_INLINE"])
+AS_ECHO(["   * Small stack:               $ENABLED_SMALLSTACK"])
 AS_ECHO(["   * keygen:                    $ENABLED_KEYGEN"])
 AS_ECHO(["   * psuedo-terminal:           $ENABLED_PTERM"])
 AS_ECHO(["   * echoserver shell support:  $ENABLED_SHELL"])
