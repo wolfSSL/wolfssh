@@ -2281,7 +2281,7 @@ static INLINE enum wc_HashType HashForId(byte id)
 }
 
 
-#ifndef WOLFSSH_NO_ECDSA
+#if !defined(WOLFSSH_NO_ECDSA) && !defined(WOLFSSH_NO_ECDH)
 static INLINE int wcPrimeForId(byte id)
 {
     switch (id) {
@@ -2310,11 +2310,7 @@ static INLINE int wcPrimeForId(byte id)
             return ECC_SECP521R1;
 #endif
         default:
-#if !defined(WOLFSSH_NO_ECDSA) && !defined(WOLFSSH_NO_ECDH)
             return ECC_CURVE_INVALID;
-#else
-            return -1;
-#endif
     }
 }
 
@@ -2875,10 +2871,14 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     int ret = WS_SUCCESS;
     int tmpIdx = 0;
     struct wolfSSH_sigKeyBlock *sigKeyBlock_ptr = NULL;
+#ifndef WOLFSSH_NO_ECDH
     ecc_key *key_ptr = NULL;
+    #ifndef WOLFSSH_SMALL_STACK
+        ecc_key key_s;
+    #endif
+#endif
 #ifndef WOLFSSH_SMALL_STACK
     struct wolfSSH_sigKeyBlock s_sigKeyBlock;
-    ecc_key key_s;
 #endif
 
     WLOG(WS_LOG_DEBUG, "Entering DoKexDhReply()");
@@ -6665,7 +6665,9 @@ int SendKexDhReply(WOLFSSH* ssh)
 {
     int ret = WS_SUCCESS;
     byte *f_ptr = NULL, *sig_ptr = NULL;
+#ifndef WOLFSSH_NO_ECDH
     byte *r_ptr = NULL, *s_ptr = NULL;
+#endif
     byte scratchLen[LENGTH_SZ];
     word32 fSz = KEX_F_SIZE;
     word32 sigSz = KEX_SIG_SIZE;
