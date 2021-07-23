@@ -471,7 +471,7 @@ static const char serverKeyEccDer[] =
     "45747a834c61f33fad26cf22cda9a3bca561b47ce662d4c2f755439a31fb8011"
     "20b5124b24f578d7fd22ef4635f005586b5f63c8da1bc4f569";
 static const int serverKeyEccCurveId = ECC_SECP256R1;
-#elif defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384)
+#elif !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384)
 static const char serverKeyEccDer[] =
     "3081a402010104303eadd2bbbf05a7be3a3f7c28151289de5bb3644d7011761d"
     "b56f2a0362fba64f98e64ff986dc4fb8efdb2d6b8da57142a00706052b810400"
@@ -480,7 +480,7 @@ static const char serverKeyEccDer[] =
     "b4c6a4cf5e97bd7e51e975e3e9217261506eb9cf3c493d3eb88d467b5f27ebab"
     "2161c00066febd";
 static const int serverKeyEccCurveId = ECC_SECP384R1;
-#elif defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
+#elif !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
 static const char serverKeyEccDer[] =
     "3081dc0201010442004ca4d86428d9400e7b2df3912eb996c195895043af92e8"
     "6de70ae4df46f22a291a6bb2748aae82580df6c39f49b3ed82f1789ece1b657d"
