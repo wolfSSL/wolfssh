@@ -6684,7 +6684,7 @@ int SendKexDhReply(WOLFSSH* ssh)
     byte* output;
     word32 idx;
     byte msgId = MSGID_KEXDH_REPLY;
-    enum wc_HashType enmhashId;
+    enum wc_HashType enmhashId = WC_HASH_TYPE_NONE;
 #ifndef WOLFSSH_NO_DH
     byte *y_ptr = NULL;
     const byte* primeGroup = NULL;

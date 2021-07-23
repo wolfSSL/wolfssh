@@ -1,3 +1,28 @@
+# wolfSSH v1.4.7 (July 23, 2021)
+
+## New Feature Additions and Improvements
+
+- SCP improvements to run on embedded RTOS
+- For SFTP messages, check both minimum bound and maximum bound of the length value
+- Added option for --enable-small-stack
+- Added SFTP support for FatFs
+- Added 192 and 256 bit support for AES-CBC, AES-CTR, and AES-GCM
+- Added options to disable algorithms. (ie WOLFSSH_NO_ECDSA, WOLFSSH_NO_AES_CBC, etc)
+- Improved handling of builds without ECC
+
+
+## Fixes
+- When processing public key user auth, initialize the key earlier
+- When processing public key user auth, use GetSize() instead of GetUint32()
+- Fix for better handling rekey
+- Fix for build with NO_WOLFSSH_CLIENT macro and --enable-all
+- Fix configuration with WOLFSSH_NO_DH
+- To add internal function to purge a packet in case building one fails
+- Fix for cleanup in error case with SFTP read packet
+- Fix initialization of DH Size values
+
+--------------------------------
+
 # wolfSSH v1.4.6 (February 3, 2021)
 
 ## New Feature Additions
