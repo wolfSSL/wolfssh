@@ -1,0 +1,34 @@
+name: macOS Build Test
+
+on:
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  build:
+
+    runs-on: macos-latest
+
+    steps:
+    - uses: actions/checkout@v2
+      with:
+          repository: wolfSSL/wolfssl.git
+          ref: master
+    - name: brew
+      run: brew install automake
+    - name: build wolfSSL
+      run: ./autogen.sh && ./configure --enable-ssh --enable-cryptonly && make check && sudo make install
+    - uses: actions/checkout@v2
+    - name: autogen
+      run: ./autogen.sh
+    - name: configure
+      run: ./configure
+    - name: make
+      run: make
+    - name: make check
+      run: make check
+    - name: make distcheck
+      run: make distcheck
+
