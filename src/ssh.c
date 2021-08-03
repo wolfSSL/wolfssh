@@ -1397,6 +1397,15 @@ char* wolfSSH_GetUsername(WOLFSSH* ssh)
 #include <wolfssl/wolfcrypt/asn_public.h>
 #include <wolfssl/wolfcrypt/coding.h>
 
+union wolfSSH_key {
+#ifndef WOLFSSH_NO_RSA
+    RsaKey rsa;
+#endif
+#ifndef WOLFSSH_NO_ECDSA
+    ecc_key ecc;
+#endif
+};
+
 /* Reads a key from the buffer in to out. If the out buffer doesn't exist
    it is created. The type of key is stored in outType. It'll be a pointer
    to a constant string. Format indicates the format of the key, currently
@@ -1449,25 +1458,36 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
     }
     else if (format == WOLFSSH_FORMAT_ASN1) {
         byte* newKey;
-        union {
-            #ifndef WOLFSSH_NO_RSA
-                RsaKey rsa;
-            #endif
-            #ifndef WOLFSSH_NO_ECDSA
-                ecc_key ecc;
-            #endif
-        } testKey;
         word32 scratch = 0;
+        union wolfSSH_key *key_ptr;
+
+    #ifndef WOLFSSH_SMALL_STACK
+        union wolfSSH_key key;
+        key_ptr = &key;
+    #else
+        key_ptr = WMALLOC(sizeof(union wolfSSH_key), heap, DYNTYPE_PRIVKEY);
+        if (key_ptr == NULL) {
+            return WS_MEMORY_E;
+        }
+    #endif
 
         if (*out == NULL) {
             newKey = (byte*)WMALLOC(inSz, heap, DYNTYPE_PRIVKEY);
-            if (newKey == NULL)
+            if (newKey == NULL) {
+            #ifdef WOLFSSH_SMALL_STACK
+                WFREE(key_ptr, heap, DYNTYPE_PRIVKEY);
+            #endif
                 return WS_MEMORY_E;
+            }
             *out = newKey;
         }
         else {
-            if (*outSz < inSz)
+            if (*outSz < inSz) {
+            #ifdef WOLFSSH_SMALL_STACK
+                WFREE(key_ptr, heap, DYNTYPE_PRIVKEY);
+            #endif
                 return WS_ERROR;
+            }
             newKey = *out;
         }
         *outSz = inSz;
@@ -1475,12 +1495,16 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
 #ifndef WOLFSSH_NO_RSA
         /* TODO: This is copied and modified from a function in src/internal.c.
            This and that code should be combined into a single function. */
-        if (wc_InitRsaKey(&testKey.rsa, heap) < 0)
+        if (wc_InitRsaKey(&key_ptr->rsa, heap) < 0) {
+    #ifdef WOLFSSH_SMALL_STACK
+        WFREE(key_ptr, heap, DYNTYPE_PRIVKEY);
+    #endif
             return WS_RSA_E;
+        }
 
-        ret = wc_RsaPrivateKeyDecode(in, &scratch, &testKey.rsa, inSz);
+        ret = wc_RsaPrivateKeyDecode(in, &scratch, &key_ptr->rsa, inSz);
 
-        wc_FreeRsaKey(&testKey.rsa);
+        wc_FreeRsaKey(&key_ptr->rsa);
 
         if (ret == 0) {
             *outType = (const byte*)IdToName(ID_SSH_RSA);
@@ -1493,12 +1517,16 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
 
             /* Couldn't decode as RSA testKey. Try decoding as ECC testKey. */
             scratch = 0;
-            if (wc_ecc_init_ex(&testKey.ecc, heap, INVALID_DEVID) != 0)
+            if (wc_ecc_init_ex(&key_ptr->ecc, heap, INVALID_DEVID) != 0) {
+            #ifdef WOLFSSH_SMALL_STACK
+                WFREE(key_ptr, heap, DYNTYPE_PRIVKEY);
+            #endif
                 return WS_ECC_E;
+            }
 
             ret = wc_EccPrivateKeyDecode(in, &scratch,
-                                         &testKey.ecc, inSz);
-            switch (wc_ecc_get_curve_id(testKey.ecc.idx)) {
+                                         &key_ptr->ecc, inSz);
+            switch (wc_ecc_get_curve_id(key_ptr->ecc.idx)) {
                 case ECC_SECP256R1:
                     curveId = ID_ECDSA_SHA2_NISTP256;
                     break;
@@ -1509,18 +1537,25 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
                     curveId = ID_ECDSA_SHA2_NISTP521;
                     break;
             }
-            wc_ecc_free(&testKey.ecc);
+            wc_ecc_free(&key_ptr->ecc);
 
             if (ret == 0) {
                 *outType = (const byte*)IdToName(curveId);
                 *outTypeSz = (word32)WSTRLEN((const char*)*outType);
             }
-            else
+            else {
+            #ifdef WOLFSSH_SMALL_STACK
+                WFREE(key_ptr, heap, DYNTYPE_PRIVKEY);
+            #endif
                 return WS_BAD_FILE_E;
+            }
 #endif
 #ifndef WOLFSSH_NO_RSA
         }
 #endif
+    #ifdef WOLFSSH_SMALL_STACK
+        WFREE(key_ptr, heap, DYNTYPE_PRIVKEY);
+    #endif
     }
     else
         ret = WS_ERROR;
