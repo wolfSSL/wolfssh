@@ -6,13 +6,17 @@ wolfSSL's Embeddable SSH Server
 dependencies
 ------------
 
-wolfSSH is dependent on wolfCrypt. The simplest configuration of wolfSSL
-required for wolfSSH is the default build.
+wolfSSH is dependent on [wolfCrypt](https://github.com/wolfSSL/wolfssl/tree/master/wolfcrypt) in [wolfSSL](https://github.com/wolfSSL/wolfssl).
+The simplest configuration of wolfSSL required for wolfSSH is the default build.
 
+    $ git clone https://github.com/wolfssl/wolfssl.git
     $ cd wolfssl
-    $ ./configure [OPTIONS] --enable-ssh
+    $ ./autogen.sh
+    $ ./configure --enable-ssh # add any other [OPTIONS] 
     $ make check
+    $ make
     $ sudo make install
+    $ sudo ldconfig
 
 To use the key generation function in wolfSSH, wolfSSL will need to be
 configured with keygen: `--enable-keygen`.
