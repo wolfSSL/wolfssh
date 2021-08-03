@@ -58,7 +58,7 @@ to connect to. From the terminal run:
 
 From another terminal run:
 
-    $ ssh_client localhost -p 22222
+    $ ./examples/echoclient/echoclient
 
 The server will send a canned banner to the client:
 
