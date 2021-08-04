@@ -4090,7 +4090,7 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     if (ret == WS_SUCCESS) {
         n = pk->signature + i;
         checkDigestSz = wc_RsaSSL_Verify(n, nSz, checkDigest,
-                                         sizeof(checkDigest), key_ptr);
+                                         MAX_ENCODED_SIG_SZ, key_ptr);
         if (checkDigestSz <= 0) {
             WLOG(WS_LOG_DEBUG, "Could not verify signature");
             ret = WS_CRYPTO_FAILED;
@@ -4377,7 +4377,8 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                     ret = WS_SUCCESS;
                 else if (ret == WOLFSSH_USERAUTH_INVALID_PUBLICKEY) {
                     WLOG(WS_LOG_DEBUG, "DUARPK: client key rejected");
-                    ret = WS_PUBKEY_REJECTED_E;
+                    ret = SendUserAuthFailure(ssh, 0);
+                    authFailure = 1;
                 }
                 else {
                     ret = SendUserAuthFailure(ssh, 0);
