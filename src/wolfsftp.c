@@ -1149,7 +1149,7 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, byte* data,
     }
 
     ato32(data + lidx, &rSz);
-    if (rSz > WOLFSSH_MAX_FILENAME || (int)(rSz + UINT32_SZ) > maxSz) {
+    if (rSz >= WOLFSSH_MAX_FILENAME || (int)(rSz + UINT32_SZ) > maxSz) {
         return WS_BUFFER_E;
     }
     lidx += UINT32_SZ;
@@ -1596,7 +1596,7 @@ int wolfSSH_SFTP_RecvRMDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_RMDIR");
 
     ato32(data + idx, &sz); idx += UINT32_SZ;
-    if (sz + idx > maxSz) {
+    if (sz > maxSz - idx) {
         return WS_BUFFER_E;
     }
 
@@ -1682,7 +1682,7 @@ int wolfSSH_SFTP_RecvMKDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_MKDIR");
 
     ato32(data + idx, &sz); idx += UINT32_SZ;
-    if (sz + idx > maxSz) {
+    if (sz > maxSz - idx) {
         return WS_BUFFER_E;
     }
 
@@ -1700,7 +1700,7 @@ int wolfSSH_SFTP_RecvMKDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 
     ato32(data + idx, &sz); idx += UINT32_SZ;
-    if (idx + sz > maxSz) {
+    if (sz > maxSz - idx) {
         WFREE(dir, ssh->ctx->heap, DYNTYPE_BUFFER);
         return WS_BUFFER_E;
     }
@@ -1890,7 +1890,7 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 
     ato32(data + idx, &sz); idx += UINT32_SZ;
-    if (sz + idx > maxSz) {
+    if (sz > maxSz - idx) {
         return WS_BUFFER_E;
     }
 
@@ -2027,7 +2027,7 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 
     ato32(data + idx, &sz); idx += UINT32_SZ;
-    if (sz + idx > maxSz) {
+    if (sz > maxSz - idx) {
         return WS_BUFFER_E;
     }
 
@@ -2176,7 +2176,7 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     /* get directory name */
     ato32(data + idx, &sz); idx += UINT32_SZ;
-    if (sz + idx > maxSz) {
+    if (sz > maxSz - idx) {
         return WS_BUFFER_E;
     }
 
@@ -2284,7 +2284,7 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     /* get directory name */
     ato32(data + idx, &sz);
     idx += UINT32_SZ;
-    if (sz + idx > maxSz) {
+    if (sz > maxSz - idx) {
         return WS_BUFFER_E;
     }
 
@@ -3243,6 +3243,9 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
         /* get length to be written */
         ato32(data + idx, &sz); idx += UINT32_SZ;
+        if (sz > maxSz - idx) {
+            return WS_BUFFER_E;
+        }
 
         ret = WPWRITE(fd, data + idx, sz, ofst);
         if (ret < 0) {
@@ -3261,6 +3264,9 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         }
     }
 
+        if (sz > maxSz - idx) {
+            return WS_BUFFER_E;
+        }
     if (wolfSSH_SFTP_CreateStatus(ssh, type, reqId, res, "English", NULL,
                 &outSz) != WS_SIZE_ONLY) {
         return WS_FATAL_ERROR;
@@ -3329,6 +3335,9 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         /* get length to be written */
         ato32(data + idx, &sz);
         idx += UINT32_SZ;
+        if (sz > maxSz - idx) {
+            return WS_BUFFER_E;
+        }
 
         if (WriteFile(fd, data + idx, sz, &bytesWritten, &offset) == 0) {
             WLOG(WS_LOG_SFTP, "Error writing to file");
@@ -3404,6 +3413,9 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     /* get length to be read */
     ato32(data + idx, &sz);
+    if (sz > maxSz - WOLFSSH_SFTP_HEADER - UINT32_SZ - idx) {
+        return WS_BUFFER_E;
+    }
 
     /* read from handle and send data back to client */
     out = (byte*)WMALLOC(sz + WOLFSSH_SFTP_HEADER + UINT32_SZ,
@@ -3484,7 +3496,7 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     /* get file handle */
     ato32(data + idx, &sz); idx += UINT32_SZ;
-    if (sz + idx > maxSz || sz > WOLFSSH_MAX_HANDLE) {
+    if (sz > maxSz - idx || sz > WOLFSSH_MAX_HANDLE) {
         return WS_BUFFER_E;
     }
     WMEMSET((byte*)&fd, 0, sizeof(HANDLE));
@@ -3502,6 +3514,9 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     /* get length to be read */
     ato32(data + idx, &sz);
+    if (sz > maxSz - WOLFSSH_SFTP_HEADER - UINT32_SZ - idx) {
+        return WS_BUFFER_E;
+    }
 
     /* read from handle and send data back to client */
     out = (byte*)WMALLOC(sz + WOLFSSH_SFTP_HEADER + UINT32_SZ,
@@ -3863,7 +3878,7 @@ int wolfSSH_SFTP_RecvRename(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     /* get old file name */
     ato32(data + idx, &sz); idx += UINT32_SZ;
-    if (sz + idx > maxSz) {
+    if (sz > maxSz - idx) {
         ret = WS_BUFFER_E;
     }
     old = (char*)WMALLOC(sz + 1, ssh->ctx->heap, DYNTYPE_BUFFER);
@@ -3877,7 +3892,7 @@ int wolfSSH_SFTP_RecvRename(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     /* get new file name */
     ato32(data + idx, &sz); idx += UINT32_SZ;
-    if (sz + idx > maxSz) {
+    if (sz > maxSz - idx) {
         ret = WS_BUFFER_E;
     }
     nw = (char*)WMALLOC(sz + 1, ssh->ctx->heap, DYNTYPE_BUFFER);
@@ -4688,7 +4703,7 @@ int wolfSSH_SFTP_RecvSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_STAT");
 
     ato32(data + idx, &sz); idx += UINT32_SZ;
-    if (sz + idx > maxSz) {
+    if (sz > maxSz - idx) {
         return WS_BUFFER_E;
     }
 
@@ -4777,7 +4792,7 @@ int wolfSSH_SFTP_RecvLSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_LSTAT");
 
     ato32(data + idx, &sz); idx += UINT32_SZ;
-    if (sz + idx > maxSz) {
+    if (sz > maxSz - idx) {
         return WS_BUFFER_E;
     }
 
@@ -4927,7 +4942,7 @@ int wolfSSH_SFTP_RecvSetSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_SETSTAT");
 
     ato32(data + idx, &sz); idx += UINT32_SZ;
-    if (sz + idx > maxSz) {
+    if (sz > maxSz - idx) {
         return WS_BUFFER_E;
     }
 
@@ -5298,7 +5313,7 @@ static int wolfSSH_SFTP_DoStatus(WOLFSSH* ssh, word32 reqId,
     if (sz > 0) {
         byte* s;
 
-        if (localIdx + sz > maxIdx) {
+        if (sz > maxIdx - localIdx) {
             return WS_FATAL_ERROR;
         }
         s = (byte*)WMALLOC(sz + 1, ssh->ctx->heap, DYNTYPE_BUFFER);
@@ -5324,7 +5339,7 @@ static int wolfSSH_SFTP_DoStatus(WOLFSSH* ssh, word32 reqId,
     if (sz > 0) {
         byte* s;
 
-        if (localIdx + sz > maxIdx) {
+        if (sz > maxIdx - localIdx) {
             return WS_FATAL_ERROR;
         }
         s = (byte*)WMALLOC(sz + 1, ssh->ctx->heap, DYNTYPE_BUFFER);
