@@ -391,7 +391,7 @@ extern "C" {
     /* for these string functions use internal versions */
     WOLFSSH_API char* wstrnstr(const char*, const char*, unsigned int);
     WOLFSSH_API char* wstrncat(char*, const char*, size_t);
-    WOLFSSL_API char* wstrdup(const char*, void*, int);
+    WOLFSSH_API char* wstrdup(const char*, void*, int);
     #define WSTRNSTR(s1,s2,n) wstrnstr((s1),(s2),(n))
     #define WSTRNCAT(s1,s2,n) wstrncat((s1),(s2),(n))
     #define WSTRDUP(s,h,t)    wstrdup((s),(h),(t))
@@ -437,6 +437,7 @@ extern "C" {
     #define WLOCALTIME(c,r) (localtime((c)) != NULL && \
                              WMEMCPY((r), localtime((c)), sizeof(struct tm)))
 #elif defined(FREESCALE_MQX)
+    #include "mqx.h"
     static inline time_t mqx_time(time_t* timer)
     {
         time_t localTime;
