@@ -1074,7 +1074,8 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
 }
 
 #ifndef NO_FILESYSTEM
-static int load_file(const char* fileName, byte* buf, word32 bufSz)
+/* set bufSz to size wanted if too small and buf is null */
+static int load_file(const char* fileName, byte* buf, word32* bufSz)
 {
     FILE* file;
     word32 fileSz;
@@ -1088,7 +1089,9 @@ static int load_file(const char* fileName, byte* buf, word32 bufSz)
     fileSz = (word32)ftell(file);
     rewind(file);
 
-    if (fileSz > bufSz) {
+    if (fileSz > *bufSz) {
+        if (buf == NULL)
+            *bufSz = fileSz;
         fclose(file);
         return 0;
     }
@@ -1119,7 +1122,7 @@ static int load_key(byte isEcc, byte* buf, word32 bufSz)
 #ifndef NO_FILESYSTEM
     const char* bufName;
     bufName = isEcc ? ECC_PATH : "./keys/server-key-rsa.der" ;
-    sz = load_file(bufName, buf, bufSz);
+    sz = load_file(bufName, buf, &bufSz);
 #else
     /* using buffers instead */
     if (isEcc) {
@@ -1336,7 +1339,7 @@ static int LoadPublicKeyBuffer(byte* buf, word32 bufSz, PwMapList* list)
     word32 publicKey64Sz;
     byte* username;
     word32 usernameSz;
-    byte  publicKey[300];
+    byte*  publicKey;
     word32 publicKeySz;
 
     /* Each line of passwd.txt is in the format
@@ -1371,20 +1374,35 @@ static int LoadPublicKeyBuffer(byte* buf, word32 bufSz, PwMapList* list)
         *delimiter = 0;
         usernameSz = (word32)(delimiter - str);
         str = delimiter + 1;
-        publicKeySz = sizeof(publicKey);
+
+        /* more than enough space for base64 decode
+         * not using WMALLOC because internal.h is not included for DYNTYPE_* */
+        publicKey = (byte*)malloc(publicKey64Sz);
+        if (publicKey == NULL) {
+            fprintf(stderr, "error with malloc\n");
+            return -1;
+        }
+        publicKeySz = publicKey64Sz;
 
         if (Base64_Decode(publicKey64, publicKey64Sz,
                           publicKey, &publicKeySz) != 0) {
 
+            free(publicKey);
             return -1;
         }
+
+    #ifdef DEBUG_WOLFSSH
+        printf("Adding public key for user : %s\n", username);
+    #endif
 
         if (PwMapNew(list, WOLFSSH_USERAUTH_PUBLICKEY,
                      username, usernameSz,
                      publicKey, publicKeySz) == NULL ) {
 
+            free(publicKey);
             return -1;
         }
+        free(publicKey);
     }
 
     return 0;
@@ -1504,6 +1522,7 @@ static void ShowUsage(void)
 #ifdef WOLFSSH_SFTP
     printf(" -d <string>   set the home directory for SFTP connections\n");
 #endif
+    printf(" -j <file>     load in a public key to accept from peer\n");
 }
 
 
@@ -1540,13 +1559,14 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     char* readyFile = NULL;
     const char* defaultSftpPath = NULL;
     char  nonBlock  = 0;
+    char* userPubKey = NULL;
 
     int     argc = serverArgs->argc;
     char**  argv = serverArgs->argv;
     serverArgs->return_code = 0;
 
     if (argc > 0) {
-    while ((ch = mygetopt(argc, argv, "?1d:efEp:R:N")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?1d:efEp:R:Nj:")) != -1) {
         switch (ch) {
             case '?' :
                 ShowUsage();
@@ -1588,6 +1608,10 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
             case 'd':
                 defaultSftpPath = myoptarg;
+                break;
+
+            case 'j':
+                userPubKey = myoptarg;
                 break;
 
             default:
@@ -1651,6 +1675,28 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                                              WOLFSSH_FORMAT_ASN1) < 0) {
             fprintf(stderr, "Couldn't use key buffer.\n");
             exit(EXIT_FAILURE);
+        }
+
+        if (userPubKey) {
+            byte* userBuf = NULL;
+            word32 userBufSz = 0;
+
+            /* get the files size */
+            load_file(userPubKey, NULL, &userBufSz);
+
+            /* create temp buffer and load in file */
+            if (userBufSz == 0) {
+                fprintf(stderr, "Couldn't find size of file %s.\n", userPubKey);
+                exit(EXIT_FAILURE);
+            }
+
+            userBuf = (byte*)malloc(userBufSz);
+            if (userBuf == NULL) {
+                fprintf(stderr, "malloc failed\n");
+                exit(EXIT_FAILURE);
+            }
+            load_file(userPubKey, userBuf, &userBufSz);
+            LoadPublicKeyBuffer(userBuf, userBufSz, &pwMapList);
         }
 
         bufSz = (word32)strlen(samplePasswordBuffer);
