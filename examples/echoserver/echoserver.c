@@ -1335,6 +1335,7 @@ static int LoadPublicKeyBuffer(byte* buf, word32 bufSz, PwMapList* list)
 {
     char* str = (char*)buf;
     char* delimiter;
+    char* end = (char*)buf + bufSz;
     byte* publicKey64;
     word32 publicKey64Sz;
     byte* username;
@@ -1351,12 +1352,14 @@ static int LoadPublicKeyBuffer(byte* buf, word32 bufSz, PwMapList* list)
     if (buf == NULL || bufSz == 0)
         return 0;
 
-    while (*str != 0) {
+    while (str < end && *str != 0) {
         /* Skip the public key type. This example will always be ssh-rsa. */
         delimiter = strchr(str, ' ');
         if (delimiter == NULL) {
             return -1;
         }
+        if (str >= end)
+            break;
         str = delimiter + 1;
         delimiter = strchr(str, ' ');
         if (delimiter == NULL) {
@@ -1365,6 +1368,8 @@ static int LoadPublicKeyBuffer(byte* buf, word32 bufSz, PwMapList* list)
         publicKey64 = (byte*)str;
         *delimiter = 0;
         publicKey64Sz = (word32)(delimiter - str);
+        if (str >= end)
+            break;
         str = delimiter + 1;
         delimiter = strchr(str, '\n');
         if (delimiter == NULL) {
