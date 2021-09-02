@@ -1415,6 +1415,7 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
         void* heap)
 {
     int ret = WS_SUCCESS;
+    byte* newKey = NULL;
 
     (void)heap;
 
@@ -1448,6 +1449,17 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
             *outType = (const byte*)name;
             *outTypeSz = typeSz;
 
+            if (*out == NULL) {
+                /* set size based on sanity check in wolfSSL base64 decode
+                 * function */
+                *outSz = ((word32)WSTRLEN(key) * 3 + 3) / 4;
+                newKey = (byte*)WMALLOC(*outSz, heap, DYNTYPE_PRIVKEY);
+                if (newKey == NULL) {
+                    return WS_MEMORY_E;
+                }
+                *out = newKey;
+            }
+
             ret = Base64_Decode((byte*)key, (word32)WSTRLEN(key), *out, outSz);
         }
 
@@ -1457,7 +1469,6 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
         WFREE(c, heap, DYNTYPE_STRING);
     }
     else if (format == WOLFSSH_FORMAT_ASN1) {
-        byte* newKey;
         word32 scratch = 0;
         union wolfSSH_key *key_ptr;
 
