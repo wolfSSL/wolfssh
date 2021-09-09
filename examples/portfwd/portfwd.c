@@ -238,9 +238,12 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     int appFdSet = 0;
     struct timeval to;
     WOLFSSH_CHANNEL* fwdChannel = NULL;
-    byte buffer[4096];
-    word32 bufferSz = sizeof(buffer);
-    word32 bufferUsed = 0;
+    byte appBuffer[4096];
+    byte sshBuffer[4096];
+    word32 appBufferSz = sizeof(appBuffer);
+    word32 appBufferUsed = 0;
+    word32 sshBufferSz = sizeof(sshBuffer);
+    word32 sshBufferUsed = 0;
 
     ((func_args*)args)->return_code = 0;
 
@@ -387,9 +390,9 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
         if (appFdSet && FD_ISSET(appFd, &rxFds)) {
             int rxd;
             rxd = (int)recv(appFd,
-                    buffer + bufferUsed, bufferSz - bufferUsed, 0);
+                    appBuffer + appBufferUsed, appBufferSz - appBufferUsed, 0);
             if (rxd > 0)
-                bufferUsed += rxd;
+                appBufferUsed += rxd;
             else
                 break;
         }
@@ -400,18 +403,19 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
             if (ret == WS_CHAN_RXD) {
                 WOLFSSH_CHANNEL* readChannel;
 
-                bufferSz = sizeof(buffer);
+                sshBufferSz = sizeof(sshBuffer);
                 readChannel = wolfSSH_ChannelFind(ssh,
                         channelId, WS_CHANNEL_ID_SELF);
                 ret = (readChannel == NULL) ? WS_INVALID_CHANID : WS_SUCCESS;
 
                 if (ret == WS_SUCCESS)
-                    ret = wolfSSH_ChannelRead(readChannel, buffer, bufferSz);
+                    ret = wolfSSH_ChannelRead(readChannel,
+                            sshBuffer, sshBufferSz);
                 if (ret > 0) {
-                    bufferSz = (word32)ret;
+                    sshBufferUsed = (word32)ret;
                     if (appFd != -1) {
-                        ret = (int)send(appFd, buffer, bufferSz, 0);
-                        if (ret != (int)bufferSz)
+                        ret = (int)send(appFd, sshBuffer, sshBufferUsed, 0);
+                        if (ret != (int)sshBufferUsed)
                             break;
                     }
                 }
@@ -427,11 +431,17 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
             appFdSet = 1;
             fwdChannel = wolfSSH_ChannelFwdNew(ssh, fwdToHost, fwdToPort,
                     fwdFromHost, fwdFromPort);
+            continue;
         }
-        if (bufferUsed > 0) {
-            ret = wolfSSH_ChannelSend(fwdChannel, buffer, bufferUsed);
+        if (appBufferUsed > 0) {
+            ret = wolfSSH_ChannelSend(fwdChannel, appBuffer, appBufferUsed);
             if (ret > 0)
-                bufferUsed -= ret;
+                appBufferUsed -= ret;
+            else if (ret == -1071 || ret == -1057) {
+            #ifdef SHELL_DEBUG
+                printf("Waiting for channel open confirmation.\n");
+            #endif
+            }
         }
     }
 
