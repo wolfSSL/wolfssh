@@ -73,6 +73,9 @@ extern "C" {
 #endif /* BUILDING_WOLFSSH */
 
 
+/* Do nothing tag to flag an API as deprecated. */
+#define DEPRECATED
+
 
 #ifdef __cplusplus
 }

@@ -1126,6 +1126,12 @@ static const NameIdPair NameIdMap[] = {
 #ifdef WOLFSSH_AGENT
     { ID_CHANTYPE_AUTH_AGENT, "auth-agent@openssh.com" },
 #endif /* WOLFSSH_AGENT */
+
+    /* Global Request IDs */
+#ifdef WOLFSSH_FWD
+    { ID_GLOBREQ_TCPIP_FWD, "tcpip-forward" },
+    { ID_GLOBREQ_TCPIP_FWD_CANCEL, "cancel-tcpip-forward" },
+#endif /* WOLFSSH_FWD */
 };
 
 
@@ -1290,7 +1296,8 @@ int ChannelUpdatePeer(WOLFSSH_CHANNEL* channel, word32 peerChannelId,
 #ifdef WOLFSSH_FWD
 int ChannelUpdateForward(WOLFSSH_CHANNEL* channel,
                                 const char* host, word32 hostPort,
-                                const char* origin, word32 originPort)
+                                const char* origin, word32 originPort,
+                                int isDirect)
 {
     int ret = WS_SUCCESS;
     char* hostCopy = NULL;
@@ -1328,6 +1335,7 @@ int ChannelUpdateForward(WOLFSSH_CHANNEL* channel,
         channel->hostPort = hostPort;
         channel->origin = originCopy;
         channel->originPort = originPort;
+        channel->isDirect = isDirect;
     }
 
     return ret;
@@ -4672,6 +4680,52 @@ static int DoUserAuthBanner(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 }
 
 
+#ifdef WOLFSSH_FWD
+static int DoGlobalRequestFwd(WOLFSSH* ssh,
+        byte* buf, word32 len, word32* idx, int wantReply, int isCancel)
+{
+    word32 begin;
+    int ret = WS_SUCCESS;
+    char* bindAddr = NULL;
+    word32 bindPort;
+
+    WLOG(WS_LOG_DEBUG, "Entering DoGlobalRequestFwd()");
+
+    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        begin = *idx;
+        WLOG(WS_LOG_INFO, "wantReply = %d, isCancel = %d", wantReply, isCancel);
+        ret = GetStringAlloc(ssh->ctx->heap, &bindAddr, buf, len, &begin);
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = GetUint32(&bindPort, buf, len, &begin);
+    }
+
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_INFO, "Requesting forwarding%s for address %s on port %u.",
+                isCancel ? " cancel" : "", bindAddr, bindPort);
+    }
+
+    if (ret == WS_SUCCESS && wantReply) {
+        ret = SendGlobalRequestFwdSuccess(ssh, 1, bindPort);
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (ssh->ctx->fwdCb) {
+            ret = ssh->ctx->fwdCb(WOLFSSH_FWD_REMOTE_SETUP,
+                    ssh->fwdCbCtx, bindAddr, bindPort);
+        }
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving DoGlobalRequestFwd(), ret = %d", ret);
+    return ret;
+}
+#endif
+
 static int DoGlobalRequest(WOLFSSH* ssh,
                            byte* buf, word32 len, word32* idx)
 {
@@ -4679,6 +4733,7 @@ static int DoGlobalRequest(WOLFSSH* ssh,
     int ret = WS_SUCCESS;
     char name[80];
     word32 nameSz = sizeof(name);
+    int globReqId = ID_UNKNOWN;
     byte wantReply = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering DoGlobalRequest()");
@@ -4696,18 +4751,41 @@ static int DoGlobalRequest(WOLFSSH* ssh,
 
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "DGR: request name = %s", name);
+        globReqId = NameToId(name, nameSz);
         ret = GetBoolean(&wantReply, buf, len, &begin);
     }
 
-    if (ret == WS_SUCCESS && ssh->ctx->globalReqCb != NULL)
-        ret = ssh->ctx->globalReqCb(ssh, name, nameSz, wantReply, (void *)ssh->globalReqCtx);
+    if (ret == WS_SUCCESS) {
+        switch (globReqId) {
+#ifdef WOLFSSH_FWD
+            case ID_GLOBREQ_TCPIP_FWD:
+                ret = DoGlobalRequestFwd(ssh, buf, len, &begin, wantReply, 0);
+                wantReply = 0;
+                break;
+            case ID_GLOBREQ_TCPIP_FWD_CANCEL:
+                ret = DoGlobalRequestFwd(ssh, buf, len, &begin, wantReply, 1);
+                wantReply = 0;
+                break;
+#endif
+            default:
+                if (ssh->ctx->globalReqCb != NULL) {
+                    ret = ssh->ctx->globalReqCb(ssh, name, nameSz, wantReply,
+                            (void *)ssh->globalReqCtx);
+
+                    if (wantReply) {
+                        ret = SendRequestSuccess(ssh, (ret == WS_SUCCESS));
+                    }
+                }
+                else if (wantReply)
+                    ret = SendRequestSuccess(ssh, 0);
+                    /* response SSH_MSG_REQUEST_FAILURE to Keep-Alive.
+                     * IETF:draft-ssh-global-requests */
+                break;
+        }
+    }
 
     if (ret == WS_SUCCESS) {
         *idx += len;
-
-        if (wantReply)
-            ret = SendRequestSuccess(ssh, 0);
-            /* response SSH_MSG_REQUEST_FAILURE to Keep-Alive. IETF:draft-ssh-global-requests */
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoGlobalRequest(), ret = %d", ret);
@@ -4776,6 +4854,7 @@ static int DoChannelOpen(WOLFSSH* ssh,
     char* host = NULL;
     char* origin = NULL;
     word32 hostPort = 0, originPort = 0;
+    int isDirect = 0;
 #endif /* WOLFSSH_FWD */
     WOLFSSH_CHANNEL* newChannel;
     int ret = WS_SUCCESS;
@@ -4811,8 +4890,10 @@ static int DoChannelOpen(WOLFSSH* ssh,
             case ID_CHANTYPE_SESSION:
                 break;
         #ifdef WOLFSSH_FWD
-            /*case ID_CHANTYPE_TCPIP_FORWARD:*/
             case ID_CHANTYPE_TCPIP_DIRECT:
+                isDirect = 1;
+                NO_BREAK;
+            case ID_CHANTYPE_TCPIP_FORWARD:
                 ret = DoChannelOpenForward(ssh,
                                 &host, &hostPort, &origin, &originPort,
                                 buf, len, &begin);
@@ -4847,7 +4928,16 @@ static int DoChannelOpen(WOLFSSH* ssh,
         #ifdef WOLFSSH_FWD
             if (typeId == ID_CHANTYPE_TCPIP_DIRECT) {
                 ChannelUpdateForward(newChannel,
-                        host, hostPort, origin, originPort);
+                        host, hostPort, origin, originPort, isDirect);
+
+                if (ssh->ctx->fwdCb) {
+                    ret = ssh->ctx->fwdCb(WOLFSSH_FWD_LOCAL_SETUP,
+                            ssh->fwdCbCtx, host, hostPort);
+                    if (ret == WS_SUCCESS) {
+                        ret = ssh->ctx->fwdCb(WOLFSSH_FWD_CHANNEL_ID,
+                                ssh->fwdCbCtx, NULL, newChannel->channel);
+                    }
+                }
             }
         #endif /* WOLFSSH_FWD */
             ChannelAppend(ssh, newChannel);
@@ -6122,7 +6212,7 @@ int DoReceive(WOLFSSH* ssh)
         WLOG(WS_LOG_DEBUG, "PR5: txCount = %u, rxCount = %u",
              ssh->txCount, ssh->rxCount);
 
-        return WS_SUCCESS;
+        return ret;
     }
 }
 
@@ -8906,6 +8996,7 @@ int SendUserAuthBanner(WOLFSSH* ssh)
     return ret;
 }
 
+
 int SendRequestSuccess(WOLFSSH *ssh, int success)
 {
     byte *output;
@@ -8939,6 +9030,49 @@ int SendRequestSuccess(WOLFSSH *ssh, int success)
     WLOG(WS_LOG_DEBUG, "Leaving SendRequestSuccess(), ret = %d", ret);
     return ret;
 }
+
+
+int SendGlobalRequestFwdSuccess(WOLFSSH* ssh, int success, word32 port)
+{
+    byte *output;
+    word32 idx;
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering SendGlobalRequestFwdSuccess(), %s",
+         success ? "Success" : "Failure");
+
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS)
+        ret = PreparePacket(ssh, MSG_ID_SZ + (success ? UINT32_SZ : 0));
+
+    if (ret == WS_SUCCESS)
+    {
+        output = ssh->outputBuffer.buffer;
+        idx = ssh->outputBuffer.length;
+
+        if (success) {
+            output[idx++] = MSGID_REQUEST_SUCCESS;
+            c32toa(port, output + idx);
+            idx += UINT32_SZ;
+        }
+        else {
+            output[idx++] = MSGID_REQUEST_FAILURE;
+        }
+
+        ssh->outputBuffer.length = idx;
+
+        ret = BundlePacket(ssh);
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = wolfSSH_SendPacket(ssh);
+
+    WLOG(WS_LOG_DEBUG, "Leaving SendGlobalRequestFwdSuccess(), ret = %d", ret);
+    return ret;
+}
+
 
 static int SendChannelOpen(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel,
         byte* channelData, word32 channelDataSz)
