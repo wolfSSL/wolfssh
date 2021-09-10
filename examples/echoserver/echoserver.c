@@ -98,8 +98,6 @@
 
 #define TEST_SFTP_TIMEOUT 1
 
-#define SE_BUF_SIZE 4096
-
 static const char echoserverBanner[] = "wolfSSH Example Echo Server\n";
 
 static int quit = 0;
@@ -107,6 +105,18 @@ wolfSSL_Mutex doneLock;
 #define MAX_PASSWD_RETRY 3
 static int passwdRetry = MAX_PASSWD_RETRY;
 
+
+#ifndef EXAMPLE_HIGHWATER_MARK
+    #define EXAMPLE_HIGHWATER_MARK 0x3FFF8000 /* 1GB - 32kB */
+#endif
+
+#ifndef EXAMPLE_BUFFER_SZ
+    #define EXAMPLE_BUFFER_SZ 4096
+#endif
+
+#ifndef EXAMPLE_KEYLOAD_BUFFER_SZ
+    #define EXAMPLE_KEYLOAD_BUFFER_SZ 1200
+#endif
 
 
 #ifdef WOLFSSH_AGENT
@@ -150,26 +160,24 @@ typedef struct {
     WS_SOCKET_T fd;
     word32 id;
     int echo;
-    char   nonBlock;
+    char nonBlock;
 #if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
     WOLFSSH_CTX *ctx;
 #endif
 #ifdef WOLFSSH_AGENT
     WS_AgentCbActionCtx agentCbCtx;
+    byte agentBuffer[EXAMPLE_BUFFER_SZ];
 #endif
 #ifdef WOLFSSH_FWD
     WS_FwdCbActionCtx fwdCbCtx;
+    byte fwdBuffer[EXAMPLE_BUFFER_SZ];
 #endif
+#ifdef WOLFSSH_SHELL
+    byte shellBuffer[EXAMPLE_BUFFER_SZ];
+#endif
+    byte channelBuffer[EXAMPLE_BUFFER_SZ];
+    char statsBuffer[EXAMPLE_BUFFER_SZ];
 } thread_ctx_t;
-
-
-#ifndef EXAMPLE_HIGHWATER_MARK
-    #define EXAMPLE_HIGHWATER_MARK 0x3FFF8000 /* 1GB - 32kB */
-#endif
-#ifndef EXAMPLE_BUFFER_SZ
-    #define EXAMPLE_BUFFER_SZ 4096
-#endif
-#define SCRATCH_BUFFER_SZ 1200
 
 
 static byte find_char(const byte* str, const byte* buf, word32 bufSz)
@@ -193,21 +201,20 @@ static byte find_char(const byte* str, const byte* buf, word32 bufSz)
 
 static int dump_stats(thread_ctx_t* ctx)
 {
-    char stats[1024];
     word32 statsSz;
     word32 txCount, rxCount, seq, peerSeq;
 
     wolfSSH_GetStats(ctx->ssh, &txCount, &rxCount, &seq, &peerSeq);
 
-    WSNPRINTF(stats, sizeof(stats),
+    WSNPRINTF(ctx->statsBuffer, sizeof ctx->statsBuffer,
             "Statistics for Thread #%u:\r\n"
             "  txCount = %u\r\n  rxCount = %u\r\n"
             "  seq = %u\r\n  peerSeq = %u\r\n",
             ctx->id, txCount, rxCount, seq, peerSeq);
-    statsSz = (word32)strlen(stats);
+    statsSz = (word32)strlen(ctx->statsBuffer);
 
-    fprintf(stderr, "%s", stats);
-    return wolfSSH_stream_send(ctx->ssh, (byte*)stats, statsSz);
+    fprintf(stderr, "%s", ctx->statsBuffer);
+    return wolfSSH_stream_send(ctx->ssh, (byte*)ctx->statsBuffer, statsSz);
 }
 
 
@@ -518,19 +525,6 @@ static void ChildSig(int sig)
 }
 #endif
 
-
-byte channelBuffer[SE_BUF_SIZE];
-#ifdef WOLFSSH_SHELL
-    byte shellBuffer[SE_BUF_SIZE];
-#endif
-#ifdef WOLFSSH_AGENT
-    byte agentBuffer[SE_BUF_SIZE];
-#endif
-#ifdef WOLFSSH_FWD
-    byte fwdBuffer[SE_BUF_SIZE];
-#endif
-
-
 static int ssh_worker(thread_ctx_t* threadCtx)
 {
     WOLFSSH* ssh;
@@ -707,32 +701,34 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                     if (rc == WS_CHAN_RXD) {
                         if (lastChannel == shellChannelId) {
                             cnt_r = wolfSSH_ChannelIdRead(ssh, shellChannelId,
-                                    channelBuffer, sizeof channelBuffer);
+                                    threadCtx->channelBuffer,
+                                    sizeof threadCtx->channelBuffer);
                             if (cnt_r <= 0)
                                 break;
                             #ifdef SHELL_DEBUG
-                                buf_dump(channelBuffer, cnt_r);
+                                buf_dump(threadCtx->channelBuffer, cnt_r);
                             #endif
                             #ifdef WOLFSSH_SHELL
                                 if (!threadCtx->echo) {
                                     cnt_w = (int)write(childFd,
-                                            channelBuffer, cnt_r);
+                                            threadCtx->channelBuffer, cnt_r);
                                 }
                                 else {
                                     cnt_w = wolfSSH_ChannelIdSend(ssh,
                                             shellChannelId,
-                                            channelBuffer, cnt_r);
+                                            threadCtx->channelBuffer, cnt_r);
                                     if (cnt_r > 0) {
                                         ChildRunning = !process_bytes(threadCtx,
-                                                channelBuffer, cnt_r);
+                                                threadCtx->channelBuffer,
+                                                cnt_r);
                                     }
                                 }
                             #else
                             cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
-                                    channelBuffer, cnt_r);
+                                    threadCtx->channelBuffer, cnt_r);
                             if (cnt_r > 0) {
                                 ChildRunning = !process_bytes(threadCtx,
-                                        channelBuffer, cnt_r);
+                                        threadCtx->channelBuffer, cnt_r);
                             }
                             #endif
                             if (cnt_w <= 0)
@@ -741,13 +737,15 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                         #ifdef WOLFSSH_AGENT
                         if (lastChannel == agentChannelId) {
                             cnt_r = wolfSSH_ChannelIdRead(ssh, agentChannelId,
-                                    channelBuffer, sizeof channelBuffer);
+                                    threadCtx->channelBuffer,
+                                    sizeof threadCtx->channelBuffer);
                             if (cnt_r <= 0)
                                 break;
                             #ifdef SHELL_DEBUG
-                                buf_dump(channelBuffer, cnt_r);
+                                buf_dump(threadCtx->channelBuffer, cnt_r);
                             #endif
-                            cnt_w = (int)send(agentFd, channelBuffer, cnt_r, 0);
+                            cnt_w = (int)send(agentFd,
+                                    threadCtx->channelBuffer, cnt_r, 0);
                             if (cnt_w <= 0)
                                 break;
                         }
@@ -758,13 +756,15 @@ static int ssh_worker(thread_ctx_t* threadCtx)
 
                             cnt_r = wolfSSH_ChannelIdRead(ssh,
                                     threadCtx->fwdCbCtx.channelId,
-                                    channelBuffer, sizeof channelBuffer);
+                                    threadCtx->channelBuffer,
+                                    sizeof threadCtx->channelBuffer);
                             if (cnt_r <= 0)
                                 break;
                             #ifdef SHELL_DEBUG
-                                buf_dump(channelBuffer, cnt_r);
+                                buf_dump(threadCtx->channelBuffer, cnt_r);
                             #endif
-                            cnt_w = (int)send(fwdFd, channelBuffer, cnt_r, 0);
+                            cnt_w = (int)send(fwdFd, threadCtx->channelBuffer,
+                                    cnt_r, 0);
                             if (cnt_w <= 0)
                                 break;
                         }
@@ -782,7 +782,9 @@ static int ssh_worker(thread_ctx_t* threadCtx)
 
             #ifdef WOLFSSH_SHELL
             if (FD_ISSET(childFd, &readFds)) {
-                cnt_r = (int)read(childFd, shellBuffer, sizeof shellBuffer);
+                cnt_r = (int)read(childFd,
+                        threadCtx->shellBuffer,
+                        sizeof threadCtx->shellBuffer);
                 if (cnt_r < 0) {
                     int err = errno;
                     if (err != EAGAIN) {
@@ -795,11 +797,11 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                 }
                 else {
                     #ifdef SHELL_DEBUG
-                        buf_dump(shellBuffer, cnt_r);
+                        buf_dump(threadCtx->shellBuffer, cnt_r);
                     #endif
                     if (cnt_r > 0) {
                         cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
-                                shellBuffer, cnt_r);
+                                threadCtx->shellBuffer, cnt_r);
                         if (cnt_w < 0)
                             break;
                     }
@@ -813,7 +815,8 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                         printf("agentFd set in readfd\n");
                     #endif
                     cnt_r = (int)recv(agentFd,
-                            agentBuffer, sizeof agentBuffer, 0);
+                            threadCtx->agentBuffer,
+                            sizeof threadCtx->agentBuffer, 0);
                     if (cnt_r == 0) {
                         /* Read zero-returned. Socket is closed. Go back
                            to listening. */
@@ -837,10 +840,10 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                     }
                     else {
                         #ifdef SHELL_DEBUG
-                            buf_dump(agentBuffer, cnt_r);
+                            buf_dump(threadCtx->agentBuffer, cnt_r);
                         #endif
                         cnt_w = wolfSSH_ChannelIdSend(ssh, agentChannelId,
-                                agentBuffer, cnt_r);
+                                threadCtx->agentBuffer, cnt_r);
                         if (cnt_w <= 0) {
                             break;
                         }
@@ -872,11 +875,13 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                     #ifdef SHELL_DEBUG
                         printf("fwdFd set in readfd\n");
                     #endif
-                    cnt_r = (int)recv(fwdFd, fwdBuffer + fwdBufferIdx,
-                            sizeof fwdBuffer - fwdBufferIdx, 0);
+                    cnt_r = (int)recv(fwdFd,
+                            threadCtx->fwdBuffer + fwdBufferIdx,
+                            sizeof threadCtx->fwdBuffer - fwdBufferIdx, 0);
                     if (cnt_r == 0) {
                         /* Read zero-returned. Socket is closed. Go back
                            to listening. */
+                        WCLOSESOCKET(fwdFd);
                         threadCtx->fwdCbCtx.state = FWD_STATE_LISTEN;
                         continue;
                     }
@@ -891,6 +896,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                                 err == SOCKET_ECONNABORTED) {
                             /* Connection reset. Socket is closed.
                              * Go back to listening. */
+                            WCLOSESOCKET(fwdFd);
                             threadCtx->fwdCbCtx.state = FWD_STATE_LISTEN;
                             continue;
                         }
@@ -898,7 +904,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                     }
                     else {
                     #ifdef SHELL_DEBUG
-                        buf_dump(fwdBuffer, cnt_r);
+                        buf_dump(threadCtx->fwdBuffer, cnt_r);
                     #endif
                         fwdBufferIdx += cnt_r;
                     }
@@ -906,11 +912,12 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                 if (fwdBufferIdx > 0) {
                     cnt_w = wolfSSH_ChannelIdSend(ssh,
                             threadCtx->fwdCbCtx.channelId,
-                            fwdBuffer, fwdBufferIdx);
+                            threadCtx->fwdBuffer, fwdBufferIdx);
                     if (cnt_w > 0) {
                         fwdBufferIdx = 0;
                     }
-                    else if (cnt_w == -1071 || cnt_w == -1057) {
+                    else if (cnt_w == WS_CHANNEL_NOT_CONF ||
+                            cnt_w == WS_CHAN_RXD) {
                     #ifdef SHELL_DEBUG
                         printf("Waiting for channel open confirmation.\n");
                     #endif
@@ -998,11 +1005,12 @@ static int ssh_worker(thread_ctx_t* threadCtx)
 
                     ret = connect(fwdFd,
                             (const struct sockaddr*)&addr, sizeof addr);
+                    if (ret == 0)
+                        threadCtx->fwdCbCtx.state = FWD_STATE_CONNECTED;
+                    else
+                        WCLOSESOCKET(fwdFd);
                 }
 
-                if (ret == 0) {
-                    threadCtx->fwdCbCtx.state = FWD_STATE_CONNECTED;
-                }
             }
             #endif
         }
@@ -1790,15 +1798,29 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
     {
         const char* bufName = NULL;
-        byte buf[SCRATCH_BUFFER_SZ];
+        #ifndef WOLFSSH_SMALL_STACK
+            byte buf[EXAMPLE_KEYLOAD_BUFFER_SZ];
+        #endif
+        byte* keyLoadBuf;
         word32 bufSz;
 
-        bufSz = load_key(peerEcc, buf, SCRATCH_BUFFER_SZ);
+        #ifdef WOLFSSH_SMALL_STACK
+            keyLoadBuf = (byte*)WMALLOC(EXAMPLE_KEYLOAD_BUFFER_SZ,
+                    NULL, DYNTYPE_BUFFER);
+            if (keyLoadBuf == NULL) {
+                exit(EXIT_FAILURE);
+            }
+        #else
+            keyLoadBuf = buf;
+        #endif
+        bufSz = EXAMPLE_KEYLOAD_BUFFER_SZ;
+
+        bufSz = load_key(peerEcc, keyLoadBuf, bufSz);
         if (bufSz == 0) {
             fprintf(stderr, "Couldn't load key file.\n");
             exit(EXIT_FAILURE);
         }
-        if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, buf, bufSz,
+        if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, keyLoadBuf, bufSz,
                                              WOLFSSH_FORMAT_ASN1) < 0) {
             fprintf(stderr, "Couldn't use key buffer.\n");
             exit(EXIT_FAILURE);
@@ -1827,9 +1849,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         }
 
         bufSz = (word32)strlen(samplePasswordBuffer);
-        memcpy(buf, samplePasswordBuffer, bufSz);
-        buf[bufSz] = 0;
-        LoadPasswordBuffer(buf, bufSz, &pwMapList);
+        memcpy(keyLoadBuf, samplePasswordBuffer, bufSz);
+        keyLoadBuf[bufSz] = 0;
+        LoadPasswordBuffer(keyLoadBuf, bufSz, &pwMapList);
 
         if (userEcc) {
         #ifdef HAVE_ECC
@@ -1843,15 +1865,19 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         }
         if (bufName != NULL) {
             bufSz = (word32)strlen(bufName);
-            memcpy(buf, bufName, bufSz);
-            buf[bufSz] = 0;
-            LoadPublicKeyBuffer(buf, bufSz, &pwMapList);
+            memcpy(keyLoadBuf, bufName, bufSz);
+            keyLoadBuf[bufSz] = 0;
+            LoadPublicKeyBuffer(keyLoadBuf, bufSz, &pwMapList);
         }
 
         bufSz = (word32)strlen(sampleNoneBuffer);
-        memcpy(buf, sampleNoneBuffer, bufSz);
-        buf[bufSz] = 0;
-        LoadNoneBuffer(buf, bufSz, &pwMapList);
+        memcpy(keyLoadBuf, sampleNoneBuffer, bufSz);
+        keyLoadBuf[bufSz] = 0;
+        LoadNoneBuffer(keyLoadBuf, bufSz, &pwMapList);
+
+        #ifdef WOLFSSH_SMALL_STACK
+            WFREE(buf, NULL, DYNTYPE_BUFFER);
+        #endif
     }
 #ifdef WOLFSSL_NUCLEUS
     {
