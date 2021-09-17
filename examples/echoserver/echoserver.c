@@ -389,10 +389,14 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
     }
     else if (action == WOLFSSH_FWD_LOCAL_CLEANUP) {
         WCLOSESOCKET(ctx->appFd);
-        if (ctx->hostName)
+        if (ctx->hostName) {
             free(ctx->hostName);
-        if (ctx->originName)
+            ctx->hostName = NULL;
+        }
+        if (ctx->originName) {
             free(ctx->originName);
+            ctx->originName = NULL;
+        }
         ctx->state = FWD_STATE_INIT;
     }
     else if (action == WOLFSSH_FWD_REMOTE_SETUP) {
@@ -424,15 +428,30 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
             ctx->state = FWD_STATE_LISTEN;
         }
         else {
+            if (ctx->hostName != NULL) {
+                free(ctx->hostName);
+                ctx->hostName = NULL;
+            }
+            if (ctx->listenFd != -1) {
+                WCLOSESOCKET(ctx->listenFd);
+                ctx->listenFd = -1;
+            }
             ret = WS_FWD_SETUP_E;
         }
     }
     else if (action == WOLFSSH_FWD_REMOTE_CLEANUP) {
-        if (ctx->hostName)
+        if (ctx->hostName) {
             free(ctx->hostName);
-        if (ctx->originName)
+            ctx->hostName = NULL;
+        }
+        if (ctx->originName) {
             free(ctx->originName);
-        WCLOSESOCKET(ctx->listenFd);
+            ctx->originName = NULL;
+        }
+        if (ctx->listenFd != -1) {
+            WCLOSESOCKET(ctx->listenFd);
+            ctx->listenFd = -1;
+        }
         ctx->state = FWD_STATE_INIT;
     }
     else if (action == WOLFSSH_FWD_CHANNEL_ID) {
@@ -882,6 +901,11 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                         /* Read zero-returned. Socket is closed. Go back
                            to listening. */
                         WCLOSESOCKET(fwdFd);
+                        fwdFd = -1;
+                        if (threadCtx->fwdCbCtx.hostName != NULL) {
+                            free(threadCtx->fwdCbCtx.hostName);
+                            threadCtx->fwdCbCtx.hostName = NULL;
+                        }
                         threadCtx->fwdCbCtx.state = FWD_STATE_LISTEN;
                         continue;
                     }
@@ -1182,7 +1206,20 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
         }
     }
 
-    WCLOSESOCKET(threadCtx->fd);
+    if (threadCtx->fd != -1) {
+        WCLOSESOCKET(threadCtx->fd);
+        threadCtx->fd = -1;
+    }
+#ifdef WOLFSSH_FWD
+    if (threadCtx->fwdCbCtx.hostName != NULL) {
+        free(threadCtx->fwdCbCtx.hostName);
+        threadCtx->fwdCbCtx.hostName = NULL;
+    }
+    if (threadCtx->fwdCbCtx.originName != NULL) {
+        free(threadCtx->fwdCbCtx.originName);
+        threadCtx->fwdCbCtx.originName = NULL;
+    }
+#endif
     wolfSSH_free(threadCtx->ssh);
 
     if (ret != 0) {
@@ -2018,6 +2055,8 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 #endif
 #ifdef WOLFSSH_FWD
         threadCtx->fwdCbCtx.state = FWD_STATE_INIT;
+        threadCtx->fwdCbCtx.listenFd = -1;
+        threadCtx->fwdCbCtx.appFd = -1;
         wolfSSH_SetFwdCbCtx(ssh, &threadCtx->fwdCbCtx);
 #endif
         server_worker(threadCtx);
