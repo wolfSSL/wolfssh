@@ -122,12 +122,13 @@ STATIC INLINE int ConstantCompare(const byte* a, const byte* b,
  * If a padding value is needed then "pad" is set to 1
  *
  */
-STATIC INLINE void CreateMpint(byte* buf, word32* sz, byte* pad)
+STATIC INLINE int CreateMpint(byte* buf, word32* sz, byte* pad)
 {
     word32 i;
 
     if (buf == NULL || sz == NULL || pad == NULL) {
         WLOG(WS_LOG_ERROR, "Internal argument error with CreateMpint");
+        return WS_BAD_ARGUMENT;
     }
 
     if (*sz == 0)
@@ -153,6 +154,8 @@ STATIC INLINE void CreateMpint(byte* buf, word32* sz, byte* pad)
         WMEMMOVE(buf, buf + i, *sz - i);
         *sz = *sz - i;
     }
+
+    return WS_SUCCESS;
 }
 #undef STATIC
 
