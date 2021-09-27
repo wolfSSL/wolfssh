@@ -1843,7 +1843,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
         #ifdef WOLFSSH_SMALL_STACK
             keyLoadBuf = (byte*)WMALLOC(EXAMPLE_KEYLOAD_BUFFER_SZ,
-                    NULL, DYNTYPE_BUFFER);
+                    NULL, 0);
             if (keyLoadBuf == NULL) {
                 exit(EXIT_FAILURE);
             }
@@ -1913,7 +1913,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         LoadNoneBuffer(keyLoadBuf, bufSz, &pwMapList);
 
         #ifdef WOLFSSH_SMALL_STACK
-            WFREE(buf, NULL, DYNTYPE_BUFFER);
+            WFREE(keyLoadBuf, NULL, 0);
         #endif
     }
 #ifdef WOLFSSL_NUCLEUS
