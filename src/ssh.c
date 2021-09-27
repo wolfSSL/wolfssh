@@ -1480,33 +1480,24 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
     }
     else if (format == WOLFSSH_FORMAT_ASN1) {
         word32 scratch = 0;
-        union wolfSSH_key *key_ptr;
+        union wolfSSH_key *key_ptr = NULL;
 
-    #ifndef WOLFSSH_SMALL_STACK
-        union wolfSSH_key key;
-        key_ptr = &key;
-    #else
         key_ptr = WMALLOC(sizeof(union wolfSSH_key), heap, DYNTYPE_PRIVKEY);
         if (key_ptr == NULL) {
             return WS_MEMORY_E;
         }
-    #endif
 
         if (*out == NULL) {
             newKey = (byte*)WMALLOC(inSz, heap, DYNTYPE_PRIVKEY);
             if (newKey == NULL) {
-            #ifdef WOLFSSH_SMALL_STACK
                 WFREE(key_ptr, heap, DYNTYPE_PRIVKEY);
-            #endif
                 return WS_MEMORY_E;
             }
             *out = newKey;
         }
         else {
             if (*outSz < inSz) {
-            #ifdef WOLFSSH_SMALL_STACK
                 WFREE(key_ptr, heap, DYNTYPE_PRIVKEY);
-            #endif
                 return WS_ERROR;
             }
             newKey = *out;
@@ -1517,9 +1508,7 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
         /* TODO: This is copied and modified from a function in src/internal.c.
            This and that code should be combined into a single function. */
         if (wc_InitRsaKey(&key_ptr->rsa, heap) < 0) {
-    #ifdef WOLFSSH_SMALL_STACK
-        WFREE(key_ptr, heap, DYNTYPE_PRIVKEY);
-    #endif
+            WFREE(key_ptr, heap, DYNTYPE_PRIVKEY);
             return WS_RSA_E;
         }
 
@@ -1539,9 +1528,7 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
             /* Couldn't decode as RSA testKey. Try decoding as ECC testKey. */
             scratch = 0;
             if (wc_ecc_init_ex(&key_ptr->ecc, heap, INVALID_DEVID) != 0) {
-            #ifdef WOLFSSH_SMALL_STACK
                 WFREE(key_ptr, heap, DYNTYPE_PRIVKEY);
-            #endif
                 return WS_ECC_E;
             }
 
@@ -1565,18 +1552,14 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
                 *outTypeSz = (word32)WSTRLEN((const char*)*outType);
             }
             else {
-            #ifdef WOLFSSH_SMALL_STACK
                 WFREE(key_ptr, heap, DYNTYPE_PRIVKEY);
-            #endif
                 return WS_BAD_FILE_E;
             }
 #endif
 #ifndef WOLFSSH_NO_RSA
         }
 #endif
-    #ifdef WOLFSSH_SMALL_STACK
         WFREE(key_ptr, heap, DYNTYPE_PRIVKEY);
-    #endif
     }
     else
         ret = WS_ERROR;

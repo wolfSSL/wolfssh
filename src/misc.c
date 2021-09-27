@@ -132,7 +132,7 @@ STATIC INLINE int CreateMpint(byte* buf, word32* sz, byte* pad)
     }
 
     if (*sz == 0)
-        return;
+        return WS_SUCCESS;
 
     /* check for leading 0's */
     for (i = 0; i < *sz; i++) {

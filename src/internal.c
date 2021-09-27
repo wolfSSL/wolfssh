@@ -720,9 +720,6 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
     byte* der;
     word32 derSz, scratch = 0;
     union wolfSSH_key *key_ptr = NULL;
-#ifndef WOLFSSH_SMALL_STACK
-    union wolfSSH_key key;
-#endif
 
     (void)dynamicType;
     (void)heap;
@@ -771,15 +768,11 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
     }
 
     if (type == BUFTYPE_PRIVKEY && format != WOLFSSH_FORMAT_RAW) {
-#ifdef WOLFSSH_SMALL_STACK
         key_ptr = WMALLOC(sizeof(union wolfSSH_key), heap, dynamicType);
         if (key_ptr == NULL) {
             WFREE(der, heap, dynamicType);
             return WS_MEMORY_E;
         }
-#else
-        key_ptr = &key;
-#endif /* WOLFSSH_SMALL_STACK */
 
         /* Check RSA key */
 #ifndef WOLFSSH_NO_RSA
@@ -828,10 +821,8 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
     }
     ret = WS_SUCCESS;
 end:
-#ifdef WOLFSSH_SMALL_STACK
     if (key_ptr)
         WFREE(key_ptr, heap, dynamicType);
-#endif
     return ret;
 }
 
@@ -2887,9 +2878,6 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         ecc_key key_s;
     #endif
 #endif
-#ifndef WOLFSSH_SMALL_STACK
-    struct wolfSSH_sigKeyBlock s_sigKeyBlock;
-#endif
 
     WLOG(WS_LOG_DEBUG, "Entering DoKexDhReply()");
 
@@ -3078,12 +3066,12 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     }
 
     if (ret == WS_SUCCESS) {
-#ifdef WOLFSSH_SMALL_STACK
         sigKeyBlock_ptr = WMALLOC(sizeof(struct wolfSSH_sigKeyBlock), ssh->ctx->heap, DYNTYPE_PRIVKEY);
         if (sigKeyBlock_ptr == NULL) {
             ret = WS_MEMORY_E;
         }
 
+#ifdef WOLFSSH_SMALL_STACK
 #ifndef WOLFSSH_NO_ECDSA
         key_ptr = WMALLOC(sizeof(ecc_key), ssh->ctx->heap, DYNTYPE_PRIVKEY);
         if (key_ptr == NULL) {
@@ -3095,7 +3083,6 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 #ifndef WOLFSSH_NO_ECDSA
         key_ptr = &key_s;
 #endif
-        sigKeyBlock_ptr = &s_sigKeyBlock;
 #endif
     }
     if (ret == WS_SUCCESS) {
@@ -3392,9 +3379,9 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     if (ret == WS_SUCCESS)
         ret = SendNewKeys(ssh);
 
-#ifdef WOLFSSH_SMALL_STACK
     if (sigKeyBlock_ptr)
         WFREE(sigKeyBlock_ptr, ssh->ctx->heap, DYNTYPE_PRIVKEY);
+#ifdef WOLFSSH_SMALL_STACK
     #ifndef WOLFSSH_NO_ECDSA
     if (key_ptr)
         WFREE(key_ptr, ssh->ctx->heap, DYNTYPE_PRIVKEY);
@@ -4013,7 +4000,6 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 
 #ifndef WOLFSSH_SMALL_STACK
     byte s_checkDigest[MAX_ENCODED_SIG_SZ];
-    RsaKey s_key;
 #endif
 
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequestRsa()");
@@ -4030,13 +4016,12 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
                 DYNTYPE_BUFFER);
         if (checkDigest == NULL)
             ret = WS_MEMORY_E;
+#else
+        checkDigest = s_checkDigest;
+#endif
         key_ptr = WMALLOC(sizeof(RsaKey), ssh->ctx->heap, DYNTYPE_PUBKEY);
         if (key_ptr == NULL)
             ret = WS_MEMORY_E;
-#else
-        checkDigest = s_checkDigest;
-        key_ptr = &s_key;
-#endif
     }
 
     if (ret == WS_SUCCESS) {
@@ -4140,11 +4125,11 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
         else
             ret = WS_RSA_E;
     }
-    if (key_ptr != NULL)
+    if (key_ptr != NULL) {
         wc_FreeRsaKey(key_ptr);
-#ifdef WOLFSSH_SMALL_STACK
-    if (key_ptr != NULL)
         WFREE(key_ptr, ssh->ctx->heap, DYNTYPE_PUBKEY);
+    }
+#ifdef WOLFSSH_SMALL_STACK
     if (checkDigest)
         WFREE(checkDigest, ssh->ctx->heap, DYNTYPE_BUFFER);
     if (encDigest)
@@ -6791,18 +6776,14 @@ int SendKexDhReply(WOLFSSH* ssh)
 #endif
     struct wolfSSH_sigKeyBlockFull *sigKeyBlock_ptr = NULL;
 #ifdef WOLFSSH_SMALL_STACK
-    sigKeyBlock_ptr = WMALLOC(sizeof(struct wolfSSH_sigKeyBlockFull),
-            ssh->ctx->heap, DYNTYPE_PRIVKEY);
     f_ptr = WMALLOC(KEX_F_SIZE, ssh->ctx->heap, DYNTYPE_BUFFER);
     sig_ptr = WMALLOC(KEX_SIG_SIZE, ssh->ctx->heap, DYNTYPE_BUFFER);
-    if (sigKeyBlock_ptr == NULL || f_ptr == NULL || sig_ptr == NULL)
+    if (f_ptr == NULL || sig_ptr == NULL)
         ret = WS_MEMORY_E;
 #else
-    struct wolfSSH_sigKeyBlockFull sigKeyBlock_s;
     byte f_s[KEX_F_SIZE];
     byte sig_s[KEX_SIG_SIZE];
 
-    sigKeyBlock_ptr = &sigKeyBlock_s;
     f_ptr = f_s;
     sig_ptr = sig_s;
 #endif
@@ -6814,7 +6795,12 @@ int SendKexDhReply(WOLFSSH* ssh)
         }
     }
 
-    if (sigKeyBlock_ptr != NULL) {
+    sigKeyBlock_ptr = WMALLOC(sizeof(struct wolfSSH_sigKeyBlockFull),
+            ssh->ctx->heap, DYNTYPE_PRIVKEY);
+    if (sigKeyBlock_ptr == NULL)
+        ret = WS_MEMORY_E;
+
+    if (ret == WS_SUCCESS) {
         WMEMSET(sigKeyBlock_ptr, 0, sizeof(struct wolfSSH_sigKeyBlockFull));
         sigKeyBlock_ptr->pubKeyId = ID_NONE;
     }
@@ -7482,9 +7468,9 @@ int SendKexDhReply(WOLFSSH* ssh)
         PurgePacket(ssh);
 
     WLOG(WS_LOG_DEBUG, "Leaving SendKexDhReply(), ret = %d", ret);
-#ifdef WOLFSSH_SMALL_STACK
     if (sigKeyBlock_ptr)
         WFREE(sigKeyBlock_ptr, ssh->ctx->heap, DYNTYPE_PRIVKEY);
+#ifdef WOLFSSH_SMALL_STACK
     if (f_ptr)
         WFREE(f_ptr, ssh->ctx->heap, DYNTYPE_BUFFER);
     if (sig_ptr)
@@ -8734,21 +8720,19 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId, int addSig)
     WS_UserAuthData authData;
     WS_KeySignature *keySig_ptr = NULL;
 
-#ifdef WOLFSSH_SMALL_STACK
-    keySig_ptr = WMALLOC(sizeof(WS_KeySignature), ssh->ctx->heap, DYNTYPE_BUFFER);
-    if (!keySig_ptr)
-        ret = WS_MEMORY_E;
-#else
-    WS_KeySignature keySig_s;
-    keySig_ptr = &keySig_s;
-#endif
-
     (void)addSig;
 
     WLOG(WS_LOG_DEBUG, "Entering SendUserAuthRequest()");
 
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        keySig_ptr = WMALLOC(sizeof(WS_KeySignature),
+                ssh->ctx->heap, DYNTYPE_BUFFER);
+        if (!keySig_ptr)
+            ret = WS_MEMORY_E;
+    }
 
     if (ret == WS_SUCCESS) {
         WMEMSET(keySig_ptr, 0, sizeof(WS_KeySignature));
@@ -8872,10 +8856,10 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId, int addSig)
 
     ForceZero(&authData, sizeof(WS_UserAuthData));
     WLOG(WS_LOG_DEBUG, "Leaving SendUserAuthRequest(), ret = %d", ret);
-#ifdef WOLFSSH_SMALL_STACK
+
     if (keySig_ptr)
         WFREE(keySig_ptr, ssh->ctx->heap, DYNTYPE_BUFFER);
-#endif
+
     return ret;
 }
 
