@@ -462,7 +462,7 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
             ret = wolfSSH_ChannelSend(fwdChannel, appBuffer, appBufferUsed);
             if (ret > 0)
                 appBufferUsed -= ret;
-            else if (ret == -1071 || ret == -1057) {
+            else if (ret == WS_CHANNEL_NOT_CONF || ret == WS_CHAN_RXD) {
             #ifdef SHELL_DEBUG
                 printf("Waiting for channel open confirmation.\n");
             #endif
