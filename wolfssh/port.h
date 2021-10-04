@@ -62,6 +62,10 @@ extern "C" {
     #define WFPUTS fputs
 #endif
 
+
+#define WEXIT(n)      exit((n))
+
+
 #ifndef WOLFSSH_HANDLE
     /* handle for console to use during Linux console code translations */
     #ifdef USE_WINDOWS_API
@@ -395,6 +399,8 @@ extern "C" {
     #define WSTRNSTR(s1,s2,n) wstrnstr((s1),(s2),(n))
     #define WSTRNCAT(s1,s2,n) wstrncat((s1),(s2),(n))
     #define WSTRDUP(s,h,t)    wstrdup((s),(h),(t))
+
+#define WSTRCHR(s,c) strchr((s),(c))
 
     #ifdef USE_WINDOWS_API
         #define WSTRNCPY(s1,s2,n) strncpy_s((s1),(n),(s2),(n))
