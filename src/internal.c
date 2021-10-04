@@ -4767,7 +4767,8 @@ static int DoGlobalRequestFwd(WOLFSSH* ssh,
 
     if (ret == WS_SUCCESS) {
         if (ssh->ctx->fwdCb) {
-            ret = ssh->ctx->fwdCb(WOLFSSH_FWD_REMOTE_SETUP,
+            ret = ssh->ctx->fwdCb(isCancel ? WOLFSSH_FWD_REMOTE_CLEANUP :
+                        WOLFSSH_FWD_REMOTE_SETUP,
                     ssh->fwdCbCtx, bindAddr, bindPort);
         }
     }
@@ -5129,8 +5130,13 @@ static int DoChannelEof(WOLFSSH* ssh,
             ret = WS_INVALID_CHANID;
     }
 
-    if (ret == WS_SUCCESS)
-        channel->receivedEof = 1;
+    if (ret == WS_SUCCESS) {
+        channel->eofRxd = 1;
+        if (!channel->eofTxd) {
+            ret = SendChannelEof(ssh, channel->peerChannel);
+        }
+        ssh->lastRxId = channelId;
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoChannelEof(), ret = %d", ret);
     return ret;
@@ -5158,7 +5164,9 @@ static int DoChannelClose(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS) {
-        ret = SendChannelClose(ssh, channel->peerChannel);
+        if (!channel->closeTxd) {
+            ret = SendChannelClose(ssh, channel->peerChannel);
+        }
     }
 
     if (ret == WS_SUCCESS) {
@@ -5167,6 +5175,7 @@ static int DoChannelClose(WOLFSSH* ssh,
 
     if (ret == WS_SUCCESS) {
         ret = WS_CHANNEL_CLOSED;
+        ssh->lastRxId = channelId;
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoChannelClose(), ret = %d", ret);
@@ -5715,22 +5724,17 @@ static int DoPacket(WOLFSSH* ssh)
             ret = SendUnimplemented(ssh);
     }
 
-    if (ret == WS_SUCCESS || ret == WS_CHAN_RXD || ret == WS_EXTDATA) {
-        if (payloadSz > 0){
-            idx += payloadIdx;
-            if (idx + padSz > len)
-            {
-                WLOG(WS_LOG_DEBUG, "Not enough data in buffer for pad.");
-                ret = WS_BUFFER_E;
-            }
+    if (payloadSz > 0) {
+        idx += payloadIdx;
+        if (idx + padSz > len) {
+            WLOG(WS_LOG_DEBUG, "Not enough data in buffer for pad.");
+            ret = WS_BUFFER_E;
         }
     }
 
-    if (ret == WS_SUCCESS || ret == WS_CHAN_RXD || ret == WS_EXTDATA) {
-        idx += padSz;
-        ssh->inputBuffer.idx = idx;
-        ssh->peerSeq++;
-    }
+    idx += padSz;
+    ssh->inputBuffer.idx = idx;
+    ssh->peerSeq++;
 
     return ret;
 }
@@ -9337,6 +9341,14 @@ int SendChannelEof(WOLFSSH* ssh, word32 peerChannelId)
             ret = WS_INVALID_CHANID;
     }
 
+    if (ret == WS_SUCCESS) {
+        if (channel->eofTxd) {
+            WLOG(WS_LOG_DEBUG, "Already sent EOF");
+            WLOG(WS_LOG_DEBUG, "Leaving SendChannelEof(), ret = %d", ret);
+            return ret;
+        }
+    }
+
     if (ret == WS_SUCCESS)
         ret = PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ);
 
@@ -9355,6 +9367,9 @@ int SendChannelEof(WOLFSSH* ssh, word32 peerChannelId)
 
     if (ret == WS_SUCCESS)
         ret = wolfSSH_SendPacket(ssh);
+
+    if (ret == WS_SUCCESS)
+        channel->eofTxd = 1;
 
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelEof(), ret = %d", ret);
     return ret;
@@ -9482,7 +9497,7 @@ int SendChannelClose(WOLFSSH* ssh, word32 peerChannelId)
         channel = ChannelFind(ssh, peerChannelId, WS_CHANNEL_ID_PEER);
         if (channel == NULL)
             ret = WS_INVALID_CHANID;
-        else if (channel->closeSent) {
+        else if (channel->closeTxd) {
             WLOG(WS_LOG_DEBUG, "Leaving SendChannelClose(), already sent");
             return ret;
         }
@@ -9506,7 +9521,7 @@ int SendChannelClose(WOLFSSH* ssh, word32 peerChannelId)
 
     if (ret == WS_SUCCESS) {
         ret = wolfSSH_SendPacket(ssh);
-        channel->closeSent = 1;
+        channel->closeTxd = 1;
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelClose(), ret = %d", ret);
