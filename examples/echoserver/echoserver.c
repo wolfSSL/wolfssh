@@ -789,6 +789,20 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                         }
                         #endif
                     }
+                    else if (rc == WS_CHANNEL_CLOSED) {
+                        #ifdef WOLFSSH_FWD
+                        /* Read zero-returned. Socket is closed. Go back
+                           to listening. */
+                        WCLOSESOCKET(fwdFd);
+                        fwdFd = -1;
+                        if (threadCtx->fwdCbCtx.hostName != NULL) {
+                            free(threadCtx->fwdCbCtx.hostName);
+                            threadCtx->fwdCbCtx.hostName = NULL;
+                        }
+                        threadCtx->fwdCbCtx.state = FWD_STATE_LISTEN;
+                        #endif
+                        continue;
+                    }
                     else if (rc != WS_WANT_READ) {
                         #ifdef SHELL_DEBUG
                             printf("Break:read sshFd returns %d: errno =%x\n",

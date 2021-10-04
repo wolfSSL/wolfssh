@@ -701,9 +701,11 @@ struct WOLFSSH {
 struct WOLFSSH_CHANNEL {
     byte channelType;
     byte sessionType;
-    byte closeSent;
-    byte receivedEof;
-    byte openConfirmed;
+    byte closeRxd : 1;
+    byte closeTxd : 1;
+    byte eofRxd : 1;
+    byte eofTxd : 1;
+    byte openConfirmed : 1;
     word32 channel;
     word32 windowSz;
     word32 maxPacketSz;

@@ -1036,7 +1036,7 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
     if (ret == WS_SUCCESS) {
         while (inputBuffer->length - inputBuffer->idx == 0) {
             ret = DoReceive(ssh);
-            if (ssh->channelList == NULL || ssh->channelList->receivedEof)
+            if (ssh->channelList == NULL || ssh->channelList->eofRxd)
                 ret = WS_EOF;
             if (ret < 0 && ret != WS_CHAN_RXD) {
                 break;
@@ -1767,12 +1767,12 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
     }
 
     /* Attempt to receive data from the peer. */
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
         ret = DoReceive(ssh);
+    }
 
-    if (ret == WS_CHAN_RXD) {
-        if (channelId != NULL)
-            *channelId = ssh->lastRxId;
+    if (channelId != NULL && ssh != NULL) {
+        *channelId = ssh->lastRxId;
     }
 
     if (ret == WS_CHAN_RXD)
@@ -2127,7 +2127,7 @@ int wolfSSH_ChannelGetEof(WOLFSSH_CHANNEL* channel)
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelGetEof()");
 
     if (channel)
-        eof = (int)channel->receivedEof;
+        eof = (int)channel->eofRxd;
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelGetEof(), %s",
             eof ? "true" : "false");
