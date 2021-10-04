@@ -54,6 +54,10 @@
  */
 
 
+#ifndef EXAMPLE_BUFFER_SZ
+    #define EXAMPLE_BUFFER_SZ 4096
+#endif
+
 #define INVALID_FWD_PORT 0
 static const char defaultFwdFromHost[] = "0.0.0.0";
 
@@ -238,12 +242,16 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     int appFdSet = 0;
     struct timeval to;
     WOLFSSH_CHANNEL* fwdChannel = NULL;
-    byte appBuffer[4096];
-    byte sshBuffer[4096];
-    word32 appBufferSz = sizeof(appBuffer);
+    byte* appBuffer = NULL;
+    byte* sshBuffer = NULL;
+    word32 appBufferSz = 0;
     word32 appBufferUsed = 0;
-    word32 sshBufferSz = sizeof(sshBuffer);
+    word32 sshBufferSz = 0;
     word32 sshBufferUsed = 0;
+#ifndef WOLFSSH_SMALL_STACK
+    byte appBuffer_s[EXAMPLE_BUFFER_SZ];
+    byte sshBuffer_s[EXAMPLE_BUFFER_SZ];
+#endif
 
     ((func_args*)args)->return_code = 0;
 
@@ -315,6 +323,23 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
            host, port, username, password,
            fwdFromHost, fwdFromPort,
            fwdToHost, fwdToPort);
+
+#ifdef WOLFSSH_SMALL_STACK
+    appBuffer = (byte*)WMALLOC(EXAMPLE_BUFFER_SZ, NULL, 0);
+    sshBuffer = (byte*)WMALLOC(EXAMPLE_BUFFER_SZ, NULL, 0);
+    if (appBuffer == NULL || sshBuffer == NULL) {
+        WFREE(appBuffer, NULL, 0);
+        WFREE(sshBuffer, NULL, 0);
+        err_sys("couldn't allocate buffers");
+    }
+    appBufferSz = EXAMPLE_BUFFER_SZ;
+    sshBufferSz = EXAMPLE_BUFFER_SZ;
+#else
+    appBuffer = appBuffer_s;
+    sshBuffer = sshBuffer_s;
+    appBufferSz = sizeof appBuffer_s;
+    sshBufferSz = sizeof sshBuffer_s;
+#endif
 
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
     if (ctx == NULL)
@@ -403,14 +428,14 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
             if (ret == WS_CHAN_RXD) {
                 WOLFSSH_CHANNEL* readChannel;
 
-                sshBufferSz = sizeof(sshBuffer);
+                sshBufferUsed = sshBufferSz;
                 readChannel = wolfSSH_ChannelFind(ssh,
                         channelId, WS_CHANNEL_ID_SELF);
                 ret = (readChannel == NULL) ? WS_INVALID_CHANID : WS_SUCCESS;
 
                 if (ret == WS_SUCCESS)
                     ret = wolfSSH_ChannelRead(readChannel,
-                            sshBuffer, sshBufferSz);
+                            sshBuffer, sshBufferUsed);
                 if (ret > 0) {
                     sshBufferUsed = (word32)ret;
                     if (appFd != -1) {
@@ -454,6 +479,10 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     WCLOSESOCKET(appFd);
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
+#ifdef WOLFSSH_SMALL_STACK
+    WFREE(appBuffer, NULL, 0);
+    WFREE(sshBuffer, NULL, 0);
+#endif
 #if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
