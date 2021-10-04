@@ -211,7 +211,7 @@ static int dump_stats(thread_ctx_t* ctx)
             "  txCount = %u\r\n  rxCount = %u\r\n"
             "  seq = %u\r\n  peerSeq = %u\r\n",
             ctx->id, txCount, rxCount, seq, peerSeq);
-    statsSz = (word32)strlen(ctx->statsBuffer);
+    statsSz = (word32)WSTRLEN(ctx->statsBuffer);
 
     fprintf(stderr, "%s", ctx->statsBuffer);
     return wolfSSH_stream_send(ctx->ssh, (byte*)ctx->statsBuffer, statsSz);
@@ -287,7 +287,7 @@ static void *global_req(void *ctx)
         sleep(SSH_TIMEOUT);
 
         ret = wolfSSH_global_request(threadCtx->ssh, (const unsigned char *)str,
-                strlen(str), 1);
+                WSTRLEN(str), 1);
         if (ret != WS_SUCCESS)
         {
             printf("Global Request Failed.\n");
@@ -322,7 +322,7 @@ static int wolfSSH_AGENT_DefaultActions(WS_AgentCbAction action, void* vCtx)
         struct sockaddr_un* name = &ctx->name;
         size_t size;
 
-        memset(name, 0, sizeof(struct sockaddr_un));
+        WMEMSET(name, 0, sizeof(struct sockaddr_un));
         ctx->pid = getpid();
         name->sun_family = AF_LOCAL;
 
@@ -331,7 +331,7 @@ static int wolfSSH_AGENT_DefaultActions(WS_AgentCbAction action, void* vCtx)
 
         if (ret == 0) {
             name->sun_path[sizeof(name->sun_path) - 1] = '\0';
-            size = strlen(name->sun_path) +
+            size = WSTRLEN(name->sun_path) +
                     offsetof(struct sockaddr_un, sun_path);
             ctx->listenFd = socket(AF_UNIX, SOCK_STREAM, 0);
             if (ctx->listenFd == -1) {
@@ -390,11 +390,11 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
     else if (action == WOLFSSH_FWD_LOCAL_CLEANUP) {
         WCLOSESOCKET(ctx->appFd);
         if (ctx->hostName) {
-            free(ctx->hostName);
+            WFREE(ctx->hostName, NULL, 0);
             ctx->hostName = NULL;
         }
         if (ctx->originName) {
-            free(ctx->originName);
+            WFREE(ctx->originName, NULL, 0);
             ctx->originName = NULL;
         }
         ctx->state = FWD_STATE_INIT;
@@ -411,7 +411,7 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
         if (ret == 0) {
             struct sockaddr_in addr;
 
-            memset(&addr, 0, sizeof addr);
+            WMEMSET(&addr, 0, sizeof addr);
             addr.sin_family = AF_INET;
             addr.sin_port = htons((word16)port);
             addr.sin_addr.s_addr = INADDR_ANY;
@@ -429,7 +429,7 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
         }
         else {
             if (ctx->hostName != NULL) {
-                free(ctx->hostName);
+                WFREE(ctx->hostName, NULL, 0);
                 ctx->hostName = NULL;
             }
             if (ctx->listenFd != -1) {
@@ -441,11 +441,11 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
     }
     else if (action == WOLFSSH_FWD_REMOTE_CLEANUP) {
         if (ctx->hostName) {
-            free(ctx->hostName);
+            WFREE(ctx->hostName, NULL, 0);
             ctx->hostName = NULL;
         }
         if (ctx->originName) {
-            free(ctx->originName);
+            WFREE(ctx->originName, NULL, 0);
             ctx->originName = NULL;
         }
         if (ctx->listenFd != -1) {
@@ -515,7 +515,7 @@ static int termios_show(int fd)
     int i;
     int rc;
 
-    memset((void *) &tios, 0, sizeof(tios));
+    WMEMSET((void *) &tios, 0, sizeof(tios));
     rc = tcgetattr(fd, &tios);
     printf("tcgetattr returns=%x\n", rc);
 
@@ -796,7 +796,8 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                         WCLOSESOCKET(fwdFd);
                         fwdFd = -1;
                         if (threadCtx->fwdCbCtx.hostName != NULL) {
-                            free(threadCtx->fwdCbCtx.hostName);
+                            WFREE(threadCtx->fwdCbCtx.hostName,
+                                    NULL, 0);
                             threadCtx->fwdCbCtx.hostName = NULL;
                         }
                         threadCtx->fwdCbCtx.state = FWD_STATE_LISTEN;
@@ -917,7 +918,8 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                         WCLOSESOCKET(fwdFd);
                         fwdFd = -1;
                         if (threadCtx->fwdCbCtx.hostName != NULL) {
-                            free(threadCtx->fwdCbCtx.hostName);
+                            WFREE(threadCtx->fwdCbCtx.hostName,
+                                    NULL, 0);
                             threadCtx->fwdCbCtx.hostName = NULL;
                         }
                         threadCtx->fwdCbCtx.state = FWD_STATE_LISTEN;
@@ -986,7 +988,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                         threadCtx->fwdCbCtx.state = FWD_STATE_CONNECT;
                         threadCtx->fwdCbCtx.appFd = fwdFd;
                         originAddrSz = sizeof originAddr;
-                        memset(&originAddr, 0, originAddrSz);
+                        WMEMSET(&originAddr, 0, originAddrSz);
                         if (getpeername(fwdFd,
                                 (struct sockaddr*)&originAddr,
                                 &originAddrSz) == 0) {
@@ -1035,7 +1037,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                 if (ret == 0) {
                     struct sockaddr_in addr;
 
-                    memset(&addr, 0, sizeof addr);
+                    WMEMSET(&addr, 0, sizeof addr);
                     addr.sin_family = AF_INET;
                     addr.sin_addr.s_addr =
                         inet_addr(threadCtx->fwdCbCtx.hostName);
@@ -1226,11 +1228,11 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
     }
 #ifdef WOLFSSH_FWD
     if (threadCtx->fwdCbCtx.hostName != NULL) {
-        free(threadCtx->fwdCbCtx.hostName);
+        WFREE(threadCtx->fwdCbCtx.hostName, NULL, 0);
         threadCtx->fwdCbCtx.hostName = NULL;
     }
     if (threadCtx->fwdCbCtx.originName != NULL) {
-        free(threadCtx->fwdCbCtx.originName);
+        WFREE(threadCtx->fwdCbCtx.originName, NULL, 0);
         threadCtx->fwdCbCtx.originName = NULL;
     }
 #endif
@@ -1246,7 +1248,7 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
     #endif
     }
 
-    free(threadCtx);
+    WFREE(threadCtx, NULL, 0);
 
     return 0;
 }
@@ -1345,12 +1347,12 @@ static PwMap* PwMapNew(PwMapList* list, byte type, const byte* username,
 {
     PwMap* map;
 
-    map = (PwMap*)malloc(sizeof(PwMap));
+    map = (PwMap*)WMALLOC(sizeof(PwMap), NULL, 0);
     if (map != NULL) {
         map->type = type;
         if (usernameSz >= sizeof(map->username))
             usernameSz = sizeof(map->username) - 1;
-        memcpy(map->username, username, usernameSz + 1);
+        WMEMCPY(map->username, username, usernameSz + 1);
         map->username[usernameSz] = 0;
         map->usernameSz = usernameSz;
 
@@ -1374,8 +1376,8 @@ static void PwMapListDelete(PwMapList* list)
         while (head != NULL) {
             PwMap* cur = head;
             head = head->next;
-            memset(cur, 0, sizeof(PwMap));
-            free(cur);
+            WMEMSET(cur, 0, sizeof(PwMap));
+            WFREE(cur, NULL, 0);
         }
     }
 }
@@ -1448,14 +1450,14 @@ static int LoadNoneBuffer(byte* buf, word32 bufSz, PwMapList* list)
 
     while (*str != 0) {
         username = str;
-        str = strchr(username, '\n');
+        str = WSTRCHR(username, '\n');
         if (str == NULL) {
             return -1;
         }
         *str = 0;
         str++;
         if (PwMapNew(list, WOLFSSH_USERAUTH_NONE,
-                     (byte*)username, (word32)strlen(username),
+                     (byte*)username, (word32)WSTRLEN(username),
                      NULL, 0) == NULL ) {
 
             return -1;
@@ -1484,22 +1486,22 @@ static int LoadPasswordBuffer(byte* buf, word32 bufSz, PwMapList* list)
         return 0;
 
     while (*str != 0) {
-        delimiter = strchr(str, ':');
+        delimiter = WSTRCHR(str, ':');
         if (delimiter == NULL) {
             return -1;
         }
         username = str;
         *delimiter = 0;
         password = delimiter + 1;
-        str = strchr(password, '\n');
+        str = WSTRCHR(password, '\n');
         if (str == NULL) {
             return -1;
         }
         *str = 0;
         str++;
         if (PwMapNew(list, WOLFSSH_USERAUTH_PASSWORD,
-                     (byte*)username, (word32)strlen(username),
-                     (byte*)password, (word32)strlen(password)) == NULL ) {
+                     (byte*)username, (word32)WSTRLEN(username),
+                     (byte*)password, (word32)WSTRLEN(password)) == NULL ) {
 
             return -1;
         }
@@ -1532,14 +1534,14 @@ static int LoadPublicKeyBuffer(byte* buf, word32 bufSz, PwMapList* list)
 
     while (str < end && *str != 0) {
         /* Skip the public key type. This example will always be ssh-rsa. */
-        delimiter = strchr(str, ' ');
+        delimiter = WSTRCHR(str, ' ');
         if (delimiter == NULL) {
             return -1;
         }
         if (str >= end)
             break;
         str = delimiter + 1;
-        delimiter = strchr(str, ' ');
+        delimiter = WSTRCHR(str, ' ');
         if (delimiter == NULL) {
             return -1;
         }
@@ -1549,7 +1551,7 @@ static int LoadPublicKeyBuffer(byte* buf, word32 bufSz, PwMapList* list)
         if (str >= end)
             break;
         str = delimiter + 1;
-        delimiter = strchr(str, '\n');
+        delimiter = WSTRCHR(str, '\n');
         if (delimiter == NULL) {
             return -1;
         }
@@ -1560,9 +1562,9 @@ static int LoadPublicKeyBuffer(byte* buf, word32 bufSz, PwMapList* list)
 
         /* more than enough space for base64 decode
          * not using WMALLOC because internal.h is not included for DYNTYPE_* */
-        publicKey = (byte*)malloc(publicKey64Sz);
+        publicKey = (byte*)WMALLOC(publicKey64Sz, NULL, 0);
         if (publicKey == NULL) {
-            fprintf(stderr, "error with malloc\n");
+            fprintf(stderr, "error with WMALLOC\n");
             return -1;
         }
         publicKeySz = publicKey64Sz;
@@ -1570,7 +1572,7 @@ static int LoadPublicKeyBuffer(byte* buf, word32 bufSz, PwMapList* list)
         if (Base64_Decode(publicKey64, publicKey64Sz,
                           publicKey, &publicKeySz) != 0) {
 
-            free(publicKey);
+            WFREE(publicKey, NULL, 0);
             return -1;
         }
 
@@ -1582,10 +1584,10 @@ static int LoadPublicKeyBuffer(byte* buf, word32 bufSz, PwMapList* list)
                      username, usernameSz,
                      publicKey, publicKeySz) == NULL ) {
 
-            free(publicKey);
+            WFREE(publicKey, NULL, 0);
             return -1;
         }
-        free(publicKey);
+        WFREE(publicKey, NULL, 0);
     }
 
     return 0;
@@ -1631,11 +1633,11 @@ static int wsUserAuth(byte authType,
 
     while (map != NULL) {
         if (authData->usernameSz == map->usernameSz &&
-            memcmp(authData->username, map->username, map->usernameSz) == 0 &&
+            WMEMCMP(authData->username, map->username, map->usernameSz) == 0 &&
             authData->type == map->type) {
 
             if (authData->type == WOLFSSH_USERAUTH_PUBLICKEY) {
-                if (memcmp(map->p, authHash, WC_SHA256_DIGEST_SIZE) == 0) {
+                if (WMEMCMP(map->p, authHash, WC_SHA256_DIGEST_SIZE) == 0) {
                     return WOLFSSH_USERAUTH_SUCCESS;
                 }
                 else {
@@ -1643,7 +1645,7 @@ static int wsUserAuth(byte authType,
                 }
             }
             else if (authData->type == WOLFSSH_USERAUTH_PASSWORD) {
-                if (memcmp(map->p, authHash, WC_SHA256_DIGEST_SIZE) == 0) {
+                if (WMEMCMP(map->p, authHash, WC_SHA256_DIGEST_SIZE) == 0) {
                     return WOLFSSH_USERAUTH_SUCCESS;
                 }
                 else {
@@ -1663,7 +1665,7 @@ static int wsUserAuth(byte authType,
             }
 
             if (authData->type == map->type) {
-                if (memcmp(map->p, authHash, WC_SHA256_DIGEST_SIZE) == 0) {
+                if (WMEMCMP(map->p, authHash, WC_SHA256_DIGEST_SIZE) == 0) {
                     return WOLFSSH_USERAUTH_SUCCESS;
                 }
                 else {
@@ -1753,7 +1755,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         switch (ch) {
             case '?' :
                 ShowUsage();
-                exit(EXIT_SUCCESS);
+                WEXIT(EXIT_SUCCESS);
 
             case '1':
                 multipleConnections = 0;
@@ -1799,7 +1801,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
             default:
                 ShowUsage();
-                exit(MY_EX_USAGE);
+                WEXIT(MY_EX_USAGE);
         }
     }
     }
@@ -1825,16 +1827,16 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
     if (wolfSSH_Init() != WS_SUCCESS) {
         fprintf(stderr, "Couldn't initialize wolfSSH.\n");
-        exit(EXIT_FAILURE);
+        WEXIT(EXIT_FAILURE);
     }
 
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
     if (ctx == NULL) {
         fprintf(stderr, "Couldn't allocate SSH CTX data.\n");
-        exit(EXIT_FAILURE);
+        WEXIT(EXIT_FAILURE);
     }
 
-    memset(&pwMapList, 0, sizeof(pwMapList));
+    WMEMSET(&pwMapList, 0, sizeof(pwMapList));
     if (serverArgs->user_auth == NULL)
         wolfSSH_SetUserAuth(ctx, wsUserAuth);
     else
@@ -1859,7 +1861,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             keyLoadBuf = (byte*)WMALLOC(EXAMPLE_KEYLOAD_BUFFER_SZ,
                     NULL, 0);
             if (keyLoadBuf == NULL) {
-                exit(EXIT_FAILURE);
+                WEXIT(EXIT_FAILURE);
             }
         #else
             keyLoadBuf = buf;
@@ -1869,12 +1871,12 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         bufSz = load_key(peerEcc, keyLoadBuf, bufSz);
         if (bufSz == 0) {
             fprintf(stderr, "Couldn't load key file.\n");
-            exit(EXIT_FAILURE);
+            WEXIT(EXIT_FAILURE);
         }
         if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, keyLoadBuf, bufSz,
                                              WOLFSSH_FORMAT_ASN1) < 0) {
             fprintf(stderr, "Couldn't use key buffer.\n");
-            exit(EXIT_FAILURE);
+            WEXIT(EXIT_FAILURE);
         }
 
         if (userPubKey) {
@@ -1887,20 +1889,20 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             /* create temp buffer and load in file */
             if (userBufSz == 0) {
                 fprintf(stderr, "Couldn't find size of file %s.\n", userPubKey);
-                exit(EXIT_FAILURE);
+                WEXIT(EXIT_FAILURE);
             }
 
-            userBuf = (byte*)malloc(userBufSz);
+            userBuf = (byte*)WMALLOC(userBufSz, NULL, 0);
             if (userBuf == NULL) {
-                fprintf(stderr, "malloc failed\n");
-                exit(EXIT_FAILURE);
+                fprintf(stderr, "WMALLOC failed\n");
+                WEXIT(EXIT_FAILURE);
             }
             load_file(userPubKey, userBuf, &userBufSz);
             LoadPublicKeyBuffer(userBuf, userBufSz, &pwMapList);
         }
 
-        bufSz = (word32)strlen(samplePasswordBuffer);
-        memcpy(keyLoadBuf, samplePasswordBuffer, bufSz);
+        bufSz = (word32)WSTRLEN(samplePasswordBuffer);
+        WMEMCPY(keyLoadBuf, samplePasswordBuffer, bufSz);
         keyLoadBuf[bufSz] = 0;
         LoadPasswordBuffer(keyLoadBuf, bufSz, &pwMapList);
 
@@ -1915,14 +1917,14 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         #endif
         }
         if (bufName != NULL) {
-            bufSz = (word32)strlen(bufName);
-            memcpy(keyLoadBuf, bufName, bufSz);
+            bufSz = (word32)WSTRLEN(bufName);
+            WMEMCPY(keyLoadBuf, bufName, bufSz);
             keyLoadBuf[bufSz] = 0;
             LoadPublicKeyBuffer(keyLoadBuf, bufSz, &pwMapList);
         }
 
-        bufSz = (word32)strlen(sampleNoneBuffer);
-        memcpy(keyLoadBuf, sampleNoneBuffer, bufSz);
+        bufSz = (word32)WSTRLEN(sampleNoneBuffer);
+        WMEMCPY(keyLoadBuf, sampleNoneBuffer, bufSz);
         keyLoadBuf[bufSz] = 0;
         LoadNoneBuffer(keyLoadBuf, bufSz, &pwMapList);
 
@@ -1938,7 +1940,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         /* wait for network and storage device */
         if (NETBOOT_Wait_For_Network_Up(NU_SUSPEND) != NU_SUCCESS) {
             fprintf(stderr, "Couldn't find network.\r\n");
-            exit(EXIT_FAILURE);
+            WEXIT(EXIT_FAILURE);
         }
 
         for(i = 0; i < 15 && ret != NU_SUCCESS; i++)
@@ -1950,7 +1952,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
         if (ret != NU_SUCCESS) {
             fprintf(stderr, "Couldn't find storage device.\r\n");
-            exit(EXIT_FAILURE);
+            WEXIT(EXIT_FAILURE);
         }
     }
 #endif
@@ -1959,7 +1961,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     if (readyFile != NULL) {
     #ifdef NO_FILESYSTEM
         fprintf(stderr, "cannot create readyFile with no file system.\r\n");
-        exit(EXIT_FAILURE);
+        WEXIT(EXIT_FAILURE);
     #endif
         port = 0;
     }
@@ -1988,18 +1990,19 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         WOLFSSH*      ssh;
         thread_ctx_t* threadCtx;
 
-        threadCtx = (thread_ctx_t*)malloc(sizeof(thread_ctx_t));
+        threadCtx = (thread_ctx_t*)WMALLOC(sizeof(thread_ctx_t),
+                NULL, 0);
         if (threadCtx == NULL) {
             fprintf(stderr, "Couldn't allocate thread context data.\n");
-            exit(EXIT_FAILURE);
+            WEXIT(EXIT_FAILURE);
         }
-        memset(threadCtx, 0, sizeof *threadCtx);
+        WMEMSET(threadCtx, 0, sizeof *threadCtx);
 
         ssh = wolfSSH_new(ctx);
         if (ssh == NULL) {
-            free(threadCtx);
+            WFREE(threadCtx, NULL, 0);
             fprintf(stderr, "Couldn't allocate SSH data.\n");
-            exit(EXIT_FAILURE);
+            WEXIT(EXIT_FAILURE);
         }
         wolfSSH_SetUserAuthCtx(ssh, &pwMapList);
         /* Use the session object for its own highwater callback ctx */
@@ -2013,7 +2016,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             if (wolfSSH_SFTP_SetDefaultPath(ssh, defaultSftpPath)
                     != WS_SUCCESS) {
                 fprintf(stderr, "Couldn't store default sftp path.\n");
-                exit(EXIT_FAILURE);
+                WEXIT(EXIT_FAILURE);
             }
         }
     #endif
@@ -2031,7 +2034,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
              * 0.0.0.0 if ip adder any */
             if (NU_Get_Sock_Name(listenFd, &sock, &addrLength) != NU_SUCCESS) {
                 fprintf(stderr, "Couldn't find network.\r\n");
-                exit(EXIT_FAILURE);
+                WEXIT(EXIT_FAILURE);
             }
 
             WMEMCPY(ipaddr, &sock.ip_num, MAX_ADDRESS_SIZE);
@@ -2082,7 +2085,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     wolfSSH_CTX_free(ctx);
     if (wolfSSH_Cleanup() != WS_SUCCESS) {
         fprintf(stderr, "Couldn't clean up wolfSSH.\n");
-        exit(EXIT_FAILURE);
+        WEXIT(EXIT_FAILURE);
     }
 #if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
