@@ -388,6 +388,7 @@ extern "C" {
 
     #define WSTRLEN(s1)       strlen((s1))
     #define WSTRSTR(s1,s2)    strstr((s1),(s2))
+    #define WSTRCMP(s1,s2)    strcmp((s1),(s2))
     #define WSTRNCMP(s1,s2,n) strncmp((s1),(s2),(n))
     #define WSTRSPN(s1,s2)    strspn((s1),(s2))
     #define WSTRCSPN(s1,s2)   strcspn((s1),(s2))
@@ -399,8 +400,7 @@ extern "C" {
     #define WSTRNSTR(s1,s2,n) wstrnstr((s1),(s2),(n))
     #define WSTRNCAT(s1,s2,n) wstrncat((s1),(s2),(n))
     #define WSTRDUP(s,h,t)    wstrdup((s),(h),(t))
-
-#define WSTRCHR(s,c) strchr((s),(c))
+    #define WSTRCHR(s,c) strchr((s),(c))
 
     #ifdef USE_WINDOWS_API
         #define WSTRNCPY(s1,s2,n) strncpy_s((s1),(n),(s2),(n))
