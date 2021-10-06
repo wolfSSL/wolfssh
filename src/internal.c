@@ -4773,6 +4773,9 @@ static int DoGlobalRequestFwd(WOLFSSH* ssh,
         }
     }
 
+    if (bindAddr != NULL)
+        WFREE(bindAddr, ssh->ctx->heap, DYNTYPE_STRING);
+
     WLOG(WS_LOG_DEBUG, "Leaving DoGlobalRequestFwd(), ret = %d", ret);
     return ret;
 }
@@ -6241,7 +6244,7 @@ int DoReceive(WOLFSSH* ssh)
         case PROCESS_PACKET:
             ret = DoPacket(ssh);
             ssh->error = ret;
-            if (ret < 0 && ret != WS_CHAN_RXD) {
+            if (ret < 0 && !(ret == WS_CHAN_RXD || ret == WS_CHANNEL_CLOSED)) {
                 return WS_FATAL_ERROR;
             }
             WLOG(WS_LOG_DEBUG, "PR3: peerMacSz = %u", peerMacSz);
