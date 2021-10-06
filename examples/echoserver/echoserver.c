@@ -375,6 +375,45 @@ static int wolfSSH_AGENT_DefaultActions(WS_AgentCbAction action, void* vCtx)
 
 #ifdef WOLFSSH_FWD
 
+static int connect_addr(const char* name, word16 port)
+{
+    int newSocket = -1, ret;
+    struct addrinfo hints, *hint, *hint0 = NULL;
+    char portStr[6];
+
+    WMEMSET(&hints, 0, sizeof hints);
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE;
+
+    snprintf(portStr, sizeof portStr, "%u", port);
+
+    ret = getaddrinfo(name, portStr, &hints, &hint0);
+    if (ret)
+        return -1;
+
+    for (hint = hint0; hint != NULL; hint = hint->ai_next) {
+        newSocket = socket(hint->ai_family,
+                hint->ai_socktype, hint->ai_protocol);
+
+        if (newSocket < 0)
+            continue;
+
+        if (connect(newSocket, hint->ai_addr, hint->ai_addrlen) < 0) {
+            WCLOSESOCKET(newSocket);
+            newSocket = -1;
+            continue;
+        }
+
+        break;
+    }
+
+    freeaddrinfo(hint0);
+
+    return newSocket;
+}
+
+
 static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
         const char* name, word32 port)
 {
@@ -410,14 +449,26 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
 
         if (ret == 0) {
             struct sockaddr_in addr;
+            socklen_t addrSz = 0;
 
             WMEMSET(&addr, 0, sizeof addr);
-            addr.sin_family = AF_INET;
-            addr.sin_port = htons((word16)port);
-            addr.sin_addr.s_addr = INADDR_ANY;
+            if (WSTRCMP(name, "") == 0 ||
+                WSTRCMP(name, "0.0.0.0") == 0 ||
+                WSTRCMP(name, "localhost") == 0 ||
+                WSTRCMP(name, "127.0.0.1") == 0) {
+
+                addr.sin_addr.s_addr = INADDR_ANY;
+                addr.sin_family = AF_INET;
+                addr.sin_port = htons((word16)port);
+                addrSz = sizeof addr;
+            }
+            else {
+                printf("Not using IPv6 yet.\n");
+                WEXIT(EXIT_FAILURE);
+            }
 
             ret = bind(ctx->listenFd,
-                    (const struct sockaddr*)&addr, sizeof addr);
+                    (const struct sockaddr*)&addr, addrSz);
         }
 
         if (ret == 0) {
@@ -1027,30 +1078,12 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                 }
             }
             if (threadCtx->fwdCbCtx.state == FWD_STATE_DIRECT) {
-                int ret = 0;
+                fwdFd = connect_addr(threadCtx->fwdCbCtx.hostName,
+                        threadCtx->fwdCbCtx.hostPort);
 
-                fwdFd = socket(AF_INET, SOCK_STREAM, 0);
-                if (fwdFd == -1) {
-                    ret = -1;
+                if (fwdFd > 0) {
+                    threadCtx->fwdCbCtx.state = FWD_STATE_CONNECTED;
                 }
-
-                if (ret == 0) {
-                    struct sockaddr_in addr;
-
-                    WMEMSET(&addr, 0, sizeof addr);
-                    addr.sin_family = AF_INET;
-                    addr.sin_addr.s_addr =
-                        inet_addr(threadCtx->fwdCbCtx.hostName);
-                    addr.sin_port = htons(threadCtx->fwdCbCtx.hostPort);
-
-                    ret = connect(fwdFd,
-                            (const struct sockaddr*)&addr, sizeof addr);
-                    if (ret == 0)
-                        threadCtx->fwdCbCtx.state = FWD_STATE_CONNECTED;
-                    else
-                        WCLOSESOCKET(fwdFd);
-                }
-
             }
             #endif
         }
