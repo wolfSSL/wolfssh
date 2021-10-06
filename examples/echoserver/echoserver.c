@@ -846,10 +846,10 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                            to listening. */
                         WCLOSESOCKET(fwdFd);
                         fwdFd = -1;
-                        if (threadCtx->fwdCbCtx.hostName != NULL) {
-                            WFREE(threadCtx->fwdCbCtx.hostName,
+                        if (threadCtx->fwdCbCtx.originName != NULL) {
+                            WFREE(threadCtx->fwdCbCtx.originName,
                                     NULL, 0);
-                            threadCtx->fwdCbCtx.hostName = NULL;
+                            threadCtx->fwdCbCtx.originName = NULL;
                         }
                         threadCtx->fwdCbCtx.state = FWD_STATE_LISTEN;
                         #endif
@@ -866,29 +866,32 @@ static int ssh_worker(thread_ctx_t* threadCtx)
             }
 
             #ifdef WOLFSSH_SHELL
-            if (FD_ISSET(childFd, &readFds)) {
-                cnt_r = (int)read(childFd,
-                        threadCtx->shellBuffer,
-                        sizeof threadCtx->shellBuffer);
-                if (cnt_r < 0) {
-                    int err = errno;
-                    if (err != EAGAIN) {
-                        #ifdef SHELL_DEBUG
-                            printf("Break:read childFd returns %d: errno =%x\n",
-                                    cnt_r, err);
-                        #endif
-                        break;
-                    }
-                }
-                else {
-                    #ifdef SHELL_DEBUG
-                        buf_dump(threadCtx->shellBuffer, cnt_r);
-                    #endif
-                    if (cnt_r > 0) {
-                        cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
-                                threadCtx->shellBuffer, cnt_r);
-                        if (cnt_w < 0)
+            if (!threadCtx->echo) {
+                if (FD_ISSET(childFd, &readFds)) {
+                    cnt_r = (int)read(childFd,
+                            threadCtx->shellBuffer,
+                            sizeof threadCtx->shellBuffer);
+                    if (cnt_r < 0) {
+                        int err = errno;
+                        if (err != EAGAIN) {
+                            #ifdef SHELL_DEBUG
+                                printf("Break:read childFd returns %d: "
+                                        "errno =%x\n",
+                                        cnt_r, err);
+                            #endif
                             break;
+                        }
+                    }
+                    else {
+                        #ifdef SHELL_DEBUG
+                            buf_dump(threadCtx->shellBuffer, cnt_r);
+                        #endif
+                        if (cnt_r > 0) {
+                            cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
+                                    threadCtx->shellBuffer, cnt_r);
+                            if (cnt_w < 0)
+                                break;
+                        }
                     }
                 }
             }
@@ -1088,7 +1091,8 @@ static int ssh_worker(thread_ctx_t* threadCtx)
             #endif
         }
 #ifdef WOLFSSH_SHELL
-        WCLOSESOCKET(childFd);
+        if (!threadCtx->echo)
+            WCLOSESOCKET(childFd);
 #endif
     }
 
