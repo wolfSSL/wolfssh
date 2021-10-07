@@ -44,7 +44,6 @@ WOLFSSH_LOCAL void ato32(const byte*, word32*);
 WOLFSSH_LOCAL void c32toa(word32, byte*);
 WOLFSSH_LOCAL void ForceZero(const void*, word32);
 WOLFSSH_LOCAL int ConstantCompare(const byte*, const byte*, word32);
-WOLFSSH_LOCAL void CreateMpint(byte*, word32*, byte*);
 
 
 #endif /* NO_INLINE */
