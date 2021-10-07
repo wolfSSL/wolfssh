@@ -87,6 +87,7 @@
     #define SOCKET_ECONNABORTED ECONNABORTED
     #define SOCKET_EWOULDBLOCK EWOULDBLOCK
 #else
+    #include <WS2tcpip.h>
     #define SOCKET_ERRNO WSAGetLastError()
     #define SOCKET_ECONNRESET WSAECONNRESET
     #define SOCKET_ECONNABORTED WSAECONNABORTED
@@ -375,9 +376,10 @@ static int wolfSSH_AGENT_DefaultActions(WS_AgentCbAction action, void* vCtx)
 
 #ifdef WOLFSSH_FWD
 
-static int connect_addr(const char* name, word16 port)
+static WS_SOCKET_T connect_addr(const char* name, word16 port)
 {
-    int newSocket = -1, ret;
+    WS_SOCKET_T newSocket = -1;
+    int ret;
     struct addrinfo hints, *hint, *hint0 = NULL;
     char portStr[6];
 
@@ -399,7 +401,8 @@ static int connect_addr(const char* name, word16 port)
         if (newSocket < 0)
             continue;
 
-        if (connect(newSocket, hint->ai_addr, hint->ai_addrlen) < 0) {
+        if (connect(newSocket, hint->ai_addr,
+                (WS_SOCKLEN_T)hint->ai_addrlen) < 0) {
             WCLOSESOCKET(newSocket);
             newSocket = -1;
             continue;
@@ -421,7 +424,7 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
     int ret = 0;
 
     if (action == WOLFSSH_FWD_LOCAL_SETUP) {
-        ctx->hostName = strdup(name);
+        ctx->hostName = WSTRDUP(name, NULL, 0);
         ctx->hostPort = port;
         ctx->isDirect = 1;
         ctx->state = FWD_STATE_DIRECT;
@@ -439,7 +442,7 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
         ctx->state = FWD_STATE_INIT;
     }
     else if (action == WOLFSSH_FWD_REMOTE_SETUP) {
-        ctx->hostName = strdup(name);
+        ctx->hostName = WSTRDUP(name, NULL, 0);
         ctx->hostPort = port;
 
         ctx->listenFd = socket(AF_INET, SOCK_STREAM, 0);
@@ -1061,7 +1064,8 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                             }
                         }
                         if (out != NULL) {
-                            threadCtx->fwdCbCtx.originName = strdup(addr);
+                            threadCtx->fwdCbCtx.originName =
+                                WSTRDUP(addr, NULL, 0);
                             threadCtx->fwdCbCtx.originPort =
                                 ntohs(originAddr.sin6_port);
                         }
