@@ -1142,6 +1142,13 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 #endif
     }
     ret = wolfSSH_shutdown(ssh);
+    if (ret != WS_SUCCESS) {
+        err_sys("Sending the shutdown messages failed.");
+    }
+    ret = wolfSSH_worker(ssh, NULL);
+    if (ret != WS_SUCCESS) {
+        err_sys("Failed to listen for close messages from the peer.");
+    }
     WCLOSESOCKET(sockFd);
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
