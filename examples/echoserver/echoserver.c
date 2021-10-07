@@ -845,16 +845,21 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                     }
                     else if (rc == WS_CHANNEL_CLOSED) {
                         #ifdef WOLFSSH_FWD
-                        /* Read zero-returned. Socket is closed. Go back
-                           to listening. */
-                        WCLOSESOCKET(fwdFd);
-                        fwdFd = -1;
-                        if (threadCtx->fwdCbCtx.originName != NULL) {
-                            WFREE(threadCtx->fwdCbCtx.originName,
-                                    NULL, 0);
-                            threadCtx->fwdCbCtx.originName = NULL;
+                        if (threadCtx->fwdCbCtx.state == FWD_STATE_CONNECTED &&
+                            lastChannel == threadCtx->fwdCbCtx.channelId) {
+                            /* Read zero-returned. Socket is closed. Go back
+                               to listening. */
+                            if (fwdFd != -1) {
+                                WCLOSESOCKET(fwdFd);
+                                fwdFd = -1;
+                            }
+                            if (threadCtx->fwdCbCtx.originName != NULL) {
+                                WFREE(threadCtx->fwdCbCtx.originName,
+                                        NULL, 0);
+                                threadCtx->fwdCbCtx.originName = NULL;
+                            }
+                            threadCtx->fwdCbCtx.state = FWD_STATE_LISTEN;
                         }
-                        threadCtx->fwdCbCtx.state = FWD_STATE_LISTEN;
                         #endif
                         continue;
                     }
