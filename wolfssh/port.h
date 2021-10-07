@@ -1247,8 +1247,10 @@ extern "C" {
 
 #if defined(USE_WINDOWS_API)
     #define WS_SOCKET_T SOCKET
+    #define WS_SOCKLEN_T int
 #else
     #define WS_SOCKET_T int
+    #define WS_SOCKLEN_T socklen_t
 #endif
 
 
