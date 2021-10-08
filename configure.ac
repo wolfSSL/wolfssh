@@ -55,6 +55,33 @@ AC_CHECK_SIZEOF([off_t])
 AC_CHECK_HEADERS([sys/select.h sys/time.h pty.h util.h termios.h])
 AC_CHECK_LIB([network],[socket])
 AC_CHECK_LIB([util],[forkpty])
+
+#wolfssl
+AC_MSG_CHECKING([for wolfSSL])
+if test "x$prefix" = "xNONE"
+then
+    wcpath=$ac_default_prefix
+else
+    wcpath=$prefix
+fi
+AC_MSG_NOTICE([prefix ${prefix}])
+WOLFSSL_URL="http://www.wolfssl.com/download.html"
+AC_ARG_WITH(wolfssl,
+  [AS_HELP_STRING([--with-wolfssl=PATH], [PATH to wolfssl install (default /usr/local)])],
+  [
+    if test "x$withval" != "xno" ; then
+      if test -d "${withval}/lib" && test -d "${withval}/include"; then
+        wcpath=${withval}
+      else
+        AC_MSG_ERROR([wolfSSL path error (${withval}): missing lib and include])
+      fi
+    fi
+  ]
+)
+
+LDFLAGS="$LDFLAGS -L${wcpath}/lib"
+CPPFLAGS="$CPPFLAGS -I${wcpath}/include"
+
 AC_CHECK_LIB([wolfssl],[wolfCrypt_Init],,[AC_MSG_ERROR([libwolfssl is required for ${PACKAGE}. It can be obtained from https://www.wolfssl.com/download.html/ .])])
 AC_CHECK_FUNCS([gethostbyname getaddrinfo gettimeofday inet_ntoa memset socket wc_ecc_set_rng])
 
