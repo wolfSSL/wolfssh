@@ -6267,6 +6267,11 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                     return WS_FATAL_ERROR;
                 }
                 WLOG(WS_LOG_SFTP, "SFTP LSTAT STATE: PARSE_REPLY");
+
+                /* after doing a 'read' the buffers index is now set to just
+                 * after the data that has been read, rewind here to set the
+                 * index to the beginning of data read and then process it */
+                wolfSSH_SFTP_buffer_rewind(&state->buffer);
                 if (state->type == WOLFSSH_FTP_ATTRS) {
                     localIdx = wolfSSH_SFTP_buffer_idx(&state->buffer);
                     ret = SFTP_ParseAtributes_buffer(ssh, atr,
@@ -6284,7 +6289,6 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                     }
                 }
                 else if (state->type == WOLFSSH_FTP_STATUS) {
-                    wolfSSH_SFTP_buffer_rewind(&state->buffer);
                     ret = wolfSSH_SFTP_DoStatus(ssh, state->reqId,
                             &state->buffer);
                     if (ret != WOLFSSH_FTP_OK) {
@@ -6429,6 +6433,10 @@ int wolfSSH_SFTP_SetSTAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
                 }
                 return WS_FATAL_ERROR;
             }
+
+            /* free up the buffer used to send data so that a new fresh buffer
+             * can be created when next reading the attribute packet header */
+            wolfSSH_SFTP_buffer_free(ssh, &state->buffer);
             state->state = STATE_SET_ATR_GET;
             NO_BREAK;
 
