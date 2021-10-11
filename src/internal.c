@@ -7434,14 +7434,13 @@ int SendKexDhReply(WOLFSSH* ssh)
         }
     }
 
-    sigBlockSz = (LENGTH_SZ * 2) + sigKeyBlock_ptr->nameSz + sigSz;
-
     if (ret == WS_SUCCESS)
         ret = GenerateKeys(ssh);
 
     /* Get the buffer, copy the packet data, once f is laid into the buffer,
      * add it to the hash and then add K. */
     if (ret == WS_SUCCESS) {
+        sigBlockSz = (LENGTH_SZ * 2) + sigKeyBlock_ptr->nameSz + sigSz;
         payloadSz = MSG_ID_SZ + (LENGTH_SZ * 3) +
                     sigKeyBlock_ptr->sz + fSz + fPad + sigBlockSz;
         ret = PreparePacket(ssh, payloadSz);
