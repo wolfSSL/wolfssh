@@ -1036,15 +1036,19 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
     if (ret == WS_SUCCESS) {
         while (inputBuffer->length - inputBuffer->idx == 0) {
             ret = DoReceive(ssh);
-            if (ssh->channelList == NULL || ssh->channelList->receivedEof)
+            if (ssh->channelList == NULL || ssh->channelList->eofRxd)
                 ret = WS_EOF;
             if (ret < 0 && ret != WS_CHAN_RXD) {
                 break;
             }
-            if (ssh->error == WS_CHAN_RXD &&
-                    ssh->lastRxId != ssh->channelList->channel) {
-                ret = WS_ERROR;
-                break;
+            if (ssh->error == WS_CHAN_RXD) {
+                if (ssh->lastRxId != ssh->channelList->channel) {
+                    ret = WS_ERROR;
+                    break;
+                }
+                else {
+                    ret = WS_SUCCESS;
+                }
             }
         }
     }
@@ -1123,30 +1127,36 @@ int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz)
 int wolfSSH_ChannelIdSend(WOLFSSH* ssh, word32 channelId,
         byte* buf, word32 bufSz)
 {
-    int bytesTxd = 0;
+    WOLFSSH_CHANNEL* channel;
+    int ret = WS_SUCCESS;
 
-    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelIdSend()");
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelIdSend(), ID = %u",
+            channelId);
 
     if (ssh == NULL || buf == NULL)
-        return WS_BAD_ARGUMENT;
+        ret = WS_BAD_ARGUMENT;
 
-    /* case of WANT WRITE and data stored in output buffer */
-    if (ssh->outputBuffer.plainSz && ssh->outputBuffer.length != 0) {
-        int ret;
-
-        bytesTxd = ssh->outputBuffer.plainSz;
-        WLOG(WS_LOG_DEBUG, "Trying to resend %d bytes", bytesTxd);
-        ssh->error = WS_SUCCESS;
-        ret = wolfSSH_SendPacket(ssh);
-
-        /* return the amount sent on success otherwise return error found */
-        return (ret == WS_SUCCESS)? bytesTxd : ret;
+    if (ret == WS_SUCCESS) {
+        channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
+        if (channel == NULL) {
+            WLOG(WS_LOG_DEBUG, "Invalid channel");
+            ret = WS_INVALID_CHANID;
+        }
+        else {
+            if (!channel->openConfirmed) {
+                WLOG(WS_LOG_DEBUG, "Channel not confirmed yet.");
+                ret = WS_CHANNEL_NOT_CONF;
+            }
+        }
     }
 
-    bytesTxd = SendChannelData(ssh, channelId, buf, bufSz);
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "Sending data.");
+        ret = SendChannelData(ssh, channelId, buf, bufSz);
+    }
 
-    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelIdSend(), txd = %d", bytesTxd);
-    return bytesTxd;
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelIdSend(), txd = %d", ret);
+    return ret;
 }
 
 
@@ -1397,6 +1407,15 @@ char* wolfSSH_GetUsername(WOLFSSH* ssh)
 #include <wolfssl/wolfcrypt/asn_public.h>
 #include <wolfssl/wolfcrypt/coding.h>
 
+union wolfSSH_key {
+#ifndef WOLFSSH_NO_RSA
+    RsaKey rsa;
+#endif
+#ifndef WOLFSSH_NO_ECDSA
+    ecc_key ecc;
+#endif
+};
+
 /* Reads a key from the buffer in to out. If the out buffer doesn't exist
    it is created. The type of key is stored in outType. It'll be a pointer
    to a constant string. Format indicates the format of the key, currently
@@ -1406,6 +1425,7 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
         void* heap)
 {
     int ret = WS_SUCCESS;
+    byte* newKey = NULL;
 
     (void)heap;
 
@@ -1439,6 +1459,17 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
             *outType = (const byte*)name;
             *outTypeSz = typeSz;
 
+            if (*out == NULL) {
+                /* set size based on sanity check in wolfSSL base64 decode
+                 * function */
+                *outSz = ((word32)WSTRLEN(key) * 3 + 3) / 4;
+                newKey = (byte*)WMALLOC(*outSz, heap, DYNTYPE_PRIVKEY);
+                if (newKey == NULL) {
+                    return WS_MEMORY_E;
+                }
+                *out = newKey;
+            }
+
             ret = Base64_Decode((byte*)key, (word32)WSTRLEN(key), *out, outSz);
         }
 
@@ -1448,26 +1479,27 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
         WFREE(c, heap, DYNTYPE_STRING);
     }
     else if (format == WOLFSSH_FORMAT_ASN1) {
-        byte* newKey;
-        union {
-            #ifndef WOLFSSH_NO_RSA
-                RsaKey rsa;
-            #endif
-            #ifndef WOLFSSH_NO_ECDSA
-                ecc_key ecc;
-            #endif
-        } testKey;
         word32 scratch = 0;
+        union wolfSSH_key *key_ptr = NULL;
+
+        key_ptr = WMALLOC(sizeof(union wolfSSH_key), heap, DYNTYPE_PRIVKEY);
+        if (key_ptr == NULL) {
+            return WS_MEMORY_E;
+        }
 
         if (*out == NULL) {
             newKey = (byte*)WMALLOC(inSz, heap, DYNTYPE_PRIVKEY);
-            if (newKey == NULL)
+            if (newKey == NULL) {
+                WFREE(key_ptr, heap, DYNTYPE_PRIVKEY);
                 return WS_MEMORY_E;
+            }
             *out = newKey;
         }
         else {
-            if (*outSz < inSz)
+            if (*outSz < inSz) {
+                WFREE(key_ptr, heap, DYNTYPE_PRIVKEY);
                 return WS_ERROR;
+            }
             newKey = *out;
         }
         *outSz = inSz;
@@ -1475,12 +1507,14 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
 #ifndef WOLFSSH_NO_RSA
         /* TODO: This is copied and modified from a function in src/internal.c.
            This and that code should be combined into a single function. */
-        if (wc_InitRsaKey(&testKey.rsa, heap) < 0)
+        if (wc_InitRsaKey(&key_ptr->rsa, heap) < 0) {
+            WFREE(key_ptr, heap, DYNTYPE_PRIVKEY);
             return WS_RSA_E;
+        }
 
-        ret = wc_RsaPrivateKeyDecode(in, &scratch, &testKey.rsa, inSz);
+        ret = wc_RsaPrivateKeyDecode(in, &scratch, &key_ptr->rsa, inSz);
 
-        wc_FreeRsaKey(&testKey.rsa);
+        wc_FreeRsaKey(&key_ptr->rsa);
 
         if (ret == 0) {
             *outType = (const byte*)IdToName(ID_SSH_RSA);
@@ -1493,12 +1527,14 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
 
             /* Couldn't decode as RSA testKey. Try decoding as ECC testKey. */
             scratch = 0;
-            if (wc_ecc_init_ex(&testKey.ecc, heap, INVALID_DEVID) != 0)
+            if (wc_ecc_init_ex(&key_ptr->ecc, heap, INVALID_DEVID) != 0) {
+                WFREE(key_ptr, heap, DYNTYPE_PRIVKEY);
                 return WS_ECC_E;
+            }
 
             ret = wc_EccPrivateKeyDecode(in, &scratch,
-                                         &testKey.ecc, inSz);
-            switch (wc_ecc_get_curve_id(testKey.ecc.idx)) {
+                                         &key_ptr->ecc, inSz);
+            switch (wc_ecc_get_curve_id(key_ptr->ecc.idx)) {
                 case ECC_SECP256R1:
                     curveId = ID_ECDSA_SHA2_NISTP256;
                     break;
@@ -1509,18 +1545,21 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
                     curveId = ID_ECDSA_SHA2_NISTP521;
                     break;
             }
-            wc_ecc_free(&testKey.ecc);
+            wc_ecc_free(&key_ptr->ecc);
 
             if (ret == 0) {
                 *outType = (const byte*)IdToName(curveId);
                 *outTypeSz = (word32)WSTRLEN((const char*)*outType);
             }
-            else
+            else {
+                WFREE(key_ptr, heap, DYNTYPE_PRIVKEY);
                 return WS_BAD_FILE_E;
+            }
 #endif
 #ifndef WOLFSSH_NO_RSA
         }
 #endif
+        WFREE(key_ptr, heap, DYNTYPE_PRIVKEY);
     }
     else
         ret = WS_ERROR;
@@ -1728,12 +1767,12 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
     }
 
     /* Attempt to receive data from the peer. */
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
         ret = DoReceive(ssh);
+    }
 
-    if (ret == WS_CHAN_RXD) {
-        if (channelId != NULL)
-            *channelId = ssh->lastRxId;
+    if (channelId != NULL && ssh != NULL) {
+        *channelId = ssh->lastRxId;
     }
 
     if (ret == WS_CHAN_RXD)
@@ -1761,14 +1800,46 @@ int wolfSSH_GetLastRxId(WOLFSSH* ssh, word32* channelId)
 
 #ifdef WOLFSSH_FWD
 
-WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNew(WOLFSSH* ssh,
+int wolfSSH_CTX_SetFwdCb(WOLFSSH_CTX* ctx,
+        WS_CallbackFwd fwdCb, WS_CallbackFwdIO fwdIoCb)
+{
+    int ret = WS_SUCCESS;
+
+    if (ctx == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        ctx->fwdCb = fwdCb;
+        ctx->fwdIoCb = fwdIoCb;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_SetFwdCbCtx(WOLFSSH* ssh, void* ctx)
+{
+    int ret = WS_SUCCESS;
+
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        ssh->fwdCbCtx = ctx;
+    }
+
+    return ret;
+}
+
+
+WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNewLocal(WOLFSSH* ssh,
         const char* host, word32 hostPort,
         const char* origin, word32 originPort)
 {
     WOLFSSH_CHANNEL* newChannel = NULL;
     int ret = WS_SUCCESS;
 
-    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelFwdNew()");
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelFwdNewLocal()");
 
     if (ssh == NULL || ssh->ctx == NULL || host == NULL || origin == NULL)
         ret = WS_BAD_ARGUMENT;
@@ -1781,7 +1852,7 @@ WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNew(WOLFSSH* ssh,
     }
     if (ret == WS_SUCCESS)
         ret = ChannelUpdateForward(newChannel,
-                host, hostPort, origin, originPort);
+                host, hostPort, origin, originPort, 1);
     if (ret == WS_SUCCESS)
         ret = SendChannelOpenForward(ssh, newChannel);
 
@@ -1794,9 +1865,62 @@ WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNew(WOLFSSH* ssh,
     if (newChannel != NULL)
         ChannelAppend(ssh, newChannel);
 
-    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelFwdNew(), newChannel = %p",
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelFwdNewLocal(), newChannel = %p",
             newChannel);
     return newChannel;
+}
+
+
+WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNewRemote(WOLFSSH* ssh,
+        const char* host, word32 hostPort,
+        const char* origin, word32 originPort)
+{
+    WOLFSSH_CHANNEL* newChannel = NULL;
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelFwdNewRemote()");
+
+    if (ssh == NULL || ssh->ctx == NULL || host == NULL || origin == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        newChannel = ChannelNew(ssh, ID_CHANTYPE_TCPIP_FORWARD,
+                ssh->ctx->windowSz, ssh->ctx->maxPacketSz);
+        if (newChannel == NULL)
+            ret = WS_MEMORY_E;
+    }
+    if (ret == WS_SUCCESS)
+        ret = ChannelUpdateForward(newChannel,
+                host, hostPort, origin, originPort, 0);
+    if (ret == WS_SUCCESS)
+        ret = SendChannelOpenForward(ssh, newChannel);
+    if (ret == WS_SUCCESS) {
+        if (ssh->ctx->fwdCb) {
+            ret = ssh->ctx->fwdCb(WOLFSSH_FWD_CHANNEL_ID, ssh->fwdCbCtx,
+                    NULL, newChannel->channel);
+        }
+    }
+
+    if (ret != WS_SUCCESS) {
+        void* heap = (ssh != NULL && ssh->ctx != NULL) ? ssh->ctx->heap : NULL;
+        ChannelDelete(newChannel, heap);
+        newChannel = NULL;
+    }
+
+    if (newChannel != NULL)
+        ChannelAppend(ssh, newChannel);
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelFwdNewRemote(), newChannel = %p, ret = %d",
+            newChannel, ret);
+    return newChannel;
+}
+
+
+WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNew(WOLFSSH* ssh,
+        const char* host, word32 hostPort,
+        const char* origin, word32 originPort)
+{
+    return wolfSSH_ChannelFwdNewLocal(ssh, host, hostPort, origin, originPort);
 }
 
 #endif /* WOLFSSH_FWD */
@@ -2003,7 +2127,7 @@ int wolfSSH_ChannelGetEof(WOLFSSH_CHANNEL* channel)
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelGetEof()");
 
     if (channel)
-        eof = (int)channel->receivedEof;
+        eof = (int)channel->eofRxd;
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelGetEof(), %s",
             eof ? "true" : "false");

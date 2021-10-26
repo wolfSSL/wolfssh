@@ -179,8 +179,10 @@ static void ShowUsage(void)
 
 
 static byte userPassword[256];
-static byte userPublicKey[512];
+static byte userPublicKeyBuf[512];
+static byte* userPublicKey = userPublicKeyBuf;
 static const byte* userPublicKeyType = NULL;
+static const char* pubKeyName = NULL;
 static byte userPrivateKeyBuf[1191]; /* Size equal to hanselPrivateRsaSz. */
 static byte* userPrivateKey = userPrivateKeyBuf;
 static const byte* userPrivateKeyType = NULL;
@@ -367,27 +369,30 @@ static int wsUserAuth(byte authType,
 
 #ifdef DEBUG_WOLFSSH
     /* inspect supported types from server */
-    printf("Server supports ");
+    printf("Server supports:\n");
     if (authData->type & WOLFSSH_USERAUTH_PASSWORD) {
-        printf("password authentication");
+        printf(" - password\n");
     }
     if (authData->type & WOLFSSH_USERAUTH_PUBLICKEY) {
-        printf(" and public key authentication");
+        printf(" - publickey\n");
     }
-    printf("\n");
     printf("wolfSSH requesting to use type %d\n", authType);
 #endif
 
-    /* We know hansel has a key, wait for request of public key */
+    /* Wait for request of public key on names known to have one */
     if ((authData->type & WOLFSSH_USERAUTH_PUBLICKEY) &&
             authData->username != NULL &&
-            authData->usernameSz > 0 &&
-            (XSTRNCMP((char*)authData->username, "hansel",
-                authData->usernameSz) == 0)) {
-        if (authType == WOLFSSH_USERAUTH_PASSWORD) {
-            printf("rejecting password type with %s in favor of pub key\n",
+            authData->usernameSz > 0) {
+
+        /* in the case that the name is hansel or in the case that the user
+         * passed in a public key file, use public key auth */
+        if ((XSTRNCMP((char*)authData->username, "hansel",
+                authData->usernameSz) == 0) || pubKeyName != NULL) {
+            if (authType == WOLFSSH_USERAUTH_PASSWORD) {
+                printf("rejecting password type with %s in favor of pub key\n",
                     (char*)authData->username);
-            return WOLFSSH_USERAUTH_FAILURE;
+                return WOLFSSH_USERAUTH_FAILURE;
+            }
         }
     }
 
@@ -810,7 +815,6 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     const char* password = NULL;
     const char* cmd      = NULL;
     const char* privKeyName = NULL;
-    const char* pubKeyName = NULL;
     byte imExit = 0;
     byte nonBlock = 0;
     byte keepOpen = 0;
@@ -946,6 +950,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     }
     else {
     #ifndef NO_FILESYSTEM
+        userPrivateKey = NULL; /* create new buffer based on parsed input */
         ret = wolfSSH_ReadKey_file(privKeyName,
                 (byte**)&userPrivateKey, &userPrivateKeySz,
                 (const byte**)&userPrivateKeyType, &userPrivateKeyTypeSz,
@@ -959,7 +964,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
     if (pubKeyName == NULL) {
         byte* p = userPublicKey;
-        userPublicKeySz = sizeof(userPublicKey);
+        userPublicKeySz = sizeof(userPublicKeyBuf);
 
         if (userEcc) {
         #ifdef HAVE_ECC
@@ -982,11 +987,9 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     }
     else {
     #ifndef NO_FILESYSTEM
-        byte* p = userPublicKey;
-        userPublicKeySz = sizeof(userPublicKey);
-
+        userPublicKey = NULL; /* create new buffer based on parsed input */
         ret = wolfSSH_ReadKey_file(pubKeyName,
-                &p, &userPublicKeySz,
+                &userPublicKey, &userPublicKeySz,
                 (const byte**)&userPublicKeyType, &userPublicKeyTypeSz,
                 &isPrivate, NULL);
     #else
@@ -1125,7 +1128,8 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
             ret = wolfSSH_stream_read(ssh, (byte*)rxBuf, sizeof(rxBuf) - 1);
             if (ret <= 0) {
                 ret = wolfSSH_get_error(ssh);
-                if (ret != WS_WANT_READ && ret != WS_WANT_WRITE)
+                if (ret != WS_WANT_READ && ret != WS_WANT_WRITE &&
+                        ret != WS_CHAN_RXD)
                     err_sys("Stream read failed.");
             }
         } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE);
@@ -1138,12 +1142,26 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 #endif
     }
     ret = wolfSSH_shutdown(ssh);
+    if (ret != WS_SUCCESS) {
+        err_sys("Sending the shutdown messages failed.");
+    }
+    ret = wolfSSH_worker(ssh, NULL);
+    if (ret != WS_SUCCESS) {
+        err_sys("Failed to listen for close messages from the peer.");
+    }
     WCLOSESOCKET(sockFd);
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
     if (ret != WS_SUCCESS)
         err_sys("Closing client stream failed. Connection could have been closed by peer");
 
+    if (pubKeyName != NULL && userPublicKey != NULL) {
+        WFREE(userPublicKey, NULL, DYNTYPE_PRIVKEY);
+    }
+
+    if (privKeyName != NULL && userPrivateKey != NULL) {
+        WFREE(userPrivateKey, NULL, DYNTYPE_PRIVKEY);
+    }
 #if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
