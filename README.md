@@ -2,17 +2,20 @@ WOLFSSH
 =======
 
 wolfSSL's Embeddable SSH Server
+[wolfSSH Manual](https://www.wolfssl.com/docs/wolfssh-manual/)
 
 dependencies
 ------------
 
-wolfSSH is dependent on wolfCrypt. The simplest configuration of wolfSSL
-required for wolfSSH is the default build.
+[wolfSSH](https://www.wolfssl.com/wolfssh/) is dependent on [wolfCrypt](https://www.wolfssl.com/download/).
+The simplest configuration of wolfSSL required for wolfSSH is the default build.
 
     $ cd wolfssl
     $ ./configure [OPTIONS] --enable-ssh
     $ make check
     $ sudo make install
+
+On some systems the optional ldconfig command is needed after installing.
 
 To use the key generation function in wolfSSH, wolfSSL will need to be
 configured with keygen: `--enable-keygen`.
@@ -20,11 +23,12 @@ configured with keygen: `--enable-keygen`.
 If the bulk of wolfSSL code isn't desired, wolfSSL can be configured with
 the crypto only option: `--enable-cryptonly`.
 
+Additional build options for wolfSSL are located [here](https://www.wolfssl.com/docs/wolfssl-manual/ch2/).
 
 building
 --------
 
-From the source directory run:
+From the wolfSSH source directory run:
 
     $ ./autogen.sh
     $ ./configure
