@@ -6,6 +6,7 @@
 #error This user_settings.h header is only designed for Windows
 #endif
 
+#define WOLFSSL_WOLFSSH
 #define WOLFCRYPT_ONLY
 #define WOLFSSL_KEY_GEN
 #define HAVE_ECC
