@@ -441,8 +441,8 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
             memset(&hints, 0, sizeof(hints));
 
             hints.ai_family   = AF_INET_V;
-            hints.ai_socktype = udp ? SOCK_DGRAM : SOCK_STREAM;
-            hints.ai_protocol = udp ? IPPROTO_UDP : IPPROTO_TCP;
+            hints.ai_socktype = SOCK_STREAM;
+            hints.ai_protocol = IPPROTO_TCP;
 
             WSNPRINTF(strPort, sizeof(strPort), "%d", port);
             strPort[79] = '\0';
