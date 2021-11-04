@@ -768,7 +768,8 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
     }
 
     if (type == BUFTYPE_PRIVKEY && format != WOLFSSH_FORMAT_RAW) {
-        key_ptr = WMALLOC(sizeof(union wolfSSH_key), heap, dynamicType);
+        key_ptr = (union wolfSSH_key*)WMALLOC(sizeof(union wolfSSH_key), heap,
+                dynamicType);
         if (key_ptr == NULL) {
             WFREE(der, heap, dynamicType);
             return WS_MEMORY_E;
@@ -3115,14 +3116,17 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     }
 
     if (ret == WS_SUCCESS) {
-        sigKeyBlock_ptr = WMALLOC(sizeof(struct wolfSSH_sigKeyBlock), ssh->ctx->heap, DYNTYPE_PRIVKEY);
+        sigKeyBlock_ptr = (struct wolfSSH_sigKeyBlock*)WMALLOC(
+                sizeof(struct wolfSSH_sigKeyBlock), ssh->ctx->heap,
+                DYNTYPE_PRIVKEY);
         if (sigKeyBlock_ptr == NULL) {
             ret = WS_MEMORY_E;
         }
 
 #ifdef WOLFSSH_SMALL_STACK
 #ifndef WOLFSSH_NO_ECDSA
-        key_ptr = WMALLOC(sizeof(ecc_key), ssh->ctx->heap, DYNTYPE_PRIVKEY);
+        key_ptr = (ecc_key*)WMALLOC(sizeof(ecc_key), ssh->ctx->heap,
+                DYNTYPE_PRIVKEY);
         if (key_ptr == NULL) {
             ret = WS_MEMORY_E;
         }
@@ -4061,14 +4065,15 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 
     if (ret == WS_SUCCESS) {
 #ifdef WOLFSSH_SMALL_STACK
-        checkDigest = WMALLOC(MAX_ENCODED_SIG_SZ, ssh->ctx->heap,
+        checkDigest = (byte*)WMALLOC(MAX_ENCODED_SIG_SZ, ssh->ctx->heap,
                 DYNTYPE_BUFFER);
         if (checkDigest == NULL)
             ret = WS_MEMORY_E;
 #else
         checkDigest = s_checkDigest;
 #endif
-        key_ptr = WMALLOC(sizeof(RsaKey), ssh->ctx->heap, DYNTYPE_PUBKEY);
+        key_ptr = (RsaKey*)WMALLOC(sizeof(RsaKey), ssh->ctx->heap,
+                DYNTYPE_PUBKEY);
         if (key_ptr == NULL)
             ret = WS_MEMORY_E;
     }
@@ -4154,7 +4159,8 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
         volatile int compare;
         volatile int sizeCompare;
 #ifdef WOLFSSH_SMALL_STACK
-        encDigest = WMALLOC(MAX_ENCODED_SIG_SZ, ssh->ctx->heap, DYNTYPE_BUFFER);
+        encDigest = (byte*)WMALLOC(MAX_ENCODED_SIG_SZ, ssh->ctx->heap,
+                DYNTYPE_BUFFER);
         if (encDigest == NULL)
             ret = WS_MEMORY_E;
 #else
@@ -4222,9 +4228,10 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 
     if (ret == WS_SUCCESS) {
 #ifdef WOLFSSH_SMALL_STACK
-    key_ptr = WMALLOC(sizeof(ecc_key), ssh->ctx->heap, DYNTYPE_PUBKEY);
-    sig_r_ptr = WMALLOC(sizeof(mp_int), ssh->ctx->heap, DYNTYPE_MPINT);
-    sig_s_ptr = WMALLOC(sizeof(mp_int), ssh->ctx->heap, DYNTYPE_MPINT);
+    key_ptr = (ecc_key*)WMALLOC(sizeof(ecc_key), ssh->ctx->heap,
+            DYNTYPE_PUBKEY);
+    sig_r_ptr = (mp_int*)WMALLOC(sizeof(mp_int), ssh->ctx->heap, DYNTYPE_MPINT);
+    sig_s_ptr = (mp_int*)WMALLOC(sizeof(mp_int), ssh->ctx->heap, DYNTYPE_MPINT);
     if (key_ptr == NULL || sig_r_ptr == NULL || sig_s_ptr == NULL)
         ret = WS_MEMORY_E;
 #else
@@ -6832,8 +6839,8 @@ int SendKexDhReply(WOLFSSH* ssh)
 #endif
     struct wolfSSH_sigKeyBlockFull *sigKeyBlock_ptr = NULL;
 #ifdef WOLFSSH_SMALL_STACK
-    f_ptr = WMALLOC(KEX_F_SIZE, ssh->ctx->heap, DYNTYPE_BUFFER);
-    sig_ptr = WMALLOC(KEX_SIG_SIZE, ssh->ctx->heap, DYNTYPE_BUFFER);
+    f_ptr = (byte*)WMALLOC(KEX_F_SIZE, ssh->ctx->heap, DYNTYPE_BUFFER);
+    sig_ptr = (byte*)WMALLOC(KEX_SIG_SIZE, ssh->ctx->heap, DYNTYPE_BUFFER);
     if (f_ptr == NULL || sig_ptr == NULL)
         ret = WS_MEMORY_E;
 #else
@@ -6851,7 +6858,8 @@ int SendKexDhReply(WOLFSSH* ssh)
         }
     }
 
-    sigKeyBlock_ptr = WMALLOC(sizeof(struct wolfSSH_sigKeyBlockFull),
+    sigKeyBlock_ptr = (struct wolfSSH_sigKeyBlockFull*)WMALLOC(
+            sizeof(struct wolfSSH_sigKeyBlockFull),
             ssh->ctx->heap, DYNTYPE_PRIVKEY);
     if (sigKeyBlock_ptr == NULL)
         ret = WS_MEMORY_E;
@@ -7201,7 +7209,7 @@ int SendKexDhReply(WOLFSSH* ssh)
                 DhKey privKey;
                 word32 ySz = MAX_KEX_KEY_SZ;
 #ifdef WOLFSSH_SMALL_STACK
-                y_ptr = WMALLOC(ySz, ssh->ctx->heap, DYNTYPE_PRIVKEY);
+                y_ptr = (byte*)WMALLOC(ySz, ssh->ctx->heap, DYNTYPE_PRIVKEY);
                 if (y_ptr == NULL)
                     ret = WS_MEMORY_E;
 #else
@@ -7383,8 +7391,8 @@ int SendKexDhReply(WOLFSSH* ssh)
                     byte rPad;
                     byte sPad;
 #ifdef WOLFSSH_SMALL_STACK
-                    r_ptr = WMALLOC(rSz, ssh->ctx->heap, DYNTYPE_BUFFER);
-                    s_ptr = WMALLOC(sSz, ssh->ctx->heap, DYNTYPE_BUFFER);
+                    r_ptr = (byte*)WMALLOC(rSz, ssh->ctx->heap, DYNTYPE_BUFFER);
+                    s_ptr = (byte*)WMALLOC(sSz, ssh->ctx->heap, DYNTYPE_BUFFER);
                     if (r_ptr == NULL || r_ptr == NULL)
                         ret = WS_MEMORY_E;
 #else
@@ -8783,7 +8791,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId, int addSig)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
-        keySig_ptr = WMALLOC(sizeof(WS_KeySignature),
+        keySig_ptr = (WS_KeySignature*)WMALLOC(sizeof(WS_KeySignature),
                 ssh->ctx->heap, DYNTYPE_BUFFER);
         if (!keySig_ptr)
             ret = WS_MEMORY_E;
