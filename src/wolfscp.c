@@ -47,6 +47,10 @@
     #include "src/misc.c"
 #endif
 
+#ifndef WOLFSSH_DEFAULT_EXTDATA_SZ
+    #define WOLFSSH_DEFAULT_EXTDATA_SZ 128
+#endif
+
 #ifndef NO_FILESYSTEM
 static int ScpFileIsDir(ScpSendCtx* ctx);
 static int ScpPushDir(ScpSendCtx* ctx, const char* path, void* heap);
@@ -55,6 +59,23 @@ static int ScpPopDir(ScpSendCtx* ctx, void* heap);
 
 const char scpError[] = "scp error: %s, %d";
 const char scpState[] = "scp state: %s";
+
+
+static int _DumpExtendedData(WOLFSSH* ssh)
+{
+    byte msg[WOLFSSH_DEFAULT_EXTDATA_SZ];
+    int msgSz;
+
+    msgSz = wolfSSH_extended_data_read(ssh, msg, WOLFSSH_DEFAULT_EXTDATA_SZ-1);
+    if (msgSz > 0) {
+        msg[WOLFSSH_DEFAULT_EXTDATA_SZ - 1] = 0;
+        fprintf(stderr, "%s", msg);
+        msgSz = WS_SUCCESS;
+    }
+
+    return msgSz;
+}
+
 
 int DoScpSink(WOLFSSH* ssh)
 {
@@ -583,6 +604,10 @@ int DoScpSource(WOLFSSH* ssh)
                     ret = wolfSSH_worker(ssh, NULL);
                     if (ret == WS_SUCCESS)
                         continue;
+                }
+                if (ret == WS_EXTDATA) {
+                    _DumpExtendedData(ssh);
+                    continue;
                 }
                 if (ret < 0) {
                     WLOG(WS_LOG_ERROR, scpError, "failed to send file", ret);
@@ -1470,7 +1495,10 @@ int ReceiveScpConfirmation(WOLFSSH* ssh)
     msgSz = wolfSSH_stream_read(ssh, msg, DEFAULT_SCP_MSG_SZ);
 
     if (msgSz < 0) {
-        ret = msgSz;
+        if (wolfSSH_get_error(ssh) == WS_EXTDATA)
+            _DumpExtendedData(ssh);
+        else
+            ret = msgSz;
     } else if (msgSz > 1) {
         /* null terminate */
         msg[msgSz] = 0x00;
