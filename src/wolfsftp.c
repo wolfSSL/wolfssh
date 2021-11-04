@@ -3800,7 +3800,7 @@ int wolfSSH_SFTP_RecvRemove(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     if (ret == WS_SUCCESS) {
     #ifndef USE_WINDOWS_API
-        if ((ret = WREMOVE(ssh->fs, name)) < 0)
+        if (WREMOVE(ssh->fs, name) < 0)
     #else /* USE_WINDOWS_API */
         if (WS_DeleteFileA(name, ssh->ctx->heap) == 0)
     #endif /* USE_WINDOWS_API */

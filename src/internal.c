@@ -6813,6 +6813,7 @@ struct wolfSSH_sigKeyBlockFull {
 int SendKexDhReply(WOLFSSH* ssh)
 {
     int ret = WS_SUCCESS;
+    void *heap  = NULL;
     byte *f_ptr = NULL, *sig_ptr = NULL;
 #ifndef WOLFSSH_NO_ECDH
     byte *r_ptr = NULL, *s_ptr = NULL;
@@ -6838,12 +6839,7 @@ int SendKexDhReply(WOLFSSH* ssh)
     word32 generatorSz = 0;
 #endif
     struct wolfSSH_sigKeyBlockFull *sigKeyBlock_ptr = NULL;
-#ifdef WOLFSSH_SMALL_STACK
-    f_ptr = (byte*)WMALLOC(KEX_F_SIZE, ssh->ctx->heap, DYNTYPE_BUFFER);
-    sig_ptr = (byte*)WMALLOC(KEX_SIG_SIZE, ssh->ctx->heap, DYNTYPE_BUFFER);
-    if (f_ptr == NULL || sig_ptr == NULL)
-        ret = WS_MEMORY_E;
-#else
+#ifndef WOLFSSH_SMALL_STACK
     byte f_s[KEX_F_SIZE];
     byte sig_s[KEX_SIG_SIZE];
 
@@ -6853,14 +6849,24 @@ int SendKexDhReply(WOLFSSH* ssh)
     WLOG(WS_LOG_DEBUG, "Entering SendKexDhReply()");
 
     if (ret == WS_SUCCESS) {
-        if (ssh == NULL || ssh->handshake == NULL) {
+        if (ssh == NULL || ssh->ctx == NULL || ssh->handshake == NULL) {
             ret = WS_BAD_ARGUMENT;
         }
     }
 
+    if (ret == WS_SUCCESS) {
+        heap = ssh->ctx->heap;
+    }
+
+#ifdef WOLFSSH_SMALL_STACK
+    f_ptr = (byte*)WMALLOC(KEX_F_SIZE, heap, DYNTYPE_BUFFER);
+    sig_ptr = (byte*)WMALLOC(KEX_SIG_SIZE, heap, DYNTYPE_BUFFER);
+    if (f_ptr == NULL || sig_ptr == NULL)
+        ret = WS_MEMORY_E;
+#endif
+
     sigKeyBlock_ptr = (struct wolfSSH_sigKeyBlockFull*)WMALLOC(
-            sizeof(struct wolfSSH_sigKeyBlockFull),
-            ssh->ctx->heap, DYNTYPE_PRIVKEY);
+            sizeof(struct wolfSSH_sigKeyBlockFull), heap, DYNTYPE_PRIVKEY);
     if (sigKeyBlock_ptr == NULL)
         ret = WS_MEMORY_E;
 
@@ -6934,7 +6940,7 @@ int SendKexDhReply(WOLFSSH* ssh)
             /* Decode the user-configured RSA private key. */
             sigKeyBlock_ptr->sk.rsa.eSz = sizeof(sigKeyBlock_ptr->sk.rsa.e);
             sigKeyBlock_ptr->sk.rsa.nSz = sizeof(sigKeyBlock_ptr->sk.rsa.n);
-            ret = wc_InitRsaKey(&sigKeyBlock_ptr->sk.rsa.key, ssh->ctx->heap);
+            ret = wc_InitRsaKey(&sigKeyBlock_ptr->sk.rsa.key, heap);
             if (ret == 0)
                 ret = wc_RsaPrivateKeyDecode(ssh->ctx->privateKey, &scratch,
                                              &sigKeyBlock_ptr->sk.rsa.key,
@@ -7040,8 +7046,8 @@ int SendKexDhReply(WOLFSSH* ssh)
 
             /* Decode the user-configured ECDSA private key. */
             sigKeyBlock_ptr->sk.ecc.qSz = sizeof(sigKeyBlock_ptr->sk.ecc.q);
-            ret = wc_ecc_init_ex(&sigKeyBlock_ptr->sk.ecc.key, ssh->ctx->heap,
-                                 INVALID_DEVID);
+            ret = wc_ecc_init_ex(&sigKeyBlock_ptr->sk.ecc.key, heap,
+                    INVALID_DEVID);
             scratch = 0;
             if (ret == 0)
                 ret = wc_EccPrivateKeyDecode(ssh->ctx->privateKey, &scratch,
@@ -7209,7 +7215,7 @@ int SendKexDhReply(WOLFSSH* ssh)
                 DhKey privKey;
                 word32 ySz = MAX_KEX_KEY_SZ;
 #ifdef WOLFSSH_SMALL_STACK
-                y_ptr = (byte*)WMALLOC(ySz, ssh->ctx->heap, DYNTYPE_PRIVKEY);
+                y_ptr = (byte*)WMALLOC(ySz, heap, DYNTYPE_PRIVKEY);
                 if (y_ptr == NULL)
                     ret = WS_MEMORY_E;
 #else
@@ -7243,11 +7249,9 @@ int SendKexDhReply(WOLFSSH* ssh)
                     ret = WS_INVALID_PRIME_CURVE;
 
                 if (ret == 0)
-                    ret = wc_ecc_init_ex(&pubKey, ssh->ctx->heap,
-                                         INVALID_DEVID);
+                    ret = wc_ecc_init_ex(&pubKey, heap, INVALID_DEVID);
                 if (ret == 0)
-                    ret = wc_ecc_init_ex(&privKey, ssh->ctx->heap,
-                                         INVALID_DEVID);
+                    ret = wc_ecc_init_ex(&privKey, heap, INVALID_DEVID);
 #ifdef HAVE_WC_ECC_SET_RNG
                 if (ret == 0)
                     ret = wc_ecc_set_rng(&privKey, ssh->rng);
@@ -7391,8 +7395,8 @@ int SendKexDhReply(WOLFSSH* ssh)
                     byte rPad;
                     byte sPad;
 #ifdef WOLFSSH_SMALL_STACK
-                    r_ptr = (byte*)WMALLOC(rSz, ssh->ctx->heap, DYNTYPE_BUFFER);
-                    s_ptr = (byte*)WMALLOC(sSz, ssh->ctx->heap, DYNTYPE_BUFFER);
+                    r_ptr = (byte*)WMALLOC(rSz, heap, DYNTYPE_BUFFER);
+                    s_ptr = (byte*)WMALLOC(sSz, heap, DYNTYPE_BUFFER);
                     if (r_ptr == NULL || r_ptr == NULL)
                         ret = WS_MEMORY_E;
 #else
@@ -7532,20 +7536,20 @@ int SendKexDhReply(WOLFSSH* ssh)
 
     WLOG(WS_LOG_DEBUG, "Leaving SendKexDhReply(), ret = %d", ret);
     if (sigKeyBlock_ptr)
-        WFREE(sigKeyBlock_ptr, ssh->ctx->heap, DYNTYPE_PRIVKEY);
+        WFREE(sigKeyBlock_ptr, heap, DYNTYPE_PRIVKEY);
 #ifdef WOLFSSH_SMALL_STACK
     if (f_ptr)
-        WFREE(f_ptr, ssh->ctx->heap, DYNTYPE_BUFFER);
+        WFREE(f_ptr, heap, DYNTYPE_BUFFER);
     if (sig_ptr)
-        WFREE(sig_ptr, ssh->ctx->heap, DYNTYPE_BUFFER);
+        WFREE(sig_ptr, heap, DYNTYPE_BUFFER);
 #ifndef WOLFSSH_NO_DH
     if (y_ptr)
-        WFREE(r_ptr, ssh->ctx->heap, DYNTYPE_PRIVKEY);
+        WFREE(y_ptr, heap, DYNTYPE_PRIVKEY);
 #endif
     if (r_ptr)
-        WFREE(r_ptr, ssh->ctx->heap, DYNTYPE_BUFFER);
+        WFREE(r_ptr, heap, DYNTYPE_BUFFER);
     if (s_ptr)
-        WFREE(s_ptr, ssh->ctx->heap, DYNTYPE_BUFFER);
+        WFREE(s_ptr, heap, DYNTYPE_BUFFER);
 #endif
     return ret;
 }
