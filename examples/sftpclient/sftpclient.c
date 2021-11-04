@@ -689,7 +689,7 @@ static int doCmds(func_args* args)
             continue;
         }
 
-        if ((pt = WSTRNSTR(msg, "reget", MAX_CMD_SZ)) != NULL) {
+        if (WSTRNSTR(msg, "reget", MAX_CMD_SZ) != NULL) {
             resume = 1;
         }
 
@@ -782,7 +782,7 @@ static int doCmds(func_args* args)
         }
 
 
-        if ((pt = WSTRNSTR(msg, "reput", MAX_CMD_SZ)) != NULL) {
+        if (WSTRNSTR(msg, "reput", MAX_CMD_SZ) != NULL) {
             resume = 1;
         }
 
@@ -1175,7 +1175,7 @@ static int doCmds(func_args* args)
 
         }
 
-        if ((pt = WSTRNSTR(msg, "ls", MAX_CMD_SZ)) != NULL) {
+        if (WSTRNSTR(msg, "ls", MAX_CMD_SZ) != NULL) {
             WS_SFTPNAME* tmp;
             WS_SFTPNAME* current;
 
@@ -1201,7 +1201,7 @@ static int doCmds(func_args* args)
         }
 
         /* display current working directory */
-        if ((pt = WSTRNSTR(msg, "pwd", MAX_CMD_SZ)) != NULL) {
+        if (WSTRNSTR(msg, "pwd", MAX_CMD_SZ) != NULL) {
             if (SFTP_FPUTS(args, workingDir) < 0 ||
                     SFTP_FPUTS(args, "\n") < 0) {
                 err_msg("fputs error");

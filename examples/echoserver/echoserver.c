@@ -606,7 +606,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
 #ifdef WOLFSSH_SHELL
     const char *userName;
     struct passwd *p_passwd;
-    WS_SOCKET_T childFd;
+    WS_SOCKET_T childFd = 0;
     pid_t childPid;
 #endif
 #if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
