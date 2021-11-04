@@ -1093,6 +1093,12 @@ static const NameIdPair NameIdMap[] = {
 #ifndef WOLFSSH_NO_SSH_RSA_SHA1
     { ID_SSH_RSA, "ssh-rsa" },
 #endif
+#ifndef WOLFSSH_NO_RSA_SHA2_256
+    { ID_RSA_SHA2_256, "rsa-sha2-256" },
+#endif
+#ifndef WOLFSSH_NO_RSA_SHA2_512
+    { ID_RSA_SHA2_512, "rsa-sha2-512" },
+#endif
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
     { ID_ECDSA_SHA2_NISTP256, "ecdsa-sha2-nistp256" },
 #endif
@@ -2040,6 +2046,12 @@ static const byte cannedMacAlgo[] = {
 };
 
 static const byte  cannedKeyAlgoClient[] = {
+#ifndef WOLFSSH_NO_SSH_RSA_SHA2_256
+    ID_RSA_SHA2_256,
+#endif
+#ifndef WOLFSSH_NO_SSH_RSA_SHA2_512
+    ID_RSA_SHA2_512,
+#endif
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
     ID_ECDSA_SHA2_NISTP521,
 #endif
@@ -2054,20 +2066,32 @@ static const byte  cannedKeyAlgoClient[] = {
 #endif
 };
 
+#ifndef WOLFSSH_NO_SSH_RSA_SHA2_256
+static const byte cannedKeyAlgoRsaSha2_256[] = {ID_RSA_SHA2_256};
+static const word32 cannedKeyAlgoRsaSha2_256Sz =
+                                               sizeof(cannedKeyAlgoRsaSha2_256);
+#endif
+#if 0
 #ifndef WOLFSSH_NO_SSH_RSA_SHA1
-static const byte  cannedKeyAlgoRsa[] = {ID_SSH_RSA};
-static const word32 cannedKeyAlgoRsaSz = sizeof(cannedKeyAlgoRsa);
+static const byte cannedKeyAlgoRsaSha1[] = {ID_SSH_RSA};
+static const word32 cannedKeyAlgoRsaSha1Sz = sizeof(cannedKeyAlgoRsaSha1);
+#endif
+#ifndef WOLFSSH_NO_SSH_RSA_SHA2_512
+static const byte cannedKeyAlgoRsaSha2_512[] = {ID_RSA_SHA2_512};
+static const word32 cannedKeyAlgoRsaSha2_512Sz =
+                                               sizeof(cannedKeyAlgoRsaSha2_512);
+#endif
 #endif
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
-static const byte  cannedKeyAlgoEcc256[] = {ID_ECDSA_SHA2_NISTP256};
+static const byte cannedKeyAlgoEcc256[] = {ID_ECDSA_SHA2_NISTP256};
 static const word32 cannedKeyAlgoEcc256Sz = sizeof(cannedKeyAlgoEcc256);
 #endif
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
-static const byte  cannedKeyAlgoEcc384[] = {ID_ECDSA_SHA2_NISTP384};
+static const byte cannedKeyAlgoEcc384[] = {ID_ECDSA_SHA2_NISTP384};
 static const word32 cannedKeyAlgoEcc384Sz = sizeof(cannedKeyAlgoEcc384);
 #endif
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
-static const byte  cannedKeyAlgoEcc521[] = {ID_ECDSA_SHA2_NISTP521};
+static const byte cannedKeyAlgoEcc521[] = {ID_ECDSA_SHA2_NISTP521};
 static const word32 cannedKeyAlgoEcc521Sz = sizeof(cannedKeyAlgoEcc521);
 #endif
 
@@ -2120,7 +2144,7 @@ static byte MatchIdLists(int side, const byte* left, word32 leftSz,
         for (i = 0; i < leftSz; i++) {
             for (j = 0; j < rightSz; j++) {
                 if (left[i] == right[j]) {
-#if 0
+#if 1
                     WLOG(WS_LOG_DEBUG, "MID: matched %s", IdToName(left[i]));
 #endif
                     return left[i];
@@ -2257,6 +2281,10 @@ static INLINE enum wc_HashType HashForId(byte id)
         case ID_ECDSA_SHA2_NISTP256:
             return WC_HASH_TYPE_SHA256;
 #endif
+#ifndef WOLFSSH_NO_RSA_SHA2_256
+        case ID_RSA_SHA2_256:
+            return WC_HASH_TYPE_SHA256;
+#endif
 
         /* SHA2-384 */
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP384
@@ -2277,6 +2305,11 @@ static INLINE enum wc_HashType HashForId(byte id)
         case ID_ECDSA_SHA2_NISTP521:
             return WC_HASH_TYPE_SHA512;
 #endif
+#ifndef WOLFSSH_NO_RSA_SHA2_512
+        case ID_RSA_SHA2_512:
+            return WC_HASH_TYPE_SHA512;
+#endif
+
         default:
             return WC_HASH_TYPE_NONE;
     }
@@ -2458,8 +2491,8 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 }
                 else {
 #ifndef WOLFSSH_NO_SSH_RSA_SHA1
-                    cannedKeyAlgo = cannedKeyAlgoRsa;
-                    cannedKeyAlgoSz = cannedKeyAlgoRsaSz;
+                    cannedKeyAlgo = cannedKeyAlgoRsaSha2_256;
+                    cannedKeyAlgoSz = cannedKeyAlgoRsaSha2_256Sz;
 #endif
                 }
             }
@@ -3145,7 +3178,10 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         *idx = begin;
 
         /* Load in the server's public signing key */
-        sigKeyBlock_ptr->useRsa = ssh->handshake->pubKeyId == ID_SSH_RSA;
+        sigKeyBlock_ptr->useRsa =
+                ssh->handshake->pubKeyId == ID_SSH_RSA ||
+                ssh->handshake->pubKeyId == ID_RSA_SHA2_256 ||
+                ssh->handshake->pubKeyId == ID_RSA_SHA2_512;
 
         if (sigKeyBlock_ptr->useRsa) {
 #ifndef WOLFSSH_NO_RSA
@@ -6560,6 +6596,12 @@ static const char cannedMacAlgoNames[] =
 #endif
 
 static const char cannedKeyAlgoClientNames[] =
+#ifndef WOLFSSH_NO_SSH_RSA_SHA2_256
+    "rsa-sha2-256,"
+#endif
+#ifndef WOLFSSH_NO_SSH_RSA_SHA2_512
+    "rsa-sha2-512,"
+#endif
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
     "ecdsa-sha2-nistp521,"
 #endif
@@ -6576,11 +6618,17 @@ static const char cannedKeyAlgoClientNames[] =
 #if defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && \
         defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && \
         defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521) && \
+        defined(WOLFSSH_NO_SSH_RSA_SHA2_256) && \
+        defined(WOLFSSH_NO_SSH_RSA_SHA2_512) && \
         defined(WOLFSSH_NO_SSH_RSA_SHA1)
     #warning "You need at least one signing algorithm."
 #endif
 
-static const char cannedKeyAlgoRsaNames[] = "ssh-rsa";
+static const char cannedKeyAlgoRsaSha2_256Names[] = "rsa-sha2-256";
+#if 0
+static const char cannedKeyAlgoRsaSha1Names[] = "ssh-rsa";
+static const char cannedKeyAlgoRsaSha2_512Names[] = "rsa-sha2-512";
+#endif
 #if !defined(WOLFSSH_NO_ECDSA) && !defined(WOLFSSH_NO_ECDH)
 static const char cannedKeyAlgoEcc256Names[] = "ecdsa-sha2-nistp256";
 static const char cannedKeyAlgoEcc384Names[] = "ecdsa-sha2-nistp384";
@@ -6624,7 +6672,14 @@ static const word32 cannedEncAlgoNamesSz = sizeof(cannedEncAlgoNames) - 2;
 static const word32 cannedMacAlgoNamesSz = sizeof(cannedMacAlgoNames) - 2;
 static const word32 cannedKeyAlgoClientNamesSz =
                                            sizeof(cannedKeyAlgoClientNames) - 2;
-static const word32 cannedKeyAlgoRsaNamesSz = sizeof(cannedKeyAlgoRsaNames) - 1;
+static const word32 cannedKeyAlgoRsaSha2_256NamesSz =
+                                      sizeof(cannedKeyAlgoRsaSha2_256Names) - 1;
+#if 0
+static const word32 cannedKeyAlgoRsaSha1NamesSz =
+                                          sizeof(cannedKeyAlgoRsaSha1Names) - 1;
+static const word32 cannedKeyAlgoRsaSha2_512NamesSz =
+                                      sizeof(cannedKeyAlgoRsaSha2_512Names) - 1;
+#endif
 #if !defined(WOLFSSH_NO_ECDSA) && !defined(WOLFSSH_NO_ECDH)
 static const word32 cannedKeyAlgoEcc256NamesSz =
                                            sizeof(cannedKeyAlgoEcc256Names) - 1;
@@ -6681,8 +6736,8 @@ int SendKexInit(WOLFSSH* ssh)
                     break;
 #endif
                 default:
-                    cannedKeyAlgoNames = cannedKeyAlgoRsaNames;
-                    cannedKeyAlgoNamesSz = cannedKeyAlgoRsaNamesSz;
+                    cannedKeyAlgoNames = cannedKeyAlgoRsaSha2_256Names;
+                    cannedKeyAlgoNamesSz = cannedKeyAlgoRsaSha2_256NamesSz;
             }
         }
         else {
@@ -6767,6 +6822,7 @@ int SendKexInit(WOLFSSH* ssh)
 
 struct wolfSSH_sigKeyBlockFull {
         byte pubKeyId;
+        byte useRsa;
         word32 sz;
         const char *name;
         word32 nameSz;
@@ -6877,7 +6933,13 @@ int SendKexDhReply(WOLFSSH* ssh)
 
     if (ret == WS_SUCCESS) {
         sigKeyBlock_ptr->pubKeyId = ssh->handshake->pubKeyId;
-        sigKeyBlock_ptr->name = IdToName(ssh->handshake->pubKeyId);
+        sigKeyBlock_ptr->useRsa =
+            ssh->handshake->pubKeyId == ID_SSH_RSA ||
+            ssh->handshake->pubKeyId == ID_RSA_SHA2_256 ||
+            ssh->handshake->pubKeyId == ID_RSA_SHA2_512;
+        /* All flavors of RSA identify as ssh-rsa. */
+        sigKeyBlock_ptr->name = sigKeyBlock_ptr->useRsa ?
+                IdToName(ID_SSH_RSA) : IdToName(ssh->handshake->pubKeyId);
         sigKeyBlock_ptr->nameSz = (word32)strlen(sigKeyBlock_ptr->name);
 
         switch (ssh->handshake->kexId) {
