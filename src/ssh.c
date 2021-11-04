@@ -1482,7 +1482,8 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
         word32 scratch = 0;
         union wolfSSH_key *key_ptr = NULL;
 
-        key_ptr = WMALLOC(sizeof(union wolfSSH_key), heap, DYNTYPE_PRIVKEY);
+        key_ptr = (union wolfSSH_key*)WMALLOC(sizeof(union wolfSSH_key), heap,
+                DYNTYPE_PRIVKEY);
         if (key_ptr == NULL) {
             return WS_MEMORY_E;
         }
