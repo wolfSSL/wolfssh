@@ -1069,32 +1069,6 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
 }
 
 
-int wolfSSH_ChannelIdRead(WOLFSSH* ssh, word32 channelId,
-        byte* buf, word32 bufSz)
-{
-    WOLFSSH_CHANNEL* chan = NULL;
-    Buffer* inputBuffer;
-
-    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelIdRead()");
-
-    if (ssh == NULL || buf == NULL)
-        return WS_BAD_ARGUMENT;
-
-    chan = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
-    if (chan == NULL)
-        return WS_INVALID_CHANID;
-
-    inputBuffer = &chan->inputBuffer;
-
-    bufSz = min(bufSz, inputBuffer->length - inputBuffer->idx);
-    WMEMCPY(buf, inputBuffer->buffer + inputBuffer->idx, bufSz);
-    inputBuffer->idx += bufSz;
-
-    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelIdRead(), rxd = %d", bufSz);
-    return bufSz;
-}
-
-
 int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz)
 {
     int bytesTxd = 0;
@@ -2003,26 +1977,21 @@ int wolfSSH_ChannelGetFwdFd(const WOLFSSH_CHANNEL* channel)
 #endif /* WOLFSSH_FWD */
 
 
-int wolfSSH_ChannelRead(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz)
+static int _UpdateChannelWindow(WOLFSSH_CHANNEL* channel)
 {
     Buffer* inputBuffer;
+    int sendResult = WS_SUCCESS;
 
-    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelRead()");
-
-    if (channel == NULL || buf == NULL || bufSz == 0)
+    if (channel == NULL)
         return WS_BAD_ARGUMENT;
 
     inputBuffer = &channel->inputBuffer;
-    bufSz = min(bufSz, inputBuffer->length - inputBuffer->idx);
-    WMEMCPY(buf, inputBuffer->buffer + inputBuffer->idx, bufSz);
-    inputBuffer->idx += bufSz;
 
     if (!channel->ssh->isKeying &&
         (inputBuffer->length > inputBuffer->bufferSz / 2)) {
 
         word32 usedSz = inputBuffer->length - inputBuffer->idx;
         word32 bytesToAdd = inputBuffer->idx;
-        int sendResult;
 
         WLOG(WS_LOG_DEBUG, "Making more room: %u", usedSz);
         if (usedSz) {
@@ -2033,8 +2002,6 @@ int wolfSSH_ChannelRead(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz)
 
         sendResult = SendChannelWindowAdjust(channel->ssh, channel->channel,
                                              bytesToAdd);
-        if (sendResult != WS_SUCCESS)
-            bufSz = sendResult;
 
         WLOG(WS_LOG_INFO, "  bytesToAdd = %u", bytesToAdd);
         WLOG(WS_LOG_INFO, "  windowSz = %u", channel->windowSz);
@@ -2044,6 +2011,62 @@ int wolfSSH_ChannelRead(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz)
         inputBuffer->length = usedSz;
         inputBuffer->idx = 0;
     }
+
+    return sendResult;
+}
+
+
+static int _ChannelRead(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz)
+{
+    Buffer* inputBuffer;
+    int updateResult = WS_SUCCESS;
+
+    if (channel == NULL || buf == NULL || bufSz == 0)
+        return WS_BAD_ARGUMENT;
+
+    inputBuffer = &channel->inputBuffer;
+    bufSz = min(bufSz, inputBuffer->length - inputBuffer->idx);
+    WMEMCPY(buf, inputBuffer->buffer + inputBuffer->idx, bufSz);
+    inputBuffer->idx += bufSz;
+
+    updateResult = _UpdateChannelWindow(channel);
+    if (updateResult == WS_SUCCESS)
+        updateResult = bufSz;
+
+    return updateResult;
+}
+
+
+int wolfSSH_ChannelIdRead(WOLFSSH* ssh, word32 channelId,
+        byte* buf, word32 bufSz)
+{
+    WOLFSSH_CHANNEL* channel = NULL;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelIdRead()");
+
+    if (ssh == NULL || buf == NULL)
+        return WS_BAD_ARGUMENT;
+
+    channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
+    if (channel == NULL)
+        return WS_INVALID_CHANID;
+
+    bufSz = _ChannelRead(channel, buf, bufSz);
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelIdRead(), rxd = %d", bufSz);
+    return bufSz;
+}
+
+
+int wolfSSH_ChannelRead(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz)
+{
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelRead()");
+
+    if (channel == NULL || buf == NULL || bufSz == 0)
+        return WS_BAD_ARGUMENT;
+
+    bufSz = _ChannelRead(channel, buf, bufSz);
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelRead(), bytesRxd = %d",
             bufSz);
