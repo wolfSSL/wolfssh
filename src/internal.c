@@ -4163,22 +4163,26 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
                 DYNTYPE_BUFFER);
         if (encDigest == NULL)
             ret = WS_MEMORY_E;
+
+        if (ret == WS_SUCCESS)
 #else
         byte s_encDigest[MAX_ENCODED_SIG_SZ];
         encDigest = s_encDigest;
 #endif
-        encDigestSz = wc_EncodeSignature(encDigest, digest,
+        {
+            encDigestSz = wc_EncodeSignature(encDigest, digest,
                                          wc_HashGetDigestSize(enmhashId),
                                          wc_HashGetOID(enmhashId));
 
-        compare = ConstantCompare(encDigest, checkDigest,
+            compare = ConstantCompare(encDigest, checkDigest,
                                   encDigestSz);
-        sizeCompare = encDigestSz != (word32)checkDigestSz;
+            sizeCompare = encDigestSz != (word32)checkDigestSz;
 
-        if ((compare == 0) && (sizeCompare == 0))
-            ret = WS_SUCCESS;
-        else
-            ret = WS_RSA_E;
+            if ((compare == 0) && (sizeCompare == 0))
+                ret = WS_SUCCESS;
+            else
+                ret = WS_RSA_E;
+        }
     }
     if (key_ptr != NULL) {
         wc_FreeRsaKey(key_ptr);
@@ -7212,36 +7216,54 @@ int SendKexDhReply(WOLFSSH* ssh)
         if (ret == 0) {
             if (!useEcc) {
 #ifndef WOLFSSH_NO_DH
-                DhKey privKey;
                 word32 ySz = MAX_KEX_KEY_SZ;
-#ifdef WOLFSSH_SMALL_STACK
+            #ifdef WOLFSSH_SMALL_STACK
+                DhKey *privKey = (DhKey*)WMALLOC(sizeof(DhKey), heap,
+                        DYNTYPE_PRIVKEY);
                 y_ptr = (byte*)WMALLOC(ySz, heap, DYNTYPE_PRIVKEY);
-                if (y_ptr == NULL)
+                if (privKey == NULL || y_ptr == NULL)
                     ret = WS_MEMORY_E;
-#else
+            #else
+                DhKey privKey[1];
                 byte y_s[MAX_KEX_KEY_SZ];
                 y_ptr = y_s;
-#endif
+            #endif
                 if (ret == WS_SUCCESS) {
-                    ret = wc_InitDhKey(&privKey);
+                    ret = wc_InitDhKey(privKey);
                     if (ret == 0)
-                        ret = wc_DhSetKey(&privKey, primeGroup, primeGroupSz,
+                        ret = wc_DhSetKey(privKey, primeGroup, primeGroupSz,
                                 generator, generatorSz);
                     if (ret == 0)
-                        ret = wc_DhGenerateKeyPair(&privKey, ssh->rng,
+                        ret = wc_DhGenerateKeyPair(privKey, ssh->rng,
                                 y_ptr, &ySz, f_ptr, &fSz);
                     if (ret == 0)
-                        ret = wc_DhAgree(&privKey, ssh->k, &ssh->kSz, y_ptr, ySz,
+                        ret = wc_DhAgree(privKey, ssh->k, &ssh->kSz, y_ptr, ySz,
                                 ssh->handshake->e, ssh->handshake->eSz);
                     ForceZero(y_ptr, ySz);
-                    wc_FreeDhKey(&privKey);
+                    wc_FreeDhKey(privKey);
                 }
+            #ifdef WOLFSSH_SMALL_STACK
+                if (privKey) {
+                    WFREE(privKey, heap, DYNTYPE_PRIVKEY);
+                }
+            #endif
 #endif /* ! WOLFSSH_NO_DH */
             }
             else {
 #if !defined(WOLFSSH_NO_ECDH)
-                ecc_key pubKey;
-                ecc_key privKey;
+            #ifdef WOLFSSH_SMALL_STACK
+                ecc_key *pubKey = NULL, *privKey = NULL;
+                pubKey = (ecc_key*)WMALLOC(sizeof(ecc_key), heap,
+                        DYNTYPE_PUBKEY);
+                privKey = (ecc_key*)WMALLOC(sizeof(ecc_key), heap,
+                        DYNTYPE_PRIVKEY);
+                if (pubKey == NULL || privKey == NULL) {
+                    ret = WS_MEMORY_E;
+                }
+            #else
+                ecc_key pubKey[1];
+                ecc_key privKey[1];
+            #endif
                 int primeId;
 
                 primeId  = wcPrimeForId(ssh->handshake->kexId);
@@ -7249,30 +7271,36 @@ int SendKexDhReply(WOLFSSH* ssh)
                     ret = WS_INVALID_PRIME_CURVE;
 
                 if (ret == 0)
-                    ret = wc_ecc_init_ex(&pubKey, heap, INVALID_DEVID);
+                    ret = wc_ecc_init_ex(pubKey, heap, INVALID_DEVID);
                 if (ret == 0)
-                    ret = wc_ecc_init_ex(&privKey, heap, INVALID_DEVID);
+                    ret = wc_ecc_init_ex(privKey, heap, INVALID_DEVID);
 #ifdef HAVE_WC_ECC_SET_RNG
                 if (ret == 0)
-                    ret = wc_ecc_set_rng(&privKey, ssh->rng);
+                    ret = wc_ecc_set_rng(privKey, ssh->rng);
 #endif
 
                 if (ret == 0)
                     ret = wc_ecc_import_x963_ex(ssh->handshake->e,
                                                 ssh->handshake->eSz,
-                                                &pubKey, primeId);
+                                                pubKey, primeId);
 
                 if (ret == 0)
                     ret = wc_ecc_make_key_ex(ssh->rng,
                                          wc_ecc_get_curve_size_from_id(primeId),
-                                         &privKey, primeId);
+                                         privKey, primeId);
                 if (ret == 0)
-                    ret = wc_ecc_export_x963(&privKey, f_ptr, &fSz);
+                    ret = wc_ecc_export_x963(privKey, f_ptr, &fSz);
                 if (ret == 0)
-                    ret = wc_ecc_shared_secret(&privKey, &pubKey,
+                    ret = wc_ecc_shared_secret(privKey, pubKey,
                                                ssh->k, &ssh->kSz);
-                wc_ecc_free(&privKey);
-                wc_ecc_free(&pubKey);
+                wc_ecc_free(privKey);
+                wc_ecc_free(pubKey);
+            #ifdef WOLFSSH_SMALL_STACK
+                WFREE(pubKey, heap, DYNTYPE_PUBKEY);
+                WFREE(privKey, heap, DYNTYPE_PRIVKEY);
+                pubKey  = NULL;
+                privKey = NULL;
+            #endif
 #endif /* !defined(WOLFSSH_NO_ECDH) */
             }
         }
@@ -7353,25 +7381,40 @@ int SendKexDhReply(WOLFSSH* ssh)
         if (ret == WS_SUCCESS) {
             if (sigKeyBlock_ptr->pubKeyId == ID_SSH_RSA) {
 #ifndef WOLFSSH_NO_SSH_RSA_SHA1
-                byte encSig[MAX_ENCODED_SIG_SZ];
                 word32 encSigSz;
+            #ifdef WOLFSSH_SMALL_STACK
+                byte *encSig = (byte*)WMALLOC(MAX_ENCODED_SIG_SZ, heap,
+                        DYNTYPE_TEMP);
+                if (encSig == NULL) {
+                    ret = WS_MEMORY_E;
+                }
 
-                encSigSz = wc_EncodeSignature(encSig, digest,
+                if (ret == WS_SUCCESS)
+            #else
+                byte encSig[MAX_ENCODED_SIG_SZ];
+            #endif
+                {
+                    encSigSz = wc_EncodeSignature(encSig, digest,
                                               wc_HashGetDigestSize(sigHashId),
                                               wc_HashGetOID(sigHashId));
-                if (encSigSz <= 0) {
-                    WLOG(WS_LOG_DEBUG, "SendKexDhReply: Bad Encode Sig");
-                    ret = WS_CRYPTO_FAILED;
-                }
-                else {
-                    WLOG(WS_LOG_INFO, "Signing hash with %s.",
-                            IdToName(ssh->handshake->pubKeyId));
-                    sigSz = wc_RsaSSL_Sign(encSig, encSigSz, sig_ptr, KEX_SIG_SIZE,
-                                           &sigKeyBlock_ptr->sk.rsa.key, ssh->rng);
-                    if (sigSz <= 0) {
-                        WLOG(WS_LOG_DEBUG, "SendKexDhReply: Bad RSA Sign");
-                        ret = WS_RSA_E;
+                    if (encSigSz <= 0) {
+                        WLOG(WS_LOG_DEBUG, "SendKexDhReply: Bad Encode Sig");
+                        ret = WS_CRYPTO_FAILED;
                     }
+                    else {
+                        WLOG(WS_LOG_INFO, "Signing hash with %s.",
+                            IdToName(ssh->handshake->pubKeyId));
+                        sigSz = wc_RsaSSL_Sign(encSig, encSigSz, sig_ptr,
+                                KEX_SIG_SIZE, &sigKeyBlock_ptr->sk.rsa.key,
+                                ssh->rng);
+                        if (sigSz <= 0) {
+                            WLOG(WS_LOG_DEBUG, "SendKexDhReply: Bad RSA Sign");
+                            ret = WS_RSA_E;
+                        }
+                    }
+                #ifdef WOLFSSH_SMALL_STACK
+                    WFREE(encSig, heap, DYNTYPE_TEMP);
+                #endif
                 }
 #endif
             }
