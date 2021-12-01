@@ -3164,14 +3164,14 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             if (ret == WS_SUCCESS) {
                 pubKeyIdx += scratch;
                 ret = GetUint32(&eSz, pubKey, pubKeySz, &pubKeyIdx);
-                if (ret == WS_SUCCESS && eSz > len - pubKeyIdx)
+                if (ret == WS_SUCCESS && eSz > pubKeySz - pubKeyIdx)
                     ret = WS_BUFFER_E;
             }
             if (ret == WS_SUCCESS) {
                 e = pubKey + pubKeyIdx;
                 pubKeyIdx += eSz;
                 ret = GetUint32(&nSz, pubKey, pubKeySz, &pubKeyIdx);
-                if (ret == WS_SUCCESS && nSz > len - pubKeyIdx)
+                if (ret == WS_SUCCESS && nSz > pubKeySz - pubKeyIdx)
                     ret = WS_BUFFER_E;
             }
             if (ret == WS_SUCCESS) {
