@@ -461,6 +461,8 @@ static void HandshakeInfoFree(HandshakeInfo* hs, void* heap)
         WFREE(hs->primeGroup, heap, DYNTYPE_MPINT);
         WFREE(hs->generator, heap, DYNTYPE_MPINT);
 #endif
+        if (hs->hashId != WC_HASH_TYPE_NONE)
+            wc_HashFree(&hs->hash, hs->hashId);
         ForceZero(hs, sizeof(HandshakeInfo));
         WFREE(hs, heap, DYNTYPE_HS);
     }
@@ -942,11 +944,10 @@ int GenerateKey(byte hashId, byte keyId,
 }
 
 
-static int GenerateKeys(WOLFSSH* ssh)
+static int GenerateKeys(WOLFSSH* ssh, byte hashId)
 {
     Keys* cK;
     Keys* sK;
-    byte hashId;
     int ret = WS_SUCCESS;
 
     if (ssh == NULL)
@@ -960,7 +961,6 @@ static int GenerateKeys(WOLFSSH* ssh)
             cK = &ssh->handshake->keys;
             sK = &ssh->handshake->peerKeys;
         }
-        hashId = ssh->handshake->hashId;
     }
 
     if (ret == WS_SUCCESS)
@@ -2701,7 +2701,6 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             else
                 ssh->serverState = SERVER_KEXINIT_DONE;
         }
-        wc_HashFree(&ssh->handshake->hash, enmhashId);
     }
     WLOG(WS_LOG_DEBUG, "Leaving DoKexInit(), ret = %d", ret);
     return ret;
@@ -3304,9 +3303,13 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                                 ssh->k, ssh->kSz);
 
         /* Save the exchange hash value H, and session ID. */
-        if (ret == 0)
+        if (ret == 0) {
             ret = wc_HashFinal(&ssh->handshake->hash,
                                enmhashId, ssh->h);
+            wc_HashFree(&ssh->handshake->hash, enmhashId);
+            ssh->handshake->hashId = WC_HASH_TYPE_NONE;
+        }
+
         if (ret == 0) {
             ssh->hSz = wc_HashGetDigestSize(enmhashId);
             if (ssh->sessionIdSz == 0) {
@@ -3427,7 +3430,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     }
 
     if (ret == WS_SUCCESS)
-        ret = GenerateKeys(ssh);
+        ret = GenerateKeys(ssh, enmhashId);
 
     if (ret == WS_SUCCESS)
         ret = SendNewKeys(ssh);
@@ -7346,9 +7349,13 @@ int SendKexDhReply(WOLFSSH* ssh)
                                 ssh->k, ssh->kSz);
 
         /* Save the exchange hash value H, and session ID. */
-        if (ret == 0)
+        if (ret == 0) {
             ret = wc_HashFinal(&ssh->handshake->hash,
                                enmhashId, ssh->h);
+            wc_HashFree(&ssh->handshake->hash, enmhashId);
+            ssh->handshake->hashId = WC_HASH_TYPE_NONE;
+        }
+
         if (ret == 0) {
             ssh->hSz = wc_HashGetDigestSize(enmhashId);
             if (ssh->sessionIdSz == 0) {
@@ -7490,7 +7497,7 @@ int SendKexDhReply(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS)
-        ret = GenerateKeys(ssh);
+        ret = GenerateKeys(ssh, enmhashId);
 
     /* Get the buffer, copy the packet data, once f is laid into the buffer,
      * add it to the hash and then add K. */
