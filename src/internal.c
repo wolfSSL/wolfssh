@@ -5589,9 +5589,9 @@ static int DoPacket(WOLFSSH* ssh)
             if (ssh->isKeying == 1 &&
                     ssh->connectState == CONNECT_SERVER_CHANNEL_REQUEST_DONE) {
                 if (ssh->handshake->kexId == ID_DH_GEX_SHA256) {
-        #ifndef WOLFSSH_NO_DH
+#if !defined(WOLFSSH_NO_DH) && !defined(WOLFSSH_NO_DH_GEX_SHA256)
                     ssh->error = SendKexDhGexRequest(ssh);
-        #endif
+#endif
                 }
                 else
                     ssh->error = SendKexDhInit(ssh);
