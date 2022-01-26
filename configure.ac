@@ -16,7 +16,7 @@ AM_INIT_AUTOMAKE([1.11 -Wall -Werror -Wno-portability foreign tar-ustar subdir-o
 
 AC_ARG_PROGRAM
 AC_CONFIG_MACRO_DIR([m4])
-AC_CONFIG_HEADERS([src/config.h])
+AC_CONFIG_HEADERS([config.h])
 
 WOLFSSH_LIBRARY_VERSION=12:3:3
 #                       | | |
