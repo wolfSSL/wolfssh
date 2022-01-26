@@ -84,6 +84,7 @@ CPPFLAGS="$CPPFLAGS -I${wcpath}/include"
 
 AC_CHECK_LIB([wolfssl],[wolfCrypt_Init],,[AC_MSG_ERROR([libwolfssl is required for ${PACKAGE}. It can be obtained from https://www.wolfssl.com/download.html/ .])])
 AC_CHECK_FUNCS([gethostbyname getaddrinfo gettimeofday inet_ntoa memset socket wc_ecc_set_rng])
+AC_CHECK_DECLS([[pread],[pwrite]],,[unistd.h])
 
 # DEBUG
 DEBUG_CFLAGS="-g -O0"
