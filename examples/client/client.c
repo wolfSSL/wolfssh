@@ -541,14 +541,17 @@ static THREAD_RET readInput(void* in)
         sz  = (word32)ret;
     #endif
         if (ret <= 0) {
-            err_sys("Error reading stdin");
+            fprintf(stderr, "Error reading stdin\n");
+            return THREAD_RET_SUCCESS;
         }
         /* lock SSH structure access */
         wc_LockMutex(&args->lock);
         ret = wolfSSH_stream_send(args->ssh, buf, sz);
         wc_UnLockMutex(&args->lock);
-        if (ret <= 0)
-            err_sys("Couldn't send data");
+        if (ret <= 0) {
+            fprintf(stderr, "Couldn't send data\n");
+            return THREAD_RET_SUCCESS;
+        }
     }
 #if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
