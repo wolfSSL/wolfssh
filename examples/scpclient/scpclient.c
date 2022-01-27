@@ -235,7 +235,7 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     word16 port = wolfSshPort;
     byte nonBlock = 0;
     enum copyDir dir = copyNone;
-    char ch;
+    int ch;
 
     ((func_args*)args)->return_code = 0;
 

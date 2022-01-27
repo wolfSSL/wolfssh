@@ -954,7 +954,7 @@ static INLINE int SFTP_GetSz(byte* buf, word32* sz,
 
 #ifndef WOLFSSH_USER_FILESYSTEM
 static int SFTP_GetAttributes(void* fs, const char* fileName,
-        WS_SFTP_FILEATRB* atr, byte link, void* heap);
+        WS_SFTP_FILEATRB* atr, byte noFollow, void* heap);
 static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
         WS_SFTP_FILEATRB* atr);
 #endif
@@ -4098,7 +4098,7 @@ static word32 TimeTo32(word16 d, word16 t)
  * returns WS_SUCCESS on success
  */
 int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
-        byte link, void* heap)
+        byte noFollow, void* heap)
 {
     DSTAT stats;
     int sz = (int)WSTRLEN(fileName);
@@ -4107,7 +4107,7 @@ int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
     (void)heap;
     (void)fs;
 
-    if (link) {
+    if (noFollow) {
         ret = WLSTAT(fileName, &stats);
     }
     else {
@@ -4238,13 +4238,13 @@ int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
  * returns WS_SUCCESS on success
  */
 int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
-        byte link, void* heap)
+        byte noFollow, void* heap)
 {
     BOOL error;
     WIN32_FILE_ATTRIBUTE_DATA stats;
 
     WLOG(WS_LOG_SFTP, "Entering SFTP_GetAttributes()");
-    (void)link;
+    (void)noFollow;
     (void)fs;
 
     /* @TODO add proper Windows link support */
@@ -4283,7 +4283,7 @@ int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
  * Fills out a WS_SFTP_FILEATRB structure
  * returns WS_SUCCESS on success */
 int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
-                       byte link, void* heap)
+                       byte noFollow, void* heap)
 {
     int err, sz;
     MQX_FILE_PTR mfs_ptr;
@@ -4401,7 +4401,7 @@ int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
 /* FatFs has its own structure for file attributes */
 
 static int SFTP_GetAttributes(void* fs, const char* fileName,
-        WS_SFTP_FILEATRB* atr, byte link, void* heap)
+        WS_SFTP_FILEATRB* atr, byte noFollow, void* heap)
 {
     FILINFO info;
     FRESULT ret;
@@ -4522,14 +4522,14 @@ static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
  * returns WS_SUCCESS on success
  */
 int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
-        byte link, void* heap)
+        byte noFollow, void* heap)
 {
     WSTAT_T stats;
 
     (void)heap;
     (void)fs;
 
-    if (link) {
+    if (noFollow) {
         /* Note, for windows, we treat WSTAT and WLSTAT the same. */
         if (WLSTAT(fileName, &stats) != 0) {
             return WS_BAD_FILE_E;
@@ -4620,7 +4620,7 @@ int wolfSSH_SFTP_RecvFSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 {
     WS_SFTP_FILEATRB atr;
     word32 handleSz;
-    word32 sz;
+    word32 sz = 0;
     byte*  handle;
     word32 idx = 0;
     int ret = WS_SUCCESS;
