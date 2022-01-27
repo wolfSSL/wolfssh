@@ -18,12 +18,12 @@
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#define WOLFSSH_TEST_SERVER
-#define WOLFSSH_TEST_ECHOSERVER
-
 #ifdef HAVE_CONFIG_H
     #include <config.h>
 #endif
+
+#define WOLFSSH_TEST_SERVER
+#define WOLFSSH_TEST_ECHOSERVER
 
 #ifdef WOLFSSL_USER_SETTINGS
     #include <wolfssl/wolfcrypt/settings.h>

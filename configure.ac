@@ -16,7 +16,7 @@ AM_INIT_AUTOMAKE([1.11 -Wall -Werror -Wno-portability foreign tar-ustar subdir-o
 
 AC_ARG_PROGRAM
 AC_CONFIG_MACRO_DIR([m4])
-AC_CONFIG_HEADERS([src/config.h])
+AC_CONFIG_HEADERS([config.h])
 
 WOLFSSH_LIBRARY_VERSION=12:3:3
 #                       | | |
@@ -84,6 +84,7 @@ CPPFLAGS="$CPPFLAGS -I${wcpath}/include"
 
 AC_CHECK_LIB([wolfssl],[wolfCrypt_Init],,[AC_MSG_ERROR([libwolfssl is required for ${PACKAGE}. It can be obtained from https://www.wolfssl.com/download.html/ .])])
 AC_CHECK_FUNCS([gethostbyname getaddrinfo gettimeofday inet_ntoa memset socket wc_ecc_set_rng])
+AC_CHECK_DECLS([[pread],[pwrite]],,[unistd.h])
 
 # DEBUG
 DEBUG_CFLAGS="-g -O0"

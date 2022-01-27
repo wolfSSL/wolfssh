@@ -18,6 +18,10 @@
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#ifdef HAVE_CONFIG_H
+    #include <config.h>
+#endif
+
 #define WOLFSSH_TEST_CLIENT
 
 #include <stdio.h>
@@ -231,7 +235,7 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     word16 port = wolfSshPort;
     byte nonBlock = 0;
     enum copyDir dir = copyNone;
-    char ch;
+    int ch;
 
     ((func_args*)args)->return_code = 0;
 

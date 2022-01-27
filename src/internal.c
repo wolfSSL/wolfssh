@@ -2356,7 +2356,7 @@ static INLINE byte AeadModeForId(byte id)
 static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
     int ret = WS_SUCCESS;
-    int side;
+    int side = WOLFSSH_ENDPOINT_SERVER;
     byte algoId;
     byte list[16] = {ID_NONE};
     word32 listSz;
@@ -4475,7 +4475,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
         else {
             wc_HashAlg hash;
             byte digest[WC_MAX_DIGEST_SIZE];
-            word32 digestSz;
+            word32 digestSz = 0;
             enum wc_HashType hashId = WC_HASH_TYPE_SHA;
             byte pkTypeId;
 
@@ -4489,9 +4489,15 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             if (ret == WS_SUCCESS) {
                 hashId = HashForId(pkTypeId);
                 WMEMSET(digest, 0, sizeof(digest));
-                digestSz = wc_HashGetDigestSize(hashId);
-                ret = wc_HashInit(&hash, hashId);
+                ret = wc_HashGetDigestSize(hashId);
+                if (ret > 0) {
+                    digestSz = ret;
+                    ret = 0;
+                }
             }
+
+            if (ret == 0)
+                ret = wc_HashInit(&hash, hashId);
 
             if (ret == 0) {
                 c32toa(ssh->sessionIdSz, digest);
