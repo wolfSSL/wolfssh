@@ -196,6 +196,11 @@ AC_ARG_ENABLE([agent],
     [AS_HELP_STRING([--enable-agent],[Enable ssh-agent support (default: disabled)])],
     [ENABLED_AGENT=$enableval],[ENABLED_AGENT=no])
 
+# X.509 certs
+AC_ARG_ENABLE([certs],
+    [AS_HELP_STRING([--enable-certs],[Enable X.509 cert support (default: disabled)])],
+    [ENABLED_CERTS=$enableval],[ENABLED_CERTS=no])
+
 # smallstack
 AC_ARG_ENABLE([smallstack],
     [AS_HELP_STRING([--enable-smallstack],[Enable small stack (default: disabled)])],
@@ -221,7 +226,7 @@ AC_ARG_ENABLE([distro],
 AS_IF([test "x$ENABLED_DISTRO" = "xyes"],
       [ENABLED_ALL=yes; enable_shared=yes; enable_static=yes])
 AS_IF([test "x$ENABLED_ALL" = "xyes"],
-      [ENABLED_KEYGEN=yes; ENABLED_SCP=yes; ENABLED_SFTP=yes; ENABLED_FWD=yes; ENABLED_SHELL=yes; ENABLED_AGENT=yes; ENABLED_SSHD=yes])
+      [ENABLED_KEYGEN=yes; ENABLED_SCP=yes; ENABLED_SFTP=yes; ENABLED_FWD=yes; ENABLED_SHELL=yes; ENABLED_AGENT=yes; ENABLED_SSHD=yes; ENABLED_CERTS=yes])
 AS_IF([test "x$ENABLED_SSHD" = "xyes"],
       [ENABLED_SHELL=yes])
 
@@ -241,6 +246,7 @@ AS_IF([test "x$ENABLED_PTERM" = "xyes"],
 AS_IF([test "x$ENABLED_SHELL" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SHELL"])
 AS_IF([test "x$ENABLED_AGENT" = "xyes"],[AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_AGENT"])
+AS_IF([test "x$ENABLED_CERTS" = "xyes"],[AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_CERTS"])
 AS_IF([test "x$ENABLED_SMALLSTACK" = "xyes"],
        [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SMALL_STACK"])
 AS_IF([test "x$ENABLED_SSHD" = "xyes"],
@@ -297,6 +303,7 @@ AM_CONDITIONAL([BUILD_TERM],[test "x$ENABLED_TERM" = "xyes"])
 AM_CONDITIONAL([BUILD_SHELL],[test "x$ENABLED_SHELL" = "xyes"])
 AM_CONDITIONAL([BUILD_AGENT],[test "x$ENABLED_AGENT" = "xyes"])
 AM_CONDITIONAL([BUILD_SSHD],[test "x$ENABLED_SSHD" = "xyes"])
+AM_CONDITIONAL([BUILD_CERTS],[test "x$ENABLED_CERTS" = "xyes"])
 
 AX_HARDEN_CC_COMPILER_FLAGS
 
@@ -340,5 +347,6 @@ AS_ECHO(["   * sftp:                      $ENABLED_SFTP"])
 AS_ECHO(["   * sshd:                      $ENABLED_SSHD"])
 AS_ECHO(["   * agent:                     $ENABLED_AGENT"])
 AS_ECHO(["   * TCP/IP Forwarding:         $ENABLED_FWD"])
+AS_ECHO(["   * X.509 Certs:               $ENABLED_CERTS"])
 AS_ECHO(["   * Examples:                  $ENABLED_EXAMPLES"])
 AS_ECHO(["   * liboqs Integration:        $ENABLED_LIBOQS"])
