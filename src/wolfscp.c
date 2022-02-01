@@ -68,7 +68,7 @@ static int _DumpExtendedData(WOLFSSH* ssh)
 
     msgSz = wolfSSH_extended_data_read(ssh, msg, WOLFSSH_DEFAULT_EXTDATA_SZ-1);
     if (msgSz > 0) {
-        msg[WOLFSSH_DEFAULT_EXTDATA_SZ - 1] = 0;
+        msg[msgSz] = 0;
         fprintf(stderr, "%s", msg);
         msgSz = WS_SUCCESS;
     }
