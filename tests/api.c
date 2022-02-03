@@ -659,6 +659,36 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
 }
 
 
+static void test_wolfSSH_CertMan(void)
+{
+#ifdef WOLFSSH_CERTMAN
+    {
+        WOLFSSH_CERTMAN* cm = NULL;
+
+        cm = wolfSSH_CERTMAN_new(NULL);
+        AssertNotNull(cm);
+        AssertNull(cm->heap);
+
+        wolfSSH_CERTMAN_free(cm);
+    }
+    {
+        WOLFSSH_CERTMAN cm;
+        WOLFSSH_CERTMAN* cmRef;
+        byte fakeHeap[32];
+
+        cmRef = wolfSSH_CERTMAN_init(&cm, NULL);
+        AssertNotNull(cmRef);
+        AssertNull(cmRef->heap);
+
+        cmRef = wolfSSH_CERTMAN_init(&cm, fakeHeap);
+        AssertNotNull(cmRef);
+        AssertNotNull(cmRef->heap);
+        AssertEQ(cmRef->heap, fakeHeap);
+    }
+#endif
+}
+
+
 #ifdef WOLFSSH_SCP
 static int my_ScpRecv(WOLFSSH* ssh, int state, const char* basePath,
     const char* fileName, int fileMode, word64 mTime, word64 aTime,
@@ -970,6 +1000,7 @@ int main(void)
     test_wolfSSH_ConvertConsole();
     test_wolfSSH_CTX_UsePrivateKey_buffer();
     test_wolfSSH_RealPath();
+    test_wolfSSH_CertMan();
 
     /* SCP tests */
     test_wolfSSH_SCP_CB();
