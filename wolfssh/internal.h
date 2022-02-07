@@ -280,6 +280,10 @@ enum {
     ID_ECDSA_SHA2_NISTP256,
     ID_ECDSA_SHA2_NISTP384,
     ID_ECDSA_SHA2_NISTP521,
+    ID_X509V3_SSH_RSA,
+    ID_X509V3_ECDSA_SHA2_NISTP256,
+    ID_X509V3_ECDSA_SHA2_NISTP384,
+    ID_X509V3_ECDSA_SHA2_NISTP521,
 
     /* Service IDs */
     ID_SERVICE_USERAUTH,
@@ -420,6 +424,7 @@ struct WOLFSSH_CTX {
 #ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
     byte useSaber:1;                  /* Depends on the private key */
 #endif
+    byte useCert;
     word32 highwaterMark;
     const char* banner;
     word32 bannerSz;
