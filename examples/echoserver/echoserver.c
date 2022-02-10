@@ -1714,6 +1714,26 @@ static int LoadPublicKeyBuffer(byte* buf, word32 bufSz, PwMapList* list)
 }
 
 
+#ifdef WOLFSSH_CERTS
+static int LoadCertBuffer(byte* buf, word32 bufSz, PwMapList* list)
+{
+    if (list == NULL)
+        return -1;
+
+    if (buf == NULL || bufSz == 0)
+        return 0;
+
+    if (PwMapNew(list,
+                WOLFSSH_USERAUTH_PUBLICKEY,
+                (const byte*)"john", 4, buf, bufSz) == NULL ) {
+        return -1;
+    }
+
+    return 0;
+}
+#endif
+
+
 static int wsUserAuth(byte authType,
                       WS_UserAuthData* authData,
                       void* ctx)
@@ -1828,6 +1848,9 @@ static void ShowUsage(void)
     printf(" -d <string>   set the home directory for SFTP connections\n");
 #endif
     printf(" -j <file>     load in a public key to accept from peer\n");
+#ifdef WOLFSSH_CERTS
+    printf(" -a <file>     load in a root CA certificate file\n");
+#endif
 }
 
 
@@ -1865,13 +1888,16 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     const char* defaultSftpPath = NULL;
     char  nonBlock  = 0;
     char* userPubKey = NULL;
+    #ifdef WOLFSSH_CERTS
+        char* caCert = NULL;
+    #endif
 
     int     argc = serverArgs->argc;
     char**  argv = serverArgs->argv;
     serverArgs->return_code = 0;
 
     if (argc > 0) {
-    while ((ch = mygetopt(argc, argv, "?1d:efEp:R:Nj:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?1a:d:efEp:R:Nj:")) != -1) {
         switch (ch) {
             case '?' :
                 ShowUsage();
@@ -1881,6 +1907,11 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 multipleConnections = 0;
                 break;
 
+            case 'a':
+                #ifdef WOLFSSH_CERTS
+                    caCert = myoptarg;
+                #endif
+                break;
             case 'e' :
                 userEcc = 1;
                 break;
@@ -2025,6 +2056,57 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             load_file(userPubKey, userBuf, &userBufSz);
             LoadPublicKeyBuffer(userBuf, userBufSz, &pwMapList);
         }
+
+        #ifdef WOLFSSH_CERTS
+        {
+            byte* certBuf = NULL;
+            word32 certBufSz = 0;
+            const char* filename = "./keys/john-cert.der";
+
+            load_file(filename, NULL, &certBufSz);
+
+            if (certBufSz == 0) {
+                fprintf(stderr,
+                        "Couldn't find size of file %s.\n", filename);
+                WEXIT(EXIT_FAILURE);
+            }
+
+            certBuf = (byte*)WMALLOC(certBufSz, NULL, 0);
+            if (certBuf == NULL) {
+                fprintf(stderr, "WMALLOC failed\n");
+                WEXIT(EXIT_FAILURE);
+            }
+            load_file(filename, certBuf, &certBufSz);
+            LoadCertBuffer(certBuf, certBufSz, &pwMapList);
+        }
+        if (caCert) {
+            byte* certBuf = NULL;
+            word32 certBufSz = 0;
+            int ret = 0;
+
+            load_file(caCert, NULL, &certBufSz);
+
+            if (certBufSz == 0) {
+                fprintf(stderr,
+                        "Couldn't find size of file %s.\n", caCert);
+                WEXIT(EXIT_FAILURE);
+            }
+
+            certBuf = (byte*)WMALLOC(certBufSz, NULL, 0);
+            if (certBuf == NULL) {
+                fprintf(stderr, "WMALLOC failed\n");
+                WEXIT(EXIT_FAILURE);
+            }
+            load_file(caCert, certBuf, &certBufSz);
+            ret = wolfSSH_CTX_AddRootCert_buffer(ctx, certBuf, certBufSz,
+                    WOLFSSH_FORMAT_ASN1);
+            if (ret != 0) {
+                fprintf(stderr, "Couldn't add root cert\n");
+                WEXIT(EXIT_FAILURE);
+            }
+            WFREE(certBuf, NULL, 0);
+        }
+        #endif
 
         bufSz = (word32)WSTRLEN(samplePasswordBuffer);
         WMEMCPY(keyLoadBuf, samplePasswordBuffer, bufSz);

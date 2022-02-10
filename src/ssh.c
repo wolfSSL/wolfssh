@@ -1680,6 +1680,39 @@ int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX* ctx,
 }
 
 
+#ifdef WOLFSSH_CERTS
+
+int wolfSSH_CTX_UseCert_buffer(WOLFSSH_CTX* ctx,
+        const byte* cert, word32 certSz, int format)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CTX_UseCert_buffer()");
+
+    ret = wolfSSH_ProcessBuffer(ctx, cert, certSz, format, BUFTYPE_CERT);
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_CTX_UseCert_buffer(), ret = %d", ret);
+    return ret;
+}
+
+
+int wolfSSH_CTX_AddRootCert_buffer(WOLFSSH_CTX* ctx,
+        const byte* cert, word32 certSz, int format)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CTX_AddRootCert_buffer()");
+
+    ret = wolfSSH_ProcessBuffer(ctx, cert, certSz, format, BUFTYPE_CA);
+
+    WLOG(WS_LOG_DEBUG,
+            "Leaving wolfSSH_CTX_AddRootCert_buffer(), ret = %d", ret);
+    return ret;
+}
+
+#endif /* WOLFSSH_CERTS */
+
+
 int wolfSSH_CTX_SetWindowPacketSize(WOLFSSH_CTX* ctx,
                                     word32 windowSz, word32 maxPacketSz)
 {

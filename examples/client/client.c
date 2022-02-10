@@ -198,6 +198,11 @@ static word32 userPrivateKeyTypeSz = 0;
 static byte isPrivate = 0;
 
 
+#ifdef WOLFSSH_CERTS
+static const byte publicKeyType[] = "x509v3-ecdsa-sha2-nistp256";
+static const byte privateKeyType[] = "ecdsa-sha2-nistp256";
+#endif
+
 #ifndef WOLFSSH_NO_RSA
 static const char* hanselPublicRsa =
     "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC9P3ZFowOsONXHD5MwWiCciXytBRZGho"
@@ -392,7 +397,11 @@ static int wsUserAuth(byte authType,
         /* in the case that the name is hansel or in the case that the user
          * passed in a public key file, use public key auth */
         if ((XSTRNCMP((char*)authData->username, "hansel",
-                authData->usernameSz) == 0) || pubKeyName != NULL) {
+                authData->usernameSz) == 0) ||
+            (XSTRNCMP((char*)authData->username, "john",
+                authData->usernameSz) == 0) ||
+            pubKeyName != NULL) {
+
             if (authType == WOLFSSH_USERAUTH_PASSWORD) {
                 printf("rejecting password type with %s in favor of pub key\n",
                     (char*)authData->username);
@@ -683,6 +692,62 @@ static THREAD_RET readPeer(void* in)
 }
 #endif /* !SINGLE_THREADED && !WOLFSSL_NUCLEUS */
 
+
+#ifdef WOLFSSH_CERTS
+
+static int load_der_file(const char* filename, byte** out, word32* outSz)
+{
+    WFILE* file;
+    byte* in;
+    word32 inSz;
+    int ret;
+
+    if (filename == NULL || out == NULL || outSz == NULL)
+        return -1;
+
+    ret = WFOPEN(&file, filename, "rb");
+    if (ret != 0 || file == WBADFILE)
+        return -1;
+
+    if (WFSEEK(file, 0, WSEEK_END) != 0) {
+        WFCLOSE(file);
+        return -1;
+    }
+    inSz = (word32)WFTELL(file);
+    WREWIND(file);
+
+    if (inSz == 0) {
+        WFCLOSE(file);
+        return -1;
+    }
+
+    in = (byte*)WMALLOC(inSz, NULL, 0);
+    if (in == NULL) {
+        WFCLOSE(file);
+        return -1;
+    }
+
+    ret = (int)WFREAD(in, 1, inSz, file);
+    if (ret <= 0 || (word32)ret != inSz) {
+        ret = -1;
+        WFREE(in, NULL, 0);
+        in = 0;
+        inSz = 0;
+    }
+    else
+        ret = 0;
+
+    *out = in;
+    *outSz = inSz;
+
+    WFCLOSE(file);
+
+    return ret;
+}
+
+#endif /* WOLFSSH_CERTS */
+
+
 #if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
 
 static int callbackGlobalReq(WOLFSSH *ssh, void *buf, word32 sz, int reply, void *ctx)
@@ -970,6 +1035,22 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         if (ret != 0) err_sys("Couldn't load private key file.");
     }
 
+#ifdef WOLFSSH_CERTS
+    if (XSTRCMP("john", username) == 0) {
+        ret = load_der_file("./keys/john-cert.der",
+                &userPublicKey, &userPublicKeySz);
+        if (ret != 0) err_sys("Couldn't load certificate file.");
+        ret = load_der_file("./keys/john-key.der",
+                &userPrivateKey, &userPrivateKeySz);
+        if (ret != 0) err_sys("Couldn't load private key file.");
+
+        userPublicKeyType = publicKeyType;
+        userPublicKeyTypeSz = (word32)WSTRLEN((const char*)publicKeyType);
+        userPrivateKeyType = privateKeyType;
+        userPrivateKeyTypeSz = (word32)WSTRLEN((const char*)privateKeyType);
+    }
+    else
+#endif
     if (pubKeyName == NULL) {
         byte* p = userPublicKey;
         userPublicKeySz = sizeof(userPublicKeyBuf);

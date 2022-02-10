@@ -36,10 +36,7 @@ extern "C" {
 #endif
 
 
-struct WOLFSSH_CERTMAN {
-    void* heap;
-    unsigned char reserved[512];
-};
+struct WOLFSSH_CERTMAN;
 typedef struct WOLFSSH_CERTMAN WOLFSSH_CERTMAN;
 
 
@@ -50,7 +47,12 @@ WOLFSSH_API
 void wolfSSH_CERTMAN_free(WOLFSSH_CERTMAN* cm);
 
 WOLFSSH_API
-WOLFSSH_CERTMAN* wolfSSH_CERTMAN_init(WOLFSSH_CERTMAN* cm, void* heap);
+int wolfSSH_CERTMAN_LoadRootCA_buffer(WOLFSSH_CERTMAN* cm,
+        const unsigned char* rootCa, word32 rootCaSz);
+
+WOLFSSH_API
+int wolfSSH_CERTMAN_VerifyCert_buffer(WOLFSSH_CERTMAN* cm,
+        const unsigned char* cert, word32 certSz);
 
 
 #ifdef __cplusplus

@@ -659,6 +659,95 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
 }
 
 
+#ifdef WOLFSSH_CERTS
+static int load_file(const char* filename, byte** buf, word32* bufSz)
+{
+    FILE* f = NULL;
+    int ret = 0;
+
+    if (filename == NULL || buf == NULL || bufSz == NULL)
+        ret = -1;
+
+    if (ret == 0) {
+        f = fopen(filename, "rb");
+        if (f == NULL)
+            ret = -2;
+    }
+
+    if (ret == 0) {
+        fseek(f, 0, XSEEK_END);
+        *bufSz = (word32)ftell(f);
+        rewind(f);
+    }
+
+    if (ret == 0) {
+        *buf = (byte*)malloc(*bufSz);
+        if (*buf == NULL)
+            ret = -3;
+    }
+
+    if (ret == 0) {
+        int readSz;
+        readSz = (int)fread(*buf, 1, *bufSz, f);
+        if (readSz < (int)*bufSz)
+            ret = -4;
+    }
+
+    if (f != NULL)
+        fclose(f);
+
+    return ret;
+}
+#endif
+
+
+static void test_wolfSSH_CTX_UseCert_buffer(void)
+{
+#ifdef WOLFSSH_CERTS
+
+    WOLFSSH_CTX* ctx = NULL;
+    byte* cert = NULL;
+    word32 certSz = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+
+    AssertIntEQ(0, load_file("./keys/server-cert.pem", &cert, &certSz));
+    AssertNotNull(cert);
+    AssertIntNE(0, certSz);
+
+    AssertIntEQ(WS_BAD_ARGUMENT,
+            wolfSSH_CTX_UseCert_buffer(NULL, cert, certSz, WOLFSSH_FORMAT_PEM));
+    AssertIntEQ(WS_BAD_ARGUMENT,
+            wolfSSH_CTX_UseCert_buffer(ctx, NULL, certSz, WOLFSSH_FORMAT_PEM));
+    AssertIntEQ(WS_BAD_ARGUMENT,
+            wolfSSH_CTX_UseCert_buffer(ctx, NULL, 0, WOLFSSH_FORMAT_PEM));
+
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_UseCert_buffer(ctx, cert, certSz, WOLFSSH_FORMAT_PEM));
+
+    AssertIntEQ(WS_BAD_FILETYPE_E,
+            wolfSSH_CTX_UseCert_buffer(ctx, cert, certSz, WOLFSSH_FORMAT_ASN1));
+    AssertIntEQ(WS_BAD_FILETYPE_E,
+            wolfSSH_CTX_UseCert_buffer(ctx, cert, certSz, WOLFSSH_FORMAT_RAW));
+    AssertIntEQ(WS_BAD_FILETYPE_E,
+            wolfSSH_CTX_UseCert_buffer(ctx, cert, certSz, 99));
+
+    free(cert);
+
+    AssertIntEQ(0, load_file("./keys/server-cert.der", &cert, &certSz));
+    AssertNotNull(cert);
+    AssertIntNE(0, certSz);
+
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_UseCert_buffer(ctx, cert, certSz, WOLFSSH_FORMAT_ASN1));
+
+    wolfSSH_CTX_free(ctx);
+    free(cert);
+#endif /* WOLFSSH_CERTS */
+}
+
+
 static void test_wolfSSH_CertMan(void)
 {
 #ifdef WOLFSSH_CERTMAN
@@ -1000,6 +1089,7 @@ int main(void)
     test_wolfSSH_ConvertConsole();
     test_wolfSSH_CTX_UsePrivateKey_buffer();
     test_wolfSSH_RealPath();
+    test_wolfSSH_CTX_UseCert_buffer();
     test_wolfSSH_CertMan();
 
     /* SCP tests */

@@ -42,6 +42,9 @@
 #ifdef WOLFSSH_AGENT
     #include <wolfssh/agent.h>
 #endif /* WOLFSSH_AGENT */
+#ifdef WOLFSSH_CERTS
+    #include <wolfssh/certman.h>
+#endif /* WOLFSSH_CERTS */
 
 
 #if !defined (ALIGN16)
@@ -415,6 +418,9 @@ struct WOLFSSH_CTX {
     WS_CallbackFwd fwdCb;             /* WOLFSSH-FWD callback */
     WS_CallbackFwdIO fwdIoCb;         /* WOLFSSH-FWD IO callback */
 #endif /* WOLFSSH_FWD */
+#ifdef WOLFSSH_CERTS
+    WOLFSSH_CERTMAN* certMan;
+#endif /* WOLFSSH_CERTS */
     WS_CallbackPublicKeyCheck publicKeyCheckCb;
                                       /* Check server's public key callback */
 
@@ -424,6 +430,8 @@ struct WOLFSSH_CTX {
 #ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
     byte useSaber:1;                  /* Depends on the private key */
 #endif
+    byte* cert;
+    word32 certSz;
     byte useCert;
     word32 highwaterMark;
     const char* banner;
@@ -457,6 +465,7 @@ typedef struct HandshakeInfo {
     byte kexId;
     byte kexIdGuess;
     byte pubKeyId;
+    byte sigId;
     byte encryptId;
     byte macId;
     byte hashId;

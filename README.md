@@ -22,6 +22,11 @@ On some systems the optional ldconfig command is needed after installing.
 To use the key generation function in wolfSSH, wolfSSL will need to be
 configured with keygen: `--enable-keygen`.
 
+When using X.509 certificates for user authentication, wolfSSL must not be
+built without TLS enabled. wolfSSH uses wolfSSL's certificate manager system
+for X.509, including OCSP lookups. To allow OCSP, add `--enable-ocsp` to the
+wolfSSL configure.
+
 If the bulk of wolfSSL code isn't desired, wolfSSL can be configured with
 the crypto only option: `--enable-cryptonly`.
 
@@ -402,6 +407,7 @@ behavior, give the echoserver the command line option `-f`.
 
     $ ./examples/echoserver/echoserver -f
 
+
 POST-QUANTUM
 ============
 
@@ -462,3 +468,24 @@ NOTE: when prompted, enter the password which is "upthehill".
 
 You can type a line of text and when you press enter, the line will be echoed
 back. Use CTRL-C to terminate the connection.
+
+
+CERTIFICATE SUPPORT
+===================
+
+wolfSSH can accept X.509 certificates in place of just public keys when
+authenticating a user. This feature is currently a work in process.
+
+To compile wolfSSH with X.509 support, use the `--enable-certs` build option
+or define `WOLFSSH_CERTS`:
+
+    $ ./configure --enable-certs
+    $ make
+
+To provide a CA root certificate to validate a user's certificate, give the
+echoserver the command line option `-a`.
+
+    $ ./examples/echoserver/echoserver -a ./keys/ca-cert.pem
+
+The echoserver and client have a fake user named "john" whose certificate
+will be used for authentication.

@@ -76,13 +76,37 @@
 #endif
 
 
+struct WOLFSSH_CERTMAN {
+    void* heap;
+    WOLFSSL_CERT_MANAGER* cm;
+};
+
+
 static WOLFSSH_CERTMAN* _CertMan_init(WOLFSSH_CERTMAN* cm, void* heap)
 {
-    (void)heap;
     WLOG_ENTER();
 
     if (cm != NULL) {
         WMEMSET(cm, 0, sizeof *cm);
+        cm->cm = wolfSSL_CertManagerNew_ex(heap);
+        if (cm->cm != NULL) {
+            int ret;
+
+            ret = wolfSSL_CertManagerEnableOCSP(cm->cm,
+                    WOLFSSL_OCSP_CHECKALL);
+
+            if (ret == WOLFSSL_SUCCESS) {
+                WLOG(WS_LOG_CERTMAN, "Enabled OCSP");
+            }
+            else {
+                WLOG(WS_LOG_CERTMAN, "Couldn't enable OCSP");
+                wolfSSL_CertManagerFree(cm->cm);
+                cm = NULL;
+            }
+        }
+        else {
+            cm = NULL;
+        }
     }
 
     WLOG_LEAVE_PTR(cm);
@@ -96,6 +120,9 @@ static void _CertMan_ResourceFree(WOLFSSH_CERTMAN* cm, void* heap)
     WLOG_ENTER();
 
     if (cm != NULL) {
+        if (cm->cm != NULL) {
+            wolfSSL_CertManagerFree(cm->cm);
+        }
         WMEMSET(cm, 0, sizeof *cm);
     }
 
@@ -137,17 +164,33 @@ void wolfSSH_CERTMAN_free(WOLFSSH_CERTMAN* cm)
 }
 
 
-WOLFSSH_CERTMAN* wolfSSH_CERTMAN_init(WOLFSSH_CERTMAN* cm, void* heap)
+int wolfSSH_CERTMAN_LoadRootCA_buffer(WOLFSSH_CERTMAN* cm,
+        const unsigned char* rootCa, word32 rootCaSz)
 {
+    int ret = WS_SUCCESS;
+
     WLOG_ENTER();
 
-    if (cm != NULL) {
-        cm = _CertMan_init(cm, heap);
-    }
+    ret = wolfSSL_CertManagerLoadCABuffer(cm->cm, rootCa, rootCaSz,
+            WOLFSSL_FILETYPE_ASN1);
 
-    WLOG_LEAVE_PTR(cm);
-    return cm;
+    WLOG_LEAVE(ret);
+    return ret;
 }
 
+
+int wolfSSH_CERTMAN_VerifyCert_buffer(WOLFSSH_CERTMAN* cm,
+        const unsigned char* cert, word32 certSz)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG_ENTER();
+
+    ret = wolfSSL_CertManagerVerifyBuffer(cm->cm, cert, certSz,
+            WOLFSSL_FILETYPE_ASN1);
+
+    WLOG_LEAVE(ret);
+    return ret;
+}
 
 #endif /* WOLFSSH_CERTS */
