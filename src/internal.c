@@ -373,6 +373,9 @@ const char* GetErrorString(int err)
 
         case WS_AGENT_CXN_FAIL:
             return "agent connection failed";
+        
+        case WS_SFTP_BAD_HEADER:
+            return "sftp bad header";
 
         default:
             return "Unknown error code";
