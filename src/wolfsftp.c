@@ -6762,6 +6762,7 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                             ssh->error == WS_WANT_WRITE) {
                         return WS_FATAL_ERROR;
                     }
+                    ret = WS_FATAL_ERROR;
                     state->state = STATE_SEND_WRITE_CLEANUP;
                     continue;
                 }
