@@ -46,7 +46,7 @@ etc. The other user macros are the directories where the wolfSSL
 libraries for the different builds may be found. So the user macro
 `wolfCryptDllRelease64` is initially set to
 
-    $(wolfCryptDir)\x64\DLL Release
+    $(wolfCryptDir)\DLL Release\x64
 
 This value is used in the debugging environment for the echoserver's
 64-bit DLL Release build is set to
