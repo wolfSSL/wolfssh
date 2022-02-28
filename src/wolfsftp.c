@@ -6646,6 +6646,7 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
     WS_SFTP_SEND_WRITE_STATE* state = NULL;
     int ret = WS_FATAL_ERROR;
     int status;
+    int sentSzSave = 0;
     byte type;
 
     WLOG(WS_LOG_SFTP, "Entering wolfSSH_SFTP_SendWritePacket()");
@@ -6748,6 +6749,14 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                     state->state = STATE_SEND_WRITE_CLEANUP;
                     continue;
                 }
+
+                sentSzSave += state->sentSz;
+                if (inSz > (word32)state->sentSz) {
+                    in += state->sentSz;
+                    inSz -= state->sentSz;
+                    continue;
+                }
+
                 wolfSSH_SFTP_buffer_free(ssh, &state->buffer);
                 state->state = STATE_SEND_WRITE_GET_HEADER;
                 NO_BREAK;
@@ -6823,7 +6832,7 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                     ret = WS_FATAL_ERROR;
                 }
                 if (ret >= WS_SUCCESS)
-                    ret = state->sentSz;
+                    ret = sentSzSave;
                 state->state = STATE_SEND_WRITE_CLEANUP;
                 NO_BREAK;
 
