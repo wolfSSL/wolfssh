@@ -542,25 +542,29 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
 {
 #ifndef WOLFSSH_NO_SERVER
     WOLFSSH_CTX* ctx;
-#ifdef HAVE_ECC
+#if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) || \
+    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) || \
+    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
     byte* eccKey;
     word32 eccKeySz;
 #endif
-#ifndef NO_RSA
+#ifndef WOLFSSH_NO_RSA
     byte* rsaKey;
     word32 rsaKeySz;
 #endif
     byte* lastKey = NULL;
     word32 lastKeySz = 0;
 
-#ifdef HAVE_ECC
+#if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) || \
+    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) || \
+    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
     AssertIntEQ(0,
             ConvertHexToBin(serverKeyEccDer, &eccKey, &eccKeySz,
                     NULL, NULL, NULL,
                     NULL, NULL, NULL,
                     NULL, NULL, NULL));
 #endif
-#ifndef NO_RSA
+#ifndef WOLFSSH_NO_RSA
     AssertIntEQ(0,
             ConvertHexToBin(serverKeyRsaDer, &rsaKey, &rsaKeySz,
                     NULL, NULL, NULL,
@@ -610,7 +614,9 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
     AssertIntEQ(0, ctx->useEcc);
 
     /* Pass */
-#ifdef HAVE_ECC
+#if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) || \
+    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) || \
+    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
     lastKey = ctx->privateKey;
     lastKeySz = ctx->privateKeySz;
 
@@ -625,7 +631,7 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
     AssertIntNE(lastKeySz, ctx->privateKeySz);
 #endif
 
-#ifndef NO_RSA
+#ifndef WOLFSSH_NO_RSA
     lastKey = ctx->privateKey;
     lastKeySz = ctx->privateKeySz;
 
@@ -641,10 +647,12 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
 #endif
 
     wolfSSH_CTX_free(ctx);
-#ifdef HAVE_ECC
+#if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) || \
+    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) || \
+    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
     FreeBins(eccKey, NULL, NULL, NULL);
 #endif
-#ifndef NO_RSA
+#ifndef WOLFSSH_NO_RSA
     FreeBins(rsaKey, NULL, NULL, NULL);
 #endif
 #endif /* WOLFSSH_NO_SERVER */
