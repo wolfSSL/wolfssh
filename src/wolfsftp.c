@@ -524,6 +524,7 @@ static int wolfSSH_SFTP_buffer_read(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer,
         int readSz)
 {
     int ret;
+    word32 channelId = 0;
 
     if (buffer == NULL || ssh == NULL) {
         return WS_FATAL_ERROR;
@@ -543,13 +544,46 @@ static int wolfSSH_SFTP_buffer_read(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer,
         }
     }
 
+    /* attempt to drain the last channel read from before reading more from the
+     * socket */
+    ret = wolfSSH_GetLastRxId(ssh, &channelId);
+    if (ret != WS_SUCCESS) {
+        WLOG(WS_LOG_SFTP, "Error %d getting last RX channel ID", ret);
+        return ret;
+    }
+
+    ret = WS_CHAN_RXD;
     do {
-        ret = wolfSSH_stream_read(ssh, buffer->data + buffer->idx,
-                buffer->sz - buffer->idx);
-        if (ret < 0) {
-            return WS_FATAL_ERROR;
+        if (ret == WS_CHAN_RXD) {
+            ret = wolfSSH_ChannelIdRead(ssh, channelId, buffer->data +
+                    buffer->idx, buffer->sz - buffer->idx);
+            if (ret == WS_INVALID_CHANID) {
+                /* possible old channel was closed down, try calling worker
+                 * function to see if any data is pending */
+                ret = 0;
+            }
+            else if (ret < 0) {
+                WLOG(WS_LOG_SFTP, "Leaving wolfSSH_SFTP_buffer_read(), ret = %d",
+                        ret);
+                return ret;
+            }
+        }
+
+        if (ret == 0) { /* no more data on the channel process more */
+            ret = wolfSSH_worker(ssh, &channelId);
+            if (ret == WS_FATAL_ERROR) {
+                WLOG(WS_LOG_SFTP, "Issue with wolfSSH_worker call");
+                WLOG(WS_LOG_SFTP, "Leaving wolfSSH_SFTP_buffer_read(), ret = %d",
+                        ret);
+                return WS_FATAL_ERROR;
+            }
+            continue;
         }
         buffer->idx += (word32)ret;
+        WLOG(WS_LOG_SFTP, "SFTP read %d bytes from channel ID %d", ret,
+                channelId);
+        WLOG(WS_LOG_SFTP, "%d of %d expected bytes read", buffer->idx,
+                buffer->sz);
     } while (buffer->idx < buffer->sz);
 
     return buffer->sz;
