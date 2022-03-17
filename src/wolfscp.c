@@ -622,7 +622,14 @@ int DoScpSource(WOLFSSH* ssh)
                 }
                 ssh->scpBufferedSz -= ret;
                 ret = WS_SUCCESS;
-                if (ssh->scpFileOffset < ssh->scpFileSz) {
+
+                if (ssh->scpBufferedSz > 0) {
+                    /* There is still file data in the buffer to send,
+                     * go ahead and try to send it by repeating this
+                     * state. */
+                    continue;
+                }
+                else if (ssh->scpFileOffset < ssh->scpFileSz) {
                     ssh->scpState = SCP_TRANSFER;
                     ssh->scpRequestType = WOLFSSH_SCP_CONTINUE_FILE_TRANSFER;
 
