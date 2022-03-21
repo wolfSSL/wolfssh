@@ -1463,6 +1463,7 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
                             if (ssh->error != WS_WANT_READ &&
                                     ssh->error != WS_WANT_WRITE &&
                                     ssh->error != WS_REKEYING &&
+                                    ssh->error != WS_CHAN_RXD &&
                                     ssh->error != WS_WINDOW_FULL)
                                 wolfSSH_SFTP_ClearState(ssh, STATE_ID_RECV);
                             return WS_FATAL_ERROR;
