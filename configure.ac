@@ -3,7 +3,7 @@
 # All right reserved.
 
 AC_COPYRIGHT([Copyright (C) 2014-2020 wolfSSL Inc.])
-AC_INIT([wolfssh],[1.4.8],[support@wolfssl.com],[wolfssh],[https://www.wolfssl.com])
+AC_INIT([wolfssh],[1.4.9],[support@wolfssl.com],[wolfssh],[https://www.wolfssl.com])
 AC_PREREQ([2.63])
 AC_CONFIG_AUX_DIR([build-aux])
 
@@ -18,7 +18,7 @@ AC_ARG_PROGRAM
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_HEADERS([config.h])
 
-WOLFSSH_LIBRARY_VERSION=12:3:3
+WOLFSSH_LIBRARY_VERSION=12:3:4
 #                       | | |
 #                +------+ | +---+
 #                |        |     |
@@ -72,15 +72,15 @@ AC_ARG_WITH(wolfssl,
     if test "x$withval" != "xno" ; then
       if test -d "${withval}/lib" && test -d "${withval}/include"; then
         wcpath=${withval}
+
+        LDFLAGS="$LDFLAGS -L${wcpath}/lib"
+        CPPFLAGS="$CPPFLAGS -I${wcpath}/include"
       else
         AC_MSG_ERROR([wolfSSL path error (${withval}): missing lib and include])
       fi
     fi
   ]
 )
-
-LDFLAGS="$LDFLAGS -L${wcpath}/lib"
-CPPFLAGS="$CPPFLAGS -I${wcpath}/include"
 
 AC_CHECK_LIB([wolfssl],[wolfCrypt_Init],,[AC_MSG_ERROR([libwolfssl is required for ${PACKAGE}. It can be obtained from https://www.wolfssl.com/download.html/ .])])
 AC_CHECK_FUNCS([gethostbyname getaddrinfo gettimeofday inet_ntoa memset socket wc_ecc_set_rng])
