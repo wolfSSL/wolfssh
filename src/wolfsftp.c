@@ -555,6 +555,8 @@ static int wolfSSH_SFTP_buffer_read(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer,
     ret = WS_CHAN_RXD;
     do {
         if (ret == WS_CHAN_RXD) {
+            WLOG(WS_LOG_SFTP, "Trying to read %d bytes from channel %d",
+                        buffer->sz - buffer->idx, channelId);
             ret = wolfSSH_ChannelIdRead(ssh, channelId, buffer->data +
                     buffer->idx, buffer->sz - buffer->idx);
             if (ret == WS_INVALID_CHANID) {
@@ -584,6 +586,7 @@ static int wolfSSH_SFTP_buffer_read(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer,
                 channelId);
         WLOG(WS_LOG_SFTP, "%d of %d expected bytes read", buffer->idx,
                 buffer->sz);
+        ret = WS_CHAN_RXD; /* read more from channel if here */
     } while (buffer->idx < buffer->sz);
 
     return buffer->sz;
