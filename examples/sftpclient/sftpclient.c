@@ -768,6 +768,10 @@ static int doCmds(func_args* args)
                 }
             } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE);
 
+#ifndef WOLFSSH_NO_TIMESTAMP
+            WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
+#endif
+
             if (ret != WS_SUCCESS) {
                 if (SFTP_FPUTS(args, "Error getting file\n")  < 0) {
                      err_msg("fputs error");
@@ -859,6 +863,11 @@ static int doCmds(func_args* args)
                 err = wolfSSH_get_error(ssh);
             } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
                         && ret != WS_SUCCESS);
+
+#ifndef WOLFSSH_NO_TIMESTAMP
+            WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
+#endif
+
             if (ret != WS_SUCCESS) {
                 if (SFTP_FPUTS(args, "Error pushing file\n") < 0) {
                     err_msg("fputs error");
