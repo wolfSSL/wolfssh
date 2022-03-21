@@ -87,10 +87,13 @@ static int Expected(int command)
                 char expt1[] = ".\n..\nwolfSSH sftp> ";
                 char expt2[] = "..\n.\nwolfSSH sftp> ";
                 if (WMEMCMP(expt1, inBuf, sizeof(expt1)) != 0 &&
-                    WMEMCMP(expt2, inBuf, sizeof(expt2)) != 0)
+                    WMEMCMP(expt2, inBuf, sizeof(expt2)) != 0) {
+                    printf("compare failed on case 4, inBuf = %s\n", inBuf);
                     return -1;
-                else
+                }
+                else {
                     return 0;
+                }
 
             }
 
@@ -131,6 +134,8 @@ static int commandCb(const char* in, char* out, int outSz)
         }
 
         if (Expected(commandIdx) != 0) {
+            printf("Error with command %d : %s\n", commandIdx,
+                    cmds[commandIdx]);
             exit(1); /* abort out */
         }
         commandIdx++;
