@@ -1259,7 +1259,7 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
             ret = 0; /* don't break out of loop with user auth error */
             printf("%s\n", errorStr);
         }
-        else if (error == WS_SOCKET_ERROR_E) {
+        else if (error == WS_SOCKET_ERROR_E || error == WS_CHANNEL_CLOSED) {
             ret = 0;
             printf("%s\n", errorStr);
         }

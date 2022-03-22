@@ -552,14 +552,14 @@ static int wolfSSH_SFTP_buffer_read(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer,
         return ret;
     }
 
-    ret = WS_CHAN_RXD;
+    ret = wolfSSH_get_error(ssh);
     do {
         if (ret == WS_CHAN_RXD) {
             WLOG(WS_LOG_SFTP, "Trying to read %d bytes from channel %d",
                         buffer->sz - buffer->idx, channelId);
             ret = wolfSSH_ChannelIdRead(ssh, channelId, buffer->data +
                     buffer->idx, buffer->sz - buffer->idx);
-            if (ret == WS_INVALID_CHANID) {
+            if (ret == WS_INVALID_CHANID || ret == WS_CHANNEL_CLOSED) {
                 /* possible old channel was closed down, try calling worker
                  * function to see if any data is pending */
                 ret = 0;
@@ -571,7 +571,8 @@ static int wolfSSH_SFTP_buffer_read(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer,
             }
         }
 
-        if (ret == 0) { /* no more data on the channel process more */
+        if (ret == 0 || ret == WS_WANT_READ) {
+            /* no more data on the channel process more */
             ret = wolfSSH_worker(ssh, &channelId);
             if (ret == WS_FATAL_ERROR) {
                 WLOG(WS_LOG_SFTP, "Issue with wolfSSH_worker call");
@@ -579,14 +580,22 @@ static int wolfSSH_SFTP_buffer_read(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer,
                         ret);
                 return WS_FATAL_ERROR;
             }
-            continue;
         }
-        buffer->idx += (word32)ret;
-        WLOG(WS_LOG_SFTP, "SFTP read %d bytes from channel ID %d", ret,
+        else if (ret > 0) {
+            buffer->idx += (word32)ret;
+            WLOG(WS_LOG_SFTP, "SFTP read %d bytes from channel ID %d", ret,
                 channelId);
-        WLOG(WS_LOG_SFTP, "%d of %d expected bytes read", buffer->idx,
+            WLOG(WS_LOG_SFTP, "%d of %d expected bytes read", buffer->idx,
                 buffer->sz);
-        ret = WS_CHAN_RXD; /* read more from channel if here */
+        }
+
+        ret = wolfSSH_get_error(ssh);
+        if (ret == WS_WANT_READ) {
+            return WS_FATAL_ERROR;
+        }
+        else if (ret != WS_CHAN_RXD && ret != WS_SUCCESS) {
+            return ret;
+        }
     } while (buffer->idx < buffer->sz);
 
     return buffer->sz;

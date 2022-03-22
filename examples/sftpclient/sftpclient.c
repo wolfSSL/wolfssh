@@ -1517,6 +1517,12 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
             printf("error with wolfSSH_shutdown(), already disconnected?\n");
         }
     }
+    if (ret == WS_SUCCESS) {
+        /* listen for close messages from the peer */
+        if (wolfSSH_worker(ssh, NULL) != WS_SUCCESS) {
+            printf("error with wolfSSH_worker(), already disconnected?\n");
+        }
+    }
     WCLOSESOCKET(sockFd);
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
