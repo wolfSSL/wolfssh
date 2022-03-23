@@ -99,6 +99,11 @@
 
 #define TEST_SFTP_TIMEOUT 1
 
+/* put an upper bound on loop for packet reads */
+#ifndef MAX_PACKET_LOOP_READ
+    #define MAX_PACKET_LOOP_READ 100
+#endif
+
 static const char echoserverBanner[] = "wolfSSH Example Echo Server\n";
 
 static int quit = 0;
@@ -1139,6 +1144,22 @@ static int sftp_worker(thread_ctx_t* threadCtx)
         }
         else {
             select_ret = tcp_select(sockfd, TEST_SFTP_TIMEOUT);
+
+            /* read all of the pending data from the socket and process it */
+            if (select_ret == WS_SELECT_RECV_READY) {
+                int i         = 0;
+                int more_data = 0;
+
+                do {
+                    ret = wolfSSH_worker(threadCtx->ssh, NULL);
+                    if (ret == WS_FATAL_ERROR) {
+                        break;
+                    }
+                    i++;
+                    more_data = tcp_select(sockfd, 0);
+                } while (more_data == WS_SELECT_RECV_READY &&
+                        i < MAX_PACKET_LOOP_READ);
+            }
         }
 
         if (select_ret == WS_SELECT_RECV_READY ||
