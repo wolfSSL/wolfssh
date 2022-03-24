@@ -13,7 +13,7 @@ wolfSSL. The following is the simplest configuration of wolfSSL to
 enable wolfSSH.
 
     $ cd wolfssl
-    $ ./configure [OPTIONS] --enable-ssh
+    $ ./configure [OPTIONS] --enable-wolfssh
     $ make check
     $ sudo make install
 
@@ -398,3 +398,64 @@ By default, the echoserver will try to start a shell. To use the echo testing
 behavior, give the echoserver the command line option `-f`.
 
     $ ./examples/echoserver/echoserver -f
+
+POST-QUANTUM
+============
+
+wolfSSH now supports the post-quantum algorithm SABER. It uses the NIST
+submission's Level 1 parameter set implemented by liboqs via an integration
+with wolfSSH.
+
+In order be able to use liboqs, you must have it built and installed on your
+system. We support the 0.7.0 release of liboqs. You can download it from the
+following link:
+
+    https://github.com/open-quantum-safe/liboqs/archive/refs/tags/0.7.0.tar.gz
+
+Once unpacked, this would be sufficient:
+
+    $ cd liboqs-0.7.0
+    $ mkdir build
+    $ cd build
+    $ cmake -DOQS_USE_OPENSSL=0 ..
+    $ make all
+    $ sudo make install
+
+
+In order to enable support for SABER Level1 in wolfSSH, use the `--with-liboqs`
+build option during configuration:
+
+    $ ./configure --with-liboqs
+
+The wolfSSH client and server will automatically negotiate using SABER Level1
+if this feature is enabled.
+
+    $ ./examples/echoserver/echoserver -f
+
+    $ ./examples/client/client -u jill -P upthehill
+
+On the client side, you will see the following output:
+
+Server said: Hello, wolfSSH!
+
+If you want to see inter-operability with OpenQauntumSafe's fork of OpenSSH, you
+can build and execute the fork while the echoserver is running. Download the
+release from here:
+
+    https://github.com/open-quantum-safe/openssh/archive/refs/tags/OQS-OpenSSH-snapshot-2021-08.tar.gz
+
+The following is sufficient for build and execution:
+
+    $ tar xmvf openssh-OQS-OpenSSH-snapshot-2021-08.tar.gz
+    $ cd openssh-OQS-OpenSSH-snapshot-2021-08/
+    $ ./configure --with-liboqs-dir=/usr/local
+    $ make all
+    $ ./ssh -o"KexAlgorithms +saber-lightsaber-sha256" \
+      -o"PubkeyAcceptedAlgorithms +ssh-rsa" \
+      -o"HostkeyAlgorithms +ssh-rsa" \
+      jill@localhost -p 22222
+
+NOTE: when prompted, enter the password which is "upthehill".
+
+You can type a line of text and when you press enter, the line will be echoed
+back. Use CTRL-C to terminate the connection.
