@@ -791,17 +791,19 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                                             shellChannelId,
                                             threadCtx->channelBuffer, cnt_r);
                                     if (cnt_r > 0) {
-                                        ChildRunning = !process_bytes(threadCtx,
+                                        int doStop = process_bytes(threadCtx,
                                                 threadCtx->channelBuffer,
                                                 cnt_r);
+                                        ChildRunning = !doStop;
                                     }
                                 }
                             #else
                             cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
                                     threadCtx->channelBuffer, cnt_r);
                             if (cnt_r > 0) {
-                                ChildRunning = !process_bytes(threadCtx,
+                                int doStop = process_bytes(threadCtx,
                                         threadCtx->channelBuffer, cnt_r);
+                                ChildRunning = !doStop;
                             }
                             #endif
                             if (cnt_w <= 0)
@@ -879,7 +881,8 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                     cnt_r = (int)read(childFd,
                             threadCtx->shellBuffer,
                             sizeof threadCtx->shellBuffer);
-                    if (cnt_r < 0) {
+                    /* This read will return 0 on EOF */
+                    if (cnt_r <= 0) {
                         int err = errno;
                         if (err != EAGAIN) {
                             #ifdef SHELL_DEBUG

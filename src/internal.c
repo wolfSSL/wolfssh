@@ -373,7 +373,7 @@ const char* GetErrorString(int err)
 
         case WS_AGENT_CXN_FAIL:
             return "agent connection failed";
-        
+
         case WS_SFTP_BAD_HEADER:
             return "sftp bad header";
 
@@ -3271,9 +3271,12 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 #endif
                 if (ret == 0)
                     ret = wc_ecc_import_x963(f, fSz, key_ptr);
-                if (ret == 0)
+                if (ret == 0) {
+                    PRIVATE_KEY_UNLOCK();
                     ret = wc_ecc_shared_secret(&ssh->handshake->privKey.ecc,
                                                key_ptr, ssh->k, &ssh->kSz);
+                    PRIVATE_KEY_LOCK();
+                }
                 wc_ecc_free(key_ptr);
                 wc_ecc_free(&ssh->handshake->privKey.ecc);
                 if (ret != 0) {
@@ -7070,10 +7073,13 @@ int SendKexDhReply(WOLFSSH* ssh)
                                              &sigKeyBlock_ptr->sk.ecc.key,
                                              ssh->ctx->privateKeySz);
             /* Flatten the public key into x963 value for the exchange hash. */
-            if (ret == 0)
+            if (ret == 0) {
+                PRIVATE_KEY_UNLOCK();
                 ret = wc_ecc_export_x963(&sigKeyBlock_ptr->sk.ecc.key,
                                          sigKeyBlock_ptr->sk.ecc.q,
                                          &sigKeyBlock_ptr->sk.ecc.qSz);
+                PRIVATE_KEY_LOCK();
+            }
             /* Hash in the length of the public key block. */
             if (ret == 0) {
                 sigKeyBlock_ptr->sz = (LENGTH_SZ * 3) +
@@ -7300,11 +7306,17 @@ int SendKexDhReply(WOLFSSH* ssh)
                     ret = wc_ecc_make_key_ex(ssh->rng,
                                          wc_ecc_get_curve_size_from_id(primeId),
                                          privKey, primeId);
-                if (ret == 0)
+                if (ret == 0) {
+                    PRIVATE_KEY_UNLOCK();
                     ret = wc_ecc_export_x963(privKey, f_ptr, &fSz);
-                if (ret == 0)
+                    PRIVATE_KEY_LOCK();
+                }
+                if (ret == 0) {
+                    PRIVATE_KEY_UNLOCK();
                     ret = wc_ecc_shared_secret(privKey, pubKey,
                                                ssh->k, &ssh->kSz);
+                    PRIVATE_KEY_LOCK();
+                }
                 wc_ecc_free(privKey);
                 wc_ecc_free(pubKey);
             #ifdef WOLFSSH_SMALL_STACK

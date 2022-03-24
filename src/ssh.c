@@ -854,7 +854,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
             WLOG(WS_LOG_DEBUG, connectState,
                     "CLIENT_CHANNEL_AGENT_REQUEST_SENT");
             ssh->connectState = CONNECT_CLIENT_CHANNEL_AGENT_REQUEST_SENT;
-            FALL_THROUGH;
+            NO_BREAK;
 
         case CONNECT_CLIENT_CHANNEL_AGENT_REQUEST_SENT:
         #if defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM)

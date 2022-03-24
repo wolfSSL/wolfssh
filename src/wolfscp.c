@@ -1813,6 +1813,12 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
     WFILE* fp = NULL;
     int ret = WS_SCP_CONTINUE;
     word32 bytes;
+#ifdef WOLFSCP_FLUSH
+    static word32 flush_bytes = 0;
+    #ifndef WRITE_FLUSH_SIZE
+    #define WRITE_FLUSH_SIZE (64*1024)
+    #endif
+#endif
 
 #ifdef WOLFSSL_NUCLEUS
     char abslut[WOLFSSH_MAX_FILENAME];
@@ -1885,6 +1891,9 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                 break;
             }
 
+#ifdef WOLFSCP_FLUSH
+            flush_bytes = 0;
+#endif
             /* store file pointer in user ctx */
             wolfSSH_SetScpRecvCtx(ssh, fp);
             break;
@@ -1902,14 +1911,32 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                      "to write requested size to file", bytes);
                 WFCLOSE(fp);
                 ret = WS_SCP_ABORT;
+            } else {
+#ifdef WOLFSCP_FLUSH
+                flush_bytes += bytes;
+                if (flush_bytes >= WRITE_FLUSH_SIZE) {
+                    if (fflush(fp) != 0)
+                       WLOG(WS_LOG_ERROR, scpError, "scp fflush failed", 0);
+                    if (fsync(fileno(fp)) != 0)
+                       WLOG(WS_LOG_ERROR, scpError, "scp fsync failed", 0);
+                    flush_bytes = 0;
+                    usleep(1000);
+                }
+#endif
             }
             break;
 
         case WOLFSSH_SCP_FILE_DONE:
 
             /* close file */
-            if (fp != NULL)
+            if (fp != NULL) {
+#ifdef WOLFSCP_FLUSH
+                (void)fflush(fp);
+                (void)fsync(fileno(fp));
+                flush_bytes = 0;
+#endif
                 WFCLOSE(fp);
+            }
 
             /* set timestamp info */
             if (mTime != 0 || aTime != 0) {
