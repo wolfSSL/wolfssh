@@ -1156,11 +1156,10 @@ static int sftp_worker(thread_ctx_t* threadCtx)
         else
             error = WS_FATAL_ERROR;
 
-        if (error == WS_WANT_READ || error == WS_WANT_WRITE)
-            ret = WS_WANT_READ;
-
-        if (error == WS_CHAN_RXD)
-            ret = WS_CHAN_RXD;
+        if (error == WS_WANT_READ || error == WS_WANT_WRITE ||
+            error == WS_CHAN_RXD || error == WS_REKEYING ||
+            error == WS_WINDOW_FULL)
+            ret = error;
 
         if (ret == WS_FATAL_ERROR && error == 0) {
             WOLFSSH_CHANNEL* channel =
