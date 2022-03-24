@@ -1474,7 +1474,11 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
                     if (wolfSSH_SFTP_buffer_idx(&state->buffer)
                             < wolfSSH_SFTP_buffer_size(&state->buffer)) {
                         ret = wolfSSH_worker(ssh, NULL);
-                        if (ret != WS_SUCCESS && ssh->error == WS_WANT_READ) {
+                        if (ret != WS_SUCCESS &&
+                                (ssh->error == WS_WANT_READ ||
+                                 ssh->error == WS_REKEYING ||
+                                 ssh->error == WS_CHAN_RXD ||
+                                 ssh->error == WS_WINDOW_FULL)) {
                             /* was something there to read, try again */
                             state->toSend = 2;
                             return WS_FATAL_ERROR;
