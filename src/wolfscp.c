@@ -2454,11 +2454,13 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
                 ret = ExtractFileName(peerRequest, fileName, fileNameSz);
 
             if (ret == WS_SUCCESS && sendCtx != NULL && sendCtx->fp != NULL) {
-                ret = (word32)WFREAD(buf, 1, bufSz, sendCtx->fp);
-                if (ret == 0) { /* handle unexpected case */
-                    ret = WS_EOF;
+                /* If it is an empty file, do not read. */
+                if (*totalFileSz != 0) {
+                    ret = (word32)WFREAD(buf, 1, bufSz, sendCtx->fp);
+                    if (ret == 0) { /* handle unexpected case */
+                        ret = WS_EOF;
+                    }
                 }
-
             } else {
                 ret = WS_SCP_ABORT;
             }
