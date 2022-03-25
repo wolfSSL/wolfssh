@@ -224,6 +224,10 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     SOCKET_T sockFd = WOLFSSH_SOCKET_INVALID;
     SOCKADDR_IN_T clientAddr;
     socklen_t clientAddrSz = sizeof(clientAddr);
+#ifdef TEST_IPV6
+    struct sockaddr_in6 clientAddr6;
+    socklen_t clientAddrSz6 = sizeof(clientAddr6);
+#endif
     int argc = ((func_args*)args)->argc;
     int ret = 0;
     char** argv = ((func_args*)args)->argv;
@@ -334,9 +338,23 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     if (ret != WS_SUCCESS)
         err_sys("Couldn't set the username.");
 
-    build_addr(&clientAddr, host, port);
-    tcp_socket(&sockFd);
-    ret = connect(sockFd, (const struct sockaddr *)&clientAddr, clientAddrSz);
+#ifdef TEST_IPV6
+    /* If it is an IPV6 address */
+    if (WSTRCHR(host, ':')) {
+        printf("IPV6 address\n");
+        build_addr_ipv6(&clientAddr6, host, port);
+        sockFd = socket(AF_INET6, SOCK_STREAM, 0);
+        ret = connect(sockFd, (const struct sockaddr *)&clientAddr6, clientAddrSz6);
+    }
+    else
+#endif
+    {
+        printf("IPV4 address\n");
+        build_addr(&clientAddr, host, port);
+        tcp_socket(&sockFd);
+        ret = connect(sockFd, (const struct sockaddr *)&clientAddr, clientAddrSz);
+    }
+
     if (ret != 0)
         err_sys("Couldn't connect to server.");
 
