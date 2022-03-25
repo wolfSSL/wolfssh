@@ -72,12 +72,6 @@ else
     exit 1
 fi
 
-if [ $RESULT -ne 0 ]; then
-    echo -e "\n\nbad return code"
-    do_cleanup
-    exit 1
-fi
-
 echo "Test basic copy from local to server"
 ./examples/echoserver/echoserver -1 -R $ready_file &
 server_pid=$!
@@ -90,12 +84,6 @@ if test -e $PWD/scp.test; then
     rm $PWD/scp.test
 else
     echo -e "\n\nfailed to send file"
-    do_cleanup
-    exit 1
-fi
-
-if [ $RESULT -ne 0 ]; then
-    echo -e "\n\n bad return code"
     do_cleanup
     exit 1
 fi
@@ -117,12 +105,6 @@ else
     exit 1
 fi
 
-if [ $RESULT -ne 0 ]; then
-    echo -e "\n\n bad return code"
-    do_cleanup
-    exit 1
-fi
-
 echo "Test of sending empty file"
 PWD=`pwd`
 ./examples/echoserver/echoserver -1 -R $ready_file &
@@ -136,12 +118,6 @@ if test -e $PWD/empty ; then
     rm $PWD/empty
 else
     echo -e "\n\nfailed to send empty file"
-    do_cleanup
-    exit 1
-fi
-
-if [ $RESULT -ne 0 ]; then
-    echo -e "\n\n bad return code"
     do_cleanup
     exit 1
 fi
