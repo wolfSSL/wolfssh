@@ -89,13 +89,14 @@ else
 fi
 
 echo "Test of getting empty file"
-PWD=`pwd`
+touch $PWD/scripts/empty
 ./examples/echoserver/echoserver -1 -R $ready_file &
 server_pid=$!
 create_port
 ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -S $PWD/scripts/empty:$PWD/empty
 RESULT=$?
 remove_ready_file
+rm -f $PWD/scripts/empty
 
 if test -e $PWD/empty ; then
     rm $PWD/empty
@@ -106,13 +107,14 @@ else
 fi
 
 echo "Test of sending empty file"
-PWD=`pwd`
+touch $PWD/scripts/empty
 ./examples/echoserver/echoserver -1 -R $ready_file &
 server_pid=$!
 create_port
 ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -L $PWD/scripts/empty:$PWD/empty
 RESULT=$?
 remove_ready_file
+rm -f $PWD/scripts/empty
 
 if test -e $PWD/empty ; then
     rm $PWD/empty
