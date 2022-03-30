@@ -1,0 +1,130 @@
+#!/bin/sh
+
+# scp local test
+
+no_pid=-1
+server_pid=$no_pid
+ready_file=`pwd`/wolfssh_scp_ready$$
+counter=0
+
+[ ! -x ./examples/scpclient/wolfscp ] && echo -e "\n\nwolfscp client doesn't exist" && exit 1
+
+create_port() {
+    while [ ! -s "$ready_file" ] && [ "$counter" -lt 20 ]; do
+        echo -e "waiting for ready file..."
+        sleep 0.1
+        counter=$((counter+ 1))
+    done
+
+    if test -e $ready_file; then
+        echo -e "found ready file, starting client..."
+
+        # get created port 0 ephemeral port
+        port=`cat $ready_file`
+    else
+        echo -e "NO ready file ending test..."
+        do_cleanup
+        exit 1
+    fi
+}
+
+remove_ready_file() {
+    if test -e $ready_file; then
+        echo -e "removing existing ready file"
+    rm $ready_file
+    fi
+}
+
+do_cleanup() {
+    echo "in cleanup"
+
+    if  [ $server_pid != $no_pid ]
+    then
+        echo "killing server"
+        kill -9 $server_pid
+    fi
+    remove_ready_file
+}
+
+do_trap() {
+    echo "got trap"
+    do_cleanup
+    exit -1
+}
+
+trap do_trap INT TERM
+
+[ ! -x ./examples/scpclient/wolfscp ] && echo -e "\n\nClient doesn't exist" && exit 1
+
+echo "Test basic copy from server to local"
+./examples/echoserver/echoserver -1 -R $ready_file &
+server_pid=$!
+create_port
+./examples/scpclient/wolfscp -u jill -P upthehill -p $port -S $PWD/scripts/scp.test:$PWD/scp.test
+RESULT=$?
+remove_ready_file
+
+if test -e $PWD/scp.test; then
+    rm $PWD/scp.test
+else
+    echo -e "\n\nfailed to get file"
+    do_cleanup
+    exit 1
+fi
+
+echo "Test basic copy from local to server"
+./examples/echoserver/echoserver -1 -R $ready_file &
+server_pid=$!
+create_port
+./examples/scpclient/wolfscp -u jill -P upthehill -p $port -L $PWD/scripts/scp.test:$PWD/scp.test
+RESULT=$?
+remove_ready_file
+
+if test -e $PWD/scp.test; then
+    rm $PWD/scp.test
+else
+    echo -e "\n\nfailed to send file"
+    do_cleanup
+    exit 1
+fi
+
+echo "Test of getting empty file"
+touch $PWD/scripts/empty
+./examples/echoserver/echoserver -1 -R $ready_file &
+server_pid=$!
+create_port
+./examples/scpclient/wolfscp -u jill -P upthehill -p $port -S $PWD/scripts/empty:$PWD/empty
+RESULT=$?
+remove_ready_file
+rm -f $PWD/scripts/empty
+
+if test -e $PWD/empty ; then
+    rm $PWD/empty
+else
+    echo -e "\n\nfailed to get empty file"
+    do_cleanup
+    exit 1
+fi
+
+echo "Test of sending empty file"
+touch $PWD/scripts/empty
+./examples/echoserver/echoserver -1 -R $ready_file &
+server_pid=$!
+create_port
+./examples/scpclient/wolfscp -u jill -P upthehill -p $port -L $PWD/scripts/empty:$PWD/empty
+RESULT=$?
+remove_ready_file
+rm -f $PWD/scripts/empty
+
+if test -e $PWD/empty ; then
+    rm $PWD/empty
+else
+    echo -e "\n\nfailed to send empty file"
+    do_cleanup
+    exit 1
+fi
+
+echo -e "\nALL Tests Passed"
+
+exit 0
+
