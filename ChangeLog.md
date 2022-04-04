@@ -1,3 +1,23 @@
+# wolfSSH v1.4.8 (Nov 4, 2021)
+
+## New Feature Additions and Improvements
+
+- Add remote port forwarding
+- Make loading user created keys into the examples easier
+- Add --with-wolfssl and use --prefix to look for wolfSSL
+- Updated the unsupported GlobalReq response
+
+
+## Fixes
+
+- Fix for RSA public key auth
+- When decoding SFTP messages, fix the size checks so they don't wrap
+- Fix an issue where the testsuite and echoserver a socket failure
+- SFTP fix for getting attribute header
+- Fix for possible null dereference in SendKexDhReply
+- Remove reference to udp from test.h
+- Fixes to local port forwarding
+
 # wolfSSH v1.4.7 (July 23, 2021)
 
 ## New Feature Additions and Improvements

@@ -1,6 +1,6 @@
 /* sftp.c
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2021 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -17,6 +17,10 @@
  * You should have received a copy of the GNU General Public License
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
+
+#ifdef HAVE_CONFIG_H
+    #include <config.h>
+#endif
 
 #include <stdio.h>
 #include <wolfssh/ssh.h>

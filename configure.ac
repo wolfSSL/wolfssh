@@ -3,7 +3,7 @@
 # All right reserved.
 
 AC_COPYRIGHT([Copyright (C) 2014-2020 wolfSSL Inc.])
-AC_INIT([wolfssh],[1.4.7],[support@wolfssl.com],[wolfssh],[https://www.wolfssl.com])
+AC_INIT([wolfssh],[1.4.9],[support@wolfssl.com],[wolfssh],[https://www.wolfssl.com])
 AC_PREREQ([2.63])
 AC_CONFIG_AUX_DIR([build-aux])
 
@@ -16,9 +16,9 @@ AM_INIT_AUTOMAKE([1.11 -Wall -Werror -Wno-portability foreign tar-ustar subdir-o
 
 AC_ARG_PROGRAM
 AC_CONFIG_MACRO_DIR([m4])
-AC_CONFIG_HEADERS([src/config.h])
+AC_CONFIG_HEADERS([config.h])
 
-WOLFSSH_LIBRARY_VERSION=12:2:3
+WOLFSSH_LIBRARY_VERSION=12:3:4
 #                       | | |
 #                +------+ | +---+
 #                |        |     |
@@ -55,8 +55,36 @@ AC_CHECK_SIZEOF([off_t])
 AC_CHECK_HEADERS([sys/select.h sys/time.h pty.h util.h termios.h])
 AC_CHECK_LIB([network],[socket])
 AC_CHECK_LIB([util],[forkpty])
+
+#wolfssl
+AC_MSG_CHECKING([for wolfSSL])
+if test "x$prefix" = "xNONE"
+then
+    wcpath=$ac_default_prefix
+else
+    wcpath=$prefix
+fi
+AC_MSG_NOTICE([prefix ${prefix}])
+WOLFSSL_URL="http://www.wolfssl.com/download.html"
+AC_ARG_WITH(wolfssl,
+  [AS_HELP_STRING([--with-wolfssl=PATH], [PATH to wolfssl install (default /usr/local)])],
+  [
+    if test "x$withval" != "xno" ; then
+      if test -d "${withval}/lib" && test -d "${withval}/include"; then
+        wcpath=${withval}
+
+        LDFLAGS="$LDFLAGS -L${wcpath}/lib"
+        CPPFLAGS="$CPPFLAGS -I${wcpath}/include"
+      else
+        AC_MSG_ERROR([wolfSSL path error (${withval}): missing lib and include])
+      fi
+    fi
+  ]
+)
+
 AC_CHECK_LIB([wolfssl],[wolfCrypt_Init],,[AC_MSG_ERROR([libwolfssl is required for ${PACKAGE}. It can be obtained from https://www.wolfssl.com/download.html/ .])])
 AC_CHECK_FUNCS([gethostbyname getaddrinfo gettimeofday inet_ntoa memset socket wc_ecc_set_rng])
+AC_CHECK_DECLS([[pread],[pwrite]],,[unistd.h])
 
 # DEBUG
 DEBUG_CFLAGS="-g -O0"

@@ -1,6 +1,6 @@
 /* portfwd.c
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2021 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -17,6 +17,10 @@
  * You should have received a copy of the GNU General Public License
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
+
+#ifdef HAVE_CONFIG_H
+    #include <config.h>
+#endif
 
 #define WOLFSSH_TEST_CLIENT
 #define WOLFSSH_TEST_SERVER
@@ -53,6 +57,10 @@
  * data from the server is forwarded to the client.
  */
 
+
+#ifndef EXAMPLE_BUFFER_SZ
+    #define EXAMPLE_BUFFER_SZ 4096
+#endif
 
 #define INVALID_FWD_PORT 0
 static const char defaultFwdFromHost[] = "0.0.0.0";
@@ -238,9 +246,16 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     int appFdSet = 0;
     struct timeval to;
     WOLFSSH_CHANNEL* fwdChannel = NULL;
-    byte buffer[4096];
-    word32 bufferSz = sizeof(buffer);
-    word32 bufferUsed = 0;
+    byte* appBuffer = NULL;
+    byte* sshBuffer = NULL;
+    word32 appBufferSz = 0;
+    word32 appBufferUsed = 0;
+    word32 sshBufferSz = 0;
+    word32 sshBufferUsed = 0;
+#ifndef WOLFSSH_SMALL_STACK
+    byte appBuffer_s[EXAMPLE_BUFFER_SZ];
+    byte sshBuffer_s[EXAMPLE_BUFFER_SZ];
+#endif
 
     ((func_args*)args)->return_code = 0;
 
@@ -312,6 +327,23 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
            host, port, username, password,
            fwdFromHost, fwdFromPort,
            fwdToHost, fwdToPort);
+
+#ifdef WOLFSSH_SMALL_STACK
+    appBuffer = (byte*)WMALLOC(EXAMPLE_BUFFER_SZ, NULL, 0);
+    sshBuffer = (byte*)WMALLOC(EXAMPLE_BUFFER_SZ, NULL, 0);
+    if (appBuffer == NULL || sshBuffer == NULL) {
+        WFREE(appBuffer, NULL, 0);
+        WFREE(sshBuffer, NULL, 0);
+        err_sys("couldn't allocate buffers");
+    }
+    appBufferSz = EXAMPLE_BUFFER_SZ;
+    sshBufferSz = EXAMPLE_BUFFER_SZ;
+#else
+    appBuffer = appBuffer_s;
+    sshBuffer = sshBuffer_s;
+    appBufferSz = sizeof appBuffer_s;
+    sshBufferSz = sizeof sshBuffer_s;
+#endif
 
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
     if (ctx == NULL)
@@ -387,9 +419,9 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
         if (appFdSet && FD_ISSET(appFd, &rxFds)) {
             int rxd;
             rxd = (int)recv(appFd,
-                    buffer + bufferUsed, bufferSz - bufferUsed, 0);
+                    appBuffer + appBufferUsed, appBufferSz - appBufferUsed, 0);
             if (rxd > 0)
-                bufferUsed += rxd;
+                appBufferUsed += rxd;
             else
                 break;
         }
@@ -400,18 +432,19 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
             if (ret == WS_CHAN_RXD) {
                 WOLFSSH_CHANNEL* readChannel;
 
-                bufferSz = sizeof(buffer);
+                sshBufferUsed = sshBufferSz;
                 readChannel = wolfSSH_ChannelFind(ssh,
                         channelId, WS_CHANNEL_ID_SELF);
                 ret = (readChannel == NULL) ? WS_INVALID_CHANID : WS_SUCCESS;
 
                 if (ret == WS_SUCCESS)
-                    ret = wolfSSH_ChannelRead(readChannel, buffer, bufferSz);
+                    ret = wolfSSH_ChannelRead(readChannel,
+                            sshBuffer, sshBufferUsed);
                 if (ret > 0) {
-                    bufferSz = (word32)ret;
+                    sshBufferUsed = (word32)ret;
                     if (appFd != -1) {
-                        ret = (int)send(appFd, buffer, bufferSz, 0);
-                        if (ret != (int)bufferSz)
+                        ret = (int)send(appFd, sshBuffer, sshBufferUsed, 0);
+                        if (ret != (int)sshBufferUsed)
                             break;
                     }
                 }
@@ -427,11 +460,17 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
             appFdSet = 1;
             fwdChannel = wolfSSH_ChannelFwdNew(ssh, fwdToHost, fwdToPort,
                     fwdFromHost, fwdFromPort);
+            continue;
         }
-        if (bufferUsed > 0) {
-            ret = wolfSSH_ChannelSend(fwdChannel, buffer, bufferUsed);
+        if (appBufferUsed > 0) {
+            ret = wolfSSH_ChannelSend(fwdChannel, appBuffer, appBufferUsed);
             if (ret > 0)
-                bufferUsed -= ret;
+                appBufferUsed -= ret;
+            else if (ret == WS_CHANNEL_NOT_CONF || ret == WS_CHAN_RXD) {
+            #ifdef SHELL_DEBUG
+                printf("Waiting for channel open confirmation.\n");
+            #endif
+            }
         }
     }
 
@@ -444,6 +483,10 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     WCLOSESOCKET(appFd);
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
+#ifdef WOLFSSH_SMALL_STACK
+    WFREE(appBuffer, NULL, 0);
+    WFREE(sshBuffer, NULL, 0);
+#endif
 #if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif

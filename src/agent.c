@@ -1,6 +1,6 @@
 /* agent.c
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2021 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -667,7 +667,8 @@ static WOLFSSH_AGENT_ID* FindKeyId(WOLFSSH_AGENT_ID* id,
     return id;
 }
 
-
+#if !defined(WOLFSSH_NO_SSH_RSA_SHA2_256) || \
+    !defined(WOLFSSH_NO_SSH_RSA_SHA2_512)
 static int SignHashRsa(WOLFSSH_AGENT_KEY_RSA* rawKey, enum wc_HashType hashType,
         const byte* digest, word32 digestSz, byte* sig, word32* sigSz,
         WC_RNG* rng, void* heap)
@@ -706,7 +707,7 @@ static int SignHashRsa(WOLFSSH_AGENT_KEY_RSA* rawKey, enum wc_HashType hashType,
 
     return ret;
 }
-
+#endif
 
 static int SignHashEcc(WOLFSSH_AGENT_KEY_ECDSA* rawKey, int curveId,
         const byte* digest, word32 digestSz,
@@ -848,6 +849,8 @@ static int PostSignRequest(WOLFSSH_AGENT_CTX* agent,
         if (signRsa)
             ret = SignHashRsa(&id->key.rsa, hashType,
                     digest, digestSz, sig, &sigSz, &agent->rng, agent->heap);
+#else
+    (void)signRsa;
 #endif
 #if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) || \
     !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) || \
@@ -855,6 +858,8 @@ static int PostSignRequest(WOLFSSH_AGENT_CTX* agent,
         if (signEcc)
             ret = SignHashEcc(&id->key.ecdsa, curveId, digest, digestSz,
                     sig, &sigSz, &agent->rng);
+#else
+    (void)signEcc;
 #endif
 
         if (ret == WS_SUCCESS)

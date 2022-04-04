@@ -1,6 +1,6 @@
 /* client.c
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2021 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -17,6 +17,10 @@
  * You should have received a copy of the GNU General Public License
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
+
+#ifdef HAVE_CONFIG_H
+    #include <config.h>
+#endif
 
 #define WOLFSSH_TEST_CLIENT
 
@@ -537,14 +541,17 @@ static THREAD_RET readInput(void* in)
         sz  = (word32)ret;
     #endif
         if (ret <= 0) {
-            err_sys("Error reading stdin");
+            fprintf(stderr, "Error reading stdin\n");
+            return THREAD_RET_SUCCESS;
         }
         /* lock SSH structure access */
         wc_LockMutex(&args->lock);
         ret = wolfSSH_stream_send(args->ssh, buf, sz);
         wc_UnLockMutex(&args->lock);
-        if (ret <= 0)
-            err_sys("Couldn't send data");
+        if (ret <= 0) {
+            fprintf(stderr, "Couldn't send data\n");
+            return THREAD_RET_SUCCESS;
+        }
     }
 #if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
@@ -1128,7 +1135,8 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
             ret = wolfSSH_stream_read(ssh, (byte*)rxBuf, sizeof(rxBuf) - 1);
             if (ret <= 0) {
                 ret = wolfSSH_get_error(ssh);
-                if (ret != WS_WANT_READ && ret != WS_WANT_WRITE)
+                if (ret != WS_WANT_READ && ret != WS_WANT_WRITE &&
+                        ret != WS_CHAN_RXD)
                     err_sys("Stream read failed.");
             }
         } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE);
@@ -1141,6 +1149,13 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 #endif
     }
     ret = wolfSSH_shutdown(ssh);
+    if (ret != WS_SUCCESS) {
+        err_sys("Sending the shutdown messages failed.");
+    }
+    ret = wolfSSH_worker(ssh, NULL);
+    if (ret != WS_SUCCESS) {
+        err_sys("Failed to listen for close messages from the peer.");
+    }
     WCLOSESOCKET(sockFd);
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);

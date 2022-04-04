@@ -1,6 +1,6 @@
 /* test.h
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2021 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -441,8 +441,8 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
             memset(&hints, 0, sizeof(hints));
 
             hints.ai_family   = AF_INET_V;
-            hints.ai_socktype = udp ? SOCK_DGRAM : SOCK_STREAM;
-            hints.ai_protocol = udp ? IPPROTO_UDP : IPPROTO_TCP;
+            hints.ai_socktype = SOCK_STREAM;
+            hints.ai_protocol = IPPROTO_TCP;
 
             WSNPRINTF(strPort, sizeof(strPort), "%d", port);
             strPort[79] = '\0';
@@ -632,15 +632,15 @@ static INLINE void tcp_set_nonblocking(WS_SOCKET_T* sockfd)
 
 
 #ifdef WOLFSSL_NUCLEUS
-	#define WFD_SET_TYPE FD_SET
-	#define WFD_SET NU_FD_Set
-	#define WFD_ZERO NU_FD_Init
-	#define WFD_ISSET NU_FD_Check
+    #define WFD_SET_TYPE FD_SET
+    #define WFD_SET NU_FD_Set
+    #define WFD_ZERO NU_FD_Init
+    #define WFD_ISSET NU_FD_Check
 #else
-	#define WFD_SET_TYPE fd_set
-	#define WFD_SET FD_SET
-	#define WFD_ZERO FD_ZERO
-	#define WFD_ISSET FD_ISSET
+    #define WFD_SET_TYPE fd_set
+    #define WFD_SET FD_SET
+    #define WFD_ZERO FD_ZERO
+    #define WFD_ISSET FD_ISSET
 #endif
 
 /* returns 1 or greater when something is ready to be read */
@@ -890,5 +890,38 @@ static INLINE void ThreadDetach(THREAD_TYPE thread)
 
 #endif /* WOLFSSH_TEST_THREADING */
 
-#endif /* _WOLFSSH_TEST_H_ */
+#ifdef TEST_IPV6
+static INLINE void build_addr_ipv6(struct sockaddr_in6* addr, const char* peer,
+                              word16 port)
+{
+    memset(addr, 0, sizeof(struct sockaddr_in6));
 
+    addr->sin6_family = AF_INET6;
+    addr->sin6_port = htons(port);
+    if ((size_t)peer == INADDR_ANY)
+        addr->sin6_addr = in6addr_any;
+    else {
+        struct addrinfo  hints;
+        struct addrinfo* answer = NULL;
+        int    ret;
+        char   strPort[80];
+
+        memset(&hints, 0, sizeof(hints));
+        hints.ai_family   = AF_INET6;
+        hints.ai_socktype = SOCK_STREAM;
+        hints.ai_protocol = IPPROTO_TCP;
+
+        WSNPRINTF(strPort, sizeof(strPort), "%d", port);
+        strPort[79] = '\0';
+
+        ret = getaddrinfo(peer, strPort, &hints, &answer);
+        if (ret < 0 || answer == NULL)
+            err_sys("getaddrinfo failed");
+
+        memcpy(addr, answer->ai_addr, answer->ai_addrlen);
+        freeaddrinfo(answer);
+    }
+}
+#endif /* TEST_IPV6 */
+
+#endif /* _WOLFSSH_TEST_H_ */

@@ -1,6 +1,6 @@
 /* visibility.h
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2021 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -72,6 +72,9 @@ extern "C" {
     #endif
 #endif /* BUILDING_WOLFSSH */
 
+
+/* Do nothing tag to flag an API as deprecated. */
+#define DEPRECATED
 
 
 #ifdef __cplusplus

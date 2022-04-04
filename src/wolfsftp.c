@@ -1,6 +1,6 @@
 /* wolfsftp.c
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2021 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -954,7 +954,7 @@ static INLINE int SFTP_GetSz(byte* buf, word32* sz,
 
 #ifndef WOLFSSH_USER_FILESYSTEM
 static int SFTP_GetAttributes(void* fs, const char* fileName,
-        WS_SFTP_FILEATRB* atr, byte link, void* heap);
+        WS_SFTP_FILEATRB* atr, byte noFollow, void* heap);
 static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
         WS_SFTP_FILEATRB* atr);
 #endif
@@ -1463,6 +1463,7 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
                             if (ssh->error != WS_WANT_READ &&
                                     ssh->error != WS_WANT_WRITE &&
                                     ssh->error != WS_REKEYING &&
+                                    ssh->error != WS_CHAN_RXD &&
                                     ssh->error != WS_WINDOW_FULL)
                                 wolfSSH_SFTP_ClearState(ssh, STATE_ID_RECV);
                             return WS_FATAL_ERROR;
@@ -1473,7 +1474,11 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
                     if (wolfSSH_SFTP_buffer_idx(&state->buffer)
                             < wolfSSH_SFTP_buffer_size(&state->buffer)) {
                         ret = wolfSSH_worker(ssh, NULL);
-                        if (ret != WS_SUCCESS && ssh->error == WS_WANT_READ) {
+                        if (ret != WS_SUCCESS &&
+                                (ssh->error == WS_WANT_READ ||
+                                 ssh->error == WS_REKEYING ||
+                                 ssh->error == WS_CHAN_RXD ||
+                                 ssh->error == WS_WINDOW_FULL)) {
                             /* was something there to read, try again */
                             state->toSend = 2;
                             return WS_FATAL_ERROR;
@@ -3800,7 +3805,7 @@ int wolfSSH_SFTP_RecvRemove(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     if (ret == WS_SUCCESS) {
     #ifndef USE_WINDOWS_API
-        if ((ret = WREMOVE(ssh->fs, name)) < 0)
+        if (WREMOVE(ssh->fs, name) < 0)
     #else /* USE_WINDOWS_API */
         if (WS_DeleteFileA(name, ssh->ctx->heap) == 0)
     #endif /* USE_WINDOWS_API */
@@ -4098,7 +4103,7 @@ static word32 TimeTo32(word16 d, word16 t)
  * returns WS_SUCCESS on success
  */
 int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
-        byte link, void* heap)
+        byte noFollow, void* heap)
 {
     DSTAT stats;
     int sz = (int)WSTRLEN(fileName);
@@ -4107,7 +4112,7 @@ int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
     (void)heap;
     (void)fs;
 
-    if (link) {
+    if (noFollow) {
         ret = WLSTAT(fileName, &stats);
     }
     else {
@@ -4238,13 +4243,13 @@ int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
  * returns WS_SUCCESS on success
  */
 int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
-        byte link, void* heap)
+        byte noFollow, void* heap)
 {
     BOOL error;
     WIN32_FILE_ATTRIBUTE_DATA stats;
 
     WLOG(WS_LOG_SFTP, "Entering SFTP_GetAttributes()");
-    (void)link;
+    (void)noFollow;
     (void)fs;
 
     /* @TODO add proper Windows link support */
@@ -4283,7 +4288,7 @@ int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
  * Fills out a WS_SFTP_FILEATRB structure
  * returns WS_SUCCESS on success */
 int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
-                       byte link, void* heap)
+                       byte noFollow, void* heap)
 {
     int err, sz;
     MQX_FILE_PTR mfs_ptr;
@@ -4401,7 +4406,7 @@ int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
 /* FatFs has its own structure for file attributes */
 
 static int SFTP_GetAttributes(void* fs, const char* fileName,
-        WS_SFTP_FILEATRB* atr, byte link, void* heap)
+        WS_SFTP_FILEATRB* atr, byte noFollow, void* heap)
 {
     FILINFO info;
     FRESULT ret;
@@ -4522,14 +4527,14 @@ static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
  * returns WS_SUCCESS on success
  */
 int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
-        byte link, void* heap)
+        byte noFollow, void* heap)
 {
     WSTAT_T stats;
 
     (void)heap;
     (void)fs;
 
-    if (link) {
+    if (noFollow) {
         /* Note, for windows, we treat WSTAT and WLSTAT the same. */
         if (WLSTAT(fileName, &stats) != 0) {
             return WS_BAD_FILE_E;
@@ -4620,7 +4625,7 @@ int wolfSSH_SFTP_RecvFSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 {
     WS_SFTP_FILEATRB atr;
     word32 handleSz;
-    word32 sz;
+    word32 sz = 0;
     byte*  handle;
     word32 idx = 0;
     int ret = WS_SUCCESS;
@@ -6267,6 +6272,11 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                     return WS_FATAL_ERROR;
                 }
                 WLOG(WS_LOG_SFTP, "SFTP LSTAT STATE: PARSE_REPLY");
+
+                /* after doing a 'read' the buffers index is now set to just
+                 * after the data that has been read, rewind here to set the
+                 * index to the beginning of data read and then process it */
+                wolfSSH_SFTP_buffer_rewind(&state->buffer);
                 if (state->type == WOLFSSH_FTP_ATTRS) {
                     localIdx = wolfSSH_SFTP_buffer_idx(&state->buffer);
                     ret = SFTP_ParseAtributes_buffer(ssh, atr,
@@ -6284,7 +6294,6 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                     }
                 }
                 else if (state->type == WOLFSSH_FTP_STATUS) {
-                    wolfSSH_SFTP_buffer_rewind(&state->buffer);
                     ret = wolfSSH_SFTP_DoStatus(ssh, state->reqId,
                             &state->buffer);
                     if (ret != WOLFSSH_FTP_OK) {
@@ -6429,6 +6438,10 @@ int wolfSSH_SFTP_SetSTAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
                 }
                 return WS_FATAL_ERROR;
             }
+
+            /* free up the buffer used to send data so that a new fresh buffer
+             * can be created when next reading the attribute packet header */
+            wolfSSH_SFTP_buffer_free(ssh, &state->buffer);
             state->state = STATE_SET_ATR_GET;
             NO_BREAK;
 
@@ -6638,6 +6651,7 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
     WS_SFTP_SEND_WRITE_STATE* state = NULL;
     int ret = WS_FATAL_ERROR;
     int status;
+    int sentSzSave = 0;
     byte type;
 
     WLOG(WS_LOG_SFTP, "Entering wolfSSH_SFTP_SendWritePacket()");
@@ -6740,6 +6754,14 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                     state->state = STATE_SEND_WRITE_CLEANUP;
                     continue;
                 }
+
+                sentSzSave += state->sentSz;
+                if (inSz > (word32)state->sentSz) {
+                    in += state->sentSz;
+                    inSz -= state->sentSz;
+                    continue;
+                }
+
                 wolfSSH_SFTP_buffer_free(ssh, &state->buffer);
                 state->state = STATE_SEND_WRITE_GET_HEADER;
                 NO_BREAK;
@@ -6754,6 +6776,8 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                             ssh->error == WS_WANT_WRITE) {
                         return WS_FATAL_ERROR;
                     }
+                    ssh->error = WS_SFTP_BAD_HEADER;
+                    ret = WS_FATAL_ERROR;
                     state->state = STATE_SEND_WRITE_CLEANUP;
                     continue;
                 }
@@ -6815,7 +6839,7 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                     ret = WS_FATAL_ERROR;
                 }
                 if (ret >= WS_SUCCESS)
-                    ret = state->sentSz;
+                    ret = sentSzSave;
                 state->state = STATE_SEND_WRITE_CLEANUP;
                 NO_BREAK;
 

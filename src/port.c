@@ -1,6 +1,6 @@
 /* port.c
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2021 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -36,6 +36,13 @@
 #if !defined(USE_WINDOWS_API) && !defined(FREESCALE_MQX)
     #include <stdio.h>
 #endif
+
+/*
+Flags:
+  WOLFSSH_LOCAL_PREAD_PWRITE
+    Defined to use local implementations of pread() and pwrite(). Switched
+    on automatically if pread() or pwrite() aren't found by configure.
+*/
 
 
 #if !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM)
@@ -82,6 +89,16 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
 #endif
 }
 
+
+/* If either pread() or pwrite() are missing, use the local versions. */
+#if (defined(USE_OSE_API) || \
+     !defined(HAVE_DECL_PREAD) || (HAVE_DECL_PREAD == 0) || \
+     !defined(HAVE_DECL_PWRITE) || (HAVE_DECL_PWRITE == 0))
+    #undef WOLFSSH_LOCAL_PREAD_PWRITE
+    #define WOLFSSH_LOCAL_PREAD_PWRITE
+#endif
+
+
 #if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
     !defined(NO_WOLFSSH_SERVER)
 
@@ -90,7 +107,7 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
 
         /* This is current inline in the source. */
 
-    #elif defined(USE_OSE_API)
+    #elif defined(WOLFSSH_LOCAL_PREAD_PWRITE)
 
         int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
                 const unsigned int* shortOffset)
@@ -104,7 +121,6 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
             return ret;
         }
 
-
         int wPread(WFD fd, unsigned char* buf, unsigned int sz,
                 const unsigned int* shortOffset)
         {
@@ -117,7 +133,7 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
             return ret;
         }
 
-    #else /* USE_WINDOWS_API USE_OSE_API */
+    #else /* USE_WINDOWS_API WOLFSSH_LOCAL_PREAD_PWRITE */
 
         int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
                 const unsigned int* shortOffset)

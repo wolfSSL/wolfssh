@@ -1,6 +1,6 @@
 /* sftpclient.c
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2021 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -17,6 +17,10 @@
  * You should have received a copy of the GNU General Public License
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
+
+#ifdef HAVE_CONFIG_H
+    #include <config.h>
+#endif
 
 #define WOLFSSH_TEST_CLIENT
 
@@ -689,7 +693,7 @@ static int doCmds(func_args* args)
             continue;
         }
 
-        if ((pt = WSTRNSTR(msg, "reget", MAX_CMD_SZ)) != NULL) {
+        if (WSTRNSTR(msg, "reget", MAX_CMD_SZ) != NULL) {
             resume = 1;
         }
 
@@ -764,6 +768,10 @@ static int doCmds(func_args* args)
                 }
             } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE);
 
+#ifndef WOLFSSH_NO_TIMESTAMP
+            WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
+#endif
+
             if (ret != WS_SUCCESS) {
                 if (SFTP_FPUTS(args, "Error getting file\n")  < 0) {
                      err_msg("fputs error");
@@ -782,7 +790,7 @@ static int doCmds(func_args* args)
         }
 
 
-        if ((pt = WSTRNSTR(msg, "reput", MAX_CMD_SZ)) != NULL) {
+        if (WSTRNSTR(msg, "reput", MAX_CMD_SZ) != NULL) {
             resume = 1;
         }
 
@@ -855,6 +863,11 @@ static int doCmds(func_args* args)
                 err = wolfSSH_get_error(ssh);
             } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
                         && ret != WS_SUCCESS);
+
+#ifndef WOLFSSH_NO_TIMESTAMP
+            WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
+#endif
+
             if (ret != WS_SUCCESS) {
                 if (SFTP_FPUTS(args, "Error pushing file\n") < 0) {
                     err_msg("fputs error");
@@ -1175,7 +1188,7 @@ static int doCmds(func_args* args)
 
         }
 
-        if ((pt = WSTRNSTR(msg, "ls", MAX_CMD_SZ)) != NULL) {
+        if (WSTRNSTR(msg, "ls", MAX_CMD_SZ) != NULL) {
             WS_SFTPNAME* tmp;
             WS_SFTPNAME* current;
 
@@ -1201,7 +1214,7 @@ static int doCmds(func_args* args)
         }
 
         /* display current working directory */
-        if ((pt = WSTRNSTR(msg, "pwd", MAX_CMD_SZ)) != NULL) {
+        if (WSTRNSTR(msg, "pwd", MAX_CMD_SZ) != NULL) {
             if (SFTP_FPUTS(args, workingDir) < 0 ||
                     SFTP_FPUTS(args, "\n") < 0) {
                 err_msg("fputs error");

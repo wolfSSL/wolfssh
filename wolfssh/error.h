@@ -1,6 +1,6 @@
 /* error.h
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2021 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -118,8 +118,9 @@ enum WS_ErrorCodes {
     WS_AGENT_NULL_E         = -1077, /* AGENT was null */
     WS_AGENT_NO_KEY_E       = -1078, /* AGENT doesn't have requested key */
     WS_AGENT_CXN_FAIL       = -1079, /* Couldn't connect to agent. */
-
-    WS_LAST_E               = -1079  /* Update this to indicate last error */
+    WS_SFTP_BAD_HEADER      = -1080, /* SFTP bad header */
+    
+    WS_LAST_E               = -1080  /* Update this to indicate last error */
 };
 
 
