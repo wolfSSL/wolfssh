@@ -3272,10 +3272,14 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 if (ret == 0)
                     ret = wc_ecc_import_x963(f, fSz, key_ptr);
                 if (ret == 0) {
+                #ifdef PRIVATE_KEY_UNLOCK
                     PRIVATE_KEY_UNLOCK();
+                #endif
                     ret = wc_ecc_shared_secret(&ssh->handshake->privKey.ecc,
                                                key_ptr, ssh->k, &ssh->kSz);
+                #ifdef PRIVATE_KEY_LOCK
                     PRIVATE_KEY_LOCK();
+                #endif
                 }
                 wc_ecc_free(key_ptr);
                 wc_ecc_free(&ssh->handshake->privKey.ecc);
@@ -7074,11 +7078,15 @@ int SendKexDhReply(WOLFSSH* ssh)
                                              ssh->ctx->privateKeySz);
             /* Flatten the public key into x963 value for the exchange hash. */
             if (ret == 0) {
+            #ifdef PRIVATE_KEY_UNLOCK
                 PRIVATE_KEY_UNLOCK();
+            #endif
                 ret = wc_ecc_export_x963(&sigKeyBlock_ptr->sk.ecc.key,
                                          sigKeyBlock_ptr->sk.ecc.q,
                                          &sigKeyBlock_ptr->sk.ecc.qSz);
+            #ifdef PRIVATE_KEY_LOCK
                 PRIVATE_KEY_LOCK();
+            #endif
             }
             /* Hash in the length of the public key block. */
             if (ret == 0) {
@@ -7307,15 +7315,23 @@ int SendKexDhReply(WOLFSSH* ssh)
                                          wc_ecc_get_curve_size_from_id(primeId),
                                          privKey, primeId);
                 if (ret == 0) {
+                #ifdef PRIVATE_KEY_UNLOCK
                     PRIVATE_KEY_UNLOCK();
+                #endif
                     ret = wc_ecc_export_x963(privKey, f_ptr, &fSz);
+                #ifdef PRIVATE_KEY_LOCK
                     PRIVATE_KEY_LOCK();
+                #endif
                 }
                 if (ret == 0) {
+                #ifdef PRIVATE_KEY_UNLOCK
                     PRIVATE_KEY_UNLOCK();
+                #endif
                     ret = wc_ecc_shared_secret(privKey, pubKey,
                                                ssh->k, &ssh->kSz);
+                #ifdef PRIVATE_KEY_LOCK
                     PRIVATE_KEY_LOCK();
+                #endif
                 }
                 wc_ecc_free(privKey);
                 wc_ecc_free(pubKey);
