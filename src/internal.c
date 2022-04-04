@@ -3248,10 +3248,16 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             ssh->kSz = MAX_KEX_KEY_SZ;
             if (!ssh->handshake->useEcc) {
 #ifndef WOLFSSH_NO_DH
+            #ifdef PRIVATE_KEY_UNLOCK
+                PRIVATE_KEY_UNLOCK();
+            #endif
                 ret = wc_DhAgree(&ssh->handshake->privKey.dh,
                                  ssh->k, &ssh->kSz,
                                  ssh->handshake->x, ssh->handshake->xSz,
                                  f, fSz);
+            #ifdef PRIVATE_KEY_LOCK
+                PRIVATE_KEY_LOCK();
+            #endif
                 ForceZero(ssh->handshake->x, ssh->handshake->xSz);
                 wc_FreeDhKey(&ssh->handshake->privKey.dh);
                 if (ret != 0) {
@@ -3272,10 +3278,14 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 if (ret == 0)
                     ret = wc_ecc_import_x963(f, fSz, key_ptr);
                 if (ret == 0) {
+                #ifdef PRIVATE_KEY_UNLOCK
                     PRIVATE_KEY_UNLOCK();
+                #endif
                     ret = wc_ecc_shared_secret(&ssh->handshake->privKey.ecc,
                                                key_ptr, ssh->k, &ssh->kSz);
+                #ifdef PRIVATE_KEY_LOCK
                     PRIVATE_KEY_LOCK();
+                #endif
                 }
                 wc_ecc_free(key_ptr);
                 wc_ecc_free(&ssh->handshake->privKey.ecc);
@@ -7074,11 +7084,15 @@ int SendKexDhReply(WOLFSSH* ssh)
                                              ssh->ctx->privateKeySz);
             /* Flatten the public key into x963 value for the exchange hash. */
             if (ret == 0) {
+            #ifdef PRIVATE_KEY_UNLOCK
                 PRIVATE_KEY_UNLOCK();
+            #endif
                 ret = wc_ecc_export_x963(&sigKeyBlock_ptr->sk.ecc.key,
                                          sigKeyBlock_ptr->sk.ecc.q,
                                          &sigKeyBlock_ptr->sk.ecc.qSz);
+            #ifdef PRIVATE_KEY_LOCK
                 PRIVATE_KEY_LOCK();
+            #endif
             }
             /* Hash in the length of the public key block. */
             if (ret == 0) {
@@ -7254,9 +7268,16 @@ int SendKexDhReply(WOLFSSH* ssh)
                     if (ret == 0)
                         ret = wc_DhGenerateKeyPair(privKey, ssh->rng,
                                 y_ptr, &ySz, f_ptr, &fSz);
-                    if (ret == 0)
+                    if (ret == 0) {
+                    #ifdef PRIVATE_KEY_UNLOCK
+                        PRIVATE_KEY_UNLOCK();
+                    #endif
                         ret = wc_DhAgree(privKey, ssh->k, &ssh->kSz, y_ptr, ySz,
                                 ssh->handshake->e, ssh->handshake->eSz);
+                    #ifdef PRIVATE_KEY_LOCK
+                        PRIVATE_KEY_LOCK();
+                    #endif
+                    }
                     ForceZero(y_ptr, ySz);
                     wc_FreeDhKey(privKey);
                 }
@@ -7307,15 +7328,23 @@ int SendKexDhReply(WOLFSSH* ssh)
                                          wc_ecc_get_curve_size_from_id(primeId),
                                          privKey, primeId);
                 if (ret == 0) {
+                #ifdef PRIVATE_KEY_UNLOCK
                     PRIVATE_KEY_UNLOCK();
+                #endif
                     ret = wc_ecc_export_x963(privKey, f_ptr, &fSz);
+                #ifdef PRIVATE_KEY_LOCK
                     PRIVATE_KEY_LOCK();
+                #endif
                 }
                 if (ret == 0) {
+                #ifdef PRIVATE_KEY_UNLOCK
                     PRIVATE_KEY_UNLOCK();
+                #endif
                     ret = wc_ecc_shared_secret(privKey, pubKey,
                                                ssh->k, &ssh->kSz);
+                #ifdef PRIVATE_KEY_LOCK
                     PRIVATE_KEY_LOCK();
+                #endif
                 }
                 wc_ecc_free(privKey);
                 wc_ecc_free(pubKey);
@@ -7936,8 +7965,15 @@ int SendKexDhInit(WOLFSSH* ssh)
                 ret = wc_ecc_make_key_ex(ssh->rng,
                                      wc_ecc_get_curve_size_from_id(primeId),
                                      privKey, primeId);
-            if (ret == 0)
+            if (ret == 0) {
+            #ifdef PRIVATE_KEY_UNLOCK
+                PRIVATE_KEY_UNLOCK();
+            #endif
                 ret = wc_ecc_export_x963(privKey, e, &eSz);
+            #ifdef PRIVATE_KEY_LOCK
+                PRIVATE_KEY_LOCK();
+            #endif
+            }
 #else
             ret = WS_INVALID_ALGO_ID;
 #endif /* !defined(WOLFSSH_NO_ECDH) */
