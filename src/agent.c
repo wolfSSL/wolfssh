@@ -667,8 +667,10 @@ static WOLFSSH_AGENT_ID* FindKeyId(WOLFSSH_AGENT_ID* id,
     return id;
 }
 
+
 #if !defined(WOLFSSH_NO_SSH_RSA_SHA2_256) || \
     !defined(WOLFSSH_NO_SSH_RSA_SHA2_512)
+
 static int SignHashRsa(WOLFSSH_AGENT_KEY_RSA* rawKey, enum wc_HashType hashType,
         const byte* digest, word32 digestSz, byte* sig, word32* sigSz,
         WC_RNG* rng, void* heap)
@@ -707,7 +709,13 @@ static int SignHashRsa(WOLFSSH_AGENT_KEY_RSA* rawKey, enum wc_HashType hashType,
 
     return ret;
 }
-#endif
+
+#endif /* WOLFSSH_NO_SSH_RSA_SHA2_256/512 */
+
+
+#if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) || \
+    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) || \
+    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
 
 static int SignHashEcc(WOLFSSH_AGENT_KEY_ECDSA* rawKey, int curveId,
         const byte* digest, word32 digestSz,
@@ -762,6 +770,8 @@ static int SignHashEcc(WOLFSSH_AGENT_KEY_ECDSA* rawKey, int curveId,
 
     return ret;
 }
+
+#endif /* WOLFSSH_NO_ECDSA_SHA2_NISTP256/384/521 */
 
 
 static int PostSignRequest(WOLFSSH_AGENT_CTX* agent,
@@ -825,7 +835,7 @@ static int PostSignRequest(WOLFSSH_AGENT_CTX* agent,
                 signEcc = 1;
                 break;
             #endif
-            #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP512
+            #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
             case ID_ECDSA_SHA2_NISTP521:
                 hashType = WC_HASH_TYPE_SHA512;
                 curveId = ECC_SECP521R1;
@@ -854,7 +864,7 @@ static int PostSignRequest(WOLFSSH_AGENT_CTX* agent,
 #endif
 #if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) || \
     !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) || \
-    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP512)
+    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
         if (signEcc)
             ret = SignHashEcc(&id->key.ecdsa, curveId, digest, digestSz,
                     sig, &sigSz, &agent->rng);

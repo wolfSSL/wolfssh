@@ -25,6 +25,7 @@
 #define WOLFSSH_TEST_CLIENT
 
 #include <wolfssh/ssh.h>
+#include <wolfssh/internal.h>
 #include <wolfssh/wolfsftp.h>
 #include <wolfssh/test.h>
 #include <wolfssh/port.h>
@@ -1384,7 +1385,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     if (username == NULL)
         err_sys("client requires a username parameter.");
 
-#ifdef NO_RSA
+#ifdef WOLFSSH_NO_RSA
     userEcc = 1;
     /* peerEcc = 1; */
 #endif
@@ -1524,7 +1525,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         printf("error %d encountered\n", ret);
         ((func_args*)args)->return_code = ret;
     }
-#if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
+#if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
 

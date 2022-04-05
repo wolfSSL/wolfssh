@@ -25,6 +25,7 @@
 #define WOLFSSH_TEST_CLIENT
 
 #include <wolfssh/ssh.h>
+#include <wolfssh/internal.h>
 #include <wolfssh/test.h>
 #ifdef WOLFSSH_AGENT
     #include <wolfssh/agent.h>
@@ -197,7 +198,7 @@ static word32 userPrivateKeyTypeSz = 0;
 static byte isPrivate = 0;
 
 
-#ifndef NO_RSA
+#ifndef WOLFSSH_NO_RSA
 static const char* hanselPublicRsa =
     "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC9P3ZFowOsONXHD5MwWiCciXytBRZGho"
     "MNiisWSgUs5HdHcACuHYPi2W6Z1PBFmBWT9odOrGRjoZXJfDDoPi+j8SSfDGsc/hsCmc3G"
@@ -311,8 +312,8 @@ static const unsigned int hanselPrivateRsaSz = 1191;
 #endif
 
 
-#ifdef HAVE_ECC
-#ifndef NO_ECC256
+#ifndef WOLFSSH_NO_ECC
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
 static const char* hanselPublicEcc =
     "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAA"
     "BBBNkI5JTP6D0lF42tbxX19cE87hztUS6FSDoGvPfiU0CgeNSbI+aFdKIzTP5CQEJSvm25"
@@ -331,7 +332,7 @@ static const byte hanselPrivateEcc[] = {
   0xf9
 };
 static const unsigned int hanselPrivateEccSz = 121;
-#elif defined(HAVE_ECC521)
+#elif !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
 static const char* hanselPublicEcc =
     "ecdsa-sha2-nistp521 AAAAE2VjZHNhLXNoYTItbmlzdHA1MjEAAAAIbmlzdHA1MjEAAA"
     "CFBAET/BOzBb9Jx9b52VIHFP4g/uk5KceDpz2M+/Ln9WiDjsMfb4NgNCAB+EMNJUX/TNBL"
@@ -553,7 +554,7 @@ static THREAD_RET readInput(void* in)
             return THREAD_RET_SUCCESS;
         }
     }
-#if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
+#if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
     return THREAD_RET_SUCCESS;
@@ -674,7 +675,7 @@ static THREAD_RET readPeer(void* in)
         }
         wc_UnLockMutex(&args->lock);
     }
-#if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
+#if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
 
@@ -924,7 +925,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     if (username == NULL)
         err_sys("client requires a username parameter.");
 
-#ifdef NO_RSA
+#ifdef WOLFSSH_NO_RSA
     userEcc = 1;
 #endif
 
@@ -939,14 +940,14 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
     if (privKeyName == NULL) {
         if (userEcc) {
-        #ifdef HAVE_ECC
+        #ifndef WOLFSSH_NO_ECC
             ret = wolfSSH_ReadKey_buffer(hanselPrivateEcc, hanselPrivateEccSz,
                     WOLFSSH_FORMAT_ASN1, &userPrivateKey, &userPrivateKeySz,
                     &userPrivateKeyType, &userPrivateKeyTypeSz, NULL);
         #endif
         }
         else {
-        #ifndef NO_RSA
+        #ifndef WOLFSSH_NO_RSA
             ret = wolfSSH_ReadKey_buffer(hanselPrivateRsa, hanselPrivateRsaSz,
                     WOLFSSH_FORMAT_ASN1, &userPrivateKey, &userPrivateKeySz,
                     &userPrivateKeyType, &userPrivateKeyTypeSz, NULL);
@@ -974,7 +975,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         userPublicKeySz = sizeof(userPublicKeyBuf);
 
         if (userEcc) {
-        #ifdef HAVE_ECC
+        #ifndef WOLFSSH_NO_ECC
             ret = wolfSSH_ReadKey_buffer((const byte*)hanselPublicEcc,
                     (word32)strlen(hanselPublicEcc), WOLFSSH_FORMAT_SSH,
                     &p, &userPublicKeySz,
@@ -982,7 +983,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         #endif
         }
         else {
-        #ifndef NO_RSA
+        #ifndef WOLFSSH_NO_RSA
             ret = wolfSSH_ReadKey_buffer((const byte*)hanselPublicRsa,
                     (word32)strlen(hanselPublicRsa), WOLFSSH_FORMAT_SSH,
                     &p, &userPublicKeySz,
@@ -1169,7 +1170,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     if (privKeyName != NULL && userPrivateKey != NULL) {
         WFREE(userPrivateKey, NULL, DYNTYPE_PRIVKEY);
     }
-#if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
+#if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
 

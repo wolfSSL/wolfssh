@@ -29,12 +29,13 @@
     #include <termios.h>
 #endif
 #include <wolfssh/ssh.h>
+#include <wolfssh/internal.h>
 #include <wolfssh/wolfscp.h>
 #include <wolfssh/test.h>
 #include <wolfssh/port.h>
 
 #ifndef NO_WOLFSSH_CLIENT
-#if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
+#if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     #include <wolfssl/wolfcrypt/ecc.h>
 #endif
 #include "examples/scpclient/scpclient.h"
@@ -382,7 +383,7 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     if (ret != WS_SUCCESS)
         err_sys("Closing scp stream failed. Connection could have been closed by peer");
 
-#if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
+#if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
 

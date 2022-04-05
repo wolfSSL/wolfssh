@@ -35,6 +35,7 @@
     #include <sys/select.h>
 #endif
 #include <wolfssh/ssh.h>
+#include <wolfssh/internal.h>
 #include <wolfssh/test.h>
 #include <wolfssh/port.h>
 #include <wolfssl/wolfcrypt/ecc.h>
@@ -487,7 +488,7 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     WFREE(appBuffer, NULL, 0);
     WFREE(sshBuffer, NULL, 0);
 #endif
-#if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
+#if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
 
