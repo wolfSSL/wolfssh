@@ -35,6 +35,7 @@
 #include <wolfssl/wolfcrypt/coding.h>
 #include <wolfssl/wolfcrypt/wc_port.h>
 #include <wolfssh/ssh.h>
+#include <wolfssh/internal.h>
 #include <wolfssh/wolfsftp.h>
 #include <wolfssh/agent.h>
 #include <wolfssh/test.h>
@@ -1339,7 +1340,7 @@ static int load_file(const char* fileName, byte* buf, word32* bufSz)
 }
 #endif /* NO_FILESYSTEM */
 
-#ifdef HAVE_ECC521
+#ifdef WOLFSSH_NO_ECDSA_SHA2_NISTP256
     #define ECC_PATH "./keys/server-key-ecc-521.der"
 #else
     #define ECC_PATH "./keys/server-key-ecc.der"
@@ -1439,8 +1440,8 @@ static const char samplePasswordBuffer[] =
     "jack:fetchapail\n";
 
 
-#ifdef HAVE_ECC
-#ifndef NO_ECC256
+#ifndef WOLFSSH_NO_ECC
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
 static const char samplePublicKeyEccBuffer[] =
     "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAA"
     "BBBNkI5JTP6D0lF42tbxX19cE87hztUS6FSDoGvPfiU0CgeNSbI+aFdKIzTP5CQEJSvm25"
@@ -1448,7 +1449,7 @@ static const char samplePublicKeyEccBuffer[] =
     "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAA"
     "BBBKAtH8cqaDbtJFjtviLobHBmjCtG56DMkP6A4M2H9zX2/YCg1h9bYS7WHd9UQDwXO1Hh"
     "IZzRYecXh7SG9P4GhRY= gretel\n";
-#elif defined(HAVE_ECC521)
+#elif !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
 static const char samplePublicKeyEccBuffer[] =
     "ecdsa-sha2-nistp521 AAAAE2VjZHNhLXNoYTItbmlzdHA1MjEAAAAIbmlzdHA1MjEAAA"
     "CFBAET/BOzBb9Jx9b52VIHFP4g/uk5KceDpz2M+/Ln9WiDjsMfb4NgNCAB+EMNJUX/TNBL"
@@ -1463,7 +1464,7 @@ static const char samplePublicKeyEccBuffer[] =
 #endif
 #endif
 
-#ifndef NO_RSA
+#ifndef WOLFSSH_NO_RSA
 static const char samplePublicKeyRsaBuffer[] =
     "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC9P3ZFowOsONXHD5MwWiCciXytBRZGho"
     "MNiisWSgUs5HdHcACuHYPi2W6Z1PBFmBWT9odOrGRjoZXJfDDoPi+j8SSfDGsc/hsCmc3G"
@@ -1865,12 +1866,12 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     }
 #endif
 
-#ifdef NO_RSA
+#ifdef WOLFSSH_NO_RSA
     /* If wolfCrypt isn't built with RSA, force ECC on. */
     userEcc = 1;
     peerEcc = 1;
 #endif
-#ifndef HAVE_ECC
+#ifdef WOLFSSH_NO_ECC
     /* If wolfCrypt isn't built with ECC, force ECC off. */
     userEcc = 0;
     peerEcc = 0;
@@ -1958,12 +1959,12 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         LoadPasswordBuffer(keyLoadBuf, bufSz, &pwMapList);
 
         if (userEcc) {
-        #ifdef HAVE_ECC
+        #ifndef WOLFSSH_NO_ECC
             bufName = samplePublicKeyEccBuffer;
         #endif
         }
         else {
-        #ifndef NO_RSA
+        #ifndef WOLFSSH_NO_RSA
             bufName = samplePublicKeyRsaBuffer;
         #endif
         }
@@ -2138,7 +2139,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         fprintf(stderr, "Couldn't clean up wolfSSH.\n");
         WEXIT(EXIT_FAILURE);
     }
-#if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
+#if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
 

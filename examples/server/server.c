@@ -35,6 +35,7 @@
 #include <wolfssl/wolfcrypt/sha256.h>
 #include <wolfssl/wolfcrypt/coding.h>
 #include <wolfssh/ssh.h>
+#include <wolfssh/internal.h>
 #include <wolfssh/test.h>
 #include <wolfssl/wolfcrypt/ecc.h>
 #include "examples/server/server.h"
@@ -664,7 +665,7 @@ THREAD_RETURN WOLFSSH_THREAD server_test(void* args)
     }
     myoptind = 0;      /* reset for test cases */
 
-#ifdef NO_RSA
+#ifdef WOLFSSH_NO_RSA
     /* If wolfCrypt isn't built with RSA, force ECC on. */
     useEcc = 1;
 #endif
@@ -776,7 +777,7 @@ THREAD_RETURN WOLFSSH_THREAD server_test(void* args)
         fprintf(stderr, "Couldn't clean up wolfSSH.\n");
         exit(EXIT_FAILURE);
     }
-#if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
+#if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
 

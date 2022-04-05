@@ -38,6 +38,7 @@
 
 #include <wolfssl/wolfcrypt/random.h>
 #include <wolfssl/wolfcrypt/rsa.h>
+#include <wolfssh/internal.h>
 #include <wolfssh/error.h>
 #include <wolfssh/keygen.h>
 #include <wolfssh/log.h>
@@ -57,7 +58,7 @@
 int wolfSSH_MakeRsaKey(byte* out, word32 outSz,
                        word32 size, word32 e)
 {
-#ifndef NO_RSA
+#ifndef WOLFSSH_NO_RSA
 
     int ret = WS_SUCCESS;
     WC_RNG rng;

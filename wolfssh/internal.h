@@ -507,16 +507,6 @@ struct WS_SFTP_RENAME_STATE;
 
 struct WOLFSSH_AGENT_CTX;
 
-#ifdef WOLFSSH_FWD
-typedef enum FwdStates {
-    FWD_STATE_INIT,
-    FWD_STATE_LISTEN,
-    FWD_STATE_CONNECTING,
-    FWD_STATE_FORWARDING,
-    FWD_STATE_CLEANUP,
-} WS_FwdStates;
-#endif /* WOLFSSH_FWD */
-
 /* our wolfSSH session */
 struct WOLFSSH {
     WOLFSSH_CTX* ctx;      /* owner context */
