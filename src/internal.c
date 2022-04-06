@@ -949,8 +949,8 @@ int GenerateKey(byte hashId, byte keyId,
 
 static int GenerateKeys(WOLFSSH* ssh, byte hashId)
 {
-    Keys* cK;
-    Keys* sK;
+    Keys* cK = 0;
+    Keys* sK = 0;
     int ret = WS_SUCCESS;
 
     if (ssh == NULL)
@@ -3151,7 +3151,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
         if (sigKeyBlock_ptr->useRsa) {
 #ifndef WOLFSSH_NO_RSA
-            byte* e;
+            byte* e = 0;
             word32 eSz;
             byte* n;
             word32 nSz;
@@ -3972,7 +3972,7 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
                                      byte* buf, word32 len, word32* idx)
 {
     word32 begin;
-    WS_UserAuthData_Password* pw;
+    WS_UserAuthData_Password* pw = 0;
     int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequestPassword()");
@@ -4410,7 +4410,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                                       byte* buf, word32 len, word32* idx)
 {
     word32 begin;
-    WS_UserAuthData_PublicKey* pk;
+    WS_UserAuthData_PublicKey* pk = 0;
     int ret = WS_SUCCESS;
     int authFailure = 0;
 
@@ -4946,7 +4946,7 @@ static int DoChannelOpen(WOLFSSH* ssh,
     word32 hostPort = 0, originPort = 0;
     int isDirect = 0;
 #endif /* WOLFSSH_FWD */
-    WOLFSSH_CHANNEL* newChannel;
+    WOLFSSH_CHANNEL* newChannel = 0;
     int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Entering DoChannelOpen()");
@@ -6853,7 +6853,7 @@ int SendKexDhReply(WOLFSSH* ssh)
     byte useEcc = 0;
     byte fPad = 0;
     byte kPad = 0;
-    word32 sigBlockSz;
+    word32 sigBlockSz = 0;
     word32 payloadSz;
     word32 scratch = 0;
     byte* output;
@@ -8885,10 +8885,10 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId, int addSig)
 {
     byte* output;
     word32 idx;
-    const char* authName;
-    word32 authNameSz;
-    const char* serviceName;
-    word32 serviceNameSz;
+    const char* authName = 0;
+    word32 authNameSz = 0;
+    const char* serviceName = 0;
+    word32 serviceNameSz = 0;
     word32 payloadSz;
     int ret = WS_SUCCESS;
     WS_UserAuthData authData;
@@ -9284,8 +9284,8 @@ static int SendChannelOpen(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel,
         byte* channelData, word32 channelDataSz)
 {
     byte* output;
-    const char* channelType;
-    word32 channelTypeSz, idx;
+    const char* channelType = 0;
+    word32 channelTypeSz = 0, idx;
     int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Entering SendChannelOpen()");
@@ -9449,7 +9449,7 @@ int SendChannelEof(WOLFSSH* ssh, word32 peerChannelId)
     byte* output;
     word32 idx;
     int ret = WS_SUCCESS;
-    WOLFSSH_CHANNEL* channel;
+    WOLFSSH_CHANNEL* channel = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering SendChannelEof()");
 
@@ -9503,7 +9503,7 @@ int SendChannelEow(WOLFSSH* ssh, word32 peerChannelId)
     word32 idx;
     word32 strSz = sizeof("eow@openssh.com");
     int      ret = WS_SUCCESS;
-    WOLFSSH_CHANNEL* channel;
+    WOLFSSH_CHANNEL* channel = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering SendChannelEow()");
 
@@ -9557,7 +9557,7 @@ int SendChannelExit(WOLFSSH* ssh, word32 peerChannelId, int status)
     word32 idx;
     word32 strSz = sizeof("exit-status");
     int      ret = WS_SUCCESS;
-    WOLFSSH_CHANNEL* channel;
+    WOLFSSH_CHANNEL* channel = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering SendChannelExit(), status = %d", status);
 
@@ -9607,7 +9607,7 @@ int SendChannelClose(WOLFSSH* ssh, word32 peerChannelId)
     byte* output;
     word32 idx;
     int ret = WS_SUCCESS;
-    WOLFSSH_CHANNEL* channel;
+    WOLFSSH_CHANNEL* channel = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering SendChannelClose()");
 
@@ -9656,7 +9656,7 @@ int SendChannelData(WOLFSSH* ssh, word32 channelId,
     byte* output;
     word32 idx;
     int ret = WS_SUCCESS;
-    WOLFSSH_CHANNEL* channel;
+    WOLFSSH_CHANNEL* channel = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering SendChannelData()");
 
@@ -9800,7 +9800,7 @@ int SendChannelRequest(WOLFSSH* ssh, byte* name, word32 nameSz)
     byte* output;
     word32 idx;
     int ret = WS_SUCCESS;
-    WOLFSSH_CHANNEL* channel;
+    WOLFSSH_CHANNEL* channel = 0;
     const char* cType = NULL;
     word32 typeSz = 0;
 
@@ -10196,7 +10196,7 @@ int SendChannelSuccess(WOLFSSH* ssh, word32 channelId, int success)
     byte* output;
     word32 idx;
     int ret = WS_SUCCESS;
-    WOLFSSH_CHANNEL* channel;
+    WOLFSSH_CHANNEL* channel = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering SendChannelSuccess(), %s",
          success ? "Success" : "Failure");
