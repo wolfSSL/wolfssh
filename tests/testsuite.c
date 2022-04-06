@@ -103,10 +103,11 @@ int TestsuiteTest(int argc, char** argv)
 
     WSTARTTCP();
 
-    wolfSSH_Init();
     #if defined(DEBUG_WOLFSSH)
         wolfSSH_Debugging_ON();
     #endif
+
+    wolfSSH_Init();
     #if !defined(WOLFSSL_TIRTOS)
         ChangeToWolfSshRoot();
     #endif
