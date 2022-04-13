@@ -2303,7 +2303,7 @@ static INLINE enum wc_HashType HashForId(byte id)
 }
 
 
-#if !defined(WOLFSSH_NO_ECDSA) && !defined(WOLFSSH_NO_ECDH)
+#if !defined(WOLFSSH_NO_ECDSA) || !defined(WOLFSSH_NO_ECDH)
 static INLINE int wcPrimeForId(byte id)
 {
     switch (id) {
@@ -4744,7 +4744,7 @@ static int DoUserAuthFailure(WOLFSSH* ssh,
                         case ID_USERAUTH_PASSWORD:
                             authType |= WOLFSSH_USERAUTH_PASSWORD;
                             break;
-#if !defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_ECDSA)
+#if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
                         case ID_USERAUTH_PUBLICKEY:
                             authType |= WOLFSSH_USERAUTH_PUBLICKEY;
                             break;
@@ -8511,7 +8511,7 @@ typedef struct WS_KeySignature {
 
 
 static const char cannedAuths[] =
-#if !defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_ECDSA)
+#if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
     "publickey,"
 #endif
     "password,";
