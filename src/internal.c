@@ -384,6 +384,21 @@ const char* GetErrorString(int err)
         case WS_SFTP_BAD_HEADER:
             return "sftp bad header";
 
+        case WS_CERT_NO_SIGNER_E:
+            return "no signer certificate";
+
+        case WS_CERT_EXPIRED_E:
+            return "certificate expired";
+
+        case WS_CERT_REVOKED_E:
+            return "certificate revoked";
+
+        case WS_CERT_SIG_CONFIRM_E:
+            return "certificate signature fail";
+
+        case WS_CERT_OTHER_E:
+            return "other certificate error";
+
         default:
             return "Unknown error code";
     }
@@ -4688,6 +4703,13 @@ static int DoUserAuthRequestEccCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     sig_s_ptr = &sig_s;
 #endif
     }
+
+#ifdef WOLFSSH_CERTS
+    if (ret == WS_SUCCESS) {
+        ret = wolfSSH_CERTMAN_VerifyCert_buffer(ssh->ctx->certMan,
+                pk->publicKey, pk->publicKeySz);
+    }
+#endif /* WOLFSSH_CERTS */
 
     if (ret == WS_SUCCESS) {
         ret = wc_ecc_init_ex(key_ptr, ssh->ctx->heap, INVALID_DEVID);

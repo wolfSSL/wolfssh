@@ -1675,8 +1675,15 @@ int wolfSSH_CTX_SetBanner(WOLFSSH_CTX* ctx,
 int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX* ctx,
                                    const byte* in, word32 inSz, int format)
 {
+    int ret = WS_SUCCESS;
+
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CTX_UsePrivateKey_buffer()");
-    return wolfSSH_ProcessBuffer(ctx, in, inSz, format, BUFTYPE_PRIVKEY);
+
+    ret = wolfSSH_ProcessBuffer(ctx, in, inSz, format, BUFTYPE_PRIVKEY);
+
+    WLOG(WS_LOG_DEBUG,
+            "Leaving wolfSSH_CTX_UsePrivateKey_buffer(), ret = %d", ret);
+    return ret;
 }
 
 

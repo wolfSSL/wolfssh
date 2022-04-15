@@ -1725,7 +1725,7 @@ static int LoadCertBuffer(byte* buf, word32 bufSz, PwMapList* list)
 
     if (PwMapNew(list,
                 WOLFSSH_USERAUTH_PUBLICKEY,
-                (const byte*)"john", 4, buf, bufSz) == NULL ) {
+                (const byte*)"orange", 6, buf, bufSz) == NULL ) {
         return -1;
     }
 
@@ -2061,7 +2061,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         {
             byte* certBuf = NULL;
             word32 certBufSz = 0;
-            const char* filename = "./keys/john-cert.der";
+            const char* filename = "../ca/orange-cert.der";
 
             load_file(filename, NULL, &certBufSz);
 
@@ -2099,7 +2099,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             }
             load_file(caCert, certBuf, &certBufSz);
             ret = wolfSSH_CTX_AddRootCert_buffer(ctx, certBuf, certBufSz,
-                    WOLFSSH_FORMAT_ASN1);
+                    WOLFSSH_FORMAT_PEM);
             if (ret != 0) {
                 fprintf(stderr, "Couldn't add root cert\n");
                 WEXIT(EXIT_FAILURE);
@@ -2306,6 +2306,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
 
 #ifndef NO_MAIN_DRIVER
+void wolfSSL_Debugging_ON(void);
 
     int main(int argc, char** argv)
     {
@@ -2319,6 +2320,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         WSTARTTCP();
 
         #ifdef DEBUG_WOLFSSH
+            wolfSSL_Debugging_ON();
             wolfSSH_Debugging_ON();
         #endif
 

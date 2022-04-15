@@ -398,7 +398,7 @@ static int wsUserAuth(byte authType,
          * passed in a public key file, use public key auth */
         if ((XSTRNCMP((char*)authData->username, "hansel",
                 authData->usernameSz) == 0) ||
-            (XSTRNCMP((char*)authData->username, "john",
+            (XSTRNCMP((char*)authData->username, "orange",
                 authData->usernameSz) == 0) ||
             pubKeyName != NULL) {
 
@@ -1036,11 +1036,11 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     }
 
 #ifdef WOLFSSH_CERTS
-    if (XSTRCMP("john", username) == 0) {
-        ret = load_der_file("./keys/john-cert.der",
+    if (XSTRCMP("orange", username) == 0) {
+        ret = load_der_file("../ca/orange-cert.der",
                 &userPublicKey, &userPublicKeySz);
         if (ret != 0) err_sys("Couldn't load certificate file.");
-        ret = load_der_file("./keys/john-key.der",
+        ret = load_der_file("../ca/orange-key.der",
                 &userPrivateKey, &userPrivateKeySz);
         if (ret != 0) err_sys("Couldn't load private key file.");
 

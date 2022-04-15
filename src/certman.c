@@ -38,6 +38,8 @@
 
 #include <wolfssl/ssl.h>
 #include <wolfssl/ocsp.h>
+#include <wolfssl/wolfcrypt/error-crypt.h>
+#include <wolfssl/error-ssl.h>
 
 #include <wolfssh/internal.h>
 #include <wolfssh/certman.h>
@@ -186,8 +188,46 @@ int wolfSSH_CERTMAN_VerifyCert_buffer(WOLFSSH_CERTMAN* cm,
 
     WLOG_ENTER();
 
-    ret = wolfSSL_CertManagerVerifyBuffer(cm->cm, cert, certSz,
-            WOLFSSL_FILETYPE_ASN1);
+    if (ret == WS_SUCCESS) {
+        ret = wolfSSL_CertManagerVerifyBuffer(cm->cm, cert, certSz,
+                WOLFSSL_FILETYPE_ASN1);
+
+        if (ret == WOLFSSL_SUCCESS) {
+            ret = WS_SUCCESS;
+        }
+        else if (ret == ASN_NO_SIGNER_E) {
+            WLOG(WS_LOG_CERTMAN, "cert verify: no signer");
+            ret = WS_CERT_NO_SIGNER_E;
+        }
+        else if (ret == ASN_AFTER_DATE_E) {
+            WLOG(WS_LOG_CERTMAN, "cert verify: expired");
+            ret = WS_CERT_EXPIRED_E;
+        }
+        else if (ret == ASN_SIG_CONFIRM_E) {
+            WLOG(WS_LOG_CERTMAN, "cert verify: bad sig");
+            ret = WS_CERT_SIG_CONFIRM_E;
+        }
+        else {
+            WLOG(WS_LOG_CERTMAN, "cert verify: other error (%d)", ret);
+            ret = WS_CERT_OTHER_E;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = wolfSSL_CertManagerCheckOCSP(cm->cm, (byte*)cert, certSz);
+
+        if (ret == WOLFSSL_SUCCESS) {
+            ret = WS_SUCCESS;
+        }
+        else if (ret == OCSP_CERT_REVOKED) {
+            WLOG(WS_LOG_CERTMAN, "ocsp lookup: ocsp revoked");
+            ret = WS_CERT_REVOKED_E;
+        }
+        else {
+            WLOG(WS_LOG_CERTMAN, "ocsp lookup: other error (%d)", ret);
+            ret = WS_CERT_OTHER_E;
+        }
+    }
 
     WLOG_LEAVE(ret);
     return ret;
