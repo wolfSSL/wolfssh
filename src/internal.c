@@ -8637,6 +8637,7 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
     int ret = WS_SUCCESS;
     byte* r;
     byte* s;
+    byte rs[139];
     byte sig[139]; /* wc_ecc_sig_size() for a prime521 key. */
     word32 sigSz = sizeof(sig), rSz, sSz;
     byte* checkData = NULL;
@@ -8705,8 +8706,8 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
 
         if (ret == WS_SUCCESS) {
             rSz = sSz = sizeof(sig) / 2;
-            r = sig;
-            s = sig + rSz;
+            r = rs;
+            s = rs + rSz;
             ret = wc_ecc_sig_to_rs(sig, sigSz, r, &rSz, s, &sSz);
         }
 
