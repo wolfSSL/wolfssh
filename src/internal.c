@@ -399,6 +399,9 @@ const char* GetErrorString(int err)
         case WS_CERT_OTHER_E:
             return "other certificate error";
 
+        case WS_CERT_PROFILE_E:
+            return "certificate profile requirements error";
+
         default:
             return "Unknown error code";
     }
@@ -4837,6 +4840,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
     WS_UserAuthData_PublicKey* pk = NULL;
     int ret = WS_SUCCESS;
     int authFailure = 0;
+    byte pkTypeId;
 
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequestPublicKey()");
 
@@ -4859,13 +4863,25 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
     if (ret == WS_SUCCESS) {
         pk->publicKeyType = buf + begin;
         begin += pk->publicKeyTypeSz;
-        ret = GetSize(&pk->publicKeySz, buf, len, &begin);
+
+        pkTypeId = NameToId((char*)pk->publicKeyType, pk->publicKeyTypeSz);
+        if (pkTypeId == ID_UNKNOWN) {
+            WLOG(WS_LOG_DEBUG, "DUARPK: Unknown / Unsupported key type");
+            ret = WS_INVALID_ALGO_ID;
+        }
     }
+
+    if (ret == WS_SUCCESS)
+        ret = GetSize(&pk->publicKeySz, buf, len, &begin);
 
     if (ret == WS_SUCCESS) {
         pk->publicKey = buf + begin;
         begin += pk->publicKeySz;
-        {
+        #ifdef WOLFSSH_CERTS
+        if (pkTypeId == ID_X509V3_SSH_RSA ||
+            pkTypeId == ID_X509V3_ECDSA_SHA2_NISTP256 ||
+            pkTypeId == ID_X509V3_ECDSA_SHA2_NISTP384 ||
+            pkTypeId == ID_X509V3_ECDSA_SHA2_NISTP521) {
             word32 l = 0, m = 0;
 
             /* Skip the name */
@@ -4877,6 +4893,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             pk->publicKeySz = l;
             pk->publicKey = pk->publicKey + m;
         }
+        #endif /* WOLFSSH_CERTS */
 
         if (pk->hasSignature) {
             ret = GetSize(&pk->signatureSz, buf, len, &begin);
@@ -4929,14 +4946,6 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             byte digest[WC_MAX_DIGEST_SIZE];
             word32 digestSz = 0;
             enum wc_HashType hashId = WC_HASH_TYPE_SHA;
-            byte pkTypeId;
-
-            pkTypeId = NameToId((char*)pk->publicKeyType,
-                                pk->publicKeyTypeSz);
-            if (pkTypeId == ID_UNKNOWN) {
-                WLOG(WS_LOG_DEBUG, "DUARPK: Unknown / Unsupported key type");
-                ret = WS_INVALID_ALGO_ID;
-            }
 
             if (ret == WS_SUCCESS) {
                 hashId = HashForId(pkTypeId);
@@ -4968,12 +4977,26 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             /* The rest of the fields in the signature are already
              * in the buffer. Just need to account for the sizes. */
             if (ret == 0) {
-                ret = wc_HashUpdate(&hash, hashId, pk->dataToSign,
-                                    authData->usernameSz +
-                                    authData->serviceNameSz +
-                                    authData->authNameSz + BOOLEAN_SZ +
-                                    (pk->publicKeyTypeSz*2) + pk->publicKeySz +
-                                    (UINT32_SZ * 9));
+                word32 dataToSignSz;
+
+                dataToSignSz = authData->usernameSz +
+                               authData->serviceNameSz +
+                               authData->authNameSz + BOOLEAN_SZ +
+                               pk->publicKeyTypeSz + pk->publicKeySz +
+                               (UINT32_SZ * 5);
+
+                #ifdef WOLFSSH_CERTS
+                if (pkTypeId == ID_X509V3_SSH_RSA ||
+                    pkTypeId == ID_X509V3_ECDSA_SHA2_NISTP256 ||
+                    pkTypeId == ID_X509V3_ECDSA_SHA2_NISTP384 ||
+                    pkTypeId == ID_X509V3_ECDSA_SHA2_NISTP521) {
+
+                    dataToSignSz += pk->publicKeyTypeSz + (UINT32_SZ * 4);
+                }
+                #endif /* WOLFSSH_CERTS */
+
+                ret = wc_HashUpdate(&hash, hashId,
+                        pk->dataToSign, dataToSignSz);
             }
             if (ret == 0) {
                 ret = wc_HashFinal(&hash, hashId, digest);

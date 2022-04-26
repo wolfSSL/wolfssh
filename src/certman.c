@@ -181,6 +181,13 @@ int wolfSSH_CERTMAN_LoadRootCA_buffer(WOLFSSH_CERTMAN* cm,
 }
 
 
+static int CheckProfile(DecodedCert* cert, int profile);
+enum {
+    PROFILE_FPKI_WORKSHEET_6 = 6,
+    PROFILE_FPKI_WORKSHEET_10 = 10,
+    PROFILE_FPKI_WORKSHEET_16 = 16
+};
+
 int wolfSSH_CERTMAN_VerifyCert_buffer(WOLFSSH_CERTMAN* cm,
         const unsigned char* cert, word32 certSz)
 {
@@ -226,11 +233,113 @@ int wolfSSH_CERTMAN_VerifyCert_buffer(WOLFSSH_CERTMAN* cm,
         else {
             WLOG(WS_LOG_CERTMAN, "ocsp lookup: other error (%d)", ret);
             ret = WS_CERT_OTHER_E;
+            ret = WS_SUCCESS;
         }
+    }
+
+    if (ret == WS_SUCCESS) {
+        DecodedCert decoded;
+
+        InitDecodedCert(&decoded, cert, certSz, cm->cm);
+        ret = ParseCert(&decoded, WOLFSSL_FILETYPE_ASN1, 0, cm->cm);
+
+        if (ret == 0) {
+            ret =
+                CheckProfile(&decoded, PROFILE_FPKI_WORKSHEET_6) ||
+                CheckProfile(&decoded, PROFILE_FPKI_WORKSHEET_10) ||
+                CheckProfile(&decoded, PROFILE_FPKI_WORKSHEET_16);
+
+            if (ret != 0) {
+                WLOG(WS_LOG_CERTMAN, "certificate didn't match profile");
+                ret = WS_CERT_PROFILE_E;
+            }
+            else
+                ret = WS_SUCCESS;
+        }
+
+        FreeDecodedCert(&decoded);
     }
 
     WLOG_LEAVE(ret);
     return ret;
+}
+
+
+static int CheckProfile(DecodedCert* cert, int profile)
+{
+    int valid = (cert != NULL);
+    const char* certPolicies[2] = {NULL, NULL};
+    byte extKeyUsage = 0, extKeyUsageSsh = 0, extKeyUsageSshAllowed = 0;
+
+    if (profile == PROFILE_FPKI_WORKSHEET_6) {
+        certPolicies[0] = "2.16.840.1.101.3.2.1.3.13";
+        extKeyUsage = EXTKEYUSE_CLIENT_AUTH;
+        extKeyUsageSsh = EXTKEYUSE_SSH_MSCL;
+        extKeyUsageSshAllowed =
+            EXTKEYUSE_SSH_KP_CLIENT_AUTH |
+            EXTKEYUSE_SSH_CLIENT_AUTH;
+    }
+    else if (profile == PROFILE_FPKI_WORKSHEET_10) {
+        certPolicies[0] = "2.16.840.1.101.3.2.1.3.40";
+        certPolicies[1] = "2.16.840.1.101.3.2.1.3.41";
+        extKeyUsage = EXTKEYUSE_CLIENT_AUTH;
+        extKeyUsageSshAllowed =
+            EXTKEYUSE_SSH_MSCL |
+            EXTKEYUSE_SSH_KP_CLIENT_AUTH |
+            EXTKEYUSE_SSH_CLIENT_AUTH;
+    }
+    else if (profile == PROFILE_FPKI_WORKSHEET_16) {
+        certPolicies[0] = "2.16.840.1.101.3.2.1.3.45";
+        extKeyUsage = EXTKEYUSE_CLIENT_AUTH;
+        extKeyUsageSsh = EXTKEYUSE_SSH_MSCL;
+        extKeyUsageSshAllowed =
+            EXTKEYUSE_SSH_KP_CLIENT_AUTH |
+            EXTKEYUSE_SSH_CLIENT_AUTH;
+    }
+    else {
+        valid = 0;
+    }
+    
+    if (valid) {
+        valid = cert->extKeyUsageSet &&
+            cert->extKeyUsage == KEYUSE_DIGITAL_SIG &&
+            /*cert->extBasicConstCrit;*/ 1;
+    }
+
+    if (valid) {
+        valid = WSTRCMP(cert->countryOfCitizenship, "US") == 0;
+    }
+
+    if (valid) {
+        valid = !cert->isCA;
+    }
+
+    if (valid) {
+            valid =
+                ((certPolicies[1] != NULL) &&
+                 (WSTRCMP(certPolicies[1], cert->extCertPolicies[0]) == 0 ||
+                  WSTRCMP(certPolicies[1], cert->extCertPolicies[1]) == 0)) ||
+                ((certPolicies[0] != NULL) &&
+                 (WSTRCMP(certPolicies[0], cert->extCertPolicies[0]) == 0 ||
+                  WSTRCMP(certPolicies[0], cert->extCertPolicies[1]) == 0));
+    }
+
+    if (valid) {
+        valid =
+            /* Must include all in extKeyUsage */
+            ((extKeyUsage == 0) ||
+                ((cert->extExtKeyUsage & extKeyUsage) != extKeyUsage)) &&
+            /* Must include all in extKeyUsageSsh */
+            ((extKeyUsageSsh == 0) ||
+                ((cert->extExtKeyUsageSsh & extKeyUsageSsh)
+                    != extKeyUsageSsh)) &&
+            /* Must include at least one in extKeyUsageSshAllowed */
+            ((extKeyUsageSshAllowed == 0) ||
+                ((cert->extExtKeyUsageSsh & extKeyUsageSshAllowed) != 0));
+
+    }
+
+    return valid;
 }
 
 #endif /* WOLFSSH_CERTS */
