@@ -233,7 +233,6 @@ int wolfSSH_CERTMAN_VerifyCert_buffer(WOLFSSH_CERTMAN* cm,
         else {
             WLOG(WS_LOG_CERTMAN, "ocsp lookup: other error (%d)", ret);
             ret = WS_CERT_OTHER_E;
-            ret = WS_SUCCESS;
         }
     }
 
