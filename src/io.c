@@ -405,6 +405,8 @@ int wsEmbedSend(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
 
     sent = (int)SEND_FUNCTION(sd, buf, sz, ssh->wflags);
 
+    sent = TranslateReturnCode(sent, sd);
+
     WLOG(WS_LOG_DEBUG,"Embed Send sent %d", sent);
 
     if (sent < 0) {
