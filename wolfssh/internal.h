@@ -402,6 +402,7 @@ struct WOLFSSH_CTX {
     WS_CallbackIORecv ioRecvCb;       /* I/O Receive Callback */
     WS_CallbackIOSend ioSendCb;       /* I/O Send Callback */
     WS_CallbackUserAuth userAuthCb;   /* User Authentication Callback */
+    WS_CallbackUserAuthResult userAuthResultCb; /* User Authentication Result */
     WS_CallbackHighwater highwaterCb; /* Data Highwater Mark Callback */
     WS_CallbackGlobalReq globalReqCb; /* Global Request Callback */
     WS_CallbackReqSuccess reqSuccessCb; /* Global Request Success Callback */
@@ -658,6 +659,7 @@ struct WOLFSSH {
     HandshakeInfo* handshake;
 
     void* userAuthCtx;
+    void* userAuthResultCtx;
     char* userName;
     word32 userNameSz;
     char* password;

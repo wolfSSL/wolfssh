@@ -1273,6 +1273,32 @@ void* wolfSSH_GetUserAuthCtx(WOLFSSH* ssh)
 }
 
 
+void wolfSSH_SetUserAuthResult(WOLFSSH_CTX* ctx,
+        WS_CallbackUserAuthResult cb)
+{
+    if (ctx != NULL) {
+        ctx->userAuthResultCb = cb;
+    }
+}
+
+
+void wolfSSH_SetUserAuthResultCtx(WOLFSSH* ssh, void* userAuthResultCtx)
+{
+    if (ssh != NULL) {
+        ssh->userAuthResultCtx = userAuthResultCtx;
+    }
+}
+
+
+void* wolfSSH_GetUserAuthResultCtx(WOLFSSH* ssh)
+{
+    if (ssh != NULL) {
+        return ssh->userAuthResultCtx;
+    }
+    return NULL;
+}
+
+
 void wolfSSH_CTX_SetPublicKeyCheck(WOLFSSH_CTX* ctx,
         WS_CallbackPublicKeyCheck cb)
 {

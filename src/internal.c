@@ -5044,11 +5044,19 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             }
 
             if (ret != WS_SUCCESS) {
+                if (ssh->ctx->userAuthResultCb) {
+                    ssh->ctx->userAuthResultCb(WOLFSSH_USERAUTH_FAILURE,
+                            authData, ssh->userAuthResultCtx);
+                }
                 WLOG(WS_LOG_DEBUG, "DUARPK: signature compare failure : [%d]",
                         ret);
                 ret = SendUserAuthFailure(ssh, 0);
             }
             else {
+                if (ssh->ctx->userAuthResultCb) {
+                    ssh->ctx->userAuthResultCb(WOLFSSH_USERAUTH_SUCCESS,
+                            authData, ssh->userAuthResultCtx);
+                }
                 ssh->clientState = CLIENT_USERAUTH_DONE;
             }
         }

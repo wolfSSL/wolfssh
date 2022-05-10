@@ -212,6 +212,14 @@ WOLFSSH_API void wolfSSH_SetUserAuth(WOLFSSH_CTX*, WS_CallbackUserAuth);
 WOLFSSH_API void wolfSSH_SetUserAuthCtx(WOLFSSH*, void*);
 WOLFSSH_API void* wolfSSH_GetUserAuthCtx(WOLFSSH*);
 
+typedef int (*WS_CallbackUserAuthResult)(byte result,
+        WS_UserAuthData* authData, void* userAuthResultCtx);
+WOLFSSH_API void wolfSSH_SetUserAuthResult(WOLFSSH_CTX* ctx,
+        WS_CallbackUserAuthResult cb);
+WOLFSSH_API void wolfSSH_SetUserAuthResultCtx(WOLFSSH* ssh,
+        void* userAuthResultCtx);
+WOLFSSH_API void* wolfSSH_GetUserAuthResultCtx(WOLFSSH* ssh);
+
 /* Public Key Check Callback */
 typedef int (*WS_CallbackPublicKeyCheck)(const byte*, word32, void*);
 WOLFSSH_API void wolfSSH_CTX_SetPublicKeyCheck(WOLFSSH_CTX*,
