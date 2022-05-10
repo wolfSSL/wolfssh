@@ -4707,19 +4707,19 @@ static int DoUserAuthRequestEccCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 #endif
     }
 
-#ifdef WOLFSSH_CERTS
-    if (ret == WS_SUCCESS) {
-        ret = wolfSSH_CERTMAN_VerifyCert_buffer(ssh->ctx->certMan,
-                pk->publicKey, pk->publicKeySz);
-    }
-#endif /* WOLFSSH_CERTS */
-
     if (ret == WS_SUCCESS) {
         ret = wc_ecc_init_ex(key_ptr, ssh->ctx->heap, INVALID_DEVID);
         if (ret == 0) {
             ret = WS_SUCCESS;
         }
     }
+
+#ifdef WOLFSSH_CERTS
+    if (ret == WS_SUCCESS) {
+        ret = wolfSSH_CERTMAN_VerifyCert_buffer(ssh->ctx->certMan,
+                pk->publicKey, pk->publicKeySz);
+    }
+#endif /* WOLFSSH_CERTS */
 
     if (ret == WS_SUCCESS) {
         byte big[1024];
