@@ -199,8 +199,13 @@ static byte isPrivate = 0;
 
 
 #ifdef WOLFSSH_CERTS
+#if 0
+static const byte publicKeyType[] = "x509v3-ssh-rsa";
+static const byte privateKeyType[] = "ssh-rsa";
+#else
 static const byte publicKeyType[] = "x509v3-ecdsa-sha2-nistp256";
 static const byte privateKeyType[] = "ecdsa-sha2-nistp256";
+#endif
 #endif
 
 #ifndef WOLFSSH_NO_RSA

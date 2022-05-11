@@ -314,6 +314,12 @@ static int CheckProfile(DecodedCert* cert, int profile)
     }
 
     if (valid) {
+        valid =
+            WMEMCMP(cert->extAuthKeyId, cert->extSubjKeyId, KEYID_SIZE) != 0;
+
+    }
+
+    if (valid) {
             valid =
                 ((certPolicies[1] != NULL) &&
                  (WSTRCMP(certPolicies[1], cert->extCertPolicies[0]) == 0 ||
