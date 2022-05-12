@@ -7497,7 +7497,7 @@ int SendKexDhReply(WOLFSSH* ssh)
 #ifdef WOLFSSH_SMALL_STACK
                     r_ptr = (byte*)WMALLOC(rSz, heap, DYNTYPE_BUFFER);
                     s_ptr = (byte*)WMALLOC(sSz, heap, DYNTYPE_BUFFER);
-                    if (r_ptr == NULL || r_ptr == NULL)
+                    if (r_ptr == NULL || s_ptr == NULL)
                         ret = WS_MEMORY_E;
 #else
                     byte r_s[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
@@ -8635,12 +8635,29 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
     word32 begin;
     enum wc_HashType hashId = WC_HASH_TYPE_SHA;
     int ret = WS_SUCCESS;
-    byte* r;
-    byte* s;
-    byte sig[139]; /* wc_ecc_sig_size() for a prime521 key. */
-    word32 sigSz = sizeof(sig), rSz, sSz;
+    byte* r_ptr;
+    byte* s_ptr;
+    byte* sig_ptr;
+    word32 rSz = ECC_MAX_SIG_SIZE / 2;
+    word32 sSz = ECC_MAX_SIG_SIZE / 2;
+    word32 sigSz = ECC_MAX_SIG_SIZE;
     byte* checkData = NULL;
     word32 checkDataSz = 0;
+
+#ifdef WOLFSSH_SMALL_STACK
+    r_ptr = (byte*)WMALLOC(rSz, ssh->ctx->heap, DYNTYPE_BUFFER);
+    s_ptr = (byte*)WMALLOC(sSz, ssh->ctx->heap, DYNTYPE_BUFFER);
+    sig_ptr = (byte*)WMALLOC(sigSz, ssh->ctx->heap, DYNTYPE_BUFFER);
+    if (r_ptr == NULL || s_ptr == NULL || sig_ptr == NULL)
+        ret = WS_MEMORY_E;
+#else
+    byte r_s[ECC_MAX_SIG_SIZE / 2];
+    byte s_s[ECC_MAX_SIG_SIZE / 2];
+    byte sig_s[ECC_MAX_SIG_SIZE];
+    r_ptr = r_s;
+    s_ptr = s_s;
+    sig_ptr = sig_s;
+#endif
 
     if (ssh == NULL || output == NULL || idx == NULL || authData == NULL ||
             sigStart == NULL || keySig == NULL) {
@@ -8674,13 +8691,13 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
     if (ssh->agentEnabled) {
         if (ret == WS_SUCCESS)
             ret = wolfSSH_AGENT_SignRequest(ssh, checkData, checkDataSz,
-                    sig, &sigSz,
+                    sig_ptr, &sigSz,
                     authData->sf.publicKey.publicKey,
                     authData->sf.publicKey.publicKeySz, 0);
         if (ret == WS_SUCCESS) {
             c32toa(sigSz, output + begin);
             begin += LENGTH_SZ;
-            XMEMCPY(output + begin, sig, sigSz);
+            XMEMCPY(output + begin, sig_ptr, sigSz);
             begin += sigSz;
         }
     }
@@ -8695,7 +8712,7 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
             if (ret == WS_SUCCESS)
                 ret = wc_HashFinal(&hash, hashId, digest);
             if (ret == WS_SUCCESS)
-                ret = wc_ecc_sign_hash(digest, digestSz, sig, &sigSz,
+                ret = wc_ecc_sign_hash(digest, digestSz, sig_ptr, &sigSz,
                         ssh->rng, &keySig->ks.ecc.key);
             if (ret != WS_SUCCESS) {
                 WLOG(WS_LOG_DEBUG, "SUAR: Bad ECC Sign");
@@ -8704,10 +8721,7 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
         }
 
         if (ret == WS_SUCCESS) {
-            rSz = sSz = sizeof(sig) / 2;
-            r = sig;
-            s = sig + rSz;
-            ret = wc_ecc_sig_to_rs(sig, sigSz, r, &rSz, s, &sSz);
+            ret = wc_ecc_sig_to_rs(sig_ptr, sigSz, r_ptr, &rSz, s_ptr, &sSz);
         }
 
         if (ret == WS_SUCCESS) {
@@ -8715,8 +8729,8 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
             byte sPad;
 
             /* adds a byte of padding if needed to avoid negative values */
-            rPad = (r[0] & 0x80) ? 1 : 0;
-            sPad = (s[0] & 0x80) ? 1 : 0;
+            rPad = (r_ptr[0] & 0x80) ? 1 : 0;
+            sPad = (s_ptr[0] & 0x80) ? 1 : 0;
             c32toa(rSz + rPad + sSz + sPad +
                     cannedKeyAlgoEcc256NamesSz + LENGTH_SZ * 4,
                     output + begin);
@@ -8738,7 +8752,7 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
             if (rPad)
                 output[begin++] = 0;
 
-            WMEMCPY(output + begin, r, rSz);
+            WMEMCPY(output + begin, r_ptr, rSz);
             begin += rSz;
 
             c32toa(sSz + sPad, output + begin);
@@ -8747,7 +8761,7 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
             if (sPad)
                 output[begin++] = 0;
 
-            WMEMCPY(output + begin, s, sSz);
+            WMEMCPY(output + begin, s_ptr, sSz);
             begin += sSz;
         }
     }
@@ -8760,6 +8774,14 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
         WFREE(checkData, ssh->ctx->heap, DYNTYPE_TEMP);
     }
 
+#ifdef WOLFSSH_SMALL_STACK
+    if (r_ptr)
+        WFREE(r_ptr, ssh->ctx->heap, DYNTYPE_BUFFER);
+    if (s_ptr)
+        WFREE(s_ptr, ssh->ctx->heap, DYNTYPE_BUFFER);
+    if (sig_ptr)
+        WFREE(sig_ptr, ssh->ctx->heap, DYNTYPE_BUFFER);
+#endif
     return ret;
 }
 #endif
