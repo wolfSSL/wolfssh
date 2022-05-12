@@ -8641,6 +8641,9 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
     word32 rSz = ECC_MAX_SIG_SIZE / 2;
     word32 sSz = ECC_MAX_SIG_SIZE / 2;
     word32 sigSz = ECC_MAX_SIG_SIZE;
+    byte* checkData = NULL;
+    word32 checkDataSz = 0;
+
 #ifdef WOLFSSH_SMALL_STACK
     r_ptr = (byte*)WMALLOC(rSz, ssh->ctx->heap, DYNTYPE_BUFFER);
     s_ptr = (byte*)WMALLOC(sSz, ssh->ctx->heap, DYNTYPE_BUFFER);
@@ -8655,8 +8658,6 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
     s_ptr = s_s;
     sig_ptr = sig_s;
 #endif
-    byte* checkData = NULL;
-    word32 checkDataSz = 0;
 
     if (ssh == NULL || output == NULL || idx == NULL || authData == NULL ||
             sigStart == NULL || keySig == NULL) {
