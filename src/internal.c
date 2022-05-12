@@ -465,7 +465,7 @@ static void HandshakeInfoFree(HandshakeInfo* hs, void* heap)
         WFREE(hs->generator, heap, DYNTYPE_MPINT);
 #endif
         if (hs->hashId != WC_HASH_TYPE_NONE)
-            wc_HashFree(&hs->hash, hs->hashId);
+            wc_HashFree(&hs->hash, (enum wc_HashType)hs->hashId);
         ForceZero(hs, sizeof(HandshakeInfo));
         WFREE(hs, heap, DYNTYPE_HS);
     }
