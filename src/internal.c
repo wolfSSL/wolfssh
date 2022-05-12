@@ -8642,9 +8642,9 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
     word32 sSz = ECC_MAX_SIG_SIZE / 2;
     word32 sigSz = ECC_MAX_SIG_SIZE;
 #ifdef WOLFSSH_SMALL_STACK
-    r_ptr = (byte*)WMALLOC(rSz, heap, DYNTYPE_BUFFER);
-    s_ptr = (byte*)WMALLOC(sSz, heap, DYNTYPE_BUFFER);
-    sig_ptr = (byte*)WMALLOC(sigSz, heap, DYNTYPE_BUFFER);
+    r_ptr = (byte*)WMALLOC(rSz, ssh->ctx->heap, DYNTYPE_BUFFER);
+    s_ptr = (byte*)WMALLOC(sSz, ssh->ctx->heap, DYNTYPE_BUFFER);
+    sig_ptr = (byte*)WMALLOC(sigSz, ssh->ctx->heap, DYNTYPE_BUFFER);
     if (r_ptr == NULL || s_ptr == NULL || sig_ptr == NULL)
         ret = WS_MEMORY_E;
 #else
@@ -8775,11 +8775,11 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
 
 #ifdef WOLFSSH_SMALL_STACK
     if (r_ptr)
-        WFREE(r_ptr, heap, DYNTYPE_BUFFER);
+        WFREE(r_ptr, ssh->ctx->heap, DYNTYPE_BUFFER);
     if (s_ptr)
-        WFREE(s_ptr, heap, DYNTYPE_BUFFER);
+        WFREE(s_ptr, ssh->ctx->heap, DYNTYPE_BUFFER);
     if (sig_ptr)
-        WFREE(sig_ptr, heap, DYNTYPE_BUFFER);
+        WFREE(sig_ptr, ssh->ctx->heap, DYNTYPE_BUFFER);
 #endif
     return ret;
 }
