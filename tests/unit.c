@@ -389,6 +389,7 @@ static int test_KDF(void)
 
 #ifdef WOLFSSH_KEYGEN
 
+#ifndef WOLFSSH_NO_RSA
 static int test_RsaKeyGen(void)
 {
     int result = 0;
@@ -405,6 +406,25 @@ static int test_RsaKeyGen(void)
 
     return result;
 }
+#endif
+
+#ifndef WOLFSSH_NO_ECDSA
+static int test_EcdsaKeyGen(void)
+{
+    int result = 0;
+    byte der[1200];
+    int derSz;
+
+    derSz = wolfSSH_MakeEcdsaKey(der, sizeof(der),
+                               WOLFSSH_ECDSAKEY_PRIME256);
+    if (derSz < 0) {
+        printf("EcdsaKeyGen: MakeEcdsaKey failed\n");
+        result = -104;
+    }
+
+    return result;
+}
+#endif
 
 #endif
 
@@ -476,9 +496,16 @@ int main(void)
     testResult = testResult || unitResult;
 
 #ifdef WOLFSSH_KEYGEN
+#ifndef WOLFSSH_NO_RSA
     unitResult = test_RsaKeyGen();
     printf("RsaKeyGen: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+#endif
+#ifndef WOLFSSH_NO_ECDSA
+    unitResult = test_EcdsaKeyGen();
+    printf("EcdsaKeyGen: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 #endif
 
     return (testResult ? 1 : 0);
