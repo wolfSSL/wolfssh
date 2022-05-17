@@ -4,7 +4,7 @@ REM Expect the script at /path/to/wolfssh/IDE/Espressif/ESP-IDF/
 ::******************************************************************************************************
 ::******************************************************************************************************
 echo;
-echo wolfSSH (Secure Shell) Windows Setup. Version 0.1b
+echo wolfSSH (Secure Shell) Windows Setup. Version 0.1c
 echo;
 echo This utility will copy a static snapshot of wolfSSH files to the ESP32-IDF component directory.
 echo;
@@ -34,12 +34,20 @@ if NOT EXIST "wolfssh_espressif_semaphore.md" (
 :: see if there was a parameter passed for a specific EDP-IDF directory
 :: this may be different than the standard ESP-IDF environment (e.g. VisualGDB)
 if "%1" == "" (
+    if "%IDF_PATH%" == "" (
+        echo;
+        echo ERROR: Specify your ESP-IDF path as a parameter or run from ESP-IDF prompt with IDF_PATH environment variable.
+        echo;
+        echo For example: setup_win.bat C:\SysGCC\esp32\esp-idf\v4.4
+        echo;
+        goto :ERR
+    )
     if exist "%IDF_PATH%" (
         echo Using IDF_PATH: %IDF_PATH%
     ) 
 ) else (
     if not exist "%1" (
-        echo "ERROR: optional directory was specified, but not found: %1"
+        echo ERROR: optional directory was specified, but not found: %1
         goto :ERR
     )
 
@@ -81,7 +89,9 @@ if exist %WOLFSSLLIB_TRG_DIR% (
     echo Using WOLFSSLLIB_TRG_DIR = %WOLFSSLLIB_TRG_DIR%
     echo;
 ) else (
-    echo ERROR: this wolfSSH component depends on the wolfSSL component.
+    echo ERROR: this wolfSSH component depends on the wolfSSL component being installed first.
+    echo;
+    echo Directory "%WOLFSSLLIB_TRG_DIR%" not found.
     echo;
     echo See https://github.com/wolfSSL/wolfssl for more info
     echo;
