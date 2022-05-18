@@ -9,6 +9,9 @@ noinst_PROGRAMS += tests/unit.test tests/api.test \
 
 tests_unit_test_SOURCES      = tests/unit.c
 tests_unit_test_CPPFLAGS     = -DNO_MAIN_DRIVER
+if BUILD_KEYGEN
+tests_unit_test_CPPFLAGS     += -DWOLFSSH_KEYGEN
+endif
 if BUILD_SCP
 tests_unit_test_CPPFLAGS     += -DWOLFSSH_SCP
 endif
@@ -30,6 +33,9 @@ tests_unit_test_DEPENDENCIES = src/libwolfssh.la
 tests_api_test_SOURCES       = tests/api.c \
                                examples/echoserver/echoserver.c
 tests_api_test_CPPFLAGS      = -DNO_MAIN_DRIVER
+if BUILD_KEYGEN
+tests_api_test_CPPFLAGS     += -DWOLFSSH_KEYGEN
+endif
 if BUILD_SCP
 tests_api_test_CPPFLAGS     += -DWOLFSSH_SCP
 endif
@@ -54,6 +60,9 @@ tests_testsuite_test_SOURCES = tests/testsuite.c \
                                examples/client/client.c \
                                examples/sftpclient/sftpclient.c
 tests_testsuite_test_CPPFLAGS  = -DNO_MAIN_DRIVER
+if BUILD_KEYGEN
+tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_KEYGEN
+endif
 if BUILD_SCP
 tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_SCP
 endif

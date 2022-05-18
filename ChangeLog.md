@@ -1,3 +1,28 @@
+# wolfSSH v1.4.10 (May 13, 2022)
+ 
+## New Feature Additions and Improvements
+- Additional small stack optimizations to reduce stack used farther
+- Update to Visual Studio paths for looking for wolfSSL library
+- SFTP example, reset timeout value with get/put command
+- Add support for flushing file IO using WOLFSCP_FLUSH
+- Add preprocessor guards for RSA/ECC to agent and the example and test applications
+- Initialization of variables to avoid warnings and use with ESP-IDF
+
+
+## Fixes
+- When scp receives a string in STDERR, print it out, rather than treating it as an error
+- Window adjustment refactor and fix
+- fix check on RSA import size
+- Fix for building with older GCC versions (tested with 4.0.2)
+- SFTP fix handling sent data sz when its size is greater than peer max packet size
+- SFTP add error return code for a bad header when sending a packet
+- KCAPI build fixes for macro guards needed
+- SCP fix for handling small and empty message sizes
+- SFTP update to handle WS_CHAN_RXD return values when reading
+- Fix for IPv6 with scpclient
+- Fixes for cross-compiling (don't force library path references)
+- Fix for FIPS 140-3 on ECC private key use
+
 # wolfSSH v1.4.8 (Nov 4, 2021)
 
 ## New Feature Additions and Improvements
