@@ -16,8 +16,12 @@ echo    "mklink [[/d] | [/h] | [/j]] <link> <target>"
 echo;
 ::******************************************************************************************************
 ::******************************************************************************************************
+
+:: Set REPLICATE_WOLFSSL=true  if a local copy of wolfssl is desired. 
+:: The default is false: use use wolfssl in the parent directory component.
+SET REPLICATE_WOLFSSL=false
+
 SET COPYERROR=false
-pause
 
 :: if there's a setup.sh, we are probably starting in the right place.
 if NOT EXIST "setup.sh" (
@@ -33,7 +37,7 @@ if NOT EXIST "wolfssh_espressif_semaphore.md" (
 
 :: see if there was a parameter passed for a specific EDP-IDF directory
 :: this may be different than the standard ESP-IDF environment (e.g. VisualGDB)
-if "%1" == "" (
+if "%~1" == "" (
     if "%IDF_PATH%" == "" (
         echo;
         echo ERROR: Specify your ESP-IDF path as a parameter or run from ESP-IDF prompt with IDF_PATH environment variable.
@@ -42,17 +46,24 @@ if "%1" == "" (
         echo;
         goto :ERR
     )
+
+    :: There's no parameter, check if %IDF_PATH% non-blank 
     if exist "%IDF_PATH%" (
         echo Using IDF_PATH: %IDF_PATH%
-    ) 
+        echo;
+    ) else (
+        echo ERROR: IDF_PATH=%IDF_PATH% does not exist!
+        echo;
+        goto :ERR
+    )
 ) else (
-    if not exist "%1" (
-        echo ERROR: optional directory was specified, but not found: %1
+    if not exist "%~1" (
+        echo ERROR: optional directory was specified, but not found: %~1
         goto :ERR
     )
 
-    SET IDF_PATH=%1
-    echo Using specified IDF_PATH: %IDF_PATH%
+    SET "IDF_PATH=%~1"
+    echo Set specified IDF_PATH.
 )
 
 :: if no IDF_PATH is found, we don't know what to do. Go exit with error.
@@ -63,8 +74,15 @@ if "%IDF_PATH%" == "" (
   echo;
   echo   .\setup_win.bat C:\SysGCC\esp32\esp-idf\v4.4
   echo;
+  echo The wolfssl components can also be installed in project directory:
+  echo;
+  echo   .\setup_win.bat C:\workspace\wolfssh\examples\ESP32-SSH-Server
+  echo;
   goto :ERR
 )
+
+echo;
+echo Using IDF_PATH: %IDF_PATH%
 
 :: Here we go!
 :: setup some path variables
@@ -85,7 +103,7 @@ set WOLFSSLLIB_TRG_DIR=%IDF_PATH%\components\wolfssl
 echo Using SCRIPTDIR          = %SCRIPTDIR%
 echo Using BASEDIR            = %BASEDIR%
 
-if exist %WOLFSSLLIB_TRG_DIR% (
+if exist "%WOLFSSLLIB_TRG_DIR%" (
     echo Using WOLFSSLLIB_TRG_DIR = %WOLFSSLLIB_TRG_DIR%
     echo;
 ) else (
@@ -102,24 +120,22 @@ echo Using WOLFSSH_ESPIDFDIR  = %WOLFSSH_ESPIDFDIR%
 echo Using WOLFSSHLIB_TRG_DIR = %WOLFSSHLIB_TRG_DIR%
 echo Using WOLFSSHEXP_TRG_DIR = %WOLFSSHEXP_TRG_DIR%
 
-
-
 echo;
 echo Equivalalent destination path:
-dir %WOLFSSH_ESPIDFDIR%\*.xyzzy 2> nul | findstr  \
+dir "%WOLFSSH_ESPIDFDIR%\*.xyzzy" 2> nul | findstr  \
 
 echo;
 echo Equivalalent wolfSSL source directory paths:
 :: show the path of the equivalent  %VALUE% (search for files that don't exist, supress error, and look for string with "\")
 
-dir %WOLFSSLLIB_TRG_DIR%\*.xyzzy 2> nul | findstr  \
+dir "%WOLFSSLLIB_TRG_DIR%\*.xyzzy" 2> nul | findstr  \
 
 echo;
 echo Equivalalent wolfSSH source directory paths:
 
-dir %BASEDIR%\*.xyzzy 2> nul | findstr  \
-dir %WOLFSSHLIB_TRG_DIR%\*.xyzzy 2> nul | findstr  \
-dir %WOLFSSHEXP_TRG_DIR%\*.xyzzy 2> nul | findstr  \
+dir "%BASEDIR%\*.xyzzy" 2> nul | findstr  \
+dir "%WOLFSSHLIB_TRG_DIR%\*.xyzzy" 2> nul | findstr  \
+dir "%WOLFSSHEXP_TRG_DIR%\*.xyzzy" 2> nul | findstr  \
 
 :: set the FileStamp variable to the current date:  YYMMYY_HHMMSS
 :: the simplest method, to use existing TIME ad DATE variables:
@@ -135,7 +151,7 @@ if     "%TIME:~0,1%" == " "  set FileStamp=%DATE:~12,2%%DATE:~7,2%%DATE:~4,2%_0%
 if NOT "%TIME:~0,1%" == " "  set FileStamp=%DATE:~12,2%%DATE:~7,2%%DATE:~4,2%_%TIME:~0,2%%TIME:~3,2%%TIME:~6,2%
 
 :: Backup existing user settings
-if exist %WOLFSSHLIB_TRG_DIR%\include\config.h (
+if exist "%WOLFSSHLIB_TRG_DIR%\include\config.h" (
   echo;
   echo Saving: %WOLFSSHLIB_TRG_DIR%\include\config.h
   echo     to: %SCRIPTDIR%\config_h_%FileStamp%.bak
@@ -154,7 +170,7 @@ if exist %WOLFSSHLIB_TRG_DIR%\include\config.h (
 ::******************************************************************************************************
 :: check if there's already an existing %WOLFSSHLIB_TRG_DIR% and confirm removal
 ::******************************************************************************************************
-if exist %WOLFSSHLIB_TRG_DIR% (
+if exist "%WOLFSSHLIB_TRG_DIR%" (
     echo;
     echo WARNING: Existing files found in %WOLFSSHLIB_TRG_DIR%
     echo;
@@ -179,6 +195,9 @@ if exist %WOLFSSHLIB_TRG_DIR% (
     choice /c YN /m "Refresh files %WOLFSSHLIB_TRG_DIR%   (there will be a prompt to keep or overwrite config)  "
     if errorlevel 2 GOTO :NOCOPY
     GOTO :REFRESH
+) else (
+    echo;
+    pause
 )
 
 
@@ -187,11 +206,11 @@ if exist %WOLFSSHLIB_TRG_DIR% (
 ::******************************************************************************************************
 :: purge existing directory
 
-if exist %WOLFSSHLIB_TRG_DIR% (
+if exist "%WOLFSSHLIB_TRG_DIR%" (
     echo;
-    echo Removing %WOLFSSHLIB_TRG_DIR%
-    rmdir %WOLFSSHLIB_TRG_DIR% /S /Q
-    if exist %WOLFSSHLIB_TRG_DIR% (
+    echo Removing "%WOLFSSHLIB_TRG_DIR%"
+    rmdir "%WOLFSSHLIB_TRG_DIR%" /S /Q
+    if exist "%WOLFSSHLIB_TRG_DIR%" (
         SET COPYERROR=true
         echo;
         echo WARNING: Failed to remove %WOLFSSHLIB_TRG_DIR%
@@ -209,47 +228,77 @@ if exist %WOLFSSHLIB_TRG_DIR% (
 ::******************************************************************************************************
 :REFRESH
 ::******************************************************************************************************
-if not exist %WOLFSSHLIB_TRG_DIR%                 mkdir      %WOLFSSHLIB_TRG_DIR%
-if not exist %WOLFSSHLIB_TRG_DIR%\include         mkdir      %WOLFSSHLIB_TRG_DIR%\include\
-if not exist %WOLFSSHLIB_TRG_DIR%\src             mkdir      %WOLFSSHLIB_TRG_DIR%\src\
-:: note we copy wolfcrypt from wolfssl component
-if not exist %WOLFSSHLIB_TRG_DIR%\wolfcrypt\src   mkdir      %WOLFSSHLIB_TRG_DIR%\wolfcrypt\
-if not exist %WOLFSSHLIB_TRG_DIR%\wolfcrypt\src   mkdir      %WOLFSSHLIB_TRG_DIR%\wolfcrypt\benchmark\
-if not exist %WOLFSSHLIB_TRG_DIR%\wolfcrypt\src   mkdir      %WOLFSSHLIB_TRG_DIR%\wolfcrypt\src\
-if not exist %WOLFSSHLIB_TRG_DIR%\wolfssh         mkdir      %WOLFSSHLIB_TRG_DIR%\wolfssh\
+if not exist "%WOLFSSHLIB_TRG_DIR%"                 mkdir      "%WOLFSSHLIB_TRG_DIR%"
+if not exist "%WOLFSSHLIB_TRG_DIR%\wolfssh"         mkdir      "%WOLFSSHLIB_TRG_DIR%\wolfssh\"
+if not exist "%WOLFSSHLIB_TRG_DIR%\include"         mkdir      "%WOLFSSHLIB_TRG_DIR%\include\"
+if not exist "%WOLFSSHLIB_TRG_DIR%\src"             mkdir      "%WOLFSSHLIB_TRG_DIR%\src\"
+
+::******************************************************************************************************
+:: optionally copy wolfssl here (the default is to use the parent directory shared component)
+::******************************************************************************************************
+if "%REPLICATE_WOLFSSL%" == "true" (
+   :: note we copy wolfcrypt from wolfssl component
+   if not exist "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\"                      mkdir      "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\
+   if not exist "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\benchmark\"            mkdir      "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\benchmark\
+   if not exist "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\src\"                  mkdir      "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\src\"
+   if not exist "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\src\port\"             mkdir      "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\src\port\"
+   if not exist "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\src\port\Atmel\"       mkdir      "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\src\port\Atmel\"
+   if not exist "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\src\port\Espressif\"   mkdir      "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\src\port\Espressif\"
+)
 
 
-rem copying ... files in src/ into $WOLFSSHLIB_TRG_DIR%/src
 echo;
 echo Copying files to %WOLFSSHLIB_TRG_DIR%\src\
-xcopy %BASEDIR%\src\*.c                                      %WOLFSSHLIB_TRG_DIR%\src\                        /S /E /Q /Y
+xcopy "%BASEDIR%\src\*.c"                                                 "%WOLFSSHLIB_TRG_DIR%\src\"                              /Q /Y
 if %errorlevel% NEQ 0 SET COPYERROR=true
 
-echo;
-echo Copying wolfSSL component src\*.c files to %WOLFSSHLIB_TRG_DIR%\wolfcrypt\src
-xcopy %WOLFSSLLIB_TRG_DIR%\wolfcrypt\src\*.c                            %WOLFSSHLIB_TRG_DIR%\wolfcrypt\src\              /S /E /Q /Y
-if %errorlevel% NEQ 0 SET COPYERROR=true
+::******************************************************************************************************
+:: optionally copy wolfssl here (the default is to use the parent directory shared component)
+::******************************************************************************************************
+if "%REPLICATE_WOLFSSL%" == "true" (
+   echo;
+   echo Copying port/Atmel files to %WOLFSSHLIB_TRG_DIR%\src\port\Atmel 
+   xcopy "%BASEDIR%\src\port\Atmel\*.c "                                     "%WOLFSSHLIB_TRG_DIR%\src\port\Atmel"                    /Q /Y
+   if %errorlevel% NEQ 0 SET COPYERROR=true
 
-echo;
-echo Copying src\*.i files to %WOLFSSHLIB_TRG_DIR%\wolfcrypt\src
-xcopy %WOLFSSLLIB_TRG_DIR%\wolfcrypt\src\*.i                            %WOLFSSHLIB_TRG_DIR%\wolfcrypt\src\              /S /E /Q /Y
-if %errorlevel% NEQ 0 SET COPYERROR=true
+   echo;
+   echo Copying port/Espressif files to %WOLFSSHLIB_TRG_DIR%\src\port\Espressif 
+   xcopy "%BASEDIR%\src\port\Espressif\*.c"                                  "%WOLFSSHLIB_TRG_DIR%\src\port\Espressif"                /Q /Y
+   if %errorlevel% NEQ 0 SET COPYERROR=true
 
-echo;
-echo Copying files to %WOLFSSHLIB_TRG_DIR%\wolfcrypt\benchmark\
-xcopy %WOLFSSLLIB_TRG_DIR%\wolfcrypt\benchmark                          %WOLFSSHLIB_TRG_DIR%\wolfcrypt\benchmark\        /S /E /Q /Y
-if %errorlevel% NEQ 0 SET COPYERROR=true
+   echo;
+   echo Copying wolfSSL component src\*.c files to %WOLFSSHLIB_TRG_DIR%\wolfcrypt\src
+   xcopy "%WOLFSSLLIB_TRG_DIR%\wolfcrypt\src\*.c"                            "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\src\"              /S /E /Q /Y
+   if %errorlevel% NEQ 0 SET COPYERROR=true
+
+   echo;
+   echo Copying src\*.i files to %WOLFSSHLIB_TRG_DIR%\wolfcrypt\src
+   xcopy "%WOLFSSLLIB_TRG_DIR%\wolfcrypt\src\*.i"                            "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\src\"              /S /E /Q /Y
+   if %errorlevel% NEQ 0 SET COPYERROR=true
+
+   echo;
+   echo Copying files to %WOLFSSHLIB_TRG_DIR%\wolfcrypt\benchmark\
+   xcopy "%WOLFSSLLIB_TRG_DIR%\wolfcrypt\benchmark"                          "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\benchmark\"        /S /E /Q /Y
+   if %errorlevel% NEQ 0 SET COPYERROR=true
+)
 
 echo;
 echo Copying files to %WOLFSSHLIB_TRG_DIR%\wolfssh\
-xcopy %BASEDIR%\wolfssh\*.h                                  %WOLFSSHLIB_TRG_DIR%\wolfssh\                    /S /E /Q /Y
+xcopy "%BASEDIR%\wolfssh\*.h"                                                "%WOLFSSHLIB_TRG_DIR%\wolfssh\"                     /Q /Y
 if %errorlevel% NEQ 0 SET COPYERROR=true
 
-:: TODO do we really need to replicate the entire wolfssl directory here?
-echo;
-echo Replicating  %WOLFSSLLIB_TRG_DIR%\wolfssl\  to  %WOLFSSHLIB_TRG_DIR%\wolfssl\
-if not EXIST %WOLFSSHLIB_TRG_DIR%\wolfssl\   mkdir   %WOLFSSHLIB_TRG_DIR%\wolfssl\
-xcopy  %WOLFSSLLIB_TRG_DIR%\wolfssl\*.*              %WOLFSSHLIB_TRG_DIR%\wolfssl\ /s /e
+::******************************************************************************************************
+:: optionally copy wolfssl here (the default is to use the parent directory shared component)
+::******************************************************************************************************
+if "%REPLICATE_WOLFSSL%" == "true" (
+   echo;
+   echo Replicating  %WOLFSSLLIB_TRG_DIR%\wolfssl\  to  %WOLFSSHLIB_TRG_DIR%\wolfssl\
+   if not EXIST "%WOLFSSHLIB_TRG_DIR%\wolfssl\"   mkdir   "%WOLFSSHLIB_TRG_DIR%\wolfssl\"
+   if not EXIST "%WOLFSSHLIB_TRG_DIR%\wolfssl\"   mkdir   "%WOLFSSHLIB_TRG_DIR%\wolfssl\wolfcrypt\"
+
+   xcopy  "%WOLFSSLLIB_TRG_DIR%\wolfssl\*.*"              "%WOLFSSHLIB_TRG_DIR%\wolfssl\"
+   xcopy  "%WOLFSSLLIB_TRG_DIR%\wolfssl\wolfcrypt\*.*"    "%WOLFSSHLIB_TRG_DIR%\wolfssl\wolfcrypt\"
+)
 
 ::******************************************************************************************************
 :: user_settings and config defaults
@@ -263,9 +312,9 @@ echo;
 :: Check if operator wants to keep prior config.h
 if EXIST config_h_%FileStamp%.bak (
     echo;
-    echo Found prior config.h in  %SCRIPTDIR%\config_h_%FileStamp%.bak
+    echo Found prior config.h in  "%SCRIPTDIR%\config_h_%FileStamp%.bak"
     echo;
-    dir config_h_%FileStamp%.bak | findstr config_h_%FileStamp%.bak
+    dir "config_h_%FileStamp%.bak" | findstr config_h_%FileStamp%.bak
     echo;
 
     :: clear any prior errorlevel
@@ -273,20 +322,26 @@ if EXIST config_h_%FileStamp%.bak (
     choice /c YN /m "Use prior config.h  in  %WOLFSSHLIB_TRG_DIR%\include\ "
     if errorlevel 2 GOTO :NO_CONFIG_RESTORE
 
-    echo new config                                            >  %WOLFSSHLIB_TRG_DIR%\include\config.h
+    echo /* new config */                                          > "%WOLFSSHLIB_TRG_DIR%\include\config.h"
     call;
-    xcopy config_h_%FileStamp%.bak                                %WOLFSSHLIB_TRG_DIR%\include\config.h /Y
+    xcopy "config_h_%FileStamp%.bak"                                 "%WOLFSSHLIB_TRG_DIR%\include\config.h" /Y
     if %errorlevel% NEQ 0 SET COPYERROR=true
 
 ) else (
     echo;
-    echo Prior config.h not found. Using default file.
+    echo Prior config.h not found. 
     echo;
 
-    echo new config                                            > %WOLFSSHLIB_TRG_DIR%\include\config.h
+    echo /* new config  */                                         > "%WOLFSSHLIB_TRG_DIR%\include\config.h"
     call;
-    xcopy  %WOLFSSH_ESPIDFDIR%\dummy_config_h.                   %WOLFSSHLIB_TRG_DIR%\include\config.h             /F /Y
-    if %errorlevel% NEQ 0 SET COPYERROR=true
+    if exist "%WOLFSSH_ESPIDFDIR%\dummy_config_h." (
+        echo Using default file dummy_config_h for ssh component in  "%WOLFSSHLIB_TRG_DIR%\include\config.h" 
+        xcopy "%WOLFSSH_ESPIDFDIR%\dummy_config_h."                  "%WOLFSSHLIB_TRG_DIR%\include\config.h"  /F /Y
+        if %errorlevel% NEQ 0 SET COPYERROR=true
+    ) else (
+        echo;
+        echo WARNING: Prior config.h not found and dummy_config_h default available. Using placeholder.
+    )
 )
 ::******************************************************************************************************
 :NO_CONFIG_RESTORE
@@ -307,18 +362,18 @@ if EXIST user_settings_h_%FileStamp%.bak (
 
     echo;
     call;
-    xcopy user_settings_h_%FileStamp%.bak    %WOLFSSHLIB_TRG_DIR%\include\user_settings.h /Y
+    xcopy "user_settings_h_%FileStamp%.bak"    "%WOLFSSHLIB_TRG_DIR%\include\user_settings.h" /Y
     if %errorlevel% NEQ 0 SET COPYERROR=true
 
     :: TODO do we really need to replicate the user_settings.h here?
-    xcopy user_settings_h_%FileStamp%.bak    %WOLFSSHLIB_TRG_DIR%\wolfssl\include\user_settings.h /Y
+    xcopy "user_settings_h_%FileStamp%.bak"    "%WOLFSSHLIB_TRG_DIR%\wolfssl\include\user_settings.h" /Y
     if %errorlevel% NEQ 0 SET COPYERROR=true
 ) else (
     echo;
     :: TODO do we really need to replicate the user_settings.h here?
-    echo Prior user_settings.h not found.  Using file:  %WOLFSSLLIB_TRG_DIR%\include\user_settings.h
-    echo new file >                                     %WOLFSSHLIB_TRG_DIR%\include\user_settings.h
-    xcopy %WOLFSSLLIB_TRG_DIR%\include\user_settings.h  %WOLFSSHLIB_TRG_DIR%\include\user_settings.h  /Y
+    echo Prior user_settings.h not found.  Using file:    "%WOLFSSLLIB_TRG_DIR%\include\user_settings.h"
+    echo /* new file */ >                                 "%WOLFSSHLIB_TRG_DIR%\include\user_settings.h"
+    xcopy "%WOLFSSLLIB_TRG_DIR%\include\user_settings.h"  "%WOLFSSHLIB_TRG_DIR%\include\user_settings.h"  /Y
 
     echo;
 )
@@ -329,32 +384,56 @@ if EXIST user_settings_h_%FileStamp%.bak (
 
 
 echo;
-echo Copying CMakeLists.txt to %WOLFSSHLIB_TRG_DIR%\
-xcopy %WOLFSSH_ESPIDFDIR%\libs\CMakeLists.txt                %WOLFSSHLIB_TRG_DIR%\                             /F
+echo Copying libs\CMakeLists.txt to %WOLFSSHLIB_TRG_DIR%\
+xcopy "%WOLFSSH_ESPIDFDIR%\libs\CMakeLists.txt"                "%WOLFSSHLIB_TRG_DIR%\"                             /F
 if %errorlevel% NEQ 0 GOTO :COPYERR
 
 echo;
-echo Copying component.mk to %WOLFSSHLIB_TRG_DIR%\
-xcopy %WOLFSSH_ESPIDFDIR%\libs\component.mk                  %WOLFSSHLIB_TRG_DIR%\                             /F
+echo Copying libs\component.mk to %WOLFSSHLIB_TRG_DIR%\
+xcopy "%WOLFSSH_ESPIDFDIR%\libs\component.mk"                  "%WOLFSSHLIB_TRG_DIR%\"                             /F
 if %errorlevel% NEQ 0 GOTO :COPYERR
 
 :: TODO determine what happened to ssl x509_str.c (we get a compile error when this is missing):
-if not exist %WOLFSSHLIB_TRG_DIR%\src\x509_str.c (
+if not exist "%WOLFSSHLIB_TRG_DIR%\src\x509_str.c" (
     echo;
-    echo # > %WOLFSSHLIB_TRG_DIR%\src\x509_str.c
-    echo Copied  placeholder %WOLFSSHLIB_TRG_DIR%\src\x509_str.c
+    echo /* placeholder */    > "%WOLFSSHLIB_TRG_DIR%\src\x509_str.c"
+    echo Created  placeholder   "%WOLFSSHLIB_TRG_DIR%\src\x509_str.c
 )
 :: echo C:/Users/gojimmypi/Desktop/esp-idf/components/wolfssl/src/x509_str.c
 :: echo %WOLFSSHLIB_TRG_DIR%\src\x509_str.c
 
 :: TODO determine what happened to ssh x509_str.c (we get a compile error when this is missing):
-if not exist %WOLFSSLLIB_TRG_DIR%\src\x509_str.c (
+if not exist "%WOLFSSLLIB_TRG_DIR%\src\x509_str.c" (
     echo;
-    echo # > %WOLFSSLLIB_TRG_DIR%\src\x509_str.c
-    echo Created placeholder %WOLFSSLLIB_TRG_DIR%\src\x509_str.c
+    echo /* placeholder */    > "%WOLFSSLLIB_TRG_DIR%\src\x509_str.c"
+    echo Created placeholder    "%WOLFSSLLIB_TRG_DIR%\src\x509_str.c"
 )
 :: echo C:/Users/gojimmypi/Desktop/esp-idf/components/wolfssl/src/x509_str.c
 :: echo %WOLFSSLLIB_TRG_DIR%\src\x509_str.c
+
+::******************************************************************************************************
+:: check if there's a missing wolfssl/options.h
+::******************************************************************************************************
+if not exist "%WOLFSSLLIB_TRG_DIR%\wolfssl\options.h" (
+    echo;
+    echo WARNING: options.h not found in "%WOLFSSLLIB_TRG_DIR%\wolfssl\"
+    echo;
+    if exist "default_espressif_options.h" (
+      echo Copying default option file to "%WOLFSSLLIB_TRG_DIR%\wolfssl\options.h"
+      echo;
+      echo /* new file */  >              "%WOLFSSLLIB_TRG_DIR%\wolfssl\options.h"
+      xcopy "default_espressif_options.h" "%WOLFSSLLIB_TRG_DIR%\wolfssl\options.h" /Y
+    ) else (
+        echo;
+        echo WARNING: "%WOLFSSLLIB_TRG_DIR%\wolfssl\options.h" is missing, but
+        echo default_espressif_options.h not found, using blank file!
+        echo /* new options file */ > "%WOLFSSLLIB_TRG_DIR%\wolfssl\options.h"
+    )
+) else (
+    echo Found existing "%WOLFSSLLIB_TRG_DIR%\wolfssl\options.h"
+)
+
+
 goto :DONE
 
 :: error during copy encountered
@@ -363,7 +442,7 @@ goto :DONE
 ::******************************************************************************************************
 echo;
 echo Error during copy.
-echo
+echo;
 echo Please ensure none of the target files are flagged as read-only, open, etc.
 goto :ERR
 
