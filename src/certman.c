@@ -329,6 +329,32 @@ static int CheckProfile(DecodedCert* cert, int profile)
                   WSTRCMP(certPolicies[0], cert->extCertPolicies[1]) == 0));
     }
 
+    /* validity period must be utc up to and including 2049, general time
+     * after 2049 */
+    if (valid) {
+        const byte* date;
+        int         dateSz;
+        byte        dateFormat;
+        struct tm t;
+
+        dateFormat = cert->afterDate[0]; /* i.e ASN_UTC_TIME */
+        dateSz     = cert->afterDate[1];
+        date       = &cert->afterDate[2];
+
+        wc_GetDateAsCalendarTime(date, dateSz, dateFormat, &t);
+        if (t.tm_year <= 149 && dateFormat != ASN_UTC_TIME) {
+            WLOG(WS_LOG_CERTMAN, "date format was not utc for year %d",
+            t.tm_year);
+            valid = 0;
+        }
+
+        if (t.tm_year > 149 && dateFormat != ASN_GENERALIZED_TIME) {
+            WLOG(WS_LOG_CERTMAN, "date format was not general for year %d",
+            t.tm_year);
+            valid = 0;
+        }
+    }
+
     if (valid) {
         valid =
             /* Must include all in extKeyUsage */
