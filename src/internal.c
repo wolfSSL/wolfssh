@@ -808,11 +808,12 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
         if (der == NULL)
             return WS_MEMORY_E;
 
-        derSz = wc_CertPemToDer(in, inSz, der, inSz, wcType);
-        if (derSz < 0) {
+        ret = wc_CertPemToDer(in, inSz, der, inSz, wcType);
+        if (ret < 0) {
             WFREE(der, heap, dynamicType);
             return WS_BAD_FILE_E;
         }
+        derSz = (word32)ret;
     }
     #endif /* WOLFSSH_CERTS */
     else {

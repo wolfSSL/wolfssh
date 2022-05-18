@@ -239,8 +239,8 @@ int wolfSSH_CERTMAN_VerifyCert_buffer(WOLFSSH_CERTMAN* cm,
     if (ret == WS_SUCCESS) {
         DecodedCert decoded;
 
-        InitDecodedCert(&decoded, cert, certSz, cm->cm);
-        ret = ParseCert(&decoded, WOLFSSL_FILETYPE_ASN1, 0, cm->cm);
+        wc_InitDecodedCert(&decoded, cert, certSz, cm->cm);
+        ret = wc_ParseCert(&decoded, WOLFSSL_FILETYPE_ASN1, 0, cm->cm);
 
         if (ret == 0) {
             ret =
@@ -298,7 +298,7 @@ static int CheckProfile(DecodedCert* cert, int profile)
     else {
         valid = 0;
     }
-    
+
     if (valid) {
         valid = cert->extKeyUsageSet &&
             cert->extKeyUsage == KEYUSE_DIGITAL_SIG &&
