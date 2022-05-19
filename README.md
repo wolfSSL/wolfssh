@@ -13,7 +13,7 @@ wolfSSL. The following is the simplest configuration of wolfSSL to
 enable wolfSSH.
 
     $ cd wolfssl
-    $ ./configure [OPTIONS] --enable-wolfssh
+    $ ./configure [OPTIONS] --enable-ssh
     $ make check
     $ sudo make install
 

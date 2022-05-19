@@ -271,7 +271,9 @@ enum {
     ID_ECDH_SHA2_ED25519,
     ID_ECDH_SHA2_ED25519_LIBSSH,
     ID_DH_GROUP14_SHA256,
+#ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
     ID_SABER_LEVEL1_SHA256,
+#endif
 
     /* Public Key IDs */
     ID_SSH_RSA,
@@ -415,7 +417,9 @@ struct WOLFSSH_CTX {
     byte* privateKey;                 /* Owned by CTX */
     word32 privateKeySz;
     byte useEcc;                      /* Depends on the private key */
-    byte useSaber;                    /* Depends on the private key */
+#ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
+    byte useSaber:1;                    /* Depends on the private key */
+#endif
     word32 highwaterMark;
     const char* banner;
     word32 bannerSz;
@@ -479,7 +483,10 @@ typedef struct HandshakeInfo {
 #endif
 
     byte useEcc;
-    byte useSaber;
+#ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
+    byte useSaber:1;
+#endif
+
     union {
 #ifndef WOLFSSH_NO_DH
         DhKey dh;
@@ -902,11 +909,15 @@ enum WS_MessageIds {
 
     MSGID_KEXDH_INIT = 30,
     MSGID_KEXECDH_INIT = 30,
+#ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
     MSGID_KEXKEM_INIT = 30,
+#endif
 
     MSGID_KEXDH_REPLY = 31,
     MSGID_KEXECDH_REPLY = 31,
+#ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
     MSGID_KEXKEM_REPLY = 31,
+#endif
 
     MSGID_KEXDH_GEX_GROUP = 31,
     MSGID_KEXDH_GEX_INIT = 32,
