@@ -248,12 +248,13 @@ int wolfSSH_CERTMAN_VerifyCert_buffer(WOLFSSH_CERTMAN* cm,
                 CheckProfile(&decoded, PROFILE_FPKI_WORKSHEET_10) ||
                 CheckProfile(&decoded, PROFILE_FPKI_WORKSHEET_16);
 
-            if (ret != 0) {
+            if (ret == 0) {
                 WLOG(WS_LOG_CERTMAN, "certificate didn't match profile");
                 ret = WS_CERT_PROFILE_E;
             }
-            else
+            else {
                 ret = WS_SUCCESS;
+            }
         }
 
         FreeDecodedCert(&decoded);
@@ -268,32 +269,22 @@ static int CheckProfile(DecodedCert* cert, int profile)
 {
     int valid = (cert != NULL);
     const char* certPolicies[2] = {NULL, NULL};
-    byte extKeyUsage = 0, extKeyUsageSsh = 0, extKeyUsageSshAllowed = 0;
+    byte extKeyUsage = 0, extKeyUsageSsh = 0;
 
     if (profile == PROFILE_FPKI_WORKSHEET_6) {
         certPolicies[0] = "2.16.840.1.101.3.2.1.3.13";
         extKeyUsage = EXTKEYUSE_CLIENT_AUTH;
         extKeyUsageSsh = EXTKEYUSE_SSH_MSCL;
-        extKeyUsageSshAllowed =
-            EXTKEYUSE_SSH_KP_CLIENT_AUTH |
-            EXTKEYUSE_SSH_CLIENT_AUTH;
     }
     else if (profile == PROFILE_FPKI_WORKSHEET_10) {
         certPolicies[0] = "2.16.840.1.101.3.2.1.3.40";
         certPolicies[1] = "2.16.840.1.101.3.2.1.3.41";
         extKeyUsage = EXTKEYUSE_CLIENT_AUTH;
-        extKeyUsageSshAllowed =
-            EXTKEYUSE_SSH_MSCL |
-            EXTKEYUSE_SSH_KP_CLIENT_AUTH |
-            EXTKEYUSE_SSH_CLIENT_AUTH;
     }
     else if (profile == PROFILE_FPKI_WORKSHEET_16) {
         certPolicies[0] = "2.16.840.1.101.3.2.1.3.45";
         extKeyUsage = EXTKEYUSE_CLIENT_AUTH;
         extKeyUsageSsh = EXTKEYUSE_SSH_MSCL;
-        extKeyUsageSshAllowed =
-            EXTKEYUSE_SSH_KP_CLIENT_AUTH |
-            EXTKEYUSE_SSH_CLIENT_AUTH;
     }
     else {
         valid = 0;
@@ -359,15 +350,11 @@ static int CheckProfile(DecodedCert* cert, int profile)
         valid =
             /* Must include all in extKeyUsage */
             ((extKeyUsage == 0) ||
-                ((cert->extExtKeyUsage & extKeyUsage) != extKeyUsage)) &&
+                ((cert->extExtKeyUsage & extKeyUsage) == extKeyUsage)) &&
             /* Must include all in extKeyUsageSsh */
             ((extKeyUsageSsh == 0) ||
                 ((cert->extExtKeyUsageSsh & extKeyUsageSsh)
-                    != extKeyUsageSsh)) &&
-            /* Must include at least one in extKeyUsageSshAllowed */
-            ((extKeyUsageSshAllowed == 0) ||
-                ((cert->extExtKeyUsageSsh & extKeyUsageSshAllowed) != 0));
-
+                    == extKeyUsageSsh));
     }
 
     return valid;
