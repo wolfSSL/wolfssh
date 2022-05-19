@@ -346,6 +346,24 @@ static int CheckProfile(DecodedCert* cert, int profile)
         }
     }
 
+    /* encoding of issuer DN must be exact match to CA subject DN */
+    if (valid) {
+        int sz = min(SIGNER_DIGEST_SIZE, KEYID_SIZE);
+        if (XMEMCMP(cert->ca->subjectNameHash, cert->issuerHash, sz) != 0) {
+            WLOG(WS_LOG_CERTMAN, "CA subject name hash did not match issuer");
+            valid = 0;
+        }
+    }
+
+    /* path length must be absent (i.e. 0) */
+    if (valid) {
+        if (cert->pathLength != 0) {
+            WLOG(WS_LOG_CERTMAN, "non-conforming pathlength of %d was larger "
+                "than 0", cert->pathLength);
+            valid = 0;
+        }
+    }
+
     if (valid) {
         valid =
             /* Must include all in extKeyUsage */
@@ -356,6 +374,31 @@ static int CheckProfile(DecodedCert* cert, int profile)
                 ((cert->extExtKeyUsageSsh & extKeyUsageSsh)
                     == extKeyUsageSsh));
     }
+
+#ifdef DEBUG_WOLFSSH
+    switch (profile) {
+        case PROFILE_FPKI_WORKSHEET_6:
+            if (valid)
+                WLOG(WS_LOG_INFO, "Cert matched FPKI profile 6");
+            else
+                WLOG(WS_LOG_INFO, "Cert did not match FPKI profile 6");
+            break;
+
+        case PROFILE_FPKI_WORKSHEET_10:
+            if (valid)
+                WLOG(WS_LOG_INFO, "Cert matched FPKI profile 10");
+            else
+                WLOG(WS_LOG_INFO, "Cert did not match FPKI profile 10");
+            break;
+
+        case PROFILE_FPKI_WORKSHEET_16:
+            if (valid)
+                WLOG(WS_LOG_INFO, "Cert matched FPKI profile 16");
+            else
+                WLOG(WS_LOG_INFO, "Cert did not match FPKI profile 16");
+            break;
+    }
+#endif /* DEBUG_WOLFSSH */
 
     return valid;
 }
