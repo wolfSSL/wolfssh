@@ -7470,9 +7470,9 @@ int SendKexDhReply(WOLFSSH* ssh)
 
         /* Hash in the server's DH f-value. */
         /* Do not want leading zero's removed for SABER. */
-        if ((ret == 0)
+        if (ret == 0
 #ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
-            && (!useSaber)
+            && !useSaber
 #endif
            ) {
             ret = CreateMpint(f_ptr, &fSz, &fPad);
@@ -8134,7 +8134,7 @@ int SendKexDhInit(WOLFSSH* ssh)
     }
 
     /* Do not want leading zero's removed for SABER. */
-    if ((ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS
 #ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
         && !ssh->handshake->useSaber
 #endif
