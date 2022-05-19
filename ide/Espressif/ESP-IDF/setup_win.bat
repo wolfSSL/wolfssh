@@ -260,8 +260,8 @@ if not exist "%WOLFSSHLIB_TRG_DIR%\src"             mkdir      "%WOLFSSHLIB_TRG_
 ::******************************************************************************************************
 if "%REPLICATE_WOLFSSL%" == "true" (
    :: note we copy wolfcrypt from wolfssl component
-   if not exist "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\"                      mkdir      "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\
-   if not exist "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\benchmark\"            mkdir      "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\benchmark\
+   if not exist "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\"                      mkdir      "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\"
+   if not exist "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\benchmark\"            mkdir      "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\benchmark\"
    if not exist "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\src\"                  mkdir      "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\src\"
    if not exist "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\src\port\"             mkdir      "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\src\port\"
    if not exist "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\src\port\Atmel\"       mkdir      "%WOLFSSHLIB_TRG_DIR%\wolfcrypt\src\port\Atmel\"
@@ -430,7 +430,7 @@ if %errorlevel% NEQ 0 GOTO :COPYERR
 if not exist "%WOLFSSHLIB_TRG_DIR%\src\x509_str.c" (
     echo;
     echo /* placeholder */    > "%WOLFSSHLIB_TRG_DIR%\src\x509_str.c"
-    echo Created  placeholder   "%WOLFSSHLIB_TRG_DIR%\src\x509_str.c
+    echo Created  placeholder   "%WOLFSSHLIB_TRG_DIR%\src\x509_str.c"
 )
 
 :: TODO determine what happened to ssh x509_str.c (we get a compile error when this is missing):
