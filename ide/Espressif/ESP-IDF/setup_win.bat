@@ -1,10 +1,32 @@
 @echo off
-REM Expect the script at /path/to/wolfssh/IDE/Espressif/ESP-IDF/
-
+:: Expect the script at /path/to/wolfssh/IDE/Espressif/ESP-IDF/
+::
+:: Note that over the course of time there are 3 possible config files:
+::
+::   user_settings.h
+::     used with IDE; enable with:
+::
+::     #define WOLFSSL_USER_SETTINGS
+::
+::     options.h is excluded with that setting
+::
+::   options.h
+::     used with configure builds
+:: 
+::     This is an older file related an issue that’s been working forever.
+::     There should only be a wolfSSL copy right now. It is generated based on configure.
+::
+::   config.h 
+::     This is generated per project. The configure script creates it.
+::     The one for wolfSSL is different than the one for wolfSSH
+::     There’s a #define that is added to the Makefile:
+::
+::     #define HAVE_CONFIG
+::
 ::******************************************************************************************************
 ::******************************************************************************************************
 echo;
-echo wolfSSH (Secure Shell) Windows Setup. Version 0.1c
+echo wolfSSH (Secure Shell) Windows Setup. Version 0.1d
 echo;
 echo This utility will copy a static snapshot of wolfSSH files to the ESP32-IDF component directory.
 echo;
@@ -328,6 +350,7 @@ if EXIST config_h_%FileStamp%.bak (
     if %errorlevel% NEQ 0 SET COPYERROR=true
 
 ) else (
+    :: a config_h_%FileStamp%.bak file does not exist
     echo;
     echo Prior config.h not found. 
     echo;
@@ -347,7 +370,7 @@ if EXIST config_h_%FileStamp%.bak (
 :NO_CONFIG_RESTORE
 ::******************************************************************************************************
 
-:: Check if operator wants to keep prior config.h
+:: Check if operator wants to keep prior user_settings.h
 if EXIST user_settings_h_%FileStamp%.bak (
     echo;
     echo Found prior user_settings.h in  %SCRIPTDIR%\user_settings_h_%FileStamp%.bak
@@ -365,16 +388,26 @@ if EXIST user_settings_h_%FileStamp%.bak (
     xcopy "user_settings_h_%FileStamp%.bak"    "%WOLFSSHLIB_TRG_DIR%\include\user_settings.h" /Y
     if %errorlevel% NEQ 0 SET COPYERROR=true
 
-    :: TODO do we really need to replicate the user_settings.h here?
+    :: TODO do we really need to replicate the user_settings.h here for wolfSSH?
     xcopy "user_settings_h_%FileStamp%.bak"    "%WOLFSSHLIB_TRG_DIR%\wolfssl\include\user_settings.h" /Y
     if %errorlevel% NEQ 0 SET COPYERROR=true
 ) else (
+    :: user_settings_h_%FileStamp%.bak not found
+    echo;
     echo;
     :: TODO do we really need to replicate the user_settings.h here?
-    echo Prior user_settings.h not found.  Using file:    "%WOLFSSLLIB_TRG_DIR%\include\user_settings.h"
-    echo /* new file */ >                                 "%WOLFSSHLIB_TRG_DIR%\include\user_settings.h"
-    xcopy "%WOLFSSLLIB_TRG_DIR%\include\user_settings.h"  "%WOLFSSHLIB_TRG_DIR%\include\user_settings.h"  /Y
+    echo Prior user_settings.h not found.  
+    echo /* new file */ >                      "%WOLFSSHLIB_TRG_DIR%\include\user_settings.h"
 
+    if exist "%WOLFSSLLIB_TRG_DIR%\include\user_settings.h" (
+        echo Using file: "%WOLFSSLLIB_TRG_DIR%\include\user_settings.h"
+        xcopy "%WOLFSSLLIB_TRG_DIR%\include\user_settings.h"  "%WOLFSSHLIB_TRG_DIR%\include\user_settings.h"  /Y
+    ) else (
+        echo;
+        echo WARNING: No %WOLFSSLLIB_TRG_DIR%\include\user_settings.h file found
+        echo;
+        echo Created placeholder. Edit %WOLFSSHLIB_TRG_DIR%\include\user_settings.h
+    )
     echo;
 )
 
@@ -399,8 +432,6 @@ if not exist "%WOLFSSHLIB_TRG_DIR%\src\x509_str.c" (
     echo /* placeholder */    > "%WOLFSSHLIB_TRG_DIR%\src\x509_str.c"
     echo Created  placeholder   "%WOLFSSHLIB_TRG_DIR%\src\x509_str.c
 )
-:: echo C:/Users/gojimmypi/Desktop/esp-idf/components/wolfssl/src/x509_str.c
-:: echo %WOLFSSHLIB_TRG_DIR%\src\x509_str.c
 
 :: TODO determine what happened to ssh x509_str.c (we get a compile error when this is missing):
 if not exist "%WOLFSSLLIB_TRG_DIR%\src\x509_str.c" (
@@ -408,29 +439,19 @@ if not exist "%WOLFSSLLIB_TRG_DIR%\src\x509_str.c" (
     echo /* placeholder */    > "%WOLFSSLLIB_TRG_DIR%\src\x509_str.c"
     echo Created placeholder    "%WOLFSSLLIB_TRG_DIR%\src\x509_str.c"
 )
-:: echo C:/Users/gojimmypi/Desktop/esp-idf/components/wolfssl/src/x509_str.c
-:: echo %WOLFSSLLIB_TRG_DIR%\src\x509_str.c
 
 ::******************************************************************************************************
-:: check if there's a missing wolfssl/options.h
+:: check if there's a wolfssl/options.h
 ::******************************************************************************************************
-if not exist "%WOLFSSLLIB_TRG_DIR%\wolfssl\options.h" (
+echo Checking for %WOLFSSLLIB_TRG_DIR%\wolfssl\options.h
+if exist "%WOLFSSLLIB_TRG_DIR%\wolfssl\options.h" (
     echo;
-    echo WARNING: options.h not found in "%WOLFSSLLIB_TRG_DIR%\wolfssl\"
+    echo WARNING: options.h found in "%WOLFSSLLIB_TRG_DIR%\wolfssl\"
     echo;
-    if exist "default_espressif_options.h" (
-      echo Copying default option file to "%WOLFSSLLIB_TRG_DIR%\wolfssl\options.h"
-      echo;
-      echo /* new file */  >              "%WOLFSSLLIB_TRG_DIR%\wolfssl\options.h"
-      xcopy "default_espressif_options.h" "%WOLFSSLLIB_TRG_DIR%\wolfssl\options.h" /Y
-    ) else (
-        echo;
-        echo WARNING: "%WOLFSSLLIB_TRG_DIR%\wolfssl\options.h" is missing, but
-        echo default_espressif_options.h not found, using blank file!
-        echo /* new options file */ > "%WOLFSSLLIB_TRG_DIR%\wolfssl\options.h"
+    echo Consider using a project user_settings.h and #define WOLFSSL_USER_SETTINGS
     )
 ) else (
-    echo Found existing "%WOLFSSLLIB_TRG_DIR%\wolfssl\options.h"
+    echo Confirmed no options.h file; will expect user_settings.h
 )
 
 
