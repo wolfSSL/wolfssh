@@ -3317,8 +3317,9 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 #else
                 ret = WS_INVALID_ALGO_ID;
 #endif
+            }
 #ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
-            } else if (ssh->handshake->useSaber) {
+            else if (ssh->handshake->useSaber) {
                 /* This is a KEM. In this case, I need to decapsulate the
                  * ciphertext. */
                 OQS_KEM* kem = NULL;
@@ -3345,8 +3346,9 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 if (ret == 0) {
                     ssh->kSz = kem->length_shared_secret;
                 }
+            }
 #endif
-            } else {
+            else {
                 ret = WS_INVALID_ALGO_ID;
             }
         }
@@ -7430,8 +7432,9 @@ int SendKexDhReply(WOLFSSH* ssh)
                 privKey = NULL;
             #endif
 #endif /* !defined(WOLFSSH_NO_ECDH) */
+            }
 #ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
-            } else if (useSaber) {
+            else if (useSaber) {
                 /* This is a KEM. In this case, I need to encapsulate the
                  * shared secret. */
                 OQS_KEM* kem = NULL;
@@ -7461,8 +7464,9 @@ int SendKexDhReply(WOLFSSH* ssh)
                     ssh->kSz = kem->length_shared_secret;
                     fSz = kem->length_ciphertext;
                 }
+            }
 #endif
-            } else {
+            else {
                 /* This should never happen */
                 ret = WS_ERROR;
             }
@@ -8103,16 +8107,15 @@ int SendKexDhInit(WOLFSSH* ssh)
 #else
             ret = WS_INVALID_ALGO_ID;
 #endif /* !defined(WOLFSSH_NO_ECDH) */
+        }
 #ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
-        } else if (ssh->handshake->useSaber) {
+        else if (ssh->handshake->useSaber) {
             OQS_KEM* kem = NULL;
             ret = 0;
 
-            if (ret == 0) {
-                kem = OQS_KEM_new(OQS_KEM_alg_saber_lightsaber);
-                if (kem == NULL) {
-                    ret = WS_INVALID_ALGO_ID;
-                }
+            kem = OQS_KEM_new(OQS_KEM_alg_saber_lightsaber);
+            if (kem == NULL) {
+                ret = WS_INVALID_ALGO_ID;
             }
 
             if (ret == 0) {
@@ -8124,8 +8127,9 @@ int SendKexDhInit(WOLFSSH* ssh)
                 eSz = kem->length_public_key;
                 ssh->handshake->xSz = kem->length_secret_key;
             }
+        }
 #endif
-        } else {
+        else {
             ret = WS_INVALID_ALGO_ID;
         }
 

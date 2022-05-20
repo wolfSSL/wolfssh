@@ -418,7 +418,7 @@ struct WOLFSSH_CTX {
     word32 privateKeySz;
     byte useEcc;                      /* Depends on the private key */
 #ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
-    byte useSaber:1;                    /* Depends on the private key */
+    byte useSaber:1;                  /* Depends on the private key */
 #endif
     word32 highwaterMark;
     const char* banner;
