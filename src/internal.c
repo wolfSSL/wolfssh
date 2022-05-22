@@ -5054,6 +5054,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             ret = GetSize(&l, pk->publicKey, pk->publicKeySz, &m);
             pk->publicKeySz = l;
             pk->publicKey = pk->publicKey + m;
+            pk->isCert = 1;
         }
         #endif /* WOLFSSH_CERTS */
 
@@ -5216,10 +5217,19 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             }
             else {
                 if (ssh->ctx->userAuthResultCb) {
-                    ssh->ctx->userAuthResultCb(WOLFSSH_USERAUTH_SUCCESS,
-                            authData, ssh->userAuthResultCtx);
+                    if (ssh->ctx->userAuthResultCb(WOLFSSH_USERAUTH_SUCCESS,
+                            authData, ssh->userAuthResultCtx) != WS_SUCCESS) {
+
+                        WLOG(WS_LOG_DEBUG, "DUARPK: user overriding success");
+                        ret = SendUserAuthFailure(ssh, 0);
+                    }
+                    else {
+                        ssh->clientState = CLIENT_USERAUTH_DONE;
+                    }
                 }
-                ssh->clientState = CLIENT_USERAUTH_DONE;
+                else {
+                    ssh->clientState = CLIENT_USERAUTH_DONE;
+                }
             }
         }
     }

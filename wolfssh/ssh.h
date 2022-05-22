@@ -191,6 +191,7 @@ typedef struct WS_UserAuthData_PublicKey {
     byte hasSignature;
     const byte* signature;
     word32 signatureSz;
+    byte isCert:1;
 } WS_UserAuthData_PublicKey;
 
 typedef struct WS_UserAuthData {

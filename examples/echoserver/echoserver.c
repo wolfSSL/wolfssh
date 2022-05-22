@@ -34,7 +34,9 @@
 #include <wolfssl/wolfcrypt/hash.h>
 #include <wolfssl/wolfcrypt/coding.h>
 #include <wolfssl/wolfcrypt/wc_port.h>
+#include <wolfssl/wolfcrypt/asn.h>
 #include <wolfssl/wolfcrypt/asn_public.h>
+#include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/wolfsftp.h>
@@ -1854,6 +1856,18 @@ static int LoadPubKeyList(StrList* strList, int format, PwMapList* mapList)
 }
 
 
+static int wsUserAuthResult(byte res,
+                      WS_UserAuthData* authData,
+                      void* ctx)
+{
+    printf("In auth result callback, auth = %s\n",
+        (res == WOLFSSH_USERAUTH_SUCCESS) ? "Success" : "Failure");
+    (void)authData;
+    (void)ctx;
+    return WS_SUCCESS;
+}
+
+
 static int wsUserAuth(byte authType,
                       WS_UserAuthData* authData,
                       void* ctx)
@@ -1886,6 +1900,69 @@ static int wsUserAuth(byte authType,
         wc_Sha256Hash(authData->sf.publicKey.publicKey,
                 authData->sf.publicKey.publicKeySz,
                 authHash);
+    #ifndef WOLFSSH_NO_FPKI
+        /* Display FPKI info UUID and FASC-N */
+        if (authData->sf.publicKey.isCert) {
+            DecodedCert cert;
+            byte* uuid;
+            word32 fascnSz;
+            word32 uuidSz;
+            word32 i;
+
+            printf("Peer connected with FPKI certificate\n");
+            wc_InitDecodedCert(&cert, authData->sf.publicKey.publicKey,
+                authData->sf.publicKey.publicKeySz, NULL);
+            ret = wc_ParseCert(&cert, CERT_TYPE, 0, NULL);
+
+            /* some profiles supported due not require FASC-N */
+            if (ret == 0 &&
+                wc_GetFASCNFromCert(&cert, NULL, &fascnSz) == LENGTH_ONLY_E) {
+                byte* fascn;
+
+                fascn = (byte*)WMALLOC(fascnSz, NULL, 0);
+                if (fascn != NULL &&
+                        wc_GetFASCNFromCert(&cert, fascn, &fascnSz) == 0) {
+                    printf("HEX of FASC-N :");
+                    for (i = 0; i < fascnSz; i++)
+                        printf("%02X", fascn[i]);
+                    printf("\n");
+                }
+                if (fascn != NULL)
+                    WFREE(fascn, NULL, 0);
+            }
+
+            /* all profiles supported must have a UUID */
+            if (ret == 0) {
+                ret = wc_GetUUIDFromCert(&cert, NULL, &uuidSz);
+                if (ret == LENGTH_ONLY_E) { /* expected error value */
+                    ret = 0;
+                }
+
+                if (ret == 0 ) {
+                    uuid = (byte*)WMALLOC(uuidSz, NULL, 0);
+                    if (uuid == NULL) {
+                        ret = WS_MEMORY_E;
+                    }
+                }
+
+                if (ret == 0) {
+                    ret = wc_GetUUIDFromCert(&cert, uuid, &uuidSz);
+                    printf("UUID string : ");
+                    for (i = 0; i < uuidSz; i++)
+                        printf("%c", uuid[i]);
+                    printf("\n");
+                }
+
+                if (uuid != NULL)
+                    WFREE(uuid, NULL, 0);
+            }
+
+            /* failed to at least get UUID string */
+            if (ret != 0) {
+                return WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
+            }
+        }
+    #endif
     }
 
     list = (PwMapList*)ctx;
@@ -2147,6 +2224,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         wolfSSH_SetUserAuth(ctx, wsUserAuth);
     else
         wolfSSH_SetUserAuth(ctx, ((func_args*)args)->user_auth);
+    wolfSSH_SetUserAuthResult(ctx, wsUserAuthResult);
     wolfSSH_CTX_SetBanner(ctx, echoserverBanner);
 #ifdef WOLFSSH_AGENT
     wolfSSH_CTX_set_agent_cb(ctx, wolfSSH_AGENT_DefaultActions, NULL);

@@ -181,12 +181,14 @@ int wolfSSH_CERTMAN_LoadRootCA_buffer(WOLFSSH_CERTMAN* cm,
 }
 
 
+#ifndef WOLFSSH_NO_FPKI
 static int CheckProfile(DecodedCert* cert, int profile);
 enum {
     PROFILE_FPKI_WORKSHEET_6 = 6,
     PROFILE_FPKI_WORKSHEET_10 = 10,
     PROFILE_FPKI_WORKSHEET_16 = 16
 };
+#endif /* WOLFSSH_NO_FPKI */
 
 int wolfSSH_CERTMAN_VerifyCert_buffer(WOLFSSH_CERTMAN* cm,
         const unsigned char* cert, word32 certSz)
@@ -236,6 +238,7 @@ int wolfSSH_CERTMAN_VerifyCert_buffer(WOLFSSH_CERTMAN* cm,
         }
     }
 
+#ifndef WOLFSSH_NO_FPKI
     if (ret == WS_SUCCESS) {
         DecodedCert decoded;
 
@@ -259,12 +262,14 @@ int wolfSSH_CERTMAN_VerifyCert_buffer(WOLFSSH_CERTMAN* cm,
 
         FreeDecodedCert(&decoded);
     }
+#endif /* WOLFSSH_NO_FPKI */
 
     WLOG_LEAVE(ret);
     return ret;
 }
 
 
+#ifndef WOLFSSH_NO_FPKI
 static int CheckProfile(DecodedCert* cert, int profile)
 {
     int valid = (cert != NULL);
@@ -298,26 +303,33 @@ static int CheckProfile(DecodedCert* cert, int profile)
 
     if (valid) {
         valid = WSTRCMP(cert->countryOfCitizenship, "US") == 0;
+        if (valid != 1)
+            WLOG(WS_LOG_CERTMAN, "cert contry of citizenship invalid");
     }
 
     if (valid) {
         valid = !cert->isCA;
+        if (valid != 1)
+            WLOG(WS_LOG_CERTMAN, "cert basic constraint invalid");
     }
 
     if (valid) {
         valid =
             WMEMCMP(cert->extAuthKeyId, cert->extSubjKeyId, KEYID_SIZE) != 0;
-
+        if (valid != 1)
+            WLOG(WS_LOG_CERTMAN, "cert auth key and subject key mismatch");
     }
 
     if (valid) {
-            valid =
-                ((certPolicies[1] != NULL) &&
-                 (WSTRCMP(certPolicies[1], cert->extCertPolicies[0]) == 0 ||
-                  WSTRCMP(certPolicies[1], cert->extCertPolicies[1]) == 0)) ||
-                ((certPolicies[0] != NULL) &&
-                 (WSTRCMP(certPolicies[0], cert->extCertPolicies[0]) == 0 ||
-                  WSTRCMP(certPolicies[0], cert->extCertPolicies[1]) == 0));
+        valid =
+            ((certPolicies[1] != NULL) &&
+             (WSTRCMP(certPolicies[1], cert->extCertPolicies[0]) == 0 ||
+              WSTRCMP(certPolicies[1], cert->extCertPolicies[1]) == 0)) ||
+            ((certPolicies[0] != NULL) &&
+             (WSTRCMP(certPolicies[0], cert->extCertPolicies[0]) == 0 ||
+              WSTRCMP(certPolicies[0], cert->extCertPolicies[1]) == 0));
+        if (valid != 1)
+            WLOG(WS_LOG_CERTMAN, "cert policy invalid");
     }
 
     /* validity period must be utc up to and including 2049, general time
@@ -364,6 +376,41 @@ static int CheckProfile(DecodedCert* cert, int profile)
         }
     }
 
+    /* check on FASC-N and UUID */
+    if (valid) {
+        DNS_entry* current;
+        byte hasFascN = 0;
+        byte hasUUID  = 0;
+        byte uuid[DEFAULT_UUID_SZ];
+        word32 uuidSz = DEFAULT_UUID_SZ;
+
+        /* cycle through alt names to check for needed types */
+        current = cert->altNames;
+        while (current != NULL) {
+            if (current->oidSum == FASCN_OID) {
+                hasFascN = 1;
+            }
+
+            current = current->next;
+        }
+
+        if (wc_GetUUIDFromCert(cert, uuid, &uuidSz) == 0) {
+            hasUUID = 1;
+        }
+
+        /* all must have UUID and worksheet 6 must have FASC-N in addition to
+         * UUID */
+        if (profile == PROFILE_FPKI_WORKSHEET_6 && hasFascN == 0) {
+            WLOG(WS_LOG_CERTMAN, "cert did not inclue a FASC-N");
+            valid = 0;
+        }
+
+        if (valid && hasUUID == 0) {
+            WLOG(WS_LOG_CERTMAN, "cert did not inclue a UUID");
+            valid = 0;
+        }
+    }
+
     if (valid) {
         valid =
             /* Must include all in extKeyUsage */
@@ -373,6 +420,9 @@ static int CheckProfile(DecodedCert* cert, int profile)
             ((extKeyUsageSsh == 0) ||
                 ((cert->extExtKeyUsageSsh & extKeyUsageSsh)
                     == extKeyUsageSsh));
+        if (valid != 1) {
+            WLOG(WS_LOG_CERTMAN, "cert did not inclue all ext. key usage");
+        }
     }
 
 #ifdef DEBUG_WOLFSSH
@@ -402,5 +452,6 @@ static int CheckProfile(DecodedCert* cert, int profile)
 
     return valid;
 }
+#endif /* WOLFSSH_NO_FPKI */
 
 #endif /* WOLFSSH_CERTS */
