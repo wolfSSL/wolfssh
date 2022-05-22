@@ -180,6 +180,11 @@ static void ShowUsage(void)
 #ifdef WOLFSSH_AGENT
     printf(" -a            Attempt to use SSH-AGENT\n");
 #endif
+#ifdef WOLFSSH_CERTS
+    printf(" -J <filename> filename for DER certificate to use\n");
+    printf("               Certificate example : client -u orange \\\n");
+    printf("               -J orange-cert.der -i orange-key.der\n");
+#endif
 }
 
 
@@ -188,6 +193,7 @@ static byte userPublicKeyBuf[512];
 static byte* userPublicKey = userPublicKeyBuf;
 static const byte* userPublicKeyType = NULL;
 static const char* pubKeyName = NULL;
+static const char* certName = NULL;
 static byte userPrivateKeyBuf[1191]; /* Size equal to hanselPrivateRsaSz. */
 static byte* userPrivateKey = userPrivateKeyBuf;
 static const byte* userPrivateKeyType = NULL;
@@ -204,7 +210,6 @@ static const byte publicKeyType[] = "x509v3-ssh-rsa";
 static const byte privateKeyType[] = "ssh-rsa";
 #else
 static const byte publicKeyType[] = "x509v3-ecdsa-sha2-nistp256";
-static const byte privateKeyType[] = "ecdsa-sha2-nistp256";
 #endif
 #endif
 
@@ -403,9 +408,7 @@ static int wsUserAuth(byte authType,
          * passed in a public key file, use public key auth */
         if ((XSTRNCMP((char*)authData->username, "hansel",
                 authData->usernameSz) == 0) ||
-            (XSTRNCMP((char*)authData->username, "orange",
-                authData->usernameSz) == 0) ||
-            pubKeyName != NULL) {
+            pubKeyName != NULL || certName != NULL) {
 
             if (authType == WOLFSSH_USERAUTH_PASSWORD) {
                 printf("rejecting password type with %s in favor of pub key\n",
@@ -908,7 +911,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     char**  argv = ((func_args*)args)->argv;
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?ac:eh:i:j:p:tu:xzNP:R")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?ac:eh:i:j:p:tu:xzNP:RJ:")) != -1) {
         switch (ch) {
             case 'h':
                 host = myoptarg;
@@ -948,6 +951,12 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
             case 'j':
                 pubKeyName = myoptarg;
                 break;
+
+        #ifdef WOLFSSH_CERTS
+            case 'J':
+                certName = myoptarg;
+                break;
+        #endif
 
             case 'x':
                 /* exit after successful connection without read/write */
@@ -1004,7 +1013,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         err_sys("Threading needed for terminal session\n");
 #endif
 
-    if (pubKeyName == NULL && privKeyName != NULL) {
+    if ((pubKeyName == NULL && certName == NULL) && privKeyName != NULL) {
         err_sys("If setting priv key, need pub key.");
     }
 
@@ -1041,18 +1050,13 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     }
 
 #ifdef WOLFSSH_CERTS
-    if (XSTRCMP("orange", username) == 0) {
-        ret = load_der_file("../ca/orange-cert.der",
-                &userPublicKey, &userPublicKeySz);
+    /* passed in certificate to use */
+    if (certName) {
+        ret = load_der_file(certName, &userPublicKey, &userPublicKeySz);
         if (ret != 0) err_sys("Couldn't load certificate file.");
-        ret = load_der_file("../ca/orange-key.der",
-                &userPrivateKey, &userPrivateKeySz);
-        if (ret != 0) err_sys("Couldn't load private key file.");
 
         userPublicKeyType = publicKeyType;
         userPublicKeyTypeSz = (word32)WSTRLEN((const char*)publicKeyType);
-        userPrivateKeyType = privateKeyType;
-        userPrivateKeyTypeSz = (word32)WSTRLEN((const char*)privateKeyType);
     }
     else
 #endif

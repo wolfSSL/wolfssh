@@ -1765,7 +1765,7 @@ static int LoadPasswdList(StrList* strList, PwMapList* mapList)
     int count = 0;
 
     while (strList) {
-        WSTRNCPY(names, strList->str, sizeof names);
+        WSTRNCPY(names, strList->str, sizeof names - 1);
         passwd = WSTRCHR(names, ':');
         if (passwd != NULL) {
             *passwd = 0;
@@ -1799,7 +1799,7 @@ static int LoadPubKeyList(StrList* strList, int format, PwMapList* mapList)
         buf = NULL;
         bufSz = 0;
 
-        WSTRNCPY(names, strList->str, sizeof names);
+        WSTRNCPY(names, strList->str, sizeof names - 1);
         fileName = WSTRCHR(names, ':');
         if (fileName != NULL) {
             *fileName = 0;
