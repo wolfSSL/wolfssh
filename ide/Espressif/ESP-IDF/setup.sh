@@ -1,29 +1,29 @@
 #!/bin/bash
 #
 #  Expect the script at /path/to/wolfssh/IDE/Espressif/ESP-IDF/
-# 
+#
 #  Note that over the course of time there are 3 possible config files:
-# 
+#
 #    user_settings.h
 #      used with IDE; enable with:
-# 
+#
 #      #define WOLFSSL_USER_SETTINGS
-# 
+#
 #      options.h is excluded with that setting
-# 
+#
 #    options.h
 #      used with configure builds
-#  
+#
 #      This is an older file related an issue that’s been working forever.
 #      There should only be a wolfSSL copy right now. It is generated based on configure.
-# 
-#    config.h 
+#
+#    config.h
 #      This is generated per project. The configure script creates it.
 #      The one for wolfSSL is different than the one for wolfSSH
 #      There’s a #define that is added to the Makefile:
-# 
+#
 #      #define HAVE_CONFIG
-# 
+#
 #  EDITOR NOTE: There's a Linux setup.sh that should identically mirror functionality here.
 #               Please try to keep code lines matching between files for easily comparing.
 # ******************************************************************************************************
@@ -42,29 +42,29 @@ echo;
 # ******************************************************************************************************
 # ******************************************************************************************************
 
-#  Set REPLICATE_WOLFSSL=true  if a local copy of wolfssl is desired. 
+#  Set REPLICATE_WOLFSSL=true  if a local copy of wolfssl is desired.
 #  The default is false: use use wolfssl in the parent directory component.
 REPLICATE_WOLFSSL=false
 
 COPYERROR=false
 WOLFSSH_FOUND=false
-SET WOLFSSH_FORCE_CONFIG=false
+WOLFSSH_FORCE_CONFIG=false
 
 #  if there's a setup.sh, we are probably starting in the right place.
-if [ ! -f "./setup_win.bat" ]; then 
-    echo "Please run this script at /path/to/wolfssh/IDE/Espressif/ESP-IDF/"
+if [ ! -f "./setup_win.bat" ]; then
+    echo "Please run this script at /path/to/wolfssh/ide/Espressif/ESP-IDF/"
    exit 1
 fi
 
 #  if there's also a default wolfssh_espressif_semaphore.md, we are very likely starting in the right place."
-if [ ! -f "./wolfssh_espressif_semaphore.md" ]; then 
-    echo Please run this script at /path/to/wolfssh/IDE/Espressif/ESP-IDF/
+if [ ! -f "./wolfssh_espressif_semaphore.md" ]; then
+    echo Please run this script at /path/to/wolfssh/ide/Espressif/ESP-IDF/
     exit 1
 fi
 
 #  see if there was a parameter passed for a specific EDP-IDF directory
 #  this may be different than the standard ESP-IDF environment (e.g. VisualGDB)
-if [ "$1" == "" ]; then 
+if [ "$1" == "" ]; then
     if [ "${IDF_PATH}" == "" ]; then
         echo;
         echo "ERROR: Specify your ESP-IDF path as a parameter or run from ESP-IDF prompt with IDF_PATH environment variable."
@@ -74,7 +74,7 @@ if [ "$1" == "" ]; then
         exit 1
     fi
 
-    #  There's no parameter, check if ${IDF_PATH} non-blank 
+    #  There's no parameter, check if ${IDF_PATH} non-blank
     if [ -d "${IDF_PATH}" ]; then
         echo "Using IDF_PATH: ${IDF_PATH}"
         echo;
@@ -83,7 +83,7 @@ if [ "$1" == "" ]; then
         echo;
         exit 1
     fi
-else 
+else
     if [ ! -d "$1" ]; then
         echo "ERROR: optional directory was specified, but not found: $1"
         exit 1
@@ -119,7 +119,7 @@ SCRIPTDIR=$(pwd)
 BASEDIR=${SCRIPTDIR}/../../..
 
 #  SSH
-WOLFSSH_ESPIDFDIR=$BASEDIR/IDE/Espressif/ESP-IDF
+WOLFSSH_ESPIDFDIR=$BASEDIR/ide/Espressif/ESP-IDF
 
 WOLFSSHLIB_TRG_DIR=${IDF_PATH}/components/wolfssh
 WOLFSSHEXP_TRG_DIR=${IDF_PATH}/examples/protocols
@@ -179,16 +179,16 @@ TIME="$(date +%T)";DATE="$(date +%a) $(date +%x)"
 #  date = Thu 09/17/15  (note 2 digit year in Linux, 4 digits in Windows)
 #  time = 11:13:15.47
 #         012345678901234567890
-# 
+#
 #  There is no leading zero for single digit hours (e.g. 9:00am), so we need to manually include the zero
-#    
+#
 if   [ "${TIME:0:1}" == " " ]; then FileStamp=${DATE:10:2}${DATE:7:2}${DATE:4:2}_0${TIME:1:1}${TIME:3:2}${TIME:6:2}; fi
 
 #  otherwise, if a space not found before the digit, it is a 2 digit hour, so no extract zero is needed
 if [ ! "${TIME:0:1}" == " " ]; then FileStamp=${DATE:10:2}${DATE:7:2}${DATE:4:2}_${TIME:0:2}${TIME:3:2}${TIME:6:2}; fi
 
 #  Backup existing config settings
-if [ -f "${WOLFSSHLIB_TRG_DIR}/include/config.h" ]; then 
+if [ -f "${WOLFSSHLIB_TRG_DIR}/include/config.h" ]; then
   echo;
   echo "Saving: $WOLFSSHLIB_TRG_DIR/include/config.h"
   echo "    to: $SCRIPTDIR/config_h_/${FileStamp}.bak"
@@ -217,11 +217,11 @@ if [ ${WOLFSSH_FOUND} == true ]; then
 
     until [ "${PURGE_COPY^}" == "Y" ] || [ "${PURGE_COPY^}" == "N" ]; do
       read -n1 -p "Delete files and proceed with install in $WOLFSSHLIB_TRG_DIR (Y/N) " PURGE_COPY
-      PURGE_COPY=${PURGE_COPY^}; 
+      PURGE_COPY=${PURGE_COPY^};
       echo;
-    done 
+    done
 
-    
+
     echo "Ready to copy files into ${IDF_PATH}"
 
 #*******************************************************************************************************
@@ -235,7 +235,7 @@ if [ ${WOLFSSH_FOUND} == true ]; then
           read -n1 -p "Refresh files ${WOLFSSHLIB_TRG_DIR}   (there will be a prompt to keep or overwrite config) (Y/N) " REFRESH_COPY
           REFRESH_COPY=${REFRESH_COPY^}
           echo;
-        done 
+        done
 
     else
         echo;
@@ -249,12 +249,12 @@ fi
 #* purge existing directory
 
 if [ "${PURGE_COPY}" == "Y" ]; then
-    if [ -d "${WOLFSSHLIB_TRG_DIR}" ]; then 
+    if [ -d "${WOLFSSHLIB_TRG_DIR}" ]; then
         echo;
         echo Removing "${WOLFSSHLIB_TRG_DIR}"
-        rm "${WOLFSSHLIB_TRG_DIR}" -R 
+        rm "${WOLFSSHLIB_TRG_DIR}" -R
 
-        if [ -d "${WOLFSSHLIB_TRG_DIR}" ]; then 
+        if [ -d "${WOLFSSHLIB_TRG_DIR}" ]; then
             COPYERROR=true
             echo;
             echo "WARNING: Failed to remove ${WOLFSSHLIB_TRG_DIR}"
@@ -273,11 +273,11 @@ fi # not purge
 #*******************************************************************************************************
 #*REFRESH
 #*******************************************************************************************************
-if [ ! -d "${WOLFSSHLIB_TRG_DIR}"           ]; then       mkdir      "${WOLFSSHLIB_TRG_DIR}"          ; fi 
+if [ ! -d "${WOLFSSHLIB_TRG_DIR}"           ]; then       mkdir      "${WOLFSSHLIB_TRG_DIR}"          ; fi
 if [ ! -d "${WOLFSSHLIB_TRG_DIR}"/wolfssh/  ]; then       mkdir      "${WOLFSSHLIB_TRG_DIR}"/wolfssh/ ; fi
 if [ ! -d "${WOLFSSHLIB_TRG_DIR}"/include/  ]; then       mkdir      "${WOLFSSHLIB_TRG_DIR}"/include/ ; fi
 if [ ! -d "${WOLFSSHLIB_TRG_DIR}"/src/      ]; then       mkdir      "${WOLFSSHLIB_TRG_DIR}"/src/     ; fi
-if [ ! -d "${WOLFSSHEXP_TRG_DIR}"           ]; then       mkdir      "${WOLFSSHEXP_TRG_DIR}"          ; fi 
+if [ ! -d "${WOLFSSHEXP_TRG_DIR}"           ]; then       mkdir      "${WOLFSSHEXP_TRG_DIR}"          ; fi
 
 #*******************************************************************************************************
 #* optionally copy wolfssl here (the default is to use the parent directory shared component)
@@ -305,7 +305,7 @@ if [ "${REPLICATE_WOLFSSL}" == "true" ]; then
    cp "${BASEDIR}"/src/port/Atmel/*.c                                      "${WOLFSSHLIB_TRG_DIR}"/src/port/Atmel
    if [ $? != 0 ]; then COPYERROR=true; fi
 
-   echo "Copying port/Espressif files to ${WOLFSSHLIB_TRG_DIR}/src/port/Espressif" 
+   echo "Copying port/Espressif files to ${WOLFSSHLIB_TRG_DIR}/src/port/Espressif"
    cp "${BASEDIR}"/src/port/Espressif/*.c                                  "${WOLFSSHLIB_TRG_DIR}"/src/port/Espressif
    if [ $? != 0 ]; then COPYERROR=true; fi
 
@@ -366,7 +366,7 @@ if [ -f "./config_h_${FileStamp}.bak" ]; then
         # create a placeholder file
         echo "/* new config */" >                                      "${WOLFSSHLIB_TRG_DIR}/include/config.h"
 
-        cp "config_h_${FileStamp}.bak"                                 "${WOLFSSHLIB_TRG_DIR}/include/config.h" 
+        cp "config_h_${FileStamp}.bak"                                 "${WOLFSSHLIB_TRG_DIR}/include/config.h"
         if [ $? != 0 ]; then COPYERROR=true; fi
     fi
 
@@ -379,8 +379,8 @@ else
     if [ "${WOLFSSH_FORCE_CONFIG}" == "true" ]; then
         echo "/* new config.h  */" >                                       "${WOLFSSHLIB_TRG_DIR}/include/config.h"
 
-        if [ -f "${WOLFSSH_ESPIDFDIR}/dummy_config_h." ]; then 
-            echo "Using default file dummy_config_h for ssh component in  \"${WOLFSSHLIB_TRG_DIR}/include/config.h\" " 
+        if [ -f "${WOLFSSH_ESPIDFDIR}/dummy_config_h." ]; then
+            echo "Using default file dummy_config_h for ssh component in  \"${WOLFSSHLIB_TRG_DIR}/include/config.h\" "
             cp "${WOLFSSH_ESPIDFDIR}"/dummy_config_h.                      "${WOLFSSHLIB_TRG_DIR}"/include/config.h
             if [ $? != 0 ]; then COPYERROR=true; fi
         else
@@ -402,7 +402,7 @@ if [ -f "user_settings_h_${FileStamp}.bak" ]; then
     ls "user_settings_h_${FileStamp}.bak" -al
     echo;
 
-    
+
     CHOICE_COPY=
     until [ "${CHOICE_COPY}" == "Y" ] || [ "${CHOICE_COPY}" == "N" ]; do
       read -n1 -p "Use prior user_settings.h  in  ${WOLFSSHLIB_TRG_DIR}/include/ (Y/N) " CHOICE_COPY
@@ -410,7 +410,7 @@ if [ -f "user_settings_h_${FileStamp}.bak" ]; then
       echo;
     done
 
-    
+
     if [ "${CHOICE_COPY}" == "Y" ]; then
         cp "user_settings_h_${FileStamp}.bak"    "${WOLFSSHLIB_TRG_DIR}/include/user_settings.h"
         if [ $? != 0 ]; then COPYERROR=true; fi
@@ -448,11 +448,11 @@ fi
 
 echo;
 echo Copying libs/CMakeLists.txt to ${WOLFSSHLIB_TRG_DIR}/
-cp "${WOLFSSH_ESPIDFDIR}/libs/CMakeLists.txt"                "${WOLFSSHLIB_TRG_DIR}/"                              
+cp "${WOLFSSH_ESPIDFDIR}/libs/CMakeLists.txt"                "${WOLFSSHLIB_TRG_DIR}/"
 if [ $? != 0 ]; then COPYERROR=true; fi
 
 echo Copying libs/component.mk to ${WOLFSSHLIB_TRG_DIR}/
-cp "${WOLFSSH_ESPIDFDIR}/libs/component.mk"                  "${WOLFSSHLIB_TRG_DIR}/"                              
+cp "${WOLFSSH_ESPIDFDIR}/libs/component.mk"                  "${WOLFSSHLIB_TRG_DIR}/"
 if [ $? != 0 ]; then COPYERROR=true; fi
 
 #* TODO determine what happened to ssl x509_str.c (we get a compile error when this is missing):
