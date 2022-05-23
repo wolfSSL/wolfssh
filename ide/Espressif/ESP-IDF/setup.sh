@@ -14,13 +14,13 @@
 #    options.h
 #      used with configure builds
 #
-#      This is an older file related an issue that’s been working forever.
+#      This is an older file related an issue that's been working forever.
 #      There should only be a wolfSSL copy right now. It is generated based on configure.
 #
 #    config.h
 #      This is generated per project. The configure script creates it.
 #      The one for wolfSSL is different than the one for wolfSSH
-#      There’s a #define that is added to the Makefile:
+#      There's a #define that is added to the Makefile:
 #
 #      #define HAVE_CONFIG
 #
@@ -197,7 +197,7 @@ if [ -f "${WOLFSSHLIB_TRG_DIR}/include/config.h" ]; then
 fi
 
 #  Backup existing user_settings
-if [ -f "${WOLFSSHLIB_TRG_DIR}"/include/user_settings.h ]; then 
+if [ -f "${WOLFSSHLIB_TRG_DIR}"/include/user_settings.h ]; then
   echo;
   echo "Saving: ${WOLFSSHLIB_TRG_DIR}/include/user_settings.h"
   echo "    to: ${SCRIPTDIR}/user_settings_h_${FileStamp}.bak"
