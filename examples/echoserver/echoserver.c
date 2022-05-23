@@ -1898,7 +1898,7 @@ static int wsUserAuth(byte authType,
         wc_Sha256Hash(authData->sf.publicKey.publicKey,
                 authData->sf.publicKey.publicKeySz,
                 authHash);
-    #ifndef WOLFSSH_NO_FPKI
+    #if defined(WOLFSSH_CERTS) && !defined(WOLFSSH_NO_FPKI)
         /* Display FPKI info UUID and FASC-N */
         if (authData->sf.publicKey.isCert) {
             DecodedCert cert;
@@ -1960,7 +1960,7 @@ static int wsUserAuth(byte authType,
                 return WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
             }
         }
-    #endif
+    #endif /* WOLFSSH_CERTS && !WOLFSSH_NO_FPKI */
     }
 
     list = (PwMapList*)ctx;
