@@ -1544,7 +1544,6 @@ static const char samplePasswordBuffer[] =
     "jack:fetchapail\n";
 
 
-#if 0
 #ifndef NO_FILESYSTEM
 #ifndef WOLFSSH_NO_ECC
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
@@ -1586,7 +1585,6 @@ static const char samplePublicKeyRsaBuffer[] =
     "RGwkU38D043AR1h0mUoGCPIKuqcFMf gretel\n";
 #endif
 #endif /* NO_FILESYSTEM */
-#endif
 
 
 #ifdef WOLFSSH_ALLOW_USERAUTH_NONE
@@ -2255,10 +2253,10 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     }
 
     {
-        //const char* bufName = NULL;
-        #ifndef WOLFSSH_SMALL_STACK
-            byte buf[EXAMPLE_KEYLOAD_BUFFER_SZ];
-        #endif
+        const char* bufName = NULL;
+    #ifndef WOLFSSH_SMALL_STACK
+        byte buf[EXAMPLE_KEYLOAD_BUFFER_SZ];
+    #endif
         byte* keyLoadBuf;
         word32 bufSz;
 
@@ -2342,7 +2340,6 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         keyLoadBuf[bufSz] = 0;
         LoadPasswordBuffer(keyLoadBuf, bufSz, &pwMapList);
 
-#if 0
         if (userEcc) {
         #ifndef WOLFSSH_NO_ECC
             bufName = samplePublicKeyEccBuffer;
@@ -2366,7 +2363,6 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             keyLoadBuf[bufSz] = 0;
             LoadNoneBuffer(keyLoadBuf, bufSz, &pwMapList);
         #endif /* WOLFSSH_ALLOW_USERAUTH_NONE */
-#endif
 
         #ifdef WOLFSSH_SMALL_STACK
             WFREE(keyLoadBuf, NULL, 0);

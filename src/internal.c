@@ -36,6 +36,9 @@
 #ifndef WOLFSSH_NO_DH
     #include <wolfssl/wolfcrypt/dh.h>
 #endif
+#ifdef WOLFSSH_CERTS
+    #include <wolfssl/wolfcrypt/error-crypt.h>
+#endif
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfssl/wolfcrypt/hmac.h>
@@ -4493,6 +4496,7 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 
 
 #ifdef WOLFSSH_CERTS
+/* return WS_SUCCESS on success */
 static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
                                 byte hashId, byte* digest, word32 digestSz)
 {
@@ -4548,18 +4552,33 @@ static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
-        byte big[1024];
-        word32 bigSz = sizeof big;
+        byte*  pub = NULL;
+        word32 pubSz;
         DecodedCert cert;
 
         wc_InitDecodedCert(&cert, pk->publicKey, pk->publicKeySz,
                 ssh->ctx->heap);
         ret = wc_ParseCert(&cert, CA_TYPE, 0, NULL);
-        ret = wc_GetPubKeyDerFromCert(&cert, big, &bigSz);
+        if (ret == 0) {
+            ret = wc_GetPubKeyDerFromCert(&cert, NULL, &pubSz);
+            if (ret == LENGTH_ONLY_E) {
+                pub = WMALLOC(pubSz, ssh->ctx->heap, DYNTYPE_PUBKEY);
+                if (pub == NULL) {
+                    ret = WS_MEMORY_E;
+                }
+                else {
+                    ret = wc_GetPubKeyDerFromCert(&cert, pub, &pubSz);
+                }
+            }
+        }
+
         if (ret == 0) {
             word32 idx = 0;
-            ret = wc_RsaPublicKeyDecode(big, &idx, key_ptr, bigSz);
+            ret = wc_RsaPublicKeyDecode(pub, &idx, key_ptr, pubSz);
         }
+
+        if (pub != NULL)
+            WFREE(pub, ssh->ctx->heap, DYNTYPE_PUBKEY);
         wc_FreeDecodedCert(&cert);
     }
 
@@ -4884,18 +4903,33 @@ static int DoUserAuthRequestEccCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 #endif /* WOLFSSH_CERTS */
 
     if (ret == WS_SUCCESS) {
-        byte big[1024];
-        word32 bigSz = sizeof big;
+        byte*  pub = NULL;
+        word32 pubSz;
         DecodedCert cert;
 
         wc_InitDecodedCert(&cert, pk->publicKey, pk->publicKeySz,
                 ssh->ctx->heap);
         ret = wc_ParseCert(&cert, CA_TYPE, 0, NULL);
-        ret = wc_GetPubKeyDerFromCert(&cert, big, &bigSz);
+        if (ret == 0) {
+            ret = wc_GetPubKeyDerFromCert(&cert, NULL, &pubSz);
+            if (ret == LENGTH_ONLY_E) {
+                pub = WMALLOC(pubSz, ssh->ctx->heap, DYNTYPE_PUBKEY);
+                if (pub == NULL) {
+                    ret = WS_MEMORY_E;
+                }
+                else {
+                    ret = wc_GetPubKeyDerFromCert(&cert, pub, &pubSz);
+                }
+            }
+        }
+
         if (ret == 0) {
             word32 idx = 0;
-            ret = wc_EccPublicKeyDecode(big, &idx, key_ptr, bigSz);
+            ret = wc_EccPublicKeyDecode(pub, &idx, key_ptr, pubSz);
         }
+
+        if (pub != NULL)
+            WFREE(pub, ssh->ctx->heap, DYNTYPE_PUBKEY);
         wc_FreeDecodedCert(&cert);
     }
 
@@ -5051,10 +5085,15 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             m += l;
             /* Get the cert count */
             ret = GetUint32(&l, pk->publicKey, pk->publicKeySz, &m);
-            ret = GetSize(&l, pk->publicKey, pk->publicKeySz, &m);
-            pk->publicKeySz = l;
-            pk->publicKey = pk->publicKey + m;
-            pk->isCert = 1;
+            if (ret == WS_SUCCESS) {
+                ret = GetSize(&l, pk->publicKey, pk->publicKeySz, &m);
+            }
+
+            if (ret == WS_SUCCESS) {
+                pk->publicKeySz = l;
+                pk->publicKey = pk->publicKey + m;
+                pk->isCert = 1;
+            }
         }
         #endif /* WOLFSSH_CERTS */
 
