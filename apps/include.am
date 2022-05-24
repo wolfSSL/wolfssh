@@ -1,0 +1,13 @@
+# vim:ft=automake
+# All paths should be given relative to the root
+
+if BUILD_SSHD
+bin_PROGRAMS += apps/wolfsshd
+noinst_HEADERS += examples/client/client.h
+apps_wolfsshd_SOURCES = apps/wolfsshd.c
+apps_wolfsshd_LDADD        = src/libwolfssh.la
+apps_wolfsshd_DEPENDENCIES = src/libwolfssh.la
+endif
+
+DISTCLEANFILES+= apps/.libs/wolfsshd
+

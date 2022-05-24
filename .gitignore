@@ -54,6 +54,9 @@ examples/portfwd/portfwd
 examples/sftpclient/wolfsftp
 examples/scpclient/wolfscp
 
+# applications
+apps/wolfsshd
+
 # test output
 tests/*.test
 *.trs
