@@ -132,6 +132,10 @@ extern "C" {
     #undef WOLFSSH_NO_ECDH_SHA2_ED25519
     #define WOLFSSH_NO_ECDH_SHA2_ED25519
 #endif
+#if !defined(WOLFSSH_HAVE_LIBOQS) || defined(NO_SHA256)
+    #undef WOLFSSH_NO_SABER_LEVEL1_SHA256
+    #define WOLFSSH_NO_SABER_LEVEL1_SHA256
+#endif
 
 #if defined(WOLFSSH_NO_DH_GROUP1_SHA1) && \
     defined(WOLFSSH_NO_DH_GROUP14_SHA1) && \
@@ -139,7 +143,8 @@ extern "C" {
     defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && \
     defined(WOLFSSH_NO_ECDH_SHA2_NISTP384) && \
     defined(WOLFSSH_NO_ECDH_SHA2_NISTP521) && \
-    defined(WOLFSSH_NO_ECDH_SHA2_ED25519)
+    defined(WOLFSSH_NO_ECDH_SHA2_ED25519) && \
+    defined(WOLFSSH_NO_SABER_LEVEL1_SHA256)
     #error "You need at least one key agreement algorithm."
 #endif
 
@@ -266,6 +271,9 @@ enum {
     ID_ECDH_SHA2_ED25519,
     ID_ECDH_SHA2_ED25519_LIBSSH,
     ID_DH_GROUP14_SHA256,
+#ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
+    ID_SABER_LEVEL1_SHA256,
+#endif
 
     /* Public Key IDs */
     ID_SSH_RSA,
@@ -342,8 +350,13 @@ enum {
     #define WOLFSSH_DEFAULT_GEXDH_MAX 8192
 #endif
 #ifndef MAX_KEX_KEY_SZ
-    /* This is based on the 8192-bit DH key that is the max size. */
-    #define MAX_KEX_KEY_SZ (WOLFSSH_DEFAULT_GEXDH_MAX / 8)
+    #ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
+        /* Private key size of SABER Level1. Biggest artifact. */
+        #define MAX_KEX_KEY_SZ 1568
+    #else
+        /* This is based on the 8192-bit DH key that is the max size. */
+        #define MAX_KEX_KEY_SZ (WOLFSSH_DEFAULT_GEXDH_MAX / 8)
+    #endif
 #endif
 #ifndef WOLFSSH_MAX_FILE_SIZE
     #define WOLFSSH_MAX_FILE_SIZE (1024ul * 1024ul * 4)
@@ -404,6 +417,9 @@ struct WOLFSSH_CTX {
     byte* privateKey;                 /* Owned by CTX */
     word32 privateKeySz;
     byte useEcc;                      /* Depends on the private key */
+#ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
+    byte useSaber:1;                  /* Depends on the private key */
+#endif
     word32 highwaterMark;
     const char* banner;
     word32 bannerSz;
@@ -467,6 +483,10 @@ typedef struct HandshakeInfo {
 #endif
 
     byte useEcc;
+#ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
+    byte useSaber:1;
+#endif
+
     union {
 #ifndef WOLFSSH_NO_DH
         DhKey dh;
@@ -889,9 +909,16 @@ enum WS_MessageIds {
 
     MSGID_KEXDH_INIT = 30,
     MSGID_KEXECDH_INIT = 30,
+#ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
+    MSGID_KEXKEM_INIT = 30,
+#endif
 
     MSGID_KEXDH_REPLY = 31,
     MSGID_KEXECDH_REPLY = 31,
+#ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
+    MSGID_KEXKEM_REPLY = 31,
+#endif
+
     MSGID_KEXDH_GEX_GROUP = 31,
     MSGID_KEXDH_GEX_INIT = 32,
     MSGID_KEXDH_GEX_REPLY = 33,

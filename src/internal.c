@@ -42,6 +42,10 @@
 #include <wolfssl/wolfcrypt/integer.h>
 #include <wolfssl/wolfcrypt/signature.h>
 
+#ifdef WOLFSSH_HAVE_LIBOQS
+#include <oqs/kem.h>
+#endif
+
 #ifdef NO_INLINE
     #include <wolfssh/misc.h>
 #else
@@ -103,6 +107,9 @@ Flags:
   WOLFSSH_NO_ECDSA_SHA2_NISTP521
     Set when ECC or SHA2-512 are disabled. Set to disable use of ECDSA server
     authentication with prime NISTP521.
+  WOLFSSH_NO_SABER_LEVEL1_SHA256
+    Set when there is no liboqs integration. Set to disable use of post-quantum
+    SABER Level 1 KEM.
   WOLFSSH_NO_AES_CBC
     Set when AES or AES-CBC are disabled. Set to disable use of AES-CBC
     encryption.
@@ -1091,7 +1098,10 @@ static const NameIdPair NameIdMap[] = {
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
     { ID_DH_GROUP14_SHA256, "diffie-hellman-group14-sha256" },
 #endif
-
+#ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
+    /* We use lightsaber here to achieve interop with OQS's fork. */
+    { ID_SABER_LEVEL1_SHA256, "saber-lightsaber-sha256" },
+#endif
     /* Public Key IDs */
 #ifndef WOLFSSH_NO_SSH_RSA_SHA1
     { ID_SSH_RSA, "ssh-rsa" },
@@ -2076,6 +2086,9 @@ static const word32 cannedKeyAlgoEcc521Sz = sizeof(cannedKeyAlgoEcc521);
 
 
 static const byte cannedKexAlgo[] = {
+#ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
+    ID_SABER_LEVEL1_SHA256,
+#endif
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP521
     ID_ECDH_SHA2_NISTP521,
 #endif
@@ -2258,6 +2271,10 @@ static INLINE enum wc_HashType HashForId(byte id)
 #endif
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
         case ID_ECDSA_SHA2_NISTP256:
+            return WC_HASH_TYPE_SHA256;
+#endif
+#ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
+        case ID_SABER_LEVEL1_SHA256:
             return WC_HASH_TYPE_SHA256;
 #endif
 
@@ -3246,7 +3263,11 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
              * potentially be smaller by a byte than usual and cause buffer
              * issues with re-key */
             ssh->kSz = MAX_KEX_KEY_SZ;
-            if (!ssh->handshake->useEcc) {
+            if (!ssh->handshake->useEcc
+#ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
+                && !ssh->handshake->useSaber
+#endif
+               ) {
 #ifndef WOLFSSH_NO_DH
             #ifdef PRIVATE_KEY_UNLOCK
                 PRIVATE_KEY_UNLOCK();
@@ -3268,7 +3289,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 ret = WS_INVALID_ALGO_ID;
 #endif
             }
-            else {
+            else if (ssh->handshake->useEcc) {
 #ifndef WOLFSSH_NO_ECDH
                 ret = wc_ecc_init(key_ptr);
 #ifdef HAVE_WC_ECC_SET_RNG
@@ -3296,6 +3317,39 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 #else
                 ret = WS_INVALID_ALGO_ID;
 #endif
+            }
+#ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
+            else if (ssh->handshake->useSaber) {
+                /* This is a KEM. In this case, I need to decapsulate the
+                 * ciphertext. */
+                OQS_KEM* kem = NULL;
+                ret = 0;
+
+                if (ret == 0) {
+                    kem = OQS_KEM_new(OQS_KEM_alg_saber_lightsaber);
+                    if (kem == NULL) {
+                        ret = WS_INVALID_ALGO_ID;
+                    }
+                }
+
+                if (ret == 0) {
+                    if (fSz != kem->length_ciphertext) {
+                        ret = WS_BUFFER_E;
+                    }
+                }
+
+                if (OQS_KEM_decaps(kem, ssh->k, f, ssh->handshake->x)
+                    != OQS_SUCCESS) {
+                    ret = WS_ERROR;
+                }
+
+                if (ret == 0) {
+                    ssh->kSz = kem->length_shared_secret;
+                }
+            }
+#endif
+            else {
+                ret = WS_INVALID_ALGO_ID;
             }
         }
         if (ret == 0)
@@ -6617,6 +6671,9 @@ static const char cannedKeyAlgoEcc521Names[] = "ecdsa-sha2-nistp521";
 #endif
 
 static const char cannedKexAlgoNames[] =
+#if !defined(WOLFSSH_NO_SABER_LEVEL1_SHA256)
+    "saber-lightsaber-sha256,"
+#endif
 #if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP521)
     "ecdh-sha2-nistp521,"
 #endif
@@ -6642,7 +6699,8 @@ static const char cannedKexAlgoNames[] =
         defined(WOLFSSH_NO_DH_GROUP14_SHA1) && \
         defined(WOLFSSH_NO_DH_GROUP1_SHA1) && \
         defined(WOLFSSH_NO_ECDH_SHA2_NISTP521) && \
-        defined(WOLFSSH_NO_ECDH_SHA2_NISTP384)
+        defined(WOLFSSH_NO_ECDH_SHA2_NISTP384) && \
+        defined(WOLFSSH_NO_SABER_LEVEL1_256)
     #warning "You need at least one key exchange algorithm."
 #endif
 
@@ -6827,7 +6885,13 @@ struct wolfSSH_sigKeyBlockFull {
         } sk;
 };
 
-#define KEX_F_SIZE (256 + 1)
+#ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
+    /* Size of SABER Level1 ciphertext. */
+    #define KEX_F_SIZE 736
+#else
+    #define KEX_F_SIZE (256 + 1)
+#endif
+
 #define KEX_SIG_SIZE (512)
 
 
@@ -6851,6 +6915,9 @@ int SendKexDhReply(WOLFSSH* ssh)
     word32 fSz = KEX_F_SIZE;
     word32 sigSz = KEX_SIG_SIZE;
     byte useEcc = 0;
+#ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
+    byte useSaber = 0;
+#endif
     byte fPad = 0;
     byte kPad = 0;
     word32 sigBlockSz = 0;
@@ -6951,6 +7018,12 @@ int SendKexDhReply(WOLFSSH* ssh)
             case ID_ECDH_SHA2_NISTP521:
                 useEcc = 1;
                 msgId = MSGID_KEXDH_REPLY;
+                break;
+#endif
+#ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
+            case ID_SABER_LEVEL1_SHA256:
+                useSaber = 1; /* Only support level 1 for now. */
+                msgId = MSGID_KEXKEM_REPLY;
                 break;
 #endif
             default:
@@ -7246,7 +7319,11 @@ int SendKexDhReply(WOLFSSH* ssh)
         /* Make the server's DH f-value and the shared secret K. */
         /* Or make the server's ECDH private value, and the shared secret K. */
         if (ret == 0) {
-            if (!useEcc) {
+            if (!useEcc
+#ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
+                && !useSaber
+#endif
+               ) {
 #ifndef WOLFSSH_NO_DH
                 word32 ySz = MAX_KEX_KEY_SZ;
             #ifdef WOLFSSH_SMALL_STACK
@@ -7288,7 +7365,7 @@ int SendKexDhReply(WOLFSSH* ssh)
             #endif
 #endif /* ! WOLFSSH_NO_DH */
             }
-            else {
+            else if (useEcc) {
 #if !defined(WOLFSSH_NO_ECDH)
             #ifdef WOLFSSH_SMALL_STACK
                 ecc_key *pubKey = NULL, *privKey = NULL;
@@ -7356,10 +7433,52 @@ int SendKexDhReply(WOLFSSH* ssh)
             #endif
 #endif /* !defined(WOLFSSH_NO_ECDH) */
             }
+#ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
+            else if (useSaber) {
+                /* This is a KEM. In this case, I need to encapsulate the
+                 * shared secret. */
+                OQS_KEM* kem = NULL;
+                ret = 0;
+
+                if (ret == 0) {
+                    kem = OQS_KEM_new(OQS_KEM_alg_saber_lightsaber);
+                    if (kem == NULL) {
+                        ret = WS_INVALID_ALGO_ID;
+                    }
+                }
+
+                if (ret == 0) {
+                    if (ssh->handshake->eSz != kem->length_public_key) {
+                        ret = WS_PUBKEY_REJECTED_E;
+                    }
+                }
+
+                if (ret == 0) {
+                    if (OQS_KEM_encaps(kem, f_ptr, ssh->k, ssh->handshake->e)
+                        != OQS_SUCCESS) {
+                        ret = WS_PUBKEY_REJECTED_E;
+                    }
+                }
+
+                if (ret == 0) {
+                    ssh->kSz = kem->length_shared_secret;
+                    fSz = kem->length_ciphertext;
+                }
+            }
+#endif
+            else {
+                /* This should never happen */
+                ret = WS_ERROR;
+            }
         }
 
         /* Hash in the server's DH f-value. */
-        if (ret == 0) {
+        /* Do not want leading zero's removed for SABER. */
+        if (ret == 0
+#ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
+            && !useSaber
+#endif
+           ) {
             ret = CreateMpint(f_ptr, &fSz, &fPad);
         }
         if (ret == 0) {
@@ -7924,6 +8043,13 @@ int SendKexDhInit(WOLFSSH* ssh)
             msgId = MSGID_KEXECDH_INIT;
             break;
 #endif
+#ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
+        case ID_SABER_LEVEL1_SHA256:
+            /* Only support level 1 for now. */
+            ssh->handshake->useSaber = 1;
+            msgId = MSGID_KEXKEM_INIT;
+            break;
+#endif
         default:
             WLOG(WS_LOG_DEBUG, "Invalid algo: %u", ssh->handshake->kexId);
             ret = WS_INVALID_ALGO_ID;
@@ -7931,7 +8057,11 @@ int SendKexDhInit(WOLFSSH* ssh)
 
 
     if (ret == WS_SUCCESS) {
-        if (!ssh->handshake->useEcc) {
+        if (!ssh->handshake->useEcc
+#ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
+            && !ssh->handshake->useSaber
+#endif
+) {
 #ifndef WOLFSSH_NO_DH
             DhKey* privKey = &ssh->handshake->privKey.dh;
 
@@ -7946,7 +8076,7 @@ int SendKexDhInit(WOLFSSH* ssh)
                                            e, &eSz);
 #endif
         }
-        else {
+        else if (ssh->handshake->useEcc) {
 #if !defined(WOLFSSH_NO_ECDH)
             ecc_key* privKey = &ssh->handshake->privKey.ecc;
             int primeId = wcPrimeForId(ssh->handshake->kexId);
@@ -7978,14 +8108,44 @@ int SendKexDhInit(WOLFSSH* ssh)
             ret = WS_INVALID_ALGO_ID;
 #endif /* !defined(WOLFSSH_NO_ECDH) */
         }
+#ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
+        else if (ssh->handshake->useSaber) {
+            OQS_KEM* kem = NULL;
+            ret = 0;
+
+            kem = OQS_KEM_new(OQS_KEM_alg_saber_lightsaber);
+            if (kem == NULL) {
+                ret = WS_INVALID_ALGO_ID;
+            }
+
+            if (ret == 0) {
+                if (OQS_KEM_keypair(kem, e, ssh->handshake->x)
+                    != OQS_SUCCESS) {
+                    /* This should never happen */
+                    ret = WS_ERROR;
+                }
+                eSz = kem->length_public_key;
+                ssh->handshake->xSz = kem->length_secret_key;
+            }
+        }
+#endif
+        else {
+            ret = WS_INVALID_ALGO_ID;
+        }
 
         if (ret == 0)
             ret = WS_SUCCESS;
     }
 
-    if (ret == WS_SUCCESS) {
+    /* Do not want leading zero's removed for SABER. */
+    if (ret == WS_SUCCESS
+#ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
+        && !ssh->handshake->useSaber
+#endif
+       ) {
         ret = CreateMpint(e, &eSz, &ePad);
     }
+
     if (ret == WS_SUCCESS) {
         if (ePad == 1) {
             ssh->handshake->e[0] = 0;

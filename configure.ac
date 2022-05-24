@@ -56,6 +56,46 @@ AC_CHECK_HEADERS([sys/select.h sys/time.h pty.h util.h termios.h])
 AC_CHECK_LIB([network],[socket])
 AC_CHECK_LIB([util],[forkpty])
 
+# liboqs
+ENABLED_LIBOQS="no"
+tryliboqsdir=""
+AC_ARG_WITH([liboqs],
+    [AS_HELP_STRING([--with-liboqs=PATH],[Path to liboqs install (default /usr/local) EXPERIMENTAL!])],
+    [
+        AC_MSG_CHECKING([for liboqs])
+        CPPFLAGS="$CPPFLAGS -DWOLFSSH_HAVE_LIBOQS"
+        LIBS="$LIBS -loqs"
+
+        AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <oqs/common.h>]], [[ OQS_init(); ]])], [ liboqs_linked=yes ],[ liboqs_linked=no ])
+
+        if test "x$liboqs_linked" = "xno" ; then
+            if test "x$withval" != "xno" ; then
+                tryliboqsdir=$withval
+            fi
+            if test "x$withval" = "xyes" ; then
+                tryliboqsdir="/usr/local"
+            fi
+
+            LDFLAGS="$AM_LDFLAGS $LDFLAGS -L$tryliboqsdir/lib"
+            CPPFLAGS="$CPPFLAGS -I$tryliboqsdir/include"
+
+            AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <oqs/common.h>]], [[ OQS_init(); ]])], [ liboqs_linked=yes ],[ liboqs_linked=no ])
+
+            if test "x$liboqs_linked" = "xno" ; then
+                AC_MSG_ERROR([liboqs isn't found.
+                If it's already installed, specify its path using --with-liboqs=/dir/])
+            fi
+            AC_MSG_RESULT([yes])
+            AM_LDFLAGS="$AM_LDFLAGS -L$tryliboqsdir/lib"
+        else
+            AC_MSG_RESULT([yes])
+        fi
+
+        AM_CFLAGS="$AM_CFLAGS -DWOLFSSH_HAVE_LIBOQS"
+        ENABLED_LIBOQS="yes"
+    ]
+)
+
 #wolfssl
 AC_MSG_CHECKING([for wolfSSL])
 if test "x$prefix" = "xNONE"
@@ -245,3 +285,4 @@ AS_ECHO(["   * sftp:                      $ENABLED_SFTP"])
 AS_ECHO(["   * agent:                     $ENABLED_AGENT"])
 AS_ECHO(["   * TCP/IP Forwarding:         $ENABLED_FWD"])
 AS_ECHO(["   * Examples:                  $ENABLED_EXAMPLES"])
+AS_ECHO(["   * liboqs Integration:        $ENABLED_LIBOQS"])
