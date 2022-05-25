@@ -113,8 +113,8 @@ AC_ARG_WITH(wolfssl,
       if test -d "${withval}/lib" && test -d "${withval}/include"; then
         wcpath=${withval}
 
-        LDFLAGS="$LDFLAGS -L${wcpath}/lib"
-        CPPFLAGS="$CPPFLAGS -I${wcpath}/include"
+        LDFLAGS="-L${wcpath}/lib $LDFLAGS"
+        CPPFLAGS="-I${wcpath}/include $CPPFLAGS"
       else
         AC_MSG_ERROR([wolfSSL path error (${withval}): missing lib and include])
       fi

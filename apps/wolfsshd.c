@@ -26,9 +26,14 @@
 
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
+#include <wolfssh/test.h>
 #include <wolfssh/log.h>
 #include <wolfssl/wolfcrypt/wc_port.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
+
+#include "wolfsshd.h"
+
+#include <signal.h>
 
 #ifdef NO_INLINE
     #include <wolfssh/misc.h>
@@ -37,11 +42,75 @@
     #include "src/misc.c"
 #endif
 
+/* catch interrupts and close down gracefully */
+static volatile byte quit = 0;
+
+static void ShowUsage(void)
+{
+    printf("wolfsshd %s\n", LIBWOLFSSH_VERSION_STRING);
+    printf(" -?             display this help and exit\n");
+    printf(" -f <file name> Configuration file to use, default is /usr/locacl/etc/ssh/sshd_config\n");
+}
+
+static void interruptCatch(int in)
+{
+    (void)in;
+    printf("Closing down wolfSSHD\n");
+    quit = 1;
+}
+
+int   myoptind = 0;
+char* myoptarg = NULL;
+
 int main(int argc, char** argv)
 {
-    (void)argc;
-    (void)argv;
+    int ret = WS_SUCCESS;
+    int ch;
+    WOLFSSHD_CONFIG* conf = NULL;
+
+    const char* configFile = "/usr/local/etc/ssh/sshd_config";
+
+    signal(SIGINT, interruptCatch);
+    while ((ch = mygetopt(argc, argv, "?f:")) != -1) {
+        switch (ch) {
+            case 'f':
+                configFile = myoptarg;
+                break;
+
+            case '?':
+                ShowUsage();
+                return WS_SUCCESS;
+
+            default:
+                ShowUsage();
+                return WS_SUCCESS;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        wolfSSH_Init();
+    }
+
+    if (ret == WS_SUCCESS) {
+        conf = wolfSSH_NewConfig(NULL);
+        if (conf == NULL) {
+            ret = WS_MEMORY_E;
+        }
+    }
+
+    if (wolfSSH_LoadSSHD(conf, configFile) != WS_SUCCESS) {
+        printf("Error reading in configure file %s\n", configFile);
+    }
+
     printf("wolfSSH SSHD application\n");
+
+    /* wait for incoming connections and fork them off */
+    do {
+
+    } while (ret == WS_SUCCESS && quit == 0);
+
+    wolfSSH_FreeConfig(conf);
+    wolfSSH_Cleanup();
     return 0;
 }
 #endif /* WOLFSSH_SSHD */
