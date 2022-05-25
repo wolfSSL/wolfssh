@@ -637,6 +637,9 @@ static int ssh_worker(thread_ctx_t* threadCtx)
         p_passwd = getpwnam((const char *)userName);
         if (p_passwd == NULL) {
             /* Not actually a user on the system. */
+            #ifdef SHELL_DEBUG
+                fprintf(stderr, "user %s does not exist\n", userName);
+            #endif
             return WS_FATAL_ERROR;
         }
 
