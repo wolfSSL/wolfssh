@@ -72,6 +72,15 @@ extern "C" {
     #error only SCP server side supported
 #endif
 
+/* Detect if ECC needs RNG */
+#if !defined(HAVE_WC_ECC_SET_RNG) && \
+    defined(ECC_TIMING_RESISTANT) && (!defined(HAVE_FIPS) || \
+    (!defined(HAVE_FIPS_VERSION) || (HAVE_FIPS_VERSION != 2))) && \
+    !defined(HAVE_SELFTEST)
+    /* Enable use of wc_ecc_set_rng */
+    #define HAVE_WC_ECC_SET_RNG
+#endif
+
 #ifdef __cplusplus
 }
 #endif
