@@ -1,0 +1,87 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.31729.503
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{803FD0C6-D64E-4E16-9DC3-1DAEC859A3D2}") = "ESP32-SSH-Server", "ESP32-SSH-Server.vgdbproj", "{728C8318-BF85-4301-B284-65C18C401679}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{A4406E39-586C-411E-B4A7-52E03034EF56}"
+	ProjectSection(SolutionItems) = preProject
+		CMakeLists.txt = CMakeLists.txt
+		README.md = README.md
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "wolfSSH", "wolfSSH", "{321B8A01-BBCB-4F97-94A7-4895EA1E0C50}"
+	ProjectSection(SolutionItems) = preProject
+		components\wolfssh\CMakeLists.txt = components\wolfssh\CMakeLists.txt
+		components\wolfssh\component.mk = components\wolfssh\component.mk
+		components\wolfssh\include\config.h = components\wolfssh\include\config.h
+		components\wolfssh\wolfssh\settings.h = components\wolfssh\wolfssh\settings.h
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "wolfSSL", "wolfSSL", "{B49CD6BD-202F-4958-9841-08480C15F1D8}"
+	ProjectSection(SolutionItems) = preProject
+		components\wolfssl\CMakeLists.txt = components\wolfssl\CMakeLists.txt
+		components\wolfssl\component.mk = components\wolfssl\component.mk
+		components\wolfssl\include\config.h = components\wolfssl\include\config.h
+		components\wolfssl\wolfssl\options.h = components\wolfssl\wolfssl\options.h
+		components\wolfssl\include\user_settings.h = components\wolfssl\include\user_settings.h
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "main", "main", "{D743A727-34E4-4B25-A06A-C4ACFE57F974}"
+	ProjectSection(SolutionItems) = preProject
+		main\CMakeLists.txt = main\CMakeLists.txt
+		main\component.mk = main\component.mk
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "openocd", "openocd", "{68AE1391-9701-4920-BEE8-D2163474C23D}"
+	ProjectSection(SolutionItems) = preProject
+		openocd\scripts\interface\README.md = openocd\scripts\interface\README.md
+		openocd\scripts\interface\tigard.cfg = openocd\scripts\interface\tigard.cfg
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "enc28j60", "enc28j60", "{98FA323D-E2DE-458E-8571-5F418454BFBE}"
+	ProjectSection(SolutionItems) = preProject
+		components\eth_enc28j60\CMakeLists.txt = components\eth_enc28j60\CMakeLists.txt
+		components\eth_enc28j60\component.mk = components\eth_enc28j60\component.mk
+		components\eth_enc28j60\README.md = components\eth_enc28j60\README.md
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "include", "include", "{431C46B7-E036-4E15-BFB8-F522A7EFC090}"
+	ProjectSection(SolutionItems) = preProject
+		components\wolfssh\include\README.md = components\wolfssh\include\README.md
+		components\wolfssh\include\user_settings.h = components\wolfssh\include\user_settings.h
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|VisualGDB = Debug|VisualGDB
+		Release|VisualGDB = Release|VisualGDB
+		Tests (Debug)|VisualGDB = Tests (Debug)|VisualGDB
+		Tests (Release)|VisualGDB = Tests (Release)|VisualGDB
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{728C8318-BF85-4301-B284-65C18C401679}.Debug|VisualGDB.ActiveCfg = Debug|VisualGDB
+		{728C8318-BF85-4301-B284-65C18C401679}.Debug|VisualGDB.Build.0 = Debug|VisualGDB
+		{728C8318-BF85-4301-B284-65C18C401679}.Release|VisualGDB.ActiveCfg = Release|VisualGDB
+		{728C8318-BF85-4301-B284-65C18C401679}.Release|VisualGDB.Build.0 = Release|VisualGDB
+		{728C8318-BF85-4301-B284-65C18C401679}.Tests (Debug)|VisualGDB.ActiveCfg = Tests (Debug)|VisualGDB
+		{728C8318-BF85-4301-B284-65C18C401679}.Tests (Debug)|VisualGDB.Build.0 = Tests (Debug)|VisualGDB
+		{728C8318-BF85-4301-B284-65C18C401679}.Tests (Release)|VisualGDB.ActiveCfg = Tests (Release)|VisualGDB
+		{728C8318-BF85-4301-B284-65C18C401679}.Tests (Release)|VisualGDB.Build.0 = Tests (Release)|VisualGDB
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{321B8A01-BBCB-4F97-94A7-4895EA1E0C50} = {A4406E39-586C-411E-B4A7-52E03034EF56}
+		{B49CD6BD-202F-4958-9841-08480C15F1D8} = {A4406E39-586C-411E-B4A7-52E03034EF56}
+		{D743A727-34E4-4B25-A06A-C4ACFE57F974} = {A4406E39-586C-411E-B4A7-52E03034EF56}
+		{68AE1391-9701-4920-BEE8-D2163474C23D} = {A4406E39-586C-411E-B4A7-52E03034EF56}
+		{98FA323D-E2DE-458E-8571-5F418454BFBE} = {A4406E39-586C-411E-B4A7-52E03034EF56}
+		{431C46B7-E036-4E15-BFB8-F522A7EFC090} = {321B8A01-BBCB-4F97-94A7-4895EA1E0C50}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {B966C21F-D281-4250-A450-1915EC531B0A}
+	EndGlobalSection
+EndGlobal
