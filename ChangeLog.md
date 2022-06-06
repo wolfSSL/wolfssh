@@ -43,7 +43,7 @@
 - Fixes to local port forwarding
 
 ## Vulnerabilities
-- When processing SFTP messages, wolfSSH isn't checking data lengths against the size of the message and is potentially under-allocating, over-reading, and over-writing buffers. Thank you to Michael Randriananantenaina, an independent security researcher, for the report.
+- When processing SFTP messages, wolfSSH isn't checking data lengths against the size of the message and is potentially under-allocating, over-reading, and over-writing buffers. Thank you to Michael Randrianantenaina, an independent security researcher, for the report.
 
 # wolfSSH v1.4.7 (July 23, 2021)
 
