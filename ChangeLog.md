@@ -36,12 +36,14 @@
 ## Fixes
 
 - Fix for RSA public key auth
-- When decoding SFTP messages, fix the size checks so they don't wrap
 - Fix an issue where the testsuite and echoserver a socket failure
 - SFTP fix for getting attribute header
 - Fix for possible null dereference in SendKexDhReply
 - Remove reference to udp from test.h
 - Fixes to local port forwarding
+
+## Vulnerabilities
+- When processing SFTP messages, wolfSSH isn't checking data lengths against the size of the message and is potentially under-allocating, over-reading, and over-writing buffers. Thank you to Michael Randriananantenaina, an independent security researcher, for the report.
 
 # wolfSSH v1.4.7 (July 23, 2021)
 
