@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
- * 
+ *
  */
 
 #include "uart_helper.h"
@@ -31,9 +31,9 @@
 #define WOLFSSL_USER_SETTINGS
 #include <wolfssl/wolfcrypt/logging.h>
 
-/* portTICK_PERIOD_MS is ( ( TickType_t ) 1000 / configTICK_RATE_HZ ) 
- * configTICK_RATE_HZ is CONFIG_FREERTOS_HZ 
- * CONFIG_FREERTOS_HZ is 100 
+/* portTICK_PERIOD_MS is ( ( TickType_t ) 1000 / configTICK_RATE_HZ )
+ * configTICK_RATE_HZ is CONFIG_FREERTOS_HZ
+ * CONFIG_FREERTOS_HZ is 100
  **/
 #define UART_TICKS_TO_WAIT (20 / portTICK_RATE_MS)
 
@@ -71,11 +71,11 @@ int sendData(const char* logName, const char* data) {
 }
 
 /*
- *  if the external Receive Buffer has data (e.g. from SSH client) 
+ *  if the external Receive Buffer has data (e.g. from SSH client)
  *  then send that data to the UART (ExternalReceiveBufferSz bytes)
  */
 void uart_tx_task(void *arg) {
-    /* 
+    /*
      * when we receive chars from ssh, we'll send them out the UART
     */
     static const char *TX_TASK_TAG = "TX_TASK";
@@ -84,21 +84,21 @@ void uart_tx_task(void *arg) {
         if (ExternalReceiveBufferSz() > 0)
         {
             WOLFSSL_MSG("UART Send Data");
-            
-            /* we don't want to send 0x7f as a backspace, we want a real backspace 
+
+            /* we don't want to send 0x7f as a backspace, we want a real backspace
              * TODO: optional character mapping */
             if ((byte)ExternalReceiveBuffer() == 0x7f && ExternalReceiveBufferSz()  == 1) {
                 sendData(TX_TASK_TAG, backspace);
-            } 
+            }
             else
             {
                 sendData(TX_TASK_TAG, (char*)ExternalReceiveBuffer());
             }
-            
+
             /* once we sent data, reset the pointer to zedro to indicate empty queue */
             Set_ExternalReceiveBufferSz(0);
         }
-       
+
         /* yield. let's not be greedy */
         taskYIELD();
     }
@@ -107,7 +107,7 @@ void uart_tx_task(void *arg) {
 
 static SemaphoreHandle_t xUART_Semaphore = NULL;
 
-void InitSemaphore() 
+void InitSemaphore()
 {
     if (xUART_Semaphore == NULL) {
         xUART_Semaphore = xSemaphoreCreateMutex();
@@ -124,7 +124,7 @@ void InitSemaphore()
  */
 void uart_rx_task(void *arg) {
     InitSemaphore();
-    /* 
+    /*
      * when we receive chars from UART, we'll send them out SSH
     */
     static const char *RX_TASK_TAG = "RX_TASK";
@@ -140,26 +140,26 @@ void uart_rx_task(void *arg) {
         if (rxBytes > 0) {
             WOLFSSL_MSG("UART Rx Data!");
             data[rxBytes] = 0;
-            
+
             ESP_LOGI(RX_TASK_TAG, "Read %d bytes: '%s'", rxBytes, data);
             ESP_LOG_BUFFER_HEXDUMP(RX_TASK_TAG, data, rxBytes, ESP_LOG_INFO);
-            
-            
-            /* Set_ExternalTransmitBuffer(data, rxBytes);  TODO: to use this, we need to move external buffer stuff to its own file   */ 
-            
+
+
+            /* Set_ExternalTransmitBuffer(data, rxBytes);  TODO: to use this, we need to move external buffer stuff to its own file   */
+
             /* thisBug points to the _ExternalTransmitBuffer  */
             thisBuf = ExternalTransmitBuffer();
-            
+
             /* save the data to send to the External Transmit Buffer (e.g. to send to SSH) */
             memcpy((char*)thisBuf, data, rxBytes); /* TODO this needs an RTOS wrapper */
 
             Set_ExternalTransmitBufferSz(rxBytes);
         }
-        
+
         /* yield. let's not be greedy */
         taskYIELD();
     }
-    
+
     // we never actually get here
     free(data);
 }

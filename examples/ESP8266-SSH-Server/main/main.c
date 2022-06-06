@@ -16,18 +16,18 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
- * 
+ *
  * Adapted from Public Domain Expressif ENC28J60 Example
- * 
+ *
  * https://github.com/espressif/esp-idf/blob/047903c612e2c7212693c0861966bf7c83430ebf/examples/ethernet/enc28j60/main/enc28j60_example_main.c#L1
- * 
+ *
  *
  * WARNING: although this code makes use of the UART #2 (as UART_NUM_0)
- * 
+ *
  * DO NOT LEAVE ANYTHING CONNECTED TO TXD2 (GPIO 15) and RXD2 (GPIO 13)
- * 
+ *
  * In particular, GPIO 15 must not be high during programming.
- * 
+ *
  */
 
 /* include ssh_server_config.h first  */
@@ -50,15 +50,15 @@
  * wolfSSL
  *
  * IMPORTANT: Ensure wolfSSL settings.h appears before any other wolfSSL headers
- * 
+ *
  * Example locations:
 
  *   Standard ESP-IDF:
  *   C:\Users\[username]\Desktop\esp-idf\components\wolfssh\wolfssl\wolfcrypt\settings.h
- * 
+ *
  *   VisualGDB
  *   C:\SysGCC\esp32\esp-idf\[version]\components\wolfssl\wolfcrypt\settings.h
- *   
+ *
  **/
 #ifdef WOLFSSL_STALE_EXAMPLE
     #warning "This project is configured using local, stale wolfSSL code. See Makefile."
@@ -78,8 +78,8 @@
 
 #define WOLFSSH_TEST_THREADING
 
-/*  note "file system": "load keys and certificate from files" vs NO_FILESYSTEM 
- *  and "access an actual filesystem via SFTP/SCP" vs WOLFSSH_NO_FILESYSTEM 
+/*  note "file system": "load keys and certificate from files" vs NO_FILESYSTEM
+ *  and "access an actual filesystem via SFTP/SCP" vs WOLFSSH_NO_FILESYSTEM
  *  we'll typically have neither on an embedded device:
  */
 #define NO_FILESYSTEM
@@ -98,12 +98,12 @@
 
 #include "ssh_server.h"
 
-/* logging 
- * see https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/system/log.html 
+/* logging
+ * see https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/system/log.html
  */
 #ifdef LOG_LOCAL_LEVEL
     #undef LOG_LOCAL_LEVEL
-#endif    
+#endif
 #define LOG_LOCAL_LEVEL ESP_LOG_INFO
 #include "esp_log.h"
 
@@ -173,15 +173,15 @@ void init_UART(void) {
      * what happens here is we SWAP the UART0 to instead be on UART #2 using
      * pins 13 and 15. Even though it is UART #2, it is still referred to as
      * with the reference UART_NUM_0.
-     * 
+     *
      * There is no UART_NUM_2
      */
 
-    
+
     /* Configure parameters of an UART driver,
      * communication pins and install the driver
-     */        
-    ESP_LOGI(TAG, "Begin UART_NUM_0 driver install.");    
+     */
+    ESP_LOGI(TAG, "Begin UART_NUM_0 driver install.");
     uart_config_t uart_config = {
         .baud_rate = BAUD_RATE,
         .data_bits = UART_DATA_8_BITS,
@@ -189,32 +189,32 @@ void init_UART(void) {
         .stop_bits = UART_STOP_BITS_1,
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE
     };
-    
-    ESP_LOGI(TAG, "UART_NUM_0 uart_param_config.");    
+
+    ESP_LOGI(TAG, "UART_NUM_0 uart_param_config.");
     uart_param_config(UART_NUM_0, &uart_config);
 
     // Install UART driver, and get the queue.
-    ESP_LOGI(TAG, "UART_NUM_0 uart_driver_install.");    
+    ESP_LOGI(TAG, "UART_NUM_0 uart_driver_install.");
     uart_driver_install(UART_NUM_0, BUF_SIZE * 2, BUF_SIZE * 2, 100, &uart0_queue, 0);
-    ESP_LOGI(TAG, "Done: UART_NUM_0 driver install.");    
+    ESP_LOGI(TAG, "Done: UART_NUM_0 driver install.");
 
     /* UART0 swap. Use MTCK as UART0 RX, MTDO as UART0 TX, so ROM log will not output from this new
-     * UART0. We also need to use MTDO (U0RTS) and MTCK (U0CTS) as UART0 in hardware. 
+     * UART0. We also need to use MTDO (U0RTS) and MTCK (U0CTS) as UART0 in hardware.
      * returns ESP_OK Success
-     * 
+     *
      * The UART needs to be consfigured before swap, otherwise we see error:
      * E uart: uart_wait_tx_done(256): uart driver error "uart_enable_swap"
      */
     /* swap UART_NUM_0 GPIO pins 1,3 with 13,15 */
-    ESP_LOGI(TAG, "Begin uart_enable_swap to UART #2 on pins 13 and 15.");    
+    ESP_LOGI(TAG, "Begin uart_enable_swap to UART #2 on pins 13 and 15.");
     uart_enable_swap();
-    ESP_LOGI(TAG, "Done with uart_enable_swap.");    
-    
-    
+    ESP_LOGI(TAG, "Done with uart_enable_swap.");
+
+
     /* UART_NUM_1 on UART #1 is Tx only! There is no Rx pin!!
-     * 
+     *
      * Configure UART #1 to be logging output in the ESP-IDF menu config.
-     * 
+     *
      * This is needed as we want a "clean" UART to forward to SSH, and not
      * all the text on the USB port.
      *
@@ -242,18 +242,18 @@ bool NoEthernet()
     bool ret = true;
 #ifdef USE_ENC28J60
     /* the ENC28J60 is only available if one has been installed  */
-    if (EthernetReady_ENC28J60()) { 
+    if (EthernetReady_ENC28J60()) {
         ret = false;
     }
 #endif
-    
+
 #ifndef USE_ENC28J60
     /* WiFi is pretty much always available on the ESP32 */
     if (wifi_ready()) {
         ret = false;
     }
 #endif
-    
+
     return ret;
 }
 
@@ -262,13 +262,13 @@ bool NoEthernet()
  */
 void init() {
     ESP_LOGI(TAG, "Begin main init.");
-    
+
 #ifdef DEBUG_WOLFSSH
     ESP_LOGI(TAG, "wolfSSH debugging on.");
     wolfSSH_Debugging_ON();
 #endif
 
-    
+
 #ifdef DEBUG_WOLFSSL
     ESP_LOGI(TAG, "wolfSSL debugging on.");
     wolfSSL_Debugging_ON();
@@ -277,27 +277,27 @@ void init() {
 #endif
 
     init_UART();
-    
+
 #ifdef USE_ENC28J60
     ESP_LOGI(TAG, "Found USE_ENC28J60 config.");
     init_ENC28J60();
 #else
     ESP_LOGI(TAG, "Setting up nvs flash for WiFi.");
     ESP_ERROR_CHECK(nvs_flash_init());
-    
+
 //    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
 //        ESP_ERROR_CHECK(nvs_flash_erase());
 //        ret = nvs_flash_init();
 //    }
 //    ESP_ERROR_CHECK(ret);
-    
-#ifdef WOLFSSH_SERVER_IS_AP    
+
+#ifdef WOLFSSH_SERVER_IS_AP
     ESP_LOGI(TAG, "Begin setup WiFi Soft AP.");
     wifi_init_softap();
     ESP_LOGI(TAG, "End setup WiFi Soft AP.");
 #endif
-    
-#ifdef WOLFSSH_SERVER_IS_STA 
+
+#ifdef WOLFSSH_SERVER_IS_STA
     ESP_LOGI(TAG, "Begin setup WiFi STA.");
     wifi_init_sta();
     ESP_LOGI(TAG, "End setup WiFi STA.");
@@ -305,21 +305,21 @@ void init() {
 
 #endif
 
-    
+
     TickType_t EthernetWaitDelayTicks = 1000 / portTICK_PERIOD_MS;
 
-       
+
     while (NoEthernet()) {
         WOLFSSL_MSG("Waiting for ethernet...");
         vTaskDelay(EthernetWaitDelayTicks ? EthernetWaitDelayTicks : 1);
     }
-    
+
     /* one of the most important aspects of security is the time and date values */
     set_time();
 
     WOLFSSL_MSG("inet_pton"); /* TODO */
-    
-    wolfSSH_Init(); 
+
+    wolfSSH_Init();
 }
 
 /**
@@ -339,21 +339,21 @@ void app_main(void) {
     /* note that by the time we get here, the scheduler is already running!
      * see https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/system/freertos.html#esp-idf-freertos-applications
      * Unlike Vanilla FreeRTOS, users must not call vTaskStartScheduler();
-     *        
+     *
      * all of the tasks are at the same, highest idle priority, so they will all get equal attention
      * when priority was set to configMAX_PRIORITIES - [1,2,3] there was an odd WDT timeout warning.
      */
     xTaskCreate(uart_rx_task, "uart_rx_task", 1024 * 2, NULL, tskIDLE_PRIORITY, NULL);
-    
+
     xTaskCreate(uart_tx_task, "uart_tx_task", 1024 * 2, NULL, tskIDLE_PRIORITY, NULL);
 
     xTaskCreate(server_session, "server_session", 6024 * 2, NULL, tskIDLE_PRIORITY, NULL);
 
-    
+
     for (;;) {
         /* we're not actually doing anything here, other than a heartbeat message */
         WOLFSSL_MSG("wolfSSH Server main loop heartbeat!");
-        
+
         taskYIELD();
         vTaskDelay(DelayTicks ? DelayTicks : 1); /* Minimum delay = 1 tick */
     }

@@ -3,9 +3,9 @@
 
 /* default is wireless unless USE_ENC28J60 is defined */
 #undef USE_ENC28J60
-// #define USE_ENC28J60    
+// #define USE_ENC28J60
 
-/* wifi can be either STA or AP 
+/* wifi can be either STA or AP
  *  #define WOLFSSH_SERVER_IS_AP
  *  #define WOLFSSH_SERVER_IS_STA
  **/
@@ -105,22 +105,22 @@
                                      "time.nist.gov",        \
                                      "utcnist.colorado.edu"  \
                                      }                       \
-                        ) 
+                        )
 
-/* number of elements 
- * To determine the number of elements in the array, we can divide the total size of 
- * the array by the size of the array element 
+/* number of elements
+ * To determine the number of elements in the array, we can divide the total size of
+ * the array by the size of the array element
  * See https://stackoverflow.com/questions/37538/how-do-i-determine-the-size-of-my-array-in-c
  **/
 #define NELEMS(x)  ( (int)(sizeof(x) / sizeof((x)[0])) )
-    
+
 /* #define NTP_SERVER_COUNT  (int)(sizeof(NTP_SERVER_LIST) / sizeof(NTP_SERVER_LIST[0])) */
 #define NTP_SERVER_COUNT NELEMS(NTP_SERVER_LIST)
 
 // extern char* ntpServerList[NTP_SERVER_COUNT];
 extern char* ntpServerList[NTP_SERVER_COUNT];
 
-    
+
 #define TIME_ZONE "PST-8"
 
 /**
@@ -136,6 +136,6 @@ extern char* ntpServerList[NTP_SERVER_COUNT];
         #error Concurrent WOLFSSH_SERVER_IS_AP and WOLFSSH_SERVER_IS_STA not supported. Pick one. Disable the other.
     #endif
 #endif
-  
+
 void ssh_server_config_init();
 

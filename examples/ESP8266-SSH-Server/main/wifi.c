@@ -177,7 +177,7 @@ void wifi_init_softap() {
         .authmode = WIFI_AUTH_WPA2_PSK
         },
     };
-    
+
     if (strlen(EXAMPLE_ESP_WIFI_AP_PASS) == 0) {
         wifi_config.ap.authmode = WIFI_AUTH_OPEN;
     }
@@ -190,7 +190,7 @@ void wifi_init_softap() {
         "wifi_init_softap finished. SSID:%s password:%s",
         EXAMPLE_ESP_WIFI_AP_SSID,
         EXAMPLE_ESP_WIFI_AP_PASS);
-    
+
     /* we don't need to wait for an IP address in AP mode */
     WiFiEthernetReady = 1;
 }
