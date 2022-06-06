@@ -6,20 +6,20 @@
  * we code .gitignore to also exclude my_private_config.h with wifi
  * SSID and passwords, etc. But it needs to be included in this project
  * but we don't know if other's will be on different envrionments...
- * 
- * So: 
+ *
+ * So:
  *
  * Search for non-GitHub repo file called my_private_config.h in one of
  * these locations:
- * 
- * Sysprogs: /c/workspace/my_private_config.h 
+ *
+ * Sysprogs: /c/workspace/my_private_config.h
  * Windows:  /workspace/my_private_config.h
  * WSL:      /mnt/c/workspace/my_private_config.h
  * Linux:    ~/my_private_config.h
- * 
+ *
  * If one of those files is NOT found, then the example from the Espressif
  * make menuconfig will be used.
- * 
+ *
  * For this file to properly detect various "my_private_config.h" files, this
  * text needs to be in the Makefile:
 
@@ -29,7 +29,7 @@ $(info "Found VisualGDB /c/workspace/my_private_config.h")
 CPPFLAGS += -DSYSPROGS_MY_PRIVATE_CONFIG=/c/workspace/my_private_config.h
 CFLAGS   += -DSYSPROGS_MY_PRIVATE_CONFIG=/c/workspace/my_private_config.h
 
-else 
+else
 # Windows private config in /workspace/
 ifeq (/workspace/my_private_config.h, $(wildcard /workspace/my_private_config.h))
 $(info "Found /workspace/my_private_config.h" )
@@ -66,14 +66,14 @@ $(info $$CPPFLAGS is [${CPPFLAGS}])
 #define EXAMPLE_ESP_WIFI_AP_SSID      "TheBucketHill"
 #define EXAMPLE_ESP_WIFI_AP_PASS      "jackorjill"
 
-/* clang intellisense gives a pragma-messages warning 
- * but we'll ignore it here. 
+/* clang intellisense gives a pragma-messages warning
+ * but we'll ignore it here.
  */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-W#pragma-messages"
 
 #if defined(NO_PRIVATE_CONFIG)
-    /* reminder that if you put a password here, 
+    /* reminder that if you put a password here,
      * it might get checked into GitHub!         */
     #define EXAMPLE_ESP_WIFI_SSID      CONFIG_ESP_WIFI_SSID
     #define EXAMPLE_ESP_WIFI_PASS      CONFIG_ESP_WIFI_PASSWORD
@@ -82,7 +82,7 @@ $(info $$CPPFLAGS is [${CPPFLAGS}])
     #pragma message ( "Found SYSPROGS_MY_PRIVATE_CONFIG !" )
     #pragma message ( XSTR(SYSPROGS_MY_PRIVATE_CONFIG) )
     #include XSTR(SYSPROGS_MY_PRIVATE_CONFIG)
-    
+
 #elif defined(WINDOWS_MY_PRIVATE_CONFIG)
     #pragma message ( "Found WINDOWS_MY_PRIVATE_CONFIG !" )
     #pragma message ( XSTR(WSL_MY_PRIVATE_CONFIG) )
@@ -99,23 +99,23 @@ $(info $$CPPFLAGS is [${CPPFLAGS}])
     #include XSTR(LINUX_MY_PRIVATE_CONFIG)
 
 #else
-    /* reminder that if you put a password here, 
+    /* reminder that if you put a password here,
      * it might get checked into GitHub!         */
     #warning "Not using my_private_config.h"
 
     #ifndef  CONFIG_EXAMPLE_WIFI_SSID
         #define CONFIG_EXAMPLE_WIFI_SSID "TheBucketHill"
-    #endif    
+    #endif
     #ifndef  CONFIG_EXAMPLE_WIFI_PASSWORD
         #define CONFIG_EXAMPLE_WIFI_PASSWORD "jackorjill"
-    #endif    
+    #endif
 
     #ifndef  CONFIG_ESP_WIFI_SSID
         #define CONFIG_ESP_WIFI_SSID "TheBucketHill"
-    #endif    
+    #endif
     #ifndef  CONFIG_ESP_WIFI_PASSWORD
         #define CONFIG_ESP_WIFI_PASSWORD "jackorjill"
-    #endif    
+    #endif
 
     #define EXAMPLE_ESP_WIFI_SSID      CONFIG_ESP_WIFI_SSID
     #define EXAMPLE_ESP_WIFI_PASS      CONFIG_ESP_WIFI_PASSWORD
