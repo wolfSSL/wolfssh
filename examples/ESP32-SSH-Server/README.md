@@ -712,4 +712,3 @@ For any issues related to wolfSSL, please open an [issue](https://github.com/wol
 visit the [wolfSSL support forum](https://www.wolfssl.com/forums/),
 send an email to [support](mailto:support@wolfssl.com),   
 or [contact us](https://www.wolfssl.com/contact/).
-
