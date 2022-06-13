@@ -23,9 +23,12 @@
 
 typedef struct WOLFSSHD_CONFIG WOLFSSHD_CONFIG;
 
-WOLFSSHD_CONFIG* wolfSSH_NewConfig(void* heap);
-void wolfSSH_FreeConfig(WOLFSSHD_CONFIG* conf);
-int wolfSSH_LoadSSHD(WOLFSSHD_CONFIG* con, const char* filename);
+WOLFSSHD_CONFIG* wolfSSHD_NewConfig(void* heap);
+void wolfSSHD_FreeConfig(WOLFSSHD_CONFIG* conf);
+int wolfSSHD_LoadSSHD(WOLFSSHD_CONFIG* conf, const char* filename);
+
+char* wolfSSHD_GetBanner(WOLFSSHD_CONFIG* conf);
+word16 wolfSSHD_GetPort(WOLFSSHD_CONFIG* conf);
 
 #endif /* WOLFSSHD_H */
 

@@ -51,7 +51,7 @@ struct WOLFSSHD_CONFIG {
     char* kekAlgos;
     char* listenAddress;
     char* authKeysFile;
-    word32 port;
+    word16 port;
     byte passwordAuth:1;
     byte pubKeyAuth:1;
     byte permitRootLogin:1;
@@ -59,7 +59,45 @@ struct WOLFSSHD_CONFIG {
     byte usePrivilegeSeparation:1;
 };
 
-WOLFSSHD_CONFIG* wolfSSH_NewConfig(void* heap)
+/* returns WS_SUCCESS on success */
+static int wolfSSHD_CreateString(char** out, const char* in, int inSz,
+        void* heap)
+{
+    int ret = WS_SUCCESS;
+    int idx = 0;
+
+    /* remove white spaces */
+    while (idx < inSz && in[idx] == ' ') idx++;
+
+    if (idx == inSz) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    /* malloc new string and set it */
+    if (ret == WS_SUCCESS) {
+        *out = (char*)WMALLOC((inSz - idx) + 1, heap, DYNTYPE_SSHD);
+        if (*out == NULL) {
+            ret = WS_MEMORY_E;
+        }
+        else {
+            XMEMCPY(*out, in + idx, inSz - idx);
+            *(*out + (inSz - idx)) = '\0';
+        }
+    }
+
+    return ret;
+}
+
+static void wolfSSHD_FreeString(char** in, void* heap)
+{
+    if (*in != NULL) {
+        WFREE(*in, heap, DYNTYPE_SSHD);
+        *in = NULL;
+    }
+    (void)heap;
+}
+
+WOLFSSHD_CONFIG* wolfSSHD_NewConfig(void* heap)
 {
     WOLFSSHD_CONFIG* ret;
 
@@ -70,24 +108,66 @@ WOLFSSHD_CONFIG* wolfSSH_NewConfig(void* heap)
     }
     else {
         WMEMSET(ret, 0, sizeof(WOLFSSHD_CONFIG));
+
+        /* default values */
+        ret->port = 22;
     }
     return ret;
 
 }
 
-void wolfSSH_FreeConfig(WOLFSSHD_CONFIG* conf)
+void wolfSSHD_FreeConfig(WOLFSSHD_CONFIG* conf)
 {
     void* heap;
 
     if (conf != NULL) {
         heap = conf->heap;
 
+        wolfSSHD_FreeString(&conf->authKeysFile, heap);
+
         WFREE(conf, heap, DYNTYPE_SSHD);
     }
 }
 
 #define MAX_LINE_SIZE 160
-int wolfSSH_LoadSSHD(WOLFSSHD_CONFIG* conf, const char* filename)
+
+/* returns WS_SUCCESS on success
+ * Fails if any option is found that is unknown/unsupported
+ */
+static int wolfSSHD_ParseConfigLine(WOLFSSHD_CONFIG* conf, const char* l,
+        int lSz)
+{
+    int ret = WS_BAD_ARGUMENT;
+    int sz;
+
+    /* supported config options */
+    const char authKeyFile[] = "AuthorizedKeysFile";
+
+    sz = (int)XSTRLEN(authKeyFile);
+    if (lSz > sz && XSTRNCMP(l, authKeyFile, sz) == 0) {
+        ret = wolfSSHD_CreateString(&conf->authKeysFile, l + sz, lSz - sz,
+                conf->heap);
+    }
+
+    if (XSTRNCMP(l, "UsePrivilegeSeparation", 18) == 0) {
+        ret = WS_SUCCESS;
+    }
+
+    if (XSTRNCMP(l, "Subsystem", 9) == 0) {
+
+        ret = WS_SUCCESS;
+    }
+
+    if (ret == WS_BAD_ARGUMENT) {
+        printf("unknown / unsuported config line\n");
+    }
+
+    (void)conf;(void)lSz;
+    return ret;
+}
+
+
+int wolfSSHD_LoadSSHD(WOLFSSHD_CONFIG* conf, const char* filename)
 {
     XFILE f;
     int ret = WS_SUCCESS;
@@ -116,11 +196,28 @@ int wolfSSH_LoadSSHD(WOLFSSHD_CONFIG* conf, const char* filename)
             continue; /* commented out line */
         }
 
-        printf("read config : %s\n", current);
+        ret = wolfSSHD_ParseConfigLine(conf, current, currentSz);
+        if (ret != WS_SUCCESS) {
+            printf("Unable to parse config line : %s\n", current);
+            break;
+        }
     }
     XFCLOSE(f);
 
     return ret;
 }
 
+char* wolfSSHD_GetBanner(WOLFSSHD_CONFIG* conf)
+{
+    if (conf != NULL)
+        return conf->banner;
+    return NULL;
+}
+
+word16 wolfSSHD_GetPort(WOLFSSHD_CONFIG* conf)
+{
+    if (conf != NULL)
+        return conf->port;
+    return 0;
+}
 #endif /* WOLFSSH_SSHD */
