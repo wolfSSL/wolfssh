@@ -44,6 +44,10 @@
     #include "src/misc.c"
 #endif
 
+#ifndef WOLFSSHD_TIMEOUT
+    #define WOLFSSHD_TIMEOUT 1
+#endif
+
 /* catch interrupts and close down gracefully */
 static volatile byte quit = 0;
 static const char defaultBanner[] = "wolfSSHD\n";
@@ -59,6 +63,7 @@ static void ShowUsage(void)
     printf("wolfsshd %s\n", LIBWOLFSSH_VERSION_STRING);
     printf(" -?             display this help and exit\n");
     printf(" -f <file name> Configuration file to use, default is /usr/locacl/etc/ssh/sshd_config\n");
+    printf(" -p <int>       Port number to listen on\n");
 }
 
 static void interruptCatch(int in)
@@ -68,6 +73,38 @@ static void interruptCatch(int in)
     quit = 1;
 }
 
+static void wolfSSHDLoggingCb(enum wolfSSH_LogLevel lvl, const char *const str)
+{
+    fprintf(stderr, "[PID %d]: %s\n", getpid(), str);
+    (void)lvl;
+}
+
+static int wsUserAuth(byte authType,
+                      WS_UserAuthData* authData,
+                      void* ctx)
+{
+    if (ctx == NULL) {
+        fprintf(stderr, "wsUserAuth: ctx not set");
+        return WOLFSSH_USERAUTH_FAILURE;
+    }
+
+    if (authType != WOLFSSH_USERAUTH_PASSWORD &&
+#ifdef WOLFSSH_ALLOW_USERAUTH_NONE
+        authType != WOLFSSH_USERAUTH_NONE &&
+#endif
+        authType != WOLFSSH_USERAUTH_PUBLICKEY) {
+
+        return WOLFSSH_USERAUTH_FAILURE;
+    }
+
+    (void)ctx;
+    (void)authData;
+
+    /* @TODO allows all connections */
+    return WOLFSSH_USERAUTH_SUCCESS;
+}
+
+
 static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
 {
     int ret = WS_SUCCESS;
@@ -76,17 +113,13 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
     /* create a new WOLFSSH_CTX */
     *ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
     if (ctx == NULL) {
-        fprintf(stderr, "Couldn't allocate SSH CTX data.\n");
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Couldn't allocate SSH CTX data.");
         ret = WS_MEMORY_E;
     }
 
     /* setup authority callback for checking peer connections */
     if (ret == WS_SUCCESS) {
-//        WMEMSET(&pwMapList, 0, sizeof(pwMapList));
-//        if (serverArgs->user_auth == NULL)
-//            wolfSSH_SetUserAuth(ctx, wsUserAuth);
-//        else
-//            wolfSSH_SetUserAuth(ctx, ((func_args*)args)->user_auth);
+        wolfSSH_SetUserAuth(*ctx, wsUserAuth);
     }
 
     /* set banner to display on connection */
@@ -233,12 +266,34 @@ int SCP_Subsystem()
 /* handle wolfSSH accept and directing to correct subsystem */
 static void* wolfSSHD_HandleConnection(void* arg)
 {
-    WOLFSSHD_CONNECTION* conn;
-    WOLFSSH* ssh;
+    int ret = WS_SUCCESS;
 
-    conn = (WOLFSSHD_CONNECTION*)arg;
-    ssh = wolfSSH_new(conn->ctx);
-    wolfSSH_set_fd(ssh, conn->fd);
+    WOLFSSHD_CONNECTION* conn = NULL;
+    WOLFSSH* ssh = NULL;
+
+    if (arg == NULL) {
+        ret = BAD_FUNC_ARG;
+    }
+
+    if (ret == WS_SUCCESS) {
+        conn = (WOLFSSHD_CONNECTION*)arg;
+        ssh = wolfSSH_new(conn->ctx);
+        if (ssh == NULL) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Failed to create new WOLFSSH struct");
+            ret = -1;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        wolfSSH_set_fd(ssh, conn->fd);
+        ret = wolfSSH_accept(ssh);
+    }
+
+    wolfSSH_free(ssh);
+    if (conn != NULL) {
+        WCLOSESOCKET(conn->fd);
+    }
     return NULL;
 }
 
@@ -251,18 +306,55 @@ static int wolfSSHD_NewConnection(WOLFSSHD_CONNECTION* conn)
 
     pd = fork();
     if (pd < 0) {
-        printf("issue spawning new process\n");
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue spawning new process");
         ret = -1;
     }
 
     if (pd == 0) {
         /* child process */
-        (void)wolfSSHD_HandleConnection((void*)&conn);
+        (void)wolfSSHD_HandleConnection((void*)conn);
     }
     else {
-        printf("spawned new process %d\n", pd);
+        wolfSSH_Log(WS_LOG_INFO, "[SSHD] Spawned new process %d\n", pd);
     }
 
+    return ret;
+}
+
+
+/* return non zero value for a pending connection */
+static int wolfSSHD_PendingConnection(WS_SOCKET_T fd)
+{
+    int ret;
+    struct timeval t;
+    fd_set r, w, e;
+    WS_SOCKET_T nfds = fd + 1;
+
+    t.tv_usec = 0;
+    t.tv_sec  = WOLFSSHD_TIMEOUT;
+
+    FD_ZERO(&r);
+    FD_ZERO(&w);
+    FD_ZERO(&e);
+
+    FD_SET(fd, &r);
+    ret = select(nfds, &r, &w, &e, &t);
+    if (ret < 0) {
+        /* a socket level issue happend */
+        printf("Error waiting for connection on socket\n");
+        quit = 1;
+        ret  = 0;
+    }
+    else if (ret > 0) {
+        if (FD_ISSET(fd, &r)) {
+            printf("Connection found\n");
+        }
+        else {
+            printf("Found write or error data\n");
+            ret = 0; /* nothing to read */
+        } 
+    }
+    //    printf("Timeout waiting for connection\n");
     return ret;
 }
 
@@ -283,6 +375,7 @@ int main(int argc, char** argv)
 
     signal(SIGINT, interruptCatch);
 
+    wolfSSH_SetLoggingCb(wolfSSHDLoggingCb);
     #ifdef DEBUG_WOLFSSH
         wolfSSH_Debugging_ON();
     #endif
@@ -302,10 +395,22 @@ int main(int argc, char** argv)
     }
 
 
-    while ((ch = mygetopt(argc, argv, "?f:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?f:p:")) != -1) {
         switch (ch) {
             case 'f':
                 configFile = myoptarg;
+                break;
+
+            case 'p':
+                ret = XATOI(myoptarg);
+                if (ret < 0) {
+                    printf("Issue parsing port number %s\n", myoptarg);
+                    ret = BAD_FUNC_ARG;
+                }
+                else {
+                    port = (word16)ret;
+                    ret = WS_SUCCESS;
+                }
                 break;
 
             case '?':
@@ -329,13 +434,14 @@ int main(int argc, char** argv)
         port = wolfSSHD_GetPort(conf);
     }
 
-    printf("wolfSSH SSHD application\n");
+    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Starting wolfSSH SSHD application");
 
     if (ret == WS_SUCCESS) {
         ret = SetupCTX(conf, &ctx);
     }
 
     tcp_listen(&listenFd, &port, 1);
+    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Listening on port %d", port);
 
     /* wait for incoming connections and fork them off */
     while (ret == WS_SUCCESS && quit == 0) {
@@ -348,15 +454,17 @@ int main(int argc, char** argv)
     #endif
 
         /* wait for a connection */
-        conn.ctx = ctx;
-    #ifdef WOLFSSL_NUCLEUS
-        conn.fd = NU_Accept(listenFd, &clientAddr, 0);
-    #else
-        conn.fd = accept(listenFd, (struct sockaddr*)&clientAddr,
+        if (wolfSSHD_PendingConnection(listenFd)) {
+            conn.ctx = ctx;
+        #ifdef WOLFSSL_NUCLEUS
+            conn.fd = NU_Accept(listenFd, &clientAddr, 0);
+        #else
+            conn.fd = accept(listenFd, (struct sockaddr*)&clientAddr,
                                                          &clientAddrSz);
-    #endif
+        #endif
 
-        ret = wolfSSHD_NewConnection(&conn);
+            ret = wolfSSHD_NewConnection(&conn);
+        }
     }
 
     wolfSSHD_FreeConfig(conf);

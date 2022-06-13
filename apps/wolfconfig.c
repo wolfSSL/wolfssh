@@ -158,6 +158,28 @@ static int wolfSSHD_ParseConfigLine(WOLFSSHD_CONFIG* conf, const char* l,
         ret = WS_SUCCESS;
     }
 
+    if (XSTRNCMP(l, "ChallengeResponseAuthentication", 31) == 0) {
+        ret = WS_SUCCESS;
+    }
+
+    if (XSTRNCMP(l, "UsePAM", 6) == 0) {
+        ret = WS_SUCCESS;
+    }
+
+    if (XSTRNCMP(l, "X11Forwarding", 13) == 0) {
+        ret = WS_SUCCESS;
+    }
+
+    if (XSTRNCMP(l, "PrintMotd", 9) == 0) {
+        ret = WS_SUCCESS;
+    }
+
+    if (XSTRNCMP(l, "AcceptEnv", 9) == 0) {
+        ret = WS_SUCCESS;
+    }
+
+
+
     if (ret == WS_BAD_ARGUMENT) {
         printf("unknown / unsuported config line\n");
     }
@@ -178,6 +200,11 @@ int wolfSSHD_LoadSSHD(WOLFSSHD_CONFIG* conf, const char* filename)
         return BAD_FUNC_ARG;
 
     f = XFOPEN(filename, "rb");
+    if (f == XBADFILE) {
+        printf("Unable to open SSHD config file %s\n", filename);
+        return BAD_FUNC_ARG;
+    }
+
     while ((current = XFGETS(buf, MAX_LINE_SIZE, f)) != NULL) {
         int currentSz = (int)XSTRLEN(current);
 
