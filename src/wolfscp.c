@@ -1312,7 +1312,7 @@ int ParseScpCommand(WOLFSSH* ssh)
  */
 int ReceiveScpMessage(WOLFSSH* ssh)
 {
-    int sz, ret = WS_SUCCESS;
+    int sz = 0, ret = WS_SUCCESS;
     word32 idx = 0;
     byte* buf;
 
@@ -1332,17 +1332,44 @@ int ReceiveScpMessage(WOLFSSH* ssh)
 
     /* keep reading until newline found */
     do {
+        int err;
+        word32 lastChannel = 0;
+
         if (ssh->scpRecvMsgSz >= DEFAULT_SCP_MSG_SZ - 1) {
             WLOG(WS_LOG_ERROR, "scp: buffer not big enough to recv message");
             return WS_BUFFER_E;
         }
 
-        sz = wolfSSH_stream_read(ssh, buf + ssh->scpRecvMsgSz,
-                DEFAULT_SCP_MSG_SZ - ssh->scpRecvMsgSz);
-        if (sz < 0)
-            return sz;
-        ssh->scpRecvMsgSz += sz;
-        sz = ssh->scpRecvMsgSz;
+        err = wolfSSH_worker(ssh, &lastChannel);
+        if (err < 0) {
+            int rc;
+
+            rc = wolfSSH_get_error(ssh);
+            switch (rc) {
+                case WS_CHAN_RXD:
+                    sz = wolfSSH_ChannelIdRead(ssh, lastChannel,
+                        buf + ssh->scpRecvMsgSz,
+                        DEFAULT_SCP_MSG_SZ - ssh->scpRecvMsgSz);
+                    if (sz <= 0) {
+                        return sz;
+                    }
+                    ssh->scpRecvMsgSz += sz;
+                    sz = ssh->scpRecvMsgSz;
+                    break;
+
+                case WS_EXTDATA:
+                    _DumpExtendedData(ssh);
+                    break;
+
+                case WS_WINDOW_FULL:
+                case WS_REKEYING:
+                    continue;
+                case WS_CHANNEL_CLOSED:
+                    return WS_EOF;
+                default:
+                    return err;
+            }
+        }
     } while (buf[sz - 1] != 0x0a);
 
     /* null-terminate request, replace newline */

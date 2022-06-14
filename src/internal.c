@@ -6334,7 +6334,8 @@ int DoReceive(WOLFSSH* ssh)
         case PROCESS_PACKET:
             ret = DoPacket(ssh);
             ssh->error = ret;
-            if (ret < 0 && !(ret == WS_CHAN_RXD || ret == WS_CHANNEL_CLOSED)) {
+            if (ret < 0 && !(ret == WS_CHAN_RXD || ret == WS_EXTDATA ||
+                    ret == WS_CHANNEL_CLOSED)) {
                 return WS_FATAL_ERROR;
             }
             WLOG(WS_LOG_DEBUG, "PR3: peerMacSz = %u", peerMacSz);
