@@ -28,6 +28,8 @@ void wolfSSHD_FreeConfig(WOLFSSHD_CONFIG* conf);
 int wolfSSHD_LoadSSHD(WOLFSSHD_CONFIG* conf, const char* filename);
 
 char* wolfSSHD_GetBanner(WOLFSSHD_CONFIG* conf);
+char* wolfSSHD_GetHostPrivateKey(WOLFSSHD_CONFIG* conf);
+int wolfSSHD_SetHostPrivateKey(WOLFSSHD_CONFIG* conf, const char* hostKeyFile);
 word16 wolfSSHD_GetPort(WOLFSSHD_CONFIG* conf);
 
 #endif /* WOLFSSHD_H */

@@ -219,7 +219,7 @@ int wolfSSHD_LoadSSHD(WOLFSSHD_CONFIG* conf, const char* filename)
         }
 
         if (current[0] == '#') {
-            printf("read commented out line\n%s\n", current);
+            //printf("read commented out line\n%s\n", current);
             continue; /* commented out line */
         }
 
@@ -239,6 +239,22 @@ char* wolfSSHD_GetBanner(WOLFSSHD_CONFIG* conf)
     if (conf != NULL)
         return conf->banner;
     return NULL;
+}
+
+char* wolfSSHD_GetHostPrivateKey(WOLFSSHD_CONFIG* conf)
+{
+    if (conf != NULL)
+        return conf->hostKey;
+    return NULL;
+}
+
+int wolfSSHD_SetHostPrivateKey(WOLFSSHD_CONFIG* conf, const char* hostKeyFile)
+{
+    if (conf == NULL)
+        return WS_BAD_ARGUMENT;
+
+    conf->hostKey = (char*)hostKeyFile;
+    return WS_SUCCESS;
 }
 
 word16 wolfSSHD_GetPort(WOLFSSHD_CONFIG* conf)

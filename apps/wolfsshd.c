@@ -48,6 +48,28 @@
     #define WOLFSSHD_TIMEOUT 1
 #endif
 
+#ifdef WOLFSSH_SHELL
+    #ifdef HAVE_PTY_H
+        #include <pty.h>
+    #endif
+    #ifdef HAVE_UTIL_H
+        #include <util.h>
+    #endif
+    #ifdef HAVE_TERMIOS_H
+        #include <termios.h>
+    #endif
+    #include <pwd.h>
+    #include <signal.h>
+    #include <sys/errno.h>
+
+    static volatile int ChildRunning = 0;
+    static void ChildSig(int sig)
+    {
+        (void)sig;
+        ChildRunning = 0;
+    }
+#endif /* WOLFSSH_SHELL */
+
 /* catch interrupts and close down gracefully */
 static volatile byte quit = 0;
 static const char defaultBanner[] = "wolfSSHD\n";
@@ -83,10 +105,10 @@ static int wsUserAuth(byte authType,
                       WS_UserAuthData* authData,
                       void* ctx)
 {
-    if (ctx == NULL) {
-        fprintf(stderr, "wsUserAuth: ctx not set");
-        return WOLFSSH_USERAUTH_FAILURE;
-    }
+//    if (ctx == NULL) {
+//        fprintf(stderr, "wsUserAuth: ctx not set");
+//        return WOLFSSH_USERAUTH_FAILURE;
+//    }
 
     if (authType != WOLFSSH_USERAUTH_PASSWORD &&
 #ifdef WOLFSSH_ALLOW_USERAUTH_NONE
@@ -99,6 +121,8 @@ static int wsUserAuth(byte authType,
 
     (void)ctx;
     (void)authData;
+
+    fprintf(stderr, "returning success always for now");
 
     /* @TODO allows all connections */
     return WOLFSSH_USERAUTH_SUCCESS;
@@ -146,37 +170,40 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
 #endif
 
     /* Load in host private key */
-//    {
-//        const char* bufName = NULL;
-//        #ifndef WOLFSSH_SMALL_STACK
-//            byte buf[EXAMPLE_KEYLOAD_BUFFER_SZ];
-//        #endif
-//        byte* keyLoadBuf;
-//        word32 bufSz;
-//
-//        #ifdef WOLFSSH_SMALL_STACK
-//            keyLoadBuf = (byte*)WMALLOC(EXAMPLE_KEYLOAD_BUFFER_SZ,
-//                    NULL, 0);
-//            if (keyLoadBuf == NULL) {
-//                WEXIT(EXIT_FAILURE);
-//            }
-//        #else
-//            keyLoadBuf = buf;
-//        #endif
-//        bufSz = EXAMPLE_KEYLOAD_BUFFER_SZ;
-//
-//        bufSz = load_key(peerEcc, keyLoadBuf, bufSz);
-//        if (bufSz == 0) {
-//            fprintf(stderr, "Couldn't load key file.\n");
-//            WEXIT(EXIT_FAILURE);
-//        }
-//        if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, keyLoadBuf, bufSz,
-//                                             WOLFSSH_FORMAT_ASN1) < 0) {
-//            fprintf(stderr, "Couldn't use key buffer.\n");
-//            WEXIT(EXIT_FAILURE);
-//        }
-//
-//    }
+    if (ret == WS_SUCCESS) {
+        char* hostKey = wolfSSHD_GetHostPrivateKey(conf);
+
+        if (hostKey == NULL) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] No host private key set");
+            ret = WS_BAD_ARGUMENT;
+        }
+        else {
+            FILE* f;
+
+            f = fopen(hostKey, "rb");
+            if (f == NULL) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Unable to open host private key");
+                ret = WS_BAD_ARGUMENT;
+            }
+            else {
+                byte* data;
+                int   dataSz = 4096;
+
+                data = (byte*)WMALLOC(dataSz, NULL, 0);
+
+                dataSz = (int)fread(data, 1, dataSz, f);
+                fclose(f);
+                if (wolfSSH_CTX_UsePrivateKey_buffer(*ctx, data, dataSz,
+                                             WOLFSSH_FORMAT_ASN1) < 0) {
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Unable parse host private key");
+                    ret = WS_BAD_ARGUMENT;
+                }
+                WFREE(data, NULL, 0);
+            }
+        }
+    }
 
     /* Load in host public key */
 //    {
@@ -255,12 +282,148 @@ int SCP_Subsystem()
 }
 #endif
 
-//static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
-//{
-//    (void)conn;
-//    (void)ssh;
-//    return WS_SUCCESS;
-//}
+#ifdef WOLFSSH_SHELL
+static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
+{
+    WS_SOCKET_T sshFd = 0;
+    int rc;
+    const char *userName;
+    struct passwd *p_passwd;
+    WS_SOCKET_T childFd = 0;
+    pid_t childPid;
+#ifndef EXAMPLE_BUFFER_SZ
+    #define EXAMPLE_BUFFER_SZ 4096
+#endif
+    byte shellBuffer[EXAMPLE_BUFFER_SZ];
+    byte channelBuffer[EXAMPLE_BUFFER_SZ];
+
+    userName = wolfSSH_GetUsername(ssh);
+    p_passwd = getpwnam((const char *)userName);
+    if (p_passwd == NULL) {
+        /* Not actually a user on the system. */
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Invalid user name found");
+        return WS_FATAL_ERROR;
+    }
+
+    ChildRunning = 1;
+    childPid = forkpty(&childFd, NULL, NULL, NULL);
+
+    if (childPid < 0) {
+        /* forkpty failed, so return */
+        ChildRunning = 0;
+        return WS_FATAL_ERROR;
+    }
+    else if (childPid == 0) {
+        /* Child process */
+        const char *args[] = {"-sh", NULL};
+
+        signal(SIGINT, SIG_DFL);
+
+        printf("userName is %s\n", userName);
+        system("env");
+
+        setenv("HOME", p_passwd->pw_dir, 1);
+        setenv("LOGNAME", p_passwd->pw_name, 1);
+        rc = chdir(p_passwd->pw_dir);
+        if (rc != 0) {
+            return WS_FATAL_ERROR;
+        }
+
+        execv("/bin/sh", (char **)args);
+    }
+
+    struct termios tios;
+    word32 shellChannelId = 0;
+    printf("In childPid > 0; getpid=%d\n", (int)getpid());
+    signal(SIGCHLD, ChildSig);
+
+    rc = tcgetattr(childFd, &tios);
+    if (rc != 0) {
+        return WS_FATAL_ERROR;
+    }
+    rc = tcsetattr(childFd, TCSAFLUSH, &tios);
+    if (rc != 0) {
+        return WS_FATAL_ERROR;
+    }
+
+#ifdef SHELL_DEBUG
+    termios_show(childFd);
+#endif
+
+    while (ChildRunning) {
+        fd_set readFds;
+        WS_SOCKET_T maxFd;
+        int cnt_r;
+        int cnt_w;
+
+        FD_ZERO(&readFds);
+        FD_SET(sshFd, &readFds);
+        maxFd = sshFd;
+
+        FD_SET(childFd, &readFds);
+        if (childFd > maxFd)
+            maxFd = childFd;
+        rc = select((int)maxFd + 1, &readFds, NULL, NULL, NULL);
+        if (rc == -1)
+            break;
+
+        if (FD_ISSET(sshFd, &readFds)) {
+            word32 lastChannel = 0;
+
+            /* The following tries to read from the first channel inside
+               the stream. If the pending data in the socket is for
+               another channel, this will return an error with id
+               WS_CHAN_RXD. That means the agent has pending data in its
+               channel. The additional channel is only used with the
+               agent. */
+            cnt_r = wolfSSH_worker(ssh, &lastChannel);
+            if (cnt_r < 0) {
+                rc = wolfSSH_get_error(ssh);
+                if (rc == WS_CHAN_RXD) {
+                    if (lastChannel == shellChannelId) {
+                        cnt_r = wolfSSH_ChannelIdRead(ssh, shellChannelId,
+                                channelBuffer,
+                                sizeof channelBuffer);
+                        if (cnt_r <= 0)
+                            break;
+                        cnt_w = (int)write(childFd,
+                                channelBuffer, cnt_r);
+                        if (cnt_w <= 0)
+                            break;
+                    }
+                }
+                else if (rc == WS_CHANNEL_CLOSED) {
+                    continue;
+                }
+                else if (rc != WS_WANT_READ) {
+                    break;
+                }
+            }
+        }
+
+        if (FD_ISSET(childFd, &readFds)) {
+            cnt_r = (int)read(childFd, shellBuffer, sizeof shellBuffer);
+            /* This read will return 0 on EOF */
+            if (cnt_r <= 0) {
+                int err = errno;
+                if (err != EAGAIN) {
+                    break;
+                }
+            }
+            else {
+                if (cnt_r > 0) {
+                    cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
+                            shellBuffer, cnt_r);
+                    if (cnt_w < 0)
+                        break;
+                }
+            }
+        }
+    }
+    (void)conn;
+    return WS_SUCCESS;
+}
+#endif
 
 
 /* handle wolfSSH accept and directing to correct subsystem */
@@ -288,8 +451,22 @@ static void* wolfSSHD_HandleConnection(void* arg)
     if (ret == WS_SUCCESS) {
         wolfSSH_set_fd(ssh, conn->fd);
         ret = wolfSSH_accept(ssh);
+        if (ret != WS_SUCCESS) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Failed to accept WOLFSSH connection");
+        }
     }
 
+#ifdef WOLFSSH_SHELL
+    printf("ret of accept = %d\n",ret);
+    if (ret == WS_SUCCESS) {
+        printf("trying to run shell\n");
+        wolfSSH_Log(WS_LOG_INFO, "[SSHD] Entering new shell");
+        SHELL_Subsystem(conn, ssh);
+    }
+#endif
+
+    wolfSSH_shutdown(ssh);
     wolfSSH_free(ssh);
     if (conn != NULL) {
         WCLOSESOCKET(conn->fd);
@@ -371,7 +548,8 @@ int main(int argc, char** argv)
     WOLFSSHD_CONFIG* conf = NULL;
     WOLFSSH_CTX* ctx = NULL;
 
-    const char* configFile = "/usr/local/etc/ssh/sshd_config";
+    const char* configFile  = "/usr/local/etc/ssh/sshd_config";
+    const char* hostKeyFile = NULL;
 
     signal(SIGINT, interruptCatch);
 
@@ -395,7 +573,7 @@ int main(int argc, char** argv)
     }
 
 
-    while ((ch = mygetopt(argc, argv, "?f:p:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?f:p:h:")) != -1) {
         switch (ch) {
             case 'f':
                 configFile = myoptarg;
@@ -411,6 +589,10 @@ int main(int argc, char** argv)
                     port = (word16)ret;
                     ret = WS_SUCCESS;
                 }
+                break;
+
+            case 'h':
+                hostKeyFile = myoptarg;
                 break;
 
             case '?':
@@ -434,12 +616,18 @@ int main(int argc, char** argv)
         port = wolfSSHD_GetPort(conf);
     }
 
+    /* check if host key file was passed in */
+    if (hostKeyFile != NULL) {
+        wolfSSHD_SetHostPrivateKey(conf, hostKeyFile);
+    }
+
     wolfSSH_Log(WS_LOG_INFO, "[SSHD] Starting wolfSSH SSHD application");
 
     if (ret == WS_SUCCESS) {
         ret = SetupCTX(conf, &ctx);
     }
 
+    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Starting to listen on port %d", port);
     tcp_listen(&listenFd, &port, 1);
     wolfSSH_Log(WS_LOG_INFO, "[SSHD] Listening on port %d", port);
 
