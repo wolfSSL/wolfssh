@@ -4152,6 +4152,7 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
+        WMEMSET(checkDigest, 0, MAX_ENCODED_SIG_SZ);
         ret = wc_InitRsaKey(key_ptr, ssh->ctx->heap);
         if (ret == 0) {
             ret = WS_SUCCESS;
@@ -4243,6 +4244,7 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
         encDigest = s_encDigest;
 #endif
         {
+            WMEMSET(encDigest, 0, MAX_ENCODED_SIG_SZ);
             encDigestSz = wc_EncodeSignature(encDigest, digest,
                                          wc_HashGetDigestSize(enmhashId),
                                          wc_HashGetOID(enmhashId));
