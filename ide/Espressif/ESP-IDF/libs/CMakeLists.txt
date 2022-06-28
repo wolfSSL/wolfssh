@@ -1,6 +1,6 @@
 #
 # cmake for wolfssh
-# 
+#
 cmake_minimum_required(VERSION 3.5)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWOLFSSL_USER_SETTINGS")
 
@@ -41,10 +41,9 @@ if(IS_DIRECTORY ${IDF_PATH}/components/cryptoauthlib)
 endif()
 
 set(COMPONENT_SRCEXCLUDE
-    "wolfcrypt/src/aes_asm.S"
-    "wolfcrypt/src/evp.c"
-    "wolfcrypt/src/misc.c"
-    "src/bio.c"
+    "./src/misc.c"
+    "../wolfssl/wolfcrypt/src/evp.c"
+    "../wolfssl/wolfcrypt/src/misc.c"
     )
 set(COMPONENT_PRIV_INCLUDEDIRS . ../wolfssl ../wolfssl/include)
 
