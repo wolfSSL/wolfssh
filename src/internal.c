@@ -4320,10 +4320,19 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 #endif
     }
 
-    if (ret == WS_SUCCESS) {
-        ret = wc_ecc_init_ex(key_ptr, ssh->ctx->heap, INVALID_DEVID);
-        if (ret == 0) {
-            ret = WS_SUCCESS;
+    if (sig_r_ptr != NULL) {
+        if (mp_init(sig_r_ptr) != MP_OKAY) {
+            ret = WS_MEMORY_E;
+        }
+    }
+    if (sig_s_ptr != NULL) {
+        if (mp_init(sig_s_ptr) != MP_OKAY) {
+            ret = WS_MEMORY_E;
+        }
+    }
+    if (key_ptr != NULL) {
+        if (wc_ecc_init_ex(key_ptr, ssh->ctx->heap, INVALID_DEVID) != 0) {
+            ret = WS_MEMORY_E;
         }
     }
 
@@ -4396,12 +4405,6 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
-        if (mp_init(sig_r_ptr) != MP_OKAY) {
-            ret = WS_FATAL_ERROR;
-        }
-    }
-
-    if (ret == WS_SUCCESS) {
         ret = mp_read_unsigned_bin(sig_r_ptr, pk->signature + i, sz);
         if (ret != 0)
             ret = WS_PARSE_E;
@@ -4412,12 +4415,6 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     if (ret == WS_SUCCESS) {
         i += sz;
         ret = GetSize(&sz, pk->signature, pk->signatureSz, &i);
-    }
-
-    if (ret == WS_SUCCESS) {
-        if (mp_init(sig_s_ptr) != MP_OKAY) {
-            ret = WS_FATAL_ERROR;
-        }
     }
 
     if (ret == WS_SUCCESS) {
