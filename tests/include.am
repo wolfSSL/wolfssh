@@ -35,7 +35,7 @@ tests_unit_test_DEPENDENCIES = src/libwolfssh.la
 
 tests_api_test_SOURCES       = tests/api.c \
                                examples/echoserver/echoserver.c
-tests_api_test_CPPFLAGS      = -DNO_MAIN_DRIVER
+tests_api_test_CPPFLAGS      = -DNO_MAIN_DRIVER  $(WOLFSENTRY_INCLUDE)
 if BUILD_KEYGEN
 tests_api_test_CPPFLAGS     += -DWOLFSSH_KEYGEN
 endif
@@ -57,7 +57,7 @@ endif
 if BUILD_CERTS
 tests_api_test_CPPFLAGS     += -DWOLFSSH_CERTS
 endif
-tests_api_test_LDADD         = src/libwolfssh.la
+tests_api_test_LDADD         = src/libwolfssh.la $(WOLFSENTRY_LIB)
 tests_api_test_DEPENDENCIES  = src/libwolfssh.la
 
 tests_testsuite_test_SOURCES = tests/testsuite.c \
@@ -65,7 +65,7 @@ tests_testsuite_test_SOURCES = tests/testsuite.c \
                                examples/echoserver/echoserver.c \
                                examples/client/client.c \
                                examples/sftpclient/sftpclient.c
-tests_testsuite_test_CPPFLAGS  = -DNO_MAIN_DRIVER
+tests_testsuite_test_CPPFLAGS  = -DNO_MAIN_DRIVER $(WOLFSENTRY_INCLUDE)
 if BUILD_KEYGEN
 tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_KEYGEN
 endif
@@ -87,7 +87,7 @@ endif
 if BUILD_CERTS
 tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_CERTS
 endif
-tests_testsuite_test_LDADD   = src/libwolfssh.la
+tests_testsuite_test_LDADD   = src/libwolfssh.la $(WOLFSENTRY_LIB)
 tests_testsuite_test_DEPENDENCIES = src/libwolfssh.la
 
 DISTCLEANFILES+= tests/.libs/unit.test tests/.libs/api.test \

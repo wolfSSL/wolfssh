@@ -198,6 +198,15 @@
     #define AF_INET_V AF_INET
 #endif
 
+#if defined(WOLFSSH_WOLFSENTRY_HOOKS) && defined(WOLFSENTRY_H)
+
+#include <wolfsentry/wolfsentry_util.h>
+
+#if !defined(NO_FILESYSTEM) && !defined(WOLFSENTRY_NO_JSON)
+    #include <wolfsentry/wolfsentry_json.h>
+#endif
+
+#endif /* WOLFSSH_WOLFSENTRY_HOOKS && WOLFSENTRY_H */
 
 #define serverKeyRsaPemFile "./keys/server-key-rsa.pem"
 
@@ -923,5 +932,11 @@ static INLINE void build_addr_ipv6(struct sockaddr_in6* addr, const char* peer,
     }
 }
 #endif /* TEST_IPV6 */
+
+#if defined(WOLFSSH_WOLFSENTRY_HOOKS) && defined(WOLFSENTRY_H)
+
+#include "wolfsentry_test.h"
+
+#endif /* WOLFSSH_WOLFSENTRY_HOOKS && WOLFSENTRY_H */
 
 #endif /* _WOLFSSH_TEST_H_ */

@@ -201,6 +201,76 @@ AC_ARG_ENABLE([certs],
     [AS_HELP_STRING([--enable-certs],[Enable X.509 cert support (default: disabled)])],
     [ENABLED_CERTS=$enableval],[ENABLED_CERTS=no])
 
+# wolfsently support
+ENABLED_WOLFSENTRY=no
+
+AC_ARG_WITH([wolfsentry],
+    [AS_HELP_STRING([--with-wolfsentry=PATH],[PATH to directory with wolfSentry installation])],
+    [WOLFSENTRY_INSTALLDIR=$withval],
+    [WOLFSENTRY_INSTALLDIR=""])
+
+AC_ARG_WITH([wolfsentry-lib],
+    [AS_HELP_STRING([--with-wolfsentry-lib=PATH],[PATH to directory with wolfSentry library])],
+    [WOLFSENTRY_LIB=$withval],
+    [WOLFSENTRY_LIB=""])
+
+AC_ARG_WITH([wolfsentry-include],
+    [AS_HELP_STRING([--with-wolfsentry-include=PATH],[PATH to directory with wolfSentry header files])],
+    [WOLFSENTRY_INCLUDE=$withval],
+    [WOLFSENTRY_INCLUDE=""])
+
+if test -n "$WOLFSENTRY_INSTALLDIR" || test -n "$WOLFSENTRY_LIB" || test -n "$WOLFSENTRY_INCLUDE"
+then
+    ENABLED_WOLFSENTRY=yes
+fi
+
+AC_ARG_ENABLE([wolfsentry],
+    [AS_HELP_STRING([--enable-wolfsentry],[Enable wolfSentry hooks and plugins (default: disabled)])],
+    [ ENABLED_WOLFSENTRY=$enableval ],
+    [ ]
+    )
+
+if test "$WOLFSENTRY_LIB" = "" && test -n "$WOLFSENTRY_INSTALLDIR"
+then
+    WOLFSENTRY_LIB="${WOLFSENTRY_INSTALLDIR}/lib"
+fi
+
+if test "$WOLFSENTRY_INCLUDE" = "" && test -n "$WOLFSENTRY_INSTALLDIR"
+then
+    WOLFSENTRY_INCLUDE="${WOLFSENTRY_INSTALLDIR}/include"
+fi
+
+if test -n "$WOLFSENTRY_LIB"
+then
+    AC_MSG_CHECKING([for $WOLFSENTRY_LIB])
+    if ! test -d "$WOLFSENTRY_LIB"
+    then
+        AC_MSG_ERROR([wolfSentry lib dir $WOLFSENTRY_LIB not found.])
+    fi
+    AC_MSG_RESULT([yes])
+    WOLFSENTRY_LIB="-L$WOLFSENTRY_LIB"
+fi
+
+if test -n "$WOLFSENTRY_INCLUDE"
+then
+    AC_MSG_CHECKING([for $WOLFSENTRY_INCLUDE])
+    if ! test -d "$WOLFSENTRY_INCLUDE"
+    then
+        AC_MSG_ERROR([wolfSentry include dir $WOLFSENTRY_INCLUDE not found.])
+    fi
+    AC_MSG_RESULT([yes])
+    WOLFSENTRY_INCLUDE="-I$WOLFSENTRY_INCLUDE"
+fi
+
+if test "$ENABLED_WOLFSENTRY" = "yes"
+then
+    AM_CFLAGS="$AM_CFLAGS -DWOLFSSH_WOLFSENTRY_HOOKS"
+    WOLFSENTRY_LIB="$WOLFSENTRY_LIB -lwolfsentry"
+fi
+
+AC_SUBST([WOLFSENTRY_LIB])
+AC_SUBST([WOLFSENTRY_INCLUDE])
+
 # smallstack
 AC_ARG_ENABLE([smallstack],
     [AS_HELP_STRING([--enable-smallstack],[Enable small stack (default: disabled)])],
@@ -249,6 +319,8 @@ AS_IF([test "x$ENABLED_AGENT" = "xyes"],[AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_AGE
 AS_IF([test "x$ENABLED_CERTS" = "xyes"],[AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_CERTS"])
 AS_IF([test "x$ENABLED_SMALLSTACK" = "xyes"],
        [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SMALL_STACK"])
+AS_IF([test "x$ENABLED_WOLFSENTRY" = "xyes"],
+       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_WOLFSENTRY_HOOKS"])
 AS_IF([test "x$ENABLED_SSHD" = "xyes"],
        [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SSHD"])
 
@@ -290,6 +362,8 @@ if test "$ENABLED_SSHD" = "yes"; then
     fi
 fi
 
+AS_IF([test "x$ENABLED_WOLFSENTRY" = "xyes"],
+       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_WOLFSENTRY_HOOKS"])
 
 # Set the automake conditionals.
 AM_CONDITIONAL([BUILD_EXAMPLE_SERVERS],[test "x$ENABLED_EXAMPLES" = "xyes"])
@@ -304,6 +378,7 @@ AM_CONDITIONAL([BUILD_SHELL],[test "x$ENABLED_SHELL" = "xyes"])
 AM_CONDITIONAL([BUILD_AGENT],[test "x$ENABLED_AGENT" = "xyes"])
 AM_CONDITIONAL([BUILD_SSHD],[test "x$ENABLED_SSHD" = "xyes"])
 AM_CONDITIONAL([BUILD_CERTS],[test "x$ENABLED_CERTS" = "xyes"])
+AM_CONDITIONAL([BUILD_WOLFSENTRY], [test "x$ENABLED_WOLFSENTRY" = "xyes"])
 
 AX_HARDEN_CC_COMPILER_FLAGS
 
@@ -350,3 +425,4 @@ AS_ECHO(["   * TCP/IP Forwarding:         $ENABLED_FWD"])
 AS_ECHO(["   * X.509 Certs:               $ENABLED_CERTS"])
 AS_ECHO(["   * Examples:                  $ENABLED_EXAMPLES"])
 AS_ECHO(["   * liboqs Integration:        $ENABLED_LIBOQS"])
+AS_ECHO(["   * wolfsentry Integration:    $ENABLED_WOLFSENTRY"])

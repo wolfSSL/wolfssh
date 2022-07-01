@@ -18,6 +18,10 @@ nobase_include_HEADERS+= \
                          wolfssh/test.h \
                          wolfssh/certs_test.h \
                          wolfssh/wolfsftp.h
+if BUILD_WOLFSENTRY
+nobase_include_HEADERS+=\
+                         wolfssh/wolfsentry_test.h
+endif BUILD_WOLFSENTRY
 
 noinst_HEADERS+= wolfssh/internal.h
 

@@ -1,0 +1,100 @@
+{
+    "wolfsentry-config-version" : 1,
+    "config-update" : {
+	"max-connection-count" : 5,
+	"penalty-box-duration" : "1h",
+	"derog-thresh-for-penalty-boxing" : 4,
+	"derog-thresh-ignore-commendable" : false,
+	"commendable-clears-derogatory" : true
+    },
+    "events-insert" : [
+        {
+	    "label" : "event-on-insert",
+	    "actions" : [ "handle-insert" ]
+	},
+	{
+	    "label" : "event-on-update",
+	    "actions" : [ "handle-update" ]
+	},
+	{
+	    "label" : "event-on-delete",
+	    "actions" : [ "handle-delete" ]
+	},
+	{
+	    "label" : "event-on-match",
+	    "actions" : [ "handle-match", "notify-on-match" ]
+	},
+	{
+	    "label" : "event-on-decision",
+	    "actions" : [ "notify-on-decision" ]
+	},
+	{
+	    "label" : "static-route-parent",
+	    "priority" : 1,
+	    "config" : {
+		"max-connection-count" : 10,
+		"penalty-box-duration" : "1h",
+		"derog-thresh-for-penalty-boxing" : 5,
+		"derog-thresh-ignore-commendable" : true,
+		"commendable-clears-derogatory" : false
+	    },
+	    "actions" : [ "handle-connect" ],
+	    "insert-event" : "event-on-insert",
+	    "match-event"  : "event-on-match",
+	    "update-event" : "event-on-update",
+	    "delete-event" : "event-on-delete",
+	    "decision-event" : "event-on-decision"
+	},
+	{
+	    "label" : "call-in-from-echo"
+	},
+	{
+	    "label" : "authentication_succeeded",
+		"actions" : [ "auth-succeeded" ]
+	},
+	{
+	    "label" : "authentication_failed",
+		"actions" : [ "auth-failed" ]
+	}
+    ],
+    "default-policies" : {
+	"default-policy-static" : "reject",
+	"default-event-static" : "static-route-parent"
+    },
+    "static-routes-insert" : [
+	{
+	    "parent-event" : "static-route-parent",
+	    "direction-in" : true,
+	    "direction-out" : false,
+	    "penalty-boxed" : false,
+	    "green-listed" : true,
+	    "dont-count-hits" : false,
+	    "dont-count-current-connections" : false,
+	    "family" : 2,
+	    "remote" : {
+		"address" : "127.0.0.1",
+		"prefix-bits" : 8
+	    },
+	    "local" : {
+		"address" : "127.0.0.1",
+		"prefix-bits" : 8
+	    }
+	},
+    {
+	    "parent-event" : "static-route-parent",
+	    "direction-in" : true,
+	    "direction-out" : true,
+	    "penalty-boxed" : false,
+	    "green-listed" : true,
+	    "dont-count-hits" : false,
+	    "dont-count-current-connections" : false,
+	    "family" : 2,
+        "protocol" : 6,
+	    "remote" : {
+	    "address" : "192.168.11.3",
+	    "prefix-bits" : 32,
+	    "interface" : 0
+	    }
+	}
+    ]
+}

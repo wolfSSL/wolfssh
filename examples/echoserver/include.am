@@ -5,9 +5,14 @@ if BUILD_EXAMPLE_SERVERS
 noinst_PROGRAMS += examples/echoserver/echoserver
 noinst_HEADERS += examples/echoserver/echoserver.h
 examples_echoserver_echoserver_SOURCES      = examples/echoserver/echoserver.c
-examples_echoserver_echoserver_LDADD        = src/libwolfssh.la
+examples_echoserver_echoserver_LDADD        = src/libwolfssh.la $(WOLFSENTRY_LIB)
 examples_echoserver_echoserver_DEPENDENCIES = src/libwolfssh.la
-examples_echoserver_echoserver_CFLAGS       = $(AM_CFLAGS)
+examples_echoserver_echoserver_CFLAGS       =  $(WOLFSENTRY_INCLUDE) $(AM_CFLAGS)
 endif
 
 DISTCLEANFILES+= examples/echoserver/.libs/echoserver
+
+if BUILD_WOLFSENTRY
+EXTRA_DIST+= examples/echoserver/echo-config.json \
+             examples/echoserver/README_wolfsentry.md
+endif BUILD_WOLFSENTRY

@@ -31,6 +31,26 @@
     #include <wolfssl/options.h>
 #endif
 
+#ifdef WOLFSSH_WOLFSENTRY_HOOKS
+#include <wolfsentry/wolfsentry.h>
+#if !defined(NO_FILESYSTEM) && !defined(WOLFSENTRY_NO_JSON)
+static const char *wolfsentry_config_path =
+                "./examples/echoserver/echo-config.json";
+static struct wolfsentry_context *wolfsentry = NULL;
+
+struct wolfsentry_data {
+    WOLFSENTRY_SOCKADDR(128) remote;
+    WOLFSENTRY_SOCKADDR(128) local;
+    wolfsentry_route_flags_t flags;
+    void *heap;
+    int alloctype;
+    struct wolfsentry_route *rule_route;
+    int commendable_count;
+};
+
+#endif
+#endif /* WOLFSSH_WOLFSENTRY_HOOKS */
+
 #include <wolfssl/wolfcrypt/hash.h>
 #include <wolfssl/wolfcrypt/coding.h>
 #include <wolfssl/wolfcrypt/wc_port.h>
@@ -188,8 +208,168 @@ typedef struct {
 #endif
     byte channelBuffer[EXAMPLE_BUFFER_SZ];
     char statsBuffer[EXAMPLE_BUFFER_SZ];
+#ifdef WOLFSSH_WOLFSENTRY_HOOKS
+    struct wolfsentry_data* pdata;
+#endif
 } thread_ctx_t;
 
+
+#ifdef WOLFSSH_WOLFSENTRY_HOOKS
+
+#define WOLFSENTRY_INVALID_PASSWORD     -1
+#define WOLFSENTRY_VALID_PASSWORD       1
+
+/**
+ *  Submit an authentificaion result event into wolfsentry and
+ *  pass it through the filters. The action_results can be checked to
+ *  see what action wolfsentry says should be taken.
+ *  
+ * @param ps  holding local and peer connection info
+ * @param auth_status password authntification status.
+ *
+ * @return WC_SUCCESS for successful, otherwise WOLFSSH_USERAUTH_REJECTED
+ */
+static int wolfsentry_event_dispatch(struct wolfsentry_data* ps,
+                                                        int auth_status)
+{
+    char* event_label = NULL;
+    const char* event_suc = "authentication_succeeded";
+    const char* event_fil = "authentication_failed";
+    
+    word32 len = 0;
+    wolfsentry_action_res_t action_results;
+    int ret;
+    
+    WOLFSENTRY_CLEAR_ALL_BITS(action_results);
+    
+    if(auth_status == WOLFSENTRY_VALID_PASSWORD) {
+    
+        /* to clear count, set ACTION_RES_COMMENDABLE */
+        WOLFSENTRY_SET_BITS(action_results,
+                       WOLFSENTRY_ACTION_RES_COMMENDABLE);
+        
+        len = WSTRLEN(event_suc);
+        event_label = (char*)WMALLOC(len + 1, NULL, DYNTYPE_BUFFER);
+        WMEMSET(event_label, 0, len + 1);
+        
+        if (!event_label) {
+            return WS_MEMORY_E;
+        }
+        
+        WSTRNCPY(event_label, event_suc, len);
+        event_label[len] = '\0';
+    }
+    else if (auth_status == WOLFSENTRY_INVALID_PASSWORD) {
+        /* Notify invalid password input to wolfsentry */
+        WOLFSENTRY_SET_BITS(action_results,
+                       WOLFSENTRY_ACTION_RES_DEROGATORY);
+                       
+        len = WSTRLEN(event_fil);
+        event_label = (char*)WMALLOC(len + 1, NULL, DYNTYPE_BUFFER);
+        WMEMSET(event_label, 0, len + 1);
+        
+        if (!event_label) {
+            return WS_MEMORY_E;
+        }
+        
+        WSTRNCPY(event_label, event_fil, len);
+        event_label[len] = '\0';
+    }
+    else
+        return WS_FATAL_ERROR;
+    
+    ret = wolfsentry_route_event_dispatch_with_inited_result(
+                wolfsentry,
+                (const struct wolfsentry_sockaddr *)&ps->remote,
+                (const struct wolfsentry_sockaddr *)&ps->local,
+                WOLFSENTRY_ROUTE_FLAG_DIRECTION_IN,
+                (const char*)event_label, len, (void*)ps, NULL, 
+                NULL, &action_results);
+    
+    fprintf(stderr, "TCP Sentry action returned " WOLFSENTRY_ERROR_FMT "\n",
+                                WOLFSENTRY_ERROR_FMT_ARGS(ret));
+    /* Check the result, if it contains "reject" then notify the caller */
+    if (WOLFSENTRY_ERROR_DECODE_ERROR_CODE(ret) >= 0) {
+        if (WOLFSENTRY_MASKIN_BITS(action_results, 
+                                                WOLFSENTRY_ACTION_RES_REJECT)) {
+            fprintf(stderr, "wolfsentry rejected\n");
+            return WOLFSSH_USERAUTH_REJECTED;
+        }
+        if (WOLFSENTRY_MASKIN_BITS(action_results, 
+                                                WOLFSENTRY_ACTION_RES_ACCEPT)) {
+            fprintf(stderr, "wolfsentry accepted\n");
+        }
+        if (WOLFSENTRY_MASKIN_BITS(action_results, 
+                                            WOLFSENTRY_ACTION_RES_DEROGATORY)) {
+            fprintf(stderr, "wolfsentry increases DEROGATORY count.\n");
+        }
+    }
+    
+    WFREE(event_label, NULL, DYNTYPE_BUFFER);
+    
+    return WS_SUCCESS;
+}
+
+/**
+ *  Submit an route addtion event into wolfsentry and
+ *  pass it through the filters. The action_results can be checked to
+ *  see what action wolfsentry says should be taken.
+ *  
+ * @param ps  holding local and peer connection info
+ *
+ * @return WC_SUCCESS for successful, otherwise WOLFSSH_USERAUTH_REJECTED
+ */
+static int wolfsentry_route_add(struct wolfsentry_data* ps)
+{
+    char inet_ntop_buf[INET6_ADDRSTRLEN], inet_ntop_buf2[INET6_ADDRSTRLEN];
+    wolfsentry_action_res_t action_results = WOLFSENTRY_ACTION_RES_CONNECT;
+    //struct wolfsentry_data* ps = list->pdata;
+    int ret;
+    
+    printf("wolfSentry : family=%d proto=%d rport=%d"
+           " lport=%d raddr=%s laddr=%s interface=%d; \n",
+           ps->remote.sa_family,
+           ps->remote.sa_proto,
+           ps->remote.sa_port,
+           ps->local.sa_port,
+           inet_ntop(ps->remote.sa_family, ps->remote.addr, inet_ntop_buf,
+                     sizeof inet_ntop_buf),
+           inet_ntop(ps->local.sa_family, ps->local.addr, inet_ntop_buf2,
+                     sizeof inet_ntop_buf2),
+           ps->remote.interface);
+           
+    /* Send the details of this to wolfSentry and get the result */
+    ret = wolfsentry_route_event_dispatch(
+            wolfsentry,
+            (const struct wolfsentry_sockaddr *)&ps->remote,
+            (const struct wolfsentry_sockaddr *)&ps->local,
+            WOLFSENTRY_ROUTE_FLAG_DIRECTION_IN,
+            "call-in-from-echo",
+            strlen("call-in-from-echo"),
+            (void*)ps,
+            NULL,
+            NULL,
+            &action_results);
+    
+    fprintf(stderr, "TCP Sentry action returned " WOLFSENTRY_ERROR_FMT "\n",
+                WOLFSENTRY_ERROR_FMT_ARGS(ret));
+    
+    /* Check the result, if it contains "reject" then notify the caller */
+    if (WOLFSENTRY_ERROR_DECODE_ERROR_CODE(ret) >= 0) {
+        if (WOLFSENTRY_MASKIN_BITS(action_results,
+                                                WOLFSENTRY_ACTION_RES_REJECT)) {
+            fprintf(stderr, "wolfsentry rejected\n");
+            return WOLFSSH_USERAUTH_REJECTED;
+        }
+        if (WOLFSENTRY_MASKIN_BITS(action_results,
+                                                WOLFSENTRY_ACTION_RES_ACCEPT)) {
+            fprintf(stderr, "wolfsentry accepted\n");
+        }
+    }
+    
+    return WS_SUCCESS;
+}
+#endif /* WOLFSSH_WOLFSENTRY_HOOKS */
 
 static byte find_char(const byte* str, const byte* buf, word32 bufSz)
 {
@@ -1257,7 +1437,12 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
     thread_ctx_t* threadCtx = (thread_ctx_t*)vArgs;
 
     passwdRetry = MAX_PASSWD_RETRY;
-
+#ifdef WOLFSSH_WOLFSENTRY_HOOKS
+    
+    ret = wolfsentry_route_add(threadCtx->pdata);
+    if (ret == WS_SUCCESS) {
+        /* wolfsentry accepts the peer */
+#endif
     if (!threadCtx->nonBlock)
         ret = wolfSSH_accept(threadCtx->ssh);
     else
@@ -1344,6 +1529,14 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
             }
         }
     }
+    
+#ifdef WOLFSSH_WOLFSENTRY_HOOKS
+    }
+    else {
+        ret = 0;
+        printf("wolfsentry rejected the peer\n");
+    }
+#endif
 
     if (threadCtx->fd != -1) {
         WCLOSESOCKET(threadCtx->fd);
@@ -1495,6 +1688,9 @@ typedef struct PwMap {
 
 typedef struct PwMapList {
     PwMap* head;
+#ifdef WOLFSSH_WOLFSENTRY_HOOKS
+    struct wolfsentry_data* pdata;
+#endif
 } PwMapList;
 
 
@@ -1526,6 +1722,10 @@ static PwMap* PwMapNew(PwMapList* list, byte type, const byte* username,
 
 static void PwMapListDelete(PwMapList* list)
 {
+#ifdef WOLFSSH_WOLFSENTRY_HOOKS
+    if (list->pdata)
+        WFREE(list->pdata, NULL, DYNAMIC_TYPE_SOCKADDR);
+#endif
     if (list != NULL) {
         PwMap* head = list->head;
 
@@ -1661,6 +1861,7 @@ static int LoadPasswordBuffer(byte* buf, word32 bufSz, PwMapList* list)
         }
         *str = 0;
         str++;
+        printf("password %s\n", password);
         if (PwMapNew(list, WOLFSSH_USERAUTH_PASSWORD,
                      (byte*)username, (word32)WSTRLEN(username),
                      (byte*)password, (word32)WSTRLEN(password)) == NULL ) {
@@ -1984,10 +2185,27 @@ static int wsUserAuth(byte authType,
             }
             else if (authData->type == WOLFSSH_USERAUTH_PASSWORD) {
                 if (WMEMCMP(map->p, authHash, WC_SHA256_DIGEST_SIZE) == 0) {
+
+                #ifdef WOLFSSH_WOLFSENTRY_HOOKS
+
+                    ret = wolfsentry_event_dispatch(list->pdata,
+                                                    WOLFSENTRY_VALID_PASSWORD);
+
+                    if (ret != WS_SUCCESS)
+                        /* wolfsentry doesn't accept */
+                        return ret;
+                #endif
                     return WOLFSSH_USERAUTH_SUCCESS;
                 }
                 else {
                     passwdRetry--;
+                #ifdef WOLFSSH_WOLFSENTRY_HOOKS
+                    ret = wolfsentry_event_dispatch(list->pdata, 
+                                                    WOLFSENTRY_INVALID_PASSWORD);
+                    if (ret != WS_SUCCESS)
+                        /* wolfsentry doesn't accept */
+                        return ret;
+                #endif
                     return (passwdRetry > 0) ?
                         WOLFSSH_USERAUTH_INVALID_PASSWORD :
                         WOLFSSH_USERAUTH_REJECTED;
@@ -2058,6 +2276,10 @@ static void ShowUsage(void)
 #ifdef WOLFSSH_CERTS
     printf(" -a <file>     load in a root CA certificate file\n");
 #endif
+#if defined(WOLFSSH_WOLFSENTRY_HOOKS) && !defined(NO_FILESYSTEM) \
+                                && !defined(WOLFSENTRY_NO_JSON)
+    printf(" -s <file>    Path for JSON wolfSentry config\n");
+#endif
 }
 
 
@@ -2108,7 +2330,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     serverArgs->return_code = 0;
 
     if (argc > 0) {
-    while ((ch = mygetopt(argc, argv, "?1a:d:efEp:R:Ni:j:I:J:K:P:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?1a:d:efEp:R:Ni:j:I:J:K:P:s:")) != -1) {
         switch (ch) {
             case '?' :
                 ShowUsage();
@@ -2165,7 +2387,13 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             case 'j':
                 userPubKey = myoptarg;
                 break;
-
+#ifdef WOLFSSH_WOLFSENTRY_HOOKS
+            case 's':
+#if !defined(NO_FILESYSTEM) && !defined(WOLFSENTRY_NO_JSON)
+                wolfsentry_config_path = myoptarg;
+#endif
+                break;
+#endif
             case 'I':
                 sshPubKeyList = StrListAdd(sshPubKeyList, myoptarg);
                 break;
@@ -2209,6 +2437,12 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 #endif
     (void)userEcc;
 
+#ifdef WOLFSSH_WOLFSENTRY_HOOKS
+    if (wolfsentry_setup(&wolfsentry, wolfsentry_config_path) < 0) {
+        fprintf(stderr, "unable to initialize wolfSentry");
+        WEXIT(EXIT_FAILURE);
+    }
+#endif
     if (wolfSSH_Init() != WS_SUCCESS) {
         fprintf(stderr, "Couldn't initialize wolfSSH.\n");
         WEXIT(EXIT_FAILURE);
@@ -2515,6 +2749,40 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         threadCtx->fwdCbCtx.appFd = -1;
         wolfSSH_SetFwdCbCtx(ssh, &threadCtx->fwdCbCtx);
 #endif
+#ifdef WOLFSSH_WOLFSENTRY_HOOKS
+        {
+            SOCKADDR_IN_T local_addr;
+            struct wolfsentry_data* p;
+            
+            socklen_t local_len = sizeof(local_addr);
+            getsockname(clientFd, (struct sockaddr *)&local_addr,
+                        (socklen_t *)&local_len);
+
+            if (((struct sockaddr *)&clientAddr)->sa_family !=
+                ((struct sockaddr *)&local_addr)->sa_family) {
+                 fprintf(stderr, "client_addr.sa_family != local_addr.sa_family");
+                 WEXIT(EXIT_FAILURE);
+            }
+
+            if (wolfsentry_store_endpoints(
+                  &clientAddr, &local_addr,
+                  IPPROTO_TCP,
+                  WOLFSENTRY_ROUTE_FLAG_DIRECTION_IN, &p) != 1) {
+                  fprintf(stderr, "error in wolfsentry_store_endpoints()");
+                  WEXIT(EXIT_FAILURE);
+            }
+           
+            if (p != NULL) {
+                if(pwMapList.pdata) {
+                    WFREE(pwMapList.pdata, NULL, DYNAMIC_TYPE_SOCKADDR);
+                }
+                pwMapList.pdata = p;
+                threadCtx->pdata = p;
+            }
+           
+        }
+#endif /* WOLFSSH_WOLFSENTRY_HOOKS */
+
         server_worker(threadCtx);
 
     } while (multipleConnections && !quit);
