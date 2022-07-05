@@ -691,13 +691,13 @@ static INLINE int tcp_select(SOCKET_T socketfd, int to_sec)
 /* Wolf Root Directory Helper */
 /* KEIL-RL File System does not support relative directory */
 #if !defined(WOLFSSL_MDK_ARM) && !defined(WOLFSSL_KEIL_FS) && !defined(WOLFSSL_TIRTOS) \
-    && !defined(NO_WOLFSSL_DIR) && !defined(WOLFSSL_NUCLEUS)
+    && !defined(WOLFSSL_NUCLEUS)
     /* Maximum depth to search for WolfSSL root */
     #define MAX_WOLF_ROOT_DEPTH 5
 
     static INLINE int ChangeToWolfSshRoot(void)
     {
-        #if !defined(NO_FILESYSTEM)
+        #if !defined(NO_FILESYSTEM) && !defined(NO_WOLFSSL_DIR)
             int depth, res;
             WFILE* file;
             for(depth = 0; depth <= MAX_WOLF_ROOT_DEPTH; depth++) {
