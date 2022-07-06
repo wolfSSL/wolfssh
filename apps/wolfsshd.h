@@ -23,6 +23,10 @@
 
 typedef struct WOLFSSHD_CONFIG WOLFSSHD_CONFIG;
 
+#define WOLFSSHD_PRIV_SEPARAT 0
+#define WOLFSSHD_PRIV_SANDBOX 1
+#define WOLFSSHD_PRIV_OFF     2
+
 WOLFSSHD_CONFIG* wolfSSHD_NewConfig(void* heap);
 void wolfSSHD_FreeConfig(WOLFSSHD_CONFIG* conf);
 int wolfSSHD_LoadSSHD(WOLFSSHD_CONFIG* conf, const char* filename);

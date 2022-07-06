@@ -34,6 +34,7 @@
 #include <wolfssh/test.h>
 
 #include "wolfsshd.h"
+#include "wolfauth.h"
 
 #include <signal.h>
 
@@ -70,6 +71,8 @@
     }
 #endif /* WOLFSSH_SHELL */
 
+static volatile byte debugMode = 0; /* default to off */
+
 /* catch interrupts and close down gracefully */
 static volatile byte quit = 0;
 static const char defaultBanner[] = "wolfSSHD\n";
@@ -86,6 +89,7 @@ static void ShowUsage(void)
     printf(" -?             display this help and exit\n");
     printf(" -f <file name> Configuration file to use, default is /usr/locacl/etc/ssh/sshd_config\n");
     printf(" -p <int>       Port number to listen on\n");
+    printf(" -d             Turn on debug mode\n");
 }
 
 static void interruptCatch(int in)
@@ -97,35 +101,10 @@ static void interruptCatch(int in)
 
 static void wolfSSHDLoggingCb(enum wolfSSH_LogLevel lvl, const char *const str)
 {
-    fprintf(stderr, "[PID %d]: %s\n", getpid(), str);
-    (void)lvl;
-}
-
-static int wsUserAuth(byte authType,
-                      WS_UserAuthData* authData,
-                      void* ctx)
-{
-//    if (ctx == NULL) {
-//        fprintf(stderr, "wsUserAuth: ctx not set");
-//        return WOLFSSH_USERAUTH_FAILURE;
-//    }
-
-    if (authType != WOLFSSH_USERAUTH_PASSWORD &&
-#ifdef WOLFSSH_ALLOW_USERAUTH_NONE
-        authType != WOLFSSH_USERAUTH_NONE &&
-#endif
-        authType != WOLFSSH_USERAUTH_PUBLICKEY) {
-
-        return WOLFSSH_USERAUTH_FAILURE;
+    if (debugMode) {
+        fprintf(stderr, "[PID %d]: %s\n", getpid(), str);
     }
-
-    (void)ctx;
-    (void)authData;
-
-    fprintf(stderr, "returning success always for now");
-
-    /* @TODO allows all connections */
-    return WOLFSSH_USERAUTH_SUCCESS;
+    (void)lvl;
 }
 
 
@@ -143,7 +122,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
 
     /* setup authority callback for checking peer connections */
     if (ret == WS_SUCCESS) {
-        wolfSSH_SetUserAuth(*ctx, wsUserAuth);
+        wolfSSH_SetUserAuth(*ctx, DefaultUserAuth);
     }
 
     /* set banner to display on connection */
@@ -270,12 +249,67 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
 }
 
 
-#if 0
-int SFTP_Subsystem()
+#ifdef WOLFSSH_SFTP
+/* handle SFTP operations
+ * returns 0 on success
+ */
+static int SFTP_Subsystem(WOLFSSH* ssh, WOLFSSHD_CONNECTION* conn)
 {
+    byte tmp[1];
+    int ret   = WS_SUCCESS;
+    int error = WS_SUCCESS;
+    WS_SOCKET_T sockfd;
+    int select_ret = 0;
 
+    sockfd = (WS_SOCKET_T)wolfSSH_get_fd(ssh);
+    do {
+//        if (threadCtx->nonBlock) {
+//            if (error == WS_WANT_READ)
+//                printf("... sftp server would read block\n");
+//            else if (error == WS_WANT_WRITE)
+//                printf("... sftp server would write block\n");
+//        }
+
+        if (wolfSSH_stream_peek(ssh, tmp, 1) > 0) {
+            select_ret = WS_SELECT_RECV_READY;
+        }
+        else {
+            select_ret = tcp_select(sockfd, TEST_SFTP_TIMEOUT);
+        }
+
+        if (select_ret == WS_SELECT_RECV_READY ||
+            select_ret == WS_SELECT_ERROR_READY ||
+            error == WS_WANT_WRITE)
+        {
+            ret = wolfSSH_SFTP_read(ssh);
+            error = wolfSSH_get_error(ssh);
+        }
+        else if (select_ret == WS_SELECT_TIMEOUT)
+            error = WS_WANT_READ;
+        else
+            error = WS_FATAL_ERROR;
+
+        if (error == WS_WANT_READ || error == WS_WANT_WRITE ||
+            error == WS_CHAN_RXD || error == WS_REKEYING ||
+            error == WS_WINDOW_FULL)
+            ret = error;
+
+        if (ret == WS_FATAL_ERROR && error == 0) {
+            WOLFSSH_CHANNEL* channel =
+                wolfSSH_ChannelNext(ssh, NULL);
+            if (channel && wolfSSH_ChannelGetEof(channel)) {
+                ret = 0;
+                break;
+            }
+        }
+    } while (ret != WS_FATAL_ERROR);
+
+    return ret;
 }
+#endif
 
+
+#ifdef WOLFSSH_SCP
 int SCP_Subsystem()
 {
 
@@ -457,14 +491,25 @@ static void* wolfSSHD_HandleConnection(void* arg)
         }
     }
 
-#ifdef WOLFSSH_SHELL
-    printf("ret of accept = %d\n",ret);
-    if (ret == WS_SUCCESS) {
-        printf("trying to run shell\n");
-        wolfSSH_Log(WS_LOG_INFO, "[SSHD] Entering new shell");
-        SHELL_Subsystem(conn, ssh);
+    switch (ret) {
+        case WS_SFTP_COMPLETE:
+        #ifdef WOLFSSH_SFTP
+            ret = SFTP_Subsystem(ssh, conn);
+        #else
+            err_sys("SFTP not compiled in. Please use --enable-sftp");
+        #endif
+            break;
+
+       case WS_SUCCESS: /* default success case to shell */
+    #ifdef WOLFSSH_SHELL
+        printf("ret of accept = %d\n",ret);
+        if (ret == WS_SUCCESS) {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Entering new shell");
+            SHELL_Subsystem(conn, ssh);
+        }
+    #endif
+        break;
     }
-#endif
 
     wolfSSH_shutdown(ssh);
     wolfSSH_free(ssh);
@@ -573,26 +618,32 @@ int main(int argc, char** argv)
     }
 
 
-    while ((ch = mygetopt(argc, argv, "?f:p:h:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?f:p:h:d")) != -1) {
         switch (ch) {
             case 'f':
                 configFile = myoptarg;
                 break;
 
             case 'p':
-                ret = XATOI(myoptarg);
-                if (ret < 0) {
-                    printf("Issue parsing port number %s\n", myoptarg);
-                    ret = BAD_FUNC_ARG;
-                }
-                else {
-                    port = (word16)ret;
-                    ret = WS_SUCCESS;
+                if (ret == WS_SUCCESS) {
+                    ret = XATOI(myoptarg);
+                    if (ret < 0) {
+                        printf("Issue parsing port number %s\n", myoptarg);
+                        ret = BAD_FUNC_ARG;
+                    }
+                    else {
+                        port = (word16)ret;
+                        ret = WS_SUCCESS;
+                    }
                 }
                 break;
 
             case 'h':
                 hostKeyFile = myoptarg;
+                break;
+
+            case 'd':
+                debugMode = 1; /* turn on debug mode */
                 break;
 
             case '?':

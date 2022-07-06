@@ -52,11 +52,11 @@ struct WOLFSSHD_CONFIG {
     char* listenAddress;
     char* authKeysFile;
     word16 port;
+    byte usePrivilegeSeparation;
     byte passwordAuth:1;
     byte pubKeyAuth:1;
     byte permitRootLogin:1;
     byte permitEmptyPasswords:1;
-    byte usePrivilegeSeparation:1;
 };
 
 /* returns WS_SUCCESS on success */
@@ -141,7 +141,8 @@ static int wolfSSHD_ParseConfigLine(WOLFSSHD_CONFIG* conf, const char* l,
     int sz;
 
     /* supported config options */
-    const char authKeyFile[] = "AuthorizedKeysFile";
+    const char authKeyFile[]         = "AuthorizedKeysFile";
+    const char privilegeSeparation[] = "UsePrivilegeSeparation";
 
     sz = (int)XSTRLEN(authKeyFile);
     if (lSz > sz && XSTRNCMP(l, authKeyFile, sz) == 0) {
@@ -149,8 +150,32 @@ static int wolfSSHD_ParseConfigLine(WOLFSSHD_CONFIG* conf, const char* l,
                 conf->heap);
     }
 
-    if (XSTRNCMP(l, "UsePrivilegeSeparation", 18) == 0) {
-        ret = WS_SUCCESS;
+    sz = (int)XSTRLEN(privilegeSeparation);
+    if (lSz > sz && XSTRNCMP(l, privilegeSeparation, sz) == 0) {
+        char* privType = NULL;
+        ret = wolfSSHD_CreateString(&privType, l + sz, lSz - sz, conf->heap);
+        
+        /* check if is an allowed option */
+        if (XSTRNCMP(privType, "sandbox", 7) == 0) {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Sandbox privilege separation");
+            ret = WS_SUCCESS;
+        }
+
+        if (XSTRNCMP(privType, "yes", 3) == 0) {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Privilege separation enabled");
+            ret = WS_SUCCESS;
+        }
+
+        if (XSTRNCMP(privType, "no", 2) == 0) {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Turning off privilege separation!");
+            ret = WS_SUCCESS;
+        }
+
+        if (ret != WS_SUCCESS) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Unknown/supported privilege separation!");
+        }
+        wolfSSHD_FreeString(&privType, conf->heap);
     }
 
     if (XSTRNCMP(l, "Subsystem", 9) == 0) {
@@ -201,9 +226,11 @@ int wolfSSHD_LoadSSHD(WOLFSSHD_CONFIG* conf, const char* filename)
 
     f = XFOPEN(filename, "rb");
     if (f == XBADFILE) {
-        printf("Unable to open SSHD config file %s\n", filename);
+        wolfSSH_Log(WS_LOG_ERROR, "Unable to open SSHD config file %s\n",
+                filename);
         return BAD_FUNC_ARG;
     }
+    wolfSSH_Log(WS_LOG_INFO, "[SSHD] parsing config file %s", filename);
 
     while ((current = XFGETS(buf, MAX_LINE_SIZE, f)) != NULL) {
         int currentSz = (int)XSTRLEN(current);
