@@ -1,4 +1,4 @@
-/* wolfconfig.c
+/* config.c
  *
  * Copyright (C) 2014-2021 wolfSSL Inc.
  *
@@ -110,7 +110,7 @@ WOLFSSHD_CONFIG* wolfSSHD_NewConfig(void* heap)
         WMEMSET(ret, 0, sizeof(WOLFSSHD_CONFIG));
 
         /* default values */
-        ret->port = 22;
+        ret->port = 9387;
     }
     return ret;
 
@@ -139,6 +139,7 @@ static int wolfSSHD_ParseConfigLine(WOLFSSHD_CONFIG* conf, const char* l,
 {
     int ret = WS_BAD_ARGUMENT;
     int sz;
+    char* tmp;
 
     /* supported config options */
     const char authKeyFile[]         = "AuthorizedKeysFile";
@@ -146,8 +147,10 @@ static int wolfSSHD_ParseConfigLine(WOLFSSHD_CONFIG* conf, const char* l,
 
     sz = (int)XSTRLEN(authKeyFile);
     if (lSz > sz && XSTRNCMP(l, authKeyFile, sz) == 0) {
-        ret = wolfSSHD_CreateString(&conf->authKeysFile, l + sz, lSz - sz,
-                conf->heap);
+        ret = wolfSSHD_CreateString(&tmp, l + sz, lSz - sz, conf->heap);
+        if (ret == WS_SUCCESS) {
+            wolfSSHD_SetAuthKeysFile(conf, tmp);
+        }
     }
 
     sz = (int)XSTRLEN(privilegeSeparation);
@@ -258,7 +261,27 @@ int wolfSSHD_LoadSSHD(WOLFSSHD_CONFIG* conf, const char* filename)
     }
     XFCLOSE(f);
 
+    SetAuthKeysPattern(conf->authKeysFile);
+
     return ret;
+}
+
+char* wolfSSHD_GetAuthKeysFile(WOLFSSHD_CONFIG* conf)
+{
+    if (conf != NULL)
+        return conf->authKeysFile;
+    return NULL;
+}
+
+int wolfSSHD_SetAuthKeysFile(WOLFSSHD_CONFIG* conf, const char* file)
+{
+    if (conf == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    conf->authKeysFile = (char*)file;
+
+    return WS_SUCCESS;
 }
 
 char* wolfSSHD_GetBanner(WOLFSSHD_CONFIG* conf)

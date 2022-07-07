@@ -1,0 +1,14 @@
+if BUILD_SSHD
+
+bin_PROGRAMS += apps/wolfsshd/wolfsshd
+noinst_HEADERS += apps/wolfsshd/wolfsshd.h \
+                  apps/wolfsshd/auth.h
+apps_wolfsshd_wolfsshd_SOURCES = apps/wolfsshd/wolfsshd.c \
+                                 apps/wolfsshd/config.c \
+                                 apps/wolfsshd/auth.c
+apps_wolfsshd_wolfsshd_LDADD        = src/libwolfssh.la
+apps_wolfsshd_wolfsshd_DEPENDENCIES = src/libwolfssh.la
+
+DISTCLEANFILES+= apps/wolfsshd/.libs/wolfsshd
+
+endif BUILD_SSHD

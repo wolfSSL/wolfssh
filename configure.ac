@@ -238,6 +238,10 @@ AS_IF([test "x$ENABLED_SMALLSTACK" = "xyes"],
 AS_IF([test "x$ENABLED_SSHD" = "xyes"],
        [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SSHD"])
 
+if test "$ENABLED_SSHD" = "yes"; then
+    AC_CHECK_LIB([crypt], [crypt], [], [AC_MSG_ERROR([libcrypt is required for sshd])])
+fi
+
 # Set the automake conditionals.
 AM_CONDITIONAL([BUILD_EXAMPLE_SERVERS],[test "x$ENABLED_EXAMPLES" = "xyes"])
 AM_CONDITIONAL([BUILD_EXAMPLE_CLIENTS],[test "x$ENABLED_EXAMPLES" = "xyes"])

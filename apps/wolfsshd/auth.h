@@ -1,4 +1,4 @@
-/* wolfauth.h
+/* auth.h
  *
  * Copyright (C) 2014-2021 wolfSSL Inc.
  *
@@ -18,14 +18,17 @@
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-
-
 #ifndef WOLFAUTH_H
 #define WOLFAUTH_H
 
+#if 0
 typedef struct USER_NODE USER_NODE;
 
 USER_NODE* AddNewUser(USER_NODE* list, byte type, const byte* username,
                        word32 usernameSz, const byte* value, word32 valueSz);
+#endif
+
+void SetAuthKeysPattern(const char* pattern);
 int DefaultUserAuth(byte authType, WS_UserAuthData* authData, void* ctx);
+
 #endif /* WOLFAUTH_H */

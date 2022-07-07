@@ -29,12 +29,13 @@
 #include <wolfssh/log.h>
 #include <wolfssl/wolfcrypt/wc_port.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
+#include <wolfssl/wolfcrypt/logging.h>
 
 #define WOLFSSH_TEST_SERVER
 #include <wolfssh/test.h>
 
 #include "wolfsshd.h"
-#include "wolfauth.h"
+#include "auth.h"
 
 #include <signal.h>
 
@@ -87,7 +88,7 @@ static void ShowUsage(void)
 {
     printf("wolfsshd %s\n", LIBWOLFSSH_VERSION_STRING);
     printf(" -?             display this help and exit\n");
-    printf(" -f <file name> Configuration file to use, default is /usr/locacl/etc/ssh/sshd_config\n");
+    printf(" -f <file name> Configuration file to use, default is /usr/local/etc/ssh/sshd_config\n");
     printf(" -p <int>       Port number to listen on\n");
     printf(" -d             Turn on debug mode\n");
 }
@@ -106,7 +107,6 @@ static void wolfSSHDLoggingCb(enum wolfSSH_LogLevel lvl, const char *const str)
     }
     (void)lvl;
 }
-
 
 static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
 {
@@ -148,8 +148,11 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
     }
 #endif
 
+    /* TODO: Currently expects a private key in DER format. Add logic to handle
+     * PEM, too. wc_PemToDer. */
     /* Load in host private key */
     if (ret == WS_SUCCESS) {
+
         char* hostKey = wolfSSHD_GetHostPrivateKey(conf);
 
         if (hostKey == NULL) {
@@ -159,7 +162,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
         else {
             FILE* f;
 
-            f = fopen(hostKey, "rb");
+            f = XFOPEN(hostKey, "rb");
             if (f == NULL) {
                 wolfSSH_Log(WS_LOG_ERROR,
                         "[SSHD] Unable to open host private key");
@@ -171,8 +174,9 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
 
                 data = (byte*)WMALLOC(dataSz, NULL, 0);
 
-                dataSz = (int)fread(data, 1, dataSz, f);
-                fclose(f);
+                dataSz = (int)XFREAD(data, 1, dataSz, f);
+                XFCLOSE(f);
+
                 if (wolfSSH_CTX_UsePrivateKey_buffer(*ctx, data, dataSz,
                                              WOLFSSH_FORMAT_ASN1) < 0) {
                     wolfSSH_Log(WS_LOG_ERROR,
@@ -239,9 +243,6 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
 //            WFREE(keyLoadBuf, NULL, 0);
 //        #endif
 //    }
-
-    /* Load in authorized keys */
-
 
     /* Set allowed connection type, i.e. public key / password */
 
@@ -599,12 +600,12 @@ int main(int argc, char** argv)
     signal(SIGINT, interruptCatch);
 
     wolfSSH_SetLoggingCb(wolfSSHDLoggingCb);
-    #ifdef DEBUG_WOLFSSH
-        wolfSSH_Debugging_ON();
-    #endif
-    #ifdef DEBUG_WOLFSSL
-        wolfSSL_Debugging_ON();
-    #endif
+#ifdef DEBUG_WOLFSSH
+    wolfSSH_Debugging_ON();
+#endif
+#ifdef DEBUG_WOLFSSL
+    wolfSSL_Debugging_ON();
+#endif
 
     if (ret == WS_SUCCESS) {
         wolfSSH_Init();
@@ -616,7 +617,6 @@ int main(int argc, char** argv)
             ret = WS_MEMORY_E;
         }
     }
-
 
     while ((ch = mygetopt(argc, argv, "?f:p:h:d")) != -1) {
         switch (ch) {
@@ -677,6 +677,9 @@ int main(int argc, char** argv)
     if (ret == WS_SUCCESS) {
         ret = SetupCTX(conf, &ctx);
     }
+    else {
+        /* TODO: handle error. */
+    }
 
     wolfSSH_Log(WS_LOG_INFO, "[SSHD] Starting to listen on port %d", port);
     tcp_listen(&listenFd, &port, 1);
@@ -708,6 +711,7 @@ int main(int argc, char** argv)
 
     wolfSSHD_FreeConfig(conf);
     wolfSSH_Cleanup();
+
     return 0;
 }
 #endif /* WOLFSSH_SSHD */
