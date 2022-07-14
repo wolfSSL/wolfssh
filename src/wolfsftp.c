@@ -1203,7 +1203,7 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, byte* data,
      * Lots of peers send a '.' wanting a return of the current absolute path
      * not the absolute path + .
      */
-    if (r[rSz - 2] == WS_DELIM && r[rSz - 1] == '.') {
+    if (rSz > 2 && r[rSz - 2] == WS_DELIM && r[rSz - 1] == '.') {
         r[rSz - 1] = '\0';
         rSz -= 1;
     }
