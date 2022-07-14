@@ -513,6 +513,13 @@ static int wolfSSH_SFTP_buffer_send(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer)
         if (ret > 0) {
             buffer->idx += ret;
         }
+
+        if (ret == WS_WANT_WRITE) {
+            /* data was stored in out buffer of ssh struct but not sent
+             * still advance the SFTP buffer index */
+            buffer->idx += buffer->sz - buffer->idx;
+        }
+
     } while (buffer->idx < buffer->sz && (ret > 0 || ret == WS_SUCCESS));
 
     return ret;
