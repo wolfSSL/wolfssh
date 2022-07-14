@@ -1137,8 +1137,15 @@ static int sftp_worker(thread_ctx_t* threadCtx)
         if (threadCtx->nonBlock) {
             if (error == WS_WANT_READ)
                 printf("... sftp server would read block\n");
-            else if (error == WS_WANT_WRITE)
+            else if (error == WS_WANT_WRITE) {
+                word32 c;
                 printf("... sftp server would write block\n");
+
+                /* handle backlog of send packets */
+                wolfSSH_worker(threadCtx->ssh, &c);
+                ret = error = wolfSSH_get_error(threadCtx->ssh);
+                continue;
+            }
         }
 
         if (wolfSSH_stream_peek(threadCtx->ssh, tmp, 1) > 0) {

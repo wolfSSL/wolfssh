@@ -2654,7 +2654,8 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             ret = SendKexInit(ssh);
         }
 
-        if (ret == WS_SUCCESS)
+        /* account for possible want write case from SendKexInit */
+        if (ret == WS_SUCCESS || ret == WS_WANT_WRITE)
             ret = wc_HashInit(&ssh->handshake->hash, enmhashId);
 
         if (ret == WS_SUCCESS) {
@@ -2720,6 +2721,10 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 ssh->clientState = CLIENT_KEXINIT_DONE;
             else
                 ssh->serverState = SERVER_KEXINIT_DONE;
+
+            if (ssh->error != 0)
+                ret = ssh->error; /* propogate potential want write case from
+                                     SendKexInit*/
         }
     }
     WLOG(WS_LOG_DEBUG, "Leaving DoKexInit(), ret = %d", ret);
@@ -6334,7 +6339,7 @@ int DoReceive(WOLFSSH* ssh)
             ret = DoPacket(ssh);
             ssh->error = ret;
             if (ret < 0 && !(ret == WS_CHAN_RXD || ret == WS_EXTDATA ||
-                    ret == WS_CHANNEL_CLOSED)) {
+                    ret == WS_CHANNEL_CLOSED || ret == WS_WANT_WRITE)) {
                 return WS_FATAL_ERROR;
             }
             WLOG(WS_LOG_DEBUG, "PR3: peerMacSz = %u", peerMacSz);
