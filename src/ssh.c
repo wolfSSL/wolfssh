@@ -395,6 +395,15 @@ int wolfSSH_accept(WOLFSSH* ssh)
     if (ssh == NULL)
         return WS_BAD_ARGUMENT;
 
+    /* clear want read/writes for retry */
+    if (ssh->error == WS_WANT_READ || ssh->error == WS_WANT_WRITE)
+        ssh->error = 0;
+
+    if (ssh->error != 0) {
+        WLOG(WS_LOG_DEBUG, "Calling wolfSSH_accept in error state");
+        return WS_INVALID_STATE_E;
+    }
+
     /* check if data pending to be sent */
     if (ssh->outputBuffer.length > 0 &&
             ssh->acceptState < ACCEPT_CLIENT_SESSION_ESTABLISHED) {

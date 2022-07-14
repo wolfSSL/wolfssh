@@ -513,6 +513,13 @@ static int wolfSSH_SFTP_buffer_send(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer)
         if (ret > 0) {
             buffer->idx += ret;
         }
+
+        if (ret == WS_WANT_WRITE) {
+            /* data was stored in out buffer of ssh struct but not sent
+             * still advance the SFTP buffer index */
+            buffer->idx += buffer->sz - buffer->idx;
+        }
+
     } while (buffer->idx < buffer->sz && (ret > 0 || ret == WS_SUCCESS));
 
     return ret;
@@ -1203,7 +1210,7 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, byte* data,
      * Lots of peers send a '.' wanting a return of the current absolute path
      * not the absolute path + .
      */
-    if (r[rSz - 2] == WS_DELIM && r[rSz - 1] == '.') {
+    if (rSz > 2 && r[rSz - 2] == WS_DELIM && r[rSz - 1] == '.') {
         r[rSz - 1] = '\0';
         rSz -= 1;
     }
