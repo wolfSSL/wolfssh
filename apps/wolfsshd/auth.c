@@ -45,6 +45,7 @@
 #ifndef _WIN32
 #include <sys/types.h>
 #include <pwd.h>
+#include <shadow.h>
 #include <uuid/uuid.h>
 #include <errno.h>
 #endif
@@ -193,10 +194,15 @@ int DefaultUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 }
 #endif
 
+enum {
+    WSSHD_AUTH_FAILURE =  0,
+    WSSHD_AUTH_SUCCESS =  1
+};
+
 static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
                              word32 keySz)
 {
-    int ret = WS_SUCCESS;
+    int ret = WSSHD_AUTH_SUCCESS;
     char* type;
     char* keyCandBase64; /* cand == candidate */
     word32 keyCandBase64Sz;
@@ -220,7 +226,7 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
         ret = WS_BAD_ARGUMENT;
     }
 
-    if (ret == WS_SUCCESS) {
+    if (ret == WSSHD_AUTH_SUCCESS) {
         if ((type = WSTRTOK(line, " ", &last)) == NULL) {
             ret = WS_FATAL_ERROR;
         }
@@ -228,7 +234,7 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
             ret = WS_FATAL_ERROR;
         }
     }
-    if (ret == WS_SUCCESS) {
+    if (ret == WSSHD_AUTH_SUCCESS) {
         for (i = 0; i < NUM_ALLOWED_TYPES; ++i) {
             if (WSTRCMP(type, allowedTypes[i]) == 0) {
                 typeOk = 1;
@@ -239,7 +245,7 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
             ret = WS_FATAL_ERROR;
         }
     }
-    if (ret == WS_SUCCESS) {
+    if (ret == WSSHD_AUTH_SUCCESS) {
         keyCandBase64Sz = XSTRLEN(keyCandBase64);
         keyCandSz = (keyCandBase64Sz * 3 + 3) / 4;
         keyCand = (byte*)WMALLOC(keyCandSz, NULL, DYNTYPE_BUFFER);
@@ -253,9 +259,10 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
             }
         }
     }
-    if (ret == WS_SUCCESS && keyCandSz == keySz &&
-        WMEMCMP(key, keyCand, keySz) == 0) {
-        ret = 1;
+    if (ret == WSSHD_AUTH_SUCCESS) {
+        if (keyCandSz != keySz || WMEMCMP(key, keyCand, keySz) != 0) {
+            ret = WSSHD_AUTH_FAILURE;
+        }
     }
 
     if (keyCand != NULL) {
@@ -265,14 +272,117 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
     return ret;
 }
 
-/* returns WS_SUCCESS if user/password found */
-static int CheckPassword(const byte* usr, const byte* pw, int pwSz)
+#ifndef _WIN32
+static int ExtractSalt(char* hash, char** salt, int saltSz)
 {
     int ret = WS_SUCCESS;
+    int idx = 0;
+    char* p;
+
+    if (hash == NULL || salt == NULL || *salt == NULL || saltSz <= 0) {
+        ret = WS_SUCCESS;
+    }
+
+    if (ret == 0) {
+        if (hash[idx] != '$') {
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            ++idx;
+            if (idx >= saltSz) {
+                ret = WS_BUFFER_E;
+            }
+        }
+    }
+    if (ret == 0) {
+        p = strstr(hash + idx, "$");
+        if (p == NULL) {
+            ret = -1;
+        }
+        else {
+            idx += (p - hash);
+            if (idx >= saltSz) {
+                ret = WS_BUFFER_E;
+            }
+        }
+    }
+    if (ret == 0) {
+        p = strstr(p + 1, "$");
+        if (p == NULL) {
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            idx += (p - (hash + idx) + 1);
+            if (idx >= saltSz) {
+                ret = WS_BUFFER_E;
+            }
+        }
+    }
+    if (ret == 0) {
+        memcpy(*salt, hash, idx);
+        (*salt)[idx] = 0;
+    }
+
+    return ret;
+}
+
+static int CheckPasswordHashUnix(const char* input, char* stored)
+{
+    int ret = WSSHD_AUTH_SUCCESS;
+    int rc;
+    char salt[32];
+    char* p = salt;
+    char* hashedInput;
+
+    if (input == NULL || stored == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WSSHD_AUTH_SUCCESS) {
+        rc = ExtractSalt(stored, &p, sizeof(salt));
+        if (rc != WS_SUCCESS) {
+            ret = rc;
+        }
+    }
+    if (ret == WSSHD_AUTH_SUCCESS) {
+        hashedInput = crypt(input, salt);
+        if (hashedInput == NULL) {
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            if (WMEMCMP(hashedInput, stored, WSTRLEN(stored)) != 0) {
+                ret = WSSHD_AUTH_FAILURE;
+            }
+        }
+    }
+
+    return ret;
+}
+
+static int CheckPasswordUnix(const byte* usr, const byte* pw, int pwSz)
+{
+    int ret = WS_SUCCESS;
+    char* pwStr = NULL;
     struct passwd* pwInfo;
-//    struct spwd*   spwInfo;
-    char* encPw; /* encrypted version of password */
-    char tmp[256];
+    struct spwd* shadowInfo;
+    /* The hash of the user's password stored on the system. */
+    char* storedHash;
+    char* storedHashCpy = NULL;
+
+    if (usr == NULL || pw == NULL || pwSz < 0) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        pwStr = (char*)WMALLOC(pwSz + 1, NULL, DYNTYPE_STRING);
+        if (pwStr == NULL) {
+            ret = WS_MEMORY_E;
+        }
+        else {
+            XMEMCPY(pwStr, pw, pwSz);
+            pwStr[pwSz] = 0;
+        }
+    }
     
     pwInfo = getpwnam((const char*)usr);
     if (pwInfo == NULL) {
@@ -280,65 +390,45 @@ static int CheckPassword(const byte* usr, const byte* pw, int pwSz)
         ret = WS_FATAL_ERROR;
     }
 
-    /* check for shadow password record */
-//    spwInfo = getspnam(usr);
-//    if (spwInfo != NULL) {
-//        pwInfo->pw_passwd = spwInfo->sp_pwdp;
-//    }
-//
-{
-    int z;
-    for (z = 0; z < pwSz; z++)
-        tmp[z] = pw[z];
-    tmp[z] = '\0';
-}
-
     if (ret == WS_SUCCESS) {
-        encPw = crypt((const char*)tmp, pwInfo->pw_passwd);
-        if (encPw == NULL) {
-            /* error encrypting password for comparison */
-            ret = WS_FATAL_ERROR;
-        }
-    }
-
-{
-    int z;
-    printf("peer pw : ");
-    for (z = 0; z < pwSz; z++)
-        printf("%02X", pw[z]);
-    printf("\n");
-    printf("     pw : ");
-    for (z = 0; z < pwSz; z++)
-        printf("%02X", pwInfo->pw_passwd[z]);
-    printf("\n");
-    printf("    enc : ");
-    for (z = 0; z < pwSz; z++)
-        printf("%02X", encPw[z]);
-    printf("\n");
-}
-    if (ret == WS_SUCCESS) {
-        if (XSTRCMP(encPw, pwInfo->pw_passwd) == 0) {
-            wolfSSH_Log(WS_LOG_INFO, "[SSHD] User %s log in successful", usr);
+        if (pwInfo->pw_passwd[0] == 'x') {
+            shadowInfo = getspnam((const char*)usr);
+            if (shadowInfo == NULL) {
+                ret = WS_FATAL_ERROR;
+            }
+            else {
+                storedHash = shadowInfo->sp_pwdp;
+            }
         }
         else {
-            wolfSSH_Log(WS_LOG_INFO, "[SSHD] User %s log in fail", usr);
-            ret = WS_FATAL_ERROR;
+            storedHash = pwInfo->pw_passwd;
         }
     }
-    (void)pwSz;
+    if (ret == WS_SUCCESS) {
+        storedHashCpy = WSTRDUP(storedHash, NULL, DYNTYPE_STRING);
+        if (storedHash == NULL) {
+            ret = WS_MEMORY_E;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = CheckPasswordHashUnix(pwStr, storedHashCpy);
+    }
+
+    if (pwStr != NULL) {
+        WFREE(pwStr, NULL, DYNTYPE_STRING);
+    }
+    if (storedHashCpy != NULL) {
+        WFREE(storedHashCpy, NULL, DYNTYPE_STRING);
+    }
 
     return ret;
 }
-
-enum {
-    USER_LOOKUP_ERROR   = -1,
-    USER_LOOKUP_FAILURE =  0,
-    USER_LOOKUP_SUCCESS =  1
-};
+#endif /* !_WIN32 */
 
 #ifndef _WIN32
 static int CheckUserUnix(const char* name) {
-    int ret = USER_LOOKUP_FAILURE;
+    int ret = WSSHD_AUTH_FAILURE;
     struct passwd* pwInfo;
 
     errno = 0;
@@ -347,11 +437,11 @@ static int CheckUserUnix(const char* name) {
         if (errno != 0) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error calling getpwnam for user "
                                       "%s.", name);
-            ret = USER_LOOKUP_ERROR;
+            ret = WS_FATAL_ERROR;
         }
     }
     else {
-        ret = USER_LOOKUP_SUCCESS;
+        ret = WSSHD_AUTH_SUCCESS;
     }
 
     return ret;
@@ -406,7 +496,8 @@ static int ResolveAuthKeysPath(const char* homeDir, char* resolved)
 
 static int CheckPublicKeyUnix(const byte* name, const byte* key, word32 keySz)
 {
-    int ret = WS_SUCCESS;
+    int ret = WSSHD_AUTH_SUCCESS;
+    int rc;
     struct passwd* pwInfo;
     char* authKeysFile = NULL;
     XFILE f;
@@ -419,7 +510,6 @@ static int CheckPublicKeyUnix(const byte* name, const byte* key, word32 keySz)
     char* current;
     word32 currentSz;
     int foundKey = 0;
-    int rc;
     char authKeysPath[MAX_PATH_SZ];
     
     errno = 0;
@@ -428,14 +518,19 @@ static int CheckPublicKeyUnix(const byte* name, const byte* key, word32 keySz)
         if (errno != 0) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error calling getpwnam for user "
                                      "%s.", name);
-            ret = WS_ERROR;
+            ret = WS_FATAL_ERROR;
         }
     }
-    if (ret == WS_SUCCESS) {
+    if (ret == WSSHD_AUTH_SUCCESS) {
         WMEMSET(authKeysPath, 0, sizeof(authKeysPath));
-        ret = ResolveAuthKeysPath(pwInfo->pw_dir, authKeysPath);
+        rc = ResolveAuthKeysPath(pwInfo->pw_dir, authKeysPath);
+        if (rc != WS_SUCCESS) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failed to resolve authorized keys"
+                                      " file path.");
+            ret = rc;
+        }
     }
-    if (ret == WS_SUCCESS) {
+    if (ret == WSSHD_AUTH_SUCCESS) {
         f = XFOPEN(authKeysPath, "rb");
         if (f == XBADFILE) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to open %s",
@@ -443,13 +538,13 @@ static int CheckPublicKeyUnix(const byte* name, const byte* key, word32 keySz)
             ret = WS_BAD_FILE_E;
         }
     }
-    if (ret == WS_SUCCESS) {
+    if (ret == WSSHD_AUTH_SUCCESS) {
         lineBuf = (char*)WMALLOC(MAX_LINE_SZ, NULL, DYNTYPE_BUFFER);
         if (lineBuf == NULL) {
             ret = WS_MEMORY_E;
         }
     }
-    while (ret == WS_SUCCESS &&
+    while (ret == WSSHD_AUTH_SUCCESS &&
            (current = XFGETS(lineBuf, MAX_LINE_SZ, f)) != NULL) {
         currentSz = XSTRLEN(current);
 
@@ -468,7 +563,7 @@ static int CheckPublicKeyUnix(const byte* name, const byte* key, word32 keySz)
         }
 
         rc = CheckAuthKeysLine(current, currentSz, key, keySz);
-        if (rc == 1) {
+        if (rc == WSSHD_AUTH_SUCCESS) {
             foundKey = 1;
             break;
         }
@@ -479,8 +574,8 @@ static int CheckPublicKeyUnix(const byte* name, const byte* key, word32 keySz)
     }
     XFCLOSE(f);
 
-    if (ret == WS_SUCCESS && !foundKey) {
-        ret = WS_ERROR;
+    if (ret == WSSHD_AUTH_SUCCESS && !foundKey) {
+        ret = WSSHD_AUTH_FAILURE;
     }
 
     if (lineBuf != NULL) {
@@ -494,9 +589,13 @@ static int CheckPublicKeyUnix(const byte* name, const byte* key, word32 keySz)
 }
 #endif /* !_WIN32*/
 
+/*
+ * Returns WSSHD_AUTH_SUCCESS if user found, WSSHD_AUTH_FAILURE if user not
+ * found, and negative values if an error occurs during checking.
+ */
 static int CheckUser(const char* name)
 {
-    int ret = USER_LOOKUP_FAILURE;
+    int ret = WSSHD_AUTH_FAILURE;
 
 #ifdef _WIN32
     /* TODO: Implement for Windows. */
@@ -504,19 +603,26 @@ static int CheckUser(const char* name)
     ret = CheckUserUnix(name);
 #endif
 
-    if (ret == USER_LOOKUP_FAILURE) {
-        wolfSSH_Log(WS_LOG_INFO, "[SSHD] User %s doesn't exist.", name);
-    }
-    else if (ret == USER_LOOKUP_ERROR) {
-        wolfSSH_Log(WS_LOG_INFO, "[SSHD] Error looking up user %s.", name);
-    }
-    else {
-        wolfSSH_Log(WS_LOG_INFO, "[SSHD] User ok.");
-    }
-
     return ret;
 }
 
+/*
+ * Returns WSSHD_AUTH_SUCCESS if user found, WSSHD_AUTH_FAILURE if user not
+ * found, and negative values if an error occurs during checking.
+ */
+static int CheckPassword(const byte* usr, const byte* pw, int pwSz)
+{
+#ifdef _WIN32
+    /* TODO: Add CheckPasswordWin. */
+#else
+    return CheckPasswordUnix(usr, pw, pwSz);
+#endif
+}
+
+/*
+ * Returns WSSHD_AUTH_SUCCESS if public key ok, WSSHD_AUTH_FAILURE if key not
+ * ok, and negative values if an error occurs during checking.
+ */
 static int CheckPublicKey(const byte* name, const byte* key, word32 keySz)
 {
     int ret = 0;
@@ -532,7 +638,8 @@ static int CheckPublicKey(const byte* name, const byte* key, word32 keySz)
 
 int DefaultUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 {
-    int ret = WOLFSSH_USERAUTH_FAILURE;
+    int ret = WOLFSSH_USERAUTH_SUCCESS;
+    int rc;
 
     (void)ctx;
     /* TODO: Auth will need some info from the config. For example, the auth
@@ -550,35 +657,57 @@ int DefaultUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
     }
 
     /* Check user exists. */
-    if (ret == WOLFSSH_USERAUTH_SUCCESS) {
-        /* TODO: Is authData and its members guaranteed to be non-NULL? */
-        if (CheckUser((const char*)authData->username) <= 0) {
-            ret = WOLFSSH_USERAUTH_INVALID_USER;
-        }
+    /* TODO: Is authData and its members guaranteed to be non-NULL? */
+    rc = CheckUser((const char*)authData->username);
+    if (rc == WSSHD_AUTH_SUCCESS) {
+        wolfSSH_Log(WS_LOG_INFO, "[SSHD] User ok.");
+    }
+    else if (ret == WSSHD_AUTH_FAILURE) {
+        wolfSSH_Log(WS_LOG_INFO, "[SSHD] User %s doesn't exist.",
+                    authData->username);
+        ret = WOLFSSH_USERAUTH_INVALID_USER;
+    }
+    else {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error looking up user %s.",
+                    authData->username);
+        ret = WOLFSSH_USERAUTH_FAILURE;
     }
 
-    /* Check if password is valid for this user. */
-    if (authData->type == WOLFSSH_USERAUTH_PASSWORD) {
-        if (CheckPassword(authData->username, authData->sf.password.password,
-                authData->sf.password.passwordSz) == WS_SUCCESS) {
-            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Password ok.");
-            ret = WOLFSSH_USERAUTH_SUCCESS;
+    if (ret == WOLFSSH_USERAUTH_SUCCESS) {
+        /* Check if password is valid for this user. */
+        if (authData->type == WOLFSSH_USERAUTH_PASSWORD) {
+            rc = CheckPassword(authData->username,
+                               authData->sf.password.password,
+                               authData->sf.password.passwordSz);
+            if (rc == WSSHD_AUTH_SUCCESS) {
+                wolfSSH_Log(WS_LOG_INFO, "[SSHD] Password ok.");
+            }
+            else if (rc == WSSHD_AUTH_FAILURE) {
+                wolfSSH_Log(WS_LOG_INFO, "[SSHD] Password incorrect.");
+                ret = WOLFSSH_USERAUTH_INVALID_PASSWORD;
+            }
+            else {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error checking password.");
+                ret = WOLFSSH_USERAUTH_FAILURE;
+            }
         }
-        else {
-            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Password incorrect.");
-            ret = WOLFSSH_USERAUTH_INVALID_PASSWORD;
-        }
-    }
-    /* Check if public key is in this user's authorized_keys file. */
-    else if (authData->type == WOLFSSH_USERAUTH_PUBLICKEY) {
-        if (CheckPublicKey(authData->username, authData->sf.publicKey.publicKey,
-                authData->sf.publicKey.publicKeySz) == WS_SUCCESS) {
-            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key ok.");
-            ret = WOLFSSH_USERAUTH_SUCCESS;
-        }
-        else {
-            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key not authorized.");
-            ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
+        /* Check if public key is in this user's authorized_keys file. */
+        else if (authData->type == WOLFSSH_USERAUTH_PUBLICKEY) {
+            rc = CheckPublicKey(authData->username,
+                                authData->sf.publicKey.publicKey,
+                                authData->sf.publicKey.publicKeySz);
+            if (rc == WSSHD_AUTH_SUCCESS) {
+                wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key ok.");
+                ret = WOLFSSH_USERAUTH_SUCCESS;
+            }
+            else if (rc == WSSHD_AUTH_FAILURE) {
+                wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key not authorized.");
+                ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
+            }
+            else {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error checking public key.");
+                ret = WOLFSSH_USERAUTH_FAILURE;
+            }
         }
     }
 
