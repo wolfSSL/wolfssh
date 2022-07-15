@@ -3465,6 +3465,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                     sigSz = scratch;
                     begin = 0;
                     asnSigSz = sizeof(asnSig);
+                    XMEMSET(asnSig, 0, asnSigSz);
 
                     ret = GetStringRef(&rSz, &r, sig, sigSz, &begin);
                     if (ret == WS_SUCCESS)
