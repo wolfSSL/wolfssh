@@ -157,7 +157,7 @@ static int wolfSSHD_ParseConfigLine(WOLFSSHD_CONFIG* conf, const char* l,
     if (lSz > sz && XSTRNCMP(l, privilegeSeparation, sz) == 0) {
         char* privType = NULL;
         ret = wolfSSHD_CreateString(&privType, l + sz, lSz - sz, conf->heap);
-        
+
         /* check if is an allowed option */
         if (XSTRNCMP(privType, "sandbox", 7) == 0) {
             wolfSSH_Log(WS_LOG_INFO, "[SSHD] Sandbox privilege separation");
@@ -182,27 +182,42 @@ static int wolfSSHD_ParseConfigLine(WOLFSSHD_CONFIG* conf, const char* l,
     }
 
     if (XSTRNCMP(l, "Subsystem", 9) == 0) {
-
+        //@TODO
         ret = WS_SUCCESS;
     }
 
     if (XSTRNCMP(l, "ChallengeResponseAuthentication", 31) == 0) {
+        //@TODO
         ret = WS_SUCCESS;
     }
 
     if (XSTRNCMP(l, "UsePAM", 6) == 0) {
+        //@TODO
         ret = WS_SUCCESS;
     }
 
     if (XSTRNCMP(l, "X11Forwarding", 13) == 0) {
+        //@TODO
         ret = WS_SUCCESS;
     }
 
     if (XSTRNCMP(l, "PrintMotd", 9) == 0) {
+        //@TODO
         ret = WS_SUCCESS;
     }
 
     if (XSTRNCMP(l, "AcceptEnv", 9) == 0) {
+        //@TODO
+        ret = WS_SUCCESS;
+    }
+
+    if (XSTRNCMP(l, "Protocol", 8) == 0) {
+        //@TODO
+        ret = WS_SUCCESS;
+    }
+
+    if (XSTRNCMP(l, "LoginGraceTime", 14) == 0) {
+        //@TODO
         ret = WS_SUCCESS;
     }
 

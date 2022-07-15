@@ -201,6 +201,12 @@ AC_ARG_ENABLE([smallstack],
     [AS_HELP_STRING([--enable-smallstack],[Enable small stack (default: disabled)])],
     [ENABLED_SMALLSTACK=$enableval],[ENABLED_SMALLSTACK=no])
 
+# use PAM lib
+AC_ARG_WITH([pam],
+    [AS_HELP_STRING([--with-pam=PATH],[PATH to directory with the PAM library])],
+    [PAM_LIB=$withval],
+    [PAM_LIB=""])
+
 # Enable All
 AC_ARG_ENABLE([all],
     [AS_HELP_STRING([--enable-all],[Enable all wolfSSH features (default: disabled)])],
@@ -241,8 +247,30 @@ AS_IF([test "x$ENABLED_SSHD" = "xyes"],
        [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SSHD"])
 
 if test "$ENABLED_SSHD" = "yes"; then
-    AC_CHECK_LIB([crypt], [crypt], [], [AC_MSG_ERROR([libcrypt is required for sshd])])
+    if test -n "$PAM_LIB"
+    then
+        AC_MSG_CHECKING([for directory $PAM_LIB])
+        if ! test -d "$PAM_LIB"
+        then
+            AC_MSG_ERROR([PAM lib dir $PAM_LIB not found.])
+        fi
+        AC_MSG_RESULT([yes])
+        AM_LDFLAGS="-L$PAM_LIB $AM_LDFLAGS"
+
+        LIBS="$LIBS -lpam"
+        AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_USE_PAM"
+        #TODO check on link to lib
+        #AC_CHECK_LIB([pam], [pam],
+        #    [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_USE_PAM"; LIBS="$LIBS -lpam"],
+        #    [AC_MSG_ERROR(libpam not found)])
+    else
+        AC_CHECK_LIB([crypt], [crypt],
+            [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_HAVE_LIBCRYPT";
+                LIBS="$LIBS -lcrypt"],
+            [AC_MSG_ERROR(libcrypt not found)])
+    fi
 fi
+
 
 # Set the automake conditionals.
 AM_CONDITIONAL([BUILD_EXAMPLE_SERVERS],[test "x$ENABLED_EXAMPLES" = "xyes"])

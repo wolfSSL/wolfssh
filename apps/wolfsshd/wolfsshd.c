@@ -62,7 +62,12 @@
     #endif
     #include <pwd.h>
     #include <signal.h>
+#if defined(__QNX__) || defined(__QNXNTO__)
+    #include <errno.h>
+    #include <unix.h>
+#else
     #include <sys/errno.h>
+#endif
 
     static volatile int ChildRunning = 0;
     static void ChildSig(int sig)
@@ -313,13 +318,6 @@ static int SFTP_Subsystem(WOLFSSH* ssh, WOLFSSHD_CONNECTION* conn)
 }
 #endif
 
-
-#ifdef WOLFSSH_SCP
-int SCP_Subsystem()
-{
-
-}
-#endif
 
 #ifdef WOLFSSH_SHELL
 static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)

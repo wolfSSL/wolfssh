@@ -69,6 +69,12 @@
     #endif
     #include <pwd.h>
     #include <signal.h>
+#if defined(__QNX__) || defined(__QNXNTO__)
+    #include <errno.h>
+    #include <unix.h>
+#else
+    #include <sys/errno.h>
+#endif
 #endif /* WOLFSSH_SHELL */
 
 #ifdef WOLFSSH_AGENT

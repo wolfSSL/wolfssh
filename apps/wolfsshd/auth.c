@@ -24,7 +24,9 @@
 
 #ifdef WOLFSSH_SSHD
 
-#define _XOPEN_SOURCE
+#ifdef __linux__
+    #define _XOPEN_SOURCE
+#endif
 #include <unistd.h>
 
 #include <wolfssh/ssh.h>
@@ -47,7 +49,6 @@
 #include <sys/types.h>
 #include <pwd.h>
 #include <shadow.h>
-#include <uuid/uuid.h>
 #include <errno.h>
 #endif
 
@@ -274,6 +275,17 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
 }
 
 #ifndef _WIN32
+
+#ifdef WOLFSSH_USE_PAM
+static int CheckPasswordPAM(const byte* usr, const byte* pw, int pwSz)
+{
+    (void)usr;
+    (void)pw;
+    (void)pwSz;
+    return 0;
+}
+#else
+
 static int ExtractSalt(char* hash, char** salt, int saltSz)
 {
     int ret = WS_SUCCESS;
@@ -327,6 +339,7 @@ static int ExtractSalt(char* hash, char** salt, int saltSz)
     return ret;
 }
 
+#ifdef WOLFSSH_HAVE_LIBCRYPT
 static int CheckPasswordHashUnix(const char* input, char* stored)
 {
     int ret = WSSHD_AUTH_SUCCESS;
@@ -359,6 +372,7 @@ static int CheckPasswordHashUnix(const char* input, char* stored)
 
     return ret;
 }
+#endif /* WOLFSSH_HAVE_LIBCRYPT */
 
 static int CheckPasswordUnix(const byte* usr, const byte* pw, int pwSz)
 {
@@ -384,7 +398,7 @@ static int CheckPasswordUnix(const byte* usr, const byte* pw, int pwSz)
             pwStr[pwSz] = 0;
         }
     }
-    
+
     pwInfo = getpwnam((const char*)usr);
     if (pwInfo == NULL) {
         /* user name not found on system */
@@ -413,7 +427,12 @@ static int CheckPasswordUnix(const byte* usr, const byte* pw, int pwSz)
     }
 
     if (ret == WS_SUCCESS) {
+    #ifdef WOLFSSH_HAVE_LIBCRYPT
         ret = CheckPasswordHashUnix(pwStr, storedHashCpy);
+    #else
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] No compiled in password check");
+        ret = WS_NOT_COMPILED;
+    #endif
     }
 
     if (pwStr != NULL) {
@@ -425,6 +444,7 @@ static int CheckPasswordUnix(const byte* usr, const byte* pw, int pwSz)
 
     return ret;
 }
+#endif /* WOLFSSH_USE_PAM */
 #endif /* !_WIN32 */
 
 #ifndef _WIN32
@@ -455,7 +475,7 @@ void SetAuthKeysPattern(const char* pattern)
 {
     if (pattern != NULL) {
         WMEMSET(authKeysPattern, 0, sizeof(authKeysPattern));
-        WSTRNCPY(authKeysPattern, pattern, sizeof(authKeysPattern));
+        WSTRNCPY(authKeysPattern, pattern, sizeof(authKeysPattern) - 1);
     }
 }
 
@@ -501,7 +521,7 @@ static int CheckPublicKeyUnix(const byte* name, const byte* key, word32 keySz)
     int rc;
     struct passwd* pwInfo;
     char* authKeysFile = NULL;
-    XFILE f;
+    XFILE f = NULL;
     enum {
         /* TODO: Probably needs to be even bigger for larger key sizes. */
         MAX_LINE_SZ = 500,
@@ -615,6 +635,8 @@ static int CheckPassword(const byte* usr, const byte* pw, int pwSz)
 {
 #ifdef _WIN32
     /* TODO: Add CheckPasswordWin. */
+#elif defined(WOLFSSH_USE_PAM)
+    return CheckPasswordPAM(usr, pw, pwSz);
 #else
     return CheckPasswordUnix(usr, pw, pwSz);
 #endif
