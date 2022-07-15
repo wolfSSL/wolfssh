@@ -502,24 +502,48 @@ static void* wolfSSHD_HandleConnection(void* arg)
         }
     }
 
-    switch (ret) {
-        case WS_SFTP_COMPLETE:
-        #ifdef WOLFSSH_SFTP
-            ret = SFTP_Subsystem(ssh, conn);
-        #else
-            err_sys("SFTP not compiled in. Please use --enable-sftp");
-        #endif
-            break;
+    if (ret == WS_SUCCESS || ret == WS_SFTP_COMPLETE) {
+        switch (wolfSSH_GetSessionType(ssh)) {
+            case WOLFSSH_SESSION_SHELL:
+            #ifdef WOLFSSH_SHELL
+                if (ret == WS_SUCCESS) {
+                    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Entering new shell");
+                    SHELL_Subsystem(conn, ssh);
+                }
+            #else
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Shell support is disabled");
+                ret = WS_NOT_COMPILED;
+            #endif
+                break;
 
-       case WS_SUCCESS: /* default success case to shell */
-    #ifdef WOLFSSH_SHELL
-        printf("ret of accept = %d\n",ret);
-        if (ret == WS_SUCCESS) {
-            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Entering new shell");
-            SHELL_Subsystem(conn, ssh);
+            case WOLFSSH_SESSION_SUBSYSTEM:
+                /* test for known subsystems */
+                switch (ret) {
+                    case WS_SFTP_COMPLETE:
+                    #ifdef WOLFSSH_SFTP
+                        ret = SFTP_Subsystem(ssh, conn);
+                    #else
+                        err_sys("SFTP not compiled in. Please use --enable-sftp");
+                    #endif
+                        break;
+
+                    default:
+                        wolfSSH_Log(WS_LOG_ERROR,
+                            "[SSHD] Unknown or build not supporting subsystem"
+                            " found [%s]", wolfSSH_GetSessionCommand(ssh));
+                        ret = WS_NOT_COMPILED;
+                }
+                break;
+
+            case WOLFSSH_SESSION_UNKNOWN:
+            case WOLFSSH_SESSION_EXEC:
+            case WOLFSSH_SESSION_TERMINAL:
+            default:
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Unknown or build not supporting session type found");
+                ret = WS_NOT_COMPILED;
         }
-    #endif
-        break;
     }
 
     wolfSSH_shutdown(ssh);

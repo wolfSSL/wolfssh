@@ -216,6 +216,8 @@ AS_IF([test "x$ENABLED_DISTRO" = "xyes"],
       [ENABLED_ALL=yes; enable_shared=yes; enable_static=yes])
 AS_IF([test "x$ENABLED_ALL" = "xyes"],
       [ENABLED_KEYGEN=yes; ENABLED_SCP=yes; ENABLED_SFTP=yes; ENABLED_FWD=yes; ENABLED_SHELL=yes; ENABLED_AGENT=yes])
+AS_IF([test "x$ENABLED_SSHD" = "xyes"],
+      [ENABLED_SHELL=yes;])
 
 # Set the defined flags for the code.
 AS_IF([test "x$ENABLED_INLINE" = "xno"],
