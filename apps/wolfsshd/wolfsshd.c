@@ -91,6 +91,7 @@ static void ShowUsage(void)
     printf(" -f <file name> Configuration file to use, default is /usr/local/etc/ssh/sshd_config\n");
     printf(" -p <int>       Port number to listen on\n");
     printf(" -d             Turn on debug mode\n");
+    printf(" -h <file name> host private key file to use\n");
 }
 
 static void interruptCatch(int in)
@@ -251,6 +252,8 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
 
 
 #ifdef WOLFSSH_SFTP
+#define TEST_SFTP_TIMEOUT 1
+
 /* handle SFTP operations
  * returns 0 on success
  */
@@ -305,6 +308,7 @@ static int SFTP_Subsystem(WOLFSSH* ssh, WOLFSSHD_CONNECTION* conn)
         }
     } while (ret != WS_FATAL_ERROR);
 
+    (void)conn;
     return ret;
 }
 #endif
@@ -354,8 +358,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
 
         signal(SIGINT, SIG_DFL);
 
-        printf("userName is %s\n", userName);
-        system("env");
+        if (system("env") != 0) {
+            printf("0 return value from system call\n");
+        }
 
         setenv("HOME", p_passwd->pw_dir, 1);
         setenv("LOGNAME", p_passwd->pw_name, 1);
@@ -366,10 +371,10 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
 
         execv("/bin/sh", (char **)args);
     }
+    sshFd = wolfSSH_get_fd(ssh);
 
     struct termios tios;
     word32 shellChannelId = 0;
-    printf("In childPid > 0; getpid=%d\n", (int)getpid());
     signal(SIGCHLD, ChildSig);
 
     rc = tcgetattr(childFd, &tios);
@@ -381,15 +386,13 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
         return WS_FATAL_ERROR;
     }
 
-#ifdef SHELL_DEBUG
-    termios_show(childFd);
-#endif
-
     while (ChildRunning) {
+        byte tmp[2];
         fd_set readFds;
         WS_SOCKET_T maxFd;
         int cnt_r;
         int cnt_w;
+        int pending = 0;
 
         FD_ZERO(&readFds);
         FD_SET(sshFd, &readFds);
@@ -398,11 +401,17 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
         FD_SET(childFd, &readFds);
         if (childFd > maxFd)
             maxFd = childFd;
-        rc = select((int)maxFd + 1, &readFds, NULL, NULL, NULL);
-        if (rc == -1)
-            break;
 
-        if (FD_ISSET(sshFd, &readFds)) {
+        if (wolfSSH_stream_peek(ssh, tmp, 1) <= 0) {
+            rc = select((int)maxFd + 1, &readFds, NULL, NULL, NULL);
+            if (rc == -1)
+                break;
+        }
+        else {
+            pending = 1; /* found some pending SSH data */
+        }
+
+        if (pending || FD_ISSET(sshFd, &readFds)) {
             word32 lastChannel = 0;
 
             /* The following tries to read from the first channel inside
@@ -455,6 +464,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
             }
         }
     }
+
     (void)conn;
     return WS_SUCCESS;
 }
@@ -486,7 +496,7 @@ static void* wolfSSHD_HandleConnection(void* arg)
     if (ret == WS_SUCCESS) {
         wolfSSH_set_fd(ssh, conn->fd);
         ret = wolfSSH_accept(ssh);
-        if (ret != WS_SUCCESS) {
+        if (ret != WS_SUCCESS && ret != WS_SFTP_COMPLETE) {
             wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] Failed to accept WOLFSSH connection");
         }

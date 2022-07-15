@@ -24,6 +24,9 @@
 
 #ifdef WOLFSSH_SSHD
 
+#define _XOPEN_SOURCE
+#include <unistd.h>
+
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/log.h>
@@ -39,8 +42,6 @@
 #endif
 
 #include "auth.h"
-
-#include <unistd.h>
 
 #ifndef _WIN32
 #include <sys/types.h>
