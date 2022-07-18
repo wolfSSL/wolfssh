@@ -1132,11 +1132,21 @@ static int sftp_worker(thread_ctx_t* threadCtx)
     WS_SOCKET_T sockfd;
     int select_ret = 0;
 
+    error  = wolfSSH_get_error(threadCtx->ssh);
     sockfd = (WS_SOCKET_T)wolfSSH_get_fd(threadCtx->ssh);
     do {
         if (threadCtx->nonBlock) {
-            if (error == WS_WANT_READ)
+            if (error == WS_WANT_READ) {
+                WOLFSSH_CHANNEL* c;
                 printf("... sftp server would read block\n");
+
+                /* if all channels are closed then close connection */
+                c = wolfSSH_ChannelNext(threadCtx->ssh, NULL);
+                if (c && wolfSSH_ChannelGetEof(c)) {
+                    ret = 0;
+                    break;
+                }
+            }
             else if (error == WS_WANT_WRITE) {
                 word32 c;
                 printf("... sftp server would write block\n");
@@ -1148,24 +1158,31 @@ static int sftp_worker(thread_ctx_t* threadCtx)
             }
         }
 
-        if (wolfSSH_stream_peek(threadCtx->ssh, tmp, 1) > 0) {
-            select_ret = WS_SELECT_RECV_READY;
-        }
-        else {
-            select_ret = tcp_select(sockfd, TEST_SFTP_TIMEOUT);
-        }
-
-        if (select_ret == WS_SELECT_RECV_READY ||
-            select_ret == WS_SELECT_ERROR_READY ||
-            error == WS_WANT_WRITE)
-        {
-            ret = wolfSSH_SFTP_read(threadCtx->ssh);
+        /* if there is a current send in progress then continue to process it */
+        if (wolfSSH_SFTP_PendingSend(threadCtx->ssh)) {
+            ret   = wolfSSH_SFTP_read(threadCtx->ssh);
             error = wolfSSH_get_error(threadCtx->ssh);
         }
-        else if (select_ret == WS_SELECT_TIMEOUT)
-            error = WS_WANT_READ;
-        else
-            error = WS_FATAL_ERROR;
+        else {
+            if (wolfSSH_stream_peek(threadCtx->ssh, tmp, 1) > 0) {
+                select_ret = WS_SELECT_RECV_READY;
+            }
+            else {
+                select_ret = tcp_select(sockfd, TEST_SFTP_TIMEOUT);
+            }
+
+            if (select_ret == WS_SELECT_RECV_READY ||
+                select_ret == WS_SELECT_ERROR_READY ||
+                error == WS_WANT_WRITE)
+            {
+                ret = wolfSSH_SFTP_read(threadCtx->ssh);
+                error = wolfSSH_get_error(threadCtx->ssh);
+            }
+            else if (select_ret == WS_SELECT_TIMEOUT)
+                error = WS_WANT_READ;
+            else
+                error = WS_FATAL_ERROR;
+        }
 
         if (error == WS_WANT_READ || error == WS_WANT_WRITE ||
             error == WS_CHAN_RXD || error == WS_REKEYING ||
@@ -1181,7 +1198,7 @@ static int sftp_worker(thread_ctx_t* threadCtx)
             }
         }
 
-    } while (ret != WS_FATAL_ERROR);
+    } while (ret != WS_FATAL_ERROR && ret != WS_SOCKET_ERROR_E);
 
     return ret;
 }
@@ -1279,8 +1296,43 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
     }
 
     if (error != WS_SOCKET_ERROR_E && error != WS_FATAL_ERROR) {
-        if (wolfSSH_shutdown(threadCtx->ssh) != WS_SUCCESS) {
-            fprintf(stderr, "Error with SSH shutdown.\n");
+        ret = wolfSSH_shutdown(threadCtx->ssh);
+
+        /* peer hung up, stop shutdown */
+        if (ret == WS_SOCKET_ERROR_E) {
+            ret = 0;
+        }
+
+        error = wolfSSH_get_error(threadCtx->ssh);
+        if (error != WS_SOCKET_ERROR_E &&
+                (error == WS_WANT_READ || error == WS_WANT_WRITE)) {
+            int maxAttempt = 10; /* make 10 attempts max before giving up */
+            int attempt;
+
+            for (attempt = 0; attempt < maxAttempt; attempt++) {
+                ret = wolfSSH_worker(threadCtx->ssh, NULL);
+                error = wolfSSH_get_error(threadCtx->ssh);
+
+                /* peer succesfully closed down gracefully */
+                if (ret == WS_CHANNEL_CLOSED) {
+                    ret = 0;
+                    break;
+                }
+
+                /* peer hung up, stop shutdown */
+                if (ret == WS_SOCKET_ERROR_E) {
+                    ret = 0;
+                    break;
+                }
+
+                if (error != WS_WANT_READ && error != WS_WANT_WRITE) {
+                    break;
+                }
+            }
+
+            if (attempt == maxAttempt) {
+                printf("Gave up on gracefull shutdown, closing the socket\n");
+            }
         }
     }
 

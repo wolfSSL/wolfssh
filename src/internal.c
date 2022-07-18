@@ -1436,6 +1436,12 @@ int ChannelPutData(WOLFSSH_CHANNEL* channel, byte* data, word32 dataSz)
 
     inBuf = &channel->inputBuffer;
 
+    /* sanity check the current state to see if is too much data */
+    if (dataSz > channel->windowSz) {
+        WLOG(WS_LOG_ERROR, "Internal state error, too much data");
+        return WS_FATAL_ERROR;
+    }
+
     if (inBuf->length < inBuf->bufferSz &&
         inBuf->length + dataSz <= inBuf->bufferSz) {
 
@@ -1445,7 +1451,7 @@ int ChannelPutData(WOLFSSH_CHANNEL* channel, byte* data, word32 dataSz)
         WLOG(WS_LOG_INFO, "  dataSz = %u", dataSz);
         WLOG(WS_LOG_INFO, "  windowSz = %u", channel->windowSz);
         channel->windowSz -= dataSz;
-        WLOG(WS_LOG_INFO, "  windowSz = %u", channel->windowSz);
+        WLOG(WS_LOG_INFO, "  update windowSz = %u", channel->windowSz);
     }
     else {
         return WS_RECV_OVERFLOW_E;
@@ -9856,6 +9862,18 @@ int SendChannelData(WOLFSSH* ssh, word32 channelId,
             ret = WS_REKEYING;
     }
 
+    /* if already having data pending try to flush it first and do not continue
+     * to que more on fail */
+    if (ret == WS_SUCCESS && ssh->outputBuffer.plainSz > 0) {
+        WLOG(WS_LOG_DEBUG, "Flushing out want write data");
+        ret = wolfSSH_SendPacket(ssh);
+        if (ret != WS_SUCCESS) {
+            WLOG(WS_LOG_DEBUG, "Leaving SendChannelData(), ret = %d", ret);
+            return ret;
+        }
+
+    }
+
     if (ret == WS_SUCCESS) {
         if (ssh->outputBuffer.length != 0)
             ret = wolfSSH_SendPacket(ssh);
@@ -9914,10 +9932,12 @@ int SendChannelData(WOLFSSH* ssh, word32 channelId,
         WLOG(WS_LOG_INFO, "  update peerWindowSz = %u", channel->peerWindowSz);
     }
 
+    /* at this point the data has been loaded into WOLFSSH structure and is
+     * considered consumed */
     if (ret == WS_SUCCESS)
         ret = wolfSSH_SendPacket(ssh);
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS || ret == WS_WANT_WRITE)
         ret = dataSz;
 
     if (ssh && ssh->error == WS_WANT_WRITE)
@@ -10453,18 +10473,9 @@ int wolfSSH_CleanPath(WOLFSSH* ssh, char* in)
         if (path[i] == '/') path[i] = '\\';
     }
 #endif
-
-    /* remove any ./ patterns */
-    for (i = 1; i < sz - 1; i++) {
-        if (path[i] == '.' && path[i - 1] != '.' && path[i + 1] == WS_DELIM) {
-            WMEMMOVE(path + i, path + i + 1, sz - i - 1);
-            path[sz - 1] = '\0';
-            i--;
-        }
-    }
     sz = (int)WSTRLEN(path);
 
-    /* remove any /./ patterns */
+    /* remove any /./ patterns, direcotries, exclude cases like ./ok./test */
     for (i = 1; i + 1 < sz; i++) {
         if (path[i] == '.' && path[i - 1] == WS_DELIM && path[i + 1] == WS_DELIM) {
             WMEMMOVE(path + i, path + i + 1, sz - i + 1);

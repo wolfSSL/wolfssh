@@ -404,11 +404,7 @@ int wsEmbedSend(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
 #endif /* MICROCHIP_MPLAB_HARMONY */
 
     sent = (int)SEND_FUNCTION(sd, buf, sz, ssh->wflags);
-
     sent = TranslateReturnCode(sent, sd);
-
-    WLOG(WS_LOG_DEBUG,"Embed Send sent %d", sent);
-
     if (sent < 0) {
         err = LastError();
         WLOG(WS_LOG_DEBUG,"Embed Send error");
@@ -434,6 +430,7 @@ int wsEmbedSend(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
             return WS_CBIO_ERR_GENERAL;
         }
     }
+    WLOG(WS_LOG_DEBUG,"Embed Send sent %d", sent);
     return sent;
 }
 
