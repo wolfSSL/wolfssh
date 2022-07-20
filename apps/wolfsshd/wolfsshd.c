@@ -85,8 +85,9 @@ static const char defaultBanner[] = "wolfSSHD\n";
 
 /* Initial connection information to pass on to threads/forks */
 typedef struct WOLFSSHD_CONNECTION {
-    WOLFSSH_CTX* ctx;
-    int          fd;
+    WOLFSSH_CTX*   ctx;
+    WOLFSSHD_AUTH* auth;
+    int            fd;
 } WOLFSSHD_CONNECTION;
 
 static void ShowUsage(void)
@@ -493,6 +494,7 @@ static void* wolfSSHD_HandleConnection(void* arg)
 
     if (ret == WS_SUCCESS) {
         wolfSSH_set_fd(ssh, conn->fd);
+        wolfSSH_SetUserAuthCtx(ssh, conn->auth);
         ret = wolfSSH_accept(ssh);
         if (ret != WS_SUCCESS && ret != WS_SFTP_COMPLETE) {
             wolfSSH_Log(WS_LOG_ERROR,
@@ -624,6 +626,7 @@ int main(int argc, char** argv)
     WS_SOCKET_T listenFd = 0;
     int ch;
     WOLFSSHD_CONFIG* conf = NULL;
+    WOLFSSHD_AUTH*   auth = NULL;
     WOLFSSH_CTX* ctx = NULL;
 
     const char* configFile  = "/usr/local/etc/ssh/sshd_config";
@@ -713,35 +716,48 @@ int main(int argc, char** argv)
         /* TODO: handle error. */
     }
 
-    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Starting to listen on port %d", port);
-    tcp_listen(&listenFd, &port, 1);
-    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Listening on port %d", port);
+    if (ret == WS_SUCCESS) {
+        auth = wolfSSHD_CreateUserAuth(NULL);
+        if (auth == NULL) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue creating auth struct");
+            ret = WS_MEMORY_E;
+        }
+        printf("created auth %p\n", auth);
+    }
 
-    /* wait for incoming connections and fork them off */
-    while (ret == WS_SUCCESS && quit == 0) {
-        WOLFSSHD_CONNECTION conn;
-    #ifdef WOLFSSL_NUCLEUS
-        struct addr_struct clientAddr;
-    #else
-        SOCKADDR_IN_T clientAddr;
-        socklen_t     clientAddrSz = sizeof(clientAddr);
-    #endif
+    if (ret == WS_SUCCESS) {
+        wolfSSH_Log(WS_LOG_INFO, "[SSHD] Starting to listen on port %d", port);
+        tcp_listen(&listenFd, &port, 1);
+        wolfSSH_Log(WS_LOG_INFO, "[SSHD] Listening on port %d", port);
 
-        /* wait for a connection */
-        if (wolfSSHD_PendingConnection(listenFd)) {
-            conn.ctx = ctx;
+        /* wait for incoming connections and fork them off */
+        while (ret == WS_SUCCESS && quit == 0) {
+            WOLFSSHD_CONNECTION conn;
         #ifdef WOLFSSL_NUCLEUS
-            conn.fd = NU_Accept(listenFd, &clientAddr, 0);
+            struct addr_struct clientAddr;
         #else
-            conn.fd = accept(listenFd, (struct sockaddr*)&clientAddr,
-                                                         &clientAddrSz);
+            SOCKADDR_IN_T clientAddr;
+            socklen_t     clientAddrSz = sizeof(clientAddr);
         #endif
+            conn.auth = auth;
 
-            ret = wolfSSHD_NewConnection(&conn);
+            /* wait for a connection */
+            if (wolfSSHD_PendingConnection(listenFd)) {
+                conn.ctx = ctx;
+            #ifdef WOLFSSL_NUCLEUS
+                conn.fd = NU_Accept(listenFd, &clientAddr, 0);
+            #else
+                conn.fd = accept(listenFd, (struct sockaddr*)&clientAddr,
+                                                             &clientAddrSz);
+            #endif
+
+                ret = wolfSSHD_NewConnection(&conn);
+            }
         }
     }
 
     wolfSSHD_FreeConfig(conf);
+    wolfSSHD_FreeUserAuth(auth);
     wolfSSH_Cleanup();
 
     return 0;
