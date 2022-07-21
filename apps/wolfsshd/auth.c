@@ -43,7 +43,7 @@
     #include "src/misc.c"
 #endif
 
-#include "auth.h"
+#include "wolfsshd.h"
 
 #ifndef _WIN32
 #include <sys/types.h>
@@ -56,6 +56,7 @@ struct WOLFSSHD_AUTH {
     CallbackCheckUser      CheckUserCb;
     CallbackCheckPassword  CheckPasswordCb;
     CallbackCheckPublicKey CheckPublicKeyCb;
+    WOLFSSHD_CONFIG* conf;
     void* heap;
 };
 
@@ -294,7 +295,7 @@ static int CheckPasswordPAM(const byte* usr, const byte* pw, int pwSz)
 }
 #else
 
-#if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
+#if defined(WOLFSSH_HAVE_LIBCRYPT)
 static int ExtractSalt(char* hash, char** salt, int saltSz)
 {
     int ret = WS_SUCCESS;
@@ -347,13 +348,12 @@ static int ExtractSalt(char* hash, char** salt, int saltSz)
 
     return ret;
 }
+#endif /* WOLFSSH_HAVE_LIBCRYPT */
 
+#if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
 static int CheckPasswordHashUnix(const char* input, char* stored)
 {
     int ret = WSSHD_AUTH_SUCCESS;
-    int rc;
-    char salt[32];
-    char* p = salt;
     char* hashedInput;
 
     if (input == NULL || stored == NULL) {
@@ -361,13 +361,7 @@ static int CheckPasswordHashUnix(const char* input, char* stored)
     }
 
     if (ret == WSSHD_AUTH_SUCCESS) {
-        rc = ExtractSalt(stored, &p, sizeof(salt));
-        if (rc != WS_SUCCESS) {
-            ret = rc;
-        }
-    }
-    if (ret == WSSHD_AUTH_SUCCESS) {
-        hashedInput = crypt(input, salt);
+        hashedInput = crypt(input, stored);
         if (hashedInput == NULL) {
             ret = WS_FATAL_ERROR;
         }
@@ -382,7 +376,7 @@ static int CheckPasswordHashUnix(const char* input, char* stored)
 }
 #endif /* WOLFSSH_HAVE_LIBCRYPT || WOLFSSH_HAVE_LIBLOGIN */
 
-static int CheckPasswordUnix(const byte* usr, const byte* pw, int pwSz)
+static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz)
 {
     int ret = WS_SUCCESS;
     char* pwStr = NULL;
@@ -392,7 +386,7 @@ static int CheckPasswordUnix(const byte* usr, const byte* pw, int pwSz)
     char* storedHash;
     char* storedHashCpy = NULL;
 
-    if (usr == NULL || pw == NULL || pwSz < 0) {
+    if (usr == NULL || pw == NULL) {
         ret = WS_BAD_ARGUMENT;
     }
 
@@ -533,7 +527,7 @@ static int ResolveAuthKeysPath(const char* homeDir, char* resolved)
     return ret;
 }
 
-static int CheckPublicKeyUnix(const byte* name, const byte* key, word32 keySz)
+static int CheckPublicKeyUnix(const char* name, const byte* key, word32 keySz)
 {
     int ret = WSSHD_AUTH_SUCCESS;
     int rc;
@@ -629,10 +623,89 @@ static int CheckPublicKeyUnix(const byte* name, const byte* key, word32 keySz)
 #endif /* !_WIN32*/
 
 
+static int DoCheckUser(const char* usr, WOLFSSHD_AUTH* auth)
+{
+    int ret = WOLFSSH_USERAUTH_FAILURE;
+    int rc;
+
+    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Checking user name %s", usr);
+    rc = auth->CheckUserCb(usr);
+    if (rc == WSSHD_AUTH_SUCCESS) {
+        wolfSSH_Log(WS_LOG_INFO, "[SSHD] User ok.");
+        ret = WOLFSSH_USERAUTH_SUCCESS;
+    }
+    else if (ret == WSSHD_AUTH_FAILURE) {
+        wolfSSH_Log(WS_LOG_INFO, "[SSHD] User %s doesn't exist.", usr);
+        ret = WOLFSSH_USERAUTH_INVALID_USER;
+    }
+    else {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error looking up user %s.", usr);
+        ret = WOLFSSH_USERAUTH_FAILURE;
+    }
+    return ret;
+}
+
+
+/* @TODO this will take in a pipe or equivilant to talk to a privliged thread
+ * rathar than having WOLFSSHD_AUTH directly with privilige seperation */
+static int RequestAuthentication(const char* usr, int type, const byte* data,
+    int dataSz, WOLFSSHD_AUTH* auth)
+{
+    int ret;
+
+    ret = DoCheckUser(usr, auth);
+    if (ret == WOLFSSH_USERAUTH_SUCCESS && type == WOLFSSH_USERAUTH_PASSWORD) {
+        int rc;
+
+        /* Check if password is valid for this user. */
+        /* first handle empty password cases */
+        if (dataSz == 0 && wolfSSHD_ConfigOptionEnabled(auth->conf,
+            WOLFSSHD_EMPTY_PASSWORD) != 1) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Empty passwords not allowed!");
+            ret = WOLFSSH_USERAUTH_FAILURE;
+        }
+        else {
+            rc = auth->CheckPasswordCb(usr, data, dataSz);
+            if (rc == WSSHD_AUTH_SUCCESS) {
+                wolfSSH_Log(WS_LOG_INFO, "[SSHD] Password ok.");
+            }
+            else if (rc == WSSHD_AUTH_FAILURE) {
+                wolfSSH_Log(WS_LOG_INFO, "[SSHD] Password incorrect.");
+                ret = WOLFSSH_USERAUTH_INVALID_PASSWORD;
+            }
+            else {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error checking password.");
+                ret = WOLFSSH_USERAUTH_FAILURE;
+            }
+        }
+    }
+
+
+    if (ret == WOLFSSH_USERAUTH_SUCCESS && type == WOLFSSH_USERAUTH_PUBLICKEY) {
+        int rc;
+
+        rc = auth->CheckPublicKeyCb(usr, data, dataSz);
+        if (rc == WSSHD_AUTH_SUCCESS) {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key ok.");
+            ret = WOLFSSH_USERAUTH_SUCCESS;
+        }
+        else if (rc == WSSHD_AUTH_FAILURE) {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key not authorized.");
+            ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
+        }
+        else {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error checking public key.");
+            ret = WOLFSSH_USERAUTH_FAILURE;
+        }
+    }
+
+    return ret;
+}
+
+
 int DefaultUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 {
     int ret = WOLFSSH_USERAUTH_SUCCESS;
-    int rc;
     WOLFSSHD_AUTH* auth;
 
     if (ctx == NULL) {
@@ -652,11 +725,6 @@ int DefaultUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
         return WOLFSSH_USERAUTH_FAILURE;
     }
 
-    /* TODO: Auth will need some info from the config. For example, the auth
-     * keys file path or the allowed users, if not all users are allowed. Could
-     * pass the config in the ctx pointer...
-     */
-
     if (authType != WOLFSSH_USERAUTH_PASSWORD &&
 #ifdef WOLFSSH_ALLOW_USERAUTH_NONE
         authType != WOLFSSH_USERAUTH_NONE &&
@@ -666,59 +734,22 @@ int DefaultUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
         ret = WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
     }
 
-    /* Check user exists. */
-    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Checking user name %s", authData->username);
-    rc = auth->CheckUserCb((const char*)authData->username);
-    if (rc == WSSHD_AUTH_SUCCESS) {
-        wolfSSH_Log(WS_LOG_INFO, "[SSHD] User ok.");
-    }
-    else if (ret == WSSHD_AUTH_FAILURE) {
-        wolfSSH_Log(WS_LOG_INFO, "[SSHD] User %s doesn't exist.",
-                    authData->username);
-        ret = WOLFSSH_USERAUTH_INVALID_USER;
-    }
-    else {
-        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error looking up user %s.",
-                    authData->username);
-        ret = WOLFSSH_USERAUTH_FAILURE;
+    /* call to possibly privilaged authentecator for password check */
+    if (ret == WOLFSSH_USERAUTH_SUCCESS &&
+            authData->type == WOLFSSH_USERAUTH_PASSWORD) {
+        ret = RequestAuthentication((const char*)authData->username,
+            authData->type,
+            authData->sf.password.password,
+            authData->sf.password.passwordSz, auth);
     }
 
-    if (ret == WOLFSSH_USERAUTH_SUCCESS) {
-        /* Check if password is valid for this user. */
-        if (authData->type == WOLFSSH_USERAUTH_PASSWORD) {
-            rc = auth->CheckPasswordCb(authData->username,
-                               authData->sf.password.password,
-                               authData->sf.password.passwordSz);
-            if (rc == WSSHD_AUTH_SUCCESS) {
-                wolfSSH_Log(WS_LOG_INFO, "[SSHD] Password ok.");
-            }
-            else if (rc == WSSHD_AUTH_FAILURE) {
-                wolfSSH_Log(WS_LOG_INFO, "[SSHD] Password incorrect.");
-                ret = WOLFSSH_USERAUTH_INVALID_PASSWORD;
-            }
-            else {
-                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error checking password.");
-                ret = WOLFSSH_USERAUTH_FAILURE;
-            }
-        }
-        /* Check if public key is in this user's authorized_keys file. */
-        else if (authData->type == WOLFSSH_USERAUTH_PUBLICKEY) {
-            rc = auth->CheckPublicKeyCb(authData->username,
-                                authData->sf.publicKey.publicKey,
-                                authData->sf.publicKey.publicKeySz);
-            if (rc == WSSHD_AUTH_SUCCESS) {
-                wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key ok.");
-                ret = WOLFSSH_USERAUTH_SUCCESS;
-            }
-            else if (rc == WSSHD_AUTH_FAILURE) {
-                wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key not authorized.");
-                ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
-            }
-            else {
-                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error checking public key.");
-                ret = WOLFSSH_USERAUTH_FAILURE;
-            }
-        }
+    /* call to possibly privilaged authentecator for public key check */
+    if (ret == WOLFSSH_USERAUTH_SUCCESS &&
+            authData->type == WOLFSSH_USERAUTH_PUBLICKEY) {
+        ret = RequestAuthentication((const char*)authData->username,
+            authData->type,
+            authData->sf.publicKey.publicKey,
+            authData->sf.publicKey.publicKeySz, auth);
     }
 
     return ret;
@@ -778,7 +809,7 @@ static int SetDefaultPublicKeyCheck(WOLFSSHD_AUTH* auth)
 /* Sets the default functions to be used for authentication of peer.
  * Later the default functions could be overriden if needed.
  * returns a newly created WOLFSSHD_AUTH struct success */
-WOLFSSHD_AUTH * wolfSSHD_CreateUserAuth(void* heap)
+WOLFSSHD_AUTH * wolfSSHD_CreateUserAuth(void* heap, WOLFSSHD_CONFIG* conf)
 {
     WOLFSSHD_AUTH* auth;
 
@@ -787,6 +818,7 @@ WOLFSSHD_AUTH * wolfSSHD_CreateUserAuth(void* heap)
         int ret;
 
         auth->heap = heap;
+        auth->conf = conf;
 
         /* set the default user checking based on build */
         ret = SetDefaultUserCheck(auth);

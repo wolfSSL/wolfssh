@@ -717,7 +717,7 @@ int main(int argc, char** argv)
     }
 
     if (ret == WS_SUCCESS) {
-        auth = wolfSSHD_CreateUserAuth(NULL);
+        auth = wolfSSHD_CreateUserAuth(NULL, conf);
         if (auth == NULL) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue creating auth struct");
             ret = WS_MEMORY_E;

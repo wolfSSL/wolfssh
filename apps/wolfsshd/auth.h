@@ -44,16 +44,16 @@ typedef int (*CallbackCheckUser)(const char* usr);
  * Returns WSSHD_AUTH_SUCCESS if user found, WSSHD_AUTH_FAILURE if user not
  * found, and negative values if an error occurs during checking.
  */
-typedef int (*CallbackCheckPassword)(const byte* usr, const byte* psw,
-    int pswSz);
+typedef int (*CallbackCheckPassword)(const char* usr, const byte* psw,
+    word32 pswSz);
 
 /*
  * Returns WSSHD_AUTH_SUCCESS if public key ok, WSSHD_AUTH_FAILURE if key not
  * ok, and negative values if an error occurs during checking.
  */
-typedef int (*CallbackCheckPublicKey)(const byte* usr, const byte* key,
+typedef int (*CallbackCheckPublicKey)(const char* usr, const byte* key,
     word32 keySz);
 
-WOLFSSHD_AUTH * wolfSSHD_CreateUserAuth(void* heap);
+WOLFSSHD_AUTH * wolfSSHD_CreateUserAuth(void* heap, WOLFSSHD_CONFIG* conf);
 int wolfSSHD_FreeUserAuth(WOLFSSHD_AUTH* auth);
 #endif /* WOLFAUTH_H */

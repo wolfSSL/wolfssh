@@ -21,9 +21,10 @@
 #ifndef WOLFSSHD_H
 #define WOLFSSHD_H
 
+typedef struct WOLFSSHD_CONFIG WOLFSSHD_CONFIG;
+
 #include "auth.h"
 
-typedef struct WOLFSSHD_CONFIG WOLFSSHD_CONFIG;
 
 #define WOLFSSHD_PRIV_SEPARAT 0
 #define WOLFSSHD_PRIV_SANDBOX 1
@@ -40,6 +41,11 @@ word16 wolfSSHD_GetPort(WOLFSSHD_CONFIG* conf);
 char* wolfSSHD_GetAuthKeysFile(WOLFSSHD_CONFIG* conf);
 int wolfSSHD_SetAuthKeysFile(WOLFSSHD_CONFIG* conf, const char* file);
 
+
+/* on/off flag options to check */
+#define WOLFSSHD_EMPTY_PASSWORD 1
+
+int wolfSSHD_ConfigOptionEnabled(WOLFSSHD_CONFIG* conf, word32 opt);
 
 #endif /* WOLFSSHD_H */
 

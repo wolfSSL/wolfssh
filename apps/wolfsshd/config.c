@@ -142,8 +142,9 @@ static int wolfSSHD_ParseConfigLine(WOLFSSHD_CONFIG* conf, const char* l,
     char* tmp;
 
     /* supported config options */
-    const char authKeyFile[]         = "AuthorizedKeysFile";
-    const char privilegeSeparation[] = "UsePrivilegeSeparation";
+    const char authKeyFile[]          = "AuthorizedKeysFile";
+    const char privilegeSeparation[]  = "UsePrivilegeSeparation";
+    const char permitEmptyPasswords[] = "PermitEmptyPasswords";
 
     sz = (int)XSTRLEN(authKeyFile);
     if (lSz > sz && XSTRNCMP(l, authKeyFile, sz) == 0) {
@@ -222,12 +223,29 @@ static int wolfSSHD_ParseConfigLine(WOLFSSHD_CONFIG* conf, const char* l,
     }
 
 
+    sz = (int)XSTRLEN(permitEmptyPasswords);
+    if (lSz > sz && XSTRNCMP(l, permitEmptyPasswords, sz) == 0) {
+        char* emptyPasswd = NULL;
+        ret = wolfSSHD_CreateString(&emptyPasswd, l + sz, lSz - sz, conf->heap);
+
+        if (XSTRNCMP(emptyPasswd, "yes", 3) == 0) {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Empty password enabled");
+            conf->permitEmptyPasswords = 1;
+            ret = WS_SUCCESS;
+        }
+
+        /* default is no */
+        if (XSTRNCMP(emptyPasswd, "no", 2) == 0) {
+            ret = WS_SUCCESS;
+        }
+        wolfSSHD_FreeString(&emptyPasswd, conf->heap);
+    }
 
     if (ret == WS_BAD_ARGUMENT) {
         printf("unknown / unsuported config line\n");
     }
 
-    (void)conf;(void)lSz;
+    (void)lSz;
     return ret;
 }
 
@@ -327,5 +345,20 @@ word16 wolfSSHD_GetPort(WOLFSSHD_CONFIG* conf)
     if (conf != NULL)
         return conf->port;
     return 0;
+}
+
+
+/* test if the 'opt' options is enabled or not in 'conf' for the flags set
+ * return 1 if enabled and 0 if not */
+int wolfSSHD_ConfigOptionEnabled(WOLFSSHD_CONFIG* conf, word32 opt)
+{
+    int ret = 0;
+
+    switch (opt) {
+        case WOLFSSHD_EMPTY_PASSWORD:
+            ret = conf->permitEmptyPasswords;
+            break;
+    }
+    return ret;
 }
 #endif /* WOLFSSH_SSHD */
