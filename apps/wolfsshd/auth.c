@@ -295,7 +295,7 @@ static int CheckPasswordPAM(const byte* usr, const byte* pw, int pwSz)
 }
 #else
 
-#if defined(WOLFSSH_HAVE_LIBCRYPT)
+#if 0
 static int ExtractSalt(char* hash, char** salt, int saltSz)
 {
     int ret = WS_SUCCESS;
@@ -348,7 +348,7 @@ static int ExtractSalt(char* hash, char** salt, int saltSz)
 
     return ret;
 }
-#endif /* WOLFSSH_HAVE_LIBCRYPT */
+#endif
 
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
 static int CheckPasswordHashUnix(const char* input, char* stored)
