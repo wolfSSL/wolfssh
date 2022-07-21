@@ -264,10 +264,20 @@ if test "$ENABLED_SSHD" = "yes"; then
         #    [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_USE_PAM"; LIBS="$LIBS -lpam"],
         #    [AC_MSG_ERROR(libpam not found)])
     else
-        AC_CHECK_LIB([crypt], [crypt],
-            [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_HAVE_LIBCRYPT";
-                LIBS="$LIBS -lcrypt"],
-            [AC_MSG_ERROR(libcrypt not found)])
+        case $host in
+            *qnx*)
+                # QNX uses liblogin for crypt operation
+                AC_CHECK_LIB([login], [login],
+                    [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_HAVE_LIBLOGIN";
+                        LIBS="$LIBS -llogin"],
+                    [AC_MSG_ERROR(liblogin not found)])
+                ;;
+            *)
+                AC_CHECK_LIB([crypt], [crypt],
+                    [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_HAVE_LIBCRYPT";
+                        LIBS="$LIBS -lcrypt"],
+                    [AC_MSG_ERROR(libcrypt not found)])
+        esac
     fi
 fi
 

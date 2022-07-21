@@ -722,7 +722,6 @@ int main(int argc, char** argv)
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue creating auth struct");
             ret = WS_MEMORY_E;
         }
-        printf("created auth %p\n", auth);
     }
 
     if (ret == WS_SUCCESS) {

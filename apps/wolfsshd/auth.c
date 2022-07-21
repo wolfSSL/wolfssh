@@ -294,6 +294,7 @@ static int CheckPasswordPAM(const byte* usr, const byte* pw, int pwSz)
 }
 #else
 
+#if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
 static int ExtractSalt(char* hash, char** salt, int saltSz)
 {
     int ret = WS_SUCCESS;
@@ -347,7 +348,6 @@ static int ExtractSalt(char* hash, char** salt, int saltSz)
     return ret;
 }
 
-#ifdef WOLFSSH_HAVE_LIBCRYPT
 static int CheckPasswordHashUnix(const char* input, char* stored)
 {
     int ret = WSSHD_AUTH_SUCCESS;
@@ -380,7 +380,7 @@ static int CheckPasswordHashUnix(const char* input, char* stored)
 
     return ret;
 }
-#endif /* WOLFSSH_HAVE_LIBCRYPT */
+#endif /* WOLFSSH_HAVE_LIBCRYPT || WOLFSSH_HAVE_LIBLOGIN */
 
 static int CheckPasswordUnix(const byte* usr, const byte* pw, int pwSz)
 {
@@ -415,8 +415,17 @@ static int CheckPasswordUnix(const byte* usr, const byte* pw, int pwSz)
 
     if (ret == WS_SUCCESS) {
         if (pwInfo->pw_passwd[0] == 'x') {
+        #ifdef WOLFSSH_HAVE_LIBCRYPT
             shadowInfo = getspnam((const char*)usr);
+        #else
+            shadowInfo = getspnam((char*)usr);
+        #endif
             if (shadowInfo == NULL) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Error getting user password info");
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Possibly permisions level error?"
+                    " i.e SSHD not ran as sudo");
                 ret = WS_FATAL_ERROR;
             }
             else {
@@ -435,7 +444,7 @@ static int CheckPasswordUnix(const byte* usr, const byte* pw, int pwSz)
     }
 
     if (ret == WS_SUCCESS) {
-    #ifdef WOLFSSH_HAVE_LIBCRYPT
+    #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
         ret = CheckPasswordHashUnix(pwStr, storedHashCpy);
     #else
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] No compiled in password check");
