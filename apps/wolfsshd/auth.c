@@ -26,6 +26,7 @@
 
 #ifdef __linux__
     #define _XOPEN_SOURCE
+    #define _GNU_SOURCE
 #endif
 #include <unistd.h>
 
@@ -57,6 +58,8 @@ struct WOLFSSHD_AUTH {
     CallbackCheckPassword  CheckPasswordCb;
     CallbackCheckPublicKey CheckPublicKeyCb;
     WOLFSSHD_CONFIG* conf;
+    int gid;
+    int uid;
     void* heap;
 };
 
@@ -653,7 +656,17 @@ static int RequestAuthentication(const char* usr, int type, const byte* data,
 {
     int ret;
 
+    if (auth == NULL)
+        return WOLFSSH_USERAUTH_FAILURE;
+
     ret = DoCheckUser(usr, auth);
+
+    /* temporarily elevate permissions */
+    if (wolfSSHD_RaisePermissions(auth) != 0) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failure to raise permissions for auth"); 
+        ret = WOLFSSH_USERAUTH_FAILURE;
+    }
+
     if (ret == WOLFSSH_USERAUTH_SUCCESS && type == WOLFSSH_USERAUTH_PASSWORD) {
         int rc;
 
@@ -699,6 +712,11 @@ static int RequestAuthentication(const char* usr, int type, const byte* data,
         }
     }
 
+
+    if (wolfSSHD_ReducePermissions(auth) != 0) {
+        /* stop everything if not able to reduce permissions level */
+        exit(1);
+    }
     return ret;
 }
 
@@ -816,6 +834,8 @@ WOLFSSHD_AUTH * wolfSSHD_CreateUserAuth(void* heap, WOLFSSHD_CONFIG* conf)
     auth = (WOLFSSHD_AUTH*)WMALLOC(sizeof(WOLFSSHD_AUTH), heap, DYNTYPE_SSHD);
     if (auth != NULL) {
         int ret;
+        struct passwd* pwInfo;
+        const char* usr = "sshd";
 
         auth->heap = heap;
         auth->conf = conf;
@@ -844,6 +864,20 @@ WOLFSSHD_AUTH * wolfSSHD_CreateUserAuth(void* heap, WOLFSSHD_CONFIG* conf)
             }
         }
 
+        if (ret == WS_SUCCESS) {
+            pwInfo = getpwnam(usr);
+            if (pwInfo == NULL) {
+                /* user name not found on system */
+                wolfSSH_Log(WS_LOG_INFO, "[SSHD] No sshd user found to use");
+                ret = WS_FATAL_ERROR;
+            }
+        }
+
+        if (ret == WS_SUCCESS) {
+            auth->gid = pwInfo->pw_gid;
+            auth->uid = pwInfo->pw_uid;
+        }
+
         /* error case in setting one of the default callbacks */
         if (ret != WS_SUCCESS) {
             (void)wolfSSHD_FreeUserAuth(auth);
@@ -863,5 +897,54 @@ int wolfSSHD_FreeUserAuth(WOLFSSHD_AUTH* auth)
         WFREE(auth, auth->heap, DYNTYPE_SSHD);
     }
     return WS_SUCCESS;
+}
+
+
+/* return 0 on success */
+int wolfSSHD_RaisePermissions(WOLFSSHD_AUTH* auth)
+{
+    int ret = 0;
+
+    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Attempting to raise permissions level");
+    if (auth) {
+        if (setegid(0) != 0) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error rasing gid");
+            ret = WS_FATAL_ERROR;
+        }
+
+        if (seteuid(0) != 0) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error rasing uid");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+    else {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    return ret;
+}
+
+
+/* return 0 on success */
+int wolfSSHD_ReducePermissions(WOLFSSHD_AUTH* auth)
+{
+    int ret = 0;
+
+    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Lowering permissions level");
+    if (auth) {
+        if (setegid(auth->gid) != 0) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting sshd gid");
+            ret = WS_FATAL_ERROR;
+        }
+
+        if (seteuid(auth->uid) != 0) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting sshd uid");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+    else {
+        ret = WS_BAD_ARGUMENT;
+    }
+    return ret;
 }
 #endif /* WOLFSSH_SSHD */

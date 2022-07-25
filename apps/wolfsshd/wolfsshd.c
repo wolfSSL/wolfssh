@@ -336,11 +336,28 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
     byte channelBuffer[EXAMPLE_BUFFER_SZ];
 
     userName = wolfSSH_GetUsername(ssh);
+
+    /* temporarily elevate permissions to get users information */
+    if (wolfSSHD_RaisePermissions(conn->auth) != 0) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failure to raise permissions for auth"); 
+        return WS_FATAL_ERROR;
+    }
+
     p_passwd = getpwnam((const char *)userName);
     if (p_passwd == NULL) {
         /* Not actually a user on the system. */
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Invalid user name found");
+        if (wolfSSHD_ReducePermissions(conn->auth) != 0) {
+            /* stop everything if not able to reduce permissions level */
+            exit(1);
+        }
+
         return WS_FATAL_ERROR;
+    }
+
+    if (wolfSSHD_ReducePermissions(conn->auth) != 0) {
+        /* stop everything if not able to reduce permissions level */
+        exit(1);
     }
 
     ChildRunning = 1;
@@ -354,15 +371,24 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
     else if (childPid == 0) {
         /* Child process */
         const char *args[] = {"-sh", NULL};
+        char cmd[80];
 
         signal(SIGINT, SIG_DFL);
 
+        setgid(p_passwd->pw_gid);
+        setuid(p_passwd->pw_uid);
         if (system("env") != 0) {
             printf("0 return value from system call\n");
         }
 
         setenv("HOME", p_passwd->pw_dir, 1);
         setenv("LOGNAME", p_passwd->pw_name, 1);
+
+        /* @TODO this needs reworked, can just exit into root */
+        WMEMSET(cmd, 0, sizeof(cmd));
+        XSNPRINTF(cmd, sizeof(cmd), "su %s", userName);
+        printf("executing command [%s]\n", cmd);
+        system(cmd);
         rc = chdir(p_passwd->pw_dir);
         if (rc != 0) {
             return WS_FATAL_ERROR;
@@ -609,7 +635,7 @@ static int wolfSSHD_PendingConnection(WS_SOCKET_T fd)
         else {
             printf("Found write or error data\n");
             ret = 0; /* nothing to read */
-        } 
+        }
     }
     //    printf("Timeout waiting for connection\n");
     return ret;
@@ -721,6 +747,14 @@ int main(int argc, char** argv)
         if (auth == NULL) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue creating auth struct");
             ret = WS_MEMORY_E;
+        }
+    }
+
+    /* seperate privlage permisions */
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ReducePermissions(auth) != 0) {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Error lowering permissions level");
+            ret = WS_FATAL_ERROR;
         }
     }
 

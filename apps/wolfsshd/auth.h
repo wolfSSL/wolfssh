@@ -56,4 +56,6 @@ typedef int (*CallbackCheckPublicKey)(const char* usr, const byte* key,
 
 WOLFSSHD_AUTH * wolfSSHD_CreateUserAuth(void* heap, WOLFSSHD_CONFIG* conf);
 int wolfSSHD_FreeUserAuth(WOLFSSHD_AUTH* auth);
+int wolfSSHD_ReducePermissions(WOLFSSHD_AUTH* auth);
+int wolfSSHD_RaisePermissions(WOLFSSHD_AUTH* auth);
 #endif /* WOLFAUTH_H */
