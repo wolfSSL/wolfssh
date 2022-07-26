@@ -30,6 +30,7 @@
 #include <wolfssl/wolfcrypt/wc_port.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/wolfcrypt/logging.h>
+#include <wolfssl/wolfcrypt/asn_public.h>
 
 #define WOLFSSH_TEST_SERVER
 #include <wolfssh/test.h>
@@ -119,6 +120,9 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
 {
     int ret = WS_SUCCESS;
     const char* banner;
+    DerBuffer* der = NULL;
+    byte* privBuf;
+    word32 privBufSz;
 
     /* create a new WOLFSSH_CTX */
     *ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
@@ -184,13 +188,28 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
                 dataSz = (int)XFREAD(data, 1, dataSz, f);
                 XFCLOSE(f);
 
-                if (wolfSSH_CTX_UsePrivateKey_buffer(*ctx, data, dataSz,
-                                             WOLFSSH_FORMAT_ASN1) < 0) {
+                if (wc_PemToDer(data, dataSz, PRIVATEKEY_TYPE, &der, NULL,
+                                NULL, NULL) != 0) {
+                    wolfSSH_Log(WS_LOG_DEBUG, "[SSHD] Failed to convert host "
+                                "private key from PEM. Assuming key in DER "
+                                "format.");
+                    privBuf = data;
+                    privBufSz = dataSz;
+                }
+                else {
+                    privBuf = der->buffer;
+                    privBufSz = der->length;
+                }
+
+                if (wolfSSH_CTX_UsePrivateKey_buffer(*ctx, privBuf, privBufSz,
+                                                     WOLFSSH_FORMAT_ASN1) < 0) {
                     wolfSSH_Log(WS_LOG_ERROR,
-                        "[SSHD] Unable parse host private key");
+                        "[SSHD] Failed to use host private key.");
                     ret = WS_BAD_ARGUMENT;
                 }
+
                 WFREE(data, NULL, 0);
+                wc_FreeDer(&der);
             }
         }
     }

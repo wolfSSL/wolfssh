@@ -608,7 +608,9 @@ static int CheckPublicKeyUnix(const char* name, const byte* key, word32 keySz)
             break;
         }
     }
-    XFCLOSE(f);
+    if (f != XBADFILE) {
+        XFCLOSE(f);
+    }
 
     if (ret == WSSHD_AUTH_SUCCESS && !foundKey) {
         ret = WSSHD_AUTH_FAILURE;
