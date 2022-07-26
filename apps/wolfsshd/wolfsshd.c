@@ -159,8 +159,6 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
     }
 #endif
 
-    /* TODO: Currently expects a private key in DER format. Add logic to handle
-     * PEM, too. wc_PemToDer. */
     /* Load in host private key */
     if (ret == WS_SUCCESS) {
 
