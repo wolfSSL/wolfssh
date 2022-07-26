@@ -374,17 +374,19 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
         return WS_FATAL_ERROR;
     }
 
-    if (wolfSSHD_ReducePermissions(conn->auth) != 0) {
-        /* stop everything if not able to reduce permissions level */
-        exit(1);
-    }
-
     ChildRunning = 1;
     childPid = forkpty(&childFd, NULL, NULL, NULL);
+    if (wolfSSHD_ReducePermissions(conn->auth) != 0) {
+        /* stop everything if not able to reduce permissions level */
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue reducing permissions level,"
+            " exiting now");
+        exit(1);
+    }
 
     if (childPid < 0) {
         /* forkpty failed, so return */
         ChildRunning = 0;
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue creating new forkpty");
         return WS_FATAL_ERROR;
     }
     else if (childPid == 0) {
@@ -514,6 +516,13 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
 }
 #endif
 
+static __thread int timeOut = 0;
+static void alarmCatch(int signum)
+{
+    wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failed login within grace period");
+    timeOut = 1;
+    (void)signum;
+}
 
 /* handle wolfSSH accept and directing to correct subsystem */
 static void* wolfSSHD_HandleConnection(void* arg)
@@ -538,9 +547,40 @@ static void* wolfSSHD_HandleConnection(void* arg)
     }
 
     if (ret == WS_SUCCESS) {
+        int error;
+        int select_ret = 0;
+        long graceTime;
+
         wolfSSH_set_fd(ssh, conn->fd);
         wolfSSH_SetUserAuthCtx(ssh, conn->auth);
+
+        /* set alarm for login grace time */
+        graceTime = wolfSSHD_GetGraceTime(conn->auth);
+        if (graceTime > 0) {
+            signal(SIGALRM, alarmCatch);
+            alarm(graceTime);
+        }
+
         ret = wolfSSH_accept(ssh);
+        error = wolfSSH_get_error(ssh);
+        while (timeOut == 0 && (ret != WS_SUCCESS
+                && ret != WS_SCP_COMPLETE && ret != WS_SFTP_COMPLETE)
+                && (error == WS_WANT_READ || error == WS_WANT_WRITE)) {
+
+            select_ret = tcp_select(conn->fd, 1);
+            if (select_ret == WS_SELECT_RECV_READY  ||
+                select_ret == WS_SELECT_ERROR_READY ||
+                error      == WS_WANT_WRITE)
+            {
+                ret = wolfSSH_accept(ssh);
+                error = wolfSSH_get_error(ssh);
+            }
+            else if (select_ret == WS_SELECT_TIMEOUT)
+                error = WS_WANT_READ;
+            else
+                error = WS_FATAL_ERROR;
+        }
+
         if (ret != WS_SUCCESS && ret != WS_SFTP_COMPLETE) {
             wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] Failed to accept WOLFSSH connection");
@@ -591,6 +631,7 @@ static void* wolfSSHD_HandleConnection(void* arg)
         }
     }
 
+    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Attempting to close down connection");
     wolfSSH_shutdown(ssh);
     wolfSSH_free(ssh);
     if (conn != NULL) {
@@ -803,6 +844,25 @@ int main(int argc, char** argv)
                                                              &clientAddrSz);
             #endif
 
+                {
+                    #ifdef USE_WINDOWS_API
+                        unsigned long blocking = 1;
+                        int ret = ioctlsocket(conn.fd, FIONBIO, &blocking);
+                        if (ret == SOCKET_ERROR)
+                            err_sys("ioctlsocket failed");
+                    #elif defined(WOLFSSL_MDK_ARM) || defined(WOLFSSL_KEIL_TCP_NET) \
+                        || defined (WOLFSSL_TIRTOS)|| defined(WOLFSSL_VXWORKS) || \
+                        defined(WOLFSSL_NUCLEUS)
+                         /* non blocking not supported, for now */
+                    #else
+                        int flags = fcntl(conn.fd, F_GETFL, 0);
+                        if (flags < 0)
+                            err_sys("fcntl get failed");
+                        flags = fcntl(conn.fd, F_SETFL, flags | O_NONBLOCK);
+                        if (flags < 0)
+                            err_sys("fcntl set failed");
+                    #endif
+                }
                 ret = wolfSSHD_NewConnection(&conn);
             }
         }

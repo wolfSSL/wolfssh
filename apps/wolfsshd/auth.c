@@ -674,7 +674,7 @@ static int RequestAuthentication(const char* usr, int type, const byte* data,
 
         /* Check if password is valid for this user. */
         /* first handle empty password cases */
-        if (dataSz == 0 && wolfSSHD_ConfigOptionEnabled(auth->conf,
+        if (dataSz == 0 && wolfSSHD_ConfigGetOption(auth->conf,
             WOLFSSHD_EMPTY_PASSWORD) != 1) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Empty passwords not allowed!");
             ret = WOLFSSH_USERAUTH_FAILURE;
@@ -946,6 +946,17 @@ int wolfSSHD_ReducePermissions(WOLFSSHD_AUTH* auth)
     }
     else {
         ret = WS_BAD_ARGUMENT;
+    }
+    return ret;
+}
+
+
+long wolfSSHD_GetGraceTime(WOLFSSHD_AUTH* auth)
+{
+    long ret = 0;
+
+    if (auth != NULL) {
+        ret = wolfSSHD_ConfigGetOption(auth->conf, WOLFSSHD_GRACE_LOGIN_TIME);
     }
     return ret;
 }

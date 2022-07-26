@@ -44,8 +44,9 @@ int wolfSSHD_SetAuthKeysFile(WOLFSSHD_CONFIG* conf, const char* file);
 
 /* on/off flag options to check */
 #define WOLFSSHD_EMPTY_PASSWORD 1
+#define WOLFSSHD_GRACE_LOGIN_TIME 2
 
-int wolfSSHD_ConfigOptionEnabled(WOLFSSHD_CONFIG* conf, word32 opt);
+long wolfSSHD_ConfigGetOption(WOLFSSHD_CONFIG* conf, word32 opt);
 
 #endif /* WOLFSSHD_H */
 

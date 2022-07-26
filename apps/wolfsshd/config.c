@@ -51,6 +51,7 @@ struct WOLFSSHD_CONFIG {
     char* kekAlgos;
     char* listenAddress;
     char* authKeysFile;
+    long  loginTimer;
     word16 port;
     byte usePrivilegeSeparation;
     byte passwordAuth:1;
@@ -59,6 +60,64 @@ struct WOLFSSHD_CONFIG {
     byte permitEmptyPasswords:1;
 };
 
+
+/* convert a string into seconds, handles if 'm' for minutes follows the string
+ * number, i.e. 2m
+ * Returns the value on success and negative value on failure */
+static long wolfSSHD_GetConfigInt(const char* in, int inSz, int isTime,
+    void* heap)
+{
+    long ret = 0;
+    int mult = 1; /* multiplier */
+    int idx  = 0;
+    int sz   = 0;
+
+    /* remove leading white spaces */
+    while (idx < inSz && in[idx] == ' ') idx++;
+
+    if (idx == inSz) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    /* remove trailing white spaces */
+    if (ret == 0) {
+        for (sz = 1; sz + idx < inSz; sz++) {
+            if (in[sz + idx] == ' ') break;
+            if (in[sz + idx] == '\n') break;
+        }
+    }
+
+    /* check for multipliers */
+    if (isTime && ret == 0) {
+        if (in[sz - 1 + idx] == 'm') {
+            sz--;
+            mult = 60;
+        }
+        if (in[sz - 1 + idx] == 'h') {
+            sz--;
+            mult = 60*60;
+        }
+    }
+
+    if (ret == 0) {
+        char* num = (char*)WMALLOC(sz + 1, heap, DYNTYPE_SSHD);
+        if (num == NULL) {
+            ret = WS_MEMORY_E;
+        }
+        else {
+            WMEMCPY(num, in + idx, sz);
+            num[sz] = '\0';
+            ret = atol(num);
+            if (ret > 0) {
+                ret = ret * mult;
+            }
+            WFREE(num, heap, DYNTYPE_SSHD);
+        }
+    }
+
+    return ret;
+}
+
 /* returns WS_SUCCESS on success */
 static int wolfSSHD_CreateString(char** out, const char* in, int inSz,
         void* heap)
@@ -66,7 +125,7 @@ static int wolfSSHD_CreateString(char** out, const char* in, int inSz,
     int ret = WS_SUCCESS;
     int idx = 0;
 
-    /* remove white spaces */
+    /* remove leading white spaces */
     while (idx < inSz && in[idx] == ' ') idx++;
 
     if (idx == inSz) {
@@ -144,6 +203,7 @@ static int wolfSSHD_ParseConfigLine(WOLFSSHD_CONFIG* conf, const char* l,
     /* supported config options */
     const char authKeyFile[]          = "AuthorizedKeysFile";
     const char privilegeSeparation[]  = "UsePrivilegeSeparation";
+    const char loginGraceTime[]       = "LoginGraceTime";
     const char permitEmptyPasswords[] = "PermitEmptyPasswords";
 
     sz = (int)XSTRLEN(authKeyFile);
@@ -217,9 +277,20 @@ static int wolfSSHD_ParseConfigLine(WOLFSSHD_CONFIG* conf, const char* l,
         ret = WS_SUCCESS;
     }
 
-    if (XSTRNCMP(l, "LoginGraceTime", 14) == 0) {
-        //@TODO
-        ret = WS_SUCCESS;
+    sz = (int)XSTRLEN(loginGraceTime);
+    if (lSz > sz && XSTRNCMP(l, loginGraceTime, sz) == 0) {
+        long num;
+
+        num = wolfSSHD_GetConfigInt(l + sz, lSz - sz, 1, conf->heap);
+        if (num < 0) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue getting login grace time");
+        }
+        else {
+            ret = WS_SUCCESS;
+            conf->loginTimer = num;
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Setting login grace time to %ld",
+                num);
+        }
     }
 
 
@@ -350,13 +421,16 @@ word16 wolfSSHD_GetPort(WOLFSSHD_CONFIG* conf)
 
 /* test if the 'opt' options is enabled or not in 'conf' for the flags set
  * return 1 if enabled and 0 if not */
-int wolfSSHD_ConfigOptionEnabled(WOLFSSHD_CONFIG* conf, word32 opt)
+long wolfSSHD_ConfigGetOption(WOLFSSHD_CONFIG* conf, word32 opt)
 {
-    int ret = 0;
+    long ret = 0;
 
     switch (opt) {
         case WOLFSSHD_EMPTY_PASSWORD:
             ret = conf->permitEmptyPasswords;
+            break;
+        case WOLFSSHD_GRACE_LOGIN_TIME:
+            ret = conf->loginTimer;
             break;
     }
     return ret;
