@@ -68,16 +68,15 @@ static long GetConfigInt(const char* in, int inSz, int isTime, void* heap)
 {
     long ret = 0;
     int mult = 1; /* multiplier */
-    int idx  = 0;
-    int sz   = 0;
+    int sz   = inSz;
 
     /* check for multipliers */
     if (isTime) {
-        if (in[sz - 1 + idx] == 'm') {
+        if (in[sz - 1] == 'm') {
             sz--;
             mult = 60;
         }
-        if (in[sz - 1 + idx] == 'h') {
+        if (in[sz - 1] == 'h') {
             sz--;
             mult = 60*60;
         }
@@ -89,7 +88,7 @@ static long GetConfigInt(const char* in, int inSz, int isTime, void* heap)
             ret = WS_MEMORY_E;
         }
         else {
-            WMEMCPY(num, in + idx, sz);
+            WMEMCPY(num, in, sz);
             num[sz] = '\0';
             ret = atol(num);
             if (ret > 0) {
