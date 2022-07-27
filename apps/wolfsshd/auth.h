@@ -54,9 +54,9 @@ typedef int (*CallbackCheckPassword)(const char* usr, const byte* psw,
 typedef int (*CallbackCheckPublicKey)(const char* usr, const byte* key,
     word32 keySz);
 
-WOLFSSHD_AUTH * wolfSSHD_CreateUserAuth(void* heap, WOLFSSHD_CONFIG* conf);
-int wolfSSHD_FreeUserAuth(WOLFSSHD_AUTH* auth);
-int wolfSSHD_ReducePermissions(WOLFSSHD_AUTH* auth);
-int wolfSSHD_RaisePermissions(WOLFSSHD_AUTH* auth);
-long wolfSSHD_GetGraceTime(WOLFSSHD_AUTH* auth);
+WOLFSSHD_AUTH* wolfSSHD_AuthCreateUser(void* heap, const WOLFSSHD_CONFIG* conf);
+int wolfSSHD_AuthFreeUser(WOLFSSHD_AUTH* auth);
+int wolfSSHD_AuthReducePermissions(WOLFSSHD_AUTH* auth);
+int wolfSSHD_AuthRaisePermissions(WOLFSSHD_AUTH* auth);
+long wolfSSHD_AuthGetGraceTime(const WOLFSSHD_AUTH* auth);
 #endif /* WOLFAUTH_H */

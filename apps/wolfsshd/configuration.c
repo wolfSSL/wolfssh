@@ -1,4 +1,4 @@
-/* config.c
+/* configuration.c
  *
  * Copyright (C) 2014-2021 wolfSSL Inc.
  *
@@ -39,7 +39,7 @@
     #include "src/misc.c"
 #endif
 
-#include "wolfsshd.h"
+#include "configuration.h"
 
 struct WOLFSSHD_CONFIG {
     void* heap;
@@ -64,31 +64,15 @@ struct WOLFSSHD_CONFIG {
 /* convert a string into seconds, handles if 'm' for minutes follows the string
  * number, i.e. 2m
  * Returns the value on success and negative value on failure */
-static long wolfSSHD_GetConfigInt(const char* in, int inSz, int isTime,
-    void* heap)
+static long GetConfigInt(const char* in, int inSz, int isTime, void* heap)
 {
     long ret = 0;
     int mult = 1; /* multiplier */
     int idx  = 0;
     int sz   = 0;
 
-    /* remove leading white spaces */
-    while (idx < inSz && in[idx] == ' ') idx++;
-
-    if (idx == inSz) {
-        ret = WS_BAD_ARGUMENT;
-    }
-
-    /* remove trailing white spaces */
-    if (ret == 0) {
-        for (sz = 1; sz + idx < inSz; sz++) {
-            if (in[sz + idx] == ' ') break;
-            if (in[sz + idx] == '\n') break;
-        }
-    }
-
     /* check for multipliers */
-    if (isTime && ret == 0) {
+    if (isTime) {
         if (in[sz - 1 + idx] == 'm') {
             sz--;
             mult = 60;
@@ -119,8 +103,7 @@ static long wolfSSHD_GetConfigInt(const char* in, int inSz, int isTime,
 }
 
 /* returns WS_SUCCESS on success */
-static int wolfSSHD_CreateString(char** out, const char* in, int inSz,
-        void* heap)
+static int CreateString(char** out, const char* in, int inSz, void* heap)
 {
     int ret = WS_SUCCESS;
     int idx = 0;
@@ -147,7 +130,7 @@ static int wolfSSHD_CreateString(char** out, const char* in, int inSz,
     return ret;
 }
 
-static void wolfSSHD_FreeString(char** in, void* heap)
+static void FreeString(char** in, void* heap)
 {
     if (*in != NULL) {
         WFREE(*in, heap, DYNTYPE_SSHD);
@@ -175,19 +158,15 @@ WOLFSSHD_CONFIG* wolfSSHD_NewConfig(void* heap)
 
 }
 
-void wolfSSHD_FreeConfig(WOLFSSHD_CONFIG* conf)
+void wolfSSHD_ConfigFree(WOLFSSHD_CONFIG* conf)
 {
     void* heap;
 
     if (conf != NULL) {
         heap = conf->heap;
 
-        if (conf->authKeysFile != NULL) {
-            wolfSSHD_FreeString(&conf->authKeysFile, heap);
-        }
-        if (conf->hostKeyFile != NULL) {
-            wolfSSHD_FreeString(&conf->hostKeyFile, heap);
-        }
+        FreeString(&conf->authKeysFile, heap);
+        FreeString(&conf->hostKeyFile, heap);
 
         WFREE(conf, heap, DYNTYPE_SSHD);
     }
@@ -233,7 +212,7 @@ static const CONFIG_OPTION options[NUM_OPTIONS] = {
     {OPT_HOST_KEY,                "HostKey"}
 };
 
-static int wolfSSHD_HandlePrivSep(WOLFSSHD_CONFIG* conf, const char* value)
+static int HandlePrivSep(WOLFSSHD_CONFIG* conf, const char* value)
 {
     int ret = WS_SUCCESS;
 
@@ -265,8 +244,7 @@ static int wolfSSHD_HandlePrivSep(WOLFSSHD_CONFIG* conf, const char* value)
     return ret;
 }
 
-static int wolfSSHD_HandleLoginGraceTime(WOLFSSHD_CONFIG* conf,
-                                         const char* value)
+static int HandleLoginGraceTime(WOLFSSHD_CONFIG* conf, const char* value)
 {
     int ret = WS_SUCCESS;
     long num;
@@ -276,7 +254,7 @@ static int wolfSSHD_HandleLoginGraceTime(WOLFSSHD_CONFIG* conf,
     }
 
     if (ret == WS_SUCCESS) {
-        num = wolfSSHD_GetConfigInt(value, XSTRLEN(value), 1, conf->heap);
+        num = GetConfigInt(value, XSTRLEN(value), 1, conf->heap);
         if (num < 0) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue getting login grace "
                         "time");
@@ -292,18 +270,42 @@ static int wolfSSHD_HandleLoginGraceTime(WOLFSSHD_CONFIG* conf,
     return ret;
 }
 
-/* TODO: Can value be const? */
-static int wolfSSHD_HandleConfigOption(WOLFSSHD_CONFIG* conf, int opt,
-                                       const char* value)
+static int HandlePermitEmptyPw(WOLFSSHD_CONFIG* conf, const char* value)
+{
+    int ret = WS_SUCCESS;
+
+    if (conf == NULL || value == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (WSTRCMP(value, "no") == 0) {
+            conf->permitEmptyPasswords = 0;
+        }
+        else if (WSTRCMP(value, "yes") == 0) {
+            conf->permitEmptyPasswords = 1;
+        }
+        else {
+            ret = WS_BAD_ARGUMENT;
+        }
+    }
+
+    return ret;
+}
+
+static int HandleConfigOption(WOLFSSHD_CONFIG* conf, int opt, const char* value)
 {
     int ret = WS_BAD_ARGUMENT;
 
     switch (opt) {
         case OPT_AUTH_KEYS_FILE:
-            ret = wolfSSHD_SetAuthKeysFile(conf, value);
+            ret = wolfSSHD_ConfigSetAuthKeysFile(conf, value);
             break;
         case OPT_PRIV_SEP:
-            ret = wolfSSHD_HandlePrivSep(conf, value);
+            ret = HandlePrivSep(conf, value);
+            break;
+        case OPT_PERMIT_EMPTY_PW:
+            ret = HandlePermitEmptyPw(conf, value);
             break;
         case OPT_SUBSYSTEM:
             /* TODO */
@@ -334,10 +336,10 @@ static int wolfSSHD_HandleConfigOption(WOLFSSHD_CONFIG* conf, int opt,
             ret = WS_SUCCESS;
             break;
         case OPT_LOGIN_GRACE_TIME:
-            ret = wolfSSHD_HandleLoginGraceTime(conf, value);
+            ret = HandleLoginGraceTime(conf, value);
             break;
         case OPT_HOST_KEY:
-            ret = wolfSSHD_SetHostPrivateKey(conf, value);
+            ret = wolfSSHD_ConfigSetHostKeyFile(conf, value);
             break;
         default:
             break;
@@ -371,8 +373,7 @@ static int CountWhitespace(const char* in, int inSz, byte inv)
 /* returns WS_SUCCESS on success
  * Fails if any option is found that is unknown/unsupported
  */
-static int wolfSSHD_ParseConfigLine(WOLFSSHD_CONFIG* conf, const char* l,
-                                    int lSz)
+static int ParseConfigLine(WOLFSSHD_CONFIG* conf, const char* l, int lSz)
 {
     int ret = WS_BAD_ARGUMENT;
     int sz;
@@ -403,7 +404,7 @@ static int wolfSSHD_ParseConfigLine(WOLFSSHD_CONFIG* conf, const char* l,
         else {
             WMEMCPY(tmp, l + idx, sz);
             tmp[sz] = 0;
-            ret = wolfSSHD_HandleConfigOption(conf, found->tag, tmp);
+            ret = HandleConfigOption(conf, found->tag, tmp);
         }
     }
     else {
@@ -415,7 +416,7 @@ static int wolfSSHD_ParseConfigLine(WOLFSSHD_CONFIG* conf, const char* l,
 }
 
 
-int wolfSSHD_LoadSSHD(WOLFSSHD_CONFIG* conf, const char* filename)
+int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename)
 {
     XFILE f;
     int ret = WS_SUCCESS;
@@ -451,7 +452,7 @@ int wolfSSHD_LoadSSHD(WOLFSSHD_CONFIG* conf, const char* filename)
             continue; /* commented out line */
         }
 
-        ret = wolfSSHD_ParseConfigLine(conf, current, currentSz);
+        ret = ParseConfigLine(conf, current, currentSz);
         if (ret != WS_SUCCESS) {
             printf("Unable to parse config line : %s\n", current);
             break;
@@ -464,7 +465,7 @@ int wolfSSHD_LoadSSHD(WOLFSSHD_CONFIG* conf, const char* filename)
     return ret;
 }
 
-char* wolfSSHD_GetAuthKeysFile(WOLFSSHD_CONFIG* conf)
+char* wolfSSHD_ConfigGetAuthKeysFile(const WOLFSSHD_CONFIG* conf)
 {
     char* ret = NULL;
 
@@ -475,7 +476,7 @@ char* wolfSSHD_GetAuthKeysFile(WOLFSSHD_CONFIG* conf)
     return ret;
 }
 
-int wolfSSHD_SetAuthKeysFile(WOLFSSHD_CONFIG* conf, const char* file)
+int wolfSSHD_ConfigSetAuthKeysFile(WOLFSSHD_CONFIG* conf, const char* file)
 {
     int ret = WS_SUCCESS;
 
@@ -485,12 +486,12 @@ int wolfSSHD_SetAuthKeysFile(WOLFSSHD_CONFIG* conf, const char* file)
 
     if (ret == WS_SUCCESS) {
         if (conf->authKeysFile != NULL) {
-            wolfSSHD_FreeString(&conf->authKeysFile, conf->heap);
+            FreeString(&conf->authKeysFile, conf->heap);
             conf->authKeysFile = NULL;
         }
 
         if (file != NULL) {
-            ret = wolfSSHD_CreateString(&conf->authKeysFile, file,
+            ret = CreateString(&conf->authKeysFile, file,
                                         WSTRLEN(file), conf->heap);
         }
     }
@@ -498,7 +499,7 @@ int wolfSSHD_SetAuthKeysFile(WOLFSSHD_CONFIG* conf, const char* file)
     return ret;
 }
 
-char* wolfSSHD_GetBanner(WOLFSSHD_CONFIG* conf)
+char* wolfSSHD_ConfigGetBanner(const WOLFSSHD_CONFIG* conf)
 {
     char* ret = NULL;
 
@@ -509,7 +510,7 @@ char* wolfSSHD_GetBanner(WOLFSSHD_CONFIG* conf)
     return ret;
 }
 
-char* wolfSSHD_GetHostPrivateKey(WOLFSSHD_CONFIG* conf)
+char* wolfSSHD_ConfigGetHostKeyFile(const WOLFSSHD_CONFIG* conf)
 {
     char* ret = NULL;
 
@@ -520,7 +521,7 @@ char* wolfSSHD_GetHostPrivateKey(WOLFSSHD_CONFIG* conf)
     return ret;
 }
 
-int wolfSSHD_SetHostPrivateKey(WOLFSSHD_CONFIG* conf, const char* file)
+int wolfSSHD_ConfigSetHostKeyFile(WOLFSSHD_CONFIG* conf, const char* file)
 {
     int ret = WS_SUCCESS;
 
@@ -530,12 +531,12 @@ int wolfSSHD_SetHostPrivateKey(WOLFSSHD_CONFIG* conf, const char* file)
 
     if (ret == WS_SUCCESS) {
         if (conf->hostKeyFile != NULL) {
-            wolfSSHD_FreeString(&conf->hostKeyFile, conf->heap);
+            FreeString(&conf->hostKeyFile, conf->heap);
             conf->hostKeyFile = NULL;
         }
 
         if (file != NULL) {
-            ret = wolfSSHD_CreateString(&conf->hostKeyFile, file,
+            ret = CreateString(&conf->hostKeyFile, file,
                                         WSTRLEN(file), conf->heap);
         }
     }
@@ -543,28 +544,37 @@ int wolfSSHD_SetHostPrivateKey(WOLFSSHD_CONFIG* conf, const char* file)
     return ret;
 }
 
-word16 wolfSSHD_GetPort(WOLFSSHD_CONFIG* conf)
+word16 wolfSSHD_ConfigGetPort(const WOLFSSHD_CONFIG* conf)
 {
-    if (conf != NULL)
-        return conf->port;
-    return 0;
+    word16 ret = 0;
+
+    if (conf != NULL) {
+        ret = conf->port;
+    }
+
+    return ret;
+}
+
+byte wolfSSHD_ConfigGetPermitEmptyPw(const WOLFSSHD_CONFIG* conf)
+{
+    byte ret = 0;
+
+    if (conf != NULL) {
+        ret = conf->permitEmptyPasswords;
+    }
+
+    return ret;
 }
 
 
-/* test if the 'opt' options is enabled or not in 'conf' for the flags set
- * return 1 if enabled and 0 if not */
-long wolfSSHD_ConfigGetOption(WOLFSSHD_CONFIG* conf, word32 opt)
+long wolfSSHD_ConfigGetGraceTime(const WOLFSSHD_CONFIG* conf)
 {
-    long ret = 0;
+    long ret = WS_BAD_ARGUMENT;
 
-    switch (opt) {
-        case WOLFSSHD_EMPTY_PASSWORD:
-            ret = conf->permitEmptyPasswords;
-            break;
-        case WOLFSSHD_GRACE_LOGIN_TIME:
-            ret = conf->loginTimer;
-            break;
+    if (conf != NULL) {
+        ret = conf->loginTimer;
     }
+
     return ret;
 }
 #endif /* WOLFSSH_SSHD */

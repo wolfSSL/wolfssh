@@ -1,4 +1,4 @@
-/* wolfsshd.h
+/* configuration.h
  *
  * Copyright (C) 2014-2021 wolfSSL Inc.
  *
@@ -31,22 +31,17 @@ typedef struct WOLFSSHD_CONFIG WOLFSSHD_CONFIG;
 #define WOLFSSHD_PRIV_OFF     2
 
 WOLFSSHD_CONFIG* wolfSSHD_NewConfig(void* heap);
-void wolfSSHD_FreeConfig(WOLFSSHD_CONFIG* conf);
-int wolfSSHD_LoadSSHD(WOLFSSHD_CONFIG* conf, const char* filename);
+void wolfSSHD_ConfigFree(WOLFSSHD_CONFIG* conf);
+int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename);
 
-char* wolfSSHD_GetBanner(WOLFSSHD_CONFIG* conf);
-char* wolfSSHD_GetHostPrivateKey(WOLFSSHD_CONFIG* conf);
-int wolfSSHD_SetHostPrivateKey(WOLFSSHD_CONFIG* conf, const char* hostKeyFile);
-word16 wolfSSHD_GetPort(WOLFSSHD_CONFIG* conf);
-char* wolfSSHD_GetAuthKeysFile(WOLFSSHD_CONFIG* conf);
-int wolfSSHD_SetAuthKeysFile(WOLFSSHD_CONFIG* conf, const char* file);
-
-
-/* on/off flag options to check */
-#define WOLFSSHD_EMPTY_PASSWORD 1
-#define WOLFSSHD_GRACE_LOGIN_TIME 2
-
-long wolfSSHD_ConfigGetOption(WOLFSSHD_CONFIG* conf, word32 opt);
+char* wolfSSHD_ConfigGetBanner(const WOLFSSHD_CONFIG* conf);
+char* wolfSSHD_ConfigGetHostKeyFile(const WOLFSSHD_CONFIG* conf);
+int wolfSSHD_ConfigSetHostKeyFile(WOLFSSHD_CONFIG* conf, const char* file);
+word16 wolfSSHD_ConfigGetPort(const WOLFSSHD_CONFIG* conf);
+char* wolfSSHD_ConfigGetAuthKeysFile(const WOLFSSHD_CONFIG* conf);
+int wolfSSHD_ConfigSetAuthKeysFile(WOLFSSHD_CONFIG* conf, const char* file);
+byte wolfSSHD_ConfigGetPermitEmptyPw(const WOLFSSHD_CONFIG* conf);
+long wolfSSHD_ConfigGetGraceTime(const WOLFSSHD_CONFIG* conf);
 
 #endif /* WOLFSSHD_H */
 

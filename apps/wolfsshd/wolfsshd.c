@@ -35,7 +35,7 @@
 #define WOLFSSH_TEST_SERVER
 #include <wolfssh/test.h>
 
-#include "wolfsshd.h"
+#include "configuration.h"
 #include "auth.h"
 
 #include <signal.h>
@@ -138,7 +138,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
 
     /* set banner to display on connection */
     if (ret == WS_SUCCESS) {
-        banner = wolfSSHD_GetBanner(conf);
+        banner = wolfSSHD_ConfigGetBanner(conf);
         if (banner == NULL) {
             banner = defaultBanner;
         }
@@ -162,7 +162,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
     /* Load in host private key */
     if (ret == WS_SUCCESS) {
 
-        char* hostKey = wolfSSHD_GetHostPrivateKey(conf);
+        char* hostKey = wolfSSHD_ConfigGetHostKeyFile(conf);
 
         if (hostKey == NULL) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] No host private key set");
@@ -355,7 +355,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
     userName = wolfSSH_GetUsername(ssh);
 
     /* temporarily elevate permissions to get users information */
-    if (wolfSSHD_RaisePermissions(conn->auth) != 0) {
+    if (wolfSSHD_AuthRaisePermissions(conn->auth) != 0) {
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failure to raise permissions for auth"); 
         return WS_FATAL_ERROR;
     }
@@ -364,7 +364,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
     if (p_passwd == NULL) {
         /* Not actually a user on the system. */
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Invalid user name found");
-        if (wolfSSHD_ReducePermissions(conn->auth) != 0) {
+        if (wolfSSHD_AuthReducePermissions(conn->auth) != 0) {
             /* stop everything if not able to reduce permissions level */
             exit(1);
         }
@@ -374,7 +374,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
 
     ChildRunning = 1;
     childPid = forkpty(&childFd, NULL, NULL, NULL);
-    if (wolfSSHD_ReducePermissions(conn->auth) != 0) {
+    if (wolfSSHD_AuthReducePermissions(conn->auth) != 0) {
         /* stop everything if not able to reduce permissions level */
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue reducing permissions level,"
             " exiting now");
@@ -523,7 +523,7 @@ static void alarmCatch(int signum)
 }
 
 /* handle wolfSSH accept and directing to correct subsystem */
-static void* wolfSSHD_HandleConnection(void* arg)
+static void* HandleConnection(void* arg)
 {
     int ret = WS_SUCCESS;
 
@@ -553,7 +553,7 @@ static void* wolfSSHD_HandleConnection(void* arg)
         wolfSSH_SetUserAuthCtx(ssh, conn->auth);
 
         /* set alarm for login grace time */
-        graceTime = wolfSSHD_GetGraceTime(conn->auth);
+        graceTime = wolfSSHD_AuthGetGraceTime(conn->auth);
         if (graceTime > 0) {
             signal(SIGALRM, alarmCatch);
             alarm(graceTime);
@@ -640,7 +640,7 @@ static void* wolfSSHD_HandleConnection(void* arg)
 
 
 /* returns WS_SUCCESS on success */
-static int wolfSSHD_NewConnection(WOLFSSHD_CONNECTION* conn)
+static int NewConnection(WOLFSSHD_CONNECTION* conn)
 {
     int pd;
     int ret = WS_SUCCESS;
@@ -653,7 +653,7 @@ static int wolfSSHD_NewConnection(WOLFSSHD_CONNECTION* conn)
 
     if (pd == 0) {
         /* child process */
-        (void)wolfSSHD_HandleConnection((void*)conn);
+        (void)HandleConnection((void*)conn);
     }
     else {
         wolfSSH_Log(WS_LOG_INFO, "[SSHD] Spawned new process %d\n", pd);
@@ -664,7 +664,7 @@ static int wolfSSHD_NewConnection(WOLFSSHD_CONNECTION* conn)
 
 
 /* return non zero value for a pending connection */
-static int wolfSSHD_PendingConnection(WS_SOCKET_T fd)
+static int PendingConnection(WS_SOCKET_T fd)
 {
     int ret;
     struct timeval t;
@@ -776,19 +776,19 @@ int main(int argc, char** argv)
     }
 
     if (ret == WS_SUCCESS) {
-        ret = wolfSSHD_LoadSSHD(conf, configFile);
+        ret = wolfSSHD_ConfigLoad(conf, configFile);
         if (ret != WS_SUCCESS)
             printf("Error reading in configure file %s\n", configFile);
     }
 
     /* port was not overridden with argument, read from config file */
     if (port == 0) {
-        port = wolfSSHD_GetPort(conf);
+        port = wolfSSHD_ConfigGetPort(conf);
     }
 
     /* check if host key file was passed in */
     if (hostKeyFile != NULL) {
-        wolfSSHD_SetHostPrivateKey(conf, hostKeyFile);
+        wolfSSHD_ConfigSetHostKeyFile(conf, hostKeyFile);
     }
 
     wolfSSH_Log(WS_LOG_INFO, "[SSHD] Starting wolfSSH SSHD application");
@@ -801,7 +801,7 @@ int main(int argc, char** argv)
     }
 
     if (ret == WS_SUCCESS) {
-        auth = wolfSSHD_CreateUserAuth(NULL, conf);
+        auth = wolfSSHD_AuthCreateUser(NULL, conf);
         if (auth == NULL) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue creating auth struct");
             ret = WS_MEMORY_E;
@@ -810,7 +810,7 @@ int main(int argc, char** argv)
 
     /* seperate privlage permisions */
     if (ret == WS_SUCCESS) {
-        if (wolfSSHD_ReducePermissions(auth) != 0) {
+        if (wolfSSHD_AuthReducePermissions(auth) != 0) {
             wolfSSH_Log(WS_LOG_INFO, "[SSHD] Error lowering permissions level");
             ret = WS_FATAL_ERROR;
         }
@@ -833,7 +833,7 @@ int main(int argc, char** argv)
             conn.auth = auth;
 
             /* wait for a connection */
-            if (wolfSSHD_PendingConnection(listenFd)) {
+            if (PendingConnection(listenFd)) {
                 conn.ctx = ctx;
             #ifdef WOLFSSL_NUCLEUS
                 conn.fd = NU_Accept(listenFd, &clientAddr, 0);
@@ -861,13 +861,13 @@ int main(int argc, char** argv)
                             err_sys("fcntl set failed");
                     #endif
                 }
-                ret = wolfSSHD_NewConnection(&conn);
+                ret = NewConnection(&conn);
             }
         }
     }
 
-    wolfSSHD_FreeConfig(conf);
-    wolfSSHD_FreeUserAuth(auth);
+    wolfSSHD_ConfigFree(conf);
+    wolfSSHD_AuthFreeUser(auth);
     wolfSSH_Cleanup();
 
     return 0;

@@ -44,7 +44,7 @@
     #include "src/misc.c"
 #endif
 
-#include "wolfsshd.h"
+#include "configuration.h"
 
 #ifndef _WIN32
 #include <sys/types.h>
@@ -57,7 +57,7 @@ struct WOLFSSHD_AUTH {
     CallbackCheckUser      CheckUserCb;
     CallbackCheckPassword  CheckPasswordCb;
     CallbackCheckPublicKey CheckPublicKeyCb;
-    WOLFSSHD_CONFIG* conf;
+    const WOLFSSHD_CONFIG* conf;
     int gid;
     int uid;
     void* heap;
@@ -664,7 +664,7 @@ static int RequestAuthentication(const char* usr, int type, const byte* data,
     ret = DoCheckUser(usr, auth);
 
     /* temporarily elevate permissions */
-    if (wolfSSHD_RaisePermissions(auth) != 0) {
+    if (wolfSSHD_AuthRaisePermissions(auth) != 0) {
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failure to raise permissions for auth"); 
         ret = WOLFSSH_USERAUTH_FAILURE;
     }
@@ -674,8 +674,7 @@ static int RequestAuthentication(const char* usr, int type, const byte* data,
 
         /* Check if password is valid for this user. */
         /* first handle empty password cases */
-        if (dataSz == 0 && wolfSSHD_ConfigGetOption(auth->conf,
-            WOLFSSHD_EMPTY_PASSWORD) != 1) {
+        if (dataSz == 0 && wolfSSHD_ConfigGetPermitEmptyPw(auth->conf) != 1) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Empty passwords not allowed!");
             ret = WOLFSSH_USERAUTH_FAILURE;
         }
@@ -715,7 +714,7 @@ static int RequestAuthentication(const char* usr, int type, const byte* data,
     }
 
 
-    if (wolfSSHD_ReducePermissions(auth) != 0) {
+    if (wolfSSHD_AuthReducePermissions(auth) != 0) {
         /* stop everything if not able to reduce permissions level */
         exit(1);
     }
@@ -829,7 +828,7 @@ static int SetDefaultPublicKeyCheck(WOLFSSHD_AUTH* auth)
 /* Sets the default functions to be used for authentication of peer.
  * Later the default functions could be overriden if needed.
  * returns a newly created WOLFSSHD_AUTH struct success */
-WOLFSSHD_AUTH * wolfSSHD_CreateUserAuth(void* heap, WOLFSSHD_CONFIG* conf)
+WOLFSSHD_AUTH* wolfSSHD_AuthCreateUser(void* heap, const WOLFSSHD_CONFIG* conf)
 {
     WOLFSSHD_AUTH* auth;
 
@@ -882,7 +881,7 @@ WOLFSSHD_AUTH * wolfSSHD_CreateUserAuth(void* heap, WOLFSSHD_CONFIG* conf)
 
         /* error case in setting one of the default callbacks */
         if (ret != WS_SUCCESS) {
-            (void)wolfSSHD_FreeUserAuth(auth);
+            (void)wolfSSHD_AuthFreeUser(auth);
             auth = NULL;
         }
     }
@@ -893,7 +892,7 @@ WOLFSSHD_AUTH * wolfSSHD_CreateUserAuth(void* heap, WOLFSSHD_CONFIG* conf)
 
 
 /* returns WS_SUCCESS on success */
-int wolfSSHD_FreeUserAuth(WOLFSSHD_AUTH* auth)
+int wolfSSHD_AuthFreeUser(WOLFSSHD_AUTH* auth)
 {
     if (auth != NULL) {
         WFREE(auth, auth->heap, DYNTYPE_SSHD);
@@ -903,7 +902,7 @@ int wolfSSHD_FreeUserAuth(WOLFSSHD_AUTH* auth)
 
 
 /* return 0 on success */
-int wolfSSHD_RaisePermissions(WOLFSSHD_AUTH* auth)
+int wolfSSHD_AuthRaisePermissions(WOLFSSHD_AUTH* auth)
 {
     int ret = 0;
 
@@ -928,7 +927,7 @@ int wolfSSHD_RaisePermissions(WOLFSSHD_AUTH* auth)
 
 
 /* return 0 on success */
-int wolfSSHD_ReducePermissions(WOLFSSHD_AUTH* auth)
+int wolfSSHD_AuthReducePermissions(WOLFSSHD_AUTH* auth)
 {
     int ret = 0;
 
@@ -950,14 +949,14 @@ int wolfSSHD_ReducePermissions(WOLFSSHD_AUTH* auth)
     return ret;
 }
 
-
-long wolfSSHD_GetGraceTime(WOLFSSHD_AUTH* auth)
+long wolfSSHD_AuthGetGraceTime(const WOLFSSHD_AUTH* auth)
 {
-    long ret = 0;
+    long ret = WS_BAD_ARGUMENT;
 
-    if (auth != NULL) {
-        ret = wolfSSHD_ConfigGetOption(auth->conf, WOLFSSHD_GRACE_LOGIN_TIME);
+    if (auth != NULL && auth->conf != NULL) {
+        ret = wolfSSHD_ConfigGetGraceTime(auth->conf);
     }
+
     return ret;
 }
 #endif /* WOLFSSH_SSHD */
