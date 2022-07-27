@@ -751,8 +751,13 @@ int main(int argc, char** argv)
                         ret = WS_BAD_ARGUMENT;
                     }
                     else {
-                        port = (word16)ret;
-                        ret = WS_SUCCESS;
+                        if (ret <= (word16)-1) {
+                            port = (word16)ret;
+                        }
+                        else {
+                            printf("Port number %d too big.\n", ret);
+                            ret = WS_BAD_ARGUMENT;
+                        }
                     }
                 }
                 break;

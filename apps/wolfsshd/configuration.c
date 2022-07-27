@@ -151,7 +151,7 @@ WOLFSSHD_CONFIG* wolfSSHD_NewConfig(void* heap)
         WMEMSET(ret, 0, sizeof(WOLFSSHD_CONFIG));
 
         /* default values */
-        ret->port = 9387;
+        ret->port = 22;
         ret->passwordAuth = 1;
     }
     return ret;
@@ -192,10 +192,11 @@ enum {
     OPT_PROTOCOL                = 9,
     OPT_LOGIN_GRACE_TIME        = 10,
     OPT_HOST_KEY                = 11,
-    OPT_PASSWORD_AUTH           = 12
+    OPT_PASSWORD_AUTH           = 12,
+    OPT_PORT                    = 13
 };
 enum {
-    NUM_OPTIONS = 13
+    NUM_OPTIONS = 14
 };
 
 static const CONFIG_OPTION options[NUM_OPTIONS] = {
@@ -210,7 +211,9 @@ static const CONFIG_OPTION options[NUM_OPTIONS] = {
     {OPT_ACCEPT_ENV,              "AcceptEnv"},
     {OPT_PROTOCOL,                "Protocol"},
     {OPT_LOGIN_GRACE_TIME,        "LoginGraceTime"},
-    {OPT_PASSWORD_AUTH,           "PasswordAuthentication"}
+    {OPT_HOST_KEY,                "HostKey"},
+    {OPT_PASSWORD_AUTH,           "PasswordAuthentication"},
+    {OPT_PORT,                    "Port"}
 };
 
 static int HandlePrivSep(WOLFSSHD_CONFIG* conf, const char* value)
@@ -317,6 +320,37 @@ static int HandlePwAuth(WOLFSSHD_CONFIG* conf, const char* value)
     return ret;
 }
 
+static int HandlePort(WOLFSSHD_CONFIG* conf, const char* value)
+{
+    int ret = WS_SUCCESS;
+    int portInt;
+
+    if (conf == NULL || value == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        portInt = XATOI(value);
+        if (portInt < 0) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to parse port number: %s.",
+                        value);
+            ret = WS_BAD_ARGUMENT;
+        }
+        else {
+            if (portInt <= (word16)-1) {
+                conf->port = (word16)portInt;
+            }
+            else {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Port number %d too big.",
+                            portInt);
+                ret = WS_BAD_ARGUMENT;
+            }
+        }
+    }
+
+    return ret;
+}
+
 static int HandleConfigOption(WOLFSSHD_CONFIG* conf, int opt, const char* value)
 {
     int ret = WS_BAD_ARGUMENT;
@@ -363,11 +397,14 @@ static int HandleConfigOption(WOLFSSHD_CONFIG* conf, int opt, const char* value)
             ret = HandleLoginGraceTime(conf, value);
             break;
         case OPT_HOST_KEY:
+            /* TODO: Add logic to check if file exists? */
             ret = wolfSSHD_ConfigSetHostKeyFile(conf, value);
             break;
         case OPT_PASSWORD_AUTH:
             ret = HandlePwAuth(conf, value);
             break;
+        case OPT_PORT:
+            ret = HandlePort(conf, value);
         default:
             break;
     }
