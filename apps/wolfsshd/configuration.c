@@ -153,6 +153,7 @@ WOLFSSHD_CONFIG* wolfSSHD_NewConfig(void* heap)
 
         /* default values */
         ret->port = 9387;
+        ret->passwordAuth = 1;
     }
     return ret;
 
@@ -191,10 +192,11 @@ enum {
     OPT_ACCEPT_ENV              = 8,
     OPT_PROTOCOL                = 9,
     OPT_LOGIN_GRACE_TIME        = 10,
-    OPT_HOST_KEY                = 11
+    OPT_HOST_KEY                = 11,
+    OPT_PASSWORD_AUTH           = 12
 };
 enum {
-    NUM_OPTIONS = 12
+    NUM_OPTIONS = 13
 };
 
 static const CONFIG_OPTION options[NUM_OPTIONS] = {
@@ -209,7 +211,7 @@ static const CONFIG_OPTION options[NUM_OPTIONS] = {
     {OPT_ACCEPT_ENV,              "AcceptEnv"},
     {OPT_PROTOCOL,                "Protocol"},
     {OPT_LOGIN_GRACE_TIME,        "LoginGraceTime"},
-    {OPT_HOST_KEY,                "HostKey"}
+    {OPT_PASSWORD_AUTH,           "PasswordAuthentication"}
 };
 
 static int HandlePrivSep(WOLFSSHD_CONFIG* conf, const char* value)
@@ -293,6 +295,29 @@ static int HandlePermitEmptyPw(WOLFSSHD_CONFIG* conf, const char* value)
     return ret;
 }
 
+static int HandlePwAuth(WOLFSSHD_CONFIG* conf, const char* value)
+{
+    int ret = WS_SUCCESS;
+
+    if (conf == NULL || value == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (WSTRCMP(value, "no") == 0) {
+            conf->passwordAuth = 0;
+        }
+        else if (WSTRCMP(value, "yes") == 0) {
+            conf->passwordAuth = 1;
+        }
+        else {
+            ret = WS_BAD_ARGUMENT;
+        }
+    }
+
+    return ret;
+}
+
 static int HandleConfigOption(WOLFSSHD_CONFIG* conf, int opt, const char* value)
 {
     int ret = WS_BAD_ARGUMENT;
@@ -340,6 +365,9 @@ static int HandleConfigOption(WOLFSSHD_CONFIG* conf, int opt, const char* value)
             break;
         case OPT_HOST_KEY:
             ret = wolfSSHD_ConfigSetHostKeyFile(conf, value);
+            break;
+        case OPT_PASSWORD_AUTH:
+            ret = HandlePwAuth(conf, value);
             break;
         default:
             break;
@@ -566,6 +594,16 @@ byte wolfSSHD_ConfigGetPermitEmptyPw(const WOLFSSHD_CONFIG* conf)
     return ret;
 }
 
+byte wolfSSHD_ConfigGetPwAuth(const WOLFSSHD_CONFIG* conf)
+{
+    byte ret = 0;
+
+    if (conf != NULL) {
+        ret = conf->passwordAuth;
+    }
+
+    return ret;
+}
 
 long wolfSSHD_ConfigGetGraceTime(const WOLFSSHD_CONFIG* conf)
 {

@@ -42,6 +42,7 @@ char* wolfSSHD_ConfigGetAuthKeysFile(const WOLFSSHD_CONFIG* conf);
 int wolfSSHD_ConfigSetAuthKeysFile(WOLFSSHD_CONFIG* conf, const char* file);
 byte wolfSSHD_ConfigGetPermitEmptyPw(const WOLFSSHD_CONFIG* conf);
 long wolfSSHD_ConfigGetGraceTime(const WOLFSSHD_CONFIG* conf);
+byte wolfSSHD_ConfigGetPwAuth(const WOLFSSHD_CONFIG* conf);
 
 #endif /* WOLFSSHD_H */
 

@@ -531,7 +531,7 @@ static void* HandleConnection(void* arg)
     WOLFSSH* ssh = NULL;
 
     if (arg == NULL) {
-        ret = BAD_FUNC_ARG;
+        ret = WS_BAD_ARGUMENT;
     }
 
     if (ret == WS_SUCCESS) {
@@ -748,7 +748,7 @@ int main(int argc, char** argv)
                     ret = XATOI(myoptarg);
                     if (ret < 0) {
                         printf("Issue parsing port number %s\n", myoptarg);
-                        ret = BAD_FUNC_ARG;
+                        ret = WS_BAD_ARGUMENT;
                     }
                     else {
                         port = (word16)ret;

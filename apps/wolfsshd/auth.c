@@ -651,8 +651,8 @@ static int DoCheckUser(const char* usr, WOLFSSHD_AUTH* auth)
 }
 
 
-/* @TODO this will take in a pipe or equivilant to talk to a privliged thread
- * rathar than having WOLFSSHD_AUTH directly with privilige seperation */
+/* @TODO this will take in a pipe or equivalent to talk to a privileged thread
+ * rathar than having WOLFSSHD_AUTH directly with privilege separation */
 static int RequestAuthentication(const char* usr, int type, const byte* data,
     int dataSz, WOLFSSHD_AUTH* auth)
 {
@@ -672,10 +672,16 @@ static int RequestAuthentication(const char* usr, int type, const byte* data,
     if (ret == WOLFSSH_USERAUTH_SUCCESS && type == WOLFSSH_USERAUTH_PASSWORD) {
         int rc;
 
+        if (wolfSSHD_ConfigGetPwAuth(auth->conf) != 1) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Password authentication not "
+                        "allowed by configuration!");
+            ret = WOLFSSH_USERAUTH_FAILURE;
+        }
         /* Check if password is valid for this user. */
         /* first handle empty password cases */
-        if (dataSz == 0 && wolfSSHD_ConfigGetPermitEmptyPw(auth->conf) != 1) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Empty passwords not allowed!");
+        else if (dataSz == 0 && wolfSSHD_ConfigGetPermitEmptyPw(auth->conf) != 1) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Empty passwords not allowed by "
+                        "configuration!");
             ret = WOLFSSH_USERAUTH_FAILURE;
         }
         else {
