@@ -86,33 +86,36 @@ struct WOLFSSH_CERTMAN {
 
 static WOLFSSH_CERTMAN* _CertMan_init(WOLFSSH_CERTMAN* cm, void* heap)
 {
+    WOLFSSH_CERTMAN* ret = NULL;
     WLOG_ENTER();
 
-    if (cm != NULL) {
-        WMEMSET(cm, 0, sizeof *cm);
-        cm->cm = wolfSSL_CertManagerNew_ex(heap);
-        if (cm->cm != NULL) {
-            int ret;
+    ret = cm;
+    if (ret != NULL) {
+        WMEMSET(ret, 0, sizeof(WOLFSSH_CERTMAN));
+        ret->cm = wolfSSL_CertManagerNew_ex(heap);
+        if (ret->cm == NULL) {
+            ret = NULL;
+        }
+    #ifdef HAVE_OCSP
+        else {
+            int err;
 
-            ret = wolfSSL_CertManagerEnableOCSP(cm->cm,
+            err = wolfSSL_CertManagerEnableOCSP(ret->cm,
                     WOLFSSL_OCSP_CHECKALL);
-
-            if (ret == WOLFSSL_SUCCESS) {
+            if (err == WOLFSSL_SUCCESS) {
                 WLOG(WS_LOG_CERTMAN, "Enabled OCSP");
             }
             else {
                 WLOG(WS_LOG_CERTMAN, "Couldn't enable OCSP");
-                wolfSSL_CertManagerFree(cm->cm);
-                cm = NULL;
+                wolfSSL_CertManagerFree(ret->cm);
+                ret = NULL;
             }
         }
-        else {
-            cm = NULL;
-        }
+    #endif
     }
 
-    WLOG_LEAVE_PTR(cm);
-    return cm;
+    WLOG_LEAVE_PTR(ret);
+    return ret;
 }
 
 
@@ -190,59 +193,148 @@ enum {
 };
 #endif /* WOLFSSH_NO_FPKI */
 
-int wolfSSH_CERTMAN_VerifyCert_buffer(WOLFSSH_CERTMAN* cm,
-        const unsigned char* cert, word32 certSz)
+/* if handling a chain it is expected to be the leaf cert first followed by
+ * intermediates and CA last (CA may be ommited) */
+int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
+        const unsigned char* certs, word32 certSz, word32 certsCount)
 {
     int ret = WS_SUCCESS;
+    int idx;
+
+    unsigned char **certLoc; /* locations of certificate start */
+    word32        *certLen;  /* size of certificate, in sync with certLoc */
+
+    unsigned char *currentPt;
+    word32         currentSz;
 
     WLOG_ENTER();
 
-    if (ret == WS_SUCCESS) {
-        ret = wolfSSL_CertManagerVerifyBuffer(cm->cm, cert, certSz,
-                WOLFSSL_FILETYPE_ASN1);
+    certLoc = (unsigned char**)WMALLOC(certsCount * sizeof(unsigned char*),
+        cm->heap, DYNTYPE_CERT);
+    certLen = (word32*)WMALLOC(certsCount * sizeof(word32), cm->heap,
+        DYNTYPE_CERT);
 
-        if (ret == WOLFSSL_SUCCESS) {
-            ret = WS_SUCCESS;
-        }
-        else if (ret == ASN_NO_SIGNER_E) {
-            WLOG(WS_LOG_CERTMAN, "cert verify: no signer");
-            ret = WS_CERT_NO_SIGNER_E;
-        }
-        else if (ret == ASN_AFTER_DATE_E) {
-            WLOG(WS_LOG_CERTMAN, "cert verify: expired");
-            ret = WS_CERT_EXPIRED_E;
-        }
-        else if (ret == ASN_SIG_CONFIRM_E) {
-            WLOG(WS_LOG_CERTMAN, "cert verify: bad sig");
-            ret = WS_CERT_SIG_CONFIRM_E;
+    currentPt = (unsigned char*)certs; /* set initial certificate pointer */
+    currentSz = 0;
+
+    for (idx = 0; idx < (int)certsCount; idx++) {
+        word32 sz = 0;
+        certLoc[idx] = currentPt;
+
+        /* get the size of the certificate from first sequence */
+        if (currentSz + MAX_SEQ_SZ >= certSz) {
+            ret = WS_BUFFER_E;
+            break;
         }
         else {
-            WLOG(WS_LOG_CERTMAN, "cert verify: other error (%d)", ret);
-            ret = WS_CERT_OTHER_E;
+            /* at this point there is at least 5 bytes in currentPt */
+            if (currentPt[sz] != (ASN_SEQUENCE | ASN_CONSTRUCTED)) {
+                WLOG(WS_LOG_CERTMAN, "no cert sequence to get length from");
+                ret = ASN_PARSE_E;
+                break;
+            }
+            sz++;
+
+            if (ret == WS_SUCCESS) {
+                if (currentPt[sz] >= ASN_LONG_LENGTH) {
+                    word32 bytes = currentPt[sz++] & 0x7F;
+                    if (bytes > MAX_LENGTH_SZ) {
+                        WLOG(WS_LOG_CERTMAN, "length found is too large!");
+                        ret = ASN_PARSE_E;
+                        break;
+                    }
+                    else {
+                        byte b;
+                        certLen[idx] = 0;
+                        for (; bytes > 0; bytes--) {
+                            b = currentPt[sz++];
+                            certLen[idx] = (certLen[idx] << 8) | b;
+                        }
+                    }
+                }
+                else {
+                    certLen[idx] = (word32)currentPt[sz++];
+                }
+                sz += certLen[idx];
+                certLen[idx] = sz; /* update size to contain first sequence */
+            }
+        }
+
+        /* advance current pointer and update current total size */
+        if (ret == WS_SUCCESS) {
+            if (currentSz + sz > certSz) {
+                WLOG(WS_LOG_CERTMAN, "cert found is too large!");
+                ret = ASN_PARSE_E;
+                break;
+            }
+            currentSz += sz;
+            currentPt += sz;
         }
     }
 
     if (ret == WS_SUCCESS) {
-        ret = wolfSSL_CertManagerCheckOCSP(cm->cm, (byte*)cert, certSz);
+        for (idx = certsCount - 1; idx >= 0; idx--) {
+            WLOG(WS_LOG_CERTMAN, "verifying cert at index %d", idx);
+            ret = wolfSSL_CertManagerVerifyBuffer(cm->cm, certLoc[idx],
+                certLen[idx], WOLFSSL_FILETYPE_ASN1);
+            if (ret == WOLFSSL_SUCCESS) {
+                ret = WS_SUCCESS;
+            }
+            else if (ret == ASN_NO_SIGNER_E) {
+                WLOG(WS_LOG_CERTMAN, "cert verify: no signer");
+                ret = WS_CERT_NO_SIGNER_E;
+            }
+            else if (ret == ASN_AFTER_DATE_E) {
+                WLOG(WS_LOG_CERTMAN, "cert verify: expired");
+                ret = WS_CERT_EXPIRED_E;
+            }
+            else if (ret == ASN_SIG_CONFIRM_E) {
+                WLOG(WS_LOG_CERTMAN, "cert verify: bad sig");
+                ret = WS_CERT_SIG_CONFIRM_E;
+            }
+            else {
+                WLOG(WS_LOG_CERTMAN, "cert verify: other error (%d)", ret);
+                ret = WS_CERT_OTHER_E;
+            }
 
-        if (ret == WOLFSSL_SUCCESS) {
-            ret = WS_SUCCESS;
-        }
-        else if (ret == OCSP_CERT_REVOKED) {
-            WLOG(WS_LOG_CERTMAN, "ocsp lookup: ocsp revoked");
-            ret = WS_CERT_REVOKED_E;
-        }
-        else {
-            WLOG(WS_LOG_CERTMAN, "ocsp lookup: other error (%d)", ret);
-            ret = WS_CERT_OTHER_E;
+        #ifdef HAVE_OCSP
+            if (ret == WS_SUCCESS) {
+                ret = wolfSSL_CertManagerCheckOCSP(cm->cm, (byte*)certLoc[idx],
+                    certLen[idx]);
+
+                if (ret == WOLFSSL_SUCCESS) {
+                    ret = WS_SUCCESS;
+                }
+                else if (ret == OCSP_CERT_REVOKED) {
+                    WLOG(WS_LOG_CERTMAN, "ocsp lookup: ocsp revoked");
+                    ret = WS_CERT_REVOKED_E;
+                }
+                else {
+                    WLOG(WS_LOG_CERTMAN, "ocsp lookup: other error (%d)", ret);
+                    ret = WS_CERT_OTHER_E;
+                }
+            }
+        #endif /* HAVE_OCSP */
+
+            /* verified successfully, add intermideate as trusted */
+            if (ret == WS_SUCCESS && idx > 0) {
+                WLOG(WS_LOG_CERTMAN, "adding intermidiate cert as trusted");
+                ret = wolfSSH_CERTMAN_LoadRootCA_buffer(cm, certLoc[idx],
+                    certLen[idx]);
+            }
+
+            if (ret != WS_SUCCESS) {
+                break;
+            }
         }
     }
 
 #ifndef WOLFSSH_NO_FPKI
+    /* FPKI checking on the leaf certificate */
     if (ret == WS_SUCCESS) {
         DecodedCert decoded;
 
-        wc_InitDecodedCert(&decoded, cert, certSz, cm->cm);
+        wc_InitDecodedCert(&decoded, certLoc[0], certLen[0], cm->cm);
         ret = wc_ParseCert(&decoded, WOLFSSL_FILETYPE_ASN1, 0, cm->cm);
 
         if (ret == 0) {
@@ -387,16 +479,20 @@ static int CheckProfile(DecodedCert* cert, int profile)
         /* cycle through alt names to check for needed types */
         current = cert->altNames;
         while (current != NULL) {
+        #ifdef WOLFSSL_FPKI
             if (current->oidSum == FASCN_OID) {
                 hasFascN = 1;
             }
+        #endif /* WOLFSSL_FPKI */
 
             current = current->next;
         }
 
+    #ifdef WOLFSSL_FPKI
         if (wc_GetUUIDFromCert(cert, uuid, &uuidSz) == 0) {
             hasUUID = 1;
         }
+    #endif /* WOLFSSL_FPKI */
 
         /* all must have UUID and worksheet 6 must have FASC-N in addition to
          * UUID */

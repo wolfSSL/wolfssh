@@ -1898,11 +1898,14 @@ static int wsUserAuth(byte authType,
         wc_Sha256Hash(authData->sf.publicKey.publicKey,
                 authData->sf.publicKey.publicKeySz,
                 authHash);
-    #if defined(WOLFSSH_CERTS) && !defined(WOLFSSH_NO_FPKI)
-        /* Display FPKI info UUID and FASC-N */
+    #if defined(WOLFSSH_CERTS) && !defined(WOLFSSH_NO_FPKI) && \
+        defined(WOLFSSL_FPKI)
+        /* Display FPKI info UUID and FASC-N, getter function for FASC-N and
+         * UUID are dependent on wolfSSL version newer than 5.3.0 so gatting
+         * on the macro WOLFSSL_FPKI here too */
         if (authData->sf.publicKey.isCert) {
             DecodedCert cert;
-            byte* uuid;
+            byte* uuid = NULL;
             word32 fascnSz;
             word32 uuidSz;
             word32 i;

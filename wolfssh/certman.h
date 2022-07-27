@@ -51,8 +51,8 @@ int wolfSSH_CERTMAN_LoadRootCA_buffer(WOLFSSH_CERTMAN* cm,
         const unsigned char* rootCa, word32 rootCaSz);
 
 WOLFSSH_API
-int wolfSSH_CERTMAN_VerifyCert_buffer(WOLFSSH_CERTMAN* cm,
-        const unsigned char* cert, word32 certSz);
+int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
+        const unsigned char* cert, word32 certSz, word32 certCount);
 
 
 #ifdef __cplusplus

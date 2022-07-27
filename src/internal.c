@@ -546,6 +546,8 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
 #endif /* DEBUG_WOLFSSH */
 #ifdef WOLFSSH_CERTS
     ctx->certMan = wolfSSH_CERTMAN_new(ctx->heap);
+    if (ctx->certMan == NULL)
+        return NULL;
 #endif /* WOLFSSH_CERTS */
     ctx->windowSz = DEFAULT_WINDOW_SZ;
     ctx->maxPacketSz = DEFAULT_MAX_PACKET_SZ;
@@ -767,7 +769,6 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
     word32 derSz, scratch = 0;
     union wolfSSH_key *key_ptr = NULL;
 
-    (void)wcType;
     (void)dynamicType;
     (void)heap;
 
@@ -846,7 +847,15 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
         if (ctx->certMan != NULL) {
             ret = wolfSSH_CERTMAN_LoadRootCA_buffer(ctx->certMan, der, derSz);
         }
+        else {
+            WLOG(WS_LOG_DEBUG, "Error no cert manager set");
+            ret = WS_MEMORY_E;
+        }
         WFREE(der, heap, dynamicType);
+        if (ret < 0) {
+            WLOG(WS_LOG_DEBUG, "Error %d loading in CA buffer", ret);
+            goto end;
+        }
     }
     #endif /* WOLFSSH_CERTS */
     else {
@@ -911,6 +920,8 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
 end:
     if (key_ptr)
         WFREE(key_ptr, heap, dynamicType);
+
+    (void)wcType;
     return ret;
 }
 
@@ -4547,11 +4558,6 @@ static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
-        ret = wolfSSH_CERTMAN_VerifyCert_buffer(ssh->ctx->certMan,
-                pk->publicKey, pk->publicKeySz);
-    }
-
-    if (ret == WS_SUCCESS) {
         byte*  pub = NULL;
         word32 pubSz;
         DecodedCert cert;
@@ -4895,13 +4901,6 @@ static int DoUserAuthRequestEccCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
         }
     }
 
-#ifdef WOLFSSH_CERTS
-    if (ret == WS_SUCCESS) {
-        ret = wolfSSH_CERTMAN_VerifyCert_buffer(ssh->ctx->certMan,
-                pk->publicKey, pk->publicKeySz);
-    }
-#endif /* WOLFSSH_CERTS */
-
     if (ret == WS_SUCCESS) {
         byte*  pub = NULL;
         word32 pubSz;
@@ -5037,6 +5036,9 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
     int ret = WS_SUCCESS;
     int authFailure = 0;
     byte pkTypeId;
+#ifdef WOLFSSH_CERTS
+    word32 certCount = 0;
+#endif
 
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequestPublicKey()");
 
@@ -5063,14 +5065,15 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
         pkTypeId = NameToId((char*)pk->publicKeyType, pk->publicKeyTypeSz);
         if (pkTypeId == ID_UNKNOWN) {
             WLOG(WS_LOG_DEBUG, "DUARPK: Unknown / Unsupported key type");
-            ret = WS_INVALID_ALGO_ID;
+            ret = SendUserAuthFailure(ssh, 0);
+            authFailure = 1;
         }
     }
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS && !authFailure)
         ret = GetSize(&pk->publicKeySz, buf, len, &begin);
 
-    if (ret == WS_SUCCESS) {
+    if (ret == WS_SUCCESS && !authFailure) {
         pk->publicKey = buf + begin;
         begin += pk->publicKeySz;
         #ifdef WOLFSSH_CERTS
@@ -5079,20 +5082,46 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             pkTypeId == ID_X509V3_ECDSA_SHA2_NISTP384 ||
             pkTypeId == ID_X509V3_ECDSA_SHA2_NISTP521) {
             word32 l = 0, m = 0;
+            word32 ocspCount = 0;
+            byte* ocspBuf = NULL;
+            word32 ocspBufSz = 0;
 
             /* Skip the name */
             ret = GetSize(&l, pk->publicKey, pk->publicKeySz, &m);
             m += l;
             /* Get the cert count */
-            ret = GetUint32(&l, pk->publicKey, pk->publicKeySz, &m);
             if (ret == WS_SUCCESS) {
-                ret = GetSize(&l, pk->publicKey, pk->publicKeySz, &m);
+                ret = GetUint32(&certCount, pk->publicKey, pk->publicKeySz, &m);
+                if (ret == WS_SUCCESS) {
+                    WLOG(WS_LOG_INFO, "Peer sent certificate count of %d",
+                        certCount);
+                    ret = GetSize(&l, pk->publicKey, pk->publicKeySz, &m);
+                }
             }
 
             if (ret == WS_SUCCESS) {
+                ocspBuf   = (byte*)pk->publicKey + m + l;
+                ocspBufSz = pk->publicKeySz - l;
+
                 pk->publicKeySz = l;
                 pk->publicKey = pk->publicKey + m;
                 pk->isCert = 1;
+            }
+
+            /* get OCSP count */
+            if (ret == WS_SUCCESS) {
+                m = 0;
+                ret = GetUint32(&ocspCount, ocspBuf, ocspBufSz, &m);
+            }
+
+            if (ret == WS_SUCCESS) {
+                WLOG(WS_LOG_INFO, "Peer sent OCSP count of %d", ocspCount);
+            }
+
+            /* @TODO handle OCSP's */
+            if (ocspCount > 0) {
+                WLOG(WS_LOG_INFO, "Peer sent OCSP's, not yet handled");
+                ret = GetSize(&l, ocspBuf, ocspBufSz, &m);
             }
         }
         #endif /* WOLFSSH_CERTS */
@@ -5177,26 +5206,13 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             }
 
             /* The rest of the fields in the signature are already
-             * in the buffer. Just need to account for the sizes. */
+             * in the buffer. Just need to account for the sizes, which total
+             * the length of the buffer minus the signature and uint32 size of
+             * signature. */
             if (ret == 0) {
                 word32 dataToSignSz;
 
-                dataToSignSz = authData->usernameSz +
-                               authData->serviceNameSz +
-                               authData->authNameSz + BOOLEAN_SZ +
-                               pk->publicKeyTypeSz + pk->publicKeySz +
-                               (UINT32_SZ * 5);
-
-                #ifdef WOLFSSH_CERTS
-                if (pkTypeId == ID_X509V3_SSH_RSA ||
-                    pkTypeId == ID_X509V3_ECDSA_SHA2_NISTP256 ||
-                    pkTypeId == ID_X509V3_ECDSA_SHA2_NISTP384 ||
-                    pkTypeId == ID_X509V3_ECDSA_SHA2_NISTP521) {
-
-                    dataToSignSz += pk->publicKeyTypeSz + (UINT32_SZ * 4);
-                }
-                #endif /* WOLFSSH_CERTS */
-
+                dataToSignSz = len - pk->signatureSz - UINT32_SZ;
                 ret = wc_HashUpdate(&hash, hashId,
                         pk->dataToSign, dataToSignSz);
             }
@@ -5209,6 +5225,15 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                     ret = WS_SUCCESS;
             }
             wc_HashFree(&hash, hashId);
+
+            #ifdef WOLFSSH_CERTS
+            /* verify certificates sent after the auth cb has allowed the
+             * connection */
+            if (ret == WS_SUCCESS && pk->isCert == 1 && certCount > 0) {
+                ret = wolfSSH_CERTMAN_VerifyCerts_buffer(ssh->ctx->certMan,
+                    pk->publicKey, pk->publicKeySz, certCount);
+            }
+            #endif
 
             if (ret == WS_SUCCESS) {
                 switch (pkTypeId) {
@@ -9917,6 +9942,7 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
     byte* r;
     byte* s;
     byte sig[139]; /* wc_ecc_sig_size() for a prime521 key. */
+    byte rs[139];  /* wc_ecc_sig_size() for a prime521 key. */
     word32 sigSz = sizeof(sig), rSz, sSz;
     byte* checkData = NULL;
     word32 checkDataSz = 0;
@@ -9985,9 +10011,9 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
         }
 
         if (ret == WS_SUCCESS) {
-            rSz = sSz = sizeof(sig) / 2;
-            r = sig;
-            s = sig + rSz;
+            rSz = sSz = sizeof(rs) / 2;
+            r = rs;
+            s = rs + rSz;
             ret = wc_ecc_sig_to_rs(sig, sigSz, r, &rSz, s, &sSz);
         }
 
@@ -10354,7 +10380,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId, int addSig)
             ret = PrepareUserAuthRequestPublicKey(ssh, &payloadSz, &authData,
                     keySig_ptr);
         }
-        else if (authId != ID_NONE)
+        else if (authId != ID_NONE && !ssh->userAuthPkDone)
             ret = WS_INVALID_ALGO_ID;
     }
 

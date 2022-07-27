@@ -103,7 +103,10 @@ WOLFSSH_CTX* wolfSSH_CTX_new(byte side, void* heap)
     }
 
     ctx = (WOLFSSH_CTX*)WMALLOC(sizeof(WOLFSSH_CTX), heap, DYNTYPE_CTX);
-    ctx = CtxInit(ctx, side, heap);
+    if (CtxInit(ctx, side, heap) == NULL) {
+        WFREE(ctx, heap, DYNTYPE_CTX);
+        ctx = NULL;
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_CTX_new(), ctx = %p", ctx);
 
