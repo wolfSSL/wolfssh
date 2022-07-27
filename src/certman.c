@@ -213,62 +213,67 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
         cm->heap, DYNTYPE_CERT);
     certLen = (word32*)WMALLOC(certsCount * sizeof(word32), cm->heap,
         DYNTYPE_CERT);
+    if (certLoc == NULL || certLen == NULL) {
+        ret = WS_MEMORY_E;
+    }
 
-    currentPt = (unsigned char*)certs; /* set initial certificate pointer */
-    currentSz = 0;
+    if (ret == WS_SUCCESS) {
+        currentPt = (unsigned char*)certs; /* set initial certificate pointer */
+        currentSz = 0;
 
-    for (idx = 0; idx < (int)certsCount; idx++) {
-        word32 sz = 0;
-        certLoc[idx] = currentPt;
+        for (idx = 0; idx < (int)certsCount; idx++) {
+            word32 sz = 0;
+            certLoc[idx] = currentPt;
 
-        /* get the size of the certificate from first sequence */
-        if (currentSz + MAX_SEQ_SZ >= certSz) {
-            ret = WS_BUFFER_E;
-            break;
-        }
-        else {
-            /* at this point there is at least 5 bytes in currentPt */
-            if (currentPt[sz] != (ASN_SEQUENCE | ASN_CONSTRUCTED)) {
-                WLOG(WS_LOG_CERTMAN, "no cert sequence to get length from");
-                ret = ASN_PARSE_E;
+            /* get the size of the certificate from first sequence */
+            if (currentSz + MAX_SEQ_SZ >= certSz) {
+                ret = WS_BUFFER_E;
                 break;
             }
-            sz++;
+            else {
+                /* at this point there is at least 5 bytes in currentPt */
+                if (currentPt[sz] != (ASN_SEQUENCE | ASN_CONSTRUCTED)) {
+                    WLOG(WS_LOG_CERTMAN, "no cert sequence to get length from");
+                    ret = ASN_PARSE_E;
+                    break;
+                }
+                sz++;
 
-            if (ret == WS_SUCCESS) {
-                if (currentPt[sz] >= ASN_LONG_LENGTH) {
-                    word32 bytes = currentPt[sz++] & 0x7F;
-                    if (bytes > MAX_LENGTH_SZ) {
-                        WLOG(WS_LOG_CERTMAN, "length found is too large!");
-                        ret = ASN_PARSE_E;
-                        break;
-                    }
-                    else {
-                        byte b;
-                        certLen[idx] = 0;
-                        for (; bytes > 0; bytes--) {
-                            b = currentPt[sz++];
-                            certLen[idx] = (certLen[idx] << 8) | b;
+                if (ret == WS_SUCCESS) {
+                    if (currentPt[sz] >= ASN_LONG_LENGTH) {
+                        word32 bytes = currentPt[sz++] & 0x7F;
+                        if (bytes > MAX_LENGTH_SZ) {
+                            WLOG(WS_LOG_CERTMAN, "length found is too large!");
+                            ret = ASN_PARSE_E;
+                            break;
+                        }
+                        else {
+                            byte b;
+                            certLen[idx] = 0;
+                            for (; bytes > 0; bytes--) {
+                                b = currentPt[sz++];
+                                certLen[idx] = (certLen[idx] << 8) | b;
+                            }
                         }
                     }
+                    else {
+                        certLen[idx] = (word32)currentPt[sz++];
+                    }
+                    sz += certLen[idx];
+                    certLen[idx] = sz; /* update size to contain sequence */
                 }
-                else {
-                    certLen[idx] = (word32)currentPt[sz++];
-                }
-                sz += certLen[idx];
-                certLen[idx] = sz; /* update size to contain first sequence */
             }
-        }
 
-        /* advance current pointer and update current total size */
-        if (ret == WS_SUCCESS) {
-            if (currentSz + sz > certSz) {
-                WLOG(WS_LOG_CERTMAN, "cert found is too large!");
-                ret = ASN_PARSE_E;
-                break;
+            /* advance current pointer and update current total size */
+            if (ret == WS_SUCCESS) {
+                if (currentSz + sz > certSz) {
+                    WLOG(WS_LOG_CERTMAN, "cert found is too large!");
+                    ret = ASN_PARSE_E;
+                    break;
+                }
+                currentSz += sz;
+                currentPt += sz;
             }
-            currentSz += sz;
-            currentPt += sz;
         }
     }
 
@@ -356,6 +361,10 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
     }
 #endif /* WOLFSSH_NO_FPKI */
 
+    if (certLoc != NULL)
+        WFREE(certLoc, cm->heap, DYNTYPE_CERT);
+    if (certLen != NULL)
+        WFREE(certLen, cm->heap, DYNTYPE_CERT);
     WLOG_LEAVE(ret);
     return ret;
 }

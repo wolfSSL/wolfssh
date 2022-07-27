@@ -568,6 +568,9 @@ void CtxResourceFree(WOLFSSH_CTX* ctx)
     if (ctx->certMan) {
         wolfSSH_CERTMAN_free(ctx->certMan);
     }
+    if (ctx->cert) {
+        WFREE(ctx->cert, ctx->heap, DYNTYPE_CERT);
+    }
 #endif
 }
 
@@ -838,7 +841,7 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
     #ifdef WOLFSSH_CERTS
     else if (type == BUFTYPE_CERT) {
         if (ctx->cert != NULL)
-            WFREE(ctx->cert, heap, 0);
+            WFREE(ctx->cert, heap, dynamicType);
         ctx->cert = der;
         ctx->certSz = derSz;
         ctx->useCert = 1;
