@@ -147,7 +147,7 @@ static void FreeString(char** in, void* heap)
     (void)heap;
 }
 
-WOLFSSHD_CONFIG* wolfSSHD_NewConfig(void* heap)
+WOLFSSHD_CONFIG* wolfSSHD_ConfigNew(void* heap)
 {
     WOLFSSHD_CONFIG* ret;
 

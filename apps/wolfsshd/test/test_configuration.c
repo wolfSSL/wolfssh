@@ -99,7 +99,7 @@ static int test_ParseConfigLine(void)
     };
     const int numVectors = (int)(sizeof(vectors) / sizeof(*vectors));
 
-    conf = wolfSSHD_NewConfig(NULL);
+    conf = wolfSSHD_ConfigNew(NULL);
     if (conf == NULL) {
         ret = WS_MEMORY_E;
     }

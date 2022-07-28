@@ -735,7 +735,7 @@ int main(int argc, char** argv)
     }
 
     if (ret == WS_SUCCESS) {
-        conf = wolfSSHD_NewConfig(NULL);
+        conf = wolfSSHD_ConfigNew(NULL);
         if (conf == NULL) {
             ret = WS_MEMORY_E;
         }
