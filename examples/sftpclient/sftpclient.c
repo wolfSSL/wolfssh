@@ -58,13 +58,37 @@ static void err_msg(const char* s)
 
 
 #ifndef WOLFSSH_NO_TIMESTAMP
-    #include <sys/time.h>
 
-    static char   currentFile[WOLFSSH_MAX_FILENAME+1] = "";
+    static char   currentFile[WOLFSSH_MAX_FILENAME + 1] = "";
     static word32 startTime;
     #define TIMEOUT_VALUE 120
 
     word32 current_time(int);
+#ifdef USE_WINDOWS_API
+    #include <time.h>
+    #define WIN32_LEAN_AND_MEAN
+    #include <windows.h>
+
+    word32 current_time(int reset)
+    {
+        static int init = 0;
+        static LARGE_INTEGER freq;
+
+        LARGE_INTEGER count;
+
+        (void)reset;
+
+        if (!init) {
+            QueryPerformanceFrequency(&freq);
+            init = 1;
+        }
+
+        QueryPerformanceCounter(&count);
+
+        return (word32)(count.QuadPart / freq.QuadPart);
+    }
+#else
+    #include <sys/time.h>
 
     /* return number of seconds*/
     word32 current_time(int reset)
@@ -76,7 +100,8 @@ static void err_msg(const char* s)
         gettimeofday(&tv, 0);
         return (word32)tv.tv_sec;
     }
-#endif
+#endif /* USE_WINDOWS_API */
+#endif /* !WOLFSSH_NO_TIMESTAMP */
 
 
 static void myStatusCb(WOLFSSH* sshIn, word32* bytes, char* name)
