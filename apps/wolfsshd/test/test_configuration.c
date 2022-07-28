@@ -67,6 +67,7 @@ static int test_ParseConfigLine(void)
         {"Valid port", "Port 22", 0},
         {"Port too big", "Port 65536", 1},
         {"Negative port", "Port -99", 1},
+        {"Port 0", "Port 0", 1},
         {"Port NaN", "Port wolfsshd", 1},
         {"Port no value", "Port \n", 1},
 

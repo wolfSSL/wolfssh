@@ -329,16 +329,16 @@ static int HandlePwAuth(WOLFSSHD_CONFIG* conf, const char* value)
 static int HandlePort(WOLFSSHD_CONFIG* conf, const char* value)
 {
     int ret = WS_SUCCESS;
-    int portInt;
+    long portInt;
 
     if (conf == NULL || value == NULL) {
         ret = WS_BAD_ARGUMENT;
     }
 
     if (ret == WS_SUCCESS) {
-        portInt = XATOI(value);
+        portInt = GetConfigInt(value, WSTRLEN(value), 0, conf->heap);
         if (portInt <= 0) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to parse port number: %s.",
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Invalid port number: %s.",
                         value);
             ret = WS_BAD_ARGUMENT;
         }
@@ -347,7 +347,7 @@ static int HandlePort(WOLFSSHD_CONFIG* conf, const char* value)
                 conf->port = (word16)portInt;
             }
             else {
-                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Port number %d too big.",
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Port number %ld too big.",
                             portInt);
                 ret = WS_BAD_ARGUMENT;
             }
