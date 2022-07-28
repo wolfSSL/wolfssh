@@ -25,7 +25,6 @@ typedef struct WOLFSSHD_CONFIG WOLFSSHD_CONFIG;
 
 #include "auth.h"
 
-
 #define WOLFSSHD_PRIV_SEPARAT 0
 #define WOLFSSHD_PRIV_SANDBOX 1
 #define WOLFSSHD_PRIV_OFF     2
@@ -43,6 +42,10 @@ int wolfSSHD_ConfigSetAuthKeysFile(WOLFSSHD_CONFIG* conf, const char* file);
 byte wolfSSHD_ConfigGetPermitEmptyPw(const WOLFSSHD_CONFIG* conf);
 long wolfSSHD_ConfigGetGraceTime(const WOLFSSHD_CONFIG* conf);
 byte wolfSSHD_ConfigGetPwAuth(const WOLFSSHD_CONFIG* conf);
+
+#ifdef WOLFSSHD_UNIT_TEST
+int ParseConfigLine(WOLFSSHD_CONFIG* conf, const char* l, int lSz);
+#endif
 
 #endif /* WOLFSSHD_H */
 

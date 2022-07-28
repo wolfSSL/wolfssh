@@ -26,6 +26,12 @@
 /* functions for parsing out options from a config file and for handling loading
  * key/certs using the env. filesystem */
 
+#ifdef WOLFSSHD_UNIT_TEST
+#define WOLFSSHD_STATIC
+#else
+#define WOLFSSHD_STATIC static
+#endif
+
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/log.h>
@@ -91,7 +97,10 @@ static long GetConfigInt(const char* in, int inSz, int isTime, void* heap)
             WMEMCPY(num, in, sz);
             num[sz] = '\0';
             ret = atol(num);
-            if (ret > 0) {
+            if (ret == 0 && WSTRCMP(in, "0") != 0) {
+                ret = WS_BAD_ARGUMENT;
+            }
+            else if (ret > 0) {
                 ret = ret * mult;
             }
             WFREE(num, heap, DYNTYPE_SSHD);
@@ -228,17 +237,14 @@ static int HandlePrivSep(WOLFSSHD_CONFIG* conf, const char* value)
         if (WSTRCMP(value, "sandbox") == 0) {
             wolfSSH_Log(WS_LOG_INFO, "[SSHD] Sandbox privilege separation");
         }
-
-        if (WSTRCMP(value, "yes") == 0) {
+        else if (WSTRCMP(value, "yes") == 0) {
             wolfSSH_Log(WS_LOG_INFO, "[SSHD] Privilege separation enabled");
         }
-
-        if (WSTRCMP(value, "no") == 0) {
+        else if (WSTRCMP(value, "no") == 0) {
             wolfSSH_Log(WS_LOG_INFO,
                         "[SSHD] Turning off privilege separation!");
         }
-
-        if (ret != WS_SUCCESS) {
+        else {
             wolfSSH_Log(WS_LOG_ERROR,
                         "[SSHD] Unknown/supported privilege separation!");
             ret = WS_BAD_ARGUMENT;
@@ -331,7 +337,7 @@ static int HandlePort(WOLFSSHD_CONFIG* conf, const char* value)
 
     if (ret == WS_SUCCESS) {
         portInt = XATOI(value);
-        if (portInt < 0) {
+        if (portInt <= 0) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to parse port number: %s.",
                         value);
             ret = WS_BAD_ARGUMENT;
@@ -437,7 +443,8 @@ static int CountWhitespace(const char* in, int inSz, byte inv)
 /* returns WS_SUCCESS on success
  * Fails if any option is found that is unknown/unsupported
  */
-static int ParseConfigLine(WOLFSSHD_CONFIG* conf, const char* l, int lSz)
+WOLFSSHD_STATIC int ParseConfigLine(WOLFSSHD_CONFIG* conf, const char* l,
+                                    int lSz)
 {
     int ret = WS_BAD_ARGUMENT;
     int sz;
