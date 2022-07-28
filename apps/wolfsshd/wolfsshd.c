@@ -147,16 +147,20 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
 
 #ifdef WOLFSSH_AGENT
     /* check if using an agent is enabled */
+    /* TODO: doesn't work
     if (ret == WS_SUCCESS) {
         wolfSSH_CTX_set_agent_cb(ctx, wolfSSH_AGENT_DefaultActions, NULL);
     }
+    */
 #endif
 
 #ifdef WOLFSSH_FWD
     /* check if port forwarding is enabled */
+    /* TODO: doesn't work
     if (ret == WS_SUCCESS) {
         wolfSSH_CTX_SetFwdCb(ctx, wolfSSH_FwdDefaultActions, NULL);
     }
+    */
 #endif
 
     /* Load in host private key */
