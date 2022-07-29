@@ -661,10 +661,17 @@ static int RequestAuthentication(const char* usr, int type, const byte* data,
     if (auth == NULL)
         return WOLFSSH_USERAUTH_FAILURE;
 
-    ret = DoCheckUser(usr, auth);
+    if (wolfSSHD_ConfigGetPermitRoot(auth->conf) == 0) {
+        if (XSTRCMP(usr, "root") == 0) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Login as root not permited");
+            return WOLFSSH_USERAUTH_FAILURE;
+        }
+    }
 
+    ret = DoCheckUser(usr, auth);
     /* temporarily elevate permissions */
-    if (wolfSSHD_AuthRaisePermissions(auth) != 0) {
+    if (ret == WOLFSSH_USERAUTH_SUCCESS &&
+            wolfSSHD_AuthRaisePermissions(auth) != 0) {
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failure to raise permissions for auth"); 
         ret = WOLFSSH_USERAUTH_FAILURE;
     }

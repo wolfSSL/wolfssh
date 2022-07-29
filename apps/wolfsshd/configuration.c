@@ -202,10 +202,11 @@ enum {
     OPT_LOGIN_GRACE_TIME        = 10,
     OPT_HOST_KEY                = 11,
     OPT_PASSWORD_AUTH           = 12,
-    OPT_PORT                    = 13
+    OPT_PORT                    = 13,
+    OPT_PERMIT_ROOT             = 14
 };
 enum {
-    NUM_OPTIONS = 14
+    NUM_OPTIONS = 15
 };
 
 static const CONFIG_OPTION options[NUM_OPTIONS] = {
@@ -222,7 +223,8 @@ static const CONFIG_OPTION options[NUM_OPTIONS] = {
     {OPT_LOGIN_GRACE_TIME,        "LoginGraceTime"},
     {OPT_HOST_KEY,                "HostKey"},
     {OPT_PASSWORD_AUTH,           "PasswordAuthentication"},
-    {OPT_PORT,                    "Port"}
+    {OPT_PORT,                    "Port"},
+    {OPT_PERMIT_ROOT,             "PermitRootLogin"}
 };
 
 static int HandlePrivSep(WOLFSSHD_CONFIG* conf, const char* value)
@@ -294,6 +296,29 @@ static int HandlePermitEmptyPw(WOLFSSHD_CONFIG* conf, const char* value)
         }
         else if (WSTRCMP(value, "yes") == 0) {
             conf->permitEmptyPasswords = 1;
+        }
+        else {
+            ret = WS_BAD_ARGUMENT;
+        }
+    }
+
+    return ret;
+}
+
+static int HandlePermitRoot(WOLFSSHD_CONFIG* conf, const char* value)
+{
+    int ret = WS_SUCCESS;
+
+    if (conf == NULL || value == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (WSTRCMP(value, "no") == 0) {
+            conf->permitRootLogin = 0;
+        }
+        else if (WSTRCMP(value, "yes") == 0) {
+            conf->permitRootLogin = 1;
         }
         else {
             ret = WS_BAD_ARGUMENT;
@@ -440,6 +465,10 @@ static int HandleConfigOption(WOLFSSHD_CONFIG* conf, int opt, const char* value)
             break;
         case OPT_PORT:
             ret = HandlePort(conf, value);
+            break;
+        case OPT_PERMIT_ROOT:
+            ret = HandlePermitRoot(conf, value);
+            break;
         default:
             break;
     }
@@ -672,6 +701,17 @@ byte wolfSSHD_ConfigGetPwAuth(const WOLFSSHD_CONFIG* conf)
 
     if (conf != NULL) {
         ret = conf->passwordAuth;
+    }
+
+    return ret;
+}
+
+byte wolfSSHD_ConfigGetPermitRoot(const WOLFSSHD_CONFIG* conf)
+{
+    byte ret = 0;
+
+    if (conf != NULL) {
+        ret = conf->permitRootLogin;
     }
 
     return ret;
