@@ -326,6 +326,35 @@ static int HandlePwAuth(WOLFSSHD_CONFIG* conf, const char* value)
     return ret;
 }
 
+#define WOLFSSH_PROTOCOL_VERSION 2
+static int HandleProtocol(WOLFSSHD_CONFIG* conf, const char* value)
+{
+    int ret = WS_SUCCESS;
+    long portInt;
+
+    if (conf == NULL || value == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        portInt = GetConfigInt(value, WSTRLEN(value), 0, conf->heap);
+        if (portInt <= 0) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Invalid protocol number: %s.",
+                        value);
+            ret = WS_BAD_ARGUMENT;
+        }
+        else {
+            if (portInt != WOLFSSH_PROTOCOL_VERSION) {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Protocol number %ld not "
+                    "supported.", portInt);
+                ret = WS_BAD_ARGUMENT;
+            }
+        }
+    }
+
+    return ret;
+}
+
 static int HandlePort(WOLFSSHD_CONFIG* conf, const char* value)
 {
     int ret = WS_SUCCESS;
@@ -397,7 +426,7 @@ static int HandleConfigOption(WOLFSSHD_CONFIG* conf, int opt, const char* value)
             break;
         case OPT_PROTOCOL:
             /* TODO */
-            ret = WS_SUCCESS;
+            ret = HandleProtocol(conf, value);
             break;
         case OPT_LOGIN_GRACE_TIME:
             ret = HandleLoginGraceTime(conf, value);
@@ -525,7 +554,7 @@ int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename)
 
         ret = ParseConfigLine(conf, current, currentSz);
         if (ret != WS_SUCCESS) {
-            printf("Unable to parse config line : %s\n", current);
+            fprintf(stderr, "Unable to parse config line : %s\n", current);
             break;
         }
     }
