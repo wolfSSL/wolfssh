@@ -6078,6 +6078,7 @@ WS_SFTPNAME* wolfSSH_SFTP_LS(WOLFSSH* ssh, char* dir)
 
         case STATE_LS_READDIR:
             /* now read the dir */
+            WS_SFTPNAME* names = NULL;
             state->name = wolfSSH_SFTP_ReadDir(ssh, state->handle, state->sz);
             if (state->name == NULL) {
                 if (ssh->error == WS_WANT_READ || ssh->error == WS_WANT_WRITE) {
@@ -6086,6 +6087,30 @@ WS_SFTPNAME* wolfSSH_SFTP_LS(WOLFSSH* ssh, char* dir)
                 WLOG(WS_LOG_SFTP, "Error reading directory");
                 /* fall through because the handle should always be closed */
             }
+            names = state->name;
+
+            while (names != NULL) {
+                names = wolfSSH_SFTP_ReadDir(ssh, state->handle, state->sz);
+                if (names == NULL) {
+                    if (ssh->error == WS_WANT_READ ||
+                        ssh->error == WS_WANT_WRITE) {
+                        /* Error condition. Clean up previous names that we got
+                         * and return null to indicate error. */
+                        wolfSSH_SFTPNAME_list_free(state->name);
+                        state->name = NULL;
+                        return NULL;
+                    }
+                    /* Got all the names. Leave the while loop and fall through
+                     * because the handle should always be closed. */
+                } else {
+                    WS_SFTPNAME* runner = NULL;
+                    /* Got more entries so we append them. */
+                    for(runner = state->name; runner->next != NULL;
+                        runner = runner->next);
+                    runner->next = names;
+                }
+            }
+
             state->state = STATE_LS_CLOSE;
             NO_BREAK;
 
