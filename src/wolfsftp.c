@@ -6094,19 +6094,20 @@ WS_SFTPNAME* wolfSSH_SFTP_LS(WOLFSSH* ssh, char* dir)
                 if (names == NULL) {
                     if (ssh->error == WS_WANT_READ ||
                         ssh->error == WS_WANT_WRITE) {
-                        /* Error condition. Clean up previous names that we got
-                         * and return null to indicate error. */
+                        /* Clean up previous names that we got. */
                         wolfSSH_SFTPNAME_list_free(state->name);
                         state->name = NULL;
                         return NULL;
                     }
                     /* Got all the names. Leave the while loop and fall through
                      * because the handle should always be closed. */
-                } else {
+                }
+                else {
                     WS_SFTPNAME* runner = NULL;
                     /* Got more entries so we append them. */
-                    for(runner = state->name; runner->next != NULL;
-                        runner = runner->next);
+                    for (runner = state->name;
+                         runner->next != NULL;
+                         runner = runner->next);
                     runner->next = names;
                 }
             }
