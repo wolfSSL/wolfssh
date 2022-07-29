@@ -6017,6 +6017,7 @@ WS_SFTPNAME* wolfSSH_SFTP_LS(WOLFSSH* ssh, char* dir)
 {
     struct WS_SFTP_LS_STATE* state = NULL;
     WS_SFTPNAME* name = NULL;
+    WS_SFTPNAME* names = NULL;
 
     if (ssh == NULL || dir == NULL) {
         WLOG(WS_LOG_SFTP, "Bad argument passed in");
@@ -6078,7 +6079,6 @@ WS_SFTPNAME* wolfSSH_SFTP_LS(WOLFSSH* ssh, char* dir)
 
         case STATE_LS_READDIR:
             /* now read the dir */
-            WS_SFTPNAME* names = NULL;
             state->name = wolfSSH_SFTP_ReadDir(ssh, state->handle, state->sz);
             if (state->name == NULL) {
                 if (ssh->error == WS_WANT_READ || ssh->error == WS_WANT_WRITE) {
@@ -6111,7 +6111,6 @@ WS_SFTPNAME* wolfSSH_SFTP_LS(WOLFSSH* ssh, char* dir)
                     runner->next = names;
                 }
             }
-
             state->state = STATE_LS_CLOSE;
             NO_BREAK;
 
