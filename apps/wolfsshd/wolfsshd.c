@@ -418,7 +418,11 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
         WMEMSET(cmd, 0, sizeof(cmd));
         XSNPRINTF(cmd, sizeof(cmd), "su %s", userName);
         printf("executing command [%s]\n", cmd);
-        system(cmd);
+        errno = 0;
+        ret = system(cmd);
+        if (ret && errno) {
+            printf("error executing command\n");
+        }
         rc = chdir(p_passwd->pw_dir);
         if (rc != 0) {
             return WS_FATAL_ERROR;
