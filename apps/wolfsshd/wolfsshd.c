@@ -395,11 +395,18 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
         /* Child process */
         const char *args[] = {"-sh", NULL};
         char cmd[80];
+        int ret;
 
         signal(SIGINT, SIG_DFL);
 
-        setgid(p_passwd->pw_gid);
-        setuid(p_passwd->pw_uid);
+        ret = setgid(p_passwd->pw_gid);
+        if (ret) {
+            printf("Error executing setgid\n");
+        }
+        ret = setuid(p_passwd->pw_uid);
+        if (ret) {
+            printf("Error executing setuid\n");
+        }
         if (system("env") != 0) {
             printf("0 return value from system call\n");
         }
