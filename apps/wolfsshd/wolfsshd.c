@@ -342,6 +342,11 @@ static int SFTP_Subsystem(WOLFSSH* ssh, WOLFSSHD_CONNECTION* conn)
 
 
 #ifdef WOLFSSH_SHELL
+
+#ifndef MAX_COMMAND_SZ
+    #define MAX_COMMAND_SZ 80
+#endif
+
 static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
 {
     WS_SOCKET_T sshFd = 0;
@@ -378,13 +383,6 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
 
     ChildRunning = 1;
     childPid = forkpty(&childFd, NULL, NULL, NULL);
-    if (wolfSSHD_AuthReducePermissions(conn->auth) != 0) {
-        /* stop everything if not able to reduce permissions level */
-        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue reducing permissions level,"
-            " exiting now");
-        exit(1);
-    }
-
     if (childPid < 0) {
         /* forkpty failed, so return */
         ChildRunning = 0;
@@ -393,43 +391,45 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
     }
     else if (childPid == 0) {
         /* Child process */
-        const char *args[] = {"-sh", NULL};
-        char cmd[80];
+        char cmd[MAX_COMMAND_SZ];
         int ret;
 
         signal(SIGINT, SIG_DFL);
 
-        ret = setgid(p_passwd->pw_gid);
-        if (ret) {
-            printf("Error executing setgid\n");
-        }
-        ret = setuid(p_passwd->pw_uid);
-        if (ret) {
-            printf("Error executing setuid\n");
-        }
-        if (system("env") != 0) {
-            printf("0 return value from system call\n");
-        }
-
         setenv("HOME", p_passwd->pw_dir, 1);
         setenv("LOGNAME", p_passwd->pw_name, 1);
-
-        /* @TODO this needs reworked, can just exit into root */
-        WMEMSET(cmd, 0, sizeof(cmd));
-        XSNPRINTF(cmd, sizeof(cmd), "su %s", userName);
-        printf("executing command [%s]\n", cmd);
-        errno = 0;
-        ret = system(cmd);
-        if (ret && errno) {
-            printf("error executing command\n");
-        }
         rc = chdir(p_passwd->pw_dir);
         if (rc != 0) {
             return WS_FATAL_ERROR;
         }
 
-        execv("/bin/sh", (char **)args);
+        /* default to /bin/sh if user shell is not set */
+        WMEMSET(cmd, 0, sizeof(cmd));
+        if (XSTRLEN(p_passwd->pw_shell) == 0) {
+            XSNPRINTF(cmd, sizeof(cmd), "sudo runuser -u %s -- %s", userName,
+                "/bin/sh");
+        }
+        else {
+            XSNPRINTF(cmd, sizeof(cmd), "sudo runuser -u %s -- %s", userName,
+                p_passwd->pw_shell);
+        }
+
+        errno = 0;
+        ret = system(cmd);
+        if (ret && errno) {
+            perror("error executing shell command ");
+            exit(1);
+        }
+        exit(0); /* exit child process and close down SSH connection */
     }
+
+    if (wolfSSHD_AuthReducePermissions(conn->auth) != 0) {
+        /* stop everything if not able to reduce permissions level */
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue reducing permissions level,"
+            " exiting now");
+        exit(1);
+    }
+
     sshFd = wolfSSH_get_fd(ssh);
 
     struct termios tios;
