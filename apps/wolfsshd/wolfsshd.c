@@ -757,6 +757,7 @@ int main(int argc, char** argv)
                     else {
                         if (ret <= (word16)-1) {
                             port = (word16)ret;
+                            ret = WS_SUCCESS;
                         }
                         else {
                             printf("Port number %d too big.\n", ret);
