@@ -203,10 +203,11 @@ enum {
     OPT_HOST_KEY                = 11,
     OPT_PASSWORD_AUTH           = 12,
     OPT_PORT                    = 13,
-    OPT_PERMIT_ROOT             = 14
+    OPT_PERMIT_ROOT             = 14,
+    OPT_USE_DNS                 = 15
 };
 enum {
-    NUM_OPTIONS = 15
+    NUM_OPTIONS = 16
 };
 
 static const CONFIG_OPTION options[NUM_OPTIONS] = {
@@ -224,7 +225,8 @@ static const CONFIG_OPTION options[NUM_OPTIONS] = {
     {OPT_HOST_KEY,                "HostKey"},
     {OPT_PASSWORD_AUTH,           "PasswordAuthentication"},
     {OPT_PORT,                    "Port"},
-    {OPT_PERMIT_ROOT,             "PermitRootLogin"}
+    {OPT_PERMIT_ROOT,             "PermitRootLogin"},
+    {OPT_USE_DNS,                 "UseDNS"}
 };
 
 static int HandlePrivSep(WOLFSSHD_CONFIG* conf, const char* value)
@@ -238,13 +240,16 @@ static int HandlePrivSep(WOLFSSHD_CONFIG* conf, const char* value)
     if (ret == WS_SUCCESS) {
         if (WSTRCMP(value, "sandbox") == 0) {
             wolfSSH_Log(WS_LOG_INFO, "[SSHD] Sandbox privilege separation");
+            conf->usePrivilegeSeparation = WOLFSSHD_PRIV_SANDBOX;
         }
         else if (WSTRCMP(value, "yes") == 0) {
             wolfSSH_Log(WS_LOG_INFO, "[SSHD] Privilege separation enabled");
+            conf->usePrivilegeSeparation = WOLFSSHD_PRIV_SEPARAT;
         }
         else if (WSTRCMP(value, "no") == 0) {
             wolfSSH_Log(WS_LOG_INFO,
                         "[SSHD] Turning off privilege separation!");
+            conf->usePrivilegeSeparation = WOLFSSHD_PRIV_OFF;
         }
         else {
             wolfSSH_Log(WS_LOG_ERROR,
@@ -469,6 +474,10 @@ static int HandleConfigOption(WOLFSSHD_CONFIG* conf, int opt, const char* value)
         case OPT_PERMIT_ROOT:
             ret = HandlePermitRoot(conf, value);
             break;
+        case OPT_USE_DNS:
+            /* TODO */
+            ret = WS_SUCCESS;
+            break;
         default:
             break;
     }
@@ -690,6 +699,17 @@ byte wolfSSHD_ConfigGetPermitEmptyPw(const WOLFSSHD_CONFIG* conf)
 
     if (conf != NULL) {
         ret = conf->permitEmptyPasswords;
+    }
+
+    return ret;
+}
+
+byte wolfSSHD_ConfigGetPrivilegeSeparation(const WOLFSSHD_CONFIG* conf)
+{
+    byte ret = 0;
+
+    if (conf != NULL) {
+        ret = conf->usePrivilegeSeparation;
     }
 
     return ret;

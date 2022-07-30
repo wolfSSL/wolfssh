@@ -650,6 +650,8 @@ static void* HandleConnection(void* arg)
     if (conn != NULL) {
         WCLOSESOCKET(conn->fd);
     }
+    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Return from closing connection = %d", ret);
+
     return NULL;
 }
 

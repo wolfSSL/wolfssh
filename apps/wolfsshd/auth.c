@@ -289,7 +289,7 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
 #ifndef _WIN32
 
 #ifdef WOLFSSH_USE_PAM
-static int CheckPasswordPAM(const byte* usr, const byte* pw, int pwSz)
+static int CheckPasswordPAM(const char* usr, const byte* pw, word32 pwSz)
 {
     (void)usr;
     (void)pw;
@@ -404,10 +404,12 @@ static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz)
         }
     }
 
-    pwInfo = getpwnam((const char*)usr);
-    if (pwInfo == NULL) {
-        /* user name not found on system */
-        ret = WS_FATAL_ERROR;
+    if (ret == WS_SUCCESS) {
+        pwInfo = getpwnam((const char*)usr);
+        if (pwInfo == NULL) {
+            /* user name not found on system */
+            ret = WS_FATAL_ERROR;
+        }
     }
 
     if (ret == WS_SUCCESS) {
@@ -554,9 +556,10 @@ static int CheckPublicKeyUnix(const char* name, const byte* key, word32 keySz)
         if (errno != 0) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error calling getpwnam for user "
                                      "%s.", name);
-            ret = WS_FATAL_ERROR;
         }
+        ret = WS_FATAL_ERROR;
     }
+
     if (ret == WSSHD_AUTH_SUCCESS) {
         WMEMSET(authKeysPath, 0, sizeof(authKeysPath));
         rc = ResolveAuthKeysPath(pwInfo->pw_dir, authKeysPath);
@@ -942,22 +945,26 @@ int wolfSSHD_AuthRaisePermissions(WOLFSSHD_AUTH* auth)
 /* return 0 on success */
 int wolfSSHD_AuthReducePermissions(WOLFSSHD_AUTH* auth)
 {
+    byte flag = 0;
     int ret = 0;
 
-    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Lowering permissions level");
-    if (auth) {
-        if (setegid(auth->gid) != 0) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting sshd gid");
-            ret = WS_FATAL_ERROR;
-        }
+    flag = wolfSSHD_ConfigGetPrivilegeSeparation(auth->conf);
+    if (flag == WOLFSSHD_PRIV_SEPARAT || flag == WOLFSSHD_PRIV_SANDBOX) {
+        wolfSSH_Log(WS_LOG_INFO, "[SSHD] Lowering permissions level");
+        if (auth) {
+            if (setegid(auth->gid) != 0) {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting sshd gid");
+                ret = WS_FATAL_ERROR;
+            }
 
-        if (seteuid(auth->uid) != 0) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting sshd uid");
-            ret = WS_FATAL_ERROR;
+            if (seteuid(auth->uid) != 0) {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting sshd uid");
+                ret = WS_FATAL_ERROR;
+            }
         }
-    }
-    else {
-        ret = WS_BAD_ARGUMENT;
+        else {
+            ret = WS_BAD_ARGUMENT;
+        }
     }
     return ret;
 }
