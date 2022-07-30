@@ -63,6 +63,7 @@
     #endif
     #include <pwd.h>
     #include <signal.h>
+    #include <sys/wait.h>
 #if defined(__QNX__) || defined(__QNXNTO__)
     #include <errno.h>
     #include <unix.h>
@@ -76,9 +77,21 @@
         (void)sig;
         ChildRunning = 0;
     }
+
+    static void ConnClose(int sig)
+    {
+        pid_t p;
+        int   ret;
+        p = wait(&ret);
+        if (p == 0 || p == -1)
+            return; /* parent or error state*/
+        (void)ret;
+        (void)sig;
+    }
 #endif /* WOLFSSH_SHELL */
 
 static volatile byte debugMode = 0; /* default to off */
+static FILE* logFile = NULL;
 
 /* catch interrupts and close down gracefully */
 static volatile byte quit = 0;
@@ -98,23 +111,37 @@ static void ShowUsage(void)
     printf(" -f <file name> Configuration file to use, default is /usr/local/etc/ssh/sshd_config\n");
     printf(" -p <int>       Port number to listen on\n");
     printf(" -d             Turn on debug mode\n");
+    printf(" -D             Run in foreground (do not detach)\n");
     printf(" -h <file name> host private key file to use\n");
+    printf(" -E <file name> append to log file\n");
 }
 
 static void interruptCatch(int in)
 {
     (void)in;
-    printf("Closing down wolfSSHD\n");
+    if (logFile)
+        fprintf(logFile, "Closing down wolfSSHD\n");
     quit = 1;
 }
 
 static void wolfSSHDLoggingCb(enum wolfSSH_LogLevel lvl, const char *const str)
 {
     if (debugMode) {
-        fprintf(stderr, "[PID %d]: %s\n", getpid(), str);
+        fprintf(logFile, "[PID %d]: %s\n", getpid(), str);
     }
     (void)lvl;
 }
+
+
+static void CleanupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
+{
+    if (ctx != NULL && *ctx != NULL) {
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+    }
+    (void)conf;
+}
+
 
 static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
 {
@@ -294,13 +321,6 @@ static int SFTP_Subsystem(WOLFSSH* ssh, WOLFSSHD_CONNECTION* conn)
 
     sockfd = (WS_SOCKET_T)wolfSSH_get_fd(ssh);
     do {
-//        if (threadCtx->nonBlock) {
-//            if (error == WS_WANT_READ)
-//                printf("... sftp server would read block\n");
-//            else if (error == WS_WANT_WRITE)
-//                printf("... sftp server would write block\n");
-//        }
-
         if (wolfSSH_stream_peek(ssh, tmp, 1) > 0) {
             select_ret = WS_SELECT_RECV_READY;
         }
@@ -394,7 +414,8 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
         char cmd[MAX_COMMAND_SZ];
         int ret;
 
-        signal(SIGINT, SIG_DFL);
+        signal(SIGINT,  SIG_DFL);
+        signal(SIGCHLD, SIG_DFL);
 
         setenv("HOME", p_passwd->pw_dir, 1);
         setenv("LOGNAME", p_passwd->pw_name, 1);
@@ -435,6 +456,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
     struct termios tios;
     word32 shellChannelId = 0;
     signal(SIGCHLD, ChildSig);
+    signal(SIGINT, SIG_DFL);
 
     rc = tcgetattr(childFd, &tios);
     if (rc != 0) {
@@ -668,12 +690,16 @@ static int NewConnection(WOLFSSHD_CONNECTION* conn)
         ret = -1;
     }
 
-    if (pd == 0) {
-        /* child process */
-        (void)HandleConnection((void*)conn);
-    }
-    else {
-        wolfSSH_Log(WS_LOG_INFO, "[SSHD] Spawned new process %d\n", pd);
+    if (ret == WS_SUCCESS) {
+        if (pd == 0) {
+            /* child process */
+            signal(SIGINT, SIG_DFL);
+            (void)HandleConnection((void*)conn);
+            exit(0);
+        }
+        else {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Spawned new process %d\n", pd);
+        }
     }
 
     return ret;
@@ -696,23 +722,25 @@ static int PendingConnection(WS_SOCKET_T fd)
     FD_ZERO(&e);
 
     FD_SET(fd, &r);
+    errno = 0;
     ret = select(nfds, &r, &w, &e, &t);
     if (ret < 0) {
-        /* a socket level issue happend */
-        printf("Error waiting for connection on socket\n");
-        quit = 1;
+        /* a socket level issue happend, could just be a system call int. */
+        if (errno != EINTR) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] TCP socket error on select()");
+            quit = 1;
+        }
         ret  = 0;
     }
     else if (ret > 0) {
         if (FD_ISSET(fd, &r)) {
-            printf("Connection found\n");
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Incoming TCP data found");
         }
         else {
-            printf("Found write or error data\n");
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Found TCP write or error data");
             ret = 0; /* nothing to read */
         }
     }
-    //    printf("Timeout waiting for connection\n");
     return ret;
 }
 
@@ -729,6 +757,7 @@ int main(int argc, char** argv)
     WOLFSSHD_CONFIG* conf = NULL;
     WOLFSSHD_AUTH*   auth = NULL;
     WOLFSSH_CTX* ctx = NULL;
+    byte isDaemon = 1;
 
     const char* configFile  = "/usr/local/etc/ssh/sshd_config";
     const char* hostKeyFile = NULL;
@@ -754,7 +783,7 @@ int main(int argc, char** argv)
         }
     }
 
-    while ((ch = mygetopt(argc, argv, "?f:p:h:d")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?f:p:h:dDE:")) != -1) {
         switch (ch) {
             case 'f':
                 configFile = myoptarg;
@@ -764,7 +793,8 @@ int main(int argc, char** argv)
                 if (ret == WS_SUCCESS) {
                     ret = XATOI(myoptarg);
                     if (ret < 0) {
-                        printf("Issue parsing port number %s\n", myoptarg);
+                        fprintf(stderr, "Issue parsing port number %s\n",
+                            myoptarg);
                         ret = WS_BAD_ARGUMENT;
                     }
                     else {
@@ -773,7 +803,7 @@ int main(int argc, char** argv)
                             ret = WS_SUCCESS;
                         }
                         else {
-                            printf("Port number %d too big.\n", ret);
+                            fprintf(stderr, "Port number %d too big.\n", ret);
                             ret = WS_BAD_ARGUMENT;
                         }
                     }
@@ -786,6 +816,18 @@ int main(int argc, char** argv)
 
             case 'd':
                 debugMode = 1; /* turn on debug mode */
+                break;
+
+            case 'D':
+                isDaemon = 0;
+                break;
+
+            case 'E':
+                logFile = fopen(myoptarg, "ab");
+                if (logFile == NULL) {
+                    fprintf(stderr, "Unable to open log file %s\n", myoptarg);
+                    ret = WS_FATAL_ERROR;
+                }
                 break;
 
             case '?':
@@ -801,11 +843,11 @@ int main(int argc, char** argv)
     if (ret == WS_SUCCESS) {
         ret = wolfSSHD_ConfigLoad(conf, configFile);
         if (ret != WS_SUCCESS)
-            printf("Error reading in configure file %s\n", configFile);
+            fprintf(stderr, "Error reading in configure file %s\n", configFile);
     }
 
     /* port was not overridden with argument, read from config file */
-    if (port == 0) {
+    if (ret == WS_SUCCESS && port == 0) {
         port = wolfSSHD_ConfigGetPort(conf);
     }
 
@@ -814,9 +856,8 @@ int main(int argc, char** argv)
         wolfSSHD_ConfigSetHostKeyFile(conf, hostKeyFile);
     }
 
-    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Starting wolfSSH SSHD application");
-
     if (ret == WS_SUCCESS) {
+        wolfSSH_Log(WS_LOG_INFO, "[SSHD] Starting wolfSSH SSHD application");
         ret = SetupCTX(conf, &ctx);
     }
     else {
@@ -839,6 +880,33 @@ int main(int argc, char** argv)
         }
     }
 
+    if (logFile == NULL) {
+        logFile = stderr;
+    }
+
+    /* run as a daemon */
+    if (ret == WS_SUCCESS && isDaemon) {
+        pid_t p;
+
+        p = fork();
+        if (p < 0) {
+            fprintf(stderr, "Failed to fork process\n");
+            ret = WS_FATAL_ERROR;
+        }
+
+        if (ret == WS_SUCCESS) {
+            if (p > 0) {
+                exit(0); /* stop parent process */
+            }
+
+            if (setsid() < 0) {
+                fprintf(stderr, "Failed to set a new session");
+                ret = WS_FATAL_ERROR;
+            }
+        }
+    }
+
+    signal(SIGCHLD, ConnClose);
     if (ret == WS_SUCCESS) {
         wolfSSH_Log(WS_LOG_INFO, "[SSHD] Starting to listen on port %d", port);
         tcp_listen(&listenFd, &port, 1);
@@ -889,6 +957,7 @@ int main(int argc, char** argv)
         }
     }
 
+    CleanupCTX(conf, &ctx);
     wolfSSHD_ConfigFree(conf);
     wolfSSHD_AuthFreeUser(auth);
     wolfSSH_Cleanup();

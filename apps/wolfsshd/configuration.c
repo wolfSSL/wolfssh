@@ -154,7 +154,7 @@ WOLFSSHD_CONFIG* wolfSSHD_ConfigNew(void* heap)
     ret = (WOLFSSHD_CONFIG*)WMALLOC(sizeof(WOLFSSHD_CONFIG), heap,
                 DYNTYPE_SSHD);
     if (ret == NULL) {
-        printf("issue mallocing config structure for sshd\n");
+        fprintf(stderr, "Issue malloc'ing config structure for sshd\n");
     }
     else {
         WMEMSET(ret, 0, sizeof(WOLFSSHD_CONFIG));
@@ -586,7 +586,6 @@ int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename)
         }
 
         if (current[0] == '#') {
-            //printf("read commented out line\n%s\n", current);
             continue; /* commented out line */
         }
 
