@@ -427,12 +427,22 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
         /* default to /bin/sh if user shell is not set */
         WMEMSET(cmd, 0, sizeof(cmd));
         if (XSTRLEN(p_passwd->pw_shell) == 0) {
-            XSNPRINTF(cmd, sizeof(cmd), "sudo runuser -u %s -- %s", userName,
+        #if defined(__QNX__) || defined(__QNXNTO__)
+            XSNPRINTF(cmd, sizeof(cmd), "su - %s -c %s", userName,
                 "/bin/sh");
+        #else
+            XSNPRINTF(cmd, sizeof(cmd), "runuser -u %s -- %s", userName,
+                "/bin/sh");
+        #endif
         }
         else {
-            XSNPRINTF(cmd, sizeof(cmd), "sudo runuser -u %s -- %s", userName,
+        #if defined(__QNX__) || defined(__QNXNTO__)
+            XSNPRINTF(cmd, sizeof(cmd), "su - %s -c %s", userName,
                 p_passwd->pw_shell);
+        #else
+            XSNPRINTF(cmd, sizeof(cmd), "runuser -u %s -- %s", userName,
+                p_passwd->pw_shell);
+        #endif
         }
 
         errno = 0;
@@ -772,6 +782,7 @@ int main(int argc, char** argv)
     wolfSSL_Debugging_ON();
 #endif
 
+    logFile = stderr;
     if (ret == WS_SUCCESS) {
         wolfSSH_Init();
     }
