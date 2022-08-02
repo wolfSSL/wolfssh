@@ -5723,6 +5723,9 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
 
                 wolfSSH_SFTP_buffer_rewind(&state->buffer);
                 wolfSSH_SFTP_DoStatus(ssh, reqId, &state->buffer);
+                if (ssh->error != WS_WANT_READ) {
+                    wolfSSH_SFTP_ClearState(ssh, STATE_ID_NAME);
+                }
                 return NULL;
             }
             NO_BREAK;
@@ -6078,29 +6081,20 @@ WS_SFTPNAME* wolfSSH_SFTP_LS(WOLFSSH* ssh, char* dir)
             NO_BREAK;
 
         case STATE_LS_READDIR:
-            /* now read the dir */
-            state->name = wolfSSH_SFTP_ReadDir(ssh, state->handle, state->sz);
-            if (state->name == NULL) {
+            /* Now read the dir. Note in non-blocking we might get here multiple
+             * times so we have to assign to state->name later. */
+            names = wolfSSH_SFTP_ReadDir(ssh, state->handle, state->sz);
+            if (names == NULL) {
                 if (ssh->error == WS_WANT_READ || ssh->error == WS_WANT_WRITE) {
                     return NULL;
                 }
                 WLOG(WS_LOG_SFTP, "Error reading directory");
                 /* fall through because the handle should always be closed */
             }
-            names = state->name;
 
             while (names != NULL) {
-                names = wolfSSH_SFTP_ReadDir(ssh, state->handle, state->sz);
-                if (names == NULL) {
-                    if (ssh->error == WS_WANT_READ ||
-                        ssh->error == WS_WANT_WRITE) {
-                        /* Clean up previous names that we got. */
-                        wolfSSH_SFTPNAME_list_free(state->name);
-                        state->name = NULL;
-                        return NULL;
-                    }
-                    /* Got all the names. Leave the while loop and fall through
-                     * because the handle should always be closed. */
+                if (state->name == NULL) {
+                    state->name = names;
                 }
                 else {
                     WS_SFTPNAME* runner = NULL;
@@ -6110,7 +6104,19 @@ WS_SFTPNAME* wolfSSH_SFTP_LS(WOLFSSH* ssh, char* dir)
                          runner = runner->next);
                     runner->next = names;
                 }
+                names = wolfSSH_SFTP_ReadDir(ssh, state->handle, state->sz);
+                if (names == NULL) {
+                    if (ssh->error == WS_WANT_READ
+                        || ssh->error == WS_WANT_WRITE) {
+                        /* State does not change so we will get back to this case
+                         * clause in non-blocking mode. */
+                        return NULL;
+                    }
+                    WLOG(WS_LOG_SFTP, "Error reading directory");
+                    /* fall through because the handle should always be closed. */
+                }
             }
+
             state->state = STATE_LS_CLOSE;
             NO_BREAK;
 
