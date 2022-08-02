@@ -5064,7 +5064,7 @@ static int SFTP_ClientRecvInit(WOLFSSH* ssh) {
                 WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
 
                 /* case where expecting more */
-                if (len < ssh->sftpExtSz) {
+                if ((word32)len < ssh->sftpExtSz) {
                     ssh->sftpExtSz -= len;
                     ssh->error = WS_WANT_READ;
                     return WS_FATAL_ERROR;
