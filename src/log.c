@@ -57,7 +57,7 @@
 #endif /* WOLFSSH_NO_DEFAULT_LOGGING_CB */
 
 
-#ifdef DEBUG_WOLFSSH
+#if defined(DEBUG_WOLFSSH) || defined(WOLFSSH_SSHD)
     static enum wolfSSH_LogLevel logLevel = WS_LOG_DEFAULT;
     static int logEnable = 0;
 #endif
@@ -66,7 +66,7 @@
 /* turn debugging on if supported */
 void wolfSSH_Debugging_ON(void)
 {
-#ifdef DEBUG_WOLFSSH
+#if defined(DEBUG_WOLFSSH) || defined(WOLFSSH_SSHD)
     logEnable = 1;
 #endif
 }
@@ -75,7 +75,7 @@ void wolfSSH_Debugging_ON(void)
 /* turn debugging off */
 void wolfSSH_Debugging_OFF(void)
 {
-#ifdef DEBUG_WOLFSSH
+#if defined(DEBUG_WOLFSSH) || defined(WOLFSSH_SSHD)
     logEnable = 0;
 #endif
 }
@@ -91,7 +91,7 @@ void wolfSSH_SetLoggingCb(wolfSSH_LoggingCb logF)
 
 int wolfSSH_LogEnabled(void)
 {
-#ifdef DEBUG_WOLFSSH
+#if defined(DEBUG_WOLFSSH) || defined(WOLFSSH_SSHD)
     return logEnable;
 #else
     return 0;
@@ -99,7 +99,7 @@ int wolfSSH_LogEnabled(void)
 }
 
 
-#ifdef DEBUG_WOLFSSH
+#if defined(DEBUG_WOLFSSH) || defined(WOLFSSH_SSHD)
 #ifndef WOLFSSH_NO_DEFAULT_LOGGING_CB
 /* log level string */
 static const char* GetLogStr(enum wolfSSH_LogLevel level)

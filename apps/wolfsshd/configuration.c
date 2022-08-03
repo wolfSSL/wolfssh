@@ -147,6 +147,8 @@ static void FreeString(char** in, void* heap)
     (void)heap;
 }
 
+
+/* returns a new WOLFSSHD_CONFIG on success and NULL on failure */
 WOLFSSHD_CONFIG* wolfSSHD_ConfigNew(void* heap)
 {
     WOLFSSHD_CONFIG* ret;
@@ -229,6 +231,7 @@ static const CONFIG_OPTION options[NUM_OPTIONS] = {
     {OPT_USE_DNS,                 "UseDNS"}
 };
 
+/* returns WS_SUCCESS on success */
 static int HandlePrivSep(WOLFSSHD_CONFIG* conf, const char* value)
 {
     int ret = WS_SUCCESS;
@@ -261,6 +264,7 @@ static int HandlePrivSep(WOLFSSHD_CONFIG* conf, const char* value)
     return ret;
 }
 
+/* returns WS_SUCCESS on success */
 static int HandleLoginGraceTime(WOLFSSHD_CONFIG* conf, const char* value)
 {
     int ret = WS_SUCCESS;
@@ -287,6 +291,7 @@ static int HandleLoginGraceTime(WOLFSSHD_CONFIG* conf, const char* value)
     return ret;
 }
 
+/* returns WS_SUCCESS on success */
 static int HandlePermitEmptyPw(WOLFSSHD_CONFIG* conf, const char* value)
 {
     int ret = WS_SUCCESS;
@@ -310,6 +315,7 @@ static int HandlePermitEmptyPw(WOLFSSHD_CONFIG* conf, const char* value)
     return ret;
 }
 
+/* returns WS_SUCCESS on success */
 static int HandlePermitRoot(WOLFSSHD_CONFIG* conf, const char* value)
 {
     int ret = WS_SUCCESS;
@@ -333,6 +339,7 @@ static int HandlePermitRoot(WOLFSSHD_CONFIG* conf, const char* value)
     return ret;
 }
 
+/* returns WS_SUCCESS on success */
 static int HandlePwAuth(WOLFSSHD_CONFIG* conf, const char* value)
 {
     int ret = WS_SUCCESS;
@@ -357,6 +364,8 @@ static int HandlePwAuth(WOLFSSHD_CONFIG* conf, const char* value)
 }
 
 #define WOLFSSH_PROTOCOL_VERSION 2
+
+/* returns WS_SUCCESS on success */
 static int HandleProtocol(WOLFSSHD_CONFIG* conf, const char* value)
 {
     int ret = WS_SUCCESS;
@@ -385,6 +394,7 @@ static int HandleProtocol(WOLFSSHD_CONFIG* conf, const char* value)
     return ret;
 }
 
+/* returns WS_SUCCESS on success */
 static int HandlePort(WOLFSSHD_CONFIG* conf, const char* value)
 {
     int ret = WS_SUCCESS;
@@ -416,6 +426,8 @@ static int HandlePort(WOLFSSHD_CONFIG* conf, const char* value)
     return ret;
 }
 
+
+/* returns WS_SUCCESS on success */
 static int HandleConfigOption(WOLFSSHD_CONFIG* conf, int opt, const char* value)
 {
     int ret = WS_BAD_ARGUMENT;
@@ -485,6 +497,8 @@ static int HandleConfigOption(WOLFSSHD_CONFIG* conf, int opt, const char* value)
     return ret;
 }
 
+/* helper function to count white spaces, returns the number of white spaces on
+ * success */
 static int CountWhitespace(const char* in, int inSz, byte inv)
 {
     int i = 0;
@@ -554,6 +568,9 @@ WOLFSSHD_STATIC int ParseConfigLine(WOLFSSHD_CONFIG* conf, const char* l,
 }
 
 
+/* parses and loads in the given configuration file 'filename'
+ * returns WS_SUCCESS on success
+ */
 int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename)
 {
     XFILE f;

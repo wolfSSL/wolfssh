@@ -60,12 +60,16 @@ struct WOLFSSHD_AUTH {
     const WOLFSSHD_CONFIG* conf;
     int gid;
     int uid;
+    int attempts;
     void* heap;
 };
 
+#ifndef WOLFSSHD_MAX_PASSWORD_ATTEMPTS
+    #define WOLFSSHD_MAX_PASSWORD_ATTEMPTS 3
+#endif
 
 #if 0
-static byte passwdRetry = 3;
+/* this could potentially be useful in a deeply embeded future port */
 
 /* Map user names to passwords */
 /* Use arrays for username and p. The password or public key can
@@ -106,105 +110,6 @@ USER_NODE* AddNewUser(USER_NODE* list, byte type, const byte* username,
     }
 
     return map;
-}
-
-int DefaultUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
-{
-    USER_NODE* map;
-    byte authHash[WC_SHA256_DIGEST_SIZE];
-    int ret;
-
-    if (authType != WOLFSSH_USERAUTH_PASSWORD &&
-#ifdef WOLFSSH_ALLOW_USERAUTH_NONE
-        authType != WOLFSSH_USERAUTH_NONE &&
-#endif
-        authType != WOLFSSH_USERAUTH_PUBLICKEY) {
-
-        return WOLFSSH_USERAUTH_FAILURE;
-    }
-    map = (USER_NODE*)ctx;
-
-    /* check if password on system */
-    if (authData->type == WOLFSSH_USERAUTH_PASSWORD) {
-        if (CheckPassword(authData->username, authData->sf.password.password,
-                authData->sf.password.passwordSz) == WS_SUCCESS) {
-            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Password and user on system");
-            return WOLFSSH_USERAUTH_SUCCESS;
-        }
-    }
-    
-    if (authType == WOLFSSH_USERAUTH_PASSWORD) {
-        wc_Sha256Hash(authData->sf.password.password,
-                authData->sf.password.passwordSz,
-                authHash);
-    }
-    else if (authType == WOLFSSH_USERAUTH_PUBLICKEY) {
-        wc_Sha256Hash(authData->sf.publicKey.publicKey,
-                authData->sf.publicKey.publicKeySz,
-                authHash);
-    }
-
-    while (map != NULL) {
-        if (authData->usernameSz == map->usernameSz &&
-            WMEMCMP(authData->username, map->username, map->usernameSz) == 0 &&
-            authData->type == map->type) {
-
-            if (authData->type == WOLFSSH_USERAUTH_PUBLICKEY) {
-                if (WMEMCMP(map->fingerprint, authHash,
-                            WC_SHA256_DIGEST_SIZE) == 0) {
-                    return WOLFSSH_USERAUTH_SUCCESS;
-                }
-                else {
-                   return WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
-                }
-            }
-            else if (authData->type == WOLFSSH_USERAUTH_PASSWORD) {
-                if (WMEMCMP(map->fingerprint, authHash,
-                            WC_SHA256_DIGEST_SIZE) == 0) {
-                    return WOLFSSH_USERAUTH_SUCCESS;
-                }
-                else {
-                    passwdRetry--;
-                    return (passwdRetry > 0) ?
-                        WOLFSSH_USERAUTH_INVALID_PASSWORD :
-                        WOLFSSH_USERAUTH_REJECTED;
-                 }
-            }
-#ifdef WOLFSSH_ALLOW_USERAUTH_NONE
-            else if (authData->type == WOLFSSH_USERAUTH_NONE) {
-                return WOLFSSH_USERAUTH_SUCCESS;
-            }
-#endif /* WOLFSSH_ALLOW_USERAUTH_NONE */
-            else {
-                 return WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
-            }
-
-            if (authData->type == map->type) {
-                if (WMEMCMP(map->fingerprint, authHash,
-                            WC_SHA256_DIGEST_SIZE) == 0) {
-                    return WOLFSSH_USERAUTH_SUCCESS;
-                }
-                else {
-                    if (authType == WOLFSSH_USERAUTH_PASSWORD) {
-                        passwdRetry--;
-                        ret = (passwdRetry > 0) ?
-                            WOLFSSH_USERAUTH_INVALID_PASSWORD :
-                            WOLFSSH_USERAUTH_REJECTED;
-                    }
-                    else {
-                        ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
-                    }
-                    return ret;
-                }
-            }
-            else {
-                return WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
-            }
-        }
-        map = map->next;
-    }
-
-    return WOLFSSH_USERAUTH_INVALID_USER;
 }
 #endif
 
@@ -631,6 +536,7 @@ static int CheckPublicKeyUnix(const char* name, const byte* key, word32 keySz)
 #endif /* !_WIN32*/
 
 
+/* return WOLFSSH_USERAUTH_SUCCESS on success */
 static int DoCheckUser(const char* usr, WOLFSSHD_AUTH* auth)
 {
     int ret = WOLFSSH_USERAUTH_FAILURE;
@@ -674,7 +580,7 @@ static int RequestAuthentication(const char* usr, int type, const byte* data,
     ret = DoCheckUser(usr, auth);
     /* temporarily elevate permissions */
     if (ret == WOLFSSH_USERAUTH_SUCCESS &&
-            wolfSSHD_AuthRaisePermissions(auth) != 0) {
+            wolfSSHD_AuthRaisePermissions(auth) != WS_SUCCESS) {
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failure to raise permissions for auth"); 
         ret = WOLFSSH_USERAUTH_FAILURE;
     }
@@ -689,7 +595,8 @@ static int RequestAuthentication(const char* usr, int type, const byte* data,
         }
         /* Check if password is valid for this user. */
         /* first handle empty password cases */
-        else if (dataSz == 0 && wolfSSHD_ConfigGetPermitEmptyPw(auth->conf) != 1) {
+        else if (dataSz == 0 && wolfSSHD_ConfigGetPermitEmptyPw(auth->conf)
+                != 1) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Empty passwords not allowed by "
                         "configuration!");
             ret = WOLFSSH_USERAUTH_FAILURE;
@@ -702,6 +609,13 @@ static int RequestAuthentication(const char* usr, int type, const byte* data,
             else if (rc == WSSHD_AUTH_FAILURE) {
                 wolfSSH_Log(WS_LOG_INFO, "[SSHD] Password incorrect.");
                 ret = WOLFSSH_USERAUTH_INVALID_PASSWORD;
+
+                auth->attempts--;
+                if (auth->attempts == 0) {
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Too many bad password attempts!");
+                    ret =  WOLFSSH_USERAUTH_REJECTED;
+                }
             }
             else {
                 wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error checking password.");
@@ -730,7 +644,7 @@ static int RequestAuthentication(const char* usr, int type, const byte* data,
     }
 
 
-    if (wolfSSHD_AuthReducePermissions(auth) != 0) {
+    if (wolfSSHD_AuthReducePermissions(auth) != WS_SUCCESS) {
         /* stop everything if not able to reduce permissions level */
         exit(1);
     }
@@ -738,6 +652,7 @@ static int RequestAuthentication(const char* usr, int type, const byte* data,
 }
 
 
+/* return WOLFSSH_USERAUTH_SUCCESS on success */
 int DefaultUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 {
     int ret = WOLFSSH_USERAUTH_SUCCESS;
@@ -856,6 +771,7 @@ WOLFSSHD_AUTH* wolfSSHD_AuthCreateUser(void* heap, const WOLFSSHD_CONFIG* conf)
 
         auth->heap = heap;
         auth->conf = conf;
+        auth->attempts = WOLFSSHD_MAX_PASSWORD_ATTEMPTS;
 
         /* set the default user checking based on build */
         ret = SetDefaultUserCheck(auth);
@@ -917,7 +833,7 @@ int wolfSSHD_AuthFreeUser(WOLFSSHD_AUTH* auth)
 }
 
 
-/* return 0 on success */
+/* return WS_SUCCESS on success */
 int wolfSSHD_AuthRaisePermissions(WOLFSSHD_AUTH* auth)
 {
     int ret = 0;
@@ -942,11 +858,11 @@ int wolfSSHD_AuthRaisePermissions(WOLFSSHD_AUTH* auth)
 }
 
 
-/* return 0 on success */
+/* return WS_SUCCESS on success */
 int wolfSSHD_AuthReducePermissions(WOLFSSHD_AUTH* auth)
 {
     byte flag = 0;
-    int ret = 0;
+    int ret = WS_SUCCESS;
 
     flag = wolfSSHD_ConfigGetPrivilegeSeparation(auth->conf);
     if (flag == WOLFSSHD_PRIV_SEPARAT || flag == WOLFSSHD_PRIV_SANDBOX) {
@@ -969,6 +885,7 @@ int wolfSSHD_AuthReducePermissions(WOLFSSHD_AUTH* auth)
     return ret;
 }
 
+/* return the time in seconds for grace timeout period */
 long wolfSSHD_AuthGetGraceTime(const WOLFSSHD_AUTH* auth)
 {
     long ret = WS_BAD_ARGUMENT;

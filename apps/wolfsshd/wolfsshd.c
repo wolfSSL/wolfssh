@@ -102,13 +102,14 @@ typedef struct WOLFSSHD_CONNECTION {
     WOLFSSH_CTX*   ctx;
     WOLFSSHD_AUTH* auth;
     int            fd;
+    char           ip[INET_ADDRSTRLEN];
 } WOLFSSHD_CONNECTION;
 
 static void ShowUsage(void)
 {
     printf("wolfsshd %s\n", LIBWOLFSSH_VERSION_STRING);
     printf(" -?             display this help and exit\n");
-    printf(" -f <file name> Configuration file to use, default is /usr/local/etc/ssh/sshd_config\n");
+    printf(" -f <file name> Configuration file to use, default is /etc/ssh/sshd_config\n");
     printf(" -p <int>       Port number to listen on\n");
     printf(" -d             Turn on debug mode\n");
     printf(" -D             Run in foreground (do not detach)\n");
@@ -116,6 +117,8 @@ static void ShowUsage(void)
     printf(" -E <file name> append to log file\n");
 }
 
+
+/* catch if interupted */
 static void interruptCatch(int in)
 {
     (void)in;
@@ -124,15 +127,21 @@ static void interruptCatch(int in)
     quit = 1;
 }
 
+
+/* redirect logging to a specific file and add the PID value */
 static void wolfSSHDLoggingCb(enum wolfSSH_LogLevel lvl, const char *const str)
 {
-    if (debugMode) {
+    /* always log errors and optionally log other info/debug level messages */
+    if (lvl == WS_LOG_ERROR) {
         fprintf(logFile, "[PID %d]: %s\n", getpid(), str);
     }
-    (void)lvl;
+    else if (debugMode) {
+        fprintf(logFile, "[PID %d]: %s\n", getpid(), str);
+    }
 }
 
 
+/* Frees up the WOLFSSH_CTX struct */
 static void CleanupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
 {
     if (ctx != NULL && *ctx != NULL) {
@@ -143,6 +152,9 @@ static void CleanupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
 }
 
 
+/* Initializes and sets up the WOLFSSH_CTX struct based on the configure options
+ * return WS_SUCCESS on success
+ */
 static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
 {
     int ret = WS_SUCCESS;
@@ -171,24 +183,6 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
         }
         wolfSSH_CTX_SetBanner(*ctx, banner);
     }
-
-#ifdef WOLFSSH_AGENT
-    /* check if using an agent is enabled */
-    /* TODO: doesn't work
-    if (ret == WS_SUCCESS) {
-        wolfSSH_CTX_set_agent_cb(ctx, wolfSSH_AGENT_DefaultActions, NULL);
-    }
-    */
-#endif
-
-#ifdef WOLFSSH_FWD
-    /* check if port forwarding is enabled */
-    /* TODO: doesn't work
-    if (ret == WS_SUCCESS) {
-        wolfSSH_CTX_SetFwdCb(ctx, wolfSSH_FwdDefaultActions, NULL);
-    }
-    */
-#endif
 
     /* Load in host private key */
     if (ret == WS_SUCCESS) {
@@ -384,7 +378,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
     userName = wolfSSH_GetUsername(ssh);
 
     /* temporarily elevate permissions to get users information */
-    if (wolfSSHD_AuthRaisePermissions(conn->auth) != 0) {
+    if (wolfSSHD_AuthRaisePermissions(conn->auth) != WS_SUCCESS) {
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failure to raise permissions for auth"); 
         return WS_FATAL_ERROR;
     }
@@ -393,7 +387,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
     if (p_passwd == NULL) {
         /* Not actually a user on the system. */
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Invalid user name found");
-        if (wolfSSHD_AuthReducePermissions(conn->auth) != 0) {
+        if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
             /* stop everything if not able to reduce permissions level */
             exit(1);
         }
@@ -454,7 +448,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
         exit(0); /* exit child process and close down SSH connection */
     }
 
-    if (wolfSSHD_AuthReducePermissions(conn->auth) != 0) {
+    if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
         /* stop everything if not able to reduce permissions level */
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue reducing permissions level,"
             " exiting now");
@@ -628,7 +622,8 @@ static void* HandleConnection(void* arg)
 
         if (ret != WS_SUCCESS && ret != WS_SFTP_COMPLETE) {
             wolfSSH_Log(WS_LOG_ERROR,
-                "[SSHD] Failed to accept WOLFSSH connection");
+                "[SSHD] Failed to accept WOLFSSH connection from %s",
+                conn->ip);
         }
     }
 
@@ -769,15 +764,13 @@ int main(int argc, char** argv)
     WOLFSSH_CTX* ctx = NULL;
     byte isDaemon = 1;
 
-    const char* configFile  = "/usr/local/etc/ssh/sshd_config";
+    const char* configFile  = "/etc/ssh/sshd_config";
     const char* hostKeyFile = NULL;
 
     signal(SIGINT, interruptCatch);
 
     wolfSSH_SetLoggingCb(wolfSSHDLoggingCb);
-#ifdef DEBUG_WOLFSSH
     wolfSSH_Debugging_ON();
-#endif
 #ifdef DEBUG_WOLFSSL
     wolfSSL_Debugging_ON();
 #endif
@@ -885,7 +878,7 @@ int main(int argc, char** argv)
 
     /* seperate privlage permisions */
     if (ret == WS_SUCCESS) {
-        if (wolfSSHD_AuthReducePermissions(auth) != 0) {
+        if (wolfSSHD_AuthReducePermissions(auth) != WS_SUCCESS) {
             wolfSSH_Log(WS_LOG_INFO, "[SSHD] Error lowering permissions level");
             ret = WS_FATAL_ERROR;
         }
@@ -942,6 +935,10 @@ int main(int argc, char** argv)
             #else
                 conn.fd = accept(listenFd, (struct sockaddr*)&clientAddr,
                                                              &clientAddrSz);
+                if (conn.fd >= 0) {
+                    inet_ntop(AF_INET, &clientAddr.sin_addr, conn.ip,
+                        INET_ADDRSTRLEN);
+                }
             #endif
 
                 {
