@@ -376,10 +376,14 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
     byte channelBuffer[EXAMPLE_BUFFER_SZ];
 
     userName = wolfSSH_GetUsername(ssh);
+    if (userName == NULL) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failure get user name");
+        return WS_FATAL_ERROR;
+    }
 
     /* temporarily elevate permissions to get users information */
     if (wolfSSHD_AuthRaisePermissions(conn->auth) != WS_SUCCESS) {
-        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failure to raise permissions for auth"); 
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failure to raise permissions for auth");
         return WS_FATAL_ERROR;
     }
 
@@ -597,7 +601,7 @@ static void* HandleConnection(void* arg)
         graceTime = wolfSSHD_AuthGetGraceTime(conn->auth);
         if (graceTime > 0) {
             signal(SIGALRM, alarmCatch);
-            alarm(graceTime);
+            alarm((unsigned int)graceTime);
         }
 
         ret = wolfSSH_accept(ssh);

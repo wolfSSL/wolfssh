@@ -49,8 +49,12 @@
 #ifndef _WIN32
 #include <sys/types.h>
 #include <pwd.h>
-#include <shadow.h>
 #include <errno.h>
+#endif
+
+#if !defined(_WIN32) && !(defined(__OSX__) || defined(__APPLE__))
+#include <shadow.h>
+#define HAVE_SHADOW
 #endif
 
 struct WOLFSSHD_AUTH {
@@ -289,7 +293,9 @@ static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz)
     int ret = WS_SUCCESS;
     char* pwStr = NULL;
     struct passwd* pwInfo;
+#ifdef HAVE_SHADOW
     struct spwd* shadowInfo;
+#endif
     /* The hash of the user's password stored on the system. */
     char* storedHash;
     char* storedHashCpy = NULL;
@@ -318,6 +324,7 @@ static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz)
     }
 
     if (ret == WS_SUCCESS) {
+    #ifdef HAVE_SHADOW
         if (pwInfo->pw_passwd[0] == 'x') {
         #ifdef WOLFSSH_HAVE_LIBCRYPT
             shadowInfo = getspnam((const char*)usr);
@@ -336,7 +343,9 @@ static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz)
                 storedHash = shadowInfo->sp_pwdp;
             }
         }
-        else {
+        else
+    #endif
+        {
             storedHash = pwInfo->pw_passwd;
         }
     }

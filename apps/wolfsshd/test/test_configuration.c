@@ -3,12 +3,26 @@
 #include <wolfssh/ssh.h>
 #include <configuration.h>
 
-static void Log(const char* fmt, ...)
+#ifndef WOLFSSH_DEFAULT_LOG_WIDTH
+    #define WOLFSSH_DEFAULT_LOG_WIDTH 120
+#endif
+
+#undef FMTCHECK
+#ifdef __GNUC__
+    #define FMTCHECK __attribute__((format(printf,1,2)))
+#else
+    #define FMTCHECK
+#endif /* __GNUC__ */
+
+
+void Log(const char *const, ...) FMTCHECK;
+void Log(const char *const fmt, ...)
 {
     va_list vlist;
+    char    msgStr[WOLFSSH_DEFAULT_LOG_WIDTH];
 
     va_start(vlist, fmt);
-    vfprintf(stderr, fmt, vlist);
+    WVSNPRINTF(msgStr, sizeof(msgStr), fmt, vlist);
     va_end(vlist);
 }
 
@@ -109,7 +123,7 @@ static int test_ParseConfigLine(void)
             Log("    Testing scenario: %s.", vectors[i].desc);
 
             ret = ParseConfigLine(conf, vectors[i].line,
-                                  WSTRLEN(vectors[i].line));
+                                  (int)WSTRLEN(vectors[i].line));
 
             if ((ret == WS_SUCCESS && !vectors[i].shouldFail) ||
                 (ret != WS_SUCCESS && vectors[i].shouldFail)) {

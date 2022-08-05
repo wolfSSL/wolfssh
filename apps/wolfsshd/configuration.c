@@ -275,11 +275,11 @@ static int HandleLoginGraceTime(WOLFSSHD_CONFIG* conf, const char* value)
     }
 
     if (ret == WS_SUCCESS) {
-        num = GetConfigInt(value, XSTRLEN(value), 1, conf->heap);
+        num = GetConfigInt(value, (int)XSTRLEN(value), 1, conf->heap);
         if (num < 0) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue getting login grace "
                         "time");
-            ret = num;
+            ret = (int)num;
         }
         else {
             conf->loginTimer = num;
@@ -376,7 +376,7 @@ static int HandleProtocol(WOLFSSHD_CONFIG* conf, const char* value)
     }
 
     if (ret == WS_SUCCESS) {
-        portInt = GetConfigInt(value, WSTRLEN(value), 0, conf->heap);
+        portInt = GetConfigInt(value, (int)WSTRLEN(value), 0, conf->heap);
         if (portInt <= 0) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Invalid protocol number: %s.",
                         value);
@@ -405,7 +405,7 @@ static int HandlePort(WOLFSSHD_CONFIG* conf, const char* value)
     }
 
     if (ret == WS_SUCCESS) {
-        portInt = GetConfigInt(value, WSTRLEN(value), 0, conf->heap);
+        portInt = GetConfigInt(value, (int)WSTRLEN(value), 0, conf->heap);
         if (portInt <= 0) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Invalid port number: %s.",
                         value);
@@ -528,7 +528,7 @@ WOLFSSHD_STATIC int ParseConfigLine(WOLFSSHD_CONFIG* conf, const char* l,
                                     int lSz)
 {
     int ret = WS_BAD_ARGUMENT;
-    int sz;
+    int sz  = 0;
     char tmp[MAX_FILENAME_SZ];
     int idx;
     const CONFIG_OPTION* found = NULL;
@@ -646,7 +646,7 @@ int wolfSSHD_ConfigSetAuthKeysFile(WOLFSSHD_CONFIG* conf, const char* file)
 
         if (file != NULL) {
             ret = CreateString(&conf->authKeysFile, file,
-                                        WSTRLEN(file), conf->heap);
+                                        (int)WSTRLEN(file), conf->heap);
         }
     }
 
@@ -691,7 +691,7 @@ int wolfSSHD_ConfigSetHostKeyFile(WOLFSSHD_CONFIG* conf, const char* file)
 
         if (file != NULL) {
             ret = CreateString(&conf->hostKeyFile, file,
-                                        WSTRLEN(file), conf->heap);
+                                        (int)WSTRLEN(file), conf->heap);
         }
     }
 
