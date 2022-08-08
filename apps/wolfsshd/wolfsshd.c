@@ -105,6 +105,40 @@ typedef struct WOLFSSHD_CONNECTION {
     char           ip[INET_ADDRSTRLEN];
 } WOLFSSHD_CONNECTION;
 
+#ifdef __unix__
+
+#include <syslog.h>
+
+static void SyslogCb(enum wolfSSH_LogLevel level, const char *const msgStr)
+{
+    int priority = LOG_DAEMON;
+
+    switch (level) {
+        case WS_LOG_WARN:
+            priority |= LOG_WARNING;
+            break;
+        case WS_LOG_ERROR:
+            priority |= LOG_ERR;
+            break;
+        case WS_LOG_DEBUG:
+            priority |= LOG_DEBUG;
+            break;
+        case WS_LOG_INFO:
+        case WS_LOG_USER:
+        case WS_LOG_SFTP:
+        case WS_LOG_SCP:
+        case WS_LOG_AGENT:
+        default:
+            priority |= LOG_INFO;
+            break;
+    }
+    openlog("sshd", LOG_PID, LOG_DAEMON);
+    syslog(priority, "%s", msgStr);
+    closelog();
+}
+
+#endif
+
 static void ShowUsage(void)
 {
     printf("wolfsshd %s\n", LIBWOLFSSH_VERSION_STRING);
@@ -894,6 +928,10 @@ int main(int argc, char** argv)
 
     /* run as a daemon */
     if (ret == WS_SUCCESS && isDaemon) {
+#ifdef __unix__
+        /* Daemonizing in POSIX, so set a syslog based log */
+        wolfSSH_SetLoggingCb(SyslogCb);
+#endif
         pid_t p;
 
         p = fork();
