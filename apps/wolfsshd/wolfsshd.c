@@ -111,17 +111,17 @@ typedef struct WOLFSSHD_CONNECTION {
 
 static void SyslogCb(enum wolfSSH_LogLevel level, const char *const msgStr)
 {
-    int priority = LOG_DAEMON;
+    int priority;
 
     switch (level) {
         case WS_LOG_WARN:
-            priority |= LOG_WARNING;
+            priority = LOG_WARNING;
             break;
         case WS_LOG_ERROR:
-            priority |= LOG_ERR;
+            priority = LOG_ERR;
             break;
         case WS_LOG_DEBUG:
-            priority |= LOG_DEBUG;
+            priority = LOG_DEBUG;
             break;
         case WS_LOG_INFO:
         case WS_LOG_USER:
@@ -129,7 +129,7 @@ static void SyslogCb(enum wolfSSH_LogLevel level, const char *const msgStr)
         case WS_LOG_SCP:
         case WS_LOG_AGENT:
         default:
-            priority |= LOG_INFO;
+            priority = LOG_INFO;
             break;
     }
     openlog("sshd", LOG_PID, LOG_DAEMON);
