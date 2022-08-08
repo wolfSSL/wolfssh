@@ -169,15 +169,19 @@ void wolfSSH_CERTMAN_free(WOLFSSH_CERTMAN* cm)
 }
 
 
+/* return WS_SUCCESS on success */
 int wolfSSH_CERTMAN_LoadRootCA_buffer(WOLFSSH_CERTMAN* cm,
         const unsigned char* rootCa, word32 rootCaSz)
 {
-    int ret = WS_SUCCESS;
+    int ret;
 
     WLOG_ENTER();
 
     ret = wolfSSL_CertManagerLoadCABuffer(cm->cm, rootCa, rootCaSz,
             WOLFSSL_FILETYPE_ASN1);
+    if (ret == WOLFSSL_SUCCESS) {
+        ret = WS_SUCCESS;
+    }
 
     WLOG_LEAVE(ret);
     return ret;
@@ -199,13 +203,11 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
         const unsigned char* certs, word32 certSz, word32 certsCount)
 {
     int ret = WS_SUCCESS;
-    int idx;
 
+    word32 idx = 0;
+    int certIdx = 0;
     unsigned char **certLoc; /* locations of certificate start */
     word32        *certLen;  /* size of certificate, in sync with certLoc */
-
-    unsigned char *currentPt;
-    word32         currentSz;
 
     WLOG_ENTER();
 
@@ -218,70 +220,31 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
     }
 
     if (ret == WS_SUCCESS) {
-        currentPt = (unsigned char*)certs; /* set initial certificate pointer */
-        currentSz = 0;
-
-        for (idx = 0; idx < (int)certsCount; idx++) {
+        for (certIdx = 0; certIdx < (int)certsCount; certIdx++) {
             word32 sz = 0;
-            certLoc[idx] = currentPt;
+            certLoc[certIdx] = (byte*)certs + idx + UINT32_SZ;
 
-            /* get the size of the certificate from first sequence */
-            if (currentSz + MAX_SEQ_SZ >= certSz) {
-                ret = WS_BUFFER_E;
-                break;
-            }
-            else {
-                /* at this point there is at least 5 bytes in currentPt */
-                if (currentPt[sz] != (ASN_SEQUENCE | ASN_CONSTRUCTED)) {
-                    WLOG(WS_LOG_CERTMAN, "no cert sequence to get length from");
-                    ret = ASN_PARSE_E;
-                    break;
-                }
-                sz++;
-
-                if (ret == WS_SUCCESS) {
-                    if (currentPt[sz] >= ASN_LONG_LENGTH) {
-                        word32 bytes = currentPt[sz++] & 0x7F;
-                        if (bytes > MAX_LENGTH_SZ) {
-                            WLOG(WS_LOG_CERTMAN, "length found is too large!");
-                            ret = ASN_PARSE_E;
-                            break;
-                        }
-                        else {
-                            byte b;
-                            certLen[idx] = 0;
-                            for (; bytes > 0; bytes--) {
-                                b = currentPt[sz++];
-                                certLen[idx] = (certLen[idx] << 8) | b;
-                            }
-                        }
-                    }
-                    else {
-                        certLen[idx] = (word32)currentPt[sz++];
-                    }
-                    sz += certLen[idx];
-                    certLen[idx] = sz; /* update size to contain sequence */
-                }
-            }
+            /* get the size of the certificate */
+            ret = GetSize(&sz, certs, certSz, &idx);
 
             /* advance current pointer and update current total size */
             if (ret == WS_SUCCESS) {
-                if (currentSz + sz > certSz) {
+                certLen[certIdx] = sz;
+                if (idx + sz > certSz) {
                     WLOG(WS_LOG_CERTMAN, "cert found is too large!");
                     ret = ASN_PARSE_E;
                     break;
                 }
-                currentSz += sz;
-                currentPt += sz;
+                idx += sz;
             }
         }
     }
 
     if (ret == WS_SUCCESS) {
-        for (idx = certsCount - 1; idx >= 0; idx--) {
-            WLOG(WS_LOG_CERTMAN, "verifying cert at index %d", idx);
-            ret = wolfSSL_CertManagerVerifyBuffer(cm->cm, certLoc[idx],
-                certLen[idx], WOLFSSL_FILETYPE_ASN1);
+        for (certIdx = certsCount - 1; certIdx >= 0; certIdx--) {
+            WLOG(WS_LOG_CERTMAN, "verifying cert at index %d", certIdx);
+            ret = wolfSSL_CertManagerVerifyBuffer(cm->cm, certLoc[certIdx],
+                certLen[certIdx], WOLFSSL_FILETYPE_ASN1);
             if (ret == WOLFSSL_SUCCESS) {
                 ret = WS_SUCCESS;
             }
@@ -304,8 +267,8 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
 
         #ifdef HAVE_OCSP
             if (ret == WS_SUCCESS) {
-                ret = wolfSSL_CertManagerCheckOCSP(cm->cm, (byte*)certLoc[idx],
-                    certLen[idx]);
+                ret = wolfSSL_CertManagerCheckOCSP(cm->cm, (byte*)certLoc[certIdx],
+                    certLen[certIdx]);
 
                 if (ret == WOLFSSL_SUCCESS) {
                     ret = WS_SUCCESS;
@@ -322,10 +285,10 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
         #endif /* HAVE_OCSP */
 
             /* verified successfully, add intermideate as trusted */
-            if (ret == WS_SUCCESS && idx > 0) {
+            if (ret == WS_SUCCESS && certIdx > 0) {
                 WLOG(WS_LOG_CERTMAN, "adding intermidiate cert as trusted");
-                ret = wolfSSH_CERTMAN_LoadRootCA_buffer(cm, certLoc[idx],
-                    certLen[idx]);
+                ret = wolfSSH_CERTMAN_LoadRootCA_buffer(cm, certLoc[certIdx],
+                    certLen[certIdx]);
             }
 
             if (ret != WS_SUCCESS) {

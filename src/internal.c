@@ -5039,8 +5039,11 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
     int ret = WS_SUCCESS;
     int authFailure = 0;
     byte pkTypeId;
+    byte*  pkOk   = NULL;
+    word32 pkOkSz = 0;
 #ifdef WOLFSSH_CERTS
-    word32 certCount = 0;
+    word32 certCount   = 0;
+    word32 certChainSz = 0;
 #endif
 
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequestPublicKey()");
@@ -5079,6 +5082,11 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
     if (ret == WS_SUCCESS && !authFailure) {
         pk->publicKey = buf + begin;
         begin += pk->publicKeySz;
+
+        /* store response values if public key is ok */
+        pkOk   = (byte*)pk->publicKey;
+        pkOkSz = pk->publicKeySz;
+
         #ifdef WOLFSSH_CERTS
         if (pkTypeId == ID_X509V3_SSH_RSA ||
             pkTypeId == ID_X509V3_ECDSA_SHA2_NISTP256 ||
@@ -5086,7 +5094,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             pkTypeId == ID_X509V3_ECDSA_SHA2_NISTP521) {
             word32 l = 0, m = 0;
             word32 ocspCount = 0;
-            byte* ocspBuf = NULL;
+            byte*  ocspBuf   = NULL;
             word32 ocspBufSz = 0;
 
             /* Skip the name */
@@ -5098,17 +5106,39 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                 if (ret == WS_SUCCESS) {
                     WLOG(WS_LOG_INFO, "Peer sent certificate count of %d",
                         certCount);
-                    ret = GetSize(&l, pk->publicKey, pk->publicKeySz, &m);
                 }
             }
 
             if (ret == WS_SUCCESS) {
-                ocspBuf   = (byte*)pk->publicKey + m + l;
-                ocspBufSz = pk->publicKeySz - l;
+                word32 count;
+                byte*  certPt = (byte*)pk->publicKey;
 
-                pk->publicKeySz = l;
-                pk->publicKey = pk->publicKey + m;
                 pk->isCert = 1;
+
+                for (count = certCount; count > 0; count--) {
+                    word32 certSz = 0;
+
+                    ret = GetSize(&certSz, certPt, pk->publicKeySz, &m);
+                    WLOG(WS_LOG_INFO, "Adding certificate size %d", certSz);
+                    if (ret != WS_SUCCESS) {
+                        break;
+                    }
+
+                    /* store leaf cert size to present to user callback */
+                    if (count == certCount) {
+                        l = certSz;
+                        pk->publicKey = certPt + m;
+                    }
+                    certChainSz += certSz + UINT32_SZ;
+                    m += certSz;
+                }
+
+                if (ret == WS_SUCCESS) {
+                    ocspBuf   = certPt + m;
+                    ocspBufSz = pk->publicKeySz - certChainSz;
+
+                    pk->publicKeySz = l; /* only the size of the leaf cert */
+                }
             }
 
             /* get OCSP count */
@@ -5119,6 +5149,12 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
 
             if (ret == WS_SUCCESS) {
                 WLOG(WS_LOG_INFO, "Peer sent OCSP count of %d", ocspCount);
+
+                /* RFC 6187 section 2.1 OCSP count must not exceed cert count */
+                if (ocspCount > certCount) {
+                    WLOG(WS_LOG_ERROR, "Error more OCSP then Certs");
+                    ret = WS_FATAL_ERROR;
+                }
             }
 
             /* @TODO handle OCSP's */
@@ -5173,7 +5209,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
         if (pk->signature == NULL) {
             WLOG(WS_LOG_DEBUG, "DUARPK: Send the PK OK");
             ret = SendUserAuthPkOk(ssh, pk->publicKeyType, pk->publicKeyTypeSz,
-                                   pk->publicKey, pk->publicKeySz);
+                                    pkOk, pkOkSz);
         }
         else {
             wc_HashAlg hash;
@@ -5234,7 +5270,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
              * connection */
             if (ret == WS_SUCCESS && pk->isCert == 1 && certCount > 0) {
                 ret = wolfSSH_CERTMAN_VerifyCerts_buffer(ssh->ctx->certMan,
-                    pk->publicKey, pk->publicKeySz, certCount);
+                    pk->publicKey - UINT32_SZ, certChainSz, certCount);
             }
             #endif
 
