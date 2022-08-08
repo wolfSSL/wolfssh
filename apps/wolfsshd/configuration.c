@@ -206,10 +206,11 @@ enum {
     OPT_PASSWORD_AUTH           = 12,
     OPT_PORT                    = 13,
     OPT_PERMIT_ROOT             = 14,
-    OPT_USE_DNS                 = 15
+    OPT_USE_DNS                 = 15,
+    OPT_INCLUDE                 = 16
 };
 enum {
-    NUM_OPTIONS = 16
+    NUM_OPTIONS = 17
 };
 
 static const CONFIG_OPTION options[NUM_OPTIONS] = {
@@ -228,7 +229,8 @@ static const CONFIG_OPTION options[NUM_OPTIONS] = {
     {OPT_PASSWORD_AUTH,           "PasswordAuthentication"},
     {OPT_PORT,                    "Port"},
     {OPT_PERMIT_ROOT,             "PermitRootLogin"},
-    {OPT_USE_DNS,                 "UseDNS"}
+    {OPT_USE_DNS,                 "UseDNS"},
+    {OPT_INCLUDE,                 "Include"}
 };
 
 /* returns WS_SUCCESS on success */
@@ -426,6 +428,70 @@ static int HandlePort(WOLFSSHD_CONFIG* conf, const char* value)
     return ret;
 }
 
+static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
+{
+    const char *ptr;
+    /* No value, nothing to do */
+    if (!value || value[0] == '\0') {
+        return WS_BAD_ARGUMENT;
+    }
+
+    ptr = value + strlen(value) - 1;
+    while(ptr != value) {
+        if (!isspace(value)) {
+            ptr--;
+        }
+        else {
+            break;
+        }
+    }
+    if (*ptr == '*') {
+        /* Ending in wildcard */
+        if (*(ptr - 1) != '/') {
+            /* TODO: This is a wildcard on files starting with X */
+        }
+        else {
+#ifdef __unix__
+            int ret;
+            struct dirent *dir;
+            DIR *d;
+            char *path = WMALLOC(ptr - value, NULL, 0);
+            char *filepath = WMALLOC(PATH_MAX, NULL, 0);
+            memcpy(path, value, ptr - value - 1);
+            path[ptr - value - 1] = '\0';
+            d = opendir(path);
+            if (d) {
+                while ((dir = readdir(d)) != NULL) {
+                    if (dir->d_type == DT_DIR) {
+                        /* Skip sub-directories */
+                        continue;
+                    }
+                    else {
+                        snprintf(filepath, PATH_MAX, "%s/%s", path, dir->d_name);
+                        ret = wolfSSHD_ConfigLoad(conf, filepath);
+                        if (ret != WS_SUCCESS) {
+                            return ret;
+                        }
+                    }
+                }
+            }
+            else {
+                /* Bad directory */
+                WFREE(filepath, NULL, 0);
+                return WS_BAD_ARGUMENT;
+            }
+            WFREE(filepath, NULL, 0);
+#else
+            /* Don't support wildcards here */
+            return WS_BAD_ARGUMENT;
+#endif
+        }
+    }
+    else {
+        return wolfSSHD_ConfigLoad(conf, value);
+    }
+    return WS_SUCCESS;
+}
 
 /* returns WS_SUCCESS on success */
 static int HandleConfigOption(WOLFSSHD_CONFIG* conf, int opt, const char* value)
@@ -489,6 +555,9 @@ static int HandleConfigOption(WOLFSSHD_CONFIG* conf, int opt, const char* value)
         case OPT_USE_DNS:
             /* TODO */
             ret = WS_SUCCESS;
+            break;
+        case OPT_INCLUDE:
+            ret = HandleInclude(conf, value);
             break;
         default:
             break;
