@@ -1890,11 +1890,16 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 break;
 
             case 'p':
-                port = (word16)atoi(myoptarg);
-                #if !defined(NO_MAIN_DRIVER) || defined(USE_WINDOWS_API)
-                    if (port == 0)
-                        err_sys("port number cannot be 0");
-                #endif
+                if (myoptarg == NULL) {
+                    err_sys("NULL port value");
+                }
+                else {
+                    port = (word16)atoi(myoptarg);
+                    #if !defined(NO_MAIN_DRIVER) || defined(USE_WINDOWS_API)
+                        if (port == 0)
+                            err_sys("port number cannot be 0");
+                    #endif
+                }
                 break;
 
             case 'R':
