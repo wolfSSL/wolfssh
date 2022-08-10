@@ -215,6 +215,7 @@ WOLFSSH_API int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to,
 
 /* SFTP server functions */
 WOLFSSH_API int wolfSSH_SFTP_read(WOLFSSH* ssh);
+WOLFSSH_API int wolfSSH_SFTP_PendingSend(WOLFSSH* ssh);
 
 
 WOLFSSH_LOCAL int wolfSSH_SFTP_CreateStatus(WOLFSSH* ssh, word32 status,

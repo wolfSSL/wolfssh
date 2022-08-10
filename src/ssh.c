@@ -947,10 +947,14 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
     if (ret == WS_SUCCESS)
         ret = SendChannelEof(ssh, ssh->channelList->peerChannel);
 
-    if (ret == WS_SUCCESS)
+    /* continue on success and in case where queing up send packets */
+    if (ret == WS_SUCCESS ||
+            (ret != WS_BAD_ARGUMENT && ssh->error == WS_WANT_WRITE))
         ret = SendChannelExit(ssh, ssh->channelList->peerChannel, 0);
 
-    if (ret == WS_SUCCESS)
+    /* continue on success and in case where queing up send packets */
+    if (ret == WS_SUCCESS ||
+            (ret != WS_BAD_ARGUMENT && ssh->error == WS_WANT_WRITE))
         ret = SendChannelClose(ssh, ssh->channelList->peerChannel);
 
     if (ssh != NULL && ssh->channelList == NULL) {
@@ -1013,14 +1017,21 @@ static int wolfSSH_stream_adjust_window(WOLFSSH* ssh)
     bytesToAdd  = inputBuffer->idx;
 
     WLOG(WS_LOG_DEBUG, "Making more room: %u", usedSz);
+    WLOG(WS_LOG_DEBUG, "  Current index into buffer = %u", inputBuffer->idx);
+    WLOG(WS_LOG_DEBUG, "  Current max index for available data = %u",
+        inputBuffer->length);
+    WLOG(WS_LOG_DEBUG, "  Current total buffer size = %u",
+        inputBuffer->bufferSz);
     if (usedSz) {
-        WLOG(WS_LOG_DEBUG, "  ...moving data down");
+        WLOG(WS_LOG_DEBUG, "  ...moving %d used bytes down", usedSz);
         WMEMMOVE(inputBuffer->buffer, inputBuffer->buffer + bytesToAdd, usedSz);
+        inputBuffer->length = usedSz;
+        inputBuffer->idx = 0;
     }
 
     ret = SendChannelWindowAdjust(ssh, ssh->channelList->channel,
             bytesToAdd);
-    if (ret != WS_SUCCESS) {
+    if (ret != WS_SUCCESS && ret != WS_WANT_WRITE) {
         WLOG(WS_LOG_ERROR, "Error adjusting window");
     }
     else {
@@ -1065,7 +1076,11 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
 
 
     if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "    Stream read index of %u", inputBuffer->idx);
+        WLOG(WS_LOG_DEBUG, "    Stream read ava data %u", inputBuffer->length);
         while (inputBuffer->length - inputBuffer->idx == 0) {
+            WLOG(WS_LOG_DEBUG, "Starting to recieve data at current index of %u",
+                inputBuffer->idx);
             ret = DoReceive(ssh);
             if (ssh->channelList == NULL || ssh->channelList->eofRxd)
                 ret = WS_EOF;
@@ -1108,19 +1123,6 @@ int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz)
 
     if (ssh == NULL || buf == NULL || ssh->channelList == NULL)
         return WS_BAD_ARGUMENT;
-
-    /* case of WANT WRITE and data stored in output buffer */
-    if (ssh->outputBuffer.plainSz && ssh->outputBuffer.length != 0) {
-        int ret;
-
-        bytesTxd = ssh->outputBuffer.plainSz;
-        WLOG(WS_LOG_DEBUG, "Trying to resend %d bytes", bytesTxd);
-        ssh->error = WS_SUCCESS;
-        ret = wolfSSH_SendPacket(ssh);
-
-        /* return the amount sent on success otherwise return error found */
-        return (ret == WS_SUCCESS)? bytesTxd : ret;
-    }
 
     bytesTxd = SendChannelData(ssh, ssh->channelList->channel, buf, bufSz);
 
@@ -2029,6 +2031,8 @@ static int _UpdateChannelWindow(WOLFSSH_CHANNEL* channel)
             WLOG(WS_LOG_DEBUG, "  ...moving data down");
             WMEMMOVE(inputBuffer->buffer,
                      inputBuffer->buffer + bytesToAdd, usedSz);
+            inputBuffer->length = usedSz;
+            inputBuffer->idx = 0;
         }
 
         sendResult = SendChannelWindowAdjust(channel->ssh, channel->channel,
