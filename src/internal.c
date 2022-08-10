@@ -1148,7 +1148,7 @@ byte NameToId(const char* name, word32 nameSz)
     word32 i;
 
     for (i = 0; i < (sizeof(NameIdMap)/sizeof(NameIdPair)); i++) {
-        if (nameSz == WSTRLEN(NameIdMap[i].name) &&
+        if (nameSz == (word32)WSTRLEN(NameIdMap[i].name) &&
             XMEMCMP(name, NameIdMap[i].name, nameSz) == 0) {
 
             id = NameIdMap[i].id;
@@ -10473,7 +10473,7 @@ int wolfSSH_CleanPath(WOLFSSH* ssh, char* in)
         if (path[i] == '/') path[i] = '\\';
     }
 #endif
-    sz = (int)WSTRLEN(path);
+    sz = (long)WSTRLEN(path);
 
     /* remove any /./ patterns, direcotries, exclude cases like ./ok./test */
     for (i = 1; i + 1 < sz; i++) {
@@ -10594,7 +10594,7 @@ int wolfSSH_CleanPath(WOLFSSH* ssh, char* in)
         WFREE(path, ssh->ctx->heap, DYNTYPE_PATH);
         return WS_BUFFER_E;
     }
-    sz = WSTRLEN(path);
+    sz = (long)WSTRLEN(path);
     WMEMCPY(in, path, sz);
     in[sz] = '\0';
     WFREE(path, ssh->ctx->heap, DYNTYPE_PATH);
