@@ -434,26 +434,28 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
     const char *ptr2;
     const char *postfix = NULL;
     const char *prefix = NULL;
-    int prefix_len = 0;
+    int prefixLen = 0;
     int found = 0;
+
     /* No value, nothing to do */
     if (!value || value[0] == '\0') {
         return WS_BAD_ARGUMENT;
     }
 
     /* Ignore trailing whitespace */
-    ptr = value + strlen(value) - 1;
-    while(ptr != value) {
-        if (!isspace(value)) {
+    ptr = value + WSTRLEN(value) - 1;
+    while (ptr != value) {
+        if (!isspace(*ptr)) {
             ptr--;
         }
         else {
             break;
         }
     }
+
     /* Find wildcards */
     ptr2 = ptr;
-    while(ptr2 != value) {
+    while (ptr2 != value) {
         if (*ptr2 == '*') {
             /* Wildcard found */
             found = 1;
@@ -469,6 +471,7 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
         ptr2--;
     }
     ptr = ptr2;
+
     /* Use wildcard */
     if (found) {
 #ifdef __unix__
@@ -491,13 +494,13 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
             memcpy(path, value, ptr2 - value);
             path[ptr2 - value] = '\0';
             prefix = ptr2 + 1;
-            prefix_len = ptr - ptr2 - 1;
+            prefixLen = (int)(ptr - ptr2 - 1);
         } else {
             path = WMALLOC(2, NULL, 0);
             memcpy(path, ".", 1);
             path[1] = '\0';
             prefix = value;
-            prefix_len = ptr - value;
+            prefixLen = (int)(ptr - value);
         }
 
         d = opendir(path);
@@ -509,21 +512,21 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
                 }
                 else {
                     /* Check if filename prefix matches */
-                    if (prefix_len > 0) {
-                        if (strlen(dir->d_name) <= prefix_len) {
+                    if (prefixLen > 0) {
+                        if ((int)WSTRLEN(dir->d_name) <= prefixLen) {
                             continue;
                         }
-                        if (strncmp(dir->d_name, prefix, prefix_len) != 0) {
+                        if (WSTRNCMP(dir->d_name, prefix, prefixLen) != 0) {
                             continue;
                         }
                     }
                     if (postfix) {
                         /* Skip if file is too short */
-                        if (strlen(dir->d_name) <= strlen(postfix)) {
+                        if (WSTRLEN(dir->d_name) <= WSTRLEN(postfix)) {
                             continue;
                         }
-                        if (strncmp(dir->d_name + strlen(dir->d_name) -
-                                    strlen(postfix), postfix, strlen(postfix))
+                        if (WSTRNCMP(dir->d_name + WSTRLEN(dir->d_name) -
+                                    WSTRLEN(postfix), postfix, WSTRLEN(postfix))
                                 == 0) {
                             snprintf(filepath, PATH_MAX, "%s/%s", path,
                                      dir->d_name);
@@ -551,6 +554,8 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
         }
         WFREE(filepath, NULL, 0);
 #else
+        (void)prefixLen;
+        (void)prefix;
         /* Don't support wildcards here */
         return WS_BAD_ARGUMENT;
 #endif
