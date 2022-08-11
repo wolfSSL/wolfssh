@@ -72,6 +72,13 @@ struct WOLFSSHD_AUTH {
     #define WOLFSSHD_MAX_PASSWORD_ATTEMPTS 3
 #endif
 
+#ifndef MAX_LEN_SZ
+    #define MAX_LINE_SZ 500
+#endif
+#ifndef MAX_PATH_SZ
+    #define MAX_PATH_SZ 80
+#endif
+
 #if 0
 /* this could potentially be useful in a deeply embeded future port */
 
@@ -400,7 +407,7 @@ static int CheckUserUnix(const char* name) {
 }
 
 static const char authKeysDefault[] = ".ssh/authorized_keys";
-static char authKeysPattern[32] = {0};
+static char authKeysPattern[MAX_PATH_SZ] = {0};
 
 void SetAuthKeysPattern(const char* pattern)
 {
@@ -425,22 +432,31 @@ static int ResolveAuthKeysPath(const char* homeDir, char* resolved)
         if (*authKeysPattern != 0) {
             /* TODO: token substitutions (e.g. %h) */
             if (*authKeysPattern == '/') {
-                /* TODO: handle absolute path case */
-                ret = WS_FATAL_ERROR;
+                WSTRNCPY(resolved, authKeysPattern, MAX_PATH_SZ - 1);
+                return WS_SUCCESS;
             }
             else {
                 suffix = authKeysPattern;
             }
         }
     }
+
     if (ret == WS_SUCCESS) {
         idx = resolved;
         homeDirSz = (int)XSTRLEN(homeDir);
-        XMEMCPY(idx, homeDir, homeDirSz);
-        idx += homeDirSz;
-        *(idx++) = '/';
-        /* Intentionally copying the null term from suffix. */
-        XMEMCPY(idx, suffix, WSTRLEN(suffix));
+        if (homeDirSz + 1 + WSTRLEN(suffix) >= MAX_PATH_SZ) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Path for key file larger than max allowed");
+                ret = WS_FATAL_ERROR;
+        }
+
+        if (ret == WS_SUCCESS) {
+            XMEMCPY(idx, homeDir, homeDirSz);
+            idx += homeDirSz;
+            *(idx++) = '/';
+            /* Intentionally copying the null term from suffix. */
+            XMEMCPY(idx, suffix, WSTRLEN(suffix));
+        }
     }
 
     return ret;
@@ -453,11 +469,6 @@ static int CheckPublicKeyUnix(const char* name, const byte* key, word32 keySz)
     struct passwd* pwInfo;
     char* authKeysFile = NULL;
     XFILE f = NULL;
-    enum {
-        /* TODO: Probably needs to be even bigger for larger key sizes. */
-        MAX_LINE_SZ = 500,
-        MAX_PATH_SZ = 80
-    };
     char* lineBuf = NULL;
     char* current;
     word32 currentSz;
