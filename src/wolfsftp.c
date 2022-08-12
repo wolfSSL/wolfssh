@@ -2275,6 +2275,7 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     byte*  out = NULL;
     word32 id[2];
     byte idFlat[sizeof(word32) * 2];
+    char name[MAX_PATH];
 
     if (ssh == NULL) {
         return WS_BAD_ARGUMENT;
@@ -2301,13 +2302,16 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
     WMEMCPY(dirName, data + idx, sz);
     dirName[sz] = '\0';
-    if (wolfSSH_CleanPath(ssh, dirName) < 0) {
-        WFREE(dirName, ssh->ctx->heap, DYNTYPE_BUFFER);
+
+    if (sz > MAX_PATH - 2) {
+        WLOG(WS_LOG_SFTP, "Path name is too long.");
         return WS_FATAL_ERROR;
     }
+    WSTRNCPY(name, dirName, MAX_PATH);
+    WSTRNCAT(name, "/*", MAX_PATH);
 
-    /* get directory handle */
-    findHandle = (HANDLE)WS_FindFirstFileA(dirName,
+    /* get directory handle - see if directory exists */
+    findHandle = (HANDLE)WS_FindFirstFileA(name,
             realName, sizeof(realName), &isDir, ssh->ctx->heap);
     if (findHandle == INVALID_HANDLE_VALUE || !isDir) {
 
@@ -2321,7 +2325,8 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         }
         ret = WS_BAD_FILE_E;
     }
-    FindClose(findHandle);
+    if (findHandle != NULL && findHandle != INVALID_HANDLE_VALUE)
+        FindClose(findHandle);
 
     (void)reqId;
 
@@ -2707,12 +2712,12 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
         char name[MAX_PATH];
         word32 nameLen = (word32)WSTRLEN(dirName);
 
-        if (nameLen > MAX_PATH - 3) {
+        if (nameLen > MAX_PATH - 2) {
             WLOG(WS_LOG_SFTP, "Path name is too long.");
             return WS_FATAL_ERROR;
         }
         WSTRNCPY(name, dirName, MAX_PATH);
-        WSTRNCAT(name, "\\*", MAX_PATH);
+        WSTRNCAT(name, "/*", MAX_PATH);
 
         findHandle = (HANDLE)WS_FindFirstFileA(name,
                 realFileName, sizeof(realFileName), NULL, ssh->ctx->heap);
@@ -2760,11 +2765,6 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
             buf[tmpSz + 1] = '\0';
         }
         WSTRNCAT(buf, out->fName, bufSz + 1);
-
-        if (wolfSSH_CleanPath(ssh, buf) < 0) {
-            WFREE(buf, out->heap, DYNTYPE_SFTP);
-            return WS_FATAL_ERROR;
-        }
 
         if (SFTP_GetAttributes(ssh->fs, buf, &out->atrb, 0, ssh->ctx->heap)
                 != WS_SUCCESS) {
