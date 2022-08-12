@@ -432,7 +432,7 @@ static int ResolveAuthKeysPath(const char* homeDir, char* resolved)
         if (*authKeysPattern != 0) {
             /* TODO: token substitutions (e.g. %h) */
             if (*authKeysPattern == '/') {
-                WSTRNCPY(resolved, authKeysPattern, MAX_PATH_SZ - 1);
+                WSTRNCPY(resolved, authKeysPattern, MAX_PATH_SZ);
                 return WS_SUCCESS;
             }
             else {

@@ -554,6 +554,7 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
         }
         WFREE(filepath, NULL, 0);
 #else
+        (void)postfix;
         (void)prefixLen;
         (void)prefix;
         /* Don't support wildcards here */
