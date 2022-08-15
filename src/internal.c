@@ -8182,7 +8182,11 @@ int SendKexDhInit(WOLFSSH* ssh)
                                            e, &eSz);
 #endif
         }
-        else if (ssh->handshake->useEcc || ssh->handshake->useEccKyber) {
+        else if (ssh->handshake->useEcc
+#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256
+                 || ssh->handshake->useEccKyber
+#endif
+                ) {
 #if !defined(WOLFSSH_NO_ECDH)
             ecc_key* privKey = &ssh->handshake->privKey.ecc;
             int primeId = wcPrimeForId(ssh->handshake->kexId);
