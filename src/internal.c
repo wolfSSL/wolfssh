@@ -10478,7 +10478,7 @@ int wolfSSH_CleanPath(WOLFSSH* ssh, char* in)
     /* remove any /./ patterns, direcotries, exclude cases like ./ok./test */
     for (i = 1; i + 1 < sz; i++) {
         if (path[i] == '.' && path[i - 1] == WS_DELIM && path[i + 1] == WS_DELIM) {
-            WMEMMOVE(path + i, path + i + 1, sz - i + 1);
+            WMEMMOVE(path + i, path + i + 1, sz - (i + 1));
             sz -= 1;
             i--;
         }
