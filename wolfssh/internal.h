@@ -717,6 +717,11 @@ struct WOLFSSH {
     struct WS_SFTP_SEND_WRITE_STATE* sendWriteState;
     struct WS_SFTP_GET_HANDLE_STATE* getHandleState;
     struct WS_SFTP_RENAME_STATE* renameState;
+#ifdef USE_WINDOWS_API
+    char driveList[26];
+    word16 driveListCount;
+    word16 driveIdx;
+#endif
 #endif
 
 #ifdef WOLFSSH_AGENT

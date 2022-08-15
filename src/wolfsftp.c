@@ -2303,30 +2303,52 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     WMEMCPY(dirName, data + idx, sz);
     dirName[sz] = '\0';
 
-    if (sz > MAX_PATH - 2) {
-        WLOG(WS_LOG_SFTP, "Path name is too long.");
-        return WS_FATAL_ERROR;
-    }
-    WSTRNCPY(name, dirName, MAX_PATH);
-    WSTRNCAT(name, "/*", MAX_PATH);
+    /* Special case in Windows for the root directory above the drives. */
+    if (dirName[0] == '/' && dirName[1] == 0) {
+        DWORD drives, mask;
+        UINT driveType;
+        char driveName[] = " :\\";
+        int i;
 
-    /* get directory handle - see if directory exists */
-    findHandle = (HANDLE)WS_FindFirstFileA(name,
-            realName, sizeof(realName), &isDir, ssh->ctx->heap);
-    if (findHandle == INVALID_HANDLE_VALUE || !isDir) {
-
-        WLOG(WS_LOG_SFTP, "Error with opening directory");
-        WFREE(dirName, ssh->ctx->heap, DYNTYPE_BUFFER);
-
-        if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_NOFILE, reqId,
-                "Unable To Open Directory", "English", NULL, &outSz)
-                != WS_SIZE_ONLY) {
-                return WS_FATAL_ERROR;
+        WMEMSET(ssh->driveList, 0, sizeof ssh->driveList);
+        drives = GetLogicalDrives();
+        for (i = 0, mask = 1; i < 26; i++, mask <<= 1) {
+            if (drives & mask) {
+                driveName[0] = 'A' + i;
+                driveType = GetDriveTypeA(driveName);
+                if (driveType == DRIVE_FIXED || driveType == DRIVE_REMOTE) {
+                    ssh->driveList[ssh->driveListCount++] = driveName[0];
+                }
+            }
         }
-        ret = WS_BAD_FILE_E;
+        ssh->driveIdx = 0;
     }
-    if (findHandle != NULL && findHandle != INVALID_HANDLE_VALUE)
-        FindClose(findHandle);
+    else {
+        if (sz > MAX_PATH - 2) {
+            WLOG(WS_LOG_SFTP, "Path name is too long.");
+            return WS_FATAL_ERROR;
+        }
+        WSTRNCPY(name, dirName, MAX_PATH);
+        WSTRNCAT(name, "/*", MAX_PATH);
+
+        /* get directory handle - see if directory exists */
+        findHandle = (HANDLE)WS_FindFirstFileA(name,
+                realName, sizeof(realName), &isDir, ssh->ctx->heap);
+        if (findHandle == INVALID_HANDLE_VALUE || !isDir) {
+
+            WLOG(WS_LOG_SFTP, "Error with opening directory");
+            WFREE(dirName, ssh->ctx->heap, DYNTYPE_BUFFER);
+
+            if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_NOFILE, reqId,
+                    "Unable To Open Directory", "English", NULL, &outSz)
+                    != WS_SIZE_ONLY) {
+                    return WS_FATAL_ERROR;
+            }
+            ret = WS_BAD_FILE_E;
+        }
+        if (findHandle != NULL && findHandle != INVALID_HANDLE_VALUE)
+            FindClose(findHandle);
+    }
 
     (void)reqId;
 
@@ -2708,7 +2730,16 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
         return WS_BAD_ARGUMENT;
     }
 
-    if (*dir == INVALID_HANDLE_VALUE) {
+    /* special case of getting drives at "/" */
+    if (dirName[0] == "/" && dirName[1] == 0) {
+        if (ssh->driveIdx >= ssh->driveListCount)
+            return WS_FATAL_ERROR;
+        realFileName[0] = ssh->driveList[ssh->driveIdx++];
+        realFileName[1] = ':';
+        realFileName[2] = '/';
+        realFileName[3] = '\0';
+    }
+    else if (*dir == INVALID_HANDLE_VALUE) {
         char name[MAX_PATH];
         word32 nameLen = (word32)WSTRLEN(dirName);
 
