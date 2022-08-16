@@ -53,6 +53,9 @@ to help with large file transfers. By default channels are set to handle
 window size for new channels would be as follows
 `./configure CPPFLAGS=-DDEFAULT_WINDOW_SZ=16384`
 
+For 32bit Linux platforms you can add support for files > 2GB by compling
+with `CFLAGS=-D_FILE_OFFSET_BITS=64`.
+
 examples
 --------
 

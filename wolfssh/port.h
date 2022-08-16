@@ -41,6 +41,15 @@ extern "C" {
 /* This value needs to stay in sync with the actual value of DYNTYPE_STRING
  * from internal.h. */
 
+#ifdef WOLFSSH_SSHD
+    /* uses isspace (not always available from wolfSSL) */
+    #ifdef XISSPACE
+        #define WISSPACE XISSPACE
+    #else
+        #define WISSPACE isspace
+    #endif
+#endif
+
 /* setup memory handling */
 #ifndef WMALLOC_USER
     #ifdef WOLFSSL_USER_SETTINGS

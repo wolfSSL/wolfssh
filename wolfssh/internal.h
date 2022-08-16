@@ -978,7 +978,8 @@ enum WS_DynamicTypes {
     DYNTYPE_AGENT_BUFFER,
     DYNTYPE_FILE,
     DYNTYPE_TEMP,
-    DYNTYPE_PATH
+    DYNTYPE_PATH,
+    DYNTYPE_SSHD
 };
 
 

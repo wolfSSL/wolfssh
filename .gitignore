@@ -23,7 +23,9 @@
 aclocal.m4
 lt*.m4
 *.cache
-config.*
+config.h*
+configure~
+config.status
 configure
 libtool
 libtool.m4
@@ -53,6 +55,9 @@ examples/server/server
 examples/portfwd/portfwd
 examples/sftpclient/wolfsftp
 examples/scpclient/wolfscp
+
+# applications
+apps/wolfsshd/wolfsshd
 
 # test output
 tests/*.test
