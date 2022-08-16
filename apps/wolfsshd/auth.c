@@ -1,6 +1,6 @@
 /* auth.c
  *
- * Copyright (C) 2014-2021 wolfSSL Inc.
+ * Copyright (C) 2014-2022 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -601,7 +601,8 @@ static int RequestAuthentication(const char* usr, int type, const byte* data,
     /* temporarily elevate permissions */
     if (ret == WOLFSSH_USERAUTH_SUCCESS &&
             wolfSSHD_AuthRaisePermissions(auth) != WS_SUCCESS) {
-        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failure to raise permissions for auth"); 
+        wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Failure to raise permissions for auth");
         ret = WOLFSSH_USERAUTH_FAILURE;
     }
 

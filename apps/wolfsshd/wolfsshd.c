@@ -1,6 +1,6 @@
 /* wolfsshd.c
  *
- * Copyright (C) 2014-2021 wolfSSL Inc.
+ * Copyright (C) 2014-2022 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -143,7 +143,8 @@ static void ShowUsage(void)
 {
     printf("wolfsshd %s\n", LIBWOLFSSH_VERSION_STRING);
     printf(" -?             display this help and exit\n");
-    printf(" -f <file name> Configuration file to use, default is /etc/ssh/sshd_config\n");
+    printf(" -f <file name> Configuration file to use, default is "
+                            "/etc/ssh/sshd_config\n");
     printf(" -p <int>       Port number to listen on\n");
     printf(" -d             Turn on debug mode\n");
     printf(" -D             Run in foreground (do not detach)\n");
@@ -271,61 +272,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
         }
     }
 
-    /* Load in host public key */
-//    {
-//        if (userPubKey) {
-//            byte* userBuf = NULL;
-//            word32 userBufSz = 0;
-//
-//            /* get the files size */
-//            load_file(userPubKey, NULL, &userBufSz);
-//
-//            /* create temp buffer and load in file */
-//            if (userBufSz == 0) {
-//                fprintf(stderr, "Couldn't find size of file %s.\n", userPubKey);
-//                WEXIT(EXIT_FAILURE);
-//            }
-//
-//            userBuf = (byte*)WMALLOC(userBufSz, NULL, 0);
-//            if (userBuf == NULL) {
-//                fprintf(stderr, "WMALLOC failed\n");
-//                WEXIT(EXIT_FAILURE);
-//            }
-//            load_file(userPubKey, userBuf, &userBufSz);
-//            LoadPublicKeyBuffer(userBuf, userBufSz, &pwMapList);
-//        }
-//
-//        bufSz = (word32)WSTRLEN(samplePasswordBuffer);
-//        WMEMCPY(keyLoadBuf, samplePasswordBuffer, bufSz);
-//        keyLoadBuf[bufSz] = 0;
-//        LoadPasswordBuffer(keyLoadBuf, bufSz, &pwMapList);
-//
-//        if (userEcc) {
-//        #ifndef WOLFSSH_NO_ECC
-//            bufName = samplePublicKeyEccBuffer;
-//        #endif
-//        }
-//        else {
-//        #ifndef WOLFSSH_NO_RSA
-//            bufName = samplePublicKeyRsaBuffer;
-//        #endif
-//        }
-//        if (bufName != NULL) {
-//            bufSz = (word32)WSTRLEN(bufName);
-//            WMEMCPY(keyLoadBuf, bufName, bufSz);
-//            keyLoadBuf[bufSz] = 0;
-//            LoadPublicKeyBuffer(keyLoadBuf, bufSz, &pwMapList);
-//        }
-//
-//        bufSz = (word32)WSTRLEN(sampleNoneBuffer);
-//        WMEMCPY(keyLoadBuf, sampleNoneBuffer, bufSz);
-//        keyLoadBuf[bufSz] = 0;
-//        LoadNoneBuffer(keyLoadBuf, bufSz, &pwMapList);
-//
-//        #ifdef WOLFSSH_SMALL_STACK
-//            WFREE(keyLoadBuf, NULL, 0);
-//        #endif
-//    }
+    /* @TODO Load in host public key */
 
     /* Set allowed connection type, i.e. public key / password */
 

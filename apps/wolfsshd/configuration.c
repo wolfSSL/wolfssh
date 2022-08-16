@@ -1,6 +1,6 @@
 /* configuration.c
  *
- * Copyright (C) 2014-2021 wolfSSL Inc.
+ * Copyright (C) 2014-2022 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -445,7 +445,7 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
     /* Ignore trailing whitespace */
     ptr = value + WSTRLEN(value) - 1;
     while (ptr != value) {
-        if (!isspace(*ptr)) {
+        if (!WISSPACE(*ptr)) {
             ptr--;
         }
         else {
@@ -649,12 +649,12 @@ static int CountWhitespace(const char* in, int inSz, byte inv)
     if (in != NULL) {
         for (; i < inSz; ++i) {
             if (inv) {
-                if (isspace(in[i])) {
+                if (WISSPACE(in[i])) {
                     break;
                 }
             }
             else {
-                if (!isspace(in[i])) {
+                if (!WISSPACE(in[i])) {
                     break;
                 }
             }
