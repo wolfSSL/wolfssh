@@ -537,6 +537,54 @@ static const char serverKeyRsaDer[] =
     "5f5bba6c42f121";
 #endif
 
+#ifdef WOLFSSH_OSSH_CERTS
+#ifndef WOLFSSH_NO_RSA
+static const char serverOsshCertRsa[] =
+    "ssh-rsa-cert-v01@openssh.com AAAAHHNzaC1yc2EtY2VydC12MDFAb3BlbnNz"
+    "aC5jb20AAAAgMSbT5pFZeSb6CWe0PC8PTSUD1z5vhLU4vBYWzGh9wZ0AAAADAQABA"
+    "AABAQDaXa0lFHYVWfNA/Ty4YjCzbcD57OyLgx6eQpzKQWrTiuFSNOANE2J+1A+uXE"
+    "0E8Y36xa13qloFyu/4jav/iikJTATC9RnL7R+xtCnTw2ypI9+joOUI3q2Mcfk0iGz"
+    "tO/BvpQ+sWf9rM/Fw+4yks0UijZ13euUpX4QU2Znq6s4tUfPjWPpbAg/JtSq8sl7T"
+    "wjC7PLHD71jzUJQoi8RlSvcA2ZfZa02NlaGKYga0UBEig7TqKufQqCBHT/9GrsUT4"
+    "TiL+FSvOk0v+B/XhJDYkwUGwn2Q2+Oc0MRlWgOtAKxaos3aP4lYN1O/K0Z6rIlBK1"
+    "ou6HbnXuMphaNj6uaGYHwtAAAAAAAAAAAAAAACAAAACWxvY2FsaG9zdAAAAA0AAAA"
+    "JbG9jYWxob3N0AAAAAGL/J1gAAAAAdb37ogAAAAAAAAAAAAAAAAAAARcAAAAHc3No"
+    "LXJzYQAAAAMBAAEAAAEBANulfQhZqHoz6Ol5VBp6yJ+eIdovGMxeuQyBua6OTKu5P"
+    "0Ic/3pOXRVFuzMZov9itFLNcmvkHdDf0cr9B5ECUqDVygk7IEskKQHDFbqUXG1BN2"
+    "6STUeO3L9infYezPWvI1gOvZyWgKCz3tqtYIvHUPkcwjEH7pJRoWx4jwUdHOXHR3T"
+    "dXgLAUVVcm0SlfdNYy1I/d8LgFG/X+7sP+8GcpLbzb1jVGciAxTYYN+B/X0dIcjv4"
+    "TqiJdGPNLT8J/p7Dm86lpllbhFPX5RkFcZqWeJIW1CESe7n/0UP26ZQom8jqv8bZ3"
+    "rj5FzbELnUNMqzelzoR90UymNWwkg51UeAxUGMAAAEUAAAADHJzYS1zaGEyLTUxMg"
+    "AAAQA+IopQ4ESYtw+qRnO0ZIL4E3BUQveLBG7GG1GH+OmN6y+2dVHqdVq6IIkaXvv"
+    "eGXodkyFFtBbPHo/MVKmNz/8Ld7MRwff+H5JU1mkIy3tv4T4Yv7YZ+HwX0qWZ/5Nh"
+    "fZGQLU7E3ZXRirELPuuvGtpUhrQGHCkSrS8SDn637uX10o9Cxrcf4UhHhFmrocrXG"
+    "5TVHGDgASKHySkR9GCck/JdpO/mcIe5+bOMLnDtNq6nq7Fzrt6YK9dq7IrU6ybmY/"
+    "YKSkNbQsLwSh+pj9NRgeB1WqrwjXNkGQrL59gg1kHRZOh658UWVpQWlmS47Emt2cw"
+    "YLeTWF9o6u5Z5HuQpTDHO server-key-rsa.pub";
+#endif
+
+static void test_wolfSSH_CTX_UseOsshCert_buffer(void)
+{
+#ifndef WOLFSSH_NO_SERVER
+    WOLFSSH_CTX* ctx;
+    int ret;
+
+    AssertNotNull(ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL));
+#ifndef WOLFSSH_NO_RSA
+    ret = wolfSSH_CTX_UseOsshCert_buffer(ctx, (const byte *)serverOsshCertRsa,
+                                         sizeof(serverOsshCertRsa));
+#ifdef WOLFSSH_NO_SSH_RSA_SHA2_512
+    /* The certificate uses SHA2-512 for the CA signature. */
+    AssertIntEQ(ret, WS_INVALID_ALGO_ID);
+#else
+    AssertIntEQ(ret, WS_SUCCESS);
+#endif /* WOLFSSH_NO_SSH_RSA_SHA2_512 */
+#endif /* !WOLFSSH_NO_RSA */
+
+    wolfSSH_CTX_free(ctx);
+#endif /* !WOLFSSH_NO_SERVER */
+}
+#endif /* WOLFSSH_OSSH_CERTS */
 
 static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
 {
@@ -1163,6 +1211,9 @@ int main(void)
     test_wolfSSH_CTX_UsePrivateKey_buffer();
     test_wolfSSH_CTX_UseCert_buffer();
     test_wolfSSH_CertMan();
+#ifdef WOLFSSH_OSSH_CERTS
+    test_wolfSSH_CTX_UseOsshCert_buffer();
+#endif /* WOLFSSH_OSSH_CERTS */
 
     /* SCP tests */
     test_wolfSSH_SCP_CB();

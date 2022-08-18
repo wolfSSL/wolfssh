@@ -125,9 +125,12 @@ enum WS_ErrorCodes {
     WS_CERT_SIG_CONFIRM_E   = -1084, /* Root cert sig verify fail */
     WS_CERT_OTHER_E         = -1085, /* Other certificate issue */
     WS_CERT_PROFILE_E       = -1086, /* Cert doesn't meet profile reqs */
-    WS_CERT_KEY_SIZE_E      = -1087, /* Key size error */
+    WS_CERT_KEY_SIZE_E      = -1087, /* Key size error */    
+    WS_OSSH_CERT_PARSE_E    = -1088, /* Error parsing OpenSSH-style cert */
+    WS_OSSH_CERT_CA_E       = -1089, /* Error with OpenSSH-style cert's CA */
+    WS_OSSH_CERT_EXPIRED_E  = -1090, /* OpenSSH-style cert dates not valid. */
     
-    WS_LAST_E               = -1087  /* Update this to indicate last error */
+    WS_LAST_E               = -1090  /* Update this to indicate last error */
 };
 
 

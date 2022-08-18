@@ -78,6 +78,113 @@ STATIC INLINE void ato32(const byte* c, word32* u32)
 }
 
 
+/* 
+ * These word64 functions come from wolfSSL. wolfSSL doesn't export them, so
+ * they're re-implemented here.
+ */
+#if defined(WORD64_AVAILABLE) && !defined(WOLFSSL_NO_WORD64_OPS)
+STATIC INLINE word64 rotlFixed64(word64 x, word64 y)
+{
+    return (x << y) | (x >> (sizeof(y) * 8 - y));
+}
+
+
+STATIC INLINE word64 ByteReverseWord64(word64 value)
+{
+#if defined(WOLF_ALLOW_BUILTIN) && defined(__GNUC_PREREQ) && __GNUC_PREREQ(4, 3)
+    return (word64)__builtin_bswap64(value);
+#elif defined(WOLFCRYPT_SLOW_WORD64)
+    return (word64)((word64)ByteReverseWord32((word32) value)) << 32 |
+        (word64)ByteReverseWord32((word32)(value   >> 32));
+#else
+    value = ((value & W64LIT(0xFF00FF00FF00FF00)) >> 8) |
+        ((value & W64LIT(0x00FF00FF00FF00FF)) << 8);
+    value = ((value & W64LIT(0xFFFF0000FFFF0000)) >> 16) |
+        ((value & W64LIT(0x0000FFFF0000FFFF)) << 16);
+    return rotlFixed64(value, 32U);
+#endif
+}
+#endif /* WORD64_AVAILABLE && !WOLFSSL_NO_WORD64_OPS */
+
+
+#ifdef WORD64_AVAILABLE
+STATIC INLINE void ato64(const byte *in, w64wrapper *w64)
+{
+#ifdef BIG_ENDIAN_ORDER
+    XMEMCPY(&w64->n, in, sizeof(w64->n));
+#else
+    word64 _in;
+    XMEMCPY(&_in, in, sizeof(_in));
+    w64->n = ByteReverseWord64(_in);
+#endif /* BIG_ENDIAN_ORDER */
+}
+
+
+STATIC INLINE w64wrapper w64From32(word32 hi, word32 lo)
+{
+    w64wrapper ret;
+    ret.n = ((word64)hi << 32) | lo;
+    return ret;
+}
+
+
+STATIC INLINE byte w64GTE(w64wrapper a, w64wrapper b)
+{
+    return a.n >= b.n;
+}
+
+
+STATIC INLINE byte w64LT(w64wrapper a, w64wrapper b)
+{
+    return a.n < b.n;
+}
+
+#else
+
+STATIC INLINE void ato64(const byte *in, w64wrapper *w64)
+{
+#ifdef BIG_ENDIAN_ORDER
+    const word32 *_in = (const word32*)(in);
+    w64->n[0] = *_in;
+    w64->n[1] = *(_in + 1);
+#else
+    ato32(in, &w64->n[0]);
+    ato32(in + 4, &w64->n[1]);
+#endif /* BIG_ENDIAN_ORDER */
+}
+
+
+STATIC INLINE w64wrapper w64From32(word32 hi, word32 lo)
+{
+    w64wrapper w64;
+    w64.n[0] = hi;
+    w64.n[1] = lo;
+    return w64;
+}
+
+
+STATIC INLINE byte w64GTE(w64wrapper a, w64wrapper b)
+{
+    if (a.n[0] > b.n[0])
+        return 1;
+    if (a.n[0] == b.n[0])
+        return a.n[1] >= b.n[1];
+    return 0;
+}
+
+
+STATIC INLINE byte w64LT(w64wrapper a, w64wrapper b)
+{
+    if (a.n[0] < b.n[0])
+        return 1;
+    if (a.n[0] == b.n[0])
+        return a.n[1] < b.n[1];
+
+    return 0;
+}
+#endif /* WORD64_AVAILABLE */
+
+
 /* convert 32 bit integer to opaque */
 STATIC INLINE void c32toa(word32 u32, byte* c)
 {

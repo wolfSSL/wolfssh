@@ -477,8 +477,7 @@ static int ResolveAuthKeysPath(const char* homeDir, char* resolved)
 }
 
 static int CheckPublicKeyUnix(const char* name,
-                              const WS_UserAuthData_PublicKey* pubKeyCtx,
-                              const char* usrCaKeysFile)
+                              const WS_UserAuthData_PublicKey* pubKeyCtx)
 {
     int ret = WSSHD_AUTH_SUCCESS;
     int rc;
@@ -493,65 +492,14 @@ static int CheckPublicKeyUnix(const char* name,
 
 #ifdef WOLFSSH_OSSH_CERTS
     if (pubKeyCtx->isOsshCert) {
-        byte* caKey = NULL;
-        word32 caKeySz;
-        const byte* caKeyType = NULL;
-        word32 caKeyTypeSz;
-        byte fingerprint[WC_SHA256_DIGEST_SIZE];
-
-        if (pubKeyCtx->caKey == NULL ||
-            pubKeyCtx->caKeySz != WC_SHA256_DIGEST_SIZE) {
-            ret = WS_FATAL_ERROR;
-        }
-
-        if (ret == WSSHD_AUTH_SUCCESS) {
-            f = XFOPEN(usrCaKeysFile, "rb");
-            if (f == XBADFILE) {
-                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to open %s",
-                            usrCaKeysFile);
-                ret = WS_BAD_FILE_E;
-            }
-        }
-        if (ret == WSSHD_AUTH_SUCCESS) {
-            lineBuf = (char*)WMALLOC(MAX_LINE_SZ, NULL, DYNTYPE_BUFFER);
-            if (lineBuf == NULL) {
-                ret = WS_MEMORY_E;
-            }
-        }
-        while (ret == WSSHD_AUTH_SUCCESS &&
-               (current = XFGETS(lineBuf, MAX_LINE_SZ, f)) != NULL) {
-            currentSz = (word32)XSTRLEN(current);
-
-            /* remove leading spaces */
-            while (currentSz > 0 && current[0] == ' ') {
-                currentSz = currentSz - 1;
-                current   = current + 1;
-            }
-
-            if (currentSz <= 1) {
-                continue; /* empty line */
-            }
-
-            if (current[0] == '#') {
-                continue; /* commented out line */
-            }
-
-            rc = wolfSSH_ReadKey_buffer((const byte*)current, currentSz,
-                                        WOLFSSH_FORMAT_SSH, &caKey, &caKeySz,
-                                        &caKeyType, &caKeyTypeSz, NULL);
-            if (rc == WS_SUCCESS) {
-                rc = wc_Hash(WC_HASH_TYPE_SHA256, caKey, caKeySz, fingerprint,
-                             WC_SHA256_DIGEST_SIZE);
-                if (rc == 0 && WMEMCMP(fingerprint, pubKeyCtx->caKey,
-                                       WC_SHA256_DIGEST_SIZE) == 0) {
-                    foundKey = 1;
-                    break;
-                }
-            }
-        }
+        /* 
+         * wolfSSH proper will have already verified the user's cert if we've
+         * made it this far. There's no further checking to do in this callback.
+         */
+        foundKey = 1;
     }
     else
-    #endif /* WOLFSSH_OSSH_CERTS */
+#endif /* WOLFSSH_OSSH_CERTS */
     {
         errno = 0;
         pwInfo = getpwnam((const char*)name);
@@ -632,7 +580,6 @@ static int CheckPublicKeyUnix(const char* name,
         WFREE(authKeysFile, NULL, DYNTYPE_STRING);
     }
 
-    (void)usrCaKeysFile;
     return ret;
 }
 #endif /* !_WIN32*/
@@ -750,8 +697,7 @@ static int RequestAuthentication(WS_UserAuthData* authData,
         }
         else {
             /* if not a certificate then parse through authorized key file */
-            rc = authCtx->checkPublicKeyCb(usr, &authData->sf.publicKey,
-                            wolfSSHD_ConfigGetUserCAKeysFile(authCtx->conf));
+            rc = authCtx->checkPublicKeyCb(usr, &authData->sf.publicKey);
             if (rc == WSSHD_AUTH_SUCCESS) {
                 wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key ok.");
                 ret = WOLFSSH_USERAUTH_SUCCESS;

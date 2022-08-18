@@ -1,0 +1,80 @@
+#!/bin/bash
+
+no_pid=-1
+server_pid=$no_pid
+ready_file=`pwd`/wolfssh_sftp_ready$$
+counter=0
+
+script_dir=$(cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd)
+ossh_dir=$script_dir/../keys/ossh
+echoserver=$script_dir/../examples/echoserver/echoserver
+
+create_port() {
+    while [ ! -s "$ready_file" ] && [ "$counter" -lt 20 ]; do
+        echo "waiting for ready file..."
+        sleep 0.1
+        counter=$((counter+ 1))
+    done
+
+    if [ -e $ready_file ]; then
+        echo "found ready file, starting client..."
+
+        # get created port 0 ephemeral port
+        port=`cat $ready_file`
+    else
+        echo "NO ready file ending test..."
+        do_cleanup
+        exit 1
+    fi
+}
+
+remove_ready_file() {
+    if [ -e $ready_file ]; then
+        echo "removing existing ready file"
+        rm $ready_file
+    fi
+}
+
+do_cleanup() {
+    echo "in cleanup"
+
+    if [ $server_pid != $no_pid ]; then
+        echo "killing server"
+        kill -9 $server_pid
+    fi
+    remove_ready_file
+}
+
+do_trap() {
+    echo "got trap"
+    do_cleanup
+    exit -1
+}
+
+trap do_trap INT TERM
+
+echo "Scenario: server presents cert trusted by client, client presents cert trusted by server."
+$echoserver -1 \
+    -R $ready_file \
+    -C $ossh_dir/ossh-host-rsa-key-cert.pub \
+    -T $ossh_dir/ossh-user-ca.pub \
+    -k $ossh_dir/ossh-host-rsa-key.der \
+    -j $ossh_dir/ossh-user-rsa-key-cert.pub &>/dev/null &
+server_pid=$!
+create_port
+ssh -p $port \
+    -i $ossh_dir/ossh-user-rsa-key \
+    -o "BatchMode yes" \
+    -o "UserKnownHostsFile=$ossh_dir/known_hosts" \
+    ossh-admin@localhost exit 2>&1 | grep "wolfSSH Example Echo Server"
+RESULT=$?
+remove_ready_file
+if [ $RESULT != 0 ]; then
+    echo "Scenario failed. $RESULT"
+    do_cleanup
+    exit 1
+else
+    echo "Scenario passed."
+fi
+
+echo "All scenarios passed."

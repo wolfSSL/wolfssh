@@ -206,6 +206,11 @@ AC_ARG_ENABLE([smallstack],
     [AS_HELP_STRING([--enable-smallstack],[Enable small stack (default: disabled)])],
     [ENABLED_SMALLSTACK=$enableval],[ENABLED_SMALLSTACK=no])
 
+# OpenSSH-style certificates
+AC_ARG_ENABLE([openssh-certs],
+    [AS_HELP_STRING([--enable-openssh-certs],[Enable support for OpenSSH-style certificates (default: disabled)])],
+    [ENABLED_OPENSSH_CERTS=$enableval],[ENABLED_OPENSSH_CERTS=no])
+
 # use PAM lib
 AC_ARG_WITH([pam],
     [AS_HELP_STRING([--with-pam=PATH],[PATH to directory with the PAM library])],
@@ -226,7 +231,7 @@ AC_ARG_ENABLE([distro],
 AS_IF([test "x$ENABLED_DISTRO" = "xyes"],
       [ENABLED_ALL=yes; enable_shared=yes; enable_static=yes])
 AS_IF([test "x$ENABLED_ALL" = "xyes"],
-      [ENABLED_KEYGEN=yes; ENABLED_SCP=yes; ENABLED_SFTP=yes; ENABLED_FWD=yes; ENABLED_SHELL=yes; ENABLED_AGENT=yes; ENABLED_SSHD=yes; ENABLED_CERTS=yes])
+      [ENABLED_KEYGEN=yes; ENABLED_SCP=yes; ENABLED_SFTP=yes; ENABLED_FWD=yes; ENABLED_SHELL=yes; ENABLED_AGENT=yes; ENABLED_SSHD=yes; ENABLED_CERTS=yes; ENABLED_OPENSSH_CERTS=yes;])
 AS_IF([test "x$ENABLED_SSHD" = "xyes"],
       [ENABLED_SHELL=yes])
 
@@ -251,6 +256,8 @@ AS_IF([test "x$ENABLED_SMALLSTACK" = "xyes"],
        [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SMALL_STACK"])
 AS_IF([test "x$ENABLED_SSHD" = "xyes"],
        [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SSHD"])
+AS_IF([test "x$ENABLED_OPENSSH_CERTS" = "xyes"],
+       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_OSSH_CERTS"])
 
 if test "$ENABLED_SSHD" = "yes"; then
     if test -n "$PAM_LIB"
@@ -304,6 +311,7 @@ AM_CONDITIONAL([BUILD_SHELL],[test "x$ENABLED_SHELL" = "xyes"])
 AM_CONDITIONAL([BUILD_AGENT],[test "x$ENABLED_AGENT" = "xyes"])
 AM_CONDITIONAL([BUILD_SSHD],[test "x$ENABLED_SSHD" = "xyes"])
 AM_CONDITIONAL([BUILD_CERTS],[test "x$ENABLED_CERTS" = "xyes"])
+AM_CONDITIONAL([BUILD_OPENSSH_CERTS],[test "x$ENABLED_OPENSSH_CERTS" = "xyes"])
 
 AX_HARDEN_CC_COMPILER_FLAGS
 
@@ -337,16 +345,17 @@ AS_ECHO(["   * CPP Flags:                 $CPPFLAGS"])
 AS_ECHO(["   * Linker Flags:              $LDFLAGS"])
 AS_ECHO
 AS_ECHO(["   Features"])
-AS_ECHO(["   * Inline Code:               $ENABLED_INLINE"])
-AS_ECHO(["   * Small stack:               $ENABLED_SMALLSTACK"])
-AS_ECHO(["   * keygen:                    $ENABLED_KEYGEN"])
-AS_ECHO(["   * psuedo-terminal:           $ENABLED_PTERM"])
-AS_ECHO(["   * echoserver shell support:  $ENABLED_SHELL"])
-AS_ECHO(["   * scp:                       $ENABLED_SCP"])
-AS_ECHO(["   * sftp:                      $ENABLED_SFTP"])
-AS_ECHO(["   * sshd:                      $ENABLED_SSHD"])
-AS_ECHO(["   * agent:                     $ENABLED_AGENT"])
-AS_ECHO(["   * TCP/IP Forwarding:         $ENABLED_FWD"])
-AS_ECHO(["   * X.509 Certs:               $ENABLED_CERTS"])
-AS_ECHO(["   * Examples:                  $ENABLED_EXAMPLES"])
-AS_ECHO(["   * liboqs Integration:        $ENABLED_LIBOQS"])
+AS_ECHO(["   * Inline Code:              $ENABLED_INLINE"])
+AS_ECHO(["   * Small stack:              $ENABLED_SMALLSTACK"])
+AS_ECHO(["   * keygen:                   $ENABLED_KEYGEN"])
+AS_ECHO(["   * psuedo-terminal:          $ENABLED_PTERM"])
+AS_ECHO(["   * echoserver shell support: $ENABLED_SHELL"])
+AS_ECHO(["   * scp:                      $ENABLED_SCP"])
+AS_ECHO(["   * sftp:                     $ENABLED_SFTP"])
+AS_ECHO(["   * sshd:                     $ENABLED_SSHD"])
+AS_ECHO(["   * agent:                    $ENABLED_AGENT"])
+AS_ECHO(["   * TCP/IP Forwarding:        $ENABLED_FWD"])
+AS_ECHO(["   * X.509 Certs:              $ENABLED_CERTS"])
+AS_ECHO(["   * OpenSSH-style certs:      $ENABLED_OPENSSH_CERTS"])
+AS_ECHO(["   * Examples:                 $ENABLED_EXAMPLES"])
+AS_ECHO(["   * liboqs Integration:       $ENABLED_LIBOQS"])

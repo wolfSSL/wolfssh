@@ -53,8 +53,7 @@ typedef int (*CallbackCheckPassword)(const char* usr, const byte* psw,
  * ok, and negative values if an error occurs during checking.
  */
 typedef int (*CallbackCheckPublicKey)(const char* usr,
-                                      const WS_UserAuthData_PublicKey* pubKey,
-                                      const char* usrCaKeysFile);
+                                      const WS_UserAuthData_PublicKey* pubKey);
 
 WOLFSSHD_AUTH* wolfSSHD_AuthCreateUser(void* heap, const WOLFSSHD_CONFIG* conf);
 int wolfSSHD_AuthFreeUser(WOLFSSHD_AUTH* auth);

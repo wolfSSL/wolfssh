@@ -1496,6 +1496,7 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
             const char* name;
             word32 typeSz;
             byte nameId;
+            int dynamicType = DYNTYPE_PRIVKEY;
 
             typeSz = (word32)WSTRLEN(type);
 
@@ -1504,11 +1505,15 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
             *outType = (const byte*)name;
             *outTypeSz = typeSz;
 
+            if (nameId == ID_OSSH_CERT_RSA) {
+                dynamicType = DYNTYPE_PUBKEY;
+            }
+
             if (*out == NULL) {
                 /* set size based on sanity check in wolfSSL base64 decode
                  * function */
                 *outSz = ((word32)WSTRLEN(key) * 3 + 3) / 4;
-                newKey = (byte*)WMALLOC(*outSz, heap, DYNTYPE_PRIVKEY);
+                newKey = (byte*)WMALLOC(*outSz, heap, dynamicType);
                 if (newKey == NULL) {
                     return WS_MEMORY_E;
                 }
@@ -1755,6 +1760,92 @@ int wolfSSH_CTX_AddRootCert_buffer(WOLFSSH_CTX* ctx,
 }
 
 #endif /* WOLFSSH_CERTS */
+
+
+#ifdef WOLFSSH_OSSH_CERTS
+
+int wolfSSH_CTX_UseOsshCert_buffer(WOLFSSH_CTX* ctx, const byte* cert,
+                                   word32 certSz)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "wolfSSH_CTX_UseOpenSSHCert_buffer()");
+
+    ret = wolfSSH_ProcessBuffer(ctx, cert, certSz, WOLFSSH_FORMAT_SSH,
+                                BUFTYPE_OSSH_CERT);
+
+    WLOG(WS_LOG_DEBUG, "wolfSSH_CTX_UseOpenSSHCert_buffer, ret = %d", ret);
+
+    return ret;
+}
+
+int wolfSSH_CTX_AddOsshCAKey(WOLFSSH_CTX* ctx, const byte* cert,
+                                     word32 certSz)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "wolfSSH_CTX_AddOsshCAKey()");
+
+    ret = wolfSSH_ProcessBuffer(ctx, cert, certSz, WOLFSSH_FORMAT_SSH,
+                                BUFTYPE_OSSH_CA_KEY);
+
+    WLOG(WS_LOG_DEBUG, "wolfSSH_CTX_AddOsshCAKey, ret = %d", ret);
+
+    return ret;
+}
+
+int wolfSSH_CTX_AddOsshCAKeys_file(WOLFSSH_CTX* ctx, const char* file)
+{
+    int ret = WS_SUCCESS;
+    XFILE f;
+    char* current;
+    word32 currentSz;
+    enum {
+        MAX_LINE_SZ = 1024
+    };
+    char lineBuf[MAX_LINE_SZ];
+
+    WLOG(WS_LOG_DEBUG, "wolfSSH_CTX_AddOsshCAKeys_file()");
+
+    if (ctx == NULL || file == WBADFILE) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        f = XFOPEN(file, "rb");
+        if (f == XBADFILE) {
+            ret = WS_BAD_FILE_E;
+        }
+
+        while (ret == WS_SUCCESS &&
+               (current = XFGETS(lineBuf, MAX_LINE_SZ, f)) != NULL) {
+            currentSz = (word32)XSTRLEN(current);
+
+            /* remove leading spaces */
+            while (currentSz > 0 && current[0] == ' ') {
+                currentSz = currentSz - 1;
+                current   = current + 1;
+            }
+
+            if (currentSz <= 1) {
+                continue; /* empty line */
+            }
+
+            if (current[0] == '#') {
+                continue; /* commented out line */
+            }
+
+            ret = wolfSSH_CTX_AddOsshCAKey(ctx, (const byte*)current,
+                                           currentSz);
+        }
+    }
+
+    WLOG(WS_LOG_DEBUG, "wolfSSH_CTX_AddOsshCAKeys_file, ret = %d", ret);
+
+    return ret;
+}
+
+#endif /* WOLFSSH_OSSH_CERTS */
 
 
 int wolfSSH_CTX_SetWindowPacketSize(WOLFSSH_CTX* ctx,

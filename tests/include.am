@@ -57,6 +57,9 @@ endif
 if BUILD_CERTS
 tests_api_test_CPPFLAGS     += -DWOLFSSH_CERTS
 endif
+if BUILD_OPENSSH_CERTS
+tests_api_test_CPPFLAGS     += -DWOLFSSH_OSSH_CERTS
+endif
 tests_api_test_LDADD         = src/libwolfssh.la
 tests_api_test_DEPENDENCIES  = src/libwolfssh.la
 
@@ -93,3 +96,34 @@ tests_testsuite_test_DEPENDENCIES = src/libwolfssh.la
 DISTCLEANFILES+= tests/.libs/unit.test tests/.libs/api.test \
                  tests/.libs/testsuite.test
 EXTRA_DIST += tests/testsuite.h
+
+if BUILD_OPENSSH_CERTS
+
+noinst_PROGRAMS += tests/test_ossh_certs.test
+check_PROGRAMS  += tests/test_ossh_certs.test
+tests_test_ossh_certs_test_SOURCES = tests/test_ossh_certs.c \
+                                     src/internal.c \
+                                     src/io.c \
+                                     src/log.c \
+                                     src/list.c \
+                                     src/ossh_certs.c
+tests_test_ossh_certs_test_LDADD        = src/libwolfssh.la
+tests_test_ossh_certs_test_DEPENDENCIES = src/libwolfssh.la
+tests_test_ossh_certs_test_CPPFLAGS     = $(AM_CPPFLAGS) -DWOLFSSH_OSSH_CERTS
+
+DISTCLEANFILES += tests/.libs/test_ossh_certs.test
+
+noinst_PROGRAMS += tests/test_list.test
+check_PROGRAMS  += tests/test_list.test
+
+tests_test_list_test_SOURCES = tests/test_list.c \
+                               src/io.c \
+                               src/internal.c \
+                               src/ossh_certs.c \
+                               src/list.c
+tests_test_list_test_LDADD        = src/libwolfssh.la
+tests_test_list_test_DEPENDENCIES = src/libwolfssh.la
+
+DISTCLEANFILES += tests/.libs/test_list.test
+
+endif BUILD_OPENSSH_CERTS

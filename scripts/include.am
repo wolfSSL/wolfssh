@@ -11,4 +11,11 @@ if BUILD_SCP
 dist_noinst_SCRIPTS+= scripts/scp.test
 endif
 
+if BUILD_OPENSSH_CERTS
+if BUILD_SHELL
+# This test will hang if wolfSSH isn't built with shell support.
+dist_noinst_SCRIPTS+= scripts/ossh-certs.test
+endif BUILD_SHELL
+endif BUILD_OPENSSH_CERTS
+
 dist_noinst_SCRIPTS+= scripts/external.test

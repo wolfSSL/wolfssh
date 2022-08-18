@@ -189,7 +189,7 @@ static void CleanupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
 }
 
 #ifndef NO_FILESYSTEM
-static void freeBufferFromFile(byte* buf, void* heap)
+static void FreeBufferFromFile(byte* buf, void* heap)
 {
     if (buf != NULL)
         WFREE(buf, heap, DYNTYPE_SSHD);
@@ -198,7 +198,7 @@ static void freeBufferFromFile(byte* buf, void* heap)
 
 
 /* set bufSz to size wanted if too small and buf is null */
-static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap)
+static byte* GetBufferFromFile(const char* fileName, word32* bufSz, void* heap)
 {
     FILE* file;
     byte* buf = NULL;
@@ -282,7 +282,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
             byte* data;
             word32 dataSz = 0;
 
-            data = getBufferFromFile(hostKey, &dataSz, heap);
+            data = GetBufferFromFile(hostKey, &dataSz, heap);
             if (data == NULL) {
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Error reading host key file.");
@@ -311,22 +311,22 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
                     ret = WS_BAD_ARGUMENT;
                 }
 
-                freeBufferFromFile(data, heap);
+                FreeBufferFromFile(data, heap);
                 wc_FreeDer(&der);
             }
         }
     }
-
 #if defined(WOLFSSH_OSSH_CERTS) || defined(WOLFSSH_CERTS)
     if (ret == WS_SUCCESS) {
-        /* TODO: Create a helper function that uses a file instead. */
         char* hostCert = wolfSSHD_ConfigGetHostCertFile(conf);
 
         if (hostCert != NULL) {
             byte*  data;
             word32 dataSz = 0;
 
-            data = getBufferFromFile(hostCert, &dataSz, heap);
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Using host cert file %s",
+                hostCert);
+            data = GetBufferFromFile(hostCert, &dataSz, heap);
             if (data == NULL) {
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Error reading host key file.");
@@ -335,44 +335,48 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
             }
 
             if (ret == WS_SUCCESS) {
-            #ifdef WOLFSSH_OPENSSH_CERTS
-                if (wolfSSH_CTX_UseOsshCert_buffer(*ctx, data, dataSz) < 0) {
-                    wolfSSH_Log(WS_LOG_ERROR,
-                        "[SSHD] Failed to use host certificate.");
-                    ret = WS_BAD_ARGUMENT;
-                }
-            #endif
+            #ifdef WOLFSSH_OSSH_CERTS
+                ret = wolfSSH_CTX_UseOsshCert_buffer(*ctx, data, dataSz);
+                /* 
+                 * If wolfSSH_CTX_UseOsshCert_buffer failed, the cert might be
+                 * X.509. Try with wolfSSH_CTX_UseCert_buffer.
+                 */
+                if (ret != WS_SUCCESS)
+            #endif /* WOLFSSH_OSSH_CERTS */
+                {
             #ifdef WOLFSSH_CERTS
-                if (ret == WS_SUCCESS || ret == WS_BAD_ARGUMENT) {
+                    /* Try PEM first. */
                     ret = wolfSSH_CTX_UseCert_buffer(*ctx, data, dataSz,
                         WOLFSSH_FORMAT_PEM);
                     if (ret != WS_SUCCESS) {
+                        /* Try DER (ASN.1) if it wasn't PEM. */
                         ret = wolfSSH_CTX_UseCert_buffer(*ctx, data, dataSz,
                             WOLFSSH_FORMAT_ASN1);
                     }
-                    if (ret != WS_SUCCESS) {
-                        wolfSSH_Log(WS_LOG_ERROR,
-                            "[SSHD] Failed to load in host certificate.");
-                    }
+            #endif /* WOLFSSH_CERTS */
                 }
-            #endif
+                if (ret != WS_SUCCESS) {
+                    wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failed to load in host "
+                                              "certificate %s.", hostCert);
+                }
 
-                freeBufferFromFile(data, heap);
+                FreeBufferFromFile(data, heap);
             }
         }
     }
 #endif /* WOLFSSH_OSSH_CERTS || WOLFSSH_CERTS */
 
-#ifdef WOLFSSH_CERTS
+#if defined(WOLFSSH_CERTS) || defined(WOLFSSH_OSSH_CERTS)
     if (ret == WS_SUCCESS) {
         char* caCert = wolfSSHD_ConfigGetUserCAKeysFile(conf);
+
         if (caCert != NULL) {
             byte*  data;
             word32 dataSz = 0;
 
-
-            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Using CA keys file %s", caCert);
-            data = getBufferFromFile(caCert, &dataSz, heap);
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Using user CA keys file %s",
+                caCert);
+            data = GetBufferFromFile(caCert, &dataSz, heap);
             if (data == NULL) {
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Error reading CA cert file.");
@@ -381,25 +385,32 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
             }
 
             if (ret == WS_SUCCESS) {
-                ret = wolfSSH_CTX_AddRootCert_buffer(*ctx, data, dataSz,
-                    WOLFSSH_FORMAT_PEM);
-                if (ret != WS_SUCCESS) {
+            #ifdef WOLFSSH_OSSH_CERTS
+                ret = wolfSSH_CTX_AddOsshCAKey(*ctx, data, dataSz);
+                /* 
+                 * If wolfSSH_CTX_AddOsshCAKey failed, try
+                 * wolfSSH_CTX_AddRootCert_buffer.
+                 */
+                if (ret != WS_SUCCESS)
+            #endif /* WOLFSSH_OSSH_CERTS */
+                {
+            #ifdef WOLFSSH_CERTS
+                    /* Try PEM first. */
                     ret = wolfSSH_CTX_AddRootCert_buffer(*ctx, data, dataSz,
-                        WOLFSSH_FORMAT_ASN1);
+                        WOLFSSH_FORMAT_PEM);
+                    if (ret != WS_SUCCESS) {
+                        /* Try DER (ASN.1) if it wasn't PEM. */
+                        ret = wolfSSH_CTX_AddRootCert_buffer(*ctx, data, dataSz,
+                            WOLFSSH_FORMAT_ASN1);
+                    }
+            #endif /* WOLFSSH_CERTS */
                 }
                 if (ret != WS_SUCCESS) {
-                #ifdef WOLFSSH_OPENSSH_CERTS
-                    wolfSSH_Log(WS_LOG_INFO,
-                        "[SSHD] Continuing on in case CA is openssh "
-                        "style.");
-                    ret = WS_SUCCESS;
-                #else
-                    wolfSSH_Log(WS_LOG_ERROR,
-                        "[SSHD] Failed to load in CA certificate.");
-                #endif
+                    wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failed to load in user CA"
+                                              " keys file %s.", caCert);
                 }
 
-                freeBufferFromFile(data, heap);
+                FreeBufferFromFile(data, heap);
             }
         }
     }

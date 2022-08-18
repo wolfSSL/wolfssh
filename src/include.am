@@ -38,3 +38,8 @@ endif
 if BUILD_CERTS
 src_libwolfssh_la_SOURCES += src/certman.c
 endif
+
+if BUILD_OPENSSH_CERTS
+src_libwolfssh_la_SOURCES += src/ossh_certs.c
+src_libwolfssh_la_SOURCES += src/list.c
+endif

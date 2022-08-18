@@ -284,16 +284,17 @@ void wolfSSHD_ConfigFree(WOLFSSHD_CONFIG* conf)
     while (current != NULL) {
         WOLFSSHD_CONFIG* next = current->next;
         heap = current->heap;
-
-        FreeString(&current->banner,    heap);
+    
+        FreeString(&current->banner, heap);
         FreeString(&current->chrootDir, heap);
-        FreeString(&current->ciphers,   heap);
-        FreeString(&current->kekAlgos,  heap);
-        FreeString(&current->hostKeyAlgos,  heap);
+        FreeString(&current->ciphers, heap);
+        FreeString(&current->kekAlgos, heap);
+        FreeString(&current->hostKeyAlgos, heap);
         FreeString(&current->listenAddress, heap);
-        FreeString(&current->authKeysFile,  heap);
-        FreeString(&current->hostKeyFile,   heap);
-        FreeString(&current->hostCertFile,  heap);
+        FreeString(&current->authKeysFile, heap);
+        FreeString(&current->hostKeyFile, heap);
+        FreeString(&current->hostCertFile, heap);
+        FreeString(&current->userCAKeysFile, heap);
 
         WFREE(current, heap, DYNTYPE_SSHD);
         current = next;

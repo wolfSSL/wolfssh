@@ -2150,16 +2150,21 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     const char* defaultSftpPath = NULL;
     char  nonBlock  = 0;
     char* userPubKey = NULL;
-    #ifdef WOLFSSH_CERTS
-        char* caCert = NULL;
-    #endif
+#ifdef WOLFSSH_CERTS
+    char* caCert = NULL;
+#endif
+#ifdef WOLFSSH_OSSH_CERTS
+    char* osshCert = NULL;
+    char* osshCaKey = NULL;
+#endif
+    char* privKey = NULL;
 
     int     argc = serverArgs->argc;
     char**  argv = serverArgs->argv;
     serverArgs->return_code = 0;
 
     if (argc > 0) {
-    while ((ch = mygetopt(argc, argv, "?1a:d:efEp:R:Ni:j:I:J:K:P:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?1a:d:efEp:R:Ni:j:I:J:K:P:C:T:k:")) != -1) {
         switch (ch) {
             case '?' :
                 ShowUsage();
@@ -2170,9 +2175,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 break;
 
             case 'a':
-                #ifdef WOLFSSH_CERTS
-                    caCert = myoptarg;
-                #endif
+            #ifdef WOLFSSH_CERTS
+                caCert = myoptarg;
+            #endif
                 break;
             case 'e' :
                 userEcc = 1;
@@ -2231,6 +2236,22 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
             case 'P':
                 passwdList = StrListAdd(passwdList, myoptarg);
+                break;
+
+            case 'C':
+            #ifdef WOLFSSH_OSSH_CERTS
+                osshCert = myoptarg;
+            #endif
+                break;
+
+            case 'T':
+            #ifdef WOLFSSH_OSSH_CERTS
+                osshCaKey = myoptarg;
+            #endif
+                break;
+
+            case 'k':
+                privKey = myoptarg;
                 break;
 
             default:
@@ -2312,23 +2333,40 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         byte buf[EXAMPLE_KEYLOAD_BUFFER_SZ];
     #endif
         byte* keyLoadBuf;
-        word32 bufSz;
+        word32 bufSz = 0;
 
-        #ifdef WOLFSSH_SMALL_STACK
-            keyLoadBuf = (byte*)WMALLOC(EXAMPLE_KEYLOAD_BUFFER_SZ,
-                    NULL, 0);
-            if (keyLoadBuf == NULL) {
+        if (privKey != NULL) {
+            load_file(privKey, NULL, &bufSz);
+            if (bufSz == 0) {
+                fprintf(stderr, "Couldn't find size of file %s.\n", privKey);
                 WEXIT(EXIT_FAILURE);
             }
-        #else
-            keyLoadBuf = buf;
-        #endif
-        bufSz = EXAMPLE_KEYLOAD_BUFFER_SZ;
 
-        bufSz = load_key(peerEcc, keyLoadBuf, bufSz);
-        if (bufSz == 0) {
-            fprintf(stderr, "Couldn't load key file.\n");
-            WEXIT(EXIT_FAILURE);
+            keyLoadBuf = (byte*)WMALLOC(bufSz, NULL, 0);
+            if (keyLoadBuf == NULL) {
+                fprintf(stderr, "WMALLOC for private key buffer failed.\n");
+                WEXIT(EXIT_FAILURE);
+            }
+
+            load_file(privKey, keyLoadBuf, &bufSz);
+        }
+        else {
+            #ifdef WOLFSSH_SMALL_STACK
+                keyLoadBuf = (byte*)WMALLOC(EXAMPLE_KEYLOAD_BUFFER_SZ,
+                        NULL, 0);
+                if (keyLoadBuf == NULL) {
+                    WEXIT(EXIT_FAILURE);
+                }
+            #else
+                keyLoadBuf = buf;
+            #endif
+            bufSz = EXAMPLE_KEYLOAD_BUFFER_SZ;
+
+            bufSz = load_key(peerEcc, keyLoadBuf, bufSz);
+            if (bufSz == 0) {
+                fprintf(stderr, "Couldn't load key file.\n");
+                WEXIT(EXIT_FAILURE);
+            }
         }
         if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, keyLoadBuf, bufSz,
                                              WOLFSSH_FORMAT_ASN1) < 0) {
@@ -2359,7 +2397,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             WFREE(userBuf, NULL, 0);
         }
 
-        #ifdef WOLFSSH_CERTS
+    #ifdef WOLFSSH_CERTS
         if (caCert) {
             byte* certBuf = NULL;
             word32 certBufSz = 0;
@@ -2381,13 +2419,51 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             load_file(caCert, certBuf, &certBufSz);
             ret = wolfSSH_CTX_AddRootCert_buffer(ctx, certBuf, certBufSz,
                     WOLFSSH_FORMAT_PEM);
-            if (ret != 0) {
+            if (ret != WS_SUCCESS) {
                 fprintf(stderr, "Couldn't add root cert\n");
                 WEXIT(EXIT_FAILURE);
             }
             WFREE(certBuf, NULL, 0);
         }
-        #endif
+    #endif /* WOLFSSH_CERTS */
+
+    #ifdef WOLFSSH_OSSH_CERTS
+        if (osshCert) {
+            byte* certBuf = NULL;
+            word32 certBufSz = 0;
+            int ret = 0;
+
+            load_file(osshCert, NULL, &certBufSz);
+
+            if (certBufSz == 0) {
+                fprintf(stderr,
+                        "Couldn't find size of file %s.\n", osshCert);
+                WEXIT(EXIT_FAILURE);
+            }
+
+            certBuf = (byte*)WMALLOC(certBufSz, NULL, 0);
+            if (certBuf == NULL) {
+                fprintf(stderr, "WMALLOC for OpenSSH-style cert buffer "
+                                "failed.\n");
+                WEXIT(EXIT_FAILURE);
+            }
+
+            load_file(osshCert, certBuf, &certBufSz);
+            ret = wolfSSH_CTX_UseOsshCert_buffer(ctx, certBuf, certBufSz);
+            WFREE(certBuf, NULL, 0);
+            if (ret != WS_SUCCESS) {
+                fprintf(stderr, "wolfSSH_CTX_UseOsshCert_buffer failed.\n");
+                WEXIT(EXIT_FAILURE);
+            }
+        }
+
+        if (osshCaKey) {
+            if (wolfSSH_CTX_AddOsshCAKeys_file(ctx, osshCaKey) != WS_SUCCESS) {
+                fprintf(stderr, "wolfSSH_CTX_AddOsshCAKeys_file failed.\n");
+                WEXIT(EXIT_FAILURE);
+            }
+        }
+    #endif /* WOLFSSH_OSSH_CERTS */
 
         bufSz = (word32)WSTRLEN(samplePasswordBuffer);
         WMEMCPY(keyLoadBuf, samplePasswordBuffer, bufSz);

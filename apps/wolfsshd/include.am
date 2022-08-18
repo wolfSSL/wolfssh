@@ -9,15 +9,17 @@ apps_wolfsshd_wolfsshd_SOURCES = apps/wolfsshd/wolfsshd.c \
 apps_wolfsshd_wolfsshd_LDADD        = src/libwolfssh.la
 apps_wolfsshd_wolfsshd_DEPENDENCIES = src/libwolfssh.la
 
-noinst_PROGRAMS += apps/wolfsshd/test/test_configuration
-apps_wolfsshd_test_test_configuration_SOURCES = apps/wolfsshd/test/test_configuration.c \
+noinst_PROGRAMS += apps/wolfsshd/test/test_configuration.test
+check_PROGRAMS  += apps/wolfsshd/test/test_configuration.test
+apps_wolfsshd_test_test_configuration_test_SOURCES = apps/wolfsshd/test/test_configuration.c \
                                                 apps/wolfsshd/configuration.c \
                                                 apps/wolfsshd/auth.c
-apps_wolfsshd_test_test_configuration_LDADD        = src/libwolfssh.la
-apps_wolfsshd_test_test_configuration_DEPENDENCIES = src/libwolfssh.la
-apps_wolfsshd_test_test_configuration_CPPFLAGS     = $(AM_CPPFLAGS) -DWOLFSSH_SSHD -DWOLFSSHD_UNIT_TEST -I$(srcdir)/apps/wolfsshd/
+
+apps_wolfsshd_test_test_configuration_test_LDADD        = src/libwolfssh.la
+apps_wolfsshd_test_test_configuration_test_DEPENDENCIES = src/libwolfssh.la
+apps_wolfsshd_test_test_configuration_test_CPPFLAGS     = $(AM_CPPFLAGS) -DWOLFSSH_SSHD -DWOLFSSHD_UNIT_TEST -I$(srcdir)/apps/wolfsshd/
 
 DISTCLEANFILES+= apps/wolfsshd/.libs/wolfsshd \
-                 apps/wolfsshd/test/.libs/test_configuration
+                 apps/wolfsshd/test/.libs/test_configuration.test
 
 endif BUILD_SSHD
