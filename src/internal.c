@@ -3349,8 +3349,8 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                     ret = wc_ecc_set_rng(key_ptr, ssh->rng);
 #endif
                 if (ret == 0) {
-                    ret = wc_ecc_import_x963(f, fSz - kem->length_ciphertext,
-                                             key_ptr);
+                    ret = wc_ecc_import_x963(f, fSz -
+                              (word32)kem->length_ciphertext, key_ptr);
                 }
 
                 if (ret == 0) {
@@ -7518,13 +7518,14 @@ int SendKexDhReply(WOLFSSH* ssh)
 
                 if (ret == 0)
                     ret = wc_ecc_import_x963_ex(ssh->handshake->e,
-                              ssh->handshake->eSz - kem->length_public_key,
+                              ssh->handshake->eSz -
+                              (word32)kem->length_public_key,
                               pubKey, primeId);
 
                 if (ret == 0)
                     ret = wc_ecc_make_key_ex(ssh->rng,
-                                         wc_ecc_get_curve_size_from_id(primeId),
-                                         privKey, primeId);
+                              wc_ecc_get_curve_size_from_id(primeId),
+                              privKey, primeId);
                 if (ret == 0) {
                 #ifdef PRIVATE_KEY_UNLOCK
                     PRIVATE_KEY_UNLOCK();
@@ -8239,7 +8240,7 @@ int SendKexDhInit(WOLFSSH* ssh)
                     ret = WS_ERROR;
                 }
                 eSz += kem->length_public_key;
-                ssh->handshake->xSz = kem->length_secret_key;
+                ssh->handshake->xSz = (word32)kem->length_secret_key;
             }
 
             if (kem != NULL) {
