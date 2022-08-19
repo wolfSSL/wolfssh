@@ -7503,9 +7503,11 @@ int SendKexDhReply(WOLFSSH* ssh)
                     }
                 }
 
-                primeId  = wcPrimeForId(ssh->handshake->kexId);
-                if (primeId == ECC_CURVE_INVALID)
-                    ret = WS_INVALID_PRIME_CURVE;
+                if (ret == 0) {
+                    primeId = wcPrimeForId(ssh->handshake->kexId);
+                    if (primeId == ECC_CURVE_INVALID)
+                        ret = WS_INVALID_PRIME_CURVE;
+                }
 
                 if (ret == 0)
                     ret = wc_ecc_init_ex(pubKey, heap, INVALID_DEVID);
