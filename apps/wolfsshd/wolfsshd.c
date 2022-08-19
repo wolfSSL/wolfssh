@@ -377,7 +377,8 @@ static int SFTP_Subsystem(WOLFSSH* ssh, WOLFSSHD_CONNECTION* conn)
     #define MAX_COMMAND_SZ 80
 #endif
 
-static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
+static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
+    char* forcedCmd)
 {
     WS_SOCKET_T sshFd = 0;
     int rc;
@@ -460,9 +461,14 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
         }
 
         errno = 0;
-        ret = execv(cmd, (char**)args);
+        if (forcedCmd) {
+            ret = execv(forcedCmd, NULL);
+        }
+        else {
+            ret = execv(cmd, (char**)args);
+        }
         if (ret && errno) {
-            perror("error executing shell command ");
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue opening shell");
             exit(1);
         }
         exit(0); /* exit child process and close down SSH connection */
@@ -633,7 +639,8 @@ static void* HandleConnection(void* arg)
                 error = WS_FATAL_ERROR;
         }
 
-        if (ret != WS_SUCCESS && ret != WS_SFTP_COMPLETE) {
+        if (ret != WS_SUCCESS && ret != WS_SFTP_COMPLETE &&
+            ret != WS_SCP_COMPLETE) {
             wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] Failed to accept WOLFSSH connection from %s",
                 conn->ip);
@@ -641,46 +648,110 @@ static void* HandleConnection(void* arg)
     }
 
     if (ret == WS_SUCCESS || ret == WS_SFTP_COMPLETE) {
-        switch (wolfSSH_GetSessionType(ssh)) {
-            case WOLFSSH_SESSION_SHELL:
-            #ifdef WOLFSSH_SHELL
-                if (ret == WS_SUCCESS) {
-                    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Entering new shell");
-                    SHELL_Subsystem(conn, ssh);
-                }
-            #else
+        WOLFSSHD_CONFIG* usrConf;
+        char* cmd;
+        char* usr;
+
+        /* get configuration for user */
+        usr     = wolfSSH_GetUsername(ssh);
+        usrConf = wolfSSHD_AuthGetUserConf(conn->auth, usr, NULL, NULL,
+            NULL, NULL, NULL);
+        if (usrConf == NULL) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Error getting user configuration");
+            ret = WS_FATAL_ERROR;
+        }
+
+
+    #ifdef WOLFSSH_SFTP
+        /* set starting SFTP directory */
+        if (ret == WS_SFTP_COMPLETE) {
+            struct passwd *p_passwd;
+            p_passwd = getpwnam((const char *)usr);
+            if (p_passwd == NULL || wolfSSH_SFTP_SetDefaultPath(ssh,
+                    p_passwd->pw_dir) != WS_SUCCESS) {
                 wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] Shell support is disabled");
-                ret = WS_NOT_COMPILED;
-            #endif
-                break;
-
-            case WOLFSSH_SESSION_SUBSYSTEM:
-                /* test for known subsystems */
-                switch (ret) {
-                    case WS_SFTP_COMPLETE:
-                    #ifdef WOLFSSH_SFTP
-                        ret = SFTP_Subsystem(ssh, conn);
-                    #else
-                        err_sys("SFTP not compiled in. Please use --enable-sftp");
-                    #endif
-                        break;
-
-                    default:
-                        wolfSSH_Log(WS_LOG_ERROR,
-                            "[SSHD] Unknown or build not supporting subsystem"
-                            " found [%s]", wolfSSH_GetSessionCommand(ssh));
-                        ret = WS_NOT_COMPILED;
-                }
-                break;
-
-            case WOLFSSH_SESSION_UNKNOWN:
-            case WOLFSSH_SESSION_EXEC:
-            case WOLFSSH_SESSION_TERMINAL:
-            default:
+                    "[SSHD] Error setting SFTP default home path");
+                ret = WS_FATAL_ERROR;
+            }
+        }
+    #endif
+        /* check for chroot set */
+        cmd = wolfSSHD_ConfigGetChroot(usrConf);
+        if (cmd != NULL) {
+            if (chroot(cmd) != 0) {
                 wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] Unknown or build not supporting session type found");
-                ret = WS_NOT_COMPILED;
+                    "[SSHD] chroot failed to path  %s", cmd);
+                ret = WS_FATAL_ERROR;
+            }
+
+        #ifdef WOLFSSH_SFTP
+            if (ret == WS_SFTP_COMPLETE) {
+                if (wolfSSH_SFTP_SetDefaultPath(ssh, "/") != WS_SUCCESS) {
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Error setting SFTP default path");
+                    ret = WS_FATAL_ERROR;
+                }
+            }
+        #endif
+        }
+
+        if (ret != WS_FATAL_ERROR) {
+            /* check for any forced command set for the user */
+            cmd =  wolfSSHD_ConfigGetForcedCmd(usrConf);
+            switch (wolfSSH_GetSessionType(ssh)) {
+                case WOLFSSH_SESSION_SHELL:
+                #ifdef WOLFSSH_SHELL
+                    if (ret == WS_SUCCESS) {
+                        if (cmd != NULL && XSTRCMP(cmd, "internal-sftp") == 0) {
+                            wolfSSH_Log(WS_LOG_ERROR,
+                                "[SSHD] Only SFTP connections allowed for user "
+                                "%s", usr);
+                            ret = WS_FATAL_ERROR;
+                        }
+                        else {
+                            wolfSSH_Log(WS_LOG_INFO,
+                                "[SSHD] Entering new shell");
+                            SHELL_Subsystem(conn, ssh, cmd);
+                        }
+                    }
+                #else
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Shell support is disabled");
+                    ret = WS_NOT_COMPILED;
+                #endif
+                    break;
+
+                case WOLFSSH_SESSION_SUBSYSTEM:
+                    /* test for known subsystems */
+                    switch (ret) {
+                        case WS_SFTP_COMPLETE:
+                        #ifdef WOLFSSH_SFTP
+                            ret = SFTP_Subsystem(ssh, conn);
+                        #else
+                            err_sys("SFTP not compiled in. Please use "
+                                    "--enable-sftp");
+                        #endif
+                            break;
+
+                        default:
+                            wolfSSH_Log(WS_LOG_ERROR,
+                                "[SSHD] Unknown or build not supporting sub"
+                                "system found [%s]",
+                                wolfSSH_GetSessionCommand(ssh));
+                            ret = WS_NOT_COMPILED;
+                    }
+                    break;
+
+                case WOLFSSH_SESSION_UNKNOWN:
+                case WOLFSSH_SESSION_EXEC:
+                case WOLFSSH_SESSION_TERMINAL:
+                default:
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Unknown or build not supporting session type "
+                        "found");
+                    ret = WS_NOT_COMPILED;
+            }
         }
     }
 
