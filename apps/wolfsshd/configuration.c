@@ -479,7 +479,7 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
         struct dirent *dir;
         DIR *d;
         char *path;
-        char *filepath = WMALLOC(PATH_MAX, NULL, 0);
+        char *filepath = (char*)WMALLOC(PATH_MAX, NULL, 0);
 
         /* Back find the full path */
         while (ptr2 != value) {
@@ -490,13 +490,13 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
         }
 
         if (ptr2 != value) {
-            path = WMALLOC(ptr2 - value + 1, NULL, 0);
+            path = (char*)WMALLOC(ptr2 - value + 1, NULL, 0);
             memcpy(path, value, ptr2 - value);
             path[ptr2 - value] = '\0';
             prefix = ptr2 + 1;
             prefixLen = (int)(ptr - ptr2 - 1);
         } else {
-            path = WMALLOC(2, NULL, 0);
+            path = (char*)WMALLOC(2, NULL, 0);
             memcpy(path, ".", 1);
             path[1] = '\0';
             prefix = value;
