@@ -57,6 +57,8 @@ struct WOLFSSHD_CONFIG {
     char* chrootDir;
     char* ciphers;
     char* hostKeyFile;
+    char* hostCertFile;
+    char* userCAKeysFile;
     char* hostKeyAlgos;
     char* kekAlgos;
     char* listenAddress;
@@ -290,6 +292,7 @@ void wolfSSHD_ConfigFree(WOLFSSHD_CONFIG* conf)
         FreeString(&current->listenAddress, heap);
         FreeString(&current->authKeysFile,  heap);
         FreeString(&current->hostKeyFile,   heap);
+        FreeString(&current->hostCertFile,  heap);
 
         WFREE(current, heap, DYNTYPE_SSHD);
         current = next;
@@ -324,9 +327,11 @@ enum {
     OPT_CHROOT_DIR              = 17,
     OPT_MATCH                   = 18,
     OPT_FORCE_CMD               = 19,
+    OPT_HOST_CERT               = 20,
+    OPT_TRUSTED_USER_CA_KEYS    = 21,
 };
 enum {
-    NUM_OPTIONS = 20
+    NUM_OPTIONS = 22
 };
 
 static const CONFIG_OPTION options[NUM_OPTIONS] = {
@@ -350,6 +355,8 @@ static const CONFIG_OPTION options[NUM_OPTIONS] = {
     {OPT_CHROOT_DIR,              "ChrootDirectory"},
     {OPT_MATCH,                   "Match"},
     {OPT_FORCE_CMD,               "ForceCommand"},
+    {OPT_HOST_CERT,               "HostCertificate"},
+    {OPT_TRUSTED_USER_CA_KEYS,    "TrustedUserCAKeys"},
 };
 
 /* returns WS_SUCCESS on success */
@@ -955,6 +962,10 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
             /* TODO: Add logic to check if file exists? */
             ret = wolfSSHD_ConfigSetHostKeyFile(*conf, value);
             break;
+        case OPT_HOST_CERT:
+            /* TODO: Add logic to check if file exists? */
+            ret = wolfSSHD_ConfigSetHostCertFile(*conf, value);
+            break;
         case OPT_PASSWORD_AUTH:
             ret = HandlePwAuth(*conf, value);
             break;
@@ -980,6 +991,10 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
             break;
         case OPT_FORCE_CMD:
             ret = HandleForcedCommand(*conf, full, fullSz);
+            break;
+        case OPT_TRUSTED_USER_CA_KEYS:
+            /* TODO: Add logic to check if file exists? */
+            ret = wolfSSHD_ConfigSetUserCAKeysFile(*conf, value);
             break;
         default:
             break;
@@ -1234,6 +1249,50 @@ char* wolfSSHD_ConfigGetHostKeyFile(const WOLFSSHD_CONFIG* conf)
     return ret;
 }
 
+char* wolfSSHD_ConfigGetHostCertFile(const WOLFSSHD_CONFIG* conf)
+{
+    char* ret = NULL;
+
+    if (conf != NULL) {
+        ret = conf->hostCertFile;
+    }
+
+    return ret;
+}
+
+char* wolfSSHD_ConfigGetUserCAKeysFile(const WOLFSSHD_CONFIG* conf)
+{
+    char* ret = NULL;
+
+    if (conf != NULL) {
+        ret = conf->userCAKeysFile;
+    }
+
+    return ret;
+}
+
+static int SetFileString(char** dst, const char* src, void* heap)
+{
+    int ret = WS_SUCCESS;
+
+    if (dst == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (*dst != NULL) {
+            FreeString(dst, heap);
+            *dst = NULL;
+        }
+
+        if (src != NULL) {
+            ret = CreateString(dst, src, (int)WSTRLEN(src), heap);
+        }
+    }
+
+    return ret;
+}
+
 int wolfSSHD_ConfigSetHostKeyFile(WOLFSSHD_CONFIG* conf, const char* file)
 {
     int ret = WS_SUCCESS;
@@ -1243,15 +1302,37 @@ int wolfSSHD_ConfigSetHostKeyFile(WOLFSSHD_CONFIG* conf, const char* file)
     }
 
     if (ret == WS_SUCCESS) {
-        if (conf->hostKeyFile != NULL) {
-            FreeString(&conf->hostKeyFile, conf->heap);
-            conf->hostKeyFile = NULL;
-        }
+        ret = SetFileString(&conf->hostKeyFile, file, conf->heap);
+    }
 
-        if (file != NULL) {
-            ret = CreateString(&conf->hostKeyFile, file,
-                                        (int)WSTRLEN(file), conf->heap);
-        }
+    return ret;
+}
+
+int wolfSSHD_ConfigSetHostCertFile(WOLFSSHD_CONFIG* conf, const char* file)
+{
+    int ret = WS_SUCCESS;
+
+    if (conf == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = SetFileString(&conf->hostCertFile, file, conf->heap);
+    }
+
+    return ret;
+}
+
+int wolfSSHD_ConfigSetUserCAKeysFile(WOLFSSHD_CONFIG* conf, const char* file)
+{
+    int ret = WS_SUCCESS;
+
+    if (conf == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = SetFileString(&conf->userCAKeysFile, file, conf->heap);
     }
 
     return ret;

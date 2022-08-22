@@ -272,7 +272,40 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
             }
         }
     }
+#ifdef WOLFSSH_OSSH_CERTS
+    if (ret == WS_SUCCESS) {
+        /* TODO: Create a helper function that uses a file instead. */
+        char* hostCert = wolfSSHD_ConfigGetHostCertFile(conf);
 
+        if (hostCert != NULL) {
+            FILE* f;
+
+            f = XFOPEN(hostCert, "rb");
+            if (f == NULL) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Unable to open host certificate.");
+                ret = WS_BAD_ARGUMENT;
+            }
+            else {
+                byte* data;
+                int   dataSz = 4096;
+
+                data = (byte*)WMALLOC(dataSz, NULL, 0);
+
+                dataSz = (int)XFREAD(data, 1, dataSz, f);
+                XFCLOSE(f);
+
+                if (wolfSSH_CTX_UseOsshCert_buffer(*ctx, data, dataSz) < 0) {
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Failed to use host certificate.");
+                    ret = WS_BAD_ARGUMENT;
+                }
+
+                WFREE(data, NULL, 0);
+            }
+        }
+    }
+#endif /* WOLFSSH_OSSH_CERTS */
     /* @TODO Load in host public key */
 
     /* Set allowed connection type, i.e. public key / password */
