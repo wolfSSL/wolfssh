@@ -43,6 +43,7 @@
 #endif
 
 #ifdef HAVE_FIPS
+#include <wolfssl/wolfcrypt/fips_test.h>
 static void myFipsCb(int ok, int err, const char* hash)
 {
     printf("in my Fips callback, ok = %d, err = %d\n", ok, err);
