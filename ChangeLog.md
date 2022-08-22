@@ -1,3 +1,19 @@
+# wolfSSH v1.4.11 (Aug 22, 2022)
+ 
+## New Feature Additions and Improvements
+- Alpha version of SSHD implementation (--enable-sshd)
+- ECDSA key generation wrapper
+- Espressif port and component install
+- Improvements to detection of ECC RNG requirement
+
+## Fixes
+- Handle receiving extended data type with SCP connections
+- Multiple non blocking fixes in SSH and SFTP use cases
+- Fix for handling '.' character in file name with SFTP
+- Windows build fix for SFTP with log timestamps enabled
+- Fix to handle listing large directories with SFTP LS function
+- Fix for checking path length when cleaning it (SFTP/SCP)
+
 # wolfSSH v1.4.10 (May 13, 2022)
  
 ## New Feature Additions and Improvements
