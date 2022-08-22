@@ -2194,6 +2194,97 @@ int wolfSSH_ChannelGetEof(WOLFSSH_CHANNEL* channel)
 }
 
 
+#if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
+    !defined(NO_WOLFSSH_SERVER)
+/*
+ * Paths starting with a slash are absolute, rooted at root. Any path that
+ * doesn't have a starting slash is assumed to be relative to the current
+ * path. If the path is empty, return the default path.
+ *
+ * The path "/." is stripped out. The path "/.." strips out the previous
+ * path value. The root path, "/", is always present.
+ *
+ * Example: "/home/fred/frob/frizz/../../../barney/bar/baz/./././../.."
+ * will return "/home/barney". "/../.." will return "/". "." will return
+ * currentPath.
+ *
+ * Note, this function does not care about OS and filesystem issues. The
+ * SFTP protocol describes how paths are handled in SFTP. Specialized
+ * behaviors are handled when actually calling the OS functions. Paths
+ * are further massaged there. For example, the C: drive is treated as
+ * the path "/C:", and is a directory like any other.
+ *
+ * @param currentPath RealPath of the current working directory
+ * @param defaultPath RealPath of the default directory, usually user's
+ * @param in          requested new path
+ * @param out         output of real path cleanup
+ * @param outSz       size in bytes of buffer 'out'
+ * @return            WS_SUCCESS, WS_BAD_ARGUMENT, or WS_INVALID_PATH_E
+ */
+int wolfSSH_RealPath(const char* currentPath, const char* defaultPath,
+        char* in, char* out, word32 outSz)
+{
+    char* tail = NULL;
+    char* seg;
+    word32 inSz, segSz, curSz;
+
+    if (currentPath == NULL || defaultPath == NULL ||
+            in == NULL || out == NULL || outSz == 0)
+        return WS_BAD_ARGUMENT;
+
+    WMEMSET(out, 0, outSz);
+    inSz = (word32)WSTRLEN(in);
+    if (inSz == 0) {
+        WSTRNCPY(out, defaultPath, outSz);
+    }
+    else if (in[0] == '/') {
+        out[0] = '/';
+    }
+    else {
+        WSTRNCPY(out, currentPath, outSz);
+    }
+    out[outSz - 1] = 0;
+    curSz = (word32)WSTRLEN(out);
+
+    for (seg = WSTRTOK(in, "/", &tail); seg; seg = WSTRTOK(NULL, "/", &tail)) {
+        segSz = (word32)WSTRLEN(seg);
+
+        /* Try to match "." */
+        if (segSz == 1 && seg[0] == '.') {
+            /* Do nothing. Keep current directory. */
+        }
+        /* Try to match ".." */
+        else if (segSz == 2 && seg[0] == '.' && seg[1] == '.') {
+            char* prev = strrchr(out, '/');
+
+            if (prev != NULL) {
+                if (prev != out) {
+                    prev[0] = 0;
+                    curSz = (word32)WSTRLEN(out);
+                }
+                else {
+                    /* preserve the root / */
+                    prev[1] = 0;
+                    curSz = 1;
+                }
+            }
+        }
+        /* Everything else is copied */
+        else {
+            if (curSz != 1) {
+                WSTRNCAT(out, "/", outSz - curSz);
+                curSz++;
+            }
+            WSTRNCAT(out, seg, outSz - curSz);
+            curSz += segSz;
+        }
+    }
+
+    return WS_SUCCESS;
+}
+#endif /* WOLFSSH_SFTP || WOLFSSH_SCP */
+
+
 #ifdef WOLFSSH_SHOW_SIZES
 
 void wolfSSH_ShowSizes(void)
