@@ -895,6 +895,68 @@ static void test_wstrcat(void)
 }
 
 
+#if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
+    !defined(NO_WOLFSSH_SERVER)
+struct RealPathTestCase {
+    const char* in;
+    const char* exp;
+};
+
+struct RealPathTestCase realPathTestCases[] = {
+    { ".", "/C:/Users/fred" },
+    { "", "/C:/Users/fred" },
+    { "/C:/Users/fred/..", "/C:/Users" },
+    { "..", "/C:/Users" },
+    { "../..", "/C:" },
+    { "../barney", "/C:/Users/barney" },
+    { "/C:/Users/..", "/C:" },
+    { "/C:/..", "/" },
+    { "/C:/../../../../../../../..", "/" },
+    { "/", "/" },
+    { "/C:/Users/fred/../..", "/C:" },
+    { "/C:/Users/fred/././././.", "/C:/Users/fred" },
+    { "/C:/Users/fred/../././..", "/C:" },
+    { "./.ssh", "/C:/Users/fred/.ssh" },
+    { "./.ssh/../foo", "/C:/Users/fred/foo" },
+    { "./.ssh/../foo", "/C:/Users/fred/foo" },
+    { "///home//////////fred///", "/home/fred" },
+    { "/home/C:/ok", "/home/C:/ok" },
+    { "/home/fred/frob/frizz/../../../barney/bar/baz/./././../..",
+        "/home/barney" },
+};
+const char* defaultPath = "/C:/Users/fred";
+
+static void test_wolfSSH_RealPath(void)
+{
+    struct RealPathTestCase* tc;
+    char testPath[128];
+    char checkPath[128];
+    word32 testCount =
+        (sizeof realPathTestCases)/(sizeof(struct RealPathTestCase));
+    word32 i;
+    int err;
+
+    for (i = 0, tc = realPathTestCases; i < testCount; i++, tc++) {
+        WSTRNCPY(testPath, tc->in, sizeof(testPath) - 1);
+        testPath[sizeof(testPath) - 1] = 0;
+        WMEMSET(checkPath, 0, sizeof checkPath);
+        err = wolfSSH_RealPath(defaultPath, defaultPath, testPath,
+                checkPath, sizeof checkPath);
+        if (err || WSTRCMP(tc->exp, checkPath) != 0) {
+            printf("RealPath failure (case %u: %d)\n"
+                   "    defaultPath: %s\n"
+                   "          input: %s\n"
+                   "       expected: %s\n"
+                   "         output: %s\n", i, err,
+                   defaultPath, tc->in, tc->exp, checkPath);
+        }
+    }
+}
+#else
+static void test_wolfSSH_RealPath(void) { ; }
+#endif
+
+
 int main(void)
 {
     AssertIntEQ(wolfSSH_Init(), WS_SUCCESS);
@@ -907,6 +969,7 @@ int main(void)
     test_wolfSSH_SetUsername();
     test_wolfSSH_ConvertConsole();
     test_wolfSSH_CTX_UsePrivateKey_buffer();
+    test_wolfSSH_RealPath();
 
     /* SCP tests */
     test_wolfSSH_SCP_CB();
