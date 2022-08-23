@@ -747,7 +747,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                 if (agentListenFd > maxFd)
                     maxFd = agentListenFd;
             }
-            if (threadCtx->agentCbCtx.state == AGENT_STATE_CONNECTED) {
+            if (agentFd >= 0 && threadCtx->agentCbCtx.state == AGENT_STATE_CONNECTED) {
                 FD_SET(agentFd, &readFds);
                 if (agentFd > maxFd)
                     maxFd = agentFd;
@@ -759,7 +759,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                 if (fwdListenFd > maxFd)
                     maxFd = fwdListenFd;
             }
-            if (threadCtx->fwdCbCtx.state == FWD_STATE_CONNECTED) {
+            if (fwdFd >= 0 && threadCtx->fwdCbCtx.state == FWD_STATE_CONNECTED) {
                 FD_SET(fwdFd, &readFds);
                 if (fwdFd > maxFd)
                     maxFd = fwdFd;
@@ -918,7 +918,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
             }
             #endif
             #ifdef WOLFSSH_AGENT
-            if (threadCtx->agentCbCtx.state == AGENT_STATE_CONNECTED) {
+            if (agentFd >= 0 && threadCtx->agentCbCtx.state == AGENT_STATE_CONNECTED) {
                 if (FD_ISSET(agentFd, &readFds)) {
                     #ifdef SHELL_DEBUG
                         printf("agentFd set in readfd\n");
@@ -979,7 +979,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
             }
             #endif
             #ifdef WOLFSSH_FWD
-            if (threadCtx->fwdCbCtx.state == FWD_STATE_CONNECTED) {
+            if (fwdFd >= 0 && threadCtx->fwdCbCtx.state == FWD_STATE_CONNECTED) {
                 if (FD_ISSET(fwdFd, &readFds)) {
                     #ifdef SHELL_DEBUG
                         printf("fwdFd set in readfd\n");
