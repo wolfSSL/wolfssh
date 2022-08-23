@@ -780,6 +780,11 @@ int main(int argc, char** argv)
 
             case 'p':
                 if (ret == WS_SUCCESS) {
+                    if (myoptarg == NULL) {
+                        ret = WS_BAD_ARGUMENT;
+                        break;
+                    }
+
                     ret = XATOI(myoptarg);
                     if (ret < 0) {
                         fprintf(stderr, "Issue parsing port number %s\n",

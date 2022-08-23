@@ -1361,6 +1361,8 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
                 break;
 
             case 'p':
+                if (myoptarg == NULL)
+                    err_sys("null argument found");
                 port = (word16)atoi(myoptarg);
                 #if !defined(NO_MAIN_DRIVER) || defined(USE_WINDOWS_API)
                     if (port == 0)
