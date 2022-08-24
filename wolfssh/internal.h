@@ -240,6 +240,12 @@ extern "C" {
     #define WOLFSSH_NO_AEAD
 #endif
 
+/* FPKI support turned off if wolfSSL linking to is not compiled with FPKI */
+#if !defined(WOLFSSL_FPKI)
+    #undef  WOLFSSH_NO_FPKI
+    #define WOLFSSH_NO_FPKI
+#endif
+
 
 WOLFSSH_LOCAL const char* GetErrorString(int);
 
