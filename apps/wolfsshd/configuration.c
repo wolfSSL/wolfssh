@@ -506,47 +506,79 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
 
         d = opendir(path);
         if (d) {
+            word32 fileCount = 0, i, j;
+            char** fileNames = NULL;
+
+            /* Count up the number of files */
             while ((dir = readdir(d)) != NULL) {
-                if (dir->d_type == DT_DIR) {
-                    /* Skip sub-directories */
-                    continue;
-                }
-                else {
-                    /* Check if filename prefix matches */
-                    if (prefixLen > 0) {
-                        if ((int)WSTRLEN(dir->d_name) <= prefixLen) {
-                            continue;
-                        }
-                        if (WSTRNCMP(dir->d_name, prefix, prefixLen) != 0) {
-                            continue;
-                        }
-                    }
-                    if (postfix) {
-                        /* Skip if file is too short */
-                        if (WSTRLEN(dir->d_name) <= WSTRLEN(postfix)) {
-                            continue;
-                        }
-                        if (WSTRNCMP(dir->d_name + WSTRLEN(dir->d_name) -
-                                    WSTRLEN(postfix), postfix, WSTRLEN(postfix))
-                                == 0) {
-                            snprintf(filepath, PATH_MAX, "%s/%s", path,
-                                     dir->d_name);
-                        }
-                        else {
-                            /* Not a match */
-                            continue;
-                        }
-                    }
-                    else {
-                        snprintf(filepath, PATH_MAX, "%s/%s", path,
-                                 dir->d_name);
-                    }
-                    ret = wolfSSHD_ConfigLoad(conf, filepath);
-                    if (ret != WS_SUCCESS) {
-                        return ret;
-                    }
+                /* Skip sub-directories */
+                if (dir->d_type != DT_DIR) {
+                    fileCount++;
                 }
             }
+            rewinddir(d);
+
+            if (fileCount > 0) {
+                fileNames = (char**)WMALLOC(fileCount * sizeof(char*), NULL, 0);
+            }
+
+            i = 0;
+            while ((dir = readdir(d)) != NULL && i < fileCount) {
+                /* Skip sub-directories */
+                if (dir->d_type != DT_DIR) {
+                    /* Insert in string order */
+                    for (j = 0; j < i; j++) {
+                        if (WSTRCMP(dir->d_name, fileNames[j]) < 0) {
+                            WMEMMOVE(fileNames+j+1, fileNames+j,
+                                    (i - j)*sizeof(char*));
+                            break;
+                        }
+                    }
+                    fileNames[j] = dir->d_name;
+                    i++;
+                }
+            }
+
+            for (i = 0; i < fileCount; i++) {
+                /* Check if filename prefix matches */
+                if (prefixLen > 0) {
+                    if ((int)WSTRLEN(fileNames[i]) <= prefixLen) {
+                        continue;
+                    }
+                    if (WSTRNCMP(fileNames[i], prefix, prefixLen) != 0) {
+                        continue;
+                    }
+                }
+                if (postfix) {
+                    /* Skip if file is too short */
+                    if (WSTRLEN(fileNames[i]) <= WSTRLEN(postfix)) {
+                        continue;
+                    }
+                    if (WSTRNCMP(fileNames[i] + WSTRLEN(fileNames[i]) -
+                                WSTRLEN(postfix), postfix, WSTRLEN(postfix))
+                            == 0) {
+                        snprintf(filepath, PATH_MAX, "%s/%s", path,
+                                 fileNames[i]);
+                    }
+                    else {
+                        /* Not a match */
+                        continue;
+                    }
+                }
+                else {
+                    snprintf(filepath, PATH_MAX, "%s/%s", path,
+                             fileNames[i]);
+                }
+                ret = wolfSSHD_ConfigLoad(conf, filepath);
+                if (ret != WS_SUCCESS) {
+                    closedir(d);
+                    WFREE(fileNames, NULL, 0);
+                    WFREE(filepath, NULL, 0);
+                    return ret;
+                }
+            }
+            WFREE(fileNames, NULL, 0);
+            closedir(d);
         }
         else {
             /* Bad directory */
