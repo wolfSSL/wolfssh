@@ -1259,6 +1259,14 @@ void wolfSSH_SetUserAuth(WOLFSSH_CTX* ctx, WS_CallbackUserAuth cb)
 }
 
 
+void wolfSSH_SetUserAuthTypes(WOLFSSH_CTX* ctx, WS_CallbackUserAuthTypes cb)
+{
+    if (ctx != NULL) {
+        ctx->userAuthTypesCb = cb;
+    }
+}
+
+
 void wolfSSH_SetUserAuthCtx(WOLFSSH* ssh, void* userAuthCtx)
 {
     if (ssh != NULL) {

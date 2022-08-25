@@ -478,6 +478,7 @@ static int HandlePwAuth(WOLFSSHD_CONFIG* conf, const char* value)
 
     if (ret == WS_SUCCESS) {
         if (WSTRCMP(value, "no") == 0) {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] password authentication disabled");
             conf->passwordAuth = 0;
         }
         else if (WSTRCMP(value, "yes") == 0) {

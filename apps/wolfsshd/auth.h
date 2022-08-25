@@ -30,6 +30,7 @@ USER_NODE* AddNewUser(USER_NODE* list, byte type, const byte* username,
 
 void SetAuthKeysPattern(const char* pattern);
 int DefaultUserAuth(byte authType, WS_UserAuthData* authData, void* ctx);
+int DefaultUserAuthTypes(WOLFSSH* ssh, void* ctx);
 
 typedef struct WOLFSSHD_AUTH WOLFSSHD_AUTH;
 

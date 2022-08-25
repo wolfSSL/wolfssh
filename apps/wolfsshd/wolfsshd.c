@@ -187,6 +187,47 @@ static void CleanupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
     (void)conf;
 }
 
+#ifndef NO_FILESYSTEM
+static void freeBufferFromFile(byte* buf, void* heap)
+{
+    if (buf != NULL)
+        WFREE(buf, heap, DYNTYPE_SSHD);
+    (void)heap;
+}
+
+
+/* set bufSz to size wanted if too small and buf is null */
+static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap)
+{
+    FILE* file;
+    byte* buf = NULL;
+    word32 fileSz;
+    word32 readSz;
+
+    if (fileName == NULL) return NULL;
+
+    if (WFOPEN(&file, fileName, "rb") != 0)
+        return NULL;
+    fseek(file, 0, XSEEK_END);
+    fileSz = (word32)ftell(file);
+    rewind(file);
+
+    buf = (byte*)WMALLOC(fileSz + 1, heap, DYNTYPE_SSHD);
+    if (buf != NULL) {
+        readSz = (word32)fread(buf, 1, fileSz, file);
+        if (readSz < fileSz) {
+            fclose(file);
+            WFREE(buf, heap, DYNTYPE_SSHD);
+            return NULL;
+        }
+        *bufSz = readSz;
+        fclose(file);
+    }
+
+    (void)heap;
+    return buf;
+}
+#endif /* NO_FILESYSTEM */
 
 /* Initializes and sets up the WOLFSSH_CTX struct based on the configure options
  * return WS_SUCCESS on success
@@ -198,6 +239,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
     DerBuffer* der = NULL;
     byte* privBuf;
     word32 privBufSz;
+    void* heap = NULL;
 
     /* create a new WOLFSSH_CTX */
     *ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
@@ -230,23 +272,18 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
             ret = WS_BAD_ARGUMENT;
         }
         else {
-            FILE* f;
+            byte* data;
+            word32 dataSz = 0;
 
-            f = XFOPEN(hostKey, "rb");
-            if (f == NULL) {
+            data = getBufferFromFile(hostKey, &dataSz, heap);
+            if (data == NULL) {
                 wolfSSH_Log(WS_LOG_ERROR,
-                        "[SSHD] Unable to open host private key");
-                ret = WS_BAD_ARGUMENT;
+                    "[SSHD] Error reading host key file.");
+                ret = WS_MEMORY_E;
+
             }
-            else {
-                byte* data;
-                int   dataSz = 4096;
 
-                data = (byte*)WMALLOC(dataSz, NULL, 0);
-
-                dataSz = (int)XFREAD(data, 1, dataSz, f);
-                XFCLOSE(f);
-
+            if (ret == WS_SUCCESS) {
                 if (wc_PemToDer(data, dataSz, PRIVATEKEY_TYPE, &der, NULL,
                                 NULL, NULL) != 0) {
                     wolfSSH_Log(WS_LOG_DEBUG, "[SSHD] Failed to convert host "
@@ -267,49 +304,106 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
                     ret = WS_BAD_ARGUMENT;
                 }
 
-                WFREE(data, NULL, 0);
+                freeBufferFromFile(data, heap);
                 wc_FreeDer(&der);
             }
         }
     }
-#ifdef WOLFSSH_OSSH_CERTS
+
+#if defined(WOLFSSH_OSSH_CERTS) || defined(WOLFSSH_CERTS)
     if (ret == WS_SUCCESS) {
         /* TODO: Create a helper function that uses a file instead. */
         char* hostCert = wolfSSHD_ConfigGetHostCertFile(conf);
 
         if (hostCert != NULL) {
-            FILE* f;
+            byte*  data;
+            word32 dataSz = 0;
 
-            f = XFOPEN(hostCert, "rb");
-            if (f == NULL) {
+            data = getBufferFromFile(hostCert, &dataSz, heap);
+            if (data == NULL) {
                 wolfSSH_Log(WS_LOG_ERROR,
-                        "[SSHD] Unable to open host certificate.");
-                ret = WS_BAD_ARGUMENT;
+                    "[SSHD] Error reading host key file.");
+                ret = WS_MEMORY_E;
+
             }
-            else {
-                byte* data;
-                int   dataSz = 4096;
 
-                data = (byte*)WMALLOC(dataSz, NULL, 0);
-
-                dataSz = (int)XFREAD(data, 1, dataSz, f);
-                XFCLOSE(f);
-
+            if (ret == WS_SUCCESS) {
+            #ifdef WOLFSSH_OPENSSH_CERTS
                 if (wolfSSH_CTX_UseOsshCert_buffer(*ctx, data, dataSz) < 0) {
                     wolfSSH_Log(WS_LOG_ERROR,
                         "[SSHD] Failed to use host certificate.");
                     ret = WS_BAD_ARGUMENT;
                 }
+            #endif
+            #ifdef WOLFSSH_CERTS
+                if (ret == WS_SUCCESS || ret == WS_BAD_ARGUMENT) {
+                    ret = wolfSSH_CTX_UseCert_buffer(*ctx, data, dataSz,
+                        WOLFSSH_FORMAT_PEM);
+                    if (ret != WS_SUCCESS) {
+                        ret = wolfSSH_CTX_UseCert_buffer(*ctx, data, dataSz,
+                            WOLFSSH_FORMAT_ASN1);
+                    }
+                    if (ret != WS_SUCCESS) {
+                        wolfSSH_Log(WS_LOG_ERROR,
+                            "[SSHD] Failed to load in host certificate.");
+                    }
+                }
+            #endif
 
-                WFREE(data, NULL, 0);
+                freeBufferFromFile(data, heap);
             }
         }
     }
-#endif /* WOLFSSH_OSSH_CERTS */
+#endif /* WOLFSSH_OSSH_CERTS || WOLFSSH_CERTS */
+
+#ifdef WOLFSSH_CERTS
+    if (ret == WS_SUCCESS) {
+        char* caCert = wolfSSHD_ConfigGetUserCAKeysFile(conf);
+        if (caCert != NULL) {
+            byte*  data;
+            word32 dataSz = 0;
+
+
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Using CA keys file %s", caCert);
+            data = getBufferFromFile(caCert, &dataSz, heap);
+            if (data == NULL) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Error reading CA cert file.");
+                ret = WS_MEMORY_E;
+
+            }
+
+            if (ret == WS_SUCCESS) {
+                ret = wolfSSH_CTX_AddRootCert_buffer(*ctx, data, dataSz,
+                    WOLFSSH_FORMAT_PEM);
+                if (ret != WS_SUCCESS) {
+                    ret = wolfSSH_CTX_AddRootCert_buffer(*ctx, data, dataSz,
+                        WOLFSSH_FORMAT_ASN1);
+                }
+                if (ret != WS_SUCCESS) {
+                #ifdef WOLFSSH_OPENSSH_CERTS
+                    wolfSSH_Log(WS_LOG_INFO,
+                        "[SSHD] Continuing on in case CA is openssh "
+                        "style.");
+                    ret = WS_SUCCESS;
+                #else
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Failed to load in CA certificate.");
+                #endif
+                }
+
+                freeBufferFromFile(data, heap);
+            }
+        }
+    }
+#endif
+    wolfSSH_SetUserAuthTypes(*ctx, DefaultUserAuthTypes);
+
     /* @TODO Load in host public key */
 
     /* Set allowed connection type, i.e. public key / password */
 
+    (void)heap;
     return ret;
 }
 
