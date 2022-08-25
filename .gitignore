@@ -58,6 +58,7 @@ examples/scpclient/wolfscp
 
 # applications
 apps/wolfsshd/wolfsshd
+apps/wolfsshd/test/test_configuration
 
 # test output
 tests/*.test

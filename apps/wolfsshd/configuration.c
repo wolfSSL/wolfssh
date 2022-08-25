@@ -59,7 +59,7 @@ struct WOLFSSHD_CONFIG {
     char* authKeysFile;
     long  loginTimer;
     word16 port;
-    byte usePrivilegeSeparation;
+    byte usePrivilegeSeparation:2;
     byte passwordAuth:1;
     byte pubKeyAuth:1;
     byte permitRootLogin:1;
@@ -445,7 +445,7 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
     /* Ignore trailing whitespace */
     ptr = value + WSTRLEN(value) - 1;
     while (ptr != value) {
-        if (!WISSPACE(*ptr)) {
+        if (WISSPACE(*ptr)) {
             ptr--;
         }
         else {
@@ -474,7 +474,8 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
 
     /* Use wildcard */
     if (found) {
-#ifdef __unix__
+#if defined(__unix__) || defined(__unix) || \
+    (defined(__APPLE__) && defined(__MACH__))
         int ret;
         struct dirent *dir;
         DIR *d;
