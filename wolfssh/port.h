@@ -1217,8 +1217,9 @@ extern "C" {
 
     /* returns 0 on success */
     #define WOPENDIR(fs,h,c,d)  ((*(c) = opendir((d))) == NULL)
-    #define WCLOSEDIR(d) closedir(*(d))
-    #define WREADDIR(d)  readdir(*(d))
+    #define WCLOSEDIR(d)  closedir(*(d))
+    #define WREADDIR(d)   readdir(*(d))
+    #define WREWINDDIR(d) rewinddir(*(d))
 #endif /* NO_WOLFSSH_DIR */
 #endif
 #endif /* WOLFSSH_SFTP or WOLFSSH_SCP */

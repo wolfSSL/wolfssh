@@ -35,6 +35,7 @@
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/log.h>
+#include <wolfssh/port.h>
 #include <wolfssl/wolfcrypt/wc_port.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
 
@@ -478,7 +479,7 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
     (defined(__APPLE__) && defined(__MACH__))
         int ret;
         struct dirent *dir;
-        DIR *d;
+        WDIR d;
         char *path;
         char *filepath = (char*)WMALLOC(PATH_MAX, NULL, 0);
 
@@ -504,26 +505,25 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
             prefixLen = (int)(ptr - value);
         }
 
-        d = opendir(path);
-        if (d) {
+        if (!WOPENDIR(NULL, conf->heap, &d, path)) {
             word32 fileCount = 0, i, j;
             char** fileNames = NULL;
 
             /* Count up the number of files */
-            while ((dir = readdir(d)) != NULL) {
+            while ((dir = WREADDIR(&d)) != NULL) {
                 /* Skip sub-directories */
                 if (dir->d_type != DT_DIR) {
                     fileCount++;
                 }
             }
-            rewinddir(d);
+            WREWINDDIR(&d);
 
             if (fileCount > 0) {
                 fileNames = (char**)WMALLOC(fileCount * sizeof(char*), NULL, 0);
             }
 
             i = 0;
-            while ((dir = readdir(d)) != NULL && i < fileCount) {
+            while ((dir = WREADDIR(&d)) != NULL && i < fileCount) {
                 /* Skip sub-directories */
                 if (dir->d_type != DT_DIR) {
                     /* Insert in string order */
@@ -557,7 +557,7 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
                     if (WSTRNCMP(fileNames[i] + WSTRLEN(fileNames[i]) -
                                 WSTRLEN(postfix), postfix, WSTRLEN(postfix))
                             == 0) {
-                        snprintf(filepath, PATH_MAX, "%s/%s", path,
+                        WSNPRINTF(filepath, PATH_MAX, "%s/%s", path,
                                  fileNames[i]);
                     }
                     else {
@@ -566,19 +566,19 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
                     }
                 }
                 else {
-                    snprintf(filepath, PATH_MAX, "%s/%s", path,
+                    WSNPRINTF(filepath, PATH_MAX, "%s/%s", path,
                              fileNames[i]);
                 }
                 ret = wolfSSHD_ConfigLoad(conf, filepath);
                 if (ret != WS_SUCCESS) {
-                    closedir(d);
+                    WCLOSEDIR(&d);
                     WFREE(fileNames, NULL, 0);
                     WFREE(filepath, NULL, 0);
                     return ret;
                 }
             }
             WFREE(fileNames, NULL, 0);
-            closedir(d);
+            WCLOSEDIR(&d);
         }
         else {
             /* Bad directory */
@@ -759,7 +759,7 @@ int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename)
 
     f = XFOPEN(filename, "rb");
     if (f == XBADFILE) {
-        wolfSSH_Log(WS_LOG_ERROR, "Unable to open SSHD config file %s\n",
+        wolfSSH_Log(WS_LOG_ERROR, "Unable to open SSHD config file %s",
                 filename);
         return BAD_FUNC_ARG;
     }
