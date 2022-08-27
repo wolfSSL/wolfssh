@@ -22,8 +22,8 @@ On some systems the optional ldconfig command is needed after installing.
 To use the key generation function in wolfSSH, wolfSSL will need to be
 configured with keygen: `--enable-keygen`.
 
-When using X.509 certificates for user authentication, wolfSSL must not be
-built without TLS enabled. wolfSSH uses wolfSSL's certificate manager system
+When using X.509 certificates for user authentication, wolfSSL must be
+built with TLS enabled. wolfSSH uses wolfSSL's certificate manager system
 for X.509, including OCSP lookups. To allow OCSP, add `--enable-ocsp` to the
 wolfSSL configure.
 
@@ -474,7 +474,7 @@ CERTIFICATE SUPPORT
 ===================
 
 wolfSSH can accept X.509 certificates in place of just public keys when
-authenticating a user. This feature is currently a work in process.
+authenticating a user.
 
 To compile wolfSSH with X.509 support, use the `--enable-certs` build option
 or define `WOLFSSH_CERTS`:
@@ -485,7 +485,15 @@ or define `WOLFSSH_CERTS`:
 To provide a CA root certificate to validate a user's certificate, give the
 echoserver the command line option `-a`.
 
-    $ ./examples/echoserver/echoserver -a ./keys/ca-cert.pem
+    $ ./examples/echoserver/echoserver -a ./keys/ca-ecc-cert.pem
 
 The echoserver and client have a fake user named "john" whose certificate
 will be used for authentication.
+
+An example echoserver / client connection using the example certificate
+john-cert.der would be:
+
+    $ ./examples/echoserver/echoserver -a ./keys/ca-ecc-cert.pem -K john:./keys/john-cert.der
+
+    $ ./examples/client/client -u john -J ./keys/john-cert.der -i ./keys/john-key.der
+

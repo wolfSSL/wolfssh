@@ -206,6 +206,7 @@ static byte isPrivate = 0;
 
 #ifdef WOLFSSH_CERTS
 #if 0
+/* compiled in for using RSA certificates instead of ECC certificate */
 static const byte publicKeyType[] = "x509v3-ssh-rsa";
 static const byte privateKeyType[] = "ssh-rsa";
 #else
