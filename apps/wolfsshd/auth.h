@@ -58,5 +58,7 @@ WOLFSSHD_AUTH* wolfSSHD_AuthCreateUser(void* heap, const WOLFSSHD_CONFIG* conf);
 int wolfSSHD_AuthFreeUser(WOLFSSHD_AUTH* auth);
 int wolfSSHD_AuthReducePermissions(WOLFSSHD_AUTH* auth);
 int wolfSSHD_AuthRaisePermissions(WOLFSSHD_AUTH* auth);
+int wolfSSHD_AuthReducePermissionsUser(WOLFSSHD_AUTH* auth, WUID_T uid,
+    WGID_T gid);
 long wolfSSHD_AuthGetGraceTime(const WOLFSSHD_AUTH* auth);
 #endif /* WOLFAUTH_H */

@@ -293,6 +293,41 @@ static int SFTP_Subsystem(WOLFSSH* ssh, WOLFSSHD_CONNECTION* conn)
     int error = WS_SUCCESS;
     WS_SOCKET_T sockfd;
     int select_ret = 0;
+    const char *userName;
+    struct passwd *p_passwd;
+
+    userName = wolfSSH_GetUsername(ssh);
+    if (userName == NULL) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failure get user name");
+        return WS_FATAL_ERROR;
+    }
+
+    /* temporarily elevate permissions to get users information */
+    if (wolfSSHD_AuthRaisePermissions(conn->auth) != WS_SUCCESS) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failure to raise permissions for auth");
+        return WS_FATAL_ERROR;
+    }
+
+    p_passwd = getpwnam((const char *)userName);
+    if (p_passwd == NULL) {
+        if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+            /* stop everything if not able to reduce permissions level */
+            exit(1);
+        }
+
+        return WS_FATAL_ERROR;
+    }
+
+    if (wolfSSHD_AuthReducePermissionsUser(conn->auth, p_passwd->pw_uid,
+        p_passwd->pw_gid) != WS_SUCCESS) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting user ID");
+        if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+            /* stop everything if not able to reduce permissions level */
+            exit(1);
+        }
+
+        return WS_FATAL_ERROR;
+    }
 
     sockfd = (WS_SOCKET_T)wolfSSH_get_fd(ssh);
     do {
@@ -381,6 +416,17 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
     }
 
     ChildRunning = 1;
+    if (wolfSSHD_AuthReducePermissionsUser(conn->auth, p_passwd->pw_uid,
+        p_passwd->pw_gid) != WS_SUCCESS) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting user ID");
+        if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+            /* stop everything if not able to reduce permissions level */
+            exit(1);
+        }
+
+        return WS_FATAL_ERROR;
+    }
+
     childPid = forkpty(&childFd, NULL, NULL, NULL);
     if (childPid < 0) {
         /* forkpty failed, so return */
@@ -390,6 +436,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
     }
     else if (childPid == 0) {
         /* Child process */
+        const char *args[] = {"-sh", NULL};
         char cmd[MAX_COMMAND_SZ];
         int ret;
 
@@ -406,38 +453,19 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
         /* default to /bin/sh if user shell is not set */
         WMEMSET(cmd, 0, sizeof(cmd));
         if (XSTRLEN(p_passwd->pw_shell) == 0) {
-        #if defined(__QNX__) || defined(__QNXNTO__)
-            XSNPRINTF(cmd, sizeof(cmd), "su - %s -c %s", userName,
-                "/bin/sh");
-        #else
-            XSNPRINTF(cmd, sizeof(cmd), "runuser -u %s -- %s", userName,
-                "/bin/sh");
-        #endif
+            XSNPRINTF(cmd, sizeof(cmd), "%s", "/bin/sh");
         }
         else {
-        #if defined(__QNX__) || defined(__QNXNTO__)
-            XSNPRINTF(cmd, sizeof(cmd), "su - %s -c %s", userName,
-                p_passwd->pw_shell);
-        #else
-            XSNPRINTF(cmd, sizeof(cmd), "runuser -u %s -- %s", userName,
-                p_passwd->pw_shell);
-        #endif
+            XSNPRINTF(cmd, sizeof(cmd),"%s", p_passwd->pw_shell);
         }
 
         errno = 0;
-        ret = system(cmd);
+        ret = execv(cmd, (char**)args);
         if (ret && errno) {
             perror("error executing shell command ");
             exit(1);
         }
         exit(0); /* exit child process and close down SSH connection */
-    }
-
-    if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
-        /* stop everything if not able to reduce permissions level */
-        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue reducing permissions level,"
-            " exiting now");
-        exit(1);
     }
 
     sshFd = wolfSSH_get_fd(ssh);
