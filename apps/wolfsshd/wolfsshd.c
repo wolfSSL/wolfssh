@@ -679,11 +679,22 @@ static void* HandleConnection(void* arg)
         /* check for chroot set */
         cmd = wolfSSHD_ConfigGetChroot(usrConf);
         if (cmd != NULL) {
-            if (chroot(cmd) != 0) {
-                wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] chroot failed to path  %s", cmd);
+            if (wolfSSHD_AuthRaisePermissions(conn->auth) != WS_SUCCESS) {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failure to raise permissions "
+                    "for auth");
                 ret = WS_FATAL_ERROR;
             }
+            else {
+                if (chroot(cmd) != 0) {
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] chroot failed to path  %s", cmd);
+                    ret = WS_FATAL_ERROR;
+                }
+
+                if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+                    exit(1);
+                }
+        }
 
         #ifdef WOLFSSH_SFTP
             if (ret == WS_SFTP_COMPLETE) {

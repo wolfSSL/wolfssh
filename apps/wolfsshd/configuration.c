@@ -255,12 +255,6 @@ static WOLFSSHD_CONFIG* wolfSSHD_ConfigCopy(WOLFSSHD_CONFIG* conf)
                                         newConf->heap);
         }
 
-        if (ret == WS_SUCCESS && conf->chrootDir) {
-            ret = CreateString(&newConf->chrootDir, conf->chrootDir,
-                                        (int)WSTRLEN(conf->chrootDir),
-                                        newConf->heap);
-        }
-
         if (ret == WS_SUCCESS) {
             newConf->loginTimer   = conf->loginTimer;
             newConf->port         = conf->port;
@@ -286,8 +280,14 @@ void wolfSSHD_ConfigFree(WOLFSSHD_CONFIG* conf)
         WOLFSSHD_CONFIG* next = current->next;
         heap = current->heap;
 
-        FreeString(&current->authKeysFile, heap);
-        FreeString(&current->hostKeyFile, heap);
+        FreeString(&current->banner,    heap);
+        FreeString(&current->chrootDir, heap);
+        FreeString(&current->ciphers,   heap);
+        FreeString(&current->kekAlgos,  heap);
+        FreeString(&current->hostKeyAlgos,  heap);
+        FreeString(&current->listenAddress, heap);
+        FreeString(&current->authKeysFile,  heap);
+        FreeString(&current->hostKeyFile,   heap);
 
         WFREE(current, heap, DYNTYPE_SSHD);
         current = next;
@@ -321,7 +321,7 @@ enum {
     OPT_INCLUDE                 = 16,
     OPT_CHROOT_DIR              = 17,
     OPT_MATCH                   = 18,
-    OPT_FORCE_CMD              = 19,
+    OPT_FORCE_CMD               = 19,
 };
 enum {
     NUM_OPTIONS = 20
