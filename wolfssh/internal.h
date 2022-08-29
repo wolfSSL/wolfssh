@@ -42,6 +42,9 @@
 #ifdef WOLFSSH_AGENT
     #include <wolfssh/agent.h>
 #endif /* WOLFSSH_AGENT */
+#ifdef WOLFSSH_CERTS
+    #include <wolfssh/certman.h>
+#endif /* WOLFSSH_CERTS */
 
 
 #if !defined (ALIGN16)
@@ -237,6 +240,12 @@ extern "C" {
     #define WOLFSSH_NO_AEAD
 #endif
 
+/* FPKI support turned off if wolfSSL linking to is not compiled with FPKI */
+#if !defined(WOLFSSL_FPKI)
+    #undef  WOLFSSH_NO_FPKI
+    #define WOLFSSH_NO_FPKI
+#endif
+
 
 WOLFSSH_LOCAL const char* GetErrorString(int);
 
@@ -280,6 +289,10 @@ enum {
     ID_ECDSA_SHA2_NISTP256,
     ID_ECDSA_SHA2_NISTP384,
     ID_ECDSA_SHA2_NISTP521,
+    ID_X509V3_SSH_RSA,
+    ID_X509V3_ECDSA_SHA2_NISTP256,
+    ID_X509V3_ECDSA_SHA2_NISTP384,
+    ID_X509V3_ECDSA_SHA2_NISTP521,
 
     /* Service IDs */
     ID_SERVICE_USERAUTH,
@@ -395,6 +408,7 @@ struct WOLFSSH_CTX {
     WS_CallbackIORecv ioRecvCb;       /* I/O Receive Callback */
     WS_CallbackIOSend ioSendCb;       /* I/O Send Callback */
     WS_CallbackUserAuth userAuthCb;   /* User Authentication Callback */
+    WS_CallbackUserAuthResult userAuthResultCb; /* User Authentication Result */
     WS_CallbackHighwater highwaterCb; /* Data Highwater Mark Callback */
     WS_CallbackGlobalReq globalReqCb; /* Global Request Callback */
     WS_CallbackReqSuccess reqSuccessCb; /* Global Request Success Callback */
@@ -411,6 +425,9 @@ struct WOLFSSH_CTX {
     WS_CallbackFwd fwdCb;             /* WOLFSSH-FWD callback */
     WS_CallbackFwdIO fwdIoCb;         /* WOLFSSH-FWD IO callback */
 #endif /* WOLFSSH_FWD */
+#ifdef WOLFSSH_CERTS
+    WOLFSSH_CERTMAN* certMan;
+#endif /* WOLFSSH_CERTS */
     WS_CallbackPublicKeyCheck publicKeyCheckCb;
                                       /* Check server's public key callback */
 
@@ -420,6 +437,9 @@ struct WOLFSSH_CTX {
 #ifndef WOLFSSH_NO_SABER_LEVEL1_SHA256
     byte useSaber:1;                  /* Depends on the private key */
 #endif
+    byte* cert;
+    word32 certSz;
+    byte useCert;
     word32 highwaterMark;
     const char* banner;
     word32 bannerSz;
@@ -452,6 +472,7 @@ typedef struct HandshakeInfo {
     byte kexId;
     byte kexIdGuess;
     byte pubKeyId;
+    byte sigId;
     byte encryptId;
     byte macId;
     byte hashId;
@@ -644,6 +665,7 @@ struct WOLFSSH {
     HandshakeInfo* handshake;
 
     void* userAuthCtx;
+    void* userAuthResultCtx;
     char* userName;
     word32 userNameSz;
     char* password;
@@ -976,6 +998,7 @@ enum WS_DynamicTypes {
     DYNTYPE_AGENT_ID,
     DYNTYPE_AGENT_KEY,
     DYNTYPE_AGENT_BUFFER,
+    DYNTYPE_CERTMAN,
     DYNTYPE_FILE,
     DYNTYPE_TEMP,
     DYNTYPE_PATH,

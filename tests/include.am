@@ -27,6 +27,9 @@ endif
 if BUILD_FWD
 tests_unit_test_CPPFLAGS     += -DWOLFSSH_FWD
 endif
+if BUILD_CERTS
+tests_unit_test_CPPFLAGS     += -DWOLFSSH_CERTS
+endif
 tests_unit_test_LDADD        = src/libwolfssh.la
 tests_unit_test_DEPENDENCIES = src/libwolfssh.la
 
@@ -50,6 +53,9 @@ tests_api_test_CPPFLAGS     += -DWOLFSSH_AGENT
 endif
 if BUILD_FWD
 tests_api_test_CPPFLAGS     += -DWOLFSSH_FWD
+endif
+if BUILD_CERTS
+tests_api_test_CPPFLAGS     += -DWOLFSSH_CERTS
 endif
 tests_api_test_LDADD         = src/libwolfssh.la
 tests_api_test_DEPENDENCIES  = src/libwolfssh.la
@@ -77,6 +83,9 @@ tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_AGENT
 endif
 if BUILD_FWD
 tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_FWD
+endif
+if BUILD_CERTS
+tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_CERTS
 endif
 tests_testsuite_test_LDADD   = src/libwolfssh.la
 tests_testsuite_test_DEPENDENCIES = src/libwolfssh.la

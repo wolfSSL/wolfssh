@@ -191,6 +191,7 @@ typedef struct WS_UserAuthData_PublicKey {
     byte hasSignature;
     const byte* signature;
     word32 signatureSz;
+    byte isCert:1;
 } WS_UserAuthData_PublicKey;
 
 typedef struct WS_UserAuthData {
@@ -212,6 +213,14 @@ WOLFSSH_API void wolfSSH_SetUserAuth(WOLFSSH_CTX*, WS_CallbackUserAuth);
 WOLFSSH_API void wolfSSH_SetUserAuthCtx(WOLFSSH*, void*);
 WOLFSSH_API void* wolfSSH_GetUserAuthCtx(WOLFSSH*);
 
+typedef int (*WS_CallbackUserAuthResult)(byte result,
+        WS_UserAuthData* authData, void* userAuthResultCtx);
+WOLFSSH_API void wolfSSH_SetUserAuthResult(WOLFSSH_CTX* ctx,
+        WS_CallbackUserAuthResult cb);
+WOLFSSH_API void wolfSSH_SetUserAuthResultCtx(WOLFSSH* ssh,
+        void* userAuthResultCtx);
+WOLFSSH_API void* wolfSSH_GetUserAuthResultCtx(WOLFSSH* ssh);
+
 /* Public Key Check Callback */
 typedef int (*WS_CallbackPublicKeyCheck)(const byte*, word32, void*);
 WOLFSSH_API void wolfSSH_CTX_SetPublicKeyCheck(WOLFSSH_CTX*,
@@ -226,6 +235,12 @@ WOLFSSH_API char* wolfSSH_GetUsername(WOLFSSH*);
 WOLFSSH_API int wolfSSH_CTX_SetBanner(WOLFSSH_CTX*, const char*);
 WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX*,
                                                  const byte*, word32, int);
+#ifdef WOLFSSH_CERTS
+    WOLFSSH_API int wolfSSH_CTX_UseCert_buffer(WOLFSSH_CTX* ctx,
+            const byte* cert, word32 certSz, int format);
+    WOLFSSH_API int wolfSSH_CTX_AddRootCert_buffer(WOLFSSH_CTX* ctx,
+            const byte* cert, word32 certSz, int format);
+#endif /* WOLFSSH_CERTS */
 WOLFSSH_API int wolfSSH_CTX_SetWindowPacketSize(WOLFSSH_CTX*, word32, word32);
 
 WOLFSSH_API int wolfSSH_accept(WOLFSSH*);

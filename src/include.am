@@ -34,3 +34,7 @@ endif
 if BUILD_AGENT
 src_libwolfssh_la_SOURCES += src/agent.c
 endif
+
+if BUILD_CERTS
+src_libwolfssh_la_SOURCES += src/certman.c
+endif

@@ -34,6 +34,9 @@
 #include <wolfssl/wolfcrypt/hash.h>
 #include <wolfssl/wolfcrypt/coding.h>
 #include <wolfssl/wolfcrypt/wc_port.h>
+#include <wolfssl/wolfcrypt/asn.h>
+#include <wolfssl/wolfcrypt/asn_public.h>
+#include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/wolfsftp.h>
@@ -1445,6 +1448,39 @@ static int load_key(byte isEcc, byte* buf, word32 bufSz)
 }
 
 
+typedef struct StrList {
+    const char* str;
+    struct StrList* next;
+} StrList;
+
+
+static StrList* StrListAdd(StrList* list, const char* str)
+{
+    if (str != NULL) {
+        StrList* newStr = (StrList*)WMALLOC(sizeof *newStr, NULL, 0);
+
+        if (newStr != NULL) {
+            newStr->str = str;
+            newStr->next = list;
+            list = newStr;
+        }
+    }
+
+    return list;
+}
+
+static void StrListFree(StrList* list)
+{
+    StrList* curStr;
+
+    while (list != NULL) {
+        curStr = list;
+        list = list->next;
+        WFREE(curStr, NULL, 0);
+    }
+}
+
+
 /* Map user names to passwords */
 /* Use arrays for username and p. The password or public key can
  * be hashed and the hash stored here. Then I won't need the type. */
@@ -1508,6 +1544,7 @@ static const char samplePasswordBuffer[] =
     "jack:fetchapail\n";
 
 
+#ifndef NO_FILESYSTEM
 #ifndef WOLFSSH_NO_ECC
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
 static const char samplePublicKeyEccBuffer[] =
@@ -1547,6 +1584,10 @@ static const char samplePublicKeyRsaBuffer[] =
     "biE57dK6BrH5iZwVLTQKux31uCJLPhiktI3iLbdlGZEctJkTasfVSsUizwVIyRjhVKmbdI"
     "RGwkU38D043AR1h0mUoGCPIKuqcFMf gretel\n";
 #endif
+#endif /* NO_FILESYSTEM */
+
+
+#ifdef WOLFSSH_ALLOW_USERAUTH_NONE
 
 static const char sampleNoneBuffer[] =
     "holmes\n"
@@ -1587,6 +1628,7 @@ static int LoadNoneBuffer(byte* buf, word32 bufSz, PwMapList* list)
     return 0;
 }
 
+#endif /* WOLFSSH_ALLOW_USERAUTH_NONE */
 
 static int LoadPasswordBuffer(byte* buf, word32 bufSz, PwMapList* list)
 {
@@ -1714,6 +1756,116 @@ static int LoadPublicKeyBuffer(byte* buf, word32 bufSz, PwMapList* list)
 }
 
 
+static int LoadPasswdList(StrList* strList, PwMapList* mapList)
+{
+    char names[256];
+    char* passwd;
+    int count = 0;
+
+    while (strList) {
+        WSTRNCPY(names, strList->str, sizeof names - 1);
+        passwd = WSTRCHR(names, ':');
+        if (passwd != NULL) {
+            *passwd = 0;
+            passwd++;
+
+            PwMapNew(mapList, WOLFSSH_USERAUTH_PASSWORD,
+                    (byte*)names, (word32)WSTRLEN(names),
+                    (byte*)passwd, (word32)WSTRLEN(passwd));
+        }
+        else {
+            fprintf(stderr, "Ignoring password: %s\n", names);
+        }
+
+        strList = strList->next;
+        count++;
+    }
+
+    return count;
+}
+
+
+static int LoadPubKeyList(StrList* strList, int format, PwMapList* mapList)
+{
+    char names[256];
+    char* fileName;
+    byte* buf;
+    word32 bufSz;
+    int count = 0;
+
+    while (strList) {
+        buf = NULL;
+        bufSz = 0;
+
+        WSTRNCPY(names, strList->str, sizeof names - 1);
+        fileName = WSTRCHR(names, ':');
+        if (fileName != NULL) {
+            *fileName = 0;
+            fileName++;
+
+            load_file(fileName, NULL, &bufSz);
+            buf = (byte*)WMALLOC(bufSz, NULL, 0);
+            bufSz = load_file(fileName, buf, &bufSz);
+            if (bufSz > 0) {
+                if (format == WOLFSSH_FORMAT_SSH) {
+                    const byte* type = NULL;
+                    byte* out = NULL;
+                    word32 typeSz, outSz;
+
+                    wolfSSH_ReadKey_buffer(buf, bufSz, WOLFSSH_FORMAT_SSH,
+                            &out, &outSz, &type, &typeSz, NULL);
+
+                    (void)type;
+                    (void)typeSz;
+
+                    WFREE(buf, NULL, 0);
+                    buf = out;
+                    bufSz = outSz;
+                }
+                else if (format == WOLFSSH_FORMAT_PEM) {
+                    byte* out = NULL;
+                    word32 outSz;
+
+                    out = (byte*)WMALLOC(bufSz, NULL, 0);
+                    outSz = wc_CertPemToDer(buf, bufSz, out, bufSz, CERT_TYPE);
+
+                    WFREE(buf, NULL, 0);
+                    buf = out;
+                    bufSz = outSz;
+                }
+
+                PwMapNew(mapList, WOLFSSH_USERAUTH_PUBLICKEY,
+                        (byte*)names, (word32)WSTRLEN(names), buf, bufSz);
+            }
+            else {
+                fprintf(stderr, "File error: %s\n", names);
+            }
+        }
+        else {
+            fprintf(stderr, "Ignoring key: %s\n", names);
+        }
+
+        WFREE(buf, NULL, 0);
+        strList = strList->next;
+        count++;
+    }
+
+    return count;
+}
+
+
+static int wsUserAuthResult(byte res,
+                      WS_UserAuthData* authData,
+                      void* ctx)
+{
+    printf("In auth result callback, auth = %s\n",
+        (res == WOLFSSH_USERAUTH_SUCCESS) ? "Success" : "Failure");
+    (void)authData;
+    (void)ctx;
+    return WS_SUCCESS;
+}
+
+
 static int wsUserAuth(byte authType,
                       WS_UserAuthData* authData,
                       void* ctx)
@@ -1746,6 +1898,72 @@ static int wsUserAuth(byte authType,
         wc_Sha256Hash(authData->sf.publicKey.publicKey,
                 authData->sf.publicKey.publicKeySz,
                 authHash);
+    #if defined(WOLFSSH_CERTS) && !defined(WOLFSSH_NO_FPKI) && \
+        defined(WOLFSSL_FPKI)
+        /* Display FPKI info UUID and FASC-N, getter function for FASC-N and
+         * UUID are dependent on wolfSSL version newer than 5.3.0 so gatting
+         * on the macro WOLFSSL_FPKI here too */
+        if (authData->sf.publicKey.isCert) {
+            DecodedCert cert;
+            byte* uuid = NULL;
+            word32 fascnSz;
+            word32 uuidSz;
+            word32 i;
+
+            printf("Peer connected with FPKI certificate\n");
+            wc_InitDecodedCert(&cert, authData->sf.publicKey.publicKey,
+                authData->sf.publicKey.publicKeySz, NULL);
+            ret = wc_ParseCert(&cert, CERT_TYPE, 0, NULL);
+
+            /* some profiles supported due not require FASC-N */
+            if (ret == 0 &&
+                wc_GetFASCNFromCert(&cert, NULL, &fascnSz) == LENGTH_ONLY_E) {
+                byte* fascn;
+
+                fascn = (byte*)WMALLOC(fascnSz, NULL, 0);
+                if (fascn != NULL &&
+                        wc_GetFASCNFromCert(&cert, fascn, &fascnSz) == 0) {
+                    printf("HEX of FASC-N :");
+                    for (i = 0; i < fascnSz; i++)
+                        printf("%02X", fascn[i]);
+                    printf("\n");
+                }
+                if (fascn != NULL)
+                    WFREE(fascn, NULL, 0);
+            }
+
+            /* all profiles supported must have a UUID */
+            if (ret == 0) {
+                ret = wc_GetUUIDFromCert(&cert, NULL, &uuidSz);
+                if (ret == LENGTH_ONLY_E) { /* expected error value */
+                    ret = 0;
+                }
+
+                if (ret == 0 ) {
+                    uuid = (byte*)WMALLOC(uuidSz, NULL, 0);
+                    if (uuid == NULL) {
+                        ret = WS_MEMORY_E;
+                    }
+                }
+
+                if (ret == 0) {
+                    ret = wc_GetUUIDFromCert(&cert, uuid, &uuidSz);
+                    printf("UUID string : ");
+                    for (i = 0; i < uuidSz; i++)
+                        printf("%c", uuid[i]);
+                    printf("\n");
+                }
+
+                if (uuid != NULL)
+                    WFREE(uuid, NULL, 0);
+            }
+
+            /* failed to at least get UUID string */
+            if (ret != 0) {
+                return WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
+            }
+        }
+    #endif /* WOLFSSH_CERTS && !WOLFSSH_NO_FPKI */
     }
 
     list = (PwMapList*)ctx;
@@ -1827,7 +2045,19 @@ static void ShowUsage(void)
 #ifdef WOLFSSH_SFTP
     printf(" -d <string>   set the home directory for SFTP connections\n");
 #endif
-    printf(" -j <file>     load in a public key to accept from peer\n");
+    printf(" -j <file>     load in a SSH public key to accept from peer\n"
+           "               (user assumed in comment)\n");
+    printf(" -I <name>:<file>\n"
+           "               load in a SSH public key to accept from peer\n");
+    printf(" -J <name>:<file>\n"
+           "               load in an X.509 PEM cert to accept from peer\n");
+    printf(" -K <name>:<file>\n"
+           "               load in an X.509 DER cert to accept from peer\n");
+    printf(" -P <name>:<password>\n"
+           "               add password to accept from peer\n");
+#ifdef WOLFSSH_CERTS
+    printf(" -a <file>     load in a root CA certificate file\n");
+#endif
 }
 
 
@@ -1852,6 +2082,10 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     func_args* serverArgs = (func_args*)args;
     WOLFSSH_CTX* ctx = NULL;
     PwMapList pwMapList;
+    StrList* sshPubKeyList = NULL;
+    StrList* pemPubKeyList = NULL;
+    StrList* derPubKeyList = NULL;
+    StrList* passwdList = NULL;
     WS_SOCKET_T listenFd = 0;
     word32 defaultHighwater = EXAMPLE_HIGHWATER_MARK;
     word32 threadCount = 0;
@@ -1865,13 +2099,16 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     const char* defaultSftpPath = NULL;
     char  nonBlock  = 0;
     char* userPubKey = NULL;
+    #ifdef WOLFSSH_CERTS
+        char* caCert = NULL;
+    #endif
 
     int     argc = serverArgs->argc;
     char**  argv = serverArgs->argv;
     serverArgs->return_code = 0;
 
     if (argc > 0) {
-    while ((ch = mygetopt(argc, argv, "?1d:efEp:R:Nj:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?1a:d:efEp:R:Ni:j:I:J:K:P:")) != -1) {
         switch (ch) {
             case '?' :
                 ShowUsage();
@@ -1881,6 +2118,11 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 multipleConnections = 0;
                 break;
 
+            case 'a':
+                #ifdef WOLFSSH_CERTS
+                    caCert = myoptarg;
+                #endif
+                break;
             case 'e' :
                 userEcc = 1;
                 break;
@@ -1924,6 +2166,22 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 userPubKey = myoptarg;
                 break;
 
+            case 'I':
+                sshPubKeyList = StrListAdd(sshPubKeyList, myoptarg);
+                break;
+
+            case 'J':
+                pemPubKeyList = StrListAdd(pemPubKeyList, myoptarg);
+                break;
+
+            case 'K':
+                derPubKeyList = StrListAdd(derPubKeyList, myoptarg);
+                break;
+
+            case 'P':
+                passwdList = StrListAdd(passwdList, myoptarg);
+                break;
+
             default:
                 ShowUsage();
                 WEXIT(MY_EX_USAGE);
@@ -1949,6 +2207,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     userEcc = 0;
     peerEcc = 0;
 #endif
+    (void)userEcc;
 
     if (wolfSSH_Init() != WS_SUCCESS) {
         fprintf(stderr, "Couldn't initialize wolfSSH.\n");
@@ -1966,6 +2225,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         wolfSSH_SetUserAuth(ctx, wsUserAuth);
     else
         wolfSSH_SetUserAuth(ctx, ((func_args*)args)->user_auth);
+    wolfSSH_SetUserAuthResult(ctx, wsUserAuthResult);
     wolfSSH_CTX_SetBanner(ctx, echoserverBanner);
 #ifdef WOLFSSH_AGENT
     wolfSSH_CTX_set_agent_cb(ctx, wolfSSH_AGENT_DefaultActions, NULL);
@@ -1974,11 +2234,32 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     wolfSSH_CTX_SetFwdCb(ctx, wolfSSH_FwdDefaultActions, NULL);
 #endif
 
+    if (sshPubKeyList) {
+        LoadPubKeyList(sshPubKeyList, WOLFSSH_FORMAT_SSH, &pwMapList);
+        StrListFree(sshPubKeyList);
+        sshPubKeyList = NULL;
+    }
+    if (pemPubKeyList) {
+        LoadPubKeyList(pemPubKeyList, WOLFSSH_FORMAT_PEM, &pwMapList);
+        StrListFree(pemPubKeyList);
+        pemPubKeyList = NULL;
+    }
+    if (derPubKeyList) {
+        LoadPubKeyList(derPubKeyList, WOLFSSH_FORMAT_ASN1, &pwMapList);
+        StrListFree(derPubKeyList);
+        derPubKeyList = NULL;
+    }
+    if (passwdList) {
+        LoadPasswdList(passwdList, &pwMapList);
+        StrListFree(passwdList);
+        passwdList = NULL;
+    }
+
     {
         const char* bufName = NULL;
-        #ifndef WOLFSSH_SMALL_STACK
-            byte buf[EXAMPLE_KEYLOAD_BUFFER_SZ];
-        #endif
+    #ifndef WOLFSSH_SMALL_STACK
+        byte buf[EXAMPLE_KEYLOAD_BUFFER_SZ];
+    #endif
         byte* keyLoadBuf;
         word32 bufSz;
 
@@ -2024,7 +2305,38 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             }
             load_file(userPubKey, userBuf, &userBufSz);
             LoadPublicKeyBuffer(userBuf, userBufSz, &pwMapList);
+            WFREE(userBuf, NULL, 0);
         }
+
+        #ifdef WOLFSSH_CERTS
+        if (caCert) {
+            byte* certBuf = NULL;
+            word32 certBufSz = 0;
+            int ret = 0;
+
+            load_file(caCert, NULL, &certBufSz);
+
+            if (certBufSz == 0) {
+                fprintf(stderr,
+                        "Couldn't find size of file %s.\n", caCert);
+                WEXIT(EXIT_FAILURE);
+            }
+
+            certBuf = (byte*)WMALLOC(certBufSz, NULL, 0);
+            if (certBuf == NULL) {
+                fprintf(stderr, "WMALLOC failed\n");
+                WEXIT(EXIT_FAILURE);
+            }
+            load_file(caCert, certBuf, &certBufSz);
+            ret = wolfSSH_CTX_AddRootCert_buffer(ctx, certBuf, certBufSz,
+                    WOLFSSH_FORMAT_PEM);
+            if (ret != 0) {
+                fprintf(stderr, "Couldn't add root cert\n");
+                WEXIT(EXIT_FAILURE);
+            }
+            WFREE(certBuf, NULL, 0);
+        }
+        #endif
 
         bufSz = (word32)WSTRLEN(samplePasswordBuffer);
         WMEMCPY(keyLoadBuf, samplePasswordBuffer, bufSz);
@@ -2048,10 +2360,12 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             LoadPublicKeyBuffer(keyLoadBuf, bufSz, &pwMapList);
         }
 
-        bufSz = (word32)WSTRLEN(sampleNoneBuffer);
-        WMEMCPY(keyLoadBuf, sampleNoneBuffer, bufSz);
-        keyLoadBuf[bufSz] = 0;
-        LoadNoneBuffer(keyLoadBuf, bufSz, &pwMapList);
+        #ifdef WOLFSSH_ALLOW_USERAUTH_NONE
+            bufSz = (word32)WSTRLEN(sampleNoneBuffer);
+            WMEMCPY(keyLoadBuf, sampleNoneBuffer, bufSz);
+            keyLoadBuf[bufSz] = 0;
+            LoadNoneBuffer(keyLoadBuf, bufSz, &pwMapList);
+        #endif /* WOLFSSH_ALLOW_USERAUTH_NONE */
 
         #ifdef WOLFSSH_SMALL_STACK
             WFREE(keyLoadBuf, NULL, 0);
@@ -2224,6 +2538,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
 
 #ifndef NO_MAIN_DRIVER
+void wolfSSL_Debugging_ON(void);
 
     int main(int argc, char** argv)
     {
@@ -2237,6 +2552,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         WSTARTTCP();
 
         #ifdef DEBUG_WOLFSSH
+            wolfSSL_Debugging_ON();
             wolfSSH_Debugging_ON();
         #endif
 

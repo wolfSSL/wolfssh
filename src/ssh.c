@@ -103,7 +103,10 @@ WOLFSSH_CTX* wolfSSH_CTX_new(byte side, void* heap)
     }
 
     ctx = (WOLFSSH_CTX*)WMALLOC(sizeof(WOLFSSH_CTX), heap, DYNTYPE_CTX);
-    ctx = CtxInit(ctx, side, heap);
+    if (CtxInit(ctx, side, heap) == NULL) {
+        WFREE(ctx, heap, DYNTYPE_CTX);
+        ctx = NULL;
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_CTX_new(), ctx = %p", ctx);
 
@@ -1273,6 +1276,32 @@ void* wolfSSH_GetUserAuthCtx(WOLFSSH* ssh)
 }
 
 
+void wolfSSH_SetUserAuthResult(WOLFSSH_CTX* ctx,
+        WS_CallbackUserAuthResult cb)
+{
+    if (ctx != NULL) {
+        ctx->userAuthResultCb = cb;
+    }
+}
+
+
+void wolfSSH_SetUserAuthResultCtx(WOLFSSH* ssh, void* userAuthResultCtx)
+{
+    if (ssh != NULL) {
+        ssh->userAuthResultCtx = userAuthResultCtx;
+    }
+}
+
+
+void* wolfSSH_GetUserAuthResultCtx(WOLFSSH* ssh)
+{
+    if (ssh != NULL) {
+        return ssh->userAuthResultCtx;
+    }
+    return NULL;
+}
+
+
 void wolfSSH_CTX_SetPublicKeyCheck(WOLFSSH_CTX* ctx,
         WS_CallbackPublicKeyCheck cb)
 {
@@ -1675,9 +1704,49 @@ int wolfSSH_CTX_SetBanner(WOLFSSH_CTX* ctx,
 int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX* ctx,
                                    const byte* in, word32 inSz, int format)
 {
+    int ret = WS_SUCCESS;
+
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CTX_UsePrivateKey_buffer()");
-    return wolfSSH_ProcessBuffer(ctx, in, inSz, format, BUFTYPE_PRIVKEY);
+
+    ret = wolfSSH_ProcessBuffer(ctx, in, inSz, format, BUFTYPE_PRIVKEY);
+
+    WLOG(WS_LOG_DEBUG,
+            "Leaving wolfSSH_CTX_UsePrivateKey_buffer(), ret = %d", ret);
+    return ret;
 }
+
+
+#ifdef WOLFSSH_CERTS
+
+int wolfSSH_CTX_UseCert_buffer(WOLFSSH_CTX* ctx,
+        const byte* cert, word32 certSz, int format)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CTX_UseCert_buffer()");
+
+    ret = wolfSSH_ProcessBuffer(ctx, cert, certSz, format, BUFTYPE_CERT);
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_CTX_UseCert_buffer(), ret = %d", ret);
+    return ret;
+}
+
+
+int wolfSSH_CTX_AddRootCert_buffer(WOLFSSH_CTX* ctx,
+        const byte* cert, word32 certSz, int format)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CTX_AddRootCert_buffer()");
+
+    ret = wolfSSH_ProcessBuffer(ctx, cert, certSz, format, BUFTYPE_CA);
+
+    WLOG(WS_LOG_DEBUG,
+            "Leaving wolfSSH_CTX_AddRootCert_buffer(), ret = %d", ret);
+    return ret;
+}
+
+#endif /* WOLFSSH_CERTS */
 
 
 int wolfSSH_CTX_SetWindowPacketSize(WOLFSSH_CTX* ctx,

@@ -43,6 +43,7 @@ extern "C" {
 
 
 enum wolfSSH_LogLevel {
+    WS_LOG_CERTMAN = 9,
     WS_LOG_AGENT = 8,
     WS_LOG_SCP   = 7,
     WS_LOG_SFTP  = 6,

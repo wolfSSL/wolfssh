@@ -128,6 +128,7 @@ static void SyslogCb(enum wolfSSH_LogLevel level, const char *const msgStr)
         case WS_LOG_SFTP:
         case WS_LOG_SCP:
         case WS_LOG_AGENT:
+        case WS_LOG_CERTMAN:
         default:
             priority = LOG_INFO;
             break;
