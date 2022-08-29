@@ -19,6 +19,6 @@ EXTRA_DIST+= \
             keys/pubkeys-ecc.txt keys/pubkeys-ecc-384.txt keys/pubkeys-ecc-521.txt \
             keys/pubkeys-rsa.txt keys/passwd.txt keys/ca-ecc-cert.der \
             keys/ca-ecc-cert.pem keys/server-cert.der keys/server-cert.pem \
-            keys/john-cert.der keys/john-cert.pem keys/john-cert.pub \
+            keys/john-cert.der keys/john-cert.pem \
             keys/server-key.pem keys/john-key.der keys/john-key.pem
 
