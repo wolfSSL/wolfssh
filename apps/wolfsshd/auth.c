@@ -882,6 +882,24 @@ int wolfSSHD_AuthRaisePermissions(WOLFSSHD_AUTH* auth)
 
 
 /* return WS_SUCCESS on success */
+int wolfSSHD_AuthReducePermissionsUser(WOLFSSHD_AUTH* auth, WUID_T uid,
+    WGID_T gid)
+{
+    if (setregid(gid, gid) != 0) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting user gid");
+        return WS_FATAL_ERROR;
+    }
+
+    if (setreuid(uid, uid) != 0) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting user uid");
+        return WS_FATAL_ERROR;
+    }
+    (void)auth;
+    return WS_SUCCESS;
+}
+
+
+/* return WS_SUCCESS on success */
 int wolfSSHD_AuthReducePermissions(WOLFSSHD_AUTH* auth)
 {
     byte flag = 0;

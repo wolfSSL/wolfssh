@@ -48,6 +48,8 @@ extern "C" {
     #else
         #define WISSPACE isspace
     #endif
+    #define WUID_T uid_t
+    #define WGID_T gid_t
 #endif
 
 /* setup memory handling */
