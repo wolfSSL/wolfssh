@@ -50,6 +50,7 @@ extern "C" {
     #endif
     #define WUID_T uid_t
     #define WGID_T gid_t
+    #define WPASSWD struct passwd
 #endif
 
 /* setup memory handling */
