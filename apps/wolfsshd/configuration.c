@@ -481,7 +481,11 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
         struct dirent *dir;
         WDIR d;
         char *path;
-        char *filepath = (char*)WMALLOC(PATH_MAX, NULL, 0);
+        char *filepath = (char*)WMALLOC(PATH_MAX, conf->heap, DYNTYPE_PATH);
+
+        if (filepath == NULL) {
+            return WS_MEMORY_E;
+        }
 
         /* Back find the full path */
         while (ptr2 != value) {
@@ -492,14 +496,23 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
         }
 
         if (ptr2 != value) {
-            path = (char*)WMALLOC(ptr2 - value + 1, NULL, 0);
-            memcpy(path, value, ptr2 - value);
+            path = (char*)WMALLOC(ptr2 - value + 1, conf->heap, DYNTYPE_PATH);
+            if (path == NULL) {
+                WFREE(filepath, conf->heap, DYNTYPE_PATH);
+                return WS_MEMORY_E;
+            }
+            WMEMCPY(path, value, ptr2 - value);
             path[ptr2 - value] = '\0';
             prefix = ptr2 + 1;
             prefixLen = (int)(ptr - ptr2 - 1);
-        } else {
-            path = (char*)WMALLOC(2, NULL, 0);
-            memcpy(path, ".", 1);
+        }
+        else {
+            path = (char*)WMALLOC(2, conf->heap, DYNTYPE_PATH);
+            if (path == NULL) {
+                WFREE(filepath, conf->heap, DYNTYPE_PATH);
+                return WS_MEMORY_E;
+            }
+            WMEMCPY(path, ".", 1);
             path[1] = '\0';
             prefix = value;
             prefixLen = (int)(ptr - value);
@@ -519,7 +532,8 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
             WREWINDDIR(&d);
 
             if (fileCount > 0) {
-                fileNames = (char**)WMALLOC(fileCount * sizeof(char*), NULL, 0);
+                fileNames = (char**)WMALLOC(fileCount * sizeof(char*),
+                        conf->heap, DYNTYPE_PATH);
             }
 
             i = 0;
@@ -572,20 +586,24 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
                 ret = wolfSSHD_ConfigLoad(conf, filepath);
                 if (ret != WS_SUCCESS) {
                     WCLOSEDIR(&d);
-                    WFREE(fileNames, NULL, 0);
-                    WFREE(filepath, NULL, 0);
+                    WFREE(fileNames, conf->heap, DYNTYPE_PATH);
+                    WFREE(filepath, conf->heap, DYNTYPE_PATH);
+                    WFREE(path, conf->heap, DYNTYPE_PATH);
                     return ret;
                 }
             }
-            WFREE(fileNames, NULL, 0);
+            WFREE(fileNames, conf->heap, DYNTYPE_PATH);
+            WFREE(path, conf->heap, DYNTYPE_PATH);
             WCLOSEDIR(&d);
         }
         else {
             /* Bad directory */
-            WFREE(filepath, NULL, 0);
+            WFREE(filepath, conf->heap, DYNTYPE_PATH);
+            WFREE(path, conf->heap, DYNTYPE_PATH);
             return WS_BAD_ARGUMENT;
         }
-        WFREE(filepath, NULL, 0);
+        WFREE(filepath, conf->heap, DYNTYPE_PATH);
+        WFREE(path, conf->heap, DYNTYPE_PATH);
 #else
         (void)postfix;
         (void)prefixLen;
