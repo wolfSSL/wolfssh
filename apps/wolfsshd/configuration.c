@@ -437,185 +437,204 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
     const char *prefix = NULL;
     int prefixLen = 0;
     int found = 0;
+    int ret = WS_SUCCESS;
 
     /* No value, nothing to do */
     if (!value || value[0] == '\0') {
-        return WS_BAD_ARGUMENT;
+        ret = WS_BAD_ARGUMENT;
     }
 
-    /* Ignore trailing whitespace */
-    ptr = value + WSTRLEN(value) - 1;
-    while (ptr != value) {
-        if (WISSPACE(*ptr)) {
-            ptr--;
-        }
-        else {
-            break;
-        }
-    }
-
-    /* Find wildcards */
-    ptr2 = ptr;
-    while (ptr2 != value) {
-        if (*ptr2 == '*') {
-            /* Wildcard found */
-            found = 1;
-            if (ptr != ptr2) {
-                postfix = ptr2 + 1;
+    if (ret == WS_SUCCESS) {
+        /* Ignore trailing whitespace */
+        ptr = value + WSTRLEN(value) - 1;
+        while (ptr != value) {
+            if (WISSPACE(*ptr)) {
+                ptr--;
             }
-            break;
-        }
-        if (*ptr2 == '/') {
-            /* Found slash before wildcard directory-wildcards not supported */
-            break;
-        }
-        ptr2--;
-    }
-    ptr = ptr2;
-
-    /* Use wildcard */
-    if (found) {
-#if defined(__unix__) || defined(__unix) || \
-    (defined(__APPLE__) && defined(__MACH__))
-        int ret;
-        struct dirent *dir;
-        WDIR d;
-        char *path;
-        char *filepath = (char*)WMALLOC(PATH_MAX, conf->heap, DYNTYPE_PATH);
-
-        if (filepath == NULL) {
-            return WS_MEMORY_E;
+            else {
+                break;
+            }
         }
 
-        /* Back find the full path */
+        /* Find wildcards */
+        ptr2 = ptr;
         while (ptr2 != value) {
+            if (*ptr2 == '*') {
+                /* Wildcard found */
+                found = 1;
+                if (ptr != ptr2) {
+                    postfix = ptr2 + 1;
+                }
+                break;
+            }
             if (*ptr2 == '/') {
+                /* Found slash before wildcard directory-wildcards
+                 * not supported */
                 break;
             }
             ptr2--;
         }
+        ptr = ptr2;
 
-        if (ptr2 != value) {
-            path = (char*)WMALLOC(ptr2 - value + 1, conf->heap, DYNTYPE_PATH);
-            if (path == NULL) {
-                WFREE(filepath, conf->heap, DYNTYPE_PATH);
-                return WS_MEMORY_E;
+        /* Use wildcard */
+        if (found) {
+#if defined(__unix__) || defined(__unix) || \
+        (defined(__APPLE__) && defined(__MACH__))
+            struct dirent *dir;
+            WDIR d;
+            char *path = NULL;
+            char *filepath = (char*)WMALLOC(PATH_MAX, conf->heap, DYNTYPE_PATH);
+
+            if (filepath == NULL) {
+                ret = WS_MEMORY_E;
             }
-            WMEMCPY(path, value, ptr2 - value);
-            path[ptr2 - value] = '\0';
-            prefix = ptr2 + 1;
-            prefixLen = (int)(ptr - ptr2 - 1);
-        }
-        else {
-            path = (char*)WMALLOC(2, conf->heap, DYNTYPE_PATH);
-            if (path == NULL) {
-                WFREE(filepath, conf->heap, DYNTYPE_PATH);
-                return WS_MEMORY_E;
-            }
-            WMEMCPY(path, ".", 1);
-            path[1] = '\0';
-            prefix = value;
-            prefixLen = (int)(ptr - value);
-        }
 
-        if (!WOPENDIR(NULL, conf->heap, &d, path)) {
-            word32 fileCount = 0, i, j;
-            char** fileNames = NULL;
-
-            /* Count up the number of files */
-            while ((dir = WREADDIR(&d)) != NULL) {
-                /* Skip sub-directories */
-                if (dir->d_type != DT_DIR) {
-                    fileCount++;
+            if (ret == WS_SUCCESS) {
+                /* Back find the full path */
+                while (ptr2 != value) {
+                    if (*ptr2 == '/') {
+                        break;
+                    }
+                    ptr2--;
                 }
-            }
-            WREWINDDIR(&d);
 
-            if (fileCount > 0) {
-                fileNames = (char**)WMALLOC(fileCount * sizeof(char*),
-                        conf->heap, DYNTYPE_PATH);
-            }
-
-            i = 0;
-            while ((dir = WREADDIR(&d)) != NULL && i < fileCount) {
-                /* Skip sub-directories */
-                if (dir->d_type != DT_DIR) {
-                    /* Insert in string order */
-                    for (j = 0; j < i; j++) {
-                        if (WSTRCMP(dir->d_name, fileNames[j]) < 0) {
-                            WMEMMOVE(fileNames+j+1, fileNames+j,
-                                    (i - j)*sizeof(char*));
-                            break;
-                        }
-                    }
-                    fileNames[j] = dir->d_name;
-                    i++;
-                }
-            }
-
-            for (i = 0; i < fileCount; i++) {
-                /* Check if filename prefix matches */
-                if (prefixLen > 0) {
-                    if ((int)WSTRLEN(fileNames[i]) <= prefixLen) {
-                        continue;
-                    }
-                    if (WSTRNCMP(fileNames[i], prefix, prefixLen) != 0) {
-                        continue;
-                    }
-                }
-                if (postfix) {
-                    /* Skip if file is too short */
-                    if (WSTRLEN(fileNames[i]) <= WSTRLEN(postfix)) {
-                        continue;
-                    }
-                    if (WSTRNCMP(fileNames[i] + WSTRLEN(fileNames[i]) -
-                                WSTRLEN(postfix), postfix, WSTRLEN(postfix))
-                            == 0) {
-                        WSNPRINTF(filepath, PATH_MAX, "%s/%s", path,
-                                 fileNames[i]);
+                if (ptr2 != value) {
+                    path = (char*)WMALLOC(ptr2 - value + 1,
+                            conf->heap, DYNTYPE_PATH);
+                    if (path == NULL) {
+                        ret = WS_MEMORY_E;
                     }
                     else {
-                        /* Not a match */
-                        continue;
+                        WMEMCPY(path, value, ptr2 - value);
+                        path[ptr2 - value] = '\0';
+                        prefix = ptr2 + 1;
+                        prefixLen = (int)(ptr - ptr2 - 1);
                     }
                 }
                 else {
-                    WSNPRINTF(filepath, PATH_MAX, "%s/%s", path,
-                             fileNames[i]);
-                }
-                ret = wolfSSHD_ConfigLoad(conf, filepath);
-                if (ret != WS_SUCCESS) {
-                    WCLOSEDIR(&d);
-                    WFREE(fileNames, conf->heap, DYNTYPE_PATH);
-                    WFREE(filepath, conf->heap, DYNTYPE_PATH);
-                    WFREE(path, conf->heap, DYNTYPE_PATH);
-                    return ret;
+                    path = (char*)WMALLOC(2, conf->heap, DYNTYPE_PATH);
+                    if (path == NULL) {
+                        ret = WS_MEMORY_E;
+                    }
+                    else {
+                        WMEMCPY(path, ".", 1);
+                        path[1] = '\0';
+                        prefix = value;
+                        prefixLen = (int)(ptr - value);
+                    }
                 }
             }
-            WFREE(fileNames, conf->heap, DYNTYPE_PATH);
-            WFREE(path, conf->heap, DYNTYPE_PATH);
-            WCLOSEDIR(&d);
+
+            if (ret == WS_SUCCESS) {
+                if (!WOPENDIR(NULL, conf->heap, &d, path)) {
+                    word32 fileCount = 0, i, j;
+                    char** fileNames = NULL;
+
+                    /* Count up the number of files */
+                    while ((dir = WREADDIR(&d)) != NULL) {
+                        /* Skip sub-directories */
+                        if (dir->d_type != DT_DIR) {
+                            fileCount++;
+                        }
+                    }
+                    WREWINDDIR(&d);
+
+                    if (fileCount > 0) {
+                        fileNames = (char**)WMALLOC(fileCount * sizeof(char*),
+                                conf->heap, DYNTYPE_PATH);
+                        if (fileNames == NULL) {
+                            ret = WS_MEMORY_E;
+                        }
+                    }
+
+                    if (ret == WS_SUCCESS) {
+                        i = 0;
+                        while (i < fileCount && (dir = WREADDIR(&d)) != NULL) {
+                            /* Skip sub-directories */
+                            if (dir->d_type != DT_DIR) {
+                                /* Insert in string order */
+                                for (j = 0; j < i; j++) {
+                                    if (WSTRCMP(dir->d_name, fileNames[j])
+                                            < 0) {
+                                        WMEMMOVE(fileNames+j+1, fileNames+j,
+                                                (i - j)*sizeof(char*));
+                                        break;
+                                    }
+                                }
+                                fileNames[j] = dir->d_name;
+                                i++;
+                            }
+                        }
+
+                        for (i = 0; i < fileCount; i++) {
+                            /* Check if filename prefix matches */
+                            if (prefixLen > 0) {
+                                if ((int)WSTRLEN(fileNames[i]) <= prefixLen) {
+                                    continue;
+                                }
+                                if (WSTRNCMP(fileNames[i], prefix, prefixLen)
+                                        != 0) {
+                                    continue;
+                                }
+                            }
+                            if (postfix) {
+                                /* Skip if file is too short */
+                                if (WSTRLEN(fileNames[i]) <= WSTRLEN(postfix)) {
+                                    continue;
+                                }
+                                if (WSTRNCMP(fileNames[i] +
+                                            WSTRLEN(fileNames[i]) -
+                                            WSTRLEN(postfix),
+                                            postfix, WSTRLEN(postfix))
+                                        == 0) {
+                                    WSNPRINTF(filepath, PATH_MAX, "%s/%s", path,
+                                             fileNames[i]);
+                                }
+                                else {
+                                    /* Not a match */
+                                    continue;
+                                }
+                            }
+                            else {
+                                WSNPRINTF(filepath, PATH_MAX, "%s/%s", path,
+                                         fileNames[i]);
+                            }
+                            ret = wolfSSHD_ConfigLoad(conf, filepath);
+                            if (ret != WS_SUCCESS) {
+                                break;
+                            }
+                        }
+
+                        if (fileNames != NULL) {
+                            WFREE(fileNames, conf->heap, DYNTYPE_PATH);
+                        }
+                    }
+                    WCLOSEDIR(&d);
+                }
+                else {
+                    /* Bad directory */
+                    ret = WS_INVALID_PATH_E;
+                }
+            }
+            if (path != NULL) {
+                WFREE(path, conf->heap, DYNTYPE_PATH);
+            }
+            if (filepath != NULL) {
+                WFREE(filepath, conf->heap, DYNTYPE_PATH);
+            }
+#else
+            (void)postfix;
+            (void)prefixLen;
+            (void)prefix;
+            /* Don't support wildcards here */
+            ret = WS_BAD_ARGUMENT;
+#endif
         }
         else {
-            /* Bad directory */
-            WFREE(filepath, conf->heap, DYNTYPE_PATH);
-            WFREE(path, conf->heap, DYNTYPE_PATH);
-            return WS_BAD_ARGUMENT;
+            ret = wolfSSHD_ConfigLoad(conf, value);
         }
-        WFREE(filepath, conf->heap, DYNTYPE_PATH);
-        WFREE(path, conf->heap, DYNTYPE_PATH);
-#else
-        (void)postfix;
-        (void)prefixLen;
-        (void)prefix;
-        /* Don't support wildcards here */
-        return WS_BAD_ARGUMENT;
-#endif
     }
-    else {
-        return wolfSSHD_ConfigLoad(conf, value);
-    }
-    return WS_SUCCESS;
+    return ret;
 }
 
 /* returns WS_SUCCESS on success */

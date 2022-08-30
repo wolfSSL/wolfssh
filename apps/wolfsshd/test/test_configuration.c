@@ -78,19 +78,20 @@ static int SetupWildcardTest(void)
                 WFCLOSE(f);
                 if (sz != wr) {
                     Log("Couldn't write the contents of file %s\n", filepath);
-                    ret = -1;
+                    ret = WS_FATAL_ERROR;
                     break;
                 }
             }
             else {
                 Log("Couldn't create the file %s\n", filepath);
-                ret = -1;
+                ret = WS_FATAL_ERROR;
                 break;
             }
         }
     }
     else {
         Log("Couldn't make the test config directory\n");
+        ret = WS_FATAL_ERROR;
     }
 
     return ret;
@@ -213,6 +214,7 @@ static int test_ParseConfigLine(void)
                 break;
             }
         }
+        wolfSSHD_ConfigFree(conf);
     }
 
     return ret;
@@ -232,14 +234,13 @@ int main(int argc, char** argv)
 
     CleanupWildcardTest();
     ret = SetupWildcardTest();
-    if (ret != 0) {
-        return 1;
-    }
 
-    for (i = 0; i < TEST_CASE_CNT; ++i) {
-        ret = RunTest(&testCases[i]);
-        if (ret != WS_SUCCESS) {
-            break;
+    if (ret == 0) {
+        for (i = 0; i < TEST_CASE_CNT; ++i) {
+            ret = RunTest(&testCases[i]);
+            if (ret != WS_SUCCESS) {
+                break;
+            }
         }
     }
 
