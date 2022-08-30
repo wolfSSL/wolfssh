@@ -485,7 +485,7 @@ or define `WOLFSSH_CERTS`:
 To provide a CA root certificate to validate a user's certificate, give the
 echoserver the command line option `-a`.
 
-    $ ./examples/echoserver/echoserver -a ./keys/ca-ecc-cert.pem
+    $ ./examples/echoserver/echoserver -a ./keys/ca-cert-ecc.pem
 
 The echoserver and client have a fake user named "john" whose certificate
 will be used for authentication.
@@ -493,7 +493,7 @@ will be used for authentication.
 An example echoserver / client connection using the example certificate
 john-cert.der would be:
 
-    $ ./examples/echoserver/echoserver -a ./keys/ca-ecc-cert.pem -K john:./keys/john-cert.der
+    $ ./examples/echoserver/echoserver -a ./keys/ca-cert-ecc.pem -K john:./keys/john-cert.der
 
     $ ./examples/client/client -u john -J ./keys/john-cert.der -i ./keys/john-key.der
 
