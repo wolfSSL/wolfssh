@@ -15,7 +15,7 @@ apps_wolfsshd_test_test_configuration_SOURCES = apps/wolfsshd/test/test_configur
                                                 apps/wolfsshd/auth.c
 apps_wolfsshd_test_test_configuration_LDADD        = src/libwolfssh.la
 apps_wolfsshd_test_test_configuration_DEPENDENCIES = src/libwolfssh.la
-apps_wolfsshd_test_test_configuration_CPPFLAGS     = -DWOLFSSH_SSHD -DWOLFSSHD_UNIT_TEST -Iapps/wolfsshd/
+apps_wolfsshd_test_test_configuration_CPPFLAGS     = $(AM_CPPFLAGS) -DWOLFSSH_SSHD -DWOLFSSHD_UNIT_TEST -Iapps/wolfsshd/
 
 DISTCLEANFILES+= apps/wolfsshd/.libs/wolfsshd \
                  apps/wolfsshd/test/.libs/test_configuration

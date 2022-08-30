@@ -267,6 +267,8 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
                 break;
 
             case 'f':
+                if (myoptarg == NULL)
+                    err_sys("null argument found");
                 fwdFromPort = (word16)atoi(myoptarg);
                 break;
 
@@ -281,6 +283,8 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
                 break;
 
             case 't':
+                if (myoptarg == NULL)
+                    err_sys("null argument found");
                 fwdToPort = (word16)atoi(myoptarg);
                 break;
 

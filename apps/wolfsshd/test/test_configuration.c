@@ -26,6 +26,77 @@ void Log(const char *const fmt, ...)
     va_end(vlist);
 }
 
+static void CleanupWildcardTest(void)
+{
+    WDIR dir;
+    struct dirent* d;
+    char filepath[MAX_PATH*2]; /* d_name is max_path long */
+
+    if (!WOPENDIR(NULL, NULL, &dir, "./sshd_config.d/")) {
+        while ((d = WREADDIR(&dir)) != NULL) {
+            if (d->d_type != DT_DIR) {
+                WSNPRINTF(filepath, sizeof filepath, "%s%s",
+                        "./sshd_config.d/", d->d_name);
+                WREMOVE(0, filepath);
+            }
+        }
+        WCLOSEDIR(&dir);
+        WRMDIR(0, "./sshd_config.d/");
+    }
+}
+
+static int SetupWildcardTest(void)
+{
+    WFILE* f;
+    const byte fileIds[] = { 0, 1, 50, 59, 99 };
+    word32 fileIdsSz = (word32)(sizeof(fileIds) / sizeof(byte));
+    word32 i;
+    int ret;
+    char filepath[MAX_PATH];
+
+    ret = WMKDIR(0, "./sshd_config.d/", 0755);
+
+    if (ret == 0) {
+        for (i = 0; i < fileIdsSz; i++) {
+            if (fileIds[i] != 0) {
+                WSNPRINTF(filepath, sizeof filepath, "%s%02u-test.conf",
+                        "./sshd_config.d/", fileIds[i]);
+            }
+            else {
+                WSNPRINTF(filepath, sizeof filepath, "%stest.bad",
+                        "./sshd_config.d/");
+            }
+
+            WFOPEN(&f, filepath, "w");
+            if (f) {
+                word32 sz, wr;
+                char contents[20];
+                WSNPRINTF(contents, sizeof contents, "LoginGraceTime %02u",
+                        fileIds[i]);
+                sz = (word32)WSTRLEN(contents);
+                wr = (word32)WFWRITE(contents, sizeof(char), sz, f);
+                WFCLOSE(f);
+                if (sz != wr) {
+                    Log("Couldn't write the contents of file %s\n", filepath);
+                    ret = WS_FATAL_ERROR;
+                    break;
+                }
+            }
+            else {
+                Log("Couldn't create the file %s\n", filepath);
+                ret = WS_FATAL_ERROR;
+                break;
+            }
+        }
+    }
+    else {
+        Log("Couldn't make the test config directory\n");
+        ret = WS_FATAL_ERROR;
+    }
+
+    return ret;
+}
+
 typedef int (*TEST_FUNC)(void);
 typedef struct {
     const char *name;
@@ -110,6 +181,13 @@ static int test_ParseConfigLine(void)
         {"Password auth no", "PasswordAuthentication no", 0},
         {"Password auth yes", "PasswordAuthentication yes", 0},
         {"Password auth invalid", "PasswordAuthentication wolfsshd", 1},
+
+        /* Include files tests. */
+        {"Include file bad", "Include sshd_config.d/test.bad", 1},
+        {"Include file exists", "Include sshd_config.d/01-test.conf", 0},
+        {"Include file DNE", "Include sshd_config.d/test-dne.conf", 1},
+        {"Include wildcard exists", "Include sshd_config.d/*.conf", 0},
+        {"Include wildcard NDE", "Include sshd_config.d/*.dne", 0},
     };
     const int numVectors = (int)(sizeof(vectors) / sizeof(*vectors));
 
@@ -136,6 +214,7 @@ static int test_ParseConfigLine(void)
                 break;
             }
         }
+        wolfSSHD_ConfigFree(conf);
     }
 
     return ret;
@@ -153,12 +232,19 @@ int main(int argc, char** argv)
     (void)argc;
     (void)argv;
 
-    for (i = 0; i < TEST_CASE_CNT; ++i) {
-        ret = RunTest(&testCases[i]);
-        if (ret != WS_SUCCESS) {
-            break;
+    CleanupWildcardTest();
+    ret = SetupWildcardTest();
+
+    if (ret == 0) {
+        for (i = 0; i < TEST_CASE_CNT; ++i) {
+            ret = RunTest(&testCases[i]);
+            if (ret != WS_SUCCESS) {
+                break;
+            }
         }
     }
+
+    CleanupWildcardTest();
 
     return ret;
 }

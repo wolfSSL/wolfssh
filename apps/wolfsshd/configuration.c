@@ -35,6 +35,7 @@
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/log.h>
+#include <wolfssh/port.h>
 #include <wolfssl/wolfcrypt/wc_port.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
 
@@ -59,7 +60,7 @@ struct WOLFSSHD_CONFIG {
     char* authKeysFile;
     long  loginTimer;
     word16 port;
-    byte usePrivilegeSeparation;
+    byte usePrivilegeSeparation:2;
     byte passwordAuth:1;
     byte pubKeyAuth:1;
     byte permitRootLogin:1;
@@ -436,135 +437,204 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
     const char *prefix = NULL;
     int prefixLen = 0;
     int found = 0;
+    int ret = WS_SUCCESS;
 
     /* No value, nothing to do */
     if (!value || value[0] == '\0') {
-        return WS_BAD_ARGUMENT;
+        ret = WS_BAD_ARGUMENT;
     }
 
-    /* Ignore trailing whitespace */
-    ptr = value + WSTRLEN(value) - 1;
-    while (ptr != value) {
-        if (!WISSPACE(*ptr)) {
-            ptr--;
-        }
-        else {
-            break;
-        }
-    }
-
-    /* Find wildcards */
-    ptr2 = ptr;
-    while (ptr2 != value) {
-        if (*ptr2 == '*') {
-            /* Wildcard found */
-            found = 1;
-            if (ptr != ptr2) {
-                postfix = ptr2 + 1;
+    if (ret == WS_SUCCESS) {
+        /* Ignore trailing whitespace */
+        ptr = value + WSTRLEN(value) - 1;
+        while (ptr != value) {
+            if (WISSPACE(*ptr)) {
+                ptr--;
             }
-            break;
+            else {
+                break;
+            }
         }
-        if (*ptr2 == '/') {
-            /* Found slash before wildcard directory-wildcards not supported */
-            break;
-        }
-        ptr2--;
-    }
-    ptr = ptr2;
 
-    /* Use wildcard */
-    if (found) {
-#ifdef __unix__
-        int ret;
-        struct dirent *dir;
-        DIR *d;
-        char *path;
-        char *filepath = (char*)WMALLOC(PATH_MAX, NULL, 0);
-
-        /* Back find the full path */
+        /* Find wildcards */
+        ptr2 = ptr;
         while (ptr2 != value) {
+            if (*ptr2 == '*') {
+                /* Wildcard found */
+                found = 1;
+                if (ptr != ptr2) {
+                    postfix = ptr2 + 1;
+                }
+                break;
+            }
             if (*ptr2 == '/') {
+                /* Found slash before wildcard directory-wildcards
+                 * not supported */
                 break;
             }
             ptr2--;
         }
+        ptr = ptr2;
 
-        if (ptr2 != value) {
-            path = (char*)WMALLOC(ptr2 - value + 1, NULL, 0);
-            memcpy(path, value, ptr2 - value);
-            path[ptr2 - value] = '\0';
-            prefix = ptr2 + 1;
-            prefixLen = (int)(ptr - ptr2 - 1);
-        } else {
-            path = (char*)WMALLOC(2, NULL, 0);
-            memcpy(path, ".", 1);
-            path[1] = '\0';
-            prefix = value;
-            prefixLen = (int)(ptr - value);
-        }
+        /* Use wildcard */
+        if (found) {
+#if defined(__unix__) || defined(__unix) || \
+        (defined(__APPLE__) && defined(__MACH__))
+            struct dirent *dir;
+            WDIR d;
+            char *path = NULL;
+            char *filepath = (char*)WMALLOC(PATH_MAX, conf->heap, DYNTYPE_PATH);
 
-        d = opendir(path);
-        if (d) {
-            while ((dir = readdir(d)) != NULL) {
-                if (dir->d_type == DT_DIR) {
-                    /* Skip sub-directories */
-                    continue;
-                }
-                else {
-                    /* Check if filename prefix matches */
-                    if (prefixLen > 0) {
-                        if ((int)WSTRLEN(dir->d_name) <= prefixLen) {
-                            continue;
-                        }
-                        if (WSTRNCMP(dir->d_name, prefix, prefixLen) != 0) {
-                            continue;
-                        }
+            if (filepath == NULL) {
+                ret = WS_MEMORY_E;
+            }
+
+            if (ret == WS_SUCCESS) {
+                /* Back find the full path */
+                while (ptr2 != value) {
+                    if (*ptr2 == '/') {
+                        break;
                     }
-                    if (postfix) {
-                        /* Skip if file is too short */
-                        if (WSTRLEN(dir->d_name) <= WSTRLEN(postfix)) {
-                            continue;
-                        }
-                        if (WSTRNCMP(dir->d_name + WSTRLEN(dir->d_name) -
-                                    WSTRLEN(postfix), postfix, WSTRLEN(postfix))
-                                == 0) {
-                            snprintf(filepath, PATH_MAX, "%s/%s", path,
-                                     dir->d_name);
-                        }
-                        else {
-                            /* Not a match */
-                            continue;
-                        }
+                    ptr2--;
+                }
+
+                if (ptr2 != value) {
+                    path = (char*)WMALLOC(ptr2 - value + 1,
+                            conf->heap, DYNTYPE_PATH);
+                    if (path == NULL) {
+                        ret = WS_MEMORY_E;
                     }
                     else {
-                        snprintf(filepath, PATH_MAX, "%s/%s", path,
-                                 dir->d_name);
+                        WMEMCPY(path, value, ptr2 - value);
+                        path[ptr2 - value] = '\0';
+                        prefix = ptr2 + 1;
+                        prefixLen = (int)(ptr - ptr2 - 1);
                     }
-                    ret = wolfSSHD_ConfigLoad(conf, filepath);
-                    if (ret != WS_SUCCESS) {
-                        return ret;
+                }
+                else {
+                    path = (char*)WMALLOC(2, conf->heap, DYNTYPE_PATH);
+                    if (path == NULL) {
+                        ret = WS_MEMORY_E;
+                    }
+                    else {
+                        WMEMCPY(path, ".", 1);
+                        path[1] = '\0';
+                        prefix = value;
+                        prefixLen = (int)(ptr - value);
                     }
                 }
             }
+
+            if (ret == WS_SUCCESS) {
+                if (!WOPENDIR(NULL, conf->heap, &d, path)) {
+                    word32 fileCount = 0, i, j;
+                    char** fileNames = NULL;
+
+                    /* Count up the number of files */
+                    while ((dir = WREADDIR(&d)) != NULL) {
+                        /* Skip sub-directories */
+                        if (dir->d_type != DT_DIR) {
+                            fileCount++;
+                        }
+                    }
+                    WREWINDDIR(&d);
+
+                    if (fileCount > 0) {
+                        fileNames = (char**)WMALLOC(fileCount * sizeof(char*),
+                                conf->heap, DYNTYPE_PATH);
+                        if (fileNames == NULL) {
+                            ret = WS_MEMORY_E;
+                        }
+                    }
+
+                    if (ret == WS_SUCCESS) {
+                        i = 0;
+                        while (i < fileCount && (dir = WREADDIR(&d)) != NULL) {
+                            /* Skip sub-directories */
+                            if (dir->d_type != DT_DIR) {
+                                /* Insert in string order */
+                                for (j = 0; j < i; j++) {
+                                    if (WSTRCMP(dir->d_name, fileNames[j])
+                                            < 0) {
+                                        WMEMMOVE(fileNames+j+1, fileNames+j,
+                                                (i - j)*sizeof(char*));
+                                        break;
+                                    }
+                                }
+                                fileNames[j] = dir->d_name;
+                                i++;
+                            }
+                        }
+
+                        for (i = 0; i < fileCount; i++) {
+                            /* Check if filename prefix matches */
+                            if (prefixLen > 0) {
+                                if ((int)WSTRLEN(fileNames[i]) <= prefixLen) {
+                                    continue;
+                                }
+                                if (WSTRNCMP(fileNames[i], prefix, prefixLen)
+                                        != 0) {
+                                    continue;
+                                }
+                            }
+                            if (postfix) {
+                                /* Skip if file is too short */
+                                if (WSTRLEN(fileNames[i]) <= WSTRLEN(postfix)) {
+                                    continue;
+                                }
+                                if (WSTRNCMP(fileNames[i] +
+                                            WSTRLEN(fileNames[i]) -
+                                            WSTRLEN(postfix),
+                                            postfix, WSTRLEN(postfix))
+                                        == 0) {
+                                    WSNPRINTF(filepath, PATH_MAX, "%s/%s", path,
+                                             fileNames[i]);
+                                }
+                                else {
+                                    /* Not a match */
+                                    continue;
+                                }
+                            }
+                            else {
+                                WSNPRINTF(filepath, PATH_MAX, "%s/%s", path,
+                                         fileNames[i]);
+                            }
+                            ret = wolfSSHD_ConfigLoad(conf, filepath);
+                            if (ret != WS_SUCCESS) {
+                                break;
+                            }
+                        }
+
+                        if (fileNames != NULL) {
+                            WFREE(fileNames, conf->heap, DYNTYPE_PATH);
+                        }
+                    }
+                    WCLOSEDIR(&d);
+                }
+                else {
+                    /* Bad directory */
+                    ret = WS_INVALID_PATH_E;
+                }
+            }
+            if (path != NULL) {
+                WFREE(path, conf->heap, DYNTYPE_PATH);
+            }
+            if (filepath != NULL) {
+                WFREE(filepath, conf->heap, DYNTYPE_PATH);
+            }
+#else
+            (void)postfix;
+            (void)prefixLen;
+            (void)prefix;
+            /* Don't support wildcards here */
+            ret = WS_BAD_ARGUMENT;
+#endif
         }
         else {
-            /* Bad directory */
-            WFREE(filepath, NULL, 0);
-            return WS_BAD_ARGUMENT;
+            ret = wolfSSHD_ConfigLoad(conf, value);
         }
-        WFREE(filepath, NULL, 0);
-#else
-        (void)postfix;
-        (void)prefixLen;
-        (void)prefix;
-        /* Don't support wildcards here */
-        return WS_BAD_ARGUMENT;
-#endif
     }
-    else {
-        return wolfSSHD_ConfigLoad(conf, value);
-    }
-    return WS_SUCCESS;
+    return ret;
 }
 
 /* returns WS_SUCCESS on success */
@@ -726,7 +796,7 @@ int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename)
 
     f = XFOPEN(filename, "rb");
     if (f == XBADFILE) {
-        wolfSSH_Log(WS_LOG_ERROR, "Unable to open SSHD config file %s\n",
+        wolfSSH_Log(WS_LOG_ERROR, "Unable to open SSHD config file %s",
                 filename);
         return BAD_FUNC_ARG;
     }

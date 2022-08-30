@@ -342,7 +342,8 @@ extern "C" {
         #define WCHMOD(fs,f,m)   _chmod((f),(m))
     #endif
 
-    #if (defined(WOLFSSH_SCP) || defined(WOLFSSH_SFTP)) && \
+    #if (defined(WOLFSSH_SCP) || \
+            defined(WOLFSSH_SFTP) || defined(WOLFSSH_SSHD)) && \
         !defined(WOLFSSH_SCP_USER_CALLBACKS)
 
         #ifdef USE_WINDOWS_API
@@ -476,8 +477,9 @@ extern "C" {
     #define WLOCALTIME(c,r) (localtime_r((c),(r))!=NULL)
 #endif
 
-#if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
-        !defined(NO_WOLFSSH_SERVER) && !defined(NO_FILESYSTEM)
+#if (defined(WOLFSSH_SFTP) || \
+        defined(WOLFSSH_SCP) || defined(WOLFSSH_SSHD)) && \
+    !defined(NO_WOLFSSH_SERVER) && !defined(NO_FILESYSTEM)
 
     #ifndef SIZEOF_OFF_T
         /* if not using autoconf then make a guess on off_t size based on sizeof
@@ -1219,8 +1221,9 @@ extern "C" {
 
     /* returns 0 on success */
     #define WOPENDIR(fs,h,c,d)  ((*(c) = opendir((d))) == NULL)
-    #define WCLOSEDIR(d) closedir(*(d))
-    #define WREADDIR(d)  readdir(*(d))
+    #define WCLOSEDIR(d)  closedir(*(d))
+    #define WREADDIR(d)   readdir(*(d))
+    #define WREWINDDIR(d) rewinddir(*(d))
 #endif /* NO_WOLFSSH_DIR */
 #endif
 #endif /* WOLFSSH_SFTP or WOLFSSH_SCP */
