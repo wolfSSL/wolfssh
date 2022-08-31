@@ -305,7 +305,7 @@ static int SetupChroot(WOLFSSHD_CONFIG* usrConf)
 #define TEST_SFTP_TIMEOUT 1
 
 /* handle SFTP operations
- * returns 0 on success
+ * returns WS_SUCCESS on success
  */
 static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     WPASSWD* pPasswd, WOLFSSHD_CONFIG* usrConf)
@@ -405,6 +405,9 @@ static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     #define MAX_COMMAND_SZ 80
 #endif
 
+/* handles creating a new shell env. and maintains SSH connection for incoming
+ * user input as well as output of the shell.
+ * return WS_SUCCESS on success */
 static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     WPASSWD* pPasswd, WOLFSSHD_CONFIG* usrConf)
 {
@@ -450,7 +453,8 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         signal(SIGINT,  SIG_DFL);
         signal(SIGCHLD, SIG_DFL);
 
-        if (SetupChroot(usrConf) < 0) {
+        rc = SetupChroot(usrConf);
+        if (rc < 0) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting chroot");
             if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
                 /* stop everything if not able to reduce permissions level */
@@ -473,10 +477,14 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 
         setenv("HOME", pPasswd->pw_dir, 1);
         setenv("LOGNAME", pPasswd->pw_name, 1);
-        rc = chdir(pPasswd->pw_dir);
-        if (rc != 0) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error going to user home dir");
-            return WS_FATAL_ERROR;
+
+        /* if chroot was not used then try to change to users direcotry */
+        if (rc == 0) {
+            rc = chdir(pPasswd->pw_dir);
+            if (rc != 0) {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error going to user home dir");
+                return WS_FATAL_ERROR;
+            }
         }
 
         /* default to /bin/sh if user shell is not set */
