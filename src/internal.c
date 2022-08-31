@@ -5038,7 +5038,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
     WS_UserAuthData_PublicKey* pk = NULL;
     int ret = WS_SUCCESS;
     int authFailure = 0;
-    byte pkTypeId;
+    byte pkTypeId = ID_NONE;
     byte*  pkOk   = NULL;
     word32 pkOkSz = 0;
 #ifdef WOLFSSH_CERTS
