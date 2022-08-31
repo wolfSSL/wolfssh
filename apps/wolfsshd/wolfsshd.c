@@ -434,27 +434,6 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     }
 
     ChildRunning = 1;
-    if (SetupChroot(usrConf) < 0) {
-        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting chroot");
-        if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
-            /* stop everything if not able to reduce permissions level */
-            exit(1);
-        }
-
-        return WS_FATAL_ERROR;
-    }
-
-    if (wolfSSHD_AuthReducePermissionsUser(conn->auth, pPasswd->pw_uid,
-        pPasswd->pw_gid) != WS_SUCCESS) {
-        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting user ID");
-        if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
-            /* stop everything if not able to reduce permissions level */
-            exit(1);
-        }
-
-        return WS_FATAL_ERROR;
-    }
-
     childPid = forkpty(&childFd, NULL, NULL, NULL);
     if (childPid < 0) {
         /* forkpty failed, so return */
@@ -470,6 +449,27 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 
         signal(SIGINT,  SIG_DFL);
         signal(SIGCHLD, SIG_DFL);
+
+        if (SetupChroot(usrConf) < 0) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting chroot");
+            if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+                /* stop everything if not able to reduce permissions level */
+                exit(1);
+            }
+
+            return WS_FATAL_ERROR;
+        }
+
+        if (wolfSSHD_AuthReducePermissionsUser(conn->auth, pPasswd->pw_uid,
+            pPasswd->pw_gid) != WS_SUCCESS) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting user ID");
+            if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+                /* stop everything if not able to reduce permissions level */
+                exit(1);
+            }
+
+            return WS_FATAL_ERROR;
+        }
 
         setenv("HOME", pPasswd->pw_dir, 1);
         setenv("LOGNAME", pPasswd->pw_name, 1);
@@ -503,6 +503,16 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         exit(0); /* exit child process and close down SSH connection */
     }
 
+    if (wolfSSHD_AuthReducePermissionsUser(conn->auth, pPasswd->pw_uid,
+        pPasswd->pw_gid) != WS_SUCCESS) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting user ID");
+        if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+            /* stop everything if not able to reduce permissions level */
+            exit(1);
+        }
+
+        return WS_FATAL_ERROR;
+    }
     sshFd = wolfSSH_get_fd(ssh);
 
     struct termios tios;
