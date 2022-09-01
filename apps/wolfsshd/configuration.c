@@ -542,6 +542,7 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
                     #else
                         if (dir->d_type != DT_DIR)
                     #endif
+                        {
                             fileCount++;
                         }
                     }
@@ -567,6 +568,7 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
                         #else
                             if (dir->d_type != DT_DIR)
                         #endif
+                            {
                                 /* Insert in string order */
                                 for (j = 0; j < i; j++) {
                                     if (WSTRCMP(dir->d_name, fileNames[j])
