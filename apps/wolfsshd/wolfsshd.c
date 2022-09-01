@@ -463,6 +463,19 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 
             return WS_FATAL_ERROR;
         }
+        else if (rc == 1) {
+            rc = chdir("/");
+            if (rc != 0) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Error going to / after chroot");
+                if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+                    /* stop everything if not able to reduce permissions level */
+                    exit(1);
+                }
+
+                return WS_FATAL_ERROR;
+            }
+        }
 
         if (wolfSSHD_AuthReducePermissionsUser(conn->auth, pPasswd->pw_uid,
             pPasswd->pw_gid) != WS_SUCCESS) {
@@ -478,13 +491,11 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         setenv("HOME", pPasswd->pw_dir, 1);
         setenv("LOGNAME", pPasswd->pw_name, 1);
 
-        /* if chroot was not used then try to change to users direcotry */
-        if (rc == 0) {
-            rc = chdir(pPasswd->pw_dir);
-            if (rc != 0) {
-                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error going to user home dir");
-                return WS_FATAL_ERROR;
-            }
+        rc = chdir(pPasswd->pw_dir);
+        if (rc != 0) {
+            /* not error'ing out if unable to find home directory */
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error going to user home dir %s",
+            pPasswd->pw_dir);
         }
 
         /* default to /bin/sh if user shell is not set */
