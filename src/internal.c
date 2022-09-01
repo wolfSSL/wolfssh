@@ -10382,7 +10382,9 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId, int addSig)
                 }
             }
             /* fall into public key case if password case was not successful */
-            if ((ret == WS_FATAL_ERROR) && (authId & WOLFSSH_USERAUTH_PUBLICKEY)) {
+            if ((ret == WS_FATAL_ERROR ||
+                !(authId & WOLFSSH_USERAUTH_PASSWORD)) &&
+                (authId & WOLFSSH_USERAUTH_PUBLICKEY)) {
                 ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PUBLICKEY,
                         &authData, ssh->userAuthCtx);
                 if (ret != WOLFSSH_USERAUTH_SUCCESS) {
