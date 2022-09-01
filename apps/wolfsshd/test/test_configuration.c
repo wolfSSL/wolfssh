@@ -200,7 +200,7 @@ static int test_ParseConfigLine(void)
         for (i = 0; i < numVectors; ++i) {
             Log("    Testing scenario: %s.", vectors[i].desc);
 
-            ret = ParseConfigLine(conf, vectors[i].line,
+            ret = ParseConfigLine(&conf, vectors[i].line,
                                   (int)WSTRLEN(vectors[i].line));
 
             if ((ret == WS_SUCCESS && !vectors[i].shouldFail) ||

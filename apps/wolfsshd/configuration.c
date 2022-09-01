@@ -50,6 +50,8 @@
 
 struct WOLFSSHD_CONFIG {
     void* heap;
+    char* usrAppliesTo;   /* NULL means all users */
+    char* groupAppliesTo; /* NULL means all groups */
     char* banner;
     char* chrootDir;
     char* ciphers;
@@ -58,6 +60,8 @@ struct WOLFSSHD_CONFIG {
     char* kekAlgos;
     char* listenAddress;
     char* authKeysFile;
+    char* forceCmd;
+    WOLFSSHD_CONFIG* next; /* next config in list */
     long  loginTimer;
     word16 port;
     byte usePrivilegeSeparation:2;
@@ -67,6 +71,7 @@ struct WOLFSSHD_CONFIG {
     byte permitEmptyPasswords:1;
 };
 
+int CountWhitespace(const char* in, int inSz, byte inv);
 
 /* convert a string into seconds, handles if 'm' for minutes follows the string
  * number, i.e. 2m
@@ -111,11 +116,20 @@ static long GetConfigInt(const char* in, int inSz, int isTime, void* heap)
     return ret;
 }
 
-/* returns WS_SUCCESS on success */
+/* returns WS_SUCCESS on success, removes trailng newlines */
 static int CreateString(char** out, const char* in, int inSz, void* heap)
 {
     int ret = WS_SUCCESS;
-    int idx = 0;
+    int idx = 0, tail, sz = 0;
+
+    if (in == NULL && inSz != 0) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    if (in == NULL) {
+        /* "created" an empty string */
+        return ret;
+    }
 
     /* remove leading white spaces */
     while (idx < inSz && in[idx] == ' ') idx++;
@@ -124,15 +138,28 @@ static int CreateString(char** out, const char* in, int inSz, void* heap)
         ret = WS_BAD_ARGUMENT;
     }
 
+    if (ret == WS_SUCCESS) {
+        for (tail = inSz - 1; tail > idx; tail--) {
+            if (in[tail] != '\n' && in[tail] != ' ' && in[tail] != '\r') {
+                break;
+            }
+        }
+
+        sz = tail - idx + 1; /* +1 to account for index of 0 */
+        if (sz > inSz - idx) {
+            ret = WS_BAD_ARGUMENT;
+        }
+    }
+
     /* malloc new string and set it */
     if (ret == WS_SUCCESS) {
-        *out = (char*)WMALLOC((inSz - idx) + 1, heap, DYNTYPE_SSHD);
+        *out = (char*)WMALLOC(sz + 1, heap, DYNTYPE_SSHD);
         if (*out == NULL) {
             ret = WS_MEMORY_E;
         }
         else {
-            XMEMCPY(*out, in + idx, inSz - idx);
-            *(*out + (inSz - idx)) = '\0';
+            XMEMCPY(*out, in + idx, sz);
+            *(*out + sz) = '\0';
         }
     }
 
@@ -170,17 +197,101 @@ WOLFSSHD_CONFIG* wolfSSHD_ConfigNew(void* heap)
 
 }
 
+
+/* on success return a newly create WOLFSSHD_CONFIG structure that has the
+ * same values set as the input 'conf'. User and group match values are not
+ * copied */
+static WOLFSSHD_CONFIG* wolfSSHD_ConfigCopy(WOLFSSHD_CONFIG* conf)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* newConf;
+
+    newConf = wolfSSHD_ConfigNew(conf->heap);
+    if (newConf != NULL) {
+        if (conf->banner) {
+            ret = CreateString(&newConf->banner, conf->banner,
+                                        (int)WSTRLEN(conf->banner),
+                                        newConf->heap);
+        }
+
+        if (ret == WS_SUCCESS && conf->chrootDir) {
+            ret = CreateString(&newConf->chrootDir, conf->chrootDir,
+                                        (int)WSTRLEN(conf->chrootDir),
+                                        newConf->heap);
+        }
+
+        if (ret == WS_SUCCESS && conf->ciphers) {
+            ret = CreateString(&newConf->ciphers, conf->ciphers,
+                                        (int)WSTRLEN(conf->ciphers),
+                                        newConf->heap);
+        }
+
+        if (ret == WS_SUCCESS && conf->hostKeyFile) {
+            ret = CreateString(&newConf->hostKeyFile, conf->hostKeyFile,
+                                        (int)WSTRLEN(conf->hostKeyFile),
+                                        newConf->heap);
+        }
+
+        if (ret == WS_SUCCESS && conf->hostKeyAlgos) {
+            ret = CreateString(&newConf->hostKeyAlgos, conf->hostKeyAlgos,
+                                        (int)WSTRLEN(conf->hostKeyAlgos),
+                                        newConf->heap);
+        }
+
+        if (ret == WS_SUCCESS && conf->kekAlgos) {
+            ret = CreateString(&newConf->kekAlgos, conf->kekAlgos,
+                                        (int)WSTRLEN(conf->kekAlgos),
+                                        newConf->heap);
+        }
+
+        if (ret == WS_SUCCESS && conf->listenAddress) {
+            ret = CreateString(&newConf->listenAddress, conf->listenAddress,
+                                        (int)WSTRLEN(conf->listenAddress),
+                                        newConf->heap);
+        }
+
+        if (ret == WS_SUCCESS && conf->authKeysFile) {
+            ret = CreateString(&newConf->authKeysFile, conf->authKeysFile,
+                                        (int)WSTRLEN(conf->authKeysFile),
+                                        newConf->heap);
+        }
+
+        if (ret == WS_SUCCESS) {
+            newConf->loginTimer   = conf->loginTimer;
+            newConf->port         = conf->port;
+            newConf->passwordAuth = conf->passwordAuth;
+            newConf->pubKeyAuth   = conf->pubKeyAuth;
+            newConf->usePrivilegeSeparation = conf->usePrivilegeSeparation;
+            newConf->permitRootLogin        = conf->permitRootLogin;
+            newConf->permitEmptyPasswords   = conf->permitEmptyPasswords;
+        }
+    }
+
+    return newConf;
+}
+
+
 void wolfSSHD_ConfigFree(WOLFSSHD_CONFIG* conf)
 {
+    WOLFSSHD_CONFIG* current;
     void* heap;
 
-    if (conf != NULL) {
-        heap = conf->heap;
+    current = conf;
+    while (current != NULL) {
+        WOLFSSHD_CONFIG* next = current->next;
+        heap = current->heap;
 
-        FreeString(&conf->authKeysFile, heap);
-        FreeString(&conf->hostKeyFile, heap);
+        FreeString(&current->banner,    heap);
+        FreeString(&current->chrootDir, heap);
+        FreeString(&current->ciphers,   heap);
+        FreeString(&current->kekAlgos,  heap);
+        FreeString(&current->hostKeyAlgos,  heap);
+        FreeString(&current->listenAddress, heap);
+        FreeString(&current->authKeysFile,  heap);
+        FreeString(&current->hostKeyFile,   heap);
 
-        WFREE(conf, heap, DYNTYPE_SSHD);
+        WFREE(current, heap, DYNTYPE_SSHD);
+        current = next;
     }
 }
 
@@ -208,10 +319,13 @@ enum {
     OPT_PORT                    = 13,
     OPT_PERMIT_ROOT             = 14,
     OPT_USE_DNS                 = 15,
-    OPT_INCLUDE                 = 16
+    OPT_INCLUDE                 = 16,
+    OPT_CHROOT_DIR              = 17,
+    OPT_MATCH                   = 18,
+    OPT_FORCE_CMD               = 19,
 };
 enum {
-    NUM_OPTIONS = 17
+    NUM_OPTIONS = 20
 };
 
 static const CONFIG_OPTION options[NUM_OPTIONS] = {
@@ -231,7 +345,10 @@ static const CONFIG_OPTION options[NUM_OPTIONS] = {
     {OPT_PORT,                    "Port"},
     {OPT_PERMIT_ROOT,             "PermitRootLogin"},
     {OPT_USE_DNS,                 "UseDNS"},
-    {OPT_INCLUDE,                 "Include"}
+    {OPT_INCLUDE,                 "Include"},
+    {OPT_CHROOT_DIR,              "ChrootDirectory"},
+    {OPT_MATCH,                   "Match"},
+    {OPT_FORCE_CMD,               "ForceCommand"},
 };
 
 /* returns WS_SUCCESS on success */
@@ -637,20 +754,154 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
     return ret;
 }
 
+
 /* returns WS_SUCCESS on success */
-static int HandleConfigOption(WOLFSSHD_CONFIG* conf, int opt, const char* value)
+static int HandleChrootDir(WOLFSSHD_CONFIG* conf, const char* value)
+{
+    int ret = WS_SUCCESS;
+
+    if (conf == NULL || value == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (conf->chrootDir != NULL) {
+            FreeString(&conf->chrootDir, conf->heap);
+            conf->chrootDir = NULL;
+        }
+        ret = CreateString(&conf->chrootDir, value,
+                                        (int)WSTRLEN(value), conf->heap);
+    }
+
+    return ret;
+}
+
+
+/* returns WS_SUCCESS on success, helps with adding a restricted case to the
+ * config */
+static int AddRestrictedCase(WOLFSSHD_CONFIG* config, const char* mtch,
+    const char* value, char** out)
+{
+    int ret = WS_SUCCESS;
+    char* pt;
+
+    pt = XSTRSTR(value, mtch);
+    if (pt != NULL) {
+        int sz, i;
+
+        pt += (int)XSTRLEN(mtch);
+        sz   = (int)XSTRLEN(pt);
+
+        /* remove spaces between 'mtch' and the user name */
+        for (i = 0; i < sz; i++) {
+            if (pt[i] != ' ') break;
+        }
+        if (i == sz) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] No valid input found with Match");
+            ret = WS_FATAL_ERROR;
+        }
+
+        if (ret == WS_SUCCESS) {
+            pt += i;
+            sz  -= i;
+
+            /* get the actual size of the user name */
+            for (i = 0; i < sz; i++) {
+                if (pt[i] == ' ' || pt[i] == '\r' || pt[i] == '\n') break;
+            }
+            sz = i;
+
+            ret = CreateString(out, pt, sz, config->heap);
+        }
+    }
+    return ret;
+}
+
+
+/* returns WS_SUCCESS on success, on success it update the conf pointed to
+ * and makes it point to the newly created conf node */
+static int HandleMatch(WOLFSSHD_CONFIG** conf, const char* value, int valueSz)
+{
+    WOLFSSHD_CONFIG* newConf;
+    int ret = WS_SUCCESS;
+
+    if (conf == NULL || *conf == NULL || value == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    /* create new configure for altered options specific to the match */
+    if (ret == WS_SUCCESS) {
+        newConf = wolfSSHD_ConfigCopy(*conf);
+        if (newConf == NULL) {
+            ret = WS_MEMORY_E;
+        }
+    }
+
+    /* users the settings apply to */
+    if (ret == WS_SUCCESS) {
+        ret = AddRestrictedCase(newConf, "User", value,
+            &newConf->usrAppliesTo);
+    }
+
+    /* groups the settings apply to */
+    if (ret == WS_SUCCESS) {
+        ret = AddRestrictedCase(newConf, "Group", value,
+            &newConf->groupAppliesTo);
+    }
+
+    /* @TODO handle , seperated user/group list */
+
+    /* update current config being processed */
+    if (ret == WS_SUCCESS) {
+        (*conf)->next = newConf;
+        (*conf)       = newConf;
+    }
+
+    (void)valueSz;
+    return ret;
+}
+
+
+/* returns WS_SUCCESS on success */
+static int HandleForcedCommand(WOLFSSHD_CONFIG* conf, const char* value,
+    int valueSz)
+{
+    int ret = WS_SUCCESS;
+
+    if (conf == NULL || value == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (conf->forceCmd != NULL) {
+            FreeString(&conf->forceCmd, conf->heap);
+            conf->forceCmd = NULL;
+        }
+
+        ret = CreateString(&conf->forceCmd, value, valueSz, conf->heap);
+    }
+
+
+    (void)valueSz;
+    return ret;
+}
+
+/* returns WS_SUCCESS on success */
+static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
+        const char* value, const char* full, int fullSz)
 {
     int ret = WS_BAD_ARGUMENT;
 
     switch (opt) {
         case OPT_AUTH_KEYS_FILE:
-            ret = wolfSSHD_ConfigSetAuthKeysFile(conf, value);
+            ret = wolfSSHD_ConfigSetAuthKeysFile(*conf, value);
             break;
         case OPT_PRIV_SEP:
-            ret = HandlePrivSep(conf, value);
+            ret = HandlePrivSep(*conf, value);
             break;
         case OPT_PERMIT_EMPTY_PW:
-            ret = HandlePermitEmptyPw(conf, value);
+            ret = HandlePermitEmptyPw(*conf, value);
             break;
         case OPT_SUBSYSTEM:
             /* TODO */
@@ -678,30 +929,40 @@ static int HandleConfigOption(WOLFSSHD_CONFIG* conf, int opt, const char* value)
             break;
         case OPT_PROTOCOL:
             /* TODO */
-            ret = HandleProtocol(conf, value);
+            ret = HandleProtocol(*conf, value);
             break;
         case OPT_LOGIN_GRACE_TIME:
-            ret = HandleLoginGraceTime(conf, value);
+            ret = HandleLoginGraceTime(*conf, value);
             break;
         case OPT_HOST_KEY:
             /* TODO: Add logic to check if file exists? */
-            ret = wolfSSHD_ConfigSetHostKeyFile(conf, value);
+            ret = wolfSSHD_ConfigSetHostKeyFile(*conf, value);
             break;
         case OPT_PASSWORD_AUTH:
-            ret = HandlePwAuth(conf, value);
+            ret = HandlePwAuth(*conf, value);
             break;
         case OPT_PORT:
-            ret = HandlePort(conf, value);
+            ret = HandlePort(*conf, value);
             break;
         case OPT_PERMIT_ROOT:
-            ret = HandlePermitRoot(conf, value);
+            ret = HandlePermitRoot(*conf, value);
             break;
         case OPT_USE_DNS:
             /* TODO */
             ret = WS_SUCCESS;
             break;
         case OPT_INCLUDE:
-            ret = HandleInclude(conf, value);
+            ret = HandleInclude(*conf, value);
+            break;
+        case OPT_CHROOT_DIR:
+            ret = HandleChrootDir(*conf, value);
+            break;
+        case OPT_MATCH:
+            /* makes new config and appends it to the list */
+            ret = HandleMatch(conf, full, fullSz);
+            break;
+        case OPT_FORCE_CMD:
+            ret = HandleForcedCommand(*conf, full, fullSz);
             break;
         default:
             break;
@@ -712,7 +973,7 @@ static int HandleConfigOption(WOLFSSHD_CONFIG* conf, int opt, const char* value)
 
 /* helper function to count white spaces, returns the number of white spaces on
  * success */
-static int CountWhitespace(const char* in, int inSz, byte inv)
+int CountWhitespace(const char* in, int inSz, byte inv)
 {
     int i = 0;
 
@@ -736,8 +997,9 @@ static int CountWhitespace(const char* in, int inSz, byte inv)
 
 /* returns WS_SUCCESS on success
  * Fails if any option is found that is unknown/unsupported
+ * Match command will create new configs for specific matching cases
  */
-WOLFSSHD_STATIC int ParseConfigLine(WOLFSSHD_CONFIG* conf, const char* l,
+WOLFSSHD_STATIC int ParseConfigLine(WOLFSSHD_CONFIG** conf, const char* l,
                                     int lSz)
 {
     int ret = WS_BAD_ARGUMENT;
@@ -769,7 +1031,7 @@ WOLFSSHD_STATIC int ParseConfigLine(WOLFSSHD_CONFIG* conf, const char* l,
         else {
             WMEMCPY(tmp, l + idx, sz);
             tmp[sz] = 0;
-            ret = HandleConfigOption(conf, found->tag, tmp);
+            ret = HandleConfigOption(conf, found->tag, tmp, l + idx, lSz - idx);
         }
     }
     else {
@@ -787,6 +1049,7 @@ WOLFSSHD_STATIC int ParseConfigLine(WOLFSSHD_CONFIG* conf, const char* l,
 int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename)
 {
     XFILE f;
+    WOLFSSHD_CONFIG* currentConfig;
     int ret = WS_SUCCESS;
     char buf[MAX_LINE_SIZE];
     const char* current;
@@ -802,6 +1065,7 @@ int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename)
     }
     wolfSSH_Log(WS_LOG_INFO, "[SSHD] parsing config file %s", filename);
 
+    currentConfig = conf;
     while ((current = XFGETS(buf, MAX_LINE_SIZE, f)) != NULL) {
         int currentSz = (int)XSTRLEN(current);
 
@@ -819,7 +1083,7 @@ int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename)
             continue; /* commented out line */
         }
 
-        ret = ParseConfigLine(conf, current, currentSz);
+        ret = ParseConfigLine(&currentConfig, current, currentSz);
         if (ret != WS_SUCCESS) {
             fprintf(stderr, "Unable to parse config line : %s\n", current);
             break;
@@ -828,6 +1092,60 @@ int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename)
     XFCLOSE(f);
 
     SetAuthKeysPattern(conf->authKeysFile);
+
+    return ret;
+}
+
+
+/* returns the config associated with the user */
+WOLFSSHD_CONFIG* wolfSSHD_GetUserConf(const WOLFSSHD_CONFIG* conf,
+        const char* usr, const char* grp, const char* host,
+        const char* localAdr, word16* localPort, const char* RDomain,
+        const char* adr)
+{
+    WOLFSSHD_CONFIG* ret;
+    WOLFSSHD_CONFIG* current;
+
+    /* default to return head of list */
+    ret = current = (WOLFSSHD_CONFIG*)conf;
+    while (current != NULL) {
+        /* compare current configs user */
+        if (usr != NULL && current->usrAppliesTo != NULL) {
+            if (XSTRCMP(current->usrAppliesTo, usr) == 0) {
+                ret = current;
+                break;
+            }
+        }
+
+        /* compare current configs group */
+        if (grp != NULL && current->groupAppliesTo != NULL) {
+            if (XSTRCMP(current->groupAppliesTo, grp) == 0) {
+                ret = current;
+                break;
+            }
+        }
+
+        current = current->next;
+    }
+
+    /* @TODO */
+    (void)host;
+    (void)localAdr;
+    (void)localPort;
+    (void)RDomain;
+    (void)adr;
+
+    return ret;
+}
+
+
+char* wolfSSHD_ConfigGetForcedCmd(const WOLFSSHD_CONFIG* conf)
+{
+    char* ret = NULL;
+
+    if (conf != NULL) {
+        ret = conf->forceCmd;
+    }
 
     return ret;
 }
@@ -872,6 +1190,17 @@ char* wolfSSHD_ConfigGetBanner(const WOLFSSHD_CONFIG* conf)
 
     if (conf != NULL) {
         ret = conf->banner;
+    }
+
+    return ret;
+}
+
+char* wolfSSHD_ConfigGetChroot(const WOLFSSHD_CONFIG* conf)
+{
+    char* ret = NULL;
+
+    if (conf != NULL) {
+        ret = conf->chrootDir;
     }
 
     return ret;

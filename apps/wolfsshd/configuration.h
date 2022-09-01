@@ -34,7 +34,9 @@ WOLFSSHD_CONFIG* wolfSSHD_ConfigNew(void* heap);
 void wolfSSHD_ConfigFree(WOLFSSHD_CONFIG* conf);
 int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename);
 
+char* wolfSSHD_ConfigGetForcedCmd(const WOLFSSHD_CONFIG* conf);
 char* wolfSSHD_ConfigGetBanner(const WOLFSSHD_CONFIG* conf);
+char* wolfSSHD_ConfigGetChroot(const WOLFSSHD_CONFIG* conf);
 char* wolfSSHD_ConfigGetHostKeyFile(const WOLFSSHD_CONFIG* conf);
 int wolfSSHD_ConfigSetHostKeyFile(WOLFSSHD_CONFIG* conf, const char* file);
 word16 wolfSSHD_ConfigGetPort(const WOLFSSHD_CONFIG* conf);
@@ -45,9 +47,13 @@ byte wolfSSHD_ConfigGetPermitRoot(const WOLFSSHD_CONFIG* conf);
 byte wolfSSHD_ConfigGetPrivilegeSeparation(const WOLFSSHD_CONFIG* conf);
 long wolfSSHD_ConfigGetGraceTime(const WOLFSSHD_CONFIG* conf);
 byte wolfSSHD_ConfigGetPwAuth(const WOLFSSHD_CONFIG* conf);
+WOLFSSHD_CONFIG* wolfSSHD_GetUserConf(const WOLFSSHD_CONFIG* conf,
+        const char* usr, const char* grp, const char* host,
+        const char* localAdr, word16* localPort, const char* RDomain,
+        const char* adr);
 
 #ifdef WOLFSSHD_UNIT_TEST
-int ParseConfigLine(WOLFSSHD_CONFIG* conf, const char* l, int lSz);
+int ParseConfigLine(WOLFSSHD_CONFIG** conf, const char* l, int lSz);
 #endif
 
 #endif /* WOLFSSHD_H */

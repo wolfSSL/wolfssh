@@ -281,27 +281,41 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
 }
 
 
+/* return 1 if set, 0 if not set and negative values on error */
+static int SetupChroot(WOLFSSHD_CONFIG* usrConf)
+{
+    int ret = 0;
+    char* chrootPath;
+
+    /* check for chroot set */
+    chrootPath = wolfSSHD_ConfigGetChroot(usrConf);
+    if (chrootPath != NULL) {
+        ret = 1;
+        wolfSSH_Log(WS_LOG_INFO, "[SSHD] chroot to path  %s", chrootPath);
+        if (chroot(chrootPath) != 0) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] chroot failed to path  %s", chrootPath);
+            ret = WS_FATAL_ERROR;
+        }
+   }
+    return ret;
+}
+
+
 #ifdef WOLFSSH_SFTP
 #define TEST_SFTP_TIMEOUT 1
 
 /* handle SFTP operations
- * returns 0 on success
+ * returns WS_SUCCESS on success
  */
-static int SFTP_Subsystem(WOLFSSH* ssh, WOLFSSHD_CONNECTION* conn)
+static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
+    WPASSWD* pPasswd, WOLFSSHD_CONFIG* usrConf)
 {
     byte tmp[1];
     int ret   = WS_SUCCESS;
     int error = WS_SUCCESS;
     WS_SOCKET_T sockfd;
     int select_ret = 0;
-    const char *userName;
-    struct passwd *p_passwd;
-
-    userName = wolfSSH_GetUsername(ssh);
-    if (userName == NULL) {
-        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failure get user name");
-        return WS_FATAL_ERROR;
-    }
 
     /* temporarily elevate permissions to get users information */
     if (wolfSSHD_AuthRaisePermissions(conn->auth) != WS_SUCCESS) {
@@ -309,18 +323,39 @@ static int SFTP_Subsystem(WOLFSSH* ssh, WOLFSSHD_CONNECTION* conn)
         return WS_FATAL_ERROR;
     }
 
-    p_passwd = getpwnam((const char *)userName);
-    if (p_passwd == NULL) {
-        if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
-            /* stop everything if not able to reduce permissions level */
-            exit(1);
+    if (ret == WS_SUCCESS) {
+        error = SetupChroot(usrConf);
+        if (error == 1) {
+            /* chroot was executed */
+            if (wolfSSH_SFTP_SetDefaultPath(ssh, "/") != WS_SUCCESS) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Error setting SFTP default path");
+                ret = WS_FATAL_ERROR;
+            }
         }
-
-        return WS_FATAL_ERROR;
+        else if (error < 0) {
+            ret = error; /* error case with setup chroot */
+        }
     }
 
-    if (wolfSSHD_AuthReducePermissionsUser(conn->auth, p_passwd->pw_uid,
-        p_passwd->pw_gid) != WS_SUCCESS) {
+    /* set starting SFTP directory */
+    if (ret == WS_SUCCESS) {
+        WDIR dir;
+
+        /* if home directory exists than set it as the default */
+        if (WOPENDIR(NULL, NULL, &dir, pPasswd->pw_dir) == 0) {
+            if (wolfSSH_SFTP_SetDefaultPath(ssh, pPasswd->pw_dir)
+                    != WS_SUCCESS) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Error setting SFTP default home path");
+                ret = WS_FATAL_ERROR;
+            }
+            WCLOSEDIR(&dir);
+        }
+    }
+
+    if (wolfSSHD_AuthReducePermissionsUser(conn->auth, pPasswd->pw_uid,
+            pPasswd->pw_gid) != WS_SUCCESS) {
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting user ID");
         if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
             /* stop everything if not able to reduce permissions level */
@@ -378,12 +413,14 @@ static int SFTP_Subsystem(WOLFSSH* ssh, WOLFSSHD_CONNECTION* conn)
     #define MAX_COMMAND_SZ 80
 #endif
 
-static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
+/* handles creating a new shell env. and maintains SSH connection for incoming
+ * user input as well as output of the shell.
+ * return WS_SUCCESS on success */
+static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
+    WPASSWD* pPasswd, WOLFSSHD_CONFIG* usrConf)
 {
     WS_SOCKET_T sshFd = 0;
     int rc;
-    const char *userName;
-    struct passwd *p_passwd;
     WS_SOCKET_T childFd = 0;
     pid_t childPid;
 #ifndef EXAMPLE_BUFFER_SZ
@@ -391,10 +428,13 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
 #endif
     byte shellBuffer[EXAMPLE_BUFFER_SZ];
     byte channelBuffer[EXAMPLE_BUFFER_SZ];
+    char* forcedCmd;
 
-    userName = wolfSSH_GetUsername(ssh);
-    if (userName == NULL) {
-        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failure get user name");
+    forcedCmd = wolfSSHD_ConfigGetForcedCmd(usrConf);
+    if (forcedCmd != NULL && XSTRCMP(forcedCmd, "internal-sftp") == 0) {
+        wolfSSH_Log(WS_LOG_ERROR,
+                                "[SSHD] Only SFTP connections allowed for user "
+                                "%s", wolfSSH_GetUsername(ssh));
         return WS_FATAL_ERROR;
     }
 
@@ -404,30 +444,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
         return WS_FATAL_ERROR;
     }
 
-    p_passwd = getpwnam((const char *)userName);
-    if (p_passwd == NULL) {
-        /* Not actually a user on the system. */
-        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Invalid user name found");
-        if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
-            /* stop everything if not able to reduce permissions level */
-            exit(1);
-        }
-
-        return WS_FATAL_ERROR;
-    }
-
     ChildRunning = 1;
-    if (wolfSSHD_AuthReducePermissionsUser(conn->auth, p_passwd->pw_uid,
-        p_passwd->pw_gid) != WS_SUCCESS) {
-        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting user ID");
-        if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
-            /* stop everything if not able to reduce permissions level */
-            exit(1);
-        }
-
-        return WS_FATAL_ERROR;
-    }
-
     childPid = forkpty(&childFd, NULL, NULL, NULL);
     if (childPid < 0) {
         /* forkpty failed, so return */
@@ -444,31 +461,85 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh)
         signal(SIGINT,  SIG_DFL);
         signal(SIGCHLD, SIG_DFL);
 
-        setenv("HOME", p_passwd->pw_dir, 1);
-        setenv("LOGNAME", p_passwd->pw_name, 1);
-        rc = chdir(p_passwd->pw_dir);
-        if (rc != 0) {
+        rc = SetupChroot(usrConf);
+        if (rc < 0) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting chroot");
+            if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+                /* stop everything if not able to reduce permissions level */
+                exit(1);
+            }
+
             return WS_FATAL_ERROR;
+        }
+        else if (rc == 1) {
+            rc = chdir("/");
+            if (rc != 0) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Error going to / after chroot");
+                if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+                    /* stop everything if not able to reduce permissions level */
+                    exit(1);
+                }
+
+                return WS_FATAL_ERROR;
+            }
+        }
+
+        if (wolfSSHD_AuthReducePermissionsUser(conn->auth, pPasswd->pw_uid,
+            pPasswd->pw_gid) != WS_SUCCESS) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting user ID");
+            if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+                /* stop everything if not able to reduce permissions level */
+                exit(1);
+            }
+
+            return WS_FATAL_ERROR;
+        }
+
+        setenv("HOME", pPasswd->pw_dir, 1);
+        setenv("LOGNAME", pPasswd->pw_name, 1);
+
+        rc = chdir(pPasswd->pw_dir);
+        if (rc != 0) {
+            /* not error'ing out if unable to find home directory */
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error going to user home dir %s",
+            pPasswd->pw_dir);
         }
 
         /* default to /bin/sh if user shell is not set */
         WMEMSET(cmd, 0, sizeof(cmd));
-        if (XSTRLEN(p_passwd->pw_shell) == 0) {
+        if (XSTRLEN(pPasswd->pw_shell) == 0) {
             XSNPRINTF(cmd, sizeof(cmd), "%s", "/bin/sh");
         }
         else {
-            XSNPRINTF(cmd, sizeof(cmd),"%s", p_passwd->pw_shell);
+            XSNPRINTF(cmd, sizeof(cmd),"%s", pPasswd->pw_shell);
         }
 
         errno = 0;
-        ret = execv(cmd, (char**)args);
+        if (forcedCmd) {
+            args[0] = NULL;
+            ret = execv(forcedCmd, (char**)args);
+        }
+        else {
+            ret = execv(cmd, (char**)args);
+        }
         if (ret && errno) {
-            perror("error executing shell command ");
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue opening shell");
             exit(1);
         }
         exit(0); /* exit child process and close down SSH connection */
     }
 
+    if (wolfSSHD_AuthReducePermissionsUser(conn->auth, pPasswd->pw_uid,
+        pPasswd->pw_gid) != WS_SUCCESS) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting user ID");
+        if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+            /* stop everything if not able to reduce permissions level */
+            exit(1);
+        }
+
+        return WS_FATAL_ERROR;
+    }
     sshFd = wolfSSH_get_fd(ssh);
 
     struct termios tios;
@@ -634,7 +705,8 @@ static void* HandleConnection(void* arg)
                 error = WS_FATAL_ERROR;
         }
 
-        if (ret != WS_SUCCESS && ret != WS_SFTP_COMPLETE) {
+        if (ret != WS_SUCCESS && ret != WS_SFTP_COMPLETE &&
+            ret != WS_SCP_COMPLETE) {
             wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] Failed to accept WOLFSSH connection from %s",
                 conn->ip);
@@ -642,46 +714,74 @@ static void* HandleConnection(void* arg)
     }
 
     if (ret == WS_SUCCESS || ret == WS_SFTP_COMPLETE) {
-        switch (wolfSSH_GetSessionType(ssh)) {
-            case WOLFSSH_SESSION_SHELL:
-            #ifdef WOLFSSH_SHELL
-                if (ret == WS_SUCCESS) {
-                    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Entering new shell");
-                    SHELL_Subsystem(conn, ssh);
-                }
-            #else
-                wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] Shell support is disabled");
-                ret = WS_NOT_COMPILED;
-            #endif
-                break;
+        WPASSWD* pPasswd;
+        WOLFSSHD_CONFIG* usrConf;
+        char* usr;
 
-            case WOLFSSH_SESSION_SUBSYSTEM:
-                /* test for known subsystems */
-                switch (ret) {
-                    case WS_SFTP_COMPLETE:
-                    #ifdef WOLFSSH_SFTP
-                        ret = SFTP_Subsystem(ssh, conn);
-                    #else
-                        err_sys("SFTP not compiled in. Please use --enable-sftp");
-                    #endif
-                        break;
+        /* get configuration for user */
+        usr     = wolfSSH_GetUsername(ssh);
+        usrConf = wolfSSHD_AuthGetUserConf(conn->auth, usr, NULL, NULL,
+            NULL, NULL, NULL);
+        if (usrConf == NULL) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Error getting user configuration");
+            ret = WS_FATAL_ERROR;
+        }
 
-                    default:
-                        wolfSSH_Log(WS_LOG_ERROR,
-                            "[SSHD] Unknown or build not supporting subsystem"
-                            " found [%s]", wolfSSH_GetSessionCommand(ssh));
-                        ret = WS_NOT_COMPILED;
-                }
-                break;
+        if (ret == WS_SUCCESS || ret == WS_SFTP_COMPLETE) {
+            pPasswd = getpwnam((const char *)usr);
+            if (pPasswd == NULL) {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error igetting user info");
+                ret = WS_FATAL_ERROR;
+            }
+        }
 
-            case WOLFSSH_SESSION_UNKNOWN:
-            case WOLFSSH_SESSION_EXEC:
-            case WOLFSSH_SESSION_TERMINAL:
-            default:
-                wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] Unknown or build not supporting session type found");
-                ret = WS_NOT_COMPILED;
+        if (ret != WS_FATAL_ERROR) {
+            /* check for any forced command set for the user */
+            switch (wolfSSH_GetSessionType(ssh)) {
+                case WOLFSSH_SESSION_SHELL:
+                #ifdef WOLFSSH_SHELL
+                    if (ret == WS_SUCCESS) {
+                        wolfSSH_Log(WS_LOG_INFO, "[SSHD] Entering new shell");
+                        SHELL_Subsystem(conn, ssh, pPasswd, usrConf);
+                    }
+                #else
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Shell support is disabled");
+                    ret = WS_NOT_COMPILED;
+                #endif
+                    break;
+
+                case WOLFSSH_SESSION_SUBSYSTEM:
+                    /* test for known subsystems */
+                    switch (ret) {
+                        case WS_SFTP_COMPLETE:
+                        #ifdef WOLFSSH_SFTP
+                            ret = SFTP_Subsystem(conn, ssh, pPasswd, usrConf);
+                        #else
+                            err_sys("SFTP not compiled in. Please use "
+                                    "--enable-sftp");
+                        #endif
+                            break;
+
+                        default:
+                            wolfSSH_Log(WS_LOG_ERROR,
+                                "[SSHD] Unknown or build not supporting sub"
+                                "system found [%s]",
+                                wolfSSH_GetSessionCommand(ssh));
+                            ret = WS_NOT_COMPILED;
+                    }
+                    break;
+
+                case WOLFSSH_SESSION_UNKNOWN:
+                case WOLFSSH_SESSION_EXEC:
+                case WOLFSSH_SESSION_TERMINAL:
+                default:
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Unknown or build not supporting session type "
+                        "found");
+                    ret = WS_NOT_COMPILED;
+            }
         }
     }
 

@@ -51,6 +51,7 @@
 #ifndef _WIN32
 #include <sys/types.h>
 #include <pwd.h>
+#include <grp.h>
 #include <errno.h>
 #endif
 
@@ -935,6 +936,35 @@ long wolfSSHD_AuthGetGraceTime(const WOLFSSHD_AUTH* auth)
         ret = wolfSSHD_ConfigGetGraceTime(auth->conf);
     }
 
+    return ret;
+}
+
+
+/* return the user configuration */
+WOLFSSHD_CONFIG* wolfSSHD_AuthGetUserConf(const WOLFSSHD_AUTH* auth,
+        const char* usr, const char* host,
+        const char* localAdr, word16* localPort, const char* RDomain,
+        const char* adr)
+{
+    struct group* g = NULL;
+    WOLFSSHD_CONFIG* ret = NULL;
+
+    if (auth != NULL) {
+        struct passwd *p_passwd;
+
+        p_passwd = getpwnam((const char *)usr);
+        if (p_passwd == NULL) {
+            return NULL;
+        }
+
+        g = getgrgid(p_passwd->pw_gid);
+        if (g == NULL) {
+            return NULL;
+        }
+
+        ret = wolfSSHD_GetUserConf(auth->conf, usr, g->gr_name, host, localAdr,
+            localPort, RDomain, adr);
+    }
     return ret;
 }
 #endif /* WOLFSSH_SSHD */

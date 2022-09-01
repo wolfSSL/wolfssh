@@ -1230,6 +1230,12 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, byte* data,
         rSz -= 1;
     }
 
+    /* special case of /. */
+    if (rSz == 2 && r[0] == WS_DELIM && r[1] == '.') {
+        r[1] = '\0';
+        rSz -= 1;
+    }
+
     /* for real path always send '/' chars */
     for (i = 0; i < rSz; i++) {
         if (r[i] == WS_DELIM) r[i] = '/';
