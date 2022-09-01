@@ -322,15 +322,6 @@ static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         return WS_FATAL_ERROR;
     }
 
-    /* set starting SFTP directory */
-    if (ret == WS_SUCCESS) {
-        if (wolfSSH_SFTP_SetDefaultPath(ssh, pPasswd->pw_dir) != WS_SUCCESS) {
-            wolfSSH_Log(WS_LOG_ERROR,
-                "[SSHD] Error setting SFTP default home path");
-            ret = WS_FATAL_ERROR;
-        }
-    }
-
     if (ret == WS_SUCCESS) {
         error = SetupChroot(usrConf);
         if (error == 1) {
@@ -343,6 +334,22 @@ static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         }
         else if (error < 0) {
             ret = error; /* error case with setup chroot */
+        }
+    }
+
+    /* set starting SFTP directory */
+    if (ret == WS_SUCCESS) {
+        WDIR dir;
+
+        /* if home directory exists than set it as the default */
+        if (WOPENDIR(NULL, NULL, &dir, pPasswd->pw_dir) == 0) {
+            if (wolfSSH_SFTP_SetDefaultPath(ssh, pPasswd->pw_dir)
+                    != WS_SUCCESS) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Error setting SFTP default home path");
+                ret = WS_FATAL_ERROR;
+            }
+            WCLOSEDIR(&dir);
         }
     }
 
