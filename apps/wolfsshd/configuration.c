@@ -47,6 +47,7 @@
 #endif
 
 #include "configuration.h"
+#include <dirent.h>
 
 struct WOLFSSHD_CONFIG {
     void* heap;
@@ -650,7 +651,15 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
                     /* Count up the number of files */
                     while ((dir = WREADDIR(&d)) != NULL) {
                         /* Skip sub-directories */
-                        if (dir->d_type != DT_DIR) {
+                    #if defined(__QNX__) || defined(__QNXNTO__)
+                        struct stat s;
+
+                        lstat(dir->d_name, &s);
+                        if (!S_ISDIR(s.st_mode))
+                    #else
+                        if (dir->d_type != DT_DIR)
+                    #endif
+                        {
                             fileCount++;
                         }
                     }
@@ -668,7 +677,15 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
                         i = 0;
                         while (i < fileCount && (dir = WREADDIR(&d)) != NULL) {
                             /* Skip sub-directories */
-                            if (dir->d_type != DT_DIR) {
+                        #if defined(__QNX__) || defined(__QNXNTO__)
+                            struct stat s;
+
+                            lstat(dir->d_name, &s);
+                            if (!S_ISDIR(s.st_mode))
+                        #else
+                            if (dir->d_type != DT_DIR)
+                        #endif
+                            {
                                 /* Insert in string order */
                                 for (j = 0; j < i; j++) {
                                     if (WSTRCMP(dir->d_name, fileNames[j])
