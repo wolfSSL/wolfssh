@@ -63,7 +63,7 @@ The example is configured by JSON configuraiotn file to only accept connetions f
 	    "family" : 2,
         "protocol" : 6,
 	    "remote" : {
-	    "address" : "192.168.11.3", <--------  IP Address to change
+	    "address" : "192.168.11.3", <--------IP Address to change
 	    "prefix-bits" : 32,
 	    "interface" : 0
 	    }
@@ -79,10 +79,10 @@ The threshold number is 5 times continuously. The peer is accommodated into the 
     "priority" : 1,
     "config" : {
 	"max-connection-count" : 10,
-	"penalty-box-duration" : "1h",                 <---- Duration at penalty boxing. In this case, the duration is 1 hour.
-	"derog-thresh-for-penalty-boxing" : 5,         <---- Theshold for invalid password
-	"derog-thresh-ignore-commendable" : true,      <---- Theshold for invalid password
-	"commendable-clears-derogatory" : false        <---- dero
+	"penalty-box-duration" : "1h",                 <----Duration at penalty boxing. In this case, the duration is 1 hour.
+	"derog-thresh-for-penalty-boxing" : 5,         <----Theshold for invalid password
+	"derog-thresh-ignore-commendable" : true,      <----Theshold for invalid password
+	"commendable-clears-derogatory" : false        <----Clear derogatory count when it becomes commendable. 
     },
     "actions" : [ "handle-connect" ],
     "insert-event" : "event-on-insert",
@@ -173,7 +173,7 @@ rule_route render:
  last_hit_time 		Fri Sep  2 10:57:21 2022
  last_penaltybox_time 	
  connection_count 	0
- derogatory_count 	4                            <--- Peer types invalid password 4 times continuously.
+ derogatory_count 	4                            <---Peer types invalid password 4 times continuously.
  commendable_count 	0
 
 action callback: a="handle-update" parent_event="static-route-parent" trigger="authentication_failed" t=4 r_id=21 caller_arg=0x561e60cd7a60
@@ -181,7 +181,7 @@ rule_route render:
 192.168.11.3/32%0:* <-> *:*, ev = "static-route-parent", AF = INET, proto = tcp
  insert_time 		Fri Sep  2 10:45:25 2022
  last_hit_time 		Fri Sep  2 10:57:21 2022
- last_penaltybox_time 	Fri Sep  2 10:57:21 2022 <--- Peer is accommodated into a penalty box because of exceeding threshold
+ last_penaltybox_time 	Fri Sep  2 10:57:21 2022 <---Peer is accommodated into a penalty box because of exceeding threshold
  connection_count 	0
  derogatory_count 	0
  commendable_count 	0
@@ -197,7 +197,7 @@ rule_route render:
  commendable_count 	0
 
 TCP Sentry action returned code 0 (OK, operation succeeded), src 4 (routes.c), line 1174
-wolfsentry rejected                              <--- Peer connection is rejected because of penalty boxing now
+wolfsentry rejected                              <---Peer connection is rejected because of penalty boxing now
 User authentication error
 
 ```
@@ -250,7 +250,7 @@ rule_route render:
  last_hit_time 		Fri Sep  2 15:20:41 2022
  last_penaltybox_time 	
  connection_count 	0
- derogatory_count 	3                      <--- Peer continuously typed invalid password 3 times.
+ derogatory_count 	3                      <---Peer continuously typed invalid password 3 times.
  commendable_count 	1
 
 action callback: a="handle-update" parent_event="static-route-parent" trigger="authentication_succeeded" t=4 r_id=21 caller_arg=0x55adeff1be30
@@ -261,7 +261,7 @@ Route detail:
  last_hit_time 		Fri Sep  2 15:20:41 2022
  last_penaltybox_time 	
  connection_count 	0
- derogatory_count 	0                       <--- Because Peer has become commendable peer, wolfsentry clears the count.
+ derogatory_count 	0                       <---Because Peer has become commendable peer, wolfsentry clears the count.
  commendable_count 	2
 
 action callback: a="notify-on-decision" parent_event="static-route-parent" trigger="authentication_succeeded" t=6 r_id=21 caller_arg=0x55adeff1be30
@@ -273,5 +273,4 @@ rule_route render:
  connection_count 	0
  derogatory_count 	0
  commendable_count 	2
-
 ```
