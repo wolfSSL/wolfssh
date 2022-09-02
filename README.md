@@ -411,9 +411,9 @@ behavior, give the echoserver the command line option `-f`.
 POST-QUANTUM
 ============
 
-wolfSSH now supports the post-quantum algorithm SABER. It uses the NIST
+wolfSSH now supports the post-quantum algorithm Kyber. It uses the NIST
 submission's Level 1 parameter set implemented by liboqs via an integration
-with wolfSSH.
+with wolfSSH. It is hybridized with ECDHE over the P-256 ECC curve.
 
 In order be able to use liboqs, you must have it built and installed on your
 system. We support the 0.7.0 release of liboqs. You can download it from the
@@ -431,13 +431,13 @@ Once unpacked, this would be sufficient:
     $ sudo make install
 
 
-In order to enable support for SABER Level1 in wolfSSH, use the `--with-liboqs`
-build option during configuration:
+In order to enable support for Kyber Level1 hybridized with ECDHE over the P-256
+ECC curve in wolfSSH, use the `--with-liboqs` build option during configuration:
 
     $ ./configure --with-liboqs
 
-The wolfSSH client and server will automatically negotiate using SABER Level1
-if this feature is enabled.
+The wolfSSH client and server will automatically negotiate using Kyber Level1
+hybridized with ECDHE over the P-256 ECC curve if this feature is enabled.
 
     $ ./examples/echoserver/echoserver -f
 
@@ -459,7 +459,7 @@ The following is sufficient for build and execution:
     $ cd openssh-OQS-OpenSSH-snapshot-2021-08/
     $ ./configure --with-liboqs-dir=/usr/local
     $ make all
-    $ ./ssh -o"KexAlgorithms +saber-lightsaber-sha256" \
+    $ ./ssh -o"KexAlgorithms +ecdh-sha2-nistp256-kyber-512-sha256" \
       -o"PubkeyAcceptedAlgorithms +ssh-rsa" \
       -o"HostkeyAlgorithms +ssh-rsa" \
       jill@localhost -p 22222
