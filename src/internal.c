@@ -3231,7 +3231,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             ret = wc_ecc_init_ex(&sigKeyBlock_ptr->sk.ecc.key, ssh->ctx->heap,
                                  INVALID_DEVID);
 #ifdef HAVE_WC_ECC_SET_RNG
-            if (ret == WS_SUCCESS)
+            if (ret == 0)
                 ret = wc_ecc_set_rng(&sigKeyBlock_ptr->sk.ecc.key, ssh->rng);
 #endif
             if (ret != 0)
@@ -3284,16 +3284,12 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 #endif
                ) {
 #ifndef WOLFSSH_NO_DH
-            #ifdef PRIVATE_KEY_UNLOCK
                 PRIVATE_KEY_UNLOCK();
-            #endif
                 ret = wc_DhAgree(&ssh->handshake->privKey.dh,
                                  ssh->k, &ssh->kSz,
                                  ssh->handshake->x, ssh->handshake->xSz,
                                  f, fSz);
-            #ifdef PRIVATE_KEY_LOCK
                 PRIVATE_KEY_LOCK();
-            #endif
                 ForceZero(ssh->handshake->x, ssh->handshake->xSz);
                 wc_FreeDhKey(&ssh->handshake->privKey.dh);
                 if (ret != 0) {
@@ -3308,20 +3304,16 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 #ifndef WOLFSSH_NO_ECDH
                 ret = wc_ecc_init(key_ptr);
 #ifdef HAVE_WC_ECC_SET_RNG
-                if (ret == WS_SUCCESS)
+                if (ret == 0)
                     ret = wc_ecc_set_rng(key_ptr, ssh->rng);
 #endif
                 if (ret == 0)
                     ret = wc_ecc_import_x963(f, fSz, key_ptr);
                 if (ret == 0) {
-                #ifdef PRIVATE_KEY_UNLOCK
                     PRIVATE_KEY_UNLOCK();
-                #endif
                     ret = wc_ecc_shared_secret(&ssh->handshake->privKey.ecc,
                                                key_ptr, ssh->k, &ssh->kSz);
-                #ifdef PRIVATE_KEY_LOCK
                     PRIVATE_KEY_LOCK();
-                #endif
                 }
                 wc_ecc_free(key_ptr);
                 wc_ecc_free(&ssh->handshake->privKey.ecc);
@@ -3343,9 +3335,13 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                     ret = WS_INVALID_ALGO_ID;
                 }
 
+                if (fSz <= (word32)kem->length_ciphertext) {
+                    ret = WS_BUFFER_E;
+                }
+
                 ret = wc_ecc_init(key_ptr);
 #ifdef HAVE_WC_ECC_SET_RNG
-                if (ret == WS_SUCCESS)
+                if (ret == 0)
                     ret = wc_ecc_set_rng(key_ptr, ssh->rng);
 #endif
                 if (ret == 0) {
@@ -3354,14 +3350,10 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 }
 
                 if (ret == 0) {
-                #ifdef PRIVATE_KEY_UNLOCK
                     PRIVATE_KEY_UNLOCK();
-                #endif
                     ret = wc_ecc_shared_secret(&ssh->handshake->privKey.ecc,
                                                key_ptr, ssh->k, &ssh->kSz);
-                #ifdef PRIVATE_KEY_LOCK
                     PRIVATE_KEY_LOCK();
-                #endif
                 }
                 wc_ecc_free(key_ptr);
                 wc_ecc_free(&ssh->handshake->privKey.ecc);
@@ -3377,7 +3369,8 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 } else {
                     ssh->kSz = 0;
                     WLOG(WS_LOG_ERROR,
-                    "Generate ECC-kyber (decap) shared secret failed, %d", ret);
+                         "Generate ECC-kyber (decap) shared secret failed, %d",
+                         ret);
                 }
 
                 if (kem != NULL) {
@@ -7196,15 +7189,11 @@ int SendKexDhReply(WOLFSSH* ssh)
                                              ssh->ctx->privateKeySz);
             /* Flatten the public key into x963 value for the exchange hash. */
             if (ret == 0) {
-            #ifdef PRIVATE_KEY_UNLOCK
                 PRIVATE_KEY_UNLOCK();
-            #endif
                 ret = wc_ecc_export_x963(&sigKeyBlock_ptr->sk.ecc.key,
                                          sigKeyBlock_ptr->sk.ecc.q,
                                          &sigKeyBlock_ptr->sk.ecc.qSz);
-            #ifdef PRIVATE_KEY_LOCK
                 PRIVATE_KEY_LOCK();
-            #endif
             }
             /* Hash in the length of the public key block. */
             if (ret == 0) {
@@ -7385,14 +7374,10 @@ int SendKexDhReply(WOLFSSH* ssh)
                         ret = wc_DhGenerateKeyPair(privKey, ssh->rng,
                                 y_ptr, &ySz, f_ptr, &fSz);
                     if (ret == 0) {
-                    #ifdef PRIVATE_KEY_UNLOCK
                         PRIVATE_KEY_UNLOCK();
-                    #endif
                         ret = wc_DhAgree(privKey, ssh->k, &ssh->kSz, y_ptr, ySz,
                                 ssh->handshake->e, ssh->handshake->eSz);
-                    #ifdef PRIVATE_KEY_LOCK
                         PRIVATE_KEY_LOCK();
-                    #endif
                     }
                     ForceZero(y_ptr, ySz);
                     wc_FreeDhKey(privKey);
@@ -7444,23 +7429,15 @@ int SendKexDhReply(WOLFSSH* ssh)
                                          wc_ecc_get_curve_size_from_id(primeId),
                                          privKey, primeId);
                 if (ret == 0) {
-                #ifdef PRIVATE_KEY_UNLOCK
                     PRIVATE_KEY_UNLOCK();
-                #endif
                     ret = wc_ecc_export_x963(privKey, f_ptr, &fSz);
-                #ifdef PRIVATE_KEY_LOCK
                     PRIVATE_KEY_LOCK();
-                #endif
                 }
                 if (ret == 0) {
-                #ifdef PRIVATE_KEY_UNLOCK
                     PRIVATE_KEY_UNLOCK();
-                #endif
                     ret = wc_ecc_shared_secret(privKey, pubKey,
                                                ssh->k, &ssh->kSz);
-                #ifdef PRIVATE_KEY_LOCK
                     PRIVATE_KEY_LOCK();
-                #endif
                 }
                 wc_ecc_free(privKey);
                 wc_ecc_free(pubKey);
@@ -7496,11 +7473,18 @@ int SendKexDhReply(WOLFSSH* ssh)
                 ecc_key privKey[1];
             #endif
 
+                XMEMSET(pubKey, 0, sizeof(*pubKey));
+                XMEMSET(privKey, 0, sizeof(*privKey));
+
                 if (ret == 0) {
                     kem = OQS_KEM_new(OQS_KEM_alg_kyber_512);
                     if (kem == NULL) {
                         ret = WS_INVALID_ALGO_ID;
                     }
+                }
+
+                if (ssh->handshake->eSz <= (word32)kem->length_public_key) {
+                    ret = WS_BUFFER_E;
                 }
 
                 if (ret == 0) {
@@ -7529,23 +7513,15 @@ int SendKexDhReply(WOLFSSH* ssh)
                               wc_ecc_get_curve_size_from_id(primeId),
                               privKey, primeId);
                 if (ret == 0) {
-                #ifdef PRIVATE_KEY_UNLOCK
                     PRIVATE_KEY_UNLOCK();
-                #endif
                     ret = wc_ecc_export_x963(privKey, f_ptr, &fSz);
-                #ifdef PRIVATE_KEY_LOCK
                     PRIVATE_KEY_LOCK();
-                #endif
                 }
                 if (ret == 0) {
-                #ifdef PRIVATE_KEY_UNLOCK
                     PRIVATE_KEY_UNLOCK();
-                #endif
                     ret = wc_ecc_shared_secret(privKey, pubKey,
                                                ssh->k, &ssh->kSz);
-                #ifdef PRIVATE_KEY_LOCK
                     PRIVATE_KEY_LOCK();
-                #endif
                 }
                 wc_ecc_free(privKey);
                 wc_ecc_free(pubKey);
@@ -7572,7 +7548,8 @@ int SendKexDhReply(WOLFSSH* ssh)
                     fSz = 0;
                     ssh->kSz = 0;
                     WLOG(WS_LOG_ERROR,
-                    "Generate ECC-kyber (encap) shared secret failed, %d", ret);
+                         "Generate ECC-kyber (encap) shared secret failed, %d",
+                         ret);
                 }
 
                 if (kem != NULL) {
@@ -8209,13 +8186,9 @@ int SendKexDhInit(WOLFSSH* ssh)
                                      wc_ecc_get_curve_size_from_id(primeId),
                                      privKey, primeId);
             if (ret == 0) {
-            #ifdef PRIVATE_KEY_UNLOCK
                 PRIVATE_KEY_UNLOCK();
-            #endif
                 ret = wc_ecc_export_x963(privKey, e, &eSz);
-            #ifdef PRIVATE_KEY_LOCK
                 PRIVATE_KEY_LOCK();
-            #endif
             }
 #else
             ret = WS_INVALID_ALGO_ID;
@@ -8852,7 +8825,7 @@ static int PrepareUserAuthRequestEcc(WOLFSSH* ssh, word32* payloadSz,
     if (ret == WS_SUCCESS)
         ret = wc_ecc_init(&keySig->ks.ecc.key);
 
-    if (ret == WS_SUCCESS) {
+    if (ret == 0) {
         word32 idx = 0;
         #ifdef WOLFSSH_AGENT
         if (ssh->agentEnabled) {
