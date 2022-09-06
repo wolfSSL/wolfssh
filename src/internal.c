@@ -9466,7 +9466,7 @@ static int BuildUserAuthRequestRsa(WOLFSSH* ssh,
 {
     wc_HashAlg hash;
     byte digest[WC_MAX_DIGEST_SIZE];
-    word32 digestSz;
+    word32 digestSz = 0;
     word32 begin;
     enum wc_HashType hashId = WC_HASH_TYPE_SHA;
     int ret = WS_SUCCESS;
@@ -9637,7 +9637,7 @@ static int BuildUserAuthRequestRsaCert(WOLFSSH* ssh,
 {
     wc_HashAlg hash;
     byte digest[WC_MAX_DIGEST_SIZE];
-    word32 digestSz;
+    word32 digestSz = 0;
     word32 begin;
     enum wc_HashType hashId = WC_HASH_TYPE_SHA;
     int ret = WS_SUCCESS;
