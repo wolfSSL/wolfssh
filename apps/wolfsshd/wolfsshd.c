@@ -714,7 +714,7 @@ static void* HandleConnection(void* arg)
     }
 
     if (ret == WS_SUCCESS || ret == WS_SFTP_COMPLETE) {
-        WPASSWD* pPasswd;
+        WPASSWD* pPasswd = NULL;
         WOLFSSHD_CONFIG* usrConf;
         char* usr;
 

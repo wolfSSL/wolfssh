@@ -160,7 +160,7 @@ static int wsUserAuth(byte authType,
                       void* ctx)
 {
     const char* defaultPassword = (const char*)ctx;
-    word32 passwordSz;
+    word32 passwordSz = 0;
     int ret = WOLFSSH_USERAUTH_SUCCESS;
 
     (void)authType;
