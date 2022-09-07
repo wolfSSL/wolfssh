@@ -4726,31 +4726,54 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
-#ifdef WOLFSSH_SMALL_STACK
-    key_ptr = (ecc_key*)WMALLOC(sizeof(ecc_key), ssh->ctx->heap,
-            DYNTYPE_PUBKEY);
-    sig_r_ptr = (mp_int*)WMALLOC(sizeof(mp_int), ssh->ctx->heap, DYNTYPE_MPINT);
-    sig_s_ptr = (mp_int*)WMALLOC(sizeof(mp_int), ssh->ctx->heap, DYNTYPE_MPINT);
-    if (key_ptr == NULL || sig_r_ptr == NULL || sig_s_ptr == NULL)
-        ret = WS_MEMORY_E;
-#else
-    key_ptr = &s_key;
-    sig_r_ptr = &sig_r;
-    sig_s_ptr = &sig_s;
-#endif
+    #ifdef WOLFSSH_SMALL_STACK
+        key_ptr = (ecc_key*)WMALLOC(sizeof(ecc_key), ssh->ctx->heap,
+                DYNTYPE_PUBKEY);
+        if (key_ptr == NULL) {
+            ret = WS_MEMORY_E;
+        }
+    #else
+        key_ptr = &s_key;
+    #endif
     }
 
-    if (sig_r_ptr != NULL) {
+    if (ret == WS_SUCCESS) {
+    #ifdef WOLFSSH_SMALL_STACK
+        sig_r_ptr = (mp_int*)WMALLOC(sizeof(mp_int), ssh->ctx->heap, DYNTYPE_MPINT);
+        if (sig_r_ptr == NULL) {
+            ret = WS_MEMORY_E;
+        }
+        else
+    #else
+        sig_r_ptr = &sig_r;
+    #endif
         if (mp_init(sig_r_ptr) != MP_OKAY) {
+    #ifdef WOLFSSH_SMALL_STACK
+            WFREE(sig_r_ptr, ssh->ctx->heap, DYNTYPE_MPINT);
+    #endif
+            sig_r_ptr = NULL;
             ret = WS_MEMORY_E;
         }
     }
-    if (sig_s_ptr != NULL) {
+    if (ret == WS_SUCCESS) {
+    #ifdef WOLFSSH_SMALL_STACK
+        sig_s_ptr = (mp_int*)WMALLOC(sizeof(mp_int), ssh->ctx->heap, DYNTYPE_MPINT);
+        if (sig_s_ptr == NULL) {
+            ret = WS_MEMORY_E;
+        }
+        else
+    #else
+        sig_s_ptr = &sig_s;
+    #endif
         if (mp_init(sig_s_ptr) != MP_OKAY) {
+    #ifdef WOLFSSH_SMALL_STACK
+            WFREE(sig_s_ptr, ssh->ctx->heap, DYNTYPE_MPINT);
+    #endif
+            sig_s_ptr = NULL;
             ret = WS_MEMORY_E;
         }
     }
-    if (key_ptr != NULL) {
+    if ((ret == WS_SUCCESS) && (key_ptr != NULL)) {
         if (wc_ecc_init_ex(key_ptr, ssh->ctx->heap, INVALID_DEVID) != 0) {
             ret = WS_MEMORY_E;
         }
@@ -4902,18 +4925,15 @@ static int DoUserAuthRequestEccCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
-#ifdef WOLFSSH_SMALL_STACK
-    key_ptr = (ecc_key*)WMALLOC(sizeof(ecc_key), ssh->ctx->heap,
-            DYNTYPE_PUBKEY);
-    sig_r_ptr = (mp_int*)WMALLOC(sizeof(mp_int), ssh->ctx->heap, DYNTYPE_MPINT);
-    sig_s_ptr = (mp_int*)WMALLOC(sizeof(mp_int), ssh->ctx->heap, DYNTYPE_MPINT);
-    if (key_ptr == NULL || sig_r_ptr == NULL || sig_s_ptr == NULL)
-        ret = WS_MEMORY_E;
-#else
-    key_ptr = &s_key;
-    sig_r_ptr = &sig_r;
-    sig_s_ptr = &sig_s;
-#endif
+    #ifdef WOLFSSH_SMALL_STACK
+        key_ptr = (ecc_key*)WMALLOC(sizeof(ecc_key), ssh->ctx->heap,
+                DYNTYPE_PUBKEY);
+        if (key_ptr == NULL) {
+            ret = WS_MEMORY_E;
+        }
+    #else
+        key_ptr = &s_key;
+    #endif
     }
 
     if (ret == WS_SUCCESS) {
@@ -4983,7 +5003,21 @@ static int DoUserAuthRequestEccCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
+    #ifdef WOLFSSH_SMALL_STACK
+        sig_r_ptr = (mp_int*)WMALLOC(sizeof(mp_int), ssh->ctx->heap,
+                                     DYNTYPE_MPINT);
+        if (sig_r_ptr == NULL) {
+            ret = WS_MEMORY_E;
+        }
+        else
+    #else
+        sig_r_ptr = &sig_r;
+    #endif
         if (mp_init(sig_r_ptr) != MP_OKAY) {
+    #ifdef WOLFSSH_SMALL_STACK
+            WFREE(sig_r_ptr, ssh->ctx->heap, DYNTYPE_MPINT);
+    #endif
+            sig_r_ptr = NULL;
             ret = WS_FATAL_ERROR;
         }
     }
@@ -5002,7 +5036,21 @@ static int DoUserAuthRequestEccCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
+    #ifdef WOLFSSH_SMALL_STACK
+        sig_s_ptr = (mp_int*)WMALLOC(sizeof(mp_int), ssh->ctx->heap,
+                                     DYNTYPE_MPINT);
+        if (sig_s_ptr == NULL) {
+            ret = WS_MEMORY_E;
+        }
+        else
+    #else
+        sig_s_ptr = &sig_s;
+    #endif
         if (mp_init(sig_s_ptr) != MP_OKAY) {
+    #ifdef WOLFSSH_SMALL_STACK
+            WFREE(sig_s_ptr, ssh->ctx->heap, DYNTYPE_MPINT);
+    #endif
+            sig_s_ptr = NULL;
             ret = WS_FATAL_ERROR;
         }
     }
