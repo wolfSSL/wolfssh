@@ -197,6 +197,11 @@ enum {
 };
 #endif /* WOLFSSH_NO_FPKI */
 
+/* if max chain depth not set in wolfSSL then default to 9 */
+#ifndef MAX_CHAIN_DEPTH
+    #define MAX_CHAIN_DEPTH 9
+#endif
+
 /* if handling a chain it is expected to be the leaf cert first followed by
  * intermediates and CA last (CA may be ommited) */
 int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
@@ -211,6 +216,15 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
 
     WLOG_ENTER();
 
+    if (cm == NULL || certs == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    if (certsCount > MAX_CHAIN_DEPTH) {
+        WLOG(WS_LOG_CERTMAN, "cert count is larger than MAX_CHAIN_DEPTH");
+        return WS_BAD_ARGUMENT;
+    }
+
     certLoc = (unsigned char**)WMALLOC(certsCount * sizeof(unsigned char*),
         cm->heap, DYNTYPE_CERT);
     certLen = (word32*)WMALLOC(certsCount * sizeof(word32), cm->heap,
@@ -222,6 +236,13 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
     if (ret == WS_SUCCESS) {
         for (certIdx = 0; certIdx < (int)certsCount; certIdx++) {
             word32 sz = 0;
+
+            if ((idx + UINT32_SZ) > certSz) {
+                WLOG(WS_LOG_CERTMAN, "cert count is past end of buffer");
+                ret = ASN_PARSE_E;
+                break;
+            }
+
             certLoc[certIdx] = (byte*)certs + idx + UINT32_SZ;
 
             /* get the size of the certificate */
@@ -236,6 +257,9 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
                     break;
                 }
                 idx += sz;
+            }
+            else {
+                break;
             }
         }
     }
