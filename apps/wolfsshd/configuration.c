@@ -72,6 +72,7 @@ struct WOLFSSHD_CONFIG {
     byte pubKeyAuth:1;
     byte permitRootLogin:1;
     byte permitEmptyPasswords:1;
+    byte authKeysFileSet:1; /* if not set then no explicit authorized keys */
 };
 
 int CountWhitespace(const char* in, int inSz, byte inv);
@@ -920,6 +921,7 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
 
     switch (opt) {
         case OPT_AUTH_KEYS_FILE:
+            (*conf)->authKeysFileSet = 1;
             ret = wolfSSHD_ConfigSetAuthKeysFile(*conf, value);
             break;
         case OPT_PRIV_SEP:
@@ -1189,6 +1191,19 @@ char* wolfSSHD_ConfigGetAuthKeysFile(const WOLFSSHD_CONFIG* conf)
 
     if (conf != NULL) {
         ret = conf->authKeysFile;
+    }
+
+    return ret;
+}
+
+
+/* returns 1 if the authorized keys file was set and 0 if not */
+int wolfSSHD_ConfigGetAuthKeysFileSet(const WOLFSSHD_CONFIG* conf)
+{
+    int ret = 0;
+
+    if (conf != NULL) {
+        ret = conf->authKeysFileSet;
     }
 
     return ret;

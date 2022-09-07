@@ -484,7 +484,7 @@ static int CheckPublicKeyUnix(const char* name,
     int rc;
     struct passwd* pwInfo;
     char* authKeysFile = NULL;
-    XFILE f = NULL;
+    XFILE f = XBADFILE;
     char* lineBuf = NULL;
     char* current;
     word32 currentSz;
@@ -740,19 +740,30 @@ static int RequestAuthentication(WS_UserAuthData* authData,
     if (ret == WOLFSSH_USERAUTH_SUCCESS &&
         authData->type == WOLFSSH_USERAUTH_PUBLICKEY) {
 
-        rc = authCtx->checkPublicKeyCb(usr, &authData->sf.publicKey,
-                            wolfSSHD_ConfigGetUserCAKeysFile(authCtx->conf));
-        if (rc == WSSHD_AUTH_SUCCESS) {
-            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key ok.");
+        /* if this is a certificate and no specific authorized keys file has
+         * been set then rely on CA to have verified the cert */
+        if (authData->sf.publicKey.isCert &&
+                !wolfSSHD_ConfigGetAuthKeysFileSet(authCtx->conf)) {
+            wolfSSH_Log(WS_LOG_INFO,
+                "[SSHD] Relying on CA for public key check");
             ret = WOLFSSH_USERAUTH_SUCCESS;
         }
-        else if (rc == WSSHD_AUTH_FAILURE) {
-            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key not authorized.");
-            ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
-        }
         else {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error checking public key.");
-            ret = WOLFSSH_USERAUTH_FAILURE;
+            /* if not a certificate then parse through authorized key file */
+            rc = authCtx->checkPublicKeyCb(usr, &authData->sf.publicKey,
+                            wolfSSHD_ConfigGetUserCAKeysFile(authCtx->conf));
+            if (rc == WSSHD_AUTH_SUCCESS) {
+                wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key ok.");
+                ret = WOLFSSH_USERAUTH_SUCCESS;
+            }
+            else if (rc == WSSHD_AUTH_FAILURE) {
+                wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key not authorized.");
+                ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
+            }
+            else {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error checking public key.");
+                ret = WOLFSSH_USERAUTH_FAILURE;
+            }
         }
     }
 
