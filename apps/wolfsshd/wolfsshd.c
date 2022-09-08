@@ -208,20 +208,20 @@ static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap)
 
     if (WFOPEN(&file, fileName, "rb") != 0)
         return NULL;
-    fseek(file, 0, XSEEK_END);
-    fileSz = (word32)ftell(file);
-    rewind(file);
+    WFSEEK(file, 0, XSEEK_END);
+    fileSz = (word32)WFTELL(file);
+    WREWIND(file);
 
     buf = (byte*)WMALLOC(fileSz + 1, heap, DYNTYPE_SSHD);
     if (buf != NULL) {
-        readSz = (word32)fread(buf, 1, fileSz, file);
+        readSz = (word32)WFREAD(buf, 1, fileSz, file);
         if (readSz < fileSz) {
-            fclose(file);
+            WFCLOSE(file);
             WFREE(buf, heap, DYNTYPE_SSHD);
             return NULL;
         }
         *bufSz = readSz;
-        fclose(file);
+        WFCLOSE(file);
     }
 
     (void)heap;
