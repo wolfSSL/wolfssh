@@ -102,6 +102,7 @@ typedef struct WOLFSSHD_CONNECTION {
     WOLFSSH_CTX*   ctx;
     WOLFSSHD_AUTH* auth;
     int            fd;
+    int            listenFd;
     char           ip[INET_ADDRSTRLEN];
 } WOLFSSHD_CONNECTION;
 
@@ -812,12 +813,14 @@ static int NewConnection(WOLFSSHD_CONNECTION* conn)
     if (ret == WS_SUCCESS) {
         if (pd == 0) {
             /* child process */
+            WCLOSESOCKET(conn->listenFd);
             signal(SIGINT, SIG_DFL);
             (void)HandleConnection((void*)conn);
             exit(0);
         }
         else {
             wolfSSH_Log(WS_LOG_INFO, "[SSHD] Spawned new process %d\n", pd);
+            WCLOSESOCKET(conn->fd);
         }
     }
 
@@ -1049,6 +1052,7 @@ int main(int argc, char** argv)
             socklen_t     clientAddrSz = sizeof(clientAddr);
         #endif
             conn.auth = auth;
+            conn.listenFd = listenFd;
 
             /* wait for a connection */
             if (PendingConnection(listenFd)) {
