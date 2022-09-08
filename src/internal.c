@@ -3361,10 +3361,12 @@ static int ParseAndVerifyCert(WOLFSSH* ssh, byte* in, word32 inSz,
             }
         }
 
-        /* @TODO handle OCSP's */
-        if (ocspCount > 0) {
-            WLOG(WS_LOG_INFO, "Peer sent OCSP's, not yet handled");
-            ret = GetSize(&l, ocspBuf, ocspBufSz, &m);
+        if (ret == WS_SUCCESS) {
+            /* @TODO handle OCSP's */
+            if (ocspCount > 0) {
+                WLOG(WS_LOG_INFO, "Peer sent OCSP's, not yet handled");
+                ret = GetSize(&l, ocspBuf, ocspBufSz, &m);
+            }
         }
     }
 
