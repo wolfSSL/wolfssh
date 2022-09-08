@@ -210,6 +210,9 @@ typedef struct WS_UserAuthData {
 
 typedef int (*WS_CallbackUserAuth)(byte, WS_UserAuthData*, void*);
 WOLFSSH_API void wolfSSH_SetUserAuth(WOLFSSH_CTX*, WS_CallbackUserAuth);
+typedef int (*WS_CallbackUserAuthTypes)(WOLFSSH* ssh, void* ctx);
+WOLFSSH_API void wolfSSH_SetUserAuthTypes(WOLFSSH_CTX*,
+    WS_CallbackUserAuthTypes);
 WOLFSSH_API void wolfSSH_SetUserAuthCtx(WOLFSSH*, void*);
 WOLFSSH_API void* wolfSSH_GetUserAuthCtx(WOLFSSH*);
 

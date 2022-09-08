@@ -184,6 +184,7 @@ static void ShowUsage(void)
     printf(" -J <filename> filename for DER certificate to use\n");
     printf("               Certificate example : client -u orange \\\n");
     printf("               -J orange-cert.der -i orange-key.der\n");
+    printf(" -A <filename> filename for DER CA certificate to verify host\n");
 #endif
 }
 
@@ -194,6 +195,7 @@ static byte* userPublicKey = userPublicKeyBuf;
 static const byte* userPublicKeyType = NULL;
 static const char* pubKeyName = NULL;
 static const char* certName = NULL;
+static const char* caCert   = NULL;
 static byte userPrivateKeyBuf[1191]; /* Size equal to hanselPrivateRsaSz. */
 static byte* userPrivateKey = userPrivateKeyBuf;
 static const byte* userPrivateKeyType = NULL;
@@ -912,7 +914,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     char**  argv = ((func_args*)args)->argv;
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?ac:eh:i:j:p:tu:xzNP:RJ:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?ac:eh:i:j:p:tu:xzNP:RJ:A:")) != -1) {
         switch (ch) {
             case 'h':
                 host = myoptarg;
@@ -957,6 +959,11 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
             case 'J':
                 certName = myoptarg;
                 break;
+
+            case 'A':
+                caCert = myoptarg;
+                break;
+
         #endif
 
             case 'x':
@@ -1134,6 +1141,24 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         wolfSSH_set_agent_cb_ctx(ssh, &agentCbCtx);
     }
 #endif
+#ifdef WOLFSSH_CERTS
+    /* CA certificate to verify host cert with */
+    if (caCert) {
+        byte* der = NULL;
+        word32 derSz;
+
+        ret = load_der_file(caCert, &der, &derSz);
+        if (ret != 0) err_sys("Couldn't load CA certificate file.");
+        if (wolfSSH_CTX_AddRootCert_buffer(ctx, der, derSz,
+            WOLFSSH_FORMAT_ASN1) != WS_SUCCESS) {
+            err_sys("Couldn't parse in CA certificate.");
+        }
+        WFREE(der, NULL, 0);
+    }
+
+#else
+    (void)caCert;
+#endif /* WOLFSSH_CERTS */
 
     wolfSSH_CTX_SetPublicKeyCheck(ctx, wsPublicKeyCheck);
     wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)"You've been sampled!");

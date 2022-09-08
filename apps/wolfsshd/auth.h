@@ -30,6 +30,7 @@ USER_NODE* AddNewUser(USER_NODE* list, byte type, const byte* username,
 
 void SetAuthKeysPattern(const char* pattern);
 int DefaultUserAuth(byte authType, WS_UserAuthData* authData, void* ctx);
+int DefaultUserAuthTypes(WOLFSSH* ssh, void* ctx);
 
 typedef struct WOLFSSHD_AUTH WOLFSSHD_AUTH;
 
@@ -51,8 +52,9 @@ typedef int (*CallbackCheckPassword)(const char* usr, const byte* psw,
  * Returns WSSHD_AUTH_SUCCESS if public key ok, WSSHD_AUTH_FAILURE if key not
  * ok, and negative values if an error occurs during checking.
  */
-typedef int (*CallbackCheckPublicKey)(const char* usr, const byte* key,
-    word32 keySz);
+typedef int (*CallbackCheckPublicKey)(const char* usr,
+                                      const WS_UserAuthData_PublicKey* pubKey,
+                                      const char* usrCaKeysFile);
 
 WOLFSSHD_AUTH* wolfSSHD_AuthCreateUser(void* heap, const WOLFSSHD_CONFIG* conf);
 int wolfSSHD_AuthFreeUser(WOLFSSHD_AUTH* auth);

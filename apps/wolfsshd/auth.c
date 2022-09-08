@@ -61,9 +61,9 @@
 #endif
 
 struct WOLFSSHD_AUTH {
-    CallbackCheckUser      CheckUserCb;
-    CallbackCheckPassword  CheckPasswordCb;
-    CallbackCheckPublicKey CheckPublicKeyCb;
+    CallbackCheckUser      checkUserCb;
+    CallbackCheckPassword  checkPasswordCb;
+    CallbackCheckPublicKey checkPublicKeyCb;
     const WOLFSSHD_CONFIG* conf;
     int gid;
     int uid;
@@ -75,8 +75,8 @@ struct WOLFSSHD_AUTH {
     #define WOLFSSHD_MAX_PASSWORD_ATTEMPTS 3
 #endif
 
-#ifndef MAX_LEN_SZ
-    #define MAX_LINE_SZ 500
+#ifndef MAX_LINE_SZ
+    #define MAX_LINE_SZ 900
 #endif
 #ifndef MAX_PATH_SZ
     #define MAX_PATH_SZ 80
@@ -132,6 +132,7 @@ enum {
     WSSHD_AUTH_SUCCESS =  1
 };
 
+/* TODO: Can use wolfSSH_ReadKey_buffer? */
 static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
                              word32 keySz)
 {
@@ -143,14 +144,24 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
     word32 keyCandSz;
     char* last;
     enum {
+    #ifdef WOLFSSH_CERTS
+        NUM_ALLOWED_TYPES = 9
+    #else
         NUM_ALLOWED_TYPES = 5
+    #endif
     };
     static const char* allowedTypes[NUM_ALLOWED_TYPES] = {
         "ssh-rsa",
         "ssh-ed25519",
         "ecdsa-sha2-nistp256",
         "ecdsa-sha2-nistp384",
-        "ecdsa-sha2-nistp521"
+        "ecdsa-sha2-nistp521",
+    #ifdef WOLFSSH_CERTS
+        "x509v3-ssh-rsa",
+        "x509v3-ecdsa-sha2-nistp256",
+        "x509v3-ecdsa-sha2-nistp384",
+        "x509v3-ecdsa-sha2-nistp521",
+    #endif
     };
     int typeOk = 0;
     int i;
@@ -465,80 +476,147 @@ static int ResolveAuthKeysPath(const char* homeDir, char* resolved)
     return ret;
 }
 
-static int CheckPublicKeyUnix(const char* name, const byte* key, word32 keySz)
+static int CheckPublicKeyUnix(const char* name,
+                              const WS_UserAuthData_PublicKey* pubKeyCtx,
+                              const char* usrCaKeysFile)
 {
     int ret = WSSHD_AUTH_SUCCESS;
     int rc;
     struct passwd* pwInfo;
     char* authKeysFile = NULL;
-    XFILE f = NULL;
+    XFILE f = XBADFILE;
     char* lineBuf = NULL;
     char* current;
     word32 currentSz;
     int foundKey = 0;
     char authKeysPath[MAX_PATH_SZ];
 
-    errno = 0;
-    pwInfo = getpwnam((const char*)name);
-    if (pwInfo == NULL) {
-        if (errno != 0) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error calling getpwnam for user "
-                                     "%s.", name);
-        }
-        ret = WS_FATAL_ERROR;
-    }
+#ifdef WOLFSSH_OSSH_CERTS
+    if (pubKeyCtx->isOsshCert) {
+        byte* caKey = NULL;
+        word32 caKeySz;
+        const byte* caKeyType = NULL;
+        word32 caKeyTypeSz;
+        byte fingerprint[WC_SHA256_DIGEST_SIZE];
 
-    if (ret == WSSHD_AUTH_SUCCESS) {
-        WMEMSET(authKeysPath, 0, sizeof(authKeysPath));
-        rc = ResolveAuthKeysPath(pwInfo->pw_dir, authKeysPath);
-        if (rc != WS_SUCCESS) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failed to resolve authorized keys"
-                                      " file path.");
-            ret = rc;
-        }
-    }
-    if (ret == WSSHD_AUTH_SUCCESS) {
-        f = XFOPEN(authKeysPath, "rb");
-        if (f == XBADFILE) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to open %s",
-                        authKeysPath);
-            ret = WS_BAD_FILE_E;
-        }
-    }
-    if (ret == WSSHD_AUTH_SUCCESS) {
-        lineBuf = (char*)WMALLOC(MAX_LINE_SZ, NULL, DYNTYPE_BUFFER);
-        if (lineBuf == NULL) {
-            ret = WS_MEMORY_E;
-        }
-    }
-    while (ret == WSSHD_AUTH_SUCCESS &&
-           (current = XFGETS(lineBuf, MAX_LINE_SZ, f)) != NULL) {
-        currentSz = (word32)XSTRLEN(current);
-
-        /* remove leading spaces */
-        while (currentSz > 0 && current[0] == ' ') {
-            currentSz = currentSz - 1;
-            current   = current + 1;
+        if (pubKeyCtx->caKey == NULL ||
+            pubKeyCtx->caKeySz != WC_SHA256_DIGEST_SIZE) {
+            ret = WS_FATAL_ERROR;
         }
 
-        if (currentSz <= 1) {
-            continue; /* empty line */
+        if (ret == WSSHD_AUTH_SUCCESS) {
+            f = XFOPEN(usrCaKeysFile, "rb");
+            if (f == XBADFILE) {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to open %s",
+                            usrCaKeysFile);
+                ret = WS_BAD_FILE_E;
+            }
         }
+        if (ret == WSSHD_AUTH_SUCCESS) {
+            lineBuf = (char*)WMALLOC(MAX_LINE_SZ, NULL, DYNTYPE_BUFFER);
+            if (lineBuf == NULL) {
+                ret = WS_MEMORY_E;
+            }
+        }
+        while (ret == WSSHD_AUTH_SUCCESS &&
+               (current = XFGETS(lineBuf, MAX_LINE_SZ, f)) != NULL) {
+            currentSz = (word32)XSTRLEN(current);
 
-        if (current[0] == '#') {
-            continue; /* commented out line */
-        }
+            /* remove leading spaces */
+            while (currentSz > 0 && current[0] == ' ') {
+                currentSz = currentSz - 1;
+                current   = current + 1;
+            }
 
-        rc = CheckAuthKeysLine(current, currentSz, key, keySz);
-        if (rc == WSSHD_AUTH_SUCCESS) {
-            foundKey = 1;
-            break;
-        }
-        else if (rc < 0) {
-            ret = rc;
-            break;
+            if (currentSz <= 1) {
+                continue; /* empty line */
+            }
+
+            if (current[0] == '#') {
+                continue; /* commented out line */
+            }
+
+            rc = wolfSSH_ReadKey_buffer((const byte*)current, currentSz,
+                                        WOLFSSH_FORMAT_SSH, &caKey, &caKeySz,
+                                        &caKeyType, &caKeyTypeSz, NULL);
+            if (rc == WS_SUCCESS) {
+                rc = wc_Hash(WC_HASH_TYPE_SHA256, caKey, caKeySz, fingerprint,
+                             WC_SHA256_DIGEST_SIZE);
+                if (rc == 0 && WMEMCMP(fingerprint, pubKeyCtx->caKey,
+                                       WC_SHA256_DIGEST_SIZE) == 0) {
+                    foundKey = 1;
+                    break;
+                }
+            }
         }
     }
+    else
+    #endif /* WOLFSSH_OSSH_CERTS */
+    {
+        errno = 0;
+        pwInfo = getpwnam((const char*)name);
+        if (pwInfo == NULL) {
+            if (errno != 0) {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error calling getpwnam for user "
+                                         "%s.", name);
+            }
+            ret = WS_FATAL_ERROR;
+        }
+
+        if (ret == WSSHD_AUTH_SUCCESS) {
+            WMEMSET(authKeysPath, 0, sizeof(authKeysPath));
+            rc = ResolveAuthKeysPath(pwInfo->pw_dir, authKeysPath);
+            if (rc != WS_SUCCESS) {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failed to resolve authorized keys"
+                                          " file path.");
+                ret = rc;
+            }
+        }
+        if (ret == WSSHD_AUTH_SUCCESS) {
+            f = XFOPEN(authKeysPath, "rb");
+            if (f == XBADFILE) {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to open %s",
+                            authKeysPath);
+                ret = WS_BAD_FILE_E;
+            }
+        }
+        if (ret == WSSHD_AUTH_SUCCESS) {
+            lineBuf = (char*)WMALLOC(MAX_LINE_SZ, NULL, DYNTYPE_BUFFER);
+            if (lineBuf == NULL) {
+                ret = WS_MEMORY_E;
+            }
+        }
+        while (ret == WSSHD_AUTH_SUCCESS &&
+               (current = XFGETS(lineBuf, MAX_LINE_SZ, f)) != NULL) {
+            currentSz = (word32)XSTRLEN(current);
+
+            /* remove leading spaces */
+            while (currentSz > 0 && current[0] == ' ') {
+                currentSz = currentSz - 1;
+                current   = current + 1;
+            }
+
+            if (currentSz <= 1) {
+                continue; /* empty line */
+            }
+
+            if (current[0] == '#') {
+                continue; /* commented out line */
+            }
+
+            rc = CheckAuthKeysLine(current, currentSz, pubKeyCtx->publicKey,
+                                   pubKeyCtx->publicKeySz);
+            if (rc == WSSHD_AUTH_SUCCESS) {
+                foundKey = 1;
+                break;
+            }
+            else if (rc < 0) {
+                ret = rc;
+                break;
+            }
+        }
+    }
+
     if (f != XBADFILE) {
         XFCLOSE(f);
     }
@@ -554,6 +632,7 @@ static int CheckPublicKeyUnix(const char* name, const byte* key, word32 keySz)
         WFREE(authKeysFile, NULL, DYNTYPE_STRING);
     }
 
+    (void)usrCaKeysFile;
     return ret;
 }
 #endif /* !_WIN32*/
@@ -562,71 +641,80 @@ static int CheckPublicKeyUnix(const char* name, const byte* key, word32 keySz)
 /* return WOLFSSH_USERAUTH_SUCCESS on success */
 static int DoCheckUser(const char* usr, WOLFSSHD_AUTH* auth)
 {
-    int ret = WOLFSSH_USERAUTH_FAILURE;
+    int ret = WOLFSSH_USERAUTH_SUCCESS;
     int rc;
 
     wolfSSH_Log(WS_LOG_INFO, "[SSHD] Checking user name %s", usr);
-    rc = auth->CheckUserCb(usr);
-    if (rc == WSSHD_AUTH_SUCCESS) {
-        wolfSSH_Log(WS_LOG_INFO, "[SSHD] User ok.");
-        ret = WOLFSSH_USERAUTH_SUCCESS;
+
+    if (wolfSSHD_ConfigGetPermitRoot(auth->conf) == 0) {
+        if (XSTRCMP(usr, "root") == 0) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Login as root not permited");
+            ret = WOLFSSH_USERAUTH_REJECTED;
+        }
     }
-    else if (ret == WSSHD_AUTH_FAILURE) {
-        wolfSSH_Log(WS_LOG_INFO, "[SSHD] User %s doesn't exist.", usr);
-        ret = WOLFSSH_USERAUTH_INVALID_USER;
+
+    if (ret == WOLFSSH_USERAUTH_SUCCESS) {
+        rc = auth->checkUserCb(usr);
+        if (rc == WSSHD_AUTH_SUCCESS) {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] User ok.");
+            ret = WOLFSSH_USERAUTH_SUCCESS;
+        }
+        else if (ret == WSSHD_AUTH_FAILURE) {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] User %s doesn't exist.", usr);
+            ret = WOLFSSH_USERAUTH_INVALID_USER;
+        }
+        else {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error looking up user %s.", usr);
+            ret = WOLFSSH_USERAUTH_FAILURE;
+        }
     }
-    else {
-        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error looking up user %s.", usr);
-        ret = WOLFSSH_USERAUTH_FAILURE;
-    }
+
     return ret;
 }
 
 
 /* @TODO this will take in a pipe or equivalent to talk to a privileged thread
  * rathar than having WOLFSSHD_AUTH directly with privilege separation */
-static int RequestAuthentication(const char* usr, int type, const byte* data,
-    int dataSz, WOLFSSHD_AUTH* auth)
+static int RequestAuthentication(WS_UserAuthData* authData,
+                                 WOLFSSHD_AUTH* authCtx)
 {
     int ret;
+    int rc;
+    const char* usr;
 
-    if (auth == NULL)
+    if (authData == NULL || authCtx == NULL) {
         return WOLFSSH_USERAUTH_FAILURE;
-
-    if (wolfSSHD_ConfigGetPermitRoot(auth->conf) == 0) {
-        if (XSTRCMP(usr, "root") == 0) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Login as root not permited");
-            return WOLFSSH_USERAUTH_FAILURE;
-        }
     }
 
-    ret = DoCheckUser(usr, auth);
+    usr = (const char*)authData->username;
+    ret = DoCheckUser(usr, authCtx);
     /* temporarily elevate permissions */
     if (ret == WOLFSSH_USERAUTH_SUCCESS &&
-            wolfSSHD_AuthRaisePermissions(auth) != WS_SUCCESS) {
+            wolfSSHD_AuthRaisePermissions(authCtx) != WS_SUCCESS) {
         wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] Failure to raise permissions for auth");
         ret = WOLFSSH_USERAUTH_FAILURE;
     }
 
-    if (ret == WOLFSSH_USERAUTH_SUCCESS && type == WOLFSSH_USERAUTH_PASSWORD) {
-        int rc;
+    if (ret == WOLFSSH_USERAUTH_SUCCESS &&
+        authData->type == WOLFSSH_USERAUTH_PASSWORD) {
 
-        if (wolfSSHD_ConfigGetPwAuth(auth->conf) != 1) {
+        if (wolfSSHD_ConfigGetPwAuth(authCtx->conf) != 1) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Password authentication not "
                         "allowed by configuration!");
-            ret = WOLFSSH_USERAUTH_FAILURE;
+            ret = WOLFSSH_USERAUTH_REJECTED;
         }
         /* Check if password is valid for this user. */
         /* first handle empty password cases */
-        else if (dataSz == 0 && wolfSSHD_ConfigGetPermitEmptyPw(auth->conf)
-                != 1) {
+        else if (authData->sf.password.passwordSz == 0 &&
+                 wolfSSHD_ConfigGetPermitEmptyPw(authCtx->conf) != 1) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Empty passwords not allowed by "
                         "configuration!");
             ret = WOLFSSH_USERAUTH_FAILURE;
         }
         else {
-            rc = auth->CheckPasswordCb(usr, data, dataSz);
+            rc = authCtx->checkPasswordCb(usr, authData->sf.password.password,
+                                          authData->sf.password.passwordSz);
             if (rc == WSSHD_AUTH_SUCCESS) {
                 wolfSSH_Log(WS_LOG_INFO, "[SSHD] Password ok.");
             }
@@ -634,8 +722,8 @@ static int RequestAuthentication(const char* usr, int type, const byte* data,
                 wolfSSH_Log(WS_LOG_INFO, "[SSHD] Password incorrect.");
                 ret = WOLFSSH_USERAUTH_INVALID_PASSWORD;
 
-                auth->attempts--;
-                if (auth->attempts == 0) {
+                authCtx->attempts--;
+                if (authCtx->attempts == 0) {
                     wolfSSH_Log(WS_LOG_ERROR,
                         "[SSHD] Too many bad password attempts!");
                     ret =  WOLFSSH_USERAUTH_REJECTED;
@@ -649,29 +737,42 @@ static int RequestAuthentication(const char* usr, int type, const byte* data,
     }
 
 
-    if (ret == WOLFSSH_USERAUTH_SUCCESS && type == WOLFSSH_USERAUTH_PUBLICKEY) {
-        int rc;
+    if (ret == WOLFSSH_USERAUTH_SUCCESS &&
+        authData->type == WOLFSSH_USERAUTH_PUBLICKEY) {
 
-        rc = auth->CheckPublicKeyCb(usr, data, dataSz);
-        if (rc == WSSHD_AUTH_SUCCESS) {
-            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key ok.");
+        /* if this is a certificate and no specific authorized keys file has
+         * been set then rely on CA to have verified the cert */
+        if (authData->sf.publicKey.isCert &&
+                !wolfSSHD_ConfigGetAuthKeysFileSet(authCtx->conf)) {
+            wolfSSH_Log(WS_LOG_INFO,
+                "[SSHD] Relying on CA for public key check");
             ret = WOLFSSH_USERAUTH_SUCCESS;
         }
-        else if (rc == WSSHD_AUTH_FAILURE) {
-            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key not authorized.");
-            ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
-        }
         else {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error checking public key.");
-            ret = WOLFSSH_USERAUTH_FAILURE;
+            /* if not a certificate then parse through authorized key file */
+            rc = authCtx->checkPublicKeyCb(usr, &authData->sf.publicKey,
+                            wolfSSHD_ConfigGetUserCAKeysFile(authCtx->conf));
+            if (rc == WSSHD_AUTH_SUCCESS) {
+                wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key ok.");
+                ret = WOLFSSH_USERAUTH_SUCCESS;
+            }
+            else if (rc == WSSHD_AUTH_FAILURE) {
+                wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key not authorized.");
+                ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
+            }
+            else {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error checking public key.");
+                ret = WOLFSSH_USERAUTH_FAILURE;
+            }
         }
     }
 
 
-    if (wolfSSHD_AuthReducePermissions(auth) != WS_SUCCESS) {
+    if (wolfSSHD_AuthReducePermissions(authCtx) != WS_SUCCESS) {
         /* stop everything if not able to reduce permissions level */
         exit(1);
     }
+
     return ret;
 }
 
@@ -680,15 +781,15 @@ static int RequestAuthentication(const char* usr, int type, const byte* data,
 int DefaultUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 {
     int ret = WOLFSSH_USERAUTH_SUCCESS;
-    WOLFSSHD_AUTH* auth;
+    WOLFSSHD_AUTH* authCtx;
 
     if (ctx == NULL) {
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] No auth callbacks passed in");
         return WOLFSSH_USERAUTH_FAILURE;
     }
     else {
-        auth = (WOLFSSHD_AUTH*)ctx;
-        if (auth->CheckUserCb == NULL) {
+        authCtx = (WOLFSSHD_AUTH*)ctx;
+        if (authCtx->checkUserCb == NULL) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] No way to check the user is set");
             return WOLFSSH_USERAUTH_FAILURE;
         }
@@ -708,22 +809,38 @@ int DefaultUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
         ret = WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
     }
 
-    /* call to possibly privilaged authentecator for password check */
-    if (ret == WOLFSSH_USERAUTH_SUCCESS &&
-            authData->type == WOLFSSH_USERAUTH_PASSWORD) {
-        ret = RequestAuthentication((const char*)authData->username,
-            authData->type,
-            authData->sf.password.password,
-            authData->sf.password.passwordSz, auth);
+    /* call to possibly privileged authenticator for password check */
+    if (ret == WOLFSSH_USERAUTH_SUCCESS) {
+        ret = RequestAuthentication(authData, authCtx);
     }
 
-    /* call to possibly privilaged authentecator for public key check */
-    if (ret == WOLFSSH_USERAUTH_SUCCESS &&
-            authData->type == WOLFSSH_USERAUTH_PUBLICKEY) {
-        ret = RequestAuthentication((const char*)authData->username,
-            authData->type,
-            authData->sf.publicKey.publicKey,
-            authData->sf.publicKey.publicKeySz, auth);
+    return ret;
+}
+
+
+int DefaultUserAuthTypes(WOLFSSH* ssh, void* ctx)
+{
+    WOLFSSHD_CONFIG* usrConf;
+    WOLFSSHD_AUTH* authCtx;
+    char* usr;
+    int   ret = 0;
+
+    if (ssh == NULL || ctx == NULL)
+        return WS_BAD_ARGUMENT;
+    authCtx = (WOLFSSHD_AUTH*)ctx;
+
+    /* get configuration for user */
+    usr     = wolfSSH_GetUsername(ssh);
+    usrConf = wolfSSHD_AuthGetUserConf(authCtx, usr, NULL, NULL,
+            NULL, NULL, NULL);
+    if (usrConf == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+    else {
+        if (wolfSSHD_ConfigGetPwAuth(usrConf) == 1) {
+            ret |= WOLFSSH_USERAUTH_PASSWORD;
+        }
+        ret |= WOLFSSH_USERAUTH_PUBLICKEY;
     }
 
     return ret;
@@ -738,7 +855,7 @@ static int SetDefaultUserCheck(WOLFSSHD_AUTH* auth)
     /* TODO: Implement for Windows. */
 #else
     wolfSSH_Log(WS_LOG_INFO, "[SSHD] Setting default Unix user name check");
-    auth->CheckUserCb = CheckUserUnix;
+    auth->checkUserCb = CheckUserUnix;
     ret = WS_SUCCESS;
 #endif
 
@@ -754,11 +871,11 @@ static int SetDefaultPasswordCheck(WOLFSSHD_AUTH* auth)
     /* TODO: Add CheckPasswordWin. */
 #elif defined(WOLFSSH_USE_PAM)
     wolfSSH_Log(WS_LOG_INFO, "[SSHD] Setting PAM password check");
-    auth->CheckPasswordCb = CheckPasswordPAM;
+    auth->checkPasswordCb = CheckPasswordPAM;
     ret = WS_SUCCESS;
 #else
     wolfSSH_Log(WS_LOG_INFO, "[SSHD] Setting Unix password check");
-    auth->CheckPasswordCb = CheckPasswordUnix;
+    auth->checkPasswordCb = CheckPasswordUnix;
     ret = WS_SUCCESS;
 #endif
     return ret;
@@ -773,7 +890,7 @@ static int SetDefaultPublicKeyCheck(WOLFSSHD_AUTH* auth)
     /* TODO: Implement for Windows. */
 #else
     wolfSSH_Log(WS_LOG_INFO, "[SSHD] Setting Unix public key check");
-    auth->CheckPublicKeyCb = CheckPublicKeyUnix;
+    auth->checkPublicKeyCb = CheckPublicKeyUnix;
     ret = WS_SUCCESS;
 #endif
     return ret;
@@ -951,18 +1068,22 @@ WOLFSSHD_CONFIG* wolfSSHD_AuthGetUserConf(const WOLFSSHD_AUTH* auth,
 
     if (auth != NULL) {
         struct passwd *p_passwd;
+        char* gName = NULL;
 
-        p_passwd = getpwnam((const char *)usr);
-        if (p_passwd == NULL) {
-            return NULL;
+        if (usr != NULL) {
+            p_passwd = getpwnam((const char *)usr);
+            if (p_passwd == NULL) {
+                return NULL;
+            }
+
+            g = getgrgid(p_passwd->pw_gid);
+            if (g == NULL) {
+                return NULL;
+            }
+            gName = g->gr_name;
         }
 
-        g = getgrgid(p_passwd->pw_gid);
-        if (g == NULL) {
-            return NULL;
-        }
-
-        ret = wolfSSHD_GetUserConf(auth->conf, usr, g->gr_name, host, localAdr,
+        ret = wolfSSHD_GetUserConf(auth->conf, usr, gName, host, localAdr,
             localPort, RDomain, adr);
     }
     return ret;

@@ -408,6 +408,7 @@ struct WOLFSSH_CTX {
     WS_CallbackIORecv ioRecvCb;       /* I/O Receive Callback */
     WS_CallbackIOSend ioSendCb;       /* I/O Send Callback */
     WS_CallbackUserAuth userAuthCb;   /* User Authentication Callback */
+    WS_CallbackUserAuthTypes userAuthTypesCb; /* Authentication Types Allowed */
     WS_CallbackUserAuthResult userAuthResultCb; /* User Authentication Result */
     WS_CallbackHighwater highwaterCb; /* Data Highwater Mark Callback */
     WS_CallbackGlobalReq globalReqCb; /* Global Request Callback */
