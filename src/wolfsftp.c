@@ -1151,9 +1151,9 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, byte* data,
 {
     WS_SFTP_FILEATRB atr;
     char  r[WOLFSSH_MAX_FILENAME];
-    word32 rSz;
+    char  s[WOLFSSH_MAX_FILENAME];
+    word32 rSz, sSz;
     word32 lidx = 0;
-    word32 i;
     int    ret;
     byte* out;
     word32 outSz = 0;
@@ -1177,16 +1177,14 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, byte* data,
     lidx += UINT32_SZ;
     WMEMCPY(r, data + lidx, rSz);
     r[rSz] = '\0';
+    WLOG(WS_LOG_SFTP, "Real Path Request = %s", r);
 
-    /* get working directory in the case of receiving non absolute path */
-    if (r[0] != '/' && r[1] != ':') {
+    if (ssh->sftpDefaultPath != NULL) {
+        ret = wolfSSH_RealPath(ssh->sftpDefaultPath, r, s, sizeof s);
+    }
+    else {
         char wd[WOLFSSH_MAX_FILENAME];
-
         WMEMSET(wd, 0, WOLFSSH_MAX_FILENAME);
-        if (ssh->sftpDefaultPath) {
-            XSTRNCPY(wd, ssh->sftpDefaultPath, WOLFSSH_MAX_FILENAME - 1);
-        }
-        else {
         #ifndef USE_WINDOWS_API
             if (WGETCWD(ssh->fs, wd, WOLFSSH_MAX_FILENAME) == NULL) {
                 WLOG(WS_LOG_SFTP, "Unable to get current working directory");
@@ -1210,40 +1208,18 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, byte* data,
                 return WS_BAD_FILE_E;
             }
         #endif
-        }
-        WSTRNCAT(wd, "/", WOLFSSH_MAX_FILENAME);
-        WSTRNCAT(wd, r, WOLFSSH_MAX_FILENAME);
-        WMEMCPY(r, wd, WOLFSSH_MAX_FILENAME);
+        ret = wolfSSH_RealPath(wd, r, s, sizeof s);
+    }
+    sSz = (word32)WSTRLEN(s);
+
+    if (ret != WS_SUCCESS) {
+        return WS_ERROR;
     }
 
-    if ((ret = wolfSSH_CleanPath(ssh, r)) < 0) {
-        return WS_FATAL_ERROR;
-    }
-    rSz = (word32)ret;
-
-    /* For real path remove ending case of /.
-     * Lots of peers send a '.' wanting a return of the current absolute path
-     * not the absolute path + .
-     */
-    if (rSz > 2 && r[rSz - 2] == WS_DELIM && r[rSz - 1] == '.') {
-        r[rSz - 1] = '\0';
-        rSz -= 1;
-    }
-
-    /* special case of /. */
-    if (rSz == 2 && r[0] == WS_DELIM && r[1] == '.') {
-        r[1] = '\0';
-        rSz -= 1;
-    }
-
-    /* for real path always send '/' chars */
-    for (i = 0; i < rSz; i++) {
-        if (r[i] == WS_DELIM) r[i] = '/';
-    }
-    WLOG(WS_LOG_SFTP, "Real Path Directory = %s", r);
+    WLOG(WS_LOG_SFTP, "Real Path Directory = %s", s);
 
     /* send response */
-    outSz = WOLFSSH_SFTP_HEADER + (UINT32_SZ * 3) + (rSz * 2);
+    outSz = WOLFSSH_SFTP_HEADER + (UINT32_SZ * 3) + (sSz * 2);
     WMEMSET(&atr, 0, sizeof(WS_SFTP_FILEATRB));
     outSz += SFTP_AtributesSz(ssh, &atr);
     lidx = 0;
@@ -1264,12 +1240,12 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, byte* data,
     c32toa(1, out + lidx); lidx += UINT32_SZ; /* only sending one file name */
 
     /* set file name size and string */
-    c32toa(rSz, out + lidx); lidx += UINT32_SZ;
-    WMEMCPY(out + lidx, r, rSz); lidx += rSz;
+    c32toa(sSz, out + lidx); lidx += UINT32_SZ;
+    WMEMCPY(out + lidx, s, sSz); lidx += sSz;
 
     /* set long name size and string */
-    c32toa(rSz, out + lidx); lidx += UINT32_SZ;
-    WMEMCPY(out + lidx, r, rSz); lidx += rSz;
+    c32toa(sSz, out + lidx); lidx += UINT32_SZ;
+    WMEMCPY(out + lidx, s, sSz); lidx += sSz;
 
     /* set attributes */
     SFTP_SetAttributes(ssh, out + lidx, outSz - lidx, &atr);
@@ -4550,7 +4526,6 @@ static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
 
 #elif defined(WOLFSSH_USER_FILESYSTEM)
     /* User-defined I/O support */
-    
 #else
 
 /* @TODO can be overriden by user for portability
