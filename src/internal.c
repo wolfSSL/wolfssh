@@ -3553,6 +3553,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     int ret = WS_SUCCESS;
     int tmpIdx = 0;
     struct wolfSSH_sigKeyBlock *sigKeyBlock_ptr = NULL;
+    byte keyAllocated = 0;
 #ifndef WOLFSSH_NO_ECDH
     ecc_key *key_ptr = NULL;
     #ifndef WOLFSSH_SMALL_STACK
@@ -3780,7 +3781,9 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
         ret = ParsePubKey(ssh, sigKeyBlock_ptr, pubKey, pubKeySz);
         /* Generate and hash in the shared secret */
-        if (ret == WS_SUCCESS)  {
+        if (ret == WS_SUCCESS) {
+            /* Remember that the key needs to be freed */
+            keyAllocated = 1;
             /* reset size here because a previous shared secret could
              * potentially be smaller by a byte than usual and cause buffer
              * issues with re-key */
@@ -4025,15 +4028,17 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             }
         }
 
-        if (sigKeyBlock_ptr->useRsa) {
+        if (keyAllocated) {
+            if (sigKeyBlock_ptr->useRsa) {
 #ifndef WOLFSSH_NO_RSA
-            wc_FreeRsaKey(&sigKeyBlock_ptr->sk.rsa.key);
+                wc_FreeRsaKey(&sigKeyBlock_ptr->sk.rsa.key);
 #endif
-        }
-        else {
+            }
+            else {
 #ifndef WOLFSSH_NO_ECDSA
-            wc_ecc_free(&sigKeyBlock_ptr->sk.ecc.key);
+                wc_ecc_free(&sigKeyBlock_ptr->sk.ecc.key);
 #endif
+            }
         }
     }
 
