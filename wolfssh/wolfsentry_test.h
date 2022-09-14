@@ -242,8 +242,8 @@ static wolfsentry_errcode_t test_update_action(
 }
 
 /*
- * Callback that is fired when an action is taken excepts auth_success and auth_fial
- * , this can be used for debugging for now 
+ * Callback that is fired when an action is taken excepts auth_success 
+ * and auth_fail this can be used for debugging for now 
  */
 static wolfsentry_errcode_t test_action(
     struct wolfsentry_context *sentry,

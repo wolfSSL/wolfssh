@@ -5,7 +5,7 @@ Once the peer breaks the theshold number, the peer is accommodated into a penalt
 
 # Prerequisites
 
-This example is designed to be run an environment that has file system because JSON configuration file is expected to be read.
+This example is designed to be run in an environment that has file system because JSON configuration file is expected to be read.
 
 # Build echoserver with wolfsentry
 
@@ -30,7 +30,7 @@ $ make
 # wolfSentry Configuration
 
 ## Filtering IP Address
-The example is configured by JSON configuraiotn file to only accept connetions from 127.0.0.1 or 192.168.11.3. Change `192.168.11.3` to your preference IP address first.
+The example is configured by JSON configuraiotn file to only accept connections from 127.0.0.1 or 192.168.11.3. Change `192.168.11.3` to your preferred IP address first.
 
 ```json
     "static-routes-insert" : [

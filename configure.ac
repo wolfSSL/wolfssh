@@ -201,7 +201,7 @@ AC_ARG_ENABLE([certs],
     [AS_HELP_STRING([--enable-certs],[Enable X.509 cert support (default: disabled)])],
     [ENABLED_CERTS=$enableval],[ENABLED_CERTS=no])
 
-# wolfsently support
+# wolfsentry support
 ENABLED_WOLFSENTRY=no
 
 AC_ARG_WITH([wolfsentry],

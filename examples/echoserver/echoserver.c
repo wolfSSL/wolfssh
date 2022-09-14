@@ -220,7 +220,7 @@ typedef struct {
 #define WOLFSENTRY_VALID_PASSWORD       1
 
 /**
- *  Submit an authentificaion result event into wolfsentry and
+ *  Submit an authentication result event into wolfsentry and
  *  pass it through the filters. The action_results can be checked to
  *  see what action wolfsentry says should be taken.
  *  
