@@ -34,7 +34,15 @@ static void CleanupWildcardTest(void)
 
     if (!WOPENDIR(NULL, NULL, &dir, "./sshd_config.d/")) {
         while ((d = WREADDIR(&dir)) != NULL) {
-            if (d->d_type != DT_DIR) {
+        #if defined(__QNX__) || defined(__QNXNTO__)
+            struct stat s;
+
+            lstat(d->d_name, &s);
+            if (!S_ISDIR(s.st_mode))
+        #else
+            if (d->d_type != DT_DIR)
+        #endif
+            {
                 WSNPRINTF(filepath, sizeof filepath, "%s%s",
                         "./sshd_config.d/", d->d_name);
                 WREMOVE(0, filepath);
