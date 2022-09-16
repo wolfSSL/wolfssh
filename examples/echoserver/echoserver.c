@@ -2030,6 +2030,42 @@ static int wsUserAuth(byte authType,
 }
 
 
+#ifdef WOLFSSH_SFTP
+static int SetDefaultSftpPath(WOLFSSH* ssh, const char* defaultSftpPath)
+{
+    char path[WOLFSSH_MAX_FILENAME];
+    char realPath[WOLFSSH_MAX_FILENAME];
+    int ret = 0;
+
+    if (defaultSftpPath == NULL) {
+    #ifdef USE_WINDOWS_API
+        if (GetCurrentDirectoryA(sizeof(path), path) == 0) {
+            ret = -1;
+        }
+    #else
+        if (getcwd(path, sizeof(path)) == NULL) {
+            ret = -1;
+        }
+    #endif
+    }
+    else {
+        WSTRNCPY(path, defaultSftpPath, sizeof(path));
+        path[sizeof(path) - 1] = 0;
+    }
+
+    if (ret == 0) {
+        path[sizeof(path) - 1] = 0;
+        wolfSSH_RealPath(NULL, path, realPath, sizeof(realPath));
+        if (wolfSSH_SFTP_SetDefaultPath(ssh, realPath) != WS_SUCCESS) {
+            ret = -1;
+        }
+    }
+
+    return ret;
+}
+#endif
+
+
 static void ShowUsage(void)
 {
     printf("echoserver %s\n", LIBWOLFSSH_VERSION_STRING);
@@ -2451,12 +2487,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         }
 
     #ifdef WOLFSSH_SFTP
-        if (defaultSftpPath) {
-            if (wolfSSH_SFTP_SetDefaultPath(ssh, defaultSftpPath)
-                    != WS_SUCCESS) {
-                fprintf(stderr, "Couldn't store default sftp path.\n");
-                WEXIT(EXIT_FAILURE);
-            }
+        if (SetDefaultSftpPath(ssh, defaultSftpPath) != 0) {
+            fprintf(stderr, "Couldn't store default sftp path.\n");
+            WEXIT(EXIT_FAILURE);
         }
     #endif
 

@@ -1050,6 +1050,12 @@ struct RealPathTestCase realPathDefault[] = {
     { "./sample.jpg", "/C:/Users/fred/sample.jpg" },
     { "./sample./other", "/C:/Users/fred/sample./other" },
     { "./sample.dir/other", "/C:/Users/fred/sample.dir/other" },
+    { "\\C:\\Users\\fred\\Documents\\junk.txt",
+        "/C:/Users/fred/Documents/junk.txt" },
+    { "C:\\Users\\fred\\Documents\\junk.txt",
+        "/C:/Users/fred/Documents/junk.txt" },
+    { "/C:\\Users\\fred/Documents\\junk.txt",
+        "/C:/Users/fred/Documents/junk.txt" },
 };
 
 struct RealPathTestCase realPathNull[] = {

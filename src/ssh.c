@@ -2274,6 +2274,11 @@ int wolfSSH_ChannelGetEof(WOLFSSH_CHANNEL* channel)
 
 #if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
     !defined(NO_WOLFSSH_SERVER)
+
+#define DELIM "/\\"
+#define IS_DELIM(x) ((x) == '/' || (x) == '\\')
+#define IS_WINPATH(x,y) ((x) > 1 && (y)[1] == ':')
+
 /*
  * Paths starting with a slash are absolute, rooted at "/". Any path that
  * doesn't have a starting slash is assumed to be relative to the default
@@ -2311,16 +2316,18 @@ int wolfSSH_RealPath(const char* defaultPath, char* in,
 
     WMEMSET(out, 0, outSz);
     inSz = (word32)WSTRLEN(in);
-    if ((inSz == 0 || in[0] != '/') && defaultPath != NULL){
-        WSTRNCPY(out, defaultPath, outSz);
-    }
-    else {
-        out[0] = '/';
+    out[0] = '/';
+    if (inSz == 0 || (!IS_DELIM(in[0]) && !IS_WINPATH(inSz, in))) {
+        if (defaultPath != NULL) {
+            WSTRNCPY(out, defaultPath, outSz);
+        }
     }
     out[outSz - 1] = 0;
     curSz = (word32)WSTRLEN(out);
 
-    for (seg = WSTRTOK(in, "/", &tail); seg; seg = WSTRTOK(NULL, "/", &tail)) {
+    for (seg = WSTRTOK(in, DELIM, &tail);
+            seg;
+            seg = WSTRTOK(NULL, DELIM, &tail)) {
         segSz = (word32)WSTRLEN(seg);
 
         /* Try to match "." */

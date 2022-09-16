@@ -2265,8 +2265,10 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         int i;
 
         WMEMSET(ssh->driveList, 0, sizeof ssh->driveList);
+        ssh->driveListCount = 0;
+
         drives = GetLogicalDrives();
-        for (i = 0, mask = 1; i < 26; i++, mask <<= 1) {
+        for (i = 0, mask = 1; i < (sizeof ssh->driveList); i++, mask <<= 1) {
             if (drives & mask) {
                 driveName[0] = 'A' + i;
                 driveType = GetDriveTypeA(driveName);
@@ -2649,7 +2651,7 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
 static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
         char* dirName)
 {
-    int sz;
+    int sz, special = 0;
     HANDLE findHandle;
     char realFileName[MAX_PATH];
 
@@ -2658,13 +2660,13 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
     }
 
     /* special case of getting drives at "/" */
-    if (dirName[0] == "/" && dirName[1] == 0) {
+    if (dirName[0] == '/' && dirName[1] == 0) {
         if (ssh->driveIdx >= ssh->driveListCount)
             return WS_FATAL_ERROR;
         realFileName[0] = ssh->driveList[ssh->driveIdx++];
         realFileName[1] = ':';
-        realFileName[2] = '/';
-        realFileName[3] = '\0';
+        realFileName[2] = '\0';
+        special = 1;
     }
     else if (*dir == INVALID_HANDLE_VALUE) {
         char name[MAX_PATH];
@@ -2714,16 +2716,21 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
             return WS_MEMORY_E;
         }
         buf[0] = '\0';
-        WSTRNCAT(buf, dirName, bufSz + 1);
-        tmpSz = (int)WSTRLEN(buf);
+        if (!special) {
+            WSTRNCAT(buf, dirName, bufSz + 1);
+            tmpSz = (int)WSTRLEN(buf);
 
-        /* add delimiter between path and file/dir name */
-        if (tmpSz + 1 < bufSz) {
-            buf[tmpSz] = WS_DELIM;
-            buf[tmpSz + 1] = '\0';
+            /* add delimiter between path and file/dir name */
+            if (tmpSz + 1 < bufSz) {
+                buf[tmpSz] = WS_DELIM;
+                buf[tmpSz + 1] = '\0';
+            }
+            WSTRNCAT(buf, out->fName, bufSz + 1);
         }
-        WSTRNCAT(buf, out->fName, bufSz + 1);
-
+        else {
+            WSTRNCAT(buf, realFileName, bufSz + 1);
+            WSTRNCAT(buf, "\\", bufSz + 1);
+        }
         if (SFTP_GetAttributes(ssh->fs, buf, &out->atrb, 0, ssh->ctx->heap)
                 != WS_SUCCESS) {
             WLOG(WS_LOG_SFTP, "Unable to get attribute values for %s",
