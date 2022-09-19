@@ -230,6 +230,11 @@ static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap)
 }
 #endif /* NO_FILESYSTEM */
 
+
+static int UserAuthResult(byte result,
+        WS_UserAuthData* authData, void* userAuthResultCtx);
+
+
 /* Initializes and sets up the WOLFSSH_CTX struct based on the configure options
  * return WS_SUCCESS on success
  */
@@ -252,6 +257,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
     /* setup authority callback for checking peer connections */
     if (ret == WS_SUCCESS) {
         wolfSSH_SetUserAuth(*ctx, DefaultUserAuth);
+        wolfSSH_SetUserAuthResult(*ctx, UserAuthResult);
     }
 
     /* set banner to display on connection */
@@ -774,6 +780,19 @@ static void alarmCatch(int signum)
     wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failed login within grace period");
     timeOut = 1;
     (void)signum;
+}
+
+static int UserAuthResult(byte result,
+        WS_UserAuthData* authData, void* userAuthResultCtx)
+{
+    (void)authData;
+    (void)userAuthResultCtx;
+
+    if (result == WOLFSSH_USERAUTH_SUCCESS) {
+        alarm(0);
+    }
+
+    return WS_SUCCESS;
 }
 
 /* handle wolfSSH accept and directing to correct subsystem */
