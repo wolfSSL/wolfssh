@@ -166,6 +166,16 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
 
 #if defined(USE_WINDOWS_API) && (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP))
 
+/*
+ * SFTP paths all start with a leading root "/". Most Windows file routines
+ * expect a drive letter when dealing with an absolute path. If the provided
+ * path, f, is of the form "/C:...", adjust the pointer f to point to the "C",
+ * and decrement the file path size, fSz, by one.
+ *
+ * @param f    pointer to a file name
+ * @param fSz  size of f in bytes
+ * @return     pointer to somewhere in f
+ */
 static const char* TrimFileName(const char* f, size_t* fSz)
 {
     if (f != NULL && fSz != NULL && *fSz >= 3 && f[0] == '/' && f[2] == ':') {

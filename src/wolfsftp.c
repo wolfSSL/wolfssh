@@ -1553,8 +1553,20 @@ int wolfSSH_SFTP_CreateStatus(WOLFSSH* ssh, word32 status, word32 reqId,
 }
 
 
-static int GetAndCleanPath(const char* dP, const byte* data, word32 sz,
-        char* s, word32 sSz)
+/*
+ * This is a wrapper around the function wolfSSH_RealPath. Since it modifies
+ * the source path value, copy the path from the data stream into a local
+ * array and use that as the source.
+ *
+ * @param defaultPath pointer to the defaultPath
+ * @param data        input data stream at the location of the path name
+ * @param sz          size of the path name in bytes
+ * @param s           destination buffer for the Real Path
+ * @param sSz         size of s in bytes
+ * @return            0 for success or negative error code
+ */
+static int GetAndCleanPath(const char* defaultPath,
+        const byte* data, word32 sz, char* s, word32 sSz)
 {
     char r[WOLFSSH_MAX_FILENAME];
 
@@ -1562,7 +1574,7 @@ static int GetAndCleanPath(const char* dP, const byte* data, word32 sz,
     WMEMCPY(r, data, sz);
     r[sz] = '\0';
 
-    return wolfSSH_RealPath(dP, r, s, sSz);
+    return wolfSSH_RealPath(defaultPath, r, s, sSz);
 }
 
 
@@ -1673,7 +1685,7 @@ int wolfSSH_SFTP_RecvMKDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     ret = GetAndCleanPath(ssh->sftpDefaultPath,
             data + idx, sz, dir, sizeof(dir));
     if (ret != WS_SUCCESS) {
-        return WS_BUFFER_E;
+        return ret;
     }
 
     idx += sz;

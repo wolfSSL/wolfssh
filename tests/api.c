@@ -1077,12 +1077,12 @@ static void DoRealPathTestCase(const char* path, struct RealPathTestCase* tc)
     err = wolfSSH_RealPath(path, testPath,
             checkPath, sizeof checkPath);
     if (err || WSTRCMP(tc->exp, checkPath) != 0) {
-        printf("RealPath failure (%d)\n"
-               "    defaultPath: %s\n"
-               "          input: %s\n"
-               "       expected: %s\n"
-               "         output: %s\n", err,
-               path, tc->in, tc->exp, checkPath);
+        fprintf(stderr, "RealPath failure (%d)\n"
+                        "    defaultPath: %s\n"
+                        "          input: %s\n"
+                        "       expected: %s\n"
+                        "         output: %s\n", err,
+                        path, tc->in, tc->exp, checkPath);
     }
 }
 

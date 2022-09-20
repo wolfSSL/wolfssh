@@ -2031,6 +2031,16 @@ static int wsUserAuth(byte authType,
 
 
 #ifdef WOLFSSH_SFTP
+/*
+ * Sets the WOLFSSH object's default SFTP path to the value provided by
+ * defaultSftpPath, or uses the current working directory from where the
+ * echoserver is run. The new default path is cleaned up with the real
+ * path function.
+ *
+ * @param ssh             WOLFSSH object to update
+ * @param defaultSftpPath command line provided default SFTP path
+ * @return                0 for success or error code
+ */
 static int SetDefaultSftpPath(WOLFSSH* ssh, const char* defaultSftpPath)
 {
     char path[WOLFSSH_MAX_FILENAME];
@@ -2039,26 +2049,31 @@ static int SetDefaultSftpPath(WOLFSSH* ssh, const char* defaultSftpPath)
 
     if (defaultSftpPath == NULL) {
     #ifdef USE_WINDOWS_API
-        if (GetCurrentDirectoryA(sizeof(path), path) == 0) {
-            ret = -1;
+        if (GetCurrentDirectoryA(sizeof(path)-1, path) == 0) {
+            ret = WS_INVALID_PATH_E;
         }
     #else
-        if (getcwd(path, sizeof(path)) == NULL) {
-            ret = -1;
+        if (getcwd(path, sizeof(path)-1) == NULL) {
+            ret = WS_INVALID_PATH_E;
         }
     #endif
     }
     else {
-        WSTRNCPY(path, defaultSftpPath, sizeof(path));
-        path[sizeof(path) - 1] = 0;
+        if (WSTRLEN(defaultSftpPath) >= sizeof(path)) {
+            ret = WS_INVALID_PATH_E;
+        }
+        else {
+            WSTRNCPY(path, defaultSftpPath, sizeof(path));
+        }
     }
 
     if (ret == 0) {
         path[sizeof(path) - 1] = 0;
-        wolfSSH_RealPath(NULL, path, realPath, sizeof(realPath));
-        if (wolfSSH_SFTP_SetDefaultPath(ssh, realPath) != WS_SUCCESS) {
-            ret = -1;
-        }
+        ret = wolfSSH_RealPath(NULL, path, realPath, sizeof(realPath));
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = wolfSSH_SFTP_SetDefaultPath(ssh, realPath);
     }
 
     return ret;
