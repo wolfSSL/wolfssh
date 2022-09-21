@@ -3301,58 +3301,50 @@ static int ParseAndVerifyCert(WOLFSSH* ssh, byte* in, word32 inSz,
     int ret;
     word32 l = 0, m = 0;
     word32 ocspCount = 0;
-    byte*  ocspBuf   = NULL;
-    word32 ocspBufSz = 0;
     word32 certCount = 0;
-    byte*  certPt    = NULL;
+    byte*  certChain = NULL;
     word32 certChainSz = 0;
 
     /* Skip the name */
     ret = GetSize(&l, in, inSz, &m);
     m += l;
 
-    /* Get the cert count */
-    ret = GetUint32(&certCount, in, inSz, &m);
     if (ret == WS_SUCCESS) {
-        WLOG(WS_LOG_INFO, "Peer sent certificate count of %d", certCount);
+        /* Get the cert count */
+        ret = GetUint32(&certCount, in, inSz, &m);
     }
 
     if (ret == WS_SUCCESS) {
         word32 count;
 
-        certPt = in + m;
-        m = 0;
+        WLOG(WS_LOG_INFO, "Peer sent certificate count of %u", certCount);
+        certChain = in + m;
+
         for (count = certCount; count > 0; count--) {
             word32 certSz = 0;
 
-            ret = GetSize(&certSz, certPt, inSz, &m);
-            WLOG(WS_LOG_INFO, "Adding certificate size %d", certSz);
+            ret = GetSize(&certSz, in, inSz, &m);
             if (ret != WS_SUCCESS) {
                 break;
             }
+            WLOG(WS_LOG_INFO, "Adding certificate size %u", certSz);
 
             /* store leaf cert size to present to user callback */
             if (count == certCount && leafOut != NULL) {
                 *leafOutSz = certSz;
-                *leafOut   = certPt + m;
+                *leafOut   = in + m;
             }
             certChainSz += certSz + UINT32_SZ;
             m += certSz;
         }
 
-        if (ret == WS_SUCCESS) {
-            ocspBuf   = certPt + m;
-            ocspBufSz = inSz - certChainSz;
-        }
-
         /* get OCSP count */
         if (ret == WS_SUCCESS) {
-            m = 0;
-            ret = GetUint32(&ocspCount, ocspBuf, ocspBufSz, &m);
+            ret = GetUint32(&ocspCount, in, inSz, &m);
         }
 
         if (ret == WS_SUCCESS) {
-            WLOG(WS_LOG_INFO, "Peer sent OCSP count of %d", ocspCount);
+            WLOG(WS_LOG_INFO, "Peer sent OCSP count of %u", ocspCount);
 
             /* RFC 6187 section 2.1 OCSP count must not exceed cert count */
             if (ocspCount > certCount) {
@@ -3365,7 +3357,6 @@ static int ParseAndVerifyCert(WOLFSSH* ssh, byte* in, word32 inSz,
             /* @TODO handle OCSP's */
             if (ocspCount > 0) {
                 WLOG(WS_LOG_INFO, "Peer sent OCSP's, not yet handled");
-                ret = GetSize(&l, ocspBuf, ocspBufSz, &m);
             }
         }
     }
@@ -3373,7 +3364,7 @@ static int ParseAndVerifyCert(WOLFSSH* ssh, byte* in, word32 inSz,
     /* verify the certificate chain */
     if (ret == WS_SUCCESS) {
         ret = wolfSSH_CERTMAN_VerifyCerts_buffer(ssh->ctx->certMan,
-                    certPt, certChainSz, certCount);
+                    certChain, certChainSz, certCount);
     }
 
     return ret;
@@ -9060,7 +9051,9 @@ int SendKexDhReply(WOLFSSH* ssh)
             break;
         #endif
         }
+    }
 
+    if (ret == WS_SUCCESS) {
         /* Copy the server's public key. F for DE, or Q_S for ECDH. */
         c32toa(fSz + fPad, output + idx);
         idx += LENGTH_SZ;
@@ -10158,22 +10151,22 @@ static int BuildUserAuthRequestRsaCert(WOLFSSH* ssh,
         WMEMCPY(checkData + i, sigStart, begin - sigStartIdx);
     }
 
-    #ifdef WOLFSSH_AGENT
-    if (ssh->agentEnabled) {
-        if (ret == WS_SUCCESS)
-            ret = wolfSSH_AGENT_SignRequest(ssh, checkData, checkDataSz,
-                    output + begin + LENGTH_SZ, &keySig->sigSz,
-                    authData->sf.publicKey.publicKey,
-                    authData->sf.publicKey.publicKeySz, 0);
-        if (ret == WS_SUCCESS) {
-            c32toa(keySig->sigSz, output + begin);
-            begin += LENGTH_SZ + keySig->sigSz;
+    if (ret == WS_SUCCESS) {
+        #ifdef WOLFSSH_AGENT
+        if (ssh->agentEnabled) {
+            if (ret == WS_SUCCESS)
+                ret = wolfSSH_AGENT_SignRequest(ssh, checkData, checkDataSz,
+                        output + begin + LENGTH_SZ, &keySig->sigSz,
+                        authData->sf.publicKey.publicKey,
+                        authData->sf.publicKey.publicKeySz, 0);
+            if (ret == WS_SUCCESS) {
+                c32toa(keySig->sigSz, output + begin);
+                begin += LENGTH_SZ + keySig->sigSz;
+            }
         }
-    }
-    else
-    #endif /* WOLFSSH_AGENT */
-    {
-        if (ret == WS_SUCCESS) {
+        else
+        #endif /* WOLFSSH_AGENT */
+        {
             byte encDigest[MAX_ENCODED_SIG_SZ];
             int encDigestSz;
 
