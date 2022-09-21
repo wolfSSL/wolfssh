@@ -247,9 +247,13 @@ extern "C" {
             const char* mode)
     {
         FRESULT ret;
-        BYTE m = FA_CREATE_NEW;
+        BYTE m = FA_CREATE_ALWAYS;
+
         if (!f) {
             return -1;
+        }
+        if (*f == 0) {
+            *f = WMALLOC(sizeof(FIL), NULL, 0);
         }
         if (XSTRSTR(mode, "r") && XSTRSTR(mode, "w")) {
             m |= WOLFSSH_O_RDWR;
@@ -266,6 +270,15 @@ extern "C" {
         return (int)ret;
     }
     #define WFOPEN(f, fn, m) ff_fopen((f),(fn),(m))
+
+    static inline int ff_close(WFILE *f)
+    {
+        int ret = f_close(f);
+        if (f != NULL)
+            WFREE(f, NULL, 0);
+        return ret;
+    }
+
     #define WFCLOSE(f)  f_close(f)
 
     static inline int ff_read(void *ptr, size_t size, size_t nmemb, WFILE *f)
@@ -304,12 +317,12 @@ extern "C" {
             case WSEEK_CUR:
                 return f_lseek(fp, off + f_tell(fp));
             case WSEEK_END:
-                return f_lseek(fp, off + f_size(fp));
+                return f_lseek(fp, off + fp->fsize);
         }
         return -1;
     }
     #define WFSEEK(s,o,w) ff_seek((s),(o),(w))
-    #define WREWIND(s) f_rewind(s)
+    #define WREWIND(s) ff_seek(s, WSEEK_SET, 0)
     #define WBADFILE (-1)
     #ifndef NO_WOLFSSH_DIR
         #define WDIR DIR
