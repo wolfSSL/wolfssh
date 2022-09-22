@@ -1,7 +1,7 @@
 #include <stdarg.h>
 
 #include <wolfssh/ssh.h>
-#include <configuration.h>
+#include <apps/wolfsshd/configuration.h>
 
 #ifndef WOLFSSH_DEFAULT_LOG_WIDTH
     #define WOLFSSH_DEFAULT_LOG_WIDTH 120
