@@ -540,7 +540,11 @@ struct WS_SFTP_GET_HANDLE_STATE;
 struct WS_SFTP_PUT_STATE;
 struct WS_SFTP_RENAME_STATE;
 
+#ifdef USE_WINDOWS_API
+    #define MAX_DRIVE_LETTER 26
+#endif /* USE_WINDOWS_API */
 #endif /* WOLFSSH_SFTP */
+
 #ifdef USE_WINDOWS_API
 #ifndef WOLFSSL_MAX_ESCBUF
 #define WOLFSSL_MAX_ESCBUF 19
@@ -718,7 +722,7 @@ struct WOLFSSH {
     struct WS_SFTP_GET_HANDLE_STATE* getHandleState;
     struct WS_SFTP_RENAME_STATE* renameState;
 #ifdef USE_WINDOWS_API
-    char driveList[26];
+    char driveList[MAX_DRIVE_LETTER];
     word16 driveListCount;
     word16 driveIdx;
 #endif

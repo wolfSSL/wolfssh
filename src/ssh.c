@@ -2317,13 +2317,17 @@ int wolfSSH_RealPath(const char* defaultPath, char* in,
     WMEMSET(out, 0, outSz);
     inSz = (word32)WSTRLEN(in);
     out[0] = '/';
+    curSz = 1;
     if (inSz == 0 || (!IS_DELIM(in[0]) && !IS_WINPATH(inSz, in))) {
         if (defaultPath != NULL) {
+            curSz = (word32)WSTRLEN(defaultPath);
+            if (curSz >= outSz) {
+                return WS_INVALID_PATH_E;
+            }
             WSTRNCPY(out, defaultPath, outSz);
         }
     }
-    out[outSz - 1] = 0;
-    curSz = (word32)WSTRLEN(out);
+    out[curSz] = 0;
 
     for (seg = WSTRTOK(in, DELIM, &tail);
             seg;
@@ -2352,6 +2356,10 @@ int wolfSSH_RealPath(const char* defaultPath, char* in,
         }
         /* Everything else is copied */
         else {
+            if (curSz >= outSz - segSz) {
+                return WS_INVALID_PATH_E;
+            }
+
             if (curSz != 1) {
                 WSTRNCAT(out, "/", outSz - curSz);
                 curSz++;
