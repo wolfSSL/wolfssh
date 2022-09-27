@@ -1021,7 +1021,7 @@ struct RealPathTestCase {
     const char* exp;
 };
 
-struct RealPathTestCase realPathTestCases[] = {
+struct RealPathTestCase realPathDefault[] = {
     { ".", "/C:/Users/fred" },
     { "", "/C:/Users/fred" },
     { "/C:/Users/fred/..", "/C:/Users" },
@@ -1042,33 +1042,106 @@ struct RealPathTestCase realPathTestCases[] = {
     { "/home/C:/ok", "/home/C:/ok" },
     { "/home/fred/frob/frizz/../../../barney/bar/baz/./././../..",
         "/home/barney" },
+    { "/home/fred/sample.", "/home/fred/sample." },
+    { "/home/fred/sample.jpg", "/home/fred/sample.jpg" },
+    { "/home/fred/sample./other", "/home/fred/sample./other" },
+    { "/home/fred/sample.dir/other", "/home/fred/sample.dir/other" },
+    { "./sample.", "/C:/Users/fred/sample." },
+    { "./sample.jpg", "/C:/Users/fred/sample.jpg" },
+    { "./sample./other", "/C:/Users/fred/sample./other" },
+    { "./sample.dir/other", "/C:/Users/fred/sample.dir/other" },
+    { "\\C:\\Users\\fred\\Documents\\junk.txt",
+        "/C:/Users/fred/Documents/junk.txt" },
+    { "C:\\Users\\fred\\Documents\\junk.txt",
+        "/C:/Users/fred/Documents/junk.txt" },
+    { "/C:\\Users\\fred/Documents\\junk.txt",
+        "/C:/Users/fred/Documents/junk.txt" },
 };
-const char* defaultPath = "/C:/Users/fred";
+
+struct RealPathTestCase realPathNull[] = {
+    { ".", "/" },
+    { "", "/" },
+    { "..", "/" },
+    { "../barney", "/barney" },
+};
+
+static void DoRealPathTestCase(const char* path, struct RealPathTestCase* tc)
+{
+    char testPath[128];
+    char checkPath[128];
+    int err;
+
+    WSTRNCPY(testPath, tc->in, sizeof(testPath) - 1);
+    testPath[sizeof(testPath) - 1] = 0;
+    WMEMSET(checkPath, 0, sizeof checkPath);
+    err = wolfSSH_RealPath(path, testPath,
+            checkPath, sizeof checkPath);
+    if (err || WSTRCMP(tc->exp, checkPath) != 0) {
+        fprintf(stderr, "RealPath failure (%d)\n"
+                        "    defaultPath: %s\n"
+                        "          input: %s\n"
+                        "       expected: %s\n"
+                        "         output: %s\n", err,
+                        path, tc->in, tc->exp, checkPath);
+    }
+}
+
+
+struct RealPathTestFailCase {
+    const char* defaultPath;
+    const char* in;
+    word32 checkPathSz;
+    int expErr;
+};
+struct RealPathTestFailCase realPathFail[] = {
+    /* Output size less than default path length. */
+    { "12345678", "12345678", 4, WS_INVALID_PATH_E },
+    /* Output size equal to default path length. */
+    { "12345678", "12345678", 8, WS_INVALID_PATH_E },
+    /* Copy segment will not fit in output. */
+    { "1234567", "12345678", 8, WS_INVALID_PATH_E },
+};
+
+static void DoRealPathTestFailCase(struct RealPathTestFailCase* tc)
+{
+    char testPath[128];
+    char checkPath[128];
+    int err;
+
+    WSTRNCPY(testPath, tc->in, sizeof(testPath) - 1);
+    testPath[sizeof(testPath) - 1] = 0;
+    WMEMSET(checkPath, 0, sizeof checkPath);
+    err = wolfSSH_RealPath(tc->defaultPath, testPath,
+            checkPath, tc->checkPathSz);
+    if (err != tc->expErr) {
+        fprintf(stderr, "RealPath fail check failure (%d)\n"
+                        "    defaultPath: %s\n"
+                        "          input: %s\n"
+                        "    checkPathSz: %u\n"
+                        "       expected: %d\n", err,
+                        tc->defaultPath, tc->in, tc->checkPathSz, tc->expErr);
+    }
+}
+
 
 static void test_wolfSSH_RealPath(void)
 {
-    struct RealPathTestCase* tc;
-    char testPath[128];
-    char checkPath[128];
-    word32 testCount =
-        (sizeof realPathTestCases)/(sizeof(struct RealPathTestCase));
+    word32 testCount;
     word32 i;
-    int err;
 
-    for (i = 0, tc = realPathTestCases; i < testCount; i++, tc++) {
-        WSTRNCPY(testPath, tc->in, sizeof(testPath) - 1);
-        testPath[sizeof(testPath) - 1] = 0;
-        WMEMSET(checkPath, 0, sizeof checkPath);
-        err = wolfSSH_RealPath(defaultPath, defaultPath, testPath,
-                checkPath, sizeof checkPath);
-        if (err || WSTRCMP(tc->exp, checkPath) != 0) {
-            printf("RealPath failure (case %u: %d)\n"
-                   "    defaultPath: %s\n"
-                   "          input: %s\n"
-                   "       expected: %s\n"
-                   "         output: %s\n", i, err,
-                   defaultPath, tc->in, tc->exp, checkPath);
-        }
+    testCount = (sizeof realPathDefault)/(sizeof(struct RealPathTestCase));
+    for (i = 0; i < testCount; i++) {
+        DoRealPathTestCase("/C:/Users/fred", realPathDefault + i);
+    }
+
+    testCount = (sizeof realPathNull)/(sizeof(struct RealPathTestCase));
+    for (i = 0; i < testCount; i++) {
+        DoRealPathTestCase(NULL, realPathNull + i);
+    }
+
+    testCount = (sizeof realPathFail)/(sizeof(struct RealPathTestFailCase));
+    for (i = 0; i < testCount; i++) {
+        DoRealPathTestFailCase(realPathFail + i);
     }
 }
 #else
@@ -1088,7 +1161,6 @@ int main(void)
     test_wolfSSH_SetUsername();
     test_wolfSSH_ConvertConsole();
     test_wolfSSH_CTX_UsePrivateKey_buffer();
-    test_wolfSSH_RealPath();
     test_wolfSSH_CTX_UseCert_buffer();
     test_wolfSSH_CertMan();
 
@@ -1098,6 +1170,8 @@ int main(void)
     /* SFTP tests */
     test_wolfSSH_SFTP_SendReadPacket();
 
+    /* Either SCP or SFTP */
+    test_wolfSSH_RealPath();
 
     AssertIntEQ(wolfSSH_Cleanup(), WS_SUCCESS);
 

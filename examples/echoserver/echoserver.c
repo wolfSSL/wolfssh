@@ -2030,6 +2030,57 @@ static int wsUserAuth(byte authType,
 }
 
 
+#ifdef WOLFSSH_SFTP
+/*
+ * Sets the WOLFSSH object's default SFTP path to the value provided by
+ * defaultSftpPath, or uses the current working directory from where the
+ * echoserver is run. The new default path is cleaned up with the real
+ * path function.
+ *
+ * @param ssh             WOLFSSH object to update
+ * @param defaultSftpPath command line provided default SFTP path
+ * @return                0 for success or error code
+ */
+static int SetDefaultSftpPath(WOLFSSH* ssh, const char* defaultSftpPath)
+{
+    char path[WOLFSSH_MAX_FILENAME];
+    char realPath[WOLFSSH_MAX_FILENAME];
+    int ret = 0;
+
+    if (defaultSftpPath == NULL) {
+    #ifdef USE_WINDOWS_API
+        if (GetCurrentDirectoryA(sizeof(path)-1, path) == 0) {
+            ret = WS_INVALID_PATH_E;
+        }
+    #else
+        if (getcwd(path, sizeof(path)-1) == NULL) {
+            ret = WS_INVALID_PATH_E;
+        }
+    #endif
+    }
+    else {
+        if (WSTRLEN(defaultSftpPath) >= sizeof(path)) {
+            ret = WS_INVALID_PATH_E;
+        }
+        else {
+            WSTRNCPY(path, defaultSftpPath, sizeof(path));
+        }
+    }
+
+    if (ret == 0) {
+        path[sizeof(path) - 1] = 0;
+        ret = wolfSSH_RealPath(NULL, path, realPath, sizeof(realPath));
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = wolfSSH_SFTP_SetDefaultPath(ssh, realPath);
+    }
+
+    return ret;
+}
+#endif
+
+
 static void ShowUsage(void)
 {
     printf("echoserver %s\n", LIBWOLFSSH_VERSION_STRING);
@@ -2451,12 +2502,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         }
 
     #ifdef WOLFSSH_SFTP
-        if (defaultSftpPath) {
-            if (wolfSSH_SFTP_SetDefaultPath(ssh, defaultSftpPath)
-                    != WS_SUCCESS) {
-                fprintf(stderr, "Couldn't store default sftp path.\n");
-                WEXIT(EXIT_FAILURE);
-            }
+        if (SetDefaultSftpPath(ssh, defaultSftpPath) != 0) {
+            fprintf(stderr, "Couldn't store default sftp path.\n");
+            WEXIT(EXIT_FAILURE);
         }
     #endif
 

@@ -166,6 +166,25 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
 
 #if defined(USE_WINDOWS_API) && (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP))
 
+/*
+ * SFTP paths all start with a leading root "/". Most Windows file routines
+ * expect a drive letter when dealing with an absolute path. If the provided
+ * path, f, is of the form "/C:...", adjust the pointer f to point to the "C",
+ * and decrement the file path size, fSz, by one.
+ *
+ * @param f    pointer to a file name
+ * @param fSz  size of f in bytes
+ * @return     pointer to somewhere in f
+ */
+static const char* TrimFileName(const char* f, size_t* fSz)
+{
+    if (f != NULL && fSz != NULL && *fSz >= 3 && f[0] == '/' && f[2] == ':') {
+        f++;
+        *fSz--;
+    }
+    return f;
+}
+
 void* WS_CreateFileA(const char* fileName, unsigned long desiredAccess,
         unsigned long shareMode, unsigned long creationDisposition,
         unsigned long flags, void* heap)
@@ -178,6 +197,8 @@ void* WS_CreateFileA(const char* fileName, unsigned long desiredAccess,
     errno_t error;
 
     fileNameSz = WSTRLEN(fileName);
+    fileName = TrimFileName(fileName, &fileNameSz);
+
     error = mbstowcs_s(&unicodeFileNameSz, NULL, 0, fileName, 0);
     if (error)
         return INVALID_HANDLE_VALUE;
@@ -211,6 +232,8 @@ void* WS_FindFirstFileA(const char* fileName,
     errno_t error;
 
     fileNameSz = WSTRLEN(fileName);
+    fileName = TrimFileName(fileName, &fileNameSz);
+
     error = mbstowcs_s(&unicodeFileNameSz, NULL, 0, fileName, 0);
     if (error)
         return INVALID_HANDLE_VALUE;
@@ -268,6 +291,8 @@ int WS_GetFileAttributesExA(const char* fileName, void* fileInfo, void* heap)
     errno_t error;
 
     fileNameSz = WSTRLEN(fileName);
+    fileName = TrimFileName(fileName, &fileNameSz);
+
     error = mbstowcs_s(&unicodeFileNameSz, NULL, 0, fileName, 0);
     if (error != 0)
         return 0;
@@ -301,6 +326,8 @@ int WS_RemoveDirectoryA(const char* dirName, void* heap)
     errno_t error;
 
     dirNameSz = WSTRLEN(dirName);
+    dirName = TrimFileName(dirName, &dirNameSz);
+
     error = mbstowcs_s(&unicodeDirNameSz, NULL, 0, dirName, 0);
     if (error != 0)
         return 0;
@@ -333,6 +360,8 @@ int WS_CreateDirectoryA(const char* dirName, void* heap)
     errno_t error;
 
     dirNameSz = WSTRLEN(dirName);
+    dirName = TrimFileName(dirName, &dirNameSz);
+
     error = mbstowcs_s(&unicodeDirNameSz, NULL, 0, dirName, 0);
     if (error != 0)
         return 0;
@@ -368,6 +397,7 @@ int WS_MoveFileA(const char* oldName, const char* newName, void* heap)
     errno_t error;
 
     oldNameSz = WSTRLEN(oldName);
+    oldName = TrimFileName(oldName, &oldNameSz);
 
     error = mbstowcs_s(&unicodeOldNameSz, NULL, 0, oldName, 0);
     if (error != 0)
@@ -382,6 +412,8 @@ int WS_MoveFileA(const char* oldName, const char* newName, void* heap)
         oldName, oldNameSz);
 
     newNameSz = WSTRLEN(newName);
+    newName = TrimFileName(newName, &newNameSz);
+
     error = mbstowcs_s(&unicodeNewNameSz, NULL, 0, newName, 0);
     if (error != 0)
         return 0;
@@ -417,6 +449,8 @@ int WS_DeleteFileA(const char* fileName, void* heap)
     errno_t error;
 
     fileNameSz = WSTRLEN(fileName);
+    fileName = TrimFileName(fileName, &fileNameSz);
+
     error = mbstowcs_s(&unicodeFileNameSz, NULL, 0, fileName, 0);
     if (error != 0)
         return 0;

@@ -2274,9 +2274,14 @@ int wolfSSH_ChannelGetEof(WOLFSSH_CHANNEL* channel)
 
 #if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
     !defined(NO_WOLFSSH_SERVER)
+
+#define DELIM "/\\"
+#define IS_DELIM(x) ((x) == '/' || (x) == '\\')
+#define IS_WINPATH(x,y) ((x) > 1 && (y)[1] == ':')
+
 /*
- * Paths starting with a slash are absolute, rooted at root. Any path that
- * doesn't have a starting slash is assumed to be relative to the current
+ * Paths starting with a slash are absolute, rooted at "/". Any path that
+ * doesn't have a starting slash is assumed to be relative to the default
  * path. If the path is empty, return the default path.
  *
  * The path "/." is stripped out. The path "/.." strips out the previous
@@ -2284,7 +2289,7 @@ int wolfSSH_ChannelGetEof(WOLFSSH_CHANNEL* channel)
  *
  * Example: "/home/fred/frob/frizz/../../../barney/bar/baz/./././../.."
  * will return "/home/barney". "/../.." will return "/". "." will return
- * currentPath.
+ * the default path.
  *
  * Note, this function does not care about OS and filesystem issues. The
  * SFTP protocol describes how paths are handled in SFTP. Specialized
@@ -2292,39 +2297,41 @@ int wolfSSH_ChannelGetEof(WOLFSSH_CHANNEL* channel)
  * are further massaged there. For example, the C: drive is treated as
  * the path "/C:", and is a directory like any other.
  *
- * @param currentPath RealPath of the current working directory
  * @param defaultPath RealPath of the default directory, usually user's
  * @param in          requested new path
  * @param out         output of real path cleanup
  * @param outSz       size in bytes of buffer 'out'
  * @return            WS_SUCCESS, WS_BAD_ARGUMENT, or WS_INVALID_PATH_E
  */
-int wolfSSH_RealPath(const char* currentPath, const char* defaultPath,
-        char* in, char* out, word32 outSz)
+int wolfSSH_RealPath(const char* defaultPath, char* in,
+        char* out, word32 outSz)
 {
     char* tail = NULL;
     char* seg;
     word32 inSz, segSz, curSz;
 
-    if (currentPath == NULL || defaultPath == NULL ||
-            in == NULL || out == NULL || outSz == 0)
+    if (in == NULL || out == NULL || outSz == 0) {
         return WS_BAD_ARGUMENT;
+    }
 
     WMEMSET(out, 0, outSz);
     inSz = (word32)WSTRLEN(in);
-    if (inSz == 0) {
-        WSTRNCPY(out, defaultPath, outSz);
+    out[0] = '/';
+    curSz = 1;
+    if (inSz == 0 || (!IS_DELIM(in[0]) && !IS_WINPATH(inSz, in))) {
+        if (defaultPath != NULL) {
+            curSz = (word32)WSTRLEN(defaultPath);
+            if (curSz >= outSz) {
+                return WS_INVALID_PATH_E;
+            }
+            WSTRNCPY(out, defaultPath, outSz);
+        }
     }
-    else if (in[0] == '/') {
-        out[0] = '/';
-    }
-    else {
-        WSTRNCPY(out, currentPath, outSz);
-    }
-    out[outSz - 1] = 0;
-    curSz = (word32)WSTRLEN(out);
+    out[curSz] = 0;
 
-    for (seg = WSTRTOK(in, "/", &tail); seg; seg = WSTRTOK(NULL, "/", &tail)) {
+    for (seg = WSTRTOK(in, DELIM, &tail);
+            seg;
+            seg = WSTRTOK(NULL, DELIM, &tail)) {
         segSz = (word32)WSTRLEN(seg);
 
         /* Try to match "." */
@@ -2349,6 +2356,10 @@ int wolfSSH_RealPath(const char* currentPath, const char* defaultPath,
         }
         /* Everything else is copied */
         else {
+            if (curSz >= outSz - segSz) {
+                return WS_INVALID_PATH_E;
+            }
+
             if (curSz != 1) {
                 WSTRNCAT(out, "/", outSz - curSz);
                 curSz++;

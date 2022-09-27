@@ -339,8 +339,8 @@ enum WS_DisconnectReasonCodes {
 };
 
 
-WOLFSSH_API int wolfSSH_RealPath(const char* currentPath,
-        const char* defaultPath, char* in, char* out, word32 outSz);
+WOLFSSH_API int wolfSSH_RealPath(const char* defaultPath, char* in,
+        char* out, word32 outSz);
 
 
 WOLFSSH_API void wolfSSH_ShowSizes(void);
