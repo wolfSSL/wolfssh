@@ -20,6 +20,7 @@ EXTRA_DIST+= \
             keys/pubkeys-rsa.txt keys/passwd.txt keys/ca-cert-ecc.der \
             keys/ca-cert-ecc.pem keys/ca-key-ecc.der keys/ca-key-ecc.pem \
             keys/server-cert.der keys/server-cert.pem \
-            keys/john-cert.der keys/john-cert.pem \
-            keys/server-key.pem keys/john-key.der keys/john-key.pem
+            keys/fred-cert.der keys/fred-cert.pem \
+            keys/server-key.pem keys/fred-key.der keys/fred-key.pem \
+            keys/renewcerts.sh keys/renewcerts.cnf
 
