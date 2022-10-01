@@ -1,0 +1,57 @@
+HOME        = .
+RANDFILE    = $ENV::HOME/.rnd
+
+[ ca ]
+default_ca  = CA_default        # The default ca section
+
+[ CA_default ]
+dir      = $HOME
+database = $dir/index.txt # database index file.
+certs    = $dir/
+new_certs_dir = $dir/
+certificate   = $dir/ca-cert-ecc.pem
+serial        = $dir/serial
+default_md    = default
+policy        = policy_match
+email_in_dn   = no
+RANDFILE      = $dir/.rand
+
+# For the CA policy
+[ policy_match ]
+countryName             = match
+stateOrProvinceName     = supplied
+organizationName        = supplied
+organizationalUnitName  = optional
+commonName              = supplied
+emailAddress            = optional
+
+[ req ]
+x509_extensions = v3_ca  # The extensions to add to the self signed cert
+distinguished_name = req_distinguished_name
+prompt = no
+
+# Extensions for a typical CA
+[ v3_ca ]
+subjectKeyIdentifier=hash
+authorityKeyIdentifier=keyid:always,issuer:always
+basicConstraints = critical,CA:true
+keyUsage = critical, digitalSignature, keyCertSign, cRLSign
+
+# Extensions for fred cert
+[ v3_fred ]
+subjectKeyIdentifier=hash
+authorityKeyIdentifier=keyid:always,issuer:always
+subjectAltName = @fred_altnames
+
+[ fred_altnames ]
+otherName = msUPN;UTF8:fred@example
+
+# Extensions for server cert
+[ v3_server ]
+subjectKeyIdentifier=hash
+authorityKeyIdentifier=keyid:always,issuer:always
+subjectAltName = DNS:example, IP:127.0.0.1
+
+
+[ req_distinguished_name ]
+
