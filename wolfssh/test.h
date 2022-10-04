@@ -175,7 +175,6 @@
         typedef void*         THREAD_RETURN;
         typedef pthread_t     THREAD_TYPE;
         #define WOLFSSH_THREAD
-        #define INFINITE -1
         #define WAIT_OBJECT_0 0L
     #elif defined(WOLFSSL_NUCLEUS) || defined(FREESCALE_MQX)
         typedef unsigned int  THREAD_RETURN;
