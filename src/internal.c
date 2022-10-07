@@ -408,6 +408,9 @@ const char* GetErrorString(int err)
         case WS_CERT_KEY_SIZE_E:
             return "key size too small error";
 
+        case WS_CTX_KEY_COUNT:
+            return "trying to add too many keys";
+
         default:
             return "Unknown error code";
     }
@@ -576,17 +579,32 @@ void CtxResourceFree(WOLFSSH_CTX* ctx)
 {
     WLOG(WS_LOG_DEBUG, "Entering CtxResourceFree()");
 
-    if (ctx->privateKey) {
-        ForceZero(ctx->privateKey, ctx->privateKeySz);
-        WFREE(ctx->privateKey, ctx->heap, DYNTYPE_PRIVKEY);
+    if (ctx->privateKeyCount > 0) {
+        word32 i;
+
+        for (i = 0; i < ctx->privateKeyCount; i++) {
+            if (ctx->privateKey[i] != NULL) {
+                ForceZero(ctx->privateKey[i], ctx->privateKeySz[i]);
+                WFREE(ctx->privateKey[i], ctx->heap, DYNTYPE_PRIVKEY);
+                ctx->privateKey[i] = NULL;
+                ctx->privateKeySz[i] = 0;
+            }
+            #ifdef WOLFSSH_CERTS
+            if (ctx->cert[i] != NULL) {
+                WFREE(ctx->cert[i], ctx->heap, DYNTYPE_PRIVKEY);
+                ctx->cert[i] = NULL;
+                ctx->certSz[i] = 0;
+            }
+            #endif
+            ctx->privateKeyId[i] = ID_NONE;
+        }
+        ctx->privateKeyCount = 0;
     }
 #ifdef WOLFSSH_CERTS
     if (ctx->certMan) {
         wolfSSH_CERTMAN_free(ctx->certMan);
     }
-    if (ctx->cert) {
-        WFREE(ctx->cert, ctx->heap, DYNTYPE_CERT);
-    }
+    ctx->certMan = NULL;
 #endif
 }
 
@@ -776,19 +794,231 @@ union wolfSSH_key {
 #endif
 };
 
+
+/*
+ * Identifies the flavor of a key, RSA or ECDSA, and returns the key type ID.
+ * The process is to decode the key as if it was RSA and if that fails try
+ * to load it as if ECDSA. Both public and private keys can be decoded.
+ *
+ * @param in        key to identify
+ * @param inSz      size of key
+ * @param isPrivate indicates private or public key
+ * @param heap      heap to use for memory allocation
+ * @return          keyId as int, WS_MEMORY_E, WS_UNIMPLEMENTED_E
+ */
+static int IdentifyKey(const byte* in, word32 inSz, int isPrivate, void* heap)
+{
+    union wolfSSH_key *key = NULL;
+    int keyId = ID_UNKNOWN;
+    word32 scratch;
+    int ret = WS_SUCCESS;
+    int dynType = isPrivate ? DYNTYPE_PRIVKEY : DYNTYPE_PUBKEY;
+
+    key = (union wolfSSH_key*)WMALLOC(sizeof(union wolfSSH_key), heap, dynType);
+    if (key == NULL) {
+        ret = WS_MEMORY_E;
+    }
+
+#ifndef WOLFSSH_NO_RSA
+    if (ret == WS_SUCCESS) {
+        /* Check RSA key */
+        if (keyId == ID_UNKNOWN) {
+            scratch = 0;
+            ret = wc_InitRsaKey(&key->rsa, NULL);
+
+            if (ret == 0) {
+                if (isPrivate) {
+                    ret = wc_RsaPrivateKeyDecode(in, &scratch,
+                            &key->rsa, inSz);
+                }
+                else {
+                    ret = wc_RsaPublicKeyDecode(in, &scratch,
+                            &key->rsa, inSz);
+                }
+
+                /* If decode was successful, this was an RSA key. */
+                if (ret == 0) {
+                    keyId = ID_SSH_RSA;
+                }
+                /* in case we need to check for another key flavor */
+                ret = WS_SUCCESS;
+            }
+
+            wc_FreeRsaKey(&key->rsa);
+        }
+    }
+#endif
+#ifndef WOLFSSH_NO_ECDSA
+    if (ret == WS_SUCCESS) {
+        if (keyId == ID_UNKNOWN) {
+            scratch = 0;
+            ret = wc_ecc_init_ex(&key->ecc, heap, INVALID_DEVID);
+
+            if (ret == 0) {
+                if (isPrivate) {
+                    ret = wc_EccPrivateKeyDecode(in, &scratch,
+                            &key->ecc, inSz);
+                }
+                else {
+                    ret = wc_EccPublicKeyDecode(in, &scratch,
+                            &key->ecc, inSz);
+                }
+
+                /* If decode was successful, this was an RSA key. */
+                if (ret == 0) {
+                    switch (wc_ecc_get_curve_id(key->ecc.idx)) {
+                        case ECC_SECP256R1:
+                            keyId = ID_ECDSA_SHA2_NISTP256;
+                            break;
+                        case ECC_SECP384R1:
+                            keyId = ID_ECDSA_SHA2_NISTP384;
+                            break;
+                        case ECC_SECP521R1:
+                            keyId = ID_ECDSA_SHA2_NISTP521;
+                            break;
+                    }
+                }
+                /* in case we need to check for another key flavor */
+                ret = WS_SUCCESS;
+            }
+
+            wc_ecc_free(&key->ecc);
+        }
+    }
+#endif /* ! WOLFSSH_NO_ECDSA */
+
+    if (key != NULL) {
+        WFREE(key, heap, dynType);
+    }
+
+    if (keyId == ID_UNKNOWN) {
+        ret = WS_UNIMPLEMENTED_E;
+    }
+
+    return ret == WS_SUCCESS ? keyId : ret;
+}
+
+
+#ifdef WOLFSSH_CERTS
+/*
+ * Identifies the flavor of an X.509 certificate, RSA or ECDSA, and returns
+ * the key type ID. The process is to decode the certificate and pass the
+ * public key to IdentifyKey.
+ *
+ * @param in        certificate to identify
+ * @param inSz      size of certificate
+ * @param heap      heap to use for memory allocation
+ * @return          keyId as int, WS_MEMORY_E, WS_UNIMPLEMENTED_E
+ */
+static int IdentifyCert(const byte* in, word32 inSz, void* heap)
+{
+    struct DecodedCert cert;
+    byte *key = NULL;
+    word32 keySz = 0;
+    int ret;
+    int keyId = ID_UNKNOWN;
+
+    wc_InitDecodedCert(&cert, in, inSz, heap);
+    ret = wc_ParseCert(&cert, CERT_TYPE, 0, NULL);
+    if (ret == 0) {
+        ret = wc_GetPubKeyDerFromCert(&cert, NULL, &keySz);
+        if (ret == LENGTH_ONLY_E) {
+            ret = 0;
+            key = (byte*)WMALLOC(keySz, heap, DYNTYPE_PUBKEY);
+            if (key == NULL) {
+                ret = WS_MEMORY_E;
+            }
+        }
+    }
+
+    if (ret == 0) {
+        ret = wc_GetPubKeyDerFromCert(&cert, key, &keySz);
+    }
+
+    if (ret == 0) {
+        ret = IdentifyKey(key, keySz, 0, heap);
+        if (ret > 0) {
+            keyId = ret;
+            ret = WS_SUCCESS;
+        }
+    }
+
+    if (key != NULL) {
+        WFREE(key, heap, DYNTYPE_PUBKEY);
+    }
+    wc_FreeDecodedCert(&cert);
+
+    return ret == WS_SUCCESS ? keyId : ret;
+}
+#endif /* WOLFSSH_CERTS */
+
+
+static int SetHostPrivateKey(WOLFSSH_CTX* ctx, byte keyId, int isKey,
+        byte* der, word32 derSz)
+{
+    word32 destIdx = 0;
+    int ret = WS_SUCCESS;
+
+    while (destIdx < ctx->privateKeyCount &&
+            ctx->privateKeyId[destIdx] != keyId) {
+        destIdx++;
+    }
+
+    if (destIdx >= WOLFSSH_MAX_PVT_KEYS) {
+        ret = WS_CTX_KEY_COUNT;
+    }
+    else {
+        if (ctx->privateKeyId[destIdx] == keyId) {
+            if (isKey) {
+                if (ctx->privateKey[destIdx] != NULL) {
+                    ForceZero(ctx->privateKey[destIdx],
+                            ctx->privateKeySz[destIdx]);
+                    WFREE(ctx->privateKey[destIdx], heap, dynamicType);
+                }
+            }
+            #ifdef WOLFSSH_CERTS
+            else {
+                if (ctx->cert[destIdx] != NULL) {
+                    WFREE(ctx->cert[destIdx], heap, dynamicType);
+                }
+            }
+            #endif /* WOLFSSH_CERTS */
+        }
+        else {
+            ctx->privateKeyCount++;
+            ctx->privateKeyId[destIdx] = keyId;
+        }
+
+        if (isKey) {
+            ctx->privateKey[destIdx] = der;
+            ctx->privateKeySz[destIdx] = derSz;
+        }
+        #ifdef WOLFSSH_CERTS
+        else {
+            ctx->cert[destIdx] = der;
+            ctx->certSz[destIdx] = derSz;
+        }
+        #endif /* WOLFSSH_CERTS */
+    }
+
+    return ret;
+}
+
+
 int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
                           const byte* in, word32 inSz,
                           int format, int type)
 {
     int dynamicType = 0;
     int wcType;
-    int ret;
+    int ret = WS_SUCCESS;
     void* heap = NULL;
     byte* der;
-    word32 derSz, scratch = 0;
-    union wolfSSH_key *key_ptr = NULL;
+    word32 derSz;
+    byte keyId = ID_NONE;
 
     (void)dynamicType;
+    (void)wcType;
     (void)heap;
 
     if (ctx == NULL || in == NULL || inSz == 0)
@@ -810,8 +1040,9 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
         dynamicType = DYNTYPE_PRIVKEY;
         wcType = PRIVATEKEY_TYPE;
     }
-    else
+    else {
         return WS_BAD_ARGUMENT;
+    }
 
     heap = ctx->heap;
 
@@ -846,21 +1077,23 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
     /* Maybe decrypt */
 
     if (type == BUFTYPE_PRIVKEY) {
-        if (ctx->privateKey) {
-            ForceZero(ctx->privateKey, ctx->privateKeySz);
-            WFREE(ctx->privateKey, heap, dynamicType);
+        ret = IdentifyKey(der, derSz, 1, ctx->heap);
+        if (ret < 0) {
+            WFREE(der, heap, dynamicType);
+            return ret;
         }
-        ctx->privateKey = der;
-        ctx->privateKeySz = derSz;
-        ctx->useEcc = 0;
+        keyId = (byte)ret;
+        ret = SetHostPrivateKey(ctx, keyId, 1, der, derSz);
     }
     #ifdef WOLFSSH_CERTS
     else if (type == BUFTYPE_CERT) {
-        if (ctx->cert != NULL)
-            WFREE(ctx->cert, heap, dynamicType);
-        ctx->cert = der;
-        ctx->certSz = derSz;
-        ctx->useCert = 1;
+        ret = IdentifyCert(der, derSz, ctx->heap);
+        if (ret < 0) {
+            WFREE(der, heap, dynamicType);
+            return ret;
+        }
+        keyId = (byte)ret;
+        ret = SetHostPrivateKey(ctx, keyId, 0, der, derSz);
     }
     else if (type == BUFTYPE_CA) {
         if (ctx->certMan != NULL) {
@@ -873,74 +1106,10 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
         WFREE(der, heap, dynamicType);
         if (ret < 0) {
             WLOG(WS_LOG_DEBUG, "Error %d loading in CA buffer", ret);
-            goto end;
         }
     }
     #endif /* WOLFSSH_CERTS */
-    else {
-        WFREE(der, heap, dynamicType);
-        return WS_UNIMPLEMENTED_E;
-    }
 
-    if (type == BUFTYPE_PRIVKEY && format != WOLFSSH_FORMAT_RAW) {
-        key_ptr = (union wolfSSH_key*)WMALLOC(sizeof(union wolfSSH_key), heap,
-                dynamicType);
-        if (key_ptr == NULL) {
-            WFREE(der, heap, dynamicType);
-            return WS_MEMORY_E;
-        }
-
-        /* Check RSA key */
-#ifndef WOLFSSH_NO_RSA
-        scratch = 0;
-        if (wc_InitRsaKey(&key_ptr->rsa, NULL) < 0) {
-            ret = WS_RSA_E;
-            goto end;
-        }
-
-        ret = wc_RsaPrivateKeyDecode(der, &scratch, &key_ptr->rsa, derSz);
-        wc_FreeRsaKey(&key_ptr->rsa);
-
-        if (ret < 0) {
-#endif
-#ifndef WOLFSSH_NO_ECDSA
-            /* Couldn't decode as RSA key. Try decoding as ECC key. */
-            scratch = 0;
-            if (wc_ecc_init_ex(&key_ptr->ecc, ctx->heap, INVALID_DEVID) != 0) {
-                ret = WS_ECC_E;
-                goto end;
-            }
-
-            ret = wc_EccPrivateKeyDecode(ctx->privateKey, &scratch,
-                                         &key_ptr->ecc, ctx->privateKeySz);
-            if (ret == 0) {
-                int curveId = wc_ecc_get_curve_id(key_ptr->ecc.idx);
-                if (curveId == ECC_SECP256R1 ||
-                    curveId == ECC_SECP384R1 ||
-                    curveId == ECC_SECP521R1) {
-
-                    ctx->useEcc = curveId;
-                }
-                else
-                    ret = WS_BAD_FILE_E;
-            }
-            wc_ecc_free(&key_ptr->ecc);
-            if (ret != 0) {
-                ret = WS_BAD_FILE_E;
-                goto end;
-            }
-#endif /* ! WOLFSSH_NO_ECDSA */
-
-#ifndef WOLFSSH_NO_RSA
-        }
-#endif
-    }
-    ret = WS_SUCCESS;
-end:
-    if (key_ptr)
-        WFREE(key_ptr, heap, dynamicType);
-
-    (void)wcType;
     return ret;
 }
 
@@ -2206,48 +2375,6 @@ static const byte  cannedKeyAlgoClient[] = {
 #endif
 };
 
-#ifndef WOLFSSH_NO_SSH_RSA_SHA1
-    static const byte cannedKeyAlgoRsa[] = {ID_SSH_RSA};
-    static const word32 cannedKeyAlgoRsaSz = sizeof(cannedKeyAlgoRsa);
-#endif
-#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
-    static const byte cannedKeyAlgoEcc256[] = {ID_ECDSA_SHA2_NISTP256};
-    static const word32 cannedKeyAlgoEcc256Sz = sizeof(cannedKeyAlgoEcc256);
-#endif
-#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
-    static const byte cannedKeyAlgoEcc384[] = {ID_ECDSA_SHA2_NISTP384};
-    static const word32 cannedKeyAlgoEcc384Sz = sizeof(cannedKeyAlgoEcc384);
-#endif
-#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
-    static const byte cannedKeyAlgoEcc521[] = {ID_ECDSA_SHA2_NISTP521};
-    static const word32 cannedKeyAlgoEcc521Sz = sizeof(cannedKeyAlgoEcc521);
-#endif
-#ifdef WOLFSSH_CERTS
-#ifndef WOLFSSH_NO_SSH_RSA_SHA1
-    static const byte cannedKeyAlgoX509Rsa[] = {ID_X509V3_SSH_RSA};
-    static const word32 cannedKeyAlgoX509RsaSz = sizeof(cannedKeyAlgoX509Rsa);
-#endif
-#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
-    static const byte cannedKeyAlgoX509Ecc256[] =
-        {ID_X509V3_ECDSA_SHA2_NISTP256};
-    static const word32 cannedKeyAlgoX509Ecc256Sz =
-            sizeof(cannedKeyAlgoX509Ecc256);
-#endif
-#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
-    static const byte cannedKeyAlgoX509Ecc384[] =
-        {ID_X509V3_ECDSA_SHA2_NISTP384};
-    static const word32 cannedKeyAlgoX509Ecc384Sz =
-            sizeof(cannedKeyAlgoX509Ecc384);
-#endif
-#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
-    static const byte cannedKeyAlgoX509Ecc521[] =
-        {ID_X509V3_ECDSA_SHA2_NISTP521};
-    static const word32 cannedKeyAlgoX509Ecc521Sz =
-            sizeof(cannedKeyAlgoX509Ecc521);
-#endif
-#endif /* WOLFSSH_CERTS */
-
-
 static const byte cannedKexAlgo[] = {
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256
     ID_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256,
@@ -2672,66 +2799,8 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             word32 cannedKeyAlgoSz = 0;
 
             if (side == WOLFSSH_ENDPOINT_SERVER) {
-                if (ssh->ctx->useEcc) {
-                    switch (ssh->ctx->useEcc) {
-                        #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
-                        case ECC_SECP256R1:
-                            if (ssh->ctx->useCert) {
-                            #ifdef WOLFSSH_CERTS
-                                cannedKeyAlgo = cannedKeyAlgoX509Ecc256;
-                                cannedKeyAlgoSz = cannedKeyAlgoX509Ecc256Sz;
-                            #endif
-                            }
-                            else {
-                                cannedKeyAlgo = cannedKeyAlgoEcc256;
-                                cannedKeyAlgoSz = cannedKeyAlgoEcc256Sz;
-                            }
-                            break;
-                        #endif
-                        #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
-                        case ECC_SECP384R1:
-                            if (ssh->ctx->useCert) {
-                            #ifdef WOLFSSH_CERTS
-                                cannedKeyAlgo = cannedKeyAlgoX509Ecc384;
-                                cannedKeyAlgoSz = cannedKeyAlgoX509Ecc384Sz;
-                            #endif
-                            }
-                            else {
-                                cannedKeyAlgo = cannedKeyAlgoEcc384;
-                                cannedKeyAlgoSz = cannedKeyAlgoEcc384Sz;
-                            }
-                            break;
-                        #endif
-                        #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
-                        case ECC_SECP521R1:
-                            if (ssh->ctx->useCert) {
-                            #ifdef WOLFSSH_CERTS
-                                cannedKeyAlgo = cannedKeyAlgoX509Ecc521;
-                                cannedKeyAlgoSz = cannedKeyAlgoX509Ecc521Sz;
-                            #endif
-                            }
-                            else {
-                                cannedKeyAlgo = cannedKeyAlgoEcc521;
-                                cannedKeyAlgoSz = cannedKeyAlgoEcc521Sz;
-                            }
-                            break;
-                        #endif
-                    }
-                }
-                else {
-                #ifndef WOLFSSH_NO_SSH_RSA_SHA1
-                    if (ssh->ctx->useCert) {
-                        #ifdef WOLFSSH_CERTS
-                        cannedKeyAlgo = cannedKeyAlgoX509Rsa;
-                        cannedKeyAlgoSz = cannedKeyAlgoX509RsaSz;
-                        #endif
-                    }
-                    else {
-                        cannedKeyAlgo = cannedKeyAlgoRsa;
-                        cannedKeyAlgoSz = cannedKeyAlgoRsaSz;
-                    }
-                #endif
-                }
+                cannedKeyAlgo = ssh->ctx->privateKeyId;
+                cannedKeyAlgoSz = ssh->ctx->privateKeyCount;
             }
             else {
                 /* XXX Does this need to be different for client? */
@@ -2808,7 +2877,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                     cannedMacAlgo, cannedMacAlgoSz);
             if (algoId == ID_UNKNOWN) {
                 WLOG(WS_LOG_DEBUG, "Unable to negotiate MAC Algo C2S");
-                ret = WS_MATCH_ENC_ALGO_E;
+                ret = WS_MATCH_MAC_ALGO_E;
             }
         }
     }
@@ -3304,6 +3373,7 @@ static int ParseAndVerifyCert(WOLFSSH* ssh, byte* in, word32 inSz,
     word32 certCount = 0;
     byte*  certChain = NULL;
     word32 certChainSz = 0;
+    word32 count;
 
     /* Skip the name */
     ret = GetSize(&l, in, inSz, &m);
@@ -3315,9 +3385,7 @@ static int ParseAndVerifyCert(WOLFSSH* ssh, byte* in, word32 inSz,
     }
 
     if (ret == WS_SUCCESS) {
-        word32 count;
-
-        WLOG(WS_LOG_INFO, "Peer sent certificate count of %u", certCount);
+        WLOG(WS_LOG_INFO, "Peer sent certificate count of %d", certCount);
         certChain = in + m;
 
         for (count = certCount; count > 0; count--) {
@@ -7592,6 +7660,30 @@ static INLINE void CopyNameList(byte* buf, word32* idx,
     *idx = begin;
 }
 
+
+static word32 BuildNameList(char* buf, word32 bufSz,
+        const byte* src, word32 srcSz)
+{
+    const char* name;
+    word32 nameSz, idx;
+
+    (void)bufSz;
+    idx = 0;
+    do {
+        name = IdToName(*src);
+        nameSz = (word32)WSTRLEN(name);
+        WMEMCPY(buf + idx, name, nameSz);
+        idx += nameSz;
+        buf[idx++] = ',';
+
+        src++;
+        srcSz--;
+    } while (srcSz > 0);
+
+    return idx - 1; /* Take off the size of last ','. */
+}
+
+
 static const char cannedEncAlgoNames[] =
 #if !defined(WOLFSSH_NO_AES_GCM)
     "aes256-gcm@openssh.com,"
@@ -7631,34 +7723,6 @@ static const char cannedMacAlgoNames[] =
     #warning "You need at least one MAC algorithm."
 #endif
 
-static const char cannedKeyAlgoClientNames[] =
-#ifdef WOLFSSH_CERTS
-    #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
-        "x509v3-ecdsa-sha2-nistp521,"
-    #endif
-    #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
-        "x509v3-ecdsa-sha2-nistp384,"
-    #endif
-    #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
-        "x509v3-ecdsa-sha2-nistp256,"
-    #endif
-    #ifndef WOLFSSH_NO_SSH_RSA_SHA1
-        "x509v3-ssh-rsa,"
-    #endif
-#endif
-#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
-    "ecdsa-sha2-nistp521,"
-#endif
-#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
-    "ecdsa-sha2-nistp384,"
-#endif
-#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
-    "ecdsa-sha2-nistp256,"
-#endif
-#ifndef WOLFSSH_NO_SSH_RSA_SHA1
-    "ssh-rsa,"
-#endif
-    "";
 #if defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && \
         defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && \
         defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521) && \
@@ -7666,20 +7730,32 @@ static const char cannedKeyAlgoClientNames[] =
     #warning "You need at least one signing algorithm."
 #endif
 
-static const char cannedKeyAlgoRsaNames[] = "ssh-rsa";
-#ifdef WOLFSSH_CERTS
-static const char cannedKeyAlgoX509RsaNames[] = "x509v3-ssh-rsa";
+#define KEY_ALGO_SIZE_GUESS 20
+#ifndef WOLFSSH_NO_SSH_RSA_SHA1
+    #ifdef WOLFSSH_CERTS
+        static const char cannedKeyAlgoX509RsaNames[] = "x509v3-ssh-rsa";
+    #endif
 #endif
-#if !defined(WOLFSSH_NO_ECDSA) && !defined(WOLFSSH_NO_ECDH)
-static const char cannedKeyAlgoEcc256Names[] = "ecdsa-sha2-nistp256";
-static const char cannedKeyAlgoEcc384Names[] = "ecdsa-sha2-nistp384";
-static const char cannedKeyAlgoEcc521Names[] = "ecdsa-sha2-nistp521";
-#ifdef WOLFSSH_CERTS
-static const char cannedKeyAlgoX509Ecc256Names[] = "x509v3-ecdsa-sha2-nistp256";
-static const char cannedKeyAlgoX509Ecc384Names[] = "x509v3-ecdsa-sha2-nistp384";
-static const char cannedKeyAlgoX509Ecc521Names[] = "x509v3-ecdsa-sha2-nistp521";
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    static const char cannedKeyAlgoEcc256Names[] = "ecdsa-sha2-nistp256";
+    #ifdef WOLFSSH_CERTS
+        static const char cannedKeyAlgoX509Ecc256Names[] =
+                "x509v3-ecdsa-sha2-nistp256";
+    #endif
 #endif
-
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+    static const char cannedKeyAlgoEcc384Names[] = "ecdsa-sha2-nistp384";
+    #ifdef WOLFSSH_CERTS
+        static const char cannedKeyAlgoX509Ecc384Names[] =
+                "x509v3-ecdsa-sha2-nistp384";
+    #endif
+#endif
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+    static const char cannedKeyAlgoEcc521Names[] = "ecdsa-sha2-nistp521";
+    #ifdef WOLFSSH_CERTS
+        static const char cannedKeyAlgoX509Ecc521Names[] =
+                "x509v3-ecdsa-sha2-nistp521";
+    #endif
 #endif
 
 static const char cannedKexAlgoNames[] =
@@ -7721,31 +7797,21 @@ static const char cannedNoneNames[] = "none";
 /* -1 for the null, some are -1 for the comma */
 static const word32 cannedEncAlgoNamesSz = sizeof(cannedEncAlgoNames) - 2;
 static const word32 cannedMacAlgoNamesSz = sizeof(cannedMacAlgoNames) - 2;
-static const word32 cannedKeyAlgoClientNamesSz =
-                                           sizeof(cannedKeyAlgoClientNames) - 2;
-static const word32 cannedKeyAlgoRsaNamesSz = sizeof(cannedKeyAlgoRsaNames) - 1;
-#ifdef WOLFSSH_CERTS
-static const word32 cannedKeyAlgoX509RsaNamesSz =
-        sizeof(cannedKeyAlgoX509RsaNames) - 1;
-#endif
-#if !defined(WOLFSSH_NO_ECDSA) && !defined(WOLFSSH_NO_ECDH)
-static const word32 cannedKeyAlgoEcc256NamesSz =
-                                           sizeof(cannedKeyAlgoEcc256Names) - 1;
-static const word32 cannedKeyAlgoEcc384NamesSz =
-                                           sizeof(cannedKeyAlgoEcc384Names) - 1;
-static const word32 cannedKeyAlgoEcc521NamesSz =
-                                           sizeof(cannedKeyAlgoEcc521Names) - 1;
-#ifdef WOLFSSH_CERTS
-static const word32 cannedKeyAlgoX509Ecc256NamesSz =
-        sizeof(cannedKeyAlgoX509Ecc256Names) - 1;
-static const word32 cannedKeyAlgoX509Ecc384NamesSz =
-        sizeof(cannedKeyAlgoX509Ecc384Names) - 1;
-static const word32 cannedKeyAlgoX509Ecc521NamesSz =
-        sizeof(cannedKeyAlgoX509Ecc521Names) - 1;
-#endif
-#endif
 static const word32 cannedKexAlgoNamesSz = sizeof(cannedKexAlgoNames) - 2;
 static const word32 cannedNoneNamesSz = sizeof(cannedNoneNames) - 1;
+
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    static const word32 cannedKeyAlgoEcc256NamesSz =
+            sizeof(cannedKeyAlgoEcc256Names) - 1;
+#endif
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+    static const word32 cannedKeyAlgoEcc384NamesSz =
+            sizeof(cannedKeyAlgoEcc384Names) - 1;
+#endif
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+    static const word32 cannedKeyAlgoEcc521NamesSz =
+            sizeof(cannedKeyAlgoEcc521Names) - 1;
+#endif
 
 
 int SendKexInit(WOLFSSH* ssh)
@@ -7755,13 +7821,18 @@ int SendKexInit(WOLFSSH* ssh)
     word32 idx = 0;
     word32 payloadSz = 0;
     int ret = WS_SUCCESS;
-    const char* cannedKeyAlgoNames = NULL;
-    word32 cannedKeyAlgoNamesSz = 0;
+    word32 keyAlgoNamesSz = 0;
+    char* keyAlgoNames = NULL;
 
     WLOG(WS_LOG_DEBUG, "Entering SendKexInit()");
 
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
+
+    if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER &&
+            ssh->ctx->privateKeyCount == 0) {
+        ret = WS_BAD_ARGUMENT;
+    }
 
     if (ret == WS_SUCCESS) {
         ssh->isKeying = 1;
@@ -7775,73 +7846,28 @@ int SendKexInit(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS) {
+        word32 privateKeyCount;
+        const byte* privateKey;
+
         if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
-            switch (ssh->ctx->useEcc) {
-                #if !defined(WOLFSSH_NO_ECDSA) && !defined(WOLFSSH_NO_ECDH)
-                case ECC_SECP256R1:
-                    if (ssh->ctx->useCert) {
-                    #ifdef WOLFSSH_CERTS
-                        cannedKeyAlgoNames = cannedKeyAlgoX509Ecc256Names;
-                        cannedKeyAlgoNamesSz =
-                            cannedKeyAlgoX509Ecc256NamesSz;
-                    #endif
-                    }
-                    else {
-                        cannedKeyAlgoNames = cannedKeyAlgoEcc256Names;
-                        cannedKeyAlgoNamesSz = cannedKeyAlgoEcc256NamesSz;
-                    }
-
-                    break;
-                case ECC_SECP384R1:
-                    if (ssh->ctx->useCert) {
-                    #ifdef WOLFSSH_CERTS
-                        cannedKeyAlgoNames = cannedKeyAlgoX509Ecc384Names;
-                        cannedKeyAlgoNamesSz =
-                            cannedKeyAlgoX509Ecc384NamesSz;
-                    #endif
-                    }
-                    else {
-                        cannedKeyAlgoNames = cannedKeyAlgoEcc384Names;
-                        cannedKeyAlgoNamesSz = cannedKeyAlgoEcc384NamesSz;
-                    }
-
-                    break;
-                case ECC_SECP521R1:
-                    if (ssh->ctx->useCert) {
-                    #ifdef WOLFSSH_CERTS
-                        cannedKeyAlgoNames = cannedKeyAlgoX509Ecc521Names;
-                        cannedKeyAlgoNamesSz =
-                            cannedKeyAlgoX509Ecc521NamesSz;
-                    #endif
-                    }
-                    else {
-                        cannedKeyAlgoNames = cannedKeyAlgoEcc521Names;
-                        cannedKeyAlgoNamesSz =
-                            cannedKeyAlgoEcc521NamesSz;
-                    }
-
-                    break;
-                #endif
-                default:
-                    if (ssh->ctx->useCert) {
-                    #ifdef WOLFSSH_CERTS
-                        cannedKeyAlgoNames = cannedKeyAlgoX509RsaNames;
-                        cannedKeyAlgoNamesSz = cannedKeyAlgoX509RsaNamesSz;
-                    #endif
-                    }
-                    else {
-                        cannedKeyAlgoNames = cannedKeyAlgoRsaNames;
-                        cannedKeyAlgoNamesSz = cannedKeyAlgoRsaNamesSz;
-                    }
-
-            }
+            privateKeyCount = ssh->ctx->privateKeyCount;
+            privateKey = ssh->ctx->privateKeyId;
         }
         else {
-            cannedKeyAlgoNames   = cannedKeyAlgoClientNames;
-            cannedKeyAlgoNamesSz = cannedKeyAlgoClientNamesSz;
+            privateKeyCount = cannedKeyAlgoClientSz;
+            privateKey = cannedKeyAlgoClient;
         }
+        keyAlgoNamesSz = privateKeyCount * (KEY_ALGO_SIZE_GUESS + 1);
+        keyAlgoNames = (char*)WMALLOC(keyAlgoNamesSz,
+                ssh->ctx->heap, DYNTYPE_STRING);
+
+        keyAlgoNamesSz = BuildNameList(keyAlgoNames, keyAlgoNamesSz,
+                privateKey, privateKeyCount);
+    }
+
+    if (ret == WS_SUCCESS) {
         payloadSz = MSG_ID_SZ + COOKIE_SZ + (LENGTH_SZ * 11) + BOOLEAN_SZ +
-                   cannedKexAlgoNamesSz + cannedKeyAlgoNamesSz +
+                   cannedKexAlgoNamesSz + keyAlgoNamesSz +
                    (cannedEncAlgoNamesSz * 2) +
                    (cannedMacAlgoNamesSz * 2) +
                    (cannedNoneNamesSz * 2);
@@ -7865,7 +7891,7 @@ int SendKexInit(WOLFSSH* ssh)
         idx += COOKIE_SZ;
 
         CopyNameList(output, &idx, cannedKexAlgoNames, cannedKexAlgoNamesSz);
-        CopyNameList(output, &idx, cannedKeyAlgoNames, cannedKeyAlgoNamesSz);
+        CopyNameList(output, &idx, keyAlgoNames, keyAlgoNamesSz);
         CopyNameList(output, &idx, cannedEncAlgoNames, cannedEncAlgoNamesSz);
         CopyNameList(output, &idx, cannedEncAlgoNames, cannedEncAlgoNamesSz);
         CopyNameList(output, &idx, cannedMacAlgoNames, cannedMacAlgoNamesSz);
@@ -7897,6 +7923,10 @@ int SendKexInit(WOLFSSH* ssh)
             ssh->handshake->kexInit = buf;
             ssh->handshake->kexInitSz = bufSz;
         }
+    }
+
+    if (keyAlgoNames != NULL) {
+        WFREE(keyAlgoNames, ssh->ctx->heap, DYNTYPE_STRING);
     }
 
     if (ret == WS_SUCCESS) {
@@ -7980,21 +8010,29 @@ static int BuildRFC6187Info(WOLFSSH* ssh, int pubKeyID,
 
     localIdx = *idx;
     switch (pubKeyID) {
+        #ifndef WOLFSSH_NO_SSH_RSA_SHA1
         case ID_X509V3_SSH_RSA:
             publicKeyType = (const byte*)cannedKeyAlgoX509RsaNames;
             break;
+        #endif
 
+        #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
         case ID_X509V3_ECDSA_SHA2_NISTP256:
             publicKeyType = (const byte*)cannedKeyAlgoX509Ecc256Names;
             break;
+        #endif
 
+        #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
         case ID_X509V3_ECDSA_SHA2_NISTP384:
             publicKeyType = (const byte*)cannedKeyAlgoX509Ecc384Names;
             break;
+        #endif
 
+        #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
         case ID_X509V3_ECDSA_SHA2_NISTP521:
             publicKeyType = (const byte*)cannedKeyAlgoX509Ecc521Names;
             break;
+        #endif
 
         default:
             return WS_BAD_ARGUMENT;
@@ -8058,7 +8096,7 @@ static int BuildRFC6187Info(WOLFSSH* ssh, int pubKeyID,
  * returns WS_SUCCESS on success */
 static int SendKexGetSigningKey(WOLFSSH* ssh,
         struct wolfSSH_sigKeyBlockFull *sigKeyBlock_ptr,
-        enum wc_HashType enmhashId)
+        enum wc_HashType enmhashId, word32 keyIdx)
 {
     int ret;
     byte isCert = 0;
@@ -8075,6 +8113,7 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
 
     heap = ssh->ctx->heap;
 
+    #ifdef WOLFSSL_CERTS
     switch (sigKeyBlock_ptr->pubKeyId) {
         case ID_X509V3_SSH_RSA:
         case ID_X509V3_ECDSA_SHA2_NISTP256:
@@ -8082,6 +8121,7 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
         case ID_X509V3_ECDSA_SHA2_NISTP521:
         isCert = 1;
     }
+    #endif
 
     switch (sigKeyBlock_ptr->sigId) {
         case ID_SSH_RSA:
@@ -8091,9 +8131,9 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
             sigKeyBlock_ptr->sk.rsa.nSz = sizeof(sigKeyBlock_ptr->sk.rsa.n);
             ret = wc_InitRsaKey(&sigKeyBlock_ptr->sk.rsa.key, heap);
             if (ret == 0)
-                ret = wc_RsaPrivateKeyDecode(ssh->ctx->privateKey, &scratch,
-                                             &sigKeyBlock_ptr->sk.rsa.key,
-                                             (int)ssh->ctx->privateKeySz);
+                ret = wc_RsaPrivateKeyDecode(ssh->ctx->privateKey[keyIdx],
+                        &scratch, &sigKeyBlock_ptr->sk.rsa.key,
+                        (int)ssh->ctx->privateKeySz[keyIdx]);
 
             /* hash in usual public key if not RFC6187 style cert use */
             if (!isCert) {
@@ -8198,9 +8238,9 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
                     INVALID_DEVID);
             scratch = 0;
             if (ret == 0)
-                ret = wc_EccPrivateKeyDecode(ssh->ctx->privateKey, &scratch,
-                                             &sigKeyBlock_ptr->sk.ecc.key,
-                                             ssh->ctx->privateKeySz);
+                ret = wc_EccPrivateKeyDecode(ssh->ctx->privateKey[keyIdx],
+                        &scratch, &sigKeyBlock_ptr->sk.ecc.key,
+                        ssh->ctx->privateKeySz[keyIdx]);
 
             /* hash in usual public key if not RFC6187 style cert use */
             if (!isCert) {
@@ -8271,7 +8311,7 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
             word32 idx = 0;
 
             BuildRFC6187Info(ssh, sigKeyBlock_ptr->pubKeyId,
-                ssh->ctx->cert, ssh->ctx->certSz, NULL, 0,
+                ssh->ctx->cert[keyIdx], ssh->ctx->certSz[keyIdx], NULL, 0,
                 NULL, &sigKeyBlock_ptr->sz, &idx);
             tmp = (byte*)WMALLOC(sigKeyBlock_ptr->sz, heap, DYNTYPE_TEMP);
             if (tmp == NULL) {
@@ -8280,7 +8320,7 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
             else {
                 idx = 0;
                 BuildRFC6187Info(ssh, sigKeyBlock_ptr->pubKeyId,
-                    ssh->ctx->cert, ssh->ctx->certSz, NULL, 0,
+                    ssh->ctx->cert[keyIdx], ssh->ctx->certSz[keyIdx], NULL, 0,
                     tmp, &sigKeyBlock_ptr->sz, &idx);
                 ret = HashUpdate(&ssh->handshake->hash, enmhashId,
                                     tmp, sigKeyBlock_ptr->sz);
@@ -8417,6 +8457,7 @@ int SendKexDhReply(WOLFSSH* ssh)
     word32 payloadSz = 0;
     byte* output;
     word32 idx;
+    word32 keyIdx = 0;
     byte msgId = MSGID_KEXDH_REPLY;
     enum wc_HashType enmhashId = WC_HASH_TYPE_NONE;
 #ifndef WOLFSSH_NO_DH
@@ -8526,11 +8567,22 @@ int SendKexDhReply(WOLFSSH* ssh)
         enmhashId = (enum wc_HashType)ssh->handshake->hashId;
     }
 
+    if (ret == WS_SUCCESS) {
+        for (keyIdx = 0; keyIdx < ssh->ctx->privateKeyCount; keyIdx++) {
+            if (ssh->ctx->privateKeyId[keyIdx] == ssh->handshake->pubKeyId) {
+                break;
+            }
+        }
+        if (keyIdx == ssh->ctx->privateKeyCount) {
+            ret = WS_INVALID_ALGO_ID;
+        }
+    }
+
     /* At this point, the exchange hash, H, includes items V_C, V_S, I_C,
      * and I_S. Next add K_S, the server's public host key. K_S will
      * either be RSA or ECDSA public key blob. */
     if (ret == WS_SUCCESS) {
-        ret = SendKexGetSigningKey(ssh, sigKeyBlock_ptr, enmhashId);
+        ret = SendKexGetSigningKey(ssh, sigKeyBlock_ptr, enmhashId, keyIdx);
     }
 
     if (ret == WS_SUCCESS) {
@@ -9040,12 +9092,8 @@ int SendKexDhReply(WOLFSSH* ssh)
             case ID_X509V3_ECDSA_SHA2_NISTP384:
             case ID_X509V3_ECDSA_SHA2_NISTP521:
             {
-                if (ssh->ctx->useCert != 1) {
-                    ret = WS_FATAL_ERROR;
-                    break;
-                }
                 ret = BuildRFC6187Info(ssh, sigKeyBlock_ptr->pubKeyId,
-                    ssh->ctx->cert, ssh->ctx->certSz, NULL, 0,
+                    ssh->ctx->cert[keyIdx], ssh->ctx->certSz[keyIdx], NULL, 0,
                     output, &ssh->outputBuffer.bufferSz, &idx);
             }
             break;
