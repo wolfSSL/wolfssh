@@ -938,7 +938,13 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
         }
     }
 
-    AssertIntEQ(wolfSSH_shutdown(ssh), WS_SUCCESS);
+    argsCount = wolfSSH_shutdown(ssh);
+    if (argsCount == WS_SOCKET_ERROR_E) {
+        /* If the socket is closed on shutdown, peer is gone, this is OK. */
+        argsCount = WS_SUCCESS;
+    }
+    AssertIntEQ(argsCount, WS_SUCCESS);
+
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
     ThreadJoin(serThread);
