@@ -12276,13 +12276,18 @@ int wolfSSH_CleanPath(WOLFSSH* ssh, char* in)
     long sz;
     byte found;
     char *path;
+    void *heap = NULL;
 
     if (in == NULL) {
         return WS_BAD_ARGUMENT;
     }
 
+    if (ssh != NULL) {
+        heap = ssh->ctx->heap;
+    }
+
     sz   = (long)WSTRLEN(in);
-    path = (char*)WMALLOC(sz+1, ssh->ctx->heap, DYNTYPE_PATH);
+    path = (char*)WMALLOC(sz+1, heap, DYNTYPE_PATH);
     if (path == NULL) {
         return WS_MEMORY_E;
     }
@@ -12299,8 +12304,8 @@ int wolfSSH_CleanPath(WOLFSSH* ssh, char* in)
     /* remove any /./ patterns, direcotries, exclude cases like ./ok./test */
     for (i = 1; i + 1 < sz; i++) {
         if (path[i] == '.' && path[i - 1] == WS_DELIM && path[i + 1] == WS_DELIM) {
-            WMEMMOVE(path + i, path + i + 1, sz - (i + 1));
-            sz -= 1;
+            WMEMMOVE(path + (i-1), path + (i+1), sz - (i-1));
+            sz -= 2; /* removed '/.' from string*/
             i--;
         }
     }
@@ -12412,13 +12417,13 @@ int wolfSSH_CleanPath(WOLFSSH* ssh, char* in)
     /* copy result back to 'in' buffer */
     if (WSTRLEN(in) < WSTRLEN(path)) {
         WLOG(WS_LOG_ERROR, "Fatal error cleaning path");
-        WFREE(path, ssh->ctx->heap, DYNTYPE_PATH);
+        WFREE(path, heap, DYNTYPE_PATH);
         return WS_BUFFER_E;
     }
     sz = (long)WSTRLEN(path);
     WMEMCPY(in, path, sz);
     in[sz] = '\0';
-    WFREE(path, ssh->ctx->heap, DYNTYPE_PATH);
+    WFREE(path, heap, DYNTYPE_PATH);
     return (int)sz;
 }
 #endif /* WOLFSSH_SFTP || WOLFSSH_SCP */
