@@ -374,6 +374,9 @@ enum {
 #ifndef WOLFSSH_MAX_FILE_SIZE
     #define WOLFSSH_MAX_FILE_SIZE (1024ul * 1024ul * 4)
 #endif
+#ifndef WOLFSSH_MAX_PVT_KEYS
+    #define WOLFSSH_MAX_PVT_KEYS 2
+#endif
 
 WOLFSSH_LOCAL byte NameToId(const char*, word32);
 WOLFSSH_LOCAL const char* IdToName(byte);
@@ -395,7 +398,6 @@ typedef struct Buffer {
     ALIGN16 byte staticBuffer[STATIC_BUFFER_LEN];
     byte dynamicFlag; /* dynamic memory currently in use */
 } Buffer;
-
 
 WOLFSSH_LOCAL int BufferInit(Buffer*, word32, void*);
 WOLFSSH_LOCAL int GrowBuffer(Buffer*, word32, word32);
@@ -431,16 +433,15 @@ struct WOLFSSH_CTX {
 #endif /* WOLFSSH_CERTS */
     WS_CallbackPublicKeyCheck publicKeyCheckCb;
                                       /* Check server's public key callback */
-
-    byte* privateKey;                 /* Owned by CTX */
-    word32 privateKeySz;
-    byte useEcc;                      /* Depends on the private key */
-#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256
-    byte useEccKyber;                 /* Depends on the private key */
+    byte* privateKey[WOLFSSH_MAX_PVT_KEYS];
+                                      /* Owned by CTX */
+    word32 privateKeySz[WOLFSSH_MAX_PVT_KEYS];
+#ifdef WOLFSSH_CERTS
+    byte* cert[WOLFSSH_MAX_PVT_KEYS];
+    word32 certSz[WOLFSSH_MAX_PVT_KEYS];
 #endif
-    byte* cert;
-    word32 certSz;
-    byte useCert;
+    byte privateKeyId[WOLFSSH_MAX_PVT_KEYS];
+    word32 privateKeyCount;
     word32 highwaterMark;
     const char* banner;
     word32 bannerSz;
@@ -783,6 +784,8 @@ WOLFSSH_LOCAL void ChannelDelete(WOLFSSH_CHANNEL*, void*);
 WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelFind(WOLFSSH*, word32, byte);
 WOLFSSH_LOCAL int ChannelRemove(WOLFSSH*, word32, byte);
 WOLFSSH_LOCAL int ChannelPutData(WOLFSSH_CHANNEL*, byte*, word32);
+WOLFSSH_LOCAL int IdentifyKey(const byte* in, word32 inSz,
+        int isPrivate, void* heap);
 WOLFSSH_LOCAL int wolfSSH_ProcessBuffer(WOLFSSH_CTX*,
                                         const byte*, word32,
                                         int, int);

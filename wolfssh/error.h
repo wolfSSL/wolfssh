@@ -126,8 +126,9 @@ enum WS_ErrorCodes {
     WS_CERT_OTHER_E         = -1085, /* Other certificate issue */
     WS_CERT_PROFILE_E       = -1086, /* Cert doesn't meet profile reqs */
     WS_CERT_KEY_SIZE_E      = -1087, /* Key size error */
+    WS_CTX_KEY_COUNT_E      = -1088, /* Adding too many private keys */
     
-    WS_LAST_E               = -1087  /* Update this to indicate last error */
+    WS_LAST_E               = -1088  /* Update this to indicate last error */
 };
 
 

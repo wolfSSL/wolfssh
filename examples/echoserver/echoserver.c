@@ -2087,7 +2087,7 @@ static void ShowUsage(void)
     printf(" -?            display this help and exit\n");
     printf(" -1            exit after single (one) connection\n");
     printf(" -e            expect ECC public key from client\n");
-    printf(" -E            use ECC private key\n");
+    printf(" -E            load ECC private key first\n");
 #ifdef WOLFSSH_SHELL
     printf(" -f            echo input\n");
 #endif
@@ -2327,12 +2327,26 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
         bufSz = load_key(peerEcc, keyLoadBuf, bufSz);
         if (bufSz == 0) {
-            fprintf(stderr, "Couldn't load key file.\n");
+            fprintf(stderr, "Couldn't load first key file.\n");
             WEXIT(EXIT_FAILURE);
         }
         if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, keyLoadBuf, bufSz,
                                              WOLFSSH_FORMAT_ASN1) < 0) {
-            fprintf(stderr, "Couldn't use key buffer.\n");
+            fprintf(stderr, "Couldn't use first key buffer.\n");
+            WEXIT(EXIT_FAILURE);
+        }
+
+        peerEcc = !peerEcc;
+        bufSz = EXAMPLE_KEYLOAD_BUFFER_SZ;
+
+        bufSz = load_key(peerEcc, keyLoadBuf, bufSz);
+        if (bufSz == 0) {
+            fprintf(stderr, "Couldn't load second key file.\n");
+            WEXIT(EXIT_FAILURE);
+        }
+        if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, keyLoadBuf, bufSz,
+                                             WOLFSSH_FORMAT_ASN1) < 0) {
+            fprintf(stderr, "Couldn't use second key buffer.\n");
             WEXIT(EXIT_FAILURE);
         }
 
