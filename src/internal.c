@@ -408,7 +408,7 @@ const char* GetErrorString(int err)
         case WS_CERT_KEY_SIZE_E:
             return "key size too small error";
 
-        case WS_CTX_KEY_COUNT:
+        case WS_CTX_KEY_COUNT_E:
             return "trying to add too many keys";
 
         default:
@@ -538,6 +538,8 @@ static const word32 cannedBannerSz = sizeof(cannedBanner) - 1;
 
 WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
 {
+    word32 idx;
+
     WLOG(WS_LOG_DEBUG, "Entering CtxInit()");
 
     if (ctx == NULL)
@@ -571,6 +573,10 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
     ctx->windowSz = DEFAULT_WINDOW_SZ;
     ctx->maxPacketSz = DEFAULT_MAX_PACKET_SZ;
 
+    for (idx = 0; idx < WOLFSSH_MAX_PVT_KEYS; idx++) {
+        ctx->privateKeyId[idx] = ID_NONE;
+    }
+
     return ctx;
 }
 
@@ -591,7 +597,7 @@ void CtxResourceFree(WOLFSSH_CTX* ctx)
             }
             #ifdef WOLFSSH_CERTS
             if (ctx->cert[i] != NULL) {
-                WFREE(ctx->cert[i], ctx->heap, DYNTYPE_PRIVKEY);
+                WFREE(ctx->cert[i], ctx->heap, DYNTYPE_CERT);
                 ctx->cert[i] = NULL;
                 ctx->certSz[i] = 0;
             }
@@ -806,42 +812,35 @@ union wolfSSH_key {
  * @param heap      heap to use for memory allocation
  * @return          keyId as int, WS_MEMORY_E, WS_UNIMPLEMENTED_E
  */
-static int IdentifyKey(const byte* in, word32 inSz, int isPrivate, void* heap)
+int IdentifyKey(const byte* in, word32 inSz, int isPrivate, void* heap)
 {
     union wolfSSH_key *key = NULL;
     int keyId = ID_UNKNOWN;
-    word32 scratch;
-    int ret = WS_SUCCESS;
+    word32 idx;
+    int ret;
     int dynType = isPrivate ? DYNTYPE_PRIVKEY : DYNTYPE_PUBKEY;
 
     key = (union wolfSSH_key*)WMALLOC(sizeof(union wolfSSH_key), heap, dynType);
-    if (key == NULL) {
-        ret = WS_MEMORY_E;
-    }
 
 #ifndef WOLFSSH_NO_RSA
-    if (ret == WS_SUCCESS) {
+    if (key != NULL) {
         /* Check RSA key */
         if (keyId == ID_UNKNOWN) {
-            scratch = 0;
+            idx = 0;
             ret = wc_InitRsaKey(&key->rsa, NULL);
 
             if (ret == 0) {
                 if (isPrivate) {
-                    ret = wc_RsaPrivateKeyDecode(in, &scratch,
-                            &key->rsa, inSz);
+                    ret = wc_RsaPrivateKeyDecode(in, &idx, &key->rsa, inSz);
                 }
                 else {
-                    ret = wc_RsaPublicKeyDecode(in, &scratch,
-                            &key->rsa, inSz);
+                    ret = wc_RsaPublicKeyDecode(in, &idx, &key->rsa, inSz);
                 }
 
-                /* If decode was successful, this was an RSA key. */
+                /* If decode was successful, this is an RSA key. */
                 if (ret == 0) {
                     keyId = ID_SSH_RSA;
                 }
-                /* in case we need to check for another key flavor */
-                ret = WS_SUCCESS;
             }
 
             wc_FreeRsaKey(&key->rsa);
@@ -849,22 +848,21 @@ static int IdentifyKey(const byte* in, word32 inSz, int isPrivate, void* heap)
     }
 #endif
 #ifndef WOLFSSH_NO_ECDSA
-    if (ret == WS_SUCCESS) {
+    if (key != NULL) {
+        /* Check ECDSA key */
         if (keyId == ID_UNKNOWN) {
-            scratch = 0;
+            idx = 0;
             ret = wc_ecc_init_ex(&key->ecc, heap, INVALID_DEVID);
 
             if (ret == 0) {
                 if (isPrivate) {
-                    ret = wc_EccPrivateKeyDecode(in, &scratch,
-                            &key->ecc, inSz);
+                    ret = wc_EccPrivateKeyDecode(in, &idx, &key->ecc, inSz);
                 }
                 else {
-                    ret = wc_EccPublicKeyDecode(in, &scratch,
-                            &key->ecc, inSz);
+                    ret = wc_EccPublicKeyDecode(in, &idx, &key->ecc, inSz);
                 }
 
-                /* If decode was successful, this was an RSA key. */
+                /* If decode was successful, this is an ECDSA key. */
                 if (ret == 0) {
                     switch (wc_ecc_get_curve_id(key->ecc.idx)) {
                         case ECC_SECP256R1:
@@ -878,8 +876,6 @@ static int IdentifyKey(const byte* in, word32 inSz, int isPrivate, void* heap)
                             break;
                     }
                 }
-                /* in case we need to check for another key flavor */
-                ret = WS_SUCCESS;
             }
 
             wc_ecc_free(&key->ecc);
@@ -887,15 +883,18 @@ static int IdentifyKey(const byte* in, word32 inSz, int isPrivate, void* heap)
     }
 #endif /* ! WOLFSSH_NO_ECDSA */
 
-    if (key != NULL) {
-        WFREE(key, heap, dynType);
+    if (key == NULL) {
+        ret = WS_MEMORY_E;
     }
-
-    if (keyId == ID_UNKNOWN) {
+    else if (keyId == ID_UNKNOWN) {
         ret = WS_UNIMPLEMENTED_E;
     }
+    else {
+        ret = keyId;
+    }
+    WFREE(key, heap, dynType);
 
-    return ret == WS_SUCCESS ? keyId : ret;
+    return ret;
 }
 
 
@@ -912,16 +911,30 @@ static int IdentifyKey(const byte* in, word32 inSz, int isPrivate, void* heap)
  */
 static int IdentifyCert(const byte* in, word32 inSz, void* heap)
 {
-    struct DecodedCert cert;
+    struct DecodedCert* cert = NULL;
+#ifndef WOLFSSH_SMALL_STACK
+    struct DecodedCert cert_s;
+#endif
     byte *key = NULL;
     word32 keySz = 0;
-    int ret;
-    int keyId = ID_UNKNOWN;
+    int ret = 0;
 
-    wc_InitDecodedCert(&cert, in, inSz, heap);
-    ret = wc_ParseCert(&cert, CERT_TYPE, 0, NULL);
+#ifndef WOLFSSH_SMALL_STACK
+    cert = &cert_s;
+#else
+    cert = (struct DecodedCert*)WMALLOC(sizeof(struct DecodedCert),
+            heap, DYNTYPE_CERT);
+    if (cert == NULL) {
+        ret = WS_MEMORY_E;
+    }
+#endif
+
     if (ret == 0) {
-        ret = wc_GetPubKeyDerFromCert(&cert, NULL, &keySz);
+        wc_InitDecodedCert(cert, in, inSz, heap);
+        ret = wc_ParseCert(cert, CERT_TYPE, 0, NULL);
+    }
+    if (ret == 0) {
+        ret = wc_GetPubKeyDerFromCert(cert, NULL, &keySz);
         if (ret == LENGTH_ONLY_E) {
             ret = 0;
             key = (byte*)WMALLOC(keySz, heap, DYNTYPE_PUBKEY);
@@ -932,32 +945,33 @@ static int IdentifyCert(const byte* in, word32 inSz, void* heap)
     }
 
     if (ret == 0) {
-        ret = wc_GetPubKeyDerFromCert(&cert, key, &keySz);
+        ret = wc_GetPubKeyDerFromCert(cert, key, &keySz);
     }
 
     if (ret == 0) {
         ret = IdentifyKey(key, keySz, 0, heap);
-        if (ret > 0) {
-            keyId = ret;
-            ret = WS_SUCCESS;
-        }
     }
 
-    if (key != NULL) {
-        WFREE(key, heap, DYNTYPE_PUBKEY);
+    WFREE(key, heap, DYNTYPE_PUBKEY);
+    if (cert != NULL) {
+        wc_FreeDecodedCert(cert);
+        #ifdef WOLFSSH_SMALL_STACK
+            WFREE(cert, heap, DYNTYPE_CERT);
+        #endif
     }
-    wc_FreeDecodedCert(&cert);
 
-    return ret == WS_SUCCESS ? keyId : ret;
+    return ret;
 }
 #endif /* WOLFSSH_CERTS */
 
 
 static int SetHostPrivateKey(WOLFSSH_CTX* ctx, byte keyId, int isKey,
-        byte* der, word32 derSz)
+        byte* der, word32 derSz, int dynamicType)
 {
     word32 destIdx = 0;
     int ret = WS_SUCCESS;
+
+    (void)dynamicType;
 
     while (destIdx < ctx->privateKeyCount &&
             ctx->privateKeyId[destIdx] != keyId) {
@@ -965,7 +979,7 @@ static int SetHostPrivateKey(WOLFSSH_CTX* ctx, byte keyId, int isKey,
     }
 
     if (destIdx >= WOLFSSH_MAX_PVT_KEYS) {
-        ret = WS_CTX_KEY_COUNT;
+        ret = WS_CTX_KEY_COUNT_E;
     }
     else {
         if (ctx->privateKeyId[destIdx] == keyId) {
@@ -1083,7 +1097,7 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
             return ret;
         }
         keyId = (byte)ret;
-        ret = SetHostPrivateKey(ctx, keyId, 1, der, derSz);
+        ret = SetHostPrivateKey(ctx, keyId, 1, der, derSz, dynamicType);
     }
     #ifdef WOLFSSH_CERTS
     else if (type == BUFTYPE_CERT) {
@@ -1093,7 +1107,7 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
             return ret;
         }
         keyId = (byte)ret;
-        ret = SetHostPrivateKey(ctx, keyId, 0, der, derSz);
+        ret = SetHostPrivateKey(ctx, keyId, 0, der, derSz, dynamicType);
     }
     else if (type == BUFTYPE_CA) {
         if (ctx->certMan != NULL) {
@@ -7661,26 +7675,45 @@ static INLINE void CopyNameList(byte* buf, word32* idx,
 }
 
 
-static word32 BuildNameList(char* buf, word32 bufSz,
+/*
+ * Iterates over a list of ID values and builds a string of names.
+ *
+ * @param buf       buffer to write names
+ * @param bufSz     size of buffer to write names
+ * @param src       source ID list
+ * @param srcSz     size of the source ID list
+ * @return          string length of buf after writing or WS_BUFFER_E
+ */
+static int BuildNameList(char* buf, word32 bufSz,
         const byte* src, word32 srcSz)
 {
     const char* name;
-    word32 nameSz, idx;
+    int nameSz, idx;
 
-    (void)bufSz;
     idx = 0;
     do {
         name = IdToName(*src);
-        nameSz = (word32)WSTRLEN(name);
+        nameSz = (int)WSTRLEN(name);
+
+        if (nameSz + 1 + idx > (int)bufSz) {
+            idx = WS_BUFFER_E;
+            break;
+        }
+
         WMEMCPY(buf + idx, name, nameSz);
         idx += nameSz;
-        buf[idx++] = ',';
 
         src++;
         srcSz--;
+        if (srcSz == 0) {
+            buf[idx] = '\0';
+        }
+        else {
+            buf[idx++] = ',';
+        }
     } while (srcSz > 0);
 
-    return idx - 1; /* Take off the size of last ','. */
+    return idx;
 }
 
 
@@ -7818,11 +7851,10 @@ int SendKexInit(WOLFSSH* ssh)
 {
     byte* output = NULL;
     byte* payload = NULL;
-    word32 idx = 0;
-    word32 payloadSz = 0;
-    int ret = WS_SUCCESS;
-    word32 keyAlgoNamesSz = 0;
     char* keyAlgoNames = NULL;
+    const byte* privateKey;
+    word32 idx = 0, payloadSz = 0, keyAlgoNamesSz = 0, privateKeyCount;
+    int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Entering SendKexInit()");
 
@@ -7831,6 +7863,7 @@ int SendKexInit(WOLFSSH* ssh)
 
     if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER &&
             ssh->ctx->privateKeyCount == 0) {
+        WLOG(WS_LOG_DEBUG, "Server needs at least one private key");
         ret = WS_BAD_ARGUMENT;
     }
 
@@ -7846,9 +7879,6 @@ int SendKexInit(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS) {
-        word32 privateKeyCount;
-        const byte* privateKey;
-
         if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
             privateKeyCount = ssh->ctx->privateKeyCount;
             privateKey = ssh->ctx->privateKeyId;
@@ -7860,9 +7890,18 @@ int SendKexInit(WOLFSSH* ssh)
         keyAlgoNamesSz = privateKeyCount * (KEY_ALGO_SIZE_GUESS + 1);
         keyAlgoNames = (char*)WMALLOC(keyAlgoNamesSz,
                 ssh->ctx->heap, DYNTYPE_STRING);
+        if (keyAlgoNames == NULL) {
+            ret = WS_MEMORY_E;
+        }
+    }
 
-        keyAlgoNamesSz = BuildNameList(keyAlgoNames, keyAlgoNamesSz,
+    if (ret == WS_SUCCESS) {
+        ret = BuildNameList(keyAlgoNames, keyAlgoNamesSz,
                 privateKey, privateKeyCount);
+        if (ret > 0) {
+            keyAlgoNamesSz = (word32)ret;
+            ret = WS_SUCCESS;
+        }
     }
 
     if (ret == WS_SUCCESS) {
@@ -7925,9 +7964,7 @@ int SendKexInit(WOLFSSH* ssh)
         }
     }
 
-    if (keyAlgoNames != NULL) {
-        WFREE(keyAlgoNames, ssh->ctx->heap, DYNTYPE_STRING);
-    }
+    WFREE(keyAlgoNames, ssh->ctx->heap, DYNTYPE_STRING);
 
     if (ret == WS_SUCCESS) {
         /* increase amount to be sent only if BundlePacket will be called */

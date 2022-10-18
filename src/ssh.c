@@ -1524,88 +1524,28 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
         WFREE(c, heap, DYNTYPE_STRING);
     }
     else if (format == WOLFSSH_FORMAT_ASN1) {
-        word32 scratch = 0;
-        union wolfSSH_key *key_ptr = NULL;
-
-        key_ptr = (union wolfSSH_key*)WMALLOC(sizeof(union wolfSSH_key), heap,
-                DYNTYPE_PRIVKEY);
-        if (key_ptr == NULL) {
-            return WS_MEMORY_E;
-        }
-
         if (*out == NULL) {
             newKey = (byte*)WMALLOC(inSz, heap, DYNTYPE_PRIVKEY);
             if (newKey == NULL) {
-                WFREE(key_ptr, heap, DYNTYPE_PRIVKEY);
                 return WS_MEMORY_E;
             }
             *out = newKey;
         }
         else {
             if (*outSz < inSz) {
-                WFREE(key_ptr, heap, DYNTYPE_PRIVKEY);
                 return WS_ERROR;
             }
             newKey = *out;
         }
         *outSz = inSz;
         WMEMCPY(newKey, in, inSz);
-#ifndef WOLFSSH_NO_RSA
-        /* TODO: This is copied and modified from a function in src/internal.c.
-           This and that code should be combined into a single function. */
-        if (wc_InitRsaKey(&key_ptr->rsa, heap) < 0) {
-            WFREE(key_ptr, heap, DYNTYPE_PRIVKEY);
-            return WS_RSA_E;
-        }
 
-        ret = wc_RsaPrivateKeyDecode(in, &scratch, &key_ptr->rsa, inSz);
-
-        wc_FreeRsaKey(&key_ptr->rsa);
-
-        if (ret == 0) {
-            *outType = (const byte*)IdToName(ID_SSH_RSA);
+        ret = IdentifyKey(in, inSz, 1, heap);
+        if (ret > 0) {
+            *outType = (const byte*)IdToName(ret);
             *outTypeSz = (word32)WSTRLEN((const char*)*outType);
+            ret = WS_SUCCESS;
         }
-        else {
-#endif
-#ifndef WOLFSSH_NO_ECDSA
-            byte curveId = ID_UNKNOWN;
-
-            /* Couldn't decode as RSA testKey. Try decoding as ECC testKey. */
-            scratch = 0;
-            if (wc_ecc_init_ex(&key_ptr->ecc, heap, INVALID_DEVID) != 0) {
-                WFREE(key_ptr, heap, DYNTYPE_PRIVKEY);
-                return WS_ECC_E;
-            }
-
-            ret = wc_EccPrivateKeyDecode(in, &scratch,
-                                         &key_ptr->ecc, inSz);
-            switch (wc_ecc_get_curve_id(key_ptr->ecc.idx)) {
-                case ECC_SECP256R1:
-                    curveId = ID_ECDSA_SHA2_NISTP256;
-                    break;
-                case ECC_SECP384R1:
-                    curveId = ID_ECDSA_SHA2_NISTP384;
-                    break;
-                case ECC_SECP521R1:
-                    curveId = ID_ECDSA_SHA2_NISTP521;
-                    break;
-            }
-            wc_ecc_free(&key_ptr->ecc);
-
-            if (ret == 0) {
-                *outType = (const byte*)IdToName(curveId);
-                *outTypeSz = (word32)WSTRLEN((const char*)*outType);
-            }
-            else {
-                WFREE(key_ptr, heap, DYNTYPE_PRIVKEY);
-                return WS_BAD_FILE_E;
-            }
-#endif
-#ifndef WOLFSSH_NO_RSA
-        }
-#endif
-        WFREE(key_ptr, heap, DYNTYPE_PRIVKEY);
     }
     else
         ret = WS_ERROR;
