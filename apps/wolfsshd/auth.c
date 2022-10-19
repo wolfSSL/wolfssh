@@ -780,10 +780,11 @@ static int RequestAuthentication(WS_UserAuthData* authData,
 
                             for (idx = 0; idx < current->len; idx++) {
                                 if (current->name[idx] == '@') break;
-                                /* UPN format is user @ domain, since currently
-                                 * not doing any checks on domain it is  not
-                                 * treatied as an error if only the user name
-                                 * is present without the domain */
+                                /* UPN format is <user>@<domain>
+                                 * since currently not doing any checks on
+                                 * domain it is  not treated as an error if only
+                                 * the user name is present without the domain
+                                 */
                             }
 
                             if ((int)XSTRLEN(usr) == idx &&
