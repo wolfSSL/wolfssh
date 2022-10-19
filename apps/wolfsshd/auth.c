@@ -747,42 +747,64 @@ static int RequestAuthentication(WS_UserAuthData* authData,
     #ifdef WOLFSSL_FPKI
         /* compare user name to UPN in certificate */
         if (authData->sf.publicKey.isCert) {
-            DecodedCert dCert;
+            DecodedCert* dCert;
+        #ifdef WOLFSSH_SMALL_STACK
+            dCert = (DecodedCert*)WMALLOC(sizeof(DecodedCert), NULL,
+                DYNTYPE_CERT);
+        #else
+            DecodedCert sdCert;
+            dCert = &sdCert;
+        #endif
 
-            wc_InitDecodedCert(&dCert, authData->sf.publicKey.publicKey,
-                    authData->sf.publicKey.publicKeySz, NULL);
-            if (wc_ParseCert(&dCert, CERT_TYPE, NO_VERIFY, NULL) != 0) {
-                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to parse peer cert.");
+            if (dCert == NULL) {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error creating cert struct");
                 ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
             }
             else {
-                int usrMatch = 0;
-                DNS_entry* current = dCert.altNames;
-
-                while (current != NULL) {
-                    if (current->type == ASN_OTHER_TYPE &&
-                            current->oidSum == UPN_OID) {
-                        /* found UPN oid, check name against user */
-                        int idx;
-
-                        for (idx = 0; idx < current->len; idx++) {
-                            if (current->name[idx] == '@') break;
-                        }
-
-                        if ((int)XSTRLEN(usr) == idx &&
-                                XSTRNCMP(usr, current->name, idx) == 0) {
-                            usrMatch = 1;
-                        }
-                    }
-                    current = current->next;
-                }
-
-                if (usrMatch == 0) {
-                    wolfSSH_Log(WS_LOG_ERROR, "[SSHD] incorrect user cert sent");
+                wc_InitDecodedCert(dCert, authData->sf.publicKey.publicKey,
+                        authData->sf.publicKey.publicKeySz, NULL);
+                if (wc_ParseCert(dCert, CERT_TYPE, NO_VERIFY, NULL) != 0) {
+                    wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to parse peer "
+                        "cert.");
                     ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
                 }
+                else {
+                    int usrMatch = 0;
+                    DNS_entry* current = dCert->altNames;
+
+                    while (current != NULL) {
+                        if (current->type == ASN_OTHER_TYPE &&
+                                current->oidSum == UPN_OID) {
+                            /* found UPN oid, check name against user */
+                            int idx;
+
+                            for (idx = 0; idx < current->len; idx++) {
+                                if (current->name[idx] == '@') break;
+                                /* UPN format is user @ domain, since currently
+                                 * not doing any checks on domain it is  not
+                                 * treatied as an error if only the user name
+                                 * is present without the domain */
+                            }
+
+                            if ((int)XSTRLEN(usr) == idx &&
+                                    XSTRNCMP(usr, current->name, idx) == 0) {
+                                usrMatch = 1;
+                            }
+                        }
+                        current = current->next;
+                    }
+
+                    if (usrMatch == 0) {
+                        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] incorrect user cert "
+                            "sent");
+                        ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
+                    }
+                }
+                FreeDecodedCert(dCert);
+            #ifdef WOLFSSH_SMALL_STACK
+                WFREE(dCert, NULL, DYNTYPE_CERT);
+            #endif
             }
-            FreeDecodedCert(&dCert);
         }
     #endif
 

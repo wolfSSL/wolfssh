@@ -483,7 +483,8 @@ static inline void ato32(const byte* c, word32* u32)
 #endif
 
 
-#ifdef WOLFSSH_CERTS
+#if defined(WOLFSSH_CERTS) && \
+    (defined(OPENSSL_ALL) || defined(WOLFSSL_IP_ALT_NAME))
 static int ParseRFC6187(const byte* in, word32 inSz, byte** leafOut,
     word32* leafOutSz)
 {
