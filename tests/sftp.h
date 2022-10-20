@@ -1,4 +1,4 @@
-/* testsuite.h
+/* sftp.h
  *
  * Copyright (C) 2014-2022 wolfSSL Inc.
  *
@@ -18,9 +18,9 @@
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef _WOLFSSH_TESTS_TESTSUITE_H_
-#define _WOLFSSH_TESTS_TESTSUITE_H_
+#ifndef _WOLFSSH_TESTS_SFTP_H_
+#define _WOLFSSH_TESTS_SFTP_H_
 
-int wolfSSH_TestsuiteTest(int argc, char** argv);
+int wolfSSH_SftpTest(int flag);
 
-#endif /* _WOLFSSH_TESTS_TESTSUITE_H_ */
+#endif /* _WOLFSSH_TESTS_SFTP_H_ */

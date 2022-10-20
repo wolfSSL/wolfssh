@@ -26,6 +26,7 @@
 #include <wolfssh/ssh.h>
 #include <wolfssh/keygen.h>
 #include <wolfssh/internal.h>
+#include "tests/unit.h"
 
 
 /* Utility functions */
@@ -483,9 +484,12 @@ static int test_Errors(void)
 }
 
 
-int main(void)
+int wolfSSH_UnitTest(int argc, char** argv)
 {
     int testResult = 0, unitResult = 0;
+
+    (void)argc;
+    (void)argv;
 
     unitResult = test_Errors();
     printf("Errors: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
@@ -511,3 +515,10 @@ int main(void)
     return (testResult ? 1 : 0);
 }
 
+
+#ifndef NO_MAIN_FUNCTION
+int main(int argc, char** argv)
+{
+    return wolfSSH_UnitTest(argc, argv);
+}
+#endif

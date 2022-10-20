@@ -43,20 +43,22 @@
 #include "examples/client/client.h"
 #include "tests/testsuite.h"
 
-#ifndef NO_TESTSUITE_MAIN_DRIVER
+#if defined(WOLFSSH_SFTP) && !defined(SINGLE_THREADED)
+    #include "tests/sftp.h"
+#endif
 
-static int TestsuiteTest(int argc, char** argv);
+#if !defined(NO_TESTSUITE_MAIN_DRIVER) && !defined(NO_MAIN_FUNCTION)
 
 int main(int argc, char** argv)
 {
-    return TestsuiteTest(argc, argv);
+    return wolfSSH_TestsuiteTest(argc, argv);
 }
 
 
 int myoptind = 0;
 char* myoptarg = NULL;
 
-#endif /* NO_TESTSUITE_MAIN_DRIVER */
+#endif /* !NO_TESTSUITE_MAIN_DRIVER && !NO_MAIN_FUNCTION */
 
 
 #if !defined(NO_WOLFSSH_SERVER) && !defined(NO_WOLFSSH_CLIENT)
@@ -83,7 +85,7 @@ static int tsClientUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 #define NUMARGS 5
 #define ARGLEN 32
 
-int TestsuiteTest(int argc, char** argv)
+int wolfSSH_TestsuiteTest(int argc, char** argv)
 {
     tcp_ready ready;
     THREAD_TYPE serverThread;
@@ -156,9 +158,9 @@ int TestsuiteTest(int argc, char** argv)
 
 #ifdef WOLFSSH_SFTP
     printf("testing SFTP blocking\n");
-    test_SFTP(0);
+    wolfSSH_SftpTest(0);
     printf("testing SFTP non blocking\n");
-    test_SFTP(1);
+    wolfSSH_SftpTest(1);
 #endif
 
     return EXIT_SUCCESS;

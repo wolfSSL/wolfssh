@@ -37,8 +37,8 @@
     #include <wolfssh/test.h>
 
     #include "examples/echoserver/echoserver.h"
-
 #endif
+#include "tests/api.h"
 
 /* for echoserver test cases */
 int myoptind = 0;
@@ -1179,8 +1179,11 @@ static void test_wolfSSH_RealPath(void) { ; }
 #endif
 
 
-int main(void)
+int wolfSSH_ApiTest(int argc, char** argv)
 {
+    (void)argc;
+    (void)argv;
+
     AssertIntEQ(wolfSSH_Init(), WS_SUCCESS);
 
     test_wstrcat();
@@ -1207,3 +1210,11 @@ int main(void)
 
     return 0;
 }
+
+
+#ifndef NO_MAIN_FUNCTION
+int main(int argc, char** argv)
+{
+    return wolfSSH_ApiTest(argc, argv);
+}
+#endif
