@@ -61,7 +61,7 @@ tests_api_test_LDADD         = src/libwolfssh.la
 tests_api_test_DEPENDENCIES  = src/libwolfssh.la
 
 tests_testsuite_test_SOURCES = tests/testsuite.c tests/testsuite.h \
-                               tests/sftp.c \
+                               tests/sftp.c tests/sftp.h \
                                examples/echoserver/echoserver.c \
                                examples/client/client.c \
                                examples/sftpclient/sftpclient.c

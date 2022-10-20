@@ -43,6 +43,10 @@
 #include "examples/client/client.h"
 #include "tests/testsuite.h"
 
+#if defined(WOLFSSH_SFTP) && !defined(SINGLE_THREADED)
+    #include "tests/sftp.h"
+#endif
+
 #ifndef NO_TESTSUITE_MAIN_DRIVER
 
 static int TestsuiteTest(int argc, char** argv);
@@ -156,9 +160,9 @@ int TestsuiteTest(int argc, char** argv)
 
 #ifdef WOLFSSH_SFTP
     printf("testing SFTP blocking\n");
-    test_SFTP(0);
+    wolfSSH_SftpTest(0);
     printf("testing SFTP non blocking\n");
-    test_SFTP(1);
+    wolfSSH_SftpTest(1);
 #endif
 
     return EXIT_SUCCESS;

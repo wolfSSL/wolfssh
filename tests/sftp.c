@@ -30,7 +30,7 @@
 #define WOLFSSH_TEST_THREADING
 #include <wolfssh/test.h>
 
-#include "tests/testsuite.h"
+#include "tests/sftp.h"
 #include "examples/echoserver/echoserver.h"
 #include "examples/sftpclient/sftpclient.h"
 
@@ -141,7 +141,7 @@ static int commandCb(const char* in, char* out, int outSz)
 
 /* test SFTP commands, if flag is set to 1 then use non blocking
  * return 0 on success */
-int test_SFTP(int flag)
+int wolfSSH_SftpTest(int flag)
 {
     func_args ser;
     func_args cli;
