@@ -47,20 +47,18 @@
     #include "tests/sftp.h"
 #endif
 
-#ifndef NO_TESTSUITE_MAIN_DRIVER
-
-static int TestsuiteTest(int argc, char** argv);
+#if !defined(NO_TESTSUITE_MAIN_DRIVER) && !defined(NO_MAIN_FUNCTION)
 
 int main(int argc, char** argv)
 {
-    return TestsuiteTest(argc, argv);
+    return wolfSSH_TestsuiteTest(argc, argv);
 }
 
 
 int myoptind = 0;
 char* myoptarg = NULL;
 
-#endif /* NO_TESTSUITE_MAIN_DRIVER */
+#endif /* !NO_TESTSUITE_MAIN_DRIVER && !NO_MAIN_FUNCTION */
 
 
 #if !defined(NO_WOLFSSH_SERVER) && !defined(NO_WOLFSSH_CLIENT)
@@ -87,7 +85,7 @@ static int tsClientUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 #define NUMARGS 5
 #define ARGLEN 32
 
-int TestsuiteTest(int argc, char** argv)
+int wolfSSH_TestsuiteTest(int argc, char** argv)
 {
     tcp_ready ready;
     THREAD_TYPE serverThread;

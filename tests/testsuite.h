@@ -18,7 +18,9 @@
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#pragma once
+#ifndef _WOLFSSH_TESTS_TESTSUITE_H_
+#define _WOLFSSH_TESTS_TESTSUITE_H_
 
-int test_SFTP(int flag);
+int wolfSSH_TestsuiteTest(int argc, char** argv);
 
+#endif /* _WOLFSSH_TESTS_TESTSUITE_H_ */
