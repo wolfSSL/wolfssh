@@ -7,7 +7,7 @@ check_PROGRAMS  += tests/unit.test tests/api.test \
 noinst_PROGRAMS += tests/unit.test tests/api.test \
                    tests/testsuite.test
 
-tests_unit_test_SOURCES      = tests/unit.c
+tests_unit_test_SOURCES      = tests/unit.c tests/unit.h
 tests_unit_test_CPPFLAGS     = -DNO_MAIN_DRIVER
 if BUILD_KEYGEN
 tests_unit_test_CPPFLAGS     += -DWOLFSSH_KEYGEN
@@ -33,7 +33,7 @@ endif
 tests_unit_test_LDADD        = src/libwolfssh.la
 tests_unit_test_DEPENDENCIES = src/libwolfssh.la
 
-tests_api_test_SOURCES       = tests/api.c \
+tests_api_test_SOURCES       = tests/api.c tests/api.h \
                                examples/echoserver/echoserver.c
 tests_api_test_CPPFLAGS      = -DNO_MAIN_DRIVER
 if BUILD_KEYGEN
@@ -60,7 +60,7 @@ endif
 tests_api_test_LDADD         = src/libwolfssh.la
 tests_api_test_DEPENDENCIES  = src/libwolfssh.la
 
-tests_testsuite_test_SOURCES = tests/testsuite.c \
+tests_testsuite_test_SOURCES = tests/testsuite.c tests/testsuite.h \
                                tests/sftp.c \
                                examples/echoserver/echoserver.c \
                                examples/client/client.c \
@@ -89,7 +89,3 @@ tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_CERTS
 endif
 tests_testsuite_test_LDADD   = src/libwolfssh.la
 tests_testsuite_test_DEPENDENCIES = src/libwolfssh.la
-
-DISTCLEANFILES+= tests/.libs/unit.test tests/.libs/api.test \
-                 tests/.libs/testsuite.test
-EXTRA_DIST += tests/testsuite.h
