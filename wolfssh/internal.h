@@ -388,7 +388,7 @@ WOLFSSH_LOCAL const char* IdToName(byte);
  * the rest of the data. */
 
 
-typedef struct Buffer {
+typedef struct WOLFSSH_BUFFER {
     void* heap;       /* Heap for allocations */
     int   plainSz;    /* amount of plain text bytes to send with WANT_WRITE */
     word32 length;    /* total buffer length used */
@@ -397,11 +397,11 @@ typedef struct Buffer {
     word32 bufferSz;  /* current buffer size */
     ALIGN16 byte staticBuffer[STATIC_BUFFER_LEN];
     byte dynamicFlag; /* dynamic memory currently in use */
-} Buffer;
+} WOLFSSH_BUFFER;
 
-WOLFSSH_LOCAL int BufferInit(Buffer*, word32, void*);
-WOLFSSH_LOCAL int GrowBuffer(Buffer*, word32, word32);
-WOLFSSH_LOCAL void ShrinkBuffer(Buffer* buf, int);
+WOLFSSH_LOCAL int BufferInit(WOLFSSH_BUFFER* buffer, word32 size, void* heap);
+WOLFSSH_LOCAL int GrowBuffer(WOLFSSH_BUFFER* buf, word32 sz, word32 usedSz);
+WOLFSSH_LOCAL void ShrinkBuffer(WOLFSSH_BUFFER* buf, int forcedFree);
 
 
 /* our wolfSSH Context */
@@ -654,9 +654,9 @@ struct WOLFSSH {
     byte channelNameSz;
     word32 lastRxId;
 
-    Buffer inputBuffer;
-    Buffer outputBuffer;
-    Buffer extDataBuffer; /* extended data ready to be read */
+    WOLFSSH_BUFFER inputBuffer;
+    WOLFSSH_BUFFER outputBuffer;
+    WOLFSSH_BUFFER extDataBuffer; /* extended data ready to be read */
     WC_RNG* rng;
 
     byte h[WC_MAX_DIGEST_SIZE];
@@ -763,7 +763,7 @@ struct WOLFSSH_CHANNEL {
     int fwdFd;
     int isDirect;
 #endif /* WOLFSSH_FWD */
-    Buffer inputBuffer;
+    WOLFSSH_BUFFER inputBuffer;
     char* command;
     struct WOLFSSH* ssh;
     struct WOLFSSH_CHANNEL* next;
