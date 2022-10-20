@@ -991,7 +991,7 @@ int wolfSSH_TriggerKeyExchange(WOLFSSH* ssh)
  * returns number of bytes was able to peek at on success */
 int wolfSSH_stream_peek(WOLFSSH* ssh, byte* buf, word32 bufSz)
 {
-    Buffer* inputBuffer;
+    WOLFSSH_BUFFER* inputBuffer;
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_stream_peek()");
 
@@ -1014,7 +1014,7 @@ static int wolfSSH_stream_adjust_window(WOLFSSH* ssh)
     word32  usedSz;
     word32  bytesToAdd;
     int     ret;
-    Buffer* inputBuffer;
+    WOLFSSH_BUFFER* inputBuffer;
 
     inputBuffer = &ssh->channelList->inputBuffer;
     usedSz      = inputBuffer->length - inputBuffer->idx;
@@ -1064,7 +1064,7 @@ static int wolfSSH_stream_adjust_window(WOLFSSH* ssh)
 int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
 {
     int ret = WS_SUCCESS;
-    Buffer* inputBuffer;
+    WOLFSSH_BUFFER* inputBuffer;
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_stream_read()");
 
@@ -2030,7 +2030,7 @@ int wolfSSH_ChannelGetFwdFd(const WOLFSSH_CHANNEL* channel)
 
 static int _UpdateChannelWindow(WOLFSSH_CHANNEL* channel)
 {
-    Buffer* inputBuffer;
+    WOLFSSH_BUFFER* inputBuffer;
     int sendResult = WS_SUCCESS;
 
     if (channel == NULL)
@@ -2071,7 +2071,7 @@ static int _UpdateChannelWindow(WOLFSSH_CHANNEL* channel)
 
 static int _ChannelRead(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz)
 {
-    Buffer* inputBuffer;
+    WOLFSSH_BUFFER* inputBuffer;
     int updateResult = WS_SUCCESS;
 
     if (channel == NULL || buf == NULL || bufSz == 0)

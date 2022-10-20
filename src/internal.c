@@ -1023,17 +1023,13 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
                           const byte* in, word32 inSz,
                           int format, int type)
 {
-    int dynamicType = 0;
-    int wcType;
-    int ret = WS_SUCCESS;
     void* heap = NULL;
     byte* der;
     word32 derSz;
+    int wcType;
+    int ret = WS_SUCCESS;
+    int dynamicType = 0;
     byte keyId = ID_NONE;
-
-    (void)dynamicType;
-    (void)wcType;
-    (void)heap;
 
     if (ctx == NULL || in == NULL || inSz == 0)
         return WS_BAD_ARGUMENT;
@@ -1123,6 +1119,10 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
         }
     }
     #endif /* WOLFSSH_CERTS */
+
+    (void)dynamicType;
+    (void)wcType;
+    (void)heap;
 
     return ret;
 }
@@ -1729,7 +1729,7 @@ int ChannelRemove(WOLFSSH* ssh, word32 channel, byte peer)
 
 int ChannelPutData(WOLFSSH_CHANNEL* channel, byte* data, word32 dataSz)
 {
-    Buffer* inBuf;
+    WOLFSSH_BUFFER* inBuf;
 
     WLOG(WS_LOG_DEBUG, "Entering ChannelPutData()");
 
@@ -1763,7 +1763,7 @@ int ChannelPutData(WOLFSSH_CHANNEL* channel, byte* data, word32 dataSz)
 }
 
 
-int BufferInit(Buffer* buffer, word32 size, void* heap)
+int BufferInit(WOLFSSH_BUFFER* buffer, word32 size, void* heap)
 {
     if (buffer == NULL)
         return WS_BAD_ARGUMENT;
@@ -1771,7 +1771,7 @@ int BufferInit(Buffer* buffer, word32 size, void* heap)
     if (size <= STATIC_BUFFER_LEN)
         size = STATIC_BUFFER_LEN;
 
-    WMEMSET(buffer, 0, sizeof(Buffer));
+    WMEMSET(buffer, 0, sizeof(WOLFSSH_BUFFER));
     buffer->heap = heap;
     buffer->bufferSz = size;
     if (size > STATIC_BUFFER_LEN) {
@@ -1787,7 +1787,7 @@ int BufferInit(Buffer* buffer, word32 size, void* heap)
 }
 
 
-int GrowBuffer(Buffer* buf, word32 sz, word32 usedSz)
+int GrowBuffer(WOLFSSH_BUFFER* buf, word32 sz, word32 usedSz)
 {
 #if 0
     WLOG(WS_LOG_DEBUG, "GB: buf = %p", buf);
@@ -1829,7 +1829,7 @@ int GrowBuffer(Buffer* buf, word32 sz, word32 usedSz)
 }
 
 
-void ShrinkBuffer(Buffer* buf, int forcedFree)
+void ShrinkBuffer(WOLFSSH_BUFFER* buf, int forcedFree)
 {
     WLOG(WS_LOG_DEBUG, "Entering ShrinkBuffer()");
 
@@ -1862,7 +1862,7 @@ void ShrinkBuffer(Buffer* buf, int forcedFree)
 }
 
 
-static int Receive(WOLFSSH* ssh, byte* buf, word32 sz)
+static int ReceiveData(WOLFSSH* ssh, byte* buf, word32 sz)
 {
     int recvd;
 
@@ -1915,7 +1915,7 @@ static int GetInputText(WOLFSSH* ssh, byte** pEol)
         return WS_MEMORY_E;
 
     do {
-        in = Receive(ssh,
+        in = ReceiveData(ssh,
                      ssh->inputBuffer.buffer + ssh->inputBuffer.length, inSz);
 
         if (in == -1)
@@ -2068,7 +2068,7 @@ static int GetInputData(WOLFSSH* ssh, word32 size)
 
     /* read data from network */
     do {
-        in = Receive(ssh,
+        in = ReceiveData(ssh,
                      ssh->inputBuffer.buffer + ssh->inputBuffer.length, inSz);
         if (in == -1) {
             ssh->error = WS_SOCKET_ERROR_E;
@@ -6596,7 +6596,7 @@ static int DoChannelData(WOLFSSH* ssh,
 
 /* deletes current buffer and updates it
  * return WS_SUCCESS on success */
-static int PutBuffer(Buffer* buf, byte* data, word32 dataSz)
+static int PutBuffer(WOLFSSH_BUFFER* buf, byte* data, word32 dataSz)
 {
     int ret;
 

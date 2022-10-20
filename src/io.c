@@ -264,7 +264,7 @@ void* wolfSSH_GetIOWriteCtx(WOLFSSH* ssh)
 
 
 /* Translates return codes returned from send() and recv() if need be. */
-static INLINE int TranslateReturnCode(int old, WS_SOCKET_T sd)
+static INLINE int wsReturnCode(int old, WS_SOCKET_T sd)
 {
     (void)sd;
 
@@ -296,7 +296,7 @@ static INLINE int TranslateReturnCode(int old, WS_SOCKET_T sd)
     return old;
 }
 
-static INLINE int LastError(void)
+static INLINE int wsErrno(void)
 {
 #ifdef USE_WINDOWS_API
     return WSAGetLastError();
@@ -327,10 +327,10 @@ int wsEmbedRecv(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
 
     recvd = (int)RECV_FUNCTION(sd, buf, sz, ssh->rflags);
 
-    recvd = TranslateReturnCode(recvd, sd);
+    recvd = wsReturnCode(recvd, sd);
 
     if (recvd < 0) {
-        err = LastError();
+        err = wsErrno();
         WLOG(WS_LOG_DEBUG,"Embed Receive error");
 
         if (err == SOCKET_EWOULDBLOCK || err == SOCKET_EAGAIN) {
@@ -404,9 +404,9 @@ int wsEmbedSend(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
 #endif /* MICROCHIP_MPLAB_HARMONY */
 
     sent = (int)SEND_FUNCTION(sd, buf, sz, ssh->wflags);
-    sent = TranslateReturnCode(sent, sd);
+    sent = wsReturnCode(sent, sd);
     if (sent < 0) {
-        err = LastError();
+        err = wsErrno();
         WLOG(WS_LOG_DEBUG,"Embed Send error");
 
         if (err == SOCKET_EWOULDBLOCK || err == SOCKET_EAGAIN) {

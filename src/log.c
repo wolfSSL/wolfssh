@@ -189,6 +189,7 @@ void DefaultLoggingCb(enum wolfSSH_LogLevel level, const char *const msgStr)
 
 void wolfSSH_Log(enum wolfSSH_LogLevel level, const char *const fmt, ...)
 {
+    (void)logFunction;
     (void)level;
     (void)fmt;
 }
