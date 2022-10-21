@@ -1873,7 +1873,6 @@ static int wsUserAuth(byte authType,
     PwMapList* list;
     PwMap* map;
     byte authHash[WC_SHA256_DIGEST_SIZE];
-    int ret;
 
     if (ctx == NULL) {
         fprintf(stderr, "wsUserAuth: ctx not set");
@@ -1909,6 +1908,7 @@ static int wsUserAuth(byte authType,
             word32 fascnSz;
             word32 uuidSz;
             word32 i;
+            int ret;
 
             printf("Peer connected with FPKI certificate\n");
             wc_InitDecodedCert(&cert, authData->sf.publicKey.publicKey,
@@ -1993,34 +1993,13 @@ static int wsUserAuth(byte authType,
                         WOLFSSH_USERAUTH_REJECTED;
                  }
             }
-#ifdef WOLFSSH_ALLOW_USERAUTH_NONE
+            #ifdef WOLFSSH_ALLOW_USERAUTH_NONE
             else if (authData->type == WOLFSSH_USERAUTH_NONE) {
                 return WOLFSSH_USERAUTH_SUCCESS;
             }
-#endif /* WOLFSSH_ALLOW_USERAUTH_NONE */
+            #endif /* WOLFSSH_ALLOW_USERAUTH_NONE */
             else {
                  return WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
-            }
-
-            if (authData->type == map->type) {
-                if (WMEMCMP(map->p, authHash, WC_SHA256_DIGEST_SIZE) == 0) {
-                    return WOLFSSH_USERAUTH_SUCCESS;
-                }
-                else {
-                    if (authType == WOLFSSH_USERAUTH_PASSWORD) {
-                        passwdRetry--;
-                        ret = (passwdRetry > 0) ?
-                            WOLFSSH_USERAUTH_INVALID_PASSWORD :
-                            WOLFSSH_USERAUTH_REJECTED;
-                    }
-                    else {
-                        ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
-                    }
-                    return ret;
-                }
-            }
-            else {
-                return WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
             }
         }
         map = map->next;
