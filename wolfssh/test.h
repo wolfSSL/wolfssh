@@ -166,27 +166,6 @@
 #endif
 
 
-#ifdef SINGLE_THREADED
-    typedef unsigned int  THREAD_RETURN;
-    typedef void*         THREAD_TYPE;
-    #define WOLFSSH_THREAD
-#else
-    #if defined(_POSIX_THREADS) && !defined(__MINGW32__)
-        typedef void*         THREAD_RETURN;
-        typedef pthread_t     THREAD_TYPE;
-        #define WOLFSSH_THREAD
-        #define WAIT_OBJECT_0 0L
-    #elif defined(WOLFSSL_NUCLEUS) || defined(FREESCALE_MQX)
-        typedef unsigned int  THREAD_RETURN;
-        typedef intptr_t      THREAD_TYPE;
-        #define WOLFSSH_THREAD
-    #else
-        typedef unsigned int  THREAD_RETURN;
-        typedef intptr_t      THREAD_TYPE;
-        #define WOLFSSH_THREAD __stdcall
-    #endif
-#endif
-
 #ifdef TEST_IPV6
     typedef struct sockaddr_in6 SOCKADDR_IN_T;
     #define AF_INET_V AF_INET6
@@ -800,9 +779,49 @@ static INLINE void WaitTcpReady(func_args* args)
 #endif /* WOLFSSH_TEST_LOCKING */
 
 
+#include <wolfssl/version.h>
+
+/*
+ * Somewhere before the release of wolfSSL v5.5.1, these threading
+ * wrappers and types were moved from wolfssl/test.h to
+ * wolfssl/wolfcrypt/types.h and are now present in the wolfSSH build.
+ * This is good, because it keeps the compatibility code in wolfCrypt.
+ * The tag WOLFSSL_THREAD is defined as a part of this compatibility, and
+ * will also be checked for. Note that the following types and defines are
+ * used by the examples to define themselves for use as threads by the test
+ * tools, but they themselves do not use threading.
+ */
+#define WOLFSSL_V5_5_1 0x05005001
+
+#if (LIBWOLFSSL_VERSION_HEX < WOLFSSL_V5_5_1) && !defined(WOLFSSL_THREAD)
+    #ifdef SINGLE_THREADED
+        typedef unsigned int  THREAD_RETURN;
+        typedef void*         THREAD_TYPE;
+        #define WOLFSSH_THREAD
+    #else
+        #if defined(_POSIX_THREADS) && !defined(__MINGW32__)
+            typedef void*         THREAD_RETURN;
+            typedef pthread_t     THREAD_TYPE;
+            #define WOLFSSH_THREAD
+            #define WAIT_OBJECT_0 0L
+        #elif defined(WOLFSSL_NUCLEUS) || defined(FREESCALE_MQX)
+            typedef unsigned int  THREAD_RETURN;
+            typedef intptr_t      THREAD_TYPE;
+            #define WOLFSSH_THREAD
+        #else
+            typedef unsigned int  THREAD_RETURN;
+            typedef intptr_t      THREAD_TYPE;
+            #define WOLFSSH_THREAD __stdcall
+        #endif
+    #endif
+#else
+    #define WOLFSSH_THREAD WOLFSSL_THREAD
+#endif
+
+
 #ifdef WOLFSSH_TEST_THREADING
 
-typedef THREAD_RETURN WOLFSSH_THREAD THREAD_FUNC(void*);
+typedef THREAD_RETURN (WOLFSSH_THREAD *THREAD_FUNC)(void*);
 
 
 static INLINE void ThreadStart(THREAD_FUNC fun, void* args, THREAD_TYPE* thread)
