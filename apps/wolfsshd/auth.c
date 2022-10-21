@@ -39,6 +39,10 @@
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/wolfcrypt/coding.h>
 
+#ifdef WOLFSSL_FPKI
+#include <wolfssl/wolfcrypt/asn.h>
+#endif
+
 #ifdef NO_INLINE
     #include <wolfssh/misc.h>
 #else
@@ -740,29 +744,96 @@ static int RequestAuthentication(WS_UserAuthData* authData,
     if (ret == WOLFSSH_USERAUTH_SUCCESS &&
         authData->type == WOLFSSH_USERAUTH_PUBLICKEY) {
 
-        /* if this is a certificate and no specific authorized keys file has
-         * been set then rely on CA to have verified the cert */
-        if (authData->sf.publicKey.isCert &&
-                !wolfSSHD_ConfigGetAuthKeysFileSet(authCtx->conf)) {
-            wolfSSH_Log(WS_LOG_INFO,
-                "[SSHD] Relying on CA for public key check");
-            ret = WOLFSSH_USERAUTH_SUCCESS;
-        }
-        else {
-            /* if not a certificate then parse through authorized key file */
-            rc = authCtx->checkPublicKeyCb(usr, &authData->sf.publicKey,
-                            wolfSSHD_ConfigGetUserCAKeysFile(authCtx->conf));
-            if (rc == WSSHD_AUTH_SUCCESS) {
-                wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key ok.");
-                ret = WOLFSSH_USERAUTH_SUCCESS;
-            }
-            else if (rc == WSSHD_AUTH_FAILURE) {
-                wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key not authorized.");
+    #ifdef WOLFSSL_FPKI
+        /* compare user name to UPN in certificate */
+        if (authData->sf.publicKey.isCert) {
+            DecodedCert* dCert;
+        #ifdef WOLFSSH_SMALL_STACK
+            dCert = (DecodedCert*)WMALLOC(sizeof(DecodedCert), NULL,
+                DYNTYPE_CERT);
+        #else
+            DecodedCert sdCert;
+            dCert = &sdCert;
+        #endif
+
+            if (dCert == NULL) {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error creating cert struct");
                 ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
             }
             else {
-                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error checking public key.");
-                ret = WOLFSSH_USERAUTH_FAILURE;
+                wc_InitDecodedCert(dCert, authData->sf.publicKey.publicKey,
+                        authData->sf.publicKey.publicKeySz, NULL);
+                if (wc_ParseCert(dCert, CERT_TYPE, NO_VERIFY, NULL) != 0) {
+                    wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to parse peer "
+                        "cert.");
+                    ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
+                }
+                else {
+                    int usrMatch = 0;
+                    DNS_entry* current = dCert->altNames;
+
+                    while (current != NULL) {
+                        if (current->type == ASN_OTHER_TYPE &&
+                                current->oidSum == UPN_OID) {
+                            /* found UPN oid, check name against user */
+                            int idx;
+
+                            for (idx = 0; idx < current->len; idx++) {
+                                if (current->name[idx] == '@') break;
+                                /* UPN format is <user>@<domain>
+                                 * since currently not doing any checks on
+                                 * domain it is  not treated as an error if only
+                                 * the user name is present without the domain
+                                 */
+                            }
+
+                            if ((int)XSTRLEN(usr) == idx &&
+                                    XSTRNCMP(usr, current->name, idx) == 0) {
+                                usrMatch = 1;
+                            }
+                        }
+                        current = current->next;
+                    }
+
+                    if (usrMatch == 0) {
+                        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] incorrect user cert "
+                            "sent");
+                        ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
+                    }
+                }
+                FreeDecodedCert(dCert);
+            #ifdef WOLFSSH_SMALL_STACK
+                WFREE(dCert, NULL, DYNTYPE_CERT);
+            #endif
+            }
+        }
+    #endif
+
+        if (ret == WOLFSSH_USERAUTH_SUCCESS) {
+            /* if this is a certificate and no specific authorized keys file has
+             * been set then rely on CA to have verified the cert */
+            if (authData->sf.publicKey.isCert &&
+                    !wolfSSHD_ConfigGetAuthKeysFileSet(authCtx->conf)) {
+                wolfSSH_Log(WS_LOG_INFO,
+                    "[SSHD] Relying on CA for public key check");
+                ret = WOLFSSH_USERAUTH_SUCCESS;
+            }
+            else {
+                /* if not a certificate then parse through authorized key file */
+                rc = authCtx->checkPublicKeyCb(usr, &authData->sf.publicKey,
+                                wolfSSHD_ConfigGetUserCAKeysFile(authCtx->conf));
+                if (rc == WSSHD_AUTH_SUCCESS) {
+                    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key ok.");
+                    ret = WOLFSSH_USERAUTH_SUCCESS;
+                }
+                else if (rc == WSSHD_AUTH_FAILURE) {
+                    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key not authorized.");
+                    ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
+                }
+                else {
+                    wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error checking public key.");
+                    ret = WOLFSSH_USERAUTH_FAILURE;
+                }
             }
         }
     }

@@ -60,6 +60,10 @@
     #include <sys/select.h>
 #endif
 
+#ifdef WOLFSSH_CERTS
+    #include <wolfssl/wolfcrypt/asn.h>
+#endif
+
 
 #ifndef NO_WOLFSSH_CLIENT
 
@@ -471,8 +475,72 @@ static int wsUserAuth(byte authType,
 }
 
 
+#if defined(WOLFSSH_AGENT) || defined(WOLFSSH_CERTS)
+static inline void ato32(const byte* c, word32* u32)
+{
+    *u32 = (c[0] << 24) | (c[1] << 16) | (c[2] << 8) | c[3];
+}
+#endif
+
+
+#if defined(WOLFSSH_CERTS) && \
+    (defined(OPENSSL_ALL) || defined(WOLFSSL_IP_ALT_NAME))
+static int ParseRFC6187(const byte* in, word32 inSz, byte** leafOut,
+    word32* leafOutSz)
+{
+    int ret = WS_SUCCESS;
+    word32 l = 0, m = 0;
+
+    if (inSz < sizeof(word32)) {
+        printf("inSz %d too small for holding cert name\n", inSz);
+        return WS_BUFFER_E;
+    }
+
+    /* Skip the name */
+    ato32(in, &l);
+    m += l + sizeof(word32);
+
+    /* Get the cert count */
+    if (ret == WS_SUCCESS) {
+        word32 count;
+
+        if (inSz - m < sizeof(word32))
+            return WS_BUFFER_E;
+
+        ato32(in + m, &count);
+        m += sizeof(word32);
+        if (ret == WS_SUCCESS && count == 0)
+            ret = WS_FATAL_ERROR; /* need at least one cert */
+    }
+
+    if (ret == WS_SUCCESS) {
+        word32 certSz = 0;
+
+        if (inSz - m < sizeof(word32))
+            return WS_BUFFER_E;
+
+        ato32(in + m, &certSz);
+        m += sizeof(word32);
+        if (ret == WS_SUCCESS) {
+            /* store leaf cert size to present to user callback */
+            *leafOutSz = certSz;
+            *leafOut   = (byte*)in + m;
+        }
+
+        if (inSz - m < certSz)
+            return WS_BUFFER_E;
+
+   }
+
+    return ret;
+}
+#endif /* WOLFSSH_CERTS */
+
+
 static int wsPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 {
+    int ret = 0;
+
     #ifdef DEBUG_WOLFSSH
         printf("Sample public key check callback\n"
                "  public key = %p\n"
@@ -483,7 +551,49 @@ static int wsPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
         (void)pubKeySz;
         (void)ctx;
     #endif
-    return 0;
+
+#ifdef WOLFSSH_CERTS
+#if defined(OPENSSL_ALL) || defined(WOLFSSL_IP_ALT_NAME)
+    /* try to parse the certificate and check it's IP address */
+    if (pubKeySz > 0) {
+        DecodedCert dCert;
+        byte*  der   = NULL;
+        word32 derSz = 0;
+
+        if (ParseRFC6187(pubKey, pubKeySz, &der, &derSz) == WS_SUCCESS) {
+            wc_InitDecodedCert(&dCert, der,  derSz, NULL);
+            if (wc_ParseCert(&dCert, CERT_TYPE, NO_VERIFY, NULL) != 0) {
+                printf("public key not a cert\n");
+            }
+            else {
+                int ipMatch = 0;
+                DNS_entry* current = dCert.altNames;
+
+                while (current != NULL) {
+                    if (current->type == ASN_IP_TYPE) {
+                        printf("host cert alt. name IP : %s\n",
+                            current->ipString);
+                        printf("\texpecting host IP : %s\n", (char*)ctx);
+                        if (XSTRCMP(ctx, current->ipString) == 0) {
+                            printf("\tmatched!\n");
+                            ipMatch = 1;
+                        }
+                    }
+                    current = current->next;
+                }
+
+                if (ipMatch == 0) {
+                    printf("IP did not match expected IP\n");
+                    ret = -1;
+                }
+            }
+            FreeDecodedCert(&dCert);
+        }
+    }
+#endif
+#endif
+
+    return ret;
 }
 
 
@@ -579,14 +689,6 @@ static THREAD_RET readInput(void* in)
 #endif
     return THREAD_RET_SUCCESS;
 }
-
-
-#ifdef WOLFSSH_AGENT
-static inline void ato32(const byte* c, word32* u32)
-{
-    *u32 = (c[0] << 24) | (c[1] << 16) | (c[2] << 8) | c[3];
-}
-#endif
 
 
 static THREAD_RET readPeer(void* in)
@@ -1161,7 +1263,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 #endif /* WOLFSSH_CERTS */
 
     wolfSSH_CTX_SetPublicKeyCheck(ctx, wsPublicKeyCheck);
-    wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)"You've been sampled!");
+    wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)host);
 
     ret = wolfSSH_SetUsername(ssh, username);
     if (ret != WS_SUCCESS)
