@@ -24,6 +24,12 @@
 
 #define WOLFSSH_TEST_CLIENT
 
+#ifdef WOLFSSL_USER_SETTINGS
+    #include <wolfssl/wolfcrypt/settings.h>
+#else
+    #include <wolfssl/options.h>
+#endif
+
 #include <stdio.h>
 #if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32)
     #include <termios.h>

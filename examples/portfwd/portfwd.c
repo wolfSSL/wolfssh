@@ -25,6 +25,11 @@
 #define WOLFSSH_TEST_CLIENT
 #define WOLFSSH_TEST_SERVER
 
+#ifdef WOLFSSL_USER_SETTINGS
+    #include <wolfssl/wolfcrypt/settings.h>
+#else
+    #include <wolfssl/options.h>
+#endif
 
 #include <stdio.h>
 #ifdef HAVE_TERMIOS_H

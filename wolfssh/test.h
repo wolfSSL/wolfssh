@@ -18,6 +18,18 @@
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+/*
+ * This file contains some utility code shared between the wolfSSH test
+ * tools and examples. This is divided into a few sets of functions that
+ * may be enabled with flags included before including this file:
+ * 
+ *  WOLFSSH_TEST_CLIENT: Client utility functions
+ *  WOLFSSH_TEST_SERVER: Server utility functions
+ *  WOLFSSH_TEST_LOCKING: Mutex wrappers
+ *  WOLFSSH_TEST_THREADING: Threading wrappers
+ *  WOLFSSH_TEST_HEX2BIN: Hex2Bin conversion
+ *  TEST_IPV6: IPv6 addressing options
+ */
 
 #ifndef _WOLFSSH_TEST_H_
 #define _WOLFSSH_TEST_H_
@@ -165,27 +177,6 @@
     #define WSTARTTCP()
 #endif
 
-
-#ifdef SINGLE_THREADED
-    typedef unsigned int  THREAD_RETURN;
-    typedef void*         THREAD_TYPE;
-    #define WOLFSSH_THREAD
-#else
-    #if defined(_POSIX_THREADS) && !defined(__MINGW32__)
-        typedef void*         THREAD_RETURN;
-        typedef pthread_t     THREAD_TYPE;
-        #define WOLFSSH_THREAD
-        #define WAIT_OBJECT_0 0L
-    #elif defined(WOLFSSL_NUCLEUS) || defined(FREESCALE_MQX)
-        typedef unsigned int  THREAD_RETURN;
-        typedef intptr_t      THREAD_TYPE;
-        #define WOLFSSH_THREAD
-    #else
-        typedef unsigned int  THREAD_RETURN;
-        typedef intptr_t      THREAD_TYPE;
-        #define WOLFSSH_THREAD __stdcall
-    #endif
-#endif
 
 #ifdef TEST_IPV6
     typedef struct sockaddr_in6 SOCKADDR_IN_T;
@@ -800,9 +791,49 @@ static INLINE void WaitTcpReady(func_args* args)
 #endif /* WOLFSSH_TEST_LOCKING */
 
 
+#include <wolfssl/version.h>
+
+/*
+ * Somewhere before the release of wolfSSL v5.5.1, these threading
+ * wrappers and types were moved from wolfssl/test.h to
+ * wolfssl/wolfcrypt/types.h and are now present in the wolfSSH build.
+ * This is good, because it keeps the compatibility code in wolfCrypt.
+ * The tag WOLFSSL_THREAD is defined as a part of this compatibility, and
+ * will also be checked for. Note that the following types and defines are
+ * used by the examples to define themselves for use as threads by the test
+ * tools, but they themselves do not use threading.
+ */
+#define WOLFSSL_V5_5_1 0x05005001
+
+#if (LIBWOLFSSL_VERSION_HEX < WOLFSSL_V5_5_1) && !defined(WOLFSSL_THREAD)
+    #ifdef SINGLE_THREADED
+        typedef unsigned int  THREAD_RETURN;
+        typedef void*         THREAD_TYPE;
+        #define WOLFSSH_THREAD
+    #else
+        #if defined(_POSIX_THREADS) && !defined(__MINGW32__)
+            typedef void*         THREAD_RETURN;
+            typedef pthread_t     THREAD_TYPE;
+            #define WOLFSSH_THREAD
+            #define WAIT_OBJECT_0 0L
+        #elif defined(WOLFSSL_NUCLEUS) || defined(FREESCALE_MQX)
+            typedef unsigned int  THREAD_RETURN;
+            typedef intptr_t      THREAD_TYPE;
+            #define WOLFSSH_THREAD
+        #else
+            typedef unsigned int  THREAD_RETURN;
+            typedef intptr_t      THREAD_TYPE;
+            #define WOLFSSH_THREAD __stdcall
+        #endif
+    #endif
+#else
+    #define WOLFSSH_THREAD WOLFSSL_THREAD
+#endif
+
+
 #ifdef WOLFSSH_TEST_THREADING
 
-typedef THREAD_RETURN WOLFSSH_THREAD THREAD_FUNC(void*);
+typedef THREAD_RETURN (WOLFSSH_THREAD *THREAD_FUNC)(void*);
 
 
 static INLINE void ThreadStart(THREAD_FUNC fun, void* args, THREAD_TYPE* thread)
@@ -922,5 +953,178 @@ static INLINE void build_addr_ipv6(struct sockaddr_in6* addr, const char* peer,
     }
 }
 #endif /* TEST_IPV6 */
+
+
+#ifdef WOLFSSH_TEST_HEX2BIN
+
+#define BAD 0xFF
+
+static const byte hexDecode[] =
+{
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+    BAD, BAD, BAD, BAD, BAD, BAD, BAD,
+    10, 11, 12, 13, 14, 15,  /* upper case A-F */
+    BAD, BAD, BAD, BAD, BAD, BAD, BAD, BAD,
+    BAD, BAD, BAD, BAD, BAD, BAD, BAD, BAD,
+    BAD, BAD, BAD, BAD, BAD, BAD, BAD, BAD,
+    BAD, BAD,  /* G - ` */
+    10, 11, 12, 13, 14, 15   /* lower case a-f */
+};  /* A starts at 0x41 not 0x3A */
+
+
+static int Base16_Decode(const byte* in, word32 inLen,
+                         byte* out, word32* outLen)
+{
+    word32 inIdx = 0;
+    word32 outIdx = 0;
+
+    if (inLen == 1 && *outLen && in) {
+        byte b = in[inIdx] - 0x30;  /* 0 starts at 0x30 */
+
+        /* sanity check */
+        if (b >=  sizeof(hexDecode)/sizeof(hexDecode[0]))
+            return -1;
+
+        b  = hexDecode[b];
+
+        if (b == BAD)
+            return -1;
+
+        out[outIdx++] = b;
+
+        *outLen = outIdx;
+        return 0;
+    }
+
+    if (inLen % 2)
+        return -1;
+
+    if (*outLen < (inLen / 2))
+        return -1;
+
+    while (inLen) {
+        byte b = in[inIdx++] - 0x30;  /* 0 starts at 0x30 */
+        byte b2 = in[inIdx++] - 0x30;
+
+        /* sanity checks */
+        if (b >=  sizeof(hexDecode)/sizeof(hexDecode[0]))
+            return -1;
+        if (b2 >= sizeof(hexDecode)/sizeof(hexDecode[0]))
+            return -1;
+
+        b  = hexDecode[b];
+        b2 = hexDecode[b2];
+
+        if (b == BAD || b2 == BAD)
+            return -1;
+
+        out[outIdx++] = (byte)((b << 4) | b2);
+        inLen -= 2;
+    }
+
+    *outLen = outIdx;
+    return 0;
+}
+
+
+static void FreeBins(byte* b1, byte* b2, byte* b3, byte* b4)
+{
+    if (b1 != NULL) free(b1);
+    if (b2 != NULL) free(b2);
+    if (b3 != NULL) free(b3);
+    if (b4 != NULL) free(b4);
+}
+
+
+/* convert hex string to binary, store size, 0 success (free mem on failure) */
+static int ConvertHexToBin(const char* h1, byte** b1, word32* b1Sz,
+                           const char* h2, byte** b2, word32* b2Sz,
+                           const char* h3, byte** b3, word32* b3Sz,
+                           const char* h4, byte** b4, word32* b4Sz)
+{
+    int ret;
+
+    /* b1 */
+    if (h1 && b1 && b1Sz) {
+        *b1Sz = (word32)strlen(h1) / 2;
+        *b1 = (byte*)malloc(*b1Sz);
+        if (*b1 == NULL)
+            return -1;
+        ret = Base16_Decode((const byte*)h1, (word32)strlen(h1),
+                            *b1, b1Sz);
+        if (ret != 0) {
+            FreeBins(*b1, NULL, NULL, NULL);
+            *b1 = NULL;
+            return -1;
+        }
+    }
+
+    /* b2 */
+    if (h2 && b2 && b2Sz) {
+        *b2Sz = (word32)strlen(h2) / 2;
+        *b2 = (byte*)malloc(*b2Sz);
+        if (*b2 == NULL) {
+            FreeBins(b1 ? *b1 : NULL, NULL, NULL, NULL);
+            if (b1) *b1 = NULL;
+            return -1;
+        }
+        ret = Base16_Decode((const byte*)h2, (word32)strlen(h2),
+                            *b2, b2Sz);
+        if (ret != 0) {
+            FreeBins(b1 ? *b1 : NULL, *b2, NULL, NULL);
+            if (b1) *b1 = NULL;
+            *b2 = NULL;
+            return -1;
+        }
+    }
+
+    /* b3 */
+    if (h3 && b3 && b3Sz) {
+        *b3Sz = (word32)strlen(h3) / 2;
+        *b3 = (byte*)malloc(*b3Sz);
+        if (*b3 == NULL) {
+            FreeBins(b1 ? *b1 : NULL, b2 ? *b2 : NULL, NULL, NULL);
+            if (b1) *b1 = NULL;
+            if (b2) *b2 = NULL;
+            return -1;
+        }
+        ret = Base16_Decode((const byte*)h3, (word32)strlen(h3),
+                            *b3, b3Sz);
+        if (ret != 0) {
+            FreeBins(b1 ? *b1 : NULL, b2 ? *b2 : NULL, *b3, NULL);
+            if (b1) *b1 = NULL;
+            if (b2) *b2 = NULL;
+            *b3 = NULL;
+            return -1;
+        }
+    }
+
+    /* b4 */
+    if (h4 && b4 && b4Sz) {
+        *b4Sz = (word32)strlen(h4) / 2;
+        *b4 = (byte*)malloc(*b4Sz);
+        if (*b4 == NULL) {
+            FreeBins(b1 ? *b1 : NULL, b2 ? *b2 : NULL, b3 ? *b3 : NULL, NULL);
+            if (b1) *b1 = NULL;
+            if (b2) *b2 = NULL;
+            if (b3) *b3 = NULL;
+            return -1;
+        }
+        ret = Base16_Decode((const byte*)h4, (word32)strlen(h4),
+                            *b4, b4Sz);
+        if (ret != 0) {
+            FreeBins(b1 ? *b1 : NULL, b2 ? *b2 : NULL, b3 ? *b3 : NULL, *b4);
+            if (b1) *b1 = NULL;
+            if (b2) *b2 = NULL;
+            if (b3) *b3 = NULL;
+            *b4 = NULL;
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+#endif /* WOLFSSH_TEST_HEX2BIN */
 
 #endif /* _WOLFSSH_TEST_H_ */
