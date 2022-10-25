@@ -22,7 +22,7 @@
  * This file contains some utility code shared between the wolfSSH test
  * tools and examples. This is divided into a few sets of functions that
  * may be enabled with flags included before including this file:
- * 
+ *
  *  WOLFSSH_TEST_CLIENT: Client utility functions
  *  WOLFSSH_TEST_SERVER: Server utility functions
  *  WOLFSSH_TEST_LOCKING: Mutex wrappers
@@ -853,20 +853,25 @@ static INLINE void ThreadStart(THREAD_FUNC fun, void* args, THREAD_TYPE* thread)
     #else
         pthread_create(thread, 0, fun, args);
     #endif
-    return;
 #elif defined(WOLFSSL_TIRTOS)
-    /* Initialize the defaults and set the parameters. */
-    Task_Params taskParams;
-    Task_Params_init(&taskParams);
-    taskParams.arg0 = (UArg)args;
-    taskParams.stackSize = 65535;
-    *thread = Task_create((Task_FuncPtr)fun, &taskParams, NULL);
-    if (*thread == NULL) {
-        printf("Failed to create new Task\n");
+    {
+        /* Initialize the defaults and set the parameters. */
+        Task_Params taskParams;
+        Task_Params_init(&taskParams);
+        taskParams.arg0 = (UArg)args;
+        taskParams.stackSize = 65535;
+        *thread = Task_create((Task_FuncPtr)fun, &taskParams, NULL);
+        if (*thread == NULL) {
+            printf("Failed to create new Task\n");
+        }
+        Task_yield();
     }
-    Task_yield();
-#else
+#elif defined(USE_WINDOWS_API)
     *thread = (THREAD_TYPE)_beginthreadex(0, 0, fun, args, 0, 0);
+#else
+    (void)fun;
+    (void)args;
+    (void)thread;
 #endif
 }
 
@@ -885,12 +890,16 @@ static INLINE void ThreadJoin(THREAD_TYPE thread)
         }
         Task_yield();
     }
+#elif defined(USE_WINDOWS_API)
+    {
+        int res = WaitForSingleObject((HANDLE)thread, INFINITE);
+        assert(res == WAIT_OBJECT_0);
+        res = CloseHandle((HANDLE)thread);
+        assert(res);
+        (void)res; /* Suppress un-used variable warning */
+    }
 #else
-    int res = WaitForSingleObject((HANDLE)thread, INFINITE);
-    assert(res == WAIT_OBJECT_0);
-    res = CloseHandle((HANDLE)thread);
-    assert(res);
-    (void)res; /* Suppress un-used variable warning */
+    (void)thread;
 #endif
 }
 
@@ -911,10 +920,14 @@ static INLINE void ThreadDetach(THREAD_TYPE thread)
         Task_yield();
     }
 #endif
+#elif defined(USE_WINDOWS_API)
+    {
+        int res = CloseHandle((HANDLE)thread);
+        assert(res);
+        (void)res; /* Suppress un-used variable warning */
+    }
 #else
-    int res = CloseHandle((HANDLE)thread);
-    assert(res);
-    (void)res; /* Suppress un-used variable warning */
+    (void)thread;
 #endif
 }
 
