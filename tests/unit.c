@@ -354,7 +354,7 @@ int wolfSSH_UnitTest(int argc, char** argv)
 }
 
 
-#ifndef NO_MAIN_FUNCTION
+#ifndef NO_UNITTEST_MAIN_DRIVER
 int main(int argc, char** argv)
 {
     return wolfSSH_UnitTest(argc, argv);

@@ -47,7 +47,7 @@
     #include "tests/sftp.h"
 #endif
 
-#if !defined(NO_TESTSUITE_MAIN_DRIVER) && !defined(NO_MAIN_FUNCTION)
+#ifndef NO_TESTSUITE_MAIN_DRIVER
 
 int main(int argc, char** argv)
 {
@@ -58,7 +58,7 @@ int main(int argc, char** argv)
 int myoptind = 0;
 char* myoptarg = NULL;
 
-#endif /* !NO_TESTSUITE_MAIN_DRIVER && !NO_MAIN_FUNCTION */
+#endif /* !NO_TESTSUITE_MAIN_DRIVER */
 
 
 #if !defined(NO_WOLFSSH_SERVER) && !defined(NO_WOLFSSH_CLIENT)

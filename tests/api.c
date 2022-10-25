@@ -1067,7 +1067,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
 }
 
 
-#ifndef NO_MAIN_FUNCTION
+#ifndef NO_APITEST_MAIN_DRIVER
 int main(int argc, char** argv)
 {
     return wolfSSH_ApiTest(argc, argv);
