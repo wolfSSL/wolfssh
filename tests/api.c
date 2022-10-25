@@ -51,11 +51,18 @@ int myoptind = 0;
 char* myoptarg = NULL;
 
 
+#ifndef WOLFSSH_NO_ASSERT_FAIL_ABORT
+    #define WABORT() abort()
+#else
+    #define WABORT()
+#endif
+
 #define Fail(description, result) do {                                         \
     printf("\nERROR - %s line %d failed with:", __FILE__, __LINE__);           \
-    printf("\n    expected: "); printf description;                            \
-    printf("\n    result:   "); printf result; printf("\n\n");                 \
-    abort();                                                                   \
+    fputs("\n    expected: ", stdout); printf description;                     \
+    fputs("\n    result:   ", stdout); printf result; fputs("\n\n", stdout);   \
+    fflush(stdout);                                                            \
+    WABORT();                                                                  \
 } while(0)
 
 #define Assert(test, description, result) if (!(test)) Fail(description, result)
@@ -65,15 +72,14 @@ char* myoptarg = NULL;
 #define AssertNotNull(x) Assert( (x), ("%s is not null", #x), (#x " => NULL"))
 
 #define AssertNull(x) do {                                                     \
-    void* _x = (void *) (x);                                                   \
+    PEDANTIC_EXTENSION void* _x = (void*)(x);                                  \
                                                                                \
     Assert(!_x, ("%s is null", #x), (#x " => %p", _x));                        \
 } while(0)
 
 #define AssertInt(x, y, op, er) do {                                           \
-    int _x = x;                                                                \
-    int _y = y;                                                                \
-                                                                               \
+    int _x = (int)(x);                                                         \
+    int _y = (int)(y);                                                         \
     Assert(_x op _y, ("%s " #op " %s", #x, #y), ("%d " #er " %d", _x, _y));    \
 } while(0)
 
@@ -85,10 +91,9 @@ char* myoptarg = NULL;
 #define AssertIntLE(x, y) AssertInt(x, y, <=,  >)
 
 #define AssertStr(x, y, op, er) do {                                           \
-    const char* _x = x;                                                        \
-    const char* _y = y;                                                        \
-    int   _z = strcmp(_x, _y);                                                 \
-                                                                               \
+    const char* _x = (const char*)(x);                                         \
+    const char* _y = (const char*)(y);                                         \
+    int         _z = (_x && _y) ? strcmp(_x, _y) : -1;                         \
     Assert(_z op 0, ("%s " #op " %s", #x, #y),                                 \
                                             ("\"%s\" " #er " \"%s\"", _x, _y));\
 } while(0)
@@ -99,6 +104,27 @@ char* myoptarg = NULL;
 #define AssertStrLT(x, y) AssertStr(x, y,  <, >=)
 #define AssertStrGE(x, y) AssertStr(x, y, >=,  <)
 #define AssertStrLE(x, y) AssertStr(x, y, <=,  >)
+
+#define AssertPtr(x, y, op, er) do {                                           \
+    PRAGMA_GCC_DIAG_PUSH;                                                      \
+      /* remarkably, without this inhibition, */                               \
+      /* the _Pragma()s make the declarations warn. */                         \
+    PRAGMA_GCC("GCC diagnostic ignored \"-Wdeclaration-after-statement\"");    \
+      /* inhibit "ISO C forbids conversion of function pointer */              \
+      /* to object pointer type [-Werror=pedantic]" */                         \
+    PRAGMA_GCC("GCC diagnostic ignored \"-Wpedantic\"");                       \
+    void* _x = (void*)(x);                                                     \
+    void* _y = (void*)(y);                                                     \
+    Assert(_x op _y, ("%s " #op " %s", #x, #y), ("%p " #er " %p", _x, _y));    \
+    PRAGMA_GCC_DIAG_POP;                                                       \
+} while(0)
+
+#define AssertPtrEq(x, y) AssertPtr(x, y, ==, !=)
+#define AssertPtrNE(x, y) AssertPtr(x, y, !=, ==)
+#define AssertPtrGT(x, y) AssertPtr(x, y,  >, <=)
+#define AssertPtrLT(x, y) AssertPtr(x, y,  <, >=)
+#define AssertPtrGE(x, y) AssertPtr(x, y, >=,  <)
+#define AssertPtrLE(x, y) AssertPtr(x, y, <=,  >)
 
 
 #if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT)
