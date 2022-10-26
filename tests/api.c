@@ -127,99 +127,6 @@ char* myoptarg = NULL;
 #define AssertPtrLE(x, y) AssertPtr(x, y, <=,  >)
 
 
-#if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT)
-
-#include "examples/echoserver/echoserver.h"
-
-byte userPassword[256];
-static int sftpUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
-{
-    int ret = WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
-
-    if (authType == WOLFSSH_USERAUTH_PASSWORD) {
-        const char* defaultPassword = (const char*)ctx;
-        word32 passwordSz;
-
-        ret = WOLFSSH_USERAUTH_SUCCESS;
-        if (defaultPassword != NULL) {
-            passwordSz = (word32)strlen(defaultPassword);
-            memcpy(userPassword, defaultPassword, passwordSz);
-        }
-        else {
-            printf("Expecting password set for test cases\n");
-            return ret;
-        }
-
-        if (ret == WOLFSSH_USERAUTH_SUCCESS) {
-            authData->sf.password.password = userPassword;
-            authData->sf.password.passwordSz = passwordSz;
-        }
-    }
-    return ret;
-}
-
-#ifndef NO_WOLFSSH_CLIENT
-/* preforms connection to port, sets WOLFSSH_CTX and WOLFSSH on success
- * caller needs to free ctx and ssh when done
- */
-static void sftp_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
-{
-    SOCKET_T sockFd = WOLFSSH_SOCKET_INVALID;
-    SOCKADDR_IN_T clientAddr;
-    socklen_t clientAddrSz = sizeof(clientAddr);
-    int ret;
-    char* host = (char*)wolfSshIp;
-    const char* username = "jill";
-    const char* password = "upthehill";
-
-    if (ctx == NULL || ssh == NULL) {
-        return;
-    }
-
-    *ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
-    if (*ctx == NULL) {
-        return;
-    }
-
-    wolfSSH_SetUserAuth(*ctx, sftpUserAuth);
-    *ssh = wolfSSH_new(*ctx);
-    if (*ssh == NULL) {
-        wolfSSH_CTX_free(*ctx);
-        *ctx = NULL;
-        return;
-    }
-
-    build_addr(&clientAddr, host, port);
-    tcp_socket(&sockFd);
-    ret = connect(sockFd, (const struct sockaddr *)&clientAddr, clientAddrSz);
-    if (ret != 0){
-        wolfSSH_free(*ssh);
-        wolfSSH_CTX_free(*ctx);
-        *ctx = NULL;
-        *ssh = NULL;
-        return;
-    }
-
-    wolfSSH_SetUserAuthCtx(*ssh, (void*)password);
-    ret = wolfSSH_SetUsername(*ssh, username);
-    if (ret == WS_SUCCESS)
-        ret = wolfSSH_set_fd(*ssh, (int)sockFd);
-
-    if (ret == WS_SUCCESS)
-        ret = wolfSSH_SFTP_connect(*ssh);
-
-    if (ret != WS_SUCCESS){
-        wolfSSH_free(*ssh);
-        wolfSSH_CTX_free(*ctx);
-        *ctx = NULL;
-        *ssh = NULL;
-        return;
-    }
-}
-#endif /* NO_WOLFSSH_CLIENT */
-#endif /* WOLFSSH_SFTP */
-
-
 enum WS_TestEndpointTypes {
     TEST_GOOD_ENDPOINT_SERVER = WOLFSSH_ENDPOINT_SERVER,
     TEST_GOOD_ENDPOINT_CLIENT = WOLFSSH_ENDPOINT_CLIENT,
@@ -684,6 +591,7 @@ static void test_wolfSSH_CertMan(void)
 
 
 #ifdef WOLFSSH_SCP
+
 static int my_ScpRecv(WOLFSSH* ssh, int state, const char* basePath,
     const char* fileName, int fileMode, word64 mTime, word64 aTime,
     word32 totalFileSz, byte* buf, word32 bufSz, word32 fileOffset,
@@ -706,12 +614,10 @@ static int my_ScpRecv(WOLFSSH* ssh, int state, const char* basePath,
 
     return WS_SCP_ABORT; /* error out for test function */
 }
-#endif
 
 
 static void test_wolfSSH_SCP_CB(void)
 {
-#ifdef WOLFSSH_SCP
     WOLFSSH_CTX* ctx;
     WOLFSSH* ssh;
     int i = 3, j = 4; /* arbitrary value */
@@ -734,12 +640,107 @@ static void test_wolfSSH_SCP_CB(void)
 
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
-#endif /* WOLFSSH_NO_CLIENT */
 }
+
+#else /* WOLFSSH_SCP */
+static void test_wolfSSH_SCP_CB(void) { ; }
+#endif /* WOLFSSH_SCP */
+
+
+#if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT) && \
+    !defined(SINGLE_THREADED)
+
+#include "examples/echoserver/echoserver.h"
+
+byte userPassword[256];
+
+static int sftpUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
+{
+    int ret = WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
+
+    if (authType == WOLFSSH_USERAUTH_PASSWORD) {
+        const char* defaultPassword = (const char*)ctx;
+        word32 passwordSz;
+
+        ret = WOLFSSH_USERAUTH_SUCCESS;
+        if (defaultPassword != NULL) {
+            passwordSz = (word32)strlen(defaultPassword);
+            memcpy(userPassword, defaultPassword, passwordSz);
+        }
+        else {
+            printf("Expecting password set for test cases\n");
+            return ret;
+        }
+
+        if (ret == WOLFSSH_USERAUTH_SUCCESS) {
+            authData->sf.password.password = userPassword;
+            authData->sf.password.passwordSz = passwordSz;
+        }
+    }
+    return ret;
+}
+
+/* preforms connection to port, sets WOLFSSH_CTX and WOLFSSH on success
+ * caller needs to free ctx and ssh when done
+ */
+static void sftp_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
+{
+    SOCKET_T sockFd = WOLFSSH_SOCKET_INVALID;
+    SOCKADDR_IN_T clientAddr;
+    socklen_t clientAddrSz = sizeof(clientAddr);
+    int ret;
+    char* host = (char*)wolfSshIp;
+    const char* username = "jill";
+    const char* password = "upthehill";
+
+    if (ctx == NULL || ssh == NULL) {
+        return;
+    }
+
+    *ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (*ctx == NULL) {
+        return;
+    }
+
+    wolfSSH_SetUserAuth(*ctx, sftpUserAuth);
+    *ssh = wolfSSH_new(*ctx);
+    if (*ssh == NULL) {
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        return;
+    }
+
+    build_addr(&clientAddr, host, port);
+    tcp_socket(&sockFd);
+    ret = connect(sockFd, (const struct sockaddr *)&clientAddr, clientAddrSz);
+    if (ret != 0){
+        wolfSSH_free(*ssh);
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        *ssh = NULL;
+        return;
+    }
+
+    wolfSSH_SetUserAuthCtx(*ssh, (void*)password);
+    ret = wolfSSH_SetUsername(*ssh, username);
+    if (ret == WS_SUCCESS)
+        ret = wolfSSH_set_fd(*ssh, (int)sockFd);
+
+    if (ret == WS_SUCCESS)
+        ret = wolfSSH_SFTP_connect(*ssh);
+
+    if (ret != WS_SUCCESS){
+        wolfSSH_free(*ssh);
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        *ssh = NULL;
+        return;
+    }
+}
+
 
 static void test_wolfSSH_SFTP_SendReadPacket(void)
 {
-#if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT)
     func_args ser;
     tcp_ready ready;
     int argsCount;
@@ -829,9 +830,11 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
     ThreadJoin(serThread);
-#endif
 }
 
+#else /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
+static void test_wolfSSH_SFTP_SendReadPacket(void) { ; }
+#endif /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
 
 
 #ifdef USE_WINDOWS_API
