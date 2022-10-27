@@ -2578,39 +2578,45 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 #endif /* NO_WOLFSSH_SERVER */
 
 
-#ifndef NO_MAIN_DRIVER
 void wolfSSL_Debugging_ON(void);
+
+int wolfSSH_Echoserver(int argc, char** argv)
+{
+    func_args args;
+
+    args.argc = argc;
+    args.argv = argv;
+    args.return_code = 0;
+    args.user_auth = NULL;
+
+    WSTARTTCP();
+
+    #ifdef DEBUG_WOLFSSH
+        wolfSSL_Debugging_ON();
+        wolfSSH_Debugging_ON();
+    #endif
+
+#ifndef WOLFSSL_NUCLEUS
+    ChangeToWolfSshRoot();
+#endif
+#ifndef NO_WOLFSSH_SERVER
+    echoserver_test(&args);
+#else
+    printf("wolfSSH compiled without server support\n");
+#endif
+
+    wolfSSH_Cleanup();
+
+    return args.return_code;
+}
+
+
+#ifndef NO_MAIN_DRIVER
 
     int main(int argc, char** argv)
     {
-        func_args args;
-
-        args.argc = argc;
-        args.argv = argv;
-        args.return_code = 0;
-        args.user_auth = NULL;
-
-        WSTARTTCP();
-
-        #ifdef DEBUG_WOLFSSH
-            wolfSSL_Debugging_ON();
-            wolfSSH_Debugging_ON();
-        #endif
-
-#ifndef WOLFSSL_NUCLEUS
-        ChangeToWolfSshRoot();
-#endif
-#ifndef NO_WOLFSSH_SERVER
-        echoserver_test(&args);
-#else
-        printf("wolfSSH compiled without server support\n");
-#endif
-
-        wolfSSH_Cleanup();
-
-        return args.return_code;
+        return wolfSSH_Echoserver(argc, argv);
     }
-
 
     int myoptind = 0;
     char* myoptarg = NULL;
