@@ -217,6 +217,11 @@ static INLINE void err_sys(const char* msg)
     printf("wolfSSH error: %s\n", msg);
     return;
 }
+#elif defined(INTEGRITY) || defined(__INTEGRITY)
+static INLINE void err_sys(const char* msg)
+{
+    printf("wolfSSH error: %s\n", msg);
+}
 #else
 static INLINE WS_NORETURN void err_sys(const char* msg)
 {

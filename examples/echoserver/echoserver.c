@@ -1272,10 +1272,12 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
         case WS_SFTP_COMPLETE:
         #ifdef WOLFSSH_SFTP
             ret = sftp_worker(threadCtx);
+            break;
         #else
             err_sys("SFTP not compiled in. Please use --enable-sftp");
+            WEXIT(EXIT_FAILURE);
+            NO_BREAK;
         #endif
-            break;
 
         case WS_SUCCESS:
             ret = ssh_worker(threadCtx);
@@ -2170,12 +2172,15 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             case 'p':
                 if (myoptarg == NULL) {
                     err_sys("NULL port value");
+                    WEXIT(EXIT_FAILURE);
                 }
                 else {
                     port = (word16)atoi(myoptarg);
                     #if !defined(NO_MAIN_DRIVER) || defined(USE_WINDOWS_API)
-                        if (port == 0)
+                        if (port == 0) {
                             err_sys("port number cannot be 0");
+                            WEXIT(EXIT_FAILURE);
+                        }
                     #endif
                 }
                 break;
@@ -2224,6 +2229,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 #ifdef WOLFSSH_TEST_BLOCK
     if (!nonBlock) {
         err_sys("Use -N when testing forced non blocking");
+        WEXIT(EXIT_FAILURE);
     }
 #endif
 
@@ -2531,8 +2537,10 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         clientFd = accept(listenFd, (struct sockaddr*)&clientAddr,
                                                          &clientAddrSz);
     #endif
-        if (clientFd == -1)
+        if (clientFd == -1) {
             err_sys("tcp accept failed");
+            WEXIT(EXIT_FAILURE);
+        }
 
         if (nonBlock)
             tcp_set_nonblocking(&clientFd);
