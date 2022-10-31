@@ -76,7 +76,7 @@ extern "C" {
 
 
 #if defined(INTEGRITY) || defined(__INTEGRITY)
-    #define WEXIT(n)      return (n)
+    #define WEXIT(n)      return (0)
 #else
     #define WEXIT(n)      exit((n))
 #endif
