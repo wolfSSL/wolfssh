@@ -452,6 +452,9 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
         ctx->state = FWD_STATE_INIT;
     }
     else if (action == WOLFSSH_FWD_REMOTE_SETUP) {
+        struct sockaddr_in addr;
+        socklen_t addrSz = 0;
+
         ctx->hostName = WSTRDUP(name, NULL, 0);
         ctx->hostPort = port;
 
@@ -461,8 +464,6 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
         }
 
         if (ret == 0) {
-            struct sockaddr_in addr;
-            socklen_t addrSz = 0;
 
             WMEMSET(&addr, 0, sizeof addr);
             if (WSTRCMP(name, "") == 0 ||
@@ -2091,16 +2092,18 @@ static void ShowUsage(void)
 }
 
 
-static void SignalTcpReady(func_args* serverArgs, word16 port)
+static INLINE void SignalTcpReady(func_args* serverArgs, word16 port)
 {
 #if defined(_POSIX_THREADS) && defined(NO_MAIN_DRIVER) && \
     !defined(__MINGW32__) && !defined(SINGLE_THREADED)
     tcp_ready* ready = serverArgs->signal;
-    pthread_mutex_lock(&ready->mutex);
-    ready->ready = 1;
-    ready->port = port;
-    pthread_cond_signal(&ready->cond);
-    pthread_mutex_unlock(&ready->mutex);
+    if (ready != NULL) {
+        pthread_mutex_lock(&ready->mutex);
+        ready->ready = 1;
+        ready->port = port;
+        pthread_cond_signal(&ready->cond);
+        pthread_mutex_unlock(&ready->mutex);
+    }
 #else
     (void)serverArgs;
     (void)port;
@@ -2623,10 +2626,9 @@ int wolfSSH_Echoserver(int argc, char** argv)
 {
     func_args args;
 
+    WMEMSET(&args, 0, sizeof(args));
     args.argc = argc;
     args.argv = argv;
-    args.return_code = 0;
-    args.user_auth = NULL;
 
     WSTARTTCP();
 
