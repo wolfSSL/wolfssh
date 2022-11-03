@@ -752,6 +752,7 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
         const char* currentDir = ".";
         byte* out = NULL;
         int outSz = 18;
+        int rxSz;
         const word32 ofst[2] = {0};
 
         current = wolfSSH_SFTP_LS(ssh, (char*)currentDir);
@@ -770,22 +771,36 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
             AssertIntEQ(wolfSSH_SFTP_Open(ssh, tmp->fName, WOLFSSH_FXF_READ,
                         NULL, handle, &handleSz), WS_SUCCESS);
 
+            /*
+             * Since errors are negative, and valid return values are greater
+             * than 0, the following wolfSSH_SFTP_SendReadPacket() calls
+             * shall return greater than 0 and less-than-equal-to the amount
+             * requested, outSz. While this endpoint may request any amount of
+             * file data, the peer must not respond with more than requested.
+             */
+
             /* read 18 bytes */
             if (tmp->atrb.sz[0] >= 18) {
                 outSz = 18;
-                AssertIntEQ(wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz,
-                            ofst, out, outSz), outSz);
+                rxSz = wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz,
+                        ofst, out, outSz);
+                AssertIntGT(rxSz, 0);
+                AssertIntLE(rxSz, outSz);
             }
 
             /* partial read */
             outSz = tmp->atrb.sz[0] / 2;
-            AssertIntEQ(wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz, ofst,
-                    out, outSz), outSz);
+            rxSz = wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz,
+                    ofst, out, outSz);
+            AssertIntGT(rxSz, 0);
+            AssertIntLE(rxSz, outSz);
 
             /* read all */
             outSz = tmp->atrb.sz[0];
-            AssertIntEQ(wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz, ofst,
-                    out, outSz), outSz);
+            rxSz = wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz,
+                    ofst, out, outSz);
+            AssertIntGT(rxSz, 0);
+            AssertIntLE(rxSz, outSz);
 
             free(out);
             wolfSSH_SFTP_Close(ssh, handle, handleSz);
