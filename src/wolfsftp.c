@@ -3398,6 +3398,10 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         return WS_BUFFER_E;
     }
 
+    if (sz > WOLFSSH_MAX_SFTP_RW) {
+        sz = WOLFSSH_MAX_SFTP_RW;
+    }
+
     /* read from handle and send data back to client */
     out = (byte*)WMALLOC(sz + WOLFSSH_SFTP_HEADER + UINT32_SZ,
             ssh->ctx->heap, DYNTYPE_BUFFER);

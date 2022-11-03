@@ -149,6 +149,13 @@ struct WS_SFTPNAME {
     WS_SFTPNAME* next;
 };
 
+/*
+ * WOLFSSH_MAX_SFTP_RW: Limit on how much file data the client will request
+ *     or send in a file transfer message. Also a limit on how much file
+ *     data a server will send per request from the client.
+ * WOLFSSH_MAX_SFTP_RECV: Used as a bounds check on a SFTP message's size.
+ *     Is not used to allocate any buffers directly.
+ */
 #ifndef WOLFSSH_MAX_SFTP_RW
     #define WOLFSSH_MAX_SFTP_RW 1024
 #endif
