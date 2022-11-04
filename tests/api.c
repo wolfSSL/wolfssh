@@ -51,7 +51,7 @@ int myoptind = 0;
 char* myoptarg = NULL;
 
 
-#ifndef WOLFSSH_NO_ASSERT_FAIL_ABORT
+#ifndef WOLFSSH_NO_ABORT
     #define WABORT() abort()
 #else
     #define WABORT()
