@@ -75,7 +75,11 @@ extern "C" {
 #endif
 
 
-#define WEXIT(n)      exit((n))
+#if defined(INTEGRITY) || defined(__INTEGRITY)
+    #define WEXIT(n)      return (0)
+#else
+    #define WEXIT(n)      exit((n))
+#endif
 
 
 #ifndef WOLFSSH_HANDLE

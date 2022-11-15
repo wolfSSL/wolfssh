@@ -61,7 +61,8 @@ char* myoptarg = NULL;
 #endif /* !NO_TESTSUITE_MAIN_DRIVER */
 
 
-#if !defined(NO_WOLFSSH_SERVER) && !defined(NO_WOLFSSH_CLIENT)
+#if !defined(NO_WOLFSSH_SERVER) && !defined(NO_WOLFSSH_CLIENT) && \
+    !defined(SINGLE_THREADED)
 
 static int tsClientUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 {
@@ -166,15 +167,15 @@ int wolfSSH_TestsuiteTest(int argc, char** argv)
     return EXIT_SUCCESS;
 }
 
-#else /* !NO_WOLFSSH_SERVER && !NO_WOLFSSH_CLIENT */
+#else /* !NO_WOLFSSH_SERVER && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
 
-int TestsuiteTest(int argc, char** argv)
+int wolfSSH_TestsuiteTest(int argc, char** argv)
 {
     (void)argc;
     (void)argv;
     return EXIT_SUCCESS;
 }
 
-#endif /* !NO_WOLFSSH_SERVER && !NO_WOLFSSH_CLIENT */
+#endif /* !NO_WOLFSSH_SERVER && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
 
 
