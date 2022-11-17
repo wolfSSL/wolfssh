@@ -775,7 +775,7 @@ static int SignHashEcc(WOLFSSH_AGENT_KEY_ECDSA* rawKey, int curveId,
 
 
 static int PostSignRequest(WOLFSSH_AGENT_CTX* agent,
-        byte* keyBlob, word32 keyBlobSz, byte* data, word32 dataSz,
+        const byte* keyBlob, word32 keyBlobSz, const byte* data, word32 dataSz,
         word32 flags)
 {
     WOLFSSH_AGENT_ID* id = NULL;
@@ -959,8 +959,8 @@ static int DoIdentitiesAnswer(WOLFSSH_AGENT_CTX* agent,
 static int DoSignRequest(WOLFSSH_AGENT_CTX* agent,
         byte* buf, word32 len, word32* idx)
 {
-    byte* keyBlob;
-    byte* data;
+    const byte* keyBlob;
+    const byte* data;
     word32 begin, keyBlobSz, dataSz, flags;
     int ret = WS_SUCCESS;
     WLOG_ENTER();
@@ -1004,7 +1004,7 @@ static int DoSignResponse(WOLFSSH_AGENT_CTX* agent,
         ret = WS_BAD_ARGUMENT;
 
     if ( ret == WS_SUCCESS)
-        ret = GetStringRef(&sigSz, &sig, buf, len, idx);
+        ret = GetStringRef(&sigSz, (const byte**)&sig, buf, len, idx);
 
     if (ret == WS_SUCCESS) {
         agent->msg = sig;
@@ -1052,7 +1052,7 @@ static int DoAddIdentity(WOLFSSH_AGENT_CTX* agent,
         if (keyType == ID_SSH_RSA) {
 #ifndef WOLFSSH_NO_RSA
             byte* key;
-            byte* scratch;
+            const byte* scratch;
             word32 keySz, nSz, eSz, dSz, iqmpSz, pSz, qSz, commentSz;
 
             key = buf + begin;
@@ -1099,7 +1099,7 @@ static int DoAddIdentity(WOLFSSH_AGENT_CTX* agent,
                 keyType == ID_ECDSA_SHA2_NISTP521) {
 #ifndef WOLFSSH_NO_ECDSA
             byte* key;
-            byte* scratch;
+            const byte* scratch;
             word32 keySz, curveNameSz, qSz, dSz, commentSz;
 
             key = buf + begin;
@@ -1145,7 +1145,7 @@ static int DoRemoveIdentity(WOLFSSH_AGENT_CTX* agent,
         byte* buf, word32 len, word32* idx)
 {
     int ret = WS_SUCCESS;
-    byte* keyBlob = NULL;
+    const byte* keyBlob = NULL;
     word32 keyBlobSz = 0;
     word32 begin;
 

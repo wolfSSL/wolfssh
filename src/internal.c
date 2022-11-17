@@ -2101,7 +2101,7 @@ static int GetInputData(WOLFSSH* ssh, word32 size)
 }
 
 
-int GetBoolean(byte* v, byte* buf, word32 len, word32* idx)
+int GetBoolean(byte* v, const byte* buf, word32 len, word32* idx)
 {
     int result = WS_BUFFER_E;
 
@@ -2146,7 +2146,8 @@ int GetSize(word32* v, const byte* buf, word32 len, word32* idx)
 
 /* Gets the size of the mpint, and puts the pointer to the start of
  * buf's number into *mpint. This function does not copy. */
-int GetMpint(word32* mpintSz, byte** mpint, byte* buf, word32 len, word32* idx)
+int GetMpint(word32* mpintSz, const byte** mpint,
+        const byte* buf, word32 len, word32* idx)
 {
     int result;
 
@@ -2168,7 +2169,7 @@ int GetMpint(word32* mpintSz, byte** mpint, byte* buf, word32 len, word32* idx)
 
 /* Gets the size of a string, copies it as much of it as will fit in
  * the provided buffer, and terminates it with a NULL. */
-int GetString(char* s, word32* sSz, byte* buf, word32 len, word32 *idx)
+int GetString(char* s, word32* sSz, const byte* buf, word32 len, word32 *idx)
 {
     int result;
     word32 strSz;
@@ -2194,7 +2195,7 @@ int GetString(char* s, word32* sSz, byte* buf, word32 len, word32 *idx)
 
 /* Gets the size of a string, allocates memory to hold it plus a NULL, then
  * copies it into the allocated buffer, and terminates it with a NULL. */
-int GetStringAlloc(void* heap, char** s, byte* buf, word32 len, word32 *idx)
+int GetStringAlloc(void* heap, char** s, const byte* buf, word32 len, word32 *idx)
 {
     int result;
     char* str;
@@ -2223,7 +2224,8 @@ int GetStringAlloc(void* heap, char** s, byte* buf, word32 len, word32 *idx)
 
 /* Gets the size of the string, and puts the pointer to the start of
  * buf's string into *str. This function does not copy. */
-int GetStringRef(word32* strSz, byte** str, byte* buf, word32 len, word32* idx)
+int GetStringRef(word32* strSz, const byte** str,
+        const byte* buf, word32 len, word32* idx)
 {
     int result;
 
@@ -3324,7 +3326,7 @@ static int ParseECCPubKey(WOLFSSH *ssh,
 {
     int ret;
 #ifndef WOLFSSH_NO_ECDSA
-    byte* q;
+    const byte* q;
     word32 qSz, pubKeyIdx = 0;
     int primeId;
     word32 scratch;
@@ -4064,8 +4066,8 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 }
                 else {
 #ifndef WOLFSSH_NO_ECDSA
-                    byte* r;
-                    byte* s;
+                    const byte* r;
+                    const byte* s;
                     word32 rSz, sSz, asnSigSz;
                     byte asnSig[256];
 
@@ -4255,9 +4257,9 @@ static int DoKexDhGexRequest(WOLFSSH* ssh,
 static int DoKexDhGexGroup(WOLFSSH* ssh,
                            byte* buf, word32 len, word32* idx)
 {
-    byte* primeGroup = NULL;
+    const byte* primeGroup = NULL;
     word32 primeGroupSz;
-    byte* generator = NULL;
+    const byte* generator = NULL;
     word32 generatorSz;
     word32 begin;
     int ret = WS_SUCCESS;
@@ -5058,6 +5060,9 @@ static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 
 
 #ifndef WOLFSSH_NO_ECDSA
+
+#define ECDSA_ASN_SIG_SZ 256
+
 /* Utility for DoUserAuthRequestPublicKey() */
 /* returns negative for error, positive is size of digest. */
 static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
@@ -5068,16 +5073,17 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     const byte* curveName;
     word32 curveNameSz = 0;
     const byte* q = NULL;
-    word32 sz, qSz;
-    word32 i = 0;
+    const byte* r;
+    const byte* s;
+    word32 sz, qSz, rSz, sSz;
+    word32 i = 0, asnSigSz = ECDSA_ASN_SIG_SZ;
     int ret = WS_SUCCESS;
-    mp_int *sig_r_ptr = NULL, *sig_s_ptr = NULL;
     ecc_key *key_ptr = NULL;
+    byte* asnSig = NULL;
 #ifndef WOLFSSH_SMALL_STACK
-    mp_int sig_r, sig_s;
     ecc_key s_key;
+    byte s_asnSig[ECDSA_ASN_SIG_SZ];
 #endif
-    (void)hashId;
 
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequestEcc()");
 
@@ -5091,51 +5097,16 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     #ifdef WOLFSSH_SMALL_STACK
         key_ptr = (ecc_key*)WMALLOC(sizeof(ecc_key), ssh->ctx->heap,
                 DYNTYPE_PUBKEY);
-        if (key_ptr == NULL) {
+        asnSig = (byte*)WMALLOC(asnSigSz, ssh->ctx->heap, DYNTYPE_STRING);
+        if (key_ptr == NULL || asnSig == NULL)
             ret = WS_MEMORY_E;
-        }
     #else
         key_ptr = &s_key;
+        asnSig = s_asnSig;
     #endif
     }
 
     if (ret == WS_SUCCESS) {
-    #ifdef WOLFSSH_SMALL_STACK
-        sig_r_ptr = (mp_int*)WMALLOC(sizeof(mp_int), ssh->ctx->heap, DYNTYPE_MPINT);
-        if (sig_r_ptr == NULL) {
-            ret = WS_MEMORY_E;
-        }
-        else
-    #else
-        sig_r_ptr = &sig_r;
-    #endif
-        if (mp_init(sig_r_ptr) != MP_OKAY) {
-    #ifdef WOLFSSH_SMALL_STACK
-            WFREE(sig_r_ptr, ssh->ctx->heap, DYNTYPE_MPINT);
-    #endif
-            sig_r_ptr = NULL;
-            ret = WS_MEMORY_E;
-        }
-    }
-    if (ret == WS_SUCCESS) {
-    #ifdef WOLFSSH_SMALL_STACK
-        sig_s_ptr = (mp_int*)WMALLOC(sizeof(mp_int), ssh->ctx->heap, DYNTYPE_MPINT);
-        if (sig_s_ptr == NULL) {
-            ret = WS_MEMORY_E;
-        }
-        else
-    #else
-        sig_s_ptr = &sig_s;
-    #endif
-        if (mp_init(sig_s_ptr) != MP_OKAY) {
-    #ifdef WOLFSSH_SMALL_STACK
-            WFREE(sig_s_ptr, ssh->ctx->heap, DYNTYPE_MPINT);
-    #endif
-            sig_s_ptr = NULL;
-            ret = WS_MEMORY_E;
-        }
-    }
-    if ((ret == WS_SUCCESS) && (key_ptr != NULL)) {
         if (wc_ecc_init_ex(key_ptr, ssh->ctx->heap, INVALID_DEVID) != 0) {
             ret = WS_MEMORY_E;
         }
@@ -5205,56 +5176,51 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
-        /* Get R and S. */
-        ret = GetSize(&sz, pk->signature, pk->signatureSz, &i);
+        ret = GetStringRef(&rSz, &r, pk->signature, pk->signatureSz, &i);
     }
 
     if (ret == WS_SUCCESS) {
-        ret = mp_read_unsigned_bin(sig_r_ptr, pk->signature + i, sz);
-        if (ret != 0)
-            ret = WS_PARSE_E;
-        else
+        ret = GetStringRef(&sSz, &s, pk->signature, pk->signatureSz, &i);
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = wc_ecc_rs_raw_to_sig(r, rSz, s, sSz,
+                asnSig, &asnSigSz);
+        if (ret == 0) {
             ret = WS_SUCCESS;
-    }
-
-    if (ret == WS_SUCCESS) {
-        i += sz;
-        ret = GetSize(&sz, pk->signature, pk->signatureSz, &i);
-    }
-
-    if (ret == WS_SUCCESS) {
-        ret = mp_read_unsigned_bin(sig_s_ptr, pk->signature + i, sz);
-        if (ret != 0)
-            ret = WS_PARSE_E;
-        else
-            ret = WS_SUCCESS;
-    }
-
-    if (ret == WS_SUCCESS) {
-        int status = 0;
-
-        ret = wc_ecc_verify_hash_ex(sig_r_ptr, sig_s_ptr, digest, digestSz, &status, key_ptr);
-        if (ret != 0) {
-            WLOG(WS_LOG_DEBUG, "Could not verify signature");
-            ret = WS_CRYPTO_FAILED;
         }
-        else
-            ret = status ? WS_SUCCESS : WS_ECC_E;
+        else {
+            WLOG(WS_LOG_DEBUG,
+                "DoKexDhReply: ECC RS raw to sig fail (%d)",
+                ret);
+            ret = WS_ECC_E;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = wc_SignatureVerifyHash(
+                         hashId,
+                         WC_SIGNATURE_TYPE_ECC,
+                         digest, digestSz, asnSig, asnSigSz,
+                         key_ptr, sizeof *key_ptr);
+        if (ret != 0) {
+            WLOG(WS_LOG_DEBUG,
+                "DoKexDhReply: Signature Verify fail (%d)",
+                ret);
+            ret = WS_ECC_E;
+        }
+        else {
+            ret = WS_SUCCESS;
+        }
     }
 
     if (key_ptr)
         wc_ecc_free(key_ptr);
-    if (sig_r_ptr)
-        mp_clear(sig_r_ptr);
-    if (sig_s_ptr)
-        mp_clear(sig_s_ptr);
 #ifdef WOLFSSH_SMALL_STACK
+    if (asnSig)
+        WFREE(asnSig, ssh->ctx->heap, DYNTYPE_STRING);
     if (key_ptr)
         WFREE(key_ptr, ssh->ctx->heap, DYNTYPE_PUBKEY);
-    if (sig_r_ptr)
-        WFREE(sig_r_ptr, ssh->ctx->heap, DYNTYPE_MPINT);
-    if (sig_s_ptr)
-        WFREE(sig_s_ptr, ssh->ctx->heap, DYNTYPE_MPINT);
 #endif
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthRequestEcc(), ret = %d", ret);
     return ret;
@@ -5267,16 +5233,17 @@ static int DoUserAuthRequestEccCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 {
     const byte* publicKeyType;
     word32 publicKeyTypeSz = 0;
-    word32 i = 0;
-    word32 sz;
+    const byte* r;
+    const byte* s;
+    word32 sz, rSz, sSz;
+    word32 i = 0, asnSigSz = ECDSA_ASN_SIG_SZ;
     int ret = WS_SUCCESS;
-    mp_int *sig_r_ptr = NULL, *sig_s_ptr = NULL;
     ecc_key *key_ptr = NULL;
+    byte* asnSig = NULL;
 #ifndef WOLFSSH_SMALL_STACK
-    mp_int sig_r, sig_s;
     ecc_key s_key;
+    byte s_asnSig[ECDSA_ASN_SIG_SZ];
 #endif
-    (void)hashId;
 
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequestEccCert()");
 
@@ -5290,18 +5257,19 @@ static int DoUserAuthRequestEccCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     #ifdef WOLFSSH_SMALL_STACK
         key_ptr = (ecc_key*)WMALLOC(sizeof(ecc_key), ssh->ctx->heap,
                 DYNTYPE_PUBKEY);
-        if (key_ptr == NULL) {
+        asnSigSz = ECDSA_ASN_SIG_SZ;
+        asnSig = (byte*)WMALLOC(asnSigSz, ssh->ctx->heap, DYNTYPE_STRING);
+        if (key_ptr == NULL || asnSig == NULL)
             ret = WS_MEMORY_E;
-        }
     #else
         key_ptr = &s_key;
+        asnSig = s_asnSig;
     #endif
     }
 
     if (ret == WS_SUCCESS) {
-        ret = wc_ecc_init_ex(key_ptr, ssh->ctx->heap, INVALID_DEVID);
-        if (ret == 0) {
-            ret = WS_SUCCESS;
+        if (wc_ecc_init_ex(key_ptr, ssh->ctx->heap, INVALID_DEVID) != 0) {
+            ret = WS_MEMORY_E;
         }
     }
 
@@ -5360,96 +5328,51 @@ static int DoUserAuthRequestEccCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
-        /* Get R and S. */
-        ret = GetSize(&sz, pk->signature, pk->signatureSz, &i);
+        ret = GetStringRef(&rSz, &r, pk->signature, pk->signatureSz, &i);
     }
 
     if (ret == WS_SUCCESS) {
-    #ifdef WOLFSSH_SMALL_STACK
-        sig_r_ptr = (mp_int*)WMALLOC(sizeof(mp_int), ssh->ctx->heap,
-                                     DYNTYPE_MPINT);
-        if (sig_r_ptr == NULL) {
-            ret = WS_MEMORY_E;
-        }
-        else
-    #else
-        sig_r_ptr = &sig_r;
-    #endif
-        if (mp_init(sig_r_ptr) != MP_OKAY) {
-    #ifdef WOLFSSH_SMALL_STACK
-            WFREE(sig_r_ptr, ssh->ctx->heap, DYNTYPE_MPINT);
-    #endif
-            sig_r_ptr = NULL;
-            ret = WS_FATAL_ERROR;
-        }
+        ret = GetStringRef(&sSz, &s, pk->signature, pk->signatureSz, &i);
     }
 
     if (ret == WS_SUCCESS) {
-        ret = mp_read_unsigned_bin(sig_r_ptr, pk->signature + i, sz);
-        if (ret != 0)
-            ret = WS_PARSE_E;
-        else
+        ret = wc_ecc_rs_raw_to_sig(r, rSz, s, sSz,
+                asnSig, &asnSigSz);
+        if (ret == 0) {
             ret = WS_SUCCESS;
-    }
-
-    if (ret == WS_SUCCESS) {
-        i += sz;
-        ret = GetSize(&sz, pk->signature, pk->signatureSz, &i);
-    }
-
-    if (ret == WS_SUCCESS) {
-    #ifdef WOLFSSH_SMALL_STACK
-        sig_s_ptr = (mp_int*)WMALLOC(sizeof(mp_int), ssh->ctx->heap,
-                                     DYNTYPE_MPINT);
-        if (sig_s_ptr == NULL) {
-            ret = WS_MEMORY_E;
         }
-        else
-    #else
-        sig_s_ptr = &sig_s;
-    #endif
-        if (mp_init(sig_s_ptr) != MP_OKAY) {
-    #ifdef WOLFSSH_SMALL_STACK
-            WFREE(sig_s_ptr, ssh->ctx->heap, DYNTYPE_MPINT);
-    #endif
-            sig_s_ptr = NULL;
-            ret = WS_FATAL_ERROR;
+        else {
+            WLOG(WS_LOG_DEBUG,
+                "DoKexDhReply: ECC RS raw to sig fail (%d)",
+                ret);
+            ret = WS_ECC_E;
         }
     }
 
     if (ret == WS_SUCCESS) {
-        ret = mp_read_unsigned_bin(sig_s_ptr, pk->signature + i, sz);
-        if (ret != 0)
-            ret = WS_PARSE_E;
-        else
-            ret = WS_SUCCESS;
-    }
-
-    if (ret == WS_SUCCESS) {
-        int status = 0;
-
-        ret = wc_ecc_verify_hash_ex(sig_r_ptr, sig_s_ptr, digest, digestSz, &status, key_ptr);
+        ret = wc_SignatureVerifyHash(
+                         hashId,
+                         WC_SIGNATURE_TYPE_ECC,
+                         digest, digestSz, asnSig, asnSigSz,
+                         key_ptr, sizeof *key_ptr);
         if (ret != 0) {
-            WLOG(WS_LOG_DEBUG, "Could not verify signature");
-            ret = WS_CRYPTO_FAILED;
+            WLOG(WS_LOG_DEBUG,
+                "DoKexDhReply: Signature Verify fail (%d)",
+                ret);
+            ret = WS_ECC_E;
         }
-        else
-            ret = status ? WS_SUCCESS : WS_ECC_E;
+        else {
+            ret = WS_SUCCESS;
+        }
     }
 
     if (key_ptr)
         wc_ecc_free(key_ptr);
-    if (sig_r_ptr)
-        mp_clear(sig_r_ptr);
-    if (sig_s_ptr)
-        mp_clear(sig_s_ptr);
 #ifdef WOLFSSH_SMALL_STACK
+    if (asnSig)
+        WFREE(asnSig, ssh->ctx->heap, DYNTYPE_STRING);
     if (key_ptr)
         WFREE(key_ptr, ssh->ctx->heap, DYNTYPE_PUBKEY);
-    if (sig_r_ptr)
-        WFREE(sig_r_ptr, ssh->ctx->heap, DYNTYPE_MPINT);
-    if (sig_s_ptr)
-        WFREE(sig_s_ptr, ssh->ctx->heap, DYNTYPE_MPINT);
 #endif
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthRequestEccCert(), ret = %d", ret);
     return ret;
