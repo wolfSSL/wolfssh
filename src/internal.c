@@ -5191,7 +5191,7 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
         }
         else {
             WLOG(WS_LOG_DEBUG,
-                "DoKexDhReply: ECC RS raw to sig fail (%d)",
+                "DUARE: ECC RS raw to sig fail (%d)",
                 ret);
             ret = WS_ECC_E;
         }
@@ -5205,7 +5205,7 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
                          key_ptr, sizeof *key_ptr);
         if (ret != 0) {
             WLOG(WS_LOG_DEBUG,
-                "DoKexDhReply: Signature Verify fail (%d)",
+                "DUARE: Signature Verify fail (%d)",
                 ret);
             ret = WS_ECC_E;
         }
@@ -5343,7 +5343,7 @@ static int DoUserAuthRequestEccCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
         }
         else {
             WLOG(WS_LOG_DEBUG,
-                "DoKexDhReply: ECC RS raw to sig fail (%d)",
+                "DUAREC: ECC RS raw to sig fail (%d)",
                 ret);
             ret = WS_ECC_E;
         }
@@ -5357,7 +5357,7 @@ static int DoUserAuthRequestEccCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
                          key_ptr, sizeof *key_ptr);
         if (ret != 0) {
             WLOG(WS_LOG_DEBUG,
-                "DoKexDhReply: Signature Verify fail (%d)",
+                "DUAREC: Signature Verify fail (%d)",
                 ret);
             ret = WS_ECC_E;
         }
@@ -10391,44 +10391,71 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
         }
 
         if (ret == WS_SUCCESS) {
+            const char* names;
+            word32 namesSz;
             byte rPad;
             byte sPad;
 
             /* adds a byte of padding if needed to avoid negative values */
             rPad = (r_ptr[0] & 0x80) ? 1 : 0;
             sPad = (s_ptr[0] & 0x80) ? 1 : 0;
-            c32toa(rSz + rPad + sSz + sPad +
-                    cannedKeyAlgoEcc256NamesSz + LENGTH_SZ * 4,
-                    output + begin);
-            begin += LENGTH_SZ;
 
-            c32toa(cannedKeyAlgoEcc256NamesSz, output + begin);
-            begin += LENGTH_SZ;
+            switch (keySig->keySigId) {
+                #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+                case ID_ECDSA_SHA2_NISTP256:
+                    names = cannedKeyAlgoEcc256Names;
+                    namesSz = cannedKeyAlgoEcc256NamesSz;
+                    break;
+                #endif
+                #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+                case ID_ECDSA_SHA2_NISTP384:
+                    names = cannedKeyAlgoEcc384Names;
+                    namesSz = cannedKeyAlgoEcc384NamesSz;
+                    break;
+                #endif
+                #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+                case ID_ECDSA_SHA2_NISTP521:
+                    names = cannedKeyAlgoEcc521Names;
+                    namesSz = cannedKeyAlgoEcc521NamesSz;
+                    break;
+                #endif
+                default:
+                    WLOG(WS_LOG_DEBUG, "SUAR: ECDSA invalid algo");
+                    ret = WS_INVALID_ALGO_ID;
+            }
 
-            WMEMCPY(output + begin, cannedKeyAlgoEcc256Names,
-                    cannedKeyAlgoEcc256NamesSz);
-            begin += cannedKeyAlgoEcc256NamesSz;
+            if (ret == WS_SUCCESS) {
+                c32toa(rSz + rPad + sSz + sPad + namesSz + LENGTH_SZ * 4,
+                        output + begin);
+                begin += LENGTH_SZ;
 
-            c32toa(rSz + rPad + sSz + sPad + LENGTH_SZ * 2, output + begin);
-            begin += LENGTH_SZ;
+                c32toa(namesSz, output + begin);
+                begin += LENGTH_SZ;
 
-            c32toa(rSz + rPad, output + begin);
-            begin += LENGTH_SZ;
+                WMEMCPY(output + begin, names, namesSz);
+                begin += namesSz;
 
-            if (rPad)
-                output[begin++] = 0;
+                c32toa(rSz + rPad + sSz + sPad + LENGTH_SZ * 2, output + begin);
+                begin += LENGTH_SZ;
 
-            WMEMCPY(output + begin, r_ptr, rSz);
-            begin += rSz;
+                c32toa(rSz + rPad, output + begin);
+                begin += LENGTH_SZ;
 
-            c32toa(sSz + sPad, output + begin);
-            begin += LENGTH_SZ;
+                if (rPad)
+                    output[begin++] = 0;
 
-            if (sPad)
-                output[begin++] = 0;
+                WMEMCPY(output + begin, r_ptr, rSz);
+                begin += rSz;
 
-            WMEMCPY(output + begin, s_ptr, sSz);
-            begin += sSz;
+                c32toa(sSz + sPad, output + begin);
+                begin += LENGTH_SZ;
+
+                if (sPad)
+                    output[begin++] = 0;
+
+                WMEMCPY(output + begin, s_ptr, sSz);
+                begin += sSz;
+            }
         }
     }
 
@@ -10585,7 +10612,7 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
     #endif
     {
         if (ret == WS_SUCCESS) {
-            WLOG(WS_LOG_INFO, "Signing hash with ECDSA.");
+            WLOG(WS_LOG_INFO, "Signing hash with ECDSA cert.");
             ret = wc_HashInit(&hash, hashId);
             if (ret == WS_SUCCESS)
                 ret = HashUpdate(&hash, hashId, checkData, checkDataSz);
@@ -10595,7 +10622,7 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
                 ret = wc_ecc_sign_hash(digest, digestSz, sig, &sigSz,
                         ssh->rng, &keySig->ks.ecc.key);
             if (ret != WS_SUCCESS) {
-                WLOG(WS_LOG_DEBUG, "SUAR: Bad ECC Sign");
+                WLOG(WS_LOG_DEBUG, "SUAR: Bad ECC Cert Sign");
                 ret = WS_ECC_E;
             }
         }
@@ -10608,44 +10635,71 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
         }
 
         if (ret == WS_SUCCESS) {
+            const char* names;
+            word32 namesSz;
             byte rPad;
             byte sPad;
 
             /* adds a byte of padding if needed to avoid negative values */
             rPad = (r[0] & 0x80) ? 1 : 0;
             sPad = (s[0] & 0x80) ? 1 : 0;
-            c32toa(rSz + rPad + sSz + sPad +
-                    cannedKeyAlgoEcc256NamesSz + LENGTH_SZ * 4,
-                    output + begin);
-            begin += LENGTH_SZ;
 
-            c32toa(cannedKeyAlgoEcc256NamesSz, output + begin);
-            begin += LENGTH_SZ;
+            switch (keySig->keySigId) {
+                #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+                case ID_ECDSA_SHA2_NISTP256:
+                    names = cannedKeyAlgoEcc256Names;
+                    namesSz = cannedKeyAlgoEcc256NamesSz;
+                    break;
+                #endif
+                #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+                case ID_ECDSA_SHA2_NISTP384:
+                    names = cannedKeyAlgoEcc384Names;
+                    namesSz = cannedKeyAlgoEcc384NamesSz;
+                    break;
+                #endif
+                #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+                case ID_ECDSA_SHA2_NISTP521:
+                    names = cannedKeyAlgoEcc521Names;
+                    namesSz = cannedKeyAlgoEcc521NamesSz;
+                    break;
+                #endif
+                default:
+                    WLOG(WS_LOG_DEBUG, "SUAR: ECDSA cert invalid algo");
+                    ret = WS_INVALID_ALGO_ID;
+            }
 
-            WMEMCPY(output + begin, cannedKeyAlgoEcc256Names,
-                    cannedKeyAlgoEcc256NamesSz);
-            begin += cannedKeyAlgoEcc256NamesSz;
+            if (ret == WS_SUCCESS) {
+                c32toa(rSz + rPad + sSz + sPad + namesSz+ LENGTH_SZ * 4,
+                        output + begin);
+                begin += LENGTH_SZ;
 
-            c32toa(rSz + rPad + sSz + sPad + LENGTH_SZ * 2, output + begin);
-            begin += LENGTH_SZ;
+                c32toa(namesSz, output + begin);
+                begin += LENGTH_SZ;
 
-            c32toa(rSz + rPad, output + begin);
-            begin += LENGTH_SZ;
+                WMEMCPY(output + begin, names, namesSz);
+                begin += namesSz;
 
-            if (rPad)
-                output[begin++] = 0;
+                c32toa(rSz + rPad + sSz + sPad + LENGTH_SZ * 2, output + begin);
+                begin += LENGTH_SZ;
 
-            WMEMCPY(output + begin, r, rSz);
-            begin += rSz;
+                c32toa(rSz + rPad, output + begin);
+                begin += LENGTH_SZ;
 
-            c32toa(sSz + sPad, output + begin);
-            begin += LENGTH_SZ;
+                if (rPad)
+                    output[begin++] = 0;
 
-            if (sPad)
-                output[begin++] = 0;
+                WMEMCPY(output + begin, r, rSz);
+                begin += rSz;
 
-            WMEMCPY(output + begin, s, sSz);
-            begin += sSz;
+                c32toa(sSz + sPad, output + begin);
+                begin += LENGTH_SZ;
+
+                if (sPad)
+                    output[begin++] = 0;
+
+                WMEMCPY(output + begin, s, sSz);
+                begin += sSz;
+            }
         }
     }
 
