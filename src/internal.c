@@ -615,6 +615,46 @@ void CtxResourceFree(WOLFSSH_CTX* ctx)
 }
 
 
+/* check for cases where a public key is a certificate and the private key
+ * should be marked for use with X509 */
+static void UpdateKeyID(WOLFSSH_CTX* ctx)
+{
+#ifdef WOLFSSH_CERTS
+    word32 idx;
+
+    for (idx = 0; idx < ctx->privateKeyCount &&
+                  idx < WOLFSSH_MAX_PVT_KEYS; idx++) {
+        if (ctx->cert[idx] != NULL && ctx->certSz[idx] > 0) {
+            /* matching certificate was set, convert private key id */
+            switch (ctx->privateKeyId[idx]) {
+            #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+                case ID_ECDSA_SHA2_NISTP521:
+                    ctx->privateKeyId[idx] = ID_X509V3_ECDSA_SHA2_NISTP521;
+                    break;
+            #endif
+            #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+                case ID_ECDSA_SHA2_NISTP384:
+                    ctx->privateKeyId[idx] = ID_X509V3_ECDSA_SHA2_NISTP384;
+                    break;
+            #endif
+            #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+                case ID_ECDSA_SHA2_NISTP256:
+                    ctx->privateKeyId[idx] = ID_X509V3_ECDSA_SHA2_NISTP256;
+                    break;
+            #endif
+            #ifndef WOLFSSH_NO_SSH_RSA_SHA1
+                case ID_SSH_RSA:
+                    ctx->privateKeyId[idx] = ID_X509V3_SSH_RSA;
+                    break;
+            #endif
+            }
+        }
+    }
+#endif
+    (void)ctx;
+}
+
+
 WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
 {
 #if defined(STM32F2) || defined(STM32F4) || defined(FREESCALE_MQX)
@@ -646,6 +686,7 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
 
     WMEMSET(ssh, 0, sizeof(WOLFSSH));  /* default init to zeros */
 
+    UpdateKeyID(ctx); /* set IDs before use */
     ssh->ctx         = ctx;
     ssh->error       = WS_SUCCESS;
 #ifdef USE_WINDOWS_API
@@ -7686,7 +7727,7 @@ static const char cannedMacAlgoNames[] =
     #warning "You need at least one signing algorithm."
 #endif
 
-#define KEY_ALGO_SIZE_GUESS 20
+#define KEY_ALGO_SIZE_GUESS 28
 #ifndef WOLFSSH_NO_SSH_RSA_SHA1
     #ifdef WOLFSSH_CERTS
         static const char cannedKeyAlgoX509RsaNames[] = "x509v3-ssh-rsa";
@@ -7768,7 +7809,20 @@ static const word32 cannedNoneNamesSz = sizeof(cannedNoneNames) - 1;
     static const word32 cannedKeyAlgoEcc521NamesSz =
             sizeof(cannedKeyAlgoEcc521Names) - 1;
 #endif
-
+#ifdef WOLFSSH_CERTS
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    static const word32 cannedKeyAlgoX509Ecc256NamesSz =
+            sizeof(cannedKeyAlgoX509Ecc256Names) - 1;
+#endif
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+    static const word32 cannedKeyAlgoX509Ecc384NamesSz =
+            sizeof(cannedKeyAlgoX509Ecc384Names) - 1;
+#endif
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+    static const word32 cannedKeyAlgoX509Ecc521NamesSz =
+            sizeof(cannedKeyAlgoX509Ecc521Names) - 1;
+#endif
+#endif /* WOLFSSH_CERTS */
 
 int SendKexInit(WOLFSSH* ssh)
 {
@@ -7803,6 +7857,7 @@ int SendKexInit(WOLFSSH* ssh)
 
     if (ret == WS_SUCCESS) {
         if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
+            UpdateKeyID(ssh->ctx);
             privateKeyCount = ssh->ctx->privateKeyCount;
             privateKey = ssh->ctx->privateKeyId;
         }
@@ -8073,7 +8128,7 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
 
     heap = ssh->ctx->heap;
 
-    #ifdef WOLFSSL_CERTS
+    #ifdef WOLFSSH_CERTS
     switch (sigKeyBlock_ptr->pubKeyId) {
         case ID_X509V3_SSH_RSA:
         case ID_X509V3_ECDSA_SHA2_NISTP256:
@@ -8265,7 +8320,7 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
 
 
         /* if is RFC6187 then the hash of the public key is changed */
-        if (isCert) {
+        if (ret == 0 && isCert) {
         #ifdef WOLFSSH_CERTS
             byte* tmp;
             word32 idx = 0;
@@ -10663,6 +10718,24 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
                     namesSz = cannedKeyAlgoEcc521NamesSz;
                     break;
                 #endif
+                #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+                case ID_X509V3_ECDSA_SHA2_NISTP256:
+                    names = cannedKeyAlgoX509Ecc256Names;
+                    namesSz = cannedKeyAlgoX509Ecc256NamesSz;
+                    break;
+                #endif
+                #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+                case ID_X509V3_ECDSA_SHA2_NISTP384:
+                    names = cannedKeyAlgoX509Ecc384Names;
+                    namesSz = cannedKeyAlgoX509Ecc384NamesSz;
+                    break;
+                #endif
+                #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+                case ID_X509V3_ECDSA_SHA2_NISTP521:
+                    names = cannedKeyAlgoX509Ecc512Names;
+                    namesSz = cannedKeyAlgoX509Ecc512NamesSz;
+                    break;
+                #endif
                 default:
                     WLOG(WS_LOG_DEBUG, "SUAR: ECDSA cert invalid algo");
                     ret = WS_INVALID_ALGO_ID;
@@ -11993,6 +12066,9 @@ int SendChannelRequest(WOLFSSH* ssh, byte* name, word32 nameSz)
 
 #if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32) && \
     !defined(NO_TERMIOS)
+
+    #include <unistd.h>
+
     /* sets terminal mode in buffer and advances idx */
     static void TTYSet(word32 isSet, int type, byte* out, word32* idx)
     {

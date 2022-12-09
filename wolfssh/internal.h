@@ -437,6 +437,7 @@ struct WOLFSSH_CTX {
                                       /* Owned by CTX */
     word32 privateKeySz[WOLFSSH_MAX_PVT_KEYS];
 #ifdef WOLFSSH_CERTS
+    /* public certificate matching the private key */
     byte* cert[WOLFSSH_MAX_PVT_KEYS];
     word32 certSz[WOLFSSH_MAX_PVT_KEYS];
 #endif

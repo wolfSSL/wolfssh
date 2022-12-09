@@ -1666,6 +1666,9 @@ int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX* ctx,
 
 #ifdef WOLFSSH_CERTS
 
+/* load in a X509 certificate that has public key to use
+ * return WS_SUCCESS on success
+ */
 int wolfSSH_CTX_UseCert_buffer(WOLFSSH_CTX* ctx,
         const byte* cert, word32 certSz, int format)
 {
@@ -1680,6 +1683,9 @@ int wolfSSH_CTX_UseCert_buffer(WOLFSSH_CTX* ctx,
 }
 
 
+/* Add a CA for verifiying the peer's certificate with.
+ * returns WS_SUCCESS on success
+ */
 int wolfSSH_CTX_AddRootCert_buffer(WOLFSSH_CTX* ctx,
         const byte* cert, word32 certSz, int format)
 {
