@@ -36,6 +36,10 @@
     #include <termios.h>
 #endif
 
+#ifdef WOLFSSH_CERTS
+    #include <wolfssl/wolfcrypt/asn.h>
+#endif
+
 #if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT)
 
 /* static so that signal handler can access and interrupt get/put */
@@ -360,26 +364,105 @@ static void ShowUsage(void)
     printf(" -r <filename> remote filename\n");
     printf(" -g            put local filename as remote filename\n");
     printf(" -G            get remote filename as local filename\n");
+    printf(" -i <filename> filename for the user's private key\n");
+#ifdef WOLFSSH_CERTS
+    printf(" -J <filename> filename for DER certificate to use\n");
+    printf("               Certificate example : client -u orange \\\n");
+    printf("               -J orange-cert.der -i orange-key.der\n");
+    printf(" -A <filename> filename for DER CA certificate to verify host\n");
+#endif
 
     ShowCommands();
 }
 
 
 static byte userPassword[256];
-static byte userPublicKeyType[32];
-static byte userPublicKey[512];
-static word32 userPublicKeySz;
-static const byte* userPrivateKey;
-static word32 userPrivateKeySz;
+static byte userPublicKeyBuf[512];
 
-static const char hanselPublicRsa[] =
-    "AAAAB3NzaC1yc2EAAAADAQABAAABAQC9P3ZFowOsONXHD5MwWiCciXytBRZGho"
+static byte* userPublicKey = userPublicKeyBuf;
+static const byte* userPublicKeyType = NULL;
+static const char* pubKeyName = NULL;
+static const char* certName = NULL;
+static const char* caCert   = NULL;
+static byte userPrivateKeyBuf[1191]; /* Size equal to hanselPrivateRsaSz. */
+static byte* userPrivateKey = userPrivateKeyBuf;
+static const byte* userPrivateKeyType = NULL;
+static word32 userPublicKeySz = 0;
+static word32 userPublicKeyTypeSz = 0;
+static word32 userPrivateKeySz = sizeof(userPrivateKeyBuf);
+static word32 userPrivateKeyTypeSz = 0;
+static byte isPrivate = 0;
+
+
+#ifdef WOLFSSH_CERTS
+#if 0
+/* compiled in for using RSA certificates instead of ECC certificate */
+static const byte publicKeyType[] = "x509v3-ssh-rsa";
+static const byte privateKeyType[] = "ssh-rsa";
+#else
+static const byte publicKeyType[] = "x509v3-ecdsa-sha2-nistp256";
+#endif
+
+static int load_der_file(const char* filename, byte** out, word32* outSz)
+{
+    WFILE* file;
+    byte* in;
+    word32 inSz;
+    int ret;
+
+    if (filename == NULL || out == NULL || outSz == NULL)
+        return -1;
+
+    ret = WFOPEN(&file, filename, "rb");
+    if (ret != 0 || file == WBADFILE)
+        return -1;
+
+    if (WFSEEK(file, 0, WSEEK_END) != 0) {
+        WFCLOSE(file);
+        return -1;
+    }
+    inSz = (word32)WFTELL(file);
+    WREWIND(file);
+
+    if (inSz == 0) {
+        WFCLOSE(file);
+        return -1;
+    }
+
+    in = (byte*)WMALLOC(inSz, NULL, 0);
+    if (in == NULL) {
+        WFCLOSE(file);
+        return -1;
+    }
+
+    ret = (int)WFREAD(in, 1, inSz, file);
+    if (ret <= 0 || (word32)ret != inSz) {
+        ret = -1;
+        WFREE(in, NULL, 0);
+        in = 0;
+        inSz = 0;
+    }
+    else
+        ret = 0;
+
+    *out = in;
+    *outSz = inSz;
+
+    WFCLOSE(file);
+
+    return ret;
+}
+#endif
+
+
+#ifndef WOLFSSH_NO_RSA
+static const char* hanselPublicRsa =
+    "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC9P3ZFowOsONXHD5MwWiCciXytBRZGho"
     "MNiisWSgUs5HdHcACuHYPi2W6Z1PBFmBWT9odOrGRjoZXJfDDoPi+j8SSfDGsc/hsCmc3G"
     "p2yEhUZUEkDhtOXyqjns1ickC9Gh4u80aSVtwHRnJZh9xPhSq5tLOhId4eP61s+a5pwjTj"
     "nEhBaIPUJO2C/M0pFnnbZxKgJlX7t1Doy7h5eXxviymOIvaCZKU+x5OopfzM/wFkey0EPW"
     "NmzI5y/+pzU5afsdeEWdiQDIQc80H6Pz8fsoFPvYSG+s4/wz0duu7yeeV1Ypoho65Zr+pE"
-    "nIf7dO0B8EblgWt+ud+JI8wrAhfE4x";
-
+    "nIf7dO0B8EblgWt+ud+JI8wrAhfE4x hansel";
 static const byte hanselPrivateRsa[] = {
   0x30, 0x82, 0x04, 0xa3, 0x02, 0x01, 0x00, 0x02, 0x82, 0x01, 0x01, 0x00,
   0xbd, 0x3f, 0x76, 0x45, 0xa3, 0x03, 0xac, 0x38, 0xd5, 0xc7, 0x0f, 0x93,
@@ -482,14 +565,16 @@ static const byte hanselPrivateRsa[] = {
   0x7c, 0x97, 0x0b, 0x27, 0x2f, 0xae, 0xfc, 0xc3, 0x93, 0xaf, 0x1a, 0x75,
   0xec, 0x18, 0xdb
 };
-
 static const unsigned int hanselPrivateRsaSz = 1191;
+#endif
 
 
-static const char hanselPublicEcc[] =
-    "AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBNkI5JTP6D0lF42tbx"
-    "X19cE87hztUS6FSDoGvPfiU0CgeNSbI+aFdKIzTP5CQEJSvm25qUzgDtH7oyaQROUnNvk=";
-
+#ifndef WOLFSSH_NO_ECC
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+static const char* hanselPublicEcc =
+    "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAA"
+    "BBBNkI5JTP6D0lF42tbxX19cE87hztUS6FSDoGvPfiU0CgeNSbI+aFdKIzTP5CQEJSvm25"
+    "qUzgDtH7oyaQROUnNvk= hansel";
 static const byte hanselPrivateEcc[] = {
   0x30, 0x77, 0x02, 0x01, 0x01, 0x04, 0x20, 0x03, 0x6e, 0x17, 0xd3, 0xb9,
   0xb8, 0xab, 0xc8, 0xf9, 0x1f, 0xf1, 0x2d, 0x44, 0x4c, 0x3b, 0x12, 0xb1,
@@ -503,45 +588,93 @@ static const byte hanselPrivateEcc[] = {
   0x4c, 0xe0, 0x0e, 0xd1, 0xfb, 0xa3, 0x26, 0x90, 0x44, 0xe5, 0x27, 0x36,
   0xf9
 };
-
 static const unsigned int hanselPrivateEccSz = 121;
-
+#elif !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
+static const char* hanselPublicEcc =
+    "ecdsa-sha2-nistp521 AAAAE2VjZHNhLXNoYTItbmlzdHA1MjEAAAAIbmlzdHA1MjEAAA"
+    "CFBAET/BOzBb9Jx9b52VIHFP4g/uk5KceDpz2M+/Ln9WiDjsMfb4NgNCAB+EMNJUX/TNBL"
+    "FFmqr7c6+zUH+QAo2qstvQDsReyFkETRB2vZD//nCZfcAe0RMtKZmgtQLKXzSlimUjXBM4"
+    "/zE5lwE05aXADp88h8nuaT/X4bll9cWJlH0fUykA== hansel";
+static const byte hanselPrivateEcc[] = {
+  0x30, 0x81, 0xdc, 0x02, 0x01, 0x01, 0x04, 0x42, 0x01, 0x79, 0x40, 0xb8,
+  0x33, 0xe5, 0x53, 0x5b, 0x9e, 0xfd, 0xed, 0xbe, 0x7c, 0x68, 0xe4, 0xb6,
+  0xc3, 0x50, 0x00, 0x0d, 0x39, 0x64, 0x05, 0xf6, 0x5a, 0x5d, 0x41, 0xab,
+  0xb3, 0xd9, 0xa7, 0xcb, 0x1c, 0x7d, 0x34, 0x46, 0x5c, 0x2d, 0x56, 0x26,
+  0xa0, 0x6a, 0xc7, 0x3d, 0x4f, 0x78, 0x58, 0x14, 0x66, 0x6c, 0xfc, 0x86,
+  0x3c, 0x8b, 0x5b, 0x54, 0x29, 0x89, 0x93, 0x48, 0xd9, 0x54, 0x8b, 0xbe,
+  0x9d, 0x91, 0xa0, 0x07, 0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x23, 0xa1,
+  0x81, 0x89, 0x03, 0x81, 0x86, 0x00, 0x04, 0x01, 0x13, 0xfc, 0x13, 0xb3,
+  0x05, 0xbf, 0x49, 0xc7, 0xd6, 0xf9, 0xd9, 0x52, 0x07, 0x14, 0xfe, 0x20,
+  0xfe, 0xe9, 0x39, 0x29, 0xc7, 0x83, 0xa7, 0x3d, 0x8c, 0xfb, 0xf2, 0xe7,
+  0xf5, 0x68, 0x83, 0x8e, 0xc3, 0x1f, 0x6f, 0x83, 0x60, 0x34, 0x20, 0x01,
+  0xf8, 0x43, 0x0d, 0x25, 0x45, 0xff, 0x4c, 0xd0, 0x4b, 0x14, 0x59, 0xaa,
+  0xaf, 0xb7, 0x3a, 0xfb, 0x35, 0x07, 0xf9, 0x00, 0x28, 0xda, 0xab, 0x2d,
+  0xbd, 0x00, 0xec, 0x45, 0xec, 0x85, 0x90, 0x44, 0xd1, 0x07, 0x6b, 0xd9,
+  0x0f, 0xff, 0xe7, 0x09, 0x97, 0xdc, 0x01, 0xed, 0x11, 0x32, 0xd2, 0x99,
+  0x9a, 0x0b, 0x50, 0x2c, 0xa5, 0xf3, 0x4a, 0x58, 0xa6, 0x52, 0x35, 0xc1,
+  0x33, 0x8f, 0xf3, 0x13, 0x99, 0x70, 0x13, 0x4e, 0x5a, 0x5c, 0x00, 0xe9,
+  0xf3, 0xc8, 0x7c, 0x9e, 0xe6, 0x93, 0xfd, 0x7e, 0x1b, 0x96, 0x5f, 0x5c,
+  0x58, 0x99, 0x47, 0xd1, 0xf5, 0x32, 0x90
+};
+static const unsigned int hanselPrivateEccSz = 223;
+#else
+    #error "Enable an ECC Curve or disable ECC."
+#endif
+#endif
 
 static int wsUserAuth(byte authType,
                       WS_UserAuthData* authData,
                       void* ctx)
 {
-    int ret = WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
+    int ret = WOLFSSH_USERAUTH_SUCCESS;
 
 #ifdef DEBUG_WOLFSSH
     /* inspect supported types from server */
-    printf("Server supports authentication:\n");
+    printf("Server supports:\n");
     if (authData->type & WOLFSSH_USERAUTH_PASSWORD) {
-        printf(" - password");
+        printf(" - password\n");
     }
     if (authData->type & WOLFSSH_USERAUTH_PUBLICKEY) {
-        printf(" - publickey");
+        printf(" - publickey\n");
     }
     printf("wolfSSH requesting to use type %d\n", authType);
 #endif
 
-    /* We know hansel has a key, wait for request of public key */
-    if (authData->type & WOLFSSH_USERAUTH_PUBLICKEY &&
+    /* Wait for request of public key on names known to have one */
+    if ((authData->type & WOLFSSH_USERAUTH_PUBLICKEY) &&
             authData->username != NULL &&
-            authData->usernameSz > 0 &&
-            XSTRNCMP((char*)authData->username, "hansel",
-                authData->usernameSz) == 0) {
-        if (authType == WOLFSSH_USERAUTH_PASSWORD) {
-            printf("rejecting password type with hansel in favor of pub key\n");
-            return WOLFSSH_USERAUTH_FAILURE;
+            authData->usernameSz > 0) {
+
+        /* in the case that the name is hansel or in the case that the user
+         * passed in a public key file, use public key auth */
+        if ((XSTRNCMP((char*)authData->username, "hansel",
+                authData->usernameSz) == 0) ||
+            pubKeyName != NULL || certName != NULL) {
+
+            if (authType == WOLFSSH_USERAUTH_PASSWORD) {
+                printf("rejecting password type with %s in favor of pub key\n",
+                    (char*)authData->username);
+                return WOLFSSH_USERAUTH_FAILURE;
+            }
         }
     }
 
-    if (authType == WOLFSSH_USERAUTH_PASSWORD) {
-        const char* defaultPassword = (const char*)ctx;
-        word32 passwordSz;
+    if (authType == WOLFSSH_USERAUTH_PUBLICKEY) {
+        WS_UserAuthData_PublicKey* pk = &authData->sf.publicKey;
+
+        pk->publicKeyType = userPublicKeyType;
+        pk->publicKeyTypeSz = userPublicKeyTypeSz;
+        pk->publicKey = userPublicKey;
+        pk->publicKeySz = userPublicKeySz;
+        pk->privateKey = userPrivateKey;
+        pk->privateKeySz = userPrivateKeySz;
 
         ret = WOLFSSH_USERAUTH_SUCCESS;
+    }
+    else if (authType == WOLFSSH_USERAUTH_PASSWORD) {
+        const char* defaultPassword = (const char*)ctx;
+        word32 passwordSz = 0;
+
         if (defaultPassword != NULL) {
             passwordSz = (word32)strlen(defaultPassword);
             memcpy(userPassword, defaultPassword, passwordSz);
@@ -550,8 +683,7 @@ static int wsUserAuth(byte authType,
             printf("Password: ");
             fflush(stdout);
             SetEcho(0);
-            if (WFGETS((char*)userPassword, sizeof(userPassword),
-                        stdin) == NULL) {
+            if (fgets((char*)userPassword, sizeof(userPassword), stdin) == NULL) {
                 printf("Getting password failed.\n");
                 ret = WOLFSSH_USERAUTH_FAILURE;
             }
@@ -572,29 +704,76 @@ static int wsUserAuth(byte authType,
             authData->sf.password.passwordSz = passwordSz;
         }
     }
-    else if (authType == WOLFSSH_USERAUTH_PUBLICKEY) {
-        WS_UserAuthData_PublicKey* pk = &authData->sf.publicKey;
-
-        /* we only have hansel's key loaded */
-        if (authData->username != NULL && authData->usernameSz > 0 &&
-                XSTRNCMP((char*)authData->username, "hansel",
-                    authData->usernameSz) == 0) {
-            pk->publicKeyType = userPublicKeyType;
-            pk->publicKeyTypeSz = (word32)WSTRLEN((char*)userPublicKeyType);
-            pk->publicKey = userPublicKey;
-            pk->publicKeySz = userPublicKeySz;
-            pk->privateKey = userPrivateKey;
-            pk->privateKeySz = userPrivateKeySz;
-            ret = WOLFSSH_USERAUTH_SUCCESS;
-        }
-    }
 
     return ret;
 }
 
 
+#if defined(WOLFSSH_AGENT) || defined(WOLFSSH_CERTS)
+static inline void ato32(const byte* c, word32* u32)
+{
+    *u32 = (c[0] << 24) | (c[1] << 16) | (c[2] << 8) | c[3];
+}
+#endif
+
+
+#if defined(WOLFSSH_CERTS) && \
+    (defined(OPENSSL_ALL) || defined(WOLFSSL_IP_ALT_NAME))
+static int ParseRFC6187(const byte* in, word32 inSz, byte** leafOut,
+    word32* leafOutSz)
+{
+    int ret = WS_SUCCESS;
+    word32 l = 0, m = 0;
+
+    if (inSz < sizeof(word32)) {
+        printf("inSz %d too small for holding cert name\n", inSz);
+        return WS_BUFFER_E;
+    }
+
+    /* Skip the name */
+    ato32(in, &l);
+    m += l + sizeof(word32);
+
+    /* Get the cert count */
+    if (ret == WS_SUCCESS) {
+        word32 count;
+
+        if (inSz - m < sizeof(word32))
+            return WS_BUFFER_E;
+
+        ato32(in + m, &count);
+        m += sizeof(word32);
+        if (ret == WS_SUCCESS && count == 0)
+            ret = WS_FATAL_ERROR; /* need at least one cert */
+    }
+
+    if (ret == WS_SUCCESS) {
+        word32 certSz = 0;
+
+        if (inSz - m < sizeof(word32))
+            return WS_BUFFER_E;
+
+        ato32(in + m, &certSz);
+        m += sizeof(word32);
+        if (ret == WS_SUCCESS) {
+            /* store leaf cert size to present to user callback */
+            *leafOutSz = certSz;
+            *leafOut   = (byte*)in + m;
+        }
+
+        if (inSz - m < certSz)
+            return WS_BUFFER_E;
+
+   }
+
+    return ret;
+}
+#endif /* WOLFSSH_CERTS */
+
 static int wsPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 {
+    int ret = 0;
+
     #ifdef DEBUG_WOLFSSH
         printf("Sample public key check callback\n"
                "  public key = %p\n"
@@ -605,7 +784,52 @@ static int wsPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
         (void)pubKeySz;
         (void)ctx;
     #endif
-    return 0;
+
+#ifdef WOLFSSH_CERTS
+#if defined(OPENSSL_ALL) || defined(WOLFSSL_IP_ALT_NAME)
+    /* try to parse the certificate and check it's IP address */
+    if (pubKeySz > 0) {
+        DecodedCert dCert;
+        byte*  der   = NULL;
+        word32 derSz = 0;
+
+        if (ParseRFC6187(pubKey, pubKeySz, &der, &derSz) == WS_SUCCESS) {
+            wc_InitDecodedCert(&dCert, der,  derSz, NULL);
+            if (wc_ParseCert(&dCert, CERT_TYPE, NO_VERIFY, NULL) != 0) {
+                printf("public key not a cert\n");
+            }
+            else {
+                int ipMatch = 0;
+                DNS_entry* current = dCert.altNames;
+
+                while (current != NULL) {
+                    if (current->type == ASN_IP_TYPE) {
+                        printf("host cert alt. name IP : %s\n",
+                            current->ipString);
+                        printf("\texpecting host IP : %s\n", (char*)ctx);
+                        if (XSTRCMP(ctx, current->ipString) == 0) {
+                            printf("\tmatched!\n");
+                            ipMatch = 1;
+                        }
+                    }
+                    current = current->next;
+                }
+
+                if (ipMatch == 0) {
+                    printf("IP did not match expected IP\n");
+                    ret = -1;
+                }
+            }
+            FreeDecodedCert(&dCert);
+        }
+    }
+#else
+    printf("wolfSSL not built with OPENSSL_ALL or WOLFSSL_IP_ALT_NAME\n");
+    printf("\tnot checking IP address from peer's cert\n");
+#endif
+#endif
+
+    return ret;
 }
 
 
@@ -1331,6 +1555,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     const char* username = NULL;
     const char* password = NULL;
     const char* defaultSftpPath = NULL;
+    const char* privKeyName = NULL;
     byte nonBlock = 0;
     int autopilot = AUTOPILOT_OFF;
     char* apLocal = NULL;
@@ -1340,7 +1565,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     char**  argv = ((func_args*)args)->argv;
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?d:egh:l:p:r:u:AEGNP:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?d:egh:i:j:l:p:r:u:EGNP:J:A:")) != -1) {
         switch (ch) {
             case 'd':
                 defaultSftpPath = myoptarg;
@@ -1398,6 +1623,25 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
                 nonBlock = 1;
                 break;
 
+            case 'i':
+                privKeyName = myoptarg;
+                break;
+
+            case 'j':
+                pubKeyName = myoptarg;
+                break;
+
+        #ifdef WOLFSSH_CERTS
+            case 'J':
+                certName = myoptarg;
+                break;
+
+            case 'A':
+                caCert = myoptarg;
+                break;
+
+        #endif
+
             case '?':
                 ShowUsage();
                 exit(EXIT_SUCCESS);
@@ -1411,6 +1655,11 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 
     if (username == NULL)
         err_sys("client requires a username parameter.");
+
+    if ((pubKeyName == NULL && certName == NULL) && privKeyName != NULL) {
+        err_sys("If setting priv key, need pub key.");
+    }
+
 
 #ifdef WOLFSSH_NO_RSA
     userEcc = 1;
@@ -1429,29 +1678,85 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     }
 #endif
 
-    if (userEcc) {
-        userPublicKeySz = (word32)sizeof(userPublicKey);
-        Base64_Decode((byte*)hanselPublicEcc,
-                (word32)WSTRLEN(hanselPublicEcc),
-                (byte*)userPublicKey, &userPublicKeySz);
-
-        WSTRNCPY((char*)userPublicKeyType, "ecdsa-sha2-nistp256",
-                sizeof(userPublicKeyType));
-        userPrivateKey = hanselPrivateEcc;
-        userPrivateKeySz = hanselPrivateEccSz;
+    if (privKeyName == NULL) {
+        if (userEcc) {
+        #ifndef WOLFSSH_NO_ECC
+            ret = wolfSSH_ReadKey_buffer(hanselPrivateEcc, hanselPrivateEccSz,
+                    WOLFSSH_FORMAT_ASN1, &userPrivateKey, &userPrivateKeySz,
+                    &userPrivateKeyType, &userPrivateKeyTypeSz, NULL);
+        #endif
+        }
+        else {
+        #ifndef WOLFSSH_NO_RSA
+            ret = wolfSSH_ReadKey_buffer(hanselPrivateRsa, hanselPrivateRsaSz,
+                    WOLFSSH_FORMAT_ASN1, &userPrivateKey, &userPrivateKeySz,
+                    &userPrivateKeyType, &userPrivateKeyTypeSz, NULL);
+        #endif
+        }
+        isPrivate = 1;
+        if (ret != 0) err_sys("Couldn't load private key buffer.");
     }
     else {
-        userPublicKeySz = (word32)sizeof(userPublicKey);
-        Base64_Decode((byte*)hanselPublicRsa,
-                (word32)WSTRLEN(hanselPublicRsa),
-                (byte*)userPublicKey, &userPublicKeySz);
-
-        WSTRNCPY((char*)userPublicKeyType, "ssh-rsa",
-                sizeof(userPublicKeyType));
-        userPrivateKey = hanselPrivateRsa;
-        userPrivateKeySz = hanselPrivateRsaSz;
+    #ifndef NO_FILESYSTEM
+        userPrivateKey = NULL; /* create new buffer based on parsed input */
+        ret = wolfSSH_ReadKey_file(privKeyName,
+                (byte**)&userPrivateKey, &userPrivateKeySz,
+                (const byte**)&userPrivateKeyType, &userPrivateKeyTypeSz,
+                &isPrivate, NULL);
+    #else
+        printf("file system not compiled in!\n");
+        ret = -1;
+    #endif
+        if (ret != 0) err_sys("Couldn't load private key file.");
     }
 
+#ifdef WOLFSSH_CERTS
+    /* passed in certificate to use */
+    if (certName) {
+        ret = load_der_file(certName, &userPublicKey, &userPublicKeySz);
+        if (ret != 0) err_sys("Couldn't load certificate file.");
+
+        userPublicKeyType = publicKeyType;
+        userPublicKeyTypeSz = (word32)WSTRLEN((const char*)publicKeyType);
+    }
+    else
+#endif
+    if (pubKeyName == NULL) {
+        byte* p = userPublicKey;
+        userPublicKeySz = sizeof(userPublicKeyBuf);
+
+        if (userEcc) {
+        #ifndef WOLFSSH_NO_ECC
+            ret = wolfSSH_ReadKey_buffer((const byte*)hanselPublicEcc,
+                    (word32)strlen(hanselPublicEcc), WOLFSSH_FORMAT_SSH,
+                    &p, &userPublicKeySz,
+                    &userPublicKeyType, &userPublicKeyTypeSz, NULL);
+        #endif
+        }
+        else {
+        #ifndef WOLFSSH_NO_RSA
+            ret = wolfSSH_ReadKey_buffer((const byte*)hanselPublicRsa,
+                    (word32)strlen(hanselPublicRsa), WOLFSSH_FORMAT_SSH,
+                    &p, &userPublicKeySz,
+                    &userPublicKeyType, &userPublicKeyTypeSz, NULL);
+        #endif
+        }
+        isPrivate = 1;
+        if (ret != 0) err_sys("Couldn't load public key buffer.");
+    }
+    else {
+    #ifndef NO_FILESYSTEM
+        userPublicKey = NULL; /* create new buffer based on parsed input */
+        ret = wolfSSH_ReadKey_file(pubKeyName,
+                &userPublicKey, &userPublicKeySz,
+                (const byte**)&userPublicKeyType, &userPublicKeyTypeSz,
+                &isPrivate, NULL);
+    #else
+        printf("file system not compiled in!\n");
+        ret = -1;
+    #endif
+        if (ret != 0) err_sys("Couldn't load public key file.");
+    }
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
     if (ctx == NULL)
         err_sys("Couldn't create wolfSSH client context.");
@@ -1481,8 +1786,27 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     if (password != NULL)
         wolfSSH_SetUserAuthCtx(ssh, (void*)password);
 
+#ifdef WOLFSSH_CERTS
+    /* CA certificate to verify host cert with */
+    if (caCert) {
+        byte* der = NULL;
+        word32 derSz;
+
+        ret = load_der_file(caCert, &der, &derSz);
+        if (ret != 0) err_sys("Couldn't load CA certificate file.");
+        if (wolfSSH_CTX_AddRootCert_buffer(ctx, der, derSz,
+            WOLFSSH_FORMAT_ASN1) != WS_SUCCESS) {
+            err_sys("Couldn't parse in CA certificate.");
+        }
+        WFREE(der, NULL, 0);
+    }
+
+#else
+    (void)caCert;
+#endif /* WOLFSSH_CERTS */
+
     wolfSSH_CTX_SetPublicKeyCheck(ctx, wsPublicKeyCheck);
-    wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)"You've been sampled!");
+    wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)host);
 
     ret = wolfSSH_SetUsername(ssh, username);
     if (ret != WS_SUCCESS)
@@ -1551,6 +1875,14 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     if (ret != WS_SUCCESS) {
         printf("error %d encountered\n", ret);
         ((func_args*)args)->return_code = ret;
+    }
+
+    if (pubKeyName != NULL && userPublicKey != NULL) {
+        WFREE(userPublicKey, NULL, DYNTYPE_PRIVKEY);
+    }
+
+    if (privKeyName != NULL && userPrivateKey != NULL) {
+        WFREE(userPrivateKey, NULL, DYNTYPE_PRIVKEY);
     }
 #if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */

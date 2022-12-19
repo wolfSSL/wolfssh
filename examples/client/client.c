@@ -596,6 +596,9 @@ static int wsPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
             FreeDecodedCert(&dCert);
         }
     }
+#else
+    printf("wolfSSL not built with OPENSSL_ALL or WOLFSSL_IP_ALT_NAME\n");
+    printf("\tnot checking IP address from peer's cert\n");
 #endif
 #endif
 
