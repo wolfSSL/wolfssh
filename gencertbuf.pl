@@ -4,7 +4,7 @@
 # version 1.0
 # Updated 04/08/2019
 #
-# Copyright (C) 2014-2020 wolfSSL Inc.
+# Copyright (C) 2014-2022 wolfSSL Inc.
 #
 
 use strict;
