@@ -4767,9 +4767,10 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
 /* Utility for DoUserAuthRequestPublicKey() */
 /* returns negative for error, positive is size of digest. */
 static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
-                                byte hashId, byte* digest, word32 digestSz)
+                                enum wc_HashType hashId, byte* digest,
+                                word32 digestSz)
 {
-    enum wc_HashType enmhashId = (enum wc_HashType)hashId;
+    enum wc_HashType enmhashId = hashId;
     byte *checkDigest = NULL;
     byte *encDigest = NULL;
     int checkDigestSz;
@@ -4936,9 +4937,10 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 #ifdef WOLFSSH_CERTS
 /* return WS_SUCCESS on success */
 static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
-                                byte hashId, byte* digest, word32 digestSz)
+                                    enum wc_HashType hashId, byte* digest,
+                                    word32 digestSz)
 {
-    enum wc_HashType enmhashId = (enum wc_HashType)hashId;
+    enum wc_HashType enmhashId = hashId;
     byte *checkDigest = NULL;
     byte *encDigest = NULL;
     int checkDigestSz;
@@ -5107,7 +5109,8 @@ static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 /* Utility for DoUserAuthRequestPublicKey() */
 /* returns negative for error, positive is size of digest. */
 static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
-                                byte hashId, byte* digest, word32 digestSz)
+                                enum wc_HashType hashId, byte* digest,
+                                word32 digestSz)
 {
     const byte* publicKeyType;
     word32 publicKeyTypeSz = 0;
@@ -5270,7 +5273,8 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 
 #ifdef WOLFSSH_CERTS
 static int DoUserAuthRequestEccCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
-                                byte hashId, byte* digest, word32 digestSz)
+                                    enum wc_HashType hashId, byte* digest,
+                                    word32 digestSz)
 {
     const byte* publicKeyType;
     word32 publicKeyTypeSz = 0;
