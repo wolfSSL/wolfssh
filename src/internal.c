@@ -5240,7 +5240,7 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 
     if (ret == WS_SUCCESS) {
         ret = wc_SignatureVerifyHash(
-                         hashId,
+                         (enum wc_HashType)hashId,
                          WC_SIGNATURE_TYPE_ECC,
                          digest, digestSz, asnSig, asnSigSz,
                          key_ptr, sizeof *key_ptr);
@@ -5392,7 +5392,7 @@ static int DoUserAuthRequestEccCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 
     if (ret == WS_SUCCESS) {
         ret = wc_SignatureVerifyHash(
-                         hashId,
+                         (enum wc_HashType)hashId,
                          WC_SIGNATURE_TYPE_ECC,
                          digest, digestSz, asnSig, asnSigSz,
                          key_ptr, sizeof *key_ptr);
