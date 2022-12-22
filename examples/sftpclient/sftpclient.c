@@ -123,12 +123,14 @@ static void myStatusCb(WOLFSSH* sshIn, word32* bytes, char* name)
     currentTime = current_time(0) - startTime;
     WSNPRINTF(buf, sizeof(buf), "Processed %8llu\t bytes in %d seconds\r",
             (unsigned long long)longBytes, currentTime);
+#ifndef WOLFSSH_NO_SFTP_TIMEOUT
     if (currentTime > TIMEOUT_VALUE) {
         WSNPRINTF(buf, sizeof(buf), "\nProcess timed out at %d seconds, "
                 "stopping\r", currentTime);
         WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
         wolfSSH_SFTP_Interrupt(ssh);
     }
+#endif
 #else
     WSNPRINTF(buf, sizeof(buf), "Processed %8llu\t bytes \r",
             (unsigned long long)longBytes);
@@ -1016,7 +1018,8 @@ static int doCmds(func_args* args)
                 if (ret != WS_SUCCESS) {
                     ret = wolfSSH_get_error(ssh);
                 }
-            } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE);
+            } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE ||
+                    ret == WS_CHAN_RXD);
 
 #ifndef WOLFSSH_NO_TIMESTAMP
             WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
@@ -1111,8 +1114,8 @@ static int doCmds(func_args* args)
             do {
                 ret = wolfSSH_SFTP_Put(ssh, pt, to, resume, &myStatusCb);
                 err = wolfSSH_get_error(ssh);
-            } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
-                        && ret != WS_SUCCESS);
+            } while ((err == WS_WANT_READ || err == WS_WANT_WRITE ||
+                        err == WS_CHAN_RXD) && ret != WS_SUCCESS);
 
 #ifndef WOLFSSH_NO_TIMESTAMP
             WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
@@ -1521,8 +1524,8 @@ static int doAutopilot(int cmd, char* local, char* remote)
             ret = wolfSSH_SFTP_Get(ssh, fullpath, local, 0, NULL);
         }
         err = wolfSSH_get_error(ssh);
-    } while ((err == WS_WANT_READ || err == WS_WANT_WRITE) &&
-            ret != WS_SUCCESS);
+    } while ((err == WS_WANT_READ || err == WS_WANT_WRITE ||
+                err == WS_CHAN_RXD) && ret != WS_SUCCESS);
 
     if (ret != WS_SUCCESS) {
         if (cmd == AUTOPILOT_PUT) {

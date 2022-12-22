@@ -398,6 +398,16 @@ static WS_SFTPNAME* wolfSSH_SFTPNAME_new(void* heap);
 static int SFTP_CreateLongName(WS_SFTPNAME* name);
 
 
+/* A few errors are OK to get. They are a notice rather that a fault.
+ * return TRUE if ssh->error is one of the following: */
+INLINE int NoticeError(WOLFSSH* ssh)
+{
+    return (ssh->error == WS_WANT_READ ||
+            ssh->error == WS_WANT_WRITE ||
+            ssh->error == WS_CHAN_RXD);
+}
+
+
 static byte* wolfSSH_SFTP_buffer_data(WS_SFTP_BUFFER* buffer)
 {
     byte* ret = NULL;
@@ -8117,8 +8127,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                             state->gOfst, state->r,
                             WOLFSSH_MAX_SFTP_RW);
                     if (sz < 0) {
-                        if (ssh->error == WS_WANT_READ ||
-                                ssh->error == WS_WANT_WRITE) {
+                        if (NoticeError(ssh)) {
                             return WS_FATAL_ERROR;
                         }
                         WLOG(WS_LOG_SFTP, "Error reading packet");
