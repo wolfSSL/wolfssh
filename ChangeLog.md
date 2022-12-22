@@ -19,6 +19,7 @@
 - Fixes for compiler complaints using GCC 4.0.2
 - Fixes for the directory path cleanup function for SFTP
 - Fixes for SFTP directory listing when on Windows
+- Fixes for large file transfers with SFTP
 - Fixes for port forwarding
 - Fix for building with QNX
 - Fix for the wolfSSHd grace time alarm
