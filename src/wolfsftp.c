@@ -2762,7 +2762,6 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
     {
         char* buf;
         int   bufSz;
-        int   tmpSz;
 
         bufSz = out->fSz + (int)WSTRLEN(dirName) + 2; /* /+nul */
         buf = (char*)WMALLOC(bufSz, out->heap, DYNTYPE_SFTP);
