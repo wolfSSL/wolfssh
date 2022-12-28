@@ -711,16 +711,14 @@ static int wsUserAuth(byte authType,
 }
 
 
-#if defined(WOLFSSH_AGENT) || defined(WOLFSSH_CERTS)
+#if defined(WOLFSSH_CERTS) && \
+    (defined(OPENSSL_ALL) || defined(WOLFSSL_IP_ALT_NAME))
 static inline void ato32(const byte* c, word32* u32)
 {
     *u32 = (c[0] << 24) | (c[1] << 16) | (c[2] << 8) | c[3];
 }
-#endif
 
 
-#if defined(WOLFSSH_CERTS) && \
-    (defined(OPENSSL_ALL) || defined(WOLFSSL_IP_ALT_NAME))
 static int ParseRFC6187(const byte* in, word32 inSz, byte** leafOut,
     word32* leafOutSz)
 {

@@ -1085,6 +1085,15 @@ int wolfSSH_ApiTest(int argc, char** argv)
 
     AssertIntEQ(wolfSSH_Init(), WS_SUCCESS);
 
+    #if defined(FIPS_VERSION_GE) && FIPS_VERSION_GE(5,2)
+    {
+        int i;
+        for (i = 0; i < FIPS_CAST_COUNT; i++) {
+            AssertIntEQ(wc_RunCast_fips(i), WS_SUCCESS);
+        }
+    }
+    #endif /* HAVE_FIPS */
+
     test_wstrcat();
     test_wolfSSH_CTX_new();
     test_server_wolfSSH_new();

@@ -1,4 +1,4 @@
-# wolfSSH v1.4.12 (Dec 21, 2022)
+# wolfSSH v1.4.12 (Dec 28, 2022)
 
 ## New Feature Additions and Improvements
 - Support for Green Hills Software's INTEGRITY

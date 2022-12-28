@@ -329,6 +329,8 @@ int wolfSSH_UnitTest(int argc, char** argv)
     (void)argc;
     (void)argv;
 
+    wolfSSH_Init();
+
     unitResult = test_Errors();
     printf("Errors: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
@@ -349,6 +351,8 @@ int wolfSSH_UnitTest(int argc, char** argv)
     testResult = testResult || unitResult;
 #endif
 #endif
+
+    wolfSSH_Cleanup();
 
     return (testResult ? 1 : 0);
 }

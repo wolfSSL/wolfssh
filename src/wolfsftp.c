@@ -400,7 +400,7 @@ static int SFTP_CreateLongName(WS_SFTPNAME* name);
 
 /* A few errors are OK to get. They are a notice rather that a fault.
  * return TRUE if ssh->error is one of the following: */
-INLINE int NoticeError(WOLFSSH* ssh)
+static INLINE int NoticeError(WOLFSSH* ssh)
 {
     return (ssh->error == WS_WANT_READ ||
             ssh->error == WS_WANT_WRITE ||
