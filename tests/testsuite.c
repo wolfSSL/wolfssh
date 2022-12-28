@@ -47,6 +47,10 @@
     #include "tests/sftp.h"
 #endif
 
+#ifdef HAVE_FIPS
+    #include <wolfssl/wolfcrypt/fips_test.h>
+#endif
+
 #ifndef NO_TESTSUITE_MAIN_DRIVER
 
 int main(int argc, char** argv)
@@ -111,6 +115,16 @@ int wolfSSH_TestsuiteTest(int argc, char** argv)
     #endif
 
     wolfSSH_Init();
+
+    #if defined(FIPS_VERSION_GE) && FIPS_VERSION_GE(5,2)
+    {
+        int i;
+        for (i = 0; i < FIPS_CAST_COUNT; i++) {
+            wc_RunCast_fips(i);
+        }
+    }
+    #endif /* HAVE_FIPS */
+
     #if !defined(WOLFSSL_TIRTOS)
         ChangeToWolfSshRoot();
     #endif

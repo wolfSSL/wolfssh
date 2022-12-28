@@ -10736,8 +10736,8 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
                 #endif
                 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
                 case ID_X509V3_ECDSA_SHA2_NISTP521:
-                    names = cannedKeyAlgoX509Ecc512Names;
-                    namesSz = cannedKeyAlgoX509Ecc512NamesSz;
+                    names = cannedKeyAlgoX509Ecc521Names;
+                    namesSz = cannedKeyAlgoX509Ecc521NamesSz;
                     break;
                 #endif
                 default:
