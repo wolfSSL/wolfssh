@@ -46,6 +46,9 @@
     #include <wolfssh/certman.h>
 #endif /* WOLFSSH_CERTS */
 
+#ifdef WOLFSSH_TPM
+    #include <wolftpm/tpm2_wrap.h>
+#endif /* WOLFSSH_TPM */
 
 #if !defined (ALIGN16)
     #if defined (__GNUC__)
@@ -453,6 +456,10 @@ struct WOLFSSH_CTX {
 #ifdef WOLFSSH_AGENT
     byte agentEnabled;
 #endif /* WOLFSSH_AGENT */
+#ifdef WOLFSSH_TPM
+    WOLFTPM2_DEV* tpmDev;
+    WOLFTPM2_KEY* tpmKey;
+#endif /* WOLFSSH_TPM */
 };
 
 

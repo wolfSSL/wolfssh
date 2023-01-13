@@ -56,6 +56,9 @@
     #include "src/misc.c"
 #endif
 
+#ifdef WOLFSSH_TPM
+    #include <wolftpm/tpm2_wrap.h>
+#endif
 
 /*
 Flags:
@@ -10087,11 +10090,21 @@ static int BuildUserAuthRequestRsa(WOLFSSH* ssh,
                 ret = WS_CRYPTO_FAILED;
             }
             else {
-                int sigSz;
+                int sigSz = 0;
                 WLOG(WS_LOG_INFO, "Signing hash with RSA.");
+#ifdef WOLFSSH_TPM
+                if (ssh->ctx->tpmDev && ssh->ctx->tpmKey) {
+                    wolfTPM2_SignHashScheme(ssh->ctx->tpmDev, ssh->ctx->tpmKey,
+                                            encDigest, encDigestSz,
+                                            output+begin, (int*)&sigSz,
+                                            TPM_ALG_OAEP, TPM_ALG_SHA1);
+                }
+                else
+#else
                 sigSz = wc_RsaSSL_Sign(encDigest, encDigestSz,
                         output + begin, keySig->sigSz,
                         &keySig->ks.rsa.key, ssh->rng);
+#endif
                 if (sigSz <= 0 || (word32)sigSz != keySig->sigSz) {
                     WLOG(WS_LOG_DEBUG, "SUAR: Bad RSA Sign");
                     ret = WS_RSA_E;
