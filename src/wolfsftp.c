@@ -5302,6 +5302,12 @@ static int wolfSSH_SFTP_DoStatus(WOLFSSH* ssh, word32 reqId,
     }
 
     wolfSSH_SFTP_buffer_seek(buffer, 0, localIdx);
+
+    if (status != WOLFSSH_FTP_OK &&
+            ssh->error != WS_WANT_READ && ssh->error != WS_WANT_WRITE) {
+        /* set ssh error as the SFTP status not being ok */
+        ssh->error = WS_SFTP_STATUS_NOT_OK;
+    }
     return status;
 }
 
