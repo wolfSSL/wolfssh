@@ -52,6 +52,7 @@ static const char* cmds[] = {
     "ls",
     "chmod 600 test-get-2",
     "rm test-get-2",
+    "ls -s",
     "exit"
 };
 static int commandIdx = 0;
@@ -102,6 +103,9 @@ static int Expected(int command)
 
         case 13:
             return (WSTRNSTR(inBuf, "test-get-2", sizeof(inBuf)) == NULL);
+
+        case 16:
+            return (WSTRNSTR(inBuf, "size in bytes", sizeof(inBuf)) == NULL);
 
         default:
             break;
