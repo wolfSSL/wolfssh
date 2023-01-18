@@ -7,6 +7,12 @@ TEST_PORT=$2
 TOTAL=0
 SKIPPED=0
 
+# setup
+set -e
+./create_authorized_test_file.sh
+./create_sshd_config.sh
+set +e
+
 if [ ! -z "$TEST_HOST" ] && [ ! -z "$TEST_PORT" ]; then
     USING_LOCAL_HOST=0
     echo "Connecting to external host $TEST_HOST:$TEST_PORT"
@@ -22,7 +28,6 @@ else
         exit -1
     fi
 fi
-
 
 run_test() {
     printf "$1 ... "
@@ -44,12 +49,6 @@ run_test() {
         exit -1
     fi
 }
-
-# setup
-set -e
-./create_authorized_test_file.sh
-./create_sshd_config.sh
-set +e
 
 run_test "sshd_exec_test.sh"
 # add aditional tests here, check on var USING_LOCAL_HOST if can make sshd
