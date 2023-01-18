@@ -807,6 +807,7 @@ static int UserAuthResult(byte result,
 static void* HandleConnection(void* arg)
 {
     int ret = WS_SUCCESS;
+    int error;
 
     WOLFSSHD_CONNECTION* conn = NULL;
     WOLFSSH* ssh = NULL;
@@ -826,7 +827,6 @@ static void* HandleConnection(void* arg)
     }
 
     if (ret == WS_SUCCESS) {
-        int error;
         int select_ret = 0;
         long graceTime;
 
@@ -949,8 +949,50 @@ static void* HandleConnection(void* arg)
         }
     }
 
-    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Attempting to close down connection");
-    wolfSSH_shutdown(ssh);
+    error = wolfSSH_get_error(ssh);
+    if (error != WS_SOCKET_ERROR_E && error != WS_FATAL_ERROR) {
+        wolfSSH_Log(WS_LOG_INFO, "[SSHD] Attempting to close down connection");
+        ret = wolfSSH_shutdown(ssh);
+
+        /* peer hung up, stop shutdown */
+        if (ret == WS_SOCKET_ERROR_E) {
+            ret = 0;
+        }
+
+        error = wolfSSH_get_error(ssh);
+        if (error != WS_SOCKET_ERROR_E &&
+                (error == WS_WANT_READ || error == WS_WANT_WRITE)) {
+            int maxAttempt = 10; /* make 10 attempts max before giving up */
+            int attempt;
+
+            for (attempt = 0; attempt < maxAttempt; attempt++) {
+                ret = wolfSSH_worker(ssh, NULL);
+                error = wolfSSH_get_error(ssh);
+
+                /* peer succesfully closed down gracefully */
+                if (ret == WS_CHANNEL_CLOSED) {
+                    ret = 0;
+                    break;
+                }
+
+                /* peer hung up, stop shutdown */
+                if (ret == WS_SOCKET_ERROR_E) {
+                    ret = 0;
+                    break;
+                }
+
+                if (error != WS_WANT_READ && error != WS_WANT_WRITE) {
+                    break;
+                }
+            }
+
+            if (attempt == maxAttempt) {
+                wolfSSH_Log(WS_LOG_INFO,
+                    "[SSHD] Gave up on gracefull shutdown, closing the socket");
+            }
+        }
+    }
+
     wolfSSH_free(ssh);
     if (conn != NULL) {
         WCLOSESOCKET(conn->fd);
