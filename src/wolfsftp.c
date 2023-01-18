@@ -5302,12 +5302,6 @@ static int wolfSSH_SFTP_DoStatus(WOLFSSH* ssh, word32 reqId,
     }
 
     wolfSSH_SFTP_buffer_seek(buffer, 0, localIdx);
-
-    if (status != WOLFSSH_FTP_OK &&
-            ssh->error != WS_WANT_READ && ssh->error != WS_WANT_WRITE) {
-        /* set ssh error as the SFTP status not being ok */
-        ssh->error = WS_SFTP_STATUS_NOT_OK;
-    }
     return status;
 }
 
@@ -5885,7 +5879,7 @@ static int wolfSSH_SFTP_GetHandle(WOLFSSH* ssh, byte* handle, word32* handleSz)
                 if (ret == WOLFSSH_FTP_OK)
                     ret = WS_SUCCESS;
                 else
-                    ret = WS_FATAL_ERROR;
+                    ret = WS_SFTP_STATUS_NOT_OK;
                 state->state = STATE_GET_HANDLE_CLEANUP;
                 continue;
 
@@ -6279,7 +6273,7 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                         if (ret == WOLFSSH_FTP_PERMISSION) {
                             return WS_PERMISSIONS;
                         }
-                        return WS_FATAL_ERROR;
+                        return WS_SFTP_STATUS_NOT_OK;
                     }
                 }
                 else {
@@ -6813,8 +6807,7 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 }
                 else if (status != WOLFSSH_FTP_OK) {
                     /* @TODO better error value description i.e permissions */
-                    ssh->error = WS_SFTP_STATUS_NOT_OK;
-                    ret = WS_FATAL_ERROR;
+                    ret = WS_SFTP_STATUS_NOT_OK;
                 }
                 if (ret >= WS_SUCCESS)
                     ret = sentSzSave;
@@ -7655,8 +7648,7 @@ int wolfSSH_SFTP_Rename(WOLFSSH* ssh, const char* old, const char* nw)
                     ret = WS_FATAL_ERROR;
                 }
                 else if (ret != WOLFSSH_FTP_OK) {
-                    ssh->error = WS_SFTP_STATUS_NOT_OK;
-                    ret = WS_FATAL_ERROR;
+                    ret = WS_SFTP_STATUS_NOT_OK;
                 }
                 state->state = STATE_RENAME_CLEANUP;
                 NO_BREAK;
@@ -8011,6 +8003,9 @@ void wolfSSH_SFTP_Interrupt(WOLFSSH* ssh)
  *          loop with bytes written.
  *
  * returns WS_SUCCESS on success
+ * returns WS_FATAL_ERROR on low level error or SSH level error
+ *                        call wolfSSH_get_error(ssh) to try to get SSH error
+ * other reuturn values are error states during the SFTP get process
  */
 int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
         char* to, byte resume, WS_STATUS_CB* statusCb)
