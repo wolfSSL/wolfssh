@@ -6710,17 +6710,14 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 WLOG(WS_LOG_SFTP, "SFTP SEND_WRITE STATE: SEND_BODY");
                 state->sentSz = wolfSSH_stream_send(ssh, in, inSz);
                 if (state->sentSz == WS_WINDOW_FULL ||
-                        state->sentSz == WS_REKEYING) {
+                        state->sentSz == WS_REKEYING ||
+                        state->sentSz == WS_WANT_READ ||
+                        state->sentSz == WS_WANT_WRITE) {
                     ret = wolfSSH_worker(ssh, NULL);
-                    if (ret == WS_SUCCESS)
-                        continue; /* skip past rest and send more */
+                    continue; /* skip past rest and send more */
                 }
 
                 if (state->sentSz <= 0) {
-                    if (ssh->error == WS_WANT_READ ||
-                            ssh->error == WS_WANT_WRITE) {
-                        return WS_FATAL_ERROR;
-                    }
                     ssh->error = state->sentSz;
                     ret = WS_FATAL_ERROR;
                     state->state = STATE_SEND_WRITE_CLEANUP;
