@@ -195,6 +195,7 @@ static void ShowUsage(void)
     printf("               Certificate example : client -u orange \\\n");
     printf("               -J orange-cert.der -i orange-key.der\n");
     printf(" -A <filename> filename for DER CA certificate to verify host\n");
+    printf(" -X            Ignore IP checks on peer vs peer certificate\n");
 #endif
 }
 
@@ -493,6 +494,10 @@ static inline void ato32(const byte* c, word32* u32)
 
 #if defined(WOLFSSH_CERTS) && \
     (defined(OPENSSL_ALL) || defined(WOLFSSL_IP_ALT_NAME))
+
+/* when set as true then ignore miss matching IP addresses */
+static int IPOverride = 0;
+
 static int ParseRFC6187(const byte* in, word32 inSz, byte** leafOut,
     word32* leafOutSz)
 {
@@ -592,7 +597,9 @@ static int wsPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 
                 if (ipMatch == 0) {
                     printf("IP did not match expected IP\n");
-                    ret = -1;
+                    if (!IPOverride) {
+                        ret = -1;
+                    }
                 }
             }
             FreeDecodedCert(&dCert);
@@ -1027,7 +1034,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     char**  argv = ((func_args*)args)->argv;
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?ac:eh:i:j:p:tu:xzNP:RJ:A:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?ac:eh:i:j:p:tu:xzNP:RJ:A:X")) != -1) {
         switch (ch) {
             case 'h':
                 host = myoptarg;
@@ -1075,6 +1082,10 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
             case 'A':
                 caCert = myoptarg;
+                break;
+
+            case 'X':
+                IPOverride = 1;
                 break;
 
         #endif
