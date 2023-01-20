@@ -5878,8 +5878,10 @@ static int wolfSSH_SFTP_GetHandle(WOLFSSH* ssh, byte* handle, word32* handleSz)
                 WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
                 if (ret == WOLFSSH_FTP_OK)
                     ret = WS_SUCCESS;
-                else
+                else {
+                    *handleSz = 0; /* error getting handle */
                     ret = WS_SFTP_STATUS_NOT_OK;
+                }
                 state->state = STATE_GET_HANDLE_CLEANUP;
                 continue;
 
@@ -8181,15 +8183,17 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                 NO_BREAK;
 
             case STATE_GET_CLOSE_REMOTE:
-                WLOG(WS_LOG_SFTP, "SFTP GET STATE: CLOSE REMOTE");
-                ret = wolfSSH_SFTP_Close(ssh,
+                if (state->handleSz > 0) {
+                    WLOG(WS_LOG_SFTP, "SFTP GET STATE: CLOSE REMOTE");
+                    ret = wolfSSH_SFTP_Close(ssh,
                                          state->handle, state->handleSz);
-                if (ret != WS_SUCCESS) {
-                    if (ssh->error == WS_WANT_READ ||
-                            ssh->error == WS_WANT_WRITE) {
-                        return WS_FATAL_ERROR;
+                    if (ret != WS_SUCCESS) {
+                        if (ssh->error == WS_WANT_READ ||
+                                ssh->error == WS_WANT_WRITE) {
+                            return WS_FATAL_ERROR;
+                        }
+                        WLOG(WS_LOG_SFTP, "Error closing remote handle");
                     }
-                    WLOG(WS_LOG_SFTP, "Error closing remote handle");
                 }
                 state->state = STATE_GET_CLOSE_LOCAL;
                 NO_BREAK;
@@ -8397,15 +8401,18 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                 NO_BREAK;
 
             case STATE_PUT_CLOSE_REMOTE:
-                WLOG(WS_LOG_SFTP, "SFTP PUT STATE: CLOSE REMOTE");
-                ret = wolfSSH_SFTP_Close(ssh, state->handle, state->handleSz);
-                if (ret != WS_SUCCESS) {
-                    if (ssh->error == WS_WANT_READ ||
-                            ssh->error == WS_WANT_WRITE) {
-                        return WS_FATAL_ERROR;
+                if (state->handleSz > 0) {
+                    WLOG(WS_LOG_SFTP, "SFTP PUT STATE: CLOSE REMOTE");
+                    ret = wolfSSH_SFTP_Close(ssh, state->handle,
+                        state->handleSz);
+                    if (ret != WS_SUCCESS) {
+                        if (ssh->error == WS_WANT_READ ||
+                                ssh->error == WS_WANT_WRITE) {
+                            return WS_FATAL_ERROR;
+                        }
+                        WLOG(WS_LOG_SFTP, "Error closing handle");
+                        /* Fall through to cleanup. */
                     }
-                    WLOG(WS_LOG_SFTP, "Error closing handle");
-                    /* Fall through to cleanup. */
                 }
                 state->state = STATE_PUT_CLEANUP;
                 NO_BREAK;
