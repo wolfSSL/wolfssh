@@ -109,4 +109,22 @@ then
     exit 1
 fi
 
+# using full path test.
+rm -rf sample2-copy.txt
+PWD=`pwd`
+if ! ./examples/sftpclient/wolfsftp -u jill -P upthehill -p "$PORT" \
+    -g -l sample2.txt -r $PWD/sample2-copy.txt
+then
+    echo "Unable to put file using full path."
+    do_cleanup
+    exit 1
+fi
+
+if ! diff sample2.txt sample2-copy.txt >/dev/null
+then
+    echo "Put test files do not match after using full path."
+    do_cleanup
+    exit 1
+fi
+
 do_cleanup

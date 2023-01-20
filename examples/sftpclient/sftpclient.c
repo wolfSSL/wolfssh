@@ -1502,17 +1502,24 @@ static int doAutopilot(int cmd, char* local, char* remote)
     int err;
     int ret = WS_SUCCESS;
     char fullpath[128] = ".";
-    WS_SFTPNAME* name;
+    WS_SFTPNAME* name  = NULL;
 
-    do {
-        name = wolfSSH_SFTP_RealPath(ssh, fullpath);
-        err = wolfSSH_get_error(ssh);
-    } while ((err == WS_WANT_READ || err == WS_WANT_WRITE) &&
+    if (remote != NULL && remote[0] == '/') {
+        /* use remote absolute path if provided */
+        WMEMSET(fullpath, 0, sizeof(fullpath));
+        WSTRNCPY(fullpath, remote, sizeof(fullpath) - 1);
+    }
+    else {
+        do {
+            name = wolfSSH_SFTP_RealPath(ssh, fullpath);
+            err = wolfSSH_get_error(ssh);
+        } while ((err == WS_WANT_READ || err == WS_WANT_WRITE) &&
             ret != WS_SUCCESS);
 
-    snprintf(fullpath, sizeof(fullpath), "%s/%s",
+        snprintf(fullpath, sizeof(fullpath), "%s/%s",
             name == NULL ? "." : name->fName,
             remote);
+    }
 
     do {
         if (cmd == AUTOPILOT_PUT) {
