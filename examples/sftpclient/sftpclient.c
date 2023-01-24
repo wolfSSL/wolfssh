@@ -1013,7 +1013,7 @@ static int doCmds(func_args* args)
 
             do {
                 ret = wolfSSH_SFTP_Get(ssh, pt, to, resume, &myStatusCb);
-                if (ret != WS_SUCCESS) {
+                if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
                     ret = wolfSSH_get_error(ssh);
                 }
             } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE ||
@@ -1113,7 +1113,7 @@ static int doCmds(func_args* args)
                 ret = wolfSSH_SFTP_Put(ssh, pt, to, resume, &myStatusCb);
                 err = wolfSSH_get_error(ssh);
             } while ((err == WS_WANT_READ || err == WS_WANT_WRITE ||
-                        err == WS_CHAN_RXD) && ret != WS_SUCCESS);
+                        err == WS_CHAN_RXD) && ret == WS_FATAL_ERROR);
 
 #ifndef WOLFSSH_NO_TIMESTAMP
             WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
@@ -1544,7 +1544,7 @@ static int doAutopilot(int cmd, char* local, char* remote)
         }
         err = wolfSSH_get_error(ssh);
     } while ((err == WS_WANT_READ || err == WS_WANT_WRITE ||
-                err == WS_CHAN_RXD) && ret != WS_SUCCESS);
+                err == WS_CHAN_RXD) && ret == WS_FATAL_ERROR);
 
     if (ret != WS_SUCCESS) {
         if (cmd == AUTOPILOT_PUT) {
