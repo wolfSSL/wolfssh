@@ -1448,8 +1448,29 @@ static int doCmds(func_args* args)
                 err = wolfSSH_get_error(ssh);
             } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
                         && current == NULL && err != WS_SUCCESS);
+
+            if (WSTRNSTR(msg, "-s", MAX_CMD_SZ) != NULL) {
+                char tmpStr[WOLFSSH_MAX_FILENAME];
+                XMEMSET(tmpStr, 0, WOLFSSH_MAX_FILENAME);
+                XSNPRINTF(tmpStr, WOLFSSH_MAX_FILENAME, "size in bytes, file name\n");
+                if (SFTP_FPUTS(args, tmpStr) < 0) {
+                    err_msg("fputs error");
+                    return -1;
+                }
+            }
+
             tmp = current;
             while (tmp != NULL) {
+                if (WSTRNSTR(msg, "-s", MAX_CMD_SZ) != NULL) {
+                    char tmpStr[WOLFSSH_MAX_FILENAME];
+                    XSNPRINTF(tmpStr, WOLFSSH_MAX_FILENAME, "%ld, ",
+                       (long)(((long)tmp->atrb.sz[1] << 32) | tmp->atrb.sz[0]));
+                    if (SFTP_FPUTS(args, tmpStr) < 0) {
+                        err_msg("fputs error");
+                        return -1;
+                    }
+                }
+
                 if (SFTP_FPUTS(args, tmp->fName) < 0) {
                     err_msg("fputs error");
                     return -1;
