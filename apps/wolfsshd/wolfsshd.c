@@ -551,7 +551,7 @@ static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
  * user input as well as output of the shell.
  * return WS_SUCCESS on success */
 static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
-    WPASSWD* pPasswd, WOLFSSHD_CONFIG* usrConf)
+    WPASSWD* pPasswd, WOLFSSHD_CONFIG* usrConf, const char* subCmd)
 {
     WS_SOCKET_T sshFd = 0;
     int rc;
@@ -565,6 +565,13 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     char* forcedCmd;
 
     forcedCmd = wolfSSHD_ConfigGetForcedCmd(usrConf);
+
+    /* do not overwrite a forced command with 'exec' sub shell. Only set the
+     * 'exec' command when no forced command is set */
+    if (forcedCmd == NULL) {
+        forcedCmd = (char*)subCmd;
+    }
+
     if (forcedCmd != NULL && XSTRCMP(forcedCmd, "internal-sftp") == 0) {
         wolfSSH_Log(WS_LOG_ERROR,
                                 "[SSHD] Only SFTP connections allowed for user "
@@ -588,7 +595,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     }
     else if (childPid == 0) {
         /* Child process */
-        const char *args[] = {"-sh", NULL};
+        const char *args[] = {"-sh", NULL, NULL, NULL};
         char cmd[MAX_COMMAND_SZ];
         int ret;
 
@@ -651,8 +658,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 
         errno = 0;
         if (forcedCmd) {
-            args[0] = NULL;
-            ret = execv(forcedCmd, (char**)args);
+            args[1] = "-c";
+            args[2] = forcedCmd;
+            ret = execv(cmd, (char**)args);
         }
         else {
             ret = execv(cmd, (char**)args);
@@ -799,6 +807,7 @@ static int UserAuthResult(byte result,
 static void* HandleConnection(void* arg)
 {
     int ret = WS_SUCCESS;
+    int error;
 
     WOLFSSHD_CONNECTION* conn = NULL;
     WOLFSSH* ssh = NULL;
@@ -818,7 +827,6 @@ static void* HandleConnection(void* arg)
     }
 
     if (ret == WS_SUCCESS) {
-        int error;
         int select_ret = 0;
         long graceTime;
 
@@ -890,7 +898,7 @@ static void* HandleConnection(void* arg)
                 #ifdef WOLFSSH_SHELL
                     if (ret == WS_SUCCESS) {
                         wolfSSH_Log(WS_LOG_INFO, "[SSHD] Entering new shell");
-                        SHELL_Subsystem(conn, ssh, pPasswd, usrConf);
+                        SHELL_Subsystem(conn, ssh, pPasswd, usrConf, NULL);
                     }
                 #else
                     wolfSSH_Log(WS_LOG_ERROR,
@@ -922,6 +930,15 @@ static void* HandleConnection(void* arg)
 
                 case WOLFSSH_SESSION_UNKNOWN:
                 case WOLFSSH_SESSION_EXEC:
+                    if (ret == WS_SUCCESS) {
+                        wolfSSH_Log(WS_LOG_INFO,
+                            "[SSHD] Entering exec session [%s]",
+                                wolfSSH_GetSessionCommand(ssh));
+                        SHELL_Subsystem(conn, ssh, pPasswd, usrConf,
+                                wolfSSH_GetSessionCommand(ssh));
+                    }
+                    break;
+
                 case WOLFSSH_SESSION_TERMINAL:
                 default:
                     wolfSSH_Log(WS_LOG_ERROR,
@@ -932,8 +949,50 @@ static void* HandleConnection(void* arg)
         }
     }
 
-    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Attempting to close down connection");
-    wolfSSH_shutdown(ssh);
+    error = wolfSSH_get_error(ssh);
+    if (error != WS_SOCKET_ERROR_E && error != WS_FATAL_ERROR) {
+        wolfSSH_Log(WS_LOG_INFO, "[SSHD] Attempting to close down connection");
+        ret = wolfSSH_shutdown(ssh);
+
+        /* peer hung up, stop shutdown */
+        if (ret == WS_SOCKET_ERROR_E) {
+            ret = 0;
+        }
+
+        error = wolfSSH_get_error(ssh);
+        if (error != WS_SOCKET_ERROR_E &&
+                (error == WS_WANT_READ || error == WS_WANT_WRITE)) {
+            int maxAttempt = 10; /* make 10 attempts max before giving up */
+            int attempt;
+
+            for (attempt = 0; attempt < maxAttempt; attempt++) {
+                ret = wolfSSH_worker(ssh, NULL);
+                error = wolfSSH_get_error(ssh);
+
+                /* peer succesfully closed down gracefully */
+                if (ret == WS_CHANNEL_CLOSED) {
+                    ret = 0;
+                    break;
+                }
+
+                /* peer hung up, stop shutdown */
+                if (ret == WS_SOCKET_ERROR_E) {
+                    ret = 0;
+                    break;
+                }
+
+                if (error != WS_WANT_READ && error != WS_WANT_WRITE) {
+                    break;
+                }
+            }
+
+            if (attempt == maxAttempt) {
+                wolfSSH_Log(WS_LOG_INFO,
+                    "[SSHD] Gave up on gracefull shutdown, closing the socket");
+            }
+        }
+    }
+
     wolfSSH_free(ssh);
     if (conn != NULL) {
         WCLOSESOCKET(conn->fd);
