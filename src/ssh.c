@@ -1007,48 +1007,7 @@ int wolfSSH_stream_peek(WOLFSSH* ssh, byte* buf, word32 bufSz)
 }
 
 
-/* moves the window for more room
- * returns WS_SUCCESS on success */
-static int wolfSSH_stream_adjust_window(WOLFSSH* ssh)
-{
-    word32  usedSz;
-    word32  bytesToAdd;
-    int     ret;
-    WOLFSSH_BUFFER* inputBuffer;
-
-    inputBuffer = &ssh->channelList->inputBuffer;
-    usedSz      = inputBuffer->length - inputBuffer->idx;
-    bytesToAdd  = inputBuffer->idx;
-
-    WLOG(WS_LOG_DEBUG, "Making more room: %u", usedSz);
-    WLOG(WS_LOG_DEBUG, "  Current index into buffer = %u", inputBuffer->idx);
-    WLOG(WS_LOG_DEBUG, "  Current max index for available data = %u",
-        inputBuffer->length);
-    WLOG(WS_LOG_DEBUG, "  Current total buffer size = %u",
-        inputBuffer->bufferSz);
-    if (usedSz) {
-        WLOG(WS_LOG_DEBUG, "  ...moving %d used bytes down", usedSz);
-        WMEMMOVE(inputBuffer->buffer, inputBuffer->buffer + bytesToAdd, usedSz);
-        inputBuffer->length = usedSz;
-        inputBuffer->idx = 0;
-    }
-
-    ret = SendChannelWindowAdjust(ssh, ssh->channelList->channel,
-            bytesToAdd);
-    if (ret != WS_SUCCESS && ret != WS_WANT_WRITE) {
-        WLOG(WS_LOG_ERROR, "Error adjusting window");
-    }
-    else {
-        WLOG(WS_LOG_INFO, "  bytesToAdd = %u", bytesToAdd);
-        WLOG(WS_LOG_INFO, "  windowSz = %u", ssh->channelList->windowSz);
-        ssh->channelList->windowSz += bytesToAdd;
-        WLOG(WS_LOG_INFO, "  update windowSz = %u", ssh->channelList->windowSz);
-        inputBuffer->length = usedSz;
-        inputBuffer->idx = 0;
-    }
-
-    return ret;
-}
+static int _UpdateChannelWindow(WOLFSSH_CHANNEL* channel);
 
 
 /* Wrapper function for ease of use to get data after it has been decrypted from
@@ -1073,18 +1032,13 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
 
     inputBuffer = &ssh->channelList->inputBuffer;
 
-    /* check if the window needs updated before attempting to read */
-    if ((ssh->channelList->windowSz == 0) || (!ssh->isKeying &&
-            (inputBuffer->length > inputBuffer->bufferSz / 2)))
-        ret = wolfSSH_stream_adjust_window(ssh);
-
-
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "    Stream read index of %u", inputBuffer->idx);
         WLOG(WS_LOG_DEBUG, "    Stream read ava data %u", inputBuffer->length);
         while (inputBuffer->length - inputBuffer->idx == 0) {
-            WLOG(WS_LOG_DEBUG, "Starting to recieve data at current index of %u",
-                inputBuffer->idx);
+            WLOG(WS_LOG_DEBUG,
+                    "Starting to recieve data at current index of %u",
+                    inputBuffer->idx);
             ret = DoReceive(ssh);
             if (ssh->channelList == NULL || ssh->channelList->eofRxd)
                 ret = WS_EOF;
@@ -1105,12 +1059,18 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
 
     /* update internal input buffer based on data read */
     if (ret == WS_SUCCESS) {
-        ret = min(bufSz, inputBuffer->length - inputBuffer->idx);
-        if (ret <= 0)
+        int n;
+
+        n = min(bufSz, inputBuffer->length - inputBuffer->idx);
+        if (n <= 0)
             ret = WS_BUFFER_E;
         else {
-            WMEMCPY(buf, inputBuffer->buffer + inputBuffer->idx, ret);
-            inputBuffer->idx += ret;
+            WMEMCPY(buf, inputBuffer->buffer + inputBuffer->idx, n);
+            ret = _UpdateChannelWindow(ssh->channelList);
+            if (ret == WS_SUCCESS) {
+                inputBuffer->idx += n;
+                ret = n;
+            }
         }
     }
 
@@ -2034,6 +1994,8 @@ int wolfSSH_ChannelGetFwdFd(const WOLFSSH_CHANNEL* channel)
 #endif /* WOLFSSH_FWD */
 
 
+/* moves the window for more room
+ * returns WS_SUCCESS on success */
 static int _UpdateChannelWindow(WOLFSSH_CHANNEL* channel)
 {
     WOLFSSH_BUFFER* inputBuffer;
@@ -2044,8 +2006,8 @@ static int _UpdateChannelWindow(WOLFSSH_CHANNEL* channel)
 
     inputBuffer = &channel->inputBuffer;
 
-    if (!channel->ssh->isKeying &&
-        (inputBuffer->length > inputBuffer->bufferSz / 2)) {
+    if ((inputBuffer->length > inputBuffer->bufferSz / 2) ||
+         (channel->windowSz == 0)) {
 
         word32 usedSz = inputBuffer->length - inputBuffer->idx;
         word32 bytesToAdd = inputBuffer->idx;
@@ -2055,8 +2017,6 @@ static int _UpdateChannelWindow(WOLFSSH_CHANNEL* channel)
             WLOG(WS_LOG_DEBUG, "  ...moving data down");
             WMEMMOVE(inputBuffer->buffer,
                      inputBuffer->buffer + bytesToAdd, usedSz);
-            inputBuffer->length = usedSz;
-            inputBuffer->idx = 0;
         }
 
         sendResult = SendChannelWindowAdjust(channel->ssh, channel->channel,
