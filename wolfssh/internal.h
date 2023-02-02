@@ -341,10 +341,11 @@ enum {
     #define DEFAULT_HIGHWATER_MARK ((1024 * 1024 * 1024) - (32 * 1024))
 #endif
 #ifndef DEFAULT_WINDOW_SZ
-    #define DEFAULT_WINDOW_SZ 16384
+    #define DEFAULT_WINDOW_SZ (128 * 1024)
 #endif
 #ifndef DEFAULT_MAX_PACKET_SZ
-    #define DEFAULT_MAX_PACKET_SZ (16 * 1024)
+    /* This is from RFC 4253 section 6.1. */
+    #define DEFAULT_MAX_PACKET_SZ 32768
 #endif
 #ifndef DEFAULT_NEXT_CHANNEL
     #define DEFAULT_NEXT_CHANNEL 0
