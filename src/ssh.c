@@ -1031,6 +1031,7 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
         return WS_BAD_ARGUMENT;
 
     inputBuffer = &ssh->channelList->inputBuffer;
+    ssh->error = WS_SUCCESS;
 
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "    Stream read index of %u", inputBuffer->idx);

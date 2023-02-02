@@ -53,10 +53,10 @@ For building under Windows with Visual Studio, see the file
 
 NOTE: On resource constrained devices the `DEFAULT_WINDOW_SZ` may need
 to be set to a lower size. It can also be increased in desktop use cases
-to help with large file transfers. By default channels are set to handle
-16,384 bytes of data being sent and received. An example of setting a
-window size for new channels would be as follows
-`./configure CPPFLAGS=-DDEFAULT_WINDOW_SZ=16384`
+to help with large file transfers. By default channels are set to receive
+up to 128kB of data before sending a channel window adjust message. An
+example of setting a window size for new channels would be as follows
+`./configure CPPFLAGS="-DDEFAULT_WINDOW_SZ=16384"`
 
 For 32bit Linux platforms you can add support for files > 2GB by compling
 with `CFLAGS=-D_FILE_OFFSET_BITS=64`.
