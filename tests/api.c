@@ -336,7 +336,7 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
     byte* eccKey;
     word32 eccKeySz;
 #endif
-#ifndef WOLFSSH_NO_RSA
+#ifndef WOLFSSH_NO_SSH_RSA_SHA1
     byte* rsaKey;
     word32 rsaKeySz;
 #endif
@@ -353,7 +353,7 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
                     NULL, NULL, NULL,
                     NULL, NULL, NULL));
 #endif
-#ifndef WOLFSSH_NO_RSA
+#ifndef WOLFSSH_NO_SSH_RSA_SHA1
     AssertIntEQ(0,
             ConvertHexToBin(serverKeyRsaDer, &rsaKey, &rsaKeySz,
                     NULL, NULL, NULL,
@@ -429,7 +429,7 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
     AssertIntNE(lastKeySz, ctx->privateKeySz[0]);
 #endif
 
-#ifndef WOLFSSH_NO_RSA
+#ifndef WOLFSSH_NO_SSH_RSA_SHA1
     lastKey = ctx->privateKey[ctx->privateKeyCount];
     lastKeySz = ctx->privateKeySz[ctx->privateKeyCount];
 
@@ -452,7 +452,7 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
         wolfSSH_CTX_UsePrivateKey_buffer(ctx, eccKey, eccKeySz,
                                          TEST_GOOD_FORMAT_ASN1));
 #endif
-#ifndef WOLFSSH_NO_RSA
+#ifndef WOLFSSH_NO_SSH_RSA_SHA1
     AssertIntEQ(WS_SUCCESS,
         wolfSSH_CTX_UsePrivateKey_buffer(ctx, rsaKey, rsaKeySz,
                                          TEST_GOOD_FORMAT_ASN1));
@@ -464,7 +464,7 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
     !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
     FreeBins(eccKey, NULL, NULL, NULL);
 #endif
-#ifndef WOLFSSH_NO_RSA
+#ifndef WOLFSSH_NO_SSH_RSA_SHA1
     FreeBins(rsaKey, NULL, NULL, NULL);
 #endif
 #endif /* WOLFSSH_NO_SERVER */

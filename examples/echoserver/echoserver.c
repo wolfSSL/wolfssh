@@ -2335,6 +2335,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             return 0;
         }
 
+        #if !defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_ECC)
         peerEcc = !peerEcc;
         bufSz = EXAMPLE_KEYLOAD_BUFFER_SZ;
 
@@ -2350,6 +2351,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             serverArgs->return_code = EXIT_FAILURE;
             return 0;
         }
+        #endif
 
         if (userPubKey) {
             byte* userBuf = NULL;
