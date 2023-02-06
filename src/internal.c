@@ -3355,7 +3355,10 @@ static int ParseRSAPubKey(WOLFSSH *ssh,
     else
         ret = WS_RSA_E;
 #else
-    (void)tmpIdx;
+    (void)ssh;
+    (void)sigKeyBlock_ptr;
+    (void)pubKey;
+    (void)pubKeySz;
     ret = WS_INVALID_ALGO_ID;
 #endif
     return ret;
@@ -3412,6 +3415,10 @@ static int ParseECCPubKey(WOLFSSH *ssh,
             ret = WS_ECC_E;
     }
 #else
+    (void)ssh;
+    (void)sigKeyBlock_ptr;
+    (void)pubKey;
+    (void)pubKeySz;
     ret = WS_INVALID_ALGO_ID;
 #endif
     return ret;
@@ -3570,6 +3577,10 @@ static int ParseECCPubKeyCert(WOLFSSH *ssh,
         WFREE(der, NULL, 0);
     }
 #else
+    (void)ssh;
+    (void)sigKeyBlock_ptr;
+    (void)pubKey;
+    (void)pubKeySz;
     ret = WS_INVALID_ALGO_ID;
 #endif
 
@@ -3583,7 +3594,7 @@ static int ParseRSAPubKeyCert(WOLFSSH *ssh,
 {
 
     int ret;
-#ifndef WOLFSSH_NO_ECDSA
+#ifndef WOLFSSH_NO_RSA
     byte* der = NULL;
     word32 derSz, idx = 0;
     int error;
@@ -3601,6 +3612,10 @@ static int ParseRSAPubKeyCert(WOLFSSH *ssh,
         WFREE(der, NULL, 0);
     }
 #else
+    (void)ssh;
+    (void)sigKeyBlock_ptr;
+    (void)pubKey;
+    (void)pubKeySz;
     ret = WS_INVALID_ALGO_ID;
 #endif
 
@@ -3667,7 +3682,6 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     byte  kPad = 0;
     word32 begin;
     int ret = WS_SUCCESS;
-    int tmpIdx = 0;
     struct wolfSSH_sigKeyBlock *sigKeyBlock_ptr = NULL;
     byte keyAllocated = 0;
 #ifndef WOLFSSH_NO_ECDH
@@ -3891,7 +3905,6 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
     if (ret == WS_SUCCESS) {
         sig = buf + begin;
-        tmpIdx = begin;
         begin += sigSz;
         *idx = begin;
 
@@ -4049,6 +4062,9 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
         /* Verify h with the server's public key. */
         if (ret == WS_SUCCESS) {
+#ifndef WOLFSSH_NO_RSA
+        int tmpIdx = begin;
+#endif
             /* Skip past the sig name. Check it, though. Other SSH
              * implementations do the verify based on the name, despite what
              * was agreed upon. XXX*/
@@ -8143,8 +8159,8 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
     #endif
 
     switch (sigKeyBlock_ptr->sigId) {
-        case ID_SSH_RSA:
         #ifndef WOLFSSH_NO_SSH_RSA_SHA1
+        case ID_SSH_RSA:
             /* Decode the user-configured RSA private key. */
             sigKeyBlock_ptr->sk.rsa.eSz = sizeof(sigKeyBlock_ptr->sk.rsa.e);
             sigKeyBlock_ptr->sk.rsa.nSz = sizeof(sigKeyBlock_ptr->sk.rsa.n);
@@ -8239,13 +8255,13 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
                                         sigKeyBlock_ptr->sk.rsa.n,
                                         sigKeyBlock_ptr->sk.rsa.nSz);
             }
-        #endif /* WOLFSSH_NO_SSH_RSA_SHA1 */
             break;
+        #endif /* WOLFSSH_NO_SSH_RSA_SHA1 */
 
+        #ifndef WOLFSSH_NO_ECDSA
         case ID_ECDSA_SHA2_NISTP256:
         case ID_ECDSA_SHA2_NISTP384:
         case ID_ECDSA_SHA2_NISTP521:
-        #ifndef WOLFSSH_NO_ECDSA
             sigKeyBlock_ptr->sk.ecc.primeName =
                     PrimeNameForId(ssh->handshake->sigId);
             sigKeyBlock_ptr->sk.ecc.primeNameSz =
@@ -8314,9 +8330,9 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
                     ret = HashUpdate(&ssh->handshake->hash, enmhashId,
                                         sigKeyBlock_ptr->sk.ecc.q,
                                         sigKeyBlock_ptr->sk.ecc.qSz);
-        }
-        #endif
+            }
             break;
+        #endif
 
             default:
                 ret = WS_INVALID_ALGO_ID;
