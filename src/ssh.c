@@ -130,7 +130,7 @@ WOLFSSH* wolfSSH_new(WOLFSSH_CTX* ctx)
     WOLFSSH* ssh;
     void*    heap = NULL;
 
-    (void)heap;
+    WOLFSSH_UNUSED(heap);
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_new()");
 
@@ -1197,8 +1197,8 @@ int wolfSSH_SendIgnore(WOLFSSH* ssh, const byte* buf, word32 bufSz)
 {
     byte scratch[128];
 
-    (void)buf;
-    (void)bufSz;
+    WOLFSSH_UNUSED(buf);
+    WOLFSSH_UNUSED(bufSz);
     WMEMSET(scratch, 0, sizeof(scratch));
 
     return SendIgnore(ssh, scratch, sizeof(scratch));
@@ -1433,7 +1433,7 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
     int ret = WS_SUCCESS;
     byte* newKey = NULL;
 
-    (void)heap;
+    WOLFSSH_UNUSED(heap);
 
     if (in == NULL || inSz == 0 || out == NULL || outSz == NULL ||
             outType == NULL || outTypeSz == NULL)
