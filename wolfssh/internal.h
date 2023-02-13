@@ -86,12 +86,17 @@ extern "C" {
     #define WOLFSSH_NO_DH
 #endif
 
+#ifdef NO_SHA
+    #undef WOLFSSH_NO_SHA1
+    #define WOLFSSH_NO_SHA1
+#endif
 
-#if defined(NO_HMAC) || defined(NO_SHA)
+
+#if defined(NO_HMAC) || defined(WOLFSSH_NO_SHA1)
     #undef WOLFSSH_NO_HMAC_SHA1
     #define WOLFSSH_NO_HMAC_SHA1
 #endif
-#if defined(NO_HMAC) || defined(NO_SHA)
+#if defined(NO_HMAC) || defined(WOLFSSH_NO_SHA1)
     #undef WOLFSSH_NO_HMAC_SHA1_96
     #define WOLFSSH_NO_HMAC_SHA1_96
 #endif
@@ -106,11 +111,11 @@ extern "C" {
 #endif
 
 
-#if defined(WOLFSSH_NO_DH) || defined(NO_SHA)
+#if defined(WOLFSSH_NO_DH) || defined(WOLFSSH_NO_SHA1)
     #undef WOLFSSH_NO_DH_GROUP1_SHA1
     #define WOLFSSH_NO_DH_GROUP1_SHA1
 #endif
-#if defined(WOLFSSH_NO_DH) || defined(NO_SHA)
+#if defined(WOLFSSH_NO_DH) || defined(WOLFSSH_NO_SHA1)
     #undef WOLFSSH_NO_DH_GROUP14_SHA1
     #define WOLFSSH_NO_DH_GROUP14_SHA1
 #endif
@@ -164,7 +169,7 @@ extern "C" {
     #define WOLFSSH_NO_ECDH
 #endif
 
-#if defined(WOLFSSH_NO_RSA) || defined(NO_SHA)
+#if defined(WOLFSSH_NO_RSA) || defined(WOLFSSH_NO_SHA1)
     #undef WOLFSSH_NO_SSH_RSA_SHA1
     #define WOLFSSH_NO_SSH_RSA_SHA1
 #endif
@@ -192,14 +197,14 @@ extern "C" {
     #undef WOLFSSH_NO_ECDSA_SHA2_NISTP521
     #define WOLFSSH_NO_ECDSA_SHA2_NISTP521
 #endif
-#if defined(WOLFSSH_NO_SHA_RSA_SHA1) && \
+#if defined(WOLFSSH_NO_SSH_RSA_SHA1) && \
     defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && \
     defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && \
     defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
     #error "You need at least one signing algorithm."
 #endif
 
-#ifdef WOLFSSH_NO_SHA_RSA_SHA1
+#ifdef WOLFSSH_NO_SSH_RSA_SHA1
     #undef WOLFSSH_NO_RSA
     #define WOLFSSH_NO_RSA
 #endif
