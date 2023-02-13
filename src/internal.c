@@ -64,6 +64,9 @@ Flags:
     use of the function if the flag isn't set. If using wolfCrypt v4.5.0 or
     later, and not building with configure, set this flag.
     default: off
+  WOLFSSH_NO_SHA1
+    Set when SHA1 is disabled. Set to disable use of SHA1 in HMAC and digital
+    signature support.
   WOLFSSH_NO_HMAC_SHA1
     Set when HMAC or SHA1 are disabled. Set to disable HMAC-SHA1 support.
   WOLFSSH_NO_HMAC_SHA1_96
@@ -2741,7 +2744,7 @@ static INLINE byte AeadModeForId(byte id)
 static INLINE byte SigTypeForId(byte id)
 {
     switch (id) {
-#ifndef WOLFSSH_NO_SSHA_RSA_SHA1
+#ifndef WOLFSSH_NO_SSH_RSA_SHA1
     #ifdef WOLFSSH_CERTS
         case ID_X509V3_SSH_RSA:
     #endif
