@@ -2040,8 +2040,8 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             ret = WS_SCP_ABORT;
     }
 
-    (void)totalFileSz;
-    (void)fileOffset;
+    WOLFSSH_UNUSED(totalFileSz);
+    WOLFSSH_UNUSED(fileOffset);
     return ret;
 }
 
@@ -2194,7 +2194,7 @@ int ScpPopDir(ScpSendCtx* ctx, void* heap)
     if (ctx->currentDir == NULL)
         return WS_SCP_DIR_STACK_EMPTY_E;
 
-    (void)heap;
+    WOLFSSH_UNUSED(heap);
     return WS_SUCCESS;
 }
 
@@ -2369,7 +2369,7 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
         }
     }
 
-    (void)ctx;
+    WOLFSSH_UNUSED(ctx);
     return ret;
 }
 
@@ -2702,10 +2702,10 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             ret = WS_SCP_ABORT;
     }
 
-    (void)totalFileSz;
-    (void)fileOffset;
-    (void)aTime;
-    (void)basePath;
+    WOLFSSH_UNUSED(totalFileSz);
+    WOLFSSH_UNUSED(fileOffset);
+    WOLFSSH_UNUSED(aTime);
+    WOLFSSH_UNUSED(basePath);
     return ret;
 }
 
@@ -2808,7 +2808,7 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             WLOG(WS_LOG_DEBUG, scpState, "bad state");
             ret = WS_SCP_ABORT;
     }
-    (void)fileOffset;
+    WOLFSSH_UNUSED(fileOffset);
 
     return ret;
 }

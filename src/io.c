@@ -266,7 +266,7 @@ void* wolfSSH_GetIOWriteCtx(WOLFSSH* ssh)
 /* Translates return codes returned from send() and recv() if need be. */
 static INLINE int wsReturnCode(int old, WS_SOCKET_T sd)
 {
-    (void)sd;
+    WOLFSSH_UNUSED(sd);
 
 #ifdef FREESCALE_MQX
     if (old == 0) {

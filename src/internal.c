@@ -144,9 +144,8 @@ static const char OpenSSH[] = "SSH-2.0-OpenSSH";
 
 const char* GetErrorString(int err)
 {
-    (void)err;
-
 #ifdef NO_WOLFSSH_STRINGS
+    WOLFSSH_UNUSED(err);
     return "No wolfSSH strings available";
 #else
     switch (err) {
@@ -422,7 +421,7 @@ static int wsHighwater(byte dir, void* ctx)
 {
     int ret = WS_SUCCESS;
 
-    (void)dir;
+    WOLFSSH_UNUSED(dir);
 
     if (ctx) {
         WOLFSSH* ssh = (WOLFSSH*)ctx;
@@ -506,7 +505,7 @@ static HandshakeInfo* HandshakeInfoNew(void* heap)
 
 static void HandshakeInfoFree(HandshakeInfo* hs, void* heap)
 {
-    (void)heap;
+    WOLFSSH_UNUSED(heap);
 
     WLOG(WS_LOG_DEBUG, "Entering HandshakeInfoFree()");
     if (hs) {
@@ -651,7 +650,7 @@ static void UpdateKeyID(WOLFSSH_CTX* ctx)
         }
     }
 #endif
-    (void)ctx;
+    WOLFSSH_UNUSED(ctx);
 }
 
 
@@ -763,7 +762,7 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
 void SshResourceFree(WOLFSSH* ssh, void* heap)
 {
     /* when ssh holds resources, free here */
-    (void)heap;
+    WOLFSSH_UNUSED(heap);
 
     WLOG(WS_LOG_DEBUG, "Entering sshResourceFree()");
 
@@ -1012,7 +1011,7 @@ static int SetHostPrivateKey(WOLFSSH_CTX* ctx, byte keyId, int isKey,
     word32 destIdx = 0;
     int ret = WS_SUCCESS;
 
-    (void)dynamicType;
+    WOLFSSH_UNUSED(dynamicType);
 
     while (destIdx < ctx->privateKeyCount &&
             ctx->privateKeyId[destIdx] != keyId) {
@@ -1161,9 +1160,9 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
     }
     #endif /* WOLFSSH_CERTS */
 
-    (void)dynamicType;
-    (void)wcType;
-    (void)heap;
+    WOLFSSH_UNUSED(dynamicType);
+    WOLFSSH_UNUSED(wcType);
+    WOLFSSH_UNUSED(heap);
 
     return ret;
 }
@@ -1576,7 +1575,7 @@ WOLFSSH_CHANNEL* ChannelNew(WOLFSSH* ssh, byte channelType,
 
 void ChannelDelete(WOLFSSH_CHANNEL* channel, void* heap)
 {
-    (void)heap;
+    WOLFSSH_UNUSED(heap);
 
     if (channel) {
     #ifdef WOLFSSH_FWD
@@ -3355,10 +3354,10 @@ static int ParseRSAPubKey(WOLFSSH *ssh,
     else
         ret = WS_RSA_E;
 #else
-    (void)ssh;
-    (void)sigKeyBlock_ptr;
-    (void)pubKey;
-    (void)pubKeySz;
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(sigKeyBlock_ptr);
+    WOLFSSH_UNUSED(pubKey);
+    WOLFSSH_UNUSED(pubKeySz);
     ret = WS_INVALID_ALGO_ID;
 #endif
     return ret;
@@ -3415,10 +3414,10 @@ static int ParseECCPubKey(WOLFSSH *ssh,
             ret = WS_ECC_E;
     }
 #else
-    (void)ssh;
-    (void)sigKeyBlock_ptr;
-    (void)pubKey;
-    (void)pubKeySz;
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(sigKeyBlock_ptr);
+    WOLFSSH_UNUSED(pubKey);
+    WOLFSSH_UNUSED(pubKeySz);
     ret = WS_INVALID_ALGO_ID;
 #endif
     return ret;
@@ -3577,10 +3576,10 @@ static int ParseECCPubKeyCert(WOLFSSH *ssh,
         WFREE(der, NULL, 0);
     }
 #else
-    (void)ssh;
-    (void)sigKeyBlock_ptr;
-    (void)pubKey;
-    (void)pubKeySz;
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(sigKeyBlock_ptr);
+    WOLFSSH_UNUSED(pubKey);
+    WOLFSSH_UNUSED(pubKeySz);
     ret = WS_INVALID_ALGO_ID;
 #endif
 
@@ -3612,10 +3611,10 @@ static int ParseRSAPubKeyCert(WOLFSSH *ssh,
         WFREE(der, NULL, 0);
     }
 #else
-    (void)ssh;
-    (void)sigKeyBlock_ptr;
-    (void)pubKey;
-    (void)pubKeySz;
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(sigKeyBlock_ptr);
+    WOLFSSH_UNUSED(pubKey);
+    WOLFSSH_UNUSED(pubKeySz);
     ret = WS_INVALID_ALGO_ID;
 #endif
 
@@ -4197,9 +4196,9 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
     int ret = WS_SUCCESS;
 
-    (void)buf;
-    (void)len;
-    (void)idx;
+    WOLFSSH_UNUSED(buf);
+    WOLFSSH_UNUSED(len);
+    WOLFSSH_UNUSED(idx);
 
     if (ssh == NULL || ssh->handshake == NULL)
         ret = WS_BAD_ARGUMENT;
@@ -4375,8 +4374,8 @@ static int DoIgnore(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     word32 dataSz;
     word32 begin = *idx;
 
-    (void)ssh;
-    (void)len;
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(len);
 
     ato32(buf + begin, &dataSz);
     begin += LENGTH_SZ + dataSz;
@@ -4392,8 +4391,8 @@ static int DoRequestSuccess(WOLFSSH *ssh, byte *buf, word32 len, word32 *idx)
     word32 begin = *idx;
     int    ret=WS_SUCCESS;
 
-    (void)ssh;
-    (void)len;
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(len);
 
     WLOG(WS_LOG_DEBUG, "DoRequestSuccess, *idx=%d, len=%d", *idx, len);
     ato32(buf + begin, &dataSz);
@@ -4413,8 +4412,8 @@ static int DoRequestFailure(WOLFSSH *ssh, byte *buf, word32 len, word32 *idx)
     word32 begin = *idx;
     int ret = WS_SUCCESS;
 
-    (void)ssh;
-    (void)len;
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(len);
 
     WLOG(WS_LOG_DEBUG, "DoRequestFalure, *idx=%d, len=%d", *idx, len);
     ato32(buf + begin, &dataSz);
@@ -4509,8 +4508,8 @@ static int DoUnimplemented(WOLFSSH* ssh,
     word32 seq;
     word32 begin = *idx;
 
-    (void)ssh;
-    (void)len;
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(len);
 
     ato32(buf + begin, &seq);
     begin += UINT32_SZ;
@@ -4529,9 +4528,9 @@ static int DoDisconnect(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     const char* reasonStr = NULL;
     word32 begin = *idx;
 
-    (void)ssh;
-    (void)len;
-    (void)reasonStr;
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(len);
+    WOLFSSH_UNUSED(reasonStr);
 
     ato32(buf + begin, &reason);
     begin += UINT32_SZ;
@@ -4589,7 +4588,7 @@ static int DoServiceRequest(WOLFSSH* ssh,
     word32 nameSz;
     char     serviceName[WOLFSSH_MAX_NAMESZ];
 
-    (void)len;
+    WOLFSSH_UNUSED(len);
 
     ato32(buf + begin, &nameSz);
     begin += LENGTH_SZ;
@@ -4618,7 +4617,7 @@ static int DoServiceAccept(WOLFSSH* ssh,
     word32 nameSz;
     char     serviceName[WOLFSSH_MAX_NAMESZ];
 
-    (void)len;
+    WOLFSSH_UNUSED(len);
 
     ato32(buf + begin, &nameSz);
     begin += LENGTH_SZ;
@@ -4648,7 +4647,7 @@ static int DoUserAuthRequestNone(WOLFSSH* ssh, WS_UserAuthData* authData,
     int ret = WS_SUCCESS;
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequestNone()");
 
-    (void)len;
+    WOLFSSH_UNUSED(len);
 
     if (ssh == NULL || authData == NULL ||
         buf == NULL || idx == NULL) {
@@ -5056,7 +5055,7 @@ static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     if (ret == WS_SUCCESS) {
         publicKeyType = pk->signature + i;
         i += publicKeyTypeSz;
-        (void)publicKeyType;
+        WOLFSSH_UNUSED(publicKeyType);
     }
 
     if (ret == WS_SUCCESS)
@@ -5194,7 +5193,8 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 
     if (ret == WS_SUCCESS) {
         curveName = pk->publicKey + i;
-        (void)curveName; /* Not used at the moment, hush the compiler. */
+        WOLFSSH_UNUSED(curveName);
+            /* Not used at the moment, hush the compiler. */
         i += curveNameSz;
         ret = GetSize(&qSz, pk->publicKey, pk->publicKeySz, &i);
     }
@@ -5380,7 +5380,7 @@ static int DoUserAuthRequestEccCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     if (ret == WS_SUCCESS) {
         publicKeyType = pk->signature + i;
         i += publicKeyTypeSz;
-        (void)publicKeyType;
+        WOLFSSH_UNUSED(publicKeyType);
     }
 
     if (ret == WS_SUCCESS) {
@@ -8108,8 +8108,8 @@ static int BuildRFC6187Info(WOLFSSH* ssh, int pubKeyID,
     localIdx += UINT32_SZ;
 
     /* here is where OCSP's would be appended [ocsp size][ocsp] */
-    (void)ocsp;
-    (void)ocspSz;
+    WOLFSSH_UNUSED(ocsp);
+    WOLFSSH_UNUSED(ocspSz);
 
     /* update idx on success */
     if (output) {
@@ -8120,8 +8120,8 @@ static int BuildRFC6187Info(WOLFSSH* ssh, int pubKeyID,
         ret = LENGTH_ONLY_E;
     }
 
-    (void)ssh;
-    (void)outputSz;
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(outputSz);
     return ret;
 }
 #endif /* WOLFSSH_CERTS */
@@ -11022,7 +11022,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId, int addSig)
     WS_UserAuthData authData;
     WS_KeySignature *keySig_ptr = NULL;
 
-    (void)addSig;
+    WOLFSSH_UNUSED(addSig);
 
     WLOG(WS_LOG_DEBUG, "Entering SendUserAuthRequest()");
 
@@ -11134,8 +11134,8 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authId, int addSig)
         idx += authNameSz;
 
         if (authId == ID_USERAUTH_PASSWORD) {
-            (void)sigStart;
-            (void)sigStartIdx;
+            WOLFSSH_UNUSED(sigStart);
+            WOLFSSH_UNUSED(sigStartIdx);
 
             ret = BuildUserAuthRequestPassword(ssh, output, &idx, &authData);
         }
@@ -12211,7 +12211,7 @@ static int CreateMode(WOLFSSH* ssh, byte* mode)
     mode[idx++] = WOLFSSH_TTY_OP_ISPEED;
     c32toa(baud, mode + idx); idx += UINT32_SZ;
 
-    (void)ssh;
+    WOLFSSH_UNUSED(ssh);
     mode[idx++] = WOLFSSH_TTY_OP_END;
     return idx;
 }

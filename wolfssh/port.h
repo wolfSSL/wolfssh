@@ -1264,6 +1264,11 @@ extern "C" {
 #endif
 
 
+#ifndef WOLFSSH_UNUSED
+    #define WOLFSSH_UNUSED(arg) (void)(arg);
+#endif
+
+
 #if defined(USE_WINDOWS_API)
     #define WS_SOCKET_T SOCKET
     #define WS_SOCKLEN_T int

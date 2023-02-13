@@ -789,8 +789,8 @@ static int PostSignRequest(WOLFSSH_AGENT_CTX* agent,
 
     WLOG_ENTER();
 
-    (void)flags;
-    (void)curveId;
+    WOLFSSH_UNUSED(flags);
+    WOLFSSH_UNUSED(curveId);
 
     if (agent == NULL || keyBlob == NULL || keyBlobSz == 0)
         ret = WS_BAD_ARGUMENT;
@@ -860,7 +860,7 @@ static int PostSignRequest(WOLFSSH_AGENT_CTX* agent,
             ret = SignHashRsa(&id->key.rsa, hashType,
                     digest, digestSz, sig, &sigSz, &agent->rng, agent->heap);
 #else
-    (void)signRsa;
+    WOLFSSH_UNUSED(signRsa);
 #endif
 #if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) || \
     !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) || \
@@ -869,7 +869,7 @@ static int PostSignRequest(WOLFSSH_AGENT_CTX* agent,
             ret = SignHashEcc(&id->key.ecdsa, curveId, digest, digestSz,
                     sig, &sigSz, &agent->rng);
 #else
-    (void)signEcc;
+    WOLFSSH_UNUSED(signEcc);
 #endif
 
         if (ret == WS_SUCCESS)
@@ -887,8 +887,8 @@ static int DoFailure(WOLFSSH_AGENT_CTX* agent,
     int ret = WS_SUCCESS;
     WLOG(WS_LOG_AGENT, "Entering DoFailure()");
 
-    (void)buf;
-    (void)idx;
+    WOLFSSH_UNUSED(buf);
+    WOLFSSH_UNUSED(idx);
 
     if (len != 0)
         ret = WS_PARSE_E;
@@ -907,8 +907,8 @@ static int DoSuccess(WOLFSSH_AGENT_CTX* agent,
     int ret = WS_SUCCESS;
     WLOG_ENTER();
 
-    (void)buf;
-    (void)idx;
+    WOLFSSH_UNUSED(buf);
+    WOLFSSH_UNUSED(idx);
 
     if (len != 0)
         ret = WS_PARSE_E;
@@ -927,8 +927,8 @@ static int DoRequestIdentities(WOLFSSH_AGENT_CTX* agent,
     int ret = WS_SUCCESS;
     WLOG_ENTER();
 
-    (void)buf;
-    (void)idx;
+    WOLFSSH_UNUSED(buf);
+    WOLFSSH_UNUSED(idx);
 
     if (len != 0)
         ret = WS_PARSE_E;
@@ -946,10 +946,10 @@ static int DoIdentitiesAnswer(WOLFSSH_AGENT_CTX* agent,
 {
     int ret = WS_SUCCESS;
     WLOG(WS_LOG_AGENT, "Entering DoIdentitiesAnswer()");
-    (void)agent;
-    (void)buf;
-    (void)len;
-    (void)idx;
+    WOLFSSH_UNUSED(agent);
+    WOLFSSH_UNUSED(buf);
+    WOLFSSH_UNUSED(len);
+    WOLFSSH_UNUSED(idx);
     DUMP(buf + *idx, len);
     WLOG(WS_LOG_AGENT, "Leaving DoIdentitiesAnswer(), ret = %d", ret);
     return ret;
@@ -1085,7 +1085,7 @@ static int DoAddIdentity(WOLFSSH_AGENT_CTX* agent,
                 ret = GetStringRef(&commentSz, &scratch, buf, len, &begin);
 
             if (ret == WS_SUCCESS) {
-                (void)scratch;
+                WOLFSSH_UNUSED(scratch);
 
                 keySz = nSz + eSz + dSz + iqmpSz + pSz + qSz + commentSz +
                         (LENGTH_SZ * 7);
@@ -1298,7 +1298,7 @@ static int DoUnimplemented(WOLFSSH_AGENT_CTX* agent,
     if (agent == NULL || idx == NULL)
         ret = WS_BAD_ARGUMENT;
 
-    (void)buf;
+    WOLFSSH_UNUSED(buf);
     DUMP(buf + *idx, len);
 
     /* Just skip the message. */
@@ -1545,7 +1545,7 @@ WOLFSSH_AGENT_ID* wolfSSH_AGENT_ID_new(byte keyType, word32 keySz, void* heap)
 void wolfSSH_AGENT_ID_free(WOLFSSH_AGENT_ID* id, void* heap)
 {
     WLOG(WS_LOG_AGENT, "Entering wolfSSH_AGENT_ID_free()");
-    (void)heap;
+    WOLFSSH_UNUSED(heap);
 
     if (id != NULL) {
         if (id->keyBuffer != NULL) {

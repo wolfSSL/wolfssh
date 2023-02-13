@@ -183,15 +183,15 @@ void wolfSSH_Log(enum wolfSSH_LogLevel level, const char *const fmt, ...)
 #else
 void DefaultLoggingCb(enum wolfSSH_LogLevel level, const char *const msgStr)
 {
-    (void)level;
-    (void)msgStr;
+    WOLFSSH_UNUSED(level);
+    WOLFSSH_UNUSED(msgStr);
 }
 
 void wolfSSH_Log(enum wolfSSH_LogLevel level, const char *const fmt, ...)
 {
-    (void)logFunction;
-    (void)level;
-    (void)fmt;
+    WOLFSSH_UNUSED(logFunction);
+    WOLFSSH_UNUSED(level);
+    WOLFSSH_UNUSED(fmt);
 }
 
 #endif  /* DEBUG_WOLFSSH */

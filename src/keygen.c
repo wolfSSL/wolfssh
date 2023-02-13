@@ -114,10 +114,10 @@ int wolfSSH_MakeRsaKey(byte* out, word32 outSz, word32 size, word32 e)
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_MakeRsaKey(), ret = %d", ret);
     return ret;
 #else
-    (void)out;
-    (void)outSz;
-    (void)size;
-    (void)e;
+    WOLFSSH_UNUSED(out);
+    WOLFSSH_UNUSED(outSz);
+    WOLFSSH_UNUSED(size);
+    WOLFSSH_UNUSED(e);
     return WS_NOT_COMPILED;
 #endif
 }
@@ -179,9 +179,9 @@ int wolfSSH_MakeEcdsaKey(byte* out, word32 outSz, word32 size)
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_MakeEcdsaKey(), ret = %d", ret);
     return ret;
 #else
-    (void)out;
-    (void)outSz;
-    (void)size;
+    WOLFSSH_UNUSED(out);
+    WOLFSSH_UNUSED(outSz);
+    WOLFSSH_UNUSED(size);
     return WS_NOT_COMPILED;
 #endif
 }

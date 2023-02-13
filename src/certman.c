@@ -121,7 +121,7 @@ static WOLFSSH_CERTMAN* _CertMan_init(WOLFSSH_CERTMAN* cm, void* heap)
 
 static void _CertMan_ResourceFree(WOLFSSH_CERTMAN* cm, void* heap)
 {
-    (void)heap;
+    WOLFSSH_UNUSED(heap);
     WLOG_ENTER();
 
     if (cm != NULL) {
