@@ -1464,8 +1464,8 @@ static int doCmds(func_args* args)
             while (tmp != NULL) {
                 if (WSTRNSTR(msg, "-s", MAX_CMD_SZ) != NULL) {
                     char tmpStr[WOLFSSH_MAX_FILENAME];
-                    XSNPRINTF(tmpStr, WOLFSSH_MAX_FILENAME, "%ld, ",
-                       (long)(((long)tmp->atrb.sz[1] << 32) | tmp->atrb.sz[0]));
+                    XSNPRINTF(tmpStr, WOLFSSH_MAX_FILENAME, "%lld, ",
+                       (long long)(((long long)tmp->atrb.sz[1] << 32) | tmp->atrb.sz[0]));
                     if (SFTP_FPUTS(args, tmpStr) < 0) {
                         err_msg("fputs error");
                         return -1;
