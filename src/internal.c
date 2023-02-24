@@ -138,6 +138,8 @@ Flags:
     algorithms off.
 */
 
+static int SetHostPrivateKey(WOLFSSH_CTX* ctx, byte keyId, int isKey,
+        byte* der, word32 derSz, int dynamicType);
 
 static const char sshProtoIdStr[] = "SSH-2.0-wolfSSHv"
                                     LIBWOLFSSH_VERSION_STRING
@@ -627,8 +629,12 @@ static void UpdateKeyID(WOLFSSH_CTX* ctx)
     for (idx = 0; idx < ctx->privateKeyCount &&
                   idx < WOLFSSH_MAX_PVT_KEYS; idx++) {
         if (ctx->cert[idx] != NULL && ctx->certSz[idx] > 0) {
+            byte keyId;
+            byte* der;
+
             /* matching certificate was set, convert private key id */
-            switch (ctx->privateKeyId[idx]) {
+            keyId = ctx->privateKeyId[idx];
+            switch (keyId) {
             #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
                 case ID_ECDSA_SHA2_NISTP521:
                     ctx->privateKeyId[idx] = ID_X509V3_ECDSA_SHA2_NISTP521;
@@ -649,6 +655,19 @@ static void UpdateKeyID(WOLFSSH_CTX* ctx)
                     ctx->privateKeyId[idx] = ID_X509V3_SSH_RSA;
                     break;
             #endif
+            }
+
+            /* can use the key for non X509v3 connections too */
+            der = (byte*)WMALLOC(ctx->privateKeySz[idx], ctx->heap,
+                DYNTYPE_PRIVKEY);
+            if (der != NULL) {
+                int ret;
+                WMEMCPY(der, ctx->privateKey[idx], ctx->privateKeySz[idx]);
+                ret = SetHostPrivateKey(ctx, keyId, 1, der,
+                            ctx->privateKeySz[idx], DYNTYPE_PRIVKEY);
+                if (ret != 0) {
+                    WFREE(der, ctx->heap, DYNTYPE_PRIVKEY);
+                }
             }
         }
     }
@@ -1008,7 +1027,7 @@ static int IdentifyCert(const byte* in, word32 inSz, void* heap)
 #endif /* WOLFSSH_CERTS */
 
 
-static int SetHostPrivateKey(WOLFSSH_CTX* ctx, byte keyId, int isKey,
+int SetHostPrivateKey(WOLFSSH_CTX* ctx, byte keyId, int isKey,
         byte* der, word32 derSz, int dynamicType)
 {
     word32 destIdx = 0;
@@ -7677,11 +7696,13 @@ static int BuildNameList(char* buf, word32 bufSz,
     const char* name;
     int nameSz, idx;
 
+    WLOG(WS_LOG_DEBUG, "Entering BuildNameList()");
     idx = 0;
     do {
         name = IdToName(*src);
         nameSz = (int)WSTRLEN(name);
 
+        WLOG(WS_LOG_DEBUG, "\tAdding name : %s", name);
         if (nameSz + 1 + idx > (int)bufSz) {
             idx = WS_BUFFER_E;
             break;
