@@ -1735,9 +1735,10 @@ int wolfSSH_KDF(byte hashId, byte keyId,
                 const byte* h, word32 hSz,
                 const byte* sessionId, word32 sessionIdSz)
 {
+    int doKeyPadding = 1;
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_KDF()");
     return GenerateKey(hashId, keyId, key, keySz, k, kSz, h, hSz,
-                       sessionId, sessionIdSz);
+                       sessionId, sessionIdSz, doKeyPadding);
 }
 
 
