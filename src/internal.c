@@ -113,7 +113,7 @@ Flags:
   WOLFSSH_NO_ECDSA_SHA2_NISTP521
     Set when ECC or SHA2-512 are disabled. Set to disable use of ECDSA server
     authentication with prime NISTP521.
-  WOLFSSH_NO_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256
+  WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
     Set when there is no liboqs integration. Set to disable use of ECDHE with
     prime NISTP256 hybridized with post-quantum Kyber Level1 KEM.
   WOLFSSH_NO_AES_CBC
@@ -1429,9 +1429,9 @@ static const NameIdPair NameIdMap[] = {
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
     { ID_DH_GROUP14_SHA256, "diffie-hellman-group14-sha256" },
 #endif
-#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256
+#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
     /* We use kyber-512 here to achieve interop with OQS's fork. */
-    { ID_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256, "ecdh-sha2-nistp256-kyber-512-sha256" },
+    { ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256, "ecdh-nistp256-kyber-512-sha256" },
 #endif
     /* Public Key IDs */
 #ifndef WOLFSSH_NO_SSH_RSA_SHA1
@@ -2435,8 +2435,8 @@ static const byte  cannedKeyAlgoClient[] = {
 };
 
 static const byte cannedKexAlgo[] = {
-#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256
-    ID_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256,
+#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
+    ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256,
 #endif
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP521
     ID_ECDH_SHA2_NISTP521,
@@ -2628,8 +2628,8 @@ static INLINE enum wc_HashType HashForId(byte id)
     #endif
             return WC_HASH_TYPE_SHA256;
 #endif
-#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256
-        case ID_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256:
+#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
+        case ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256:
             return WC_HASH_TYPE_SHA256;
 #endif
 
@@ -2668,8 +2668,8 @@ static INLINE enum wc_HashType HashForId(byte id)
 static INLINE int wcPrimeForId(byte id)
 {
     switch (id) {
-#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256
-        case ID_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256:
+#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
+        case ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256:
             return ECC_SECP256R1;
 #endif
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256
@@ -3920,7 +3920,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
              * issues with re-key */
             ssh->kSz = MAX_KEX_KEY_SZ;
             if (!ssh->handshake->useEcc
-#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256
+#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
                 && !ssh->handshake->useEccKyber
 #endif
                ) {
@@ -3966,7 +3966,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 ret = WS_INVALID_ALGO_ID;
 #endif
             }
-#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256
+#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
             else if (ssh->handshake->useEccKyber) {
                 /* This is a a hybrid of ECDHE and a post-quantum KEM. In this
                  * case, I need to generated the ECC shared secret and
@@ -7779,8 +7779,8 @@ static const char cannedMacAlgoNames[] =
 #endif
 
 static const char cannedKexAlgoNames[] =
-#if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256)
-    "ecdh-sha2-nistp256-kyber-512-sha256,"
+#if !defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256)
+    "ecdh-nistp256-kyber-512-sha256,"
 #endif
 #if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP521)
     "ecdh-sha2-nistp521,"
@@ -7808,7 +7808,7 @@ static const char cannedKexAlgoNames[] =
         defined(WOLFSSH_NO_DH_GROUP1_SHA1) && \
         defined(WOLFSSH_NO_ECDH_SHA2_NISTP521) && \
         defined(WOLFSSH_NO_ECDH_SHA2_NISTP384) && \
-        defined(WOLFSSH_NO_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256)
+        defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256)
     #warning "You need at least one key exchange algorithm."
 #endif
 
@@ -8018,7 +8018,7 @@ struct wolfSSH_sigKeyBlockFull {
         } sk;
 };
 
-#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256
+#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
     /* Size of Kyber public key (bigger than ciphertext) and some extra for the
      * ECC hybrid component. */
     #define KEX_F_SIZE 1024
@@ -8486,7 +8486,7 @@ int SendKexDhReply(WOLFSSH* ssh)
     word32 fSz = KEX_F_SIZE;
     word32 sigSz = KEX_SIG_SIZE;
     byte useEcc = 0;
-#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256
+#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
     byte useEccKyber = 0;
 #endif
     byte fPad = 0;
@@ -8592,8 +8592,8 @@ int SendKexDhReply(WOLFSSH* ssh)
                 msgId = MSGID_KEXDH_REPLY;
                 break;
 #endif
-#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256
-            case ID_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256:
+#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
+            case ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256:
                 useEccKyber = 1; /* Only support level 1 for now. */
                 msgId = MSGID_KEXKEM_REPLY;
                 break;
@@ -8633,7 +8633,7 @@ int SendKexDhReply(WOLFSSH* ssh)
         /* Or make the server's ECDH private value, and the shared secret K. */
         if (ret == 0) {
             if (!useEcc
-#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256
+#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
                 && !useEccKyber
 #endif
                ) {
@@ -8734,7 +8734,7 @@ int SendKexDhReply(WOLFSSH* ssh)
             #endif
 #endif /* !defined(WOLFSSH_NO_ECDH) */
             }
-#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256
+#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
             else if (useEccKyber) {
                 /* This is a hybrid KEM. In this case, I need to generate my ECC
                  * keypair, send the public one, use the private one to generate
@@ -9460,8 +9460,8 @@ int SendKexDhInit(WOLFSSH* ssh)
             msgId = MSGID_KEXECDH_INIT;
             break;
 #endif
-#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256
-        case ID_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256:
+#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
+        case ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256:
             /* Only support level 1 for now. */
             ssh->handshake->useEccKyber = 1;
             msgId = MSGID_KEXKEM_INIT;
@@ -9475,7 +9475,7 @@ int SendKexDhInit(WOLFSSH* ssh)
 
     if (ret == WS_SUCCESS) {
         if (!ssh->handshake->useEcc
-#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256
+#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
             && !ssh->handshake->useEccKyber
 #endif
 ) {
@@ -9494,7 +9494,7 @@ int SendKexDhInit(WOLFSSH* ssh)
 #endif
         }
         else if (ssh->handshake->useEcc
-#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256
+#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
                  || ssh->handshake->useEccKyber
 #endif
                 ) {
@@ -9529,7 +9529,7 @@ int SendKexDhInit(WOLFSSH* ssh)
             ret = WS_INVALID_ALGO_ID;
         }
 
-#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256_KYBER_LEVEL1_SHA256
+#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
         if (ssh->handshake->useEccKyber) {
             OQS_KEM* kem = NULL;
             ret = 0;
