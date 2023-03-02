@@ -164,6 +164,8 @@ static int SetEcho(int type)
 static void ShowUsage(void)
 {
     printf("client %s\n", LIBWOLFSSH_VERSION_STRING);
+    printf("./wolfssh <options> user@host\n");
+    printf("./wolfssh <options> -u user -h host\n");
     printf(" -?            display this help and exit\n");
     printf(" -h <host>     host to connect to, default %s\n", wolfSshIp);
     printf(" -p <num>      port to connect on, default %d\n", wolfSshPort);
@@ -880,7 +882,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         username = argv[argc-1];
         host = XSTRSTR(username, "@");
 
-        usernameSz = (int)(host - username);
+        usernameSz = (int)((uintptr_t)host - (uintptr_t)username);
         XMEMCPY(localUsername, username, usernameSz);
         localUsername[usernameSz] = '\0';
 
