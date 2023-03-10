@@ -51,14 +51,23 @@ run_test() {
 }
 
 run_test "sshd_exec_test.sh"
+
 # add aditional tests here, check on var USING_LOCAL_HOST if can make sshd
 # server start/restart with changes
-
 
 if [ "$USING_LOCAL_HOST" == 1 ]; then
     printf "Shutting down test wolfSSHd\n"
     stop_wolfsshd
 fi
+
+# these tests require setting up an sshd
+if [ "$USING_LOCAL_HOST" == 1 ]; then
+    run_test "sshd_forcedcmd_test.sh"
+else
+    printf "Skipping tests that need to setup local SSHD\n"
+    SKIPPED=$((SKIPPED+1))
+fi
+
 printf "All tests ran, $TOTAL passed, $SKIPPED skipped\n"
 
 exit 0

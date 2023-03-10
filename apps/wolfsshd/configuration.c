@@ -1104,8 +1104,9 @@ int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename)
     while ((current = XFGETS(buf, MAX_LINE_SIZE, f)) != NULL) {
         int currentSz = (int)XSTRLEN(current);
 
-        /* remove leading spaces */
-        while (currentSz > 0 && current[0] == ' ') {
+        /* remove leading spaces and tabs */
+        while (currentSz > 0 &&
+                (current[0] == ' ' || current[0] == '\t')) {
             currentSz = currentSz - 1;
             current   = current + 1;
         }
