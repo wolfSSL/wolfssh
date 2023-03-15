@@ -1084,10 +1084,11 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
                 caCert = myoptarg;
                 break;
 
+            #if defined(OPENSSL_ALL) || defined(WOLFSSL_IP_ALT_NAME)
             case 'X':
                 IPOverride = 1;
                 break;
-
+            #endif
         #endif
 
             case 'x':
