@@ -116,14 +116,20 @@
     #define NUM_SOCKETS 5
 #else /* USE_WINDOWS_API */
     #include <unistd.h>
-    #include <netdb.h>
-    #include <netinet/in.h>
-    #include <netinet/tcp.h>
-    #include <arpa/inet.h>
-    #include <sys/ioctl.h>
     #include <sys/socket.h>
     #include <pthread.h>
-    #include <fcntl.h>
+    #ifdef  WOLFSSH_LWIP
+        #include <lwip/tcp.h>
+        #include <lwip/inet.h>
+        #include <lwip/netdb.h>
+    #else
+        #include <netdb.h>
+        #include <netinet/in.h>
+        #include <netinet/tcp.h>
+        #include <arpa/inet.h>
+        #include <sys/ioctl.h>
+        #include <fcntl.h>
+    #endif
     #ifndef SO_NOSIGPIPE
         #include <signal.h>  /* ignore SIGPIPE */
     #endif
@@ -529,7 +535,8 @@ static INLINE void tcp_socket(WS_SOCKET_T* sockFd)
 #endif
 
 
-#if defined(WOLFSSH_TEST_SERVER) && !defined(FREESCALE_MQX)
+#if defined(WOLFSSH_TEST_SERVER) && !defined(FREESCALE_MQX)\
+                                 && !defined(WOLFSSH_LWIP)
 
 static INLINE void tcp_listen(WS_SOCKET_T* sockfd, word16* port, int useAnyAddr)
 {
