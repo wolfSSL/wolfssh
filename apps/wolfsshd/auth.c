@@ -292,6 +292,7 @@ static int CheckPasswordHashUnix(const char* input, char* stored)
 {
     int ret = WSSHD_AUTH_SUCCESS;
     char* hashedInput;
+    word32 hashedInputSz = 0, storedSz = 0;
 
     if (input == NULL || stored == NULL) {
         ret = WS_BAD_ARGUMENT;
@@ -303,7 +304,13 @@ static int CheckPasswordHashUnix(const char* input, char* stored)
             ret = WS_FATAL_ERROR;
         }
         else {
-            if (WMEMCMP(hashedInput, stored, WSTRLEN(stored)) != 0) {
+            hashedInputSz = (word32)WSTRLEN(hashedInput);
+            storedSz = (word32)WSTRLEN(stored);
+
+            if (storedSz == 0 || stored[0] == '*' ||
+                    hashedInputSz == 0 || hashedInput[0] == '*' ||
+                    hashedInputSz != storedSz ||
+                    WMEMCMP(hashedInput, stored, storedSz) != 0) {
                 ret = WSSHD_AUTH_FAILURE;
             }
         }
