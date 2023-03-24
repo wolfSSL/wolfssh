@@ -2,13 +2,13 @@
 
 The wolfSSH Cube Pack can be found [here](https://www.wolfssl.com/files/ide/I-CUBE-wolfSSH.pack)
 
-1. The first step is to setup the wolfCrypt library in your ST project following the guide here [https://github.com/wolfSSL/wolfssl/blob/master/IDE/STM32Cube/README.md](https://github.com/wolfSSL/wolfssl/blob/master/IDE/STM32Cube/README.md). To run the wolfSSH unit tests, name the entry function `wolfSSHTest` instead of `wolfCryptDemo`.
+1. The first step is to set up the wolfCrypt library in your ST project following the guide here [https://github.com/wolfSSL/wolfssl/blob/master/IDE/STM32Cube/README.md](https://github.com/wolfSSL/wolfssl/blob/master/IDE/STM32Cube/README.md). To run the wolfSSH unit tests, name the entry function `wolfSSHTest` instead of `wolfCryptDemo`.
 
 2. Then install the wolfSSH Cube Pack in the same manner as the wolfSSL pack with CUBEMX.
 
-3. Open the project `.ioc` file and click the `Softare Packs` drop down menu and then `Select Components`. Expand the `wolfSSH` pack and check all the components. 
+3. Open the project `.ioc` file and click the `Software Packs` drop down menu and then `Select Components`. Expand the `wolfSSH` pack and check all the components. 
 
-4. In the `Softare Packs` configuration category of the `.ioc` file, click on the wolfSSH pack and enable the library by checking the box.
+4. In the `Software Packs` configuration category of the `.ioc` file, click on the wolfSSH pack and enable the library by checking the box.
 
 5. Since LwIP is a dependency for the Cube Pack, enable LwIP in the `Middleware` configuration category of the project. Also enable the `LWIP_DNS` option in the LwIP configuration settings.
 

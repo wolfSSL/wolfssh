@@ -114,22 +114,28 @@
     #endif
 
     #define NUM_SOCKETS 5
+#elif defined(WOLFSSH_LWIP)
+    #include <unistd.h>
+    #include <sys/socket.h>
+    #include <pthread.h>
+    #include <lwip/tcp.h>
+    #include <lwip/inet.h>
+    #include <lwip/netdb.h>
+    #ifndef SO_NOSIGPIPE
+        #include <signal.h>  /* ignore SIGPIPE */
+    #endif
+    #define SOCKET_T int
+    #define NUM_SOCKETS 5
 #else /* USE_WINDOWS_API */
     #include <unistd.h>
     #include <sys/socket.h>
     #include <pthread.h>
-    #ifdef  WOLFSSH_LWIP
-        #include <lwip/tcp.h>
-        #include <lwip/inet.h>
-        #include <lwip/netdb.h>
-    #else
-        #include <netdb.h>
-        #include <netinet/in.h>
-        #include <netinet/tcp.h>
-        #include <arpa/inet.h>
-        #include <sys/ioctl.h>
-        #include <fcntl.h>
-    #endif
+    #include <netdb.h>
+    #include <netinet/in.h>
+    #include <netinet/tcp.h>
+    #include <arpa/inet.h>
+    #include <sys/ioctl.h>
+    #include <fcntl.h>
     #ifndef SO_NOSIGPIPE
         #include <signal.h>  /* ignore SIGPIPE */
     #endif

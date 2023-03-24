@@ -1182,13 +1182,9 @@ extern "C" {
 
 #elif defined(WOLFSSH_USER_FILESYSTEM)
     /* User-defined I/O support */
-    #ifdef WOLFSSH_STM32_CUBEMX
-        #include <wolfssh/myFilesystem.h>
-    #else
-        #include "myFilesystem.h"
-    #endif
+    #include "myFilesystem.h"
 #else
-   
+
     #include <unistd.h>   /* used for rmdir */
     #include <sys/stat.h> /* used for mkdir, stat, and lstat */
     #include <stdio.h>    /* used for remove and rename */
