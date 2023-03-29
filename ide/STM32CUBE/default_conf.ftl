@@ -95,8 +95,8 @@ extern ${variable.value} ${variable.name};
 /* wolfSSH IO */
 /* ------------------------------------------------------------------------- */
 #define WOLFSSH_LWIP
-#define WOLFSSH_USER_IO
-#define WOLFSSL_USER_IO
+/* Remove the LWIP define and uncomment the line below to use user defined IO */
+/* #define WOLFSSL_USER_IO */
 
 /* To be defined for the target Socket API */
 #define WSTARTTCP()

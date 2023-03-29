@@ -1,6 +1,6 @@
 # wolfSSH for STM32 Cube IDE 
 
-The wolfSSH Cube Pack can be found [here](https://www.wolfssl.com/files/ide/I-CUBE-wolfSSH.pack)
+The wolfSSH Cube Pack can be found [here](https://www.wolfssl.com/files/ide/I-CUBE-wolfSSH.pack) and is dependent on the `wolfCrypt` library.
 
 1. The first step is to set up the wolfCrypt library in your ST project following the guide here [https://github.com/wolfSSL/wolfssl/blob/master/IDE/STM32Cube/README.md](https://github.com/wolfSSL/wolfssl/blob/master/IDE/STM32Cube/README.md). To run the wolfSSH unit tests, name the entry function `wolfSSHTest` instead of `wolfCryptDemo`.
 
