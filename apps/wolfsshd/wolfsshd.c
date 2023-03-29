@@ -1217,31 +1217,60 @@ int main(int argc, char** argv)
 
     /* run as a daemon */
     if (ret == WS_SUCCESS && isDaemon) {
+        pid_t p;
+
 #ifdef __unix__
         /* Daemonizing in POSIX, so set a syslog based log */
         wolfSSH_SetLoggingCb(SyslogCb);
 #endif
-        pid_t p;
-
         p = fork();
         if (p < 0) {
             fprintf(stderr, "Failed to fork process\n");
-            ret = WS_FATAL_ERROR;
+            exit(EXIT_FAILURE);
+        }
+        if (p > 0) {
+            exit(EXIT_SUCCESS); /* stop parent process */
         }
 
-        if (ret == WS_SUCCESS) {
+        if (setsid() < 0) {
+            fprintf(stderr, "Failed to set a new session");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            signal(SIGCHLD, ConnClose);
+            p = fork();
+            if (p < 0) {
+                fprintf(stderr, "Failed to fork process\n");
+                exit(EXIT_FAILURE);
+            }
             if (p > 0) {
-                exit(0); /* stop parent process */
+                exit(EXIT_SUCCESS);
             }
 
-            if (setsid() < 0) {
-                fprintf(stderr, "Failed to set a new session");
+            umask(0);
+            if (chdir("/") < 0) {
                 ret = WS_FATAL_ERROR;
+            }
+
+            if (ret == WS_SUCCESS) {
+                int fd;
+
+                fd = open("/dev/null", O_RDWR);
+                if (fd < 0) {
+                    ret = WS_FATAL_ERROR;
+                }
+                else {
+                    if (dup2(fd, STDIN_FILENO) < 0 ||
+                            dup2(fd, STDOUT_FILENO) < 0 ||
+                            dup2(fd, STDERR_FILENO) < 0) {
+                        ret = WS_FATAL_ERROR;
+                    }
+                    close(fd);
+                }
             }
         }
     }
 
-    signal(SIGCHLD, ConnClose);
     if (ret == WS_SUCCESS) {
         wolfSSH_Log(WS_LOG_INFO, "[SSHD] Starting to listen on port %d", port);
         tcp_listen(&listenFd, &port, 1);
