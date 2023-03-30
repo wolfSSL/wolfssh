@@ -4,6 +4,8 @@
 if BUILD_EXAMPLE_CLIENTS
 noinst_PROGRAMS += examples/client/client
 examples_client_client_SOURCES      = examples/client/client.c \
+                                      examples/client/common.c \
+                                      examples/client/common.h \
                                       examples/client/client.h
 examples_client_client_LDADD        = src/libwolfssh.la
 examples_client_client_DEPENDENCIES = src/libwolfssh.la
