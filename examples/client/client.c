@@ -509,6 +509,9 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
                 break;
 
             case 'p':
+                if (myoptarg == NULL) {
+                    err_sys("port number cannot be NULL");
+                }
                 port = (word16)atoi(myoptarg);
                 #if !defined(NO_MAIN_DRIVER) || defined(USE_WINDOWS_API)
                     if (port == 0)
@@ -603,7 +606,10 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         err_sys("If setting priv key, need pub key.");
     }
 
-    ClientSetPrivateKey(privKeyName, userEcc);
+    ret = ClientSetPrivateKey(privKeyName, userEcc);
+    if (ret != 0) {
+        err_sys("Error setting private key");
+    }
 
 #ifdef WOLFSSH_CERTS
     /* passed in certificate to use */
@@ -613,7 +619,10 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     else
 #endif
     {
-        ClientUsePubKey(pubKeyName, userEcc);
+        ret = ClientUsePubKey(pubKeyName, userEcc);
+    }
+    if (ret != 0) {
+        err_sys("Error setting public key");
     }
 
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);

@@ -606,6 +606,8 @@ int ClientSetEcho(int type)
 }
 
 
+/* Set certificate to use and public key.
+ * returns 0 on success */
 int ClientUseCert(const char* certName)
 {
     int ret = 0;
@@ -626,6 +628,8 @@ int ClientUseCert(const char* certName)
 }
 
 
+/* Reads the private key to use from file name privKeyName.
+ * returns 0 on success */
 int ClientSetPrivateKey(const char* privKeyName, int userEcc)
 {
     int ret;
@@ -666,6 +670,8 @@ int ClientSetPrivateKey(const char* privKeyName, int userEcc)
 }
 
 
+/* Set public key to use
+ * returns 0 on success */
 int ClientUsePubKey(const char* pubKeyName, int userEcc)
 {
     int ret;

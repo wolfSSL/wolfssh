@@ -216,7 +216,10 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
         err_sys("Empty path values");
     }
 
-    ClientSetPrivateKey(privKeyName, 0);
+    ret = ClientSetPrivateKey(privKeyName, 0);
+    if (ret != 0) {
+        err_sys("Error setting private key");
+    }
 
 #ifdef WOLFSSH_CERTS
     /* passed in certificate to use */
@@ -226,7 +229,10 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     else
 #endif
     {
-        ClientUsePubKey(pubKeyName, 0);
+        ret = ClientUsePubKey(pubKeyName, 0);
+    }
+    if (ret != 0) {
+        err_sys("Error setting public key");
     }
 
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);

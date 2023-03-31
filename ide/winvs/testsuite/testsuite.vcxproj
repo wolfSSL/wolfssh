@@ -35,6 +35,7 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\..\..\examples\client\common.c" />
     <ClCompile Include="..\..\..\examples\client\client.c" />
     <ClCompile Include="..\..\..\examples\echoserver\echoserver.c" />
     <ClCompile Include="..\..\..\tests\testsuite.c" />

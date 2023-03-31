@@ -35,6 +35,7 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\..\..\examples\client\common.c" />
     <ClCompile Include="..\..\..\examples\sftpclient\sftpclient.c" />
   </ItemGroup>
   <ItemGroup>
