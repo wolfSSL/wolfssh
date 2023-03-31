@@ -28,7 +28,6 @@
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/wolfsftp.h>
-#include <wolfssh/test.h>
 #include <wolfssh/port.h>
 #include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfssl/wolfcrypt/coding.h>
@@ -615,12 +614,13 @@ int ClientUseCert(const char* certName)
     if (certName != NULL) {
     #ifdef WOLFSSH_CERTS
         ret = load_der_file(certName, &userPublicKey, &userPublicKeySz);
-        if (ret != 0) err_sys("Couldn't load certificate file.");
-
-        userPublicKeyType = publicKeyType;
-        userPublicKeyTypeSz = (word32)WSTRLEN((const char*)publicKeyType);
+        if (ret == 0) {
+            userPublicKeyType = publicKeyType;
+            userPublicKeyTypeSz = (word32)WSTRLEN((const char*)publicKeyType);
+        }
     #else
-        err_sys("Certificate support not compiled in");
+        fprintf(stderr, "Certificate support not compiled in");
+        ret = WS_NOT_COMPILED;
     #endif
     }
 
@@ -650,7 +650,6 @@ int ClientSetPrivateKey(const char* privKeyName, int userEcc)
         #endif
         }
         isPrivate = 1;
-        if (ret != 0) err_sys("Couldn't load private key buffer.");
     }
     else {
     #ifndef NO_FILESYSTEM
@@ -661,9 +660,8 @@ int ClientSetPrivateKey(const char* privKeyName, int userEcc)
                 &isPrivate, NULL);
     #else
         printf("file system not compiled in!\n");
-        ret = -1;
+        ret = WC_NOT_COMPILED;
     #endif
-        if (ret != 0) err_sys("Couldn't load private key file.");
     }
 
     return ret;
@@ -697,7 +695,6 @@ int ClientUsePubKey(const char* pubKeyName, int userEcc)
         #endif
         }
         isPrivate = 1;
-        if (ret != 0) err_sys("Couldn't load public key buffer.");
     }
     else {
     #ifndef NO_FILESYSTEM
@@ -710,8 +707,9 @@ int ClientUsePubKey(const char* pubKeyName, int userEcc)
         printf("file system not compiled in!\n");
         ret = -1;
     #endif
-        if (ret != 0) err_sys("Couldn't load public key file.");
-        pubKeyLoaded = 1;
+        if (ret == 0) {
+            pubKeyLoaded = 1;
+        }
     }
 
     return ret;
@@ -728,15 +726,18 @@ int ClientLoadCA(WOLFSSH_CTX* ctx, const char* caCert)
         word32 derSz;
 
         ret = load_der_file(caCert, &der, &derSz);
-        if (ret != 0) err_sys("Couldn't load CA certificate file.");
-        if (wolfSSH_CTX_AddRootCert_buffer(ctx, der, derSz,
-            WOLFSSH_FORMAT_ASN1) != WS_SUCCESS) {
-            err_sys("Couldn't parse in CA certificate.");
+        if (ret == 0) {
+            if (wolfSSH_CTX_AddRootCert_buffer(ctx, der, derSz,
+                WOLFSSH_FORMAT_ASN1) != WS_SUCCESS) {
+                fprintf(stderr, "Couldn't parse in CA certificate.");
+                ret = WS_PARSE_E;
+            }
+            WFREE(der, NULL, 0);
         }
-        WFREE(der, NULL, 0);
     #else
         (void)ctx;
-        err_sys("Support for certificates not compiled in.");
+        fprintf(stderr, "Support for certificates not compiled in.");
+        ret = WS_NOT_COMPILED;
     #endif
     }
     return ret;

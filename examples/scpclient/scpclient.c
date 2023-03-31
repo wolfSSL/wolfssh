@@ -248,6 +248,7 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     ClientLoadCA(ctx, caCert);
 #else
     (void)caCert;
+    (void)certName;
 #endif /* WOLFSSH_CERTS */
 
     wolfSSH_CTX_SetPublicKeyCheck(ctx, ClientPublicKeyCheck);
