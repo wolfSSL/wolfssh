@@ -10,7 +10,7 @@ The wolfSSH Cube Pack can be found [here](https://www.wolfssl.com/files/ide/I-CU
 
 4. In the `Software Packs` configuration category of the `.ioc` file, click on the wolfSSH pack and enable the library by checking the box.
 
-5. Since LwIP is a dependency for the Cube Pack, enable LwIP in the `Middleware` configuration category of the project. Also enable the `LWIP_DNS` option in the LwIP configuration settings.
+5. The Pack defaults to using custom IO provided by the user. Modify `ide/STM32CUBE/userio_template.h` to supply the custom IO. If you'd like to use LwIP instead, configure the wolfSSH IO settings in the `.ioc` to enable LwIP compatibilty. You'll also have to enable LwIP in the `Middleware` configuration category of the project. Enable the `LWIP_DNS` option in the LwIP configuration settings.
 
 6. Save your changes and select yes to the prompt asking about generating code.
 
@@ -19,4 +19,4 @@ The wolfSSH Cube Pack can be found [here](https://www.wolfssl.com/files/ide/I-CU
 ## Notes
 - Make sure to make [these changes](https://github.com/wolfSSL/wolfssl/tree/master/IDE/STM32Cube#stm32-printf) to redirect the printf's to the UART.
 
-- If looking to enable filesystem support, the pack assumes the user has defined their own filesystem in `wolfssh/myFilesystem.h`. That file will originally contain a dummy filesystem. If going the FATFS route, make sure to replace `#define WOLFSSH_USER_FILESYSTEM` with `#define WOLFSSH_FATFS` in the `wolfSSL.I-CUBE-wolfSSH_conf.h` header file. The wolfSSL Cube Pack also defaults to disabling filesystem support so make sure to remove `#define NO_FILESYSTEM` from `wolfSSL.I-CUBE-wolfSSL_conf.h`.
+- If looking to enable filesystem support (required for SFTP), the pack assumes the user has defined their own filesystem in `wolfssh/myFilesystem.h`. That file will originally contain a dummy filesystem. If going the FATFS route, make sure to replace `#define WOLFSSH_USER_FILESYSTEM` with `#define WOLFSSH_FATFS` in the `wolfSSL.I-CUBE-wolfSSH_conf.h` header file. The wolfSSL Cube Pack also defaults to disabling filesystem support so make sure to remove `#define NO_FILESYSTEM` from `wolfSSL.I-CUBE-wolfSSL_conf.h`.

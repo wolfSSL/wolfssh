@@ -126,6 +126,16 @@
     #endif
     #define SOCKET_T int
     #define NUM_SOCKETS 5
+#elif defined(WOLFSSH_USER_IO)
+    #include <unistd.h>
+    #include <pthread.h>
+    #include <fcntl.h>
+    #include "userio_template.h"
+    #ifndef SO_NOSIGPIPE
+        #include <signal.h>  /* ignore SIGPIPE */
+    #endif
+    #define SOCKET_T int
+    #define NUM_SOCKETS 5
 #else /* USE_WINDOWS_API */
     #include <unistd.h>
     #include <sys/socket.h>

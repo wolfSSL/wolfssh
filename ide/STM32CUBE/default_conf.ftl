@@ -94,9 +94,11 @@ extern ${variable.value} ${variable.name};
 /* ------------------------------------------------------------------------- */
 /* wolfSSH IO */
 /* ------------------------------------------------------------------------- */
-#define WOLFSSH_LWIP
-/* Remove the LWIP define and uncomment the line below to use user defined IO */
-/* #define WOLFSSL_USER_IO */
+#if defined(WOLFSSH_CONF_IO) && WOLFSSH_CONF_IO == 2
+    #define WOLFSSH_LWIP
+#else
+    #define WOLFSSH_USER_IO
+#endif
 
 /* To be defined for the target Socket API */
 #define WSTARTTCP()
@@ -139,6 +141,8 @@ extern ${variable.value} ${variable.name};
 #define HAVE_CURVE25519
 #define CURVE25519_SMALL
 #define HAVE_ED25519
+
+#define WOLFSSH_IGNORE_FILE_WARN
 
 typedef unsigned int size_t;
 
