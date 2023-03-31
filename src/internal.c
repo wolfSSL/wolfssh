@@ -8859,9 +8859,6 @@ int SendKexDhReply(WOLFSSH* ssh)
 
         /* Hash in the server's DH f-value. */
         if (ret == 0) {
-            ret = CreateMpint(f_ptr, &fSz, &fPad);
-        }
-        if (ret == 0) {
             c32toa(fSz + fPad, scratchLen);
             ret = HashUpdate(&ssh->handshake->hash, enmhashId,
                                scratchLen, LENGTH_SZ);
