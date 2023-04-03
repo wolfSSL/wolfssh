@@ -40,107 +40,107 @@ typedef  struct { int i; } stat_t;
 #define WFD int
 enum { O_RDWR, O_RDONLY, O_WRONLY, O_APPEND, O_CREAT, O_TRUNC, O_EXCL } ;
 
-static int WFOPEN(FILE **f, const char *n, const char *m){
+static inline int WFOPEN(FILE **f, const char *n, const char *m){
     (void) n; (void) m; (void)f;
     return NULL;
 }
 
-static int WFCLOSE(FILE *f) {
+static inline int WFCLOSE(FILE *f) {
     (void) f;
     return 0;
 }
 
-static size_t WFREAD(void *b, size_t s, size_t n, FILE *f) {
+static inline size_t WFREAD(void *b, size_t s, size_t n, FILE *f) {
     (void) b; (void) s; (void) n; (void) f;
     return 0;
 }
 
-static size_t WFWRITE(const void *b, size_t s, size_t n, FILE *f) {
+static inline size_t WFWRITE(const void *b, size_t s, size_t n, FILE *f) {
     (void) b; (void) s; (void) n; (void) f;
     return 0;
 }
 
-static int WFSEEK(FILE *f, long int p, int m) {
+static inline int WFSEEK(FILE *f, long int p, int m) {
     (void) f; (void) p; (void) m;
     return 0;
 }
 
-static long int WFTELL(FILE *f) {
+static inline long int WFTELL(FILE *f) {
     (void) f;
     return 0;
 }
-static void WREWIND(FILE *f) {
+static inline void WREWIND(FILE *f) {
     (void) f;
 }
 
-static int WOPEN (const char* n, int f, int m) {
+static inline int WOPEN (const char* n, int f, int m) {
     (void) f; (void) n; (void) m;
     return 0;
 }
 
-static int WCLOSE(int f) {
+static inline int WCLOSE(int f) {
     (void) f;
     return 0;
 }
 
-static size_t WPREAD(int f, void* b, size_t c,  off_t *o) {
+static inline size_t WPREAD(int f, void* b, size_t c,  off_t *o) {
     (void) f; (void) b; (void) c; (void)o;
     return 0;
 }
 
-static size_t WPWRITE(int f, void* b, size_t c,  off_t *o) {
+static inline size_t WPWRITE(int f, void* b, size_t c,  off_t *o) {
     (void) f; (void) b; (void) c; (void)o;
     return 0;
 }
 
-static char *WGETCWD(void *fs, char *f, size_t l){
+static inline char *WGETCWD(void *fs, char *f, size_t l){
     (void) fs; (void) f; (void) l;
     return 0;
 }
 
-static int WRMDIR(void *fs, const char *p){
+static inline int WRMDIR(void *fs, const char *p){
      (void) p;
     return 0;
 }
 
-static int WMKDIR(void *fs, const char *p, mode_t m) {
+static inline int WMKDIR(void *fs, const char *p, mode_t m) {
     (void) p; (void) m;
     return 0;
 }
 
-static int WREMOVE(void *fs, const char *p){
+static inline int WREMOVE(void *fs, const char *p){
     (void) fs; (void) p;
     return 0;
 } 
 
-static int WRENAME(void *fs, const char *p, const char *np){
+static inline int WRENAME(void *fs, const char *p, const char *np){
     (void) fs; (void) p; (void)np;
     return 0;
 }
 
-static int WSTAT(const char *p, stat_t *b) {
+static inline int WSTAT(const char *p, stat_t *b) {
     (void) p; (void)b;
     return 0;
 }
 
-static int WLSTAT(const char *p, stat_t *b) {
+static inline int WLSTAT(const char *p, stat_t *b) {
     (void) p; (void)b;
     return 0;
 }
 
-static int WCHMOD(void *fs, const char *p, mode_t m) {
+static inline int WCHMOD(void *fs, const char *p, mode_t m) {
     (void) fs; (void) p; (void)m;
     return 0;
 }
 
-static int SFTP_GetAttributes(void* fs, const char* fileName,
+static inline int SFTP_GetAttributes(void* fs, const char* fileName,
         void* atr, byte link, void* heap) {
     (void)fs; (void)fileName; (void)atr; (void)link; (void)heap;
     return 0;
 
 }
 
-static int SFTP_GetAttributes_Handle(void* ssh, byte* handle, int handleSz,
+static inline int SFTP_GetAttributes_Handle(void* ssh, byte* handle, int handleSz,
         void* atr) {
             (void)ssh; (void)handle; (void)handleSz;
 
