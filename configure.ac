@@ -1,5 +1,5 @@
 # wolfssh
-# Copyright (C) 2014-2022 wolfSSL Inc.
+# Copyright (C) 2014-2023 wolfSSL Inc.
 # All right reserved.
 
 AC_COPYRIGHT([Copyright (C) 2014-2022 wolfSSL Inc.])
