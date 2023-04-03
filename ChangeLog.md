@@ -1,3 +1,30 @@
+# wolfSSH v1.4.13 (Apr 3, 2023)
+
+## New Feature Additions and Improvements
+
+- Improvement to forking the wolfSSHd daemon.
+- Added an STM32Cube Expansion pack. See the file _ide/STM32CUBE/README.md_
+  for more information. (https://www.wolfssl.com/files/ide/I-CUBE-wolfSSH.pack)
+- Improved test coverage for wolfSSHd.
+- X.509 style private key support.
+
+## Fixes
+
+- Fixed shadow password checking in wolfSSHd.
+- Building cleanups: warnings, types, 32-bit.
+- SFTP fixes for large files.
+- Testing and fixes with SFTP and LwIP.
+
+## Vulnerabilities
+
+- wolfSSHd would allow users without passwords to log in with any password.
+  This is fixed as of this version. The return value of crypt() was not
+  correctly checked. This issue was introduced in v1.4.11 and only affects
+  wolfSSHd when using the default authentication callback provided with
+  wolfSSHd. Anyone using wolfSSHd should upgrade to v1.4.13.
+
+---
+
 # wolfSSH v1.4.12 (Dec 28, 2022)
 
 ## New Feature Additions and Improvements
