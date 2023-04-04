@@ -1,6 +1,6 @@
 /* misc.c
  *
- * Copyright (C) 2014-2022 wolfSSL Inc.
+ * Copyright (C) 2014-2023 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *

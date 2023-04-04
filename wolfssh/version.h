@@ -1,6 +1,6 @@
 /* version.h.in
  *
- * Copyright (C) 2014-2022 wolfSSL Inc.
+ * Copyright (C) 2014-2023 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -35,8 +35,8 @@
 extern "C" {
 #endif
 
-#define LIBWOLFSSH_VERSION_STRING "1.4.12"
-#define LIBWOLFSSH_VERSION_HEX 0x01004012
+#define LIBWOLFSSH_VERSION_STRING "1.4.13"
+#define LIBWOLFSSH_VERSION_HEX 0x01004013
 
 #ifdef __cplusplus
 }
