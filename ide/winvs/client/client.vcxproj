@@ -36,6 +36,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\..\examples\client\client.c" />
+    <ClCompile Include="..\..\..\examples\client\common.c" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\wolfssh\wolfssh.vcxproj">

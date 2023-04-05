@@ -628,7 +628,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
 
 #ifdef WOLFSSH_SCP
             case ACCEPT_INIT_SCP_TRANSFER:
-                if ( (ssh->error = DoScpRequest(ssh)) < 0) {
+                if (DoScpRequest(ssh) < 0) {
                     WLOG(WS_LOG_DEBUG, acceptError, "INIT_SCP_TRANSFER",
                          ssh->error);
                     return WS_FATAL_ERROR;

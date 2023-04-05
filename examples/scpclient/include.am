@@ -5,7 +5,9 @@ if BUILD_SCP
 if BUILD_EXAMPLE_CLIENTS
 noinst_PROGRAMS += examples/scpclient/wolfscp
 examples_scpclient_wolfscp_SOURCES      = examples/scpclient/scpclient.c \
-                                          examples/scpclient/scpclient.h
+                                          examples/scpclient/scpclient.h \
+                                          examples/client/common.c \
+                                          examples/client/common.h
 examples_scpclient_wolfscp_LDADD        = src/libwolfssh.la
 examples_scpclient_wolfscp_DEPENDENCIES = src/libwolfssh.la
 endif

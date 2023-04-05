@@ -64,6 +64,8 @@ tests_testsuite_test_SOURCES = tests/testsuite.c tests/testsuite.h \
                                tests/sftp.c tests/sftp.h \
                                examples/echoserver/echoserver.c \
                                examples/client/client.c \
+                               examples/client/common.c \
+                               examples/client/common.h \
                                examples/sftpclient/sftpclient.c
 tests_testsuite_test_CPPFLAGS  = -DNO_MAIN_DRIVER
 if BUILD_KEYGEN
