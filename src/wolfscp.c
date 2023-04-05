@@ -1370,10 +1370,12 @@ int ReceiveScpMessage(WOLFSSH* ssh)
                     return err;
             }
         }
-    } while (buf[sz - 1] != 0x0a);
+    } while (sz == 0 || buf[sz - 1] != 0x0a);
 
     /* null-terminate request, replace newline */
-    buf[sz - 1] = '\0';
+    if (sz > 0) {
+        buf[sz - 1] = '\0';
+    }
 
     switch (buf[0]) {
         case 'C':
@@ -1875,6 +1877,8 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                          ret = WS_SCP_CONTINUE;
                     }
                     else {
+                        WLOG(WS_LOG_ERROR,
+                            "scp: invalid destination directory, abort");
                         wolfSSH_SetScpErrorMsg(ssh,
                                 "invalid destination directory");
                         ret = WS_SCP_ABORT;
@@ -1885,6 +1889,8 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
 
                     /* check to make sure that it is a directory */
                     if ((stat.fattribute & ADIRENT) == 0) {
+                        WLOG(WS_LOG_ERROR,
+                            "scp: invalid destination directory, abort");
                         wolfSSH_SetScpErrorMsg(ssh,
                                 "invalid destination directory");
                         ret = WS_SCP_ABORT;
@@ -1894,6 +1900,8 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             }
     #else
             if (WCHDIR(basePath) != 0) {
+                WLOG(WS_LOG_ERROR,
+                    "scp: invalid destination directory, abort");
                 wolfSSH_SetScpErrorMsg(ssh, "invalid destination directory");
                 ret = WS_SCP_ABORT;
             }
@@ -1913,6 +1921,8 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
         #else
             if (WFOPEN(&fp, fileName, "wb") != 0) {
         #endif
+                WLOG(WS_LOG_ERROR,
+                    "scp: unable to open file for writing, abort");
                 wolfSSH_SetScpErrorMsg(ssh, "unable to open file for writing");
                 ret = WS_SCP_ABORT;
                 break;
@@ -1928,6 +1938,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
         case WOLFSSH_SCP_FILE_PART:
 
             if (fp == NULL) {
+                WLOG(WS_LOG_ERROR, "scp: file pointer was null, abort");
                 ret = WS_SCP_ABORT;
                 break;
             }
@@ -1972,6 +1983,8 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                 if (ret == WS_SUCCESS) {
                     ret = WS_SCP_CONTINUE;
                 } else {
+                    WLOG(WS_LOG_ERROR,
+                        "scp: unable to get timestamp info, abort");
                     ret = WS_SCP_ABORT;
                 }
             }
@@ -1991,6 +2004,8 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                 if (WMKDIR(ssh->fs, abslut, fileMode) != 0) {
                     /* check if directory already exists */
                     if (NU_Make_Dir(abslut) != NUF_EXIST) {
+                        WLOG(WS_LOG_ERROR, scpState,
+                            "error creating directory, abort");
                         wolfSSH_SetScpErrorMsg(ssh, "error creating directory");
                         ret = WS_SCP_ABORT;
                         break;
@@ -2000,6 +2015,8 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             #else
                 if (WMKDIR(ssh->fs, fileName, fileMode) != 0) {
                     if (wolfSSH_LastError() != EEXIST) {
+                        WLOG(WS_LOG_ERROR,
+                            "scp: error creating directory, abort");
                         wolfSSH_SetScpErrorMsg(ssh, "error creating directory");
                         ret = WS_SCP_ABORT;
                         break;
@@ -2014,6 +2031,8 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                 wolfSSH_CleanPath(ssh, (char*)basePath);
             #else
                 if (WCHDIR(fileName) != 0) {
+                    WLOG(WS_LOG_ERROR,
+                            "scp: unable to cd into direcotry, abort");
                     wolfSSH_SetScpErrorMsg(ssh, "unable to cd into directory");
                     ret = WS_SCP_ABORT;
                 }
@@ -2029,6 +2048,8 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                 wolfSSH_CleanPath(ssh, (char*)basePath);
         #else
             if (WCHDIR("..") != 0) {
+                WLOG(WS_LOG_ERROR,
+                            "scp: unable to cd out of direcotry, abort");
                 wolfSSH_SetScpErrorMsg(ssh, "unable to cd out of directory");
                 ret = WS_SCP_ABORT;
             }
@@ -2036,6 +2057,8 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             break;
 
         default:
+            WLOG(WS_LOG_ERROR,
+                            "scp: invalid scp command request, abort");
             wolfSSH_SetScpErrorMsg(ssh, "invalid scp command request");
             ret = WS_SCP_ABORT;
     }
@@ -2304,6 +2327,7 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
         dNameLen   = (int)WSTRLEN(sendCtx->entry->d_name);
     #endif
         if ((dirNameLen + 1 + dNameLen) > DEFAULT_SCP_FILE_NAME_SZ) {
+            WLOG(WS_LOG_ERROR, "scp: dir name length too long, abort");
             ret = WS_SCP_ABORT;
 
         } else {
@@ -2339,11 +2363,13 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
             if (ret == WS_SUCCESS) {
                 ret = WS_SCP_ENTER_DIR;
             } else {
+                WLOG(WS_LOG_ERROR, "scp: Error with push dir, abort");
                 ret = WS_SCP_ABORT;
             }
 
         } else if (ScpFileIsFile(sendCtx)) {
             if (WFOPEN(&(sendCtx->fp), filePath, "rb") != 0) {
+                WLOG(WS_LOG_ERROR, "scp: Error with oepning file, abort");
                 wolfSSH_SetScpErrorMsg(ssh, "unable to open file "
                                        "for reading");
                 ret = WS_SCP_ABORT;
@@ -2365,6 +2391,7 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
 
     } else {
         if (ret != WS_NEXT_ERROR) {
+            WLOG(WS_LOG_ERROR, "scp: ret does not equal WS_NEXT_ERROR, abort");
             ret = WS_SCP_ABORT;
         }
     }
@@ -2484,6 +2511,7 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             if ((sendCtx == NULL) || WFOPEN(&(sendCtx->fp), peerRequest,
                                             "rb") != 0) {
 
+                WLOG(WS_LOG_ERROR, "scp: unable to open file, abort");
                 wolfSSH_SetScpErrorMsg(ssh, "unable to open file for reading");
                 ret = WS_SCP_ABORT;
             }
@@ -2516,6 +2544,7 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
                     }
                 }
             } else {
+                WLOG(WS_LOG_ERROR, "scp: error extracting file name, abort");
                 ret = WS_SCP_ABORT;
             }
 
@@ -2547,6 +2576,7 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
                 if (ret == WS_SUCCESS) {
                     ret = WS_SCP_ENTER_DIR;
                 } else {
+                    WLOG(WS_LOG_ERROR, "scp: error getting file stats, abort");
                     ret = WS_SCP_ABORT;
                 }
 
@@ -2576,6 +2606,8 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
                         ret = WS_SCP_EXIT_DIR_FINAL;
 
                     } else {
+                        WLOG(WS_LOG_ERROR,
+                            "scp: error popping directory, abort");
                         ret = WS_SCP_ABORT;
                     }
 
@@ -2597,6 +2629,7 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
         case WOLFSSH_SCP_CONTINUE_FILE_TRANSFER:
 
             if (sendCtx == NULL) {
+                WLOG(WS_LOG_ERROR, "scp: sendCtx was null, abort");
                 ret = WS_SCP_ABORT;
                 break;
             }
@@ -2643,6 +2676,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             /* create file */
             sz = (int)WSTRLEN(fileName);
             if (sz >= DEFAULT_SCP_FILE_NAME_SZ) {
+                WLOG(WS_LOG_ERROR, "scp: file name is too large, abort");
                 wolfSSH_SetScpErrorMsg(ssh, "file name is too large");
                 ret = WS_SCP_ABORT;
                 break;
@@ -2653,6 +2687,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             if (recvBuffer->status) {
                 if (recvBuffer->status(ssh, fileName, WOLFSSH_SCP_NEW_FILE,
                             recvBuffer) != WS_SUCCESS)
+                    WLOG(WS_LOG_ERROR, "scp: status of new file failed, abort");
                     ret = WS_SCP_ABORT;
             }
             break;
@@ -2665,7 +2700,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             if (recvBuffer->idx >= recvBuffer->bufferSz) {
                 wolfSSH_SetScpErrorMsg(ssh,
                         "buffer is not large enough for file");
-                WLOG(WS_LOG_DEBUG, scpState, "SCP buffer too small for file");
+                WLOG(WS_LOG_ERROR, scpState, "SCP buffer too small for file");
                 ret = WS_SCP_ABORT;
                 break;
             }
@@ -2676,6 +2711,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             if (recvBuffer->status) {
                 if (recvBuffer->status(ssh, recvBuffer->name,
                             WOLFSSH_SCP_FILE_PART, recvBuffer) != WS_SUCCESS)
+                    WLOG(WS_LOG_ERROR, "scp: bad status, abort");
                     ret = WS_SCP_ABORT;
             }
             break;
@@ -2686,18 +2722,23 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             if (recvBuffer->status) {
                 if (recvBuffer->status(ssh, recvBuffer->name,
                             WOLFSSH_SCP_FILE_DONE, recvBuffer) != WS_SUCCESS)
+                    WLOG(WS_LOG_ERROR, "scp: bad status, abort");
                     ret = WS_SCP_ABORT;
             }
             break;
 
         case WOLFSSH_SCP_NEW_DIR:
         case WOLFSSH_SCP_END_DIR:
+            WLOG(WS_LOG_ERROR,
+                    "scp: creating a new directory not supported");
             wolfSSH_SetScpErrorMsg(ssh,
                     "creating a new directory not supported");
             ret = WS_SCP_ABORT;
             break;
 
         default:
+            WLOG(WS_LOG_ERROR, scpState,
+                   "invalid scp command request");
             wolfSSH_SetScpErrorMsg(ssh, "invalid scp command request");
             ret = WS_SCP_ABORT;
     }
@@ -2741,6 +2782,7 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
                 if ( sendBuffer->status(ssh, fileName,
                             WOLFSSH_SCP_SINGLE_FILE_REQUEST, sendBuffer)
                             != WS_SUCCESS) {
+                    WLOG(WS_LOG_ERROR, scpState, "bad status of file, abort");
                     ret = WS_SCP_ABORT;
                     break;
                 }
@@ -2748,6 +2790,7 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
 
             if (WSTRLEN(fileName) != sendBuffer->nameSz ||
                 WMEMCMP(sendBuffer->name, fileName, sendBuffer->nameSz) != 0) {
+                WLOG(WS_LOG_ERROR, scpState, "file name did not match, abort");
                 wolfSSH_SetScpErrorMsg(ssh, "file name did not match");
                 ret = WS_SCP_ABORT;
                 break;
@@ -2761,6 +2804,8 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             ret = (bufSz < (sendBuffer->fileSz - sendBuffer->idx))?
                 bufSz : sendBuffer->fileSz - sendBuffer->idx;
             if (sendBuffer->idx  + ret >= sendBuffer->bufferSz) {
+                WLOG(WS_LOG_ERROR, scpState,
+                    "potential buffer overflow caught, abort");
                 ret = WS_SCP_ABORT;
                 break;
             }
@@ -2770,6 +2815,8 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             break;
 
         case WOLFSSH_SCP_RECURSIVE_REQUEST:
+            WLOG(WS_LOG_ERROR, scpState,
+                   "recursive request without filesystem not supported, abort");
             wolfSSH_SetScpErrorMsg(ssh,
                     "recursive request without filesystem not supported");
             ret = WS_SCP_ABORT;
@@ -2778,6 +2825,8 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
         case WOLFSSH_SCP_CONTINUE_FILE_TRANSFER:
             /* copy over buffer info */
             if (sendBuffer->idx >= sendBuffer->bufferSz) {
+                WLOG(WS_LOG_ERROR, scpState,
+                    "sendbuffer idx greater than buffer size, abort");
                 ret = WS_SCP_ABORT;
                 break;
             }
@@ -2786,6 +2835,7 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             if (ret > 0) {
                 if (sendBuffer->idx  + ret >= sendBuffer->bufferSz) {
                     ret = WS_SCP_ABORT;
+                    WLOG(WS_LOG_ERROR, scpState, "buffer size issue, abort");
                     break;
                 }
                 WMEMCPY(buf, sendBuffer->buffer + sendBuffer->idx, ret);
@@ -2798,6 +2848,7 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             if (sendBuffer->status(ssh, sendBuffer->name,
                         WOLFSSH_SCP_CONTINUE_FILE_TRANSFER, sendBuffer)
                         != WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, scpState, "continue status fail, abort");
                 ret = WS_SCP_ABORT;
                 break;
             }
