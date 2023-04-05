@@ -617,6 +617,7 @@ int ClientUseCert(const char* certName)
         if (ret == 0) {
             userPublicKeyType = publicKeyType;
             userPublicKeyTypeSz = (word32)WSTRLEN((const char*)publicKeyType);
+            pubKeyLoaded = 1;
         }
     #else
         fprintf(stderr, "Certificate support not compiled in");

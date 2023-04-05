@@ -886,7 +886,7 @@ static void* HandleConnection(void* arg)
         if (ret == WS_SUCCESS || ret == WS_SFTP_COMPLETE) {
             pPasswd = getpwnam((const char *)usr);
             if (pPasswd == NULL) {
-                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error igetting user info");
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error getting user info");
                 ret = WS_FATAL_ERROR;
             }
         }
