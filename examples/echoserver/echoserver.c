@@ -107,8 +107,6 @@
 
 #ifndef NO_WOLFSSH_SERVER
 
-#define TEST_SFTP_TIMEOUT 1
-
 static const char echoserverBanner[] = "wolfSSH Example Echo Server\n";
 
 static int quit = 0;
@@ -1133,84 +1131,70 @@ static int ssh_worker(thread_ctx_t* threadCtx)
 
 
 #ifdef WOLFSSH_SFTP
+
+#define TEST_SFTP_TIMEOUT_NONE 0
+#define TEST_SFTP_TIMEOUT 1
+
 /* handle SFTP operations
  * returns 0 on success
  */
 static int sftp_worker(thread_ctx_t* threadCtx)
 {
-    byte tmp[1];
-    int ret   = WS_SUCCESS;
-    int error = WS_SUCCESS;
-    WS_SOCKET_T sockfd;
-    int select_ret = 0;
+    WOLFSSH* ssh = threadCtx->ssh;
+    WS_SOCKET_T s;
+    int ret = WS_SUCCESS;
+    int error;
+    int selected;
+    unsigned char peek_buf[1];
+    int timeout = TEST_SFTP_TIMEOUT;
 
-    error  = wolfSSH_get_error(threadCtx->ssh);
-    sockfd = (WS_SOCKET_T)wolfSSH_get_fd(threadCtx->ssh);
+    s = (WS_SOCKET_T)wolfSSH_get_fd(ssh);
+
     do {
-        if (threadCtx->nonBlock) {
-            if (error == WS_WANT_READ) {
-                WOLFSSH_CHANNEL* c;
-                printf("... sftp server would read block\n");
-
-                /* if all channels are closed then close connection */
-                c = wolfSSH_ChannelNext(threadCtx->ssh, NULL);
-                if (c && wolfSSH_ChannelGetEof(c)) {
-                    ret = 0;
-                    break;
-                }
-            }
-            else if (error == WS_WANT_WRITE) {
-                word32 c;
-                printf("... sftp server would write block\n");
-
-                /* handle backlog of send packets */
-                wolfSSH_worker(threadCtx->ssh, &c);
-                ret = error = wolfSSH_get_error(threadCtx->ssh);
-                continue;
-            }
+        selected = tcp_select(s, timeout);
+        if (selected == WS_SELECT_ERROR_READY) {
+            break;
         }
 
-        /* if there is a current send in progress then continue to process it */
-        if (wolfSSH_SFTP_PendingSend(threadCtx->ssh)) {
-            ret   = wolfSSH_SFTP_read(threadCtx->ssh);
-            error = wolfSSH_get_error(threadCtx->ssh);
-        }
-        else {
-            if (wolfSSH_stream_peek(threadCtx->ssh, tmp, 1) > 0) {
-                select_ret = WS_SELECT_RECV_READY;
+        if (selected == WS_SELECT_RECV_READY) {
+            ret = wolfSSH_worker(ssh, NULL);
+            error = wolfSSH_get_error(ssh);
+            if (error == WS_EOF) {
+                break;
             }
-            else {
-                select_ret = tcp_select(sockfd, TEST_SFTP_TIMEOUT);
-            }
-
-            if (select_ret == WS_SELECT_RECV_READY ||
-                select_ret == WS_SELECT_ERROR_READY ||
-                error == WS_WANT_WRITE)
-            {
-                ret = wolfSSH_SFTP_read(threadCtx->ssh);
-                error = wolfSSH_get_error(threadCtx->ssh);
-            }
-            else if (select_ret == WS_SELECT_TIMEOUT)
-                error = WS_WANT_READ;
-            else
-                error = WS_FATAL_ERROR;
-        }
-
-        if (error == WS_WANT_READ || error == WS_WANT_WRITE ||
-            error == WS_CHAN_RXD || error == WS_REKEYING ||
-            error == WS_WINDOW_FULL)
-            ret = error;
-
-        if (ret == WS_FATAL_ERROR && error == 0) {
-            WOLFSSH_CHANNEL* channel =
-                wolfSSH_ChannelNext(threadCtx->ssh, NULL);
-            if (channel && wolfSSH_ChannelGetEof(channel)) {
-                ret = 0;
+            if (ret != WS_SUCCESS && ret != WS_CHAN_RXD) {
+                /* If not successful and no channel data, leave. */
                 break;
             }
         }
 
-    } while (ret != WS_FATAL_ERROR && ret != WS_SOCKET_ERROR_E);
+        if (wolfSSH_SFTP_PendingSend(ssh)) {
+            /* Yes, process the SFTP data. */
+            ret = wolfSSH_SFTP_read(ssh);
+            timeout = TEST_SFTP_TIMEOUT_NONE;
+            continue;
+        }
+
+        ret = wolfSSH_stream_peek(ssh, peek_buf, sizeof(peek_buf));
+        if (ret > 0) {
+            /* Yes, process the SFTP data. */
+            ret = wolfSSH_SFTP_read(ssh);
+            timeout = TEST_SFTP_TIMEOUT_NONE;
+            continue;
+        }
+
+        /* Old check for EOF here */
+        {
+            WOLFSSH_CHANNEL* channel =
+                    wolfSSH_ChannelNext(ssh, NULL);
+            if (channel && wolfSSH_ChannelGetEof(channel)) {
+                ret = WS_EOF;
+                break;
+            }
+        }
+
+        timeout = TEST_SFTP_TIMEOUT;
+    } while (1);
 
     return ret;
 }

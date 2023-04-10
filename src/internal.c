@@ -11896,6 +11896,7 @@ int SendChannelData(WOLFSSH* ssh, word32 channelId,
 
     if (ret == WS_SUCCESS) {
         word32 bound = min(channel->peerWindowSz, channel->peerMaxPacketSz);
+        bound = min(bound, channel->maxPacketSz);
 
         if (dataSz > bound) {
             WLOG(WS_LOG_DEBUG,

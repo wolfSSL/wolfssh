@@ -681,7 +681,7 @@ static INLINE int tcp_select(SOCKET_T socketfd, int to_sec)
 {
     WFD_SET_TYPE recvfds, errfds;
     int nfds = (int)socketfd + 1;
-    struct timeval timeout = {(to_sec > 0) ? to_sec : 0, 0};
+    struct timeval timeout = {(to_sec > 0) ? to_sec : 0, 100};
     int result;
 
     WFD_ZERO(&recvfds);
