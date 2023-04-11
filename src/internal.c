@@ -11721,7 +11721,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
 #ifndef MAX_AUTH_STRING
     #define MAX_AUTH_STRING 80
 #endif
-static int GetAllowedAuth(WOLFSSH* ssh, char* authStr)
+static int GetAllowedAuth(WOLFSSH* ssh, char* authStr, byte* partialSuccess)
 {
     int typeAllowed = 0;
 
@@ -11745,6 +11745,10 @@ static int GetAllowedAuth(WOLFSSH* ssh, char* authStr)
         WSTRNCAT(authStr, "password,", MAX_AUTH_STRING-1);
     }
 
+    if (typeAllowed & WOLFSSH_USERAUTH_PARTIAL_SUCCESS) {
+        *partialSuccess = 1;
+    }
+
     /* remove last comma from the list */
     return (int)XSTRLEN(authStr) - 1;
 }
@@ -11763,7 +11767,7 @@ int SendUserAuthFailure(WOLFSSH* ssh, byte partialSuccess)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
-        authSz = GetAllowedAuth(ssh, authStr);
+        authSz = GetAllowedAuth(ssh, authStr, &partialSuccess);
         if (authSz < 0) {
             ret = authSz; /* propogate error value */
         }
