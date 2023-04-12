@@ -1159,6 +1159,11 @@ static int sftp_worker(thread_ctx_t* threadCtx)
         if (selected == WS_SELECT_RECV_READY) {
             ret = wolfSSH_worker(ssh, NULL);
             error = wolfSSH_get_error(ssh);
+            if (ret == WS_REKEYING) {
+                /* In a rekey, keeping turning the crank. */
+                timeout = TEST_SFTP_TIMEOUT;
+                continue;
+            }
             if (error == WS_EOF) {
                 break;
             }
@@ -1171,7 +1176,8 @@ static int sftp_worker(thread_ctx_t* threadCtx)
         if (wolfSSH_SFTP_PendingSend(ssh)) {
             /* Yes, process the SFTP data. */
             ret = wolfSSH_SFTP_read(ssh);
-            timeout = TEST_SFTP_TIMEOUT_NONE;
+            timeout = (ret == WS_REKEYING) ?
+                TEST_SFTP_TIMEOUT : TEST_SFTP_TIMEOUT_NONE;
             continue;
         }
 
@@ -1179,7 +1185,12 @@ static int sftp_worker(thread_ctx_t* threadCtx)
         if (ret > 0) {
             /* Yes, process the SFTP data. */
             ret = wolfSSH_SFTP_read(ssh);
-            timeout = TEST_SFTP_TIMEOUT_NONE;
+            timeout = (ret == WS_REKEYING) ?
+                TEST_SFTP_TIMEOUT : TEST_SFTP_TIMEOUT_NONE;
+            continue;
+        }
+        else if (ret == WS_REKEYING) {
+            timeout = TEST_SFTP_TIMEOUT;
             continue;
         }
 

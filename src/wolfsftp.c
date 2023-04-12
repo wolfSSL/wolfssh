@@ -1484,11 +1484,14 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
             if (state->toSend) {
                 ret = wolfSSH_SFTP_buffer_send(ssh, &state->buffer);
                 if (ret < 0) {
+                    if (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
+                        return WS_REKEYING;
+                    }
                     if (ssh->error != WS_WANT_READ &&
                             ssh->error != WS_WANT_WRITE &&
-                            ssh->error != WS_REKEYING &&
-                            ssh->error != WS_WINDOW_FULL)
+                            ssh->error != WS_WINDOW_FULL) {
                         wolfSSH_SFTP_ClearState(ssh, STATE_ID_RECV);
+                    }
                     return WS_FATAL_ERROR;
                 }
                 if (wolfSSH_SFTP_buffer_idx(&state->buffer)
