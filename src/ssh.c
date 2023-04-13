@@ -1783,22 +1783,22 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
         ret = DoReceive(ssh);
     }
 
-    if (channelId != NULL && ssh != NULL) {
-        *channelId = ssh->lastRxId;
+    if (ret == WS_SUCCESS) {
+        if (channelId != NULL) {
+            *channelId = ssh->lastRxId;
+        }
+
+        if (ssh->isKeying) {
+            ssh->error = WS_REKEYING;
+            return WS_REKEYING;
+        }
     }
 
-    if (ssh->isKeying) {
-        ssh->error = WS_REKEYING;
-        return WS_REKEYING;
-    }
-
-    if (ret == WS_CHAN_RXD)
+    if (ret == WS_CHAN_RXD) {
         WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_worker(), "
                            "data received on channel %u", ssh->lastRxId);
+    }
     else {
-        if (ret != WS_SUCCESS && ssh->isKeying) {
-            ret = WS_REKEYING;
-        }
         WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_worker(), ret = %d", ret);
     }
     return ret;
