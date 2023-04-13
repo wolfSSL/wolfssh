@@ -1104,6 +1104,7 @@ int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz)
         return WS_BAD_ARGUMENT;
 
     if (ssh->isKeying) {
+        ssh->error = WS_REKEYING;
         return WS_REKEYING;
     }
 
@@ -1786,11 +1787,16 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
         *channelId = ssh->lastRxId;
     }
 
+    if (ssh->isKeying) {
+        ssh->error = WS_REKEYING;
+        return WS_REKEYING;
+    }
+
     if (ret == WS_CHAN_RXD)
         WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_worker(), "
                            "data received on channel %u", ssh->lastRxId);
     else {
-        if (ret == WS_SUCCESS && ssh->isKeying) {
+        if (ret != WS_SUCCESS && ssh->isKeying) {
             ret = WS_REKEYING;
         }
         WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_worker(), ret = %d", ret);

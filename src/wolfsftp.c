@@ -404,7 +404,8 @@ static INLINE int NoticeError(WOLFSSH* ssh)
 {
     return (ssh->error == WS_WANT_READ ||
             ssh->error == WS_WANT_WRITE ||
-            ssh->error == WS_CHAN_RXD);
+            ssh->error == WS_CHAN_RXD ||
+            ssh->error == WS_REKEYING);
 }
 
 
@@ -6927,6 +6928,9 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 /* send header and type specific data */
                 ret = wolfSSH_SFTP_buffer_send(ssh, &state->buffer);
                 if (ret < 0) {
+                    if (ret == WS_REKEYING) {
+                        return ret;
+                    }
                     if (ssh->error != WS_WANT_READ &&
                             ssh->error != WS_WANT_WRITE) {
                         state->state = STATE_SEND_READ_CLEANUP;
