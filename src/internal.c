@@ -151,6 +151,9 @@ const char* GetErrorString(int err)
     return "No wolfSSH strings available";
 #else
     switch (err) {
+        case WS_SUCCESS:
+            return "no error";
+
         case WS_ERROR:
             return "general function failure";
 
