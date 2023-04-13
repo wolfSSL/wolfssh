@@ -999,7 +999,12 @@ int wolfSSH_stream_peek(WOLFSSH* ssh, byte* buf, word32 bufSz)
         return WS_BAD_ARGUMENT;
 
     if (ssh->isKeying) {
+        ssh->error = WS_REKEYING;
         return WS_REKEYING;
+    }
+    if (ssh->channelList->eofRxd) {
+        ssh->error = WS_EOF;
+        return WS_ERROR;
     }
 
     inputBuffer = &ssh->channelList->inputBuffer;
@@ -1033,6 +1038,11 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
 
     if (ssh == NULL || buf == NULL || bufSz == 0 || ssh->channelList == NULL)
         return WS_BAD_ARGUMENT;
+
+    if (ssh->channelList->eofRxd) {
+        ssh->error = WS_EOF;
+        return WS_ERROR;
+    }
 
     inputBuffer = &ssh->channelList->inputBuffer;
     ssh->error = WS_SUCCESS;
