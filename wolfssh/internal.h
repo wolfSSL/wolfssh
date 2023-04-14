@@ -493,6 +493,7 @@ struct WOLFSSH_CTX {
     word32 publicKeyAlgoCount;
     word32 highwaterMark;
     const char* banner;
+    const char* sshProtoIdStr;
     word32 bannerSz;
     word32 windowSz;
     word32 maxPacketSz;
