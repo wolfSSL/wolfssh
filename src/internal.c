@@ -2097,8 +2097,15 @@ WOLFSSH_CHANNEL* ChannelNew(WOLFSSH* ssh, byte channelType,
         if (newChannel != NULL)
         {
             byte* buffer;
+            word32 bufferSz = initialWindowSz;
 
-            buffer = (byte*)WMALLOC(initialWindowSz, heap, DYNTYPE_BUFFER);
+            /* We want a huge window, but not allocate all of it.
+             * Clamp buffer size to a reasonable value
+             */
+            if (bufferSz > maxPacketSz * 8) {
+                bufferSz = maxPacketSz * 8;
+            }
+            buffer = (byte*)WMALLOC(bufferSz, heap, DYNTYPE_BUFFER);
             if (buffer != NULL) {
                 WMEMSET(newChannel, 0, sizeof(WOLFSSH_CHANNEL));
                 newChannel->ssh = ssh;
@@ -2115,7 +2122,7 @@ WOLFSSH_CHANNEL* ChannelNew(WOLFSSH* ssh, byte channelType,
                  */
                 newChannel->inputBuffer.heap = heap;
                 newChannel->inputBuffer.buffer = buffer;
-                newChannel->inputBuffer.bufferSz = initialWindowSz;
+                newChannel->inputBuffer.bufferSz = bufferSz;
                 newChannel->inputBuffer.dynamicFlag = 1;
             }
             else {
@@ -2346,20 +2353,30 @@ int ChannelPutData(WOLFSSH_CHANNEL* channel, byte* data, word32 dataSz)
         return WS_FATAL_ERROR;
     }
 
-    if (inBuf->length < inBuf->bufferSz &&
-        inBuf->length + dataSz <= inBuf->bufferSz) {
-
-        WMEMCPY(inBuf->buffer + inBuf->length, data, dataSz);
-        inBuf->length += dataSz;
-
-        WLOG(WS_LOG_INFO, "  dataSz = %u", dataSz);
-        WLOG(WS_LOG_INFO, "  windowSz = %u", channel->windowSz);
-        channel->windowSz -= dataSz;
-        WLOG(WS_LOG_INFO, "  update windowSz = %u", channel->windowSz);
+    if (!(inBuf->length < inBuf->bufferSz &&
+        inBuf->length + dataSz <= inBuf->bufferSz))
+    {
+        /* During rekeying we must buffer either
+         * incoming or outgoing channel data until rekeying is complete.
+         * This means growing the buffer, within reason. */
+        if (channel->ssh->isKeying && dataSz + inBuf->length - inBuf->idx < 1024 *1024 *100) {
+            int ret = GrowBuffer(inBuf, dataSz);
+            if (ret != WS_SUCCESS) {
+                return ret;
+            }
+        }
+        else {
+            return WS_RECV_OVERFLOW_E;
+        }
     }
-    else {
-        return WS_RECV_OVERFLOW_E;
-    }
+
+    WMEMCPY(inBuf->buffer + inBuf->length, data, dataSz);
+    inBuf->length += dataSz;
+
+    WLOG(WS_LOG_INFO, "  dataSz = %u", dataSz);
+    WLOG(WS_LOG_INFO, "  windowSz = %u", channel->windowSz);
+    channel->windowSz -= dataSz;
+    WLOG(WS_LOG_INFO, "  update windowSz = %u", channel->windowSz);
 
     return WS_SUCCESS;
 }
