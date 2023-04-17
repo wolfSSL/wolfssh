@@ -1416,6 +1416,11 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
                             wolfSSH_SFTP_buffer_data(&state->buffer),
                             wolfSSH_SFTP_buffer_size(&state->buffer));
                     break;
+                case WOLFSSH_FTP_FSETSTAT:
+                    ret = wolfSSH_SFTP_RecvFSetSTAT(ssh, state->reqId,
+                            wolfSSH_SFTP_buffer_data(&state->buffer),
+                            wolfSSH_SFTP_buffer_size(&state->buffer));
+                    break;
             #endif
 
             #ifndef NO_WOLFSSH_DIR
@@ -4856,8 +4861,10 @@ static int SFTP_SetFileAttributes(WOLFSSH* ssh, char* name, WS_SFTP_FILEATRB* at
 #endif
 
     /* check if time attribute present */
-    if (atr->flags & WOLFSSH_FILEATRB_TIME) {
-        /* @TODO set time */
+    if (ret == WS_SUCCESS && (atr->flags & WOLFSSH_FILEATRB_TIME)) {
+        if (WSETTIME(ssh->fs, name, atr->atime, atr->mtime) != 0) {
+            ret = WS_BAD_FILE_E;
+        }
     }
 
     /* check if extended attributes are present */
@@ -4869,6 +4876,47 @@ static int SFTP_SetFileAttributes(WOLFSSH* ssh, char* name, WS_SFTP_FILEATRB* at
     return ret ;
 }
 
+
+/* sets a files attributes
+ * returns WS_SUCCESS on success */
+static int SFTP_SetFileAttributesHandle(WOLFSSH* ssh, WFD handle, WS_SFTP_FILEATRB* atr)
+{
+    int ret = WS_SUCCESS;
+
+    /* check if size attribute present */
+    if (atr->flags & WOLFSSH_FILEATRB_SIZE) {
+        /* @TODO set file size */
+    }
+
+    /* check if uid and gid attribute present */
+    if (atr->flags & WOLFSSH_FILEATRB_UIDGID) {
+        /* @TODO set group and user id */
+    }
+
+#ifndef USE_WINDOWS_API
+    /* check if permissions attribute present */
+    if (atr->flags & WOLFSSH_FILEATRB_PERM) {
+         if (WFCHMOD(ssh->fs, handle, atr->per) != 0) {
+           ret = WS_BAD_FILE_E;
+        }
+    }
+#endif
+
+    /* check if time attribute present */
+    if (ret == WS_SUCCESS && (atr->flags & WOLFSSH_FILEATRB_TIME)) {
+        if (WFSETTIME(ssh->fs, handle, atr->atime, atr->mtime) != 0) {
+            ret = WS_BAD_FILE_E;
+        }
+    }
+
+    /* check if extended attributes are present */
+    if (atr->flags & WOLFSSH_FILEATRB_EXT) {
+        /* @TODO handle extensions */
+    }
+
+    (void)ssh;
+    return ret ;
+}
 
 /* Handles a packet sent to set attributes of path
  *
@@ -4922,6 +4970,81 @@ int wolfSSH_SFTP_RecvSetSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             != WS_SUCCESS) {
         /* tell peer that was not ok */
         WLOG(WS_LOG_SFTP, "Unable to get set attributes of file/directory");
+        type = WOLFSSH_FTP_FAILURE;
+        res  = ser;
+        ret  = WS_BAD_FILE_E;
+    }
+
+    if (wolfSSH_SFTP_CreateStatus(ssh, type, reqId, res, "English", NULL,
+                &outSz) != WS_SIZE_ONLY) {
+        return WS_FATAL_ERROR;
+    }
+    out = (byte*)WMALLOC(outSz, ssh->ctx->heap, DYNTYPE_BUFFER);
+    if (out == NULL) {
+        return WS_MEMORY_E;
+    }
+    if (wolfSSH_SFTP_CreateStatus(ssh, type, reqId, res, "English", out,
+                &outSz) != WS_SUCCESS) {
+        WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
+        return WS_FATAL_ERROR;
+    }
+
+    /* set send out buffer, "out" is taken by ssh  */
+    wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
+    return ret;
+}
+
+
+/* Handles a packet sent to set attributes of file handle
+ *
+ * returns WS_SUCCESS on success
+ */
+int wolfSSH_SFTP_RecvFSetSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
+{
+    WS_SFTP_FILEATRB atr;
+    int   ret = WS_SUCCESS;
+
+    WFD    fd;
+    word32 sz;
+    word32 idx = 0;
+
+    byte*  out = NULL;
+    word32 outSz = 0;
+
+    char  suc[] = "Set Attirbutes";
+    char  ser[] = "Unable to set attributes error";
+    char  per[] = "Unable to parse attributes error";
+    char* res   = suc;
+    byte  type  = WOLFSSH_FTP_OK;
+
+    if (ssh == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_FSETSTAT");
+
+    /* get file handle */
+    ato32(data + idx, &sz); idx += UINT32_SZ;
+    if (sz + idx > maxSz || sz > WOLFSSH_MAX_HANDLE) {
+        return WS_BUFFER_E;
+    }
+    WMEMSET((byte*)&fd, 0, sizeof(WFD));
+    WMEMCPY((byte*)&fd, data + idx, sz); idx += sz;
+
+    if (ret == WS_SUCCESS &&
+            SFTP_ParseAtributes_buffer(ssh, &atr, data, &idx, maxSz) != 0) {
+        type = WOLFSSH_FTP_FAILURE;
+        res  = per;
+        ret  = WS_BAD_FILE_E;
+    }
+
+
+
+    /* try to set file attributes and send status back to client */
+    if (ret == WS_SUCCESS && (ret = SFTP_SetFileAttributesHandle(ssh, fd, &atr))
+            != WS_SUCCESS) {
+        /* tell peer that was not ok */
+        WLOG(WS_LOG_SFTP, "Unable to get set attributes of open file");
         type = WOLFSSH_FTP_FAILURE;
         res  = ser;
         ret  = WS_BAD_FILE_E;
