@@ -445,11 +445,11 @@ static int wsHighwater(byte dir, void* ctx)
 static int HashUpdate(wc_HashAlg* hash, enum wc_HashType type,
     const byte* data, word32 dataSz)
 {
-#if 0
+#if 1
     word32 i;
     printf("Hashing In :");
     for (i = 0; i < dataSz; i++)
-        printf("%02X", data[i]);
+        printf("%02X ", data[i]);
     printf("\n");
 #endif
     return wc_HashUpdate(hash, type, data, dataSz);
@@ -1175,7 +1175,7 @@ int GenerateKey(byte hashId, byte keyId,
                 byte* key, word32 keySz,
                 const byte* k, word32 kSz,
                 const byte* h, word32 hSz,
-                const byte* sessionId, word32 sessionIdSz)
+                const byte* sessionId, word32 sessionIdSz, byte doKeyPad)
 {
     word32 blocks, remainder;
     wc_HashAlg hash;
@@ -1201,7 +1201,7 @@ int GenerateKey(byte hashId, byte keyId,
         return WS_BAD_ARGUMENT;
     }
 
-    if (k[0] & 0x80) kPad = 1;
+    if (doKeyPad && (k[0] & 0x80)) kPad = 1;
     c32toa(kSz + kPad, kSzFlat);
 
     blocks = keySz / digestSz;
@@ -1308,33 +1308,33 @@ static int GenerateKeys(WOLFSSH* ssh, byte hashId)
         ret = GenerateKey(hashId, 'A',
                           cK->iv, cK->ivSz,
                           ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                          ssh->sessionId, ssh->sessionIdSz);
+                          ssh->sessionId, ssh->sessionIdSz, 1);
     if (ret == WS_SUCCESS)
         ret = GenerateKey(hashId, 'B',
                           sK->iv, sK->ivSz,
                           ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                          ssh->sessionId, ssh->sessionIdSz);
+                          ssh->sessionId, ssh->sessionIdSz, 0);
     if (ret == WS_SUCCESS)
         ret = GenerateKey(hashId, 'C',
                           cK->encKey, cK->encKeySz,
                           ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                          ssh->sessionId, ssh->sessionIdSz);
+                          ssh->sessionId, ssh->sessionIdSz, 0);
     if (ret == WS_SUCCESS)
         ret = GenerateKey(hashId, 'D',
                           sK->encKey, sK->encKeySz,
                           ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                          ssh->sessionId, ssh->sessionIdSz);
+                          ssh->sessionId, ssh->sessionIdSz, 1);
     if (ret == WS_SUCCESS) {
         if (!ssh->handshake->aeadMode) {
             ret = GenerateKey(hashId, 'E',
                               cK->macKey, cK->macKeySz,
                               ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                              ssh->sessionId, ssh->sessionIdSz);
+                              ssh->sessionId, ssh->sessionIdSz, 1);
             if (ret == WS_SUCCESS) {
                 ret = GenerateKey(hashId, 'F',
                                   sK->macKey, sK->macKeySz,
                                   ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                                  ssh->sessionId, ssh->sessionIdSz);
+                                  ssh->sessionId, ssh->sessionIdSz, 1);
             }
         }
     }
@@ -4246,6 +4246,10 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             case ID_AES192_GCM:
             case ID_AES256_GCM:
                 WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes-gcm");
+
+for (int runner = 0; runner < ssh->peerKeys.encKeySz; runner ++) fprintf(stderr, "%2X ", ssh->peerKeys.encKey[runner]);
+fprintf(stderr, "\n");
+
                 ret = wc_AesGcmSetKey(&ssh->decryptCipher.aes,
                                       ssh->peerKeys.encKey,
                                       ssh->peerKeys.encKeySz);
@@ -8899,14 +8903,18 @@ int SendKexDhReply(WOLFSSH* ssh)
         ss_hash = NULL;
 
         /* Hash in the shared secret K. */
+        (void)kPad;
+/*
         if (ret == 0) {
             ret = CreateMpint(ssh->k, &ssh->kSz, &kPad);
         }
+*/
         if (ret == 0) {
             c32toa(ssh->kSz + kPad, scratchLen);
             ret = HashUpdate(&ssh->handshake->hash, enmhashId,
                                 scratchLen, LENGTH_SZ);
         }
+/*
         if (ret == 0) {
             if (kPad) {
                 scratchLen[0] = 0;
@@ -8914,6 +8922,7 @@ int SendKexDhReply(WOLFSSH* ssh)
                                     enmhashId, scratchLen, 1);
             }
         }
+*/
 
         if (ret == 0) {
             ret = HashUpdate(&ssh->handshake->hash, enmhashId,
