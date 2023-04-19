@@ -1308,7 +1308,7 @@ static int GenerateKeys(WOLFSSH* ssh, byte hashId)
         ret = GenerateKey(hashId, 'A',
                           cK->iv, cK->ivSz,
                           ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                          ssh->sessionId, ssh->sessionIdSz, 1);
+                          ssh->sessionId, ssh->sessionIdSz, 0);
     if (ret == WS_SUCCESS)
         ret = GenerateKey(hashId, 'B',
                           sK->iv, sK->ivSz,
@@ -1323,7 +1323,7 @@ static int GenerateKeys(WOLFSSH* ssh, byte hashId)
         ret = GenerateKey(hashId, 'D',
                           sK->encKey, sK->encKeySz,
                           ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                          ssh->sessionId, ssh->sessionIdSz, 1);
+                          ssh->sessionId, ssh->sessionIdSz, 0);
     if (ret == WS_SUCCESS) {
         if (!ssh->handshake->aeadMode) {
             ret = GenerateKey(hashId, 'E',
@@ -1338,6 +1338,7 @@ static int GenerateKeys(WOLFSSH* ssh, byte hashId)
             }
         }
     }
+#define SHOW_SECRETS
 #ifdef SHOW_SECRETS
     if (ret == WS_SUCCESS) {
         printf("\n** Showing Secrets **\nK:\n");
