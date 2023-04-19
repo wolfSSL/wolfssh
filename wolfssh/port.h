@@ -481,7 +481,7 @@ extern "C" {
 #endif /* WSTRING_USER */
 
 /* get local time for debug print out */
-#ifdef USE_WINDOWS_API
+#if defined(USE_WINDOWS_API) || defined(__MINGW32__)
     #define WTIME time
     #define WLOCALTIME(c,r) (localtime_s((r),(c))==0)
 #elif defined(MICROCHIP_MPLAB_HARMONY)
