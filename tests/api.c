@@ -816,14 +816,14 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
             }
 
             /* partial read */
-            outSz = tmp->atrb.sz[0] / 2;
+            outSz = WOLFSSH_MAX_SFTP_RW / 2;
             rxSz = wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz,
                     ofst, out, outSz);
             AssertIntGT(rxSz, 0);
             AssertIntLE(rxSz, outSz);
 
             /* read all */
-            outSz = tmp->atrb.sz[0];
+            outSz = WOLFSSH_MAX_SFTP_RW;
             rxSz = wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz,
                     ofst, out, outSz);
             AssertIntGT(rxSz, 0);

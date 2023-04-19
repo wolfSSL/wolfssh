@@ -1330,7 +1330,11 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
                     break;
                 }
 
-                if (error != WS_WANT_READ && error != WS_WANT_WRITE) {
+                if (error == WS_WANT_READ || error == WS_WANT_WRITE) {
+                    /* Wanting read or wanting write. Clear ret. */
+                    ret = 0;
+                }
+                else {
                     break;
                 }
             }
