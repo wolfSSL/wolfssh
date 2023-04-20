@@ -3693,6 +3693,10 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         ecc_key key_s;
     #endif
 #endif
+#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
+    byte ss_hashSz = 0;
+    byte *ss_hash = NULL;
+#endif
 
     WLOG(WS_LOG_DEBUG, "Entering DoKexDhReply()");
 
@@ -3987,23 +3991,25 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                     ret = wc_ecc_set_rng(key_ptr, ssh->rng);
 #endif
                 if (ret == 0) {
-                    ret = wc_ecc_import_x963(f, fSz -
-                              (word32)kem->length_ciphertext, key_ptr);
+                    ret = wc_ecc_import_x963(f + kem->length_ciphertext,
+                              fSz - (word32)kem->length_ciphertext, key_ptr);
                 }
 
                 if (ret == 0) {
                     PRIVATE_KEY_UNLOCK();
                     ret = wc_ecc_shared_secret(&ssh->handshake->privKey.ecc,
-                                               key_ptr, ssh->k, &ssh->kSz);
+                               key_ptr, ssh->k + kem->length_shared_secret,
+                               &ssh->kSz);
                     PRIVATE_KEY_LOCK();
                 }
                 wc_ecc_free(key_ptr);
                 wc_ecc_free(&ssh->handshake->privKey.ecc);
 
-                if (OQS_KEM_decaps(kem, ssh->k + ssh->kSz,
-                        f + fSz - kem->length_ciphertext, ssh->handshake->x)
-                    != OQS_SUCCESS) {
-                    ret = WS_ERROR;
+                if (ret == 0) {
+                    if (OQS_KEM_decaps(kem, ssh->k, f, ssh->handshake->x)
+                        != OQS_SUCCESS) {
+                        ret = WS_ERROR;
+                    }
                 }
 
                 if (ret == 0) {
@@ -4024,15 +4030,40 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 ret = WS_INVALID_ALGO_ID;
             }
         }
-        if (ret == 0)
-            ret = CreateMpint(ssh->k, &ssh->kSz, &kPad);
+
+        /* Replace the concatenated shared secret with its hash. */
+
+        if (ret == 0) {
+            ss_hashSz = wc_HashGetDigestSize(enmhashId);
+            ss_hash = (byte *)WMALLOC(ss_hashSz, ssh->ctx->heap,
+                                      DYNTYPE_PRIVKEY);
+            if (ss_hash == NULL) {
+                ret = WS_MEMORY_E;
+            }
+        }
+
+        if (ret == 0) {
+            ret = wc_Hash(enmhashId, ssh->k, ssh->kSz, ss_hash, ss_hashSz);
+        }
+
+        if (ret == 0) {
+            XMEMCPY(ssh->k, ss_hash, ss_hashSz);
+            ssh->kSz = ss_hashSz;
+        }
 
         /* Hash in the shared secret K. */
+#if 0
+        if (ret == 0)
+            ret = CreateMpint(ssh->k, &ssh->kSz, &kPad);
+#endif
+
         if (ret == 0) {
             c32toa(ssh->kSz + kPad, scratchLen);
             ret = HashUpdate(&ssh->handshake->hash, enmhashId,
                                 scratchLen, LENGTH_SZ);
         }
+
+#if 0
         if (ret == 0) {
             if (kPad) {
                 scratchLen[0] = 0;
@@ -4040,6 +4071,8 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                                     enmhashId, scratchLen, 1);
             }
         }
+#endif
+
         if (ret == 0)
             ret = HashUpdate(&ssh->handshake->hash, enmhashId,
                                 ssh->k, ssh->kSz);
@@ -9577,8 +9610,12 @@ int SendKexDhInit(WOLFSSH* ssh)
                 ret = WS_INVALID_ALGO_ID;
             }
 
+            /* Move ecc to the back. Note that this assumes the PQ public key
+             * is bigger than the ECC public key. */
+            XMEMCPY(e + kem->length_public_key, e, eSz);
+ 
             if (ret == 0) {
-                if (OQS_KEM_keypair(kem, e + eSz, ssh->handshake->x)
+                if (OQS_KEM_keypair(kem, e, ssh->handshake->x)
                     != OQS_SUCCESS) {
                     /* This should never happen */
                     ret = WS_ERROR;
@@ -9597,9 +9634,11 @@ int SendKexDhInit(WOLFSSH* ssh)
             ret = WS_SUCCESS;
     }
 
+#if 0
     if (ret == WS_SUCCESS) {
         ret = CreateMpint(e, &eSz, &ePad);
     }
+#endif
 
     if (ret == WS_SUCCESS) {
         if (ePad == 1) {
