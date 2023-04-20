@@ -1338,7 +1338,7 @@ static int GenerateKeys(WOLFSSH* ssh, byte hashId)
             }
         }
     }
-#define SHOW_SECRETS
+
 #ifdef SHOW_SECRETS
     if (ret == WS_SUCCESS) {
         printf("\n** Showing Secrets **\nK:\n");
