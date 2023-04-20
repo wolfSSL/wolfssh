@@ -1432,7 +1432,8 @@ static const NameIdPair NameIdMap[] = {
 #endif
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
     /* We use kyber-512 here to achieve interop with OQS's fork. */
-    { ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256, "ecdh-nistp256-kyber-512-sha256" },
+    { ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256,
+      "ecdh-nistp256-kyber-512r3-sha256-d00@openquantumsafe.org" },
 #endif
     /* Public Key IDs */
 #ifndef WOLFSSH_NO_SSH_RSA_SHA1
@@ -7818,7 +7819,7 @@ static const char cannedMacAlgoNames[] =
 
 static const char cannedKexAlgoNames[] =
 #if !defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256)
-    "ecdh-nistp256-kyber-512-sha256,"
+    "ecdh-nistp256-kyber-512r3-sha256-d00@openquantumsafe.org,"
 #endif
 #if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP521)
     "ecdh-sha2-nistp521,"

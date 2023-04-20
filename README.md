@@ -459,7 +459,7 @@ The following is sufficient for build and execution:
     $ cd openssh-OQS-OpenSSH-snapshot-2021-08/
     $ ./configure --with-liboqs-dir=/usr/local
     $ make all
-    $ ./ssh -o"KexAlgorithms=ecdh-nistp256-kyber-512-sha256" \
+    $ ./ssh -o"KexAlgorithms=ecdh-nistp256-kyber-512r3-sha256-d00@openquantumsafe.org" \
       -o"PubkeyAcceptedAlgorithms +ssh-rsa" \
       -o"HostkeyAlgorithms +ssh-rsa" \
       jill@localhost -p 22222
