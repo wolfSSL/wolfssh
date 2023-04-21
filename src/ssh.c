@@ -484,14 +484,14 @@ int wolfSSH_accept(WOLFSSH* ssh)
                     }
                 }
                 ssh->acceptState = ACCEPT_KEYED;
-                WLOG(WS_LOG_DEBUG, acceptState, "KEYED 1XXX");
+                WLOG(WS_LOG_DEBUG, acceptState, "KEYED");
                 NO_BREAK;
 
             case ACCEPT_KEYED:
                 while (ssh->clientState < CLIENT_USERAUTH_REQUEST_DONE) {
                     if (DoReceive(ssh) < 0) {
                         WLOG(WS_LOG_DEBUG, acceptError,
-                             "KEYED 2XXX", ssh->error);
+                             "KEYED", ssh->error);
                         return WS_FATAL_ERROR;
                     }
                 }
@@ -772,13 +772,13 @@ int wolfSSH_connect(WOLFSSH* ssh)
                 }
             }
             ssh->connectState = CONNECT_KEYED;
-            WLOG(WS_LOG_DEBUG, connectState, "KEYED 3XXX");
+            WLOG(WS_LOG_DEBUG, connectState, "KEYED");
             NO_BREAK;
 
         case CONNECT_KEYED:
             if ( (ssh->error = SendServiceRequest(ssh, ID_SERVICE_USERAUTH)) <
                                                                   WS_SUCCESS) {
-                WLOG(WS_LOG_DEBUG, connectError, "KEYED 4XXX", ssh->error);
+                WLOG(WS_LOG_DEBUG, connectError, "KEYED", ssh->error);
                 return WS_FATAL_ERROR;
             }
             ssh->connectState = CONNECT_CLIENT_USERAUTH_REQUEST_SENT;

@@ -445,11 +445,11 @@ static int wsHighwater(byte dir, void* ctx)
 static int HashUpdate(wc_HashAlg* hash, enum wc_HashType type,
     const byte* data, word32 dataSz)
 {
-#if 1
+#if 0
     word32 i;
     printf("Hashing In :");
     for (i = 0; i < dataSz; i++)
-        printf("%02X ", data[i]);
+        printf("%02X", data[i]);
     printf("\n");
 #endif
     return wc_HashUpdate(hash, type, data, dataSz);
@@ -4281,10 +4281,6 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             case ID_AES192_GCM:
             case ID_AES256_GCM:
                 WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes-gcm");
-
-for (int runner = 0; runner < ssh->peerKeys.encKeySz; runner ++) fprintf(stderr, "%2X ", ssh->peerKeys.encKey[runner]);
-fprintf(stderr, "\n");
-
                 ret = wc_AesGcmSetKey(&ssh->decryptCipher.aes,
                                       ssh->peerKeys.encKey,
                                       ssh->peerKeys.encKeySz);
@@ -9614,7 +9610,7 @@ int SendKexDhInit(WOLFSSH* ssh)
             /* Move ecc to the back. Note that this assumes the PQ public key
              * is bigger than the ECC public key. */
             XMEMCPY(e + kem->length_public_key, e, eSz);
- 
+
             if (ret == 0) {
                 if (OQS_KEM_keypair(kem, e, ssh->handshake->x)
                     != OQS_SUCCESS) {
