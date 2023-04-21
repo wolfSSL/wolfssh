@@ -1160,7 +1160,12 @@ static int sftp_worker(thread_ctx_t* threadCtx)
             ret = wolfSSH_worker(ssh, NULL);
             error = wolfSSH_get_error(ssh);
             if (ret == WS_REKEYING) {
-                /* In a rekey, keeping turning the crank. */
+                /* In a rekey, keep turning the crank. */
+                timeout = TEST_SFTP_TIMEOUT;
+                continue;
+            }
+            if (error == WS_WANT_READ) {
+                /* If would block, keep turning the crank. */
                 timeout = TEST_SFTP_TIMEOUT;
                 continue;
             }

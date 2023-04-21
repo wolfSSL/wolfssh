@@ -8550,9 +8550,6 @@ int SendKexDhReply(WOLFSSH* ssh)
     int ret = WS_SUCCESS;
     void *heap  = NULL;
     byte *f_ptr = NULL, *sig_ptr = NULL;
-#ifndef WOLFSSH_NO_ECDH
-    byte *r_ptr = NULL, *s_ptr = NULL;
-#endif
     byte scratchLen[LENGTH_SZ];
     word32 fSz = KEX_F_SIZE;
     word32 sigSz = KEX_SIG_SIZE;
@@ -8571,13 +8568,6 @@ int SendKexDhReply(WOLFSSH* ssh)
     word32 keyIdx = 0;
     byte msgId = MSGID_KEXDH_REPLY;
     enum wc_HashType enmhashId = WC_HASH_TYPE_NONE;
-#ifndef WOLFSSH_NO_DH
-    byte *y_ptr = NULL;
-    const byte* primeGroup = NULL;
-    word32 primeGroupSz = 0;
-    const byte* generator = NULL;
-    word32 generatorSz = 0;
-#endif
     struct wolfSSH_sigKeyBlockFull *sigKeyBlock_ptr = NULL;
 #ifndef WOLFSSH_SMALL_STACK
     byte f_s[KEX_F_SIZE];
@@ -8622,31 +8612,6 @@ int SendKexDhReply(WOLFSSH* ssh)
         sigKeyBlock_ptr->nameSz = (word32)strlen(sigKeyBlock_ptr->name);
 
         switch (ssh->handshake->kexId) {
-#ifndef WOLFSSH_NO_DH_GROUP1_SHA1
-            case ID_DH_GROUP1_SHA1:
-                primeGroup = dhPrimeGroup1;
-                primeGroupSz = dhPrimeGroup1Sz;
-                generator = dhGenerator;
-                generatorSz = dhGeneratorSz;
-                break;
-#endif
-#ifndef WOLFSSH_NO_DH_GROUP14_SHA1
-            case ID_DH_GROUP14_SHA1:
-                primeGroup = dhPrimeGroup14;
-                primeGroupSz = dhPrimeGroup14Sz;
-                generator = dhGenerator;
-                generatorSz = dhGeneratorSz;
-                break;
-#endif
-#ifndef WOLFSSH_NO_DH_GEX_SHA256
-            case ID_DH_GEX_SHA256:
-                primeGroup = dhPrimeGroup14;
-                primeGroupSz = dhPrimeGroup14Sz;
-                generator = dhGenerator;
-                generatorSz = dhGeneratorSz;
-                msgId = MSGID_KEXDH_GEX_REPLY;
-                break;
-#endif
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256
             case ID_ECDH_SHA2_NISTP256:
                 useEcc = 1;
@@ -8671,8 +8636,6 @@ int SendKexDhReply(WOLFSSH* ssh)
                 msgId = MSGID_KEXKEM_REPLY;
                 break;
 #endif
-            default:
-                ret = WS_INVALID_ALGO_ID;
         }
 
         enmhashId = (enum wc_HashType)ssh->handshake->hashId;
@@ -8711,7 +8674,12 @@ int SendKexDhReply(WOLFSSH* ssh)
 #endif
                ) {
 #ifndef WOLFSSH_NO_DH
+                byte *y_ptr = NULL;
+                const byte* primeGroup = NULL;
+                const byte* generator = NULL;
                 word32 ySz = MAX_KEX_KEY_SZ;
+                word32 primeGroupSz = 0;
+                word32 generatorSz = 0;
             #ifdef WOLFSSH_SMALL_STACK
                 DhKey *privKey = (DhKey*)WMALLOC(sizeof(DhKey), heap,
                         DYNTYPE_PRIVKEY);
@@ -8724,7 +8692,38 @@ int SendKexDhReply(WOLFSSH* ssh)
                 y_ptr = y_s;
             #endif
                 if (ret == WS_SUCCESS) {
-                    ret = wc_InitDhKey(privKey);
+                    switch (ssh->handshake->kexId) {
+                        #ifndef WOLFSSH_NO_DH_GROUP1_SHA1
+                        case ID_DH_GROUP1_SHA1:
+                            primeGroup = dhPrimeGroup1;
+                            primeGroupSz = dhPrimeGroup1Sz;
+                            generator = dhGenerator;
+                            generatorSz = dhGeneratorSz;
+                            break;
+                        #endif
+                        #ifndef WOLFSSH_NO_DH_GROUP14_SHA1
+                        case ID_DH_GROUP14_SHA1:
+                            primeGroup = dhPrimeGroup14;
+                            primeGroupSz = dhPrimeGroup14Sz;
+                            generator = dhGenerator;
+                            generatorSz = dhGeneratorSz;
+                            break;
+                        #endif
+                        #ifndef WOLFSSH_NO_DH_GEX_SHA256
+                        case ID_DH_GEX_SHA256:
+                            primeGroup = dhPrimeGroup14;
+                            primeGroupSz = dhPrimeGroup14Sz;
+                            generator = dhGenerator;
+                            generatorSz = dhGeneratorSz;
+                            msgId = MSGID_KEXDH_GEX_REPLY;
+                            break;
+                        #endif
+                        default:
+                            ret = WS_INVALID_ALGO_ID;
+                    }
+                    if (ret == WS_SUCCESS) {
+                        ret = wc_InitDhKey(privKey);
+                    }
                     if (ret == 0)
                         ret = wc_DhSetKey(privKey, primeGroup, primeGroupSz,
                                 generator, generatorSz);
@@ -8741,6 +8740,8 @@ int SendKexDhReply(WOLFSSH* ssh)
                     wc_FreeDhKey(privKey);
                 }
             #ifdef WOLFSSH_SMALL_STACK
+                if (y_ptr)
+                    WFREE(y_ptr, heap, DYNTYPE_PRIVKEY);
                 if (privKey) {
                     WFREE(privKey, heap, DYNTYPE_PRIVKEY);
                 }
@@ -9095,23 +9096,27 @@ int SendKexDhReply(WOLFSSH* ssh)
                     ret = WS_ECC_E;
                 }
                 else {
+                    byte *r_ptr = NULL, *s_ptr = NULL;
                     word32 rSz = MAX_ECC_BYTES + ECC_MAX_PAD_SZ;
                     word32 sSz = MAX_ECC_BYTES + ECC_MAX_PAD_SZ;
                     byte rPad;
                     byte sPad;
-#ifdef WOLFSSH_SMALL_STACK
-                    r_ptr = (byte*)WMALLOC(rSz, heap, DYNTYPE_BUFFER);
-                    s_ptr = (byte*)WMALLOC(sSz, heap, DYNTYPE_BUFFER);
-                    if (r_ptr == NULL || s_ptr == NULL)
-                        ret = WS_MEMORY_E;
-#else
-                    byte r_s[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
-                    byte s_s[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
-                    r_ptr = r_s;
-                    s_ptr = s_s;
-#endif
-                    if (ret == WS_SUCCESS)
-                        ret = wc_ecc_sig_to_rs(sig_ptr, sigSz, r_ptr, &rSz, s_ptr, &sSz);
+
+                    #ifdef WOLFSSH_SMALL_STACK
+                        r_ptr = (byte*)WMALLOC(rSz, heap, DYNTYPE_BUFFER);
+                        s_ptr = (byte*)WMALLOC(sSz, heap, DYNTYPE_BUFFER);
+                        if (r_ptr == NULL || s_ptr == NULL)
+                            ret = WS_MEMORY_E;
+                    #else
+                        byte r_s[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
+                        byte s_s[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
+                        r_ptr = r_s;
+                        s_ptr = s_s;
+                    #endif
+                    if (ret == WS_SUCCESS) {
+                        ret = wc_ecc_sig_to_rs(sig_ptr, sigSz,
+                                r_ptr, &rSz, s_ptr, &sSz);
+                    }
                     if (ret == 0) {
                         idx = 0;
                         rPad = (r_ptr[0] & 0x80) ? 1 : 0;
@@ -9130,6 +9135,12 @@ int SendKexDhReply(WOLFSSH* ssh)
                             sig_ptr[idx++] = 0;
                         WMEMCPY(sig_ptr + idx, s_ptr, sSz);
                     }
+                    #ifdef WOLFSSH_SMALL_STACK
+                        if (r_ptr)
+                            WFREE(r_ptr, heap, DYNTYPE_BUFFER);
+                        if (s_ptr)
+                            WFREE(s_ptr, heap, DYNTYPE_BUFFER);
+                    #endif
                 }
 #endif
             }
@@ -9284,14 +9295,6 @@ int SendKexDhReply(WOLFSSH* ssh)
         WFREE(f_ptr, heap, DYNTYPE_BUFFER);
     if (sig_ptr)
         WFREE(sig_ptr, heap, DYNTYPE_BUFFER);
-#ifndef WOLFSSH_NO_DH
-    if (y_ptr)
-        WFREE(y_ptr, heap, DYNTYPE_PRIVKEY);
-#endif
-    if (r_ptr)
-        WFREE(r_ptr, heap, DYNTYPE_BUFFER);
-    if (s_ptr)
-        WFREE(s_ptr, heap, DYNTYPE_BUFFER);
 #endif
     return ret;
 }
