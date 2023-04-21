@@ -1175,7 +1175,8 @@ int GenerateKey(byte hashId, byte keyId,
                 byte* key, word32 keySz,
                 const byte* k, word32 kSz,
                 const byte* h, word32 hSz,
-                const byte* sessionId, word32 sessionIdSz, byte doKeyPad)
+                const byte* sessionId, word32 sessionIdSz,
+                byte doKeyPad)
 {
     word32 blocks, remainder;
     wc_HashAlg hash;
@@ -1285,7 +1286,7 @@ int GenerateKey(byte hashId, byte keyId,
 }
 
 
-static int GenerateKeys(WOLFSSH* ssh, byte hashId)
+static int GenerateKeys(WOLFSSH* ssh, byte hashId, byte doKeyPad)
 {
     Keys* cK = NULL;
     Keys* sK = NULL;
@@ -1308,33 +1309,33 @@ static int GenerateKeys(WOLFSSH* ssh, byte hashId)
         ret = GenerateKey(hashId, 'A',
                           cK->iv, cK->ivSz,
                           ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                          ssh->sessionId, ssh->sessionIdSz, 0);
+                          ssh->sessionId, ssh->sessionIdSz, doKeyPad);
     if (ret == WS_SUCCESS)
         ret = GenerateKey(hashId, 'B',
                           sK->iv, sK->ivSz,
                           ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                          ssh->sessionId, ssh->sessionIdSz, 0);
+                          ssh->sessionId, ssh->sessionIdSz, doKeyPad);
     if (ret == WS_SUCCESS)
         ret = GenerateKey(hashId, 'C',
                           cK->encKey, cK->encKeySz,
                           ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                          ssh->sessionId, ssh->sessionIdSz, 0);
+                          ssh->sessionId, ssh->sessionIdSz, doKeyPad);
     if (ret == WS_SUCCESS)
         ret = GenerateKey(hashId, 'D',
                           sK->encKey, sK->encKeySz,
                           ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                          ssh->sessionId, ssh->sessionIdSz, 0);
+                          ssh->sessionId, ssh->sessionIdSz, doKeyPad);
     if (ret == WS_SUCCESS) {
         if (!ssh->handshake->aeadMode) {
             ret = GenerateKey(hashId, 'E',
                               cK->macKey, cK->macKeySz,
                               ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                              ssh->sessionId, ssh->sessionIdSz, 1);
+                              ssh->sessionId, ssh->sessionIdSz, doKeyPad);
             if (ret == WS_SUCCESS) {
                 ret = GenerateKey(hashId, 'F',
                                   sK->macKey, sK->macKeySz,
                                   ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                                  ssh->sessionId, ssh->sessionIdSz, 1);
+                                  ssh->sessionId, ssh->sessionIdSz, doKeyPad);
             }
         }
     }
@@ -4212,8 +4213,15 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         }
     }
 
-    if (ret == WS_SUCCESS)
-        ret = GenerateKeys(ssh, enmhashId);
+    if (ret == WS_SUCCESS) {
+        ret = GenerateKeys(ssh, enmhashId,
+#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
+                           !ssh->handshake->useEccKyber
+#else
+                           1
+#endif
+                          );
+    }
 
     if (ret == WS_SUCCESS)
         ret = SendNewKeys(ssh);
@@ -9117,8 +9125,15 @@ int SendKexDhReply(WOLFSSH* ssh)
         }
     }
 
-    if (ret == WS_SUCCESS)
-        ret = GenerateKeys(ssh, enmhashId);
+    if (ret == WS_SUCCESS) {
+        ret = GenerateKeys(ssh, enmhashId,
+#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
+                           !useEccKyber
+#else
+                           1
+#endif
+                          );
+    }
 
     /* Get the buffer, copy the packet data, once f is laid into the buffer,
      * add it to the hash and then add K. */
