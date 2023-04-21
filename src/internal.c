@@ -4025,38 +4025,42 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 if (kem != NULL) {
                     OQS_KEM_free(kem);
                 }
+
+                /* Replace the concatenated shared secrets with the hash. That
+                 * will become the new shared secret. */
+                if (ret == 0) {
+                    ss_hashSz = wc_HashGetDigestSize(enmhashId);
+                    ss_hash = (byte *)WMALLOC(ss_hashSz, ssh->ctx->heap,
+                                      DYNTYPE_PRIVKEY);
+                    if (ss_hash == NULL) {
+                        ret = WS_MEMORY_E;
+                    }
+                }
+
+                if (ret == 0) {
+                    ret = wc_Hash(enmhashId, ssh->k, ssh->kSz, ss_hash,
+                                  ss_hashSz);
+                }
+
+                if (ret == 0) {
+                    XMEMCPY(ssh->k, ss_hash, ss_hashSz);
+                    ssh->kSz = ss_hashSz;
+                }
             }
-#endif
+#endif /* !WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256 */
             else {
                 ret = WS_INVALID_ALGO_ID;
             }
         }
 
-        /* Replace the concatenated shared secret with its hash. */
-
-        if (ret == 0) {
-            ss_hashSz = wc_HashGetDigestSize(enmhashId);
-            ss_hash = (byte *)WMALLOC(ss_hashSz, ssh->ctx->heap,
-                                      DYNTYPE_PRIVKEY);
-            if (ss_hash == NULL) {
-                ret = WS_MEMORY_E;
-            }
-        }
-
-        if (ret == 0) {
-            ret = wc_Hash(enmhashId, ssh->k, ssh->kSz, ss_hash, ss_hashSz);
-        }
-
-        if (ret == 0) {
-            XMEMCPY(ssh->k, ss_hash, ss_hashSz);
-            ssh->kSz = ss_hashSz;
-        }
-
         /* Hash in the shared secret K. */
-#if 0
-        if (ret == 0)
-            ret = CreateMpint(ssh->k, &ssh->kSz, &kPad);
+        if ((ret == 0)
+#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
+            && (!ssh->handshake->useEccKyber)
 #endif
+        ) {
+            ret = CreateMpint(ssh->k, &ssh->kSz, &kPad);
+        }
 
         if (ret == 0) {
             c32toa(ssh->kSz + kPad, scratchLen);
@@ -4064,19 +4068,16 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                                 scratchLen, LENGTH_SZ);
         }
 
-#if 0
-        if (ret == 0) {
-            if (kPad) {
-                scratchLen[0] = 0;
-                ret = HashUpdate(&ssh->handshake->hash,
-                                    enmhashId, scratchLen, 1);
-            }
+        if ((ret == 0) && (kPad)) {
+            scratchLen[0] = 0;
+            ret = HashUpdate(&ssh->handshake->hash,
+                             enmhashId, scratchLen, 1);
         }
-#endif
 
-        if (ret == 0)
+        if (ret == 0) {
             ret = HashUpdate(&ssh->handshake->hash, enmhashId,
                                 ssh->k, ssh->kSz);
+        }
 
         /* Save the exchange hash value H, and session ID. */
         if (ret == 0) {
@@ -8720,6 +8721,8 @@ int SendKexDhReply(WOLFSSH* ssh)
                 privKey = (ecc_key*)WMALLOC(sizeof(ecc_key), heap,
                         DYNTYPE_PRIVKEY);
                 if (pubKey == NULL || privKey == NULL) {
+                    WFREE(pubKey, heap, DYNTYPE_PUBKEY);
+                    pubKey = NULL;
                     ret = WS_MEMORY_E;
                 }
             #else
@@ -8782,11 +8785,14 @@ int SendKexDhReply(WOLFSSH* ssh)
                 int primeId;
                 ret = 0;
             #ifdef WOLFSSH_SMALL_STACK
+                ecc_key *pubKey = NULL, *privKey = NULL;
                 pubKey = (ecc_key*)WMALLOC(sizeof(ecc_key), heap,
                         DYNTYPE_PUBKEY);
                 privKey = (ecc_key*)WMALLOC(sizeof(ecc_key), heap,
                         DYNTYPE_PRIVKEY);
                 if (pubKey == NULL || privKey == NULL) {
+                    WFREE(pubKey, heap, DYNTYPE_PUBKEY);
+                    pubKey = NULL;
                     ret = WS_MEMORY_E;
                 }
             #else
@@ -8843,14 +8849,12 @@ int SendKexDhReply(WOLFSSH* ssh)
                     ret = wc_ecc_set_rng(privKey, ssh->rng);
                 }
 #endif
-
                 if (ret == 0) {
                     ret = wc_ecc_import_x963_ex(
                         ssh->handshake->e + kem->length_public_key,
                         ssh->handshake->eSz - (word32)kem->length_public_key,
                         pubKey, primeId);
                 }
-
                 if (ret == 0) {
                     ret = wc_ecc_make_key_ex(ssh->rng,
                               wc_ecc_get_curve_size_from_id(primeId),
@@ -8879,13 +8883,33 @@ int SendKexDhReply(WOLFSSH* ssh)
                 pubKey  = NULL;
                 privKey = NULL;
             #endif
-
                 if (kem != NULL) {
                     OQS_KEM_free(kem);
                     kem = NULL;
                 }
+
+                /* Replace the concatenated shared secrets with the hash. That
+                 * will become the new shared secret.*/
+                if (ret == 0) {
+                    ss_hashSz = wc_HashGetDigestSize(enmhashId);
+                    ss_hash = (byte *)WMALLOC(ss_hashSz, heap, DYNTYPE_PRIVKEY);
+                    if (ss_hash == NULL) {
+                        ret = WS_MEMORY_E;
+                    }
+                }
+                if (ret == 0) {
+                    ret = wc_Hash(enmhashId, ssh->k, ssh->kSz, ss_hash,
+                                  ss_hashSz);
+                }
+                if (ret == 0) {
+                    XMEMCPY(ssh->k, ss_hash, ss_hashSz);
+                    ssh->kSz = ss_hashSz;
+                }
+
+                WFREE(ss_hash, heap, DYNTYPE_PRIVKEY);
+                ss_hash = NULL;
             }
-#endif
+#endif /* !WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256 */
             else {
                 /* This should never happen */
                 ret = WS_ERROR;
@@ -8893,71 +8917,47 @@ int SendKexDhReply(WOLFSSH* ssh)
         }
 
         /* Hash in the server's DH f-value. */
+        if ((ret == 0)
+#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
+            && (!useEccKyber)
+#endif
+           ) {
+            ret = CreateMpint(f_ptr, &fSz, &fPad);
+        }
         if (ret == 0) {
             c32toa(fSz + fPad, scratchLen);
-            ret = HashUpdate(&ssh->handshake->hash, enmhashId,
-                               scratchLen, LENGTH_SZ);
+            ret = HashUpdate(&ssh->handshake->hash, enmhashId, scratchLen,
+                             LENGTH_SZ);
+        }
+        if ((ret == 0) && (fPad)) {
+            scratchLen[0] = 0;
+            ret = HashUpdate(&ssh->handshake->hash, enmhashId, scratchLen, 1);
         }
         if (ret == 0) {
-            if (fPad) {
-                scratchLen[0] = 0;
-                ret = HashUpdate(&ssh->handshake->hash,
-                                    enmhashId, scratchLen, 1);
-            }
+            ret = HashUpdate(&ssh->handshake->hash, enmhashId, f_ptr, fSz);
         }
-
-        if (ret == 0) {
-            ret = HashUpdate(&ssh->handshake->hash,
-                                enmhashId, f_ptr, fSz);
-        }
-
-        /* Replace the concatenated shared secret with its hash. */
-
-        if (ret == 0) {
-            ss_hashSz = wc_HashGetDigestSize(enmhashId);
-            ss_hash = (byte *)WMALLOC(ss_hashSz, heap, DYNTYPE_PRIVKEY);
-            if (ss_hash == NULL) {
-                ret = WS_MEMORY_E;
-            }
-        }
-
-        if (ret == 0) {
-            ret = wc_Hash(enmhashId, ssh->k, ssh->kSz, ss_hash, ss_hashSz);
-        }
-
-        if (ret == 0) {
-            XMEMCPY(ssh->k, ss_hash, ss_hashSz);
-            ssh->kSz = ss_hashSz;
-        }
-
-        WFREE(ss_hash, heap, DYNTYPE_PRIVKEY);
-        ss_hash = NULL;
 
         /* Hash in the shared secret K. */
-        (void)kPad;
-/*
-        if (ret == 0) {
+        if ((ret == 0)
+#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
+            && (!useEccKyber)
+#endif
+           ) {
             ret = CreateMpint(ssh->k, &ssh->kSz, &kPad);
         }
-*/
         if (ret == 0) {
             c32toa(ssh->kSz + kPad, scratchLen);
             ret = HashUpdate(&ssh->handshake->hash, enmhashId,
-                                scratchLen, LENGTH_SZ);
+                             scratchLen, LENGTH_SZ);
         }
-/*
-        if (ret == 0) {
-            if (kPad) {
-                scratchLen[0] = 0;
-                ret = HashUpdate(&ssh->handshake->hash,
-                                    enmhashId, scratchLen, 1);
-            }
+        if ((ret == 0) && (kPad)) {
+            scratchLen[0] = 0;
+            ret = HashUpdate(&ssh->handshake->hash,
+                             enmhashId, scratchLen, 1);
         }
-*/
-
         if (ret == 0) {
             ret = HashUpdate(&ssh->handshake->hash, enmhashId,
-                                ssh->k, ssh->kSz);
+                             ssh->k, ssh->kSz);
         }
 
         /* Save the exchange hash value H, and session ID. */
@@ -8967,7 +8967,6 @@ int SendKexDhReply(WOLFSSH* ssh)
             wc_HashFree(&ssh->handshake->hash, enmhashId);
             ssh->handshake->hashId = WC_HASH_TYPE_NONE;
         }
-
         if (ret == 0) {
             ssh->hSz = wc_HashGetDigestSize(enmhashId);
             if (ssh->sessionIdSz == 0) {
@@ -8975,9 +8974,9 @@ int SendKexDhReply(WOLFSSH* ssh)
                 ssh->sessionIdSz = ssh->hSz;
             }
         }
-
-        if (ret != WS_SUCCESS)
+        if (ret != WS_SUCCESS) {
             ret = WS_CRYPTO_FAILED;
+        }
     }
 
     /* Sign h with the server's private key. */
@@ -9610,32 +9609,31 @@ int SendKexDhInit(WOLFSSH* ssh)
             /* Move ecc to the back. Note that this assumes the PQ public key
              * is bigger than the ECC public key. */
             XMEMCPY(e + kem->length_public_key, e, eSz);
-
             if (ret == 0) {
-                if (OQS_KEM_keypair(kem, e, ssh->handshake->x)
-                    != OQS_SUCCESS) {
+                if (OQS_KEM_keypair(kem, e, ssh->handshake->x) != OQS_SUCCESS) {
                     /* This should never happen */
                     ret = WS_ERROR;
                 }
                 eSz += kem->length_public_key;
                 ssh->handshake->xSz = (word32)kem->length_secret_key;
             }
-
             if (kem != NULL) {
                 OQS_KEM_free(kem);
             }
         }
-#endif
-
-        if (ret == 0)
+#endif /* ! WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256 */
+        if (ret == 0) {
             ret = WS_SUCCESS;
+        }
     }
 
-#if 0
-    if (ret == WS_SUCCESS) {
+    if ((ret == WS_SUCCESS)
+#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
+        && (!ssh->handshake->useEccKyber)
+#endif
+       ) {
         ret = CreateMpint(e, &eSz, &ePad);
     }
-#endif
 
     if (ret == WS_SUCCESS) {
         if (ePad == 1) {
