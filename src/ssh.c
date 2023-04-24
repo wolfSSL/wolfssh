@@ -998,6 +998,15 @@ int wolfSSH_stream_peek(WOLFSSH* ssh, byte* buf, word32 bufSz)
     if (ssh == NULL || ssh->channelList == NULL)
         return WS_BAD_ARGUMENT;
 
+    if (ssh->isKeying) {
+        ssh->error = WS_REKEYING;
+        return WS_REKEYING;
+    }
+    if (ssh->channelList->eofRxd) {
+        ssh->error = WS_EOF;
+        return WS_ERROR;
+    }
+
     inputBuffer = &ssh->channelList->inputBuffer;
     bufSz = min(bufSz, inputBuffer->length - inputBuffer->idx);
     if (buf != NULL) {
@@ -1029,6 +1038,11 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
 
     if (ssh == NULL || buf == NULL || bufSz == 0 || ssh->channelList == NULL)
         return WS_BAD_ARGUMENT;
+
+    if (ssh->channelList->eofRxd) {
+        ssh->error = WS_EOF;
+        return WS_ERROR;
+    }
 
     inputBuffer = &ssh->channelList->inputBuffer;
     ssh->error = WS_SUCCESS;
@@ -1088,6 +1102,11 @@ int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz)
 
     if (ssh == NULL || buf == NULL || ssh->channelList == NULL)
         return WS_BAD_ARGUMENT;
+
+    if (ssh->isKeying) {
+        ssh->error = WS_REKEYING;
+        return WS_REKEYING;
+    }
 
     bytesTxd = SendChannelData(ssh, ssh->channelList->channel, buf, bufSz);
 
@@ -1764,15 +1783,24 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
         ret = DoReceive(ssh);
     }
 
-    if (channelId != NULL && ssh != NULL) {
-        *channelId = ssh->lastRxId;
+    if (ret == WS_SUCCESS) {
+        if (channelId != NULL) {
+            *channelId = ssh->lastRxId;
+        }
+
+        if (ssh->isKeying) {
+            ssh->error = WS_REKEYING;
+            return WS_REKEYING;
+        }
     }
 
-    if (ret == WS_CHAN_RXD)
+    if (ret == WS_CHAN_RXD) {
         WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_worker(), "
                            "data received on channel %u", ssh->lastRxId);
-    else
+    }
+    else {
         WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_worker(), ret = %d", ret);
+    }
     return ret;
 }
 

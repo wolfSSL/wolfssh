@@ -404,7 +404,8 @@ static INLINE int NoticeError(WOLFSSH* ssh)
 {
     return (ssh->error == WS_WANT_READ ||
             ssh->error == WS_WANT_WRITE ||
-            ssh->error == WS_CHAN_RXD);
+            ssh->error == WS_CHAN_RXD ||
+            ssh->error == WS_REKEYING);
 }
 
 
@@ -512,7 +513,7 @@ static int wolfSSH_SFTP_buffer_send(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer)
         return WS_BUFFER_E;
     }
 
-    while (buffer->idx < buffer->sz && (ret > 0 || ret == WS_SUCCESS)) {
+    if (buffer->idx < buffer->sz) {
         ret = wolfSSH_stream_send(ssh, buffer->data + buffer->idx,
             buffer->sz - buffer->idx);
         if (ret > 0) {
@@ -520,11 +521,6 @@ static int wolfSSH_SFTP_buffer_send(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer)
         }
         WLOG(WS_LOG_SFTP, "SFTP buffer sent %d / %d bytes", buffer->idx,
             buffer->sz);
-
-        /* interupt sending for a rekey or full window */
-        if (ret == WS_WINDOW_FULL || ret == WS_REKEYING) {
-            ret = wolfSSH_worker(ssh, NULL);
-        }
     }
 
     return ret;
@@ -1488,12 +1484,26 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
         case STATE_RECV_SEND:
             if (state->toSend) {
                 ret = wolfSSH_SFTP_buffer_send(ssh, &state->buffer);
-                if (ret == WS_SUCCESS || ret > 0) {
-                    ret = WS_SUCCESS;
-                    state->toSend = 0;
-                    wolfSSH_SFTP_ClearState(ssh, STATE_ID_RECV);
+                if (ret < 0) {
+                    if (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
+                        return WS_REKEYING;
+                    }
+                    if (ssh->error != WS_WANT_READ &&
+                            ssh->error != WS_WANT_WRITE &&
+                            ssh->error != WS_WINDOW_FULL) {
+                        wolfSSH_SFTP_ClearState(ssh, STATE_ID_RECV);
+                    }
+                    return WS_FATAL_ERROR;
                 }
+                if (wolfSSH_SFTP_buffer_idx(&state->buffer)
+                        < wolfSSH_SFTP_buffer_size(&state->buffer)) {
+                    ssh->error = WS_WANT_WRITE;
+                    return WS_FATAL_ERROR;
+                }
+                ret = WS_SUCCESS;
+                state->toSend = 0;
             }
+            wolfSSH_SFTP_ClearState(ssh, STATE_ID_RECV);
             return ret;
 
         default:
@@ -3405,10 +3415,6 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     ato32(data + idx, &sz);
     if (sz > maxSz - WOLFSSH_SFTP_HEADER - UINT32_SZ - idx) {
         return WS_BUFFER_E;
-    }
-
-    if (sz > WOLFSSH_MAX_SFTP_RW) {
-        sz = WOLFSSH_MAX_SFTP_RW;
     }
 
     /* read from handle and send data back to client */
@@ -6922,6 +6928,9 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 /* send header and type specific data */
                 ret = wolfSSH_SFTP_buffer_send(ssh, &state->buffer);
                 if (ret < 0) {
+                    if (ret == WS_REKEYING) {
+                        return ret;
+                    }
                     if (ssh->error != WS_WANT_READ &&
                             ssh->error != WS_WANT_WRITE) {
                         state->state = STATE_SEND_READ_CLEANUP;

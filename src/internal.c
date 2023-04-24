@@ -7411,7 +7411,8 @@ int DoReceive(WOLFSSH* ssh)
             ret = DoPacket(ssh);
             ssh->error = ret;
             if (ret < 0 && !(ret == WS_CHAN_RXD || ret == WS_EXTDATA ||
-                    ret == WS_CHANNEL_CLOSED || ret == WS_WANT_WRITE)) {
+                    ret == WS_CHANNEL_CLOSED || ret == WS_WANT_WRITE ||
+                    ret == WS_REKEYING)) {
                 return WS_FATAL_ERROR;
             }
             WLOG(WS_LOG_DEBUG, "PR3: peerMacSz = %u", peerMacSz);
@@ -11896,6 +11897,7 @@ int SendChannelData(WOLFSSH* ssh, word32 channelId,
 
     if (ret == WS_SUCCESS) {
         word32 bound = min(channel->peerWindowSz, channel->peerMaxPacketSz);
+        bound = min(bound, channel->maxPacketSz);
 
         if (dataSz > bound) {
             WLOG(WS_LOG_DEBUG,

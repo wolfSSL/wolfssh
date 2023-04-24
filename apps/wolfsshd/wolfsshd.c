@@ -438,6 +438,7 @@ static int SetupChroot(WOLFSSHD_CONFIG* usrConf)
 
 #ifdef WOLFSSH_SFTP
 #define TEST_SFTP_TIMEOUT 1
+#define TEST_SFTP_TIMEOUT_NONE 0
 
 /* handle SFTP operations
  * returns WS_SUCCESS on success
@@ -445,11 +446,12 @@ static int SetupChroot(WOLFSSHD_CONFIG* usrConf)
 static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     WPASSWD* pPasswd, WOLFSSHD_CONFIG* usrConf)
 {
-    byte tmp[1];
     int ret   = WS_SUCCESS;
     int error = WS_SUCCESS;
     WS_SOCKET_T sockfd;
     int select_ret = 0;
+    int timeout = TEST_SFTP_TIMEOUT_NONE;
+    byte peek_buf[1];
 
     /* temporarily elevate permissions to get users information */
     if (wolfSSHD_AuthRaisePermissions(conn->auth) != WS_SUCCESS) {
@@ -501,29 +503,67 @@ static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 
     sockfd = (WS_SOCKET_T)wolfSSH_get_fd(ssh);
     do {
-        if (wolfSSH_stream_peek(ssh, tmp, 1) > 0) {
-            select_ret = WS_SELECT_RECV_READY;
-        }
-        else {
-            select_ret = tcp_select(sockfd, TEST_SFTP_TIMEOUT);
+        select_ret = tcp_select(sockfd, timeout);
+        if (select_ret == WS_SELECT_ERROR_READY) {
+            break;
         }
 
-        if (select_ret == WS_SELECT_RECV_READY ||
-            select_ret == WS_SELECT_ERROR_READY ||
-            error == WS_WANT_WRITE)
-        {
+        if (select_ret == WS_SELECT_RECV_READY) {
+            ret = wolfSSH_worker(ssh, NULL);
+            error = wolfSSH_get_error(ssh);
+            if (ret == WS_REKEYING) {
+                /* In a rekey, keeping turning the crank. */
+                timeout = TEST_SFTP_TIMEOUT;
+                continue;
+            }
+            if (error == WS_EOF) {
+                break;
+            }
+            if (ret != WS_SUCCESS && ret != WS_CHAN_RXD) {
+                /* If not successful and no channel data, leave. */
+                break;
+            }
+        }
+
+        if (wolfSSH_SFTP_PendingSend(ssh)) {
+            /* Yes, process the SFTP data. */
             ret = wolfSSH_SFTP_read(ssh);
             error = wolfSSH_get_error(ssh);
+            timeout = (ret == WS_REKEYING) ?
+                TEST_SFTP_TIMEOUT : TEST_SFTP_TIMEOUT_NONE;
+            if (error == WS_WANT_READ || error == WS_WANT_WRITE ||
+                error == WS_CHAN_RXD || error == WS_REKEYING ||
+                error == WS_WINDOW_FULL)
+                ret = error;
+            if (error == WS_EOF)
+                break;
+            continue;
         }
-        else if (select_ret == WS_SELECT_TIMEOUT)
-            error = WS_WANT_READ;
-        else
-            error = WS_FATAL_ERROR;
 
-        if (error == WS_WANT_READ || error == WS_WANT_WRITE ||
-            error == WS_CHAN_RXD || error == WS_REKEYING ||
-            error == WS_WINDOW_FULL)
-            ret = error;
+        ret = wolfSSH_stream_peek(ssh, peek_buf, sizeof(peek_buf));
+        if (ret > 0) {
+            /* Yes, process the SFTP data. */
+            ret = wolfSSH_SFTP_read(ssh);
+            error = wolfSSH_get_error(ssh);
+            timeout = (ret == WS_REKEYING) ?
+                TEST_SFTP_TIMEOUT : TEST_SFTP_TIMEOUT_NONE;
+            if (error == WS_WANT_READ || error == WS_WANT_WRITE ||
+                error == WS_CHAN_RXD || error == WS_REKEYING ||
+                error == WS_WINDOW_FULL)
+                ret = error;
+            if (error == WS_EOF)
+                break;
+            continue;
+        }
+        else if (ret == WS_REKEYING) {
+            timeout = TEST_SFTP_TIMEOUT;
+            continue;
+        }
+        else if (ret < 0) {
+            error = wolfSSH_get_error(ssh);
+            if (error == WS_EOF)
+                break;
+        }
 
         if (ret == WS_FATAL_ERROR && error == 0) {
             WOLFSSH_CHANNEL* channel =
@@ -533,6 +573,8 @@ static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 break;
             }
         }
+
+        timeout = TEST_SFTP_TIMEOUT;
     } while (ret != WS_FATAL_ERROR);
 
     (void)conn;

@@ -501,8 +501,14 @@ static int doCmds(func_args* args)
                 if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
                     ret = wolfSSH_get_error(ssh);
                 }
+                while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
+                    ret = wolfSSH_worker(ssh, NULL);
+                    if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
+                        ret = wolfSSH_get_error(ssh);
+                    }
+                }
             } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE ||
-                    ret == WS_CHAN_RXD || ret == WS_REKEYING);
+                    ret == WS_CHAN_RXD);
 
 #ifndef WOLFSSH_NO_TIMESTAMP
             WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
