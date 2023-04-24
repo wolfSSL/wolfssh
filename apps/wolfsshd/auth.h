@@ -46,7 +46,7 @@ typedef int (*CallbackCheckUser)(const char* usr);
  * found, and negative values if an error occurs during checking.
  */
 typedef int (*CallbackCheckPassword)(const char* usr, const byte* psw,
-    word32 pswSz);
+    word32 pswSz, WOLFSSHD_AUTH* authCtx);
 
 /*
  * Returns WSSHD_AUTH_SUCCESS if public key ok, WSSHD_AUTH_FAILURE if key not
@@ -54,7 +54,7 @@ typedef int (*CallbackCheckPassword)(const char* usr, const byte* psw,
  */
 typedef int (*CallbackCheckPublicKey)(const char* usr,
                                       const WS_UserAuthData_PublicKey* pubKey,
-                                      const char* usrCaKeysFile);
+                                      const char* usrCaKeysFile, WOLFSSHD_AUTH* authCtx);
 
 WOLFSSHD_AUTH* wolfSSHD_AuthCreateUser(void* heap, const WOLFSSHD_CONFIG* conf);
 int wolfSSHD_AuthFreeUser(WOLFSSHD_AUTH* auth);
@@ -69,4 +69,8 @@ WOLFSSHD_CONFIG* wolfSSHD_AuthGetUserConf(const WOLFSSHD_AUTH* auth,
         const char* usr, const char* host,
         const char* localAdr, word16* localPort, const char* RDomain,
         const char* adr);
+#ifdef _WIN32
+HANDLE wolfSSHD_GetAuthToken(const WOLFSSHD_AUTH* auth);
+int wolfSSHD_GetHomeDirectory(WOLFSSHD_AUTH* auth, WOLFSSH* ssh, WCHAR* out, int outSz);
+#endif
 #endif /* WOLFAUTH_H */

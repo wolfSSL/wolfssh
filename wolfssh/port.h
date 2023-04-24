@@ -48,9 +48,15 @@ extern "C" {
     #else
         #define WISSPACE isspace
     #endif
+#ifdef USE_WINDOWS_API
+    #define WUID_T int
+    #define WGID_T int
+    #define WPASSWD struct passwd
+#else
     #define WUID_T uid_t
     #define WGID_T gid_t
     #define WPASSWD struct passwd
+#endif
 #endif
 
 /* setup memory handling */
@@ -366,6 +372,8 @@ extern "C" {
     #define WBADFILE          NULL
     #ifdef WOLFSSL_VXWORKS
         #define WUTIMES(f,t)      (WS_SUCCESS)
+    #elif defined(USE_WINDOWS_API)
+        #include <sys/utime.h>    
     #else
         #define WUTIMES(f,t)      utimes((f),(t))
     #endif
@@ -451,7 +459,7 @@ extern "C" {
     #ifdef USE_WINDOWS_API
         #define WSTRNCPY(s1,s2,n) strncpy_s((s1),(n),(s2),(n))
         #define WSTRNCASECMP(s1,s2,n) _strnicmp((s1),(s2),(n))
-        #define WSNPRINTF(s,n,f,...) _snprintf_s((s),(n),(n),(f),##__VA_ARGS__)
+        #define WSNPRINTF(s,n,f,...) _snprintf_s((s),(n),_TRUNCATE,(f),##__VA_ARGS__)
         #define WVSNPRINTF(s,n,f,...) _vsnprintf_s((s),(n),(n),(f),##__VA_ARGS__)
         #define WSTRTOK(s1,s2,s3) strtok_s((s1),(s2),(s3))
     #elif defined(MICROCHIP_MPLAB_HARMONY) || defined(MICROCHIP_PIC32)

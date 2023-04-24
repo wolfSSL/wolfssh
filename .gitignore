@@ -76,6 +76,7 @@ client.plist
 *.vcxproj.filters
 *.opensdf
 *.pdb
+.vs
 Debug
 Release
 DLL Debug

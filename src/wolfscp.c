@@ -1095,7 +1095,7 @@ static int ScpCheckForRename(WOLFSSH* ssh, int cmdSz)
 
     WSTRNCPY(buf, ssh->scpBasePath, cmdSz);
     buf[sz] = '\0';
-    WSTRNCAT(buf, "/..", sizeof("/.."));
+    WSTRNCAT(buf, "/..", DEFAULT_SCP_MSG_SZ);
 
     idx = wolfSSH_CleanPath(ssh, buf);
     if (idx < 0) {
@@ -1143,7 +1143,7 @@ static int ScpCheckForRename(WOLFSSH* ssh, int cmdSz)
             WLOG(WS_LOG_DEBUG, "scp: renaming from %s to %s",
                     ssh->scpFileName, ssh->scpBasePath + idx);
             ssh->scpFileReName = ssh->scpFileName;
-            WSTRNCPY(ssh->scpFileName, ssh->scpBasePath + idx, sz);
+            WSTRNCPY(ssh->scpFileName, ssh->scpBasePath + idx, sz + 1);
             ssh->scpFileName[sz]  = '\0';
             ssh->scpFileNameSz    = sz;
             *((char*)ssh->scpBasePath + idx) = '\0';
@@ -1158,15 +1158,16 @@ static int ScpCheckForRename(WOLFSSH* ssh, int cmdSz)
  * returns WS_SUCCESS on success */
 static int ParseBasePathHelper(WOLFSSH* ssh, int cmdSz)
 {
-    int ret = 0;
+    int ret;
     ret = ScpCheckForRename(ssh, cmdSz);
 #ifndef NO_FILESYSTEM
-    {
+    if (ret == WS_SUCCESS) {
         ScpSendCtx ctx;
 
         WMEMSET(&ctx, 0, sizeof(ScpSendCtx));
         if (ScpPushDir(&ctx, ssh->scpBasePath, ssh->ctx->heap) != WS_SUCCESS) {
             WLOG(WS_LOG_DEBUG, "scp : issue opening base dir");
+            ret = WS_FATAL_ERROR;
         }
         else {
             ret = ScpPopDir(&ctx, ssh->ctx->heap);
@@ -1261,7 +1262,8 @@ int ParseScpCommand(WOLFSSH* ssh)
                             ssh->scpBasePath = cmd + idx;
                         #endif
                             ret = ParseBasePathHelper(ssh, cmdSz);
-                            if (wolfSSH_CleanPath(ssh, (char*)ssh->scpBasePath) < 0)
+                            if (ret == WS_SUCCESS &&
+                                    wolfSSH_CleanPath(ssh, (char*)ssh->scpBasePath) < 0)
                                 ret = WS_FATAL_ERROR;
                         }
                         break;
@@ -1766,28 +1768,41 @@ static INLINE int wolfSSH_LastError(void)
     return errno;
 }
 
+
 /* set file access and modification times
  * Returns WS_SUCCESS on success, or negative upon error */
 static int SetTimestampInfo(const char* fileName, word64 mTime, word64 aTime)
 {
     int ret = WS_SUCCESS;
+#ifdef USE_WINDOWS_API
+    struct _utimbuf tmp;
+    int fd;
+#else
     struct timeval tmp[2];
+#endif
 
     if (fileName == NULL)
         ret= WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
+#ifdef USE_WINDOWS_API
+        tmp.actime  = aTime;
+        tmp.modtime = mTime;
+        _sopen_s(&fd, fileName, _O_RDWR, _SH_DENYNO, 0);
+        _futime(fd, &tmp);
+        _close(fd);
+#else
         tmp[0].tv_sec = (time_t)aTime;
         tmp[0].tv_usec = 0;
         tmp[1].tv_sec = (time_t)mTime;
         tmp[1].tv_usec = 0;
 
         ret = WUTIMES(fileName, tmp);
+#endif
     }
 
     return ret;
 }
-
 
 /* Default SCP receive callback, called by wolfSSH when application has called
  * wolfSSH_accept() and a new SCP request has been received for an incomming
@@ -2079,7 +2094,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
     return ret;
 }
 
-static int GetFileSize(WFILE* fp, word32* fileSz)
+static int _GetFileSize(WFILE* fp, word32* fileSz)
 {
     if (fp == NULL || fileSz == NULL)
         return WS_BAD_ARGUMENT;
@@ -2103,6 +2118,22 @@ static int GetFileStats(ScpSendCtx* ctx, const char* fileName,
     }
 
     /* get file stats for times and mode */
+#if defined(USE_WINDOWS_API)
+    BOOL error;
+
+    error = !WS_GetFileAttributesExA(fileName, &ctx->s, NULL);
+    if (error)
+        return WS_BAD_FILE_E;
+
+    *aTime = ((word64)ctx->s.ftLastAccessTime.dwHighDateTime << 32) |
+        (word64)ctx->s.ftLastAccessTime.dwLowDateTime;
+    *mTime = ((word64)ctx->s.ftLastWriteTime.dwHighDateTime << 32) |
+        (word64)ctx->s.ftLastWriteTime.dwLowDateTime;
+
+    *fileMode = 0555 |
+        (ctx->s.dwFileAttributes | FILE_ATTRIBUTE_READONLY ? 0 : 0200);
+    *fileMode |= (ctx->s.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? 0x4000 : 0;
+#else
     if (WSTAT(fileName, &ctx->s) < 0) {
         ret = WS_BAD_FILE_E;
         #ifdef WOLFSSL_NUCLEUS
@@ -2112,7 +2143,8 @@ static int GetFileStats(ScpSendCtx* ctx, const char* fileName,
             ret = WS_SUCCESS;
         }
         #endif
-    } else {
+    }
+    else {
     #ifdef WOLFSSL_NUCLEUS
         if (ctx->s.fattribute & ARDONLY) {
             *fileMode = 0x124; /* octal 444 */
@@ -2132,6 +2164,7 @@ static int GetFileStats(ScpSendCtx* ctx, const char* fileName,
         *fileMode = ctx->s.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO);
     #endif
     }
+#endif
 
     return ret;
 }
@@ -2155,6 +2188,24 @@ static ScpDir* ScpNewDir(const char* path, void* heap)
     }
 
     entry->next = NULL;
+#ifdef USE_WINDOWS_API
+    {
+        char sPath[MAX_PATH];
+        int isDir;
+
+        /* add wildcard to get full directory */
+        WSNPRINTF(sPath, MAX_PATH, "%s/*", path);
+
+        entry->dir = (HANDLE)WS_FindFirstFileA(sPath,
+            sPath, sizeof(sPath), &isDir, heap);
+        if (entry->dir == INVALID_HANDLE_VALUE) {
+            WFREE(entry, heap, DYNTYPE_SCPDIR);
+            WLOG(WS_LOG_ERROR, scpError, "opendir failed on directory",
+                WS_INVALID_PATH_E);
+            return NULL;
+        }
+    }
+#else
     if (WOPENDIR(NULL, heap, &entry->dir, path) != 0
         #ifndef WOLFSSL_NUCLEUS
             || entry->dir == NULL
@@ -2165,7 +2216,7 @@ static ScpDir* ScpNewDir(const char* path, void* heap)
              WS_INVALID_PATH_E);
         return NULL;
     }
-
+#endif
     return entry;
 }
 
@@ -2209,7 +2260,11 @@ int ScpPopDir(ScpSendCtx* ctx, void* heap)
     }
 
     if (entry != NULL) {
+    #ifdef USE_WINDOWS_API
+        FindClose(entry->dir);
+    #else
         WCLOSEDIR(&entry->dir);
+    #endif
         WFREE(entry, heap, DYNTYPE_SCPDIR);
     }
 
@@ -2268,6 +2323,31 @@ static int FindNextDirEntry(ScpSendCtx* ctx)
         }
     }
     ctx->nextError = 1;
+#elif defined(USE_WINDOWS_API)
+    do {
+        char realFileName[MAX_PATH];
+        int  sz;
+
+        if (WS_FindNextFileA(ctx->currentDir->dir,
+            realFileName, sizeof(realFileName)) == 0) {
+            return WS_FATAL_ERROR;
+        }
+
+        sz = (int)WSTRLEN(realFileName);
+        if (ctx->entry != NULL) {
+            WFREE(ctx->entry, NULL, DYNTYPE_SCPDIR);
+            ctx->entry = NULL;
+        }
+
+        ctx->entry = (char*)WMALLOC(sz + 1, NULL, DYNTYPE_SCPDIR);
+        if (ctx->entry == NULL) {
+            return WS_MEMORY_E;
+        }
+        WMEMCPY(ctx->entry, realFileName, sz);
+        ctx->entry[sz] = '\0';
+    } while ((ctx->entry != NULL) &&
+        (WSTRNCMP(ctx->entry, ".", 1) == 0 ||
+         WSTRNCMP(ctx->entry, "..", 2) == 0));
 #else
     do {
         ctx->entry = WREADDIR(&ctx->currentDir->dir);
@@ -2293,6 +2373,8 @@ int ScpFileIsDir(ScpSendCtx* ctx)
 {
 #ifdef WOLFSSL_NUCLEUS
     return (ctx->s.fattribute & ADIRENT);
+#elif defined(USE_WINDOWS_API)
+    return (ctx->s.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY);
 #else
     return S_ISDIR(ctx->s.st_mode);
 #endif
@@ -2302,6 +2384,8 @@ static int ScpFileIsFile(ScpSendCtx* ctx)
 {
 #ifdef WOLFSSL_NUCLEUS
     return (ctx->s.fattribute != ADIRENT);
+#elif defined(USE_WINDOWS_API)
+    return ((ctx->s.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0);
 #else
     return S_ISREG(ctx->s.st_mode);
 #endif
@@ -2332,8 +2416,15 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
     if (ret == WS_SUCCESS) {
 
         dirNameLen = (int)WSTRLEN(sendCtx->dirName);
-    #ifdef WOLFSSL_NUCLEUS
-        dNameLen   = (int)WSTRLEN(sendCtx->currentDir->dir.lfname);
+    #if defined(WOLFSSL_NUCLEUS)
+        dNameLen = (int)WSTRLEN(sendCtx->currentDir->dir.lfname);
+    #elif defined(USE_WINDOWS_API)
+        {
+            char path[MAX_PATH];
+
+            GetFullPathNameA(fileName, MAX_PATH, path, NULL);
+            dNameLen = (int)WSTRLEN(path);
+        }
     #else
         dNameLen   = (int)WSTRLEN(sendCtx->entry->d_name);
     #endif
@@ -2354,6 +2445,11 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
             if (wolfSSH_CleanPath(ssh, filePath) < 0) {
                 ret = WS_SCP_ABORT;
             }
+        #elif defined(USE_WINDOWS_API)
+            WSTRNCAT(filePath, sendCtx->entry,
+                DEFAULT_SCP_FILE_NAME_SZ);
+            WSTRNCPY(fileName, sendCtx->entry,
+                DEFAULT_SCP_FILE_NAME_SZ);
         #else
             WSTRNCAT(filePath, sendCtx->entry->d_name,
                      DEFAULT_SCP_FILE_NAME_SZ);
@@ -2387,7 +2483,7 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
             }
 
             if (ret == WS_SUCCESS) {
-                ret = GetFileSize(sendCtx->fp, totalFileSz);
+                ret = _GetFileSize(sendCtx->fp, totalFileSz);
 
                 if (ret == WS_SUCCESS)
                     ret = (word32)WFREAD(buf, 1, bufSz, sendCtx->fp);
@@ -2538,7 +2634,7 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             }
 
             if (ret == WS_SUCCESS)
-                ret = GetFileSize(sendCtx->fp, totalFileSz);
+                ret = _GetFileSize(sendCtx->fp, totalFileSz);
 
             if (ret == WS_SUCCESS)
                 ret = GetFileStats(sendCtx, peerRequest, mTime, aTime, fileMode);

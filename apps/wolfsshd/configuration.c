@@ -22,6 +22,10 @@
     #include <config.h>
 #endif
 
+#ifdef WOLFSSL_USER_SETTINGS
+    #include <wolfssl/wolfcrypt/settings.h>
+#endif
+
 #ifdef WOLFSSH_SSHD
 /* functions for parsing out options from a config file and for handling loading
  * key/certs using the env. filesystem */
@@ -47,7 +51,10 @@
 #endif
 
 #include "configuration.h"
+
+#ifndef WIN32
 #include <dirent.h>
+#endif
 
 struct WOLFSSHD_CONFIG {
     void* heap;
@@ -854,7 +861,7 @@ static int AddRestrictedCase(WOLFSSHD_CONFIG* config, const char* mtch,
  * and makes it point to the newly created conf node */
 static int HandleMatch(WOLFSSHD_CONFIG** conf, const char* value, int valueSz)
 {
-    WOLFSSHD_CONFIG* newConf;
+    WOLFSSHD_CONFIG* newConf = NULL;
     int ret = WS_SUCCESS;
 
     if (conf == NULL || *conf == NULL || value == NULL) {
@@ -1096,7 +1103,7 @@ WOLFSSHD_STATIC int ParseConfigLine(WOLFSSHD_CONFIG** conf, const char* l,
  */
 int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename)
 {
-    XFILE f;
+    WFILE *f;
     WOLFSSHD_CONFIG* currentConfig;
     int ret = WS_SUCCESS;
     char buf[MAX_LINE_SIZE];
@@ -1105,8 +1112,7 @@ int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename)
     if (conf == NULL || filename == NULL)
         return BAD_FUNC_ARG;
 
-    f = XFOPEN(filename, "rb");
-    if (f == XBADFILE) {
+    if (WFOPEN(&f, filename, "rb") != 0) {
         wolfSSH_Log(WS_LOG_ERROR, "Unable to open SSHD config file %s",
                 filename);
         return BAD_FUNC_ARG;
@@ -1124,7 +1130,7 @@ int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename)
             current   = current + 1;
         }
 
-        if (currentSz <= 1) {
+        if (currentSz <= 2) { /* \n or \r\n */
             continue; /* empty line */
         }
 
@@ -1138,7 +1144,7 @@ int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename)
             break;
         }
     }
-    XFCLOSE(f);
+    WFCLOSE(f);
 
     SetAuthKeysPattern(conf->authKeysFile);
 

@@ -310,17 +310,20 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
         err_sys("Couldn't copy the file.");
 
     ret = wolfSSH_shutdown(ssh);
-    if (ret != WS_SUCCESS) {
-        err_sys("Sending the shutdown messages failed.");
-    }
-    ret = wolfSSH_worker(ssh, NULL);
-    if (ret != WS_SUCCESS && ret != WS_CHANNEL_CLOSED) {
-        err_sys("Failed to listen for close messages from the peer.");
+    /* do not continue on with shutdown process if peer already disconnected */
+    if (ret != WS_SOCKET_ERROR_E && wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E) {
+        if (ret != WS_SUCCESS) {
+            err_sys("Sending the shutdown messages failed.");
+        }
+        ret = wolfSSH_worker(ssh, NULL);
+        if (ret != WS_SUCCESS && ret != WS_CHANNEL_CLOSED) {
+            err_sys("Failed to listen for close messages from the peer.");
+        }
     }
     WCLOSESOCKET(sockFd);
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
-    if (ret != WS_SUCCESS)
+    if (ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E)
         err_sys("Closing scp stream failed. Connection could have been closed by peer");
 
     ClientFreeBuffers(pubKeyName, privKeyName);

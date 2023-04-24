@@ -1032,8 +1032,9 @@ static int doAutopilot(int cmd, char* local, char* remote)
     }
 
     if (remoteAbsPath) {
-        WMEMSET(fullpath, 0, sizeof(fullpath));
-        WSTRNCPY(fullpath, remote, sizeof(fullpath) - 1);
+       /* use remote absolute path if provided */
+       WMEMSET(fullpath, 0, sizeof(fullpath));
+       WSTRNCPY(fullpath, remote, sizeof(fullpath) - 1);
     }
     else {
         do {
@@ -1332,7 +1333,11 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     WFREE(workingDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     if (ret == WS_SUCCESS) {
         if (wolfSSH_shutdown(ssh) != WS_SUCCESS) {
-            printf("error with wolfSSH_shutdown(), already disconnected?\n");
+			int rc;
+			rc = wolfSSH_get_error(ssh);
+
+			if (rc != WS_SOCKET_ERROR_E && rc != WS_EOF)
+				printf("error with wolfSSH_shutdown()\n");
         }
     }
     WCLOSESOCKET(sockFd);
