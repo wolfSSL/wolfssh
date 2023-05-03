@@ -25,6 +25,9 @@
     #include <config.h>
 #endif
 
+#include <wolfssl/wolfcrypt/settings.h>
+#include <wolfssh/settings.h>
+
 #include "../../tests/unit.h"
 #include "../../tests/api.h"
 #include "../../tests/testsuite.h"
