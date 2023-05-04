@@ -2,6 +2,23 @@
 
 The wolfSSH Cube Pack can be found [here](https://www.wolfssl.com/files/ide/I-CUBE-wolfSSH.pack) and is dependent on the `wolfCrypt` library.
 
+## Dependencies
+
+### wolfCrypt
+
+The wolfCrypt crypto library is required to build/run the wolfSSH pack.
+
+### RTOS
+
+The wolfSSH pack core functionality can be built without an RTOS but to build/run the tests, FreeRTOS will have to be added as a middlware.
+
+### Input/Output
+
+By default, the wolfSSH pack uses a dummy custom IO implementation. The user is expected to be provide their own implementation in `ide/STM32CUBE/userio_template.h`. Alternatively, they can enable LwIP and configure wolfSSH to use it.
+
+
+## Building and Running Tests
+
 1. The first step is to set up the wolfCrypt library in your ST project following the guide here [https://github.com/wolfSSL/wolfssl/blob/master/IDE/STM32Cube/README.md](https://github.com/wolfSSL/wolfssl/blob/master/IDE/STM32Cube/README.md). To run the wolfSSH unit tests, name the entry function `wolfSSHTest` instead of `wolfCryptDemo`.
 
 2. Then install the wolfSSH Cube Pack in the same manner as the wolfSSL pack with CUBEMX.
