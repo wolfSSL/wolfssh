@@ -1122,6 +1122,38 @@ int wolfSSHD_AuthReducePermissions(WOLFSSHD_AUTH* auth)
     return ret;
 }
 
+
+/* sets the extended groups the user is in, returns WS_SUCCESS on success */
+int wolfSSHD_AuthSetGroups(const WOLFSSHD_AUTH* auth, const char* usr,
+        WGID_T gid)
+{
+    int grpListSz = 0;
+    gid_t* grpList = NULL;
+    int ret = WS_SUCCESS;
+
+    /* should return -1 if grpListSz is smaller than actual groups */
+    if (getgrouplist(usr, gid, NULL, &grpListSz) == -1) {
+        grpList = (gid_t*)WMALLOC(sizeof(gid_t) * grpListSz, auth->heap,
+            DYNTYPE_SSHD);
+        if (grpList == NULL) {
+            ret = WS_MEMORY_E;
+        }
+        else {
+            if (getgrouplist(usr, gid, grpList, &grpListSz)
+                    != grpListSz) {
+                ret = WS_FATAL_ERROR;
+            }
+            else {
+                setgroups(grpListSz, grpList);
+            }
+            WFREE(grpList, auth->heap, DYNTYPE_SSHD);
+        }
+    }
+
+    return ret;
+}
+
+
 /* return the time in seconds for grace timeout period */
 long wolfSSHD_AuthGetGraceTime(const WOLFSSHD_AUTH* auth)
 {
