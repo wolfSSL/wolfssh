@@ -412,6 +412,9 @@ const char* GetErrorString(int err)
         case WS_CTX_KEY_COUNT_E:
             return "trying to add too many keys";
 
+        case WS_MATCH_UA_KEY_ID_E:
+            return "unable to match user auth key type";
+
         default:
             return "Unknown error code";
     }
@@ -760,6 +763,9 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
     }
     wc_AesFree(&ssh->encryptCipher.aes);
     wc_AesFree(&ssh->decryptCipher.aes);
+    if (ssh->peerSigId) {
+        WFREE(ssh->peerSigId, heap, DYNTYPE_ID);
+    }
 
 #ifdef WOLFSSH_SCP
     if (ssh->scpConfirmMsg) {
@@ -1601,8 +1607,8 @@ static const NameIdPair NameIdMap[] = {
     { ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256,
         "ecdh-nistp256-kyber-512r3-sha256-d00@openquantumsafe.org" },
 #endif
-    { ID_EXT_INFO_S, "ext-info-s" },
-    { ID_EXT_INFO_C, "ext-info-c" },
+    { ID_EXTINFO_S, "ext-info-s" },
+    { ID_EXTINFO_C, "ext-info-c" },
 
     /* Public Key IDs */
 #ifndef WOLFSSH_NO_RSA
@@ -1661,6 +1667,9 @@ static const NameIdPair NameIdMap[] = {
     { ID_GLOBREQ_TCPIP_FWD, "tcpip-forward" },
     { ID_GLOBREQ_TCPIP_FWD_CANCEL, "cancel-tcpip-forward" },
 #endif /* WOLFSSH_FWD */
+
+    /* Ext Info IDs */
+    { ID_EXTINFO_SERVER_SIG_ALGS, "server-sig-algs" },
 };
 
 
@@ -2465,14 +2474,91 @@ int GetStringRef(word32* strSz, const byte** str,
 }
 
 
-static int GetNameList(byte* idList, word32* idListSz,
-                       byte* buf, word32 len, word32* idx)
+static word32 CountNameList(const byte* buf, word32 len)
 {
-    byte idListIdx;
-    word32 nameListSz, nameListIdx;
-    word32 begin;
-    byte* name;
-    word32 nameSz;
+    word32 count = 0;
+
+    if (buf != NULL && len > 0) {
+        word32 i;
+
+        count = 1;
+        for (i = 0; i < len; i++) {
+            if (buf[i] == ',') {
+                count++;
+            }
+        }
+        /* remove leading comma */
+        if (count > 0 && buf[0] == ',') {
+            count--;
+        }
+        /* remove trailing comma */
+        if (count > 0 && buf[len-1] == ',') {
+            count--;
+        }
+    }
+
+    return count;
+}
+
+
+static int GetNameListRaw(byte* idList, word32* idListSz,
+        const byte* nameList, word32 nameListSz)
+{
+    const byte* name = nameList;
+    word32 nameSz = 0, nameListIdx = 0, idListIdx = 0;
+    int ret = WS_SUCCESS;
+
+    /*
+     * The strings we want are now in the bounds of the message, and the
+     * length of the list. Find the commas, or end of list, and then decode
+     * the values.
+     */
+
+    while (nameListIdx < nameListSz) {
+        nameListIdx++;
+
+        if (nameListIdx == nameListSz)
+            nameSz++;
+
+        if (nameListIdx == nameListSz || name[nameSz] == ',') {
+            byte id;
+
+            id = NameToId((char*)name, nameSz);
+            {
+                const char* displayName = IdToName(id);
+                if (displayName) {
+                    WLOG(WS_LOG_DEBUG, "GNL: name ID = %s", displayName);
+                }
+            }
+            if (id != ID_UNKNOWN || idListIdx == 0) {
+                /* Intentionally save the first one if unknown. This helps
+                 * skipping the KexDhInit if the client sends the wrong one
+                 * as a guess. */
+                if (idListIdx >= *idListSz) {
+                    WLOG(WS_LOG_ERROR, "No more space left for names");
+                    return WS_BUFFER_E;
+                }
+                idList[idListIdx++] = id;
+            }
+
+            name += 1 + nameSz;
+            nameSz = 0;
+        }
+        else
+            nameSz++;
+    }
+
+    *idListSz = idListIdx;
+
+    return ret;
+}
+
+
+static int GetNameList(byte* idList, word32* idListSz,
+                       const byte* buf, word32 len, word32* idx)
+{
+    const byte* nameList;
+    word32 nameListSz;
     int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Entering GetNameList()");
@@ -2489,63 +2575,16 @@ static int GetNameList(byte* idList, word32* idListSz,
      */
 
     if (ret == WS_SUCCESS) {
-        begin = *idx;
-        if (begin >= len || begin + 4 >= len)
+        if (*idx >= len || *idx + 4 >= len)
             ret = WS_BUFFER_E;
     }
 
-    if (ret == WS_SUCCESS)
-        ret = GetUint32(&nameListSz, buf, len, &begin);
-
-    /* The strings we want are now in the bounds of the message, and the
-     * length of the list. Find the commas, or end of list, and then decode
-     * the values. */
     if (ret == WS_SUCCESS) {
-        name = buf + begin;
-        nameSz = 0;
-        nameListIdx = 0;
-        idListIdx = 0;
+        ret = GetStringRef(&nameListSz, &nameList, buf, len, idx);
+    }
 
-        while (nameListIdx < nameListSz) {
-            nameListIdx++;
-
-            if (nameListIdx == nameListSz)
-                nameSz++;
-
-            if (nameListIdx + begin >= len)
-                return WS_BUFFER_E;
-
-            if (nameListIdx == nameListSz || name[nameSz] == ',') {
-                byte id;
-
-                id = NameToId((char*)name, nameSz);
-                {
-                    const char* displayName = IdToName(id);
-                    if (displayName) {
-                        WLOG(WS_LOG_DEBUG, "DNL: name ID = %s", displayName);
-                    }
-                }
-                if (id != ID_UNKNOWN || idListIdx == 0) {
-                    /* Intentionally save the first one if unknown. This helps
-                     * skipping the KexDhInit if the client sends the wrong one
-                     * as a guess. */
-                    if (idListIdx >= *idListSz) {
-                        WLOG(WS_LOG_ERROR, "No more space left for names");
-                        return WS_BUFFER_E;
-                    }
-                    idList[idListIdx++] = id;
-                }
-
-                name += 1 + nameSz;
-                nameSz = 0;
-            }
-            else
-                nameSz++;
-        }
-
-        begin += nameListSz;
-        *idListSz = idListIdx;
-        *idx = begin;
+    if (ret == WS_SUCCESS) {
+        ret = GetNameListRaw(idList, idListSz, nameList, nameListSz);
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving GetNameList(), ret = %d", ret);
@@ -3008,7 +3047,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 byte extInfo;
 
                 /* Match the client accepts extInfo. */
-                algoId = ID_EXT_INFO_C;
+                algoId = ID_EXTINFO_C;
                 extInfo = MatchIdLists(side, list, listSz, &algoId, 1);
                 ssh->sendExtInfo = extInfo == algoId;
             }
@@ -4796,8 +4835,6 @@ static int DoServiceAccept(WOLFSSH* ssh,
     word32 nameSz;
     char     serviceName[WOLFSSH_MAX_NAMESZ];
 
-    WOLFSSH_UNUSED(len);
-
     ato32(buf + begin, &nameSz);
     begin += LENGTH_SZ;
 
@@ -4818,16 +4855,77 @@ static int DoServiceAccept(WOLFSSH* ssh,
 }
 
 
+static int DoExtInfoServerSigAlgs(WOLFSSH* ssh,
+        const byte* names, word32 namesSz)
+{
+    byte* peerSigId = NULL;
+    word32 peerSigIdSz;
+    int ret = WS_SUCCESS;
+    byte algoId;
+
+    peerSigIdSz = CountNameList(names, namesSz);
+    if (peerSigIdSz > 0) {
+        peerSigId = (byte*)WMALLOC(peerSigIdSz, ssh->ctx->heap, DYNTYPE_ID);
+        if (peerSigId == NULL) {
+            ret = WS_MEMORY_E;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = GetNameListRaw(peerSigId, &peerSigIdSz, names, namesSz);
+    }
+
+    if (ret == WS_SUCCESS) {
+        algoId = MatchIdLists(ssh->ctx->side,
+                peerSigId, peerSigIdSz,
+                cannedKeyAlgoClient, cannedKeyAlgoClientSz);
+
+        if (algoId == ID_UNKNOWN) {
+            ret = WS_MATCH_UA_KEY_ID_E;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (ssh->peerSigId != NULL) {
+            WFREE(ssh->peerSigId, ssh->ctx->heap, DYNTYPE_ID);
+        }
+        ssh->peerSigId = peerSigId;
+        ssh->peerSigIdSz = peerSigIdSz;
+    }
+    else {
+        WFREE(peerSigId, ssh->ctx->heap, DYNTYPE_ID);
+    }
+
+    return ret;
+}
+
+
 static int DoExtInfo(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
-    const byte* str = NULL;
-    word32 strSz = 0;
+    const byte* extName;
+    const byte* extValue;
+    word32 i, extCount, extNameSz, extValueSz;
+    int ret;
+    byte matchId;
 
-    WOLFSSH_UNUSED(ssh);
-    GetStringRef(&strSz, &str, buf, len, idx);
-    DumpOctetString(str, strSz);
+    ret = GetUint32(&extCount, buf, len, idx);
 
-    return WS_SUCCESS;
+    for (i = 0; ret == WS_SUCCESS && i < extCount; i++) {
+        ret = GetStringRef(&extNameSz, &extName, buf, len, idx);
+
+        if (ret == WS_SUCCESS) {
+            ret = GetStringRef(&extValueSz, &extValue, buf, len, idx);
+        }
+
+        if (ret == WS_SUCCESS) {
+            matchId = NameToId((const char*)extName, extNameSz);
+            if (matchId == ID_EXTINFO_SERVER_SIG_ALGS) {
+                ret = DoExtInfoServerSigAlgs(ssh, extValue, extValueSz);
+            }
+        }
+    }
+
+    return ret;
 }
 
 
@@ -5734,7 +5832,8 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             byte  *cert   = NULL;
             word32 certSz = 0;
 
-            ret = ParseAndVerifyCert(ssh, pubKey, pubKeySz, &cert, &certSz);
+            ret = ParseAndVerifyCert(ssh, (byte*)pubKeyBlob, pubKeyBlobSz,
+                    &cert, &certSz);
             if (ret == WS_SUCCESS) {
                 authData->sf.publicKey.publicKey = cert;
                 authData->sf.publicKey.publicKeySz = certSz;
@@ -8002,6 +8101,7 @@ static const char cannedMacAlgoNames[] =
 
 static const char cannedKeyAlgoNames[] = "rsa-sha2-256,ecdsa-sha2-nistp256";
 
+#if 0
 static const char cannedKexAlgoNames[] =
 #if !defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256)
     "ecdh-nistp256-kyber-512r3-sha256-d00@openquantumsafe.org,"
@@ -8025,6 +8125,7 @@ static const char cannedKexAlgoNames[] =
     "diffie-hellman-group1-sha1,"
 #endif
     "";
+#endif
 
 
 static const char cannedNoneNames[] = "none";
@@ -8032,7 +8133,9 @@ static const char cannedNoneNames[] = "none";
 /* -1 for the null, some are -2 for the null and comma */
 static const word32 cannedEncAlgoNamesSz = sizeof(cannedEncAlgoNames) - 2;
 static const word32 cannedMacAlgoNamesSz = sizeof(cannedMacAlgoNames) - 2;
+#if 0
 static const word32 cannedKexAlgoNamesSz = sizeof(cannedKexAlgoNames) - 2;
+#endif
 static const word32 cannedNoneNamesSz = sizeof(cannedNoneNames) - 1;
 
 #define KEY_ALGO_SIZE_GUESS 28
@@ -8083,9 +8186,11 @@ int SendKexInit(WOLFSSH* ssh)
 {
     byte* output = NULL;
     byte* payload = NULL;
+    char* kexAlgoNames = NULL;
     char* keyAlgoNames = NULL;
-    const byte* publicKeyAlgo;
-    word32 idx = 0, payloadSz = 0, keyAlgoNamesSz = 0, publicKeyAlgoCount;
+    const byte* algo;
+    word32 algoCount, idx = 0, payloadSz = 0,
+            kexAlgoNamesSz = 0, keyAlgoNamesSz = 0;
     int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Entering SendKexInit()");
@@ -8111,16 +8216,43 @@ int SendKexInit(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS) {
+        byte algoList[8];
+        word32 algoListSz;
+
+        WMEMCPY(algoList, cannedKexAlgo, cannedKexAlgoSz);
+        algoListSz = cannedKexAlgoSz;
+        if (ssh->ctx->side == WOLFSSH_ENDPOINT_CLIENT) {
+            algoList[cannedKexAlgoSz] = ID_EXTINFO_C;
+            algoListSz++;
+        }
+
+        kexAlgoNamesSz = BuildNameList(NULL, 0, algoList, algoListSz) + 1;
+        kexAlgoNames = (char*)WMALLOC(kexAlgoNamesSz,
+                ssh->ctx->heap, DYNTYPE_STRING);
+        if (kexAlgoNames == NULL) {
+            ret = WS_MEMORY_E;
+        }
+
+        if (ret == WS_SUCCESS) {
+            ret = BuildNameList(kexAlgoNames, kexAlgoNamesSz,
+                    algoList, algoListSz);
+            if (ret > 0) {
+                kexAlgoNamesSz = (word32)ret;
+                ret = WS_SUCCESS;
+            }
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
         if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
-            publicKeyAlgoCount = ssh->ctx->publicKeyAlgoCount;
-            publicKeyAlgo = ssh->ctx->publicKeyAlgo;
+            algoCount = ssh->ctx->publicKeyAlgoCount;
+            algo = ssh->ctx->publicKeyAlgo;
         }
         else {
-            publicKeyAlgoCount = cannedKeyAlgoClientSz;
-            publicKeyAlgo = cannedKeyAlgoClient;
+            algoCount = cannedKeyAlgoClientSz;
+            algo = cannedKeyAlgoClient;
         }
-        keyAlgoNamesSz = BuildNameList(NULL, 0,
-                publicKeyAlgo, publicKeyAlgoCount) + 1;
+        keyAlgoNamesSz = BuildNameList(NULL, 0, algo, algoCount) + 1;
         keyAlgoNames = (char*)WMALLOC(keyAlgoNamesSz,
                 ssh->ctx->heap, DYNTYPE_STRING);
         if (keyAlgoNames == NULL) {
@@ -8129,8 +8261,7 @@ int SendKexInit(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS) {
-        ret = BuildNameList(keyAlgoNames, keyAlgoNamesSz,
-                publicKeyAlgo, publicKeyAlgoCount);
+        ret = BuildNameList(keyAlgoNames, keyAlgoNamesSz, algo, algoCount);
         if (ret > 0) {
             keyAlgoNamesSz = (word32)ret;
             ret = WS_SUCCESS;
@@ -8139,7 +8270,7 @@ int SendKexInit(WOLFSSH* ssh)
 
     if (ret == WS_SUCCESS) {
         payloadSz = MSG_ID_SZ + COOKIE_SZ + (LENGTH_SZ * 11) + BOOLEAN_SZ +
-                   cannedKexAlgoNamesSz + keyAlgoNamesSz +
+                   kexAlgoNamesSz + keyAlgoNamesSz +
                    (cannedEncAlgoNamesSz * 2) +
                    (cannedMacAlgoNamesSz * 2) +
                    (cannedNoneNamesSz * 2);
@@ -8162,7 +8293,7 @@ int SendKexInit(WOLFSSH* ssh)
 
         idx += COOKIE_SZ;
 
-        CopyNameList(output, &idx, cannedKexAlgoNames, cannedKexAlgoNamesSz);
+        CopyNameList(output, &idx, kexAlgoNames, kexAlgoNamesSz);
         CopyNameList(output, &idx, keyAlgoNames, keyAlgoNamesSz);
         CopyNameList(output, &idx, cannedEncAlgoNames, cannedEncAlgoNamesSz);
         CopyNameList(output, &idx, cannedEncAlgoNames, cannedEncAlgoNamesSz);
@@ -8197,6 +8328,7 @@ int SendKexInit(WOLFSSH* ssh)
         }
     }
 
+    WFREE(kexAlgoNames, ssh->ctx->heap, DYNTYPE_STRING);
     WFREE(keyAlgoNames, ssh->ctx->heap, DYNTYPE_STRING);
 
     if (ret == WS_SUCCESS) {
@@ -10246,8 +10378,6 @@ int SendExtInfo(WOLFSSH* ssh)
         WMEMCPY(output + idx, cannedKeyAlgoNames, cannedKeyAlgoNamesSz);
         idx += cannedKeyAlgoNamesSz;
 
-        DumpOctetString(output + ssh->outputBuffer.length,
-                idx - ssh->outputBuffer.length);
         ssh->outputBuffer.length = idx;
 
         ret = BundlePacket(ssh);

@@ -312,8 +312,8 @@ enum {
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
     ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256,
 #endif
-    ID_EXT_INFO_S, /* Pseudo-KEX to indicate server extensions. */
-    ID_EXT_INFO_C, /* Pseudo-KEX to indicate client extensions. */
+    ID_EXTINFO_S, /* Pseudo-KEX to indicate server extensions. */
+    ID_EXTINFO_C, /* Pseudo-KEX to indicate client extensions. */
 
     /* Public Key IDs */
     ID_SSH_RSA,
@@ -344,6 +344,8 @@ enum {
     /* Global Request IDs */
     ID_GLOBREQ_TCPIP_FWD,
     ID_GLOBREQ_TCPIP_FWD_CANCEL,
+
+    ID_EXTINFO_SERVER_SIG_ALGS,
 
     ID_UNKNOWN
 };
@@ -730,6 +732,8 @@ struct WOLFSSH {
     byte  sendTerminalRequest;
     byte userAuthPkDone;
     byte sendExtInfo;
+    byte* peerSigId;
+    word32 peerSigIdSz;
 
 #ifdef USE_WINDOWS_API
     word32 defaultAttr; /* default windows attributes */
