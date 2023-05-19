@@ -11355,12 +11355,37 @@ static int PrepareUserAuthRequestPublicKey(WOLFSSH* ssh, word32* payloadSz,
 
     if (ssh == NULL || payloadSz == NULL || authData == NULL || keySig == NULL) {
         ret = WS_BAD_ARGUMENT;
-        return ret;
     }
 
-    keySig->keySigId = NameToId(
-            (const char*)authData->sf.publicKey.publicKeyType,
-            authData->sf.publicKey.publicKeyTypeSz);
+    if (ret == WS_SUCCESS) {
+        byte matchId, algoId[3];
+        word32 algoIdSz = 0;
+
+        keySig->keySigId = NameToId(
+                (const char*)authData->sf.publicKey.publicKeyType,
+                authData->sf.publicKey.publicKeyTypeSz);
+        if (keySig->keySigId == ID_SSH_RSA) {
+        #ifndef WOLFSSH_NO_RSA_SHA2_512
+            algoId[algoIdSz++] = ID_RSA_SHA2_512;
+        #endif
+        #ifndef WOLFSSH_NO_RSA_SHA2_256
+            algoId[algoIdSz++] = ID_RSA_SHA2_256;
+        #endif
+        #ifndef WOLFSSH_NO_SSH_RSA_SHA1
+            algoId[algoIdSz++] = ID_SSH_RSA;
+        #endif
+        }
+        else {
+            algoId[algoIdSz++] = keySig->keySigId;
+        }
+
+        /* Is that in the peerSigId list? */
+        matchId = MatchIdLists(WOLFSSH_ENDPOINT_CLIENT, algoId, algoIdSz,
+                ssh->peerSigId, ssh->peerSigIdSz);
+        if (matchId == ID_UNKNOWN) {
+            ret = WS_MATCH_KEX_ALGO_E;
+        }
+    }
 
     if (ret == WS_SUCCESS) {
         /* Add the boolean size to the payload, and the lengths of
@@ -11369,39 +11394,39 @@ static int PrepareUserAuthRequestPublicKey(WOLFSSH* ssh, word32* payloadSz,
         *payloadSz += BOOLEAN_SZ + (LENGTH_SZ * 2) +
             authData->sf.publicKey.publicKeyTypeSz +
             authData->sf.publicKey.publicKeySz;
-    }
 
-    switch (keySig->keySigId) {
-        #ifndef WOLFSSH_NO_RSA
-        case ID_SSH_RSA:
-            ret = PrepareUserAuthRequestRsa(ssh,
-                    payloadSz, authData, keySig);
-            break;
-        #ifdef WOLFSSH_CERTS
-        case ID_X509V3_SSH_RSA:
-            ret = PrepareUserAuthRequestRsaCert(ssh,
-                    payloadSz, authData, keySig);
-            break;
-        #endif
-        #endif
-        #ifndef WOLFSSH_NO_ECDSA
-        case ID_ECDSA_SHA2_NISTP256:
-        case ID_ECDSA_SHA2_NISTP384:
-        case ID_ECDSA_SHA2_NISTP521:
-            ret = PrepareUserAuthRequestEcc(ssh,
-                    payloadSz, authData, keySig);
-            break;
-        #ifdef WOLFSSH_CERTS
-        case ID_X509V3_ECDSA_SHA2_NISTP256:
-        case ID_X509V3_ECDSA_SHA2_NISTP384:
-        case ID_X509V3_ECDSA_SHA2_NISTP521:
-            ret = PrepareUserAuthRequestEccCert(ssh,
-                    payloadSz, authData, keySig);
-            break;
-        #endif
-        #endif
-        default:
-            ret = WS_INVALID_ALGO_ID;
+        switch (keySig->keySigId) {
+            #ifndef WOLFSSH_NO_RSA
+            case ID_SSH_RSA:
+                ret = PrepareUserAuthRequestRsa(ssh,
+                        payloadSz, authData, keySig);
+                break;
+            #ifdef WOLFSSH_CERTS
+            case ID_X509V3_SSH_RSA:
+                ret = PrepareUserAuthRequestRsaCert(ssh,
+                        payloadSz, authData, keySig);
+                break;
+            #endif
+            #endif
+            #ifndef WOLFSSH_NO_ECDSA
+            case ID_ECDSA_SHA2_NISTP256:
+            case ID_ECDSA_SHA2_NISTP384:
+            case ID_ECDSA_SHA2_NISTP521:
+                ret = PrepareUserAuthRequestEcc(ssh,
+                        payloadSz, authData, keySig);
+                break;
+            #ifdef WOLFSSH_CERTS
+            case ID_X509V3_ECDSA_SHA2_NISTP256:
+            case ID_X509V3_ECDSA_SHA2_NISTP384:
+            case ID_X509V3_ECDSA_SHA2_NISTP521:
+                ret = PrepareUserAuthRequestEccCert(ssh,
+                        payloadSz, authData, keySig);
+                break;
+            #endif
+            #endif
+            default:
+                ret = WS_INVALID_ALGO_ID;
+        }
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving PrepareUserAuthRequestPublicKey(), ret = %d",
