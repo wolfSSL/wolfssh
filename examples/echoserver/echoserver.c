@@ -1261,6 +1261,16 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
     else
         ret = NonBlockSSH_accept(threadCtx->ssh);
 
+#ifdef WOLFSSH_SCP
+    /* finish off SCP operation */
+    if (ret == WS_SCP_INIT) {
+        if (!threadCtx->nonBlock)
+            ret = wolfSSH_accept(threadCtx->ssh);
+        else
+            ret = NonBlockSSH_accept(threadCtx->ssh);
+    }
+#endif
+
     switch (ret) {
         case WS_SCP_COMPLETE:
             printf("scp file transfer completed\n");
