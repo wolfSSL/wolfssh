@@ -1245,14 +1245,6 @@ int main(int argc, char** argv)
         }
     }
 
-    /* seperate privlage permisions */
-    if (ret == WS_SUCCESS) {
-        if (wolfSSHD_AuthReducePermissions(auth) != WS_SUCCESS) {
-            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Error lowering permissions level");
-            ret = WS_FATAL_ERROR;
-        }
-    }
-
     if (logFile == NULL) {
         logFile = stderr;
     }
@@ -1310,6 +1302,13 @@ int main(int argc, char** argv)
                     close(fd);
                 }
             }
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_AuthReducePermissions(auth) != WS_SUCCESS) {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Error lowering permissions level");
+            ret = WS_FATAL_ERROR;
         }
     }
 
