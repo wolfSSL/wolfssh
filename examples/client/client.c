@@ -199,6 +199,15 @@ static THREAD_RET readInput(void* in)
     #else
         ret = (int)read(STDIN_FILENO, buf, bufSz -1);
         sz  = (word32)ret;
+
+        /* add carriage returns for interop with windows server */
+        if (ret > 0) {
+            if (ret == 1 && buf[0] == '\n') {
+                buf[1] = '\r';
+                ret++;
+                sz++;
+            }
+        }
     #endif
         if (ret <= 0) {
             fprintf(stderr, "Error reading stdin\n");
