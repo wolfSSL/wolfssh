@@ -986,7 +986,8 @@ static void* HandleConnection(void* arg)
             ret = WS_FATAL_ERROR;
         }
 
-        if (ret == WS_SUCCESS || ret == WS_SFTP_COMPLETE) {
+        if (ret == WS_SUCCESS || ret == WS_SFTP_COMPLETE ||
+            ret == WS_SCP_INIT) {
             pPasswd = getpwnam((const char *)usr);
             if (pPasswd == NULL) {
                 wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error getting user info");
@@ -1048,6 +1049,16 @@ static void* HandleConnection(void* arg)
                                 wolfSSH_GetSessionCommand(ssh));
                         SHELL_Subsystem(conn, ssh, pPasswd, usrConf,
                                 wolfSSH_GetSessionCommand(ssh));
+                    }
+
+                    /* SCP can be an exec type */
+                    if (ret == WS_SCP_INIT) {
+                    #ifdef WOLFSSH_SCP
+                        ret = SCP_Subsystem(conn, ssh, pPasswd, usrConf);
+                    #else
+                        err_sys("SCP not compiled in. Please use "
+                                "--enable-scp");
+                    #endif
                     }
                     break;
 
