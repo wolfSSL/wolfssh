@@ -467,23 +467,25 @@ static int SCP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         return WS_FATAL_ERROR;
     }
 
-    ret = wolfSSH_accept(ssh);
-    error = wolfSSH_get_error(ssh);
-    while (ret != WS_SUCCESS && ret != WS_SCP_COMPLETE
-            && (error == WS_WANT_READ || error == WS_WANT_WRITE)) {
+    if (ret == WS_SUCCESS) {
+        ret = wolfSSH_accept(ssh);
+        error = wolfSSH_get_error(ssh);
+        while (ret != WS_SUCCESS && ret != WS_SCP_COMPLETE
+                && (error == WS_WANT_READ || error == WS_WANT_WRITE)) {
 
-        select_ret = tcp_select(conn->fd, 1);
-        if (select_ret == WS_SELECT_RECV_READY  ||
-            select_ret == WS_SELECT_ERROR_READY ||
-            error      == WS_WANT_WRITE)
-        {
-            ret = wolfSSH_accept(ssh);
-            error = wolfSSH_get_error(ssh);
+            select_ret = tcp_select(conn->fd, 1);
+            if (select_ret == WS_SELECT_RECV_READY  ||
+                select_ret == WS_SELECT_ERROR_READY ||
+                error      == WS_WANT_WRITE)
+            {
+                ret = wolfSSH_accept(ssh);
+                error = wolfSSH_get_error(ssh);
+            }
+            else if (select_ret == WS_SELECT_TIMEOUT)
+                error = WS_WANT_READ;
+            else
+                error = WS_FATAL_ERROR;
         }
-        else if (select_ret == WS_SELECT_TIMEOUT)
-            error = WS_WANT_READ;
-        else
-            error = WS_FATAL_ERROR;
     }
 
     if (ret != WS_SUCCESS && ret != WS_SCP_COMPLETE) {
