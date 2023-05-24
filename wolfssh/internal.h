@@ -65,9 +65,26 @@ extern "C" {
 #endif
 
 
-/* Check options set by wolfSSL and set wolfSSH options as appropriate. If
+/*
+ * Force some options. Do not want ssh-rsa with SHA1 at anymore. Not ready
+ * for rsa-sha2-512 yet.
+ */
+
+#undef WOLFSSH_NO_SSH_RSA_SHA1
+#ifndef WOLFSSH_YES_SSH_RSA_SHA1
+    #define WOLFSSH_NO_SSH_RSA_SHA1
+#endif
+#undef WOLFSSH_NO_RSA_SHA2_512
+#ifndef WOLFSSH_YES_RSA_SHA2_512
+    #define WOLFSSH_NO_RSA_SHA2_512
+#endif
+
+
+/*
+ * Check options set by wolfSSL and set wolfSSH options as appropriate. If
  * the derived options and any override options leave wolfSSH without
- * at least one algorithm to use, throw an error. */
+ * at least one algorithm to use, throw an error.
+ */
 
 #ifdef NO_RSA
     #undef WOLFSSH_NO_RSA
@@ -123,15 +140,18 @@ extern "C" {
     #undef WOLFSSH_NO_DH_GEX_SHA256
     #define WOLFSSH_NO_DH_GEX_SHA256
 #endif
-#if defined(WOLFSSH_NO_ECDH) || defined(NO_SHA256) || defined(NO_ECC256)
+#if defined(WOLFSSH_NO_ECDH) \
+    || defined(NO_SHA256) || defined(NO_ECC256)
     #undef WOLFSSH_NO_ECDH_SHA2_NISTP256
     #define WOLFSSH_NO_ECDH_SHA2_NISTP256
 #endif
-#if defined(WOLFSSH_NO_ECDH) || !defined(WOLFSSL_SHA384) || !defined(HAVE_ECC384)
+#if defined(WOLFSSH_NO_ECDH) \
+    || !defined(WOLFSSL_SHA384) || !defined(HAVE_ECC384)
     #undef WOLFSSH_NO_ECDH_SHA2_NISTP384
     #define WOLFSSH_NO_ECDH_SHA2_NISTP384
 #endif
-#if defined(WOLFSSH_NO_ECDH) || !defined(WOLFSSL_SHA512) || !defined(HAVE_ECC521)
+#if defined(WOLFSSH_NO_ECDH) \
+    || !defined(WOLFSSL_SHA512) || !defined(HAVE_ECC521)
     #undef WOLFSSH_NO_ECDH_SHA2_NISTP521
     #define WOLFSSH_NO_ECDH_SHA2_NISTP521
 #endif
@@ -174,12 +194,12 @@ extern "C" {
     #define WOLFSSH_NO_SSH_RSA_SHA1
 #endif
 #if defined(WOLFSSH_NO_RSA) || defined(NO_SHA256)
-    #undef WOLFSSH_NO_SSH_RSA_SHA2_256
-    #define WOLFSSH_NO_SSH_RSA_SHA2_256
+    #undef WOLFSSH_NO_RSA_SHA2_256
+    #define WOLFSSH_NO_RSA_SHA2_256
 #endif
 #if defined(WOLFSSH_NO_RSA) || !defined(WOLFSSL_SHA512)
-    #undef WOLFSSH_NO_SSH_RSA_SHA2_512
-    #define WOLFSSH_NO_SSH_RSA_SHA2_512
+    #undef WOLFSSH_NO_RSA_SHA2_512
+    #define WOLFSSH_NO_RSA_SHA2_512
 #endif
 
 #if defined(WOLFSSH_NO_ECDSA) || \
@@ -198,13 +218,17 @@ extern "C" {
     #define WOLFSSH_NO_ECDSA_SHA2_NISTP521
 #endif
 #if defined(WOLFSSH_NO_SSH_RSA_SHA1) && \
+    defined(WOLFSSH_NO_RSA_SHA2_256) && \
+    defined(WOLFSSH_NO_RSA_SHA2_512) && \
     defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && \
     defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && \
     defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
     #error "You need at least one signing algorithm."
 #endif
 
-#ifdef WOLFSSH_NO_SSH_RSA_SHA1
+#if defined(WOLFSSH_NO_SSH_RSA_SHA1) && \
+    defined(WOLFSSH_NO_RSA_SHA2_256) && \
+    defined(WOLFSSH_NO_RSA_SHA2_512)
     #undef WOLFSSH_NO_RSA
     #define WOLFSSH_NO_RSA
 #endif
@@ -290,7 +314,9 @@ enum {
 #endif
 
     /* Public Key IDs */
-    ID_SSH_RSA,
+    ID_SSH_RSA, /* 0x16 */
+    ID_RSA_SHA2_256, /* 0x17 */
+    ID_RSA_SHA2_512,
     ID_ECDSA_SHA2_NISTP256,
     ID_ECDSA_SHA2_NISTP384,
     ID_ECDSA_SHA2_NISTP521,
@@ -383,6 +409,9 @@ enum {
 #ifndef WOLFSSH_MAX_PVT_KEYS
     #define WOLFSSH_MAX_PVT_KEYS 2
 #endif
+#ifndef WOLFSSH_MAX_PUB_KEY_ALGO
+    #define WOLFSSH_MAX_PUB_KEY_ALGO (WOLFSSH_MAX_PVT_KEYS + 2)
+#endif
 
 WOLFSSH_LOCAL byte NameToId(const char*, word32);
 WOLFSSH_LOCAL const char* IdToName(byte);
@@ -408,6 +437,21 @@ typedef struct WOLFSSH_BUFFER {
 WOLFSSH_LOCAL int BufferInit(WOLFSSH_BUFFER* buffer, word32 size, void* heap);
 WOLFSSH_LOCAL int GrowBuffer(WOLFSSH_BUFFER* buf, word32 sz, word32 usedSz);
 WOLFSSH_LOCAL void ShrinkBuffer(WOLFSSH_BUFFER* buf, int forcedFree);
+
+
+typedef struct WOLFSSH_PVT_KEY {
+    byte* key;
+        /* List of pointers to raw private keys. Owned by CTX. */
+    word32 keySz;
+#ifdef WOLFSSH_CERTS
+    byte* cert;
+        /* Pointer to certificates for the private key. Owned by CTX. */
+    word32 certSz;
+#endif
+    byte publicKeyFmt;
+        /* Public key format for the private key. Note, some public key
+         * formats are used with multiple public key signing algorithms. */
+} WOLFSSH_PVT_KEY;
 
 
 /* our wolfSSH Context */
@@ -438,17 +482,11 @@ struct WOLFSSH_CTX {
     WOLFSSH_CERTMAN* certMan;
 #endif /* WOLFSSH_CERTS */
     WS_CallbackPublicKeyCheck publicKeyCheckCb;
-                                      /* Check server's public key callback */
-    byte* privateKey[WOLFSSH_MAX_PVT_KEYS];
-                                      /* Owned by CTX */
-    word32 privateKeySz[WOLFSSH_MAX_PVT_KEYS];
-#ifdef WOLFSSH_CERTS
-    /* public certificate matching the private key */
-    byte* cert[WOLFSSH_MAX_PVT_KEYS];
-    word32 certSz[WOLFSSH_MAX_PVT_KEYS];
-#endif
-    byte privateKeyId[WOLFSSH_MAX_PVT_KEYS];
+        /* Check server's public key callback */
+    WOLFSSH_PVT_KEY privateKey[WOLFSSH_MAX_PVT_KEYS];
     word32 privateKeyCount;
+    byte publicKeyAlgo[WOLFSSH_MAX_PUB_KEY_ALGO];
+    word32 publicKeyAlgoCount;
     word32 highwaterMark;
     const char* banner;
     word32 bannerSz;
@@ -480,11 +518,10 @@ typedef struct Keys {
 typedef struct HandshakeInfo {
     byte kexId;
     byte kexIdGuess;
+    byte kexHashId;
     byte pubKeyId;
-    byte sigId;
     byte encryptId;
     byte macId;
-    byte hashId;
     byte kexPacketFollows;
     byte aeadMode;
 
@@ -493,9 +530,9 @@ typedef struct HandshakeInfo {
 
     Keys keys;
     Keys peerKeys;
-    wc_HashAlg hash;
+    wc_HashAlg kexHash;
     byte e[MAX_KEX_KEY_SZ+1]; /* May have a leading zero for unsigned
-                               or is a Q_S value. */
+                                 or is a Q_S value. */
     word32 eSz;
     byte x[MAX_KEX_KEY_SZ+1]; /* May have a leading zero, for unsigned. */
     word32 xSz;

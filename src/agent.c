@@ -668,8 +668,8 @@ static WOLFSSH_AGENT_ID* FindKeyId(WOLFSSH_AGENT_ID* id,
 }
 
 
-#if !defined(WOLFSSH_NO_SSH_RSA_SHA2_256) || \
-    !defined(WOLFSSH_NO_SSH_RSA_SHA2_512)
+#if !defined(WOLFSSH_NO_RSA_SHA2_256) || \
+    !defined(WOLFSSH_NO_RSA_SHA2_512)
 
 static int SignHashRsa(WOLFSSH_AGENT_KEY_RSA* rawKey, enum wc_HashType hashType,
         const byte* digest, word32 digestSz, byte* sig, word32* sigSz,
@@ -710,7 +710,7 @@ static int SignHashRsa(WOLFSSH_AGENT_KEY_RSA* rawKey, enum wc_HashType hashType,
     return ret;
 }
 
-#endif /* WOLFSSH_NO_SSH_RSA_SHA2_256/512 */
+#endif /* WOLFSSH_NO_RSA_SHA2_256/512 */
 
 
 #if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) || \
@@ -804,16 +804,16 @@ static int PostSignRequest(WOLFSSH_AGENT_CTX* agent,
 
     if (ret == WS_SUCCESS) {
         switch (id->keyType) {
-            #if !defined(WOLFSSH_NO_SSH_RSA_SHA2_256) || \
-                !defined(WOLFSSH_NO_SSH_RSA_SHA2_512)
+            #if !defined(WOLFSSH_NO_RSA_SHA2_256) || \
+                !defined(WOLFSSH_NO_RSA_SHA2_512)
             case ID_SSH_RSA:
                 signRsa = 1;
-                #ifndef WOLFSSH_NO_SSH_RSA_SHA2_256
+                #ifndef WOLFSSH_NO_RSA_SHA2_256
                 if (flags & AGENT_SIGN_RSA_SHA2_256)
                     hashType = WC_HASH_TYPE_SHA256;
                 else
                 #endif
-                #ifndef WOLFSSH_NO_SSH_RSA_SHA2_512
+                #ifndef WOLFSSH_NO_RSA_SHA2_512
                 if (flags & AGENT_SIGN_RSA_SHA2_512)
                     hashType = WC_HASH_TYPE_SHA512;
                 else
@@ -854,8 +854,8 @@ static int PostSignRequest(WOLFSSH_AGENT_CTX* agent,
     }
 
     if (ret == WS_SUCCESS) {
-#if !defined(WOLFSSH_NO_SSH_RSA_SHA2_256) || \
-    !defined(WOLFSSH_NO_SSH_RSA_SHA2_512)
+#if !defined(WOLFSSH_NO_RSA_SHA2_256) || \
+    !defined(WOLFSSH_NO_RSA_SHA2_512)
         if (signRsa)
             ret = SignHashRsa(&id->key.rsa, hashType,
                     digest, digestSz, sig, &sigSz, &agent->rng, agent->heap);
