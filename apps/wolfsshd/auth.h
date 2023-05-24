@@ -62,6 +62,8 @@ int wolfSSHD_AuthReducePermissions(WOLFSSHD_AUTH* auth);
 int wolfSSHD_AuthRaisePermissions(WOLFSSHD_AUTH* auth);
 int wolfSSHD_AuthReducePermissionsUser(WOLFSSHD_AUTH* auth, WUID_T uid,
     WGID_T gid);
+int wolfSSHD_AuthSetGroups(const WOLFSSHD_AUTH* auth, const char* usr,
+    WGID_T gid);
 long wolfSSHD_AuthGetGraceTime(const WOLFSSHD_AUTH* auth);
 WOLFSSHD_CONFIG* wolfSSHD_AuthGetUserConf(const WOLFSSHD_AUTH* auth,
         const char* usr, const char* host,
