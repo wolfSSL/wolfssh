@@ -490,12 +490,6 @@ static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         }
     }
 
-    /* set additional groups if needed */
-    if (ret == WS_SUCCESS) {
-        ret = wolfSSHD_AuthSetGroups(conn->auth, wolfSSH_GetUsername(ssh),
-                pPasswd->pw_gid);
-    }
-
     if (wolfSSHD_AuthReducePermissionsUser(conn->auth, pPasswd->pw_uid,
             pPasswd->pw_gid) != WS_SUCCESS) {
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting user ID");
@@ -672,13 +666,6 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 
                 return WS_FATAL_ERROR;
             }
-        }
-
-        /* set additional groups if needed */
-        if ( wolfSSHD_AuthSetGroups(conn->auth, wolfSSH_GetUsername(ssh),
-                pPasswd->pw_gid) != WS_SUCCESS) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting user groups");
-            return WS_FATAL_ERROR;
         }
 
         if (wolfSSHD_AuthReducePermissionsUser(conn->auth, pPasswd->pw_uid,
@@ -943,6 +930,15 @@ static void* HandleConnection(void* arg)
             if (pPasswd == NULL) {
                 wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error getting user info");
                 ret = WS_FATAL_ERROR;
+            }
+
+            /* set additional groups if needed */
+            if (ret != WS_FATAL_ERROR &&
+                    wolfSSHD_AuthSetGroups(conn->auth, usr, pPasswd->pw_gid) !=
+                    WS_SUCCESS) {
+
+               wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting groups");
+               ret = WS_FATAL_ERROR;
             }
         }
 
