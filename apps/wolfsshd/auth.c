@@ -298,6 +298,13 @@ static int CheckPasswordHashUnix(const char* input, char* stored)
         ret = WS_BAD_ARGUMENT;
     }
 
+    /* empty password case */
+    if (stored[0] == 0 && WSTRLEN(input) == 0) {
+        wolfSSH_Log(WS_LOG_INFO,
+                    "[SSHD] User logged in with empty password");
+        return ret;
+    }
+
     if (ret == WSSHD_AUTH_SUCCESS) {
         hashedInput = crypt(input, stored);
         if (hashedInput == NULL) {
