@@ -314,7 +314,7 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
         err_sys("Sending the shutdown messages failed.");
     }
     ret = wolfSSH_worker(ssh, NULL);
-    if (ret != WS_SUCCESS) {
+    if (ret != WS_SUCCESS && ret != WS_CHANNEL_CLOSED) {
         err_sys("Failed to listen for close messages from the peer.");
     }
     WCLOSESOCKET(sockFd);

@@ -558,7 +558,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 if (ChannelCommandIsScp(ssh)) {
                     ssh->acceptState = ACCEPT_INIT_SCP_TRANSFER;
                     WLOG(WS_LOG_DEBUG, acceptState, "ACCEPT_INIT_SCP_TRANSFER");
-                    continue;
+                    return WS_SCP_INIT;
                 }
 #endif
 #if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_SERVER)

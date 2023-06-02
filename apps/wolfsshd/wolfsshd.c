@@ -435,6 +435,69 @@ static int SetupChroot(WOLFSSHD_CONFIG* usrConf)
     return ret;
 }
 
+#ifdef WOLFSSH_SCP
+static int SCP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
+    WPASSWD* pPasswd, WOLFSSHD_CONFIG* usrConf)
+{
+    int ret   = WS_SUCCESS;
+    int error = WS_SUCCESS;
+    int select_ret = 0;
+
+    /* temporarily elevate permissions to get users information */
+    if (wolfSSHD_AuthRaisePermissions(conn->auth) != WS_SUCCESS) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failure to raise permissions for auth");
+        return WS_FATAL_ERROR;
+    }
+
+    if (ret == WS_SUCCESS) {
+        error = SetupChroot(usrConf);
+        if (error < 0) {
+            ret = error; /* error case with setup chroot */
+        }
+    }
+
+    if (wolfSSHD_AuthReducePermissionsUser(conn->auth, pPasswd->pw_uid,
+            pPasswd->pw_gid) != WS_SUCCESS) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting user ID");
+        if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+            /* stop everything if not able to reduce permissions level */
+            exit(1);
+        }
+
+        return WS_FATAL_ERROR;
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = wolfSSH_accept(ssh);
+        error = wolfSSH_get_error(ssh);
+        while (ret != WS_SUCCESS && ret != WS_SCP_COMPLETE
+                && (error == WS_WANT_READ || error == WS_WANT_WRITE)) {
+
+            select_ret = tcp_select(conn->fd, 1);
+            if (select_ret == WS_SELECT_RECV_READY  ||
+                select_ret == WS_SELECT_ERROR_READY ||
+                error      == WS_WANT_WRITE)
+            {
+                ret = wolfSSH_accept(ssh);
+                error = wolfSSH_get_error(ssh);
+            }
+            else if (select_ret == WS_SELECT_TIMEOUT)
+                error = WS_WANT_READ;
+            else
+                error = WS_FATAL_ERROR;
+        }
+    }
+
+    if (ret != WS_SUCCESS && ret != WS_SCP_COMPLETE) {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] Failed to finish SCP operation from IP %s",
+            conn->ip);
+    }
+
+    (void)conn;
+    return ret;
+}
+#endif /* WOLFSSH_SCP */
 
 #ifdef WOLFSSH_SFTP
 #define TEST_SFTP_TIMEOUT 1
@@ -885,7 +948,7 @@ static void* HandleConnection(void* arg)
         ret = wolfSSH_accept(ssh);
         error = wolfSSH_get_error(ssh);
         while (timeOut == 0 && (ret != WS_SUCCESS
-                && ret != WS_SCP_COMPLETE && ret != WS_SFTP_COMPLETE)
+                && ret != WS_SCP_INIT && ret != WS_SFTP_COMPLETE)
                 && (error == WS_WANT_READ || error == WS_WANT_WRITE)) {
 
             select_ret = tcp_select(conn->fd, 1);
@@ -903,14 +966,14 @@ static void* HandleConnection(void* arg)
         }
 
         if (ret != WS_SUCCESS && ret != WS_SFTP_COMPLETE &&
-            ret != WS_SCP_COMPLETE) {
+            ret != WS_SCP_INIT) {
             wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] Failed to accept WOLFSSH connection from %s",
                 conn->ip);
         }
     }
 
-    if (ret == WS_SUCCESS || ret == WS_SFTP_COMPLETE) {
+    if (ret == WS_SUCCESS || ret == WS_SFTP_COMPLETE || ret == WS_SCP_INIT) {
         WPASSWD* pPasswd = NULL;
         WOLFSSHD_CONFIG* usrConf;
         char* usr;
@@ -925,7 +988,8 @@ static void* HandleConnection(void* arg)
             ret = WS_FATAL_ERROR;
         }
 
-        if (ret == WS_SUCCESS || ret == WS_SFTP_COMPLETE) {
+        if (ret == WS_SUCCESS || ret == WS_SFTP_COMPLETE ||
+            ret == WS_SCP_INIT) {
             pPasswd = getpwnam((const char *)usr);
             if (pPasswd == NULL) {
                 wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error getting user info");
@@ -970,6 +1034,15 @@ static void* HandleConnection(void* arg)
                         #endif
                             break;
 
+                        case WS_SCP_INIT:
+                        #ifdef WOLFSSH_SCP
+                            ret = SCP_Subsystem(conn, ssh, pPasswd, usrConf);
+                        #else
+                            err_sys("SCP not compiled in. Please use "
+                                    "--enable-scp");
+                        #endif
+                            break;
+
                         default:
                             wolfSSH_Log(WS_LOG_ERROR,
                                 "[SSHD] Unknown or build not supporting sub"
@@ -987,6 +1060,16 @@ static void* HandleConnection(void* arg)
                                 wolfSSH_GetSessionCommand(ssh));
                         SHELL_Subsystem(conn, ssh, pPasswd, usrConf,
                                 wolfSSH_GetSessionCommand(ssh));
+                    }
+
+                    /* SCP can be an exec type */
+                    if (ret == WS_SCP_INIT) {
+                    #ifdef WOLFSSH_SCP
+                        ret = SCP_Subsystem(conn, ssh, pPasswd, usrConf);
+                    #else
+                        err_sys("SCP not compiled in. Please use "
+                                "--enable-scp");
+                    #endif
                     }
                     break;
 

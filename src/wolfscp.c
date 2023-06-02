@@ -104,7 +104,7 @@ int DoScpSink(WOLFSSH* ssh)
 
                 if ( (ret = ReceiveScpMessage(ssh)) < WS_SUCCESS) {
                     if (ret == WS_EOF) {
-                        ret = wolfSSH_shutdown(ssh);
+                        ret = WS_SUCCESS; /* successfully recieved message */
                         ssh->scpState = SCP_DONE;
                         break;
                     }
@@ -1368,6 +1368,17 @@ int ReceiveScpMessage(WOLFSSH* ssh)
                     return WS_EOF;
                 default:
                     return err;
+            }
+        }
+
+        /* check if wolfSSH_worker returns 0 from handling a channel eof */
+        if (err == 0) {
+            WOLFSSH_CHANNEL* channel;
+            channel = wolfSSH_ChannelFind(ssh, lastChannel, WS_CHANNEL_ID_SELF);
+            if (channel == NULL)
+                ret = WS_INVALID_CHANID;
+            if (wolfSSH_ChannelGetEof(channel)) {
+                return WS_EOF;
             }
         }
     } while (sz == 0 || buf[sz - 1] != 0x0a);
