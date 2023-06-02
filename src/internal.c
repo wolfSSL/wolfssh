@@ -138,9 +138,6 @@ Flags:
     algorithms off.
 */
 
-static int SetHostPrivateKey(WOLFSSH_CTX* ctx, byte keyId, int isKey,
-        byte* der, word32 derSz, int dynamicType);
-
 static const char sshProtoIdStr[] = "SSH-2.0-wolfSSHv"
                                     LIBWOLFSSH_VERSION_STRING
                                     "\r\n";
@@ -624,62 +621,6 @@ void CtxResourceFree(WOLFSSH_CTX* ctx)
 }
 
 
-/* check for cases where a public key is a certificate and the private key
- * should be marked for use with X509 */
-static void UpdateKeyID(WOLFSSH_CTX* ctx)
-{
-#ifdef WOLFSSH_CERTS
-    WOLFSSH_PVT_KEY* pvtKey;
-    word32 idx;
-
-    for (idx = 0, pvtKey = ctx->privateKey;
-            idx < ctx->privateKeyCount && idx < WOLFSSH_MAX_PVT_KEYS;
-            idx++, pvtKey++) {
-        if (pvtKey->cert != NULL && pvtKey->certSz > 0) {
-            byte* der;
-
-            /* matching certificate was set, convert private key id */
-            switch (pvtKey->publicKeyFmt) {
-            #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
-                case ID_ECDSA_SHA2_NISTP521:
-                    pvtKey->publicKeyFmt = ID_X509V3_ECDSA_SHA2_NISTP521;
-                    break;
-            #endif
-            #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
-                case ID_ECDSA_SHA2_NISTP384:
-                    pvtKey->publicKeyFmt = ID_X509V3_ECDSA_SHA2_NISTP384;
-                    break;
-            #endif
-            #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
-                case ID_ECDSA_SHA2_NISTP256:
-                    pvtKey->publicKeyFmt = ID_X509V3_ECDSA_SHA2_NISTP256;
-                    break;
-            #endif
-            #ifndef WOLFSSH_NO_SSH_RSA_SHA1
-                case ID_SSH_RSA:
-                    pvtKey->publicKeyFmt = ID_X509V3_SSH_RSA;
-                    break;
-            #endif
-            }
-
-            /* can use the key for non X509v3 connections too */
-            der = (byte*)WMALLOC(pvtKey->keySz, ctx->heap, DYNTYPE_PRIVKEY);
-            if (der != NULL) {
-                int ret;
-                WMEMCPY(der, pvtKey->key, pvtKey->keySz);
-                ret = SetHostPrivateKey(ctx, pvtKey->publicKeyFmt, 1,
-                        der, pvtKey->keySz, DYNTYPE_PRIVKEY);
-                if (ret != 0) {
-                    WFREE(der, ctx->heap, DYNTYPE_PRIVKEY);
-                }
-            }
-        }
-    }
-#endif
-    WOLFSSH_UNUSED(ctx);
-}
-
-
 WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
 {
 #if defined(STM32F2) || defined(STM32F4) || defined(FREESCALE_MQX)
@@ -711,7 +652,6 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
 
     WMEMSET(ssh, 0, sizeof(WOLFSSH));  /* default init to zeros */
 
-    UpdateKeyID(ctx); /* set IDs before use */
     ssh->ctx         = ctx;
     ssh->error       = WS_SUCCESS;
 #ifdef USE_WINDOWS_API
@@ -1074,13 +1014,174 @@ static void RefreshPublicKeyAlgo(WOLFSSH_CTX* ctx)
 }
 
 
-int SetHostPrivateKey(WOLFSSH_CTX* ctx, byte keyId, int isKey,
-        byte* der, word32 derSz, int dynamicType)
+#ifdef WOLFSSH_CERTS
+
+static INLINE byte CertTypeForId(byte id)
+{
+    switch (id) {
+    #ifndef WOLFSSH_NO_SSH_RSA_SHA1
+        case ID_SSH_RSA:
+            id = ID_X509V3_SSH_RSA;
+            break;
+    #endif
+    #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+        case ID_ECDSA_SHA2_NISTP256:
+            id = ID_X509V3_ECDSA_SHA2_NISTP256;
+            break;
+    #endif
+    #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+        case ID_ECDSA_SHA2_NISTP384:
+            id = ID_X509V3_ECDSA_SHA2_NISTP384;
+            break;
+    #endif
+    #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+        case ID_ECDSA_SHA2_NISTP521:
+            id = ID_X509V3_ECDSA_SHA2_NISTP521;
+            break;
+    #endif
+    }
+
+    WOLFSSH_UNUSED(id);
+    return id;
+}
+
+#define HINTISSET(x) ((x) != WOLFSSH_MAX_PVT_KEYS)
+
+static int UpdateHostCertificates(WOLFSSH_CTX* ctx,
+        word32 keyHint, word32 certHint)
+{
+    int ret = WS_SUCCESS;
+/*
+ * 1. Load a private key.
+ *    SetHostPrivateKey()
+ *      -> UpdateCertificate() does nothing (keyHint set, certHint clear)
+ *
+ * 2. Load a private key then load a certificate.
+ *    SetHostPrivateKey()
+ *      -> UpdateCertificate() does nothing (keyHint set, certHint clear)
+ *    SetHostCertificate()
+ *      -> UpdateCertificate() updates (keyHint set, certHint set)
+ *
+ * 3. Load a certificate then load a private key.
+ *    SetHostCertificate()
+ *      -> UpdateCertificate() does nothing (keyHint clear, certHint set)
+ *    SetHostPrivateKey()
+ *      -> UpdateCertificate() updates (keyHint set, certHint clear/set)
+ */
+
+    /* If keyHint is set and certHint is not, scan list for
+     * cert and update certHint. */
+    if (HINTISSET(keyHint) && !HINTISSET(certHint)) {
+        word32 i;
+        byte certId;
+
+        certId = CertTypeForId(ctx->privateKey[keyHint].publicKeyFmt);
+        for (i = 0; i < ctx->privateKeyCount; i++) {
+            if (certId == ctx->privateKey[i].publicKeyFmt) {
+                certHint = i;
+                break;
+            }
+        }
+    }
+
+    if (HINTISSET(keyHint) && HINTISSET(certHint)) {
+        byte* key = NULL;
+        word32 keySz;
+
+        keySz = ctx->privateKey[keyHint].keySz;
+        key = (byte*)WMALLOC(keySz, ctx->heap, DYNTYPE_PRIVKEY);
+        if (key == NULL) {
+            ret = WS_MEMORY_E;
+        }
+        else {
+            WMEMCPY(key, ctx->privateKey[keyHint].key, keySz);
+
+            if (ctx->privateKey[certHint].key != NULL) {
+                ForceZero(ctx->privateKey[certHint].key,
+                        ctx->privateKey[certHint].keySz);
+                WFREE(ctx->privateKey[certHint].key,
+                        ctx->heap, DYNTYPE_PRIVKEY);
+            }
+            ctx->privateKey[certHint].key = key;
+            ctx->privateKey[certHint].keySz = keySz;
+        }
+    }
+
+    return ret;
+}
+
+static int SetHostCertificate(WOLFSSH_CTX* ctx,
+        byte keyId, byte* der, word32 derSz, int dynamicType)
+{
+    /*
+     * The keyId is for the key inside the certificate. wolfSSH_ProcessBuffer
+     * will decode the certificate, get the public key inside, and identify
+     * that. keyId will be: ssh-rsa, ecdsa-sha2-nistp256, etc.
+     */
+
+    word32 destIdx,
+           certIdx = WOLFSSH_MAX_PVT_KEYS, keyIdx = WOLFSSH_MAX_PVT_KEYS;
+    int ret = WS_SUCCESS;
+    byte certId = CertTypeForId(keyId);
+
+    /* Look for the specified certId. Add it if not present,
+     * replace it if present. Call UpdateHostCertificate().
+     */
+
+    for (destIdx = 0; destIdx < ctx->privateKeyCount; destIdx++) {
+        if (ctx->privateKey[destIdx].publicKeyFmt == certId) {
+            certIdx = destIdx;
+        }
+        if (ctx->privateKey[destIdx].publicKeyFmt == keyId) {
+            keyIdx = destIdx;
+        }
+    }
+
+    if (destIdx >= WOLFSSH_MAX_PVT_KEYS) {
+        ret = WS_CTX_KEY_COUNT_E;
+    }
+    else {
+        WOLFSSH_PVT_KEY* pvtKey = ctx->privateKey + destIdx;
+
+        if (pvtKey->publicKeyFmt == certId) {
+            if (pvtKey->cert != NULL) {
+                WFREE(pvtKey->cert, heap, dynamicType);
+            }
+        }
+        else {
+            certIdx = destIdx;
+            ctx->privateKeyCount++;
+            pvtKey->publicKeyFmt = certId;
+        }
+
+        pvtKey->cert = der;
+        pvtKey->certSz = derSz;
+
+        if (ret == WS_SUCCESS) {
+            ret = UpdateHostCertificates(ctx, keyIdx, certIdx);
+        }
+        if (ret == WS_SUCCESS) {
+            RefreshPublicKeyAlgo(ctx);
+        }
+    }
+
+    WOLFSSH_UNUSED(dynamicType);
+
+    return ret;
+}
+
+#endif
+
+
+static int SetHostPrivateKey(WOLFSSH_CTX* ctx,
+        byte keyId, byte* der, word32 derSz, int dynamicType)
 {
     word32 destIdx = 0;
     int ret = WS_SUCCESS;
 
-    WOLFSSH_UNUSED(dynamicType);
+     /* Look for the specified keyId. Add it if not present,
+     * replace it if present. Call UpdateHostCertificate().
+     */
 
     while (destIdx < ctx->privateKeyCount
             && ctx->privateKey[destIdx].publicKeyFmt != keyId) {
@@ -1092,39 +1193,32 @@ int SetHostPrivateKey(WOLFSSH_CTX* ctx, byte keyId, int isKey,
     }
     else {
         WOLFSSH_PVT_KEY* pvtKey = ctx->privateKey + destIdx;
+
         if (pvtKey->publicKeyFmt == keyId) {
-            if (isKey) {
-                if (pvtKey->key != NULL) {
-                    ForceZero(pvtKey->key, pvtKey->keySz);
-                    WFREE(pvtKey->key, heap, dynamicType);
-                }
+            if (pvtKey->key != NULL) {
+                ForceZero(pvtKey->key, pvtKey->keySz);
+                WFREE(pvtKey->key, heap, dynamicType);
             }
-            #ifdef WOLFSSH_CERTS
-            else {
-                if (pvtKey->cert != NULL) {
-                    WFREE(pvtKey->cert, heap, dynamicType);
-                }
-            }
-            #endif /* WOLFSSH_CERTS */
         }
         else {
             ctx->privateKeyCount++;
             pvtKey->publicKeyFmt = keyId;
         }
 
-        if (isKey) {
-            pvtKey->key = der;
-            pvtKey->keySz = derSz;
-        }
-        #ifdef WOLFSSH_CERTS
-        else {
-            pvtKey->cert = der;
-            pvtKey->certSz = derSz;
-        }
-        #endif /* WOLFSSH_CERTS */
+        pvtKey->key = der;
+        pvtKey->keySz = derSz;
 
-        RefreshPublicKeyAlgo(ctx);
+        #ifdef WOLFSSH_CERTS
+        if (ret == WS_SUCCESS) {
+            ret = UpdateHostCertificates(ctx, destIdx, WOLFSSH_MAX_PVT_KEYS);
+        }
+        #endif
+        if (ret == WS_SUCCESS) {
+            RefreshPublicKeyAlgo(ctx);
+        }
     }
+
+    WOLFSSH_UNUSED(dynamicType);
 
     return ret;
 }
@@ -1204,7 +1298,7 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
             return ret;
         }
         keyId = (byte)ret;
-        ret = SetHostPrivateKey(ctx, keyId, 1, der, derSz, dynamicType);
+        ret = SetHostPrivateKey(ctx, keyId, der, derSz, dynamicType);
     }
     #ifdef WOLFSSH_CERTS
     else if (type == BUFTYPE_CERT) {
@@ -1214,7 +1308,7 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
             return ret;
         }
         keyId = (byte)ret;
-        ret = SetHostPrivateKey(ctx, keyId, 0, der, derSz, dynamicType);
+        ret = SetHostCertificate(ctx, keyId, der, derSz, dynamicType);
     }
     else if (type == BUFTYPE_CA) {
         if (ctx->certMan != NULL) {
@@ -2838,7 +2932,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     int ret = WS_SUCCESS;
     int side = WOLFSSH_ENDPOINT_SERVER;
     byte algoId;
-    byte list[16] = {ID_NONE};
+    byte list[24] = {ID_NONE};
     word32 listSz;
     word32 skipSz;
     word32 begin;
@@ -7951,7 +8045,6 @@ int SendKexInit(WOLFSSH* ssh)
 
     if (ret == WS_SUCCESS) {
         if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
-            UpdateKeyID(ssh->ctx);
             publicKeyAlgoCount = ssh->ctx->publicKeyAlgoCount;
             publicKeyAlgo = ssh->ctx->publicKeyAlgo;
         }

@@ -407,7 +407,7 @@ enum {
     #define WOLFSSH_MAX_FILE_SIZE (1024ul * 1024ul * 4)
 #endif
 #ifndef WOLFSSH_MAX_PVT_KEYS
-    #define WOLFSSH_MAX_PVT_KEYS 2
+    #define WOLFSSH_MAX_PVT_KEYS 8
 #endif
 #ifndef WOLFSSH_MAX_PUB_KEY_ALGO
     #define WOLFSSH_MAX_PUB_KEY_ALGO (WOLFSSH_MAX_PVT_KEYS + 2)
