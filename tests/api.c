@@ -283,7 +283,7 @@ static const char serverKeyEccDer[] =
 static const byte serverKeyEccCurveId = ID_ECDSA_SHA2_NISTP521;
 #endif
 
-#ifndef WOLFSSH_NO_SSH_RSA_SHA1
+#ifndef WOLFSSH_NO_RSA
 static const char serverKeyRsaDer[] =
     "308204a30201000282010100da5dad2514761559f340fd3cb86230b36dc0f9ec"
     "ec8b831e9e429cca416ad38ae15234e00d13627ed40fae5c4d04f18dfac5ad77"
@@ -330,13 +330,11 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
 {
 #ifndef WOLFSSH_NO_SERVER
     WOLFSSH_CTX* ctx;
-#if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) || \
-    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) || \
-    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
+#ifndef WOLFSSH_NO_ECDSA
     byte* eccKey;
     word32 eccKeySz;
 #endif
-#ifndef WOLFSSH_NO_SSH_RSA_SHA1
+#ifndef WOLFSSH_NO_RSA
     byte* rsaKey;
     word32 rsaKeySz;
 #endif
@@ -344,16 +342,14 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
     word32 lastKeySz = 0;
     int i;
 
-#if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) || \
-    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) || \
-    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
+#ifndef WOLFSSH_NO_ECC
     AssertIntEQ(0,
             ConvertHexToBin(serverKeyEccDer, &eccKey, &eccKeySz,
                     NULL, NULL, NULL,
                     NULL, NULL, NULL,
                     NULL, NULL, NULL));
 #endif
-#ifndef WOLFSSH_NO_SSH_RSA_SHA1
+#ifndef WOLFSSH_NO_RSA
     AssertIntEQ(0,
             ConvertHexToBin(serverKeyRsaDer, &rsaKey, &rsaKeySz,
                     NULL, NULL, NULL,
@@ -363,85 +359,85 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
 
     AssertNotNull(ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL));
     for (i = 0; i < WOLFSSH_MAX_PVT_KEYS; i++) {
-        AssertNull(ctx->privateKey[i]);
-        AssertIntEQ(0, ctx->privateKeySz[i]);
-        AssertIntEQ(ID_NONE, ctx->privateKeyId[i]);
+        AssertNull(ctx->privateKey[i].key);
+        AssertIntEQ(0, ctx->privateKey[i].keySz);
+        AssertIntEQ(ID_NONE, ctx->privateKey[i].publicKeyFmt);
     }
     AssertIntEQ(0, ctx->privateKeyCount);
 
     /* Fail: all NULL/BAD */
     AssertIntNE(WS_SUCCESS,
         wolfSSH_CTX_UsePrivateKey_buffer(NULL, NULL, 0, TEST_BAD_FORMAT_NEXT));
-    AssertNull(ctx->privateKey[0]);
-    AssertIntEQ(0, ctx->privateKeySz[0]);
-    AssertIntEQ(ID_NONE, ctx->privateKeyId[0]);
+    AssertNull(ctx->privateKey[0].key);
+    AssertIntEQ(0, ctx->privateKey[0].keySz);
+    AssertIntEQ(ID_NONE, ctx->privateKey[0].publicKeyFmt);
     AssertIntEQ(0, ctx->privateKeyCount);
 
     /* Fail: ctx set, others NULL/bad */
     AssertIntNE(WS_SUCCESS,
         wolfSSH_CTX_UsePrivateKey_buffer(ctx, NULL, 0, TEST_BAD_FORMAT_NEXT));
-    AssertNull(ctx->privateKey[0]);
-    AssertIntEQ(0, ctx->privateKeySz[0]);
-    AssertIntEQ(ID_NONE, ctx->privateKeyId[0]);
+    AssertNull(ctx->privateKey[0].key);
+    AssertIntEQ(0, ctx->privateKey[0].keySz);
+    AssertIntEQ(ID_NONE, ctx->privateKey[0].publicKeyFmt);
     AssertIntEQ(0, ctx->privateKeyCount);
 
     /* Fail: ctx set, key set, others bad */
     AssertIntNE(WS_SUCCESS,
         wolfSSH_CTX_UsePrivateKey_buffer(ctx,
                                          lastKey, 0, TEST_BAD_FORMAT_NEXT));
-    AssertNull(ctx->privateKey[0]);
-    AssertIntEQ(0, ctx->privateKeySz[0]);
-    AssertIntEQ(ID_NONE, ctx->privateKeyId[0]);
+    AssertNull(ctx->privateKey[0].key);
+    AssertIntEQ(0, ctx->privateKey[0].keySz);
+    AssertIntEQ(ID_NONE, ctx->privateKey[0].publicKeyFmt);
     AssertIntEQ(0, ctx->privateKeyCount);
 
     /* Fail: ctx set, keySz set, others NULL/bad */
     AssertIntNE(WS_SUCCESS,
         wolfSSH_CTX_UsePrivateKey_buffer(ctx, NULL, 1, TEST_BAD_FORMAT_NEXT));
-    AssertNull(ctx->privateKey[0]);
-    AssertIntEQ(0, ctx->privateKeySz[0]);
-    AssertIntEQ(ID_NONE, ctx->privateKeyId[0]);
+    AssertNull(ctx->privateKey[0].key);
+    AssertIntEQ(0, ctx->privateKey[0].keySz);
+    AssertIntEQ(ID_NONE, ctx->privateKey[0].publicKeyFmt);
     AssertIntEQ(0, ctx->privateKeyCount);
 
     /* Fail: ctx set, key set, keySz set, format invalid */
     AssertIntNE(WS_SUCCESS, wolfSSH_CTX_UsePrivateKey_buffer(ctx,
                 lastKey, lastKeySz, TEST_GOOD_FORMAT_PEM));
-    AssertNull(ctx->privateKey[0]);
-    AssertIntEQ(0, ctx->privateKeySz[0]);
-    AssertIntEQ(ID_NONE, ctx->privateKeyId[0]);
+    AssertNull(ctx->privateKey[0].key);
+    AssertIntEQ(0, ctx->privateKey[0].keySz);
+    AssertIntEQ(ID_NONE, ctx->privateKey[0].publicKeyFmt);
     AssertIntEQ(0, ctx->privateKeyCount);
 
     /* Pass */
 #if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) || \
     !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) || \
     !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
-    lastKey = ctx->privateKey[ctx->privateKeyCount];
-    lastKeySz = ctx->privateKeySz[ctx->privateKeyCount];
+    lastKey = ctx->privateKey[ctx->privateKeyCount].key;
+    lastKeySz = ctx->privateKey[ctx->privateKeyCount].keySz;
 
     AssertIntEQ(WS_SUCCESS,
         wolfSSH_CTX_UsePrivateKey_buffer(ctx, eccKey, eccKeySz,
                                          TEST_GOOD_FORMAT_ASN1));
     AssertIntEQ(1, ctx->privateKeyCount);
-    AssertNotNull(ctx->privateKey[0]);
-    AssertIntNE(0, ctx->privateKeySz[0]);
-    AssertIntEQ(serverKeyEccCurveId, ctx->privateKeyId[0]);
+    AssertNotNull(ctx->privateKey[0].key);
+    AssertIntNE(0, ctx->privateKey[0].keySz);
+    AssertIntEQ(serverKeyEccCurveId, ctx->privateKey[0].publicKeyFmt);
 
-    AssertIntEQ(0, (lastKey == ctx->privateKey[0]));
-    AssertIntNE(lastKeySz, ctx->privateKeySz[0]);
+    AssertIntEQ(0, (lastKey == ctx->privateKey[0].key));
+    AssertIntNE(lastKeySz, ctx->privateKey[0].keySz);
 #endif
 
 #ifndef WOLFSSH_NO_SSH_RSA_SHA1
-    lastKey = ctx->privateKey[ctx->privateKeyCount];
-    lastKeySz = ctx->privateKeySz[ctx->privateKeyCount];
+    lastKey = ctx->privateKey[ctx->privateKeyCount].key;
+    lastKeySz = ctx->privateKey[ctx->privateKeyCount].keySz;
 
     AssertIntEQ(WS_SUCCESS,
         wolfSSH_CTX_UsePrivateKey_buffer(ctx, rsaKey, rsaKeySz,
                                          TEST_GOOD_FORMAT_ASN1));
     AssertIntNE(0, ctx->privateKeyCount);
-    AssertNotNull(ctx->privateKey[0]);
-    AssertIntNE(0, ctx->privateKeySz[0]);
+    AssertNotNull(ctx->privateKey[0].key);
+    AssertIntNE(0, ctx->privateKey[0].keySz);
 
-    AssertIntEQ(0, (lastKey == ctx->privateKey[0]));
-    AssertIntNE(lastKeySz, ctx->privateKeySz[0]);
+    AssertIntEQ(0, (lastKey == ctx->privateKey[0].key));
+    AssertIntNE(lastKeySz, ctx->privateKey[0].keySz);
 #endif
 
     /* Add the same keys again. This should succeed. */
@@ -464,7 +460,7 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
     !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
     FreeBins(eccKey, NULL, NULL, NULL);
 #endif
-#ifndef WOLFSSH_NO_SSH_RSA_SHA1
+#ifndef WOLFSSH_NO_RSA
     FreeBins(rsaKey, NULL, NULL, NULL);
 #endif
 #endif /* WOLFSSH_NO_SERVER */
