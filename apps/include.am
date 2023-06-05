@@ -1,0 +1,6 @@
+# vim:ft=automake
+# included from Top Level Makefile.am
+# All paths should be given relative to the root
+
+include apps/wolfssh/include.am
+include apps/wolfsshd/include.am

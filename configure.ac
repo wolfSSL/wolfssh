@@ -177,6 +177,11 @@ AC_ARG_ENABLE([sshd],
     [AS_HELP_STRING([--enable-sshd],[Enable SSHD support (default: disabled)])],
     [ENABLED_SSHD=$enableval],[ENABLED_SSHD=no])
 
+# SSH Client
+AC_ARG_ENABLE([sshclient],
+    [AS_HELP_STRING([--enable-sshclient],[Enable SSH client app (default: disabled)])],
+    [ENABLED_SSHCLIENT=$enableval],[ENABLED_SSHCLIENT=no])
+
 # TCP/IP Forwarding
 AC_ARG_ENABLE([fwd],
     [AS_HELP_STRING([--enable-fwd],[Enable TCP/IP Forwarding support (default: disabled)])],
@@ -227,7 +232,7 @@ AC_ARG_ENABLE([distro],
 AS_IF([test "x$ENABLED_DISTRO" = "xyes"],
       [ENABLED_ALL=yes; enable_shared=yes; enable_static=yes])
 AS_IF([test "x$ENABLED_ALL" = "xyes"],
-      [ENABLED_KEYGEN=yes; ENABLED_SCP=yes; ENABLED_SFTP=yes; ENABLED_FWD=yes; ENABLED_SHELL=yes; ENABLED_AGENT=yes; ENABLED_SSHD=yes; ENABLED_CERTS=yes])
+      [ENABLED_KEYGEN=yes; ENABLED_SCP=yes; ENABLED_SFTP=yes; ENABLED_FWD=yes; ENABLED_SHELL=yes; ENABLED_AGENT=yes; ENABLED_SSHD=yes; ENABLED_SSHCLIENT=yes; ENABLED_CERTS=yes])
 AS_IF([test "x$ENABLED_SSHD" = "xyes"],
       [ENABLED_SHELL=yes])
 
@@ -246,12 +251,16 @@ AS_IF([test "x$ENABLED_PTERM" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_TERM"])
 AS_IF([test "x$ENABLED_SHELL" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SHELL"])
-AS_IF([test "x$ENABLED_AGENT" = "xyes"],[AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_AGENT"])
-AS_IF([test "x$ENABLED_CERTS" = "xyes"],[AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_CERTS"])
+AS_IF([test "x$ENABLED_AGENT" = "xyes"],
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_AGENT"])
+AS_IF([test "x$ENABLED_CERTS" = "xyes"],
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_CERTS"])
 AS_IF([test "x$ENABLED_SMALLSTACK" = "xyes"],
-       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SMALL_STACK"])
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SMALL_STACK"])
 AS_IF([test "x$ENABLED_SSHD" = "xyes"],
-       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SSHD"])
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SSHD"])
+AS_IF([test "x$ENABLED_SSHCLIENT" = "xyes"],
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SSHCLIENT"])
 
 if test "$ENABLED_SSHD" = "yes"; then
     if test -n "$PAM_LIB"
@@ -304,6 +313,7 @@ AM_CONDITIONAL([BUILD_TERM],[test "x$ENABLED_TERM" = "xyes"])
 AM_CONDITIONAL([BUILD_SHELL],[test "x$ENABLED_SHELL" = "xyes"])
 AM_CONDITIONAL([BUILD_AGENT],[test "x$ENABLED_AGENT" = "xyes"])
 AM_CONDITIONAL([BUILD_SSHD],[test "x$ENABLED_SSHD" = "xyes"])
+AM_CONDITIONAL([BUILD_SSHCLIENT],[test "x$ENABLED_SSHCLIENT" = "xyes"])
 AM_CONDITIONAL([BUILD_CERTS],[test "x$ENABLED_CERTS" = "xyes"])
 
 AX_HARDEN_CC_COMPILER_FLAGS
@@ -346,6 +356,7 @@ AS_ECHO(["   * echoserver shell support:  $ENABLED_SHELL"])
 AS_ECHO(["   * scp:                       $ENABLED_SCP"])
 AS_ECHO(["   * sftp:                      $ENABLED_SFTP"])
 AS_ECHO(["   * sshd:                      $ENABLED_SSHD"])
+AS_ECHO(["   * ssh client:                $ENABLED_SSHCLIENT"])
 AS_ECHO(["   * agent:                     $ENABLED_AGENT"])
 AS_ECHO(["   * TCP/IP Forwarding:         $ENABLED_FWD"])
 AS_ECHO(["   * X.509 Certs:               $ENABLED_CERTS"])
