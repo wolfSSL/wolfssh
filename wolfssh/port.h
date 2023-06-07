@@ -247,14 +247,20 @@ extern "C" {
             const char* mode)
     {
         FRESULT ret;
-        BYTE m = FA_CREATE_ALWAYS;
+        BYTE m;
 
         if (!f) {
             return -1;
         }
+#ifdef WOLFSSH_XILFATFS
+        m = FA_CREATE_ALWAYS;
         if (*f == 0) {
             *f = WMALLOC(sizeof(FIL), NULL, 0);
         }
+#else
+        m = FA_CREATE_NEW;
+#endif
+
         if (XSTRSTR(mode, "r") && XSTRSTR(mode, "w")) {
             m |= WOLFSSH_O_RDWR;
         }
@@ -271,6 +277,7 @@ extern "C" {
     }
     #define WFOPEN(f, fn, m) ff_fopen((f),(fn),(m))
 
+#ifdef WOLFSSH_XILFATFS
     static inline int ff_close(WFILE *f)
     {
         int ret = f_close(f);
@@ -278,6 +285,7 @@ extern "C" {
             WFREE(f, NULL, 0);
         return ret;
     }
+#endif
 
     #define WFCLOSE(f)  f_close(f)
 
@@ -317,12 +325,20 @@ extern "C" {
             case WSEEK_CUR:
                 return f_lseek(fp, off + f_tell(fp));
             case WSEEK_END:
+        #ifdef WOLFSSH_XILFATFS
                 return f_lseek(fp, off + fp->fsize);
+        #else
+                return f_lseek(fp, off + f_size(fp));
+        #endif
         }
         return -1;
     }
     #define WFSEEK(s,o,w) ff_seek((s),(o),(w))
+#ifdef WOLFSSH_XILFATFS
     #define WREWIND(s) ff_seek(s, WSEEK_SET, 0)
+#else
+    #define WREWIND(s) f_rewind(s)
+#endif
     #define WBADFILE (-1)
     #ifndef NO_WOLFSSH_DIR
         #define WDIR DIR
