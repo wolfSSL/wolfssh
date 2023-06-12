@@ -2018,8 +2018,7 @@ int GrowBuffer(WOLFSSH_BUFFER* buf, word32 sz, word32 usedSz)
         /*WLOG(WS_LOG_DEBUG, "GB: newSz = %d", newSz);*/
 
         if (newSz > buf->bufferSz) {
-            byte* newBuffer = (byte*)WMALLOC(newSz,
-                                                     buf->heap, DYNTYPE_BUFFER);
+            byte* newBuffer = (byte*)WMALLOC(newSz, buf->heap, DYNTYPE_BUFFER);
 
             if (newBuffer == NULL) {
                 WLOG(WS_LOG_ERROR, "Not enough memory left to grow buffer");
@@ -7727,8 +7726,6 @@ static int BundlePacket(WOLFSSH* ssh)
         c32toa(packetSz, output + ssh->packetStartIdx);
         output[ssh->packetStartIdx + LENGTH_SZ] = paddingSz;
 
-        /* end new */
-
         /* Add the padding */
         WLOG(WS_LOG_DEBUG, "BP: paddingSz = %u", paddingSz);
         if (ssh->encryptId == ID_NONE)
@@ -9580,13 +9577,13 @@ int SendKexDhGexGroup(WOLFSSH* ssh)
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
-    if (primeGroup[0] & 0x80)
-        primePad = 1;
-
-    if (generator[0] & 0x80)
-        generatorPad = 1;
-
     if (ret == WS_SUCCESS) {
+        if (primeGroup[0] & 0x80)
+            primePad = 1;
+
+        if (generator[0] & 0x80)
+            generatorPad = 1;
+
         payloadSz = MSG_ID_SZ + (LENGTH_SZ * 2) +
                     primeGroupSz + primePad +
                     generatorSz + generatorPad;
@@ -9603,8 +9600,7 @@ int SendKexDhGexGroup(WOLFSSH* ssh)
         idx += LENGTH_SZ;
 
         if (primePad) {
-            output[idx] = 0;
-            idx += 1;
+            output[idx++] = 0;
         }
 
         WMEMCPY(output + idx, primeGroup, primeGroupSz);
@@ -9614,8 +9610,7 @@ int SendKexDhGexGroup(WOLFSSH* ssh)
         idx += LENGTH_SZ;
 
         if (generatorPad) {
-            output[idx] = 0;
-            idx += 1;
+            output[idx++] = 0;
         }
 
         WMEMCPY(output + idx, generator, generatorSz);
@@ -11954,8 +11949,9 @@ int SendChannelEof(WOLFSSH* ssh, word32 peerChannelId)
 int SendChannelEow(WOLFSSH* ssh, word32 peerChannelId)
 {
     byte* output;
+    const char* str = "eow@openssh.com";
     word32 idx;
-    word32 strSz = sizeof("eow@openssh.com");
+    word32 strSz;
     int      ret = WS_SUCCESS;
     WOLFSSH_CHANNEL* channel = NULL;
 
@@ -11975,9 +11971,11 @@ int SendChannelEow(WOLFSSH* ssh, word32 peerChannelId)
             ret = WS_INVALID_CHANID;
     }
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
+        strSz = (word32)WSTRLEN(str);
         ret = PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ + LENGTH_SZ + strSz +
                             BOOLEAN_SZ);
+    }
 
     if (ret == WS_SUCCESS) {
         output = ssh->outputBuffer.buffer;
@@ -11988,9 +11986,9 @@ int SendChannelEow(WOLFSSH* ssh, word32 peerChannelId)
         idx += UINT32_SZ;
         c32toa(strSz, output + idx);
         idx += LENGTH_SZ;
-        WMEMCPY(output + idx, "eow@openssh.com", strSz);
+        WMEMCPY(output + idx, str, strSz);
         idx += strSz;
-        output[idx++] = 0;      // false
+        output[idx++] = 0;
 
         ssh->outputBuffer.length = idx;
 
@@ -12008,8 +12006,9 @@ int SendChannelEow(WOLFSSH* ssh, word32 peerChannelId)
 int SendChannelExit(WOLFSSH* ssh, word32 peerChannelId, int status)
 {
     byte* output;
+    const char* str = "exit-status";
     word32 idx;
-    word32 strSz = sizeof("exit-status");
+    word32 strSz;
     int      ret = WS_SUCCESS;
     WOLFSSH_CHANNEL* channel = NULL;
 
@@ -12024,9 +12023,11 @@ int SendChannelExit(WOLFSSH* ssh, word32 peerChannelId, int status)
             ret = WS_INVALID_CHANID;
     }
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
+        strSz = (word32)WSTRLEN(str);
         ret = PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ + LENGTH_SZ + strSz +
                             BOOLEAN_SZ + UINT32_SZ);
+    }
 
     if (ret == WS_SUCCESS) {
         output = ssh->outputBuffer.buffer;
@@ -12037,9 +12038,9 @@ int SendChannelExit(WOLFSSH* ssh, word32 peerChannelId, int status)
         idx += UINT32_SZ;
         c32toa(strSz, output + idx);
         idx += LENGTH_SZ;
-        WMEMCPY(output + idx, "exit-status", strSz);
+        WMEMCPY(output + idx, str, strSz);
         idx += strSz;
-        output[idx++] = 0;      // false
+        output[idx++] = 0;
         c32toa(status, output + idx);
         idx += UINT32_SZ;
 
