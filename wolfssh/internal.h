@@ -435,7 +435,7 @@ typedef struct WOLFSSH_BUFFER {
 } WOLFSSH_BUFFER;
 
 WOLFSSH_LOCAL int BufferInit(WOLFSSH_BUFFER* buffer, word32 size, void* heap);
-WOLFSSH_LOCAL int GrowBuffer(WOLFSSH_BUFFER* buf, word32 sz, word32 usedSz);
+WOLFSSH_LOCAL int GrowBuffer(WOLFSSH_BUFFER* buf, word32 sz);
 WOLFSSH_LOCAL void ShrinkBuffer(WOLFSSH_BUFFER* buf, int forcedFree);
 
 

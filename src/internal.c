@@ -2003,19 +2003,17 @@ int BufferInit(WOLFSSH_BUFFER* buffer, word32 size, void* heap)
     return WS_SUCCESS;
 }
 
-
-int GrowBuffer(WOLFSSH_BUFFER* buf, word32 sz, word32 usedSz)
+int GrowBuffer(WOLFSSH_BUFFER* buf, word32 sz)
 {
 #if 0
     WLOG(WS_LOG_DEBUG, "GB: buf = %p", buf);
     WLOG(WS_LOG_DEBUG, "GB: sz = %d", sz);
-    WLOG(WS_LOG_DEBUG, "GB: usedSz = %d", usedSz);
+    WLOG(WS_LOG_DEBUG, "GB: usedSz = %d", ssh->length);
 #endif
-    /* New buffer will end up being sz+usedSz long
+    /* New buffer will end up being sz+ssh->length long
      * empty space at the head of the buffer will be compressed */
     if (buf != NULL) {
-        word32 newSz = sz + usedSz;
-        /*WLOG(WS_LOG_DEBUG, "GB: newSz = %d", newSz);*/
+        word32 newSz = sz + buf->length;
 
         if (newSz > buf->bufferSz) {
             byte* newBuffer = (byte*)WMALLOC(newSz, buf->heap, DYNTYPE_BUFFER);
@@ -2025,19 +2023,26 @@ int GrowBuffer(WOLFSSH_BUFFER* buf, word32 sz, word32 usedSz)
                 return WS_MEMORY_E;
             }
 
-            /*WLOG(WS_LOG_DEBUG, "GB: resizing buffer");*/
-            if (buf->length > 0 && usedSz > 0)
-                WMEMCPY(newBuffer, buf->buffer + buf->idx, usedSz);
+            if (buf->length > 0) {
+                WMEMCPY(newBuffer, buf->buffer + buf->idx, buf->length);
+            }
 
-            if (!buf->dynamicFlag)
+            if (!buf->dynamicFlag) {
                 buf->dynamicFlag = 1;
-            else
+            }
+            else {
                 WFREE(buf->buffer, buf->heap, DYNTYPE_BUFFER);
+            }
 
             buf->buffer = newBuffer;
             buf->bufferSz = newSz;
-            buf->length = usedSz;
             buf->idx = 0;
+        }
+        else {
+            if (buf->length > 0) {
+                WMEMMOVE(buf->buffer, buf->buffer + buf->idx, buf->length);
+                buf->idx = 0;
+            }
         }
     }
 
@@ -2050,7 +2055,7 @@ void ShrinkBuffer(WOLFSSH_BUFFER* buf, int forcedFree)
     WLOG(WS_LOG_DEBUG, "Entering ShrinkBuffer()");
 
     if (buf != NULL) {
-        word32 usedSz = buf->length - buf->idx;
+        word32 usedSz = buf->length;
 
         WLOG(WS_LOG_DEBUG, "SB: usedSz = %u, forcedFree = %u",
              usedSz, forcedFree);
@@ -2127,7 +2132,7 @@ static int GetInputText(WOLFSSH* ssh, byte** pEol)
     int in;
     char *eol;
 
-    if (GrowBuffer(&ssh->inputBuffer, inSz, 0) < 0)
+    if (GrowBuffer(&ssh->inputBuffer, inSz) < 0)
         return WS_MEMORY_E;
 
     do {
@@ -2234,58 +2239,17 @@ int wolfSSH_SendPacket(WOLFSSH* ssh)
 static int GetInputData(WOLFSSH* ssh, word32 size)
 {
     int in;
-    int inSz;
-    int maxLength;
-    int usedLength;
 
-    /* check max input length */
-    usedLength = ssh->inputBuffer.length - ssh->inputBuffer.idx;
-    maxLength  = ssh->inputBuffer.bufferSz - usedLength;
-    inSz       = (int)(size - usedLength);      /* from last partial read */
-#if 0
-    WLOG(WS_LOG_DEBUG, "GID: size = %u", size);
-    WLOG(WS_LOG_DEBUG, "GID: usedLength = %d", usedLength);
-    WLOG(WS_LOG_DEBUG, "GID: maxLength = %d", maxLength);
-    WLOG(WS_LOG_DEBUG, "GID: inSz = %d", inSz);
-#endif
-    /*
-     * usedLength - how much untouched data is in the buffer
-     * maxLength - how much empty space is in the buffer
-     * inSz - difference between requested data and empty space in the buffer
-     *        how much more we need to allocate
-     */
-
-    if (inSz <= 0)
-        return WS_SUCCESS;
-
-    /*
-     * If we need more space than there is left in the buffer grow buffer.
-     * Growing the buffer also compresses empty space at the head of the
-     * buffer and resets idx to 0.
-     */
-    if (inSz > maxLength) {
-        if (GrowBuffer(&ssh->inputBuffer, size, usedLength) < 0) {
-            ssh->error = WS_MEMORY_E;
-            return WS_FATAL_ERROR;
-        }
+    if (GrowBuffer(&ssh->inputBuffer, size) < 0) {
+        ssh->error = WS_MEMORY_E;
+        return WS_FATAL_ERROR;
     }
-
-    /* Put buffer data at start if not there */
-    /* Compress the buffer if needed, i.e. buffer idx is non-zero */
-    if (usedLength > 0 && ssh->inputBuffer.idx != 0) {
-        WMEMMOVE(ssh->inputBuffer.buffer,
-                ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
-                usedLength);
-    }
-
-    /* remove processed data */
-    ssh->inputBuffer.idx    = 0;
-    ssh->inputBuffer.length = usedLength;
 
     /* read data from network */
     do {
         in = ReceiveData(ssh,
-                     ssh->inputBuffer.buffer + ssh->inputBuffer.length, inSz);
+                     ssh->inputBuffer.buffer + ssh->inputBuffer.length,
+                     size);
         if (in == -1) {
             ssh->error = WS_SOCKET_ERROR_E;
             return WS_FATAL_ERROR;
@@ -2296,14 +2260,9 @@ static int GetInputData(WOLFSSH* ssh, word32 size)
             return WS_FATAL_ERROR;
         }
 
-        if (in > inSz) {
-            ssh->error = WS_RECV_OVERFLOW_E;
-            return WS_FATAL_ERROR;
-        }
-
         if (in >= 0) {
             ssh->inputBuffer.length += in;
-            inSz -= in;
+            size -= in;
         }
         else {
             /* all other unexpected negative values is a failure case */
@@ -2311,7 +2270,7 @@ static int GetInputData(WOLFSSH* ssh, word32 size)
             return WS_FATAL_ERROR;
         }
 
-    } while (ssh->inputBuffer.length < size);
+    } while (size);
 
     return WS_SUCCESS;
 }
@@ -6750,7 +6709,7 @@ static int PutBuffer(WOLFSSH_BUFFER* buf, byte* data, word32 dataSz)
     buf->idx    = 0;
 
     if (dataSz > buf->bufferSz) {
-        if ((ret = GrowBuffer(buf, dataSz, 0)) != WS_SUCCESS) {
+        if ((ret = GrowBuffer(buf, dataSz)) != WS_SUCCESS) {
             return ret;
         }
     }
@@ -7476,7 +7435,7 @@ int DoReceive(WOLFSSH* ssh)
             NO_BREAK;
 
         case PROCESS_PACKET_FINISH:
-            readSz = ssh->curSz + LENGTH_SZ + peerMacSz;
+            readSz = ssh->curSz + peerMacSz - ssh->peerBlockSz + LENGTH_SZ;
             WLOG(WS_LOG_DEBUG, "PR2: size = %u", readSz);
             if (readSz > 0) {
                 if ((ret = GetInputData(ssh, readSz)) < 0) {
@@ -7627,6 +7586,8 @@ int DoProtoId(WOLFSSH* ssh)
     }
 
     ssh->inputBuffer.idx += idSz + SSH_PROTO_EOL_SZ;
+    ssh->inputBuffer.length -= idSz + SSH_PROTO_EOL_SZ;
+
     ShrinkBuffer(&ssh->inputBuffer, 0);
 
     return ret;
@@ -7644,7 +7605,7 @@ int SendProtoId(WOLFSSH* ssh)
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "%s", sshProtoIdStr);
         sshProtoIdStrSz = (word32)WSTRLEN(sshProtoIdStr);
-        ret = GrowBuffer(&ssh->outputBuffer, sshProtoIdStrSz, 0);
+        ret = GrowBuffer(&ssh->outputBuffer, sshProtoIdStrSz);
     }
 
     if (ret == WS_SUCCESS) {
@@ -7672,15 +7633,14 @@ static int PreparePacket(WOLFSSH* ssh, word32 payloadSz)
     }
 
     if (ret == WS_SUCCESS) {
-        word32 packetSz, usedSz, outputSz;
+        word32 packetSz, outputSz;
         byte paddingSz;
 
         paddingSz = ssh->blockSz * 2;
         packetSz = PAD_LENGTH_SZ + payloadSz + paddingSz;
         outputSz = LENGTH_SZ + packetSz + ssh->macSz;
-        usedSz = ssh->outputBuffer.length - ssh->outputBuffer.idx;
 
-        ret = GrowBuffer(&ssh->outputBuffer, outputSz, usedSz);
+        ret = GrowBuffer(&ssh->outputBuffer, outputSz);
     }
 
     if (ret == WS_SUCCESS) {
