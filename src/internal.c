@@ -2008,12 +2008,12 @@ int GrowBuffer(WOLFSSH_BUFFER* buf, word32 sz)
 #if 0
     WLOG(WS_LOG_DEBUG, "GB: buf = %p", buf);
     WLOG(WS_LOG_DEBUG, "GB: sz = %d", sz);
-    WLOG(WS_LOG_DEBUG, "GB: usedSz = %d", ssh->length);
+    WLOG(WS_LOG_DEBUG, "GB: usedSz = %d", ssh->length - ssh->idx);
 #endif
-    /* New buffer will end up being sz+ssh->length long
+    /* New buffer will end up being sz+ssh->length-ssh->idx long
      * empty space at the head of the buffer will be compressed */
     if (buf != NULL) {
-        word32 newSz = sz + buf->length;
+        word32 newSz = sz + buf->length - buf->idx;
 
         if (newSz > buf->bufferSz) {
             byte* newBuffer = (byte*)WMALLOC(newSz, buf->heap, DYNTYPE_BUFFER);
@@ -2024,7 +2024,7 @@ int GrowBuffer(WOLFSSH_BUFFER* buf, word32 sz)
             }
 
             if (buf->length > 0) {
-                WMEMCPY(newBuffer, buf->buffer + buf->idx, buf->length);
+                WMEMCPY(newBuffer, buf->buffer + buf->idx, buf->length - buf->idx);
             }
 
             if (!buf->dynamicFlag) {
@@ -2036,11 +2036,13 @@ int GrowBuffer(WOLFSSH_BUFFER* buf, word32 sz)
 
             buf->buffer = newBuffer;
             buf->bufferSz = newSz;
+            buf->length -= buf->idx;
             buf->idx = 0;
         }
         else {
             if (buf->length > 0) {
-                WMEMMOVE(buf->buffer, buf->buffer + buf->idx, buf->length);
+                WMEMMOVE(buf->buffer, buf->buffer + buf->idx, buf->length - buf->idx);
+                buf->length -= buf->idx;
                 buf->idx = 0;
             }
         }
@@ -2055,8 +2057,11 @@ void ShrinkBuffer(WOLFSSH_BUFFER* buf, int forcedFree)
     WLOG(WS_LOG_DEBUG, "Entering ShrinkBuffer()");
 
     if (buf != NULL) {
-        word32 usedSz = buf->length;
+        word32 usedSz = buf->length - buf->idx;
 
+        WLOG(WS_LOG_DEBUG, "  buf->bufferSz = %u", buf->bufferSz);
+        WLOG(WS_LOG_DEBUG, "  buf->idx = %u", buf->idx);
+        WLOG(WS_LOG_DEBUG, "  buf->length = %u", buf->length);
         WLOG(WS_LOG_DEBUG, "SB: usedSz = %u, forcedFree = %u",
              usedSz, forcedFree);
 
@@ -2184,7 +2189,7 @@ int wolfSSH_SendPacket(WOLFSSH* ssh)
         return WS_SOCKET_ERROR_E;
     }
 
-    while (ssh->outputBuffer.length > 0) {
+    while (ssh->outputBuffer.length - ssh->outputBuffer.idx > 0) {
         int sent;
 
         /* sanity check on amount requested to be sent */
@@ -2224,10 +2229,8 @@ int wolfSSH_SendPacket(WOLFSSH* ssh)
         }
 
         ssh->outputBuffer.idx += sent;
-        ssh->outputBuffer.length -= sent;
     }
 
-    ssh->outputBuffer.idx = 0;
     ssh->outputBuffer.plainSz = 0;
 
     WLOG(WS_LOG_DEBUG, "SB: Shrinking output buffer");
@@ -7435,7 +7438,8 @@ int DoReceive(WOLFSSH* ssh)
             NO_BREAK;
 
         case PROCESS_PACKET_FINISH:
-            readSz = ssh->curSz + peerMacSz - ssh->peerBlockSz + LENGTH_SZ;
+            /* readSz is the full packet size minus the first block. */
+            readSz = UINT32_SZ + ssh->curSz + peerMacSz - peerBlockSz;
             WLOG(WS_LOG_DEBUG, "PR2: size = %u", readSz);
             if (readSz > 0) {
                 if ((ret = GetInputData(ssh, readSz)) < 0) {
@@ -7586,7 +7590,6 @@ int DoProtoId(WOLFSSH* ssh)
     }
 
     ssh->inputBuffer.idx += idSz + SSH_PROTO_EOL_SZ;
-    ssh->inputBuffer.length -= idSz + SSH_PROTO_EOL_SZ;
 
     ShrinkBuffer(&ssh->inputBuffer, 0);
 
@@ -7609,8 +7612,9 @@ int SendProtoId(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS) {
-        WMEMCPY(ssh->outputBuffer.buffer, sshProtoIdStr, sshProtoIdStrSz);
-        ssh->outputBuffer.length = sshProtoIdStrSz;
+        WMEMCPY(ssh->outputBuffer.buffer + ssh->outputBuffer.length,
+                sshProtoIdStr, sshProtoIdStrSz);
+        ssh->outputBuffer.length += sshProtoIdStrSz;
         ret = wolfSSH_SendPacket(ssh);
     }
 
