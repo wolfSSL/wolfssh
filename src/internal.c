@@ -2008,7 +2008,7 @@ int GrowBuffer(WOLFSSH_BUFFER* buf, word32 sz)
 #if 0
     WLOG(WS_LOG_DEBUG, "GB: buf = %p", buf);
     WLOG(WS_LOG_DEBUG, "GB: sz = %d", sz);
-    WLOG(WS_LOG_DEBUG, "GB: usedSz = %d", ssh->length - ssh->idx);
+    WLOG(WS_LOG_DEBUG, "GB: usedSz = %d", buf->length - buf->idx);
 #endif
     /* New buffer will end up being sz+ssh->length-ssh->idx long
      * empty space at the head of the buffer will be compressed */
@@ -2242,6 +2242,19 @@ int wolfSSH_SendPacket(WOLFSSH* ssh)
 static int GetInputData(WOLFSSH* ssh, word32 size)
 {
     int in;
+
+    /* Take into account the data already in the buffer. Update size
+     * for what is missing in the request. */
+    word32 haveDataSz = ssh->inputBuffer.length - ssh->inputBuffer.idx;
+
+    if (haveDataSz >= size) {
+        WLOG(WS_LOG_INFO, "GID: have enough already, return early");
+        return WS_SUCCESS;
+    }
+    else {
+        WLOG(WS_LOG_INFO, "GID: readjust size");
+        size -= haveDataSz;
+    }
 
     if (GrowBuffer(&ssh->inputBuffer, size) < 0) {
         ssh->error = WS_MEMORY_E;
@@ -6783,7 +6796,7 @@ static int DoPacket(WOLFSSH* ssh)
 
     WLOG(WS_LOG_DEBUG, "DoPacket sequence number: %d", ssh->peerSeq);
 
-    idx += LENGTH_SZ;
+    idx += UINT32_SZ;
     padSz = buf[idx++];
 
     /* check for underflow */
@@ -7406,11 +7419,9 @@ int DoReceive(WOLFSSH* ssh)
             if (!aeadMode) {
                 /* Decrypt first block if encrypted */
                 ret = Decrypt(ssh,
-                              ssh->inputBuffer.buffer +
-                                 ssh->inputBuffer.idx,
-                              ssh->inputBuffer.buffer +
-                                 ssh->inputBuffer.idx,
-                              readSz);
+                        ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
+                        ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
+                        readSz);
                 if (ret != WS_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, "PR: First decrypt fail");
                     ssh->error = ret;
@@ -7420,17 +7431,14 @@ int DoReceive(WOLFSSH* ssh)
             NO_BREAK;
 
         case PROCESS_PACKET_LENGTH:
-            if (ssh->inputBuffer.idx + UINT32_SZ >
-                    ssh->inputBuffer.bufferSz) {
+            if (ssh->inputBuffer.idx + UINT32_SZ > ssh->inputBuffer.bufferSz) {
                 ssh->error = WS_OVERFLOW_E;
                 return WS_FATAL_ERROR;
             }
 
             /* Peek at the packet_length field. */
-            ato32(ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
-                  &ssh->curSz);
-            if (ssh->curSz >
-                    MAX_PACKET_SZ - (word32)peerMacSz - LENGTH_SZ) {
+            ato32(ssh->inputBuffer.buffer + ssh->inputBuffer.idx, &ssh->curSz);
+            if (ssh->curSz > MAX_PACKET_SZ - (word32)peerMacSz - UINT32_SZ) {
                 ssh->error = WS_OVERFLOW_E;
                 return WS_FATAL_ERROR;
             }
@@ -7438,8 +7446,8 @@ int DoReceive(WOLFSSH* ssh)
             NO_BREAK;
 
         case PROCESS_PACKET_FINISH:
-            /* readSz is the full packet size minus the first block. */
-            readSz = UINT32_SZ + ssh->curSz + peerMacSz - peerBlockSz;
+            /* readSz is the full packet size */
+            readSz = UINT32_SZ + ssh->curSz + peerMacSz;
             WLOG(WS_LOG_DEBUG, "PR2: size = %u", readSz);
             if (readSz > 0) {
                 if ((ret = GetInputData(ssh, readSz)) < 0) {
@@ -7447,13 +7455,13 @@ int DoReceive(WOLFSSH* ssh)
                 }
 
                 if (!aeadMode) {
-                    if (ssh->curSz + LENGTH_SZ - peerBlockSz > 0) {
+                    if (ssh->curSz + UINT32_SZ - peerBlockSz > 0) {
                         ret = Decrypt(ssh,
-                                      ssh->inputBuffer.buffer +
-                                         ssh->inputBuffer.idx + peerBlockSz,
-                                      ssh->inputBuffer.buffer +
-                                         ssh->inputBuffer.idx + peerBlockSz,
-                                      ssh->curSz + LENGTH_SZ - peerBlockSz);
+                                ssh->inputBuffer.buffer + ssh->inputBuffer.idx
+                                    + peerBlockSz,
+                                ssh->inputBuffer.buffer + ssh->inputBuffer.idx
+                                    + peerBlockSz,
+                                ssh->curSz - peerBlockSz);
                     }
                     else {
                         /* Entire packet fit in one block, don't need
@@ -7464,12 +7472,10 @@ int DoReceive(WOLFSSH* ssh)
                      * Even if the decrypt step fails, verify the MAC anyway.
                      * This keeps consistent timing. */
                     verifyResult = VerifyMac(ssh,
-                                             ssh->inputBuffer.buffer +
-                                                 ssh->inputBuffer.idx,
-                                             ssh->curSz + LENGTH_SZ,
-                                             ssh->inputBuffer.buffer +
-                                                 ssh->inputBuffer.idx +
-                                                 LENGTH_SZ + ssh->curSz);
+                            ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
+                            UINT32_SZ + ssh->curSz,
+                            ssh->inputBuffer.buffer + ssh->inputBuffer.idx
+                                + UINT32_SZ + ssh->curSz);
                     if (ret != WS_SUCCESS) {
                         WLOG(WS_LOG_DEBUG, "PR: Decrypt fail");
                         ssh->error = ret;
@@ -7484,19 +7490,15 @@ int DoReceive(WOLFSSH* ssh)
                 else {
 #ifndef WOLFSSH_NO_AEAD
                     ret = DecryptAead(ssh,
-                                      ssh->inputBuffer.buffer +
-                                         ssh->inputBuffer.idx +
-                                         LENGTH_SZ,
-                                      ssh->inputBuffer.buffer +
-                                         ssh->inputBuffer.idx +
-                                         LENGTH_SZ,
-                                      ssh->curSz,
-                                      ssh->inputBuffer.buffer +
-                                          ssh->inputBuffer.idx +
-                                          ssh->curSz + LENGTH_SZ,
-                                      ssh->inputBuffer.buffer +
-                                          ssh->inputBuffer.idx,
-                                      LENGTH_SZ);
+                            ssh->inputBuffer.buffer + ssh->inputBuffer.idx
+                                + UINT32_SZ,
+                            ssh->inputBuffer.buffer + ssh->inputBuffer.idx
+                                + UINT32_SZ,
+                            ssh->curSz,
+                            ssh->inputBuffer.buffer + ssh->inputBuffer.idx
+                                + UINT32_SZ + ssh->curSz,
+                            ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
+                            UINT32_SZ);
 
                     if (ret != WS_SUCCESS) {
                         WLOG(WS_LOG_DEBUG, "PR: DecryptAead fail");
