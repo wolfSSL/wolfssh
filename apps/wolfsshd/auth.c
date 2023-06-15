@@ -71,6 +71,8 @@ struct WOLFSSHD_AUTH {
     const WOLFSSHD_CONFIG* conf;
     int gid;
     int uid;
+    int sGid; /* saved gid */
+    int sUid; /* saved uid */
     int attempts;
     void* heap;
 };
@@ -1035,6 +1037,8 @@ WOLFSSHD_AUTH* wolfSSHD_AuthCreateUser(void* heap, const WOLFSSHD_CONFIG* conf)
         if (ret == WS_SUCCESS) {
             auth->gid = pwInfo->pw_gid;
             auth->uid = pwInfo->pw_uid;
+            auth->sGid = getgid();
+            auth->sUid = getuid();
         }
 
         /* error case in setting one of the default callbacks */
@@ -1066,12 +1070,12 @@ int wolfSSHD_AuthRaisePermissions(WOLFSSHD_AUTH* auth)
 
     wolfSSH_Log(WS_LOG_INFO, "[SSHD] Attempting to raise permissions level");
     if (auth) {
-        if (setegid(0) != 0) {
+        if (setegid(auth->sGid) != 0) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error rasing gid");
             ret = WS_FATAL_ERROR;
         }
 
-        if (seteuid(0) != 0) {
+        if (seteuid(auth->sUid) != 0) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error rasing uid");
             ret = WS_FATAL_ERROR;
         }
