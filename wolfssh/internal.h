@@ -357,13 +357,13 @@ enum {
 #define MAX_HMAC_SZ WC_SHA256_DIGEST_SIZE
 #define MIN_BLOCK_SZ 8
 #define COOKIE_SZ 16
-#define LENGTH_SZ 4
 #define PAD_LENGTH_SZ 1
 #define MIN_PAD_LENGTH 4
 #define BOOLEAN_SZ 1
 #define MSG_ID_SZ 1
 #define SHA1_96_SZ 12
 #define UINT32_SZ 4
+#define LENGTH_SZ UINT32_SZ
 #define SSH_PROTO_SZ 7 /* "SSH-2.0" */
 #define AEAD_IMP_IV_SZ 4
 #define AEAD_EXP_IV_SZ 8
@@ -435,7 +435,7 @@ typedef struct WOLFSSH_BUFFER {
 } WOLFSSH_BUFFER;
 
 WOLFSSH_LOCAL int BufferInit(WOLFSSH_BUFFER* buffer, word32 size, void* heap);
-WOLFSSH_LOCAL int GrowBuffer(WOLFSSH_BUFFER* buf, word32 sz, word32 usedSz);
+WOLFSSH_LOCAL int GrowBuffer(WOLFSSH_BUFFER* buf, word32 sz);
 WOLFSSH_LOCAL void ShrinkBuffer(WOLFSSH_BUFFER* buf, int forcedFree);
 
 
