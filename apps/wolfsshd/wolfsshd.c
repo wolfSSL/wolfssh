@@ -725,7 +725,12 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         if (wolfSSHD_AuthSetGroups(conn->auth, wolfSSH_GetUsername(ssh),
                 pPasswd->pw_gid) != WS_SUCCESS) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting groups");
-            ret = WS_FATAL_ERROR;
+            if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+                /* stop everything if not able to reduce permissions level */
+                exit(1);
+            }
+
+            return WS_FATAL_ERROR;
         }
 
         rc = SetupChroot(usrConf);
