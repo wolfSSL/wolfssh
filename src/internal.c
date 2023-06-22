@@ -5930,6 +5930,9 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             wc_HashFree(&hash, hashId);
 
             if (ret == WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, "Verify user signature type: %s",
+                        IdToName(pkTypeId));
+
                 switch (pkTypeId) {
                     #ifndef WOLFSSH_NO_RSA
                     case ID_SSH_RSA:
@@ -11358,13 +11361,13 @@ static int PrepareUserAuthRequestPublicKey(WOLFSSH* ssh, word32* payloadSz,
     }
 
     if (ret == WS_SUCCESS) {
-        byte matchId, algoId[3];
+        byte keyId, matchId, algoId[4];
         word32 algoIdSz = 0;
 
-        keySig->keySigId = NameToId(
+        keyId = NameToId(
                 (const char*)authData->sf.publicKey.publicKeyType,
                 authData->sf.publicKey.publicKeyTypeSz);
-        if (keySig->keySigId == ID_SSH_RSA) {
+        if (keyId == ID_SSH_RSA) {
         #ifndef WOLFSSH_NO_RSA_SHA2_512
             algoId[algoIdSz++] = ID_RSA_SHA2_512;
         #endif
@@ -11376,7 +11379,7 @@ static int PrepareUserAuthRequestPublicKey(WOLFSSH* ssh, word32* payloadSz,
         #endif
         }
         else {
-            algoId[algoIdSz++] = keySig->keySigId;
+            algoId[algoIdSz++] = keyId;
         }
 
         /* Is that in the peerSigId list? */
@@ -11385,6 +11388,9 @@ static int PrepareUserAuthRequestPublicKey(WOLFSSH* ssh, word32* payloadSz,
         if (matchId == ID_UNKNOWN) {
             ret = WS_MATCH_KEX_ALGO_E;
         }
+        keySig->keySigId = matchId;
+        keySig->name = IdToName(matchId);
+        keySig->nameSz = (word32)WSTRLEN(keySig->name);
     }
 
     if (ret == WS_SUCCESS) {
@@ -11392,12 +11398,13 @@ static int PrepareUserAuthRequestPublicKey(WOLFSSH* ssh, word32* payloadSz,
          * the public key algorithm name, and the public key length.
          * For the X509 types, this accounts for ONLY one certificate.*/
         *payloadSz += BOOLEAN_SZ + (LENGTH_SZ * 2) +
-            authData->sf.publicKey.publicKeyTypeSz +
-            authData->sf.publicKey.publicKeySz;
+            keySig->nameSz + authData->sf.publicKey.publicKeySz;
 
         switch (keySig->keySigId) {
             #ifndef WOLFSSH_NO_RSA
             case ID_SSH_RSA:
+            case ID_RSA_SHA2_256:
+            case ID_RSA_SHA2_512:
                 ret = PrepareUserAuthRequestRsa(ssh,
                         payloadSz, authData, keySig);
                 break;
@@ -11456,16 +11463,18 @@ static int BuildUserAuthRequestPublicKey(WOLFSSH* ssh,
         output[begin++] = pk->hasSignature;
 
         if (pk->hasSignature) {
+            WLOG(WS_LOG_DEBUG, "User signature type: %s",
+                    IdToName(keySig->keySigId));
+
             switch (keySig->keySigId) {
                 #ifndef WOLFSSH_NO_RSA
                 case ID_SSH_RSA:
                 case ID_RSA_SHA2_256:
                 case ID_RSA_SHA2_512:
-                    c32toa(pk->publicKeyTypeSz, output + begin);
+                    c32toa(keySig->nameSz, output + begin);
                     begin += LENGTH_SZ;
-                    WMEMCPY(output + begin,
-                            pk->publicKeyType, pk->publicKeyTypeSz);
-                    begin += pk->publicKeyTypeSz;
+                    WMEMCPY(output + begin, keySig->name, keySig->nameSz);
+                    begin += keySig->nameSz;
                     c32toa(pk->publicKeySz, output + begin);
                     begin += LENGTH_SZ;
                     WMEMCPY(output + begin, pk->publicKey, pk->publicKeySz);
