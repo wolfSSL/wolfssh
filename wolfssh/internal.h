@@ -312,10 +312,12 @@ enum {
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
     ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256,
 #endif
+    ID_EXTINFO_S, /* Pseudo-KEX to indicate server extensions. */
+    ID_EXTINFO_C, /* Pseudo-KEX to indicate client extensions. */
 
     /* Public Key IDs */
-    ID_SSH_RSA, /* 0x16 */
-    ID_RSA_SHA2_256, /* 0x17 */
+    ID_SSH_RSA,
+    ID_RSA_SHA2_256,
     ID_RSA_SHA2_512,
     ID_ECDSA_SHA2_NISTP256,
     ID_ECDSA_SHA2_NISTP384,
@@ -342,6 +344,8 @@ enum {
     /* Global Request IDs */
     ID_GLOBREQ_TCPIP_FWD,
     ID_GLOBREQ_TCPIP_FWD_CANCEL,
+
+    ID_EXTINFO_SERVER_SIG_ALGS,
 
     ID_UNKNOWN
 };
@@ -727,6 +731,9 @@ struct WOLFSSH {
     void* publicKeyCheckCtx;
     byte  sendTerminalRequest;
     byte userAuthPkDone;
+    byte sendExtInfo;
+    byte* peerSigId;
+    word32 peerSigIdSz;
 
 #ifdef USE_WINDOWS_API
     word32 defaultAttr; /* default windows attributes */
@@ -879,6 +886,7 @@ WOLFSSH_LOCAL int SendGlobalRequest(WOLFSSH *, const unsigned char *, word32, in
 WOLFSSH_LOCAL int SendDebug(WOLFSSH*, byte, const char*);
 WOLFSSH_LOCAL int SendServiceRequest(WOLFSSH*, byte);
 WOLFSSH_LOCAL int SendServiceAccept(WOLFSSH*, byte);
+WOLFSSH_LOCAL int SendExtInfo(WOLFSSH* ssh);
 WOLFSSH_LOCAL int SendUserAuthRequest(WOLFSSH*, byte, int);
 WOLFSSH_LOCAL int SendUserAuthSuccess(WOLFSSH*);
 WOLFSSH_LOCAL int SendUserAuthFailure(WOLFSSH*, byte);
@@ -989,6 +997,7 @@ enum WS_MessageIds {
     MSGID_DEBUG = 4,
     MSGID_SERVICE_REQUEST = 5,
     MSGID_SERVICE_ACCEPT = 6,
+    MSGID_EXT_INFO = 7,
 
     MSGID_KEXINIT = 20,
     MSGID_NEWKEYS = 21,
