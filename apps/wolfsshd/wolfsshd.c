@@ -426,9 +426,19 @@ static int SetupChroot(WOLFSSHD_CONFIG* usrConf)
     if (chrootPath != NULL) {
         ret = 1;
         wolfSSH_Log(WS_LOG_INFO, "[SSHD] chroot to path  %s", chrootPath);
+        if (chdir(chrootPath) != 0) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] chdir to chroot path failed, %s", chrootPath);
+            ret = WS_FATAL_ERROR;
+        }
         if (chroot(chrootPath) != 0) {
             wolfSSH_Log(WS_LOG_ERROR,
-                "[SSHD] chroot failed to path  %s", chrootPath);
+                "[SSHD] chroot failed to path %s", chrootPath);
+            ret = WS_FATAL_ERROR;
+        }
+        if (chdir("/") != 0) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] chdir after chroot failed");
             ret = WS_FATAL_ERROR;
         }
    }
