@@ -12421,6 +12421,7 @@ int SendChannelData(WOLFSSH* ssh, word32 channelId,
     if (ret == WS_SUCCESS) {
         if (channel->peerWindowSz == 0) {
             WLOG(WS_LOG_DEBUG, "channel window is full");
+            ssh->error = WS_WINDOW_FULL;
             ret = WS_WINDOW_FULL;
         }
     }

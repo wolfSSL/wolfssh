@@ -579,6 +579,14 @@ static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 timeout = TEST_SFTP_TIMEOUT;
                 continue;
             }
+
+            if (error == WS_WANT_READ || error == WS_WANT_WRITE ||
+                error == WS_WINDOW_FULL) {
+                timeout = TEST_SFTP_TIMEOUT;
+                ret = error;
+                continue;
+            }
+
             if (error == WS_EOF) {
                 break;
             }
@@ -598,8 +606,9 @@ static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 error == WS_CHAN_RXD || error == WS_REKEYING ||
                 error == WS_WINDOW_FULL)
                 ret = error;
-            if (error == WS_EOF)
+            if (error == WS_EOF) {
                 break;
+            }
             continue;
         }
 
