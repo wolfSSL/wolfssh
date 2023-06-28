@@ -449,6 +449,13 @@ static int SCP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         return WS_FATAL_ERROR;
     }
 
+    /* set additional groups if needed */
+    if (wolfSSHD_AuthSetGroups(conn->auth, wolfSSH_GetUsername(ssh),
+            pPasswd->pw_gid) != WS_SUCCESS) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting groups");
+        ret = WS_FATAL_ERROR;
+    }
+
     if (ret == WS_SUCCESS) {
         error = SetupChroot(usrConf);
         if (error < 0) {
@@ -520,6 +527,13 @@ static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     if (wolfSSHD_AuthRaisePermissions(conn->auth) != WS_SUCCESS) {
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failure to raise permissions for auth");
         return WS_FATAL_ERROR;
+    }
+
+    /* set additional groups if needed */
+    if (wolfSSHD_AuthSetGroups(conn->auth, wolfSSH_GetUsername(ssh),
+            pPasswd->pw_gid) != WS_SUCCESS) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting groups");
+        ret = WS_FATAL_ERROR;
     }
 
     if (ret == WS_SUCCESS) {
@@ -706,6 +720,18 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 
         signal(SIGINT,  SIG_DFL);
         signal(SIGCHLD, SIG_DFL);
+
+        /* set additional groups if needed */
+        if (wolfSSHD_AuthSetGroups(conn->auth, wolfSSH_GetUsername(ssh),
+                pPasswd->pw_gid) != WS_SUCCESS) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting groups");
+            if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+                /* stop everything if not able to reduce permissions level */
+                exit(1);
+            }
+
+            return WS_FATAL_ERROR;
+        }
 
         rc = SetupChroot(usrConf);
         if (rc < 0) {
@@ -994,15 +1020,6 @@ static void* HandleConnection(void* arg)
             if (pPasswd == NULL) {
                 wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error getting user info");
                 ret = WS_FATAL_ERROR;
-            }
-
-            /* set additional groups if needed */
-            if (ret != WS_FATAL_ERROR &&
-                    wolfSSHD_AuthSetGroups(conn->auth, usr, pPasswd->pw_gid) !=
-                    WS_SUCCESS) {
-
-               wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting groups");
-               ret = WS_FATAL_ERROR;
             }
         }
 
