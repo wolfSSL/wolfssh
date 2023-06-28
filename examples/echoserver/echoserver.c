@@ -50,6 +50,11 @@
     #include <pthread.h>
 #endif
 
+#if defined(WOLFSSH_SHELL) && defined(USE_WINDOWS_API)
+#pragma message ("echoserver with shell on windows is not supported, use wolfSSHd instead")
+#undef WOLFSSH_SHELL
+#endif
+
 #ifdef WOLFSSL_NUCLEUS
     /* use buffers for keys with server */
     #define NO_FILESYSTEM
@@ -70,11 +75,16 @@
     #ifdef HAVE_TERMIOS_H
         #include <termios.h>
     #endif
+#ifndef USE_WINDOWS_API
     #include <pwd.h>
+#endif
     #include <signal.h>
 #if defined(__QNX__) || defined(__QNXNTO__)
     #include <errno.h>
     #include <unix.h>
+
+#elif defined(USE_WINDOWS_API)
+    #include <errno.h>
 #else
     #include <sys/errno.h>
 #endif
