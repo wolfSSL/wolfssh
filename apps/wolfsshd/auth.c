@@ -1148,20 +1148,37 @@ int wolfSSHD_AuthSetGroups(const WOLFSSHD_AUTH* auth, const char* usr,
     gid_t* grpList = NULL;
     int ret = WS_SUCCESS;
 
+#if defined(__QNX__) || defined(__QNXNTO__)
+    /* QNX does not support getting the exact group list size ahead of time,
+       only the max group list size */
+    grpListSz = sysconf( _SC_NGROUPS_MAX );
+#else
     /* should return -1 if grpListSz is smaller than actual groups */
-    if (WGETGROUPLIST(usr, gid, NULL, &grpListSz) == -1) {
+    if (WGETGROUPLIST(usr, gid, NULL, &grpListSz) == -1)
+#endif
+    {
         grpList = (gid_t*)WMALLOC(sizeof(gid_t) * grpListSz, auth->heap,
             DYNTYPE_SSHD);
         if (grpList == NULL) {
             ret = WS_MEMORY_E;
         }
         else {
-            if (WGETGROUPLIST(usr, gid, grpList, &grpListSz)
-                    != grpListSz) {
+            int res;
+
+            res = WGETGROUPLIST(usr, gid, grpList, &grpListSz);
+        #if defined(__QNX__) || defined(__QNXNTO__)
+            if (res != 0) {
                 ret = WS_FATAL_ERROR;
             }
-            else {
-                setgroups(grpListSz, grpList);
+        #else
+            if (res != grpListSz) {
+                ret = WS_FATAL_ERROR;
+            }
+        #endif
+
+            if (ret == WS_SUCCESS &&
+                    setgroups(grpListSz, grpList) == -1) {
+                ret = WS_FATAL_ERROR;
             }
             WFREE(grpList, auth->heap, DYNTYPE_SSHD);
         }
