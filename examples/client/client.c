@@ -53,7 +53,9 @@
     #ifdef HAVE_TERMIOS_H
         #include <termios.h>
     #endif
-    #include <pwd.h>
+    #ifndef USE_WINDOWS_API
+        #include <pwd.h>
+    #endif
 #endif /* WOLFSSH_SHELL */
 
 #ifdef WOLFSSH_AGENT
