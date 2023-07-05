@@ -1,3 +1,27 @@
+# wolfSSH v1.4.14 (July 7, 2023)
+
+## New Feature Additions and Improvements
+
+- Add user authentication support for RSA signing with SHA2-256 and SHA2-512 (Following RFC 8332)
+- Support for FATFS on Xilinx targets
+- ecc_p256-kyber_level1 interop with OQS OpenSSH following the RFC https://www.ietf.org/id/draft-kampanakis-curdle-ssh-pq-ke-01.html
+- Internal refactor of client apps to simplify them and added X509 support to scpclient
+- wolfSSH_accept now returns WS_SCP_INIT and needs called again to complete the SCP operation
+- Update to document Cube Pack dependencies
+- Add carriage return for ‘enter’ key in the example client with shell connections to windows server
+- Stack usage improvement to limit the scope of variables
+- Echoserver example SFTP non blocking improvement for want read cases
+- Increase SFTP performance with throughput
+
+## Fixes
+
+- Fix for calling chdir after chroot with wolfSSHd when jailing connections on unix environments
+- Better handling on the server side for when the client’s window is filled up
+- Fix for building the client project on windows when shell support is enabled
+- Sanity check improvements for handling memory management with non blocking connections
+- Fix for support with secondary groups with wolfSSHd
+- Fixes for SFTP edge cases when used with LWiP
+
 # wolfSSH v1.4.13 (Apr 3, 2023)
 
 ## New Feature Additions and Improvements
