@@ -3206,7 +3206,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
     if (ret == WS_SUCCESS) {
         wc_HashAlg* hash = &ssh->handshake->kexHash;
-        enum wc_HashType hashId = ssh->handshake->kexHashId;
+        enum wc_HashType hashId = (enum wc_HashType)ssh->handshake->kexHashId;
         byte scratchLen[LENGTH_SZ];
         word32 strSz;
 
@@ -3917,7 +3917,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     }
 
     hash = &ssh->handshake->kexHash;
-    hashId = ssh->handshake->kexHashId;
+    hashId = (enum wc_HashType)ssh->handshake->kexHashId;
 
     if (ret == WS_SUCCESS) {
         /* Hash in the raw public key blob from the server including its
@@ -5277,7 +5277,7 @@ static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
         if (ret == 0) {
             ret = wc_GetPubKeyDerFromCert(&cert, NULL, &pubSz);
             if (ret == LENGTH_ONLY_E) {
-                pub = WMALLOC(pubSz, ssh->ctx->heap, DYNTYPE_PUBKEY);
+                pub = (byte*)WMALLOC(pubSz, ssh->ctx->heap, DYNTYPE_PUBKEY);
                 if (pub == NULL) {
                     ret = WS_MEMORY_E;
                 }
@@ -5610,7 +5610,7 @@ static int DoUserAuthRequestEccCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
         if (ret == 0) {
             ret = wc_GetPubKeyDerFromCert(&cert, NULL, &pubSz);
             if (ret == LENGTH_ONLY_E) {
-                pub = WMALLOC(pubSz, ssh->ctx->heap, DYNTYPE_PUBKEY);
+                pub = (byte*)WMALLOC(pubSz, ssh->ctx->heap, DYNTYPE_PUBKEY);
                 if (pub == NULL) {
                     ret = WS_MEMORY_E;
                 }
