@@ -2215,7 +2215,8 @@ int wolfSSH_SendPacket(WOLFSSH* ssh)
 
        sent = ssh->ctx->ioSendCb(ssh,
                                ssh->outputBuffer.buffer + ssh->outputBuffer.idx,
-                               ssh->outputBuffer.length, ssh->ioWriteCtx);
+                               ssh->outputBuffer.length - ssh->outputBuffer.idx,
+                               ssh->ioWriteCtx);
 
         if (sent < 0) {
             switch (sent) {
