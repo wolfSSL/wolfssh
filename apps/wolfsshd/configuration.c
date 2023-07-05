@@ -811,7 +811,7 @@ static int AddRestrictedCase(WOLFSSHD_CONFIG* config, const char* mtch,
     int ret = WS_SUCCESS;
     char* pt;
 
-    pt = XSTRSTR(value, mtch);
+    pt = (char*)XSTRSTR(value, mtch);
     if (pt != NULL) {
         int sz, i;
 
