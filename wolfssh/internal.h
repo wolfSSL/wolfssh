@@ -602,6 +602,17 @@ struct WS_SFTP_RENAME_STATE;
 
 struct WOLFSSH_AGENT_CTX;
 
+#ifndef NO_WOLFSSH_DIR
+/* hold pointers to directory handles */
+typedef struct DIR_HANDLE {
+	WDIR dir;
+	char* dirName; /* base name of directory */
+	byte isEof;    /* flag for if read everything */
+	word32 id[2];  /* handle ID */
+	struct DIR_HANDLE* next;
+} DIR_HANDLE;
+#endif
+
 /* our wolfSSH session */
 struct WOLFSSH {
     WOLFSSH_CTX* ctx;      /* owner context */
@@ -753,6 +764,9 @@ struct WOLFSSH {
     char* sftpDefaultPath;
 #ifdef WOLFSSH_STOREHANDLE
     WS_HANDLE_LIST* handleList;
+#endif
+#ifndef NO_WOLFSSH_DIR
+    DIR_HANDLE* dirList;    /* hold pointers to directory handles */
 #endif
     struct WS_SFTP_RECV_STATE* recvState;
     struct WS_SFTP_RMDIR_STATE* rmdirState;
