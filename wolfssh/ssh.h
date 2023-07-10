@@ -88,6 +88,39 @@ WOLFSSH_API int wolfSSH_ReadKey_buffer(const byte*, word32, int,
 WOLFSSH_API int wolfSSH_ReadKey_file(const char*,
         byte**, word32*, const byte**, word32*, byte*, void*);
 
+typedef enum WS_Text {
+	WOLFSSH_TEXT_KEX_ALGO,
+	WOLFSSH_TEXT_KEX_CURVE,
+	WOLFSSH_TEXT_KEX_HASH,
+
+	WOLFSSH_TEXT_CRYPTO_IN_CIPHER,
+	WOLFSSH_TEXT_CRYPTO_IN_MAC,
+	WOLFSSH_TEXT_CRYPTO_OUT_CIPHER,
+	WOLFSSH_TEXT_CRYPTO_OUT_MAC,
+} WS_Text;
+
+/*
+ * Outputs the c-string representation of the data entry identified by the id to
+ * the character string str, writing no more than strsz bytes, including the
+ * terminating null byte ('\0').
+ *
+ * Returns the number of characters written (excluding the null byte used to end
+ * output to strings), unless the output was truncated, in which case the return
+ * value is the number of characters (excluding the terminating null byte) which
+ * would have been written to the final string if enough space had been
+ * available.
+ *
+ * Thus, a return value of strsz or more means that the output was truncated.
+ */
+
+WOLFSSH_API size_t wolfSSH_GetText(WOLFSSH *ssh, WS_Text id, char *str,
+        size_t strsz);
+
+typedef void (*WS_CallbackKeyingCompletion)(void *);
+WOLFSSH_API void wolfSSH_SetKeyingCompletionCb(WOLFSSH_CTX*,
+        WS_CallbackKeyingCompletion);
+WOLFSSH_API void wolfSSH_SetKeyingCompletionCbCtx(WOLFSSH*,
+        void*);
 
 #define WS_CHANNEL_ID_SELF 0
 #define WS_CHANNEL_ID_PEER 1
