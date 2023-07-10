@@ -602,6 +602,8 @@ struct WS_SFTP_RENAME_STATE;
 
 struct WOLFSSH_AGENT_CTX;
 
+typedef struct DIR_HANDLE DIR_HANDLE;
+
 /* our wolfSSH session */
 struct WOLFSSH {
     WOLFSSH_CTX* ctx;      /* owner context */
@@ -751,6 +753,8 @@ struct WOLFSSH {
     word32 sftpExtSz; /* size of extension buffer (buffer not currently used) */
     SFTP_OFST sftpOfst[WOLFSSH_MAX_SFTPOFST];
     char* sftpDefaultPath;
+    DIR_HANDLE* dirList;
+    word32 idCount[2];
 #ifdef WOLFSSH_STOREHANDLE
     WS_HANDLE_LIST* handleList;
 #endif

@@ -712,6 +712,9 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
 
 #ifdef WOLFSSH_SFTP
     ssh->sftpState   = SFTP_BEGIN;
+    ssh->dirList = NULL;
+    ssh->idCount[0] = 0;
+    ssh->idCount[1] = 0;
 #endif
 
 #ifdef WOLFSSH_AGENT

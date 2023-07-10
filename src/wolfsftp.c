@@ -2149,9 +2149,6 @@ typedef struct DIR_HANDLE {
     word32 id[2];  /* handle ID */
     struct DIR_HANDLE* next;
 } DIR_HANDLE;
-static DIR_HANDLE* dirList = NULL;
-static word32 idCount[2] = {0, 0};
-/* @TODO add locking for thread safety */
 
 
 /* Handles packet to open a directory
@@ -2232,15 +2229,15 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 #else
         cur->dir  = ctx;
 #endif
-        cur->id[0] = id[0] = idCount[0];
-        cur->id[1] = id[1] = idCount[1];
+        cur->id[0] = id[0] = ssh->idCount[0];
+        cur->id[1] = id[1] = ssh->idCount[1];
         c32toa(id[0], idFlat);
         c32toa(id[1], idFlat + UINT32_SZ);
-        AddAssign64(idCount, 1);
+        AddAssign64(ssh->idCount, 1);
         cur->isEof = 0;
-        cur->next  = dirList;
-        dirList    = cur;
-        dirList->dirName = dirName; /* take over ownership of buffer */
+        cur->next = ssh->dirList;
+        ssh->dirList = cur;
+        ssh->dirList->dirName = dirName; /* take over ownership of buffer */
     }
 
     out = (byte*)WMALLOC(outSz, ssh->ctx->heap, DYNTYPE_BUFFER);
@@ -3028,7 +3025,7 @@ int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     WS_SFTPNAME* name = NULL;
     WS_SFTPNAME* list = NULL;
     word32 outSz = 0;
-    DIR_HANDLE* cur = dirList;
+    DIR_HANDLE* cur = ssh->dirList;
     char* dirName = NULL;
     byte* out;
 
@@ -3138,7 +3135,7 @@ int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
  */
 int wolfSSH_SFTP_RecvCloseDir(WOLFSSH* ssh, byte* handle, word32 handleSz)
 {
-    DIR_HANDLE* cur = dirList;
+    DIR_HANDLE* cur = ssh->dirList;
     word32 h[2] = {0,0};
 
     if (ssh == NULL || handle == NULL || handleSz != (sizeof(word32)*2)) {
@@ -3169,13 +3166,13 @@ int wolfSSH_SFTP_RecvCloseDir(WOLFSSH* ssh, byte* handle, word32 handleSz)
 
     /* remove directory from list */
     if (cur != NULL) {
-        DIR_HANDLE* pre = dirList;
+        DIR_HANDLE* pre = ssh->dirList;
 
         WLOG(WS_LOG_SFTP, "Free'ing and closing handle %d%d pointer of [%p]",
                 cur->id[1], cur->id[0], cur);
         /* case where node is at head of list */
         if (pre == cur) {
-            dirList = cur->next;
+            ssh->dirList = cur->next;
             WFREE(cur->dirName, ssh->ctx->heap, DYNTYPE_SFTP);
             WFREE(cur, ssh->ctx->heap, DYNTYPE_SFTP);
         }
@@ -8463,7 +8460,7 @@ int wolfSSH_SFTP_free(WOLFSSH* ssh)
 #ifndef NO_WOLFSSH_DIR
     {
         /* free all dirs if hung up on */
-        DIR_HANDLE* cur = dirList;
+        DIR_HANDLE* cur = ssh->dirList;
 
         /* find DIR given handle */
         while (cur != NULL) {
@@ -8479,7 +8476,7 @@ int wolfSSH_SFTP_free(WOLFSSH* ssh)
                 WFREE(toFree->dirName, ssh->ctx->heap, DYNTYPE_SFTP);
             WFREE(toFree, ssh->ctx->heap, DYNTYPE_SFTP);
         }
-        dirList = NULL;
+        ssh->dirList = NULL;
     }
 #endif /* NO_WOLFSSH_DIR */
 
