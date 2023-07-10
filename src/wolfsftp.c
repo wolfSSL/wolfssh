@@ -2997,7 +2997,6 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
     {
         char  r[WOLFSSH_MAX_FILENAME];
         char  s[WOLFSSH_MAX_FILENAME];
-
         if ((WSTRLEN(dirName) + WSTRLEN(out->fName) + 2) > sizeof(r)) {
             WLOG(WS_LOG_SFTP, "Path length too large");
             WFREE(out->fName, out->heap, DYNTYPE_SFTP);
@@ -3016,6 +3015,42 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
             WLOG(WS_LOG_SFTP, "Unable to get attribute values for %s",
                     out->fName);
         }
+    }
+
+    /* Use attributes and fName to create long name */
+    if (SFTP_CreateLongName(out) != WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "Error creating long name for %s", out->fName);
+        WFREE(out->fName, out->heap, DYNTYPE_SFTP);
+        return WS_FATAL_ERROR;
+    }
+
+    return WS_SUCCESS;
+}
+
+#elif defined(WOLFSSH_USER_FILESYSTEM) && defined(SFTP_Name_readdir)
+
+/* helper function that gets file information from reading directory.
+ * Internally uses SFTP_Name_readdir to delegate the work to the User Filesystem.
+ *
+ * returns WS_SUCCESS on success
+ */
+static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
+        char* dirName)
+{
+    WOLFSSH_UNUSED(dirName);
+    int res;
+
+    if (dir == NULL || ssh == NULL || out == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    res = SFTP_Name_readdir(ssh->fs, dir, out);
+    if (res != WS_SUCCESS) {
+        return res;
+    }
+
+    if (out->fName == NULL) {
+        return WS_MEMORY_E;
     }
 
     /* Use attributes and fName to create long name */
