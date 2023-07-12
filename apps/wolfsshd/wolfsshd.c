@@ -596,7 +596,8 @@ static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 break;
             }
 
-            if (select_ret == WS_SELECT_RECV_READY) {
+            if (ret == WS_WANT_READ || ret == WS_WANT_WRITE ||
+                    select_ret == WS_SELECT_RECV_READY) {
                 ret = wolfSSH_worker(ssh, NULL);
                 error = wolfSSH_get_error(ssh);
                 if (ret == WS_REKEYING) {
