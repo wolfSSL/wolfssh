@@ -1016,9 +1016,22 @@ static int doAutopilot(int cmd, char* local, char* remote)
     int ret = WS_SUCCESS;
     char fullpath[128] = ".";
     WS_SFTPNAME* name  = NULL;
+    byte remoteAbsPath = 0;
 
-    if (remote != NULL && remote[0] == '/') {
-        /* use remote absolute path if provided */
+    /* check if is absolute path before making it one */
+    if (remote != NULL && WSTRLEN(remote) > 2 && remote[1] == ':' &&
+            remote[2] == '\\') {
+        remoteAbsPath = 1;
+    }
+    else if (remote != NULL && WSTRLEN(remote) > 2 && remote[1] == ':' &&
+            remote[2] == '/') {
+        remoteAbsPath = 1;
+    }
+    else if (remote != NULL && remote[0] == '/') {
+        remoteAbsPath = 1;
+    }
+
+    if (remoteAbsPath) {
         WMEMSET(fullpath, 0, sizeof(fullpath));
         WSTRNCPY(fullpath, remote, sizeof(fullpath) - 1);
     }
