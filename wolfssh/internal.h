@@ -155,8 +155,7 @@ extern "C" {
     #undef WOLFSSH_NO_ECDH_SHA2_NISTP521
     #define WOLFSSH_NO_ECDH_SHA2_NISTP521
 #endif
-#if !defined(HAVE_ED25519) || defined(NO_SHA256) || 1
-    /* ED25519 isn't supported yet. Force disabled. */
+#if !defined(HAVE_ED25519) || defined(NO_SHA256)
     #undef WOLFSSH_NO_ECDH_SHA2_ED25519
     #define WOLFSSH_NO_ECDH_SHA2_ED25519
 #endif
@@ -184,7 +183,8 @@ extern "C" {
 #endif
 #if defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && \
     defined(WOLFSSH_NO_ECDH_SHA2_NISTP384) && \
-    defined(WOLFSSH_NO_ECDH_SHA2_NISTP521)
+    defined(WOLFSSH_NO_ECDH_SHA2_NISTP521) && \
+    defined(WOLFSSH_NO_ECDH_SHA2_ED25519)
     #undef WOLFSSH_NO_ECDH
     #define WOLFSSH_NO_ECDH
 #endif
@@ -222,7 +222,8 @@ extern "C" {
     defined(WOLFSSH_NO_RSA_SHA2_512) && \
     defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && \
     defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && \
-    defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
+    defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521) && \
+    !defined(HAVE_ED25519)
     #error "You need at least one signing algorithm."
 #endif
 
@@ -234,7 +235,8 @@ extern "C" {
 #endif
 #if defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && \
     defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && \
-    defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
+    defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521) && \
+    !defined(HAVE_ED25519)
     #undef WOLFSSH_NO_ECDSA
     #define WOLFSSH_NO_ECDSA
 #endif
@@ -322,6 +324,7 @@ enum {
     ID_ECDSA_SHA2_NISTP256,
     ID_ECDSA_SHA2_NISTP384,
     ID_ECDSA_SHA2_NISTP521,
+    ID_ED25519,
     ID_X509V3_SSH_RSA,
     ID_X509V3_ECDSA_SHA2_NISTP256,
     ID_X509V3_ECDSA_SHA2_NISTP384,
