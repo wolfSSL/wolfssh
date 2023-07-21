@@ -1411,7 +1411,7 @@ static int load_file(const char* fileName, byte* buf, word32* bufSz)
 
     if (fileName == NULL) return 0;
 
-    if (WFOPEN(&file, fileName, "rb") != 0)
+    if (WFOPEN(NULL, &file, fileName, "rb") != 0)
         return 0;
     fseek(file, 0, XSEEK_END);
     fileSz = (word32)ftell(file);
@@ -2511,10 +2511,10 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     #ifndef NO_FILESYSTEM
         WFILE* f = NULL;
         int    ret;
-        ret = WFOPEN(&f, readyFile, "w");
+        ret = WFOPEN(NULL, &f, readyFile, "w");
         if (f != NULL && ret == 0) {
             fprintf(f, "%d\n", (int)port);
-            WFCLOSE(f);
+            WFCLOSE(NULL, f);
         }
     #endif
     }

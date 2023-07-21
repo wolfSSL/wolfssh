@@ -66,13 +66,13 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
     }
 
     if (filename != NULL && f != NULL) {
-        if ((**f = WOPEN(filename, m, 0)) < 0) {
+        if ((**f = WOPEN(ssh->fs, filename, m, 0)) < 0) {
             return **f;
         }
 
         /* fopen defaults to normal */
         if (NU_Set_Attributes(filename, 0) != NU_SUCCESS) {
-            WCLOSE(**f);
+            WCLOSE(ssh->fs, **f);
             return 1;
         }
         return 0;
