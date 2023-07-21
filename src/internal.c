@@ -430,6 +430,9 @@ const char* GetErrorString(int err)
         case WS_KEY_FORMAT_E:
             return "key format wrong error";
 
+        case WS_AUTH_PENDING:
+            return "userauth is still pending (callback would block)";
+
         default:
             return "Unknown error code";
     }
@@ -5344,6 +5347,10 @@ static int DoUserAuthRequestNone(WOLFSSH* ssh, WS_UserAuthData* authData,
                 ret = WS_USER_AUTH_E;
                 #endif
             }
+            else if (ret == WOLFSSH_USERAUTH_WOULD_BLOCK) {
+                WLOG(WS_LOG_DEBUG, "DUARN: userauth callback would block");
+                ret = WS_AUTH_PENDING;
+            }
             else {
                 WLOG(WS_LOG_DEBUG, "DUARN: none check failed, retry");
                 ret = SendUserAuthFailure(ssh, 0);
@@ -5428,6 +5435,10 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
                     authFailure = 1;
                 #endif
                 ret = WS_USER_AUTH_E;
+            }
+            else if (ret == WOLFSSH_USERAUTH_WOULD_BLOCK) {
+                WLOG(WS_LOG_DEBUG, "DUARPW: userauth callback would block");
+                ret = WS_AUTH_PENDING;
             }
             else {
                 WLOG(WS_LOG_DEBUG, "DUARPW: password check failed, retry");
@@ -6241,6 +6252,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PUBLICKEY,
                                        authData, ssh->userAuthCtx);
             WLOG(WS_LOG_DEBUG, "DUARPK: callback result = %d", ret);
+
         #ifdef DEBUG_WOLFSSH
             switch (ret) {
                 case WOLFSSH_USERAUTH_SUCCESS:
@@ -6270,6 +6282,10 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                 case WOLFSSH_USERAUTH_PARTIAL_SUCCESS:
                     WLOG(WS_LOG_DEBUG, "DUARPK: user auth partial success");
                     break;
+                    
+                case WOLFSSH_USERAUTH_WOULD_BLOCK:
+                    WLOG(WS_LOG_DEBUG, "DUARPK: userauth callback would block");
+                    break;
 
                 default:
                     WLOG(WS_LOG_DEBUG,
@@ -6277,13 +6293,18 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             }
         #endif
 
-            if (ret == WOLFSSH_USERAUTH_PARTIAL_SUCCESS) {
-                partialSuccess = 1;
+            if (ret == WOLFSSH_USERAUTH_WOULD_BLOCK) {
+                ret = WS_AUTH_PENDING;
             }
-            else if (ret != WOLFSSH_USERAUTH_SUCCESS) {
-                authFailure = 1;
+            else {
+                if (ret == WOLFSSH_USERAUTH_PARTIAL_SUCCESS) {
+                    partialSuccess = 1;
+                }
+                else if (ret != WOLFSSH_USERAUTH_SUCCESS) {
+                    authFailure = 1;
+                }
+                ret = WS_SUCCESS;
             }
-            ret = WS_SUCCESS;
         }
         else {
             WLOG(WS_LOG_DEBUG, "DUARPK: no userauth callback set");
@@ -7685,17 +7706,20 @@ static int DoPacket(WOLFSSH* ssh)
             ret = SendUnimplemented(ssh);
     }
 
-    if (payloadSz > 0) {
-        idx += payloadIdx;
-        if (idx + padSz > len) {
-            WLOG(WS_LOG_DEBUG, "Not enough data in buffer for pad.");
-            ret = WS_BUFFER_E;
+    /* if the auth is still pending, don't discard the packet data */
+    if (ret != WS_AUTH_PENDING) {
+        if (payloadSz > 0) {
+            idx += payloadIdx;
+            if (idx + padSz > len) {
+                WLOG(WS_LOG_DEBUG, "Not enough data in buffer for pad.");
+                ret = WS_BUFFER_E;
+            }
         }
-    }
 
-    idx += padSz;
-    ssh->inputBuffer.idx = idx;
-    ssh->peerSeq++;
+        idx += padSz;
+        ssh->inputBuffer.idx = idx;
+        ssh->peerSeq++;
+    }
 
     return ret;
 }
