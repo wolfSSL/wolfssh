@@ -5842,6 +5842,11 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                 authFailure = 1;
                 ret = WS_SUCCESS;
             }
+            else if (ret == WOLFSSH_USERAUTH_INVALID_USER) {
+                WLOG(WS_LOG_DEBUG, "DUARPK: public key user rejected");
+                authFailure = 1;
+                ret = WS_SUCCESS;
+            }
             else {
                 authFailure = 1;
             }
@@ -7632,7 +7637,7 @@ int DoReceive(WOLFSSH* ssh)
                                     + peerBlockSz,
                                 ssh->inputBuffer.buffer + ssh->inputBuffer.idx
                                     + peerBlockSz,
-                                ssh->curSz - peerBlockSz);
+                                UINT32_SZ + ssh->curSz - peerBlockSz);
                     }
                     else {
                         /* Entire packet fit in one block, don't need
