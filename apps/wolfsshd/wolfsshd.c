@@ -2213,6 +2213,9 @@ int main(int argc, char** argv)
 }
 
 #else
+
+#include <stdio.h>
+
 /* helpful print out if compiling without SSHD feature enabled */
 int main(int argc, char** argv)
 {

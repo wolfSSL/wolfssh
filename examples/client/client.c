@@ -190,13 +190,23 @@ typedef struct thread_args {
 
 
 #ifndef _MSC_VER
+
+#if (defined(__OSX__) || defined(__APPLE__))
+#include <dispatch/dispatch.h>
+dispatch_semaphore_t windowSem;
+#else
 #include <semaphore.h>
 static sem_t windowSem;
+#endif
 
 /* capture window change signales */
 static void WindowChangeSignal(int sig)
 {
+#if (defined(__OSX__) || defined(__APPLE__))
+    dispatch_semaphore_signal(windowSem);
+#else
     sem_post(&windowSem);
+#endif
     (void)sig;
 }
 
@@ -225,7 +235,11 @@ static THREAD_RET windowMonitor(void* in)
 
     args = (thread_args*)in;
     do {
+    #if (defined(__OSX__) || defined(__APPLE__))
+        dispatch_semaphore_wait(windowSem, DISPATCH_TIME_FOREVER);
+    #else
         sem_wait(&windowSem);
+    #endif
         ret = sendCurrentWindowSize(args);
         (void)ret;
     } while (1);
@@ -290,7 +304,7 @@ static THREAD_RET readPeer(void* in)
     int  bufSz = sizeof(buf);
     thread_args* args = (thread_args*)in;
     int ret = 0;
-    int fd = wolfSSH_get_fd(args->ssh);
+    int fd = (int)wolfSSH_get_fd(args->ssh);
     word32 bytes;
 #ifdef USE_WINDOWS_API
     HANDLE stdoutHandle = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -800,19 +814,28 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
         arg.ssh = ssh;
         wc_InitMutex(&arg.lock);
+    #if (defined(__OSX__) || defined(__APPLE__))
+        windowSem = dispatch_semaphore_create(0);
+    #else
         sem_init(&windowSem, 0, 0);
+    #endif
 
         /* send current terminal size */
         ret = sendCurrentWindowSize(&arg);
-
-        signal(SIGWINCH, WindowChangeSignal);
-        pthread_create(&thread[0], NULL, windowMonitor, (void*)&arg);
-        pthread_create(&thread[1], NULL, readInput, (void*)&arg);
-        pthread_create(&thread[2], NULL, readPeer, (void*)&arg);
-        pthread_join(thread[2], NULL);
-        pthread_cancel(thread[0]);
-        pthread_cancel(thread[1]);
-        sem_destroy(&windowSem);
+        if (ret == WS_SUCCESS) {
+            signal(SIGWINCH, WindowChangeSignal);
+            pthread_create(&thread[0], NULL, windowMonitor, (void*)&arg);
+            pthread_create(&thread[1], NULL, readInput, (void*)&arg);
+            pthread_create(&thread[2], NULL, readPeer, (void*)&arg);
+            pthread_join(thread[2], NULL);
+            pthread_cancel(thread[0]);
+            pthread_cancel(thread[1]);
+        #if (defined(__OSX__) || defined(__APPLE__))
+            dispatch_release(windowSem);
+        #else
+            sem_destroy(&windowSem);
+        #endif
+        }
     #elif defined(_MSC_VER)
         thread_args arg;
         HANDLE thread[2];

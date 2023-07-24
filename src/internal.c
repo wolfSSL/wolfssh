@@ -633,7 +633,7 @@ void CtxResourceFree(WOLFSSH_CTX* ctx)
 #ifdef WOLFSSH_TERM
 /* default terminal resize handling callbacks */
 
-#ifdef USE_WINDOWS_API
+#if defined(USE_WINDOWS_API) && defined(WOLFSSH_SSHD)
 static int WS_WindowsTermResize(WOLFSSH* ssh, word32 col, word32 row, word32 colP,
     word32 rowP, void* usrCtx)
 {
@@ -752,7 +752,7 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
 #endif
 
 #ifdef WOLFSSH_TERM
-    #if defined(USE_WINDOWS_API)
+    #if defined(USE_WINDOWS_API) && defined(WOLFSSH_SSHD)
     ssh->termResizeCb = WS_WindowsTermResize;
     #endif
 #endif
