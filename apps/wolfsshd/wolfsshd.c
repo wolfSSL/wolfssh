@@ -1258,6 +1258,7 @@ int main(int argc, char** argv)
     WOLFSSHD_AUTH*   auth = NULL;
     WOLFSSH_CTX* ctx = NULL;
     byte isDaemon = 1;
+    byte testMode = 0;
 
     const char* configFile  = "/etc/ssh/sshd_config";
     const char* hostKeyFile = NULL;
@@ -1282,7 +1283,7 @@ int main(int argc, char** argv)
         }
     }
 
-    while ((ch = mygetopt(argc, argv, "?f:p:h:dDE:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?f:p:h:dDE:o:t")) != -1) {
         switch (ch) {
             case 'f':
                 configFile = myoptarg;
@@ -1334,6 +1335,19 @@ int main(int argc, char** argv)
                 }
                 break;
 
+            case 'o':
+            #ifdef WOLFSSH_IGNORE_UNKNOWN_CONFIG
+                wolfSSH_Log(WS_LOG_DEBUG, "[SSHD] ignoring -o.");
+                break;
+            #else
+                ShowUsage();
+                return WS_FATAL_ERROR;
+            #endif
+
+            case 't':
+                testMode = 1;
+                break;
+
             case '?':
                 ShowUsage();
                 return WS_SUCCESS;
@@ -1346,8 +1360,9 @@ int main(int argc, char** argv)
 
     if (ret == WS_SUCCESS) {
         ret = wolfSSHD_ConfigLoad(conf, configFile);
-        if (ret != WS_SUCCESS)
+        if (ret != WS_SUCCESS) {
             fprintf(stderr, "Error reading in configure file %s\n", configFile);
+        }
     }
 
     /* port was not overridden with argument, read from config file */
@@ -1437,13 +1452,14 @@ int main(int argc, char** argv)
     }
 
     if (ret == WS_SUCCESS) {
+        wolfSSHD_ConfigSavePID(conf);
         if (wolfSSHD_AuthReducePermissions(auth) != WS_SUCCESS) {
             wolfSSH_Log(WS_LOG_INFO, "[SSHD] Error lowering permissions level");
             ret = WS_FATAL_ERROR;
         }
     }
 
-    if (ret == WS_SUCCESS) {
+    if (ret == WS_SUCCESS && !testMode) {
         wolfSSH_Log(WS_LOG_INFO, "[SSHD] Starting to listen on port %d", port);
         tcp_listen(&listenFd, &port, 1);
         wolfSSH_Log(WS_LOG_INFO, "[SSHD] Listening on port %d", port);
