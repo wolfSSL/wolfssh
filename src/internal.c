@@ -13044,6 +13044,28 @@ int SendChannelTerminalResize(WOLFSSH* ssh, word32 columns, word32 rows,
 }
 
 
+#ifdef __linux__
+#ifdef HAVE_PTY_H
+    #include <pty.h>
+#endif
+#endif
+
+static void GetTerminalSize(word32* width, word32* height)
+{
+#ifdef __linux__
+    struct winsize windowSize = {0,0,0,0};
+
+    ioctl(STDOUT_FILENO, TIOCGWINSZ, &windowSize);
+    *width  = (word32)windowSize.ws_col;
+    *height = (word32)windowSize.ws_row;
+#else
+    /* sane defaults for terminal size if not yet supported */
+    *width  = 80;
+    *height = 24;
+#endif
+}
+
+
 /* sends request for pseudo-terminal (rfc 4254)
  * returns WS_SUCCESS on success */
 int SendChannelTerminalRequest(WOLFSSH* ssh)
@@ -13056,7 +13078,7 @@ int SendChannelTerminalRequest(WOLFSSH* ssh)
     const char envVar[] = "xterm";
     byte mode[4096];
     word32 envSz, typeSz, modeSz;
-    word32 w = 80, h = 24;
+    word32 w, h;
     word32 pxW = 0, pxH = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering SendChannelTerminalRequest()");
@@ -13064,6 +13086,7 @@ int SendChannelTerminalRequest(WOLFSSH* ssh)
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
+    GetTerminalSize(&w, &h);
     envSz  = (word32)WSTRLEN(envVar);
     typeSz = (word32)WSTRLEN(cType);
     modeSz = CreateMode(ssh, mode);
