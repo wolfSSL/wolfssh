@@ -24,6 +24,12 @@
 
 #define WOLFSSH_TEST_CLIENT
 
+#ifdef WOLFSSL_USER_SETTINGS
+#include <wolfssl/wolfcrypt/settings.h>
+#else
+#include <wolfssl/options.h>
+#endif
+
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/wolfsftp.h>
@@ -1245,7 +1251,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     else
         wolfSSH_SetUserAuth(ctx, ((func_args*)args)->user_auth);
 
-#ifndef WS_NO_SIGNAL
+#if !defined(WS_NO_SIGNAL) && !defined(USE_WINDOWS_API)
     /* handle interrupt with get and put */
     signal(SIGINT, sig_handler);
 #endif

@@ -189,6 +189,39 @@ typedef struct thread_args {
 #endif
 
 
+static int sendCurrentWindowSize(thread_args* args)
+{
+    int ret;
+    word32 col = 80, row = 24, xpix = 0, ypix = 0;
+
+    wc_LockMutex(&args->lock);
+#if defined(_MSC_VER)
+    {
+        CONSOLE_SCREEN_BUFFER_INFO cs;
+
+        if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &cs) != 0) {
+            col = cs.srWindow.Right - cs.srWindow.Left + 1;
+            row = cs.srWindow.Bottom - cs.srWindow.Top + 1;
+        }
+    }
+#else
+    {
+        struct winsize windowSize = { 0,0,0,0 };
+
+        ioctl(STDOUT_FILENO, TIOCGWINSZ, &windowSize);
+        col = windowSize.ws_col;
+        row = windowSize.ws_row;
+        xpix = windowSize.ws_xpixel;
+        ypix = windowSize.ws_ypixel;
+    }
+#endif
+    ret = wolfSSH_ChangeTerminalSize(args->ssh, col, row, xpix, ypix);
+    wc_UnLockMutex(&args->lock);
+
+    return ret;
+}
+
+
 #ifndef _MSC_VER
 
 #if (defined(__OSX__) || defined(__APPLE__))
@@ -210,23 +243,6 @@ static void WindowChangeSignal(int sig)
     (void)sig;
 }
 
-
-static int sendCurrentWindowSize(thread_args* args)
-{
-    struct winsize windowSize = {0,0,0,0};
-    int ret;
-
-    wc_LockMutex(&args->lock);
-    ioctl(STDOUT_FILENO, TIOCGWINSZ, &windowSize);
-    ret = wolfSSH_ChangeTerminalSize(args->ssh,
-            windowSize.ws_col, windowSize.ws_row,
-            windowSize.ws_xpixel, windowSize.ws_ypixel);
-    wc_UnLockMutex(&args->lock);
-
-    return ret;
-}
-
-
 /* thread for handling window size adjustments */
 static THREAD_RET windowMonitor(void* in)
 {
@@ -246,7 +262,34 @@ static THREAD_RET windowMonitor(void* in)
 
     return THREAD_RET_SUCCESS;
 }
+#else
+/* no SIGWINCH on Windows, poll current terminal size */
+static word32 prevCol, prevRow;
+
+static int windowMonitor(thread_args* args)
+{
+    word32 row, col;
+    int ret = WS_SUCCESS;
+    CONSOLE_SCREEN_BUFFER_INFO cs;
+
+    if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &cs) != 0) {
+        col = cs.srWindow.Right - cs.srWindow.Left + 1;
+        row = cs.srWindow.Bottom - cs.srWindow.Top + 1;
+
+        if (prevCol != col || prevRow != row) {
+            prevCol = col;
+            prevRow = row;
+
+            wc_LockMutex(&args->lock);
+            ret = wolfSSH_ChangeTerminalSize(args->ssh, col, row, 0, 0);
+            wc_UnLockMutex(&args->lock);
+        }
+    }
+
+    return ret;
+}
 #endif
+
 
 static THREAD_RET readInput(void* in)
 {
@@ -265,6 +308,7 @@ static THREAD_RET readInput(void* in)
         /* Using A version to avoid potential 2 byte chars */
         ret = ReadConsoleA(stdinHandle, (void*)buf, bufSz - 1, (DWORD*)&sz,
                 NULL);
+        (void)windowMonitor(args);
     #else
         ret = (int)read(STDIN_FILENO, buf, bufSz -1);
         sz  = (word32)ret;
@@ -325,6 +369,10 @@ static THREAD_RET readPeer(void* in)
 #endif
 
     while (ret >= 0) {
+    #ifdef USE_WINDOWS_API
+        (void)windowMonitor(args);
+    #endif
+
         bytes = select(fd + 1, &readSet, NULL, &errSet, NULL);
         wc_LockMutex(&args->lock);
         while (bytes > 0 && (FD_ISSET(fd, &readSet) || FD_ISSET(fd, &errSet))) {
@@ -820,41 +868,21 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         sem_init(&windowSem, 0, 0);
     #endif
 
-        /* send current terminal size */
-        ret = sendCurrentWindowSize(&arg);
-        if (ret == WS_SUCCESS) {
-            signal(SIGWINCH, WindowChangeSignal);
-            pthread_create(&thread[0], NULL, windowMonitor, (void*)&arg);
-            pthread_create(&thread[1], NULL, readInput, (void*)&arg);
-            pthread_create(&thread[2], NULL, readPeer, (void*)&arg);
-            pthread_join(thread[2], NULL);
-            pthread_cancel(thread[0]);
-            pthread_cancel(thread[1]);
-        #if (defined(__OSX__) || defined(__APPLE__))
-            dispatch_release(windowSem);
-        #else
-            sem_destroy(&windowSem);
-        #endif
-        }
+        signal(SIGWINCH, WindowChangeSignal);
+        pthread_create(&thread[0], NULL, windowMonitor, (void*)&arg);
+        pthread_create(&thread[1], NULL, readInput, (void*)&arg);
+        pthread_create(&thread[2], NULL, readPeer, (void*)&arg);
+        pthread_join(thread[2], NULL);
+        pthread_cancel(thread[0]);
+        pthread_cancel(thread[1]);
+    #if (defined(__OSX__) || defined(__APPLE__))
+        dispatch_release(windowSem);
+    #else
+        sem_destroy(&windowSem);
+    #endif
     #elif defined(_MSC_VER)
         thread_args arg;
         HANDLE thread[2];
-
-        /* send the console size to server */
-        {
-            CONSOLE_SCREEN_BUFFER_INFO cs;
-            word32 col = 80, row = 24;
-
-            if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &cs) == 0) {
-                fprintf(stderr, "Failed to get the current console size\r\n");
-                fprintf(stderr, "Using default col = 80 row = 24\r\n");
-            }
-            else {
-                col = cs.srWindow.Right - cs.srWindow.Left + 1;
-                row = cs.srWindow.Bottom - cs.srWindow.Top + 1;
-            }
-            wolfSSH_ChangeTerminalSize(ssh, col, row, 0, 0);
-        }
 
         arg.ssh     = ssh;
         arg.rawMode = rawMode;

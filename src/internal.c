@@ -13053,11 +13053,18 @@ int SendChannelTerminalResize(WOLFSSH* ssh, word32 columns, word32 rows,
 static void GetTerminalSize(word32* width, word32* height)
 {
 #ifdef __linux__
-    struct winsize windowSize = {0,0,0,0};
+    struct winsize windowSize = { 0,0,0,0 };
 
     ioctl(STDOUT_FILENO, TIOCGWINSZ, &windowSize);
     *width  = (word32)windowSize.ws_col;
     *height = (word32)windowSize.ws_row;
+#elif defined(_MSC_VER)
+    CONSOLE_SCREEN_BUFFER_INFO cs;
+
+    if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &cs) != 0) {
+        *width  = cs.srWindow.Right - cs.srWindow.Left + 1;
+        *height = cs.srWindow.Bottom - cs.srWindow.Top + 1;
+    }
 #else
     /* sane defaults for terminal size if not yet supported */
     *width  = 80;
