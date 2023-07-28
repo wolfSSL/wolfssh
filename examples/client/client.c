@@ -868,6 +868,17 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         sem_init(&windowSem, 0, 0);
     #endif
 
+        if (cmd) {
+            int err;
+
+            /* exec command does not contain initial terminal size, unlike pty-req.
+             * Send an inital terminal size for recieving the results of the command */
+            err = sendCurrentWindowSize(&arg);
+            if (err != WS_SUCCESS) {
+                fprintf(stderr, "Issue sending exec initial terminal size\n\r");
+            }
+        }
+
         signal(SIGWINCH, WindowChangeSignal);
         pthread_create(&thread[0], NULL, windowMonitor, (void*)&arg);
         pthread_create(&thread[1], NULL, readInput, (void*)&arg);
@@ -887,6 +898,18 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         arg.ssh     = ssh;
         arg.rawMode = rawMode;
         wc_InitMutex(&arg.lock);
+
+        if (cmd) {
+            int err;
+
+            /* exec command does not contain initial terminal size, unlike pty-req.
+             * Send an inital terminal size for recieving the results of the command */
+            err = sendCurrentWindowSize(&arg);
+            if (err != WS_SUCCESS) {
+                fprintf(stderr, "Issue sending exec initial terminal size\n\r");
+            }
+        }
+
         thread[0] = CreateThread(NULL, 0, readInput, (void*)&arg, 0, 0);
         thread[1] = CreateThread(NULL, 0, readPeer, (void*)&arg, 0, 0);
         WaitForSingleObject(thread[1], INFINITE);
