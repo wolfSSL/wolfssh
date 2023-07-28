@@ -843,6 +843,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 ret = WS_MEMORY_E;
             }
             else {
+                byte pol[2];
                 WCHAR* tmp = (WCHAR*)WMALLOC(sizeof(wchar_t) * cmdSz, NULL, DYNTYPE_SSHD);
                 if (tmp == NULL) {
                     ret = WS_MEMORY_E;
@@ -861,6 +862,19 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 
                 if (tmp != NULL) {
                     WFREE(tmp, NULL, DYNTYPE_SSHD);
+                }
+
+                /* read in case a window-change packet might be queued */
+                {
+                    int rc;
+                    word32 lastChannel = 0;
+
+                    do {
+                        rc = wolfSSH_worker(ssh, &lastChannel);
+                        if (rc < 0) {
+                            rc = wolfSSH_get_error(ssh);
+                        }
+                    } while (rc == WS_WANT_WRITE);
                 }
             }
         }
