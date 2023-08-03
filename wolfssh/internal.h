@@ -571,6 +571,9 @@ typedef struct HandshakeInfo {
 #ifdef WOLFSSH_SFTP
 #define WOLFSSH_MAX_SFTPOFST 3
 
+#ifndef NO_WOLFSSH_DIR
+    typedef struct WS_DIR_LIST WS_DIR_LIST;
+#endif
 typedef struct WS_HANDLE_LIST WS_HANDLE_LIST;
 typedef struct SFTP_OFST {
     word32 offset[2];
@@ -751,6 +754,10 @@ struct WOLFSSH {
     word32 sftpExtSz; /* size of extension buffer (buffer not currently used) */
     SFTP_OFST sftpOfst[WOLFSSH_MAX_SFTPOFST];
     char* sftpDefaultPath;
+#ifndef NO_WOLFSSH_DIR
+    WS_DIR_LIST* dirList;
+    word32 dirIdCount[2];
+#endif
 #ifdef WOLFSSH_STOREHANDLE
     WS_HANDLE_LIST* handleList;
 #endif
