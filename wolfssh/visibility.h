@@ -41,7 +41,7 @@ extern "C" {
 */
 
 #if defined(BUILDING_WOLFSSH)
-    #if defined(_MSC_VER) || defined(__CYGWIN__)
+    #if defined(_MSC_VER) || defined(__CYGWIN__) || defined(__MINGW32__)
         #ifdef WOLFSSH_DLL
             #define WOLFSSH_API extern __declspec(dllexport)
         #else
@@ -59,7 +59,7 @@ extern "C" {
         #define WOLFSSH_LOCAL
     #endif /* HAVE_VISIBILITY */
 #else /* BUILDING_WOLFSSH */
-    #if defined(_MSC_VER) || defined(__CYGWIN__)
+    #if defined(_MSC_VER) || defined(__CYGWIN__) || defined(__MINGW32__)
         #ifdef WOLFSSH_DLL
             #define WOLFSSH_API extern __declspec(dllimport)
         #else
