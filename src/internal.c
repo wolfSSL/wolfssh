@@ -8341,10 +8341,10 @@ struct wolfSSH_sigKeyBlockFull {
 #ifndef WOLFSSH_NO_RSA
             struct {
                 RsaKey key;
-                byte e[257];
+                byte e[1025];
                 word32 eSz;
                 byte ePad;
-                byte n[257];
+                byte n[1025];
                 word32 nSz;
                 byte nPad;
             } rsa;
