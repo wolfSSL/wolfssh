@@ -5834,22 +5834,39 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PUBLICKEY,
                                        authData, ssh->userAuthCtx);
             WLOG(WS_LOG_DEBUG, "DUARPK: callback result = %d", ret);
-            if (ret == WOLFSSH_USERAUTH_SUCCESS) {
-                ret = WS_SUCCESS;
+        #ifdef DEBUG_WOLFSSH
+            switch (ret) {
+                case WOLFSSH_USERAUTH_INVALID_PUBLICKEY:
+                    WLOG(WS_LOG_DEBUG, "DUARPK: client key invalid");
+                    break;
+
+                case WOLFSSH_USERAUTH_INVALID_USER:
+                    WLOG(WS_LOG_DEBUG, "DUARPK: public key user rejected");
+                    break;
+
+
+                case WOLFSSH_USERAUTH_FAILURE:
+                    WLOG(WS_LOG_DEBUG, "DUARPK: public key general failure");
+                    break;
+
+                case WOLFSSH_USERAUTH_INVALID_AUTHTYPE:
+                    WLOG(WS_LOG_DEBUG, "DUARPK: public key invalid auth type");
+                    break;
+
+                case WOLFSSH_USERAUTH_REJECTED:
+                    WLOG(WS_LOG_DEBUG, "DUARPK: public key rejected");
+                    break;
+
+                default:
+                    WLOG(WS_LOG_DEBUG,
+                        "Unexpected return value from Auth callback");
             }
-            else if (ret == WOLFSSH_USERAUTH_INVALID_PUBLICKEY) {
-                WLOG(WS_LOG_DEBUG, "DUARPK: client key rejected");
+        #endif
+
+            if (ret != WOLFSSH_USERAUTH_SUCCESS) {
                 authFailure = 1;
-                ret = WS_SUCCESS;
             }
-            else if (ret == WOLFSSH_USERAUTH_INVALID_USER) {
-                WLOG(WS_LOG_DEBUG, "DUARPK: public key user rejected");
-                authFailure = 1;
-                ret = WS_SUCCESS;
-            }
-            else {
-                authFailure = 1;
-            }
+            ret = WS_SUCCESS;
         }
         else {
             WLOG(WS_LOG_DEBUG, "DUARPK: no userauth callback set");
