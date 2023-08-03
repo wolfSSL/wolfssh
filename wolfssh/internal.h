@@ -581,6 +581,7 @@ typedef struct SFTP_OFST {
     char to[WOLFSSH_MAX_FILENAME];
 } SFTP_OFST;
 
+struct WS_SFTP_RECV_INIT_STATE;
 struct WS_SFTP_GET_STATE;
 struct WS_SFTP_PUT_STATE;
 struct WS_SFTP_LSTAT_STATE;
@@ -761,6 +762,7 @@ struct WOLFSSH {
 #ifdef WOLFSSH_STOREHANDLE
     WS_HANDLE_LIST* handleList;
 #endif
+    struct WS_SFTP_RECV_INIT_STATE* recvInitState;
     struct WS_SFTP_RECV_STATE* recvState;
     struct WS_SFTP_RMDIR_STATE* rmdirState;
     struct WS_SFTP_MKDIR_STATE* mkdirState;
