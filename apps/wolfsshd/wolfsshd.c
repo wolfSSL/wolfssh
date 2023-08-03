@@ -698,7 +698,6 @@ static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 if (error == WS_EOF) {
                     break;
                 }
-                continue;
             }
 
             if (ret == WS_WANT_READ || ret == WS_WANT_WRITE ||
@@ -843,7 +842,6 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 ret = WS_MEMORY_E;
             }
             else {
-                byte pol[2];
                 WCHAR* tmp = (WCHAR*)WMALLOC(sizeof(wchar_t) * cmdSz, NULL, DYNTYPE_SSHD);
                 if (tmp == NULL) {
                     ret = WS_MEMORY_E;
