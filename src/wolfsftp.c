@@ -2149,8 +2149,6 @@ struct WS_DIR_LIST {
     word32 id[2];  /* handle ID */
     struct WS_DIR_LIST* next;
 };
-static word32 idCount[2] = {0, 0};
-/* @TODO add locking for thread safety */
 
 
 /* Handles packet to open a directory
@@ -2230,11 +2228,11 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 #else
         cur->dir  = ctx;
 #endif
-        cur->id[0] = id[0] = idCount[0];
-        cur->id[1] = id[1] = idCount[1];
+        cur->id[0] = id[0] = ssh->dirIdCount[0];
+        cur->id[1] = id[1] = ssh->dirIdCount[1];
         c32toa(id[0], idFlat);
         c32toa(id[1], idFlat + UINT32_SZ);
-        AddAssign64(idCount, 1);
+        AddAssign64(ssh->dirIdCount, 1);
         cur->isEof = 0;
         cur->next  = ssh->dirList;
         ssh->dirList          = cur;
@@ -2357,7 +2355,6 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     WOLFSSH_UNUSED(reqId);
 
-    /* add to directory list @TODO locking for thread safety */
     if (ret == WS_SUCCESS) {
         WS_DIR_LIST* cur = (WS_DIR_LIST*)WMALLOC(sizeof(WS_DIR_LIST),
                 ssh->ctx->heap, DYNTYPE_SFTP);
@@ -2366,11 +2363,11 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             return WS_MEMORY_E;
         }
         cur->dir = INVALID_HANDLE_VALUE;
-        cur->id[0] = id[0] = idCount[0];
-        cur->id[1] = id[1] = idCount[1];
+        cur->id[0] = id[0] = ssh->dirIdCount[0];
+        cur->id[1] = id[1] = ssh->dirIdCount[1];
         c32toa(id[0], idFlat);
         c32toa(id[1], idFlat + UINT32_SZ);
-        AddAssign64(idCount, 1);
+        AddAssign64(ssh->dirIdCount, 1);
         cur->isEof = 0;
         cur->dirName = dirName; /* take over ownership of buffer */
         cur->next    = ssh->dirList;

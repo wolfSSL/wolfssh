@@ -756,6 +756,7 @@ struct WOLFSSH {
     char* sftpDefaultPath;
 #ifndef NO_WOLFSSH_DIR
     WS_DIR_LIST* dirList;
+    word32 dirIdCount[2];
 #endif
 #ifdef WOLFSSH_STOREHANDLE
     WS_HANDLE_LIST* handleList;
