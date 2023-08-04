@@ -1628,6 +1628,16 @@ int wolfSSH_CTX_SetBanner(WOLFSSH_CTX* ctx,
     return WS_SUCCESS;
 }
 
+int wolfSSH_CTX_SetSshProtoIdStr(WOLFSSH_CTX* ctx,
+                                          const char* protoIdStr)
+{
+    if (!ctx || !protoIdStr) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    ctx->sshProtoIdStr = protoIdStr;
+    return WS_SUCCESS;
+}
 
 int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX* ctx,
                                    const byte* in, word32 inSz, int format)

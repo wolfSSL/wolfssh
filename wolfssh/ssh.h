@@ -236,6 +236,7 @@ WOLFSSH_API int wolfSSH_SetUsername(WOLFSSH*, const char*);
 WOLFSSH_API char* wolfSSH_GetUsername(WOLFSSH*);
 
 WOLFSSH_API int wolfSSH_CTX_SetBanner(WOLFSSH_CTX*, const char*);
+WOLFSSH_API int wolfSSH_CTX_SetSshProtoIdStr(WOLFSSH_CTX*, const char*);
 WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX*,
                                                  const byte*, word32, int);
 #ifdef WOLFSSH_CERTS

@@ -579,6 +579,7 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
 #endif /* WOLFSSH_CERTS */
     ctx->windowSz = DEFAULT_WINDOW_SZ;
     ctx->maxPacketSz = DEFAULT_MAX_PACKET_SZ;
+    ctx->sshProtoIdStr = sshProtoIdStr;
 
     count = (word32)(sizeof(ctx->privateKey)
             / sizeof(ctx->privateKey[0]));
@@ -3233,13 +3234,13 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         if (ret == WS_SUCCESS) {
             byte SSH_PROTO_EOL_SZ = 2;
 
-            strSz = (word32)WSTRLEN(sshProtoIdStr) - SSH_PROTO_EOL_SZ;
+            strSz = (word32)WSTRLEN(ssh->ctx->sshProtoIdStr) - SSH_PROTO_EOL_SZ;
             c32toa(strSz, scratchLen);
             ret = HashUpdate(hash, hashId, scratchLen, LENGTH_SZ);
         }
 
         if (ret == WS_SUCCESS) {
-            ret = HashUpdate(hash, hashId, (const byte*)sshProtoIdStr, strSz);
+            ret = HashUpdate(hash, hashId, (const byte*)ssh->ctx->sshProtoIdStr, strSz);
         }
 
         if (ret == WS_SUCCESS) {
@@ -7731,7 +7732,7 @@ int DoProtoId(WOLFSSH* ssh)
     }
 
     if (WSTRNCASECMP((char*)ssh->inputBuffer.buffer,
-                     sshProtoIdStr, SSH_PROTO_SZ) == 0) {
+                     ssh->ctx->sshProtoIdStr, SSH_PROTO_SZ) == 0) {
 
         if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER)
             ssh->clientState = CLIENT_VERSION_DONE;
@@ -7782,14 +7783,14 @@ int SendProtoId(WOLFSSH* ssh)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
-        WLOG(WS_LOG_DEBUG, "%s", sshProtoIdStr);
-        sshProtoIdStrSz = (word32)WSTRLEN(sshProtoIdStr);
+        WLOG(WS_LOG_DEBUG, "%s", ssh->ctx->sshProtoIdStr);
+        sshProtoIdStrSz = (word32)WSTRLEN(ssh->ctx->sshProtoIdStr);
         ret = GrowBuffer(&ssh->outputBuffer, sshProtoIdStrSz);
     }
 
     if (ret == WS_SUCCESS) {
         WMEMCPY(ssh->outputBuffer.buffer + ssh->outputBuffer.length,
-                sshProtoIdStr, sshProtoIdStrSz);
+                ssh->ctx->sshProtoIdStr, sshProtoIdStrSz);
         ssh->outputBuffer.length += sshProtoIdStrSz;
         ret = wolfSSH_SendPacket(ssh);
     }
