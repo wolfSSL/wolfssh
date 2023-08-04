@@ -1628,10 +1628,10 @@ int wolfSSH_CTX_SetBanner(WOLFSSH_CTX* ctx,
     return WS_SUCCESS;
 }
 
-WOLFSSH_API int wolfSSH_CTX_SetSshProtoIdStr(WOLFSSH_CTX* ctx,
+int wolfSSH_CTX_SetSshProtoIdStr(WOLFSSH_CTX* ctx,
                                           const char* protoIdStr)
 {
-    if (!protoIdStr) {
+    if (!ctx || !protoIdStr) {
         return WS_BAD_ARGUMENT;
     }
 
