@@ -13217,12 +13217,20 @@ int wolfSSH_oct2dec(WOLFSSH* ssh, byte* oct, word32 octSz)
 }
 
 
+/* not using UINT_MAX here because word32 should always be 32 bits where an
+ * int type can change depending on platform */
+#define WS_WORD32_MAX_SZ 4294967295U
+
 /* addend1 += addend2 */
 void AddAssign64(word32* addend1, word32 addend2)
 {
-    word32 tmp = addend1[0];
-    if ((addend1[0] += addend2) < tmp)
+    if (addend1[0] > (WS_WORD32_MAX_SZ - addend2)) {
         addend1[1]++;
+        addend1[0] = addend2 - (WS_WORD32_MAX_SZ - addend1[0]);
+    }
+    else {
+        addend1[0] += addend2;
+    }
 }
 
 #endif /* WOLFSSH_SFTP */
