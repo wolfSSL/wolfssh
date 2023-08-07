@@ -8478,6 +8478,46 @@ static int BuildRFC6187Info(WOLFSSH* ssh, int pubKeyID,
 #endif /* WOLFSSH_CERTS */
 
 
+#ifndef WOLFSSH_NO_DH
+static int GetDHPrimeGroup(int kexId, const byte** primeGroup,
+    word32* primeGroupSz, const byte** generator, word32* generatorSz)
+{
+    int ret = WS_SUCCESS;
+
+    switch (kexId) {
+        #ifndef WOLFSSH_NO_DH_GROUP1_SHA1
+        case ID_DH_GROUP1_SHA1:
+            *primeGroup = dhPrimeGroup1;
+            *primeGroupSz = dhPrimeGroup1Sz;
+            *generator = dhGenerator;
+            *generatorSz = dhGeneratorSz;
+            break;
+        #endif
+        #ifndef WOLFSSH_NO_DH_GROUP14_SHA1
+        case ID_DH_GROUP14_SHA1:
+            *primeGroup = dhPrimeGroup14;
+            *primeGroupSz = dhPrimeGroup14Sz;
+            *generator = dhGenerator;
+            *generatorSz = dhGeneratorSz;
+            break;
+        #endif
+        #ifndef WOLFSSH_NO_DH_GEX_SHA256
+        case ID_DH_GEX_SHA256:
+            *primeGroup = dhPrimeGroup14;
+            *primeGroupSz = dhPrimeGroup14Sz;
+            *generator = dhGenerator;
+            *generatorSz = dhGeneratorSz;
+            break;
+        #endif
+        default:
+            ret = WS_INVALID_ALGO_ID;
+    }
+
+    return ret;
+}
+#endif /* !WOLFSSH_NO_DH */
+
+
 /* Sets the signing key and hashes in the public key
  * returns WS_SUCCESS on success */
 static int SendKexGetSigningKey(WOLFSSH* ssh,
@@ -8720,6 +8760,11 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
         /* If using DH-GEX include the GEX specific values. */
         if (ssh->handshake->kexId == ID_DH_GEX_SHA256) {
             byte primeGroupPad = 0, generatorPad = 0;
+
+            if (GetDHPrimeGroup(ssh->handshake->kexId, &primeGroup,
+                &primeGroupSz, &generator, &generatorSz) != WS_SUCCESS) {
+                ret = WS_BAD_ARGUMENT;
+            }
 
             /* Hash in the client's requested minimum key size. */
             if (ret == 0) {
@@ -8995,35 +9040,13 @@ int SendKexDhReply(WOLFSSH* ssh)
                 y_ptr = y_s;
             #endif
                 if (ret == WS_SUCCESS) {
-                    switch (ssh->handshake->kexId) {
-                        #ifndef WOLFSSH_NO_DH_GROUP1_SHA1
-                        case ID_DH_GROUP1_SHA1:
-                            primeGroup = dhPrimeGroup1;
-                            primeGroupSz = dhPrimeGroup1Sz;
-                            generator = dhGenerator;
-                            generatorSz = dhGeneratorSz;
-                            break;
-                        #endif
-                        #ifndef WOLFSSH_NO_DH_GROUP14_SHA1
-                        case ID_DH_GROUP14_SHA1:
-                            primeGroup = dhPrimeGroup14;
-                            primeGroupSz = dhPrimeGroup14Sz;
-                            generator = dhGenerator;
-                            generatorSz = dhGeneratorSz;
-                            break;
-                        #endif
-                        #ifndef WOLFSSH_NO_DH_GEX_SHA256
-                        case ID_DH_GEX_SHA256:
-                            primeGroup = dhPrimeGroup14;
-                            primeGroupSz = dhPrimeGroup14Sz;
-                            generator = dhGenerator;
-                            generatorSz = dhGeneratorSz;
-                            msgId = MSGID_KEXDH_GEX_REPLY;
-                            break;
-                        #endif
-                        default:
-                            ret = WS_INVALID_ALGO_ID;
-                    }
+                    ret = GetDHPrimeGroup(ssh->handshake->kexId, &primeGroup,
+                        &primeGroupSz, &generator, &generatorSz);
+                    #ifndef WOLFSSH_NO_DH_GEX_SHA256
+                    if (ssh->handshake->kexId == ID_DH_GEX_SHA256)
+                        msgId = MSGID_KEXDH_GEX_REPLY;
+                    #endif
+
                     if (ret == WS_SUCCESS) {
                         ret = wc_InitDhKey(privKey);
                     }
