@@ -13220,9 +13220,13 @@ int wolfSSH_oct2dec(WOLFSSH* ssh, byte* oct, word32 octSz)
 /* addend1 += addend2 */
 void AddAssign64(word32* addend1, word32 addend2)
 {
-    word32 tmp = addend1[0];
-    if ((addend1[0] += addend2) < tmp)
+    if (addend1[0] > (WOLFSSL_MAX_32BIT - addend2)) {
         addend1[1]++;
+        addend1[0] = addend2 - (WOLFSSL_MAX_32BIT- addend1[0]);
+    }
+    else {
+        addend1[0] += addend2;
+    }
 }
 
 #endif /* WOLFSSH_SFTP */
