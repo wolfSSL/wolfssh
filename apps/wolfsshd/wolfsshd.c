@@ -704,6 +704,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     byte shellBuffer[EXAMPLE_BUFFER_SZ];
     byte channelBuffer[EXAMPLE_BUFFER_SZ];
     char* forcedCmd;
+    int   windowFull = 0;
 
     forcedCmd = wolfSSHD_ConfigGetForcedCmd(usrConf);
 
@@ -876,7 +877,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             pending = 1; /* found some pending SSH data */
         }
 
-        if (pending || FD_ISSET(sshFd, &readFds)) {
+        if (windowFull || pending || FD_ISSET(sshFd, &readFds)) {
             word32 lastChannel = 0;
 
             /* The following tries to read from the first channel inside
@@ -910,6 +911,19 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             }
         }
 
+        /* if the window was previously full, try resending the data */
+        if (windowFull) {
+            cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
+                    shellBuffer, cnt_r);
+            if (cnt_w == WS_WINDOW_FULL) {
+                windowFull = 1;
+                continue;
+            }
+            else {
+                windowFull = 0;
+            }
+        }
+
         if (FD_ISSET(childFd, &readFds)) {
             cnt_r = (int)read(childFd, shellBuffer, sizeof shellBuffer);
             /* This read will return 0 on EOF */
@@ -923,7 +937,11 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 if (cnt_r > 0) {
                     cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
                             shellBuffer, cnt_r);
-                    if (cnt_w < 0)
+                    if (cnt_w == WS_WINDOW_FULL) {
+                        windowFull = 1;
+                        continue;
+                    }
+                    else if (cnt_w < 0)
                         break;
                 }
             }

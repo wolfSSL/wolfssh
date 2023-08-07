@@ -148,7 +148,13 @@ static int NonBlockSSH_connect(WOLFSSH* ssh)
             printf("... client would write block\n");
 
         select_ret = tcp_select(sockfd, 1);
-        if (select_ret == WS_SELECT_RECV_READY ||
+
+        /* Continue in want write cases even if did not select on socket
+         * because there could be pending data to be written. Added continue
+         * on want write for test cases where a forced want read was introduced
+         * and the socket will not be receiving more data. */
+        if (error == WS_WANT_WRITE || error == WS_WANT_READ ||
+            select_ret == WS_SELECT_RECV_READY ||
             select_ret == WS_SELECT_ERROR_READY)
         {
             ret = wolfSSH_connect(ssh);
