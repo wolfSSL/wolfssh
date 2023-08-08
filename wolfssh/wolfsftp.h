@@ -254,7 +254,7 @@ WOLFSSH_LOCAL int wolfSSH_SFTP_RecvSetSTAT(WOLFSSH* ssh, int reqId, byte* data,
         word32 maxSz);
 WOLFSSH_LOCAL int wolfSSH_SFTP_RecvFSTAT(WOLFSSH* ssh, int reqId, byte* data,
         word32 maxSz);
-WOLFSSH_API int wolfSSH_SFTP_RecvFSetSTAT(WOLFSSH* ssh, int reqId, byte* data, 
+WOLFSSH_LOCAL int wolfSSH_SFTP_RecvFSetSTAT(WOLFSSH* ssh, int reqId, byte* data, 
         word32 maxSz);
 
 #ifndef NO_WOLFSSH_DIR
