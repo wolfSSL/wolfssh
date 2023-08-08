@@ -2448,7 +2448,7 @@ static void getDate(char* buf, int len, struct tm* t)
  * return WS_SUCCESS on success */
 static int SFTP_CreateLongName(WS_SFTPNAME* name)
 {
-    char size[32];
+    char sizeStr[32];
     char perm[11];
     int linkCount = 1; /* @TODO set to correct value */
 #if defined(XGMTIME) && defined(XSNPRINTF)
@@ -2503,8 +2503,8 @@ static int SFTP_CreateLongName(WS_SFTPNAME* name)
     totalSz += name->fSz; /* size of file name */
     totalSz += 7; /* for all ' ' spaces */
     totalSz += 3 + 8 + 8; /* linkCount + uid + gid */
-    sprintf(size, "%8lld", ((long long int)atr->sz[1] << 32) + (long long int)(atr->sz[0]));
-    totalSz += strlen(size);
+    WSNPRINTF(sizeStr, sizeof(sizeStr) - 1, "%8lld", ((long long int)atr->sz[1] << 32) + (long long int)(atr->sz[0]));
+    totalSz += WSTRLEN(sizeStr);
 #else
     totalSz = name->fSz;
 #endif
@@ -2519,7 +2519,7 @@ static int SFTP_CreateLongName(WS_SFTPNAME* name)
 
 #if defined(XGMTIME) && defined(XSNPRINTF)
     WSNPRINTF(name->lName, totalSz, "%s %3d %8d %8d %s %s %s",
-            perm, linkCount, atr->uid, atr->gid, size, date, name->fName);
+            perm, linkCount, atr->uid, atr->gid, sizeStr, date, name->fName);
 #else
     WMEMCPY(name->lName, name->fName, totalSz);
 #endif
