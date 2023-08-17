@@ -61,10 +61,10 @@ SSHD Service
 -----------
 
 Creating a new servie
-`sc.exe create wolfSSHd binpath=D:\work\wolfssh\ide\winvs\Debug\x64\wolfsshd.exe`
+`sc.exe create wolfSSHd binpath="D:\work\wolfssh\ide\winvs\Debug\x64\wolfsshd.exe  -f <sshd_config fils> -h <optionally load host key> -p <optional port number>"`
 
 Starting wolfSSHd service run the following command in an adminstrator power shell session:
-`sc.exe start wolfSSHd -f <sshd_config fils> -h <optionally load host key> -p <optional port number>`
+`sc.exe start wolfSSHd`
 
 To stop the service run the following in an adminstrator power shell session:
 `sc.exe stop wolfSSHd`

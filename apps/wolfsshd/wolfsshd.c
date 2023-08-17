@@ -1752,6 +1752,7 @@ char* myoptarg = NULL;
 
 #ifdef _WIN32
 #include <tchar.h>
+#include <shellapi.h>
 
 SERVICE_STATUS        serviceStatus = { 0 };
 SERVICE_STATUS_HANDLE serviceStatusHandle = NULL;
@@ -1828,10 +1829,23 @@ static int StartSSHD(int argc, char** argv)
 #ifdef _WIN32
     char** argv = NULL;
     DWORD i;
+    LPWSTR* cmdArgs = NULL;
+    LPWSTR cmdLn;
+    int cmdArgC = 0;
 
-    for (i = 0; i < argc; i++) {
-        if (WSTRCMP((char*)(wargv[i]), "-D") == 0) {
-            isDaemon = 0;
+    /* get what the command line was and parse arguments from it */
+    cmdLn   = GetCommandLineW();
+    cmdArgs = CommandLineToArgvW(cmdLn, &cmdArgC);
+    if (cmdArgs == NULL) {
+        ret = WS_FATAL_ERROR;
+    }
+    argc = cmdArgC;
+
+    if (ret == WS_SUCCESS) {
+        for (i = 0; i < argc; i++) {
+            if (WSTRCMP((char*)(cmdArgs[i]), "-D") == 0) {
+                isDaemon = 0;
+            }
         }
     }
 
@@ -1839,12 +1853,17 @@ static int StartSSHD(int argc, char** argv)
         /* Set the logging to go to OutputDebugString */
         wolfSSH_SetLoggingCb(ServiceDebugCb);
 
-        /* we want the arguments to be normal char strings not wchar_t */
-        argv = WMALLOC(argc * sizeof(char*), NULL, DYNTYPE_SSHD);
-        {
-            unsigned int z;
-            for (z = 0; z < argc; z++) {
-                argv[z] = _convertHelper(wargv[z], NULL);
+        if (ret == WS_SUCCESS) {
+            /* we want the arguments to be normal char strings not wchar_t */
+            argv = (char**)WMALLOC(argc * sizeof(char*), NULL, DYNTYPE_SSHD);
+            if (argv == NULL) {
+                ret = WS_MEMORY_E;
+            }
+            else {
+                unsigned int z;
+                for (z = 0; z < argc; z++) {
+                    argv[z] = _convertHelper(cmdArgs[z], NULL);
+                }
             }
         }
     }
@@ -2070,6 +2089,10 @@ static int StartSSHD(int argc, char** argv)
                 wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue updating service status");
             }
             return;
+        }
+
+        if (cmdArgs != NULL) {
+            LocalFree(cmdArgs);
         }
     }
 #endif
