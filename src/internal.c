@@ -6175,6 +6175,7 @@ static int DoUserAuthRequestEccCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 #endif /* WOLFSSH_CERTS */
 #endif /* ! WOLFSSH_NO_ECDSA */
 
+#ifdef HAVE_ED25519
 static int DoUserAuthRequestEd25519(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
                                     WS_UserAuthData* authData)
 {
@@ -6316,7 +6317,7 @@ static int DoUserAuthRequestEd25519(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthRequestEd25519(), ret = %d", ret);
     return ret;
 }
-
+#endif
 
 #if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
 /* Utility for DoUserAuthRequest() */
@@ -9088,6 +9089,7 @@ struct wolfSSH_sigKeyBlockFull {
                 word32 primeNameSz;
             } ecc;
 
+#ifdef HAVE_ED25519
             struct {
                 ed25519_key key;
                 word32 keyBlobSz;
@@ -9097,6 +9099,7 @@ struct wolfSSH_sigKeyBlockFull {
                 word32 qSz;
                 byte qPad;
             } ed;
+#endif
 #endif
         } sk;
 };
@@ -9456,6 +9459,7 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
             }
             break;
 
+        #ifdef HAVE_ED25519
         case ID_ED25519:
             WLOG(WS_LOG_DEBUG, "Using Ed25519 Host key");
 
@@ -9505,6 +9509,7 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
                                     sigKeyBlock_ptr->sk.ed.q,
                                     sigKeyBlock_ptr->sk.ed.qSz);
             break;
+        #endif
         #endif
 
             default:
@@ -9877,7 +9882,7 @@ int SendKexDhReply(WOLFSSH* ssh)
             #endif
 #endif /* ! WOLFSSH_NO_DH */
             }
-#if !defined(WOLFSSH_NO_ECDH)
+#if !defined(WOLFSSH_NO_ECDH) && defined(HAVE_CURVE25519)
             else if(useEcc == ECC_ED25519)
             {
                 curve25519_key local_priv_key;
