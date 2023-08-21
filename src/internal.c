@@ -957,7 +957,7 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap)
             wc_FreeRsaKey(&key->ks.rsa.key);
         }
 #endif
-#ifndef WOLFSSH_NO_ECDSA
+#if !defined(WOLFSSH_NO_ECDSA) && defined(HAVE_ED25519)
     if (key != NULL) {
         if (keyId == ID_UNKNOWN) {
             idx = 0;
