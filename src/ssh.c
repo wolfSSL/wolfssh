@@ -2353,8 +2353,10 @@ static const char* CurveNameForId(byte id)
         case ECC_SECP521R1:
             return "nistp521";
 
+#ifdef HAVE_CURVE25519
         case ECC_X25519:
             return "Curve25519";
+#endif
     }
 #endif
     return "";
