@@ -10193,6 +10193,7 @@ int SendKexDhReply(WOLFSSH* ssh)
     /* Sign h with the server's private key. */
     if (ret == WS_SUCCESS) {
         if (sigKeyBlock_ptr->pubKeyId == ID_ED25519) {
+#ifdef HAVE_ED25519
             WLOG(WS_LOG_INFO, "Signing hash with %s.", IdToName(ssh->handshake->pubKeyId));
 
             sigSz = KEX_SIG_SIZE;
@@ -10202,6 +10203,7 @@ int SendKexDhReply(WOLFSSH* ssh)
                 WLOG(WS_LOG_DEBUG, "SendKexDhReply: Bad ED25519 Sign (error: %d)", ret);
                 ret = WS_ECC_E;
             }
+#endif
         } else {
             wc_HashAlg digestHash;
             byte digest[WC_MAX_DIGEST_SIZE];
@@ -10350,7 +10352,7 @@ int SendKexDhReply(WOLFSSH* ssh)
             wc_ecc_free(&sigKeyBlock_ptr->sk.ecc.key);
 #endif
         } else if (sigKeyBlock_ptr->pubKeyId == ID_ED25519) {
-#ifndef WOLFSSH_NO_ECDSA
+#if !defined(WOLFSSH_NO_ECDSA) && defined(HAVE_ED25519)
             wc_ed25519_free(&sigKeyBlock_ptr->sk.ed.key);
 #endif
         }
@@ -10435,7 +10437,7 @@ int SendKexDhReply(WOLFSSH* ssh)
 
             case ID_ED25519:
             {
-#ifndef WOLFSSH_NO_ECDSA
+#if !defined(WOLFSSH_NO_ECDSA) && defined(HAVE_ED25519)
             /* Copy the edKeyBlock into the buffer. */
             c32toa(sigKeyBlock_ptr->sk.ed.qSz, output + idx);
             idx += LENGTH_SZ;
