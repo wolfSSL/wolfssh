@@ -4191,7 +4191,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 /* Replace the concatenated shared secrets with the hash. That
                  * will become the new shared secret. */
                 if (ret == 0) {
-                    sharedSecretHashSz = wc_HashGetDigestSize(enmhashId);
+                    sharedSecretHashSz = wc_HashGetDigestSize(hashId);
                     sharedSecretHash = (byte *)WMALLOC(sharedSecretHashSz,
                                                        ssh->ctx->heap,
                                                        DYNTYPE_PRIVKEY);
@@ -4201,7 +4201,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 }
 
                 if (ret == 0) {
-                    ret = wc_Hash(enmhashId, ssh->k, ssh->kSz, sharedSecretHash,
+                    ret = wc_Hash(hashId, ssh->k, ssh->kSz, sharedSecretHash,
                                   sharedSecretHashSz);
                 }
 
@@ -9279,7 +9279,7 @@ int SendKexDhReply(WOLFSSH* ssh)
                     ret = wc_ecc_shared_secret(privKey, pubKey,
                               ssh->k + kem->length_shared_secret, &tmp_kSz);
                     PRIVATE_KEY_LOCK();
-                    ssh->kSz = kem->length_shared_secret + tmp_kSz;
+                    ssh->kSz = (word32)kem->length_shared_secret + tmp_kSz;
                 }
                 wc_ecc_free(privKey);
                 wc_ecc_free(pubKey);
