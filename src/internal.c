@@ -2264,8 +2264,14 @@ static int GetInputData(WOLFSSH* ssh, word32 size)
 
     /* Take into account the data already in the buffer. Update size
      * for what is missing in the request. */
-    word32 haveDataSz = ssh->inputBuffer.length - ssh->inputBuffer.idx;
+    word32 haveDataSz;
 
+    /* reset want read state before attempting to read */
+    if (ssh->error == WS_WANT_READ) {
+        ssh->error = 0;
+    }
+
+    haveDataSz = ssh->inputBuffer.length - ssh->inputBuffer.idx;
     if (haveDataSz >= size) {
         WLOG(WS_LOG_INFO, "GID: have enough already, return early");
         return WS_SUCCESS;

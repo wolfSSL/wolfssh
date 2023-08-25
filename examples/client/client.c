@@ -158,6 +158,7 @@ static int NonBlockSSH_connect(WOLFSSH* ssh)
             select_ret == WS_SELECT_ERROR_READY)
         {
             ret = wolfSSH_connect(ssh);
+            error = wolfSSH_get_error(ssh);
         }
         else if (select_ret == WS_SELECT_TIMEOUT)
             error = WS_WANT_READ;
