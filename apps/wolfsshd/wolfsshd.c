@@ -760,7 +760,6 @@ static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 }
             }
 
-            timeout = TEST_SFTP_TIMEOUT;
         } while (ret != WS_FATAL_ERROR);
     }
 
