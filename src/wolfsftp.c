@@ -1697,6 +1697,11 @@ int wolfSSH_SFTP_RecvRMDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_RMDIR");
 
+    if (maxSz < UINT32_SZ) {
+        /* not enough for an ato32 call */
+        return WS_BUFFER_E;
+    }
+
     ato32(data + idx, &sz); idx += UINT32_SZ;
     if (sz > maxSz - idx) {
         return WS_BUFFER_E;
@@ -1771,6 +1776,11 @@ int wolfSSH_SFTP_RecvMKDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_MKDIR");
+
+    if (maxSz < UINT32_SZ) {
+        /* not enough for an ato32 call */
+        return WS_BUFFER_E;
+    }
 
     ato32(data + idx, &sz); idx += UINT32_SZ;
     if (sz > maxSz - idx) {
@@ -1971,6 +1981,11 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         return WS_FATAL_ERROR;
     }
 
+    if (maxSz < UINT32_SZ) {
+        /* not enough for an ato32 call */
+        return WS_BUFFER_E;
+    }
+
     ato32(data + idx, &sz); idx += UINT32_SZ;
     if (sz > maxSz - idx) {
         return WS_BUFFER_E;
@@ -2097,6 +2112,11 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     if (sizeof(HANDLE) > WOLFSSH_MAX_HANDLE) {
         WLOG(WS_LOG_SFTP, "Handle size is too large");
         return WS_FATAL_ERROR;
+    }
+
+    if (maxSz < UINT32_SZ) {
+        /* not enough for an ato32 call */
+        return WS_BUFFER_E;
     }
 
     ato32(data + idx, &sz); idx += UINT32_SZ;
@@ -2237,6 +2257,11 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         return WS_FATAL_ERROR;
     }
 
+    if (maxSz < UINT32_SZ) {
+        /* not enough for an ato32 call */
+        return WS_BUFFER_E;
+    }
+
     /* get directory name */
     ato32(data + idx, &sz); idx += UINT32_SZ;
     if (sz > maxSz - idx) {
@@ -2344,6 +2369,11 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     if (sizeof(HANDLE) > WOLFSSH_MAX_HANDLE) {
         WLOG(WS_LOG_SFTP, "Handle size is too large");
         return WS_FATAL_ERROR;
+    }
+
+    if (maxSz < UINT32_SZ) {
+        /* not enough for an ato32 call */
+        return WS_BUFFER_E;
     }
 
     /* get directory name */
@@ -3098,6 +3128,11 @@ int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         dir = INVALID_HANDLE_VALUE;
     #endif
 
+    if (maxSz < UINT32_SZ) {
+        /* not enough for an ato32 call */
+        return WS_BUFFER_E;
+    }
+
     /* get directory handle */
     ato32(data + idx, &sz); idx += UINT32_SZ;
     if (sz + idx > maxSz || sz > WOLFSSH_MAX_HANDLE) {
@@ -3281,6 +3316,11 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_WRITE");
 
+    if (maxSz < UINT32_SZ) {
+        /* not enough for an ato32 call */
+        return WS_BUFFER_E;
+    }
+
     /* get file handle */
     ato32(data + idx, &sz); idx += UINT32_SZ;
     if (sz + idx > maxSz || sz > WOLFSSH_MAX_HANDLE) {
@@ -3364,6 +3404,11 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_WRITE");
+
+    if (maxSz < UINT32_SZ) {
+        /* not enough for an ato32 call */
+        return WS_BUFFER_E;
+    }
 
     /* get file handle */
     ato32(data + idx, &sz);
@@ -3455,6 +3500,11 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_READ");
+
+    if (maxSz < UINT32_SZ) {
+        /* not enough for an ato32 call */
+        return WS_BUFFER_E;
+    }
 
     /* get file handle */
     ato32(data + idx, &sz); idx += UINT32_SZ;
@@ -3550,6 +3600,11 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_READ");
+
+    if (maxSz < UINT32_SZ) {
+        /* not enough for an ato32 call */
+        return WS_BUFFER_E;
+    }
 
     /* get file handle */
     ato32(data + idx, &sz); idx += UINT32_SZ;
@@ -3668,6 +3723,11 @@ int wolfSSH_SFTP_RecvClose(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_CLOSE");
 
+    if (maxSz < UINT32_SZ) {
+        /* not enough for an ato32 call */
+        return WS_BUFFER_E;
+    }
+
     /* get file handle */
     ato32(data + idx, &sz); idx += UINT32_SZ;
     if (sz + idx > maxSz || sz > WOLFSSH_MAX_HANDLE) {
@@ -3748,6 +3808,11 @@ int wolfSSH_SFTP_RecvClose(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_CLOSE");
+
+    if (maxSz < UINT32_SZ) {
+        /* not enough for an ato32 call */
+        return WS_BUFFER_E;
+    }
 
     /* get file handle */
     ato32(data + idx, &sz); idx += UINT32_SZ;
@@ -3839,6 +3904,11 @@ int wolfSSH_SFTP_RecvRemove(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_REMOVE");
 
+    if (maxSz < UINT32_SZ) {
+        /* not enough for an ato32 call */
+        return WS_BUFFER_E;
+    }
+
     /* get file name */
     ato32(data + idx, &sz); idx += UINT32_SZ;
     if (sz + idx > maxSz || sz > WOLFSSH_MAX_HANDLE) {
@@ -3924,6 +3994,11 @@ int wolfSSH_SFTP_RecvRename(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_RENAME");
+
+    if (maxSz < UINT32_SZ) {
+        /* not enough for an ato32 call */
+        return WS_BUFFER_E;
+    }
 
     /* get old file name */
     ato32(data + idx, &sz); idx += UINT32_SZ;
@@ -4667,6 +4742,11 @@ int wolfSSH_SFTP_RecvFSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_FSTAT");
 
+    if (maxSz < UINT32_SZ) {
+        /* not enough for an ato32 call */
+        return WS_BUFFER_E;
+    }
+
     ato32(data + idx, &handleSz); idx += UINT32_SZ;
     if (handleSz + idx > maxSz) {
         return WS_BUFFER_E;
@@ -4734,6 +4814,11 @@ int wolfSSH_SFTP_RecvSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_STAT");
+
+    if (maxSz < UINT32_SZ) {
+        /* not enough for an ato32 call */
+        return WS_BUFFER_E;
+    }
 
     ato32(data + idx, &sz); idx += UINT32_SZ;
     if (sz > maxSz - idx) {
@@ -4813,6 +4898,11 @@ int wolfSSH_SFTP_RecvLSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_LSTAT");
+
+    if (maxSz < UINT32_SZ) {
+        /* not enough for an ato32 call */
+        return WS_BUFFER_E;
+    }
 
     ato32(data + idx, &sz); idx += UINT32_SZ;
     if (sz > maxSz - idx) {
@@ -4954,6 +5044,11 @@ int wolfSSH_SFTP_RecvSetSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_SETSTAT");
+
+    if (maxSz < UINT32_SZ) {
+        /* not enough for an ato32 call */
+        return WS_BUFFER_E;
+    }
 
     ato32(data + idx, &sz); idx += UINT32_SZ;
     if (sz > maxSz - idx) {
