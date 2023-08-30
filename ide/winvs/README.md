@@ -60,7 +60,7 @@ DLL in that directory.
 SSHD Service
 -----------
 
-Creating a new servie
+Creating a new service
 `sc.exe create wolfSSHd binpath="D:\work\wolfssh\ide\winvs\Debug\x64\wolfsshd.exe  -f <sshd_config fils> -h <optionally load host key> -p <optional port number>"`
 
 Starting wolfSSHd service run the following command in an adminstrator power shell session:

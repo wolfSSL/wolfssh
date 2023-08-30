@@ -24,6 +24,8 @@
 
 #ifdef WOLFSSL_USER_SETTINGS
     #include <wolfssl/wolfcrypt/settings.h>
+#else
+    #include <wolfssl/options.h>
 #endif
 
 #ifdef WOLFSSH_SSHD
@@ -522,8 +524,8 @@ static int SearchForPubKey(const char* path, const WS_UserAuthData_PublicKey* pu
         }
     }
     while (ret == WSSHD_AUTH_SUCCESS &&
-        (current = XFGETS(lineBuf, MAX_LINE_SZ, f)) != NULL) {
-        currentSz = (word32)XSTRLEN(current);
+        (current = WFGETS(lineBuf, MAX_LINE_SZ, f)) != NULL) {
+        currentSz = (word32)WSTRLEN(current);
 
         /* remove leading spaces */
         while (currentSz > 0 && current[0] == ' ') {
@@ -551,7 +553,7 @@ static int SearchForPubKey(const char* path, const WS_UserAuthData_PublicKey* pu
         }
     }
 
-    if (f != XBADFILE) {
+    if (f != WBADFILE) {
         WFCLOSE(f);
     }
 
@@ -977,7 +979,7 @@ static int CheckPublicKeyWIN(const char* usr,
     wolfSSH_Log(WS_LOG_INFO, "[SSHD] Windows check public key");
 
     ret = SetupUserTokenWin(usr, pubKeyCtx,usrCaKeysFile, authCtx);
-   
+
     /* after successful logon check the public key sent */
     if (ret == WSSHD_AUTH_SUCCESS) {
         WCHAR h[MAX_PATH];
@@ -985,7 +987,7 @@ static int CheckPublicKeyWIN(const char* usr,
         if (_GetHomeDirectory(authCtx, usr, h, MAX_PATH) == WS_SUCCESS) {
             CHAR r[MAX_PATH];
             size_t rSz;
-            
+
             if (wcstombs_s(&rSz, r, MAX_PATH, h, MAX_PATH - 1) != 0) {
                 ret = WSSHD_AUTH_FAILURE;
             }
@@ -1002,8 +1004,8 @@ static int CheckPublicKeyWIN(const char* usr,
             }
         }
         else {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Windows failed to get home directory for user %s",
-                usr);
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Windows failed to get home directory for user %s", usr);
             ret = WSSHD_AUTH_FAILURE;
         }
     }
@@ -1088,7 +1090,7 @@ static int RequestAuthentication(WS_UserAuthData* authData,
         }
         else {
             rc = authCtx->checkPasswordCb(usr, authData->sf.password.password,
-                                          authData->sf.password.passwordSz, authCtx);
+                                     authData->sf.password.passwordSz, authCtx);
             if (rc == WSSHD_AUTH_SUCCESS) {
                 wolfSSH_Log(WS_LOG_INFO, "[SSHD] Password ok.");
             }
@@ -1195,7 +1197,8 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                     ret = WOLFSSH_USERAUTH_SUCCESS;
                 }
                 else {
-                    wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error getting users token.");
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Error getting users token.");
                     ret = WOLFSSH_USERAUTH_FAILURE;
                 }
             #else
@@ -1205,17 +1208,20 @@ static int RequestAuthentication(WS_UserAuthData* authData,
             else {
                 /* if not a certificate then parse through authorized key file */
                 rc = authCtx->checkPublicKeyCb(usr, &authData->sf.publicKey,
-                                wolfSSHD_ConfigGetUserCAKeysFile(authCtx->conf), authCtx);
+                                wolfSSHD_ConfigGetUserCAKeysFile(authCtx->conf),
+                                authCtx);
                 if (rc == WSSHD_AUTH_SUCCESS) {
                     wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key ok.");
                     ret = WOLFSSH_USERAUTH_SUCCESS;
                 }
                 else if (rc == WSSHD_AUTH_FAILURE) {
-                    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key not authorized.");
+                    wolfSSH_Log(WS_LOG_INFO,
+                        "[SSHD] Public key not authorized.");
                     ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
                 }
                 else {
-                    wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error checking public key.");
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Error checking public key.");
                     ret = WOLFSSH_USERAUTH_FAILURE;
                 }
             }
@@ -1403,7 +1409,8 @@ WOLFSSHD_AUTH* wolfSSHD_AuthCreateUser(void* heap, const WOLFSSHD_CONFIG* conf)
         /* set the default user checking based on build */
         ret = SetDefaultUserCheck(auth);
         if (ret != WS_SUCCESS) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting default user check.");
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Error setting default user check.");
         }
 
         /* set the default password checking based on build */

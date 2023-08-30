@@ -24,6 +24,8 @@
 
 #ifdef WOLFSSL_USER_SETTINGS
     #include <wolfssl/wolfcrypt/settings.h>
+#else
+    #include <wolfssl/options.h>
 #endif
 
 #ifdef WOLFSSH_SSHD

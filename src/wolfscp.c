@@ -2346,14 +2346,19 @@ static int FindNextDirEntry(ScpSendCtx* ctx)
         WMEMCPY(ctx->entry, realFileName, sz);
         ctx->entry[sz] = '\0';
     } while ((ctx->entry != NULL) &&
-        (WSTRNCMP(ctx->entry, ".", 1) == 0 ||
-         WSTRNCMP(ctx->entry, "..", 2) == 0));
+        (((WSTRLEN(ctx->entry) == 1) && WSTRNCMP(ctx->entry, ".", 1) == 0) ||
+         ((WSTRLEN(ctx->entry) == 2) && WSTRNCMP(ctx->entry, "..", 2) == 0)));
 #else
     do {
         ctx->entry = WREADDIR(&ctx->currentDir->dir);
     } while ((ctx->entry != NULL) &&
-             (WSTRNCMP(ctx->entry->d_name, ".",  1) == 0 ||
-              WSTRNCMP(ctx->entry->d_name ,"..", 2) == 0));
+             (
+               ((WSTRLEN(ctx->entry->d_name) == 1) &&
+                (WSTRNCMP(ctx->entry->d_name, ".",  1) == 0))
+               ||
+               ((WSTRLEN(ctx->entry->d_name) == 2) &&
+                (WSTRNCMP(ctx->entry->d_name ,"..", 2) == 0))
+             ));
 #endif
 
     return WS_SUCCESS;

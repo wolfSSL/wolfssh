@@ -1339,11 +1339,11 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     WFREE(workingDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     if (ret == WS_SUCCESS) {
         if (wolfSSH_shutdown(ssh) != WS_SUCCESS) {
-			int rc;
-			rc = wolfSSH_get_error(ssh);
+            int rc;
+            rc = wolfSSH_get_error(ssh);
 
-			if (rc != WS_SOCKET_ERROR_E && rc != WS_EOF)
-				printf("error with wolfSSH_shutdown()\n");
+            if (rc != WS_SOCKET_ERROR_E && rc != WS_EOF)
+                printf("error with wolfSSH_shutdown()\n");
         }
     }
     WCLOSESOCKET(sockFd);

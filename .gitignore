@@ -74,6 +74,7 @@ client.plist
 *.sdf
 *.v11.suo
 *.vcxproj.filters
+*.vcxproj.user
 *.opensdf
 *.pdb
 .vs
