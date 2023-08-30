@@ -64,6 +64,7 @@ struct WOLFSSHD_CONFIG {
     char* listenAddress;
     char* authKeysFile;
     char* forceCmd;
+    char* pidFile;
     WOLFSSHD_CONFIG* next; /* next config in list */
     long  loginTimer;
     word16 port;
@@ -76,6 +77,7 @@ struct WOLFSSHD_CONFIG {
 };
 
 int CountWhitespace(const char* in, int inSz, byte inv);
+int SetFileString(char** dst, const char* src, void* heap);
 
 /* convert a string into seconds, handles if 'm' for minutes follows the string
  * number, i.e. 2m
@@ -294,6 +296,7 @@ void wolfSSHD_ConfigFree(WOLFSSHD_CONFIG* conf)
         FreeString(&current->authKeysFile,  heap);
         FreeString(&current->hostKeyFile,   heap);
         FreeString(&current->hostCertFile,  heap);
+        FreeString(&current->pidFile,  heap);
 
         WFREE(current, heap, DYNTYPE_SSHD);
         current = next;
@@ -330,9 +333,10 @@ enum {
     OPT_FORCE_CMD               = 19,
     OPT_HOST_CERT               = 20,
     OPT_TRUSTED_USER_CA_KEYS    = 21,
+    OPT_PIDFILE                 = 22,
 };
 enum {
-    NUM_OPTIONS = 22
+    NUM_OPTIONS = 23
 };
 
 static const CONFIG_OPTION options[NUM_OPTIONS] = {
@@ -358,6 +362,7 @@ static const CONFIG_OPTION options[NUM_OPTIONS] = {
     {OPT_FORCE_CMD,               "ForceCommand"},
     {OPT_HOST_CERT,               "HostCertificate"},
     {OPT_TRUSTED_USER_CA_KEYS,    "TrustedUserCAKeys"},
+    {OPT_PIDFILE,                 "PidFile"},
 };
 
 /* returns WS_SUCCESS on success */
@@ -999,6 +1004,9 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
             /* TODO: Add logic to check if file exists? */
             ret = wolfSSHD_ConfigSetUserCAKeysFile(*conf, value);
             break;
+        case OPT_PIDFILE:
+            ret = SetFileString(&(*conf)->pidFile, value, (*conf)->heap);
+            break;
         default:
             break;
     }
@@ -1070,8 +1078,13 @@ WOLFSSHD_STATIC int ParseConfigLine(WOLFSSHD_CONFIG** conf, const char* l,
         }
     }
     else {
+    #ifdef WOLFSSH_IGNORE_UNKNOWN_CONFIG
+        wolfSSH_Log(WS_LOG_DEBUG, "[SSHD] ignoring config line %s.", l);
+        ret = WS_SUCCESS;
+    #else
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error parsing config line.");
         ret = WS_FATAL_ERROR;
+    #endif
     }
 
     return ret;
@@ -1288,7 +1301,7 @@ char* wolfSSHD_ConfigGetUserCAKeysFile(const WOLFSSHD_CONFIG* conf)
     return ret;
 }
 
-static int SetFileString(char** dst, const char* src, void* heap)
+int SetFileString(char** dst, const char* src, void* heap)
 {
     int ret = WS_SUCCESS;
 
@@ -1420,4 +1433,20 @@ long wolfSSHD_ConfigGetGraceTime(const WOLFSSHD_CONFIG* conf)
 
     return ret;
 }
+
+
+/* Used to save out the PID of SSHD to a file */
+void wolfSSHD_ConfigSavePID(const WOLFSSHD_CONFIG* conf)
+{
+    FILE* f;
+    char buf[12]; /* large enough to hold 'int' type with null terminator */
+
+    WMEMSET(buf, 0, sizeof(buf));
+    if (WFOPEN(&f, conf->pidFile, "wb") == 0) {
+        WSNPRINTF(buf, sizeof(buf), "%d", getpid());
+        WFWRITE(buf, 1, WSTRLEN(buf), f);
+        WFCLOSE(f);
+    }
+}
+
 #endif /* WOLFSSH_SSHD */
