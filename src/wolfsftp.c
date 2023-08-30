@@ -2500,16 +2500,15 @@ static void getDate(char* buf, int len, struct tm* t)
  * return WS_SUCCESS on success */
 static int SFTP_CreateLongName(WS_SFTPNAME* name)
 {
+#if defined(XGMTIME) && defined(XSNPRINTF)
     char sizeStr[32];
     char perm[11];
     int linkCount = 1; /* @TODO set to correct value */
-#if defined(XGMTIME) && defined(XSNPRINTF)
     char date[WS_DATE_SIZE + 1]; /* +1 for null terminator */
     struct tm* localTime = NULL;
-#endif
-    WS_SFTP_FILEATRB* atr;
     int i;
-
+    WS_SFTP_FILEATRB* atr;
+#endif
     int totalSz = 0;
 
     if (name == NULL) {

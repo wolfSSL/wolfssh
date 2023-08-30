@@ -1316,6 +1316,41 @@ void* wolfSSH_GetPublicKeyCheckCtx(WOLFSSH* ssh)
 }
 
 
+/* Used to resize terminal window with shell connections
+ * returns WS_SUCCESS on success */
+int wolfSSH_ChangeTerminalSize(WOLFSSH* ssh, word32 columns, word32 rows,
+    word32 widthPixels, word32 heightPixels)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChangeWindowDimension()");
+
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        ret = SendChannelTerminalResize(ssh, columns, rows, widthPixels,
+        heightPixels);
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChangeWindowDimension(), ret = %d",
+        ret);
+    return ret;
+}
+
+
+void wolfSSH_SetTerminalResizeCb(WOLFSSH* ssh, WS_CallbackTerminalSize cb)
+{
+    ssh->termResizeCb = cb;
+}
+
+
+void wolfSSH_SetTerminalResizeCtx(WOLFSSH* ssh, void* usrCtx)
+{
+    ssh->termCtx = usrCtx;
+}
+
+
 /* Used to set the channel request type sent in wolfSSH connect. The default
  * type set is shell if this function is not called.
  *

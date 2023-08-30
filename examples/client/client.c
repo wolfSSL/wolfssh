@@ -188,6 +188,109 @@ typedef struct thread_args {
     #define THREAD_RET_SUCCESS 0
 #endif
 
+
+static int sendCurrentWindowSize(thread_args* args)
+{
+    int ret;
+    word32 col = 80, row = 24, xpix = 0, ypix = 0;
+
+    wc_LockMutex(&args->lock);
+#if defined(_MSC_VER)
+    {
+        CONSOLE_SCREEN_BUFFER_INFO cs;
+
+        if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &cs) != 0) {
+            col = cs.srWindow.Right - cs.srWindow.Left + 1;
+            row = cs.srWindow.Bottom - cs.srWindow.Top + 1;
+        }
+    }
+#else
+    {
+        struct winsize windowSize = { 0,0,0,0 };
+
+        ioctl(STDOUT_FILENO, TIOCGWINSZ, &windowSize);
+        col = windowSize.ws_col;
+        row = windowSize.ws_row;
+        xpix = windowSize.ws_xpixel;
+        ypix = windowSize.ws_ypixel;
+    }
+#endif
+    ret = wolfSSH_ChangeTerminalSize(args->ssh, col, row, xpix, ypix);
+    wc_UnLockMutex(&args->lock);
+
+    return ret;
+}
+
+
+#ifndef _MSC_VER
+
+#if (defined(__OSX__) || defined(__APPLE__))
+#include <dispatch/dispatch.h>
+dispatch_semaphore_t windowSem;
+#else
+#include <semaphore.h>
+static sem_t windowSem;
+#endif
+
+/* capture window change signales */
+static void WindowChangeSignal(int sig)
+{
+#if (defined(__OSX__) || defined(__APPLE__))
+    dispatch_semaphore_signal(windowSem);
+#else
+    sem_post(&windowSem);
+#endif
+    (void)sig;
+}
+
+/* thread for handling window size adjustments */
+static THREAD_RET windowMonitor(void* in)
+{
+    thread_args* args;
+    int ret;
+
+    args = (thread_args*)in;
+    do {
+    #if (defined(__OSX__) || defined(__APPLE__))
+        dispatch_semaphore_wait(windowSem, DISPATCH_TIME_FOREVER);
+    #else
+        sem_wait(&windowSem);
+    #endif
+        ret = sendCurrentWindowSize(args);
+        (void)ret;
+    } while (1);
+
+    return THREAD_RET_SUCCESS;
+}
+#else
+/* no SIGWINCH on Windows, poll current terminal size */
+static word32 prevCol, prevRow;
+
+static int windowMonitor(thread_args* args)
+{
+    word32 row, col;
+    int ret = WS_SUCCESS;
+    CONSOLE_SCREEN_BUFFER_INFO cs;
+
+    if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &cs) != 0) {
+        col = cs.srWindow.Right - cs.srWindow.Left + 1;
+        row = cs.srWindow.Bottom - cs.srWindow.Top + 1;
+
+        if (prevCol != col || prevRow != row) {
+            prevCol = col;
+            prevRow = row;
+
+            wc_LockMutex(&args->lock);
+            ret = wolfSSH_ChangeTerminalSize(args->ssh, col, row, 0, 0);
+            wc_UnLockMutex(&args->lock);
+        }
+    }
+
+    return ret;
+}
+#endif
+
+
 static THREAD_RET readInput(void* in)
 {
     byte buf[256];
@@ -205,6 +308,7 @@ static THREAD_RET readInput(void* in)
         /* Using A version to avoid potential 2 byte chars */
         ret = ReadConsoleA(stdinHandle, (void*)buf, bufSz - 1, (DWORD*)&sz,
                 NULL);
+        (void)windowMonitor(args);
     #else
         ret = (int)read(STDIN_FILENO, buf, bufSz -1);
         sz  = (word32)ret;
@@ -240,11 +344,11 @@ static THREAD_RET readInput(void* in)
 
 static THREAD_RET readPeer(void* in)
 {
-    byte buf[80];
+    byte buf[256];
     int  bufSz = sizeof(buf);
     thread_args* args = (thread_args*)in;
     int ret = 0;
-    int fd = wolfSSH_get_fd(args->ssh);
+    int fd = (int)wolfSSH_get_fd(args->ssh);
     word32 bytes;
 #ifdef USE_WINDOWS_API
     HANDLE stdoutHandle = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -257,7 +361,18 @@ static THREAD_RET readPeer(void* in)
     FD_SET(fd, &readSet);
     FD_SET(fd, &errSet);
 
+#ifdef USE_WINDOWS_API
+    /* set handle to use for window resize */
+    wc_LockMutex(&args->lock);
+    wolfSSH_SetTerminalResizeCtx(args->ssh, stdoutHandle);
+    wc_UnLockMutex(&args->lock);
+#endif
+
     while (ret >= 0) {
+    #ifdef USE_WINDOWS_API
+        (void)windowMonitor(args);
+    #endif
+
         bytes = select(fd + 1, &readSet, NULL, &errSet, NULL);
         wc_LockMutex(&args->lock);
         while (bytes > 0 && (FD_ISSET(fd, &readSet) || FD_ISSET(fd, &errSet))) {
@@ -271,7 +386,13 @@ static THREAD_RET readPeer(void* in)
                     if (ret < 0)
                         err_sys("Extended data read failed.");
                     buf[bufSz - 1] = '\0';
+                #ifdef USE_WINDOWS_API
                     fprintf(stderr, "%s", buf);
+                #else
+                    if (write(STDERR_FILENO, buf, ret) < 0) {
+                        perror("Issue with stderr write ");
+                    }
+                #endif
                 } while (ret > 0);
             }
             else if (ret <= 0) {
@@ -334,7 +455,9 @@ static THREAD_RET readPeer(void* in)
                     fflush(stdout);
                 }
             #else
-                printf("%s", buf);
+                if (write(STDOUT_FILENO, buf, ret) < 0) {
+                    perror("write to stdout error ");
+                }
                 fflush(stdout);
             #endif
             }
@@ -636,7 +759,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     }
     else
 #endif
-    {
+    if (pubKeyName) {
         ret = ClientUsePubKey(pubKeyName, userEcc);
     }
     if (ret != 0) {
@@ -735,14 +858,39 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     if (cmd != NULL || keepOpen == 1) {
     #if defined(_POSIX_THREADS)
         thread_args arg;
-        pthread_t   thread[2];
+        pthread_t   thread[3];
 
         arg.ssh = ssh;
         wc_InitMutex(&arg.lock);
-        pthread_create(&thread[0], NULL, readInput, (void*)&arg);
-        pthread_create(&thread[1], NULL, readPeer, (void*)&arg);
-        pthread_join(thread[1], NULL);
+    #if (defined(__OSX__) || defined(__APPLE__))
+        windowSem = dispatch_semaphore_create(0);
+    #else
+        sem_init(&windowSem, 0, 0);
+    #endif
+
+        if (cmd) {
+            int err;
+
+            /* exec command does not contain initial terminal size, unlike pty-req.
+             * Send an inital terminal size for recieving the results of the command */
+            err = sendCurrentWindowSize(&arg);
+            if (err != WS_SUCCESS) {
+                fprintf(stderr, "Issue sending exec initial terminal size\n\r");
+            }
+        }
+
+        signal(SIGWINCH, WindowChangeSignal);
+        pthread_create(&thread[0], NULL, windowMonitor, (void*)&arg);
+        pthread_create(&thread[1], NULL, readInput, (void*)&arg);
+        pthread_create(&thread[2], NULL, readPeer, (void*)&arg);
+        pthread_join(thread[2], NULL);
         pthread_cancel(thread[0]);
+        pthread_cancel(thread[1]);
+    #if (defined(__OSX__) || defined(__APPLE__))
+        dispatch_release(windowSem);
+    #else
+        sem_destroy(&windowSem);
+    #endif
     #elif defined(_MSC_VER)
         thread_args arg;
         HANDLE thread[2];
@@ -750,6 +898,18 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         arg.ssh     = ssh;
         arg.rawMode = rawMode;
         wc_InitMutex(&arg.lock);
+
+        if (cmd) {
+            int err;
+
+            /* exec command does not contain initial terminal size, unlike pty-req.
+             * Send an inital terminal size for recieving the results of the command */
+            err = sendCurrentWindowSize(&arg);
+            if (err != WS_SUCCESS) {
+                fprintf(stderr, "Issue sending exec initial terminal size\n\r");
+            }
+        }
+
         thread[0] = CreateThread(NULL, 0, readInput, (void*)&arg, 0, 0);
         thread[1] = CreateThread(NULL, 0, readPeer, (void*)&arg, 0, 0);
         WaitForSingleObject(thread[1], INFINITE);
@@ -792,18 +952,21 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 #endif
     }
     ret = wolfSSH_shutdown(ssh);
-    if (ret != WS_SUCCESS) {
-        err_sys("Sending the shutdown messages failed.");
-    }
-    ret = wolfSSH_worker(ssh, NULL);
-    if (ret != WS_SUCCESS) {
-        err_sys("Failed to listen for close messages from the peer.");
+    /* do not continue on with shutdown process if peer already disconnected */
+    if (ret != WS_SOCKET_ERROR_E && wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E) {
+        if (ret != WS_SUCCESS) {
+            err_sys("Sending the shutdown messages failed.");
+        }
+        ret = wolfSSH_worker(ssh, NULL);
+        if (ret != WS_SUCCESS) {
+            err_sys("Failed to listen for close messages from the peer.");
+        }
     }
     WCLOSESOCKET(sockFd);
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
-    if (ret != WS_SUCCESS)
-        err_sys("Closing client stream failed. Connection could have been closed by peer");
+    if (ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E)
+        err_sys("Closing client stream failed");
 
     ClientFreeBuffers(pubKeyName, privKeyName);
 #if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
