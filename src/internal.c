@@ -5018,6 +5018,8 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
     word32 begin;
     WS_UserAuthData_Password* pw = NULL;
     int ret = WS_SUCCESS;
+    int authFailure = 0;
+    byte partialSuccess = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequestPassword()");
 
@@ -5060,35 +5062,42 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
             ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PASSWORD,
                                        authData, ssh->userAuthCtx);
             if (ret == WOLFSSH_USERAUTH_SUCCESS) {
-                WLOG(WS_LOG_DEBUG, "DUARPW: password check successful");
-                ssh->clientState = CLIENT_USERAUTH_DONE;
+                WLOG(WS_LOG_DEBUG, "DUARPW: password check success");
+                ret = WS_SUCCESS;
+            }
+            else if (ret == WOLFSSH_USERAUTH_PARTIAL_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, "DUARPW: password check partial success");
+                partialSuccess = 1;
                 ret = WS_SUCCESS;
             }
             else if (ret == WOLFSSH_USERAUTH_REJECTED) {
                 WLOG(WS_LOG_DEBUG, "DUARPW: password rejected");
                 #ifndef NO_FAILURE_ON_REJECTED
-                ret = SendUserAuthFailure(ssh, 0);
-                if (ret == WS_SUCCESS)
-                    ret = WS_USER_AUTH_E;
-                #else
-                ret = WS_USER_AUTH_E;
+                    authFailure = 1;
                 #endif
+                ret = WS_USER_AUTH_E;
             }
             else {
                 WLOG(WS_LOG_DEBUG, "DUARPW: password check failed, retry");
-                ret = SendUserAuthFailure(ssh, 0);
+                authFailure = 1;
+                ret = WS_SUCCESS;
             }
         }
         else {
             WLOG(WS_LOG_DEBUG, "DUARPW: No user auth callback");
-            ret = SendUserAuthFailure(ssh, 0);
-            if (ret == WS_SUCCESS)
-                ret = WS_FATAL_ERROR;
+            authFailure = 1;
         }
     }
 
     if (ret == WS_SUCCESS)
         *idx = begin;
+
+    if (authFailure || partialSuccess) {
+        ret = SendUserAuthFailure(ssh, partialSuccess);
+    }
+    else {
+        ssh->clientState = CLIENT_USERAUTH_DONE;
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthRequestPassword(), ret = %d", ret);
     return ret;
@@ -5773,6 +5782,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
     word32 begin;
     int ret = WS_SUCCESS;
     int authFailure = 0;
+    int partialSuccess = 0;
     byte hasSig = 0;
     byte pkTypeId = ID_NONE;
 
@@ -5881,6 +5891,10 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             WLOG(WS_LOG_DEBUG, "DUARPK: callback result = %d", ret);
         #ifdef DEBUG_WOLFSSH
             switch (ret) {
+                case WOLFSSH_USERAUTH_SUCCESS:
+                    WLOG(WS_LOG_DEBUG, "DUARPK: user auth success");
+                    break;
+
                 case WOLFSSH_USERAUTH_INVALID_PUBLICKEY:
                     WLOG(WS_LOG_DEBUG, "DUARPK: client key invalid");
                     break;
@@ -5888,7 +5902,6 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                 case WOLFSSH_USERAUTH_INVALID_USER:
                     WLOG(WS_LOG_DEBUG, "DUARPK: public key user rejected");
                     break;
-
 
                 case WOLFSSH_USERAUTH_FAILURE:
                     WLOG(WS_LOG_DEBUG, "DUARPK: public key general failure");
@@ -5902,13 +5915,20 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                     WLOG(WS_LOG_DEBUG, "DUARPK: public key rejected");
                     break;
 
+                case WOLFSSH_USERAUTH_PARTIAL_SUCCESS:
+                    WLOG(WS_LOG_DEBUG, "DUARPK: user auth partial success");
+                    break;
+
                 default:
                     WLOG(WS_LOG_DEBUG,
                         "Unexpected return value from Auth callback");
             }
         #endif
 
-            if (ret != WOLFSSH_USERAUTH_SUCCESS) {
+            if (ret == WOLFSSH_USERAUTH_PARTIAL_SUCCESS) {
+                partialSuccess = 1;
+            }
+            else if (ret != WOLFSSH_USERAUTH_SUCCESS) {
                 authFailure = 1;
             }
             ret = WS_SUCCESS;
@@ -6049,8 +6069,13 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
         }
     }
 
-    if (ret == WS_SUCCESS && authFailure) {
-        ret = SendUserAuthFailure(ssh, 0);
+    if (ret == WS_SUCCESS) {
+        if (authFailure) {
+            ret = SendUserAuthFailure(ssh, 0);
+        }
+        else if (partialSuccess && hasSig) {
+            ret = SendUserAuthFailure(ssh, 1);
+        }
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthRequestPublicKey(), ret = %d", ret);
