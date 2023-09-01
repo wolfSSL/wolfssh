@@ -672,7 +672,7 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
                     char** fileNames = NULL;
 
                     /* Count up the number of files */
-                    while ((dir = WREADDIR(&d)) != NULL) {
+                    while ((dir = WREADDIR(NULL, &d)) != NULL) {
                         /* Skip sub-directories */
                     #if defined(__QNX__) || defined(__QNXNTO__)
                         struct stat s;
@@ -686,7 +686,7 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
                             fileCount++;
                         }
                     }
-                    WREWINDDIR(&d);
+                    WREWINDDIR(NULL, &d);
 
                     if (fileCount > 0) {
                         fileNames = (char**)WMALLOC(fileCount * sizeof(char*),
@@ -698,7 +698,7 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
 
                     if (ret == WS_SUCCESS) {
                         i = 0;
-                        while (i < fileCount && (dir = WREADDIR(&d)) != NULL) {
+                        while (i < fileCount && (dir = WREADDIR(NULL, &d)) != NULL) {
                             /* Skip sub-directories */
                         #if defined(__QNX__) || defined(__QNXNTO__)
                             struct stat s;
@@ -766,7 +766,7 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
                             WFREE(fileNames, conf->heap, DYNTYPE_PATH);
                         }
                     }
-                    WCLOSEDIR(&d);
+                    WCLOSEDIR(NULL, &d);
                 }
                 else {
                     /* Bad directory */

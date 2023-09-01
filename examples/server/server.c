@@ -282,7 +282,7 @@ static int load_file(const char* fileName, byte* buf, word32 bufSz)
 
     if (fileName == NULL) return 0;
 
-    if (WFOPEN(&file, fileName, "rb") != 0)
+    if (WFOPEN(NULL, &file, fileName, "rb") != 0)
         return 0;
     fseek(file, 0, SEEK_END);
     fileSz = (word32)ftell(file);

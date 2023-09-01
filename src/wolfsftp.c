@@ -2033,7 +2033,7 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         atr.per = 0644;
     }
 
-    fd = WOPEN(dir, m, atr.per);
+    fd = WOPEN(ssh->fs, dir, m, atr.per);
     if (fd < 0) {
         WLOG(WS_LOG_SFTP, "Error opening file %s", dir);
         res = oer;
@@ -2293,14 +2293,14 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         cur = (WS_DIR_LIST*)WMALLOC(sizeof(WS_DIR_LIST),
                 ssh->ctx->heap, DYNTYPE_SFTP);
         if (cur == NULL) {
-            WCLOSEDIR(&ctx);
+            WCLOSEDIR(ssh->fs, &ctx);
             return WS_MEMORY_E;
         }
         dirNameSz = (word32)WSTRLEN(dir) + 1;
         dirName = (char*)WMALLOC(dirNameSz,
                 ssh->ctx->heap, DYNTYPE_PATH);
         if (dirName == NULL) {
-            WCLOSEDIR(&ctx);
+            WCLOSEDIR(ssh->fs, &ctx);
             WFREE(cur, ssh->ctx->heap, DYNTYPE_SFTP);
             return WS_MEMORY_E;
         }
@@ -2697,7 +2697,7 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
         }
     }
 
-    if (!special && (WREADDIR(dir)) == NULL) {
+    if (!special && (WREADDIR(ssh->fs, dir)) == NULL) {
         ret = WS_NEXT_ERROR;
     }
 
@@ -2971,7 +2971,7 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
         return WS_BAD_ARGUMENT;
     }
 
-    dp = WREADDIR(dir);
+    dp = WREADDIR(ssh->fs, dir);
     if (dp == NULL) {
         return WS_FATAL_ERROR;
     }
@@ -3255,7 +3255,7 @@ int wolfSSH_SFTP_RecvCloseDir(WOLFSSH* ssh, byte* handle, word32 handleSz)
 #ifdef USE_WINDOWS_API
     FindClose(cur->dir);
 #else
-    WCLOSEDIR(&cur->dir);
+    WCLOSEDIR(ssh->fs, &cur->dir);
 #endif
 
     /* remove directory from list */
@@ -3343,7 +3343,7 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             return WS_BUFFER_E;
         }
 
-        ret = WPWRITE(fd, data + idx, sz, ofst);
+        ret = WPWRITE(ssh->fs, fd, data + idx, sz, ofst);
         if (ret < 0) {
     #if defined(WOLFSSL_NUCLEUS) && defined(DEBUG_WOLFSSH)
             if (ret == NUF_NOSPC) {
@@ -3530,7 +3530,7 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         return WS_MEMORY_E;
     }
 
-    ret = WPREAD(fd, out + UINT32_SZ + WOLFSSH_SFTP_HEADER, sz, ofst);
+    ret = WPREAD(ssh->fs, fd, out + UINT32_SZ + WOLFSSH_SFTP_HEADER, sz, ofst);
     if (ret < 0 || (word32)ret > sz) {
         WLOG(WS_LOG_SFTP, "Error reading from file");
         res  = err;
@@ -3743,7 +3743,7 @@ int wolfSSH_SFTP_RecvClose(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     if (sz == sizeof(WFD)) {
         WMEMSET((byte*)&fd, 0, sizeof(WFD));
         WMEMCPY((byte*)&fd, data + idx, sz);
-        ret = WCLOSE(fd);
+        ret = WCLOSE(ssh->fs, fd);
     #ifdef WOLFSSH_STOREHANDLE
         if (SFTP_RemoveHandleNode(ssh, data + idx, sz) != WS_SUCCESS) {
             WLOG(WS_LOG_SFTP, "Unable to remove handle from list");
@@ -4216,10 +4216,10 @@ int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
     WOLFSSH_UNUSED(fs);
 
     if (noFollow) {
-        ret = WLSTAT(fileName, &stats);
+        ret = WLSTAT(ssh->fs, fileName, &stats);
     }
     else {
-        ret = WSTAT(fileName, &stats);
+        ret = WSTAT(ssh->fs, fileName, &stats);
     }
 
     WMEMSET(atr, 0, sizeof(WS_SFTP_FILEATRB));
@@ -4298,7 +4298,7 @@ int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
         return WS_BAD_FILE_E;
     }
 
-    if (WSTAT(cur->name, &stats) != NU_SUCCESS) {
+    if (WSTAT(ssh->fs, cur->name, &stats) != NU_SUCCESS) {
         return WS_FATAL_ERROR;
     }
 
@@ -4638,12 +4638,12 @@ int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
 
     if (noFollow) {
         /* Note, for windows, we treat WSTAT and WLSTAT the same. */
-        if (WLSTAT(fileName, &stats) != 0) {
+        if (WLSTAT(ssh->fs, fileName, &stats) != 0) {
             return WS_BAD_FILE_E;
         }
     }
     else {
-        if (WSTAT(fileName, &stats) != 0) {
+        if (WSTAT(ssh->fs, fileName, &stats) != 0) {
             return WS_BAD_FILE_E;
         }
     }
@@ -8249,9 +8249,9 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                 WLOG(WS_LOG_SFTP, "SFTP GET STATE: OPEN LOCAL");
                 #ifndef USE_WINDOWS_API
                     if (state->gOfst[0] > 0 || state->gOfst[1] > 0)
-                        ret = WFOPEN(&state->fl, to, "ab");
+                        ret = WFOPEN(ssh->fs, &state->fl, to, "ab");
                     else
-                        ret = WFOPEN(&state->fl, to, "wb");
+                        ret = WFOPEN(ssh->fs, &state->fl, to, "wb");
                 #else /* USE_WINDOWS_API */
                     {
                         DWORD desiredAccess = GENERIC_WRITE;
@@ -8296,7 +8296,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                     }
                     else {
                     #ifndef USE_WINDOWS_API
-                        if ((long)WFWRITE(state->r, 1,
+                        if ((long)WFWRITE(ssh->fs, state->r, 1,
                                           sz, state->fl) != sz) {
                             WLOG(WS_LOG_SFTP, "Error writing to file");
                             ssh->error = WS_BAD_FILE_E;
@@ -8358,7 +8358,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
             case STATE_GET_CLOSE_LOCAL:
                 WLOG(WS_LOG_SFTP, "SFTP GET STATE: CLOSE LOCAL");
                 #ifndef USE_WINDOWS_API
-                    WFCLOSE(state->fl);
+                    WFCLOSE(ssh->fs, state->fl);
                 #else /* USE_WINDOWS_API */
                     if (CloseHandle(state->fileHandle) == 0) {
                         WLOG(WS_LOG_SFTP, "Error closing file.");
@@ -8447,7 +8447,7 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
             case STATE_PUT_OPEN_LOCAL:
                 WLOG(WS_LOG_SFTP, "SFTP PUT STATE: OPEN LOCAL");
             #ifndef USE_WINDOWS_API
-                ret = WFOPEN(&state->fl, from, "rb");
+                ret = WFOPEN(ssh->fs, &state->fl, from, "rb");
                 if (ret != 0) {
                     WLOG(WS_LOG_SFTP, "Unable to open input file");
                     ssh->error = WS_SFTP_FILE_DNE;
@@ -8461,7 +8461,7 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                 #if SIZEOF_OFF_T == 8
                     offset = (((word64)state->pOfst[1]) << 32) | offset;
                 #endif
-                    WFSEEK(state->fl, offset, 0);
+                    WFSEEK(ssh->fs, state->fl, offset, 0);
                 }
             #else /* USE_WINDOWS_API */
                 state->fileHandle = WS_CreateFileA(from, GENERIC_READ,
@@ -8506,7 +8506,7 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                 do {
                     if (state->rSz == 0) {
                     #ifndef USE_WINDOWS_API
-                        state->rSz = (int)WFREAD(state->r,
+                        state->rSz = (int)WFREAD(ssh->fs, state->r,
                                 1, WOLFSSH_MAX_SFTP_RW, state->fl);
                         if (state->rSz <= 0) {
                             break; /* either at end of file or error */
@@ -8550,7 +8550,7 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
             case STATE_PUT_CLOSE_LOCAL:
                 WLOG(WS_LOG_SFTP, "SFTP PUT STATE: CLOSE LOCAL");
             #ifndef USE_WINDOWS_API
-                WFCLOSE(state->fl);
+                WFCLOSE(ssh->fs, state->fl);
             #else /* USE_WINDOWS_API */
                 CloseHandle(state->fileHandle);
             #endif /* USE_WINDOWS_API */
@@ -8601,7 +8601,7 @@ int wolfSSH_SFTP_free(WOLFSSH* ssh)
 
         /* go through and free handles and make sure files are closed */
         while (cur != NULL) {
-            WCLOSE(*((WFD*)cur->handle));
+            WCLOSE(ssh->fs, *((WFD*)cur->handle));
             if (SFTP_RemoveHandleNode(ssh, cur->handle, cur->handleSz)
                     != WS_SUCCESS) {
                 return WS_FATAL_ERROR;
@@ -8624,7 +8624,7 @@ int wolfSSH_SFTP_free(WOLFSSH* ssh)
         #ifdef USE_WINDOWS_API
             FindClose(toFree->dir);
         #else
-            WCLOSEDIR(&toFree->dir);
+            WCLOSEDIR(ssh->fs, &toFree->dir);
         #endif
             if (toFree->dirName != NULL)
                 WFREE(toFree->dirName, ssh->ctx->heap, DYNTYPE_SFTP);

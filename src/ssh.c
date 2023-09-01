@@ -1569,7 +1569,7 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
 }
 
 
-#ifndef NO_FILESYSTEM
+#if !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM)
 
 /* Reads a key from the file name into a buffer. If the key starts with the
    string "ssh-rsa" or "ecdsa-sha2-nistp256", it is considered an SSH format
@@ -1592,27 +1592,27 @@ int wolfSSH_ReadKey_file(const char* name,
             isPrivate == NULL)
         return WS_BAD_ARGUMENT;
 
-    ret = WFOPEN(&file, name, "rb");
+    ret = WFOPEN(NULL, &file, name, "rb");
     if (ret != 0 || file == WBADFILE) return WS_BAD_FILE_E;
-    if (WFSEEK(file, 0, WSEEK_END) != 0) {
-        WFCLOSE(file);
+    if (WFSEEK(NULL, file, 0, WSEEK_END) != 0) {
+        WFCLOSE(NULL, file);
         return WS_BAD_FILE_E;
     }
-    inSz = (word32)WFTELL(file);
-    WREWIND(file);
+    inSz = (word32)WFTELL(NULL, file);
+    WREWIND(NULL, file);
 
     if (inSz > WOLFSSH_MAX_FILE_SIZE || inSz == 0) {
-        WFCLOSE(file);
+        WFCLOSE(NULL, file);
         return WS_BAD_FILE_E;
     }
 
     in = (byte*)WMALLOC(inSz + 1, heap, DYNTYPE_FILE);
     if (in == NULL) {
-        WFCLOSE(file);
+        WFCLOSE(NULL, file);
         return WS_MEMORY_E;
     }
 
-    ret = (int)WFREAD(in, 1, inSz, file);
+    ret = (int)WFREAD(NULL, in, 1, inSz, file);
     if (ret <= 0 || (word32)ret != inSz) {
         ret = WS_BAD_FILE_E;
     }
@@ -1634,7 +1634,7 @@ int wolfSSH_ReadKey_file(const char* name,
                 out, outSz, outType, outTypeSz, heap);
     }
 
-    WFCLOSE(file);
+    WFCLOSE(ssh->fs, file);
     WFREE(in, heap, DYNTYPE_FILE);
 
     return ret;

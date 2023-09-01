@@ -245,22 +245,22 @@ static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap)
 
     if (fileName == NULL) return NULL;
 
-    if (WFOPEN(&file, fileName, "rb") != 0)
+    if (WFOPEN(NULL, &file, fileName, "rb") != 0)
         return NULL;
-    WFSEEK(file, 0, XSEEK_END);
-    fileSz = (word32)WFTELL(file);
-    WREWIND(file);
+    WFSEEK(NULL, file, 0, XSEEK_END);
+    fileSz = (word32)WFTELL(NULL, file);
+    WREWIND(NULL, file);
 
     buf = (byte*)WMALLOC(fileSz + 1, heap, DYNTYPE_SSHD);
     if (buf != NULL) {
-        readSz = (word32)WFREAD(buf, 1, fileSz, file);
+        readSz = (word32)WFREAD(NULL, buf, 1, fileSz, file);
         if (readSz < fileSz) {
-            WFCLOSE(file);
+            WFCLOSE(NULL, file);
             WFREE(buf, heap, DYNTYPE_SSHD);
             return NULL;
         }
         *bufSz = readSz;
-        WFCLOSE(file);
+        WFCLOSE(NULL, file);
     }
 
     (void)heap;
@@ -636,7 +636,7 @@ static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     "[SSHD] Error setting SFTP default home path");
                 ret = WS_FATAL_ERROR;
             }
-            WCLOSEDIR(&dir);
+            WCLOSEDIR(NULL, &dir);
         }
     }
 
