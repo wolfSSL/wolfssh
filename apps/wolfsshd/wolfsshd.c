@@ -1949,7 +1949,7 @@ static int StartSSHD(int argc, char** argv)
             break;
 
         case 'E':
-            ret = WFOPEN(&logFile, myoptarg, "ab");
+            ret = WFOPEN(NULL, &logFile, myoptarg, "ab");
             if (ret != 0 || logFile == WBADFILE) {
                 fprintf(stderr, "Unable to open log file %s\n", myoptarg);
                 ret = WS_FATAL_ERROR;
