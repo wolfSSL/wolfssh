@@ -21,6 +21,11 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "testsuite", "testsuite\test
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "wolfsftp-client", "wolfsftp-client\wolfsftp-client.vcxproj", "{8DD810D6-159B-4C40-B682-FCA11F9B3680}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "wolfsshd", "wolfsshd\wolfsshd.vcxproj", "{9A31DAB4-6292-4ECB-BE35-C60D925C571E}"
+	ProjectSection(ProjectDependencies) = postProject
+		{7C2CCF0D-A155-4914-BD1C-9A47C0530E65} = {7C2CCF0D-A155-4914-BD1C-9A47C0530E65}
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Win32 = Debug|Win32
@@ -141,6 +146,22 @@ Global
 		{8DD810D6-159B-4C40-B682-FCA11F9B3680}.Release|Win32.Build.0 = Release|Win32
 		{8DD810D6-159B-4C40-B682-FCA11F9B3680}.Release|x64.ActiveCfg = Release|x64
 		{8DD810D6-159B-4C40-B682-FCA11F9B3680}.Release|x64.Build.0 = Release|x64
+		{9A31DAB4-6292-4ECB-BE35-C60D925C571E}.Debug|Win32.ActiveCfg = Debug|Win32
+		{9A31DAB4-6292-4ECB-BE35-C60D925C571E}.Debug|Win32.Build.0 = Debug|Win32
+		{9A31DAB4-6292-4ECB-BE35-C60D925C571E}.Debug|x64.ActiveCfg = Debug|x64
+		{9A31DAB4-6292-4ECB-BE35-C60D925C571E}.Debug|x64.Build.0 = Debug|x64
+		{9A31DAB4-6292-4ECB-BE35-C60D925C571E}.DLL Debug|Win32.ActiveCfg = Debug|Win32
+		{9A31DAB4-6292-4ECB-BE35-C60D925C571E}.DLL Debug|Win32.Build.0 = Debug|Win32
+		{9A31DAB4-6292-4ECB-BE35-C60D925C571E}.DLL Debug|x64.ActiveCfg = Debug|x64
+		{9A31DAB4-6292-4ECB-BE35-C60D925C571E}.DLL Debug|x64.Build.0 = Debug|x64
+		{9A31DAB4-6292-4ECB-BE35-C60D925C571E}.DLL Release|Win32.ActiveCfg = Release|Win32
+		{9A31DAB4-6292-4ECB-BE35-C60D925C571E}.DLL Release|Win32.Build.0 = Release|Win32
+		{9A31DAB4-6292-4ECB-BE35-C60D925C571E}.DLL Release|x64.ActiveCfg = Release|x64
+		{9A31DAB4-6292-4ECB-BE35-C60D925C571E}.DLL Release|x64.Build.0 = Release|x64
+		{9A31DAB4-6292-4ECB-BE35-C60D925C571E}.Release|Win32.ActiveCfg = Release|Win32
+		{9A31DAB4-6292-4ECB-BE35-C60D925C571E}.Release|Win32.Build.0 = Release|Win32
+		{9A31DAB4-6292-4ECB-BE35-C60D925C571E}.Release|x64.ActiveCfg = Release|x64
+		{9A31DAB4-6292-4ECB-BE35-C60D925C571E}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

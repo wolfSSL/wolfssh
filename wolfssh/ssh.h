@@ -236,6 +236,7 @@ WOLFSSH_API int wolfSSH_SetUsername(WOLFSSH*, const char*);
 WOLFSSH_API char* wolfSSH_GetUsername(WOLFSSH*);
 
 WOLFSSH_API int wolfSSH_CTX_SetBanner(WOLFSSH_CTX*, const char*);
+WOLFSSH_API int wolfSSH_CTX_SetSshProtoIdStr(WOLFSSH_CTX*, const char*);
 WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX*,
                                                  const byte*, word32, int);
 #ifdef WOLFSSH_CERTS
@@ -282,6 +283,12 @@ typedef enum {
 WOLFSSH_API WS_SessionType wolfSSH_GetSessionType(const WOLFSSH*);
 WOLFSSH_API const char* wolfSSH_GetSessionCommand(const WOLFSSH*);
 WOLFSSH_API int wolfSSH_SetChannelType(WOLFSSH*, byte, byte*, word32);
+WOLFSSH_API int wolfSSH_ChangeTerminalSize(WOLFSSH* ssh, word32, word32,
+    word32, word32);
+typedef int (*WS_CallbackTerminalSize)(WOLFSSH*, word32, word32, word32,
+    word32, void*);
+void wolfSSH_SetTerminalResizeCb(WOLFSSH*, WS_CallbackTerminalSize);
+void wolfSSH_SetTerminalResizeCtx(WOLFSSH*, void*);
 
 
 enum WS_HighwaterSide {
