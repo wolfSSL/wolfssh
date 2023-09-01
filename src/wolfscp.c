@@ -2095,7 +2095,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
     return ret;
 }
 
-static int _GetFileSize(WFILE* fp, word32* fileSz)
+static int _GetFileSize(void* fs, WFILE* fp, word32* fileSz)
 {
     WOLFSSH_UNUSED(fs);
 

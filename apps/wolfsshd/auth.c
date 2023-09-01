@@ -511,7 +511,7 @@ static int SearchForPubKey(const char* path, const WS_UserAuthData_PublicKey* pu
     }
 
     if (ret == WSSHD_AUTH_SUCCESS) {
-        if (WFOPEN(&f, authKeysPath, "rb") != 0) {
+        if (WFOPEN(NULL, &f, authKeysPath, "rb") != 0) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to open %s",
                 authKeysPath);
             ret = WS_BAD_FILE_E;
@@ -554,7 +554,7 @@ static int SearchForPubKey(const char* path, const WS_UserAuthData_PublicKey* pu
     }
 
     if (f != WBADFILE) {
-        WFCLOSE(f);
+        WFCLOSE(NULL, f);
     }
 
     if (ret == WSSHD_AUTH_SUCCESS && !foundKey) {

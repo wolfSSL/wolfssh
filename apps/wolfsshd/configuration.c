@@ -1114,7 +1114,7 @@ int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename)
     if (conf == NULL || filename == NULL)
         return BAD_FUNC_ARG;
 
-    if (WFOPEN(&f, filename, "rb") != 0) {
+    if (WFOPEN(NULL, &f, filename, "rb") != 0) {
         wolfSSH_Log(WS_LOG_ERROR, "Unable to open SSHD config file %s",
                 filename);
         return BAD_FUNC_ARG;
@@ -1146,7 +1146,7 @@ int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename)
             break;
         }
     }
-    WFCLOSE(f);
+    WFCLOSE(NULL, f);
 
     SetAuthKeysPattern(conf->authKeysFile);
 
@@ -1450,10 +1450,10 @@ void wolfSSHD_ConfigSavePID(const WOLFSSHD_CONFIG* conf)
     char buf[12]; /* large enough to hold 'int' type with null terminator */
 
     WMEMSET(buf, 0, sizeof(buf));
-    if (WFOPEN(&f, conf->pidFile, "wb") == 0) {
+    if (WFOPEN(NULL, &f, conf->pidFile, "wb") == 0) {
         WSNPRINTF(buf, sizeof(buf), "%d", getpid());
-        WFWRITE(buf, 1, WSTRLEN(buf), f);
-        WFCLOSE(f);
+        WFWRITE(NULL, buf, 1, WSTRLEN(buf), f);
+        WFCLOSE(NULL, f);
     }
 }
 
