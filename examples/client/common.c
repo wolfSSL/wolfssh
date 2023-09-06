@@ -382,25 +382,26 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
         if (ParseRFC6187(pubKey, pubKeySz, &der, &derSz) == WS_SUCCESS) {
             wc_InitDecodedCert(&dCert, der,  derSz, NULL);
             if (wc_ParseCert(&dCert, CERT_TYPE, NO_VERIFY, NULL) != 0) {
-                printf("public key not a cert\n");
+                WLOG(WS_LOG_DEBUG, "public key not a cert\n");
             }
             else {
                 int ipMatch = 0;
                 DNS_entry* current = dCert.altNames;
 
                 if (ctx == NULL) {
-                    fprintf(stderr, "No host IP set to check against!\n");
+                    WLOG(WS_LOG_ERROR, "No host IP set to check against!\n");
                     ret = -1;
                 }
 
                 if (ret == 0) {
                     while (current != NULL) {
                         if (current->type == ASN_IP_TYPE) {
-                            printf("host cert alt. name IP : %s\n",
+                            WLOG(WS_LOG_DEBUG, "host cert alt. name IP : %s\n",
                                 current->ipString);
-                            printf("\texpecting host IP : %s\n", (char*)ctx);
+                            WLOG(WS_LOG_DEBUG,
+                                "\texpecting host IP : %s\n", (char*)ctx);
                             if (XSTRCMP(ctx, current->ipString) == 0) {
-                                printf("\tmatched!\n");
+                                WLOG(WS_LOG_DEBUG, "\tmatched!\n");
                                 ipMatch = 1;
                             }
                         }
@@ -424,8 +425,8 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
         }
     }
 #else
-    printf("wolfSSL not built with OPENSSL_ALL or WOLFSSL_IP_ALT_NAME\n");
-    printf("\tnot checking IP address from peer's cert\n");
+    WLOG(WS_LOG_DEBUG, "wolfSSL not built with OPENSSL_ALL or WOLFSSL_IP_ALT_NAME\n");
+    WLOG(WS_LOG_DEBUG, "\tnot checking IP address from peer's cert\n");
 #endif
 #endif
 
