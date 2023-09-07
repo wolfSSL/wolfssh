@@ -6804,8 +6804,8 @@ static int DoChannelRequest(WOLFSSH* ssh,
             if (ret == WS_SUCCESS)
                 ret = GetUint32(&heightPixels, buf, len, &begin);
 
-            /* itterate over op codes */
-            if (ret == WS_SUCCESS) {
+            /* iterate over op codes */
+            if (ret == WS_SUCCESS && begin < len) {
                 do {
                     opCode = buf[begin];
                     begin++;
