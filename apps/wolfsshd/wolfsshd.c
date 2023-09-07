@@ -2115,18 +2115,15 @@ static int StartSSHD(int argc, char** argv)
     }
 #endif
 
-    if (ret == WS_SUCCESS) {
+    if (ret == WS_SUCCESS && !testMode) {
         wolfSSHD_ConfigSavePID(conf);
+        wolfSSH_Log(WS_LOG_INFO, "[SSHD] Starting to listen on port %d", port);
+        tcp_listen(&listenFd, &port, 1);
+        wolfSSH_Log(WS_LOG_INFO, "[SSHD] Listening on port %d", port);
         if (wolfSSHD_AuthReducePermissions(auth) != WS_SUCCESS) {
             wolfSSH_Log(WS_LOG_INFO, "[SSHD] Error lowering permissions level");
             ret = WS_FATAL_ERROR;
         }
-    }
-
-    if (ret == WS_SUCCESS && !testMode) {
-        wolfSSH_Log(WS_LOG_INFO, "[SSHD] Starting to listen on port %d", port);
-        tcp_listen(&listenFd, &port, 1);
-        wolfSSH_Log(WS_LOG_INFO, "[SSHD] Listening on port %d", port);
 
     #ifdef WIN32
         if (ret == WS_SUCCESS && isDaemon) {
