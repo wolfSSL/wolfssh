@@ -104,6 +104,7 @@ struct WOLFSSHD_CONFIG {
     byte permitEmptyPasswords:1;
     byte authKeysFileSet:1; /* if not set then no explicit authorized keys */
     byte strictModes:1; /* enforce file permission/ownership checks */
+    byte useSystemCA:1;
 };
 
 /* Maximum depth of nested Include directives. Bounds the recursion
@@ -425,9 +426,10 @@ enum {
     OPT_PUBKEY_AUTH             = 24,
     OPT_STRICT_MODES            = 25,
     OPT_AUTHORIZED_UPN_DOMAINS  = 26,
+    OPT_TRUSTED_SYSTEM_CA_KEYS  = 27,
 };
 enum {
-    NUM_OPTIONS = 27
+    NUM_OPTIONS = 28
 };
 
 static const CONFIG_OPTION options[NUM_OPTIONS] = {
@@ -454,6 +456,7 @@ static const CONFIG_OPTION options[NUM_OPTIONS] = {
     {OPT_FORCE_CMD,               "ForceCommand"},
     {OPT_HOST_CERT,               "HostCertificate"},
     {OPT_TRUSTED_USER_CA_KEYS,    "TrustedUserCAKeys"},
+    {OPT_TRUSTED_SYSTEM_CA_KEYS,  "TrustedSystemCAKeys"},
     {OPT_PIDFILE,                 "PidFile"},
     {OPT_BANNER,                  "Banner"},
     {OPT_STRICT_MODES,            "StrictModes"},
@@ -1301,6 +1304,9 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
             /* TODO: Add logic to check if file exists? */
             ret = wolfSSHD_ConfigSetUserCAKeysFile(*conf, value);
             break;
+        case OPT_TRUSTED_SYSTEM_CA_KEYS:
+            ret = wolfSSHD_ConfigSetSystemCA(*conf, value);
+            break;
         case OPT_PIDFILE:
             ret = SetFileString(&(*conf)->pidFile, value, (*conf)->heap);
             break;
@@ -1657,6 +1663,44 @@ char* wolfSSHD_ConfigGetHostCertFile(const WOLFSSHD_CONFIG* conf)
 
     return ret;
 }
+
+
+/* getter function for if using system CAs
+ * return 1 if true and 0 if false */
+int wolfSSHD_ConfigGetSystemCA(const WOLFSSHD_CONFIG* conf)
+{
+    if (conf != NULL) {
+        return conf->useSystemCA;
+    }
+    return 0;
+}
+
+
+/* setter function for if using system CAs
+ * 'yes' if true and 'no' if false
+ * returns WS_SUCCESS on success */
+int wolfSSHD_ConfigSetSystemCA(WOLFSSHD_CONFIG* conf, const char* value)
+{
+    int ret = WS_SUCCESS;
+
+    if (conf != NULL) {
+        if (WSTRCMP(value, "yes") == 0) {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] System CAs enabled");
+            conf->useSystemCA = 1;
+        }
+        else if (WSTRCMP(value, "no") == 0) {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] System CAs disabled");
+            conf->useSystemCA = 0;
+        }
+        else {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] System CAs unexpected flag");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    return ret;
+}
+
 
 char* wolfSSHD_ConfigGetUserCAKeysFile(const WOLFSSHD_CONFIG* conf)
 {
