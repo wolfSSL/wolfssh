@@ -287,8 +287,9 @@ WOLFSSH_API int wolfSSH_ChangeTerminalSize(WOLFSSH* ssh, word32, word32,
     word32, word32);
 typedef int (*WS_CallbackTerminalSize)(WOLFSSH*, word32, word32, word32,
     word32, void*);
-void wolfSSH_SetTerminalResizeCb(WOLFSSH*, WS_CallbackTerminalSize);
-void wolfSSH_SetTerminalResizeCtx(WOLFSSH*, void*);
+WOLFSSH_API void wolfSSH_SetTerminalResizeCb(WOLFSSH* ssh,
+    WS_CallbackTerminalSize cb);
+WOLFSSH_API void wolfSSH_SetTerminalResizeCtx(WOLFSSH* ssh, void* usrCtx);
 
 
 enum WS_HighwaterSide {
