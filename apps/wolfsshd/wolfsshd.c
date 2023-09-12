@@ -406,6 +406,39 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
 #endif /* WOLFSSH_OSSH_CERTS || WOLFSSH_CERTS */
 
 #ifdef WOLFSSH_CERTS
+    /* check if loading in system CA certs */
+    if (ret == WS_SUCCESS && wolfSSHD_ConfigGetSystemCA(conf)) {
+        WOLFSSL_CTX* sslCtx;
+
+        wolfSSH_Log(WS_LOG_INFO, "[SSHD] Using system CAs");
+        sslCtx = wolfSSL_CTX_new(wolfSSLv23_method());
+        if (sslCtx == NULL) {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Unable to create temporary CTX");
+            ret = WS_FATAL_ERROR;
+        }
+
+        if (ret == WS_SUCCESS) {
+            if (wolfSSL_CTX_load_system_CA_certs(sslCtx) != WOLFSSL_SUCCESS) {
+                wolfSSH_Log(WS_LOG_INFO, "[SSHD] Issue loading system CAs");
+                ret = WS_FATAL_ERROR;
+            }
+        }
+
+        if (ret == WS_SUCCESS) {
+            if (wolfSSH_SetCertManager(*ctx,
+                wolfSSL_CTX_GetCertManager(sslCtx)) != WS_SUCCESS) {
+                wolfSSH_Log(WS_LOG_INFO,
+                    "[SSHD] Issue copying over system CAs");
+                ret = WS_FATAL_ERROR;
+            }
+        }
+
+        if (sslCtx != NULL) {
+            wolfSSL_CTX_free(sslCtx);
+        }
+    }
+
+    /* load in CA certs from file set */
     if (ret == WS_SUCCESS) {
         char* caCert = wolfSSHD_ConfigGetUserCAKeysFile(conf);
         if (caCert != NULL) {

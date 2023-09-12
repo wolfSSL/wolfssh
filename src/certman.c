@@ -36,7 +36,6 @@
 #endif
 
 
-#include <wolfssl/ssl.h>
 #include <wolfssl/ocsp.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/error-ssl.h>
@@ -82,6 +81,26 @@ struct WOLFSSH_CERTMAN {
     void* heap;
     WOLFSSL_CERT_MANAGER* cm;
 };
+
+
+/* used to import an external cert manager, frees and replaces existing manager
+ * returns WS_SUCCESS on success
+ */
+int wolfSSH_SetCertManager(WOLFSSH_CTX* ctx, WOLFSSL_CERT_MANAGER* cm)
+{
+    if (ctx == NULL || cm == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    /* free up existing cm if present */
+    if (ctx->certMan != NULL && ctx->certMan->cm != NULL) {
+        wolfSSL_CertManagerFree(ctx->certMan->cm);
+    }
+    wolfSSL_CertManager_up_ref(cm);
+    ctx->certMan->cm = cm;
+
+    return WS_SUCCESS;
+}
 
 
 static WOLFSSH_CERTMAN* _CertMan_init(WOLFSSH_CERTMAN* cm, void* heap)
