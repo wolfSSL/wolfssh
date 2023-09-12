@@ -2855,8 +2855,6 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 #endif /* NO_WOLFSSH_SERVER */
 
 
-void wolfSSL_Debugging_ON(void);
-
 int wolfSSH_Echoserver(int argc, char** argv)
 {
     func_args args;
