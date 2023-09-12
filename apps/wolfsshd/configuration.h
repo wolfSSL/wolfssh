@@ -42,6 +42,8 @@ char* wolfSSHD_ConfigGetHostCertFile(const WOLFSSHD_CONFIG* conf);
 char* wolfSSHD_ConfigGetUserCAKeysFile(const WOLFSSHD_CONFIG* conf);
 int wolfSSHD_ConfigSetHostKeyFile(WOLFSSHD_CONFIG* conf, const char* file);
 int wolfSSHD_ConfigSetHostCertFile(WOLFSSHD_CONFIG* conf, const char* file);
+int wolfSSHD_ConfigSetSystemCA(WOLFSSHD_CONFIG* conf, const char* value);
+int wolfSSHD_ConfigGetSystemCA(const WOLFSSHD_CONFIG* conf);
 int wolfSSHD_ConfigSetUserCAKeysFile(WOLFSSHD_CONFIG* conf, const char* file);
 word16 wolfSSHD_ConfigGetPort(const WOLFSSHD_CONFIG* conf);
 char* wolfSSHD_ConfigGetAuthKeysFile(const WOLFSSHD_CONFIG* conf);
