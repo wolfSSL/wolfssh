@@ -396,10 +396,14 @@ static THREAD_RET readPeer(void* in)
                 } while (ret > 0);
             }
             else if (ret <= 0) {
-                #ifdef WOLFSSH_AGENT
                 if (ret == WS_FATAL_ERROR) {
                     ret = wolfSSH_get_error(args->ssh);
-                    if (ret == WS_CHAN_RXD) {
+                    if (ret == WS_WANT_READ) {
+                        /* If WANT_READ, not an error. */
+                        ret = WS_SUCCESS;
+                    }
+                    #ifdef WOLFSSH_AGENT
+                    else if (ret == WS_CHAN_RXD) {
                         byte agentBuf[512];
                         int rxd, txd;
                         word32 channel = 0;
@@ -430,9 +434,9 @@ static THREAD_RET readPeer(void* in)
                         WMEMSET(agentBuf, 0, sizeof(agentBuf));
                         continue;
                     }
+                    #endif /* WOLFSSH_AGENT */
                 }
-                #endif
-                if (ret != WS_EOF) {
+                else if (ret != WS_EOF) {
                     err_sys("Stream read failed.");
                 }
             }
