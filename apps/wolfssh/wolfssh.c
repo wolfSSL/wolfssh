@@ -35,6 +35,9 @@
 #include <wolfssl/version.h>
 
 #include <wolfssh/test.h>
+#ifdef WOLFSSH_AGENT
+    #include <wolfssh/agent.h>
+#endif
 #include <wolfssl/wolfcrypt/ecc.h>
 #include "examples/client/client.h"
 #if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32)
@@ -165,12 +168,11 @@ static int SetEcho(int type)
 }
 
 
-static void ShowUsage(const char* appPath)
+static void ShowUsage(char* appPath)
 {
-    char appNameBuf[MAXPATHLEN];
     const char* appName;
 
-    appName = basename_r(appPath, appNameBuf);
+    appName = basename(appPath);
     /* Attempt to use the actual program name from the caller. Otherwise,
      * default to "wolfssh". */
     if (appName == NULL) {
@@ -550,10 +552,13 @@ static THREAD_RET readPeer(void* in)
                 } while (ret > 0);
             }
             else if (ret <= 0) {
-                #ifdef WOLFSSH_AGENT
                 if (ret == WS_FATAL_ERROR) {
                     ret = wolfSSH_get_error(args->ssh);
-                    if (ret == WS_CHAN_RXD) {
+                    if (ret == WS_WANT_READ) {
+                        ret = WS_SUCCESS;
+                    }
+                    #ifdef WOLFSSH_AGENT
+                    else if (ret == WS_CHAN_RXD) {
                         byte agentBuf[512];
                         int rxd, txd;
                         word32 channel = 0;
@@ -584,12 +589,9 @@ static THREAD_RET readPeer(void* in)
                         WMEMSET(agentBuf, 0, sizeof(agentBuf));
                         continue;
                     }
+                    #endif /* WOLFSSH_AGENT */
                 }
-                #endif
-                if (ret == WS_ERROR) {
-                    /* Sometimes, err is WANT_READ. Why? */
-                }
-                if (ret != WS_EOF) {
+                else if (ret != WS_EOF) {
                     err_sys("Stream read failed.");
                 }
             }
@@ -616,7 +618,8 @@ static THREAD_RET readPeer(void* in)
                 fflush(stdout);
             #endif
             }
-            if (wolfSSH_stream_peek(args->ssh, buf, bufSz) <= 0) {
+            ret = wolfSSH_stream_peek(args->ssh, buf, bufSz);
+            if (ret <= 0) {
                 bytes = 0; /* read it all */
             }
         }
@@ -643,29 +646,29 @@ static int load_der_file(const char* filename, byte** out, word32* outSz)
     if (filename == NULL || out == NULL || outSz == NULL)
         return -1;
 
-    ret = WFOPEN(&file, filename, "rb");
+    ret = WFOPEN(NULL, &file, filename, "rb");
     if (ret != 0 || file == WBADFILE)
         return -1;
 
-    if (WFSEEK(file, 0, WSEEK_END) != 0) {
-        WFCLOSE(file);
+    if (WFSEEK(NULL, file, 0, WSEEK_END) != 0) {
+        WFCLOSE(NULL, file);
         return -1;
     }
-    inSz = (word32)WFTELL(file);
-    WREWIND(file);
+    inSz = (word32)WFTELL(NULL, file);
+    WREWIND(NULL, file);
 
     if (inSz == 0) {
-        WFCLOSE(file);
+        WFCLOSE(NULL, file);
         return -1;
     }
 
     in = (byte*)WMALLOC(inSz, NULL, 0);
     if (in == NULL) {
-        WFCLOSE(file);
+        WFCLOSE(NULL, file);
         return -1;
     }
 
-    ret = (int)WFREAD(in, 1, inSz, file);
+    ret = (int)WFREAD(NULL, in, 1, inSz, file);
     if (ret <= 0 || (word32)ret != inSz) {
         ret = -1;
         WFREE(in, NULL, 0);
@@ -678,7 +681,7 @@ static int load_der_file(const char* filename, byte** out, word32* outSz)
     *out = in;
     *outSz = inSz;
 
-    WFCLOSE(file);
+    WFCLOSE(NULL, file);
 
     return ret;
 }
@@ -813,13 +816,15 @@ struct config {
     const char* logFile;
     const char* user;
     const char* hostname;
-    const char* destination;
     char* command;
     char* user_host_buffer;
     word32 printConfig:1;
     word32 noCommand:1;
     word16 port;
 };
+/* Note: user is either pointing to an argv argument, the value of USER in
+ * the env, or to the username in the user_host_buffer. hostname will be
+ * pointing into user_host_buffer. */
 
 
 static int config_init_default(struct config* config)
@@ -950,12 +955,12 @@ static int config_parse_command_line(struct config* config,
 static int config_print(struct config* config)
 {
     if (config->printConfig) {
-        printf("user %s\n", config->user);
-        printf("hostname %s\n", config->hostname);
+        printf("user %s\n", config->user ? config->user : "none");
+        printf("hostname %s\n", config->hostname ? config->hostname : "none");
         printf("port %u\n", config->port);
         printf("noCommand %s\n", config->noCommand ? "true" : "false");
-        printf("logfile %s\n", config->logFile);
-        printf("command %s\n", config->command);
+        printf("logfile %s\n", config->logFile ? config->logFile : "default");
+        printf("command %s\n", config->command ? config->command : "none");
     }
 
     return 0;
@@ -1167,7 +1172,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     tcp_socket(&sockFd);
     ret = connect(sockFd, (const struct sockaddr *)&clientAddr, clientAddrSz);
     if (ret != 0)
-        err_sys("Couldn't connect to server!!!.");
+        err_sys("Couldn't connect to server.");
 
     tcp_set_nonblocking(&sockFd);
 
