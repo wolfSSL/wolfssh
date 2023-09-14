@@ -254,12 +254,12 @@ static THREAD_RET windowMonitor(void* in)
     do {
     #if (defined(__OSX__) || defined(__APPLE__))
         dispatch_semaphore_wait(windowSem, DISPATCH_TIME_FOREVER);
-        if (args->quit) {
-            break;
-        }
     #else
         sem_wait(&windowSem);
     #endif
+        if (args->quit) {
+            break;
+        }
         ret = sendCurrentWindowSize(args);
         (void)ret;
     } while (1);
@@ -895,7 +895,11 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         pthread_join(thread[2], NULL);
         /* Wake the windowMonitor thread so it can exit. */
         arg.quit = 1;
+    #if (defined(__OSX__) || defined(__APPLE__))
         dispatch_semaphore_signal(windowSem);
+    #else
+        sem_post(&windowSem);
+    #endif
         pthread_join(thread[0], NULL);
         pthread_cancel(thread[1]);
     #if (defined(__OSX__) || defined(__APPLE__))
