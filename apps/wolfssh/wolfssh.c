@@ -586,24 +586,50 @@ static int wolfSSH_AGENT_IO_Cb(WS_AgentIoCbAction action,
 
 
 struct config {
-    const char* logFile;
-    const char* user;
-    const char* hostname;
+    char* logFile;
+    char* user;
+    char* hostname;
+    char* keyFile;
     char* command;
-    char* user_host_buffer;
     word32 printConfig:1;
     word32 noCommand:1;
     word16 port;
 };
-/* Note: user is either pointing to an argv argument, the value of USER in
- * the env, or to the username in the user_host_buffer. hostname will be
- * pointing into user_host_buffer. */
 
 
 static int config_init_default(struct config* config)
 {
+    char* env;
+    size_t sz;
+
     memset(config, 0, sizeof(*config));
     config->port = 22;
+
+    env = getenv("USER");
+    if (env != NULL) {
+        char* user;
+
+        sz = strlen(env + 1);
+        user = (char*)malloc(sz);
+        if (user != NULL) {
+            strcpy(user, env);
+            config->user = user;
+        }
+    }
+
+    env = getenv("HOME");
+    if (env != NULL) {
+        const char* defaultName = "/.ssh/id_ecdsa";
+        char* keyFile;
+
+        sz = strlen(env) + strlen(defaultName) + 1;
+        keyFile = (char*)malloc(sz);
+        if (keyFile != NULL) {
+            strcpy(keyFile, env);
+            strcat(keyFile, defaultName);
+            config->keyFile = keyFile;
+        }
+    }
 
     return 0;
 }
@@ -653,6 +679,7 @@ static int config_parse_command_line(struct config* config,
      *  - ssh://[user@]hostname[:port] */
     if (myoptind < argc) {
         const char* uriPrefix = "ssh://";
+        char* dest;
         char* cursor;
         char* found;
         size_t sz;
@@ -661,9 +688,9 @@ static int config_parse_command_line(struct config* config,
         myoptarg = argv[myoptind];
 
         sz = strlen(myoptarg) + 1;
-        cursor = (char*)malloc(sz);
-        memcpy(cursor, myoptarg, sz);
-        config->user_host_buffer = cursor;
+        dest = (char*)malloc(sz);
+        memcpy(dest, myoptarg, sz);
+        cursor = dest;
 
         if (strstr(cursor, uriPrefix)) {
             checkPort = 1;
@@ -674,25 +701,40 @@ static int config_parse_command_line(struct config* config,
         }
 
         found = strchr(cursor, '@');
+        if (found == cursor) {
+            fprintf(stderr, "can't start destination with just an @\n");
+        }
         if (found != NULL) {
             *found = '\0';
-            config->user = cursor;
+            if (config->user) {
+                free(config->user);
+            }
+            sz = strlen(cursor);
+            config->user = malloc(sz + 1);
+            strcpy(config->user, cursor);
             cursor = found + 1;
         }
-        else {
-            config->user = NULL;
-        }
 
-        config->hostname = cursor;
         if (checkPort) {
             found = strchr(cursor, ':');
             if (found != NULL) {
                 *found = '\0';
+                sz = strlen(cursor);
+                config->hostname = (char*)malloc(sz);
+                strcpy(config->hostname, cursor);
                 cursor = found + 1;
-                config->port = atoi(cursor);
+                if (*cursor != 0) {
+                    config->port = atoi(cursor);
+                }
             }
         }
+        else {
+            sz = strlen(cursor);
+            config->hostname = (char*)malloc(sz);
+            strcpy(config->hostname, cursor);
+        }
 
+        free(dest);
         myoptind++;
     }
 
@@ -731,6 +773,7 @@ static int config_print(struct config* config)
         printf("user %s\n", config->user ? config->user : "none");
         printf("hostname %s\n", config->hostname ? config->hostname : "none");
         printf("port %u\n", config->port);
+        printf("keyFile %s\n", config->keyFile ? config->keyFile : "none");
         printf("noCommand %s\n", config->noCommand ? "true" : "false");
         printf("logfile %s\n", config->logFile ? config->logFile : "default");
         printf("command %s\n", config->command ? config->command : "none");
@@ -742,8 +785,14 @@ static int config_print(struct config* config)
 
 static int config_cleanup(struct config* config)
 {
-    if (config->user_host_buffer) {
-        free(config->user_host_buffer);
+    if (config->user) {
+        free(config->user);
+    }
+    if (config->hostname) {
+        free(config->hostname);
+    }
+    if (config->keyFile) {
+        free(config->keyFile);
     }
     if (config->command) {
         free(config->command);
@@ -762,7 +811,6 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     socklen_t clientAddrSz = sizeof(clientAddr);
     //char rxBuf[80];
     int ret = 0;
-    //int userEcc = 0;
     const char* password = NULL;
     const char* privKeyName = NULL;
     //byte imExit = 0;
@@ -786,12 +834,6 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     if (config.user == NULL)
         err_sys("client requires a username parameter.");
 
-#ifdef WOLFSSH_NO_RSA
-    /* XXX This needs to go.
-     * Client should tell the key type based on the key. */
-    //userEcc = 1;
-#endif
-
 #ifdef SINGLE_THREADED
     if (keepOpen)
         err_sys("Threading needed for terminal session\n");
@@ -801,9 +843,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         err_sys("If setting priv key, need pub key.");
     }
 
-    /* XXX Setting to zero instead of userEcc. Should be able to
-     * tell key type from the key. */
-    ret = ClientSetPrivateKey(privKeyName, 0);
+    ret = ClientSetPrivateKey(privKeyName);
     if (ret != 0) {
         err_sys("Error setting private key");
     }
@@ -815,10 +855,9 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     }
     else
 #endif
-    /* XXX Setting to zero instead of userEcc. Should be able to
-     * tell key type from the key. */
+
     if (pubKeyName) {
-        ret = ClientUsePubKey(pubKeyName, 0);
+        ret = ClientUsePubKey(pubKeyName);
     }
     if (ret != 0) {
         err_sys("Error setting public key");
