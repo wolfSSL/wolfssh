@@ -154,6 +154,7 @@ typedef struct thread_args {
     WOLFSSH* ssh;
     wolfSSL_Mutex lock;
     byte rawMode;
+    byte quit;
 } thread_args;
 
 #ifdef _POSIX_THREADS
@@ -233,6 +234,9 @@ static THREAD_RET windowMonitor(void* in)
     do {
     #if (defined(__OSX__) || defined(__APPLE__))
         dispatch_semaphore_wait(windowSem, DISPATCH_TIME_FOREVER);
+        if (args->quit) {
+            break;
+        }
     #else
         sem_wait(&windowSem);
     #endif
@@ -956,6 +960,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         pthread_t   thread[3];
 
         arg.ssh = ssh;
+        arg.quit = 0;
         wc_InitMutex(&arg.lock);
     #if (defined(__OSX__) || defined(__APPLE__))
         windowSem = dispatch_semaphore_create(0);
@@ -980,7 +985,14 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         pthread_create(&thread[1], NULL, readInput, (void*)&arg);
         pthread_create(&thread[2], NULL, readPeer, (void*)&arg);
         pthread_join(thread[2], NULL);
-        pthread_cancel(thread[0]);
+        /* Wake the windowMonitor thread so it can exit. */
+        arg.quit = 1;
+    #if (defined(__OSX__) || defined(__APPLE__))
+        dispatch_semaphore_signal(windowSem);
+    #else
+        sem_post(&windowSem);
+    #endif
+        pthread_join(thread[0], NULL);
         pthread_cancel(thread[1]);
     #if (defined(__OSX__) || defined(__APPLE__))
         dispatch_release(windowSem);
