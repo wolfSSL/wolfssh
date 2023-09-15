@@ -13025,7 +13025,7 @@ int SendChannelTerminalResize(WOLFSSH* ssh, word32 columns, word32 rows,
     }
 
     if (ret == WS_SUCCESS) {
-        typeSz = (word32)sizeof(cType) - 1;
+        typeSz = (word32)WSTRLEN(cType);
         ret = PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ + LENGTH_SZ +
                                  typeSz + BOOLEAN_SZ + (4 * UINT32_SZ));
     }
