@@ -76,13 +76,16 @@ enum WS_ScpFileStates {
     #include <errno.h>
 
     typedef struct ScpSendCtx {
-    #ifndef WOLFSSL_NUCLEUS
-        struct dirent* entry;                   /* file entry, from readdir() */
-        struct stat s;                          /* stat info from file */
-    #else
+    #ifdef WOLFSSL_NUCLEUS
         int   fd; /* file descriptor, in the case of Nucleus fp points to fd */
         DSTAT s;
         int   nextError;
+    #elif defined(USE_WINDOWS_API)
+        char* entry;
+        WIN32_FILE_ATTRIBUTE_DATA s;
+    #else
+        struct dirent* entry;                   /* file entry, from readdir() */
+        struct stat s;                          /* stat info from file */
     #endif
         WFILE* fp;                              /* file pointer */
         struct ScpDir* currentDir;              /* dir being copied, stack */

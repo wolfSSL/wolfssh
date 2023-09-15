@@ -582,6 +582,11 @@ static int wolfSSH_DoControlSeq(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf, 
             i += 1; /* for 'h' or 'l' */
             break;
 
+        case 'X':
+            /* @TODO (ECH) Erase <n> number of characters on current line */
+            break;
+
+
         default:
             WLOG(WS_LOG_DEBUG, "Unknown control sequence char:%c", c);
             i = *idx;

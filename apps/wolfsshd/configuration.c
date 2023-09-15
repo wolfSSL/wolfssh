@@ -22,6 +22,12 @@
     #include <config.h>
 #endif
 
+#ifdef WOLFSSL_USER_SETTINGS
+    #include <wolfssl/wolfcrypt/settings.h>
+#else
+    #include <wolfssl/options.h>
+#endif
+
 #ifdef WOLFSSH_SSHD
 /* functions for parsing out options from a config file and for handling loading
  * key/certs using the env. filesystem */
@@ -47,7 +53,10 @@
 #endif
 
 #include "configuration.h"
+
+#ifndef WIN32
 #include <dirent.h>
+#endif
 
 struct WOLFSSHD_CONFIG {
     void* heap;
@@ -64,6 +73,7 @@ struct WOLFSSHD_CONFIG {
     char* listenAddress;
     char* authKeysFile;
     char* forceCmd;
+    char* pidFile;
     WOLFSSHD_CONFIG* next; /* next config in list */
     long  loginTimer;
     word16 port;
@@ -76,6 +86,7 @@ struct WOLFSSHD_CONFIG {
 };
 
 int CountWhitespace(const char* in, int inSz, byte inv);
+int SetFileString(char** dst, const char* src, void* heap);
 
 /* convert a string into seconds, handles if 'm' for minutes follows the string
  * number, i.e. 2m
@@ -294,6 +305,7 @@ void wolfSSHD_ConfigFree(WOLFSSHD_CONFIG* conf)
         FreeString(&current->authKeysFile,  heap);
         FreeString(&current->hostKeyFile,   heap);
         FreeString(&current->hostCertFile,  heap);
+        FreeString(&current->pidFile,  heap);
 
         WFREE(current, heap, DYNTYPE_SSHD);
         current = next;
@@ -330,9 +342,10 @@ enum {
     OPT_FORCE_CMD               = 19,
     OPT_HOST_CERT               = 20,
     OPT_TRUSTED_USER_CA_KEYS    = 21,
+    OPT_PIDFILE                 = 22,
 };
 enum {
-    NUM_OPTIONS = 22
+    NUM_OPTIONS = 23
 };
 
 static const CONFIG_OPTION options[NUM_OPTIONS] = {
@@ -358,6 +371,7 @@ static const CONFIG_OPTION options[NUM_OPTIONS] = {
     {OPT_FORCE_CMD,               "ForceCommand"},
     {OPT_HOST_CERT,               "HostCertificate"},
     {OPT_TRUSTED_USER_CA_KEYS,    "TrustedUserCAKeys"},
+    {OPT_PIDFILE,                 "PidFile"},
 };
 
 /* returns WS_SUCCESS on success */
@@ -658,7 +672,7 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
                     char** fileNames = NULL;
 
                     /* Count up the number of files */
-                    while ((dir = WREADDIR(&d)) != NULL) {
+                    while ((dir = WREADDIR(NULL, &d)) != NULL) {
                         /* Skip sub-directories */
                     #if defined(__QNX__) || defined(__QNXNTO__)
                         struct stat s;
@@ -672,7 +686,7 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
                             fileCount++;
                         }
                     }
-                    WREWINDDIR(&d);
+                    WREWINDDIR(NULL, &d);
 
                     if (fileCount > 0) {
                         fileNames = (char**)WMALLOC(fileCount * sizeof(char*),
@@ -684,7 +698,7 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
 
                     if (ret == WS_SUCCESS) {
                         i = 0;
-                        while (i < fileCount && (dir = WREADDIR(&d)) != NULL) {
+                        while (i < fileCount && (dir = WREADDIR(NULL, &d)) != NULL) {
                             /* Skip sub-directories */
                         #if defined(__QNX__) || defined(__QNXNTO__)
                             struct stat s;
@@ -752,7 +766,7 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
                             WFREE(fileNames, conf->heap, DYNTYPE_PATH);
                         }
                     }
-                    WCLOSEDIR(&d);
+                    WCLOSEDIR(NULL, &d);
                 }
                 else {
                     /* Bad directory */
@@ -849,7 +863,7 @@ static int AddRestrictedCase(WOLFSSHD_CONFIG* config, const char* mtch,
  * and makes it point to the newly created conf node */
 static int HandleMatch(WOLFSSHD_CONFIG** conf, const char* value, int valueSz)
 {
-    WOLFSSHD_CONFIG* newConf;
+    WOLFSSHD_CONFIG* newConf = NULL;
     int ret = WS_SUCCESS;
 
     if (conf == NULL || *conf == NULL || value == NULL) {
@@ -999,6 +1013,9 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
             /* TODO: Add logic to check if file exists? */
             ret = wolfSSHD_ConfigSetUserCAKeysFile(*conf, value);
             break;
+        case OPT_PIDFILE:
+            ret = SetFileString(&(*conf)->pidFile, value, (*conf)->heap);
+            break;
         default:
             break;
     }
@@ -1070,8 +1087,13 @@ WOLFSSHD_STATIC int ParseConfigLine(WOLFSSHD_CONFIG** conf, const char* l,
         }
     }
     else {
+    #ifdef WOLFSSH_IGNORE_UNKNOWN_CONFIG
+        wolfSSH_Log(WS_LOG_DEBUG, "[SSHD] ignoring config line %s.", l);
+        ret = WS_SUCCESS;
+    #else
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error parsing config line.");
         ret = WS_FATAL_ERROR;
+    #endif
     }
 
     return ret;
@@ -1083,7 +1105,7 @@ WOLFSSHD_STATIC int ParseConfigLine(WOLFSSHD_CONFIG** conf, const char* l,
  */
 int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename)
 {
-    XFILE f;
+    WFILE *f;
     WOLFSSHD_CONFIG* currentConfig;
     int ret = WS_SUCCESS;
     char buf[MAX_LINE_SIZE];
@@ -1092,8 +1114,7 @@ int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename)
     if (conf == NULL || filename == NULL)
         return BAD_FUNC_ARG;
 
-    f = XFOPEN(filename, "rb");
-    if (f == XBADFILE) {
+    if (WFOPEN(NULL, &f, filename, "rb") != 0) {
         wolfSSH_Log(WS_LOG_ERROR, "Unable to open SSHD config file %s",
                 filename);
         return BAD_FUNC_ARG;
@@ -1111,7 +1132,7 @@ int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename)
             current   = current + 1;
         }
 
-        if (currentSz <= 1) {
+        if (currentSz <= 2) { /* \n or \r\n */
             continue; /* empty line */
         }
 
@@ -1125,7 +1146,7 @@ int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename)
             break;
         }
     }
-    XFCLOSE(f);
+    WFCLOSE(NULL, f);
 
     SetAuthKeysPattern(conf->authKeysFile);
 
@@ -1288,7 +1309,7 @@ char* wolfSSHD_ConfigGetUserCAKeysFile(const WOLFSSHD_CONFIG* conf)
     return ret;
 }
 
-static int SetFileString(char** dst, const char* src, void* heap)
+int SetFileString(char** dst, const char* src, void* heap)
 {
     int ret = WS_SUCCESS;
 
@@ -1420,4 +1441,20 @@ long wolfSSHD_ConfigGetGraceTime(const WOLFSSHD_CONFIG* conf)
 
     return ret;
 }
+
+
+/* Used to save out the PID of SSHD to a file */
+void wolfSSHD_ConfigSavePID(const WOLFSSHD_CONFIG* conf)
+{
+    FILE* f;
+    char buf[12]; /* large enough to hold 'int' type with null terminator */
+
+    WMEMSET(buf, 0, sizeof(buf));
+    if (WFOPEN(NULL, &f, conf->pidFile, "wb") == 0) {
+        WSNPRINTF(buf, sizeof(buf), "%d", getpid());
+        WFWRITE(NULL, buf, 1, WSTRLEN(buf), f);
+        WFCLOSE(NULL, f);
+    }
+}
+
 #endif /* WOLFSSH_SSHD */

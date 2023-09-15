@@ -248,29 +248,29 @@ static int load_der_file(const char* filename, byte** out, word32* outSz)
     if (filename == NULL || out == NULL || outSz == NULL)
         return -1;
 
-    ret = WFOPEN(&file, filename, "rb");
+    ret = WFOPEN(NULL, &file, filename, "rb");
     if (ret != 0 || file == WBADFILE)
         return -1;
 
-    if (WFSEEK(file, 0, WSEEK_END) != 0) {
-        WFCLOSE(file);
+    if (WFSEEK(NULL, file, 0, WSEEK_END) != 0) {
+        WFCLOSE(NULL, file);
         return -1;
     }
-    inSz = (word32)WFTELL(file);
-    WREWIND(file);
+    inSz = (word32)WFTELL(NULL, file);
+    WREWIND(NULL, file);
 
     if (inSz == 0) {
-        WFCLOSE(file);
+        WFCLOSE(NULL, file);
         return -1;
     }
 
     in = (byte*)WMALLOC(inSz, NULL, 0);
     if (in == NULL) {
-        WFCLOSE(file);
+        WFCLOSE(NULL, file);
         return -1;
     }
 
-    ret = (int)WFREAD(in, 1, inSz, file);
+    ret = (int)WFREAD(NULL, in, 1, inSz, file);
     if (ret <= 0 || (word32)ret != inSz) {
         ret = -1;
         WFREE(in, NULL, 0);
@@ -283,7 +283,7 @@ static int load_der_file(const char* filename, byte** out, word32* outSz)
     *out = in;
     *outSz = inSz;
 
-    WFCLOSE(file);
+    WFCLOSE(NULL, file);
 
     return ret;
 }
@@ -382,25 +382,26 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
         if (ParseRFC6187(pubKey, pubKeySz, &der, &derSz) == WS_SUCCESS) {
             wc_InitDecodedCert(&dCert, der,  derSz, NULL);
             if (wc_ParseCert(&dCert, CERT_TYPE, NO_VERIFY, NULL) != 0) {
-                printf("public key not a cert\n");
+                WLOG(WS_LOG_DEBUG, "public key not a cert");
             }
             else {
                 int ipMatch = 0;
                 DNS_entry* current = dCert.altNames;
 
                 if (ctx == NULL) {
-                    fprintf(stderr, "No host IP set to check against!\n");
+                    WLOG(WS_LOG_ERROR, "No host IP set to check against!");
                     ret = -1;
                 }
 
                 if (ret == 0) {
                     while (current != NULL) {
                         if (current->type == ASN_IP_TYPE) {
-                            printf("host cert alt. name IP : %s\n",
+                            WLOG(WS_LOG_DEBUG, "host cert alt. name IP : %s",
                                 current->ipString);
-                            printf("\texpecting host IP : %s\n", (char*)ctx);
+                            WLOG(WS_LOG_DEBUG,
+                                "\texpecting host IP : %s", (char*)ctx);
                             if (XSTRCMP(ctx, current->ipString) == 0) {
-                                printf("\tmatched!\n");
+                                WLOG(WS_LOG_DEBUG, "\tmatched!");
                                 ipMatch = 1;
                             }
                         }
@@ -424,8 +425,8 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
         }
     }
 #else
-    printf("wolfSSL not built with OPENSSL_ALL or WOLFSSL_IP_ALT_NAME\n");
-    printf("\tnot checking IP address from peer's cert\n");
+    WLOG(WS_LOG_DEBUG, "wolfSSL not built with OPENSSL_ALL or WOLFSSL_IP_ALT_NAME");
+    WLOG(WS_LOG_DEBUG, "\tnot checking IP address from peer's cert");
 #endif
 #endif
 

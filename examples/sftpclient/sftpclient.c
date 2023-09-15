@@ -24,6 +24,12 @@
 
 #define WOLFSSH_TEST_CLIENT
 
+#ifdef WOLFSSL_USER_SETTINGS
+#include <wolfssl/wolfcrypt/settings.h>
+#else
+#include <wolfssl/options.h>
+#endif
+
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/wolfsftp.h>
@@ -1032,8 +1038,9 @@ static int doAutopilot(int cmd, char* local, char* remote)
     }
 
     if (remoteAbsPath) {
-        WMEMSET(fullpath, 0, sizeof(fullpath));
-        WSTRNCPY(fullpath, remote, sizeof(fullpath) - 1);
+       /* use remote absolute path if provided */
+       WMEMSET(fullpath, 0, sizeof(fullpath));
+       WSTRNCPY(fullpath, remote, sizeof(fullpath) - 1);
     }
     else {
         do {
@@ -1244,7 +1251,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     else
         wolfSSH_SetUserAuth(ctx, ((func_args*)args)->user_auth);
 
-#ifndef WS_NO_SIGNAL
+#if !defined(WS_NO_SIGNAL) && !defined(USE_WINDOWS_API)
     /* handle interrupt with get and put */
     signal(SIGINT, sig_handler);
 #endif
@@ -1332,7 +1339,11 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     WFREE(workingDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     if (ret == WS_SUCCESS) {
         if (wolfSSH_shutdown(ssh) != WS_SUCCESS) {
-            printf("error with wolfSSH_shutdown(), already disconnected?\n");
+            int rc;
+            rc = wolfSSH_get_error(ssh);
+
+            if (rc != WS_SOCKET_ERROR_E && rc != WS_EOF)
+                printf("error with wolfSSH_shutdown()\n");
         }
     }
     WCLOSESOCKET(sockFd);

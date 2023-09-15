@@ -56,6 +56,7 @@ WOLFSSHD_CONFIG* wolfSSHD_GetUserConf(const WOLFSSHD_CONFIG* conf,
         const char* usr, const char* grp, const char* host,
         const char* localAdr, word16* localPort, const char* RDomain,
         const char* adr);
+void wolfSSHD_ConfigSavePID(const WOLFSSHD_CONFIG* conf);
 
 #ifdef WOLFSSHD_UNIT_TEST
 int ParseConfigLine(WOLFSSHD_CONFIG** conf, const char* l, int lSz);

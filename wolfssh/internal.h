@@ -493,6 +493,7 @@ struct WOLFSSH_CTX {
     word32 publicKeyAlgoCount;
     word32 highwaterMark;
     const char* banner;
+    const char* sshProtoIdStr;
     word32 bannerSz;
     word32 windowSz;
     word32 maxPacketSz;
@@ -571,6 +572,9 @@ typedef struct HandshakeInfo {
 #ifdef WOLFSSH_SFTP
 #define WOLFSSH_MAX_SFTPOFST 3
 
+#ifndef NO_WOLFSSH_DIR
+    typedef struct WS_DIR_LIST WS_DIR_LIST;
+#endif
 typedef struct WS_HANDLE_LIST WS_HANDLE_LIST;
 typedef struct SFTP_OFST {
     word32 offset[2];
@@ -578,6 +582,7 @@ typedef struct SFTP_OFST {
     char to[WOLFSSH_MAX_FILENAME];
 } SFTP_OFST;
 
+struct WS_SFTP_RECV_INIT_STATE;
 struct WS_SFTP_GET_STATE;
 struct WS_SFTP_PUT_STATE;
 struct WS_SFTP_LSTAT_STATE;
@@ -751,9 +756,14 @@ struct WOLFSSH {
     word32 sftpExtSz; /* size of extension buffer (buffer not currently used) */
     SFTP_OFST sftpOfst[WOLFSSH_MAX_SFTPOFST];
     char* sftpDefaultPath;
+#ifndef NO_WOLFSSH_DIR
+    WS_DIR_LIST* dirList;
+    word32 dirIdCount[2];
+#endif
 #ifdef WOLFSSH_STOREHANDLE
     WS_HANDLE_LIST* handleList;
 #endif
+    struct WS_SFTP_RECV_INIT_STATE* recvInitState;
     struct WS_SFTP_RECV_STATE* recvState;
     struct WS_SFTP_RMDIR_STATE* rmdirState;
     struct WS_SFTP_MKDIR_STATE* mkdirState;
@@ -789,6 +799,12 @@ struct WOLFSSH {
 #ifdef WOLFSSH_FWD
     void* fwdCbCtx;
 #endif /* WOLFSSH_FWD */
+#ifdef WOLFSSH_TERM
+    WS_CallbackTerminalSize termResizeCb;
+    void* termCtx;
+    word32 curX; /* current terminal width */
+    word32 curY; /* current terminal height */
+#endif
 };
 
 
@@ -867,6 +883,13 @@ WOLFSSH_LOCAL int wsEmbedSend(WOLFSSH*, void*, word32, void*);
 
 #endif /* WOLFSSH_USER_IO */
 
+enum ChannelOpenFailReasons {
+    OPEN_OK = 0,
+    OPEN_ADMINISTRATIVELY_PROHIBITED,
+    OPEN_CONNECT_FAILED,
+    OPEN_UNKNOWN_CHANNEL_TYPE,
+    OPEN_RESOURCE_SHORTAGE
+};
 
 WOLFSSH_LOCAL int DoReceive(WOLFSSH*);
 WOLFSSH_LOCAL int DoProtoId(WOLFSSH*);
@@ -897,6 +920,7 @@ WOLFSSH_LOCAL int SendRequestSuccess(WOLFSSH*, int);
 WOLFSSH_LOCAL int SendChannelOpenSession(WOLFSSH*, WOLFSSH_CHANNEL*);
 WOLFSSH_LOCAL int SendChannelOpenForward(WOLFSSH*, WOLFSSH_CHANNEL*);
 WOLFSSH_LOCAL int SendChannelOpenConf(WOLFSSH*, WOLFSSH_CHANNEL*);
+WOLFSSH_LOCAL int SendChannelOpenFail(WOLFSSH*, word32, word32, const char*, const char*);
 WOLFSSH_LOCAL int SendChannelEof(WOLFSSH*, word32);
 WOLFSSH_LOCAL int SendChannelEow(WOLFSSH*, word32);
 WOLFSSH_LOCAL int SendChannelClose(WOLFSSH*, word32);
@@ -904,6 +928,8 @@ WOLFSSH_LOCAL int SendChannelExit(WOLFSSH*, word32, int);
 WOLFSSH_LOCAL int SendChannelData(WOLFSSH*, word32, byte*, word32);
 WOLFSSH_LOCAL int SendChannelWindowAdjust(WOLFSSH*, word32, word32);
 WOLFSSH_LOCAL int SendChannelRequest(WOLFSSH*, byte*, word32);
+WOLFSSH_LOCAL int SendChannelTerminalResize(WOLFSSH*, word32, word32, word32,
+    word32);
 WOLFSSH_LOCAL int SendChannelTerminalRequest(WOLFSSH* ssh);
 WOLFSSH_LOCAL int SendChannelAgentRequest(WOLFSSH* ssh);
 WOLFSSH_LOCAL int SendChannelSuccess(WOLFSSH*, word32, int);

@@ -33,7 +33,7 @@ static void CleanupWildcardTest(void)
     char filepath[MAX_PATH*2]; /* d_name is max_path long */
 
     if (!WOPENDIR(NULL, NULL, &dir, "./sshd_config.d/")) {
-        while ((d = WREADDIR(&dir)) != NULL) {
+        while ((d = WREADDIR(NULL, &dir)) != NULL) {
         #if defined(__QNX__) || defined(__QNXNTO__)
             struct stat s;
 
@@ -48,7 +48,7 @@ static void CleanupWildcardTest(void)
                 WREMOVE(0, filepath);
             }
         }
-        WCLOSEDIR(&dir);
+        WCLOSEDIR(NULL, &dir);
         WRMDIR(0, "./sshd_config.d/");
     }
 }
@@ -75,15 +75,15 @@ static int SetupWildcardTest(void)
                         "./sshd_config.d/");
             }
 
-            WFOPEN(&f, filepath, "w");
+            WFOPEN(NULL, &f, filepath, "w");
             if (f) {
                 word32 sz, wr;
                 char contents[20];
                 WSNPRINTF(contents, sizeof contents, "LoginGraceTime %02u",
                         fileIds[i]);
                 sz = (word32)WSTRLEN(contents);
-                wr = (word32)WFWRITE(contents, sizeof(char), sz, f);
-                WFCLOSE(f);
+                wr = (word32)WFWRITE(NULL, contents, sizeof(char), sz, f);
+                WFCLOSE(NULL, f);
                 if (sz != wr) {
                     Log("Couldn't write the contents of file %s\n", filepath);
                     ret = WS_FATAL_ERROR;

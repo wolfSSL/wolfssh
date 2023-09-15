@@ -1316,6 +1316,41 @@ void* wolfSSH_GetPublicKeyCheckCtx(WOLFSSH* ssh)
 }
 
 
+/* Used to resize terminal window with shell connections
+ * returns WS_SUCCESS on success */
+int wolfSSH_ChangeTerminalSize(WOLFSSH* ssh, word32 columns, word32 rows,
+    word32 widthPixels, word32 heightPixels)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChangeWindowDimension()");
+
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        ret = SendChannelTerminalResize(ssh, columns, rows, widthPixels,
+        heightPixels);
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChangeWindowDimension(), ret = %d",
+        ret);
+    return ret;
+}
+
+
+void wolfSSH_SetTerminalResizeCb(WOLFSSH* ssh, WS_CallbackTerminalSize cb)
+{
+    ssh->termResizeCb = cb;
+}
+
+
+void wolfSSH_SetTerminalResizeCtx(WOLFSSH* ssh, void* usrCtx)
+{
+    ssh->termCtx = usrCtx;
+}
+
+
 /* Used to set the channel request type sent in wolfSSH connect. The default
  * type set is shell if this function is not called.
  *
@@ -1534,7 +1569,7 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
 }
 
 
-#ifndef NO_FILESYSTEM
+#if !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM)
 
 /* Reads a key from the file name into a buffer. If the key starts with the
    string "ssh-rsa" or "ecdsa-sha2-nistp256", it is considered an SSH format
@@ -1557,27 +1592,27 @@ int wolfSSH_ReadKey_file(const char* name,
             isPrivate == NULL)
         return WS_BAD_ARGUMENT;
 
-    ret = WFOPEN(&file, name, "rb");
+    ret = WFOPEN(NULL, &file, name, "rb");
     if (ret != 0 || file == WBADFILE) return WS_BAD_FILE_E;
-    if (WFSEEK(file, 0, WSEEK_END) != 0) {
-        WFCLOSE(file);
+    if (WFSEEK(NULL, file, 0, WSEEK_END) != 0) {
+        WFCLOSE(NULL, file);
         return WS_BAD_FILE_E;
     }
-    inSz = (word32)WFTELL(file);
-    WREWIND(file);
+    inSz = (word32)WFTELL(NULL, file);
+    WREWIND(NULL, file);
 
     if (inSz > WOLFSSH_MAX_FILE_SIZE || inSz == 0) {
-        WFCLOSE(file);
+        WFCLOSE(NULL, file);
         return WS_BAD_FILE_E;
     }
 
     in = (byte*)WMALLOC(inSz + 1, heap, DYNTYPE_FILE);
     if (in == NULL) {
-        WFCLOSE(file);
+        WFCLOSE(NULL, file);
         return WS_MEMORY_E;
     }
 
-    ret = (int)WFREAD(in, 1, inSz, file);
+    ret = (int)WFREAD(NULL, in, 1, inSz, file);
     if (ret <= 0 || (word32)ret != inSz) {
         ret = WS_BAD_FILE_E;
     }
@@ -1599,7 +1634,7 @@ int wolfSSH_ReadKey_file(const char* name,
                 out, outSz, outType, outTypeSz, heap);
     }
 
-    WFCLOSE(file);
+    WFCLOSE(ssh->fs, file);
     WFREE(in, heap, DYNTYPE_FILE);
 
     return ret;
@@ -1628,6 +1663,16 @@ int wolfSSH_CTX_SetBanner(WOLFSSH_CTX* ctx,
     return WS_SUCCESS;
 }
 
+int wolfSSH_CTX_SetSshProtoIdStr(WOLFSSH_CTX* ctx,
+                                          const char* protoIdStr)
+{
+    if (!ctx || !protoIdStr) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    ctx->sshProtoIdStr = protoIdStr;
+    return WS_SUCCESS;
+}
 
 int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX* ctx,
                                    const byte* in, word32 inSz, int format)
