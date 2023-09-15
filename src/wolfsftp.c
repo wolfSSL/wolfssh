@@ -5174,6 +5174,11 @@ int wolfSSH_SFTP_RecvFSetSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_FSETSTAT");
 
+    if (maxSz < UINT32_SZ) {
+        /* not enough for an ato32 call */
+        return WS_BUFFER_E;
+    }
+
     /* get file handle */
     ato32(data + idx, &sz); idx += UINT32_SZ;
     if (sz + idx > maxSz || sz > WOLFSSH_MAX_HANDLE) {
