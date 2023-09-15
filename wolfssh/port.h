@@ -370,6 +370,8 @@ extern "C" {
     #define WREWIND(fs,s)       rewind((s))
     #define WSEEK_END           SEEK_END
     #define WBADFILE            NULL
+    #define WSETTIME(fs,f,a,m) (0)
+    #define WFSETTIME(fs,fd,a,m) (0)
     #ifdef WOLFSSL_VXWORKS
         #define WUTIMES(f,t)      (WS_SUCCESS)
     #elif defined(USE_WINDOWS_API)
@@ -380,8 +382,10 @@ extern "C" {
 
     #ifndef USE_WINDOWS_API
         #define WCHMOD(fs,f,m)   chmod((f),(m))
+        #define WFCHMOD(fs,fd,m) fchmod((fd),(m))
     #else
         #define WCHMOD(fs,f,m)   _chmod((f),(m))
+        #define WFCHMOD(fs,fd,m)   _fchmod((fd),(m))
     #endif
 
     #if (defined(WOLFSSH_SCP) || \
