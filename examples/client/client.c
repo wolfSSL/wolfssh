@@ -190,6 +190,7 @@ typedef struct thread_args {
 #endif
 
 
+#ifdef WOLFSSH_TERM
 static int sendCurrentWindowSize(thread_args* args)
 {
     int ret;
@@ -221,6 +222,7 @@ static int sendCurrentWindowSize(thread_args* args)
 
     return ret;
 }
+#endif
 
 
 #ifndef _MSC_VER
@@ -260,7 +262,9 @@ static THREAD_RET windowMonitor(void* in)
         if (args->quit) {
             break;
         }
+#ifdef WOLFSSH_TERM
         ret = sendCurrentWindowSize(args);
+#endif
         (void)ret;
     } while (1);
 
@@ -877,6 +881,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         sem_init(&windowSem, 0, 0);
     #endif
 
+#ifdef WOLFSSH_TERM
         if (cmd) {
             int err;
 
@@ -887,6 +892,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
                 fprintf(stderr, "Issue sending exec initial terminal size\n\r");
             }
         }
+#endif
 
         signal(SIGWINCH, WindowChangeSignal);
         pthread_create(&thread[0], NULL, windowMonitor, (void*)&arg);
