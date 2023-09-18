@@ -99,9 +99,10 @@ static void ShowUsage(char* appPath)
 }
 
 
-static const char* pubKeyName = NULL;
+#ifdef WOLFSSH_CERTS
 static const char* certName = NULL;
 static const char* caCert   = NULL;
+#endif
 
 
 #if defined(WOLFSSH_AGENT)
@@ -594,6 +595,7 @@ struct config {
     char* user;
     char* hostname;
     char* keyFile;
+    char* pubKeyFile;
     char* command;
     word32 printConfig:1;
     word32 noCommand:1;
@@ -624,6 +626,7 @@ static int config_init_default(struct config* config)
     env = getenv("HOME");
     if (env != NULL) {
         const char* defaultName = "/.ssh/id_ecdsa";
+        const char* pubSuffix = ".pub";
         char* keyFile;
 
         sz = strlen(env) + strlen(defaultName) + 1;
@@ -632,6 +635,15 @@ static int config_init_default(struct config* config)
             strcpy(keyFile, env);
             strcat(keyFile, defaultName);
             config->keyFile = keyFile;
+        }
+
+        sz += strlen(pubSuffix);
+        keyFile = (char*)malloc(sz);
+        if (keyFile != NULL) {
+            strcpy(keyFile, env);
+            strcat(keyFile, defaultName);
+            strcat(keyFile, pubSuffix);
+            config->pubKeyFile = keyFile;
         }
     }
 
@@ -778,6 +790,8 @@ static int config_print(struct config* config)
         printf("hostname %s\n", config->hostname ? config->hostname : "none");
         printf("port %u\n", config->port);
         printf("keyFile %s\n", config->keyFile ? config->keyFile : "none");
+        printf("pubKeyFile %s\n",
+                config->keyFile ? config->keyFile : "none");
         printf("noCommand %s\n", config->noCommand ? "true" : "false");
         printf("logfile %s\n", config->logFile ? config->logFile : "default");
         printf("command %s\n", config->command ? config->command : "none");
@@ -798,6 +812,9 @@ static int config_cleanup(struct config* config)
     if (config->keyFile) {
         free(config->keyFile);
     }
+    if (config->pubKeyFile) {
+        free(config->pubKeyFile);
+    }
     if (config->command) {
         free(config->command);
     }
@@ -816,7 +833,6 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     //char rxBuf[80];
     int ret = 0;
     const char* password = NULL;
-    const char* privKeyName = NULL;
     //byte imExit = 0;
     byte keepOpen = 1;
 #ifdef USE_WINDOWS_API
@@ -842,14 +858,17 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     if (keepOpen)
         err_sys("Threading needed for terminal session\n");
 #endif
-
-    if ((pubKeyName == NULL && certName == NULL) && privKeyName != NULL) {
+#if 0
+    if ((config.pubKeyFilae== NULL && certName == NULL)
+            && config.keyFile != NULL) {
         err_sys("If setting priv key, need pub key.");
     }
-
-    ret = ClientSetPrivateKey(privKeyName);
-    if (ret != 0) {
-        err_sys("Error setting private key");
+#endif
+    if (config.keyFile) {
+        ret = ClientSetPrivateKey(config.keyFile);
+        if (ret != 0) {
+            err_sys("Error setting private key");
+        }
     }
 
 #ifdef WOLFSSH_CERTS
@@ -860,8 +879,8 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     else
 #endif
 
-    if (pubKeyName) {
-        ret = ClientUsePubKey(pubKeyName);
+    if (config.pubKeyFile) {
+        ret = ClientUsePubKey(config.pubKeyFile);
     }
     if (ret != 0) {
         err_sys("Error setting public key");
@@ -871,10 +890,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     if (ctx == NULL)
         err_sys("Couldn't create wolfSSH client context.");
 
-    if (((func_args*)args)->user_auth == NULL)
-        wolfSSH_SetUserAuth(ctx, ClientUserAuth);
-    else
-        wolfSSH_SetUserAuth(ctx, ((func_args*)args)->user_auth);
+    wolfSSH_SetUserAuth(ctx, ClientUserAuth);
 
 #ifdef WOLFSSH_AGENT
     if (useAgent) {
@@ -886,8 +902,6 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
 #ifdef WOLFSSH_CERTS
     ClientLoadCA(ctx, caCert);
-#else
-    (void)caCert;
 #endif /* WOLFSSH_CERTS */
 
     wolfSSH_CTX_SetPublicKeyCheck(ctx, ClientPublicKeyCheck);
@@ -1078,7 +1092,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     if (ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E)
         err_sys("Closing client stream failed");
 
-    ClientFreeBuffers(pubKeyName, privKeyName);
+    ClientFreeBuffers(config.pubKeyFile, config.keyFile);
 #if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
