@@ -52,7 +52,7 @@ AC_CHECK_SIZEOF([long])
 AC_CHECK_SIZEOF([off_t])
 
 # Check headers/libs
-AC_CHECK_HEADERS([sys/select.h sys/time.h pty.h util.h termios.h])
+AC_CHECK_HEADERS([sys/select.h sys/time.h sys/ioctl.h pty.h util.h termios.h])
 AC_CHECK_LIB([network],[socket])
 AC_CHECK_LIB([util],[forkpty])
 
