@@ -83,10 +83,12 @@ WOLFSSH_API void wolfSSH_SetHighwaterCb(WOLFSSH_CTX*, word32,
 WOLFSSH_API void wolfSSH_SetHighwaterCtx(WOLFSSH*, void*);
 WOLFSSH_API void* wolfSSH_GetHighwaterCtx(WOLFSSH*);
 
-WOLFSSH_API int wolfSSH_ReadKey_buffer(const byte*, word32, int,
-        byte**, word32*, const byte**, word32*, void*);
-WOLFSSH_API int wolfSSH_ReadKey_file(const char*,
-        byte**, word32*, const byte**, word32*, byte*, void*);
+WOLFSSH_API int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
+        byte** out, word32* outSz, const byte** outType, word32* outTypeSz,
+        void* heap);
+WOLFSSH_API int wolfSSH_ReadKey_file(const char* name,
+        byte** out, word32* outSz, const byte** outType, word32* outTypeSz,
+        byte* isPrivate, void* heap);
 
 
 #define WS_CHANNEL_ID_SELF 0
