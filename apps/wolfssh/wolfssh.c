@@ -437,7 +437,6 @@ static THREAD_RET readPeer(void* in)
                 if (write(STDOUT_FILENO, buf, ret) < 0) {
                     perror("write to stdout error ");
                 }
-                fflush(stdout);
             #endif
             }
             ret = wolfSSH_stream_peek(args->ssh, buf, bufSz);
@@ -1073,7 +1072,11 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
             err_sys("Sending the shutdown messages failed.");
         }
         ret = wolfSSH_worker(ssh, NULL);
-        if (ret != WS_SUCCESS) {
+        if (ret == WS_CHANNEL_CLOSED) {
+            /* Shutting down, channel closing isn't a fail. */
+            ret = WS_SUCCESS;
+        }
+        else if (ret != WS_SUCCESS) {
             err_sys("Failed to listen for close messages from the peer.");
         }
     }
