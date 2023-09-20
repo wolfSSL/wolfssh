@@ -2590,7 +2590,7 @@ static int SFTP_CreateLongName(WS_SFTPNAME* name)
     totalSz += 7; /* for all ' ' spaces */
     totalSz += 3 + 8 + 8; /* linkCount + uid + gid */
     WSNPRINTF(sizeStr, sizeof(sizeStr) - 1, "%8lld", ((long long int)atr->sz[1] << 32) + (long long int)(atr->sz[0]));
-    totalSz += WSTRLEN(sizeStr);
+    totalSz += (int)WSTRLEN(sizeStr);
 #else
     totalSz = name->fSz;
 #endif

@@ -57,6 +57,9 @@
 #ifndef WIN32
 #include <dirent.h>
 #endif
+#ifdef WIN32
+#include <process.h>
+#endif
 
 struct WOLFSSHD_CONFIG {
     void* heap;
