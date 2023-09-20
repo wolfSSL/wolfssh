@@ -235,12 +235,12 @@ static THREAD_RET windowMonitor(void* in)
     do {
     #if (defined(__OSX__) || defined(__APPLE__))
         dispatch_semaphore_wait(windowSem, DISPATCH_TIME_FOREVER);
-        if (args->quit) {
-            break;
-        }
     #else
         sem_wait(&windowSem);
     #endif
+        if (args->quit) {
+            break;
+        }
         ret = sendCurrentWindowSize(args);
         (void)ret;
     } while (1);
@@ -375,7 +375,7 @@ static THREAD_RET readPeer(void* in)
                 if (ret == WS_FATAL_ERROR) {
                     ret = wolfSSH_get_error(args->ssh);
                     if (ret == WS_WANT_READ) {
-                        ret = WS_SUCCESS;
+                        continue;
                     }
                     #ifdef WOLFSSH_AGENT
                     else if (ret == WS_CHAN_RXD) {
@@ -605,7 +605,7 @@ static int config_init_default(struct config* config)
     if (env != NULL) {
         char* user;
 
-        sz = strlen(env + 1);
+        sz = strlen(env) + 1;
         user = (char*)malloc(sz);
         if (user != NULL) {
             strcpy(user, env);
@@ -726,7 +726,7 @@ static int config_parse_command_line(struct config* config,
             if (found != NULL) {
                 *found = '\0';
                 sz = strlen(cursor);
-                config->hostname = (char*)malloc(sz);
+                config->hostname = (char*)malloc(sz + 1);
                 strcpy(config->hostname, cursor);
                 cursor = found + 1;
                 if (*cursor != 0) {
@@ -736,7 +736,7 @@ static int config_parse_command_line(struct config* config,
         }
         else {
             sz = strlen(cursor);
-            config->hostname = (char*)malloc(sz);
+            config->hostname = (char*)malloc(sz + 1);
             strcpy(config->hostname, cursor);
         }
 
@@ -758,6 +758,7 @@ static int config_parse_command_line(struct config* config,
         }
 
         command = (char*)malloc(commandSz);
+        config->command = command;
         cursor = command;
 
         for (i = myoptind; i < argc; i++) {
@@ -998,6 +999,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     #endif
         pthread_join(thread[0], NULL);
         pthread_cancel(thread[1]);
+        pthread_join(thread[1], NULL);
     #if (defined(__OSX__) || defined(__APPLE__))
         dispatch_release(windowSem);
     #else

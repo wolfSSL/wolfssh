@@ -7,3 +7,5 @@ apps_wolfssh_wolfssh_LDADD = src/libwolfssh.la
 apps_wolfssh_wolfssh_DEPENDENCIES = src/libwolfssh.la
 
 endif BUILD_SSHCLIENT
+
+EXTRA_DIST+= apps/wolfssh/README.md
