@@ -1451,7 +1451,11 @@ void wolfSSHD_ConfigSavePID(const WOLFSSHD_CONFIG* conf)
 
     WMEMSET(buf, 0, sizeof(buf));
     if (WFOPEN(NULL, &f, conf->pidFile, "wb") == 0) {
+#ifndef WIN32
         WSNPRINTF(buf, sizeof(buf), "%d", getpid());
+#else
+        WSNPRINTF(buf, sizeof(buf), "%d", _getpid());
+#endif
         WFWRITE(NULL, buf, 1, WSTRLEN(buf), f);
         WFCLOSE(NULL, f);
     }
