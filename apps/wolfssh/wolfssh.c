@@ -821,10 +821,8 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     SOCKET_T sockFd = WOLFSSH_SOCKET_INVALID;
     SOCKADDR_IN_T clientAddr;
     socklen_t clientAddrSz = sizeof(clientAddr);
-    //char rxBuf[80];
     int ret = 0;
     const char* password = NULL;
-    //byte imExit = 0;
     byte keepOpen = 1;
 #ifdef USE_WINDOWS_API
     byte rawMode = 0;
@@ -849,12 +847,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     if (keepOpen)
         err_sys("Threading needed for terminal session\n");
 #endif
-#if 0
-    if ((config.pubKeyFilae== NULL && certName == NULL)
-            && config.keyFile != NULL) {
-        err_sys("If setting priv key, need pub key.");
-    }
-#endif
+
     if (config.keyFile) {
         ret = ClientSetPrivateKey(config.keyFile);
         if (ret != 0) {
@@ -1036,36 +1029,8 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         if (keepOpen)
             ClientSetEcho(1);
     }
-//    else
 #endif
 
-//#if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
-//    while (!imExit) {
-//#else
-//    if (!imExit) {
-//#endif
-//        ret = wolfSSH_stream_send(ssh, (byte*)testString,
-//                                  (word32)strlen(testString));
-//        if (ret <= 0)
-//            err_sys("Couldn't send test string.");
-//
-//        do {
-//            ret = wolfSSH_stream_read(ssh, (byte*)rxBuf, sizeof(rxBuf) - 1);
-//            if (ret <= 0) {
-//                ret = wolfSSH_get_error(ssh);
-//                if (ret != WS_WANT_READ && ret != WS_WANT_WRITE &&
-//                        ret != WS_CHAN_RXD)
-//                    err_sys("Stream read failed.");
-//            }
-//        } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE);
-//
-//        rxBuf[ret] = '\0';
-//        printf("Server said: %s\n", rxBuf);
-//
-//#if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
-//        sleep(10);
-//#endif
-//    }
     ret = wolfSSH_shutdown(ssh);
     /* do not continue on with shutdown process if peer already disconnected */
     if (ret != WS_SOCKET_ERROR_E
