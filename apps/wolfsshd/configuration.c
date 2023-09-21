@@ -57,6 +57,9 @@
 #ifndef WIN32
 #include <dirent.h>
 #endif
+#ifdef WIN32
+#include <process.h>
+#endif
 
 struct WOLFSSHD_CONFIG {
     void* heap;
@@ -1449,11 +1452,17 @@ void wolfSSHD_ConfigSavePID(const WOLFSSHD_CONFIG* conf)
     FILE* f;
     char buf[12]; /* large enough to hold 'int' type with null terminator */
 
-    WMEMSET(buf, 0, sizeof(buf));
-    if (WFOPEN(NULL, &f, conf->pidFile, "wb") == 0) {
-        WSNPRINTF(buf, sizeof(buf), "%d", getpid());
-        WFWRITE(NULL, buf, 1, WSTRLEN(buf), f);
-        WFCLOSE(NULL, f);
+    if (conf->pidFile != NULL) {
+        WMEMSET(buf, 0, sizeof(buf));
+        if (WFOPEN(NULL, &f, conf->pidFile, "wb") == 0) {
+    #ifndef WIN32
+            WSNPRINTF(buf, sizeof(buf), "%d", getpid());
+    #else
+            WSNPRINTF(buf, sizeof(buf), "%d", _getpid());
+    #endif
+            WFWRITE(NULL, buf, 1, WSTRLEN(buf), f);
+            WFCLOSE(NULL, f);
+        }
     }
 }
 
