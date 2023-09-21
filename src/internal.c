@@ -6789,9 +6789,9 @@ static int DoChannelRequest(WOLFSSH* ssh,
 #ifdef WOLFSSH_TERM
         if (WSTRNCMP(type, "pty-req", typeSz) == 0) {
             char term[32];
-            word32 termSz;
+            const byte* modes;
+            word32 termSz, modesSz = 0;
             word32 widthChar, heightRows, widthPixels, heightPixels;
-            byte opCode = 0;
 
             termSz = (word32)sizeof(term);
             ret = GetString(term, &termSz, buf, len, &begin);
@@ -6803,14 +6803,11 @@ static int DoChannelRequest(WOLFSSH* ssh,
                 ret = GetUint32(&widthPixels, buf, len, &begin);
             if (ret == WS_SUCCESS)
                 ret = GetUint32(&heightPixels, buf, len, &begin);
+            if (ret == WS_SUCCESS)
+                ret = GetStringRef(&modesSz, &modes, buf, len, &begin);
 
-            /* iterate over op codes */
-            if (ret == WS_SUCCESS && begin < len) {
-                do {
-                    opCode = buf[begin];
-                    begin++;
-                } while (opCode != 0 && begin < len);
-             }
+            WOLFSSH_UNUSED(modes);
+            WOLFSSH_UNUSED(modesSz);
 
             if (ret == WS_SUCCESS) {
                 WLOG(WS_LOG_DEBUG, "  term = %s", term);
@@ -6821,8 +6818,9 @@ static int DoChannelRequest(WOLFSSH* ssh,
                 ssh->curX = widthChar;
                 ssh->curY = heightRows;
                 if (ssh->termResizeCb) {
-                    if (ssh->termResizeCb(ssh, widthChar, heightRows, widthPixels,
-                        heightPixels, ssh->termCtx) != WS_SUCCESS) {
+                    if (ssh->termResizeCb(ssh, widthChar, heightRows,
+                                widthPixels, heightPixels, ssh->termCtx)
+                            != WS_SUCCESS) {
                         ret = WS_FATAL_ERROR;
                     }
                 }
@@ -12877,10 +12875,14 @@ int SendChannelRequest(WOLFSSH* ssh, byte* name, word32 nameSz)
 
 #if defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM)
 
+static void TTYWordSet(word32 flag, int type, byte* out, word32* idx)
+{
+    out[*idx] = type; *idx += 1;
+    c32toa(flag, out + *idx); *idx += UINT32_SZ;
+}
+
 #if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32) && \
     !defined(NO_TERMIOS)
-
-    #include <unistd.h>
 
     /* sets terminal mode in buffer and advances idx */
     static void TTYSet(word32 isSet, int type, byte* out, word32* idx)
@@ -12892,8 +12894,7 @@ int SendChannelRequest(WOLFSSH* ssh, byte* name, word32 nameSz)
 
     static void TTYCharSet(char flag, int type, byte* out, word32* idx)
     {
-        out[*idx] = type; *idx += 1;
-        c32toa(flag, out + *idx); *idx += UINT32_SZ;
+        TTYWordSet((flag & 0xFF), type, out, idx);
     }
 #endif /* !USE_WINDOWS_API && !MICROCHIP_PIC32 && !NO_TERMIOS*/
 
@@ -12903,20 +12904,22 @@ int SendChannelRequest(WOLFSSH* ssh, byte* name, word32 nameSz)
 static int CreateMode(WOLFSSH* ssh, byte* mode)
 {
     word32 idx = 0;
-    int baud = 38400; /* default speed */
 
     #if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32) && \
         !defined(NO_TERMIOS)
     {
         WOLFSSH_TERMIOS term;
+        int baud;
 
         if (tcgetattr(STDIN_FILENO, &term) != 0) {
             printf("Couldn't get the original terminal settings.\n");
             return -1;
         }
 
-        /* set baud rate */
+        /* get baud rate */
         baud = (int)cfgetospeed(&term);
+        TTYWordSet(baud, WOLFSSH_TTY_OP_ISPEED, mode, &idx);
+        TTYWordSet(baud, WOLFSSH_TTY_OP_OSPEED, mode, &idx);
 
         /* char type */
         TTYCharSet(term.c_cc[VINTR], WOLFSSH_VINTR, mode, &idx);
@@ -12961,6 +12964,9 @@ static int CreateMode(WOLFSSH* ssh, byte* mode)
         TTYSet((term.c_iflag & IXANY), WOLFSSH_IXANY, mode, &idx);
         TTYSet((term.c_iflag & IXOFF), WOLFSSH_IXOFF, mode, &idx);
         TTYSet((term.c_iflag & IMAXBEL), WOLFSSH_IMAXBEL, mode, &idx);
+        #ifdef IUTF8
+            TTYSet((term.c_iflag & IUTF8), WOLFSSH_IUTF8, mode, &idx);
+        #endif
 
         /* c_lflag */
         TTYSet((term.c_lflag & ISIG), WOLFSSH_ISIG, mode, &idx);
@@ -12997,12 +13003,13 @@ static int CreateMode(WOLFSSH* ssh, byte* mode)
         TTYSet((term.c_cflag &  PARENB), WOLFSSH_PARENB, mode, &idx);
         TTYSet((term.c_cflag &  PARODD), WOLFSSH_PARODD, mode, &idx);
     }
+    #else
+    {
+        /* No termios. Just set the bitrate to 38400. */
+        TTYWordSet(38400, WOLFSSH_TTY_OP_ISPEED, mode, &idx);
+        TTYWordSet(38400, WOLFSSH_TTY_OP_OSPEED, mode, &idx);
+    }
     #endif /* !USE_WINDOWS_API && !MICROCHIP_PIC32 && !NO_TERMIOS */
-
-    mode[idx++] = WOLFSSH_TTY_OP_OSPEED;
-    c32toa(baud, mode + idx); idx += UINT32_SZ;
-    mode[idx++] = WOLFSSH_TTY_OP_ISPEED;
-    c32toa(baud, mode + idx); idx += UINT32_SZ;
 
     WOLFSSH_UNUSED(ssh);
     mode[idx++] = WOLFSSH_TTY_OP_END;
