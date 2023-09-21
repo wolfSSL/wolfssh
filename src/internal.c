@@ -873,6 +873,7 @@ int IdentifyKey(const byte* in, word32 inSz, int isPrivate, void* heap)
     word32 idx;
     int ret;
     int dynType = isPrivate ? DYNTYPE_PRIVKEY : DYNTYPE_PUBKEY;
+    (void) dynType;
 
     key = (union wolfSSH_key*)WMALLOC(sizeof(union wolfSSH_key), heap, dynType);
 
@@ -8323,8 +8324,8 @@ int SendKexInit(WOLFSSH* ssh)
     byte* payload = NULL;
     char* kexAlgoNames = NULL;
     char* keyAlgoNames = NULL;
-    const byte* algo;
-    word32 algoCount, idx = 0, payloadSz = 0,
+    const byte* algo = 0;
+    word32 algoCount = 0, idx = 0, payloadSz = 0,
             kexAlgoNamesSz = 0, keyAlgoNamesSz = 0;
     int ret = WS_SUCCESS;
 
@@ -9051,8 +9052,8 @@ int SendKexDhReply(WOLFSSH* ssh)
     byte kPad = 0;
     word32 sigBlockSz = 0;
     word32 payloadSz = 0;
-    byte* output;
-    word32 idx;
+    byte* output = 0;
+    word32 idx = 0;
     word32 keyIdx = 0;
     byte msgId = MSGID_KEXDH_REPLY;
     enum wc_HashType hashId = WC_HASH_TYPE_NONE;
