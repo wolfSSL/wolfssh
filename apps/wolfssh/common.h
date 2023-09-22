@@ -31,7 +31,6 @@ WOLFSSH_LOCAL int ClientUserAuth(byte authType, WS_UserAuthData* authData,
 WOLFSSH_LOCAL int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz,
         void* ctx);
 WOLFSSH_LOCAL void ClientIPOverride(int flag);
-WOLFSSH_LOCAL void ClientFreeBuffers(const char* pubKeyName,
-        const char* privKeyName);
+WOLFSSH_LOCAL void ClientFreeBuffers(void);
 
 #endif /* APPS_WOLFSSH_COMMON_H */

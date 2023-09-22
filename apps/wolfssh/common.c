@@ -523,13 +523,13 @@ int ClientLoadCA(WOLFSSH_CTX* ctx, const char* caCert)
 }
 
 
-void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName)
+void ClientFreeBuffers(void)
 {
-    if (pubKeyName != NULL && userPublicKey != NULL) {
+    if (userPublicKey != userPublicKeyBuf) {
         WFREE(userPublicKey, NULL, DYNTYPE_PRIVKEY);
     }
 
-    if (privKeyName != NULL && userPrivateKey != NULL) {
+    if (userPrivateKey != userPrivateKeyBuf) {
         WFREE(userPrivateKey, NULL, DYNTYPE_PRIVKEY);
     }
 }

@@ -94,7 +94,8 @@ static void ShowUsage(char* appPath)
     }
 
     printf("%s v%s\n", appName, LIBWOLFSSH_VERSION_STRING);
-    printf("usage: %s [-E logfile] [-G] [-l login_name] [-N] [-p port] [-V]\n",
+    printf("usage: %s [-E logfile] [-G] [-l login_name] [-N] [-p port] "
+            "[-V] destination\n",
             appName);
 }
 
@@ -148,6 +149,53 @@ static int NonBlockSSH_connect(WOLFSSH* ssh)
 
     return ret;
 }
+
+#ifdef HAVE_TERMIOS_H
+WOLFSSH_TERMIOS oldTerm;
+
+static void modes_store(void)
+{
+    tcgetattr(STDIN_FILENO, &oldTerm);
+}
+
+static void modes_clear(void)
+{
+    WOLFSSH_TERMIOS term = oldTerm;
+
+    term.c_lflag &= ~(ICANON | ISIG | IEXTEN | ECHO | ECHOE | ECHOK
+            | ECHONL | ECHOPRT | NOFLSH | TOSTOP | FLUSHO
+            | PENDIN | EXTPROC);
+
+    term.c_iflag &= ~(ISTRIP | INLCR | ICRNL | IGNCR | IXON | IXOFF
+            | IXANY | IGNBRK | INPCK | PARMRK);
+#ifdef IUCLC
+    term.c_iflag &= ~IUCLC;
+#endif
+    term.c_iflag |= IGNPAR;
+
+    term.c_oflag &= ~(OPOST | ONOCR | ONLRET);
+#ifdef OUCLC
+    term.c_oflag &= ~OLCUC;
+#endif
+
+    term.c_cflag &= ~(CSTOPB | PARENB | PARODD | CLOCAL | CRTSCTS);
+
+    tcsetattr(STDIN_FILENO, TCSANOW, &term);
+}
+
+static void modes_reset(void)
+{
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &oldTerm);
+}
+
+#define MODES_STORE() modes_store()
+#define MODES_CLEAR() modes_clear()
+#define MODES_RESET() modes_reset()
+#else
+#define MODES_STORE() do {} while(0)
+#define MODES_CLEAR() do {} while(0)
+#define MODES_RESET() do {} while(0)
+#endif
 
 #if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS)
 
@@ -814,7 +862,7 @@ static int config_cleanup(struct config* config)
 }
 
 
-THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
+static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
 {
     WOLFSSH_CTX* ctx = NULL;
     WOLFSSH* ssh = NULL;
@@ -833,6 +881,8 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 #endif
     struct config config;
 
+    MODES_STORE();
+
     ((func_args*)args)->return_code = 0;
 
     config_init_default(&config);
@@ -850,24 +900,18 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
     if (config.keyFile) {
         ret = ClientSetPrivateKey(config.keyFile);
-        if (ret != 0) {
-            err_sys("Error setting private key");
+        if (ret == 0) {
+        #ifdef WOLFSSH_CERTS
+            /* passed in certificate to use */
+            if (certName) {
+                (void)ClientUseCert(certName);
+            }
+            else
+        #endif
+            if (config.pubKeyFile) {
+                (void)ClientUsePubKey(config.pubKeyFile);
+            }
         }
-    }
-
-#ifdef WOLFSSH_CERTS
-    /* passed in certificate to use */
-    if (certName) {
-        ret = ClientUseCert(certName);
-    }
-    else
-#endif
-
-    if (config.pubKeyFile) {
-        ret = ClientUsePubKey(config.pubKeyFile);
-    }
-    if (ret != 0) {
-        err_sys("Error setting public key");
     }
 
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
@@ -949,8 +993,12 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         err_sys("Couldn't connect SSH stream.");
 
 #if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS)
+#if 0
     if (keepOpen) /* set up for psuedo-terminal */
         ClientSetEcho(2);
+#endif
+
+    MODES_CLEAR();
 
     if (config.command != NULL || keepOpen == 1) {
     #if defined(_POSIX_THREADS)
@@ -1053,12 +1101,13 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     if (ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E)
         err_sys("Closing client stream failed");
 
-    ClientFreeBuffers(config.pubKeyFile, config.keyFile);
+    ClientFreeBuffers();
 #if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
 
     config_cleanup(&config);
+    MODES_RESET();
 
     return 0;
 }
@@ -1081,7 +1130,7 @@ int main(int argc, char** argv)
 
     wolfSSH_Init();
 
-    client_test(&args);
+    wolfSSH_Client(&args);
 
     wolfSSH_Cleanup();
 
