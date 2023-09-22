@@ -8229,7 +8229,12 @@ static const char cannedMacAlgoNames[] =
     static const char cannedKeyAlgoRsaSha2_512Names[] = "rsa-sha2-512";
 #endif
 
+#ifdef WOLFSSH_CERTS
+static const char cannedKeyAlgoNames[] =
+   "rsa-sha2-256,x509v3-ssh-rsa,ecdsa-sha2-nistp256,x509v3-ecdsa-sha2-nistp256";
+#else
 static const char cannedKeyAlgoNames[] = "rsa-sha2-256,ecdsa-sha2-nistp256";
+#endif
 
 #if 0
 static const char cannedKexAlgoNames[] =
