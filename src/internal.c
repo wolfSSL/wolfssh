@@ -873,7 +873,7 @@ int IdentifyKey(const byte* in, word32 inSz, int isPrivate, void* heap)
     word32 idx;
     int ret;
     int dynType = isPrivate ? DYNTYPE_PRIVKEY : DYNTYPE_PUBKEY;
-    (void) dynType;
+    WOLFSSH_UNUSED(dynType);
 
     key = (union wolfSSH_key*)WMALLOC(sizeof(union wolfSSH_key), heap, dynType);
 
