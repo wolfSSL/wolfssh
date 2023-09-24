@@ -11,3 +11,22 @@ ssh-keygen tool.
 Phase 2 is going to bring reading the config files `/etc/ssh/ssh_config` and
 `$HOME/.ssh/config`. It will handle OpenSSH style modern keys. It will also
 have support for SSH-AGENT and forwarding.
+
+Command Line Options
+--------------------
+
+    -E logfile    : Specify a different log file.
+    -G            : Print out the configuration as used.
+    -l login_name : Overrides the login name specified in the destination.
+    -N            : Do not execute remote command.
+    -p port       : Overrides the destination port number.
+    -V            : Print out the version.
+
+The destination option is the only required option. It can be in the two
+following formats:
+
+    [user@]hostname
+    ssh://[user@]hostname[:port]
+
+The default value for _user_ is the current user's login name. The default
+value for _port_ is 22.

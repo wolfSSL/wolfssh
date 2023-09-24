@@ -515,8 +515,8 @@ static int callbackGlobalReq(WOLFSSH *ssh, void *buf, word32 sz,
         return WS_FATAL_ERROR;
     }
 
-    if (strlen(reqStr) == sz
-            && (strncmp((char *)buf, reqStr, sz) == 0)
+    if (WSTRLEN(reqStr) == sz
+            && (WSTRNCMP((char *)buf, reqStr, sz) == 0)
             && reply == 1) {
         printf("Global Request\n");
         return WS_SUCCESS;
@@ -554,11 +554,11 @@ static int wolfSSH_AGENT_DefaultActions(WS_AgentCbAction action, void* vCtx)
             ret = WS_AGENT_NOT_AVAILABLE;
 
         if (ret == WS_AGENT_SUCCESS) {
-            memset(name, 0, sizeof(struct sockaddr_un));
+            WMEMSET(name, 0, sizeof(struct sockaddr_un));
             name->sun_family = AF_LOCAL;
-            strncpy(name->sun_path, sockName, sizeof(name->sun_path));
+            WSTRNCPY(name->sun_path, sockName, sizeof(name->sun_path));
             name->sun_path[sizeof(name->sun_path) - 1] = '\0';
-            size = strlen(sockName) +
+            size = WSTRLEN(sockName) +
                     offsetof(struct sockaddr_un, sun_path);
 
             ctx->fd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -646,15 +646,15 @@ static int config_init_default(struct config* config)
     char* env;
     size_t sz;
 
-    memset(config, 0, sizeof(*config));
+    WMEMSET(config, 0, sizeof(*config));
     config->port = 22;
 
     env = getenv("USER");
     if (env != NULL) {
         char* user;
 
-        sz = strlen(env) + 1;
-        user = (char*)malloc(sz);
+        sz = WSTRLEN(env) + 1;
+        user = (char*)WMALLOC(sz, NULL, 0);
         if (user != NULL) {
             strcpy(user, env);
             config->user = user;
@@ -667,16 +667,16 @@ static int config_init_default(struct config* config)
         const char* pubSuffix = ".pub";
         char* keyFile;
 
-        sz = strlen(env) + strlen(defaultName) + 1;
-        keyFile = (char*)malloc(sz);
+        sz = WSTRLEN(env) + WSTRLEN(defaultName) + 1;
+        keyFile = (char*)WMALLOC(sz, NULL, 0);
         if (keyFile != NULL) {
             strcpy(keyFile, env);
             strcat(keyFile, defaultName);
             config->keyFile = keyFile;
         }
 
-        sz += strlen(pubSuffix);
-        keyFile = (char*)malloc(sz);
+        sz += WSTRLEN(pubSuffix);
+        keyFile = (char*)WMALLOC(sz, NULL, 0);
         if (keyFile != NULL) {
             strcpy(keyFile, env);
             strcat(keyFile, defaultName);
@@ -741,20 +741,20 @@ static int config_parse_command_line(struct config* config,
 
         myoptarg = argv[myoptind];
 
-        sz = strlen(myoptarg) + 1;
-        dest = (char*)malloc(sz);
-        memcpy(dest, myoptarg, sz);
+        sz = WSTRLEN(myoptarg) + 1;
+        dest = (char*)WMALLOC(sz, NULL, 0);
+        WMEMCPY(dest, myoptarg, sz);
         cursor = dest;
 
-        if (strstr(cursor, uriPrefix)) {
+        if (WSTRSTR(cursor, uriPrefix)) {
             checkPort = 1;
-            cursor += strlen(uriPrefix);
+            cursor += WSTRLEN(uriPrefix);
         }
         else {
             checkPort = 0;
         }
 
-        found = strchr(cursor, '@');
+        found = WSTRCHR(cursor, '@');
         if (found == cursor) {
             fprintf(stderr, "can't start destination with just an @\n");
         }
@@ -763,18 +763,18 @@ static int config_parse_command_line(struct config* config,
             if (config->user) {
                 free(config->user);
             }
-            sz = strlen(cursor);
-            config->user = malloc(sz + 1);
+            sz = WSTRLEN(cursor);
+            config->user = WMALLOC(sz + 1, NULL, 0);
             strcpy(config->user, cursor);
             cursor = found + 1;
         }
 
         if (checkPort) {
-            found = strchr(cursor, ':');
+            found = WSTRCHR(cursor, ':');
             if (found != NULL) {
                 *found = '\0';
-                sz = strlen(cursor);
-                config->hostname = (char*)malloc(sz + 1);
+                sz = WSTRLEN(cursor);
+                config->hostname = (char*)WMALLOC(sz + 1, NULL, 0);
                 strcpy(config->hostname, cursor);
                 cursor = found + 1;
                 if (*cursor != 0) {
@@ -783,8 +783,8 @@ static int config_parse_command_line(struct config* config,
             }
         }
         else {
-            sz = strlen(cursor);
-            config->hostname = (char*)malloc(sz + 1);
+            sz = WSTRLEN(cursor);
+            config->hostname = (char*)WMALLOC(sz + 1, NULL, 0);
             strcpy(config->hostname, cursor);
         }
 
@@ -802,10 +802,10 @@ static int config_parse_command_line(struct config* config,
          * space but that's for the nul termination. */
         commandSz = argc - myoptind;
         for (i = myoptind; i < argc; i++) {
-            commandSz += strlen(argv[i]);
+            commandSz += WSTRLEN(argv[i]);
         }
 
-        command = (char*)malloc(commandSz);
+        command = (char*)WMALLOC(commandSz, NULL, 0);
         config->command = command;
         cursor = command;
 
@@ -843,19 +843,19 @@ static int config_print(struct config* config)
 static int config_cleanup(struct config* config)
 {
     if (config->user) {
-        free(config->user);
+        WFREE(config->user, NULL, 0);
     }
     if (config->hostname) {
-        free(config->hostname);
+        WFREE(config->hostname, NULL, 0);
     }
     if (config->keyFile) {
-        free(config->keyFile);
+        WFREE(config->keyFile, NULL, 0);
     }
     if (config->pubKeyFile) {
-        free(config->pubKeyFile);
+        WFREE(config->pubKeyFile, NULL, 0);
     }
     if (config->command) {
-        free(config->command);
+        WFREE(config->command, NULL, 0);
     }
 
     return 0;
@@ -948,7 +948,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
 
 #ifdef WOLFSSH_AGENT
     if (useAgent) {
-        memset(&agentCbCtx, 0, sizeof(agentCbCtx));
+        WMEMSET(&agentCbCtx, 0, sizeof(agentCbCtx));
         agentCbCtx.state = AGENT_STATE_INIT;
         wolfSSH_set_agent_cb_ctx(ssh, &agentCbCtx);
     }
