@@ -1315,6 +1315,7 @@ void* wolfSSH_GetPublicKeyCheckCtx(WOLFSSH* ssh)
     return NULL;
 }
 
+#ifdef WOLFSSH_TERM
 
 /* Used to resize terminal window with shell connections
  * returns WS_SUCCESS on success */
@@ -1349,6 +1350,8 @@ void wolfSSH_SetTerminalResizeCtx(WOLFSSH* ssh, void* usrCtx)
 {
     ssh->termCtx = usrCtx;
 }
+
+#endif
 
 
 /* Used to set the channel request type sent in wolfSSH connect. The default

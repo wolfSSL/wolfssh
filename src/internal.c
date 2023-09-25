@@ -6874,7 +6874,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
                 WLOG(WS_LOG_AGENT, "Agent callback not set, not using.");
         }
 #endif /* WOLFSSH_AGENT */
-#ifdef WOLFSSH_SHELL
+#if defined(WOLFSSH_SHELL) && defined(WOLFSSH_TERM)
         else if (WSTRNCMP(type, "window-change", typeSz) == 0) {
             word32 widthChar, heightRows, widthPixels, heightPixels;
 
@@ -6901,7 +6901,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
                 }
             }
         }
-#endif
+#endif /* WOLFSSH_SHELL && WOLFSSH_TERM */
     }
 
     if (ret == WS_SUCCESS)

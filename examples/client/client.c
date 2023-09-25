@@ -190,6 +190,7 @@ typedef struct thread_args {
 #endif
 
 
+#ifdef WOLFSSH_TERM
 static int sendCurrentWindowSize(thread_args* args)
 {
     int ret;
@@ -221,8 +222,10 @@ static int sendCurrentWindowSize(thread_args* args)
 
     return ret;
 }
+#endif
 
 
+#ifdef WOLFSSH_TERM
 #ifndef _MSC_VER
 
 #if (defined(__OSX__) || defined(__APPLE__))
@@ -266,7 +269,7 @@ static THREAD_RET windowMonitor(void* in)
 
     return THREAD_RET_SUCCESS;
 }
-#else
+#else /* _MSC_VER */
 /* no SIGWINCH on Windows, poll current terminal size */
 static word32 prevCol, prevRow;
 
@@ -292,7 +295,8 @@ static int windowMonitor(thread_args* args)
 
     return ret;
 }
-#endif
+#endif /* _MSC_VER */
+#endif /* WOLFSSH_TERM */
 
 
 static THREAD_RET readInput(void* in)
@@ -862,6 +866,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         arg.ssh = ssh;
         arg.quit = 0;
         wc_InitMutex(&arg.lock);
+#ifdef WOLFSSH_TERM
     #if (defined(__OSX__) || defined(__APPLE__))
         windowSem = dispatch_semaphore_create(0);
     #else
@@ -878,12 +883,13 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
                 fprintf(stderr, "Issue sending exec initial terminal size\n\r");
             }
         }
-
         signal(SIGWINCH, WindowChangeSignal);
         pthread_create(&thread[0], NULL, windowMonitor, (void*)&arg);
+#endif /* WOLFSSH_TERM */
         pthread_create(&thread[1], NULL, readInput, (void*)&arg);
         pthread_create(&thread[2], NULL, readPeer, (void*)&arg);
         pthread_join(thread[2], NULL);
+#ifdef WOLFSSH_TERM
         /* Wake the windowMonitor thread so it can exit. */
         arg.quit = 1;
     #if (defined(__OSX__) || defined(__APPLE__))
@@ -892,12 +898,16 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         sem_post(&windowSem);
     #endif
         pthread_join(thread[0], NULL);
+#endif /* WOLFSSH_TERM */
         pthread_cancel(thread[1]);
+        pthread_join(thread[1], NULL);
+#ifdef WOLFSSH_TERM
     #if (defined(__OSX__) || defined(__APPLE__))
         dispatch_release(windowSem);
     #else
         sem_destroy(&windowSem);
     #endif
+#endif /* WOLFSSH_TERM */
     #elif defined(_MSC_VER)
         thread_args arg;
         HANDLE thread[2];
