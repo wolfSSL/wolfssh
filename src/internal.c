@@ -29,6 +29,7 @@
     #include <config.h>
 #endif
 
+#include <stdio.h>
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/log.h>
@@ -826,7 +827,7 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
         ssh->scpFileNameSz = 0;
     }
     if (ssh->scpRecvMsg) {
-        WFREE(ssh->scpRecvMsg, ssh->heap, DYNTYPE_STRING);
+        WFREE(ssh->scpRecvMsg, ssh->ctx->heap, DYNTYPE_STRING);
         ssh->scpRecvMsg = NULL;
         ssh->scpRecvMsgSz = 0;
     }
@@ -1245,7 +1246,7 @@ static int SetHostPrivateKey(WOLFSSH_CTX* ctx,
         if (pvtKey->publicKeyFmt == keyId) {
             if (pvtKey->key != NULL) {
                 ForceZero(pvtKey->key, pvtKey->keySz);
-                WFREE(pvtKey->key, heap, dynamicType);
+                WFREE(pvtKey->key, ctx->heap, dynamicType);
             }
         }
         else {
@@ -2247,8 +2248,8 @@ int wolfSSH_SendPacket(WOLFSSH* ssh)
         int sent;
 
         /* sanity check on amount requested to be sent */
-        if (ssh->outputBuffer.idx + ssh->outputBuffer.length >
-                ssh->outputBuffer.bufferSz) {
+        if (ssh->outputBuffer.length > ssh->outputBuffer.bufferSz ||
+                ssh->outputBuffer.length < ssh->outputBuffer.idx) {
             WLOG(WS_LOG_ERROR, "Bad buffer state");
             return WS_BUFFER_E;
         }
@@ -8327,7 +8328,7 @@ int SendKexInit(WOLFSSH* ssh)
     byte* payload = NULL;
     char* kexAlgoNames = NULL;
     char* keyAlgoNames = NULL;
-    const byte* algo = 0;
+    const byte* algo = NULL;
     word32 algoCount = 0, idx = 0, payloadSz = 0,
             kexAlgoNamesSz = 0, keyAlgoNamesSz = 0;
     int ret = WS_SUCCESS;
@@ -9055,7 +9056,7 @@ int SendKexDhReply(WOLFSSH* ssh)
     byte kPad = 0;
     word32 sigBlockSz = 0;
     word32 payloadSz = 0;
-    byte* output = 0;
+    byte* output = NULL;
     word32 idx = 0;
     word32 keyIdx = 0;
     byte msgId = MSGID_KEXDH_REPLY;

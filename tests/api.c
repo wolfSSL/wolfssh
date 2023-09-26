@@ -27,6 +27,7 @@
 #else
     #include <wolfssl/options.h>
 #endif
+#include <wolfssl/wolfcrypt/wc_port.h>
 
 #include <stdio.h>
 #include <wolfssh/ssh.h>
@@ -59,13 +60,24 @@ char* myoptarg = NULL;
     #define WABORT()
 #endif
 
-#define Fail(description, result) do {                                         \
+#define PrintError(description, result) do {                                   \
     printf("\nERROR - %s line %d failed with:", __FILE__, __LINE__);           \
-    fputs("\n    expected: ", stdout); printf description;                     \
-    fputs("\n    result:   ", stdout); printf result; fputs("\n\n", stdout);   \
-    fflush(stdout);                                                            \
+    printf("\n    expected: "); printf description;                            \
+    printf("\n    result:   "); printf result; printf("\n\n");                 \
+} while(0)
+
+#ifdef WOLFSSH_ZEPHYR
+#define Fail(description, result) do {                                         \
+    PrintError(description, result);                                           \
     WABORT();                                                                  \
 } while(0)
+#else
+#define Fail(description, result) do {                                         \
+    PrintError(description, result);                                           \
+    WFFLUSH(stdout);                                                           \
+    WABORT();                                                                  \
+} while(0)
+#endif
 
 #define Assert(test, description, result) if (!(test)) Fail(description, result)
 
@@ -846,6 +858,10 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
 
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
+#ifdef WOLFSSH_ZEPHYR
+    /* Weird deadlock without this sleep */
+    k_sleep(Z_TIMEOUT_TICKS(100));
+#endif
     ThreadJoin(serThread);
 }
 

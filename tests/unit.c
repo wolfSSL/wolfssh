@@ -35,7 +35,7 @@
 
 #define WOLFSSH_TEST_HEX2BIN
 #include <wolfssh/test.h>
-#include "tests/unit.h"
+#include "unit.h"
 
 
 /* Key Derivation Function (KDF) Unit Test */

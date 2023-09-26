@@ -141,6 +141,8 @@ void* wolfSSH_GetIOWriteCtx(WOLFSSH* ssh)
         #include "nucleus.h"
         #include "networking/nu_networking.h"
         #include <errno.h>
+    #elif defined(WOLFSSH_ZEPHYR)
+        #include <zephyr/net/socket.h>
     #else
         #include <sys/types.h>
         #include <errno.h>

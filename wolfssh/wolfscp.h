@@ -83,6 +83,9 @@ enum WS_ScpFileStates {
     #elif defined(USE_WINDOWS_API)
         char* entry;
         WIN32_FILE_ATTRIBUTE_DATA s;
+    #elif defined(WOLFSSH_ZEPHYR)
+        struct fs_dirent entry;
+        WSTAT_T s;                              /* stat info from file */
     #else
         struct dirent* entry;                   /* file entry, from readdir() */
         struct stat s;                          /* stat info from file */

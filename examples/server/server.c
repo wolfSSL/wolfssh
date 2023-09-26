@@ -38,7 +38,7 @@
 #include <wolfssh/internal.h>
 #include <wolfssh/test.h>
 #include <wolfssl/wolfcrypt/ecc.h>
-#include "examples/server/server.h"
+#include "server.h"
 
 #ifdef NO_FILESYSTEM
     #include <wolfssh/certs_test.h>
@@ -760,12 +760,15 @@ THREAD_RETURN WOLFSSH_THREAD server_test(void* args)
         threadCtx->nonBlock = nonBlock;
 
 #ifndef SINGLE_THREADED
-        ThreadStart(server_worker, threadCtx, &thread);
-
+#if defined(WOLFSSH_OLD_THREADING) || defined(WOLFSSL_THREAD_NO_JOIN)
         if (multipleConnections)
-            ThreadDetach(thread);
+            ThreadStartNoJoin(server_worker, threadCtx);
         else
+#endif
+        {
+            ThreadStart(server_worker, threadCtx, &thread);
             ThreadJoin(thread);
+        }
 #else
         server_worker(threadCtx);
 #endif /* SINGLE_THREADED */
@@ -781,7 +784,7 @@ THREAD_RETURN WOLFSSH_THREAD server_test(void* args)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
 
-    return 0;
+    WOLFSSL_RETURN_FROM_THREAD(0);
 }
 
 #endif /* NO_WOLFSSH_SERVER */

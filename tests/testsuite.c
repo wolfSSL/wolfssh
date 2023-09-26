@@ -134,7 +134,7 @@ int wolfSSH_TestsuiteTest(int argc, char** argv)
     WSTRNCPY(serverArgv[serverArgc++], "echoserver", ARGLEN);
     WSTRNCPY(serverArgv[serverArgc++], "-1", ARGLEN);
     WSTRNCPY(serverArgv[serverArgc++], "-f", ARGLEN);
-    #ifndef USE_WINDOWS_API
+    #if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR)
         WSTRNCPY(serverArgv[serverArgc++], "-p", ARGLEN);
         WSTRNCPY(serverArgv[serverArgc++], "-0", ARGLEN);
     #endif
@@ -150,7 +150,7 @@ int wolfSSH_TestsuiteTest(int argc, char** argv)
     WSTRNCPY(cA[clientArgc++], "client", ARGLEN);
     WSTRNCPY(cA[clientArgc++], "-u", ARGLEN);
     WSTRNCPY(cA[clientArgc++], "jill", ARGLEN);
-    #ifndef USE_WINDOWS_API
+    #if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR)
         WSTRNCPY(cA[clientArgc++], "-p", ARGLEN);
         WSNPRINTF(cA[clientArgc++], ARGLEN, "%d", ready.port);
     #endif
@@ -166,6 +166,10 @@ int wolfSSH_TestsuiteTest(int argc, char** argv)
         return clientArgs.return_code;
     }
 
+#ifdef WOLFSSH_ZEPHYR
+    /* Weird deadlock without this sleep */
+    k_sleep(Z_TIMEOUT_TICKS(100));
+#endif
     ThreadJoin(serverThread);
 
     wolfSSH_Cleanup();
@@ -174,8 +178,10 @@ int wolfSSH_TestsuiteTest(int argc, char** argv)
 #ifdef WOLFSSH_SFTP
     printf("testing SFTP blocking\n");
     wolfSSH_SftpTest(0);
+#ifndef WOLFSSH_NO_NONBLOCKING
     printf("testing SFTP non blocking\n");
     wolfSSH_SftpTest(1);
+#endif
 #endif
 
     return EXIT_SUCCESS;
