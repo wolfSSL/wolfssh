@@ -686,11 +686,6 @@ static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     if (ret == WS_SUCCESS) {
         sockfd = (WS_SOCKET_T)wolfSSH_get_fd(ssh);
         do {
-            select_ret = tcp_select(sockfd, timeout);
-            if (select_ret == WS_SELECT_ERROR_READY) {
-                break;
-            }
-
             if (wolfSSH_SFTP_PendingSend(ssh)) {
                 /* Yes, process the SFTP data. */
                 ret = wolfSSH_SFTP_read(ssh);
@@ -701,9 +696,18 @@ static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     error == WS_CHAN_RXD || error == WS_REKEYING ||
                     error == WS_WINDOW_FULL)
                     ret = error;
+                if (error == WS_WANT_WRITE && wolfSSH_SFTP_PendingSend(ssh)) {
+                    continue; /* no need to spend time attempting to pull data
+                                * if there is still pending sends */
+                }
                 if (error == WS_EOF) {
                     break;
                 }
+            }
+
+            select_ret = tcp_select(sockfd, timeout);
+            if (select_ret == WS_SELECT_ERROR_READY) {
+                break;
             }
 
             if (ret == WS_WANT_READ || ret == WS_WANT_WRITE ||
