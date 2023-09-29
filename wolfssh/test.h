@@ -136,6 +136,14 @@
     #endif
     #define SOCKET_T int
     #define NUM_SOCKETS 5
+#elif defined(WOLFSSL_ESPIDF)
+    #include "sdkconfig.h"
+    #include <esp_idf_version.h>
+    #include <esp_log.h>
+    #include <lwip/sockets.h>
+    #include <lwip/netdb.h>
+    #define SOCKET_T int
+    #define NUM_SOCKETS 5
 #else /* USE_WINDOWS_API */
     #include <unistd.h>
     #include <sys/socket.h>
@@ -519,6 +527,8 @@ static INLINE void tcp_socket(WS_SOCKET_T* sockFd)
 #elif defined(MICROCHIP_MPLAB_HARMONY) && !defined(_FULL_SIGNAL_IMPLEMENTATION)
     /* not full signal implementation */
 #elif defined(WOLFSSL_NUCLEUS)
+    /* nothing to define */
+#elif defined(WOLFSSL_ESPIDF)
     /* nothing to define */
 #else  /* no S_NOSIGPIPE */
     signal(SIGPIPE, SIG_IGN);
