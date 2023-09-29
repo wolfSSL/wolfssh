@@ -9,6 +9,15 @@ counter=0
 
 [ ! -x ./examples/scpclient/wolfscp ] && echo -e "\n\nwolfscp client doesn't exist" && exit 1
 
+# test for nonblocking only
+./examples/client/client -h | grep WOLFSSH_TEST_BLOCK
+if [ $? -eq 0 ]
+then
+    echo "macro NO_WOLFSSH_CLIENT was used"
+    echo "skipping for now"
+    exit 77
+fi
+
 create_port() {
     while [ ! -s "$ready_file" ] && [ "$counter" -lt 20 ]; do
         echo -e "waiting for ready file..."

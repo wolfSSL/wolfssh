@@ -44,7 +44,7 @@
 
     /* percent of time that forced want read/write is done */
     #ifndef WOLFSSH_BLOCK_PROB
-        #define WOLFSSH_BLOCK_PROB 75
+        #define WOLFSSH_BLOCK_PROB 50
     #endif
 #endif
 

@@ -91,7 +91,12 @@ static void ShowUsage(void)
     printf(" -j <filename> filename for the user's public key\n");
     printf(" -x            exit after successful connection without doing\n"
            "               read/write\n");
+#ifdef WOLFSSH_TEST_BLOCK
+    printf("-N            non-blocking sockets required when compiled with "
+                          "WOLFSSH_TEST_BLOCK\n");
+#else
     printf(" -N            use non-blocking sockets\n");
+#endif
 #ifdef WOLFSSH_TERM
     printf(" -t            use psuedo terminal\n");
 #endif
