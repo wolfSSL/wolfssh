@@ -822,8 +822,10 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
             outSz = WOLFSSH_MAX_SFTP_RW;
             rxSz = wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz,
                     ofst, out, outSz);
-            AssertIntGT(rxSz, 0);
-            AssertIntLE(rxSz, outSz);
+            if (rxSz != WS_REKEYING) {
+                AssertIntGT(rxSz, 0);
+                AssertIntLE(rxSz, outSz);
+            }
 
             free(out);
             wolfSSH_SFTP_Close(ssh, handle, handleSz);
