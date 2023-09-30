@@ -88,15 +88,23 @@ static int Expected(int command)
                 char expt1[] = ".\n..\nwolfSSH sftp> ";
                 char expt2[] = "..\n.\nwolfSSH sftp> ";
                 if (WMEMCMP(expt1, inBuf, sizeof(expt1)) != 0 &&
-                    WMEMCMP(expt2, inBuf, sizeof(expt2)) != 0)
+                    WMEMCMP(expt2, inBuf, sizeof(expt2)) != 0) {
+                    fprintf(stderr, "Unexpected string of %s\n", inBuf);
                     return -1;
+                }
                 else
                     return 0;
 
             }
 
         case 6:
-            return (WSTRNSTR(inBuf, "configure", sizeof(inBuf)) == NULL);
+            if (WSTRNSTR(inBuf, "configure", sizeof(inBuf)) == NULL) {
+                fprintf(stderr, "configure not found in %s\n", inBuf);
+                return 1;
+            }
+            else {
+                return 0;
+            }
 
         case 10:
             return (WSTRNSTR(inBuf, "test-get", sizeof(inBuf)) == NULL);
@@ -135,6 +143,7 @@ static int commandCb(const char* in, char* out, int outSz)
         }
 
         if (Expected(commandIdx) != 0) {
+            fprintf(stderr, "Failed on command index %d\n", commandIdx);
             exit(1); /* abort out */
         }
         commandIdx++;
@@ -162,6 +171,8 @@ int wolfSSH_SftpTest(int flag)
     WMEMSET(&ser, 0, sizeof(func_args));
     WMEMSET(&cli, 0, sizeof(func_args));
     commandIdx = 0;
+
+    wolfSSH_Debugging_ON();
 
     argsCount = 0;
     args[argsCount++] = ".";

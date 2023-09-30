@@ -6265,7 +6265,8 @@ WS_SFTPNAME* wolfSSH_SFTP_LS(WOLFSSH* ssh, char* dir)
         case STATE_LS_REALPATH:
             state->name = wolfSSH_SFTP_RealPath(ssh, dir);
             if (state->name == NULL) {
-                if (ssh->error != WS_WANT_READ && ssh->error != WS_WANT_WRITE) {
+                if (ssh->error != WS_WANT_READ && ssh->error != WS_WANT_WRITE &&
+                    ssh->error != WS_REKEYING) {
                     wolfSSH_SFTP_ClearState(ssh, STATE_ID_LS);
                 }
                 return NULL;
@@ -6277,7 +6278,8 @@ WS_SFTPNAME* wolfSSH_SFTP_LS(WOLFSSH* ssh, char* dir)
             if (wolfSSH_SFTP_OpenDir(ssh, (byte*)state->name->fName,
                         state->name->fSz) != WS_SUCCESS) {
                 WLOG(WS_LOG_SFTP, "Unable to open directory");
-                if (ssh->error != WS_WANT_READ && ssh->error != WS_WANT_WRITE) {
+                if (ssh->error != WS_WANT_READ && ssh->error != WS_WANT_WRITE &&
+                    ssh->error != WS_REKEYING) {
                     wolfSSH_SFTPNAME_list_free(state->name); state->name = NULL;
                     wolfSSH_SFTP_ClearState(ssh, STATE_ID_LS);
                 }
@@ -6293,7 +6295,8 @@ WS_SFTPNAME* wolfSSH_SFTP_LS(WOLFSSH* ssh, char* dir)
             if (wolfSSH_SFTP_GetHandle(ssh, state->handle, (word32*)&state->sz)
                     != WS_SUCCESS) {
                 WLOG(WS_LOG_SFTP, "Unable to get handle");
-                if (ssh->error != WS_WANT_READ && ssh->error != WS_WANT_WRITE) {
+                if (ssh->error != WS_WANT_READ && ssh->error != WS_WANT_WRITE &&
+                    ssh->error != WS_REKEYING) {
                     wolfSSH_SFTP_ClearState(ssh, STATE_ID_LS);
                 }
                 return NULL;
@@ -6306,7 +6309,8 @@ WS_SFTPNAME* wolfSSH_SFTP_LS(WOLFSSH* ssh, char* dir)
              * times so we have to assign to state->name later. */
             names = wolfSSH_SFTP_ReadDir(ssh, state->handle, state->sz);
             if (names == NULL) {
-                if (ssh->error == WS_WANT_READ || ssh->error == WS_WANT_WRITE) {
+                if (ssh->error == WS_WANT_READ || ssh->error == WS_WANT_WRITE ||
+                    ssh->error == WS_REKEYING) {
                     return NULL;
                 }
                 WLOG(WS_LOG_SFTP, "Error reading directory");
@@ -6328,7 +6332,8 @@ WS_SFTPNAME* wolfSSH_SFTP_LS(WOLFSSH* ssh, char* dir)
                 names = wolfSSH_SFTP_ReadDir(ssh, state->handle, state->sz);
                 if (names == NULL) {
                     if (ssh->error == WS_WANT_READ
-                        || ssh->error == WS_WANT_WRITE) {
+                        || ssh->error == WS_WANT_WRITE
+                        || ssh->error == WS_REKEYING) {
                         /* State does not change so we will get back to this case
                          * clause in non-blocking mode. */
                         return NULL;
@@ -6346,7 +6351,8 @@ WS_SFTPNAME* wolfSSH_SFTP_LS(WOLFSSH* ssh, char* dir)
             if (wolfSSH_SFTP_Close(ssh, state->handle, state->sz)
                     != WS_SUCCESS) {
                 WLOG(WS_LOG_SFTP, "Error closing handle");
-                if (ssh->error != WS_WANT_READ && ssh->error != WS_WANT_WRITE) {
+                if (ssh->error != WS_WANT_READ && ssh->error != WS_WANT_WRITE &&
+                    ssh->error != WS_REKEYING) {
                     wolfSSH_SFTPNAME_list_free(state->name);
                     state->name = NULL;
                     wolfSSH_SFTP_ClearState(ssh, STATE_ID_LS);
@@ -8692,7 +8698,8 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                         state->handleSz);
                     if (ret != WS_SUCCESS) {
                         if (ssh->error == WS_WANT_READ ||
-                                ssh->error == WS_WANT_WRITE) {
+                                ssh->error == WS_WANT_WRITE ||
+                                ssh->error == WS_REKEYING) {
                             return WS_FATAL_ERROR;
                         }
                         WLOG(WS_LOG_SFTP, "Error closing handle");

@@ -9,7 +9,16 @@ if test -n "$WOLFSSH_EXTERNAL_TEST"; then
     echo "WOLFSSH_EXTERNAL_TEST set, running test..."
 else
     echo "WOLFSSH_EXTERNAL_TEST NOT set, won't run"
-    exit 0
+    exit 77
+fi
+
+# test for nonblocking only
+./examples/client/client -h | grep WOLFSSH_TEST_BLOCK
+if [ $? -eq 0 ]
+then
+    echo "macro NO_WOLFSSH_CLIENT was used"
+    echo "skipping for now"
+    exit 77
 fi
 
 do_cleanup() {

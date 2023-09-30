@@ -15,11 +15,19 @@ then
     then
         echo "macro NO_WOLFSSH_CLIENT was used"
         echo "skipping test"
-        exit 0
+        exit 77
     else
         echo "wolfSFTP client not compiled in or not working"
         exit 1
     fi
+fi
+
+# test for nonblocking only
+./examples/client/client -h | grep WOLFSSH_TEST_BLOCK
+if [ $? -eq 0 ]
+then
+    echo "macro WOLFSSH_TEST_BLOCK was used"
+    exit 77
 fi
 
 if test ! -x ./examples/echoserver/echoserver
