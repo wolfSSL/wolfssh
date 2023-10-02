@@ -23,6 +23,10 @@
 #endif
 
 #include <stdio.h>
+#include <wolfssh/settings.h>
+
+#if defined(WOLFSSH_SFTP) && !defined(SINGLE_THREADED)
+
 #include <wolfssh/ssh.h>
 #include <wolfssh/wolfsftp.h>
 
@@ -34,16 +38,22 @@
 #include "examples/echoserver/echoserver.h"
 #include "examples/sftpclient/sftpclient.h"
 
-#if defined(WOLFSSH_SFTP) && !defined(SINGLE_THREADED)
-
 static const char* cmds[] = {
     "mkdir a",
     "cd a",
     "pwd",
     "ls",
+#ifdef WOLFSSH_ZEPHYR
+    "put " CONFIG_WOLFSSH_SFTP_DEFAULT_DIR "/configure",
+#else
     "put configure",
+#endif
     "ls",
+#ifdef WOLFSSH_ZEPHYR
+    "get configure " CONFIG_WOLFSSH_SFTP_DEFAULT_DIR "/test-get",
+#else
     "get configure test-get",
+#endif
     "rm configure",
     "cd ../",
     "ls",
@@ -85,11 +95,19 @@ static int Expected(int command)
 
         case 4:
             {
+#ifdef WOLFSSH_ZEPHYR
+                /* No . and .. in zephyr fs API */
+                char expt1[] = "wolfSSH sftp> ";
+                char expt2[] = "wolfSSH sftp> ";
+#else
                 char expt1[] = ".\n..\nwolfSSH sftp> ";
                 char expt2[] = "..\n.\nwolfSSH sftp> ";
+#endif
                 if (WMEMCMP(expt1, inBuf, sizeof(expt1)) != 0 &&
                     WMEMCMP(expt2, inBuf, sizeof(expt2)) != 0) {
-                    fprintf(stderr, "Unexpected string of %s\n", inBuf);
+                    printf("unexpected ls\n");
+                    printf("\texpected \n%s\n\tor\n%s\n\tbut got\n%s\n", expt1,
+                            expt2, inBuf);
                     return -1;
                 }
                 else
@@ -166,7 +184,8 @@ int wolfSSH_SftpTest(int flag)
     char  portNumber[8];
 
     THREAD_TYPE serThread;
-    THREAD_TYPE cliThread;
+
+    wolfSSH_Init();
 
     WMEMSET(&ser, 0, sizeof(func_args));
     WMEMSET(&cli, 0, sizeof(func_args));
@@ -212,11 +231,15 @@ int wolfSSH_SftpTest(int flag)
     cli.argc    = argsCount;
     cli.signal  = &ready;
     cli.sftp_cb = commandCb;
-    ThreadStart(sftpclient_test, (void*)&cli, &cliThread);
+    sftpclient_test(&cli);
 
+#ifdef WOLFSSH_ZEPHYR
+    /* Weird deadlock without this sleep */
+    k_sleep(Z_TIMEOUT_TICKS(100));
+#endif
 
     ThreadJoin(serThread);
-    ThreadJoin(cliThread);
+    wolfSSH_Cleanup();
 
     return ret;
 }

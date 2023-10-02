@@ -39,7 +39,8 @@
 #include <wolfssl/wolfcrypt/coding.h>
 #include "examples/sftpclient/sftpclient.h"
 #include "examples/client/common.h"
-#ifndef USE_WINDOWS_API
+#if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32) && \
+    !defined(WOLFSSH_ZEPHYR)
     #include <termios.h>
 #endif
 
@@ -379,7 +380,7 @@ static int doCmds(func_args* args)
             err_msg("fputs error");
             return -1;
         }
-        fflush(stdout);
+        WFFLUSH(stdout);
 
         WMEMSET(msg, 0, sizeof(msg));
         if (SFTP_FGETS(args, msg, sizeof(msg) - 1) == NULL) {
@@ -1385,7 +1386,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
 
-    return 0;
+    WOLFSSL_RETURN_FROM_THREAD(0);
 }
 
 #else
@@ -1399,7 +1400,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
            "Please recompile with WOLFSSH_SFTP or --enable-sftp\n");
 #endif
     (void)args;
-    return 0;
+    WOLFSSL_RETURN_FROM_THREAD(0);
 }
 #endif /* WOLFSSH_SFTP */
 

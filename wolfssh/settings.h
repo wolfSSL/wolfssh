@@ -38,6 +38,10 @@
     #include "wolfSSL.I-CUBE-wolfSSH_conf.h"
 #endif
 
+#if defined(WOLFSSH_ZEPHYR) && defined(CONFIG_WOLFSSH_SETTINGS_FILE)
+    #include CONFIG_WOLFSSH_SETTINGS_FILE
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif

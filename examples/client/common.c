@@ -25,14 +25,17 @@
 
 #define WOLFSSH_TEST_CLIENT
 
+#include <stdio.h>
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/wolfsftp.h>
 #include <wolfssh/port.h>
 #include <wolfssl/wolfcrypt/ecc.h>
+#include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/wolfcrypt/coding.h>
 #include "examples/client/common.h"
-#ifndef USE_WINDOWS_API
+#if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32) && \
+    !defined(WOLFSSH_ZEPHYR)
     #include <termios.h>
 #endif
 
@@ -487,11 +490,13 @@ int ClientUserAuth(byte authType,
             passwordSz = (word32)strlen(defaultPassword);
             memcpy(userPassword, defaultPassword, passwordSz);
         }
+#ifdef WOLFSSH_TERM
         else {
             printf("Password: ");
-            fflush(stdout);
+            WFFLUSH(stdout);
             ClientSetEcho(0);
-            if (fgets((char*)userPassword, sizeof(userPassword), stdin) == NULL) {
+            if (WFGETS((char*)userPassword, sizeof(userPassword), stdin)
+                    == NULL) {
                 fprintf(stderr, "Getting password failed.\n");
                 ret = WOLFSSH_USERAUTH_FAILURE;
             }
@@ -505,8 +510,9 @@ int ClientUserAuth(byte authType,
             #ifdef USE_WINDOWS_API
                 printf("\r\n");
             #endif
-            fflush(stdout);
+            WFFLUSH(stdout);
         }
+#endif
 
         if (ret == WOLFSSH_USERAUTH_SUCCESS) {
             authData->sf.password.password = userPassword;
@@ -518,6 +524,7 @@ int ClientUserAuth(byte authType,
 }
 
 
+#ifdef WOLFSSH_TERM
 /* type = 2 : shell / execute command settings
  * type = 0 : password
  * type = 1 : restore default
@@ -604,6 +611,7 @@ int ClientSetEcho(int type)
 
     return 0;
 }
+#endif
 
 
 /* Set certificate to use and public key.
@@ -662,7 +670,7 @@ int ClientSetPrivateKey(const char* privKeyName, int userEcc)
                 &isPrivate, NULL);
     #else
         printf("file system not compiled in!\n");
-        ret = WC_NOT_COMPILED;
+        ret = NOT_COMPILED_IN;
     #endif
     }
 

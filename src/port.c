@@ -45,7 +45,8 @@ Flags:
 */
 
 
-#if !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM)
+#if !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM) && \
+    !defined(WOLFSSH_ZEPHYR)
 int wfopen(WFILE** f, const char* filename, const char* mode)
 {
 #ifdef USE_WINDOWS_API
@@ -103,7 +104,7 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
     !defined(NO_WOLFSSH_SERVER)
 
     #if defined(USE_WINDOWS_API) || defined(WOLFSSL_NUCLEUS) || \
-        defined(FREESCALE_MQX)
+        defined(FREESCALE_MQX) || defined(WOLFSSH_ZEPHYR)
 
         /* This is current inline in the source. */
 
@@ -475,6 +476,145 @@ int WS_DeleteFileA(const char* fileName, void* heap)
 
 #endif /* USE_WINDOWS_API WOLFSSH_SFTP WOLFSSH_SCP */
 
+#if defined(WOLFSSH_ZEPHYR) && (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP))
+
+int wssh_z_fstat(const char *p, struct fs_dirent *b)
+{
+    size_t p_len;
+
+    if (p == NULL || b == NULL)
+        return -1;
+
+    p_len = WSTRLEN(p);
+    /* Detect if origin directory when it ends in ':' or ':/' */
+    if (p_len >= 3 && (p[p_len-1] == ':' ||
+            (p[p_len-1] == '/' && p[p_len-2] == ':'))) {
+        b->type = FS_DIR_ENTRY_DIR;
+        b->size = 0;
+        b->name[0] = '/';
+        b->name[1] = '\0';
+        return 0;
+    }
+    else
+        return fs_stat(p, b);
+}
+
+int z_fs_chdir(const char *path)
+{
+    /* Just make sure that the path exists and is a directory */
+    struct fs_dirent dir;
+    int ret;
+
+    ret = wssh_z_fstat(path, &dir);
+    if (ret != 0 || dir.type != FS_DIR_ENTRY_DIR)
+        ret = -1;
+    return ret;
+}
+
+static struct {
+    byte open:1;
+    WFILE zfp;
+} z_fds[WOLFSSH_MAX_DESCIPRTORS];
+static wolfSSL_Mutex z_fds_mutex;
+static int z_fds_setup = 0;
+
+int wssh_z_fds_init(void)
+{
+    int ret = 0;
+    if (!z_fds_setup) {
+        WMEMSET(z_fds, 0, sizeof(z_fds));
+        ret = wc_InitMutex(&z_fds_mutex);
+        if (ret == 0)
+            z_fds_setup = 1;
+    }
+    return ret;
+}
+
+int wssh_z_fds_cleanup(void)
+{
+    int ret = 0;
+    if (z_fds_setup) {
+        WMEMSET(z_fds, 0, sizeof(z_fds));
+        ret = wc_FreeMutex(&z_fds_mutex);
+        z_fds_setup = 0;
+    }
+    return ret;
+}
+
+WFD wssh_z_open(const char *p, int f)
+{
+    WFD ret = -1;
+    if (p != NULL) {
+        if (wc_LockMutex(&z_fds_mutex) == 0) {
+            WFD idx = 0;
+            /* find a free fd */
+            while(idx < WOLFSSH_MAX_DESCIPRTORS && z_fds[idx].open)
+                idx++;
+            if (idx < WOLFSSH_MAX_DESCIPRTORS) {
+                /* found a free fd */
+                fs_file_t_init(&z_fds[idx].zfp);
+                if (fs_open(&z_fds[idx].zfp, p, f) == 0) {
+                    z_fds[idx].open = 1;
+                    ret = idx;
+                }
+            }
+            wc_UnLockMutex(&z_fds_mutex);
+        }
+    }
+    return ret;
+}
+
+int wssh_z_close(WFD fd)
+{
+    int ret = -1;
+    if (fd >= 0 && fd < WOLFSSH_MAX_DESCIPRTORS) {
+        if (wc_LockMutex(&z_fds_mutex) == 0) {
+            if (z_fds[fd].open) {
+                z_fds[fd].open = 0;
+                if (fs_close(&z_fds[fd].zfp) == 0)
+                    ret = 0;
+            }
+            wc_UnLockMutex(&z_fds_mutex);
+        }
+    }
+    return ret;
+}
+
+int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
+        const unsigned int* shortOffset)
+{
+    int ret = -1;
+    if (fd >= 0 && fd < WOLFSSH_MAX_DESCIPRTORS) {
+        if (wc_LockMutex(&z_fds_mutex) == 0) {
+            if (z_fds[fd].open) {
+                const word32* offset = (const word32*)shortOffset;
+                if (fs_seek(&z_fds[fd].zfp, offset[0], FS_SEEK_SET) == 0)
+                    ret = fs_write(&z_fds[fd].zfp, buf, sz);
+            }
+            wc_UnLockMutex(&z_fds_mutex);
+        }
+    }
+    return ret;
+}
+
+int wPread(WFD fd, unsigned char* buf, unsigned int sz,
+        const unsigned int* shortOffset)
+{
+    int ret = -1;
+    if (fd >= 0 && fd < WOLFSSH_MAX_DESCIPRTORS) {
+        if (wc_LockMutex(&z_fds_mutex) == 0) {
+            if (z_fds[fd].open) {
+                const word32* offset = (const word32*)shortOffset;
+                if (fs_seek(&z_fds[fd].zfp, offset[0], FS_SEEK_SET) == 0)
+                    ret = fs_read(&z_fds[fd].zfp, buf, sz);
+            }
+            wc_UnLockMutex(&z_fds_mutex);
+        }
+    }
+    return ret;
+}
+
+#endif
 
 #ifndef WSTRING_USER
 

@@ -83,3 +83,8 @@ Debug
 Release
 DLL Debug
 DLL Release
+
+# Eclipse
+.cproject
+.project
+.settings

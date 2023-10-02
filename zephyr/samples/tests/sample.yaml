@@ -1,0 +1,15 @@
+sample:
+  description: wolfSSH tests
+  name: wolfSSH tests
+common:
+  harness: console
+  harness_config:
+    type: one_line
+    regex:
+      - "Zephyr wolfSSH tests passed"
+tests:
+  sample.lib.wolfssh_tests:
+    timeout: 50
+    platform_allow: qemu_x86
+    integration_platforms:
+      - qemu_x86

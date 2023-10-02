@@ -71,6 +71,10 @@ int wolfSSH_Init(void)
 #ifdef WC_RNG_SEED_CB
     wc_SetSeed_Cb(wc_GenerateSeed);
 #endif
+#if defined(WOLFSSH_ZEPHYR) && (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP))
+    if (wssh_z_fds_init() != 0)
+        ret = WS_CRYPTO_FAILED;
+#endif
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_Init(), returning %d", ret);
     return ret;
@@ -85,6 +89,10 @@ int wolfSSH_Cleanup(void)
 
     if (wolfCrypt_Cleanup() != 0)
         ret = WS_CRYPTO_FAILED;
+#if defined(WOLFSSH_ZEPHYR) && (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP))
+    if (wssh_z_fds_cleanup() != 0)
+        ret = WS_CRYPTO_FAILED;
+#endif
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_Cleanup(), returning %d", ret);
     return ret;
@@ -1317,6 +1325,7 @@ void* wolfSSH_GetPublicKeyCheckCtx(WOLFSSH* ssh)
 
 #ifdef WOLFSSH_TERM
 
+#if defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM)
 /* Used to resize terminal window with shell connections
  * returns WS_SUCCESS on success */
 int wolfSSH_ChangeTerminalSize(WOLFSSH* ssh, word32 columns, word32 rows,
@@ -1350,6 +1359,7 @@ void wolfSSH_SetTerminalResizeCtx(WOLFSSH* ssh, void* usrCtx)
 {
     ssh->termCtx = usrCtx;
 }
+#endif
 
 #endif
 
@@ -2383,7 +2393,14 @@ int wolfSSH_RealPath(const char* defaultPath, char* in,
             char* prev = strrchr(out, '/');
 
             if (prev != NULL) {
-                if (prev != out) {
+                if (prev != out
+#ifdef WOLFSSH_ZEPHYR
+                        /* Zephyr FAT fs path names follow the format of '/RAM:'
+                         * and we want to preserve the '/' after this mount
+                         * point definition too. */
+                        && prev[-1] != ':'
+#endif
+                        ) {
                     prev[0] = 0;
                     curSz = (word32)WSTRLEN(out);
                 }

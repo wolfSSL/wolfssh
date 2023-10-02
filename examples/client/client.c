@@ -39,7 +39,8 @@
 #include <wolfssl/wolfcrypt/ecc.h>
 #include "examples/client/client.h"
 #include "examples/client/common.h"
-#if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32)
+#if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32) && \
+    defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM)
     #include <termios.h>
 #endif
 
@@ -124,15 +125,6 @@ static const char* certName = NULL;
 static const char* caCert   = NULL;
 
 
-#if defined(WOLFSSH_AGENT)
-static inline void ato32(const byte* c, word32* u32)
-{
-    *u32 = (c[0] << 24) | (c[1] << 16) | (c[2] << 8) | c[3];
-}
-#endif
-
-
-
 static int NonBlockSSH_connect(WOLFSSH* ssh)
 {
     int ret;
@@ -174,7 +166,8 @@ static int NonBlockSSH_connect(WOLFSSH* ssh)
     return ret;
 }
 
-#if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS)
+#if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS) && \
+    defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM)
 
 typedef struct thread_args {
     WOLFSSH* ssh;
@@ -345,6 +338,12 @@ static THREAD_RET readInput(void* in)
     return THREAD_RET_SUCCESS;
 }
 
+#if defined(WOLFSSH_AGENT)
+static inline void ato32(const byte* c, word32* u32)
+{
+    *u32 = (c[0] << 24) | (c[1] << 16) | (c[2] << 8) | c[3];
+}
+#endif
 
 static THREAD_RET readPeer(void* in)
 {
@@ -460,13 +459,13 @@ static THREAD_RET readPeer(void* in)
                 }
                 else {
                     printf("%s", buf);
-                    fflush(stdout);
+                    WFFLUSH(stdout);
                 }
             #else
                 if (write(STDOUT_FILENO, buf, ret) < 0) {
                     perror("write to stdout error ");
                 }
-                fflush(stdout);
+                WFFLUSH(stdout);
             #endif
             }
             if (wolfSSH_stream_peek(args->ssh, buf, bufSz) <= 0) {
@@ -639,6 +638,8 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     int     argc = ((func_args*)args)->argc;
     char**  argv = ((func_args*)args)->argv;
     ((func_args*)args)->return_code = 0;
+
+    (void)keepOpen;
 
     while ((ch = mygetopt(argc, argv, "?ac:h:i:j:p:tu:xzNP:RJ:A:Xe")) != -1) {
         switch (ch) {
@@ -859,7 +860,8 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     if (ret != WS_SUCCESS)
         err_sys("Couldn't connect SSH stream.");
 
-#if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS)
+#if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS) && \
+    defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM)
     if (keepOpen) /* set up for psuedo-terminal */
         ClientSetEcho(2);
 
@@ -995,7 +997,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
 
-    return 0;
+    WOLFSSL_RETURN_FROM_THREAD(0);
 }
 
 #endif /* NO_WOLFSSH_CLIENT */

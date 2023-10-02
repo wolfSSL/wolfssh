@@ -351,6 +351,38 @@ extern "C" {
         #define WOPENDIR(fs,h,c,d)  f_opendir((c),(d))
         #define WCLOSEDIR(fs,d)    f_closedir(d)
     #endif
+#elif defined(WOLFSSH_ZEPHYR)
+
+    #include <zephyr/fs/fs.h>
+    #include <stdlib.h>
+    #include <stdio.h>
+
+    #define WFFLUSH(s)          ((void)(s))
+
+    #define WFILE struct fs_file_t
+
+    #define FLUSH_STD(a)
+
+    int z_fs_chdir(const char *path);
+
+    /* Use wolfCrypt z_fs_open and z_fs_close */
+    #define WFOPEN(fs,f,fn,m)   ((*(f) = z_fs_open((fn),(m))) == NULL)
+    #define WFCLOSE(fs,f)       z_fs_close(f)
+    #define WFREAD(fs,b,s,a,f)  fs_read((f),(b),(s)*(a))
+    #define WFWRITE(fs,b,s,a,f) fs_write((f),(b),(s)*(a))
+    #define WFSEEK(fs,s,o,w)    fs_seek((s),(o),(w))
+    #define WFTELL(fs,s)        fs_tell((s))
+    #define WREWIND(fs,s)       fs_seek((s), 0, FS_SEEK_SET)
+    #define WSEEK_END           FS_SEEK_END
+    #define WBADFILE            NULL
+    #define WCHMOD(fs,f,m)      chmod((f),(m))
+    #undef  WFGETS
+    #define WFGETS(b,s,f)       NULL /* Not ported yet */
+    #undef  WFPUTS
+    #define WFPUTS(b,s)         EOF /* Not ported yet */
+    #define WUTIMES(a,b)        (0) /* Not ported yet */
+    #define WCHDIR(fs,b)        z_fs_chdir((b))
+
 #elif defined(WOLFSSH_USER_FILESYSTEM)
     /* User-defined I/O support */
 #else
@@ -361,12 +393,15 @@ extern "C" {
     #define WFILE FILE
     WOLFSSH_API int wfopen(WFILE**, const char*, const char*);
 
+    #define WFFLUSH             fflush
+
     #define WFOPEN(fs,f,fn,m)   wfopen((f),(fn),(m))
     #define WFCLOSE(fs,f)       fclose(f)
     #define WFREAD(fs,b,s,a,f)  fread((b),(s),(a),(f))
     #define WFWRITE(fs,b,s,a,f) fwrite((b),(s),(a),(f))
     #define WFSEEK(fs,s,o,w)    fseek((s),(o),(w))
     #define WFTELL(fs,s)        ftell((s))
+    #define WFSTAT(fs,fd,b)     fstat((fd),(b))
     #define WREWIND(fs,s)       rewind((s))
     #define WSEEK_END           SEEK_END
     #define WBADFILE            NULL
@@ -481,7 +516,9 @@ extern "C" {
         #define WVSNPRINTF(s,n,f,...) vsnprintf((s),(n),(f),__VA_ARGS__)
         #define WSTRTOK(s1,s2,s3) strtok_r((s1),(s2),(s3))
     #else
-        #ifndef FREESCALE_MQX
+        #ifdef WOLFSSH_ZEPHYR
+            #include <strings.h>
+        #elif !defined(FREESCALE_MQX)
             #include <stdio.h>
         #endif
         #define WSTRNCPY(s1,s2,n) strncpy((s1),(s2),(n))
@@ -518,6 +555,9 @@ extern "C" {
     #define WTIME(t1)        mqx_time((t1))
     #define WLOCALTIME(c,r) (localtime_r((c),(r))!=NULL)
     #define WOLFSSH_NO_TIMESTAMP /* no strftime() */
+#elif defined(WOLFSSH_ZEPHYR)
+    #define WTIME time
+    #define WLOCALTIME(c,r) (gmtime_r((c),(r))!=NULL)
 #else
     #define WTIME time
     #define WLOCALTIME(c,r) (localtime_r((c),(r))!=NULL)
@@ -1220,6 +1260,50 @@ extern "C" {
     #ifndef NO_WOLFSSH_DIR
         #define WDIR HANDLE
     #endif /* NO_WOLFSSH_DIR */
+
+#elif defined(WOLFSSH_ZEPHYR)
+
+    #include <zephyr/fs/fs.h>
+
+    #define WDIR              struct fs_dir_t
+    #define WSTAT_T           struct fs_dirent
+
+    /* FAT_FS fs_stat doesn't handling stat'ing the top level dir. Let's wrap
+     * and implement that. */
+    int wssh_z_fstat(const char *p, struct fs_dirent *b);
+
+    #define WOPENDIR(fs,h,c,d) (fs_dir_t_init((c)), fs_opendir((c),(d)))
+    #define WCLOSEDIR(fs,d)   fs_closedir((d))
+    #define WMKDIR(fs,p,m)    fs_mkdir((p))
+    #define WRMDIR(fs,d)      fs_unlink((d))
+    #define WSTAT(fs,p,b)     wssh_z_fstat((p),(b))
+    #define WREMOVE(fs,d)     fs_unlink((d))
+    #define WRENAME(fs,o,n)   fs_rename((o),(n))
+    #define WS_DELIM          '/'
+
+    #define WOLFSSH_O_RDWR    FS_O_RDWR
+    #define WOLFSSH_O_RDONLY  FS_O_READ
+    #define WOLFSSH_O_WRONLY  FS_O_WRITE
+    #define WOLFSSH_O_APPEND  FS_O_APPEND
+    #define WOLFSSH_O_CREAT   FS_O_CREATE
+    #define WOLFSSH_O_TRUNC   0
+    #define WOLFSSH_O_EXCL    0
+
+    /* Our "file descriptor" wrapper */
+    #ifndef WOLFSSH_MAX_DESCIPRTORS
+    #define WOLFSSH_MAX_DESCIPRTORS 10
+    #endif
+    #define WFD               int
+    int wssh_z_fds_init(void);
+    int wssh_z_fds_cleanup(void);
+    WFD wssh_z_open(const char *p, int f);
+    #define WOPEN(fs,p,f,m)   wssh_z_open((p),(f))
+    int wssh_z_close(WFD fd);
+    #define WCLOSE(fs,fd)     wssh_z_close((fd))
+    int wPwrite(WFD, unsigned char*, unsigned int, const unsigned int*);
+    int wPread(WFD, unsigned char*, unsigned int, const unsigned int*);
+    #define WPWRITE(fs,fd,b,s,o) wPwrite((fd),(b),(s),(o))
+    #define WPREAD(fs,fd,b,s,o)  wPread((fd),(b),(s),(o))
 
 #elif defined(WOLFSSH_USER_FILESYSTEM)
     /* User-defined I/O support */

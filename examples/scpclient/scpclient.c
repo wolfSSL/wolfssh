@@ -31,7 +31,8 @@
 #endif
 
 #include <stdio.h>
-#if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32)
+#if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32) && \
+    !defined(WOLFSSH_ZEPHYR)
     #include <termios.h>
 #endif
 #include <wolfssh/ssh.h>

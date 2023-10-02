@@ -1980,7 +1980,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
 #ifdef WOLFSCP_FLUSH
                 flush_bytes += bytes;
                 if (flush_bytes >= WRITE_FLUSH_SIZE) {
-                    if (fflush(fp) != 0)
+                    if (WFFLUSH(fp) != 0)
                        WLOG(WS_LOG_ERROR, scpError, "scp fflush failed", 0);
                     if (fsync(fileno(fp)) != 0)
                        WLOG(WS_LOG_ERROR, scpError, "scp fsync failed", 0);
@@ -1996,7 +1996,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             /* close file */
             if (fp != NULL) {
 #ifdef WOLFSCP_FLUSH
-                (void)fflush(fp);
+                (void)WFFLUSH(fp);
                 (void)fsync(fileno(fp));
                 flush_bytes = 0;
 #endif
@@ -2011,7 +2011,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                     ret = WS_SCP_CONTINUE;
                 } else {
                     WLOG(WS_LOG_ERROR,
-                        "scp: unable to get timestamp info, abort");
+                        "scp: unable to set timestamp info, abort");
                     ret = WS_SCP_ABORT;
                 }
             }
@@ -2163,6 +2163,20 @@ static int GetFileStats(void *fs, ScpSendCtx* ctx, const char* fileName,
         *mTime = ctx->s.fupdate;
         *aTime = ctx->s.faccdate;
         NU_Done(&ctx->s);
+    #elif defined(WOLFSSH_ZEPHYR)
+        /* No time data in zephyr fs */
+        *mTime = (word64)0;
+        *aTime = (word64)0;
+        /* Default perms */
+        *fileMode = 0755;
+        /* Mimic S_IFMT */
+        if (ctx->s.type == FS_DIR_ENTRY_FILE)
+            *fileMode |= 0040000;
+        else if (ctx->s.type == FS_DIR_ENTRY_DIR)
+            *fileMode |= 0100000;
+        else
+            ret = WS_BAD_FILE_E;
+
     #else
         *mTime = (word64)ctx->s.st_mtime;
         *aTime = (word64)ctx->s.st_atime;
@@ -2214,7 +2228,7 @@ static ScpDir* ScpNewDir(void *fs, const char* path, void* heap)
     }
 #else
     if (WOPENDIR(fs, heap, &entry->dir, path) != 0
-        #ifndef WOLFSSL_NUCLEUS
+        #if !defined(WOLFSSL_NUCLEUS) && !defined(WOLFSSH_ZEPHYR)
             || entry->dir == NULL
         #endif
             ) {
@@ -2359,6 +2373,13 @@ static int FindNextDirEntry(void *fs, ScpSendCtx* ctx)
     } while ((ctx->entry != NULL) &&
         (((WSTRLEN(ctx->entry) == 1) && WSTRNCMP(ctx->entry, ".", 1) == 0) ||
          ((WSTRLEN(ctx->entry) == 2) && WSTRNCMP(ctx->entry, "..", 2) == 0)));
+#elif defined(WOLFSSH_ZEPHYR)
+    do {
+        if (fs_readdir(&ctx->currentDir->dir, &ctx->entry) != 0)
+            return WS_FATAL_ERROR;
+        if (ctx->entry.name[0] == 0) /* Reached end-of-dir */
+            return WS_NEXT_ERROR;
+    } while (1);
 #else
     do {
         ctx->entry = WREADDIR(fs, &ctx->currentDir->dir);
@@ -2391,6 +2412,8 @@ int ScpFileIsDir(ScpSendCtx* ctx)
     return (ctx->s.fattribute & ADIRENT);
 #elif defined(USE_WINDOWS_API)
     return (ctx->s.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY);
+#elif defined(WOLFSSH_ZEPHYR)
+    return ctx->s.type == FS_DIR_ENTRY_DIR;
 #else
     return S_ISDIR(ctx->s.st_mode);
 #endif
@@ -2402,6 +2425,8 @@ static int ScpFileIsFile(ScpSendCtx* ctx)
     return (ctx->s.fattribute != ADIRENT);
 #elif defined(USE_WINDOWS_API)
     return ((ctx->s.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0);
+#elif defined(WOLFSSH_ZEPHYR)
+    return ctx->s.type == FS_DIR_ENTRY_FILE;
 #else
     return S_ISREG(ctx->s.st_mode);
 #endif
@@ -2441,6 +2466,8 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
             GetFullPathNameA(fileName, MAX_PATH, path, NULL);
             dNameLen = (int)WSTRLEN(path);
         }
+    #elif defined(WOLFSSH_ZEPHYR)
+        dNameLen   = (int)WSTRLEN(sendCtx->entry.name);
     #else
         dNameLen   = (int)WSTRLEN(sendCtx->entry->d_name);
     #endif
@@ -2466,6 +2493,11 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
                 DEFAULT_SCP_FILE_NAME_SZ);
             WSTRNCPY(fileName, sendCtx->entry,
                 DEFAULT_SCP_FILE_NAME_SZ);
+        #elif defined(WOLFSSH_ZEPHYR)
+            WSTRNCAT(filePath, sendCtx->entry.name,
+                     DEFAULT_SCP_FILE_NAME_SZ);
+            WSTRNCPY(fileName, sendCtx->entry.name,
+                     DEFAULT_SCP_FILE_NAME_SZ);
         #else
             WSTRNCAT(filePath, sendCtx->entry->d_name,
                      DEFAULT_SCP_FILE_NAME_SZ);
@@ -2715,7 +2747,7 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
 
             if (ret == WS_SUCCESS || ret == WS_NEXT_ERROR) {
 
-            #ifdef WOLFSSL_NUCLEUS
+            #if defined(WOLFSSL_NUCLEUS) || defined(WOLFSSH_ZEPHYR)
                 if (ret == WS_NEXT_ERROR) {
             #else
                 /* reached end of directory */
