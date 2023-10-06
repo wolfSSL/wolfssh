@@ -1,0 +1,23 @@
+# vim:ft=automake
+# included from Top Level Makefile.am
+# All paths should be given relative to the root
+#
+
+# Component Manager
+
+EXTRA_DIST+= ide\Espressif\component-manager\CMakeLists.txt
+EXTRA_DIST+= ide\Espressif\component-manager\component_manifest.txt
+EXTRA_DIST+= ide\Espressif\component-manager\idf_component.yml
+EXTRA_DIST+= ide\Espressif\component-manager\INSTALL.md
+EXTRA_DIST+= ide\Espressif\component-manager\LICENSE.txt
+EXTRA_DIST+= ide\Espressif\component-manager\NEW_README.md
+EXTRA_DIST+= ide\Espressif\component-manager\README.md
+EXTRA_DIST+= ide\Espressif\component-manager\README_DIST.md
+EXTRA_DIST+= ide\Espressif\component-manager\README_REGISTRY_PREPEND.md
+EXTRA_DIST+= ide\Espressif\component-manager\README_STAGING.md
+EXTRA_DIST+= ide\Espressif\component-manager\README_STAGING_PREPEND.md
+EXTRA_DIST+= ide\Espressif\component-manager\wolfssl_build_example.sh
+EXTRA_DIST+= ide\Espressif\component-manager\wolfssl_component_publish.sh
+EXTRA_DIST+= ide\Espressif\component-manager\lib\idf_component-staging-gojimmypi.yml
+EXTRA_DIST+= ide\Espressif\component-manager\lib\idf_component.yml
+EXTRA_DIST+= ide\Espressif\component-manager\lib\winmerge wolfssl filter.flt

@@ -1,0 +1,34 @@
+# component_manifest.txt
+#
+# Copy Template project
+#
+
+wolfssh_template/CMakeLists.txt
+wolfssh_template/README.md
+wolfssh_template/main/CMakeLists.txt
+wolfssh_template/main/main.c
+wolfssh_template/main/include/main.h
+wolfssh_template/VisualGDB/wolfssh_template_IDF_v5.1_ESP32.sln
+wolfssh_template/VisualGDB/wolfssh_template_IDF_v5.1_ESP32.vgdbproj
+
+#
+# Copy Server Project
+#
+
+wolfssh_server/CMakeLists.txt
+wolfssh_server/README.md
+wolfssh_server/sdkconfig.defaults
+wolfssh_server/main/CMakeLists.txt
+wolfssh_server/main/main.c
+wolfssh_server/main/server.c
+wolfssh_server/main/server.h
+wolfssh_server/main/time_helper.c
+wolfssh_server/main/wifi_connect.c
+wolfssh_server/main/include/main.h
+wolfssh_server/main/include/time_helper.h
+wolfssh_server/main/include/wifi_connect.h
+wolfssh_server/VisualGDB/wolfssh_server_IDF_v5.1_ESP32.sln
+wolfssh_server/VisualGDB/wolfssh_server_IDF_v5.1_ESP32.vgdbproj
+
+#
+# End of component manifest
