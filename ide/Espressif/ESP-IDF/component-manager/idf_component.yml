@@ -1,0 +1,36 @@
+version: "1.0.11-test"
+description: wolfSSL wolfSSH Library
+url: https://www.wolfssl.com
+repository: https://github.com/wolfSSL/wolfssh.git
+documentation: https://www.wolfssl.com/documentation/manuals/wolfssh/index.html
+issues: https://github.com/wolfSSL/wolfssh/issues
+discussion: https://www.wolfssl.com/forums
+files:
+  exclude:
+  - '**/*'  # exclude everything, so next lines are redundant / reminder only:
+  - 'INSTALL.md'
+  - '*.py'
+  - '**/*.list'
+  - '**/.vs/**/*'
+  - '**/build/**/*'
+  - '**/dist/**/*'
+  - '**/dist.bak/**/*'
+  - '**/out/**/*'
+  - '*.sh'
+  - '*.bak'
+  - 'sdkconfig'
+  - 'README_DIST.md'
+  - 'README_REGISTRY_PREPEND.md'
+  - 'README_STAGING_PREPEND.md'
+  - 'README_STAGING.md'
+  include: # only explicitly include things we actually want to publish:
+  - './README.md'
+  - './LICENSE.txt'
+  - './idf_component.yml'
+  - './CMakeLists.txt'
+  - './Kconfig'
+  - './install_log.txt'
+  - './src/**/*'
+  - './include/**/*'
+  - './wolfssh/**/*'
+  - './examples/**/*'
