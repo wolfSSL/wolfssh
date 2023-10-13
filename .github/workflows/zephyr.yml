@@ -8,7 +8,7 @@ on:
 
 jobs:
   run_test:
-    name: Build and run
+    name: Zephyr tests
     strategy:
       matrix:
         config:

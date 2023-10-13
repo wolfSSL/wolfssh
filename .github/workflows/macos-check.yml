@@ -8,9 +8,8 @@ on:
 
 jobs:
   build:
-
+    name: macOS Build Test
     runs-on: macos-latest
-
     steps:
     - uses: actions/checkout@v2
       with:
