@@ -845,21 +845,100 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
 #endif
 }
 
-union wolfSSH_key {
+
+typedef struct WS_KeySignature {
+    byte keySigId;
+    word32 sigSz;
+    const char *name;
+    word32 nameSz;
+    union {
 #ifndef WOLFSSH_NO_RSA
-    RsaKey rsa;
+        struct {
+            RsaKey key;
+            byte e[256];
+            word32 eSz;
+            byte ePad;
+            byte n[256];
+            word32 nSz;
+            byte nPad;
+        } rsa;
 #endif
 #ifndef WOLFSSH_NO_ECDSA
-    ecc_key ecc;
+        struct {
+            ecc_key key;
+            word32 keyBlobSz;
+            const char *keyBlobName;
+            word32 keyBlobNameSz;
+            byte q[256];
+            word32 qSz;
+            byte qPad;
+            const char *primeName;
+            word32 primeNameSz;
+        } ecc;
 #endif
-};
+    } ks;
+} WS_KeySignature;
+
+
+static int wolfSSH_KEY_init(WS_KeySignature* key, byte keyId, void* heap)
+{
+    int ret = WS_SUCCESS;
+
+    if (key != NULL) {
+        key->keySigId = keyId;
+
+        switch (keyId) {
+#ifndef WOLFSSH_NO_RSA
+            case ID_SSH_RSA:
+                ret = wc_InitRsaKey(&key->ks.rsa.key, NULL);
+                break;
+#endif
+#ifndef WOLFSSH_NO_ECDSA
+            case ID_ECDSA_SHA2_NISTP256:
+                ret = wc_ecc_init_ex(&key->ks.ecc.key, heap, INVALID_DEVID);
+                break;
+#endif
+            default:
+                ret = WS_INVALID_ALGO_ID;
+        }
+    }
+
+    return ret;
+}
+
+
+static int wolfSSH_KEY_clean(WS_KeySignature* key)
+{
+    int ret = WS_SUCCESS;
+
+    if (key != NULL) {
+        switch (key->keySigId) {
+#ifndef WOLFSSH_NO_RSA
+            case ID_SSH_RSA:
+                wc_FreeRsaKey(&key->ks.rsa.key);
+                break;
+#endif
+#ifndef WOLFSSH_NO_ECDSA
+            case ID_ECDSA_SHA2_NISTP256:
+            case ID_ECDSA_SHA2_NISTP384:
+            case ID_ECDSA_SHA2_NISTP521:
+                wc_ecc_free(&key->ks.ecc.key);
+                break;
+#endif
+            default:
+                ret = WS_INVALID_ALGO_ID;
+        }
+    }
+
+    return ret;
+}
 
 
 /*
- * Identifies the flavor of a key, RSA or ECDSA, and returns the key type ID.
- * The process is to decode the key as if it was RSA and if that fails try
- * to load it as if ECDSA. Both public and private keys can be decoded.
- * For RSA keys, the key format is described as "ssh-rsa".
+ * Identifies the flavor of an ASN.1 key, RSA or ECDSA, and returns the key
+ * type ID. The process is to decode the key as if it was RSA and if that
+ * fails try to load it as if ECDSA. Both public and private keys can be
+ * decoded. For RSA keys, the key format is described as "ssh-rsa".
  *
  * @param in        key to identify
  * @param inSz      size of key
@@ -867,88 +946,271 @@ union wolfSSH_key {
  * @param heap      heap to use for memory allocation
  * @return          keyId as int, WS_MEMORY_E, WS_UNIMPLEMENTED_E
  */
-int IdentifyKey(const byte* in, word32 inSz, int isPrivate, void* heap)
+int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap)
 {
-    union wolfSSH_key *key = NULL;
-    int keyId = ID_UNKNOWN;
+    WS_KeySignature *key = NULL;
     word32 idx;
     int ret;
     int dynType = isPrivate ? DYNTYPE_PRIVKEY : DYNTYPE_PUBKEY;
     WOLFSSH_UNUSED(dynType);
 
-    key = (union wolfSSH_key*)WMALLOC(sizeof(union wolfSSH_key), heap, dynType);
+    key = (WS_KeySignature*)WMALLOC(sizeof(WS_KeySignature), heap, dynType);
+
+    if (key == NULL) {
+        ret = WS_MEMORY_E;
+    }
+    else {
+        WMEMSET(key, 0, sizeof(*key));
+        key->keySigId = ID_UNKNOWN;
 
 #ifndef WOLFSSH_NO_RSA
-    if (key != NULL) {
         /* Check RSA key */
-        if (keyId == ID_UNKNOWN) {
+        if (key->keySigId == ID_UNKNOWN) {
             idx = 0;
-            ret = wc_InitRsaKey(&key->rsa, NULL);
+            ret = wc_InitRsaKey(&key->ks.rsa.key, NULL);
 
             if (ret == 0) {
                 if (isPrivate) {
-                    ret = wc_RsaPrivateKeyDecode(in, &idx, &key->rsa, inSz);
+                    ret = wc_RsaPrivateKeyDecode(in, &idx,
+                            &key->ks.rsa.key, inSz);
                 }
                 else {
-                    ret = wc_RsaPublicKeyDecode(in, &idx, &key->rsa, inSz);
+                    ret = wc_RsaPublicKeyDecode(in, &idx,
+                            &key->ks.rsa.key, inSz);
                 }
 
                 /* If decode was successful, this is an RSA key. */
                 if (ret == 0) {
-                    keyId = ID_SSH_RSA;
+                    key->keySigId = ID_SSH_RSA;
                 }
             }
 
-            wc_FreeRsaKey(&key->rsa);
+            wc_FreeRsaKey(&key->ks.rsa.key);
         }
-    }
 #endif /* WOLFSSH_NO_RSA */
 #ifndef WOLFSSH_NO_ECDSA
-    if (key != NULL) {
         /* Check ECDSA key */
-        if (keyId == ID_UNKNOWN) {
+        if (key->keySigId == ID_UNKNOWN) {
             idx = 0;
-            ret = wc_ecc_init_ex(&key->ecc, heap, INVALID_DEVID);
+            ret = wc_ecc_init_ex(&key->ks.ecc.key, heap, INVALID_DEVID);
 
             if (ret == 0) {
                 if (isPrivate) {
-                    ret = wc_EccPrivateKeyDecode(in, &idx, &key->ecc, inSz);
+                    ret = wc_EccPrivateKeyDecode(in, &idx,
+                            &key->ks.ecc.key, inSz);
                 }
                 else {
-                    ret = wc_EccPublicKeyDecode(in, &idx, &key->ecc, inSz);
+                    ret = wc_EccPublicKeyDecode(in, &idx,
+                            &key->ks.ecc.key, inSz);
                 }
 
                 /* If decode was successful, this is an ECDSA key. */
                 if (ret == 0) {
-                    switch (wc_ecc_get_curve_id(key->ecc.idx)) {
+                    switch (wc_ecc_get_curve_id(key->ks.ecc.key.idx)) {
                         case ECC_SECP256R1:
-                            keyId = ID_ECDSA_SHA2_NISTP256;
+                            key->keySigId = ID_ECDSA_SHA2_NISTP256;
                             break;
                         case ECC_SECP384R1:
-                            keyId = ID_ECDSA_SHA2_NISTP384;
+                            key->keySigId = ID_ECDSA_SHA2_NISTP384;
                             break;
                         case ECC_SECP521R1:
-                            keyId = ID_ECDSA_SHA2_NISTP521;
+                            key->keySigId = ID_ECDSA_SHA2_NISTP521;
                             break;
                     }
                 }
             }
 
-            wc_ecc_free(&key->ecc);
+            wc_ecc_free(&key->ks.ecc.key);
+        }
+#endif /* WOLFSSH_NO_ECDSA */
+
+        if (key->keySigId == ID_UNKNOWN) {
+            ret = WS_UNIMPLEMENTED_E;
+        }
+        else {
+            ret = key->keySigId;
+        }
+
+        WFREE(key, heap, dynType);
+    }
+
+    return ret;
+}
+
+
+static int GetOpenSshKeyRsa(RsaKey* key,
+        const byte* buf, word32 len, word32* idx)
+{
+    const byte* val;
+    word32 valSz;
+    mp_int m;
+
+    GetMpint(&valSz, &val, buf, len, idx); /* n */
+    mp_read_unsigned_bin(&key->n, val, valSz);
+    GetMpint(&valSz, &val, buf, len, idx); /* e */
+    mp_read_unsigned_bin(&key->e, val, valSz);
+    GetMpint(&valSz, &val, buf, len, idx); /* d */
+    mp_read_unsigned_bin(&key->d, val, valSz);
+    GetMpint(&valSz, &val, buf, len, idx); /* iqmp */
+    mp_read_unsigned_bin(&key->u, val, valSz);
+    GetMpint(&valSz, &val, buf, len, idx); /* p */
+    mp_read_unsigned_bin(&key->p, val, valSz);
+    GetMpint(&valSz, &val, buf, len, idx); /* q */
+    mp_read_unsigned_bin(&key->q, val, valSz);
+
+    /* Calculate dP and dQ for wolfCrypt. */
+    mp_init(&m);
+    mp_sub_d(&key->p, 1, &m);
+    mp_mod(&key->d, &m, &key->dP);
+    mp_sub_d(&key->q, 1, &m);
+    mp_mod(&key->d, &m, &key->dQ);
+    mp_forcezero(&m);
+    mp_free(&m);
+
+    return 0;
+}
+
+
+static int GetOpenSshKeyEcc(ecc_key* key,
+        const byte* buf, word32 len, word32* idx)
+{
+    const byte *name, *priv, *pub;
+    word32 nameSz, privSz, pubSz;
+    int ret;
+
+    GetStringRef(&nameSz, &name, buf, len, idx); /* curve name */
+    GetStringRef(&pubSz, &pub, buf, len, idx); /* Q */
+    GetMpint(&privSz, &priv, buf, len, idx); /* d */
+
+    ret = wc_ecc_import_private_key_ex(priv, privSz, pub, pubSz,
+            key, ECC_CURVE_DEF);
+
+    return ret != 0;
+}
+
+
+
+static int GetOpenSshKey(WS_KeySignature *key,
+        const byte* buf, word32 len, word32* idx)
+{
+    const char AuthMagic[] = "openssh-key-v1";
+    const byte* str;
+    int ret = WS_SUCCESS;
+    word32 keyCount, i, strSz;
+
+    if (strcmp(AuthMagic, (const char*)buf) != 0) {
+        ret = -1;
+    }
+    strSz = (word32)strlen(AuthMagic);
+    *idx += strSz + 1;
+
+    GetSkip(buf, len, idx); /* ciphername */
+    GetSkip(buf, len, idx); /* kdfname */
+    GetSkip(buf, len, idx); /* kdfoptions */
+
+    GetUint32(&keyCount, buf, len, idx); /* key count */
+
+    for (i = 0; i < keyCount; i++) {
+        GetStringRef(&strSz, &str, buf, len, idx); /* public buf */
+    }
+
+    GetStringRef(&strSz, &str, buf, len, idx); /* list of private keys */
+
+    if (strSz > 0) {
+        const byte* subStr;
+        word32 subStrSz, subIdx = 0, check1 = 0, check2 = ~0;
+        byte keyId;
+
+        idx = 0;
+        GetUint32(&check1, str, strSz, &subIdx); /* checkint 1 */
+        GetUint32(&check2, str, strSz, &subIdx); /* checkint 2 */
+        if (check1 == check2) {
+            for (i = 0; i < keyCount; i++) {
+                GetStringRef(&subStrSz, &subStr, str, strSz, &subIdx);
+                keyId = NameToId((const char*)subStr, subStrSz);
+                wolfSSH_KEY_init(key, keyId, NULL);
+                switch (keyId) {
+                #ifndef WOLFSSH_NO_RSA
+                    case ID_SSH_RSA:
+                        GetOpenSshKeyRsa(&key->ks.rsa.key,
+                                str, strSz, &subIdx);
+                        break;
+                #endif
+                #ifndef WOLFSSH_NO_ECDSA
+                    case ID_ECDSA_SHA2_NISTP256:
+                        GetOpenSshKeyEcc(&key->ks.ecc.key,
+                                str, strSz, &subIdx);
+                        break;
+                #endif
+                    default:
+                        ret = WS_UNIMPLEMENTED_E;
+                        break;
+                }
+                GetSkip(str, strSz, &subIdx); /* comment */
+            }
+            /* Padding: Add increasing digits to pad to the nearest block
+             * size. Default block size is 8, but depends on the encryption
+             * algo. The private key chunk's length, and the length of the
+             * comment delimit the end of the encrypted blob. No added
+             * padding required. */
+            if (strSz % 8 == 0) {
+                if (strSz - subIdx > 0) {
+                    /* The padding starts at 1. */
+                    check2 = strSz - subIdx;
+                    for (check1 = 1; check1 <= check2; check1++, subIdx++) {
+                        if (check1 != str[subIdx]) {
+                            /* Bad pad value. */
+                        }
+                    }
+                }
+            }
         }
     }
-#endif /* WOLFSSH_NO_ECDSA */
+
+    return ret;
+}
+
+
+/*
+ * Identifies the flavor of an OpenSSH key, RSA or ECDSA, and returns the
+ * key type ID. The process is to decode the key extracting the identifiers,
+ * and try to decode the key as the type indicated type. For RSA keys, the
+ * key format is described as "ssh-rsa".
+ *
+ * @param in        key to identify
+ * @param inSz      size of key
+ * @param heap      heap to use for memory allocation
+ * @return          keyId as int, WS_MEMORY_E, WS_UNIMPLEMENTED_E,
+ *                  WS_INVALID_ALGO_ID
+ */
+int IdentifyOpenSshKey(const byte* in, word32 inSz, void* heap)
+{
+    WS_KeySignature *key = NULL;
+    word32 idx = 0;
+    int ret;
+
+    key = (WS_KeySignature*)WMALLOC(sizeof(WS_KeySignature),
+            heap, DYNTYPE_PRIVKEY);
 
     if (key == NULL) {
         ret = WS_MEMORY_E;
     }
-    else if (keyId == ID_UNKNOWN) {
-        ret = WS_UNIMPLEMENTED_E;
-    }
     else {
-        ret = keyId;
+        WMEMSET(key, 0, sizeof(*key));
+        key->keySigId = ID_UNKNOWN;
+
+        ret = GetOpenSshKey(key, in, inSz, &idx);
+
+        if (ret == WS_SUCCESS) {
+            ret = key->keySigId;
+        }
+        else if (key->keySigId == ID_UNKNOWN) {
+            ret = WS_UNIMPLEMENTED_E;
+        }
+
+        wolfSSH_KEY_clean(key);
+        WFREE(key, heap, DYNTYPE_PRIVKEY);
     }
-    WFREE(key, heap, dynType);
 
     return ret;
 }
@@ -958,7 +1220,7 @@ int IdentifyKey(const byte* in, word32 inSz, int isPrivate, void* heap)
 /*
  * Identifies the flavor of an X.509 certificate, RSA or ECDSA, and returns
  * the key type ID. The process is to decode the certificate and pass the
- * public key to IdentifyKey.
+ * public key to IdentifyAsn1Key.
  *
  * @param in        certificate to identify
  * @param inSz      size of certificate
@@ -1005,7 +1267,7 @@ static int IdentifyCert(const byte* in, word32 inSz, void* heap)
     }
 
     if (ret == 0) {
-        ret = IdentifyKey(key, keySz, 0, heap);
+        ret = IdentifyAsn1Key(key, keySz, 0, heap);
     }
 
     WFREE(key, heap, DYNTYPE_PUBKEY);
@@ -1288,9 +1550,12 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
     if (ctx == NULL || in == NULL || inSz == 0)
         return WS_BAD_ARGUMENT;
 
-    if (format != WOLFSSH_FORMAT_ASN1 && format != WOLFSSH_FORMAT_PEM &&
-                                         format != WOLFSSH_FORMAT_RAW)
+    if (format != WOLFSSH_FORMAT_ASN1
+            && format != WOLFSSH_FORMAT_PEM
+            && format != WOLFSSH_FORMAT_RAW
+            && format != WOLFSSH_FORMAT_OPENSSH) {
         return WS_BAD_FILETYPE_E;
+    }
 
     if (type == BUFTYPE_CA) {
         dynamicType = DYNTYPE_CA;
@@ -1334,6 +1599,9 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
         derSz = (word32)ret;
     }
     #endif /* WOLFSSH_CERTS */
+    else if (format == WOLFSSH_FORMAT_OPENSSH) {
+        /* TODO */
+    }
     else {
         return WS_UNIMPLEMENTED_E;
     }
@@ -1341,7 +1609,7 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
     /* Maybe decrypt */
 
     if (type == BUFTYPE_PRIVKEY) {
-        ret = IdentifyKey(der, derSz, 1, ctx->heap);
+        ret = IdentifyAsn1Key(der, derSz, 1, ctx->heap);
         if (ret < 0) {
             WFREE(der, heap, dynamicType);
             return ret;
@@ -1713,6 +1981,11 @@ static const NameIdPair NameIdMap[] = {
 
     /* Ext Info IDs */
     { ID_EXTINFO_SERVER_SIG_ALGS, "server-sig-algs" },
+
+    /* Curve Name IDs */
+    { ID_CURVE_NISTP256, "nistp256" },
+    { ID_CURVE_NISTP384, "nistp384" },
+    { ID_CURVE_NISTP521, "nistp521" },
 };
 
 
@@ -2390,6 +2663,26 @@ int GetSize(word32* v, const byte* buf, word32 len, word32* idx)
     if (result == WS_SUCCESS) {
         if (*v > len - *idx) {
             result = WS_BUFFER_E;
+        }
+    }
+
+    return result;
+}
+
+
+int GetSkip(const byte* buf, word32 len, word32* idx)
+{
+    int result;
+    word32 sz;
+
+    result = GetUint32(&sz, buf, len, idx);
+
+    if (result == WS_SUCCESS) {
+        result = WS_BUFFER_E;
+
+        if (*idx < len && sz <= len - *idx) {
+            *idx += sz;
+            result = WS_SUCCESS;
         }
     }
 
@@ -10556,40 +10849,6 @@ int SendExtInfo(WOLFSSH* ssh)
 }
 
 
-typedef struct WS_KeySignature {
-    byte keySigId;
-    word32 sigSz;
-    const char *name;
-    word32 nameSz;
-    union {
-#ifndef WOLFSSH_NO_RSA
-        struct {
-            RsaKey key;
-            byte e[256];
-            word32 eSz;
-            byte ePad;
-            byte n[256];
-            word32 nSz;
-            byte nPad;
-        } rsa;
-#endif
-#ifndef WOLFSSH_NO_ECDSA
-        struct {
-            ecc_key key;
-            word32 keyBlobSz;
-            const char *keyBlobName;
-            word32 keyBlobNameSz;
-            byte q[256];
-            word32 qSz;
-            byte qPad;
-            const char *primeName;
-            word32 primeNameSz;
-        } ecc;
-#endif
-    } ks;
-} WS_KeySignature;
-
-
 /* Updates the payload size, and maybe loads keys. */
 static int PrepareUserAuthRequestPassword(WOLFSSH* ssh, word32* payloadSz,
         const WS_UserAuthData* authData)
@@ -10647,15 +10906,24 @@ static int PrepareUserAuthRequestRsa(WOLFSSH* ssh, word32* payloadSz,
     if (ret == WS_SUCCESS) {
         word32 idx = 0;
         #ifdef WOLFSSH_AGENT
-        if (ssh->agentEnabled)
+        if (ssh->agentEnabled) {
             ret = wc_RsaPublicKeyDecode(authData->sf.publicKey.publicKey,
                     &idx, &keySig->ks.rsa.key,
                     authData->sf.publicKey.publicKeySz);
+        }
         else
         #endif
+        {
             ret = wc_RsaPrivateKeyDecode(authData->sf.publicKey.privateKey,
                     &idx, &keySig->ks.rsa.key,
                     authData->sf.publicKey.privateKeySz);
+            if (ret != 0) {
+                idx = 0;
+                ret = GetOpenSshKey(keySig,
+                        authData->sf.publicKey.privateKey,
+                        authData->sf.publicKey.privateKeySz, &idx);
+            }
+        }
     }
 
     if (ret == WS_SUCCESS) {
@@ -11040,6 +11308,12 @@ static int PrepareUserAuthRequestEcc(WOLFSSH* ssh, word32* payloadSz,
             ret = wc_EccPrivateKeyDecode(authData->sf.publicKey.privateKey,
                     &idx, &keySig->ks.ecc.key,
                     authData->sf.publicKey.privateKeySz);
+            if (ret != 0) {
+                idx = 0;
+                ret = GetOpenSshKey(keySig,
+                        authData->sf.publicKey.privateKey,
+                        authData->sf.publicKey.privateKeySz, &idx);
+            }
     }
 
     if (ret == WS_SUCCESS) {
@@ -13491,7 +13765,6 @@ int wolfSSH_CleanPath(WOLFSSH* ssh, char* in)
 #endif /* WOLFSSH_SFTP || WOLFSSH_SCP */
 
 
-#ifdef DEBUG_WOLFSSH
 
 #define LINE_WIDTH 16
 void DumpOctetString(const byte* input, word32 inputSz)
@@ -13527,7 +13800,6 @@ void DumpOctetString(const byte* input, word32 inputSz)
     }
 }
 
-#endif
 
 #ifdef WOLFSSH_SFTP
 

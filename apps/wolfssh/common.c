@@ -379,7 +379,7 @@ int ClientSetEcho(int type)
             newTerm.c_lflag &= ~(ICANON | ECHOE | ECHOK | ECHONL | ISIG);
         }
         else {
-            newTerm.c_lflag |= (ICANON | ECHONL);
+            newTerm.c_lflag |= ICANON;
         }
 
         if (tcsetattr(STDIN_FILENO, TCSANOW, &newTerm) != 0) {

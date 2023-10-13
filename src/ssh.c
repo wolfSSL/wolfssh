@@ -1323,7 +1323,6 @@ void* wolfSSH_GetPublicKeyCheckCtx(WOLFSSH* ssh)
     return NULL;
 }
 
-#ifdef WOLFSSH_TERM
 
 #if defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM)
 /* Used to resize terminal window with shell connections
@@ -1359,8 +1358,6 @@ void wolfSSH_SetTerminalResizeCtx(WOLFSSH* ssh, void* usrCtx)
 {
     ssh->termCtx = usrCtx;
 }
-#endif
-
 #endif
 
 
@@ -1489,6 +1486,206 @@ union wolfSSH_key {
 #endif
 };
 
+static const char* PrivBeginOpenSSH = "-----BEGIN OPENSSH PRIVATE KEY-----";
+static const char* PrivEndOpenSSH = "-----END OPENSSH PRIVATE KEY-----";
+static const char* PrivBeginPrefix = "-----BEGIN ";
+/* static const char* PrivEndPrefix = "-----END "; */
+static const char* PrivSuffix = " PRIVATE KEY-----";
+
+
+static int DoSshPubKey(const byte* in, word32 inSz, byte** out,
+        word32* outSz, const byte** outType, word32* outTypeSz,
+        void* heap)
+{
+    int ret = WS_SUCCESS;
+    byte* newKey = NULL;
+    char* c;
+    char* last;
+    char* type = NULL;
+    char* key = NULL;
+
+    WOLFSSH_UNUSED(inSz);
+    WOLFSSH_UNUSED(heap);
+
+    /*
+       SSH format is:
+       type AAAABASE64ENCODEDKEYDATA comment
+    */
+    c = WSTRDUP((const char*)in, heap, DYNTYPE_STRING);
+    type = WSTRTOK(c, " \n", &last);
+    key = WSTRTOK(NULL, " \n", &last);
+
+    if (type != NULL && key != NULL) {
+        const char* name;
+        word32 typeSz;
+        byte nameId;
+
+        typeSz = (word32)WSTRLEN(type);
+
+        nameId = NameToId(type, typeSz);
+        name = IdToName(nameId);
+        *outType = (const byte*)name;
+        *outTypeSz = typeSz;
+
+        if (*out == NULL) {
+            /* set size based on sanity check in wolfSSL base64 decode
+             * function */
+            *outSz = ((word32)WSTRLEN(key) * 3 + 3) / 4;
+            newKey = (byte*)WMALLOC(*outSz, heap, DYNTYPE_PRIVKEY);
+            if (newKey == NULL) {
+                return WS_MEMORY_E;
+            }
+            *out = newKey;
+        }
+
+        ret = Base64_Decode((byte*)key, (word32)WSTRLEN(key), *out, outSz);
+    }
+
+    if (ret != 0) {
+        WLOG(WS_LOG_DEBUG, "Base64 decode of public key failed.");
+        ret = WS_PARSE_E;
+    }
+
+    WFREE(c, heap, DYNTYPE_STRING);
+    return ret;
+}
+
+
+static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
+        word32* outSz, const byte** outType, word32* outTypeSz,
+        void* heap)
+{
+    int ret = WS_SUCCESS;
+    byte* newKey = NULL;
+
+    WOLFSSH_UNUSED(heap);
+
+    if (*out == NULL) {
+        newKey = (byte*)WMALLOC(inSz, heap, DYNTYPE_PRIVKEY);
+        if (newKey == NULL) {
+            return WS_MEMORY_E;
+        }
+        *out = newKey;
+    }
+    else {
+        if (*outSz < inSz) {
+            WLOG(WS_LOG_DEBUG, "DER private key output size too small");
+            return WS_BUFFER_E;
+        }
+        newKey = *out;
+    }
+    *outSz = inSz;
+    WMEMCPY(newKey, in, inSz);
+
+    ret = IdentifyAsn1Key(in, inSz, 1, heap);
+    if (ret > 0) {
+        *outType = (const byte*)IdToName(ret);
+        *outTypeSz = (word32)WSTRLEN((const char*)*outType);
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+static int DoPemKey(const byte* in, word32 inSz, byte** out,
+        word32* outSz, const byte** outType, word32* outTypeSz,
+        void* heap)
+{
+    int ret = WS_SUCCESS;
+    byte* newKey = NULL;
+
+    WOLFSSH_UNUSED(heap);
+
+    word32 newKeySz = inSz; /* binary will be smaller than PEM */
+
+    if (*out == NULL) {
+        newKey = (byte*)WMALLOC(newKeySz, heap, DYNTYPE_PRIVKEY);
+        if (newKey == NULL) {
+            return WS_MEMORY_E;
+        }
+        *out = newKey;
+    }
+    else {
+        if (*outSz < inSz) {
+            WLOG(WS_LOG_DEBUG, "PEM private key output size too small");
+            return WS_BUFFER_E;
+        }
+        newKey = *out;
+    }
+
+    /* If it is PEM, convert to ASN1 then process. */
+    ret = wc_KeyPemToDer(in, inSz, newKey, newKeySz, NULL);
+    if (ret > 0) {
+        newKeySz = (word32)ret;
+        ret = WS_SUCCESS;
+    }
+    else {
+        WLOG(WS_LOG_DEBUG, "Base64 decode of public key failed.");
+        ret = WS_PARSE_E;
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = IdentifyAsn1Key(newKey, newKeySz, 1, heap);
+        if (ret > 0) {
+            *outSz = newKeySz;
+            *outType = (const byte*)IdToName(ret);
+            *outTypeSz = (word32)WSTRLEN((const char*)*outType);
+            ret = WS_SUCCESS;
+        }
+        else {
+            WLOG(WS_LOG_DEBUG, "unable to identify key");
+        }
+    }
+
+    return ret;
+}
+
+
+static int DoOpenSshKey(const byte* in, word32 inSz, byte** out,
+        word32* outSz, const byte** outType, word32* outTypeSz,
+        void* heap)
+{
+    int ret = WS_SUCCESS;
+    byte* newKey = NULL;
+    word32 newKeySz = inSz; /* binary will be smaller than PEM */
+
+    if (*out == NULL) {
+        newKey = (byte*)WMALLOC(newKeySz, heap, DYNTYPE_PRIVKEY);
+        if (newKey == NULL) {
+            return WS_MEMORY_E;
+        }
+        *out = newKey;
+    }
+    else {
+        if (*outSz < inSz) {
+            WLOG(WS_LOG_DEBUG, "PEM private key output size too small");
+            return WS_BUFFER_E;
+        }
+        newKey = *out;
+    }
+
+    in += strlen(PrivBeginOpenSSH);
+    inSz -= (strlen(PrivBeginOpenSSH) + strlen(PrivEndOpenSSH) + 2);
+
+    ret = Base64_Decode((byte*)in, inSz, newKey, &newKeySz);
+    if (ret == 0) {
+        ret = IdentifyOpenSshKey(newKey, newKeySz, heap);
+        if (ret > 0) {
+            *outSz = newKeySz;
+            *outType = (const byte*)IdToName(ret);
+            *outTypeSz = (word32)WSTRLEN((const char*)*outType);
+            ret = WS_SUCCESS;
+        }
+        else {
+            WLOG(WS_LOG_DEBUG, "unable to identify key");
+        }
+    }
+
+    return ret;
+}
+
+
 /* Reads a key from the buffer in to out. If the out buffer doesn't exist
    it is created. The type of key is stored in outType. It'll be a pointer
    to a constant string. Format indicates the format of the key, currently
@@ -1499,127 +1696,22 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
         void* heap)
 {
     int ret = WS_SUCCESS;
-    byte* newKey = NULL;
-
-    WOLFSSH_UNUSED(heap);
 
     if (in == NULL || inSz == 0 || out == NULL || outSz == NULL ||
             outType == NULL || outTypeSz == NULL)
         return WS_BAD_ARGUMENT;
 
     if (format == WOLFSSH_FORMAT_SSH) {
-        char* c;
-        char* last;
-        char* type = NULL;
-        char* key = NULL;
-
-        /*
-           SSH format is:
-           type AAAABASE64ENCODEDKEYDATA comment
-        */
-        c = WSTRDUP((const char*)in, heap, DYNTYPE_STRING);
-        type = WSTRTOK(c, " \n", &last);
-        key = WSTRTOK(NULL, " \n", &last);
-
-        if (type != NULL && key != NULL) {
-            const char* name;
-            word32 typeSz;
-            byte nameId;
-
-            typeSz = (word32)WSTRLEN(type);
-
-            nameId = NameToId(type, typeSz);
-            name = IdToName(nameId);
-            *outType = (const byte*)name;
-            *outTypeSz = typeSz;
-
-            if (*out == NULL) {
-                /* set size based on sanity check in wolfSSL base64 decode
-                 * function */
-                *outSz = ((word32)WSTRLEN(key) * 3 + 3) / 4;
-                newKey = (byte*)WMALLOC(*outSz, heap, DYNTYPE_PRIVKEY);
-                if (newKey == NULL) {
-                    return WS_MEMORY_E;
-                }
-                *out = newKey;
-            }
-
-            ret = Base64_Decode((byte*)key, (word32)WSTRLEN(key), *out, outSz);
-        }
-
-        if (ret != 0) {
-            WLOG(WS_LOG_DEBUG, "Base64 decode of public key failed.");
-            ret = WS_PARSE_E;
-        }
-
-        WFREE(c, heap, DYNTYPE_STRING);
+        ret = DoSshPubKey(in, inSz, out, outSz, outType, outTypeSz, heap);
     }
     else if (format == WOLFSSH_FORMAT_ASN1) {
-        if (*out == NULL) {
-            newKey = (byte*)WMALLOC(inSz, heap, DYNTYPE_PRIVKEY);
-            if (newKey == NULL) {
-                return WS_MEMORY_E;
-            }
-            *out = newKey;
-        }
-        else {
-            if (*outSz < inSz) {
-                WLOG(WS_LOG_DEBUG, "DER private key output size too small");
-                return WS_BUFFER_E;
-            }
-            newKey = *out;
-        }
-        *outSz = inSz;
-        WMEMCPY(newKey, in, inSz);
-
-        ret = IdentifyKey(in, inSz, 1, heap);
-        if (ret > 0) {
-            *outType = (const byte*)IdToName(ret);
-            *outTypeSz = (word32)WSTRLEN((const char*)*outType);
-            ret = WS_SUCCESS;
-        }
+        ret = DoAsn1Key(in, inSz, out, outSz, outType, outTypeSz, heap);
     }
     else if (format == WOLFSSH_FORMAT_PEM) {
-        word32 newKeySz = inSz; /* binary will be smaller than PEM */
-
-        if (*out == NULL) {
-            newKey = (byte*)WMALLOC(newKeySz, heap, DYNTYPE_PRIVKEY);
-            if (newKey == NULL) {
-                return WS_MEMORY_E;
-            }
-            *out = newKey;
-        }
-        else {
-            if (*outSz < inSz) {
-                WLOG(WS_LOG_DEBUG, "PEM private key output size too small");
-                return WS_BUFFER_E;
-            }
-            newKey = *out;
-        }
-
-        /* If it is PEM, convert to ASN1 then process. */
-        ret = wc_KeyPemToDer(in, inSz, newKey, newKeySz, NULL);
-        if (ret > 0) {
-            newKeySz = (word32)ret;
-            ret = WS_SUCCESS;
-        }
-        else {
-            WLOG(WS_LOG_DEBUG, "Base64 decode of public key failed.");
-            ret = WS_PARSE_E;
-        }
-
-        if (ret == WS_SUCCESS) {
-            ret = IdentifyKey(newKey, newKeySz, 1, heap);
-            if (ret > 0) {
-                *outSz = newKeySz;
-                *outType = (const byte*)IdToName(ret);
-                *outTypeSz = (word32)WSTRLEN((const char*)*outType);
-                ret = WS_SUCCESS;
-            }
-            else {
-                WLOG(WS_LOG_DEBUG, "unable to identify key");
-            }
-        }
+        ret = DoPemKey(in, inSz, out, outSz, outType, outTypeSz, heap);
+    }
+    else if (format == WOLFSSH_FORMAT_OPENSSH) {
+        ret = DoOpenSshKey(in, inSz, out, outSz, outType, outTypeSz, heap);
     }
     else {
         WLOG(WS_LOG_DEBUG, "Invalid key format");
@@ -1687,9 +1779,13 @@ int wolfSSH_ReadKey_file(const char* name,
             format = WOLFSSH_FORMAT_SSH;
             in[inSz] = 0;
         }
-        else if ((WSTRNSTR((const char*)in, "-----BEGIN ", inSz)
+        else if (WSTRNSTR((const char*)in, PrivBeginOpenSSH, inSz) != NULL) {
+            *isPrivate = 1;
+            format = WOLFSSH_FORMAT_OPENSSH;
+        }
+        else if ((WSTRNSTR((const char*)in, PrivBeginPrefix, inSz)
                     == (const char*)in)
-                && (WSTRNSTR((const char*)in, "PRIVATE KEY-----", inSz)
+                && (WSTRNSTR((const char*)in, PrivSuffix, inSz)
                     != NULL)) {
             *isPrivate = 1;
             format = WOLFSSH_FORMAT_PEM;
