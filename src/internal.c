@@ -419,6 +419,12 @@ const char* GetErrorString(int err)
         case WS_MATCH_UA_KEY_ID_E:
             return "unable to match user auth key type";
 
+        case WS_KEY_AUTH_MAGIC_E:
+            return "key auth magic check error";
+
+        case WS_KEY_CHECK_VAL_E:
+            return "key check value error";
+
         default:
             return "Unknown error code";
     }
@@ -1041,8 +1047,8 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap)
 static int GetOpenSshKeyRsa(RsaKey* key,
         const byte* buf, word32 len, word32* idx)
 {
-    const byte* val;
-    word32 valSz;
+    const byte* val = NULL;
+    word32 valSz = 0;
     mp_int m;
 
     GetMpint(&valSz, &val, buf, len, idx); /* n */
@@ -1074,8 +1080,8 @@ static int GetOpenSshKeyRsa(RsaKey* key,
 static int GetOpenSshKeyEcc(ecc_key* key,
         const byte* buf, word32 len, word32* idx)
 {
-    const byte *name, *priv, *pub;
-    word32 nameSz, privSz, pubSz;
+    const byte *name = NULL, *priv = NULL, *pub = NULL;
+    word32 nameSz = 0, privSz = 0, pubSz = 0;
     int ret;
 
     GetStringRef(&nameSz, &name, buf, len, idx); /* curve name */
@@ -1094,72 +1100,100 @@ static int GetOpenSshKey(WS_KeySignature *key,
         const byte* buf, word32 len, word32* idx)
 {
     const char AuthMagic[] = "openssh-key-v1";
-    const byte* str;
+    const byte* str = NULL;
+    word32 keyCount = 0, strSz = 0, i;
     int ret = WS_SUCCESS;
-    word32 keyCount, i, strSz;
 
     if (strcmp(AuthMagic, (const char*)buf) != 0) {
-        ret = -1;
+        ret = WS_KEY_AUTH_MAGIC_E;
     }
-    strSz = (word32)strlen(AuthMagic);
-    *idx += strSz + 1;
 
-    GetSkip(buf, len, idx); /* ciphername */
-    GetSkip(buf, len, idx); /* kdfname */
-    GetSkip(buf, len, idx); /* kdfoptions */
+    if (ret == WS_SUCCESS) {
+        *idx += (word32)strlen(AuthMagic) + 1;
+        ret = GetSkip(buf, len, idx); /* ciphername */
+    }
 
-    GetUint32(&keyCount, buf, len, idx); /* key count */
+    if (ret == WS_SUCCESS)
+        ret = GetSkip(buf, len, idx); /* kdfname */
+
+    if (ret == WS_SUCCESS)
+        ret = GetSkip(buf, len, idx); /* kdfoptions */
+
+    if (ret == WS_SUCCESS)
+        ret = GetUint32(&keyCount, buf, len, idx); /* key count */
 
     for (i = 0; i < keyCount; i++) {
-        GetStringRef(&strSz, &str, buf, len, idx); /* public buf */
+        if (ret == WS_SUCCESS)
+            ret = GetStringRef(&strSz, &str, buf, len, idx); /* public buf */
     }
 
-    GetStringRef(&strSz, &str, buf, len, idx); /* list of private keys */
+    if (keyCount > 0) {
+        if (ret == WS_SUCCESS) {
+            ret = GetStringRef(&strSz, &str, buf, len, idx);
+                    /* list of private keys */
+        }
 
-    if (strSz > 0) {
-        const byte* subStr;
-        word32 subStrSz, subIdx = 0, check1 = 0, check2 = ~0;
-        byte keyId;
+        if (strSz > 0) {
+            const byte* subStr = NULL;
+            word32 subStrSz = 0, subIdx = 0, check1 = 0, check2 = ~0;
+            byte keyId;
 
-        idx = 0;
-        GetUint32(&check1, str, strSz, &subIdx); /* checkint 1 */
-        GetUint32(&check2, str, strSz, &subIdx); /* checkint 2 */
-        if (check1 == check2) {
-            for (i = 0; i < keyCount; i++) {
-                GetStringRef(&subStrSz, &subStr, str, strSz, &subIdx);
-                keyId = NameToId((const char*)subStr, subStrSz);
-                wolfSSH_KEY_init(key, keyId, NULL);
-                switch (keyId) {
-                #ifndef WOLFSSH_NO_RSA
-                    case ID_SSH_RSA:
-                        GetOpenSshKeyRsa(&key->ks.rsa.key,
-                                str, strSz, &subIdx);
-                        break;
-                #endif
-                #ifndef WOLFSSH_NO_ECDSA
-                    case ID_ECDSA_SHA2_NISTP256:
-                        GetOpenSshKeyEcc(&key->ks.ecc.key,
-                                str, strSz, &subIdx);
-                        break;
-                #endif
-                    default:
-                        ret = WS_UNIMPLEMENTED_E;
-                        break;
+            idx = 0;
+            if (ret == WS_SUCCESS)
+                ret = GetUint32(&check1, str, strSz, &subIdx); /* checkint 1 */
+            if (ret == WS_SUCCESS)
+                ret = GetUint32(&check2, str, strSz, &subIdx); /* checkint 2 */
+            if (ret == WS_SUCCESS) {
+                if (check1 != check2) {
+                    ret = WS_KEY_CHECK_VAL_E;
                 }
-                GetSkip(str, strSz, &subIdx); /* comment */
             }
-            /* Padding: Add increasing digits to pad to the nearest block
-             * size. Default block size is 8, but depends on the encryption
-             * algo. The private key chunk's length, and the length of the
-             * comment delimit the end of the encrypted blob. No added
-             * padding required. */
-            if (strSz % 8 == 0) {
-                if (strSz - subIdx > 0) {
-                    /* The padding starts at 1. */
-                    check2 = strSz - subIdx;
-                    for (check1 = 1; check1 <= check2; check1++, subIdx++) {
-                        if (check1 != str[subIdx]) {
-                            /* Bad pad value. */
+            if (ret == WS_SUCCESS) {
+                for (i = 0; i < keyCount; i++) {
+                    ret = GetStringRef(&subStrSz, &subStr,
+                            str, strSz, &subIdx);
+                    if (ret == WS_SUCCESS) {
+                        keyId = NameToId((const char*)subStr, subStrSz);
+                        wolfSSH_KEY_init(key, keyId, NULL);
+                        switch (keyId) {
+                        #ifndef WOLFSSH_NO_RSA
+                            case ID_SSH_RSA:
+                                GetOpenSshKeyRsa(&key->ks.rsa.key,
+                                        str, strSz, &subIdx);
+                                break;
+                        #endif
+                        #ifndef WOLFSSH_NO_ECDSA
+                            case ID_ECDSA_SHA2_NISTP256:
+                                GetOpenSshKeyEcc(&key->ks.ecc.key,
+                                        str, strSz, &subIdx);
+                                break;
+                        #endif
+                            default:
+                                ret = WS_UNIMPLEMENTED_E;
+                                break;
+                        }
+                        if (ret == WS_SUCCESS)
+                            ret = GetSkip(str, strSz, &subIdx);
+                                    /* key comment */
+                    }
+                }
+                /* Padding: Add increasing digits to pad to the nearest
+                 * block size. Default block size is 8, but depends on
+                 * the encryption algo. The private key chunk's length,
+                 * and the length of the comment delimit the end of the
+                 * encrypted blob. No added padding required. */
+                if (ret == WS_SUCCESS) {
+                    if (strSz % 8 == 0) {
+                        if (strSz - subIdx > 0) {
+                            /* The padding starts at 1. */
+                            check2 = strSz - subIdx;
+                            for (check1 = 1;
+                                 check1 <= check2;
+                                 check1++, subIdx++) {
+                                if (check1 != str[subIdx]) {
+                                    /* Bad pad value. */
+                                }
+                            }
                         }
                     }
                 }
@@ -1599,9 +1633,6 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
         derSz = (word32)ret;
     }
     #endif /* WOLFSSH_CERTS */
-    else if (format == WOLFSSH_FORMAT_OPENSSH) {
-        /* TODO */
-    }
     else {
         return WS_UNIMPLEMENTED_E;
     }
@@ -11305,6 +11336,7 @@ static int PrepareUserAuthRequestEcc(WOLFSSH* ssh, word32* payloadSz,
         }
         else
         #endif
+        {
             ret = wc_EccPrivateKeyDecode(authData->sf.publicKey.privateKey,
                     &idx, &keySig->ks.ecc.key,
                     authData->sf.publicKey.privateKeySz);
@@ -11314,6 +11346,7 @@ static int PrepareUserAuthRequestEcc(WOLFSSH* ssh, word32* payloadSz,
                         authData->sf.publicKey.privateKey,
                         authData->sf.publicKey.privateKeySz, &idx);
             }
+        }
     }
 
     if (ret == WS_SUCCESS) {

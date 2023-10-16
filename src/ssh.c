@@ -1594,10 +1594,9 @@ static int DoPemKey(const byte* in, word32 inSz, byte** out,
 {
     int ret = WS_SUCCESS;
     byte* newKey = NULL;
+    word32 newKeySz = inSz; /* binary will be smaller than PEM */
 
     WOLFSSH_UNUSED(heap);
-
-    word32 newKeySz = inSz; /* binary will be smaller than PEM */
 
     if (*out == NULL) {
         newKey = (byte*)WMALLOC(newKeySz, heap, DYNTYPE_PRIVKEY);
@@ -1666,7 +1665,7 @@ static int DoOpenSshKey(const byte* in, word32 inSz, byte** out,
     }
 
     in += strlen(PrivBeginOpenSSH);
-    inSz -= (strlen(PrivBeginOpenSSH) + strlen(PrivEndOpenSSH) + 2);
+    inSz -= (word32)(strlen(PrivBeginOpenSSH) + strlen(PrivEndOpenSSH) + 2);
 
     ret = Base64_Decode((byte*)in, inSz, newKey, &newKeySz);
     if (ret == 0) {
