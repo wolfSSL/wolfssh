@@ -2195,7 +2195,7 @@ static int StartSSHD(int argc, char** argv)
                     int flags = fcntl(conn->fd, F_GETFL, 0);
                     if (flags < 0)
                         err_sys("fcntl get failed");
-                    flags = fcntl(conn.fd, F_SETFL, flags | O_NONBLOCK);
+                    flags = fcntl(conn->fd, F_SETFL, flags | O_NONBLOCK);
                     if (flags < 0)
                         err_sys("fcntl set failed");
 #endif
