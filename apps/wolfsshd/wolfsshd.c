@@ -2159,7 +2159,6 @@ static int StartSSHD(int argc, char** argv)
             conn = (WOLFSSHD_CONNECTION*)WMALLOC(sizeof(WOLFSSHD_CONNECTION), NULL, DYNTYPE_SSHD);
             if (conn == NULL) {
                 wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failed to malloc memory for connection");
-                ret = WS_MEMORY_E;
                 break;
             }
 
