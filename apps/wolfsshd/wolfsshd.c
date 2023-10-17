@@ -1671,6 +1671,7 @@ static void* HandleConnection(void* arg)
         WCLOSESOCKET(conn->fd);
     }
     wolfSSH_Log(WS_LOG_INFO, "[SSHD] Return from closing connection = %d", ret);
+    WFREE(conn, NULL, DYNTYPE_SSHD);
 
 #ifdef _WIN32
     return 0;
@@ -1966,7 +1967,11 @@ static int StartSSHD(int argc, char** argv)
             break;
         #else
             ShowUsage();
+            #ifndef _WIN32
             return WS_FATAL_ERROR;
+            #else
+            return;
+            #endif
         #endif
 
         case 't':
@@ -2144,27 +2149,33 @@ static int StartSSHD(int argc, char** argv)
     #endif
         /* wait for incoming connections and fork them off */
         while (ret == WS_SUCCESS && quit == 0) {
-            WOLFSSHD_CONNECTION conn;
+            WOLFSSHD_CONNECTION* conn;
 #ifdef WOLFSSL_NUCLEUS
             struct addr_struct clientAddr;
 #else
             SOCKADDR_IN_T clientAddr;
             socklen_t     clientAddrSz = sizeof(clientAddr);
 #endif
-            conn.auth = auth;
-            conn.listenFd = (int)listenFd;
-            conn.isThreaded = isDaemon;
+            conn = (WOLFSSHD_CONNECTION*)WMALLOC(sizeof(WOLFSSHD_CONNECTION), NULL, DYNTYPE_SSHD);
+            if (conn == NULL) {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failed to malloc memory for connection");
+                break;
+            }
+
+            conn->auth = auth;
+            conn->listenFd = (int)listenFd;
+            conn->isThreaded = isDaemon;
 
             /* wait for a connection */
             if (PendingConnection(listenFd)) {
-                conn.ctx = ctx;
+                conn->ctx = ctx;
 #ifdef WOLFSSL_NUCLEUS
-                conn.fd = NU_Accept(listenFd, &clientAddr, 0);
+                conn->fd = NU_Accept(listenFd, &clientAddr, 0);
 #else
-                conn.fd = (int)accept(listenFd, (struct sockaddr*)&clientAddr,
+                conn->fd = (int)accept(listenFd, (struct sockaddr*)&clientAddr,
                     &clientAddrSz);
-                if (conn.fd >= 0) {
-                    inet_ntop(AF_INET, &clientAddr.sin_addr, conn.ip,
+                if (conn->fd >= 0) {
+                    inet_ntop(AF_INET, &clientAddr.sin_addr, conn->ip,
                         INET_ADDRSTRLEN);
                 }
 #endif
@@ -2172,7 +2183,7 @@ static int StartSSHD(int argc, char** argv)
                 {
 #ifdef USE_WINDOWS_API
                     unsigned long blocking = 1;
-                    if (ioctlsocket(conn.fd, FIONBIO, &blocking)
+                    if (ioctlsocket(conn->fd, FIONBIO, &blocking)
                         == SOCKET_ERROR)
                         err_sys("ioctlsocket failed");
 #elif defined(WOLFSSL_MDK_ARM) || defined(WOLFSSL_KEIL_TCP_NET) \
@@ -2180,15 +2191,15 @@ static int StartSSHD(int argc, char** argv)
                         defined(WOLFSSL_NUCLEUS)
                     /* non blocking not supported, for now */
 #else
-                    int flags = fcntl(conn.fd, F_GETFL, 0);
+                    int flags = fcntl(conn->fd, F_GETFL, 0);
                     if (flags < 0)
                         err_sys("fcntl get failed");
-                    flags = fcntl(conn.fd, F_SETFL, flags | O_NONBLOCK);
+                    flags = fcntl(conn->fd, F_SETFL, flags | O_NONBLOCK);
                     if (flags < 0)
                         err_sys("fcntl set failed");
 #endif
                 }
-                ret = NewConnection(&conn);
+                ret = NewConnection(conn);
             }
 #ifdef _WIN32
             /* check if service has been shutdown */
@@ -2258,7 +2269,7 @@ int main(int argc, char** argv)
         }
     }
     else {
-        StartSSHD(argc, (LPSTR*)argv);
+        StartSSHD(argc, (LPTSTR*)argv);
     }
     return 0;
 #else
