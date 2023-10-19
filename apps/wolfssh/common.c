@@ -66,7 +66,11 @@ static const byte publicKeyType[] = "x509v3-ecdsa-sha2-nistp256";
 #endif
 
 
-#if defined(WOLFSSH_CERTS)
+static inline void ato32(const byte* c, word32* u32)
+{
+    *u32 = (c[0] << 24) | (c[1] << 16) | (c[2] << 8) | c[3];
+}
+
 
 static int load_der_file(const char* filename, byte** out, word32* outSz)
 {
@@ -119,12 +123,9 @@ static int load_der_file(const char* filename, byte** out, word32* outSz)
 }
 
 
-#if (defined(OPENSSL_ALL) || defined(WOLFSSL_IP_ALT_NAME))
-static inline void ato32(const byte* c, word32* u32)
-{
-    *u32 = (c[0] << 24) | (c[1] << 16) | (c[2] << 8) | c[3];
-}
+#if defined(WOLFSSH_CERTS)
 
+#if (defined(OPENSSL_ALL) || defined(WOLFSSL_IP_ALT_NAME))
 /* when set as true then ignore miss matching IP addresses */
 static int IPOverride = 0;
 
@@ -186,20 +187,87 @@ void ClientIPOverride(int flag)
 #endif /* WOLFSSH_CERTS */
 
 
+static int AppendKeyToFile(const char* filename, const char* name,
+        const char* type, const char* key)
+{
+    FILE *f;
+
+    f = fopen(filename, "a");
+    fprintf(f, "%s %s %s\n", name, type, key);
+    fclose(f);
+
+    return 0;
+}
+
+
 int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 {
-    int ret = 0;
+    char *cursor;
+    char *line;
+    const char *targetName = (const char*)ctx;
+    char *name;
+    char *keyType;
+    char *key;
+    char *knownHosts = NULL;
+    char *knownHostsName = NULL;
+    int ret = 0, found = 0, badMatch = 0;
+    word32 sz;
+    char encodedKey[1200];
+    char pubKeyType[54];
 
-    #ifdef DEBUG_WOLFSSH
-        printf("Sample public key check callback\n"
-               "  public key = %p\n"
-               "  public key size = %u\n"
-               "  ctx = %s\n", pubKey, pubKeySz, (const char*)ctx);
-    #else
-        (void)pubKey;
-        (void)pubKeySz;
-        (void)ctx;
-    #endif
+    {
+        const char *defaultName = "/.ssh/known_hosts";
+        char *env;
+
+        env = getenv("HOME");
+        sz = (word32)(WSTRLEN(env) + WSTRLEN(defaultName) + 1);
+        knownHostsName = (char*)WMALLOC(sz, NULL, 0);
+        if (knownHostsName != NULL) {
+            strcpy(knownHostsName, env);
+            strcat(knownHostsName, defaultName);
+        }
+    }
+
+    sz = 0;
+    ret = load_der_file(knownHostsName, (byte**)&knownHosts, &sz);
+
+    /* Get the key type out of the key. */
+    ato32(pubKey, &sz);
+    memcpy(pubKeyType, pubKey + LENGTH_SZ, sz);
+    pubKeyType[sz] = 0;
+
+    sz = (word32)sizeof(encodedKey);
+    ret = Base64_Encode_NoNl(pubKey, pubKeySz, (byte*)encodedKey, &sz);
+
+    cursor = knownHosts;
+    while (cursor) {
+        line = strsep(&cursor, "\n");
+        if (line != NULL && *line) {
+            name = strsep(&line, " ");
+            keyType = strsep(&line, " ");
+            key = strsep(&line, " ");
+            if (name && keyType && key) {
+                if (strcmp(targetName, name) == 0
+                        && strcmp(pubKeyType, keyType) == 0) {
+                    if (strcmp(encodedKey, key) == 0) {
+                        found = 1;
+                    }
+                    else {
+                        badMatch = 1;
+                    }
+                }
+            }
+        }
+    }
+    WFREE(knownHosts, NULL, 0);
+
+    if (badMatch) {
+        ret = -1;
+    }
+    else if (!found) {
+        ret = AppendKeyToFile(knownHostsName,
+                targetName, pubKeyType, encodedKey);
+    }
 
 #ifdef WOLFSSH_CERTS
 #if defined(OPENSSL_ALL) || defined(WOLFSSL_IP_ALT_NAME)
