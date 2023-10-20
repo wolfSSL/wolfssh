@@ -2323,19 +2323,19 @@ int wolfSSH_ChannelGetEof(WOLFSSH_CHANNEL* channel)
 
 static const char* HashNameForId(byte id)
 {
-    switch (HashForId(id)) {
-        case WC_HASH_TYPE_SHA:
-            return "SHA-1";
+    enum wc_HashType hash = HashForId(id);
 
-        case WC_HASH_TYPE_SHA256:
-            return "SHA-256";
+    if (hash == WC_HASH_TYPE_SHA)
+        return "SHA-1";
 
-        case WC_HASH_TYPE_SHA384:
-            return "SHA-384";
+    if (hash == WC_HASH_TYPE_SHA256)
+        return "SHA-256";
 
-        case WC_HASH_TYPE_SHA512:
-            return "SHA-512";
-    }
+    if (hash == WC_HASH_TYPE_SHA384)
+        return "SHA-384";
+
+    if (hash == WC_HASH_TYPE_SHA512)
+        return "SHA-512";
 
     return "";
 }
