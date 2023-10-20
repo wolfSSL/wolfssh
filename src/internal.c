@@ -6501,112 +6501,112 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             WLOG(WS_LOG_DEBUG, "DUARPK: Send the PK OK");
             ret = SendUserAuthPkOk(ssh,
                     pubKeyAlgo, pubKeyAlgoSz, pubKeyBlob, pubKeyBlobSz);
-        } else if(pkTypeId == ID_ED25519) {
-#ifdef HAVE_ED25519
-            if(ret == WS_SUCCESS)
-                ret = DoUserAuthRequestEd25519(ssh, &authData->sf.publicKey, authData);
-#else
-            ret = WS_CRYPTO_FAILED;
-#endif
         } else {
-            wc_HashAlg hash;
-            byte digest[WC_MAX_DIGEST_SIZE];
-            word32 digestSz = 0;
-            enum wc_HashType hashId = WC_HASH_TYPE_SHA;
+            if(pkTypeId == ID_ED25519) {
+#ifdef HAVE_ED25519
+                if(ret == WS_SUCCESS)
+                    ret = DoUserAuthRequestEd25519(ssh, &authData->sf.publicKey, authData);
+#else
+                ret = WS_CRYPTO_FAILED;
+#endif
+            } else {
+                wc_HashAlg hash;
+                byte digest[WC_MAX_DIGEST_SIZE];
+                word32 digestSz = 0;
+                enum wc_HashType hashId = WC_HASH_TYPE_SHA;
 
-            if (ret == WS_SUCCESS) {
-                hashId = HashForId(pkTypeId);
-                WMEMSET(digest, 0, sizeof(digest));
-                ret = wc_HashGetDigestSize(hashId);
-                if (ret > 0) {
-                    digestSz = ret;
-                    ret = 0;
+                if (ret == WS_SUCCESS) {
+                    hashId = HashForId(pkTypeId);
+                    WMEMSET(digest, 0, sizeof(digest));
+                    ret = wc_HashGetDigestSize(hashId);
+                    if (ret > 0) {
+                        digestSz = ret;
+                        ret = 0;
+                    }
+                }
+
+                if (ret == 0)
+                    ret = wc_HashInit(&hash, hashId);
+
+                if (ret == 0) {
+                    c32toa(ssh->sessionIdSz, digest);
+                    ret = HashUpdate(&hash, hashId, digest, UINT32_SZ);
+                }
+
+                if (ret == 0)
+                    ret = HashUpdate(&hash, hashId,
+                                        ssh->sessionId, ssh->sessionIdSz);
+
+                if (ret == 0) {
+                    digest[0] = MSGID_USERAUTH_REQUEST;
+                    ret = HashUpdate(&hash, hashId, digest, MSG_ID_SZ);
+                }
+
+                /* The rest of the fields in the signature are already
+                 * in the buffer. Just need to account for the sizes, which total
+                 * the length of the buffer minus the signature and size of
+                 * signature. */
+                if (ret == 0) {
+                    ret = HashUpdate(&hash, hashId,
+                            authData->sf.publicKey.dataToSign,
+                            len - sigSz - LENGTH_SZ);
+                }
+                if (ret == 0) {
+                    ret = wc_HashFinal(&hash, hashId, digest);
+
+                    if (ret != 0)
+                        ret = WS_CRYPTO_FAILED;
+                    else
+                        ret = WS_SUCCESS;
+                }
+                wc_HashFree(&hash, hashId);
+
+                if (ret == WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, "Verify user signature type: %s",
+                            IdToName(pkTypeId));
+
+                    switch (pkTypeId) {
+                        #ifndef WOLFSSH_NO_RSA
+                        case ID_SSH_RSA:
+                        case ID_RSA_SHA2_256:
+                        case ID_RSA_SHA2_512:
+                            ret = DoUserAuthRequestRsa(ssh,
+                                    &authData->sf.publicKey,
+                                    hashId, digest, digestSz);
+                            break;
+                        #ifdef WOLFSSH_CERTS
+                        case ID_X509V3_SSH_RSA:
+                            ret = DoUserAuthRequestRsaCert(ssh,
+                                    &authData->sf.publicKey,
+                                    hashId, digest, digestSz);
+                            break;
+                        #endif
+                        #endif
+                        #ifndef WOLFSSH_NO_ECDSA
+                        case ID_ECDSA_SHA2_NISTP256:
+                        case ID_ECDSA_SHA2_NISTP384:
+                        case ID_ECDSA_SHA2_NISTP521:
+                        case ID_ED25519:
+                            ret = DoUserAuthRequestEcc(ssh,
+                                    &authData->sf.publicKey,
+                                    hashId, digest, digestSz);
+                            break;
+                        #ifdef WOLFSSH_CERTS
+                        case ID_X509V3_ECDSA_SHA2_NISTP256:
+                        case ID_X509V3_ECDSA_SHA2_NISTP384:
+                        case ID_X509V3_ECDSA_SHA2_NISTP521:
+                            ret = DoUserAuthRequestEccCert(ssh,
+                                    &authData->sf.publicKey,
+                                    hashId, digest, digestSz);
+                            break;
+                        #endif
+                        #endif
+                        default:
+                            ret = WS_INVALID_ALGO_ID;
+                    }
                 }
             }
 
-            if (ret == 0)
-                ret = wc_HashInit(&hash, hashId);
-
-            if (ret == 0) {
-                c32toa(ssh->sessionIdSz, digest);
-                ret = HashUpdate(&hash, hashId, digest, UINT32_SZ);
-            }
-
-            if (ret == 0)
-                ret = HashUpdate(&hash, hashId,
-                                    ssh->sessionId, ssh->sessionIdSz);
-
-            if (ret == 0) {
-                digest[0] = MSGID_USERAUTH_REQUEST;
-                ret = HashUpdate(&hash, hashId, digest, MSG_ID_SZ);
-            }
-
-            /* The rest of the fields in the signature are already
-             * in the buffer. Just need to account for the sizes, which total
-             * the length of the buffer minus the signature and size of
-             * signature. */
-            if (ret == 0) {
-                ret = HashUpdate(&hash, hashId,
-                        authData->sf.publicKey.dataToSign,
-                        len - sigSz - LENGTH_SZ);
-            }
-            if (ret == 0) {
-                ret = wc_HashFinal(&hash, hashId, digest);
-
-                if (ret != 0)
-                    ret = WS_CRYPTO_FAILED;
-                else
-                    ret = WS_SUCCESS;
-            }
-            wc_HashFree(&hash, hashId);
-
-            if (ret == WS_SUCCESS) {
-                WLOG(WS_LOG_DEBUG, "Verify user signature type: %s",
-                        IdToName(pkTypeId));
-
-                switch (pkTypeId) {
-                    #ifndef WOLFSSH_NO_RSA
-                    case ID_SSH_RSA:
-                    case ID_RSA_SHA2_256:
-                    case ID_RSA_SHA2_512:
-                        ret = DoUserAuthRequestRsa(ssh,
-                                &authData->sf.publicKey,
-                                hashId, digest, digestSz);
-                        break;
-                    #ifdef WOLFSSH_CERTS
-                    case ID_X509V3_SSH_RSA:
-                        ret = DoUserAuthRequestRsaCert(ssh,
-                                &authData->sf.publicKey,
-                                hashId, digest, digestSz);
-                        break;
-                    #endif
-                    #endif
-                    #ifndef WOLFSSH_NO_ECDSA
-                    case ID_ECDSA_SHA2_NISTP256:
-                    case ID_ECDSA_SHA2_NISTP384:
-                    case ID_ECDSA_SHA2_NISTP521:
-                    case ID_ED25519:
-                        ret = DoUserAuthRequestEcc(ssh,
-                                &authData->sf.publicKey,
-                                hashId, digest, digestSz);
-                        break;
-                    #ifdef WOLFSSH_CERTS
-                    case ID_X509V3_ECDSA_SHA2_NISTP256:
-                    case ID_X509V3_ECDSA_SHA2_NISTP384:
-                    case ID_X509V3_ECDSA_SHA2_NISTP521:
-                        ret = DoUserAuthRequestEccCert(ssh,
-                                &authData->sf.publicKey,
-                                hashId, digest, digestSz);
-                        break;
-                    #endif
-                    #endif
-                    default:
-                        ret = WS_INVALID_ALGO_ID;
-                }
-            }
-        }
-
-        if (!hasSig) {
             if (ret != WS_SUCCESS) {
                 if (ssh->ctx->userAuthResultCb) {
                     ssh->ctx->userAuthResultCb(WOLFSSH_USERAUTH_FAILURE,
