@@ -108,6 +108,13 @@ extern "C" {
     #define WOLFSSH_NO_SHA1
 #endif
 
+#if !defined(HAVE_ED25519) \
+    || !defined(WOLFSSL_ED25519_STREAMING_VERIFY) \
+    || !defined(HAVE_ED25519_KEY_IMPORT) \
+    || !defined(HAVE_ED25519_KEY_EXPORT)
+    #undef WOLFSSH_NO_ED25519
+    #define WOLFSSH_NO_ED25519
+#endif
 
 #if defined(NO_HMAC) || defined(WOLFSSH_NO_SHA1)
     #undef WOLFSSH_NO_HMAC_SHA1
@@ -155,7 +162,7 @@ extern "C" {
     #undef WOLFSSH_NO_ECDH_SHA2_NISTP521
     #define WOLFSSH_NO_ECDH_SHA2_NISTP521
 #endif
-#if !defined(HAVE_ED25519) || defined(NO_SHA256)
+#if !defined(HAVE_CURVE25519) || defined(NO_SHA256)
     #undef WOLFSSH_NO_ECDH_SHA2_ED25519
     #define WOLFSSH_NO_ECDH_SHA2_ED25519
 #endif
@@ -223,7 +230,7 @@ extern "C" {
     defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && \
     defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && \
     defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521) && \
-    !defined(HAVE_ED25519)
+    defined(WOLFSSH_NO_ED25519)
     #error "You need at least one signing algorithm."
 #endif
 
