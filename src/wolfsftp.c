@@ -2616,8 +2616,42 @@ static int SFTP_CreateLongName(WS_SFTPNAME* name)
     return WS_SUCCESS;
 }
 
+#if defined (WOLFSSH_SFTP_NAME_READDIR)
+/* helper function that gets file information from reading directory.
+ * Internally uses SFTP_Name_readdir to delegate the work to the User Filesystem.
+ *
+ * returns WS_SUCCESS on success
+ */
+static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
+                                    char* dirName)
+{
+    WOLFSSH_UNUSED(dirName);
+    int res;
 
-#ifdef WOLFSSL_NUCLEUS
+    if (dir == NULL || ssh == NULL || out == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    res = SFTP_Name_readdir(ssh->fs, dir, out);
+    if (res != WS_SUCCESS) {
+        return res;
+    }
+
+    if (out->fName == NULL) {
+        return WS_MEMORY_E;
+    }
+
+    /* Use attributes and fName to create long name */
+    if (SFTP_CreateLongName(out) != WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "Error creating long name for %s", out->fName);
+        WFREE(out->fName, out->heap, DYNTYPE_SFTP);
+        return WS_FATAL_ERROR;
+    }
+
+    return WS_SUCCESS;
+}
+
+#elif defined(WOLFSSL_NUCLEUS)
 /* For Nucleus port
  * helper function that gets file information from reading directory
  * @TODO allow user to override
@@ -3015,42 +3049,6 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
             WLOG(WS_LOG_SFTP, "Unable to get attribute values for %s",
                     out->fName);
         }
-    }
-
-    /* Use attributes and fName to create long name */
-    if (SFTP_CreateLongName(out) != WS_SUCCESS) {
-        WLOG(WS_LOG_DEBUG, "Error creating long name for %s", out->fName);
-        WFREE(out->fName, out->heap, DYNTYPE_SFTP);
-        return WS_FATAL_ERROR;
-    }
-
-    return WS_SUCCESS;
-}
-
-#elif defined(WOLFSSH_USER_FILESYSTEM) && defined(SFTP_Name_readdir)
-
-/* helper function that gets file information from reading directory.
- * Internally uses SFTP_Name_readdir to delegate the work to the User Filesystem.
- *
- * returns WS_SUCCESS on success
- */
-static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
-        char* dirName)
-{
-    WOLFSSH_UNUSED(dirName);
-    int res;
-
-    if (dir == NULL || ssh == NULL || out == NULL) {
-        return WS_BAD_ARGUMENT;
-    }
-
-    res = SFTP_Name_readdir(ssh->fs, dir, out);
-    if (res != WS_SUCCESS) {
-        return res;
-    }
-
-    if (out->fName == NULL) {
-        return WS_MEMORY_E;
     }
 
     /* Use attributes and fName to create long name */
