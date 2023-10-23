@@ -210,7 +210,7 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
     char *key;
     char *knownHosts = NULL;
     char *knownHostsName = NULL;
-    int ret = 0, found = 0, badMatch = 0;
+    int ret = 0, found = 0, badMatch = 0, requestAdd = 0;
     word32 sz;
     char encodedKey[1200];
     char pubKeyType[54];
@@ -247,6 +247,7 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
             keyType = strsep(&line, " ");
             key = strsep(&line, " ");
             if (name && keyType && key) {
+#if 0
                 if (strcmp(targetName, name) == 0
                         && strcmp(pubKeyType, keyType) == 0) {
                     if (strcmp(encodedKey, key) == 0) {
@@ -256,15 +257,56 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
                         badMatch = 1;
                     }
                 }
+                else {
+                    if (strcmp(encodedKey, key) == 0) {
+                        printf("Found key, but name is wrong.\n");
+                    }
+                }
+#endif
+                int nameMatch, keyTypeMatch, keyMatch;
+
+                nameMatch = strcmp(targetName , name) == 0;
+                keyTypeMatch = strcmp(pubKeyType, keyType) == 0;
+                keyMatch = strcmp(encodedKey, key) == 0;
+
+                if (nameMatch) {
+                    if (keyTypeMatch) {
+                        if (keyMatch) {
+                            found = 1;
+                            printf("key found/matched\n");
+                        }
+                        else {
+                            /* report mismatch */
+                            badMatch = 1;
+                            printf("key found/not matched\n");
+                        }
+                        break;
+                    }
+                }
+                else {
+                    if (keyTypeMatch) {
+                        if (keyMatch) {
+                            /* report key used on different address */
+                            requestAdd = 1;
+                            printf("key found/wrong name\n");
+                        }
+                    }
+                }
             }
         }
     }
     WFREE(knownHosts, NULL, 0);
 
     if (badMatch) {
+        printf("rejecting\n");
+        ret = -1;
+    }
+    else if (requestAdd) {
+        printf("requesting to add\n");
         ret = -1;
     }
     else if (!found) {
+        printf("adding\n");
         ret = AppendKeyToFile(knownHostsName,
                 targetName, pubKeyType, encodedKey);
     }
