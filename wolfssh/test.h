@@ -897,12 +897,14 @@ static INLINE void WaitTcpReady(func_args* args)
  * The tag WOLFSSL_THREAD is defined as a part of this compatibility, and
  * will also be checked for. Note that the following types and defines are
  * used by the examples to define themselves for use as threads by the test
- * tools, but they themselves do not use threading.
+ * tools, but they themselves do not use threading. Before v5.6.4, a new
+ * macro for return from threads was added.
  */
-#define WOLFSSL_V5_5_1 0x05005001
+#define WOLFSSL_V5_5_2 0x05005002
+#define WOLFSSL_V5_6_4 0x05006004
 
-#if (LIBWOLFSSL_VERSION_HEX < WOLFSSL_V5_5_1) && !defined(WOLFSSL_THREAD)
-    #define WOLFSSH_OLD_THREADING
+#if (LIBWOLFSSL_VERSION_HEX < WOLFSSL_V5_5_2) && !defined(WOLFSSL_THREAD)
+    #define WOLFSSH_OLDER_THREADING
     #ifdef SINGLE_THREADED
         typedef unsigned int  THREAD_RETURN;
         typedef void*         THREAD_TYPE;
@@ -927,11 +929,17 @@ static INLINE void WaitTcpReady(func_args* args)
     #define WOLFSSH_THREAD WOLFSSL_THREAD
 #endif
 
+#if (LIBWOLFSSL_VERSION_HEX < WOLFSSL_V5_6_4) \
+        && !defined(WOLFSSL_RETURN_FROM_THREAD)
+    #define WOLFSSL_RETURN_FROM_THREAD(x) return (THREAD_RETURN)(x)
+    #define WOLFSSH_OLD_THREADING
+#endif
+
 
 #ifdef WOLFSSH_TEST_THREADING
 
 
-#ifndef WOLFSSH_OLD_THREADING
+#if !defined(WOLFSSH_OLD_THREADING) && !defined(WOLFSSH_OLDER_THREADING)
 
 static INLINE void ThreadStart(THREAD_CB fun, void* args, THREAD_TYPE* thread)
 {
@@ -1056,7 +1064,7 @@ static INLINE void ThreadStartNoJoin(THREAD_FUNC fun, void* args)
     ThreadDetach(thread);
 }
 
-#endif /* WOLFSSH_OLD_THREADING */
+#endif /* !WOLFSSH_OLD_THREADING && !WOLFSSH_OLDER_THREADING */
 
 #endif /* WOLFSSH_TEST_THREADING */
 
