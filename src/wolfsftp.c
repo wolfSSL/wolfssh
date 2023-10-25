@@ -8481,6 +8481,14 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                     state->state = STATE_GET_CLEANUP;
                     continue;
                 }
+                if ((state->attrib.per & FILEATRB_PER_MASK_TYPE)
+                        != FILEATRB_PER_FILE) {
+                    WLOG(WS_LOG_SFTP, "Not a file");
+                    ssh->error = WS_SFTP_NOT_FILE_E;
+                    ret = WS_FATAL_ERROR;
+                    state->state = STATE_GET_CLEANUP;
+                    continue;
+                }
                 state->handleSz = WOLFSSH_MAX_HANDLE;
                 state->state = STATE_GET_OPEN_REMOTE;
                 NO_BREAK;
