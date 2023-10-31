@@ -1142,8 +1142,9 @@ static int ssh_worker(thread_ctx_t* threadCtx)
 
 #ifdef WOLFSSH_SFTP
 
-#define TEST_SFTP_TIMEOUT_NONE 0
+#define TEST_SFTP_TIMEOUT_SHORT 0
 #define TEST_SFTP_TIMEOUT 1
+#define TEST_SFTP_TIMEOUT_LONG 60
 
 /* handle SFTP operations
  * returns 0 on success
@@ -1165,8 +1166,17 @@ static int sftp_worker(thread_ctx_t* threadCtx)
             /* Yes, process the SFTP data. */
             ret = wolfSSH_SFTP_read(ssh);
             error = wolfSSH_get_error(ssh);
-            timeout = (ret == WS_REKEYING) ?
-                TEST_SFTP_TIMEOUT : TEST_SFTP_TIMEOUT_NONE;
+
+            if (ret == WS_REKEYING) {
+                timeout = TEST_SFTP_TIMEOUT;
+            }
+            else if (error == WS_WINDOW_FULL) {
+                timeout = TEST_SFTP_TIMEOUT_LONG;
+            }
+            else {
+                timeout = TEST_SFTP_TIMEOUT_SHORT;
+            }
+
             if (error == WS_WANT_READ || error == WS_WANT_WRITE ||
                 error == WS_CHAN_RXD || error == WS_REKEYING ||
                 error == WS_WINDOW_FULL)
@@ -1183,6 +1193,10 @@ static int sftp_worker(thread_ctx_t* threadCtx)
         selected = tcp_select(s, timeout);
         if (selected == WS_SELECT_ERROR_READY) {
             break;
+        }
+        else if (selected == WS_SELECT_TIMEOUT) {
+            timeout = TEST_SFTP_TIMEOUT_LONG;
+            continue;
         }
 
         if (ret == WS_WANT_READ || ret == WS_WANT_WRITE ||
@@ -1217,7 +1231,7 @@ static int sftp_worker(thread_ctx_t* threadCtx)
             ret = wolfSSH_SFTP_read(ssh);
             error = wolfSSH_get_error(ssh);
             timeout = (ret == WS_REKEYING) ?
-                TEST_SFTP_TIMEOUT : TEST_SFTP_TIMEOUT_NONE;
+                TEST_SFTP_TIMEOUT : TEST_SFTP_TIMEOUT_SHORT;
             if (error == WS_WANT_READ || error == WS_WANT_WRITE ||
                 error == WS_CHAN_RXD || error == WS_REKEYING ||
                 error == WS_WINDOW_FULL)
