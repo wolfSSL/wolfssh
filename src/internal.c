@@ -14034,6 +14034,64 @@ int SendChannelSuccess(WOLFSSH* ssh, word32 channelId, int success)
 }
 
 
+/* Sends out the channel exit-status msg
+ * returns WS_SUCCESS on success */
+int SendChannelExitStatus(WOLFSSH* ssh, word32 channelId, word32 exitStatus)
+{
+    byte* output;
+    word32 idx;
+    int ret = WS_SUCCESS;
+    WOLFSSH_CHANNEL* channel = NULL;
+    const char cType[] = "exit-status";
+    int typeSz;
+
+    WLOG(WS_LOG_DEBUG, "Entering SendChannelExitStatus()");
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
+        if (channel == NULL) {
+            WLOG(WS_LOG_DEBUG, "Invalid channel");
+            ret = WS_INVALID_CHANID;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        typeSz = (word32)WSTRLEN(cType);
+        ret = PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ + LENGTH_SZ +
+                                 typeSz + BOOLEAN_SZ + UINT32_SZ);
+    }
+
+    if (ret == WS_SUCCESS) {
+        output = ssh->outputBuffer.buffer;
+        idx = ssh->outputBuffer.length;
+
+        output[idx++] = MSGID_CHANNEL_REQUEST;
+        c32toa(channel->peerChannel, output + idx);
+        idx += UINT32_SZ;
+
+        c32toa(typeSz, output + idx);
+        idx += LENGTH_SZ;
+        WMEMCPY(output + idx, cType, typeSz);
+        idx += typeSz;
+        output[idx++] = 0; /* boolean of want reply is always false */
+        c32toa(exitStatus, output + idx);
+        idx += UINT32_SZ;
+
+        ssh->outputBuffer.length = idx;
+
+        ret = BundlePacket(ssh);
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = wolfSSH_SendPacket(ssh);
+
+    WLOG(WS_LOG_DEBUG, "Leaving SendChannelExitStatus(), ret = %d", ret);
+    return ret;
+}
+
+
 #if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
     !defined(NO_WOLFSSH_SERVER)
 /* cleans up absolute path

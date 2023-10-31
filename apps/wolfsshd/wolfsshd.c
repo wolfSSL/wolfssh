@@ -1308,7 +1308,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue opening shell");
             exit(1);
         }
-        exit(0); /* exit child process and close down SSH connection */
+        exit(ret); /* exit child process and close down SSH connection */
     }
 
     /* do not wait for status of child process, and signal that the child can
@@ -1454,6 +1454,16 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         }
     }
 
+    /* get return value of child process */
+    {
+        int waitStatus;
+        waitpid(-1, &waitStatus, WNOHANG);
+        if (wolfSSH_SendExitStatus(ssh, (word32)WEXITSTATUS(waitStatus)) !=
+                WS_SUCCESS) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue sending childs exit "
+                "status");
+        }
+    }
     (void)conn;
     return WS_SUCCESS;
 }

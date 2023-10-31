@@ -1375,6 +1375,21 @@ int wolfSSH_GetExitStatus(WOLFSSH* ssh)
     }
     return ssh->exitStatus;
 }
+
+
+/* Sends the commands exit status to the peer
+ * returns WS_SUCCESS on success */
+int wolfSSH_SendExitStatus(WOLFSSH* ssh, word32 exitStatus)
+{
+    if (ssh == NULL) {
+        WLOG(WS_LOG_DEBUG, "wolfSSH_SendExitStatus WOLFSSH struct was NULL");
+        return WS_BAD_ARGUMENT;
+    }
+    WLOG(WS_LOG_DEBUG, "wolfSSH_SendExitStatus sending exit status %u",
+        exitStatus);
+
+    return SendChannelExitStatus(ssh, ssh->defaultPeerChannelId, exitStatus);
+}
 #endif
 
 
