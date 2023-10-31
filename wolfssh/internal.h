@@ -822,6 +822,9 @@ struct WOLFSSH {
     byte* modes;
     word32 modesSz;
 #endif
+#if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
+    word32 exitStatus;
+#endif
 };
 
 

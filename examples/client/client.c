@@ -987,6 +987,11 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         }
     }
     WCLOSESOCKET(sockFd);
+
+#if defined(WOLFSSH_TERM) || defined(WOLFSH_SHELL)
+    ((func_args*)args)->return_code = wolfSSH_GetExitStatus(ssh);
+#endif
+
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
     if (ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E)

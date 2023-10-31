@@ -1365,6 +1365,19 @@ void wolfSSH_SetTerminalResizeCtx(WOLFSSH* ssh, void* usrCtx)
 #endif
 
 
+#if defined(WOLFSSH_TERM) || defined(WOLFSH_SHELL)
+/* returns the exit status captured from the connection if any */
+int wolfSSH_GetExitStatus(WOLFSSH* ssh)
+{
+    if (ssh == NULL) {
+        WLOG(WS_LOG_DEBUG, "wolfSSH_GetExitStatus WOLFSSH struct was NULL");
+        return WS_BAD_ARGUMENT;
+    }
+    return ssh->exitStatus;
+}
+#endif
+
+
 /* Used to set the channel request type sent in wolfSSH connect. The default
  * type set is shell if this function is not called.
  *

@@ -293,6 +293,7 @@ typedef int (*WS_CallbackTerminalSize)(WOLFSSH*, word32, word32, word32,
 WOLFSSH_API void wolfSSH_SetTerminalResizeCb(WOLFSSH* ssh,
     WS_CallbackTerminalSize cb);
 WOLFSSH_API void wolfSSH_SetTerminalResizeCtx(WOLFSSH* ssh, void* usrCtx);
+WOLFSSH_API int wolfSSH_GetExitStatus(WOLFSSH* ssh);
 
 
 enum WS_HighwaterSide {
