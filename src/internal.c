@@ -4303,7 +4303,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         /* Verify h with the server's public key. */
         if (ret == WS_SUCCESS) {
 #ifndef WOLFSSH_NO_RSA
-        int tmpIdx = begin;
+        int tmpIdx = begin - sigSz;
 #endif
             /* Skip past the sig name. Check it, though. Other SSH
              * implementations do the verify based on the name, despite what
