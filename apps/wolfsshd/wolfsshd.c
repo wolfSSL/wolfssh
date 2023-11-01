@@ -1140,6 +1140,12 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 HeapFree(GetProcessHeap(), 0, ext.lpAttributeList);
             }
 
+            if (wolfSSH_SendExitStatus(ssh, processState) !=
+                    WS_SUCCESS) {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue sending childs exit "
+                    "status");
+            }
+
             ClosePseudoConsole(pCon);
             CloseHandle(processInfo.hThread);
             CloseHandle(wolfSSHD_GetAuthToken(conn->auth));
