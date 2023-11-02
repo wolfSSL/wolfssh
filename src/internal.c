@@ -891,6 +891,7 @@ static int wolfSSH_KEY_init(WS_KeySignature* key, byte keyId, void* heap)
     int ret = WS_SUCCESS;
 
     if (key != NULL) {
+        WMEMSET(key, 0, sizeof(*key));
         key->keySigId = keyId;
 
         switch (keyId) {
@@ -1104,12 +1105,12 @@ static int GetOpenSshKey(WS_KeySignature *key,
     word32 keyCount = 0, strSz = 0, i;
     int ret = WS_SUCCESS;
 
-    if (strcmp(AuthMagic, (const char*)buf) != 0) {
+    if (WSTRCMP(AuthMagic, (const char*)buf) != 0) {
         ret = WS_KEY_AUTH_MAGIC_E;
     }
 
     if (ret == WS_SUCCESS) {
-        *idx += (word32)strlen(AuthMagic) + 1;
+        *idx += (word32)WSTRLEN(AuthMagic) + 1;
         ret = GetSkip(buf, len, idx); /* ciphername */
     }
 
@@ -9138,7 +9139,7 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
             sigKeyBlock_ptr->sk.ecc.primeName =
                     PrimeNameForId(ssh->handshake->pubKeyId);
             sigKeyBlock_ptr->sk.ecc.primeNameSz =
-                    (word32)strlen(sigKeyBlock_ptr->sk.ecc.primeName);
+                    (word32)WSTRLEN(sigKeyBlock_ptr->sk.ecc.primeName);
 
             /* Decode the user-configured ECDSA private key. */
             sigKeyBlock_ptr->sk.ecc.qSz =
@@ -9428,7 +9429,7 @@ int SendKexDhReply(WOLFSSH* ssh)
         sigKeyBlock_ptr->pubKeyName =
             IdToName(SigTypeForId(sigKeyBlock_ptr->pubKeyId));
         sigKeyBlock_ptr->pubKeyNameSz =
-                (word32)strlen(sigKeyBlock_ptr->pubKeyName);
+                (word32)WSTRLEN(sigKeyBlock_ptr->pubKeyName);
         sigKeyBlock_ptr->pubKeyFmtId = sigKeyBlock_ptr->pubKeyId;
         if (sigKeyBlock_ptr->pubKeyId == ID_RSA_SHA2_256
                 || sigKeyBlock_ptr->pubKeyId == ID_RSA_SHA2_512) {
@@ -9437,7 +9438,7 @@ int SendKexDhReply(WOLFSSH* ssh)
         sigKeyBlock_ptr->pubKeyFmtName =
                 IdToName(sigKeyBlock_ptr->pubKeyFmtId);
         sigKeyBlock_ptr->pubKeyFmtNameSz =
-                (word32)strlen(sigKeyBlock_ptr->pubKeyFmtName);
+                (word32)WSTRLEN(sigKeyBlock_ptr->pubKeyFmtName);
 
         switch (ssh->handshake->kexId) {
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256

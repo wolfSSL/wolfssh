@@ -1664,8 +1664,8 @@ static int DoOpenSshKey(const byte* in, word32 inSz, byte** out,
         newKey = *out;
     }
 
-    in += strlen(PrivBeginOpenSSH);
-    inSz -= (word32)(strlen(PrivBeginOpenSSH) + strlen(PrivEndOpenSSH) + 2);
+    in += WSTRLEN(PrivBeginOpenSSH);
+    inSz -= (word32)(WSTRLEN(PrivBeginOpenSSH) + WSTRLEN(PrivEndOpenSSH) + 2);
 
     ret = Base64_Decode((byte*)in, inSz, newKey, &newKeySz);
     if (ret == 0) {
