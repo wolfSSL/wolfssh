@@ -1497,12 +1497,13 @@ static int DoSshPubKey(const byte* in, word32 inSz, byte** out,
         word32* outSz, const byte** outType, word32* outTypeSz,
         void* heap)
 {
-    int ret = WS_SUCCESS;
     byte* newKey = NULL;
     char* c;
     char* last;
     char* type = NULL;
     char* key = NULL;
+    int ret = WS_SUCCESS;
+    word32 newKeySz, typeSz;
 
     WOLFSSH_UNUSED(inSz);
     WOLFSSH_UNUSED(heap);
@@ -1512,38 +1513,60 @@ static int DoSshPubKey(const byte* in, word32 inSz, byte** out,
        type AAAABASE64ENCODEDKEYDATA comment
     */
     c = WSTRDUP((const char*)in, heap, DYNTYPE_STRING);
-    type = WSTRTOK(c, " \n", &last);
-    key = WSTRTOK(NULL, " \n", &last);
-
-    if (type != NULL && key != NULL) {
-        const char* name;
-        word32 typeSz;
-        byte nameId;
-
-        typeSz = (word32)WSTRLEN(type);
-
-        nameId = NameToId(type, typeSz);
-        name = IdToName(nameId);
-        *outType = (const byte*)name;
-        *outTypeSz = typeSz;
-
-        if (*out == NULL) {
-            /* set size based on sanity check in wolfSSL base64 decode
-             * function */
-            *outSz = ((word32)WSTRLEN(key) * 3 + 3) / 4;
-            newKey = (byte*)WMALLOC(*outSz, heap, DYNTYPE_PRIVKEY);
-            if (newKey == NULL) {
-                return WS_MEMORY_E;
-            }
-            *out = newKey;
-        }
-
-        ret = Base64_Decode((byte*)key, (word32)WSTRLEN(key), *out, outSz);
+    if (c != NULL) {
+        type = WSTRTOK(c, " \n", &last);
+        key = WSTRTOK(NULL, " \n", &last);
+    }
+    else {
+        ret = WS_MEMORY_E;
     }
 
-    if (ret != 0) {
-        WLOG(WS_LOG_DEBUG, "Base64 decode of public key failed.");
-        ret = WS_PARSE_E;
+    if (ret == WS_SUCCESS) {
+        if (type == NULL || key == NULL) {
+            ret = WS_PARSE_E;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        typeSz = (word32)WSTRLEN(type);
+        /* set size based on sanity check in wolfSSL base64 decode
+         * function */
+        newKeySz = ((word32)WSTRLEN(key) * 3 + 3) / 4;
+        if (*out == NULL) {
+            newKey = (byte*)WMALLOC(*outSz, heap, DYNTYPE_PRIVKEY);
+            if (newKey == NULL) {
+                ret = WS_MEMORY_E;
+            }
+        }
+        else {
+            if (*outSz < newKeySz) {
+                WLOG(WS_LOG_DEBUG, "PEM private key output size too small");
+                ret = WS_BUFFER_E;
+            }
+            else {
+                newKey = *out;
+            }
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = Base64_Decode((byte*)key, (word32)WSTRLEN(key),
+                newKey, &newKeySz);
+
+        if (ret == 0) {
+            *out = newKey;
+            *outSz = newKeySz;
+            *outType = (const byte *)IdToName(NameToId(type, typeSz));
+            *outTypeSz = (word32)WSTRLEN((const char*)*outType);
+            ret = WS_SUCCESS;
+        }
+        else {
+            WLOG(WS_LOG_DEBUG, "Base64 decode of public key failed.");
+            if (*out == NULL) {
+                WFREE(newKey, heap, DYNTYPE_PRIVKEY);
+            }
+            ret = WS_PARSE_E;
+        }
     }
 
     WFREE(c, heap, DYNTYPE_STRING);
@@ -1565,7 +1588,6 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
         if (newKey == NULL) {
             return WS_MEMORY_E;
         }
-        *out = newKey;
     }
     else {
         if (*outSz < inSz) {
@@ -1574,14 +1596,22 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
         }
         newKey = *out;
     }
-    *outSz = inSz;
-    WMEMCPY(newKey, in, inSz);
 
     ret = IdentifyAsn1Key(in, inSz, 1, heap);
+
     if (ret > 0) {
+        *out = newKey;
+        *outSz = inSz;
+        WMEMCPY(newKey, in, inSz);
         *outType = (const byte*)IdToName(ret);
         *outTypeSz = (word32)WSTRLEN((const char*)*outType);
         ret = WS_SUCCESS;
+    }
+    else {
+        WLOG(WS_LOG_DEBUG, "unable to identify key");
+        if (*out == NULL) {
+            WFREE(newKey, heap, DYNTYPE_PRIVKEY);
+        }
     }
 
     return ret;
@@ -1599,11 +1629,10 @@ static int DoPemKey(const byte* in, word32 inSz, byte** out,
     WOLFSSH_UNUSED(heap);
 
     if (*out == NULL) {
-        newKey = (byte*)WMALLOC(newKeySz, heap, DYNTYPE_PRIVKEY);
+        newKey = (byte*)WMALLOC(inSz, heap, DYNTYPE_PRIVKEY);
         if (newKey == NULL) {
             return WS_MEMORY_E;
         }
-        *out = newKey;
     }
     else {
         if (*outSz < inSz) {
@@ -1626,14 +1655,19 @@ static int DoPemKey(const byte* in, word32 inSz, byte** out,
 
     if (ret == WS_SUCCESS) {
         ret = IdentifyAsn1Key(newKey, newKeySz, 1, heap);
-        if (ret > 0) {
-            *outSz = newKeySz;
-            *outType = (const byte*)IdToName(ret);
-            *outTypeSz = (word32)WSTRLEN((const char*)*outType);
-            ret = WS_SUCCESS;
-        }
-        else {
-            WLOG(WS_LOG_DEBUG, "unable to identify key");
+    }
+
+    if (ret > 0) {
+        *out = newKey;
+        *outSz = newKeySz;
+        *outType = (const byte*)IdToName(ret);
+        *outTypeSz = (word32)WSTRLEN((const char*)*outType);
+        ret = WS_SUCCESS;
+    }
+    else {
+        WLOG(WS_LOG_DEBUG, "unable to identify key");
+        if (*out == NULL) {
+            WFREE(newKey, heap, DYNTYPE_PRIVKEY);
         }
     }
 
@@ -1654,7 +1688,6 @@ static int DoOpenSshKey(const byte* in, word32 inSz, byte** out,
         if (newKey == NULL) {
             return WS_MEMORY_E;
         }
-        *out = newKey;
     }
     else {
         if (*outSz < inSz) {
@@ -1669,15 +1702,28 @@ static int DoOpenSshKey(const byte* in, word32 inSz, byte** out,
 
     ret = Base64_Decode((byte*)in, inSz, newKey, &newKeySz);
     if (ret == 0) {
+        ret = WS_SUCCESS;
+    }
+    else {
+        WLOG(WS_LOG_DEBUG, "Base64 decode of public key failed.");
+        ret = WS_PARSE_E;
+    }
+
+    if (ret == WS_SUCCESS) {
         ret = IdentifyOpenSshKey(newKey, newKeySz, heap);
-        if (ret > 0) {
-            *outSz = newKeySz;
-            *outType = (const byte*)IdToName(ret);
-            *outTypeSz = (word32)WSTRLEN((const char*)*outType);
-            ret = WS_SUCCESS;
-        }
-        else {
-            WLOG(WS_LOG_DEBUG, "unable to identify key");
+    }
+
+    if (ret > 0) {
+        *out = newKey;
+        *outSz = newKeySz;
+        *outType = (const byte*)IdToName(ret);
+        *outTypeSz = (word32)WSTRLEN((const char*)*outType);
+        ret = WS_SUCCESS;
+    }
+    else {
+        WLOG(WS_LOG_DEBUG, "unable to identify key");
+        if (*out == NULL) {
+            WFREE(newKey, heap, DYNTYPE_PRIVKEY);
         }
     }
 
