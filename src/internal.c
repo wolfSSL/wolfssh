@@ -1239,8 +1239,8 @@ static int GetOpenSshKey(WS_KeySignature *key,
                  * and the length of the comment delimit the end of the
                  * encrypted blob. No added padding required. */
                 if (ret == WS_SUCCESS) {
-                    if (strSz % 8 == 0) {
-                        if (strSz - subIdx > 0) {
+                    if (strSz % MIN_BLOCK_SZ == 0) {
+                        if (strSz > subIdx) {
                             /* The padding starts at 1. */
                             check2 = strSz - subIdx;
                             for (check1 = 1;
