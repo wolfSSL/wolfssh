@@ -861,25 +861,11 @@ typedef struct WS_KeySignature {
 #ifndef WOLFSSH_NO_RSA
         struct {
             RsaKey key;
-            byte e[256];
-            word32 eSz;
-            byte ePad;
-            byte n[256];
-            word32 nSz;
-            byte nPad;
         } rsa;
 #endif
 #ifndef WOLFSSH_NO_ECDSA
         struct {
             ecc_key key;
-            word32 keyBlobSz;
-            const char *keyBlobName;
-            word32 keyBlobNameSz;
-            byte q[256];
-            word32 qSz;
-            byte qPad;
-            const char *primeName;
-            word32 primeNameSz;
         } ecc;
 #endif
     } ks;
