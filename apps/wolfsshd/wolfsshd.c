@@ -1140,7 +1140,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 HeapFree(GetProcessHeap(), 0, ext.lpAttributeList);
             }
 
-            if (wolfSSH_SendExitStatus(ssh, processState) !=
+            if (wolfSSH_SetExitStatus(ssh, processState) !=
                     WS_SUCCESS) {
                 wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue sending childs exit "
                     "status");
@@ -1464,7 +1464,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     {
         int waitStatus;
         waitpid(-1, &waitStatus, WNOHANG);
-        if (wolfSSH_SendExitStatus(ssh, (word32)WEXITSTATUS(waitStatus)) !=
+        if (wolfSSH_SetExitStatus(ssh, (word32)WEXITSTATUS(waitStatus)) !=
                 WS_SUCCESS) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue sending childs exit "
                 "status");
@@ -1722,9 +1722,12 @@ static void* HandleConnection(void* arg)
                     break;
                 }
 
-                if (error != WS_WANT_READ && error != WS_WANT_WRITE) {
+                if (ret == WS_FATAL_ERROR &&
+                   (error != WS_WANT_READ &&
+                    error != WS_WANT_WRITE)) {
                     break;
                 }
+		usleep(1);
             }
 
             if (attempt == maxAttempt) {
@@ -1734,6 +1737,7 @@ static void* HandleConnection(void* arg)
         }
     }
 
+    /* check if there is a response to the shutdown */
     wolfSSH_free(ssh);
     if (conn != NULL) {
         WCLOSESOCKET(conn->fd);
