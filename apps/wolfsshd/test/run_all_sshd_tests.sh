@@ -52,6 +52,7 @@ run_test() {
 
 run_test "sshd_exec_test.sh"
 run_test "sshd_term_size_test.sh"
+run_test "error_return.sh"
 
 # add aditional tests here, check on var USING_LOCAL_HOST if can make sshd
 # server start/restart with changes
