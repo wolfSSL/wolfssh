@@ -1727,7 +1727,11 @@ static void* HandleConnection(void* arg)
                     error != WS_WANT_WRITE)) {
                     break;
                 }
-		usleep(1);
+            #ifdef _WIN32
+                Sleep(1);
+            #else
+                usleep(1);
+            #endif
             }
 
             if (attempt == maxAttempt) {
