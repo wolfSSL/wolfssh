@@ -976,7 +976,11 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
        if (ret == WS_SUCCESS ||
                (ret != WS_BAD_ARGUMENT && ssh->error == WS_WANT_WRITE)) {
            ret = SendChannelExit(ssh, ssh->channelList->peerChannel,
+           #if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
                ssh->exitStatus);
+           #else
+               0);
+           #endif
        }
 
        /* continue on success and in case where queing up send packets */
