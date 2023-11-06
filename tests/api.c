@@ -1051,6 +1051,14 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
         /* If the socket is closed on shutdown, peer is gone, this is OK. */
         argsCount = WS_SUCCESS;
     }
+
+#if DEFAULT_HIGHWATER_MARK < 8000
+    if (argsCount == WS_REKEYING) {
+        /* in cases where highwater mark is really small a re-key could happen */
+        argsCount = WS_SUCCESS;
+    }
+#endif
+
     AssertIntEQ(argsCount, WS_SUCCESS);
 
     wolfSSH_free(ssh);
