@@ -1533,7 +1533,7 @@ static int DoSshPubKey(const byte* in, word32 inSz, byte** out,
          * function */
         newKeySz = ((word32)WSTRLEN(key) * 3 + 3) / 4;
         if (*out == NULL) {
-            newKey = (byte*)WMALLOC(*outSz, heap, DYNTYPE_PRIVKEY);
+            newKey = (byte*)WMALLOC(newKeySz, heap, DYNTYPE_PRIVKEY);
             if (newKey == NULL) {
                 ret = WS_MEMORY_E;
             }
