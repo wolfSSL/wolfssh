@@ -1222,6 +1222,27 @@ int wolfSSH_global_request(WOLFSSH *ssh, const unsigned char* data, word32 dataS
 }
 
 
+int wolfSSH_extended_data_send(WOLFSSH* ssh, byte* buf, word32 bufSz)
+{
+    int bytesTxd = 0;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_extended_data_send()");
+
+    if (ssh == NULL || buf == NULL || ssh->channelList == NULL)
+        return WS_BAD_ARGUMENT;
+
+    if (ssh->isKeying) {
+        ssh->error = WS_REKEYING;
+        return WS_REKEYING;
+    }
+
+    bytesTxd = SendChannelExtendedData(ssh, ssh->channelList->channel, buf, bufSz);
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_extended_data_send(), txd = %d", bytesTxd);
+    return bytesTxd;
+}
+
+
 /* Reads pending data from extended data buffer. Currently can be used to get
  * STDERR information sent across the channel.
  * Returns the number of bytes read on success */
