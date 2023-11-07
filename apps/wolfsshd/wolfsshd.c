@@ -1200,15 +1200,17 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     }
 
     /* create pipes for stdout and stderr */
-    if (pipe(stdoutPipe) != 0) {
-        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue creating stdout pipe");
-        return WS_FATAL_ERROR;
-    }
-    if (pipe(stderrPipe) != 0) {
-        close(stdoutPipe[0]);
-        close(stderrPipe[1]);
-        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue creating stderr pipe");
-        return WS_FATAL_ERROR;
+    if (forcedCmd) {
+        if (pipe(stdoutPipe) != 0) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue creating stdout pipe");
+            return WS_FATAL_ERROR;
+        }
+        if (pipe(stderrPipe) != 0) {
+            close(stdoutPipe[0]);
+            close(stderrPipe[1]);
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue creating stderr pipe");
+            return WS_FATAL_ERROR;
+        }
     }
 
     ChildRunning = 1;
@@ -1229,25 +1231,27 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         signal(SIGINT,  SIG_DFL);
         signal(SIGCHLD, SIG_DFL);
 
-        close(stdoutPipe[0]);
-        close(stderrPipe[0]);
-        if (dup2(stdoutPipe[1], STDOUT_FILENO) == -1) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error redirecting stdout pipe");
-            if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
-                /* stop everything if not able to reduce permissions level */
-                exit(1);
-            }
+        if (forcedCmd) {
+            close(stdoutPipe[0]);
+            close(stderrPipe[0]);
+            if (dup2(stdoutPipe[1], STDOUT_FILENO) == -1) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Error redirecting stdout pipe");
+                if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+                    exit(1);
+                }
 
-            return WS_FATAL_ERROR;
-        }
-        if (dup2(stderrPipe[1], STDERR_FILENO) == -1) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error redirecting stderr pipe");
-            if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
-                /* stop everything if not able to reduce permissions level */
-                exit(1);
+                return WS_FATAL_ERROR;
             }
+            if (dup2(stderrPipe[1], STDERR_FILENO) == -1) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Error redirecting stderr pipe");
+                if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+                    exit(1);
+                }
 
-            return WS_FATAL_ERROR;
+                return WS_FATAL_ERROR;
+            }
         }
 
         /* set additional groups if needed */
@@ -1340,12 +1344,12 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             args[1] = "-c";
             args[2] = forcedCmd;
             ret = execv(cmd, (char**)args);
+            close(stdoutPipe[1]);
+            close(stderrPipe[1]);
         }
         else {
             ret = execv(cmd, (char**)args);
         }
-        close(stdoutPipe[1]);
-        close(stderrPipe[1]);
         if (ret && errno) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue opening shell");
             exit(1);
@@ -1395,8 +1399,10 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 #endif
 
     wolfSSH_SetTerminalResizeCtx(ssh, (void*)&childFd);
-    close(stdoutPipe[1]);
-    close(stderrPipe[1]);
+    if (forcedCmd) {
+        close(stdoutPipe[1]);
+        close(stderrPipe[1]);
+    }
 
     while (ChildRunning) {
         byte tmp[2];
@@ -1410,14 +1416,21 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         FD_SET(sshFd, &readFds);
         maxFd = sshFd;
 
-        /* select on stdout/stderr pipes */
-        FD_SET(stdoutPipe[0], &readFds);
-        if (stdoutPipe[0] > maxFd)
-            maxFd = stdoutPipe[0];
+        /* select on stdout/stderr pipes with forced commands */
+        if (forcedCmd) {
+            FD_SET(stdoutPipe[0], &readFds);
+            if (stdoutPipe[0] > maxFd)
+                maxFd = stdoutPipe[0];
 
-        FD_SET(stderrPipe[0], &readFds);
-        if (stderrPipe[0] > maxFd)
-            maxFd = stderrPipe[0];
+            FD_SET(stderrPipe[0], &readFds);
+            if (stderrPipe[0] > maxFd)
+                maxFd = stderrPipe[0];
+        }
+        else {
+            FD_SET(childFd, &readFds);
+            if (childFd > maxFd)
+                maxFd = childFd;
+        }
 
         if (wolfSSH_stream_peek(ssh, tmp, 1) <= 0) {
             rc = select((int)maxFd + 1, &readFds, NULL, NULL, NULL);
@@ -1475,48 +1488,77 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             }
         }
 
-        if (FD_ISSET(stderrPipe[0], &readFds)) {
-            cnt_r = (int)read(stderrPipe[0], shellBuffer, sizeof shellBuffer);
-            /* This read will return 0 on EOF */
-            if (cnt_r <= 0) {
-                int err = errno;
-                if (err != EAGAIN) {
-                    break;
+        if (forcedCmd) {
+            if (FD_ISSET(stderrPipe[0], &readFds)) {
+                cnt_r = (int)read(stderrPipe[0], shellBuffer,
+                    sizeof shellBuffer);
+                /* This read will return 0 on EOF */
+                if (cnt_r <= 0) {
+                    int err = errno;
+                    if (err != EAGAIN) {
+                        break;
+                    }
+                }
+                else {
+                    if (cnt_r > 0) {
+                        cnt_w = wolfSSH_extended_data_send(ssh, shellBuffer,
+                            cnt_r);
+                        if (cnt_w == WS_WINDOW_FULL) {
+                            windowFull = 1;
+                            continue;
+                        }
+                        else if (cnt_w < 0)
+                            break;
+                    }
                 }
             }
-            else {
-                if (cnt_r > 0) {
-                    cnt_w = wolfSSH_extended_data_send(ssh, shellBuffer, cnt_r);
-                    if (cnt_w == WS_WINDOW_FULL) {
-                        windowFull = 1;
-                        continue;
-                    }
-                    else if (cnt_w < 0)
+
+            /* handle stdout */
+            if (FD_ISSET(stdoutPipe[0], &readFds)) {
+                cnt_r = (int)read(stdoutPipe[0], shellBuffer,
+                    sizeof shellBuffer);
+                /* This read will return 0 on EOF */
+                if (cnt_r <= 0) {
+                    int err = errno;
+                    if (err != EAGAIN) {
                         break;
+                    }
+                }
+                else {
+                    if (cnt_r > 0) {
+                        cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
+                                shellBuffer, cnt_r);
+                        if (cnt_w == WS_WINDOW_FULL) {
+                            windowFull = 1;
+                            continue;
+                        }
+                        else if (cnt_w < 0)
+                            break;
+                    }
                 }
             }
         }
-
-        /* handle stdout */
-        if (FD_ISSET(stdoutPipe[0], &readFds)) {
-            cnt_r = (int)read(stdoutPipe[0], shellBuffer, sizeof shellBuffer);
-            /* This read will return 0 on EOF */
-            if (cnt_r <= 0) {
-                int err = errno;
-                if (err != EAGAIN) {
-                    break;
-                }
-            }
-            else {
-                if (cnt_r > 0) {
-                    cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
-                            shellBuffer, cnt_r);
-                    if (cnt_w == WS_WINDOW_FULL) {
-                        windowFull = 1;
-                        continue;
-                    }
-                    else if (cnt_w < 0)
+        else {
+            if (FD_ISSET(childFd, &readFds)) {
+                cnt_r = (int)read(childFd, shellBuffer, sizeof shellBuffer);
+                /* This read will return 0 on EOF */
+                if (cnt_r <= 0) {
+                    int err = errno;
+                    if (err != EAGAIN) {
                         break;
+                    }
+                }
+                else {
+                    if (cnt_r > 0) {
+                        cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
+                                shellBuffer, cnt_r);
+                        if (cnt_w == WS_WINDOW_FULL) {
+                            windowFull = 1;
+                            continue;
+                        }
+                        else if (cnt_w < 0)
+                            break;
+                    }
                 }
             }
         }
@@ -1543,8 +1585,10 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             }
         }
     }
-    close(stdoutPipe[0]);
-    close(stderrPipe[0]);
+    if (forcedCmd) {
+        close(stdoutPipe[0]);
+        close(stderrPipe[0]);
+    }
 
     (void)conn;
     return WS_SUCCESS;
