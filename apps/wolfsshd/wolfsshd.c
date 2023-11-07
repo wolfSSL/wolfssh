@@ -1585,7 +1585,20 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             }
         }
     }
+
+    /* check for any left over data in pipes then close them */
     if (forcedCmd) {
+        int readSz;
+
+        readSz = (int)read(stdoutPipe[0], shellBuffer, sizeof shellBuffer);
+        if (readSz > 0) {
+            wolfSSH_ChannelIdSend(ssh, shellChannelId, shellBuffer, readSz);
+        }
+
+        readSz = (int)read(stderrPipe[0], shellBuffer, sizeof shellBuffer);
+        if (readSz > 0) {
+            wolfSSH_extended_data_send(ssh, shellBuffer, readSz);
+        }
         close(stdoutPipe[0]);
         close(stderrPipe[0]);
     }
