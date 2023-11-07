@@ -717,7 +717,7 @@ struct WOLFSSH {
     word32 defaultPeerChannelId;
     word32 connectChannelId;
     byte channelName[WOLFSSH_MAX_CHN_NAMESZ];
-    byte channelNameSz;
+    word32 channelNameSz;
     word32 lastRxId;
 
     WOLFSSH_BUFFER inputBuffer;

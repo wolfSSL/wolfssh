@@ -1173,10 +1173,14 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 #ifndef EXAMPLE_BUFFER_SZ
     #define EXAMPLE_BUFFER_SZ 4096
 #endif
+#ifndef MAX_IDLE_COUNT
+    #define MAX_IDLE_COUNT 2
+#endif
     byte shellBuffer[EXAMPLE_BUFFER_SZ];
     byte channelBuffer[EXAMPLE_BUFFER_SZ];
     char* forcedCmd;
     int   windowFull = 0;
+    int   idle = 0;
 
     forcedCmd = wolfSSHD_ConfigGetForcedCmd(usrConf);
 
@@ -1404,13 +1408,15 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         close(stderrPipe[1]);
     }
 
-    while (ChildRunning) {
+    while (idle < MAX_IDLE_COUNT) {
         byte tmp[2];
         fd_set readFds;
         WS_SOCKET_T maxFd;
         int cnt_r;
         int cnt_w;
         int pending = 0;
+
+        idle++; /* increment idle count, gets reset if not idle */
 
         FD_ZERO(&readFds);
         FD_SET(sshFd, &readFds);
@@ -1439,6 +1445,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         }
         else {
             pending = 1; /* found some pending SSH data */
+            idle    = 0;
         }
 
         if (windowFull || pending || FD_ISSET(sshFd, &readFds)) {
@@ -1454,6 +1461,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             if (cnt_r < 0) {
                 rc = wolfSSH_get_error(ssh);
                 if (rc == WS_CHAN_RXD) {
+                    idle = 0;
                     if (lastChannel == shellChannelId) {
                         cnt_r = wolfSSH_ChannelIdRead(ssh, shellChannelId,
                                 channelBuffer,
@@ -1481,6 +1489,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     shellBuffer, cnt_r);
             if (cnt_w == WS_WINDOW_FULL) {
                 windowFull = 1;
+                idle = 0;
                 continue;
             }
             else {
@@ -1495,12 +1504,13 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 /* This read will return 0 on EOF */
                 if (cnt_r <= 0) {
                     int err = errno;
-                    if (err != EAGAIN) {
+                    if (err != EAGAIN && err != 0) {
                         break;
                     }
                 }
                 else {
                     if (cnt_r > 0) {
+                        idle = 0;
                         cnt_w = wolfSSH_extended_data_send(ssh, shellBuffer,
                             cnt_r);
                         if (cnt_w == WS_WINDOW_FULL) {
@@ -1520,12 +1530,13 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 /* This read will return 0 on EOF */
                 if (cnt_r <= 0) {
                     int err = errno;
-                    if (err != EAGAIN) {
+                    if (err != EAGAIN && err != 0) {
                         break;
                     }
                 }
                 else {
                     if (cnt_r > 0) {
+                        idle = 0;
                         cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
                                 shellBuffer, cnt_r);
                         if (cnt_w == WS_WINDOW_FULL) {
@@ -1544,12 +1555,13 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 /* This read will return 0 on EOF */
                 if (cnt_r <= 0) {
                     int err = errno;
-                    if (err != EAGAIN) {
+                    if (err != EAGAIN && err != 0) {
                         break;
                     }
                 }
                 else {
                     if (cnt_r > 0) {
+                        idle = 0;
                         cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
                                 shellBuffer, cnt_r);
                         if (cnt_w == WS_WINDOW_FULL) {
@@ -1561,6 +1573,10 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     }
                 }
             }
+        }
+
+        if (ChildRunning && idle) {
+            idle = 0; /* waiting on child process */
         }
     }
 
