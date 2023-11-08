@@ -162,12 +162,26 @@ static void modes_clear(void)
 {
     WOLFSSH_TERMIOS term = oldTerm;
 
-    term.c_lflag &= ~(ICANON | ISIG | IEXTEN | ECHO | ECHOE | ECHOK
-            | ECHONL | ECHOPRT | NOFLSH | TOSTOP | FLUSHO
-            | PENDIN | EXTPROC);
+    term.c_lflag &= ~(ICANON | ISIG | IEXTEN | ECHO | ECHOE
+        | ECHOK | ECHONL | NOFLSH | TOSTOP);
 
-    term.c_iflag &= ~(ISTRIP | INLCR | ICRNL | IGNCR | IXON | IXOFF
-            | IXANY | IGNBRK | INPCK | PARMRK);
+    /* check macros set for some BSD dependent and missing on
+     * QNX flags */
+#ifdef ECHOPRT
+    term.c_lflag &= ~(ECHOPRT);
+#endif
+#ifdef FLUSHO
+    term.c_lflag &= ~(FLUSHO);
+#endif
+#ifdef PENDIN
+    term.c_lflag &= ~(PENDIN);
+#endif
+#ifdef EXTPROC
+    term.c_lflag &= ~(EXTPROC);
+#endif
+
+    term.c_iflag &= ~(ISTRIP | INLCR | ICRNL | IGNCR | IXON
+        | IXOFF | IXANY | IGNBRK | INPCK | PARMRK);
 #ifdef IUCLC
     term.c_iflag &= ~IUCLC;
 #endif
@@ -178,8 +192,10 @@ static void modes_clear(void)
     term.c_oflag &= ~OLCUC;
 #endif
 
-    term.c_cflag &= ~(CSTOPB | PARENB | PARODD | CLOCAL | CRTSCTS);
-
+    term.c_cflag &= ~(CSTOPB | PARENB | PARODD | CLOCAL);
+#ifdef CRTSCTS
+    term.c_cflag &= ~(CRTSCTS);
+#endif
     tcsetattr(STDIN_FILENO, TCSANOW, &term);
 }
 

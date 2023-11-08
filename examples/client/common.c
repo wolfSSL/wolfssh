@@ -556,8 +556,22 @@ int ClientSetEcho(int type)
             newTerm.c_lflag &= ~ECHO;
             if (type == 2) {
                 newTerm.c_lflag &= ~(ICANON | ISIG | IEXTEN | ECHO | ECHOE
-                | ECHOK | ECHONL | ECHOPRT | NOFLSH | TOSTOP | FLUSHO
-                | PENDIN | EXTPROC);
+                    | ECHOK | ECHONL | NOFLSH | TOSTOP);
+
+                /* check macros set for some BSD dependent and not missing on
+                 * QNX flags */
+            #ifdef ECHOPRT
+                newTerm.c_lflag &= ~(ECHOPRT);
+            #endif
+            #ifdef FLUSHO
+                newTerm.c_lflag &= ~(FLUSHO);
+            #endif
+            #ifdef PENDIN
+                newTerm.c_lflag &= ~(PENDIN);
+            #endif
+            #ifdef EXTPROC
+                newTerm.c_lflag &= ~(EXTPROC);
+            #endif
 
                 newTerm.c_iflag &= ~(ISTRIP | INLCR | ICRNL | IGNCR | IXON
                 | IXOFF | IXANY | IGNBRK | INPCK | PARMRK);
@@ -571,8 +585,10 @@ int ClientSetEcho(int type)
                 newTerm.c_oflag &= ~OLCUC;
             #endif
 
-                newTerm.c_cflag &= ~(CSTOPB | PARENB | PARODD | CLOCAL
-                | CRTSCTS);
+                newTerm.c_cflag &= ~(CSTOPB | PARENB | PARODD | CLOCAL);
+            #ifdef CRTSCTS
+                newTerm.c_cflag &= ~(CRTSCTS);
+            #endif
             }
             else {
                 newTerm.c_lflag |= (ICANON | ECHONL);
