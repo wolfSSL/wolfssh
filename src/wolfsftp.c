@@ -5099,7 +5099,7 @@ static int SFTP_SetMode(void* fs, char* name, word32 mode) {
 }
 #endif
 
-#if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_SFTP_SETMODEHANDLE)
+#if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR) && !defined(WOLFSSH_SFTP_SETMODEHANDLE)
 /* Set the files mode
  * return WS_SUCCESS on success */
 static int SFTP_SetModeHandle(void* fs, WFD handle, word32 mode) {
