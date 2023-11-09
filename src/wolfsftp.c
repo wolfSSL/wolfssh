@@ -5087,19 +5087,29 @@ int wolfSSH_SFTP_RecvLSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     return ret;
 }
 
-
-#if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR)
+#if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR) && !defined(WOLFSSH_SFTP_SETMODE)
 /* Set the files mode
  * return WS_SUCCESS on success */
-static int SFTP_SetMode(WOLFSSH* ssh, char* name, word32 mode) {
-    WOLFSSH_UNUSED(ssh);
-    if (WCHMOD(ssh->fs, name, mode) != 0) {
+static int SFTP_SetMode(void* fs, char* name, word32 mode) {
+    WOLFSSH_UNUSED(fs)
+    if (WCHMOD(fs, name, mode) != 0) {
         return WS_BAD_FILE_E;
     }
     return WS_SUCCESS;
 }
 #endif
 
+#if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_SFTP_SETMODEHANDLE)
+/* Set the files mode
+ * return WS_SUCCESS on success */
+static int SFTP_SetModeHandle(void* fs, WFD handle, word32 mode) {
+    WOLFSSH_UNUSED(fs)
+    if (WFCHMOD(fs, handle, mode) != 0) {
+        return WS_BAD_FILE_E;
+    }
+    return WS_SUCCESS;
+}
+#endif
 
 #if !defined(_WIN32_WCE) && !defined(WOLFSSH_ZEPHYR)
 
@@ -5122,7 +5132,7 @@ static int SFTP_SetFileAttributes(WOLFSSH* ssh, char* name, WS_SFTP_FILEATRB* at
 #if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR)
     /* check if permissions attribute present */
     if (atr->flags & WOLFSSH_FILEATRB_PERM) {
-        ret = SFTP_SetMode(ssh, name, atr->per);
+        ret = SFTP_SetMode(ssh->fs, name, atr->per);
     }
 #endif
 
@@ -5162,9 +5172,7 @@ static int SFTP_SetFileAttributesHandle(WOLFSSH* ssh, WFD handle, WS_SFTP_FILEAT
 #ifndef USE_WINDOWS_API
     /* check if permissions attribute present */
     if (atr->flags & WOLFSSH_FILEATRB_PERM) {
-         if (WFCHMOD(ssh->fs, handle, atr->per) != 0) {
-           ret = WS_BAD_FILE_E;
-        }
+        ret = SFTP_SetModeHandle(ssh->fs, handle, atr->per);
     }
 #endif
 
