@@ -2171,8 +2171,9 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 #endif
 
-    fileHandle = WS_CreateFileA(dir, desiredAccess, 0, creationDisp,
-            FILE_ATTRIBUTE_NORMAL, ssh->ctx->heap);
+    fileHandle = WS_CreateFileA(dir, desiredAccess,
+            (FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE),
+            creationDisp, FILE_ATTRIBUTE_NORMAL, ssh->ctx->heap);
     if (fileHandle == INVALID_HANDLE_VALUE) {
         WLOG(WS_LOG_SFTP, "Error opening file %s", dir);
         res = oer;
@@ -8512,8 +8513,9 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                         if (state->gOfst > 0)
                             desiredAccess |= FILE_APPEND_DATA;
                         state->fileHandle = WS_CreateFileA(to, desiredAccess,
-                                0, CREATE_ALWAYS,
-                                FILE_ATTRIBUTE_NORMAL, ssh->ctx->heap);
+                            (FILE_SHARE_DELETE | FILE_SHARE_READ |
+                             FILE_SHARE_WRITE), CREATE_ALWAYS,
+                            FILE_ATTRIBUTE_NORMAL, ssh->ctx->heap);
                     }
                     if (resume) {
                         WMEMSET(&state->offset, 0, sizeof(OVERLAPPED));
