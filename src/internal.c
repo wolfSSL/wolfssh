@@ -957,29 +957,6 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap)
             wc_FreeRsaKey(&key->ks.rsa.key);
         }
 #endif /* WOLFSSH_NO_RSA */
-#if !defined(WOLFSSH_NO_ED25519)
-    if (key != NULL) {
-        if (keyId == ID_UNKNOWN) {
-            idx = 0;
-            ret = wc_ed25519_init_ex(&key->ed, heap, INVALID_DEVID);
-
-            if(ret == 0) {
-                if (isPrivate) {
-                    ret = wc_Ed25519PrivateKeyDecode(in, &idx, &key->ed, inSz);
-                }
-                else {
-                    ret = wc_Ed25519PublicKeyDecode(in, &idx, &key->ed, inSz);
-                }
-            }
-
-            /* If decode was successful, this is a Ed25519 key. */
-            if(ret == 0)
-                keyId = ID_ED25519;
-
-            wc_ed25519_free(&key->ed);
-        }
-    }
-#endif /* WOLFSSH_NO_ED25519 */
 #ifndef WOLFSSH_NO_ECDSA
         /* Check ECDSA key */
         if (key->keySigId == ID_UNKNOWN) {
@@ -1015,6 +992,29 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap)
             wc_ecc_free(&key->ks.ecc.key);
         }
 #endif /* WOLFSSH_NO_ECDSA */
+#if !defined(WOLFSSH_NO_ED25519)
+    if (key != NULL) {
+        if (key->keySigId == ID_UNKNOWN) {
+            idx = 0;
+            ret = wc_ed25519_init_ex(&key->ks.ed25519.key, heap, INVALID_DEVID);
+
+            if(ret == 0) {
+                if (isPrivate) {
+                    ret = wc_Ed25519PrivateKeyDecode(in, &idx, &key->ks.ed25519.key, inSz);
+                }
+                else {
+                    ret = wc_Ed25519PublicKeyDecode(in, &idx, &key->ks.ed25519.key, inSz);
+                }
+            }
+
+            /* If decode was successful, this is a Ed25519 key. */
+            if(ret == 0)
+                key->keySigId = ID_ED25519;
+
+            wc_ed25519_free(&key->ks.ed25519.key);
+        }
+    }
+#endif /* WOLFSSH_NO_ED25519 */
 
         if (key->keySigId == ID_UNKNOWN) {
             ret = WS_UNIMPLEMENTED_E;
