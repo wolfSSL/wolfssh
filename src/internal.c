@@ -5458,7 +5458,7 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
     if (authFailure || partialSuccess) {
         ret = SendUserAuthFailure(ssh, partialSuccess);
     }
-    else {
+    else if (ret == WS_SUCCESS) {
         ssh->clientState = CLIENT_USERAUTH_DONE;
     }
 
