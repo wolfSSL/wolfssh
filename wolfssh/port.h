@@ -1390,7 +1390,7 @@ extern "C" {
 
 
 #ifndef WOLFSSH_UNUSED
-    #define WOLFSSH_UNUSED(arg) (void)(arg);
+    #define WOLFSSH_UNUSED(arg) (void)(arg)
 #endif
 
 

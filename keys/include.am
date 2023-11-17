@@ -22,5 +22,6 @@ EXTRA_DIST+= \
             keys/server-cert.der keys/server-cert.pem \
             keys/fred-cert.der keys/fred-cert.pem \
             keys/server-key.pem keys/fred-key.der keys/fred-key.pem \
+            keys/id_ecdsa keys/id_ecdsa.pub keys/id_rsa keys/id_rsa.pub \
             keys/renewcerts.sh keys/renewcerts.cnf
 
