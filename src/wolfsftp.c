@@ -7475,6 +7475,9 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                         WLOG(WS_LOG_SFTP, "OK or EOF found");
                         ret = 0; /* nothing was read */
                     }
+                    else {
+                        ret = WS_FATAL_ERROR;
+                    }
                 }
                 state->state = STATE_SEND_READ_CLEANUP;
                 NO_BREAK;
