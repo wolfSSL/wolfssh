@@ -5091,7 +5091,7 @@ int wolfSSH_SFTP_RecvLSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 /* Set the files mode
  * return WS_SUCCESS on success */
 static int SFTP_SetMode(void* fs, char* name, word32 mode) {
-    WOLFSSH_UNUSED(fs)
+    WOLFSSH_UNUSED(fs);
     if (WCHMOD(fs, name, mode) != 0) {
         return WS_BAD_FILE_E;
     }
@@ -5103,7 +5103,7 @@ static int SFTP_SetMode(void* fs, char* name, word32 mode) {
 /* Set the files mode
  * return WS_SUCCESS on success */
 static int SFTP_SetModeHandle(void* fs, WFD handle, word32 mode) {
-    WOLFSSH_UNUSED(fs)
+    WOLFSSH_UNUSED(fs);
     if (WFCHMOD(fs, handle, mode) != 0) {
         return WS_BAD_FILE_E;
     }
