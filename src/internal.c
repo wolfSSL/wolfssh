@@ -137,6 +137,8 @@ Flags:
     Set when all ECDH algorithms are disabled. Set to disable use of all ECDH
     algorithms for key agreement. Setting this will force all ECDH key agreement
     algorithms off.
+  WOLFSSH_KEY_QUANTITY_REQ
+    Number of keys required to be in an OpenSSH-style key wrapper.
 */
 
 static const char sshProtoIdStr[] = "SSH-2.0-wolfSSHv"
@@ -424,6 +426,9 @@ const char* GetErrorString(int err)
 
         case WS_KEY_CHECK_VAL_E:
             return "key check value error";
+
+        case WS_KEY_FORMAT_E:
+            return "key format wrong error";
 
         default:
             return "Unknown error code";
@@ -872,58 +877,22 @@ typedef struct WS_KeySignature {
 } WS_KeySignature;
 
 
-static int wolfSSH_KEY_init(WS_KeySignature* key, byte keyId, void* heap)
+static void wolfSSH_KEY_clean(WS_KeySignature* key)
 {
-    int ret = WS_SUCCESS;
-
     if (key != NULL) {
-        WMEMSET(key, 0, sizeof(*key));
-        key->keySigId = keyId;
-
-        switch (keyId) {
+        if (key->keySigId == ID_SSH_RSA) {
 #ifndef WOLFSSH_NO_RSA
-            case ID_SSH_RSA:
-                ret = wc_InitRsaKey(&key->ks.rsa.key, heap);
-                break;
+            wc_FreeRsaKey(&key->ks.rsa.key);
 #endif
+        }
+        else if (key->keySigId == ID_ECDSA_SHA2_NISTP256 ||
+                key->keySigId == ID_ECDSA_SHA2_NISTP384 ||
+                key->keySigId == ID_ECDSA_SHA2_NISTP521) {
 #ifndef WOLFSSH_NO_ECDSA
-            case ID_ECDSA_SHA2_NISTP256:
-                ret = wc_ecc_init_ex(&key->ks.ecc.key, heap, INVALID_DEVID);
-                break;
+            wc_ecc_free(&key->ks.ecc.key);
 #endif
-            default:
-                ret = WS_INVALID_ALGO_ID;
         }
     }
-
-    return ret;
-}
-
-
-static int wolfSSH_KEY_clean(WS_KeySignature* key)
-{
-    int ret = WS_SUCCESS;
-
-    if (key != NULL) {
-        switch (key->keySigId) {
-#ifndef WOLFSSH_NO_RSA
-            case ID_SSH_RSA:
-                wc_FreeRsaKey(&key->ks.rsa.key);
-                break;
-#endif
-#ifndef WOLFSSH_NO_ECDSA
-            case ID_ECDSA_SHA2_NISTP256:
-            case ID_ECDSA_SHA2_NISTP384:
-            case ID_ECDSA_SHA2_NISTP521:
-                wc_ecc_free(&key->ks.ecc.key);
-                break;
-#endif
-            default:
-                ret = WS_INVALID_ALGO_ID;
-        }
-    }
-
-    return ret;
 }
 
 
@@ -1083,7 +1052,9 @@ static int GetOpenSshKeyRsa(RsaKey* key,
 {
     int ret;
 
-    ret = GetMpintToMp(&key->n, buf, len, idx);
+    ret = wc_InitRsaKey(key, NULL);
+    if (ret == WS_SUCCESS)
+        ret = GetMpintToMp(&key->n, buf, len, idx);
     if (ret == WS_SUCCESS)
         ret = GetMpintToMp(&key->e, buf, len, idx);
     if (ret == WS_SUCCESS)
@@ -1116,7 +1087,9 @@ static int GetOpenSshKeyEcc(ecc_key* key,
     word32 nameSz = 0, privSz = 0, pubSz = 0;
     int ret;
 
-    ret = GetStringRef(&nameSz, &name, buf, len, idx); /* curve name */
+    ret = wc_ecc_init(key);
+    if (ret == WS_SUCCESS)
+        ret = GetStringRef(&nameSz, &name, buf, len, idx); /* curve name */
     if (ret == WS_SUCCESS)
         ret = GetStringRef(&pubSz, &pub, buf, len, idx); /* Q */
     if (ret == WS_SUCCESS)
@@ -1141,7 +1114,7 @@ static int GetOpenSshKey(WS_KeySignature *key,
 {
     const char AuthMagic[] = "openssh-key-v1";
     const byte* str = NULL;
-    word32 keyCount = 0, strSz = 0, i;
+    word32 keyCount = 0, strSz, i;
     int ret = WS_SUCCESS;
 
     if (WSTRCMP(AuthMagic, (const char*)buf) != 0) {
@@ -1162,18 +1135,29 @@ static int GetOpenSshKey(WS_KeySignature *key,
     if (ret == WS_SUCCESS)
         ret = GetUint32(&keyCount, buf, len, idx); /* key count */
 
-    for (i = 0; i < keyCount; i++) {
-        if (ret == WS_SUCCESS)
-            ret = GetStringRef(&strSz, &str, buf, len, idx); /* public buf */
+    if (ret == WS_SUCCESS) {
+        if (keyCount != WOLFSSH_KEY_QUANTITY_REQ) {
+            ret = WS_KEY_FORMAT_E;
+        }
     }
 
-    if (keyCount > 0) {
-        if (ret == WS_SUCCESS) {
-            ret = GetStringRef(&strSz, &str, buf, len, idx);
-                    /* list of private keys */
+    if (ret == WS_SUCCESS) {
+        strSz = 0;
+        ret = GetStringRef(&strSz, &str, buf, len, idx);
+                /* public buf */
+    }
+
+    if (ret == WS_SUCCESS) {
+        strSz = 0;
+        ret = GetStringRef(&strSz, &str, buf, len, idx);
+                /* list of private keys */
+
+        /* If there isn't a private key, the key file is bad. */
+        if (ret == WS_SUCCESS && strSz == 0) {
+            ret = WS_KEY_FORMAT_E;
         }
 
-        if (strSz > 0) {
+        if (ret == WS_SUCCESS) {
             const byte* subStr = NULL;
             word32 subStrSz = 0, subIdx = 0, check1 = 0, check2 = ~0;
             byte keyId;
@@ -1194,7 +1178,7 @@ static int GetOpenSshKey(WS_KeySignature *key,
                             str, strSz, &subIdx);
                     if (ret == WS_SUCCESS) {
                         keyId = NameToId((const char*)subStr, subStrSz);
-                        ret = wolfSSH_KEY_init(key, keyId, NULL);
+                        key->keySigId = keyId;
                     }
                     if (ret == WS_SUCCESS) {
                         switch (keyId) {
@@ -1273,7 +1257,7 @@ int IdentifyOpenSshKey(const byte* in, word32 inSz, void* heap)
     }
     else {
         WMEMSET(key, 0, sizeof(*key));
-        key->keySigId = ID_UNKNOWN;
+        key->keySigId = ID_NONE;
 
         ret = GetOpenSshKey(key, in, inSz, &idx);
 
@@ -12068,23 +12052,6 @@ static int BuildUserAuthRequestPublicKey(WOLFSSH* ssh,
 }
 
 
-static void CleanupUserAuthRequestPublicKey(WS_KeySignature* keySig)
-{
-    if (keySig != NULL) {
-        if (keySig->keySigId == ID_SSH_RSA) {
-#ifndef WOLFSSH_NO_RSA
-            wc_FreeRsaKey(&keySig->ks.rsa.key);
-#endif
-        }
-        else if (keySig->keySigId == ID_ECDSA_SHA2_NISTP256 ||
-                keySig->keySigId == ID_ECDSA_SHA2_NISTP384 ||
-                keySig->keySigId == ID_ECDSA_SHA2_NISTP521) {
-#ifndef WOLFSSH_NO_ECDSA
-            wc_ecc_free(&keySig->ks.ecc.key);
-#endif
-        }
-    }
-}
 #endif
 
 
@@ -12234,7 +12201,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
     }
 
     if (authId == ID_USERAUTH_PUBLICKEY)
-        CleanupUserAuthRequestPublicKey(keySig_ptr);
+        wolfSSH_KEY_clean(keySig_ptr);
 
     if (ret == WS_SUCCESS) {
         ret = wolfSSH_SendPacket(ssh);

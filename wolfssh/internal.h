@@ -424,6 +424,9 @@ enum {
 #ifndef WOLFSSH_MAX_PUB_KEY_ALGO
     #define WOLFSSH_MAX_PUB_KEY_ALGO (WOLFSSH_MAX_PVT_KEYS + 2)
 #endif
+#ifndef WOLFSSH_KEY_QUANTITY_REQ
+    #define WOLFSSH_KEY_QUANTITY_REQ 1
+#endif
 
 WOLFSSH_LOCAL byte NameToId(const char*, word32);
 WOLFSSH_LOCAL const char* IdToName(byte);

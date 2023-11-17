@@ -1824,6 +1824,10 @@ int wolfSSH_ReadKey_file(const char* name,
             format = WOLFSSH_FORMAT_SSH;
             in[inSz] = 0;
         }
+#if 0
+        else if (WSTRNSTR((const char*)in, PrivBeginOpenSSH, inSz) != NULL &&
+                WSTRNSTR((const char*)in, PrivEndOpenSSH, inSz) != NULL) {
+#endif
         else if (WSTRNSTR((const char*)in, PrivBeginOpenSSH, inSz) != NULL) {
             *isPrivate = 1;
             format = WOLFSSH_FORMAT_OPENSSH;
