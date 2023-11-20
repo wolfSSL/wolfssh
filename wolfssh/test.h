@@ -176,6 +176,7 @@
 #else /* USE_WINDOWS_API */
     #include <unistd.h>
     #include <sys/socket.h>
+    #include <sys/select.h>
     #include <pthread.h>
     #include <netdb.h>
     #include <netinet/in.h>
