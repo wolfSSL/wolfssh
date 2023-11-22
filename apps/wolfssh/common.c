@@ -263,8 +263,8 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
         sz = (word32)(WSTRLEN(env) + WSTRLEN(defaultName) + 1);
         knownHostsName = (char*)WMALLOC(sz, NULL, 0);
         if (knownHostsName != NULL) {
-            strcpy(knownHostsName, env);
-            strcat(knownHostsName, defaultName);
+            WSTRCPY(knownHostsName, env);
+            WSTRCAT(knownHostsName, defaultName);
         }
     }
 
@@ -273,7 +273,7 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 
     /* Get the key type out of the key. */
     ato32(pubKey, &sz);
-    memcpy(pubKeyType, pubKey + LENGTH_SZ, sz);
+    WMEMCPY(pubKeyType, pubKey + LENGTH_SZ, sz);
     pubKeyType[sz] = 0;
 
     sz = (word32)sizeof(encodedKey);
@@ -283,17 +283,17 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
     cursor = knownHosts;
     while (cursor) {
         lineCount++;
-        line = strsep(&cursor, "\n");
+        line = WSTRSEP(&cursor, "\n");
         if (line != NULL && *line) {
-            name = strsep(&line, " ");
-            keyType = strsep(&line, " ");
-            key = strsep(&line, " ");
+            name = WSTRSEP(&line, " ");
+            keyType = WSTRSEP(&line, " ");
+            key = WSTRSEP(&line, " ");
             if (name && keyType && key) {
                 int nameMatch, keyTypeMatch, keyMatch;
 
-                nameMatch = strcmp(targetName , name) == 0;
-                keyTypeMatch = strcmp(pubKeyType, keyType) == 0;
-                keyMatch = strcmp(encodedKey, key) == 0;
+                nameMatch = WSTRCMP(targetName , name) == 0;
+                keyTypeMatch = WSTRCMP(pubKeyType, keyType) == 0;
+                keyMatch = WSTRCMP(encodedKey, key) == 0;
 
                 if (nameMatch) {
                     if (keyTypeMatch) {
@@ -474,7 +474,7 @@ int ClientUserAuth(byte authType,
 
         if (defaultPassword != NULL) {
             passwordSz = (word32)strlen(defaultPassword);
-            memcpy(userPassword, defaultPassword, passwordSz);
+            WMEMCPY(userPassword, defaultPassword, passwordSz);
         }
         else {
             printf("Password: ");

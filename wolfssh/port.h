@@ -485,6 +485,9 @@ extern "C" {
     #define WSTRNCMP(s1,s2,n) strncmp((s1),(s2),(n))
     #define WSTRSPN(s1,s2)    strspn((s1),(s2))
     #define WSTRCSPN(s1,s2)   strcspn((s1),(s2))
+    #define WSTRSEP(s,d)      strsep((s),(d))
+    #define WSTRCAT(s1,s2)    strcat((s1),(s2))
+    #define WSTRCPY(s1,s2)    strcpy((s1),(s2))
 
     /* for these string functions use internal versions */
     WOLFSSH_API char* wstrnstr(const char*, const char*, unsigned int);
