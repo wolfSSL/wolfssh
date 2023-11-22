@@ -200,6 +200,45 @@ static int AppendKeyToFile(const char* filename, const char* name,
 }
 
 
+static int FingerprintKey(const byte* pubKey, word32 pubKeySz, char* out)
+{
+    wc_Sha256 sha;
+    byte digest[WC_SHA256_DIGEST_SIZE];
+    char fp[48] = { 0 };
+    word32 fpSz = sizeof(fp);
+
+    wc_InitSha256(&sha);
+    wc_Sha256Update(&sha, pubKey, pubKeySz);
+    wc_Sha256Final(&sha, digest);
+
+    Base64_Encode_NoNl(digest, sizeof(digest), (byte*)fp, &fpSz);
+
+    if (fp[fpSz] == '=') {
+        fp[fpSz] = 0;
+    }
+
+    strcat(out, "SHA256:");
+    strcat(out, fp);
+
+    return 0;
+}
+
+
+static int GetConfirmation(void)
+{
+    int c, confirmed = 0;
+
+    printf("Y/n: ");
+    c = getchar();
+
+    if (c == 'Y') {
+        confirmed = 1;
+    }
+
+    return confirmed;
+}
+
+
 int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 {
     char *cursor;
@@ -210,10 +249,11 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
     char *key;
     char *knownHosts = NULL;
     char *knownHostsName = NULL;
-    int ret = 0, found = 0, badMatch = 0, requestAdd = 0;
-    word32 sz;
-    char encodedKey[1200];
-    char pubKeyType[54];
+    int ret = 0, found = 0, badMatch = 0, otherMatch = 0;
+    word32 sz, lineCount = 0;
+    char encodedKey[1200] = { 0 };
+    char pubKeyType[54] = { 0 };
+    char fp[56] = { 0 };
 
     {
         const char *defaultName = "/.ssh/known_hosts";
@@ -238,31 +278,17 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 
     sz = (word32)sizeof(encodedKey);
     ret = Base64_Encode_NoNl(pubKey, pubKeySz, (byte*)encodedKey, &sz);
+    FingerprintKey(pubKey, pubKeySz, fp);
 
     cursor = knownHosts;
     while (cursor) {
+        lineCount++;
         line = strsep(&cursor, "\n");
         if (line != NULL && *line) {
             name = strsep(&line, " ");
             keyType = strsep(&line, " ");
             key = strsep(&line, " ");
             if (name && keyType && key) {
-#if 0
-                if (strcmp(targetName, name) == 0
-                        && strcmp(pubKeyType, keyType) == 0) {
-                    if (strcmp(encodedKey, key) == 0) {
-                        found = 1;
-                    }
-                    else {
-                        badMatch = 1;
-                    }
-                }
-                else {
-                    if (strcmp(encodedKey, key) == 0) {
-                        printf("Found key, but name is wrong.\n");
-                    }
-                }
-#endif
                 int nameMatch, keyTypeMatch, keyMatch;
 
                 nameMatch = strcmp(targetName , name) == 0;
@@ -273,22 +299,24 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
                     if (keyTypeMatch) {
                         if (keyMatch) {
                             found = 1;
-                            printf("key found/matched\n");
                         }
                         else {
-                            /* report mismatch */
                             badMatch = 1;
-                            printf("key found/not matched\n");
                         }
                         break;
                     }
                 }
                 else {
-                    if (keyTypeMatch) {
-                        if (keyMatch) {
-                            /* report key used on different address */
-                            requestAdd = 1;
-                            printf("key found/wrong name\n");
+                    if (keyTypeMatch && keyMatch) {
+                        /* report key used on different address */
+                        if (!otherMatch) {
+                            printf("Key fingerprint is %s.\n", fp);
+                            printf("This key matches other servers:\n");
+                            otherMatch = 1;
+                        }
+                        if (otherMatch) {
+                            printf("\t%s:%u: %s\n",
+                                    knownHostsName, lineCount, name);
                         }
                     }
                 }
@@ -298,17 +326,39 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
     WFREE(knownHosts, NULL, 0);
 
     if (badMatch) {
-        printf("rejecting\n");
+        printf("That server is known, but that key is not.\n");
+        printf("Rejecting connection and closing.\n");
         ret = -1;
     }
-    else if (requestAdd) {
-        printf("requesting to add\n");
-        ret = -1;
+    else if (otherMatch) {
+        if (!found) {
+            printf("Does this key look familiar to you?\n");
+            printf("Fingerprint: %s\n", fp);
+            printf("Shall I add it to the known hosts?\n");
+            /* Query. */
+            if (GetConfirmation()) {
+                ret = AppendKeyToFile(knownHostsName,
+                        targetName, pubKeyType, encodedKey);
+            }
+            else {
+                ret = -1;
+            }
+        }
+        else {
+            printf("This key matched multiple servers including %s.\n",
+                    targetName);
+            printf("Attempting to connect.\n");
+        }
     }
     else if (!found) {
-        printf("adding\n");
-        ret = AppendKeyToFile(knownHostsName,
-                targetName, pubKeyType, encodedKey);
+        printf("The server is unknown and the key is unknown.\n");
+        printf("Fingerprint: %s\n", fp);
+        printf("Shall I add it to the known hosts?\n");
+        /* Query. */
+        if (GetConfirmation()) {
+            ret = AppendKeyToFile(knownHostsName,
+                    targetName, pubKeyType, encodedKey);
+        }
     }
 
 #ifdef WOLFSSH_CERTS
