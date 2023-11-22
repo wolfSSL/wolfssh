@@ -7456,7 +7456,7 @@ static int DoChannelExtendedData(WOLFSSH* ssh,
 }
 
 
-static int DoPacket(WOLFSSH* ssh)
+static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
 {
     byte* buf = (byte*)ssh->inputBuffer.buffer;
     word32 idx = ssh->inputBuffer.idx;
@@ -7468,6 +7468,8 @@ static int DoPacket(WOLFSSH* ssh)
     int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "DoPacket sequence number: %d", ssh->peerSeq);
+
+    *bufferConsumed = 0;
 
     idx += UINT32_SZ;
     padSz = buf[idx++];
@@ -7696,6 +7698,7 @@ static int DoPacket(WOLFSSH* ssh)
     idx += padSz;
     ssh->inputBuffer.idx = idx;
     ssh->peerSeq++;
+    *bufferConsumed = 1;
 
     return ret;
 }
@@ -8084,6 +8087,7 @@ int DoReceive(WOLFSSH* ssh)
     byte peerBlockSz = ssh->peerBlockSz;
     byte peerMacSz = ssh->peerMacSz;
     byte aeadMode = ssh->peerAeadMode;
+    byte bufferConsumed = 0;
 
     switch (ssh->processReplyState) {
         case PROCESS_INIT:
@@ -8190,15 +8194,13 @@ int DoReceive(WOLFSSH* ssh)
             NO_BREAK;
 
         case PROCESS_PACKET:
-            ret = DoPacket(ssh);
+            ret = DoPacket(ssh, &bufferConsumed);
             ssh->error = ret;
             if (ret < 0 && !(ret == WS_CHAN_RXD || ret == WS_EXTDATA ||
                     ret == WS_CHANNEL_CLOSED || ret == WS_WANT_WRITE ||
                     ret == WS_REKEYING || ret == WS_WANT_READ)) {
-                return WS_FATAL_ERROR;
+                ret = WS_FATAL_ERROR;
             }
-            WLOG(WS_LOG_DEBUG, "PR3: peerMacSz = %u", peerMacSz);
-            ssh->inputBuffer.idx += peerMacSz;
             break;
 
         default:
@@ -8206,9 +8208,15 @@ int DoReceive(WOLFSSH* ssh)
             ssh->error = WS_INPUT_CASE_E;
             return WS_FATAL_ERROR;
     }
-    WLOG(WS_LOG_DEBUG, "PR4: Shrinking input buffer");
-    ShrinkBuffer(&ssh->inputBuffer, 1);
-    ssh->processReplyState = PROCESS_INIT;
+
+    if (bufferConsumed) {
+        WLOG(WS_LOG_DEBUG, "PR3: peerMacSz = %u", peerMacSz);
+        ssh->inputBuffer.idx += peerMacSz;
+
+        WLOG(WS_LOG_DEBUG, "PR4: Shrinking input buffer");
+        ShrinkBuffer(&ssh->inputBuffer, 1);
+        ssh->processReplyState = PROCESS_INIT;
+    }
 
     WLOG(WS_LOG_DEBUG, "PR5: txCount = %u, rxCount = %u",
          ssh->txCount, ssh->rxCount);
