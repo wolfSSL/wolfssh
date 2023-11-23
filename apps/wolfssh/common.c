@@ -190,13 +190,16 @@ void ClientIPOverride(int flag)
 static int AppendKeyToFile(const char* filename, const char* name,
         const char* type, const char* key)
 {
-    FILE *f;
+    WFILE *f;
+    int ret;
 
-    f = fopen(filename, "a");
-    fprintf(f, "%s %s %s\n", name, type, key);
-    fclose(f);
+    ret = WFOPEN(NULL, &f, filename, "a");
+    if (ret == 0 && f != WBADFILE) {
+        fprintf(f, "%s %s %s\n", name, type, key);
+        WFCLOSE(NULL, f);
+    }
 
-    return 0;
+    return ret;
 }
 
 
@@ -206,21 +209,27 @@ static int FingerprintKey(const byte* pubKey, word32 pubKeySz, char* out)
     byte digest[WC_SHA256_DIGEST_SIZE];
     char fp[48] = { 0 };
     word32 fpSz = sizeof(fp);
+    int ret;
 
-    wc_InitSha256(&sha);
-    wc_Sha256Update(&sha, pubKey, pubKeySz);
-    wc_Sha256Final(&sha, digest);
+    ret = wc_InitSha256(&sha);
+    if (ret == 0)
+        ret = wc_Sha256Update(&sha, pubKey, pubKeySz);
+    if (ret == 0)
+        ret = wc_Sha256Final(&sha, digest);
 
-    Base64_Encode_NoNl(digest, sizeof(digest), (byte*)fp, &fpSz);
+    if (ret == 0)
+        ret = Base64_Encode_NoNl(digest, sizeof(digest), (byte*)fp, &fpSz);
 
-    if (fp[fpSz] == '=') {
-        fp[fpSz] = 0;
+    if (ret == 0) {
+        if (fp[fpSz] == '=') {
+            fp[fpSz] = 0;
+        }
+
+        WSTRCAT(out, "SHA256:");
+        WSTRCAT(out, fp);
     }
 
-    strcat(out, "SHA256:");
-    strcat(out, fp);
-
-    return 0;
+    return ret;
 }
 
 
@@ -239,6 +248,10 @@ static int GetConfirmation(void)
 }
 
 
+#define WOLFSSH_CLIENT_ENCKEY_SIZE_ESTIMATE 1200
+#define WOLFSSH_CLIENT_PUBKEYTYPE_SIZE_ESTIMATE 54
+#define WOLFSSH_CLIENT_FINGERPRINT_SIZE_ESTIMATE 56
+
 int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 {
     char *cursor;
@@ -249,11 +262,11 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
     char *key;
     char *knownHosts = NULL;
     char *knownHostsName = NULL;
+    char *encodedKey = NULL;
+    char *pubKeyType = NULL;
+    char *fp = NULL;
     int ret = 0, found = 0, badMatch = 0, otherMatch = 0;
     word32 sz, lineCount = 0;
-    char encodedKey[1200] = { 0 };
-    char pubKeyType[54] = { 0 };
-    char fp[56] = { 0 };
 
     {
         const char *defaultName = "/.ssh/known_hosts";
@@ -270,17 +283,58 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 
     sz = 0;
     ret = load_der_file(knownHostsName, (byte**)&knownHosts, &sz);
+    /* load_der_file() loads exactly what's in the file. Since it is
+     * NL terminated lines of known host data, and the last line ends
+     * in a NL, overwrite that with a nul to terminate the new string. */
+    knownHosts[sz - 1] = 0;
 
-    /* Get the key type out of the key. */
-    ato32(pubKey, &sz);
-    WMEMCPY(pubKeyType, pubKey + LENGTH_SZ, sz);
-    pubKeyType[sz] = 0;
+    if (ret == 0) {
+        if (sz < sizeof(word32)) {
+            /* This file is too small. There must be at least a word32
+             * length size. */
+            ret = -1;
+        }
+    }
 
-    sz = (word32)sizeof(encodedKey);
-    ret = Base64_Encode_NoNl(pubKey, pubKeySz, (byte*)encodedKey, &sz);
-    FingerprintKey(pubKey, pubKeySz, fp);
+    if (ret == 0) {
+        encodedKey = (char*)WMALLOC(WOLFSSH_CLIENT_ENCKEY_SIZE_ESTIMATE
+                + WOLFSSH_CLIENT_PUBKEYTYPE_SIZE_ESTIMATE
+                + WOLFSSH_CLIENT_FINGERPRINT_SIZE_ESTIMATE, NULL, 0);
+        if (encodedKey == NULL) {
+            ret = -1;
+        }
+    }
 
-    cursor = knownHosts;
+    if (ret == 0) {
+        word32 keySz;
+
+        pubKeyType = encodedKey + WOLFSSH_CLIENT_ENCKEY_SIZE_ESTIMATE;
+        fp = pubKeyType + WOLFSSH_CLIENT_PUBKEYTYPE_SIZE_ESTIMATE;
+
+        encodedKey[0] = 0;
+        pubKeyType[0] = 0;
+        fp[0] = 0;
+
+        /* Get the key type out of the key. */
+        ato32(pubKey, &keySz);
+        if (keySz > sz - sizeof(word32)) {
+            ret = -1;
+        }
+    }
+
+    if (ret == 0) {
+        WMEMCPY(pubKeyType, pubKey + LENGTH_SZ, sz);
+        pubKeyType[sz] = 0;
+
+        sz = WOLFSSH_CLIENT_ENCKEY_SIZE_ESTIMATE;
+        ret = Base64_Encode_NoNl(pubKey, pubKeySz, (byte*)encodedKey, &sz);
+    }
+
+    if (ret == 0)
+        ret = FingerprintKey(pubKey, pubKeySz, fp);
+
+    cursor = (ret == 0) ? knownHosts : NULL;
+
     while (cursor) {
         lineCount++;
         line = WSTRSEP(&cursor, "\n");
@@ -323,16 +377,35 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
             }
         }
     }
-    WFREE(knownHosts, NULL, 0);
 
-    if (badMatch) {
-        printf("That server is known, but that key is not.\n");
-        printf("Rejecting connection and closing.\n");
-        ret = -1;
-    }
-    else if (otherMatch) {
-        if (!found) {
-            printf("Does this key look familiar to you?\n");
+    if (ret == 0) {
+        if (badMatch) {
+            printf("That server is known, but that key is not.\n");
+            printf("Rejecting connection and closing.\n");
+            ret = -1;
+        }
+        else if (otherMatch) {
+            if (!found) {
+                printf("Does this key look familiar to you?\n");
+                printf("Fingerprint: %s\n", fp);
+                printf("Shall I add it to the known hosts?\n");
+                /* Query. */
+                if (GetConfirmation()) {
+                    ret = AppendKeyToFile(knownHostsName,
+                            targetName, pubKeyType, encodedKey);
+                }
+                else {
+                    ret = -1;
+                }
+            }
+            else {
+                printf("This key matched multiple servers including %s.\n",
+                        targetName);
+                printf("Attempting to connect.\n");
+            }
+        }
+        else if (!found) {
+            printf("The server is unknown and the key is unknown.\n");
             printf("Fingerprint: %s\n", fp);
             printf("Shall I add it to the known hosts?\n");
             /* Query. */
@@ -340,24 +413,6 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
                 ret = AppendKeyToFile(knownHostsName,
                         targetName, pubKeyType, encodedKey);
             }
-            else {
-                ret = -1;
-            }
-        }
-        else {
-            printf("This key matched multiple servers including %s.\n",
-                    targetName);
-            printf("Attempting to connect.\n");
-        }
-    }
-    else if (!found) {
-        printf("The server is unknown and the key is unknown.\n");
-        printf("Fingerprint: %s\n", fp);
-        printf("Shall I add it to the known hosts?\n");
-        /* Query. */
-        if (GetConfirmation()) {
-            ret = AppendKeyToFile(knownHostsName,
-                    targetName, pubKeyType, encodedKey);
         }
     }
 
@@ -419,6 +474,11 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
     WLOG(WS_LOG_DEBUG, "\tnot checking IP address from peer's cert");
 #endif
 #endif
+
+    if (encodedKey)
+        WFREE(encodedKey, NULL, 0);
+    if (knownHosts)
+        WFREE(knownHosts, NULL, 0);
 
     return ret;
 }
