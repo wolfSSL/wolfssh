@@ -1509,6 +1509,14 @@ static void* HandleConnection(void* arg)
                 error = WS_FATAL_ERROR;
         }
 
+        if (graceTime > 0) {
+    #ifdef WIN32
+            /* @TODO SetTimer(NULL, NULL, graceTime, alarmCatch); */
+    #else
+            alarm(0); /* cancel any alarm */
+    #endif
+        }
+
         if (ret != WS_SUCCESS && ret != WS_SFTP_COMPLETE &&
             ret != WS_SCP_INIT) {
             wolfSSH_Log(WS_LOG_ERROR,
