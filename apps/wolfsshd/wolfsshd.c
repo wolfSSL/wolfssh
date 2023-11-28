@@ -2046,7 +2046,9 @@ static int StartSSHD(int argc, char** argv)
 
 #ifdef __unix__
         /* Daemonizing in POSIX, so set a syslog based log */
-        wolfSSH_SetLoggingCb(SyslogCb);
+        if (logFile == stderr) {
+            wolfSSH_SetLoggingCb(SyslogCb);
+        }
 #endif
         p = fork();
         if (p < 0) {
