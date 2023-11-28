@@ -55,7 +55,7 @@ if [ "$RESULT" != 0 ]; then
 fi
 
 cd $PWD
-#stop_wolfsshd
+stop_wolfsshd
 exit 0
 
 
