@@ -283,11 +283,6 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 
     sz = 0;
     ret = load_der_file(knownHostsName, (byte**)&knownHosts, &sz);
-    /* load_der_file() loads exactly what's in the file. Since it is
-     * NL terminated lines of known host data, and the last line ends
-     * in a NL, overwrite that with a nul to terminate the new string. */
-    knownHosts[sz - 1] = 0;
-
     if (ret == 0) {
         if (sz < sizeof(word32)) {
             /* This file is too small. There must be at least a word32
@@ -297,6 +292,11 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
     }
 
     if (ret == 0) {
+        /* load_der_file() loads exactly what's in the file. Since it is
+         * NL terminated lines of known host data, and the last line ends
+         * in a NL, overwrite that with a nul to terminate the new string. */
+        knownHosts[sz - 1] = 0;
+
         encodedKey = (char*)WMALLOC(WOLFSSH_CLIENT_ENCKEY_SIZE_ESTIMATE
                 + WOLFSSH_CLIENT_PUBKEYTYPE_SIZE_ESTIMATE
                 + WOLFSSH_CLIENT_FINGERPRINT_SIZE_ESTIMATE, NULL, 0);
@@ -306,8 +306,6 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
     }
 
     if (ret == 0) {
-        word32 keySz;
-
         pubKeyType = encodedKey + WOLFSSH_CLIENT_ENCKEY_SIZE_ESTIMATE;
         fp = pubKeyType + WOLFSSH_CLIENT_PUBKEYTYPE_SIZE_ESTIMATE;
 
@@ -316,8 +314,9 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
         fp[0] = 0;
 
         /* Get the key type out of the key. */
-        ato32(pubKey, &keySz);
-        if (keySz > sz - sizeof(word32)) {
+        ato32(pubKey, &sz);
+        if ((sz > pubKeySz - sizeof(word32))
+                    || (sz > WOLFSSH_CLIENT_PUBKEYTYPE_SIZE_ESTIMATE - 1)) {
             ret = -1;
         }
     }
@@ -479,6 +478,8 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
         WFREE(encodedKey, NULL, 0);
     if (knownHosts)
         WFREE(knownHosts, NULL, 0);
+    if (knownHostsName)
+        WFREE(knownHostsName, NULL, 0);
 
     return ret;
 }
