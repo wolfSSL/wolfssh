@@ -645,8 +645,9 @@ void CtxResourceFree(WOLFSSH_CTX* ctx)
 #ifdef WOLFSSH_TERM
 /* default terminal resize handling callbacks */
 
-#if defined(USE_WINDOWS_API) && defined(WOLFSSH_SSHD)
-static int WS_WindowsTermResize(WOLFSSH* ssh, word32 col, word32 row, word32 colP,
+#if defined(WOLFSSH_SSHD) && !defined(WOLFSSH_RESIZE_NO_DEFUALT)
+#if defined(USE_WINDOWS_API)
+static int WS_TermResize(WOLFSSH* ssh, word32 col, word32 row, word32 colP,
     word32 rowP, void* usrCtx)
 {
     HPCON* term = (HPCON*)usrCtx;
@@ -667,7 +668,33 @@ static int WS_WindowsTermResize(WOLFSSH* ssh, word32 col, word32 row, word32 col
 
     return ret;
 }
+#elif defined(HAVE_SYS_IOCTL_H)
+
+#include <sys/ioctl.h>
+static int WS_TermResize(WOLFSSH* ssh, word32 col, word32 row, word32 colP,
+    word32 rowP, void* usrCtx)
+{
+    struct winsize s;
+    int ret = WS_SUCCESS;
+    int* fd = (int*)usrCtx;
+
+    if (fd != NULL) {
+        WMEMSET(&s, 0, sizeof s);
+        s.ws_row = row;
+        s.ws_col = col;
+        s.ws_xpixel = colP;
+        s.ws_ypixel = rowP;
+
+        ioctl(*fd, TIOCSWINSZ, &s);
+    }
+
+    (void)ssh;
+    return ret;
+}
+#else
+    #define WOLFSSH_RESIZE_NO_DEFUALT
 #endif
+#endif /* WOLFSSH_SSHD */
 
 #endif /* WOLFSSH_TERM */
 
@@ -763,10 +790,10 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->agentEnabled = ctx->agentEnabled;
 #endif
 
-#ifdef WOLFSSH_TERM
-    #if defined(USE_WINDOWS_API) && defined(WOLFSSH_SSHD)
-    ssh->termResizeCb = WS_WindowsTermResize;
-    #endif
+#if defined(WOLFSSH_TERM) && defined(WOLFSSH_SSHD)
+#ifndef WOLFSSH_RESIZE_NO_DEFUALT
+    ssh->termResizeCb = WS_TermResize;
+#endif
 #endif
 
     if (BufferInit(&ssh->inputBuffer, 0, ctx->heap) != WS_SUCCESS  ||
@@ -7169,6 +7196,8 @@ static int DoChannelRequest(WOLFSSH* ssh,
                 WLOG(WS_LOG_DEBUG, "  heightPixels = %u", heightPixels);
                 ssh->curX = widthChar;
                 ssh->curY = heightRows;
+                ssh->curXP = widthPixels;
+                ssh->curYP = heightPixels;
                 if (ssh->termResizeCb) {
                     if (ssh->termResizeCb(ssh, widthChar, heightRows,
                                 widthPixels, heightPixels, ssh->termCtx)
