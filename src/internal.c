@@ -1516,7 +1516,7 @@ static int SetHostCertificate(WOLFSSH_CTX* ctx,
 
         if (pvtKey->publicKeyFmt == certId) {
             if (pvtKey->cert != NULL) {
-                WFREE(pvtKey->cert, heap, dynamicType);
+                WFREE(pvtKey->cert, ctx->heap, dynamicType);
             }
         }
         else {
@@ -2210,17 +2210,19 @@ int ChannelUpdateForward(WOLFSSH_CHANNEL* channel,
                                 const char* origin, word32 originPort,
                                 int isDirect)
 {
+    void* heap = NULL;
     int ret = WS_SUCCESS;
     char* hostCopy = NULL;
     char* originCopy = NULL;
     word32 hostSz;
     word32 originSz;
 
+    WOLFSSH_UNUSED(heap);
+
     if (channel == NULL || host == NULL || origin == NULL)
         ret = WS_BAD_ARGUMENT;
     else {
-        void* heap = channel->ssh->ctx->heap;
-
+        heap = channel->ssh->ctx->heap;
         hostSz = (word32)WSTRLEN(host) + 1;
         originSz = (word32)WSTRLEN(origin) + 1;
         hostCopy = (char*)WMALLOC(hostSz, heap, DYNTYPE_STRING);
@@ -5614,7 +5616,7 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     if (checkDigest)
         WFREE(checkDigest, ssh->ctx->heap, DYNTYPE_BUFFER);
     if (encDigest)
-        WFREE(encDigest, ssh->ctx_heap, DYNTYPE_BUFFER);
+        WFREE(encDigest, ssh->ctx->heap, DYNTYPE_BUFFER);
 #endif
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthRequestRsa(), ret = %d", ret);
     return ret;
