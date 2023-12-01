@@ -1148,6 +1148,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     return ret;
 }
 #else
+#if defined(HAVE_SYS_IOCTL_H)
+    #include <sys/ioctl.h>
+#endif
 
 /* handles creating a new shell env. and maintains SSH connection for incoming
  * user input as well as output of the shell.
@@ -1314,6 +1317,21 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         return WS_FATAL_ERROR;
     }
 
+    /* set initial size of terminal based on saved size */
+#if defined(HAVE_SYS_IOCTL_H)
+    {
+        struct winsize s;
+
+        WMEMSET(&s, 0, sizeof s);
+        s.ws_col = ssh->curX;
+        s.ws_row = ssh->curY;
+        s.ws_xpixel = ssh->curXP;
+        s.ws_ypixel = ssh->curYP;
+        ioctl(childFd, TIOCSWINSZ, &s);
+    }
+#endif
+
+    wolfSSH_SetTerminalResizeCtx(ssh, (void*)&childFd);
     while (ChildRunning) {
         byte tmp[2];
         fd_set readFds;

@@ -815,6 +815,8 @@ struct WOLFSSH {
     void* termCtx;
     word32 curX; /* current terminal width */
     word32 curY; /* current terminal height */
+    word32 curXP; /* pixel width  */
+    word32 curYP; /* pixel height */
 #endif
 };
 
