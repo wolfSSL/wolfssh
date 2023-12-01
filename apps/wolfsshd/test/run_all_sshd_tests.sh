@@ -63,6 +63,7 @@ fi
 # these tests require setting up an sshd
 if [ "$USING_LOCAL_HOST" == 1 ]; then
     run_test "sshd_forcedcmd_test.sh"
+    run_test "sshd_login_grace_test.sh"
 else
     printf "Skipping tests that need to setup local SSHD\n"
     SKIPPED=$((SKIPPED+1))
