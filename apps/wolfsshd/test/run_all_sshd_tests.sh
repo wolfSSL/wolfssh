@@ -25,7 +25,7 @@ else
     start_wolfsshd "sshd_config_test"
     if [ -z "$PID" ]; then
         echo "Issue starting up wolfSSHd"
-        exit -1
+        exit 1
     fi
 fi
 
@@ -46,11 +46,12 @@ run_test() {
             printf "Shutting down test wolfSSHd\n"
             stop_wolfsshd
         fi
-        exit -1
+        exit 1
     fi
 }
 
 run_test "sshd_exec_test.sh"
+run_test "sshd_term_size_test.sh"
 
 # add aditional tests here, check on var USING_LOCAL_HOST if can make sshd
 # server start/restart with changes
