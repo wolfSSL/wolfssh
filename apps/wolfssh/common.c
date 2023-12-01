@@ -273,16 +273,23 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
         char *env;
 
         env = getenv("HOME");
-        sz = (word32)(WSTRLEN(env) + WSTRLEN(defaultName) + 1);
-        knownHostsName = (char*)WMALLOC(sz, NULL, 0);
-        if (knownHostsName != NULL) {
-            WSTRCPY(knownHostsName, env);
-            WSTRCAT(knownHostsName, defaultName);
+        if (env != NULL) {
+            sz = (word32)(WSTRLEN(env) + WSTRLEN(defaultName) + 1);
+            knownHostsName = (char*)WMALLOC(sz, NULL, 0);
+            if (knownHostsName != NULL) {
+                WSTRCPY(knownHostsName, env);
+                WSTRCAT(knownHostsName, defaultName);
+            }
         }
+        else
+            ret = -1;
     }
 
-    sz = 0;
-    ret = load_der_file(knownHostsName, (byte**)&knownHosts, &sz);
+    if (ret == 0) {
+        sz = 0;
+        ret = load_der_file(knownHostsName, (byte**)&knownHosts, &sz);
+    }
+
     if (ret == 0) {
         if (sz < sizeof(word32)) {
             /* This file is too small. There must be at least a word32
