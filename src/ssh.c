@@ -408,7 +408,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
         return WS_BAD_ARGUMENT;
 
     /* clear want read/writes for retry */
-    if (ssh->error == WS_WANT_READ || ssh->error == WS_WANT_WRITE)
+    if (ssh->error == WS_WANT_READ || ssh->error == WS_WANT_WRITE || ssh->error == WS_AUTH_PENDING)
         ssh->error = 0;
 
     if (ssh->error != 0) {
