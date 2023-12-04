@@ -1291,6 +1291,10 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         exit(0); /* exit child process and close down SSH connection */
     }
 
+    /* do not wait for status of child process, and signal that the child can
+     * be reaped to avoid zombie processes when running in the foreground */
+    signal(SIGCHLD, SIG_IGN);
+
     if (wolfSSHD_AuthReducePermissionsUser(conn->auth, pPasswd->pw_uid,
         pPasswd->pw_gid) != WS_SUCCESS) {
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting user ID");
@@ -1730,6 +1734,11 @@ static int NewConnection(WOLFSSHD_CONNECTION* conn)
             exit(0);
         }
         else {
+            /* do not wait for status of child process, and signal that the
+               child can be reaped to avoid zombie processes when running in
+               the foreground */
+            signal(SIGCHLD, SIG_IGN);
+
             wolfSSH_Log(WS_LOG_INFO, "[SSHD] Spawned new process %d\n", pd);
             WCLOSESOCKET(conn->fd);
         }
