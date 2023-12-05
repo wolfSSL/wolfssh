@@ -47,14 +47,18 @@ if [ "$RESULT" != 0 ]; then
     exit 1
 fi
 
+# attempt clearing out stdin from previous echo/grep
+read -t 1 -n 1000 discard
+
 # test grace login timeout by stalling on password prompt
-timeout 7 "$TEST_CLIENT" -u "$USER" -h "$TEST_HOST" -p "$TEST_PORT" -t
+timeout --foreground 7 "$TEST_CLIENT" -u "$USER" -h "$TEST_HOST" -p "$TEST_PORT" -t
 
 popd
 cat ./log.txt | grep "Failed login within grace period"
 RESULT=$?
 if [ "$RESULT" != 0 ]; then
     echo "FAIL: Grace period not hit"
+    cat ./log.txt
     exit 1
 fi
 
