@@ -634,6 +634,12 @@ static int doCmds(func_args* args)
 #endif
 
             if (ret != WS_SUCCESS) {
+                if (wolfSSH_get_error(ssh) == WS_SFTP_NOT_FILE_E) {
+                    if (SFTP_FPUTS(args, "Not a regular file\n")  < 0) {
+                         err_msg("fputs error");
+                         return -1;
+                    }
+                }
                 if (SFTP_FPUTS(args, "Error pushing file\n") < 0) {
                     err_msg("fputs error");
                     return -1;
