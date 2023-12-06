@@ -4729,9 +4729,9 @@ static int PopulateAttributes(WS_SFTP_FILEATRB* atr, WSTAT_T* stats)
     atr->per = 0755;
     /* Mimic S_IFMT */
     if (stats->type == FS_DIR_ENTRY_FILE)
-        atr->per |= 0040000;
+        atr->per |= FILEATRB_PER_FILE;
     else if (stats->type == FS_DIR_ENTRY_DIR)
-        atr->per |= 0100000;
+        atr->per |= FILEATRB_PER_DIR;
     else
         return WS_BAD_FILE_E;
 
