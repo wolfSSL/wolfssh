@@ -430,6 +430,9 @@ const char* GetErrorString(int err)
         case WS_KEY_FORMAT_E:
             return "key format wrong error";
 
+        case WS_SFTP_NOT_FILE_E:
+            return "not a regular file";
+
         default:
             return "Unknown error code";
     }

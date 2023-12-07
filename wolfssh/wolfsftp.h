@@ -126,6 +126,13 @@ struct WS_SFTP_FILEATRB_EX {
     WS_SFTP_FILEATRB_EX* next;
 };
 
+#define FILEATRB_PER_MASK_TYPE 0770000
+#define FILEATRB_PER_FILE      0100000
+#define FILEATRB_PER_DEV_CHAR  0020000
+#define FILEATRB_PER_DIR       0040000
+#define FILEATRB_PER_DEV_BLOCK 0060000
+#define FILEATRB_PER_MASK_PERM 0000777
+
 typedef struct WS_SFTP_FILEATRB {
     word32 flags;
     word32 sz[2]; /* sz[0] being the lower and sz[1] being the upper */
