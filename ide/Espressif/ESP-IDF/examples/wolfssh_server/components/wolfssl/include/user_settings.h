@@ -27,6 +27,8 @@
 #undef WOLFSSL_ESP32
 #undef WOLFSSL_ESP8266
 
+#define WOLFSSL_ESPIDF
+
 /* The Espressif sdkconfig will have chipset info.
 **
 ** Possible values:
@@ -38,13 +40,29 @@
 **   CONFIG_IDF_TARGET_ESP32C6
 */
 
-/* wolfSSH */
-#undef  WOLFSSH_TERM /* may be defined in cmake for other examples */
-#define WOLFSSH_TERM
-#undef  DEBUG_WOLFSSH /* may be defined in cmake for other examples */
-#define DEBUG_WOLFSSH
+/* Optionally enable some wolfSSH settings */
+#define ESP_ENABLE_WOLFSSH
+#ifdef  ESP_ENABLE_WOLFSSH
+    /* These may be defined in cmake for other examples: */
+    #undef  WOLFSSH_TERM
+    #define WOLFSSH_TERM
 
-#define WOLFSSL_ESPIDF
+    #undef  DEBUG_WOLFSSH
+    #define DEBUG_WOLFSSH
+
+    #undef  WOLFSSL_KEY_GEN
+    #define WOLFSSL_KEY_GEN
+
+    #undef  WOLFSSL_PTHREADS
+    #define WOLFSSL_PTHREADS
+
+    #define WOLFSSH_TEST_SERVER
+    #define WOLFSSH_TEST_THREADING
+
+#endif /* ESP_ENABLE_WOLFSSH */
+
+/* when you want to use SINGLE THREAD */
+/* #define SINGLE_THREADED */
 
 /*
  * choose ONE of these Espressif chips to define:
@@ -73,8 +91,6 @@
 
 #define WOLFSSL_BENCHMARK_FIXED_UNITS_KB
 
-/* when you want to use SINGLE THREAD */
-#define SINGLE_THREADED
 
 #define NO_FILESYSTEM
 
