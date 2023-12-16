@@ -88,3 +88,20 @@ DLL Release
 .cproject
 .project
 .settings
+
+*.bak
+*.old
+
+# Visual Studio
+/.vs
+# auto-created CMake backups
+**/CMakeLists.txt.old
+
+# VisualGDB
+**/.visualgdb
+**/*.vgdbproj.*.user
+
+# Espressif sdk config default should be saved in sdkconfig.defaults
+# we won't track the actual working sdkconfig files
+**/Espressif/**/out/
+**/Espressif/**/sdkconfig
