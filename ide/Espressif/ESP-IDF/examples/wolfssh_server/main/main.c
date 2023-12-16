@@ -98,6 +98,10 @@ void app_main(void)
     set_time();
 
     ESP_LOGI(TAG, "Starting wolfSSH server_test...");
+
+    /* TODO: Consider pulling in wolfSSH server.c example source automatically:
+     * Keep in mind the nature of this example as an Espressif Component.
+     * See https://github.com/wolfSSL/wolfssh/tree/master/examples/server */
     server_test(&args);
 
     ESP_LOGI(TAG, "\n\nDone!\n\n"
