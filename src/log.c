@@ -173,7 +173,7 @@ void wolfSSH_Log(enum wolfSSH_LogLevel level, const char *const fmt, ...)
 
     /* format msg */
     va_start(vlist, fmt);
-    WVSNPRINTF(msgStr, sizeof(msgStr), fmt, vlist);
+    WVSNPRINTF(msgStr, sizeof(msgStr)-1, fmt, vlist);
     va_end(vlist);
 
     if (logFunction)

@@ -1977,6 +1977,7 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     char* res   = NULL;
     char  ier[] = "Internal Failure";
     char  oer[] = "Open File Error";
+    char  naf[] = "Not A File";
 
     if (ssh == NULL) {
         return WS_BAD_ARGUMENT;
@@ -2036,20 +2037,40 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         m |= WOLFSSH_O_EXCL;
     }
 
-    /* if file permissions not set then use default */
-    if (!(atr.flags & WOLFSSH_FILEATRB_PERM)) {
-        atr.per = 0644;
+    {
+        WS_SFTP_FILEATRB fileAtr = { 0 };
+        if (SFTP_GetAttributes(ssh->fs,
+                        dir, &fileAtr, 1, ssh->ctx->heap) == WS_SUCCESS) {
+            if ((fileAtr.per & FILEATRB_PER_MASK_TYPE) != FILEATRB_PER_FILE) {
+                WLOG(WS_LOG_SFTP, "Not a file");
+                ssh->error = WS_SFTP_NOT_FILE_E;
+
+                res = naf;
+                if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
+                            res, "English", NULL, &outSz) != WS_SIZE_ONLY) {
+                    return WS_FATAL_ERROR;
+                }
+                ret = WS_FATAL_ERROR;
+            }
+        }
     }
 
-    fd = WOPEN(ssh->fs, dir, m, atr.per);
-    if (fd < 0) {
-        WLOG(WS_LOG_SFTP, "Error opening file %s", dir);
-        res = oer;
-        if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId, res,
-                "English", NULL, &outSz) != WS_SIZE_ONLY) {
-            return WS_FATAL_ERROR;
+    if (ret == WS_SUCCESS) {
+        /* if file permissions not set then use default */
+        if (!(atr.flags & WOLFSSH_FILEATRB_PERM)) {
+            atr.per = 0644;
         }
-        ret = WS_BAD_FILE_E;
+
+        fd = WOPEN(ssh->fs, dir, m, atr.per);
+        if (fd < 0) {
+            WLOG(WS_LOG_SFTP, "Error opening file %s", dir);
+            res = oer;
+            if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId, res,
+                    "English", NULL, &outSz) != WS_SIZE_ONLY) {
+                return WS_FATAL_ERROR;
+            }
+            ret = WS_BAD_FILE_E;
+        }
     }
 
 #ifdef WOLFSSH_STOREHANDLE
@@ -2171,8 +2192,9 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 #endif
 
-    fileHandle = WS_CreateFileA(dir, desiredAccess, 0, creationDisp,
-            FILE_ATTRIBUTE_NORMAL, ssh->ctx->heap);
+    fileHandle = WS_CreateFileA(dir, desiredAccess,
+            (FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE),
+            creationDisp, FILE_ATTRIBUTE_NORMAL, ssh->ctx->heap);
     if (fileHandle == INVALID_HANDLE_VALUE) {
         WLOG(WS_LOG_SFTP, "Error opening file %s", dir);
         res = oer;
@@ -4707,9 +4729,9 @@ static int PopulateAttributes(WS_SFTP_FILEATRB* atr, WSTAT_T* stats)
     atr->per = 0755;
     /* Mimic S_IFMT */
     if (stats->type == FS_DIR_ENTRY_FILE)
-        atr->per |= 0040000;
+        atr->per |= FILEATRB_PER_FILE;
     else if (stats->type == FS_DIR_ENTRY_DIR)
-        atr->per |= 0100000;
+        atr->per |= FILEATRB_PER_DIR;
     else
         return WS_BAD_FILE_E;
 
@@ -5087,19 +5109,29 @@ int wolfSSH_SFTP_RecvLSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     return ret;
 }
 
-
-#if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR)
+#if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR) && !defined(WOLFSSH_SFTP_SETMODE)
 /* Set the files mode
  * return WS_SUCCESS on success */
-static int SFTP_SetMode(WOLFSSH* ssh, char* name, word32 mode) {
-    WOLFSSH_UNUSED(ssh);
-    if (WCHMOD(ssh->fs, name, mode) != 0) {
+static int SFTP_SetMode(void* fs, char* name, word32 mode) {
+    WOLFSSH_UNUSED(fs);
+    if (WCHMOD(fs, name, mode) != 0) {
         return WS_BAD_FILE_E;
     }
     return WS_SUCCESS;
 }
 #endif
 
+#if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR) && !defined(WOLFSSH_SFTP_SETMODEHANDLE)
+/* Set the files mode
+ * return WS_SUCCESS on success */
+static int SFTP_SetModeHandle(void* fs, WFD handle, word32 mode) {
+    WOLFSSH_UNUSED(fs);
+    if (WFCHMOD(fs, handle, mode) != 0) {
+        return WS_BAD_FILE_E;
+    }
+    return WS_SUCCESS;
+}
+#endif
 
 #if !defined(_WIN32_WCE) && !defined(WOLFSSH_ZEPHYR)
 
@@ -5122,7 +5154,7 @@ static int SFTP_SetFileAttributes(WOLFSSH* ssh, char* name, WS_SFTP_FILEATRB* at
 #if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR)
     /* check if permissions attribute present */
     if (atr->flags & WOLFSSH_FILEATRB_PERM) {
-        ret = SFTP_SetMode(ssh, name, atr->per);
+        ret = SFTP_SetMode(ssh->fs, name, atr->per);
     }
 #endif
 
@@ -5162,9 +5194,7 @@ static int SFTP_SetFileAttributesHandle(WOLFSSH* ssh, WFD handle, WS_SFTP_FILEAT
 #ifndef USE_WINDOWS_API
     /* check if permissions attribute present */
     if (atr->flags & WOLFSSH_FILEATRB_PERM) {
-         if (WFCHMOD(ssh->fs, handle, atr->per) != 0) {
-           ret = WS_BAD_FILE_E;
-        }
+        ret = SFTP_SetModeHandle(ssh->fs, handle, atr->per);
     }
 #endif
 
@@ -7474,6 +7504,9 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                         WLOG(WS_LOG_SFTP, "OK or EOF found");
                         ret = 0; /* nothing was read */
                     }
+                    else {
+                        ret = WS_FATAL_ERROR;
+                    }
                 }
                 state->state = STATE_SEND_READ_CLEANUP;
                 NO_BREAK;
@@ -8469,6 +8502,14 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                     state->state = STATE_GET_CLEANUP;
                     continue;
                 }
+                if ((state->attrib.per & FILEATRB_PER_MASK_TYPE)
+                        != FILEATRB_PER_FILE) {
+                    WLOG(WS_LOG_SFTP, "Not a file");
+                    ssh->error = WS_SFTP_NOT_FILE_E;
+                    ret = WS_FATAL_ERROR;
+                    state->state = STATE_GET_CLEANUP;
+                    continue;
+                }
                 state->handleSz = WOLFSSH_MAX_HANDLE;
                 state->state = STATE_GET_OPEN_REMOTE;
                 NO_BREAK;
@@ -8512,8 +8553,9 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                         if (state->gOfst > 0)
                             desiredAccess |= FILE_APPEND_DATA;
                         state->fileHandle = WS_CreateFileA(to, desiredAccess,
-                                0, CREATE_ALWAYS,
-                                FILE_ATTRIBUTE_NORMAL, ssh->ctx->heap);
+                            (FILE_SHARE_DELETE | FILE_SHARE_READ |
+                             FILE_SHARE_WRITE), CREATE_ALWAYS,
+                            FILE_ATTRIBUTE_NORMAL, ssh->ctx->heap);
                     }
                     if (resume) {
                         WMEMSET(&state->offset, 0, sizeof(OVERLAPPED));
@@ -8701,6 +8743,21 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
             case STATE_PUT_OPEN_LOCAL:
                 WLOG(WS_LOG_SFTP, "SFTP PUT STATE: OPEN LOCAL");
             #ifndef USE_WINDOWS_API
+                {
+                    WS_SFTP_FILEATRB fileAtr = { 0 };
+                    if (SFTP_GetAttributes(ssh->fs,
+                                from, &fileAtr, 1, ssh->ctx->heap)
+                            == WS_SUCCESS) {
+                        if ((fileAtr.per & FILEATRB_PER_MASK_TYPE)
+                                != FILEATRB_PER_FILE) {
+                            WLOG(WS_LOG_SFTP, "Not a file");
+                            ssh->error = WS_SFTP_NOT_FILE_E;
+                            ret = WS_FATAL_ERROR;
+                            state->state = STATE_PUT_CLEANUP;
+                            continue;
+                        }
+                    }
+                }
                 ret = WFOPEN(ssh->fs, &state->fl, from, "rb");
                 if (ret != 0) {
                     WLOG(WS_LOG_SFTP, "Unable to open input file");

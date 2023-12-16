@@ -128,8 +128,12 @@ enum WS_ErrorCodes {
     WS_CERT_KEY_SIZE_E      = -1087, /* Key size error */
     WS_CTX_KEY_COUNT_E      = -1088, /* Adding too many private keys */
     WS_MATCH_UA_KEY_ID_E    = -1089, /* Match user auth key key fail */
+    WS_KEY_AUTH_MAGIC_E     = -1090, /* OpenSSH key auth magic check fail */
+    WS_KEY_CHECK_VAL_E      = -1091, /* OpenSSH key check value fail */
+    WS_KEY_FORMAT_E         = -1092, /* OpenSSH key format fail */
+    WS_SFTP_NOT_FILE_E      = -1093, /* Not a regular file */
     
-    WS_LAST_E               = -1089  /* Update this to indicate last error */
+    WS_LAST_E               = -1093  /* Update this to indicate last error */
 };
 
 

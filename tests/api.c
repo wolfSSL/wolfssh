@@ -602,6 +602,203 @@ static void test_wolfSSH_CertMan(void)
 }
 
 
+#define KEY_BUF_SZ 2048
+
+#ifndef WOLFSSH_NO_RSA
+
+const char id_rsa[] =
+    "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+    "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAABFwAAAAdzc2gtcn\n"
+    "NhAAAAAwEAAQAAAQEAy2cigZDlpBT+X2MJHAoHnfeFf6+LHm6BDkAT8V9ejHA4dY0Aepb6\n"
+    "NbV6u/oYZlueKPeAZ3GNztR9szoL6FSlMvkd9oqvfoxjTGu71T0981ybJelqqGATGtevHU\n"
+    "6Jko/I0+lgSQFKWQJ7D3Dj2zlZpIXB2Q7xl/i9kFZgaIqFhUHdWO9JMOwCFwoDrhd8v5xk\n"
+    "y1v3OIIZDxiYxVIKbf2J07WbwiSFAxXfiX8TjUBDLFmtqt1AF6LjAyGyaRICXkaGJQ/QJ9\n"
+    "sX85h9bkiPlGNAtQGQtNUg3tC9GqOkZ9tCKY1Efh/r0zosOA7ufxg6ymLpq1C4LU/4ENGH\n"
+    "kuRPAKvu8wAAA8gztJfmM7SX5gAAAAdzc2gtcnNhAAABAQDLZyKBkOWkFP5fYwkcCged94\n"
+    "V/r4seboEOQBPxX16McDh1jQB6lvo1tXq7+hhmW54o94BncY3O1H2zOgvoVKUy+R32iq9+\n"
+    "jGNMa7vVPT3zXJsl6WqoYBMa168dTomSj8jT6WBJAUpZAnsPcOPbOVmkhcHZDvGX+L2QVm\n"
+    "BoioWFQd1Y70kw7AIXCgOuF3y/nGTLW/c4ghkPGJjFUgpt/YnTtZvCJIUDFd+JfxONQEMs\n"
+    "Wa2q3UAXouMDIbJpEgJeRoYlD9An2xfzmH1uSI+UY0C1AZC01SDe0L0ao6Rn20IpjUR+H+\n"
+    "vTOiw4Du5/GDrKYumrULgtT/gQ0YeS5E8Aq+7zAAAAAwEAAQAAAQEAvbdBiQXkGyn1pHST\n"
+    "/5IfTqia3OCX6td5ChicQUsJvgXBs2rDopQFZmkRxBjd/0K+/0jyfAl/EgZCBBRFHPsuZp\n"
+    "/S4ayzSV6aE6J8vMT1bnLWxwKyl7+csjGwRK6HRKtVzsnjI9TPSrw0mc9ax5PzV6/mgZUd\n"
+    "o/i+nszh+UASj5mYrBGqMiINspzX6YC+qoUHor3rEJOd9p1aO+N5+1fDKiDnlkM5IO0Qsz\n"
+    "GktuwL0fzv9zBnGfnWVJz3CorfP1OW5KCtrDn7BnkQf1eBeVLzq/uoglUjS4DNnVfLA67D\n"
+    "O4ZfwtnoW8Gr2R+KdvnypvHnDeY5X51r5PDgL4+7z47pWQAAAIBNFcAzHHE19ISGN8YRHk\n"
+    "23/r/3zfvzHU68GSKR1Xj/Y4LSdRTpSm3wBrdQ17f5B4V7RVl2CJvoPekTggnBDQlLJ7fU\n"
+    "NU93/nZrY9teYdrNh03buL54VVb5tUM+KN+27zERlTj0/LmYJupN97sZXmlgKsvLbcsnM2\n"
+    "i7HuQQaFnsIQAAAIEA5wqFVatT9yovt8pS7rAyYUL/cqc50TZ/5Nwfy5uasRyf1BphHwEW\n"
+    "LEimBemVc+VrNwAkt6MFWuloK5ssqb1ubvtRI8Mntd15rRfZtq/foS3J8FJxueXLDWlECy\n"
+    "PmVyfVN1Vv4ZeirBy9BTYLiSuxMes+HYks3HucQhxIN1j8SA0AAACBAOFgRjfWXv1/93Jp\n"
+    "6CCJ5c98MWP+zu1FbLIlklxPb85osZqlazXHNPPEtblC4z+OqRGMCsv2683anU4ZzcTFIk\n"
+    "JS3lzeJ3tdAH4osQ5etKkV4mcdCmeRpjudB9VbaziVhPX02qkPWpM0ckPrgB3hVNUDPz89\n"
+    "GtJd3mlhyY5IfFL/AAAADWJvYkBsb2NhbGhvc3QBAgMEBQ==\n"
+    "-----END OPENSSH PRIVATE KEY-----\n";
+
+const char id_rsa_pub[] =
+    "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDLZyKBkOWkFP5fYwkcCged94V/r4seboEO"
+    "QBPxX16McDh1jQB6lvo1tXq7+hhmW54o94BncY3O1H2zOgvoVKUy+R32iq9+jGNMa7vVPT3z"
+    "XJsl6WqoYBMa168dTomSj8jT6WBJAUpZAnsPcOPbOVmkhcHZDvGX+L2QVmBoioWFQd1Y70kw"
+    "7AIXCgOuF3y/nGTLW/c4ghkPGJjFUgpt/YnTtZvCJIUDFd+JfxONQEMsWa2q3UAXouMDIbJp"
+    "EgJeRoYlD9An2xfzmH1uSI+UY0C1AZC01SDe0L0ao6Rn20IpjUR+H+vTOiw4Du5/GDrKYumr"
+    "ULgtT/gQ0YeS5E8Aq+7z bob@localhost\n";
+
+#endif /* WOLFSSH_NO_RSA */
+
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+
+const char id_ecdsa[] =
+    "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+    "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAaAAAABNlY2RzYS\n"
+    "1zaGEyLW5pc3RwMjU2AAAACG5pc3RwMjU2AAAAQQTAqdBgCp8bYSq2kQQ48/Ud8Iy6Mjnb\n"
+    "/fpB3LfSE/1kx9VaaE4FL3i9Gg2vDV0eLGM3PWksFNPhULxtcYJyjaBjAAAAqJAeleSQHp\n"
+    "XkAAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBMCp0GAKnxthKraR\n"
+    "BDjz9R3wjLoyOdv9+kHct9IT/WTH1VpoTgUveL0aDa8NXR4sYzc9aSwU0+FQvG1xgnKNoG\n"
+    "MAAAAgPrOgktioNqad/wHNC/rt/zVrpNqDnOwg9tNDFMOTwo8AAAANYm9iQGxvY2FsaG9z\n"
+    "dAECAw==\n"
+    "-----END OPENSSH PRIVATE KEY-----\n";
+
+const char id_ecdsa_pub[] =
+    "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABB"
+    "BMCp0GAKnxthKraRBDjz9R3wjLoyOdv9+kHct9IT/WTH1VpoTgUveL0aDa8NXR4sYzc9aSwU"
+    "0+FQvG1xgnKNoGM= bob@localhost\n";
+
+#endif /* WOLFSSH_NO_ECDSA_SHA2_NISTP256 */
+
+static void test_wolfSSH_ReadKey(void)
+{
+#if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+    byte *key, *keyCheck, *derKey;
+    const byte* keyType;
+    word32 keySz, keyTypeSz, derKeySz;
+    int ret;
+#endif
+
+#ifndef WOLFSSH_NO_RSA
+
+    /* OpenSSH Format, ssh-rsa, private, need alloc */
+    key = NULL;
+    keySz = 0;
+    keyType = NULL;
+    keyTypeSz = 0;
+    ret = wolfSSH_ReadKey_buffer((const byte*)id_rsa, (word32)WSTRLEN(id_rsa),
+            WOLFSSH_FORMAT_OPENSSH, &key, &keySz, &keyType, &keyTypeSz, NULL);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertNotNull(key);
+    AssertIntGT(keySz, 0);
+    AssertStrEQ(keyType, "ssh-rsa");
+    AssertIntEQ(keyTypeSz, (word32)WSTRLEN("ssh-rsa"));
+    WFREE(key, NULL, DYNTYPE_FILE);
+
+    /* SSL PEM Format, ssh-rsa, private, need alloc */
+    derKey = NULL;
+    derKeySz = 0;
+    key = NULL;
+    keySz = 0;
+    keyType = NULL;
+    keyTypeSz = 0;
+    ret = ConvertHexToBin(serverKeyRsaDer, &derKey, &derKeySz,
+            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+    AssertIntEQ(ret, 0);
+    ret = wolfSSH_ReadKey_buffer(derKey, derKeySz, WOLFSSH_FORMAT_ASN1,
+            &key, &keySz, &keyType, &keyTypeSz, NULL);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertNotNull(key);
+    AssertIntGT(keySz, 0);
+    AssertStrEQ(keyType, "ssh-rsa");
+    AssertIntEQ(keyTypeSz, (word32)WSTRLEN("ssh-rsa"));
+    WFREE(key, NULL, DYNTYPE_FILE);
+    WFREE(derKey, NULL, 0);
+
+    /* OpenSSH Format, ssh-rsa, public, need alloc */
+    key = NULL;
+    keySz = 0;
+    keyType = NULL;
+    keyTypeSz = 0;
+    ret = wolfSSH_ReadKey_buffer((const byte*)id_rsa_pub,
+            (word32)WSTRLEN(id_rsa_pub), WOLFSSH_FORMAT_SSH,
+            &key, &keySz, &keyType, &keyTypeSz, NULL);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertNotNull(key);
+    AssertIntGT(keySz, 0);
+    AssertStrEQ(keyType, "ssh-rsa");
+    AssertIntEQ(keyTypeSz, (word32)WSTRLEN("ssh-rsa"));
+    WFREE(key, NULL, DYNTYPE_FILE);
+
+    /* OpenSSH Format, ssh-rsa, private, no alloc */
+    keyCheck = (byte*)WMALLOC(KEY_BUF_SZ, NULL, DYNTYPE_FILE);
+    AssertNotNull(keyCheck);
+    key = keyCheck;
+    keySz = KEY_BUF_SZ;
+    keyType = NULL;
+    keyTypeSz = 0;
+    ret = wolfSSH_ReadKey_buffer((const byte*)id_rsa, (word32)WSTRLEN(id_rsa),
+            WOLFSSH_FORMAT_OPENSSH, &key, &keySz, &keyType, &keyTypeSz, NULL);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertTrue(key == keyCheck);
+    AssertIntGT(keySz, 0);
+    AssertStrEQ(keyType, "ssh-rsa");
+    AssertIntEQ(keyTypeSz, (word32)WSTRLEN("ssh-rsa"));
+    WFREE(keyCheck, NULL, DYNTYPE_FILE);
+
+#endif /* WOLFSSH_NO_RSA */
+
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+
+    /* OpenSSH Format, ecdsa-sha2-nistp256, private, need alloc */
+    key = NULL;
+    keySz = 0;
+    keyType = NULL;
+    keyTypeSz = 0;
+    ret = wolfSSH_ReadKey_buffer((const byte*)id_ecdsa,
+            (word32)WSTRLEN(id_ecdsa), WOLFSSH_FORMAT_OPENSSH,
+            &key, &keySz, &keyType, &keyTypeSz, NULL);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertNotNull(key);
+    AssertIntGT(keySz, 0);
+    AssertStrEQ(keyType, "ecdsa-sha2-nistp256");
+    AssertIntEQ(keyTypeSz, (word32)WSTRLEN("ecdsa-sha2-nistp256"));
+    WFREE(key, NULL, DYNTYPE_FILE);
+
+    /* SSL DER Format, ecdsa-sha2-nistp256, private, need alloc */
+    derKey = NULL;
+    derKeySz = 0;
+    key = NULL;
+    keySz = 0;
+    keyType = NULL;
+    keyTypeSz = 0;
+    ret = ConvertHexToBin(serverKeyEccDer, &derKey, &derKeySz,
+            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+    AssertIntEQ(ret, WS_SUCCESS);
+    ret = wolfSSH_ReadKey_buffer(derKey, derKeySz, WOLFSSH_FORMAT_ASN1,
+            &key, &keySz, &keyType, &keyTypeSz, NULL);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertNotNull(key);
+    AssertIntGT(keySz, 0);
+    AssertStrEQ(keyType, "ecdsa-sha2-nistp256");
+    AssertIntEQ(keyTypeSz, (word32)WSTRLEN("ecdsa-sha2-nistp256"));
+    WFREE(key, NULL, DYNTYPE_FILE);
+    WFREE(derKey, NULL, 0);
+
+    /* OpenSSH Format, ecdsa-sha2-nistp256, public, need alloc */
+    key = NULL;
+    keySz = 0;
+    keyType = NULL;
+    keyTypeSz = 0;
+    ret = wolfSSH_ReadKey_buffer((const byte*)id_ecdsa_pub,
+            (word32)WSTRLEN(id_ecdsa_pub), WOLFSSH_FORMAT_SSH,
+            &key, &keySz, &keyType, &keyTypeSz, NULL);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertNotNull(key);
+    AssertIntGT(keySz, 0);
+    AssertStrEQ(keyType, "ecdsa-sha2-nistp256");
+    AssertIntEQ(keyTypeSz, (word32)WSTRLEN("ecdsa-sha2-nistp256"));
+    WFREE(key, NULL, DYNTYPE_FILE);
+
+#endif /* WOLFSSH_NO_ECDSA_SHA2_NISTP256 */
+}
+
+
 #ifdef WOLFSSH_SCP
 
 static int my_ScpRecv(WOLFSSH* ssh, int state, const char* basePath,
@@ -1125,6 +1322,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_CTX_UsePrivateKey_buffer();
     test_wolfSSH_CTX_UseCert_buffer();
     test_wolfSSH_CertMan();
+    test_wolfSSH_ReadKey();
 
     /* SCP tests */
     test_wolfSSH_SCP_CB();

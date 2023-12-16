@@ -485,6 +485,9 @@ extern "C" {
     #define WSTRNCMP(s1,s2,n) strncmp((s1),(s2),(n))
     #define WSTRSPN(s1,s2)    strspn((s1),(s2))
     #define WSTRCSPN(s1,s2)   strcspn((s1),(s2))
+    #define WSTRSEP(s,d)      strsep((s),(d))
+    #define WSTRCAT(s1,s2)    strcat((s1),(s2))
+    #define WSTRCPY(s1,s2)    strcpy((s1),(s2))
 
     /* for these string functions use internal versions */
     WOLFSSH_API char* wstrnstr(const char*, const char*, unsigned int);
@@ -499,7 +502,7 @@ extern "C" {
         #define WSTRNCPY(s1,s2,n) strncpy_s((s1),(n),(s2),(n))
         #define WSTRNCASECMP(s1,s2,n) _strnicmp((s1),(s2),(n))
         #define WSNPRINTF(s,n,f,...) _snprintf_s((s),(n),_TRUNCATE,(f),##__VA_ARGS__)
-        #define WVSNPRINTF(s,n,f,...) _vsnprintf_s((s),(n),(n),(f),##__VA_ARGS__)
+        #define WVSNPRINTF(s,n,f,...) _vsnprintf_s((s),(n),_TRUNCATE,(f),##__VA_ARGS__)
         #define WSTRTOK(s1,s2,s3) strtok_s((s1),(s2),(s3))
     #elif defined(MICROCHIP_MPLAB_HARMONY) || defined(MICROCHIP_PIC32)
         #include <stdio.h>
@@ -1390,7 +1393,7 @@ extern "C" {
 
 
 #ifndef WOLFSSH_UNUSED
-    #define WOLFSSH_UNUSED(arg) (void)(arg);
+    #define WOLFSSH_UNUSED(arg) (void)(arg)
 #endif
 
 

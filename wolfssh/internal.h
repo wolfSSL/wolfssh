@@ -347,12 +347,20 @@ enum {
 
     ID_EXTINFO_SERVER_SIG_ALGS,
 
+    ID_CURVE_NISTP256,
+    ID_CURVE_NISTP384,
+    ID_CURVE_NISTP521,
+
     ID_UNKNOWN
 };
 
 
 #define WOLFSSH_MAX_NAMESZ 32
-#define WOLFSSH_MAX_CHN_NAMESZ 256
+
+#ifndef WOLFSSH_MAX_CHN_NAMESZ
+    #define WOLFSSH_MAX_CHN_NAMESZ 4096
+#endif
+
 #define MAX_ENCRYPTION 3
 #define MAX_INTEGRITY 2
 #define MAX_KEY_EXCHANGE 2
@@ -415,6 +423,9 @@ enum {
 #endif
 #ifndef WOLFSSH_MAX_PUB_KEY_ALGO
     #define WOLFSSH_MAX_PUB_KEY_ALGO (WOLFSSH_MAX_PVT_KEYS + 2)
+#endif
+#ifndef WOLFSSH_KEY_QUANTITY_REQ
+    #define WOLFSSH_KEY_QUANTITY_REQ 1
 #endif
 
 WOLFSSH_LOCAL byte NameToId(const char*, word32);
@@ -804,6 +815,8 @@ struct WOLFSSH {
     void* termCtx;
     word32 curX; /* current terminal width */
     word32 curY; /* current terminal height */
+    word32 curXP; /* pixel width  */
+    word32 curYP; /* pixel height */
 #endif
 };
 
@@ -851,8 +864,9 @@ WOLFSSH_LOCAL void ChannelDelete(WOLFSSH_CHANNEL*, void*);
 WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelFind(WOLFSSH*, word32, byte);
 WOLFSSH_LOCAL int ChannelRemove(WOLFSSH*, word32, byte);
 WOLFSSH_LOCAL int ChannelPutData(WOLFSSH_CHANNEL*, byte*, word32);
-WOLFSSH_LOCAL int IdentifyKey(const byte* in, word32 inSz,
+WOLFSSH_LOCAL int IdentifyAsn1Key(const byte* in, word32 inSz,
         int isPrivate, void* heap);
+WOLFSSH_LOCAL int IdentifyOpenSshKey(const byte* in, word32 inSz, void* heap);
 WOLFSSH_LOCAL int wolfSSH_ProcessBuffer(WOLFSSH_CTX*,
                                         const byte*, word32,
                                         int, int);
@@ -865,6 +879,7 @@ WOLFSSH_LOCAL int GetUint32(word32* v,
         const byte* buf, word32 len, word32* idx);
 WOLFSSH_LOCAL int GetSize(word32* v,
         const byte* buf, word32 len, word32* idx);
+WOLFSSH_LOCAL int GetSkip(const byte* buf, word32 len, word32* idx);
 WOLFSSH_LOCAL int GetMpint(word32* mpintSz, const byte** mpint,
         const byte* buf, word32 len, word32* idx);
 WOLFSSH_LOCAL int GetString(char* s, word32* sSz,

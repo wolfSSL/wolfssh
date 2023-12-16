@@ -50,6 +50,9 @@ AC_PROG_INSTALL
 AC_CHECK_SIZEOF([long long])
 AC_CHECK_SIZEOF([long])
 AC_CHECK_SIZEOF([off_t])
+AC_TYPE_SIZE_T
+AC_TYPE_UINT8_T
+AC_TYPE_UINTPTR_T
 
 # Check headers/libs
 AC_CHECK_HEADERS([sys/select.h sys/time.h sys/ioctl.h pty.h util.h termios.h])

@@ -762,7 +762,7 @@ static int CheckPasswordWIN(const char* usr, const byte* pw, word32 pwSz, WOLFSS
 
     usrWSz = WSTRLEN(usr) * sizeof(WCHAR);
 
-    usrW = (WCHAR*)WMALLOC(usrWSz + 1, authCtx->heap, DYNTYPE_SSHD);
+    usrW = (WCHAR*)WMALLOC((usrWSz * sizeof(WCHAR)) + sizeof(WCHAR), authCtx->heap, DYNTYPE_SSHD);
     if (usrW == NULL) {
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Ran out of memory");
         ret = WSSHD_AUTH_FAILURE;
@@ -1363,6 +1363,12 @@ static int SetDefaultPublicKeyCheck(WOLFSSHD_AUTH* auth)
     return ret;
 }
 
+#ifndef WOLFSSH_SSHD_USER
+    #define WOLFSSH_SSHD_USER sshd
+#endif
+#define WOLFSSH_USER_GET_STRING(x) #x
+#define WOLFSSH_USER_STRING(x) WOLFSSH_USER_GET_STRING(x)
+
 static int SetDefualtUserID(WOLFSSHD_AUTH* auth)
 {
 #ifdef _WIN32
@@ -1370,13 +1376,13 @@ static int SetDefualtUserID(WOLFSSHD_AUTH* auth)
     return 0;
 #else
     struct passwd* pwInfo;
-    const char* usr = "sshd";
     int ret = WS_SUCCESS;
 
-    pwInfo = getpwnam(usr);
+    pwInfo = getpwnam(WOLFSSH_USER_STRING(WOLFSSH_SSHD_USER));
     if (pwInfo == NULL) {
         /* user name not found on system */
-        wolfSSH_Log(WS_LOG_INFO, "[SSHD] No sshd user found to use");
+        wolfSSH_Log(WS_LOG_INFO, "[SSHD] No %s user found to use",
+            WOLFSSH_USER_STRING(WOLFSSH_SSHD_USER));
         ret = WS_FATAL_ERROR;
     }
 
