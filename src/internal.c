@@ -9422,6 +9422,47 @@ static INLINE byte SigTypeForId(byte id)
 }
 
 
+#ifndef WOLFSSH_NO_RSA
+/*
+ * wolfSSH_RsaVerify
+ * sig - signature to verify
+ * sigSz - signature to verify size
+ * digest - encoded digest for verification
+ * digestSz - encoded digest size
+ * key - key used to sign and verify signature
+ * heap - allocation heap
+ * loc - calling function for logging
+ */
+int wolfSSH_RsaVerify(byte *sig, word32 sigSz,
+        const byte* digest, word32 digestSz,
+        RsaKey* key, void* heap, const char* loc)
+{
+    byte* checkSig;
+    int ret = WS_SUCCESS;
+
+    checkSig = (byte*)WMALLOC(sigSz, heap, DYNTYPE_TEMP);
+    if (checkSig == NULL) {
+        ret = WS_MEMORY_E;
+    }
+    else {
+        int checkSz;
+
+        checkSz = wc_RsaSSL_VerifyInline(sig, sigSz, &checkSig, key);
+        if (checkSz < 0
+                || (word32)checkSz != digestSz
+                || WMEMCMP(digest, checkSig, digestSz) != 0) {
+            WLOG(WS_LOG_DEBUG, "%s: %s", loc, "Bad RSA Sign Verify");
+            ret = WS_RSA_E;
+        }
+        ForceZero(checkSig, sigSz);
+        WFREE(checkSig, heap, DYNTYPE_TEMP);
+    }
+
+    return ret;
+}
+#endif /* WOLFSSH_NO_RSA */
+
+
 /* SendKexDhReply()
  * It is also the funciton used for MSGID_KEXECDH_REPLY. The parameters
  * are analogous between the two messages. Where MSGID_KEXDH_REPLY has
@@ -9932,7 +9973,7 @@ int SendKexDhReply(WOLFSSH* ssh)
                     encSigSz = wc_EncodeSignature(encSig, digest,
                                               wc_HashGetDigestSize(sigHashId),
                                               wc_HashGetOID(sigHashId));
-                    if (encSigSz <= 0) {
+                    if (encSigSz == 0) {
                         WLOG(WS_LOG_DEBUG, "SendKexDhReply: Bad Encode Sig");
                         ret = WS_CRYPTO_FAILED;
                     }
@@ -9945,6 +9986,12 @@ int SendKexDhReply(WOLFSSH* ssh)
                         if (sigSz <= 0) {
                             WLOG(WS_LOG_DEBUG, "SendKexDhReply: Bad RSA Sign");
                             ret = WS_RSA_E;
+                        }
+                        else {
+                            ret = wolfSSH_RsaVerify(sig_ptr, sigSz,
+                                    encSig, encSigSz,
+                                    &sigKeyBlock_ptr->sk.rsa.key,
+                                    heap, "SendKexDhReply");
                         }
                     }
                 #ifdef WOLFSSH_SMALL_STACK
@@ -11175,6 +11222,11 @@ static int BuildUserAuthRequestRsa(WOLFSSH* ssh,
                         WLOG(WS_LOG_DEBUG, "SUAR: Bad RSA Sign");
                         ret = WS_RSA_E;
                     }
+                    else {
+                        ret = wolfSSH_RsaVerify(output + begin, keySig->sigSz,
+                                encDigest, encDigestSz, &keySig->ks.rsa.key,
+                                ssh->ctx->heap, "SUAR");
+                    }
                 }
             }
 
@@ -11324,21 +11376,23 @@ static int BuildUserAuthRequestRsaCert(WOLFSSH* ssh,
             if (ret == WS_SUCCESS)
                 ret = wc_HashFinal(&hash, hashId, digest);
 
-            c32toa(keySig->sigSz + 7 + LENGTH_SZ * 2, output + begin);
-            begin += LENGTH_SZ;
-            c32toa(7, output + begin);
-            begin += LENGTH_SZ;
-            WMEMCPY(output + begin, "ssh-rsa", 7);
-            begin += 7;
-            c32toa(keySig->sigSz, output + begin);
-            begin += LENGTH_SZ;
-            encDigestSz = wc_EncodeSignature(encDigest, digest, digestSz,
-                    wc_HashGetOID(hashId));
-            if (encDigestSz <= 0) {
-                WLOG(WS_LOG_DEBUG, "SUAR: Bad Encode Sig");
-                ret = WS_CRYPTO_FAILED;
+            if (ret == WS_SUCCESS) {
+                c32toa(keySig->sigSz + 7 + LENGTH_SZ * 2, output + begin);
+                begin += LENGTH_SZ;
+                c32toa(7, output + begin);
+                begin += LENGTH_SZ;
+                WMEMCPY(output + begin, "ssh-rsa", 7);
+                begin += 7;
+                c32toa(keySig->sigSz, output + begin);
+                begin += LENGTH_SZ;
+                encDigestSz = wc_EncodeSignature(encDigest, digest, digestSz,
+                        wc_HashGetOID(hashId));
+                if (encDigestSz <= 0) {
+                    WLOG(WS_LOG_DEBUG, "SUAR: Bad Encode Sig");
+                    ret = WS_CRYPTO_FAILED;
+                }
             }
-            else {
+            if (ret == WS_SUCCESS) {
                 int sigSz;
                 WLOG(WS_LOG_INFO, "Signing hash with RSA.");
                 sigSz = wc_RsaSSL_Sign(encDigest, encDigestSz,
@@ -11347,6 +11401,11 @@ static int BuildUserAuthRequestRsaCert(WOLFSSH* ssh,
                 if (sigSz <= 0 || (word32)sigSz != keySig->sigSz) {
                     WLOG(WS_LOG_DEBUG, "SUAR: Bad RSA Sign");
                     ret = WS_RSA_E;
+                }
+                else {
+                    ret = wolfSSH_RsaVerify(output + begin, keySig->sigSz,
+                            encDigest, encDigestSz, &keySig->ks.rsa.key,
+                            ssh->ctx->heap, "SUAR");
                 }
             }
 

@@ -36,6 +36,7 @@
 #include <wolfssl/wolfcrypt/aes.h>
 #include <wolfssl/wolfcrypt/dh.h>
 #include <wolfssl/wolfcrypt/ecc.h>
+#include <wolfssl/wolfcrypt/rsa.h>
 #ifdef WOLFSSH_SCP
     #include <wolfssh/wolfscp.h>
 #endif
@@ -1195,6 +1196,9 @@ WOLFSSH_LOCAL int wsScpSendCallback(WOLFSSH*, int, const char*, char*, word32,
 
 
 WOLFSSH_LOCAL int wolfSSH_CleanPath(WOLFSSH* ssh, char* in);
+WOLFSSH_LOCAL int wolfSSH_RsaVerify(byte *sig, word32 sigSz,
+        const byte* digest, word32 digestSz,
+        RsaKey* key, void* heap, const char* loc);
 WOLFSSH_LOCAL void DumpOctetString(const byte*, word32);
 WOLFSSH_LOCAL int wolfSSH_oct2dec(WOLFSSH* ssh, byte* oct, word32 octSz);
 WOLFSSH_LOCAL void AddAssign64(word32*, word32);
