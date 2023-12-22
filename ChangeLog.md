@@ -7,7 +7,7 @@
   been observed in wolfSSH, the fix is now implemented. The RSA signature
   is verified before sending to the peer.
   - Keegan Ryan, Kaiwen He, George Arnold Sullivan, and Nadia Heninger. 2023.
-    Passive SSH Key Compormise via Lattices. Cryptology ePrint Archive,
+    Passive SSH Key Compromise via Lattices. Cryptology ePrint Archive,
     Report 2023/1711. https://eprint.iacr.org/2023/1711.
 
 ## Notes
@@ -46,7 +46,7 @@
 * Speed improvements for SFTP. (Fixed unnecessary waiting.)
 * Windows wolfSSHd improvements.
 * The functions `wolfSSH_ReadKey_file()` and `wolfSSH_ReadKey_buffer()`
-  handles more encodings.
+  handle more encodings.
 * Add function to supply new protocol ID string.
 * Support larger RSA keys.
 * MinGW support updates.
