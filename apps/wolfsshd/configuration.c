@@ -60,6 +60,9 @@
 #ifdef WIN32
 #include <process.h>
 #endif
+#ifdef HAVE_LIMITS_H
+    #include <limits.h>
+#endif
 
 struct WOLFSSHD_CONFIG {
     void* heap;
