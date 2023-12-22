@@ -714,37 +714,37 @@ static int doCmds(func_args* args)
         }
 
         if ((pt = WSTRNSTR(msg, "chmod", MAX_CMD_SZ)) != NULL) {
-            int sz;
+            word32 sz, idx;
             char* f = NULL;
             char mode[WOLFSSH_MAX_OCTET_LEN];
 
             pt += sizeof("chmod");
-            sz = (int)WSTRLEN(pt);
+            sz = (word32)WSTRLEN(pt);
 
             if (pt[sz - 1] == '\n') pt[sz - 1] = '\0';
 
             /* advance pointer to first location of non space character */
-            for (i = 0; i < sz && pt[0] == ' '; i++, pt++);
-            sz = (int)WSTRLEN(pt);
+            for (idx = 0; idx < sz && pt[0] == ' '; idx++, pt++);
+            sz = (word32)WSTRLEN(pt);
 
             /* get mode */
             sz = (sz < WOLFSSH_MAX_OCTET_LEN - 1)? sz :
                                                    WOLFSSH_MAX_OCTET_LEN -1;
             WMEMCPY(mode, pt, sz);
             mode[WOLFSSH_MAX_OCTET_LEN - 1] = '\0';
-            for (i = 0; i < sz; i++) {
-                if (mode[i] == ' ') {
-                    mode[i] = '\0';
+            for (idx = 0; idx < sz; idx++) {
+                if (mode[idx] == ' ') {
+                    mode[idx] = '\0';
                     break;
                 }
             }
-            if (i == 0) {
+            if (idx == 0) {
                 printf("error with getting mode\r\n");
                 continue;
             }
-            pt += (int)WSTRLEN(mode);
-            sz = (int)WSTRLEN(pt);
-            for (i = 0; i < sz && pt[0] == ' '; i++, pt++);
+            pt += (word32)WSTRLEN(mode);
+            sz = (word32)WSTRLEN(pt);
+            for (idx = 0; idx < sz && pt[0] == ' '; idx++, pt++);
 
             if (pt[0] != '/') {
                 int maxSz = (int)WSTRLEN(workingDir) + sz + 2;

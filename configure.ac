@@ -3,7 +3,7 @@
 # All right reserved.
 
 AC_COPYRIGHT([Copyright (C) 2014-2023 wolfSSL Inc.])
-AC_INIT([wolfssh],[1.4.14],[support@wolfssl.com],[wolfssh],[https://www.wolfssl.com])
+AC_INIT([wolfssh],[1.4.15],[support@wolfssl.com],[wolfssh],[https://www.wolfssl.com])
 AC_PREREQ([2.63])
 AC_CONFIG_AUX_DIR([build-aux])
 
@@ -18,7 +18,7 @@ AC_ARG_PROGRAM
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_HEADERS([config.h])
 
-WOLFSSH_LIBRARY_VERSION=15:1:7
+WOLFSSH_LIBRARY_VERSION=15:2:7
 #                       | | |
 #                +------+ | +---+
 #                |        |     |
@@ -55,7 +55,7 @@ AC_TYPE_UINT8_T
 AC_TYPE_UINTPTR_T
 
 # Check headers/libs
-AC_CHECK_HEADERS([sys/select.h sys/time.h sys/ioctl.h pty.h util.h termios.h])
+AC_CHECK_HEADERS([limits.h sys/select.h sys/time.h sys/ioctl.h pty.h util.h termios.h])
 AC_CHECK_LIB([network],[socket])
 AC_CHECK_LIB([util],[forkpty])
 
