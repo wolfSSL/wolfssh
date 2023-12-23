@@ -41,7 +41,10 @@
 #include <unistd.h>
 #else
 /* avoid macro redefinition warnings on STATUS values when include ntstatus.h */
+#undef UMDF_USING_NTSTATUS
 #define UMDF_USING_NTSTATUS
+#undef UNICODE
+#define UNICODE
 #endif
 
 #include <wolfssh/ssh.h>
