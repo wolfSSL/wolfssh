@@ -56,7 +56,7 @@
     #define MISC_WARNING "misc.c does not need to be compiled when using inline (NO_INLINE not defined))"
 
     #ifndef _MSC_VER
-        #warning MISC_WARNING
+        #warning #MISC_WARNING
     #else
         #pragma message("warning: " MISC_WARNING)
     #endif
