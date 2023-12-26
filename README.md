@@ -497,3 +497,9 @@ john-cert.der would be:
 
     $ ./examples/client/client -u john -J ./keys/john-cert.der -i ./keys/john-key.der
 
+
+WOLFSSH APPLICATIONS
+====================
+
+wolfSSH comes with a server daemon and a command line shell tool. Check out
+the apps directory for more information.

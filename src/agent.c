@@ -701,6 +701,10 @@ static int SignHashRsa(WOLFSSH_AGENT_KEY_RSA* rawKey, enum wc_HashType hashType,
             WLOG(WS_LOG_DEBUG, "Bad RSA Sign");
             ret = WS_RSA_E;
         }
+        else {
+            ret = wolfSSH_RsaVerify(sig, *sigSz,
+                    encSig, encSigSz, &key, heap, "SignHashRsa");
+        }
     }
 
     wc_FreeRsaKey(&key);

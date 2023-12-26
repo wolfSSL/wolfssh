@@ -39,6 +39,12 @@
 
 #ifndef _WIN32
 #include <unistd.h>
+#else
+/* avoid macro redefinition warnings on STATUS values when include ntstatus.h */
+#undef UMDF_USING_NTSTATUS
+#define UMDF_USING_NTSTATUS
+#undef UNICODE
+#define UNICODE
 #endif
 
 #include <wolfssh/ssh.h>
@@ -685,6 +691,21 @@ static int CheckPublicKeyUnix(const char* name,
 
 #include <UserEnv.h>
 #include <KnownFolders.h>
+
+/* Pulled in from Advapi32.dll */
+extern BOOL WINAPI LogonUserExExW(LPTSTR usr,
+    LPTSTR dmn,
+    LPTSTR paswd,
+    DWORD logonType,
+    DWORD logonProv,
+    PTOKEN_GROUPS tokenGrp,
+    PHANDLE tokenPh,
+    PSID* loginSid,
+    PVOID* pBuffer,
+    LPDWORD pBufferLen ,
+    PQUOTA_LIMITS quotaLimits
+);
+
 #define MAX_USERNAME 256
 
 static int _GetHomeDirectory(WOLFSSHD_AUTH* auth, const char* usr, WCHAR* out, int outSz)
@@ -705,7 +726,7 @@ static int _GetHomeDirectory(WOLFSSHD_AUTH* auth, const char* usr, WCHAR* out, i
         CoTaskMemFree(homeDir);
     }
     else {
-        PROFILEINFO pInfo = { sizeof(PROFILEINFO) };
+        PROFILEINFO pInfo = { 0 };
 
         /* failed with get known folder path, try with loading the user profile */
         pInfo.dwFlags = PI_NOUI;

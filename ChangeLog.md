@@ -1,3 +1,74 @@
+# wolfSSH v1.4.15 (December 22, 2023)
+
+## Vulnerabilities
+
+* Fixes a potential vulnerability described in the paper "Passive SSH Key
+  Compromise via Lattices". While the misbehavior described hasn't
+  been observed in wolfSSH, the fix is now implemented. The RSA signature
+  is verified before sending to the peer.
+  - Keegan Ryan, Kaiwen He, George Arnold Sullivan, and Nadia Heninger. 2023.
+    Passive SSH Key Compromise via Lattices. Cryptology ePrint Archive,
+    Report 2023/1711. https://eprint.iacr.org/2023/1711.
+
+## Notes
+
+* When building wolfSSL/wolfCrypt versions before v5.6.6 with CMake,
+  wolfSSH may have a problem with RSA keys. This is due to wolfSSH not
+  checking on the size of `___uint128_t`. wolfSSH sees the RSA structure
+  as the wrong size. You will have to define `HAVE___UINT128_T` if you
+  know you have it and are using it in wolfSSL. wolfSSL v5.6.6 exports that
+  define in options.h when using CMake.
+
+## New Features
+
+* Added wolfSSH client application.
+* Added support for OpenSSH-style private keys, like those made by ssh-keygen.
+* Added support for the Zephyr RTOS.
+* Added support for multiple authentication schemes in the userauth callback
+  with the error response `WOLFSSH_USERAUTH_PARTIAL_SUCCESS`.
+
+## Improvements
+
+* Allow override of default sshd user name at build.
+* Do not attempt to copy device files. The client won't ask, and the server
+  won't do it.
+* More wolfSSHd testing.
+* Portability updates.
+* Terminal updates for shell connections to wolfSSHd, including window size
+  updates.
+* QNX support updates.
+* Windows file support updates for SFTP and SCP.
+* Allow for longer command strings in wolfSSHd.
+* Tweaked some select timeouts in the echoserver.
+* Add some type size checks to configure.
+* Update for changes in wolfSSL's threading wrappers.
+* Updates for Espressif support and testing.
+* Speed improvements for SFTP. (Fixed unnecessary waiting.)
+* Windows wolfSSHd improvements.
+* The functions `wolfSSH_ReadKey_file()` and `wolfSSH_ReadKey_buffer()`
+  handle more encodings.
+* Add function to supply new protocol ID string.
+* Support larger RSA keys.
+* MinGW support updates.
+* Update file use W-macro wrappers with a filesystem parameter.
+
+## Fixes
+
+* When setting the file permissions for a file in Zephyr, use the correct
+  permission constants.
+* Fix buffer issue in `DoReceive()` on some edge failure conditions.
+* Prevent wolfSSHd zombie processes.
+* Fixed a few references to the heap variable for user supplied memory
+  allocation functions.
+* Fixed an index update when verifying the server's RSA signature during KEX.
+* Fixed some of the guards around optional code.
+* Fixed some would-block cases when using non-blocking sockets in the
+  examples.
+* Fixed some compile issues with liboqs.
+* Fix for interop issue with OpenSSH when using AES-CTR.
+
+---
+
 # wolfSSH v1.4.14 (July 7, 2023)
 
 ## New Feature Additions and Improvements
@@ -21,6 +92,8 @@
 - Sanity check improvements for handling memory management with non blocking connections
 - Fix for support with secondary groups with wolfSSHd
 - Fixes for SFTP edge cases when used with LWiP
+
+---
 
 # wolfSSH v1.4.13 (Apr 3, 2023)
 
