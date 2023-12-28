@@ -1073,7 +1073,7 @@ static INLINE int CalcRsaInverses(RsaKey* key)
     return ret;
 }
 
-
+#ifndef WOLFSSH_NO_RSA
 /*
  * Utility for GetOpenSshKey() to read in RSA keys.
  */
@@ -1105,7 +1105,7 @@ static int GetOpenSshKeyRsa(RsaKey* key,
 
     return ret;
 }
-
+#endif
 
 /*
  * Utility for GetOpenSshKey() to read in ECDSA keys.
