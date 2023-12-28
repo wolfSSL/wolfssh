@@ -282,6 +282,7 @@ typedef enum {
     WOLFSSH_SESSION_TERMINAL,
 } WS_SessionType;
 
+WOLFSSH_API int wolfSSH_DoModes(const byte* modes, word32 modesSz, int fd);
 WOLFSSH_API WS_SessionType wolfSSH_GetSessionType(const WOLFSSH*);
 WOLFSSH_API const char* wolfSSH_GetSessionCommand(const WOLFSSH*);
 WOLFSSH_API int wolfSSH_SetChannelType(WOLFSSH*, byte, byte*, word32);
