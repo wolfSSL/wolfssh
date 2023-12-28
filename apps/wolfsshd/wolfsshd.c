@@ -1204,6 +1204,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         /* Child process */
         const char *args[] = {"-sh", NULL, NULL, NULL};
         char cmd[MAX_COMMAND_SZ];
+        char shell[MAX_COMMAND_SZ];
         int ret;
 
         signal(SIGINT,  SIG_DFL);
@@ -1258,6 +1259,25 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 
         setenv("HOME", pPasswd->pw_dir, 1);
         setenv("LOGNAME", pPasswd->pw_name, 1);
+        setenv("SHELL", pPasswd->pw_shell, 1);
+
+        if (pPasswd->pw_shell) {
+            word32 shellSz = (word32)WSTRLEN(pPasswd->pw_shell);
+
+            if (shellSz < sizeof(shell)) {
+                char* cursor;
+                char* start;
+
+                WSTRNCPY(shell, pPasswd->pw_shell, sizeof(shell));
+                cursor = shell;
+                do {
+                    start = cursor;
+                    *cursor = '-';
+                    cursor = WSTRCHR(start, '/');
+                } while (cursor && *cursor != '\0');
+                args[0] = start;
+            }
+        }
 
         rc = chdir(pPasswd->pw_dir);
         if (rc != 0) {
