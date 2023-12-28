@@ -39,7 +39,11 @@
     #include <wolfssh/misc.h>
 #else
     #define WOLFSSH_MISC_INCLUDED
-    #include "src/misc.c"
+    #if defined(WOLFSSL_NUCLEUS)
+        #include "src/wolfssh_misc.c"
+    #else
+        #include "src/misc.c"
+    #endif
 #endif
 
 #ifdef HAVE_FIPS

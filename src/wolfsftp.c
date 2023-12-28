@@ -34,7 +34,11 @@
     #include <wolfssh/misc.h>
 #else
     #define WOLFSSH_MISC_INCLUDED
-    #include "src/misc.c"
+    #if defined(WOLFSSL_NUCLEUS)
+        #include "src/wolfssh_misc.c"
+    #else
+        #include "src/misc.c"
+    #endif
 #endif
 
 /* for XGMTIME if defined */
@@ -2731,6 +2735,15 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
         ret = WS_NEXT_ERROR;
     }
 
+    if (special) {
+        sz = WSTRLEN(out->fName);
+
+        if ((out->fName[sz - 1] == '/') || (out->fName[sz - 1] == WS_DELIM)) {
+            out->fName[sz - 1] = '\0';
+            out->fSz--;
+        }
+    }
+
     /* Use attributes and fName to create long name */
     if (SFTP_CreateLongName(out) != WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "Error creating long name for %s", out->fName);
@@ -4271,12 +4284,22 @@ int SFTP_RemoveHandleNode(WOLFSSH* ssh, byte* handle, word32 handleSz)
 #ifndef NO_WOLFSSH_MKTIME
 
 #define WS_GETDAY(d) ((d) & 0x001f)
-#define WS_GETMON(d) (((d) >> 5) & 0x000f)
+#define _GETMON(d) (((d) >> 5) & 0x000f)
 /* number of years since 1900. year + 1980 - 1900 */
 #define WS_GETYEAR(d) ((((d) >> 9) & 0x007f) + 80)
-#define WS_GETHOUR(t) (((t) >> 11) & 0x001f)
+#define _GETHOUR(t) (((t) >> 11) & 0x001f)
 #define WS_GETMIN(t)  (((t) >> 5 ) & 0x003f)
 #define WS_GETSEC(t)  (((t) << 1 ) & 0x003f)
+#ifdef WOLFSSL_NUCLEUS
+    /* mktime() expects month from 0 to 11. Nucleus months
+    * are saved as 1 to 12. Hence 1 is being deducted to
+    * make it compatible with Unix time stamp. */
+    #define WS_GETMON(d) (_GETMON(d) - 5)
+    #define WS_GETHOUR(t) (_GETHOUR(t) - 1)
+#else
+    #define WS_GETMON(d) _GETMON(d)
+    #define WS_GETHOUR(t) _GETHOUR(t)
+#endif
 
 /* convert nucleus date and time shorts to word32
  * returns results in Unix time stamp */
@@ -7159,7 +7182,6 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                     ret = wolfSSH_worker(ssh, NULL);
                     continue; /* skip past rest and send more */
                 }
-
                 if (state->sentSz <= 0) {
                     ssh->error = state->sentSz;
                     ret = WS_FATAL_ERROR;
@@ -8901,7 +8923,6 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
     }
 }
 
-
 /* called when wolfSSH_free() is called
  * return WS_SUCCESS on success */
 int wolfSSH_SFTP_free(WOLFSSH* ssh)
@@ -8949,7 +8970,6 @@ int wolfSSH_SFTP_free(WOLFSSH* ssh)
     wolfSSH_SFTP_ClearState(ssh, STATE_ID_ALL);
     return WS_SUCCESS;
 }
-
 
 #ifdef WOLFSSH_SHOW_SIZES
 
