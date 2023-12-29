@@ -54,11 +54,20 @@
 #if !defined(WOLFSSH_MISC_INCLUDED) && !defined(NO_INLINE) && \
     !defined(WOLFSSH_IGNORE_FILE_WARN)
     #define MISC_WARNING "misc.c does not need to be compiled when using inline (NO_INLINE not defined))"
+    #define MISC_STRINGIFY(x) #x
+    #define MISC_TOSTRING(x) MISC_STRINGIFY(x)
+    #ifdef __STDC_VERSION__
+      #if __STDC_VERSION__ >= 199901L
+        #define PRAGMA_SUPPORTED 1
+      #endif
+    #endif
 
-    #ifndef _MSC_VER
-        #warning MISC_WARNING
-    #else
+    #if (defined(__GNUC__) || defined(__clang__)) && defined(PRAGMA_SUPPORTED)
+        _Pragma(MISC_TOSTRING(message(MISC_WARNING)))
+    #elif  defined(_MSC_VER)
         #pragma message("warning: " MISC_WARNING)
+    #else
+        #warning MISC_WARNING
     #endif
 
 #else /* !WOLFSSL_MISC_INCLUDED && !NO_INLINE && !WOLFSSH_IGNORE_FILE_WARN */
