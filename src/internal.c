@@ -1048,6 +1048,7 @@ static INLINE int GetMpintToMp(mp_int* mp,
 }
 
 
+#ifndef WOLFSSH_NO_RSA
 /*
  * For the given RSA key, calculate p^-1 and q^-1. wolfCrypt's RSA
  * code expects them, but the OpenSSH format key doesn't store them.
@@ -1073,7 +1074,6 @@ static INLINE int CalcRsaInverses(RsaKey* key)
     return ret;
 }
 
-#ifndef WOLFSSH_NO_RSA
 /*
  * Utility for GetOpenSshKey() to read in RSA keys.
  */
@@ -1107,6 +1107,8 @@ static int GetOpenSshKeyRsa(RsaKey* key,
 }
 #endif
 
+
+#if !defined(WOLFSSH_NO_ECDSA) && !defined(WOLFSSH_NO_ECC)
 /*
  * Utility for GetOpenSshKey() to read in ECDSA keys.
  */
@@ -1134,7 +1136,7 @@ static int GetOpenSshKeyEcc(ecc_key* key,
 
     return ret;
 }
-
+#endif
 
 /*
  * Decodes an OpenSSH format key.
@@ -1218,7 +1220,7 @@ static int GetOpenSshKey(WS_KeySignature *key,
                                         str, strSz, &subIdx);
                                 break;
                         #endif
-                        #ifndef WOLFSSH_NO_ECDSA
+                        #if !defined(WOLFSSH_NO_ECDSA) && !defined(WOLFSSH_NO_ECC)
                             case ID_ECDSA_SHA2_NISTP256:
                                 ret = GetOpenSshKeyEcc(&key->ks.ecc.key,
                                         str, strSz, &subIdx);
