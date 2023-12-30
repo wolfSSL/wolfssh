@@ -26,16 +26,16 @@ COL=`tmux display -p -t test '#{pane_width}'`
 ROW=`tmux display -p -t test '#{pane_height}'`
 
 # get the terminals columns and lines
-tmux send-keys -t test 'echo col=$COLUMNS row=$LINES'
+tmux send-keys -t test 'echo;echo $COLUMNS $LINES;echo'
 tmux send-keys -t test 'ENTER'
 tmux capture-pane -t test
-RESULT=`tmux show-buffer | grep -v echo | grep -v rejecting | grep "col="`
+RESULT=$(tmux show-buffer | grep '^[0-9]* [0-9]*$')
 
 echo "$RESULT"
 echo ""
 echo ""
-ROW_FOUND=`echo "$RESULT" | sed -e 's/.*[^0-9]\([0-9]\+\)[^0-9]*$/\1/'`
-COL_FOUND=`echo "$RESULT" | sed -r 's/^[^0-9]*([0-9]+).*$/\1/'`
+ROW_FOUND=$(echo "$RESULT" | sed -e 's/[0-9]* \([0-9]*\)/\1/')
+COL_FOUND=$(echo "$RESULT" | sed -e 's/\([0-9]*\) [0-9]*/\1/')
 
 if [ "$COL" != "$COL_FOUND" ]; then
     echo "Col found was $COL_FOUND which does not match expected $COL"
@@ -67,15 +67,13 @@ tmux new-session -d -x 50 -y 10 -s test "$TEST_CLIENT -t -u $USER -i $PRIVATE_KE
 # give the command a second to establish SSH connection
 sleep 0.5
 
-echo "New COL=$COL ROW=$ROW"
-
-tmux send-keys -t test 'echo col=$COLUMNS row=$LINES'
+tmux send-keys -t test 'echo;echo $COLUMNS $LINES;echo'
 tmux send-keys -t test 'ENTER'
 tmux capture-pane -t test
-RESULT=`tmux show-buffer | grep -v echo | grep -v rejecting | grep "col="`
+RESULT=$(tmux show-buffer | grep '^[0-9]* [0-9]*$')
 
-ROW_FOUND=`echo "$RESULT" | sed -e 's/.*[^0-9]\([0-9]\+\)[^0-9]*$/\1/'`
-COL_FOUND=`echo "$RESULT" | sed -r 's/^[^0-9]*([0-9]+).*$/\1/'`
+ROW_FOUND=$(echo "$RESULT" | sed -e 's/[0-9]* \([0-9]*\)/\1/')
+COL_FOUND=$(echo "$RESULT" | sed -e 's/\([0-9]*\) [0-9]*/\1/')
 
 if [ "50" != "$COL_FOUND" ]; then
     echo "Col found was $COL_FOUND which does not match expected 50"

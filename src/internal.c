@@ -7132,6 +7132,9 @@ static int DoChannelClose(WOLFSSH* ssh,
 }
 
 
+#if !defined(NO_TERMIOS) && defined(WOLFSSH_TERM)
+#if defined(HAVE_SYS_IOCTL_H)
+
 #define TTY_SET_CHAR(x,y,z) (x)[(y)] = (byte)(z)
 #define TTY_SET_FLAG(x,y,z) (x) = (z) ? ((x) | (y)) : ((x) & ~(y))
 
@@ -7367,6 +7370,9 @@ int wolfSSH_DoModes(const byte* modes, word32 modesSz, int fd)
 
     return 0;
 }
+
+#endif /* HAVE_SYS_IOCTL_H */
+#endif /* !NO_TERMIOS && WOLFSSH_TERM */
 
 
 static int DoChannelRequest(WOLFSSH* ssh,
