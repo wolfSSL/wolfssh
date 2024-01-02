@@ -238,12 +238,6 @@ The sftpclient tool accepts the following command line options:
     -G             get remote filename as local filename
 
 
-server
-------
-
-This tool is a place holder.
-
-
 SCP
 ===
 
@@ -357,12 +351,12 @@ define `WOLFSSH_SFTP`:
 For full API usage and implementation details, please see the wolfSSH User
 Manual.
 
-The SFTP client created is located in the directory examples/sftpclient/ and the
-server is ran using the same echoserver as with wolfSSH.
+The SFTP client created is located in the directory examples/sftpclient/ and
+the example echoserver acts as a SFTP server.
 
     src/wolfssh$ ./examples/sftpclient/wolfsftp
 
-A full list of supported commands can be seen with typeing "help" after a
+A full list of supported commands can be seen with typing "help" after a
 connection.
 
 
