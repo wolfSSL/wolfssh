@@ -2159,21 +2159,18 @@ static void ShowUsage(void)
 }
 
 
-static INLINE void SignalTcpReady(func_args* serverArgs, word16 port)
+static INLINE void SignalTcpReady(tcp_ready* ready, word16 port)
 {
 #if defined(_POSIX_THREADS) && defined(NO_MAIN_DRIVER) && \
     !defined(__MINGW32__) && !defined(SINGLE_THREADED)
-    tcp_ready* ready = serverArgs->signal;
-    if (ready != NULL) {
-        pthread_mutex_lock(&ready->mutex);
-        ready->ready = 1;
-        ready->port = port;
-        pthread_cond_signal(&ready->cond);
-        pthread_mutex_unlock(&ready->mutex);
-    }
+    pthread_mutex_lock(&ready->mutex);
+    ready->ready = 1;
+    ready->port = port;
+    pthread_cond_signal(&ready->cond);
+    pthread_mutex_unlock(&ready->mutex);
 #else
-    (void)serverArgs;
-    (void)port;
+    WOLFSSH_UNUSED(ready);
+    WOLFSSH_UNUSED(port);
 #endif
 }
 
@@ -2543,6 +2540,8 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     #endif
     }
 
+    SignalTcpReady(serverArgs->signal, port);
+
     do {
         WS_SOCKET_T      clientFd = WOLFSSH_SOCKET_INVALID;
     #ifdef WOLFSSL_NUCLEUS
@@ -2599,8 +2598,6 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             fprintf(stdout, "Listening on %s:%d\r\n", buf, port);
         }
     #endif
-
-        SignalTcpReady(serverArgs, port);
 
     #ifdef WOLFSSL_NUCLEUS
         clientFd = NU_Accept(listenFd, &clientAddr, 0);

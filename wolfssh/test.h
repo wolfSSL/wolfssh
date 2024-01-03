@@ -850,8 +850,8 @@ static INLINE void InitTcpReady(tcp_ready* ready)
     ready->srfName = NULL;
 #if defined(_POSIX_THREADS) && defined(NO_MAIN_DRIVER) && \
     !defined(__MINGW32__) && !defined(SINGLE_THREADED)
-    pthread_mutex_init(&ready->mutex, 0);
-    pthread_cond_init(&ready->cond, 0);
+    pthread_mutex_init(&ready->mutex, NULL);
+    pthread_cond_init(&ready->cond, NULL);
 #endif
 }
 
@@ -863,24 +863,30 @@ static INLINE void FreeTcpReady(tcp_ready* ready)
     pthread_mutex_destroy(&ready->mutex);
     pthread_cond_destroy(&ready->cond);
 #else
-    (void)ready;
+    WOLFSSH_UNUSED(ready);
 #endif
 }
 
 
-static INLINE void WaitTcpReady(func_args* args)
+static INLINE void WaitTcpReady(tcp_ready* ready)
 {
 #if defined(_POSIX_THREADS) && defined(NO_MAIN_DRIVER) && \
     !defined(__MINGW32__) && !defined(SINGLE_THREADED)
-    pthread_mutex_lock(&args->signal->mutex);
+    pthread_mutex_lock(&ready->mutex);
 
-    if (!args->signal->ready)
-        pthread_cond_wait(&args->signal->cond, &args->signal->mutex);
-    args->signal->ready = 0; /* reset */
+    while (!ready->ready) {
+        pthread_cond_wait(&ready->cond, &ready->mutex);
+    }
 
-    pthread_mutex_unlock(&args->signal->mutex);
+    pthread_mutex_unlock(&ready->mutex);
+#ifdef WOLFSSH_ZEPHYR
+    /* It's like the server isn't ready to accept connections it is
+     * listening for despite this conditional variable. A 300ms wait
+     * seems to help. This is not ideal. (XXX) */
+    k_sleep(Z_TIMEOUT_TICKS(300));
+#endif /* WOLFSSH_ZEPHYR */
 #else
-    (void)args;
+    WOLFSSH_UNUSED(ready);
 #endif
 }
 

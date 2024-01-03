@@ -208,7 +208,7 @@ int wolfSSH_SftpTest(int flag)
     ser.signal = &ready;
     InitTcpReady(ser.signal);
     ThreadStart(echoserver_test, (void*)&ser, &serThread);
-    WaitTcpReady(&ser);
+    WaitTcpReady(&ready);
 
     argsCount = 0;
     args[argsCount++] = ".";
@@ -216,10 +216,10 @@ int wolfSSH_SftpTest(int flag)
     args[argsCount++] = "jill";
     args[argsCount++] = "-P";
     args[argsCount++] = "upthehill";
-    args[argsCount++] = "-p";
 
 #ifndef USE_WINDOWS_API
     /* use port that server has found */
+    args[argsCount++] = "-p";
     snprintf(portNumber, sizeof(portNumber), "%d", ready.port);
     args[argsCount++] = portNumber;
 #endif
@@ -240,6 +240,7 @@ int wolfSSH_SftpTest(int flag)
 
     ThreadJoin(serThread);
     wolfSSH_Cleanup();
+    FreeTcpReady(&ready);
 
     return ret;
 }
