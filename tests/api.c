@@ -974,7 +974,7 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
     ser.signal = &ready;
     InitTcpReady(ser.signal);
     ThreadStart(echoserver_test, (void*)&ser, &serThread);
-    WaitTcpReady(&ser);
+    WaitTcpReady(&ready);
 
     sftp_client_connect(&ctx, &ssh, ready.port);
     AssertNotNull(ctx);

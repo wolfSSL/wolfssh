@@ -145,7 +145,7 @@ int wolfSSH_TestsuiteTest(int argc, char** argv)
     serverArgs.signal = &ready;
     serverArgs.user_auth = NULL;
     ThreadStart(echoserver_test, &serverArgs, &serverThread);
-    WaitTcpReady(&serverArgs);
+    WaitTcpReady(&ready);
 
     WSTRNCPY(cA[clientArgc++], "client", ARGLEN);
     WSTRNCPY(cA[clientArgc++], "-u", ARGLEN);

@@ -208,7 +208,7 @@ int wolfSSH_SftpTest(int flag)
     ser.signal = &ready;
     InitTcpReady(ser.signal);
     ThreadStart(echoserver_test, (void*)&ser, &serThread);
-    WaitTcpReady(&ser);
+    WaitTcpReady(&ready);
 
     argsCount = 0;
     args[argsCount++] = ".";
