@@ -378,6 +378,7 @@ enum {
 #define UINT32_SZ 4
 #define LENGTH_SZ UINT32_SZ
 #define SSH_PROTO_SZ 7 /* "SSH-2.0" */
+#define TERMINAL_MODE_SZ 5 /* opcode byte + argument uint32 */
 #define AEAD_IMP_IV_SZ 4
 #define AEAD_EXP_IV_SZ 8
 #define AEAD_NONCE_SZ (AEAD_IMP_IV_SZ+AEAD_EXP_IV_SZ)
@@ -814,10 +815,12 @@ struct WOLFSSH {
 #ifdef WOLFSSH_TERM
     WS_CallbackTerminalSize termResizeCb;
     void* termCtx;
-    word32 curX; /* current terminal width */
-    word32 curY; /* current terminal height */
-    word32 curXP; /* pixel width  */
-    word32 curYP; /* pixel height */
+    word32 widthChar;    /* current terminal width */
+    word32 heightRows;   /* current terminal height */
+    word32 widthPixels;  /* pixel width  */
+    word32 heightPixels; /* pixel height */
+    byte* modes;
+    word32 modesSz;
 #endif
 };
 
@@ -1262,7 +1265,8 @@ enum TerminalModes {
     WOLFSSH_PARENB,
     WOLFSSH_PARODD,
     WOLFSSH_TTY_OP_ISPEED = 128,
-    WOLFSSH_TTY_OP_OSPEED
+    WOLFSSH_TTY_OP_OSPEED,
+    WOLFSSH_TTY_INVALID = 160
 };
 #endif /* WOLFSSH_TERM */
 

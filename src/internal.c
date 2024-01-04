@@ -7132,6 +7132,249 @@ static int DoChannelClose(WOLFSSH* ssh,
 }
 
 
+#if !defined(NO_TERMIOS) && defined(WOLFSSH_TERM)
+#if defined(HAVE_SYS_IOCTL_H)
+
+#define TTY_SET_CHAR(x,y,z) (x)[(y)] = (byte)(z)
+#define TTY_SET_FLAG(x,y,z) (x) = (z) ? ((x) | (y)) : ((x) & ~(y))
+
+int wolfSSH_DoModes(const byte* modes, word32 modesSz, int fd)
+{
+    WOLFSSH_TERMIOS term;
+    word32 idx = 0, arg;
+
+    if (!modes || !modesSz || (modesSz % TERMINAL_MODE_SZ > 1))
+        return -1;
+    /*
+     * Modes is a list of opcode-argument pairs. The opcodes are
+     * bytes and the arguments are uint32s. TTY_OP_END is an opcode
+     * that terminates the list. Of course, it isn't clear if
+     * TTY_OP_END has an arguement or note. The RFC doesn't say,
+     * but in operation it usually doesn't. Allow for an odd single
+     * byte left over.
+     */
+
+    tcgetattr(fd, &term);
+
+    while (idx < modesSz && modes[idx] != WOLFSSH_TTY_OP_END
+            && modes[idx] < WOLFSSH_TTY_INVALID) {
+
+        ato32(modes + idx + 1, &arg);
+
+        switch (modes[idx]) {
+            /* Special Control Characters (c_cc) */
+            case WOLFSSH_VINTR:
+                TTY_SET_CHAR(term.c_cc, VINTR, arg);
+                break;
+            case WOLFSSH_VQUIT:
+                TTY_SET_CHAR(term.c_cc, VQUIT, arg);
+                break;
+            case WOLFSSH_VERASE:
+                TTY_SET_CHAR(term.c_cc, VERASE, arg);
+                break;
+            case WOLFSSH_VKILL:
+                TTY_SET_CHAR(term.c_cc, VKILL, arg);
+                break;
+            case WOLFSSH_VEOF:
+                TTY_SET_CHAR(term.c_cc, VEOF, arg);
+                break;
+            case WOLFSSH_VEOL:
+                TTY_SET_CHAR(term.c_cc, VEOL, arg);
+                break;
+            case WOLFSSH_VEOL2:
+                TTY_SET_CHAR(term.c_cc, VEOL2, arg);
+                break;
+            case WOLFSSH_VSTART:
+                TTY_SET_CHAR(term.c_cc, VSTART, arg);
+                break;
+            case WOLFSSH_VSTOP:
+                TTY_SET_CHAR(term.c_cc, VSTOP, arg);
+                break;
+            case WOLFSSH_VSUSP:
+                TTY_SET_CHAR(term.c_cc, VSUSP, arg);
+                break;
+            case WOLFSSH_VDSUSP:
+                #ifdef VDSUSP
+                    TTY_SET_CHAR(term.c_cc, VDSUSP, arg);
+                #endif
+                break;
+            case WOLFSSH_VREPRINT:
+                TTY_SET_CHAR(term.c_cc, VREPRINT, arg);
+                break;
+            case WOLFSSH_VWERASE:
+                TTY_SET_CHAR(term.c_cc, VWERASE, arg);
+                break;
+            case WOLFSSH_VLNEXT:
+                TTY_SET_CHAR(term.c_cc, VLNEXT, arg);
+                break;
+            case WOLFSSH_VFLUSH:
+                #ifdef VFLUSH
+                    TTY_SET_CHAR(term.c_cc, VFLUSH, arg);
+                #endif
+                break;
+            case WOLFSSH_VSWTCH:
+                #ifdef VSWTCH
+                    TTY_SET_CHAR(term.c_cc, VSWTCH, arg);
+                #endif
+                break;
+            case WOLFSSH_VSTATUS:
+                #ifdef VSTATUS
+                    TTY_SET_CHAR(term.c_cc, VSTATUS, arg);
+                #endif
+                break;
+            case WOLFSSH_VDISCARD:
+                TTY_SET_CHAR(term.c_cc, VDISCARD, arg);
+                break;
+
+            /* Input Modes (c_iflag) */
+            case WOLFSSH_IGNPAR:
+                TTY_SET_FLAG(term.c_iflag, IGNPAR, arg);
+                break;
+            case WOLFSSH_PARMRK:
+                TTY_SET_FLAG(term.c_iflag, PARMRK, arg);
+                break;
+            case WOLFSSH_INPCK:
+                TTY_SET_FLAG(term.c_iflag, INPCK, arg);
+                break;
+            case WOLFSSH_ISTRIP:
+                TTY_SET_FLAG(term.c_iflag, ISTRIP, arg);
+                break;
+            case WOLFSSH_INLCR:
+                TTY_SET_FLAG(term.c_iflag, INLCR, arg);
+                break;
+            case WOLFSSH_IGNCR:
+                TTY_SET_FLAG(term.c_iflag, IGNCR, arg);
+                break;
+            case WOLFSSH_ICRNL:
+                TTY_SET_FLAG(term.c_iflag, ICRNL, arg);
+                break;
+            case WOLFSSH_IUCLC:
+                #ifdef IUCLC
+                    TTY_SET_FLAG(term.c_iflag, IUCLC, arg);
+                #endif
+                break;
+            case WOLFSSH_IXON:
+                TTY_SET_FLAG(term.c_iflag, IXON, arg);
+                break;
+            case WOLFSSH_IXANY:
+                TTY_SET_FLAG(term.c_iflag, IXANY, arg);
+                break;
+            case WOLFSSH_IXOFF:
+                TTY_SET_FLAG(term.c_iflag, IXOFF, arg);
+                break;
+            case WOLFSSH_IMAXBEL:
+                TTY_SET_FLAG(term.c_iflag, IMAXBEL, arg);
+                break;
+            case WOLFSSH_IUTF8:
+                #ifdef IUTF8
+                    TTY_SET_FLAG(term.c_iflag, IUTF8, arg);
+                #endif
+                break;
+
+            /* Local Modes (c_lflag) */
+            case WOLFSSH_ISIG:
+                TTY_SET_FLAG(term.c_lflag, ISIG, arg);
+                break;
+            case WOLFSSH_ICANON:
+                TTY_SET_FLAG(term.c_lflag, ICANON, arg);
+                break;
+            case WOLFSSH_XCASE:
+                #ifdef XCASE
+                    TTY_SET_FLAG(term.c_lflag, XCASE, arg);
+                #endif
+                break;
+            case WOLFSSH_ECHO:
+                TTY_SET_FLAG(term.c_lflag, ECHO, arg);
+                break;
+            case WOLFSSH_ECHOE:
+                TTY_SET_FLAG(term.c_lflag, ECHOE, arg);
+                break;
+            case WOLFSSH_ECHOK:
+                TTY_SET_FLAG(term.c_lflag, ECHOK, arg);
+                break;
+            case WOLFSSH_ECHONL:
+                TTY_SET_FLAG(term.c_lflag, ECHONL, arg);
+                break;
+            case WOLFSSH_NOFLSH:
+                TTY_SET_FLAG(term.c_lflag, NOFLSH, arg);
+                break;
+            case WOLFSSH_TOSTOP:
+                TTY_SET_FLAG(term.c_lflag, TOSTOP, arg);
+                break;
+            case WOLFSSH_IEXTEN:
+                TTY_SET_FLAG(term.c_lflag, IEXTEN, arg);
+                break;
+            case WOLFSSH_ECHOCTL:
+                TTY_SET_FLAG(term.c_lflag, ECHOCTL, arg);
+                break;
+            case WOLFSSH_ECHOKE:
+                TTY_SET_FLAG(term.c_lflag, ECHOKE, arg);
+                break;
+            case WOLFSSH_PENDIN:
+                #ifdef PENDIN
+                    TTY_SET_FLAG(term.c_lflag, PENDIN, arg);
+                #endif
+                break;
+
+            /* Output Modes (c_oflag) */
+            case WOLFSSH_OPOST:
+                TTY_SET_FLAG(term.c_lflag, OPOST, arg);
+                break;
+            case WOLFSSH_OLCUC:
+                #ifdef OLCUC
+                    TTY_SET_FLAG(term.c_lflag, OLCUC, arg);
+                #endif
+                break;
+            case WOLFSSH_ONLCR:
+                TTY_SET_FLAG(term.c_lflag, ONLCR, arg);
+                break;
+            case WOLFSSH_OCRNL:
+                TTY_SET_FLAG(term.c_lflag, OCRNL, arg);
+                break;
+            case WOLFSSH_ONOCR:
+                TTY_SET_FLAG(term.c_lflag, ONOCR, arg);
+                break;
+            case WOLFSSH_ONLRET:
+                TTY_SET_FLAG(term.c_lflag, ONLRET, arg);
+                break;
+
+            /* Control Modes (c_cflag) */
+            case WOLFSSH_CS7:
+                TTY_SET_FLAG(term.c_cflag, CS7, arg);
+                break;
+            case WOLFSSH_CS8:
+                TTY_SET_FLAG(term.c_cflag, CS8, arg);
+                break;
+            case WOLFSSH_PARENB:
+                TTY_SET_FLAG(term.c_cflag, PARENB, arg);
+                break;
+            case WOLFSSH_PARODD:
+                TTY_SET_FLAG(term.c_cflag, PARODD, arg);
+                break;
+
+            /* Baud Rates */
+            case WOLFSSH_TTY_OP_ISPEED:
+                cfsetispeed(&term, (speed_t)arg);
+                break;
+            case WOLFSSH_TTY_OP_OSPEED:
+                cfsetospeed(&term, (speed_t)arg);
+                break;
+
+            default:
+                break;
+        }
+        idx += TERMINAL_MODE_SZ;
+    }
+
+    tcsetattr(fd, TCSANOW, &term);
+
+    return 0;
+}
+
+#endif /* HAVE_SYS_IOCTL_H */
+#endif /* !NO_TERMIOS && WOLFSSH_TERM */
+
+
 static int DoChannelRequest(WOLFSSH* ssh,
                             byte* buf, word32 len, word32* idx)
 {
@@ -7189,24 +7432,27 @@ static int DoChannelRequest(WOLFSSH* ssh,
                 ret = GetUint32(&heightPixels, buf, len, &begin);
             if (ret == WS_SUCCESS)
                 ret = GetStringRef(&modesSz, &modes, buf, len, &begin);
-
-            WOLFSSH_UNUSED(modes);
-            WOLFSSH_UNUSED(modesSz);
-
             if (ret == WS_SUCCESS) {
+                ssh->modes = (byte*)WMALLOC(modesSz, ssh->ctx->heap, 0);
+                if (ssh->modes == NULL)
+                    ret = WS_MEMORY_E;
+            }
+            if (ret == WS_SUCCESS) {
+                ssh->modesSz = modesSz;
+                WMEMCPY(ssh->modes, modes, modesSz);
                 WLOG(WS_LOG_DEBUG, "  term = %s", term);
                 WLOG(WS_LOG_DEBUG, "  widthChar = %u", widthChar);
                 WLOG(WS_LOG_DEBUG, "  heightRows = %u", heightRows);
                 WLOG(WS_LOG_DEBUG, "  widthPixels = %u", widthPixels);
                 WLOG(WS_LOG_DEBUG, "  heightPixels = %u", heightPixels);
-                ssh->curX = widthChar;
-                ssh->curY = heightRows;
-                ssh->curXP = widthPixels;
-                ssh->curYP = heightPixels;
+                ssh->widthChar = widthChar;
+                ssh->heightRows = heightRows;
+                ssh->widthPixels = widthPixels;
+                ssh->heightPixels = heightPixels;
                 if (ssh->termResizeCb) {
                     if (ssh->termResizeCb(ssh, widthChar, heightRows,
-                                widthPixels, heightPixels, ssh->termCtx)
-                            != WS_SUCCESS) {
+                            widthPixels, heightPixels,
+                            ssh->termCtx) != WS_SUCCESS) {
                         ret = WS_FATAL_ERROR;
                     }
                 }
@@ -7276,11 +7522,14 @@ static int DoChannelRequest(WOLFSSH* ssh,
                 WLOG(WS_LOG_DEBUG, "  heightRows = %u", heightRows);
                 WLOG(WS_LOG_DEBUG, "  widthPixels = %u", widthPixels);
                 WLOG(WS_LOG_DEBUG, "  heightPixels = %u", heightPixels);
-                ssh->curX = widthChar;
-                ssh->curY = heightRows;
+                ssh->widthChar = widthChar;
+                ssh->heightRows = heightRows;
+                ssh->widthPixels = widthPixels;
+                ssh->heightPixels = heightPixels;
                 if (ssh->termResizeCb) {
-                    if (ssh->termResizeCb(ssh, widthChar, heightRows, widthPixels,
-                        heightPixels, ssh->termCtx) != WS_SUCCESS) {
+                    if (ssh->termResizeCb(ssh, widthChar, heightRows,
+                            widthPixels, heightPixels,
+                            ssh->termCtx) != WS_SUCCESS) {
                         ret = WS_FATAL_ERROR;
                     }
                 }
