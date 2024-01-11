@@ -1488,10 +1488,13 @@ union wolfSSH_key {
 
 static const char* PrivBeginOpenSSH = "-----BEGIN OPENSSH PRIVATE KEY-----";
 static const char* PrivEndOpenSSH = "-----END OPENSSH PRIVATE KEY-----";
-static const char* PrivBeginPrefix = "-----BEGIN ";
-/* static const char* PrivEndPrefix = "-----END "; */
-static const char* PrivSuffix = " PRIVATE KEY-----";
 
+#if !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM)
+    /* currently only used in wolfSSH_ReadKey_file() */
+    static const char* PrivBeginPrefix = "-----BEGIN ";
+    /* static const char* PrivEndPrefix = "-----END "; */
+    static const char* PrivSuffix = " PRIVATE KEY-----";
+#endif
 
 static int DoSshPubKey(const byte* in, word32 inSz, byte** out,
         word32* outSz, const byte** outType, word32* outTypeSz,
@@ -1503,7 +1506,7 @@ static int DoSshPubKey(const byte* in, word32 inSz, byte** out,
     char* type = NULL;
     char* key = NULL;
     int ret = WS_SUCCESS;
-    word32 newKeySz, typeSz;
+    word32 newKeySz, typeSz = 0;
 
     WOLFSSH_UNUSED(inSz);
     WOLFSSH_UNUSED(heap);
