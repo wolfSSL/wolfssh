@@ -53,21 +53,11 @@
 /* Check for if compiling misc.c when not needed. */
 #if !defined(WOLFSSH_MISC_INCLUDED) && !defined(NO_INLINE) && \
     !defined(WOLFSSH_IGNORE_FILE_WARN)
-    #define MISC_WARNING "misc.c does not need to be compiled when using inline (NO_INLINE not defined))"
-    #define MISC_STRINGIFY(x) #x
-    #define MISC_TOSTRING(x) MISC_STRINGIFY(x)
-    #ifdef __STDC_VERSION__
-      #if __STDC_VERSION__ >= 199901L
-        #define PRAGMA_SUPPORTED 1
-      #endif
-    #endif
 
-    #if (defined(__GNUC__) || defined(__clang__)) && defined(PRAGMA_SUPPORTED)
-        _Pragma(MISC_TOSTRING(message(MISC_WARNING)))
-    #elif  defined(_MSC_VER)
-        #pragma message("warning: " MISC_WARNING)
+    #ifndef _MSC_VER
+        #warning "misc.c does not need to be compiled when using inline (NO_INLINE not defined))"
     #else
-        #warning MISC_WARNING
+        #pragma message("warning: misc.c does not need to be compiled when using inline (NO_INLINE not defined))")
     #endif
 
 #else /* !WOLFSSL_MISC_INCLUDED && !NO_INLINE && !WOLFSSH_IGNORE_FILE_WARN */
