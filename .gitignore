@@ -31,13 +31,21 @@ libtool
 libtool.m4
 *.log
 *.gz
+*.zip
+*.bak
+*.dummy
+*.xcworkspace
 Makefile
 Makefile.in
 *.deps
 .dirstamp
 *.libs
 stamp-h*
+src/stamp-h1
 build-aux/
+wolfmqtt-config
+build-test/
+build/
 wolfssh-config
 aminclude.am
 
@@ -71,6 +79,18 @@ client.plist
 # misc
 .DS_Store
 
+# Visual Studio Code Workspace Files
+*.vscode
+*.userprefs
+*.exe
+*.dll
+.vs
+Backup
+UpgradeLog.htm
+*.aps
+*.VC.db
+*.filters
+
 # VS debris
 *.sdf
 *.v11.suo
@@ -88,3 +108,30 @@ DLL Release
 .cproject
 .project
 .settings
+
+
+# auto-created CMake backups
+**/CMakeLists.txt.old
+
+# VisualGDB
+**/.visualgdb
+**/*.vgdbproj.*.user
+
+
+# Espressif sdk config default should be saved in sdkconfig.defaults
+# we won't track the actual working sdkconfig files
+/ide/Espressif/**/out/
+/ide/Espressif/**/sdkconfig
+/ide/Espressif/**/sdkconfig.old
+
+# Espressif managed components to exclude:
+/ide/Espressif/**/managed_components/**
+
+# Espressif managed component lock files to exclude.
+# "In general, it's ok to have it under version control, however, it ties
+# the solution to the exact version of ESP-IDF and will be ignored if an
+# example is built against another IDF version or for a different target.
+# So it's better to git ignore it for the examples."
+/ide/Espressif/**/dependencies.lock
+
+
