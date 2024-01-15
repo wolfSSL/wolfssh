@@ -33,6 +33,10 @@
 #include <wolfssh/settings.h>
 #include <wolfssh/log.h>
 
+#ifdef WOLFSSL_NUCLEUS
+#include "os/networking/utils/util_tp.h"
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -105,14 +109,16 @@ extern "C" {
     #define WFILE int
     WOLFSSH_API int wfopen(WFILE**, const char*, const char*);
 
-    #define WFOPEN(fs, f,fn,m)  wfopen((f),(fn),(m))
+    #define WFOPEN(fs,f,fn,m)   wfopen((f),(fn),(m))
     #define WFCLOSE(fs,f)       NU_Close(*(f))
-    #define WFWRITE(fs,b,x,s,f) ((s) != 0)? NU_Write(*(f),(const CHAR*)(b),(s)): 0
+    #define WFWRITE(fs,b,x,s,f) \
+            (((s) != 0) ? NU_Write(*(f),(const CHAR*)(b),(s)) : 0)
     #define WFREAD(fs,b,x,s,f)  NU_Read(*(f),(CHAR*)(b),(s))
     #define WFSEEK(fs,s,o,w)    NU_Seek(*(s),(o),(w))
     #define WFTELL(fs,s)        NU_Seek(*(s), 0, PSEEK_CUR)
     #define WREWIND(fs,s)       NU_Seek(*(s), 0, PSEEK_SET)
     #define WSEEK_END           PSEEK_END
+    #define WBADFILE            NULL
 
     #define WS_DELIM '\\'
     #define WOLFSSH_O_RDWR   PO_RDWR
@@ -561,6 +567,9 @@ extern "C" {
 #elif defined(WOLFSSH_ZEPHYR)
     #define WTIME time
     #define WLOCALTIME(c,r) (gmtime_r((c),(r))!=NULL)
+#elif defined(WOLFSSL_NUCLEUS)
+    #define WTIME time
+    #define WLOCALTIME(c,r) (localtime_s((c),(r))!=NULL)
 #else
     #define WTIME time
     #define WLOCALTIME(c,r) (localtime_r((c),(r))!=NULL)
@@ -756,7 +765,7 @@ extern "C" {
             if (NU_Get_Attributes(&atrib, dir) == NU_SUCCESS) {
                 if (atrib & ADIRENT) {
                     if (tmp[idx-1] != WS_DELIM) {
-                        if (idx + 2 > sizeof(tmp)) {
+                        if (idx + 2 > (int)sizeof(tmp)) {
                             /* not enough space */
                             return -1;
                         }
@@ -768,7 +777,7 @@ extern "C" {
         }
 
         if (tmp[idx - 1] == WS_DELIM) {
-            if (idx + 1 > sizeof(tmp)) {
+            if (idx + 1 > (int)sizeof(tmp)) {
                 /* not enough space */
                 return -1;
             }
@@ -1316,7 +1325,6 @@ extern "C" {
     #include <unistd.h>   /* used for rmdir */
     #include <sys/stat.h> /* used for mkdir, stat, and lstat */
     #include <stdio.h>    /* used for remove and rename */
-    #include <dirent.h>   /* used for opening directory and reading */
 
     #define WSTAT_T      struct stat
     #define WRMDIR(fs,d) rmdir((d))

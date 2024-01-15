@@ -54,7 +54,11 @@
     #include <wolfssh/misc.h>
 #else
     #define WOLFSSH_MISC_INCLUDED
-    #include "src/misc.c"
+    #if defined(WOLFSSL_NUCLEUS)
+        #include "src/wolfssh_misc.c"
+    #else
+        #include "src/misc.c"
+    #endif
 #endif
 
 
@@ -14100,6 +14104,8 @@ int wolfSSH_CleanPath(WOLFSSH* ssh, char* in)
         if (path[sz - 1] == ':') {
             path[sz] = WS_DELIM;
             path[sz + 1] = '\0';
+            in[sz] = WS_DELIM;
+            in[sz + 1] = '\0';
         }
 
         /* clean up any multiple drive listed i.e. A:/A: */
