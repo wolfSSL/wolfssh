@@ -81,7 +81,7 @@ int main(void)
     /* Setup the necessary files for the sftp tests */
     fs_file_t_init(&zfp);
     snprintf(filename, sizeof(filename), "%s/%s",
-            CONFIG_WOLFSSH_SFTP_DEFAULT_DIR, "configure");
+            CONFIG_WOLFSSH_SFTP_DEFAULT_DIR, "configure.ac");
     CHECK_TEST_RETURN(fs_open(&zfp, filename, FS_O_WRITE|FS_O_CREATE));
     /* Write some random data to file */
     for (i = 0; i < 10; i++)

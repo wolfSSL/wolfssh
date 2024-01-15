@@ -44,17 +44,17 @@ static const char* cmds[] = {
     "pwd",
     "ls",
 #ifdef WOLFSSH_ZEPHYR
-    "put " CONFIG_WOLFSSH_SFTP_DEFAULT_DIR "/configure",
+    "put " CONFIG_WOLFSSH_SFTP_DEFAULT_DIR "/configure.ac",
 #else
-    "put configure",
+    "put configure.ac",
 #endif
     "ls",
 #ifdef WOLFSSH_ZEPHYR
-    "get configure " CONFIG_WOLFSSH_SFTP_DEFAULT_DIR "/test-get",
+    "get configure.ac " CONFIG_WOLFSSH_SFTP_DEFAULT_DIR "/test-get",
 #else
-    "get configure test-get",
+    "get configure.ac test-get",
 #endif
-    "rm configure",
+    "rm configure.ac",
     "cd ../",
     "ls",
     "rename test-get test-get-2",
@@ -116,8 +116,8 @@ static int Expected(int command)
             }
 
         case 6:
-            if (WSTRNSTR(inBuf, "configure", sizeof(inBuf)) == NULL) {
-                fprintf(stderr, "configure not found in %s\n", inBuf);
+            if (WSTRNSTR(inBuf, "configure.ac", sizeof(inBuf)) == NULL) {
+                fprintf(stderr, "configure.ac not found in %s\n", inBuf);
                 return 1;
             }
             else {
