@@ -541,6 +541,17 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
 #endif /* WOLFSSH_FWD */
 
 
+static int wsChannelOpenCb(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    word32 id = 0;
+
+    WOLFSSH_UNUSED(ctx);
+    wolfSSH_ChannelGetId(channel, &id, WS_CHANNEL_ID_PEER);
+    printf("Oh cute, they opened channel %u.\n", id);
+    return 0;
+}
+
+
 #ifdef SHELL_DEBUG
 
 static void display_ascii(char *p_buf,
@@ -2366,6 +2377,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         wolfSSH_SetUserAuth(ctx, ((func_args*)args)->user_auth);
     wolfSSH_SetUserAuthResult(ctx, wsUserAuthResult);
     wolfSSH_CTX_SetBanner(ctx, echoserverBanner);
+    wolfSSH_CTX_SetChannelOpenCb(ctx, wsChannelOpenCb);
 #ifdef WOLFSSH_AGENT
     wolfSSH_CTX_set_agent_cb(ctx, wolfSSH_AGENT_DefaultActions, NULL);
 #endif
