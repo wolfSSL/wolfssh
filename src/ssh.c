@@ -3049,6 +3049,44 @@ void wolfSSH_SetKeyingCompletionCbCtx(WOLFSSH* ssh, void* ctx)
 }
 
 
+int wolfSSH_CTX_SetChannelOpenCb(WOLFSSH_CTX* ctx, WS_CallbackChannelOpen cb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->channelOpenCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_SetChannelOpenCtx(WOLFSSH* ssh, void* ctx)
+{
+    int ret = WS_SSH_NULL_E;
+
+    if (ssh != NULL) {
+        ssh->channelOpenCtx = ctx;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+void* wolfSSH_GetChannelOpenCtx(WOLFSSH* ssh)
+{
+    void* ctx = NULL;
+
+    if (ssh != NULL) {
+        ctx = ssh->channelOpenCtx;
+    }
+
+    return ctx;
+}
+
+
 #if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
     !defined(NO_WOLFSSH_SERVER)
 

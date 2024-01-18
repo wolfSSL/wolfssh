@@ -7761,6 +7761,9 @@ static int DoChannelOpen(WOLFSSH* ssh,
         else {
             ChannelUpdatePeer(newChannel, peerChannelId,
                           peerInitialWindowSz, peerMaxPacketSz);
+            if (ssh->ctx->channelOpenCb) {
+                ret = ssh->ctx->channelOpenCb(newChannel, ssh->channelOpenCtx);
+            }
             if (ssh->channelListSz == 0)
                 ssh->defaultPeerChannelId = peerChannelId;
         #ifdef WOLFSSH_FWD

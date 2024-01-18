@@ -498,6 +498,7 @@ struct WOLFSSH_CTX {
     WS_CallbackGlobalReq globalReqCb; /* Global Request Callback */
     WS_CallbackReqSuccess reqSuccessCb; /* Global Request Success Callback */
     WS_CallbackReqSuccess reqFailureCb; /* Global Request Failure Callback */
+    WS_CallbackChannelOpen channelOpenCb;
 #ifdef WOLFSSH_SCP
     WS_CallbackScpRecv scpRecvCb;     /* SCP receive callback */
     WS_CallbackScpSend scpSendCb;     /* SCP send callback */
@@ -662,6 +663,7 @@ struct WOLFSSH {
     void* globalReqCtx;    /* Global Request CB context */
     void* reqSuccessCtx;   /* Global Request Sucess CB context */
     void* reqFailureCtx;   /* Global Request Failure CB context */
+    void* channelOpenCtx;  /* Channel Open CB context */
     void* fs;              /* File system handle */
     word32 curSz;
     word32 seq;

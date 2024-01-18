@@ -210,6 +210,12 @@ WOLFSSH_API int wolfSSH_ChannelSend(WOLFSSH_CHANNEL*, const byte*, word32);
 WOLFSSH_API int wolfSSH_ChannelExit(WOLFSSH_CHANNEL*);
 WOLFSSH_API int wolfSSH_ChannelGetEof(WOLFSSH_CHANNEL*);
 
+/* Channel callbacks */
+typedef int (*WS_CallbackChannelOpen)(WOLFSSH_CHANNEL* channel, void* ctx);
+WOLFSSH_API int wolfSSH_CTX_SetChannelOpenCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelOpen cb);
+WOLFSSH_API int wolfSSH_SetChannelOpenCtx(WOLFSSH* ssh, void* ctx);
+WOLFSSH_API void* wolfSSH_GetChannelOpenCtx(WOLFSSH* ssh);
 
 WOLFSSH_API int wolfSSH_get_error(const WOLFSSH*);
 WOLFSSH_API const char* wolfSSH_get_error_name(const WOLFSSH*);
