@@ -1467,7 +1467,6 @@ static __thread int timeOut = 0;
 #endif
 static void alarmCatch(int signum)
 {
-    wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failed login within grace period");
     timeOut = 1;
     (void)signum;
 }
@@ -1553,7 +1552,14 @@ static void* HandleConnection(void* arg)
                 error = WS_FATAL_ERROR;
         }
 
+        wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] grace time = %ld timeout = %d", graceTime, timeOut);
         if (graceTime > 0) {
+            if (timeOut) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Failed login within grace period");
+             }
+
     #ifdef WIN32
             /* @TODO SetTimer(NULL, NULL, graceTime, alarmCatch); */
     #else
@@ -1564,8 +1570,8 @@ static void* HandleConnection(void* arg)
         if (ret != WS_SUCCESS && ret != WS_SFTP_COMPLETE &&
             ret != WS_SCP_INIT) {
             wolfSSH_Log(WS_LOG_ERROR,
-                "[SSHD] Failed to accept WOLFSSH connection from %s",
-                conn->ip);
+                "[SSHD] Failed to accept WOLFSSH connection from %s error %d",
+                conn->ip, ret);
         }
     }
 
