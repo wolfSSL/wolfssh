@@ -1388,7 +1388,7 @@ void wolfSSH_SetTerminalResizeCtx(WOLFSSH* ssh, void* usrCtx)
 #endif
 
 
-#if defined(WOLFSSH_TERM) || defined(WOLFSH_SHELL)
+#if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
 /* returns the exit status captured from the connection if any */
 int wolfSSH_GetExitStatus(WOLFSSH* ssh)
 {

@@ -1105,7 +1105,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
     }
     WCLOSESOCKET(sockFd);
 
-#if defined(WOLFSSH_TERM) || defined(WOLFSH_SHELL)
+#if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
     ((func_args*)args)->return_code = wolfSSH_GetExitStatus(ssh);
 #endif
 

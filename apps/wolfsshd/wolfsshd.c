@@ -1667,7 +1667,7 @@ static void* HandleConnection(void* arg)
                         SHELL_Subsystem(conn, ssh, pPasswd, usrConf,
                                 wolfSSH_GetSessionCommand(ssh));
                     }
-                #endif /* WOLFSH_SHELL */
+                #endif /* WOLFSSH_SHELL */
 
                     /* SCP can be an exec type */
                     if (ret == WS_SCP_INIT) {
