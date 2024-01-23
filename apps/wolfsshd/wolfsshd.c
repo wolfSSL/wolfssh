@@ -1140,6 +1140,12 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 HeapFree(GetProcessHeap(), 0, ext.lpAttributeList);
             }
 
+            if (wolfSSH_SetExitStatus(ssh, processState) !=
+                    WS_SUCCESS) {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue sending childs exit "
+                    "status");
+            }
+
             ClosePseudoConsole(pCon);
             CloseHandle(processInfo.hThread);
             CloseHandle(wolfSSHD_GetAuthToken(conn->auth));
@@ -1308,12 +1314,8 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue opening shell");
             exit(1);
         }
-        exit(0); /* exit child process and close down SSH connection */
+        exit(ret); /* exit child process and close down SSH connection */
     }
-
-    /* do not wait for status of child process, and signal that the child can
-     * be reaped to avoid zombie processes when running in the foreground */
-    signal(SIGCHLD, SIG_IGN);
 
     if (wolfSSHD_AuthReducePermissionsUser(conn->auth, pPasswd->pw_uid,
         pPasswd->pw_gid) != WS_SUCCESS) {
@@ -1454,6 +1456,27 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         }
     }
 
+    /* get return value of child process */
+    {
+        int waitStatus;
+
+        do {
+            rc = waitpid(childPid, &waitStatus, 0);
+            /* if the waitpid experinced an interupt then try again */
+        } while (rc < 0 && errno == EINTR);
+
+        if (rc < 0) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue waiting for childs exit "
+                    "status");
+        }
+        else {
+            if (wolfSSH_SetExitStatus(ssh, (word32)WEXITSTATUS(waitStatus)) !=
+                WS_SUCCESS) {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue setting childs exit "
+                    "status");
+            }
+        }
+    }
     (void)conn;
     return WS_SUCCESS;
 }
@@ -1657,7 +1680,7 @@ static void* HandleConnection(void* arg)
                         SHELL_Subsystem(conn, ssh, pPasswd, usrConf,
                                 wolfSSH_GetSessionCommand(ssh));
                     }
-                #endif /* WOLFSH_SHELL */
+                #endif /* WOLFSSH_SHELL */
 
                     /* SCP can be an exec type */
                     if (ret == WS_SCP_INIT) {
@@ -1712,9 +1735,16 @@ static void* HandleConnection(void* arg)
                     break;
                 }
 
-                if (error != WS_WANT_READ && error != WS_WANT_WRITE) {
+                if (ret == WS_FATAL_ERROR &&
+                   (error != WS_WANT_READ &&
+                    error != WS_WANT_WRITE)) {
                     break;
                 }
+            #ifdef _WIN32
+                Sleep(1);
+            #else
+                usleep(1);
+            #endif
             }
 
             if (attempt == maxAttempt) {
@@ -1724,6 +1754,7 @@ static void* HandleConnection(void* arg)
         }
     }
 
+    /* check if there is a response to the shutdown */
     wolfSSH_free(ssh);
     if (conn != NULL) {
         WCLOSESOCKET(conn->fd);

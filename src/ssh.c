@@ -954,24 +954,47 @@ int wolfSSH_connect(WOLFSSH* ssh)
 int wolfSSH_shutdown(WOLFSSH* ssh)
 {
     int ret = WS_SUCCESS;
+    WOLFSSH_CHANNEL* channel = NULL;
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_shutdown()");
 
     if (ssh == NULL || ssh->channelList == NULL)
         ret = WS_BAD_ARGUMENT;
 
-    if (ret == WS_SUCCESS)
-        ret = SendChannelEof(ssh, ssh->channelList->peerChannel);
+    /* look up the channel if it still exists */
+    if (ret == WS_SUCCESS) {
+        channel = ChannelFind(ssh, ssh->channelList->peerChannel, WS_CHANNEL_ID_SELF);
+    }
 
-    /* continue on success and in case where queing up send packets */
-    if (ret == WS_SUCCESS ||
-            (ret != WS_BAD_ARGUMENT && ssh->error == WS_WANT_WRITE))
-        ret = SendChannelExit(ssh, ssh->channelList->peerChannel, 0);
+    /* if channel close was not already sent then send it */
+    if (channel != NULL && !channel->closeTxd) {
+       if (ret == WS_SUCCESS) {
+           ret = SendChannelEof(ssh, ssh->channelList->peerChannel);
+       }
 
-    /* continue on success and in case where queing up send packets */
-    if (ret == WS_SUCCESS ||
-            (ret != WS_BAD_ARGUMENT && ssh->error == WS_WANT_WRITE))
-        ret = SendChannelClose(ssh, ssh->channelList->peerChannel);
+       /* continue on success and in case where queing up send packets */
+       if (ret == WS_SUCCESS ||
+               (ret != WS_BAD_ARGUMENT && ssh->error == WS_WANT_WRITE)) {
+           ret = SendChannelExit(ssh, ssh->channelList->peerChannel,
+           #if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
+               ssh->exitStatus);
+           #else
+               0);
+           #endif
+       }
+
+       /* continue on success and in case where queing up send packets */
+       if (ret == WS_SUCCESS ||
+               (ret != WS_BAD_ARGUMENT && ssh->error == WS_WANT_WRITE))
+           ret = SendChannelClose(ssh, ssh->channelList->peerChannel);
+    }
+
+
+    /* if the channel was not yet removed then read to get
+     * response to SendChannelClose */
+    if (channel != NULL && ret == WS_SUCCESS) {
+        ret = wolfSSH_worker(ssh, NULL);
+    }
 
     if (ssh != NULL && ssh->channelList == NULL) {
         WLOG(WS_LOG_DEBUG, "channel list was already removed");
@@ -1361,6 +1384,34 @@ void wolfSSH_SetTerminalResizeCb(WOLFSSH* ssh, WS_CallbackTerminalSize cb)
 void wolfSSH_SetTerminalResizeCtx(WOLFSSH* ssh, void* usrCtx)
 {
     ssh->termCtx = usrCtx;
+}
+#endif
+
+
+#if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
+/* returns the exit status captured from the connection if any */
+int wolfSSH_GetExitStatus(WOLFSSH* ssh)
+{
+    if (ssh == NULL) {
+        WLOG(WS_LOG_DEBUG, "wolfSSH_GetExitStatus WOLFSSH struct was NULL");
+        return WS_BAD_ARGUMENT;
+    }
+    return ssh->exitStatus;
+}
+
+
+/* Sets the exit status to send on shutdown
+ * returns WS_SUCCESS on success */
+int wolfSSH_SetExitStatus(WOLFSSH* ssh, word32 exitStatus)
+{
+    if (ssh == NULL) {
+        WLOG(WS_LOG_DEBUG, "wolfSSH_SetExitStatus WOLFSSH struct was NULL");
+        return WS_BAD_ARGUMENT;
+    }
+    WLOG(WS_LOG_DEBUG, "wolfSSH_SetExitStatus sending exit status %u",
+        exitStatus);
+    ssh->exitStatus = exitStatus;
+    return WS_SUCCESS;
 }
 #endif
 

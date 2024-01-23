@@ -822,6 +822,9 @@ struct WOLFSSH {
     byte* modes;
     word32 modesSz;
 #endif
+#if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
+    word32 exitStatus;
+#endif
 };
 
 
@@ -953,6 +956,8 @@ WOLFSSH_LOCAL int SendChannelTerminalResize(WOLFSSH*, word32, word32, word32,
 WOLFSSH_LOCAL int SendChannelTerminalRequest(WOLFSSH* ssh);
 WOLFSSH_LOCAL int SendChannelAgentRequest(WOLFSSH* ssh);
 WOLFSSH_LOCAL int SendChannelSuccess(WOLFSSH*, word32, int);
+WOLFSSH_LOCAL int SendChannelExitStatus(WOLFSSH* ssh, word32 channelId,
+    word32 exitStatus);
 WOLFSSH_LOCAL int GenerateKey(byte, byte, byte*, word32, const byte*, word32,
                               const byte*, word32, const byte*, word32, byte doKeyPad);
 

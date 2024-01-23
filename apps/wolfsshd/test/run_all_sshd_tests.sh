@@ -53,6 +53,10 @@ run_test() {
 run_test "sshd_exec_test.sh"
 run_test "sshd_term_size_test.sh"
 
+#Github actions needs resolved for these test cases
+#run_test "error_return.sh"
+#run_test "sshd_login_grace_test.sh"
+
 # add aditional tests here, check on var USING_LOCAL_HOST if can make sshd
 # server start/restart with changes
 

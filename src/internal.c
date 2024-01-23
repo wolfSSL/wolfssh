@@ -7542,6 +7542,40 @@ static int DoChannelRequest(WOLFSSH* ssh,
             }
         }
 #endif /* WOLFSSH_SHELL && WOLFSSH_TERM */
+#if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
+        else if (WSTRNCMP(type, "exit-status", typeSz) == 0) {
+            ret = GetUint32(&ssh->exitStatus, buf, len, &begin);
+            WLOG(WS_LOG_AGENT, "Got exit status %u.", ssh->exitStatus);
+        }
+        else if (WSTRNCMP(type, "exit-signal", typeSz) == 0) {
+            char sig[WOLFSSH_MAX_NAMESZ];
+            word32 sigSz;
+            byte coreDumped;
+
+            WLOG(WS_LOG_AGENT, "Got exit signal, remote command terminated");
+
+            sigSz = WOLFSSH_MAX_NAMESZ;
+            ret = GetString(sig, &sigSz, buf, len, &begin);
+            if (ret == WS_SUCCESS) {
+                WLOG(WS_LOG_AGENT, "SIGNAL      : %s", sig);
+                ret = GetBoolean(&coreDumped, buf, len, &begin);
+            }
+
+            if (ret == WS_SUCCESS) {
+                WLOG(WS_LOG_AGENT, "Core Dumped?: %d", coreDumped);
+                sigSz = WOLFSSH_MAX_NAMESZ;
+                ret = GetString(sig, &sigSz, buf, len, &begin);
+            }
+
+            if (ret == WS_SUCCESS) {
+                WLOG(WS_LOG_AGENT, "Error Msg  : %s", sig);
+                sigSz = WOLFSSH_MAX_NAMESZ;
+
+                /* getting language tag */
+                ret = GetString(sig, &sigSz, buf, len, &begin);
+            }
+        }
+#endif
     }
 
     if (ret == WS_SUCCESS)

@@ -982,15 +982,23 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
             err_sys("Sending the shutdown messages failed.");
         }
         ret = wolfSSH_worker(ssh, NULL);
-        if (ret != WS_SUCCESS) {
+        if (ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E &&
+            ret != WS_CHANNEL_CLOSED) {
             err_sys("Failed to listen for close messages from the peer.");
         }
     }
     WCLOSESOCKET(sockFd);
+
+#if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
+    ((func_args*)args)->return_code = wolfSSH_GetExitStatus(ssh);
+#endif
+
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
-    if (ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E)
+    if (ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E &&
+            ret != WS_CHANNEL_CLOSED) {
         err_sys("Closing client stream failed");
+    }
 
     ClientFreeBuffers(pubKeyName, privKeyName);
 #if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
