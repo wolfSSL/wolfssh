@@ -1463,11 +1463,22 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     /* get return value of child process */
     {
         int waitStatus;
-        waitpid(-1, &waitStatus, WNOHANG);
-        if (wolfSSH_SetExitStatus(ssh, (word32)WEXITSTATUS(waitStatus)) !=
+
+        do {
+            rc = waitpid(childPid, &waitStatus, 0);
+            /* if the waitpid experinced an interupt then try again */
+        } while (rc < 0 && errno == EINTR);
+
+        if (rc < 0) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue waiting for childs exit "
+                    "status");
+        }
+        else {
+            if (wolfSSH_SetExitStatus(ssh, (word32)WEXITSTATUS(waitStatus)) !=
                 WS_SUCCESS) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue sending childs exit "
-                "status");
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue setting childs exit "
+                    "status");
+            }
         }
     }
     (void)conn;
