@@ -21,16 +21,17 @@ echo "$TEST_CLIENT -c 'pwd' -u $3 -i $PRIVATE_KEY -J $PUBLIC_KEY -A $CA_CERT -h 
 $TEST_CLIENT -c 'pwd' -u $3 -i "$PRIVATE_KEY" -J "$PUBLIC_KEY" -A "$CA_CERT" -h "$1" -p "$2"
 set +e
 
-#rm -f error.txt
-#echo "$TEST_CLIENT -c 'ls error' -u $3 -i $PRIVATE_KEY -J $PUBLIC_KEY -A $CA_CERT -h \"$1\" -p \"$2\" 2> error.txt"
-#$TEST_CLIENT -c 'ls error' -u $3 -i "$PRIVATE_KEY" -J "$PUBLIC_KEY" -A "$CA_CERT" -h "$1" -p "$2" 2> error.txt
-#
-## check stderr output was caught
-#if [ ! -s error.txt ]; then
-#    echo "No stderr data was found when expected!!"
-#    cd $PWD
-#    exit 1
-#fi
+rm -f error.txt
+echo "$TEST_CLIENT -c 'ls error' -u $3 -i $PRIVATE_KEY -J $PUBLIC_KEY -A $CA_CERT -h \"$1\" -p \"$2\" 2> error.txt"
+$TEST_CLIENT -c 'ls error' -u $3 -i "$PRIVATE_KEY" -J "$PUBLIC_KEY" -A "$CA_CERT" -h "$1" -p "$2" 2> error.txt
+
+# check stderr output was caught
+if [ ! -s error.txt ]; then
+    echo "No stderr data was found when expected!!"
+    cd $PWD
+    exit 1
+fi
+rm -f error.txt
 
 cd $PWD
 exit 0

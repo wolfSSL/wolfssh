@@ -2,9 +2,15 @@
 
 echo "Running all wolfSSHd tests"
 
-USER=$1
+if [ -z "$1" ]; then
+    USER=$USER
+else
+    USER=$1
+fi
+
 TEST_HOST=$2
 TEST_PORT=$3
+
 TOTAL=0
 SKIPPED=0
 

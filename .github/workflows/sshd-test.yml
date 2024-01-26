@@ -28,5 +28,5 @@ jobs:
     - name: make check
       run: make check
     - name: run wolfSSHd tests
-      run: sudo ./run_all_sshd_tests.sh
+      run: sudo ./run_all_sshd_tests.sh root
       working-directory: ./apps/wolfsshd/test
