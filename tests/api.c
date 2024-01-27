@@ -746,6 +746,7 @@ static void test_wolfSSH_ReadKey(void)
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
 
     /* OpenSSH Format, ecdsa-sha2-nistp256, private, need alloc */
+    (void)keyCheck;
     key = NULL;
     keySz = 0;
     keyType = NULL;

@@ -1128,6 +1128,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     socklen_t clientAddrSz = sizeof(clientAddr);
     int ret;
     int ch;
+    int userEcc = 0;
     /* int peerEcc = 0; */
     word16 port = wolfSshPort;
     char* host = (char*)wolfSshIp;
@@ -1262,7 +1263,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     }
 #endif
 
-    ret = ClientSetPrivateKey(privKeyName, 0);
+    ret = ClientSetPrivateKey(privKeyName, userEcc);
     if (ret != 0) {
         err_sys("Error setting private key");
     }

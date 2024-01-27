@@ -6829,7 +6829,7 @@ static int DoChannelOpen(WOLFSSH* ssh,
     word32 typeSz;
     char type[32];
     byte typeId = ID_UNKNOWN;
-    word32 peerChannelId;
+    word32 peerChannelId = 0;
     word32 peerInitialWindowSz;
     word32 peerMaxPacketSz;
 #ifdef WOLFSSH_FWD
