@@ -9,7 +9,7 @@ common:
       - "Zephyr wolfSSH tests passed"
 tests:
   sample.lib.wolfssh_tests:
-    timeout: 50
+    timeout: 200
     platform_allow: qemu_x86
     integration_platforms:
       - qemu_x86

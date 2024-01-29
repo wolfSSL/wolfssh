@@ -953,6 +953,7 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
     func_args ser;
     tcp_ready ready;
     int argsCount;
+    int clientFd;
 
     const char* args[10];
     WOLFSSH_CTX* ctx = NULL;
@@ -1060,6 +1061,10 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
 #endif
 
     AssertIntEQ(argsCount, WS_SUCCESS);
+
+    /* close client socket down */
+    clientFd = wolfSSH_get_fd(ssh);
+    close(clientFd);
 
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
