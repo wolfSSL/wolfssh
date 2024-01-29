@@ -542,27 +542,62 @@ int ClientSetEcho(int type)
         }
         echoInit = 1;
     }
-    if (type == 1) {
-        if (tcsetattr(STDIN_FILENO, TCSANOW, &originalTerm) != 0) {
-            printf("Couldn't restore the terminal settings.\n");
-            return -1;
-        }
-    }
-    else {
-        struct termios newTerm;
-        memcpy(&newTerm, &originalTerm, sizeof(struct termios));
-
-        newTerm.c_lflag &= ~ECHO;
-        if (type == 2) {
-            newTerm.c_lflag &= ~(ICANON | ECHOE | ECHOK | ECHONL | ISIG);
+    if (echoInit) {
+        if (type == 1) {
+            if (tcsetattr(STDIN_FILENO, TCSANOW, &originalTerm) != 0) {
+                printf("Couldn't restore the terminal settings.\n");
+                return -1;
+            }
         }
         else {
-            newTerm.c_lflag |= (ICANON | ECHONL);
-        }
+            struct termios newTerm;
+            memcpy(&newTerm, &originalTerm, sizeof(struct termios));
 
-        if (tcsetattr(STDIN_FILENO, TCSANOW, &newTerm) != 0) {
-            printf("Couldn't turn off echo.\n");
-            return -1;
+            newTerm.c_lflag &= ~ECHO;
+            if (type == 2) {
+                newTerm.c_lflag &= ~(ICANON | ISIG | IEXTEN | ECHO | ECHOE
+                    | ECHOK | ECHONL | NOFLSH | TOSTOP);
+
+                /* check macros set for some BSD dependent and not missing on
+                 * QNX flags */
+            #ifdef ECHOPRT
+                newTerm.c_lflag &= ~(ECHOPRT);
+            #endif
+            #ifdef FLUSHO
+                newTerm.c_lflag &= ~(FLUSHO);
+            #endif
+            #ifdef PENDIN
+                newTerm.c_lflag &= ~(PENDIN);
+            #endif
+            #ifdef EXTPROC
+                newTerm.c_lflag &= ~(EXTPROC);
+            #endif
+
+                newTerm.c_iflag &= ~(ISTRIP | INLCR | ICRNL | IGNCR | IXON
+                | IXOFF | IXANY | IGNBRK | INPCK | PARMRK);
+            #ifdef IUCLC
+                newTerm.c_iflag &= ~IUCLC;
+            #endif
+                newTerm.c_iflag |= IGNPAR;
+
+                newTerm.c_oflag &= ~(OPOST | ONOCR | ONLRET);
+            #ifdef OUCLC
+                newTerm.c_oflag &= ~OLCUC;
+            #endif
+
+                newTerm.c_cflag &= ~(CSTOPB | PARENB | PARODD | CLOCAL);
+            #ifdef CRTSCTS
+                newTerm.c_cflag &= ~(CRTSCTS);
+            #endif
+            }
+            else {
+                newTerm.c_lflag |= (ICANON | ECHONL);
+            }
+
+            if (tcsetattr(STDIN_FILENO, TCSANOW, &newTerm) != 0) {
+                printf("Couldn't turn off echo.\n");
+                return -1;
+            }
         }
     }
 #else

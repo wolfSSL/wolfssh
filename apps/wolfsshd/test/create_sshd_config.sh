@@ -26,11 +26,15 @@ PermitEmptyPasswords no
 UsePrivilegeSeparation no
 UseDNS no
 
-TrustedUserCAKeys $PWD/ca-cert-ecc.pem     
-HostKey $PWD/server-key.pem                
-HostCertificate $PWD/server-cert.pem
+TrustedUserCAKeys $PWD/../../../keys/ca-cert-ecc.pem     
+HostKey $PWD/../../../keys/server-key.pem                
+HostCertificate $PWD/../../../keys/server-cert.pem
 
 EOF
+
+cd ../../../keys/
+./renewcerts.sh $1
+cd ../apps/wolfsshd/test/
 
 exit 0
 
