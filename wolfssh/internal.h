@@ -718,7 +718,7 @@ struct WOLFSSH {
     word32 defaultPeerChannelId;
     word32 connectChannelId;
     byte channelName[WOLFSSH_MAX_CHN_NAMESZ];
-    byte channelNameSz;
+    word32 channelNameSz;
     word32 lastRxId;
 
     WOLFSSH_BUFFER inputBuffer;
@@ -950,6 +950,7 @@ WOLFSSH_LOCAL int SendChannelEow(WOLFSSH*, word32);
 WOLFSSH_LOCAL int SendChannelClose(WOLFSSH*, word32);
 WOLFSSH_LOCAL int SendChannelExit(WOLFSSH*, word32, int);
 WOLFSSH_LOCAL int SendChannelData(WOLFSSH*, word32, byte*, word32);
+WOLFSSH_LOCAL int SendChannelExtendedData(WOLFSSH*, word32, byte*, word32);
 WOLFSSH_LOCAL int SendChannelWindowAdjust(WOLFSSH*, word32, word32);
 WOLFSSH_LOCAL int SendChannelRequest(WOLFSSH*, byte*, word32);
 WOLFSSH_LOCAL int SendChannelTerminalResize(WOLFSSH*, word32, word32, word32,

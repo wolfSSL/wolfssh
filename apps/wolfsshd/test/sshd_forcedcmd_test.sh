@@ -5,7 +5,7 @@
 if [ -z "$1" ] || [ -z "$2" ]; then
     echo "expecting host and port as arguments"
     echo "./sshd_exec_test.sh 127.0.0.1 22222"
-    exit -1
+    exit 1
 fi
 
 PWD=`pwd`
@@ -42,7 +42,7 @@ cat $RESULT | grep bob
 RESULT=$?
 if [ "$RESULT" == 0 ]; then
     echo "Shell login should fail with forced command"
-    exit -1
+    exit 1
 fi
 
 set -e

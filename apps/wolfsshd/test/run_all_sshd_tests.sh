@@ -2,15 +2,22 @@
 
 echo "Running all wolfSSHd tests"
 
-TEST_HOST=$1
-TEST_PORT=$2
+if [ -z "$1" ]; then
+    USER=$USER
+else
+    USER=$1
+fi
+
+TEST_HOST=$2
+TEST_PORT=$3
+
 TOTAL=0
 SKIPPED=0
 
 # setup
 set -e
 ./create_authorized_test_file.sh
-./create_sshd_config.sh
+./create_sshd_config.sh $USER
 set +e
 
 if [ ! -z "$TEST_HOST" ] && [ ! -z "$TEST_PORT" ]; then
@@ -31,7 +38,7 @@ fi
 
 run_test() {
     printf "$1 ... "
-    ./"$1" "$TEST_HOST" "$TEST_PORT" &> stdout.txt
+    ./"$1" "$TEST_HOST" "$TEST_PORT" "$USER" &> stdout.txt
     RESULT=$?
     TOTAL=$((TOTAL+1))
     if [ "$RESULT" == 77 ]; then
@@ -71,6 +78,16 @@ if [ "$USING_LOCAL_HOST" == 1 ]; then
 else
     printf "Skipping tests that need to setup local SSHD\n"
     SKIPPED=$((SKIPPED+1))
+fi
+
+# these tests run with X509 sshd-config loaded
+if [ "$USING_LOCAL_HOST" == 1 ]; then
+    start_wolfsshd "sshd_config_test_x509"
+fi
+run_test "sshd_x509_test.sh"
+if [ "$USING_LOCAL_HOST" == 1 ]; then
+    printf "Shutting down test wolfSSHd\n"
+    stop_wolfsshd
 fi
 
 printf "All tests ran, $TOTAL passed, $SKIPPED skipped\n"
