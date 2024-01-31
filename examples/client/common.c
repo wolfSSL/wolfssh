@@ -677,7 +677,7 @@ int ClientUseCert(const char* certName)
  * returns 0 on success */
 int ClientSetPrivateKey(const char* privKeyName, int userEcc)
 {
-    int ret;
+    int ret = 0;
 
     if (privKeyName == NULL) {
         if (userEcc) {
@@ -717,7 +717,7 @@ int ClientSetPrivateKey(const char* privKeyName, int userEcc)
  * returns 0 on success */
 int ClientUsePubKey(const char* pubKeyName, int userEcc)
 {
-    int ret;
+    int ret = 0;
 
     if (pubKeyName == NULL) {
         byte* p = userPublicKey;

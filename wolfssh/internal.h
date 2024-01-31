@@ -1205,9 +1205,11 @@ WOLFSSH_LOCAL int wsScpSendCallback(WOLFSSH*, int, const char*, char*, word32,
 
 
 WOLFSSH_LOCAL int wolfSSH_CleanPath(WOLFSSH* ssh, char* in);
+#ifndef WOLFSSH_NO_RSA
 WOLFSSH_LOCAL int wolfSSH_RsaVerify(byte *sig, word32 sigSz,
         const byte* digest, word32 digestSz,
         RsaKey* key, void* heap, const char* loc);
+#endif
 WOLFSSH_LOCAL void DumpOctetString(const byte*, word32);
 WOLFSSH_LOCAL int wolfSSH_oct2dec(WOLFSSH* ssh, byte* oct, word32 octSz);
 WOLFSSH_LOCAL void AddAssign64(word32*, word32);

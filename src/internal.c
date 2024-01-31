@@ -1034,6 +1034,7 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap)
 }
 
 
+#ifndef WOLFSSH_NO_RSA
 /*
  * Utility function to read an Mpint from the stream directly into a mp_int.
  */
@@ -1052,7 +1053,6 @@ static INLINE int GetMpintToMp(mp_int* mp,
 }
 
 
-#ifndef WOLFSSH_NO_RSA
 /*
  * For the given RSA key, calculate p^-1 and q^-1. wolfCrypt's RSA
  * code expects them, but the OpenSSH format key doesn't store them.
@@ -6829,7 +6829,7 @@ static int DoChannelOpen(WOLFSSH* ssh,
     word32 typeSz;
     char type[32];
     byte typeId = ID_UNKNOWN;
-    word32 peerChannelId;
+    word32 peerChannelId = 0;
     word32 peerInitialWindowSz;
     word32 peerMaxPacketSz;
 #ifdef WOLFSSH_FWD
