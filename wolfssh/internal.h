@@ -495,6 +495,8 @@ struct WOLFSSH_CTX {
     WS_CallbackReqSuccess reqSuccessCb; /* Global Request Success Callback */
     WS_CallbackReqSuccess reqFailureCb; /* Global Request Failure Callback */
     WS_CallbackChannelOpen channelOpenCb;
+    WS_CallbackChannelOpen channelOpenConfCb;
+    WS_CallbackChannelOpen channelOpenFailCb;
 #ifdef WOLFSSH_SCP
     WS_CallbackScpRecv scpRecvCb;     /* SCP receive callback */
     WS_CallbackScpSend scpSendCb;     /* SCP send callback */

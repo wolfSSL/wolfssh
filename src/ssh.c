@@ -2845,6 +2845,21 @@ int wolfSSH_CTX_SetChannelOpenCb(WOLFSSH_CTX* ctx, WS_CallbackChannelOpen cb)
 }
 
 
+int wolfSSH_CTX_SetChannelOpenRespCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelOpen confCb, WS_CallbackChannelOpen failCb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->channelOpenConfCb = confCb;
+        ctx->channelOpenFailCb = failCb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
 int wolfSSH_SetChannelOpenCtx(WOLFSSH* ssh, void* ctx)
 {
     int ret = WS_SSH_NULL_E;

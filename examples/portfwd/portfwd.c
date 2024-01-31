@@ -211,6 +211,40 @@ static int wsPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 }
 
 
+static int wsChannelOpenConfCb(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    word32 id = 0;
+    const char* str;
+
+    if (ctx != NULL) {
+        str = (const char*)ctx;
+    }
+    else {
+        str = "<BAD CONTEXT>";
+    }
+    wolfSSH_ChannelGetId(channel, &id, WS_CHANNEL_ID_PEER);
+    printf("Channel for %s, %u open confirmed.\n", str, id);
+    return 0;
+}
+
+
+static int wsChannelOpenFailCb(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    word32 id = 0;
+    const char* str;
+
+    if (ctx != NULL) {
+        str = (const char*)ctx;
+    }
+    else {
+        str = "<BAD CONTEXT>";
+    }
+    wolfSSH_ChannelGetId(channel, &id, WS_CHANNEL_ID_PEER);
+    printf("Channel for %s, %u open failed.\n", str, id);
+    return 0;
+}
+
+
 /*
  * fwdFromHost - address to bind the local listener socket to (default: any)
  * fwdFromHostPort - port number to bind the local listener socket to
@@ -375,6 +409,9 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
 
     wolfSSH_CTX_SetPublicKeyCheck(ctx, wsPublicKeyCheck);
     wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)"You've been sampled.");
+    wolfSSH_CTX_SetChannelOpenRespCb(ctx,
+            wsChannelOpenConfCb, wsChannelOpenFailCb);
+    wolfSSH_SetChannelOpenCtx(ssh, (void*)"port forward");
 
     ret = wolfSSH_SetUsername(ssh, username);
     if (ret != WS_SUCCESS)

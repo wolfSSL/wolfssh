@@ -7345,6 +7345,12 @@ static int DoChannelOpenConf(WOLFSSH* ssh,
                             peerInitialWindowSz, peerMaxPacketSz);
 
     if (ret == WS_SUCCESS) {
+        if (ssh->ctx->channelOpenConfCb != NULL) {
+            ret = ssh->ctx->channelOpenConfCb(channel, ssh->channelOpenCtx);
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
         ssh->serverState = SERVER_CHANNEL_OPEN_DONE;
         ssh->defaultPeerChannelId = peerChannelId;
     }
@@ -7357,6 +7363,7 @@ static int DoChannelOpenConf(WOLFSSH* ssh,
 static int DoChannelOpenFail(WOLFSSH* ssh,
                              byte* buf, word32 len, word32* idx)
 {
+    WOLFSSH_CHANNEL* channel = NULL;
     char desc[80];
     word32 begin, channelId, reasonId, descSz, langSz;
     int ret = WS_SUCCESS;
@@ -7390,6 +7397,19 @@ static int DoChannelOpenFail(WOLFSSH* ssh,
             WLOG(WS_LOG_INFO, "description: %s", desc);
         }
 
+        if (ssh->ctx->channelOpenFailCb != NULL) {
+            channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
+
+            if (channel != NULL) {
+                ret = ssh->ctx->channelOpenFailCb(channel, ssh->channelOpenCtx);
+            }
+            else {
+                ret = WS_INVALID_CHANID;
+            }
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
         ret = ChannelRemove(ssh, channelId, WS_CHANNEL_ID_SELF);
     }
 

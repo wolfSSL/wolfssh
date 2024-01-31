@@ -544,10 +544,16 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
 static int wsChannelOpenCb(WOLFSSH_CHANNEL* channel, void* ctx)
 {
     word32 id = 0;
+    const char* str;
 
-    WOLFSSH_UNUSED(ctx);
+    if (ctx != NULL) {
+        str = (const char*)ctx;
+    }
+    else {
+        str = "<BAD CONTEXT>";
+    }
     wolfSSH_ChannelGetId(channel, &id, WS_CHANNEL_ID_PEER);
-    printf("Oh cute, they opened channel %u.\n", id);
+    printf("Channel for %s, %u open attempt.\n", str, id);
     return 0;
 }
 
@@ -2605,6 +2611,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             ES_ERROR("Couldn't allocate SSH data.\n");
         }
         wolfSSH_SetUserAuthCtx(ssh, &pwMapList);
+        wolfSSH_SetChannelOpenCtx(ssh, (void*)"echoserver");
         /* Use the session object for its own highwater callback ctx */
         if (defaultHighwater > 0) {
             wolfSSH_SetHighwaterCtx(ssh, (void*)ssh);
