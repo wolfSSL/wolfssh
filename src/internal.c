@@ -9726,25 +9726,25 @@ int wolfSSH_RsaVerify(byte *sig, word32 sigSz,
         const byte* digest, word32 digestSz,
         RsaKey* key, void* heap, const char* loc)
 {
-    byte* checkSig;
+    byte* check;
     int ret = WS_SUCCESS;
 
-    checkSig = (byte*)WMALLOC(sigSz, heap, DYNTYPE_TEMP);
-    if (checkSig == NULL) {
+    check = (byte*)WMALLOC(digestSz, heap, DYNTYPE_TEMP);
+    if (check == NULL) {
         ret = WS_MEMORY_E;
     }
     else {
         int checkSz;
 
-        checkSz = wc_RsaSSL_VerifyInline(sig, sigSz, &checkSig, key);
+        checkSz = wc_RsaSSL_Verify(sig, sigSz, check, digestSz, key);
         if (checkSz < 0
                 || (word32)checkSz != digestSz
-                || WMEMCMP(digest, checkSig, digestSz) != 0) {
+                || WMEMCMP(digest, check, digestSz) != 0) {
             WLOG(WS_LOG_DEBUG, "%s: %s", loc, "Bad RSA Sign Verify");
             ret = WS_RSA_E;
         }
-        ForceZero(checkSig, sigSz);
-        WFREE(checkSig, heap, DYNTYPE_TEMP);
+        ForceZero(check, digestSz);
+        WFREE(check, heap, DYNTYPE_TEMP);
     }
 
     return ret;
