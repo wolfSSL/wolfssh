@@ -904,8 +904,8 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         CreatePipe(&cnslIn, &ptyIn, NULL, 0);
         CreatePipe(&ptyOut, &cnslOut, NULL, 0);
 
-        cord.X = ssh->curX;
-        cord.Y = ssh->curY;
+        cord.X = ssh->widthChar;
+        cord.Y = ssh->heightRows;
 
         /* Sanity check on cord values, if 0 than assume was not set.
          * (can happen with exec and not req-pty message)
