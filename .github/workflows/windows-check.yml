@@ -1,0 +1,66 @@
+name: Windows Build Test
+
+on:
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ '*' ]
+
+env:
+  WOLFSSL_SOLUTION_FILE_PATH: wolfssl64.sln
+  SOLUTION_FILE_PATH: wolfssh.sln
+  USER_SETTINGS_H_NEW: wolfssh/ide/winvs/user_settings.h
+  USER_SETTINGS_H: wolfssl/IDE/WIN/user_settings.h
+  INCLUDE_DIR: wolfssh
+
+  # Configuration type to build.
+  # You can convert this to a build matrix if you need coverage of multiple configuration types.
+  # https://docs.github.com/actions/learn-github-actions/managing-complex-workflows#using-a-build-matrix
+  WOLFSSL_BUILD_CONFIGURATION: Release
+  WOLFSSH_BUILD_CONFIGURATION: Release
+  BUILD_PLATFORM: x64
+  TARGET_PLATFORM: 10
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+
+    - uses: actions/checkout@master
+      with:
+        path: wolfssh
+
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@v1
+
+    - name: Restore wolfSSL NuGet packages
+      working-directory: ${{env.GITHUB_WORKSPACE}}wolfssl
+      run: nuget restore ${{env.WOLFSSL_SOLUTION_FILE_PATH}}
+
+    - name: updated user_settings.h for sshd and x509
+      working-directory: ${{env.GITHUB_WORKSPACE}}
+      run: cp ${{env.USER_SETTINGS_H_NEW}} ${{env.USER_SETTINGS_H}}
+
+    - name: replace wolfSSL user_settings.h with wolfSSH user_settings.h
+      working-directory: ${{env.GITHUB_WORKSPACE}}
+      run: get-content ${{env.USER_SETTINGS_H_NEW}} | %{$_ -replace "if 0","if 1"}
+
+    - name: Build wolfssl library
+      working-directory: ${{env.GITHUB_WORKSPACE}}wolfssl
+      run: msbuild /m /p:PlatformToolset=v142 /p:Platform=${{env.BUILD_PLATFORM}} /p:Configuration=${{env.WOLFSSL_BUILD_CONFIGURATION}} /t:wolfssl ${{env.WOLFSSL_SOLUTION_FILE_PATH}}
+
+    - name: Restore NuGet packages
+      working-directory: ${{env.GITHUB_WORKSPACE}}wolfssh\ide\winvs
+      run: nuget restore ${{env.SOLUTION_FILE_PATH}}
+
+    - name: Build wolfssh
+      working-directory: ${{env.GITHUB_WORKSPACE}}wolfssh\ide\winvs
+      # Add additional options to the MSBuild command line here (like platform or verbosity level).
+      # See https://docs.microsoft.com/visualstudio/msbuild/msbuild-command-line-reference
+      run: msbuild /m /p:PlatformToolset=v142 /p:Platform=${{env.BUILD_PLATFORM}} /p:WindowsTargetPlatformVersion=${{env.TARGET_PLATFORM}} /p:Configuration=${{env.WOLFSSH_BUILD_CONFIGURATION}} ${{env.SOLUTION_FILE_PATH}}
+
