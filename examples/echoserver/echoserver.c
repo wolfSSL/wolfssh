@@ -562,6 +562,23 @@ static int wsChannelOpenCb(WOLFSSH_CHANNEL* channel, void* ctx)
 }
 
 
+static int wsShellStartCb(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    word32 id = 0;
+    const char* str;
+
+    if (ctx != NULL) {
+        str = (const char*)ctx;
+    }
+    else {
+        str = "<BAD CONTEXT>";
+    }
+    wolfSSH_ChannelGetId(channel, &id, WS_CHANNEL_ID_PEER);
+    printf("Channel for %s, %u request.\n", str, id);
+    return 0;
+}
+
+
 #ifdef SHELL_DEBUG
 
 static void display_ascii(char *p_buf,
@@ -2426,6 +2443,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     wolfSSH_SetUserAuthResult(ctx, wsUserAuthResult);
     wolfSSH_CTX_SetBanner(ctx, echoserverBanner);
     wolfSSH_CTX_SetChannelOpenCb(ctx, wsChannelOpenCb);
+    wolfSSH_CTX_SetChannelReqShellCb(ctx, wsShellStartCb);
 #ifdef WOLFSSH_AGENT
     wolfSSH_CTX_set_agent_cb(ctx, wolfSSH_AGENT_DefaultActions, NULL);
 #endif
@@ -2654,6 +2672,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         }
         wolfSSH_SetUserAuthCtx(ssh, &pwMapList);
         wolfSSH_SetChannelOpenCtx(ssh, (void*)"echoserver");
+        wolfSSH_SetChannelReqCtx(ssh, (void*)"echoserver");
         /* Use the session object for its own highwater callback ctx */
         if (defaultHighwater > 0) {
             wolfSSH_SetHighwaterCtx(ssh, (void*)ssh);
