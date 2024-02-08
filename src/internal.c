@@ -7794,16 +7794,18 @@ static int DoChannelOpen(WOLFSSH* ssh,
         const char *description = NULL;
 
         if (fail_reason == OPEN_ADMINISTRATIVELY_PROHIBITED)
-            description = "Each session cannot have more than one channel open.";
+            description = "Administratively prohibited.";
         else if (fail_reason == OPEN_UNKNOWN_CHANNEL_TYPE)
             description = "Channel type not supported.";
         else if (fail_reason == OPEN_RESOURCE_SHORTAGE)
             description = "Not enough resources.";
 
-        if (description != NULL)
-            ret = SendChannelOpenFail(ssh, peerChannelId, fail_reason, description, "en");
+        if (description != NULL) {
+            ret = SendChannelOpenFail(ssh, peerChannelId,
+                    fail_reason, description, "en");
+        }
         else
-            ret = SendRequestSuccess(ssh, 0);
+            ret = SendRequestSuccess(ssh, 0); /* XXX Is this right? */
     }
 
 #ifdef WOLFSSH_FWD
@@ -8357,6 +8359,9 @@ static int DoChannelRequest(WOLFSSH* ssh,
         }
         else if (WSTRNCMP(type, "shell", typeSz) == 0) {
             channel->sessionType = WOLFSSH_SESSION_SHELL;
+            if (ssh->ctx->channelReqShellCb) {
+                ssh->ctx->channelReqShellCb(channel, ssh->channelReqCtx);
+            }
             ssh->clientState = CLIENT_DONE;
         }
         else if (WSTRNCMP(type, "exec", typeSz) == 0) {
@@ -8451,8 +8456,9 @@ static int DoChannelRequest(WOLFSSH* ssh,
 #endif
     }
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
         *idx = len;
+    }
 
     if (wantReply) {
         int replyRet;
