@@ -803,6 +803,8 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
 #endif
 #endif
 
+    ssh->keyingCompletionCtx = (void*)ssh;
+
     if (BufferInit(&ssh->inputBuffer, 0, ctx->heap) != WS_SUCCESS  ||
         BufferInit(&ssh->outputBuffer, 0, ctx->heap) != WS_SUCCESS ||
         BufferInit(&ssh->extDataBuffer, 0, ctx->heap) != WS_SUCCESS) {
@@ -3224,8 +3226,7 @@ static INLINE byte KeySzForId(byte id)
     }
 }
 
-
-static INLINE enum wc_HashType HashForId(byte id)
+INLINE enum wc_HashType HashForId(byte id)
 {
     switch (id) {
 
@@ -3308,7 +3309,7 @@ static INLINE enum wc_HashType HashForId(byte id)
 
 
 #if !defined(WOLFSSH_NO_ECDSA) || !defined(WOLFSSH_NO_ECDH)
-static INLINE int wcPrimeForId(byte id)
+INLINE int wcPrimeForId(byte id)
 {
     switch (id) {
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
@@ -3446,7 +3447,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 ret = WS_MATCH_KEX_ALGO_E;
             }
             else {
-                ssh->handshake->kexId = algoId;
+                ssh->kexId = ssh->handshake->kexId = algoId;
                 ssh->handshake->kexHashId = HashForId(algoId);
             }
         }
@@ -4901,6 +4902,9 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         HandshakeInfoFree(ssh->handshake, ssh->ctx->heap);
         ssh->handshake = NULL;
         WLOG(WS_LOG_DEBUG, "Keying completed");
+
+        if (ssh->ctx->keyingCompletionCb)
+            ssh->ctx->keyingCompletionCb(ssh->keyingCompletionCtx);
     }
 
     return ret;
@@ -9928,6 +9932,9 @@ int SendKexDhReply(WOLFSSH* ssh)
                     #endif
 
                     if (ret == WS_SUCCESS) {
+                        #ifndef WOLFSSH_NO_DH
+                            ssh->primeGroupSz = primeGroupSz;
+                        #endif
                         ret = wc_InitDhKey(privKey);
                     }
                     if (ret == 0)
