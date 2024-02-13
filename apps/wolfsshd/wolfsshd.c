@@ -1606,11 +1606,15 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     if (forcedCmd) {
         int readSz;
 
+        fcntl(stdoutPipe[0], F_SETFL, fcntl(stdoutPipe[0], F_GETFL)
+            | O_NONBLOCK);
         readSz = (int)read(stdoutPipe[0], shellBuffer, sizeof shellBuffer);
         if (readSz > 0) {
             wolfSSH_ChannelIdSend(ssh, shellChannelId, shellBuffer, readSz);
         }
 
+        fcntl(stderrPipe[0], F_SETFL, fcntl(stderrPipe[0], F_GETFL)
+            | O_NONBLOCK);
         readSz = (int)read(stderrPipe[0], shellBuffer, sizeof shellBuffer);
         if (readSz > 0) {
             wolfSSH_extended_data_send(ssh, shellBuffer, readSz);
