@@ -22,7 +22,7 @@ jobs:
     - name: autogen
       run: ./autogen.sh
     - name: configure
-      run: ./configure --enable-all CPPFLAGS=-DWOLFSSH_NO_FPKI
+      run: ./configure --enable-all CPPFLAGS="-DWOLFSSH_NO_FPKI -DWOLFSSH_NO_SFTP_TIMEOUT -DWOLFSSH_MAX_SFTP_RW=4000000"
     - name: make
       run: make
     - name: make check
