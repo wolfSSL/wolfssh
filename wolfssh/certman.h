@@ -30,6 +30,7 @@
 
 #include <wolfssh/settings.h>
 #include <wolfssh/port.h>
+#include <wolfssl/ssl.h> /* included for WOLFSSL_CERT_MANAGER struct */
 
 #ifdef __cplusplus
 extern "C" {
@@ -39,6 +40,9 @@ extern "C" {
 struct WOLFSSH_CERTMAN;
 typedef struct WOLFSSH_CERTMAN WOLFSSH_CERTMAN;
 
+
+WOLFSSH_API
+int wolfSSH_SetCertManager(WOLFSSH_CTX* ctx, WOLFSSL_CERT_MANAGER* cm);
 
 WOLFSSH_API
 WOLFSSH_CERTMAN* wolfSSH_CERTMAN_new(void* heap);
