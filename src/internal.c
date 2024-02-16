@@ -7850,7 +7850,6 @@ static int DoChannelRequest(WOLFSSH* ssh,
         }
         else if (WSTRNCMP(type, "shell", typeSz) == 0) {
             channel->sessionType = WOLFSSH_SESSION_SHELL;
-            printf("ooo! a shell!\n");
             if (ssh->ctx->channelReqShellCb) {
                 ssh->ctx->channelReqShellCb(channel, ssh->channelReqCtx);
             }
