@@ -14379,7 +14379,9 @@ void AddAssign64(word32* addend1, word32 addend2)
 {
     if (addend1[0] > (WOLFSSL_MAX_32BIT - addend2)) {
         addend1[1]++;
-        addend1[0] = addend2 - (WOLFSSL_MAX_32BIT- addend1[0]);
+
+        /* -1 to account for roll over digit */
+        addend1[0] = addend2 - (WOLFSSL_MAX_32BIT- addend1[0]) - 1;
     }
     else {
         addend1[0] += addend2;
