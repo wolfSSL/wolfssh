@@ -851,7 +851,8 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                     rc = wolfSSH_get_error(ssh);
                     if (rc == WS_CHAN_RXD) {
                         #ifdef WOLFSSH_SHELL
-                        if (lastChannel == threadCtx->shellCtx.channelId) {
+                        if (threadCtx->shellCtx.isConnected &&
+                                lastChannel == threadCtx->shellCtx.channelId) {
                             cnt_r = wolfSSH_ChannelIdRead(ssh,
                                     threadCtx->shellCtx.channelId,
                                     threadCtx->channelBuffer,
