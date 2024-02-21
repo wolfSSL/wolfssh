@@ -219,6 +219,25 @@ WOLFSSH_API int wolfSSH_CTX_SetChannelOpenRespCb(WOLFSSH_CTX* ctx,
 WOLFSSH_API int wolfSSH_SetChannelOpenCtx(WOLFSSH* ssh, void* ctx);
 WOLFSSH_API void* wolfSSH_GetChannelOpenCtx(WOLFSSH* ssh);
 
+typedef int (*WS_CallbackChannelReqShell)(WOLFSSH_CHANNEL* channel,
+        void* ctx);
+WOLFSSH_API int wolfSSH_CTX_SetChannelReqShellCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelReqShell cb);
+WOLFSSH_API int wolfSSH_SetChannelReqCtx(WOLFSSH* ssh, void* ctx);
+WOLFSSH_API void* wolfSSH_GetChannelReqCtx(WOLFSSH* ssh);
+
+typedef int (*WS_CallbackChannelEof)(WOLFSSH_CHANNEL* channel, void* ctx);
+WOLFSSH_API int wolfSSH_CTX_SetChannelEofCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelEof cb);
+WOLFSSH_API int wolfSSH_SetChannelEofCtx(WOLFSSH* ssh, void* ctx);
+WOLFSSH_API void* wolfSSH_GetChannelEofCtx(WOLFSSH* ssh);
+
+typedef int (*WS_CallbackChannelClose)(WOLFSSH_CHANNEL* channel, void* ctx);
+WOLFSSH_API int wolfSSH_CTX_SetChannelCloseCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelClose cb);
+WOLFSSH_API int wolfSSH_SetChannelCloseCtx(WOLFSSH* ssh, void* ctx);
+WOLFSSH_API void* wolfSSH_GetChannelCloseCtx(WOLFSSH* ssh);
+
 WOLFSSH_API int wolfSSH_get_error(const WOLFSSH*);
 WOLFSSH_API const char* wolfSSH_get_error_name(const WOLFSSH*);
 WOLFSSH_API const char* wolfSSH_ErrorToName(int);
