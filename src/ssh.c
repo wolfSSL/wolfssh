@@ -543,7 +543,6 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 }
                 ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
                 WLOG(WS_LOG_DEBUG, acceptState, "SERVER_USERAUTH_SENT");
-                NO_BREAK;
 #if 0
             case ACCEPT_SERVER_USERAUTH_SENT:
                 while (ssh->clientState < CLIENT_CHANNEL_OPEN_DONE) {
@@ -2556,7 +2555,8 @@ WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNewRemote(WOLFSSH* ssh,
     if (newChannel != NULL)
         ChannelAppend(ssh, newChannel);
 
-    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelFwdNewRemote(), newChannel = %p, ret = %d",
+    WLOG(WS_LOG_DEBUG,
+            "Leaving wolfSSH_ChannelFwdNewRemote(), newChannel = %p, ret = %d",
             newChannel, ret);
     return newChannel;
 }
