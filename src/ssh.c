@@ -2885,6 +2885,107 @@ void* wolfSSH_GetChannelOpenCtx(WOLFSSH* ssh)
 }
 
 
+int wolfSSH_SetChannelReqCtx(WOLFSSH* ssh, void* ctx)
+{
+    int ret = WS_SSH_NULL_E;
+
+    if (ssh != NULL) {
+        ssh->channelReqCtx = ctx;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+void* wolfSSH_GetChannelReqCtx(WOLFSSH* ssh)
+{
+    void* ctx = NULL;
+
+    if (ssh != NULL) {
+        ctx = ssh->channelReqCtx;
+    }
+
+    return ctx;
+}
+
+
+int wolfSSH_CTX_SetChannelEofCb(WOLFSSH_CTX* ctx, WS_CallbackChannelEof cb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->channelEofCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_SetChannelEofCtx(WOLFSSH* ssh, void* ctx)
+{
+    int ret = WS_SSH_NULL_E;
+
+    if (ssh != NULL) {
+        ssh->channelEofCtx = ctx;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+void* wolfSSH_GetChannelEofCtx(WOLFSSH* ssh)
+{
+    void* ctx = NULL;
+
+    if (ssh != NULL) {
+        ctx = ssh->channelEofCtx;
+    }
+
+    return ctx;
+}
+
+
+int wolfSSH_CTX_SetChannelCloseCb(WOLFSSH_CTX* ctx, WS_CallbackChannelClose cb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->channelCloseCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_SetChannelCloseCtx(WOLFSSH* ssh, void* ctx)
+{
+    int ret = WS_SSH_NULL_E;
+
+    if (ssh != NULL) {
+        ssh->channelCloseCtx = ctx;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+void* wolfSSH_GetChannelCloseCtx(WOLFSSH* ssh)
+{
+    void* ctx = NULL;
+
+    if (ssh != NULL) {
+        ctx = ssh->channelCloseCtx;
+    }
+
+    return ctx;
+}
+
+
 #if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
     !defined(NO_WOLFSSH_SERVER)
 

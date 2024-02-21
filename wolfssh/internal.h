@@ -494,9 +494,12 @@ struct WOLFSSH_CTX {
     WS_CallbackGlobalReq globalReqCb; /* Global Request Callback */
     WS_CallbackReqSuccess reqSuccessCb; /* Global Request Success Callback */
     WS_CallbackReqSuccess reqFailureCb; /* Global Request Failure Callback */
-    WS_CallbackChannelOpen channelOpenCb;
-    WS_CallbackChannelOpen channelOpenConfCb;
-    WS_CallbackChannelOpen channelOpenFailCb;
+    WS_CallbackChannelOpen channelOpenCb;     /* Channel Open Requested */
+    WS_CallbackChannelOpen channelOpenConfCb; /* Channel Open Confirm */
+    WS_CallbackChannelOpen channelOpenFailCb; /* Channel Open Fail */
+    WS_CallbackChannelReqShell channelReqShellCb; /* Channel Request "Shell" */
+    WS_CallbackChannelEof channelEofCb; /* Channel Eof Callback */
+    WS_CallbackChannelClose channelCloseCb; /* Channel Close Callback */
 #ifdef WOLFSSH_SCP
     WS_CallbackScpRecv scpRecvCb;     /* SCP receive callback */
     WS_CallbackScpSend scpSendCb;     /* SCP send callback */
@@ -659,11 +662,14 @@ struct WOLFSSH {
     word32 rxCount;
     word32 highwaterMark;
     byte highwaterFlag;    /* Set when highwater CB called */
-    void* highwaterCtx;
+    void* highwaterCtx;    /* Highwater CB context */
     void* globalReqCtx;    /* Global Request CB context */
     void* reqSuccessCtx;   /* Global Request Sucess CB context */
     void* reqFailureCtx;   /* Global Request Failure CB context */
     void* channelOpenCtx;  /* Channel Open CB context */
+    void* channelReqCtx;   /* Channel Request CB context */
+    void* channelEofCtx;   /* Channel EOF CB context */
+    void* channelCloseCtx; /* Channel Close CB context */
     void* fs;              /* File system handle */
     word32 curSz;
     word32 seq;
