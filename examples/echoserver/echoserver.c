@@ -700,6 +700,38 @@ static int wsChannelOpenCb(WOLFSSH_CHANNEL* channel, void* ctx)
 }
 
 
+static int wsChannelEofCb(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    word32 id = 0;
+
+    wolfSSH_ChannelGetId(channel, &id, WS_CHANNEL_ID_PEER);
+
+    if (ctx != NULL) {
+        printf("Channel %u end of file, CTX is %p.\n", id, ctx);
+    }
+    else {
+        printf("Channel %u end of file, but no CTX.\n", id);
+    }
+    return 0;
+}
+
+
+static int wsChannelCloseCb(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    word32 id = 0;
+
+    wolfSSH_ChannelGetId(channel, &id, WS_CHANNEL_ID_PEER);
+
+    if (ctx != NULL) {
+        printf("Channel %u closed, CTX is %p.\n", id, ctx);
+    }
+    else {
+        printf("Channel %u closed, but no CTX.\n", id);
+    }
+    return 0;
+}
+
+
 #ifdef SHELL_DEBUG
 
 static void display_ascii(char *p_buf,
@@ -778,7 +810,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
 #endif
 #ifdef WOLFSSH_FWD
         WS_SOCKET_T fwdFd = -1;
-        WS_SOCKET_T fwdListenFd = threadCtx->fwdCbCtx.listenFd;
+        WS_SOCKET_T fwdListenFd = -1;
         word32 fwdBufferIdx = 0;
 #endif
 
@@ -816,7 +848,8 @@ static int ssh_worker(thread_ctx_t* threadCtx)
             }
             #endif /* WOLFSSH_AGENT */
             #ifdef WOLFSSH_FWD
-            if (threadCtx->fwdCbCtx.state == FWD_STATE_LISTEN) {
+            if (fwdListenFd == -1
+                    && threadCtx->fwdCbCtx.state == FWD_STATE_LISTEN) {
                 fwdListenFd = threadCtx->fwdCbCtx.listenFd;
                 FD_SET(fwdListenFd, &readFds);
                 if (fwdListenFd > maxFd)
@@ -1130,7 +1163,8 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                     }
                 }
             }
-            if (threadCtx->fwdCbCtx.state == FWD_STATE_LISTEN) {
+            if (fwdListenFd > 0
+                    && threadCtx->fwdCbCtx.state == FWD_STATE_LISTEN) {
                 if (FD_ISSET(fwdListenFd, &readFds)) {
                     #ifdef SHELL_DEBUG
                         printf("accepting fwd connection\n");
@@ -2424,7 +2458,11 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     wolfSSH_SetUserAuthResult(ctx, wsUserAuthResult);
     wolfSSH_CTX_SetBanner(ctx, echoserverBanner);
     wolfSSH_CTX_SetChannelOpenCb(ctx, wsChannelOpenCb);
+    wolfSSH_CTX_SetChannelEofCb(ctx, wsChannelEofCb);
+    wolfSSH_CTX_SetChannelCloseCb(ctx, wsChannelCloseCb);
+#ifdef WOLFSSH_SHELL
     wolfSSH_CTX_SetChannelReqShellCb(ctx, wsShellStartCb);
+#endif
 #ifdef WOLFSSH_AGENT
     wolfSSH_CTX_set_agent_cb(ctx, wolfSSH_AGENT_DefaultActions, NULL);
 #endif
@@ -2654,6 +2692,8 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         wolfSSH_SetUserAuthCtx(ssh, &pwMapList);
         wolfSSH_SetChannelOpenCtx(ssh, (void*)threadCtx);
         wolfSSH_SetChannelReqCtx(ssh, (void*)threadCtx);
+        wolfSSH_SetChannelEofCtx(ssh, (void*)threadCtx);
+        wolfSSH_SetChannelCloseCtx(ssh, (void*)threadCtx);
         /* Use the session object for its own highwater callback ctx */
         if (defaultHighwater > 0) {
             wolfSSH_SetHighwaterCtx(ssh, (void*)ssh);
