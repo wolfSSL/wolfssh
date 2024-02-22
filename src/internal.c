@@ -7959,6 +7959,12 @@ static int DoChannelEof(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS) {
+        if (ssh->ctx->channelEofCb) {
+            ssh->ctx->channelEofCb(channel, ssh->channelEofCtx);
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
         channel->eofRxd = 1;
         if (!channel->eofTxd) {
             ret = SendChannelEof(ssh, channel->peerChannel);
@@ -7989,6 +7995,12 @@ static int DoChannelClose(WOLFSSH* ssh,
         channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
         if (channel == NULL)
             ret = WS_INVALID_CHANID;
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (ssh->ctx->channelCloseCb) {
+            ssh->ctx->channelCloseCb(channel, ssh->channelCloseCtx);
+        }
     }
 
     if (ret == WS_SUCCESS) {
