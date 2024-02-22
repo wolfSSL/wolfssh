@@ -977,7 +977,8 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     }
     ret = wolfSSH_shutdown(ssh);
     /* do not continue on with shutdown process if peer already disconnected */
-    if (ret != WS_SOCKET_ERROR_E && wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E) {
+    if (ret != WS_SOCKET_ERROR_E && wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E
+            && wolfSSH_get_error(ssh) != WS_CHANNEL_CLOSED) {
         if (ret != WS_SUCCESS) {
             err_sys("Sending the shutdown messages failed.");
         }
