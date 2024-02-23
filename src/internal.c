@@ -69,6 +69,11 @@ Flags:
     use of the function if the flag isn't set. If using wolfCrypt v4.5.0 or
     later, and not building with configure, set this flag.
     default: off
+  WOLFSSH_NO_SHA1_SOFT_DISABLE
+    SHA-1 is normally soft-disabled. The default configuration will not
+    advertise the availability of SHA-1 based algorithms during KEX. SHA-1
+    algorithms still work. Setting this flag will advertise SHA-1 based
+    algorithms during KEX by default.
   WOLFSSH_NO_SHA1
     Set when SHA1 is disabled. Set to disable use of SHA1 in HMAC and digital
     signature support.
@@ -3025,29 +3030,33 @@ static const byte cannedMacAlgo[] = {
 #ifndef WOLFSSH_NO_HMAC_SHA2_256
     ID_HMAC_SHA2_256,
 #endif
-#ifndef WOLFSSH_NO_HMAC_SHA1_96
-    ID_HMAC_SHA1_96,
-#endif
-#ifndef WOLFSSH_NO_HMAC_SHA1
-    ID_HMAC_SHA1,
-#endif
+#ifdef WOLFSSH_NO_SHA1_SOFT_DISABLE
+    #ifndef WOLFSSH_NO_HMAC_SHA1_96
+        ID_HMAC_SHA1_96,
+    #endif
+    #ifndef WOLFSSH_NO_HMAC_SHA1
+        ID_HMAC_SHA1,
+    #endif
+#endif /* WOLFSSH_NO_SHA1_SOFT_DISABLE */
 };
 
 static const byte  cannedKeyAlgoClient[] = {
 #ifdef WOLFSSH_CERTS
-#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
-    ID_X509V3_ECDSA_SHA2_NISTP521,
-#endif
-#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
-    ID_X509V3_ECDSA_SHA2_NISTP384,
-#endif
-#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
-    ID_X509V3_ECDSA_SHA2_NISTP256,
-#endif
-#ifndef WOLFSSH_NO_SSH_RSA_SHA1
-    ID_X509V3_SSH_RSA,
-#endif
-#endif
+    #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+        ID_X509V3_ECDSA_SHA2_NISTP521,
+    #endif
+    #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+        ID_X509V3_ECDSA_SHA2_NISTP384,
+    #endif
+    #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+        ID_X509V3_ECDSA_SHA2_NISTP256,
+    #endif
+    #ifdef WOLFSSH_NO_SHA1_SOFT_DISABLE
+        #ifndef WOLFSSH_NO_SSH_RSA_SHA1
+            ID_X509V3_SSH_RSA,
+        #endif /* WOLFSSH_NO_SSH_RSA_SHA1 */
+    #endif /* WOLFSSH_NO_SHA1_SOFT_DISABLE */
+#endif /* WOLFSSH_CERTS */
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
     ID_ECDSA_SHA2_NISTP521,
 #endif
@@ -3063,9 +3072,11 @@ static const byte  cannedKeyAlgoClient[] = {
 #ifndef WOLFSSH_NO_RSA_SHA2_256
     ID_RSA_SHA2_256,
 #endif
-#ifndef WOLFSSH_NO_SSH_RSA_SHA1
-    ID_SSH_RSA,
-#endif
+#ifdef WOLFSSH_NO_SHA1_SOFT_DISABLE
+    #ifndef WOLFSSH_NO_SSH_RSA_SHA1
+        ID_SSH_RSA,
+    #endif /* WOLFSSH_NO_SSH_RSA_SHA1 */
+#endif /* WOLFSSH_NO_SHA1_SOFT_DISABLE */
 };
 
 static const byte cannedKexAlgo[] = {
@@ -3084,12 +3095,14 @@ static const byte cannedKexAlgo[] = {
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
     ID_DH_GEX_SHA256,
 #endif
-#ifndef WOLFSSH_NO_DH_GROUP14_SHA1
-    ID_DH_GROUP14_SHA1,
-#endif
-#ifndef WOLFSSH_NO_DH_GROUP1_SHA1
-    ID_DH_GROUP1_SHA1,
-#endif
+#ifdef WOLFSSH_NO_SHA1_SOFT_DISABLE
+    #ifndef WOLFSSH_NO_DH_GROUP14_SHA1
+        ID_DH_GROUP14_SHA1,
+    #endif
+    #ifndef WOLFSSH_NO_DH_GROUP1_SHA1
+        ID_DH_GROUP1_SHA1,
+    #endif
+#endif /* WOLFSSH_NO_SHA1_SOFT_DISABLE */
 };
 
 static const word32 cannedEncAlgoSz = (word32)sizeof(cannedEncAlgo);
@@ -8865,12 +8878,14 @@ static const char cannedMacAlgoNames[] =
 #if !defined(WOLFSSH_NO_HMAC_SHA2_256)
     "hmac-sha2-256,"
 #endif
-#if !defined(WOLFSSH_NO_HMAC_SHA1_96)
-    "hmac-sha1-96,"
-#endif
-#if !defined(WOLFSSH_NO_HMAC_SHA1)
-    "hmac-sha1,"
-#endif
+#if defined(WOLFSSH_NO_SHA1_SOFT_DISABLE)
+    #if !defined(WOLFSSH_NO_HMAC_SHA1_96)
+        "hmac-sha1-96,"
+    #endif
+    #if !defined(WOLFSSH_NO_HMAC_SHA1)
+        "hmac-sha1,"
+    #endif
+#endif /* WOLFSSH_NO_SHA1_SOFT_DISABLE */
     "";
 
 

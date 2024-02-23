@@ -67,14 +67,9 @@ extern "C" {
 
 
 /*
- * Force some options. Do not want ssh-rsa with SHA1 at anymore. Not ready
- * for rsa-sha2-512 yet.
+ * Not ready for rsa-sha2-512 yet.
  */
 
-#undef WOLFSSH_NO_SSH_RSA_SHA1
-#ifndef WOLFSSH_YES_SSH_RSA_SHA1
-    #define WOLFSSH_NO_SSH_RSA_SHA1
-#endif
 #undef WOLFSSH_NO_RSA_SHA2_512
 #ifndef WOLFSSH_YES_RSA_SHA2_512
     #define WOLFSSH_NO_RSA_SHA2_512
