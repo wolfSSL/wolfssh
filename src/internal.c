@@ -567,6 +567,111 @@ static const word32 cannedBannerSz = (word32)sizeof(cannedBanner) - 1;
 #endif /* DEBUG_WOLFSSH */
 
 
+#if 0
+static const char cannedKexAlgoNames[] =
+#if !defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256)
+    "ecdh-nistp256-kyber-512r3-sha256-d00@openquantumsafe.org,"
+#endif
+#if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP521)
+    "ecdh-sha2-nistp521,"
+#endif
+#if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP384)
+    "ecdh-sha2-nistp384,"
+#endif
+#if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256)
+    "ecdh-sha2-nistp256,"
+#endif
+#if !defined(WOLFSSH_NO_DH_GEX_SHA256)
+    "diffie-hellman-group-exchange-sha256,"
+#endif
+#if !defined(WOLFSSH_NO_DH_GROUP14_SHA1)
+    "diffie-hellman-group14-sha1,"
+#endif
+#if !defined(WOLFSSH_NO_DH_GROUP1_SHA1)
+    "diffie-hellman-group1-sha1,"
+#endif
+    "";
+#endif
+
+#ifndef WOLFSSH_NO_SSH_RSA_SHA1
+    #ifdef WOLFSSH_CERTS
+        static const char cannedKeyAlgoX509RsaNames[] = "x509v3-ssh-rsa";
+    #endif
+#endif
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    static const char cannedKeyAlgoEcc256Names[] = "ecdsa-sha2-nistp256";
+    #ifdef WOLFSSH_CERTS
+        static const char cannedKeyAlgoX509Ecc256Names[] =
+                "x509v3-ecdsa-sha2-nistp256";
+    #endif
+#endif
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+    static const char cannedKeyAlgoEcc384Names[] = "ecdsa-sha2-nistp384";
+    #ifdef WOLFSSH_CERTS
+        static const char cannedKeyAlgoX509Ecc384Names[] =
+                "x509v3-ecdsa-sha2-nistp384";
+    #endif
+#endif
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+    static const char cannedKeyAlgoEcc521Names[] = "ecdsa-sha2-nistp521";
+    #ifdef WOLFSSH_CERTS
+        static const char cannedKeyAlgoX509Ecc521Names[] =
+                "x509v3-ecdsa-sha2-nistp521";
+    #endif
+#endif
+#ifndef WOLFSSH_NO_SSH_RSA_SHA1
+    /* Used for both the signature algorithm and the RSA key format. */
+    static const char cannedKeyAlgoSshRsaNames[] = "ssh-rsa";
+#endif
+#ifndef WOLFSSH_NO_RSA_SHA2_256
+    static const char cannedKeyAlgoRsaSha2_256Names[] = "rsa-sha2-256";
+#endif
+#ifndef WOLFSSH_NO_RSA_SHA2_512
+    static const char cannedKeyAlgoRsaSha2_512Names[] = "rsa-sha2-512";
+#endif
+
+#ifdef WOLFSSH_CERTS
+static const char cannedKeyAlgoNames[] =
+   "rsa-sha2-256,x509v3-ssh-rsa,ecdsa-sha2-nistp256,x509v3-ecdsa-sha2-nistp256";
+#else
+static const char cannedKeyAlgoNames[] = "rsa-sha2-256,ecdsa-sha2-nistp256";
+#endif
+
+static const char cannedEncAlgoNames[] =
+#if !defined(WOLFSSH_NO_AES_GCM)
+    "aes256-gcm@openssh.com,"
+    "aes192-gcm@openssh.com,"
+    "aes128-gcm@openssh.com,"
+#endif
+#if !defined(WOLFSSH_NO_AES_CTR)
+    "aes256-ctr,"
+    "aes192-ctr,"
+    "aes128-ctr,"
+#endif
+#if !defined(WOLFSSH_NO_AES_CBC)
+    "aes256-cbc,"
+    "aes192-cbc,"
+    "aes128-cbc,"
+#endif
+    "";
+
+static const char cannedMacAlgoNames[] =
+#if !defined(WOLFSSH_NO_HMAC_SHA2_256)
+    "hmac-sha2-256,"
+#endif
+#if defined(WOLFSSH_NO_SHA1_SOFT_DISABLE)
+    #if !defined(WOLFSSH_NO_HMAC_SHA1_96)
+        "hmac-sha1-96,"
+    #endif
+    #if !defined(WOLFSSH_NO_HMAC_SHA1)
+        "hmac-sha1,"
+    #endif
+#endif /* WOLFSSH_NO_SHA1_SOFT_DISABLE */
+    "";
+
+static const char cannedNoneNames[] = "none";
+
+
 WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
 {
     word32 idx, count;
@@ -604,6 +709,12 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
     ctx->windowSz = DEFAULT_WINDOW_SZ;
     ctx->maxPacketSz = DEFAULT_MAX_PACKET_SZ;
     ctx->sshProtoIdStr = sshProtoIdStr;
+#if 0
+    ctx->algoListKex = cannedKexAlgoNames;
+    ctx->algoListKey = cannedKeyAlgoNames;
+    ctx->algoListCipher = cannedEncAlgoNames;
+    ctx->algoListMac = cannedMacAlgoNames;
+#endif
 
     count = (word32)(sizeof(ctx->privateKey)
             / sizeof(ctx->privateKey[0]));
@@ -772,6 +883,10 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->kSz         = (word32)sizeof(ssh->k);
     ssh->handshake   = handshake;
     ssh->connectChannelId = WOLFSSH_SESSION_SHELL;
+    ssh->algoListKex = ctx->algoListKex;
+    ssh->algoListKey = ctx->algoListKey;
+    ssh->algoListCipher = ctx->algoListCipher;
+    ssh->algoListMac = ctx->algoListMac;
 #ifdef WOLFSSH_SCP
     ssh->scpRequestState = SCP_PARSE_COMMAND;
     ssh->scpConfirmMsg   = NULL;
@@ -1950,140 +2065,141 @@ static int GenerateKeys(WOLFSSH* ssh, byte hashId, byte doKeyPad)
 
 typedef struct {
     byte id;
+    byte type;
     const char* name;
 } NameIdPair;
 
 
 static const NameIdPair NameIdMap[] = {
-    { ID_NONE, "none" },
+    { ID_NONE, TYPE_OTHER, "none" },
 
     /* Encryption IDs */
 #ifndef WOLFSSH_NO_AES_CBC
-    { ID_AES128_CBC, "aes128-cbc" },
-    { ID_AES192_CBC, "aes192-cbc" },
-    { ID_AES256_CBC, "aes256-cbc" },
+    { ID_AES128_CBC, TYPE_CIPHER, "aes128-cbc" },
+    { ID_AES192_CBC, TYPE_CIPHER, "aes192-cbc" },
+    { ID_AES256_CBC, TYPE_CIPHER, "aes256-cbc" },
 #endif
 #ifndef WOLFSSH_NO_AES_CTR
-    { ID_AES128_CTR, "aes128-ctr" },
-    { ID_AES192_CTR, "aes192-ctr" },
-    { ID_AES256_CTR, "aes256-ctr" },
+    { ID_AES128_CTR, TYPE_CIPHER, "aes128-ctr" },
+    { ID_AES192_CTR, TYPE_CIPHER, "aes192-ctr" },
+    { ID_AES256_CTR, TYPE_CIPHER, "aes256-ctr" },
 #endif
 #ifndef WOLFSSH_NO_AES_GCM
-    { ID_AES128_GCM, "aes128-gcm@openssh.com" },
-    { ID_AES192_GCM, "aes192-gcm@openssh.com" },
-    { ID_AES256_GCM, "aes256-gcm@openssh.com" },
+    { ID_AES128_GCM, TYPE_CIPHER, "aes128-gcm@openssh.com" },
+    { ID_AES192_GCM, TYPE_CIPHER, "aes192-gcm@openssh.com" },
+    { ID_AES256_GCM, TYPE_CIPHER, "aes256-gcm@openssh.com" },
 #endif
 
     /* Integrity IDs */
 #ifndef WOLFSSH_NO_HMAC_SHA1
-    { ID_HMAC_SHA1, "hmac-sha1" },
+    { ID_HMAC_SHA1, TYPE_MAC, "hmac-sha1" },
 #endif
 #ifndef WOLFSSH_NO_HMAC_SHA1_96
-    { ID_HMAC_SHA1_96, "hmac-sha1-96" },
+    { ID_HMAC_SHA1_96, TYPE_MAC, "hmac-sha1-96" },
 #endif
 #ifndef WOLFSSH_NO_HMAC_SHA2_256
-    { ID_HMAC_SHA2_256, "hmac-sha2-256" },
+    { ID_HMAC_SHA2_256, TYPE_MAC, "hmac-sha2-256" },
 #endif
 
     /* Key Exchange IDs */
 #ifndef WOLFSSH_NO_DH_GROUP1_SHA1
-    { ID_DH_GROUP1_SHA1, "diffie-hellman-group1-sha1" },
+    { ID_DH_GROUP1_SHA1, TYPE_KEX, "diffie-hellman-group1-sha1" },
 #endif
 #ifndef WOLFSSH_NO_DH_GROUP14_SHA1
-    { ID_DH_GROUP14_SHA1, "diffie-hellman-group14-sha1" },
+    { ID_DH_GROUP14_SHA1, TYPE_KEX, "diffie-hellman-group14-sha1" },
 #endif
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
-    { ID_DH_GEX_SHA256, "diffie-hellman-group-exchange-sha256" },
+    { ID_DH_GEX_SHA256, TYPE_KEX, "diffie-hellman-group-exchange-sha256" },
 #endif
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256
-    { ID_ECDH_SHA2_NISTP256, "ecdh-sha2-nistp256" },
+    { ID_ECDH_SHA2_NISTP256, TYPE_KEX, "ecdh-sha2-nistp256" },
 #endif
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP384
-    { ID_ECDH_SHA2_NISTP384, "ecdh-sha2-nistp384" },
+    { ID_ECDH_SHA2_NISTP384, TYPE_KEX, "ecdh-sha2-nistp384" },
 #endif
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP521
-    { ID_ECDH_SHA2_NISTP521, "ecdh-sha2-nistp521" },
+    { ID_ECDH_SHA2_NISTP521, TYPE_KEX, "ecdh-sha2-nistp521" },
 #endif
 #ifndef WOLFSSH_NO_ECDH_SHA2_ED25519
-    { ID_ECDH_SHA2_ED25519, "curve25519-sha256" },
-    { ID_ECDH_SHA2_ED25519_LIBSSH, "curve25519-sha256@libssh.org" },
+    { ID_ECDH_SHA2_ED25519, TYPE_KEX, "curve25519-sha256" },
+    { ID_ECDH_SHA2_ED25519_LIBSSH, TYPE_KEX, "curve25519-sha256@libssh.org" },
 #endif
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
-    { ID_DH_GROUP14_SHA256, "diffie-hellman-group14-sha256" },
+    { ID_DH_GROUP14_SHA256, TYPE_KEX, "diffie-hellman-group14-sha256" },
 #endif
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
     /* We use kyber-512 here to achieve interop with OQS's fork. */
-    { ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256,
+    { ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256, TYPE_KEX,
         "ecdh-nistp256-kyber-512r3-sha256-d00@openquantumsafe.org" },
 #endif
-    { ID_EXTINFO_S, "ext-info-s" },
-    { ID_EXTINFO_C, "ext-info-c" },
+    { ID_EXTINFO_S, TYPE_OTHER, "ext-info-s" },
+    { ID_EXTINFO_C, TYPE_OTHER, "ext-info-c" },
 
     /* Public Key IDs */
 #ifndef WOLFSSH_NO_RSA
-    { ID_SSH_RSA, "ssh-rsa" },
+    { ID_SSH_RSA, TYPE_KEY, "ssh-rsa" },
 #ifndef WOLFSSH_NO_RSA_SHA2_256
-    { ID_RSA_SHA2_256, "rsa-sha2-256" },
+    { ID_RSA_SHA2_256, TYPE_KEY, "rsa-sha2-256" },
 #endif
 #ifndef WOLFSSH_NO_RSA_SHA2_512
-    { ID_RSA_SHA2_512, "rsa-sha2-512" },
+    { ID_RSA_SHA2_512, TYPE_KEY, "rsa-sha2-512" },
 #endif
 #endif /* WOLFSSH_NO_RSA */
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
-    { ID_ECDSA_SHA2_NISTP256, "ecdsa-sha2-nistp256" },
+    { ID_ECDSA_SHA2_NISTP256, TYPE_KEY, "ecdsa-sha2-nistp256" },
 #endif
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
-    { ID_ECDSA_SHA2_NISTP384, "ecdsa-sha2-nistp384" },
+    { ID_ECDSA_SHA2_NISTP384, TYPE_KEY, "ecdsa-sha2-nistp384" },
 #endif
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
-    { ID_ECDSA_SHA2_NISTP521, "ecdsa-sha2-nistp521" },
+    { ID_ECDSA_SHA2_NISTP521, TYPE_KEY, "ecdsa-sha2-nistp521" },
 #endif
 #ifdef WOLFSSH_CERTS
 #ifndef WOLFSSH_NO_SSH_RSA_SHA1
-    { ID_X509V3_SSH_RSA, "x509v3-ssh-rsa" },
+    { ID_X509V3_SSH_RSA, TYPE_KEY, "x509v3-ssh-rsa" },
 #endif
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
-    { ID_X509V3_ECDSA_SHA2_NISTP256, "x509v3-ecdsa-sha2-nistp256" },
+    { ID_X509V3_ECDSA_SHA2_NISTP256, TYPE_KEY, "x509v3-ecdsa-sha2-nistp256" },
 #endif
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
-    { ID_X509V3_ECDSA_SHA2_NISTP384, "x509v3-ecdsa-sha2-nistp384" },
+    { ID_X509V3_ECDSA_SHA2_NISTP384, TYPE_KEY, "x509v3-ecdsa-sha2-nistp384" },
 #endif
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
-    { ID_X509V3_ECDSA_SHA2_NISTP521, "x509v3-ecdsa-sha2-nistp521" },
+    { ID_X509V3_ECDSA_SHA2_NISTP521, TYPE_KEY, "x509v3-ecdsa-sha2-nistp521" },
 #endif
 #endif /* WOLFSSH_CERTS */
 
     /* Service IDs */
-    { ID_SERVICE_USERAUTH, "ssh-userauth" },
-    { ID_SERVICE_CONNECTION, "ssh-connection" },
+    { ID_SERVICE_USERAUTH, TYPE_OTHER, "ssh-userauth" },
+    { ID_SERVICE_CONNECTION, TYPE_OTHER, "ssh-connection" },
 
     /* UserAuth IDs */
-    { ID_USERAUTH_PASSWORD, "password" },
-    { ID_USERAUTH_PUBLICKEY, "publickey" },
+    { ID_USERAUTH_PASSWORD, TYPE_OTHER, "password" },
+    { ID_USERAUTH_PUBLICKEY, TYPE_OTHER, "publickey" },
 
     /* Channel Type IDs */
-    { ID_CHANTYPE_SESSION, "session" },
+    { ID_CHANTYPE_SESSION, TYPE_OTHER, "session" },
 #ifdef WOLFSSH_FWD
-    { ID_CHANTYPE_TCPIP_FORWARD, "forwarded-tcpip" },
-    { ID_CHANTYPE_TCPIP_DIRECT, "direct-tcpip" },
+    { ID_CHANTYPE_TCPIP_FORWARD, TYPE_OTHER, "forwarded-tcpip" },
+    { ID_CHANTYPE_TCPIP_DIRECT, TYPE_OTHER, "direct-tcpip" },
 #endif /* WOLFSSH_FWD */
 #ifdef WOLFSSH_AGENT
-    { ID_CHANTYPE_AUTH_AGENT, "auth-agent@openssh.com" },
+    { ID_CHANTYPE_AUTH_AGENT, TYPE_OTHER, "auth-agent@openssh.com" },
 #endif /* WOLFSSH_AGENT */
 
     /* Global Request IDs */
 #ifdef WOLFSSH_FWD
-    { ID_GLOBREQ_TCPIP_FWD, "tcpip-forward" },
-    { ID_GLOBREQ_TCPIP_FWD_CANCEL, "cancel-tcpip-forward" },
+    { ID_GLOBREQ_TCPIP_FWD, TYPE_OTHER, "tcpip-forward" },
+    { ID_GLOBREQ_TCPIP_FWD_CANCEL, TYPE_OTHER, "cancel-tcpip-forward" },
 #endif /* WOLFSSH_FWD */
 
     /* Ext Info IDs */
-    { ID_EXTINFO_SERVER_SIG_ALGS, "server-sig-algs" },
+    { ID_EXTINFO_SERVER_SIG_ALGS, TYPE_OTHER, "server-sig-algs" },
 
     /* Curve Name IDs */
-    { ID_CURVE_NISTP256, "nistp256" },
-    { ID_CURVE_NISTP384, "nistp384" },
-    { ID_CURVE_NISTP521, "nistp521" },
+    { ID_CURVE_NISTP256, TYPE_OTHER, "nistp256" },
+    { ID_CURVE_NISTP384, TYPE_OTHER, "nistp384" },
+    { ID_CURVE_NISTP521, TYPE_OTHER, "nistp521" },
 };
 
 
@@ -2115,6 +2231,29 @@ const char* IdToName(byte id)
             name = NameIdMap[i].name;
             break;
         }
+    }
+
+    return name;
+}
+
+
+const char* NameByIndexType(byte type, word32* index)
+{
+    const char* name = NULL;
+
+    if (index != NULL) {
+        word32 i, mapSz;
+
+        mapSz = (word32)(sizeof(NameIdMap)/sizeof(NameIdPair));
+
+        for (i = *index; i < mapSz; i++) {
+            if (NameIdMap[i].type == type) {
+                name = NameIdMap[i].name;
+                break;
+            }
+        }
+
+        *index = i + 1;
     }
 
     return name;
@@ -8855,112 +8994,6 @@ static int BuildNameList(char* buf, word32 bufSz,
     return idx - 1;
 }
 
-
-static const char cannedEncAlgoNames[] =
-#if !defined(WOLFSSH_NO_AES_GCM)
-    "aes256-gcm@openssh.com,"
-    "aes192-gcm@openssh.com,"
-    "aes128-gcm@openssh.com,"
-#endif
-#if !defined(WOLFSSH_NO_AES_CTR)
-    "aes256-ctr,"
-    "aes192-ctr,"
-    "aes128-ctr,"
-#endif
-#if !defined(WOLFSSH_NO_AES_CBC)
-    "aes256-cbc,"
-    "aes192-cbc,"
-    "aes128-cbc,"
-#endif
-    "";
-
-static const char cannedMacAlgoNames[] =
-#if !defined(WOLFSSH_NO_HMAC_SHA2_256)
-    "hmac-sha2-256,"
-#endif
-#if defined(WOLFSSH_NO_SHA1_SOFT_DISABLE)
-    #if !defined(WOLFSSH_NO_HMAC_SHA1_96)
-        "hmac-sha1-96,"
-    #endif
-    #if !defined(WOLFSSH_NO_HMAC_SHA1)
-        "hmac-sha1,"
-    #endif
-#endif /* WOLFSSH_NO_SHA1_SOFT_DISABLE */
-    "";
-
-
-#ifndef WOLFSSH_NO_SSH_RSA_SHA1
-    #ifdef WOLFSSH_CERTS
-        static const char cannedKeyAlgoX509RsaNames[] = "x509v3-ssh-rsa";
-    #endif
-#endif
-#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
-    static const char cannedKeyAlgoEcc256Names[] = "ecdsa-sha2-nistp256";
-    #ifdef WOLFSSH_CERTS
-        static const char cannedKeyAlgoX509Ecc256Names[] =
-                "x509v3-ecdsa-sha2-nistp256";
-    #endif
-#endif
-#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
-    static const char cannedKeyAlgoEcc384Names[] = "ecdsa-sha2-nistp384";
-    #ifdef WOLFSSH_CERTS
-        static const char cannedKeyAlgoX509Ecc384Names[] =
-                "x509v3-ecdsa-sha2-nistp384";
-    #endif
-#endif
-#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
-    static const char cannedKeyAlgoEcc521Names[] = "ecdsa-sha2-nistp521";
-    #ifdef WOLFSSH_CERTS
-        static const char cannedKeyAlgoX509Ecc521Names[] =
-                "x509v3-ecdsa-sha2-nistp521";
-    #endif
-#endif
-#ifndef WOLFSSH_NO_SSH_RSA_SHA1
-    /* Used for both the signature algorithm and the RSA key format. */
-    static const char cannedKeyAlgoSshRsaNames[] = "ssh-rsa";
-#endif
-#ifndef WOLFSSH_NO_RSA_SHA2_256
-    static const char cannedKeyAlgoRsaSha2_256Names[] = "rsa-sha2-256";
-#endif
-#ifndef WOLFSSH_NO_RSA_SHA2_512
-    static const char cannedKeyAlgoRsaSha2_512Names[] = "rsa-sha2-512";
-#endif
-
-#ifdef WOLFSSH_CERTS
-static const char cannedKeyAlgoNames[] =
-   "rsa-sha2-256,x509v3-ssh-rsa,ecdsa-sha2-nistp256,x509v3-ecdsa-sha2-nistp256";
-#else
-static const char cannedKeyAlgoNames[] = "rsa-sha2-256,ecdsa-sha2-nistp256";
-#endif
-
-#if 0
-static const char cannedKexAlgoNames[] =
-#if !defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256)
-    "ecdh-nistp256-kyber-512r3-sha256-d00@openquantumsafe.org,"
-#endif
-#if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP521)
-    "ecdh-sha2-nistp521,"
-#endif
-#if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP384)
-    "ecdh-sha2-nistp384,"
-#endif
-#if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256)
-    "ecdh-sha2-nistp256,"
-#endif
-#if !defined(WOLFSSH_NO_DH_GEX_SHA256)
-    "diffie-hellman-group-exchange-sha256,"
-#endif
-#if !defined(WOLFSSH_NO_DH_GROUP14_SHA1)
-    "diffie-hellman-group14-sha1,"
-#endif
-#if !defined(WOLFSSH_NO_DH_GROUP1_SHA1)
-    "diffie-hellman-group1-sha1,"
-#endif
-    "";
-#endif
-
-
-static const char cannedNoneNames[] = "none";
 
 /* -1 for the null, some are -2 for the null and comma */
 static const word32 cannedEncAlgoNamesSz =

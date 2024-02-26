@@ -1305,7 +1305,91 @@ static void test_wolfSSH_RealPath(void)
 #else
 static void test_wolfSSH_RealPath(void) { ; }
 #endif
+
+
+static void test_wolfSSH_SetAlgoList(void)
+{
+    const char* list = "aes128-ctr,aes128-cbc";
+    const char* checkList = NULL;
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    ssh = wolfSSH_new(ctx);
+
+    wolfSSH_SetAlgoListCipher(ssh, list);
+    checkList = wolfSSH_GetAlgoListCipher(ssh);
+
+    if (checkList != list) {
+        printf("Didn't get back the correct list.\n");
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
+static void test_wolfSSH_QueryAlgoList(void)
+{
+    word32 i;
+    const char* name;
+
+    i = 0;
+    name = NULL;
+    printf("KEX:\n");
+    do {
+        if (name != NULL) {
+            printf("\t%s\n", name);
+        }
+        name = wolfSSH_QueryKex(&i);
+    } while (name != NULL);
+
+    i = 0;
+    name = NULL;
+    printf("Public key:\n");
+    do {
+        if (name != NULL) {
+            printf("\t%s\n", name);
+        }
+        name = wolfSSH_QueryKey(&i);
+    } while (name != NULL);
+
+    i = 0;
+    name = NULL;
+    printf("Cipher:\n");
+    do {
+        if (name != NULL) {
+            printf("\t%s\n", name);
+        }
+        name = wolfSSH_QueryCipher(&i);
+    } while (name != NULL);
+
+    i = 0;
+    name = NULL;
+    printf("MAC:\n");
+    do {
+        if (name != NULL) {
+            printf("\t%s\n", name);
+        }
+        name = wolfSSH_QueryMac(&i);
+    } while (name != NULL);
+
+    /* This test case picks up where the index left off. */
+    name = wolfSSH_QueryKex(&i);
+    if (name != NULL) {
+        printf("That's not right.\n");
+    }
+
+    if (wolfSSH_CheckAlgoName("ssh-rsa"))
+        printf("Don't know ssh-rsa.\n");
+
+    if (!wolfSSH_CheckAlgoName("foofarah"))
+        printf("Fake algo name found.\n");
+}
+
+
 #endif /* WOLFSSH_TEST_BLOCK */
+
 
 int wolfSSH_ApiTest(int argc, char** argv)
 {
@@ -1337,6 +1421,8 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_CTX_UseCert_buffer();
     test_wolfSSH_CertMan();
     test_wolfSSH_ReadKey();
+    test_wolfSSH_QueryAlgoList();
+    test_wolfSSH_SetAlgoList();
 
     /* SCP tests */
     test_wolfSSH_SCP_CB();

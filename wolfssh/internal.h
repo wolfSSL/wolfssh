@@ -351,6 +351,11 @@ enum {
 };
 
 
+enum NameIdType {
+    TYPE_KEX, TYPE_KEY, TYPE_CIPHER, TYPE_MAC, TYPE_OTHER
+};
+
+
 #define WOLFSSH_MAX_NAMESZ 32
 
 #ifndef WOLFSSH_MAX_CHN_NAMESZ
@@ -425,8 +430,10 @@ enum {
     #define WOLFSSH_KEY_QUANTITY_REQ 1
 #endif
 
-WOLFSSH_LOCAL byte NameToId(const char*, word32);
-WOLFSSH_LOCAL const char* IdToName(byte);
+
+WOLFSSH_LOCAL byte NameToId(const char* name, word32 nameSz);
+WOLFSSH_LOCAL const char* IdToName(byte id);
+WOLFSSH_LOCAL const char* NameByIndexType(byte type, word32* index);
 
 
 #define STATIC_BUFFER_LEN AES_BLOCK_SIZE
@@ -502,6 +509,10 @@ struct WOLFSSH_CTX {
     word32 highwaterMark;
     const char* banner;
     const char* sshProtoIdStr;
+    const char* algoListKex;
+    const char* algoListKey;
+    const char* algoListCipher;
+    const char* algoListMac;
     word32 bannerSz;
     word32 windowSz;
     word32 maxPacketSz;
@@ -638,6 +649,10 @@ struct WOLFSSH {
     word32 seq;
     word32 peerSeq;
     word32 packetStartIdx; /* Current send packet start index */
+    const char* algoListKex;
+    const char* algoListKey;
+    const char* algoListCipher;
+    const char* algoListMac;
     byte acceptState;
     byte connectState;
     byte clientState;
