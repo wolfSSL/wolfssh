@@ -7335,7 +7335,8 @@ int wolfSSH_DoModes(const byte* modes, word32 modesSz, int fd)
                 TTY_SET_FLAG(term.c_lflag, ONLCR, arg);
                 break;
             case WOLFSSH_OCRNL:
-                TTY_SET_FLAG(term.c_lflag, OCRNL, arg);
+                /* keep as default, adjusting removes echo over shell */
+                /* TTY_SET_FLAG(term.c_lflag, OCRNL, arg); */
                 break;
             case WOLFSSH_ONOCR:
                 TTY_SET_FLAG(term.c_lflag, ONOCR, arg);
