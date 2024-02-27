@@ -567,7 +567,6 @@ static const word32 cannedBannerSz = (word32)sizeof(cannedBanner) - 1;
 #endif /* DEBUG_WOLFSSH */
 
 
-#if 0
 static const char cannedKexAlgoNames[] =
 #if !defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256)
     "ecdh-nistp256-kyber-512r3-sha256-d00@openquantumsafe.org,"
@@ -584,14 +583,15 @@ static const char cannedKexAlgoNames[] =
 #if !defined(WOLFSSH_NO_DH_GEX_SHA256)
     "diffie-hellman-group-exchange-sha256,"
 #endif
-#if !defined(WOLFSSH_NO_DH_GROUP14_SHA1)
-    "diffie-hellman-group14-sha1,"
-#endif
-#if !defined(WOLFSSH_NO_DH_GROUP1_SHA1)
-    "diffie-hellman-group1-sha1,"
-#endif
+#ifndef WOLFSSH_NO_SHA1_SOFT_DISABLE
+    #if !defined(WOLFSSH_NO_DH_GROUP14_SHA1)
+        "diffie-hellman-group14-sha1,"
+    #endif
+    #if !defined(WOLFSSH_NO_DH_GROUP1_SHA1)
+        "diffie-hellman-group1-sha1,"
+    #endif
+#endif /* WOLFSSH_NO_SHA1_SOFT_DISABLE */
     "";
-#endif
 
 #ifndef WOLFSSH_NO_SSH_RSA_SHA1
     #ifdef WOLFSSH_CERTS
@@ -709,8 +709,8 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
     ctx->windowSz = DEFAULT_WINDOW_SZ;
     ctx->maxPacketSz = DEFAULT_MAX_PACKET_SZ;
     ctx->sshProtoIdStr = sshProtoIdStr;
-#if 0
     ctx->algoListKex = cannedKexAlgoNames;
+#if 0
     ctx->algoListKey = cannedKeyAlgoNames;
 #endif
     ctx->algoListCipher = cannedEncAlgoNames;
@@ -3186,34 +3186,7 @@ static const byte  cannedKeyAlgoClient[] = {
 #endif /* WOLFSSH_NO_SHA1_SOFT_DISABLE */
 };
 
-static const byte cannedKexAlgo[] = {
-#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-    ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256,
-#endif
-#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP521
-    ID_ECDH_SHA2_NISTP521,
-#endif
-#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP384
-    ID_ECDH_SHA2_NISTP384,
-#endif
-#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256
-    ID_ECDH_SHA2_NISTP256,
-#endif
-#ifndef WOLFSSH_NO_DH_GEX_SHA256
-    ID_DH_GEX_SHA256,
-#endif
-#ifdef WOLFSSH_NO_SHA1_SOFT_DISABLE
-    #ifndef WOLFSSH_NO_DH_GROUP14_SHA1
-        ID_DH_GROUP14_SHA1,
-    #endif
-    #ifndef WOLFSSH_NO_DH_GROUP1_SHA1
-        ID_DH_GROUP1_SHA1,
-    #endif
-#endif /* WOLFSSH_NO_SHA1_SOFT_DISABLE */
-};
-
 static const word32 cannedKeyAlgoClientSz = (word32)sizeof(cannedKeyAlgoClient);
-static const word32 cannedKexAlgoSz = (word32)sizeof(cannedKexAlgo);
 
 
 static byte MatchIdLists(int side, const byte* left, word32 leftSz,
@@ -3573,30 +3546,35 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         ret = GetNameList(list, &listSz, buf, len, &begin);
     }
     if (ret == WS_SUCCESS) {
+        cannedAlgoNamesSz = AlgoListSz(ssh->algoListKex);
+        cannedListSz = (word32)sizeof(cannedList);
+        ret = GetNameListRaw(cannedList, &cannedListSz,
+                (const byte*)ssh->algoListKex, cannedAlgoNamesSz);
+    }
+    if (ret == WS_SUCCESS) {
         ssh->handshake->kexIdGuess = list[0];
         algoId = MatchIdLists(side, list, listSz,
-                cannedKexAlgo, cannedKexAlgoSz);
+                cannedList, cannedListSz);
         if (algoId == ID_UNKNOWN) {
             WLOG(WS_LOG_DEBUG, "Unable to negotiate KEX Algo");
             ret = WS_MATCH_KEX_ALGO_E;
         }
-        else {
-            ssh->handshake->kexId = algoId;
-            ssh->handshake->kexHashId = HashForId(algoId);
-        }
+    }
+    if (ret == WS_SUCCESS) {
+        ssh->handshake->kexId = algoId;
+        ssh->handshake->kexHashId = HashForId(algoId);
+    }
+    /* Extension Info Flag */
+    if (ret == WS_SUCCESS) {
+        /* Only checking for this is we are server. Our client does
+         * not have anything to say to a server, yet. */
+        if (side == WOLFSSH_ENDPOINT_SERVER) {
+            byte extInfo;
 
-        /* Extension Info Flag */
-        if (ret == WS_SUCCESS) {
-            /* Only checking for this is we are server. Our client does
-             * not have anything to say to a server, yet. */
-            if (side == WOLFSSH_ENDPOINT_SERVER) {
-                byte extInfo;
-
-                /* Match the client accepts extInfo. */
-                algoId = ID_EXTINFO_C;
-                extInfo = MatchIdLists(side, list, listSz, &algoId, 1);
-                ssh->sendExtInfo = extInfo == algoId;
-            }
+            /* Match the client accepts extInfo. */
+            algoId = ID_EXTINFO_C;
+            extInfo = MatchIdLists(side, list, listSz, &algoId, 1);
+            ssh->sendExtInfo = extInfo == algoId;
         }
     }
 
@@ -8948,6 +8926,24 @@ static INLINE void CopyNameList(byte* buf, word32* idx,
 }
 
 
+static INLINE void CopyNameListPlus(byte* buf, word32* idx,
+        const char* src, word32 srcSz, const char* plus, word32 plusSz)
+{
+    word32 begin = *idx;
+
+    c32toa(srcSz + plusSz, buf + begin);
+    begin += LENGTH_SZ;
+    WMEMCPY(buf + begin, src, srcSz);
+    begin += srcSz;
+    if (plusSz) {
+        WMEMCPY(buf + begin, plus, plusSz);
+    }
+    begin += plusSz;
+
+    *idx = begin;
+}
+
+
 /*
  * Iterates over a list of ID values and builds a string of names.
  *
@@ -9045,13 +9041,13 @@ int SendKexInit(WOLFSSH* ssh)
 {
     byte* output = NULL;
     byte* payload = NULL;
-    char* kexAlgoNames = NULL;
     char* keyAlgoNames = NULL;
+    const char* kexAlgoNamesPlus = NULL;
     const byte* algo = NULL;
     word32 algoCount = 0, idx = 0, payloadSz = 0,
-            kexAlgoNamesSz = 0, keyAlgoNamesSz = 0,
-            encAlgoNamesSz = 0, macAlgoNamesSz = 0,
-            noneNamesSz = 0;
+            kexAlgoNamesSz = 0, kexAlgoNamesPlusSz = 0,
+            keyAlgoNamesSz = 0, encAlgoNamesSz = 0,
+            macAlgoNamesSz = 0, noneNamesSz = 0;
 
     int ret = WS_SUCCESS;
 
@@ -9073,34 +9069,6 @@ int SendKexInit(WOLFSSH* ssh)
             if (ssh->handshake == NULL) {
                 WLOG(WS_LOG_DEBUG, "Couldn't allocate handshake info");
                 ret = WS_MEMORY_E;
-            }
-        }
-    }
-
-    if (ret == WS_SUCCESS) {
-        byte algoList[8];
-        word32 algoListSz;
-
-        WMEMCPY(algoList, cannedKexAlgo, cannedKexAlgoSz);
-        algoListSz = cannedKexAlgoSz;
-        if (ssh->ctx->side == WOLFSSH_ENDPOINT_CLIENT) {
-            algoList[cannedKexAlgoSz] = ID_EXTINFO_C;
-            algoListSz++;
-        }
-
-        kexAlgoNamesSz = BuildNameList(NULL, 0, algoList, algoListSz) + 1;
-        kexAlgoNames = (char*)WMALLOC(kexAlgoNamesSz,
-                ssh->ctx->heap, DYNTYPE_STRING);
-        if (kexAlgoNames == NULL) {
-            ret = WS_MEMORY_E;
-        }
-
-        if (ret == WS_SUCCESS) {
-            ret = BuildNameList(kexAlgoNames, kexAlgoNamesSz,
-                    algoList, algoListSz);
-            if (ret > 0) {
-                kexAlgoNamesSz = (word32)ret;
-                ret = WS_SUCCESS;
             }
         }
     }
@@ -9131,14 +9099,18 @@ int SendKexInit(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS) {
+        if (ssh->ctx->side == WOLFSSH_ENDPOINT_CLIENT) {
+            kexAlgoNamesPlus = ",ext-info-c";
+            kexAlgoNamesPlusSz = (word32)WSTRLEN(kexAlgoNamesPlus);
+        }
+
+        kexAlgoNamesSz = AlgoListSz(ssh->algoListKex);
         encAlgoNamesSz = AlgoListSz(ssh->algoListCipher);
         macAlgoNamesSz = AlgoListSz(ssh->algoListMac);
         noneNamesSz = AlgoListSz(cannedNoneNames);
         payloadSz = MSG_ID_SZ + COOKIE_SZ + (LENGTH_SZ * 11) + BOOLEAN_SZ +
-                   kexAlgoNamesSz + keyAlgoNamesSz +
-                   (encAlgoNamesSz * 2) +
-                   (macAlgoNamesSz * 2) +
-                   (noneNamesSz * 2);
+            + kexAlgoNamesSz + kexAlgoNamesPlusSz + keyAlgoNamesSz
+            + (encAlgoNamesSz * 2) + (macAlgoNamesSz * 2) + (noneNamesSz * 2);
         ret = PreparePacket(ssh, payloadSz);
     }
 
@@ -9158,7 +9130,9 @@ int SendKexInit(WOLFSSH* ssh)
 
         idx += COOKIE_SZ;
 
-        CopyNameList(output, &idx, kexAlgoNames, kexAlgoNamesSz);
+        CopyNameListPlus(output, &idx,
+                ssh->algoListKex, kexAlgoNamesSz,
+                kexAlgoNamesPlus, kexAlgoNamesPlusSz);
         CopyNameList(output, &idx, keyAlgoNames, keyAlgoNamesSz);
         CopyNameList(output, &idx, ssh->algoListCipher, encAlgoNamesSz);
         CopyNameList(output, &idx, ssh->algoListCipher, encAlgoNamesSz);
@@ -9193,7 +9167,6 @@ int SendKexInit(WOLFSSH* ssh)
         }
     }
 
-    WFREE(kexAlgoNames, ssh->ctx->heap, DYNTYPE_STRING);
     WFREE(keyAlgoNames, ssh->ctx->heap, DYNTYPE_STRING);
 
     if (ret == WS_SUCCESS) {
