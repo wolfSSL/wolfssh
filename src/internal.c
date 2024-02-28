@@ -583,7 +583,7 @@ static const char cannedKexAlgoNames[] =
 #if !defined(WOLFSSH_NO_DH_GEX_SHA256)
     "diffie-hellman-group-exchange-sha256,"
 #endif
-#ifndef WOLFSSH_NO_SHA1_SOFT_DISABLE
+#ifdef WOLFSSH_NO_SHA1_SOFT_DISABLE
     #if !defined(WOLFSSH_NO_DH_GROUP14_SHA1)
         "diffie-hellman-group14-sha1,"
     #endif
@@ -630,12 +630,19 @@ static const char cannedKexAlgoNames[] =
     static const char cannedKeyAlgoRsaSha2_512Names[] = "rsa-sha2-512";
 #endif
 
-#ifdef WOLFSSH_CERTS
 static const char cannedKeyAlgoNames[] =
-   "rsa-sha2-256,x509v3-ssh-rsa,ecdsa-sha2-nistp256,x509v3-ecdsa-sha2-nistp256";
-#else
-static const char cannedKeyAlgoNames[] = "rsa-sha2-256,ecdsa-sha2-nistp256";
-#endif
+    "rsa-sha2-256,"
+    "ecdsa-sha2-nistp256,"
+#ifdef WOLFSSH_CERTS
+    "x509v3-ecdsa-sha2-nistp256,"
+    #ifdef WOLFSSH_NO_SHA1_SOFT_DISABLE
+        "x509v3-ssh-rsa,"
+    #endif /* WOLFSSH_NO_SHA1_SOFT_DISABLE */
+#endif /* WOLFSSH_CERTS */
+#ifdef WOLFSSH_NO_SHA1_SOFT_DISABLE
+        "ssh-rsa,"
+#endif /* WOLFSSH_NO_SHA1_SOFT_DISABLE */
+    "";
 
 static const char cannedEncAlgoNames[] =
 #if !defined(WOLFSSH_NO_AES_GCM)
@@ -710,9 +717,6 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
     ctx->maxPacketSz = DEFAULT_MAX_PACKET_SZ;
     ctx->sshProtoIdStr = sshProtoIdStr;
     ctx->algoListKex = cannedKexAlgoNames;
-#if 0
-    ctx->algoListKey = cannedKeyAlgoNames;
-#endif
     ctx->algoListCipher = cannedEncAlgoNames;
     ctx->algoListMac = cannedMacAlgoNames;
 
@@ -3674,7 +3678,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             cannedAlgoNamesSz = AlgoListSz(ssh->algoListMac);
             cannedListSz = (word32)sizeof(cannedList);
             ret = GetNameListRaw(cannedList, &cannedListSz,
-                    (const byte*)cannedMacAlgoNames, cannedAlgoNamesSz);
+                    (const byte*)ssh->algoListMac, cannedAlgoNamesSz);
         }
         if (ret == WS_SUCCESS) {
             algoId = MatchIdLists(side, list, listSz, cannedList, cannedListSz);
@@ -3700,11 +3704,11 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             }
         }
         if (ret == WS_SUCCESS) {
-                ssh->handshake->macId = algoId;
-                ssh->handshake->macSz = MacSzForId(algoId);
-                ssh->handshake->keys.macKeySz =
-                    ssh->handshake->peerKeys.macKeySz =
-                    KeySzForId(algoId);
+            ssh->handshake->macId = algoId;
+            ssh->handshake->macSz = MacSzForId(algoId);
+            ssh->handshake->keys.macKeySz =
+                ssh->handshake->peerKeys.macKeySz =
+                KeySzForId(algoId);
         }
     }
 
@@ -3802,7 +3806,8 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         }
 
         if (ret == WS_SUCCESS) {
-            ret = HashUpdate(hash, hashId, (const byte*)ssh->ctx->sshProtoIdStr, strSz);
+            ret = HashUpdate(hash, hashId,
+                    (const byte*)ssh->ctx->sshProtoIdStr, strSz);
         }
 
         if (ret == WS_SUCCESS) {
@@ -8992,51 +8997,6 @@ static int BuildNameList(char* buf, word32 bufSz,
 }
 
 
-/* -1 for the null */
-
-#ifndef WOLFSSH_NO_SSH_RSA_SHA1
-    static const word32 cannedKeyAlgoSshRsaNamesSz =
-            (word32)sizeof(cannedKeyAlgoSshRsaNames) - 1;
-#endif
-#ifndef WOLFSSH_NO_RSA_SHA2_256
-    static const word32 cannedKeyAlgoRsaSha2_256NamesSz =
-            (word32)sizeof(cannedKeyAlgoRsaSha2_256Names) - 1;
-#endif
-#ifndef WOLFSSH_NO_RSA_SHA2_512
-    static const word32 cannedKeyAlgoRsaSha2_512NamesSz =
-            (word32)sizeof(cannedKeyAlgoRsaSha2_512Names) - 1;
-#endif
-#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
-    static const word32 cannedKeyAlgoEcc256NamesSz =
-            (word32)sizeof(cannedKeyAlgoEcc256Names) - 1;
-#endif
-#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
-    static const word32 cannedKeyAlgoEcc384NamesSz =
-            (word32)sizeof(cannedKeyAlgoEcc384Names) - 1;
-#endif
-#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
-    static const word32 cannedKeyAlgoEcc521NamesSz =
-            (word32)sizeof(cannedKeyAlgoEcc521Names) - 1;
-#endif
-#ifdef WOLFSSH_CERTS
-#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
-    static const word32 cannedKeyAlgoX509Ecc256NamesSz =
-            (word32)sizeof(cannedKeyAlgoX509Ecc256Names) - 1;
-#endif
-#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
-    static const word32 cannedKeyAlgoX509Ecc384NamesSz =
-            (word32)sizeof(cannedKeyAlgoX509Ecc384Names) - 1;
-#endif
-#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
-    static const word32 cannedKeyAlgoX509Ecc521NamesSz =
-            (word32)sizeof(cannedKeyAlgoX509Ecc521Names) - 1;
-#endif
-#endif /* WOLFSSH_CERTS */
-
-static const word32 cannedKeyAlgoNamesSz =
-        (word32)sizeof(cannedKeyAlgoNames) - 1;
-
-
 int SendKexInit(WOLFSSH* ssh)
 {
     byte* output = NULL;
@@ -11250,12 +11210,14 @@ int SendServiceAccept(WOLFSSH* ssh, byte serviceId)
 
 #define WS_EXTINFO_EXTENSION_COUNT 1
 static const char serverSigAlgsName[] = "server-sig-algs";
-static word32 serverSigAlgsNameSz = (word32)sizeof(serverSigAlgsName) - 1;
+
 
 int SendExtInfo(WOLFSSH* ssh)
 {
     byte* output;
     word32 idx;
+    word32 cannedKeyAlgoNamesSz = 0;
+    word32 serverSigAlgsNameSz = 0;
     int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Entering SendExtInfo()");
@@ -11265,6 +11227,8 @@ int SendExtInfo(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS) {
+        cannedKeyAlgoNamesSz = AlgoListSz(cannedKeyAlgoNames);
+        serverSigAlgsNameSz = AlgoListSz(serverSigAlgsName);
         ret = PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ + (LENGTH_SZ * 2)
                 + serverSigAlgsNameSz + cannedKeyAlgoNamesSz);
     }
@@ -11482,19 +11446,16 @@ static int BuildUserAuthRequestRsa(WOLFSSH* ssh,
                 #ifndef WOLFSSH_NO_SSH_RSA_SHA1
                 case ID_SSH_RSA:
                     names = cannedKeyAlgoSshRsaNames;
-                    namesSz = cannedKeyAlgoSshRsaNamesSz;
                     break;
                 #endif
                 #ifndef WOLFSSH_NO_RSA_SHA2_256
                 case ID_RSA_SHA2_256:
                     names = cannedKeyAlgoRsaSha2_256Names;
-                    namesSz = cannedKeyAlgoRsaSha2_256NamesSz;
                     break;
                 #endif
                 #ifndef WOLFSSH_NO_RSA_SHA2_512
                 case ID_RSA_SHA2_512:
                     names = cannedKeyAlgoRsaSha2_512Names;
-                    namesSz = cannedKeyAlgoRsaSha2_512NamesSz;
                     break;
                 #endif
                 default:
@@ -11503,6 +11464,7 @@ static int BuildUserAuthRequestRsa(WOLFSSH* ssh,
             }
 
             if (ret == WS_SUCCESS) {
+                namesSz = (word32)WSTRLEN(names);
                 c32toa(keySig->sigSz + namesSz + LENGTH_SZ * 2, output + begin);
                 begin += LENGTH_SZ;
                 c32toa(namesSz, output + begin);
@@ -11916,19 +11878,16 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
                 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
                 case ID_ECDSA_SHA2_NISTP256:
                     names = cannedKeyAlgoEcc256Names;
-                    namesSz = cannedKeyAlgoEcc256NamesSz;
                     break;
                 #endif
                 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
                 case ID_ECDSA_SHA2_NISTP384:
                     names = cannedKeyAlgoEcc384Names;
-                    namesSz = cannedKeyAlgoEcc384NamesSz;
                     break;
                 #endif
                 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
                 case ID_ECDSA_SHA2_NISTP521:
                     names = cannedKeyAlgoEcc521Names;
-                    namesSz = cannedKeyAlgoEcc521NamesSz;
                     break;
                 #endif
                 default:
@@ -11937,6 +11896,8 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
             }
 
             if (ret == WS_SUCCESS) {
+                namesSz = (word32)WSTRLEN(names);
+
                 c32toa(rSz + rPad + sSz + sPad + namesSz + LENGTH_SZ * 4,
                         output + begin);
                 begin += LENGTH_SZ;
@@ -12160,37 +12121,31 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
                 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
                 case ID_ECDSA_SHA2_NISTP256:
                     names = cannedKeyAlgoEcc256Names;
-                    namesSz = cannedKeyAlgoEcc256NamesSz;
                     break;
                 #endif
                 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
                 case ID_ECDSA_SHA2_NISTP384:
                     names = cannedKeyAlgoEcc384Names;
-                    namesSz = cannedKeyAlgoEcc384NamesSz;
                     break;
                 #endif
                 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
                 case ID_ECDSA_SHA2_NISTP521:
                     names = cannedKeyAlgoEcc521Names;
-                    namesSz = cannedKeyAlgoEcc521NamesSz;
                     break;
                 #endif
                 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
                 case ID_X509V3_ECDSA_SHA2_NISTP256:
                     names = cannedKeyAlgoX509Ecc256Names;
-                    namesSz = cannedKeyAlgoX509Ecc256NamesSz;
                     break;
                 #endif
                 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
                 case ID_X509V3_ECDSA_SHA2_NISTP384:
                     names = cannedKeyAlgoX509Ecc384Names;
-                    namesSz = cannedKeyAlgoX509Ecc384NamesSz;
                     break;
                 #endif
                 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
                 case ID_X509V3_ECDSA_SHA2_NISTP521:
                     names = cannedKeyAlgoX509Ecc521Names;
-                    namesSz = cannedKeyAlgoX509Ecc521NamesSz;
                     break;
                 #endif
                 default:
@@ -12199,6 +12154,8 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
             }
 
             if (ret == WS_SUCCESS) {
+                namesSz = (word32)WSTRLEN(names);
+
                 c32toa(rSz + rPad + sSz + sPad + namesSz+ LENGTH_SZ * 4,
                         output + begin);
                 begin += LENGTH_SZ;
