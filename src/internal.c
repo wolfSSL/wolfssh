@@ -717,6 +717,9 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
     ctx->maxPacketSz = DEFAULT_MAX_PACKET_SZ;
     ctx->sshProtoIdStr = sshProtoIdStr;
     ctx->algoListKex = cannedKexAlgoNames;
+    if (side == WOLFSSH_ENDPOINT_CLIENT) {
+        ctx->algoListKey = cannedKeyAlgoNames;
+    }
     ctx->algoListCipher = cannedEncAlgoNames;
     ctx->algoListMac = cannedMacAlgoNames;
 
@@ -1525,13 +1528,15 @@ static void RefreshPublicKeyAlgo(WOLFSSH_CTX* ctx)
                 publicKeyAlgoCount++;
             }
         #endif
-        #ifndef WOLFSSH_NO_SSH_RSA_SHA1
-            if (publicKeyAlgoCount < WOLFSSH_MAX_PUB_KEY_ALGO) {
-                *publicKeyAlgo = ID_SSH_RSA;
-                publicKeyAlgo++;
-                publicKeyAlgoCount++;
-            }
-        #endif
+        #ifdef WOLFSSH_NO_SHA1_SOFT_DISABLE
+            #ifndef WOLFSSH_NO_SSH_RSA_SHA1
+                if (publicKeyAlgoCount < WOLFSSH_MAX_PUB_KEY_ALGO) {
+                    *publicKeyAlgo = ID_SSH_RSA;
+                    publicKeyAlgo++;
+                    publicKeyAlgoCount++;
+                }
+            #endif /* WOLFSSH_NO_SSH_RSA_SHA1 */
+        #endif /* WOLFSSH_NO_SHA1_SOFT_DISABLE */
         }
         else {
             if (publicKeyAlgoCount < WOLFSSH_MAX_PUB_KEY_ALGO) {
@@ -3587,27 +3592,27 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         WLOG(WS_LOG_DEBUG, "DKI: Server Host Key Algorithms");
         listSz = (word32)sizeof(list);
         ret = GetNameList(list, &listSz, buf, len, &begin);
-        if (ret == WS_SUCCESS) {
-            const byte *cannedKeyAlgo = NULL;
-            word32 cannedKeyAlgoSz = 0;
-
-            if (side == WOLFSSH_ENDPOINT_SERVER) {
-                cannedKeyAlgo = ssh->ctx->publicKeyAlgo;
-                cannedKeyAlgoSz = ssh->ctx->publicKeyAlgoCount;
-            }
-            else {
-                cannedKeyAlgo = cannedKeyAlgoClient;
-                cannedKeyAlgoSz = cannedKeyAlgoClientSz;
-            }
-            algoId = MatchIdLists(side, list, listSz,
-                                  cannedKeyAlgo, cannedKeyAlgoSz);
-            if (algoId == ID_UNKNOWN) {
-                WLOG(WS_LOG_DEBUG, "Unable to negotiate Server Host Key Algo");
-                return WS_MATCH_KEY_ALGO_E;
-            }
-            else {
-                ssh->handshake->pubKeyId = algoId;
-            }
+    }
+    if (ret == WS_SUCCESS) {
+        if (side == WOLFSSH_ENDPOINT_SERVER && !ssh->algoListKey) {
+            cannedListSz = ssh->ctx->publicKeyAlgoCount;
+            WMEMCPY(cannedList, ssh->ctx->publicKeyAlgo, cannedListSz);
+        }
+        else {
+            cannedAlgoNamesSz = AlgoListSz(ssh->algoListKey);
+            cannedListSz = (word32)sizeof(cannedList);
+            ret = GetNameListRaw(cannedList, &cannedListSz,
+                    (const byte*)ssh->algoListKey, cannedAlgoNamesSz);
+        }
+    }
+    if (ret == WS_SUCCESS) {
+        algoId = MatchIdLists(side, list, listSz, cannedList, cannedListSz);
+        if (algoId == ID_UNKNOWN) {
+            WLOG(WS_LOG_DEBUG, "Unable to negotiate Server Host Key Algo");
+            return WS_MATCH_KEY_ALGO_E;
+        }
+        else {
+            ssh->handshake->pubKeyId = algoId;
         }
     }
 
@@ -3624,8 +3629,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 (const byte*)ssh->algoListCipher, cannedAlgoNamesSz);
     }
     if (ret == WS_SUCCESS) {
-        algoId = MatchIdLists(side, list, listSz,
-                cannedList, cannedListSz);
+        algoId = MatchIdLists(side, list, listSz, cannedList, cannedListSz);
         if (algoId == ID_UNKNOWN) {
             WLOG(WS_LOG_DEBUG, "Unable to negotiate Encryption Algo C2S");
             ret = WS_MATCH_ENC_ALGO_E;
@@ -3720,11 +3724,12 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         WLOG(WS_LOG_DEBUG, "DKI: Compression Algorithms - Client to Server");
         listSz = (word32)sizeof(list);
         ret = GetNameList(list, &listSz, buf, len, &begin);
-        if (ret == WS_SUCCESS) {
-            if (MatchIdLists(side, list, listSz, &algoId, 1) == ID_UNKNOWN) {
-                WLOG(WS_LOG_DEBUG, "Unable to negotiate Compression Algo C2S");
-                ret = WS_INVALID_ALGO_ID;
-            }
+    }
+    if (ret == WS_SUCCESS) {
+        algoId = MatchIdLists(side, list, listSz, &algoId, 1);
+        if (algoId == ID_UNKNOWN) {
+            WLOG(WS_LOG_DEBUG, "Unable to negotiate Compression Algo C2S");
+            ret = WS_INVALID_ALGO_ID;
         }
     }
 
@@ -3733,11 +3738,12 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         WLOG(WS_LOG_DEBUG, "DKI: Compression Algorithms - Server to Client");
         listSz = (word32)sizeof(list);
         ret = GetNameList(list, &listSz, buf, len, &begin);
-        if (ret == WS_SUCCESS) {
-            if (MatchIdLists(side, list, listSz, &algoId, 1) == ID_UNKNOWN) {
-                WLOG(WS_LOG_DEBUG, "Unable to negotiate Compression Algo S2C");
-                ret = WS_INVALID_ALGO_ID;
-            }
+    }
+    if (ret == WS_SUCCESS) {
+        algoId = MatchIdLists(side, list, listSz, &algoId, 1);
+        if (algoId == ID_UNKNOWN) {
+            WLOG(WS_LOG_DEBUG, "Unable to negotiate Compression Algo S2C");
+            ret = WS_INVALID_ALGO_ID;
         }
     }
 
@@ -9003,8 +9009,7 @@ int SendKexInit(WOLFSSH* ssh)
     byte* payload = NULL;
     char* keyAlgoNames = NULL;
     const char* kexAlgoNamesPlus = NULL;
-    const byte* algo = NULL;
-    word32 algoCount = 0, idx = 0, payloadSz = 0,
+    word32 idx = 0, payloadSz = 0,
             kexAlgoNamesSz = 0, kexAlgoNamesPlusSz = 0,
             keyAlgoNamesSz = 0, encAlgoNamesSz = 0,
             macAlgoNamesSz = 0, noneNamesSz = 0;
@@ -9034,27 +9039,25 @@ int SendKexInit(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS) {
-        if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
-            algoCount = ssh->ctx->publicKeyAlgoCount;
-            algo = ssh->ctx->publicKeyAlgo;
-        }
-        else {
-            algoCount = cannedKeyAlgoClientSz;
-            algo = cannedKeyAlgoClient;
-        }
-        keyAlgoNamesSz = BuildNameList(NULL, 0, algo, algoCount) + 1;
-        keyAlgoNames = (char*)WMALLOC(keyAlgoNamesSz,
-                ssh->ctx->heap, DYNTYPE_STRING);
-        if (keyAlgoNames == NULL) {
-            ret = WS_MEMORY_E;
-        }
-    }
-
-    if (ret == WS_SUCCESS) {
-        ret = BuildNameList(keyAlgoNames, keyAlgoNamesSz, algo, algoCount);
-        if (ret > 0) {
-            keyAlgoNamesSz = (word32)ret;
-            ret = WS_SUCCESS;
+        if (!ssh->algoListKey && ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
+            keyAlgoNamesSz = BuildNameList(NULL, 0,
+                    ssh->ctx->publicKeyAlgo,
+                    ssh->ctx->publicKeyAlgoCount)
+                + 1;
+            keyAlgoNames = (char*)WMALLOC(keyAlgoNamesSz,
+                    ssh->ctx->heap, DYNTYPE_STRING);
+            if (keyAlgoNames) {
+                ret = BuildNameList(keyAlgoNames, keyAlgoNamesSz,
+                    ssh->ctx->publicKeyAlgo,
+                    ssh->ctx->publicKeyAlgoCount);
+                if (ret > 0) {
+                    keyAlgoNamesSz = (word32)ret;
+                    ret = WS_SUCCESS;
+                }
+            }
+            else {
+                ret = WS_MEMORY_E;
+            }
         }
     }
 
@@ -9066,6 +9069,12 @@ int SendKexInit(WOLFSSH* ssh)
 
         kexAlgoNamesSz = AlgoListSz(ssh->algoListKex);
         encAlgoNamesSz = AlgoListSz(ssh->algoListCipher);
+        if (!keyAlgoNames) {
+            keyAlgoNamesSz = (word32)WSTRLEN(ssh->algoListKey);
+        }
+        else {
+            keyAlgoNamesSz = AlgoListSz(keyAlgoNames);
+        }
         macAlgoNamesSz = AlgoListSz(ssh->algoListMac);
         noneNamesSz = AlgoListSz(cannedNoneNames);
         payloadSz = MSG_ID_SZ + COOKIE_SZ + (LENGTH_SZ * 11) + BOOLEAN_SZ +
@@ -9093,7 +9102,12 @@ int SendKexInit(WOLFSSH* ssh)
         CopyNameListPlus(output, &idx,
                 ssh->algoListKex, kexAlgoNamesSz,
                 kexAlgoNamesPlus, kexAlgoNamesPlusSz);
-        CopyNameList(output, &idx, keyAlgoNames, keyAlgoNamesSz);
+        if (!keyAlgoNames) {
+            CopyNameList(output, &idx, ssh->algoListKey, keyAlgoNamesSz);
+        }
+        else {
+            CopyNameList(output, &idx, keyAlgoNames, keyAlgoNamesSz);
+        }
         CopyNameList(output, &idx, ssh->algoListCipher, encAlgoNamesSz);
         CopyNameList(output, &idx, ssh->algoListCipher, encAlgoNamesSz);
         CopyNameList(output, &idx, ssh->algoListMac, macAlgoNamesSz);
@@ -9127,7 +9141,9 @@ int SendKexInit(WOLFSSH* ssh)
         }
     }
 
-    WFREE(keyAlgoNames, ssh->ctx->heap, DYNTYPE_STRING);
+    if (keyAlgoNames) {
+        WFREE(keyAlgoNames, ssh->ctx->heap, DYNTYPE_STRING);
+    }
 
     if (ret == WS_SUCCESS) {
         /* increase amount to be sent only if BundlePacket will be called */

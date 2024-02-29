@@ -90,8 +90,6 @@ WOLFSSH_API int wolfSSH_ReadKey_file(const char* name,
         byte** out, word32* outSz, const byte** outType, word32* outTypeSz,
         byte* isPrivate, void* heap);
 
-WOLFSSH_API int wolfSSH_CheckAlgoName(const char* name);
-
 WOLFSSH_API int wolfSSH_CTX_SetAlgoListKex(WOLFSSH_CTX* ctx, const char* list);
 WOLFSSH_API const char* wolfSSH_CTX_GetAlgoListKex(WOLFSSH_CTX* ctx);
 WOLFSSH_API int wolfSSH_SetAlgoListKex(WOLFSSH* ssh, const char* list);
@@ -112,6 +110,8 @@ WOLFSSH_API int wolfSSH_CTX_SetAlgoListMac(WOLFSSH_CTX* ctx, const char* list);
 WOLFSSH_API const char* wolfSSH_CTX_GetAlgoListMac(WOLFSSH_CTX* ctx);
 WOLFSSH_API int wolfSSH_SetAlgoListMac(WOLFSSH* ssh, const char* list);
 WOLFSSH_API const char* wolfSSH_GetAlgoListMac(WOLFSSH* ssh);
+
+WOLFSSH_API int wolfSSH_CheckAlgoName(const char* name);
 
 WOLFSSH_API const char* wolfSSH_QueryKex(word32* index);
 WOLFSSH_API const char* wolfSSH_QueryKey(word32* index);

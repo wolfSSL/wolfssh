@@ -1932,21 +1932,6 @@ int wolfSSH_ReadKey_file(const char* name,
 #endif
 
 
-int wolfSSH_CheckAlgoName(const char* name)
-{
-    int ret = WS_INVALID_ALGO_ID;
-
-    if (name) {
-        word32 nameSz = (word32)WSTRLEN(name);
-        if (NameToId(name, nameSz) != ID_UNKNOWN) {
-            ret = WS_SUCCESS;
-        }
-    }
-
-    return ret;
-}
-
-
 int wolfSSH_CTX_SetAlgoListKex(WOLFSSH_CTX* ctx, const char* list)
 {
     int ret = WS_SSH_CTX_NULL_E;
@@ -2144,6 +2129,21 @@ const char* wolfSSH_GetAlgoListMac(WOLFSSH* ssh)
     }
 
     return list;
+}
+
+
+int wolfSSH_CheckAlgoName(const char* name)
+{
+    int ret = WS_INVALID_ALGO_ID;
+
+    if (name) {
+        word32 nameSz = (word32)WSTRLEN(name);
+        if (NameToId(name, nameSz) != ID_UNKNOWN) {
+            ret = WS_SUCCESS;
+        }
+    }
+
+    return ret;
 }
 
 
