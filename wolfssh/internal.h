@@ -513,6 +513,7 @@ struct WOLFSSH_CTX {
     const char* algoListKey;
     const char* algoListCipher;
     const char* algoListMac;
+    const char* algoListKeyAccepted;
     word32 bannerSz;
     word32 windowSz;
     word32 maxPacketSz;
@@ -653,6 +654,7 @@ struct WOLFSSH {
     const char* algoListKey;
     const char* algoListCipher;
     const char* algoListMac;
+    const char* algoListKeyAccepted;
     byte acceptState;
     byte connectState;
     byte clientState;

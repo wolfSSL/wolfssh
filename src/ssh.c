@@ -2132,6 +2132,56 @@ const char* wolfSSH_GetAlgoListMac(WOLFSSH* ssh)
 }
 
 
+int wolfSSH_CTX_SetAlgoListKeyAccepted(WOLFSSH_CTX* ctx, const char* list)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx) {
+        ctx->algoListKeyAccepted = list;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+const char* wolfSSH_CTX_GetAlgoListKeyAccepted(WOLFSSH_CTX* ctx)
+{
+    const char* list = NULL;
+
+    if (ctx) {
+        list = ctx->algoListKeyAccepted;
+    }
+
+    return list;
+}
+
+
+int wolfSSH_SetAlgoListKeyAccepted(WOLFSSH* ssh, const char* list)
+{
+    int ret = WS_SSH_NULL_E;
+
+    if (ssh) {
+        ssh->algoListKeyAccepted = list;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+const char* wolfSSH_GetAlgoListKeyAccepted(WOLFSSH* ssh)
+{
+    const char* list = NULL;
+
+    if (ssh) {
+        list = ssh->algoListKeyAccepted;
+    }
+
+    return list;
+}
+
+
 int wolfSSH_CheckAlgoName(const char* name)
 {
     int ret = WS_INVALID_ALGO_ID;

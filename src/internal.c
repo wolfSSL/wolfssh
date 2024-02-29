@@ -722,6 +722,7 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
     }
     ctx->algoListCipher = cannedEncAlgoNames;
     ctx->algoListMac = cannedMacAlgoNames;
+    ctx->algoListKeyAccepted = cannedKeyAlgoNames;
 
     count = (word32)(sizeof(ctx->privateKey)
             / sizeof(ctx->privateKey[0]));
@@ -894,6 +895,7 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->algoListKey = ctx->algoListKey;
     ssh->algoListCipher = ctx->algoListCipher;
     ssh->algoListMac = ctx->algoListMac;
+    ssh->algoListKeyAccepted = ctx->algoListKeyAccepted;
 #ifdef WOLFSSH_SCP
     ssh->scpRequestState = SCP_PARSE_COMMAND;
     ssh->scpConfirmMsg   = NULL;
@@ -11232,7 +11234,7 @@ int SendExtInfo(WOLFSSH* ssh)
 {
     byte* output;
     word32 idx;
-    word32 cannedKeyAlgoNamesSz = 0;
+    word32 keyAlgoNamesSz = 0;
     word32 serverSigAlgsNameSz = 0;
     int ret = WS_SUCCESS;
 
@@ -11243,10 +11245,10 @@ int SendExtInfo(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS) {
-        cannedKeyAlgoNamesSz = AlgoListSz(cannedKeyAlgoNames);
+        keyAlgoNamesSz = AlgoListSz(ssh->algoListKeyAccepted);
         serverSigAlgsNameSz = AlgoListSz(serverSigAlgsName);
         ret = PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ + (LENGTH_SZ * 2)
-                + serverSigAlgsNameSz + cannedKeyAlgoNamesSz);
+                + serverSigAlgsNameSz + keyAlgoNamesSz);
     }
 
     if (ret == WS_SUCCESS) {
@@ -11262,10 +11264,10 @@ int SendExtInfo(WOLFSSH* ssh)
         WMEMCPY(output + idx, serverSigAlgsName, serverSigAlgsNameSz);
         idx += serverSigAlgsNameSz;
 
-        c32toa(cannedKeyAlgoNamesSz, output + idx);
+        c32toa(keyAlgoNamesSz, output + idx);
         idx += LENGTH_SZ;
-        WMEMCPY(output + idx, cannedKeyAlgoNames, cannedKeyAlgoNamesSz);
-        idx += cannedKeyAlgoNamesSz;
+        WMEMCPY(output + idx, ssh->algoListKeyAccepted, keyAlgoNamesSz);
+        idx += keyAlgoNamesSz;
 
         ssh->outputBuffer.length = idx;
 

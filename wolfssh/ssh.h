@@ -111,6 +111,12 @@ WOLFSSH_API const char* wolfSSH_CTX_GetAlgoListMac(WOLFSSH_CTX* ctx);
 WOLFSSH_API int wolfSSH_SetAlgoListMac(WOLFSSH* ssh, const char* list);
 WOLFSSH_API const char* wolfSSH_GetAlgoListMac(WOLFSSH* ssh);
 
+WOLFSSH_API int wolfSSH_CTX_SetAlgoListKeyAccepted(WOLFSSH_CTX* ctx,
+        const char* list);
+WOLFSSH_API const char* wolfSSH_CTX_GetAlgoListKeyAccepted(WOLFSSH_CTX* ctx);
+WOLFSSH_API int wolfSSH_SetAlgoListKeyAccepted(WOLFSSH* ssh, const char* list);
+WOLFSSH_API const char* wolfSSH_GetAlgoListKeyAccepted(WOLFSSH* ssh);
+
 WOLFSSH_API int wolfSSH_CheckAlgoName(const char* name);
 
 WOLFSSH_API const char* wolfSSH_QueryKex(word32* index);
