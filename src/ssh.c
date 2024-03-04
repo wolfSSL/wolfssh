@@ -1903,10 +1903,6 @@ int wolfSSH_ReadKey_file(const char* name,
             format = WOLFSSH_FORMAT_SSH;
             in[inSz] = 0;
         }
-#if 0
-        else if (WSTRNSTR((const char*)in, PrivBeginOpenSSH, inSz) != NULL &&
-                WSTRNSTR((const char*)in, PrivEndOpenSSH, inSz) != NULL) {
-#endif
         else if (WSTRNSTR((const char*)in, PrivBeginOpenSSH, inSz) != NULL) {
             *isPrivate = 1;
             format = WOLFSSH_FORMAT_OPENSSH;
@@ -1934,6 +1930,296 @@ int wolfSSH_ReadKey_file(const char* name,
 }
 
 #endif
+
+
+int wolfSSH_CTX_SetAlgoListKex(WOLFSSH_CTX* ctx, const char* list)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx) {
+        ctx->algoListKex = list;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+const char* wolfSSH_CTX_GetAlgoListKex(WOLFSSH_CTX* ctx)
+{
+    const char* list = NULL;
+
+    if (ctx) {
+        list = ctx->algoListKex;
+    }
+
+    return list;
+}
+
+
+int wolfSSH_SetAlgoListKex(WOLFSSH* ssh, const char* list)
+{
+    int ret = WS_SSH_NULL_E;
+
+    if (ssh) {
+        ssh->algoListKex = list;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+const char* wolfSSH_GetAlgoListKex(WOLFSSH* ssh)
+{
+    const char* list = NULL;
+
+    if (ssh) {
+        list = ssh->algoListKex;
+    }
+
+    return list;
+}
+
+
+int wolfSSH_CTX_SetAlgoListKey(WOLFSSH_CTX* ctx, const char* list)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx) {
+        ctx->algoListKey = list;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+const char* wolfSSH_CTX_GetAlgoListKey(WOLFSSH_CTX* ctx)
+{
+    const char* list = NULL;
+
+    if (ctx) {
+        list = ctx->algoListKey;
+    }
+
+    return list;
+}
+
+
+int wolfSSH_SetAlgoListKey(WOLFSSH* ssh, const char* list)
+{
+    int ret = WS_SSH_NULL_E;
+
+    if (ssh) {
+        ssh->algoListKey = list;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+const char* wolfSSH_GetAlgoListKey(WOLFSSH* ssh)
+{
+    const char* list = NULL;
+
+    if (ssh) {
+        list = ssh->algoListKey;
+    }
+
+    return list;
+}
+
+
+int wolfSSH_CTX_SetAlgoListCipher(WOLFSSH_CTX* ctx, const char* list)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx) {
+        ctx->algoListCipher = list;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+const char* wolfSSH_CTX_GetAlgoListCipher(WOLFSSH_CTX* ctx)
+{
+    const char* list = NULL;
+
+    if (ctx) {
+        list = ctx->algoListCipher;
+    }
+
+    return list;
+}
+
+
+int wolfSSH_SetAlgoListCipher(WOLFSSH* ssh, const char* list)
+{
+    int ret = WS_SSH_NULL_E;
+
+    if (ssh) {
+        ssh->algoListCipher = list;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+const char* wolfSSH_GetAlgoListCipher(WOLFSSH* ssh)
+{
+    const char* list = NULL;
+
+    if (ssh) {
+        list = ssh->algoListCipher;
+    }
+
+    return list;
+}
+
+
+int wolfSSH_CTX_SetAlgoListMac(WOLFSSH_CTX* ctx, const char* list)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx) {
+        ctx->algoListMac = list;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+const char* wolfSSH_CTX_GetAlgoListMac(WOLFSSH_CTX* ctx)
+{
+    const char* list = NULL;
+
+    if (ctx) {
+        list = ctx->algoListMac;
+    }
+
+    return list;
+}
+
+
+int wolfSSH_SetAlgoListMac(WOLFSSH* ssh, const char* list)
+{
+    int ret = WS_SSH_NULL_E;
+
+    if (ssh) {
+        ssh->algoListMac = list;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+const char* wolfSSH_GetAlgoListMac(WOLFSSH* ssh)
+{
+    const char* list = NULL;
+
+    if (ssh) {
+        list = ssh->algoListMac;
+    }
+
+    return list;
+}
+
+
+int wolfSSH_CTX_SetAlgoListKeyAccepted(WOLFSSH_CTX* ctx, const char* list)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx) {
+        ctx->algoListKeyAccepted = list;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+const char* wolfSSH_CTX_GetAlgoListKeyAccepted(WOLFSSH_CTX* ctx)
+{
+    const char* list = NULL;
+
+    if (ctx) {
+        list = ctx->algoListKeyAccepted;
+    }
+
+    return list;
+}
+
+
+int wolfSSH_SetAlgoListKeyAccepted(WOLFSSH* ssh, const char* list)
+{
+    int ret = WS_SSH_NULL_E;
+
+    if (ssh) {
+        ssh->algoListKeyAccepted = list;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+const char* wolfSSH_GetAlgoListKeyAccepted(WOLFSSH* ssh)
+{
+    const char* list = NULL;
+
+    if (ssh) {
+        list = ssh->algoListKeyAccepted;
+    }
+
+    return list;
+}
+
+
+int wolfSSH_CheckAlgoName(const char* name)
+{
+    int ret = WS_INVALID_ALGO_ID;
+
+    if (name) {
+        word32 nameSz = (word32)WSTRLEN(name);
+        if (NameToId(name, nameSz) != ID_UNKNOWN) {
+            ret = WS_SUCCESS;
+        }
+    }
+
+    return ret;
+}
+
+
+const char* wolfSSH_QueryKex(word32* index)
+{
+    return NameByIndexType(TYPE_KEX, index);
+}
+
+
+const char* wolfSSH_QueryKey(word32* index)
+{
+    return NameByIndexType(TYPE_KEY, index);
+}
+
+
+const char* wolfSSH_QueryCipher(word32* index)
+{
+    return NameByIndexType(TYPE_CIPHER, index);
+}
+
+
+const char* wolfSSH_QueryMac(word32* index)
+{
+    return NameByIndexType(TYPE_MAC, index);
+}
+
 
 int wolfSSH_CTX_SetBanner(WOLFSSH_CTX* ctx,
                           const char* newBanner)

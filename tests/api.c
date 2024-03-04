@@ -120,13 +120,13 @@ char* myoptarg = NULL;
 #define AssertStrLE(x, y) AssertStr(x, y, <=,  >)
 
 #define AssertPtr(x, y, op, er) do {                                           \
-    PRAGMA_GCC_DIAG_PUSH;                                                      \
+    PRAGMA_GCC_DIAG_PUSH                                                       \
       /* remarkably, without this inhibition, */                               \
       /* the _Pragma()s make the declarations warn. */                         \
-    PRAGMA_GCC("GCC diagnostic ignored \"-Wdeclaration-after-statement\"");    \
+    PRAGMA_GCC("GCC diagnostic ignored \"-Wdeclaration-after-statement\"")     \
       /* inhibit "ISO C forbids conversion of function pointer */              \
       /* to object pointer type [-Werror=pedantic]" */                         \
-    PRAGMA_GCC("GCC diagnostic ignored \"-Wpedantic\"");                       \
+    PRAGMA_GCC("GCC diagnostic ignored \"-Wpedantic\"")                        \
     void* _x = (void*)(x);                                                     \
     void* _y = (void*)(y);                                                     \
     Assert(_x op _y, ("%s " #op " %s", #x, #y), ("%p " #er " %p", _x, _y));    \
@@ -1305,7 +1305,257 @@ static void test_wolfSSH_RealPath(void)
 #else
 static void test_wolfSSH_RealPath(void) { ; }
 #endif
+
+
+static void test_wolfSSH_SetAlgoList(void)
+{
+    const char* newKexList = "diffie-hellman-group1-sha1,ecdh-sha2-nistp521";
+    const char* newKeyList = "rsa-sha2-512,ecdsa-sha2-nistp521";
+    const char* newCipherList = "aes128-ctr,aes128-cbc";
+    const char* newMacList = "hmac-sha1";
+    const char* newKeyAccList = "ssh-rsa";
+    const char* defaultKexList = NULL;
+    const char* defaultKeyList = NULL;
+    const char* defaultCipherList = NULL;
+    const char* defaultMacList = NULL;
+    const char* defaultKeyAccList = NULL;
+    const char* checkKexList = NULL;
+    const char* checkKeyList = NULL;
+    const char* checkCipherList = NULL;
+    const char* checkMacList = NULL;
+    const char* checkKeyAccList = NULL;
+    const char* rawKey = NULL;
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    byte* key;
+    word32 keySz;
+
+    /* Create a ctx object. */
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    /* Check that the ctx's default algo lists are not null */
+    defaultKexList = wolfSSH_CTX_GetAlgoListKex(ctx);
+    AssertNotNull(defaultKexList);
+
+    defaultKeyList = wolfSSH_CTX_GetAlgoListKey(ctx);
+    AssertNotNull(defaultKeyList);
+
+    defaultCipherList = wolfSSH_CTX_GetAlgoListCipher(ctx);
+    AssertNotNull(defaultCipherList);
+
+    defaultMacList = wolfSSH_CTX_GetAlgoListMac(ctx);
+    AssertNotNull(defaultMacList);
+
+    defaultKeyAccList = wolfSSH_CTX_GetAlgoListKeyAccepted(ctx);
+    AssertNotNull(defaultKeyAccList);
+
+    /* Create a new ssh object. */
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    /* Check that the ssh's default algo lists match the ctx's algo lists. */
+    checkKexList = wolfSSH_GetAlgoListKex(ssh);
+    AssertPtrEq(checkKexList, defaultKexList);
+
+    checkKeyList = wolfSSH_GetAlgoListKey(ssh);
+    AssertPtrEq(checkKeyList, defaultKeyList);
+
+    checkCipherList = wolfSSH_GetAlgoListCipher(ssh);
+    AssertPtrEq(checkCipherList, defaultCipherList);
+
+    checkMacList = wolfSSH_GetAlgoListMac(ssh);
+    AssertPtrEq(checkMacList, defaultMacList);
+
+    checkKeyAccList = wolfSSH_GetAlgoListKeyAccepted(ssh);
+    AssertPtrEq(checkKeyAccList, defaultKeyAccList);
+
+    /* Set the ssh's algo lists, check they match new value. */
+    wolfSSH_SetAlgoListKex(ssh, newKexList);
+    checkKexList = wolfSSH_GetAlgoListKex(ssh);
+    AssertPtrEq(checkKexList, newKexList);
+
+    wolfSSH_SetAlgoListKey(ssh, newKeyList);
+    checkKeyList = wolfSSH_GetAlgoListKey(ssh);
+    AssertPtrEq(checkKeyList, newKeyList);
+
+    wolfSSH_SetAlgoListCipher(ssh, newCipherList);
+    checkCipherList = wolfSSH_GetAlgoListCipher(ssh);
+    AssertPtrEq(checkCipherList, newCipherList);
+
+    wolfSSH_SetAlgoListMac(ssh, newMacList);
+    checkMacList = wolfSSH_GetAlgoListMac(ssh);
+    AssertPtrEq(checkMacList, newMacList);
+
+    wolfSSH_SetAlgoListKeyAccepted(ssh, newKeyAccList);
+    checkKeyAccList = wolfSSH_GetAlgoListKeyAccepted(ssh);
+    AssertPtrEq(checkKeyAccList, newKeyAccList);
+
+    /* Delete the ssh. */
+    wolfSSH_free(ssh);
+
+    /* Set new algo lists on the ctx. */
+    wolfSSH_CTX_SetAlgoListKex(ctx, newKexList);
+    defaultKexList = wolfSSH_CTX_GetAlgoListKex(ctx);
+    AssertPtrEq(defaultKexList, newKexList);
+
+    wolfSSH_CTX_SetAlgoListKey(ctx, newKeyList);
+    defaultKeyList = wolfSSH_CTX_GetAlgoListKey(ctx);
+    AssertPtrEq(checkKeyList, newKeyList);
+
+    wolfSSH_CTX_SetAlgoListCipher(ctx, newCipherList);
+    defaultCipherList = wolfSSH_CTX_GetAlgoListCipher(ctx);
+    AssertNotNull(defaultCipherList);
+
+    wolfSSH_CTX_SetAlgoListMac(ctx, newMacList);
+    defaultMacList = wolfSSH_CTX_GetAlgoListMac(ctx);
+    AssertNotNull(defaultMacList);
+
+    wolfSSH_CTX_SetAlgoListKeyAccepted(ctx, newKeyAccList);
+    defaultKeyAccList = wolfSSH_CTX_GetAlgoListKeyAccepted(ctx);
+    AssertNotNull(defaultKeyAccList);
+
+    /* Create a new ssh object. */
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    /* Check that the ssh's default algo lists match the ctx's algo lists. */
+    checkKexList = wolfSSH_GetAlgoListKex(ssh);
+    AssertPtrEq(checkKexList, defaultKexList);
+
+    checkKeyList = wolfSSH_GetAlgoListKey(ssh);
+    AssertPtrEq(checkKeyList, defaultKeyList);
+
+    checkCipherList = wolfSSH_GetAlgoListCipher(ssh);
+    AssertPtrEq(checkCipherList, defaultCipherList);
+
+    checkMacList = wolfSSH_GetAlgoListMac(ssh);
+    AssertPtrEq(checkMacList, defaultMacList);
+
+    checkKeyAccList = wolfSSH_GetAlgoListKeyAccepted(ssh);
+    AssertPtrEq(checkKeyAccList, defaultKeyAccList);
+
+    /* Cleanup */
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    /* Create a ctx object. */
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+
+    /* Check server ctx's key list is NULL. */
+    defaultKeyList = wolfSSH_CTX_GetAlgoListKey(ctx);
+    AssertNull(defaultKeyList);
+    defaultKeyAccList = wolfSSH_CTX_GetAlgoListKeyAccepted(ctx);
+    AssertNotNull(defaultKeyAccList);
+
+    /* Create a new ssh object. */
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    /* Check server ssh's key list is NULL. */
+    checkKeyList = wolfSSH_GetAlgoListKey(ssh);
+    AssertNull(checkKeyList);
+
+    /* Delete the ssh. */
+    wolfSSH_free(ssh);
+
+    /* Set key on ctx. */
+#if !defined(WOLFSSH_NO_ECDSA)
+    rawKey = serverKeyEccDer;
+#elif !defined(WOLFSSH_NO_RSA)
+    rawKey = serverKeyRsaDer;
+#endif
+    AssertNotNull(rawKey);
+    AssertIntEQ(0,
+            ConvertHexToBin(rawKey, &key, &keySz,
+                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL));
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_UsePrivateKey_buffer(ctx,
+                key, keySz, WOLFSSH_FORMAT_ASN1));
+
+    /* Check ctx's key algo list is still null. */
+    checkKeyList = wolfSSH_CTX_GetAlgoListKey(ctx);
+    AssertNull(checkKeyList);
+
+    /* Create a new ssh object. */
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    /* Check ssh's key algo list is null. */
+    checkKeyList = wolfSSH_GetAlgoListKey(ssh);
+    AssertNull(checkKeyList);
+
+    /* Set a new list on ssh. */
+    wolfSSH_SetAlgoListKey(ssh, newKeyList);
+    checkKeyList = wolfSSH_GetAlgoListKey(ssh);
+    AssertPtrEq(checkKeyList, newKeyList);
+
+    /* Cleanup */
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    FreeBins(key, NULL, NULL, NULL);
+}
+
+
+static void test_wolfSSH_QueryAlgoList(void)
+{
+    const char* name;
+    word32 i, j;
+    int k;
+
+    i = 0;
+    name = NULL;
+    do {
+        name = wolfSSH_QueryKex(&i);
+        AssertIntNE(i, 0);
+    } while (name != NULL);
+
+    i = 0;
+    name = NULL;
+    do {
+        name = wolfSSH_QueryKey(&i);
+        AssertIntNE(i, 0);
+    } while (name != NULL);
+
+    i = 0;
+    name = NULL;
+    do {
+        name = wolfSSH_QueryCipher(&i);
+        AssertIntNE(i, 0);
+    } while (name != NULL);
+
+    i = 0;
+    name = NULL;
+    do {
+        name = wolfSSH_QueryMac(&i);
+        AssertIntNE(i, 0);
+    } while (name != NULL);
+
+    /* This test case picks up where the index left off. */
+    j = i;
+    name = wolfSSH_QueryKex(&i);
+    AssertNull(name);
+    i = j;
+    name = wolfSSH_QueryKey(&i);
+    AssertNull(name);
+    i = j;
+    name = wolfSSH_QueryCipher(&i);
+    AssertNull(name);
+    i = j;
+    name = wolfSSH_QueryMac(&i);
+    AssertNull(name);
+
+    k = wolfSSH_CheckAlgoName("ssh-rsa");
+    AssertIntEQ(WS_SUCCESS, k);
+
+    k = wolfSSH_CheckAlgoName("not-an-algo@wolfssl.com");
+    AssertIntEQ(WS_INVALID_ALGO_ID, k);
+}
+
+
 #endif /* WOLFSSH_TEST_BLOCK */
+
 
 int wolfSSH_ApiTest(int argc, char** argv)
 {
@@ -1337,6 +1587,8 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_CTX_UseCert_buffer();
     test_wolfSSH_CertMan();
     test_wolfSSH_ReadKey();
+    test_wolfSSH_QueryAlgoList();
+    test_wolfSSH_SetAlgoList();
 
     /* SCP tests */
     test_wolfSSH_SCP_CB();
