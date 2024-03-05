@@ -57,6 +57,8 @@ static int ScpPushDir(void *fs, ScpSendCtx* ctx, const char* path, void* heap);
 static int ScpPopDir(void *fs, ScpSendCtx* ctx, void* heap);
 #endif
 
+#define WOLFSSH_MODE_MASK 0777
+
 const char scpError[] = "scp error: %s, %d";
 const char scpState[] = "scp state: %s";
 
@@ -315,7 +317,8 @@ static int SendScpFileHeader(WOLFSSH* ssh)
 #ifndef WSCPFILEHDR
     WMEMSET(buf, 0, sizeof(buf));
     WSNPRINTF(buf, sizeof(buf), "C%04o %u %s\n",
-              ssh->scpFileMode, ssh->scpFileSz, ssh->scpFileName);
+              ssh->scpFileMode & WOLFSSH_MODE_MASK,
+              ssh->scpFileSz, ssh->scpFileName);
     filehdr = buf;
 #else
     filehdr = WSCPFILEHDR(ssh);
@@ -350,8 +353,9 @@ static int SendScpEnterDirectory(WOLFSSH* ssh)
 
     WMEMSET(buf, 0, sizeof(buf));
 
-    WSNPRINTF(buf, sizeof(buf), "D%04o 0 %s\n", ssh->scpFileMode,
-              ssh->scpFileName);
+    WSNPRINTF(buf, sizeof(buf), "D%04o 0 %s\n",
+            ssh->scpFileMode & WOLFSSH_MODE_MASK,
+            ssh->scpFileName);
 
     bufSz = (int)WSTRLEN(buf);
 
