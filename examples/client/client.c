@@ -888,7 +888,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
         wolfSSH_free(ssh);
         wolfSSH_CTX_free(ctx);
-        return 0;
+        WOLFSSL_RETURN_FROM_THREAD(0);
     }
 
     build_addr(&clientAddr, host, port);
