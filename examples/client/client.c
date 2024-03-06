@@ -117,6 +117,8 @@ static void ShowUsage(void)
     printf(" -A <filename> filename for DER CA certificate to verify host\n");
     printf(" -X            Ignore IP checks on peer vs peer certificate\n");
 #endif
+    printf(" -E            List all possible algos\n");
+    printf(" -k            set the list of key algos to use\n");
 }
 
 
@@ -624,7 +626,9 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     const char* password = NULL;
     const char* cmd      = NULL;
     const char* privKeyName = NULL;
+    const char* keyList = NULL;
     byte imExit = 0;
+    byte listAlgos = 0;
     byte nonBlock = 0;
     byte keepOpen = 0;
 #ifdef USE_WINDOWS_API
@@ -641,7 +645,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
     (void)keepOpen;
 
-    while ((ch = mygetopt(argc, argv, "?ac:h:i:j:p:tu:xzNP:RJ:A:Xe")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?ac:h:i:j:p:tu:xzNP:RJ:A:XeEk:")) != -1) {
         switch (ch) {
             case 'h':
                 host = myoptarg;
@@ -701,6 +705,10 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
             #endif
         #endif
 
+            case 'E':
+                listAlgos = 1;
+                break;
+
             case 'x':
                 /* exit after successful connection without read/write */
                 imExit = 1;
@@ -708,6 +716,10 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
             case 'N':
                 nonBlock = 1;
+                break;
+
+            case 'k':
+                keyList = myoptarg;
                 break;
 
         #if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS)
@@ -779,6 +791,12 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     if (ctx == NULL)
         err_sys("Couldn't create wolfSSH client context.");
 
+    if (keyList) {
+        if (wolfSSH_CTX_SetAlgoListKey(ctx, NULL) != WS_SUCCESS) {
+            err_sys("Error setting key list.\n");
+        }
+    }
+
     if (((func_args*)args)->user_auth == NULL)
         wolfSSH_SetUserAuth(ctx, ClientUserAuth);
     else
@@ -824,6 +842,54 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     ret = wolfSSH_SetUsername(ssh, username);
     if (ret != WS_SUCCESS)
         err_sys("Couldn't set the username.");
+
+    if (listAlgos) {
+        word32 idx = 0;
+        const char* current = NULL;
+
+        printf("KEX:\n");
+        do {
+            current = wolfSSH_QueryKex(&idx);
+            if (current) {
+                printf("\t%d: %s\n", idx, current);
+            }
+        } while (current != NULL);
+        printf("Set KEX: %s\n\n", wolfSSH_GetAlgoListKex(ssh));
+
+        idx = 0;
+        printf("Key:\n");
+        do {
+            current = wolfSSH_QueryKey(&idx);
+            if (current) {
+                printf("\t%d: %s\n", idx, current);
+            }
+        } while (current != NULL);
+        printf("Set Key: %s\n\n", wolfSSH_GetAlgoListKey(ssh));
+
+        idx = 0;
+        printf("Cipher:\n");
+        do {
+            current = wolfSSH_QueryCipher(&idx);
+            if (current) {
+                printf("\t%d: %s\n", idx, current);
+            }
+        } while (current != NULL);
+        printf("Set Cipher: %s\n\n", wolfSSH_GetAlgoListCipher(ssh));
+
+        idx = 0;
+        printf("Mac:\n");
+        do {
+            current = wolfSSH_QueryMac(&idx);
+            if (current) {
+                printf("\t%d: %s\n", idx, current);
+            }
+        } while (current != NULL);
+        printf("Set Mac: %s\n", wolfSSH_GetAlgoListMac(ssh));
+
+        wolfSSH_free(ssh);
+        wolfSSH_CTX_free(ctx);
+        WOLFSSL_RETURN_FROM_THREAD(0);
+    }
 
     build_addr(&clientAddr, host, port);
     tcp_socket(&sockFd);

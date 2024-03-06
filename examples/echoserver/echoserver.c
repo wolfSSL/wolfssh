@@ -2156,6 +2156,7 @@ static void ShowUsage(void)
 #ifdef WOLFSSH_CERTS
     printf(" -a <file>     load in a root CA certificate file\n");
 #endif
+    printf(" -k            set the list of key algos to use\n");
 }
 
 
@@ -2194,6 +2195,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     WS_SOCKET_T listenFd = WOLFSSH_SOCKET_INVALID;
     word32 defaultHighwater = EXAMPLE_HIGHWATER_MARK;
     word32 threadCount = 0;
+    const char* keyList = NULL;
     int multipleConnections = 1;
     int userEcc = 0;
     int peerEcc = 0;
@@ -2215,7 +2217,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     serverArgs->return_code = EXIT_SUCCESS;
 
     if (argc > 0) {
-        const char* optlist = "?1a:d:efEp:R:Ni:j:I:J:K:P:";
+        const char* optlist = "?1a:d:efEp:R:Ni:j:I:J:K:P:k:";
         myoptind = 0;
         while ((ch = mygetopt(argc, argv, optlist)) != -1) {
             switch (ch) {
@@ -2235,6 +2237,10 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                     break;
                 case 'e' :
                     userEcc = 1;
+                    break;
+
+                case 'k' :
+                    keyList = myoptarg;
                     break;
 
                 case 'E':
@@ -2330,6 +2336,12 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
     if (ctx == NULL) {
         ES_ERROR("Couldn't allocate SSH CTX data.\n");
+    }
+
+    if (keyList) {
+        if (wolfSSH_CTX_SetAlgoListKey(ctx, keyList) != WS_SUCCESS) {
+            ES_ERROR("Error setting key list.\n");
+        }
     }
 
     WMEMSET(&pwMapList, 0, sizeof(pwMapList));
