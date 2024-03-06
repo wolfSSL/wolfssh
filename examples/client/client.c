@@ -367,6 +367,20 @@ static THREAD_RET readPeer(void* in)
     FD_SET(fd, &errSet);
 
 #ifdef USE_WINDOWS_API
+    if (args->rawMode == 0) {
+        DWORD wrd;
+
+        if (GetConsoleMode(stdoutHandle, &wrd) == FALSE) {
+            err_sys("Unable to get stdout handle");
+        }
+
+        /* depend on the terminal to process VT characters */
+        wrd |= (ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_PROCESSED_OUTPUT);
+        if (SetConsoleMode(stdoutHandle, wrd) == FALSE) {
+            err_sys("Unable to set console mode");
+        }
+    }
+
     /* set handle to use for window resize */
     wc_LockMutex(&args->lock);
     wolfSSH_SetTerminalResizeCtx(args->ssh, stdoutHandle);
@@ -446,29 +460,21 @@ static THREAD_RET readPeer(void* in)
                 }
             }
             else {
+            #ifdef USE_WINDOWS_API
+                DWORD writtn = 0;
+            #endif
                 buf[bufSz - 1] = '\0';
 
             #ifdef USE_WINDOWS_API
-                if (args->rawMode == 0) {
-                    ret = wolfSSH_ConvertConsole(args->ssh, stdoutHandle, buf,
-                            ret);
-                    if (ret != WS_SUCCESS && ret != WS_WANT_READ) {
-                        err_sys("issue with print out");
-                    }
-                    if (ret == WS_WANT_READ) {
-                        ret = 0;
-                    }
-                }
-                else {
-                    printf("%s", buf);
-                    WFFLUSH(stdout);
+                if (WriteFile(stdoutHandle, buf, bufSz, &writtn, NULL) == FALSE) {
+                    err_sys("Failed to write to stdout handle");
                 }
             #else
                 if (write(STDOUT_FILENO, buf, ret) < 0) {
                     perror("write to stdout error ");
                 }
-                WFFLUSH(stdout);
             #endif
+                WFFLUSH(stdout);
             }
             if (wolfSSH_stream_peek(args->ssh, buf, bufSz) <= 0) {
                 bytes = 0; /* read it all */
