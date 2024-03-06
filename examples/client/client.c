@@ -375,7 +375,13 @@ static THREAD_RET readPeer(void* in)
         }
 
         /* depend on the terminal to process VT characters */
-        wrd |= (ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_PROCESSED_OUTPUT);
+        #ifndef _WIN32_WINNT_WIN10
+            /* support for virtual terminal processing was introduced in windows 10 */
+            #define _WIN32_WINNT_WIN10 0x0A00
+        #endif
+        #if defined(WINVER) && (WINVER >= _WIN32_WINNT_WIN10)
+            wrd |= (ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_PROCESSED_OUTPUT);
+        #endif
         if (SetConsoleMode(stdoutHandle, wrd) == FALSE) {
             err_sys("Unable to set console mode");
         }
