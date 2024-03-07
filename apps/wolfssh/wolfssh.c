@@ -404,6 +404,26 @@ static THREAD_RET readPeer(void* in)
     FD_SET(fd, &errSet);
 
 #ifdef USE_WINDOWS_API
+    if (args->rawMode == 0) {
+        DWORD wrd;
+
+        if (GetConsoleMode(stdoutHandle, &wrd) == FALSE) {
+            err_sys("Unable to get stdout handle");
+        }
+
+        /* depend on the terminal to process VT characters */
+        #ifndef _WIN32_WINNT_WIN10
+            /* support for virtual terminal processing was introduced in windows 10 */
+            #define _WIN32_WINNT_WIN10 0x0A00
+        #endif
+        #if defined(WINVER) && (WINVER >= _WIN32_WINNT_WIN10)
+            wrd |= (ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_PROCESSED_OUTPUT);
+        #endif
+        if (SetConsoleMode(stdoutHandle, wrd) == FALSE) {
+            err_sys("Unable to set console mode");
+        }
+    }
+
     /* set handle to use for window resize */
     wc_LockMutex(&args->lock);
     wolfSSH_SetTerminalResizeCtx(args->ssh, stdoutHandle);
@@ -482,22 +502,14 @@ static THREAD_RET readPeer(void* in)
                 }
             }
             else {
+            #ifdef USE_WINDOWS_API
+                DWORD writtn = 0;
+            #endif
                 buf[bufSz - 1] = '\0';
 
             #ifdef USE_WINDOWS_API
-                if (args->rawMode == 0) {
-                    ret = wolfSSH_ConvertConsole(args->ssh, stdoutHandle, buf,
-                            ret);
-                    if (ret != WS_SUCCESS && ret != WS_WANT_READ) {
-                        err_sys("issue with print out");
-                    }
-                    if (ret == WS_WANT_READ) {
-                        ret = 0;
-                    }
-                }
-                else {
-                    printf("%s", buf);
-                    fflush(stdout);
+                if (WriteFile(stdoutHandle, buf, bufSz, &writtn, NULL) == FALSE) {
+                    err_sys("Failed to write to stdout handle");
                 }
             #else
                 if (write(STDOUT_FILENO, buf, ret) < 0) {
