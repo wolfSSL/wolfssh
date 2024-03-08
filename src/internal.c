@@ -148,6 +148,9 @@ Flags:
     algorithms off.
   WOLFSSH_KEY_QUANTITY_REQ
     Number of keys required to be in an OpenSSH-style key wrapper.
+  WOLFSSH_NO_CURVE25519_SHA256
+    Set when Curve25519 or SHA2-256 are disabled in wolfSSL. Set to disable use
+    of Curve25519 key exchange.
 */
 
 static const char sshProtoIdStr[] = "SSH-2.0-wolfSSHv"
@@ -570,6 +573,9 @@ static const word32 cannedBannerSz = (word32)sizeof(cannedBanner) - 1;
 static const char cannedKexAlgoNames[] =
 #if !defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256)
     "ecdh-nistp256-kyber-512r3-sha256-d00@openquantumsafe.org,"
+#endif
+#ifndef WOLFSSH_NO_CURVE25519_SHA256
+    "curve25519-sha256,"
 #endif
 #if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP521)
     "ecdh-sha2-nistp521,"
@@ -2143,6 +2149,10 @@ static const NameIdPair NameIdMap[] = {
     { ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256, TYPE_KEX,
         "ecdh-nistp256-kyber-512r3-sha256-d00@openquantumsafe.org" },
 #endif
+#ifndef WOLFSSH_NO_CURVE25519_SHA256
+    /* See RFC 8731 */
+    { ID_CURVE25519_SHA256, TYPE_KEX, "curve25519-sha256" },
+#endif
     { ID_EXTINFO_S, TYPE_OTHER, "ext-info-s" },
     { ID_EXTINFO_C, TYPE_OTHER, "ext-info-c" },
 
@@ -3368,6 +3378,10 @@ static INLINE enum wc_HashType HashForId(byte id)
         case ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256:
             return WC_HASH_TYPE_SHA256;
 #endif
+#ifndef WOLFSSH_NO_CURVE25519_SHA256
+        case ID_CURVE25519_SHA256:
+            return WC_HASH_TYPE_SHA256;
+#endif
 #ifndef WOLFSSH_NO_RSA_SHA2_256
         case ID_RSA_SHA2_256:
             return WC_HASH_TYPE_SHA256;
@@ -3432,6 +3446,10 @@ static INLINE int wcPrimeForId(byte id)
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
         case ID_ECDSA_SHA2_NISTP384:
             return ECC_SECP384R1;
+#endif
+#ifndef WOLFSSH_NO_CURVE25519_SHA256
+        case ID_CURVE25519_SHA256:
+            return ECC_X25519;
 #endif
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP521
         case ID_ECDH_SHA2_NISTP521:
@@ -4663,6 +4681,9 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
                 && !ssh->handshake->useEccKyber
 #endif
+#ifndef WOLFSSH_NO_CURVE25519_SHA256
+                && !ssh->handshake->useCurve25519
+#endif
                ) {
 #ifndef WOLFSSH_NO_DH
                 PRIVATE_KEY_UNLOCK();
@@ -4706,6 +4727,37 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 ret = WS_INVALID_ALGO_ID;
 #endif
             }
+#ifndef WOLFSSH_NO_CURVE25519_SHA256
+            else if (ssh->handshake->useCurve25519) {
+                curve25519_key pub;
+                ret = wc_curve25519_init(&pub);
+
+                if (ret == 0)
+                    ret = wc_curve25519_check_public(f, fSz,
+                                                     EC25519_LITTLE_ENDIAN);
+
+                if (ret == 0) {
+                    ret = wc_curve25519_import_public_ex(f, fSz, &pub,
+                                                         EC25519_LITTLE_ENDIAN);
+                }
+
+                if (ret == 0) {
+                    PRIVATE_KEY_UNLOCK();
+                    ret = wc_curve25519_shared_secret_ex(
+                              &ssh->handshake->privKey.curve25519, &pub,
+                              ssh->k, &ssh->kSz, EC25519_LITTLE_ENDIAN);
+                    PRIVATE_KEY_LOCK();
+                }
+
+                wc_curve25519_free(&pub);
+                wc_curve25519_free(&ssh->handshake->privKey.curve25519);
+
+                if (ret != 0) {
+                    WLOG(WS_LOG_ERROR,
+                            "Gen curve25519 shared secret failed, %d", ret);
+                }
+            }
+#endif /* !WOLFSSH_NO_CURVE25519_SHA256 */
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
             else if (ssh->handshake->useEccKyber) {
                 /* This is a a hybrid of ECDHE and a post-quantum KEM. In this
@@ -4948,8 +5000,8 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
     if (ret == WS_SUCCESS) {
         int useKeyPadding = 1;
-#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-        useKeyPadding = !ssh->handshake->useEccKyber;
+#if !defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256)
+        doKeyPadding = !ssh->handshake->useEccKyber;
 #endif
         ret = GenerateKeys(ssh, hashId, useKeyPadding);
     }
@@ -9769,6 +9821,9 @@ int SendKexDhReply(WOLFSSH* ssh)
     byte sharedSecretHashSz = 0;
     byte *sharedSecretHash = NULL;
 #endif
+#ifndef WOLFSSH_NO_CURVE25519_SHA256
+    byte useCurve25519 = 0;
+#endif
     byte fPad = 0;
     byte kPad = 0;
     word32 sigBlockSz = 0;
@@ -9851,6 +9906,12 @@ int SendKexDhReply(WOLFSSH* ssh)
                 msgId = MSGID_KEXDH_REPLY;
                 break;
 #endif
+#ifndef WOLFSSH_NO_CURVE25519_SHA256
+            case ID_CURVE25519_SHA256:
+                useCurve25519 = 1;
+                msgId = MSGID_KEXDH_REPLY;
+                break;
+#endif
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
             case ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256:
                 useEccKyber = 1; /* Only support level 1 for now. */
@@ -9894,6 +9955,9 @@ int SendKexDhReply(WOLFSSH* ssh)
             if (!useEcc
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
                 && !useEccKyber
+#endif
+#ifndef WOLFSSH_NO_CURVE25519_SHA256
+                && !useCurve25519
 #endif
                ) {
 #ifndef WOLFSSH_NO_DH
@@ -10009,6 +10073,62 @@ int SendKexDhReply(WOLFSSH* ssh)
             #endif
 #endif /* !defined(WOLFSSH_NO_ECDH) */
             }
+#ifndef WOLFSSH_NO_CURVE25519_SHA256
+            if (useCurve25519) {
+#ifdef WOLFSSH_SMALL_STACK
+                curve25519_key *pubKey = NULL, *privKey = NULL;
+                pubKey = (curve25519_key*)WMALLOC(sizeof(curve25519_key),
+                                                  heap, DYNTYPE_PUBKEY);
+                privKey = (curve25519_key*)WMALLOC(sizeof(curve25519_key),
+                                                   heap, DYNTYPE_PRIVKEY);
+                if (pubKey == NULL || privKey == NULL) {
+                    ret = WS_MEMORY_E;
+                }
+#else
+                curve25519_key pubKey[1], privKey[1];
+#endif
+
+                if (ret == 0)
+                    ret = wc_curve25519_init_ex(pubKey, heap,
+                                                INVALID_DEVID);
+                if (ret == 0)
+                    ret = wc_curve25519_init_ex(privKey, heap,
+                                                INVALID_DEVID);
+                if (ret == 0)
+                    ret = wc_curve25519_check_public(ssh->handshake->e,
+                              ssh->handshake->eSz, EC25519_LITTLE_ENDIAN);
+                if (ret == 0)
+                    ret = wc_curve25519_import_public_ex(
+                              ssh->handshake->e, ssh->handshake->eSz,
+                              pubKey, EC25519_LITTLE_ENDIAN);
+
+                if (ret == 0)
+                    ret = wc_curve25519_make_key(ssh->rng,
+                              CURVE25519_KEYSIZE, privKey);
+
+                if (ret == 0) {
+                    PRIVATE_KEY_UNLOCK();
+                    ret = wc_curve25519_export_public_ex(privKey,
+                              f_ptr, &fSz, EC25519_LITTLE_ENDIAN);
+                    PRIVATE_KEY_LOCK();
+                }
+
+                if (ret == 0) {
+                    PRIVATE_KEY_UNLOCK();
+                    ret = wc_curve25519_shared_secret_ex(privKey, pubKey,
+                              ssh->k, &ssh->kSz, EC25519_LITTLE_ENDIAN);
+                    PRIVATE_KEY_LOCK();
+                }
+                wc_curve25519_free(privKey);
+                wc_curve25519_free(pubKey);
+#ifdef WOLFSSH_SMALL_STACK
+                WFREE(pubKey, heap, DYNTYPE_PUBKEY);
+                WFREE(privKey, heap, DYNTYPE_PRIVKEY);
+                pubKey  = NULL;
+                privKey = NULL;
+#endif
+            }
+#endif /* ! WOLFSSH_NO_CURVE25519_SHA256 */
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
             else if (useEccKyber) {
                 /* This is a hybrid KEM. In this case, I need to generate my ECC
@@ -10156,6 +10276,9 @@ int SendKexDhReply(WOLFSSH* ssh)
         if (ret == 0
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
             && !useEccKyber
+#endif
+#ifndef WOLFSSH_NO_CURVE25519_SHA256
+            && !useCurve25519
 #endif
            ) {
             ret = CreateMpint(f_ptr, &fSz, &fPad);
@@ -10373,8 +10496,8 @@ int SendKexDhReply(WOLFSSH* ssh)
 
     if (ret == WS_SUCCESS) {
         int doKeyPadding = 1;
-#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-        doKeyPadding = !useEccKyber;
+#if !defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256)
+        doKeyPadding = !ssh->handshake->useEccKyber;
 #endif
         ret = GenerateKeys(ssh, hashId, doKeyPadding);
     }
@@ -10788,6 +10911,12 @@ int SendKexDhInit(WOLFSSH* ssh)
             msgId = MSGID_KEXECDH_INIT;
             break;
 #endif
+#ifndef WOLFSSH_NO_CURVE25519_SHA256
+        case ID_CURVE25519_SHA256:
+            ssh->handshake->useCurve25519 = 1;
+            msgId = MSGID_KEXECDH_INIT;
+            break;
+#endif
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
         case ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256:
             /* Only support level 1 for now. */
@@ -10806,6 +10935,9 @@ int SendKexDhInit(WOLFSSH* ssh)
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
             && !ssh->handshake->useEccKyber
 #endif
+#ifndef WOLFSSH_NO_CURVE25519_SHA256
+            && !ssh->handshake->useCurve25519
+#endif
 ) {
 #ifndef WOLFSSH_NO_DH
             DhKey* privKey = &ssh->handshake->privKey.dh;
@@ -10821,6 +10953,23 @@ int SendKexDhInit(WOLFSSH* ssh)
                                            e, &eSz);
 #endif
         }
+#ifndef WOLFSSH_NO_CURVE25519_SHA256
+        else if (ssh->handshake->useCurve25519) {
+            curve25519_key* privKey = &ssh->handshake->privKey.curve25519;
+            if (ret == 0)
+                ret = wc_curve25519_init_ex(privKey, ssh->ctx->heap,
+                                            INVALID_DEVID);
+            if (ret == 0)
+                ret = wc_curve25519_make_key(ssh->rng, CURVE25519_KEYSIZE,
+                                             privKey);
+            if (ret == 0) {
+                PRIVATE_KEY_UNLOCK();
+                ret = wc_curve25519_export_public_ex(privKey, e, &eSz,
+                          EC25519_LITTLE_ENDIAN);
+                PRIVATE_KEY_LOCK();
+            }
+        }
+#endif /* ! WOLFSSH_NO_CURVE25519_SHA256 */
         else if (ssh->handshake->useEcc
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
                  || ssh->handshake->useEccKyber
@@ -10892,6 +11041,10 @@ int SendKexDhInit(WOLFSSH* ssh)
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
         && !ssh->handshake->useEccKyber
 #endif
+#ifndef WOLFSSH_NO_CURVE25519_SHA256
+        && !ssh->handshake->useCurve25519
+#endif
+
        ) {
         ret = CreateMpint(e, &eSz, &ePad);
     }

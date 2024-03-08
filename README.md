@@ -401,6 +401,25 @@ behavior, give the echoserver the command line option `-f`.
 
     $ ./examples/echoserver/echoserver -f
 
+CURVE25519
+==========
+
+wolfSSH now supports Curve25519 for key exchange. To enable this support simply
+compile wolfSSL with support for wolfssh and Curve25519.
+
+    $ cd wolfssl
+    $ ./configure --enable-wolfssh --enable-curve25519
+
+After building and installing wolfSSL, you can simply configure with no options.
+
+    $ cd wolfssh
+    $ ./configure
+
+The wolfSSH client and server will automatically negotiate using Curve25519.
+
+    $ ./examples/echoserver/echoserver -f
+
+    $ ./examples/client/client -u jill -P upthehill
 
 POST-QUANTUM
 ============
