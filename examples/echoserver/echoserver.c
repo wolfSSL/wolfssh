@@ -206,6 +206,9 @@ typedef struct {
     WS_ShellCtx shellCtx;
     byte shellBuffer[EXAMPLE_BUFFER_SZ];
 #endif
+#ifdef WOLFSSH_SFTP
+    int doSftp;
+#endif
     byte channelBuffer[EXAMPLE_BUFFER_SZ];
     char statsBuffer[EXAMPLE_BUFFER_SZ];
 } thread_ctx_t;
@@ -703,64 +706,14 @@ static int wsSubsysStartCb(WOLFSSH_CHANNEL* channel, void* vCtx)
     cmd = wolfSSH_ChannelGetSessionCommand(channel);
     type = wolfSSH_ChannelGetSessionType(channel);
 
-    WOLFSSH_UNUSED(threadCtx);
-
     if (type == WOLFSSH_SESSION_SUBSYSTEM
             && WSTRCMP(cmd, "sftp") == 0) {
-        /* do nothing */;
+        threadCtx->doSftp = 1;
     }
 
     return 0;
 }
 #endif /* WOLFSSH_SFTP */
-
-
-static int wsChannelOpenCb(WOLFSSH_CHANNEL* channel, void* ctx)
-{
-    word32 id = 0;
-
-    wolfSSH_ChannelGetId(channel, &id, WS_CHANNEL_ID_PEER);
-
-    if (ctx != NULL) {
-        printf("Channel %u open attempt, CTX is %p.\n", id, ctx);
-    }
-    else {
-        printf("Channel %u open attempt, but no CTX.\n", id);
-    }
-    return 0;
-}
-
-
-static int wsChannelEofCb(WOLFSSH_CHANNEL* channel, void* ctx)
-{
-    word32 id = 0;
-
-    wolfSSH_ChannelGetId(channel, &id, WS_CHANNEL_ID_PEER);
-
-    if (ctx != NULL) {
-        printf("Channel %u end of file, CTX is %p.\n", id, ctx);
-    }
-    else {
-        printf("Channel %u end of file, but no CTX.\n", id);
-    }
-    return 0;
-}
-
-
-static int wsChannelCloseCb(WOLFSSH_CHANNEL* channel, void* ctx)
-{
-    word32 id = 0;
-
-    wolfSSH_ChannelGetId(channel, &id, WS_CHANNEL_ID_PEER);
-
-    if (ctx != NULL) {
-        printf("Channel %u closed, CTX is %p.\n", id, ctx);
-    }
-    else {
-        printf("Channel %u closed, but no CTX.\n", id);
-    }
-    return 0;
-}
 
 
 #ifdef SHELL_DEBUG
@@ -913,6 +866,11 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                    channel. The additional channel is only used with the
                    agent. */
                 cnt_r = wolfSSH_worker(ssh, &lastChannel);
+                #ifdef WOLFSSH_SFTP
+                if (threadCtx->doSftp) {
+                    return WS_SFTP_COMPLETE;
+                }
+                #endif
                 if (cnt_r < 0) {
                     rc = wolfSSH_get_error(ssh);
                     if (rc == WS_CHAN_RXD) {
@@ -1470,14 +1428,16 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
             ret = 0;
             break;
 
-        #ifdef WOLFSSH_SFTP
-        case WS_SFTP_COMPLETE:
-            ret = sftp_worker(threadCtx);
-            break;
-        #endif
-
         case WS_SUCCESS:
             ret = ssh_worker(threadCtx);
+            #ifdef WOLFSSH_SFTP
+            if (ret == WS_SFTP_COMPLETE) {
+                ret = wolfSSH_SFTP_accept(threadCtx->ssh);
+            }
+            if (ret == WS_SFTP_COMPLETE) {
+                ret = sftp_worker(threadCtx);
+            }
+            #endif
             break;
     }
 
@@ -2490,9 +2450,6 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         wolfSSH_SetUserAuth(ctx, ((func_args*)args)->user_auth);
     wolfSSH_SetUserAuthResult(ctx, wsUserAuthResult);
     wolfSSH_CTX_SetBanner(ctx, echoserverBanner);
-    wolfSSH_CTX_SetChannelOpenCb(ctx, wsChannelOpenCb);
-    wolfSSH_CTX_SetChannelEofCb(ctx, wsChannelEofCb);
-    wolfSSH_CTX_SetChannelCloseCb(ctx, wsChannelCloseCb);
 #ifdef WOLFSSH_SHELL
     wolfSSH_CTX_SetChannelReqShellCb(ctx, wsShellStartCb);
 #endif
@@ -2726,10 +2683,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             ES_ERROR("Couldn't allocate SSH data.\n");
         }
         wolfSSH_SetUserAuthCtx(ssh, &pwMapList);
-        wolfSSH_SetChannelOpenCtx(ssh, (void*)threadCtx);
         wolfSSH_SetChannelReqCtx(ssh, (void*)threadCtx);
-        wolfSSH_SetChannelEofCtx(ssh, (void*)threadCtx);
-        wolfSSH_SetChannelCloseCtx(ssh, (void*)threadCtx);
         /* Use the session object for its own highwater callback ctx */
         if (defaultHighwater > 0) {
             wolfSSH_SetHighwaterCtx(ssh, (void*)ssh);
