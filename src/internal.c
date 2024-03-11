@@ -7879,6 +7879,9 @@ static int DoChannelRequest(WOLFSSH* ssh,
             ret = GetStringAlloc(ssh->ctx->heap, &channel->command,
                     buf, len, &begin);
             channel->sessionType = WOLFSSH_SESSION_SUBSYSTEM;
+            if (ssh->ctx->channelReqSubsysCb) {
+                ssh->ctx->channelReqSubsysCb(channel, ssh->channelReqCtx);
+            }
             ssh->clientState = CLIENT_DONE;
 
             WLOG(WS_LOG_DEBUG, "  subsystem = %s", channel->command);

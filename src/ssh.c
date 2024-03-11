@@ -2832,6 +2832,34 @@ int wolfSSH_ChannelGetEof(WOLFSSH_CHANNEL* channel)
 }
 
 
+WS_SessionType wolfSSH_ChannelGetSessionType(const WOLFSSH_CHANNEL* channel)
+{
+    WS_SessionType type = WOLFSSH_SESSION_UNKNOWN;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelGetType()");
+
+    if (channel) {
+        type = (WS_SessionType)channel->sessionType;
+    }
+
+    return type;
+}
+
+
+const char* wolfSSH_ChannelGetSessionCommand(const WOLFSSH_CHANNEL* channel)
+{
+    const char* cmd = NULL;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelGetCommand()");
+
+    if (channel) {
+        cmd = channel->command;
+    }
+
+    return cmd;
+}
+
+
 int wolfSSH_CTX_SetChannelOpenCb(WOLFSSH_CTX* ctx, WS_CallbackChannelOpen cb)
 {
     int ret = WS_SSH_CTX_NULL_E;
@@ -2861,12 +2889,26 @@ int wolfSSH_CTX_SetChannelOpenRespCb(WOLFSSH_CTX* ctx,
 
 
 int wolfSSH_CTX_SetChannelReqShellCb(WOLFSSH_CTX* ctx,
-        WS_CallbackChannelReqShell cb)
+        WS_CallbackChannelReq cb)
 {
     int ret = WS_SSH_CTX_NULL_E;
 
     if (ctx != NULL) {
         ctx->channelReqShellCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_CTX_SetChannelReqSubsysCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelReq cb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->channelReqSubsysCb = cb;
         ret = WS_SUCCESS;
     }
 

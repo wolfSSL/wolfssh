@@ -211,6 +211,8 @@ typedef struct {
 } thread_ctx_t;
 
 
+#ifdef WOLFSSH_SHELL
+
 static byte find_char(const byte* str, const byte* buf, word32 bufSz)
 {
     const byte* cur;
@@ -272,6 +274,8 @@ static int process_bytes(thread_ctx_t* threadCtx,
     }
     return stop;
 }
+
+#endif /* WOLFSSH_SHELL */
 
 
 #if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
@@ -684,6 +688,33 @@ static int wsShellStartCb(WOLFSSH_CHANNEL* channel, void* ctx)
 #endif /* WOLFSSH_SHELL */
 
 
+#ifdef WOLFSSH_SFTP
+static int wsSubsysStartCb(WOLFSSH_CHANNEL* channel, void* vCtx)
+{
+    thread_ctx_t* threadCtx;
+    const char* cmd;
+    WS_SessionType type;
+
+    if (!vCtx || !channel) {
+        return 0;
+    }
+
+    threadCtx = (thread_ctx_t*)vCtx;
+    cmd = wolfSSH_ChannelGetSessionCommand(channel);
+    type = wolfSSH_ChannelGetSessionType(channel);
+
+    WOLFSSH_UNUSED(threadCtx);
+
+    if (type == WOLFSSH_SESSION_SUBSYSTEM
+            && WSTRCMP(cmd, "sftp") == 0) {
+        /* do nothing */;
+    }
+
+    return 0;
+}
+#endif /* WOLFSSH_SFTP */
+
+
 static int wsChannelOpenCb(WOLFSSH_CHANNEL* channel, void* ctx)
 {
     word32 id = 0;
@@ -820,7 +851,9 @@ static int ssh_worker(thread_ctx_t* threadCtx)
             fd_set readFds, exFds;
             WS_SOCKET_T maxFd;
             int cnt_r;
+#if defined(WOLFSSH_SHELL) || defined(WOLFSSH_AGENT) || defined(WOLFSSH_FWD)
             int cnt_w;
+#endif
 
             FD_ZERO(&readFds);
             FD_ZERO(&exFds);
@@ -2468,6 +2501,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 #endif
 #ifdef WOLFSSH_FWD
     wolfSSH_CTX_SetFwdCb(ctx, wolfSSH_FwdDefaultActions, NULL);
+#endif
+#ifdef WOLFSSH_SFTP
+    wolfSSH_CTX_SetChannelReqSubsysCb(ctx, wsSubsysStartCb);
 #endif
 
 #ifndef NO_FILESYSTEM
