@@ -100,7 +100,6 @@ AC_ARG_WITH([liboqs],
 )
 
 #wolfssl
-AC_MSG_CHECKING([for wolfSSL])
 if test "x$prefix" = "xNONE"
 then
     wcpath=$ac_default_prefix
@@ -125,7 +124,20 @@ AC_ARG_WITH(wolfssl,
   ]
 )
 
-AC_CHECK_LIB([wolfssl],[wolfCrypt_Init],,[AC_MSG_ERROR([libwolfssl is required for ${PACKAGE}. It can be obtained from https://www.wolfssl.com/download.html/ .])])
+HAVE_WOLFSSL="0"
+AC_CHECK_LIB([wolfssl],[wolfCrypt_Init],[HAVE_WOLFSSL="1"],)
+
+# Double check if is a static library
+if test ${HAVE_WOLFSSL} = "0" ; then
+    AC_MSG_CHECKING([for libwolfssl.a])
+    if test -f "${wcpath}/lib/libwolfssl.a"; then
+        AC_MSG_RESULT([yes])
+    else
+        AC_MSG_RESULT([no])
+        AC_MSG_ERROR([libwolfssl is required for ${PACKAGE}. It can be obtained from https://www.wolfssl.com/download.html/ .])
+    fi
+fi
+
 AC_CHECK_FUNCS([gethostbyname getaddrinfo gettimeofday inet_ntoa memset socket wc_ecc_set_rng])
 AC_CHECK_DECLS([[pread],[pwrite]],,[unistd.h])
 
