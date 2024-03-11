@@ -162,6 +162,15 @@ WOLFSSH_API void wolfSSH_SetKeyingCompletionCbCtx(WOLFSSH*,
 #define WS_CHANNEL_ID_PEER 1
 
 
+typedef enum {
+    WOLFSSH_SESSION_UNKNOWN = 0,
+    WOLFSSH_SESSION_SHELL,
+    WOLFSSH_SESSION_EXEC,
+    WOLFSSH_SESSION_SUBSYSTEM,
+    WOLFSSH_SESSION_TERMINAL,
+} WS_SessionType;
+
+
 typedef enum WS_FwdCbAction {
     WOLFSSH_FWD_LOCAL_SETUP,
     WOLFSSH_FWD_LOCAL_CLEANUP,
@@ -209,6 +218,10 @@ WOLFSSH_API int wolfSSH_ChannelRead(WOLFSSH_CHANNEL*, byte*, word32);
 WOLFSSH_API int wolfSSH_ChannelSend(WOLFSSH_CHANNEL*, const byte*, word32);
 WOLFSSH_API int wolfSSH_ChannelExit(WOLFSSH_CHANNEL*);
 WOLFSSH_API int wolfSSH_ChannelGetEof(WOLFSSH_CHANNEL*);
+WOLFSSH_API WS_SessionType wolfSSH_ChannelGetSessionType(
+        const WOLFSSH_CHANNEL* channel);
+WOLFSSH_API const char* wolfSSH_ChannelGetSessionCommand(
+        const WOLFSSH_CHANNEL* channel);
 
 /* Channel callbacks */
 typedef int (*WS_CallbackChannelOpen)(WOLFSSH_CHANNEL* channel, void* ctx);
@@ -219,10 +232,11 @@ WOLFSSH_API int wolfSSH_CTX_SetChannelOpenRespCb(WOLFSSH_CTX* ctx,
 WOLFSSH_API int wolfSSH_SetChannelOpenCtx(WOLFSSH* ssh, void* ctx);
 WOLFSSH_API void* wolfSSH_GetChannelOpenCtx(WOLFSSH* ssh);
 
-typedef int (*WS_CallbackChannelReqShell)(WOLFSSH_CHANNEL* channel,
-        void* ctx);
+typedef int (*WS_CallbackChannelReq)(WOLFSSH_CHANNEL* channel, void* ctx);
 WOLFSSH_API int wolfSSH_CTX_SetChannelReqShellCb(WOLFSSH_CTX* ctx,
-        WS_CallbackChannelReqShell cb);
+        WS_CallbackChannelReq cb);
+WOLFSSH_API int wolfSSH_CTX_SetChannelReqSubsysCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelReq cb);
 WOLFSSH_API int wolfSSH_SetChannelReqCtx(WOLFSSH* ssh, void* ctx);
 WOLFSSH_API void* wolfSSH_GetChannelReqCtx(WOLFSSH* ssh);
 
@@ -369,13 +383,6 @@ WOLFSSH_API int wolfSSH_KDF(byte, byte, byte*, word32, const byte*, word32,
 WOLFSSH_API int wolfSSH_ConvertConsole(WOLFSSH*, WOLFSSH_HANDLE, byte*, word32);
 #endif
 
-typedef enum {
-    WOLFSSH_SESSION_UNKNOWN = 0,
-    WOLFSSH_SESSION_SHELL,
-    WOLFSSH_SESSION_EXEC,
-    WOLFSSH_SESSION_SUBSYSTEM,
-    WOLFSSH_SESSION_TERMINAL,
-} WS_SessionType;
 
 WOLFSSH_API int wolfSSH_DoModes(const byte* modes, word32 modesSz, int fd);
 WOLFSSH_API WS_SessionType wolfSSH_GetSessionType(const WOLFSSH*);
