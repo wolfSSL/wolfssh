@@ -138,6 +138,11 @@ if test ${HAVE_WOLFSSL} = "0" ; then
     fi
 fi
 
+if test ${HAVE_WOLFSSL} = "1" ; then
+    LIBS="-lwolfssl ${LIBS}"
+    AC_DEFINE(HAVE_LIBWOLFSSL,[1],[libwolfssl was found and linked with])
+fi
+
 AC_CHECK_FUNCS([gethostbyname getaddrinfo gettimeofday inet_ntoa memset socket wc_ecc_set_rng])
 AC_CHECK_DECLS([[pread],[pwrite]],,[unistd.h])
 
