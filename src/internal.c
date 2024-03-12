@@ -781,17 +781,17 @@ void CtxResourceFree(WOLFSSH_CTX* ctx)
 static int WS_TermResize(WOLFSSH* ssh, word32 col, word32 row, word32 colP,
     word32 rowP, void* usrCtx)
 {
-    HPCON* term = (HPCON*)usrCtx;
+    HANDLE* term = (HANDLE*)usrCtx;
     int ret = WS_SUCCESS;
 
     if (term != NULL) {
-        HRESULT ret;
-        COORD sz;
+        char cmd[20];
+        int cmdSz = 20;
+        DWORD wrtn = 0;
 
-        sz.X = col;
-        sz.Y = row;
-        ret = ResizePseudoConsole(*term, sz);
-        if (ret != S_OK) {
+        /* VT control sequence for resizing window */
+        cmdSz = snprintf(cmd, cmdSz, "\x1b[8;%d;%dt", row, col);
+        if (WriteFile(*term, cmd, cmdSz, &wrtn, 0) != TRUE) {
             WLOG(WS_LOG_ERROR, "Issue with pseudo console resize");
             ret = WS_FATAL_ERROR;
         }
