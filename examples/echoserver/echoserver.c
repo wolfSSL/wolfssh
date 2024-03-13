@@ -1196,11 +1196,8 @@ static int sftp_worker(thread_ctx_t* threadCtx)
         }
         else if (selected == WS_SELECT_TIMEOUT) {
             timeout = TEST_SFTP_TIMEOUT_LONG;
-            continue;
         }
-
-        if (ret == WS_WANT_READ || ret == WS_WANT_WRITE ||
-                selected == WS_SELECT_RECV_READY) {
+        else if (selected == WS_SELECT_RECV_READY) {
             ret = wolfSSH_worker(ssh, NULL);
             error = wolfSSH_get_error(ssh);
             if (ret == WS_REKEYING) {
@@ -1213,7 +1210,6 @@ static int sftp_worker(thread_ctx_t* threadCtx)
                 error == WS_WINDOW_FULL) {
                 timeout = TEST_SFTP_TIMEOUT;
                 ret = error;
-                continue;
             }
 
             if (error == WS_EOF) {
