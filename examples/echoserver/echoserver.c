@@ -1432,7 +1432,11 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
             ret = ssh_worker(threadCtx);
             #ifdef WOLFSSH_SFTP
             if (ret == WS_SFTP_COMPLETE) {
-                ret = wolfSSH_SFTP_accept(threadCtx->ssh);
+                do {
+                    ret = wolfSSH_SFTP_accept(threadCtx->ssh);
+                    error = wolfSSH_get_error(threadCtx->ssh);
+                } while (ret != WS_SFTP_COMPLETE
+                        && (error == WS_WANT_READ || error == WS_WANT_WRITE));
             }
             if (ret == WS_SFTP_COMPLETE) {
                 ret = sftp_worker(threadCtx);

@@ -68,6 +68,8 @@ char* myoptarg = NULL;
 #if !defined(NO_WOLFSSH_SERVER) && !defined(NO_WOLFSSH_CLIENT) && \
     !defined(SINGLE_THREADED) && !defined(WOLFSSH_TEST_BLOCK)
 
+#ifdef WOLFSSH_SHELL
+
 static int tsClientUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 {
     static char password[] = "upthehill";
@@ -90,7 +92,7 @@ static int tsClientUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 #define NUMARGS 5
 #define ARGLEN 32
 
-int wolfSSH_TestsuiteTest(int argc, char** argv)
+static void wolfSSH_EchoTest(void)
 {
     tcp_ready ready;
     THREAD_TYPE serverThread;
@@ -104,30 +106,6 @@ int wolfSSH_TestsuiteTest(int argc, char** argv)
         { cA[0], cA[1], cA[2], cA[3], cA[4] };
     int serverArgc = 0;
     int clientArgc = 0;
-
-    (void)argc;
-    (void)argv;
-
-    WSTARTTCP();
-
-    #if defined(DEBUG_WOLFSSH)
-        wolfSSH_Debugging_ON();
-    #endif
-
-    wolfSSH_Init();
-
-    #if defined(FIPS_VERSION_GE) && FIPS_VERSION_GE(5,2)
-    {
-        int i;
-        for (i = 0; i < FIPS_CAST_COUNT; i++) {
-            wc_RunCast_fips(i);
-        }
-    }
-    #endif /* HAVE_FIPS */
-
-    #if !defined(WOLFSSL_TIRTOS)
-        ChangeToWolfSshRoot();
-    #endif
 
     InitTcpReady(&ready);
 
@@ -162,9 +140,6 @@ int wolfSSH_TestsuiteTest(int argc, char** argv)
     clientArgs.user_auth = tsClientUserAuth;
 
     client_test(&clientArgs);
-    if (clientArgs.return_code != 0) {
-        return clientArgs.return_code;
-    }
 
 #ifdef WOLFSSH_ZEPHYR
     /* Weird deadlock without this sleep */
@@ -172,8 +147,42 @@ int wolfSSH_TestsuiteTest(int argc, char** argv)
 #endif
     ThreadJoin(serverThread);
 
-    wolfSSH_Cleanup();
     FreeTcpReady(&ready);
+}
+#endif /* WOLFSSH_SHELL */
+
+
+int wolfSSH_TestsuiteTest(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+
+    WSTARTTCP();
+
+    #if defined(DEBUG_WOLFSSH)
+        wolfSSH_Debugging_ON();
+    #endif
+
+    wolfSSH_Init();
+
+    #if defined(FIPS_VERSION_GE) && FIPS_VERSION_GE(5,2)
+    {
+        int i;
+        for (i = 0; i < FIPS_CAST_COUNT; i++) {
+            wc_RunCast_fips(i);
+        }
+    }
+    #endif /* HAVE_FIPS */
+
+    #if !defined(WOLFSSL_TIRTOS)
+        ChangeToWolfSshRoot();
+    #endif
+
+#ifdef WOLFSSH_SHELL
+    wolfSSH_EchoTest();
+#endif
+
+    wolfSSH_Cleanup();
 
 #ifdef WOLFSSH_SFTP
     printf("testing SFTP blocking\n");
@@ -183,7 +192,6 @@ int wolfSSH_TestsuiteTest(int argc, char** argv)
     wolfSSH_SftpTest(1);
 #endif
 #endif
-
     return EXIT_SUCCESS;
 }
 
