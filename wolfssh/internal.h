@@ -37,6 +37,7 @@
 #include <wolfssl/wolfcrypt/dh.h>
 #include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfssl/wolfcrypt/rsa.h>
+#include <wolfssl/wolfcrypt/curve25519.h>
 #ifdef WOLFSSH_SCP
     #include <wolfssh/wolfscp.h>
 #endif
@@ -160,6 +161,10 @@ extern "C" {
     #undef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
     #define WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
 #endif
+#if !defined(HAVE_CURVE25519) || defined(NO_SHA256)
+    #undef WOLFSSH_NO_CURVE25519_SHA256
+    #define WOLFSSH_NO_CURVE25519_SHA256
+#endif
 
 #if defined(WOLFSSH_NO_DH_GROUP1_SHA1) && \
     defined(WOLFSSH_NO_DH_GROUP14_SHA1) && \
@@ -168,7 +173,8 @@ extern "C" {
     defined(WOLFSSH_NO_ECDH_SHA2_NISTP384) && \
     defined(WOLFSSH_NO_ECDH_SHA2_NISTP521) && \
     defined(WOLFSSH_NO_ECDH_SHA2_ED25519) && \
-    defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256)
+    defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256) && \
+    defined(WOLFSSH_NO_CURVE25519_SHA256)
     #error "You need at least one key agreement algorithm."
 #endif
 
@@ -307,6 +313,9 @@ enum {
     ID_DH_GROUP14_SHA256,
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
     ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256,
+#endif
+#ifndef WOLFSSH_NO_CURVE25519_SHA256
+    ID_CURVE25519_SHA256,
 #endif
     ID_EXTINFO_S, /* Pseudo-KEX to indicate server extensions. */
     ID_EXTINFO_C, /* Pseudo-KEX to indicate client extensions. */
@@ -578,6 +587,9 @@ typedef struct HandshakeInfo {
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
     byte useEccKyber;
 #endif
+#ifndef WOLFSSH_NO_CURVE25519_SHA256
+    byte useCurve25519;
+#endif
 
     union {
 #ifndef WOLFSSH_NO_DH
@@ -585,6 +597,9 @@ typedef struct HandshakeInfo {
 #endif
 #if !defined(WOLFSSH_NO_ECDSA) && !defined(WOLFSSH_NO_ECDH)
         ecc_key ecc;
+#endif
+#ifndef WOLFSSH_NO_CURVE25519_SHA256
+        curve25519_key curve25519;
 #endif
     } privKey;
 } HandshakeInfo;
