@@ -1017,6 +1017,12 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
         ssh->sftpDefaultPath = NULL;
     }
 #endif
+#ifdef WOLFSSH_TERM
+    if (ssh->modes) {
+        WFREE(ssh->modes, ssh->ctx->heap, DYNTYPE_STRING);
+        ssh->modesSz = 0;
+    }
+#endif
 }
 
 
@@ -7584,7 +7590,8 @@ static int DoChannelRequest(WOLFSSH* ssh,
             if (ret == WS_SUCCESS)
                 ret = GetStringRef(&modesSz, &modes, buf, len, &begin);
             if (ret == WS_SUCCESS) {
-                ssh->modes = (byte*)WMALLOC(modesSz, ssh->ctx->heap, 0);
+                ssh->modes = (byte*)WMALLOC(modesSz,
+                        ssh->ctx->heap, DYNTYPE_STRING);
                 if (ssh->modes == NULL)
                     ret = WS_MEMORY_E;
             }
