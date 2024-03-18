@@ -4204,60 +4204,61 @@ static int ParseECCPubKey(WOLFSSH *ssh,
 
 
 #ifdef WOLFSSH_CERTS
-/* finds the leaf certificate and verifies it with known CA's
+/* finds the leaf certificate and optionally the bounds of the cert chain,
  * returns WS_SUCCESS on success */
-static int ParseAndVerifyCert(WOLFSSH* ssh, byte* in, word32 inSz,
-    byte** leafOut, word32* leafOutSz)
+static int ParseCertChain(byte* in, word32 inSz,
+        byte** certChain, word32* certChainSz, word32* certCount,
+        byte** leafOut, word32* leafOutSz)
 {
     int ret;
-    word32 l = 0, m = 0;
+    word32 sz = 0, idx = 0;
     word32 ocspCount = 0;
-    word32 certCount = 0;
-    byte*  certChain = NULL;
-    word32 certChainSz = 0;
-    word32 count;
+    byte*  chain = NULL;
+    word32 chainSz = 0;
+    word32 count, countIdx;
 
     /* Skip the name */
-    ret = GetSize(&l, in, inSz, &m);
-    m += l;
+    ret = GetSize(&sz, in, inSz, &idx);
 
     if (ret == WS_SUCCESS) {
+        idx += sz;
+
         /* Get the cert count */
-        ret = GetUint32(&certCount, in, inSz, &m);
+        ret = GetUint32(&count, in, inSz, &idx);
     }
 
     if (ret == WS_SUCCESS) {
-        WLOG(WS_LOG_INFO, "Peer sent certificate count of %d", certCount);
-        certChain = in + m;
+        WLOG(WS_LOG_INFO, "Peer sent certificate count of %d", count);
+        chain = in + idx;
 
-        for (count = certCount; count > 0; count--) {
-            word32 certSz = 0;
-
-            ret = GetSize(&certSz, in, inSz, &m);
+        for (countIdx = count; countIdx > 0; countIdx--) {
+            ret = GetSize(&sz, in, inSz, &idx);
             if (ret != WS_SUCCESS) {
                 break;
             }
-            WLOG(WS_LOG_INFO, "Adding certificate size %u", certSz);
+            WLOG(WS_LOG_INFO, "Adding certificate size %u", sz);
 
             /* store leaf cert size to present to user callback */
-            if (count == certCount && leafOut != NULL) {
-                *leafOutSz = certSz;
-                *leafOut   = in + m;
+            if (countIdx == count) {
+                if (leafOut != NULL && leafOutSz != NULL) {
+                    *leafOutSz = sz;
+                    *leafOut = in + idx;
+                }
             }
-            certChainSz += certSz + UINT32_SZ;
-            m += certSz;
+            chainSz += sz + UINT32_SZ;
+            idx += sz;
         }
 
         /* get OCSP count */
         if (ret == WS_SUCCESS) {
-            ret = GetUint32(&ocspCount, in, inSz, &m);
+            ret = GetUint32(&ocspCount, in, inSz, &idx);
         }
 
         if (ret == WS_SUCCESS) {
             WLOG(WS_LOG_INFO, "Peer sent OCSP count of %u", ocspCount);
 
             /* RFC 6187 section 2.1 OCSP count must not exceed cert count */
-            if (ocspCount > certCount) {
+            if (ocspCount > count) {
                 WLOG(WS_LOG_ERROR, "Error more OCSP then Certs");
                 ret = WS_FATAL_ERROR;
             }
@@ -4271,7 +4272,36 @@ static int ParseAndVerifyCert(WOLFSSH* ssh, byte* in, word32 inSz,
         }
     }
 
-    /* verify the certificate chain */
+    if (ret == WS_SUCCESS) {
+        if (certChain != NULL && certChainSz != NULL && certCount != NULL) {
+            *certChain = chain;
+            *certChainSz = chainSz;
+            *certCount = count;
+        }
+    }
+
+    return ret;
+}
+
+
+static int ParseLeafCert(byte* in, word32 inSz,
+        byte** leafOut, word32* leafOutSz)
+{
+    return ParseCertChain(in, inSz, NULL, NULL, NULL, leafOut, leafOutSz);
+}
+
+
+static int ParseCertChainVerify(WOLFSSH* ssh, byte* in, word32 inSz,
+        byte** leafOut, word32* leafOutSz)
+{
+    byte *certChain = NULL;
+    word32 certChainSz = 0, certCount = 0;
+    int ret;
+
+    ret = ParseCertChain(in, inSz,
+            &certChain, &certChainSz, &certCount,
+            leafOut, leafOutSz);
+
     if (ret == WS_SUCCESS) {
         ret = wolfSSH_CERTMAN_VerifyCerts_buffer(ssh->ctx->certMan,
                     certChain, certChainSz, certCount);
@@ -4292,7 +4322,7 @@ static int ParsePubKeyCert(WOLFSSH* ssh, byte* in, word32 inSz, byte** out,
     byte*  leaf   = NULL;
     word32 leafSz = 0;
 
-    ret = ParseAndVerifyCert(ssh, in, inSz, &leaf, &leafSz);
+    ret = ParseCertChainVerify(ssh, in, inSz, &leaf, &leafSz);
     if (ret == WS_SUCCESS) {
         int error = 0;
         struct DecodedCert dCert;
@@ -6453,22 +6483,29 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
 
     #ifdef WOLFSSH_CERTS
     if (ret == WS_SUCCESS && !authFailure) {
-        if (pkTypeId == ID_X509V3_SSH_RSA ||
-            pkTypeId == ID_X509V3_ECDSA_SHA2_NISTP256 ||
-            pkTypeId == ID_X509V3_ECDSA_SHA2_NISTP384 ||
-            pkTypeId == ID_X509V3_ECDSA_SHA2_NISTP521) {
-            byte  *cert   = NULL;
+        if (pkTypeId == ID_X509V3_SSH_RSA
+                || pkTypeId == ID_X509V3_ECDSA_SHA2_NISTP256
+                || pkTypeId == ID_X509V3_ECDSA_SHA2_NISTP384
+                || pkTypeId == ID_X509V3_ECDSA_SHA2_NISTP521) {
+            byte *cert = NULL;
             word32 certSz = 0;
 
-            ret = ParseAndVerifyCert(ssh, (byte*)pubKeyBlob, pubKeyBlobSz,
-                    &cert, &certSz);
+            if (hasSig) {
+                ret = ParseCertChainVerify(ssh,
+                        (byte*)pubKeyBlob, pubKeyBlobSz, &cert, &certSz);
+            }
+            else {
+                ret = ParseLeafCert((byte*)pubKeyBlob, pubKeyBlobSz,
+                        &cert, &certSz);
+            }
             if (ret == WS_SUCCESS) {
                 authData->sf.publicKey.publicKey = cert;
                 authData->sf.publicKey.publicKeySz = certSz;
                 authData->sf.publicKey.isCert = 1;
             }
             else {
-                WLOG(WS_LOG_DEBUG, "DUARPK: client cert not verified");
+                WLOG(WS_LOG_DEBUG, "DUARPK: cannot parse client cert chain");
+                ret = WS_SUCCESS;
                 authFailure = 1;
             }
         }
@@ -6661,13 +6698,11 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
         }
     }
 
-    if (ret == WS_SUCCESS) {
-        if (authFailure) {
-            ret = SendUserAuthFailure(ssh, 0);
-        }
-        else if (partialSuccess && hasSig) {
-            ret = SendUserAuthFailure(ssh, 1);
-        }
+    if (authFailure) {
+        ret = SendUserAuthFailure(ssh, 0);
+    }
+    else if (partialSuccess && hasSig) {
+        ret = SendUserAuthFailure(ssh, 1);
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthRequestPublicKey(), ret = %d", ret);
