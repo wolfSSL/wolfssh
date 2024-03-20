@@ -1087,6 +1087,20 @@ enum WS_MessageIds {
 };
 
 
+#define MSGID_KEXDH_LIMIT 30
+
+/* The endpoints should not allow message IDs greater than or
+ * equal to msgid 80 before user authentication is complete.
+ * Per RFC 4252 section 6. */
+#define MSGID_USERAUTH_LIMIT 80
+
+/* The client should only send the user auth request message
+ * (50), it should not accept it. The server should only receive
+ * the user auth request message, it should not accept the other
+ * user auth messages, it sends them. (>50) */
+#define MSGID_USERAUTH_RESTRICT 50
+
+
 #define CHANNEL_EXTENDED_DATA_STDERR WOLFSSH_EXT_DATA_STDERR
 
 

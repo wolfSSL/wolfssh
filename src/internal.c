@@ -433,6 +433,9 @@ const char* GetErrorString(int err)
         case WS_SFTP_NOT_FILE_E:
             return "not a regular file";
 
+        case WS_MSGID_NOT_ALLOWED_E:
+            return "message not allowed before user authentication";
+
         default:
             return "Unknown error code";
     }
@@ -542,6 +545,84 @@ static void HandshakeInfoFree(HandshakeInfo* hs, void* heap)
         ForceZero(hs, sizeof(HandshakeInfo));
         WFREE(hs, heap, DYNTYPE_HS);
     }
+}
+
+
+#ifndef NO_WOLFSSH_SERVER
+INLINE static int IsMessageAllowedServer(WOLFSSH *ssh, byte msg)
+{
+    /* Has client userauth started? */
+    if (ssh->acceptState < ACCEPT_KEYED) {
+        if (msg > MSGID_KEXDH_LIMIT) {
+            return 0;
+        }
+    }
+    /* Is server userauth complete? */
+    if (ssh->acceptState < ACCEPT_SERVER_USERAUTH_SENT) {
+        /* Explicitly check for messages not allowed before user
+         * authentication has comleted. */
+        if (msg >= MSGID_USERAUTH_LIMIT) {
+            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by server "
+                    "before user authentication is complete", msg);
+            return 0;
+        }
+        /* Explicitly check for the user authentication messages that
+         * only the server sends, it shouldn't receive them. */
+        if (msg > MSGID_USERAUTH_RESTRICT) {
+            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by server "
+                    "during user authentication", msg);
+            return 0;
+        }
+    }
+    return 1;
+}
+#endif /* NO_WOLFSSH_SERVER */
+
+
+#ifndef NO_WOLFSSH_CLIENT
+INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
+{
+    /* Has client userauth started? */
+    if (ssh->connectState < CONNECT_CLIENT_KEXDH_INIT_SENT) {
+        if (msg >= MSGID_KEXDH_LIMIT) {
+            return 0;
+        }
+    }
+    /* Is client userauth complete? */
+    if (ssh->connectState < CONNECT_SERVER_USERAUTH_ACCEPT_DONE) {
+        /* Explicitly check for messages not allowed before user
+         * authentication has comleted. */
+        if (msg >= MSGID_USERAUTH_LIMIT) {
+            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by client "
+                    "before user authentication is complete", msg);
+            return 0;
+        }
+        /* Explicitly check for the user authentication message that
+         * only the client sends, it shouldn't receive it. */
+        if (msg == MSGID_USERAUTH_RESTRICT) {
+            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by client "
+                    "during user authentication", msg);
+            return 0;
+        }
+    }
+    return 1;
+}
+#endif /* NO_WOLFSSH_CLIENT */
+
+
+INLINE static int IsMessageAllowed(WOLFSSH *ssh, byte msg)
+{
+#ifndef NO_WOLFSSH_SERVER
+    if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
+        return IsMessageAllowedServer(ssh, msg);
+    }
+#endif /* NO_WOLFSSH_SERVER */
+#ifndef NO_WOLFSSH_CLIENT
+    if (ssh->ctx->side == WOLFSSH_ENDPOINT_CLIENT) {
+        return IsMessageAllowedClient(ssh, msg);
+    }
+#endif /* NO_WOLFSSH_CLIENT */
+    return 0;
 }
 
 
@@ -7524,6 +7605,10 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
     if ((ssh->inputBuffer.bufferSz < payloadSz + idx) ||
             (payloadSz + idx < payloadSz)) {
         return WS_OVERFLOW_E;
+    }
+
+    if (!IsMessageAllowed(ssh, msg)) {
+        return WS_MSGID_NOT_ALLOWED_E;
     }
 
     switch (msg) {
