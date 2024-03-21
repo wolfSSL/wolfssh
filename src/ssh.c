@@ -544,45 +544,6 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
                 WLOG(WS_LOG_DEBUG, acceptState, "SERVER_USERAUTH_SENT");
 #if 0
-            case ACCEPT_SERVER_USERAUTH_SENT:
-                while (ssh->clientState < CLIENT_CHANNEL_OPEN_DONE) {
-                    if (DoReceive(ssh) < 0) {
-                        WLOG(WS_LOG_DEBUG, acceptError,
-                             "SERVER_USERAUTH_SENT", ssh->error);
-                        return WS_FATAL_ERROR;
-                    }
-                }
-                ssh->acceptState = ACCEPT_SERVER_CHANNEL_ACCEPT_SENT;
-                WLOG(WS_LOG_DEBUG, acceptState, "SERVER_CHANNEL_ACCEPT_SENT");
-                NO_BREAK;
-
-            case ACCEPT_SERVER_CHANNEL_ACCEPT_SENT:
-                while (ssh->clientState < CLIENT_DONE) {
-                    if (DoReceive(ssh) < 0) {
-                        WLOG(WS_LOG_DEBUG, acceptError,
-                             "SERVER_CHANNEL_ACCEPT_SENT", ssh->error);
-                        return WS_FATAL_ERROR;
-                    }
-                }
-
-#ifdef WOLFSSH_SCP
-                if (ChannelCommandIsScp(ssh)) {
-                    ssh->acceptState = ACCEPT_INIT_SCP_TRANSFER;
-                    WLOG(WS_LOG_DEBUG, acceptState, "ACCEPT_INIT_SCP_TRANSFER");
-                    return WS_SCP_INIT;
-                }
-#endif
-#if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_SERVER)
-                {
-                    const char* cmd = wolfSSH_GetSessionCommand(ssh);
-                    if (cmd != NULL &&
-                        WOLFSSH_SESSION_SUBSYSTEM == wolfSSH_GetSessionType(ssh)
-                        && (WSTRNCMP(cmd, "sftp", 4) == 0)) {
-                        ssh->acceptState = ACCEPT_INIT_SFTP;
-                        return wolfSSH_SFTP_accept(ssh);
-                    }
-                }
-#endif /* WOLFSSH_SFTP and !NO_WOLFSSH_SERVER */
 #ifdef WOLFSSH_AGENT
                 if (ssh->useAgent) {
                     WOLFSSH_AGENT_CTX* newAgent;
@@ -637,19 +598,6 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_SESSION_ESTABLISHED");
                 break;
 
-#ifdef WOLFSSH_SCP
-            case ACCEPT_INIT_SCP_TRANSFER:
-                if (DoScpRequest(ssh) < 0) {
-                    WLOG(WS_LOG_DEBUG, acceptError, "INIT_SCP_TRANSFER",
-                         ssh->error);
-                    return WS_FATAL_ERROR;
-                }
-                return WS_SCP_COMPLETE;
-#endif
-#ifdef WOLFSSH_SFTP
-            case ACCEPT_INIT_SFTP:
-                return wolfSSH_SFTP_accept(ssh);
-#endif
 #endif /* 0 */
         }
     } /* end while */
@@ -2895,6 +2843,20 @@ int wolfSSH_CTX_SetChannelReqShellCb(WOLFSSH_CTX* ctx,
 
     if (ctx != NULL) {
         ctx->channelReqShellCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_CTX_SetChannelReqExecCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelReq cb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->channelReqExecCb = cb;
         ret = WS_SUCCESS;
     }
 

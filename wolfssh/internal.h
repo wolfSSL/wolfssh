@@ -498,6 +498,7 @@ struct WOLFSSH_CTX {
     WS_CallbackChannelOpen channelOpenConfCb; /* Channel Open Confirm */
     WS_CallbackChannelOpen channelOpenFailCb; /* Channel Open Fail */
     WS_CallbackChannelReq channelReqShellCb; /* Channel Request "Shell" */
+    WS_CallbackChannelReq channelReqExecCb; /* Channel Request "Exec" */
     WS_CallbackChannelReq channelReqSubsysCb; /* Channel Request "Subsystem" */
     WS_CallbackChannelEof channelEofCb; /* Channel Eof Callback */
     WS_CallbackChannelClose channelCloseCb; /* Channel Close Callback */
@@ -1237,7 +1238,6 @@ enum WS_ScpDirection {
 };
 
 WOLFSSH_LOCAL int ChannelCommandIsScp(WOLFSSH*);
-WOLFSSH_LOCAL int DoScpRequest(WOLFSSH*);
 WOLFSSH_LOCAL int DoScpSink(WOLFSSH* ssh);
 WOLFSSH_LOCAL int DoScpSource(WOLFSSH* ssh);
 WOLFSSH_LOCAL int ParseScpCommand(WOLFSSH*);

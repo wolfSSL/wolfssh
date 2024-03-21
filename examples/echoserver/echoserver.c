@@ -209,6 +209,9 @@ typedef struct {
 #ifdef WOLFSSH_SFTP
     int doSftp;
 #endif
+#ifdef WOLFSSH_SCP
+    int doScp;
+#endif
     byte channelBuffer[EXAMPLE_BUFFER_SZ];
     char statsBuffer[EXAMPLE_BUFFER_SZ];
 } thread_ctx_t;
@@ -691,6 +694,28 @@ static int wsShellStartCb(WOLFSSH_CHANNEL* channel, void* ctx)
 #endif /* WOLFSSH_SHELL */
 
 
+#ifdef WOLFSSH_SCP
+static int wsExecStartCb(WOLFSSH_CHANNEL* channel, void* vCtx)
+{
+    thread_ctx_t* threadCtx;
+    const char* cmd;
+    WS_SessionType type;
+
+    if (!vCtx || !channel) {
+        return 0;
+    }
+
+    threadCtx = (thread_ctx_t*)vCtx;
+    cmd = wolfSSH_ChannelGetSessionCommand(channel);
+    type = wolfSSH_ChannelGetSessionType(channel);
+
+    threadCtx->doScp = (type == WOLFSSH_SESSION_EXEC && WSTRSTR(cmd, "scp"));
+
+    return 0;
+}
+#endif /* WOLFSSH_SCP */
+
+
 #ifdef WOLFSSH_SFTP
 static int wsSubsysStartCb(WOLFSSH_CHANNEL* channel, void* vCtx)
 {
@@ -706,10 +731,8 @@ static int wsSubsysStartCb(WOLFSSH_CHANNEL* channel, void* vCtx)
     cmd = wolfSSH_ChannelGetSessionCommand(channel);
     type = wolfSSH_ChannelGetSessionType(channel);
 
-    if (type == WOLFSSH_SESSION_SUBSYSTEM
-            && WSTRCMP(cmd, "sftp") == 0) {
-        threadCtx->doSftp = 1;
-    }
+    threadCtx->doSftp = (type == WOLFSSH_SESSION_SUBSYSTEM
+            && !WSTRCMP(cmd, "sftp"));
 
     return 0;
 }
@@ -866,6 +889,11 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                    channel. The additional channel is only used with the
                    agent. */
                 cnt_r = wolfSSH_worker(ssh, &lastChannel);
+                #ifdef WOLFSSH_SCP
+                if (threadCtx->doScp) {
+                    return WS_SCP_INIT;
+                }
+                #endif
                 #ifdef WOLFSSH_SFTP
                 if (threadCtx->doSftp) {
                     return WS_SFTP_COMPLETE;
@@ -1373,8 +1401,7 @@ static int NonBlockSSH_accept(WOLFSSH* ssh)
     error = wolfSSH_get_error(ssh);
     sockfd = (WS_SOCKET_T)wolfSSH_get_fd(ssh);
 
-    while ((ret != WS_SUCCESS
-                && ret != WS_SCP_COMPLETE && ret != WS_SFTP_COMPLETE)
+    while (ret != WS_SUCCESS && ret != WS_SCP_COMPLETE
             && (error == WS_WANT_READ || error == WS_WANT_WRITE)) {
 
         if (error == WS_WANT_READ)
@@ -1423,13 +1450,13 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
 #endif
 
     switch (ret) {
-        case WS_SCP_COMPLETE:
-            printf("scp file transfer completed\n");
-            ret = 0;
-            break;
-
         case WS_SUCCESS:
             ret = ssh_worker(threadCtx);
+            #ifdef WOLFSSH_SCP
+            if (ret == WS_SCP_INIT) {
+                ret = wolfSSH_SCP_DoRequest(threadCtx->ssh);
+            }
+            #endif
             #ifdef WOLFSSH_SFTP
             if (ret == WS_SFTP_COMPLETE) {
                 do {
@@ -2462,6 +2489,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 #endif
 #ifdef WOLFSSH_FWD
     wolfSSH_CTX_SetFwdCb(ctx, wolfSSH_FwdDefaultActions, NULL);
+#endif
+#ifdef WOLFSSH_SCP
+    wolfSSH_CTX_SetChannelReqExecCb(ctx, wsExecStartCb);
 #endif
 #ifdef WOLFSSH_SFTP
     wolfSSH_CTX_SetChannelReqSubsysCb(ctx, wsSubsysStartCb);
