@@ -586,6 +586,14 @@ INLINE static int IsMessageAllowedServer(WOLFSSH *ssh, byte msg)
             return 0;
         }
     }
+    else {
+        if (msg >= MSGID_USERAUTH_RESTRICT && msg < MSGID_USERAUTH_LIMIT) {
+            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by server "
+                    "after user authentication", msg);
+            return 0;
+        }
+    }
+
     return 1;
 }
 #endif /* NO_WOLFSSH_SERVER */
@@ -614,6 +622,13 @@ INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
         if (msg == MSGID_USERAUTH_RESTRICT) {
             WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by client "
                     "during user authentication", msg);
+            return 0;
+        }
+    }
+    else {
+        if (msg >= MSGID_USERAUTH_RESTRICT && msg < MSGID_USERAUTH_LIMIT) {
+            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by client "
+                    "after user authentication", msg);
             return 0;
         }
     }
