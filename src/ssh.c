@@ -3119,6 +3119,20 @@ int wolfSSH_CTX_SetChannelReqShellCb(WOLFSSH_CTX* ctx,
 }
 
 
+int wolfSSH_CTX_SetChannelReqExecCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelReq cb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->channelReqExecCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
 int wolfSSH_CTX_SetChannelReqSubsysCb(WOLFSSH_CTX* ctx,
         WS_CallbackChannelReq cb)
 {

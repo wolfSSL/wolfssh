@@ -8380,6 +8380,9 @@ static int DoChannelRequest(WOLFSSH* ssh,
             ret = GetStringAlloc(ssh->ctx->heap, &channel->command,
                     buf, len, &begin);
             channel->sessionType = WOLFSSH_SESSION_EXEC;
+            if (ssh->ctx->channelReqExecCb) {
+                ssh->ctx->channelReqExecCb(channel, ssh->channelReqCtx);
+            }
             ssh->clientState = CLIENT_DONE;
 
             WLOG(WS_LOG_DEBUG, "  command = %s", channel->command);

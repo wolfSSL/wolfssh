@@ -502,6 +502,7 @@ struct WOLFSSH_CTX {
     WS_CallbackChannelOpen channelOpenConfCb; /* Channel Open Confirm */
     WS_CallbackChannelOpen channelOpenFailCb; /* Channel Open Fail */
     WS_CallbackChannelReq channelReqShellCb; /* Channel Request "Shell" */
+    WS_CallbackChannelReq channelReqExecCb; /* Channel Request "Exec" */
     WS_CallbackChannelReq channelReqSubsysCb; /* Channel Request "Subsystem" */
     WS_CallbackChannelEof channelEofCb; /* Channel Eof Callback */
     WS_CallbackChannelClose channelCloseCb; /* Channel Close Callback */

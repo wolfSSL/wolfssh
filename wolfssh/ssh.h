@@ -235,6 +235,8 @@ WOLFSSH_API void* wolfSSH_GetChannelOpenCtx(WOLFSSH* ssh);
 typedef int (*WS_CallbackChannelReq)(WOLFSSH_CHANNEL* channel, void* ctx);
 WOLFSSH_API int wolfSSH_CTX_SetChannelReqShellCb(WOLFSSH_CTX* ctx,
         WS_CallbackChannelReq cb);
+WOLFSSH_API int wolfSSH_CTX_SetChannelReqExecCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelReq cb);
 WOLFSSH_API int wolfSSH_CTX_SetChannelReqSubsysCb(WOLFSSH_CTX* ctx,
         WS_CallbackChannelReq cb);
 WOLFSSH_API int wolfSSH_SetChannelReqCtx(WOLFSSH* ssh, void* ctx);
