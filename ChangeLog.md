@@ -1,3 +1,55 @@
+# wolfSSH v1.4.17 (March 22, 2024)
+
+## Vulnerabilities
+
+* Fixes a vulnerability where a properly crafted SSH client can bypass user
+  authentication in the wolfSSH server code. The added fix filters the
+  messages that are allowed during different operational states.
+
+## Notes
+
+* When building wolfSSL/wolfCrypt versions before v5.6.6 with CMake,
+  wolfSSH may have a problem with RSA keys. This is due to wolfSSH not
+  checking on the size of `___uint128_t`. wolfSSH sees the RSA structure
+  as the wrong size. You will have to define `HAVE___UINT128_T` if you
+  know you have it and are using it in wolfSSL. wolfSSL v5.6.6 exports that
+  define in options.h when using CMake.
+* The example server in directory examples/server/server.c has been removed.
+  It was never kept up to date, the echoserver did its job as an example and
+  test server.
+
+## New Features
+
+* Added functions to set algorithms lists for KEX at run-time, and some
+  functions to inspect which algorithms are set or are available to use.
+* In v1.4.15, we had disabled SHA-1 in the build by default. SHA-1 has been
+  re-enabled in the build and is now "soft" disabled, where algorithms using
+  it can put configured for KEX.
+* Add Curve25519 KEX support for server/client key agreement.
+
+## Improvements
+
+* Clean up some issues when building for Nucleus.
+* Clean up some issues when building for Windows.
+* Clean up some issues when building for QNX.
+* Added more wolfSSHd testing.
+* Added more appropriate build option guard checking.
+* General improvements for the ESP32 builds.
+* Better terminal support in Windows.
+* Better I/O pipes and return codes when running commands or scripts over an
+  SSH connection.
+
+## Fixes
+
+* Fix shell terminal window resizing and it sets up the environment better.
+* Fix some corner cases with the SFTP testing.
+* Fix some corner cases with SFTP in general.
+* Fix verifying RSA signatures.
+* Add masking of file mode bits for Zephyr.
+* Fix leak of terminal modes cache.
+
+---
+
 # wolfSSH v1.4.15 (December 22, 2023)
 
 ## Vulnerabilities
