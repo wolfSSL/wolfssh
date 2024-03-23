@@ -794,7 +794,7 @@ static int config_parse_command_line(struct config* config,
                 free(config->user);
             }
             sz = WSTRLEN(cursor);
-            config->user = WMALLOC(sz + 1, NULL, 0);
+            config->user = (char*)WMALLOC(sz + 1, NULL, 0);
             strcpy(config->user, cursor);
             cursor = found + 1;
         }

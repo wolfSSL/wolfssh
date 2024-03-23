@@ -451,7 +451,8 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
                                 current->ipString);
                             WLOG(WS_LOG_DEBUG,
                                 "\texpecting host IP : %s", (char*)ctx);
-                            if (XSTRCMP(ctx, current->ipString) == 0) {
+                            if (XSTRCMP((const char*)ctx,
+                                        current->ipString) == 0) {
                                 WLOG(WS_LOG_DEBUG, "\tmatched!");
                                 ipMatch = 1;
                             }
