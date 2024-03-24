@@ -1,4 +1,4 @@
-# wolfSSH v1.4.17 (March 22, 2024)
+# wolfSSH v1.4.17 (March 25, 2024)
 
 ## Vulnerabilities
 
