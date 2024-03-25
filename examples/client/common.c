@@ -1,6 +1,6 @@
 /* common.c
  *
- * Copyright (C) 2014-2022 wolfSSL Inc.
+ * Copyright (C) 2014-2024 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -403,7 +403,8 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
                                 current->ipString);
                             WLOG(WS_LOG_DEBUG,
                                 "\texpecting host IP : %s", (char*)ctx);
-                            if (XSTRCMP(ctx, current->ipString) == 0) {
+                            if (XSTRCMP((const char*)ctx,
+                                        current->ipString) == 0) {
                                 WLOG(WS_LOG_DEBUG, "\tmatched!");
                                 ipMatch = 1;
                             }

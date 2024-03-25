@@ -1,6 +1,6 @@
 /* wolfsftp.c
  *
- * Copyright (C) 2014-2023 wolfSSL Inc.
+ * Copyright (C) 2014-2024 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -2042,7 +2042,8 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 
     {
-        WS_SFTP_FILEATRB fileAtr = { 0 };
+        WS_SFTP_FILEATRB fileAtr;
+        WMEMSET(&fileAtr, 0, sizeof(fileAtr));
         if (SFTP_GetAttributes(ssh->fs,
                         dir, &fileAtr, 1, ssh->ctx->heap) == WS_SUCCESS) {
             if ((fileAtr.per & FILEATRB_PER_MASK_TYPE) != FILEATRB_PER_FILE) {
@@ -8767,7 +8768,8 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                 WLOG(WS_LOG_SFTP, "SFTP PUT STATE: OPEN LOCAL");
             #ifndef USE_WINDOWS_API
                 {
-                    WS_SFTP_FILEATRB fileAtr = { 0 };
+                    WS_SFTP_FILEATRB fileAtr;
+                    WMEMSET(&fileAtr, 0, sizeof(fileAtr));
                     if (SFTP_GetAttributes(ssh->fs,
                                 from, &fileAtr, 1, ssh->ctx->heap)
                             == WS_SUCCESS) {
