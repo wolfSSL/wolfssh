@@ -24,7 +24,7 @@
   functions to inspect which algorithms are set or are available to use.
 * In v1.4.15, we had disabled SHA-1 in the build by default. SHA-1 has been
   re-enabled in the build and is now "soft" disabled, where algorithms using
-  it can put configured for KEX.
+  it can be configured for KEX.
 * Add Curve25519 KEX support for server/client key agreement.
 
 ## Improvements
