@@ -492,8 +492,12 @@ authenticating a user.
 To compile wolfSSH with X.509 support, use the `--enable-certs` build option
 or define `WOLFSSH_CERTS`:
 
-    $ ./configure --enable-certs
+    $ ./configure --enable-certs CPPFLAGS=-DWOLFSSH_NO_FPKI
     $ make
+
+For this example, we are disabling the FPKI checking as the included
+certificate for "fred" does not have the required FPKI extensions. If the
+flag WOLFSSH_NO_FPKI is removed, you can see the certificate get rejected.
 
 To provide a CA root certificate to validate a user's certificate, give the
 echoserver the command line option `-a`.
