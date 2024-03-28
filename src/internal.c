@@ -7796,54 +7796,6 @@ static int DoChannelRequest(WOLFSSH* ssh,
         WLOG(WS_LOG_DEBUG, "  type = %s", type);
         WLOG(WS_LOG_DEBUG, "  wantReply = %u", wantReply);
 
-#ifdef WOLFSSH_TERM
-        if (WSTRNCMP(type, "pty-req", typeSz) == 0) {
-            char term[32];
-            const byte* modes;
-            word32 termSz, modesSz = 0;
-            word32 widthChar, heightRows, widthPixels, heightPixels;
-
-            termSz = (word32)sizeof(term);
-            ret = GetString(term, &termSz, buf, len, &begin);
-            if (ret == WS_SUCCESS)
-                ret = GetUint32(&widthChar, buf, len, &begin);
-            if (ret == WS_SUCCESS)
-                ret = GetUint32(&heightRows, buf, len, &begin);
-            if (ret == WS_SUCCESS)
-                ret = GetUint32(&widthPixels, buf, len, &begin);
-            if (ret == WS_SUCCESS)
-                ret = GetUint32(&heightPixels, buf, len, &begin);
-            if (ret == WS_SUCCESS)
-                ret = GetStringRef(&modesSz, &modes, buf, len, &begin);
-            if (ret == WS_SUCCESS) {
-                ssh->modes = (byte*)WMALLOC(modesSz,
-                        ssh->ctx->heap, DYNTYPE_STRING);
-                if (ssh->modes == NULL)
-                    ret = WS_MEMORY_E;
-            }
-            if (ret == WS_SUCCESS) {
-                ssh->modesSz = modesSz;
-                WMEMCPY(ssh->modes, modes, modesSz);
-                WLOG(WS_LOG_DEBUG, "  term = %s", term);
-                WLOG(WS_LOG_DEBUG, "  widthChar = %u", widthChar);
-                WLOG(WS_LOG_DEBUG, "  heightRows = %u", heightRows);
-                WLOG(WS_LOG_DEBUG, "  widthPixels = %u", widthPixels);
-                WLOG(WS_LOG_DEBUG, "  heightPixels = %u", heightPixels);
-                ssh->widthChar = widthChar;
-                ssh->heightRows = heightRows;
-                ssh->widthPixels = widthPixels;
-                ssh->heightPixels = heightPixels;
-                if (ssh->termResizeCb) {
-                    if (ssh->termResizeCb(ssh, widthChar, heightRows,
-                            widthPixels, heightPixels,
-                            ssh->termCtx) != WS_SUCCESS) {
-                        ret = WS_FATAL_ERROR;
-                    }
-                }
-            }
-        }
-        else
-#endif /* WOLFSSH_TERM */
         if (WSTRNCMP(type, "env", typeSz) == 0) {
             char name[WOLFSSH_MAX_NAMESZ];
             word32 nameSz;
@@ -7889,16 +7841,54 @@ static int DoChannelRequest(WOLFSSH* ssh,
 
             WLOG(WS_LOG_DEBUG, "  subsystem = %s", channel->command);
         }
-#ifdef WOLFSSH_AGENT
-        else if (WSTRNCMP(type, "auth-agent-req@openssh.com", typeSz) == 0) {
-            WLOG(WS_LOG_AGENT, "  ssh-agent");
-            if (ssh->ctx->agentCb != NULL)
-                ssh->useAgent = 1;
-            else
-                WLOG(WS_LOG_AGENT, "Agent callback not set, not using.");
+        #ifdef WOLFSSH_TERM
+        else if (WSTRNCMP(type, "pty-req", typeSz) == 0) {
+            char term[32];
+            const byte* modes;
+            word32 termSz, modesSz = 0;
+            word32 widthChar, heightRows, widthPixels, heightPixels;
+
+            termSz = (word32)sizeof(term);
+            ret = GetString(term, &termSz, buf, len, &begin);
+            if (ret == WS_SUCCESS)
+                ret = GetUint32(&widthChar, buf, len, &begin);
+            if (ret == WS_SUCCESS)
+                ret = GetUint32(&heightRows, buf, len, &begin);
+            if (ret == WS_SUCCESS)
+                ret = GetUint32(&widthPixels, buf, len, &begin);
+            if (ret == WS_SUCCESS)
+                ret = GetUint32(&heightPixels, buf, len, &begin);
+            if (ret == WS_SUCCESS)
+                ret = GetStringRef(&modesSz, &modes, buf, len, &begin);
+            if (ret == WS_SUCCESS) {
+                ssh->modes = (byte*)WMALLOC(modesSz,
+                        ssh->ctx->heap, DYNTYPE_STRING);
+                if (ssh->modes == NULL)
+                    ret = WS_MEMORY_E;
+            }
+            if (ret == WS_SUCCESS) {
+                ssh->modesSz = modesSz;
+                WMEMCPY(ssh->modes, modes, modesSz);
+                WLOG(WS_LOG_DEBUG, "  term = %s", term);
+                WLOG(WS_LOG_DEBUG, "  widthChar = %u", widthChar);
+                WLOG(WS_LOG_DEBUG, "  heightRows = %u", heightRows);
+                WLOG(WS_LOG_DEBUG, "  widthPixels = %u", widthPixels);
+                WLOG(WS_LOG_DEBUG, "  heightPixels = %u", heightPixels);
+                ssh->widthChar = widthChar;
+                ssh->heightRows = heightRows;
+                ssh->widthPixels = widthPixels;
+                ssh->heightPixels = heightPixels;
+                if (ssh->termResizeCb) {
+                    if (ssh->termResizeCb(ssh, widthChar, heightRows,
+                            widthPixels, heightPixels,
+                            ssh->termCtx) != WS_SUCCESS) {
+                        ret = WS_FATAL_ERROR;
+                    }
+                }
+            }
         }
-#endif /* WOLFSSH_AGENT */
-#if defined(WOLFSSH_SHELL) && defined(WOLFSSH_TERM)
+        #endif /* WOLFSSH_TERM */
+        #if defined(WOLFSSH_SHELL) && defined(WOLFSSH_TERM)
         else if (WSTRNCMP(type, "window-change", typeSz) == 0) {
             word32 widthChar, heightRows, widthPixels, heightPixels;
 
@@ -7928,8 +7918,8 @@ static int DoChannelRequest(WOLFSSH* ssh,
                 }
             }
         }
-#endif /* WOLFSSH_SHELL && WOLFSSH_TERM */
-#if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
+        #endif /* WOLFSSH_SHELL && WOLFSSH_TERM */
+        #if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
         else if (WSTRNCMP(type, "exit-status", typeSz) == 0) {
             ret = GetUint32(&ssh->exitStatus, buf, len, &begin);
             WLOG(WS_LOG_AGENT, "Got exit status %u.", ssh->exitStatus);
@@ -7962,7 +7952,16 @@ static int DoChannelRequest(WOLFSSH* ssh,
                 ret = GetString(sig, &sigSz, buf, len, &begin);
             }
         }
-#endif
+        #endif /* WOLFSSH_TERM or WOLFSSH_SHELL */
+        #ifdef WOLFSSH_AGENT
+        else if (WSTRNCMP(type, "auth-agent-req@openssh.com", typeSz) == 0) {
+            WLOG(WS_LOG_AGENT, "  ssh-agent");
+            if (ssh->ctx->agentCb != NULL)
+                ssh->useAgent = 1;
+            else
+                WLOG(WS_LOG_AGENT, "Agent callback not set, not using.");
+        }
+        #endif /* WOLFSSH_AGENT */
     }
 
     if (ret == WS_SUCCESS) {
