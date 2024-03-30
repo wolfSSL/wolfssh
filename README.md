@@ -492,23 +492,27 @@ authenticating a user.
 To compile wolfSSH with X.509 support, use the `--enable-certs` build option
 or define `WOLFSSH_CERTS`:
 
-    $ ./configure --enable-certs
+    $ ./configure --enable-certs CPPFLAGS=-DWOLFSSH_NO_FPKI
     $ make
+
+For this example, we are disabling the FPKI checking as the included
+certificate for "fred" does not have the required FPKI extensions. If the
+flag WOLFSSH_NO_FPKI is removed, you can see the certificate get rejected.
 
 To provide a CA root certificate to validate a user's certificate, give the
 echoserver the command line option `-a`.
 
     $ ./examples/echoserver/echoserver -a ./keys/ca-cert-ecc.pem
 
-The echoserver and client have a fake user named "john" whose certificate
+The echoserver and client have a fake user named "fred" whose certificate
 will be used for authentication.
 
 An example echoserver / client connection using the example certificate
-john-cert.der would be:
+fred-cert.der would be:
 
-    $ ./examples/echoserver/echoserver -a ./keys/ca-cert-ecc.pem -K john:./keys/john-cert.der
+    $ ./examples/echoserver/echoserver -a ./keys/ca-cert-ecc.pem -K fred:./keys/fred-cert.der
 
-    $ ./examples/client/client -u john -J ./keys/john-cert.der -i ./keys/john-key.der
+    $ ./examples/client/client -u fred -J ./keys/fred-cert.der -i ./keys/fred-key.der
 
 
 WOLFSSH APPLICATIONS
