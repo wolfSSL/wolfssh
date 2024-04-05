@@ -8276,7 +8276,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
     word32 typeSz;
     char type[32];
     byte wantReply;
-    int ret;
+    int ret, rej = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering DoChannelRequest()");
 
@@ -8324,7 +8324,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
         else if (WSTRNCMP(type, "shell", typeSz) == 0) {
             channel->sessionType = WOLFSSH_SESSION_SHELL;
             if (ssh->ctx->channelReqShellCb) {
-                ssh->ctx->channelReqShellCb(channel, ssh->channelReqCtx);
+                rej = ssh->ctx->channelReqShellCb(channel, ssh->channelReqCtx);
             }
             ssh->clientState = CLIENT_DONE;
         }
@@ -8333,7 +8333,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
                     buf, len, &begin);
             channel->sessionType = WOLFSSH_SESSION_EXEC;
             if (ssh->ctx->channelReqExecCb) {
-                ssh->ctx->channelReqExecCb(channel, ssh->channelReqCtx);
+                rej = ssh->ctx->channelReqExecCb(channel, ssh->channelReqCtx);
             }
             ssh->clientState = CLIENT_DONE;
 
@@ -8344,7 +8344,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
                     buf, len, &begin);
             channel->sessionType = WOLFSSH_SESSION_SUBSYSTEM;
             if (ssh->ctx->channelReqSubsysCb) {
-                ssh->ctx->channelReqSubsysCb(channel, ssh->channelReqCtx);
+                rej = ssh->ctx->channelReqSubsysCb(channel, ssh->channelReqCtx);
             }
             ssh->clientState = CLIENT_DONE;
 
@@ -8480,7 +8480,11 @@ static int DoChannelRequest(WOLFSSH* ssh,
     if (wantReply) {
         int replyRet;
 
-        replyRet = SendChannelSuccess(ssh, channelId, (ret == WS_SUCCESS));
+        if (rej) {
+            WLOG(WS_LOG_DEBUG, "Callback rejecting channel request.");
+        }
+        replyRet = SendChannelSuccess(ssh, channelId,
+                (ret == WS_SUCCESS && !rej));
         if (replyRet != WS_SUCCESS)
             ret = replyRet;
     }
