@@ -597,23 +597,24 @@ static int SCP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 #endif
 
     if (ret == WS_SUCCESS) {
-        ret = wolfSSH_accept(ssh);
+        ret = wolfSSH_SCP_DoRequest(ssh);
         error = wolfSSH_get_error(ssh);
-        while (ret != WS_SUCCESS && ret != WS_SCP_COMPLETE
+        while (ret != WS_SUCCESS
+                && ret != WS_SCP_COMPLETE
                 && (error == WS_WANT_READ || error == WS_WANT_WRITE)) {
-
             select_ret = tcp_select(conn->fd, 1);
-            if (select_ret == WS_SELECT_RECV_READY  ||
-                select_ret == WS_SELECT_ERROR_READY ||
-                error      == WS_WANT_WRITE)
-            {
-                ret = wolfSSH_accept(ssh);
+            if (select_ret == WS_SELECT_RECV_READY
+                    || select_ret == WS_SELECT_ERROR_READY
+                    || error == WS_WANT_WRITE) {
+                ret = wolfSSH_SCP_DoRequest(ssh);
                 error = wolfSSH_get_error(ssh);
             }
-            else if (select_ret == WS_SELECT_TIMEOUT)
+            else if (select_ret == WS_SELECT_TIMEOUT) {
                 error = WS_WANT_READ;
-            else
+            }
+            else {
                 error = WS_FATAL_ERROR;
+            }
         }
     }
 
@@ -623,7 +624,6 @@ static int SCP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             conn->ip);
     }
 
-    (void)conn;
 #ifdef _WIN32
     /* stop impersonating the user */
     RevertToSelf();
@@ -1845,9 +1845,21 @@ static void* HandleConnection(void* arg)
         }
         else if (conn->doSftp) {
         #ifdef WOLFSSH_SFTP
+            int select_ret;
             do {
-                ret = wolfSSH_SFTP_accept(ssh);
-                /* XXX Need some select */
+                select_ret = tcp_select(conn->fd, 1);
+                if (select_ret == WS_SELECT_RECV_READY
+                        || select_ret == WS_SELECT_ERROR_READY
+                        || error == WS_WANT_WRITE) {
+                    ret = wolfSSH_SFTP_accept(ssh);
+                    error = wolfSSH_get_error(ssh);
+                }
+                else if (select_ret == WS_SELECT_TIMEOUT) {
+                    error = WS_WANT_READ;
+                }
+                else {
+                    error = WS_FATAL_ERROR;
+                }
             } while (ret != WS_SFTP_COMPLETE
                     && (error == WS_WANT_READ || error == WS_WANT_WRITE));
             if (ret == WS_SFTP_COMPLETE) {
