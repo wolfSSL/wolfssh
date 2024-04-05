@@ -109,10 +109,15 @@ static const char defaultBanner[] = "wolfSSHD\n";
 typedef struct WOLFSSHD_CONNECTION {
     WOLFSSH_CTX*   ctx;
     WOLFSSHD_AUTH* auth;
+    WOLFSSH_CHANNEL* channel;
     int            fd;
     int            listenFd;
     char           ip[INET_ADDRSTRLEN];
-    byte           isThreaded;
+    byte           isThreaded:1;
+    byte           doShell:1;
+    byte           doSftp:1;
+    byte           doScp:1;
+    byte           doExec:1;
 } WOLFSSHD_CONNECTION;
 
 #ifdef __unix__
@@ -172,6 +177,50 @@ static void ServiceDebugCb(enum wolfSSH_LogLevel level, const char* const msgStr
     WOLFSSH_UNUSED(level);
 }
 #endif
+
+static int wsChannelReqCb(WOLFSSH_CHANNEL* channel, void* vCtx)
+{
+    WOLFSSHD_CONNECTION* ctx;
+    const char* cmd;
+    WS_SessionType type;
+
+    if (!vCtx || !channel) {
+        return 0;
+    }
+
+    ctx = (WOLFSSHD_CONNECTION*)vCtx;
+    cmd = wolfSSH_ChannelGetSessionCommand(channel);
+    type = wolfSSH_ChannelGetSessionType(channel);
+
+#ifdef WOLFSSH_SHELL
+    if (type == WOLFSSH_SESSION_SHELL) {
+        ctx->channel = channel;
+        ctx->doShell = 1;
+        return 0;
+    }
+#endif
+#ifdef WOLFSSH_SCP
+    if (type == WOLFSSH_SESSION_EXEC) {
+        ctx->channel = channel;
+        ctx->doExec = 1;
+        ctx->doScp = WSTRSTR(cmd, "scp") != NULL;
+        return 0;
+    }
+#endif
+#ifdef WOLFSSH_SFTP
+    if (type == WOLFSSH_SESSION_SUBSYSTEM) {
+        if (!WSTRCMP(cmd, "sftp")) {
+            ctx->channel = channel;
+            ctx->doSftp = 1;
+            return 0;
+        }
+    }
+#endif
+
+    wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] Unknown or build not supporting session type found");
+    return 1;
+}
 
 static void ShowUsage(void)
 {
@@ -309,6 +358,13 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
             banner = defaultBanner;
         }
         wolfSSH_CTX_SetBanner(*ctx, banner);
+    }
+
+    /* set the channel request callbacks */
+    if (ret == WS_SUCCESS) {
+        wolfSSH_CTX_SetChannelReqShellCb(*ctx, wsChannelReqCb);
+        wolfSSH_CTX_SetChannelReqExecCb(*ctx, wsChannelReqCb);
+        wolfSSH_CTX_SetChannelReqSubsysCb(*ctx, wsChannelReqCb);
     }
 
     /* Load in host private key */
@@ -760,6 +816,9 @@ static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 if (error == WS_EOF)
                     break;
             }
+            else {
+                timeout = TEST_SFTP_TIMEOUT;
+            }
 
             if (ret == WS_FATAL_ERROR && error == 0) {
                 WOLFSSH_CHANNEL* channel =
@@ -1032,7 +1091,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 
                 if (readPending == 0) {
                     /* check if process is still running before waiting to read */
-                    if (GetExitCodeProcess(processInfo.hProcess, &processState) 
+                    if (GetExitCodeProcess(processInfo.hProcess, &processState)
                             == TRUE) {
                         if (processState != STILL_ACTIVE) {
                             wolfSSH_Log(WS_LOG_INFO,
@@ -1690,6 +1749,7 @@ static void* HandleConnection(void* arg)
 
         wolfSSH_set_fd(ssh, conn->fd);
         wolfSSH_SetUserAuthCtx(ssh, conn->auth);
+        wolfSSH_SetChannelReqCtx(ssh, conn);
 
         /* set alarm for login grace time */
         graceTime = wolfSSHD_AuthGetGraceTime(conn->auth);
@@ -1737,15 +1797,14 @@ static void* HandleConnection(void* arg)
     #endif
         }
 
-        if (ret != WS_SUCCESS && ret != WS_SFTP_COMPLETE &&
-            ret != WS_SCP_INIT) {
+        if (ret != WS_SUCCESS) {
             wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] Failed to accept WOLFSSH connection from %s error %d",
                 conn->ip, ret);
         }
     }
 
-    if (ret == WS_SUCCESS || ret == WS_SFTP_COMPLETE || ret == WS_SCP_INIT) {
+    if (ret == WS_SUCCESS) {
         WPASSWD* pPasswd = NULL;
         WOLFSSHD_CONFIG* usrConf;
         char* usr;
@@ -1761,8 +1820,7 @@ static void* HandleConnection(void* arg)
         }
 
     #ifndef WIN32
-        if (ret == WS_SUCCESS || ret == WS_SFTP_COMPLETE ||
-            ret == WS_SCP_INIT) {
+        if (ret == WS_SUCCESS) {
             pPasswd = getpwnam((const char *)usr);
             if (pPasswd == NULL) {
                 wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error getting user info");
@@ -1771,81 +1829,47 @@ static void* HandleConnection(void* arg)
         }
     #endif
 
-        if (ret != WS_FATAL_ERROR) {
-            /* check for any forced command set for the user */
-            switch (wolfSSH_GetSessionType(ssh)) {
-                case WOLFSSH_SESSION_SHELL:
-                #ifdef WOLFSSH_SHELL
-                    if (ret == WS_SUCCESS) {
-                        wolfSSH_Log(WS_LOG_INFO, "[SSHD] Entering new shell");
-                        SHELL_Subsystem(conn, ssh, pPasswd, usrConf, NULL);
-                    }
-                #else
-                    wolfSSH_Log(WS_LOG_ERROR,
-                        "[SSHD] Shell support is disabled");
-                    ret = WS_NOT_COMPILED;
-                #endif
-                    break;
+        do {
+            ret = wolfSSH_worker(ssh, NULL);
+        } while (conn->channel == NULL);
 
-                case WOLFSSH_SESSION_SUBSYSTEM:
-                    /* test for known subsystems */
-                    switch (ret) {
-                        case WS_SFTP_COMPLETE:
-                        #ifdef WOLFSSH_SFTP
-                            ret = SFTP_Subsystem(conn, ssh, pPasswd, usrConf);
-                        #else
-                            err_sys("SFTP not compiled in. Please use "
-                                    "--enable-sftp");
-                        #endif
-                            break;
-
-                        case WS_SCP_INIT:
-                        #ifdef WOLFSSH_SCP
-                            ret = SCP_Subsystem(conn, ssh, pPasswd, usrConf);
-                        #else
-                            err_sys("SCP not compiled in. Please use "
-                                    "--enable-scp");
-                        #endif
-                            break;
-
-                        default:
-                            wolfSSH_Log(WS_LOG_ERROR,
-                                "[SSHD] Unknown or build not supporting sub"
-                                "system found [%s]",
-                                wolfSSH_GetSessionCommand(ssh));
-                            ret = WS_NOT_COMPILED;
-                    }
-                    break;
-
-                case WOLFSSH_SESSION_UNKNOWN:
-                case WOLFSSH_SESSION_EXEC:
-                #if defined(WOLFSSH_SHELL)
-                    if (ret == WS_SUCCESS) {
-                        wolfSSH_Log(WS_LOG_INFO,
-                            "[SSHD] Entering exec session [%s]",
-                                wolfSSH_GetSessionCommand(ssh));
-                        SHELL_Subsystem(conn, ssh, pPasswd, usrConf,
-                                wolfSSH_GetSessionCommand(ssh));
-                    }
-                #endif /* WOLFSSH_SHELL */
-
-                    /* SCP can be an exec type */
-                    if (ret == WS_SCP_INIT) {
-                    #ifdef WOLFSSH_SCP
-                        ret = SCP_Subsystem(conn, ssh, pPasswd, usrConf);
-                    #else
-                        err_sys("SCP not compiled in. Please use "
-                                "--enable-scp");
-                    #endif
-                    }
-                    break;
-
-                case WOLFSSH_SESSION_TERMINAL:
-                default:
-                    wolfSSH_Log(WS_LOG_ERROR,
-                        "[SSHD] Unknown or build not supporting session type "
-                        "found");
-                    ret = WS_NOT_COMPILED;
+        if (conn->doShell) {
+        #ifdef WOLFSSH_SHELL
+            if (ret == WS_SUCCESS) {
+                SHELL_Subsystem(conn, ssh, pPasswd, usrConf, NULL);
+            }
+        #else
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Shell support is disabled");
+            ret = WS_NOT_COMPILED;
+        #endif
+        }
+        else if (conn->doSftp) {
+        #ifdef WOLFSSH_SFTP
+            do {
+                ret = wolfSSH_SFTP_accept(ssh);
+                /* XXX Need some select */
+            } while (ret != WS_SFTP_COMPLETE
+                    && (error == WS_WANT_READ || error == WS_WANT_WRITE));
+            if (ret == WS_SFTP_COMPLETE) {
+                ret = SFTP_Subsystem(conn, ssh, pPasswd, usrConf);
+            }
+        #else
+            err_sys("SFTP not compiled in. Please use --enable-sftp");
+        #endif
+        }
+        else if (conn->doScp) {
+        #ifdef WOLFSSH_SCP
+            ret = SCP_Subsystem(conn, ssh, pPasswd, usrConf);
+        #else
+            err_sys("SCP not compiled in. Please use --enable-scp");
+        #endif
+        }
+        else if (conn->doExec) {
+            if (ret == WS_SUCCESS) {
+                wolfSSH_Log(WS_LOG_INFO, "[SSHD] Entering exec session [%s]",
+                    wolfSSH_GetSessionCommand(ssh));
+                SHELL_Subsystem(conn, ssh, pPasswd, usrConf,
+                        wolfSSH_GetSessionCommand(ssh));
             }
         }
     }
@@ -2053,7 +2077,7 @@ static void wolfSSHD_ServiceCb(DWORD CtrlCode)
 static char* _convertHelper(WCHAR* in, void* heap) {
     int retSz;
     char* ret;
-    
+
     retSz = (int)wcslen(in) * 2;
     ret   = (char*)WMALLOC(retSz + 1, heap, DYNTYPE_SSHD);
     if (ret != NULL) {
@@ -2399,7 +2423,8 @@ static int StartSSHD(int argc, char** argv)
             SOCKADDR_IN_T clientAddr;
             socklen_t     clientAddrSz = sizeof(clientAddr);
 #endif
-            conn = (WOLFSSHD_CONNECTION*)WMALLOC(sizeof(WOLFSSHD_CONNECTION), NULL, DYNTYPE_SSHD);
+            conn = (WOLFSSHD_CONNECTION*)WMALLOC(sizeof(WOLFSSHD_CONNECTION),
+                    NULL, DYNTYPE_SSHD);
             if (conn == NULL) {
                 wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failed to malloc memory for connection");
                 break;
@@ -2408,6 +2433,11 @@ static int StartSSHD(int argc, char** argv)
             conn->auth = auth;
             conn->listenFd = (int)listenFd;
             conn->isThreaded = isDaemon;
+            conn->doShell = 0;
+            conn->doSftp = 0;
+            conn->doScp= 0;
+            conn->doExec = 0;
+            conn->channel = NULL;
 
             /* wait for a connection */
             if (PendingConnection(listenFd)) {
