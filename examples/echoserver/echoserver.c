@@ -176,13 +176,11 @@ typedef struct WS_FwdCbActionCtx {
 #endif
 
 
-#ifdef WOLFSSH_SHELL
 typedef struct WS_ShellCtx {
     int isConnected;
     WS_SOCKET_T childFd;
     word32 channelId;
 } WS_ShellCtx;
-#endif
 
 
 typedef struct {
@@ -202,10 +200,8 @@ typedef struct {
     WS_FwdCbActionCtx fwdCbCtx;
     byte fwdBuffer[EXAMPLE_BUFFER_SZ];
 #endif
-#ifdef WOLFSSH_SHELL
     WS_ShellCtx shellCtx;
     byte shellBuffer[EXAMPLE_BUFFER_SZ];
-#endif
 #ifdef WOLFSSH_SFTP
     int doSftp;
 #endif
@@ -216,8 +212,6 @@ typedef struct {
     char statsBuffer[EXAMPLE_BUFFER_SZ];
 } thread_ctx_t;
 
-
-#ifdef WOLFSSH_SHELL
 
 static byte find_char(const byte* str, const byte* buf, word32 bufSz)
 {
@@ -280,8 +274,6 @@ static int process_bytes(thread_ctx_t* threadCtx,
     }
     return stop;
 }
-
-#endif /* WOLFSSH_SHELL */
 
 
 #if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
@@ -595,23 +587,33 @@ static int termios_show(int fd)
     }
     return 0;
 }
-#endif
+#endif /* SHELL_DEBUG */
+#endif /* WOLFSSH_SHELL */
 
 
 static int wsShellStartCb(WOLFSSH_CHANNEL* channel, void* ctx)
 {
     if (ctx != NULL) {
         thread_ctx_t* threadCtx;
+#ifdef WOLFSSH_SHELL
         WOLFSSH* ssh;
         const char *userName;
         struct passwd *p_passwd;
         struct termios tios;
         pid_t childPid;
         int rc;
+#endif /* WOLFSSH_SHELL */
 
         threadCtx = (thread_ctx_t*)ctx;
-        ssh = threadCtx->ssh;
         threadCtx->shellCtx.isConnected = 1;
+        if (threadCtx->echo) {
+            /* Running as the echoserver. Don't check the user with
+             * the system. One of the canned users is OK here. */
+            return 0;
+        }
+
+#ifdef WOLFSSH_SHELL
+        ssh = threadCtx->ssh;
         wolfSSH_ChannelGetId(channel,
                 &threadCtx->shellCtx.channelId, WS_CHANNEL_ID_PEER);
         userName = wolfSSH_GetUsername(ssh);
@@ -650,6 +652,10 @@ static int wsShellStartCb(WOLFSSH_CHANNEL* channel, void* ctx)
             }
 
             rc = execv("/bin/sh", (char **)args);
+            if (rc < 0) {
+                printf("execv failed: rc =%d,errno=%x\n", rc, errno);
+                return WS_FATAL_ERROR;
+            }
         }
         #ifdef SHELL_DEBUG
             printf("In childPid > 0; getpid=%d\n", (int)getpid());
@@ -687,11 +693,13 @@ static int wsShellStartCb(WOLFSSH_CHANNEL* channel, void* ctx)
         #endif /* HAVE_SYS_IOCTL_H */
 
         wolfSSH_SetTerminalResizeCtx(ssh, (void*)&threadCtx->shellCtx.childFd);
+#else /* WOLFSSH_SHELL */
+        (void)channel;
+#endif /* WOLFSSH_SHELL */
     }
 
     return 0;
 }
-#endif /* WOLFSSH_SHELL */
 
 
 #ifdef WOLFSSH_SCP
@@ -826,23 +834,18 @@ static int ssh_worker(thread_ctx_t* threadCtx)
         while (ChildRunning) {
             fd_set readFds, exFds;
             WS_SOCKET_T maxFd;
-            int cnt_r;
-#if defined(WOLFSSH_SHELL) || defined(WOLFSSH_AGENT) || defined(WOLFSSH_FWD)
-            int cnt_w;
-#endif
+            int cnt_r, cnt_w = 0;
 
             FD_ZERO(&readFds);
             FD_ZERO(&exFds);
             FD_SET(sshFd, &readFds);
             maxFd = sshFd;
 
-            #ifdef WOLFSSH_SHELL
             if (threadCtx->shellCtx.isConnected) {
                 FD_SET(threadCtx->shellCtx.childFd, &readFds);
                 if (threadCtx->shellCtx.childFd > maxFd)
                     maxFd = threadCtx->shellCtx.childFd;
             }
-            #endif /* WOLFSSH_SHELL */
             #ifdef WOLFSSH_AGENT
             if (threadCtx->agentCbCtx.state == AGENT_STATE_LISTEN) {
                 FD_SET(agentListenFd, &readFds);
@@ -902,7 +905,6 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                 if (cnt_r < 0) {
                     rc = wolfSSH_get_error(ssh);
                     if (rc == WS_CHAN_RXD) {
-                        #ifdef WOLFSSH_SHELL
                         if (threadCtx->shellCtx.isConnected &&
                                 lastChannel == threadCtx->shellCtx.channelId) {
                             cnt_r = wolfSSH_ChannelIdRead(ssh,
@@ -914,11 +916,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                             #ifdef SHELL_DEBUG
                                 buf_dump(threadCtx->channelBuffer, cnt_r);
                             #endif
-                            if (!threadCtx->echo) {
-                                cnt_w = (int)write(threadCtx->shellCtx.childFd,
-                                        threadCtx->channelBuffer, cnt_r);
-                            }
-                            else {
+                            if (threadCtx->echo) {
                                 cnt_w = wolfSSH_ChannelIdSend(ssh,
                                         threadCtx->shellCtx.channelId,
                                         threadCtx->channelBuffer, cnt_r);
@@ -929,10 +927,15 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                                     ChildRunning = !doStop;
                                 }
                             }
+                            #ifdef WOLFSSH_SHELL
+                            else {
+                                cnt_w = (int)write(threadCtx->shellCtx.childFd,
+                                        threadCtx->channelBuffer, cnt_r);
+                            }
+                            #endif /* WOLFSSH_SHELL */
                             if (cnt_w <= 0)
                                 break;
                         }
-                        #endif /* WOLFSSH_SHELL */
                         #ifdef WOLFSSH_AGENT
                         if (lastChannel == agentChannelId) {
                             cnt_r = wolfSSH_ChannelIdRead(ssh, agentChannelId,
@@ -1018,7 +1021,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                 }
             }
             #ifdef WOLFSSH_SHELL
-            if (threadCtx->shellCtx.isConnected) {
+            if (threadCtx->shellCtx.isConnected && !threadCtx->echo) {
                 if (FD_ISSET(threadCtx->shellCtx.childFd, &readFds)) {
                     cnt_r = (int)read(threadCtx->shellCtx.childFd,
                             threadCtx->shellBuffer,
@@ -2346,6 +2349,10 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     char**  argv = serverArgs->argv;
     serverArgs->return_code = EXIT_SUCCESS;
 
+#ifndef WOLFSSH_SHELL
+    echo = 1;
+#endif
+
     if (argc > 0) {
         const char* optlist = "?1a:d:efEp:R:Ni:j:I:J:K:P:k:";
         myoptind = 0;
@@ -2378,9 +2385,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                     break;
 
                 case 'f':
-                    #ifdef WOLFSSH_SHELL
-                        echo = 1;
-                    #endif
+                    echo = 1;
                     break;
 
                 case 'p':
@@ -2481,9 +2486,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         wolfSSH_SetUserAuth(ctx, ((func_args*)args)->user_auth);
     wolfSSH_SetUserAuthResult(ctx, wsUserAuthResult);
     wolfSSH_CTX_SetBanner(ctx, echoserverBanner);
-#ifdef WOLFSSH_SHELL
     wolfSSH_CTX_SetChannelReqShellCb(ctx, wsShellStartCb);
-#endif
 #ifdef WOLFSSH_AGENT
     wolfSSH_CTX_set_agent_cb(ctx, wolfSSH_AGENT_DefaultActions, NULL);
 #endif
