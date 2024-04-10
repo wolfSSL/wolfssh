@@ -832,13 +832,14 @@ static int ssh_worker(thread_ctx_t* threadCtx)
         ChildRunning = 1;
 
         while (ChildRunning) {
-            fd_set readFds, exFds;
+            fd_set readFds, writeFds;
             WS_SOCKET_T maxFd;
             int cnt_r, cnt_w = 0;
 
             FD_ZERO(&readFds);
-            FD_ZERO(&exFds);
+            FD_ZERO(&writeFds);
             FD_SET(sshFd, &readFds);
+            FD_SET(sshFd, &writeFds);
             maxFd = sshFd;
 
             if (threadCtx->shellCtx.isConnected) {
@@ -872,17 +873,16 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                 || threadCtx->fwdCbCtx.state == FWD_STATE_DIRECT_CONNECTED)) {
 
                 FD_SET(fwdFd, &readFds);
-                FD_SET(fwdFd, &exFds);
                 if (fwdFd > maxFd)
                     maxFd = fwdFd;
             }
             #endif /* WOLFSSH_FWD */
 
-            rc = select((int)maxFd + 1, &readFds, NULL, &exFds, NULL);
+            rc = select((int)maxFd + 1, &readFds, &writeFds, NULL, NULL);
             if (rc == -1)
                 break;
 
-            if (FD_ISSET(sshFd, &readFds)) {
+            if (FD_ISSET(sshFd, &readFds) || FD_ISSET(sshFd, &writeFds)) {
                 word32 lastChannel = 0;
 
                 /* The following tries to read from the first channel inside
@@ -892,16 +892,6 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                    channel. The additional channel is only used with the
                    agent. */
                 cnt_r = wolfSSH_worker(ssh, &lastChannel);
-                #ifdef WOLFSSH_SCP
-                if (threadCtx->doScp) {
-                    return WS_SCP_INIT;
-                }
-                #endif
-                #ifdef WOLFSSH_SFTP
-                if (threadCtx->doSftp) {
-                    return WS_SFTP_COMPLETE;
-                }
-                #endif
                 if (cnt_r < 0) {
                     rc = wolfSSH_get_error(ssh);
                     if (rc == WS_CHAN_RXD) {
@@ -1011,14 +1001,28 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                         #endif
                         continue;
                     }
-                    else if (rc != WS_WANT_READ && rc != WS_REKEYING) {
+                    else if (rc != WS_WANT_READ && rc != WS_WANT_WRITE
+                            && rc != WS_REKEYING) {
                         #ifdef SHELL_DEBUG
                             printf("Break:read sshFd returns %d: errno =%x\n",
                                     cnt_r, errno);
                         #endif
                         break;
                     }
+                    else {
+                        continue;
+                    }
                 }
+                #ifdef WOLFSSH_SCP
+                if (threadCtx->doScp) {
+                    return WS_SCP_INIT;
+                }
+                #endif
+                #ifdef WOLFSSH_SFTP
+                if (threadCtx->doSftp) {
+                    return WS_SFTP_COMPLETE;
+                }
+                #endif
             }
             #ifdef WOLFSSH_SHELL
             if (threadCtx->shellCtx.isConnected && !threadCtx->echo) {
@@ -2390,13 +2394,13 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
                 case 'p':
                     if (myoptarg == NULL) {
-                        ES_ERROR("NULL port value");
+                        ES_ERROR("NULL port value\n");
                     }
                     else {
                         port = (word16)atoi(myoptarg);
                         #if !defined(NO_MAIN_DRIVER) || defined(USE_WINDOWS_API)
                             if (port == 0) {
-                                ES_ERROR("port number cannot be 0");
+                                ES_ERROR("port number cannot be 0\n");
                             }
                         #endif
                     }
@@ -2448,7 +2452,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
 #ifdef WOLFSSH_TEST_BLOCK
     if (!nonBlock) {
-        ES_ERROR("Use -N when testing forced non blocking");
+        ES_ERROR("Use -N when testing forced non blocking\n");
     }
 #endif
 
@@ -2535,7 +2539,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             keyLoadBuf = (byte*)WMALLOC(EXAMPLE_KEYLOAD_BUFFER_SZ,
                     NULL, 0);
             if (keyLoadBuf == NULL) {
-                ES_ERROR("Error allocating keyLoadBuf");
+                ES_ERROR("Error allocating keyLoadBuf\n");
             }
         #else
             keyLoadBuf = buf;
@@ -2761,7 +2765,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                                                          &clientAddrSz);
     #endif
         if (clientFd == -1) {
-            ES_ERROR("tcp accept failed");
+            ES_ERROR("tcp accept failed\n");
         }
 
         if (nonBlock)

@@ -422,7 +422,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
 
     /* check if data pending to be sent */
     if (ssh->outputBuffer.length > 0 &&
-            ssh->acceptState < ACCEPT_CLIENT_SESSION_ESTABLISHED) {
+            ssh->acceptState < ACCEPT_DONE) {
         if ((ssh->error = wolfSSH_SendPacket(ssh)) == WS_SUCCESS) {
             WLOG(WS_LOG_DEBUG, "Sent pending packet");
 
@@ -430,8 +430,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
             if (ssh->acceptState != ACCEPT_SERVER_VERSION_SENT &&
                 ssh->acceptState != ACCEPT_SERVER_USERAUTH_ACCEPT_SENT &&
                 ssh->acceptState != ACCEPT_SERVER_KEXINIT_SENT &&
-                ssh->acceptState != ACCEPT_KEYED &&
-                ssh->acceptState != ACCEPT_SERVER_CHANNEL_ACCEPT_SENT) {
+                ssh->acceptState != ACCEPT_KEYED) {
                 WLOG(WS_LOG_DEBUG, "Advancing accept state");
                 ssh->acceptState++;
             }

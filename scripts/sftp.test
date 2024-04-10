@@ -3,16 +3,17 @@
 # sftp local test
 
 no_pid=-1
-server_pid=$no_pid
-ready_file=`pwd`/wolfssh_sftp_ready$$
+server_pid="$no_pid"
+ready_file="$PWD/wolfssh_sftp_ready$$"
 counter=0
 nonblockingOnly=0
 
-[ ! -x ./examples/sftpclient/wolfsftp ] && echo -e "\n\nwolfSFTP client doesn't exist" && exit 1
+[ ! -x ./examples/sftpclient/wolfsftp ] && echo && echo "wolfSFTP client doesn't exist" && exit 1
 
 # test for if the SFTP client works
-./examples/sftpclient/wolfsftp -h | grep NO_WOLFSSH_CLIENT
-if [ $? -eq 0 ]
+./examples/sftpclient/wolfsftp -h | grep -q NO_WOLFSSH_CLIENT
+RESULT=$?
+if [ $RESULT -eq 0 ]
 then
     echo "macro NO_WOLFSSH_CLIENT was used"
     echo "skipping test"
@@ -20,10 +21,11 @@ then
 fi
 
 # test for nonblocking only
-./examples/client/client -h | grep WOLFSSH_TEST_BLOCK
-if [ $? -eq 0 ]
+./examples/client/client -h | grep -q WOLFSSH_TEST_BLOCK
+RESULT=$?
+if [ $RESULT -eq 0 ]
 then
-    echo "macro NO_WOLFSSH_CLIENT was used"
+    echo "macro WOLFSSH_TEST_BLOCK was used"
     nonblockingOnly=1
 fi
 
@@ -31,27 +33,27 @@ fi
 
 create_port() {
     while [ ! -s "$ready_file" ] && [ "$counter" -lt 20 ]; do
-        echo -e "waiting for ready file..."
+        echo "waiting for ready file..."
         sleep 0.1
         counter=$((counter+ 1))
     done
 
-    if test -e $ready_file; then
-        echo -e "found ready file, starting client..."
+    if test -e "$ready_file"; then
+        echo "found ready file, starting client..."
 
         # get created port 0 ephemeral port
-        port=`cat $ready_file`
+        port=$(cat "$ready_file")
     else
-        echo -e "NO ready file ending test..."
+        echo "NO ready file ending test..."
         do_cleanup
         exit 1
     fi
 }
 
 remove_ready_file() {
-    if test -e $ready_file; then
-        echo -e "removing existing ready file"
-    rm $ready_file
+    if test -e "$ready_file"; then
+        echo "removing existing ready file"
+        rm "$ready_file"
     fi
 }
 
@@ -69,23 +71,25 @@ do_cleanup() {
 do_trap() {
     echo "got trap"
     do_cleanup
-    exit -1
+    exit 1
 }
 
 trap do_trap INT TERM
 
-[ ! -x ./examples/sftpclient/wolfsftp ] && echo -e "\n\nClient doesn't exist" && exit 1
+[ ! -x ./examples/sftpclient/wolfsftp ] && echo && echo "Client doesn't exist" && exit 1
 
 if [ $nonblockingOnly = 0 ]; then
     echo "Test basic connection"
-    ./examples/echoserver/echoserver -1 -R $ready_file &
+    ./examples/echoserver/echoserver -1 -R "$ready_file" &
     server_pid=$!
+    counter=0
     create_port
-    echo "exit" | ./examples/sftpclient/wolfsftp -u jill -P upthehill -p $port
+    echo "exit" | ./examples/sftpclient/wolfsftp -u jill -P upthehill -p "$port"
     RESULT=$?
     remove_ready_file
     if [ $RESULT -ne 0 ]; then
-        echo -e "\n\nfailed to connect"
+        echo
+        echo "failed to connect"
         do_cleanup
         exit 1
     fi
@@ -93,14 +97,16 @@ fi
 
 # Test non blocking connection
 echo "Test non blocking connection"
-./examples/echoserver/echoserver -N -1 -R $ready_file &
+./examples/echoserver/echoserver -N -1 -R "$ready_file" &
 server_pid=$!
+counter=0
 create_port
-echo "exit" | ./examples/sftpclient/wolfsftp -N -u jill -P upthehill -p $port
+echo "exit" | ./examples/sftpclient/wolfsftp -N -u jill -P upthehill -p "$port"
 RESULT=$?
 remove_ready_file
 if [ $RESULT -ne 0 ]; then
-    echo -e "\n\nfailed to connect"
+    echo
+    echo "failed to connect"
     do_cleanup
     exit 1
 fi
@@ -108,21 +114,23 @@ fi
 # Test of setting directory
 if [ $nonblockingOnly = 0 ]; then
     echo "Test of setting directory"
-    PWD=`pwd`
-    ./examples/echoserver/echoserver -d $PWD/examples -1 -R $ready_file &
+    ./examples/echoserver/echoserver -d "$PWD"/examples -1 -R "$ready_file" &
     server_pid=$!
+    counter=0
     create_port
-    echo "exit" | ./examples/sftpclient/wolfsftp -N -u jill -P upthehill -p $port
+    echo "exit" | ./examples/sftpclient/wolfsftp -N -u jill -P upthehill -p "$port"
     RESULT=$?
     remove_ready_file
     if [ $RESULT -ne 0 ]; then
-        echo -e "\n\nfailed to connect"
+        echo
+        echo "failed to connect"
         do_cleanup
         exit 1
     fi
 fi
 
-echo -e "\nALL Tests Passed"
+echo
+echo "ALL Tests Passed"
 
 exit 0
 
