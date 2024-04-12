@@ -396,10 +396,36 @@ or define `WOLFSSH_SHELL`:
     $ ./configure --enable-shell
     $ make
 
+To try out this functionality, you can use the example echoserver and client.
+In a terminal do the following to launch the server:
+
+    $ ./examples/echoserver/echoserver -P <user>:junk
+
+And in another terminal do the following to launch the example client:
+
+    $ ./examples/client/client -t -u <user> -P junk
+
+Note that `<user>` must be the user name of the current user that is logged in.
+
 By default, the echoserver will try to start a shell. To use the echo testing
 behavior, give the echoserver the command line option `-f`.
 
     $ ./examples/echoserver/echoserver -f
+
+To use the shell feature with wolfsshd add `--enable-sshd` to your configure
+command and use the following command:
+
+    $ sudo ./apps/wolfsshd/wolfsshd -D -h keys/gretel-key-ecc.pem -p 11111
+
+If it complains about a bad `sshd_config` file, simply copy it to another file
+and remove the offending line that it complains about and use the `-f` command
+line parameter to point to the new file.
+
+You can then connect to the `wolfsshd` server with ssh:
+
+    $ ssh <user>@localhost -p 11111
+
+Note that `<user>` must be the user name of the current user that is logged in.
 
 CURVE25519
 ==========
