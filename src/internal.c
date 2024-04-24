@@ -1155,6 +1155,7 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
         if (hint->memory->flag & WOLFMEM_TRACK_STATS
                 && hint->stats != NULL) {
             WFREE(hint->stats, heap, DYNTYPE_SSH);
+            hint->stats = NULL;
         }
     }
 #endif

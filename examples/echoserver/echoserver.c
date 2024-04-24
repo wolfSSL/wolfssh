@@ -623,10 +623,10 @@ static int termios_show(int fd)
       * and distList items and summing (32*64 + 128*118 + ...) and adding
       * the sum of the distList values times the sizeof wc_Memory (rounded up
       * to a word, 24). This total was 288kb plus change, rounded up to 289. */
-    const word32 static_sizeList[] =
+    static const word32 static_sizeList[] =
             {32,128,384,800,3120,8400,17552,32846,131072};
-    const word32 static_distList[] = {64,118,3,4,6,2,2,2,1};
-    byte static_buffer[289*1024];
+    static const word32 static_distList[] = {64,118,3,4,6,2,2,2,1};
+    static byte static_buffer[289*1024];
 
     static void wolfSSH_MemoryPrintStats(ES_HEAP_HINT* hint)
     {
