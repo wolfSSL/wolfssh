@@ -241,7 +241,8 @@ static const unsigned int hanselPrivateEccSz = 223;
 
 #if defined(WOLFSSH_CERTS)
 
-static int load_der_file(const char* filename, byte** out, word32* outSz)
+static int load_der_file(const char* filename, byte** out, word32* outSz,
+        void* heap)
 {
     WFILE* file;
     byte* in;
@@ -267,7 +268,7 @@ static int load_der_file(const char* filename, byte** out, word32* outSz)
         return -1;
     }
 
-    in = (byte*)WMALLOC(inSz, NULL, 0);
+    in = (byte*)WMALLOC(inSz, heap, 0);
     if (in == NULL) {
         WFCLOSE(NULL, file);
         return -1;
@@ -276,7 +277,7 @@ static int load_der_file(const char* filename, byte** out, word32* outSz)
     ret = (int)WFREAD(NULL, in, 1, inSz, file);
     if (ret <= 0 || (word32)ret != inSz) {
         ret = -1;
-        WFREE(in, NULL, 0);
+        WFREE(in, heap, 0);
         in = 0;
         inSz = 0;
     }
@@ -652,19 +653,20 @@ int ClientSetEcho(int type)
 
 /* Set certificate to use and public key.
  * returns 0 on success */
-int ClientUseCert(const char* certName)
+int ClientUseCert(const char* certName, void* heap)
 {
     int ret = 0;
 
     if (certName != NULL) {
     #ifdef WOLFSSH_CERTS
-        ret = load_der_file(certName, &userPublicKey, &userPublicKeySz);
+        ret = load_der_file(certName, &userPublicKey, &userPublicKeySz, heap);
         if (ret == 0) {
             userPublicKeyType = publicKeyType;
             userPublicKeyTypeSz = (word32)WSTRLEN((const char*)publicKeyType);
             pubKeyLoaded = 1;
         }
     #else
+        (void)heap;
         fprintf(stderr, "Certificate support not compiled in");
         ret = WS_NOT_COMPILED;
     #endif
@@ -676,7 +678,7 @@ int ClientUseCert(const char* certName)
 
 /* Reads the private key to use from file name privKeyName.
  * returns 0 on success */
-int ClientSetPrivateKey(const char* privKeyName, int userEcc)
+int ClientSetPrivateKey(const char* privKeyName, int userEcc, void* heap)
 {
     int ret = 0;
 
@@ -685,14 +687,14 @@ int ClientSetPrivateKey(const char* privKeyName, int userEcc)
         #ifndef WOLFSSH_NO_ECC
             ret = wolfSSH_ReadKey_buffer(hanselPrivateEcc, hanselPrivateEccSz,
                     WOLFSSH_FORMAT_ASN1, &userPrivateKey, &userPrivateKeySz,
-                    &userPrivateKeyType, &userPrivateKeyTypeSz, NULL);
+                    &userPrivateKeyType, &userPrivateKeyTypeSz, heap);
         #endif
         }
         else {
         #ifndef WOLFSSH_NO_RSA
             ret = wolfSSH_ReadKey_buffer(hanselPrivateRsa, hanselPrivateRsaSz,
                     WOLFSSH_FORMAT_ASN1, &userPrivateKey, &userPrivateKeySz,
-                    &userPrivateKeyType, &userPrivateKeyTypeSz, NULL);
+                    &userPrivateKeyType, &userPrivateKeyTypeSz, heap);
         #endif
         }
         isPrivate = 1;
@@ -703,7 +705,7 @@ int ClientSetPrivateKey(const char* privKeyName, int userEcc)
         ret = wolfSSH_ReadKey_file(privKeyName,
                 (byte**)&userPrivateKey, &userPrivateKeySz,
                 (const byte**)&userPrivateKeyType, &userPrivateKeyTypeSz,
-                &isPrivate, NULL);
+                &isPrivate, heap);
     #else
         printf("file system not compiled in!\n");
         ret = NOT_COMPILED_IN;
@@ -716,7 +718,7 @@ int ClientSetPrivateKey(const char* privKeyName, int userEcc)
 
 /* Set public key to use
  * returns 0 on success */
-int ClientUsePubKey(const char* pubKeyName, int userEcc)
+int ClientUsePubKey(const char* pubKeyName, int userEcc, void* heap)
 {
     int ret = 0;
 
@@ -729,7 +731,7 @@ int ClientUsePubKey(const char* pubKeyName, int userEcc)
             ret = wolfSSH_ReadKey_buffer((const byte*)hanselPublicEcc,
                     (word32)strlen(hanselPublicEcc), WOLFSSH_FORMAT_SSH,
                     &p, &userPublicKeySz,
-                    &userPublicKeyType, &userPublicKeyTypeSz, NULL);
+                    &userPublicKeyType, &userPublicKeyTypeSz, heap);
         #endif
         }
         else {
@@ -737,7 +739,7 @@ int ClientUsePubKey(const char* pubKeyName, int userEcc)
             ret = wolfSSH_ReadKey_buffer((const byte*)hanselPublicRsa,
                     (word32)strlen(hanselPublicRsa), WOLFSSH_FORMAT_SSH,
                     &p, &userPublicKeySz,
-                    &userPublicKeyType, &userPublicKeyTypeSz, NULL);
+                    &userPublicKeyType, &userPublicKeyTypeSz, heap);
         #endif
         }
         isPrivate = 1;
@@ -748,7 +750,7 @@ int ClientUsePubKey(const char* pubKeyName, int userEcc)
         ret = wolfSSH_ReadKey_file(pubKeyName,
                 &userPublicKey, &userPublicKeySz,
                 (const byte**)&userPublicKeyType, &userPublicKeyTypeSz,
-                &isPrivate, NULL);
+                &isPrivate, heap);
     #else
         printf("file system not compiled in!\n");
         ret = -1;
@@ -771,7 +773,7 @@ int ClientLoadCA(WOLFSSH_CTX* ctx, const char* caCert)
         byte* der = NULL;
         word32 derSz;
 
-        ret = load_der_file(caCert, &der, &derSz);
+        ret = load_der_file(caCert, &der, &derSz, ctx->heap);
         if (ret == 0) {
             if (wolfSSH_CTX_AddRootCert_buffer(ctx, der, derSz,
                 WOLFSSH_FORMAT_ASN1) != WS_SUCCESS) {
@@ -790,13 +792,14 @@ int ClientLoadCA(WOLFSSH_CTX* ctx, const char* caCert)
 }
 
 
-void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName)
+void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
+        void* heap)
 {
     if (pubKeyName != NULL && userPublicKey != NULL) {
-        WFREE(userPublicKey, NULL, DYNTYPE_PRIVKEY);
+        WFREE(userPublicKey, heap, DYNTYPE_PRIVKEY);
     }
 
     if (privKeyName != NULL && userPrivateKey != NULL) {
-        WFREE(userPrivateKey, NULL, DYNTYPE_PRIVKEY);
+        WFREE(userPrivateKey, heap, DYNTYPE_PRIVKEY);
     }
 }

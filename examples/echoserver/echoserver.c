@@ -623,10 +623,21 @@ static int termios_show(int fd)
       * and distList items and summing (32*64 + 128*118 + ...) and adding
       * the sum of the distList values times the sizeof wc_Memory (rounded up
       * to a word, 24). This total was 288kb plus change, rounded up to 289. */
-    static const word32 static_sizeList[] =
-            {32,128,384,800,3120,8400,17552,32846,131072};
-    static const word32 static_distList[] = {64,118,3,4,6,2,2,2,1};
-    static byte static_buffer[289*1024];
+    #ifndef ES_STATIC_SIZES
+        #define ES_STATIC_SIZES 32,128,384,800,3120,8400,17552,32846,131072
+    #endif
+    #ifndef ES_STATIC_DISTS
+        #define ES_STATIC_DISTS 64,118,3,4,6,2,2,2,1
+    #endif
+    #ifndef ES_STATIC_LISTSZ
+        #define ES_STATIC_LISTSZ 9
+    #endif
+    #ifndef ES_STATIC_BUFSZ
+        #define ES_STATIC_BUFSZ (289*1024)
+    #endif
+    static const word32 static_sizeList[] = {ES_STATIC_SIZES};
+    static const word32 static_distList[] = {ES_STATIC_DISTS};
+    static byte static_buffer[ES_STATIC_BUFSZ];
 
     static void wolfSSH_MemoryPrintStats(ES_HEAP_HINT* hint)
     {
@@ -2410,7 +2421,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         int ret;
 
         ret = wc_LoadStaticMemory_ex(&heap,
-                9, static_sizeList, static_distList,
+                ES_STATIC_LISTSZ, static_sizeList, static_distList,
                 static_buffer, sizeof(static_buffer),
                 WOLFMEM_GENERAL|WOLFMEM_TRACK_STATS, 0);
         if (ret != 0) {

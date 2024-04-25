@@ -780,7 +780,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         err_sys("If setting priv key, need pub key.");
     }
 
-    ret = ClientSetPrivateKey(privKeyName, userEcc);
+    ret = ClientSetPrivateKey(privKeyName, userEcc, NULL);
     if (ret != 0) {
         err_sys("Error setting private key");
     }
@@ -788,12 +788,12 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 #ifdef WOLFSSH_CERTS
     /* passed in certificate to use */
     if (certName) {
-        ret = ClientUseCert(certName);
+        ret = ClientUseCert(certName, NULL);
     }
     else
 #endif
     if (pubKeyName) {
-        ret = ClientUsePubKey(pubKeyName, userEcc);
+        ret = ClientUsePubKey(pubKeyName, userEcc, NULL);
     }
     if (ret != 0) {
         err_sys("Error setting public key");
@@ -1079,7 +1079,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         err_sys("Closing client stream failed");
     }
 
-    ClientFreeBuffers(pubKeyName, privKeyName);
+    ClientFreeBuffers(pubKeyName, privKeyName, NULL);
 #if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
