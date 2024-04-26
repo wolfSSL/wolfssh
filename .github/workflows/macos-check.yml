@@ -17,14 +17,12 @@ jobs:
           repository: wolfSSL/wolfssl.git
           ref: master
     - name: brew
-      run: brew install automake
+      run: brew install autoconf automake libtool
     - name: build wolfSSL
-      run: ./autogen.sh && ./configure --enable-ssh --enable-cryptonly && make check && sudo make install
+      run: ./autogen.sh && ./configure --enable-wolfssh --enable-cryptonly && make check && sudo make install
     - uses: actions/checkout@v2
-    - name: autogen
-      run: ./autogen.sh
     - name: configure
-      run: ./configure
+      run: autoreconf -ivf && ./configure
     - name: make
       run: make
     - name: make check
