@@ -18,6 +18,9 @@ endif
 if BUILD_SFTP
 tests_unit_test_CPPFLAGS     += -DWOLFSSH_SFTP
 endif
+if BUILD_TERM
+tests_unit_test_CPPFLAGS     += -DWOLFSSH_TERM
+endif
 if BUILD_SHELL
 tests_unit_test_CPPFLAGS     += -DWOLFSSH_SHELL
 endif
@@ -44,6 +47,9 @@ tests_api_test_CPPFLAGS     += -DWOLFSSH_SCP
 endif
 if BUILD_SFTP
 tests_api_test_CPPFLAGS     += -DWOLFSSH_SFTP
+endif
+if BUILD_TERM
+tests_api_test_CPPFLAGS     += -DWOLFSSH_TERM
 endif
 if BUILD_SHELL
 tests_api_test_CPPFLAGS     += -DWOLFSSH_SHELL
@@ -76,6 +82,9 @@ tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_SCP
 endif
 if BUILD_SFTP
 tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_SFTP
+endif
+if BUILD_TERM
+tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_TERM
 endif
 if BUILD_SHELL
 tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_SHELL

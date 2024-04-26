@@ -494,6 +494,14 @@ struct WOLFSSH_CTX {
     WS_CallbackGlobalReq globalReqCb; /* Global Request Callback */
     WS_CallbackReqSuccess reqSuccessCb; /* Global Request Success Callback */
     WS_CallbackReqSuccess reqFailureCb; /* Global Request Failure Callback */
+    WS_CallbackChannelOpen channelOpenCb;     /* Channel Open Requested */
+    WS_CallbackChannelOpen channelOpenConfCb; /* Channel Open Confirm */
+    WS_CallbackChannelOpen channelOpenFailCb; /* Channel Open Fail */
+    WS_CallbackChannelReq channelReqShellCb; /* Channel Request "Shell" */
+    WS_CallbackChannelReq channelReqExecCb; /* Channel Request "Exec" */
+    WS_CallbackChannelReq channelReqSubsysCb; /* Channel Request "Subsystem" */
+    WS_CallbackChannelEof channelEofCb; /* Channel Eof Callback */
+    WS_CallbackChannelClose channelCloseCb; /* Channel Close Callback */
 #ifdef WOLFSSH_SCP
     WS_CallbackScpRecv scpRecvCb;     /* SCP receive callback */
     WS_CallbackScpSend scpSendCb;     /* SCP send callback */
@@ -656,10 +664,14 @@ struct WOLFSSH {
     word32 rxCount;
     word32 highwaterMark;
     byte highwaterFlag;    /* Set when highwater CB called */
-    void* highwaterCtx;
+    void* highwaterCtx;    /* Highwater CB context */
     void* globalReqCtx;    /* Global Request CB context */
     void* reqSuccessCtx;   /* Global Request Sucess CB context */
     void* reqFailureCtx;   /* Global Request Failure CB context */
+    void* channelOpenCtx;  /* Channel Open CB context */
+    void* channelReqCtx;   /* Channel Request CB context */
+    void* channelEofCtx;   /* Channel EOF CB context */
+    void* channelCloseCtx; /* Channel Close CB context */
     void* fs;              /* File system handle */
     word32 curSz;
     word32 seq;
@@ -1000,17 +1012,7 @@ enum AcceptStates {
     ACCEPT_SERVER_USERAUTH_ACCEPT_SENT,
     ACCEPT_CLIENT_USERAUTH_DONE,
     ACCEPT_SERVER_USERAUTH_SENT,
-    ACCEPT_SERVER_CHANNEL_ACCEPT_SENT,
-    ACCEPT_CLIENT_SESSION_ESTABLISHED,
-#ifdef WOLFSSH_SCP
-    ACCEPT_INIT_SCP_TRANSFER,
-#endif
-#ifdef WOLFSSH_SFTP
-    ACCEPT_INIT_SFTP,
-#endif
-#ifdef WOLFSSH_AGENT
-    ACCEPT_INIT_AGENT,
-#endif
+    ACCEPT_DONE
 };
 
 
@@ -1226,7 +1228,6 @@ enum WS_ScpDirection {
 };
 
 WOLFSSH_LOCAL int ChannelCommandIsScp(WOLFSSH*);
-WOLFSSH_LOCAL int DoScpRequest(WOLFSSH*);
 WOLFSSH_LOCAL int DoScpSink(WOLFSSH* ssh);
 WOLFSSH_LOCAL int DoScpSource(WOLFSSH* ssh);
 WOLFSSH_LOCAL int ParseScpCommand(WOLFSSH*);

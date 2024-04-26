@@ -422,7 +422,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
 
     /* check if data pending to be sent */
     if (ssh->outputBuffer.length > 0 &&
-            ssh->acceptState < ACCEPT_CLIENT_SESSION_ESTABLISHED) {
+            ssh->acceptState < ACCEPT_DONE) {
         if ((ssh->error = wolfSSH_SendPacket(ssh)) == WS_SUCCESS) {
             WLOG(WS_LOG_DEBUG, "Sent pending packet");
 
@@ -430,8 +430,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
             if (ssh->acceptState != ACCEPT_SERVER_VERSION_SENT &&
                 ssh->acceptState != ACCEPT_SERVER_USERAUTH_ACCEPT_SENT &&
                 ssh->acceptState != ACCEPT_SERVER_KEXINIT_SENT &&
-                ssh->acceptState != ACCEPT_KEYED &&
-                ssh->acceptState != ACCEPT_SERVER_CHANNEL_ACCEPT_SENT) {
+                ssh->acceptState != ACCEPT_KEYED) {
                 WLOG(WS_LOG_DEBUG, "Advancing accept state");
                 ssh->acceptState++;
             }
@@ -453,7 +452,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
         }
     }
 
-    while (ssh->acceptState != ACCEPT_CLIENT_SESSION_ESTABLISHED) {
+    while (ssh->acceptState != ACCEPT_SERVER_USERAUTH_SENT) {
         switch (ssh->acceptState) {
 
             case ACCEPT_BEGIN:
@@ -543,47 +542,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 }
                 ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
                 WLOG(WS_LOG_DEBUG, acceptState, "SERVER_USERAUTH_SENT");
-                NO_BREAK;
-
-            case ACCEPT_SERVER_USERAUTH_SENT:
-                while (ssh->clientState < CLIENT_CHANNEL_OPEN_DONE) {
-                    if (DoReceive(ssh) < 0) {
-                        WLOG(WS_LOG_DEBUG, acceptError,
-                             "SERVER_USERAUTH_SENT", ssh->error);
-                        return WS_FATAL_ERROR;
-                    }
-                }
-                ssh->acceptState = ACCEPT_SERVER_CHANNEL_ACCEPT_SENT;
-                WLOG(WS_LOG_DEBUG, acceptState, "SERVER_CHANNEL_ACCEPT_SENT");
-                NO_BREAK;
-
-            case ACCEPT_SERVER_CHANNEL_ACCEPT_SENT:
-                while (ssh->clientState < CLIENT_DONE) {
-                    if (DoReceive(ssh) < 0) {
-                        WLOG(WS_LOG_DEBUG, acceptError,
-                             "SERVER_CHANNEL_ACCEPT_SENT", ssh->error);
-                        return WS_FATAL_ERROR;
-                    }
-                }
-
-#ifdef WOLFSSH_SCP
-                if (ChannelCommandIsScp(ssh)) {
-                    ssh->acceptState = ACCEPT_INIT_SCP_TRANSFER;
-                    WLOG(WS_LOG_DEBUG, acceptState, "ACCEPT_INIT_SCP_TRANSFER");
-                    return WS_SCP_INIT;
-                }
-#endif
-#if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_SERVER)
-                {
-                    const char* cmd = wolfSSH_GetSessionCommand(ssh);
-                    if (cmd != NULL &&
-                        WOLFSSH_SESSION_SUBSYSTEM == wolfSSH_GetSessionType(ssh)
-                        && (WSTRNCMP(cmd, "sftp", 4) == 0)) {
-                        ssh->acceptState = ACCEPT_INIT_SFTP;
-                        return wolfSSH_SFTP_accept(ssh);
-                    }
-                }
-#endif /* WOLFSSH_SFTP and !NO_WOLFSSH_SERVER */
+#if 0
 #ifdef WOLFSSH_AGENT
                 if (ssh->useAgent) {
                     WOLFSSH_AGENT_CTX* newAgent;
@@ -638,20 +597,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_SESSION_ESTABLISHED");
                 break;
 
-#ifdef WOLFSSH_SCP
-            case ACCEPT_INIT_SCP_TRANSFER:
-                if (DoScpRequest(ssh) < 0) {
-                    WLOG(WS_LOG_DEBUG, acceptError, "INIT_SCP_TRANSFER",
-                         ssh->error);
-                    return WS_FATAL_ERROR;
-                }
-                return WS_SCP_COMPLETE;
-#endif
-#ifdef WOLFSSH_SFTP
-            case ACCEPT_INIT_SFTP:
-                return wolfSSH_SFTP_accept(ssh);
-#endif
-
+#endif /* 0 */
         }
     } /* end while */
 
@@ -2556,7 +2502,8 @@ WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNewRemote(WOLFSSH* ssh,
     if (newChannel != NULL)
         ChannelAppend(ssh, newChannel);
 
-    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelFwdNewRemote(), newChannel = %p, ret = %d",
+    WLOG(WS_LOG_DEBUG,
+            "Leaving wolfSSH_ChannelFwdNewRemote(), newChannel = %p, ret = %d",
             newChannel, ret);
     return newChannel;
 }
@@ -2829,6 +2776,230 @@ int wolfSSH_ChannelGetEof(WOLFSSH_CHANNEL* channel)
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelGetEof(), %s",
             eof ? "true" : "false");
     return eof;
+}
+
+
+WS_SessionType wolfSSH_ChannelGetSessionType(const WOLFSSH_CHANNEL* channel)
+{
+    WS_SessionType type = WOLFSSH_SESSION_UNKNOWN;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelGetType()");
+
+    if (channel) {
+        type = (WS_SessionType)channel->sessionType;
+    }
+
+    return type;
+}
+
+
+const char* wolfSSH_ChannelGetSessionCommand(const WOLFSSH_CHANNEL* channel)
+{
+    const char* cmd = NULL;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelGetCommand()");
+
+    if (channel) {
+        cmd = channel->command;
+    }
+
+    return cmd;
+}
+
+
+int wolfSSH_CTX_SetChannelOpenCb(WOLFSSH_CTX* ctx, WS_CallbackChannelOpen cb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->channelOpenCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_CTX_SetChannelOpenRespCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelOpen confCb, WS_CallbackChannelOpen failCb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->channelOpenConfCb = confCb;
+        ctx->channelOpenFailCb = failCb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_CTX_SetChannelReqShellCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelReq cb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->channelReqShellCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_CTX_SetChannelReqExecCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelReq cb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->channelReqExecCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_CTX_SetChannelReqSubsysCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelReq cb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->channelReqSubsysCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_SetChannelOpenCtx(WOLFSSH* ssh, void* ctx)
+{
+    int ret = WS_SSH_NULL_E;
+
+    if (ssh != NULL) {
+        ssh->channelOpenCtx = ctx;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+void* wolfSSH_GetChannelOpenCtx(WOLFSSH* ssh)
+{
+    void* ctx = NULL;
+
+    if (ssh != NULL) {
+        ctx = ssh->channelOpenCtx;
+    }
+
+    return ctx;
+}
+
+
+int wolfSSH_SetChannelReqCtx(WOLFSSH* ssh, void* ctx)
+{
+    int ret = WS_SSH_NULL_E;
+
+    if (ssh != NULL) {
+        ssh->channelReqCtx = ctx;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+void* wolfSSH_GetChannelReqCtx(WOLFSSH* ssh)
+{
+    void* ctx = NULL;
+
+    if (ssh != NULL) {
+        ctx = ssh->channelReqCtx;
+    }
+
+    return ctx;
+}
+
+
+int wolfSSH_CTX_SetChannelEofCb(WOLFSSH_CTX* ctx, WS_CallbackChannelEof cb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->channelEofCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_SetChannelEofCtx(WOLFSSH* ssh, void* ctx)
+{
+    int ret = WS_SSH_NULL_E;
+
+    if (ssh != NULL) {
+        ssh->channelEofCtx = ctx;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+void* wolfSSH_GetChannelEofCtx(WOLFSSH* ssh)
+{
+    void* ctx = NULL;
+
+    if (ssh != NULL) {
+        ctx = ssh->channelEofCtx;
+    }
+
+    return ctx;
+}
+
+
+int wolfSSH_CTX_SetChannelCloseCb(WOLFSSH_CTX* ctx, WS_CallbackChannelClose cb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->channelCloseCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_SetChannelCloseCtx(WOLFSSH* ssh, void* ctx)
+{
+    int ret = WS_SSH_NULL_E;
+
+    if (ssh != NULL) {
+        ssh->channelCloseCtx = ctx;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+void* wolfSSH_GetChannelCloseCtx(WOLFSSH* ssh)
+{
+    void* ctx = NULL;
+
+    if (ssh != NULL) {
+        ctx = ssh->channelCloseCtx;
+    }
+
+    return ctx;
 }
 
 

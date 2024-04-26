@@ -668,7 +668,7 @@ int DoScpSource(WOLFSSH* ssh)
     return ret;
 }
 
-int DoScpRequest(WOLFSSH* ssh)
+int wolfSSH_SCP_DoRequest(WOLFSSH* ssh)
 {
     int ret = WS_SUCCESS;
 
@@ -789,6 +789,7 @@ WOLFSSH_API int wolfSSH_SetScpErrorMsg(WOLFSSH* ssh, const char* message)
 
 /* Determine if channel command sent in initial negotiation is scp.
  * Return 1 if yes, 0 if no */
+/* XXX Obsolete. Remove. */
 int ChannelCommandIsScp(WOLFSSH* ssh)
 {
     const char* cmd;

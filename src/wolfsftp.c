@@ -1126,22 +1126,6 @@ int wolfSSH_SFTP_accept(WOLFSSH* ssh)
     if (ssh->error == WS_WANT_READ || ssh->error == WS_WANT_WRITE)
         ssh->error = WS_SUCCESS;
 
-    /* check accept is done, if not call wolfSSH accept */
-    if (ssh->acceptState < ACCEPT_CLIENT_SESSION_ESTABLISHED) {
-        byte name[] = "sftp";
-
-        WLOG(WS_LOG_SFTP, "Trying to do SSH accept first");
-        if ((ret = wolfSSH_SetChannelType(ssh, WOLFSSH_SESSION_SUBSYSTEM,
-                            name, sizeof(name) - 1)) != WS_SUCCESS) {
-            WLOG(WS_LOG_SFTP, "Unable to set subsystem channel type");
-            return ret;
-        }
-
-        if ((ret = wolfSSH_accept(ssh)) != WS_SUCCESS) {
-            return ret;
-        }
-    }
-
     switch (ssh->sftpState) {
         case SFTP_BEGIN:
         case SFTP_EXT:

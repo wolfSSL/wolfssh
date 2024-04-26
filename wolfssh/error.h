@@ -133,7 +133,7 @@ enum WS_ErrorCodes {
     WS_KEY_FORMAT_E         = -1092, /* OpenSSH key format fail */
     WS_SFTP_NOT_FILE_E      = -1093, /* Not a regular file */
     WS_MSGID_NOT_ALLOWED_E  = -1094, /* Message not allowed before userauth */
-    
+
     WS_LAST_E               = -1094  /* Update this to indicate last error */
 };
 
