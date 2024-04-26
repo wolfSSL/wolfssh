@@ -9266,7 +9266,7 @@ int SendKexInit(WOLFSSH* ssh)
         kexAlgoNamesSz = AlgoListSz(ssh->algoListKex);
         encAlgoNamesSz = AlgoListSz(ssh->algoListCipher);
         if (!keyAlgoNames) {
-            keyAlgoNamesSz = (word32)WSTRLEN(ssh->algoListKey);
+            keyAlgoNamesSz = AlgoListSz(ssh->algoListKey);
         }
         else {
             keyAlgoNamesSz = AlgoListSz(keyAlgoNames);
