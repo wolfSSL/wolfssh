@@ -806,8 +806,6 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     int cnt_r, cnt_w;
     HANDLE ptyIn = NULL, ptyOut = NULL;
     HANDLE cnslIn = NULL, cnslOut = NULL;
-    HPCON pCon = 0;
-    COORD cord;
     STARTUPINFOEX ext;
     PCWSTR sysCmd = L"c:\\windows\\system32\\cmd.exe";
 #if 0
@@ -865,7 +863,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 }
 
                 if (ret == WS_SUCCESS) {
-                    swprintf(cmd, cmdSz, L"%s /C \"%s\"", sysCmd, tmp);
+                    swprintf(cmd, cmdSz, L"%s /C %s", sysCmd, tmp);
                 }
 
                 if (tmp != NULL) {
@@ -898,259 +896,239 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         }
     }
 
+    if (ImpersonateLoggedOnUser(wolfSSHD_GetAuthToken(conn->auth)) == FALSE) {
+        ret = WS_FATAL_ERROR;
+    }
+
     if (ret == WS_SUCCESS) {
-        HRESULT err;
+        SECURITY_ATTRIBUTES saAttr;
 
-        CreatePipe(&cnslIn, &ptyIn, NULL, 0);
-        CreatePipe(&ptyOut, &cnslOut, NULL, 0);
+        saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
+        saAttr.bInheritHandle = TRUE;
+        saAttr.lpSecurityDescriptor = NULL;
 
-        cord.X = ssh->widthChar;
-        cord.Y = ssh->heightRows;
-
-        /* Sanity check on cord values, if 0 than assume was not set.
-         * (can happen with exec and not req-pty message)
-         * If not set yet then use sane default values. */
-        if (cord.X == 0) {
-            cord.X = 80;
-        }
-
-        if (cord.Y == 0) {
-            cord.Y = 24;
-        }
-
-        err = CreatePseudoConsole(cord, cnslIn, cnslOut, 0, &pCon);
-        if (err != S_OK) {
-            wolfSSH_Log(WS_LOG_ERROR,
-                "[SSHD] Issue creating pseudo console");
+        if (CreatePipe(&cnslIn, &ptyIn, &saAttr, 0) != TRUE) {
             ret = WS_FATAL_ERROR;
+        }
+
+        if (CreatePipe(&ptyOut, &cnslOut, &saAttr, 0) != TRUE) {
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        STARTUPINFO si;
+        PCWSTR conCmd = L"wolfsshd.exe -r ";
+        PWSTR conCmdPtr;
+        int conCmdSz;
+
+        SetHandleInformation(ptyIn, HANDLE_FLAG_INHERIT, 0);
+        SetHandleInformation(ptyOut, HANDLE_FLAG_INHERIT, 0);
+
+        wolfSSH_SetTerminalResizeCtx(ssh, (void*)&ptyIn);
+
+        conCmdSz = (int)(wcslen(conCmd) + cmdSz + 2); /* +1 for terminator */
+        conCmdPtr = (PWSTR)WMALLOC(sizeof(wchar_t) * conCmdSz, NULL, DYNTYPE_SSHD);
+        if (conCmdPtr == NULL) {
+            ret = WS_MEMORY_E;
         }
         else {
-            CloseHandle(cnslIn);
-            CloseHandle(cnslOut);
-            wolfSSH_SetTerminalResizeCtx(ssh, (void*)&pCon);
-        }
-    }
-
-    /* setup startup extended info for pseudo terminal */
-    if (ret == WS_SUCCESS) {
-        ext.StartupInfo.cb = sizeof(STARTUPINFOEX);
-        (void)InitializeProcThreadAttributeList(NULL, 1, 0, &sz);
-        if (sz == 0) {
-            ret = WS_FATAL_ERROR;
+            memset(conCmdPtr, 0, conCmdSz * sizeof(wchar_t));
+            _snwprintf(conCmdPtr, conCmdSz * sizeof(wchar_t), L"wolfsshd.exe -r \"%s\"", cmd);
         }
 
-        if (ret == WS_SUCCESS) {
-            /* Using HeapAlloc for better support when possibly passing
-               memory between Windows Modules */
-            ext.lpAttributeList =
-                (PPROC_THREAD_ATTRIBUTE_LIST)HeapAlloc(GetProcessHeap(), 0, sz);
-            if (ext.lpAttributeList == NULL) {
-                wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] Issue getting memory for attribute list");
-                ret = WS_FATAL_ERROR;
-            }
-        }
+        ZeroMemory(&si, sizeof(STARTUPINFO));
+        si.cb = sizeof(STARTUPINFO);
 
-        if (ret == WS_SUCCESS) {
-            if (InitializeProcThreadAttributeList(ext.lpAttributeList, 1, 0,
-                    &sz) != TRUE) {
-                wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] Issue initializing proc thread attribute");
-                ret = WS_FATAL_ERROR;
-            }
-        }
+        si.hStdInput  = cnslIn;
+        si.hStdOutput = cnslOut;
+        si.hStdError  = cnslOut;
+        si.dwFlags    = STARTF_USESTDHANDLES;
+        si.lpDesktop  = NULL;
 
-        if (ret == WS_SUCCESS) {
-            if (UpdateProcThreadAttribute(ext.lpAttributeList, 0,
-                    PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
-                    pCon, sizeof(HPCON), NULL, NULL) != TRUE) {
-                wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] Issue updating proc thread attribute");
-                ret = WS_FATAL_ERROR;
-            }
-        }
-    }
-
-
-    if (ret == WS_SUCCESS) {
-#if 1
-        if (CreateProcessAsUserW(wolfSSHD_GetAuthToken(conn->auth), NULL, cmd,
-            NULL, NULL, FALSE, EXTENDED_STARTUPINFO_PRESENT, NULL, h,
-            &ext.StartupInfo, &processInfo) != TRUE) {
+        if (CreateProcessAsUserW(wolfSSHD_GetAuthToken(conn->auth), NULL, conCmdPtr,
+            NULL, NULL, TRUE, DETACHED_PROCESS, NULL, h,
+            &si, &processInfo) != TRUE) {
             wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] Issue creating process, Windows error %d", GetLastError());
             return WS_FATAL_ERROR;
         }
-#else
-        /* Needs enabled when running as non-service, compiled out for now to
-         * make sure it can not accidentally be used since the permissions of
-         * the created process match the current process. */
-        if (CreateProcessW(NULL, cmd, NULL, NULL, FALSE,
-            EXTENDED_STARTUPINFO_PRESENT, NULL, h, &ext.StartupInfo, &processInfo)
-            != TRUE) {
-            wolfSSH_Log(WS_LOG_ERROR,
-                "[SSHD] Issue creating process, windows error %d", WSAGetLastError());
-            if (cmd != NULL) {
-                WFREE(cmd, NULL, DYNTYPE_SSHD);
-            }
-            return WS_FATAL_ERROR;
-        }
-#endif
-        else {
-            SOCKET sshFd;
-            byte tmp[2];
-            fd_set readFds;
-            WS_SOCKET_T maxFd;
-            int pending = 0;
-            int readPending = 0;
-            int rc = 0;
-            DWORD processState;
-            DWORD ava;
-            struct timeval t;
 
-            t.tv_sec  = 0;
-            t.tv_usec = 800;
+        CloseHandle(cnslIn);
+        CloseHandle(cnslOut);
 
-            sshFd = wolfSSH_get_fd(ssh);
-            maxFd = sshFd;
+        WFREE(conCmdPtr, NULL, DYNTYPE_SSHD);
+        CloseHandle(processInfo.hThread);
+    }
 
-            FD_ZERO(&readFds);
-            FD_SET(sshFd, &readFds);
+    if (ret == WS_SUCCESS) {
+        char cmdWSize[20];
+        int cmdWSizeSz = 20;
+        DWORD wrtn = 0;
 
-            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Successfully created process for "
-                "console, waiting for it to start");
+        wolfSSH_Log(WS_LOG_INFO, "[SSHD] Successfully created process for "
+            "console, waiting for it to start");
 
-            WaitForInputIdle(processInfo.hProcess, 1000);
+        WaitForInputIdle(processInfo.hProcess, 1000);
 
-            do {
-                /* @TODO currently not blocking till data comes in */
-                if (PeekNamedPipe(ptyOut, NULL, 0, NULL, &ava, NULL) == TRUE) {
-                    if (ava > 0) {
-                        readPending = 1;
-                    }
-                }
-
-                if (readPending == 0) {
-                    /* check if process is still running before waiting to read */
-                    if (GetExitCodeProcess(processInfo.hProcess, &processState) 
-                            == TRUE) {
-                        if (processState != STILL_ACTIVE) {
-                            wolfSSH_Log(WS_LOG_INFO,
-                                "[SSHD] Process has exited, exit state = %d, "
-                                "close down SSH connection", processState);
-                            Sleep(100); /* give the stdout/stderr of process a
-                                         * little time to write to pipe */
-                            if (PeekNamedPipe(ptyOut, NULL, 0, NULL, &ava, NULL)
-                                == TRUE) {
-                                if (ava > 0) {
-                                    /* if data still pending then continue
-                                     * sending it over SSH */
-                                    readPending = 1;
-                                    continue;
-                                }
-                            }
-                            break;
-                        }
-                    }
-                    if (wolfSSH_stream_peek(ssh, tmp, 1) <= 0) {
-                        rc = select((int)maxFd + 1, &readFds, NULL, NULL, &t);
-                        if (rc == -1) {
-                            wolfSSH_Log(WS_LOG_INFO,
-                                "[SSHD] select call waiting on socket failed");
-                            break;
-                        }
-                        /* when select times out and no socket is set as ready
-                           Windows overwrites readFds with 0. Reset the fd here
-                           for next select call */
-                        if (rc == 0) {
-                            FD_SET(sshFd, &readFds);
-                        }
-                    }
-                    else {
-                        pending = 1;
-                    }
-                }
-
-                if (rc != 0 && (pending || FD_ISSET(sshFd, &readFds))) {
-                    word32 lastChannel = 0;
-
-                    /* The following tries to read from the first channel inside
-                       the stream. If the pending data in the socket is for
-                       another channel, this will return an error with id
-                       WS_CHAN_RXD. That means the agent has pending data in its
-                       channel. The additional channel is only used with the
-                       agent. */
-                    cnt_r = wolfSSH_worker(ssh, &lastChannel);
-                    if (cnt_r < 0) {
-                        rc = wolfSSH_get_error(ssh);
-                        if (rc == WS_CHAN_RXD) {
-                            if (lastChannel == shellChannelId) {
-                                cnt_r = wolfSSH_ChannelIdRead(ssh,
-                                    shellChannelId, shellBuffer,
-                                    sizeof shellBuffer);
-                                if (cnt_r <= 0)
-                                    break;
-                                pending = 0;
-                                if (WriteFile(ptyIn, shellBuffer, cnt_r, &cnt_r,
-                                    NULL) != TRUE) {
-                                    wolfSSH_Log(WS_LOG_INFO,
-                                        "[SSHD] Error writing to pipe for "
-                                        "console");
-                                    break;
-                                }
-                            }
-                        }
-                        else if (rc == WS_CHANNEL_CLOSED) {
-                            continue;
-                        }
-                        else if (rc != WS_WANT_READ) {
-                            break;
-                        }
-                    }
-                }
-
-                if (readPending) {
-                    WMEMSET(shellBuffer, 0, EXAMPLE_BUFFER_SZ);
-
-                    if (ReadFile(ptyOut, shellBuffer, EXAMPLE_BUFFER_SZ, &cnt_r,
-                            NULL) != TRUE) {
-                        wolfSSH_Log(WS_LOG_INFO,
-                            "[SSHD] Error reading from pipe for console");
-                        break;
-                    }
-                    else {
-                        readPending = 0;
-                        if (cnt_r > 0) {
-                            cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
-                                shellBuffer, cnt_r);
-                            if (cnt_w < 0)
-                                break;
-                        }
-                    }
-                }
-            } while (1);
-
-            if (cmd != NULL) {
-                WFREE(cmd, NULL, DYNTYPE_SSHD);
-            }
-            wolfSSH_Log(WS_LOG_INFO,
-                "[SSHD] Closing down process for console");
-
-            if (ext.lpAttributeList != NULL) {
-                HeapFree(GetProcessHeap(), 0, ext.lpAttributeList);
-            }
-
-            if (wolfSSH_SetExitStatus(ssh, processState) !=
-                    WS_SUCCESS) {
-                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue sending childs exit "
-                    "status");
-            }
-
-            ClosePseudoConsole(pCon);
-            CloseHandle(processInfo.hThread);
-            CloseHandle(wolfSSHD_GetAuthToken(conn->auth));
+        /* Send initial terminal size to pseudo console with VT control sequence */
+        cmdWSizeSz = snprintf(cmdWSize, cmdWSizeSz, "\x1b[8;%d;%dt", ssh->heightRows, ssh->widthChar);
+        if (WriteFile(ptyIn, cmdWSize, cmdWSizeSz, &wrtn, 0) != TRUE) {
+            WLOG(WS_LOG_ERROR, "Issue with pseudo console resize");
+            ret = WS_FATAL_ERROR;
         }
     }
+
+    if (ret == WS_SUCCESS) {
+        SOCKET sshFd;
+        byte tmp[2];
+        fd_set readFds;
+        WS_SOCKET_T maxFd;
+        int pending = 0;
+        int readPending = 0;
+        int rc = 0;
+        DWORD processState;
+        DWORD ava;
+        struct timeval t;
+
+        t.tv_sec = 0;
+        t.tv_usec = 800;
+
+        sshFd = wolfSSH_get_fd(ssh);
+        maxFd = sshFd;
+
+        FD_ZERO(&readFds);
+        FD_SET(sshFd, &readFds);
+
+        do {
+            /* @TODO currently not blocking till data comes in */
+            if (PeekNamedPipe(ptyOut, NULL, 0, NULL, &ava, NULL) == TRUE) {
+                if (ava > 0) {
+                    readPending = 1;
+                }
+            }
+
+            if (readPending == 0) {
+                /* check if process is still running before waiting to read */
+                if (GetExitCodeProcess(processInfo.hProcess, &processState)
+                    == TRUE) {
+                    if (processState != STILL_ACTIVE) {
+                        wolfSSH_Log(WS_LOG_INFO,
+                            "[SSHD] Process has exited, exit state = %d, "
+                            "close down SSH connection", processState);
+                        Sleep(100); /* give the stdout/stderr of process a
+                                     * little time to write to pipe */
+                        if (PeekNamedPipe(ptyOut, NULL, 0, NULL, &ava, NULL)
+                            == TRUE) {
+                            if (ava > 0) {
+                                /* if data still pending then continue
+                                 * sending it over SSH */
+                                readPending = 1;
+                                continue;
+                            }
+                        }
+                        break;
+                    }
+                }
+                if (wolfSSH_stream_peek(ssh, tmp, 1) <= 0) {
+                    rc = select((int)maxFd + 1, &readFds, NULL, NULL, &t);
+                    if (rc == -1) {
+                        wolfSSH_Log(WS_LOG_INFO,
+                            "[SSHD] select call waiting on socket failed");
+                        break;
+                    }
+                    /* when select times out and no socket is set as ready
+                       Windows overwrites readFds with 0. Reset the fd here
+                       for next select call */
+                    if (rc == 0) {
+                        FD_SET(sshFd, &readFds);
+                    }
+                }
+                else {
+                    pending = 1;
+                }
+            }
+
+            if (rc != 0 && (pending || FD_ISSET(sshFd, &readFds))) {
+                word32 lastChannel = 0;
+
+                /* The following tries to read from the first channel inside
+                   the stream. If the pending data in the socket is for
+                   another channel, this will return an error with id
+                   WS_CHAN_RXD. That means the agent has pending data in its
+                   channel. The additional channel is only used with the
+                   agent. */
+                cnt_r = wolfSSH_worker(ssh, &lastChannel);
+                if (cnt_r < 0) {
+                    rc = wolfSSH_get_error(ssh);
+                    if (rc == WS_CHAN_RXD) {
+                        if (lastChannel == shellChannelId) {
+                            cnt_r = wolfSSH_ChannelIdRead(ssh,
+                                shellChannelId, shellBuffer,
+                                sizeof shellBuffer);
+                            if (cnt_r <= 0)
+                                break;
+                            pending = 0;
+                            if (WriteFile(ptyIn, shellBuffer, cnt_r, &cnt_r,
+                                NULL) != TRUE) {
+                                wolfSSH_Log(WS_LOG_INFO,
+                                    "[SSHD] Error writing to pipe for "
+                                    "console");
+                                break;
+                            }
+                        }
+                    }
+                    else if (rc == WS_CHANNEL_CLOSED) {
+                        continue;
+                    }
+                    else if (rc != WS_WANT_READ) {
+                        break;
+                    }
+                }
+            }
+
+            if (readPending) {
+                WMEMSET(shellBuffer, 0, EXAMPLE_BUFFER_SZ);
+
+                if (ReadFile(ptyOut, shellBuffer, EXAMPLE_BUFFER_SZ, &cnt_r,
+                    NULL) != TRUE) {
+                    wolfSSH_Log(WS_LOG_INFO,
+                        "[SSHD] Error reading from pipe for console");
+                    break;
+                }
+                else {
+                    readPending = 0;
+                    if (cnt_r > 0) {
+                        cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
+                            shellBuffer, cnt_r);
+                        if (cnt_w < 0)
+                            break;
+                    }
+                }
+            }
+        } while (1);
+
+        if (cmd != NULL) {
+            WFREE(cmd, NULL, DYNTYPE_SSHD);
+        }
+        wolfSSH_Log(WS_LOG_INFO,
+            "[SSHD] Closing down process for console");
+
+        if (ext.lpAttributeList != NULL) {
+            HeapFree(GetProcessHeap(), 0, ext.lpAttributeList);
+        }
+
+        if (wolfSSH_SetExitStatus(ssh, processState) !=
+            WS_SUCCESS) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue sending childs exit "
+                "status");
+        }
+
+        CloseHandle(processInfo.hThread);
+        CloseHandle(wolfSSHD_GetAuthToken(conn->auth));
+    }
+
+    RevertToSelf();
     return ret;
 }
 #else
@@ -2488,6 +2466,162 @@ static int StartSSHD(int argc, char** argv)
 #endif
 }
 
+#ifdef _WIN32
+/* Used to setup a console and run command as a user.
+ * returns the process exit value */
+static int SetupConsole(char* sysCmd)
+{
+    HANDLE sOut;
+    HANDLE sIn;
+    HPCON pCon = 0;
+    COORD cord;
+    STARTUPINFOEX ext;
+    int ret = WS_SUCCESS;
+    PWSTR cmd    = NULL;
+    size_t cmdSz = 0;
+    PROCESS_INFORMATION processInfo;
+    size_t sz = 0;
+    DWORD processState = 0;
+
+    if (sysCmd == NULL) {
+        return -1;
+    }
+
+    /* defautl 80x24 with setup, screen size will get set by VT command after started */
+    cord.X = 80;
+    cord.Y = 24;
+
+    sIn  = GetStdHandle(STD_INPUT_HANDLE);
+    sOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (CreatePseudoConsole(cord, sIn, sOut, 0, &pCon) != S_OK) {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] Issue creating pseudo console");
+        ret = WS_FATAL_ERROR;
+    }
+    else {
+        CloseHandle(sIn);
+        CloseHandle(sOut);
+    }
+
+    /* setup startup extended info for pseudo terminal */
+    ZeroMemory(&ext, sizeof(ext));
+    if (ret == WS_SUCCESS) {
+        ext.StartupInfo.cb = sizeof(STARTUPINFOEX);
+        (void)InitializeProcThreadAttributeList(NULL, 1, 0, &sz);
+        if (sz == 0) {
+            ret = WS_FATAL_ERROR;
+        }
+
+        if (ret == WS_SUCCESS) {
+            /* Using HeapAlloc for better support when possibly passing
+               memory between Windows Modules */
+            ext.lpAttributeList =
+                (PPROC_THREAD_ATTRIBUTE_LIST)HeapAlloc(GetProcessHeap(), 0, sz);
+            if (ext.lpAttributeList == NULL) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Issue getting memory for attribute list");
+                ret = WS_FATAL_ERROR;
+            }
+        }
+
+        if (ret == WS_SUCCESS) {
+            if (InitializeProcThreadAttributeList(ext.lpAttributeList, 1, 0,
+                &sz) != TRUE) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Issue initializing proc thread attribute");
+                ret = WS_FATAL_ERROR;
+            }
+        }
+
+        if (ret == WS_SUCCESS) {
+            if (UpdateProcThreadAttribute(ext.lpAttributeList, 0,
+                PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+                pCon, sizeof(HPCON), NULL, NULL) != TRUE) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Issue updating proc thread attribute");
+                ret = WS_FATAL_ERROR;
+            }
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        cmdSz = WSTRLEN(sysCmd) + 1; /* +1 for terminator */
+        cmd   = (PWSTR)HeapAlloc(GetProcessHeap(), 0, sizeof(wchar_t) * cmdSz);
+        if (cmd == NULL) {
+            ret = WS_MEMORY_E;
+        }
+        else {
+            size_t numConv = 0;
+
+            WMEMSET(cmd, 0, sizeof(wchar_t) * cmdSz);
+            mbstowcs_s(&numConv, cmd, cmdSz, sysCmd, strlen(sysCmd));
+        }
+    }
+
+
+    ZeroMemory(&processInfo, sizeof(processInfo));
+    if (ret == WS_SUCCESS) {
+        if (CreateProcessW(NULL, cmd,
+            NULL, NULL, FALSE, EXTENDED_STARTUPINFO_PRESENT, NULL, NULL,
+            &ext.StartupInfo, &processInfo) != TRUE) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Issue creating process, Windows error %d", GetLastError());
+            return WS_FATAL_ERROR;
+        }
+        else {
+            DWORD ava = 0;
+
+            WaitForInputIdle(processInfo.hProcess, 1000);
+
+            do {
+                /* wait indefinitly for console process to exit */
+                if (ava == 0) {
+                    if (WaitForSingleObject(processInfo.hProcess, INFINITE) == WAIT_FAILED) {
+                        break;
+                    }
+                }
+
+                /* check if process is still running and give time to drain pipes */
+                if (GetExitCodeProcess(processInfo.hProcess, &processState)
+                    == TRUE) {
+                    if (processState != STILL_ACTIVE) {
+                        wolfSSH_Log(WS_LOG_INFO,
+                            "[SSHD] Process has exited, exit state = %d, "
+                            "close down SSH connection", processState);
+                        Sleep(100); /* give the stdout/stderr of process a
+                                     * little time to write to pipe */
+                        if (PeekNamedPipe(GetStdHandle(STD_OUTPUT_HANDLE), NULL, 0, NULL, &ava, NULL)
+                            == TRUE) {
+                            if (ava > 0) {
+                                /* if data still pending then continue
+                                 * sending it over SSH */
+                                continue;
+                            }
+                        }
+                        break;
+                    }
+                }
+            } while (1);
+            CloseHandle(processInfo.hThread);
+        }
+    }
+
+    if (cmd != NULL) {
+        HeapFree(GetProcessHeap(), 0, cmd);
+    }
+
+    if (ext.lpAttributeList != NULL) {
+        HeapFree(GetProcessHeap(), 0, ext.lpAttributeList);
+    }
+
+    if (pCon != 0) {
+        ClosePseudoConsole(pCon);
+    }
+
+    return processState;
+}
+#endif /* _WIN32 */
+
 int main(int argc, char** argv)
 {
 #ifdef _WIN32
@@ -2496,6 +2630,13 @@ int main(int argc, char** argv)
     for (i = 0; i < argc; i++) {
         if (WSTRCMP(argv[i], "-D") == 0) {
             isService = 0;
+        }
+        if (WSTRCMP(argv[i], "-r") == 0) {
+            if (argc < i + 1) {
+                /* was expecting command to run after -r argument */
+                return -1;
+            }
+            return SetupConsole(argv[i + 1]);
         }
     }
 
