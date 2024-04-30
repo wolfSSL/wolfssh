@@ -10046,6 +10046,371 @@ int wolfSSH_RsaVerify(byte *sig, word32 sigSz,
 #endif /* WOLFSSH_NO_RSA */
 
 
+static int KeyAgreeDh_server(WOLFSSH* ssh, byte hashId, byte* f, word32* fSz)
+#ifndef WOLFSSH_NO_DH
+{
+    int ret = WS_SUCCESS;
+    byte *y_ptr = NULL;
+    const byte* primeGroup = NULL;
+    const byte* generator = NULL;
+    word32 ySz = MAX_KEX_KEY_SZ;
+    word32 primeGroupSz = 0;
+    word32 generatorSz = 0;
+    #ifdef WOLFSSH_SMALL_STACK
+    DhKey *privKey = (DhKey*)WMALLOC(sizeof(DhKey), heap,
+            DYNTYPE_PRIVKEY);
+    y_ptr = (byte*)WMALLOC(ySz, heap, DYNTYPE_PRIVKEY);
+    if (privKey == NULL || y_ptr == NULL)
+        ret = WS_MEMORY_E;
+    #else
+    DhKey privKey[1];
+    byte y_s[MAX_KEX_KEY_SZ];
+    y_ptr = y_s;
+    #endif
+
+    WOLFSSH_UNUSED(hashId);
+
+    if (ret == WS_SUCCESS) {
+        ret = GetDHPrimeGroup(ssh->handshake->kexId, &primeGroup,
+            &primeGroupSz, &generator, &generatorSz);
+
+        if (ret == WS_SUCCESS) {
+            ret = wc_InitDhKey(privKey);
+        }
+        if (ret == 0)
+            ret = wc_DhSetKey(privKey, primeGroup, primeGroupSz,
+                    generator, generatorSz);
+        if (ret == 0)
+            ret = wc_DhGenerateKeyPair(privKey, ssh->rng,
+                    y_ptr, &ySz, f, fSz);
+        if (ret == 0) {
+            PRIVATE_KEY_UNLOCK();
+            ret = wc_DhAgree(privKey, ssh->k, &ssh->kSz, y_ptr, ySz,
+                    ssh->handshake->e, ssh->handshake->eSz);
+            PRIVATE_KEY_LOCK();
+        }
+        ForceZero(y_ptr, ySz);
+        wc_FreeDhKey(privKey);
+    }
+    #ifdef WOLFSSH_SMALL_STACK
+    if (y_ptr)
+        WFREE(y_ptr, heap, DYNTYPE_PRIVKEY);
+    if (privKey) {
+        WFREE(privKey, heap, DYNTYPE_PRIVKEY);
+    }
+    #endif
+    return ret;
+}
+#else /* WOLFSSH_NO_DH */
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(hashId);
+    WOLFSSH_UNUSED(f);
+    WOLFSSH_UNUSED(fSz);
+    return WS_INVALID_ALGO_ID;
+}
+#endif /* WOLFSSH_NO_DH */
+
+
+static int KeyAgreeEcdh_server(WOLFSSH* ssh, byte hashId, byte* f, word32* fSz)
+#ifndef WOLFSSH_NO_ECDH
+{
+    int ret = WS_SUCCESS;
+    void* heap;
+#ifdef WOLFSSH_SMALL_STACK
+    ecc_key *pubKey = NULL, *privKey = NULL;
+    pubKey = (ecc_key*)WMALLOC(sizeof(ecc_key), heap,
+            DYNTYPE_PUBKEY);
+    privKey = (ecc_key*)WMALLOC(sizeof(ecc_key), heap,
+            DYNTYPE_PRIVKEY);
+    if (pubKey == NULL || privKey == NULL) {
+        ret = WS_MEMORY_E;
+    }
+#else
+    ecc_key pubKey[1];
+    ecc_key privKey[1];
+#endif
+    int primeId;
+
+    WOLFSSH_UNUSED(hashId);
+    heap = ssh->ctx->heap;
+    primeId  = wcPrimeForId(ssh->handshake->kexId);
+    if (primeId == ECC_CURVE_INVALID)
+        ret = WS_INVALID_PRIME_CURVE;
+
+    if (ret == 0)
+        ret = wc_ecc_init_ex(pubKey, heap, INVALID_DEVID);
+    if (ret == 0)
+        ret = wc_ecc_init_ex(privKey, heap, INVALID_DEVID);
+#ifdef HAVE_WC_ECC_SET_RNG
+    if (ret == 0)
+        ret = wc_ecc_set_rng(privKey, ssh->rng);
+#endif
+
+    if (ret == 0)
+        ret = wc_ecc_import_x963_ex(ssh->handshake->e,
+                                    ssh->handshake->eSz,
+                                    pubKey, primeId);
+
+    if (ret == 0)
+        ret = wc_ecc_make_key_ex(ssh->rng,
+                             wc_ecc_get_curve_size_from_id(primeId),
+                             privKey, primeId);
+    if (ret == 0) {
+        PRIVATE_KEY_UNLOCK();
+        ret = wc_ecc_export_x963(privKey, f, fSz);
+        PRIVATE_KEY_LOCK();
+    }
+    if (ret == 0) {
+        PRIVATE_KEY_UNLOCK();
+        ret = wc_ecc_shared_secret(privKey, pubKey,
+                                   ssh->k, &ssh->kSz);
+        PRIVATE_KEY_LOCK();
+    }
+    wc_ecc_free(privKey);
+    wc_ecc_free(pubKey);
+#ifdef WOLFSSH_SMALL_STACK
+    WFREE(pubKey, heap, DYNTYPE_PUBKEY);
+    WFREE(privKey, heap, DYNTYPE_PRIVKEY);
+    pubKey  = NULL;
+    privKey = NULL;
+#endif
+    return ret;
+}
+#else /* WOLFSSH_NO_ECDH */
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(hashId);
+    WOLFSSH_UNUSED(f);
+    WOLFSSH_UNUSED(fSz);
+    return WS_INVALID_ALGO_ID;
+}
+#endif /* WOLFSSH_NO_ECDH */
+
+
+static int KeyAgreeX25519_server(WOLFSSH* ssh, byte hashId,
+        byte* f, word32* fSz)
+#ifndef WOLFSSH_NO_CURVE25519_SHA256
+{
+    int ret = WS_SUCCESS;
+    void* heap = ssh->ctx->heap;
+#ifdef WOLFSSH_SMALL_STACK
+    curve25519_key *pubKey = NULL, *privKey = NULL;
+    pubKey = (curve25519_key*)WMALLOC(sizeof(curve25519_key),
+            heap, DYNTYPE_PUBKEY);
+    privKey = (curve25519_key*)WMALLOC(sizeof(curve25519_key),
+            heap, DYNTYPE_PRIVKEY);
+    if (pubKey == NULL || privKey == NULL) {
+        ret = WS_MEMORY_E;
+    }
+#else
+    curve25519_key pubKey[1], privKey[1];
+#endif
+
+    WOLFSSH_UNUSED(hashId);
+    if (ret == 0)
+        ret = wc_curve25519_init_ex(pubKey, heap, INVALID_DEVID);
+    if (ret == 0)
+        ret = wc_curve25519_init_ex(privKey, heap, INVALID_DEVID);
+    if (ret == 0)
+        ret = wc_curve25519_check_public(ssh->handshake->e,
+                ssh->handshake->eSz, EC25519_LITTLE_ENDIAN);
+    if (ret == 0)
+        ret = wc_curve25519_import_public_ex(
+                ssh->handshake->e, ssh->handshake->eSz,
+                pubKey, EC25519_LITTLE_ENDIAN);
+
+    if (ret == 0)
+        ret = wc_curve25519_make_key(ssh->rng, CURVE25519_KEYSIZE, privKey);
+
+    if (ret == 0) {
+        PRIVATE_KEY_UNLOCK();
+        ret = wc_curve25519_export_public_ex(privKey,
+                f, fSz, EC25519_LITTLE_ENDIAN);
+        PRIVATE_KEY_LOCK();
+    }
+
+    if (ret == 0) {
+        PRIVATE_KEY_UNLOCK();
+        ret = wc_curve25519_shared_secret_ex(privKey, pubKey,
+                  ssh->k, &ssh->kSz, EC25519_LITTLE_ENDIAN);
+        PRIVATE_KEY_LOCK();
+    }
+    wc_curve25519_free(privKey);
+    wc_curve25519_free(pubKey);
+#ifdef WOLFSSH_SMALL_STACK
+    WFREE(pubKey, heap, DYNTYPE_PUBKEY);
+    WFREE(privKey, heap, DYNTYPE_PRIVKEY);
+    pubKey  = NULL;
+    privKey = NULL;
+#endif
+    return ret;
+}
+#else /* WOLFSSH_NO_CURVE25519_SHA256 */
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(hashId);
+    WOLFSSH_UNUSED(f);
+    WOLFSSH_UNUSED(fSz);
+    return WS_INVALID_ALGO_ID;
+}
+#endif /* WOLFSSH_NO_CURVE25519_SHA256 */
+
+
+static int KeyAgreeEcdhKyber1_server(WOLFSSH* ssh, byte hashId,
+        byte* f, word32* fSz)
+#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
+{
+    int ret = WS_SUCCESS;
+    void* heap = ssh->ctx->heap;
+    byte sharedSecretHashSz = 0;
+    byte *sharedSecretHash = NULL;
+    /* This is a hybrid KEM. In this case, I need to generate my ECC
+     * keypair, send the public one, use the private one to generate
+     * the shared secret, use the post-quantum public key to
+     * generate and encapsulate the shared secret and send the
+     * ciphertext. */
+    OQS_KEM* kem = NULL;
+    int primeId;
+    ret = 0;
+#ifdef WOLFSSH_SMALL_STACK
+    ecc_key *pubKey = NULL, *privKey = NULL;
+    pubKey = (ecc_key*)WMALLOC(sizeof(ecc_key), heap,
+            DYNTYPE_PUBKEY);
+    privKey = (ecc_key*)WMALLOC(sizeof(ecc_key), heap,
+            DYNTYPE_PRIVKEY);
+    if (pubKey == NULL || privKey == NULL) {
+        ret = WS_MEMORY_E;
+    }
+#else
+    ecc_key pubKey[1];
+    ecc_key privKey[1];
+#endif
+
+    if (ret == 0) {
+        XMEMSET(pubKey, 0, sizeof(*pubKey));
+        XMEMSET(privKey, 0, sizeof(*privKey));
+
+        primeId = wcPrimeForId(ssh->handshake->kexId);
+        if (primeId == ECC_CURVE_INVALID)
+            ret = WS_INVALID_PRIME_CURVE;
+    }
+
+    if (ret == 0) {
+        kem = OQS_KEM_new(OQS_KEM_alg_kyber_512);
+        if (kem == NULL) {
+            ret = WS_INVALID_ALGO_ID;
+        }
+    }
+
+    if ((ret == 0) &&
+        (ssh->handshake->eSz <= (word32)kem->length_public_key)) {
+        ret = WS_BUFFER_E;
+    }
+
+    if (ret == 0) {
+        if (OQS_KEM_encaps(kem, f, ssh->k,
+            ssh->handshake->e) != OQS_SUCCESS) {
+            ret = WS_PUBKEY_REJECTED_E;
+        }
+    }
+
+    if (ret == 0) {
+        *fSz -= kem->length_ciphertext;
+        ssh->kSz -= kem->length_shared_secret;
+    }
+    else {
+        *fSz = 0;
+        ssh->kSz = 0;
+        WLOG(WS_LOG_ERROR,
+             "Generate ECC-kyber (encap) shared secret failed, %d",
+             ret);
+    }
+
+    if (ret == 0) {
+        ret = wc_ecc_init_ex(pubKey, heap, INVALID_DEVID);
+    }
+    if (ret == 0) {
+        ret = wc_ecc_init_ex(privKey, heap, INVALID_DEVID);
+    }
+#ifdef HAVE_WC_ECC_SET_RNG
+    if (ret == 0) {
+        ret = wc_ecc_set_rng(privKey, ssh->rng);
+    }
+#endif
+    if (ret == 0) {
+        ret = wc_ecc_import_x963_ex(
+            ssh->handshake->e + kem->length_public_key,
+            ssh->handshake->eSz - (word32)kem->length_public_key,
+            pubKey, primeId);
+    }
+    if (ret == 0) {
+        ret = wc_ecc_make_key_ex(ssh->rng,
+                  wc_ecc_get_curve_size_from_id(primeId),
+                  privKey, primeId);
+    }
+    if (ret == 0) {
+        PRIVATE_KEY_UNLOCK();
+        ret = wc_ecc_export_x963(privKey,
+                  f + kem->length_ciphertext, fSz);
+        PRIVATE_KEY_LOCK();
+        *fSz += kem->length_ciphertext;
+    }
+    if (ret == 0) {
+        word32 tmp_kSz = ssh->kSz;
+        PRIVATE_KEY_UNLOCK();
+        ret = wc_ecc_shared_secret(privKey, pubKey,
+                  ssh->k + kem->length_shared_secret, &tmp_kSz);
+        PRIVATE_KEY_LOCK();
+        ssh->kSz = (word32)kem->length_shared_secret + tmp_kSz;
+    }
+    wc_ecc_free(privKey);
+    wc_ecc_free(pubKey);
+#ifdef WOLFSSH_SMALL_STACK
+    WFREE(pubKey, heap, DYNTYPE_PUBKEY);
+    WFREE(privKey, heap, DYNTYPE_PRIVKEY);
+    pubKey  = NULL;
+    privKey = NULL;
+#endif
+    if (kem != NULL) {
+        OQS_KEM_free(kem);
+        kem = NULL;
+    }
+
+    /* Replace the concatenated shared secrets with the hash. That
+     * will become the new shared secret.*/
+    if (ret == 0) {
+        sharedSecretHashSz = wc_HashGetDigestSize(hashId);
+        sharedSecretHash = (byte *)WMALLOC(sharedSecretHashSz, heap,
+                                           DYNTYPE_PRIVKEY);
+        if (sharedSecretHash == NULL) {
+            ret = WS_MEMORY_E;
+        }
+    }
+    if (ret == 0) {
+        ret = wc_Hash(hashId, ssh->k, ssh->kSz, sharedSecretHash,
+                      sharedSecretHashSz);
+    }
+    if (ret == 0) {
+        XMEMCPY(ssh->k, sharedSecretHash, sharedSecretHashSz);
+        ssh->kSz = sharedSecretHashSz;
+    }
+
+    WFREE(sharedSecretHash, heap, DYNTYPE_PRIVKEY);
+    sharedSecretHash = NULL;
+    return ret;
+}
+#else /* WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256 */
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(hashId);
+    WOLFSSH_UNUSED(f);
+    WOLFSSH_UNUSED(fSz);
+    return WS_INVALID_ALGO_ID;
+}
+#endif /* WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256 */
+
+
 /* SendKexDhReply()
  * It is also the funciton used for MSGID_KEXECDH_REPLY. The parameters
  * are analogous between the two messages. Where MSGID_KEXDH_REPLY has
@@ -10062,15 +10427,6 @@ int SendKexDhReply(WOLFSSH* ssh)
     byte scratchLen[LENGTH_SZ];
     word32 fSz = KEX_F_SIZE;
     word32 sigSz = KEX_SIG_SIZE;
-    byte useEcc = 0;
-#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-    byte useEccKyber = 0;
-    byte sharedSecretHashSz = 0;
-    byte *sharedSecretHash = NULL;
-#endif
-#ifndef WOLFSSH_NO_CURVE25519_SHA256
-    byte useCurve25519 = 0;
-#endif
     byte fPad = 0;
     byte kPad = 0;
     word32 sigBlockSz = 0;
@@ -10078,17 +10434,19 @@ int SendKexDhReply(WOLFSSH* ssh)
     byte* output = NULL;
     word32 idx = 0;
     word32 keyIdx = 0;
-    byte msgId = MSGID_KEXDH_REPLY;
     enum wc_HashType hashId = WC_HASH_TYPE_NONE;
     wc_HashAlg* hash = NULL;
     struct wolfSSH_sigKeyBlockFull *sigKeyBlock_ptr = NULL;
 #ifndef WOLFSSH_SMALL_STACK
     byte f_s[KEX_F_SIZE];
     byte sig_s[KEX_SIG_SIZE];
-
-    f_ptr = f_s;
-    sig_ptr = sig_s;
 #endif
+    byte msgId;
+    byte useDh = 0;
+    byte useEcc = 0;
+    byte useCurve25519 = 0;
+    byte useEccKyber = 0;
+
     WLOG(WS_LOG_DEBUG, "Entering SendKexDhReply()");
 
     if (ret == WS_SUCCESS) {
@@ -10106,6 +10464,9 @@ int SendKexDhReply(WOLFSSH* ssh)
     sig_ptr = (byte*)WMALLOC(KEX_SIG_SIZE, heap, DYNTYPE_BUFFER);
     if (f_ptr == NULL || sig_ptr == NULL)
         ret = WS_MEMORY_E;
+#else
+    f_ptr = f_s;
+    sig_ptr = sig_s;
 #endif
 
     sigKeyBlock_ptr = (struct wolfSSH_sigKeyBlockFull*)WMALLOC(
@@ -10135,6 +10496,24 @@ int SendKexDhReply(WOLFSSH* ssh)
                 (word32)WSTRLEN(sigKeyBlock_ptr->pubKeyFmtName);
 
         switch (ssh->handshake->kexId) {
+#ifndef WOLFSSH_NO_DH_GROUP1_SHA1
+            case ID_DH_GROUP1_SHA1:
+                useDh = 1;
+                msgId = MSGID_KEXDH_REPLY;
+                break;
+#endif
+#ifndef WOLFSSH_NO_DH_GROUP14_SHA1
+            case ID_DH_GROUP14_SHA1:
+                useDh = 1;
+                msgId = MSGID_KEXDH_REPLY;
+                break;
+#endif
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
+            case ID_DH_GEX_SHA256:
+                useDh = 1;
+                msgId = MSGID_KEXDH_GEX_REPLY;
+                break;
+#endif
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256
             case ID_ECDH_SHA2_NISTP256:
                 useEcc = 1;
@@ -10165,13 +10544,15 @@ int SendKexDhReply(WOLFSSH* ssh)
                 msgId = MSGID_KEXKEM_REPLY;
                 break;
 #endif
+            default:
+                ret = WS_INVALID_ALGO_ID;
         }
-
-        hash = &ssh->handshake->kexHash;
-        hashId = (enum wc_HashType)ssh->handshake->kexHashId;
     }
 
     if (ret == WS_SUCCESS) {
+        hash = &ssh->handshake->kexHash;
+        hashId = (enum wc_HashType)ssh->handshake->kexHashId;
+
         for (keyIdx = 0; keyIdx < ssh->ctx->privateKeyCount; keyIdx++) {
             if (ssh->ctx->privateKey[keyIdx].publicKeyFmt
                     == sigKeyBlock_ptr->pubKeyFmtId) {
@@ -10193,341 +10574,27 @@ int SendKexDhReply(WOLFSSH* ssh)
     if (ret == WS_SUCCESS) {
         /* reset size here because a previous shared secret could potentially be
          * smaller by a byte than usual and cause buffer issues with re-key */
-        if (ret == 0)
-            ssh->kSz = MAX_KEX_KEY_SZ;
+        ssh->kSz = MAX_KEX_KEY_SZ;
 
         /* Make the server's DH f-value and the shared secret K. */
         /* Or make the server's ECDH private value, and the shared secret K. */
         if (ret == 0) {
-            if (!useEcc
-#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-                && !useEccKyber
-#endif
-#ifndef WOLFSSH_NO_CURVE25519_SHA256
-                && !useCurve25519
-#endif
-               ) {
-#ifndef WOLFSSH_NO_DH
-                byte *y_ptr = NULL;
-                const byte* primeGroup = NULL;
-                const byte* generator = NULL;
-                word32 ySz = MAX_KEX_KEY_SZ;
-                word32 primeGroupSz = 0;
-                word32 generatorSz = 0;
-            #ifdef WOLFSSH_SMALL_STACK
-                DhKey *privKey = (DhKey*)WMALLOC(sizeof(DhKey), heap,
-                        DYNTYPE_PRIVKEY);
-                y_ptr = (byte*)WMALLOC(ySz, heap, DYNTYPE_PRIVKEY);
-                if (privKey == NULL || y_ptr == NULL)
-                    ret = WS_MEMORY_E;
-            #else
-                DhKey privKey[1];
-                byte y_s[MAX_KEX_KEY_SZ];
-                y_ptr = y_s;
-            #endif
-                if (ret == WS_SUCCESS) {
-                    ret = GetDHPrimeGroup(ssh->handshake->kexId, &primeGroup,
-                        &primeGroupSz, &generator, &generatorSz);
-                    #ifndef WOLFSSH_NO_DH_GEX_SHA256
-                    if (ssh->handshake->kexId == ID_DH_GEX_SHA256)
-                        msgId = MSGID_KEXDH_GEX_REPLY;
-                    #endif
-
-                    if (ret == WS_SUCCESS) {
-                        ret = wc_InitDhKey(privKey);
-                    }
-                    if (ret == 0)
-                        ret = wc_DhSetKey(privKey, primeGroup, primeGroupSz,
-                                generator, generatorSz);
-                    if (ret == 0)
-                        ret = wc_DhGenerateKeyPair(privKey, ssh->rng,
-                                y_ptr, &ySz, f_ptr, &fSz);
-                    if (ret == 0) {
-                        PRIVATE_KEY_UNLOCK();
-                        ret = wc_DhAgree(privKey, ssh->k, &ssh->kSz, y_ptr, ySz,
-                                ssh->handshake->e, ssh->handshake->eSz);
-                        PRIVATE_KEY_LOCK();
-                    }
-                    ForceZero(y_ptr, ySz);
-                    wc_FreeDhKey(privKey);
-                }
-            #ifdef WOLFSSH_SMALL_STACK
-                if (y_ptr)
-                    WFREE(y_ptr, heap, DYNTYPE_PRIVKEY);
-                if (privKey) {
-                    WFREE(privKey, heap, DYNTYPE_PRIVKEY);
-                }
-            #endif
-#endif /* ! WOLFSSH_NO_DH */
+            if (useDh) {
+                ret = KeyAgreeDh_server(ssh, hashId, f_ptr, &fSz);
             }
             else if (useEcc) {
-#if !defined(WOLFSSH_NO_ECDH)
-            #ifdef WOLFSSH_SMALL_STACK
-                ecc_key *pubKey = NULL, *privKey = NULL;
-                pubKey = (ecc_key*)WMALLOC(sizeof(ecc_key), heap,
-                        DYNTYPE_PUBKEY);
-                privKey = (ecc_key*)WMALLOC(sizeof(ecc_key), heap,
-                        DYNTYPE_PRIVKEY);
-                if (pubKey == NULL || privKey == NULL) {
-                    ret = WS_MEMORY_E;
-                }
-            #else
-                ecc_key pubKey[1];
-                ecc_key privKey[1];
-            #endif
-                int primeId;
-
-                primeId  = wcPrimeForId(ssh->handshake->kexId);
-                if (primeId == ECC_CURVE_INVALID)
-                    ret = WS_INVALID_PRIME_CURVE;
-
-                if (ret == 0)
-                    ret = wc_ecc_init_ex(pubKey, heap, INVALID_DEVID);
-                if (ret == 0)
-                    ret = wc_ecc_init_ex(privKey, heap, INVALID_DEVID);
-#ifdef HAVE_WC_ECC_SET_RNG
-                if (ret == 0)
-                    ret = wc_ecc_set_rng(privKey, ssh->rng);
-#endif
-
-                if (ret == 0)
-                    ret = wc_ecc_import_x963_ex(ssh->handshake->e,
-                                                ssh->handshake->eSz,
-                                                pubKey, primeId);
-
-                if (ret == 0)
-                    ret = wc_ecc_make_key_ex(ssh->rng,
-                                         wc_ecc_get_curve_size_from_id(primeId),
-                                         privKey, primeId);
-                if (ret == 0) {
-                    PRIVATE_KEY_UNLOCK();
-                    ret = wc_ecc_export_x963(privKey, f_ptr, &fSz);
-                    PRIVATE_KEY_LOCK();
-                }
-                if (ret == 0) {
-                    PRIVATE_KEY_UNLOCK();
-                    ret = wc_ecc_shared_secret(privKey, pubKey,
-                                               ssh->k, &ssh->kSz);
-                    PRIVATE_KEY_LOCK();
-                }
-                wc_ecc_free(privKey);
-                wc_ecc_free(pubKey);
-            #ifdef WOLFSSH_SMALL_STACK
-                WFREE(pubKey, heap, DYNTYPE_PUBKEY);
-                WFREE(privKey, heap, DYNTYPE_PRIVKEY);
-                pubKey  = NULL;
-                privKey = NULL;
-            #endif
-#endif /* !defined(WOLFSSH_NO_ECDH) */
+                ret = KeyAgreeEcdh_server(ssh, hashId, f_ptr, &fSz);
             }
-#ifndef WOLFSSH_NO_CURVE25519_SHA256
             if (useCurve25519) {
-#ifdef WOLFSSH_SMALL_STACK
-                curve25519_key *pubKey = NULL, *privKey = NULL;
-                pubKey = (curve25519_key*)WMALLOC(sizeof(curve25519_key),
-                                                  heap, DYNTYPE_PUBKEY);
-                privKey = (curve25519_key*)WMALLOC(sizeof(curve25519_key),
-                                                   heap, DYNTYPE_PRIVKEY);
-                if (pubKey == NULL || privKey == NULL) {
-                    ret = WS_MEMORY_E;
-                }
-#else
-                curve25519_key pubKey[1], privKey[1];
-#endif
-
-                if (ret == 0)
-                    ret = wc_curve25519_init_ex(pubKey, heap,
-                                                INVALID_DEVID);
-                if (ret == 0)
-                    ret = wc_curve25519_init_ex(privKey, heap,
-                                                INVALID_DEVID);
-                if (ret == 0)
-                    ret = wc_curve25519_check_public(ssh->handshake->e,
-                              ssh->handshake->eSz, EC25519_LITTLE_ENDIAN);
-                if (ret == 0)
-                    ret = wc_curve25519_import_public_ex(
-                              ssh->handshake->e, ssh->handshake->eSz,
-                              pubKey, EC25519_LITTLE_ENDIAN);
-
-                if (ret == 0)
-                    ret = wc_curve25519_make_key(ssh->rng,
-                              CURVE25519_KEYSIZE, privKey);
-
-                if (ret == 0) {
-                    PRIVATE_KEY_UNLOCK();
-                    ret = wc_curve25519_export_public_ex(privKey,
-                              f_ptr, &fSz, EC25519_LITTLE_ENDIAN);
-                    PRIVATE_KEY_LOCK();
-                }
-
-                if (ret == 0) {
-                    PRIVATE_KEY_UNLOCK();
-                    ret = wc_curve25519_shared_secret_ex(privKey, pubKey,
-                              ssh->k, &ssh->kSz, EC25519_LITTLE_ENDIAN);
-                    PRIVATE_KEY_LOCK();
-                }
-                wc_curve25519_free(privKey);
-                wc_curve25519_free(pubKey);
-#ifdef WOLFSSH_SMALL_STACK
-                WFREE(pubKey, heap, DYNTYPE_PUBKEY);
-                WFREE(privKey, heap, DYNTYPE_PRIVKEY);
-                pubKey  = NULL;
-                privKey = NULL;
-#endif
+                ret = KeyAgreeX25519_server(ssh, hashId, f_ptr, &fSz);
             }
-#endif /* ! WOLFSSH_NO_CURVE25519_SHA256 */
-#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
             else if (useEccKyber) {
-                /* This is a hybrid KEM. In this case, I need to generate my ECC
-                 * keypair, send the public one, use the private one to generate
-                 * the shared secret, use the post-quantum public key to
-                 * generate and encapsulate the shared secret and send the
-                 * ciphertext. */
-                OQS_KEM* kem = NULL;
-                int primeId;
-                ret = 0;
-            #ifdef WOLFSSH_SMALL_STACK
-                ecc_key *pubKey = NULL, *privKey = NULL;
-                pubKey = (ecc_key*)WMALLOC(sizeof(ecc_key), heap,
-                        DYNTYPE_PUBKEY);
-                privKey = (ecc_key*)WMALLOC(sizeof(ecc_key), heap,
-                        DYNTYPE_PRIVKEY);
-                if (pubKey == NULL || privKey == NULL) {
-                    ret = WS_MEMORY_E;
-                }
-            #else
-                ecc_key pubKey[1];
-                ecc_key privKey[1];
-            #endif
-
-                if (ret == 0) {
-                    XMEMSET(pubKey, 0, sizeof(*pubKey));
-                    XMEMSET(privKey, 0, sizeof(*privKey));
-
-                    primeId = wcPrimeForId(ssh->handshake->kexId);
-                    if (primeId == ECC_CURVE_INVALID)
-                        ret = WS_INVALID_PRIME_CURVE;
-                }
-
-                if (ret == 0) {
-                    kem = OQS_KEM_new(OQS_KEM_alg_kyber_512);
-                    if (kem == NULL) {
-                        ret = WS_INVALID_ALGO_ID;
-                    }
-                }
-
-                if ((ret == 0) &&
-                    (ssh->handshake->eSz <= (word32)kem->length_public_key)) {
-                    ret = WS_BUFFER_E;
-                }
-
-                if (ret == 0) {
-                    if (OQS_KEM_encaps(kem, f_ptr, ssh->k,
-                        ssh->handshake->e) != OQS_SUCCESS) {
-                        ret = WS_PUBKEY_REJECTED_E;
-                    }
-                }
-
-                if (ret == 0) {
-                    fSz -= kem->length_ciphertext;
-                    ssh->kSz -= kem->length_shared_secret;
-                }
-                else {
-                    fSz = 0;
-                    ssh->kSz = 0;
-                    WLOG(WS_LOG_ERROR,
-                         "Generate ECC-kyber (encap) shared secret failed, %d",
-                         ret);
-                }
-
-                if (ret == 0) {
-                    ret = wc_ecc_init_ex(pubKey, heap, INVALID_DEVID);
-                }
-                if (ret == 0) {
-                    ret = wc_ecc_init_ex(privKey, heap, INVALID_DEVID);
-                }
-#ifdef HAVE_WC_ECC_SET_RNG
-                if (ret == 0) {
-                    ret = wc_ecc_set_rng(privKey, ssh->rng);
-                }
-#endif
-                if (ret == 0) {
-                    ret = wc_ecc_import_x963_ex(
-                        ssh->handshake->e + kem->length_public_key,
-                        ssh->handshake->eSz - (word32)kem->length_public_key,
-                        pubKey, primeId);
-                }
-                if (ret == 0) {
-                    ret = wc_ecc_make_key_ex(ssh->rng,
-                              wc_ecc_get_curve_size_from_id(primeId),
-                              privKey, primeId);
-                }
-                if (ret == 0) {
-                    PRIVATE_KEY_UNLOCK();
-                    ret = wc_ecc_export_x963(privKey,
-                              f_ptr + kem->length_ciphertext, &fSz);
-                    fSz += kem->length_ciphertext;
-                    PRIVATE_KEY_LOCK();
-                }
-                if (ret == 0) {
-                    word32 tmp_kSz = ssh->kSz;
-                    PRIVATE_KEY_UNLOCK();
-                    ret = wc_ecc_shared_secret(privKey, pubKey,
-                              ssh->k + kem->length_shared_secret, &tmp_kSz);
-                    PRIVATE_KEY_LOCK();
-                    ssh->kSz = (word32)kem->length_shared_secret + tmp_kSz;
-                }
-                wc_ecc_free(privKey);
-                wc_ecc_free(pubKey);
-            #ifdef WOLFSSH_SMALL_STACK
-                WFREE(pubKey, heap, DYNTYPE_PUBKEY);
-                WFREE(privKey, heap, DYNTYPE_PRIVKEY);
-                pubKey  = NULL;
-                privKey = NULL;
-            #endif
-                if (kem != NULL) {
-                    OQS_KEM_free(kem);
-                    kem = NULL;
-                }
-
-                /* Replace the concatenated shared secrets with the hash. That
-                 * will become the new shared secret.*/
-                if (ret == 0) {
-                    sharedSecretHashSz = wc_HashGetDigestSize(hashId);
-                    sharedSecretHash = (byte *)WMALLOC(sharedSecretHashSz, heap,
-                                                       DYNTYPE_PRIVKEY);
-                    if (sharedSecretHash == NULL) {
-                        ret = WS_MEMORY_E;
-                    }
-                }
-                if (ret == 0) {
-                    ret = wc_Hash(hashId, ssh->k, ssh->kSz, sharedSecretHash,
-                                  sharedSecretHashSz);
-                }
-                if (ret == 0) {
-                    XMEMCPY(ssh->k, sharedSecretHash, sharedSecretHashSz);
-                    ssh->kSz = sharedSecretHashSz;
-                }
-
-                WFREE(sharedSecretHash, heap, DYNTYPE_PRIVKEY);
-                sharedSecretHash = NULL;
-            }
-#endif /* !WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256 */
-            else {
-                /* This should never happen */
-                ret = WS_ERROR;
+                ret = KeyAgreeEcdhKyber1_server(ssh, hashId, f_ptr, &fSz);
             }
         }
 
         /* Hash in the server's DH f-value. */
-        if (ret == 0
-#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-            && !useEccKyber
-#endif
-#ifndef WOLFSSH_NO_CURVE25519_SHA256
-            && !useCurve25519
-#endif
-           ) {
+        if (ret == 0 && (useDh || useEcc)) {
             ret = CreateMpint(f_ptr, &fSz, &fPad);
         }
         if (ret == 0) {
@@ -10543,11 +10610,7 @@ int SendKexDhReply(WOLFSSH* ssh)
         }
 
         /* Hash in the shared secret K. */
-        if (ret == 0
-#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-            && !useEccKyber
-#endif
-           ) {
+        if (ret == 0 && !useEccKyber) {
             ret = CreateMpint(ssh->k, &ssh->kSz, &kPad);
         }
         if (ret == 0) {
@@ -10742,11 +10805,8 @@ int SendKexDhReply(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS) {
-        int doKeyPadding = 1;
-#if !defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256)
-        doKeyPadding = !useEccKyber;
-#endif
-        ret = GenerateKeys(ssh, hashId, doKeyPadding);
+        /* If we aren't using EccKyber, use padding. */
+        ret = GenerateKeys(ssh, hashId, !useEccKyber);
     }
 
     /* Get the buffer, copy the packet data, once f is laid into the buffer,
