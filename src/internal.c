@@ -4780,16 +4780,16 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         }
 
 #ifdef WOLFSSH_SMALL_STACK
-#ifndef WOLFSSH_NO_ECDSA
+#ifndef WOLFSSH_NO_ECDH
         key_ptr = (ecc_key*)WMALLOC(sizeof(ecc_key), ssh->ctx->heap,
                 DYNTYPE_PRIVKEY);
         if (key_ptr == NULL) {
             ret = WS_MEMORY_E;
         }
-#endif /* WOLFSSH_NO_ECDSA */
+#endif /* WOLFSSH_NO_ECDH */
 
 #else /* ! WOLFSSH_SMALL_STACK */
-#ifndef WOLFSSH_NO_ECDSA
+#ifndef WOLFSSH_NO_ECDH
         key_ptr = &key_s;
 #endif
 #endif
