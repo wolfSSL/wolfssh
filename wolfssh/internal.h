@@ -583,19 +583,16 @@ typedef struct HandshakeInfo {
     word32 generatorSz;
 #endif
 
-    byte useEcc;
-#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-    byte useEccKyber;
-#endif
-#ifndef WOLFSSH_NO_CURVE25519_SHA256
-    byte useCurve25519;
-#endif
+    byte useDh:1;
+    byte useEcc:1;
+    byte useEccKyber:1;
+    byte useCurve25519:1;
 
     union {
 #ifndef WOLFSSH_NO_DH
         DhKey dh;
 #endif
-#if !defined(WOLFSSH_NO_ECDSA) && !defined(WOLFSSH_NO_ECDH)
+#ifndef WOLFSSH_NO_ECDH
         ecc_key ecc;
 #endif
 #ifndef WOLFSSH_NO_CURVE25519_SHA256
