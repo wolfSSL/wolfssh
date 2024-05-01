@@ -5606,6 +5606,11 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     if (ret == WS_SUCCESS) {
         /* If we aren't using EccKyber, use padding. */
         ret = GenerateKeys(ssh, hashId, !ssh->handshake->useEccKyber);
+        int useKeyPadding = 1;
+#if !defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256)
+        useKeyPadding = !ssh->handshake->useEccKyber;
+#endif
+        ret = GenerateKeys(ssh, hashId, useKeyPadding);
     }
 
     if (ret == WS_SUCCESS)
@@ -11659,6 +11664,11 @@ int SendKexDhReply(WOLFSSH* ssh)
     if (ret == WS_SUCCESS) {
         /* If we aren't using EccKyber, use padding. */
         ret = GenerateKeys(ssh, hashId, !useEccKyber);
+        int doKeyPadding = 1;
+#if !defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256)
+        doKeyPadding = !useEccKyber;
+#endif
+        ret = GenerateKeys(ssh, hashId, doKeyPadding);
     }
 
     /* Get the buffer, copy the packet data, once f is laid into the buffer,
