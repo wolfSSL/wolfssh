@@ -5133,7 +5133,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     if (ret == WS_SUCCESS) {
         int useKeyPadding = 1;
 #if !defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256)
-        doKeyPadding = !ssh->handshake->useEccKyber;
+        useKeyPadding = !ssh->handshake->useEccKyber;
 #endif
         ret = GenerateKeys(ssh, hashId, useKeyPadding);
     }
@@ -10639,7 +10639,7 @@ int SendKexDhReply(WOLFSSH* ssh)
     if (ret == WS_SUCCESS) {
         int doKeyPadding = 1;
 #if !defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256)
-        doKeyPadding = !ssh->handshake->useEccKyber;
+        doKeyPadding = !useEccKyber;
 #endif
         ret = GenerateKeys(ssh, hashId, doKeyPadding);
     }
