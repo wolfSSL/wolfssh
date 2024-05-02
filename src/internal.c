@@ -6783,11 +6783,8 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                         WLOG(WS_LOG_DEBUG, "DUARPK: user overriding success");
                         authFailure = 1;
                     }
-                    else {
-                        ssh->clientState = CLIENT_USERAUTH_DONE;
-                    }
                 }
-                else {
+                if (!authFailure && !partialSuccess) {
                     ssh->clientState = CLIENT_USERAUTH_DONE;
                 }
             }
