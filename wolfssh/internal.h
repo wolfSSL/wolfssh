@@ -157,7 +157,8 @@ extern "C" {
     #undef WOLFSSH_NO_ECDH_SHA2_ED25519
     #define WOLFSSH_NO_ECDH_SHA2_ED25519
 #endif
-#if !defined(WOLFSSH_HAVE_LIBOQS) || defined(NO_SHA256)
+#if !defined(WOLFSSH_HAVE_LIBOQS) || defined(NO_SHA256) \
+    || defined(WOLFSSH_NO_ECDH_SHA2_NISTP256)
     #undef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
     #define WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
 #endif
@@ -1120,7 +1121,8 @@ enum WS_MessageIds {
 };
 
 
-#define MSGID_KEXDH_LIMIT 30
+/* Allows the server to receive up to KEXDH GEX Request during KEX. */
+#define MSGID_KEXDH_LIMIT MSGID_KEXDH_GEX_REQUEST
 
 /* The endpoints should not allow message IDs greater than or
  * equal to msgid 80 before user authentication is complete.
