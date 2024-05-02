@@ -75,7 +75,8 @@ int wolfSSH_Init(void)
 #ifdef WC_RNG_SEED_CB
     wc_SetSeed_Cb(wc_GenerateSeed);
 #endif
-#if defined(WOLFSSH_ZEPHYR) && (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP))
+#if !defined(NO_FILESYSTEM) && defined(WOLFSSH_ZEPHYR) && \
+        (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP))
     if (wssh_z_fds_init() != 0)
         ret = WS_CRYPTO_FAILED;
 #endif
@@ -93,7 +94,8 @@ int wolfSSH_Cleanup(void)
 
     if (wolfCrypt_Cleanup() != 0)
         ret = WS_CRYPTO_FAILED;
-#if defined(WOLFSSH_ZEPHYR) && (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP))
+#if !defined(NO_FILESYSTEM) && defined(WOLFSSH_ZEPHYR) && \
+        (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP))
     if (wssh_z_fds_cleanup() != 0)
         ret = WS_CRYPTO_FAILED;
 #endif

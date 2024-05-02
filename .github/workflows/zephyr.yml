@@ -16,7 +16,7 @@ jobs:
             zephyr-sdk: 0.16.1
     runs-on: ubuntu-latest
     # This should be a safe limit for the tests to run.
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Install dependencies
         run: |
@@ -76,6 +76,8 @@ jobs:
         working-directory: zephyr
         run: |
           ./zephyr/scripts/twister --testsuite-root modules/lib/wolfssh --test zephyr/samples/tests/sample.lib.wolfssh_tests -vvv
+          rm -rf zephyr/twister-out
+          ./zephyr/scripts/twister --testsuite-root modules/lib/wolfssh --test zephyr/samples/tests/sample.lib.wolfssh_nofs_tests -vvv
           rm -rf zephyr/twister-out
 
       - name: Zip failure logs

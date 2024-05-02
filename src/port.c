@@ -476,7 +476,8 @@ int WS_DeleteFileA(const char* fileName, void* heap)
 
 #endif /* USE_WINDOWS_API WOLFSSH_SFTP WOLFSSH_SCP */
 
-#if defined(WOLFSSH_ZEPHYR) && (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP))
+#if !defined(NO_FILESYSTEM) && \
+    defined(WOLFSSH_ZEPHYR) && (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP))
 
 int wssh_z_fstat(const char *p, struct fs_dirent *b)
 {
