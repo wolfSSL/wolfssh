@@ -37,13 +37,14 @@
 #include <stdio.h>
 #include <wolfssh/settings.h>
 #include <wolfssh/ssh.h>
+
+#ifndef NO_FILESYSTEM
+#ifndef CONFIG_FAT_FILESYSTEM_ELM
+#error "This test is designed for FAT FS"
+#endif
 #include <zephyr/fs/fs.h>
 #include <zephyr/storage/disk_access.h>
 #include <ff.h>
-
-
-#ifndef CONFIG_FAT_FILESYSTEM_ELM
-#error "This test is designed for FAT FS"
 #endif
 
 #define CHECK_TEST_RETURN(func) do {                \
@@ -60,6 +61,7 @@
 int main(void)
 {
     int ret = 0;
+#ifndef NO_FILESYSTEM
     static FATFS fat_fs;
     static struct fs_mount_t mnt_point = {
         .type = FS_FATFS,
@@ -89,6 +91,7 @@ int main(void)
                             < 0);
 
     CHECK_TEST_RETURN(fs_close(&zfp));
+#endif
 
     CHECK_TEST_RETURN(wolfSSH_UnitTest(0, NULL));
     CHECK_TEST_RETURN(wolfSSH_TestsuiteTest(0, NULL));

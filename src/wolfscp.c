@@ -2845,9 +2845,10 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             recvBuffer->mode = fileMode;
             if (recvBuffer->status) {
                 if (recvBuffer->status(ssh, fileName, WOLFSSH_SCP_NEW_FILE,
-                            recvBuffer) != WS_SUCCESS)
+                            recvBuffer) != WS_SUCCESS) {
                     WLOG(WS_LOG_ERROR, "scp: status of new file failed, abort");
                     ret = WS_SCP_ABORT;
+                }
             }
             break;
 
@@ -2869,9 +2870,10 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             recvBuffer->fileSz += sz;
             if (recvBuffer->status) {
                 if (recvBuffer->status(ssh, recvBuffer->name,
-                            WOLFSSH_SCP_FILE_PART, recvBuffer) != WS_SUCCESS)
+                            WOLFSSH_SCP_FILE_PART, recvBuffer) != WS_SUCCESS) {
                     WLOG(WS_LOG_ERROR, "scp: bad status, abort");
                     ret = WS_SCP_ABORT;
+                }
             }
             break;
 
@@ -2880,9 +2882,10 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             recvBuffer->mTime = 0; /* @TODO set time if wanted */
             if (recvBuffer->status) {
                 if (recvBuffer->status(ssh, recvBuffer->name,
-                            WOLFSSH_SCP_FILE_DONE, recvBuffer) != WS_SUCCESS)
+                            WOLFSSH_SCP_FILE_DONE, recvBuffer) != WS_SUCCESS) {
                     WLOG(WS_LOG_ERROR, "scp: bad status, abort");
                     ret = WS_SCP_ABORT;
+                }
             }
             break;
 
