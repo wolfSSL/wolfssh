@@ -10793,6 +10793,252 @@ static int KeyAgreeEcdhKyber1_server(WOLFSSH* ssh, byte hashId,
 #endif /* WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256 */
 
 
+static int SignHRsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
+        struct wolfSSH_sigKeyBlockFull *sigKey)
+#ifndef WOLFSSH_NO_RSA
+{
+    void* heap;
+    byte* encSig = NULL;
+    byte digest[WC_MAX_DIGEST_SIZE];
+    word32 digestSz = (word32)sizeof(digest);
+    word32 encSigSz;
+    int ret = WS_SUCCESS;
+    enum wc_HashType hashId;
+#ifndef WOLFSSH_SMALL_STACK
+    byte encSig_s[MAX_ENCODED_SIG_SZ];
+#endif
+
+    WLOG(WS_LOG_DEBUG, "Entering SignHRsa()");
+
+    heap = ssh->ctx->heap;
+#ifdef WOLFSSH_SMALL_STACK
+    encSig = (byte*)WMALLOC(MAX_ENCODED_SIG_SZ, heap, DYNTYPE_TEMP);
+    if (encSig == NULL) {
+        ret = WS_MEMORY_E;
+    }
+#else
+    encSig = encSig_s;
+#endif
+
+    if (ret == WS_SUCCESS) {
+        hashId = HashForId(ssh->handshake->pubKeyId);
+        digestSz = wc_HashGetDigestSize(hashId);
+
+        ret = wc_Hash(hashId, ssh->h, ssh->hSz, digest, digestSz);
+        if (ret != 0) {
+            ret = WS_CRYPTO_FAILED;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        encSigSz = wc_EncodeSignature(encSig, digest, digestSz,
+                wc_HashGetOID(hashId));
+        if (encSigSz <= 0) {
+            WLOG(WS_LOG_DEBUG, "SignHRsa: Bad Encode Sig");
+            ret = WS_CRYPTO_FAILED;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_INFO, "Signing hash with %s.",
+            IdToName(ssh->handshake->pubKeyId));
+        *sigSz = wc_RsaSSL_Sign(encSig, encSigSz, sig,
+                KEX_SIG_SIZE, &sigKey->sk.rsa.key,
+                ssh->rng);
+        if (*sigSz <= 0) {
+            WLOG(WS_LOG_DEBUG, "SignHRsa: Bad RSA Sign");
+            ret = WS_RSA_E;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = wolfSSH_RsaVerify(sig, *sigSz, encSig, encSigSz,
+                &sigKey->sk.rsa.key, heap, "SignHRsa");
+    }
+
+    #ifdef WOLFSSH_SMALL_STACK
+    if (encSig != NULL)
+        WFREE(encSig, heap, DYNTYPE_TEMP);
+    #endif
+    WLOG(WS_LOG_DEBUG, "Leaving SignHRsa(), ret = %d", ret);
+    return ret;
+}
+#else /* WOLFSSH_NO_RSA */
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(sig);
+    WOLFSSH_UNUSED(sigSz);
+    WOLFSSH_UNUSED(sigKey);
+    return WS_INVALID_ALGO_ID;
+}
+#endif /* WOLFSSH_NO_RSA */
+
+
+static int SignHEcdsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
+        struct wolfSSH_sigKeyBlockFull *sigKey)
+#ifndef WOLFSSH_NO_ECDSA
+{
+#ifdef WOLFSSH_SMALL_STACK
+    void* heap = NULL;
+#endif
+    byte *r = NULL, *s = NULL;
+    byte digest[WC_MAX_DIGEST_SIZE];
+    word32 digestSz = (word32)sizeof(digest);
+    int ret = WS_SUCCESS;
+    enum wc_HashType hashId;
+    word32 rSz = MAX_ECC_BYTES + ECC_MAX_PAD_SZ,
+           sSz = MAX_ECC_BYTES + ECC_MAX_PAD_SZ;
+    byte rPad, sPad;
+#ifndef WOLFSSH_SMALL_STACK
+    byte r_s[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
+    byte s_s[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
+#endif
+
+    WLOG(WS_LOG_DEBUG, "Entering SignHEcdsa()");
+
+    hashId = HashForId(ssh->handshake->pubKeyId);
+    digestSz = wc_HashGetDigestSize(hashId);
+
+    ret = wc_Hash(hashId, ssh->h, ssh->hSz, digest, digestSz);
+    if (ret != 0) {
+        ret = WS_CRYPTO_FAILED;
+    }
+
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_INFO, "Signing hash with %s.",
+                IdToName(ssh->handshake->pubKeyId));
+        ret = wc_ecc_sign_hash(digest, digestSz, sig, sigSz, ssh->rng,
+                &sigKey->sk.ecc.key);
+        if (ret != MP_OKAY) {
+            WLOG(WS_LOG_DEBUG, "SignHEcdsa: Bad ECDSA Sign");
+            ret = WS_ECC_E;
+        }
+        else {
+            ret = WS_SUCCESS;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+#ifdef WOLFSSH_SMALL_STACK
+        heap = ssh->ctx->heap;
+        r = (byte*)WMALLOC(rSz, heap, DYNTYPE_BUFFER);
+        s = (byte*)WMALLOC(sSz, heap, DYNTYPE_BUFFER);
+        if (r == NULL || s == NULL) {
+            ret = WS_MEMORY_E;
+        }
+#else
+        r = r_s;
+        s = s_s;
+#endif
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = wc_ecc_sig_to_rs(sig, *sigSz, r, &rSz, s, &sSz);
+        if (ret != 0) {
+            ret = WS_ECC_E;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        int idx = 0;
+        rPad = (r[0] & 0x80) ? 1 : 0;
+        sPad = (s[0] & 0x80) ? 1 : 0;
+        *sigSz = (LENGTH_SZ * 2) + rSz + rPad + sSz + sPad;
+
+        c32toa(rSz + rPad, sig + idx);
+        idx += LENGTH_SZ;
+        if (rPad)
+            sig[idx++] = 0;
+        WMEMCPY(sig + idx, r, rSz);
+        idx += rSz;
+        c32toa(sSz + sPad, sig + idx);
+        idx += LENGTH_SZ;
+        if (sPad)
+            sig[idx++] = 0;
+        WMEMCPY(sig + idx, s, sSz);
+    }
+
+    #ifdef WOLFSSH_SMALL_STACK
+        if (r)
+            WFREE(r, heap, DYNTYPE_BUFFER);
+        if (s)
+            WFREE(s, heap, DYNTYPE_BUFFER);
+    #endif
+
+    WLOG(WS_LOG_DEBUG, "Leaving SignHEcdsa(), ret = %d", ret);
+    return ret;
+}
+#else /* WOLFSSH_NO_ECDSA */
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(sig);
+    WOLFSSH_UNUSED(sigSz);
+    WOLFSSH_UNUSED(sigKey);
+    return WS_INVALID_ALGO_ID;
+}
+#endif /* WOLFSSH_NO_ECDSA */
+
+
+static int SignHEd25519(WOLFSSH* ssh, byte* sig, word32* sigSz,
+        struct wolfSSH_sigKeyBlockFull *sigKey)
+#ifndef WOLFSSH_NO_ED25519
+{
+    int ret;
+
+    WLOG(WS_LOG_DEBUG, "Entering SignHEd25519()");
+
+    ret = wc_ed25519_sign_msg(ssh->h, ssh->hSz, sig, sigSz, &sigKey->sk.ed.key);
+    if (ret != 0) {
+        WLOG(WS_LOG_DEBUG,
+                "SignHEd5519: Bad ED25519 Sign (error: %d)", ret);
+        ret = WS_ECC_E;
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving SignHEd25519(), ret = %d", ret);
+    return ret;
+}
+#else /* WOLFSSH_NO_ED25519 */
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(sig);
+    WOLFSSH_UNUSED(sigSz);
+    WOLFSSH_UNUSED(sigKey);
+    return WS_INVALID_ALGO_ID;
+}
+#endif /* WOLFSSH_NO_ED25519 */
+
+
+static int SignH(WOLFSSH* ssh, byte* sig, word32* sigSz,
+        struct wolfSSH_sigKeyBlockFull *sigKey)
+{
+    int ret;
+
+    switch (sigKey->pubKeyId) {
+        case ID_SSH_RSA:
+        case ID_X509V3_SSH_RSA:
+        case ID_RSA_SHA2_256:
+        case ID_RSA_SHA2_512:
+            ret = SignHRsa(ssh, sig, sigSz, sigKey);
+            break;
+        case ID_ECDSA_SHA2_NISTP256:
+        case ID_ECDSA_SHA2_NISTP384:
+        case ID_ECDSA_SHA2_NISTP521:
+        case ID_X509V3_ECDSA_SHA2_NISTP256:
+        case ID_X509V3_ECDSA_SHA2_NISTP384:
+        case ID_X509V3_ECDSA_SHA2_NISTP521:
+            ret = SignHEcdsa(ssh, sig, sigSz, sigKey);
+            break;
+        case ID_ED25519:
+            ret = SignHEd25519(ssh, sig, sigSz, sigKey);
+            break;
+        default:
+            ret = WS_INVALID_ALGO_ID;
+    }
+
+    return ret;
+}
+
+
 /* SendKexDhReply()
  * It is also the funciton used for MSGID_KEXECDH_REPLY. The parameters
  * are analogous between the two messages. Where MSGID_KEXDH_REPLY has
@@ -11033,156 +11279,7 @@ int SendKexDhReply(WOLFSSH* ssh)
 
     /* Sign h with the server's private key. */
     if (ret == WS_SUCCESS) {
-        if (sigKeyBlock_ptr->pubKeyId == ID_ED25519) {
-#ifndef WOLFSSH_NO_ED25519
-            WLOG(WS_LOG_INFO, "Signing hash with %s.", IdToName(ssh->handshake->pubKeyId));
-
-            sigSz = KEX_SIG_SIZE;
-            ret = wc_ed25519_sign_msg(ssh->h, ssh->hSz,
-                                    sig_ptr, &sigSz, &sigKeyBlock_ptr->sk.ed.key);
-            if (ret != 0) {
-                WLOG(WS_LOG_DEBUG, "SendKexDhReply: Bad ED25519 Sign (error: %d)", ret);
-                ret = WS_ECC_E;
-            }
-#endif
-        } else {
-            wc_HashAlg digestHash;
-            byte digest[WC_MAX_DIGEST_SIZE];
-            enum wc_HashType sigHashId;
-
-            sigHashId = HashForId(ssh->handshake->pubKeyId);
-            ret = wc_HashInit(&digestHash, sigHashId);
-            if (ret == 0)
-            ret = HashUpdate(&digestHash, sigHashId, ssh->h, ssh->hSz);
-            if (ret == 0)
-                ret = wc_HashFinal(&digestHash, sigHashId, digest);
-            if (ret != 0)
-                ret = WS_CRYPTO_FAILED;
-            wc_HashFree(&digestHash, sigHashId);
-
-            if (ret == WS_SUCCESS) {
-                if (sigKeyBlock_ptr->pubKeyId == ID_SSH_RSA
-            #ifdef WOLFSSH_CERTS
-                 || sigKeyBlock_ptr->pubKeyId == ID_X509V3_SSH_RSA
-            #endif
-                 || sigKeyBlock_ptr->pubKeyId == ID_RSA_SHA2_256
-                 || sigKeyBlock_ptr->pubKeyId == ID_RSA_SHA2_512
-                ) {
-        #ifndef WOLFSSH_NO_RSA
-                    word32 encSigSz;
-                #ifdef WOLFSSH_SMALL_STACK
-                    byte *encSig = (byte*)WMALLOC(MAX_ENCODED_SIG_SZ, heap,
-                            DYNTYPE_TEMP);
-                    if (encSig == NULL) {
-                        ret = WS_MEMORY_E;
-                    }
-
-                    if (ret == WS_SUCCESS)
-                #else
-                    byte encSig[MAX_ENCODED_SIG_SZ];
-                #endif
-                    {
-                        encSigSz = wc_EncodeSignature(encSig, digest,
-                                                  wc_HashGetDigestSize(sigHashId),
-                                                  wc_HashGetOID(sigHashId));
-                        if (encSigSz <= 0) {
-                            WLOG(WS_LOG_DEBUG, "SendKexDhReply: Bad Encode Sig");
-                            ret = WS_CRYPTO_FAILED;
-                        }
-                        else {
-                            WLOG(WS_LOG_INFO, "Signing hash with %s.",
-                                IdToName(ssh->handshake->pubKeyId));
-                            sigSz = wc_RsaSSL_Sign(encSig, encSigSz, sig_ptr,
-                                    KEX_SIG_SIZE, &sigKeyBlock_ptr->sk.rsa.key,
-                                    ssh->rng);
-                            if (sigSz <= 0) {
-                                WLOG(WS_LOG_DEBUG, "SendKexDhReply: Bad RSA Sign");
-                                ret = WS_RSA_E;
-                            }
-                            else {
-                                ret = wolfSSH_RsaVerify(sig_ptr, sigSz,
-                                        encSig, encSigSz,
-                                        &sigKeyBlock_ptr->sk.rsa.key,
-                                        heap, "SendKexDhReply");
-                            }
-                        }
-                    #ifdef WOLFSSH_SMALL_STACK
-                        WFREE(encSig, heap, DYNTYPE_TEMP);
-                    #endif
-                    }    
-        #endif /* WOLFSSH_NO_RSA */
-                }
-                else if (sigKeyBlock_ptr->pubKeyId == ID_ECDSA_SHA2_NISTP256
-                      || sigKeyBlock_ptr->pubKeyId == ID_ECDSA_SHA2_NISTP384
-                      || sigKeyBlock_ptr->pubKeyId == ID_ECDSA_SHA2_NISTP521
-        #ifdef WOLFSSH_CERTS
-                      || sigKeyBlock_ptr->pubKeyId == ID_X509V3_ECDSA_SHA2_NISTP256
-                      || sigKeyBlock_ptr->pubKeyId == ID_X509V3_ECDSA_SHA2_NISTP384
-                      || sigKeyBlock_ptr->pubKeyId == ID_X509V3_ECDSA_SHA2_NISTP521
-        #endif
-                ) {
-        #ifndef WOLFSSH_NO_ECDSA
-                    WLOG(WS_LOG_INFO, "Signing hash with %s.",
-                            IdToName(ssh->handshake->pubKeyId));
-                    sigSz = KEX_SIG_SIZE;
-                    ret = wc_ecc_sign_hash(digest, wc_HashGetDigestSize(sigHashId),
-                                           sig_ptr, &sigSz,
-                                           ssh->rng, &sigKeyBlock_ptr->sk.ecc.key);
-                    if (ret != MP_OKAY) {
-                        WLOG(WS_LOG_DEBUG, "SendKexDhReply: Bad ECDSA Sign");
-                        ret = WS_ECC_E;
-                    }
-                    else {
-                        byte *r_ptr = NULL, *s_ptr = NULL;
-                        word32 rSz = MAX_ECC_BYTES + ECC_MAX_PAD_SZ;
-                        word32 sSz = MAX_ECC_BYTES + ECC_MAX_PAD_SZ;
-                        byte rPad;
-                        byte sPad;
-
-                        #ifdef WOLFSSH_SMALL_STACK
-                            r_ptr = (byte*)WMALLOC(rSz, heap, DYNTYPE_BUFFER);
-                            s_ptr = (byte*)WMALLOC(sSz, heap, DYNTYPE_BUFFER);
-                            if (r_ptr == NULL || s_ptr == NULL)
-                                ret = WS_MEMORY_E;
-                        #else
-                            byte r_s[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
-                            byte s_s[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
-                            r_ptr = r_s;
-                            s_ptr = s_s;
-                        #endif
-                        if (ret == WS_SUCCESS) {
-                            ret = wc_ecc_sig_to_rs(sig_ptr, sigSz,
-                                    r_ptr, &rSz, s_ptr, &sSz);
-                        }
-                        if (ret == 0) {
-                            idx = 0;
-                            rPad = (r_ptr[0] & 0x80) ? 1 : 0;
-                            sPad = (s_ptr[0] & 0x80) ? 1 : 0;
-                            sigSz = (LENGTH_SZ * 2) + rSz + rPad + sSz + sPad;
-
-                            c32toa(rSz + rPad, sig_ptr + idx);
-                            idx += LENGTH_SZ;
-                            if (rPad)
-                                sig_ptr[idx++] = 0;
-                            WMEMCPY(sig_ptr + idx, r_ptr, rSz);
-                            idx += rSz;
-                            c32toa(sSz + sPad, sig_ptr + idx);
-                            idx += LENGTH_SZ;
-                            if (sPad)
-                                sig_ptr[idx++] = 0;
-                            WMEMCPY(sig_ptr + idx, s_ptr, sSz);
-                        }
-                        #ifdef WOLFSSH_SMALL_STACK
-                            if (r_ptr)
-                                WFREE(r_ptr, heap, DYNTYPE_BUFFER);
-                            if (s_ptr)
-                                WFREE(s_ptr, heap, DYNTYPE_BUFFER);
-                        #endif
-                    }
-        #endif /* WOLFSSH_NO_ECDSA */
-                }
-            }
-        }
+        ret = SignH(ssh, sig_ptr, &sigSz, sigKeyBlock_ptr);
     }
 
     if (sigKeyBlock_ptr != NULL) {
@@ -11197,7 +11294,8 @@ int SendKexDhReply(WOLFSSH* ssh)
 #ifndef WOLFSSH_NO_ECDSA
             wc_ecc_free(&sigKeyBlock_ptr->sk.ecc.key);
 #endif
-        } else if (sigKeyBlock_ptr->pubKeyId == ID_ED25519) {
+        }
+        else if (sigKeyBlock_ptr->pubKeyId == ID_ED25519) {
 #if !defined(WOLFSSH_NO_ED25519)
             wc_ed25519_free(&sigKeyBlock_ptr->sk.ed.key);
 #endif
