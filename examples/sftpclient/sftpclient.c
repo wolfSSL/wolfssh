@@ -63,6 +63,36 @@ static char* workingDir;
 #define AUTOPILOT_PUT 2
 
 
+#ifdef WOLFSSH_STATIC_MEMORY
+    #include <wolfssl/wolfcrypt/memory.h>
+
+    typedef WOLFSSL_HEAP_HINT SFTPC_HEAP_HINT;
+
+     /* This static buffer is tuned for building with SFTP only. The static
+      * buffer size is calulated by multiplying the pairs of sizeList items
+      * and distList items and summing (32*50 + 128*100 + ...) and adding
+      * the sum of the distList values times the sizeof wc_Memory (rounded up
+      * to a word, 24). This total was 268kb plus change, rounded up to 269. */
+    #ifndef SFTPC_STATIC_SIZES
+        #define SFTPC_STATIC_SIZES 64,128,384,800,3120,8400,17552,33104,131072
+    #endif
+    #ifndef SFTPC_STATIC_DISTS
+        #define SFTPC_STATIC_DISTS 60,100,4,6,5,2,1,2,1
+    #endif
+    #ifndef SFTPC_STATIC_LISTSZ
+        #define SFTPC_STATIC_LISTSZ 9
+    #endif
+    #ifndef SFTPC_STATIC_BUFSZ
+        #define SFTPC_STATIC_BUFSZ (269*1024)
+    #endif
+    static const word32 static_sizeList[] = {SFTPC_STATIC_SIZES};
+    static const word32 static_distList[] = {SFTPC_STATIC_DISTS};
+    static byte static_buffer[SFTPC_STATIC_BUFSZ];
+#else /* WOLFSSH_STATIC_MEMORY */
+    typedef void SFTPC_HEAP_HINT;
+#endif /* WOLFSSH_STATIC_MEMORY */
+
+
 static void err_msg(const char* s)
 {
     printf("%s\n", s);
@@ -1143,7 +1173,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     char* pubKeyName = NULL;
     char* certName = NULL;
     char* caCert   = NULL;
-
+    SFTPC_HEAP_HINT* heap = NULL;
 
     int     argc = ((func_args*)args)->argc;
     char**  argv = ((func_args*)args)->argv;
@@ -1263,7 +1293,17 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     }
 #endif
 
-    ret = ClientSetPrivateKey(privKeyName, userEcc);
+#ifdef WOLFSSH_STATIC_MEMORY
+    ret = wc_LoadStaticMemory_ex(&heap,
+            SFTPC_STATIC_LISTSZ, static_sizeList, static_distList,
+            static_buffer, sizeof(static_buffer),
+            WOLFMEM_GENERAL, 0);
+    if (ret != 0) {
+        err_sys("Couldn't set up static memory pool.\n");
+    }
+#endif /* WOLFSSH_STATIC_MEMORY */
+
+    ret = ClientSetPrivateKey(privKeyName, userEcc, heap);
     if (ret != 0) {
         err_sys("Error setting private key");
     }
@@ -1271,18 +1311,18 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 #ifdef WOLFSSH_CERTS
     /* passed in certificate to use */
     if (certName) {
-        ret = ClientUseCert(certName);
+        ret = ClientUseCert(certName, heap);
     }
     else
 #endif
     {
-        ret = ClientUsePubKey(pubKeyName, 0);
+        ret = ClientUsePubKey(pubKeyName, 0, heap);
     }
     if (ret != 0) {
         err_sys("Error setting public key");
     }
 
-    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, heap);
     if (ctx == NULL)
         err_sys("Couldn't create wolfSSH client context.");
 
@@ -1394,7 +1434,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         ((func_args*)args)->return_code = ret;
     }
 
-    ClientFreeBuffers(pubKeyName, privKeyName);
+    ClientFreeBuffers(pubKeyName, privKeyName, heap);
 #if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif

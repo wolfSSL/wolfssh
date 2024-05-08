@@ -948,6 +948,30 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
         return ssh;
     heap = ctx->heap;
 
+#ifdef WOLFSSH_STATIC_MEMORY
+    if (heap != NULL) {
+        WOLFSSL_HEAP_HINT* hint = (WOLFSSL_HEAP_HINT*)heap;
+
+        if (hint->memory->flag & WOLFMEM_TRACK_STATS) {
+            WOLFSSL_MEM_CONN_STATS* stats = NULL;
+
+            stats = (WOLFSSL_MEM_CONN_STATS*)WMALLOC(
+                    sizeof(WOLFSSL_MEM_CONN_STATS),
+                    heap, DYNTYPE_SSH);
+            if (stats == NULL) {
+                WLOG(WS_LOG_DEBUG, "SshInit: Cannot track memory stats.\n");
+                return NULL;
+            }
+
+            XMEMSET(stats, 0, sizeof(WOLFSSL_MEM_CONN_STATS));
+            if (hint->stats != NULL) {
+                WFREE(hint->stats, heap, DYNTYPE_SSH);
+            }
+            hint->stats = stats;
+        }
+    }
+#endif /* WOLFSSH_STATIC_MEMORY */
+
     handshake = HandshakeInfoNew(heap);
     rng = (WC_RNG*)WMALLOC(sizeof(WC_RNG), heap, DYNTYPE_RNG);
 
@@ -1123,6 +1147,16 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
     if (ssh->modes) {
         WFREE(ssh->modes, ssh->ctx->heap, DYNTYPE_STRING);
         ssh->modesSz = 0;
+    }
+#endif
+#ifdef WOLFSSH_STATIC_MEMORY
+    if (heap) {
+        WOLFSSL_HEAP_HINT* hint = (WOLFSSL_HEAP_HINT*)heap;
+        if (hint->memory->flag & WOLFMEM_TRACK_STATS
+                && hint->stats != NULL) {
+            WFREE(hint->stats, heap, DYNTYPE_SSH);
+            hint->stats = NULL;
+        }
     }
 #endif
 }
