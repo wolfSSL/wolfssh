@@ -217,7 +217,7 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
         err_sys("Empty path values");
     }
 
-    ret = ClientSetPrivateKey(privKeyName, 0);
+    ret = ClientSetPrivateKey(privKeyName, 0, NULL);
     if (ret != 0) {
         err_sys("Error setting private key");
     }
@@ -225,12 +225,12 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
 #ifdef WOLFSSH_CERTS
     /* passed in certificate to use */
     if (certName) {
-        ret = ClientUseCert(certName);
+        ret = ClientUseCert(certName, NULL);
     }
     else
 #endif
     {
-        ret = ClientUsePubKey(pubKeyName, 0);
+        ret = ClientUsePubKey(pubKeyName, 0, NULL);
     }
     if (ret != 0) {
         err_sys("Error setting public key");
@@ -327,7 +327,7 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     if (ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E)
         err_sys("Closing scp stream failed. Connection could have been closed by peer");
 
-    ClientFreeBuffers(pubKeyName, privKeyName);
+    ClientFreeBuffers(pubKeyName, privKeyName, NULL);
 #if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif

@@ -609,6 +609,87 @@ static int termios_show(int fd)
 #endif /* SHELL_DEBUG */
 
 
+#ifdef WOLFSSH_STATIC_MEMORY
+    #ifndef WOLFSSL_STATIC_MEMORY
+        #error Requires the static memory functions from wolfSSL
+    #endif
+    #if defined(WOLFSSH_SCP) || defined(WOLFSSH_SHELL) || defined(WOLFSSH_FWD)
+        #warning Static memory configuration for SFTP, results may vary.
+    #endif
+    typedef WOLFSSL_HEAP_HINT ES_HEAP_HINT;
+
+     /* This static buffer is tuned for building with SFTP only. The static
+      * buffer size is calulated by multiplying the pairs of sizeList items
+      * and distList items and summing (32*64 + 128*118 + ...) and adding
+      * the sum of the distList values times the sizeof wc_Memory (rounded up
+      * to a word, 24). This total was 288kb plus change, rounded up to 289. */
+    #ifndef ES_STATIC_SIZES
+        #define ES_STATIC_SIZES 32,128,384,800,3120,8400,17552,32846,131072
+    #endif
+    #ifndef ES_STATIC_DISTS
+        #define ES_STATIC_DISTS 64,118,3,4,6,2,2,2,1
+    #endif
+    #ifndef ES_STATIC_LISTSZ
+        #define ES_STATIC_LISTSZ 9
+    #endif
+    #ifndef ES_STATIC_BUFSZ
+        #define ES_STATIC_BUFSZ (289*1024)
+    #endif
+    static const word32 static_sizeList[] = {ES_STATIC_SIZES};
+    static const word32 static_distList[] = {ES_STATIC_DISTS};
+    static byte static_buffer[ES_STATIC_BUFSZ];
+
+    static void wolfSSH_MemoryPrintStats(ES_HEAP_HINT* hint)
+    {
+        if (hint != NULL) {
+            word16 i;
+            WOLFSSL_MEM_STATS stats;
+
+            wolfSSL_GetMemStats(hint->memory, &stats);
+
+            /* print to stderr so is on the same pipe as WOLFSSL_DEBUG */
+            fprintf(stderr, "Total mallocs        = %d\n", stats.totalAlloc);
+            fprintf(stderr, "Total frees          = %d\n", stats.totalFr);
+            fprintf(stderr, "Current mallocs      = %d\n", stats.curAlloc);
+            fprintf(stderr, "Available IO         = %d\n", stats.avaIO);
+            fprintf(stderr, "Max con. handshakes  = %d\n", stats.maxHa);
+            fprintf(stderr, "Max con. IO          = %d\n", stats.maxIO);
+            fprintf(stderr, "State of memory blocks: size : available\n");
+            for (i = 0; i < WOLFMEM_MAX_BUCKETS; i++) {
+                fprintf(stderr, "                    %8d : %d\n",
+                        stats.blockSz[i], stats.avaBlock[i]);
+            }
+        }
+    }
+
+    static void wolfSSH_MemoryConnPrintStats(ES_HEAP_HINT* hint)
+    {
+        if (hint != NULL) {
+            WOLFSSL_MEM_CONN_STATS* stats = hint->stats;
+
+            /* fill out statistics if wanted and WOLFMEM_TRACK_STATS flag */
+            if (hint->memory->flag & WOLFMEM_TRACK_STATS
+                    && hint->stats != NULL) {
+                fprintf(stderr, "peak connection memory    = %d\n",
+                        stats->peakMem);
+                fprintf(stderr, "current memory in use     = %d\n",
+                        stats->curMem);
+                fprintf(stderr, "peak connection allocs    = %d\n",
+                        stats->peakAlloc);
+                fprintf(stderr, "current connection allocs = %d\n",
+                        stats->curAlloc);
+                fprintf(stderr, "total connection allocs   = %d\n",
+                        stats->totalAlloc);
+                fprintf(stderr, "total connection frees    = %d\n\n",
+                        stats->totalFr);
+            }
+        }
+    }
+#else
+    typedef void ES_HEAP_HINT;
+#endif
+
+
 int ChildRunning = 0;
 
 #ifdef WOLFSSH_SHELL
@@ -1419,6 +1500,11 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
         threadCtx->fwdCbCtx.originName = NULL;
     }
 #endif
+
+#ifdef WOLFSSH_STATIC_MEMORY
+    wolfSSH_MemoryConnPrintStats(threadCtx->ssh->ctx->heap);
+#endif
+
     wolfSSH_free(threadCtx->ssh);
 
     if (ret != 0) {
@@ -2192,6 +2278,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     word32 defaultHighwater = EXAMPLE_HIGHWATER_MARK;
     word32 threadCount = 0;
     const char* keyList = NULL;
+    ES_HEAP_HINT* heap = NULL;
     int multipleConnections = 1;
     int userEcc = 0;
     int peerEcc = 0;
@@ -2329,7 +2416,21 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         ES_ERROR("Couldn't initialize wolfSSH.\n");
     }
 
-    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    #ifdef WOLFSSH_STATIC_MEMORY
+    {
+        int ret;
+
+        ret = wc_LoadStaticMemory_ex(&heap,
+                ES_STATIC_LISTSZ, static_sizeList, static_distList,
+                static_buffer, sizeof(static_buffer),
+                WOLFMEM_GENERAL|WOLFMEM_TRACK_STATS, 0);
+        if (ret != 0) {
+            ES_ERROR("Couldn't set up static memory pool.\n");
+        }
+    }
+    #endif /* WOLFSSH_STATIC_MEMORY */
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, heap);
     if (ctx == NULL) {
         ES_ERROR("Couldn't allocate SSH CTX data.\n");
     }
@@ -2573,6 +2674,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             WFREE(threadCtx, NULL, 0);
             ES_ERROR("Couldn't allocate SSH data.\n");
         }
+    #ifdef WOLFSSH_STATIC_MEMORY
+        wolfSSH_MemoryConnPrintStats(heap);
+    #endif
         wolfSSH_SetUserAuthCtx(ssh, &pwMapList);
         /* Use the session object for its own highwater callback ctx */
         if (defaultHighwater > 0) {
@@ -2649,6 +2753,10 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     wc_FreeMutex(&doneLock);
     PwMapListDelete(&pwMapList);
     wolfSSH_CTX_free(ctx);
+#ifdef WOLFSSH_STATIC_MEMORY
+    wolfSSH_MemoryPrintStats(heap);
+#endif
+
     if (wolfSSH_Cleanup() != WS_SUCCESS) {
         ES_ERROR("Couldn't clean up wolfSSH.\n");
     }
