@@ -104,9 +104,6 @@ Flags:
   WOLFSSH_NO_ECDH_SHA2_NISTP521
     Set when ECC or SHA2-512 are disabled. Set to disable use of ECDHE key
     exchange with prime NISTP521.
-  WOLFSSH_NO_ECDH_SHA2_ED25519
-    Set when ED25519 or SHA2-256 are disabled. Set to disable use of ECDHE key
-    exchange with prime ED25519. (It just decodes the ID for output.)
   WOLFSSH_NO_RSA
     Set when RSA is disabled. Set to disable use of RSA server and user
     authentication.
@@ -2303,12 +2300,6 @@ static const NameIdPair NameIdMap[] = {
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP521
     { ID_ECDH_SHA2_NISTP521, TYPE_KEX, "ecdh-sha2-nistp521" },
 #endif
-#if 0
-#ifndef WOLFSSH_NO_ECDH_SHA2_ED25519
-    { ID_ECDH_SHA2_ED25519, TYPE_KEX, "curve25519-sha256" },
-    { ID_ECDH_SHA2_ED25519_LIBSSH, TYPE_KEX, "curve25519-sha256@libssh.org" },
-#endif
-#endif
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
     { ID_DH_GROUP14_SHA256, TYPE_KEX, "diffie-hellman-group14-sha256" },
 #endif
@@ -3560,13 +3551,6 @@ static INLINE enum wc_HashType HashForId(byte id)
         case ID_RSA_SHA2_256:
             return WC_HASH_TYPE_SHA256;
 #endif
-#ifndef WOLFSSH_NO_ECDH_SHA2_ED25519
-        case ID_ECDH_SHA2_ED25519:
-            return WC_HASH_TYPE_SHA256;
-
-        case ID_ECDH_SHA2_ED25519_LIBSSH:
-            return WC_HASH_TYPE_SHA256;
-#endif
 
 #ifndef WOLFSSH_NO_ED25519
         case ID_ED25519:
@@ -3643,13 +3627,6 @@ static INLINE int wcPrimeForId(byte id)
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
         case ID_ECDSA_SHA2_NISTP521:
             return ECC_SECP521R1;
-#endif
-#ifndef WOLFSSH_NO_ECDH_SHA2_ED25519
-        case ID_ECDH_SHA2_ED25519:
-            return ECC_X25519;
-
-        case ID_ECDH_SHA2_ED25519_LIBSSH:
-            return ECC_X25519;
 #endif
         default:
             return ECC_CURVE_INVALID;
@@ -6712,9 +6689,10 @@ static int DoUserAuthRequestEccCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 #endif /* WOLFSSH_CERTS */
 #endif /* ! WOLFSSH_NO_ECDSA */
 
+
 #ifndef WOLFSSH_NO_ED25519
-static int DoUserAuthRequestEd25519(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
-                                    WS_UserAuthData* authData)
+static int DoUserAuthRequestEd25519(WOLFSSH* ssh,
+        WS_UserAuthData_PublicKey* pk, WS_UserAuthData* authData)
 {
     const byte* publicKeyType;
     byte temp[32];
@@ -6735,7 +6713,7 @@ static int DoUserAuthRequestEd25519(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 
     if (ret == WS_SUCCESS) {
 #ifdef WOLFSSH_SMALL_STACK
-    key_ptr = (ecc_key*)WMALLOC(sizeof(ecc_key), ssh->ctx->heap,
+    key_ptr = (ed25519_key*)WMALLOC(sizeof(ed25519_key), ssh->ctx->heap,
             DYNTYPE_PUBKEY);
     if (key_ptr == NULL)
         ret = WS_MEMORY_E;
@@ -6759,9 +6737,9 @@ static int DoUserAuthRequestEd25519(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     if (ret == WS_SUCCESS) {
         publicKeyType = pk->publicKey + i;
         i += publicKeyTypeSz;
-        if (publicKeyTypeSz != pk->publicKeyTypeSz &&
-            WMEMCMP(publicKeyType, pk->publicKeyType, publicKeyTypeSz) != 0) {
-
+        if (publicKeyTypeSz != pk->publicKeyTypeSz
+                && WMEMCMP(publicKeyType,
+                        pk->publicKeyType, publicKeyTypeSz) != 0) {
             WLOG(WS_LOG_DEBUG,
                 "Public Key's type does not match public key type");
             ret = WS_INVALID_ALGO_ID;
@@ -6805,17 +6783,19 @@ static int DoUserAuthRequestEd25519(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
         ret = GetSize(&sz, pk->signature, pk->signatureSz, &i);
     }
 
-    if(ret == WS_SUCCESS) {
-        ret = wc_ed25519_verify_msg_init(pk->signature + i, sz, key_ptr, (byte)Ed25519, NULL, 0);
+    if (ret == WS_SUCCESS) {
+        ret = wc_ed25519_verify_msg_init(pk->signature + i, sz,
+                key_ptr, (byte)Ed25519, NULL, 0);
     }
 
-    if(ret == WS_SUCCESS) {
+    if (ret == WS_SUCCESS) {
         c32toa(ssh->sessionIdSz, temp);
         ret = wc_ed25519_verify_msg_update(temp, UINT32_SZ, key_ptr);
     }
 
-    if(ret == WS_SUCCESS) {
-        ret = wc_ed25519_verify_msg_update(ssh->sessionId, ssh->sessionIdSz, key_ptr);
+    if (ret == WS_SUCCESS) {
+        ret = wc_ed25519_verify_msg_update(ssh->sessionId, ssh->sessionIdSz,
+                key_ptr);
     }
 
     if(ret == WS_SUCCESS) {
@@ -6836,7 +6816,8 @@ static int DoUserAuthRequestEd25519(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 
     if(ret == WS_SUCCESS) {
         int status = 0;
-        ret = wc_ed25519_verify_msg_final(pk->signature + i, sz, &status, key_ptr);
+        ret = wc_ed25519_verify_msg_final(pk->signature + i, sz,
+                &status, key_ptr);
         if (ret != 0) {
             WLOG(WS_LOG_DEBUG, "Could not verify signature");
             ret = WS_CRYPTO_FAILED;
@@ -6845,12 +6826,13 @@ static int DoUserAuthRequestEd25519(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
             ret = status ? WS_SUCCESS : WS_ECC_E;
     }
 
-    if (key_ptr)
+    if (key_ptr) {
         wc_ed25519_free(key_ptr);
 #ifdef WOLFSSH_SMALL_STACK
-    if (key_ptr)
         WFREE(key_ptr, ssh->ctx->heap, DYNTYPE_PUBKEY);
 #endif
+    }
+
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthRequestEd25519(), ret = %d", ret);
     return ret;
 }
@@ -7045,13 +7027,14 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             WLOG(WS_LOG_DEBUG, "DUARPK: Send the PK OK");
             ret = SendUserAuthPkOk(ssh,
                     pubKeyAlgo, pubKeyAlgoSz, pubKeyBlob, pubKeyBlobSz);
-        } else {
-            if(pkTypeId == ID_ED25519) {
+        }
+        else {
+            if (pkTypeId == ID_ED25519) {
 #ifndef WOLFSSH_NO_ED25519
-                if(ret == WS_SUCCESS)
-                    ret = DoUserAuthRequestEd25519(ssh, &authData->sf.publicKey, authData);
+                ret = DoUserAuthRequestEd25519(ssh,
+                        &authData->sf.publicKey, authData);
 #else
-                ret = WS_CRYPTO_FAILED;
+                ret = WS_INVALID_ALGO_ID;
 #endif
             } else {
                 wc_HashAlg hash;
@@ -7087,9 +7070,9 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                 }
 
                 /* The rest of the fields in the signature are already
-                 * in the buffer. Just need to account for the sizes, which total
-                 * the length of the buffer minus the signature and size of
-                 * signature. */
+                 * in the buffer. Just need to account for the sizes, which
+                 * total the length of the buffer minus the signature and
+                 * size of signature. */
                 if (ret == 0) {
                     ret = HashUpdate(&hash, hashId,
                             authData->sf.publicKey.dataToSign,
@@ -7130,7 +7113,6 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                         case ID_ECDSA_SHA2_NISTP256:
                         case ID_ECDSA_SHA2_NISTP384:
                         case ID_ECDSA_SHA2_NISTP521:
-                        case ID_ED25519:
                             ret = DoUserAuthRequestEcc(ssh,
                                     &authData->sf.publicKey,
                                     hashId, digest, digestSz);

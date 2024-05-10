@@ -159,10 +159,6 @@ extern "C" {
     #undef WOLFSSH_NO_ECDH_SHA2_NISTP521
     #define WOLFSSH_NO_ECDH_SHA2_NISTP521
 #endif
-#if !defined(HAVE_CURVE25519) || defined(NO_SHA256)
-    #undef WOLFSSH_NO_ECDH_SHA2_ED25519
-    #define WOLFSSH_NO_ECDH_SHA2_ED25519
-#endif
 #if !defined(WOLFSSH_HAVE_LIBOQS) || defined(NO_SHA256) \
     || defined(WOLFSSH_NO_ECDH_SHA2_NISTP256)
     #undef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
@@ -179,7 +175,6 @@ extern "C" {
     defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && \
     defined(WOLFSSH_NO_ECDH_SHA2_NISTP384) && \
     defined(WOLFSSH_NO_ECDH_SHA2_NISTP521) && \
-    defined(WOLFSSH_NO_ECDH_SHA2_ED25519) && \
     defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256) && \
     defined(WOLFSSH_NO_CURVE25519_SHA256)
     #error "You need at least one key agreement algorithm."
@@ -193,8 +188,7 @@ extern "C" {
 #endif
 #if defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && \
     defined(WOLFSSH_NO_ECDH_SHA2_NISTP384) && \
-    defined(WOLFSSH_NO_ECDH_SHA2_NISTP521) && \
-    defined(WOLFSSH_NO_ECDH_SHA2_ED25519)
+    defined(WOLFSSH_NO_ECDH_SHA2_NISTP521)
     #undef WOLFSSH_NO_ECDH
     #define WOLFSSH_NO_ECDH
 #endif
