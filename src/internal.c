@@ -1409,8 +1409,7 @@ static int GetOpenSshKeyRsa(RsaKey* key,
 }
 #endif
 
-
-#if !defined(WOLFSSH_NO_ECDSA) && !defined(WOLFSSH_NO_ECC)
+#ifndef WOLFSSH_NO_ECDSA
 /*
  * Utility for GetOpenSshKey() to read in ECDSA keys.
  */
@@ -1440,6 +1439,35 @@ static int GetOpenSshKeyEcc(ecc_key* key,
 }
 #endif
 
+#ifndef WOLFSSH_NO_ED25519
+/*
+ * Utility for GetOpenSshKey() to read in Ed25519 keys.
+ */
+static int GetOpenSshKeyEd25519(ed25519_key* key,
+        const byte* buf, word32 len, word32* idx)
+{
+    const byte *name = NULL, *priv = NULL, *pub = NULL;
+    word32 nameSz = 0, privSz = 0, pubSz = 0;
+    int ret;
+
+    ret = wc_ed25519_init_ex(key, ssh->ctx->heap, INVALID_DEVID);
+    if (ret == WS_SUCCESS)
+        ret = GetStringRef(&nameSz, &name, buf, len, idx); /* curve name */
+    if (ret == WS_SUCCESS)
+        ret = GetStringRef(&pubSz, &pub, buf, len, idx); /* ENC(A) */
+    if (ret == WS_SUCCESS)
+        ret = GetMpint(&privSz, &priv, buf, len, idx); /* k || ENC(A) */
+
+    if (ret == WS_SUCCESS)
+        ret = wc_ecc_import_private_key_ex(priv, privSz, pub, pubSz,
+                key, ECC_CURVE_DEF);
+
+    if (ret != WS_SUCCESS)
+        ret = WS_ECC_E;
+
+    return ret;
+}
+#endif
 /*
  * Decodes an OpenSSH format key.
  */
@@ -1522,9 +1550,16 @@ static int GetOpenSshKey(WS_KeySignature *key,
                                         str, strSz, &subIdx);
                                 break;
                         #endif
-                        #if !defined(WOLFSSH_NO_ECDSA) && !defined(WOLFSSH_NO_ECC)
+                        #ifndef WOLFSSH_NO_ECDSA
                             case ID_ECDSA_SHA2_NISTP256:
+                            case ID_ECDSA_SHA2_NISTP384:
+                            case ID_ECDSA_SHA2_NISTP521:
                                 ret = GetOpenSshKeyEcc(&key->ks.ecc.key,
+                                        str, strSz, &subIdx);
+                                break;
+                        #endif
+                        #ifndef WOLFSSH_NO_ED25519
+                                ret = GetOpenSshKeyEd25519(&key->ks.ed25519.key,
                                         str, strSz, &subIdx);
                                 break;
                         #endif

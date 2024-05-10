@@ -239,8 +239,7 @@ extern "C" {
 #endif
 #if defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && \
     defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && \
-    defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521) && \
-    !defined(HAVE_ED25519)
+    defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
     #undef WOLFSSH_NO_ECDSA
     #define WOLFSSH_NO_ECDSA
 #endif
