@@ -164,6 +164,12 @@ extern "C" {
     #define WOLFSSH_NO_ECDH_SHA2_NISTP521
 #endif
 #if !defined(WOLFSSL_HAVE_KYBER) || defined(NO_SHA256) \
+#if !defined(HAVE_ED25519) || defined(NO_SHA256) || 1
+    /* ED25519 isn't supported yet. Force disabled. */
+    #undef WOLFSSH_NO_ECDH_SHA2_ED25519
+    #define WOLFSSH_NO_ECDH_SHA2_ED25519
+#endif
+#if !defined(WOLFSSH_HAVE_LIBOQS) || defined(NO_SHA256) \
     || defined(WOLFSSH_NO_ECDH_SHA2_NISTP256)
     #undef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
     #define WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
