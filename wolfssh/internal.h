@@ -157,7 +157,8 @@ extern "C" {
     #undef WOLFSSH_NO_ECDH_SHA2_ED25519
     #define WOLFSSH_NO_ECDH_SHA2_ED25519
 #endif
-#if !defined(WOLFSSH_HAVE_LIBOQS) || defined(NO_SHA256)
+#if !defined(WOLFSSH_HAVE_LIBOQS) || defined(NO_SHA256) \
+    || defined(WOLFSSH_NO_ECDH_SHA2_NISTP256)
     #undef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
     #define WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
 #endif
@@ -583,19 +584,16 @@ typedef struct HandshakeInfo {
     word32 generatorSz;
 #endif
 
-    byte useEcc;
-#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-    byte useEccKyber;
-#endif
-#ifndef WOLFSSH_NO_CURVE25519_SHA256
-    byte useCurve25519;
-#endif
+    byte useDh:1;
+    byte useEcc:1;
+    byte useEccKyber:1;
+    byte useCurve25519:1;
 
     union {
 #ifndef WOLFSSH_NO_DH
         DhKey dh;
 #endif
-#if !defined(WOLFSSH_NO_ECDSA) && !defined(WOLFSSH_NO_ECDH)
+#ifndef WOLFSSH_NO_ECDH
         ecc_key ecc;
 #endif
 #ifndef WOLFSSH_NO_CURVE25519_SHA256
@@ -1123,7 +1121,8 @@ enum WS_MessageIds {
 };
 
 
-#define MSGID_KEXDH_LIMIT 30
+/* Allows the server to receive up to KEXDH GEX Request during KEX. */
+#define MSGID_KEXDH_LIMIT MSGID_KEXDH_GEX_REQUEST
 
 /* The endpoints should not allow message IDs greater than or
  * equal to msgid 80 before user authentication is complete.
