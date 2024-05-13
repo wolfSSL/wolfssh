@@ -447,6 +447,9 @@ const char* GetErrorString(int err)
         case WS_MSGID_NOT_ALLOWED_E:
             return "message not allowed before user authentication";
 
+        case WS_ED25519_E:
+            return "Ed25519 buffer error";
+
         default:
             return "Unknown error code";
     }
@@ -730,8 +733,12 @@ static const char cannedKexAlgoNames[] =
 #ifndef WOLFSSH_NO_RSA_SHA2_512
     static const char cannedKeyAlgoRsaSha2_512Names[] = "rsa-sha2-512";
 #endif
+#ifndef WOLFSSH_NO_ED25519
+    static const char cannedKeyAlgoEd25519Name[] = "ssh-ed25519";
+#endif
 
 static const char cannedKeyAlgoNames[] =
+    "ssh-ed25519,"
     "rsa-sha2-256,"
     "ecdsa-sha2-nistp256,"
 #ifdef WOLFSSH_CERTS
@@ -1165,6 +1172,7 @@ typedef struct WS_KeySignature {
     byte keySigId;
     word32 sigSz;
     const char *name;
+    void *heap;
     word32 nameSz;
     union {
 #ifndef WOLFSSH_NO_RSA
@@ -1302,10 +1310,12 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap)
 
             if(ret == 0) {
                 if (isPrivate) {
-                    ret = wc_Ed25519PrivateKeyDecode(in, &idx, &key->ks.ed25519.key, inSz);
+                    ret = wc_Ed25519PrivateKeyDecode(in, &idx,
+                            &key->ks.ed25519.key, inSz);
                 }
                 else {
-                    ret = wc_Ed25519PublicKeyDecode(in, &idx, &key->ks.ed25519.key, inSz);
+                    ret = wc_Ed25519PublicKeyDecode(in, &idx,
+                            &key->ks.ed25519.key, inSz);
                 }
             }
 
@@ -1446,21 +1456,22 @@ static int GetOpenSshKeyEcc(ecc_key* key,
 static int GetOpenSshKeyEd25519(ed25519_key* key,
         const byte* buf, word32 len, word32* idx)
 {
-    const byte *name = NULL, *priv = NULL, *pub = NULL;
-    word32 nameSz = 0, privSz = 0, pubSz = 0;
+    const byte *priv = NULL, *pub = NULL;
+    word32 privSz = 0, pubSz = 0;
     int ret;
 
-    ret = wc_ed25519_init_ex(key, ssh->ctx->heap, INVALID_DEVID);
-    if (ret == WS_SUCCESS)
-        ret = GetStringRef(&nameSz, &name, buf, len, idx); /* curve name */
+    ret = wc_ed25519_init_ex(key, key->heap, INVALID_DEVID);
+
+    /* OpenSSH key formatting stores the public key, ENC(A), and the
+     * private key (k) concatenated with the public key, k || ENC(A). */
     if (ret == WS_SUCCESS)
         ret = GetStringRef(&pubSz, &pub, buf, len, idx); /* ENC(A) */
     if (ret == WS_SUCCESS)
-        ret = GetMpint(&privSz, &priv, buf, len, idx); /* k || ENC(A) */
+        ret = GetStringRef(&privSz, &priv, buf, len, idx); /* k || ENC(A) */
 
     if (ret == WS_SUCCESS)
-        ret = wc_ecc_import_private_key_ex(priv, privSz, pub, pubSz,
-                key, ECC_CURVE_DEF);
+        ret = wc_ed25519_import_private_key(priv, privSz - pubSz,
+                pub, pubSz, key);
 
     if (ret != WS_SUCCESS)
         ret = WS_ECC_E;
@@ -1559,6 +1570,7 @@ static int GetOpenSshKey(WS_KeySignature *key,
                                 break;
                         #endif
                         #ifndef WOLFSSH_NO_ED25519
+                            case ID_ED25519:
                                 ret = GetOpenSshKeyEd25519(&key->ks.ed25519.key,
                                         str, strSz, &subIdx);
                                 break;
@@ -1626,6 +1638,7 @@ int IdentifyOpenSshKey(const byte* in, word32 inSz, void* heap)
     }
     else {
         WMEMSET(key, 0, sizeof(*key));
+        key->heap = heap;
         key->keySigId = ID_NONE;
 
         ret = GetOpenSshKey(key, in, inSz, &idx);
@@ -4275,6 +4288,7 @@ static int DoKexDhInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 struct wolfSSH_sigKeyBlock {
     byte useRsa:1;
     byte useEcc:1;
+    byte useEd25519:1;
     byte keyAllocated:1;
     word32 keySz;
     union {
@@ -4287,6 +4301,11 @@ struct wolfSSH_sigKeyBlock {
         struct {
             ecc_key key;
         } ecc;
+#endif
+#ifndef WOLFSSH_NO_ED25519
+        struct {
+            ed25519_key key;
+        } ed25519;
 #endif
     } sk;
 };
@@ -4408,6 +4427,49 @@ static int ParseECCPubKey(WOLFSSH *ssh,
 #endif
     return ret;
 }
+
+
+/* Parse out a RAW Ed25519 public key from buffer */
+static int ParseEd25519PubKey(WOLFSSH *ssh,
+        struct wolfSSH_sigKeyBlock *sigKeyBlock_ptr,
+        byte *pubKey, word32 pubKeySz)
+#ifndef WOLFSSH_NO_ED25519
+{
+    int ret;
+    const byte* encA;
+    word32 encASz, pubKeyIdx = 0;
+
+    ret = wc_ed25519_init_ex(&sigKeyBlock_ptr->sk.ed25519.key,
+            ssh->ctx->heap, INVALID_DEVID);
+    if (ret != 0)
+        ret = WS_ED25519_E;
+
+    /* Skip the algo name */
+    if (ret == WS_SUCCESS) {
+        ret = GetSkip(pubKey, pubKeySz, &pubKeyIdx);
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = GetStringRef(&encASz, &encA, pubKey, pubKeySz, &pubKeyIdx);
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = wc_ed25519_import_public(encA, encASz,
+                &sigKeyBlock_ptr->sk.ed25519.key);
+        if (ret != 0)
+            ret = WS_ED25519_E;
+    }
+    return ret;
+}
+#else
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(sigKeyBlock_ptr);
+    WOLFSSH_UNUSED(pubKey);
+    WOLFSSH_UNUSED(pubKeySz);
+    return WS_INVALID_ALGO_ID;
+}
+#endif
 
 
 #ifdef WOLFSSH_CERTS
@@ -4681,6 +4743,11 @@ static int ParsePubKey(WOLFSSH *ssh,
             ret = ParseECCPubKeyCert(ssh, sigKeyBlock_ptr, pubKey, pubKeySz);
             break;
     #endif
+
+        case ID_ED25519:
+            sigKeyBlock_ptr->useEd25519 = 1;
+            ret = ParseEd25519PubKey(ssh, sigKeyBlock_ptr, pubKey, pubKeySz);
+            break;
 
         default:
             ret = WS_INVALID_ALGO_ID;
@@ -5311,12 +5378,12 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 }
             }
             if (ret == WS_SUCCESS) {
+                sig = sig + begin;
+                /* In the fuzz, sigSz ends up 1 and it has issues. */
+                sigSz = scratch;
+
                 if (sigKeyBlock_ptr->useRsa) {
 #ifndef WOLFSSH_NO_RSA
-                    sig = sig + begin;
-                    /* In the fuzz, sigSz ends up 1 and it has issues. */
-                    sigSz = scratch;
-
                     if (sigSz < MIN_RSA_SIG_SZ) {
                         WLOG(WS_LOG_DEBUG, "Provided signature is too small.");
                         ret = WS_RSA_E;
@@ -5343,15 +5410,13 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                     }
 #endif
                 }
-                else {
+                else if (sigKeyBlock_ptr->useEcc) {
 #ifndef WOLFSSH_NO_ECDSA
                     const byte* r;
                     const byte* s;
                     word32 rSz, sSz, asnSigSz;
                     byte asnSig[256];
 
-                    sig = sig + begin;
-                    sigSz = scratch;
                     begin = 0;
                     asnSigSz = (word32)sizeof(asnSig);
                     XMEMSET(asnSig, 0, asnSigSz);
@@ -5378,6 +5443,24 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                         }
                     }
 #endif
+                }
+                else if (sigKeyBlock_ptr->useEd25519) {
+#ifndef WOLFSSH_NO_ED25519
+                    int res = 0;
+
+                    ret = wc_ed25519_verify_msg(sig, sigSz,
+                            ssh->h, ssh->hSz, &res,
+                            &sigKeyBlock_ptr->sk.ed25519.key);
+                    if (ret != 0 || res != 1) {
+                        WLOG(WS_LOG_DEBUG,
+                            "DoKexDhReply: Signature Verify fail (%d)",
+                            ret);
+                        ret = WS_ED25519_E;
+                    }
+#endif /* WOLFSSH_NO_ED25519 */
+                }
+                else {
+                    ret = WS_INVALID_ALGO_ID;
                 }
             }
         }
@@ -6858,7 +6941,7 @@ static int DoUserAuthRequestEd25519(WOLFSSH* ssh,
             ret = WS_CRYPTO_FAILED;
         }
         else
-            ret = status ? WS_SUCCESS : WS_ECC_E;
+            ret = status ? WS_SUCCESS : WS_ED25519_E;
     }
 
     if (key_ptr) {
@@ -13207,7 +13290,168 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
 #endif /* WOLFSSH_NO_ECDSA */
 
 
-#if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
+#ifndef WOLFSSH_NO_ED25519
+
+static int PrepareUserAuthRequestEd25519(WOLFSSH* ssh, word32* payloadSz,
+        const WS_UserAuthData* authData, WS_KeySignature* keySig)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering PrepareUserAuthRequestEd25519()");
+    if (ssh == NULL || payloadSz == NULL || authData == NULL || keySig == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS)
+        ret = wc_ed25519_init_ex(&keySig->ks.ed25519.key,
+                keySig->heap, INVALID_DEVID);
+
+    if (ret == 0) {
+        word32 idx = 0;
+        #ifdef WOLFSSH_AGENT
+        if (ssh->agentEnabled) {
+            /* XXX: Pending */
+        }
+        else
+        #endif
+        {
+            ret = GetOpenSshKey(keySig,
+                    authData->sf.publicKey.privateKey,
+                    authData->sf.publicKey.privateKeySz, &idx);
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (authData->sf.publicKey.hasSignature) {
+            int sigSz = wc_ed25519_sig_size(&keySig->ks.ed25519.key);
+
+            if (sigSz >= 0) {
+                *payloadSz += (LENGTH_SZ * 3) + (word32)sigSz +
+                        authData->sf.publicKey.publicKeyTypeSz;
+                keySig->sigSz = sigSz;
+            }
+            else
+                ret = sigSz;
+        }
+    }
+
+    WLOG(WS_LOG_DEBUG,
+            "Leaving PrepareUserAuthRequestEd25519(), ret = %d", ret);
+    return ret;
+}
+
+
+static int BuildUserAuthRequestEd25519(WOLFSSH* ssh,
+        byte* output, word32* idx,
+        const WS_UserAuthData* authData,
+        const byte* sigStart, word32 sigStartIdx,
+        WS_KeySignature* keySig)
+{
+    word32 begin;
+    int ret = WS_SUCCESS;
+    byte* sig;
+    word32 sigSz = ED25519_SIG_SIZE;
+    byte* checkData = NULL;
+    word32 checkDataSz = 0;
+#ifndef WOLFSSH_SMALL_STACK
+    byte sig_s[ED25519_SIG_SIZE];
+#endif
+
+    WLOG(WS_LOG_DEBUG, "Entering BuildUserAuthRequestEd25519()");
+    if (ssh == NULL || output == NULL || idx == NULL || authData == NULL ||
+            sigStart == NULL || keySig == NULL) {
+        ret = WS_BAD_ARGUMENT;
+        return ret;
+    }
+
+#ifdef WOLFSSH_SMALL_STACK
+    sig = (byte*)WMALLOC(sigSz, keySig->heap, DYNTYPE_BUFFER);
+    if (sig == NULL)
+        ret = WS_MEMORY_E;
+#else
+    sig = sig_s;
+#endif
+
+    begin = *idx;
+
+    if (ret == WS_SUCCESS) {
+        checkDataSz = LENGTH_SZ + ssh->sessionIdSz + (begin - sigStartIdx);
+        checkData = (byte*)WMALLOC(checkDataSz, keySig->heap, DYNTYPE_TEMP);
+        if (checkData == NULL)
+            ret = WS_MEMORY_E;
+    }
+
+    if (ret == WS_SUCCESS) {
+        word32 i = 0;
+
+        c32toa(ssh->sessionIdSz, checkData + i);
+        i += LENGTH_SZ;
+        WMEMCPY(checkData + i, ssh->sessionId, ssh->sessionIdSz);
+        i += ssh->sessionIdSz;
+        WMEMCPY(checkData + i, sigStart, begin - sigStartIdx);
+    }
+
+    #ifdef WOLFSSH_AGENT
+    if (ssh->agentEnabled) {
+        /* XXX: Pending */
+    }
+    else
+    #endif
+    {
+        if (ret == WS_SUCCESS) {
+            WLOG(WS_LOG_INFO, "Signing with Ed25519.");
+            ret = wc_ed25519_sign_msg(checkData, checkDataSz,
+                    sig, &sigSz, &keySig->ks.ed25519.key);
+
+            if (ret != WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, "SUAR: Bad ED25519 Sign");
+                ret = WS_ED25519_E;
+            }
+        }
+
+        if (ret == WS_SUCCESS) {
+            const char* name = cannedKeyAlgoEd25519Name;
+            word32 nameSz = (word32)WSTRLEN(name);
+
+            c32toa(LENGTH_SZ * 2 + nameSz + sigSz, output + begin);
+            begin += LENGTH_SZ;
+
+            c32toa(nameSz, output + begin);
+            begin += LENGTH_SZ;
+
+            WMEMCPY(output + begin, name, nameSz);
+            begin += nameSz;
+
+            c32toa(sigSz, output + begin);
+            begin += LENGTH_SZ;
+
+            WMEMCPY(output + begin, sig, sigSz);
+            begin += sigSz;
+        }
+    }
+
+    if (ret == WS_SUCCESS)
+        *idx = begin;
+
+    if (checkData != NULL) {
+        ForceZero(checkData, checkDataSz);
+        WFREE(checkData, keySig->heap, DYNTYPE_TEMP);
+    }
+
+#ifdef WOLFSSH_SMALL_STACK
+    if (sig)
+        WFREE(sig, keySig->heap, DYNTYPE_BUFFER);
+#endif
+
+    WLOG(WS_LOG_DEBUG,
+            "Leaving BuildUserAuthRequestEd25519(), ret = %d", ret);
+    return ret;
+}
+
+#endif /* WOLFSSH_NO_ED25519 */
+
+
+#if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA) \
+    || !defined(WOLFSSH_NO_ED25519)
 static int PrepareUserAuthRequestPublicKey(WOLFSSH* ssh, word32* payloadSz,
         const WS_UserAuthData* authData, WS_KeySignature* keySig)
 {
@@ -13245,7 +13489,7 @@ static int PrepareUserAuthRequestPublicKey(WOLFSSH* ssh, word32* payloadSz,
         matchId = MatchIdLists(WOLFSSH_ENDPOINT_CLIENT, algoId, algoIdSz,
                 ssh->peerSigId, ssh->peerSigIdSz);
         if (matchId == ID_UNKNOWN) {
-            ret = WS_MATCH_KEX_ALGO_E;
+            ret = WS_MATCH_KEY_ALGO_E;
         }
         keySig->keySigId = matchId;
         keySig->name = IdToName(matchId);
@@ -13289,6 +13533,12 @@ static int PrepareUserAuthRequestPublicKey(WOLFSSH* ssh, word32* payloadSz,
                         payloadSz, authData, keySig);
                 break;
             #endif
+            #endif
+            #ifndef WOLFSSH_NO_ED25519
+            case ID_ED25519:
+                ret = PrepareUserAuthRequestEd25519(ssh,
+                        payloadSz, authData, keySig);
+                break;
             #endif
             default:
                 ret = WS_INVALID_ALGO_ID;
@@ -13399,6 +13649,21 @@ static int BuildUserAuthRequestPublicKey(WOLFSSH* ssh,
                     break;
                 #endif
                 #endif
+                #ifndef WOLFSSH_NO_ED25519
+                case ID_ED25519:
+                    c32toa(pk->publicKeyTypeSz, output + begin);
+                    begin += LENGTH_SZ;
+                    WMEMCPY(output + begin,
+                            pk->publicKeyType, pk->publicKeyTypeSz);
+                    begin += pk->publicKeyTypeSz;
+                    c32toa(pk->publicKeySz, output + begin);
+                    begin += LENGTH_SZ;
+                    WMEMCPY(output + begin, pk->publicKey, pk->publicKeySz);
+                    begin += pk->publicKeySz;
+                    ret = BuildUserAuthRequestEd25519(ssh, output, &begin,
+                        authData, sigStart, sigStartIdx, keySig);
+                    break;
+                #endif
                 default:
                     ret = WS_INVALID_ALGO_ID;
             }
@@ -13451,6 +13716,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
     if (ret == WS_SUCCESS) {
         WMEMSET(keySig_ptr, 0, sizeof(WS_KeySignature));
         keySig_ptr->keySigId = ID_NONE;
+        keySig_ptr->heap = ssh->ctx->heap;
 
         if (ssh->ctx->userAuthCb != NULL) {
             WLOG(WS_LOG_DEBUG, "SUAR: Calling the userauth callback");

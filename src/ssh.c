@@ -1689,7 +1689,7 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
         ret = WS_SUCCESS;
     }
     else {
-        WLOG(WS_LOG_DEBUG, "unable to identify key");
+        WLOG(WS_LOG_DEBUG, "Unable to identify ASN.1 key");
         if (*out == NULL) {
             WFREE(newKey, heap, DYNTYPE_PRIVKEY);
         }
@@ -1746,7 +1746,7 @@ static int DoPemKey(const byte* in, word32 inSz, byte** out,
         ret = WS_SUCCESS;
     }
     else {
-        WLOG(WS_LOG_DEBUG, "unable to identify key");
+        WLOG(WS_LOG_DEBUG, "Unable to identify PEM key");
         if (*out == NULL) {
             WFREE(newKey, heap, DYNTYPE_PRIVKEY);
         }
@@ -1802,7 +1802,7 @@ static int DoOpenSshKey(const byte* in, word32 inSz, byte** out,
         ret = WS_SUCCESS;
     }
     else {
-        WLOG(WS_LOG_DEBUG, "unable to identify key");
+        WLOG(WS_LOG_DEBUG, "Unable to identify key");
         if (*out == NULL) {
             WFREE(newKey, heap, DYNTYPE_PRIVKEY);
         }
@@ -1897,10 +1897,11 @@ int wolfSSH_ReadKey_file(const char* name,
         ret = WS_BAD_FILE_E;
     }
     else {
-        if (WSTRNSTR((const char*)in,
-                    "ssh-rsa", inSz) == (const char*)in ||
-                WSTRNSTR((const char*)in,
-                    "ecdsa-sha2-nistp", inSz) == (const char*)in) {
+        if (WSTRNSTR((const char*)in, "ssh-rsa", inSz) == (const char*)in
+                || WSTRNSTR((const char*)in,
+                    "ecdsa-sha2-nistp", inSz) == (const char*)in
+                || WSTRNSTR((const char*)in,
+                    "ssh-ed25519", inSz) == (const char*)in) {
             *isPrivate = 0;
             format = WOLFSSH_FORMAT_SSH;
             in[inSz] = 0;
