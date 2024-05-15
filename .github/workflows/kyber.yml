@@ -1,0 +1,87 @@
+name: Kyber Tests
+
+on:
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  build_liboqs:
+    name: Build liboqs
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Install liboqs source
+        run: git clone --depth 1 --branch "0.10.0" "https://github.com/open-quantum-safe/liboqs"
+
+      - name: Build and install liboqs
+        working-directory: liboqs
+        run: |
+          mkdir build
+          cd build
+          cmake -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/opt -DOQS_MINIMAL_BUILD=KEM_kyber_512 -DOQS_USE_OPENSSL=0 ..
+          make
+          make install
+
+      - name: Upload liboqs
+        uses: actions/upload-artifact@v4
+        with:
+          name: wolfssh-liboqs
+          path: ${{ github.workspace }}/opt/
+          retention-days: 3
+
+  build_wolfssl:
+    name: Build wolfssl
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Install wolfssl source
+        run: git clone --depth 1 "https://github.com/wolfssl/wolfssl"
+
+      - name: Build and install wolfssl
+        working-directory: wolfssl
+        run: |
+          autoreconf -ivf
+          ./configure --prefix=${{ github.workspace }}/opt --enable-wolfssh --enable-cryptonly --disable-examples --disable-crypttests
+          make
+          make install
+
+      - name: Upload wolfssl
+        uses: actions/upload-artifact@v4
+        with:
+          name: wolfssh-wolfssl
+          path: ${{ github.workspace}}/opt/
+          retention-days: 3
+
+  build_wolfssh:
+    name: Build wolfssh
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    needs: [build_wolfssl, build_liboqs]
+    steps:
+      - name: Download wolfssl
+        uses: actions/download-artifact@v4
+        with:
+          name: wolfssh-wolfssl
+          path: ${{ github.workspace }}/opt/
+
+      - name: Download liboqs
+        uses: actions/download-artifact@v4
+        with:
+          name: wolfssh-liboqs
+          path: ${{ github.workspace }}/opt/
+
+      - name: Install wolfSSH
+        run: git clone --depth 1 "https://github.com/wolfssl/wolfssh"
+
+      - name: Build wolfSSH
+        working-directory: wolfssh
+        run: |
+          autoreconf -ivf
+          ./configure --with-liboqs=${{ github.workspace }}/opt LDFLAGS=-L${{ github.workspace }}/opt/lib CPPFLAGS=-I${{ github.workspace }}/opt/include
+          make
+
+      - name: Run wolfssh tests
+        working-directory: wolfssh
+        run: make check
