@@ -138,6 +138,8 @@ enum WS_ErrorCodes {
     WS_KDF_E                = -1097, /* KDF error*/
 
     WS_LAST_E               = -1097  /* Update this to indicate last error */
+    
+    WS_LAST_E               = -1095  /* Update this to indicate last error */
 };
 
 
