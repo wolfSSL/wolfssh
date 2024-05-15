@@ -105,6 +105,13 @@ extern "C" {
     #define WOLFSSH_NO_SHA1
 #endif
 
+#if !defined(HAVE_ED25519) \
+    || !defined(WOLFSSL_ED25519_STREAMING_VERIFY) \
+    || !defined(HAVE_ED25519_KEY_IMPORT) \
+    || !defined(HAVE_ED25519_KEY_EXPORT)
+    #undef WOLFSSH_NO_ED25519
+    #define WOLFSSH_NO_ED25519
+#endif
 
 #if defined(NO_HMAC) || defined(WOLFSSH_NO_SHA1)
     #undef WOLFSSH_NO_HMAC_SHA1
@@ -152,11 +159,6 @@ extern "C" {
     #undef WOLFSSH_NO_ECDH_SHA2_NISTP521
     #define WOLFSSH_NO_ECDH_SHA2_NISTP521
 #endif
-#if !defined(HAVE_ED25519) || defined(NO_SHA256) || 1
-    /* ED25519 isn't supported yet. Force disabled. */
-    #undef WOLFSSH_NO_ECDH_SHA2_ED25519
-    #define WOLFSSH_NO_ECDH_SHA2_ED25519
-#endif
 #if !defined(WOLFSSH_HAVE_LIBOQS) || defined(NO_SHA256) \
     || defined(WOLFSSH_NO_ECDH_SHA2_NISTP256)
     #undef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
@@ -173,7 +175,6 @@ extern "C" {
     defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && \
     defined(WOLFSSH_NO_ECDH_SHA2_NISTP384) && \
     defined(WOLFSSH_NO_ECDH_SHA2_NISTP521) && \
-    defined(WOLFSSH_NO_ECDH_SHA2_ED25519) && \
     defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256) && \
     defined(WOLFSSH_NO_CURVE25519_SHA256)
     #error "You need at least one key agreement algorithm."
@@ -225,7 +226,8 @@ extern "C" {
     defined(WOLFSSH_NO_RSA_SHA2_512) && \
     defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && \
     defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && \
-    defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
+    defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521) && \
+    defined(WOLFSSH_NO_ED25519)
     #error "You need at least one signing algorithm."
 #endif
 
@@ -328,6 +330,7 @@ enum {
     ID_ECDSA_SHA2_NISTP256,
     ID_ECDSA_SHA2_NISTP384,
     ID_ECDSA_SHA2_NISTP521,
+    ID_ED25519,
     ID_X509V3_SSH_RSA,
     ID_X509V3_ECDSA_SHA2_NISTP256,
     ID_X509V3_ECDSA_SHA2_NISTP384,
