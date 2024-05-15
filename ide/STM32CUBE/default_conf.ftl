@@ -106,6 +106,7 @@ extern ${variable.value} ${variable.name};
 #define WOLFSSH_LOG_PRINTF
 #define WOLFSSL_LOG_PRINTF
 #define fprintf(err, ... ) printf(__VA_ARGS__)
+#define WFFLUSH fflush
 
 #define BENCH_EMBEDDED
 #define NO_WRITEV
@@ -138,8 +139,6 @@ extern ${variable.value} ${variable.name};
 #define HAVE_AESGCM
 #define WOLFSSL_SHA512
 #define HAVE_ECC
-#define HAVE_CURVE25519
-#define CURVE25519_SMALL
 #define HAVE_ED25519
 
 #define WOLFSSH_IGNORE_FILE_WARN
