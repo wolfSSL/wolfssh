@@ -12,47 +12,69 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
-      - name: Install liboqs source
-        run: git clone --depth 1 --branch "0.10.0" "https://github.com/open-quantum-safe/liboqs"
+      - name: Checking cache for liboqs
+        uses: actions/cache/restore@v4
+        id: cache-liboqs
+        with:
+          path: opt/liboqs/
+          key: wolfssh-liboqs-0.10.0-${{ runner.os }}
+          lookup-only: true
+
+      - name: Checkout liboqs
+        if: steps.cache-liboqs.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: open-quantum-safe/liboqs
+          ref: 0.10.0
+          path: liboqs
 
       - name: Build and install liboqs
+        if: steps.cache-liboqs.outputs.cache-hit != 'true'
         working-directory: liboqs
         run: |
           mkdir build
           cd build
-          cmake -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/opt -DOQS_MINIMAL_BUILD=KEM_kyber_512 -DOQS_USE_OPENSSL=0 ..
+          cmake -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/opt/liboqs -DOQS_MINIMAL_BUILD=KEM_kyber_512 -DOQS_USE_OPENSSL=0 ..
           make
           make install
 
-      - name: Upload liboqs
-        uses: actions/upload-artifact@v4
+      - name: Stash liboqs in cache
+        if: steps.cache-liboqs.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
         with:
-          name: wolfssh-liboqs
-          path: ${{ github.workspace }}/opt/
-          retention-days: 3
+          path: opt/liboqs/
+          key: wolfssh-liboqs-0.10.0-${{ runner.os }}
 
   build_wolfssl:
     name: Build wolfssl
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
-      - name: Install wolfssl source
-        run: git clone --depth 1 "https://github.com/wolfssl/wolfssl"
-
-      - name: Build and install wolfssl
-        working-directory: wolfssl
-        run: |
-          autoreconf -ivf
-          ./configure --prefix=${{ github.workspace }}/opt --enable-wolfssh --enable-cryptonly --disable-examples --disable-crypttests
-          make
-          make install
-
-      - name: Upload wolfssl
-        uses: actions/upload-artifact@v4
+      - name: Checking cache for wolfssl
+        uses: actions/cache/restore@v4
+        id: cache-wolfssl
         with:
-          name: wolfssh-wolfssl
-          path: ${{ github.workspace}}/opt/
-          retention-days: 3
+          path: opt/wolfssl/
+          key: wolfssh-wolfssl-v5.7.0-stable-${{ runner.os }}
+          lookup-only: true
+
+      - name: Checkout, build, and install wolfssl
+        if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+        uses: wolfSSL/actions-build-autotools-project@v1
+        with:
+          repository: wolfssl/wolfssl
+          ref: v5.7.0-stable
+          path: wolfssl
+          configure: --prefix=${{ github.workspace }}/opt/wolfssl --enable-wolfssh --enable-cryptonly --disable-examples --disable-crypttests
+          check: false
+          install: true
+
+      - name: Stash wolfssl in cache
+        if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: opt/wolfssl/
+          key: wolfssh-wolfssl-v5.7.0-stable-${{ runner.os }}
 
   build_wolfssh:
     name: Build wolfssh
@@ -60,28 +82,24 @@ jobs:
     timeout-minutes: 4
     needs: [build_wolfssl, build_liboqs]
     steps:
-      - name: Download wolfssl
-        uses: actions/download-artifact@v4
+      - name: Checking cache for liboqs
+        uses: actions/cache/restore@v4
         with:
-          name: wolfssh-wolfssl
-          path: ${{ github.workspace }}/opt/
+          path: opt/liboqs/
+          key: wolfssh-liboqs-0.10.0-${{ runner.os }}
+          fail-on-cache-miss: true
 
-      - name: Download liboqs
-        uses: actions/download-artifact@v4
+      - name: Checking cache for wolfssl
+        uses: actions/cache/restore@v4
         with:
-          name: wolfssh-liboqs
-          path: ${{ github.workspace }}/opt/
+          path: opt/wolfssl/
+          key: wolfssh-wolfssl-v5.7.0-stable-${{ runner.os }}
+          fail-on-cache-miss: true
 
-      - name: Install wolfSSH
-        run: git clone --depth 1 "https://github.com/wolfssl/wolfssh"
-
-      - name: Build wolfSSH
-        working-directory: wolfssh
-        run: |
-          autoreconf -ivf
-          ./configure --with-liboqs=${{ github.workspace }}/opt LDFLAGS=-L${{ github.workspace }}/opt/lib CPPFLAGS=-I${{ github.workspace }}/opt/include
-          make
-
-      - name: Run wolfssh tests
-        working-directory: wolfssh
-        run: make check
+      - name: Checkout, build, and test wolfssh
+        uses: wolfSSL/actions-build-autotools-project@v1
+        with:
+          repository: wolfssl/wolfssh
+          path: wolfssh
+          configure: --with-liboqs LDFLAGS="-L${{ github.workspace }}/opt/liboqs/lib -L${{ github.workspace }}/opt/wolfssl/lib" CPPFLAGS="-I${{ github.workspace }}/opt/liboqs/include -I${{ github.workspace }}/opt/wolfssl/include"
+          check: true
