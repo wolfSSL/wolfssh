@@ -738,17 +738,25 @@ static const char cannedKexAlgoNames[] =
 #endif
 
 static const char cannedKeyAlgoNames[] =
+#ifndef WOLFSSH_NO_ED25519
     "ssh-ed25519,"
+#endif /* WOLFSSH_NO_ED25519 */
+#ifndef WOLFSSH_NO_RSA_SHA2_256
     "rsa-sha2-256,"
+#endif/* WOLFSSH_NO_RSA_SHA2_256 */
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
     "ecdsa-sha2-nistp256,"
+#endif /* WOLFSSH_NO_ECDSA_SHA2_NISTP256 */
 #ifdef WOLFSSH_CERTS
-    "x509v3-ecdsa-sha2-nistp256,"
+    #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+        "x509v3-ecdsa-sha2-nistp256,"
+    #endif /* WOLFSSH_NO_ECDSA_SHA2_NISTP256 */
     #ifdef WOLFSSH_NO_SHA1_SOFT_DISABLE
         "x509v3-ssh-rsa,"
     #endif /* WOLFSSH_NO_SHA1_SOFT_DISABLE */
 #endif /* WOLFSSH_CERTS */
 #ifdef WOLFSSH_NO_SHA1_SOFT_DISABLE
-        "ssh-rsa,"
+    "ssh-rsa,"
 #endif /* WOLFSSH_NO_SHA1_SOFT_DISABLE */
     "";
 
