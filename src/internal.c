@@ -749,6 +749,8 @@ static const char cannedKeyAlgoNames[] =
 #endif /* WOLFSSH_NO_ED25519 */
 #ifndef WOLFSSH_NO_RSA_SHA2_256
     "ssh-ed25519,"
+#endif /* WOLFSSH_NO_ED25519 */
+#ifndef WOLFSSH_NO_RSA_SHA2_256
     "rsa-sha2-256,"
 #endif/* WOLFSSH_NO_RSA_SHA2_256 */
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
