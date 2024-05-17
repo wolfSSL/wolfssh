@@ -535,6 +535,7 @@ struct WOLFSSH_CTX {
 #ifdef WOLFSSH_AGENT
     byte agentEnabled;
 #endif /* WOLFSSH_AGENT */
+    WS_CallbackKeyingCompletion keyingCompletionCb;
 };
 
 
@@ -725,6 +726,7 @@ struct WOLFSSH {
     byte isClosed;
     byte clientOpenSSH;
 
+    byte kexId;
     byte blockSz;
     byte encryptId;
     byte macId;
@@ -735,6 +737,9 @@ struct WOLFSSH {
     byte peerMacId;
     byte peerMacSz;
     byte peerAeadMode;
+#ifndef WOLFSSH_NO_DH
+    word32 primeGroupSz;
+#endif
 
     Ciphers encryptCipher;
     Ciphers decryptCipher;
@@ -853,6 +858,7 @@ struct WOLFSSH {
 #if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
     word32 exitStatus;
 #endif
+    void* keyingCompletionCtx;
 };
 
 
@@ -989,6 +995,10 @@ WOLFSSH_LOCAL int SendChannelExitStatus(WOLFSSH* ssh, word32 channelId,
     word32 exitStatus);
 WOLFSSH_LOCAL int GenerateKey(byte, byte, byte*, word32, const byte*, word32,
                               const byte*, word32, const byte*, word32, byte doKeyPad);
+#if !defined(WOLFSSH_NO_ECDSA) || !defined(WOLFSSH_NO_ECDH)
+WOLFSSH_LOCAL int wcPrimeForId(byte);
+#endif
+WOLFSSH_LOCAL enum wc_HashType HashForId(byte);
 
 
 enum AcceptStates {
