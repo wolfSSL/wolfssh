@@ -289,6 +289,7 @@ static int callbackReqFailure(WOLFSSH *ssh, void *buf, word32 sz, void *ctx)
     return WS_SUCCESS;
 }
 
+
 static void *global_req(void *ctx)
 {
     int ret;
@@ -326,6 +327,50 @@ static void *global_req(void *ctx)
 }
 
 #endif
+
+
+static void printKeyCompleteText(WOLFSSH* ssh, WS_Text id, const char* tag)
+{
+    char str[200];
+    size_t strSz = sizeof(str);
+    size_t ret;
+
+    ret = wolfSSH_GetText(ssh, id, str, strSz);
+    if (ret == strSz) {
+        printf("\tString size was not large enough for %s\n", tag);
+    }
+    printf("\t%-30s : %s\n", tag, str);
+}
+
+
+static void callbackKeyingComplete(void* ctx)
+{
+    WOLFSSH* ssh = (WOLFSSH*)ctx;
+
+    if (ssh != NULL) {
+        printf("Keying Complete:\n");
+        printKeyCompleteText(ssh, WOLFSSH_TEXT_KEX_ALGO,
+                                    "WOLFSSH_TEXT_KEX_ALGO");
+
+        printKeyCompleteText(ssh, WOLFSSH_TEXT_KEX_CURVE,
+                                    "WOLFSSH_TEXT_KEX_CURVE");
+
+        printKeyCompleteText(ssh, WOLFSSH_TEXT_KEX_HASH,
+                                    "WOLFSSH_TEXT_KEX_HASH");
+
+        printKeyCompleteText(ssh, WOLFSSH_TEXT_CRYPTO_IN_CIPHER,
+                                    "WOLFSSH_TEXT_CRYPTO_IN_CIPHER");
+
+        printKeyCompleteText(ssh, WOLFSSH_TEXT_CRYPTO_IN_MAC,
+                                    "WOLFSSH_TEXT_CRYPTO_IN_MAC");
+
+        printKeyCompleteText(ssh, WOLFSSH_TEXT_CRYPTO_OUT_CIPHER,
+                                    "WOLFSSH_TEXT_CRYPTO_OUT_CIPHER");
+
+        printKeyCompleteText(ssh, WOLFSSH_TEXT_CRYPTO_OUT_MAC,
+                                    "WOLFSSH_TEXT_CRYPTO_OUT_MAC");
+    }
+}
 
 
 #ifdef WOLFSSH_AGENT
@@ -2435,6 +2480,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         ES_ERROR("Couldn't allocate SSH CTX data.\n");
     }
 
+    wolfSSH_SetKeyingCompletionCb(ctx, callbackKeyingComplete);
     if (keyList) {
         if (wolfSSH_CTX_SetAlgoListKey(ctx, keyList) != WS_SUCCESS) {
             ES_ERROR("Error setting key list.\n");
@@ -2678,6 +2724,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         wolfSSH_MemoryConnPrintStats(heap);
     #endif
         wolfSSH_SetUserAuthCtx(ssh, &pwMapList);
+        wolfSSH_SetKeyingCompletionCbCtx(ssh, (void*)ssh);
         /* Use the session object for its own highwater callback ctx */
         if (defaultHighwater > 0) {
             wolfSSH_SetHighwaterCtx(ssh, (void*)ssh);
