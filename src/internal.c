@@ -3650,7 +3650,7 @@ INLINE enum wc_HashType HashForId(byte id)
 
 
 #if !defined(WOLFSSH_NO_ECDSA) || !defined(WOLFSSH_NO_ECDH)
-INLINE int wcPrimeForId(byte id)
+int wcPrimeForId(byte id)
 {
     switch (id) {
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256

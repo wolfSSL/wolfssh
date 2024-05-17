@@ -137,7 +137,7 @@ typedef enum WS_Text {
 
 /*
  * Outputs the c-string representation of the data entry identified by the id to
- * the character string str, writing no more than strsz bytes, including the
+ * the character string str, writing no more than strSz bytes, including the
  * terminating null byte ('\0').
  *
  * Returns the number of characters written (excluding the null byte used to end
@@ -146,11 +146,11 @@ typedef enum WS_Text {
  * would have been written to the final string if enough space had been
  * available.
  *
- * Thus, a return value of strsz or more means that the output was truncated.
+ * Thus, a return value of strSz or more means that the output was truncated.
  */
 
 WOLFSSH_API size_t wolfSSH_GetText(WOLFSSH *ssh, WS_Text id, char *str,
-        size_t strsz);
+        size_t strSz);
 
 typedef void (*WS_CallbackKeyingCompletion)(void *);
 WOLFSSH_API void wolfSSH_SetKeyingCompletionCb(WOLFSSH_CTX*,
