@@ -3673,6 +3673,7 @@ static INLINE byte KeySzForId(byte id)
 }
 
 enum wc_HashType HashForId(byte id)
+INLINE enum wc_HashType HashForId(byte id)
 {
     switch (id) {
 
@@ -5677,6 +5678,15 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
          * length which is at LENGTH_SZ offset ahead of pubKey. */
         ret = HashUpdate(hash, hashId,
                 pubKey - LENGTH_SZ, pubKeySz + LENGTH_SZ);
+        ssh->rxCount = 0;
+        ssh->highwaterFlag = 0;
+        ssh->isKeying = 0;
+        HandshakeInfoFree(ssh->handshake, ssh->ctx->heap);
+        ssh->handshake = NULL;
+        WLOG(WS_LOG_DEBUG, "Keying completed");
+
+        if (ssh->ctx->keyingCompletionCb)
+            ssh->ctx->keyingCompletionCb(ssh->keyingCompletionCtx);
     }
 
     if (ret == WS_SUCCESS)
