@@ -2942,8 +2942,11 @@ static const char* MacNameForId(byte macid, byte cipherid)
 size_t wolfSSH_GetText(WOLFSSH *ssh, WS_Text id, char *str, size_t strSz)
 {
     int ret = 0;
+
+#ifndef WOLFSSH_NO_DH
     static const char standard_dh_format[] =
         "%d-bit Diffie-Hellman with standard group %d";
+#endif
 
     if (!ssh || str == NULL || strSz <= 0)
         return 0;
@@ -2995,6 +2998,7 @@ size_t wolfSSH_GetText(WOLFSSH *ssh, WS_Text id, char *str, size_t strSz)
                     break;
             #endif
 
+            #ifndef WOLFSSH_NO_DH
                 case ID_DH_GROUP1_SHA1:
                     ret = WSNPRINTF(str, strSz, standard_dh_format,
                         ssh->primeGroupSz*8, 1);
@@ -3011,6 +3015,7 @@ size_t wolfSSH_GetText(WOLFSSH *ssh, WS_Text id, char *str, size_t strSz)
                         "%d-bit Diffie-Hellman with server-supplied group",
                         ssh->primeGroupSz*8);
                     break;
+            #endif /* !WOLFSSH_NO_DH */
 
                 case ID_EXTINFO_S:
                     ret = WSNPRINTF(str, strSz, "Server extensions KEX");
