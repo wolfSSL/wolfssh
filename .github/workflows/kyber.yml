@@ -72,12 +72,6 @@ jobs:
           check: false
           install: true
 
-      - shell: bash
-        if: steps.cache-wolfssl.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p opt
-          mv build-dir opt/wolfssl
-
   build_wolfssh:
     name: Build wolfssh
     runs-on: ubuntu-latest
