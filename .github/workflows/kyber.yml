@@ -9,6 +9,7 @@ on:
 env:
   LIBOQS_REF: 0.10.0
   WOLFSSL_REF: v5.7.0-stable
+  OS_REF: ubuntu-latest
 
 jobs:
   build_liboqs:
@@ -20,8 +21,8 @@ jobs:
         uses: actions/cache@v4
         id: cache-liboqs
         with:
-          path: opt/liboqs/
-          key: wolfssh-kyber-liboqs-${{ env.LIBOQS_REF }}-${{ runner.os }}
+          path: build-dir/
+          key: wolfssh-kyber-liboqs-${{ env.LIBOQS_REF }}-${{ env.OS_REF }}
           lookup-only: true
 
       - name: Checkout liboqs
@@ -38,7 +39,7 @@ jobs:
         run: |
           mkdir build
           cd build
-          cmake -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/opt/liboqs -DOQS_MINIMAL_BUILD=KEM_kyber_512 -DOQS_USE_OPENSSL=0 ..
+          cmake -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/build-dir -DOQS_MINIMAL_BUILD=KEM_kyber_512 -DOQS_USE_OPENSSL=0 ..
           make
           make install
 
@@ -51,8 +52,8 @@ jobs:
         uses: actions/cache@v4
         id: cache-wolfssl
         with:
-          path: opt/wolfssl/
-          key: wolfssh-kyber-wolfssl-${{ env.WOLFSSL_REF }}-${{ runner.os }}
+          path: build-dir/
+          key: wolfssh-kyber-wolfssl-${{ env.WOLFSSL_REF }}-${{ env.OS_REF }}
           lookup-only: true
 
       - name: Checkout, build, and install wolfssl
@@ -66,12 +67,6 @@ jobs:
           check: false
           install: true
 
-      - shell: bash
-        if: steps.cache-wolfssl.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p opt
-          mv build-dir opt/wolfssl
-
   build_wolfssh:
     name: Build wolfssh
     runs-on: ubuntu-latest
@@ -81,15 +76,15 @@ jobs:
       - name: Checking cache for liboqs
         uses: actions/cache@v4
         with:
-          path: opt/liboqs/
-          key: wolfssh-kyber-liboqs-${{ env.LIBOQS_REF }}-${{ runner.os }}
+          path: build-dir/
+          key: wolfssh-kyber-liboqs-${{ env.LIBOQS_REF }}-${{ env.OS_REF }}
           fail-on-cache-miss: true
 
       - name: Checking cache for wolfssl
         uses: actions/cache@v4
         with:
-          path: opt/wolfssl/
-          key: wolfssh-kyber-wolfssl-${{ env.WOLFSSL_REF }}-${{ runner.os }}
+          path: build-dir/
+          key: wolfssh-kyber-wolfssl-${{ env.WOLFSSL_REF }}-${{ env.OS_REF }}
           fail-on-cache-miss: true
 
       - name: Checkout, build, and test wolfssh
@@ -97,5 +92,5 @@ jobs:
         with:
           repository: wolfssl/wolfssh
           path: wolfssh
-          configure: --with-liboqs LDFLAGS="-L${{ github.workspace }}/opt/liboqs/lib -L${{ github.workspace }}/opt/wolfssl/lib" CPPFLAGS="-I${{ github.workspace }}/opt/liboqs/include -I${{ github.workspace }}/opt/wolfssl/include"
+          configure: --with-liboqs=${{ github.workspace }}/build-dir --with-wolfssl=${{ github.workspace }}/build-dir
           check: true
