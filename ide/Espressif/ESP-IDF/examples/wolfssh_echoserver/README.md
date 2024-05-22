@@ -1,4 +1,4 @@
-# wolfSSL Server Project
+# wolfSSH Server Project
 
 This is an example wolfSSH Server based on the minimally viable wolfSSL [template](../wolfssh_template/README.md)
 
@@ -8,8 +8,6 @@ and the instructions in [wolfssh README.md](https://github.com/wolfSSL/wolfssh#r
 To connect:
 
 ```bash
-TODO
-
 ssh -p 22222 jack@192.168.1.32
 ```
 

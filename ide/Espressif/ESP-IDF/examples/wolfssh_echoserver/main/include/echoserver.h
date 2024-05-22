@@ -25,7 +25,7 @@
 #include <types.h>
 
 #ifndef WOLFSSH_THREAD
-    #define WOLFSSH_THREAD
+    #define WOLFSSH_THREAD WOLFSSL_THREAD
 #endif
 
 THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args);
