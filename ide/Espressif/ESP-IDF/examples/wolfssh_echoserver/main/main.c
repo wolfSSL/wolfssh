@@ -34,16 +34,18 @@
     #warning "Check components/wolfssl/include"
 #endif
 
+/* wolfSSH */
+#include <wolfssh/test.h>
+
 /* this project */
 #include "wifi_connect.h"
 #include "time_helper.h"
 
 static const char* const TAG = "My Project";
 
-
 void app_main(void)
 {
-    void*  args = {0};
+    func_args args = {0};
     int ret = ESP_OK;
 
     ESP_LOGI(TAG, "------------ wolfSSL wolfSSH template Example ----------");
@@ -157,6 +159,7 @@ void app_main(void)
     /* TODO: Consider pulling in wolfSSH server.c example source automatically:
      * Keep in mind the nature of this example as an Espressif Component.
      * See https://github.com/wolfSSL/wolfssh/tree/master/examples/server */
+    memset(&args, 0, sizeof(func_args));
     echoserver_test(&args);
 
     ESP_LOGI(TAG, "\n\nDone!"

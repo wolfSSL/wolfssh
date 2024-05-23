@@ -933,7 +933,9 @@ static INLINE void WaitTcpReady(tcp_ready* ready)
         #endif
     #endif
 #else
-    #define WOLFSSH_THREAD WOLFSSL_THREAD
+    #ifndef WOLFSSH_THREAD
+        #define WOLFSSH_THREAD WOLFSSL_THREAD
+    #endif
 #endif
 
 #if (LIBWOLFSSL_VERSION_HEX < WOLFSSL_V5_6_4) \
