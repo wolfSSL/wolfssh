@@ -47,6 +47,7 @@ void app_main(void)
 {
     func_args args = {0};
     esp_err_t ret = ESP_OK;
+    int ret = ESP_OK;
 
     ESP_LOGI(TAG, "------------ wolfSSL wolfSSH template Example ----------");
     ESP_LOGI(TAG, "--------------------------------------------------------");
