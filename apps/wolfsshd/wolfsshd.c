@@ -2396,8 +2396,13 @@ static int StartSSHD(int argc, char** argv)
                 conn->fd = (int)accept(listenFd, (struct sockaddr*)&clientAddr,
                     &clientAddrSz);
                 if (conn->fd >= 0) {
-                    inet_ntop(AF_INET, &clientAddr.sin_addr, conn->ip,
-                        INET_ADDRSTRLEN);
+                    inet_ntop(AF_INET,
+#ifdef TEST_IPV6
+                              &clientAddr.sin6_addr,
+#else
+                              &clientAddr.sin_addr,
+#endif /* TEST_IPV6 */
+                              conn->ip, INET_ADDRSTRLEN);
                 }
 #endif
 
