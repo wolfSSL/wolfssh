@@ -2497,6 +2497,13 @@ static int StartSSHD(int argc, char** argv)
                         inet_ntop(AF_INET6, &clientAddr.sin6_addr, conn->ip,
                               INET6_ADDRSTRLEN);
                     }
+                    inet_ntop(AF_INET,
+#ifdef TEST_IPV6
+                              &clientAddr.sin6_addr,
+#else
+                              &clientAddr.sin_addr,
+#endif /* TEST_IPV6 */
+                              conn->ip, INET_ADDRSTRLEN);
                 }
 #endif
 
