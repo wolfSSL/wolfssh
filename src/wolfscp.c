@@ -2634,6 +2634,7 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
  *     WS_SCP_EXIT_DIR_FINAL       - return when recursive directory transfer
  *                                   is complete.
  *     WS_SCP_ABORT                - abort file transfer request
+ *     WS_BAD_FILE_E               - local file open error hit
  */
 int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
         char* fileName, word32 fileNameSz, word64* mTime, word64* aTime,
@@ -2672,7 +2673,7 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
 
                 WLOG(WS_LOG_ERROR, "scp: unable to open file, abort");
                 wolfSSH_SetScpErrorMsg(ssh, "unable to open file for reading");
-                ret = WS_SCP_ABORT;
+                ret = WS_BAD_FILE_E;
             }
 
             if (ret == WS_SUCCESS) {
@@ -2694,17 +2695,21 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             if (ret == WS_SUCCESS)
                 ret = ExtractFileName(peerRequest, fileName, fileNameSz);
 
-            if (ret == WS_SUCCESS && sendCtx != NULL && sendCtx->fp != NULL) {
-                /* If it is an empty file, do not read. */
-                if (*totalFileSz != 0) {
-                    ret = (word32)WFREAD(ssh->fs, buf, 1, bufSz, sendCtx->fp);
-                    if (ret == 0) { /* handle unexpected case */
-                        ret = WS_EOF;
+            if (ret == WS_SUCCESS) {
+                if (sendCtx != NULL && sendCtx->fp != NULL) {
+                    /* If it is an empty file, do not read. */
+                    if (*totalFileSz != 0) {
+                        ret = (word32)WFREAD(ssh->fs, buf, 1, bufSz,
+                                             sendCtx->fp);
+                        if (ret == 0) { /* handle unexpected case */
+                            ret = WS_EOF;
+                        }
                     }
+                } else {
+                    WLOG(WS_LOG_ERROR,
+                                      "scp: error extracting file name, abort");
+                    ret = WS_SCP_ABORT;
                 }
-            } else {
-                WLOG(WS_LOG_ERROR, "scp: error extracting file name, abort");
-                ret = WS_SCP_ABORT;
             }
 
             /* keep fp open if no errors and transfer will continue */
