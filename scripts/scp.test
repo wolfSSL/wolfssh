@@ -133,6 +133,21 @@ else
     exit 1
 fi
 
+echo "Test of sending a file that does not exist"
+touch $PWD/scripts/empty
+./examples/echoserver/echoserver -1 -R $ready_file &
+server_pid=$!
+create_port
+./examples/scpclient/wolfscp -u jill -P upthehill -p $port -L $PWD/does-not-exist:$PWD/empty
+RESULT=$?
+remove_ready_file
+
+if test $RESULT -eq 0; then
+    echo -e "\n\nshould fail out sending a file that does not exist"
+    do_cleanup
+    exit 1
+fi
+
 echo -e "\nALL Tests Passed"
 
 exit 0
