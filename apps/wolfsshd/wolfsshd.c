@@ -2374,8 +2374,8 @@ static int StartSSHD(int argc, char** argv)
 #ifdef WOLFSSL_NUCLEUS
             struct addr_struct clientAddr;
 #else
-            SOCKADDR_IN_T clientAddr;
-            socklen_t     clientAddrSz = sizeof(clientAddr);
+            struct sockaddr_in6 clientAddr;
+            socklen_t           clientAddrSz = sizeof(clientAddr);
 #endif
             conn = (WOLFSSHD_CONNECTION*)WMALLOC(sizeof(WOLFSSHD_CONNECTION), NULL, DYNTYPE_SSHD);
             if (conn == NULL) {
@@ -2396,13 +2396,16 @@ static int StartSSHD(int argc, char** argv)
                 conn->fd = (int)accept(listenFd, (struct sockaddr*)&clientAddr,
                     &clientAddrSz);
                 if (conn->fd >= 0) {
-                    inet_ntop(AF_INET,
-#ifdef TEST_IPV6
-                              &clientAddr.sin6_addr,
-#else
-                              &clientAddr.sin_addr,
-#endif /* TEST_IPV6 */
-                              conn->ip, INET_ADDRSTRLEN);
+                    if (clientAddr.sin6_family == AF_INET) {
+                        struct sockaddr_in* addr4 =
+                            (struct sockaddr_in*)&clientAddr;
+                        inet_ntop(AF_INET, &addr4->sin_addr, conn->ip,
+                              INET_ADDRSTRLEN);
+                    }
+                    else if (clientAddr.sin6_family == AF_INET6) {
+                        inet_ntop(AF_INET6, &clientAddr.sin6_addr, conn->ip,
+                              INET6_ADDRSTRLEN);
+                    }
                 }
 #endif
 

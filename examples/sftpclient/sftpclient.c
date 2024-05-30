@@ -1366,7 +1366,14 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         err_sys("Couldn't set the username.");
 
     build_addr(&clientAddr, host, port);
-    tcp_socket(&sockFd);
+    tcp_socket(&sockFd, 1,
+#ifdef TEST_IPV6
+               clientAddr.sin6_family
+#else
+               clientAddr.sin_family
+#endif
+              );
+
     ret = connect(sockFd, (const struct sockaddr *)&clientAddr, clientAddrSz);
     if (ret != 0)
         err_sys("Couldn't connect to server.");

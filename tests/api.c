@@ -921,7 +921,7 @@ static void sftp_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
     }
 
     build_addr(&clientAddr, host, port);
-    tcp_socket(&sockFd);
+    tcp_socket(&sockFd, 0, 0);
     ret = connect(sockFd, (const struct sockaddr *)&clientAddr, clientAddrSz);
     if (ret != 0){
         wolfSSH_free(*ssh);
