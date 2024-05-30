@@ -13490,7 +13490,8 @@ static int PrepareUserAuthRequestPublicKey(WOLFSSH* ssh, word32* payloadSz,
         #ifndef WOLFSSH_NO_RSA_SHA2_256
             algoId[algoIdSz++] = ID_RSA_SHA2_256;
         #endif
-        #ifndef WOLFSSH_NO_SSH_RSA_SHA1
+        #if !defined(WOLFSSH_NO_SSH_RSA_SHA1) \
+            && defined(WOLFSSH_NO_SHA1_SOFT_DISABLE)
             algoId[algoIdSz++] = ID_SSH_RSA;
         #endif
         }
