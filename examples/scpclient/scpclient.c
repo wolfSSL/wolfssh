@@ -253,12 +253,12 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
 #endif /* WOLFSSH_CERTS */
 
     wolfSSH_CTX_SetPublicKeyCheck(ctx, ClientPublicKeyCheck);
-    wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)host);
-
 
     ssh = wolfSSH_new(ctx);
     if (ssh == NULL)
         err_sys("Couldn't create wolfSSH session.");
+
+    wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)host);
 
     if (password != NULL)
         wolfSSH_SetUserAuthCtx(ssh, (void*)password);
