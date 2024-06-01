@@ -33,6 +33,7 @@
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/log.h>
+#include <wolfssl/version.h>
 #include <wolfssl/wolfcrypt/asn.h>
 #ifndef WOLFSSH_NO_DH
     #include <wolfssl/wolfcrypt/dh.h>
@@ -45,7 +46,6 @@
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfssl/wolfcrypt/hmac.h>
-#include <wolfssl/wolfcrypt/integer.h>
 #include <wolfssl/wolfcrypt/signature.h>
 
 #ifdef WOLFSSH_HAVE_LIBOQS
@@ -1353,10 +1353,57 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap)
 
 
 #ifndef WOLFSSH_NO_RSA
+
+#if LIBWOLFSSL_VERSION_HEX > WOLFSSL_V5_7_0
+/*
+ * The function wc_RsaPrivateKeyDecodeRaw() is available
+ * from wolfSSL after v5.7.0.
+ */
+
+/*
+ * Utility for GetOpenSshKey() to read in RSA keys.
+ */
+static int GetOpenSshKeyRsa(RsaKey* key,
+        const byte* buf, word32 len, word32* idx)
+{
+    const byte *n, *e, *d, *u, *p, *q;
+    word32 nSz, eSz, dSz, uSz, pSz, qSz;
+    int ret;
+
+    ret = wc_InitRsaKey(key, NULL);
+    if (ret == WS_SUCCESS)
+        ret = GetMpint(&nSz, &n, buf, len, idx);
+    if (ret == WS_SUCCESS)
+        ret = GetMpint(&eSz, &e, buf, len, idx);
+    if (ret == WS_SUCCESS)
+        ret = GetMpint(&dSz, &d, buf, len, idx);
+    if (ret == WS_SUCCESS)
+        ret = GetMpint(&uSz, &u, buf, len, idx);
+    if (ret == WS_SUCCESS)
+        ret = GetMpint(&pSz, &p, buf, len, idx);
+    if (ret == WS_SUCCESS)
+        ret = GetMpint(&qSz, &q, buf, len, idx);
+    if (ret == WS_SUCCESS)
+        ret = wc_RsaPrivateKeyDecodeRaw(n, nSz, e, eSz, d, dSz,
+                u, uSz, p, pSz, q, qSz, NULL, 0, NULL, 0, key);
+
+    if (ret != WS_SUCCESS)
+        ret = WS_RSA_E;
+
+    return ret;
+}
+
+#else /* LIBWOLFSSL_VERSION_HEX > WOLFSSL_V5_7_0 */
+
+#include <wolfssl/wolfcrypt/wolfmath.h>
+
 /*
  * Utility function to read an Mpint from the stream directly into a mp_int.
+ * The RsaKey members u, dP, and dQ do not exist when wolfCrypt is built
+ * with RSA_LOW_MEM. (That mode of wolfCrypt isn't using the extra values
+ * for the Chinese Remainder Theorem.)
  */
-static INLINE int GetMpintToMp(mp_int* mp,
+static int GetMpintToMp(mp_int* mp,
         const byte* buf, word32 len, word32* idx)
 {
     const byte* val = NULL;
@@ -1371,12 +1418,13 @@ static INLINE int GetMpintToMp(mp_int* mp,
 }
 
 
+#ifndef RSA_LOW_MEM
 /*
- * For the given RSA key, calculate p^-1 and q^-1. wolfCrypt's RSA
- * code expects them, but the OpenSSH format key doesn't store them.
- * TODO: Add a RSA read function to wolfCrypt to handle this condition.
+ * For the given RSA key, calculate d mod(p-1) and d mod(q-1).
+ * wolfCrypt's RSA code expects them, but the OpenSSH format key
+ * doesn't store them.
  */
-static INLINE int CalcRsaInverses(RsaKey* key)
+static int CalcRsaDX(RsaKey* key)
 {
     mp_int m;
     int ret;
@@ -1395,6 +1443,7 @@ static INLINE int CalcRsaInverses(RsaKey* key)
 
     return ret;
 }
+#endif
 
 /*
  * Utility for GetOpenSshKey() to read in RSA keys.
@@ -1411,23 +1460,35 @@ static int GetOpenSshKeyRsa(RsaKey* key,
         ret = GetMpintToMp(&key->e, buf, len, idx);
     if (ret == WS_SUCCESS)
         ret = GetMpintToMp(&key->d, buf, len, idx);
+#ifndef RSA_LOW_MEM
     if (ret == WS_SUCCESS)
         ret = GetMpintToMp(&key->u, buf, len, idx);
+#else
+    /* Skipping the u value in the key. */
+    if (ret == WS_SUCCESS)
+        ret = GetSkip(buf, len, idx);
+#endif
     if (ret == WS_SUCCESS)
         ret = GetMpintToMp(&key->p, buf, len, idx);
     if (ret == WS_SUCCESS)
         ret = GetMpintToMp(&key->q, buf, len, idx);
 
+#ifndef RSA_LOW_MEM
     /* Calculate dP and dQ for wolfCrypt. */
     if (ret == WS_SUCCESS)
-        ret = CalcRsaInverses(key);
+        ret = CalcRsaDX(key);
+#endif
 
     if (ret != WS_SUCCESS)
         ret = WS_RSA_E;
 
     return ret;
 }
-#endif
+
+#endif /* LIBWOLFSSL_VERSION_HEX > WOLFSSL_V5_7_0 */
+
+#endif /* WOLFSSH_NO_RSA */
+
 
 #ifndef WOLFSSH_NO_ECDSA
 /*

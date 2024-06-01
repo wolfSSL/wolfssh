@@ -1331,6 +1331,10 @@ enum TerminalModes {
 };
 #endif /* WOLFSSH_TERM */
 
+
+#define WOLFSSL_V5_7_0 0x05007000
+
+
 #ifdef __cplusplus
 }
 #endif
