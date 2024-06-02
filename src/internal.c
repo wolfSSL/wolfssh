@@ -10953,14 +10953,17 @@ static int SignHRsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
     }
 
     if (ret == WS_SUCCESS) {
+        int sz = 0;
         WLOG(WS_LOG_INFO, "Signing hash with %s.",
             IdToName(ssh->handshake->pubKeyId));
-        *sigSz = wc_RsaSSL_Sign(encSig, encSigSz, sig,
+        sz = wc_RsaSSL_Sign(encSig, encSigSz, sig,
                 KEX_SIG_SIZE, &sigKey->sk.rsa.key,
                 ssh->rng);
-        if (*sigSz <= 0) {
+        if (sz <= 0) {
             WLOG(WS_LOG_DEBUG, "SignHRsa: Bad RSA Sign");
             ret = WS_RSA_E;
+         } else {
+            *sigSz = sz;
         }
     }
 
