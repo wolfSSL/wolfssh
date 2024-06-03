@@ -1364,6 +1364,7 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap)
 #ifndef WOLFSSH_NO_RSA
 
 #if (LIBWOLFSSL_VERSION_HEX > WOLFSSL_V5_7_0) && !defined(HAVE_FIPS)
+#if LIBWOLFSSL_VERSION_HEX > WOLFSSL_V5_7_0
 /*
  * The function wc_RsaPrivateKeyDecodeRaw() is available
  * from wolfSSL after v5.7.0.
