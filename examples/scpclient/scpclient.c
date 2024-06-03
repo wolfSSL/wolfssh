@@ -280,8 +280,9 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     {
         printf("IPV4 address\n");
         build_addr(&clientAddr, host, port);
-        tcp_socket(&sockFd);
-        ret = connect(sockFd, (const struct sockaddr *)&clientAddr, clientAddrSz);
+        tcp_socket(&sockFd, ((struct sockaddr_in *)&clientAddr)->sin_family);
+        ret = connect(sockFd, (const struct sockaddr *)&clientAddr,
+                      clientAddrSz);
     }
 
     if (ret != 0)
