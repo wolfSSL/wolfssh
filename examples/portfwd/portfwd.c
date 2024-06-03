@@ -380,24 +380,14 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     if (ret != WS_SUCCESS)
         err_sys("Couldn't set the username.");
 
+    /* Socket to SSH peer. */
     build_addr(&hostAddr, host, port);
-    tcp_socket(&sshFd, 1,
-#ifdef TEST_IPV6
-               hostAddr.sin6_family
-#else
-               hostAddr.sin_family
-#endif
-              ); /* Socket to SSH peer. */
+    tcp_socket(&sshFd, ((struct sockaddr_in *)&hostAddr)->sin_family);
 
+    /* Receive from client application or connect to server application. */
     build_addr(&fwdFromHostAddr, fwdFromHost, fwdFromPort);
-    tcp_socket(&listenFd, 1,
-#ifdef TEST_IPV6
-               fwdFromHostAddr.sin6_family
-#else
-               fwdFromHostAddr.sin_family
-#endif
-              ); /* Either receive from client application or connect
-                              to server application. */
+    tcp_socket(&listenFd, ((struct sockaddr_in *)&fwdFromHostAddr)->sin_family);
+
     tcp_listen(&listenFd, &fwdFromPort, 1);
 
     printf("Connecting to the SSH server...\n");
