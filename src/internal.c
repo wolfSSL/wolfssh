@@ -10944,23 +10944,31 @@ static int SignHRsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
     }
 
     if (ret == WS_SUCCESS) {
-        encSigSz = wc_EncodeSignature(encSig, digest, digestSz,
+        ret = wc_EncodeSignature(encSig, digest, digestSz,
                 wc_HashGetOID(hashId));
-        if (encSigSz <= 0) {
+        if (ret <= 0) {
             WLOG(WS_LOG_DEBUG, "SignHRsa: Bad Encode Sig");
             ret = WS_CRYPTO_FAILED;
+        }
+        else {
+            encSigSz = (word32)ret;
+            ret = WS_SUCCESS;
         }
     }
 
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_INFO, "Signing hash with %s.",
             IdToName(ssh->handshake->pubKeyId));
-        *sigSz = wc_RsaSSL_Sign(encSig, encSigSz, sig,
+        ret = wc_RsaSSL_Sign(encSig, encSigSz, sig,
                 KEX_SIG_SIZE, &sigKey->sk.rsa.key,
                 ssh->rng);
-        if (*sigSz <= 0) {
+        if (ret <= 0) {
             WLOG(WS_LOG_DEBUG, "SignHRsa: Bad RSA Sign");
             ret = WS_RSA_E;
+        }
+        else {
+            *sigSz = (word32)ret;
+            ret = WS_SUCCESS;
         }
     }
 
