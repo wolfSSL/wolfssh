@@ -548,6 +548,8 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
 
 static INLINE void tcp_socket(WS_SOCKET_T* sockFd, int targetProtocol)
 {
+    /* targetProtocol is only used if none of these platforms are defined. */
+    WOLFSSH_UNUSED(targetProtocol);
 #ifdef MICROCHIP_MPLAB_HARMONY
     /* creates socket in listen or connect */
     *sockFd = 0;
