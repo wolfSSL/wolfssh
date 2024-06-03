@@ -904,7 +904,8 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     }
 
     build_addr(&clientAddr, host, port);
-    tcp_socket(&sockFd);
+    tcp_socket(&sockFd, ((struct sockaddr_in *)&clientAddr)->sin_family);
+
     ret = connect(sockFd, (const struct sockaddr *)&clientAddr, clientAddrSz);
     if (ret != 0)
         err_sys("Couldn't connect to server.");

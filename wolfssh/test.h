@@ -519,7 +519,7 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
 
             memset(&hints, 0, sizeof(hints));
 
-            hints.ai_family   = AF_INET_V;
+            hints.ai_family   = AF_UNSPEC;
             hints.ai_socktype = SOCK_STREAM;
             hints.ai_protocol = IPPROTO_TCP;
 
@@ -546,8 +546,10 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
 #endif
 
 
-static INLINE void tcp_socket(WS_SOCKET_T* sockFd)
+static INLINE void tcp_socket(WS_SOCKET_T* sockFd, int targetProtocol)
 {
+    /* targetProtocol is only used if none of these platforms are defined. */
+    WOLFSSH_UNUSED(targetProtocol);
 #ifdef MICROCHIP_MPLAB_HARMONY
     /* creates socket in listen or connect */
     *sockFd = 0;
@@ -558,7 +560,7 @@ static INLINE void tcp_socket(WS_SOCKET_T* sockFd)
 #elif defined(WOLFSSL_NUCLEUS)
     *sockFd = NU_Socket(NU_FAMILY_IP, NU_TYPE_STREAM, 0);
 #else
-    *sockFd = socket(AF_INET_V, SOCK_STREAM, 0);
+    *sockFd = socket(targetProtocol, SOCK_STREAM, 0);
 #endif
 
 #ifdef USE_WINDOWS_API
@@ -637,8 +639,7 @@ static INLINE void tcp_listen(WS_SOCKET_T* sockfd, word16* port, int useAnyAddr)
     /* don't use INADDR_ANY by default, firewall may block, make user switch
        on */
     build_addr(&addr, (useAnyAddr ? INADDR_ANY : wolfSshIp), *port);
-    tcp_socket(sockfd);
-
+    tcp_socket(sockfd, ((struct sockaddr_in *)&addr)->sin_family);
 #if !defined(USE_WINDOWS_API) && !defined(WOLFSSL_MDK_ARM) \
                               && !defined(WOLFSSL_KEIL_TCP_NET) \
                               && !defined(WOLFSSL_NUCLEUS) \
