@@ -1400,7 +1400,8 @@ static int NonBlockSSH_accept(WOLFSSH* ssh)
 
     while ((ret != WS_SUCCESS
                 && ret != WS_SCP_COMPLETE && ret != WS_SFTP_COMPLETE)
-            && (error == WS_WANT_READ || error == WS_WANT_WRITE)) {
+            && (error == WS_WANT_READ || error == WS_WANT_WRITE ||
+                error == WS_AUTH_PENDING)) {
 
         if (error == WS_WANT_READ)
             printf("... server would read block\n");
@@ -1410,7 +1411,8 @@ static int NonBlockSSH_accept(WOLFSSH* ssh)
         select_ret = tcp_select(sockfd, 1);
         if (select_ret == WS_SELECT_RECV_READY  ||
             select_ret == WS_SELECT_ERROR_READY ||
-            error      == WS_WANT_WRITE)
+            error      == WS_WANT_WRITE ||
+            error      == WS_AUTH_PENDING)
         {
             ret = wolfSSH_accept(ssh);
             error = wolfSSH_get_error(ssh);
@@ -1432,11 +1434,16 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
 
     passwdRetry = MAX_PASSWD_RETRY;
 
-    if (!threadCtx->nonBlock)
+    if (!threadCtx->nonBlock) {
         ret = wolfSSH_accept(threadCtx->ssh);
-    else
+        if (wolfSSH_get_error(threadCtx->ssh) == WS_AUTH_PENDING) {
+            printf("Auth pending error, use -N for non blocking\n");
+            printf("Trying to close down the connection\n");
+        }
+    }
+    else {
         ret = NonBlockSSH_accept(threadCtx->ssh);
-
+    }
 #ifdef WOLFSSH_SCP
     /* finish off SCP operation */
     if (ret == WS_SCP_INIT) {
@@ -2055,6 +2062,7 @@ static int wsUserAuthResult(byte res,
 }
 
 
+static int userAuthWouldBlock = 0;
 static int wsUserAuth(byte authType,
                       WS_UserAuthData* authData,
                       void* ctx)
@@ -2066,6 +2074,12 @@ static int wsUserAuth(byte authType,
     if (ctx == NULL) {
         fprintf(stderr, "wsUserAuth: ctx not set");
         return WOLFSSH_USERAUTH_FAILURE;
+    }
+
+    if (userAuthWouldBlock > 0) {
+        printf("User Auth would block ....\n");
+        userAuthWouldBlock--;
+        return WOLFSSH_USERAUTH_WOULD_BLOCK;
     }
 
     if (authType != WOLFSSH_USERAUTH_PASSWORD &&
@@ -2284,6 +2298,7 @@ static void ShowUsage(void)
     printf(" -a <file>     load in a root CA certificate file\n");
 #endif
     printf(" -k            set the list of key algos to use\n");
+    printf(" -b <num>      test user auth would block\n");
 }
 
 
@@ -2345,7 +2360,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     serverArgs->return_code = EXIT_SUCCESS;
 
     if (argc > 0) {
-        const char* optlist = "?1a:d:efEp:R:Ni:j:I:J:K:P:k:";
+        const char* optlist = "?1a:d:efEp:R:Ni:j:I:J:K:P:k:b:";
         myoptind = 0;
         while ((ch = mygetopt(argc, argv, optlist)) != -1) {
             switch (ch) {
@@ -2427,6 +2442,10 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
                 case 'P':
                     passwdList = StrListAdd(passwdList, myoptarg);
+                    break;
+
+                case 'b':
+                    userAuthWouldBlock = atoi(myoptarg);
                     break;
 
                 default:

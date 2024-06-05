@@ -134,8 +134,9 @@ enum WS_ErrorCodes {
     WS_SFTP_NOT_FILE_E      = -1093, /* Not a regular file */
     WS_MSGID_NOT_ALLOWED_E  = -1094, /* Message not allowed before userauth */
     WS_ED25519_E            = -1095, /* Ed25519 failure */
-    
-    WS_LAST_E               = -1095  /* Update this to indicate last error */
+    WS_AUTH_PENDING         = -1096, /* User authentication still pending */
+
+    WS_LAST_E               = -1096  /* Update this to indicate last error */
 };
 
 
