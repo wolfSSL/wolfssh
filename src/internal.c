@@ -6229,24 +6229,19 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
                                 enum wc_HashType hashId, byte* digest,
                                 word32 digestSz)
 {
-    enum wc_HashType enmhashId = hashId;
-    byte *checkDigest = NULL;
-    byte *encDigest = NULL;
-    int checkDigestSz;
     const byte* publicKeyType;
-    word32 publicKeyTypeSz = 0;
-    const byte* n;
-    word32 nSz = 0;
-    const byte* e = NULL;
-    word32 eSz = 0;
     const byte* sig;
+    word32 publicKeyTypeSz = 0;
     word32 sigSz;
+    word32 encDigestSz;
     word32 i = 0;
     int ret = WS_SUCCESS;
-    RsaKey *key_ptr = NULL;
-
-#ifndef WOLFSSH_SMALL_STACK
-    byte s_checkDigest[MAX_ENCODED_SIG_SZ];
+#ifdef WOLFSSH_SMALL_STACK
+    byte* encDigest = NULL;
+    RsaKey* key = NULL;
+#else
+    byte encDigest[MAX_ENCODED_SIG_SZ];
+    RsaKey key[1];
 #endif
 
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequestRsa()");
@@ -6257,24 +6252,22 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
         ret = WS_BAD_ARGUMENT;
     }
 
-    if (ret == WS_SUCCESS) {
 #ifdef WOLFSSH_SMALL_STACK
-        checkDigest = (byte*)WMALLOC(MAX_ENCODED_SIG_SZ, ssh->ctx->heap,
-                DYNTYPE_BUFFER);
-        if (checkDigest == NULL)
-            ret = WS_MEMORY_E;
-#else
-        checkDigest = s_checkDigest;
-#endif
-        key_ptr = (RsaKey*)WMALLOC(sizeof(RsaKey), ssh->ctx->heap,
-                DYNTYPE_PUBKEY);
-        if (key_ptr == NULL)
+    if (ret == WS_SUCCESS) {
+        encDigest = (byte*)WMALLOC(MAX_ENCODED_SIG_SZ,
+                ssh->ctx->heap, DYNTYPE_BUFFER);
+        if (encDigest == NULL)
             ret = WS_MEMORY_E;
     }
+    if (ret == WS_SUCCESS) {
+        key = (RsaKey*)WMALLOC(sizeof(RsaKey), ssh->ctx->heap, DYNTYPE_PUBKEY);
+        if (key == NULL)
+            ret = WS_MEMORY_E;
+    }
+#endif
 
     if (ret == WS_SUCCESS) {
-        WMEMSET(checkDigest, 0, MAX_ENCODED_SIG_SZ);
-        ret = wc_InitRsaKey(key_ptr, ssh->ctx->heap);
+        ret = wc_InitRsaKey(key, ssh->ctx->heap);
         if (ret == 0) {
             ret = WS_SUCCESS;
         }
@@ -6296,19 +6289,27 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
         }
     }
 
+    /* Load up the key. */
     if (ret == WS_SUCCESS) {
-        ret = GetMpint(&eSz, &e, pk->publicKey, pk->publicKeySz, &i);
-    }
+        const byte* n = NULL;
+        word32 nSz = 0;
+        const byte* e = NULL;
+        word32 eSz = 0;
 
-    if (ret == WS_SUCCESS) {
-        ret = GetMpint(&nSz, &n, pk->publicKey, pk->publicKeySz, &i);
-    }
+        if (ret == WS_SUCCESS) {
+            ret = GetMpint(&eSz, &e, pk->publicKey, pk->publicKeySz, &i);
+        }
 
-    if (ret == WS_SUCCESS) {
-        ret = wc_RsaPublicKeyDecodeRaw(n, nSz, e, eSz, key_ptr);
-        if (ret != 0) {
-            WLOG(WS_LOG_DEBUG, "Could not decode public key");
-            ret = WS_CRYPTO_FAILED;
+        if (ret == WS_SUCCESS) {
+            ret = GetMpint(&nSz, &n, pk->publicKey, pk->publicKeySz, &i);
+        }
+
+        if (ret == WS_SUCCESS) {
+            ret = wc_RsaPublicKeyDecodeRaw(n, nSz, e, eSz, key);
+            if (ret != 0) {
+                WLOG(WS_LOG_DEBUG, "Could not decode public key");
+                ret = WS_CRYPTO_FAILED;
+            }
         }
     }
 
@@ -6334,55 +6335,22 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
-        checkDigestSz = wc_RsaSSL_Verify(sig, sigSz, checkDigest,
-                                         MAX_ENCODED_SIG_SZ, key_ptr);
-        if (checkDigestSz <= 0) {
-            WLOG(WS_LOG_DEBUG, "Could not verify signature");
-            ret = WS_CRYPTO_FAILED;
-        }
+        encDigestSz = wc_EncodeSignature(encDigest,
+                digest, digestSz, wc_HashGetOID(hashId));
+        ret = wolfSSH_RsaVerify(sig, sigSz, encDigest, encDigestSz,
+                key, ssh->ctx->heap, "DoUserAuthRequestRsa");
     }
 
-    if (ret == WS_SUCCESS) {
-        word32 encDigestSz;
-        volatile int compare;
-        volatile int sizeCompare;
+    wc_FreeRsaKey(key);
 #ifdef WOLFSSH_SMALL_STACK
-        encDigest = (byte*)WMALLOC(MAX_ENCODED_SIG_SZ, ssh->ctx->heap,
-                DYNTYPE_BUFFER);
-        if (encDigest == NULL)
-            ret = WS_MEMORY_E;
-
-        if (ret == WS_SUCCESS)
-#else
-        byte s_encDigest[MAX_ENCODED_SIG_SZ];
-        encDigest = s_encDigest;
-#endif
-        {
-            WMEMSET(encDigest, 0, MAX_ENCODED_SIG_SZ);
-            encDigestSz = wc_EncodeSignature(encDigest, digest,
-                                         wc_HashGetDigestSize(enmhashId),
-                                         wc_HashGetOID(enmhashId));
-
-            compare = ConstantCompare(encDigest, checkDigest,
-                                  encDigestSz);
-            sizeCompare = encDigestSz != (word32)checkDigestSz;
-
-            if ((compare == 0) && (sizeCompare == 0))
-                ret = WS_SUCCESS;
-            else
-                ret = WS_RSA_E;
-        }
+    if (key) {
+        WFREE(key, ssh->ctx->heap, DYNTYPE_PUBKEY);
     }
-    if (key_ptr != NULL) {
-        wc_FreeRsaKey(key_ptr);
-        WFREE(key_ptr, ssh->ctx->heap, DYNTYPE_PUBKEY);
-    }
-#ifdef WOLFSSH_SMALL_STACK
-    if (checkDigest)
-        WFREE(checkDigest, ssh->ctx->heap, DYNTYPE_BUFFER);
-    if (encDigest)
+    if (encDigest) {
         WFREE(encDigest, ssh->ctx->heap, DYNTYPE_BUFFER);
+    }
 #endif
+
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthRequestRsa(), ret = %d", ret);
     return ret;
 }
@@ -6394,21 +6362,19 @@ static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
                                     enum wc_HashType hashId, byte* digest,
                                     word32 digestSz)
 {
-    enum wc_HashType enmhashId = hashId;
-    byte *checkDigest = NULL;
-    byte *encDigest = NULL;
-    int checkDigestSz;
     const byte* publicKeyType;
-    word32 publicKeyTypeSz = 0;
     const byte* sig;
-    word32 sigSz = 0;
+    word32 publicKeyTypeSz = 0;
+    word32 sigSz;
+    word32 encDigestSz;
     word32 i = 0;
     int ret = WS_SUCCESS;
-    RsaKey *key_ptr = NULL;
-
-#ifndef WOLFSSH_SMALL_STACK
-    byte s_checkDigest[MAX_ENCODED_SIG_SZ];
-    RsaKey s_key;
+#ifdef WOLFSSH_SMALL_STACK
+    byte* encDigest = NULL;
+    RsaKey* key = NULL;
+#else
+    byte encDigest[MAX_ENCODED_SIG_SZ];
+    RsaKey key[1];
 #endif
 
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequestRsaCert()");
@@ -6419,27 +6385,28 @@ static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
         ret = WS_BAD_ARGUMENT;
     }
 
-    if (ret == WS_SUCCESS) {
 #ifdef WOLFSSH_SMALL_STACK
-    checkDigest = (byte*)WMALLOC(MAX_ENCODED_SIG_SZ, ssh->ctx->heap,
-            DYNTYPE_BUFFER);
-    key_ptr = (RsaKey*)WMALLOC(sizeof(RsaKey), ssh->ctx->heap,
-            DYNTYPE_PUBKEY);
-    if (checkDigest == NULL || key_ptr == NULL)
-        ret = WS_MEMORY_E;
-#else
-    checkDigest = s_checkDigest;
-    key_ptr = &s_key;
-#endif
+    if (ret == WS_SUCCESS) {
+        encDigest = (byte*)WMALLOC(MAX_ENCODED_SIG_SZ,
+                ssh->ctx->heap, DYNTYPE_BUFFER);
+        if (encDigest == NULL)
+            ret = WS_MEMORY_E;
     }
+    if (ret == WS_SUCCESS) {
+        key = (RsaKey*)WMALLOC(sizeof(RsaKey), ssh->ctx->heap, DYNTYPE_PUBKEY);
+        if (key == NULL)
+            ret = WS_MEMORY_E;
+    }
+#endif
 
     if (ret == WS_SUCCESS) {
-        ret = wc_InitRsaKey(key_ptr, ssh->ctx->heap);
+        ret = wc_InitRsaKey(key, ssh->ctx->heap);
         if (ret == 0) {
             ret = WS_SUCCESS;
         }
     }
 
+    /* Load up the key. */
     if (ret == WS_SUCCESS) {
         byte*  pub = NULL;
         word32 pubSz;
@@ -6462,8 +6429,12 @@ static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
         }
 
         if (ret == 0) {
-            word32 idx = 0;
-            ret = wc_RsaPublicKeyDecode(pub, &idx, key_ptr, pubSz);
+            i = 0;
+            ret = wc_RsaPublicKeyDecode(pub, &i, key, pubSz);
+            if (ret != 0) {
+                WLOG(WS_LOG_DEBUG, "Could not decode public key");
+                ret = WS_CRYPTO_FAILED;
+            }
         }
 
         if (pub != NULL)
@@ -6471,13 +6442,8 @@ static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
         wc_FreeDecodedCert(&cert);
     }
 
-    if (ret != 0) {
-        WLOG(WS_LOG_DEBUG, "Could not decode public key");
-        ret = WS_CRYPTO_FAILED;
-    }
-
     if (ret == WS_SUCCESS) {
-        int keySz = wc_RsaEncryptSize(key_ptr) * 8;
+        int keySz = wc_RsaEncryptSize(key) * 8;
         if (keySz < 2048) {
             WLOG(WS_LOG_DEBUG, "Key size too small (%d)", keySz);
             ret = WS_CERT_KEY_SIZE_E;
@@ -6486,69 +6452,42 @@ static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 
     if (ret == WS_SUCCESS) {
         i = 0;
-        /* First check that the signature's public key type matches the one
-         * we are expecting. */
-        ret = GetSize(&publicKeyTypeSz, pk->signature, pk->signatureSz, &i);
+        /* Check that the signature's pubkey type matches the expected one. */
+        ret = GetStringRef(&publicKeyTypeSz, &publicKeyType,
+                pk->signature, pk->signatureSz, &i);
     }
 
     if (ret == WS_SUCCESS) {
-        publicKeyType = pk->signature + i;
-        i += publicKeyTypeSz;
-        WOLFSSH_UNUSED(publicKeyType);
-    }
+        if (publicKeyTypeSz != pk->publicKeyTypeSz &&
+            WMEMCMP(publicKeyType, pk->publicKeyType, publicKeyTypeSz) != 0) {
 
-    if (ret == WS_SUCCESS)
-        ret = GetSize(&sigSz, pk->signature, pk->signatureSz, &i);
-
-    if (ret == WS_SUCCESS) {
-        sig = pk->signature + i;
-        checkDigestSz = wc_RsaSSL_Verify(sig, sigSz, checkDigest,
-                                         MAX_ENCODED_SIG_SZ, key_ptr);
-        if (checkDigestSz <= 0) {
-            WLOG(WS_LOG_DEBUG, "Could not verify signature");
-            ret = WS_CRYPTO_FAILED;
+            WLOG(WS_LOG_DEBUG,
+                 "Signature's type does not match public key type");
+            ret = WS_INVALID_ALGO_ID;
         }
     }
 
     if (ret == WS_SUCCESS) {
-        word32 encDigestSz;
-        volatile int compare;
-        volatile int sizeCompare;
-#ifdef WOLFSSH_SMALL_STACK
-        encDigest = (byte*)WMALLOC(MAX_ENCODED_SIG_SZ, ssh->ctx->heap,
-                DYNTYPE_BUFFER);
-        if (encDigest == NULL)
-            ret = WS_MEMORY_E;
-
-        if (ret == WS_SUCCESS)
-#else
-        byte s_encDigest[MAX_ENCODED_SIG_SZ];
-        encDigest = s_encDigest;
-#endif
-        {
-            encDigestSz = wc_EncodeSignature(encDigest, digest,
-                                         wc_HashGetDigestSize(enmhashId),
-                                         wc_HashGetOID(enmhashId));
-
-            compare = ConstantCompare(encDigest, checkDigest,
-                                  encDigestSz);
-            sizeCompare = encDigestSz != (word32)checkDigestSz;
-
-            if ((compare == 0) && (sizeCompare == 0))
-                ret = WS_SUCCESS;
-            else
-                ret = WS_RSA_E;
-        }
+        ret = GetMpint(&sigSz, &sig, pk->signature, pk->signatureSz, &i);
     }
 
-    if (key_ptr)
-        wc_FreeRsaKey(key_ptr);
+    if (ret == WS_SUCCESS) {
+        encDigestSz = wc_EncodeSignature(encDigest,
+                digest, digestSz, wc_HashGetOID(hashId));
+        ret = wolfSSH_RsaVerify(sig, sigSz, encDigest, encDigestSz,
+                key, ssh->ctx->heap, "DoUserAuthRequestRsaCert");
+    }
+
+    wc_FreeRsaKey(key);
 #ifdef WOLFSSH_SMALL_STACK
-    if (key_ptr)
-        WFREE(key_ptr, ssh->ctx->heap, DYNTYPE_PUBKEY);
-    if (checkDigest)
-        WFREE(checkDigest, ssh->ctx->heap, DYNTYPE_BUFFER);
+    if (key) {
+        WFREE(key, ssh->ctx->heap, DYNTYPE_PUBKEY);
+    }
+    if (encDigest) {
+        WFREE(encDigest, ssh->ctx->heap, DYNTYPE_BUFFER);
+    }
 #endif
+
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthRequestRsaCert(), ret = %d", ret);
     return ret;
 }
@@ -10523,38 +10462,86 @@ static INLINE byte SigTypeForId(byte id)
 /*
  * wolfSSH_RsaVerify
  * sig - signature to verify
- * sigSz - signature to verify size
- * digest - encoded digest for verification
- * digestSz - encoded digest size
+ * sigSz - signature size
+ * encDigest - encoded digest for verification
+ * encDigestSz - encoded digest size
  * key - key used to sign and verify signature
  * heap - allocation heap
  * loc - calling function for logging
+ *
+ * Takes the provided digest of type digestId and converts it to an
+ * encoded digest. Then verifies the signature, comparing the output
+ * digest and compares it.
  */
-int wolfSSH_RsaVerify(byte *sig, word32 sigSz,
-        const byte* digest, word32 digestSz,
+int wolfSSH_RsaVerify(const byte *sig, word32 sigSz,
+        const byte* encDigest, word32 encDigestSz,
         RsaKey* key, void* heap, const char* loc)
 {
-    byte* check;
+    byte* checkSig = NULL;
+    int checkDigestSz;
+    word32 keySz;
     int ret = WS_SUCCESS;
+#ifdef WOLFSSH_SMALL_STACK
+    byte* checkDigest = NULL;
+#else
+    byte checkDigest[MAX_ENCODED_SIG_SZ];
+#endif
 
-    check = (byte*)WMALLOC(digestSz, heap, DYNTYPE_TEMP);
-    if (check == NULL) {
-        ret = WS_MEMORY_E;
+    keySz = (word32)wc_RsaEncryptSize(key);
+
+    if (ret == WS_SUCCESS) {
+        checkSig = (byte*)WMALLOC(keySz, heap, DYNTYPE_TEMP);
+        if (checkSig == NULL)
+            ret = WS_MEMORY_E;
     }
-    else {
-        int checkSz;
+#ifdef WOLFSSH_SMALL_STACK
+    if (ret == WS_SUCCESS) {
+        checkDigest = (byte*)WMALLOC(MAX_ENCODED_SIG_SZ, heap, DYNTYPE_TEMP);
+        if (checkDigest == NULL)
+            ret = WS_MEMORY_E;
+    }
+#endif
 
-        checkSz = wc_RsaSSL_Verify(sig, sigSz, check, digestSz, key);
-        if (checkSz < 0
-                || (word32)checkSz != digestSz
-                || WMEMCMP(digest, check, digestSz) != 0) {
-            WLOG(WS_LOG_DEBUG, "%s: %s", loc, "Bad RSA Sign Verify");
+    /* Normalize the peer's signature. Some SSH implementations remove
+     * leading zeros on the signatures they encode. We need to pad the
+     * front of the signature to the key size. */
+    if (ret == WS_SUCCESS) {
+        word32 offset;
+
+        if (keySz > sigSz) {
+            offset = keySz - sigSz;
+        }
+        else {
+            sigSz = keySz;
+            offset = 0;
+        }
+
+        WMEMSET(checkSig, 0, offset);
+        WMEMCPY(checkSig + offset, sig, sigSz);
+    }
+
+    if (ret == WS_SUCCESS) {
+        volatile int sizeCompare;
+        volatile int compare;
+
+        checkDigestSz = wc_RsaSSL_Verify(checkSig, keySz,
+                checkDigest, MAX_ENCODED_SIG_SZ, key);
+
+        sizeCompare = checkDigestSz > 0 && encDigestSz != (word32)checkDigestSz;
+        compare = ConstantCompare(encDigest, checkDigest, encDigestSz);
+
+        if (checkDigestSz < 0 || sizeCompare || compare) {
+            WLOG(WS_LOG_DEBUG, "%s: %s", loc, "Bad RSA Verify");
             ret = WS_RSA_E;
         }
-        ForceZero(check, digestSz);
-        WFREE(check, heap, DYNTYPE_TEMP);
     }
 
+#ifdef WOLFSSH_SMALL_STACK
+    if (checkDigest)
+        WFREE(checkDigest, heap, DYNTYPE_TEMP);
+#endif
+    if (checkSig)
+        WFREE(checkSig, heap, DYNTYPE_TEMP);
     return ret;
 }
 #endif /* WOLFSSH_NO_RSA */
