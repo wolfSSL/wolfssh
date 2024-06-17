@@ -1000,7 +1000,7 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
 
     if (ssh != NULL && ssh->channelList == NULL) {
         WLOG(WS_LOG_DEBUG, "channel list was already removed");
-        ret = WS_SUCCESS;
+        ret = WS_CHANNEL_CLOSED;
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_shutdown(), ret = %d", ret);
