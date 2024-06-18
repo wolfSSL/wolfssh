@@ -6675,6 +6675,7 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
 {
     WS_SFTP_LSTAT_STATE* state = NULL;
     int ret;
+    int ret_fatal = 0;
     word32 localIdx;
 
     WLOG(WS_LOG_SFTP, "Entering SFTP_STAT()");
@@ -6716,6 +6717,7 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                             ssh->error == WS_WANT_WRITE)
                         return WS_FATAL_ERROR;
                     else {
+                        ret_fatal = 1;
                         state->state = STATE_LSTAT_CLEANUP;
                         continue;
                     }
@@ -6734,6 +6736,7 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                         return WS_FATAL_ERROR;
                     else {
                         state->state = STATE_LSTAT_CLEANUP;
+                        ret_fatal = 1;
                         continue;
                     }
                 }
@@ -6815,7 +6818,10 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                     WFREE(ssh->lstatState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
                     ssh->lstatState = NULL;
                 }
-                return WS_SUCCESS;
+                if(ret_fatal)
+                    return WS_FATAL_ERROR;
+                else
+                    return WS_SUCCESS;
 
             default:
                 WLOG(WS_LOG_SFTP, "Bad SFTP LSTAT state, program error");
