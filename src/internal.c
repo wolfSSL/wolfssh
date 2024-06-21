@@ -3007,7 +3007,7 @@ static int GetInputText(WOLFSSH* ssh, byte** pEol)
     int gotLine = 0;
     int inSz = 255;
     int in;
-    char *eol;
+    char *eol = NULL;
 
     if (GrowBuffer(&ssh->inputBuffer, inSz) < 0)
         return WS_MEMORY_E;
@@ -4099,7 +4099,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         wc_HashAlg* hash = &ssh->handshake->kexHash;
         enum wc_HashType hashId = (enum wc_HashType)ssh->handshake->kexHashId;
         byte scratchLen[LENGTH_SZ];
-        word32 strSz;
+        word32 strSz = 0;
 
         if (!ssh->isKeying) {
             WLOG(WS_LOG_DEBUG, "Keying initiated");
@@ -4446,7 +4446,7 @@ static int ParseECCPubKey(WOLFSSH *ssh,
 #ifndef WOLFSSH_NO_ECDSA
     const byte* q;
     word32 qSz, pubKeyIdx = 0;
-    int primeId;
+    int primeId = 0;
     word32 scratch;
 
     ret = wc_ecc_init_ex(&sigKeyBlock_ptr->sk.ecc.key, ssh->ctx->heap,
@@ -11262,7 +11262,7 @@ int SendKexDhReply(WOLFSSH* ssh)
     byte f_s[KEX_F_SIZE];
     byte sig_s[KEX_SIG_SIZE];
 #endif
-    byte msgId;
+    byte msgId = 0;
     byte useDh = 0;
     byte useEcc = 0;
     byte useCurve25519 = 0;
@@ -13980,7 +13980,7 @@ int SendUserAuthFailure(WOLFSSH* ssh, byte partialSuccess)
     byte* output;
     word32 idx;
     int ret = WS_SUCCESS;
-    int   authSz;
+    int   authSz = 0;
     char  authStr[MAX_AUTH_STRING];
 
     WLOG(WS_LOG_DEBUG, "Entering SendUserAuthFailure()");
@@ -14503,7 +14503,7 @@ int SendChannelEow(WOLFSSH* ssh, word32 peerChannelId)
     byte* output;
     const char* str = "eow@openssh.com";
     word32 idx;
-    word32 strSz;
+    word32 strSz = 0;
     int      ret = WS_SUCCESS;
     WOLFSSH_CHANNEL* channel = NULL;
 
@@ -14560,7 +14560,7 @@ int SendChannelExit(WOLFSSH* ssh, word32 peerChannelId, int status)
     byte* output;
     const char* str = "exit-status";
     word32 idx;
-    word32 strSz;
+    word32 strSz = 0;
     int      ret = WS_SUCCESS;
     WOLFSSH_CHANNEL* channel = NULL;
 
