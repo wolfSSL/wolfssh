@@ -2051,9 +2051,9 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         WS_SFTP_FILEATRB fileAtr;
         WMEMSET(&fileAtr, 0, sizeof(fileAtr));
         if (SFTP_GetAttributes(ssh->fs,
-                        dir, &fileAtr, 1, ssh->ctx->heap) == WS_SUCCESS) {
-            if ((fileAtr.per & FILEATRB_PER_MASK_TYPE) != FILEATRB_PER_FILE) {
-                WLOG(WS_LOG_SFTP, "Not a file");
+                        dir, &fileAtr, 0, ssh->ctx->heap) == WS_SUCCESS) {
+            if ((fileAtr.per & FILEATRB_PER_MASK_TYPE)
+                        != FILEATRB_PER_FILE) {
                 ssh->error = WS_SFTP_NOT_FILE_E;
 
                 res = naf;
@@ -2607,7 +2607,15 @@ static int SFTP_CreateLongName(WS_SFTPNAME* name)
         word32 tmp = atr->per;
 
         i = 0;
-        perm[i++] = (tmp & 0x4000)?'d':'-';
+        if (tmp & FILEATRB_PER_DIR) {
+            perm[i++] = 'd';
+        }
+        else if (tmp & FILEATRB_PER_LINK) {
+            perm[i++] = 'l';
+        }
+        else {
+            perm[i++] = '-';
+        }
         perm[i++] = (tmp & 0x100)?'r':'-';
         perm[i++] = (tmp & 0x080)?'w':'-';
         perm[i++] = (tmp & 0x040)?'x':'-';
@@ -3153,7 +3161,7 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
             return WS_FATAL_ERROR;
         }
 
-        if (SFTP_GetAttributes(ssh->fs, s, &out->atrb, 0, ssh->ctx->heap)
+        if (SFTP_GetAttributes(ssh->fs, s, &out->atrb, 1, ssh->ctx->heap)
                 != WS_SUCCESS) {
             WLOG(WS_LOG_SFTP, "Unable to get attribute values for %s",
                     out->fName);
@@ -8592,8 +8600,8 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                 NO_BREAK;
 
             case STATE_GET_LSTAT:
-                WLOG(WS_LOG_SFTP, "SFTP GET STATE: LSTAT");
-                ret = wolfSSH_SFTP_LSTAT(ssh, from, &state->attrib);
+                WLOG(WS_LOG_SFTP, "SFTP GET STATE: STAT");
+                ret = wolfSSH_SFTP_STAT(ssh, from, &state->attrib);
                 if (ret != WS_SUCCESS) {
                     if (ssh->error == WS_WANT_READ ||
                             ssh->error == WS_WANT_WRITE)
@@ -8603,7 +8611,9 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                     continue;
                 }
                 if ((state->attrib.per & FILEATRB_PER_MASK_TYPE)
-                        != FILEATRB_PER_FILE) {
+                        != FILEATRB_PER_FILE
+                    && (state->attrib.per & FILEATRB_PER_MASK_TYPE)
+                        != FILEATRB_PER_LINK) {
                     WLOG(WS_LOG_SFTP, "Not a file");
                     ssh->error = WS_SFTP_NOT_FILE_E;
                     ret = WS_FATAL_ERROR;
