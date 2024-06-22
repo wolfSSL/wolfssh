@@ -3049,6 +3049,230 @@ void wolfSSH_SetKeyingCompletionCbCtx(WOLFSSH* ssh, void* ctx)
 }
 
 
+WS_SessionType wolfSSH_ChannelGetSessionType(const WOLFSSH_CHANNEL* channel)
+{
+    WS_SessionType type = WOLFSSH_SESSION_UNKNOWN;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelGetType()");
+
+    if (channel) {
+        type = (WS_SessionType)channel->sessionType;
+    }
+
+    return type;
+}
+
+
+const char* wolfSSH_ChannelGetSessionCommand(const WOLFSSH_CHANNEL* channel)
+{
+    const char* cmd = NULL;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelGetCommand()");
+
+    if (channel) {
+        cmd = channel->command;
+    }
+
+    return cmd;
+}
+
+
+int wolfSSH_CTX_SetChannelOpenCb(WOLFSSH_CTX* ctx, WS_CallbackChannelOpen cb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->channelOpenCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_CTX_SetChannelOpenRespCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelOpen confCb, WS_CallbackChannelOpen failCb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->channelOpenConfCb = confCb;
+        ctx->channelOpenFailCb = failCb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_CTX_SetChannelReqShellCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelReq cb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->channelReqShellCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_CTX_SetChannelReqExecCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelReq cb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->channelReqExecCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_CTX_SetChannelReqSubsysCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelReq cb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->channelReqSubsysCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_SetChannelOpenCtx(WOLFSSH* ssh, void* ctx)
+{
+    int ret = WS_SSH_NULL_E;
+
+    if (ssh != NULL) {
+        ssh->channelOpenCtx = ctx;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+void* wolfSSH_GetChannelOpenCtx(WOLFSSH* ssh)
+{
+    void* ctx = NULL;
+
+    if (ssh != NULL) {
+        ctx = ssh->channelOpenCtx;
+    }
+
+    return ctx;
+}
+
+
+int wolfSSH_SetChannelReqCtx(WOLFSSH* ssh, void* ctx)
+{
+    int ret = WS_SSH_NULL_E;
+
+    if (ssh != NULL) {
+        ssh->channelReqCtx = ctx;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+void* wolfSSH_GetChannelReqCtx(WOLFSSH* ssh)
+{
+    void* ctx = NULL;
+
+    if (ssh != NULL) {
+        ctx = ssh->channelReqCtx;
+    }
+
+    return ctx;
+}
+
+
+int wolfSSH_CTX_SetChannelEofCb(WOLFSSH_CTX* ctx, WS_CallbackChannelEof cb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->channelEofCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_SetChannelEofCtx(WOLFSSH* ssh, void* ctx)
+{
+    int ret = WS_SSH_NULL_E;
+
+    if (ssh != NULL) {
+        ssh->channelEofCtx = ctx;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+void* wolfSSH_GetChannelEofCtx(WOLFSSH* ssh)
+{
+    void* ctx = NULL;
+
+    if (ssh != NULL) {
+        ctx = ssh->channelEofCtx;
+    }
+
+    return ctx;
+}
+
+
+int wolfSSH_CTX_SetChannelCloseCb(WOLFSSH_CTX* ctx, WS_CallbackChannelClose cb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->channelCloseCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_SetChannelCloseCtx(WOLFSSH* ssh, void* ctx)
+{
+    int ret = WS_SSH_NULL_E;
+
+    if (ssh != NULL) {
+        ssh->channelCloseCtx = ctx;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+void* wolfSSH_GetChannelCloseCtx(WOLFSSH* ssh)
+{
+    void* ctx = NULL;
+
+    if (ssh != NULL) {
+        ctx = ssh->channelCloseCtx;
+    }
+
+    return ctx;
+}
+
+
 #if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
     !defined(NO_WOLFSSH_SERVER)
 

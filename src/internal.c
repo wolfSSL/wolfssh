@@ -7761,6 +7761,9 @@ static int DoChannelOpen(WOLFSSH* ssh,
         else {
             ChannelUpdatePeer(newChannel, peerChannelId,
                           peerInitialWindowSz, peerMaxPacketSz);
+            if (ssh->ctx->channelOpenCb) {
+                ret = ssh->ctx->channelOpenCb(newChannel, ssh->channelOpenCtx);
+            }
             if (ssh->channelListSz == 0)
                 ssh->defaultPeerChannelId = peerChannelId;
         #ifdef WOLFSSH_FWD
@@ -7791,16 +7794,18 @@ static int DoChannelOpen(WOLFSSH* ssh,
         const char *description = NULL;
 
         if (fail_reason == OPEN_ADMINISTRATIVELY_PROHIBITED)
-            description = "Each session cannot have more than one channel open.";
+            description = "Administratively prohibited.";
         else if (fail_reason == OPEN_UNKNOWN_CHANNEL_TYPE)
             description = "Channel type not supported.";
         else if (fail_reason == OPEN_RESOURCE_SHORTAGE)
             description = "Not enough resources.";
 
-        if (description != NULL)
-            ret = SendChannelOpenFail(ssh, peerChannelId, fail_reason, description, "en");
+        if (description != NULL) {
+            ret = SendChannelOpenFail(ssh, peerChannelId,
+                    fail_reason, description, "en");
+        }
         else
-            ret = SendRequestSuccess(ssh, 0);
+            ret = SendRequestSuccess(ssh, 0); /* XXX Is this right? */
     }
 
 #ifdef WOLFSSH_FWD
@@ -7857,6 +7862,12 @@ static int DoChannelOpenConf(WOLFSSH* ssh,
                             peerInitialWindowSz, peerMaxPacketSz);
 
     if (ret == WS_SUCCESS) {
+        if (ssh->ctx->channelOpenConfCb != NULL) {
+            ret = ssh->ctx->channelOpenConfCb(channel, ssh->channelOpenCtx);
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
         ssh->serverState = SERVER_CHANNEL_OPEN_DONE;
         ssh->defaultPeerChannelId = peerChannelId;
     }
@@ -7869,6 +7880,7 @@ static int DoChannelOpenConf(WOLFSSH* ssh,
 static int DoChannelOpenFail(WOLFSSH* ssh,
                              byte* buf, word32 len, word32* idx)
 {
+    WOLFSSH_CHANNEL* channel = NULL;
     char desc[80];
     word32 begin, channelId, reasonId, descSz, langSz;
     int ret = WS_SUCCESS;
@@ -7902,6 +7914,19 @@ static int DoChannelOpenFail(WOLFSSH* ssh,
             WLOG(WS_LOG_INFO, "description: %s", desc);
         }
 
+        if (ssh->ctx->channelOpenFailCb != NULL) {
+            channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
+
+            if (channel != NULL) {
+                ret = ssh->ctx->channelOpenFailCb(channel, ssh->channelOpenCtx);
+            }
+            else {
+                ret = WS_INVALID_CHANID;
+            }
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
         ret = ChannelRemove(ssh, channelId, WS_CHANNEL_ID_SELF);
     }
 
@@ -7931,6 +7956,12 @@ static int DoChannelEof(WOLFSSH* ssh,
         channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
         if (channel == NULL)
             ret = WS_INVALID_CHANID;
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (ssh->ctx->channelEofCb) {
+            ssh->ctx->channelEofCb(channel, ssh->channelEofCtx);
+        }
     }
 
     if (ret == WS_SUCCESS) {
@@ -7964,6 +7995,12 @@ static int DoChannelClose(WOLFSSH* ssh,
         channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
         if (channel == NULL)
             ret = WS_INVALID_CHANID;
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (ssh->ctx->channelCloseCb) {
+            ssh->ctx->channelCloseCb(channel, ssh->channelCloseCtx);
+        }
     }
 
     if (ret == WS_SUCCESS) {
@@ -8239,7 +8276,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
     word32 typeSz;
     char type[32];
     byte wantReply;
-    int ret;
+    int ret, rej = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering DoChannelRequest()");
 
@@ -8268,8 +8305,53 @@ static int DoChannelRequest(WOLFSSH* ssh,
         WLOG(WS_LOG_DEBUG, "  type = %s", type);
         WLOG(WS_LOG_DEBUG, "  wantReply = %u", wantReply);
 
-#ifdef WOLFSSH_TERM
-        if (WSTRNCMP(type, "pty-req", typeSz) == 0) {
+        if (WSTRNCMP(type, "env", typeSz) == 0) {
+            char name[WOLFSSH_MAX_NAMESZ];
+            word32 nameSz;
+            char value[32];
+            word32 valueSz;
+
+            name[0] = 0;
+            value[0] = 0;
+            nameSz = (word32)sizeof(name);
+            valueSz = (word32)sizeof(value);
+            ret = GetString(name, &nameSz, buf, len, &begin);
+            if (ret == WS_SUCCESS)
+                ret = GetString(value, &valueSz, buf, len, &begin);
+
+            WLOG(WS_LOG_DEBUG, "  %s = %s", name, value);
+        }
+        else if (WSTRNCMP(type, "shell", typeSz) == 0) {
+            channel->sessionType = WOLFSSH_SESSION_SHELL;
+            if (ssh->ctx->channelReqShellCb) {
+                rej = ssh->ctx->channelReqShellCb(channel, ssh->channelReqCtx);
+            }
+            ssh->clientState = CLIENT_DONE;
+        }
+        else if (WSTRNCMP(type, "exec", typeSz) == 0) {
+            ret = GetStringAlloc(ssh->ctx->heap, &channel->command,
+                    buf, len, &begin);
+            channel->sessionType = WOLFSSH_SESSION_EXEC;
+            if (ssh->ctx->channelReqExecCb) {
+                rej = ssh->ctx->channelReqExecCb(channel, ssh->channelReqCtx);
+            }
+            ssh->clientState = CLIENT_DONE;
+
+            WLOG(WS_LOG_DEBUG, "  command = %s", channel->command);
+        }
+        else if (WSTRNCMP(type, "subsystem", typeSz) == 0) {
+            ret = GetStringAlloc(ssh->ctx->heap, &channel->command,
+                    buf, len, &begin);
+            channel->sessionType = WOLFSSH_SESSION_SUBSYSTEM;
+            if (ssh->ctx->channelReqSubsysCb) {
+                rej = ssh->ctx->channelReqSubsysCb(channel, ssh->channelReqCtx);
+            }
+            ssh->clientState = CLIENT_DONE;
+
+            WLOG(WS_LOG_DEBUG, "  subsystem = %s", channel->command);
+        }
+        #ifdef WOLFSSH_TERM
+        else if (WSTRNCMP(type, "pty-req", typeSz) == 0) {
             char term[32];
             const byte* modes;
             word32 termSz, modesSz = 0;
@@ -8314,54 +8396,8 @@ static int DoChannelRequest(WOLFSSH* ssh,
                 }
             }
         }
-        else
-#endif /* WOLFSSH_TERM */
-        if (WSTRNCMP(type, "env", typeSz) == 0) {
-            char name[WOLFSSH_MAX_NAMESZ];
-            word32 nameSz;
-            char value[32];
-            word32 valueSz;
-
-            name[0] = 0;
-            value[0] = 0;
-            nameSz = (word32)sizeof(name);
-            valueSz = (word32)sizeof(value);
-            ret = GetString(name, &nameSz, buf, len, &begin);
-            if (ret == WS_SUCCESS)
-                ret = GetString(value, &valueSz, buf, len, &begin);
-
-            WLOG(WS_LOG_DEBUG, "  %s = %s", name, value);
-        }
-        else if (WSTRNCMP(type, "shell", typeSz) == 0) {
-            channel->sessionType = WOLFSSH_SESSION_SHELL;
-            ssh->clientState = CLIENT_DONE;
-        }
-        else if (WSTRNCMP(type, "exec", typeSz) == 0) {
-            ret = GetStringAlloc(ssh->ctx->heap, &channel->command,
-                    buf, len, &begin);
-            channel->sessionType = WOLFSSH_SESSION_EXEC;
-            ssh->clientState = CLIENT_DONE;
-
-            WLOG(WS_LOG_DEBUG, "  command = %s", channel->command);
-        }
-        else if (WSTRNCMP(type, "subsystem", typeSz) == 0) {
-            ret = GetStringAlloc(ssh->ctx->heap, &channel->command,
-                    buf, len, &begin);
-            channel->sessionType = WOLFSSH_SESSION_SUBSYSTEM;
-            ssh->clientState = CLIENT_DONE;
-
-            WLOG(WS_LOG_DEBUG, "  subsystem = %s", channel->command);
-        }
-#ifdef WOLFSSH_AGENT
-        else if (WSTRNCMP(type, "auth-agent-req@openssh.com", typeSz) == 0) {
-            WLOG(WS_LOG_AGENT, "  ssh-agent");
-            if (ssh->ctx->agentCb != NULL)
-                ssh->useAgent = 1;
-            else
-                WLOG(WS_LOG_AGENT, "Agent callback not set, not using.");
-        }
-#endif /* WOLFSSH_AGENT */
-#if defined(WOLFSSH_SHELL) && defined(WOLFSSH_TERM)
+        #endif /* WOLFSSH_TERM */
+        #if defined(WOLFSSH_SHELL) && defined(WOLFSSH_TERM)
         else if (WSTRNCMP(type, "window-change", typeSz) == 0) {
             word32 widthChar, heightRows, widthPixels, heightPixels;
 
@@ -8391,8 +8427,8 @@ static int DoChannelRequest(WOLFSSH* ssh,
                 }
             }
         }
-#endif /* WOLFSSH_SHELL && WOLFSSH_TERM */
-#if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
+        #endif /* WOLFSSH_SHELL && WOLFSSH_TERM */
+        #if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
         else if (WSTRNCMP(type, "exit-status", typeSz) == 0) {
             ret = GetUint32(&ssh->exitStatus, buf, len, &begin);
             WLOG(WS_LOG_AGENT, "Got exit status %u.", ssh->exitStatus);
@@ -8425,16 +8461,30 @@ static int DoChannelRequest(WOLFSSH* ssh,
                 ret = GetString(sig, &sigSz, buf, len, &begin);
             }
         }
-#endif
+        #endif /* WOLFSSH_TERM or WOLFSSH_SHELL */
+        #ifdef WOLFSSH_AGENT
+        else if (WSTRNCMP(type, "auth-agent-req@openssh.com", typeSz) == 0) {
+            WLOG(WS_LOG_AGENT, "  ssh-agent");
+            if (ssh->ctx->agentCb != NULL)
+                ssh->useAgent = 1;
+            else
+                WLOG(WS_LOG_AGENT, "Agent callback not set, not using.");
+        }
+        #endif /* WOLFSSH_AGENT */
     }
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
         *idx = len;
+    }
 
     if (wantReply) {
         int replyRet;
 
-        replyRet = SendChannelSuccess(ssh, channelId, (ret == WS_SUCCESS));
+        if (rej) {
+            WLOG(WS_LOG_DEBUG, "Callback rejecting channel request.");
+        }
+        replyRet = SendChannelSuccess(ssh, channelId,
+                (ret == WS_SUCCESS && !rej));
         if (replyRet != WS_SUCCESS)
             ret = replyRet;
     }
