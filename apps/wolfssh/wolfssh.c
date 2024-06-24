@@ -407,11 +407,10 @@ static THREAD_RET readPeer(void* in)
     if (args->rawMode == 0) {
         DWORD wrd;
 
-        if (GetConsoleMode(stdoutHandle, &wrd) == FALSE) {
-            err_sys("Unable to get stdout handle");
-        }
-
-        /* depend on the terminal to process VT characters */
+        /* get console mode will fail on handles that are not a console,
+         * i.e. if the stdout is being redirected to a file */
+        if (GetConsoleMode(stdoutHandle, &wrd) != FALSE) {
+            /* depend on the terminal to process VT characters */
         #ifndef _WIN32_WINNT_WIN10
             /* support for virtual terminal processing was introduced in windows 10 */
             #define _WIN32_WINNT_WIN10 0x0A00
@@ -419,8 +418,9 @@ static THREAD_RET readPeer(void* in)
         #if defined(WINVER) && (WINVER >= _WIN32_WINNT_WIN10)
             wrd |= (ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_PROCESSED_OUTPUT);
         #endif
-        if (SetConsoleMode(stdoutHandle, wrd) == FALSE) {
-            err_sys("Unable to set console mode");
+            if (SetConsoleMode(stdoutHandle, wrd) == FALSE) {
+                err_sys("Unable to set console mode");
+            }
         }
     }
 
