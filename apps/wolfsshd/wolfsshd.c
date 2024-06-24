@@ -1495,17 +1495,19 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         /* if the window was previously full, try resending the data */
         if (windowFull) {
             cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
-                    shellBuffer, cnt_r);
+                    shellBuffer, windowFull);
             if (cnt_w == WS_WINDOW_FULL) {
-                windowFull = 1;
                 continue;
             }
             else if (cnt_w == WS_WANT_WRITE) {
-                windowFull = 1;
                 continue;
             }
             else {
-                windowFull = 0;
+                windowFull -= cnt_w;
+                if (windowFull > 0)
+                    continue;
+                if (windowFull < 0)
+                    windowFull = 0;
             }
         }
 
@@ -1525,7 +1527,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                         cnt_w = wolfSSH_extended_data_send(ssh, shellBuffer,
                             cnt_r);
                         if (cnt_w == WS_WINDOW_FULL) {
-                            windowFull = 1;
+                            windowFull = cnt_r; /* save amount to be sent */
                             continue;
                         }
                         else if (cnt_w == WS_WANT_WRITE) {
@@ -1557,7 +1559,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                         cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
                                 shellBuffer, cnt_r);
                         if (cnt_w == WS_WINDOW_FULL) {
-                            windowFull = 1;
+                            windowFull = cnt_r; /* save amount to be sent */
                             continue;
                         }
                         else if (cnt_w == WS_WANT_WRITE) {
