@@ -106,14 +106,6 @@ static const char* caCert   = NULL;
 #endif
 
 
-#if defined(WOLFSSH_AGENT)
-static inline void ato32(const byte* c, word32* u32)
-{
-    *u32 = (c[0] << 24) | (c[1] << 16) | (c[2] << 8) | c[3];
-}
-#endif
-
-
 static int NonBlockSSH_connect(WOLFSSH* ssh)
 {
     int ret;
@@ -214,6 +206,13 @@ static void modes_reset(void)
 #endif /* HAVE_TERMIOS_H && WOLFSSH_TERM */
 
 #if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS)
+
+#if defined(WOLFSSH_AGENT)
+static inline void ato32(const byte* c, word32* u32)
+{
+    *u32 = (c[0] << 24) | (c[1] << 16) | (c[2] << 8) | c[3];
+}
+#endif
 
 typedef struct thread_args {
     WOLFSSH* ssh;
@@ -1023,13 +1022,13 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
     if (ret != WS_SUCCESS)
         err_sys("Couldn't connect SSH stream.");
 
+    MODES_CLEAR();
+
 #if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS)
 #if 0
     if (keepOpen) /* set up for psuedo-terminal */
         ClientSetEcho(2);
 #endif
-
-    MODES_CLEAR();
 
     if (config.command != NULL || keepOpen == 1) {
     #if defined(_POSIX_THREADS)

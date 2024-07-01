@@ -23,6 +23,11 @@
 #endif
 
 #include <stdio.h>
+#ifdef WOLFSSL_USER_SETTINGS
+    #include <wolfssl/wolfcrypt/settings.h>
+#else
+    #include <wolfssl/options.h>
+#endif
 #include <wolfssh/settings.h>
 
 #if defined(WOLFSSH_SFTP) && !defined(SINGLE_THREADED)
