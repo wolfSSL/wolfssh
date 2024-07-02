@@ -98,7 +98,8 @@ int DoScpSink(WOLFSSH* ssh)
 
                 ssh->scpConfirm = ssh->ctx->scpRecvCb(ssh,
                         WOLFSSH_SCP_NEW_REQUEST, ssh->scpBasePath,
-                        NULL, 0, 0, 0, 0, NULL, 0, 0, wolfSSH_GetScpRecvCtx(ssh));
+                        NULL, 0, 0, 0, 0, NULL, 0, 0,
+                        wolfSSH_GetScpRecvCtx(ssh));
                 continue;
 
             case SCP_RECEIVE_MESSAGE:
@@ -188,12 +189,9 @@ int DoScpSink(WOLFSSH* ssh)
                         ssh->scpATime, ssh->scpFileSz, ssh->scpFileBuffer,
                         ssh->scpFileBufferSz, ssh->scpFileOffset,
                         wolfSSH_GetScpRecvCtx(ssh));
-
                 ssh->scpFileOffset += ssh->scpFileBufferSz;
 
-                /* shrink and reset recv buffer */
-                WFREE(ssh->scpFileBuffer, ssh->ctx->heap, DYNTYPE_BUFFER);
-                ssh->scpFileBuffer = NULL;
+                /* reset recv buffer */
                 ssh->scpFileBufferSz = 0;
 
                 if (ssh->scpConfirm != WS_SCP_CONTINUE) {
@@ -1445,8 +1443,6 @@ int ReceiveScpMessage(WOLFSSH* ssh)
             break;
     }
 
-    WFREE(ssh->scpRecvMsg, ssh->ctx->heap, DYNTYPE_STRING);
-    ssh->scpRecvMsg = NULL;
     ssh->scpRecvMsgSz = 0;
 
     return ret;
@@ -1455,34 +1451,28 @@ int ReceiveScpMessage(WOLFSSH* ssh)
 int ReceiveScpFile(WOLFSSH* ssh)
 {
     int partSz, ret = WS_SUCCESS;
-    byte* part;
 
     if (ssh == NULL)
         return WS_BAD_ARGUMENT;
 
+    /* We don't want to over-read the buffer. The file data is
+     * terminated by the sender with a nul which is checked later. */
     partSz = min(ssh->scpFileSz - ssh->scpFileOffset, DEFAULT_SCP_BUFFER_SZ);
 
     /* don't even bother reading if read size is 0 */
     if (partSz == 0) return ret;
 
-    part = (byte*)WMALLOC(partSz, ssh->ctx->heap, DYNTYPE_BUFFER);
-    if (part == NULL)
-        ret = WS_MEMORY_E;
+    if (ssh->scpFileBuffer == NULL) {
+        ssh->scpFileBuffer = (byte*)WMALLOC(DEFAULT_SCP_BUFFER_SZ,
+                ssh->ctx->heap, DYNTYPE_BUFFER);
+        if (ssh->scpFileBuffer == NULL)
+            ret = WS_MEMORY_E;
+    }
 
     if (ret == WS_SUCCESS) {
-        WMEMSET(part, 0, partSz);
-
-        ret = wolfSSH_stream_read(ssh, part, partSz);
+        ret = wolfSSH_stream_read(ssh, ssh->scpFileBuffer, partSz);
         if (ret > 0) {
-            if (ssh->scpFileBuffer != NULL) {
-                WFREE(ssh->scpFileBuffer, ssh->ctx->heap, DYNTYPE_BUFFER);
-                ssh->scpFileBuffer = NULL;
-                ssh->scpFileBufferSz = 0;
-            }
-            ssh->scpFileBuffer = part;
             ssh->scpFileBufferSz = ret;
-        } else {
-            WFREE(part, ssh->ctx->heap, DYNTYPE_BUFFER);
         }
     }
 
@@ -2122,7 +2112,7 @@ static int GetFileStats(void *fs, ScpSendCtx* ctx, const char* fileName,
                         word64* mTime, word64* aTime, int* fileMode)
 {
     int ret = WS_SUCCESS;
-    
+
     WOLFSSH_UNUSED(fs);
 
     if (ctx == NULL || fileName == NULL || mTime == NULL ||

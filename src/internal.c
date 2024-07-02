@@ -1043,6 +1043,8 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->scpRequestState = SCP_PARSE_COMMAND;
     ssh->scpConfirmMsg   = NULL;
     ssh->scpConfirmMsgSz = 0;
+    ssh->scpRecvMsg      = NULL;
+    ssh->scpRecvMsgSz    = 0;
     ssh->scpRecvCtx      = NULL;
     #if !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
     ssh->scpSendCtx      = &(ssh->scpSendCbCtx);
@@ -7143,7 +7145,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                 case WOLFSSH_USERAUTH_PARTIAL_SUCCESS:
                     WLOG(WS_LOG_DEBUG, "DUARPK: user auth partial success");
                     break;
-                    
+
                 case WOLFSSH_USERAUTH_WOULD_BLOCK:
                     WLOG(WS_LOG_DEBUG, "DUARPK: userauth callback would block");
                     break;
