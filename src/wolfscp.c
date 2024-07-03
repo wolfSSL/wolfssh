@@ -1655,70 +1655,107 @@ int wolfSSH_SCP_connect(WOLFSSH* ssh, byte* cmd)
     return ret;
 }
 
-static int wolfSSH_SCP_cmd(WOLFSSH* ssh, const char* localName,
-        const char* remoteName, byte dir)
+
+static char* MakeScpCmd(const char* name, char dir, void* heap)
 {
-    char* cmd = NULL;
-    word32 remoteNameSz, cmdSz;
+    char* cmd;
+    int sz;
+
+    sz = WSNPRINTF(NULL, 0, "scp -%c %s", dir, name) + 1;
+    if (sz <= 0) {
+        return NULL;
+    }
+    cmd = (char*)WMALLOC(sz, heap, DYNTYPE_STRING);
+    if (cmd == NULL) {
+        return NULL;
+    }
+    sz = WSNPRINTF(cmd, sz, "scp -%c %s", dir, name);
+    if (sz <= 0) {
+        WFREE(cmd, heap, DYNTYPE_STRING);
+        return NULL;
+    }
+
+    return cmd;
+}
+
+
+int wolfSSH_SCP_to(WOLFSSH* ssh, const char* src, const char* dst)
+{
     int ret = WS_SUCCESS;
 
-    if (ssh == NULL || localName == NULL || remoteName == NULL)
+    /* dst is passed to the server in the scp -t command */
+    /* src is used locally to fopen and read for copy to */
+
+    if (ssh == NULL || src == NULL || dst == NULL)
         return WS_BAD_ARGUMENT;
 
-    if (dir != 't' && dir != 'f')
-        return WS_BAD_ARGUMENT;
+    if (ssh->scpState == SCP_SETUP) {
+        char* cmd = MakeScpCmd(dst, 't', ssh->ctx->heap);
+        if (cmd == NULL) {
+            WLOG(WS_LOG_SCP, "Cannot allocate scp command");
+            ssh->error = WS_MEMORY_E;
+            return WS_ERROR;
+        }
 
-    remoteNameSz = (word32)WSTRLEN(remoteName);
-    cmdSz = remoteNameSz + (word32)WSTRLEN("scp -5 ") + 1;
-    cmd = (char*)WMALLOC(cmdSz, ssh->ctx->heap, DYNTYPE_STRING);
-
-    /* Need to set up the context for the local interaction callback. */
-
-    if (cmd != NULL) {
-        WSNPRINTF(cmd, cmdSz, "scp -%c %s", dir, remoteName);
-        ssh->scpBasePath = localName;
+        ssh->scpBasePath = src;
         ret = wolfSSH_SCP_connect(ssh, (byte*)cmd);
         if (ret == WS_SUCCESS) {
-            if (dir == 't') {
-                ssh->scpState = SCP_SOURCE_BEGIN;
-                ssh->scpRequestState = SCP_SOURCE;
-                ret = DoScpSource(ssh);
-            }
-            else {
-                cmdSz = (word32)WSTRLEN(localName);
-                ret = ParseBasePathHelper(ssh, cmdSz);
-                if (ret == WS_SUCCESS) {
-                    ssh->scpState = SCP_SINK_BEGIN;
-                    ssh->scpRequestState = SCP_SINK;
-                    ret = DoScpSink(ssh);
-                }
-            }
+            ssh->scpState = SCP_SOURCE_BEGIN;
+            ssh->scpRequestState = SCP_SOURCE;
         }
-        WFREE(cmd, ssh->ctx->heap, DYNTYPE_STRING);
+        if (cmd) {
+            WFREE(cmd, ssh->ctx->heap, DYNTYPE_STRING);
+        }
     }
-    else {
-        WLOG(WS_LOG_SCP, "Cannot build scp command");
-        ssh->error = WS_MEMORY_E;
-        ret = WS_ERROR;
+    if (ssh->scpState != SCP_SETUP) {
+        if (ret == WS_SUCCESS) {
+            ret = DoScpSource(ssh);
+        }
     }
 
     return ret;
 }
 
 
-int wolfSSH_SCP_to(WOLFSSH* ssh, const char* src, const char* dst)
-{
-    return wolfSSH_SCP_cmd(ssh, src, dst, 't');
-    /* dst is passed to the server in the scp -t command */
-    /* src is used locally to fopen and read for copy to */
-}
-
-
 int wolfSSH_SCP_from(WOLFSSH* ssh, const char* src, const char* dst)
 {
-    return wolfSSH_SCP_cmd(ssh, dst, src, 'f');
+    int ret = WS_SUCCESS;
+
     /* src is passed to the server in the scp -f command */
     /* dst is used locally to fopen and write for copy from */
+
+    if (ssh == NULL || src == NULL || dst == NULL)
+        return WS_BAD_ARGUMENT;
+
+    if (ssh->scpState == SCP_SETUP) {
+        char* cmd = MakeScpCmd(src, 'f', ssh->ctx->heap);
+        if (cmd == NULL) {
+            WLOG(WS_LOG_SCP, "Cannot allocate scp command");
+            ssh->error = WS_MEMORY_E;
+            return WS_ERROR;
+        }
+
+        ssh->scpBasePath = dst;
+        ret = wolfSSH_SCP_connect(ssh, (byte*)cmd);
+        if (ret == WS_SUCCESS) {
+            word32 srcSz = (word32)WSTRLEN(src);
+            ret = ParseBasePathHelper(ssh, srcSz);
+        }
+        if (ret == WS_SUCCESS) {
+            ssh->scpState = SCP_SINK_BEGIN;
+            ssh->scpRequestState = SCP_SINK;
+        }
+        if (cmd) {
+            WFREE(cmd, ssh->ctx->heap, DYNTYPE_STRING);
+        }
+    }
+    if (ssh->scpState != SCP_SETUP) {
+        if (ret == WS_SUCCESS) {
+            ret = DoScpSink(ssh);
+        }
+    }
+
+    return ret;
 }
 #endif /* ! NO_WOLFSSH_CLIENT */
 
