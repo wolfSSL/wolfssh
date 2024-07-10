@@ -103,7 +103,6 @@ static WFILE* logFile = NULL;
 
 /* catch interrupts and close down gracefully */
 static volatile byte quit = 0;
-static const char defaultBanner[] = "wolfSSHD\n";
 
 /* Initial connection information to pass on to threads/forks */
 typedef struct WOLFSSHD_CONNECTION {
@@ -318,9 +317,6 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
 #endif
         if (*banner) {
             wolfSSH_CTX_SetBanner(*ctx, (char*)*banner);
-        }
-        else {
-            wolfSSH_CTX_SetBanner(*ctx, defaultBanner);
         }
     }
 
