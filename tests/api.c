@@ -38,8 +38,9 @@
 
 #ifdef WOLFSSH_SFTP
     #define WOLFSSH_TEST_LOCKING
-    #define WOLFSSH_TEST_THREADING
-
+    #ifndef SINGLE_THREADED
+        #define WOLFSSH_TEST_THREADING
+    #endif
     #define WOLFSSH_TEST_SERVER
     #define WOLFSSH_TEST_ECHOSERVER
 #endif
