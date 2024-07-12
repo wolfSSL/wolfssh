@@ -2477,7 +2477,7 @@ static int StartSSHD(int argc, char** argv)
 #ifdef _WIN32
 /* Used to setup a console and run command as a user.
  * returns the process exit value */
-static int SetupConsole(char* sysCmd)
+static int SetupConsole(char* inCmd)
 {
     HANDLE sOut;
     HANDLE sIn;
@@ -2490,8 +2490,9 @@ static int SetupConsole(char* sysCmd)
     PROCESS_INFORMATION processInfo;
     size_t sz = 0;
     DWORD processState = 0;
+    PCSTR shellCmd = "c:\\windows\\system32\\cmd.exe";
 
-    if (sysCmd == NULL) {
+    if (inCmd == NULL) {
         return -1;
     }
 
@@ -2500,15 +2501,31 @@ static int SetupConsole(char* sysCmd)
     cord.Y = 24;
 
     sIn  = GetStdHandle(STD_INPUT_HANDLE);
-    sOut = GetStdHandle(STD_OUTPUT_HANDLE);
-    if (CreatePseudoConsole(cord, sIn, sOut, 0, &pCon) != S_OK) {
-        wolfSSH_Log(WS_LOG_ERROR,
-            "[SSHD] Issue creating pseudo console");
-        ret = WS_FATAL_ERROR;
+
+    if (WSTRCMP(shellCmd, inCmd) != 0) {
+        /* if not opening a shell, pipe virtual terminal sequences to 'nul' */
+        if (CreatePseudoConsole(cord, sIn, INVALID_HANDLE_VALUE, 0, &pCon) != S_OK) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Issue creating pseudo console");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            CloseHandle(sIn);
+        }
     }
-    else {
-        CloseHandle(sIn);
-        CloseHandle(sOut);
+    else
+    {
+        /* if opening a shell, pipe virtual terminal sequences back to calling process */
+        sOut = GetStdHandle(STD_OUTPUT_HANDLE);
+        if (CreatePseudoConsole(cord, sIn, sOut, 0, &pCon) != S_OK) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Issue creating pseudo console");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            CloseHandle(sIn);
+            CloseHandle(sOut);
+        }
     }
 
     /* setup startup extended info for pseudo terminal */
@@ -2553,7 +2570,7 @@ static int SetupConsole(char* sysCmd)
     }
 
     if (ret == WS_SUCCESS) {
-        cmdSz = WSTRLEN(sysCmd) + 1; /* +1 for terminator */
+        cmdSz = WSTRLEN(inCmd) + 1; /* +1 for terminator */
         cmd   = (PWSTR)HeapAlloc(GetProcessHeap(), 0, sizeof(wchar_t) * cmdSz);
         if (cmd == NULL) {
             ret = WS_MEMORY_E;
@@ -2562,10 +2579,9 @@ static int SetupConsole(char* sysCmd)
             size_t numConv = 0;
 
             WMEMSET(cmd, 0, sizeof(wchar_t) * cmdSz);
-            mbstowcs_s(&numConv, cmd, cmdSz, sysCmd, strlen(sysCmd));
+            mbstowcs_s(&numConv, cmd, cmdSz, inCmd, strlen(inCmd));
         }
     }
-
 
     ZeroMemory(&processInfo, sizeof(processInfo));
     if (ret == WS_SUCCESS) {
