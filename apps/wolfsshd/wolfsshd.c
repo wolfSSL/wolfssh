@@ -2416,6 +2416,8 @@ static int StartSSHD(int argc, char** argv)
                         == SOCKET_ERROR) {
                         WLOG(WS_LOG_DEBUG, "wolfSSH non-fatal error: "
                                 "ioctlsocket failed");
+                        WCLOSESOCKET(conn->fd);
+                        WFREE(conn, NULL, DYNTYPE_SSHD);
                         continue;
                     }
 #elif defined(WOLFSSL_MDK_ARM) || defined(WOLFSSL_KEIL_TCP_NET) \
@@ -2427,12 +2429,16 @@ static int StartSSHD(int argc, char** argv)
                     if (flags < 0) {
                         WLOG(WS_LOG_DEBUG, "wolfSSH non-fatal error: "
                                 "fcntl get failed");
+                        WCLOSESOCKET(conn->fd);
+                        WFREE(conn, NULL, DYNTYPE_SSHD);
                         continue;
                     }
                     flags = fcntl(conn->fd, F_SETFL, flags | O_NONBLOCK);
                     if (flags < 0) {
                         WLOG(WS_LOG_DEBUG, "wolfSSH non-fatal error: "
                                 "fcntl set failed");
+                        WCLOSESOCKET(conn->fd);
+                        WFREE(conn, NULL, DYNTYPE_SSHD);
                         continue;
                     }
 #endif
