@@ -7571,7 +7571,7 @@ static int DoUserAuthRequestEccCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
                 case WOLFSSH_USERAUTH_PARTIAL_SUCCESS:
                     WLOG(WS_LOG_DEBUG, "DUARPK: user auth partial success");
                     break;
-                    
+
                 case WOLFSSH_USERAUTH_WOULD_BLOCK:
                     WLOG(WS_LOG_DEBUG, "DUARPK: userauth callback would block");
                     break;
