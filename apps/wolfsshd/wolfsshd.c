@@ -1178,6 +1178,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                            * not get passed on to wolfSSH yet. This happens
                            * with window full errors or when rekeying.  */
     int   wantWrite  = 0;
+    int   windowFull = 0;
     int   peerConnected = 1;
     int   stdoutEmpty = 0;
 
@@ -1428,6 +1429,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 
         FD_ZERO(&writeFds);
         if (windowFull || wantWrite) {
+        if (windowFull) {
             FD_SET(sshFd, &writeFds);
         }
 
@@ -1460,6 +1462,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             word32 lastChannel = 0;
 
             wantWrite = 0;
+            windowFull = 0;
             /* The following tries to read from the first channel inside
                the stream. If the pending data in the socket is for
                another channel, this will return an error with id
@@ -1474,6 +1477,8 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                                         * of windowFull left overs */
                         if (lastChannel == shellChannelId) {
                             cnt_r = wolfSSH_ChannelIdRead(ssh, shellChannelId,
+                    if (lastChannel == shellChannelId) {
+                        cnt_r = wolfSSH_ChannelIdRead(ssh, shellChannelId,
                                 channelBuffer,
                                 sizeof channelBuffer);
                             if (cnt_r <= 0)
@@ -1495,6 +1500,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 }
                 else if (rc == WS_REKEYING) {
                     wantWrite = 1;
+                    windowFull = 1;
                     continue;
                 }
                 else if (rc != WS_WANT_READ) {
@@ -1512,6 +1518,13 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             }
             else if (cnt_w == WS_WANT_WRITE) {
                 wantWrite = 1;
+                    shellBuffer, cnt_r);
+            if (cnt_w == WS_WINDOW_FULL) {
+                windowFull = 1;
+                continue;
+            }
+            else if (cnt_w == WS_WANT_WRITE) {
+                windowFull = 1;
                 continue;
             }
             else {
@@ -1554,6 +1567,10 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                             wantWrite = 1;
                             continue;
                         }
+                        else if (cnt_w == WS_WANT_WRITE) {
+                            windowFull = 1;
+                            continue;
+                        }
                         else if (cnt_w < 0)
                             break;
                     }
@@ -1590,6 +1607,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                         }
                         else if (cnt_w == WS_WANT_WRITE) {
                             wantWrite = 1;
+                            windowFull = 1;
                             continue;
                         }
                         else if (cnt_w < 0) {
@@ -1626,6 +1644,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                         }
                         else if (cnt_w == WS_WANT_WRITE) {
                             wantWrite = 1;
+                            windowFull = 1;
                             continue;
                         }
                         else if (cnt_w < 0) {
