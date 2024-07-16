@@ -103,7 +103,6 @@ static WFILE* logFile = NULL;
 
 /* catch interrupts and close down gracefully */
 static volatile byte quit = 0;
-static const char defaultBanner[] = "wolfSSHD\n";
 
 /* Initial connection information to pass on to threads/forks */
 typedef struct WOLFSSHD_CONNECTION {
@@ -216,16 +215,6 @@ static void wolfSSHDLoggingCb(enum wolfSSH_LogLevel lvl, const char *const str)
 }
 
 
-/* Frees up the WOLFSSH_CTX struct */
-static void CleanupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
-{
-    if (ctx != NULL && *ctx != NULL) {
-        wolfSSH_CTX_free(*ctx);
-        *ctx = NULL;
-    }
-    (void)conf;
-}
-
 #ifndef NO_FILESYSTEM
 static void freeBufferFromFile(byte* buf, void* heap)
 {
@@ -259,7 +248,8 @@ static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap)
             WFREE(buf, heap, DYNTYPE_SSHD);
             return NULL;
         }
-        *bufSz = readSz;
+        if (bufSz)
+            *bufSz = readSz;
         WFCLOSE(NULL, file);
     }
 
@@ -273,13 +263,30 @@ static int UserAuthResult(byte result,
         WS_UserAuthData* authData, void* userAuthResultCtx);
 
 
+/* Frees up the WOLFSSH_CTX struct */
+static void CleanupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
+        byte** banner)
+{
+    if (banner != NULL && *banner != NULL) {
+#ifndef NO_FILESYSTEM
+        freeBufferFromFile(*banner, NULL);
+#endif
+        *banner = NULL;
+    }
+    if (ctx != NULL && *ctx != NULL) {
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+    }
+    (void)conf;
+}
+
 /* Initializes and sets up the WOLFSSH_CTX struct based on the configure options
  * return WS_SUCCESS on success
  */
-static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
+static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
+        byte** banner)
 {
     int ret = WS_SUCCESS;
-    const char* banner;
     DerBuffer* der = NULL;
     byte* privBuf;
     word32 privBufSz;
@@ -304,11 +311,13 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx)
 
     /* set banner to display on connection */
     if (ret == WS_SUCCESS) {
-        banner = wolfSSHD_ConfigGetBanner(conf);
-        if (banner == NULL) {
-            banner = defaultBanner;
+#ifndef NO_FILESYSTEM
+        *banner = getBufferFromFile(wolfSSHD_ConfigGetBanner(conf),
+                NULL, heap);
+#endif
+        if (*banner) {
+            wolfSSH_CTX_SetBanner(*ctx, (char*)*banner);
         }
-        wolfSSH_CTX_SetBanner(*ctx, banner);
     }
 
     /* Load in host private key */
@@ -2101,6 +2110,7 @@ static int StartSSHD(int argc, char** argv)
 
     const char* configFile = "/etc/ssh/sshd_config";
     const char* hostKeyFile = NULL;
+    byte* banner = NULL;
 
     logFile = stderr;
     wolfSSH_SetLoggingCb(wolfSSHDLoggingCb);
@@ -2275,7 +2285,7 @@ static int StartSSHD(int argc, char** argv)
 
     if (ret == WS_SUCCESS) {
         wolfSSH_Log(WS_LOG_INFO, "[SSHD] Starting wolfSSH SSHD application");
-        ret = SetupCTX(conf, &ctx);
+        ret = SetupCTX(conf, &ctx, &banner);
     }
 
     if (ret == WS_SUCCESS) {
@@ -2511,7 +2521,10 @@ static int StartSSHD(int argc, char** argv)
     }
 #endif
 
-    CleanupCTX(conf, &ctx);
+    CleanupCTX(conf, &ctx, &banner);
+    if (banner) {
+        WFREE(banner, NULL, DYNTYPE_STRING);
+    }
     wolfSSHD_ConfigFree(conf);
     wolfSSHD_AuthFreeUser(auth);
     wolfSSH_Cleanup();
