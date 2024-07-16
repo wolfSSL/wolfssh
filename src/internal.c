@@ -658,19 +658,6 @@ INLINE static int IsMessageAllowed(WOLFSSH *ssh, byte msg)
 }
 
 
-#ifdef DEBUG_WOLFSSH
-
-static const char cannedBanner[] =
-    "CANNED BANNER\r\n"
-    "This server is an example test server. "
-    "It should have its own banner, but\r\n"
-    "it is currently using a canned one in "
-    "the library. Be happy or not.\r\n";
-static const word32 cannedBannerSz = (word32)sizeof(cannedBanner) - 1;
-
-#endif /* DEBUG_WOLFSSH */
-
-
 static const char cannedKexAlgoNames[] =
 #if !defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256)
     "ecdh-nistp256-kyber-512r3-sha256-d00@openquantumsafe.org,"
@@ -823,10 +810,8 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
     ctx->scpRecvCb = wsScpRecvCallback;
     ctx->scpSendCb = wsScpSendCallback;
 #endif /* WOLFSSH_SCP */
-#ifdef DEBUG_WOLFSSH
-    ctx->banner = cannedBanner;
-    ctx->bannerSz = cannedBannerSz;
-#endif /* DEBUG_WOLFSSH */
+    ctx->banner = NULL;
+    ctx->bannerSz = 0;
 #ifdef WOLFSSH_CERTS
     ctx->certMan = wolfSSH_CERTMAN_new(ctx->heap);
     if (ctx->certMan == NULL)

@@ -349,9 +349,10 @@ enum {
     OPT_HOST_CERT               = 20,
     OPT_TRUSTED_USER_CA_KEYS    = 21,
     OPT_PIDFILE                 = 22,
+    OPT_BANNER                  = 23,
 };
 enum {
-    NUM_OPTIONS = 23
+    NUM_OPTIONS = 24
 };
 
 static const CONFIG_OPTION options[NUM_OPTIONS] = {
@@ -378,6 +379,7 @@ static const CONFIG_OPTION options[NUM_OPTIONS] = {
     {OPT_HOST_CERT,               "HostCertificate"},
     {OPT_TRUSTED_USER_CA_KEYS,    "TrustedUserCAKeys"},
     {OPT_PIDFILE,                 "PidFile"},
+    {OPT_BANNER,                  "Banner"},
 };
 
 /* returns WS_SUCCESS on success */
@@ -1021,6 +1023,9 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
             break;
         case OPT_PIDFILE:
             ret = SetFileString(&(*conf)->pidFile, value, (*conf)->heap);
+            break;
+        case OPT_BANNER:
+            ret = SetFileString(&(*conf)->banner, value, (*conf)->heap);
             break;
         default:
             break;
