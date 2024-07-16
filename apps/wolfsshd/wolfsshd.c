@@ -2413,19 +2413,34 @@ static int StartSSHD(int argc, char** argv)
 #ifdef USE_WINDOWS_API
                     unsigned long blocking = 1;
                     if (ioctlsocket(conn->fd, FIONBIO, &blocking)
-                        == SOCKET_ERROR)
-                        err_sys("ioctlsocket failed");
+                        == SOCKET_ERROR) {
+                        WLOG(WS_LOG_DEBUG, "wolfSSH non-fatal error: "
+                                "ioctlsocket failed");
+                        WCLOSESOCKET(conn->fd);
+                        WFREE(conn, NULL, DYNTYPE_SSHD);
+                        continue;
+                    }
 #elif defined(WOLFSSL_MDK_ARM) || defined(WOLFSSL_KEIL_TCP_NET) \
                         || defined (WOLFSSL_TIRTOS)|| defined(WOLFSSL_VXWORKS) || \
                         defined(WOLFSSL_NUCLEUS)
                     /* non blocking not supported, for now */
 #else
                     int flags = fcntl(conn->fd, F_GETFL, 0);
-                    if (flags < 0)
-                        err_sys("fcntl get failed");
+                    if (flags < 0) {
+                        WLOG(WS_LOG_DEBUG, "wolfSSH non-fatal error: "
+                                "fcntl get failed");
+                        WCLOSESOCKET(conn->fd);
+                        WFREE(conn, NULL, DYNTYPE_SSHD);
+                        continue;
+                    }
                     flags = fcntl(conn->fd, F_SETFL, flags | O_NONBLOCK);
-                    if (flags < 0)
-                        err_sys("fcntl set failed");
+                    if (flags < 0) {
+                        WLOG(WS_LOG_DEBUG, "wolfSSH non-fatal error: "
+                                "fcntl set failed");
+                        WCLOSESOCKET(conn->fd);
+                        WFREE(conn, NULL, DYNTYPE_SSHD);
+                        continue;
+                    }
 #endif
                 }
                 ret = NewConnection(conn);
