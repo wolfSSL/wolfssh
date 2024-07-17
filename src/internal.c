@@ -3978,15 +3978,14 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         listSz = (word32)sizeof(list);
         ret = GetNameList(list, &listSz, buf, len, &begin);
     }
-    if (!ssh->handshake->aeadMode) {
+    if (ret == WS_SUCCESS && !ssh->handshake->aeadMode) {
+        cannedAlgoNamesSz = AlgoListSz(ssh->algoListMac);
+        cannedListSz = (word32)sizeof(cannedList);
+        ret = GetNameListRaw(cannedList, &cannedListSz,
+                (const byte*)ssh->algoListMac, cannedAlgoNamesSz);
         if (ret == WS_SUCCESS) {
-            cannedAlgoNamesSz = AlgoListSz(ssh->algoListMac);
-            cannedListSz = (word32)sizeof(cannedList);
-            ret = GetNameListRaw(cannedList, &cannedListSz,
-                    (const byte*)ssh->algoListMac, cannedAlgoNamesSz);
-        }
-        if (ret == WS_SUCCESS) {
-            algoId = MatchIdLists(side, list, listSz, cannedList, cannedListSz);
+            algoId = MatchIdLists(side, list, listSz,
+                    cannedList, cannedListSz);
             if (algoId == ID_UNKNOWN) {
                 WLOG(WS_LOG_DEBUG, "Unable to negotiate MAC Algo C2S");
                 ret = WS_MATCH_MAC_ALGO_E;
@@ -4000,15 +3999,13 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         listSz = (word32)sizeof(list);
         ret = GetNameList(list, &listSz, buf, len, &begin);
     }
-    if (!ssh->handshake->aeadMode) {
-        if (ret == WS_SUCCESS) {
-            algoId = MatchIdLists(side, list, listSz, &algoId, 1);
-            if (algoId == ID_UNKNOWN) {
-                WLOG(WS_LOG_DEBUG, "Unable to negotiate MAC Algo S2C");
-                ret = WS_MATCH_MAC_ALGO_E;
-            }
+    if (ret == WS_SUCCESS && !ssh->handshake->aeadMode) {
+        algoId = MatchIdLists(side, list, listSz, &algoId, 1);
+        if (algoId == ID_UNKNOWN) {
+            WLOG(WS_LOG_DEBUG, "Unable to negotiate MAC Algo S2C");
+            ret = WS_MATCH_MAC_ALGO_E;
         }
-        if (ret == WS_SUCCESS) {
+        else {
             ssh->handshake->macId = algoId;
             ssh->handshake->macSz = MacSzForId(algoId);
             ssh->handshake->keys.macKeySz =
