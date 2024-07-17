@@ -2545,7 +2545,7 @@ static int StartSSHD(int argc, char** argv)
 #ifdef _WIN32
 /* Used to setup a console and run command as a user.
  * returns the process exit value */
-static int SetupConsole(char* sysCmd)
+static int SetupConsole(char* inCmd)
 {
     HANDLE sOut;
     HANDLE sIn;
@@ -2558,8 +2558,9 @@ static int SetupConsole(char* sysCmd)
     PROCESS_INFORMATION processInfo;
     size_t sz = 0;
     DWORD processState = 0;
+    PCSTR shellCmd = "c:\\windows\\system32\\cmd.exe";
 
-    if (sysCmd == NULL) {
+    if (inCmd == NULL) {
         return -1;
     }
 
@@ -2568,15 +2569,27 @@ static int SetupConsole(char* sysCmd)
     cord.Y = 24;
 
     sIn  = GetStdHandle(STD_INPUT_HANDLE);
-    sOut = GetStdHandle(STD_OUTPUT_HANDLE);
-    if (CreatePseudoConsole(cord, sIn, sOut, 0, &pCon) != S_OK) {
-        wolfSSH_Log(WS_LOG_ERROR,
-            "[SSHD] Issue creating pseudo console");
-        ret = WS_FATAL_ERROR;
+
+    if (WSTRCMP(shellCmd, inCmd) != 0) {
+        /* if not opening a shell, pipe virtual terminal sequences to 'nul' */
+        if (CreatePseudoConsole(cord, sIn, INVALID_HANDLE_VALUE, 0, &pCon) != S_OK) {
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            CloseHandle(sIn);
+        }
     }
-    else {
-        CloseHandle(sIn);
-        CloseHandle(sOut);
+    else
+    {
+        /* if opening a shell, pipe virtual terminal sequences back to calling process */
+        sOut = GetStdHandle(STD_OUTPUT_HANDLE);
+        if (CreatePseudoConsole(cord, sIn, sOut, 0, &pCon) != S_OK) {
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            CloseHandle(sIn);
+            CloseHandle(sOut);
+        }
     }
 
     /* setup startup extended info for pseudo terminal */
@@ -2594,8 +2607,6 @@ static int SetupConsole(char* sysCmd)
             ext.lpAttributeList =
                 (PPROC_THREAD_ATTRIBUTE_LIST)HeapAlloc(GetProcessHeap(), 0, sz);
             if (ext.lpAttributeList == NULL) {
-                wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] Issue getting memory for attribute list");
                 ret = WS_FATAL_ERROR;
             }
         }
@@ -2603,8 +2614,6 @@ static int SetupConsole(char* sysCmd)
         if (ret == WS_SUCCESS) {
             if (InitializeProcThreadAttributeList(ext.lpAttributeList, 1, 0,
                 &sz) != TRUE) {
-                wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] Issue initializing proc thread attribute");
                 ret = WS_FATAL_ERROR;
             }
         }
@@ -2613,15 +2622,13 @@ static int SetupConsole(char* sysCmd)
             if (UpdateProcThreadAttribute(ext.lpAttributeList, 0,
                 PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
                 pCon, sizeof(HPCON), NULL, NULL) != TRUE) {
-                wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] Issue updating proc thread attribute");
                 ret = WS_FATAL_ERROR;
             }
         }
     }
 
     if (ret == WS_SUCCESS) {
-        cmdSz = WSTRLEN(sysCmd) + 1; /* +1 for terminator */
+        cmdSz = WSTRLEN(inCmd) + 1; /* +1 for terminator */
         cmd   = (PWSTR)HeapAlloc(GetProcessHeap(), 0, sizeof(wchar_t) * cmdSz);
         if (cmd == NULL) {
             ret = WS_MEMORY_E;
@@ -2630,18 +2637,15 @@ static int SetupConsole(char* sysCmd)
             size_t numConv = 0;
 
             WMEMSET(cmd, 0, sizeof(wchar_t) * cmdSz);
-            mbstowcs_s(&numConv, cmd, cmdSz, sysCmd, strlen(sysCmd));
+            mbstowcs_s(&numConv, cmd, cmdSz, inCmd, strlen(inCmd));
         }
     }
-
 
     ZeroMemory(&processInfo, sizeof(processInfo));
     if (ret == WS_SUCCESS) {
         if (CreateProcessW(NULL, cmd,
             NULL, NULL, FALSE, EXTENDED_STARTUPINFO_PRESENT, NULL, NULL,
             &ext.StartupInfo, &processInfo) != TRUE) {
-            wolfSSH_Log(WS_LOG_ERROR,
-                "[SSHD] Issue creating process, Windows error %d", GetLastError());
             return WS_FATAL_ERROR;
         }
         else {
@@ -2661,9 +2665,6 @@ static int SetupConsole(char* sysCmd)
                 if (GetExitCodeProcess(processInfo.hProcess, &processState)
                     == TRUE) {
                     if (processState != STILL_ACTIVE) {
-                        wolfSSH_Log(WS_LOG_INFO,
-                            "[SSHD] Process has exited, exit state = %d, "
-                            "close down SSH connection", processState);
                         Sleep(100); /* give the stdout/stderr of process a
                                      * little time to write to pipe */
                         if (PeekNamedPipe(GetStdHandle(STD_OUTPUT_HANDLE), NULL, 0, NULL, &ava, NULL)
