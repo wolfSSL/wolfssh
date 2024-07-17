@@ -31,7 +31,7 @@ HostKey $PWD/../../../keys/server-key.pem
 AuthorizedKeysFile $PWD/authorized_keys_test
 EOF
 
-start_wolfsshd "sshd_config_test_forcedcmd"
+start_wolfsshd "sshd_config_test_window"
 cd ../../..
 
 TEST_CLIENT="./examples/client/client"
@@ -48,6 +48,8 @@ diff random-test.txt random-test-result.txt
 RESULT=$?
 if [ "$RESULT" != 0 ]; then
     echo "cat did not pass through all expected data"
+    ls -la random-test.txt
+    ls -la random-test-result.txt
     exit 1
 fi
 
