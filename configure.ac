@@ -194,7 +194,7 @@ AC_ARG_ENABLE([fwd],
 # pseudo-terminal
 AC_ARG_ENABLE([term],
     [AS_HELP_STRING([--disable-term],[Disable pseudo-terminal support (default: enabled)])],
-    [ENABLED_PTERM=$enableval],[ENABLED_PTERM=yes])
+    [ENABLED_TERM=$enableval],[ENABLED_TERM=yes])
 
 # shell support
 AC_ARG_ENABLE([shell],
@@ -251,7 +251,7 @@ AS_IF([test "x$ENABLED_SFTP" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SFTP"])
 AS_IF([test "x$ENABLED_FWD" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_FWD"])
-AS_IF([test "x$ENABLED_PTERM" = "xyes"],
+AS_IF([test "x$ENABLED_TERM" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_TERM"])
 AS_IF([test "x$ENABLED_SHELL" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SHELL"])
@@ -355,7 +355,7 @@ AS_ECHO(["   Features"])
 AS_ECHO(["   * Inline Code:               $ENABLED_INLINE"])
 AS_ECHO(["   * Small stack:               $ENABLED_SMALLSTACK"])
 AS_ECHO(["   * keygen:                    $ENABLED_KEYGEN"])
-AS_ECHO(["   * psuedo-terminal:           $ENABLED_PTERM"])
+AS_ECHO(["   * psuedo-terminal:           $ENABLED_TERM"])
 AS_ECHO(["   * echoserver shell support:  $ENABLED_SHELL"])
 AS_ECHO(["   * scp:                       $ENABLED_SCP"])
 AS_ECHO(["   * sftp:                      $ENABLED_SFTP"])
