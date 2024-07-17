@@ -1173,7 +1173,10 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     byte shellBuffer[EXAMPLE_BUFFER_SZ];
     byte channelBuffer[EXAMPLE_BUFFER_SZ];
     char* forcedCmd;
-    int   windowFull = 0;
+    int   windowFull = 0; /* Contains size of bytes from shellBuffer that did
+                           * not get passed on to wolfSSH yet. This happens
+                           * with window full errors or when rekeying.  */
+    int   wantWrite  = 0;
     int   peerConnected = 1;
     int   stdoutEmpty = 0;
 
@@ -1423,7 +1426,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         maxFd = sshFd;
 
         FD_ZERO(&writeFds);
-        if (windowFull) {
+        if (windowFull || wantWrite) {
             FD_SET(sshFd, &writeFds);
         }
 
@@ -1452,10 +1455,10 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             pending = 1; /* found some pending SSH data */
         }
 
-        if (windowFull || pending || FD_ISSET(sshFd, &readFds)) {
+        if (wantWrite || windowFull || pending || FD_ISSET(sshFd, &readFds)) {
             word32 lastChannel = 0;
 
-            windowFull = 0;
+            wantWrite = 0;
             /* The following tries to read from the first channel inside
                the stream. If the pending data in the socket is for
                another channel, this will return an error with id
@@ -1466,16 +1469,19 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             if (cnt_r < 0) {
                 rc = wolfSSH_get_error(ssh);
                 if (rc == WS_CHAN_RXD) {
-                    if (lastChannel == shellChannelId) {
-                        cnt_r = wolfSSH_ChannelIdRead(ssh, shellChannelId,
+                    if (!windowFull) { /* don't rewrite channeldBuffer if full
+                                        * of windowFull left overs */
+                        if (lastChannel == shellChannelId) {
+                            cnt_r = wolfSSH_ChannelIdRead(ssh, shellChannelId,
                                 channelBuffer,
                                 sizeof channelBuffer);
-                        if (cnt_r <= 0)
-                            break;
-                        cnt_w = (int)write(childFd,
-                                channelBuffer, cnt_r);
-                        if (cnt_w <= 0)
-                            break;
+                            if (cnt_r <= 0)
+                                break;
+                            cnt_w = (int)write(childFd,
+                                    channelBuffer, cnt_r);
+                            if (cnt_w <= 0)
+                                break;
+                        }
                     }
                 }
                 else if (rc == WS_CHANNEL_CLOSED) {
@@ -1483,7 +1489,11 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     continue;
                 }
                 else if (rc == WS_WANT_WRITE) {
-                    windowFull = 1;
+                    wantWrite = 1;
+                    continue;
+                }
+                else if (rc == WS_REKEYING) {
+                    wantWrite = 1;
                     continue;
                 }
                 else if (rc != WS_WANT_READ) {
@@ -1496,10 +1506,11 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         if (windowFull) {
             cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
                     shellBuffer, windowFull);
-            if (cnt_w == WS_WINDOW_FULL) {
+            if (cnt_w == WS_WINDOW_FULL || cnt_w == WS_REKEYING) {
                 continue;
             }
             else if (cnt_w == WS_WANT_WRITE) {
+                wantWrite = 1;
                 continue;
             }
             else {
@@ -1526,12 +1537,12 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     if (cnt_r > 0) {
                         cnt_w = wolfSSH_extended_data_send(ssh, shellBuffer,
                             cnt_r);
-                        if (cnt_w == WS_WINDOW_FULL) {
+                        if (cnt_w == WS_WINDOW_FULL || cnt_w == WS_REKEYING) {
                             windowFull = cnt_r; /* save amount to be sent */
                             continue;
                         }
                         else if (cnt_w == WS_WANT_WRITE) {
-                            windowFull = 1;
+                            wantWrite = 1;
                             continue;
                         }
                         else if (cnt_w < 0)
@@ -1558,12 +1569,12 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     if (cnt_r > 0) {
                         cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
                                 shellBuffer, cnt_r);
-                        if (cnt_w == WS_WINDOW_FULL) {
+                        if (cnt_w == WS_WINDOW_FULL || cnt_w == WS_REKEYING) {
                             windowFull = cnt_r; /* save amount to be sent */
                             continue;
                         }
                         else if (cnt_w == WS_WANT_WRITE) {
-                            windowFull = 1;
+                            wantWrite = 1;
                             continue;
                         }
                         else if (cnt_w < 0) {
@@ -1588,12 +1599,12 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     if (cnt_r > 0) {
                         cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
                                 shellBuffer, cnt_r);
-                        if (cnt_w == WS_WINDOW_FULL) {
-                            windowFull = 1;
+                        if (cnt_w == WS_WINDOW_FULL || cnt_w == WS_REKEYING) {
+                            windowFull = cnt_r;
                             continue;
                         }
                         else if (cnt_w == WS_WANT_WRITE) {
-                            windowFull = 1;
+                            wantWrite = 1;
                             continue;
                         }
                         else if (cnt_w < 0) {
