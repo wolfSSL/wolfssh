@@ -1214,7 +1214,8 @@ enum WS_BufferTypes {
 #define SCP_CONFIRM_FATAL 0x02   /* binary 2 */
 
 enum WS_ScpStates {
-    SCP_PARSE_COMMAND = 0,
+    SCP_SETUP = 0,
+    SCP_PARSE_COMMAND,
     SCP_SINK,
     SCP_SINK_BEGIN,
     SCP_TRANSFER,
