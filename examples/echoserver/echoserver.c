@@ -1609,20 +1609,18 @@ static int load_file(const char* fileName, byte* buf, word32* bufSz)
     fileSz = (word32)WFTELL(NULL, file);
     WREWIND(NULL, file);
 
-    if (fileSz > *bufSz) {
-        if (buf == NULL)
-            *bufSz = fileSz;
+    if (buf == NULL || fileSz > *bufSz) {
+        *bufSz = fileSz;
         WFCLOSE(NULL, file);
         return 0;
     }
 
     readSz = (word32)WFREAD(NULL, buf, 1, fileSz, file);
-    if (readSz < fileSz) {
-        WFCLOSE(NULL, file);
-        return 0;
-    }
-
     WFCLOSE(NULL, file);
+
+    if (readSz < fileSz) {
+        fileSz = 0;
+    }
 
     return fileSz;
 }
