@@ -221,7 +221,7 @@
 
 #ifdef USE_WINDOWS_API
     #define WCLOSESOCKET(s) closesocket(s)
-    #define WSTARTTCP() do { WSADATA wsd; WSAStartup(0x0002, &wsd); } while(0)
+    #define WSTARTTCP() do { WSADATA wsd; (void)WSAStartup(0x0002, &wsd); } while(0)
 #elif defined(MICROCHIP_TCPIP) || defined(MICROCHIP_MPLAB_HARMONY)
     #ifdef MICROCHIP_MPLAB_HARMONY
         #define WCLOSESOCKET(s) TCPIP_TCP_Close((s))
@@ -1135,6 +1135,9 @@ static int Base16_Decode(const byte* in, word32 inLen,
 {
     word32 inIdx = 0;
     word32 outIdx = 0;
+
+    if (in == NULL || out == NULL || outLen == NULL)
+        return WS_BAD_ARGUMENT;
 
     if (inLen == 1 && *outLen && in) {
         byte b = in[inIdx] - 0x30;  /* 0 starts at 0x30 */
