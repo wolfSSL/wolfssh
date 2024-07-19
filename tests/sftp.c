@@ -186,7 +186,9 @@ int wolfSSH_SftpTest(int flag)
     int argsCount;
 
     const char* args[10];
+#ifndef USE_WINDOWS_API
     char  portNumber[8];
+#endif
 
     THREAD_TYPE serThread;
 

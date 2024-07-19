@@ -1,3 +1,65 @@
+# wolfSSH v1.4.18 (July 20, 2024)
+
+## New Features
+
+- Add wolfSSL style static memory pool allocation support.
+- Add Ed25519 public key support.
+- Add Banner option to wolfSSHd configuration.
+- Add non-blocking socket support to the example SCP client.
+
+## Improvements
+
+- Documentation updates.
+- Update the Zephyr test action.
+- Add a no-filesystem build to the Zephyr port.
+- Update the macOS test action.
+- Refactor certificate processing. Only verify certificates when a signature
+  is present.
+- Update the Kyber test action.
+- Refactor the Curve25519 Key Agreement support.
+- Update the STM32Cube Pack.
+- Increase the memory that Zephyr uses for a heap for testing.
+- Add a macro wrapper to replace the ReadDir function.
+- Add callback hook for keying completion.
+- Add function to return strings for the names of algorithms.
+- Add asynchronous server side user authentication.
+- Add ssh-rsa (SHA-1) to the default user auth algorithm list when
+  sha1-soft-disable is disabled.
+- Update Espressif examples using Managed Components.
+- Add SCP test case.
+- Refactor RSA sign and verify.
+- Refresh the example echoserver with updates from wolfSSHd.
+- Add callback hooks for most channel messages including open, close, success,
+  fail, and requests.
+- Reduce the number of memory allocations SCP makes.
+- Improve wolfSSHd’s behavior on closing a connection. It closes channels and
+  waits for the peer to close the channels.
+
+## Fixes
+
+- Refactor wolfSSHd service support for Windows to fix PowerShell
+  Write-Progress.
+- Fix partial success case with public key user authentication.
+- Fix the build guards with respect to cannedKeyAlgoNames.
+- Error if unable to open the local file when doing a SCP send.
+- Fix some IPv6 related build issues.
+- Add better checks for SCP error returns for closed channels.
+- In the example SCP client, move the public key check context after the
+  WOLFSSH object is created.
+- Fix error reporting for wolfSSH_SFTP_STAT.
+- In the example SCP client, fix error code checking on shutdown.
+- Change return from wolfSSH_shutdown() to WS_CHANNEL_CLOSED.
+- Fix SFTP symlink handling.
+- Fix variable initialization warnings for Zephyr builds.
+- Fix wolfSSHd case of non-console output handles.
+- Fix testsuite for single threaded builds. Add single threaded test action.
+- Fix wolfSSHd shutting down on fcntl() failure.
+- Fix wolfSSHd on Windows handling virtual terminal sequences using exec
+  commands.
+- Fix possible null dereference when matching MAC algos during key exchange.
+
+---
+
 # wolfSSH v1.4.17 (March 25, 2024)
 
 ## Vulnerabilities

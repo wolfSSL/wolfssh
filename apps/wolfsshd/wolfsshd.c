@@ -110,7 +110,7 @@ typedef struct WOLFSSHD_CONNECTION {
     WOLFSSHD_AUTH* auth;
     int            fd;
     int            listenFd;
-    char           ip[INET_ADDRSTRLEN];
+    char           ip[INET6_ADDRSTRLEN];
     byte           isThreaded;
 } WOLFSSHD_CONNECTION;
 
@@ -151,6 +151,7 @@ static void SyslogCb(enum wolfSSH_LogLevel level, const char *const msgStr)
 
 #ifdef _WIN32
 static void ServiceDebugCb(enum wolfSSH_LogLevel level, const char* const msgStr)
+#ifdef UNICODE
 {
     WCHAR* wc;
     size_t szWord = WSTRLEN(msgStr) + 3;  /* + 3 for null terminator and new
@@ -170,7 +171,13 @@ static void ServiceDebugCb(enum wolfSSH_LogLevel level, const char* const msgStr
     }
     WOLFSSH_UNUSED(level);
 }
+#else
+{
+    OutputDebugString(msgStr);
+    WOLFSSH_UNUSED(level);
+}
 #endif
+#endif /* _WIN32 */
 
 static void ShowUsage(void)
 {
@@ -674,7 +681,6 @@ static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS) {
-        r[rSz] = '\0';
         wolfSSH_Log(WS_LOG_INFO,
             "[SSHD] Using directory %s for SFTP connection", r);
         if (wolfSSH_SFTP_SetDefaultPath(ssh, r) != WS_SUCCESS) {
@@ -832,7 +838,6 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 
     /* @TODO check for conpty support LoadLibrary()and GetProcAddress(). */
 
-
     if (forcedCmd != NULL && WSTRCMP(forcedCmd, "internal-sftp") == 0) {
         wolfSSH_Log(WS_LOG_ERROR,
             "[SSHD] Only SFTP connections allowed for user "
@@ -912,6 +917,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     if (ret == WS_SUCCESS) {
         SECURITY_ATTRIBUTES saAttr;
 
+        ZeroMemory(&saAttr, sizeof(saAttr));
         saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
         saAttr.bInheritHandle = TRUE;
         saAttr.lpSecurityDescriptor = NULL;
@@ -926,28 +932,30 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS) {
-        STARTUPINFO si;
+        STARTUPINFOW si;
         PCWSTR conCmd = L"wolfsshd.exe -r ";
         PWSTR conCmdPtr;
-        int conCmdSz;
+        size_t conCmdSz;
 
         SetHandleInformation(ptyIn, HANDLE_FLAG_INHERIT, 0);
         SetHandleInformation(ptyOut, HANDLE_FLAG_INHERIT, 0);
 
         wolfSSH_SetTerminalResizeCtx(ssh, (void*)&ptyIn);
 
-        conCmdSz = (int)(wcslen(conCmd) + cmdSz + 2); /* +1 for terminator */
-        conCmdPtr = (PWSTR)WMALLOC(sizeof(wchar_t) * conCmdSz, NULL, DYNTYPE_SSHD);
+        conCmdSz = wcslen(conCmd) + cmdSz + 3;
+            /* +1 for terminator, +2 for quotes */
+        conCmdPtr = (PWSTR)WMALLOC(sizeof(wchar_t) * conCmdSz,
+                NULL, DYNTYPE_SSHD);
         if (conCmdPtr == NULL) {
             ret = WS_MEMORY_E;
         }
         else {
-            memset(conCmdPtr, 0, conCmdSz * sizeof(wchar_t));
-            _snwprintf(conCmdPtr, conCmdSz * sizeof(wchar_t), L"wolfsshd.exe -r \"%s\"", cmd);
+            _snwprintf_s(conCmdPtr, conCmdSz, conCmdSz,
+                L"wolfsshd.exe -r \"%s\"", cmd);
         }
 
-        ZeroMemory(&si, sizeof(STARTUPINFO));
-        si.cb = sizeof(STARTUPINFO);
+        ZeroMemory(&si, sizeof(si));
+        si.cb = sizeof(si);
 
         si.hStdInput  = cnslIn;
         si.hStdOutput = cnslOut;
@@ -967,7 +975,6 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         CloseHandle(cnslOut);
 
         WFREE(conCmdPtr, NULL, DYNTYPE_SSHD);
-        CloseHandle(processInfo.hThread);
     }
 
     if (ret == WS_SUCCESS) {
@@ -2374,21 +2381,21 @@ static int StartSSHD(int argc, char** argv)
                 wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue updating service status");
             }
         }
+        if (ret == WS_SUCCESS) {
+            /* Create a stop event to watch on */
+            serviceStop = CreateEvent(NULL, TRUE, FALSE, NULL);
+            if (serviceStop == NULL) {
+                serviceStatus.dwControlsAccepted = 0;
+                serviceStatus.dwCurrentState = SERVICE_STOPPED;
+                serviceStatus.dwWin32ExitCode = GetLastError();
+                serviceStatus.dwCheckPoint = 1;
 
-        /* Create a stop event to watch on */
-        serviceStop = CreateEvent(NULL, TRUE, FALSE, NULL);
-        if (serviceStop == NULL) {
-            serviceStatus.dwControlsAccepted = 0;
-            serviceStatus.dwCurrentState = SERVICE_STOPPED;
-            serviceStatus.dwWin32ExitCode = GetLastError();
-            serviceStatus.dwCheckPoint = 1;
-
-            if (SetServiceStatus(serviceStatusHandle, &serviceStatus) == FALSE) {
-                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue updating service status");
+                if (SetServiceStatus(serviceStatusHandle, &serviceStatus) == FALSE) {
+                    wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue updating service status");
+                }
+                return;
             }
-            return;
         }
-
         if (cmdArgs != NULL) {
             LocalFree(cmdArgs);
         }
@@ -2550,8 +2557,8 @@ static int SetupConsole(char* inCmd)
     HANDLE sOut;
     HANDLE sIn;
     HPCON pCon = 0;
-    COORD cord;
-    STARTUPINFOEX ext;
+    COORD cord = { 80,24 }; /* Default to 80x24. Updated later. */
+    STARTUPINFOEXW ext;
     int ret = WS_SUCCESS;
     PWSTR cmd    = NULL;
     size_t cmdSz = 0;
@@ -2563,10 +2570,6 @@ static int SetupConsole(char* inCmd)
     if (inCmd == NULL) {
         return -1;
     }
-
-    /* defautl 80x24 with setup, screen size will get set by VT command after started */
-    cord.X = 80;
-    cord.Y = 24;
 
     sIn  = GetStdHandle(STD_INPUT_HANDLE);
 

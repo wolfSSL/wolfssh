@@ -4538,9 +4538,9 @@ int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
 
     atr->flags |= WOLFSSH_FILEATRB_PERM;
     atr->per = 0555 |
-        (stats.dwFileAttributes | FILE_ATTRIBUTE_READONLY ? 0 : 0200);
-    atr->per |= (stats.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? 0x4000:
-        FILEATRB_PER_FILE;
+        ((stats.dwFileAttributes | FILE_ATTRIBUTE_READONLY) ? 0 : 0200);
+    atr->per |= ((stats.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+        ? FILEATRB_PER_DIR : FILEATRB_PER_FILE);
 
 #if 0
     /* @TODO handle the constellation of possible Windows FILETIMEs */

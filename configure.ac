@@ -3,7 +3,7 @@
 # All right reserved.
 
 AC_COPYRIGHT([Copyright (C) 2014-2024 wolfSSL Inc.])
-AC_INIT([wolfssh],[1.4.17],[support@wolfssl.com],[wolfssh],[https://www.wolfssl.com])
+AC_INIT([wolfssh],[1.4.18],[support@wolfssl.com],[wolfssh],[https://www.wolfssl.com])
 AC_PREREQ([2.63])
 AC_CONFIG_AUX_DIR([build-aux])
 
@@ -18,7 +18,7 @@ AC_ARG_PROGRAM
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_HEADERS([config.h])
 
-WOLFSSH_LIBRARY_VERSION=16:0:9
+WOLFSSH_LIBRARY_VERSION=17:0:10
 #                        | | |
 #                  +-----+ | +----+
 #                  |       |      |
@@ -313,7 +313,7 @@ AM_CONDITIONAL([BUILD_KEYGEN],[test "x$ENABLED_KEYGEN" = "xyes"])
 AM_CONDITIONAL([BUILD_SCP],[test "x$ENABLED_SCP" = "xyes"])
 AM_CONDITIONAL([BUILD_SFTP],[test "x$ENABLED_SFTP" = "xyes"])
 AM_CONDITIONAL([BUILD_FWD],[test "x$ENABLED_FWD" = "xyes"])
-AM_CONDITIONAL([BUILD_TERM],[test "x$ENABLED_PTERM" = "xyes"])
+AM_CONDITIONAL([BUILD_TERM],[test "x$ENABLED_TERM" = "xyes"])
 AM_CONDITIONAL([BUILD_SHELL],[test "x$ENABLED_SHELL" = "xyes"])
 AM_CONDITIONAL([BUILD_AGENT],[test "x$ENABLED_AGENT" = "xyes"])
 AM_CONDITIONAL([BUILD_SSHD],[test "x$ENABLED_SSHD" = "xyes"])

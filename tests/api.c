@@ -28,6 +28,7 @@
     #include <wolfssl/options.h>
 #endif
 #include <wolfssl/wolfcrypt/wc_port.h>
+#include <wolfssh/port.h>
 
 #include <stdio.h>
 #include <wolfssh/ssh.h>
@@ -955,7 +956,7 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
     func_args ser;
     tcp_ready ready;
     int argsCount;
-    int clientFd;
+    WS_SOCKET_T clientFd;
 
     const char* args[10];
     WOLFSSH_CTX* ctx = NULL;
@@ -1066,7 +1067,7 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
 
     /* close client socket down */
     clientFd = wolfSSH_get_fd(ssh);
-    close(clientFd);
+    WCLOSESOCKET(clientFd);
 
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
