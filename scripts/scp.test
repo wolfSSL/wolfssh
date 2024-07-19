@@ -141,6 +141,7 @@ create_port
 ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -L $PWD/does-not-exist:$PWD/empty
 RESULT=$?
 remove_ready_file
+rm -f $PWD/scripts/empty
 
 if test $RESULT -eq 0; then
     echo -e "\n\nshould fail out sending a file that does not exist"

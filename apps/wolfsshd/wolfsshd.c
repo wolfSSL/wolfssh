@@ -110,7 +110,7 @@ typedef struct WOLFSSHD_CONNECTION {
     WOLFSSHD_AUTH* auth;
     int            fd;
     int            listenFd;
-    char           ip[INET_ADDRSTRLEN];
+    char           ip[INET6_ADDRSTRLEN];
     byte           isThreaded;
 } WOLFSSHD_CONNECTION;
 
