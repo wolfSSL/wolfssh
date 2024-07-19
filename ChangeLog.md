@@ -1,4 +1,4 @@
-# wolfSSH v1.4.18 (July 20, 2024)
+# wolfSSH v1.4.18 (July 22, 2024)
 
 ## New Features
 
