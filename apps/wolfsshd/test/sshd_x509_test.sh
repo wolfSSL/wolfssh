@@ -7,7 +7,7 @@ cd ../../..
 
 if [ -z "$1" ] || [ -z "$2" ] || [ -z "$3" ]; then
     echo "expecting host, port and user as arguments"
-    echo "./sshd_x509_text.sh 127.0.0.1 22222 user"
+    echo "$0 127.0.0.1 22222 user"
     exit 1
 fi
 

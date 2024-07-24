@@ -10,15 +10,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  WOLFSSL_REF: v5.7.0-stable
-
 jobs:
   build_wolfssl:
     strategy:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest, macos-latest ]
+        wolfssl: [ v5.7.2-stable, master ]
     name: Build wolfssl
     runs-on: ${{ matrix.os }}
     timeout-minutes: 4
@@ -28,7 +26,7 @@ jobs:
         id: cache-wolfssl
         with:
           path: build-dir/
-          key: wolfssh-os-check-wolfssl-${{ env.WOLFSSL_REF }}-${{ matrix.os }}
+          key: wolfssh-os-check-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}
           lookup-only: true
 
       - name: Checkout, build, and install wolfssl
@@ -36,7 +34,7 @@ jobs:
         uses: wolfSSL/actions-build-autotools-project@v1
         with:
           repository: wolfssl/wolfssl
-          ref: ${{ env.WOLFSSL_REF }}
+          ref: ${{ matrix.wolfssl }}
           path: wolfssl
           configure: --enable-all
           check: false
@@ -47,6 +45,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest, macos-latest ]
+        wolfssl: [ v5.7.2-stable, master ]
         config: [
           '',
           '--enable-all',
@@ -63,7 +62,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build-dir/
-          key: wolfssh-os-check-wolfssl-${{ env.WOLFSSL_REF }}-${{ matrix.os }}
+          key: wolfssh-os-check-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}
           fail-on-cache-miss: true
 
       - name: Checkout, build, and test wolfssh
