@@ -140,6 +140,10 @@ extern "C" {
     #undef WOLFSSH_NO_DH_GROUP14_SHA1
     #define WOLFSSH_NO_DH_GROUP14_SHA1
 #endif
+#if defined(WOLFSSH_NO_DH) || defined(WOLFSSH_NO_SHA256)
+    #undef WOLFSSH_NO_DH_GROUP14_SHA256
+    #define WOLFSSH_NO_DH_GROUP14_SHA256
+#endif
 #if defined(WOLFSSH_NO_DH) || defined(NO_SHA256)
     #undef WOLFSSH_NO_DH_GEX_SHA256
     #define WOLFSSH_NO_DH_GEX_SHA256
@@ -171,6 +175,7 @@ extern "C" {
 
 #if defined(WOLFSSH_NO_DH_GROUP1_SHA1) && \
     defined(WOLFSSH_NO_DH_GROUP14_SHA1) && \
+    defined(WOLFSSH_NO_DH_GROUP14_SHA256) && \
     defined(WOLFSSH_NO_DH_GEX_SHA256) && \
     defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && \
     defined(WOLFSSH_NO_ECDH_SHA2_NISTP384) && \
@@ -182,6 +187,7 @@ extern "C" {
 
 #if defined(WOLFSSH_NO_DH_GROUP1_SHA1) && \
     defined(WOLFSSH_NO_DH_GROUP14_SHA1) && \
+    defined(WOLFSSH_NO_DH_GROUP14_SHA256) && \
     defined(WOLFSSH_NO_DH_GEX_SHA256)
     #undef WOLFSSH_NO_DH
     #define WOLFSSH_NO_DH
@@ -307,13 +313,13 @@ enum {
     /* Key Exchange IDs */
     ID_DH_GROUP1_SHA1,
     ID_DH_GROUP14_SHA1,
+    ID_DH_GROUP14_SHA256,
     ID_DH_GEX_SHA256,
     ID_ECDH_SHA2_NISTP256,
     ID_ECDH_SHA2_NISTP384,
     ID_ECDH_SHA2_NISTP521,
     ID_ECDH_SHA2_ED25519,
     ID_ECDH_SHA2_ED25519_LIBSSH,
-    ID_DH_GROUP14_SHA256,
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
     ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256,
 #endif

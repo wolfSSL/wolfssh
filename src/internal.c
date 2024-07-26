@@ -92,6 +92,9 @@ Flags:
   WOLFSSH_NO_DH_GROUP14_SHA1
     Set when DH or SHA1 are disabled. Set to disable use of DH (Oakley 14) and
     SHA1 support.
+  WOLFSSH_NO_DH_GROUP14_SHA256
+    Set when DH or SHA256 are disabled. Set to disable use of DH (Oakley 14)
+    and SHA256 support.
   WOLFSSH_NO_DH_GEX_SHA256
     Set when DH or SHA2-256 are disabled. Set to disable use of DH group
     exchange and SHA2-256 support.
@@ -673,6 +676,9 @@ static const char cannedKexAlgoNames[] =
 #endif
 #if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256)
     "ecdh-sha2-nistp256,"
+#endif
+#if !defined(WOLFSSH_NO_DH_GROUP14_SHA256)
+    "diffie-hellman-group14-sha256,"
 #endif
 #if !defined(WOLFSSH_NO_DH_GEX_SHA256)
     "diffie-hellman-group-exchange-sha256,"
@@ -2397,6 +2403,9 @@ static const NameIdPair NameIdMap[] = {
 #ifndef WOLFSSH_NO_DH_GROUP14_SHA1
     { ID_DH_GROUP14_SHA1, TYPE_KEX, "diffie-hellman-group14-sha1" },
 #endif
+#ifndef WOLFSSH_NO_DH_GROUP14_SHA256
+    { ID_DH_GROUP14_SHA256, TYPE_KEX, "diffie-hellman-group14-sha256" },
+#endif
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
     { ID_DH_GEX_SHA256, TYPE_KEX, "diffie-hellman-group-exchange-sha256" },
 #endif
@@ -2408,9 +2417,6 @@ static const NameIdPair NameIdMap[] = {
 #endif
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP521
     { ID_ECDH_SHA2_NISTP521, TYPE_KEX, "ecdh-sha2-nistp521" },
-#endif
-#ifndef WOLFSSH_NO_DH_GEX_SHA256
-    { ID_DH_GROUP14_SHA256, TYPE_KEX, "diffie-hellman-group14-sha256" },
 #endif
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
     /* We use kyber-512 here to achieve interop with OQS's fork. */
@@ -3632,6 +3638,10 @@ INLINE enum wc_HashType HashForId(byte id)
 #endif
 
         /* SHA2-256 */
+#ifndef WOLFSSH_NO_DH_GROUP14_SHA256
+        case ID_DH_GROUP14_SHA256:
+            return WC_HASH_TYPE_SHA256;
+#endif
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
         case ID_DH_GEX_SHA256:
             return WC_HASH_TYPE_SHA256;
@@ -4239,6 +4249,7 @@ static const word32 dhPrimeGroup1Sz = (word32)sizeof(dhPrimeGroup1);
 #endif
 
 #if !defined(WOLFSSH_NO_DH_GROUP14_SHA1) || \
+    !defined(WOLFSSH_NO_DH_GROUP14_SHA256) || \
     !defined(WOLFSSH_NO_DH_GEX_SHA256)
 static const byte dhPrimeGroup14[] = {
     /* SSH DH Group 14 (Oakley Group 14, 2048-bit MODP Group, RFC 3526) */
@@ -10093,6 +10104,14 @@ static int GetDHPrimeGroup(int kexId, const byte** primeGroup,
             *generatorSz = dhGeneratorSz;
             break;
         #endif
+        #ifndef WOLFSSH_NO_DH_GROUP14_SHA256
+        case ID_DH_GROUP14_SHA256:
+            *primeGroup = dhPrimeGroup14;
+            *primeGroupSz = dhPrimeGroup14Sz;
+            *generator = dhGenerator;
+            *generatorSz = dhGeneratorSz;
+            break;
+        #endif
         #ifndef WOLFSSH_NO_DH_GEX_SHA256
         case ID_DH_GEX_SHA256:
             *primeGroup = dhPrimeGroup14;
@@ -10121,7 +10140,7 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
     void* heap;
     byte scratchLen[LENGTH_SZ];
     word32 scratch = 0;
-#ifndef WOLFSSH_NO_DH
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
     const byte* primeGroup = NULL;
     word32 primeGroupSz = 0;
     const byte* generator = NULL;
@@ -11363,6 +11382,12 @@ int SendKexDhReply(WOLFSSH* ssh)
                 msgId = MSGID_KEXDH_REPLY;
                 break;
 #endif
+#ifndef WOLFSSH_NO_DH_GROUP14_SHA256
+            case ID_DH_GROUP14_SHA256:
+                useDh = 1;
+                msgId = MSGID_KEXDH_REPLY;
+                break;
+#endif
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
             case ID_DH_GEX_SHA256:
                 useDh = 1;
@@ -11916,6 +11941,15 @@ int SendKexDhInit(WOLFSSH* ssh)
 #endif
 #ifndef WOLFSSH_NO_DH_GROUP14_SHA1
         case ID_DH_GROUP14_SHA1:
+            ssh->handshake->useDh = 1;
+            primeGroup = dhPrimeGroup14;
+            primeGroupSz = dhPrimeGroup14Sz;
+            generator = dhGenerator;
+            generatorSz = dhGeneratorSz;
+            break;
+#endif
+#ifndef WOLFSSH_NO_DH_GROUP14_SHA256
+        case ID_DH_GROUP14_SHA256:
             ssh->handshake->useDh = 1;
             primeGroup = dhPrimeGroup14;
             primeGroupSz = dhPrimeGroup14Sz;
