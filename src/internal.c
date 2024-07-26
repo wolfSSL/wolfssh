@@ -2462,9 +2462,6 @@ static const NameIdPair NameIdMap[] = {
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP521
     { ID_ECDH_SHA2_NISTP521, TYPE_KEX, "ecdh-sha2-nistp521" },
 #endif
-#ifndef WOLFSSH_NO_DH_GEX_SHA256
-    { ID_DH_GROUP14_SHA256, TYPE_KEX, "diffie-hellman-group14-sha256" },
-#endif
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
     { ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256, TYPE_KEX,
         "ecdh-nistp256-kyber-512r3-sha256-d00@openquantumsafe.org" },
@@ -10542,6 +10539,65 @@ int DoReceive(WOLFSSH* ssh)
                 return ret;
             }
             ssh->processReplyState = PROCESS_PACKET_LENGTH;
+    switch (kexId) {
+        #ifndef WOLFSSH_NO_DH_GROUP1_SHA1
+        case ID_DH_GROUP1_SHA1:
+            *primeGroup = dhPrimeGroup1;
+            *primeGroupSz = dhPrimeGroup1Sz;
+            *generator = dhGenerator;
+            *generatorSz = dhGeneratorSz;
+            break;
+        #endif
+        #ifndef WOLFSSH_NO_DH_GROUP14_SHA1
+        case ID_DH_GROUP14_SHA1:
+            *primeGroup = dhPrimeGroup14;
+            *primeGroupSz = dhPrimeGroup14Sz;
+            *generator = dhGenerator;
+            *generatorSz = dhGeneratorSz;
+            break;
+        #endif
+        #ifndef WOLFSSH_NO_DH_GROUP14_SHA256
+        case ID_DH_GROUP14_SHA256:
+            *primeGroup = dhPrimeGroup14;
+            *primeGroupSz = dhPrimeGroup14Sz;
+            *generator = dhGenerator;
+            *generatorSz = dhGeneratorSz;
+            break;
+        #endif
+        #ifndef WOLFSSH_NO_DH_GEX_SHA256
+        case ID_DH_GEX_SHA256:
+            *primeGroup = dhPrimeGroup14;
+            *primeGroupSz = dhPrimeGroup14Sz;
+            *generator = dhGenerator;
+            *generatorSz = dhGeneratorSz;
+            break;
+        #endif
+        default:
+            ret = WS_INVALID_ALGO_ID;
+    }
+
+    return ret;
+}
+#endif /* !WOLFSSH_NO_DH */
+
+
+/* Sets the signing key and hashes in the public key
+ * returns WS_SUCCESS on success */
+static int SendKexGetSigningKey(WOLFSSH* ssh,
+        struct wolfSSH_sigKeyBlockFull *sigKeyBlock_ptr,
+        enum wc_HashType hashId, wc_HashAlg* hash, word32 keyIdx)
+{
+    int ret = 0;
+    byte isCert = 0;
+    void* heap;
+    byte scratchLen[LENGTH_SZ];
+    word32 scratch = 0;
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
+    const byte* primeGroup = NULL;
+    word32 primeGroupSz = 0;
+    const byte* generator = NULL;
+    word32 generatorSz = 0;
+#endif
 
             if (!aeadMode) {
                 /* Decrypt first block if encrypted */
