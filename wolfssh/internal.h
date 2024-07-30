@@ -1362,6 +1362,7 @@ enum TerminalModes {
 #define WOLFSSL_V5_7_0 0x05007000
 #define WOLFSSL_V5_7_2 0x05007002
 #define WOLFSSL_V5_7_0 0x05007000
+#define WOLFSSL_V5_7_2 0x05007002
 
 
 #ifdef __cplusplus

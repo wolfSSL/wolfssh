@@ -57,6 +57,8 @@
 #ifdef WOLFSSL_HAVE_KYBER
 #include <wolfssl/wolfcrypt/kyber.h>
 #include <wolfssl/wolfcrypt/wc_kyber.h>
+#ifdef WOLFSSH_HAVE_LIBOQS
+#include <oqs/kem.h>
 #endif
 
 #ifdef NO_INLINE
