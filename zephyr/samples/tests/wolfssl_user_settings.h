@@ -28,6 +28,9 @@ extern "C" {
 #undef  WOLFSSL_ZEPHYR
 #define WOLFSSL_ZEPHYR
 
+#undef  WOLFSSL_WOLFSSH
+#define WOLFSSL_WOLFSSH
+
 #undef  TFM_TIMING_RESISTANT
 #define TFM_TIMING_RESISTANT
 

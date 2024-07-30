@@ -135,8 +135,9 @@ enum WS_ErrorCodes {
     WS_MSGID_NOT_ALLOWED_E  = -1094, /* Message not allowed before userauth */
     WS_ED25519_E            = -1095, /* Ed25519 failure */
     WS_AUTH_PENDING         = -1096, /* User authentication still pending */
+    WS_KDF_E                = -1097, /* KDF error*/
 
-    WS_LAST_E               = -1096  /* Update this to indicate last error */
+    WS_LAST_E               = -1097  /* Update this to indicate last error */
 };
 
 
