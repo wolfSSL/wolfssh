@@ -48,6 +48,12 @@
 #include <wolfssl/wolfcrypt/hmac.h>
 #include <wolfssl/wolfcrypt/signature.h>
 
+#if (LIBWOLFSSL_VERSION_HEX >= WOLFSSL_V5_0_0) \
+    && ((defined(HAVE_FIPS) && FIPS_VERSION_GE(5,2)) \
+        || defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256))
+    #include <wolfssl/wolfcrypt/kdf.h>
+#endif
+
 #ifdef WOLFSSH_HAVE_LIBOQS
 #include <oqs/kem.h>
 #endif
@@ -455,6 +461,9 @@ const char* GetErrorString(int err)
 
         case WS_AUTH_PENDING:
             return "userauth is still pending (callback would block)";
+
+        case WS_KDF_E:
+            return "KDF error";
 
         default:
             return "Unknown error code";
@@ -2164,6 +2173,32 @@ int GenerateKey(byte hashId, byte keyId,
                 const byte* h, word32 hSz,
                 const byte* sessionId, word32 sessionIdSz,
                 byte doKeyPad)
+#if (LIBWOLFSSL_VERSION_HEX >= WOLFSSL_V5_0_0) \
+    && ((defined(HAVE_FIPS) && FIPS_VERSION_GE(5,2)) \
+        || defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256))
+/* Cannot use the SSH KDF with Kyber. With Kyber, doKeyPad must be false,
+ * and the FIPS SSH KDF doesn't handle no-padding. Also, the Kyber algorithm
+ * isn't in our FIPS boundary. */
+{
+    int ret = WS_SUCCESS;
+
+    if (!doKeyPad) {
+        WLOG(WS_LOG_ERROR, "cannot use FIPS KDF with Kyber");
+        ret = WS_INVALID_ALGO_ID;
+    }
+    else {
+        PRIVATE_KEY_UNLOCK();
+        ret = wc_SSH_KDF(hashId, keyId, key, keySz,
+                k, kSz, h, hSz, sessionId, sessionIdSz);
+        PRIVATE_KEY_LOCK();
+        if (ret != 0) {
+            WLOG(WS_LOG_ERROR, "SSH KDF failed (%d)", ret);
+            ret = WS_KDF_E;
+        }
+    }
+    return ret;
+}
+#else
 {
     word32 blocks, remainder;
     wc_HashAlg hash;
@@ -2174,12 +2209,13 @@ int GenerateKey(byte hashId, byte keyId,
     int digestSz;
     int ret;
 
+    WLOG(WS_LOG_DEBUG, "Entering GenerateKey()");
+
     if (key == NULL || keySz == 0 ||
         k == NULL || kSz == 0 ||
         h == NULL || hSz == 0 ||
         sessionId == NULL || sessionIdSz == 0) {
 
-        WLOG(WS_LOG_DEBUG, "GK: bad argument");
         return WS_BAD_ARGUMENT;
     }
 
@@ -2274,6 +2310,7 @@ int GenerateKey(byte hashId, byte keyId,
 
     return ret;
 }
+#endif /* HAVE_FIPS && LIBWOLFSSL_VERSION_HEX >= WOLFSSL_V5_7_2 */
 
 
 static int GenerateKeys(WOLFSSH* ssh, byte hashId, byte doKeyPad)
