@@ -1515,8 +1515,10 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             }
             else {
                 windowFull -= cnt_w;
-                if (windowFull > 0)
+                if (windowFull > 0) {
+                    WMEMMOVE(shellBuffer, shellBuffer + cnt_w, windowFull);
                     continue;
+                }
                 if (windowFull < 0)
                     windowFull = 0;
             }
@@ -1537,7 +1539,13 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     if (cnt_r > 0) {
                         cnt_w = wolfSSH_extended_data_send(ssh, shellBuffer,
                             cnt_r);
-                        if (cnt_w == WS_WINDOW_FULL || cnt_w == WS_REKEYING) {
+                        if (cnt_w > 0 && cnt_w < cnt_r) { /* partial send */
+                            windowFull = cnt_r - cnt_w;
+                            WMEMMOVE(shellBuffer, shellBuffer + cnt_w,
+                                windowFull);
+                        }
+                        else if (cnt_w == WS_WINDOW_FULL ||
+                                 cnt_w == WS_REKEYING) {
                             windowFull = cnt_r; /* save amount to be sent */
                             continue;
                         }
@@ -1569,7 +1577,13 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     if (cnt_r > 0) {
                         cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
                                 shellBuffer, cnt_r);
-                        if (cnt_w == WS_WINDOW_FULL || cnt_w == WS_REKEYING) {
+                        if (cnt_w > 0 && cnt_w < cnt_r) { /* partial send */
+                            windowFull = cnt_r - cnt_w;
+                            WMEMMOVE(shellBuffer, shellBuffer + cnt_w,
+                                windowFull);
+                        }
+                        else if (cnt_w == WS_WINDOW_FULL ||
+                                 cnt_w == WS_REKEYING) {
                             windowFull = cnt_r; /* save amount to be sent */
                             continue;
                         }
@@ -1599,7 +1613,13 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     if (cnt_r > 0) {
                         cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
                                 shellBuffer, cnt_r);
-                        if (cnt_w == WS_WINDOW_FULL || cnt_w == WS_REKEYING) {
+                        if (cnt_w > 0 && cnt_w < cnt_r) { /* partial send */
+                            windowFull = cnt_r - cnt_w;
+                            WMEMMOVE(shellBuffer, shellBuffer + cnt_w,
+                                windowFull);
+                        }
+                        else if (cnt_w == WS_WINDOW_FULL ||
+                                 cnt_w == WS_REKEYING) {
                             windowFull = cnt_r;
                             continue;
                         }
