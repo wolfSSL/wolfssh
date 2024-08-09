@@ -1120,15 +1120,18 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
     if (ret != WS_SOCKET_ERROR_E
             && wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E) {
         if (ret != WS_SUCCESS) {
-            err_sys("Sending the shutdown messages failed.");
+            WLOG(WS_LOG_DEBUG, "Sending the shutdown messages failed.");
         }
-        ret = wolfSSH_worker(ssh, NULL);
+        else {
+            ret = wolfSSH_worker(ssh, NULL);
+        }
         if (ret == WS_CHANNEL_CLOSED) {
             /* Shutting down, channel closing isn't a fail. */
             ret = WS_SUCCESS;
         }
         else if (ret != WS_SUCCESS) {
-            err_sys("Failed to listen for close messages from the peer.");
+            WLOG(WS_LOG_DEBUG,
+                "Failed to listen for close messages from the peer.");
         }
     }
     WCLOSESOCKET(sockFd);
@@ -1139,8 +1142,14 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
 
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
-    if (ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E)
-        err_sys("Closing client stream failed");
+    if (ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E) {
+        WLOG(WS_LOG_DEBUG, "Closing client stream failed");
+    #if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
+        /* override return value, do not want to return success if connection
+         * close failed */
+        ((func_args*)args)->return_code = 1;
+    #endif
+    }
 
     ClientFreeBuffers();
 #if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
