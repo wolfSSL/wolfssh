@@ -10,7 +10,7 @@ To run all tests do:
 ```
 $ cd apps/wolfsshd/test/
 
-$ sudo ./run_all_sshd_tests.sh
+$ sudo ./run_all_sshd_tests.sh <user>
 Running all wolfSSHd tests
 Starting up local wolfSSHd for tests on 127.0.0.1:22222
 SSHD running on PID 7979

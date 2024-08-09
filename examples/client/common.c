@@ -468,8 +468,10 @@ int ClientUserAuth(byte authType,
          * passed in a public key file, use public key auth */
         if (pubKeyLoaded == 1) {
             if (authType == WOLFSSH_USERAUTH_PASSWORD) {
+            #ifdef WOLFSSH_DEBUG
                 printf("rejecting password type with %s in favor of pub key\n",
                     (char*)authData->username);
+            #endif
                 return WOLFSSH_USERAUTH_FAILURE;
             }
         }
