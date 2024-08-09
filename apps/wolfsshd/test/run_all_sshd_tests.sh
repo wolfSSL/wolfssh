@@ -76,9 +76,10 @@ fi
 # these tests require setting up an sshd
 if [ "$USING_LOCAL_HOST" == 1 ]; then
     run_test "sshd_forcedcmd_test.sh"
+    run_test "sshd_window_full_test.sh"
 else
     printf "Skipping tests that need to setup local SSHD\n"
-    SKIPPED=$((SKIPPED+1))
+    SKIPPED=$((SKIPPED+2))
 fi
 
 # these tests run with X509 sshd-config loaded
