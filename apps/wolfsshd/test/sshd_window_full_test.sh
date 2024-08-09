@@ -47,6 +47,7 @@ echo "$TEST_CLIENT -q -c \"cd $PWD; $TEST_CLIENT -q -c \"cat $PWD/random-test.tx
 $TEST_CLIENT -q -c "cd $PWD; $TEST_CLIENT -q -c \"cat $PWD/random-test.txt\" -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT" -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT > random-test-result.txt
 
 ls -la random-test*
+$TEST_CLIENT -c "cd $PWD; $TEST_CLIENT -c \"cat $PWD/random-test.txt\" -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT" -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT > random-test-result.txt
 
 diff random-test.txt random-test-result.txt
 RESULT=$?
