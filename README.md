@@ -247,7 +247,7 @@ single file and recursive directory copy are supported with the default
 send and receive callbacks.
 
 To compile wolfSSH with scp support, use the `--enable-scp` build option
-or define `WOLFSSL_SCP`:
+or define `WOLFSSH_SCP`:
 
     $ ./configure --enable-scp
     $ make
@@ -255,7 +255,7 @@ or define `WOLFSSL_SCP`:
 For full API usage and implementation details, please see the wolfSSH User
 Manual.
 
-The wolfSSL example server has been set up to accept a single scp request,
+The wolfSSH example server has been set up to accept a single scp request,
 and is compiled by default when compiling the wolfSSH library. To start the
 example server, run:
 
