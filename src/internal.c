@@ -3046,14 +3046,17 @@ static int GetInputText(WOLFSSH* ssh, byte** pEol)
         in = ReceiveData(ssh,
                      ssh->inputBuffer.buffer + ssh->inputBuffer.length, inSz);
 
-        if (in == -1)
+        if (in == -1) {
             return WS_SOCKET_ERROR_E;
+        }
 
-        if (in == WS_WANT_READ)
+        if (in == WS_WANT_READ) {
             return WS_WANT_READ;
+        }
 
-        if (in > inSz)
+        if (in > inSz) {
             return WS_RECV_OVERFLOW_E;
+        }
 
         ssh->inputBuffer.length += in;
         inSz -= in;
@@ -3077,7 +3080,11 @@ static int GetInputText(WOLFSSH* ssh, byte** pEol)
     if (pEol)
         *pEol = (byte*)eol;
 
-    return (gotLine ? WS_SUCCESS : WS_VERSION_E);
+    if (!gotLine) {
+        return WS_VERSION_E;
+    }
+
+    return WS_SUCCESS;
 }
 
 
@@ -3191,7 +3198,7 @@ static int GetInputData(WOLFSSH* ssh, word32 size)
         }
         else {
             /* all other unexpected negative values is a failure case */
-            ssh->error = WS_FATAL_ERROR;
+            ssh->error = WS_SOCKET_ERROR_E;
             return WS_FATAL_ERROR;
         }
 
@@ -3852,7 +3859,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     word32 listSz;
     word32 cannedListSz;
     word32 cannedAlgoNamesSz;
-    word32 skipSz;
+    word32 skipSz = 0;
     word32 begin;
 
     WLOG(WS_LOG_DEBUG, "Entering DoKexInit()");
