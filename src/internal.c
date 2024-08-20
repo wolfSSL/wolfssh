@@ -54,8 +54,9 @@
     #include <wolfssl/wolfcrypt/kdf.h>
 #endif
 
-#ifdef WOLFSSH_HAVE_LIBOQS
-#include <oqs/kem.h>
+#ifdef WOLFSSL_HAVE_KYBER
+#include <wolfssl/wolfcrypt/kyber.h>
+#include <wolfssl/wolfcrypt/wc_kyber.h>
 #endif
 
 #ifdef NO_INLINE
@@ -132,8 +133,8 @@ Flags:
     Set when ECC or SHA2-512 are disabled. Set to disable use of ECDSA server
     authentication with prime NISTP521.
   WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-    Set when there is no liboqs integration. Set to disable use of ECDHE with
-    prime NISTP256 hybridized with post-quantum Kyber Level1 KEM.
+    Set when Kyber is disabled in wolfssl. Set to disable use of ECDHE with
+    prime NISTP256 hybridized with post-quantum KYBER512 KEM.
   WOLFSSH_NO_AES_CBC
     Set when AES or AES-CBC are disabled. Set to disable use of AES-CBC
     encryption.
@@ -2456,7 +2457,6 @@ static const NameIdPair NameIdMap[] = {
     { ID_ECDH_SHA2_NISTP521, TYPE_KEX, "ecdh-sha2-nistp521" },
 #endif
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-    /* We use kyber-512 here to achieve interop with OQS's fork. */
     { ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256, TYPE_KEX,
         "ecdh-nistp256-kyber-512r3-sha256-d00@openquantumsafe.org" },
 #endif
@@ -5052,12 +5052,12 @@ static int KeyAgreeCurve25519_client(WOLFSSH* ssh, byte hashId,
 #endif /* WOLFSSH_NO_CURVE25519_SHA256 */
 
 
-/* KeyAgreeEcdhKyber1_client
+/* KeyAgreeEcdhKyber512_client
  * hashId - wolfCrypt hash type ID used
  * f - peer public key
  * fSz - peer public key size
  */
-static int KeyAgreeEcdhKyber1_client(WOLFSSH* ssh, byte hashId,
+static int KeyAgreeEcdhKyber512_client(WOLFSSH* ssh, byte hashId,
         const byte* f, word32 fSz)
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
 {
@@ -5065,7 +5065,10 @@ static int KeyAgreeEcdhKyber1_client(WOLFSSH* ssh, byte hashId,
     byte sharedSecretHashSz = 0;
     byte *sharedSecretHash = NULL;
     ecc_key *key_ptr = NULL;
-    OQS_KEM *kem;
+    KyberKey kem = {0};
+    word32 length_ciphertext = 0;
+    word32 length_sharedsecret = 0;
+    word32 length_privatekey = 0;
 
     #ifndef WOLFSSH_SMALL_STACK
         ecc_key key_s;
@@ -5080,17 +5083,33 @@ static int KeyAgreeEcdhKyber1_client(WOLFSSH* ssh, byte hashId,
         key_ptr = &key_s;
     #endif /* WOLFSSH_SMALL_STACK */
 
-    WLOG(WS_LOG_DEBUG, "Entering KeyAgreeEcdhKyber1_client()");
+    WLOG(WS_LOG_DEBUG, "Entering KeyAgreeEcdhKyber512_client()");
 
     /* This is a a hybrid of ECDHE and a post-quantum KEM. In this
      * case, I need to generated the ECC shared secret and
      * decapsulate the ciphertext of the post-quantum KEM. */
-    kem = OQS_KEM_new(OQS_KEM_alg_kyber_512);
-    if (kem == NULL) {
-        ret = WS_MEMORY_E;
+
+    if (ret == 0) {
+        ret = wc_KyberKey_Init(KYBER512, &kem, ssh->ctx->heap, INVALID_DEVID);
     }
 
-    if ((ret == 0) && (fSz <= (word32)kem->length_ciphertext)) {
+    if (ret == 0) {
+        ret = wc_KyberKey_CipherTextSize(&kem, &length_ciphertext);
+    }
+
+    if (ret == 0) {
+        ret = wc_KyberKey_SharedSecretSize(&kem, &length_sharedsecret);
+    }
+
+    if (ret == 0) {
+        ret = wc_KyberKey_PrivateKeySize(&kem, &length_privatekey);
+    }
+
+    if ((ret == 0) && (ssh->handshake->xSz < length_privatekey)) {
+        ret = WS_BUFFER_E;
+    }
+
+    if ((ret == 0) && (fSz < length_ciphertext)) {
         ret = WS_BUFFER_E;
     }
 
@@ -5103,16 +5122,15 @@ static int KeyAgreeEcdhKyber1_client(WOLFSSH* ssh, byte hashId,
     }
     #endif
     if (ret == 0) {
-        ret = wc_ecc_import_x963(f + kem->length_ciphertext,
-                  fSz - (word32)kem->length_ciphertext,
-                  key_ptr);
+        ret = wc_ecc_import_x963(f + length_ciphertext, fSz - length_ciphertext,
+                                 key_ptr);
     }
 
     if (ret == 0) {
         PRIVATE_KEY_UNLOCK();
         ret = wc_ecc_shared_secret(&ssh->handshake->privKey.ecc,
-                   key_ptr, ssh->k + kem->length_shared_secret,
-                   &ssh->kSz);
+                                   key_ptr, ssh->k + length_sharedsecret,
+                                   &ssh->kSz);
         PRIVATE_KEY_LOCK();
     }
     wc_ecc_free(key_ptr);
@@ -5124,14 +5142,16 @@ static int KeyAgreeEcdhKyber1_client(WOLFSSH* ssh, byte hashId,
     wc_ecc_free(&ssh->handshake->privKey.ecc);
 
     if (ret == 0) {
-        if (OQS_KEM_decaps(kem, ssh->k, f, ssh->handshake->x)
-            != OQS_SUCCESS) {
-            ret = WS_ERROR;
-        }
+        wc_KyberKey_DecodePrivateKey(&kem, ssh->handshake->x,
+                                     length_privatekey);
     }
 
     if (ret == 0) {
-        ssh->kSz += kem->length_shared_secret;
+        ret = wc_KyberKey_Decapsulate(&kem, ssh->k, f, length_ciphertext);
+    }
+
+    if (ret == 0) {
+        ssh->kSz += length_sharedsecret;
     } else {
         ssh->kSz = 0;
         WLOG(WS_LOG_ERROR,
@@ -5139,9 +5159,7 @@ static int KeyAgreeEcdhKyber1_client(WOLFSSH* ssh, byte hashId,
              ret);
     }
 
-    if (kem != NULL) {
-        OQS_KEM_free(kem);
-    }
+    wc_KyberKey_Free(&kem);
 
     /* Replace the concatenated shared secrets with the hash. That
      * will become the new shared secret. */
@@ -5170,7 +5188,7 @@ static int KeyAgreeEcdhKyber1_client(WOLFSSH* ssh, byte hashId,
         WFREE(sharedSecretHash, ssh->ctx->heap, DYNTYPE_PRIVKEY);
     }
 
-    WLOG(WS_LOG_DEBUG, "Leaving KeyAgreeEcdhKyber1_client(), ret = %d", ret);
+    WLOG(WS_LOG_DEBUG, "Leaving KeyAgreeEcdhKyber512_client(), ret = %d", ret);
     return ret;
 }
 #else /* WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256 */
@@ -5208,7 +5226,7 @@ static int KeyAgree_client(WOLFSSH* ssh, byte hashId, const byte* f, word32 fSz)
         ret = KeyAgreeCurve25519_client(ssh, hashId, f, fSz);
     }
     else if (ssh->handshake->useEccKyber) {
-        ret = KeyAgreeEcdhKyber1_client(ssh, hashId, f, fSz);
+        ret = KeyAgreeEcdhKyber512_client(ssh, hashId, f, fSz);
     }
     else {
         ret = WS_INVALID_ALGO_ID;
@@ -10903,7 +10921,7 @@ static int KeyAgreeCurve25519_server(WOLFSSH* ssh, byte hashId,
 #endif /* WOLFSSH_NO_CURVE25519_SHA256 */
 
 
-/* KeyAgreeEcdhKyber1_server
+/* KeyAgreeEcdhKyber512_server
  * hashId - wolfCrypt hash type ID used
  * f - peer public key
  * fSz - peer public key size
@@ -10914,14 +10932,17 @@ static int KeyAgreeCurve25519_server(WOLFSSH* ssh, byte hashId,
  * generate and encapsulate the shared secret and send the
  * ciphertext.
  */
-static int KeyAgreeEcdhKyber1_server(WOLFSSH* ssh, byte hashId,
+static int KeyAgreeEcdhKyber512_server(WOLFSSH* ssh, byte hashId,
         byte* f, word32* fSz)
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
 {
     int ret = WS_SUCCESS;
     byte sharedSecretHashSz = 0;
     byte *sharedSecretHash = NULL;
-    OQS_KEM* kem = NULL;
+    KyberKey kem = {0};
+    word32 length_publickey = 0;
+    word32 length_ciphertext = 0;
+    word32 length_sharedsecret = 0;
     ecc_key* pubKey = NULL;
     ecc_key* privKey = NULL;
     int primeId;
@@ -10929,7 +10950,7 @@ static int KeyAgreeEcdhKyber1_server(WOLFSSH* ssh, byte hashId,
     ecc_key eccKeys[2];
 #endif
 
-    WLOG(WS_LOG_DEBUG, "Entering KeyAgreeEcdhKyber1_server()");
+    WLOG(WS_LOG_DEBUG, "Entering KeyAgreeEcdhKyber512_server()");
 
 #ifdef WOLFSSH_SMALL_STACK
     pubKey = (ecc_key*)WMALLOC(sizeof(ecc_key),
@@ -10954,39 +10975,48 @@ static int KeyAgreeEcdhKyber1_server(WOLFSSH* ssh, byte hashId,
     }
 
     if (ret == 0) {
-        kem = OQS_KEM_new(OQS_KEM_alg_kyber_512);
-        if (kem == NULL) {
-            ret = WS_MEMORY_E;
-        }
+        ret = wc_KyberKey_Init(KYBER512, &kem, ssh->ctx->heap,
+                               INVALID_DEVID);
     }
 
-    if ((ret == 0) &&
-        (ssh->handshake->eSz <= (word32)kem->length_public_key)) {
+    if (ret == 0) {
+        ret = wc_KyberKey_CipherTextSize(&kem, &length_ciphertext);
+    }
+
+    if (ret == 0) {
+        ret = wc_KyberKey_SharedSecretSize(&kem, &length_sharedsecret);
+    }
+
+    if (ret == 0) {
+        ret = wc_KyberKey_PublicKeySize(&kem, &length_publickey);
+    }
+
+    if ((ret == 0) && (ssh->handshake->eSz <= length_publickey)) {
         ret = WS_BUFFER_E;
     }
 
     if (ret == 0) {
-        if (OQS_KEM_encaps(kem, f, ssh->k, ssh->handshake->e) != OQS_SUCCESS) {
-            ret = WS_PUBKEY_REJECTED_E;
-            WLOG(WS_LOG_ERROR,
-                 "Generate ECC-kyber (encap) shared secret failed, %d",
-                 ret);
-            *fSz = 0;
-            ssh->kSz = 0;
-        }
+        ret = wc_KyberKey_DecodePublicKey(&kem, ssh->handshake->e,
+                                          length_publickey);
     }
 
     if (ret == 0) {
-        *fSz -= kem->length_ciphertext;
-        ssh->kSz -= kem->length_shared_secret;
+        ret = wc_KyberKey_Encapsulate(&kem, f, ssh->k, ssh->rng);
+    }
+
+    if (ret == 0) {
+        *fSz -= length_ciphertext;
+        ssh->kSz -= length_sharedsecret;
     }
     else {
+        ret = WS_PUBKEY_REJECTED_E;
+        WLOG(WS_LOG_ERROR,
+             "Generate ECC-kyber (encap) shared secret failed, %d", ret);
         *fSz = 0;
         ssh->kSz = 0;
-        WLOG(WS_LOG_ERROR,
-             "Generate ECC-kyber (encap) shared secret failed, %d",
-             ret);
     }
+
+    wc_KyberKey_Free(&kem);
 
     if (ret == 0) {
         ret = wc_ecc_init_ex(pubKey, ssh->ctx->heap, INVALID_DEVID);
@@ -11001,8 +11031,8 @@ static int KeyAgreeEcdhKyber1_server(WOLFSSH* ssh, byte hashId,
 #endif
     if (ret == 0) {
         ret = wc_ecc_import_x963_ex(
-            ssh->handshake->e + kem->length_public_key,
-            ssh->handshake->eSz - (word32)kem->length_public_key,
+            ssh->handshake->e + length_publickey,
+            ssh->handshake->eSz - length_publickey,
             pubKey, primeId);
     }
     if (ret == 0) {
@@ -11012,17 +11042,17 @@ static int KeyAgreeEcdhKyber1_server(WOLFSSH* ssh, byte hashId,
     }
     if (ret == 0) {
         PRIVATE_KEY_UNLOCK();
-        ret = wc_ecc_export_x963(privKey, f + kem->length_ciphertext, fSz);
+        ret = wc_ecc_export_x963(privKey, f + length_ciphertext, fSz);
         PRIVATE_KEY_LOCK();
-        *fSz += kem->length_ciphertext;
+        *fSz += length_ciphertext;
     }
     if (ret == 0) {
         word32 tmp_kSz = ssh->kSz;
         PRIVATE_KEY_UNLOCK();
         ret = wc_ecc_shared_secret(privKey, pubKey,
-                  ssh->k + kem->length_shared_secret, &tmp_kSz);
+                  ssh->k + length_sharedsecret, &tmp_kSz);
         PRIVATE_KEY_LOCK();
-        ssh->kSz = (word32)kem->length_shared_secret + tmp_kSz;
+        ssh->kSz = length_sharedsecret + tmp_kSz;
     }
     wc_ecc_free(privKey);
     wc_ecc_free(pubKey);
@@ -11032,10 +11062,6 @@ static int KeyAgreeEcdhKyber1_server(WOLFSSH* ssh, byte hashId,
     if (privKey)
         WFREE(privKey, ssh->ctx->heap, DYNTYPE_PUBKEY);
 #endif
-    if (kem != NULL) {
-        OQS_KEM_free(kem);
-        kem = NULL;
-    }
 
     /* Replace the concatenated shared secrets with the hash. That
      * will become the new shared secret.*/
@@ -11061,7 +11087,7 @@ static int KeyAgreeEcdhKyber1_server(WOLFSSH* ssh, byte hashId,
         WFREE(sharedSecretHash, ssh->ctx->heap, DYNTYPE_PRIVKEY);
     }
 
-    WLOG(WS_LOG_DEBUG, "Leaving KeyAgreeEcdhKyber1_server(), ret = %d", ret);
+    WLOG(WS_LOG_DEBUG, "Leaving KeyAgreeEcdhKyber512_server(), ret = %d", ret);
     return ret;
 }
 #else /* WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256 */
@@ -11513,7 +11539,7 @@ int SendKexDhReply(WOLFSSH* ssh)
                 ret = KeyAgreeCurve25519_server(ssh, hashId, f_ptr, &fSz);
             }
             else if (useEccKyber) {
-                ret = KeyAgreeEcdhKyber1_server(ssh, hashId, f_ptr, &fSz);
+                ret = KeyAgreeEcdhKyber512_server(ssh, hashId, f_ptr, &fSz);
             }
         }
 
@@ -12126,28 +12152,44 @@ int SendKexDhInit(WOLFSSH* ssh)
 
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
         if (ssh->handshake->useEccKyber) {
-            OQS_KEM* kem = NULL;
+            KyberKey kem = {0};
+            word32 length_publickey = 0;
+            word32 length_privatekey = 0;
             ret = 0;
 
-            kem = OQS_KEM_new(OQS_KEM_alg_kyber_512);
-            if (kem == NULL) {
-                ret = WS_INVALID_ALGO_ID;
+            if (ret == 0) {
+                ret = wc_KyberKey_Init(KYBER512, &kem, ssh->ctx->heap,
+                                       INVALID_DEVID);
             }
 
-            /* Move ecc to the back. Note that this assumes the PQ public key
-             * is bigger than the ECC public key. */
             if (ret == 0) {
-                XMEMCPY(e + kem->length_public_key, e, eSz);
-                if (OQS_KEM_keypair(kem, e, ssh->handshake->x) != OQS_SUCCESS) {
-                    /* This should never happen */
-                    ret = WS_ERROR;
-                }
-                eSz += kem->length_public_key;
-                ssh->handshake->xSz = (word32)kem->length_secret_key;
+                ret = wc_KyberKey_MakeKey(&kem, ssh->rng);
             }
-            if (kem != NULL) {
-                OQS_KEM_free(kem);
+
+            if (ret == 0) {
+                ret = wc_KyberKey_PublicKeySize(&kem, &length_publickey);
             }
+
+            if (ret == 0) {
+                ret = wc_KyberKey_PrivateKeySize(&kem, &length_privatekey);
+            }
+
+            if (ret == 0) {
+                /* Move ecc to the back and put PQ Key in the front. Note that
+                 * this assumes the PQ public key is bigger than the ECC public
+                 * key. */
+                XMEMCPY(e + length_publickey, e, eSz);
+                ret = wc_KyberKey_EncodePublicKey(&kem, e, length_publickey);
+                eSz += length_publickey;
+            }
+
+            if (ret == 0) {
+                ret = wc_KyberKey_EncodePrivateKey(&kem, ssh->handshake->x,
+                                                   length_privatekey);
+                ssh->handshake->xSz = length_privatekey;
+            }
+
+            wc_KyberKey_Free(&kem);
         }
 #endif /* ! WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256 */
         if (ret == 0) {

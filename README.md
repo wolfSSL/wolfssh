@@ -450,33 +450,22 @@ The wolfSSH client and server will automatically negotiate using Curve25519.
 POST-QUANTUM
 ============
 
-wolfSSH now supports the post-quantum algorithm Kyber. It uses the NIST
-submission's Level 1 parameter set implemented by liboqs via an integration
-with wolfSSH. It is hybridized with ECDHE over the P-256 ECC curve.
+wolfSSH now supports the post-quantum algorithm ML-DSA (also known as Kyber).
+It uses the KYBER512 parameter set and is hybridized with ECDHE over the P-256
+ECC curve.
 
-In order be able to use liboqs, you must have it built and installed on your
-system. We support the 0.7.0 release of liboqs. You can download it from the
-following link:
+In order to use this key exchange you must build and install wolfSSL on your
+system. Here is an example of an effective configuration:
 
-    https://github.com/open-quantum-safe/liboqs/archive/refs/tags/0.7.0.tar.gz
+    $ ./configure --enable-wolfssh --enable-experimental --enable-kyber
 
-Once unpacked, this would be sufficient:
+After that, simply configure and build wolfssh as usual:
 
-    $ cd liboqs-0.7.0
-    $ mkdir build
-    $ cd build
-    $ cmake -DOQS_USE_OPENSSL=0 ..
+    $ ./configure
     $ make all
-    $ sudo make install
 
-
-In order to enable support for Kyber Level1 hybridized with ECDHE over the P-256
-ECC curve in wolfSSH, use the `--with-liboqs` build option during configuration:
-
-    $ ./configure --with-liboqs
-
-The wolfSSH client and server will automatically negotiate using Kyber Level1
-hybridized with ECDHE over the P-256 ECC curve if this feature is enabled.
+The wolfSSH client and server will automatically negotiate using KYBER512
+hybridized with ECDHE over the P-256 ECC curve.
 
     $ ./examples/echoserver/echoserver -f
 
@@ -507,7 +496,6 @@ NOTE: when prompted, enter the password which is "upthehill".
 
 You can type a line of text and when you press enter, the line will be echoed
 back. Use CTRL-C to terminate the connection.
-
 
 CERTIFICATE SUPPORT
 ===================
