@@ -3660,7 +3660,7 @@ static INLINE byte KeySzForId(byte id)
     }
 }
 
-INLINE enum wc_HashType HashForId(byte id)
+enum wc_HashType HashForId(byte id)
 {
     switch (id) {
 
