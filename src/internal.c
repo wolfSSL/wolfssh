@@ -2061,7 +2061,7 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
                           int format, int type)
 {
     void* heap = NULL;
-    byte* der;
+    byte* der  = NULL;
     word32 derSz;
     int wcType;
     int ret = WS_SUCCESS;
@@ -2078,7 +2078,12 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
         return WS_BAD_FILETYPE_E;
     }
 
-    if (type == BUFTYPE_CA) {
+    if (type == BUFTYPE_PRIVKEY) {
+        dynamicType = DYNTYPE_PRIVKEY;
+        wcType = PRIVATEKEY_TYPE;
+    }
+    #ifdef WOLFSSH_CERTS
+    else if (type == BUFTYPE_CA) {
         dynamicType = DYNTYPE_CA;
         wcType = CA_TYPE;
     }
@@ -2086,10 +2091,7 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
         dynamicType = DYNTYPE_CERT;
         wcType = CERT_TYPE;
     }
-    else if (type == BUFTYPE_PRIVKEY) {
-        dynamicType = DYNTYPE_PRIVKEY;
-        wcType = PRIVATEKEY_TYPE;
-    }
+    #endif
     else {
         return WS_BAD_ARGUMENT;
     }
