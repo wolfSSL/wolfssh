@@ -82,7 +82,8 @@ static const char testString[] = "Hello, wolfSSH!";
 
 static void ShowUsage(void)
 {
-    printf("client %s\n", LIBWOLFSSH_VERSION_STRING);
+    printf("client %s linked with wolfSSL %s\n", LIBWOLFSSH_VERSION_STRING,
+        LIBWOLFSSL_VERSION_STRING);
     printf(" -?            display this help and exit\n");
     printf(" -h <host>     host to connect to, default %s\n", wolfSshIp);
     printf(" -p <num>      port to connect on, default %d\n", wolfSshPort);

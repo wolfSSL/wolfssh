@@ -79,7 +79,7 @@ static inline int max(int a, int b)
 
 static void ShowUsage(void)
 {
-    printf("portfwd %s\n"
+    printf("portfwd %s linked with wolfSSL %s\n"
            " -?            display this help and exit\n"
            " -h <host>     host to connect to, default %s\n"
            " -p <num>      port to connect on, default %u\n"
@@ -90,6 +90,7 @@ static void ShowUsage(void)
            " -T <host>     host to forward to, default to host\n"
            " -t <num>      port to forward to (REQUIRED)\n",
            LIBWOLFSSH_VERSION_STRING,
+           LIBWOLFSSL_VERSION_STRING,
            wolfSshIp, wolfSshPort, defaultFwdFromHost);
 }
 
