@@ -536,8 +536,6 @@ int DoScpSource(WOLFSSH* ssh)
                     break;
                 }
 
-                continue;
-
             case SCP_SEND_TIMESTAMP:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SEND_TIMESTAMP");
 
