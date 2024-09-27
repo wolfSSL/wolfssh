@@ -3406,6 +3406,10 @@ static int GetNameListRaw(byte* idList, word32* idListSz,
     word32 nameSz = 0, nameListIdx = 0, idListIdx = 0;
     int ret = WS_SUCCESS;
 
+    if (idList == NULL || nameList == NULL || idListSz == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
     /*
      * The strings we want are now in the bounds of the message, and the
      * length of the list. Find the commas, or end of list, and then decode
