@@ -9868,7 +9868,7 @@ int SendKexInit(WOLFSSH* ssh)
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
-    if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER &&
+    if (ret == WS_SUCCESS && ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER &&
             ssh->ctx->privateKeyCount == 0) {
         WLOG(WS_LOG_DEBUG, "Server needs at least one private key");
         ret = WS_BAD_ARGUMENT;
