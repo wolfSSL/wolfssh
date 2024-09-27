@@ -51,7 +51,8 @@
 #define USAGE_WIDE "12"
 static void ShowUsage(void)
 {
-    printf("wolfscp %s\n", LIBWOLFSSH_VERSION_STRING);
+    printf("wolfscp %s linked with wolfSSL %s\n", LIBWOLFSSH_VERSION_STRING,
+        LIBWOLFSSL_VERSION_STRING);
     printf(" -%c %-" USAGE_WIDE "s %s\n", 'h', "",
             "display this help and exit");
     printf(" -%c %-" USAGE_WIDE "s %s, default %s\n", 'H', "<host>",

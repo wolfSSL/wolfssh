@@ -93,7 +93,8 @@ static void ShowUsage(char* appPath)
         appName = "wolfssh";
     }
 
-    printf("%s v%s\n", appName, LIBWOLFSSH_VERSION_STRING);
+    printf("%s v%s linked with wolfSSL %s\n", appName,
+        LIBWOLFSSH_VERSION_STRING, LIBWOLFSSL_VERSION_STRING);
     printf("usage: %s [-E logfile] [-G] [-l login_name] [-N] [-p port] "
             "[-V] destination\n",
             appName);
