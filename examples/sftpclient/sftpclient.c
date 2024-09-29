@@ -328,7 +328,8 @@ static void ShowCommands(void)
 
 static void ShowUsage(void)
 {
-    printf("wolfsftp %s\n", LIBWOLFSSH_VERSION_STRING);
+    printf("wolfsftp %s linked with wolfSSL %s\n", LIBWOLFSSH_VERSION_STRING,
+        LIBWOLFSSL_VERSION_STRING);
     printf(" -?            display this help and exit\n");
     printf(" -h <host>     host to connect to, default %s\n", wolfSshIp);
     printf(" -p <num>      port to connect on, default %d\n", wolfSshPort);

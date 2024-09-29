@@ -2288,7 +2288,8 @@ static int SetDefaultSftpPath(WOLFSSH* ssh, const char* defaultSftpPath)
 
 static void ShowUsage(void)
 {
-    printf("echoserver %s\n", LIBWOLFSSH_VERSION_STRING);
+    printf("echoserver %s linked with wolfSSL %s\n", LIBWOLFSSH_VERSION_STRING,
+        LIBWOLFSSL_VERSION_STRING);
     printf(" -?            display this help and exit\n");
     printf(" -1            exit after single (one) connection\n");
     printf(" -e            expect ECC public key from client\n");

@@ -181,7 +181,8 @@ static void ServiceDebugCb(enum wolfSSH_LogLevel level, const char* const msgStr
 
 static void ShowUsage(void)
 {
-    printf("wolfsshd %s\n", LIBWOLFSSH_VERSION_STRING);
+    printf("wolfSSHd %s linked with wolfSSL %s\n", LIBWOLFSSH_VERSION_STRING,
+        LIBWOLFSSL_VERSION_STRING);
     printf(" -?             display this help and exit\n");
     printf(" -f <file name> Configuration file to use, default is "
                             "/etc/ssh/sshd_config\n");
