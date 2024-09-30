@@ -60,6 +60,7 @@ run_test() {
 run_test "sshd_exec_test.sh"
 run_test "sshd_term_size_test.sh"
 run_test "sshd_large_sftp_test.sh"
+run_test "sshd_bad_sftp_test.sh"
 
 #Github actions needs resolved for these test cases
 #run_test "error_return.sh"
