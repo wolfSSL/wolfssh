@@ -11,12 +11,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  create_matrix:
+    runs-on: ubuntu-latest
+    outputs:
+        versions: ${{ steps.json.outputs.versions }}
+    steps:
+      - name: Create wolfSSL version matrix
+        id: json
+        run: |
+          current=`curl -s https://api.github.com/repos/wolfssl/wolfssl/releases | grep tag_name | cut -d : -f 2,3 | tr -d \" | tr -d , | tr -d ' ' | head -1`
+          last=`curl -s https://api.github.com/repos/wolfssl/wolfssl/releases | grep tag_name | cut -d : -f 2,3 | tr -d \" | tr -d , | tr -d ' ' | head -2 | tail -1`
+          VERSIONS=$(echo "[ \"master\", \"$current\", \"$last\" ]")
+          echo "wolfSSL versions found: $VERSIONS"
+          echo "versions=$VERSIONS" >> $GITHUB_OUTPUT
+
   build_wolfssl:
+    needs: create_matrix
     strategy:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest ]
-        wolfssl: [ v5.7.2-stable ]
+        wolfssl: ${{ fromJson(needs.create_matrix.outputs['versions']) }}
     name: Build wolfssl
     runs-on: ${{ matrix.os }}
     timeout-minutes: 4
@@ -41,15 +56,17 @@ jobs:
           install: true
 
   build_wolfssh:
+    needs:
+      - build_wolfssl
+      - create_matrix
     strategy:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest ]
-        wolfssl: [ v5.7.2-stable ]
+        wolfssl: ${{ fromJson(needs.create_matrix.outputs['versions']) }}
     name: Build and test wolfsshd
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
-    needs: build_wolfssl
     steps:
       - name: Checking cache for wolfssl
         uses: actions/cache@v4
@@ -58,14 +75,25 @@ jobs:
           key: wolfssh-sshd-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}
           fail-on-cache-miss: true
 
-      - name: Checkout and build wolfsshd
-        uses: wolfSSL/actions-build-autotools-project@v1
+      - uses: actions/checkout@v4
         with:
-          repository: wolfssl/wolfssh
-          path: wolfssh
-          configure: --enable-debug --enable-all LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include -DWOLFSSH_NO_FPKI -DWOLFSSH_NO_SFTP_TIMEOUT -DWOLFSSH_MAX_SFTP_RW=4000000"
-          check: true
+          path: wolfssh/
+
+      - name: autogen
+        working-directory: ./wolfssh/
+        run: ./autogen.sh
+
+      - name: configure
+        working-directory: ./wolfssh/
+        run : |
+          ./configure --enable-all LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include -DWOLFSSH_NO_FPKI -DWOLFSSH_NO_SFTP_TIMEOUT -DWOLFSSH_MAX_SFTP_RW=4000000 -DMAX_PATH_SZ=120"
+
+      - name: make check
+        working-directory: ./wolfssh/
+        run: make check
 
       - name: Run wolfSSHd tests
-        working-directory: wolfssh/apps/wolfsshd/test
-        run: sudo ./run_all_sshd_tests.sh root
+        working-directory: ./wolfssh/apps/wolfsshd/test
+        run: |
+          git log -3
+          sudo ./run_all_sshd_tests.sh

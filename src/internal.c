@@ -14047,7 +14047,6 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
 
         payloadSz = MSG_ID_SZ + (LENGTH_SZ * 3) +
                     ssh->userNameSz + serviceNameSz + authNameSz;
-
         if (authId == ID_USERAUTH_PASSWORD)
             ret = PrepareUserAuthRequestPassword(ssh, &payloadSz, &authData);
         else if (authId == ID_USERAUTH_PUBLICKEY && !ssh->userAuthPkDone) {

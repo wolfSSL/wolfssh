@@ -15,21 +15,36 @@ if [ -z "$1" ] || [ -z "$2" ]; then
     exit 1
 fi
 
-set -e
+# Check if tmux is available
+which tmux
+RESULT=$?
+if [ ${RESULT} = 1 ]; then
+    echo "tmux is not installed!!"
+    exit 1
+fi
+
 echo "Creating tmux session at $PWD with command :"
-tmux new-session -d -s test "$TEST_CLIENT -t -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h \"$1\" -p \"$2\""
+echo "tmux new-session -d -s test \"$TEST_CLIENT -q -t -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h \"$1\" -p \"$2\"\""
+tmux new-session -d -s test "$TEST_CLIENT -q -t -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h \"$1\" -p \"$2\""
+echo "Result of tmux new-session = $?"
 
 # give the command a second to establish SSH connection
-sleep 0.5
+sleep 1
 
 COL=`tmux display -p -t test '#{pane_width}'`
 ROW=`tmux display -p -t test '#{pane_height}'`
+echo "tmux 'test' session has COL = ${COL} and ROW = ${ROW}"
 
 # get the terminals columns and lines
 tmux send-keys -t test 'echo;echo $COLUMNS $LINES;echo'
 tmux send-keys -t test 'ENTER'
+
+# give the command a second to run
+sleep 1
+
 tmux capture-pane -t test
 RESULT=$(tmux show-buffer | grep '^[0-9]* [0-9]*$')
+tmux show-buffer
 
 echo "$RESULT"
 echo ""
@@ -55,25 +70,32 @@ fi
 # close down the SSH session
 tmux send-keys -t test 'exit'
 tmux send-keys -t test 'ENTER'
-set +e
 
 # kill off the session if it's still running, but don't error out if the session
 # has already closed down
 tmux kill-session -t test
 set -e
 
-tmux new-session -d -x 50 -y 10 -s test "$TEST_CLIENT -t -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h \"$1\" -p \"$2\""
+echo "Starting another session with a smaller window size"
+echo "tmux new-session -d -x 50 -y 10 -s test \"$TEST_CLIENT -q -t -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h \"$1\" -p \"$2\"\""
+tmux new-session -d -x 50 -y 10 -s test "$TEST_CLIENT -q -t -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h \"$1\" -p \"$2\""
 
 # give the command a second to establish SSH connection
-sleep 0.5
+sleep 1
 
+echo "Sending keys to tmux session for displaying column/rows"
 tmux send-keys -t test 'echo;echo $COLUMNS $LINES;echo'
 tmux send-keys -t test 'ENTER'
 tmux capture-pane -t test
 RESULT=$(tmux show-buffer | grep '^[0-9]* [0-9]*$')
 
-ROW_FOUND=$(echo "$RESULT" | sed -e 's/[0-9]* \([0-9]*\)/\1/')
-COL_FOUND=$(echo "$RESULT" | sed -e 's/\([0-9]*\) [0-9]*/\1/')
+ROW_FOUND=$( echo "$RESULT" | sed -e 's/[0-9]* \([0-9]*\)/\1/' )
+COL_FOUND=$( echo "$RESULT" | sed -e 's/\([0-9]*\) [0-9]*/\1/' )
+
+#remove any newlines, tabs, or returns
+ROW_FOUND=$( tr -d '\n\t\r ' <<<"$ROW_FOUND" )
+COL_FOUND=$( tr -d '\n\t\r ' <<<"$COL_FOUND" )
+
 
 if [ "50" != "$COL_FOUND" ]; then
     echo "Col found was $COL_FOUND which does not match expected 50"
