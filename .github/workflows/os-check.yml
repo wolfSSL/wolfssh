@@ -11,12 +11,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  create_matrix:
+    runs-on: ubuntu-latest
+    outputs:
+        versions: ${{ steps.json.outputs.versions }}
+    steps:
+      - name: Create wolfSSL version matrix
+        id: json
+        run: |
+          current=`curl -s https://api.github.com/repos/wolfssl/wolfssl/releases | grep tag_name | cut -d : -f 2,3 | tr -d \" | tr -d , | head -1`
+          last=`curl -s https://api.github.com/repos/wolfssl/wolfssl/releases | grep tag_name | cut -d : -f 2,3 | tr -d \" | tr -d , | head -2 | tail -1`
+          VERSIONS=$(echo "[ \"master\", \"$current\", \"$last\" ]")
+          echo "wolfSSL versions found: $VERSIONS"
+          echo "::set-output name=versions::$VERSIONS"
+
   build_wolfssl:
+    needs: create_matrix
     strategy:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest, macos-latest ]
-        wolfssl: [ v5.7.2-stable, master ]
+        wolfssl: ${{ fromJson(needs.create_matrix.outputs['versions']) }}
     name: Build wolfssl
     runs-on: ${{ matrix.os }}
     timeout-minutes: 4
@@ -28,6 +43,9 @@ jobs:
           path: build-dir/
           key: wolfssh-os-check-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}
           lookup-only: true
+
+      - name: debug
+        run: echo wolfssl version ${{ matrix.wolfssl }}
 
       - name: Checkout, build, and install wolfssl
         if: steps.cache-wolfssl.outputs.cache-hit != 'true'
@@ -41,11 +59,14 @@ jobs:
           install: true
 
   build_wolfssh:
+    needs:
+      - build_wolfssl
+      - create_matrix
     strategy:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest, macos-latest ]
-        wolfssl: [ v5.7.2-stable, master ]
+        wolfssl: ${{ fromJson(needs.create_matrix.outputs['versions']) }}
         config: [
           '',
           '--enable-all',
@@ -56,7 +77,6 @@ jobs:
     name: Build wolfssh
     runs-on: ${{ matrix.os }}
     timeout-minutes: 4
-    needs: build_wolfssl
     steps:
       - name: Checking cache for wolfssl
         uses: actions/cache@v4
