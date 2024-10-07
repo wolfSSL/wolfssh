@@ -16,7 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest ]
-        wolfssl: [ v5.7.2-stable ]
+        wolfssl: [ master ]
     name: Build wolfssl
     runs-on: ${{ matrix.os }}
     timeout-minutes: 4
@@ -45,7 +45,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest ]
-        wolfssl: [ v5.7.2-stable ]
+        wolfssl: [ master ]
     name: Build and test wolfsshd
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
