@@ -1133,41 +1133,41 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
 
 #ifdef WOLFSSH_SCP
     if (ssh->scpConfirmMsg) {
-        WFREE(ssh->scpConfirmMsg, ssh->ctx->heap, DYNTYPE_STRING);
+        WFREE(ssh->scpConfirmMsg, heap, DYNTYPE_STRING);
         ssh->scpConfirmMsg = NULL;
         ssh->scpConfirmMsgSz = 0;
     }
     if (ssh->scpFileBuffer) {
         ForceZero(ssh->scpFileBuffer, ssh->scpFileBufferSz);
-        WFREE(ssh->scpFileBuffer, ssh->ctx->heap, DYNTYPE_BUFFER);
+        WFREE(ssh->scpFileBuffer, heap, DYNTYPE_BUFFER);
         ssh->scpFileBuffer = NULL;
         ssh->scpFileBufferSz = 0;
     }
     if (ssh->scpFileName) {
-        WFREE(ssh->scpFileName, ssh->ctx->heap, DYNTYPE_STRING);
+        WFREE(ssh->scpFileName, heap, DYNTYPE_STRING);
         ssh->scpFileName = NULL;
         ssh->scpFileNameSz = 0;
     }
     if (ssh->scpRecvMsg) {
-        WFREE(ssh->scpRecvMsg, ssh->ctx->heap, DYNTYPE_STRING);
+        WFREE(ssh->scpRecvMsg, heap, DYNTYPE_STRING);
         ssh->scpRecvMsg = NULL;
         ssh->scpRecvMsgSz = 0;
     }
 #ifdef WOLFSSL_NUCLEUS
-    WFREE(ssh->scpBasePathDynamic, ssh->ctx->heap, DYNTYPE_BUFFER);
+    WFREE(ssh->scpBasePathDynamic, heap, DYNTYPE_BUFFER);
     ssh->scpBasePathDynamic = NULL;
     ssh->scpBasePathSz = 0;
 #endif
 #endif
 #ifdef WOLFSSH_SFTP
     if (ssh->sftpDefaultPath) {
-        WFREE(ssh->sftpDefaultPath, ssh->ctx->heap, DYNTYPE_STRING);
+        WFREE(ssh->sftpDefaultPath, heap, DYNTYPE_STRING);
         ssh->sftpDefaultPath = NULL;
     }
 #endif
 #ifdef WOLFSSH_TERM
     if (ssh->modes) {
-        WFREE(ssh->modes, ssh->ctx->heap, DYNTYPE_STRING);
+        WFREE(ssh->modes, heap, DYNTYPE_STRING);
         ssh->modesSz = 0;
     }
 #endif
@@ -2061,7 +2061,7 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
                           int format, int type)
 {
     void* heap = NULL;
-    byte* der;
+    byte* der  = NULL;
     word32 derSz;
     int wcType;
     int ret = WS_SUCCESS;
@@ -2078,7 +2078,12 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
         return WS_BAD_FILETYPE_E;
     }
 
-    if (type == BUFTYPE_CA) {
+    if (type == BUFTYPE_PRIVKEY) {
+        dynamicType = DYNTYPE_PRIVKEY;
+        wcType = PRIVATEKEY_TYPE;
+    }
+    #ifdef WOLFSSH_CERTS
+    else if (type == BUFTYPE_CA) {
         dynamicType = DYNTYPE_CA;
         wcType = CA_TYPE;
     }
@@ -2086,10 +2091,7 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
         dynamicType = DYNTYPE_CERT;
         wcType = CERT_TYPE;
     }
-    else if (type == BUFTYPE_PRIVKEY) {
-        dynamicType = DYNTYPE_PRIVKEY;
-        wcType = PRIVATEKEY_TYPE;
-    }
+    #endif
     else {
         return WS_BAD_ARGUMENT;
     }
@@ -3405,6 +3407,10 @@ static int GetNameListRaw(byte* idList, word32* idListSz,
     const byte* name = nameList;
     word32 nameSz = 0, nameListIdx = 0, idListIdx = 0;
     int ret = WS_SUCCESS;
+
+    if (idList == NULL || nameList == NULL || idListSz == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
 
     /*
      * The strings we want are now in the bounds of the message, and the
@@ -9868,7 +9874,7 @@ int SendKexInit(WOLFSSH* ssh)
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
-    if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER &&
+    if (ret == WS_SUCCESS && ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER &&
             ssh->ctx->privateKeyCount == 0) {
         WLOG(WS_LOG_DEBUG, "Server needs at least one private key");
         ret = WS_BAD_ARGUMENT;

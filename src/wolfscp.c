@@ -536,8 +536,6 @@ int DoScpSource(WOLFSSH* ssh)
                     break;
                 }
 
-                continue;
-
             case SCP_SEND_TIMESTAMP:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SEND_TIMESTAMP");
 
@@ -1091,7 +1089,7 @@ static int ScpCheckForRename(WOLFSSH* ssh, int cmdSz)
     int  sz = (int)WSTRLEN(ssh->scpBasePath);
     int  idx;
 
-    if (sz > (int)sizeof(buf)) {
+    if (sz >= DEFAULT_SCP_MSG_SZ) {
         return WS_BUFFER_E;
     }
 
