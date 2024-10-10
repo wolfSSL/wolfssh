@@ -15720,16 +15720,22 @@ int wolfSSH_GetPath(const char* defaultPath, byte* in, word32 inSz,
     }
 
     if (out != NULL) {
-        WMEMCPY(out + curSz, in, inSz);
+        if (curSz + inSz < *outSz) {
+            WMEMCPY(out + curSz, in, inSz);
+        }
     }
     curSz += inSz;
     if (out != NULL) {
         if (!WOLFSSH_SFTP_IS_DELIM(out[0])) {
-            WMEMMOVE(out+1, out, curSz);
-            out[0] = '/';
+            if (curSz + 1 < *outSz) {
+                WMEMMOVE(out+1, out, curSz);
+                out[0] = '/';
+            }
             curSz++;
         }
-        out[curSz] = 0;
+        if (curSz < *outSz) {
+            out[curSz] = 0;
+        }
     }
     *outSz = curSz;
 
