@@ -94,6 +94,9 @@ struct WOLFSSHD_CONFIG {
     char* forceCmd;
     char* pidFile;
     char* authorizedUPNDomains; /* allowlist of UPN realms for cert auth */
+    char* winUserStores;
+    char* winUserDwFlags;
+    char* winUserPvPara;
     WOLFSSHD_CONFIG* next; /* next config in list */
     long  loginTimer;
     word16 port;
@@ -105,6 +108,7 @@ struct WOLFSSHD_CONFIG {
     byte authKeysFileSet:1; /* if not set then no explicit authorized keys */
     byte strictModes:1; /* enforce file permission/ownership checks */
     byte useSystemCA:1;
+    byte useUserCAStore:1;
 };
 
 /* Maximum depth of nested Include directives. Bounds the recursion
@@ -385,6 +389,9 @@ void wolfSSHD_ConfigFree(WOLFSSHD_CONFIG* conf)
         FreeString(&current->authorizedUPNDomains, heap);
         FreeString(&current->usrAppliesTo,    heap);
         FreeString(&current->groupAppliesTo,  heap);
+        FreeString(&current->winUserStores,   heap);
+        FreeString(&current->winUserDwFlags,  heap);
+        FreeString(&current->winUserPvPara,   heap);
 
         WFREE(current, heap, DYNTYPE_SSHD);
         current = next;
@@ -425,11 +432,15 @@ enum {
     OPT_BANNER                  = 23,
     OPT_PUBKEY_AUTH             = 24,
     OPT_STRICT_MODES            = 25,
-    OPT_AUTHORIZED_UPN_DOMAINS  = 26,
-    OPT_TRUSTED_SYSTEM_CA_KEYS  = 27,
+    OPT_TRUSTED_SYSTEM_CA_KEYS  = 26,
+    OPT_TRUSTED_USER_CA_STORE   = 27,
+    OPT_WIN_USER_STORES         = 28,
+    OPT_WIN_USER_DW_FLAGS       = 29,
+    OPT_WIN_USER_PV_PARA        = 30,
+    OPT_AUTHORIZED_UPN_DOMAINS  = 31
 };
 enum {
-    NUM_OPTIONS = 28
+    NUM_OPTIONS = 32
 };
 
 static const CONFIG_OPTION options[NUM_OPTIONS] = {
@@ -460,6 +471,10 @@ static const CONFIG_OPTION options[NUM_OPTIONS] = {
     {OPT_PIDFILE,                 "PidFile"},
     {OPT_BANNER,                  "Banner"},
     {OPT_STRICT_MODES,            "StrictModes"},
+    {OPT_TRUSTED_USER_CA_STORE,   "TrustedUserCaStore"},
+    {OPT_WIN_USER_STORES,         "WinUserStores"},
+    {OPT_WIN_USER_DW_FLAGS,       "WinUserDwFlags"},
+    {OPT_WIN_USER_PV_PARA,        "WinUserPvPara"},
     {OPT_AUTHORIZED_UPN_DOMAINS,  "AuthorizedUPNDomains"},
 };
 
@@ -1315,6 +1330,17 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
             break;
         case OPT_STRICT_MODES:
             ret = HandleStrictModes(*conf, value);
+        case OPT_TRUSTED_USER_CA_STORE:
+            ret = wolfSSHD_ConfigSetUserCAStore(*conf, value);
+            break;
+        case OPT_WIN_USER_STORES:
+            ret = wolfSSHD_ConfigSetWinUserStores(*conf, value);
+            break;
+        case OPT_WIN_USER_DW_FLAGS:
+            ret = wolfSSHD_ConfigSetWinUserDwFlags(*conf, value);
+            break;
+        case OPT_WIN_USER_PV_PARA:
+            ret = wolfSSHD_ConfigSetWinUserPvPara(*conf, value);
             break;
         case OPT_AUTHORIZED_UPN_DOMAINS:
             ret = SetListString(&(*conf)->authorizedUPNDomains, full, fullSz,
@@ -1701,6 +1727,119 @@ int wolfSSHD_ConfigSetSystemCA(WOLFSSHD_CONFIG* conf, const char* value)
     return ret;
 }
 
+/* getter function for if using user CA store
+ * return 1 if true and 0 if false */
+int wolfSSHD_ConfigGetUserCAStore(const WOLFSSHD_CONFIG* conf)
+{
+    if (conf != NULL) {
+        return conf->useUserCAStore;
+    }
+    return 0;
+}
+
+
+/* setter function for if using user CA store
+ * 'yes' if true and 'no' if false
+ * returns WS_SUCCESS on success */
+int wolfSSHD_ConfigSetUserCAStore(WOLFSSHD_CONFIG* conf, const char* value)
+{
+    int ret = WS_SUCCESS;
+
+    if (conf != NULL) {
+        if (WSTRCMP(value, "yes") == 0) {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] User CA store enabled.  Note this "
+                                     "is currently only supported on Windows.");
+            conf->useUserCAStore = 1;
+        }
+        else if (WSTRCMP(value, "no") == 0) {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] User CA store disabled");
+            conf->useUserCAStore = 0;
+        }
+        else {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] User CA store unexpected flag");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    return ret;
+}
+
+char* wolfSSHD_ConfigGetWinUserStores(WOLFSSHD_CONFIG* conf) {
+    if (conf != NULL) {
+        if (conf->winUserStores == NULL) {
+            /* If no value was specified, default to CERT_STORE_PROV_SYSTEM */
+            CreateString(&conf->winUserStores, "CERT_STORE_PROV_SYSTEM", 
+                         (int)WSTRLEN("CERT_STORE_PROV_SYSTEM"), conf->heap);
+        }
+
+        return conf->winUserStores;
+    }
+
+    return NULL;
+}
+
+int wolfSSHD_ConfigSetWinUserStores(WOLFSSHD_CONFIG* conf, const char* value) {
+    int ret = WS_SUCCESS;
+
+    if (conf == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    ret = CreateString(&conf->winUserStores, value, (int)WSTRLEN(value), conf->heap);
+
+    return ret;
+}
+
+char* wolfSSHD_ConfigGetWinUserDwFlags(WOLFSSHD_CONFIG* conf) {
+    if (conf != NULL) {
+        if (conf->winUserDwFlags == NULL) {
+            /* If no value was specified, default to CERT_SYSTEM_STORE_CURRENT_USER */
+            CreateString(&conf->winUserDwFlags, "CERT_SYSTEM_STORE_CURRENT_USER", 
+                         (int)WSTRLEN("CERT_SYSTEM_STORE_CURRENT_USER"), conf->heap);
+        }
+
+        return conf->winUserDwFlags;
+    }
+
+    return NULL;
+}
+
+int wolfSSHD_ConfigSetWinUserDwFlags(WOLFSSHD_CONFIG* conf, const char* value) {
+    int ret = WS_SUCCESS;
+
+    if (conf == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    ret = CreateString(&conf->winUserDwFlags, value, (int)WSTRLEN(value), conf->heap);
+
+    return ret;
+}
+
+char* wolfSSHD_ConfigGetWinUserPvPara(WOLFSSHD_CONFIG* conf) {
+    if (conf != NULL) {
+        if (conf->winUserPvPara == NULL) {
+            /* If no value was specified, default to MY */
+            CreateString(&conf->winUserPvPara, "MY", (int)WSTRLEN("MY"), conf->heap);
+        }
+
+        return conf->winUserPvPara;
+    }
+
+    return NULL;
+}
+
+int wolfSSHD_ConfigSetWinUserPvPara(WOLFSSHD_CONFIG* conf, const char* value) {
+    int ret = WS_SUCCESS;
+
+    if (conf == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    ret = CreateString(&conf->winUserPvPara, value, (int)WSTRLEN(value), conf->heap);
+
+    return ret;
+}
 
 char* wolfSSHD_ConfigGetUserCAKeysFile(const WOLFSSHD_CONFIG* conf)
 {
