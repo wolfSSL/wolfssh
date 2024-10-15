@@ -3276,10 +3276,6 @@ void* wolfSSH_GetChannelCloseCtx(WOLFSSH* ssh)
 #if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
     !defined(NO_WOLFSSH_SERVER)
 
-#define DELIM "/\\"
-#define IS_DELIM(x) ((x) == '/' || (x) == '\\')
-#define IS_WINPATH(x,y) ((x) > 1 && (y)[1] == ':')
-
 /*
  * Paths starting with a slash are absolute, rooted at "/". Any path that
  * doesn't have a starting slash is assumed to be relative to the default
@@ -3287,6 +3283,8 @@ void* wolfSSH_GetChannelCloseCtx(WOLFSSH* ssh)
  *
  * The path "/." is stripped out. The path "/.." strips out the previous
  * path value. The root path, "/", is always present.
+ *
+ * Trailing delimiters are stripped, i.e /tmp/path/ becomes /tmp/path
  *
  * Example: "/home/fred/frob/frizz/../../../barney/bar/baz/./././../.."
  * will return "/home/barney". "/../.." will return "/". "." will return
@@ -3319,7 +3317,8 @@ int wolfSSH_RealPath(const char* defaultPath, char* in,
     inSz = (word32)WSTRLEN(in);
     out[0] = '/';
     curSz = 1;
-    if (inSz == 0 || (!IS_DELIM(in[0]) && !IS_WINPATH(inSz, in))) {
+    if (inSz == 0 || (!WOLFSSH_SFTP_IS_DELIM(in[0]) &&
+        !WOLFSSH_SFTP_IS_WINPATH(inSz, in))) {
         if (defaultPath != NULL) {
             curSz = (word32)WSTRLEN(defaultPath);
             if (curSz >= outSz) {
@@ -3330,9 +3329,9 @@ int wolfSSH_RealPath(const char* defaultPath, char* in,
     }
     out[curSz] = 0;
 
-    for (seg = WSTRTOK(in, DELIM, &tail);
+    for (seg = WSTRTOK(in, WOLFSSH_SFTP_DELIM, &tail);
             seg;
-            seg = WSTRTOK(NULL, DELIM, &tail)) {
+            seg = WSTRTOK(NULL, WOLFSSH_SFTP_DELIM, &tail)) {
         segSz = (word32)WSTRLEN(seg);
 
         /* Try to match "." */

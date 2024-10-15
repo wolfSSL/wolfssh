@@ -1974,7 +1974,7 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 {
     WS_SFTP_FILEATRB atr;
     WFD    fd;
-    word32 sz;
+    word32 sz, dirSz;
     char   dir[WOLFSSH_MAX_FILENAME];
     word32 reason;
     word32 idx = 0;
@@ -2010,10 +2010,11 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         return WS_BUFFER_E;
     }
 
-    ret = GetAndCleanPath(ssh->sftpDefaultPath, data + idx, sz,
-            dir, sizeof(dir));
-    if (ret < 0) {
-        return ret;
+    dirSz = sizeof(dir);
+    if (wolfSSH_GetPath(ssh->sftpDefaultPath, data + idx, sz, dir, &dirSz)
+            != WS_SUCCESS) {
+        WLOG(WS_LOG_SFTP, "Creating path for file to open failed");
+        return WS_FATAL_ERROR;
     }
     idx += sz;
 
@@ -2128,7 +2129,7 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 {
 /*    WS_SFTP_FILEATRB atr;*/
     HANDLE fileHandle;
-    word32 sz;
+    word32 sz, dirSz;
     char   dir[WOLFSSH_MAX_FILENAME];
     word32 reason;
     word32 idx = 0;
@@ -2165,9 +2166,11 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         return WS_BUFFER_E;
     }
 
-    if (GetAndCleanPath(ssh->sftpDefaultPath,
-                data + idx, sz, dir, sizeof(dir)) < 0) {
-        return WS_BUFFER_E;
+    dirSz = sizeof(dir);
+    if (wolfSSH_GetPath(ssh->sftpDefaultPath, data + idx, sz, dir, &dirSz)
+            != WS_SUCCESS) {
+        WLOG(WS_LOG_SFTP, "Creating path for file to open failed");
+        return WS_FATAL_ERROR;
     }
     idx += sz;
 
