@@ -6,7 +6,7 @@ else
     USER_NAME=$1
     cp fred-key.der $USER_NAME-key.der
     cp fred-key.pem $USER_NAME-key.pem
-    sed -i "s/fred/$USER_NAME/g" renewcerts.cnf
+    sed -i.bak "s/fred/$USER_NAME/g" renewcerts.cnf
 fi
 
 # renew CA
