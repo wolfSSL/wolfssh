@@ -120,6 +120,7 @@ static void ShowUsage(void)
 #endif
     printf(" -E            List all possible algos\n");
     printf(" -k            set the list of key algos to use\n");
+    printf(" -q            turn off debugging output\n");
 }
 
 
@@ -658,7 +659,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
     (void)keepOpen;
 
-    while ((ch = mygetopt(argc, argv, "?ac:h:i:j:p:tu:xzNP:RJ:A:XeEk:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?ac:h:i:j:p:tu:xzNP:RJ:A:XeEk:q")) != -1) {
         switch (ch) {
             case 'h':
                 host = myoptarg;
@@ -669,6 +670,10 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
                 wolfSSH_ShowSizes();
                 exit(EXIT_SUCCESS);
             #endif
+                break;
+
+            case 'q':
+                wolfSSH_Debugging_OFF();
                 break;
 
             case 'e':

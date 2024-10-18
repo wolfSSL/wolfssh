@@ -4,7 +4,7 @@
 
 if [ -z "$1" ] || [ -z "$2" ]; then
     echo "expecting host and port as arguments"
-    echo "./sshd_exec_test.sh 127.0.0.1 22222"
+    echo "$0 127.0.0.1 22222"
     exit 1
 fi
 
@@ -37,8 +37,9 @@ TEST_SFTP="./examples/sftpclient/wolfsftp"
 PRIVATE_KEY="./keys/hansel-key-ecc.der"
 PUBLIC_KEY="./keys/hansel-key-ecc.pub"
 
-RESULT=`$TEST_CLIENT -c 'echo bob' -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT`
-cat $RESULT | grep bob
+RESULT=$( $TEST_CLIENT -c 'echo bob' -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT )
+echo $RESULT
+echo $RESULT | grep bob
 RESULT=$?
 if [ "$RESULT" == 0 ]; then
     echo "Shell login should fail with forced command"
