@@ -15736,6 +15736,9 @@ int wolfSSH_GetPath(const char* defaultPath, byte* in, word32 inSz,
         if (curSz < *outSz) {
             out[curSz] = 0;
         }
+        else {
+            return WS_BUFFER_E;
+        }
     }
     *outSz = curSz;
 
