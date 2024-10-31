@@ -1,3 +1,27 @@
+# wolfSSH v1.4.19 (November 1, 2024)
+
+## New Features
+
+- Add DH Group 14 with SHA256 KEX support (PR 731)
+
+## Improvements
+
+- Use of the new SSH-KDF function in wolfCrypt (PR 729)
+- Adds macro guards to the non-POSIX value checks and updates with TTY modes (PR 739)
+- Add CI test against master and last two wolfSSL releases (PR 746)
+- Show version of wolfSSL linked to when application help messages are printed out (PR 741)
+- Purge OQS from wolfSSH and instead use Kyber implementation from wolfssl (PR 736)
+- Adjust Espressif wolfssl_echoserver example timehelper (PR 730)
+
+## Fixes
+
+- Remove Inline for function HashForId() to resolve clash with WOLFSSH_LOCAL declaration (PR 738)
+- Fix for wolfSSHd’s handling of re-key and window full when processing a command with lots of stdout text (PR 719)
+- Fix for wolfSSH client app to gracefully clean up on failure and added more WLOG debug messages (PR 732)
+- Minor static analysis report fixes (PR 740, 735)
+- Fix for handling SFTP transfer to non-existent folder (PR 743)
+
+
 # wolfSSH v1.4.18 (July 22, 2024)
 
 ## New Features
