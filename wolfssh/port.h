@@ -575,6 +575,14 @@ extern "C" {
     #define WLOCALTIME(c,r) (localtime_r((c),(r))!=NULL)
 #endif
 
+#ifndef WOLFSSH_SFTP_DELIM
+    /* Delimiter's used between two SFTP peers should be the same regardless of
+     * operating system. WS_DELIM defined elsewhere is OS specific delimiter. */
+    #define WOLFSSH_SFTP_DELIM "/\\"
+    #define WOLFSSH_SFTP_IS_DELIM(x) ((x) == '/' || (x) == '\\')
+    #define WOLFSSH_SFTP_IS_WINPATH(x,y) ((x) > 1 && (y)[1] == ':')
+#endif
+
 #if (defined(WOLFSSH_SFTP) || \
         defined(WOLFSSH_SCP) || defined(WOLFSSH_SSHD)) && \
     !defined(NO_WOLFSSH_SERVER) && !defined(NO_FILESYSTEM)

@@ -15691,6 +15691,66 @@ int SendChannelSuccess(WOLFSSH* ssh, word32 channelId, int success)
 
 #if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
     !defined(NO_WOLFSSH_SERVER)
+/* Checks if 'in' is absolute path, if not the returns the concat. of
+ * 'defaultPath' | 'in'. This leaves 'in' as-is and does not handle
+ * simplification of the path, such as removing ../
+ *
+ * Sanity checks outSz and then adjusts it for the size used
+ * returns WS_SUCCESS on success
+ */
+int wolfSSH_GetPath(const char* defaultPath, byte* in, word32 inSz,
+        char* out, word32* outSz)
+{
+    word32 curSz = 0;
+
+    if (out != NULL) {
+        WMEMSET(out, 0, *outSz);
+    }
+
+    if (inSz == 0 || (!WOLFSSH_SFTP_IS_DELIM(in[0]) &&
+        !WOLFSSH_SFTP_IS_WINPATH(inSz, in))) {
+        if (defaultPath != NULL) {
+            curSz = (word32)WSTRLEN(defaultPath);
+            if (out != NULL && curSz >= *outSz) {
+                return WS_INVALID_PATH_E;
+            }
+            if (out != NULL) {
+                WSTRNCPY(out, defaultPath, *outSz);
+                if (out[curSz] != '/') {
+                    out[curSz] = '/';
+                    curSz++;
+                }
+            }
+        }
+    }
+
+    if (out != NULL) {
+        if (curSz + inSz < *outSz) {
+            WMEMCPY(out + curSz, in, inSz);
+        }
+    }
+    curSz += inSz;
+    if (out != NULL) {
+        if (!WOLFSSH_SFTP_IS_DELIM(out[0])) {
+            if (curSz + 1 < *outSz) {
+                WMEMMOVE(out+1, out, curSz);
+                out[0] = '/';
+            }
+            curSz++;
+        }
+        if (curSz < *outSz) {
+            out[curSz] = 0;
+        }
+        else {
+            return WS_BUFFER_E;
+        }
+    }
+    *outSz = curSz;
+
+    return WS_SUCCESS;
+}
+
+
 /* cleans up absolute path
  * returns size of new path on success (strlen sz) and negative values on fail*/
 int wolfSSH_CleanPath(WOLFSSH* ssh, char* in)
