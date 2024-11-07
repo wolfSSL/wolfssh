@@ -993,7 +993,8 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     handshake = HandshakeInfoNew(heap);
     rng = (WC_RNG*)WMALLOC(sizeof(WC_RNG), heap, DYNTYPE_RNG);
 
-    if (handshake == NULL || rng == NULL || wc_InitRng(rng) != 0) {
+    if (handshake == NULL || rng == NULL ||
+            wc_InitRng_ex(rng, heap, INVALID_DEVID) != 0) {
 
         WLOG(WS_LOG_DEBUG, "SshInit: Cannot allocate memory.\n");
         WFREE(handshake, heap, DYNTYPE_HS);
