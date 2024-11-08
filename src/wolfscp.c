@@ -610,6 +610,15 @@ int DoScpSource(WOLFSSH* ssh)
                     continue;
                 }
                 if (ret < 0) {
+                #if !defined(NO_FILESYSTEM) && \
+                        !defined(WOLFSSH_SCP_USER_CALLBACKS)
+                    /* if the socket send had a fatal error, try to close any
+                     * open file descriptor before exit */
+                    ScpSendCtx* sendCtx = NULL;
+                    sendCtx = (ScpSendCtx*)wolfSSH_GetScpSendCtx(ssh);
+                    if (sendCtx != NULL)
+                        WFCLOSE(ssh->fs, sendCtx->fp);
+                #endif
                     WLOG(WS_LOG_ERROR, scpError, "failed to send file", ret);
                     break;
                 }
