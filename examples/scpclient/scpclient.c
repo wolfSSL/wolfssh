@@ -309,8 +309,10 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
         }
     } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE ||
                     ret == WS_CHAN_RXD || ret == WS_REKEYING);
-    if (ret != WS_SUCCESS)
-        err_sys("Couldn't copy the file.");
+    if (ret != WS_SUCCESS) {
+        fprintf(stderr, "Couldn't copy the file.");
+        ((func_args*)args)->return_code = 1;
+    }
 
     ret = wolfSSH_shutdown(ssh);
     /* do not continue on with shutdown process if peer already disconnected */
@@ -318,11 +320,14 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
             wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E &&
             wolfSSH_get_error(ssh) != WS_CHANNEL_CLOSED) {
         if (ret != WS_SUCCESS) {
-            err_sys("Sending the shutdown messages failed.");
+            WLOG(WS_LOG_DEBUG, "Sending the shutdown messages failed.");
         }
-        ret = wolfSSH_worker(ssh, NULL);
-        if (ret != WS_SUCCESS && ret != WS_CHANNEL_CLOSED) {
-            err_sys("Failed to listen for close messages from the peer.");
+        else {
+            ret = wolfSSH_worker(ssh, NULL);
+            if (ret != WS_SUCCESS && ret != WS_CHANNEL_CLOSED) {
+                WLOG(WS_LOG_DEBUG,
+                    "Failed to listen for close messages from the peer.");
+            }
         }
     }
     WCLOSESOCKET(sockFd);
@@ -330,7 +335,8 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     wolfSSH_CTX_free(ctx);
     if (ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E &&
             ret != WS_CHANNEL_CLOSED) {
-        err_sys("Closing scp stream failed. Connection could have been closed by peer");
+        WLOG(WS_LOG_DEBUG,
+        "Closing scp stream failed. Connection could have been closed by peer");
     }
 
     ClientFreeBuffers(pubKeyName, privKeyName, NULL);
@@ -338,6 +344,8 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
 
+    if (ret != WS_SUCCESS)
+        ((func_args*)args)->return_code = 1;
     return 0;
 }
 
