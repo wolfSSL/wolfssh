@@ -1572,6 +1572,11 @@ int ReceiveScpConfirmation(WOLFSSH* ssh)
                      "scp error: peer sent error confirmation (code: %d)",
                      msg[0]);
                 ret = WS_FATAL_ERROR;
+
+                /* SCP peer signaled a failure, propogate the error back
+                 * to the caller. If not set here WS_CHAN_RXD could be
+                 * returned. */
+                ssh->error = ret;
                 break;
         }
     }
