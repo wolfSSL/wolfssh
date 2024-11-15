@@ -391,13 +391,13 @@ static const CONFIG_OPTION options[NUM_OPTIONS] = {
     {OPT_FORCE_CMD,               "ForceCommand"},
     {OPT_HOST_CERT,               "HostCertificate"},
     {OPT_TRUSTED_USER_CA_KEYS,    "TrustedUserCAKeys"},
-    {OPT_TRUSTED_SYSTEM_CA_KEYS,  "TrustedSystemCAKeys"},
     {OPT_PIDFILE,                 "PidFile"},
     {OPT_BANNER,                  "Banner"},
-    {OPT_TRUSTED_USER_CA_STORE,   "TrustedUserCaStore"},
-    {OPT_WIN_USER_STORES,         "WinUserStores"},
-    {OPT_WIN_USER_DW_FLAGS,       "WinUserDwFlags"},
-    {OPT_WIN_USER_PV_PARA,        "WinUserPvPara"},
+    {OPT_TRUSTED_SYSTEM_CA_KEYS,  "wolfSSH_TrustedSystemCAKeys"},
+    {OPT_TRUSTED_USER_CA_STORE,   "wolfSSH_TrustedUserCaStore"},
+    {OPT_WIN_USER_STORES,         "wolfSSH_WinUserStores"},
+    {OPT_WIN_USER_DW_FLAGS,       "wolfSSH_WinUserDwFlags"},
+    {OPT_WIN_USER_PV_PARA,        "wolfSSH_WinUserPvPara"},
 };
 
 /* returns WS_SUCCESS on success */
