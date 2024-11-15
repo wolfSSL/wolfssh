@@ -97,3 +97,12 @@ jobs:
         run: |
           git log -3
           sudo ./run_all_sshd_tests.sh
+
+      # could use optimization with caching
+      - name: Test memory after close down
+        working-directory: ./wolfssh/
+        run: |
+          sudo apt-get install valgrind
+          touch sshd_config.txt
+          ./configure --enable-all LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include -DWOLFSSH_NO_FPKI -DWOLFSSH_NO_SFTP_TIMEOUT -DWOLFSSH_MAX_SFTP_RW=4000000 -DMAX_PATH_SZ=120" --enable-static --disable-shared && make
+          sudo timeout --preserve-status -s 2 5 valgrind --error-exitcode=1 --leak-check=full ./apps/wolfsshd/wolfsshd -D -f sshd_config -h ./keys/server-key.pem -d -p 22222
