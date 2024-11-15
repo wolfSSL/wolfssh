@@ -2468,9 +2468,11 @@ static int StartSSHD(int argc, char** argv)
             struct sockaddr_in6 clientAddr;
             socklen_t           clientAddrSz = sizeof(clientAddr);
 #endif
-            conn = (WOLFSSHD_CONNECTION*)WMALLOC(sizeof(WOLFSSHD_CONNECTION), NULL, DYNTYPE_SSHD);
+            conn = (WOLFSSHD_CONNECTION*)WMALLOC(sizeof(WOLFSSHD_CONNECTION),
+                NULL, DYNTYPE_SSHD);
             if (conn == NULL) {
-                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failed to malloc memory for connection");
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Failed to malloc memory for connection");
                 break;
             }
 
@@ -2536,9 +2538,13 @@ static int StartSSHD(int argc, char** argv)
                 }
                 ret = NewConnection(conn);
             }
+            else {
+                XFREE(conn, NULL, DYNTYPE_SSHD);
+            }
 #ifdef _WIN32
             /* check if service has been shutdown */
-            if (isDaemon && WaitForSingleObject(serviceStop, 0) == WAIT_OBJECT_0) {
+            if (isDaemon && WaitForSingleObject(serviceStop, 0) ==
+                    WAIT_OBJECT_0) {
                 quit = 1;
             }
 #endif
