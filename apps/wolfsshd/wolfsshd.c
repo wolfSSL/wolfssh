@@ -1498,6 +1498,8 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     continue;
                 }
                 else if (rc != WS_WANT_READ) {
+                    /* unexpected error, kill off child process */
+                    kill(childPid, SIGKILL);
                     break;
                 }
             }
