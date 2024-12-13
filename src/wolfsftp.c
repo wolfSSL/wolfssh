@@ -3035,7 +3035,7 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
                 != WS_SUCCESS) {
             WLOG(WS_LOG_SFTP, "Unable to get attribute values for %s",
                     out->fName);
-            WFREE(buf, out->heap, DYNTYPE_SFTP);
+            WFREE(out->fName, out->heap, DYNTYPE_SFTP);
             return WS_FATAL_ERROR;
         }
     }
