@@ -450,7 +450,7 @@ The wolfSSH client and server will automatically negotiate using Curve25519.
 POST-QUANTUM
 ============
 
-wolfSSH now supports the post-quantum algorithm ML-DSA (also known as Kyber).
+wolfSSH now supports the post-quantum algorithm ML-KEM (also known as Kyber).
 It uses the KYBER512 parameter set and is hybridized with ECDHE over the P-256
 ECC curve.
 
