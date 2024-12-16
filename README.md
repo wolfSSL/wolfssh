@@ -532,7 +532,7 @@ fred-cert.der would be:
 TPM
 ===
 
-wolfSSH now supports TPM support with client key authentication.
+wolfSSH now supports TPM public key authentication.
 
 When using TPM for client side public key authentication wolfSSH has dependencies
 on wolfCrypt and wolfTPM. Youll also need to have a tpm simulator
@@ -565,8 +565,10 @@ using:
 
     $ ./examples/keygen/keygen keyblob.bin -rsa -t -pem
 
-Take key.pem and convert the TPM public key to the ssh-rsa BASE64 username format:
-`ssh-keygen -f key.pem -i -m PKCS8`. Update echoserver.c user "hansel"'s public key.
+This will produce a key.pem TPM public key which needs to be converted the to
+the ssh-rsa BASE64 username format using this command: `ssh-keygen -f key.pem -i -m PKCS8`
+Take this BASE64 encoded public key and update the `samplePublicKeyRsaBuffer`
+in `echoserver.c` with it. Make sure to the user is "hansel"'s public key.
 
 The directory `examples` contains an echoserver that any client should
 be able to connect to. From wolfSSH open two terminal instances and run the

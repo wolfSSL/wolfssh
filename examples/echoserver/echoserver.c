@@ -43,6 +43,7 @@
 #include <wolfssh/agent.h>
 #include <wolfssh/test.h>
 #include <wolfssl/wolfcrypt/ecc.h>
+#include <wolfssl/wolfcrypt/logging.h>
 
 #include "examples/echoserver/echoserver.h"
 

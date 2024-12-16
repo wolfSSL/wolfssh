@@ -1546,6 +1546,8 @@ static int GetOpenSshKeyEd25519(ed25519_key* key,
 }
 #endif
 
+#ifdef WOLFSSH_TPM
+
 #ifndef WOLFSSH_NO_ECDSA
 static int GetOpenSshPublicKeyEcc(ecc_key* key, const byte* buf, word32 len,
     word32* idx)
@@ -1630,6 +1632,8 @@ static int GetOpenSshPublicKey(WS_KeySignature *key,
     }
     return ret;
 }
+
+#endif /* WOLFSSH_TPM */
 
 /*
  * Decodes an OpenSSH format key.
@@ -12947,9 +12951,9 @@ static int BuildUserAuthRequestRsa(WOLFSSH* ssh,
                     ret = WS_CRYPTO_FAILED;
                 }
                 else {
-                    int sigSz;
                     WLOG(WS_LOG_INFO, "Signing hash with RSA.");
                 #ifdef WOLFSSH_TPM
+                    int sigSz;
                     sigSz = keySig->sigSz;
                     if (ssh->ctx->tpmDev && ssh->ctx->tpmKey) {
                         ret = wc_RsaPad_ex(encDigest, encDigestSz, output+begin,
