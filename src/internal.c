@@ -1865,7 +1865,7 @@ static int IdentifyCert(const byte* in, word32 inSz, void* heap)
     }
 
     if (ret == 0) {
-        ret = IdentifyAsn1Key(key, keySz, 0, heap);
+        ret = IdentifyAsn1Key(key, keySz, 0, heap, NULL);
     }
 
     WFREE(key, heap, DYNTYPE_PUBKEY);
