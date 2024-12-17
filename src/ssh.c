@@ -1716,7 +1716,11 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
     WOLFSSH_UNUSED(heap);
 
     ret = IdentifyAsn1Key(in, inSz, isPrivate, heap, &key);
-    if (ret > 0) {
+    if (ret <= 0) {
+        WLOG(WS_LOG_DEBUG, "Unable to identify ASN.1 key");
+    }
+
+    if (ret > 0 && !isPrivate) {
         long e;
         byte n[RSA_MAX_SIZE]; /* TODO: Handle small stack */
         word32 nSz = (word32)sizeof(n), eSz = (word32)sizeof(e);
@@ -1768,12 +1772,39 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
         }
 
         wolfSSH_KEY_clean(key);
-        ret = WS_SUCCESS;
+    }
+    else if (ret > 0 && isPrivate) {
+        if (*out == NULL) {
+            newKey = (byte*)WMALLOC(inSz, heap, DYNTYPE_PRIVKEY);
+            if (newKey == NULL) {
+                ret = WS_MEMORY_E;
+                return ret;
+            }
+        }
+        else {
+            if (*outSz < inSz) {
+                WLOG(WS_LOG_DEBUG, "DER private key output size too small");
+                ret = WS_BUFFER_E;
+                return ret;
+            }
+            newKey = *out;
+        }
+
+        *out = newKey;
+        *outSz = inSz;
+        WMEMCPY(newKey, in, inSz);
+        *outType = (const byte*)IdToName(ret);
+        *outTypeSz = (word32)WSTRLEN((const char*)*outType);
     }
     else {
         WLOG(WS_LOG_DEBUG, "Unable to identify ASN.1 key");
+        if (*out == NULL) {
+            WFREE(newKey, heap, DYNTYPE_PRIVKEY);
+        }
     }
 
+    if (ret > 0)
+        ret = WS_SUCCESS;
     return ret;
 }
 
