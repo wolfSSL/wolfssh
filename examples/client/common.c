@@ -816,7 +816,7 @@ exit:
     WLOG(WS_LOG_DEBUG, "Leaving readKeyBlob(), rc = %d", rc);
     return rc;
 }
-
+// make rc check cleanup at end and get rid of uneeded returns
 static int wolfSSH_TPM_InitKey(WOLFTPM2_DEV* dev, const char* name,
                                WOLFTPM2_KEY* pTpmKey)
 {
@@ -832,7 +832,7 @@ static int wolfSSH_TPM_InitKey(WOLFTPM2_DEV* dev, const char* name,
     #ifdef DEBUG_WOLFSSH
         printf("TPM 2.0 Device initialization failed\n");
     #endif
-        return WOLFSSH_TPM_FAILED_INIT;
+        return WS_ERROR;
     }
 
     /* TPM 2.0 keys live under a Primary Key, acquire such key */
@@ -841,7 +841,7 @@ static int wolfSSH_TPM_InitKey(WOLFTPM2_DEV* dev, const char* name,
     #ifdef DEBUG_WOLFSSH
         printf("Acquiring a Primary TPM 2.0 Key failed\n");
     #endif
-        return WOLFSSH_TPM_FAILED_LOAD_PRIMARY;
+        return WS_BAD_ARGUMENT;
     }
 
     /* Load the TPM 2.0 key blob from disk */
@@ -850,7 +850,7 @@ static int wolfSSH_TPM_InitKey(WOLFTPM2_DEV* dev, const char* name,
     #ifdef DEBUG_WOLFSSH
         printf("Reading key blob from disk failed\n");
     #endif
-        return WOLFSSH_TPM_FAILED_READ_KEYBLOB;
+        return WS_DECRYPT_E;
     }
 
     /* TODO: workaround until password can be supplied */
@@ -866,7 +866,7 @@ static int wolfSSH_TPM_InitKey(WOLFTPM2_DEV* dev, const char* name,
     #ifdef DEBUG_WOLFSSH
         printf("wolfTPM2_LoadKey failed\n");
     #endif
-        return WOLFSSH_TPM_FAILED_LOAD_KEY;
+        return WS_BAD_ARGUMENT;
     }
     #ifdef DEBUG_WOLFSSH
     printf("Loaded key to 0x%x\n", (word32)tpmKeyBlob.handle.hndl);
@@ -880,7 +880,7 @@ static int wolfSSH_TPM_InitKey(WOLFTPM2_DEV* dev, const char* name,
     #ifdef DEBUG_WOLFSSH
         printf("Exporting TPM key failed\n");
     #endif
-        return WOLFSSH_TPM_FAILED_EXPORT_KEY;
+        return WS_MEMORY_E;
     }
 
     /* Read public key from the buffer and convert the key to OpenSSH format */
@@ -891,7 +891,7 @@ static int wolfSSH_TPM_InitKey(WOLFTPM2_DEV* dev, const char* name,
     #ifdef DEBUG_WOLFSSH
         printf("Reading public key failed returned: %d\n", rc);
     #endif
-        return WOLFSSH_TPM_FAILED_READ_PUBLIC_KEY;
+        return WS_PUBKEY_REJECTED_E;
     }
     userPublicKey = p;
 

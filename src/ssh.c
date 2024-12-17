@@ -1807,7 +1807,11 @@ static int DoPemKey(const byte* in, word32 inSz, byte** out,
         ret = wc_KeyPemToDer(in, inSz, newKey, newKeySz, NULL);
     }
     else {
+    #ifdef WOLFSSH_TPM
         ret = wc_PubKeyPemToDer(in, inSz, newKey, newKeySz);
+    #else
+        ret = NOT_COMPILED_IN;
+    #endif
     }
     if (ret > 0) {
         newKeySz = (word32)ret;

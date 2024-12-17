@@ -137,15 +137,7 @@ enum WS_ErrorCodes {
     WS_AUTH_PENDING         = -1096, /* User authentication still pending */
     WS_KDF_E                = -1097, /* KDF error*/
 
-    /* TODO: Fix names and add hard coded value */
-    WOLFSSH_TPM_FAILED_INIT,
-    WOLFSSH_TPM_FAILED_LOAD_PRIMARY,
-    WOLFSSH_TPM_FAILED_READ_KEYBLOB,
-    WOLFSSH_TPM_FAILED_EXPORT_KEY,
-    WOLFSSH_TPM_FAILED_LOAD_KEY,
-    WOLFSSH_TPM_FAILED_READ_PUBLIC_KEY,
-
-    WS_LAST_E               = WOLFSSH_TPM_FAILED_READ_PUBLIC_KEY  /* Update this to indicate last error */
+    WS_LAST_E               = WS_KDF_E  /* Update this to indicate last error */
 };
 
 
