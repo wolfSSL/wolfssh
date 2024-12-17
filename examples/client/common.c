@@ -708,7 +708,7 @@ static int getPrimaryStoragekey(WOLFTPM2_DEV* pDev,
         rc = wolfTPM2_CreateSRK(pDev, pStorageKey, alg,
             (byte*)gStorageKeyAuth, sizeof(gStorageKeyAuth)-1);
     #ifndef WOLFTPM_WINAPI
-        if (rc == TPM_RC_SUCCESS) {
+        if (rc == 0) {
             /* Move storage key into persistent NV */
             rc = wolfTPM2_NVStoreKey(pDev, TPM_RH_OWNER, pStorageKey,
                 TPM2_DEMO_STORAGE_KEY_HANDLE);
@@ -777,7 +777,7 @@ static int readKeyBlob(const char* filename, WOLFTPM2_KEYBLOB* key)
         /* Decode the byte stream into a publicArea structure ready for use */
         rc = TPM2_ParsePublic(&key->pub, pubAreaBuffer,
             (word32)sizeof(pubAreaBuffer), &pubAreaSize);
-        if (rc != TPM_RC_SUCCESS) return rc;
+        if (rc != 0) return rc;
 
         if (fileSz > 0) {
             printf("Reading the private part of the key\n");
@@ -816,94 +816,85 @@ exit:
     WLOG(WS_LOG_DEBUG, "Leaving readKeyBlob(), rc = %d", rc);
     return rc;
 }
-// make rc check cleanup at end and get rid of uneeded returns
+
 static int wolfSSH_TPM_InitKey(WOLFTPM2_DEV* dev, const char* name,
                                WOLFTPM2_KEY* pTpmKey)
 {
-    int rc;
+    int rc = 0;
     WOLFTPM2_KEY storage;
     WOLFTPM2_KEYBLOB tpmKeyBlob;
     byte* p = NULL;
-
-    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_TPM_InitKey()");
-
-    rc = wolfTPM2_Init(dev, TPM2_IoCb, NULL);
-    if (rc != TPM_RC_SUCCESS) {
-    #ifdef DEBUG_WOLFSSH
-        printf("TPM 2.0 Device initialization failed\n");
-    #endif
-        return WS_ERROR;
-    }
-
-    /* TPM 2.0 keys live under a Primary Key, acquire such key */
-    rc = getPrimaryStoragekey(dev, &storage, TPM_ALG_RSA);
-    if (rc != TPM_RC_SUCCESS) {
-    #ifdef DEBUG_WOLFSSH
-        printf("Acquiring a Primary TPM 2.0 Key failed\n");
-    #endif
-        return WS_BAD_ARGUMENT;
-    }
-
-    /* Load the TPM 2.0 key blob from disk */
-    rc = readKeyBlob(name, &tpmKeyBlob);
-    if (rc != TPM_RC_SUCCESS) {
-    #ifdef DEBUG_WOLFSSH
-        printf("Reading key blob from disk failed\n");
-    #endif
-        return WS_DECRYPT_E;
-    }
-
     /* TODO: workaround until password can be supplied */
     /* consider a refactor to take a 32-bit handle and key auth password */
     static const char gKeyAuth[] = "ThisIsMyKeyAuth";
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_TPM_InitKey()");
+
+    /* Initilize the TPM 2.0 device */
+    if (rc == 0) {
+        rc = wolfTPM2_Init(dev, TPM2_IoCb, NULL);
+        if (rc != 0)
+            WLOG(WS_LOG_DEBUG, "TPM 2.0 Device initialization failed, rc: %d", rc);
+    }
+
+    /* TPM 2.0 keys live under a Primary Key, acquire such key */
+    if (rc == 0) {
+        rc = getPrimaryStoragekey(dev, &storage, TPM_ALG_RSA);
+        if (rc != 0)
+            WLOG(WS_LOG_DEBUG, "Acquiring a Primary TPM 2.0 Key failed, rc: %d", rc);
+    }
+
+    /* Load the TPM 2.0 key blob from disk */
+    if (rc == 0) {
+        rc = readKeyBlob(name, &tpmKeyBlob);
+        if (rc != 0)
+            WLOG(WS_LOG_DEBUG, "Reading key blob from disk failed, rc: %d", rc);
+    }
+
     /* set session for authorization key */
-    tpmKeyBlob.handle.auth.size = (int)sizeof(gKeyAuth)-1;
-    XMEMCPY(tpmKeyBlob.handle.auth.buffer, gKeyAuth, tpmKeyBlob.handle.auth.size);
+    if (rc == 0) {
+        tpmKeyBlob.handle.auth.size = (int)sizeof(gKeyAuth)-1;
+        XMEMCPY(tpmKeyBlob.handle.auth.buffer, gKeyAuth,
+            tpmKeyBlob.handle.auth.size);
+    }
 
     /* Load the public key into the TPM device */
-    rc = wolfTPM2_LoadKey(dev, &tpmKeyBlob, &storage.handle);
-    if (rc != TPM_RC_SUCCESS) {
-    #ifdef DEBUG_WOLFSSH
-        printf("wolfTPM2_LoadKey failed\n");
-    #endif
-        return WS_BAD_ARGUMENT;
+    if (rc == 0) {
+        rc = wolfTPM2_LoadKey(dev, &tpmKeyBlob, &storage.handle);
+        if (rc != 0)
+            WLOG(WS_LOG_DEBUG, "wolfTPM2_LoadKey failed, rc: %d", rc);
+        WLOG(WS_LOG_DEBUG, "Loaded key to 0x%x\n", (word32)tpmKeyBlob.handle.hndl);
     }
-    #ifdef DEBUG_WOLFSSH
-    printf("Loaded key to 0x%x\n", (word32)tpmKeyBlob.handle.hndl);
-    #endif
 
     /* Read the public key and extract the public key as a DER/ASN.1 */
-    userPublicKeySz = sizeof(userPublicKeyBuf);
-    rc = wolfTPM2_ExportPublicKeyBuffer(dev, (WOLFTPM2_KEY*)&tpmKeyBlob,
-        ENCODING_TYPE_ASN1, userPublicKey, &userPublicKeySz);
-    if (rc != TPM_RC_SUCCESS) {
-    #ifdef DEBUG_WOLFSSH
-        printf("Exporting TPM key failed\n");
-    #endif
-        return WS_MEMORY_E;
+    if (rc == 0) {
+        userPublicKeySz = sizeof(userPublicKeyBuf);
+        rc = wolfTPM2_ExportPublicKeyBuffer(dev, (WOLFTPM2_KEY*)&tpmKeyBlob,
+            ENCODING_TYPE_ASN1, userPublicKey, &userPublicKeySz);
+        if (rc != 0)
+            WLOG(WS_LOG_DEBUG, "Exporting TPM key failed, rc: %d", rc);
     }
 
-    /* Read public key from the buffer and convert the key to OpenSSH format */
-    rc = wolfSSH_ReadPublicKey_buffer(userPublicKey, userPublicKeySz,
-        WOLFSSH_FORMAT_ASN1, &p, &userPublicKeySz, &userPublicKeyType,
-        &userPublicKeyTypeSz, NULL);
-    if (rc != TPM_RC_SUCCESS) {
-    #ifdef DEBUG_WOLFSSH
-        printf("Reading public key failed returned: %d\n", rc);
-    #endif
-        return WS_PUBKEY_REJECTED_E;
+    /* Read public key from buffer and convert key to OpenSSH format */
+    if (rc == 0) {
+        rc = wolfSSH_ReadPublicKey_buffer(userPublicKey, userPublicKeySz,
+            WOLFSSH_FORMAT_ASN1, &p, &userPublicKeySz, &userPublicKeyType,
+            &userPublicKeyTypeSz, NULL);
+        if (rc != 0)
+            WLOG(WS_LOG_DEBUG, "Reading public key failed, rc: %d", rc);
+        else
+            userPublicKey = p;
     }
-    userPublicKey = p;
-
-    XMEMCPY(&pTpmKey->handle, &tpmKeyBlob.handle, sizeof(pTpmKey->handle));
-    XMEMCPY(&pTpmKey->pub, &tpmKeyBlob.pub, sizeof(pTpmKey->pub));
 
     /* Unload SRK storage handle */
-    wolfTPM2_UnloadHandle(dev, &storage.handle);
-    /* Key handle is unloaded on TPM cleanup */
+    if (rc == 0) {
+        XMEMCPY(&pTpmKey->handle, &tpmKeyBlob.handle, sizeof(pTpmKey->handle));
+        XMEMCPY(&pTpmKey->pub, &tpmKeyBlob.pub, sizeof(pTpmKey->pub));
+        wolfTPM2_UnloadHandle(dev, &storage.handle);
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_TPM_InitKey()");
-    return WS_SUCCESS;
+    return rc;
 }
 
 static void wolfSSH_TPM_Cleanup(WOLFTPM2_DEV* dev, WOLFTPM2_KEY* key)
