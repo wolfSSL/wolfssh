@@ -1237,6 +1237,10 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
     int dynType = isPrivate ? DYNTYPE_PRIVKEY : DYNTYPE_PUBKEY;
     WOLFSSH_UNUSED(dynType);
 
+    if (pkey != NULL) {
+        *pkey = NULL;
+    }
+
     key = (WS_KeySignature*)WMALLOC(sizeof(WS_KeySignature), heap, dynType);
     if (key == NULL) {
         ret = WS_MEMORY_E;
@@ -1329,6 +1333,8 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
             ret = WS_UNIMPLEMENTED_E;
         }
         else {
+            if (pkey != NULL)
+                *pkey = key;
             ret = key->keySigId;
         }
 
@@ -1337,10 +1343,6 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
             WFREE(key, heap, dynType);
             key = NULL;
         }
-    }
-
-    if (pkey != NULL) {
-        *pkey = key;
     }
 
     return ret;
@@ -1867,8 +1869,9 @@ static int IdentifyCert(const byte* in, word32 inSz, void* heap)
     if (ret == 0) {
         ret = IdentifyAsn1Key(key, keySz, 0, heap, NULL);
     }
-
-    WFREE(key, heap, DYNTYPE_PUBKEY);
+    if (key != NULL) {
+        WFREE(key, heap, DYNTYPE_PUBKEY);
+    }
     if (cert != NULL) {
         wc_FreeDecodedCert(cert);
         #ifdef WOLFSSH_SMALL_STACK
@@ -2210,7 +2213,8 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
     if (type == BUFTYPE_PRIVKEY) {
         ret = IdentifyAsn1Key(der, derSz, 1, ctx->heap, NULL);
         if (ret < 0) {
-            WFREE(der, heap, dynamicType);
+            if (der != NULL)
+                WFREE(der, heap, dynamicType);
             return ret;
         }
         keyId = (byte)ret;

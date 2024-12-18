@@ -1766,7 +1766,6 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
                 newKey[idx++] = 0;
             }
             WMEMCPY(&newKey[idx], n, nSz);
-            idx += nSz;
 
             *out = newKey;
         }
@@ -1803,8 +1802,10 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
         }
     }
 
-    if (ret > 0)
+    if (ret > 0) {
         ret = WS_SUCCESS;
+    }
+
     return ret;
 }
 

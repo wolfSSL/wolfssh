@@ -833,22 +833,25 @@ static int wolfSSH_TPM_InitKey(WOLFTPM2_DEV* dev, const char* name,
     /* Initilize the TPM 2.0 device */
     if (rc == 0) {
         rc = wolfTPM2_Init(dev, TPM2_IoCb, NULL);
-        if (rc != 0)
+        if (rc != 0) {
             WLOG(WS_LOG_DEBUG, "TPM 2.0 Device initialization failed, rc: %d", rc);
+        }
     }
 
     /* TPM 2.0 keys live under a Primary Key, acquire such key */
     if (rc == 0) {
         rc = getPrimaryStoragekey(dev, &storage, TPM_ALG_RSA);
-        if (rc != 0)
+        if (rc != 0) {
             WLOG(WS_LOG_DEBUG, "Acquiring a Primary TPM 2.0 Key failed, rc: %d", rc);
+        }
     }
 
     /* Load the TPM 2.0 key blob from disk */
     if (rc == 0) {
         rc = readKeyBlob(name, &tpmKeyBlob);
-        if (rc != 0)
+        if (rc != 0) {
             WLOG(WS_LOG_DEBUG, "Reading key blob from disk failed, rc: %d", rc);
+        }
     }
 
     /* set session for authorization key */
@@ -861,8 +864,9 @@ static int wolfSSH_TPM_InitKey(WOLFTPM2_DEV* dev, const char* name,
     /* Load the public key into the TPM device */
     if (rc == 0) {
         rc = wolfTPM2_LoadKey(dev, &tpmKeyBlob, &storage.handle);
-        if (rc != 0)
+        if (rc != 0) {
             WLOG(WS_LOG_DEBUG, "wolfTPM2_LoadKey failed, rc: %d", rc);
+        }
         WLOG(WS_LOG_DEBUG, "Loaded key to 0x%x\n", (word32)tpmKeyBlob.handle.hndl);
     }
 
@@ -871,8 +875,9 @@ static int wolfSSH_TPM_InitKey(WOLFTPM2_DEV* dev, const char* name,
         userPublicKeySz = sizeof(userPublicKeyBuf);
         rc = wolfTPM2_ExportPublicKeyBuffer(dev, (WOLFTPM2_KEY*)&tpmKeyBlob,
             ENCODING_TYPE_ASN1, userPublicKey, &userPublicKeySz);
-        if (rc != 0)
+        if (rc != 0) {
             WLOG(WS_LOG_DEBUG, "Exporting TPM key failed, rc: %d", rc);
+        }
     }
 
     /* Read public key from buffer and convert key to OpenSSH format */
@@ -880,10 +885,10 @@ static int wolfSSH_TPM_InitKey(WOLFTPM2_DEV* dev, const char* name,
         rc = wolfSSH_ReadPublicKey_buffer(userPublicKey, userPublicKeySz,
             WOLFSSH_FORMAT_ASN1, &p, &userPublicKeySz, &userPublicKeyType,
             &userPublicKeyTypeSz, NULL);
-        if (rc != 0)
+        if (rc != 0) {
             WLOG(WS_LOG_DEBUG, "Reading public key failed, rc: %d", rc);
-        else
-            userPublicKey = p;
+        }
+        userPublicKey = p;
     }
 
     /* Unload SRK storage handle */
