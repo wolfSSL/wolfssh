@@ -1751,7 +1751,7 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
             c32toa((word32)WSTRLEN(keyFormat), &newKey[idx]);
             idx += LENGTH_SZ;
             WMEMCPY(&newKey[idx], keyFormat, (word32)WSTRLEN(keyFormat));
-            idx += WSTRLEN(keyFormat);
+            idx += (word32)WSTRLEN(keyFormat);
 
             /* encode public exponent (e) */
             c32toa(eSz, &newKey[idx]);
@@ -1795,6 +1795,8 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
     }
 
     wolfSSH_KEY_clean(key);
+    WFREE(key, heap, isPrivate ? DYNTYPE_PRIVKEY : DYNTYPE_PUBKEY);
+
     if (*out == NULL) {
         WFREE(newKey, heap, DYNTYPE_PRIVKEY);
     }

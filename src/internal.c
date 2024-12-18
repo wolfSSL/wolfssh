@@ -1338,7 +1338,8 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
             ret = key->keySigId;
         }
 
-        if (pkey == NULL || ret == WS_UNIMPLEMENTED_E) {
+        /* if not returning key then free it */
+        if (pkey == NULL || *pkey == NULL) {
             wolfSSH_KEY_clean(key);
             WFREE(key, heap, dynType);
             key = NULL;
