@@ -32,6 +32,9 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx);
 void ClientIPOverride(int flag);
 void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
         void* heap);
+#ifdef WOLFSSH_TPM
+int CLientSetTpm(WOLFSSH* ssh);
+#endif
 
 #endif /* WOLFSSH_COMMON_H */
 
