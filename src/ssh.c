@@ -1769,8 +1769,6 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
 
             *out = newKey;
         }
-
-        wolfSSH_KEY_clean(key);
     }
     else if (ret > 0 && isPrivate) {
         if (*out == NULL) {
@@ -1795,11 +1793,10 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
         *outType = (const byte*)IdToName(ret);
         *outTypeSz = (word32)WSTRLEN((const char*)*outType);
     }
-    else {
-        WLOG(WS_LOG_DEBUG, "Unable to identify ASN.1 key");
-        if (*out == NULL) {
-            WFREE(newKey, heap, DYNTYPE_PRIVKEY);
-        }
+
+    wolfSSH_KEY_clean(key);
+    if (*out == NULL) {
+        WFREE(newKey, heap, DYNTYPE_PRIVKEY);
     }
 
     if (ret > 0) {
