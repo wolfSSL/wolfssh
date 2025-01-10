@@ -3,9 +3,9 @@
 # All paths should be given relative to the root
 
 check_PROGRAMS  += tests/unit.test tests/api.test \
-                   tests/testsuite.test
+                   tests/testsuite.test tests/auth.test
 noinst_PROGRAMS += tests/unit.test tests/api.test \
-                   tests/testsuite.test
+                   tests/testsuite.test tests/auth.test
 
 tests_unit_test_SOURCES      = tests/unit.c tests/unit.h
 tests_unit_test_CPPFLAGS     = -DNO_MAIN_DRIVER
@@ -100,3 +100,34 @@ tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_CERTS
 endif
 tests_testsuite_test_LDADD   = src/libwolfssh.la
 tests_testsuite_test_DEPENDENCIES = src/libwolfssh.la
+
+
+tests_auth_test_SOURCES      = tests/auth.c tests/auth.h
+tests_auth_test_CPPFLAGS     = -DNO_MAIN_DRIVER
+if BUILD_KEYGEN
+tests_auth_test_CPPFLAGS    += -DWOLFSSH_KEYGEN
+endif
+if BUILD_SCP
+tests_auth_test_CPPFLAGS    += -DWOLFSSH_SCP
+endif
+if BUILD_SFTP
+tests_auth_test_CPPFLAGS    += -DWOLFSSH_SFTP
+endif
+if BUILD_TERM
+tests_auth_test_CPPFLAGS    += -DWOLFSSH_TERM
+endif
+if BUILD_SHELL
+tests_auth_test_CPPFLAGS    += -DWOLFSSH_SHELL
+endif
+if BUILD_AGENT
+tests_auth_test_CPPFLAGS    += -DWOLFSSH_AGENT
+endif
+if BUILD_FWD
+tests_auth_test_CPPFLAGS    += -DWOLFSSH_FWD
+endif
+if BUILD_CERTS
+tests_auth_test_CPPFLAGS    += -DWOLFSSH_CERTS
+endif
+tests_auth_test_LDADD        = src/libwolfssh.la
+tests_auth_test_DEPENDENCIES = src/libwolfssh.la
+

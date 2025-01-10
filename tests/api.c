@@ -1555,6 +1555,150 @@ static void test_wolfSSH_QueryAlgoList(void)
     AssertIntEQ(WS_INVALID_ALGO_ID, k);
 }
 
+#if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT) && \
+    !defined(SINGLE_THREADED)
+
+static byte* kbResponse = (byte*)"test";
+static word32 kbResponseLength = 4;
+
+static int keyboardUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
+{
+    (void) ctx;
+    int ret = WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
+
+    if (authType == WOLFSSH_USERAUTH_KEYBOARD) {
+        AssertIntEQ(1, authData->sf.keyboard.promptCount);
+        AssertStrEQ("KB Auth Password: ", authData->sf.keyboard.prompts[0]);
+
+        authData->sf.keyboard.responseCount = 1;
+        authData->sf.keyboard.responseLengths = &kbResponseLength;
+        authData->sf.keyboard.responses = (byte**)&kbResponse;
+        ret = WS_SUCCESS;
+    }
+    return ret;
+}
+
+
+static void keyboard_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
+{
+    SOCKET_T sockFd = WOLFSSH_SOCKET_INVALID;
+    SOCKADDR_IN_T clientAddr;
+    socklen_t clientAddrSz = sizeof(clientAddr);
+    int ret;
+    char* host = (char*)wolfSshIp;
+    const char* username = "test";
+
+    if (ctx == NULL || ssh == NULL) {
+        return;
+    }
+
+    *ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (*ctx == NULL) {
+        return;
+    }
+
+    wolfSSH_SetUserAuth(*ctx, keyboardUserAuth);
+    *ssh = wolfSSH_new(*ctx);
+    if (*ssh == NULL) {
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        return;
+    }
+
+    build_addr(&clientAddr, host, port);
+    tcp_socket(&sockFd, ((struct sockaddr_in *)&clientAddr)->sin_family);
+    ret = connect(sockFd, (const struct sockaddr *)&clientAddr, clientAddrSz);
+    if (ret != 0){
+        wolfSSH_free(*ssh);
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        *ssh = NULL;
+        return;
+    }
+
+    ret = wolfSSH_SetUsername(*ssh, username);
+    if (ret == WS_SUCCESS)
+        ret = wolfSSH_set_fd(*ssh, (int)sockFd);
+
+    if (ret == WS_SUCCESS)
+        ret = wolfSSH_connect(*ssh);
+
+    if (ret != WS_SUCCESS){
+        wolfSSH_free(*ssh);
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        *ssh = NULL;
+        return;
+    }
+}
+
+static void test_wolfSSH_KeyboardInteractive(void)
+{
+    func_args ser;
+    tcp_ready ready;
+    int argsCount;
+    WS_SOCKET_T clientFd;
+
+    const char* args[10];
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+
+    THREAD_TYPE serThread;
+
+    WMEMSET(&ser, 0, sizeof(func_args));
+
+    argsCount = 0;
+    args[argsCount++] = ".";
+    args[argsCount++] = "-1";
+    args[argsCount++] = "-i";
+    args[argsCount++] = "test:test";
+#ifndef USE_WINDOWS_API
+    args[argsCount++] = "-p";
+    args[argsCount++] = "0";
+#endif
+    ser.argv   = (char**)args;
+    ser.argc    = argsCount;
+    ser.signal = &ready;
+    InitTcpReady(ser.signal);
+    ThreadStart(echoserver_test, (void*)&ser, &serThread);
+    WaitTcpReady(&ready);
+
+    keyboard_client_connect(&ctx, &ssh, ready.port);
+    AssertNotNull(ctx);
+    AssertNotNull(ssh);
+
+
+    argsCount = wolfSSH_shutdown(ssh);
+    if (argsCount == WS_SOCKET_ERROR_E) {
+        /* If the socket is closed on shutdown, peer is gone, this is OK. */
+        argsCount = WS_SUCCESS;
+    }
+
+#if DEFAULT_HIGHWATER_MARK < 8000
+    if (argsCount == WS_REKEYING) {
+        /* in cases where highwater mark is really small a re-key could happen */
+        argsCount = WS_SUCCESS;
+    }
+#endif
+
+    AssertIntEQ(argsCount, WS_SUCCESS);
+
+    /* close client socket down */
+    clientFd = wolfSSH_get_fd(ssh);
+    WCLOSESOCKET(clientFd);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+#ifdef WOLFSSH_ZEPHYR
+    /* Weird deadlock without this sleep */
+    k_sleep(Z_TIMEOUT_TICKS(100));
+#endif
+    ThreadJoin(serThread);
+}
+
+#else /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
+static void test_wolfSSH_KeyboardInteractive(void) { ; }
+#endif /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
 
 #endif /* WOLFSSH_TEST_BLOCK */
 
@@ -1591,6 +1735,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_ReadKey();
     test_wolfSSH_QueryAlgoList();
     test_wolfSSH_SetAlgoList();
+    test_wolfSSH_KeyboardInteractive();
 
     /* SCP tests */
     test_wolfSSH_SCP_CB();

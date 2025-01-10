@@ -88,6 +88,13 @@ extern "C" {
     #define HAVE_WC_ECC_SET_RNG
 #endif
 
+/* Maximum number of prompts in one request / response transaction for
+ * Keyboard-Interactive authentication.
+ */
+#if !defined(WOLFSSH_MAX_PROMPTS)
+    #define WOLFSSH_MAX_PROMPTS 64
+#endif
+
 #ifdef __cplusplus
 }
 #endif

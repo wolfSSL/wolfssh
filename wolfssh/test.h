@@ -1199,9 +1199,9 @@ static void FreeBins(byte* b1, byte* b2, byte* b3, byte* b4)
 
 /* convert hex string to binary, store size, 0 success (free mem on failure) */
 static int ConvertHexToBin(const char* h1, byte** b1, word32* b1Sz,
-                           const char* h2, byte** b2, word32* b2Sz,
-                           const char* h3, byte** b3, word32* b3Sz,
-                           const char* h4, byte** b4, word32* b4Sz)
+                                  const char* h2, byte** b2, word32* b2Sz,
+                                  const char* h3, byte** b3, word32* b3Sz,
+                                  const char* h4, byte** b4, word32* b4Sz)
 {
     int ret;
 
