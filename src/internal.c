@@ -2314,7 +2314,7 @@ int GenerateKey(byte hashId, byte keyId,
 
     return ret;
 }
-#endif /* HAVE_FIPS && LIBWOLFSSL_VERSION_HEX >= WOLFSSL_V5_7_2 */
+#endif /* HAVE_FIPS && LIBWOLFSSL_VERSION_HEX >= WOLFSSL_V5_0_0 */
 
 
 static int GenerateKeys(WOLFSSH* ssh, byte hashId, byte doKeyPad)
