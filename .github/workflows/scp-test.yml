@@ -95,6 +95,10 @@ jobs:
       - name: Setup test user
         run: sudo useradd -p password jak
 
+      # This is a regression test for a reported hang with SCP file transfer.
+      #     Verifying the error from a bad directory is propogated back, and
+      #     that the direcotry/file is not created. To account for potential
+      #     hanging of the operation, the timeout is set to 1 minute.
       - name: Run SCP example test
         timeout-minutes: 1
         working-directory: ./wolfssh/
