@@ -750,9 +750,18 @@ static const char cannedKeyAlgoNames[] =
 #ifndef WOLFSSH_NO_RSA_SHA2_256
     "rsa-sha2-256,"
 #endif/* WOLFSSH_NO_RSA_SHA2_256 */
+#ifndef WOLFSSH_NO_RSA_SHA2_512
+    "rsa-sha2-512",
+#endif /* WOLFSSH_NO_RSA_SHA2_512 */
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
     "ecdsa-sha2-nistp256,"
 #endif /* WOLFSSH_NO_ECDSA_SHA2_NISTP256 */
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+    "ecdsa-sha2-nistp384,"
+#endif /* WOLFSSH_NO_ECDSA_SHA2_NISTP384 */
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+    "ecdsa-sha2-nistp521,"
+#endif /* WOLFSSH_NO_ECDSA_SHA2_NISTP521 */
 #ifdef WOLFSSH_CERTS
     #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
         "x509v3-ecdsa-sha2-nistp256,"

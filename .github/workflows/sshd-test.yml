@@ -106,3 +106,20 @@ jobs:
           touch sshd_config.txt
           ./configure --enable-all LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include -DWOLFSSH_NO_FPKI -DWOLFSSH_NO_SFTP_TIMEOUT -DWOLFSSH_MAX_SFTP_RW=4000000 -DMAX_PATH_SZ=120" --enable-static --disable-shared && make
           sudo timeout --preserve-status -s 2 5 valgrind --error-exitcode=1 --leak-check=full ./apps/wolfsshd/wolfsshd -D -f sshd_config -h ./keys/server-key.pem -d -p 22222
+
+      - name: configure with debug
+        working-directory: ./wolfssh/
+        run : |
+          ./configure --enable-all --enable-debug LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include -DWOLFSSH_NO_FPKI -DWOLFSSH_NO_SFTP_TIMEOUT -DWOLFSSH_MAX_SFTP_RW=4000000 -DMAX_PATH_SZ=120"
+
+      - name: make
+        working-directory: ./wolfssh/
+        run: make
+
+      # ssh_kex_algos.sh requires debug output otherwise it is skipped
+      - name: Run wolfSSHd tests with debug
+        working-directory: ./wolfssh/apps/wolfsshd/test
+        run: |
+          git log -3
+          sudo ./run_all_sshd_tests.sh --match ssh_kex_algos.sh
+
