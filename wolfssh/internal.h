@@ -721,11 +721,9 @@ struct WOLFSSH {
     char*  scpRecvMsg;            /* reading up to newline delimiter */
     int    scpRecvMsgSz;          /* current size of scp recv message */
     const char* scpBasePath;      /* base path, ptr into channelList->command */
-#ifdef WOLFSSL_NUCLEUS
     /* alter base path instead of using chdir */
     char* scpBasePathDynamic;     /* dynamic base path */
     word32 scpBasePathSz;
-#endif
     byte   scpIsRecursive;        /* recursive transfer requested */
     byte   scpRequestType;        /* directory or single file */
     byte   scpMsgType;
