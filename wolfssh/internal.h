@@ -154,12 +154,14 @@ extern "C" {
     #define WOLFSSH_NO_ECDH_SHA2_NISTP256
 #endif
 #if defined(WOLFSSH_NO_ECDH) \
-    || !defined(WOLFSSL_SHA384) || !defined(HAVE_ECC384)
+    || !defined(WOLFSSL_SHA384) || \
+    (!defined(HAVE_ECC384) && !defined(HAVE_ALL_CURVES))
     #undef WOLFSSH_NO_ECDH_SHA2_NISTP384
     #define WOLFSSH_NO_ECDH_SHA2_NISTP384
 #endif
 #if defined(WOLFSSH_NO_ECDH) \
-    || !defined(WOLFSSL_SHA512) || !defined(HAVE_ECC521)
+    || !defined(WOLFSSL_SHA512) || \
+    (!defined(HAVE_ECC521) && !defined(HAVE_ALL_CURVES))
     #undef WOLFSSH_NO_ECDH_SHA2_NISTP521
     #define WOLFSSH_NO_ECDH_SHA2_NISTP521
 #endif
@@ -218,12 +220,14 @@ extern "C" {
     #define WOLFSSH_NO_ECDSA_SHA2_NISTP256
 #endif
 #if defined(WOLFSSH_NO_ECDSA) || \
-    !defined(WOLFSSL_SHA384) || !defined(HAVE_ECC384)
+    !defined(WOLFSSL_SHA384) || \
+    (!defined(HAVE_ECC384) && !defined(HAVE_ALL_CURVES))
     #undef WOLFSSH_NO_ECDSA_SHA2_NISTP384
     #define WOLFSSH_NO_ECDSA_SHA2_NISTP384
 #endif
 #if defined(WOLFSSH_NO_ECDSA) || \
-    !defined(WOLFSSL_SHA512) || !defined(HAVE_ECC521)
+    !defined(WOLFSSL_SHA512) || \
+    (!defined(HAVE_ECC521) && !defined(HAVE_ALL_CURVES))
     #undef WOLFSSH_NO_ECDSA_SHA2_NISTP521
     #define WOLFSSH_NO_ECDSA_SHA2_NISTP521
 #endif
