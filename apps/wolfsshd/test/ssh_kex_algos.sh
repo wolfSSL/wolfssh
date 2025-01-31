@@ -80,6 +80,7 @@ test_for_algo_name_success() {
     test_for_algo_name "$1"
     if [ $EXISTS != 1 ]; then
         printf "Error finding algo name $1\n"
+        printf "Searched in :\n$SUBSTRING\n"
         exit 1
     fi
 }
@@ -89,6 +90,7 @@ test_for_algo_name_fail() {
     test_for_algo_name "$1"
     if [ $EXISTS = 1 ]; then
         printf "Error expected to not find algo name $1\n"
+        printf "Searched in :\n$SUBSTRING\n"
         exit 1
     fi
 }
