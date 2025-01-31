@@ -1,3 +1,26 @@
+# wolfSSH v1.4.20 (Feburary 20, 2025)
+
+## New Features
+
+- Added DH Group 16 and HMAC-SHA2-512 support (PR 768)
+- Added RFC-4256 keyboard-interactive authentication support (PR 763)
+
+## Enhancements and Fixes
+
+- Enhancement to pass dynamic memory heap hint to init RNG call (PR 749)
+- Update SCP example to properly free memory upon failure (PR 750)
+- Address memory management during socket timeouts in wolfSSHd (PR 752)
+- Modify wolfSSHd to terminate child processes following SSH connection failures
+ (PR 753)
+- Fix for wolfSSHd handling of pipe's with forced commands (PR 776)
+- Resolve SFTP compilation issues with WOLFSSH_FATFS (PR 756)
+- Refactor and simplify autogen script (PR 758)
+- Fix SCP hang issue in interop scenarios (PR 751)
+- Fix for SCP server side handling of EAGAIN (PR 783)
+- Reinstate support for P521 and P384 curves by default when compiled in (PR 762)
+- Fix for wolfSSH client app handling of an empty hostname (PR 768)
+
+
 # wolfSSH v1.4.19 (November 1, 2024)
 
 ## New Features
