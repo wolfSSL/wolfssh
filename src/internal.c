@@ -1163,11 +1163,11 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
         ssh->scpRecvMsg = NULL;
         ssh->scpRecvMsgSz = 0;
     }
-#ifdef WOLFSSL_NUCLEUS
-    WFREE(ssh->scpBasePathDynamic, heap, DYNTYPE_BUFFER);
-    ssh->scpBasePathDynamic = NULL;
-    ssh->scpBasePathSz = 0;
-#endif
+    if (ssh->scpBasePathDynamic) {
+        WFREE(ssh->scpBasePathDynamic, heap, DYNTYPE_BUFFER);
+        ssh->scpBasePathDynamic = NULL;
+        ssh->scpBasePathSz = 0;
+    }
 #endif
 #ifdef WOLFSSH_SFTP
     if (ssh->sftpDefaultPath) {

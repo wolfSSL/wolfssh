@@ -1260,47 +1260,46 @@ int ParseScpCommand(WOLFSSH* ssh)
 
                     case 't':
                         ssh->scpDirection = WOLFSSH_SCP_TO;
-                    #ifdef WOLFSSL_NUCLEUS
                         ssh->scpBasePathSz = cmdSz + WOLFSSH_MAX_FILENAME;
                         ssh->scpBasePathDynamic = (char*)WMALLOC(
                                 ssh->scpBasePathSz,
                                 ssh->ctx->heap, DYNTYPE_BUFFER);
-                    #endif
+                        if (ssh->scpBasePathDynamic == NULL) {
+                            return WS_MEMORY_E;
+                        }
+                        WMEMSET(ssh->scpBasePathDynamic, 0, ssh->scpBasePathSz);
                         if (idx + 2 < cmdSz) {
                             /* skip space */
                             idx += 2;
-                        #ifdef WOLFSSL_NUCLEUS
                             ssh->scpBasePath = ssh->scpBasePathDynamic;
-                            WMEMCPY(ssh->scpBasePathDynamic, cmd + idx, cmdSz);
-                        #else
-                            ssh->scpBasePath = cmd + idx;
-                        #endif
+                            WMEMCPY(ssh->scpBasePathDynamic, cmd + idx,
+                                cmdSz - idx);
                             ret = ParseBasePathHelper(ssh, cmdSz);
                             if (ret == WS_SUCCESS &&
-                                    wolfSSH_CleanPath(ssh, (char*)ssh->scpBasePath) < 0)
+                                    wolfSSH_CleanPath(ssh,
+                                        ssh->scpBasePathDynamic) < 0)
                                 ret = WS_FATAL_ERROR;
                         }
                         break;
 
                     case 'f':
                         ssh->scpDirection = WOLFSSH_SCP_FROM;
-                    #ifdef WOLFSSL_NUCLEUS
                         ssh->scpBasePathSz = cmdSz + WOLFSSH_MAX_FILENAME;
                         ssh->scpBasePathDynamic = (char*)WMALLOC(
                                 ssh->scpBasePathSz,
                                 ssh->ctx->heap, DYNTYPE_BUFFER);
-                    #endif
+                        if (ssh->scpBasePathDynamic == NULL) {
+                            return WS_MEMORY_E;
+                        }
+                        WMEMSET(ssh->scpBasePathDynamic, 0, ssh->scpBasePathSz);
                         if (idx + 2 < cmdSz) {
                             /* skip space */
                             idx += 2;
-                        #ifdef WOLFSSL_NUCLEUS
                             ssh->scpBasePath = ssh->scpBasePathDynamic;
-                            WMEMCPY(ssh->scpBasePathDynamic, cmd + idx, cmdSz);
-                        #else
-                            ssh->scpBasePath = cmd + idx;
-                        #endif
+                            WMEMCPY(ssh->scpBasePathDynamic, cmd + idx,
+                                cmdSz - idx);
                             if (wolfSSH_CleanPath(ssh,
-                                        (char*)ssh->scpBasePath) < 0)
+                                        ssh->scpBasePathDynamic) < 0)
                                 ret = WS_FATAL_ERROR;
                         }
                         break;
