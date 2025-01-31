@@ -2,14 +2,60 @@
 
 echo "Running all wolfSSHd tests"
 
-if [ -z "$1" ]; then
-    USER=$USER
-else
-    USER=$1
-fi
+# Define an array of test cases
+test_cases=(
+ "sshd_exec_test.sh"
+ "sshd_term_size_test.sh"
+ "sshd_large_sftp_test.sh"
+ "sshd_bad_sftp_test.sh"
+ "sshd_term_close_test.sh"
+ "ssh_kex_algos.sh"
+)
 
-TEST_HOST=$2
-TEST_PORT=$3
+# Set defaults
+USER=$USER
+
+# Parse arguments
+MATCH=""
+EXCLUDE=""
+while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+        --match)
+            MATCH="$2"
+            shift 2
+            ;;
+
+        --exclude)
+            EXCLUDE="$2"
+            shift 2
+            ;;
+
+        --user)
+            USER="$2"
+            shift 2
+            ;;
+
+        --host)
+            TEST_HOST="$2"
+            shift 2
+            ;;
+
+        --port)
+            TEST_PORT="$2"
+            shift 2
+            ;;
+
+        *)
+            echo "Unknown option: $1"
+            echo "Expecting --host <host> | --port <port> | --user <user> | --match <test case> | --exclude <test case>"
+            echo "All test cases:"
+            for test in "${test_cases[@]}"; do
+                echo "    $test"
+            done
+            exit 1
+            ;;
+    esac
+done
 
 TOTAL=0
 SKIPPED=0
@@ -57,43 +103,62 @@ run_test() {
     fi
 }
 
-run_test "sshd_exec_test.sh"
-run_test "sshd_term_size_test.sh"
-run_test "sshd_large_sftp_test.sh"
-run_test "sshd_bad_sftp_test.sh"
-run_test "sshd_term_close_test.sh"
+# Run the tests
+if [[ -n "$MATCH" ]]; then
+    if [[ " ${test_cases[*]} " =~ " $MATCH " ]]; then
+        echo "Running test: $MATCH"
+        run_test "$MATCH"
+    else
+        echo "Error: Test '$MATCH' not found."
+        exit 1
+    fi
 
-run_test "ssh_kex_algos.sh"
-
-#Github actions needs resolved for these test cases
-#run_test "error_return.sh"
-#run_test "sshd_login_grace_test.sh"
-
-# add aditional tests here, check on var USING_LOCAL_HOST if can make sshd
-# server start/restart with changes
-
-if [ "$USING_LOCAL_HOST" == 1 ]; then
-    printf "Shutting down test wolfSSHd\n"
-    stop_wolfsshd
-fi
-
-# these tests require setting up an sshd
-if [ "$USING_LOCAL_HOST" == 1 ]; then
-    run_test "sshd_forcedcmd_test.sh"
-    run_test "sshd_window_full_test.sh"
+    if [ "$USING_LOCAL_HOST" == 1 ]; then
+        printf "Shutting down test wolfSSHd\n"
+        stop_wolfsshd
+    fi
 else
-    printf "Skipping tests that need to setup local SSHD\n"
-    SKIPPED=$((SKIPPED+2))
-fi
+    echo "Running all tests..."
+    for test in "${test_cases[@]}"; do
+        if [[ "$test" != "$EXCLUDE" ]]; then
+            echo "Running test: $test"
+            run_test "$test"
+        else
+            echo "Test '$test' is excluded. Skipping."
+            SKIPPED=$((SKIPPED+1))
+        fi
+    done
 
-# these tests run with X509 sshd-config loaded
-if [ "$USING_LOCAL_HOST" == 1 ]; then
-    start_wolfsshd "sshd_config_test_x509"
-fi
-run_test "sshd_x509_test.sh"
-if [ "$USING_LOCAL_HOST" == 1 ]; then
-    printf "Shutting down test wolfSSHd\n"
-    stop_wolfsshd
+    #Github actions needs resolved for these test cases
+    #run_test "error_return.sh"
+    #run_test "sshd_login_grace_test.sh"
+
+    # add aditional tests here, check on var USING_LOCAL_HOST if can make sshd
+    # server start/restart with changes
+
+    if [ "$USING_LOCAL_HOST" == 1 ]; then
+        printf "Shutting down test wolfSSHd\n"
+        stop_wolfsshd
+    fi
+
+    # these tests require setting up an sshd
+    if [ "$USING_LOCAL_HOST" == 1 ]; then
+        run_test "sshd_forcedcmd_test.sh"
+        run_test "sshd_window_full_test.sh"
+    else
+        printf "Skipping tests that need to setup local SSHD\n"
+        SKIPPED=$((SKIPPED+2))
+    fi
+
+    # these tests run with X509 sshd-config loaded
+    if [ "$USING_LOCAL_HOST" == 1 ]; then
+        start_wolfsshd "sshd_config_test_x509"
+    fi
+    run_test "sshd_x509_test.sh"
+    if [ "$USING_LOCAL_HOST" == 1 ]; then
+        printf "Shutting down test wolfSSHd\n"
+        stop_wolfsshd
+    fi
 fi
 
 printf "All tests ran, $TOTAL passed, $SKIPPED skipped\n"
