@@ -1,3 +1,18 @@
+# wolfSSH v1.4.20 (January 31, 2025)
+
+## Enhancements and Fixes
+
+- Enhancement to pass dynamic memory heap hint to init RNG call (PR 749)
+- Update SCP example to properly free memory upon failure (PR 750)
+- Address memory management during socket timeouts in wolfSSHd (PR 752)
+- Modify wolfSSHd to terminate child processes following SSH connection failures
+ (PR 753)
+- Resolve SFTP compilation issues with WOLFSSH_FATFS (PR 756)
+- Refactor and simplify autogen script (PR 758)
+- Fix SCP hang issue in interop scenarios (PR 751)
+- Reinstate support for P521 and P384 curves by default when compiled in (PR 762)
+
+
 # wolfSSH v1.4.19 (November 1, 2024)
 
 ## New Features
