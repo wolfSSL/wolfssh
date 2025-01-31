@@ -63,6 +63,8 @@ run_test "sshd_large_sftp_test.sh"
 run_test "sshd_bad_sftp_test.sh"
 run_test "sshd_term_close_test.sh"
 
+run_test "ssh_kex_algos.sh"
+
 #Github actions needs resolved for these test cases
 #run_test "error_return.sh"
 #run_test "sshd_login_grace_test.sh"
