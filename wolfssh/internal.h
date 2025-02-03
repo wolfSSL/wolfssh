@@ -459,6 +459,11 @@ WOLFSSH_LOCAL const char* IdToName(byte id);
 WOLFSSH_LOCAL const char* NameByIndexType(byte type, word32* index);
 
 
+/* For cases when openssl coexist is used */
+#ifdef WC_NO_COMPAT_AES_BLOCK_SIZE
+    #define AES_BLOCK_SIZE WC_AES_BLOCK_SIZE
+#endif
+
 #define STATIC_BUFFER_LEN AES_BLOCK_SIZE
 /* This is one AES block size. We always grab one
  * block size first to decrypt to find the size of
