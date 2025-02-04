@@ -2961,6 +2961,9 @@ static const char* MacNameForId(byte macid, byte cipherid)
 
             case ID_HMAC_SHA2_256:
                 return "HMAC-SHA-256";
+
+            case ID_HMAC_SHA2_512:
+                return "HMAC-SHA-512";
         }
     }
     else {
@@ -3048,6 +3051,11 @@ size_t wolfSSH_GetText(WOLFSSH *ssh, WS_Text id, char *str, size_t strSz)
                 case ID_DH_GROUP14_SHA256:
                     ret = WSNPRINTF(str, strSz, standard_dh_format,
                         ssh->primeGroupSz*8, 14);
+                    break;
+
+                case ID_DH_GROUP16_SHA512:
+                    ret = WSNPRINTF(str, strSz, standard_dh_format,
+                        ssh->primeGroupSz*8, 16);
                     break;
 
                 case ID_DH_GEX_SHA256:

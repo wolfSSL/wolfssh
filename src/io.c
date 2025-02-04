@@ -428,7 +428,7 @@ int wsEmbedSend(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
             return WS_CBIO_ERR_CONN_CLOSE;
         }
         else {
-            WLOG(WS_LOG_DEBUG,"    General error");
+            WLOG(WS_LOG_DEBUG,"    General error %d", err);
             return WS_CBIO_ERR_GENERAL;
         }
     }
