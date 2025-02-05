@@ -1,6 +1,6 @@
 /* wifi_connect.h
  *
- * Copyright (C) 2014-2024 wolfSSL Inc.
+ * Copyright (C) 2014-2025 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -62,7 +62,7 @@
     #else
         #warning "did not detect environment. using ~/my_private_config.h"
         #include "~/my_private_config.h"
-	#endif
+    #endif
 #else
 
     /*
@@ -72,17 +72,44 @@
     ** If you'd rather not, just change the below entries to strings with
     ** the config you want - ie #define EXAMPLE_WIFI_SSID "mywifissid"
     */
+    /* Some older versions use ESP_WIFI_SSID via Kconfig */
     #ifdef CONFIG_ESP_WIFI_SSID
+        /* Overwrite the example SSID with the value set in menuconfig */
+        #undef  EXAMPLE_ESP_WIFI_SSID
         #define EXAMPLE_ESP_WIFI_SSID CONFIG_ESP_WIFI_SSID
-    #else
-        #define EXAMPLE_ESP_WIFI_SSID "MYSSID_WIFI_CONNECT"
     #endif
 
-    #ifdef CONFIG_ESP_WIFI_PASSWORD
-        #define EXAMPLE_ESP_WIFI_PASS CONFIG_ESP_WIFI_PASSWORD
-    #else
-        #define EXAMPLE_ESP_WIFI_PASS "MYPASSWORD_WIFI_CONNECT"
+    /* Newer versions of the ESP-IDF use EXAMPLE_WIFI_SSID via Kconfig */
+    #ifdef CONFIG_EXAMPLE_WIFI_SSID
+        /* Overwrite the example SSID with the value set in menuconfig */
+        #undef  EXAMPLE_ESP_WIFI_SSID
+        #define EXAMPLE_ESP_WIFI_SSID CONFIG_EXAMPLE_WIFI_SSID
     #endif
+
+    /* Some older versions use ESP_WIFI_PASSWORD via Kconfig */
+    #ifdef CONFIG_ESP_WIFI_PASSWORD
+        /* Overwrite the example password with the value set in menuconfig */
+        #undef  EXAMPLE_ESP_WIFI_PASS
+        #define EXAMPLE_ESP_WIFI_PASS CONFIG_ESP_WIFI_PASSWORD
+    #endif
+
+    /* Newer versions use CONFIG_ESP_WIFI_PASSWORD via Kconfig */
+    #ifdef CONFIG_EXAMPLE_WIFI_PASSWORD
+        /* Overwrite the example SSID with the value set in menuconfig */
+        #undef  EXAMPLE_ESP_WIFI_PASS
+        #define EXAMPLE_ESP_WIFI_PASS CONFIG_EXAMPLE_WIFI_PASSWORD
+    #endif
+
+#endif
+
+ /* Ensure EXAMPLE_ESP_WIFI_SSID and EXAMPLE_ESP_WIFI_PASS are not blank: */
+#ifndef EXAMPLE_ESP_WIFI_SSID
+    #warning "Setting default WiFi SSID: MYSSID_WIFI_CONNECT"
+    #define EXAMPLE_ESP_WIFI_SSID "MYSSID_WIFI_CONNECT"
+#endif
+#ifndef EXAMPLE_ESP_WIFI_PASS
+    #warning "Setting default WiFi SSID Password: MYSSID_WIFI_CONNECT"
+    #define EXAMPLE_ESP_WIFI_PASS "MYPASSWORD_WIFI_CONNECT"
 #endif
 
 /* ESP lwip */

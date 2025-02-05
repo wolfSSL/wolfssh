@@ -18,7 +18,7 @@
     <ToolchainID>
       <ID>com.visualgdb.xtensa-esp32-elf</ID>
       <Version>
-        <GCC>12.2.0</GCC>
+        <GCC>13.2.0</GCC>
         <GDB>12.1</GDB>
         <Revision>1</Revision>
       </Version>
@@ -67,8 +67,8 @@
       <EnableFastUpToDateCheck>true</EnableFastUpToDateCheck>
       <ESPIDFExtension>
         <IDFCheckout>
-          <Version>release/v5.1</Version>
-          <Subdirectory>esp-idf/v5.1</Subdirectory>
+          <Version>master</Version>
+          <Subdirectory>esp-idf/v5.2-master</Subdirectory>
           <Type>ESPIDF</Type>
         </IDFCheckout>
         <COMPort>COM19</COMPort>
@@ -76,7 +76,9 @@
         <UseCCache>false</UseCCache>
         <DeviceID>ESP32</DeviceID>
       </ESPIDFExtension>
+      <DetectMissingSolutionConfigurations>false</DetectMissingSolutionConfigurations>
     </ProjectModeSettings>
+    <LoadCMakePresets>false</LoadCMakePresets>
   </Build>
   <CustomBuild>
     <PreSyncActions />
@@ -216,6 +218,7 @@
       <MaxBreakpointLimit>0</MaxBreakpointLimit>
       <EnableVerboseMode>true</EnableVerboseMode>
       <EnablePrettyPrinters>false</EnablePrettyPrinters>
+      <EnableAbsolutePathReporting>true</EnableAbsolutePathReporting>
     </AdditionalGDBSettings>
     <DebugMethod>
       <ID>openocd</ID>
