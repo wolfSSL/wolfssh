@@ -125,11 +125,11 @@ static int dump_stats(thread_ctx_t* ctx)
 
     wolfSSH_GetStats(ctx->ssh, &txCount, &rxCount, &seq, &peerSeq);
 
-    printf(stats, 
+    sprintf(stats, 
             "Statistics for Thread #%u:\r\n"
             "  txCount = %u\r\n  rxCount = %u\r\n"
             "  seq = %u\r\n  peerSeq = %u\r\n",
-            0, txCount, rxCount, seq, peerSeq);
+            (word32)0, txCount, rxCount, seq, peerSeq);
     statsSz = (word32)strlen(stats);
 
     fprintf(stderr, "%s", stats);

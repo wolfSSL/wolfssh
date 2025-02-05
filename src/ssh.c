@@ -2755,15 +2755,19 @@ int wolfSSH_ChannelSend(WOLFSSH_CHANNEL* channel,
 {
     int bytesTxd = 0;
 
+    if (channel == NULL || buf == NULL) {
+        WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelSend() with bad argument");
+        return WS_BAD_ARGUMENT;
+    }
+
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelSend(), ID = %d, peerID = %d",
             channel->channel, channel->peerChannel);
 
 #ifdef DEBUG_WOLFSSH
     DumpOctetString(buf, bufSz);
 #endif
-    if (channel == NULL || buf == NULL)
-        bytesTxd = WS_BAD_ARGUMENT;
-    else if (!channel->openConfirmed) {
+
+    if (!channel->openConfirmed) {
         WLOG(WS_LOG_DEBUG, "Channel not confirmed yet.");
         bytesTxd = WS_CHANNEL_NOT_CONF;
     }

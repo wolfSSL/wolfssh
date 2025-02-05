@@ -1,0 +1,44 @@
+name: Cppcheck Test
+
+on:
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  run_cppcheck:
+    name: Cppcheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cppcheck
+        if: always()
+        run: sudo apt-get install cppcheck
+
+      - name: Run CppCheck
+        id: cpp_check_run
+        if: always()
+        run: >
+          cppcheck
+          -UWSCPFILEHDR -UXSNPRINTF
+          -DLIBWOLFSSH_VERSION_STRING='""'
+          --enable='warning,portability'
+          --std=c99
+          --force
+          --check-level=exhaustive
+          --error-exitcode=2
+          --library=std.cfg
+          --inline-suppr
+          -j4
+          -q
+          .
+          3>&1 1>&2 2>&3 | tee cppcheck.txt
+
+      - name: Upload cppcheck results as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wolfssh-${{ github.sha }}-cppcheck_results.txt
+          path: cppcheck.txt
