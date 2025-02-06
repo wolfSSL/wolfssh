@@ -46,7 +46,7 @@ static const char* const TAG = "My Project";
 void app_main(void)
 {
     func_args args = {0};
-    int ret = ESP_OK;
+    esp_err_t ret = ESP_OK;
 
     ESP_LOGI(TAG, "------------ wolfSSL wolfSSH template Example ----------");
     ESP_LOGI(TAG, "--------------------------------------------------------");

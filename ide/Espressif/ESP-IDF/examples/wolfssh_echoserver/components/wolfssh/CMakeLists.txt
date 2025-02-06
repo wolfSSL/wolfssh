@@ -17,7 +17,7 @@
 #  You should have received a copy of the GNU General Public License
 #  along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
 #
-# cmake for WOLFSSH Espressif projects v5.6.6 r1
+# cmake for WOLFSSH Espressif projects v5.7.6 (template pr)
 #
 # See https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/build-system.html
 #

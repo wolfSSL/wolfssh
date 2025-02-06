@@ -3,7 +3,7 @@
 # All paths should be given relative to the root
 
 include ide/CSBENCH/include.am
-incldue ide/Espressif/include.am
+include ide/Espressif/include.am
 include ide/IAR-EWARM/include.am
 include ide/MQX/include.am
 include ide/STM32CUBE/include.am
