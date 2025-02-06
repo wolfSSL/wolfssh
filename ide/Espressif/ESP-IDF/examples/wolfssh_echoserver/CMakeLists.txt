@@ -38,6 +38,9 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DESP_ENABLE_WOLFSSH")
 # Managed wolfSSL Components prior to 5.7.4 need a manual setting for WOLFSSL_WOLFSSH
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWOLFSSL_WOLFSSH")
 
+# TODO: The ESP32 echo server example still uses older threading
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWOLFSSH_OLD_THREADING")
+
 # Optional:
 # set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWOLFSSH_TERM")
 # set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DDEBUG_WOLFSSH")
