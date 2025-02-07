@@ -320,7 +320,7 @@ static int CheckPasswordHashUnix(const char* input, char* stored)
     }
 
     /* empty password case */
-    if (stored[0] == 0 && WSTRLEN(input) == 0) {
+    if (ret == WSSHD_AUTH_SUCCESS && stored[0] == 0 && WSTRLEN(input) == 0) {
         wolfSSH_Log(WS_LOG_INFO,
                     "[SSHD] User logged in with empty password");
         return ret;
@@ -1206,49 +1206,47 @@ static int RequestAuthentication(WS_UserAuthData* authData,
         }
     #endif
 
-        if (ret == WOLFSSH_USERAUTH_SUCCESS) {
-            /* if this is a certificate and no specific authorized keys file has
-             * been set then rely on CA to have verified the cert */
-            if (authData->sf.publicKey.isCert &&
-                    !wolfSSHD_ConfigGetAuthKeysFileSet(authCtx->conf)) {
-                wolfSSH_Log(WS_LOG_INFO,
-                    "[SSHD] Relying on CA for public key check");
-            #ifdef WIN32
-                /* Still need to get users token on Windows */
-                rc = SetupUserTokenWin(usr, &authData->sf.publicKey,
-                    wolfSSHD_ConfigGetUserCAKeysFile(authCtx->conf), authCtx);
-                if (rc == WSSHD_AUTH_SUCCESS) {
-                    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Got users token ok.");
-                    ret = WOLFSSH_USERAUTH_SUCCESS;
-                }
-                else {
-                    wolfSSH_Log(WS_LOG_ERROR,
-                        "[SSHD] Error getting users token.");
-                    ret = WOLFSSH_USERAUTH_FAILURE;
-                }
-            #else
+        /* if this is a certificate and no specific authorized keys file has
+            * been set then rely on CA to have verified the cert */
+        if (authData->sf.publicKey.isCert &&
+                !wolfSSHD_ConfigGetAuthKeysFileSet(authCtx->conf)) {
+            wolfSSH_Log(WS_LOG_INFO,
+                "[SSHD] Relying on CA for public key check");
+        #ifdef WIN32
+            /* Still need to get users token on Windows */
+            rc = SetupUserTokenWin(usr, &authData->sf.publicKey,
+                wolfSSHD_ConfigGetUserCAKeysFile(authCtx->conf), authCtx);
+            if (rc == WSSHD_AUTH_SUCCESS) {
+                wolfSSH_Log(WS_LOG_INFO, "[SSHD] Got users token ok.");
                 ret = WOLFSSH_USERAUTH_SUCCESS;
-            #endif
             }
             else {
-                /* if not a certificate then parse through authorized key file */
-                rc = authCtx->checkPublicKeyCb(usr, &authData->sf.publicKey,
-                                wolfSSHD_ConfigGetUserCAKeysFile(authCtx->conf),
-                                authCtx);
-                if (rc == WSSHD_AUTH_SUCCESS) {
-                    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key ok.");
-                    ret = WOLFSSH_USERAUTH_SUCCESS;
-                }
-                else if (rc == WSSHD_AUTH_FAILURE) {
-                    wolfSSH_Log(WS_LOG_INFO,
-                        "[SSHD] Public key not authorized.");
-                    ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
-                }
-                else {
-                    wolfSSH_Log(WS_LOG_ERROR,
-                        "[SSHD] Error checking public key.");
-                    ret = WOLFSSH_USERAUTH_FAILURE;
-                }
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Error getting users token.");
+                ret = WOLFSSH_USERAUTH_FAILURE;
+            }
+        #else
+            ret = WOLFSSH_USERAUTH_SUCCESS;
+        #endif
+        }
+        else {
+            /* if not a certificate then parse through authorized key file */
+            rc = authCtx->checkPublicKeyCb(usr, &authData->sf.publicKey,
+                            wolfSSHD_ConfigGetUserCAKeysFile(authCtx->conf),
+                            authCtx);
+            if (rc == WSSHD_AUTH_SUCCESS) {
+                wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key ok.");
+                ret = WOLFSSH_USERAUTH_SUCCESS;
+            }
+            else if (rc == WSSHD_AUTH_FAILURE) {
+                wolfSSH_Log(WS_LOG_INFO,
+                    "[SSHD] Public key not authorized.");
+                ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
+            }
+            else {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Error checking public key.");
+                ret = WOLFSSH_USERAUTH_FAILURE;
             }
         }
     }
@@ -1545,23 +1543,23 @@ int wolfSSHD_AuthReducePermissions(WOLFSSHD_AUTH* auth)
     byte flag = 0;
     int ret = WS_SUCCESS;
 
+    if (!auth) {
+        return WS_BAD_ARGUMENT;
+    }
+
     flag = wolfSSHD_ConfigGetPrivilegeSeparation(auth->conf);
 #ifndef WIN32
     if (flag == WOLFSSHD_PRIV_SEPARAT || flag == WOLFSSHD_PRIV_SANDBOX) {
         wolfSSH_Log(WS_LOG_INFO, "[SSHD] Lowering permissions level");
-        if (auth) {
-            if (setegid(auth->gid) != 0) {
-                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting sshd gid");
-                ret = WS_FATAL_ERROR;
-            }
 
-            if (seteuid(auth->uid) != 0) {
-                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting sshd uid");
-                ret = WS_FATAL_ERROR;
-            }
+        if (setegid(auth->gid) != 0) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting sshd gid");
+            ret = WS_FATAL_ERROR;
         }
-        else {
-            ret = WS_BAD_ARGUMENT;
+
+        if (seteuid(auth->uid) != 0) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting sshd uid");
+            ret = WS_FATAL_ERROR;
         }
     }
 #endif

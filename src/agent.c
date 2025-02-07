@@ -1303,7 +1303,10 @@ static int DoUnimplemented(WOLFSSH_AGENT_CTX* agent,
         ret = WS_BAD_ARGUMENT;
 
     WOLFSSH_UNUSED(buf);
-    DUMP(buf + *idx, len);
+
+    if (ret == WS_SUCCESS) {
+        DUMP(buf + *idx, len);
+    }
 
     /* Just skip the message. */
     if (ret == WS_SUCCESS) {
@@ -1498,11 +1501,12 @@ WOLFSSH_AGENT_CTX* wolfSSH_AGENT_new(void* heap)
 
 void wolfSSH_AGENT_free(WOLFSSH_AGENT_CTX* agent)
 {
-    void* heap = agent->heap;
+    void* heap = NULL;
 
     WLOG(WS_LOG_AGENT, "Entering wolfSSH_AGENT_free()");
 
     if (agent != NULL) {
+        heap = agent->heap;
         if (agent->msg != NULL)
             WFREE(agent->msg, agent->heap, DYNTYPE_AGENT_BUFFER);
         wc_FreeRng(&agent->rng);

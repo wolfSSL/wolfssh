@@ -3647,7 +3647,7 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     word32 ofst[2] = {0, 0};
 
     byte*  out;
-    word32 outSz;
+    word32 outSz = 0;
 
     char* res  = NULL;
     char err[] = "Read File Error";
@@ -3747,7 +3747,7 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     word32 idx  = 0;
 
     byte*  out;
-    word32 outSz;
+    word32 outSz = 0;
 
     char* res  = NULL;
     char err[] = "Read File Error";

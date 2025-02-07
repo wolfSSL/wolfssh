@@ -181,7 +181,7 @@ static const char* TrimFileName(const char* f, size_t* fSz)
 {
     if (f != NULL && fSz != NULL && *fSz >= 3 && f[0] == '/' && f[2] == ':') {
         f++;
-        *fSz--;
+        (*fSz)--;
     }
     return f;
 }
@@ -224,7 +224,7 @@ void* WS_CreateFileA(const char* fileName, unsigned long desiredAccess,
 void* WS_FindFirstFileA(const char* fileName,
         char* realFileName, size_t realFileNameSz, int* isDir, void* heap)
 {
-    HANDLE findHandle;
+    HANDLE findHandle = NULL;
     WIN32_FIND_DATAW findFileData;
     wchar_t* unicodeFileName;
     size_t unicodeFileNameSz = 0;
@@ -269,7 +269,7 @@ int WS_FindNextFileA(void* findHandle,
 {
     BOOL success;
     WIN32_FIND_DATAW findFileData;
-    errno_t error;
+    errno_t error = 0;
 
     success = FindNextFileW((HANDLE)findHandle, &findFileData);
 

@@ -1329,7 +1329,6 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap)
         }
 #endif /* WOLFSSH_NO_ECDSA */
 #if !defined(WOLFSSH_NO_ED25519)
-    if (key != NULL) {
         if (key->keySigId == ID_UNKNOWN) {
             idx = 0;
             ret = wc_ed25519_init_ex(&key->ks.ed25519.key, heap, INVALID_DEVID);
@@ -1351,7 +1350,6 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap)
 
             wc_ed25519_free(&key->ks.ed25519.key);
         }
-    }
 #endif /* WOLFSSH_NO_ED25519 */
 
         if (key->keySigId == ID_UNKNOWN) {
@@ -1623,8 +1621,7 @@ static int GetOpenSshKey(WS_KeySignature *key,
             byte keyId;
 
             idx = 0;
-            if (ret == WS_SUCCESS)
-                ret = GetUint32(&check1, str, strSz, &subIdx); /* checkint 1 */
+            ret = GetUint32(&check1, str, strSz, &subIdx); /* checkint 1 */
             if (ret == WS_SUCCESS)
                 ret = GetUint32(&check2, str, strSz, &subIdx); /* checkint 2 */
             if (ret == WS_SUCCESS) {
@@ -2815,7 +2812,7 @@ int ChannelAppend(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel)
 int ChannelRemove(WOLFSSH* ssh, word32 channel, byte peer)
 {
     int ret = WS_SUCCESS;
-    WOLFSSH_CHANNEL* list;
+    WOLFSSH_CHANNEL* list = NULL;
 
     WLOG(WS_LOG_DEBUG, "Entering ChannelRemove()");
 
@@ -6380,9 +6377,7 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
         const byte* e = NULL;
         word32 eSz = 0;
 
-        if (ret == WS_SUCCESS) {
-            ret = GetMpint(&eSz, &e, pk->publicKey, pk->publicKeySz, &i);
-        }
+        ret = GetMpint(&eSz, &e, pk->publicKey, pk->publicKeySz, &i);
 
         if (ret == WS_SUCCESS) {
             ret = GetMpint(&nSz, &n, pk->publicKey, pk->publicKeySz, &i);
@@ -13157,13 +13152,7 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
     byte* checkData = NULL;
     word32 checkDataSz = 0;
 
-#ifdef WOLFSSH_SMALL_STACK
-    r_ptr = (byte*)WMALLOC(rSz, ssh->ctx->heap, DYNTYPE_BUFFER);
-    s_ptr = (byte*)WMALLOC(sSz, ssh->ctx->heap, DYNTYPE_BUFFER);
-    sig_ptr = (byte*)WMALLOC(sigSz, ssh->ctx->heap, DYNTYPE_BUFFER);
-    if (r_ptr == NULL || s_ptr == NULL || sig_ptr == NULL)
-        ret = WS_MEMORY_E;
-#else
+#ifndef WOLFSSH_SMALL_STACK
     byte r_s[ECC_MAX_SIG_SIZE / 2];
     byte s_s[ECC_MAX_SIG_SIZE / 2];
     byte sig_s[ECC_MAX_SIG_SIZE];
@@ -13177,6 +13166,14 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
         ret = WS_BAD_ARGUMENT;
         return ret;
     }
+
+#ifdef WOLFSSH_SMALL_STACK
+    r_ptr = (byte*)WMALLOC(rSz, ssh->ctx->heap, DYNTYPE_BUFFER);
+    s_ptr = (byte*)WMALLOC(sSz, ssh->ctx->heap, DYNTYPE_BUFFER);
+    sig_ptr = (byte*)WMALLOC(sigSz, ssh->ctx->heap, DYNTYPE_BUFFER);
+    if (r_ptr == NULL || s_ptr == NULL || sig_ptr == NULL)
+        ret = WS_MEMORY_E;
+#endif
 
     begin = *idx;
 

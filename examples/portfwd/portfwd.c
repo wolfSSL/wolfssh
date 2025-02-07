@@ -337,7 +337,7 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
            " * password: %s\n"
            " * forward from: %s:%u\n"
            " * forward to: %s:%u\n",
-           host, port, username, password,
+           host, port, username, password ? password : "",
            fwdFromHost, fwdFromPort,
            fwdToHost, fwdToPort);
 
