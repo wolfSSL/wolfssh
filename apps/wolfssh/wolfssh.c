@@ -923,6 +923,9 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
     if (config.user == NULL)
         err_sys("client requires a username parameter.");
 
+    if (config.hostname == NULL)
+        err_sys("client requires a hostname parameter.");
+
 #ifdef SINGLE_THREADED
     if (keepOpen)
         err_sys("Threading needed for terminal session\n");
