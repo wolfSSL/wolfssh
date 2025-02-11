@@ -598,7 +598,8 @@ INLINE static int IsMessageAllowedServer(WOLFSSH *ssh, byte msg)
         }
         /* Explicitly check for the user authentication messages that
          * only the server sends, it shouldn't receive them. */
-        if (msg > MSGID_USERAUTH_RESTRICT) {
+        if ((msg > MSGID_USERAUTH_RESTRICT) &&
+            (msg != MSGID_USERAUTH_INFO_RESPONSE)) {
             WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by server "
                     "during user authentication", msg);
             return 0;
@@ -1035,7 +1036,8 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->authId      = ID_USERAUTH_PUBLICKEY;
     ssh->supportedAuth[0] = ID_USERAUTH_PUBLICKEY;
     ssh->supportedAuth[1] = ID_USERAUTH_PASSWORD;
-    ssh->supportedAuth[2] = ID_NONE; /* ID_NONE is treated as empty slot */
+    ssh->supportedAuth[2] = ID_USERAUTH_KEYBOARD;
+    ssh->supportedAuth[3] = ID_NONE; /* ID_NONE is treated as empty slot */
     ssh->nextChannel = DEFAULT_NEXT_CHANNEL;
     ssh->blockSz     = MIN_BLOCK_SZ;
     ssh->encryptId   = ID_NONE;
@@ -2520,6 +2522,7 @@ static const NameIdPair NameIdMap[] = {
     /* UserAuth IDs */
     { ID_USERAUTH_PASSWORD, TYPE_OTHER, "password" },
     { ID_USERAUTH_PUBLICKEY, TYPE_OTHER, "publickey" },
+    { ID_USERAUTH_KEYBOARD, TYPE_OTHER, "keyboard-interactive" },
 
     /* Channel Type IDs */
     { ID_CHANTYPE_SESSION, TYPE_OTHER, "session" },
@@ -3438,7 +3441,8 @@ static int GetNameListRaw(byte* idList, word32* idListSz,
             {
                 const char* displayName = IdToName(id);
                 if (displayName) {
-                    WLOG(WS_LOG_DEBUG, "GNL: name ID = %s", displayName);
+                    WLOG(WS_LOG_DEBUG, "GNL: name ID %.*s matches %s", nameSz,
+                            name, displayName);
                 }
             }
             if (id != ID_UNKNOWN || idListIdx == 0) {
@@ -6207,6 +6211,151 @@ static int DoUserAuthRequestNone(WOLFSSH* ssh, WS_UserAuthData* authData,
 #endif
 
 
+
+static int DoUserAuthInfoResponse(WOLFSSH* ssh,
+                             byte* buf, word32 len, word32* idx)
+{
+    word32 begin;
+    WS_UserAuthData authData;
+    WS_UserAuthData_Keyboard* kb = NULL;
+    int ret = WS_SUCCESS;
+    int authFailure = 0;
+    byte partialSuccess = 0;
+    word32 entry;
+    word32 allocatedCount = 0;
+
+    WLOG(WS_LOG_DEBUG, "Entering DoUserAuthInfoResponse()");
+
+
+    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL) {
+
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        begin = *idx;
+        kb = &authData.sf.keyboard;
+        authData.type = WOLFSSH_USERAUTH_KEYBOARD;
+        authData.username = (byte*)ssh->userName;
+        authData.usernameSz = ssh->userNameSz;
+        ret = GetUint32(&kb->responseCount, buf, len, &begin);
+
+    }
+
+    if ((ret == WS_SUCCESS) &&
+        (ssh->kbAuth.promptCount != kb->responseCount)) {
+        WLOG(WS_LOG_DEBUG, "DUARKB: Invalid number of responses received");
+        ret = WS_USER_AUTH_E;
+    }
+
+    if (ret == WS_SUCCESS && kb->responseCount > WOLFSSH_MAX_PROMPTS) {
+        WLOG(WS_LOG_DEBUG, "DUARKB: Received too many responses (%d), max: %d",
+             kb->responseCount, WOLFSSH_MAX_PROMPTS);
+        ret = WS_USER_AUTH_E;
+    }
+
+    if (ret == WS_SUCCESS) {
+        allocatedCount = kb->responseCount;
+        if (kb->responseCount) {
+            kb->responseLengths =
+                (word32*)WMALLOC(sizeof(word32) * kb->responseCount, NULL, 0);
+            if (!kb->responseLengths) {
+                ret = WS_MEMORY_E;
+            }
+        }
+        else {
+            kb->responseLengths = NULL;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (kb->responseCount) {
+            kb->responses = (byte**) WMALLOC(sizeof(byte*) * kb->responseCount,
+                                             NULL, 0);
+            if (!kb->responses) {
+                ret = WS_MEMORY_E;
+            }
+        }
+        else {
+            kb->responses = NULL;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        for (entry = 0; entry < kb->responseCount; entry++) {
+            if (ret == WS_SUCCESS) {
+                ret = GetStringRef(&kb->responseLengths[entry],
+                (const byte**)&kb->responses[entry], buf, len, &begin);
+            }
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (ssh->ctx->userAuthCb != NULL) {
+            WLOG(WS_LOG_DEBUG, "DUARKB: Calling the userauth callback");
+            ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_KEYBOARD,
+                                        &authData, ssh->userAuthCtx);
+
+            if (ret == WOLFSSH_USERAUTH_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, "DUARKB: keyboard check success");
+                ret = WS_SUCCESS;
+            }
+            else if (ret == WOLFSSH_USERAUTH_SUCCESS_ANOTHER) {
+                WLOG(WS_LOG_DEBUG, "DUARKB: keyboard check success, another wanted");
+            }
+            else if (ret == WOLFSSH_USERAUTH_PARTIAL_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, "DUARKB: keyboard check partial success");
+                partialSuccess = 1;
+                ret = WS_SUCCESS;
+            }
+            else if (ret == WOLFSSH_USERAUTH_REJECTED) {
+                WLOG(WS_LOG_DEBUG, "DUARKB: keyboard rejected");
+                #ifndef NO_FAILURE_ON_REJECTED
+                    authFailure = 1;
+                #endif
+                ret = WS_USER_AUTH_E;
+            }
+            else if (ret == WOLFSSH_USERAUTH_WOULD_BLOCK) {
+                WLOG(WS_LOG_DEBUG, "DUARKB: keyboard callback would block");
+                ret = WS_AUTH_PENDING;
+            }
+            else {
+                WLOG(WS_LOG_DEBUG, "DUARKB: keyboard check failed, retry");
+                authFailure = 1;
+                ret = WS_SUCCESS;
+            }
+        }
+        else {
+            WLOG(WS_LOG_DEBUG, "DUARKB: No user auth callback");
+            authFailure = 1;
+        }
+    }
+
+    if (allocatedCount) {
+        WFREE(kb->responseLengths, NULL, 0);
+        WFREE(kb->responses, NULL, 0);
+    }
+
+    if (ret == WS_SUCCESS || ret == WOLFSSH_USERAUTH_SUCCESS_ANOTHER) {
+        *idx = begin;
+    }
+
+    if (authFailure || partialSuccess) {
+        ret = SendUserAuthFailure(ssh, partialSuccess);
+    }
+    else if (ret == WOLFSSH_USERAUTH_SUCCESS_ANOTHER) {
+        ret = SendUserAuthKeyboardRequest(ssh, &authData);
+    }
+    else if (ret == WS_SUCCESS) {
+        ssh->clientState = CLIENT_USERAUTH_DONE;
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthInfoResponse(), ret = %d", ret);
+
+    return ret;
+}
+
+
 /* Utility for DoUserAuthRequest() */
 static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
                                      byte* buf, word32 len, word32* idx)
@@ -7417,6 +7566,10 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS) {
+        ret = wolfSSH_SetUsernameRaw(ssh, authData.username, authData.usernameSz);
+    }
+
+    if (ret == WS_SUCCESS) {
         if (authData.serviceNameSz > len - begin) {
             ret = WS_BUFFER_E;
         }
@@ -7436,6 +7589,9 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
 
         if (authNameId == ID_USERAUTH_PASSWORD)
             ret = DoUserAuthRequestPassword(ssh, &authData, buf, len, &begin);
+        else if (authNameId == ID_USERAUTH_KEYBOARD) {
+            ret = SendUserAuthKeyboardRequest(ssh, &authData);
+        }
 #if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
         else if (authNameId == ID_USERAUTH_PUBLICKEY) {
             authData.sf.publicKey.dataToSign = buf + *idx;
@@ -7469,8 +7625,9 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
 static int DoUserAuthFailure(WOLFSSH* ssh,
                              byte* buf, word32 len, word32* idx)
 {
-    byte authList[3]; /* Should only ever be password, publickey, hostname */
-    word32 authListSz = 3;
+    byte authList[4]; /* Should only ever be password, publickey, hostname,
+                         keyboard */
+    word32 authListSz = 4;
     byte partialSuccess;
     byte authType = 0;
     int ret = WS_SUCCESS;
@@ -7497,6 +7654,9 @@ static int DoUserAuthFailure(WOLFSSH* ssh,
                     switch(authList[i]) {
                         case ID_USERAUTH_PASSWORD:
                             authType |= WOLFSSH_USERAUTH_PASSWORD;
+                            break;
+                        case ID_USERAUTH_KEYBOARD:
+                            authType |= WOLFSSH_USERAUTH_KEYBOARD;
                             break;
 #if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
                         case ID_USERAUTH_PUBLICKEY:
@@ -7540,7 +7700,10 @@ static int DoUserAuthSuccess(WOLFSSH* ssh,
         return ret;
     }
 
-    ssh->serverState = SERVER_USERAUTH_ACCEPT_DONE;
+    if (ssh->serverState == SERVER_USERAUTH_ACCEPT_KEYBOARD)
+        ssh->serverState = SERVER_USERAUTH_ACCEPT_KEYBOARD_DONE;
+    else
+        ssh->serverState = SERVER_USERAUTH_ACCEPT_DONE;
 
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthSuccess(), ret = %d", ret);
     return ret;
@@ -7571,6 +7734,102 @@ static int DoUserAuthBanner(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthBanner(), ret = %d", ret);
+    return ret;
+}
+
+
+static int DoUserAuthInfoRequest(WOLFSSH* ssh, byte* buf, word32 len,
+        word32* idx)
+{
+    int ret = WS_SUCCESS;
+    word32 begin;
+    word32 promptSz = 0;
+    word32 entry;
+    byte *authName = NULL;
+    byte *authInstruction = NULL;
+    byte *language = NULL;
+    byte *echo = NULL;
+    byte **prompts = NULL;
+
+    WLOG(WS_LOG_DEBUG, "Entering DoUserAuthInfoRequest()");
+
+    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+
+    if (ret == WS_SUCCESS) {
+        begin = *idx;
+        ret = GetStringAlloc(ssh->ctx->heap, (char**)&authName, buf, len,
+                             &begin);
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = GetStringAlloc(ssh->ctx->heap, (char**)&authInstruction, buf, len,
+                             &begin);
+
+    if (ret == WS_SUCCESS)
+        ret = GetStringAlloc(ssh->ctx->heap, (char**)&language, buf, len,
+                             &begin);
+
+    if (ret == WS_SUCCESS)
+        ret = GetUint32(&promptSz, buf, len, &begin);
+
+    if (ret == WS_SUCCESS && promptSz > WOLFSSH_MAX_PROMPTS) {
+        WLOG(WS_LOG_DEBUG, "Received too many prompts (%d), max: %d", promptSz,
+             WOLFSSH_MAX_PROMPTS);
+        ret = WS_USER_AUTH_E;
+    }
+
+    if (ret == WS_SUCCESS && promptSz) {
+        prompts = (byte**)WMALLOC(sizeof(byte*) * promptSz, ssh->ctx->heap,
+                                  DYNTYPE_BUFFER);
+        if (!prompts) {
+            ret = WS_MEMORY_E;
+        } else {
+            echo = (byte*)WMALLOC(sizeof(byte) * promptSz, ssh->ctx->heap,
+                                  DYNTYPE_BUFFER);
+        }
+
+        if (!echo) {
+            ret = WS_MEMORY_E;
+        } else {
+            WMEMSET(prompts, '\0', sizeof(char*) * promptSz);
+            for (entry = 0; entry < promptSz; entry++) {
+                ret = GetStringAlloc(ssh->ctx->heap, (char**)&prompts[entry],
+                                     buf, len, &begin);
+                if (ret != WS_SUCCESS)
+                    break;
+                ret = GetBoolean(&echo[entry], buf, len, &begin);
+                if (ret != WS_SUCCESS)
+                    break;
+            }
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        *idx += len;
+        ssh->kbAuth.promptCount = promptSz;
+        ssh->kbAuth.prompts = (byte**)prompts;
+        ssh->kbAuth.promptInstruction = authInstruction;
+        ssh->kbAuth.promptName = authName;
+        ssh->kbAuth.promptLanguage = language;
+        ssh->kbAuth.promptEcho = echo;
+        WLOG(WS_LOG_DEBUG, "Got keyboard-interactive prompt '%s'", authName);
+    } else {
+        if (prompts) {
+            for (entry = 0; entry < promptSz; entry++) {
+                WFREE((void*)prompts[entry], ssh->ctx->heap, DYNTYPE_BUFFER);
+            }
+        }
+        WFREE(prompts, ssh->ctx->heap, DYNTYPE_BUFFER);
+        WFREE(echo, ssh->ctx->heap, DYNTYPE_BUFFER);
+    }
+
+    if (ret == WS_SUCCESS)
+        ssh->serverState = SERVER_USERAUTH_ACCEPT_KEYBOARD;
+
+    WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthInfoRequest(), ret = %d", ret);
+
     return ret;
 }
 
@@ -8923,6 +9182,16 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
         case MSGID_USERAUTH_REQUEST:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_USERAUTH_REQUEST");
             ret = DoUserAuthRequest(ssh, buf + idx, payloadSz, &payloadIdx);
+            break;
+
+        case MSGID_USERAUTH_INFO_RESPONSE:
+            WLOG(WS_LOG_DEBUG, "Decoding MSG_USERAUTH_INFO_RESPONSE");
+            ret = DoUserAuthInfoResponse(ssh, buf + idx, payloadSz, &payloadIdx);
+            break;
+
+        case MSGID_USERAUTH_INFO_REQUEST:
+            WLOG(WS_LOG_DEBUG, "Decoding MSGID_USERAUTH_INFO_REQUEST");
+            ret = DoUserAuthInfoRequest(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
         case MSGID_USERAUTH_FAILURE:
@@ -12674,6 +12943,225 @@ static int BuildUserAuthRequestPassword(WOLFSSH* ssh,
     return ret;
 }
 
+static int PrepareUserAuthRequestKeyboard(WOLFSSH* ssh, word32* payloadSz,
+        const WS_UserAuthData* authData)
+{
+    int ret = WS_SUCCESS;
+    word32 entry;
+
+    if (ssh == NULL || payloadSz == NULL || authData == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS)
+    {
+        *payloadSz += LENGTH_SZ * 3;
+        if (authData->sf.keyboard.promptName) {
+            *payloadSz += authData->sf.keyboard.promptNameSz;
+        }
+        if (authData->sf.keyboard.promptInstruction) {
+            *payloadSz += authData->sf.keyboard.promptInstructionSz;
+        }
+        if (authData->sf.keyboard.promptLanguage) {
+            *payloadSz += authData->sf.keyboard.promptLanguageSz;
+        }
+        *payloadSz += LENGTH_SZ;
+
+        for (entry = 0; entry < authData->sf.keyboard.promptCount; entry++) {
+            *payloadSz += LENGTH_SZ +
+                authData->sf.keyboard.promptLengths[entry];
+            *payloadSz += BOOLEAN_SZ;
+        }
+    }
+
+    return ret;
+}
+
+
+static int BuildUserAuthRequestKeyboard(WOLFSSH* ssh, byte* output, word32* idx,
+        const WS_UserAuthData* authData)
+{
+    int ret = WS_SUCCESS;
+    word32 begin;
+    word32 entry;
+
+    if (ssh == NULL || output == NULL || idx == NULL || authData == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        begin = *idx;
+        if (authData->sf.keyboard.promptName) {
+            word32 slen = authData->sf.keyboard.promptNameSz;
+            c32toa(slen, output + begin);
+            begin += LENGTH_SZ;
+            WMEMCPY(output + begin, authData->sf.keyboard.promptName, slen);
+            begin += slen;
+        } else {
+            c32toa(0, output + begin);
+            begin += LENGTH_SZ;
+        }
+        if (authData->sf.keyboard.promptInstruction) {
+            word32 slen = authData->sf.keyboard.promptInstructionSz;
+            c32toa(slen, output + begin);
+            begin += LENGTH_SZ;
+            WMEMCPY(output + begin, authData->sf.keyboard.promptInstruction, slen);
+            begin += slen;
+        } else {
+            c32toa(0, output + begin);
+            begin += LENGTH_SZ;
+        }
+        if (authData->sf.keyboard.promptLanguage) {
+            word32 slen = authData->sf.keyboard.promptLanguageSz;
+            c32toa(slen, output + begin);
+            begin += LENGTH_SZ;
+            WMEMCPY(output + begin, authData->sf.keyboard.promptLanguage, slen);
+            begin += slen;
+        } else {
+            c32toa(0, output + begin);
+            begin += LENGTH_SZ;
+        }
+        c32toa(authData->sf.keyboard.promptCount, output + begin);
+        begin += LENGTH_SZ;
+        for (entry = 0; entry < authData->sf.keyboard.promptCount;
+                entry++) {
+            c32toa(authData->sf.keyboard.promptLengths[entry], output + begin);
+            begin += LENGTH_SZ;
+            WMEMCPY(output + begin, authData->sf.keyboard.prompts[entry],
+                    authData->sf.keyboard.promptLengths[entry]);
+            begin += authData->sf.keyboard.promptLengths[entry];
+            output[begin] = authData->sf.keyboard.promptEcho[entry];
+            begin++;
+        }
+        *idx = begin;
+    }
+
+    return ret;
+}
+
+int SendUserAuthKeyboardRequest(WOLFSSH* ssh, WS_UserAuthData* authData)
+{
+    byte* output;
+    word32 idx;
+    word32 payloadSz = 0;
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering SendUserAuthKeyboardRequest()");
+
+
+    if (ssh == NULL || authData == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = ssh->ctx->keyboardAuthCb(&authData->sf.keyboard,
+                                       ssh->keyboardAuthCtx);
+    }
+
+    if (authData->sf.keyboard.promptCount > 0 &&
+        (authData->sf.keyboard.prompts == NULL ||
+         authData->sf.keyboard.promptLengths == NULL ||
+         authData->sf.keyboard.promptEcho == NULL)) {
+
+        ret = WS_BAD_USAGE;
+    }
+
+    if (authData->sf.keyboard.promptCount > WOLFSSH_MAX_PROMPTS) {
+        ret = WS_BAD_USAGE;
+    }
+
+    ssh->kbAuth.promptCount = authData->sf.keyboard.promptCount;
+
+    payloadSz = MSG_ID_SZ;
+    if (ret == WS_SUCCESS) {
+        ret = PrepareUserAuthRequestKeyboard(ssh, &payloadSz, authData);
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = PreparePacket(ssh, payloadSz);
+    }
+
+    output = ssh->outputBuffer.buffer;
+    idx = ssh->outputBuffer.length;
+
+    output[idx++] = MSGID_USERAUTH_INFO_REQUEST;
+
+    if (ret == WS_SUCCESS) {
+        ret = BuildUserAuthRequestKeyboard(ssh, output, &idx, authData);
+    }
+
+    if (ret == WS_SUCCESS) {
+        ssh->outputBuffer.length = idx;
+        ret = BundlePacket(ssh);
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = wolfSSH_SendPacket(ssh);
+    }
+
+    if ((ret != WS_WANT_WRITE) && (ret != WS_SUCCESS)) {
+        PurgePacket(ssh);
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving SendUserAuthKeyboardRequest(), ret = %d", ret);
+
+    return ret;
+}
+
+static int PrepareUserAuthResponseKeyboard(WOLFSSH* ssh, word32* payloadSz,
+        const WS_UserAuthData* authData)
+{
+    int ret = WS_SUCCESS;
+    word32 entry;
+
+    if (ssh == NULL || payloadSz == NULL || authData == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS)
+    {
+        *payloadSz += LENGTH_SZ;
+        for (entry = 0; entry < authData->sf.keyboard.responseCount; entry++) {
+            *payloadSz += LENGTH_SZ +
+                authData->sf.keyboard.responseLengths[entry];
+        }
+    }
+
+    return ret;
+}
+
+
+static int BuildUserAuthResponseKeyboard(WOLFSSH* ssh, byte* output, word32* idx,
+        const WS_UserAuthData* authData)
+{
+    int ret = WS_SUCCESS;
+    word32 begin;
+    word32 entry;
+
+    if (ssh == NULL || output == NULL || idx == NULL || authData == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS &&
+        authData->sf.keyboard.promptCount !=
+        authData->sf.keyboard.responseCount) {
+
+        ret = WS_USER_AUTH_E;
+        WLOG(WS_LOG_DEBUG, "Not enough answers provided for prompts");
+    }
+
+    if (ret == WS_SUCCESS) {
+        begin = *idx;
+        c32toa(authData->sf.keyboard.responseCount, output + begin);
+        begin += LENGTH_SZ;
+        for (entry = 0; entry < authData->sf.keyboard.responseCount; entry++) {
+            c32toa(authData->sf.keyboard.responseLengths[entry], output + begin);
+            begin += LENGTH_SZ;
+            WMEMCPY(output + begin, authData->sf.keyboard.responses[entry],
+                    authData->sf.keyboard.responseLengths[entry]);
+            begin += authData->sf.keyboard.responseLengths[entry];
+        }
+        *idx = begin;
+    }
+
+    return ret;
+}
 
 #ifndef WOLFSSH_NO_RSA
 static int PrepareUserAuthRequestRsa(WOLFSSH* ssh, word32* payloadSz,
@@ -13971,6 +14459,95 @@ static int BuildUserAuthRequestPublicKey(WOLFSSH* ssh,
 
 #endif
 
+int SendUserAuthKeyboardResponse(WOLFSSH* ssh)
+{
+    byte* output;
+    int ret = WS_SUCCESS;
+    word32 idx;
+    word32 payloadSz = 0;
+    word32 prompt;
+    WS_UserAuthData authData;
+
+    WLOG(WS_LOG_DEBUG, "Entering SendUserAuthKeyboardResponse()");
+
+    authData.type = WOLFSSH_USERAUTH_KEYBOARD;
+    authData.username = (const byte*)ssh->userName;
+    authData.usernameSz = ssh->userNameSz;
+    authData.sf.keyboard.promptCount = ssh->kbAuth.promptCount;
+    authData.sf.keyboard.promptName = ssh->kbAuth.promptName;
+    authData.sf.keyboard.promptNameSz =
+        (word32)WSTRLEN((char*)ssh->kbAuth.promptName);
+    authData.sf.keyboard.promptInstruction = ssh->kbAuth.promptInstruction;
+    authData.sf.keyboard.promptInstructionSz =
+        (word32)WSTRLEN((char*)ssh->kbAuth.promptInstruction);
+    authData.sf.keyboard.promptLanguage = ssh->kbAuth.promptLanguage;
+    authData.sf.keyboard.promptLanguageSz =
+        (word32)WSTRLEN((char*)ssh->kbAuth.promptLanguage);
+    authData.sf.keyboard.prompts = ssh->kbAuth.prompts;
+    authData.sf.keyboard.promptEcho = ssh->kbAuth.promptEcho;
+    authData.sf.keyboard.responseCount = 0;
+
+    WLOG(WS_LOG_DEBUG, "SUAR: Calling the userauth callback");
+    ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_KEYBOARD, &authData,
+                               ssh->userAuthCtx);
+
+    WFREE(ssh->kbAuth.promptName, ssh->ctx->heap, 0);
+    WFREE(ssh->kbAuth.promptInstruction, ssh->ctx->heap, 0);
+    WFREE(ssh->kbAuth.promptLanguage, ssh->ctx->heap, 0);
+    WFREE(ssh->kbAuth.promptEcho, ssh->ctx->heap, 0);
+    for (prompt = 0; prompt < ssh->kbAuth.promptCount; prompt++) {
+        WFREE((void*)ssh->kbAuth.prompts[prompt], ssh->ctx->heap, 0);
+    }
+    WFREE(ssh->kbAuth.prompts, ssh->ctx->heap, 0);
+
+    if (ret != WOLFSSH_USERAUTH_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "SUAR: Couldn't get keyboard auth");
+        ret = WS_FATAL_ERROR;
+    }
+    else if (ssh->kbAuth.promptCount != authData.sf.keyboard.responseCount) {
+        WLOG(WS_LOG_DEBUG,
+             "SUAR: Keyboard auth response count does not match request count");
+        ret = WS_USER_AUTH_E;
+    }
+    else {
+        WLOG(WS_LOG_DEBUG, "SUAR: Callback successful keyboard");
+    }
+
+    payloadSz = MSG_ID_SZ;
+
+    if (ret == WS_SUCCESS) {
+        ret = PrepareUserAuthResponseKeyboard(ssh, &payloadSz, &authData);
+    }
+    if (ret == WS_SUCCESS) {
+        ret = PreparePacket(ssh, payloadSz);
+    }
+
+    output = ssh->outputBuffer.buffer;
+    idx = ssh->outputBuffer.length;
+
+    output[idx++] = MSGID_USERAUTH_INFO_RESPONSE;
+
+    if (ret == WS_SUCCESS)
+        ret = BuildUserAuthResponseKeyboard(ssh, output, &idx, &authData);
+
+    if (ret == WS_SUCCESS) {
+        ssh->outputBuffer.length = idx;
+        ret = BundlePacket(ssh);
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = wolfSSH_SendPacket(ssh);
+    }
+
+    if (ret != WS_WANT_WRITE && ret != WS_SUCCESS)
+        PurgePacket(ssh);
+
+    ForceZero(&authData, sizeof(WS_UserAuthData));
+
+    WLOG(WS_LOG_DEBUG, "Leaving SendUserAuthKeyboardResponse(), ret = %d", ret);
+
+    return ret;
+}
 
 int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
 {
@@ -14004,8 +14581,11 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
         WMEMSET(keySig_ptr, 0, sizeof(WS_KeySignature));
         keySig_ptr->keySigId = ID_NONE;
         keySig_ptr->heap = ssh->ctx->heap;
-
-        if (ssh->ctx->userAuthCb != NULL) {
+        /* Callback happens later for keyboard auth */
+        if (authType & WOLFSSH_USERAUTH_KEYBOARD) {
+                    authId = ID_USERAUTH_KEYBOARD;
+        }
+        else if (ssh->ctx->userAuthCb != NULL) {
             WLOG(WS_LOG_DEBUG, "SUAR: Calling the userauth callback");
 
             WMEMSET(&authData, 0, sizeof(authData));
@@ -14028,9 +14608,11 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
                     authData.type = authType;
                 }
             }
-            /* fall into public key case if password case was not successful */
+            /* fall into public key case if keyboard or password case was not
+             * successful */
             if ((ret == WS_FATAL_ERROR ||
-                !(authType & WOLFSSH_USERAUTH_PASSWORD)) &&
+                (!(authType & WOLFSSH_USERAUTH_PASSWORD) &&
+                !(authType & WOLFSSH_USERAUTH_KEYBOARD))) &&
                 (authType & WOLFSSH_USERAUTH_PUBLICKEY)) {
                 ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PUBLICKEY,
                         &authData, ssh->userAuthCtx);
@@ -14068,7 +14650,8 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
             ret = PrepareUserAuthRequestPublicKey(ssh, &payloadSz, &authData,
                     keySig_ptr);
         }
-        else if (authId != ID_NONE && !ssh->userAuthPkDone)
+        else if (authId != ID_NONE && authId != ID_USERAUTH_KEYBOARD &&
+                 !ssh->userAuthPkDone)
             ret = WS_INVALID_ALGO_ID;
     }
 
@@ -14107,6 +14690,14 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
 
             ret = BuildUserAuthRequestPassword(ssh, output, &idx, &authData);
         }
+        else if (authId == ID_USERAUTH_KEYBOARD) {
+            /* language tag, deprecated, should be empty */
+            c32toa(0, output + idx);
+            idx += LENGTH_SZ;
+            /* submethods */
+            c32toa(0, output + idx);
+            idx += LENGTH_SZ;
+        }
         else if (authId == ID_USERAUTH_PUBLICKEY)
             ret = BuildUserAuthRequestPublicKey(ssh, output, &idx, &authData,
                     sigStart, sigStartIdx, keySig_ptr);
@@ -14143,13 +14734,16 @@ static int GetAllowedAuth(WOLFSSH* ssh, char* authStr)
 {
     int typeAllowed = 0;
 
+    if (ssh == NULL || authStr == NULL)
+        return WS_BAD_ARGUMENT;
+
     typeAllowed |= WOLFSSH_USERAUTH_PASSWORD;
+    if (ssh->ctx->keyboardAuthCb != NULL) {
+        typeAllowed |= WOLFSSH_USERAUTH_KEYBOARD;
+    }
 #if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
     typeAllowed |= WOLFSSH_USERAUTH_PUBLICKEY;
 #endif
-
-    if (ssh == NULL || authStr == NULL)
-        return WS_BAD_ARGUMENT;
 
     authStr[0] = '\0';
     if (ssh->ctx && ssh->ctx->userAuthTypesCb) {
@@ -14161,6 +14755,10 @@ static int GetAllowedAuth(WOLFSSH* ssh, char* authStr)
 
     if (typeAllowed & WOLFSSH_USERAUTH_PASSWORD) {
         WSTRNCAT(authStr, "password,", MAX_AUTH_STRING-1);
+    }
+
+    if (typeAllowed & WOLFSSH_USERAUTH_KEYBOARD) {
+        WSTRNCAT(authStr, "keyboard-interactive,", MAX_AUTH_STRING-1);
     }
 
     /* remove last comma from the list */

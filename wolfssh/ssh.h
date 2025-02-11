@@ -292,6 +292,22 @@ typedef struct WS_UserAuthData_Password {
     word32 newPasswordSz;
 } WS_UserAuthData_Password;
 
+typedef struct WS_UserAuthData_Keyboard {
+    word32 promptCount;
+    word32 responseCount;
+    word32 promptNameSz;
+    word32 promptInstructionSz;
+    word32 promptLanguageSz;
+    byte* promptName;
+    byte* promptInstruction;
+    byte* promptLanguage;
+    word32* promptLengths;
+    word32* responseLengths;
+    byte* promptEcho;
+    byte** responses;
+    byte** prompts;
+} WS_UserAuthData_Keyboard;
+
 typedef struct WS_UserAuthData_PublicKey {
     const byte* dataToSign;
     const byte* publicKeyType;
@@ -317,6 +333,7 @@ typedef struct WS_UserAuthData {
     union {
         WS_UserAuthData_Password password;
         WS_UserAuthData_PublicKey publicKey;
+        WS_UserAuthData_Keyboard keyboard;
     } sf;
 } WS_UserAuthData;
 
@@ -327,6 +344,11 @@ WOLFSSH_API void wolfSSH_SetUserAuthTypes(WOLFSSH_CTX*,
     WS_CallbackUserAuthTypes);
 WOLFSSH_API void wolfSSH_SetUserAuthCtx(WOLFSSH*, void*);
 WOLFSSH_API void* wolfSSH_GetUserAuthCtx(WOLFSSH*);
+
+typedef int (*WS_CallbackKeyboardAuthPrompts)(WS_UserAuthData_Keyboard*, void*);
+WOLFSSH_API void wolfSSH_SetKeyboardAuthPrompts(WOLFSSH_CTX*,
+                                                WS_CallbackKeyboardAuthPrompts);
+WOLFSSH_API void wolfSSH_SetKeyboardAuthCtx(WOLFSSH*, void*);
 
 typedef int (*WS_CallbackUserAuthResult)(byte result,
         WS_UserAuthData* authData, void* userAuthResultCtx);
@@ -425,7 +447,8 @@ enum WS_FormatTypes {
 /* bit map */
 #define WOLFSSH_USERAUTH_PASSWORD  0x01
 #define WOLFSSH_USERAUTH_PUBLICKEY 0x02
-#define WOLFSSH_USERAUTH_NONE      0x04
+#define WOLFSSH_USERAUTH_KEYBOARD  0x04
+#define WOLFSSH_USERAUTH_NONE      0x08
 
 enum WS_UserAuthResults
 {
@@ -437,6 +460,7 @@ enum WS_UserAuthResults
     WOLFSSH_USERAUTH_REJECTED,
     WOLFSSH_USERAUTH_INVALID_PUBLICKEY,
     WOLFSSH_USERAUTH_PARTIAL_SUCCESS,
+    WOLFSSH_USERAUTH_SUCCESS_ANOTHER,
     WOLFSSH_USERAUTH_WOULD_BLOCK
 };
 

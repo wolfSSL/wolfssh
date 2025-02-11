@@ -840,6 +840,28 @@ int wolfSSH_connect(WOLFSSH* ssh)
                     return WS_FATAL_ERROR;
                 }
             }
+
+            while (ssh->serverState == SERVER_USERAUTH_ACCEPT_KEYBOARD) {
+                if ( (ssh->error = SendUserAuthKeyboardResponse(ssh)) <
+                    WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, connectError, "CLIENT_USERAUTH_SENT",
+                        ssh->error);
+                    return WS_FATAL_ERROR;
+                }
+                ssh->serverState = SERVER_USERAUTH_ACCEPT_KEYBOARD_NEXT;
+                while (
+                    (ssh->serverState < SERVER_USERAUTH_ACCEPT_KEYBOARD_DONE) &&
+                    (ssh->serverState != SERVER_USERAUTH_ACCEPT_KEYBOARD) &&
+                    (ssh->serverState != SERVER_USERAUTH_ACCEPT_DONE)) {
+
+                    if (DoReceive(ssh) < WS_SUCCESS) {
+                        WLOG(WS_LOG_DEBUG, connectError,
+                            "CLIENT_USERAUTH_SENT", ssh->error);
+                        return WS_FATAL_ERROR;
+                    }
+                }
+            }
+
             ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
             WLOG(WS_LOG_DEBUG, connectState, "SERVER_USERAUTH_ACCEPT_DONE");
             NO_BREAK;
@@ -1288,6 +1310,20 @@ int wolfSSH_SendDisconnect(WOLFSSH *ssh, word32 reason)
     return SendDisconnect(ssh, reason);
 }
 
+void wolfSSH_SetKeyboardAuthPrompts(WOLFSSH_CTX* ctx,
+                                    WS_CallbackKeyboardAuthPrompts cb)
+{
+    if (ctx != NULL) {
+        ctx->keyboardAuthCb = cb;
+    }
+}
+
+void wolfSSH_SetKeyboardAuthCtx(WOLFSSH* ssh, void* keyboardAuthCtx)
+{
+    if (ssh != NULL) {
+        ssh->keyboardAuthCtx = keyboardAuthCtx;
+    }
+}
 
 void wolfSSH_SetUserAuth(WOLFSSH_CTX* ctx, WS_CallbackUserAuth cb)
 {

@@ -57,6 +57,10 @@ static word32 userPrivateKeySz = sizeof(userPrivateKeyBuf);
 static word32 userPrivateKeyTypeSz = 0;
 static byte isPrivate = 0;
 
+static word32 keyboardResponseCount = 0;
+static byte** keyboardResponses;
+static word32* keyboardResponseLengths;
+
 
 #ifdef WOLFSSH_CERTS
 #if 0
@@ -445,6 +449,9 @@ int ClientUserAuth(byte authType,
 {
     const char* defaultPassword = (const char*)ctx;
     word32 passwordSz = 0;
+#ifdef WOLFSSH_TERM
+    word32 entry;
+#endif
     int ret = WOLFSSH_USERAUTH_SUCCESS;
 
 #ifdef DEBUG_WOLFSSH
@@ -455,6 +462,9 @@ int ClientUserAuth(byte authType,
     }
     if (authData->type & WOLFSSH_USERAUTH_PUBLICKEY) {
         printf(" - publickey\n");
+    }
+    if (authData->type & WOLFSSH_USERAUTH_KEYBOARD) {
+        printf(" - keyboard\n");
     }
     printf("wolfSSH requesting to use type %d\n", authType);
 #endif
@@ -523,7 +533,63 @@ int ClientUserAuth(byte authType,
             authData->sf.password.passwordSz = passwordSz;
         }
     }
+#ifdef WOLFSSH_TERM
+    else if (authType == WOLFSSH_USERAUTH_KEYBOARD) {
+        if (authData->sf.keyboard.promptName &&
+            authData->sf.keyboard.promptName[0] != '\0') {
+            printf("%s\n", authData->sf.keyboard.promptName);
+        }
+        if (authData->sf.keyboard.promptInstruction &&
+            authData->sf.keyboard.promptInstruction[0] != '\0') {
+            printf("%s\n", authData->sf.keyboard.promptInstruction);
+        }
+        keyboardResponseCount = authData->sf.keyboard.promptCount;
+        keyboardResponses =
+            (byte**)WMALLOC(sizeof(byte*) * keyboardResponseCount, NULL, 0);
+        if (keyboardResponses == NULL) {
+            ret = WS_MEMORY_E;
+        }
+        if (ret == WS_SUCCESS) {
+            authData->sf.keyboard.responses = (byte**)keyboardResponses;
+            keyboardResponseLengths = (word32*)WMALLOC(
+                sizeof(word32) * keyboardResponseCount, NULL, 0);
+            authData->sf.keyboard.responseLengths = keyboardResponseLengths;
+        }
 
+        if (keyboardResponseLengths == NULL) {
+            ret = WS_MEMORY_E;
+        }
+
+        for (entry = 0; entry < authData->sf.keyboard.promptCount; entry++) {
+            if (ret == WS_SUCCESS) {
+                printf("%s", authData->sf.keyboard.prompts[entry]);
+                if (!authData->sf.keyboard.promptEcho[entry]) {
+                    ClientSetEcho(0);
+                }
+                if (WFGETS((char*)userPassword, sizeof(userPassword), stdin)
+                        == NULL) {
+                    fprintf(stderr, "Getting response failed.\n");
+                    ret = WOLFSSH_USERAUTH_FAILURE;
+                }
+                else {
+                    char* c = strpbrk((char*)userPassword, "\r\n");
+                    if (c != NULL)
+                        *c = '\0';
+                }
+                passwordSz = (word32)strlen((const char*)userPassword);
+                ClientSetEcho(1);
+                #ifdef USE_WINDOWS_API
+                    printf("\r\n");
+                #endif
+                WFFLUSH(stdout);
+                authData->sf.keyboard.responses[entry] =
+                    (byte*) WSTRDUP((char*)userPassword, NULL, 0);
+                authData->sf.keyboard.responseLengths[entry] = passwordSz;
+                authData->sf.keyboard.responseCount++;
+            }
+        }
+    }
+#endif
     return ret;
 }
 
@@ -797,6 +863,7 @@ int ClientLoadCA(WOLFSSH_CTX* ctx, const char* caCert)
 void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
         void* heap)
 {
+    word32 entry;
     if (pubKeyName != NULL && userPublicKey != NULL) {
         WFREE(userPublicKey, heap, DYNTYPE_PRIVKEY);
     }
@@ -804,4 +871,10 @@ void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
     if (privKeyName != NULL && userPrivateKey != NULL) {
         WFREE(userPrivateKey, heap, DYNTYPE_PRIVKEY);
     }
+
+    for (entry = 0; entry < keyboardResponseCount; entry++) {
+        WFREE(keyboardResponses[entry], NULL, 0);
+    }
+    WFREE(keyboardResponses, NULL, 0);
+    WFREE(keyboardResponseLengths, NULL, 0);
 }

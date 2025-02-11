@@ -353,6 +353,7 @@ enum {
     /* UserAuth IDs */
     ID_USERAUTH_PASSWORD,
     ID_USERAUTH_PUBLICKEY,
+    ID_USERAUTH_KEYBOARD,
 
     /* Channel Type IDs */
     ID_CHANTYPE_SESSION,
@@ -509,6 +510,7 @@ struct WOLFSSH_CTX {
     WS_CallbackUserAuth userAuthCb;   /* User Authentication Callback */
     WS_CallbackUserAuthTypes userAuthTypesCb; /* Authentication Types Allowed */
     WS_CallbackUserAuthResult userAuthResultCb; /* User Authentication Result */
+    WS_CallbackKeyboardAuthPrompts keyboardAuthCb; /* Keyboard auth prompts */
     WS_CallbackHighwater highwaterCb; /* Data Highwater Mark Callback */
     WS_CallbackGlobalReq globalReqCb; /* Global Request Callback */
     WS_CallbackReqSuccess reqSuccessCb; /* Global Request Success Callback */
@@ -712,7 +714,7 @@ struct WOLFSSH {
     byte processReplyState;
     byte isKeying;
     byte authId;           /* if using public key or password */
-    byte supportedAuth[3]; /* supported auth IDs public key , password */
+    byte supportedAuth[4]; /* supported auth IDs public key , password */
 
 #ifdef WOLFSSH_SCP
     byte   scpState;
@@ -802,6 +804,7 @@ struct WOLFSSH {
 
     void* userAuthCtx;
     void* userAuthResultCtx;
+    void* keyboardAuthCtx;
     char* userName;
     word32 userNameSz;
     char* password;
@@ -890,6 +893,7 @@ struct WOLFSSH {
     word32 exitStatus;
 #endif
     void* keyingCompletionCtx;
+    WS_UserAuthData_Keyboard kbAuth;
 };
 
 
@@ -998,6 +1002,8 @@ WOLFSSH_LOCAL int SendServiceRequest(WOLFSSH*, byte);
 WOLFSSH_LOCAL int SendServiceAccept(WOLFSSH*, byte);
 WOLFSSH_LOCAL int SendExtInfo(WOLFSSH* ssh);
 WOLFSSH_LOCAL int SendUserAuthRequest(WOLFSSH*, byte, int);
+WOLFSSH_LOCAL int SendUserAuthKeyboardResponse(WOLFSSH*);
+WOLFSSH_LOCAL int SendUserAuthKeyboardRequest(WOLFSSH*, WS_UserAuthData*);
 WOLFSSH_LOCAL int SendUserAuthSuccess(WOLFSSH*);
 WOLFSSH_LOCAL int SendUserAuthFailure(WOLFSSH*, byte);
 WOLFSSH_LOCAL int SendUserAuthBanner(WOLFSSH*);
@@ -1098,6 +1104,9 @@ enum ServerStates {
     SERVER_KEXINIT_DONE,
     SERVER_USERAUTH_REQUEST_DONE,
     SERVER_USERAUTH_ACCEPT_DONE,
+    SERVER_USERAUTH_ACCEPT_KEYBOARD,
+    SERVER_USERAUTH_ACCEPT_KEYBOARD_NEXT,
+    SERVER_USERAUTH_ACCEPT_KEYBOARD_DONE,
     SERVER_CHANNEL_OPEN_DONE,
     SERVER_DONE
 };
@@ -1146,6 +1155,8 @@ enum WS_MessageIds {
     MSGID_USERAUTH_BANNER = 53,
     MSGID_USERAUTH_PK_OK = 60, /* Public Key OK */
     MSGID_USERAUTH_PW_CHRQ = 60, /* Password Change Request */
+    MSGID_USERAUTH_INFO_REQUEST = 60,
+    MSGID_USERAUTH_INFO_RESPONSE = 61,
 
     MSGID_GLOBAL_REQUEST = 80,
     MSGID_REQUEST_SUCCESS = 81,
