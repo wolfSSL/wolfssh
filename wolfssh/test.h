@@ -949,8 +949,7 @@ static INLINE void WaitTcpReady(tcp_ready* ready)
 #ifdef WOLFSSH_TEST_THREADING
 
 
-#if !defined(WOLFSSH_OLD_THREADING) && !defined(WOLFSSH_OLDER_THREADING) && \
-    !defined(SINGLE_THREADED)
+#if !defined(WOLFSSH_OLD_THREADING) && !defined(WOLFSSH_OLDER_THREADING)
 
 static INLINE void ThreadStart(THREAD_CB fun, void* args, THREAD_TYPE* thread)
 {
