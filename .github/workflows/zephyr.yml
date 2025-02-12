@@ -14,7 +14,7 @@ jobs:
         config:
           - zephyr-ref: v3.4.0
             zephyr-sdk: 0.16.1
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     # This should be a safe limit for the tests to run.
     timeout-minutes: 20
     steps:
@@ -87,7 +87,7 @@ jobs:
 
       - name: Upload failure logs
         if: ${{ failure() && steps.wolfssh-test.outcome == 'failure' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: zephyr-client-test-logs
           path: logs.zip

@@ -20,7 +20,6 @@ jobs:
       matrix:
         os: [ ubuntu-latest, macos-latest ]
     name: Build wolfssl
-    if: github.repository_owner == 'wolfssl'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 4
     steps:
