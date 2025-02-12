@@ -23,6 +23,7 @@ env:
 
 jobs:
   build:
+    if: github.repository_owner == 'wolfssl'
     runs-on: windows-latest
 
     steps:
