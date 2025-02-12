@@ -125,9 +125,14 @@ extern "C" {
     #undef WOLFSSH_NO_HMAC_SHA2_256
     #define WOLFSSH_NO_HMAC_SHA2_256
 #endif
+#if defined(NO_HMAC) || defined(NO_SHA512)
+    #undef WOLFSSH_NO_HMAC_SHA2_512
+    #define WOLFSSH_NO_HMAC_SHA2_512
+#endif
 #if defined(WOLFSSH_NO_HMAC_SHA1) && \
     defined(WOLFSSH_NO_HMAC_SHA1_96) && \
-    defined(WOLFSSH_NO_HMAC_SHA2_256)
+    defined(WOLFSSH_NO_HMAC_SHA2_256) && \
+    defined(WOLFSSH_NO_HMAC_SHA2_512)
     #error "You need at least one MAC algorithm."
 #endif
 
@@ -143,6 +148,10 @@ extern "C" {
 #if defined(WOLFSSH_NO_DH) || defined(WOLFSSH_NO_SHA256)
     #undef WOLFSSH_NO_DH_GROUP14_SHA256
     #define WOLFSSH_NO_DH_GROUP14_SHA256
+#endif
+#if defined(WOLFSSH_NO_DH) || defined(WOLFSSH_NO_SHA512)
+    #undef WOLFSSH_NO_DH_GROUP16_SHA512
+    #define WOLFSSH_NO_DH_GROUP16_SHA512
 #endif
 #if defined(WOLFSSH_NO_DH) || defined(NO_SHA256)
     #undef WOLFSSH_NO_DH_GEX_SHA256
@@ -178,6 +187,7 @@ extern "C" {
 #if defined(WOLFSSH_NO_DH_GROUP1_SHA1) && \
     defined(WOLFSSH_NO_DH_GROUP14_SHA1) && \
     defined(WOLFSSH_NO_DH_GROUP14_SHA256) && \
+    defined(WOLFSSH_NO_DH_GROUP16_SHA512) && \
     defined(WOLFSSH_NO_DH_GEX_SHA256) && \
     defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && \
     defined(WOLFSSH_NO_ECDH_SHA2_NISTP384) && \
@@ -190,6 +200,7 @@ extern "C" {
 #if defined(WOLFSSH_NO_DH_GROUP1_SHA1) && \
     defined(WOLFSSH_NO_DH_GROUP14_SHA1) && \
     defined(WOLFSSH_NO_DH_GROUP14_SHA256) && \
+    defined(WOLFSSH_NO_DH_GROUP16_SHA512) && \
     defined(WOLFSSH_NO_DH_GEX_SHA256)
     #undef WOLFSSH_NO_DH
     #define WOLFSSH_NO_DH
@@ -313,11 +324,13 @@ enum {
     ID_HMAC_SHA1,
     ID_HMAC_SHA1_96,
     ID_HMAC_SHA2_256,
+    ID_HMAC_SHA2_512,
 
     /* Key Exchange IDs */
     ID_DH_GROUP1_SHA1,
     ID_DH_GROUP14_SHA1,
     ID_DH_GROUP14_SHA256,
+    ID_DH_GROUP16_SHA512,
     ID_DH_GEX_SHA256,
     ID_ECDH_SHA2_NISTP256,
     ID_ECDH_SHA2_NISTP384,
@@ -391,7 +404,7 @@ enum NameIdType {
 #define MAX_KEY_EXCHANGE 2
 #define MAX_PUBLIC_KEY 1
 #define MIN_RSA_SIG_SZ 2
-#define MAX_HMAC_SZ WC_SHA256_DIGEST_SIZE
+#define MAX_HMAC_SZ WC_SHA512_DIGEST_SIZE
 #define MIN_BLOCK_SZ 8
 #define COOKIE_SZ 16
 #define PAD_LENGTH_SZ 1

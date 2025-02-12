@@ -3,9 +3,7 @@
 # All paths should be given relative to the root
 
 check_PROGRAMS  += tests/unit.test tests/api.test \
-                   tests/testsuite.test tests/auth.test
-noinst_PROGRAMS += tests/unit.test tests/api.test \
-                   tests/testsuite.test tests/auth.test
+                   tests/testsuite.test tests/auth.test tests/kex.test
 
 tests_unit_test_SOURCES      = tests/unit.c tests/unit.h
 tests_unit_test_CPPFLAGS     = -DNO_MAIN_DRIVER
@@ -131,3 +129,36 @@ endif
 tests_auth_test_LDADD        = src/libwolfssh.la
 tests_auth_test_DEPENDENCIES = src/libwolfssh.la
 
+
+tests_kex_test_SOURCES = tests/kex.c tests/kex.h \
+                               examples/echoserver/echoserver.c \
+                               examples/client/client.c \
+                               examples/client/common.c \
+                               examples/client/common.h
+tests_kex_test_CPPFLAGS  = -DNO_MAIN_DRIVER
+if BUILD_KEYGEN
+tests_kex_test_CPPFLAGS     += -DWOLFSSH_KEYGEN
+endif
+if BUILD_SCP
+tests_kex_test_CPPFLAGS     += -DWOLFSSH_SCP
+endif
+if BUILD_SFTP
+tests_kex_test_CPPFLAGS     += -DWOLFSSH_SFTP
+endif
+if BUILD_TERM
+tests_kex_test_CPPFLAGS     += -DWOLFSSH_TERM
+endif
+if BUILD_SHELL
+tests_kex_test_CPPFLAGS     += -DWOLFSSH_SHELL
+endif
+if BUILD_AGENT
+tests_kex_test_CPPFLAGS     += -DWOLFSSH_AGENT
+endif
+if BUILD_FWD
+tests_kex_test_CPPFLAGS     += -DWOLFSSH_FWD
+endif
+if BUILD_CERTS
+tests_kex_test_CPPFLAGS     += -DWOLFSSH_CERTS
+endif
+tests_kex_test_LDADD   = src/libwolfssh.la
+tests_kex_test_DEPENDENCIES = src/libwolfssh.la

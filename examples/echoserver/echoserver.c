@@ -2369,7 +2369,10 @@ static void ShowUsage(void)
 #ifdef WOLFSSH_CERTS
     printf(" -a <file>     load in a root CA certificate file\n");
 #endif
-    printf(" -k            set the list of key algos to use\n");
+    printf(" -k <list>     set the comma separated list of key algos to use\n");
+    printf(" -x <list>     set the comma separated list of key exchange algos "
+           "to use\n");
+    printf(" -m <list>     set the comma separated list of mac algos to use\n");
     printf(" -b <num>      test user auth would block\n");
 }
 
@@ -2412,6 +2415,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     word32 defaultHighwater = EXAMPLE_HIGHWATER_MARK;
     word32 threadCount = 0;
     const char* keyList = NULL;
+    const char* kexList = NULL;
+    const char* macList = NULL;
+    const char* cipherList = NULL;
     ES_HEAP_HINT* heap = NULL;
     int multipleConnections = 1;
     int userEcc = 0;
@@ -2435,7 +2441,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     kbAuthData.promptCount = 0;
 
     if (argc > 0) {
-        const char* optlist = "?1a:d:efEp:R:Ni:j:i:I:J:K:P:k:b:";
+        const char* optlist = "?1a:d:efEp:R:Ni:j:i:I:J:K:P:k:b:x:m:c:";
         myoptind = 0;
         while ((ch = mygetopt(argc, argv, optlist)) != -1) {
             switch (ch) {
@@ -2527,6 +2533,18 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                     userAuthWouldBlock = atoi(myoptarg);
                     break;
 
+                case 'x':
+                    kexList = myoptarg;
+                    break;
+
+                case 'm':
+                    macList = myoptarg;
+                    break;
+
+                case 'c':
+                    cipherList = myoptarg;
+                    break;
+
                 default:
                     ShowUsage();
                     serverArgs->return_code = MY_EX_USAGE;
@@ -2582,6 +2600,24 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     if (keyList) {
         if (wolfSSH_CTX_SetAlgoListKey(ctx, keyList) != WS_SUCCESS) {
             ES_ERROR("Error setting key list.\n");
+        }
+    }
+
+    if (kexList) {
+        if (wolfSSH_CTX_SetAlgoListKex(ctx, kexList) != WS_SUCCESS) {
+            ES_ERROR("Error setting kex list.\n");
+        }
+    }
+
+    if (macList) {
+        if (wolfSSH_CTX_SetAlgoListMac(ctx, macList) != WS_SUCCESS) {
+            ES_ERROR("Error setting mac list.\n");
+        }
+    }
+
+    if (cipherList) {
+        if (wolfSSH_CTX_SetAlgoListCipher(ctx, cipherList) != WS_SUCCESS) {
+            ES_ERROR("Error setting cipher list.\n");
         }
     }
 
