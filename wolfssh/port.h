@@ -1192,7 +1192,7 @@ extern "C" {
     #define WSTAT(fs,p,b) f_stat(p,b)
     #define WLSTAT(fs,p,b) f_stat(p,b)
     #define WREMOVE(fs,d) f_unlink((d))
-    #define WRENAME(fs,fd,o,n) f_rename((o),(n))
+    #define WRENAME(fs,o,n) f_rename((o),(n))
     #define WMKDIR(fs, p, m) f_mkdir(p)
     #define WFD int
 
