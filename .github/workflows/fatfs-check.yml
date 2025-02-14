@@ -70,14 +70,14 @@ jobs:
           echo "typedef struct { FIL fil; FILE* stdio_file; } WFILE;" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#define WFD WFILE*" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#define WBADFILE ((WFD)NULL)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "static inline int ff_fopen(WFD* f, const char* filename, BYTE m) { if(!f) return -1; WFD tmp = (WFD)malloc(sizeof(WFILE)); if(!tmp) return -1; memset(tmp, 0, sizeof(WFILE)); tmp->stdio_file = tmpfile(); if(!tmp->stdio_file) { free(tmp); return -1; } int ret = f_open(&tmp->fil, filename, m); if(ret != 0) { fclose(tmp->stdio_file); free(tmp); return ret; } *f = tmp; return 0; }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "static inline int ff_fopen(WFD* f, const char* filename, BYTE m) { if(!f) return -1; *f = NULL; WFD tmp = (WFD)malloc(sizeof(WFILE)); if(!tmp) return -1; memset(tmp, 0, sizeof(WFILE)); tmp->stdio_file = tmpfile(); if(!tmp->stdio_file) { free(tmp); return -1; } int ret = f_open(&tmp->fil, filename, m); if(ret != 0) { fclose(tmp->stdio_file); free(tmp); return ret; } *f = tmp; return 0; }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "static inline int ff_fprintf(WFD f, const char* fmt, ...) { if(!f || !f->stdio_file) return -1; va_list args; va_start(args, fmt); int ret = vfprintf(f->stdio_file, fmt, args); va_end(args); return ret; }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "static inline FILE* ff_get_stdio(WFD f) { return f ? f->stdio_file : NULL; }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#define WFOPEN(fs,f,fn,m) (ff_fopen(&(f),(fn),(m)))" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#define WFCLOSE(fs,f) ff_fclose(f)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#define WFREAD(fs,p,s,n,f) ff_fread((p),(s),(n),(f))" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#define WFWRITE(fs,p,s,n,f) ff_fwrite((p),(s),(n),(f))" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "#define WFPRINTF ff_fprintf" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WFPRINTF(fs,f,fmt,...) ff_fprintf((f),(fmt),__VA_ARGS__)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "static inline int ff_fprintf(WFD f, const char* fmt, ...) { FILE* fp = ff_get_stdio(f); if(!fp) return -1; va_list args; va_start(args, fmt); int ret = vfprintf(fp, fmt, args); va_end(args); return ret; }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "static inline int ff_fclose(WFD f) { if(!f) return -1; if(f->stdio_file) fclose(f->stdio_file); int ret = f_close(&f->fil); free(f); return ret; }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "static inline int ff_fread(void* ptr, size_t size, size_t nmemb, WFD f) { if(!f) return -1; UINT br; int ret = f_read(&f->fil, ptr, size * nmemb, &br); return ret ? -1 : br; }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
