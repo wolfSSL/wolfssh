@@ -58,10 +58,12 @@ jobs:
           mkdir -p ${{ github.workspace }}/build-dir/include/fatfs
           cp *.h ${{ github.workspace }}/build-dir/include/fatfs/
           mkdir -p ${{ github.workspace }}/build-dir/lib/fatfs
-          gcc -c -I${{ github.workspace }}/build-dir/include/fatfs -fPIC *.c
-          ar rcs ${{ github.workspace }}/build-dir/lib/fatfs/libfatfs.a *.o
           mkdir -p ${{ github.workspace }}/build-dir/include/wolfssh
           mkdir -p ${{ github.workspace }}/build-dir/include/fatfs
+          cp *.h ${{ github.workspace }}/build-dir/include/fatfs/
+          gcc -c -I${{ github.workspace }}/build-dir/include/fatfs -fPIC *.c
+          mkdir -p ${{ github.workspace }}/build-dir/lib/fatfs
+          ar rcs ${{ github.workspace }}/build-dir/lib/fatfs/libfatfs.a *.o
           cp fatfs/source/ffconf.h ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
           echo "#define FF_DEFINED 80000" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
           echo "#define FFCONF_DEF 80000" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
