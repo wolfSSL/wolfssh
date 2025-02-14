@@ -70,7 +70,7 @@ jobs:
           echo "#define WFD FIL*" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "static FIL __wbadfile;" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#define WBADFILE (&__wbadfile)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "#define ff_fopen(f, filename, m) ({ FIL* __f = malloc(sizeof(FIL)); *f = __f; f_open(__f, filename, m); })" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "static inline int ff_fopen(FIL** f, const char* filename, BYTE m) { *f = malloc(sizeof(FIL)); return f_open(*f, filename, m); }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
 
       - name: Checkout, build, and test wolfssh
         uses: wolfSSL/actions-build-autotools-project@v1
