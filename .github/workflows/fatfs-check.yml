@@ -51,14 +51,18 @@ jobs:
           key: wolfssh-fatfs-check-wolfssl-${{ env.WOLFSSL_REF }}
           fail-on-cache-miss: true
 
-      - name: Apply FATFS patch
+      - name: Setup FATFS
         run: |
-          sed -i 's/#define WRENAME(fs,fd,o,n) f_rename((o),(n))/#define WRENAME(fs,o,n) f_rename((o),(n))/' wolfssh/port.h
+          git clone https://github.com/FatFs/FatFs.git
+          cd FatFs/source
+          mkdir -p ${{ github.workspace }}/build-dir/include/fatfs
+          cp *.h ${{ github.workspace }}/build-dir/include/fatfs/
+          cp *.c ${{ github.workspace }}/build-dir/include/fatfs/
 
       - name: Checkout, build, and test wolfssh
         uses: wolfSSL/actions-build-autotools-project@v1
         with:
           repository: wolfssl/wolfssh
           path: wolfssh
-          configure: --enable-sftp CPPFLAGS="-DWOLFSSH_FATFS -I${{ github.workspace }}/build-dir/include" LDFLAGS="-L${{ github.workspace }}/build-dir/lib"
+          configure: --enable-sftp CPPFLAGS="-DWOLFSSH_FATFS -I${{ github.workspace }}/build-dir/include -I${{ github.workspace }}/build-dir/include/fatfs" LDFLAGS="-L${{ github.workspace }}/build-dir/lib"
           check: true
