@@ -61,11 +61,12 @@ jobs:
           gcc -c -I${{ github.workspace }}/build-dir/include/fatfs *.c
           ar rcs ${{ github.workspace }}/build-dir/lib/fatfs/libfatfs.a *.o
           mkdir -p ${{ github.workspace }}/build-dir/include/wolfssh
-          echo "#define WOLFSSH_FATFS" > ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "#undef WOLFSSH_USER_FILESYSTEM" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          mkdir -p ${{ github.workspace }}/build-dir/include/fatfs
           cp ffconf.h ${{ github.workspace }}/build-dir/include/fatfs/
           echo "#define DIR FATFS_DIR" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
-          echo "#define WBADFILE ((FIL*)0)" > ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WOLFSSH_FATFS" > ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#undef WOLFSSH_USER_FILESYSTEM" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WBADFILE ((FIL*)0)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#include <ffconf.h>" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#include <ff.h>" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
 
