@@ -58,7 +58,7 @@ jobs:
           mkdir -p ${{ github.workspace }}/build-dir/include/{wolfssh,fatfs}
           mkdir -p ${{ github.workspace }}/build-dir/lib/fatfs
           cp *.h ${{ github.workspace }}/build-dir/include/fatfs/
-          gcc -c -I${{ github.workspace }}/build-dir/include/fatfs -fPIC -ffreestanding -DWIN32=0 -DUNIX=1 *.c
+          gcc -c -I${{ github.workspace }}/build-dir/include/fatfs -fPIC -ffreestanding -DWIN32=0 -DUNIX=1 -DUSE_STDIO=1 *.c
           ar rcs ${{ github.workspace }}/build-dir/lib/fatfs/libfatfs.a *.o
           cp ffconf.h ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
           echo "#define DIR FATFS_DIR" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
@@ -131,9 +131,9 @@ jobs:
           echo "#define WFREAD(fs,p,s,n,f) ((f) && (f)->stdio_file ? fread((p),(s),(n),(f)->stdio_file) : -1)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#define WFWRITE(fs,p,s,n,f) ((f) && (f)->stdio_file ? fwrite((p),(s),(n),(f)->stdio_file) : -1)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#define WFPRINTF(fs,f,fmt,...) ((f) && (f)->stdio_file ? fprintf((f)->stdio_file,(fmt),__VA_ARGS__) : -1)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "#define WFSEEK(fs,f,o,w) (WFILE_IS_VALID(f) ? fseek(WFILE_STDIO(f),(o),(w)) : -1)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "#define WFTELL(fs,f) (WFILE_IS_VALID(f) ? ftell(WFILE_STDIO(f)) : -1)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "#define WREWIND(fs,f) (WFILE_IS_VALID(f) ? (void)fseek(WFILE_STDIO(f),0,SEEK_SET) : (void)0)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WFSEEK(fs,f,o,w) ((f) && (f)->stdio_file ? fseek((f)->stdio_file,(o),(w)) : -1)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WFTELL(fs,f) ((f) && (f)->stdio_file ? ftell((f)->stdio_file) : -1)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WREWIND(fs,f) ((f) && (f)->stdio_file ? (void)fseek((f)->stdio_file,0,SEEK_SET) : (void)0)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
 
 
       - name: Checkout, build, and test wolfssh
