@@ -71,6 +71,7 @@ jobs:
           echo "#define WFD WFILE*" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#define WBADFILE ((WFD)NULL)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "static inline int ff_fopen(WFD* f, const char* filename, BYTE m) { if(!f) return -1; WFD tmp = (WFD)malloc(sizeof(WFILE)); if(!tmp) return -1; memset(tmp, 0, sizeof(WFILE)); tmp->stdio_file = tmpfile(); if(!tmp->stdio_file) { free(tmp); return -1; } int ret = f_open(&tmp->fil, filename, m); if(ret != 0) { fclose(tmp->stdio_file); free(tmp); return ret; } *f = tmp; return 0; }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "static inline int ff_fprintf(WFD f, const char* fmt, ...) { if(!f || !f->stdio_file) return -1; va_list args; va_start(args, fmt); int ret = vfprintf(f->stdio_file, fmt, args); va_end(args); return ret; }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "static inline FILE* ff_get_stdio(WFD f) { return f ? f->stdio_file : NULL; }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#define WFOPEN(fs,f,fn,m) (ff_fopen(&(f),(fn),(m)))" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#define WFCLOSE(fs,f) ff_fclose(f)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
