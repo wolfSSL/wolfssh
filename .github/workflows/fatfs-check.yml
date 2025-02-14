@@ -69,10 +69,10 @@ jobs:
           echo "#include <stdarg.h>" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "typedef struct { FIL fil; FILE* stdio_file; } WFILE;" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#define WFD WFILE*" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "static const WFD WBADFILE = NULL;" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WBADFILE ((WFD)NULL)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "static inline int ff_fopen(WFD* f, const char* filename, BYTE m) { if(!f) return -1; WFD tmp = (WFD)malloc(sizeof(WFILE)); if(!tmp) return -1; memset(tmp, 0, sizeof(WFILE)); tmp->stdio_file = tmpfile(); if(!tmp->stdio_file) { free(tmp); return -1; } int ret = f_open(&tmp->fil, filename, m); if(ret != 0) { fclose(tmp->stdio_file); free(tmp); return ret; } *f = tmp; return 0; }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "static inline FILE* ff_get_stdio(WFD f) { return f ? f->stdio_file : NULL; }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "#define WFOPEN(fs,f,fn,m) ((f) = NULL, ff_fopen(&(f),(fn),(m)))" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WFOPEN(fs,f,fn,m) (ff_fopen(&(f),(fn),(m)))" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#define WFCLOSE(fs,f) ff_fclose(f)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#define WFREAD(fs,p,s,n,f) ff_fread((p),(s),(n),(f))" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#define WFWRITE(fs,p,s,n,f) ff_fwrite((p),(s),(n),(f))" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
