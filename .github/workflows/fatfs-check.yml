@@ -53,21 +53,7 @@ jobs:
 
       - name: Apply FATFS patch
         run: |
-          cat > fatfs.patch << 'EOL'
-          diff --git a/wolfssh/port.h b/wolfssh/port.h
-          index dbd0de9..883903b 100644
-          --- a/wolfssh/port.h
-          +++ b/wolfssh/port.h
-          @@ -1192,7 +1192,7 @@ extern "C" {
-               #define WSTAT(fs,p,b) f_stat(p,b)
-               #define WLSTAT(fs,p,b) f_stat(p,b)
-               #define WREMOVE(fs,d) f_unlink((d))
-          -    #define WRENAME(fs,fd,o,n) f_rename((o),(n))
-          +    #define WRENAME(fs,o,n) f_rename((o),(n))
-               #define WMKDIR(fs, p, m) f_mkdir(p)
-               #define WFD int
-          EOL
-          git apply fatfs.patch
+          sed -i 's/#define WRENAME(fs,fd,o,n) f_rename((o),(n))/#define WRENAME(fs,o,n) f_rename((o),(n))/' wolfssh/port.h
 
       - name: Checkout, build, and test wolfssh
         uses: wolfSSL/actions-build-autotools-project@v1
