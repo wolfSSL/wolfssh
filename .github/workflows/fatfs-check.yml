@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  WOLFSSL_REF: v5.7.0-stable
+  WOLFSSL_REF: master
 
 jobs:
   build_wolfssl:
@@ -53,11 +53,13 @@ jobs:
 
       - name: Setup FATFS
         run: |
-          git clone https://github.com/FatFs/FatFs.git
-          cd FatFs/source
+          git clone https://github.com/abbrev/fatfs.git
+          cd fatfs/source
           mkdir -p ${{ github.workspace }}/build-dir/include/fatfs
           cp *.h ${{ github.workspace }}/build-dir/include/fatfs/
-          cp *.c ${{ github.workspace }}/build-dir/include/fatfs/
+          mkdir -p ${{ github.workspace }}/build-dir/lib/fatfs
+          gcc -c -I${{ github.workspace }}/build-dir/include/fatfs *.c
+          ar rcs ${{ github.workspace }}/build-dir/lib/fatfs/libfatfs.a *.o
           mkdir -p ${{ github.workspace }}/build-dir/include/wolfssh
           echo "#define WOLFSSH_FATFS" > ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#undef WOLFSSH_USER_FILESYSTEM" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
@@ -68,5 +70,5 @@ jobs:
         with:
           repository: wolfssl/wolfssh
           path: wolfssh
-          configure: --enable-sftp --enable-all CPPFLAGS="-DWOLFSSH_FATFS -I${{ github.workspace }}/build-dir/include -I${{ github.workspace }}/build-dir/include/fatfs -I${{ github.workspace }}/build-dir/include/wolfssh" LDFLAGS="-L${{ github.workspace }}/build-dir/lib"
+          configure: --enable-sftp --enable-all CPPFLAGS="-DWOLFSSH_FATFS -I${{ github.workspace }}/build-dir/include -I${{ github.workspace }}/build-dir/include/fatfs -I${{ github.workspace }}/build-dir/include/wolfssh" LDFLAGS="-L${{ github.workspace }}/build-dir/lib -L${{ github.workspace }}/build-dir/lib/fatfs -lfatfs"
           check: true
