@@ -58,11 +58,15 @@ jobs:
           mkdir -p ${{ github.workspace }}/build-dir/include/fatfs
           cp *.h ${{ github.workspace }}/build-dir/include/fatfs/
           cp *.c ${{ github.workspace }}/build-dir/include/fatfs/
+          mkdir -p ${{ github.workspace }}/build-dir/include/wolfssh
+          echo "#define WOLFSSH_FATFS" > ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#undef WOLFSSH_USER_FILESYSTEM" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#include <ff.h>" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
 
       - name: Checkout, build, and test wolfssh
         uses: wolfSSL/actions-build-autotools-project@v1
         with:
           repository: wolfssl/wolfssh
           path: wolfssh
-          configure: --enable-sftp CPPFLAGS="-DWOLFSSH_FATFS -I${{ github.workspace }}/build-dir/include -I${{ github.workspace }}/build-dir/include/fatfs" LDFLAGS="-L${{ github.workspace }}/build-dir/lib"
+          configure: --enable-sftp --enable-all CPPFLAGS="-DWOLFSSH_FATFS -I${{ github.workspace }}/build-dir/include -I${{ github.workspace }}/build-dir/include/fatfs -I${{ github.workspace }}/build-dir/include/wolfssh" LDFLAGS="-L${{ github.workspace }}/build-dir/lib"
           check: true
