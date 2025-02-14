@@ -62,7 +62,9 @@ jobs:
           ar rcs ${{ github.workspace }}/build-dir/lib/fatfs/libfatfs.a *.o
           mkdir -p ${{ github.workspace }}/build-dir/include/wolfssh
           mkdir -p ${{ github.workspace }}/build-dir/include/fatfs
-          echo "#define FF_FS_READONLY 0" > ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
+          echo "#define FF_DEFINED 80000" > ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
+          echo "#define FFCONF_DEF 80000" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
+          echo "#define FF_FS_READONLY 0" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
           echo "#define FF_FS_MINIMIZE 0" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
           echo "#define FF_USE_STRFUNC 0" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
           echo "#define FF_USE_FIND 0" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
@@ -75,11 +77,16 @@ jobs:
           echo "#define FF_CODE_PAGE 437" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
           echo "#define FF_USE_LFN 0" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
           echo "#define FF_MAX_SS 512" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
+          echo "#define FF_MIN_SS 512" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
           echo "#define FF_FS_TINY 1" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
           echo "#define FF_FS_EXFAT 0" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
           echo "#define FF_FS_NORTC 1" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
           echo "#define FF_FS_LOCK 0" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
           echo "#define FF_FS_REENTRANT 0" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
+          echo "#define FF_FS_RPATH 0" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
+          echo "#define FF_LBA64 0" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
+          echo "#define FF_MULTI_PARTITION 0" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
+          echo "#define FF_STR_VOLUME_ID 0" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
           echo "#define DIR FATFS_DIR" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
           echo "#define WOLFSSH_FATFS" > ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#undef WOLFSSH_USER_FILESYSTEM" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
