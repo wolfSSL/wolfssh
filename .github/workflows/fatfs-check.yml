@@ -66,12 +66,14 @@ jobs:
           echo "#undef WOLFSSH_USER_FILESYSTEM" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#include <ffconf.h>" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#include <ff.h>" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "typedef struct { FIL* fil; } WFILE_T;" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "#define WFILE WFILE_T" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "#define WFD WFILE_T*" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "static WFILE_T __wbadfile = {0};" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "#define WBADFILE (&__wbadfile)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "static inline int ff_fopen(WFD* f, const char* filename, BYTE m) { *f = malloc(sizeof(WFILE_T)); if(!*f) return -1; (*f)->fil = malloc(sizeof(FIL)); if(!(*f)->fil) { free(*f); *f = NULL; return -1; } return f_open((*f)->fil, filename, m); }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WFILE FIL" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WFD FIL*" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "static FIL __wbadfile;" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WBADFILE NULL" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "static inline int ff_fopen(WFD* f, const char* filename, BYTE m) { if(!f) return -1; *f = malloc(sizeof(FIL)); if(!*f) return -1; return f_open(*f, filename, m); }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "static inline int ff_fclose(WFD f) { if(!f) return -1; int ret = f_close(f); free(f); return ret; }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "static inline int ff_fread(void* ptr, size_t size, size_t nmemb, WFD f) { UINT br; int ret = f_read(f, ptr, size * nmemb, &br); return ret ? -1 : br; }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "static inline int ff_fwrite(const void* ptr, size_t size, size_t nmemb, WFD f) { UINT bw; int ret = f_write(f, ptr, size * nmemb, &bw); return ret ? -1 : bw; }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
 
       - name: Checkout, build, and test wolfssh
         uses: wolfSSL/actions-build-autotools-project@v1
