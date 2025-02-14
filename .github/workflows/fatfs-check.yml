@@ -69,12 +69,14 @@ jobs:
           echo "#include <stdarg.h>" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#include <wolfssl/wolfcrypt/types.h>" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#include <wolfssl/wolfcrypt/memory.h>" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "typedef struct WFILE_S { FIL fil; void* stdio_file; } WFILE;" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "typedef struct WFILE_S { FIL fil; FILE* stdio_file; } WFILE;" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "typedef WFILE* WFD;" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#define WBADFILE NULL" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WFILE_STDIO(f) ((f) ? (f)->stdio_file : NULL)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "static inline int ff_fopen(WFD* f, const char* filename, BYTE m) {
-              WFD tmp;
+              WFD tmp = NULL;
               FRESULT fr;
+              FILE* stdio = NULL;
               if (!f) return -1;
               *f = NULL;  /* Initialize early */
               tmp = (WFD)WMALLOC(sizeof(WFILE), NULL, DYNTYPE_SFTP);
@@ -101,9 +103,9 @@ jobs:
           echo "static inline FILE* ff_get_stdio(WFD f) { return f ? f->stdio_file : NULL; }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#define WFOPEN(fs,f,fn,m) (ff_fopen(&(f),(fn),(m)))" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#define WFCLOSE(fs,f) ((f) ? (f_close(&(f)->fil), fclose((f)->stdio_file), WFREE((f),NULL,DYNTYPE_SFTP), 0) : -1)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "#define WFREAD(fs,p,s,n,f) ((f) && (f)->stdio_file ? fread((p),(s),(n),(f)->stdio_file) : -1)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "#define WFWRITE(fs,p,s,n,f) ((f) && (f)->stdio_file ? fwrite((p),(s),(n),(f)->stdio_file) : -1)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "#define WFPRINTF(fs,f,fmt,...) ((f) && (f)->stdio_file ? fprintf((f)->stdio_file,(fmt),__VA_ARGS__) : -1)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WFREAD(fs,p,s,n,f) ((f) ? fread((p),(s),(n),WFILE_STDIO(f)) : -1)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WFWRITE(fs,p,s,n,f) ((f) ? fwrite((p),(s),(n),WFILE_STDIO(f)) : -1)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WFPRINTF(fs,f,fmt,...) ((f) ? fprintf(WFILE_STDIO(f),(fmt),__VA_ARGS__) : -1)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#define WFSEEK(fs,f,o,w) ((f) && (f)->stdio_file ? fseek((f)->stdio_file,(o),(w)) : -1)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#define WFTELL(fs,f) ((f) && (f)->stdio_file ? ftell((f)->stdio_file) : -1)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#define WREWIND(fs,f) ((f) && (f)->stdio_file ? (void)fseek((f)->stdio_file,0,SEEK_SET) : (void)0)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
