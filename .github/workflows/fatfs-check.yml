@@ -62,7 +62,7 @@ jobs:
           ar rcs ${{ github.workspace }}/build-dir/lib/fatfs/libfatfs.a *.o
           mkdir -p ${{ github.workspace }}/build-dir/include/wolfssh
           mkdir -p ${{ github.workspace }}/build-dir/include/fatfs
-          cp fatfs/source/ffconf.h.template ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
+          cp fatfs/source/ffconf.h ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
           echo "#define FF_DEFINED 80000" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
           echo "#define FFCONF_DEF 80000" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
           echo "#define FF_LBA64 0" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
