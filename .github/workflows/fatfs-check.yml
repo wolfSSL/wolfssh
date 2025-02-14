@@ -66,11 +66,12 @@ jobs:
           echo "#undef WOLFSSH_USER_FILESYSTEM" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#include <ffconf.h>" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#include <ff.h>" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "#define WFILE FILE" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "#define WFD FILE*" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "#define WBADFILE NULL" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "static FIL* __fatfs_files[32];" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "static inline int ff_fopen(FILE** f, const char* filename, BYTE m) { int idx = 0; while(idx < 32 && __fatfs_files[idx]) idx++; if(idx == 32) return -1; __fatfs_files[idx] = malloc(sizeof(FIL)); int ret = f_open(__fatfs_files[idx], filename, m); if(ret == 0) *f = (FILE*)__fatfs_files[idx]; return ret; }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "typedef struct { FIL* fil; } WFILE_T;" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WFILE WFILE_T" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WFD WFILE_T*" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "static WFILE_T __wbadfile = {0};" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WBADFILE (&__wbadfile)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "static inline int ff_fopen(WFD* f, const char* filename, BYTE m) { *f = malloc(sizeof(WFILE_T)); if(!*f) return -1; (*f)->fil = malloc(sizeof(FIL)); if(!(*f)->fil) { free(*f); *f = NULL; return -1; } return f_open((*f)->fil, filename, m); }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
 
       - name: Checkout, build, and test wolfssh
         uses: wolfSSL/actions-build-autotools-project@v1
