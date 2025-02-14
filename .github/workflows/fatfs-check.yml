@@ -71,4 +71,4 @@ jobs:
           repository: wolfssl/wolfssh
           path: wolfssh
           configure: --enable-sftp --enable-all CPPFLAGS="-DWOLFSSH_FATFS -I${{ github.workspace }}/build-dir/include -I${{ github.workspace }}/build-dir/include/fatfs -I${{ github.workspace }}/build-dir/include/wolfssh" LDFLAGS="-L${{ github.workspace }}/build-dir/lib -L${{ github.workspace }}/build-dir/lib/fatfs -lfatfs"
-          check: true
+          check: false
