@@ -69,16 +69,19 @@ jobs:
           echo "#include <stdarg.h>" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#include <wolfssl/wolfcrypt/types.h>" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "#include <wolfssl/wolfcrypt/memory.h>" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "typedef struct WFILE_S { FIL fil; FILE* stdio_file; } WFILE;" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "typedef struct WFILE_S { FIL fil; void* stdio_file; } WFILE;" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "typedef WFILE* WFD;" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
-          echo "#define WBADFILE ((WFD)NULL)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WBADFILE NULL" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
           echo "static inline int ff_fopen(WFD* f, const char* filename, BYTE m) {
+              WFD tmp;
+              FRESULT fr;
               if (!f) return -1;
-              *f = WBADFILE;  /* Initialize early */
-              WFD tmp = (WFD)WMALLOC(sizeof(WFILE), NULL, DYNTYPE_SFTP);
+              *f = NULL;  /* Initialize early */
+              tmp = (WFD)WMALLOC(sizeof(WFILE), NULL, DYNTYPE_SFTP);
               if (!tmp) return -1;
               WMEMSET(tmp, 0, sizeof(WFILE));
-              if (f_open(&tmp->fil, filename, m) != FR_OK) {
+              fr = f_open(&tmp->fil, filename, m);
+              if (fr != FR_OK) {
                   WFREE(tmp, NULL, DYNTYPE_SFTP);
                   return -1;
               }
