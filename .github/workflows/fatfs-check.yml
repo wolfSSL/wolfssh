@@ -58,7 +58,7 @@ jobs:
           mkdir -p ${{ github.workspace }}/build-dir/include/fatfs
           cp *.h ${{ github.workspace }}/build-dir/include/fatfs/
           mkdir -p ${{ github.workspace }}/build-dir/lib/fatfs
-          gcc -c -I${{ github.workspace }}/build-dir/include/fatfs *.c
+          gcc -c -I${{ github.workspace }}/build-dir/include/fatfs -fPIC *.c
           ar rcs ${{ github.workspace }}/build-dir/lib/fatfs/libfatfs.a *.o
           mkdir -p ${{ github.workspace }}/build-dir/include/wolfssh
           mkdir -p ${{ github.workspace }}/build-dir/include/fatfs
