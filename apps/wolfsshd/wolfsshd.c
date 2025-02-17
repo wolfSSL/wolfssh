@@ -816,7 +816,8 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     BOOL ret;
     word32 shellChannelId = 0;
 #ifndef EXAMPLE_BUFFER_SZ
-#define EXAMPLE_BUFFER_SZ 4096
+    /* default to try and read max packet size */
+    #define EXAMPLE_BUFFER_SZ 32768
 #endif
     byte shellBuffer[EXAMPLE_BUFFER_SZ];
     int cnt_r, cnt_w;
@@ -1166,7 +1167,8 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     pid_t childPid;
 
 #ifndef EXAMPLE_BUFFER_SZ
-    #define EXAMPLE_BUFFER_SZ 4096
+    /* default to try and read max packet size */
+    #define EXAMPLE_BUFFER_SZ 32768
 #endif
 #ifndef MAX_IDLE_COUNT
     #define MAX_IDLE_COUNT 2
@@ -1431,23 +1433,23 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             FD_SET(sshFd, &writeFds);
         }
 
-        /* select on stdout/stderr pipes with forced commands */
-        if (forcedCmd) {
-            FD_SET(stdoutPipe[0], &readFds);
-            if (stdoutPipe[0] > maxFd)
-                maxFd = stdoutPipe[0];
-
-            FD_SET(stderrPipe[0], &readFds);
-            if (stderrPipe[0] > maxFd)
-                maxFd = stderrPipe[0];
-        }
-        else {
-            FD_SET(childFd, &readFds);
-            if (childFd > maxFd)
-                maxFd = childFd;
-        }
-
         if (wolfSSH_stream_peek(ssh, tmp, 1) <= 0) {
+            /* select on stdout/stderr pipes with forced commands */
+            if (forcedCmd) {
+                FD_SET(stdoutPipe[0], &readFds);
+                if (stdoutPipe[0] > maxFd)
+                    maxFd = stdoutPipe[0];
+
+                FD_SET(stderrPipe[0], &readFds);
+                if (stderrPipe[0] > maxFd)
+                    maxFd = stderrPipe[0];
+            }
+            else {
+                FD_SET(childFd, &readFds);
+                if (childFd > maxFd)
+                    maxFd = childFd;
+            }
+
             rc = select((int)maxFd + 1, &readFds, &writeFds, NULL, NULL);
             if (rc == -1)
                 break;
@@ -1499,6 +1501,21 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 }
                 else if (rc != WS_WANT_READ) {
                     /* unexpected error, kill off child process */
+                    kill(childPid, SIGKILL);
+                    break;
+                }
+            }
+
+            /* did the channel just receive an EOF? */
+            if (cnt_r == 0) {
+                int eof;
+                WOLFSSH_CHANNEL* current;
+
+                current = wolfSSH_ChannelFind(ssh, lastChannel,
+                    WS_CHANNEL_ID_SELF);
+                eof = wolfSSH_ChannelGetEof(current);
+                if (eof) {
+                    /* SSH is done, kill off child process */
                     kill(childPid, SIGKILL);
                     break;
                 }
