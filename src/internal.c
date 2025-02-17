@@ -10057,7 +10057,11 @@ static int PreparePacket(WOLFSSH* ssh, word32 payloadSz)
         word32 packetSz, outputSz;
         byte paddingSz;
 
-        paddingSz = ssh->blockSz * 2;
+        /* Ensure enough space for worst-case padding scenario:
+         * - At least MIN_PAD_LENGTH (4)
+         * - Plus potentially another blockSz for alignment
+         * This gives us a safe upper bound */
+        paddingSz = ssh->blockSz * 3;
         packetSz = PAD_LENGTH_SZ + payloadSz + paddingSz;
         outputSz = LENGTH_SZ + packetSz + ssh->macSz;
 
@@ -10109,8 +10113,14 @@ static int BundlePacket(WOLFSSH* ssh)
 
         /* Add the padding */
         WLOG(WS_LOG_DEBUG, "BP: paddingSz = %u", paddingSz);
-        if (ssh->encryptId == ID_NONE)
+        /* Verify we have enough space for padding */
+        if (idx + paddingSz > ssh->outputBuffer.bufferSz) {
+            ret = WS_BUFFER_E;
+            WLOG(WS_LOG_DEBUG, "BP: buffer too small for padding");
+        }
+        else if (ssh->encryptId == ID_NONE) {
             WMEMSET(output + idx, 0, paddingSz);
+        }
         else if (wc_RNG_GenerateBlock(ssh->rng, output + idx, paddingSz) < 0) {
             ret = WS_CRYPTO_FAILED;
             WLOG(WS_LOG_DEBUG, "BP: failed to add padding");
