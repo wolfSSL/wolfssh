@@ -10109,8 +10109,13 @@ static int BundlePacket(WOLFSSH* ssh)
 
         /* Add the padding */
         WLOG(WS_LOG_DEBUG, "BP: paddingSz = %u", paddingSz);
-        if (ssh->encryptId == ID_NONE)
+        if (idx + paddingSz > ssh->outputBuffer.bufferSz) {
+            ret = WS_BUFFER_E;
+            WLOG(WS_LOG_DEBUG, "BP: paddingSz was too large");
+        }
+        else if (ssh->encryptId == ID_NONE) {
             WMEMSET(output + idx, 0, paddingSz);
+        }
         else if (wc_RNG_GenerateBlock(ssh->rng, output + idx, paddingSz) < 0) {
             ret = WS_CRYPTO_FAILED;
             WLOG(WS_LOG_DEBUG, "BP: failed to add padding");
