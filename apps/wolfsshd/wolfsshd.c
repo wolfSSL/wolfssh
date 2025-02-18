@@ -57,6 +57,11 @@
     #define WOLFSSHD_TIMEOUT 1
 #endif
 
+#ifdef EXAMPLE_BUFFER_SZ
+    #warning use WOLFSSHD_SHELL_BUFFER_SZ instead of EXAMPLE_BUFFER_SZ
+    #define WOLFSSHD_SHELL_BUFFER_SZ EXAMPLE_BUFFER_SZ
+#endif
+
 #if defined(WOLFSSH_SHELL) && !defined(_WIN32)
     #ifdef HAVE_PTY_H
         #include <pty.h>
@@ -815,11 +820,11 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 {
     BOOL ret;
     word32 shellChannelId = 0;
-#ifndef EXAMPLE_BUFFER_SZ
+#ifndef WOLFSSHD_SHELL_BUFFER_SZ
     /* default to try and read max packet size */
-    #define EXAMPLE_BUFFER_SZ 32768
+    #define WOLFSSHD_SHELL_BUFFER_SZ 32768
 #endif
-    byte shellBuffer[EXAMPLE_BUFFER_SZ];
+    byte shellBuffer[WOLFSSHD_SHELL_BUFFER_SZ];
     int cnt_r, cnt_w;
     HANDLE ptyIn = NULL, ptyOut = NULL;
     HANDLE cnslIn = NULL, cnslOut = NULL;
@@ -1106,9 +1111,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             }
 
             if (readPending) {
-                WMEMSET(shellBuffer, 0, EXAMPLE_BUFFER_SZ);
+                WMEMSET(shellBuffer, 0, WOLFSSHD_SHELL_BUFFER_SZ);
 
-                if (ReadFile(ptyOut, shellBuffer, EXAMPLE_BUFFER_SZ, &cnt_r,
+                if (ReadFile(ptyOut, shellBuffer, WOLFSSHD_SHELL_BUFFER_SZ, &cnt_r,
                     NULL) != TRUE) {
                     wolfSSH_Log(WS_LOG_INFO,
                         "[SSHD] Error reading from pipe for console");
@@ -1166,15 +1171,15 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     int stdoutPipe[2], stderrPipe[2];
     pid_t childPid;
 
-#ifndef EXAMPLE_BUFFER_SZ
+#ifndef WOLFSSHD_SHELL_BUFFER_SZ
     /* default to try and read max packet size */
-    #define EXAMPLE_BUFFER_SZ 32768
+    #define WOLFSSHD_SHELL_BUFFER_SZ 32768
 #endif
 #ifndef MAX_IDLE_COUNT
     #define MAX_IDLE_COUNT 2
 #endif
-    byte shellBuffer[EXAMPLE_BUFFER_SZ];
-    byte channelBuffer[EXAMPLE_BUFFER_SZ];
+    byte shellBuffer[WOLFSSHD_SHELL_BUFFER_SZ];
+    byte channelBuffer[WOLFSSHD_SHELL_BUFFER_SZ];
     char* forcedCmd;
     int   windowFull = 0; /* Contains size of bytes from shellBuffer that did
                            * not get passed on to wolfSSH yet. This happens

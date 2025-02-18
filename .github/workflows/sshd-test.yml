@@ -108,6 +108,25 @@ jobs:
           ./configure --enable-all LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include -DWOLFSSH_NO_FPKI -DWOLFSSH_NO_SFTP_TIMEOUT -DWOLFSSH_MAX_SFTP_RW=4000000 -DMAX_PATH_SZ=120" --enable-static --disable-shared && make
           sudo timeout --preserve-status -s 2 5 valgrind --error-exitcode=1 --leak-check=full ./apps/wolfsshd/wolfsshd -D -f sshd_config -h ./keys/server-key.pem -d -p 22222
 
+      # regression test, check that cat command does not hang
+      - name: Test cat command for hanging
+        working-directory: ./wolfssh/
+        timeout-minutes: 1
+        run: |
+          touch sshd_config.txt
+          echo "AuthorizedKeysFile $PWD/authorized_keys_test" >> sshd_config.txt
+          cat ./keys/hansel-*.pub > authorized_keys_test
+          sed -i.bak "s/hansel/$USER/" ./authorized_keys_test
+          ./configure --enable-all LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include -DWOLFSSH_NO_FPKI -DWOLFSSH_NO_SFTP_TIMEOUT -DWOLFSSH_MAX_SFTP_RW=4000000 -DMAX_PATH_SZ=120" --enable-static --disable-shared && make
+          sudo ./apps/wolfsshd/wolfsshd -f sshd_config.txt -h ./keys/server-key.pem -p 22225
+          chmod 600 ./keys/hansel-key-rsa.pem
+          tail -c 50000 /dev/urandom > test
+          while ! nc -z 127.0.0.1 22225; do echo "waiting for wolfSSHd"; sleep 0.2; done
+          cat test | ssh -vvv -T -i ./keys/hansel-key-rsa.pem -oStrictHostKeyChecking=no 127.0.0.1 -p 22225 'cat > test-file'
+          diff test ~/test-file
+          sudo pkill wolfsshd
+
+
       - name: configure with debug
         working-directory: ./wolfssh/
         run : |
