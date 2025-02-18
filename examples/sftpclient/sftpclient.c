@@ -148,7 +148,9 @@ static void err_msg(const char* s)
 
 static void myStatusCb(WOLFSSH* sshIn, word32* bytes, char* name)
 {
+#ifndef WOLFSSH_NO_TIMESTAMP
     static word32 lastOutputTime = 0;
+#endif
     word32 currentTime;
     char buf[80];
     word64 longBytes = ((word64)bytes[1] << 32) | bytes[0];
