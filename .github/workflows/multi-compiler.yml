@@ -25,7 +25,7 @@ jobs:
         with:
           repository: wolfssl/wolfssl
           path: wolfssl
-          configure: --enable-all
+          configure: --enable-all --prefix=${{ github.workspace }}/build-dir
           check: false
           install: true
       - name: Cache wolfSSL build
