@@ -161,6 +161,7 @@ static void myStatusCb(WOLFSSH* sshIn, word32* bytes, char* name)
     lastOutputTime = currentTime;
     if (WSTRNCMP(currentFile, name, WSTRLEN(name)) != 0) {
         startTime = current_time(1);
+        lastOutputTime = 0; /* Reset timer for new file transfer */
         WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
         WSTRNCPY(currentFile, name, WOLFSSH_MAX_FILENAME);
     }
