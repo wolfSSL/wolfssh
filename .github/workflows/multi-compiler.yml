@@ -91,7 +91,9 @@ jobs:
           path: wolfssh
           configure: LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include"
           check: true
-      - name: Show log on errors
+      - name: Upload config.log on errors
         if: ${{ failure() }}
-        run: |
-            cat config.log
+        uses: actions/upload-artifact@v4
+        with:
+          name: config-log-${{ matrix.CC }}-${{ matrix.OS }}
+          path: config.log
