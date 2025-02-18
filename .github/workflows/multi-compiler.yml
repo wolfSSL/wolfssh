@@ -11,8 +11,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build_wolfssl:
+    name: Build wolfSSL
+    runs-on: ${{ matrix.OS }}
+    strategy:
+      fail-fast: false
+      matrix:
+        OS: [ubuntu-20.04, ubuntu-22.04]
+    timeout-minutes: 4
+    steps:
+      - name: Checkout, build, and install wolfssl
+        uses: wolfSSL/actions-build-autotools-project@v1
+        with:
+          repository: wolfssl/wolfssl
+          path: wolfssl
+          configure: --enable-all
+          check: false
+          install: true
+
   my_matrix:
     name: Compiler test
+    needs: build_wolfssl
     strategy:
       fail-fast: false
       matrix:
@@ -55,7 +74,12 @@ jobs:
         env:
             CC: ${{ matrix.CC }}
             CXX: ${{ matrix.CXX }}
-        run: ./autogen.sh && ./configure && make && make dist
+        uses: wolfSSL/actions-build-autotools-project@v1
+        with:
+          repository: wolfssl/wolfssh
+          path: wolfssh
+          configure: LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include"
+          check: true
       - name: Show log on errors
         if: ${{ failure() }}
         run: |
