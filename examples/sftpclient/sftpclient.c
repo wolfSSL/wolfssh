@@ -148,19 +148,25 @@ static void err_msg(const char* s)
 
 static void myStatusCb(WOLFSSH* sshIn, word32* bytes, char* name)
 {
+    static word32 lastOutputTime = 0;
     word32 currentTime;
     char buf[80];
     word64 longBytes = ((word64)bytes[1] << 32) | bytes[0];
 
 #ifndef WOLFSSH_NO_TIMESTAMP
+    currentTime = current_time(0);
+    if (currentTime == lastOutputTime) {
+        return;
+    }
+    lastOutputTime = currentTime;
     if (WSTRNCMP(currentFile, name, WSTRLEN(name)) != 0) {
         startTime = current_time(1);
         WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
         WSTRNCPY(currentFile, name, WOLFSSH_MAX_FILENAME);
     }
-    currentTime = current_time(0) - startTime;
+    word32 elapsedTime = currentTime - startTime;
     WSNPRINTF(buf, sizeof(buf), "Processed %8llu\t bytes in %d seconds\r",
-            (unsigned long long)longBytes, currentTime);
+            (unsigned long long)longBytes, elapsedTime);
 #ifndef WOLFSSH_NO_SFTP_TIMEOUT
     if (currentTime > TIMEOUT_VALUE) {
         WSNPRINTF(buf, sizeof(buf), "\nProcess timed out at %d seconds, "
