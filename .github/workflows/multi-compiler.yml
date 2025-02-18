@@ -28,6 +28,11 @@ jobs:
           configure: --enable-all
           check: false
           install: true
+      - name: Cache wolfSSL build
+        uses: actions/cache@v4
+        with:
+          path: build-dir/
+          key: wolfssh-compiler-test-wolfssl-${{ matrix.OS }}
 
   my_matrix:
     name: Compiler test
@@ -70,6 +75,12 @@ jobs:
       - name: Install dependencies
         run: export DEBIAN_FRONTEND=noninteractive && sudo apt-get update && sudo apt-get install -y ${{ matrix.CC }}
       - uses: actions/checkout@v4
+      - name: Restore wolfSSL build
+        uses: actions/cache@v4
+        with:
+          path: build-dir/
+          key: wolfssh-compiler-test-wolfssl-${{ matrix.OS }}
+          fail-on-cache-miss: true
       - name: Build
         env:
             CC: ${{ matrix.CC }}
