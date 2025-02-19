@@ -7886,6 +7886,7 @@ static int DoUserAuthInfoRequest(WOLFSSH* ssh, byte* buf, word32 len,
         if (!prompts) {
             ret = WS_MEMORY_E;
         } else {
+            WMEMSET(prompts, '\0', sizeof(char*) * promptSz);
             echo = (byte*)WMALLOC(sizeof(byte) * promptSz, ssh->ctx->heap,
                                   DYNTYPE_BUFFER);
         }
@@ -7893,7 +7894,7 @@ static int DoUserAuthInfoRequest(WOLFSSH* ssh, byte* buf, word32 len,
         if (!echo) {
             ret = WS_MEMORY_E;
         } else {
-            WMEMSET(prompts, '\0', sizeof(char*) * promptSz);
+            WMEMSET(echo, 0, sizeof(byte) * promptSz);
             for (entry = 0; entry < promptSz; entry++) {
                 ret = GetStringAlloc(ssh->ctx->heap, (char**)&prompts[entry],
                                      buf, len, &begin);
@@ -7923,6 +7924,11 @@ static int DoUserAuthInfoRequest(WOLFSSH* ssh, byte* buf, word32 len,
         }
         WFREE(prompts, ssh->ctx->heap, DYNTYPE_BUFFER);
         WFREE(echo, ssh->ctx->heap, DYNTYPE_BUFFER);
+
+        /* free strings in fail case */
+        WFREE(authName, ssh->ctx->heap,  DYNTYPE_STRING);
+        WFREE(authInstruction, ssh->ctx->heap,  DYNTYPE_STRING);
+        WFREE(language, ssh->ctx->heap,  DYNTYPE_STRING);
     }
 
     if (ret == WS_SUCCESS)
@@ -10109,8 +10115,13 @@ static int BundlePacket(WOLFSSH* ssh)
 
         /* Add the padding */
         WLOG(WS_LOG_DEBUG, "BP: paddingSz = %u", paddingSz);
-        if (ssh->encryptId == ID_NONE)
+        if (idx + paddingSz > ssh->outputBuffer.bufferSz) {
+            ret = WS_BUFFER_E;
+            WLOG(WS_LOG_DEBUG, "BP: paddingSz was too large");
+        }
+        else if (ssh->encryptId == ID_NONE) {
             WMEMSET(output + idx, 0, paddingSz);
+        }
         else if (wc_RNG_GenerateBlock(ssh->rng, output + idx, paddingSz) < 0) {
             ret = WS_CRYPTO_FAILED;
             WLOG(WS_LOG_DEBUG, "BP: failed to add padding");
