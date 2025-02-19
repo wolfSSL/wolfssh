@@ -1169,6 +1169,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     int rc;
     WS_SOCKET_T childFd = 0;
     int stdoutPipe[2], stderrPipe[2];
+    int stdinPipe[2];
     pid_t childPid;
 
 #ifndef WOLFSSHD_SHELL_BUFFER_SZ
@@ -1193,6 +1194,8 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     stdoutPipe[1] = -1;
     stderrPipe[0] = -1;
     stderrPipe[1] = -1;
+    stdinPipe[0] = -1;
+    stdinPipe[1] = -1;
 
     forcedCmd = wolfSSHD_ConfigGetForcedCmd(usrConf);
 
@@ -1223,8 +1226,16 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         }
         if (pipe(stderrPipe) != 0) {
             close(stdoutPipe[0]);
-            close(stderrPipe[1]);
+            close(stdoutPipe[1]);
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue creating stderr pipe");
+            return WS_FATAL_ERROR;
+        }
+        if (pipe(stdinPipe) != 0) {
+            close(stdoutPipe[0]);
+            close(stdoutPipe[1]);
+            close(stderrPipe[0]);
+            close(stderrPipe[1]);
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue creating stdin pipe");
             return WS_FATAL_ERROR;
         }
     }
@@ -1250,8 +1261,20 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         if (forcedCmd) {
             close(stdoutPipe[0]);
             close(stderrPipe[0]);
+            close(stdinPipe[1]);
             stdoutPipe[0] = -1;
             stderrPipe[0] = -1;
+            stdinPipe[1]  = -1;
+
+            if (dup2(stdinPipe[0], STDIN_FILENO) == -1) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Error redirecting stdin pipe");
+                if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+                    exit(1);
+                }
+
+                return WS_FATAL_ERROR;
+            }
             if (dup2(stdoutPipe[1], STDOUT_FILENO) == -1) {
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Error redirecting stdout pipe");
@@ -1361,6 +1384,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             ret = execv(cmd, (char**)args);
             close(stdoutPipe[1]);
             close(stderrPipe[1]);
+            close(stdinPipe[1]);
         }
         else {
             ret = execv(cmd, (char**)args);
@@ -1418,6 +1442,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     if (forcedCmd) {
         close(stdoutPipe[1]);
         close(stderrPipe[1]);
+        close(stdinPipe[0]);
     }
 
     while (ChildRunning || windowFull || !stdoutEmpty || peerConnected) {
@@ -1485,8 +1510,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                                 sizeof channelBuffer);
                             if (cnt_r <= 0)
                                 break;
-                            cnt_w = (int)write(childFd,
-                                    channelBuffer, cnt_r);
+
+                            cnt_w = (int)write(stdinPipe[1], channelBuffer,
+                                cnt_r);
                             if (cnt_w <= 0)
                                 break;
                         }
@@ -1520,9 +1546,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     WS_CHANNEL_ID_SELF);
                 eof = wolfSSH_ChannelGetEof(current);
                 if (eof) {
-                    /* SSH is done, kill off child process */
-                    kill(childPid, SIGKILL);
-                    break;
+                    /* SSH is done, close stdin pipe to child process */
+                    close(stdinPipe[1]);
+                    stdinPipe[1] = -1;
                 }
             }
         }
@@ -1705,8 +1731,12 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         if (readSz > 0) {
             wolfSSH_extended_data_send(ssh, shellBuffer, readSz);
         }
+
         close(stdoutPipe[0]);
         close(stderrPipe[0]);
+        if (stdinPipe[1] != -1) {
+            close(stdinPipe[1]);
+        }
     }
 
     (void)conn;
