@@ -1511,8 +1511,14 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                             if (cnt_r <= 0)
                                 break;
 
-                            cnt_w = (int)write(stdinPipe[1], channelBuffer,
-                                cnt_r);
+                            if (forcedCmd) {
+                                cnt_w = (int)write(stdinPipe[1], channelBuffer,
+                                    cnt_r);
+                            }
+                            else {
+                                cnt_w = (int)write(childFd, channelBuffer,
+                                    cnt_r);
+                            }
                             if (cnt_w <= 0)
                                 break;
                         }
@@ -1545,7 +1551,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 current = wolfSSH_ChannelFind(ssh, lastChannel,
                     WS_CHANNEL_ID_SELF);
                 eof = wolfSSH_ChannelGetEof(current);
-                if (eof) {
+                if (eof && forcedCmd) {
                     /* SSH is done, close stdin pipe to child process */
                     close(stdinPipe[1]);
                     stdinPipe[1] = -1;
