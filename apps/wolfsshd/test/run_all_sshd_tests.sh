@@ -8,6 +8,7 @@ test_cases=(
  "sshd_term_size_test.sh"
  "sshd_large_sftp_test.sh"
  "sshd_bad_sftp_test.sh"
+ "sshd_scp_fail.sh"
  "sshd_term_close_test.sh"
  "ssh_kex_algos.sh"
 )
