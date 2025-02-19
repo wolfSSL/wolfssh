@@ -344,7 +344,7 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
 
-    if (ret != WS_SUCCESS)
+    if ((ret != WS_SUCCESS) && (ret != WS_CHANNEL_CLOSED))
         ((func_args*)args)->return_code = 1;
     return 0;
 }

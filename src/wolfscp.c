@@ -602,7 +602,7 @@ int DoScpSource(WOLFSSH* ssh)
                                           ssh->scpBufferedSz);
                 if (ret == WS_WINDOW_FULL || ret == WS_REKEYING) {
                     ret = wolfSSH_worker(ssh, NULL);
-                    if (ret == WS_SUCCESS)
+                    if (ret == WS_SUCCESS || ssh->error == WS_WANT_READ)
                         continue;
                 }
                 if (ret == WS_EXTDATA) {
@@ -616,8 +616,10 @@ int DoScpSource(WOLFSSH* ssh)
                      * open file descriptor before exit */
                     ScpSendCtx* sendCtx = NULL;
                     sendCtx = (ScpSendCtx*)wolfSSH_GetScpSendCtx(ssh);
-                    if (sendCtx != NULL)
+                    if (sendCtx != NULL) {
                         WFCLOSE(ssh->fs, sendCtx->fp);
+                        sendCtx->fp = NULL;
+                    }
                 #endif
                     WLOG(WS_LOG_ERROR, scpError, "failed to send file", ret);
                     break;
@@ -1181,6 +1183,7 @@ static int ParseBasePathHelper(WOLFSSH* ssh, int cmdSz)
 
         if (ScpPushDir(ssh->fs, &ctx, ssh->scpBasePath, ssh->ctx->heap) != WS_SUCCESS) {
             WLOG(WS_LOG_DEBUG, "scp : issue opening base dir");
+            ssh->error = WS_INVALID_PATH_E;
             ret = WS_FATAL_ERROR;
         }
         else {
@@ -2021,6 +2024,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                 WLOG(WS_LOG_ERROR, scpError, "scp receive callback unable "
                      "to write requested size to file", bytes);
                 WFCLOSE(ssh->fs, fp);
+                fp = NULL;
                 ret = WS_SCP_ABORT;
             } else {
 #ifdef WOLFSCP_FLUSH
@@ -2047,6 +2051,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                 flush_bytes = 0;
 #endif
                 WFCLOSE(ssh->fs, fp);
+                fp = NULL;
             }
 
             /* set timestamp info */
@@ -2587,6 +2592,7 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
             if ((sendCtx->fp != NULL) &&
                 ((ret < 0) || (*totalFileSz == (word32)ret))) {
                 WFCLOSE(ssh->fs, sendCtx->fp);
+                sendCtx->fp = NULL;
             }
         }
 
@@ -2758,6 +2764,7 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             if ((sendCtx != NULL) && (sendCtx->fp != NULL) &&
                 ((ret < 0) || (*totalFileSz == (word32)ret))) {
                 WFCLOSE(ssh->fs, sendCtx->fp);
+                sendCtx->fp = NULL;
             }
 
             break;
@@ -2840,6 +2847,12 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
                 break;
             }
 
+            if (sendCtx->fp == NULL) {
+                WLOG(WS_LOG_ERROR, "scp: file has been closed, abort");
+                ret = WS_SCP_ABORT;
+                break;
+            }
+
             ret = (word32)WFREAD(ssh->fs, buf, 1, bufSz, sendCtx->fp);
             if (ret == 0) { /* handle case of EOF */
                 ret = WS_EOF;
@@ -2847,6 +2860,7 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
 
             if ((ret <= 0) || (fileOffset + ret == *totalFileSz)) {
                 WFCLOSE(ssh->fs, sendCtx->fp);
+                sendCtx->fp = NULL;
             }
 
             break;
