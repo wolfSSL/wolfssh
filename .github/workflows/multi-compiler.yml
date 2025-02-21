@@ -1,0 +1,135 @@
+name: Multiple compilers and versions
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build_wolfssl:
+    name: Build wolfSSL
+    runs-on: ${{ matrix.OS }}
+    strategy:
+      fail-fast: false
+      matrix:
+        OS: [ubuntu-20.04, ubuntu-22.04]
+    timeout-minutes: 4
+    steps:
+      - name: Checkout, build, and install wolfssl
+        uses: wolfSSL/actions-build-autotools-project@v1
+        with:
+          repository: wolfssl/wolfssl
+          path: wolfssl
+          configure: --enable-all --enable-wolfssh --enable-shared --enable-static --prefix=${{ github.workspace }}/build-dir CFLAGS="-fPIC"
+          check: false
+          install: true
+      - name: Cache wolfSSL build
+        uses: actions/cache@v4
+        with:
+          path: build-dir/
+          key: wolfssh-compiler-test-wolfssl-${{ matrix.OS }}
+
+  my_matrix:
+    name: Compiler test
+    needs: build_wolfssl
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - CC: g++
+            CXX: g++
+            OS: ubuntu-22.04
+          - CC: gcc-9
+            CXX: g++-9
+            OS: ubuntu-22.04
+          - CC: gcc-10
+            CXX: g++-10
+            OS: ubuntu-22.04
+          - CC: gcc-11
+            CXX: g++-11
+            OS: ubuntu-22.04
+          - CC: gcc-12
+            CXX: g++-12
+            OS: ubuntu-22.04
+          - CC: clang-10
+            CXX: clang++-10
+            OS: ubuntu-20.04
+          - CC: clang-11
+            CXX: clang++-11
+            OS: ubuntu-20.04
+          - CC: clang-12
+            CXX: clang++-12
+            OS: ubuntu-20.04
+          - CC: clang-13
+            CXX: clang++-13
+            OS: ubuntu-22.04
+          - CC: clang-14
+            CXX: clang++-14
+            OS: ubuntu-22.04
+    if: github.repository_owner == 'wolfSSL'
+    runs-on: ${{ matrix.OS }}
+    timeout-minutes: 4
+    steps:
+      - name: Install dependencies
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          if [ "${{ matrix.CC }}" != "g++" ]; then
+            sudo apt-get install -y ${{ matrix.CC }}
+          fi
+      - uses: actions/checkout@v4
+      - name: Restore wolfSSL build
+        uses: actions/cache@v4
+        with:
+          path: build-dir/
+          key: wolfssh-compiler-test-wolfssl-${{ matrix.OS }}
+          fail-on-cache-miss: true
+      - name: Verify wolfSSL installation
+        run: |
+          ls -la ${{ github.workspace }}/build-dir/lib/
+          ls -la ${{ github.workspace }}/build-dir/include/
+          pkg-config --libs --cflags wolfssl || echo "pkg-config failed"
+      - name: Verify wolfSSL installation
+        run: |
+          ls -la ${{ github.workspace }}/build-dir/lib/
+          echo "Testing wolfSSL library..."
+          ${{ matrix.CC }} -o test_wolfssl -I${{ github.workspace }}/build-dir/include -L${{ github.workspace }}/build-dir/lib test_wolfssl.c -lwolfssl || echo "Compilation failed"
+        working-directory: ${{ github.workspace }}
+      - name: Create test file
+        run: |
+          cat > test_wolfssl.c << 'EOL'
+          #include <wolfssl/wolfcrypt/settings.h>
+          #include <wolfssl/wolfcrypt/wc_port.h>
+          int main() { return wolfCrypt_Init(); }
+          EOL
+      - name: Build
+        env:
+            CC: ${{ matrix.CC }}
+            CXX: ${{ matrix.CXX }}
+            LDFLAGS: "-L${{ github.workspace }}/build-dir/lib -Wl,-rpath,${{ github.workspace }}/build-dir/lib -lwolfssl"
+            CPPFLAGS: "-I${{ github.workspace }}/build-dir/include"
+            PKG_CONFIG_PATH: "${{ github.workspace }}/build-dir/lib/pkgconfig"
+            LD_LIBRARY_PATH: "${{ github.workspace }}/build-dir/lib"
+            CFLAGS: "-fPIC"
+            WOLFSSL_CFLAGS: "-I${{ github.workspace }}/build-dir/include"
+            WOLFSSL_LIBS: "-L${{ github.workspace }}/build-dir/lib -lwolfssl"
+        uses: wolfSSL/actions-build-autotools-project@v1
+        with:
+          repository: wolfssl/wolfssh
+          path: wolfssh
+          configure: --enable-all --with-wolfssl=${{ github.workspace }}/build-dir
+          check: true
+      - name: Upload config.log on errors
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: config-log-${{ matrix.CC }}-${{ matrix.OS }}
+          path: |
+            config.log
+            ${{ github.workspace }}/build-dir/lib/
+            ${{ github.workspace }}/build-dir/include/
