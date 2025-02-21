@@ -25,7 +25,7 @@ jobs:
         with:
           repository: wolfssl/wolfssl
           path: wolfssl
-          configure: --enable-all --enable-wolfssh --enable-shared --enable-static --prefix=${{ github.workspace }}/build-dir CFLAGS="-I${{ github.workspace }}/build-dir/include" LDFLAGS="-L${{ github.workspace }}/build-dir/lib"
+          configure: --enable-all --enable-wolfssh --enable-shared --enable-static --prefix=${{ github.workspace }}/build-dir
           check: false
           install: true
       - name: Cache wolfSSL build
@@ -94,15 +94,21 @@ jobs:
           ls -la ${{ github.workspace }}/build-dir/lib/
           ls -la ${{ github.workspace }}/build-dir/include/
           pkg-config --libs --cflags wolfssl || echo "pkg-config failed"
+      - name: Verify wolfSSL installation
+        run: |
+          ls -la ${{ github.workspace }}/build-dir/lib/
+          pkg-config --libs --cflags wolfssl || echo "Using manual flags"
+          ${{ matrix.CC }} -v
       - name: Build
         env:
             CC: ${{ matrix.CC }}
             CXX: ${{ matrix.CXX }}
-            LDFLAGS: "-L${{ github.workspace }}/build-dir/lib -lwolfssl"
+            LDFLAGS: "-L${{ github.workspace }}/build-dir/lib"
             CPPFLAGS: "-I${{ github.workspace }}/build-dir/include"
             PKG_CONFIG_PATH: "${{ github.workspace }}/build-dir/lib/pkgconfig"
             LD_LIBRARY_PATH: "${{ github.workspace }}/build-dir/lib"
-            CFLAGS: "-I${{ github.workspace }}/build-dir/include"
+            WOLFSSL_CFLAGS: "-I${{ github.workspace }}/build-dir/include"
+            WOLFSSL_LIBS: "-L${{ github.workspace }}/build-dir/lib -lwolfssl"
         uses: wolfSSL/actions-build-autotools-project@v1
         with:
           repository: wolfssl/wolfssh
