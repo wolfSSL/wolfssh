@@ -175,7 +175,7 @@ static void myStatusCb(WOLFSSH* sshIn, word32* bytes, char* name)
     WSNPRINTF(buf, sizeof(buf), "Processed %8llu\t bytes in %d seconds\r",
             (unsigned long long)longBytes, elapsedTime);
 #ifndef WOLFSSH_NO_SFTP_TIMEOUT
-    if (currentTime > TIMEOUT_VALUE) {
+    if (elapsedTime > TIMEOUT_VALUE) {
         WSNPRINTF(buf, sizeof(buf), "\nProcess timed out at %d seconds, "
                 "stopping\r", currentTime);
         WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
