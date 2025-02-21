@@ -93,8 +93,8 @@ jobs:
         env:
             CC: ${{ matrix.CC }}
             CXX: ${{ matrix.CXX }}
-            LDFLAGS: "-L${{ github.workspace }}/build-dir/lib"
-            CPPFLAGS: "-I${{ github.workspace }}/build-dir/include"
+            LDFLAGS: -L${{ github.workspace }}/build-dir/lib
+            CPPFLAGS: -I${{ github.workspace }}/build-dir/include
         uses: wolfSSL/actions-build-autotools-project@v1
         with:
           repository: wolfssl/wolfssh
