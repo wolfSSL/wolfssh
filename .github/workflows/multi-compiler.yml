@@ -25,7 +25,7 @@ jobs:
         with:
           repository: wolfssl/wolfssl
           path: wolfssl
-          configure: --enable-all --enable-wolfssh --prefix=${{ github.workspace }}/build-dir
+          configure: --enable-all --enable-wolfssh --enable-shared --prefix=${{ github.workspace }}/build-dir
           check: false
           install: true
       - name: Cache wolfSSL build
@@ -93,11 +93,11 @@ jobs:
         env:
             CC: ${{ matrix.CC }}
             CXX: ${{ matrix.CXX }}
-            LDFLAGS: "-L${{ github.workspace }}/build-dir/lib -lwolfssl"
+            LDFLAGS: "-L${{ github.workspace }}/build-dir/lib"
             CPPFLAGS: "-I${{ github.workspace }}/build-dir/include"
             PKG_CONFIG_PATH: "${{ github.workspace }}/build-dir/lib/pkgconfig"
             LD_LIBRARY_PATH: "${{ github.workspace }}/build-dir/lib"
-            LIBS: "-lwolfssl"
+            LIBS: "-L${{ github.workspace }}/build-dir/lib -lwolfssl"
         uses: wolfSSL/actions-build-autotools-project@v1
         with:
           repository: wolfssl/wolfssh
