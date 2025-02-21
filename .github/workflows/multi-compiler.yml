@@ -97,7 +97,11 @@ jobs:
         with:
           repository: wolfssl/wolfssh
           path: wolfssh
-          configure: LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include"
+          configure: >-
+            CC="${{ matrix.CC }}"
+            CXX="${{ matrix.CXX }}"
+            LDFLAGS="-L${{ github.workspace }}/build-dir/lib"
+            CPPFLAGS="-I${{ github.workspace }}/build-dir/include"
           check: true
       - name: Upload config.log on errors
         if: ${{ failure() }}
