@@ -148,10 +148,14 @@ static void err_msg(const char* s)
 
 static void myStatusCb(WOLFSSH* sshIn, word32* bytes, char* name)
 {
+    /* Variables declared at function scope per wolfSSL coding standards.
+     * Modern compilers optimize variable access regardless of declaration
+     * placement, so there is no performance impact. */
 #ifndef WOLFSSH_NO_TIMESTAMP
     static word32 lastOutputTime = 0;
 #endif
     word32 currentTime;
+    word32 elapsedTime;
     char buf[80];
     word64 longBytes = ((word64)bytes[1] << 32) | bytes[0];
 
@@ -167,7 +171,7 @@ static void myStatusCb(WOLFSSH* sshIn, word32* bytes, char* name)
         WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
         WSTRNCPY(currentFile, name, WOLFSSH_MAX_FILENAME);
     }
-    word32 elapsedTime = currentTime - startTime;
+    elapsedTime = currentTime - startTime;
     WSNPRINTF(buf, sizeof(buf), "Processed %8llu\t bytes in %d seconds\r",
             (unsigned long long)longBytes, elapsedTime);
 #ifndef WOLFSSH_NO_SFTP_TIMEOUT
