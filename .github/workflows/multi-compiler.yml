@@ -102,6 +102,7 @@ jobs:
             CXX="${{ matrix.CXX }}"
             LDFLAGS="-L${{ github.workspace }}/build-dir/lib"
             CPPFLAGS="-I${{ github.workspace }}/build-dir/include"
+            --enable-all
           check: true
       - name: Upload config.log on errors
         if: ${{ failure() }}
