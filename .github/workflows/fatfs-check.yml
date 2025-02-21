@@ -1,0 +1,145 @@
+name: FATFS Build Test
+
+on:
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ '*' ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  WOLFSSL_REF: master
+
+jobs:
+  build_wolfssl:
+    name: Build wolfssl
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Checking cache for wolfssl
+        uses: actions/cache@v4
+        id: cache-wolfssl
+        with:
+          path: build-dir/
+          key: wolfssh-fatfs-check-wolfssl-${{ env.WOLFSSL_REF }}
+          lookup-only: true
+
+      - name: Checkout, build, and install wolfssl
+        if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+        uses: wolfSSL/actions-build-autotools-project@v1
+        with:
+          repository: wolfssl/wolfssl
+          ref: ${{ env.WOLFSSL_REF }}
+          path: wolfssl
+          configure: --enable-wolfssh --enable-cryptonly
+          check: false
+          install: true
+
+  build_wolfssh:
+    name: Build wolfssh with FATFS
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    needs: build_wolfssl
+    steps:
+      - name: Checking cache for wolfssl
+        uses: actions/cache@v4
+        with:
+          path: build-dir/
+          key: wolfssh-fatfs-check-wolfssl-${{ env.WOLFSSL_REF }}
+          fail-on-cache-miss: true
+
+      - name: Setup FATFS
+        run: |
+          git clone https://github.com/abbrev/fatfs.git
+          cd fatfs/source
+          mkdir -p ${{ github.workspace }}/build-dir/include/{wolfssh,fatfs}
+          mkdir -p ${{ github.workspace }}/build-dir/lib/fatfs
+          cp *.h ${{ github.workspace }}/build-dir/include/fatfs/
+          gcc -c -I${{ github.workspace }}/build-dir/include/fatfs -fPIC -ffreestanding -DWIN32=0 -DUNIX=1 -DUSE_STDIO=1 *.c
+          ar rcs ${{ github.workspace }}/build-dir/lib/fatfs/libfatfs.a *.o
+          cp ffconf.h ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
+          echo "#define DIR FATFS_DIR" >> ${{ github.workspace }}/build-dir/include/fatfs/ffconf.h
+          echo "#define WOLFSSH_FATFS" > ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#undef WOLFSSH_USER_FILESYSTEM" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#include <ffconf.h>" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#include <ff.h>" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#include <stdarg.h>" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#include <wolfssl/wolfcrypt/types.h>" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#include <wolfssl/wolfcrypt/memory.h>" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "typedef struct WFILE_S { FIL fil; FILE* stdio_file; } WFILE;" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "typedef WFILE* WFD;" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WBADFILE ((WFD)NULL)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WFILE_STDIO(f) ((f) ? (f)->stdio_file : NULL)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WFILE_IS_VALID(f) ((f) != NULL && (f)->stdio_file != NULL)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WFILE_INIT(f) do { (f) = NULL; } while(0)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "static inline int ff_fopen(WFD* f, const char* filename, BYTE m) {
+              WFD tmp = NULL;
+              FRESULT fr;
+              FILE* stdio = NULL;
+              if (!f) return -1;
+              WFILE_INIT(*f);
+              tmp = (WFD)WMALLOC(sizeof(WFILE), NULL, DYNTYPE_SFTP);
+              if (!tmp) return -1;
+              WMEMSET(tmp, 0, sizeof(WFILE));
+              fr = f_open(&tmp->fil, filename, m);
+              if (fr != FR_OK) {
+                  WFREE(tmp, NULL, DYNTYPE_SFTP);
+                  return -1;
+              }
+              stdio = tmpfile();
+              if (!stdio) {
+                  f_close(&tmp->fil);
+                  WFREE(tmp, NULL, DYNTYPE_SFTP);
+                  return -1;
+              }
+              tmp->stdio_file = stdio;
+              *f = tmp;
+              if (fr != FR_OK) {
+                  WFREE(tmp, NULL, DYNTYPE_SFTP);
+                  return -1;
+              }
+              stdio = tmpfile();
+              if (!stdio) {
+                  f_close(&tmp->fil);
+                  WFREE(tmp, NULL, DYNTYPE_SFTP);
+                  return -1;
+              }
+              tmp->stdio_file = stdio;
+              *f = tmp;
+                  WFREE(tmp, NULL, DYNTYPE_SFTP);
+                  return -1;
+              }
+              tmp->stdio_file = tmpfile();
+              if (!tmp->stdio_file) {
+                  f_close(&tmp->fil);
+                  WFREE(tmp, NULL, DYNTYPE_SFTP);
+                  return -1;
+              }
+              *f = tmp;
+              return 0;
+          }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "static inline int ff_fclose(WFD f) { if(!f) return -1; if(f->stdio_file) fclose(f->stdio_file); int ret = f_close(&f->fil); free(f); return ret; }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "static inline int ff_fread(void* ptr, size_t size, size_t nmemb, WFD f) { if(!f) return -1; UINT br; int ret = f_read(&f->fil, ptr, size * nmemb, &br); return ret ? -1 : br; }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "static inline int ff_fwrite(const void* ptr, size_t size, size_t nmemb, WFD f) { if(!f) return -1; UINT bw; int ret = f_write(&f->fil, ptr, size * nmemb, &bw); return ret ? -1 : bw; }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "static inline int ff_fprintf(WFD f, const char* fmt, ...) { if(!f || !f->stdio_file) return -1; va_list args; va_start(args, fmt); int ret = vfprintf((FILE*)f->stdio_file, fmt, args); va_end(args); return ret; }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "static inline FILE* ff_get_stdio(WFD f) { return f ? f->stdio_file : NULL; }" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WFOPEN(fs,f,fn,m) (ff_fopen(&(f),(fn),(m)))" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WFCLOSE(fs,f) ((f) ? (f_close(&(f)->fil), fclose((f)->stdio_file), WFREE((f),NULL,DYNTYPE_SFTP), 0) : -1)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WFREAD(fs,p,s,n,f) ((f) && (f)->stdio_file ? fread((p),(s),(n),(f)->stdio_file) : -1)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WFWRITE(fs,p,s,n,f) ((f) && (f)->stdio_file ? fwrite((p),(s),(n),(f)->stdio_file) : -1)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WFPRINTF(fs,f,fmt,...) ((f) && (f)->stdio_file ? fprintf((f)->stdio_file,(fmt),__VA_ARGS__) : -1)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WFSEEK(fs,f,o,w) ((f) && (f)->stdio_file ? fseek((f)->stdio_file,(o),(w)) : -1)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WFTELL(fs,f) ((f) && (f)->stdio_file ? ftell((f)->stdio_file) : -1)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+          echo "#define WREWIND(fs,f) ((f) && (f)->stdio_file ? (void)fseek((f)->stdio_file,0,SEEK_SET) : (void)0)" >> ${{ github.workspace }}/build-dir/include/wolfssh/myFilesystem.h
+
+
+      - name: Checkout, build, and test wolfssh
+        uses: wolfSSL/actions-build-autotools-project@v1
+        with:
+          repository: wolfssl/wolfssh
+          path: wolfssh
+          configure: --enable-sftp --enable-all CPPFLAGS="-DWOLFSSH_FATFS -I${{ github.workspace }}/build-dir/include -I${{ github.workspace }}/build-dir/include/fatfs -I${{ github.workspace }}/build-dir/include/wolfssh" LDFLAGS="-L${{ github.workspace }}/build-dir/lib -L${{ github.workspace }}/build-dir/lib/fatfs -lfatfs"
+          check: false
