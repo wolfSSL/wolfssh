@@ -97,11 +97,14 @@ jobs:
             CPPFLAGS: "-I${{ github.workspace }}/build-dir/include"
             PKG_CONFIG_PATH: "${{ github.workspace }}/build-dir/lib/pkgconfig"
             LD_LIBRARY_PATH: "${{ github.workspace }}/build-dir/lib"
+            LIBS: "-lwolfssl"
+            WOLFSSL_LIBS: "-L${{ github.workspace }}/build-dir/lib -lwolfssl"
+            WOLFSSL_CFLAGS: "-I${{ github.workspace }}/build-dir/include"
         uses: wolfSSL/actions-build-autotools-project@v1
         with:
           repository: wolfssl/wolfssh
           path: wolfssh
-          configure: --enable-all --with-wolfssl=${{ github.workspace }}/build-dir LIBS="-lwolfssl"
+          configure: --enable-all --with-wolfssl=${{ github.workspace }}/build-dir
           check: true
       - name: Upload config.log on errors
         if: ${{ failure() }}
