@@ -41,6 +41,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - CC: g++
+            CXX: g++
+            OS: ubuntu-22.04
           - CC: gcc-9
             CXX: g++-9
             OS: ubuntu-22.04
@@ -73,7 +76,12 @@ jobs:
     timeout-minutes: 4
     steps:
       - name: Install dependencies
-        run: export DEBIAN_FRONTEND=noninteractive && sudo apt-get update && sudo apt-get install -y ${{ matrix.CC }}
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          if [ "${{ matrix.CC }}" != "g++" ]; then
+            sudo apt-get install -y ${{ matrix.CC }}
+          fi
       - uses: actions/checkout@v4
       - name: Restore wolfSSL build
         uses: actions/cache@v4
