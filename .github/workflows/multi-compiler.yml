@@ -97,17 +97,27 @@ jobs:
       - name: Verify wolfSSL installation
         run: |
           ls -la ${{ github.workspace }}/build-dir/lib/
-          pkg-config --libs --cflags wolfssl || echo "Using manual flags"
-          ${{ matrix.CC }} -v
+          echo "Testing wolfSSL library..."
+          ${{ matrix.CC }} -o test_wolfssl -I${{ github.workspace }}/build-dir/include -L${{ github.workspace }}/build-dir/lib test_wolfssl.c -lwolfssl || echo "Compilation failed"
+        working-directory: ${{ github.workspace }}
+      - name: Create test file
+        run: |
+          cat > test_wolfssl.c << 'EOL'
+          #include <wolfssl/wolfcrypt/settings.h>
+          #include <wolfssl/wolfcrypt/wc_port.h>
+          int main() { return wolfCrypt_Init(); }
+          EOL
       - name: Build
         env:
             CC: ${{ matrix.CC }}
             CXX: ${{ matrix.CXX }}
-            LDFLAGS: "-L${{ github.workspace }}/build-dir/lib -lwolfssl"
+            LDFLAGS: "-L${{ github.workspace }}/build-dir/lib -Wl,-rpath,${{ github.workspace }}/build-dir/lib -lwolfssl"
             CPPFLAGS: "-I${{ github.workspace }}/build-dir/include"
             PKG_CONFIG_PATH: "${{ github.workspace }}/build-dir/lib/pkgconfig"
             LD_LIBRARY_PATH: "${{ github.workspace }}/build-dir/lib"
             CFLAGS: "-fPIC"
+            WOLFSSL_CFLAGS: "-I${{ github.workspace }}/build-dir/include"
+            WOLFSSL_LIBS: "-L${{ github.workspace }}/build-dir/lib -lwolfssl"
         uses: wolfSSL/actions-build-autotools-project@v1
         with:
           repository: wolfssl/wolfssh
