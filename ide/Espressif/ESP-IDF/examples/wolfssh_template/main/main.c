@@ -1,6 +1,6 @@
 /* main.c
  *
- * Copyright (C) 2014-2024 wolfSSL Inc.
+ * Copyright (C) 2014-2025 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -38,7 +38,7 @@ void app_main(void)
     wolfSSH_Debugging_ON();
 #else
     ESP_LOGI(TAG, "DEBUG_WOLFSSH is not defined, "
-                  "so nothing will happen for teh next statement");
+                  "so nothing will happen for the next statement");
 #endif
 
 #ifdef HAVE_VERSION_EXTENDED_INFO
