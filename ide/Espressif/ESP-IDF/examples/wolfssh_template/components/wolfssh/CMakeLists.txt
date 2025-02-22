@@ -17,7 +17,7 @@
 #  You should have received a copy of the GNU General Public License
 #  along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
 #
-# cmake for WOLFSSH Espressif projects v5.6.6 r1
+# cmake for wolfssh Espressif projects v5.7.6 (template pr)
 #
 # See https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/build-system.html
 #
@@ -317,27 +317,27 @@ else()
     message(STATUS "************************************************************************************************")
     FIND_WOLFSSH_DIRECTORY(WOLFSSH_ROOT)
 
-    # Check to see if we're already in WOLFSSH, and only if WOLFSSH_ROOT not specified
+    # Check to see if we're already in wolfssh, and only if WOLFSSH_ROOT not specified
     if ("${WOLFSSH_ROOT}" STREQUAL "")
-        # WOLFSSH examples are 7 directories deep from WOLFSSH repo root
+        # wolfssh examples are 7 directories deep from wolfssh repo root
         #                        1  2  3  4  5  6  7
         set(THIS_RELATIVE_PATH "../../../../../../..")
         get_filename_component(THIS_SEARCH_PATH  "${THIS_RELATIVE_PATH}" ABSOLUTE)
         message(STATUS "Searching in path = ${THIS_SEARCH_PATH}")
 
         if (EXISTS "${THIS_SEARCH_PATH}/wolfcrypt/src")
-            # we're already in WOLFSSH examples!
+            # we're already in wolfssh examples!
             get_filename_component(WOLFSSH_ROOT  "${THIS_SEARCH_PATH}" ABSOLUTE)
-            message(STATUS "Using WOLFSSH example with root ${WOLFSSH_ROOT}")
+            message(STATUS "Using wolfssh example with root ${WOLFSSH_ROOT}")
         else()
             # We're in some other repo such as wolfssh, so we'll search for an
-            # adjacent-level directory for WOLFSSH. (8 directories up, then down one)
+            # adjacent-level directory for wolfssh. (8 directories up, then down one)
             #
-            # For example WOLFSSH examples:
-            #   C:\workspace\WOLFSSH-gojimmypi\IDE\Espressif\ESP-IDF\examples\WOLFSSH_benchmark\components\WOLFSSH
+            # For example wolfssh examples:
+            #   C:\workspace\wolfssh-gojimmypi\IDE\Espressif\ESP-IDF\examples\wolfssh_benchmark\components\wolfssh
             #
             # For example wolfSSH examples:
-            #   C:\workspace\wolfssh-gojimmypi\ide\Espressif\ESP-IDF\examples\wolfssh_benchmark\components\WOLFSSH
+            #   C:\workspace\wolfssh-gojimmypi\ide\Espressif\ESP-IDF\examples\wolfssh_benchmark\components\wolfssh
             #
             #                        1  2  3  4  5  6  7  8
             set(THIS_RELATIVE_PATH "../../../../../../../..")
@@ -356,7 +356,7 @@ else()
             get_filename_component(THIS_DIR "${CMAKE_CURRENT_SOURCE_DIR}" ABSOLUTE)
             message(STATUS "THIS_DIR = ${THIS_DIR}")
 
-            # find the user name to search for possible "WOLFSSH-username"
+            # find the user name to search for possible "wolfssh-username"
             message(STATUS "USERNAME = $ENV{USERNAME}")
             if(  "$ENV{USER}" STREQUAL "" ) # the bash user
                 if(  "$ENV{USERNAME}" STREQUAL "" ) # the Windows user
@@ -371,35 +371,35 @@ else()
             endif()
             message(STATUS "THIS_USER = ${THIS_USER}")
 
-            # This same makefile is used for both the WOLFSSH component, and other
-            # components that may depend on WOLFSSH, such as wolfssh. Therefore
-            # we need to determine if this makefile is in the WOLFSSH repo, or
+            # This same makefile is used for both the wolfssh component, and other
+            # components that may depend on wolfssh, such as wolfssh. Therefore
+            # we need to determine if this makefile is in the wolfssh repo, or
             # some other repo.
 
             if(  "{THIS_USER}" STREQUAL "" )
                 # This is highly unusual to not find a user name.
-                # In this case, we'll just search for a "WOLFSSH" directory:
+                # In this case, we'll just search for a "wolfssh" directory:
                 message(STATUS "No username found!")
-                get_filename_component(WOLFSSH_ROOT  "${THIS_RELATIVE_PATH}/WOLFSSH" ABSOLUTE)
+                get_filename_component(WOLFSSH_ROOT  "${THIS_RELATIVE_PATH}/wolfssh" ABSOLUTE)
             else()
                 # We found an environment USER name!
-                # The first place to look for WOLFSSH will be in a user-clone called "WOLFSSH-[username]"
-                message(STATUS "Using [THIS_USER = ${THIS_USER}] to see if there's a [relative path]/WOLFSSH-${THIS_USER} directory.")
-                get_filename_component(WOLFSSH_ROOT  "${THIS_RELATIVE_PATH}/WOLFSSH-${THIS_USER}" ABSOLUTE)
+                # The first place to look for wolfssh will be in a user-clone called "wolfssh-[username]"
+                message(STATUS "Using [THIS_USER = ${THIS_USER}] to see if there's a [relative path]/wolfssh-${THIS_USER} directory.")
+                get_filename_component(WOLFSSH_ROOT  "${THIS_RELATIVE_PATH}/wolfssh-${THIS_USER}" ABSOLUTE)
 
                 if( EXISTS "${WOLFSSH_ROOT}" )
-                    message(STATUS "Found WOLFSSH in user-suffix ${WOLFSSH_ROOT}")
+                    message(STATUS "Found wolfssh in user-suffix ${WOLFSSH_ROOT}")
                 else()
-                    # If there's not a user-clone called "WOLFSSH-[username]",
-                    # perhaps there's simply a git clone called "WOLFSSH"?
-                    message(STATUS "Did not find WOLFSSH-${THIS_USER}; continuing search...")
-                    get_filename_component(WOLFSSH_ROOT  "${THIS_RELATIVE_PATH}/WOLFSSH" ABSOLUTE)
+                    # If there's not a user-clone called "wolfssh-[username]",
+                    # perhaps there's simply a git clone called "wolfssh"?
+                    message(STATUS "Did not find wolfssh-${THIS_USER}; continuing search...")
+                    get_filename_component(WOLFSSH_ROOT  "${THIS_RELATIVE_PATH}/wolfssh" ABSOLUTE)
 
                     if( EXISTS "${WOLFSSH_ROOT}" )
-                        message(STATUS "Found WOLFSSH in standard ${WOLFSSH_ROOT}")
+                        message(STATUS "Found wolfssh in standard ${WOLFSSH_ROOT}")
                     else()
                         # Things are looking pretty bleak. We'll likely not be able to compile.
-                        message(STATUS "Did not find WOLFSSH in ${WOLFSSH_ROOT}")
+                        message(STATUS "Did not find wolfssh in ${WOLFSSH_ROOT}")
                     endif()
                 endif()
             endif()
@@ -426,8 +426,8 @@ else()
     if( EXISTS "${WOLFSSH_ROOT}" )
         message(STATUS "WOLFSSH_ROOT = ${WOLFSSH_ROOT}")
     else()
-        # Abort. We need WOLFSSH _somewhere_.
-        message(FATAL_ERROR "Could not find WOLFSSH in ${WOLFSSH_ROOT}. Try setting environment variable or git clone.")
+        # Abort. We need wolfssh _somewhere_.
+        message(FATAL_ERROR "Could not find wolfssh in ${WOLFSSH_ROOT}. Try setting environment variable or git clone.")
     endif()
 
 
@@ -488,12 +488,12 @@ else()
             # We need to now determine if it is local and if so if it is part of the wolfssh repo,
             # or if  wolfssh is simply installed as a local component.
             #
-
+            message(STATUS "Looking at WOLFSSH_PROJECT_DIR = '${WOLFSSH_PROJECT_DIR}'")
             if( EXISTS "${WOLFSSH_PROJECT_DIR}" )
                 #
                 # wolfssh found in local project.
                 #
-                if( EXISTS "${WOLFSSH_PROJECT_DIR}/wolfcrypt/" )
+                if( EXISTS "${WOLFSSH_PROJECT_DIR}/wolfssh/" )
                     message(STATUS "")
                     message(STATUS "Using installed project ./components/wolfssh in CMAKE_HOME_DIRECTORY = ${CMAKE_HOME_DIRECTORY}")
                     message(STATUS "")
