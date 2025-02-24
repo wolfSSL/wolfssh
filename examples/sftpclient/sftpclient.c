@@ -132,6 +132,8 @@ static void err_msg(const char* s)
 #else
     #include <sys/time.h>
 
+    double current_time_ms(int);
+
     /* return number of seconds*/
     word32 current_time(int reset)
     {
@@ -142,6 +144,18 @@ static void err_msg(const char* s)
         gettimeofday(&tv, 0);
         return (word32)tv.tv_sec;
     }
+
+    /* return number of micro seconds */
+    double current_time_ms(int reset)
+    {
+        struct timeval tv;
+
+        (void)reset;
+
+        gettimeofday(&tv, 0);
+        return (word64)(tv.tv_sec*1000000) + tv.tv_usec;
+    }
+
 #endif /* USE_WINDOWS_API */
 #endif /* !WOLFSSH_NO_TIMESTAMP */
 
@@ -1093,6 +1107,12 @@ static int doAutopilot(int cmd, char* local, char* remote)
     char fullpath[128] = ".";
     WS_SFTPNAME* name  = NULL;
     byte remoteAbsPath = 0;
+#if !defined(WOLFSSH_NO_TIMESTAMP) && !defined(USE_WINDOWS_API)
+    double currentTime;
+    double longBytes = 0;
+    FILE* f;
+#endif
+
 
     /* check if is absolute path before making it one */
     if (remote != NULL && WSTRLEN(remote) > 2 && remote[1] == ':' &&
@@ -1124,6 +1144,18 @@ static int doAutopilot(int cmd, char* local, char* remote)
             remote);
     }
 
+#if !defined(WOLFSSH_NO_TIMESTAMP) && !defined(USE_WINDOWS_API)
+    ret = WFOPEN(NULL, &f, fullpath, "rb");
+    if (ret != 0 || f == WBADFILE) return WS_BAD_FILE_E;
+    if (WFSEEK(NULL, f, 0, WSEEK_END) != 0) {
+        WFCLOSE(NULL, f);
+        return WS_BAD_FILE_E;
+    }
+    longBytes = (word32)WFTELL(NULL, f);
+    WREWIND(NULL, f);
+    currentTime = current_time_ms(0);
+#endif
+
     do {
         if (cmd == AUTOPILOT_PUT) {
             ret = wolfSSH_SFTP_Put(ssh, local, fullpath, 0, NULL);
@@ -1145,6 +1177,15 @@ static int doAutopilot(int cmd, char* local, char* remote)
                     fullpath, local);
         }
     }
+#if !defined(WOLFSSH_NO_TIMESTAMP) && !defined(USE_WINDOWS_API)
+    else {
+        currentTime = current_time_ms(0) - currentTime;
+        double result;
+        result = (double)longBytes / 1000000;
+        result = result / ((double)currentTime / 1000000);
+        printf("Transfered %s at %.2fMB/s\n", fullpath, result);
+    }
+#endif
 
     wolfSSH_SFTPNAME_list_free(name);
     return ret;
