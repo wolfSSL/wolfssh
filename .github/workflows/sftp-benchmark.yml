@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [ '*' ]
 
+# give permissions to write a comment on the pull request
+permissions:
+  pull-requests: write
+  actions: read
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -43,13 +49,12 @@ jobs:
   build_wolfssh:
     needs:
       - build_wolfssl
-      - create_matrix
     strategy:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest ]
-        wolfssl: ${{ fromJson(needs.create_matrix.outputs['versions']) }}
-    name: Build and test wolfsshd
+        wolfssl: [ master ]
+    name: Collect SFTP performance
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
@@ -71,53 +76,109 @@ jobs:
       - name: configure
         working-directory: ./wolfssh/
         run : |
-          ./configure --enable-all LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include -DWOLFSSH_NO_FPKI -DWOLFSSH_NO_SFTP_TIMEOUT -DWOLFSSH_MAX_SFTP_RW=4000000 -DMAX_PATH_SZ=120"
+          ./configure --enable-all LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include -DWOLFSSH_NO_FPKI -DWOLFSSH_NO_SFTP_TIMEOUT -DWOLFSSH_MAX_SFTP_RW=4000000 -DMAX_PATH_SZ=120 -DEXAMPLE_SFTP_BENCHMARK"
 
       - name: make
         working-directory: ./wolfssh/
         run: make
 
       - name: Get Saved OpenSSH Upload Results
-        uses: actions/downlad-artifact@v4
+        id: cache-upload
+        uses: actions/cache@v4
         with:
-          path: ./wolfssh/
-          artifact_id: 'openssh-upload'
+          path: wolfssh/openssh-average-download.csv
+          key: openssh-average-download.csv
+          fail-on-cache-miss: false
 
+      - name: Get Saved OpenSSH Download Results
+        id: cache-download
+        uses: actions/cache@v4
+        with:
+          path: wolfssh/openssh-average-upload.csv
+          key: openssh-averavge-upload.csv
+          fail-on-cache-miss: false
 
-      - name: Put test key in authorized keys file
+      - name: Install gnuplot
+        run: sudo apt-get install gnuplot
+
+      - name: Setup OpenSSH Test Server
+        working-directory: ./wolfssh/
         run: |
-          touch ~/.ssh/authorized_keys_test
-          cat ./keys/hansel-*.pub > authorized_keys_test
+          sudo apt-get install openssh-server
+          mkdir ~/.ssh
+          chmod 700 ~/.ssh
+          echo "AuthorizedKeysFile $PWD/keys/hansel-key-ecc.pub" >> sshd-config-test.txt
+          echo "PubkeyAuthentication yes" >> sshd-config-test.txt
+          echo "Subsystem   sftp    internal-sftp" >> sshd-config-test.txt
+          echo "KbdInteractiveAuthentication no" >> sshd-config-test.txt
+          sed -i.bak "s/hansel/$USER/" ./keys/hansel-key-ecc.pub
           chmod 600 ./keys/hansel-key-*.pem
-          sudo systemctl restart sshd
-          sudo service sshd restart
+          chmod 600 ./keys/hansel-key-*.pub
+          sudo mkdir -p /run/sshd
+          sudo chmod 755 /run/sshd
+          sudo /usr/sbin/sshd -p 22222 -f sshd-config-test.txt -E $PWD/sshd-log.txt
+          cat sshd-config-test.txt
+          ps -e | grep sshd
 
       - name: Run SFTP client benchmark
         working-directory: ./wolfssh/
+        timeout-minutes: 5
         run: |
-          ./scripts/get-sftp-benchmark.sh
+          ./scripts/get-sftp-benchmark.sh 22222
 
       - name: Store Upload Speed PNG
         uses: actions/upload-artifact@v4
         with:
-          name: upload-results.png
+          name: upload-results-pr${{ github.event.pull_request.number }}.png
           path: wolfssh/upload-results.png
+          retention-days: 2
 
       - name: Store Download Speed PNG
         uses: actions/upload-artifact@v4
         with:
-          name: download-results.png
+          name: download-results-pr${{ github.event.pull_request.number }}.png
           path: wolfssh/download-results.png
+          retention-days: 2
 
-      - name: Comment on PR about performance 
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload OpenSSH Download Results
+        if: steps.cache-download.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: wolfssh/openssh-average-download.csv
+          key: openssh-average-download.csv
+
+      - name: Upload OpenSSH Upload Results
+        if: steps.cache-upload.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: wolfssh/openssh-average-upload.csv
+          key: openssh-average-upload.csv
+
+# Currently the comment in PR does not work correctly
+#      - name: Comment on PR about performance
+#        env:
+#          GITHUB_URL: ${{ github.event.pull_request.comments_url }}
+#          GH_TOKEN: ${{ github.token }}
+#          PR_NUMBER: ${{ github.event.pull_request.number }}
+#          RUN_ID: ${{ github.run_id }}
+#        run: |
+#          # Get both artifact IDs
+#          DOWNLOAD_ARTIFACT=$(gh api repos/${{ github.repository }}/actions/artifacts \
+#            --jq '.artifacts[] | select(.name | contains("download-results-pr")) | .id')
+#          UPLOAD_ARTIFACT=$(gh api repos/${{ github.repository }}/actions/artifacts \
+#            --jq '.artifacts[] | select(.name | contains("upload-results-pr")) | .id')
+#
+#          # Create the comment with direct link to download
+#          curl -X POST \
+#            $GITHUB_URL \
+#            -H "Content-Type: application/json" \
+#            -H "Authorization: token $GH_TOKEN" \
+#            -d "{\"body\":\"Performance test results:\n\n- [Download Results](https://github.com/${{ github.repository }}/actions/runs/$RUN_ID/artifacts/$DOWNLOAD_ARTIFACT)\n- [Upload Results](https://github.com/${{ github.repository }}/actions/runs/$RUN_ID/artifacts/$UPLOAD_ARTIFACT)\"}"
+
+      - name: Print logs if failed
+        working-directory: ./wolfssh/
+        if: failure()
         run: |
-          PR_NUMBER=$(jq --raw-output .pull_request.number "$GITHUB_EVENT_PATH")
-          gh pr comment $PR_NUMBER --body "Attached is the performance results" \
-            --attach download-results.png \
-            --attach upload-results.png
+          sudo cat sshd-log.txt
+          cat log.csv
 
-      artifacts:
-        'openssh-upload': { 'path': 'wolfssh/openssh-average-upload.csv' }
-        'openssh-download': { 'path': 'wolfssh/openssh-average-download.csv' }

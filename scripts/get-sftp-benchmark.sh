@@ -1,7 +1,7 @@
 #!/bin/bash
 
-KEY="keys/hansel-key-ecc.pem"
-TEST_FILE="/home/jak/Documents/wolfssh-fork/test"
+KEY="$PWD/keys/hansel-key-ecc.pem"
+TEST_FILE="$PWD/test"
 FILE_SIZES=("5000" "10000" "50000" "100000" "150000" "200000" "250000" "300000" "350000" "400000" "500000" "1000000")
 TRANSFER_MBS=""
 NUMBER_RUNS=10
@@ -19,7 +19,7 @@ fi
 
 do_openssh_put_test() {
     cp $TEST_FILE $TEST_FILE-out
-    sftp_command="sftp -P$PORT -i $KEY jak@127.0.0.1"
+    sftp_command="sftp -P$PORT -o \"StrictHostKeyChecking no\" -i $KEY $USER@127.0.0.1"
     output_file="sftp_log.txt"
 
     # Start the script command to capture the sftp session
@@ -37,7 +37,7 @@ EOF" /dev/null 2>&1 | tee $output_file | while read line; do
 
 do_openssh_get_test() {
     cp $TEST_FILE $TEST_FILE-out
-    sftp_command="sftp -P $PORT -i $KEY jak@127.0.0.1"
+    sftp_command="sftp -P $PORT -o \"StrictHostKeyChecking no\" -i $KEY $USER@127.0.0.1"
     output_file="sftp_log.txt"
 
     # Start the script command to capture the sftp session
@@ -55,14 +55,14 @@ EOF" /dev/null 2>&1 | tee $output_file | while read line; do
 
 do_wolfssh_put_test() {
     cp $TEST_FILE $TEST_FILE-out
-    RESULT=$(./examples/sftpclient/wolfsftp -g -l $TEST_FILE -r $TEST_FILE-out -i $PWD/keys/hansel-key-ecc.der -j $PWD/keys/hansel-key-ecc.pub -u jak -p $PORT)
+    RESULT=$(./examples/sftpclient/wolfsftp -g -l $TEST_FILE -r $TEST_FILE-out -i $PWD/keys/hansel-key-ecc.der -j $PWD/keys/hansel-key-ecc.pub -u $USER -p $PORT)
     TRANSFER_MBS="$(echo "$RESULT" | awk '{print $(NF-0)}' | sed 's/MB\/s//')"
     printf " $TRANSFER_MBS" >> $LOG_FILE
 }
 
 do_wolfssh_get_test() {
     cp $TEST_FILE $TEST_FILE-out
-    RESULT=$(./examples/sftpclient/wolfsftp -G -l $TEST_FILE-out -r $TEST_FILE -i $PWD/keys/hansel-key-ecc.der -j $PWD/keys/hansel-key-ecc.pub -u jak -p $PORT)
+    RESULT=$(./examples/sftpclient/wolfsftp -G -l $TEST_FILE-out -r $TEST_FILE -i $PWD/keys/hansel-key-ecc.der -j $PWD/keys/hansel-key-ecc.pub -u $USER -p $PORT)
     TRANSFER_MBS="$(echo "$RESULT" | awk '{print $(NF-0)}' | sed 's/MB\/s//')"
     printf " $TRANSFER_MBS" >> $LOG_FILE
 }
