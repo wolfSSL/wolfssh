@@ -1,0 +1,123 @@
+name: Benchmark Test
+
+on:
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ '*' ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build_wolfssl:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest ]
+        wolfssl: [ master ]
+    name: Build wolfssl
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 4
+    steps:
+      - name: Checking cache for wolfssl
+        uses: actions/cache@v4
+        id: cache-wolfssl
+        with:
+          path: build-dir/
+          key: wolfssh-sshd-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}
+          lookup-only: true
+
+      - name: Checkout, build, and install wolfssl
+        if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+        uses: wolfSSL/actions-build-autotools-project@v1
+        with:
+          repository: wolfssl/wolfssl
+          ref: ${{ matrix.wolfssl }}
+          path: wolfssl
+          configure: --enable-all
+          check: false
+          install: true
+
+  build_wolfssh:
+    needs:
+      - build_wolfssl
+      - create_matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest ]
+        wolfssl: ${{ fromJson(needs.create_matrix.outputs['versions']) }}
+    name: Build and test wolfsshd
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - name: Checking cache for wolfssl
+        uses: actions/cache@v4
+        with:
+          path: build-dir/
+          key: wolfssh-sshd-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}
+          fail-on-cache-miss: true
+
+      - uses: actions/checkout@v4
+        with:
+          path: wolfssh/
+
+      - name: autogen
+        working-directory: ./wolfssh/
+        run: ./autogen.sh
+
+      - name: configure
+        working-directory: ./wolfssh/
+        run : |
+          ./configure --enable-all LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include -DWOLFSSH_NO_FPKI -DWOLFSSH_NO_SFTP_TIMEOUT -DWOLFSSH_MAX_SFTP_RW=4000000 -DMAX_PATH_SZ=120"
+
+      - name: make
+        working-directory: ./wolfssh/
+        run: make
+
+      - name: Get Saved OpenSSH Upload Results
+        uses: actions/downlad-artifact@v4
+        with:
+          path: ./wolfssh/
+          artifact_id: 'openssh-upload'
+
+
+      - name: Put test key in authorized keys file
+        run: |
+          touch ~/.ssh/authorized_keys_test
+          cat ./keys/hansel-*.pub > authorized_keys_test
+          chmod 600 ./keys/hansel-key-*.pem
+          sudo systemctl restart sshd
+          sudo service sshd restart
+
+      - name: Run SFTP client benchmark
+        working-directory: ./wolfssh/
+        run: |
+          ./scripts/get-sftp-benchmark.sh
+
+      - name: Store Upload Speed PNG
+        uses: actions/upload-artifact@v4
+        with:
+          name: upload-results.png
+          path: wolfssh/upload-results.png
+
+      - name: Store Download Speed PNG
+        uses: actions/upload-artifact@v4
+        with:
+          name: download-results.png
+          path: wolfssh/download-results.png
+
+      - name: Comment on PR about performance 
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=$(jq --raw-output .pull_request.number "$GITHUB_EVENT_PATH")
+          gh pr comment $PR_NUMBER --body "Attached is the performance results" \
+            --attach download-results.png \
+            --attach upload-results.png
+
+      artifacts:
+        'openssh-upload': { 'path': 'wolfssh/openssh-average-upload.csv' }
+        'openssh-download': { 'path': 'wolfssh/openssh-average-download.csv' }
