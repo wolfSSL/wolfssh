@@ -132,8 +132,6 @@ static void err_msg(const char* s)
 #else
     #include <sys/time.h>
 
-    double current_time_ms(int);
-
     /* return number of seconds*/
     word32 current_time(int reset)
     {
@@ -145,6 +143,9 @@ static void err_msg(const char* s)
         return (word32)tv.tv_sec;
     }
 
+#ifdef EXAMPLE_SFTP_BENCHMARK
+    double current_time_ms(int);
+
     /* return number of micro seconds */
     double current_time_ms(int reset)
     {
@@ -155,7 +156,7 @@ static void err_msg(const char* s)
         gettimeofday(&tv, 0);
         return (word64)(tv.tv_sec*1000000) + tv.tv_usec;
     }
-
+#endif
 #endif /* USE_WINDOWS_API */
 #endif /* !WOLFSSH_NO_TIMESTAMP */
 
@@ -1166,7 +1167,8 @@ static int doAutopilot(int cmd, char* local, char* remote)
     char fullpath[128] = ".";
     WS_SFTPNAME* name  = NULL;
     byte remoteAbsPath = 0;
-#if !defined(WOLFSSH_NO_TIMESTAMP) && !defined(USE_WINDOWS_API)
+#if !defined(WOLFSSH_NO_TIMESTAMP) && !defined(USE_WINDOWS_API) &&\
+    defined(EXAMPLE_SFTP_BENCHMARK)
     double currentTime;
     double longBytes = 0;
     FILE* f;
@@ -1203,7 +1205,8 @@ static int doAutopilot(int cmd, char* local, char* remote)
             remote);
     }
 
-#if !defined(WOLFSSH_NO_TIMESTAMP) && !defined(USE_WINDOWS_API)
+#if !defined(WOLFSSH_NO_TIMESTAMP) && !defined(USE_WINDOWS_API) &&\
+    defined(EXAMPLE_SFTP_BENCHMARK)
     ret = WFOPEN(NULL, &f, fullpath, "rb");
     if (ret != 0 || f == WBADFILE) return WS_BAD_FILE_E;
     if (WFSEEK(NULL, f, 0, WSEEK_END) != 0) {
@@ -1244,7 +1247,8 @@ static int doAutopilot(int cmd, char* local, char* remote)
                     fullpath, local);
         }
     }
-#if !defined(WOLFSSH_NO_TIMESTAMP) && !defined(USE_WINDOWS_API)
+#if !defined(WOLFSSH_NO_TIMESTAMP) && !defined(USE_WINDOWS_API) &&\
+    defined(EXAMPLE_SFTP_BENCHMARK)
     else {
         currentTime = current_time_ms(0) - currentTime;
         double result;
