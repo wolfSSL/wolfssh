@@ -151,9 +151,9 @@ static void myStatusCb(WOLFSSH* sshIn, word32* bytes, char* name)
     /* Variables declared at function scope per wolfSSL coding standards.
      * Modern compilers optimize variable access regardless of declaration
      * placement, so there is no performance impact. */
+    word32 currentTime;
 #ifndef WOLFSSH_NO_TIMESTAMP
     static word32 lastOutputTime = 0;
-    word32 currentTime;
     word32 elapsedTime;
 #endif
     char buf[80];
