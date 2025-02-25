@@ -346,6 +346,7 @@ typedef struct WS_SFTP_SEND_WRITE_STATE {
     WS_SFTP_BUFFER buffer;
     int maxSz;
     int sentSz;
+    int sentSzSave;
 } WS_SFTP_SEND_WRITE_STATE;
 
 
@@ -7167,7 +7168,6 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
     WS_SFTP_SEND_WRITE_STATE* state = NULL;
     int ret = WS_FATAL_ERROR;
     int status;
-    int sentSzSave = 0;
     byte type;
 
     WLOG(WS_LOG_SFTP, "Entering wolfSSH_SFTP_SendWritePacket()");
@@ -7195,6 +7195,7 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
             case STATE_SEND_WRITE_INIT:
                 WLOG(WS_LOG_SFTP, "SFTP SEND_WRITE STATE: INIT");
                 state->sentSz = 0;
+                state->sentSzSave = 0;
                 if (wolfSSH_SFTP_buffer_create(ssh, &state->buffer,
                         handleSz + WOLFSSH_SFTP_HEADER + UINT32_SZ * 4) !=
                         WS_SUCCESS) {
@@ -7267,7 +7268,7 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                     continue;
                 }
 
-                sentSzSave += state->sentSz;
+                state->sentSzSave += state->sentSz;
                 if (inSz > (word32)state->sentSz) {
                     in += state->sentSz;
                     inSz -= state->sentSz;
@@ -7351,7 +7352,7 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                     ret = WS_SFTP_STATUS_NOT_OK;
                 }
                 if (ret >= WS_SUCCESS)
-                    ret = sentSzSave;
+                    ret = state->sentSzSave;
                 state->state = STATE_SEND_WRITE_CLEANUP;
                 NO_BREAK;
 

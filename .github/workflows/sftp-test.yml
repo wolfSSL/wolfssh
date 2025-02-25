@@ -1,0 +1,140 @@
+name: wolfSSH SFTP Test
+
+on:
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ '*' ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  create_matrix:
+    runs-on: ubuntu-latest
+    outputs:
+        versions: ${{ steps.json.outputs.versions }}
+    steps:
+      - name: Create wolfSSL version matrix
+        id: json
+        run: |
+          current=`curl -s https://api.github.com/repos/wolfssl/wolfssl/releases | grep tag_name | cut -d : -f 2,3 | tr -d \" | tr -d , | tr -d ' ' | head -1`
+          last=`curl -s https://api.github.com/repos/wolfssl/wolfssl/releases | grep tag_name | cut -d : -f 2,3 | tr -d \" | tr -d , | tr -d ' ' | head -2 | tail -1`
+          VERSIONS=$(echo "[ \"master\", \"$current\", \"$last\" ]")
+          echo "wolfSSL versions found: $VERSIONS"
+          echo "versions=$VERSIONS" >> $GITHUB_OUTPUT
+
+  build_wolfssl:
+    needs: create_matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest ]
+        wolfssl: ${{ fromJson(needs.create_matrix.outputs['versions']) }}
+    name: Build wolfssl
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 4
+    steps:
+      - name: Checking cache for wolfssl
+        uses: actions/cache@v4
+        id: cache-wolfssl
+        with:
+          path: build-dir/
+          key: wolfssh-sftp-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}
+          lookup-only: true
+
+      - name: Checkout, build, and install wolfssl
+        if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+        uses: wolfSSL/actions-build-autotools-project@v1
+        with:
+          repository: wolfssl/wolfssl
+          ref: ${{ matrix.wolfssl }}
+          path: wolfssl
+          configure: --enable-ssh
+          check: false
+          install: true
+
+  build_wolfssh:
+    needs:
+      - build_wolfssl
+      - create_matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest ]
+        wolfssl: ${{ fromJson(needs.create_matrix.outputs['versions']) }}
+    name: Build and test wolfsftp
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - name: Checking cache for wolfssl
+        uses: actions/cache@v4
+        with:
+          path: build-dir/
+          key: wolfssh-sftp-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}
+          fail-on-cache-miss: true
+
+      - uses: actions/checkout@v4
+        with:
+          path: wolfssh/
+
+      - name: autogen
+        working-directory: ./wolfssh/
+        run: ./autogen.sh
+
+      - name: configure
+        working-directory: ./wolfssh/
+        run : |
+          ./configure --enable-sftp LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include -DWOLFSSH_NO_FPKI"
+
+      - name: make
+        working-directory: ./wolfssh/
+        run: make
+
+      - name: Create test file
+        run: |
+          dd if=/dev/urandom of=/tmp/test.dat bs=1M count=2
+          echo "Created 2MB test file at /tmp/test.dat"
+          md5sum /tmp/test.dat > /tmp/test.md5
+
+      - name: Start echoserver
+        working-directory: ./wolfssh/
+        run: |
+          ./examples/echoserver/echoserver -f &
+          echo "Echoserver started with PID: $!"
+          sleep 2  # Give the server time to start
+
+      - name: Run SFTP test
+        working-directory: ./wolfssh/
+        run: |
+          mkdir -p /tmp/sftp_test_dir
+          # Create expect script to automate the SFTP client interaction
+          cat > /tmp/sftp_test.exp << 'EOF'
+          #!/usr/bin/expect -f
+          set timeout 60
+          spawn ./examples/sftpclient/wolfsftp -N -h 127.0.0.1 -p 22222 -u jill
+          expect "Password:"
+          send "upthehill\r"
+          expect "wolfSSH sftp>"
+          send "put /tmp/test.dat /tmp/sftp_test_dir/test_received.dat\r"
+          expect "wolfSSH sftp>"
+          send "exit\r"
+          expect eof
+          EOF
+          chmod +x /tmp/sftp_test.exp
+          
+          # Install expect
+          sudo apt-get update && sudo apt-get install -y expect
+          
+          # Run the expect script
+          /tmp/sftp_test.exp
+          
+          # Verify the files match
+          echo "Verifying file integrity..."
+          if cmp -s /tmp/test.dat /tmp/sftp_test_dir/test_received.dat; then
+            echo "SFTP Test PASSED: Files match"
+          else
+            echo "SFTP Test FAILED: Files do not match"
+            exit 1
+          fi
