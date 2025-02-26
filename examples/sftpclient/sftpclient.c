@@ -148,23 +148,36 @@ static void err_msg(const char* s)
 
 static void myStatusCb(WOLFSSH* sshIn, word32* bytes, char* name)
 {
+    /* Variables declared at function scope per wolfSSL coding standards.
+     * Modern compilers optimize variable access regardless of declaration
+     * placement, so there is no performance impact. */
     word32 currentTime;
+#ifndef WOLFSSH_NO_TIMESTAMP
+    static word32 lastOutputTime = 0;
+    word32 elapsedTime;
+#endif
     char buf[80];
     word64 longBytes = ((word64)bytes[1] << 32) | bytes[0];
 
 #ifndef WOLFSSH_NO_TIMESTAMP
+    currentTime = current_time(0);
+    if (currentTime == lastOutputTime) {
+        return;
+    }
+    lastOutputTime = currentTime;
     if (WSTRNCMP(currentFile, name, WSTRLEN(name)) != 0) {
         startTime = current_time(1);
+        lastOutputTime = 0; /* Reset timer for new file transfer */
         WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
         WSTRNCPY(currentFile, name, WOLFSSH_MAX_FILENAME);
     }
-    currentTime = current_time(0) - startTime;
+    elapsedTime = currentTime - startTime;
     WSNPRINTF(buf, sizeof(buf), "Processed %8llu\t bytes in %d seconds\r",
-            (unsigned long long)longBytes, currentTime);
+            (unsigned long long)longBytes, elapsedTime);
 #ifndef WOLFSSH_NO_SFTP_TIMEOUT
-    if (currentTime > TIMEOUT_VALUE) {
+    if (elapsedTime > TIMEOUT_VALUE) {
         WSNPRINTF(buf, sizeof(buf), "\nProcess timed out at %d seconds, "
-                "stopping\r", currentTime);
+                "stopping\r", elapsedTime);
         WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
         wolfSSH_SFTP_Interrupt(ssh);
     }
