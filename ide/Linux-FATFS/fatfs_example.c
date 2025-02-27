@@ -9,33 +9,33 @@
 
 static FILE *storage_file = NULL;
 
-// Initialize the storage file
+/* Initialize the storage file */
 DSTATUS disk_initialize(BYTE pdrv) {
-    if (pdrv != 0) return STA_NOINIT;  // Only support one drive (0)
+    if (pdrv != 0) return STA_NOINIT;  /* Only support one drive (0) */
     
-    // Open the storage file in read/write binary mode
+    /* Open the storage file in read/write binary mode */
     storage_file = fopen(STORAGE_FILE_PATH, "r+b");
     if (!storage_file) {
         perror("Failed to open storage file");
         return STA_NODISK | STA_NOINIT;
     }
     
-    return 0;  // Initialization successful
+    return 0;  /* Initialization successful */
 }
 
-// Get the status of the storage file
+/* Get the status of the storage file */
 DSTATUS disk_status(BYTE pdrv) {
-    if (pdrv != 0) return STA_NOINIT;  // Only support one drive (0)
+    if (pdrv != 0) return STA_NOINIT;  /* Only support one drive (0) */
     if (!storage_file) return STA_NODISK;
     return 0;
 }
 
-// Read sectors from the storage file
+/* Read sectors from the storage file */
 DRESULT disk_read(BYTE pdrv, BYTE* buff, LBA_t sector, UINT count) {
-    if (pdrv != 0) return RES_PARERR;  // Only support one drive (0)
+    if (pdrv != 0) return RES_PARERR;  /* Only support one drive (0) */
     if (!storage_file) return RES_NOTRDY;
     
-    off_t offset = sector * FF_MIN_SS;  // Calculate the byte offset
+    off_t offset = sector * FF_MIN_SS;  /* Calculate the byte offset */
     if (fseek(storage_file, offset, SEEK_SET) != 0) {
         perror("Failed to seek in storage file");
         return RES_ERROR;
@@ -50,12 +50,12 @@ DRESULT disk_read(BYTE pdrv, BYTE* buff, LBA_t sector, UINT count) {
     return RES_OK;
 }
 
-// Write sectors to the storage file
+/* Write sectors to the storage file */
 DRESULT disk_write(BYTE pdrv, const BYTE* buff, LBA_t sector, UINT count) {
-    if (pdrv != 0) return RES_PARERR;  // Only support one drive (0)
+    if (pdrv != 0) return RES_PARERR;  /* Only support one drive (0) */
     if (!storage_file) return RES_NOTRDY;
     
-    off_t offset = sector * FF_MIN_SS;  // Calculate the byte offset
+    off_t offset = sector * FF_MIN_SS;  /* Calculate the byte offset */
     if (fseek(storage_file, offset, SEEK_SET) != 0) {
         perror("Failed to seek in storage file");
         return RES_ERROR;
@@ -67,17 +67,17 @@ DRESULT disk_write(BYTE pdrv, const BYTE* buff, LBA_t sector, UINT count) {
         return RES_ERROR;
     }
     
-    fflush(storage_file);  // Ensure data is written to disk
+    fflush(storage_file);  /* Ensure data is written to disk */
     return RES_OK;
 }
 
-// Control the device
+/* Control the device */
 DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void* buff) {
-    if (pdrv != 0) return RES_PARERR;  // Only support one drive (0)
+    if (pdrv != 0) return RES_PARERR;  /* Only support one drive (0) */
     
     switch (cmd) {
         case CTRL_SYNC:
-            // Ensure all data is written to disk
+            /* Ensure all data is written to disk */
             fflush(storage_file);
             break;
         
@@ -86,7 +86,7 @@ DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void* buff) {
             break;
         
         case GET_BLOCK_SIZE:
-            *(DWORD*)buff = 1;  // One sector per block (minimum)
+            *(DWORD*)buff = 1;  /* One sector per block (minimum) */
             break;
         
         default:
@@ -96,19 +96,19 @@ DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void* buff) {
     return RES_OK;
 }
 
-// Function to deinitialize the storage file
+/* Function to deinitialize the storage file */
 DSTATUS disk_deinitialize(BYTE pdrv) {
-    if (pdrv != 0) return STA_NOINIT;  // Only support one drive (0)
+    if (pdrv != 0) return STA_NOINIT;  /* Only support one drive (0) */
     
     if (storage_file) {
         fclose(storage_file);
         storage_file = NULL;
     }
     
-    return 0;  // Deinitialization successful
+    return 0;  /* Deinitialization successful */
 }
 
-// FatFs disk I/O driver interface
+/* FatFs disk I/O driver interface */
 DSTATUS disk_status_(BYTE pdrv) { return disk_status(pdrv); }
 DRESULT disk_read_(BYTE pdrv, BYTE* buff, LBA_t sector, UINT count) { return disk_read(pdrv, buff, sector, count); }
 DRESULT disk_write_(BYTE pdrv, const BYTE* buff, LBA_t sector, UINT count) { return disk_write(pdrv, buff, sector, count); }
