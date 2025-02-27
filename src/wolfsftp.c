@@ -1479,7 +1479,8 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
                             wolfSSH_SFTP_buffer_data(&state->buffer),
                             wolfSSH_SFTP_buffer_size(&state->buffer));
                     break;
-            #if !defined(_WIN32_WCE) && !defined(WOLFSSH_ZEPHYR)
+            #if !defined(_WIN32_WCE) && !defined(WOLFSSH_ZEPHYR) && \
+                !defined(WOLFSSH_FATFS)
                 case WOLFSSH_FTP_SETSTAT:
                     ret = wolfSSH_SFTP_RecvSetSTAT(ssh, state->reqId,
                             wolfSSH_SFTP_buffer_data(&state->buffer),
@@ -4685,6 +4686,9 @@ int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
 static int SFTP_GetAttributes(void* fs, const char* fileName,
         WS_SFTP_FILEATRB* atr, byte noFollow, void* heap)
 {
+    (void) fs;
+    (void) noFollow;
+    (void) heap;
     FILINFO info;
     FRESULT ret;
     int sz = (int)WSTRLEN(fileName);
@@ -5191,7 +5195,7 @@ int wolfSSH_SFTP_RecvLSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 }
 
 #if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR) \
-    && !defined(WOLFSSH_SFTP_SETMODE)
+    && !defined(WOLFSSH_SFTP_SETMODE) && !defined(WOLFSSH_FATFS)
 /* Set the files mode
  * return WS_SUCCESS on success */
 static int SFTP_SetMode(void* fs, char* name, word32 mode) {
@@ -5204,7 +5208,7 @@ static int SFTP_SetMode(void* fs, char* name, word32 mode) {
 #endif
 
 #if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR) \
-    && !defined(WOLFSSH_SFTP_SETMODEHANDLE)
+    && !defined(WOLFSSH_SFTP_SETMODEHANDLE) && !defined(WOLFSSH_FATFS)
 /* Set the files mode
  * return WS_SUCCESS on success */
 static int SFTP_SetModeHandle(void* fs, WFD handle, word32 mode) {
@@ -5216,7 +5220,7 @@ static int SFTP_SetModeHandle(void* fs, WFD handle, word32 mode) {
 }
 #endif
 
-#if !defined(_WIN32_WCE) && !defined(WOLFSSH_ZEPHYR)
+#if !defined(_WIN32_WCE) && !defined(WOLFSSH_ZEPHYR) && !defined(WOLFSSH_FATFS)
 
 /* sets a files attributes
  * returns WS_SUCCESS on success */
