@@ -30,7 +30,6 @@ the library.
 ### wolfSSH
 
 ```sh
-export LD_LIBRARY_PATH=ide/Linux-FATFS
-./configure --enable-sftp CFLAGS="-DWOLFSSH_FATFS -Iide/Linux-FATFS -DSTDIN_FILENO=0 -DPRINTF=printf -lfatfs"
+./configure --enable-sftp CFLAGS="-DWOLFSSH_FATFS -Iide/Linux-FATFS -DSTDIN_FILENO=0 -DPRINTF=printf" LDFLAGS="-Lide/Linux-FATFS -lfatfs"
 ```
 
