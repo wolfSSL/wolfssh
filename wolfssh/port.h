@@ -265,11 +265,12 @@ extern "C" {
         if (!f) {
             return -1;
         }
-#ifdef WOLFSSH_XILFATFS
-        m = FA_CREATE_ALWAYS;
+
         if (*f == 0) {
             *f = WMALLOC(sizeof(FIL), NULL, 0);
         }
+#ifdef WOLFSSH_XILFATFS
+        m = FA_CREATE_ALWAYS;
 #else
         m = FA_CREATE_NEW;
 #endif
