@@ -1476,6 +1476,9 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 
     int main(int argc, char** argv)
     {
+        #ifdef WOLFSSH_FATFS
+            FATFS fs;
+        #endif
         func_args args;
 
         args.argc = argc;
@@ -1484,6 +1487,13 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         args.user_auth = NULL;
         #ifdef WOLFSSH_SFTP
             args.sftp_cb = NULL;
+        #endif
+
+        #ifdef WOLFSSH_FATFS
+                if (f_mount(&fs, "0:", 1) != FR_OK) {
+                    fprintf(stderr, "Failed to mount filesystem\n");
+                    return 1;
+                }
         #endif
 
         WSTARTTCP();
@@ -1498,6 +1508,10 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         sftpclient_test(&args);
 
         wolfSSH_Cleanup();
+
+        #ifdef WOLFSSH_FATFS
+            f_mount(NULL, "0:", 1);
+        #endif
 
         #if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT)
             return args.return_code;

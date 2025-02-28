@@ -101,7 +101,7 @@ extern "C" {
     #endif
 #endif /* !WOLFSSH_HANDLE */
 
-#ifdef NO_FILESYSTEM
+#if defined(NO_FILESYSTEM) && !defined(WOLFSSH_FATFS)
     #define WS_DELIM '/'
 #elif defined(WOLFSSL_NUCLEUS)
     #include "storage/nu_storage.h"
@@ -255,6 +255,7 @@ extern "C" {
     #define WSEEK_SET 0
     #define WSEEK_CUR 1
     #define WSEEK_END 2
+    #define WFFLUSH(s) ((void)(s))
     static inline int ff_fopen(WFILE** f, const char* filename,
             const char* mode)
     {
@@ -264,11 +265,12 @@ extern "C" {
         if (!f) {
             return -1;
         }
-#ifdef WOLFSSH_XILFATFS
-        m = FA_CREATE_ALWAYS;
+
         if (*f == 0) {
             *f = WMALLOC(sizeof(FIL), NULL, 0);
         }
+#ifdef WOLFSSH_XILFATFS
+        m = FA_CREATE_ALWAYS;
 #else
         m = FA_CREATE_NEW;
 #endif
@@ -585,7 +587,8 @@ extern "C" {
 
 #if (defined(WOLFSSH_SFTP) || \
         defined(WOLFSSH_SCP) || defined(WOLFSSH_SSHD)) && \
-    !defined(NO_WOLFSSH_SERVER) && !defined(NO_FILESYSTEM)
+    !defined(NO_WOLFSSH_SERVER) && \
+    (!defined(NO_FILESYSTEM) || defined(WOLFSSH_FATFS))
 
     #ifndef SIZEOF_OFF_T
         /* if not using autoconf then make a guess on off_t size based on sizeof
@@ -1192,7 +1195,7 @@ extern "C" {
     #define WSTAT(fs,p,b) f_stat(p,b)
     #define WLSTAT(fs,p,b) f_stat(p,b)
     #define WREMOVE(fs,d) f_unlink((d))
-    #define WRENAME(fs,fd,o,n) f_rename((o),(n))
+    #define WRENAME(fs,o,n) f_rename((o),(n))
     #define WMKDIR(fs, p, m) f_mkdir(p)
     #define WFD int
 

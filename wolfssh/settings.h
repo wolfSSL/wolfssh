@@ -52,6 +52,10 @@ extern "C" {
     #define USE_WOLFSSH_MEMORY  /* default memory handlers */
 #endif /* WMALLOC_USER */
 
+/* SFTP requires storehandle when fatfs is in use */
+#ifdef WOLFSSH_FATFS
+    #define WOLFSSH_STOREHANDLE
+#endif
 
 #if defined (_WIN32)
     #define USE_WINDOWS_API

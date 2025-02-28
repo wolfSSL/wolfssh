@@ -1,0 +1,148 @@
+name: Test FATFS Support
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  test-fatfs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential autoconf automake libtool pkg-config openssh-server dosfstools
+
+      - name: Clone wolfSSL
+        run: |
+          cd ..
+          git clone https://github.com/wolfSSL/wolfssl.git
+          cd wolfssl
+          ./autogen.sh
+
+      - name: Configure and build wolfSSL
+        run: |
+          cd ../wolfssl
+          ./configure --enable-wolfssh --enable-intelasm --disable-crl --disable-examples --disable-filesystem CFLAGS="-DNO_WOLFSSL_DIR"
+          make
+          sudo make install
+          sudo ldconfig
+
+      - name: Compile FATFS library
+        run: |
+          cd ide/Linux-FATFS
+          make
+
+      - name: Configure and build wolfSSH with FATFS
+        run: |
+          ./autogen.sh
+          export LD_LIBRARY_PATH=$(pwd)/ide/Linux-FATFS
+          ./configure --enable-sftp CFLAGS="-DWOLFSSH_FATFS -Iide/Linux-FATFS -DSTDIN_FILENO=0 -DPRINTF=printf" LDFLAGS="-Lide/Linux-FATFS -lfatfs"
+          make
+
+
+
+      - name: Create test file
+        run: |
+          dd if=/dev/urandom of=test_file.bin bs=1M count=1
+
+      - name: Setup SSH server
+        run: |
+          sudo mkdir -p /run/sshd
+          sudo /usr/sbin/sshd
+          mkdir -p ~/.ssh
+          ssh-keygen -t rsa -f ~/.ssh/id_rsa -N ""
+          cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          echo "Host localhost" > ~/.ssh/config
+          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
+          echo "  UserKnownHostsFile=/dev/null" >> ~/.ssh/config
+          chmod 600 ~/.ssh/config
+
+      - name: Install expect
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y expect
+
+      - name: Run wolfsftp client to get file
+        run: |
+          # Export the library path
+          export LD_LIBRARY_PATH=$(pwd)/ide/Linux-FATFS
+          
+          # Get the full path to the test file
+          TEST_FILE_PATH=$(pwd)/test_file.bin
+          
+          # Change to the sftpclient directory
+          cd examples/sftpclient
+          
+          # Create the FATFS image file directly in the sftpclient directory
+          dd if=/dev/zero of=fatfs_image.img bs=1M count=32
+          mkdosfs fatfs_image.img
+          
+          # Create a test user with a known password and add to the same group as the runner
+          sudo useradd -m testuser
+          echo "testuser:password123" | sudo chpasswd
+          sudo usermod -aG $(id -gn) testuser
+          
+          # Make the test file accessible to testuser
+          chmod 644 ${TEST_FILE_PATH}
+          sudo chown testuser:$(id -gn) ${TEST_FILE_PATH}
+          
+          # Configure SSH server to allow SFTP access
+          sudo sed -i 's/^#Subsystem\s\+sftp.*/Subsystem sftp \/usr\/lib\/openssh\/sftp-server/' /etc/ssh/sshd_config
+          sudo service ssh restart || sudo /etc/init.d/ssh restart || sudo /usr/sbin/sshd -t && sudo kill -HUP $(pgrep -f sshd)
+          
+          # Create expect script to automate the wolfsftp client interaction
+          cat > /tmp/sftp_test.exp << EOF
+          #!/usr/bin/expect -f
+          set timeout 60
+          spawn ./wolfsftp -N -h localhost -p 22 -u testuser
+          expect "Password:"
+          send "password123\r"
+          expect "wolfSSH sftp>"
+          send "get ${TEST_FILE_PATH} test_file.bin\r"
+          expect "wolfSSH sftp>"
+          send "exit\r"
+          expect eof
+          EOF
+          chmod +x /tmp/sftp_test.exp
+          
+          # Run the expect script
+          /tmp/sftp_test.exp
+
+      - name: Verify file in FATFS image
+        run: |
+          cd examples/sftpclient
+          sudo mkdir -p /mnt/fatfs
+          LOOPDEV=$(sudo losetup -f)
+          sudo losetup $LOOPDEV fatfs_image.img
+          sudo mount $LOOPDEV /mnt/fatfs
+          if [ -f /mnt/fatfs/test_file.bin ]; then
+            echo "File exists in FATFS image!"
+            ls -la /mnt/fatfs/
+            
+            # Verify file contents match
+            if cmp -s ../../test_file.bin /mnt/fatfs/test_file.bin; then
+              echo "File contents match! FATFS test PASSED."
+              sudo umount /mnt/fatfs
+              sudo losetup -d $LOOPDEV
+              exit 0
+            else
+              echo "File contents do not match! FATFS test FAILED."
+              sudo umount /mnt/fatfs
+              sudo losetup -d $LOOPDEV
+              exit 1
+            fi
+          else
+            echo "File does not exist in FATFS image! FATFS test FAILED."
+            ls -la /mnt/fatfs/
+            sudo umount /mnt/fatfs
+            sudo losetup -d $LOOPDEV
+            exit 1
+          fi
