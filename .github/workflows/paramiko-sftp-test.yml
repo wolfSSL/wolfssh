@@ -1,0 +1,198 @@
+name: wolfSSH Paramiko SFTP Test
+
+on:
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ '*' ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build_wolfssl:
+    name: Build wolfssl
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Checking cache for wolfssl
+        uses: actions/cache@v4
+        id: cache-wolfssl
+        with:
+          path: build-dir/
+          key: wolfssh-paramiko-sftp-wolfssl-ubuntu-latest
+          lookup-only: true
+
+      - name: Checkout, build, and install wolfssl
+        if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+        uses: wolfSSL/actions-build-autotools-project@v1
+        with:
+          repository: wolfssl/wolfssl
+          ref: master
+          path: wolfssl
+          configure: --enable-all
+          check: false
+          install: true
+
+  paramiko_sftp_test:
+    needs: build_wolfssl
+    name: Paramiko SFTP Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checking cache for wolfssl
+        uses: actions/cache@v4
+        with:
+          path: build-dir/
+          key: wolfssh-paramiko-sftp-wolfssl-ubuntu-latest
+          fail-on-cache-miss: true
+
+      - uses: actions/checkout@v4
+        with:
+          path: wolfssh/
+          
+      - name: autogen
+        working-directory: ./wolfssh/
+        run: ./autogen.sh
+
+      - name: configure
+        working-directory: ./wolfssh/
+        run: |
+          ./configure --enable-all LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include -DWOLFSSH_NO_FPKI"
+
+      - name: make
+        working-directory: ./wolfssh/
+        run: make
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pip openssh-client
+          python3 -m pip install paramiko
+
+      - name: Create test directories
+        run: |
+          mkdir -p /tmp/sftp_upload
+          mkdir -p /tmp/sftp_download
+
+      - name: Create 20MB test file for upload
+        run: |
+          dd if=/dev/urandom of=/tmp/sftp_upload/test_upload.dat bs=1M count=20
+          echo "Created 20MB test file at /tmp/sftp_upload/test_upload.dat"
+          md5sum /tmp/sftp_upload/test_upload.dat
+
+      - name: Configure wolfSSHd
+        working-directory: ./wolfssh/
+        run: |
+          # Create a minimal sshd_config file
+          cat > sshd_config.txt << EOF
+          Port 22222
+          HostKey ./keys/server-key.pem
+          PasswordAuthentication yes
+          Subsystem sftp internal-sftp
+          EOF
+          
+          # Set proper permissions for keys
+          chmod 600 ./keys/server-key.pem
+          
+          # Print debug info
+          echo "Contents of sshd_config.txt:"
+          cat sshd_config.txt
+
+      - name: Start wolfSSHd
+        working-directory: ./wolfssh/
+        run: |
+          # Create a test user with known password
+          echo "Creating test user..."
+          sudo useradd -m testuser
+          echo "testuser:testpassword" | sudo chpasswd
+          
+          # Start wolfSSHd with debug output
+          echo "Starting wolfSSHd..."
+          sudo ./apps/wolfsshd/wolfsshd -f sshd_config.txt -h ./keys/server-key.pem -p 22222 -d &
+          echo "Started wolfSSHd on port 22222"
+          sleep 5  # Give the server time to start
+          
+          # Check if server is running
+          if ! nc -z 127.0.0.1 22222; then
+            echo "Error: wolfSSHd failed to start"
+            exit 1
+          fi
+          
+          # Print debug info
+          echo "wolfSSHd process info:"
+          ps aux | grep wolfsshd
+
+      - name: Create Paramiko SFTP test script
+        run: |
+          cat > /tmp/paramiko_sftp_test.py << 'EOF'
+          import paramiko
+          import os
+          import time
+          import sys
+          
+          def run_sftp_test():
+              # Create SSH client
+              ssh = paramiko.SSHClient()
+              ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+              
+              # Connect to server using password authentication with testuser
+              print("Connecting to wolfSSHd server...")
+              try:
+                  ssh.connect('127.0.0.1', port=22222, username='testuser', password='testpassword')
+              except Exception as e:
+                  print(f"Connection error: {e}")
+                  raise
+              
+              # Open SFTP session
+              print("Opening SFTP session...")
+              sftp = ssh.open_sftp()
+              
+              # Upload test
+              print("Uploading 20MB test file...")
+              start_time = time.time()
+              sftp.put('/tmp/sftp_upload/test_upload.dat', '/tmp/test_upload.dat')
+              upload_time = time.time() - start_time
+              print(f"Upload completed in {upload_time:.2f} seconds")
+              
+              # Download test
+              print("Downloading 20MB test file...")
+              start_time = time.time()
+              sftp.get('/tmp/test_upload.dat', '/tmp/sftp_download/test_download.dat')
+              download_time = time.time() - start_time
+              print(f"Download completed in {download_time:.2f} seconds")
+              
+              # Close connections
+              sftp.close()
+              ssh.close()
+              
+              print("SFTP session closed")
+              return True
+          
+          if __name__ == "__main__":
+              try:
+                  success = run_sftp_test()
+                  sys.exit(0 if success else 1)
+              except Exception as e:
+                  print(f"Error: {e}")
+                  sys.exit(1)
+          EOF
+
+      - name: Run Paramiko SFTP test
+        run: |
+          python3 /tmp/paramiko_sftp_test.py
+
+      - name: Verify file integrity
+        run: |
+          echo "Verifying file integrity..."
+          if cmp -s /tmp/sftp_upload/test_upload.dat /tmp/sftp_download/test_download.dat; then
+            echo "SFTP Test PASSED: Files match"
+          else
+            echo "SFTP Test FAILED: Files do not match"
+            exit 1
+          fi
+
+      - name: Stop wolfSSHd
+        run: |
+          sudo pkill wolfsshd || true
