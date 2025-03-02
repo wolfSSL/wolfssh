@@ -1377,6 +1377,17 @@ extern "C" {
     #define WRENAME(fs,o,n)   SYS_FS_FileDirectoryRenameMove((o),(n))
     #define WS_DELIM          '/'
 
+    static inline char *ff_getcwd(char *r, int rSz)
+    {
+        SYS_FS_RESULT ret;
+        ret = SYS_FS_CurrentWorkingDirectoryGet(r, rSz);
+        if (ret != SYS_FS_RES_SUCCESS) {
+            return r;
+        }
+        return r;
+    }
+    #define WGETCWD(fs,r,rSz) ff_getcwd(r,(rSz))
+
     #define WOLFSSH_O_RDWR    SYS_FS_FILE_OPEN_READ_PLUS
     #define WOLFSSH_O_RDONLY  SYS_FS_FILE_OPEN_READ
     #define WOLFSSH_O_WRONLY  SYS_FS_FILE_OPEN_WRITE

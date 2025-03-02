@@ -1975,6 +1975,9 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 {
     WS_SFTP_FILEATRB atr;
     WFD    fd;
+#ifdef MICROCHIP_MPLAB_HARMONY
+    WFILE* f = &fd;
+#endif
     word32 sz, dirSz;
     char   dir[WOLFSSH_MAX_FILENAME];
     word32 reason;
@@ -2074,7 +2077,12 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             atr.per = 0644;
         }
 
+    #ifdef MICROCHIP_MPLAB_HARMONY
+        fd = WBADFILE;
+        WFOPEN(ssh->fs, &f, dir, m);
+    #else
         fd = WOPEN(ssh->fs, dir, m, atr.per);
+    #endif
         if (fd < 0) {
             WLOG(WS_LOG_SFTP, "Error opening file %s", dir);
             res = oer;
@@ -3924,7 +3932,12 @@ int wolfSSH_SFTP_RecvClose(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     if (sz == sizeof(WFD)) {
         WMEMSET((byte*)&fd, 0, sizeof(WFD));
         WMEMCPY((byte*)&fd, data + idx, sz);
+        
+#ifdef MICROCHIP_MPLAB_HARMONY
+        WFCLOSE(ssh->fs, &fd);   
+#else
         ret = WCLOSE(ssh->fs, fd);
+#endif
     #ifdef WOLFSSH_STOREHANDLE
         if (SFTP_RemoveHandleNode(ssh, data + idx, sz) != WS_SUCCESS) {
             WLOG(WS_LOG_SFTP, "Unable to remove handle from list");
@@ -4878,26 +4891,28 @@ int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
         byte noFollow, void* heap)
 {
     WSTAT_T stats;
-    WFILE f;
+    WFILE fd = WBADFILE;
+    WFILE *f = &fd;
     int ret;
     
     WOLFSSH_UNUSED(heap);
     WOLFSSH_UNUSED(fs);
 
-    ret = WFOPEN(NULL, &f, filename, WOLFSSH_O_RDONLY);
-    
-    if (noFollow) {
-        /* Note, for windows, we treat WSTAT and WLSTAT the same. */
-        if (WLSTAT(fs, fileName, &stats) != 0) {
-            return WS_BAD_FILE_E;
-        }
-    }
-    else {
+    ret = WFOPEN(NULL, &f, fileName, WOLFSSH_O_RDONLY);
+    (void)ret;
+//    if (noFollow) {
+//        /* Note, for windows, we treat WSTAT and WLSTAT the same. */
+//        if (WLSTAT(fs, fileName, &stats) != 0) {
+//            return WS_BAD_FILE_E;
+//        }
+//    }
+//    else
+    {    
         if (WSTAT(fs, fileName, &stats) != 0) {
             return WS_BAD_FILE_E;
         }
     }
-    WFCLOSE(NULL, &f);
+    WFCLOSE(NULL, f);
     
     WMEMSET(atr, 0, sizeof(WS_SFTP_FILEATRB));
 
@@ -4934,12 +4949,19 @@ int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
         WS_SFTP_FILEATRB* atr)
 {
     WSTAT_T stats;
+    byte fileName[255];
 
     if (handleSz != sizeof(word32)) {
         WLOG(WS_LOG_SFTP, "Unexpected handle size SFTP_GetAttributes_Handle()");
     }
 
-    if (WSTAT(ssh->fs, *(int*)handle, &stats) != 0) {
+    WMEMSET(fileName, 0, sizeof(fileName));
+    if (SYS_FS_FileNameGet(*(SYS_FS_HANDLE*)handle, fileName, sizeof(fileName)) == false) {
+        printf("unable to get the files name\n");
+        return -1;
+    }
+    
+    if (WSTAT(ssh->fs, (const char*)fileName, &stats) != 0) {
             return WS_BAD_FILE_E;
     }
 

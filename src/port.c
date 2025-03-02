@@ -126,7 +126,7 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
 
             ret = (int)WFSEEK(NULL, &fd, shortOffset[0], SYS_FS_SEEK_SET);
             if (ret != -1)
-                ret = (int)WFWRITE(NULL, &fd, buf, sz);
+                ret = (int)WFWRITE(NULL, buf, 1, sz, &fd);
 
             return ret;
         }
@@ -138,7 +138,7 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
 
             ret = (int)WFSEEK(NULL, &fd, shortOffset[0], SYS_FS_SEEK_SET);
             if (ret != -1)
-                ret = (int)WFREAD(NULL, &fd, buf, sz);
+                ret = (int)WFREAD(NULL, buf, 1, sz, &fd);
 
             return ret;
         }
