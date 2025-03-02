@@ -390,34 +390,40 @@ extern "C" {
     #define WCHDIR(fs,b)        z_fs_chdir((b))
 
 #elif defined(MICROCHIP_MPLAB_HARMONY)
-
     #include <stdlib.h>
     #include <stdio.h>
 
+    #include "system/fs/sys_fs.h"
+    
     #define WFFLUSH(s)          SYS_FS_FileSync((s))
 
     #define WFILE SYS_FS_HANDLE
 
     #define FLUSH_STD(a)
 
+    WOLFSSH_API int wfopen(WFILE* f, const char* filenmae,
+            SYS_FS_FILE_OPEN_ATTRIBUTES mode);
     //int z_fs_chdir(const char *path);
 
     /* Use wolfCrypt z_fs_open and z_fs_close */
-    #define WFOPEN(fs,f,fn,m)   (*(f) = SYS_FS_FileOpen((fn), (m)))
-    #define WFCLOSE(fs,f)       SYS_FS_FileClose((f))
-    #define WFREAD(fs,b,s,a,f)  SYS_FS_FileRead((f),(b),(s)*(a))
-    #define WFWRITE(fs,b,s,a,f) SYS_FS_FileWrite((f)), (b), (s))
-    #define WFSEEK(fs,s,o,w)    SYS_FS_FileSeek((s),(o),(w))
-    #define WFTELL(fs,s)        SYS_FS_FileTell((s))
-    #define WREWIND(fs,s)       SYS_FS_FileSeek((s), 0, SYS_FS_SEEK_SET)
+    #define WFOPEN(fs,f,fn,m)   wfopen(*(f),(fn),(m))
+    #define WFCLOSE(fs,f)       SYS_FS_FileClose(*(f))
+    #define WFREAD(fs,b,s,a,f)  SYS_FS_FileRead(*(f),(b),(s)*(a))
+    #define WFWRITE(fs,b,s,a,f) SYS_FS_FileWrite(*(f),(b),(s))
+    #define WFSEEK(fs,s,o,w)    SYS_FS_FileSeek(*(s),(o),(w))
+    #define WFTELL(fs,s)        SYS_FS_FileTell(*(s))
+    #define WREWIND(fs,s)       SYS_FS_FileSeek(*(s), 0, SYS_FS_SEEK_SET)
     #define WSEEK_END           SYS_FS_SEEK_END
-    #define WBADFILE            NULL
+    #define WBADFILE            SYS_FS_HANDLE_INVALID
     #define WCHMOD(fs,f,m)      (0) /* Not available */
+    #define WFCHMOD(fs,fd,m)    (0)
     #undef  WFGETS
     #define WFGETS(b,s,f)       SYS_FS_FileStringGet((f), (b), (s))
     #undef  WFPUTS
     #define WFPUTS(b,s)         SYS_FS_FileStringPut((f), (b), (s))
     #define WUTIMES(a,b)        (0) /* Not ported yet */
+    #define WSETTIME(fs,f,a,m) (0)
+    #define WFSETTIME(fs,fd,a,m) (0)
     #define WCHDIR(fs,b)        SYS_FS_DirectryChange((b))
 
 #elif defined(WOLFSSH_USER_FILESYSTEM)
@@ -1362,8 +1368,8 @@ extern "C" {
     #define WDIR              SYS_FS_HANDLE
     #define WSTAT_T           SYS_FS_FSTAT
 
-    #define WOPENDIR(fs,h,c,d) SYS_FS_DirOpen((d))
-    #define WCLOSEDIR(fs,d)   SYS_FS_DirOpen((d))
+    #define WOPENDIR(fs,h,c,d) (*(c) = SYS_FS_DirOpen((d)))
+    #define WCLOSEDIR(fs,d)   SYS_FS_DirClose(*(d))
     #define WMKDIR(fs,p,m)    SYS_FS_DirectoryMake((p))
     #define WRMDIR(fs,d)      SYS_FS_FileDirectoryRemove((d))
     #define WSTAT(fs,p,b)     SYS_FS_FileStat((p),(b))
@@ -1380,6 +1386,9 @@ extern "C" {
     #define WOLFSSH_O_EXCL    0
 
     /* Our "file descriptor" wrapper */
+    
+    //@TODO maybe this should be int or something to handle DIR to?
+    #define WFD SYS_FS_HANDLE
     int wPwrite(WFD, unsigned char*, unsigned int, const unsigned int*);
     int wPread(WFD, unsigned char*, unsigned int, const unsigned int*);
     #define WPWRITE(fs,fd,b,s,o) wPwrite((fd),(b),(s),(o))

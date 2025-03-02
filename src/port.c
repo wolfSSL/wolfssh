@@ -47,6 +47,16 @@ Flags:
 
 #if !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM) && \
     !defined(WOLFSSH_ZEPHYR)
+#if defined(MICROCHIP_MPLAB_HARMONY)
+int wfopen(WFILE* f, const char* filename, SYS_FS_FILE_OPEN_ATTRIBUTES mode)
+{
+    if (f != NULL) {
+        *f = SYS_FS_FileOpen(filename, mode);
+        return *f == WBADFILE;
+    }
+    return 1;
+}
+#else
 int wfopen(WFILE** f, const char* filename, const char* mode)
 {
 #ifdef USE_WINDOWS_API
@@ -89,7 +99,7 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
     return 1;
 #endif
 }
-
+#endif
 
 /* If either pread() or pwrite() are missing, use the local versions. */
 #if (defined(USE_OSE_API) || \
@@ -107,7 +117,32 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
         defined(FREESCALE_MQX) || defined(WOLFSSH_ZEPHYR)
 
         /* This is current inline in the source. */
+    #elif defined(MICROCHIP_MPLAB_HARMONY)
 
+        int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
+                const unsigned int* shortOffset)
+        {
+            int ret;
+
+            ret = (int)WFSEEK(NULL, &fd, shortOffset[0], SYS_FS_SEEK_SET);
+            if (ret != -1)
+                ret = (int)WFWRITE(NULL, &fd, buf, sz);
+
+            return ret;
+        }
+
+        int wPread(WFD fd, unsigned char* buf, unsigned int sz,
+                const unsigned int* shortOffset)
+        {
+            int ret;
+
+            ret = (int)WFSEEK(NULL, &fd, shortOffset[0], SYS_FS_SEEK_SET);
+            if (ret != -1)
+                ret = (int)WFREAD(NULL, &fd, buf, sz);
+
+            return ret;
+        }
+        
     #elif defined(WOLFSSH_LOCAL_PREAD_PWRITE)
 
         int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,

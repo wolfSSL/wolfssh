@@ -135,7 +135,6 @@ void* wolfSSH_GetIOWriteCtx(WOLFSSH* ssh)
         static int errno;
     #elif defined(MICROCHIP_MPLAB_HARMONY)
         #include "tcpip/tcpip.h"
-        #include "sys/errno.h"
         #include <errno.h>
     #elif defined(WOLFSSL_NUCLEUS)
         #include "nucleus.h"
