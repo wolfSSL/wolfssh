@@ -3,9 +3,23 @@
 This is a FATFS example that uses a single file on the Linux filesystem as the
 FATFS file system.
 
+## Obtaining FATFS
+
+You can download the source code from
+[The FATFS download site](http://elm-chan.org/fsw/ff/archives.html). Extract it
+into this directory.
+
+The example has been tested against FATFS 0.15a
+
 ## Compiling Library
 
-To compile the FATFS library simply run `make`.
+First copy the config file into the correct place:
+
+```sh
+cp ffconf.h source/
+```
+
+Then to compile the FATFS library simply run `make`.
 
 ## Setup filesystem
 
@@ -30,6 +44,6 @@ the library.
 ### wolfSSH
 
 ```sh
-./configure --enable-sftp CFLAGS="-DWOLFSSH_FATFS -Iide/Linux-FATFS -DSTDIN_FILENO=0 -DPRINTF=printf" LDFLAGS="-Lide/Linux-FATFS -lfatfs"
+LD_LIBRARY_PATH=ide/Linux-FATFS ./configure --enable-sftp CFLAGS="-DWOLFSSH_FATFS -Iide/Linux-FATFS/source -DSTDIN_FILENO=0 -DPRINTF=printf" LDFLAGS="-Lide/Linux-FATFS -lfatfs"
 ```
 

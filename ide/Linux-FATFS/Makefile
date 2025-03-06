@@ -1,10 +1,10 @@
 # Compiler and flags
 CC = gcc
-CFLAGS = -g -Wall -O2 -fPIC
+CFLAGS = -g -Wall -O2 -fPIC -Isource
 LDFLAGS = -shared
 
 # Source files
-SRCS = ff.c ffunicode.c fatfs_example.c
+SRCS = source/ff.c source/ffunicode.c fatfs_example.c
 
 # Object files
 OBJS = $(SRCS:.c=.o)

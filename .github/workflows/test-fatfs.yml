@@ -37,13 +37,16 @@ jobs:
       - name: Compile FATFS library
         run: |
           cd ide/Linux-FATFS
+          wget http://elm-chan.org/fsw/ff/arc/ff15a.zip
+          unzip ff15a.zip
+          cp ffconf.h source/
           make
 
       - name: Configure and build wolfSSH with FATFS
         run: |
           ./autogen.sh
           export LD_LIBRARY_PATH=$(pwd)/ide/Linux-FATFS
-          ./configure --enable-sftp CFLAGS="-DWOLFSSH_FATFS -Iide/Linux-FATFS -DSTDIN_FILENO=0 -DPRINTF=printf" LDFLAGS="-Lide/Linux-FATFS -lfatfs"
+          ./configure --enable-sftp CFLAGS="-DWOLFSSH_FATFS -Iide/Linux-FATFS/source -DSTDIN_FILENO=0 -DPRINTF=printf" LDFLAGS="-Lide/Linux-FATFS -lfatfs"
           make
 
 
