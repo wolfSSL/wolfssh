@@ -8,11 +8,39 @@ on:
   workflow_dispatch:
 
 jobs:
+  get-fatfs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up cache key
+        id: cache-key
+        run: echo "CACHE_KEY=ff15a-cache" >> $GITHUB_ENV
+
+      - name: Download FF15a.zip
+        id: download
+        run: |
+          wget http://elm-chan.org/fsw/ff/arc/ff15a.zip -O ff15a.zip
+
+      - name: Cache the downloaded ZIP file
+        uses: actions/cache@v4
+        with:
+          path: ./ff15a.zip
+          key: ${{ env.CACHE_KEY }}
+          restore-keys: |
+            ${{ env.CACHE_KEY }}
+
   test-fatfs:
+    needs: get-fatfs
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+
+      - name: Checking cache for FATFS
+        uses: actions/cache@v4
+        with:
+          path: ./ff15a.zip
+          key: ff15a-cache
+          fail-on-cache-miss: true
 
       - name: Install dependencies
         run: |
@@ -37,8 +65,7 @@ jobs:
       - name: Compile FATFS library
         run: |
           cd ide/Linux-FATFS
-          wget http://elm-chan.org/fsw/ff/arc/ff15a.zip
-          unzip ff15a.zip
+          unzip ../../ff15a.zip
           cp ffconf.h source/
           make
 
