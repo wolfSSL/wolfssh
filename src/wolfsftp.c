@@ -4686,12 +4686,13 @@ int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
 static int SFTP_GetAttributes(void* fs, const char* fileName,
         WS_SFTP_FILEATRB* atr, byte noFollow, void* heap)
 {
-    (void) fs;
-    (void) noFollow;
-    (void) heap;
     FILINFO info;
     FRESULT ret;
     int sz = (int)WSTRLEN(fileName);
+
+    (void) fs;
+    (void) noFollow;
+    (void) heap;
 
     ret = f_stat(fileName, &info);
     if (ret != FR_OK)
