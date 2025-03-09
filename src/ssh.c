@@ -400,6 +400,56 @@ const char* wolfSSH_ErrorToName(int err)
 }
 
 
+#ifdef WOLFSSH_TPM
+void wolfSSH_SetTpmDev(WOLFSSH* ssh, WOLFTPM2_DEV* dev)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetTpmDev()");
+
+    if (ssh && ssh->ctx)
+        ssh->ctx->tpmDev = dev;
+
+    if (ssh->ctx->tpmDev == NULL) {
+        WLOG(WS_LOG_DEBUG, "wolfSSH_SetTpmDev: Set tpm dev failed");
+    }
+}
+
+
+void wolfSSH_SetTpmKey(WOLFSSH* ssh, WOLFTPM2_KEY* key)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetTpmKey()");
+
+    if (ssh && ssh->ctx)
+        ssh->ctx->tpmKey = key;
+
+    if (ssh->ctx->tpmDev == NULL) {
+        WLOG(WS_LOG_DEBUG, "wolfSSH_SetTpmKey: Set tpm key failed");
+    }
+}
+
+
+void* wolfSSH_GetTpmDev(WOLFSSH* ssh)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetTpmDev()");
+
+    if (ssh && ssh->ctx) {
+        return ssh->ctx->tpmDev;
+    }
+    return NULL;
+}
+
+
+void* wolfSSH_GetTpmKey(WOLFSSH* ssh)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetTpmKey()");
+
+    if (ssh && ssh->ctx) {
+        return ssh->ctx->tpmKey;
+    }
+    return NULL;
+}
+#endif /* WOLFSSH_TPM */
+
+
 #ifndef NO_WOLFSSH_SERVER
 
 const char acceptError[] = "accept error: %s, %d";
@@ -1693,42 +1743,102 @@ static int DoSshPubKey(const byte* in, word32 inSz, byte** out,
 
 static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
         word32* outSz, const byte** outType, word32* outTypeSz,
-        void* heap)
+        int isPrivate, void* heap)
 {
     int ret = WS_SUCCESS;
     byte* newKey = NULL;
+    WS_KeySignature* key = NULL;
 
     WOLFSSH_UNUSED(heap);
 
-    if (*out == NULL) {
-        newKey = (byte*)WMALLOC(inSz, heap, DYNTYPE_PRIVKEY);
-        if (newKey == NULL) {
-            return WS_MEMORY_E;
-        }
-    }
-    else {
-        if (*outSz < inSz) {
-            WLOG(WS_LOG_DEBUG, "DER private key output size too small");
-            return WS_BUFFER_E;
-        }
-        newKey = *out;
+    ret = IdentifyAsn1Key(in, inSz, isPrivate, heap, &key);
+    if (ret <= 0) {
+        WLOG(WS_LOG_DEBUG, "Unable to identify ASN.1 key");
     }
 
-    ret = IdentifyAsn1Key(in, inSz, 1, heap);
+    if (ret > 0 && !isPrivate) {
+        long e;
+        byte n[RSA_MAX_SIZE]; /* TODO: Handle small stack */
+        word32 nSz = (word32)sizeof(n), eSz = (word32)sizeof(e);
+        const char* keyFormat = "ssh-rsa";
+        word32 idx = 0;
+        int nMsb = 0;
 
-    if (ret > 0) {
+        *outType = (const byte*)IdToName(ret);
+        *outTypeSz = (word32)WSTRLEN((const char*)*outType);
+
+        ret = wc_RsaFlattenPublicKey(&key->ks.rsa.key, (byte*)&e, &eSz, n, &nSz);
+        if (ret == 0) {
+            if (n[0] & 0x80) {
+                /* if MSB is set need leading zero */
+                nMsb = 1;
+            }
+            *outSz = LENGTH_SZ + (word32)WSTRLEN(keyFormat) +
+                LENGTH_SZ + eSz +
+                LENGTH_SZ + nSz + nMsb;
+
+            newKey = (byte*)WMALLOC(*outSz, heap, DYNTYPE_PRIVKEY);
+            if (newKey == NULL) {
+                ret = WS_MEMORY_E;
+            }
+        }
+        if (ret == 0) {
+            /* encode the key format string */
+            c32toa((word32)WSTRLEN(keyFormat), &newKey[idx]);
+            idx += LENGTH_SZ;
+            WMEMCPY(&newKey[idx], keyFormat, (word32)WSTRLEN(keyFormat));
+            idx += (word32)WSTRLEN(keyFormat);
+
+            /* encode public exponent (e) */
+            c32toa(eSz, &newKey[idx]);
+            idx += LENGTH_SZ;
+            WMEMCPY(&newKey[idx], &e, eSz);
+            idx += eSz;
+
+            /* encode public modulus (n) */
+            c32toa(nSz + nMsb, &newKey[idx]);
+            idx += LENGTH_SZ;
+            if (nMsb) {
+                newKey[idx++] = 0;
+            }
+            WMEMCPY(&newKey[idx], n, nSz);
+
+            *out = newKey;
+        }
+    }
+    else if (ret > 0 && isPrivate) {
+        if (*out == NULL) {
+            newKey = (byte*)WMALLOC(inSz, heap, DYNTYPE_PRIVKEY);
+            if (newKey == NULL) {
+                ret = WS_MEMORY_E;
+                return ret;
+            }
+        }
+        else {
+            if (*outSz < inSz) {
+                WLOG(WS_LOG_DEBUG, "DER private key output size too small");
+                ret = WS_BUFFER_E;
+                return ret;
+            }
+            newKey = *out;
+        }
+
         *out = newKey;
         *outSz = inSz;
         WMEMCPY(newKey, in, inSz);
         *outType = (const byte*)IdToName(ret);
         *outTypeSz = (word32)WSTRLEN((const char*)*outType);
-        ret = WS_SUCCESS;
     }
-    else {
-        WLOG(WS_LOG_DEBUG, "Unable to identify ASN.1 key");
-        if (*out == NULL) {
-            WFREE(newKey, heap, DYNTYPE_PRIVKEY);
-        }
+
+    wolfSSH_KEY_clean(key);
+    WFREE(key, heap, isPrivate ? DYNTYPE_PRIVKEY : DYNTYPE_PUBKEY);
+
+    if (*out == NULL) {
+        WFREE(newKey, heap, DYNTYPE_PRIVKEY);
+    }
+
+    if (ret > 0) {
+        ret = WS_SUCCESS;
     }
 
     return ret;
@@ -1737,7 +1847,7 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
 
 static int DoPemKey(const byte* in, word32 inSz, byte** out,
         word32* outSz, const byte** outType, word32* outTypeSz,
-        void* heap)
+        int isPrivate, void* heap)
 {
     int ret = WS_SUCCESS;
     byte* newKey = NULL;
@@ -1760,7 +1870,16 @@ static int DoPemKey(const byte* in, word32 inSz, byte** out,
     }
 
     /* If it is PEM, convert to ASN1 then process. */
-    ret = wc_KeyPemToDer(in, inSz, newKey, newKeySz, NULL);
+    if (isPrivate) {
+        ret = wc_KeyPemToDer(in, inSz, newKey, newKeySz, NULL);
+    }
+    else {
+    #ifdef WOLFSSH_TPM
+        ret = wc_PubKeyPemToDer(in, inSz, newKey, newKeySz);
+    #else
+        ret = NOT_COMPILED_IN;
+    #endif
+    }
     if (ret > 0) {
         newKeySz = (word32)ret;
         ret = WS_SUCCESS;
@@ -1771,7 +1890,7 @@ static int DoPemKey(const byte* in, word32 inSz, byte** out,
     }
 
     if (ret == WS_SUCCESS) {
-        ret = IdentifyAsn1Key(newKey, newKeySz, 1, heap);
+        ret = IdentifyAsn1Key(newKey, newKeySz, 1, heap, NULL);
     }
 
     if (ret > 0) {
@@ -1853,9 +1972,9 @@ static int DoOpenSshKey(const byte* in, word32 inSz, byte** out,
    to a constant string. Format indicates the format of the key, currently
    either SSH format (a public key) or ASN.1 in DER or PEM format (a
    private key). */
-int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
+int wolfSSH_ReadKey_buffer_ex(const byte* in, word32 inSz, int format,
         byte** out, word32* outSz, const byte** outType, word32* outTypeSz,
-        void* heap)
+        int isPrivate, void* heap)
 {
     int ret = WS_SUCCESS;
 
@@ -1867,10 +1986,12 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
         ret = DoSshPubKey(in, inSz, out, outSz, outType, outTypeSz, heap);
     }
     else if (format == WOLFSSH_FORMAT_ASN1) {
-        ret = DoAsn1Key(in, inSz, out, outSz, outType, outTypeSz, heap);
+        ret = DoAsn1Key(in, inSz, out, outSz, outType, outTypeSz,
+            isPrivate, heap);
     }
     else if (format == WOLFSSH_FORMAT_PEM) {
-        ret = DoPemKey(in, inSz, out, outSz, outType, outTypeSz, heap);
+        ret = DoPemKey(in, inSz, out, outSz, outType, outTypeSz,
+            isPrivate, heap);
     }
     else if (format == WOLFSSH_FORMAT_OPENSSH) {
         ret = DoOpenSshKey(in, inSz, out, outSz, outType, outTypeSz, heap);
@@ -1881,6 +2002,21 @@ int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
     }
 
     return ret;
+}
+int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
+        byte** out, word32* outSz, const byte** outType, word32* outTypeSz,
+        void* heap)
+{
+    return wolfSSH_ReadKey_buffer_ex(in, inSz, format, out, outSz,
+        outType, outTypeSz, 1, heap);
+}
+
+int wolfSSH_ReadPublicKey_buffer(const byte* in, word32 inSz, int format,
+        byte** out, word32* outSz, const byte** outType, word32* outTypeSz,
+        void* heap)
+{
+    return wolfSSH_ReadKey_buffer_ex(in, inSz, format, out, outSz,
+        outType, outTypeSz, 0, heap);
 }
 
 
@@ -1958,8 +2094,8 @@ int wolfSSH_ReadKey_file(const char* name,
             format = WOLFSSH_FORMAT_ASN1;
         }
 
-        ret = wolfSSH_ReadKey_buffer(in, inSz, format,
-                out, outSz, outType, outTypeSz, heap);
+        ret = wolfSSH_ReadKey_buffer_ex(in, inSz, format,
+                out, outSz, outType, outTypeSz, *isPrivate, heap);
     }
 
     WFCLOSE(ssh->fs, file);
