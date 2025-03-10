@@ -3027,10 +3027,9 @@ size_t wolfSSH_GetText(WOLFSSH *ssh, WS_Text id, char *str, size_t strSz)
                 case ID_ECDH_SHA2_NISTP256:
                 case ID_ECDH_SHA2_NISTP384:
                 case ID_ECDH_SHA2_NISTP521:
-                case ID_ECDH_SHA2_ED25519:
-                case ID_ECDH_SHA2_ED25519_LIBSSH:
             #ifndef WOLFSSH_NO_CURVE25519_SHA256
                 case ID_CURVE25519_SHA256:
+                case ID_CURVE25519_SHA256_LIBSSH:
             #endif
                     ret = WSNPRINTF(str, strSz, "%s", "ECDH");
                     break;
