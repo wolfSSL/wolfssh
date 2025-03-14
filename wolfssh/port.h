@@ -1368,15 +1368,34 @@ extern "C" {
     #define WDIR              SYS_FS_HANDLE
     #define WSTAT_T           SYS_FS_FSTAT
 
-    #define WOPENDIR(fs,h,c,d) (*(c) = SYS_FS_DirOpen((d)))
+    #define WOPENDIR(fs,h,c,d) wDirOpen((h), (c),(d))
     #define WCLOSEDIR(fs,d)   SYS_FS_DirClose(*(d))
     #define WMKDIR(fs,p,m)    SYS_FS_DirectoryMake((p))
     #define WRMDIR(fs,d)      SYS_FS_FileDirectoryRemove((d))
-    #define WSTAT(fs,p,b)     SYS_FS_FileStat((p),(b))
+    #define WSTAT(fs,p,b)     wStat((p), (b))
     #define WREMOVE(fs,d)     SYS_FS_FileDirectoryRemove((d))
     #define WRENAME(fs,o,n)   SYS_FS_FileDirectoryRenameMove((o),(n))
     #define WS_DELIM          '/'
 
+    static inline int wDirOpen(void* heap, WDIR* dir, const char* path)
+    {
+        *dir = SYS_FS_DirOpen(path);
+        if (*dir == SYS_FS_HANDLE_INVALID) {
+            return -1;
+        }
+        return 0;
+    }
+
+    static inline int wStat(const char* path, WSTAT_T* stat)
+    {
+        int ret = SYS_FS_FileStat(path, stat);
+        
+        WLOG(WS_LOG_SFTP, "Return from SYS_FS_fileStat [%s] = %d, expecting %d",
+                path, ret, SYS_FS_RES_SUCCESS);
+        WLOG(WS_LOG_SFTP, "SYS error reason = %d", SYS_FS_Error());
+        return 0;
+    }
+    
     static inline char *ff_getcwd(char *r, int rSz)
     {
         SYS_FS_RESULT ret;
@@ -1390,7 +1409,7 @@ extern "C" {
 
     #define WOLFSSH_O_RDWR    SYS_FS_FILE_OPEN_READ_PLUS
     #define WOLFSSH_O_RDONLY  SYS_FS_FILE_OPEN_READ
-    #define WOLFSSH_O_WRONLY  SYS_FS_FILE_OPEN_WRITE
+    #define WOLFSSH_O_WRONLY  SYS_FS_FILE_OPEN_WRITE_PLUS
     #define WOLFSSH_O_APPEND  SYS_FS_FILE_OPEN_APPEND
     #define WOLFSSH_O_CREAT   SYS_FS_FILE_OPEN_WRITE_PLUS
     #define WOLFSSH_O_TRUNC   0

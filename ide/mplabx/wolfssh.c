@@ -21,12 +21,21 @@
 /* Uses portions of code from the wolfssh/examples/echoserver.c example */
 
 #include "app.h"
+#include "definitions.h"
 #include "tcpip/tcpip.h"
 
+//#include "driver/spi_flash/at25df/drv_at25df.h"
+#include "system/fs/sys_fs.h"
+#include "system/fs/sys_fs_media_manager.h"
+
 #include <wolfssh/ssh.h>
+#include <wolfssh/wolfsftp.h>
 #include <wolfssh/test.h>
-#include <wolfssh/certs_test.h>
 #include <wolfssh/log.h>
+
+#define NO_FILESYSTEM
+#include <wolfssh/certs_test.h>
+#undef NO_FILESYSETM
 
 #include <wolfssl/wolfcrypt/sha256.h>
 #include <wolfssl/wolfcrypt/coding.h>
@@ -38,12 +47,17 @@ typedef enum
     APP_SSH_TCPIP_WAIT_INIT,
     APP_SSH_TCPIP_WAIT_FOR_IP,
     APP_SSH_CTX_INIT,
+    APP_SSH_MOUNT_FILESYSTEM,
+    APP_SSH_FORMAT_DISK,
+    APP_SSH_FORMAT_CHECK,
     APP_SSH_USERAUTH_INIT,
     APP_SSH_LOADKEY,
     APP_SSH_CREATE_SOCKET,
     APP_SSH_LISTEN,
     APP_SSH_CLEANUP,
-    APP_SSH_OPERATION,
+    APP_SSH_SFTP_START,
+    APP_SSH_SFTP,
+    APP_SSH_ECHO,
     APP_SSH_ACCEPT,
     APP_SSH_ERROR
 } APP_SSH_STATES;
@@ -328,51 +342,11 @@ static int LoadPasswordBuffer(byte* buf, word32 bufSz, PwMapList* list)
     return 0;
 }
 
-
-#ifndef NO_FILESYSTEM
-static int load_file(const char* fileName, byte* buf, word32 bufSz)
-{
-    FILE* file;
-    word32 fileSz;
-    word32 readSz;
-
-    if (fileName == NULL) return 0;
-
-    if (WFOPEN(&file, fileName, "rb") != 0)
-        return 0;
-    fseek(file, 0, SEEK_END);
-    fileSz = (word32)ftell(file);
-    rewind(file);
-
-    if (fileSz > bufSz) {
-        fclose(file);
-        return 0;
-    }
-
-    readSz = (word32)fread(buf, 1, fileSz, file);
-    if (readSz < fileSz) {
-        fclose(file);
-        return 0;
-    }
-
-    fclose(file);
-
-    return fileSz;
-}
-#endif /* NO_FILESYSTEM */
-
 /* returns buffer size on success */
 static int load_key(byte isEcc, byte* buf, word32 bufSz)
 {
     word32 sz = 0;
 
-#ifndef NO_FILESYSTEM
-    const char* bufName;
-    bufName = isEcc ? "./keys/server-key-ecc.der" :
-                       "./keys/server-key-rsa.der" ;
-    sz = load_file(bufName, buf, SCRATCH_BUFFER_SZ);
-#else
-    /* using buffers instead */
     if (isEcc) {
         if (sizeof_ecc_key_der_256 > bufSz) {
             return 0;
@@ -387,7 +361,6 @@ static int load_key(byte isEcc, byte* buf, word32 bufSz)
         WMEMCPY(buf, (byte*)rsa_key_der_2048, sizeof_rsa_key_der_2048);
         sz = sizeof_rsa_key_der_2048;
     }
-#endif
 
     return sz;
 }
@@ -412,10 +385,10 @@ static byte find_char(const byte* str, const byte* buf, word32 bufSz)
 }
 
 
-#if 0
+#if 1
 static void logCb(enum wolfSSH_LogLevel lvl, const char *const msg)
 {
-    if (wolfSSH_LogEnabled()) {
+    if (lvl == WS_LOG_SFTP && wolfSSH_LogEnabled()) {
         SYS_CONSOLE_PRINT(msg);
         SYS_CONSOLE_PRINT("\r\n");
         SYS_CONSOLE_Tasks(sysObj.sysConsole0);
@@ -424,21 +397,78 @@ static void logCb(enum wolfSSH_LogLevel lvl, const char *const msg)
 #endif
 
 
-void APP_SSH_Initialize ( void )
+void APP_Initialize ( void )
 {
     appData.state = APP_SSH_CTX_INIT;
     wolfSSH_Init();
-#if 0
+#if 1
     SYS_CONSOLE_PRINT("Turning on wolfSSH debugging\n\r");
     wolfSSH_Debugging_ON();
     wolfSSH_SetLoggingCb(logCb);
 #endif
 }
 
+#define APP_MOUNT_NAME          "/mnt/myDrive1/"
+#define APP_DEVICE_NAME         "/dev/nvma1"
+#define APP_FS_TYPE             FAT
 
-void APP_SSH_Tasks ( void )
+
+static int CheckDriveStatus(void)
 {
-    int useEcc = 0;
+    char cwdBuf[256];
+    int ret = 0;
+    
+    SYS_CONSOLE_PRINT("\r\nChecking drive status:\r\n");
+    
+    /* Try to get current drive */
+    memset(cwdBuf, 0, sizeof(cwdBuf));
+    if (SYS_FS_CurrentDriveGet(cwdBuf) == SYS_FS_RES_SUCCESS) {
+        SYS_CONSOLE_PRINT("Current drive: %s\r\n", cwdBuf);
+    } else {
+        SYS_CONSOLE_PRINT("Failed to get current drive: %d\r\n", SYS_FS_Error());
+        ret = -1;
+    }
+    
+    /* Try to get current directory */
+    memset(cwdBuf, 0, sizeof(cwdBuf));
+    if (SYS_FS_CurrentWorkingDirectoryGet(cwdBuf, sizeof(cwdBuf)) == SYS_FS_RES_SUCCESS) {
+        SYS_CONSOLE_PRINT("Current directory: %s\r\n", cwdBuf);
+    } else {
+        SYS_CONSOLE_PRINT("Failed to get current directory: %d\r\n", SYS_FS_Error());
+        ret = -1;
+    }
+    return ret;
+}
+
+
+/* returns 0 on success, 1 for try again, and negative value on failure */
+static int TryMount(void)
+{
+    int ret = 0;
+    
+    /* Try mounting */
+    if(SYS_FS_Mount(APP_DEVICE_NAME, APP_MOUNT_NAME, APP_FS_TYPE, 0, NULL) ==
+            SYS_FS_RES_SUCCESS) {
+        SYS_CONSOLE_PRINT("Filesystem mounted\r\n");
+    } else {
+        int err = (int)SYS_FS_Error();
+        
+        if (err == SYS_FS_ERROR_NOT_READY) {
+            ret = 1;
+        }
+        else {
+            SYS_CONSOLE_PRINT("Mount failed: %d\r\n", err);
+            ret = -1;
+        }
+    }
+    return ret;
+}
+
+
+void APP_Tasks ( void )
+{
+    int useEcc = 0, numNetworks = 0, ret, error;
+    unsigned char peek_buf[1];
 
     switch(appData.state)
     {
@@ -448,7 +478,57 @@ void APP_SSH_Tasks ( void )
                 SYS_CONSOLE_PRINT("Couldn't allocate SSH CTX data.\r\n");
                 appData.state = APP_SSH_ERROR;
             }
-            appData.state = APP_SSH_USERAUTH_INIT;
+            
+            SYS_CONSOLE_PRINT("Attempting filesystem mount...\r\n");
+            appData.state = APP_SSH_MOUNT_FILESYSTEM;
+            break;
+            
+        case APP_SSH_MOUNT_FILESYSTEM:
+            ret = TryMount();
+            switch (ret) {
+                case 0:
+                    appData.state = APP_SSH_FORMAT_DISK;
+                    break;
+                    
+                case 1: /* try again */
+                    break;
+                    
+                case -1: /* failed */
+                    SYS_CONSOLE_PRINT("Mounting file system failed\r\n");
+                    break;
+            }
+            break;
+            
+        case APP_SSH_FORMAT_DISK:
+        {
+            SYS_FS_FORMAT_PARAM opt;
+
+            /* Work buffer used by FAT FS during Format */
+            uint8_t CACHE_ALIGN work[SYS_FS_FAT_MAX_SS];
+
+            opt.fmt = SYS_FS_FORMAT_FAT;
+            opt.au_size = 0;
+
+            if (SYS_FS_DriveFormat (APP_MOUNT_NAME, &opt, (void *)work, SYS_FS_FAT_MAX_SS) != SYS_FS_RES_SUCCESS)
+            {
+                /* Format of the disk failed. */
+                //appData.state = APP_ERROR;
+                SYS_CONSOLE_PRINT("Failed to format file system\r\n");
+            }
+            else
+            {
+                SYS_CONSOLE_PRINT("Formated file system\r\n");
+                /* Format succeeded. Open a file. */
+                appData.state = APP_SSH_FORMAT_CHECK;
+            }
+            break;
+        }
+            
+        case APP_SSH_FORMAT_CHECK:
+            vTaskDelay(100);
+            if (CheckDriveStatus() == 0) {
+                appData.state = APP_SSH_USERAUTH_INIT;
+            }
             break;
 
         case APP_SSH_USERAUTH_INIT:
@@ -492,15 +572,39 @@ void APP_SSH_Tasks ( void )
         break;
 
         case APP_SSH_CREATE_SOCKET:
-            /* Create a socket for listen and accepting connections on */
-            appData.socket = TCPIP_TCP_ServerOpen(IP_ADDRESS_TYPE_IPV4, SERVER_PORT, 0);
-            if (!TCPIP_TCP_OptionsSet(appData.socket, TCP_OPTION_NODELAY, (void*)1)) {
-                SYS_CONSOLE_PRINT("Unable to set no delay with TCP\r\n");
-                appData.state = APP_SSH_ERROR;
-                break;
+            numNetworks = TCPIP_STACK_NumberOfNetworksGet();
+            if (numNetworks > 0) {
+                int i;
+                TCPIP_NET_HANDLE handle;
+    
+                for (i = 0; i < numNetworks; i++) {
+                    IPV4_ADDR addr;
+                    
+                    handle = TCPIP_STACK_IndexToNet(i);
+                    if (!TCPIP_STACK_NetIsReady(handle)) {
+                        return; // interface not ready yet!
+                    }
+                    addr.Val = TCPIP_STACK_NetAddress(handle);
+                    SYS_CONSOLE_MESSAGE(TCPIP_STACK_NetNameGet(handle));
+                    SYS_CONSOLE_MESSAGE(" IP Address: ");
+                    SYS_CONSOLE_PRINT("%d.%d.%d.%d \r\n", addr.v[0],
+                            addr.v[1], addr.v[2], addr.v[3]); 
+                }
+            
+                /* Create a socket for listen and accepting connections on */
+                appData.socket = TCPIP_TCP_ServerOpen(IP_ADDRESS_TYPE_IPV4, SERVER_PORT, 0);
+                if (!TCPIP_TCP_OptionsSet(appData.socket, TCP_OPTION_NODELAY, (void*)1)) {
+                    SYS_CONSOLE_PRINT("Unable to set no delay with TCP\r\n");
+                    appData.state = APP_SSH_ERROR;
+                    break;
+                }
+                appData.state = APP_SSH_LISTEN;
+                SYS_CONSOLE_PRINT("Waiting for client on to connect on port [%d]\r\n", SERVER_PORT);
+                }
+            else {
+              SYS_CONSOLE_PRINT("No networks found...\r\n");
+              
             }
-            appData.state = APP_SSH_LISTEN;
-            SYS_CONSOLE_PRINT("Waiting for client on to connect on port [%d]\r\n", SERVER_PORT);
             break;
 
         case APP_SSH_LISTEN:
@@ -522,24 +626,134 @@ void APP_SSH_Tasks ( void )
         {
             int ret;
 
-            if ((ret = wolfSSH_accept(ssh)) == WS_SUCCESS) {
-                byte msg[] = "Successfully connected to wolfSSH PIC32 echoserver\n\r";
-                appData.state = APP_SSH_OPERATION;
+            ret = wolfSSH_accept(ssh);
+            if (ret == WS_SUCCESS || ret == WS_SFTP_COMPLETE || ret == WS_SCP_INIT) {
                 SYS_CONSOLE_PRINT("wolfSSH accept success!\r\n");
-                wolfSSH_stream_send(ssh, msg, sizeof(msg));
-                break;
+                /* determine request type */
+                switch (wolfSSH_GetSessionType(ssh)) {
+                    case WOLFSSH_SESSION_SHELL:
+                        SYS_CONSOLE_PRINT("Starting ECHO session\r\n");
+                        appData.state = APP_SSH_ECHO;
+                        break;
+
+                    case WOLFSSH_SESSION_SUBSYSTEM:
+                        SYS_CONSOLE_PRINT("Starting SFTP session\r\n");
+                        appData.state = APP_SSH_SFTP_START;
+                        break;
+                        
+                    case WOLFSSH_SESSION_UNKNOWN:
+                    case WOLFSSH_SESSION_EXEC:
+                    case WOLFSSH_SESSION_TERMINAL:
+                        SYS_CONSOLE_PRINT("Unsupported session type requested\r\n");
+                        appData.state = APP_SSH_CLEANUP;
+                        break;
+                }
             }
-            ret = wolfSSH_get_error(ssh);
-            if (ret != WS_WANT_READ && ret != WS_WANT_WRITE) {
-                /* connection was closed or error happened */
-                SYS_CONSOLE_PRINT("Error [%d] with wolfSSH connection. Closing socket.\r\n", ret);
-                appData.state = APP_SSH_CLEANUP;
+            else {
+                ret = wolfSSH_get_error(ssh);
+                if (ret != WS_WANT_READ && ret != WS_WANT_WRITE) {
+                    /* connection was closed or error happened */
+                    SYS_CONSOLE_PRINT("Error [%d] with wolfSSH connection. Closing socket.\r\n", ret);
+                    appData.state = APP_SSH_CLEANUP;
+                }
             }
         }
             break;
 
+        case APP_SSH_SFTP_START:
+            SYS_CONSOLE_PRINT("Setting starting SFTP directory to [%s]\r\n",
+                    "/mnt/myDrive1");
+            if (wolfSSH_SFTP_SetDefaultPath(ssh, "/mnt/myDrive1") != WS_SUCCESS) {    
+                SYS_CONSOLE_PRINT("Error setting starting directory\r\n");
+                SYS_CONSOLE_PRINT("Error = %d\r\n", wolfSSH_get_error(ssh));
+                appData.state = APP_SSH_CLEANUP;
+            }
+            appData.state = APP_SSH_SFTP;
+            break;
+            
+        case APP_SSH_SFTP:
+            if (wolfSSH_SFTP_PendingSend(ssh)) {
+                /* Yes, process the SFTP data. */
+                ret = wolfSSH_SFTP_read(ssh);
+                error = wolfSSH_get_error(ssh);
+                if (error == WS_WANT_READ || error == WS_WANT_WRITE ||
+                    error == WS_CHAN_RXD || error == WS_REKEYING ||
+                    error == WS_WINDOW_FULL)
+                    ret = error;
+                if (error == WS_WANT_WRITE && wolfSSH_SFTP_PendingSend(ssh)) {  
+                    break; /* no need to spend time attempting to pull data  
+                                * if there is still pending sends */
+                }
+                if (error == WS_EOF) {
+                    appData.state = APP_SSH_CLEANUP;
+                    break;
+                }
+            }
+  
+            if (TCPIP_TCP_GetIsReady(wolfSSH_get_fd(ssh)) > 0) {
+                ret = wolfSSH_worker(ssh, NULL);
+                error = wolfSSH_get_error(ssh);
+                if (ret == WS_REKEYING) {
+                    /* In a rekey, keeping turning the crank. */
+                    break;
+                }
+
+                if (error == WS_WANT_READ || error == WS_WANT_WRITE ||
+                        error == WS_WINDOW_FULL) {
+                    ret = error;
+                    break;
+                }
+
+                if (error == WS_EOF) {
+                    appData.state = APP_SSH_CLEANUP;
+                    break;
+                }
+                
+                if (ret != WS_SUCCESS && ret != WS_CHAN_RXD) {
+                    /* If not successful and no channel data, leave. */
+                    appData.state = APP_SSH_CLEANUP;
+                    break;
+                }
+            }
+  
+            ret = wolfSSH_stream_peek(ssh, peek_buf, sizeof(peek_buf));
+            if (ret > 0) {
+                /* Yes, process the SFTP data. */
+                ret = wolfSSH_SFTP_read(ssh);
+                error = wolfSSH_get_error(ssh);
+                if (error == WS_WANT_READ || error == WS_WANT_WRITE ||
+                    error == WS_CHAN_RXD || error == WS_REKEYING ||
+                    error == WS_WINDOW_FULL)
+                    ret = error;
+                if (error == WS_EOF) {
+                      appData.state = APP_SSH_CLEANUP;
+                }
+                break;
+            }
+            else if (ret == WS_REKEYING) {
+                break;
+            }
+            else if (ret < 0) {
+                error = wolfSSH_get_error(ssh);
+                if (error == WS_EOF) {
+                      appData.state = APP_SSH_CLEANUP;
+                }
+                break;
+            }
+  
+            if (ret == WS_FATAL_ERROR && error == 0) {
+                WOLFSSH_CHANNEL* channel =
+                    wolfSSH_ChannelNext(ssh, NULL);
+                if (channel && wolfSSH_ChannelGetEof(channel)) {
+                    ret = 0;
+                    appData.state = APP_SSH_CLEANUP;
+                    break;
+                }
+            }
+            break;
+            
         /* echo ssh input (example code from wolfssh/echoserver/echoserver.c) */
-        case APP_SSH_OPERATION:
+        case APP_SSH_ECHO:
             {
                 byte* buf = NULL;
                 byte* tmpBuf;

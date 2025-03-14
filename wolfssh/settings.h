@@ -64,6 +64,12 @@ extern "C" {
     #endif
 #endif
 
+#ifdef MICROCHIP_MPLAB_HARMONY
+    #ifndef WOLFSSH_STOREHANDLE
+    #define WOLFSSH_STOREHANDLE
+    #endif
+#endif  
+
 #ifdef FREESCALE_MQX
     #define NO_STDIO_FILESYSTEM
     #ifndef WOLFSSH_STOREHANDLE
