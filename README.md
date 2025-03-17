@@ -558,15 +558,10 @@ simulator like `ibmswtpm2`. This can be done as followed:
     $ cd src
     $ ./tpm_server
 
-Before starting the echoserver you need to run the keygen for keyblob in wolfTPM.
-You must choose between using the primary/endorsement key (recommended) or the
-storage root key. The following commands will generate the keyblob:
+Before starting the echoserver you need to run the keygen for keyblob in wolfTPM
+using:
 
-For primary endorsement key:
     $ ./examples/keygen/keygen keyblob.bin -rsa -t -pem -eh
-
-For storage root key:
-    $ ./examples/keygen/keygen keyblob.bin -rsa -t -pem
 
 This will produce a key.pem TPM public key which needs to be converted the to
 the ssh-rsa BASE64 username format using this command: `ssh-keygen -f key.pem -i -m PKCS8`
