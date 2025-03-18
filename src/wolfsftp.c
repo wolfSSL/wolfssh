@@ -3520,7 +3520,6 @@ int wolfSSH_SFTP_RecvCloseDir(WOLFSSH* ssh, byte* handle, word32 handleSz)
 }
 #endif /* NO_WOLFSSH_DIR */
 
-
 /* Handles packet to write a file
  *
  * returns WS_SUCCESS on success
@@ -3589,7 +3588,6 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             ret  = WS_INVALID_STATE_E;
         }
         else {
-            WLOG(WS_LOG_SFTP, "Wrote %d bytes to file", ret);
             ret = WS_SUCCESS;
         }
     }
@@ -3792,7 +3790,6 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         if (outSz > sz) {
             /* need to increase buffer size for holding status packet */
             WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
-            WLOG(WS_LOG_SFTP, "Allocating a new buffer of size %d", outSz);
             out = (byte*)WMALLOC(outSz, ssh->ctx->heap, DYNTYPE_BUFFER);
             if (out == NULL) {
                 return WS_MEMORY_E;
@@ -4966,15 +4963,15 @@ int SFTP_GetAttributesStat(WS_SFTP_FILEATRB* atr, WSTAT_T* stats)
     return WS_SUCCESS;
 }
 
+
 static int SFTP_GetAttributesHelper(WS_SFTP_FILEATRB* atr, const char* fName)
 {
     WSTAT_T stats;
     SYS_FS_RESULT res;
     char buffer[255];
 
-    WMEMSET(&stats, 0, sizeof(WSTAT_T));
     WMEMSET(atr, 0, sizeof(WS_SFTP_FILEATRB));
-
+    WMEMSET(buffer, 0, sizeof(buffer));
     res = SYS_FS_CurrentDriveGet(buffer);
     if (res == SYS_FS_RES_SUCCESS) {
         if (WSTRCMP(fName, buffer) == 0) {
@@ -5336,9 +5333,6 @@ int wolfSSH_SFTP_RecvLSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         ret = WS_FATAL_ERROR;
     }
 
-
-    WLOG(WS_LOG_SFTP, "SFTP default path = %s name after get and clean = %s",
-        ssh->sftpDefaultPath, name);
     /* try to get file attributes and send back to client */
     if (ret == WS_SUCCESS) {
         WMEMSET((byte*)&atr, 0, sizeof(WS_SFTP_FILEATRB));
@@ -9072,8 +9066,11 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                         }
                     }
                 }
-                //ret = WFOPEN(ssh->fs, &state->fl, from, "rb");
+            #if defined(MICROCHIP_MPLAB_HARMONY)
                 ret = WFOPEN(ssh->fs, &state->fl, from, WOLFSSH_O_RDONLY);
+            #else
+                ret = WFOPEN(ssh->fs, &state->fl, from, "rb");
+            #endif
                 if (ret != 0) {
                     WLOG(WS_LOG_SFTP, "Unable to open input file");
                     ssh->error = WS_SFTP_FILE_DNE;
@@ -9224,7 +9221,7 @@ static int SFTP_FreeHandles(WOLFSSH* ssh)
     /* go through and free handles and make sure files are closed */
     while (cur != NULL) {
     #ifdef MICROCHIP_MPLAB_HARMONY
-//@TODO #warning todo clean handles
+        WFCLOSE(ssh->fs, ((WFILE*)cur->handle));
     #else
         WCLOSE(ssh->fs, *((WFD*)cur->handle));
     #endif
@@ -9234,9 +9231,8 @@ static int SFTP_FreeHandles(WOLFSSH* ssh)
         }
         cur = ssh->handleList;
     }
-    
+
     return WS_SUCCESS;
-    
 }
 #endif
 
@@ -9245,7 +9241,7 @@ static int SFTP_FreeHandles(WOLFSSH* ssh)
 int wolfSSH_SFTP_free(WOLFSSH* ssh)
 {
     int ret = WS_SUCCESS;
-    
+
     WOLFSSH_UNUSED(ssh);
 #ifdef WOLFSSH_STOREHANDLE
     ret = SFTP_FreeHandles(ssh);

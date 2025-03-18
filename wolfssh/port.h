@@ -394,7 +394,7 @@ extern "C" {
     #include <stdio.h>
 
     #include "system/fs/sys_fs.h"
-    
+
     #define WFFLUSH(s)          SYS_FS_FileSync((s))
 
     #define WFILE SYS_FS_HANDLE
@@ -451,7 +451,7 @@ extern "C" {
     #ifdef WOLFSSL_VXWORKS
         #define WUTIMES(f,t)      (WS_SUCCESS)
     #elif defined(USE_WINDOWS_API)
-        #include <sys/utime.h>    
+        #include <sys/utime.h>
     #else
         #define WUTIMES(f,t)      utimes((f),(t))
     #endif
@@ -1385,14 +1385,23 @@ extern "C" {
 
     static inline int wStat(const char* path, WSTAT_T* stat)
     {
-        int ret = SYS_FS_FileStat(path, stat);
-        
-        WLOG(WS_LOG_SFTP, "Return from SYS_FS_fileStat [%s] = %d, expecting %d",
+        int ret;
+        WMEMSET(stat, 0, sizeof(WSTAT_T));
+        ret = SYS_FS_FileStat(path, stat);
+
+        if (ret != SYS_FS_RES_SUCCESS) {
+            WLOG(WS_LOG_SFTP,
+                "Return from SYS_FS_fileStat [%s] = %d, expecting %d",
                 path, ret, SYS_FS_RES_SUCCESS);
-        WLOG(WS_LOG_SFTP, "SYS error reason = %d", SYS_FS_Error());
+            WLOG(WS_LOG_SFTP, "SYS error reason = %d", SYS_FS_Error());
+            return -1;
+        }
+        else {
+            return 0;
+        }
         return 0;
     }
-    
+
     static inline char *ff_getcwd(char *r, int rSz)
     {
         SYS_FS_RESULT ret;
@@ -1413,8 +1422,7 @@ extern "C" {
     #define WOLFSSH_O_EXCL    0
 
     /* Our "file descriptor" wrapper */
-    
-    //@TODO maybe this should be int or something to handle DIR to?
+
     #define WFD SYS_FS_HANDLE
     int wPwrite(WFD, unsigned char*, unsigned int, const unsigned int*);
     int wPread(WFD, unsigned char*, unsigned int, const unsigned int*);

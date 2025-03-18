@@ -124,6 +124,7 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
         defined(FREESCALE_MQX) || defined(WOLFSSH_ZEPHYR)
 
         /* This is current inline in the source. */
+
     #elif defined(MICROCHIP_MPLAB_HARMONY)
         int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
                 const unsigned int* shortOffset)
@@ -149,7 +150,7 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
 
             return ret;
         }
-        
+
     #elif defined(WOLFSSH_LOCAL_PREAD_PWRITE)
 
         int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,

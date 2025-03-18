@@ -1,6 +1,6 @@
 /* wolfssh.c
  *
- * Copyright (C) 2014-2016 wolfSSL Inc.
+ * Copyright (C) 2014-2025 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -109,11 +109,16 @@ PwMapList pwMapList;
 
 static const char echoserverBanner[] = "wolfSSH Example Echo Server\n";
 
+
+/* These are example user:password strings. To update for an admin user
+ * a string could be added to the list with something like "admin:admin123\n"
+ */
 static const char samplePasswordBuffer[] =
     "jill:upthehill\n"
     "jack:fetchapail\n";
 
 
+/* These are example public key authentication options. */
 static const char samplePublicKeyEccBuffer[] =
     "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAA"
     "BBBNkI5JTP6D0lF42tbxX19cE87hztUS6FSDoGvPfiU0CgeNSbI+aFdKIzTP5CQEJSvm25"
@@ -386,7 +391,8 @@ static byte find_char(const byte* str, const byte* buf, word32 bufSz)
 }
 
 
-#if 1
+#if 0
+/* redirection of logging message to SYS_CONSOLE_PRINT instead of printf */
 static void logCb(enum wolfSSH_LogLevel lvl, const char *const msg)
 {
     if ( wolfSSH_LogEnabled()
@@ -407,7 +413,8 @@ void APP_Initialize ( void )
 {
     appData.state = APP_SSH_CTX_INIT;
     wolfSSH_Init();
-#if 1
+#if 0
+    /* Used to enable debug messages and set logging callback */
     SYS_CONSOLE_PRINT("Turning on wolfSSH debugging\n\r");
     wolfSSH_Debugging_ON();
     wolfSSH_SetLoggingCb(logCb);
@@ -415,15 +422,16 @@ void APP_Initialize ( void )
 }
 
 #ifndef NO_FILESYSTEM
-    #define APP_MOUNT_NAME          "/mnt/myDrive1/"
-    #define APP_DEVICE_NAME         "/dev/nvma1"
-    #ifdef SYS_FS_LFS_MAX_SS
-        #define APP_FS_TYPE             LITTLEFS
-    #elif defined(SYS_FS_FAT_MAX_SS)
-        #define APP_FS_TYPE             FAT
-    #else
-        #error untested file system setup
-    #endif
+
+#define APP_MOUNT_NAME   "/mnt/myDrive1/"
+#define APP_DEVICE_NAME  "/dev/nvma1"
+#ifdef SYS_FS_LFS_MAX_SS
+    #define APP_FS_TYPE             LITTLEFS
+#elif defined(SYS_FS_FAT_MAX_SS)
+    #define APP_FS_TYPE             FAT
+#else
+    #error untested file system setup
+#endif
 
 static void CreateTestFile(void)
 {
