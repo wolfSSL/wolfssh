@@ -2083,9 +2083,12 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     #ifdef MICROCHIP_MPLAB_HARMONY
         fd = WBADFILE;
-        WFILE* f = &fd;
-        
-        WLOG(WS_LOG_SFTP, "Ret of WFOPEN = %d", WFOPEN(ssh->fs, &f, dir, m));
+        {
+            WFILE* f = &fd;
+            if (WFOPEN(ssh->fs, &f, dir, m) != WS_SUCCESS) {
+                fd = -1;
+            }
+        }
     #else
         fd = WOPEN(ssh->fs, dir, m, atr.per);
     #endif
@@ -3147,6 +3150,12 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
         return WS_BAD_ARGUMENT;
     }
 
+    if (*dir == SYS_FS_HANDLE_INVALID) {
+        WLOG(WS_LOG_SFTP, "READ dir attempted with invalid handle");
+        return WS_BAD_ARGUMENT;
+    }
+    WMEMSET(&stat, 0, sizeof(WSTAT_T));
+
     /* 0 return and dp.name[0] == 0 means end-of-dir */
     if (SYS_FS_DirRead(*dir, &stat) != SYS_FS_RES_SUCCESS ||
             stat.fname[0] == '\0') {
@@ -3511,6 +3520,7 @@ int wolfSSH_SFTP_RecvCloseDir(WOLFSSH* ssh, byte* handle, word32 handleSz)
 }
 #endif /* NO_WOLFSSH_DIR */
 
+
 /* Handles packet to write a file
  *
  * returns WS_SUCCESS on success
@@ -3579,6 +3589,7 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             ret  = WS_INVALID_STATE_E;
         }
         else {
+            WLOG(WS_LOG_SFTP, "Wrote %d bytes to file", ret);
             ret = WS_SUCCESS;
         }
     }
@@ -3781,6 +3792,7 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         if (outSz > sz) {
             /* need to increase buffer size for holding status packet */
             WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
+            WLOG(WS_LOG_SFTP, "Allocating a new buffer of size %d", outSz);
             out = (byte*)WMALLOC(outSz, ssh->ctx->heap, DYNTYPE_BUFFER);
             if (out == NULL) {
                 return WS_MEMORY_E;
@@ -3968,7 +3980,7 @@ int wolfSSH_SFTP_RecvClose(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         WMEMCPY((byte*)&fd, data + idx, sz);
         
 #ifdef MICROCHIP_MPLAB_HARMONY
-        WFCLOSE(ssh->fs, &fd);   
+        ret = WFCLOSE(ssh->fs, &fd);
 #else
         ret = WCLOSE(ssh->fs, fd);
 #endif
@@ -4927,14 +4939,16 @@ int SFTP_GetAttributesStat(WS_SFTP_FILEATRB* atr, WSTAT_T* stats)
     atr->flags |= WOLFSSH_FILEATRB_PERM;
     if ((stats->fattrib & SYS_FS_ATTR_DIR) & SYS_FS_ATTR_MASK) {
         atr->per |= 0x41ED; /* 755 with directory */
-    } else {
+    }
+    else {
         atr->per |= 0x8000;
     }
 
     /* check for read only */
     if ((stats->fattrib & SYS_FS_ATTR_RDO) & SYS_FS_ATTR_MASK) {
         atr->per |= 0x124; /* octal 444 */
-    } else {
+    }
+    else {
         atr->per |= 0x1ED; /* octal 755 */
     }
 
@@ -4955,14 +4969,33 @@ int SFTP_GetAttributesStat(WS_SFTP_FILEATRB* atr, WSTAT_T* stats)
 static int SFTP_GetAttributesHelper(WS_SFTP_FILEATRB* atr, const char* fName)
 {
     WSTAT_T stats;
-        
+    SYS_FS_RESULT res;
+    char buffer[255];
+
+    WMEMSET(&stats, 0, sizeof(WSTAT_T));
+    WMEMSET(atr, 0, sizeof(WS_SFTP_FILEATRB));
+
+    res = SYS_FS_CurrentDriveGet(buffer);
+    if (res == SYS_FS_RES_SUCCESS) {
+        if (WSTRCMP(fName, buffer) == 0) {
+            atr->flags |= WOLFSSH_FILEATRB_PERM;
+            atr->per |= 0x41ED; /* 755 with directory */
+            atr->per |= 0x1ED;  /* octal 755 */
+
+            atr->flags |= WOLFSSH_FILEATRB_SIZE;
+            atr->sz[0] = 0;
+            atr->sz[1] = 0;
+
+            atr->mtime = 30912;
+            WLOG(WS_LOG_SFTP, "Setting mount point as directory");
+            return WS_SUCCESS;
+        }
+    }
+
     if (WSTAT(ssh->fs, fName, &stats) != 0) {
         WLOG(WS_LOG_SFTP, "Issue with WSTAT call");
         return WS_BAD_FILE_E;
     }
-
-    WMEMSET(atr, 0, sizeof(WS_SFTP_FILEATRB));
-
     return SFTP_GetAttributesStat(atr, &stats);
 }
 
@@ -5303,6 +5336,9 @@ int wolfSSH_SFTP_RecvLSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         ret = WS_FATAL_ERROR;
     }
 
+
+    WLOG(WS_LOG_SFTP, "SFTP default path = %s name after get and clean = %s",
+        ssh->sftpDefaultPath, name);
     /* try to get file attributes and send back to client */
     if (ret == WS_SUCCESS) {
         WMEMSET((byte*)&atr, 0, sizeof(WS_SFTP_FILEATRB));

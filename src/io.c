@@ -326,6 +326,19 @@ int wsEmbedRecv(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
     }
 #endif
 
+#ifdef MICROCHIP_MPLAB_HARMONY
+    /* check is still connected */
+    if (!TCPIP_TCP_IsConnected(sd))
+    {
+        return WS_CBIO_ERR_CONN_CLOSE;
+    }
+
+    /* check for data ready to be read */
+    if (TCPIP_TCP_GetIsReady(sd) <= 0) {
+        return WS_CBIO_ERR_WANT_READ;
+    }
+#endif
+
     recvd = (int)RECV_FUNCTION(sd, buf, sz, ssh->rflags);
 
     recvd = wsReturnCode(recvd, sd);

@@ -11737,12 +11737,13 @@ static int SignHEcdsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
         WMEMCPY(sig + idx, s, sSz);
     }
 
-    #ifdef WOLFSSH_SMALL_STACK
-        if (r)
-            WFREE(r, heap, DYNTYPE_BUFFER);
-        if (s)
-            WFREE(s, heap, DYNTYPE_BUFFER);
-    #endif
+#ifdef WOLFSSH_SMALL_STACK
+    if (r)
+        WFREE(r, heap, DYNTYPE_BUFFER);
+    if (s)
+        WFREE(s, heap, DYNTYPE_BUFFER);
+    WOLFSSH_UNUSED(heap); /* could be unused in error case, resolve warning */
+#endif
 
     WLOG(WS_LOG_DEBUG, "Leaving SignHEcdsa(), ret = %d", ret);
     return ret;

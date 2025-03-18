@@ -52,7 +52,14 @@ int wfopen(WFILE* f, const char* filename, SYS_FS_FILE_OPEN_ATTRIBUTES mode)
 {
     if (f != NULL) {
         *f = SYS_FS_FileOpen(filename, mode);
-        return *f == WBADFILE;
+        if (*f == WBADFILE) {
+            WLOG(WS_LOG_SFTP, "Failed to open file %s", filename);
+            return 1;
+        }
+        else {
+            WLOG(WS_LOG_SFTP, "Opened file %s", filename);
+            return 0;
+        }
     }
     return 1;
 }
@@ -118,15 +125,15 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
 
         /* This is current inline in the source. */
     #elif defined(MICROCHIP_MPLAB_HARMONY)
-
         int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
                 const unsigned int* shortOffset)
         {
             int ret;
 
             ret = (int)WFSEEK(NULL, &fd, shortOffset[0], SYS_FS_SEEK_SET);
-            if (ret != -1)
+            if (ret != -1) {
                 ret = (int)WFWRITE(NULL, buf, 1, sz, &fd);
+            }
 
             return ret;
         }

@@ -403,13 +403,11 @@ extern "C" {
 
     WOLFSSH_API int wfopen(WFILE* f, const char* filenmae,
             SYS_FS_FILE_OPEN_ATTRIBUTES mode);
-    //int z_fs_chdir(const char *path);
 
-    /* Use wolfCrypt z_fs_open and z_fs_close */
     #define WFOPEN(fs,f,fn,m)   wfopen(*(f),(fn),(m))
     #define WFCLOSE(fs,f)       SYS_FS_FileClose(*(f))
     #define WFREAD(fs,b,s,a,f)  SYS_FS_FileRead(*(f),(b),(s)*(a))
-    #define WFWRITE(fs,b,s,a,f) SYS_FS_FileWrite(*(f),(b),(s))
+    #define WFWRITE(fs,b,s,a,f) SYS_FS_FileWrite(*(f),(b),(s)*(a))
     #define WFSEEK(fs,s,o,w)    SYS_FS_FileSeek(*(s),(o),(w))
     #define WFTELL(fs,s)        SYS_FS_FileTell(*(s))
     #define WREWIND(fs,s)       SYS_FS_FileSeek(*(s), 0, SYS_FS_SEEK_SET)
@@ -1363,7 +1361,6 @@ extern "C" {
     #define WPREAD(fs,fd,b,s,o)  wPread((fd),(b),(s),(o))
 
 #elif defined(MICROCHIP_MPLAB_HARMONY)
-
 
     #define WDIR              SYS_FS_HANDLE
     #define WSTAT_T           SYS_FS_FSTAT
