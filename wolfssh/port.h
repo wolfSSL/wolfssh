@@ -401,8 +401,9 @@ extern "C" {
 
     #define FLUSH_STD(a)
 
-    WOLFSSH_API int wfopen(WFILE* f, const char* filenmae,
+    WOLFSSH_LOCAL int wfopen(WFILE* f, const char* filenmae,
             SYS_FS_FILE_OPEN_ATTRIBUTES mode);
+    WOLFSSH_LOCAL int wChmod(const char *path, int mode);
 
     #define WFOPEN(fs,f,fn,m)   wfopen(*(f),(fn),(m))
     #define WFCLOSE(fs,f)       SYS_FS_FileClose(*(f))
@@ -413,7 +414,7 @@ extern "C" {
     #define WREWIND(fs,s)       SYS_FS_FileSeek(*(s), 0, SYS_FS_SEEK_SET)
     #define WSEEK_END           SYS_FS_SEEK_END
     #define WBADFILE            SYS_FS_HANDLE_INVALID
-    #define WCHMOD(fs,f,m)      (0) /* Not available */
+    #define WCHMOD(fs,f,m)      wChmod((f),(m))
     #define WFCHMOD(fs,fd,m)    (0)
     #undef  WFGETS
     #define WFGETS(b,s,f)       SYS_FS_FileStringGet((f), (b), (s))

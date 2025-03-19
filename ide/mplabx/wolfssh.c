@@ -440,27 +440,16 @@ static void CreateTestFile(void)
     char testData[] = "Test Data";
     SYS_FS_ERROR fsError;
 
-    /* Test change to the root directory */
-    result = SYS_FS_DirectoryChange("/mnt/myDrive1");
-    if(result != SYS_FS_RES_SUCCESS) {
-        fsError = SYS_FS_Error();
-        SYS_CONSOLE_PRINT("Change to root failed! Error: %d\r\n", fsError);
-        return;
-    }
-    SYS_CONSOLE_PRINT("Changed to root directory\r\n");
-
     /* Try to create and write to a test file */
     fileHandle = SYS_FS_FileOpen("test.txt", (SYS_FS_FILE_OPEN_WRITE));
-    if(fileHandle == SYS_FS_HANDLE_INVALID)
-    {
+    if (fileHandle == SYS_FS_HANDLE_INVALID) {
         fsError = SYS_FS_Error();
         SYS_CONSOLE_PRINT("File open failed! Error: %d\r\n", fsError);
         return;
     }
 
     result = SYS_FS_FileWrite(fileHandle, testData, strlen(testData));
-    if(result == -1)
-    {
+    if(result == -1) {
         fsError = SYS_FS_Error();
         SYS_CONSOLE_PRINT("File write failed! Error: %d\r\n", fsError);
         SYS_FS_FileClose(fileHandle);
@@ -468,7 +457,7 @@ static void CreateTestFile(void)
     }
 
     SYS_FS_FileClose(fileHandle);
-    SYS_CONSOLE_PRINT("File operations successful!\r\n");
+    SYS_CONSOLE_PRINT("\tCreated test.txt file example successful!\r\n");
 }
 
 
@@ -482,18 +471,23 @@ static int CheckDriveStatus(void)
     /* Try to get current drive */
     memset(cwdBuf, 0, sizeof(cwdBuf));
     if (SYS_FS_CurrentDriveGet(cwdBuf) == SYS_FS_RES_SUCCESS) {
-        SYS_CONSOLE_PRINT("Current drive: %s\r\n", cwdBuf);
-    } else {
-        SYS_CONSOLE_PRINT("Failed to get current drive: %d\r\n", SYS_FS_Error());
+        SYS_CONSOLE_PRINT("\tCurrent drive: %s\r\n", cwdBuf);
+    }
+    else {
+        SYS_CONSOLE_PRINT("\tFailed to get current drive: %d\r\n",
+                SYS_FS_Error());
         ret = -1;
     }
     
     /* Try to get current directory */
     memset(cwdBuf, 0, sizeof(cwdBuf));
-    if (SYS_FS_CurrentWorkingDirectoryGet(cwdBuf, sizeof(cwdBuf)) == SYS_FS_RES_SUCCESS) {
-        SYS_CONSOLE_PRINT("Current directory: %s\r\n", cwdBuf);
-    } else {
-        SYS_CONSOLE_PRINT("Failed to get current directory: %d\r\n", SYS_FS_Error());
+    if (SYS_FS_CurrentWorkingDirectoryGet(cwdBuf, sizeof(cwdBuf)) ==
+            SYS_FS_RES_SUCCESS) {
+        SYS_CONSOLE_PRINT("\tCurrent directory: %s\r\n", cwdBuf);
+    }
+    else {
+        SYS_CONSOLE_PRINT("\tFailed to get current directory: %d\r\n",
+                SYS_FS_Error());
         ret = -1;
     }
     CreateTestFile();
@@ -507,10 +501,11 @@ static int TryMount(void)
     int ret = 0;
     
     /* Try mounting */
-    if(SYS_FS_Mount(APP_DEVICE_NAME, APP_MOUNT_NAME, APP_FS_TYPE, 0, NULL) ==
+    if (SYS_FS_Mount(APP_DEVICE_NAME, APP_MOUNT_NAME, APP_FS_TYPE, 0, NULL) ==
             SYS_FS_RES_SUCCESS) {
         SYS_CONSOLE_PRINT("Filesystem mounted\r\n");
-    } else {
+    }
+    else {
         int err = (int)SYS_FS_Error();
         
         if (err == SYS_FS_ERROR_NOT_READY) {
@@ -772,7 +767,6 @@ void APP_Tasks ( void )
                 SYS_CONSOLE_PRINT("Total heap free = %d bytes\r\n", xPortGetFreeHeapSize());
             }
         #endif
-
             if (!TCPIP_TCP_IsConnected(wolfSSH_get_fd(ssh))) {
                 SYS_CONSOLE_PRINT("TCP socket was disconnected\r\n");
                 appData.state = APP_SSH_CLEANUP;
@@ -796,31 +790,7 @@ void APP_Tasks ( void )
                     break;
                 }
             }
-  
-            ret = wolfSSH_worker(ssh, NULL);
-            error = wolfSSH_get_error(ssh);
-            if (ret == WS_REKEYING) {
-                /* In a rekey, keeping turning the crank. */
-                break;
-            }
 
-            if (error == WS_WANT_READ || error == WS_WANT_WRITE ||
-                    error == WS_WINDOW_FULL) {
-                ret = error;
-                break;
-            }
-
-            if (error == WS_EOF) {
-                appData.state = APP_SSH_CLEANUP;
-                break;
-            }
-
-            if (ret != WS_SUCCESS && ret != WS_CHAN_RXD) {
-                /* If not successful and no channel data, leave. */
-                appData.state = APP_SSH_CLEANUP;
-                break;
-            }
-  
             ret = wolfSSH_stream_peek(ssh, peek_buf, sizeof(peek_buf));
             if (ret > 0) {
                 /* Yes, process the SFTP data. */
@@ -832,21 +802,37 @@ void APP_Tasks ( void )
                 }
                 if (error == WS_WANT_READ || error == WS_WANT_WRITE ||
                     error == WS_CHAN_RXD || error == WS_REKEYING ||
-                    error == WS_WINDOW_FULL)
+                    error == WS_WINDOW_FULL) {
                     ret = error;
+                }
                 if (error == WS_EOF) {
                       appData.state = APP_SSH_CLEANUP;
                 }
-                break;
-            }
-            else if (ret == WS_REKEYING) {
                 break;
             }
             else if (ret < 0) {
                 error = wolfSSH_get_error(ssh);
                 if (error == WS_EOF) {
                       appData.state = APP_SSH_CLEANUP;
+                    break;
                 }
+            }
+
+            ret = wolfSSH_worker(ssh, NULL);
+            error = wolfSSH_get_error(ssh);
+            if (ret == WS_REKEYING) {
+                SYS_CONSOLE_PRINT("Doing rekeying\r\n");
+                /* In a rekey, keeping turning the crank. */
+                break;
+            }
+
+            if (error == WS_WANT_READ || error == WS_WANT_WRITE ||
+                    error == WS_WINDOW_FULL) {
+                break;
+            }
+
+            if (error == WS_EOF) {
+                appData.state = APP_SSH_CLEANUP;
                 break;
             }
   
@@ -858,6 +844,12 @@ void APP_Tasks ( void )
                     appData.state = APP_SSH_CLEANUP;
                     break;
                 }
+            }
+
+            if (ret != WS_SUCCESS && ret != WS_CHAN_RXD) {
+                /* If not successful and no channel data, leave. */
+                appData.state = APP_SSH_CLEANUP;
+                break;
             }
             break;
             

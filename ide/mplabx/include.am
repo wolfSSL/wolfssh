@@ -4,3 +4,5 @@
 EXTRA_DIST+= ide/mplabx/README.md
 EXTRA_DIST+= ide/mplabx/user_settings.h
 EXTRA_DIST+= ide/mplabx/wolfssh.c
+EXTRA_DIST+= ide/mplabx/mcc-manifest-samv71.yml
+EXTRA_DIST+= ide/mplabx/wolfssh-sftp-server-samv71.mc3
