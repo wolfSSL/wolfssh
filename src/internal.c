@@ -684,6 +684,7 @@ static const char cannedKexAlgoNames[] =
 #endif
 #ifndef WOLFSSH_NO_CURVE25519_SHA256
     "curve25519-sha256,"
+    "curve25519-sha256@libssh.org,"
 #endif
 #if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP521)
     "ecdh-sha2-nistp521,"
@@ -2492,6 +2493,7 @@ static const NameIdPair NameIdMap[] = {
 #ifndef WOLFSSH_NO_CURVE25519_SHA256
     /* See RFC 8731 */
     { ID_CURVE25519_SHA256, TYPE_KEX, "curve25519-sha256" },
+    { ID_CURVE25519_SHA256_LIBSSH, TYPE_KEX, "curve25519-sha256@libssh.org" },
 #endif
     { ID_EXTINFO_S, TYPE_OTHER, "ext-info-s" },
     { ID_EXTINFO_C, TYPE_OTHER, "ext-info-c" },
@@ -3750,6 +3752,7 @@ enum wc_HashType HashForId(byte id)
 #endif
 #ifndef WOLFSSH_NO_CURVE25519_SHA256
         case ID_CURVE25519_SHA256:
+        case ID_CURVE25519_SHA256_LIBSSH:
             return WC_HASH_TYPE_SHA256;
 #endif
 #ifndef WOLFSSH_NO_RSA_SHA2_256
@@ -3827,6 +3830,7 @@ int wcPrimeForId(byte id)
 #endif
 #ifndef WOLFSSH_NO_CURVE25519_SHA256
         case ID_CURVE25519_SHA256:
+        case ID_CURVE25519_SHA256_LIBSSH:
             return ECC_X25519;
 #endif
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP521
@@ -11953,6 +11957,7 @@ int SendKexDhReply(WOLFSSH* ssh)
 #endif
 #ifndef WOLFSSH_NO_CURVE25519_SHA256
             case ID_CURVE25519_SHA256:
+            case ID_CURVE25519_SHA256_LIBSSH:
                 useCurve25519 = 1;
                 msgId = MSGID_KEXDH_REPLY;
                 break;
@@ -12535,6 +12540,7 @@ int SendKexDhInit(WOLFSSH* ssh)
 #endif
 #ifndef WOLFSSH_NO_CURVE25519_SHA256
         case ID_CURVE25519_SHA256:
+        case ID_CURVE25519_SHA256_LIBSSH:
             ssh->handshake->useCurve25519 = 1;
             msgId = MSGID_KEXECDH_INIT;
             break;
