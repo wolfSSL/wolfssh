@@ -2612,10 +2612,10 @@ static int SFTP_CreateLongName(WS_SFTPNAME* name)
         word32 tmp = atr->per;
 
         i = 0;
-        if (tmp & FILEATRB_PER_DIR) {
+        if ((tmp & FILEATRB_PER_MASK_TYPE) == FILEATRB_PER_DIR) {
             perm[i++] = 'd';
         }
-        else if (tmp & FILEATRB_PER_LINK) {
+        else if ((tmp & FILEATRB_PER_MASK_TYPE) == FILEATRB_PER_LINK) {
             perm[i++] = 'l';
         }
         else {
