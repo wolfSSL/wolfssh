@@ -39,6 +39,10 @@
 #include <wolfssh/port.h>
 #include <wolfssh/error.h>
 
+#ifdef WOLFSSH_TPM
+#include <wolftpm/tpm2_wrap.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -83,7 +87,14 @@ WOLFSSH_API void wolfSSH_SetHighwaterCb(WOLFSSH_CTX*, word32,
 WOLFSSH_API void wolfSSH_SetHighwaterCtx(WOLFSSH*, void*);
 WOLFSSH_API void* wolfSSH_GetHighwaterCtx(WOLFSSH*);
 
+WOLFSSH_API int wolfSSH_ReadKey_buffer_ex(const byte* in, word32 inSz, int format,
+        byte** out, word32* outSz, const byte** outType, word32* outTypeSz,
+        int isPrivate, void* heap);
+
 WOLFSSH_API int wolfSSH_ReadKey_buffer(const byte* in, word32 inSz, int format,
+        byte** out, word32* outSz, const byte** outType, word32* outTypeSz,
+        void* heap);
+WOLFSSH_API int wolfSSH_ReadPublicKey_buffer(const byte* in, word32 inSz, int format,
         byte** out, word32* outSz, const byte** outType, word32* outTypeSz,
         void* heap);
 WOLFSSH_API int wolfSSH_ReadKey_file(const char* name,
@@ -257,6 +268,14 @@ WOLFSSH_API void* wolfSSH_GetChannelCloseCtx(WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_get_error(const WOLFSSH*);
 WOLFSSH_API const char* wolfSSH_get_error_name(const WOLFSSH*);
 WOLFSSH_API const char* wolfSSH_ErrorToName(int);
+
+/* TPM 2.0 integration related functions */
+#ifdef WOLFSSH_TPM
+WOLFSSH_API void wolfSSH_SetTpmDev(WOLFSSH* ssh, WOLFTPM2_DEV* dev);
+WOLFSSH_API void wolfSSH_SetTpmKey(WOLFSSH* ssh, WOLFTPM2_KEY* key);
+WOLFSSH_API void* wolfSSH_GetTpmDev(WOLFSSH* ssh);
+WOLFSSH_API void* wolfSSH_GetTpmKey(WOLFSSH* ssh);
+#endif /* WOLFSSH_TPM */
 
 /* I/O callbacks */
 typedef int (*WS_CallbackIORecv)(WOLFSSH*, void*, word32, void*);

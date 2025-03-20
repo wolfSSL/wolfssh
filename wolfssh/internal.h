@@ -38,6 +38,8 @@
 #include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/curve25519.h>
+#include <wolfssl/wolfcrypt/ed25519.h>
+
 #ifdef WOLFSSH_SCP
     #include <wolfssh/wolfscp.h>
 #endif
@@ -48,6 +50,9 @@
     #include <wolfssh/certman.h>
 #endif /* WOLFSSH_CERTS */
 
+#ifdef WOLFSSH_TPM
+    #include <wolftpm/tpm2_wrap.h>
+#endif /* WOLFSSH_TPM */
 
 #if !defined (ALIGN16)
     #if defined (__GNUC__)
@@ -572,6 +577,10 @@ struct WOLFSSH_CTX {
 #ifdef WOLFSSH_AGENT
     byte agentEnabled;
 #endif /* WOLFSSH_AGENT */
+#ifdef WOLFSSH_TPM
+    WOLFTPM2_DEV* tpmDev;
+    WOLFTPM2_KEY* tpmKey;
+#endif /* WOLFSSH_TPM */
     WS_CallbackKeyingCompletion keyingCompletionCb;
 };
 
@@ -952,13 +961,42 @@ WOLFSSH_LOCAL void ChannelDelete(WOLFSSH_CHANNEL*, void*);
 WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelFind(WOLFSSH*, word32, byte);
 WOLFSSH_LOCAL int ChannelRemove(WOLFSSH*, word32, byte);
 WOLFSSH_LOCAL int ChannelPutData(WOLFSSH_CHANNEL*, byte*, word32);
-WOLFSSH_LOCAL int IdentifyAsn1Key(const byte* in, word32 inSz,
-        int isPrivate, void* heap);
-WOLFSSH_LOCAL int IdentifyOpenSshKey(const byte* in, word32 inSz, void* heap);
 WOLFSSH_LOCAL int wolfSSH_ProcessBuffer(WOLFSSH_CTX*,
                                         const byte*, word32,
                                         int, int);
 WOLFSSH_LOCAL int wolfSSH_FwdWorker(WOLFSSH*);
+
+
+typedef struct WS_KeySignature {
+    byte keySigId;
+    word32 sigSz;
+    const char *name;
+    void *heap;
+    word32 nameSz;
+    union {
+#ifndef WOLFSSH_NO_RSA
+        struct {
+            RsaKey key;
+        } rsa;
+#endif
+#ifndef WOLFSSH_NO_ECDSA
+        struct {
+            ecc_key key;
+        } ecc;
+#endif
+#ifndef WOLFSSH_NO_ED25519
+        struct {
+            ed25519_key key;
+        } ed25519;
+#endif
+    } ks;
+} WS_KeySignature;
+
+WOLFSSH_LOCAL int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
+    WS_KeySignature **pkey);
+WOLFSSH_LOCAL void wolfSSH_KEY_clean(WS_KeySignature* key);
+WOLFSSH_LOCAL int IdentifyOpenSshKey(const byte* in, word32 inSz, void* heap);
+
 
 /* Parsing functions */
 WOLFSSH_LOCAL int GetBoolean(byte* v,

@@ -74,6 +74,10 @@
     #include <wolfssl/wolfcrypt/asn.h>
 #endif
 
+#ifdef WOLFSSH_TPM
+    #include <wolftpm/tpm2_wrap.h>
+    #include <hal/tpm_io.h>
+#endif /* WOLFSSH_TPM */
 
 #ifndef NO_WOLFSSH_CLIENT
 
@@ -121,11 +125,16 @@ static void ShowUsage(void)
     printf(" -E            List all possible algos\n");
     printf(" -k            set the list of key algos to use\n");
     printf(" -q            turn off debugging output\n");
+#ifdef WOLFSSH_TPM
+    printf(" -s <type>     TPM key type: pk (primary key) or srk (storage)\n");
+#endif
 }
 
 
 static const char* pubKeyName = NULL;
-static const char* certName = NULL;
+#ifdef WOLFSSH_CERTS
+    static const char* certName = NULL;
+#endif
 static const char* caCert   = NULL;
 
 
@@ -549,7 +558,7 @@ static int wolfSSH_AGENT_DefaultActions(WS_AgentCbAction action, void* vCtx)
             ret = WS_AGENT_NOT_AVAILABLE;
 
         if (ret == WS_AGENT_SUCCESS) {
-            memset(name, 0, sizeof(struct sockaddr_un));
+            WMEMSET(name, 0, sizeof(struct sockaddr_un));
             name->sun_family = AF_LOCAL;
             strncpy(name->sun_path, sockName, sizeof(name->sun_path));
             name->sun_path[sizeof(name->sun_path) - 1] = '\0';
@@ -634,6 +643,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     int ret = 0;
     int ch;
     int userEcc = 0;
+    int useEndorsementKey = -1;
     word16 port = wolfSshPort;
     char* host = (char*)wolfSshIp;
     const char* username = NULL;
@@ -659,7 +669,8 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
     (void)keepOpen;
 
-    while ((ch = mygetopt(argc, argv, "?ac:h:i:j:p:tu:xzNP:RJ:A:XeEk:q")) != -1) {
+    while ((ch = mygetopt(argc, argv,
+        "?ac:h:i:j:p:tu:xzNP:RJ:A:XeEk:qs:")) != -1) {
         switch (ch) {
             case 'h':
                 host = myoptarg;
@@ -763,6 +774,22 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
                 break;
         #endif
 
+            case 's':
+                if (myoptarg == NULL) {
+                    err_sys("TPM key type cannot be NULL");
+                }
+                if (strcmp(myoptarg, "pk") == 0) {
+                    useEndorsementKey = 1;  /* Use primary/endorsement key */
+                }
+                else if (strcmp(myoptarg, "srk") == 0) {
+                    useEndorsementKey = 0;  /* Use storage key */
+                }
+                else {
+                    useEndorsementKey = -1;
+                    err_sys("Invalid TPM key type. Must be 'pk' or 'srk'");
+                }
+                break;
+
             case '?':
                 ShowUsage();
                 exit(EXIT_SUCCESS);
@@ -781,12 +808,19 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     if (keepOpen)
         err_sys("Threading needed for terminal session\n");
 #endif
-
+#ifndef WOLFSSH_TPM
+    #ifdef WOLFSSH_CERTS
     if ((pubKeyName == NULL && certName == NULL) && privKeyName != NULL) {
         err_sys("If setting priv key, need pub key.");
     }
-
-    ret = ClientSetPrivateKey(privKeyName, userEcc, NULL);
+    #else
+    if (pubKeyName == NULL && privKeyName != NULL) {
+        err_sys("If setting priv key, need pub key.");
+    }
+    #endif
+#endif
+    ret = ClientSetPrivateKey(privKeyName, userEcc, NULL,
+        useEndorsementKey);
     if (ret != 0) {
         err_sys("Error setting private key");
     }
@@ -840,6 +874,16 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     if (ssh == NULL)
         err_sys("Couldn't create wolfSSH session.");
 
+#ifdef WOLFSSH_TPM
+    if (useEndorsementKey == -1) {
+        ClientFreeBuffers(pubKeyName, privKeyName, NULL);
+        wolfSSH_free(ssh);
+        wolfSSH_CTX_free(ctx);
+        err_sys("TPM key type must be specified as either 'pk' or 'srk'");
+    } else {
+        CLientSetTpm(ssh);
+    }
+#endif
 #if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
     wolfSSH_SetGlobalReq(ctx, callbackGlobalReq);
     wolfSSH_SetGlobalReqCtx(ssh, &ssh); /* dummy ctx */
@@ -850,7 +894,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
 #ifdef WOLFSSH_AGENT
     if (useAgent) {
-        memset(&agentCbCtx, 0, sizeof(agentCbCtx));
+        WMEMSET(&agentCbCtx, 0, sizeof(agentCbCtx));
         agentCbCtx.state = AGENT_STATE_INIT;
         wolfSSH_set_agent_cb_ctx(ssh, &agentCbCtx);
     }
@@ -913,28 +957,44 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     tcp_socket(&sockFd, ((struct sockaddr_in *)&clientAddr)->sin_family);
 
     ret = connect(sockFd, (const struct sockaddr *)&clientAddr, clientAddrSz);
-    if (ret != 0)
+    if (ret != 0) {
+        ClientFreeBuffers(pubKeyName, privKeyName, NULL);
+        wolfSSH_free(ssh);
+        wolfSSH_CTX_free(ctx);
         err_sys("Couldn't connect to server.");
+    }
 
     if (nonBlock)
         tcp_set_nonblocking(&sockFd);
 
     ret = wolfSSH_set_fd(ssh, (int)sockFd);
-    if (ret != WS_SUCCESS)
+    if (ret != WS_SUCCESS) {
+        ClientFreeBuffers(pubKeyName, privKeyName, NULL);
+        wolfSSH_free(ssh);
+        wolfSSH_CTX_free(ctx);
         err_sys("Couldn't set the session's socket.");
+    }
 
     if (cmd != NULL) {
         ret = wolfSSH_SetChannelType(ssh, WOLFSSH_SESSION_EXEC,
                             (byte*)cmd, (word32)WSTRLEN((char*)cmd));
-        if (ret != WS_SUCCESS)
+        if (ret != WS_SUCCESS) {
+            ClientFreeBuffers(pubKeyName, privKeyName, NULL);
+            wolfSSH_free(ssh);
+            wolfSSH_CTX_free(ctx);
             err_sys("Couldn't set the channel type.");
+        }
     }
 
 #ifdef WOLFSSH_TERM
     if (keepOpen) {
         ret = wolfSSH_SetChannelType(ssh, WOLFSSH_SESSION_TERMINAL, NULL, 0);
-        if (ret != WS_SUCCESS)
+        if (ret != WS_SUCCESS) {
+            ClientFreeBuffers(pubKeyName, privKeyName, NULL);
+            wolfSSH_free(ssh);
+            wolfSSH_CTX_free(ctx);
             err_sys("Couldn't set the terminal channel type.");
+        }
     }
 #endif
 
@@ -942,8 +1002,12 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         ret = wolfSSH_connect(ssh);
     else
         ret = NonBlockSSH_connect(ssh);
-    if (ret != WS_SUCCESS)
+    if (ret != WS_SUCCESS) {
+        ClientFreeBuffers(pubKeyName, privKeyName, NULL);
+        wolfSSH_free(ssh);
+        wolfSSH_CTX_free(ctx);
         err_sys("Couldn't connect SSH stream.");
+    }
 
 #if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS) && \
     defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM)
@@ -1040,16 +1104,23 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 #endif
         ret = wolfSSH_stream_send(ssh, (byte*)testString,
                                   (word32)strlen(testString));
-        if (ret <= 0)
+        if (ret <= 0) {
+            ClientFreeBuffers(pubKeyName, privKeyName, NULL);
+            wolfSSH_free(ssh);
+            wolfSSH_CTX_free(ctx);
             err_sys("Couldn't send test string.");
-
+        }
         do {
             ret = wolfSSH_stream_read(ssh, (byte*)rxBuf, sizeof(rxBuf) - 1);
             if (ret <= 0) {
                 ret = wolfSSH_get_error(ssh);
                 if (ret != WS_WANT_READ && ret != WS_WANT_WRITE &&
-                        ret != WS_CHAN_RXD)
+                        ret != WS_CHAN_RXD) {
+                    ClientFreeBuffers(pubKeyName, privKeyName, NULL);
+                    wolfSSH_free(ssh);
+                    wolfSSH_CTX_free(ctx);
                     err_sys("Stream read failed.");
+                }
             }
         } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE);
 
@@ -1065,11 +1136,17 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     if (ret != WS_SOCKET_ERROR_E && wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E
             && wolfSSH_get_error(ssh) != WS_CHANNEL_CLOSED) {
         if (ret != WS_SUCCESS) {
+            ClientFreeBuffers(pubKeyName, privKeyName, NULL);
+            wolfSSH_free(ssh);
+            wolfSSH_CTX_free(ctx);
             err_sys("Sending the shutdown messages failed.");
         }
         ret = wolfSSH_worker(ssh, NULL);
         if (ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E &&
             ret != WS_CHANNEL_CLOSED) {
+            ClientFreeBuffers(pubKeyName, privKeyName, NULL);
+            wolfSSH_free(ssh);
+            wolfSSH_CTX_free(ctx);
             err_sys("Failed to listen for close messages from the peer.");
         }
     }
@@ -1079,6 +1156,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     ((func_args*)args)->return_code = wolfSSH_GetExitStatus(ssh);
 #endif
 
+    ClientFreeBuffers(pubKeyName, privKeyName, NULL);
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
     if (ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E &&
@@ -1086,7 +1164,6 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         err_sys("Closing client stream failed");
     }
 
-    ClientFreeBuffers(pubKeyName, privKeyName, NULL);
 #if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
