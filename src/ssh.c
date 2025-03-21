@@ -3034,9 +3034,9 @@ size_t wolfSSH_GetText(WOLFSSH *ssh, WS_Text id, char *str, size_t strSz)
                     ret = WSNPRINTF(str, strSz, "%s", "ECDH");
                     break;
 
-            #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-                case ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256:
-                    ret = WSNPRINTF(str, strSz, "%s", "ECDH-KYBER512");
+            #ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
+                case ID_NISTP256_MLKEM768_SHA256:
+                    ret = WSNPRINTF(str, strSz, "%s", "ECDH-MLKEM768");
                     break;
             #endif
 

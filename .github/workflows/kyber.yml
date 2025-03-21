@@ -1,4 +1,4 @@
-name: Kyber Tests
+name: ML-KEM Tests
 
 on:
   push:
@@ -22,7 +22,7 @@ jobs:
         id: cache-liboqs
         with:
           path: build-dir/
-          key: wolfssh-kyber-liboqs-${{ env.LIBOQS_REF }}-${{ env.OS_REF }}
+          key: wolfssh-mlkem-liboqs-${{ env.LIBOQS_REF }}-${{ env.OS_REF }}
           lookup-only: true
 
       - name: Checkout liboqs
@@ -53,7 +53,7 @@ jobs:
         id: cache-wolfssl
         with:
           path: build-dir/
-          key: wolfssh-kyber-wolfssl-${{ env.WOLFSSL_REF }}-${{ env.OS_REF }}
+          key: wolfssh-mlkem-wolfssl-${{ env.WOLFSSL_REF }}-${{ env.OS_REF }}
           lookup-only: true
 
       - name: Checkout, build, and install wolfssl
@@ -77,14 +77,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build-dir/
-          key: wolfssh-kyber-liboqs-${{ env.LIBOQS_REF }}-${{ env.OS_REF }}
+          key: wolfssh-mlkem-liboqs-${{ env.LIBOQS_REF }}-${{ env.OS_REF }}
           fail-on-cache-miss: true
 
       - name: Checking cache for wolfssl
         uses: actions/cache@v4
         with:
           path: build-dir/
-          key: wolfssh-kyber-wolfssl-${{ env.WOLFSSL_REF }}-${{ env.OS_REF }}
+          key: wolfssh-mlkem-wolfssl-${{ env.WOLFSSL_REF }}-${{ env.OS_REF }}
           fail-on-cache-miss: true
 
       - name: Checkout, build, and test wolfssh
