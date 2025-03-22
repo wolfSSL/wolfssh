@@ -174,10 +174,10 @@ extern "C" {
     #undef WOLFSSH_NO_ECDH_SHA2_NISTP521
     #define WOLFSSH_NO_ECDH_SHA2_NISTP521
 #endif
-#if !defined(WOLFSSL_HAVE_KYBER) || defined(NO_SHA256) \
+#if !defined(WOLFSSL_HAVE_MLKEM) || defined(NO_SHA256) \
     || defined(WOLFSSH_NO_ECDH_SHA2_NISTP256)
-    #undef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-    #define WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
+    #undef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
+    #define WOLFSSH_NO_NISTP256_MLKEM768_SHA256
 #endif
 #if !defined(HAVE_CURVE25519) || defined(NO_SHA256)
     #undef WOLFSSH_NO_CURVE25519_SHA256
@@ -192,7 +192,7 @@ extern "C" {
     defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && \
     defined(WOLFSSH_NO_ECDH_SHA2_NISTP384) && \
     defined(WOLFSSH_NO_ECDH_SHA2_NISTP521) && \
-    defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256) && \
+    defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) && \
     defined(WOLFSSH_NO_CURVE25519_SHA256)
     #error "You need at least one key agreement algorithm."
 #endif
@@ -335,8 +335,8 @@ enum {
     ID_ECDH_SHA2_NISTP256,
     ID_ECDH_SHA2_NISTP384,
     ID_ECDH_SHA2_NISTP521,
-#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-    ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256,
+#ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
+    ID_NISTP256_MLKEM768_SHA256,
 #endif
 #ifndef WOLFSSH_NO_CURVE25519_SHA256
     ID_CURVE25519_SHA256,
@@ -445,9 +445,9 @@ enum NameIdType {
     #define WOLFSSH_DEFAULT_GEXDH_MAX 8192
 #endif
 #ifndef MAX_KEX_KEY_SZ
-    #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-        /* Private key size of Kyber Level1. Biggest artifact. */
-        #define MAX_KEX_KEY_SZ 1632
+    #ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
+        /* Private key size of ML-KEM 768. Biggest artifact. */
+        #define MAX_KEX_KEY_SZ 2400
     #else
         /* This is based on the 8192-bit DH key that is the max size. */
         #define MAX_KEX_KEY_SZ (WOLFSSH_DEFAULT_GEXDH_MAX / 8)
@@ -627,7 +627,7 @@ typedef struct HandshakeInfo {
 
     byte useDh:1;
     byte useEcc:1;
-    byte useEccKyber:1;
+    byte useEccMlKem:1;
     byte useCurve25519:1;
 
     union {
@@ -1146,13 +1146,13 @@ enum WS_MessageIds {
 
     MSGID_KEXDH_INIT = 30,
     MSGID_KEXECDH_INIT = 30,
-#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
+#ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
     MSGID_KEXKEM_INIT = 30,
 #endif
 
     MSGID_KEXDH_REPLY = 31,
     MSGID_KEXECDH_REPLY = 31,
-#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
+#ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
     MSGID_KEXKEM_REPLY = 31,
 #endif
 

@@ -50,13 +50,13 @@
 
 #if (LIBWOLFSSL_VERSION_HEX >= WOLFSSL_V5_0_0) \
     && ((defined(HAVE_FIPS) && FIPS_VERSION_GE(5,2)) \
-        || defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256))
+        || defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256))
     #include <wolfssl/wolfcrypt/kdf.h>
 #endif
 
-#ifdef WOLFSSL_HAVE_KYBER
-#include <wolfssl/wolfcrypt/kyber.h>
-#include <wolfssl/wolfcrypt/wc_kyber.h>
+#ifdef WOLFSSL_HAVE_MLKEM
+#include <wolfssl/wolfcrypt/mlkem.h>
+#include <wolfssl/wolfcrypt/wc_mlkem.h>
 #endif
 
 #ifdef NO_INLINE
@@ -138,9 +138,9 @@ Flags:
   WOLFSSH_NO_ECDSA_SHA2_NISTP521
     Set when ECC or SHA2-512 are disabled. Set to disable use of ECDSA server
     authentication with prime NISTP521.
-  WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-    Set when Kyber is disabled in wolfssl. Set to disable use of ECDHE with
-    prime NISTP256 hybridized with post-quantum KYBER512 KEM.
+  WOLFSSH_NO_NISTP256_MLKEM768_SHA256
+    Set when ML-KEM is disabled in wolfssl. Set to disable use of ECDHE with
+    prime NISTP256 hybridized with post-quantum ML-KEM 768.
   WOLFSSH_NO_AES_CBC
     Set when AES or AES-CBC are disabled. Set to disable use of AES-CBC
     encryption.
@@ -679,8 +679,8 @@ INLINE static int IsMessageAllowed(WOLFSSH *ssh, byte msg)
 
 
 static const char cannedKexAlgoNames[] =
-#if !defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256)
-    "ecdh-nistp256-kyber-512r3-sha256-d00@openquantumsafe.org,"
+#if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256)
+    "mlkem768nistp256-sha256,"
 #endif
 #ifndef WOLFSSH_NO_CURVE25519_SHA256
     "curve25519-sha256,"
@@ -2200,15 +2200,15 @@ int GenerateKey(byte hashId, byte keyId,
                 byte doKeyPad)
 #if (LIBWOLFSSL_VERSION_HEX >= WOLFSSL_V5_0_0) \
     && ((defined(HAVE_FIPS) && FIPS_VERSION_GE(5,2)) \
-        || defined(WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256))
-/* Cannot use the SSH KDF with Kyber. With Kyber, doKeyPad must be false,
- * and the FIPS SSH KDF doesn't handle no-padding. Also, the Kyber algorithm
+        || defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256))
+/* Cannot use the SSH KDF with ML-KEM. With ML-KEM, doKeyPad must be false,
+ * and the FIPS SSH KDF doesn't handle no-padding. Also, the ML-KEM algorithm
  * isn't in our FIPS boundary. */
 {
     int ret = WS_SUCCESS;
 
     if (!doKeyPad) {
-        WLOG(WS_LOG_ERROR, "cannot use FIPS KDF with Kyber");
+        WLOG(WS_LOG_ERROR, "cannot use FIPS KDF with ML-KEM");
         ret = WS_INVALID_ALGO_ID;
     }
     else {
@@ -2486,9 +2486,9 @@ static const NameIdPair NameIdMap[] = {
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP521
     { ID_ECDH_SHA2_NISTP521, TYPE_KEX, "ecdh-sha2-nistp521" },
 #endif
-#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-    { ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256, TYPE_KEX,
-        "ecdh-nistp256-kyber-512r3-sha256-d00@openquantumsafe.org" },
+#ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
+    { ID_NISTP256_MLKEM768_SHA256, TYPE_KEX,
+        "mlkem768nistp256-sha256" },
 #endif
 #ifndef WOLFSSH_NO_CURVE25519_SHA256
     /* See RFC 8731 */
@@ -3746,8 +3746,8 @@ enum wc_HashType HashForId(byte id)
     #endif
             return WC_HASH_TYPE_SHA256;
 #endif
-#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-        case ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256:
+#ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
+        case ID_NISTP256_MLKEM768_SHA256:
             return WC_HASH_TYPE_SHA256;
 #endif
 #ifndef WOLFSSH_NO_CURVE25519_SHA256
@@ -3808,8 +3808,8 @@ enum wc_HashType HashForId(byte id)
 int wcPrimeForId(byte id)
 {
     switch (id) {
-#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-        case ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256:
+#ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
+        case ID_NISTP256_MLKEM768_SHA256:
             return ECC_SECP256R1;
 #endif
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256
@@ -5173,20 +5173,20 @@ static int KeyAgreeCurve25519_client(WOLFSSH* ssh, byte hashId,
 #endif /* WOLFSSH_NO_CURVE25519_SHA256 */
 
 
-/* KeyAgreeEcdhKyber512_client
+/* KeyAgreeEcdhMlKem_client
  * hashId - wolfCrypt hash type ID used
  * f - peer public key
  * fSz - peer public key size
  */
-static int KeyAgreeEcdhKyber512_client(WOLFSSH* ssh, byte hashId,
+static int KeyAgreeEcdhMlKem_client(WOLFSSH* ssh, byte hashId,
         const byte* f, word32 fSz)
-#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
+#ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
 {
     int ret = WS_SUCCESS;
     byte sharedSecretHashSz = 0;
     byte *sharedSecretHash = NULL;
     ecc_key *key_ptr = NULL;
-    KyberKey kem = {0};
+    MlKemKey kem = {0};
     word32 length_ciphertext = 0;
     word32 length_sharedsecret = 0;
     word32 length_privatekey = 0;
@@ -5204,26 +5204,26 @@ static int KeyAgreeEcdhKyber512_client(WOLFSSH* ssh, byte hashId,
         key_ptr = &key_s;
     #endif /* WOLFSSH_SMALL_STACK */
 
-    WLOG(WS_LOG_DEBUG, "Entering KeyAgreeEcdhKyber512_client()");
+    WLOG(WS_LOG_DEBUG, "Entering KeyAgreeEcdhMlKem_client()");
 
     /* This is a a hybrid of ECDHE and a post-quantum KEM. In this
      * case, I need to generated the ECC shared secret and
      * decapsulate the ciphertext of the post-quantum KEM. */
 
     if (ret == 0) {
-        ret = wc_KyberKey_Init(KYBER512, &kem, ssh->ctx->heap, INVALID_DEVID);
+        ret = wc_MlKemKey_Init(&kem, WC_ML_KEM_768, ssh->ctx->heap, INVALID_DEVID);
     }
 
     if (ret == 0) {
-        ret = wc_KyberKey_CipherTextSize(&kem, &length_ciphertext);
+        ret = wc_MlKemKey_CipherTextSize(&kem, &length_ciphertext);
     }
 
     if (ret == 0) {
-        ret = wc_KyberKey_SharedSecretSize(&kem, &length_sharedsecret);
+        ret = wc_MlKemKey_SharedSecretSize(&kem, &length_sharedsecret);
     }
 
     if (ret == 0) {
-        ret = wc_KyberKey_PrivateKeySize(&kem, &length_privatekey);
+        ret = wc_MlKemKey_PrivateKeySize(&kem, &length_privatekey);
     }
 
     if ((ret == 0) && (ssh->handshake->xSz < length_privatekey)) {
@@ -5263,12 +5263,12 @@ static int KeyAgreeEcdhKyber512_client(WOLFSSH* ssh, byte hashId,
     wc_ecc_free(&ssh->handshake->privKey.ecc);
 
     if (ret == 0) {
-        wc_KyberKey_DecodePrivateKey(&kem, ssh->handshake->x,
+        wc_MlKemKey_DecodePrivateKey(&kem, ssh->handshake->x,
                                      length_privatekey);
     }
 
     if (ret == 0) {
-        ret = wc_KyberKey_Decapsulate(&kem, ssh->k, f, length_ciphertext);
+        ret = wc_MlKemKey_Decapsulate(&kem, ssh->k, f, length_ciphertext);
     }
 
     if (ret == 0) {
@@ -5276,11 +5276,11 @@ static int KeyAgreeEcdhKyber512_client(WOLFSSH* ssh, byte hashId,
     } else {
         ssh->kSz = 0;
         WLOG(WS_LOG_ERROR,
-             "Generate ECC-kyber (decap) shared secret failed, %d",
+             "Generate ECC and ML-KEM (decap) shared secret failed, %d",
              ret);
     }
 
-    wc_KyberKey_Free(&kem);
+    wc_MlKemKey_Free(&kem);
 
     /* Replace the concatenated shared secrets with the hash. That
      * will become the new shared secret. */
@@ -5309,10 +5309,10 @@ static int KeyAgreeEcdhKyber512_client(WOLFSSH* ssh, byte hashId,
         WFREE(sharedSecretHash, ssh->ctx->heap, DYNTYPE_PRIVKEY);
     }
 
-    WLOG(WS_LOG_DEBUG, "Leaving KeyAgreeEcdhKyber512_client(), ret = %d", ret);
+    WLOG(WS_LOG_DEBUG, "Leaving KeyAgreeEcdhMlKem_client(), ret = %d", ret);
     return ret;
 }
-#else /* WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256 */
+#else /* WOLFSSH_NO_NISTP256_MLKEM768_SHA256 */
 {
     WOLFSSH_UNUSED(ssh);
     WOLFSSH_UNUSED(hashId);
@@ -5320,7 +5320,7 @@ static int KeyAgreeEcdhKyber512_client(WOLFSSH* ssh, byte hashId,
     WOLFSSH_UNUSED(fSz);
     return WS_INVALID_ALGO_ID;
 }
-#endif /* WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256 */
+#endif /* WOLFSSH_NO_NISTP256_MLKEM768_SHA256 */
 
 
 /* KeyAgree_client
@@ -5346,8 +5346,8 @@ static int KeyAgree_client(WOLFSSH* ssh, byte hashId, const byte* f, word32 fSz)
     else if (ssh->handshake->useCurve25519) {
         ret = KeyAgreeCurve25519_client(ssh, hashId, f, fSz);
     }
-    else if (ssh->handshake->useEccKyber) {
-        ret = KeyAgreeEcdhKyber512_client(ssh, hashId, f, fSz);
+    else if (ssh->handshake->useEccMlKem) {
+        ret = KeyAgreeEcdhMlKem_client(ssh, hashId, f, fSz);
     }
     else {
         ret = WS_INVALID_ALGO_ID;
@@ -5563,7 +5563,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
         /* Hash in the shared secret K. */
         if (ret == WS_SUCCESS) {
-            if (!ssh->handshake->useEccKyber) {
+            if (!ssh->handshake->useEccMlKem) {
                 ret = CreateMpint(ssh->k, &ssh->kSz, &kPad);
             }
         }
@@ -5719,8 +5719,8 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     }
 
     if (ret == WS_SUCCESS) {
-        /* If we aren't using EccKyber, use padding. */
-        ret = GenerateKeys(ssh, hashId, !ssh->handshake->useEccKyber);
+        /* If we aren't using ECC with ML-KEM, use padding. */
+        ret = GenerateKeys(ssh, hashId, !ssh->handshake->useEccMlKem);
     }
 
     if (ret == WS_SUCCESS)
@@ -10488,10 +10488,10 @@ struct wolfSSH_sigKeyBlockFull {
         } sk;
 };
 
-#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-    /* Size of Kyber public key (bigger than ciphertext) and some extra for the
+#ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
+    /* Size of ML-KEM public key (bigger than ciphertext) and some extra for the
      * ECC hybrid component. */
-    #define KEX_F_SIZE 1024
+    #define KEX_F_SIZE 1300
 #elif !defined(WOLFSSH_NO_DH_GROUP16_SHA512)
     #define KEX_F_SIZE (512 + 1)
 #else
@@ -11388,7 +11388,7 @@ static int KeyAgreeCurve25519_server(WOLFSSH* ssh, byte hashId,
 #endif /* WOLFSSH_NO_CURVE25519_SHA256 */
 
 
-/* KeyAgreeEcdhKyber512_server
+/* KeyAgreeEcdhMlKem_server
  * hashId - wolfCrypt hash type ID used
  * f - peer public key
  * fSz - peer public key size
@@ -11399,14 +11399,14 @@ static int KeyAgreeCurve25519_server(WOLFSSH* ssh, byte hashId,
  * generate and encapsulate the shared secret and send the
  * ciphertext.
  */
-static int KeyAgreeEcdhKyber512_server(WOLFSSH* ssh, byte hashId,
+static int KeyAgreeEcdhMlKem_server(WOLFSSH* ssh, byte hashId,
         byte* f, word32* fSz)
-#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
+#ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
 {
     int ret = WS_SUCCESS;
     byte sharedSecretHashSz = 0;
     byte *sharedSecretHash = NULL;
-    KyberKey kem = {0};
+    MlKemKey kem = {0};
     word32 length_publickey = 0;
     word32 length_ciphertext = 0;
     word32 length_sharedsecret = 0;
@@ -11417,7 +11417,7 @@ static int KeyAgreeEcdhKyber512_server(WOLFSSH* ssh, byte hashId,
     ecc_key eccKeys[2];
 #endif
 
-    WLOG(WS_LOG_DEBUG, "Entering KeyAgreeEcdhKyber512_server()");
+    WLOG(WS_LOG_DEBUG, "Entering KeyAgreeEcdhMlKem_server()");
 
 #ifdef WOLFSSH_SMALL_STACK
     pubKey = (ecc_key*)WMALLOC(sizeof(ecc_key),
@@ -11442,20 +11442,20 @@ static int KeyAgreeEcdhKyber512_server(WOLFSSH* ssh, byte hashId,
     }
 
     if (ret == 0) {
-        ret = wc_KyberKey_Init(KYBER512, &kem, ssh->ctx->heap,
+        ret = wc_MlKemKey_Init(&kem, WC_ML_KEM_768, ssh->ctx->heap,
                                INVALID_DEVID);
     }
 
     if (ret == 0) {
-        ret = wc_KyberKey_CipherTextSize(&kem, &length_ciphertext);
+        ret = wc_MlKemKey_CipherTextSize(&kem, &length_ciphertext);
     }
 
     if (ret == 0) {
-        ret = wc_KyberKey_SharedSecretSize(&kem, &length_sharedsecret);
+        ret = wc_MlKemKey_SharedSecretSize(&kem, &length_sharedsecret);
     }
 
     if (ret == 0) {
-        ret = wc_KyberKey_PublicKeySize(&kem, &length_publickey);
+        ret = wc_MlKemKey_PublicKeySize(&kem, &length_publickey);
     }
 
     if ((ret == 0) && (ssh->handshake->eSz <= length_publickey)) {
@@ -11463,12 +11463,12 @@ static int KeyAgreeEcdhKyber512_server(WOLFSSH* ssh, byte hashId,
     }
 
     if (ret == 0) {
-        ret = wc_KyberKey_DecodePublicKey(&kem, ssh->handshake->e,
+        ret = wc_MlKemKey_DecodePublicKey(&kem, ssh->handshake->e,
                                           length_publickey);
     }
 
     if (ret == 0) {
-        ret = wc_KyberKey_Encapsulate(&kem, f, ssh->k, ssh->rng);
+        ret = wc_MlKemKey_Encapsulate(&kem, f, ssh->k, ssh->rng);
     }
 
     if (ret == 0) {
@@ -11478,12 +11478,12 @@ static int KeyAgreeEcdhKyber512_server(WOLFSSH* ssh, byte hashId,
     else {
         ret = WS_PUBKEY_REJECTED_E;
         WLOG(WS_LOG_ERROR,
-             "Generate ECC-kyber (encap) shared secret failed, %d", ret);
+             "Generate ECC and ML-KEM (encap) shared secret failed, %d", ret);
         *fSz = 0;
         ssh->kSz = 0;
     }
 
-    wc_KyberKey_Free(&kem);
+    wc_MlKemKey_Free(&kem);
 
     if (ret == 0) {
         ret = wc_ecc_init_ex(pubKey, ssh->ctx->heap, INVALID_DEVID);
@@ -11554,10 +11554,10 @@ static int KeyAgreeEcdhKyber512_server(WOLFSSH* ssh, byte hashId,
         WFREE(sharedSecretHash, ssh->ctx->heap, DYNTYPE_PRIVKEY);
     }
 
-    WLOG(WS_LOG_DEBUG, "Leaving KeyAgreeEcdhKyber512_server(), ret = %d", ret);
+    WLOG(WS_LOG_DEBUG, "Leaving KeyAgreeEcdhMlKem_server(), ret = %d", ret);
     return ret;
 }
-#else /* WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256 */
+#else /* WOLFSSH_NO_NISTP256_MLKEM768_SHA256 */
 {
     WOLFSSH_UNUSED(ssh);
     WOLFSSH_UNUSED(hashId);
@@ -11565,7 +11565,7 @@ static int KeyAgreeEcdhKyber512_server(WOLFSSH* ssh, byte hashId,
     WOLFSSH_UNUSED(fSz);
     return WS_INVALID_ALGO_ID;
 }
-#endif /* WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256 */
+#endif /* WOLFSSH_NO_NISTP256_MLKEM768_SHA256 */
 
 
 static int SignHRsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
@@ -11856,7 +11856,7 @@ int SendKexDhReply(WOLFSSH* ssh)
     byte useDh = 0;
     byte useEcc = 0;
     byte useCurve25519 = 0;
-    byte useEccKyber = 0;
+    byte useEccMlKem = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering SendKexDhReply()");
 
@@ -11962,9 +11962,9 @@ int SendKexDhReply(WOLFSSH* ssh)
                 msgId = MSGID_KEXDH_REPLY;
                 break;
 #endif
-#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-            case ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256:
-                useEccKyber = 1; /* Only support level 1 for now. */
+#ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
+            case ID_NISTP256_MLKEM768_SHA256:
+                useEccMlKem = 1; /* Only support level 1 for now. */
                 msgId = MSGID_KEXKEM_REPLY;
                 break;
 #endif
@@ -12012,8 +12012,8 @@ int SendKexDhReply(WOLFSSH* ssh)
             if (useCurve25519) {
                 ret = KeyAgreeCurve25519_server(ssh, hashId, f_ptr, &fSz);
             }
-            else if (useEccKyber) {
-                ret = KeyAgreeEcdhKyber512_server(ssh, hashId, f_ptr, &fSz);
+            else if (useEccMlKem) {
+                ret = KeyAgreeEcdhMlKem_server(ssh, hashId, f_ptr, &fSz);
             }
         }
 
@@ -12034,7 +12034,7 @@ int SendKexDhReply(WOLFSSH* ssh)
         }
 
         /* Hash in the shared secret K. */
-        if (ret == 0 && !useEccKyber) {
+        if (ret == 0 && !useEccMlKem) {
             ret = CreateMpint(ssh->k, &ssh->kSz, &kPad);
         }
         if (ret == 0) {
@@ -12099,8 +12099,8 @@ int SendKexDhReply(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS) {
-        /* If we aren't using EccKyber, use padding. */
-        ret = GenerateKeys(ssh, hashId, !useEccKyber);
+        /* If we aren't using ECC with ML-KEM, use padding. */
+        ret = GenerateKeys(ssh, hashId, !useEccMlKem);
     }
 
     /* Get the buffer, copy the packet data, once f is laid into the buffer,
@@ -12545,10 +12545,10 @@ int SendKexDhInit(WOLFSSH* ssh)
             msgId = MSGID_KEXECDH_INIT;
             break;
 #endif
-#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-        case ID_ECDH_NISTP256_KYBER_LEVEL1_SHA256:
+#ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
+        case ID_NISTP256_MLKEM768_SHA256:
             /* Only support level 1 for now. */
-            ssh->handshake->useEccKyber = 1;
+            ssh->handshake->useEccMlKem = 1;
             msgId = MSGID_KEXKEM_INIT;
             break;
 #endif
@@ -12560,8 +12560,8 @@ int SendKexDhInit(WOLFSSH* ssh)
 
     if (ret == WS_SUCCESS) {
         if (!ssh->handshake->useEcc
-#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-            && !ssh->handshake->useEccKyber
+#ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
+            && !ssh->handshake->useEccMlKem
 #endif
 #ifndef WOLFSSH_NO_CURVE25519_SHA256
             && !ssh->handshake->useCurve25519
@@ -12599,8 +12599,8 @@ int SendKexDhInit(WOLFSSH* ssh)
         }
 #endif /* ! WOLFSSH_NO_CURVE25519_SHA256 */
         else if (ssh->handshake->useEcc
-#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-                 || ssh->handshake->useEccKyber
+#ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
+                 || ssh->handshake->useEccMlKem
 #endif
                 ) {
 #if !defined(WOLFSSH_NO_ECDH)
@@ -12634,28 +12634,28 @@ int SendKexDhInit(WOLFSSH* ssh)
             ret = WS_INVALID_ALGO_ID;
         }
 
-#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-        if (ssh->handshake->useEccKyber) {
-            KyberKey kem = {0};
+#ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
+        if (ssh->handshake->useEccMlKem) {
+            MlKemKey kem = {0};
             word32 length_publickey = 0;
             word32 length_privatekey = 0;
             ret = 0;
 
             if (ret == 0) {
-                ret = wc_KyberKey_Init(KYBER512, &kem, ssh->ctx->heap,
+                ret = wc_MlKemKey_Init(&kem, WC_ML_KEM_768, ssh->ctx->heap,
                                        INVALID_DEVID);
             }
 
             if (ret == 0) {
-                ret = wc_KyberKey_MakeKey(&kem, ssh->rng);
+                ret = wc_MlKemKey_MakeKey(&kem, ssh->rng);
             }
 
             if (ret == 0) {
-                ret = wc_KyberKey_PublicKeySize(&kem, &length_publickey);
+                ret = wc_MlKemKey_PublicKeySize(&kem, &length_publickey);
             }
 
             if (ret == 0) {
-                ret = wc_KyberKey_PrivateKeySize(&kem, &length_privatekey);
+                ret = wc_MlKemKey_PrivateKeySize(&kem, &length_privatekey);
             }
 
             if (ret == 0) {
@@ -12663,27 +12663,27 @@ int SendKexDhInit(WOLFSSH* ssh)
                  * this assumes the PQ public key is bigger than the ECC public
                  * key. */
                 XMEMCPY(e + length_publickey, e, eSz);
-                ret = wc_KyberKey_EncodePublicKey(&kem, e, length_publickey);
+                ret = wc_MlKemKey_EncodePublicKey(&kem, e, length_publickey);
                 eSz += length_publickey;
             }
 
             if (ret == 0) {
-                ret = wc_KyberKey_EncodePrivateKey(&kem, ssh->handshake->x,
+                ret = wc_MlKemKey_EncodePrivateKey(&kem, ssh->handshake->x,
                                                    length_privatekey);
                 ssh->handshake->xSz = length_privatekey;
             }
 
-            wc_KyberKey_Free(&kem);
+            wc_MlKemKey_Free(&kem);
         }
-#endif /* ! WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256 */
+#endif /* ! WOLFSSH_NO_NISTP256_MLKEM768_SHA256 */
         if (ret == 0) {
             ret = WS_SUCCESS;
         }
     }
 
     if (ret == WS_SUCCESS
-#ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
-        && !ssh->handshake->useEccKyber
+#ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
+        && !ssh->handshake->useEccMlKem
 #endif
 #ifndef WOLFSSH_NO_CURVE25519_SHA256
         && !ssh->handshake->useCurve25519
