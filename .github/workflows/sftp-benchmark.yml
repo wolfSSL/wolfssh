@@ -32,7 +32,7 @@ jobs:
         id: cache-wolfssl
         with:
           path: build-dir/
-          key: wolfssh-sshd-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}
+          key: wolfssh-benchmark-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}
           lookup-only: true
 
       - name: Checkout, build, and install wolfssl
@@ -42,7 +42,7 @@ jobs:
           repository: wolfssl/wolfssl
           ref: ${{ matrix.wolfssl }}
           path: wolfssl
-          configure: --enable-all
+          configure: --enable-all --enable-intelasm --enable-sp --enable-sp-asm
           check: false
           install: true
 
@@ -62,7 +62,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build-dir/
-          key: wolfssh-sshd-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}
+          key: wolfssh-benchmark-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}
           fail-on-cache-miss: true
 
       - uses: actions/checkout@v4
