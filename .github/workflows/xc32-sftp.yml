@@ -1,0 +1,96 @@
+name: XC32 Build
+
+on:
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  wolfssh-xc32:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout app repository
+        uses: actions/checkout@v3
+        with:
+          repository: JacobBarthelmeh/net_apps_sam_e70_v71
+          ref: sftp_server
+          path: net_apps_sam_e70_v71
+
+      - name: Set up environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev libarchive-dev libelf-dev
+
+      # Cache XC32 compiler installer
+      - name: Cache XC32 compiler installer
+        id: cache-xc32
+        uses: actions/cache@v3
+        with:
+          path: /tmp/xc32.run
+          key: ${{ runner.os }}-xc32-installer
+
+      - name: Download XC32 compiler
+        if: steps.cache-xc32.outputs.cache-hit != 'true'
+        run: |
+          echo "Downloading XC32 compiler..."
+          curl -fSL -A "Mozilla/4.0" -o /tmp/xc32.run "https://ww1.microchip.com/downloads/aemDocuments/documents/DEV/ProductDocuments/SoftwareTools/xc32-v4.60-full-install-linux-x64-installer.run"
+
+      - name: Setup XC32 compiler
+        run: |
+          chmod a+x /tmp/xc32.run
+          echo "Installing XC32 compiler..."
+          sudo /tmp/xc32.run --mode unattended --unattendedmodeui none --netservername localhost --LicenseType FreeMode --prefix /opt/microchip/xc32
+          # Add compiler to PATH
+          echo "PATH=$PATH:/opt/microchip/xc32/v4.60/bin" >> $GITHUB_ENV
+
+      # Cache MPLABX installer
+      - name: Cache MPLABX compiler installer
+        id: cache-mplabx
+        uses: actions/cache@v3
+        with:
+          path: /tmp/mplabx.run
+          key: ${{ runner.os }}-mplabx-installer
+
+      - name: Download MPLABX
+        if: steps.cache-mplabx.outputs.cache-hit != 'true'
+        run: |
+          echo "Downloading MPLABX..."
+           curl -fSL -A "Mozilla/4.0" -o /tmp/mplabx.tar "http://ww1.microchip.com/downloads/en/DeviceDoc/MPLABX-v6.00-linux-installer.tar"
+
+      - name: Setup MPLABX
+        run: |
+          mkdir MPLABX
+          cd MPLABX
+          tar -xf /tmp/mplabx.tar
+          echo "Installing MPLABX..."
+          sudo ./MPLABX-v6.00-linux-installer.sh --nox11 -- --unattendedmodeui none --mode unattended --installdir /opt/microchip/mplabx
+          echo "MPLABX directory /opt/microchip/mplabx"
+          ls /opt/microchip/mplabx/mplab_platform/
+          echo "MPLABX directory /opt/microchip/mplabx/bin"
+          ls /opt/microchip/mplabx/mplab_platform/bin
+
+      - uses: actions/checkout@v4
+        with:
+          path: wolfssh/
+
+      - name: Replace wolfssh source code
+        run: |
+          # Remove existing wolfssh directory if it exists
+          if [ -d "net_apps_sam_e70_v71/apps/wolfssh_sftp_server_freertos/firmware/src/third_party/wolfssh" ]; then
+            rm -rf net_apps_sam_e70_v71/apps/wolfssh_sftp_server_freertos/firmware/src/third_party/wolfssh
+          fi
+          # Copy the PR wolfssh code
+          mkdir -p net_apps_sam_e70_v71/apps/wolfssh_sftp_server_freertos/firmware/src/third_party/wolfssh
+          cp -R wolfssh/* net_apps_sam_e70_v71/apps/wolfssh_sftp_server_freertos/firmware/src/third_party/wolfssh/
+          echo "Replaced wolfssh source code with current PR's source code"
+
+      - name: Generate and compile the project
+        working-directory: net_apps_sam_e70_v71/apps/wolfssh_sftp_server_freertos/firmware
+        run: |
+          sudo chmod +x /opt/microchip/mplabx/mplab_platform/bin/packmanagercli.sh
+          sudo -E /opt/microchip/mplabx/mplab_platform/bin/packmanagercli.sh --install SAMV71_DFP
+          /opt/microchip/mplabx/mplab_platform/bin/prjMakefilesGenerator.sh wolfssh_sftp_server_freertos.X
+          cd wolfssh_sftp_server_freertos.X
+          make
+
