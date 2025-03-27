@@ -946,11 +946,6 @@ static int wolfSSH_TPM_InitKey(WOLFTPM2_DEV* dev, const char* name,
         wolfTPM2_UnloadHandle(dev, &endorse.handle);
     }
 
-    /* Cleanup */
-    if (primary != NULL) {
-        wolfTPM2_UnloadHandle(dev, &primary->handle);
-    }
-
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_TPM_InitKey(), rc = %d", rc);
     return rc;
 }
@@ -984,8 +979,7 @@ int CLientSetTpm(WOLFSSH* ssh)
 
 /* Reads the private key to use from file name privKeyName.
  * returns 0 on success */
-int ClientSetPrivateKey(const char* privKeyName, int userEcc,
-    void* heap, int useEndorsementKey)
+int ClientSetPrivateKey(const char* privKeyName, int userEcc, void* heap)
 {
     int ret = 0;
 
@@ -1021,8 +1015,7 @@ int ClientSetPrivateKey(const char* privKeyName, int userEcc,
          */
         WMEMSET(&tpmDev, 0, sizeof(tpmDev));
         WMEMSET(&tpmKey, 0, sizeof(tpmKey));
-        ret = wolfSSH_TPM_InitKey(&tpmDev, privKeyName, &tpmKey,
-            useEndorsementKey);
+        ret = wolfSSH_TPM_InitKey(&tpmDev, privKeyName, &tpmKey);
     #elif !defined(NO_FILESYSTEM)
         userPrivateKey = NULL; /* create new buffer based on parsed input */
         userPrivateKeyAlloc = 1;
