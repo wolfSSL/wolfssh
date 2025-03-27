@@ -135,7 +135,6 @@ void* wolfSSH_GetIOWriteCtx(WOLFSSH* ssh)
         static int errno;
     #elif defined(MICROCHIP_MPLAB_HARMONY)
         #include "tcpip/tcpip.h"
-        #include "sys/errno.h"
         #include <errno.h>
     #elif defined(WOLFSSL_NUCLEUS)
         #include "nucleus.h"
@@ -323,6 +322,19 @@ int wsEmbedRecv(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
     if (tcp_select(sd, 1) == WS_SELECT_RECV_READY &&
             (rand() % 100) < WOLFSSH_BLOCK_PROB) {
         printf("Forced read block\n");
+        return WS_CBIO_ERR_WANT_READ;
+    }
+#endif
+
+#ifdef MICROCHIP_MPLAB_HARMONY
+    /* check is still connected */
+    if (!TCPIP_TCP_IsConnected(sd))
+    {
+        return WS_CBIO_ERR_CONN_CLOSE;
+    }
+
+    /* check for data ready to be read */
+    if (TCPIP_TCP_GetIsReady(sd) <= 0) {
         return WS_CBIO_ERR_WANT_READ;
     }
 #endif
