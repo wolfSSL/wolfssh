@@ -20,7 +20,7 @@ jobs:
       - name: Set up environment
         run: |
           sudo apt-get update
-          sudo apt-get install -y libcurl4-openssl-dev libarchive-dev libelf-dev
+          sudo apt-get install -y libcurl4-openssl-dev libarchive-dev libelf-dev xvfb
 
       # Cache XC32 compiler installer
       - name: Cache XC32 compiler installer
@@ -89,7 +89,12 @@ jobs:
         working-directory: net_apps_sam_e70_v71/apps/wolfssh_sftp_server_freertos/firmware
         run: |
           sudo chmod +x /opt/microchip/mplabx/mplab_platform/bin/packmanagercli.sh
-          sudo -E /opt/microchip/mplabx/mplab_platform/bin/packmanagercli.sh --install SAMV71_DFP
+          echo "List available packs"
+          sudo -E /opt/microchip/mplabx/mplab_platform/bin/packmanagercli.sh --list
+          echo "Update Microchip SAMV71_DFP@4.12.237"
+          sudo -E /opt/microchip/mplabx/mplab_platform/bin/packmanagercli.sh --update-packs SAMV71_DFP@4.12.237
+          # Add DISPLAY variable to handle headless environment
+          export DISPLAY=:0
           /opt/microchip/mplabx/mplab_platform/bin/prjMakefilesGenerator.sh wolfssh_sftp_server_freertos.X
           cd wolfssh_sftp_server_freertos.X
           make
