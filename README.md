@@ -450,21 +450,21 @@ The wolfSSH client and server will automatically negotiate using Curve25519.
 POST-QUANTUM
 ============
 
-wolfSSH now supports the post-quantum algorithm ML-KEM (also known as Kyber).
-It uses the KYBER512 parameter set and is hybridized with ECDHE over the P-256
-ECC curve.
+wolfSSH now supports the post-quantum algorithm ML-KEM (formerly known as
+Kyber). It uses the ML-KEM-768 parameter set and is hybridized with ECDHE over
+the P-256 ECC curve.
 
 In order to use this key exchange you must build and install wolfSSL on your
 system. Here is an example of an effective configuration:
 
-    $ ./configure --enable-wolfssh --enable-experimental --enable-kyber
+    $ ./configure --enable-wolfssh --enable-mlkem
 
 After that, simply configure and build wolfssh as usual:
 
     $ ./configure
     $ make all
 
-The wolfSSH client and server will automatically negotiate using KYBER512
+The wolfSSH client and server will automatically negotiate using ML-KEM-768
 hybridized with ECDHE over the P-256 ECC curve.
 
     $ ./examples/echoserver/echoserver -f
@@ -487,7 +487,7 @@ The following is sufficient for build and execution:
     $ cd openssh-OQS-OpenSSH-snapshot-2021-08/
     $ ./configure --with-liboqs-dir=/usr/local
     $ make all
-    $ ./ssh -o"KexAlgorithms=ecdh-nistp256-kyber-512r3-sha256-d00@openquantumsafe.org" \
+    $ ./ssh -o"KexAlgorithms=mlkem768nistp256-sha256" \
       -o"PubkeyAcceptedAlgorithms +ssh-rsa" \
       -o"HostkeyAlgorithms +ssh-rsa" \
       jill@localhost -p 22222
