@@ -1249,6 +1249,10 @@ enum WS_MessageIds {
 
 #define CHANNEL_EXTENDED_DATA_STDERR WOLFSSH_EXT_DATA_STDERR
 
+/* Used when checking IsMessageAllowed() to determine if createing and sending
+ * the message or receiving the message is allowed */
+#define WS_MSG_SEND 1
+#define WS_MSG_RECV 2
 
 /* dynamic memory types */
 enum WS_DynamicTypes {
@@ -1442,4 +1446,3 @@ enum TerminalModes {
 #endif
 
 #endif /* _WOLFSSH_INTERNAL_H_ */
-
