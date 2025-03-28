@@ -237,8 +237,6 @@ AS_IF([test "x$ENABLED_SSHCLIENT" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SSHCLIENT"])
 AS_IF([test "x$ENABLED_TPM" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_TPM"])
-AS_IF([test "x$ENABLED_SMALLSTACK" = "xyes"],
-      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SMALL_STACK"])
 
 if test "$ENABLED_SSHD" = "yes"; then
     if test -n "$PAM_LIB"

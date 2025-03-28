@@ -574,22 +574,8 @@ server:
 
     $ ./examples/echoserver/echoserver
 
-From another terminal run the client with the keyblob. You must specify which
-key type to use:
-
-Using primary endorsement key (recommened)
-    $ ./examples/client/client -i ../wolfTPM/keyblob.bin -u hansel -s pk
-
-Using storage root key
-    $ ./examples/client/client -i ../wolfTPM/keyblob.bin -u hansel -s srk
-
-For debuging run server like above then:
-
-    $ <lldb, gdb, etc.> ./examples/client/client
-
-Set break point or just run:
-
-    $ r -i ../wolfTPM/keyblob.bin -u hansel
+From another terminal run the client with the keyblob. Using primary endorsement key
+    $ ./examples/client/client -i ../wolfTPM/keyblob.bin -u hansel -K <keyAuth>
 
 WOLFSSH APPLICATIONS
 ====================

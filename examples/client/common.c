@@ -756,13 +756,6 @@ int ClientUseCert(const char* certName, void* heap)
 
 #ifdef WOLFSSH_TPM
 
-/* Key Authentication Password */
-#ifndef WOLFSSH_TPM_KEY_AUTH
-    #define WOLFSSH_TPM_KEY_AUTH      "ThisIsMyKeyAuth"
-#endif
-
-static const char gKeyAuth[] = WOLFSSH_TPM_KEY_AUTH;
-
 static int readKeyBlob(const char* filename, WOLFTPM2_KEYBLOB* key)
 {
     int rc = 0;
@@ -848,7 +841,7 @@ exit:
 }
 
 static int wolfSSH_TPM_InitKey(WOLFTPM2_DEV* dev, const char* name,
-                               WOLFTPM2_KEY* pTpmKey)
+    WOLFTPM2_KEY* pTpmKey, const char* tpmKeyAuth)
 {
     int rc = 0;
     WOLFTPM2_KEY endorse;
@@ -862,7 +855,8 @@ static int wolfSSH_TPM_InitKey(WOLFTPM2_DEV* dev, const char* name,
     if (rc == 0) {
         rc = wolfTPM2_Init(dev, TPM2_IoCb, NULL);
         if (rc != 0) {
-            WLOG(WS_LOG_DEBUG, "TPM 2.0 Device initialization failed, rc: %d", rc);
+            WLOG(WS_LOG_DEBUG,
+                "TPM 2.0 Device initialization failed, rc: %d", rc);
         }
     }
 
@@ -879,7 +873,8 @@ static int wolfSSH_TPM_InitKey(WOLFTPM2_DEV* dev, const char* name,
         endorse.handle.policyAuth = 1;
         rc = wolfTPM2_CreateAuthSession_EkPolicy(dev, &tpmSession);
         if (rc != 0) {
-            WLOG(WS_LOG_DEBUG, "Creating EK policy session failed, rc: %d", rc);
+            WLOG(WS_LOG_DEBUG,
+                "Creating EK policy session failed, rc: %d", rc);
         }
     }
 
@@ -899,10 +894,10 @@ static int wolfSSH_TPM_InitKey(WOLFTPM2_DEV* dev, const char* name,
         }
     }
 
-    /* Set auth for key */
-    if (rc == 0) {
-        tpmKeyBlob.handle.auth.size = (int)sizeof(gKeyAuth)-1;
-        XMEMCPY(tpmKeyBlob.handle.auth.buffer, gKeyAuth,
+    /* Use global auth if provided */
+    if (rc == 0 && tpmKeyAuth != NULL) {
+        tpmKeyBlob.handle.auth.size = (word32)XSTRLEN(tpmKeyAuth);
+        XMEMCPY(tpmKeyBlob.handle.auth.buffer, tpmKeyAuth,
             tpmKeyBlob.handle.auth.size);
     }
 
@@ -963,9 +958,8 @@ static void wolfSSH_TPM_Cleanup(WOLFTPM2_DEV* dev, WOLFTPM2_KEY* key)
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_TPM_Cleanup()");
 }
 
-/* Set the tpm device and
- * key for the client side */
-int CLientSetTpm(WOLFSSH* ssh)
+/* Set the tpm device and key for the client side */
+int ClientSetTpm(WOLFSSH* ssh)
 {
     if (ssh != NULL) {
         wolfSSH_SetTpmDev(ssh, &tpmDev);
@@ -979,9 +973,11 @@ int CLientSetTpm(WOLFSSH* ssh)
 
 /* Reads the private key to use from file name privKeyName.
  * returns 0 on success */
-int ClientSetPrivateKey(const char* privKeyName, int userEcc, void* heap)
+int ClientSetPrivateKey(const char* privKeyName, int userEcc,
+    void* heap, const char* tpmKeyAuth)
 {
     int ret = 0;
+    (void)tpmKeyAuth; /* Not used*/
 
     if (privKeyName == NULL) {
         if (userEcc) {
@@ -1015,7 +1011,7 @@ int ClientSetPrivateKey(const char* privKeyName, int userEcc, void* heap)
          */
         WMEMSET(&tpmDev, 0, sizeof(tpmDev));
         WMEMSET(&tpmKey, 0, sizeof(tpmKey));
-        ret = wolfSSH_TPM_InitKey(&tpmDev, privKeyName, &tpmKey);
+        ret = wolfSSH_TPM_InitKey(&tpmDev, privKeyName, &tpmKey, tpmKeyAuth);
     #elif !defined(NO_FILESYSTEM)
         userPrivateKey = NULL; /* create new buffer based on parsed input */
         userPrivateKeyAlloc = 1;

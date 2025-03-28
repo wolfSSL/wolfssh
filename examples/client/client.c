@@ -93,6 +93,9 @@ static void ShowUsage(void)
     printf(" -p <num>      port to connect on, default %d\n", wolfSshPort);
     printf(" -u <username> username to authenticate as (REQUIRED)\n");
     printf(" -P <password> password for username, prompted if omitted\n");
+#ifdef WOLFSSH_TPM
+    printf(" -K <password> TPM key authentication password\n");
+#endif
     printf(" -i <filename> filename for the user's private key\n");
     printf(" -j <filename> filename for the user's public key\n");
     printf(" -x            exit after successful connection without doing\n"
@@ -644,6 +647,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     char* host = (char*)wolfSshIp;
     const char* username = NULL;
     const char* password = NULL;
+    const char* tpmKeyAuth = NULL;
     const char* cmd      = NULL;
     const char* privKeyName = NULL;
     const char* keyList = NULL;
@@ -665,7 +669,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
     (void)keepOpen;
 
-    while ((ch = mygetopt(argc, argv, "?ac:h:i:j:p:tu:xzNP:RJ:A:XeEk:q")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?ac:h:i:j:p:tu:xzNP:RJ:A:XeEk:qK:")) != -1) {
         switch (ch) {
             case 'h':
                 host = myoptarg;
@@ -769,6 +773,12 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
                 break;
         #endif
 
+        #ifdef WOLFSSH_TPM
+            case 'K':
+                tpmKeyAuth = myoptarg;
+                break;
+        #endif
+
             case '?':
                 ShowUsage();
                 exit(EXIT_SUCCESS);
@@ -798,7 +808,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     }
     #endif
 #endif
-    ret = ClientSetPrivateKey(privKeyName, userEcc, NULL);
+    ret = ClientSetPrivateKey(privKeyName, userEcc, NULL, tpmKeyAuth);
     if (ret != 0) {
         err_sys("Error setting private key");
     }
@@ -853,7 +863,8 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         err_sys("Couldn't create wolfSSH session.");
 
 #ifdef WOLFSSH_TPM
-    CLientSetTpm(ssh);
+    if (tpmKeyAuth != NULL)
+        ClientSetTpm(ssh);
 #endif
 #if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
     wolfSSH_SetGlobalReq(ctx, callbackGlobalReq);
