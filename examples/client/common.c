@@ -977,7 +977,7 @@ int ClientSetPrivateKey(const char* privKeyName, int userEcc,
     void* heap, const char* tpmKeyAuth)
 {
     int ret = 0;
-    (void)tpmKeyAuth; /* Not used*/
+    (void)tpmKeyAuth; /* Not used */
 
     if (privKeyName == NULL) {
         if (userEcc) {

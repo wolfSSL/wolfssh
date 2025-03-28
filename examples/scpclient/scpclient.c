@@ -218,7 +218,7 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
         err_sys("Empty path values");
     }
 
-    ret = ClientSetPrivateKey(privKeyName, 0, NULL);
+    ret = ClientSetPrivateKey(privKeyName, 0, NULL, NULL);
     if (ret != 0) {
         err_sys("Error setting private key");
     }
