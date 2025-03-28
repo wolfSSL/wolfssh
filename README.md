@@ -569,15 +569,15 @@ Custom password:
     $ ./examples/keygen/keygen keyblob.bin -rsa -t -pem -eh -auth=<custompassword>
 
 This will produce a key.pem TPM public key which needs to be converted the to
-the ssh-rsa BASE64 username format using this command: `ssh-keygen -f key.pem -i -m PKCS8`
-Take this BASE64 encoded public key and update the `samplePublicKeyRsaBuffer`
-in `echoserver.c` with it. Make sure to the user is "hansel"'s public key.
+the ssh-rsa BASE64 username format using this command:
+
+    $ ssh-keygen -f key.pem -i -m PKCS8 > ../wolfssh/key.ssh
 
 The directory `examples` contains an echoserver that any client should
 be able to connect to. From wolfSSH open two terminal instances and run the
-server:
+server with the key.ssh file you created in the previous step:
 
-    $ ./examples/echoserver/echoserver
+    $ ./examples/echoserver/echoserver -s key.ssh
 
 From another terminal run the client with the keyblob. Using primary endorsement key
 If you used the default password for keygen you must specify the password:

@@ -1784,21 +1784,84 @@ static const char samplePublicKeyEccBuffer[] =
 #endif
 
 #ifndef WOLFSSH_NO_RSA
-static const char samplePublicKeyRsaBuffer[] =
-    "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC9P3ZFowOsONXHD5MwWiCciXytBRZGho"
-    "MNiisWSgUs5HdHcACuHYPi2W6Z1PBFmBWT9odOrGRjoZXJfDDoPi+j8SSfDGsc/hsCmc3G"
-    "p2yEhUZUEkDhtOXyqjns1ickC9Gh4u80aSVtwHRnJZh9xPhSq5tLOhId4eP61s+a5pwjTj"
-    "nEhBaIPUJO2C/M0pFnnbZxKgJlX7t1Doy7h5eXxviymOIvaCZKU+x5OopfzM/wFkey0EPW"
-    "NmzI5y/+pzU5afsdeEWdiQDIQc80H6Pz8fsoFPvYSG+s4/wz0duu7yeeV1Ypoho65Zr+pE"
-    "nIf7dO0B8EblgWt+ud+JI8wrAhfE4x hansel\n"
+static const char* samplePublicKeyRsaBuffer =
     "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCqDwRVTRVk/wjPhoo66+Mztrc31KsxDZ"
     "+kAV0139PHQ+wsueNpba6jNn5o6mUTEOrxrz0LMsDJOBM7CmG0983kF4gRIihECpQ0rcjO"
     "P6BSfbVTE9mfIK5IsUiZGd8SoE9kSV2pJ2FvZeBQENoAxEFk0zZL9tchPS+OCUGbK4SDjz"
     "uNZl/30Mczs73N3MBzi6J1oPo7sFlqzB6ecBjK2Kpjus4Y1rYFphJnUxtKvB0s+hoaadru"
     "biE57dK6BrH5iZwVLTQKux31uCJLPhiktI3iLbdlGZEctJkTasfVSsUizwVIyRjhVKmbdI"
-    "RGwkU38D043AR1h0mUoGCPIKuqcFMf gretel\n";
+    "RGwkU38D043AR1h0mUoGCPIKuqcFMf gretel\n"
+    "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC9P3ZFowOsONXHD5MwWiCciXytBRZGho"
+    "MNiisWSgUs5HdHcACuHYPi2W6Z1PBFmBWT9odOrGRjoZXJfDDoPi+j8SSfDGsc/hsCmc3G"
+    "p2yEhUZUEkDhtOXyqjns1ickC9Gh4u80aSVtwHRnJZh9xPhSq5tLOhId4eP61s+a5pwjTj"
+    "nEhBaIPUJO2C/M0pFnnbZxKgJlX7t1Doy7h5eXxviymOIvaCZKU+x5OopfzM/wFkey0EPW"
+    "NmzI5y/+pzU5afsdeEWdiQDIQc80H6Pz8fsoFPvYSG+s4/wz0duu7yeeV1Ypoho65Zr+pE"
+    "nIf7dO0B8EblgWt+ud+JI8wrAhfE4x hansel\n";
 #endif
 
+/* Loads a new key from a file and appends
+ * it to the samplePublicKeyRsaBuffer */
+static char* LoadSshKey(const char* path)
+{
+    FILE* file;
+    char* buffer = NULL;
+    char* ret = NULL;
+    long length;
+    const char* gretelKey = samplePublicKeyRsaBuffer;
+    const char* hanselKey;
+
+    /* Find where hansel's key starts (it's after gretel's key) */
+    hanselKey = strstr(gretelKey + 1, "ssh-rsa");
+    if (!hanselKey) {
+        fprintf(stderr, "Could not find hansel's key\n");
+        return NULL;
+    }
+
+    /* Calculate length of gretel's key portion */
+    long gretelLen = hanselKey - gretelKey;
+
+    /* Read new key from file */
+    file = fopen(path, "rb");
+    if (!file) {
+        fprintf(stderr, "Failed to open SSH key file: %s\n", path);
+        return NULL;
+    }
+
+    fseek(file, 0, SEEK_END);
+    length = ftell(file);
+    fseek(file, 0, SEEK_SET);
+
+    buffer = (char*)WMALLOC(length + 1, NULL, DYNTYPE_BUFFER);
+    if (buffer) {
+        if (fread(buffer, 1, length, file) != (size_t)length) {
+            WFREE(buffer, NULL, DYNTYPE_BUFFER);
+            buffer = NULL;
+        }
+        else {
+            /* Remove any trailing newlines */
+            while (length > 0 && (buffer[length-1] == '\n'
+                || buffer[length-1] == '\r')) {
+                length--;
+            }
+            buffer[length] = '\0';
+
+            /* Allocate space for: gretel's key + new key + " hansel\n" */
+            ret = (char*)WMALLOC(gretelLen + length + 8, NULL, DYNTYPE_BUFFER);
+            if (ret) {
+                /* Copy gretel's key */
+                WMEMCPY(ret, gretelKey, gretelLen);
+                /* Copy new key */
+                WMEMCPY(ret + gretelLen, buffer, length);
+                /* Append hansel identifier */
+                WMEMCPY(ret + gretelLen + length, " hansel\n", 8);
+            }
+            WFREE(buffer, NULL, DYNTYPE_BUFFER);
+        }
+    }
+
+    fclose(file);
+    return ret;
+}
 
 #ifdef WOLFSSH_ALLOW_USERAUTH_NONE
 
@@ -2375,6 +2438,7 @@ static void ShowUsage(void)
            "to use\n");
     printf(" -m <list>     set the comma separated list of mac algos to use\n");
     printf(" -b <num>      test user auth would block\n");
+    printf(" -s <file>     load SSH public key file to replace default hansel key\n");
 }
 
 
@@ -2420,6 +2484,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     const char* macList = NULL;
     const char* cipherList = NULL;
     ES_HEAP_HINT* heap = NULL;
+    static char* sshKeyPath = NULL;
     int multipleConnections = 1;
     int userEcc = 0;
     int peerEcc = 0;
@@ -2442,7 +2507,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     kbAuthData.promptCount = 0;
 
     if (argc > 0) {
-        const char* optlist = "?1a:d:efEp:R:Ni:j:i:I:J:K:P:k:b:x:m:c:";
+        const char* optlist = "?1a:d:efEp:R:Ni:j:i:I:J:K:P:k:b:x:m:c:s:";
         myoptind = 0;
         while ((ch = mygetopt(argc, argv, optlist)) != -1) {
             switch (ch) {
@@ -2546,6 +2611,10 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                     cipherList = myoptarg;
                     break;
 
+                case 's':
+                    sshKeyPath = myoptarg;
+                    break;
+
                 default:
                     ShowUsage();
                     serverArgs->return_code = MY_EX_USAGE;
@@ -2576,6 +2645,21 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
     if (wolfSSH_Init() != WS_SUCCESS) {
         ES_ERROR("Couldn't initialize wolfSSH.\n");
+    }
+
+    /* Load custom SSH key if specified */
+    if (sshKeyPath != NULL) {
+        const char* newBuffer = LoadSshKey(sshKeyPath);
+        if (newBuffer != NULL) {
+            samplePublicKeyRsaBuffer = newBuffer;
+        }
+        else {
+            ES_ERROR("Failed to load SSH key from %s\n", sshKeyPath);
+        }
+        #ifdef WOLFSSH_DEBUG
+            printf("New samplePublicKeyRsaBuffer:\n%s\n",
+                samplePublicKeyRsaBuffer);
+        #endif
     }
 
     #ifdef WOLFSSH_STATIC_MEMORY
