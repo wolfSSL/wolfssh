@@ -1809,6 +1809,7 @@ static char* LoadSshKey(const char* path)
     long length;
     const char* gretelKey = samplePublicKeyRsaBuffer;
     const char* hanselKey;
+    long gretelLen;
 
     /* Find where hansel's key starts (it's after gretel's key) */
     hanselKey = strstr(gretelKey + 1, "ssh-rsa");
@@ -1818,7 +1819,7 @@ static char* LoadSshKey(const char* path)
     }
 
     /* Calculate length of gretel's key portion */
-    long gretelLen = hanselKey - gretelKey;
+    gretelLen = hanselKey - gretelKey;
 
     /* Read new key from file */
     file = fopen(path, "rb");
