@@ -1317,7 +1317,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     }
 #endif /* WOLFSSH_STATIC_MEMORY */
 
-    ret = ClientSetPrivateKey(privKeyName, userEcc, heap);
+    ret = ClientSetPrivateKey(privKeyName, userEcc, heap, NULL);
     if (ret != 0) {
         err_sys("Error setting private key");
     }
