@@ -1809,7 +1809,7 @@ static char* LoadSshKey(const char* path)
     long length;
     const char* gretelKey = samplePublicKeyRsaBuffer;
     const char* hanselKey;
-    long gretelLen;
+    long gretelLen = (long)strlen(gretelKey);
 
     /* Find where hansel's key starts (it's after gretel's key) */
     hanselKey = strstr(gretelKey + 1, "ssh-rsa");
