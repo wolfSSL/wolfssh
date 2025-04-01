@@ -22,16 +22,19 @@
 #define WOLFSSH_COMMON_H
 int ClientLoadCA(WOLFSSH_CTX* ctx, const char* caCert);
 int ClientUsePubKey(const char* pubKeyName, int userEcc, void* heap);
-int ClientSetPrivateKey(const char* privKeyName, int userEcc, void* heap);
+int ClientSetPrivateKey(const char* privKeyName, int userEcc,
+        void* heap, const char* tpmKeyAuth);
 int ClientUseCert(const char* certName, void* heap);
 int ClientSetEcho(int type);
 int ClientUserAuth(byte authType,
-                      WS_UserAuthData* authData,
-                      void* ctx);
+        WS_UserAuthData* authData, void* ctx);
 int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx);
 void ClientIPOverride(int flag);
 void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
         void* heap);
+#ifdef WOLFSSH_TPM
+int ClientSetTpm(WOLFSSH* ssh);
+#endif
 
 #endif /* WOLFSSH_COMMON_H */
 

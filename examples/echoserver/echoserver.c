@@ -43,6 +43,7 @@
 #include <wolfssh/agent.h>
 #include <wolfssh/test.h>
 #include <wolfssl/wolfcrypt/ecc.h>
+#include <wolfssl/wolfcrypt/logging.h>
 
 #include "examples/echoserver/echoserver.h"
 
@@ -1783,21 +1784,24 @@ static const char samplePublicKeyEccBuffer[] =
 #endif
 
 #ifndef WOLFSSH_NO_RSA
-static const char samplePublicKeyRsaBuffer[] =
-    "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC9P3ZFowOsONXHD5MwWiCciXytBRZGho"
-    "MNiisWSgUs5HdHcACuHYPi2W6Z1PBFmBWT9odOrGRjoZXJfDDoPi+j8SSfDGsc/hsCmc3G"
-    "p2yEhUZUEkDhtOXyqjns1ickC9Gh4u80aSVtwHRnJZh9xPhSq5tLOhId4eP61s+a5pwjTj"
-    "nEhBaIPUJO2C/M0pFnnbZxKgJlX7t1Doy7h5eXxviymOIvaCZKU+x5OopfzM/wFkey0EPW"
-    "NmzI5y/+pzU5afsdeEWdiQDIQc80H6Pz8fsoFPvYSG+s4/wz0duu7yeeV1Ypoho65Zr+pE"
-    "nIf7dO0B8EblgWt+ud+JI8wrAhfE4x hansel\n"
-    "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCqDwRVTRVk/wjPhoo66+Mztrc31KsxDZ"
-    "+kAV0139PHQ+wsueNpba6jNn5o6mUTEOrxrz0LMsDJOBM7CmG0983kF4gRIihECpQ0rcjO"
-    "P6BSfbVTE9mfIK5IsUiZGd8SoE9kSV2pJ2FvZeBQENoAxEFk0zZL9tchPS+OCUGbK4SDjz"
-    "uNZl/30Mczs73N3MBzi6J1oPo7sFlqzB6ecBjK2Kpjus4Y1rYFphJnUxtKvB0s+hoaadru"
-    "biE57dK6BrH5iZwVLTQKux31uCJLPhiktI3iLbdlGZEctJkTasfVSsUizwVIyRjhVKmbdI"
-    "RGwkU38D043AR1h0mUoGCPIKuqcFMf gretel\n";
-#endif
-
+#ifdef WOLFSSH_TPM
+    static const char* sampleTpmPublicKeyRsaBuffer = "";
+#else
+    static const char* samplePublicKeyRsaBuffer =
+        "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCqDwRVTRVk/wjPhoo66+Mztrc31KsxDZ"
+        "+kAV0139PHQ+wsueNpba6jNn5o6mUTEOrxrz0LMsDJOBM7CmG0983kF4gRIihECpQ0rcjO"
+        "P6BSfbVTE9mfIK5IsUiZGd8SoE9kSV2pJ2FvZeBQENoAxEFk0zZL9tchPS+OCUGbK4SDjz"
+        "uNZl/30Mczs73N3MBzi6J1oPo7sFlqzB6ecBjK2Kpjus4Y1rYFphJnUxtKvB0s+hoaadru"
+        "biE57dK6BrH5iZwVLTQKux31uCJLPhiktI3iLbdlGZEctJkTasfVSsUizwVIyRjhVKmbdI"
+        "RGwkU38D043AR1h0mUoGCPIKuqcFMf gretel\n"
+        "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC9P3ZFowOsONXHD5MwWiCciXytBRZGho"
+        "MNiisWSgUs5HdHcACuHYPi2W6Z1PBFmBWT9odOrGRjoZXJfDDoPi+j8SSfDGsc/hsCmc3G"
+        "p2yEhUZUEkDhtOXyqjns1ickC9Gh4u80aSVtwHRnJZh9xPhSq5tLOhId4eP61s+a5pwjTj"
+        "nEhBaIPUJO2C/M0pFnnbZxKgJlX7t1Doy7h5eXxviymOIvaCZKU+x5OopfzM/wFkey0EPW"
+        "NmzI5y/+pzU5afsdeEWdiQDIQc80H6Pz8fsoFPvYSG+s4/wz0duu7yeeV1Ypoho65Zr+pE"
+        "nIf7dO0B8EblgWt+ud+JI8wrAhfE4x hansel\n";
+#endif /* WOLFSSH_TPM */
+#endif /* WOLFSSH_NO_RSA */
 
 #ifdef WOLFSSH_ALLOW_USERAUTH_NONE
 
@@ -2094,6 +2098,46 @@ static int LoadPubKeyList(StrList* strList, int format, PwMapList* mapList)
 }
 #endif
 
+#ifdef WOLFSSH_TPM
+static char* LoadTpmSshKey(const char* keyFile)
+{
+    FILE* file;
+    char* buffer = NULL;
+    char* ret = NULL;
+    long length;
+
+    file = fopen(keyFile, "rb");
+    if (!file) {
+        fprintf(stderr,
+            "Failed to open TPM key file: %s\n", keyFile);
+        return NULL;
+    }
+
+    fseek(file, 0, SEEK_END);
+    length = ftell(file);
+    fseek(file, 0, SEEK_SET);
+
+    buffer = (char*)WMALLOC(length + 8 + 1, NULL, DYNTYPE_BUFFER);
+    if (buffer) {
+        if (fread(buffer, 1, length, file) == (size_t)length) {
+            while (length > 0 && (buffer[length-1] == '\n' ||
+                                buffer[length-1] == '\r')) {
+                length--;
+            }
+            WMEMCPY(buffer + length, " hansel\n", 8);
+            buffer[length + 8] = '\0';
+            ret = buffer;
+        }
+        else {
+            WFREE(buffer, NULL, DYNTYPE_BUFFER);
+        }
+    }
+
+    fclose(file);
+    return ret;
+}
+#endif
+
 static int wsUserAuthResult(byte res,
                       WS_UserAuthData* authData,
                       void* ctx)
@@ -2357,6 +2401,7 @@ static void ShowUsage(void)
            "               (user assumed in comment)\n");
     printf(" -I <name>:<file>\n"
            "               load in a SSH public key to accept from peer\n");
+    printf(" -s <file>     load in a TPM public key file to replace default hansel key\n");
     printf(" -J <name>:<file>\n"
            "               load in an X.509 PEM cert to accept from peer\n");
     printf(" -K <name>:<file>\n"
@@ -2419,6 +2464,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     const char* macList = NULL;
     const char* cipherList = NULL;
     ES_HEAP_HINT* heap = NULL;
+    #ifdef WOLFSSH_TPM
+        static char* tpmKeyPath = NULL;
+    #endif
     int multipleConnections = 1;
     int userEcc = 0;
     int peerEcc = 0;
@@ -2441,7 +2489,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     kbAuthData.promptCount = 0;
 
     if (argc > 0) {
-        const char* optlist = "?1a:d:efEp:R:Ni:j:i:I:J:K:P:k:b:x:m:c:";
+        const char* optlist = "?1a:d:efEp:R:Ni:j:i:I:J:K:P:k:b:x:m:c:s:";
         myoptind = 0;
         while ((ch = mygetopt(argc, argv, optlist)) != -1) {
             switch (ch) {
@@ -2545,6 +2593,12 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                     cipherList = myoptarg;
                     break;
 
+                case 's':
+                    #ifdef WOLFSSH_TPM
+                        tpmKeyPath = myoptarg;
+                    #endif
+                    break;
+
                 default:
                     ShowUsage();
                     serverArgs->return_code = MY_EX_USAGE;
@@ -2576,6 +2630,23 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     if (wolfSSH_Init() != WS_SUCCESS) {
         ES_ERROR("Couldn't initialize wolfSSH.\n");
     }
+
+    /* Load custom TPM key if specified */
+    #ifdef WOLFSSH_TPM
+    if (tpmKeyPath != NULL) {
+        const char* newBuffer = LoadTpmSshKey(tpmKeyPath);
+        if (newBuffer != NULL) {
+            sampleTpmPublicKeyRsaBuffer = newBuffer;
+        }
+        else {
+            ES_ERROR("Failed to load TPM key from %s\n", tpmKeyPath);
+        }
+        printf("New sampleTpmPublicKeyRsaBuffer:\n%s\n", sampleTpmPublicKeyRsaBuffer);
+    }
+    else {
+        printf("No TPM key loaded\n");
+    }
+    #endif
 
     #ifdef WOLFSSH_STATIC_MEMORY
     {
@@ -2791,7 +2862,11 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         }
         else {
         #ifndef WOLFSSH_NO_RSA
-            bufName = samplePublicKeyRsaBuffer;
+            #ifdef WOLFSSH_TPM
+                bufName = sampleTpmPublicKeyRsaBuffer;
+            #else
+                bufName = samplePublicKeyRsaBuffer;
+            #endif
         #endif
         }
         if (bufName != NULL) {
@@ -2987,8 +3062,6 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
 #endif /* NO_WOLFSSH_SERVER */
 
-
-void wolfSSL_Debugging_ON(void);
 
 int wolfSSH_Echoserver(int argc, char** argv)
 {
