@@ -1,0 +1,143 @@
+name: TPM SSH Test
+
+on:
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  test-tpm-ssh:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        path: wolfssh
+
+    # Clone dependencies
+    - name: Clone wolfSSL
+      uses: actions/checkout@v4
+      with:
+        repository: wolfSSL/wolfssl
+        path: wolfssl
+
+    - name: Clone wolfTPM
+      uses: actions/checkout@v4
+      with:
+        repository: wolfSSL/wolftpm
+        path: wolftpm
+
+    # Install dependencies
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libtool automake autoconf
+        sudo apt-get install -y build-essential git autoconf-archive \
+            libcmocka-dev libssl-dev uthash-dev libglib2.0-dev \
+            tpm2-tools openssh-client
+
+    # Clone, build, and start TPM Simulator
+    - name: Clone and Build TPM Simulator
+      run: |
+        git clone https://github.com/kgoldman/ibmswtpm2
+        cd ibmswtpm2/src
+        make
+        ./tpm_server &
+        sleep 2
+        cd ../..
+
+    # Build and install wolfSSL
+    - name: Build wolfSSL
+      run: |
+        cd wolfssl
+        ./autogen.sh
+        ./configure --enable-wolftpm --enable-wolfssh
+        make
+        sudo make install
+        sudo ldconfig
+        cd ..
+
+    # Build and install wolfTPM
+    - name: Build wolfTPM
+      run: |
+        cd wolftpm
+        ./autogen.sh
+        ./configure --enable-swtpm
+        make
+        sudo make install
+        sudo ldconfig
+        cd ..
+
+    # Build wolfSSH
+    - name: Build wolfSSH
+      run: |
+        cd wolfssh
+        ./autogen.sh
+        ./configure --enable-tpm
+        make
+        sudo make install
+        sudo ldconfig
+        cd ..
+
+    # Test TPM SSH Default Password
+    - name: Test TPM SSH Default Password
+      run: |
+        # Generate key with default password
+        cd wolftpm
+        ./examples/keygen/keygen keyblob1.bin -rsa -t -pem -eh
+        cp key.pem key1.pem  # Save the key for first test
+
+        # Convert key to SSH format
+        ssh-keygen -f key1.pem -i -m PKCS8 > ../wolfssh/key1.ssh
+        cd ..
+
+        # Start echoserver and wait for it to be ready
+        cd wolfssh
+        ./examples/echoserver/echoserver -1 -s key1.ssh &
+        echo "Echoserver started with PID: $!"
+        sleep 2
+        cd ..
+
+        # Test client connection with default password
+        cd wolfssh
+        ./examples/client/client -i ../wolftpm/keyblob1.bin -u hansel -K ThisIsMyKeyAuth
+        cd ..
+
+    # Test the TPM SSH Custom Password
+    - name: Test TPM SSH Custom Password
+      run: |
+        # Test with custom password
+        cd wolftpm
+        ./examples/keygen/keygen keyblob2.bin -rsa -t -pem -eh -auth=custompassword
+        cp key.pem key2.pem  # Save the key for second test
+
+        # Convert key to SSH format
+        ssh-keygen -f key2.pem -i -m PKCS8 > ../wolfssh/key2.ssh
+        cd ..
+
+        # Start echoserver and wait for it to be ready
+        cd wolfssh
+        ./examples/echoserver/echoserver -1 -s key2.ssh &
+        echo "Echoserver started with PID: $!"
+        sleep 2
+        cd ..
+
+        # Test with custom password
+        cd wolfssh
+        ./examples/client/client -i ../wolftpm/keyblob2.bin -u hansel -K custompassword
+        cd ..
+
+    # Archive artifacts for debugging
+    - name: Archive test artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-artifacts
+        path: |
+          wolftpm/keyblob1.bin
+          wolftpm/keyblob2.bin
+          wolftpm/key1.pem
+          wolftpm/key2.pem
+          wolfssh/key1.ssh
+          wolfssh/key2.ssh

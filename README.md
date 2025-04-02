@@ -34,12 +34,13 @@ Additional build options for wolfSSL are located in
 [chapter two](https://www.wolfssl.com/docs/wolfssl-manual/ch2/).
 of the wolfSSH manual.
 
+
 building
 --------
 
 From the wolfSSH source directory run:
 
-    $ ./autogen.sh
+    $ ./autogen.sh (if cloned from GitHub)
     $ ./configure --with-wolfssl=[/usr/local]
     $ make
     $ make check
@@ -528,6 +529,64 @@ fred-cert.der would be:
 
     $ ./examples/client/client -u fred -J ./keys/fred-cert.der -i ./keys/fred-key.der
 
+TPM PUBLIC KEY AUTHENTICATION
+=============================
+
+When using TPM for client side public key authentication wolfSSH has dependencies
+on wolfCrypt and wolfTPM. Youll also need to have a tpm simulator
+[wolfTPM](https://www.wolfssl.com/products/wolftpm/)
+[wolfSSL](https://www.wolfssl.com/products/wolfssl/)
+You'll need to build and configure wolfTPM, wolfSSL, and wolfSSH like so:
+
+    $ cd <wolfSSL, wolfTPM, wolfSSH>
+    $ ./autogen.sh (if cloned from GitHub)
+    $ <Configuration>
+    $ make
+    $ make check
+
+    <Configuration>
+    wolfSSL
+        $ ./configure --enable-wolftpm --enable-wolfssh
+    wolfTPM
+        $ ./configure --enable-swtpm
+    wolfSSH
+        $ ./configure --enable-tpm
+
+For testing TPM with private rsa key you'll need to run the server from a TPM
+simulator like `ibmswtpm2`. This can be done as followed:
+
+    $ cd src
+    $ ./tpm_server
+
+Before starting the echoserver you need to run the keygen for keyblob
+using the endorsment key in wolfTPM with the following commands:
+Default password to `ThisIsMyKeyAuth`:
+
+    $ ./examples/keygen/keygen keyblob.bin -rsa -t -pem -eh
+
+Custom password:
+
+    $ ./examples/keygen/keygen keyblob.bin -rsa -t -pem -eh -auth=<custompassword>
+
+This will produce a key.pem TPM public key which needs to be converted the to
+the ssh-rsa BASE64 username format using this command:
+
+    $ ssh-keygen -f key.pem -i -m PKCS8 > ../wolfssh/key.ssh
+
+The directory `examples` contains an echoserver that any client should
+be able to connect to. From wolfSSH open two terminal instances and run the
+server with the key.ssh file you created in the previous step:
+
+    $ ./examples/echoserver/echoserver -s key.ssh
+
+From another terminal run the client with the keyblob. Using primary endorsement key
+If you used the default password for keygen you must specify the password:
+
+    $ ./examples/client/client -i ../wolfTPM/keyblob.bin -u hansel -K ThisIsMyKeyAuth
+
+If you used a custom password for keygen you must specify the password you used:
+
+    $ ./examples/client/client -i ../wolfTPM/keyblob.bin -u hansel -K <custompassword>
 
 WOLFSSH APPLICATIONS
 ====================
