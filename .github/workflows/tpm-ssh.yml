@@ -85,22 +85,23 @@ jobs:
       run: |
         # Generate key with default password
         cd wolftpm
-        ./examples/keygen/keygen keyblob.bin -rsa -t -pem -eh
+        ./examples/keygen/keygen keyblob1.bin -rsa -t -pem -eh
+        cp key.pem key1.pem  # Save the key for first test
 
         # Convert key to SSH format
-        ssh-keygen -f key.pem -i -m PKCS8 > ../wolfssh/key.ssh
+        ssh-keygen -f key1.pem -i -m PKCS8 > ../wolfssh/key1.ssh
         cd ..
 
         # Start echoserver and wait for it to be ready
         cd wolfssh
-        ./examples/echoserver/echoserver -1 -s key.ssh &
+        ./examples/echoserver/echoserver -1 -s key1.ssh &
         echo "Echoserver started with PID: $!"
         sleep 2
         cd ..
 
         # Test client connection with default password
         cd wolfssh
-        ./examples/client/client -i ../wolftpm/keyblob.bin -u hansel -K ThisIsMyKeyAuth
+        ./examples/client/client -i ../wolftpm/keyblob1.bin -u hansel -K ThisIsMyKeyAuth
         cd ..
 
     # Test the TPM SSH Custom Password
@@ -109,14 +110,15 @@ jobs:
         # Test with custom password
         cd wolftpm
         ./examples/keygen/keygen keyblob2.bin -rsa -t -pem -eh -auth=custompassword
+        cp key.pem key2.pem  # Save the key for second test
 
         # Convert key to SSH format
-        ssh-keygen -f key.pem -i -m PKCS8 > ../wolfssh/key.ssh
+        ssh-keygen -f key2.pem -i -m PKCS8 > ../wolfssh/key2.ssh
         cd ..
 
         # Start echoserver and wait for it to be ready
         cd wolfssh
-        ./examples/echoserver/echoserver -1 -s key.ssh &
+        ./examples/echoserver/echoserver -1 -s key2.ssh &
         echo "Echoserver started with PID: $!"
         sleep 2
         cd ..
@@ -126,10 +128,6 @@ jobs:
         ./examples/client/client -i ../wolftpm/keyblob2.bin -u hansel -K custompassword
         cd ..
 
-        # Cleanup
-        pkill -f tpm_server
-        sleep 2
-
     # Archive artifacts for debugging
     - name: Archive test artifacts
       if: always()
@@ -137,7 +135,9 @@ jobs:
       with:
         name: test-artifacts
         path: |
-          wolftpm/keyblob.bin
+          wolftpm/keyblob1.bin
           wolftpm/keyblob2.bin
-          wolftpm/key.pem
-          wolfssh/key.ssh
+          wolftpm/key1.pem
+          wolftpm/key2.pem
+          wolfssh/key1.ssh
+          wolfssh/key2.ssh

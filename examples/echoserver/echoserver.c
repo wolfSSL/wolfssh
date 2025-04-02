@@ -41,6 +41,7 @@
 #include <wolfssh/internal.h>
 #include <wolfssh/wolfsftp.h>
 #include <wolfssh/agent.h>
+#include <wolfssh/port.h>
 #include <wolfssh/test.h>
 #include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfssl/wolfcrypt/logging.h>
@@ -2101,25 +2102,24 @@ static int LoadPubKeyList(StrList* strList, int format, PwMapList* mapList)
 #ifdef WOLFSSH_TPM
 static char* LoadTpmSshKey(const char* keyFile)
 {
-    FILE* file;
+    WFILE* file = NULL;
     char* buffer = NULL;
     char* ret = NULL;
     long length;
 
-    file = fopen(keyFile, "rb");
-    if (!file) {
+    if (WFOPEN(NULL, &file, keyFile, "rb") != 0) {
         fprintf(stderr,
             "Failed to open TPM key file: %s\n", keyFile);
         return NULL;
     }
 
-    fseek(file, 0, SEEK_END);
-    length = ftell(file);
-    fseek(file, 0, SEEK_SET);
+    WFSEEK(NULL, file, 0, SEEK_END);
+    length = WFTELL(NULL, file);
+    WFSEEK(NULL, file, 0, SEEK_SET);
 
     buffer = (char*)WMALLOC(length + 8 + 1, NULL, DYNTYPE_BUFFER);
     if (buffer) {
-        if (fread(buffer, 1, length, file) == (size_t)length) {
+        if (WFREAD(NULL, buffer, 1, length, file) == (size_t)length) {
             while (length > 0 && (buffer[length-1] == '\n' ||
                                 buffer[length-1] == '\r')) {
                 length--;
@@ -2133,7 +2133,7 @@ static char* LoadTpmSshKey(const char* keyFile)
         }
     }
 
-    fclose(file);
+    WFCLOSE(NULL, file);
     return ret;
 }
 #endif
