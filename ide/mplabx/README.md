@@ -1,48 +1,54 @@
-This is example code for adding a wolfSSH echoserver to a MPLABX project.
+# wolfSSH MPLABX
 
-For SAMV71:
+This is example project to create a wolfSSH library and example code for adding
+a wolfSSH echoserver to a MPLABX project.
 
-1) Import the .mc3 settings. Create a new project for SAMV71, click on CM for content manager. Click "Load Manifest" and select the ide/mplabx/mcc-manifest-samv71.yml file and then click apply.
-2) Open MCC then click "Import" and import ide/mplabx/wolfssh-sftp-server-samv71.mc3 and then click "Generate"
-3) Adjust the "Preprocessor macros" to include WOLFSSH_IGNORE_FILE_WARN and WOLFSSL_USER_SETTINGS
-4) Create a user_sttings.h file in config/sam_v71_xult_freertos that includes config.h i.e.
+Tested on a ATSAMV71Q21B with MPLABX version 6.20.
 
-user_settings.h
-```
-  1 #ifndef USER_SETTINGS_H
-  2 #define USER_SETTINGS_H
-  3 #include "config.h"
-  4 #endif
-```
+### Building wolfSSH library
 
-5) Remove the generated app.c from Source Files
-6) Download wolfssh into src/third_party/wolfssh, for example:
+The library project is located at ide/mplabx/wolfssh.X
+
+- First open wolfssh.X with MPLABX IDE then click on "CM" content manager and
+import the ide/mplabx/wolfssh.X/mcc-manifest-generated-success.yml file.
+- Click apply.
+- Next click "MCC" and "generate".
+- To build from the command line, do the following after the XC32 toolchain has
+been installed.
 
 ```
-cd src/third_party
-git clone git@github.com:wolfssl/wolfssh
+cd ide/mplabx/wolfssh.X
+make
 ```
 
-7) Right click on the project and add existing item. Select src/third_party/wolfssh/ide/mplabx/wolfssh.c
-8) Right click on the project and add existing folder. Select src/third_party/wolfssh/src
-9) Increase the heap size to 200,000 by right clicking on the project, selecting "Properties"->"x32-ld"
-10) In "Header Files"/config/sam_v71_xult_freertos/configuration.h alter the configuration to support wolfSSH
+- To build using the IDE open the project ide/mplabx/wolfssh.X and click build.
 
-```
-// wolfSSH
-#define WOLFSSL_WOLFSSH
-#ifndef NO_FILESYSTEM
-    #define WOLFSSH_SFTP
-#endif
-#define WOLFSSH_NO_HMAC_SHA2_512
-#define DEFAULT_WINDOW_SZ 16384
-```
 
-If present remove NO_FILESYSTEM and NO_SIG_WRAPPER. Add NO_WOLFSSL_DIR.
+This will produce a wolfssh.X.a library in the directory
+ide/mplabx/wolfssh.X/dist/default/production/wolfssh.X.a
 
+The application and wolfSSL must be built with the same user_settings.h as the
+wolfSSH library was built with! Differences in macro's defined for
+configuration will cause undefined behavior and potential crashes.
+
+### Building an example app
+
+1) Adjust the "Preprocessor macros" to include WOLFSSL_USER_SETTINGS and add an
+ include path to ide/mplabx/user_settings.h.
+2) Remove the generated app.c from Source File
+3) Link to the wolfssh.X.a library. Properties->Libraries->Add Library/Object
+ File...
+4) Right click on the project and add existing item. Select ide/mplabx/wolfssh.c
+5) Increase the heap size to 200,000 by right clicking on the project, selecting
+ "Properties"->"x32-ld"
 
 Notes:
 
-For the current project this was tested with the heap and stack set to 200,000 each. This was not trimed to see the minumum possible heap and stack usage yet. The TX buffer size used was set to 1024. The example was developed with wolfssh version 1.4.20. 
+For the current project this was tested with the heap and stack set to 200,000
+ each. This was not trimed to see the minumum possible heap and stack usage yet.
+ The TX buffer size used was set to 1024. The example was developed with wolfssh
+ version 1.4.20.
 
-After building and flashing the board a wolfSSH echoserver will be open on port 22 which can be connected to by using the example client bundled with wolfSSH. ```./examples/client/client -u jill -P upthehill -h 192.168.1.120 -p 22```
+After building and flashing the board a wolfSSH echoserver will be open on port
+ 22 which can be connected to by using the example client bundled with wolfSSH.
+ ```./examples/client/client -u jill -P upthehill -h 192.168.1.120 -p 22```

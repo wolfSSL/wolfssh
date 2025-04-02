@@ -21,7 +21,7 @@
 
 /*
  * The port module wraps standard C library functions with macros to
- * cover portablility issues when building in environments that rename
+ * cover portability issues when building in environments that rename
  * those functions. This module also provides local versions of some
  * standard C library functions that are missing on some platforms.
  */

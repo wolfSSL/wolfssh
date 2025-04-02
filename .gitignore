@@ -135,3 +135,6 @@ DLL Release
 /ide/Espressif/**/dependencies.lock
 
 
+/ide/mplabx/wolfssh.X/dist/
+/ide/mplabx/wolfssh.X/.generated_files
+/ide/mplabx/wolfssh.X/build
