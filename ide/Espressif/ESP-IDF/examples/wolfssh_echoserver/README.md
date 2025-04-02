@@ -11,13 +11,15 @@ To connect:
 ssh -p 22222 jack@192.168.1.32
 ```
 
+The default password for `jack` is 'fetchapail`.
+
 ### Prerequisites
 
 It is assumed the [ESP-IDF environment](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/) has been installed.
 
 ### Files Included
 
-- [main.c](./main/main.c) with a simple call to an Espressif library (`ESP_LOGI`) and a call to a wolfSSL library (`esp_ShowExtendedSystemInfo`) . 
+- [main.c](./main/main.c) with a simple call to an Espressif library (`ESP_LOGI`) and a call to a wolfSSL library (`esp_ShowExtendedSystemInfo`) .
 
 - See [components/wolfssl/include](./components/wolfssl/include/user_settings.h) directory to edit the wolfSSL `user_settings.h`.
 
