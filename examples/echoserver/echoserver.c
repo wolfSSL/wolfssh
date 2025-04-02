@@ -2100,32 +2100,35 @@ static int LoadPubKeyList(StrList* strList, int format, PwMapList* mapList)
 #endif
 
 #ifdef WOLFSSH_TPM
-static char* LoadTpmSshKey(const char* keyFile)
+static char* LoadTpmSshKey(const char* keyFile, const char* username)
 {
     WFILE* file = NULL;
     char* buffer = NULL;
     char* ret = NULL;
     long length;
+    size_t usernameLen;
 
     if (WFOPEN(NULL, &file, keyFile, "rb") != 0) {
         fprintf(stderr,
             "Failed to open TPM key file: %s\n", keyFile);
         return NULL;
     }
-
-    WFSEEK(NULL, file, 0, SEEK_END);
+    WFSEEK(NULL, file, 0, WSEEK_END);
     length = WFTELL(NULL, file);
-    WFSEEK(NULL, file, 0, SEEK_SET);
+    WREWIND(NULL, file);
 
-    buffer = (char*)WMALLOC(length + 8 + 1, NULL, DYNTYPE_BUFFER);
+    usernameLen = WSTRLEN(username);
+    buffer = (char*)WMALLOC(length + usernameLen + 2, NULL, DYNTYPE_BUFFER);
     if (buffer) {
         if (WFREAD(NULL, buffer, 1, length, file) == (size_t)length) {
             while (length > 0 && (buffer[length-1] == '\n' ||
                                 buffer[length-1] == '\r')) {
                 length--;
             }
-            WMEMCPY(buffer + length, " hansel\n", 8);
-            buffer[length + 8] = '\0';
+            buffer[length] = ' ';
+            WMEMCPY(buffer + length + 1, username, usernameLen);
+            buffer[length + 1 + usernameLen] = '\n';
+            buffer[length + 2 + usernameLen] = '\0';
             ret = buffer;
         }
         else {
@@ -2634,7 +2637,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     /* Load custom TPM key if specified */
     #ifdef WOLFSSH_TPM
     if (tpmKeyPath != NULL) {
-        const char* newBuffer = LoadTpmSshKey(tpmKeyPath);
+        const char* newBuffer = LoadTpmSshKey(tpmKeyPath, "hansel");
         if (newBuffer != NULL) {
             sampleTpmPublicKeyRsaBuffer = newBuffer;
         }
