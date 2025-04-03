@@ -401,7 +401,7 @@ extern "C" {
 
     #define FLUSH_STD(a)
 
-    WOLFSSH_LOCAL int wfopen(WFILE* f, const char* filenmae,
+    WOLFSSH_LOCAL int wfopen(WFILE* f, const char* filename,
             SYS_FS_FILE_OPEN_ATTRIBUTES mode);
     WOLFSSH_LOCAL int wChmod(const char *path, int mode);
 
@@ -419,7 +419,7 @@ extern "C" {
     #undef  WFGETS
     #define WFGETS(b,s,f)       SYS_FS_FileStringGet((f), (b), (s))
     #undef  WFPUTS
-    #define WFPUTS(b,s)         SYS_FS_FileStringPut((f), (b), (s))
+    #define WFPUTS(b,f)         SYS_FS_FileStringPut((f), (b))
     #define WUTIMES(a,b)        (0) /* Not ported yet */
     #define WSETTIME(fs,f,a,m) (0)
     #define WFSETTIME(fs,fd,a,m) (0)
