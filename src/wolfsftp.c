@@ -4929,7 +4929,6 @@ int SFTP_GetAttributesStat(WS_SFTP_FILEATRB* atr, WSTAT_T* stats)
     /* file size */
     atr->flags |= WOLFSSH_FILEATRB_SIZE;
     atr->sz[0] = (word32)stats->fsize;
-    WLOG(WS_LOG_SFTP, "Setting attrib file size to %u", (unsigned int)stats->fsize);
     atr->sz[1] = (word32)(0);
 
     /* file permissions */
@@ -4949,16 +4948,8 @@ int SFTP_GetAttributesStat(WS_SFTP_FILEATRB* atr, WSTAT_T* stats)
         atr->per |= 0x1ED; /* octal 755 */
     }
 
-    /* volume label */
-    //stats.fattrib == SYS_FS_ATTR_VOL
-
     /* last modified time */
     atr->mtime = stats->ftime;
-
-    WLOG(WS_LOG_SFTP, "Setting attrib time to %u", (unsigned int)stats->ftime);
-
-    /* last modified date */
-    //stat.fdate
 
     return WS_SUCCESS;
 }
