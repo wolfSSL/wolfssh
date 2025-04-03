@@ -1579,6 +1579,12 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
 
     wolfSSH_free(threadCtx->ssh);
 
+    /* For socket error, it could have been the previous connection just ended
+     * early. Not really an error, no need to report error and quit. */
+    if (error == WS_SOCKET_ERROR_E) {
+        ret = 0;
+    }
+
     if (ret != 0) {
         fprintf(stderr, "Error [%d] \"%s\" with handling connection.\n", ret,
                 wolfSSH_ErrorToName(error));
