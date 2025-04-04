@@ -9631,9 +9631,6 @@ static INLINE int Decrypt(WOLFSSH* ssh, byte* plain, const byte* input,
 
     ssh->rxCount += sz;
 
-    if (ret == WS_SUCCESS)
-        ret = HighwaterCheck(ssh, WOLFSSH_HWSIDE_RECEIVE);
-
     return ret;
 }
 
@@ -9902,9 +9899,6 @@ static INLINE int DecryptAead(WOLFSSH* ssh, byte* plain,
     AeadIncrementExpIv(ssh->peerKeys.iv);
     ssh->rxCount += sz;
 
-    if (ret == WS_SUCCESS)
-        ret = HighwaterCheck(ssh, WOLFSSH_HWSIDE_RECEIVE);
-
     return ret;
 }
 #endif /* WOLFSSH_NO_AEAD */
@@ -10033,6 +10027,15 @@ int DoReceive(WOLFSSH* ssh)
                     ret == WS_CHANNEL_CLOSED || ret == WS_WANT_WRITE ||
                     ret == WS_REKEYING || ret == WS_WANT_READ)) {
                 ret = WS_FATAL_ERROR;
+            }
+
+            if (ret == WS_SUCCESS) {
+                ret = HighwaterCheck(ssh, WOLFSSH_HWSIDE_RECEIVE);
+                if (ret != WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, "PR: HighwaterCheck fail");
+                    ssh->error = ret;
+                    return WS_FATAL_ERROR;
+                }
             }
             break;
 
