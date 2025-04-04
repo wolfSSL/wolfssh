@@ -47,6 +47,23 @@ Flags:
 
 #if !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM) && \
     !defined(WOLFSSH_ZEPHYR)
+#if defined(MICROCHIP_MPLAB_HARMONY)
+int wfopen(WFILE* f, const char* filename, SYS_FS_FILE_OPEN_ATTRIBUTES mode)
+{
+    if (f != NULL) {
+        *f = SYS_FS_FileOpen(filename, mode);
+        if (*f == WBADFILE) {
+            WLOG(WS_LOG_SFTP, "Failed to open file %s", filename);
+            return 1;
+        }
+        else {
+            WLOG(WS_LOG_SFTP, "Opened file %s", filename);
+            return 0;
+        }
+    }
+    return 1;
+}
+#else
 int wfopen(WFILE** f, const char* filename, const char* mode)
 {
 #ifdef USE_WINDOWS_API
@@ -89,7 +106,7 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
     return 1;
 #endif
 }
-
+#endif
 
 /* If either pread() or pwrite() are missing, use the local versions. */
 #if (defined(USE_OSE_API) || \
@@ -107,6 +124,32 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
         defined(FREESCALE_MQX) || defined(WOLFSSH_ZEPHYR)
 
         /* This is current inline in the source. */
+
+    #elif defined(MICROCHIP_MPLAB_HARMONY)
+        int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
+                const unsigned int* shortOffset)
+        {
+            int ret;
+
+            ret = (int)WFSEEK(NULL, &fd, shortOffset[0], SYS_FS_SEEK_SET);
+            if (ret != -1) {
+                ret = (int)WFWRITE(NULL, buf, 1, sz, &fd);
+            }
+
+            return ret;
+        }
+
+        int wPread(WFD fd, unsigned char* buf, unsigned int sz,
+                const unsigned int* shortOffset)
+        {
+            int ret;
+
+            ret = (int)WFSEEK(NULL, &fd, shortOffset[0], SYS_FS_SEEK_SET);
+            if (ret != -1)
+                ret = (int)WFREAD(NULL, buf, 1, sz, &fd);
+
+            return ret;
+        }
 
     #elif defined(WOLFSSH_LOCAL_PREAD_PWRITE)
 
@@ -617,6 +660,28 @@ int wPread(WFD fd, unsigned char* buf, unsigned int sz,
 
 #endif
 
+#ifndef NO_FILESYSTEM
+#if defined(MICROCHIP_MPLAB_HARMONY)
+int wChmod(const char *path, int mode)
+{
+    SYS_FS_RESULT ret;
+    SYS_FS_FILE_DIR_ATTR attr = 0;
+
+    /* mode is the octal value i.e 666 is 0x1B6 */
+    if ((mode & 0x180) != 0x180) { /* not octal 6XX read only */
+        attr |= SYS_FS_ATTR_RDO;
+    }
+
+    /* toggle the read only attribute */
+    ret = SYS_FS_FileDirectoryModeSet(path, attr, SYS_FS_ATTR_RDO);
+    if (ret != SYS_FS_RES_SUCCESS) {
+        WLOG(WS_LOG_SFTP, "Failed to set file/dir mode");
+        return -1;
+    }
+    return 0;
+}
+#endif
+#endif /* NO_FILESYSTEM */
 #ifndef WSTRING_USER
 
 char* wstrdup(const char* s1, void* heap, int type)

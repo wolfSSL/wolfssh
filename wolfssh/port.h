@@ -21,7 +21,7 @@
 
 /*
  * The port module wraps standard C library functions with macros to
- * cover portablility issues when building in environments that rename
+ * cover portability issues when building in environments that rename
  * those functions. This module also provides local versions of some
  * standard C library functions that are missing on some platforms.
  */
@@ -391,6 +391,42 @@ extern "C" {
     #define WUTIMES(a,b)        (0) /* Not ported yet */
     #define WCHDIR(fs,b)        z_fs_chdir((b))
 
+#elif defined(MICROCHIP_MPLAB_HARMONY)
+    #include <stdlib.h>
+    #include <stdio.h>
+
+    #include "system/fs/sys_fs.h"
+
+    #define WFFLUSH(s)          SYS_FS_FileSync((s))
+
+    #define WFILE SYS_FS_HANDLE
+
+    #define FLUSH_STD(a)
+
+    WOLFSSH_LOCAL int wfopen(WFILE* f, const char* filename,
+            SYS_FS_FILE_OPEN_ATTRIBUTES mode);
+    WOLFSSH_LOCAL int wChmod(const char *path, int mode);
+
+    #define WFOPEN(fs,f,fn,m)   wfopen(*(f),(fn),(m))
+    #define WFCLOSE(fs,f)       SYS_FS_FileClose(*(f))
+    #define WFREAD(fs,b,s,a,f)  SYS_FS_FileRead(*(f),(b),(s)*(a))
+    #define WFWRITE(fs,b,s,a,f) SYS_FS_FileWrite(*(f),(b),(s)*(a))
+    #define WFSEEK(fs,s,o,w)    SYS_FS_FileSeek(*(s),(o),(w))
+    #define WFTELL(fs,s)        SYS_FS_FileTell(*(s))
+    #define WREWIND(fs,s)       SYS_FS_FileSeek(*(s), 0, SYS_FS_SEEK_SET)
+    #define WSEEK_END           SYS_FS_SEEK_END
+    #define WBADFILE            SYS_FS_HANDLE_INVALID
+    #define WCHMOD(fs,f,m)      wChmod((f),(m))
+    #define WFCHMOD(fs,fd,m)    (0)
+    #undef  WFGETS
+    #define WFGETS(b,s,f)       SYS_FS_FileStringGet((f), (b), (s))
+    #undef  WFPUTS
+    #define WFPUTS(b,f)         SYS_FS_FileStringPut((f), (b))
+    #define WUTIMES(a,b)        (0) /* Not ported yet */
+    #define WSETTIME(fs,f,a,m) (0)
+    #define WFSETTIME(fs,fd,a,m) (0)
+    #define WCHDIR(fs,b)        SYS_FS_DirectryChange((b))
+
 #elif defined(WOLFSSH_USER_FILESYSTEM)
     /* User-defined I/O support */
 #else
@@ -418,7 +454,7 @@ extern "C" {
     #ifdef WOLFSSL_VXWORKS
         #define WUTIMES(f,t)      (WS_SUCCESS)
     #elif defined(USE_WINDOWS_API)
-        #include <sys/utime.h>    
+        #include <sys/utime.h>
     #else
         #define WUTIMES(f,t)      utimes((f),(t))
     #endif
@@ -1323,6 +1359,75 @@ extern "C" {
     #define WOPEN(fs,p,f,m)   wssh_z_open((p),(f))
     int wssh_z_close(WFD fd);
     #define WCLOSE(fs,fd)     wssh_z_close((fd))
+    int wPwrite(WFD, unsigned char*, unsigned int, const unsigned int*);
+    int wPread(WFD, unsigned char*, unsigned int, const unsigned int*);
+    #define WPWRITE(fs,fd,b,s,o) wPwrite((fd),(b),(s),(o))
+    #define WPREAD(fs,fd,b,s,o)  wPread((fd),(b),(s),(o))
+
+#elif defined(MICROCHIP_MPLAB_HARMONY)
+
+    #define WDIR              SYS_FS_HANDLE
+    #define WSTAT_T           SYS_FS_FSTAT
+
+    #define WOPENDIR(fs,h,c,d) wDirOpen((h), (c),(d))
+    #define WCLOSEDIR(fs,d)   SYS_FS_DirClose(*(d))
+    #define WMKDIR(fs,p,m)    SYS_FS_DirectoryMake((p))
+    #define WRMDIR(fs,d)      SYS_FS_FileDirectoryRemove((d))
+    #define WSTAT(fs,p,b)     wStat((p), (b))
+    #define WREMOVE(fs,d)     SYS_FS_FileDirectoryRemove((d))
+    #define WRENAME(fs,o,n)   SYS_FS_FileDirectoryRenameMove((o),(n))
+    #define WS_DELIM          '/'
+
+    static inline int wDirOpen(void* heap, WDIR* dir, const char* path)
+    {
+        *dir = SYS_FS_DirOpen(path);
+        if (*dir == SYS_FS_HANDLE_INVALID) {
+            return -1;
+        }
+        return 0;
+    }
+
+    static inline int wStat(const char* path, WSTAT_T* stat)
+    {
+        int ret;
+        WMEMSET(stat, 0, sizeof(WSTAT_T));
+        ret = SYS_FS_FileStat(path, stat);
+
+        if (ret != SYS_FS_RES_SUCCESS) {
+            WLOG(WS_LOG_SFTP,
+                "Return from SYS_FS_fileStat [%s] = %d, expecting %d",
+                path, ret, SYS_FS_RES_SUCCESS);
+            WLOG(WS_LOG_SFTP, "SYS error reason = %d", SYS_FS_Error());
+            return -1;
+        }
+        else {
+            return 0;
+        }
+        return 0;
+    }
+
+    static inline char *ff_getcwd(char *r, int rSz)
+    {
+        SYS_FS_RESULT ret;
+        ret = SYS_FS_CurrentWorkingDirectoryGet(r, rSz);
+        if (ret != SYS_FS_RES_SUCCESS) {
+            return r;
+        }
+        return r;
+    }
+    #define WGETCWD(fs,r,rSz) ff_getcwd(r,(rSz))
+
+    #define WOLFSSH_O_RDWR    SYS_FS_FILE_OPEN_READ_PLUS
+    #define WOLFSSH_O_RDONLY  SYS_FS_FILE_OPEN_READ
+    #define WOLFSSH_O_WRONLY  SYS_FS_FILE_OPEN_WRITE_PLUS
+    #define WOLFSSH_O_APPEND  SYS_FS_FILE_OPEN_APPEND
+    #define WOLFSSH_O_CREAT   SYS_FS_FILE_OPEN_WRITE_PLUS
+    #define WOLFSSH_O_TRUNC   0
+    #define WOLFSSH_O_EXCL    0
+
+    /* Our "file descriptor" wrapper */
+
+    #define WFD SYS_FS_HANDLE
     int wPwrite(WFD, unsigned char*, unsigned int, const unsigned int*);
     int wPread(WFD, unsigned char*, unsigned int, const unsigned int*);
     #define WPWRITE(fs,fd,b,s,o) wPwrite((fd),(b),(s),(o))

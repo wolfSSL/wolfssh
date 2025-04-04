@@ -11843,12 +11843,13 @@ static int SignHEcdsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
         WMEMCPY(sig + idx, s, sSz);
     }
 
-    #ifdef WOLFSSH_SMALL_STACK
-        if (r)
-            WFREE(r, heap, DYNTYPE_BUFFER);
-        if (s)
-            WFREE(s, heap, DYNTYPE_BUFFER);
-    #endif
+#ifdef WOLFSSH_SMALL_STACK
+    if (r)
+        WFREE(r, heap, DYNTYPE_BUFFER);
+    if (s)
+        WFREE(s, heap, DYNTYPE_BUFFER);
+    WOLFSSH_UNUSED(heap); /* could be unused in error case, resolve warning */
+#endif
 
     WLOG(WS_LOG_DEBUG, "Leaving SignHEcdsa(), ret = %d", ret);
     return ret;
@@ -12348,6 +12349,7 @@ int SendKexDhReply(WOLFSSH* ssh)
     if (sig_ptr)
         WFREE(sig_ptr, heap, DYNTYPE_BUFFER);
 #endif
+    WOLFSSH_UNUSED(heap);
     return ret;
 }
 
@@ -16828,6 +16830,7 @@ int wolfSSH_CleanPath(WOLFSSH* ssh, char* in)
     WMEMCPY(in, path, sz);
     in[sz] = '\0';
     WFREE(path, heap, DYNTYPE_PATH);
+    WOLFSSH_UNUSED(heap);
     return (int)sz;
 }
 #endif /* WOLFSSH_SFTP || WOLFSSH_SCP */
@@ -16898,6 +16901,9 @@ int wolfSSH_oct2dec(WOLFSSH* ssh, byte* oct, word32 octSz)
     return ret;
 }
 
+#ifndef WOLFSSL_MAX_32BIT
+    #define WOLFSSL_MAX_32BIT INT_MAX
+#endif
 
 /* addend1 += addend2 */
 void AddAssign64(word32* addend1, word32 addend2)

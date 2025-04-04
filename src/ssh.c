@@ -2031,7 +2031,11 @@ int wolfSSH_ReadKey_file(const char* name,
         byte** out, word32* outSz, const byte** outType, word32* outTypeSz,
         byte* isPrivate, void* heap)
 {
+
     WFILE* file;
+#ifdef MICROCHIP_MPLAB_HARMONY
+    WFILE f = WBADFILE;
+#endif
     byte* in;
     word32 inSz;
     int format;
@@ -2044,8 +2048,15 @@ int wolfSSH_ReadKey_file(const char* name,
             isPrivate == NULL)
         return WS_BAD_ARGUMENT;
 
+#ifdef MICROCHIP_MPLAB_HARMONY
+    file = &f;
+    ret = WFOPEN(NULL, &file, name, WOLFSSH_O_RDONLY);
+    if (ret != 0 || *file == WBADFILE) return WS_BAD_FILE_E;
+#else
     ret = WFOPEN(NULL, &file, name, "rb");
     if (ret != 0 || file == WBADFILE) return WS_BAD_FILE_E;
+#endif
+
     if (WFSEEK(NULL, file, 0, WSEEK_END) != 0) {
         WFCLOSE(NULL, file);
         return WS_BAD_FILE_E;

@@ -408,7 +408,7 @@ enum NameIdType {
 #define MAX_KEY_EXCHANGE 2
 #define MAX_PUBLIC_KEY 1
 #define MIN_RSA_SIG_SZ 2
-#define MAX_HMAC_SZ WC_SHA512_DIGEST_SIZE
+#define MAX_HMAC_SZ WC_MAX_DIGEST_SIZE
 #define MIN_BLOCK_SZ 8
 #define COOKIE_SZ 16
 #define PAD_LENGTH_SZ 1
