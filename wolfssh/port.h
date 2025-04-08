@@ -267,7 +267,7 @@ extern "C" {
         }
 
         if (*f == 0) {
-            *f = WMALLOC(sizeof(FIL), NULL, 0);
+            *f = (FIL*)WMALLOC(sizeof(FIL), NULL, 0);
         }
 #ifdef WOLFSSH_XILFATFS
         m = FA_CREATE_ALWAYS;
