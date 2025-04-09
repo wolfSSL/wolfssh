@@ -5499,7 +5499,7 @@ int wolfSSH_SFTP_RecvSetSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     byte*  out = NULL;
     word32 outSz = 0;
 
-    char  suc[] = "Set Attirbutes";
+    char  suc[] = "Set Attributes";
     char  ser[] = "Unable to set attributes error";
     char  per[] = "Unable to parse attributes error";
     char* res   = suc;
@@ -5581,7 +5581,7 @@ int wolfSSH_SFTP_RecvFSetSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     byte*  out = NULL;
     word32 outSz = 0;
 
-    char  suc[] = "Set Attirbutes";
+    char  suc[] = "Set Attributes";
     char  ser[] = "Unable to set attributes error";
     char  per[] = "Unable to parse attributes error";
     char* res   = suc;
