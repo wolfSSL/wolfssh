@@ -1362,6 +1362,12 @@ static int sftp_worker(thread_ctx_t* threadCtx)
                 break;
             }
             if (ret != WS_SUCCESS && ret != WS_CHAN_RXD) {
+                if (ret == WS_WANT_WRITE) {
+                    /* recall wolfSSH_worker here because is likely our custom
+                     * highwater callback that returned up a WS_WANT_WRITE */
+                    ret = wolfSSH_worker(ssh, NULL);
+                    continue; /* continue on if our send got a want write */
+                }
                 /* If not successful and no channel data, leave. */
                 break;
             }
@@ -2439,6 +2445,7 @@ static void ShowUsage(void)
            "to use\n");
     printf(" -m <list>     set the comma separated list of mac algos to use\n");
     printf(" -b <num>      test user auth would block\n");
+    printf(" -H            set test highwater callback\n");
 }
 
 
@@ -2463,6 +2470,36 @@ static INLINE void SignalTcpReady(tcp_ready* ready, word16 port)
     WOLFSSL_RETURN_FROM_THREAD(0); \
 } while(0)
 
+
+static byte wantwrite = 0; /*flag to return want write on first highwater call*/
+static int my_highwaterCb(byte dir, void* ctx)
+{
+    int ret = WS_SUCCESS;
+
+    WOLFSSH_UNUSED(dir);
+
+    printf("my_highwaterCb called\n");
+    if (ctx) {
+        WOLFSSH* ssh = (WOLFSSH*)ctx;
+
+        printf("HIGHWATER MARK: (%u) %s", wolfSSH_GetHighwater(ssh),
+             (dir == WOLFSSH_HWSIDE_RECEIVE) ? "receive\n" : "transmit\n");
+        if (dir == WOLFSSH_HWSIDE_RECEIVE) {
+            if (!wantwrite) {
+                ret = WS_WANT_WRITE;
+                wantwrite = 1;
+                printf("Forcing a want write on first highwater callback\n");
+            }
+            else {
+                ret = wolfSSH_TriggerKeyExchange(ssh);
+            }
+        }
+
+    }
+
+    return ret;
+}
+
 THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 {
     func_args* serverArgs = (func_args*)args;
@@ -2479,6 +2516,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     WS_UserAuthData_Keyboard kbAuthData;
     #endif
     WS_SOCKET_T listenFd = WOLFSSH_SOCKET_INVALID;
+    int useCustomHighWaterCb = 0;
     word32 defaultHighwater = EXAMPLE_HIGHWATER_MARK;
     word32 threadCount = 0;
     const char* keyList = NULL;
@@ -2513,7 +2551,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 #endif
 
     if (argc > 0) {
-        const char* optlist = "?1a:d:efEp:R:Ni:j:i:I:J:K:P:k:b:x:m:c:s:";
+        const char* optlist = "?1a:d:efEp:R:Ni:j:i:I:J:K:P:k:b:x:m:c:s:H";
         myoptind = 0;
         while ((ch = mygetopt(argc, argv, optlist)) != -1) {
             switch (ch) {
@@ -2623,6 +2661,10 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                     #ifdef WOLFSSH_TPM
                         tpmKeyPath = myoptarg;
                     #endif
+                    break;
+
+                case 'H':
+                    useCustomHighWaterCb = 1;
                     break;
 
                 default:
@@ -2987,6 +3029,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             WFREE(threadCtx, NULL, 0);
             ES_ERROR("Couldn't allocate SSH data.\n");
         }
+
     #ifdef WOLFSSH_STATIC_MEMORY
         wolfSSH_MemoryConnPrintStats(heap);
     #endif
@@ -2995,8 +3038,20 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
         wolfSSH_SetKeyboardAuthCtx(ssh, &kbAuthData);
     #endif
+
         /* Use the session object for its own highwater callback ctx */
         if (defaultHighwater > 0) {
+            wolfSSH_SetHighwaterCtx(ssh, (void*)ssh);
+            wolfSSH_SetHighwater(ssh, defaultHighwater);
+        }
+
+        if (useCustomHighWaterCb) {
+            if (defaultHighwater == EXAMPLE_HIGHWATER_MARK) {
+                defaultHighwater = 2000; /* lower the highwater mark to hit the
+                                          * callback sooner */
+            }
+            printf("Registering highwater callback that returns want write\n");
+            wolfSSH_SetHighwaterCb(ctx, defaultHighwater, my_highwaterCb);
             wolfSSH_SetHighwaterCtx(ssh, (void*)ssh);
             wolfSSH_SetHighwater(ssh, defaultHighwater);
         }
