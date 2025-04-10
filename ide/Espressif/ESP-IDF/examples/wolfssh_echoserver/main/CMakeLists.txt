@@ -1,6 +1,6 @@
 #  [wolfSSL Project]/main/CMakeLists.txt
 #
-#  Copyright (C) 2014-2024 wolfSSL Inc.
+#  Copyright (C) 2014-2025 wolfSSL Inc.
 #
 #  This file is part of wolfSSH.
 #
@@ -28,28 +28,26 @@ message(STATUS "main cmake found WOLFSSL_COMPONENT_NAME = ${WOLFSSL_COMPONENT_NA
 if(WIN32)
     # Windows-specific configuration here
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWOLFSSL_CMAKE_SYSTEM_NAME_WINDOWS")
-    message("Detected Windows")
+    message(STATUS "Detected Windows")
 endif()
 if(CMAKE_HOST_UNIX)
-    message("Detected UNIX")
-endif()
-if(APPLE)
-    message("Detected APPLE")
+    message(STATUS "Detected UNIX")
 endif()
 if(CMAKE_HOST_UNIX AND (NOT APPLE) AND EXISTS "/proc/sys/fs/binfmt_misc/WSLInterop")
     # Windows-specific configuration here
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWOLFSSL_CMAKE_SYSTEM_NAME_WSL")
-    message("Detected WSL")
+    message(STATUS "Detected WSL")
 endif()
 if(CMAKE_HOST_UNIX AND (NOT APPLE) AND (NOT WIN32))
     # Windows-specific configuration here
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWOLFSSL_CMAKE_SYSTEM_NAME_LINUX")
-    message("Detected Linux")
+    message(STATUS "Detected Linux")
 endif()
 if(APPLE)
-    # Windows-specific configuration here
+    # Apple-specific configuration here
+    message(STATUS "Detected APPLE")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWOLFSSL_CMAKE_SYSTEM_NAME_APPLE")
-    message("Detected Apple")
+    message(STATUS "Detected Apple")
 endif()
 set (git_cmd "git")
 
