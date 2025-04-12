@@ -59,7 +59,7 @@ up to 128kB of data before sending a channel window adjust message. An
 example of setting a window size for new channels would be as follows
 `./configure CPPFLAGS="-DDEFAULT_WINDOW_SZ=16384"`
 
-For 32bit Linux platforms you can add support for files > 2GB by compling
+For 32bit Linux platforms you can add support for files > 2GB by compiling
 with `CFLAGS=-D_FILE_OFFSET_BITS=64`.
 
 examples
@@ -177,7 +177,7 @@ The client tool accepts the following command line options:
     -x             exit after successful connection without doing
                    read/write
     -N             use non-blocking sockets
-    -t             use psuedo terminal
+    -t             use pseudo terminal
     -c <command>   executes remote command and pipe stdin/stdout
     -a             Attempt to use SSH-AGENT
 
@@ -476,7 +476,7 @@ On the client side, you will see the following output:
 
 Server said: Hello, wolfSSH!
 
-If you want to see inter-operability with OpenQauntumSafe's fork of OpenSSH, you
+If you want to see interoperability with OpenQauntumSafe's fork of OpenSSH, you
 can build and execute the fork while the echoserver is running. Download the
 release from here:
 
