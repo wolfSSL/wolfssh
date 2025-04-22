@@ -370,7 +370,9 @@ enum {
     /* UserAuth IDs */
     ID_USERAUTH_PASSWORD,
     ID_USERAUTH_PUBLICKEY,
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     ID_USERAUTH_KEYBOARD,
+#endif
 
     /* Channel Type IDs */
     ID_CHANTYPE_SESSION,
@@ -527,7 +529,9 @@ struct WOLFSSH_CTX {
     WS_CallbackUserAuth userAuthCb;   /* User Authentication Callback */
     WS_CallbackUserAuthTypes userAuthTypesCb; /* Authentication Types Allowed */
     WS_CallbackUserAuthResult userAuthResultCb; /* User Authentication Result */
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     WS_CallbackKeyboardAuthPrompts keyboardAuthCb; /* Keyboard auth prompts */
+#endif
     WS_CallbackHighwater highwaterCb; /* Data Highwater Mark Callback */
     WS_CallbackGlobalReq globalReqCb; /* Global Request Callback */
     WS_CallbackReqSuccess reqSuccessCb; /* Global Request Success Callback */
@@ -825,7 +829,9 @@ struct WOLFSSH {
 
     void* userAuthCtx;
     void* userAuthResultCtx;
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     void* keyboardAuthCtx;
+#endif
     char* userName;
     word32 userNameSz;
     char* password;
@@ -914,7 +920,9 @@ struct WOLFSSH {
     word32 exitStatus;
 #endif
     void* keyingCompletionCtx;
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     WS_UserAuthData_Keyboard kbAuth;
+#endif
 };
 
 
@@ -1052,8 +1060,10 @@ WOLFSSH_LOCAL int SendServiceRequest(WOLFSSH*, byte);
 WOLFSSH_LOCAL int SendServiceAccept(WOLFSSH*, byte);
 WOLFSSH_LOCAL int SendExtInfo(WOLFSSH* ssh);
 WOLFSSH_LOCAL int SendUserAuthRequest(WOLFSSH*, byte, int);
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
 WOLFSSH_LOCAL int SendUserAuthKeyboardResponse(WOLFSSH*);
 WOLFSSH_LOCAL int SendUserAuthKeyboardRequest(WOLFSSH*, WS_UserAuthData*);
+#endif
 WOLFSSH_LOCAL int SendUserAuthSuccess(WOLFSSH*);
 WOLFSSH_LOCAL int SendUserAuthFailure(WOLFSSH*, byte);
 WOLFSSH_LOCAL int SendUserAuthBanner(WOLFSSH*);
@@ -1154,9 +1164,11 @@ enum ServerStates {
     SERVER_KEXINIT_DONE,
     SERVER_USERAUTH_REQUEST_DONE,
     SERVER_USERAUTH_ACCEPT_DONE,
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     SERVER_USERAUTH_ACCEPT_KEYBOARD,
     SERVER_USERAUTH_ACCEPT_KEYBOARD_NEXT,
     SERVER_USERAUTH_ACCEPT_KEYBOARD_DONE,
+#endif
     SERVER_CHANNEL_OPEN_DONE,
     SERVER_DONE
 };

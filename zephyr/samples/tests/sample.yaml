@@ -19,3 +19,9 @@ tests:
     extra_args: CONF_FILE="prj_nofs.conf"
     integration_platforms:
       - qemu_x86
+  sample.lib.wolfssh_kbi_tests:
+    timeout: 200
+    platform_allow: qemu_x86
+    extra_args: CONF_FILE="prj_kbi.conf"
+    integration_platforms:
+      - qemu_x86

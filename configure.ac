@@ -126,6 +126,11 @@ AC_ARG_ENABLE([keygen],
     [AS_HELP_STRING([--enable-keygen],[Enable key generation (default: disabled)])],
     [ENABLED_KEYGEN=$enableval],[ENABLED_KEYGEN=no])
 
+# Keyboard Interactive
+AC_ARG_ENABLE([keyboard-interactive],
+    [AS_HELP_STRING([--enable-keyboard-interactive],[Enable keyboard interactive authentication (default: disabled)])],
+    [ENABLED_KEYBOARD_INTERACTIVE=$enableval],[ENABLED_KEYBOARD_INTERACTIVE=no])
+
 # SCP
 AC_ARG_ENABLE([scp],
     [AS_HELP_STRING([--enable-scp],[Enable scp support (default: disabled)])],
@@ -206,7 +211,7 @@ AC_ARG_ENABLE([distro],
 AS_IF([test "x$ENABLED_DISTRO" = "xyes"],
       [ENABLED_ALL=yes; enable_shared=yes; enable_static=yes])
 AS_IF([test "x$ENABLED_ALL" = "xyes"],
-      [ENABLED_KEYGEN=yes; ENABLED_SCP=yes; ENABLED_SFTP=yes; ENABLED_FWD=yes; ENABLED_SHELL=yes; ENABLED_AGENT=yes; ENABLED_SSHD=yes; ENABLED_SSHCLIENT=yes; ENABLED_CERTS=yes])
+      [ENABLED_KEYGEN=yes; ENABLED_SCP=yes; ENABLED_SFTP=yes; ENABLED_FWD=yes; ENABLED_SHELL=yes; ENABLED_AGENT=yes; ENABLED_SSHD=yes; ENABLED_SSHCLIENT=yes; ENABLED_CERTS=yes; ENABLED_KEYBOARD_INTERACTIVE=yes])
 AS_IF([test "x$ENABLED_SSHD" = "xyes"],
       [ENABLED_SHELL=yes])
 
@@ -215,6 +220,8 @@ AS_IF([test "x$ENABLED_INLINE" = "xno"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DNO_INLINE"])
 AS_IF([test "x$ENABLED_KEYGEN" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_KEYGEN"])
+AS_IF([test "x$ENABLED_KEYBOARD_INTERACTIVE" = "xyes"],
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_KEYBOARD_INTERACTIVE"])
 AS_IF([test "x$ENABLED_SCP" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SCP"])
 AS_IF([test "x$ENABLED_SFTP" = "xyes"],
@@ -292,6 +299,7 @@ AM_CONDITIONAL([BUILD_SSHD],[test "x$ENABLED_SSHD" = "xyes"])
 AM_CONDITIONAL([BUILD_SSHCLIENT],[test "x$ENABLED_SSHCLIENT" = "xyes"])
 AM_CONDITIONAL([BUILD_CERTS],[test "x$ENABLED_CERTS" = "xyes"])
 AM_CONDITIONAL([BUILD_TPM],[test "x$ENABLED_TPM" = "xyes"])
+AM_CONDITIONAL([BUILD_KEYBOARD_INTERACTIVE],[test "x$ENABLED_KEYBOARD_INTERACTIVE" = "xyes"])
 
 AX_HARDEN_CC_COMPILER_FLAGS
 
@@ -328,6 +336,7 @@ AS_ECHO(["   Features"])
 AS_ECHO(["   * Inline Code:               $ENABLED_INLINE"])
 AS_ECHO(["   * Small stack:               $ENABLED_SMALLSTACK"])
 AS_ECHO(["   * keygen:                    $ENABLED_KEYGEN"])
+AS_ECHO(["   * keyboard interactive:      $ENABLED_KEYBOARD_INTERACTIVE"])
 AS_ECHO(["   * psuedo-terminal:           $ENABLED_TERM"])
 AS_ECHO(["   * echoserver shell support:  $ENABLED_SHELL"])
 AS_ECHO(["   * scp:                       $ENABLED_SCP"])

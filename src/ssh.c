@@ -891,6 +891,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
                 }
             }
 
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
             while (ssh->serverState == SERVER_USERAUTH_ACCEPT_KEYBOARD) {
                 if ( (ssh->error = SendUserAuthKeyboardResponse(ssh)) <
                     WS_SUCCESS) {
@@ -911,6 +912,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
                     }
                 }
             }
+#endif
 
             ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
             WLOG(WS_LOG_DEBUG, connectState, "SERVER_USERAUTH_ACCEPT_DONE");
@@ -1360,6 +1362,7 @@ int wolfSSH_SendDisconnect(WOLFSSH *ssh, word32 reason)
     return SendDisconnect(ssh, reason);
 }
 
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
 void wolfSSH_SetKeyboardAuthPrompts(WOLFSSH_CTX* ctx,
                                     WS_CallbackKeyboardAuthPrompts cb)
 {
@@ -1374,6 +1377,7 @@ void wolfSSH_SetKeyboardAuthCtx(WOLFSSH* ssh, void* keyboardAuthCtx)
         ssh->keyboardAuthCtx = keyboardAuthCtx;
     }
 }
+#endif
 
 void wolfSSH_SetUserAuth(WOLFSSH_CTX* ctx, WS_CallbackUserAuth cb)
 {

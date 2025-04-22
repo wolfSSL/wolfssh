@@ -101,7 +101,8 @@ extern "C" {
 /* Maximum number of prompts in one request / response transaction for
  * Keyboard-Interactive authentication.
  */
-#if !defined(WOLFSSH_MAX_PROMPTS)
+
+#if defined(WOLFSSH_KEYBOARD_INTERACTIVE) && !defined(WOLFSSH_MAX_PROMPTS)
     #define WOLFSSH_MAX_PROMPTS 64
 #endif
 
