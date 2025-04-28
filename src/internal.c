@@ -8353,7 +8353,7 @@ static int DoChannelOpen(WOLFSSH* ssh,
 static int DoChannelOpenConf(WOLFSSH* ssh,
                              byte* buf, word32 len, word32* idx)
 {
-    WOLFSSH_CHANNEL* channel;
+    WOLFSSH_CHANNEL* channel = NULL;
     word32 begin, channelId, peerChannelId,
            peerInitialWindowSz, peerMaxPacketSz;
     int ret = WS_SUCCESS;
