@@ -105,6 +105,23 @@ if [ $RESULT -ne 0 ]; then
     exit 1
 fi
 
+# Test want write return from highwater callback
+if [ $nonblockingOnly = 0 ]; then
+    echo "Test want write return from highwater callback"
+    ./examples/echoserver/echoserver -H -N -1 -R $ready_file &
+    server_pid=$!
+    create_port
+    ./examples/sftpclient/wolfsftp -N -u jill -P upthehill -p $port -g -r $PWD/README.md-2 -l $PWD/README.md
+    RESULT=$?
+    remove_ready_file
+    rm -f $PWD/README.md-2
+    if [ $RESULT -ne 0 ]; then
+        echo -e "\n\nfailed to connect"
+        do_cleanup
+        exit 1
+    fi
+fi
+
 # Test of setting directory
 if [ $nonblockingOnly = 0 ]; then
     echo "Test of setting directory"
