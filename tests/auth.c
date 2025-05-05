@@ -145,7 +145,7 @@
 
 #if !defined(NO_WOLFSSH_SERVER) && !defined(NO_WOLFSSH_CLIENT) && \
     !defined(SINGLE_THREADED) && !defined(WOLFSSH_TEST_BLOCK) && \
-    !defined(NO_FILESYSTEM)
+    !defined(NO_FILESYSTEM) && defined(WOLFSSH_KEYBOARD_INTERACTIVE)
 
 const char *testText1 = "test";
 const char *testText2 = "password";
@@ -387,7 +387,6 @@ static THREAD_RETURN WOLFSSH_THREAD server_thread(void* args)
     WOLFSSL_RETURN_FROM_THREAD(0);
 }
 
-
 static int keyboardUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 {
     (void) ctx;
@@ -575,7 +574,6 @@ static void test_unbalanced_client_KeyboardInteractive(void)
     test_client();
     unbalanced = 0;
 }
-
 #endif /* WOLFSSH_TEST_BLOCK */
 
 int wolfSSH_AuthTest(int argc, char** argv)
@@ -585,7 +583,7 @@ int wolfSSH_AuthTest(int argc, char** argv)
 
 #if defined(NO_WOLFSSH_SERVER) || defined(NO_WOLFSSH_CLIENT) || \
     defined(SINGLE_THREADED) || defined(WOLFSSH_TEST_BLOCK) || \
-    defined(NO_FILESYSTEM)
+    defined(NO_FILESYSTEM) || !defined(WOLFSSH_KEYBOARD_INTERACTIVE)
     return 77;
 #else
     AssertIntEQ(wolfSSH_Init(), WS_SUCCESS);

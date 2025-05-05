@@ -64,10 +64,11 @@ static word32 userPrivateKeySz = 0;
 static word32 userPrivateKeyTypeSz = 0;
 static byte isPrivate = 0;
 
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
 static word32 keyboardResponseCount = 0;
 static byte** keyboardResponses;
 static word32* keyboardResponseLengths;
-
+#endif
 
 #ifdef WOLFSSH_CERTS
 #if 0
@@ -460,7 +461,7 @@ int ClientUserAuth(byte authType,
 {
     const char* defaultPassword = (const char*)ctx;
     word32 passwordSz = 0;
-#ifdef WOLFSSH_TERM
+#if defined(WOLFSSH_TERM) && defined(WOLFSSH_KEYBOARD_INTERACTIVE)
     word32 entry;
 #endif
     int ret = WOLFSSH_USERAUTH_SUCCESS;
@@ -474,9 +475,11 @@ int ClientUserAuth(byte authType,
     if (authData->type & WOLFSSH_USERAUTH_PUBLICKEY) {
         printf(" - publickey\n");
     }
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     if (authData->type & WOLFSSH_USERAUTH_KEYBOARD) {
         printf(" - keyboard\n");
     }
+#endif
     printf("wolfSSH requesting to use type %d\n", authType);
 #endif
 
@@ -544,7 +547,7 @@ int ClientUserAuth(byte authType,
             authData->sf.password.passwordSz = passwordSz;
         }
     }
-#ifdef WOLFSSH_TERM
+#if defined(WOLFSSH_TERM) && defined(WOLFSSH_KEYBOARD_INTERACTIVE)
     else if (authType == WOLFSSH_USERAUTH_KEYBOARD) {
         if (authData->sf.keyboard.promptName &&
             authData->sf.keyboard.promptName[0] != '\0') {
@@ -1112,7 +1115,9 @@ int ClientLoadCA(WOLFSSH_CTX* ctx, const char* caCert)
 void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
         void* heap)
 {
+#if defined(WOLFSSH_TERM) && defined(WOLFSSH_KEYBOARD_INTERACTIVE)
     word32 entry;
+#endif
 #ifdef WOLFSSH_TPM
     wolfSSH_TPM_Cleanup(&tpmDev, &tpmKey);
 #endif
@@ -1126,9 +1131,11 @@ void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
         WFREE(userPrivateKey, heap, DYNTYPE_PRIVKEY);
     }
 
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     for (entry = 0; entry < keyboardResponseCount; entry++) {
         WFREE(keyboardResponses[entry], NULL, 0);
     }
     WFREE(keyboardResponses, NULL, 0);
     WFREE(keyboardResponseLengths, NULL, 0);
+#endif
 }

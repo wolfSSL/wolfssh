@@ -72,6 +72,7 @@ jobs:
           '--enable-all',
           '--enable-sftp',
           '--enable-scp',
+          '--enable-keyboard-interactive',
           '--enable-shell',
         ]
     name: Build wolfssh

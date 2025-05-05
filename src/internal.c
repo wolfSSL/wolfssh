@@ -1055,8 +1055,12 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->authId      = ID_USERAUTH_PUBLICKEY;
     ssh->supportedAuth[0] = ID_USERAUTH_PUBLICKEY;
     ssh->supportedAuth[1] = ID_USERAUTH_PASSWORD;
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     ssh->supportedAuth[2] = ID_USERAUTH_KEYBOARD;
     ssh->supportedAuth[3] = ID_NONE; /* ID_NONE is treated as empty slot */
+#else
+    ssh->supportedAuth[2] = ID_NONE; /* ID_NONE is treated as empty slot */
+#endif
     ssh->nextChannel = DEFAULT_NEXT_CHANNEL;
     ssh->blockSz     = MIN_BLOCK_SZ;
     ssh->encryptId   = ID_NONE;
@@ -2625,7 +2629,9 @@ static const NameIdPair NameIdMap[] = {
     /* UserAuth IDs */
     { ID_USERAUTH_PASSWORD, TYPE_OTHER, "password" },
     { ID_USERAUTH_PUBLICKEY, TYPE_OTHER, "publickey" },
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     { ID_USERAUTH_KEYBOARD, TYPE_OTHER, "keyboard-interactive" },
+#endif
 
     /* Channel Type IDs */
     { ID_CHANTYPE_SESSION, TYPE_OTHER, "session" },
@@ -6398,7 +6404,7 @@ static int DoUserAuthRequestNone(WOLFSSH* ssh, WS_UserAuthData* authData,
 #endif
 
 
-
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
 static int DoUserAuthInfoResponse(WOLFSSH* ssh,
                              byte* buf, word32 len, word32* idx)
 {
@@ -6541,7 +6547,7 @@ static int DoUserAuthInfoResponse(WOLFSSH* ssh,
 
     return ret;
 }
-
+#endif
 
 /* Utility for DoUserAuthRequest() */
 static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
@@ -7781,9 +7787,11 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
 
         if (authNameId == ID_USERAUTH_PASSWORD)
             ret = DoUserAuthRequestPassword(ssh, &authData, buf, len, &begin);
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
         else if (authNameId == ID_USERAUTH_KEYBOARD) {
             ret = SendUserAuthKeyboardRequest(ssh, &authData);
         }
+#endif
 #if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
         else if (authNameId == ID_USERAUTH_PUBLICKEY) {
             authData.sf.publicKey.dataToSign = buf + *idx;
@@ -7817,9 +7825,14 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
 static int DoUserAuthFailure(WOLFSSH* ssh,
                              byte* buf, word32 len, word32* idx)
 {
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     byte authList[4]; /* Should only ever be password, publickey, hostname,
                          keyboard */
     word32 authListSz = 4;
+#else
+    byte authList[3];
+    word32 authListSz = 3;
+#endif
     byte partialSuccess;
     byte authType = 0;
     int ret = WS_SUCCESS;
@@ -7852,9 +7865,11 @@ static int DoUserAuthFailure(WOLFSSH* ssh,
                         case ID_USERAUTH_PASSWORD:
                             authType |= WOLFSSH_USERAUTH_PASSWORD;
                             break;
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
                         case ID_USERAUTH_KEYBOARD:
                             authType |= WOLFSSH_USERAUTH_KEYBOARD;
                             break;
+#endif
 #if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
                         case ID_USERAUTH_PUBLICKEY:
                             authType |= WOLFSSH_USERAUTH_PUBLICKEY;
@@ -7898,9 +7913,11 @@ static int DoUserAuthSuccess(WOLFSSH* ssh,
         return ret;
     }
 
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     if (ssh->serverState == SERVER_USERAUTH_ACCEPT_KEYBOARD)
         ssh->serverState = SERVER_USERAUTH_ACCEPT_KEYBOARD_DONE;
     else
+#endif
         ssh->serverState = SERVER_USERAUTH_ACCEPT_DONE;
 
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthSuccess(), ret = %d", ret);
@@ -7935,7 +7952,7 @@ static int DoUserAuthBanner(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     return ret;
 }
 
-
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
 static int DoUserAuthInfoRequest(WOLFSSH* ssh, byte* buf, word32 len,
         word32* idx)
 {
@@ -8036,7 +8053,7 @@ static int DoUserAuthInfoRequest(WOLFSSH* ssh, byte* buf, word32 len,
 
     return ret;
 }
-
+#endif
 
 #ifdef WOLFSSH_FWD
 static int DoGlobalRequestFwd(WOLFSSH* ssh,
@@ -9388,6 +9405,7 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
             ret = DoUserAuthRequest(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
 
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
         case MSGID_USERAUTH_INFO_RESPONSE:
             WLOG(WS_LOG_DEBUG, "Decoding MSG_USERAUTH_INFO_RESPONSE");
             ret = DoUserAuthInfoResponse(ssh, buf + idx, payloadSz, &payloadIdx);
@@ -9397,6 +9415,7 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_USERAUTH_INFO_REQUEST");
             ret = DoUserAuthInfoRequest(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
+#endif
 
         case MSGID_USERAUTH_FAILURE:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_USERAUTH_FAILURE");
@@ -13225,6 +13244,7 @@ static int BuildUserAuthRequestPassword(WOLFSSH* ssh,
     return ret;
 }
 
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
 static int PrepareUserAuthRequestKeyboard(WOLFSSH* ssh, word32* payloadSz,
         const WS_UserAuthData* authData)
 {
@@ -13444,6 +13464,7 @@ static int BuildUserAuthResponseKeyboard(WOLFSSH* ssh, byte* output, word32* idx
 
     return ret;
 }
+#endif
 
 #ifndef WOLFSSH_NO_RSA
 static int PrepareUserAuthRequestRsa(WOLFSSH* ssh, word32* payloadSz,
@@ -14775,6 +14796,7 @@ static int BuildUserAuthRequestPublicKey(WOLFSSH* ssh,
 
 #endif /* !WOLFSSH_NO_RSA || !WOLFSSH_NO_ECDSA || !WOLFSSH_NO_ED25519 */
 
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
 int SendUserAuthKeyboardResponse(WOLFSSH* ssh)
 {
     byte* output;
@@ -14864,6 +14886,7 @@ int SendUserAuthKeyboardResponse(WOLFSSH* ssh)
 
     return ret;
 }
+#endif
 
 int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
 {
@@ -14897,11 +14920,14 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
         WMEMSET(keySig_ptr, 0, sizeof(WS_KeySignature));
         keySig_ptr->keySigId = ID_NONE;
         keySig_ptr->heap = ssh->ctx->heap;
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
         /* Callback happens later for keyboard auth */
         if (authType & WOLFSSH_USERAUTH_KEYBOARD) {
                     authId = ID_USERAUTH_KEYBOARD;
         }
-        else if (ssh->ctx->userAuthCb != NULL) {
+        else
+#endif
+        if (ssh->ctx->userAuthCb != NULL) {
             WLOG(WS_LOG_DEBUG, "SUAR: Calling the userauth callback");
 
             WMEMSET(&authData, 0, sizeof(authData));
@@ -14927,8 +14953,13 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
             /* fall into public key case if keyboard or password case was not
              * successful */
             if ((ret == WS_FATAL_ERROR ||
+
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
                 (!(authType & WOLFSSH_USERAUTH_PASSWORD) &&
                 !(authType & WOLFSSH_USERAUTH_KEYBOARD))) &&
+#else
+                !(authType & WOLFSSH_USERAUTH_PASSWORD)) &&
+#endif
                 (authType & WOLFSSH_USERAUTH_PUBLICKEY)) {
                 ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PUBLICKEY,
                         &authData, ssh->userAuthCtx);
@@ -14966,7 +14997,10 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
             ret = PrepareUserAuthRequestPublicKey(ssh, &payloadSz, &authData,
                     keySig_ptr);
         }
-        else if (authId != ID_NONE && authId != ID_USERAUTH_KEYBOARD &&
+        else if (authId != ID_NONE &&
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+                 authId != ID_USERAUTH_KEYBOARD &&
+#endif
                  !ssh->userAuthPkDone)
             ret = WS_INVALID_ALGO_ID;
     }
@@ -15006,6 +15040,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
 
             ret = BuildUserAuthRequestPassword(ssh, output, &idx, &authData);
         }
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
         else if (authId == ID_USERAUTH_KEYBOARD) {
             /* language tag, deprecated, should be empty */
             c32toa(0, output + idx);
@@ -15014,6 +15049,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
             c32toa(0, output + idx);
             idx += LENGTH_SZ;
         }
+#endif
         else if (authId == ID_USERAUTH_PUBLICKEY)
             ret = BuildUserAuthRequestPublicKey(ssh, output, &idx, &authData,
                     sigStart, sigStartIdx, keySig_ptr);
@@ -15054,9 +15090,11 @@ static int GetAllowedAuth(WOLFSSH* ssh, char* authStr)
         return WS_BAD_ARGUMENT;
 
     typeAllowed |= WOLFSSH_USERAUTH_PASSWORD;
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     if (ssh->ctx->keyboardAuthCb != NULL) {
         typeAllowed |= WOLFSSH_USERAUTH_KEYBOARD;
     }
+#endif
 #if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
     typeAllowed |= WOLFSSH_USERAUTH_PUBLICKEY;
 #endif
@@ -15073,9 +15111,11 @@ static int GetAllowedAuth(WOLFSSH* ssh, char* authStr)
         WSTRNCAT(authStr, "password,", MAX_AUTH_STRING-1);
     }
 
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     if (typeAllowed & WOLFSSH_USERAUTH_KEYBOARD) {
         WSTRNCAT(authStr, "keyboard-interactive,", MAX_AUTH_STRING-1);
     }
+#endif
 
     /* remove last comma from the list */
     return (int)XSTRLEN(authStr) - 1;

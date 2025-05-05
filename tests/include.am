@@ -3,7 +3,7 @@
 # All paths should be given relative to the root
 
 check_PROGRAMS  += tests/unit.test tests/api.test \
-                   tests/testsuite.test tests/auth.test tests/kex.test
+                   tests/testsuite.test tests/kex.test
 
 tests_unit_test_SOURCES      = tests/unit.c tests/unit.h
 tests_unit_test_CPPFLAGS     = -DNO_MAIN_DRIVER
@@ -30,6 +30,9 @@ tests_unit_test_CPPFLAGS     += -DWOLFSSH_FWD
 endif
 if BUILD_CERTS
 tests_unit_test_CPPFLAGS     += -DWOLFSSH_CERTS
+endif
+if BUILD_KEYBOARD_INTERACTIVE
+tests_unit_test_CPPFLAGS     += -DWOLFSSH_KEYBOARD_INTERACTIVE
 endif
 tests_unit_test_LDADD        = src/libwolfssh.la
 tests_unit_test_DEPENDENCIES = src/libwolfssh.la
@@ -60,6 +63,9 @@ tests_api_test_CPPFLAGS     += -DWOLFSSH_FWD
 endif
 if BUILD_CERTS
 tests_api_test_CPPFLAGS     += -DWOLFSSH_CERTS
+endif
+if BUILD_KEYBOARD_INTERACTIVE
+tests_api_test_CPPFLAGS     += -DWOLFSSH_KEYBOARD_INTERACTIVE
 endif
 tests_api_test_LDADD         = src/libwolfssh.la
 tests_api_test_DEPENDENCIES  = src/libwolfssh.la
@@ -96,12 +102,16 @@ endif
 if BUILD_CERTS
 tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_CERTS
 endif
+if BUILD_KEYBOARD_INTERACTIVE
+tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_KEYBOARD_INTERACTIVE
+endif
 tests_testsuite_test_LDADD   = src/libwolfssh.la
 tests_testsuite_test_DEPENDENCIES = src/libwolfssh.la
 
-
+if BUILD_KEYBOARD_INTERACTIVE
+check_PROGRAMS              += tests/auth.test
 tests_auth_test_SOURCES      = tests/auth.c tests/auth.h
-tests_auth_test_CPPFLAGS     = -DNO_MAIN_DRIVER
+tests_auth_test_CPPFLAGS     = -DNO_MAIN_DRIVER -DWOLFSSH_KEYBOARD_INTERACTIVE
 if BUILD_KEYGEN
 tests_auth_test_CPPFLAGS    += -DWOLFSSH_KEYGEN
 endif
@@ -128,7 +138,7 @@ tests_auth_test_CPPFLAGS    += -DWOLFSSH_CERTS
 endif
 tests_auth_test_LDADD        = src/libwolfssh.la
 tests_auth_test_DEPENDENCIES = src/libwolfssh.la
-
+endif
 
 tests_kex_test_SOURCES = tests/kex.c tests/kex.h \
                                examples/echoserver/echoserver.c \
@@ -159,6 +169,9 @@ tests_kex_test_CPPFLAGS     += -DWOLFSSH_FWD
 endif
 if BUILD_CERTS
 tests_kex_test_CPPFLAGS     += -DWOLFSSH_CERTS
+endif
+if BUILD_KEYBOARD_INTERACTIVE
+tests_kex_test_CPPFLAGS     += -DWOLFSSH_KEYBOARD_INTERACTIVE
 endif
 tests_kex_test_LDADD   = src/libwolfssh.la
 tests_kex_test_DEPENDENCIES = src/libwolfssh.la

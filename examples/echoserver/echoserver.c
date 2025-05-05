@@ -2006,7 +2006,7 @@ static int LoadPasswdList(StrList* strList, PwMapList* mapList)
 
     return count;
 }
-
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
 static int LoadKeyboardList(StrList* strList, PwMapList* mapList)
 {
     char names[256];
@@ -2034,6 +2034,7 @@ static int LoadKeyboardList(StrList* strList, PwMapList* mapList)
 
     return count;
 }
+#endif
 
 #ifndef NO_FILESYSTEM
 static int LoadPubKeyList(StrList* strList, int format, PwMapList* mapList)
@@ -2183,8 +2184,10 @@ static int wsUserAuth(byte authType,
 #ifdef WOLFSSH_ALLOW_USERAUTH_NONE
         authType != WOLFSSH_USERAUTH_NONE &&
 #endif
-        authType != WOLFSSH_USERAUTH_PUBLICKEY &&
-        authType != WOLFSSH_USERAUTH_KEYBOARD) {
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+        authType != WOLFSSH_USERAUTH_KEYBOARD &&
+#endif
+        authType != WOLFSSH_USERAUTH_PUBLICKEY) {
 
         return WOLFSSH_USERAUTH_FAILURE;
     }
@@ -2194,6 +2197,7 @@ static int wsUserAuth(byte authType,
                 authData->sf.password.passwordSz,
                 authHash);
     }
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     else if (authType == WOLFSSH_USERAUTH_KEYBOARD) {
         if (authData->sf.keyboard.responseCount != 1) {
             return WOLFSSH_USERAUTH_FAILURE;
@@ -2202,6 +2206,7 @@ static int wsUserAuth(byte authType,
                       authData->sf.keyboard.responseLengths[0],
                       authHash);
     }
+#endif
     else if (authType == WOLFSSH_USERAUTH_PUBLICKEY) {
         wc_Sha256Hash(authData->sf.publicKey.publicKey,
                 authData->sf.publicKey.publicKeySz,
@@ -2302,6 +2307,7 @@ static int wsUserAuth(byte authType,
                         WOLFSSH_USERAUTH_REJECTED;
                  }
             }
+            #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
             else if (authData->type == WOLFSSH_USERAUTH_KEYBOARD) {
                 if (WMEMCMP(map->p, authHash, WC_SHA256_DIGEST_SIZE) == 0) {
                     return WOLFSSH_USERAUTH_SUCCESS;
@@ -2310,6 +2316,7 @@ static int wsUserAuth(byte authType,
                     return WOLFSSH_USERAUTH_INVALID_PASSWORD;
                 }
             }
+            #endif
             #ifdef WOLFSSH_ALLOW_USERAUTH_NONE
             else if (authData->type == WOLFSSH_USERAUTH_NONE) {
                 return WOLFSSH_USERAUTH_SUCCESS;
@@ -2325,6 +2332,7 @@ static int wsUserAuth(byte authType,
     return WOLFSSH_USERAUTH_INVALID_USER;
 }
 
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
 static int keyboardCallback(WS_UserAuthData_Keyboard *kbAuth, void *ctx)
 {
     WS_UserAuthData_Keyboard *kbAuthData = (WS_UserAuthData_Keyboard*) ctx;
@@ -2332,6 +2340,7 @@ static int keyboardCallback(WS_UserAuthData_Keyboard *kbAuth, void *ctx)
 
     return WS_SUCCESS;
 }
+#endif
 
 #ifdef WOLFSSH_SFTP
 /*
@@ -2417,9 +2426,11 @@ static void ShowUsage(void)
            "               load in an X.509 DER cert to accept from peer\n");
     printf(" -P <name>:<password>\n"
            "               add password to accept from peer\n");
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     printf(" -i <name>:<password>\n"
            "               add passowrd to accept via keyboard-interactive "
            "from peer\n");
+#endif
 #ifdef WOLFSSH_CERTS
     printf(" -a <file>     load in a root CA certificate file\n");
 #endif
@@ -2463,8 +2474,10 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         StrList* derPubKeyList = NULL;
     #endif
     StrList* passwdList = NULL;
+    #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     StrList* keyboardList = NULL;
     WS_UserAuthData_Keyboard kbAuthData;
+    #endif
     WS_SOCKET_T listenFd = WOLFSSH_SOCKET_INVALID;
     word32 defaultHighwater = EXAMPLE_HIGHWATER_MARK;
     word32 threadCount = 0;
@@ -2495,7 +2508,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     int     argc = serverArgs->argc;
     char**  argv = serverArgs->argv;
     serverArgs->return_code = EXIT_SUCCESS;
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     kbAuthData.promptCount = 0;
+#endif
 
     if (argc > 0) {
         const char* optlist = "?1a:d:efEp:R:Ni:j:i:I:J:K:P:k:b:x:m:c:s:";
@@ -2582,9 +2597,11 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                     passwdList = StrListAdd(passwdList, myoptarg);
                     break;
 
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
                 case 'i':
                     keyboardList = StrListAdd(keyboardList, myoptarg);
                     break;
+#endif
 
                 case 'b':
                     userAuthWouldBlock = atoi(myoptarg);
@@ -2739,6 +2756,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         passwdList = NULL;
     }
 
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     if (keyboardList) {
         LoadKeyboardList(keyboardList, &pwMapList);
         StrListFree(keyboardList);
@@ -2767,6 +2785,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         kbAuthData.promptEcho[0] = 0;
         wolfSSH_SetKeyboardAuthPrompts(ctx, keyboardCallback);
     }
+#endif
 
     {
         const char* bufName = NULL;
@@ -2973,7 +2992,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     #endif
         wolfSSH_SetUserAuthCtx(ssh, &pwMapList);
         wolfSSH_SetKeyingCompletionCbCtx(ssh, (void*)ssh);
+    #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
         wolfSSH_SetKeyboardAuthCtx(ssh, &kbAuthData);
+    #endif
         /* Use the session object for its own highwater callback ctx */
         if (defaultHighwater > 0) {
             wolfSSH_SetHighwaterCtx(ssh, (void*)ssh);
@@ -3046,11 +3067,13 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     if (listenFd != WOLFSSH_SOCKET_INVALID) {
         WCLOSESOCKET(listenFd);
     }
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     if (kbAuthData.promptCount > 0) {
         WFREE(kbAuthData.promptLengths, NULL, 0);
         WFREE(kbAuthData.prompts, NULL, 0);
         WFREE(kbAuthData.promptEcho, NULL, 0);
     }
+#endif
     wc_FreeMutex(&doneLock);
     PwMapListDelete(&pwMapList);
     wolfSSH_CTX_free(ctx);

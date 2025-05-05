@@ -311,6 +311,7 @@ typedef struct WS_UserAuthData_Password {
     word32 newPasswordSz;
 } WS_UserAuthData_Password;
 
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
 typedef struct WS_UserAuthData_Keyboard {
     word32 promptCount;
     word32 responseCount;
@@ -326,6 +327,7 @@ typedef struct WS_UserAuthData_Keyboard {
     byte** responses;
     byte** prompts;
 } WS_UserAuthData_Keyboard;
+#endif
 
 typedef struct WS_UserAuthData_PublicKey {
     const byte* dataToSign;
@@ -352,7 +354,9 @@ typedef struct WS_UserAuthData {
     union {
         WS_UserAuthData_Password password;
         WS_UserAuthData_PublicKey publicKey;
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
         WS_UserAuthData_Keyboard keyboard;
+#endif
     } sf;
 } WS_UserAuthData;
 
@@ -364,10 +368,12 @@ WOLFSSH_API void wolfSSH_SetUserAuthTypes(WOLFSSH_CTX*,
 WOLFSSH_API void wolfSSH_SetUserAuthCtx(WOLFSSH*, void*);
 WOLFSSH_API void* wolfSSH_GetUserAuthCtx(WOLFSSH*);
 
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
 typedef int (*WS_CallbackKeyboardAuthPrompts)(WS_UserAuthData_Keyboard*, void*);
 WOLFSSH_API void wolfSSH_SetKeyboardAuthPrompts(WOLFSSH_CTX*,
                                                 WS_CallbackKeyboardAuthPrompts);
 WOLFSSH_API void wolfSSH_SetKeyboardAuthCtx(WOLFSSH*, void*);
+#endif
 
 typedef int (*WS_CallbackUserAuthResult)(byte result,
         WS_UserAuthData* authData, void* userAuthResultCtx);

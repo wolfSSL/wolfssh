@@ -1555,6 +1555,7 @@ static void test_wolfSSH_QueryAlgoList(void)
     AssertIntEQ(WS_INVALID_ALGO_ID, k);
 }
 
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
 #if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT) && \
     !defined(SINGLE_THREADED)
 
@@ -1699,6 +1700,7 @@ static void test_wolfSSH_KeyboardInteractive(void)
 #else /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
 static void test_wolfSSH_KeyboardInteractive(void) { ; }
 #endif /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
+#endif /* WOLFSSH_KEYBOARD_INTERACTIVE */
 
 #endif /* WOLFSSH_TEST_BLOCK */
 
@@ -1735,7 +1737,9 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_ReadKey();
     test_wolfSSH_QueryAlgoList();
     test_wolfSSH_SetAlgoList();
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     test_wolfSSH_KeyboardInteractive();
+#endif
 
     /* SCP tests */
     test_wolfSSH_SCP_CB();
