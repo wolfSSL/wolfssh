@@ -872,6 +872,9 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
     ctx->algoListCipher = cannedEncAlgoNames;
     ctx->algoListMac = cannedMacAlgoNames;
     ctx->algoListKeyAccepted = cannedKeyAlgoNames;
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+    ctx->keyboardAuthCb = NULL;
+#endif
 
     count = (word32)(sizeof(ctx->privateKey)
             / sizeof(ctx->privateKey[0]));
@@ -6421,11 +6424,16 @@ static int DoUserAuthInfoResponse(WOLFSSH* ssh,
 
 
     if (ssh == NULL || buf == NULL || len == 0 || idx == NULL) {
-
         ret = WS_BAD_ARGUMENT;
     }
 
+    if ((ret == WS_SUCCESS) && (ssh->authId != ID_USERAUTH_KEYBOARD)) {
+        WLOG(WS_LOG_DEBUG, "DoUserAuthInfoResponse on non-keyboard auth");
+        ret = WS_FATAL_ERROR;
+    }
+
     if (ret == WS_SUCCESS) {
+        WMEMSET(&authData, 0, sizeof(authData));
         begin = *idx;
         kb = &authData.sf.keyboard;
         authData.type = WOLFSSH_USERAUTH_KEYBOARD;
@@ -7784,6 +7792,7 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
         authData.authName = buf + begin;
         begin += authData.authNameSz;
         authNameId = NameToId((char*)authData.authName, authData.authNameSz);
+        ssh->authId = authNameId;
 
         if (authNameId == ID_USERAUTH_PASSWORD)
             ret = DoUserAuthRequestPassword(ssh, &authData, buf, len, &begin);
@@ -8043,6 +8052,8 @@ static int DoUserAuthInfoRequest(WOLFSSH* ssh, byte* buf, word32 len,
     if (ret == WS_SUCCESS) {
         ret = SendUserAuthKeyboardResponse(ssh);
     }
+
+    ssh->authId = ID_USERAUTH_KEYBOARD;
 
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthInfoRequest(), ret = %d", ret);
 
@@ -13346,6 +13357,11 @@ int SendUserAuthKeyboardRequest(WOLFSSH* ssh, WS_UserAuthData* authData)
 
     if (ssh == NULL || authData == NULL) {
         ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ssh->ctx->keyboardAuthCb == NULL) {
+        WLOG(WS_LOG_DEBUG, "SendUserAuthKeyboardRequest called with no Cb set");
+        ret = WS_BAD_USAGE;
     }
 
     if (ret == WS_SUCCESS) {

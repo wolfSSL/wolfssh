@@ -586,6 +586,11 @@ int wolfSSH_AuthTest(int argc, char** argv)
     defined(NO_FILESYSTEM) || !defined(WOLFSSH_KEYBOARD_INTERACTIVE)
     return 77;
 #else
+
+#if defined(DEBUG_WOLFSSH)
+    wolfSSH_Debugging_ON();
+#endif
+
     AssertIntEQ(wolfSSH_Init(), WS_SUCCESS);
 
     #if defined(FIPS_VERSION_GE) && FIPS_VERSION_GE(5,2)
