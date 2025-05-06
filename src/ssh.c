@@ -890,30 +890,6 @@ int wolfSSH_connect(WOLFSSH* ssh)
                     return WS_FATAL_ERROR;
                 }
             }
-
-#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-            while (ssh->serverState == SERVER_USERAUTH_ACCEPT_KEYBOARD) {
-                if ( (ssh->error = SendUserAuthKeyboardResponse(ssh)) <
-                    WS_SUCCESS) {
-                    WLOG(WS_LOG_DEBUG, connectError, "CLIENT_USERAUTH_SENT",
-                        ssh->error);
-                    return WS_FATAL_ERROR;
-                }
-                ssh->serverState = SERVER_USERAUTH_ACCEPT_KEYBOARD_NEXT;
-                while (
-                    (ssh->serverState < SERVER_USERAUTH_ACCEPT_KEYBOARD_DONE) &&
-                    (ssh->serverState != SERVER_USERAUTH_ACCEPT_KEYBOARD) &&
-                    (ssh->serverState != SERVER_USERAUTH_ACCEPT_DONE)) {
-
-                    if (DoReceive(ssh) < WS_SUCCESS) {
-                        WLOG(WS_LOG_DEBUG, connectError,
-                            "CLIENT_USERAUTH_SENT", ssh->error);
-                        return WS_FATAL_ERROR;
-                    }
-                }
-            }
-#endif
-
             ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
             WLOG(WS_LOG_DEBUG, connectState, "SERVER_USERAUTH_ACCEPT_DONE");
             NO_BREAK;

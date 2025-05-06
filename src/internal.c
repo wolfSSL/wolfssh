@@ -7913,12 +7913,7 @@ static int DoUserAuthSuccess(WOLFSSH* ssh,
         return ret;
     }
 
-#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-    if (ssh->serverState == SERVER_USERAUTH_ACCEPT_KEYBOARD)
-        ssh->serverState = SERVER_USERAUTH_ACCEPT_KEYBOARD_DONE;
-    else
-#endif
-        ssh->serverState = SERVER_USERAUTH_ACCEPT_DONE;
+    ssh->serverState = SERVER_USERAUTH_ACCEPT_DONE;
 
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthSuccess(), ret = %d", ret);
     return ret;
@@ -7970,7 +7965,6 @@ static int DoUserAuthInfoRequest(WOLFSSH* ssh, byte* buf, word32 len,
 
     if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
         ret = WS_BAD_ARGUMENT;
-
 
     if (ret == WS_SUCCESS) {
         begin = *idx;
@@ -8046,8 +8040,9 @@ static int DoUserAuthInfoRequest(WOLFSSH* ssh, byte* buf, word32 len,
         WFREE(language, ssh->ctx->heap,  DYNTYPE_STRING);
     }
 
-    if (ret == WS_SUCCESS)
-        ssh->serverState = SERVER_USERAUTH_ACCEPT_KEYBOARD;
+    if (ret == WS_SUCCESS) {
+        ret = SendUserAuthKeyboardResponse(ssh);
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthInfoRequest(), ret = %d", ret);
 
