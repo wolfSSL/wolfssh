@@ -1103,6 +1103,11 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
         return WS_ERROR;
     }
 
+    if (ssh->isKeying) {
+        ssh->error = WS_REKEYING;
+        return WS_FATAL_ERROR;
+    }
+
     inputBuffer = &ssh->channelList->inputBuffer;
     ssh->error = WS_SUCCESS;
 
@@ -1132,7 +1137,7 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
     }
 
     /* update internal input buffer based on data read */
-    if (ret == WS_SUCCESS) {
+    if (ret == WS_SUCCESS && !ssh->isKeying) {
         int n;
 
         n = min(bufSz, inputBuffer->length - inputBuffer->idx);
@@ -2777,6 +2782,11 @@ int wolfSSH_ChannelRead(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz)
 
     if (channel == NULL || buf == NULL || bufSz == 0)
         return WS_BAD_ARGUMENT;
+
+    if (channel->ssh->isKeying) {
+        channel->ssh->error = WS_REKEYING;
+        return WS_REKEYING;
+    }
 
     bufSz = _ChannelRead(channel, buf, bufSz);
 
