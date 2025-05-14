@@ -360,6 +360,13 @@ typedef struct WS_UserAuthData {
     } sf;
 } WS_UserAuthData;
 
+/* User Authentication callback
+ * For keyboard-interactive authentication:
+ * - When responseCount is 0, the callback is being called to set up prompts
+ *   Return WOLFSSH_USERAUTH_SUCCESS_ANOTHER to proceed with sending prompts
+ * - When responseCount > 0, the callback is being called to validate responses
+ *   Return WOLFSSH_USERAUTH_SUCCESS_ANOTHER to request more prompts
+ */
 typedef int (*WS_CallbackUserAuth)(byte, WS_UserAuthData*, void*);
 WOLFSSH_API void wolfSSH_SetUserAuth(WOLFSSH_CTX*, WS_CallbackUserAuth);
 typedef int (*WS_CallbackUserAuthTypes)(WOLFSSH* ssh, void* ctx);

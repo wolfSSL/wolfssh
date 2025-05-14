@@ -13349,8 +13349,31 @@ int SendUserAuthKeyboardRequest(WOLFSSH* ssh, WS_UserAuthData* authData)
     }
 
     if (ret == WS_SUCCESS) {
-        ret = ssh->ctx->keyboardAuthCb(&authData->sf.keyboard,
-                                       ssh->keyboardAuthCtx);
+        /* Set responseCount to 0 to indicate this is a prompt setup call */
+        authData->sf.keyboard.responseCount = 0;
+        
+        /* First try using userAuthCb if it's set */
+        if (ssh->ctx->userAuthCb != NULL) {
+            WLOG(WS_LOG_DEBUG, "SUAKR: Calling userAuthCb for prompt setup");
+            ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_KEYBOARD,
+                                      authData, ssh->userAuthCtx);
+            
+            /* If userAuthCb doesn't return SUCCESS_ANOTHER, fall back to keyboardAuthCb */
+            if (ret != WOLFSSH_USERAUTH_SUCCESS_ANOTHER) {
+                WLOG(WS_LOG_DEBUG, "SUAKR: userAuthCb didn't return SUCCESS_ANOTHER, falling back");
+                ret = ssh->ctx->keyboardAuthCb(&authData->sf.keyboard,
+                                             ssh->keyboardAuthCtx);
+            }
+            else {
+                WLOG(WS_LOG_DEBUG, "SUAKR: userAuthCb returned SUCCESS_ANOTHER, proceeding");
+                ret = WS_SUCCESS;
+            }
+        }
+        else {
+            /* Fall back to keyboardAuthCb if userAuthCb is not set */
+            ret = ssh->ctx->keyboardAuthCb(&authData->sf.keyboard,
+                                         ssh->keyboardAuthCtx);
+        }
     }
 
     if (authData->sf.keyboard.promptCount > 0 &&
