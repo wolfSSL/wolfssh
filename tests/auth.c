@@ -280,7 +280,17 @@ static int serverUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 static int serverKeyboardCallback(WS_UserAuthData_Keyboard *kbAuth, void *ctx)
 {
     (void) ctx;
-    WMEMCPY(kbAuth, &promptData, sizeof(WS_UserAuthData_Keyboard));
+    /* Copy individual fields instead of the entire structure to avoid memory issues */
+    kbAuth->promptCount = promptData.promptCount;
+    kbAuth->promptName = promptData.promptName;
+    kbAuth->promptNameSz = promptData.promptNameSz;
+    kbAuth->promptInstruction = promptData.promptInstruction;
+    kbAuth->promptInstructionSz = promptData.promptInstructionSz;
+    kbAuth->promptLanguage = promptData.promptLanguage;
+    kbAuth->promptLanguageSz = promptData.promptLanguageSz;
+    kbAuth->prompts = promptData.prompts;
+    kbAuth->promptLengths = promptData.promptLengths;
+    kbAuth->promptEcho = promptData.promptEcho;
 
     return WS_SUCCESS;
 }
