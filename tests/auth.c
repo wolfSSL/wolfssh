@@ -156,6 +156,7 @@ word32 kbResponseCount;
 byte kbMultiRound = 0;
 byte currentRound = 0;
 byte unbalanced = 0;
+byte useUserAuthCb = 0;  /* Flag to test userAuthCb for keyboard-interactive */
 
 WS_UserAuthData_Keyboard promptData;
 
@@ -223,32 +224,48 @@ static int load_key(byte isEcc, byte* buf, word32 bufSz)
 static int serverUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 {
     (void) ctx;
-    if (authType != WOLFSSH_USERAUTH_KEYBOARD) {
-        return WOLFSSH_USERAUTH_FAILURE;
-    }
-
-    if (authData->sf.keyboard.responseCount != kbResponseCount) {
-        return WOLFSSH_USERAUTH_FAILURE;
-    }
-
-    for (word32 resp = 0; resp < kbResponseCount; resp++) {
-        if (authData->sf.keyboard.responseLengths[resp] !=
-                kbResponseLengths[resp]) {
-            return WOLFSSH_USERAUTH_FAILURE;
-
-        }
-        if (WSTRCMP((const char*)authData->sf.keyboard.responses[resp],
-                    (const char*)kbResponses[resp]) != 0) {
+    
+    /* Handle keyboard-interactive auth */
+    if (authType == WOLFSSH_USERAUTH_KEYBOARD) {
+        /* If responseCount is 0, this is a prompt setup call */
+        if (authData->sf.keyboard.responseCount == 0) {
+            /* Set up prompts */
+            WMEMCPY(&authData->sf.keyboard, &promptData, sizeof(WS_UserAuthData_Keyboard));
+            
+            /* Return SUCCESS_ANOTHER to proceed with sending prompts */
+            if (useUserAuthCb) {
+                return WOLFSSH_USERAUTH_SUCCESS_ANOTHER;
+            }
+            /* When not testing userAuthCb, return FAILURE to fall back to keyboardAuthCb */
             return WOLFSSH_USERAUTH_FAILURE;
         }
+        
+        /* Validate responses */
+        if (authData->sf.keyboard.responseCount != kbResponseCount) {
+            return WOLFSSH_USERAUTH_FAILURE;
+        }
+
+        for (word32 resp = 0; resp < kbResponseCount; resp++) {
+            if (authData->sf.keyboard.responseLengths[resp] !=
+                    kbResponseLengths[resp]) {
+                return WOLFSSH_USERAUTH_FAILURE;
+
+            }
+            if (WSTRCMP((const char*)authData->sf.keyboard.responses[resp],
+                        (const char*)kbResponses[resp]) != 0) {
+                return WOLFSSH_USERAUTH_FAILURE;
+            }
+        }
+        if (kbMultiRound && currentRound == 0) {
+            currentRound++;
+            kbResponses[0] = (byte*)testText2;
+            kbResponseLengths[0] = 8;
+            return WOLFSSH_USERAUTH_SUCCESS_ANOTHER;
+        }
+        return WOLFSSH_USERAUTH_SUCCESS;
     }
-    if (kbMultiRound && currentRound == 0) {
-        currentRound++;
-        kbResponses[0] = (byte*)testText2;
-        kbResponseLengths[0] = 8;
-        return WOLFSSH_USERAUTH_SUCCESS_ANOTHER;
-    }
-    return WOLFSSH_USERAUTH_SUCCESS;
+    
+    return WOLFSSH_USERAUTH_FAILURE;
 }
 
 static int serverKeyboardCallback(WS_UserAuthData_Keyboard *kbAuth, void *ctx)
@@ -332,7 +349,12 @@ static THREAD_RETURN WOLFSSH_THREAD server_thread(void* args)
     }
 
     wolfSSH_SetUserAuth(ctx, serverUserAuth);
-    wolfSSH_SetKeyboardAuthPrompts(ctx, serverKeyboardCallback);
+    
+    /* Only set keyboard auth callback when not testing userAuthCb */
+    if (!useUserAuthCb) {
+        wolfSSH_SetKeyboardAuthPrompts(ctx, serverKeyboardCallback);
+    }
+    
     ssh = wolfSSH_new(ctx);
     if (ssh == NULL) {
         ES_ERROR("Couldn't allocate SSH data.\n");
@@ -574,6 +596,34 @@ static void test_unbalanced_client_KeyboardInteractive(void)
     test_client();
     unbalanced = 0;
 }
+
+static void test_userAuthCb_KeyboardInteractive(void)
+{
+    printf("Testing keyboard-interactive auth via userAuthCb\n");
+    kbResponses[0] = (byte*)testText1;
+    kbResponseLengths[0] = 4;
+    kbResponseCount = 1;
+    useUserAuthCb = 1;
+
+    test_client();
+    useUserAuthCb = 0;
+}
+
+static void test_userAuthCb_multi_round_KeyboardInteractive(void)
+{
+    printf("Testing multiple prompt rounds via userAuthCb\n");
+    kbResponses[0] = (byte*)testText1;
+    kbResponseLengths[0] = 4;
+    kbResponseCount = 1;
+    kbMultiRound = 1;
+    useUserAuthCb = 1;
+
+    test_client();
+    AssertIntEQ(currentRound, 1);
+    currentRound = 0;
+    kbMultiRound = 0;
+    useUserAuthCb = 0;
+}
 #endif /* WOLFSSH_TEST_BLOCK */
 
 int wolfSSH_AuthTest(int argc, char** argv)
@@ -603,6 +653,8 @@ int wolfSSH_AuthTest(int argc, char** argv)
     test_multi_prompt_KeyboardInteractive();
     test_multi_round_KeyboardInteractive();
     test_unbalanced_client_KeyboardInteractive();
+    test_userAuthCb_KeyboardInteractive();
+    test_userAuthCb_multi_round_KeyboardInteractive();
 
     AssertIntEQ(wolfSSH_Cleanup(), WS_SUCCESS);
 
@@ -616,5 +668,3 @@ int main(int argc, char** argv)
     return wolfSSH_AuthTest(argc, argv);
 }
 #endif
-
-
