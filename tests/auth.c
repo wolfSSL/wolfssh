@@ -425,16 +425,24 @@ static int keyboardUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 
     if (authType == WOLFSSH_USERAUTH_KEYBOARD) {
         AssertIntEQ(kbResponseCount, authData->sf.keyboard.promptCount);
-        for (word32 prompt = 0; prompt < kbResponseCount; prompt++) {
-            AssertStrEQ("Password: ", authData->sf.keyboard.prompts[prompt]);
+        
+        /* Only check prompts if there are any */
+        if (kbResponseCount > 0) {
+            for (word32 prompt = 0; prompt < kbResponseCount; prompt++) {
+                AssertStrEQ("Password: ", authData->sf.keyboard.prompts[prompt]);
+            }
         }
 
         authData->sf.keyboard.responseCount = kbResponseCount;
         if (unbalanced) {
             authData->sf.keyboard.responseCount++;
         }
-        authData->sf.keyboard.responseLengths = kbResponseLengths;
-        authData->sf.keyboard.responses = (byte**)kbResponses;
+        
+        /* Only set response pointers if there are responses */
+        if (kbResponseCount > 0) {
+            authData->sf.keyboard.responseLengths = kbResponseLengths;
+            authData->sf.keyboard.responses = (byte**)kbResponses;
+        }
         ret = WS_SUCCESS;
     }
     return ret;
