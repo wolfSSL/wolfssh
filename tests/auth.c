@@ -229,8 +229,17 @@ static int serverUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
     if (authType == WOLFSSH_USERAUTH_KEYBOARD) {
         /* If responseCount is 0, this is a prompt setup call */
         if (authData->sf.keyboard.responseCount == 0) {
-            /* Set up prompts */
-            WMEMCPY(&authData->sf.keyboard, &promptData, sizeof(WS_UserAuthData_Keyboard));
+            /* Set up prompts - only copy the necessary fields, not the entire structure */
+            authData->sf.keyboard.promptCount = promptData.promptCount;
+            authData->sf.keyboard.promptName = promptData.promptName;
+            authData->sf.keyboard.promptNameSz = promptData.promptNameSz;
+            authData->sf.keyboard.promptInstruction = promptData.promptInstruction;
+            authData->sf.keyboard.promptInstructionSz = promptData.promptInstructionSz;
+            authData->sf.keyboard.promptLanguage = promptData.promptLanguage;
+            authData->sf.keyboard.promptLanguageSz = promptData.promptLanguageSz;
+            authData->sf.keyboard.prompts = promptData.prompts;
+            authData->sf.keyboard.promptLengths = promptData.promptLengths;
+            authData->sf.keyboard.promptEcho = promptData.promptEcho;
             
             /* Return SUCCESS_ANOTHER to proceed with sending prompts */
             if (useUserAuthCb) {
@@ -668,3 +677,5 @@ int main(int argc, char** argv)
     return wolfSSH_AuthTest(argc, argv);
 }
 #endif
+
+
