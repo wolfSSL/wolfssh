@@ -13376,6 +13376,7 @@ int SendUserAuthKeyboardRequest(WOLFSSH* ssh, WS_UserAuthData* authData)
         }
     }
 
+    /* Only check for NULL pointers if we actually have prompts */
     if (authData->sf.keyboard.promptCount > 0 &&
         (authData->sf.keyboard.prompts == NULL ||
          authData->sf.keyboard.promptLengths == NULL ||
