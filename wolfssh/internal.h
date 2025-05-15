@@ -1249,7 +1249,7 @@ enum WS_MessageIds {
 
 #define CHANNEL_EXTENDED_DATA_STDERR WOLFSSH_EXT_DATA_STDERR
 
-/* Used when checking IsMessageAllowed() to determine if createing and sending
+/* Used when checking IsMessageAllowed() to determine if creating and sending
  * the message or receiving the message is allowed */
 #define WS_MSG_SEND 1
 #define WS_MSG_RECV 2

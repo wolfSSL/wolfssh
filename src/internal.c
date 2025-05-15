@@ -707,6 +707,8 @@ INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
 #endif /* NO_WOLFSSH_CLIENT */
 
 
+/* 'state' argument is for if trying to send a message or receive one.
+ * Returns 1 if allowed 0 if not allowed. */
 INLINE static int IsMessageAllowed(WOLFSSH *ssh, byte msg, byte state)
 {
     if (state == WS_MSG_SEND && !IsMessageAllowedKeying(ssh, msg)) {
