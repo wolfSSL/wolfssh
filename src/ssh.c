@@ -1201,7 +1201,7 @@ int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz)
 
     if (ssh->isKeying) {
         ssh->error = WS_REKEYING;
-        return WS_REKEYING;
+        return WS_FATAL_ERROR;
     }
 
     bytesTxd = SendChannelData(ssh, ssh->channelList->channel, buf, bufSz);
