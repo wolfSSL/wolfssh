@@ -126,7 +126,8 @@ static void ShowUsage(void)
     printf(" -X            Ignore IP checks on peer vs peer certificate\n");
 #endif
     printf(" -E            List all possible algos\n");
-    printf(" -k            set the list of key algos to use\n");
+    printf(" -k            set the list of key algos\n");
+    printf(" -C            set the list of encrypt algos\n");
     printf(" -q            turn off debugging output\n");
 }
 
@@ -651,6 +652,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     const char* cmd      = NULL;
     const char* privKeyName = NULL;
     const char* keyList = NULL;
+    const char* cipherList = NULL;
     byte imExit = 0;
     byte listAlgos = 0;
     byte nonBlock = 0;
@@ -669,7 +671,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
     (void)keepOpen;
 
-    while ((ch = mygetopt(argc, argv, "?ac:h:i:j:p:tu:xzNP:RJ:A:XeEk:qK:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?ac:C:h:i:j:p:tu:xzNP:RJ:A:XeEk:qK:")) != -1) {
         switch (ch) {
             case 'h':
                 host = myoptarg;
@@ -748,6 +750,10 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
             case 'k':
                 keyList = myoptarg;
+                break;
+
+            case 'C':
+                cipherList = myoptarg;
                 break;
 
         #if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS)
@@ -839,6 +845,11 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     if (keyList) {
         if (wolfSSH_CTX_SetAlgoListKey(ctx, NULL) != WS_SUCCESS) {
             err_sys("Error setting key list.\n");
+        }
+    }
+    if (cipherList) {
+        if (wolfSSH_CTX_SetAlgoListCipher(ctx, cipherList) != WS_SUCCESS) {
+            err_sys("Error setting cipher list.\n");
         }
     }
 
