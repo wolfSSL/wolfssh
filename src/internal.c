@@ -147,6 +147,11 @@ Flags:
   WOLFSSH_NO_NISTP256_MLKEM768_SHA256
     Set when ML-KEM is disabled in wolfssl. Set to disable use of ECDHE with
     prime NISTP256 hybridized with post-quantum ML-KEM 768.
+  WOLFSSH_NO_AES_CBC_SOFT_DISABLE
+    AES-CBC is normally soft-disabled. The default configuration will not
+    advertise the availability of AES-CBC algorithms during KEX. AES-CBC
+    algorithms still work. Setting this flag will advertise AES-CBC
+    algorithms during KEX by default.
   WOLFSSH_NO_AES_CBC
     Set when AES or AES-CBC are disabled. Set to disable use of AES-CBC
     encryption.
@@ -803,7 +808,7 @@ static const char cannedEncAlgoNames[] =
     "aes192-ctr,"
     "aes128-ctr,"
 #endif
-#if !defined(WOLFSSH_NO_AES_CBC)
+#if !defined(WOLFSSH_NO_AES_CBC) && defined(WOLFSSH_NO_AES_CBC_SOFT_DISABLE)
     "aes256-cbc,"
     "aes192-cbc,"
     "aes128-cbc,"

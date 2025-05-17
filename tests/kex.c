@@ -163,6 +163,52 @@ static int tsClientUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 #define NUMARGS 12
 #define ARGLEN 32
 
+/* 
+ * Macro: ADD_ARG
+ * Purpose: Adds a string argument to the argument list.
+ * Parameters:
+ *   - argList: The array of argument strings.
+ *   - argListCount: The current count of arguments in the list (modified
+ *     by the macro).
+ *   - arg: The string argument to add.
+ * Behavior:
+ *   - Copies the string `arg` into the next available slot in `argList`.
+ *   - Increments `argListCount` if the operation is successful.
+ * Constraints:
+ *   - The total number of arguments must not exceed `NUMARGS`.
+ *   - Each argument string must not exceed `ARGLEN` characters.
+ * Side effects:
+ *   - Modifies `argList` and increments `argListCount`.
+ */
+#define ADD_ARG(argList,argListCount,arg) do { \
+    if ((argListCount) < NUMARGS) \
+        WSTRNCPY((argList)[(argListCount)++], (arg), ARGLEN); \
+} while (0)
+
+/* 
+ * Macro: ADD_ARG_INT
+ * Purpose: Adds an integer argument to the argument list as a string.
+ * Parameters:
+ *   - argList: The array of argument strings.
+ *   - argListCount: The current count of arguments in the list (modified
+ *     by the macro).
+ *   - arg: The integer argument to add.
+ * Behavior:
+ *   - Converts the integer `arg` to a string and stores it in the next
+ *     available slot in `argList`.
+ *   - Increments `argListCount` if the operation is successful.
+ * Constraints:
+ *   - The total number of arguments must not exceed `NUMARGS`.
+ *   - Each argument string must not exceed `ARGLEN` characters.
+ * Side effects:
+ *   - Modifies `argList` and increments `argListCount`.
+ */
+#define ADD_ARG_INT(argList,argListCount,arg) do { \
+    if ((argListCount) < NUMARGS) \
+        WSNPRINTF((argList)[(argListCount)++], ARGLEN, "%d", (arg)); \
+} while (0)
+
+
 static int wolfSSH_wolfSSH_Group16_512(void)
 {
     tcp_ready ready;
@@ -175,7 +221,8 @@ static int wolfSSH_wolfSSH_Group16_512(void)
           sA[10], sA[11] };
     char cA[NUMARGS][ARGLEN];
     char *clientArgv[NUMARGS] =
-        { cA[0], cA[1], cA[2], cA[3], cA[4] };
+        { cA[0], cA[1], cA[2], cA[3], cA[4], cA[5], cA[6], cA[7], cA[8], cA[9],
+          cA[10], cA[11] };
     int serverArgc = 0;
     int clientArgc = 0;
 
@@ -202,19 +249,19 @@ static int wolfSSH_wolfSSH_Group16_512(void)
 
     InitTcpReady(&ready);
 
-    WSTRNCPY(serverArgv[serverArgc++], "echoserver", ARGLEN);
-    WSTRNCPY(serverArgv[serverArgc++], "-1", ARGLEN);
-    WSTRNCPY(serverArgv[serverArgc++], "-f", ARGLEN);
+    ADD_ARG(serverArgv, serverArgc, "echoserver");
+    ADD_ARG(serverArgv, serverArgc, "-1");
+    ADD_ARG(serverArgv, serverArgc, "-f");
     #if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR)
-        WSTRNCPY(serverArgv[serverArgc++], "-p", ARGLEN);
-        WSTRNCPY(serverArgv[serverArgc++], "-0", ARGLEN);
+        ADD_ARG(serverArgv, serverArgc, "-p");
+        ADD_ARG(serverArgv, serverArgc, "-0");
     #endif
-    WSTRNCPY(serverArgv[serverArgc++], "-x", ARGLEN);
-    WSTRNCPY(serverArgv[serverArgc++], "diffie-hellman-group16-sha512", ARGLEN);
-    WSTRNCPY(serverArgv[serverArgc++], "-m", ARGLEN);
-    WSTRNCPY(serverArgv[serverArgc++], "hmac-sha2-512", ARGLEN);
-    WSTRNCPY(serverArgv[serverArgc++], "-c", ARGLEN);
-    WSTRNCPY(serverArgv[serverArgc++], "aes256-cbc", ARGLEN);
+    ADD_ARG(serverArgv, serverArgc, "-x");
+    ADD_ARG(serverArgv, serverArgc, "diffie-hellman-group16-sha512");
+    ADD_ARG(serverArgv, serverArgc, "-m");
+    ADD_ARG(serverArgv, serverArgc, "hmac-sha2-512");
+    ADD_ARG(serverArgv, serverArgc, "-c");
+    ADD_ARG(serverArgv, serverArgc, "aes256-cbc");
 
     serverArgs.argc = serverArgc;
     serverArgs.argv = serverArgv;
@@ -224,12 +271,14 @@ static int wolfSSH_wolfSSH_Group16_512(void)
     ThreadStart(echoserver_test, &serverArgs, &serverThread);
     WaitTcpReady(&ready);
 
-    WSTRNCPY(cA[clientArgc++], "client", ARGLEN);
-    WSTRNCPY(cA[clientArgc++], "-u", ARGLEN);
-    WSTRNCPY(cA[clientArgc++], "jill", ARGLEN);
+    ADD_ARG(clientArgv, clientArgc, "client");
+    ADD_ARG(clientArgv, clientArgc, "-u");
+    ADD_ARG(clientArgv, clientArgc, "jill");
+    ADD_ARG(clientArgv, clientArgc, "-C");
+    ADD_ARG(clientArgv, clientArgc, "aes256-cbc");
     #if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR)
-        WSTRNCPY(cA[clientArgc++], "-p", ARGLEN);
-        WSNPRINTF(cA[clientArgc++], ARGLEN, "%d", ready.port);
+        ADD_ARG(clientArgv, clientArgc, "-p");
+        ADD_ARG_INT(clientArgv, clientArgc, ready.port);
     #endif
 
     clientArgs.argc = clientArgc;
