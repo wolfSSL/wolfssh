@@ -103,6 +103,11 @@ extern "C" {
 
 #if defined(NO_FILESYSTEM) && !defined(WOLFSSH_FATFS)
     #define WS_DELIM '/'
+
+#elif defined(WOLFSSH_USER_FILESYSTEM)
+    /* User-defined I/O support, this should be at the top of the ports list
+     * to override all */
+
 #elif defined(WOLFSSL_NUCLEUS)
     #include "storage/nu_storage.h"
 
@@ -427,8 +432,6 @@ extern "C" {
     #define WFSETTIME(fs,fd,a,m) (0)
     #define WCHDIR(fs,b)        SYS_FS_DirectryChange((b))
 
-#elif defined(WOLFSSH_USER_FILESYSTEM)
-    /* User-defined I/O support */
 #else
     #include <stdlib.h>
     #if !defined(_WIN32_WCE) && !defined(FREESCALE_MQX)
@@ -636,7 +639,12 @@ extern "C" {
         #endif
     #endif
 
-#ifdef WOLFSSL_NUCLEUS
+#if defined(WOLFSSH_USER_FILESYSTEM)
+    /* User-defined I/O support, this should be at the top of the ports list
+     * to override all */
+    #include "myFilesystem.h"
+
+#elif defined(WOLFSSL_NUCLEUS)
     #define WSTAT_T         struct stat
     #define WRMDIR(fs,d)   (NU_Remove_Dir((d)) == NU_SUCCESS)?0:1
     #define WMKDIR(fs,d,m) (NU_Make_Dir((d)) == NU_SUCCESS)?0:1
@@ -1433,9 +1441,6 @@ extern "C" {
     #define WPWRITE(fs,fd,b,s,o) wPwrite((fd),(b),(s),(o))
     #define WPREAD(fs,fd,b,s,o)  wPread((fd),(b),(s),(o))
 
-#elif defined(WOLFSSH_USER_FILESYSTEM)
-    /* User-defined I/O support */
-    #include "myFilesystem.h"
 #else
 
     #include <unistd.h>   /* used for rmdir */

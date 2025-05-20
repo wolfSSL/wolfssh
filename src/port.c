@@ -660,7 +660,7 @@ int wPread(WFD fd, unsigned char* buf, unsigned int sz,
 
 #endif
 
-#ifndef NO_FILESYSTEM
+#if !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM)
 #if defined(MICROCHIP_MPLAB_HARMONY)
 int wChmod(const char *path, int mode)
 {
