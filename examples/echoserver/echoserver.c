@@ -1308,7 +1308,7 @@ static int sftp_worker(thread_ctx_t* threadCtx)
     s = (WS_SOCKET_T)wolfSSH_get_fd(ssh);
 
     do {
-        if (wolfSSH_SFTP_PendingSend(ssh)) {
+        if (ret == WS_WANT_WRITE || wolfSSH_SFTP_PendingSend(ssh)) {
             /* Yes, process the SFTP data. */
             ret = wolfSSH_SFTP_read(ssh);
             error = wolfSSH_get_error(ssh);
