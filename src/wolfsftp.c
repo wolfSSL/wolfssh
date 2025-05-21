@@ -3228,12 +3228,16 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
                 >= (int)sizeof(r)) {
             WLOG(WS_LOG_SFTP, "Path length too large");
             WFREE(out->fName, out->heap, DYNTYPE_SFTP);
+            out->fName = NULL;
+            out->fSz = 0;
             return WS_FATAL_ERROR;
         }
 
         if (wolfSSH_RealPath(ssh->sftpDefaultPath, r, s, sizeof(s)) < 0) {
             WFREE(out->fName, out->heap, DYNTYPE_SFTP);
             WLOG(WS_LOG_SFTP, "Error cleaning path to get attributes");
+            out->fName = NULL;
+            out->fSz = 0;
             return WS_FATAL_ERROR;
         }
 
@@ -3248,6 +3252,8 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
     if (SFTP_CreateLongName(out) != WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "Error creating long name for %s", out->fName);
         WFREE(out->fName, out->heap, DYNTYPE_SFTP);
+        out->fName = NULL;
+        out->fSz = 0;
         return WS_FATAL_ERROR;
     }
 
@@ -3976,7 +3982,7 @@ int wolfSSH_SFTP_RecvClose(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     if (sz == sizeof(WFD)) {
         WMEMSET((byte*)&fd, 0, sizeof(WFD));
         WMEMCPY((byte*)&fd, data + idx, sz);
-        
+
 #ifdef MICROCHIP_MPLAB_HARMONY
         ret = WFCLOSE(ssh->fs, &fd);
 #else
@@ -5003,7 +5009,7 @@ int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
 {
     WOLFSSH_UNUSED(heap);
     WOLFSSH_UNUSED(fs);
-    
+
     return SFTP_GetAttributesHelper(atr, fileName);
 }
 
@@ -5028,7 +5034,7 @@ int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
         WLOG(WS_LOG_SFTP, "Unknown handle");
         return WS_BAD_FILE_E;
     }
-        
+
     return SFTP_GetAttributesHelper(atr, cur->name);
 }
 
@@ -8844,7 +8850,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                     if (state->gOfst[0] > 0 || state->gOfst[1] > 0)
                         ret = WFOPEN(ssh->fs, &state->fl, to, WOLFSSH_O_APPEND);
                     else
-                        ret = WFOPEN(ssh->fs, &state->fl, to, WOLFSSH_O_WRONLY);          
+                        ret = WFOPEN(ssh->fs, &state->fl, to, WOLFSSH_O_WRONLY);
             #elif defined(USE_WINDOWS_API)
                     {
                         DWORD desiredAccess = GENERIC_WRITE;
