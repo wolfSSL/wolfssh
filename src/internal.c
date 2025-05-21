@@ -9661,9 +9661,6 @@ static INLINE int Decrypt(WOLFSSH* ssh, byte* plain, const byte* input,
 
     ssh->rxCount += sz;
 
-    if (ret == WS_SUCCESS)
-        ret = HighwaterCheck(ssh, WOLFSSH_HWSIDE_RECEIVE);
-
     return ret;
 }
 
@@ -9932,9 +9929,6 @@ static INLINE int DecryptAead(WOLFSSH* ssh, byte* plain,
     AeadIncrementExpIv(ssh->peerKeys.iv);
     ssh->rxCount += sz;
 
-    if (ret == WS_SUCCESS)
-        ret = HighwaterCheck(ssh, WOLFSSH_HWSIDE_RECEIVE);
-
     return ret;
 }
 #endif /* WOLFSSH_NO_AEAD */
@@ -9969,6 +9963,14 @@ int DoReceive(WOLFSSH* ssh)
                     WLOG(WS_LOG_DEBUG, "PR: First decrypt fail");
                     ssh->error = ret;
                     return WS_FATAL_ERROR;
+                }
+
+                ret = HighwaterCheck(ssh, WOLFSSH_HWSIDE_RECEIVE);
+                if (ret != WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, "PR: First HighwaterCheck fail");
+                    ssh->error = ret;
+                    ret = WS_FATAL_ERROR;
+                    break;
                 }
             }
             NO_BREAK;
@@ -10054,6 +10056,14 @@ int DoReceive(WOLFSSH* ssh)
                 }
             }
             ssh->processReplyState = PROCESS_PACKET;
+
+            ret = HighwaterCheck(ssh, WOLFSSH_HWSIDE_RECEIVE);
+            if (ret != WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, "PR: HighwaterCheck fail");
+                ssh->error = ret;
+                ret = WS_FATAL_ERROR;
+                break;
+            }
             NO_BREAK;
 
         case PROCESS_PACKET:
