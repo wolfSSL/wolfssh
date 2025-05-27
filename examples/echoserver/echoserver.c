@@ -1709,7 +1709,7 @@ static void StrListFree(StrList* list)
 }
 
 
-/* Map user names to passwords */
+/* Map user names to passwords and keyboard auth prompts */
 /* Use arrays for username and p. The password or public key can
  * be hashed and the hash stored here. Then I won't need the type. */
 typedef struct PwMap {
@@ -1717,6 +1717,9 @@ typedef struct PwMap {
     byte username[32];
     word32 usernameSz;
     byte p[WC_SHA256_DIGEST_SIZE];
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+    WS_UserAuthData_Keyboard* keyboard;
+#endif
     struct PwMap* next;
 } PwMap;
 
@@ -1750,6 +1753,24 @@ static PwMap* PwMapNew(PwMapList* list, byte type, const byte* username,
 
     return map;
 }
+
+
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+/* Create new node for list of auths, adding keyboard auth prompts */
+static PwMap* PwMapKeyboardNew(PwMapList* list, byte type, const byte* username,
+                       word32 usernameSz, const byte* p, word32 pSz,
+                       WS_UserAuthData_Keyboard* keyboard)
+{
+    PwMap* map;
+
+    map = PwMapNew(list, type, username, usernameSz, p, pSz);
+    if (map) {
+        map->keyboard = keyboard;
+    }
+
+    return map;
+}
+#endif
 
 
 static void PwMapListDelete(PwMapList* list)
@@ -2013,7 +2034,8 @@ static int LoadPasswdList(StrList* strList, PwMapList* mapList)
     return count;
 }
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-static int LoadKeyboardList(StrList* strList, PwMapList* mapList)
+static int LoadKeyboardList(StrList* strList, PwMapList* mapList,
+    WS_UserAuthData_Keyboard* kbAuthData)
 {
     char names[256];
     char* passwd;
@@ -2026,9 +2048,10 @@ static int LoadKeyboardList(StrList* strList, PwMapList* mapList)
             *passwd = 0;
             passwd++;
 
-            PwMapNew(mapList, WOLFSSH_USERAUTH_KEYBOARD,
+            PwMapKeyboardNew(mapList, WOLFSSH_USERAUTH_KEYBOARD,
                     (byte*)names, (word32)WSTRLEN(names),
-                    (byte*)passwd, (word32)WSTRLEN(passwd));
+                    (byte*)passwd, (word32)WSTRLEN(passwd),
+                    kbAuthData);
         }
         else {
             fprintf(stderr, "Ignoring password: %s\n", names);
@@ -2192,6 +2215,7 @@ static int wsUserAuth(byte authType,
 #endif
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
         authType != WOLFSSH_USERAUTH_KEYBOARD &&
+        authType != WOLFSSH_USERAUTH_KEYBOARD_SETUP &&
 #endif
         authType != WOLFSSH_USERAUTH_PUBLICKEY) {
 
@@ -2315,6 +2339,14 @@ static int wsUserAuth(byte authType,
             }
             #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
             else if (authData->type == WOLFSSH_USERAUTH_KEYBOARD) {
+                if (authType == WOLFSSH_USERAUTH_KEYBOARD_SETUP) {
+                    /* setup the keyboard auth prompts */
+                    WMEMCPY(&authData->sf.keyboard, map->keyboard,
+                    sizeof(WS_UserAuthData_Keyboard));
+                    return WS_SUCCESS;
+                }
+
+                /* do keyboard auth prompts */
                 if (WMEMCMP(map->p, authHash, WC_SHA256_DIGEST_SIZE) == 0) {
                     return WOLFSSH_USERAUTH_SUCCESS;
                 }
@@ -2338,15 +2370,6 @@ static int wsUserAuth(byte authType,
     return WOLFSSH_USERAUTH_INVALID_USER;
 }
 
-#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-static int keyboardCallback(WS_UserAuthData_Keyboard *kbAuth, void *ctx)
-{
-    WS_UserAuthData_Keyboard *kbAuthData = (WS_UserAuthData_Keyboard*) ctx;
-    WMEMCPY(kbAuth, kbAuthData, sizeof(WS_UserAuthData_Keyboard));
-
-    return WS_SUCCESS;
-}
-#endif
 
 #ifdef WOLFSSH_SFTP
 /*
@@ -2800,9 +2823,6 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     if (keyboardList) {
-        LoadKeyboardList(keyboardList, &pwMapList);
-        StrListFree(keyboardList);
-        keyboardList = NULL;
         kbAuthData.promptCount = 1;
         kbAuthData.promptName = NULL;
         kbAuthData.promptNameSz = 0;
@@ -2825,7 +2845,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             ES_ERROR("Error allocating promptEcho");
         }
         kbAuthData.promptEcho[0] = 0;
-        wolfSSH_SetKeyboardAuthPrompts(ctx, keyboardCallback);
+        LoadKeyboardList(keyboardList, &pwMapList, &kbAuthData);
+        StrListFree(keyboardList);
+        keyboardList = NULL;
     }
 #endif
 
@@ -3035,9 +3057,6 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     #endif
         wolfSSH_SetUserAuthCtx(ssh, &pwMapList);
         wolfSSH_SetKeyingCompletionCbCtx(ssh, (void*)ssh);
-    #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-        wolfSSH_SetKeyboardAuthCtx(ssh, &kbAuthData);
-    #endif
 
         /* Use the session object for its own highwater callback ctx */
         if (defaultHighwater > 0) {

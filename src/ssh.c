@@ -1338,23 +1338,6 @@ int wolfSSH_SendDisconnect(WOLFSSH *ssh, word32 reason)
     return SendDisconnect(ssh, reason);
 }
 
-#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-void wolfSSH_SetKeyboardAuthPrompts(WOLFSSH_CTX* ctx,
-                                    WS_CallbackKeyboardAuthPrompts cb)
-{
-    if (ctx != NULL) {
-        ctx->keyboardAuthCb = cb;
-    }
-}
-
-void wolfSSH_SetKeyboardAuthCtx(WOLFSSH* ssh, void* keyboardAuthCtx)
-{
-    if (ssh != NULL) {
-        ssh->keyboardAuthCtx = keyboardAuthCtx;
-    }
-}
-#endif
-
 void wolfSSH_SetUserAuth(WOLFSSH_CTX* ctx, WS_CallbackUserAuth cb)
 {
     if (ctx != NULL) {
