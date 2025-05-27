@@ -877,9 +877,6 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
     ctx->algoListCipher = cannedEncAlgoNames;
     ctx->algoListMac = cannedMacAlgoNames;
     ctx->algoListKeyAccepted = cannedKeyAlgoNames;
-#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-    ctx->keyboardAuthCb = NULL;
-#endif
 
     count = (word32)(sizeof(ctx->privateKey)
             / sizeof(ctx->privateKey[0]));
@@ -13369,19 +13366,22 @@ int SendUserAuthKeyboardRequest(WOLFSSH* ssh, WS_UserAuthData* authData)
 
     WLOG(WS_LOG_DEBUG, "Entering SendUserAuthKeyboardRequest()");
 
-
     if (ssh == NULL || authData == NULL) {
         ret = WS_BAD_ARGUMENT;
     }
 
-    if (ssh->ctx->keyboardAuthCb == NULL) {
+    if (ssh->ctx->userAuthCb == NULL) {
         WLOG(WS_LOG_DEBUG, "SendUserAuthKeyboardRequest called with no Cb set");
         ret = WS_BAD_USAGE;
     }
 
     if (ret == WS_SUCCESS) {
-        ret = ssh->ctx->keyboardAuthCb(&authData->sf.keyboard,
-                                       ssh->keyboardAuthCtx);
+        authData->type = WOLFSSH_USERAUTH_KEYBOARD;
+        ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_KEYBOARD_SETUP, authData,
+                               ssh->userAuthCtx);
+        if (ret == WOLFSSH_USERAUTH_SUCCESS) {
+            ret = WS_SUCCESS;
+        }
     }
 
     if (authData->sf.keyboard.promptCount > 0 &&
@@ -14946,6 +14946,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
         WMEMSET(keySig_ptr, 0, sizeof(WS_KeySignature));
         keySig_ptr->keySigId = ID_NONE;
         keySig_ptr->heap = ssh->ctx->heap;
+
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
         /* Callback happens later for keyboard auth */
         if (authType & WOLFSSH_USERAUTH_KEYBOARD) {
@@ -15117,9 +15118,7 @@ static int GetAllowedAuth(WOLFSSH* ssh, char* authStr)
 
     typeAllowed |= WOLFSSH_USERAUTH_PASSWORD;
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-    if (ssh->ctx->keyboardAuthCb != NULL) {
-        typeAllowed |= WOLFSSH_USERAUTH_KEYBOARD;
-    }
+    typeAllowed |= WOLFSSH_USERAUTH_KEYBOARD;
 #endif
 #if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
     typeAllowed |= WOLFSSH_USERAUTH_PUBLICKEY;

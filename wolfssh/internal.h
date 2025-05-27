@@ -529,9 +529,6 @@ struct WOLFSSH_CTX {
     WS_CallbackUserAuth userAuthCb;   /* User Authentication Callback */
     WS_CallbackUserAuthTypes userAuthTypesCb; /* Authentication Types Allowed */
     WS_CallbackUserAuthResult userAuthResultCb; /* User Authentication Result */
-#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-    WS_CallbackKeyboardAuthPrompts keyboardAuthCb; /* Keyboard auth prompts */
-#endif
     WS_CallbackHighwater highwaterCb; /* Data Highwater Mark Callback */
     WS_CallbackGlobalReq globalReqCb; /* Global Request Callback */
     WS_CallbackReqSuccess reqSuccessCb; /* Global Request Success Callback */
