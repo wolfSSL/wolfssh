@@ -7878,7 +7878,10 @@ static int DoUserAuthFailure(WOLFSSH* ssh,
                             break;
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
                         case ID_USERAUTH_KEYBOARD:
-                            authType |= WOLFSSH_USERAUTH_KEYBOARD;
+                            /* try a different auth method if failing */
+                            if (ssh->kbAuthAttempts < 3) {
+                                authType |= WOLFSSH_USERAUTH_KEYBOARD;
+                            }
                             break;
 #endif
 #if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
@@ -13382,6 +13385,11 @@ int SendUserAuthKeyboardRequest(WOLFSSH* ssh, WS_UserAuthData* authData)
         if (ret == WOLFSSH_USERAUTH_SUCCESS) {
             ret = WS_SUCCESS;
         }
+        else {
+            WLOG(WS_LOG_DEBUG, "Issue with keyboard auth setup, try another "
+                "auth type");
+            return  SendUserAuthFailure(ssh, 0);
+        }
     }
 
     if (authData->sf.keyboard.promptCount > 0 &&
@@ -13407,10 +13415,12 @@ int SendUserAuthKeyboardRequest(WOLFSSH* ssh, WS_UserAuthData* authData)
         ret = PreparePacket(ssh, payloadSz);
     }
 
-    output = ssh->outputBuffer.buffer;
-    idx = ssh->outputBuffer.length;
+    if (ret == WS_SUCCESS) {
+        output = ssh->outputBuffer.buffer;
+        idx = ssh->outputBuffer.length;
 
-    output[idx++] = MSGID_USERAUTH_INFO_REQUEST;
+        output[idx++] = MSGID_USERAUTH_INFO_REQUEST;
+    }
 
     if (ret == WS_SUCCESS) {
         ret = BuildUserAuthRequestKeyboard(ssh, output, &idx, authData);
@@ -15075,6 +15085,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
             /* submethods */
             c32toa(0, output + idx);
             idx += LENGTH_SZ;
+            ssh->kbAuthAttempts++;
         }
 #endif
         else if (authId == ID_USERAUTH_PUBLICKEY)

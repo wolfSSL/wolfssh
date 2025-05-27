@@ -222,9 +222,21 @@ static int load_key(byte isEcc, byte* buf, word32 bufSz)
 
 static int serverUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 {
-    (void) ctx;
-    if (authType != WOLFSSH_USERAUTH_KEYBOARD) {
+    WS_UserAuthData_Keyboard* prompts = (WS_UserAuthData_Keyboard*)ctx;
+
+    if (ctx == NULL) {
         return WOLFSSH_USERAUTH_FAILURE;
+    }
+
+    if (authType != WOLFSSH_USERAUTH_KEYBOARD &&
+            authType != WOLFSSH_USERAUTH_KEYBOARD_SETUP) {
+        return WOLFSSH_USERAUTH_FAILURE;
+    }
+
+    if (authType == WOLFSSH_USERAUTH_KEYBOARD_SETUP) {
+        WMEMCPY(&authData->sf.keyboard, prompts,
+            sizeof(WS_UserAuthData_Keyboard));
+        return WS_SUCCESS;
     }
 
     if (authData->sf.keyboard.responseCount != kbResponseCount) {
@@ -249,14 +261,6 @@ static int serverUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
         return WOLFSSH_USERAUTH_SUCCESS_ANOTHER;
     }
     return WOLFSSH_USERAUTH_SUCCESS;
-}
-
-static int serverKeyboardCallback(WS_UserAuthData_Keyboard *kbAuth, void *ctx)
-{
-    (void) ctx;
-    WMEMCPY(kbAuth, &promptData, sizeof(WS_UserAuthData_Keyboard));
-
-    return WS_SUCCESS;
 }
 
 static INLINE void SignalTcpReady(tcp_ready* ready, word16 port)
@@ -332,13 +336,13 @@ static THREAD_RETURN WOLFSSH_THREAD server_thread(void* args)
     }
 
     wolfSSH_SetUserAuth(ctx, serverUserAuth);
-    wolfSSH_SetKeyboardAuthPrompts(ctx, serverKeyboardCallback);
     ssh = wolfSSH_new(ctx);
     if (ssh == NULL) {
         ES_ERROR("Couldn't allocate SSH data.\n");
     }
     keyLoadBuf = buf;
     bufSz = EXAMPLE_KEYLOAD_BUFFER_SZ;
+    wolfSSH_SetUserAuthCtx(ssh, &promptData);
 
     bufSz = load_key(peerEcc, keyLoadBuf, bufSz);
     if (bufSz == 0) {

@@ -919,6 +919,7 @@ struct WOLFSSH {
     void* keyingCompletionCtx;
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     WS_UserAuthData_Keyboard kbAuth;
+    byte kbAuthAttempts;
 #endif
 };
 
