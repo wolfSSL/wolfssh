@@ -249,8 +249,9 @@ static int serverUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
             return WOLFSSH_USERAUTH_FAILURE;
 
         }
-        if (WSTRCMP((const char*)authData->sf.keyboard.responses[resp],
-                    (const char*)kbResponses[resp]) != 0) {
+        if (WSTRNCMP((const char*)authData->sf.keyboard.responses[resp],
+                    (const char*)kbResponses[resp],
+                    kbResponseLengths[resp]) != 0) {
             return WOLFSSH_USERAUTH_FAILURE;
         }
     }
