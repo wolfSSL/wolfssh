@@ -2,11 +2,11 @@
 # included from Top Level Makefile.am
 # All paths should be given relative to the root
 
-include ide/CSBENCH/include.am
-include ide/Espressif/include.am
-include ide/IAR-EWARM/include.am
-include ide/MQX/include.am
-include ide/STM32CUBE/include.am
 include ide/winvs/include.am
+include ide/mplabx/include.am
+include ide/CSBENCH/include.am
+include ide/MQX/include.am
+include ide/IAR-EWARM/include.am
+include ide/STM32CUBE/include.am
 
 EXTRA_DIST += ide/Renesas
