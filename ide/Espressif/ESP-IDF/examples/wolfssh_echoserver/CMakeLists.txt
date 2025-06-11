@@ -1,6 +1,6 @@
 #  [wolfSSL Project]/CMakeLists.txt
 #
-#  Copyright (C) 2014-2024 wolfSSL Inc.
+#  Copyright (C) 2014-2025 wolfSSL Inc.
 #
 #  This file is part of wolfSSH.
 #
@@ -17,7 +17,7 @@
 #  You should have received a copy of the GNU General Public License
 #  along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
 #
-# cmake for WOLFSSH Espressif projects
+# cmake for WOLFSSH Espressif projects (echoserver)
 #
 # See https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/build-system.html
 
@@ -34,6 +34,13 @@ set(WOLFSSL_USER_SETTINGS ON)
 
 # Assume we have a ESP_ENABLE_WOLFSSH section in user_settings.h
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DESP_ENABLE_WOLFSSH")
+
+# Managed wolfSSL Components prior to 5.7.4 need a manual setting for WOLFSSL_WOLFSSH
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWOLFSSL_WOLFSSH")
+
+# Optional:
+# set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWOLFSSH_TERM")
+# set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DDEBUG_WOLFSSH")
 
 # The wolfSSL CMake file should be able to find the source code.
 # Otherwise, assign an environment variable or set it here:
@@ -54,28 +61,28 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DESP_ENABLE_WOLFSSH")
 if(WIN32)
     # Windows-specific configuration here
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWOLFSSL_CMAKE_SYSTEM_NAME_WINDOWS")
-    message("Detected Windows")
+    message(STATUS "Detected Windows")
 endif()
 if(CMAKE_HOST_UNIX)
-    message("Detected UNIX")
+    message(STATUS "Detected UNIX")
 endif()
 if(APPLE)
-    message("Detected APPLE")
+    message(STATUS "Detected APPLE")
 endif()
 if(CMAKE_HOST_UNIX AND (NOT APPLE) AND EXISTS "/proc/sys/fs/binfmt_misc/WSLInterop")
     # Windows-specific configuration here
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWOLFSSL_CMAKE_SYSTEM_NAME_WSL")
-    message("Detected WSL")
+    message(STATUS "Detected WSL")
 endif()
 if(CMAKE_HOST_UNIX AND (NOT APPLE) AND (NOT WIN32))
     # Windows-specific configuration here
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWOLFSSL_CMAKE_SYSTEM_NAME_LINUX")
-    message("Detected Linux")
+    message(STATUS "Detected Linux")
 endif()
 if(APPLE)
     # Windows-specific configuration here
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWOLFSSL_CMAKE_SYSTEM_NAME_APPLE")
-    message("Detected Apple")
+    message(STATUS "Detected Apple")
 endif()
 # End optional WOLFSSL_CMAKE_SYSTEM_NAME
 
@@ -83,7 +90,7 @@ endif()
 set (PROTOCOL_EXAMPLES_DIR $ENV{IDF_PATH}/examples/common_components/protocol_examples_common)
 
 if (EXISTS "${PROTOCOL_EXAMPLES_DIR}")
-    message("Found PROTOCOL_EXAMPLES_DIR=${PROTOCOL_EXAMPLES_DIR}")
+    message(STATUS "Found PROTOCOL_EXAMPLES_DIR=${PROTOCOL_EXAMPLES_DIR}")
     set(EXTRA_COMPONENT_DIRS $ENV{IDF_PATH}/examples/common_components/protocol_examples_common)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DFOUND_PROTOCOL_EXAMPLES_DIR")
 else()
@@ -116,7 +123,7 @@ endif()
 set (PROTOCOL_EXAMPLES_DIR $ENV{IDF_PATH}/examples/common_components/protocol_examples_common)
 
 if (EXISTS "${PROTOCOL_EXAMPLES_DIR}")
-    message("Found PROTOCOL_EXAMPLES_DIR=${PROTOCOL_EXAMPLES_DIR}")
+    message(STATUS "Found PROTOCOL_EXAMPLES_DIR=${PROTOCOL_EXAMPLES_DIR}")
     set(EXTRA_COMPONENT_DIRS $ENV{IDF_PATH}/examples/common_components/protocol_examples_common)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DFOUND_PROTOCOL_EXAMPLES_DIR")
 else()
