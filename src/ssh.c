@@ -1737,6 +1737,7 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
     }
 
     if (ret > 0 && !isPrivate) {
+#ifndef WOLFSSH_NO_RSA
         long e;
         byte n[RSA_MAX_SIZE]; /* TODO: Handle small stack */
         word32 nSz = (word32)sizeof(n), eSz = (word32)sizeof(e);
@@ -1785,6 +1786,10 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
 
             *out = newKey;
         }
+#else
+        WLOG(WS_LOG_DEBUG, "DoAsn1Key failed; WOLFSSH_NO_RSA disabled RSA");
+        ret = WS_UNIMPLEMENTED_E;
+#endif
     }
     else if (ret > 0 && isPrivate) {
         if (*out == NULL) {
