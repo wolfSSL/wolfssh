@@ -994,7 +994,10 @@ static INLINE int SFTP_GetSz(byte* buf, word32* sz,
 
 #ifndef NO_WOLFSSH_SERVER
 
-#ifndef WOLFSSH_USER_FILESYSTEM
+#if defined(MICROCHIP_MPLAB_HARMONY) || defined(WOLFSSH_ZEPHYR) || \
+    defined(WOLFSSH_FATFS) || defined(FREESCALE_MQX) || \
+    defined(USE_WINDOWS_API) || defined(WOLFSSL_NUCLEUS) || \
+    !defined(WOLFSSH_USER_FILESYSTEM)
 static int SFTP_GetAttributes(void* fs, const char* fileName,
         WS_SFTP_FILEATRB* atr, byte noFollow, void* heap);
 static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
@@ -4930,10 +4933,6 @@ int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
     return WS_NOT_COMPILED;
 }
 
-
-#elif defined(WOLFSSH_USER_FILESYSTEM)
-    /* User-defined I/O support */
-
 #elif defined(MICROCHIP_MPLAB_HARMONY)
 int SFTP_GetAttributesStat(WS_SFTP_FILEATRB* atr, WSTAT_T* stats)
 {
@@ -5037,6 +5036,9 @@ int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
 
     return SFTP_GetAttributesHelper(atr, cur->name);
 }
+
+#elif defined(WOLFSSH_USER_FILESYSTEM)
+    /* User-defined I/O support */
 
 #else
 
