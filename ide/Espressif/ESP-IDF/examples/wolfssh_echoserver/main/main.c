@@ -1,6 +1,6 @@
 /* main.c
  *
- * Copyright (C) 2014-2024 wolfSSL Inc.
+ * Copyright (C) 2014-2025 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -65,9 +65,17 @@ void app_main(void)
 #endif
 
 #ifdef HAVE_VERSION_EXTENDED_INFO
-  //  esp_ShowExtendedSystemInfo();
+    esp_ShowExtendedSystemInfo();
 #endif
-
+#ifdef DEBUG_WOLFSSL
+    wolfSSL_Debugging_OFF();
+#endif
+#ifdef CONFIG_IDF_TARGET_ESP32H2
+    ESP_LOGE(TAG, "No WiFi on the ESP32-H2 and ethernet not yet supported");
+    while (1) {
+        vTaskDelay(60000);
+    }
+#endif
     /* Set time for cert validation.
      * Some lwIP APIs, including SNTP functions, are not thread safe. */
     ret = set_time(); /* need to setup NTP before WiFi */
@@ -116,11 +124,23 @@ void app_main(void)
 
     /* Initialize NVS */
     ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
-        ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ret = nvs_flash_init();
+    #if defined(CONFIG_IDF_TARGET_ESP8266)
+    {
+        if (ret == ESP_ERR_NVS_NO_FREE_PAGES) {
+            ESP_ERROR_CHECK(nvs_flash_erase());
+            ret = nvs_flash_init();
+        }
     }
+    #else
+    {
+        /* Non-ESP8266 initialization is slightly different */
+        if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
+            ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+            ESP_ERROR_CHECK(nvs_flash_erase());
+            ret = nvs_flash_init();
+        }
+    }
+    #endif /* else not CONFIG_IDF_TARGET_ESP8266 */
     ESP_ERROR_CHECK(ret);
 
     #if defined(CONFIG_IDF_TARGET_ESP32H2)
@@ -135,11 +155,11 @@ void app_main(void)
             ESP_LOGI(TAG, "Trying WiFi again...");
             ret = wifi_init_sta();
         }
-    #endif
-#endif
+    #endif /* else not CONFIG_IDF_TARGET_ESP32H2 */
+#endif /* else FOUND_PROTOCOL_EXAMPLES_DIR not found */
 
     /* Once we are connected to the network, start & wait for NTP time */
-   // ret = set_time_wait_for_ntp();
+    ret = set_time_wait_for_ntp();
 
     if (ret < -1) {
         /* a value of -1 means there was no NTP server, so no need to wait */
@@ -162,23 +182,16 @@ void app_main(void)
     memset(&args, 0, sizeof(func_args));
     echoserver_test(&args);
 
-    ESP_LOGI(TAG, "\n\nDone!"
-                  "If running from idf.py monitor, press twice: Ctrl+]");
-
-    ESP_LOGV(TAG, "\n\nLoop...\n\n");
     ESP_LOGI(TAG, "Stack used: %d", CONFIG_ESP_MAIN_TASK_STACK_SIZE
                                     - uxTaskGetStackHighWaterMark(NULL));
-
-    while (1) {
-#if defined(SINGLE_THREADED)
-        while (1);
-#else
-        vTaskDelay(60000);
-#endif
-    }
 
     ESP_LOGI(TAG, "\n\nDone!\n\n"
                   "If running from idf.py monitor, press twice: Ctrl+]\n\n"
              "WOLFSSL_COMPLETE\n" /* exit keyword for wolfssl_monitor.py */
             );
+
+    while (1) {
+        vTaskDelay(60000);
+    }
+
 } /* app_main */
