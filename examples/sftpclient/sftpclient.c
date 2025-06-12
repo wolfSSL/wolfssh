@@ -1101,7 +1101,7 @@ static int doCmds(func_args* args)
 /* alternate main loop for the autopilot get/receive */
 static int doAutopilot(int cmd, char* local, char* remote)
 {
-    int err;
+    int err = 0;
     int ret = WS_SUCCESS;
     char fullpath[128] = ".";
     WS_SFTPNAME* name  = NULL;
@@ -1138,6 +1138,12 @@ static int doAutopilot(int cmd, char* local, char* remote)
     }
 
     do {
+        if (err == WS_REKEYING) { /* handle rekeying state */
+            do {
+                ret = wolfSSH_worker(ssh, NULL);
+            } while (ret == WS_REKEYING);
+        }
+
         if (cmd == AUTOPILOT_PUT) {
             ret = wolfSSH_SFTP_Put(ssh, local, fullpath, 0, NULL);
         }
@@ -1146,7 +1152,8 @@ static int doAutopilot(int cmd, char* local, char* remote)
         }
         err = wolfSSH_get_error(ssh);
     } while ((err == WS_WANT_READ || err == WS_WANT_WRITE ||
-                err == WS_CHAN_RXD) && ret == WS_FATAL_ERROR);
+                err == WS_CHAN_RXD || err == WS_REKEYING) &&
+		    ret == WS_FATAL_ERROR);
 
     if (ret != WS_SUCCESS) {
         if (cmd == AUTOPILOT_PUT) {
