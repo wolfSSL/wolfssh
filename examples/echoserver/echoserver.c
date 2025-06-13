@@ -1491,7 +1491,7 @@ static int NonBlockSSH_accept(WOLFSSH* ssh)
             }
         }
         else {
-            error = WS_FATAL_ERROR;
+            ret = WS_FATAL_ERROR;
             break;
         }
     }
