@@ -543,6 +543,7 @@ static int wolfSSH_SFTP_buffer_read(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer,
         int readSz)
 {
     int ret;
+    byte peekBuf[1];
 
     if (buffer == NULL || ssh == NULL) {
         return WS_FATAL_ERROR;
@@ -563,8 +564,18 @@ static int wolfSSH_SFTP_buffer_read(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer,
     }
 
     do {
-        ret = wolfSSH_stream_read(ssh, buffer->data + buffer->idx,
+        if (!wolfSSH_stream_peek(ssh, peekBuf, 1)) {
+            /* poll more data off the wire */
+            ret = wolfSSH_worker(ssh, NULL);
+        }
+        else {
+            ret = WS_CHAN_RXD; /* existing data found with peek */
+        }
+
+        if (ret == WS_CHAN_RXD) {
+            ret = wolfSSH_stream_read(ssh, buffer->data + buffer->idx,
                 buffer->sz - buffer->idx);
+        }
         if (ret < 0) {
             return WS_FATAL_ERROR;
         }
@@ -5666,7 +5677,7 @@ int wolfSSH_SFTP_RecvFSetSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
  * returns WS_SUCCESS on success
  */
 static int SFTP_ClientRecvInit(WOLFSSH* ssh) {
-    int  len;
+    int  len, ret;
     byte id;
     word32 sz = 0;
     word32 version = 0;
@@ -5674,6 +5685,11 @@ static int SFTP_ClientRecvInit(WOLFSSH* ssh) {
 
     switch (ssh->sftpState) {
         case SFTP_RECV:
+            ret = wolfSSH_worker(ssh,NULL);
+            if (ret != WS_CHAN_RXD) {
+                return ret;
+            }
+
             if ((len = wolfSSH_stream_read(ssh, buf, sizeof(buf)))
                     != sizeof(buf)) {
                 /* @TODO partial read on small packet */
@@ -5785,7 +5801,7 @@ int wolfSSH_SFTP_connect(WOLFSSH* ssh)
 
     switch (ssh->sftpState) {
         case SFTP_BEGIN:
-            if ((ssh->error = SFTP_ClientSendInit(ssh)) != WS_SUCCESS) {
+            if (SFTP_ClientSendInit(ssh) != WS_SUCCESS) {
                 return WS_FATAL_ERROR;
             }
             ssh->sftpState = SFTP_RECV;
@@ -8174,7 +8190,7 @@ WS_SFTPNAME* wolfSSH_SFTP_RealPath(WOLFSSH* ssh, char* dir)
         case SFTP_REAL_GET_PACKET:
             /* read name response from Real Path packet */
             ret = wolfSSH_SFTP_DoName(ssh);
-            if (ret != NULL || (ret == NULL && ssh->error != WS_WANT_READ)) {
+            if (ret != NULL || (ret == NULL && !NoticeError(ssh))) {
                 wolfSSH_SFTP_ClearState(ssh, STATE_ID_NAME);
                 ssh->realState = SFTP_REAL_SEND_PACKET;
             }

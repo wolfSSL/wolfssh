@@ -1299,16 +1299,25 @@ static int sftp_worker(thread_ctx_t* threadCtx)
 {
     WOLFSSH* ssh = threadCtx->ssh;
     WS_SOCKET_T s;
-    int ret = WS_SUCCESS;
+    int ret;
     int error = -1;
     int selected;
     unsigned char peek_buf[1];
     int timeout = TEST_SFTP_TIMEOUT;
 
     s = (WS_SOCKET_T)wolfSSH_get_fd(ssh);
+    ret = error = wolfSSH_get_error(ssh);
+
+    /* there is an edge case where the last SFTP handshake message sent got a
+     * WANT_WRITE case, keep trying to send it here. */
+    while (error == WS_WANT_WRITE) {
+        ret = wolfSSH_worker(ssh, NULL);
+        error = wolfSSH_get_error(ssh);
+    }
 
     do {
-        if (ret == WS_WANT_WRITE || wolfSSH_SFTP_PendingSend(ssh)) {
+        if (ret == WS_WANT_WRITE || ret == WS_CHAN_RXD ||
+                wolfSSH_SFTP_PendingSend(ssh)) {
             /* Yes, process the SFTP data. */
             ret = wolfSSH_SFTP_read(ssh);
             error = wolfSSH_get_error(ssh);
@@ -1362,6 +1371,19 @@ static int sftp_worker(thread_ctx_t* threadCtx)
                 break;
             }
             if (ret != WS_SUCCESS && ret != WS_CHAN_RXD) {
+            #ifdef WOLFSSH_TEST_BLOCK
+                if (error == WS_WANT_READ) {
+                    while (error == WS_WANT_READ) {
+                        /* The socket had data but our test nonblocking code
+                        * returned want read. Loop over wolfSSH_worker here
+                        * until we get the data off the socket that select
+                        * indicated was available. */
+                        ret = wolfSSH_worker(ssh, NULL);
+                        error = wolfSSH_get_error(ssh);
+                    }
+                    continue;
+                }
+            #endif
                 if (ret == WS_WANT_WRITE) {
                     /* recall wolfSSH_worker here because is likely our custom
                      * highwater callback that returned up a WS_WANT_WRITE */
@@ -1433,20 +1455,45 @@ static int NonBlockSSH_accept(WOLFSSH* ssh)
             printf("... server would read block\n");
         else if (error == WS_WANT_WRITE)
             printf("... server would write block\n");
+        else if (error == WS_AUTH_PENDING)
+            printf("... server auth pending\n");
 
         select_ret = tcp_select(sockfd, 1);
-        if (select_ret == WS_SELECT_RECV_READY  ||
-            select_ret == WS_SELECT_ERROR_READY ||
-            error      == WS_WANT_WRITE ||
-            error      == WS_AUTH_PENDING)
-        {
+        if (select_ret == WS_SELECT_RECV_READY) {
             ret = wolfSSH_accept(ssh);
             error = wolfSSH_get_error(ssh);
+
+        #ifdef WOLFSSH_TEST_BLOCK
+            if (error == WS_WANT_READ) {
+                /* The socket had data but our test nonblocking code
+                 * returned want read. Loop over wolfSSH_accept here until
+                 * we get the data off the socket that select indicated was
+                 * available. */
+                while (error == WS_WANT_READ) {
+                    ret = wolfSSH_accept(ssh);
+                    error = wolfSSH_get_error(ssh);
+                }
+            }
+        #endif
         }
-        else if (select_ret == WS_SELECT_TIMEOUT)
-            error = WS_WANT_READ;
-        else
+        else if (select_ret == WS_SELECT_TIMEOUT) {
+            if (error == WS_WANT_WRITE || error == WS_AUTH_PENDING
+            #ifdef WOLFSSH_TEST_BLOCK
+                || error == WS_WANT_READ
+            #endif
+            ) {
+                /* For write or auth pending, we need to try again */
+                ret = wolfSSH_accept(ssh);
+                error = wolfSSH_get_error(ssh);
+            }
+            else {
+                error = WS_WANT_READ;
+            }
+        }
+        else {
             error = WS_FATAL_ERROR;
+            break;
+        }
     }
 
     return ret;
