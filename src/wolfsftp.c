@@ -515,6 +515,7 @@ static void wolfSSH_SFTP_buffer_rewind(WS_SFTP_BUFFER* buffer)
 static int wolfSSH_SFTP_buffer_send(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer)
 {
     int ret = WS_SUCCESS;
+    int err;
 
     if (buffer == NULL) {
         return WS_BAD_ARGUMENT;
@@ -522,6 +523,12 @@ static int wolfSSH_SFTP_buffer_send(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer)
 
     if (buffer->idx > buffer->sz) {
         return WS_BUFFER_E;
+    }
+
+    /* Call wolfSSH worker if rekeying or adjusting window size */
+    err = wolfSSH_get_error(ssh);
+    if (err == WS_WINDOW_FULL || err == WS_REKEYING) {
+        (void)wolfSSH_worker(ssh, NULL);
     }
 
     if (buffer->idx < buffer->sz) {
@@ -1411,8 +1418,9 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
             ret = wolfSSH_SFTP_buffer_read(ssh, &state->buffer,
                     state->buffer.sz);
             if (ret < 0) {
-                if (ssh->error != WS_WANT_READ && ssh->error != WS_WANT_WRITE)
-                        wolfSSH_SFTP_ClearState(ssh, STATE_ID_RECV);
+                if (!NoticeError(ssh)) {
+                    wolfSSH_SFTP_ClearState(ssh, STATE_ID_RECV);
+                }
                 return ret;
             }
 
@@ -5924,14 +5932,7 @@ int SendPacketType(WOLFSSH* ssh, byte type, byte* buf, word32 bufSz)
              * because channel could have restrictions on how much
              * state->data can be sent at one time */
             do {
-                int err;
                 ret = wolfSSH_SFTP_buffer_send(ssh, &state->buffer);
-
-                /* check for adjust window packet */
-                err = wolfSSH_get_error(ssh);
-                if (err == WS_WINDOW_FULL || err == WS_REKEYING)
-                    ret = wolfSSH_worker(ssh, NULL);
-                ssh->error = err; /* don't save potential want read here */
             } while (ret > 0 &&
                     wolfSSH_SFTP_buffer_idx(&state->buffer) <
                     wolfSSH_SFTP_buffer_size(&state->buffer));
@@ -6565,8 +6566,7 @@ static int wolfSSH_SFTP_GetHandle(WOLFSSH* ssh, byte* handle, word32* handleSz)
                 WLOG(WS_LOG_SFTP, "SFTP GET HANDLE STATE: GET_HEADER");
                 ret = SFTP_GetHeader(ssh, &state->reqId, &type, &state->buffer);
                 if (ret <= 0) {
-                    if (ssh->error == WS_WANT_READ ||
-                            ssh->error == WS_WANT_WRITE) {
+                    if (NoticeError(ssh)) {
                         return WS_FATAL_ERROR;
                     }
                     else {
@@ -8087,9 +8087,8 @@ int wolfSSH_SFTP_Close(WOLFSSH* ssh, byte* handle, word32 handleSz)
             case STATE_CLOSE_SEND:
                 WLOG(WS_LOG_SFTP, "SFTP CLOSE STATE: SEND");
                 ret = SendPacketType(ssh, WOLFSSH_FTP_CLOSE, handle, handleSz);
-                if (ssh->error == WS_WANT_WRITE || ssh->error == WS_WANT_READ)
-                {
-                    return ret;
+                if (NoticeError(ssh)) {
+                    return WS_FATAL_ERROR;
                 }
 
                 if (ret != WS_SUCCESS) {
@@ -8102,10 +8101,9 @@ int wolfSSH_SFTP_Close(WOLFSSH* ssh, byte* handle, word32 handleSz)
             case STATE_CLOSE_GET_HEADER:
                 WLOG(WS_LOG_SFTP, "SFTP CLOSE STATE: GET_HEADER");
                 ret = SFTP_GetHeader(ssh, &state->reqId, &type, &state->buffer);
-                if (ret <= 0 &&
-                        (ssh->error == WS_WANT_WRITE ||
-                         ssh->error == WS_WANT_READ))
-                    return ret;
+                if (ret <= 0 && NoticeError(ssh)) {
+                    return WS_FATAL_ERROR;
+                }
 
                 if (type != WOLFSSH_FTP_STATUS || ret <= 0) {
                     WLOG(WS_LOG_SFTP, "Unexpected packet type");
@@ -9209,9 +9207,7 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                     ret = wolfSSH_SFTP_Close(ssh, state->handle,
                         state->handleSz);
                     if (ret != WS_SUCCESS) {
-                        if (ssh->error == WS_WANT_READ ||
-                                ssh->error == WS_WANT_WRITE ||
-                                ssh->error == WS_REKEYING) {
+                        if (NoticeError(ssh)) {
                             return WS_FATAL_ERROR;
                         }
                         WLOG(WS_LOG_SFTP, "Error closing handle");
