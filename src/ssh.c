@@ -1046,6 +1046,10 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
      * response to SendChannelClose */
     if (channel != NULL && ret == WS_SUCCESS) {
         ret = wolfSSH_worker(ssh, NULL);
+        if (ret == WS_CHAN_RXD) {
+            /* received response */
+            ret = WS_SUCCESS;
+        }
     }
 
     if (ssh != NULL && ssh->channelList == NULL) {
