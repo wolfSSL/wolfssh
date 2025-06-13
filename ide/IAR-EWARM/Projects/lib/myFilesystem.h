@@ -144,8 +144,8 @@ static int SFTP_GetAttributes(void* fs, const char* fileName,
 }
 
 static int SFTP_GetAttributes_Handle(void* ssh, byte* handle, int handleSz,
-        void* atr) {
-            (void)ssh; (void)handle; (void)handleSz;
+        char* name, void* atr) {
+            (void)ssh; (void)handle; (void)handleSz; (void)name;
 
         return 0;
 }
