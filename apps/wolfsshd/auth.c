@@ -1138,10 +1138,9 @@ static int RequestAuthentication(WS_UserAuthData* authData,
     }
 
 
+    #ifdef WOLFSSL_FPKI
     if (ret == WOLFSSH_USERAUTH_SUCCESS &&
         authData->type == WOLFSSH_USERAUTH_PUBLICKEY) {
-
-    #ifdef WOLFSSL_FPKI
         /* compare user name to UPN in certificate */
         if (authData->sf.publicKey.isCert) {
             DecodedCert* dCert;
@@ -1204,8 +1203,11 @@ static int RequestAuthentication(WS_UserAuthData* authData,
             #endif
             }
         }
+    }
     #endif
 
+    if (ret == WOLFSSH_USERAUTH_SUCCESS &&
+        authData->type == WOLFSSH_USERAUTH_PUBLICKEY) {
         /* if this is a certificate and no specific authorized keys file has
             * been set then rely on CA to have verified the cert */
         if (authData->sf.publicKey.isCert &&
