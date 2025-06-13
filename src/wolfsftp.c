@@ -4861,6 +4861,9 @@ static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
     atr->atime = info.ftime;
     atr->mtime = info.ftime;
 #endif /* NO_WOLFSSH_MKTIME */
+
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(handleSz);
     return WS_SUCCESS;
 }
 
