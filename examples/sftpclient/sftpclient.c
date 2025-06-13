@@ -1424,6 +1424,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
             ret = wolfSSH_get_error(ssh);
         } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE);
         if (n == NULL) {
+            printf("Error [%d] when getting real path\n", ret);
             err_sys("Unable to get real path for working directory");
         }
 
