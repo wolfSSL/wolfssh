@@ -1160,7 +1160,8 @@ static int doAutopilot(int cmd, char* local, char* remote)
         }
         err = wolfSSH_get_error(ssh);
     } while ((err == WS_WANT_READ || err == WS_WANT_WRITE ||
-                err == WS_CHAN_RXD) && ret == WS_FATAL_ERROR);
+                err == WS_CHAN_RXD || err == WS_REKEYING) &&
+                ret == WS_FATAL_ERROR);
 
     if (ret != WS_SUCCESS) {
         if (cmd == AUTOPILOT_PUT) {
