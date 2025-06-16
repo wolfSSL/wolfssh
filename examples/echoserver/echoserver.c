@@ -1336,7 +1336,7 @@ static int sftp_worker(thread_ctx_t* threadCtx)
                 error == WS_CHAN_RXD || error == WS_REKEYING ||
                 error == WS_WINDOW_FULL)
                 ret = error;
-            if (error == WS_WANT_WRITE && wolfSSH_SFTP_PendingSend(ssh)) {
+            if (error == WS_WANT_WRITE || wolfSSH_SFTP_PendingSend(ssh)) {
                 continue; /* no need to spend time attempting to pull data
                             * if there is still pending sends */
             }
