@@ -9,6 +9,7 @@ on:
 
 jobs:
   get-fatfs:
+    if: github.repository_owner == 'wolfssl'
     runs-on: ubuntu-latest
     steps:
       - name: Set up cache key
@@ -30,6 +31,7 @@ jobs:
 
   test-fatfs:
     needs: get-fatfs
+    if: github.repository_owner == 'wolfssl'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

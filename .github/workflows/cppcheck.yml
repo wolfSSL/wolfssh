@@ -9,6 +9,7 @@ on:
 jobs:
   run_cppcheck:
     name: Cppcheck
+    if: github.repository_owner == 'wolfssl'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4

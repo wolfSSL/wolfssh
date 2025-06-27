@@ -8,6 +8,7 @@ on:
 
 jobs:
   test-tpm-ssh:
+    if: github.repository_owner == 'wolfssl'
     runs-on: ubuntu-latest
 
     steps:

@@ -12,6 +12,7 @@ concurrency:
 
 jobs:
   create_matrix:
+    if: github.repository_owner == 'wolfssl'
     runs-on: ubuntu-latest
     outputs:
         versions: ${{ steps.json.outputs.versions }}
@@ -33,6 +34,7 @@ jobs:
         os: [ ubuntu-latest ]
         wolfssl: ${{ fromJson(needs.create_matrix.outputs['versions']) }}
     name: Build wolfssl
+    if: github.repository_owner == 'wolfssl'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 4
     steps:
@@ -65,6 +67,7 @@ jobs:
         os: [ ubuntu-latest ]
         wolfssl: ${{ fromJson(needs.create_matrix.outputs['versions']) }}
     name: Build and test wolfsshd
+    if: github.repository_owner == 'wolfssl'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
