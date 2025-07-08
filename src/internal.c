@@ -3227,7 +3227,7 @@ int wolfSSH_SendPacket(WOLFSSH* ssh)
         return WS_SOCKET_ERROR_E;
     }
 
-    while (ssh->outputBuffer.length - ssh->outputBuffer.idx > 0) {
+    while (ssh->outputBuffer.length > ssh->outputBuffer.idx) {
         int sent;
 
         /* sanity check on amount requested to be sent */
@@ -3237,7 +3237,7 @@ int wolfSSH_SendPacket(WOLFSSH* ssh)
             return WS_BUFFER_E;
         }
 
-       sent = ssh->ctx->ioSendCb(ssh,
+        sent = ssh->ctx->ioSendCb(ssh,
                                ssh->outputBuffer.buffer + ssh->outputBuffer.idx,
                                ssh->outputBuffer.length - ssh->outputBuffer.idx,
                                ssh->ioWriteCtx);
@@ -10002,7 +10002,7 @@ int DoReceive(WOLFSSH* ssh)
                 }
 
                 if (!aeadMode) {
-                    if (ssh->curSz + UINT32_SZ - peerBlockSz > 0) {
+                    if (ssh->curSz + UINT32_SZ > peerBlockSz) {
                         ret = Decrypt(ssh,
                                 ssh->inputBuffer.buffer + ssh->inputBuffer.idx
                                     + peerBlockSz,
