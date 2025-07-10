@@ -8286,7 +8286,7 @@ static int DoChannelOpen(WOLFSSH* ssh,
         #ifdef WOLFSSH_FWD
             case ID_CHANTYPE_TCPIP_DIRECT:
                 isDirect = 1;
-                NO_BREAK;
+                FALL_THROUGH;
             case ID_CHANTYPE_TCPIP_FORWARD:
                 ret = DoChannelOpenForward(ssh,
                                 &host, &hostPort, &origin, &originPort,
@@ -9973,7 +9973,7 @@ int DoReceive(WOLFSSH* ssh)
                     break;
                 }
             }
-            NO_BREAK;
+            FALL_THROUGH;
 
         case PROCESS_PACKET_LENGTH:
             if (ssh->inputBuffer.idx + UINT32_SZ > ssh->inputBuffer.bufferSz) {
@@ -9990,7 +9990,7 @@ int DoReceive(WOLFSSH* ssh)
                 return WS_FATAL_ERROR;
             }
             ssh->processReplyState = PROCESS_PACKET_FINISH;
-            NO_BREAK;
+            FALL_THROUGH;
 
         case PROCESS_PACKET_FINISH:
             /* readSz is the full packet size */
@@ -10064,7 +10064,7 @@ int DoReceive(WOLFSSH* ssh)
                 ret = WS_FATAL_ERROR;
                 break;
             }
-            NO_BREAK;
+            FALL_THROUGH;
 
         case PROCESS_PACKET:
             ret = DoPacket(ssh, &bufferConsumed);
@@ -10818,7 +10818,7 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
         #ifdef WOLFSSH_CERTS
         case ID_X509V3_SSH_RSA:
             isCert = 1;
-            NO_BREAK;
+            FALL_THROUGH;
         #endif
         case ID_SSH_RSA:
         case ID_RSA_SHA2_256:
@@ -10922,7 +10922,7 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
         case ID_X509V3_ECDSA_SHA2_NISTP384:
         case ID_X509V3_ECDSA_SHA2_NISTP521:
             isCert = 1;
-            NO_BREAK;
+            FALL_THROUGH;
         #endif
         case ID_ECDSA_SHA2_NISTP256:
         case ID_ECDSA_SHA2_NISTP384:

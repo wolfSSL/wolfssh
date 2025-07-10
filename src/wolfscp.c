@@ -1408,7 +1408,7 @@ int ReceiveScpMessage(WOLFSSH* ssh)
 
     switch (buf[0]) {
         case 'C':
-            NO_BREAK;
+            FALL_THROUGH;
 
         case 'D':
             if (buf[0] == 'C') {
@@ -1512,7 +1512,7 @@ int SendScpConfirmation(WOLFSSH* ssh)
 
         case WS_SCP_CONTINUE:
             /* default to ok confirmation */
-            NO_BREAK;
+            FALL_THROUGH;
 
         default:
             msg[0] = SCP_CONFIRM_OK;
@@ -1566,9 +1566,9 @@ int ReceiveScpConfirmation(WOLFSSH* ssh)
             case SCP_CONFIRM_OK:
                 break;
             case SCP_CONFIRM_ERR:
-                NO_BREAK;
+                FALL_THROUGH;
             case SCP_CONFIRM_FATAL:
-                NO_BREAK;
+                FALL_THROUGH;
             default:
                 WLOG(WS_LOG_ERROR,
                      "scp error: peer sent error confirmation (code: %d)",

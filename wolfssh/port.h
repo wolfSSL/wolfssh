@@ -1510,17 +1510,6 @@ extern "C" {
 #endif /* INLINE */
 
 
-/* GCC 7 has new switch() fall-through detection */
-#if defined(__GNUC__) && !defined(NO_BREAK)
-    #if ((__GNUC__ > 7) || ((__GNUC__ == 7) && (__GNUC_MINOR__ >= 1)))
-        #define NO_BREAK __attribute__ ((fallthrough))
-    #endif
-#endif
-#ifndef NO_BREAK
-    #define NO_BREAK
-#endif
-
-
 #ifndef WOLFSSH_UNUSED
     #define WOLFSSH_UNUSED(arg) (void)(arg)
 #endif
