@@ -1071,7 +1071,7 @@ static int SFTP_ServerRecvInit(WOLFSSH* ssh) {
 
             state->extSz = sz - MSG_ID_SZ - UINT32_SZ;
             ssh->sftpState = SFTP_EXT;
-            NO_BREAK;
+            FALL_THROUGH;
 
         case SFTP_EXT:
             /* silently ignore extensions if not supported */
@@ -1157,7 +1157,7 @@ int wolfSSH_SFTP_accept(WOLFSSH* ssh)
                 return ret;
             }
             ssh->sftpState = SFTP_RECV;
-            NO_BREAK;
+            FALL_THROUGH;
 
         case SFTP_RECV:
             ret = SFTP_ServerSendInit(ssh);
@@ -1394,7 +1394,7 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
             ssh->reqId  = state->reqId;
 
             state->state = STATE_RECV_DO;
-            NO_BREAK;
+            FALL_THROUGH;
 
         case STATE_RECV_DO:
             ret = wolfSSH_SFTP_buffer_read(ssh, &state->buffer,
@@ -1556,7 +1556,7 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
             }
             state->buffer.idx   = 0;
             state->state = STATE_RECV_SEND;
-            NO_BREAK;
+            FALL_THROUGH;
 
         case STATE_RECV_SEND:
             if (state->toSend) {
@@ -5692,7 +5692,7 @@ static int SFTP_ClientRecvInit(WOLFSSH* ssh) {
             sz = sz - MSG_ID_SZ - UINT32_SZ;
             ssh->sftpExtSz = sz;
             ssh->sftpState = SFTP_EXT;
-            NO_BREAK;
+            FALL_THROUGH;
 
         case SFTP_EXT:
             /* silently ignore extensions if not supported */
@@ -5784,7 +5784,7 @@ int wolfSSH_SFTP_connect(WOLFSSH* ssh)
                 return WS_FATAL_ERROR;
             }
             ssh->sftpState = SFTP_RECV;
-            NO_BREAK;
+            FALL_THROUGH;
 
         case SFTP_RECV:
         case SFTP_EXT:
@@ -5896,7 +5896,7 @@ int SendPacketType(WOLFSSH* ssh, byte type, byte* buf, word32 bufSz)
                 wolfSSH_SFTP_buffer_rewind(&state->buffer);
             }
             state->state = SFTP_SEND_PACKET;
-            NO_BREAK;
+            FALL_THROUGH;
 
         case SFTP_SEND_PACKET:
             /* send header and type specific state->data, looping over send
@@ -6352,7 +6352,7 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
                 wolfSSH_SFTP_ClearState(ssh, STATE_ID_NAME);
                 return NULL;
             }
-            NO_BREAK;
+            FALL_THROUGH;
 
         case SFTP_NAME_DO_STATUS:
             if (state->state == SFTP_NAME_DO_STATUS) {
@@ -6372,7 +6372,7 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
                 }
                 return NULL;
             }
-            NO_BREAK;
+            FALL_THROUGH;
 
 
         case SFTP_NAME_GET_PACKET:
@@ -6538,7 +6538,7 @@ static int wolfSSH_SFTP_GetHandle(WOLFSSH* ssh, byte* handle, word32* handleSz)
             case STATE_GET_HANDLE_INIT:
                 WLOG(WS_LOG_SFTP, "SFTP GET HANDLE STATE: INIT");
                 state->state = STATE_GET_HANDLE_GET_HEADER;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_GET_HANDLE_GET_HEADER:
                 WLOG(WS_LOG_SFTP, "SFTP GET HANDLE STATE: GET_HEADER");
@@ -6610,7 +6610,7 @@ static int wolfSSH_SFTP_GetHandle(WOLFSSH* ssh, byte* handle, word32* handleSz)
                 ssh->reqId++;
 
                 state->state = STATE_GET_HANDLE_READ;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_GET_HANDLE_READ:
                 WLOG(WS_LOG_SFTP, "SFTP GET HANDLE STATE: READ");
@@ -6638,7 +6638,7 @@ static int wolfSSH_SFTP_GetHandle(WOLFSSH* ssh, byte* handle, word32* handleSz)
                         (wolfSSH_SFTP_buffer_data(&state->buffer) + UINT32_SZ),
                         *handleSz);
                 state->state = STATE_GET_HANDLE_CLEANUP;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_GET_HANDLE_CLEANUP:
                 WLOG(WS_LOG_SFTP, "SFTP GET HANDLE STATE: CLEANUP");
@@ -6700,7 +6700,7 @@ WS_SFTPNAME* wolfSSH_SFTP_LS(WOLFSSH* ssh, char* dir)
                 return NULL;
             }
             state->state = STATE_LS_OPENDIR;
-            NO_BREAK;
+            FALL_THROUGH;
 
         case STATE_LS_OPENDIR:
             if (wolfSSH_SFTP_OpenDir(ssh, (byte*)state->name->fName,
@@ -6717,7 +6717,7 @@ WS_SFTPNAME* wolfSSH_SFTP_LS(WOLFSSH* ssh, char* dir)
             wolfSSH_SFTPNAME_list_free(state->name); state->name = NULL;
             state->sz    = WOLFSSH_MAX_HANDLE;
             state->state = STATE_LS_GETHANDLE;
-            NO_BREAK;
+            FALL_THROUGH;
 
         case STATE_LS_GETHANDLE:
             /* get the handle from opening the directory and read with it */
@@ -6732,7 +6732,7 @@ WS_SFTPNAME* wolfSSH_SFTP_LS(WOLFSSH* ssh, char* dir)
                 return NULL;
             }
             state->state = STATE_LS_READDIR;
-            NO_BREAK;
+            FALL_THROUGH;
 
         case STATE_LS_READDIR:
             /* Now read the dir. Note in non-blocking we might get here multiple
@@ -6775,7 +6775,7 @@ WS_SFTPNAME* wolfSSH_SFTP_LS(WOLFSSH* ssh, char* dir)
             }
 
             state->state = STATE_LS_CLOSE;
-            NO_BREAK;
+            FALL_THROUGH;
 
         case STATE_LS_CLOSE:
             /* close dir when finished */
@@ -6851,7 +6851,7 @@ int wolfSSH_SFTP_CHMOD(WOLFSSH* ssh, char* n, char* oct)
             /* update permissions */
             state->atr.per = mode;
             state->state = STATE_CHMOD_SEND;
-            NO_BREAK;
+            FALL_THROUGH;
 
         case STATE_CHMOD_SEND:
             ret = wolfSSH_SFTP_SetSTAT(ssh, n, &state->atr);
@@ -6909,7 +6909,7 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                 WLOG(WS_LOG_SFTP, "SFTP LSTAT STATE: INIT");
                 state->dirSz = (word32)WSTRLEN(dir);
                 state->state = STATE_LSTAT_SEND_TYPE_REQ;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_LSTAT_SEND_TYPE_REQ:
                 WLOG(WS_LOG_SFTP, "SFTP LSTAT STATE: SEND_TYPE_REQ");
@@ -6925,7 +6925,7 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                     }
                 }
                 state->state = STATE_LSTAT_GET_HEADER;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_LSTAT_GET_HEADER:
                 WLOG(WS_LOG_SFTP, "SFTP LSTAT STATE: GET_HEADER");
@@ -6949,7 +6949,7 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                     ssh->error = WS_MEMORY_E;
                     return WS_FATAL_ERROR;
                 }
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_LSTAT_CHECK_REQ_ID:
                 /* check request ID */
@@ -6961,7 +6961,7 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                     ssh->reqId++;
                 }
                 state->state = STATE_LSTAT_PARSE_REPLY;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_LSTAT_PARSE_REPLY:
                 ret = wolfSSH_SFTP_buffer_read(ssh, &state->buffer,
@@ -7011,7 +7011,7 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                     return WS_FATAL_ERROR;
                 }
                 state->state = STATE_LSTAT_CLEANUP;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_LSTAT_CLEANUP:
                 WLOG(WS_LOG_SFTP, "SFTP LSTAT STATE: CLEANUP");
@@ -7131,7 +7131,7 @@ int wolfSSH_SFTP_SetSTAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
 
             wolfSSH_SFTP_buffer_rewind(&state->buffer);
             state->state = STATE_SET_ATR_SEND;
-            NO_BREAK;
+            FALL_THROUGH;
 
         /* send header and type specific data */
         case STATE_SET_ATR_SEND:
@@ -7148,7 +7148,7 @@ int wolfSSH_SFTP_SetSTAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
              * can be created when next reading the attribute packet header */
             wolfSSH_SFTP_buffer_free(ssh, &state->buffer);
             state->state = STATE_SET_ATR_GET;
-            NO_BREAK;
+            FALL_THROUGH;
 
 
         case STATE_SET_ATR_GET:
@@ -7175,7 +7175,7 @@ int wolfSSH_SFTP_SetSTAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
             }
 
             state->state = STATE_SET_ATR_STATUS;
-            NO_BREAK;
+            FALL_THROUGH;
 
 
         case STATE_SET_ATR_STATUS:
@@ -7290,7 +7290,7 @@ int wolfSSH_SFTP_Open(WOLFSSH* ssh, char* dir, word32 reason,
                 wolfSSH_SFTP_buffer_rewind(&state->buffer);
 
                 state->state = STATE_OPEN_SEND;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_OPEN_SEND:
                 WLOG(WS_LOG_SFTP, "SFTP OPEN STATE: SEND");
@@ -7307,7 +7307,7 @@ int wolfSSH_SFTP_Open(WOLFSSH* ssh, char* dir, word32 reason,
                 }
                 wolfSSH_SFTP_buffer_free(ssh, &state->buffer);
                 state->state = STATE_OPEN_GETHANDLE;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_OPEN_GETHANDLE:
                 WLOG(WS_LOG_SFTP, "SFTP OPEN STATE: GETHANDLE");
@@ -7322,7 +7322,7 @@ int wolfSSH_SFTP_Open(WOLFSSH* ssh, char* dir, word32 reason,
                     }
                 }
                 state->state = STATE_OPEN_CLEANUP;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_OPEN_CLEANUP:
                 WLOG(WS_LOG_SFTP, "SFTP OPEN STATE: CLEANUP");
@@ -7424,7 +7424,7 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 wolfSSH_SFTP_buffer_rewind(&state->buffer);
 
                 state->state = STATE_SEND_WRITE_SEND_HEADER;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_SEND_WRITE_SEND_HEADER:
                 WLOG(WS_LOG_SFTP, "SFTP SEND_WRITE STATE: SEND_HEADER");
@@ -7439,7 +7439,7 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                     continue;
                 }
                 state->state = STATE_SEND_WRITE_SEND_BODY;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_SEND_WRITE_SEND_BODY:
                 WLOG(WS_LOG_SFTP, "SFTP SEND_WRITE STATE: SEND_BODY");
@@ -7467,7 +7467,7 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
 
                 wolfSSH_SFTP_buffer_free(ssh, &state->buffer);
                 state->state = STATE_SEND_WRITE_GET_HEADER;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_SEND_WRITE_GET_HEADER:
                 WLOG(WS_LOG_SFTP, "SFTP SEND_WRITE STATE: GET_HEADER");
@@ -7512,7 +7512,7 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                     continue;
                 }
                 state->state = STATE_SEND_WRITE_READ_STATUS;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_SEND_WRITE_READ_STATUS:
                 WLOG(WS_LOG_SFTP, "SFTP SEND_WRITE STATE: READ_STATUS");
@@ -7528,7 +7528,7 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 }
                 wolfSSH_SFTP_buffer_rewind(&state->buffer);
                 state->state = STATE_SEND_WRITE_DO_STATUS;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_SEND_WRITE_DO_STATUS:
                 WLOG(WS_LOG_SFTP, "SFTP SEND_WRITE STATE: DO_STATUS");
@@ -7544,7 +7544,7 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 if (ret >= WS_SUCCESS)
                     ret = state->sentSzSave;
                 state->state = STATE_SEND_WRITE_CLEANUP;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_SEND_WRITE_CLEANUP:
                 WLOG(WS_LOG_SFTP, "SFTP SEND_WRITE STATE: CLEANUP");
@@ -7648,7 +7648,7 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
 
                 state->state = STATE_SEND_READ_SEND_REQ;
 
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_SEND_READ_SEND_REQ:
                 WLOG(WS_LOG_SFTP, "SFTP SEND_READ STATE: SEND_REQ");
@@ -7667,7 +7667,7 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 }
                 wolfSSH_SFTP_buffer_free(ssh, &state->buffer);
                 state->state = STATE_SEND_READ_GET_HEADER;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_SEND_READ_GET_HEADER:
                 WLOG(WS_LOG_SFTP, "SFTP SEND_READ STATE: GET_HEADER");
@@ -7688,7 +7688,7 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                     continue;
                 }
                 state->state = STATE_SEND_READ_CHECK_REQ_ID;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_SEND_READ_CHECK_REQ_ID:
                 WLOG(WS_LOG_SFTP, "SFTP SEND_READ STATE: CHECK_REQ_ID");
@@ -7735,7 +7735,7 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 }
 
                 state->state = STATE_SEND_READ_REMAINDER;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_SEND_READ_REMAINDER:
                 WLOG(WS_LOG_SFTP, "SFTP SEND_READ STATE: READ_REMAINDER");
@@ -7802,7 +7802,7 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                     }
                 }
                 state->state = STATE_SEND_READ_CLEANUP;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_SEND_READ_CLEANUP:
                 WLOG(WS_LOG_SFTP, "SFTP SEND_READ STATE: CLEANUP");
@@ -7906,7 +7906,7 @@ int wolfSSH_SFTP_MKDIR(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
             /* free data pointer to reuse it later */
             wolfSSH_SFTP_buffer_free(ssh, &state->buffer);
             state->state = STATE_MKDIR_GET;
-            NO_BREAK;
+            FALL_THROUGH;
 
         case STATE_MKDIR_GET:
             /* Get response */
@@ -7938,7 +7938,7 @@ int wolfSSH_SFTP_MKDIR(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
                 return WS_FATAL_ERROR;
             }
             state->state = STATE_MKDIR_STATUS;
-            NO_BREAK;
+            FALL_THROUGH;
 
         case STATE_MKDIR_STATUS:
             ret = wolfSSH_SFTP_buffer_read(ssh, &state->buffer,
@@ -8007,7 +8007,7 @@ WS_SFTPNAME* wolfSSH_SFTP_ReadDir(WOLFSSH* ssh, byte* handle,
                 return NULL;
             }
             state->state = STATE_READDIR_NAME;
-            NO_BREAK;
+            FALL_THROUGH;
 
         case STATE_READDIR_NAME:
             name = wolfSSH_SFTP_DoName(ssh);
@@ -8061,7 +8061,7 @@ int wolfSSH_SFTP_Close(WOLFSSH* ssh, byte* handle, word32 handleSz)
             case STATE_CLOSE_INIT:
                 WLOG(WS_LOG_SFTP, "SFTP CLOSE STATE: INIT");
                 state->state = STATE_CLOSE_SEND;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_CLOSE_SEND:
                 WLOG(WS_LOG_SFTP, "SFTP CLOSE STATE: SEND");
@@ -8076,7 +8076,7 @@ int wolfSSH_SFTP_Close(WOLFSSH* ssh, byte* handle, word32 handleSz)
                     continue;
                 }
                 state->state = STATE_CLOSE_GET_HEADER;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_CLOSE_GET_HEADER:
                 WLOG(WS_LOG_SFTP, "SFTP CLOSE STATE: GET_HEADER");
@@ -8099,7 +8099,7 @@ int wolfSSH_SFTP_Close(WOLFSSH* ssh, byte* handle, word32 handleSz)
                     continue;
                 }
                 state->state = STATE_CLOSE_DO_STATUS;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_CLOSE_DO_STATUS:
                 WLOG(WS_LOG_SFTP, "SFTP CLOSE STATE: DO_STATUS");
@@ -8120,7 +8120,7 @@ int wolfSSH_SFTP_Close(WOLFSSH* ssh, byte* handle, word32 handleSz)
                 else
                     ret = WS_FATAL_ERROR;
                 state->state = STATE_CLOSE_CLEANUP;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_CLOSE_CLEANUP:
                 WLOG(WS_LOG_SFTP, "SFTP CLOSE STATE: CLEANUP");
@@ -8164,7 +8164,7 @@ WS_SFTPNAME* wolfSSH_SFTP_RealPath(WOLFSSH* ssh, char* dir)
                 return NULL;
             }
             ssh->realState = SFTP_REAL_GET_PACKET;
-            NO_BREAK;
+            FALL_THROUGH;
 
         case SFTP_REAL_GET_PACKET:
             /* read name response from Real Path packet */
@@ -8238,7 +8238,7 @@ int wolfSSH_SFTP_Rename(WOLFSSH* ssh, const char* old, const char* nw)
 
             case STATE_RENAME_INIT:
                 WLOG(WS_LOG_SFTP, "SFTP RENAME STATE: INIT");
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_RENAME_GET_STAT:
                 WLOG(WS_LOG_SFTP, "SFTP RENAME STATE: GET_STAT");
@@ -8303,7 +8303,7 @@ int wolfSSH_SFTP_Rename(WOLFSSH* ssh, const char* old, const char* nw)
                 wolfSSH_SFTP_buffer_rewind(&state->buffer);
 
                 state->state = STATE_RENAME_SEND;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_RENAME_SEND:
                 WLOG(WS_LOG_SFTP, "SFTP RENAME STATE: SEND");
@@ -8319,7 +8319,7 @@ int wolfSSH_SFTP_Rename(WOLFSSH* ssh, const char* old, const char* nw)
                 }
                 wolfSSH_SFTP_buffer_free(ssh, &state->buffer);
                 state->state = STATE_RENAME_GET_HEADER;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_RENAME_GET_HEADER:
                 WLOG(WS_LOG_SFTP, "SFTP RENAME STATE: GET_HEADER");
@@ -8361,7 +8361,7 @@ int wolfSSH_SFTP_Rename(WOLFSSH* ssh, const char* old, const char* nw)
                     continue;
                 }
                 state->state = STATE_RENAME_READ_STATUS;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_RENAME_READ_STATUS:
                 WLOG(WS_LOG_SFTP, "SFTP RENAME STATE: READ_STATUS");
@@ -8377,7 +8377,7 @@ int wolfSSH_SFTP_Rename(WOLFSSH* ssh, const char* old, const char* nw)
                 }
                 wolfSSH_SFTP_buffer_rewind(&state->buffer);
                 state->state = STATE_RENAME_DO_STATUS;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_RENAME_DO_STATUS:
                 WLOG(WS_LOG_SFTP, "SFTP RENAME STATE: DO_STATUS");
@@ -8394,7 +8394,7 @@ int wolfSSH_SFTP_Rename(WOLFSSH* ssh, const char* old, const char* nw)
                     ret = WS_SFTP_STATUS_NOT_OK;
                 }
                 state->state = STATE_RENAME_CLEANUP;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_RENAME_CLEANUP:
                 WLOG(WS_LOG_SFTP, "SFTP RENAME STATE: CLEANUP");
@@ -8461,7 +8461,7 @@ int wolfSSH_SFTP_Remove(WOLFSSH* ssh, char* f)
                 return ret;
             }
             state->state = STATE_RM_SEND;
-            NO_BREAK;
+            FALL_THROUGH;
 
         case STATE_RM_SEND:
             ret = SendPacketType(ssh, WOLFSSH_FTP_REMOVE, (byte*)f,
@@ -8474,7 +8474,7 @@ int wolfSSH_SFTP_Remove(WOLFSSH* ssh, char* f)
                 return ret;
             }
             state->state = STATE_RM_GET;
-            NO_BREAK;
+            FALL_THROUGH;
 
         case STATE_RM_GET:
             ret = SFTP_GetHeader(ssh, &state->reqId, &type, &state->buffer);
@@ -8492,7 +8492,7 @@ int wolfSSH_SFTP_Remove(WOLFSSH* ssh, char* f)
                 return WS_FATAL_ERROR;
             }
             state->state = STATE_RM_DOSTATUS;
-            NO_BREAK;
+            FALL_THROUGH;
 
        case STATE_RM_DOSTATUS:
             ret = wolfSSH_SFTP_buffer_read(ssh, &state->buffer,
@@ -8567,7 +8567,7 @@ int wolfSSH_SFTP_RMDIR(WOLFSSH* ssh, char* dir)
                 return ret;
             }
             state->state = STATE_RMDIR_GET;
-            NO_BREAK;
+            FALL_THROUGH;
 
         case STATE_RMDIR_GET:
             ret = SFTP_GetHeader(ssh, &state->reqId, &type, &state->buffer);
@@ -8583,7 +8583,7 @@ int wolfSSH_SFTP_RMDIR(WOLFSSH* ssh, char* dir)
                 return WS_MEMORY_E;
             }
             state->state = STATE_RMDIR_STATUS;
-            NO_BREAK;
+            FALL_THROUGH;
 
         case STATE_RMDIR_STATUS:
             ret = wolfSSH_SFTP_buffer_read(ssh, &state->buffer,
@@ -8791,7 +8791,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
             case STATE_GET_INIT:
                 WLOG(WS_LOG_SFTP, "SFTP GET STATE: INIT");
                 state->state = STATE_GET_LSTAT;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_GET_LSTAT:
                 WLOG(WS_LOG_SFTP, "SFTP GET STATE: STAT");
@@ -8816,7 +8816,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                 }
                 state->handleSz = WOLFSSH_MAX_HANDLE;
                 state->state = STATE_GET_OPEN_REMOTE;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_GET_OPEN_REMOTE:
                 WLOG(WS_LOG_SFTP, "SFTP GET STATE: OPEN REMOTE");
@@ -8833,7 +8833,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                     continue;
                 }
                 state->state = STATE_GET_LOOKUP_OFFSET;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_GET_LOOKUP_OFFSET:
                 WLOG(WS_LOG_SFTP, "SFTP GET STATE: LOOKUP OFFSET");
@@ -8842,7 +8842,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                     wolfSSH_SFTP_GetOfst(ssh, from, to, state->gOfst);
                 }
                 state->state = STATE_GET_OPEN_LOCAL;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_GET_OPEN_LOCAL:
                 WLOG(WS_LOG_SFTP, "SFTP GET STATE: OPEN LOCAL");
@@ -8880,7 +8880,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                     continue;
                 }
                 state->state = STATE_GET_READ;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_GET_READ:
                 WLOG(WS_LOG_SFTP, "SFTP GET STATE: GET READ");
@@ -8942,7 +8942,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                 }
                 ssh->sftpInt = 0;
                 state->state = STATE_GET_CLOSE_REMOTE;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_GET_CLOSE_REMOTE:
                 if (state->handleSz > 0) {
@@ -8958,7 +8958,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                     }
                 }
                 state->state = STATE_GET_CLOSE_LOCAL;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_GET_CLOSE_LOCAL:
                 WLOG(WS_LOG_SFTP, "SFTP GET STATE: CLOSE LOCAL");
@@ -8972,7 +8972,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                     }
                 #endif /* USE_WINDOWS_API */
                 state->state = STATE_GET_CLEANUP;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_GET_CLEANUP:
                 WLOG(WS_LOG_SFTP, "SFTP GET STATE: CLEANUP");
@@ -9037,7 +9037,7 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                 state->pOfst[0] = 0;
                 state->pOfst[1] = 0;
                 state->state = STATE_PUT_LOOKUP_OFFSET;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_PUT_LOOKUP_OFFSET:
                 WLOG(WS_LOG_SFTP, "SFTP PUT STATE: LOOKUP OFFSET");
@@ -9047,7 +9047,7 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                 }
                 state->handleSz = WOLFSSH_MAX_HANDLE;
                 state->state = STATE_PUT_OPEN_LOCAL;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_PUT_OPEN_LOCAL:
                 WLOG(WS_LOG_SFTP, "SFTP PUT STATE: OPEN LOCAL");
@@ -9106,7 +9106,7 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
             #endif /* USE_WINDOWS_API */
                 state->rSz = 0;
                 state->state = STATE_PUT_OPEN_REMOTE;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_PUT_OPEN_REMOTE:
                 WLOG(WS_LOG_SFTP, "SFTP PUT STATE: OPEN REMOTE");
@@ -9124,7 +9124,7 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                     continue;
                 }
                 state->state = STATE_PUT_WRITE;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_PUT_WRITE:
                 WLOG(WS_LOG_SFTP, "SFTP PUT STATE: WRITE");
@@ -9170,7 +9170,7 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                     wolfSSH_SFTP_SaveOfst(ssh, from, to, state->pOfst);
                     ssh->sftpInt = 0;
                 }
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_PUT_CLOSE_LOCAL:
                 WLOG(WS_LOG_SFTP, "SFTP PUT STATE: CLOSE LOCAL");
@@ -9180,7 +9180,7 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                 CloseHandle(state->fileHandle);
             #endif /* USE_WINDOWS_API */
                 state->state = STATE_PUT_CLOSE_REMOTE;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_PUT_CLOSE_REMOTE:
                 if (state->handleSz > 0) {
@@ -9198,7 +9198,7 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                     }
                 }
                 state->state = STATE_PUT_CLEANUP;
-                NO_BREAK;
+                FALL_THROUGH;
 
             case STATE_PUT_CLEANUP:
                 WLOG(WS_LOG_SFTP, "SFTP PUT STATE: CLEANUP");
