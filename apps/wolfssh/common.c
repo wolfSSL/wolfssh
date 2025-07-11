@@ -499,6 +499,8 @@ int ClientUserAuth(byte authType,
 {
     int ret = WOLFSSH_USERAUTH_SUCCESS;
 
+    WOLFSSH_UNUSED(ctx);
+
 #ifdef DEBUG_WOLFSSH
     /* inspect supported types from server */
     printf("Server supports:\n");
@@ -538,37 +540,28 @@ int ClientUserAuth(byte authType,
         ret = WOLFSSH_USERAUTH_SUCCESS;
     }
     else if (authType == WOLFSSH_USERAUTH_PASSWORD) {
-        const char* defaultPassword = (const char*)ctx;
-        word32 passwordSz = 0;
-
-        if (defaultPassword != NULL) {
-            passwordSz = (word32)strlen(defaultPassword);
-            WMEMCPY(userPassword, defaultPassword, passwordSz);
+        printf("Password: ");
+        fflush(stdout);
+        ClientSetEcho(0);
+        if (fgets((char*)userPassword, sizeof(userPassword), stdin) == NULL) {
+            fprintf(stderr, "Getting password failed.\n");
+            ret = WOLFSSH_USERAUTH_FAILURE;
         }
         else {
-            printf("Password: ");
-            fflush(stdout);
-            ClientSetEcho(0);
-            if (fgets((char*)userPassword, sizeof(userPassword), stdin) == NULL) {
-                fprintf(stderr, "Getting password failed.\n");
-                ret = WOLFSSH_USERAUTH_FAILURE;
-            }
-            else {
-                char* c = strpbrk((char*)userPassword, "\r\n");
-                if (c != NULL)
-                    *c = '\0';
-            }
-            passwordSz = (word32)strlen((const char*)userPassword);
-            ClientSetEcho(1);
-            #ifdef USE_WINDOWS_API
-                printf("\r\n");
-            #endif
-            fflush(stdout);
+            char* c = strpbrk((char*)userPassword, "\r\n");
+            if (c != NULL)
+                *c = '\0';
         }
+        ClientSetEcho(1);
+        #ifdef USE_WINDOWS_API
+            printf("\r\n");
+        #endif
+        fflush(stdout);
 
         if (ret == WOLFSSH_USERAUTH_SUCCESS) {
             authData->sf.password.password = userPassword;
-            authData->sf.password.passwordSz = passwordSz;
+            authData->sf.password.passwordSz =
+                (word32)strlen((const char*)userPassword);
         }
     }
 
@@ -743,7 +736,7 @@ int ClientLoadCA(WOLFSSH_CTX* ctx, const char* caCert)
             WFREE(der, NULL, 0);
         }
     #else
-        (void)ctx;
+        WOLFSSH_UNUSED(ctx);
         fprintf(stderr, "Support for certificates not compiled in.");
         ret = WS_NOT_COMPILED;
     #endif
