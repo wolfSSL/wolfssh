@@ -927,8 +927,17 @@ static void sftp_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
 
     build_addr(&clientAddr, host, port);
     tcp_socket(&sockFd, ((struct sockaddr_in *)&clientAddr)->sin_family);
+    if (sockFd < 0) {
+        wolfSSH_free(*ssh);
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        *ssh = NULL;
+        return;
+    }
+
     ret = connect(sockFd, (const struct sockaddr *)&clientAddr, clientAddrSz);
     if (ret != 0){
+        WCLOSESOCKET(sockFd);
         wolfSSH_free(*ssh);
         wolfSSH_CTX_free(*ctx);
         *ctx = NULL;
@@ -945,6 +954,7 @@ static void sftp_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
         ret = wolfSSH_SFTP_connect(*ssh);
 
     if (ret != WS_SUCCESS){
+        WCLOSESOCKET(sockFd);
         wolfSSH_free(*ssh);
         wolfSSH_CTX_free(*ctx);
         *ctx = NULL;
@@ -1611,8 +1621,17 @@ static void keyboard_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
 
     build_addr(&clientAddr, host, port);
     tcp_socket(&sockFd, ((struct sockaddr_in *)&clientAddr)->sin_family);
+    if (sockFd < 0) {
+        wolfSSH_free(*ssh);
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        *ssh = NULL;
+        return;
+    }
+
     ret = connect(sockFd, (const struct sockaddr *)&clientAddr, clientAddrSz);
     if (ret != 0){
+        WCLOSESOCKET(sockFd);
         wolfSSH_free(*ssh);
         wolfSSH_CTX_free(*ctx);
         *ctx = NULL;
@@ -1628,6 +1647,7 @@ static void keyboard_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
         ret = wolfSSH_connect(*ssh);
 
     if (ret != WS_SUCCESS){
+        WCLOSESOCKET(sockFd);
         wolfSSH_free(*ssh);
         wolfSSH_CTX_free(*ctx);
         *ctx = NULL;
