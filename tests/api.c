@@ -85,12 +85,15 @@ char* myoptarg = NULL;
 
 #define AssertTrue(x)    Assert( (x), ("%s is true",     #x), (#x " => FALSE"))
 #define AssertFalse(x)   Assert(!(x), ("%s is false",    #x), (#x " => TRUE"))
-#define AssertNotNull(x) Assert( (x), ("%s is not null", #x), (#x " => NULL"))
+
+#define AssertNotNull(x) do {                                                  \
+    PEDANTIC_EXTENSION void* _isNotNull = (void*)(x);                          \
+    Assert(_isNotNull, ("%s is not null", #x), (#x " => NULL"));               \
+} while (0)
 
 #define AssertNull(x) do {                                                     \
-    PEDANTIC_EXTENSION void* _x = (void*)(x);                                  \
-                                                                               \
-    Assert(!_x, ("%s is null", #x), (#x " => %p", _x));                        \
+    PEDANTIC_EXTENSION void* _isNull = (void*)(x);                             \
+    Assert(!_isNull, ("%s is null", #x), (#x " => %p", _isNull));              \
 } while(0)
 
 #define AssertInt(x, y, op, er) do {                                           \
