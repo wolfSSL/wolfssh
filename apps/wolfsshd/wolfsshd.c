@@ -1347,20 +1347,18 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         setenv("LOGNAME", pPasswd->pw_name, 1);
         setenv("SHELL", pPasswd->pw_shell, 1);
 
-        if (pPasswd->pw_shell) {
-            if (WSTRLEN(pPasswd->pw_shell) < sizeof(shell)) {
-                char* cursor;
-                char* start;
+        if (WSTRLEN(pPasswd->pw_shell) < sizeof(shell)) {
+            char* cursor;
+            char* start;
 
-                WSTRNCPY(shell, pPasswd->pw_shell, sizeof(shell));
-                cursor = shell;
-                do {
-                    start = cursor;
-                    *cursor = '-';
-                    cursor = WSTRCHR(start, '/');
-                } while (cursor && *cursor != '\0');
-                args[0] = start;
-            }
+            WSTRNCPY(shell, pPasswd->pw_shell, sizeof(shell));
+            cursor = shell;
+            do {
+                start = cursor;
+                *cursor = '-';
+                cursor = WSTRCHR(start, '/');
+            } while (cursor && *cursor != '\0');
+            args[0] = start;
         }
 
         rc = chdir(pPasswd->pw_dir);
