@@ -1351,7 +1351,8 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             char* cursor;
             char* start;
 
-            WSTRNCPY(shell, pPasswd->pw_shell, sizeof(shell));
+            WSTRNCPY(shell, pPasswd->pw_shell, sizeof(shell)-1);
+            shell[sizeof(shell)-1] = 0;
             cursor = shell;
             do {
                 start = cursor;
