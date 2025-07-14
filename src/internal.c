@@ -3988,6 +3988,9 @@ static word32 AlgoListSz(const char* algoList)
 {
     word32 algoListSz;
 
+    if (algoList == NULL)
+        return 0;
+
     algoListSz = (word32)WSTRLEN(algoList);
     if (algoList[algoListSz-1] == ',') {
         --algoListSz;
