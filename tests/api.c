@@ -85,12 +85,15 @@ char* myoptarg = NULL;
 
 #define AssertTrue(x)    Assert( (x), ("%s is true",     #x), (#x " => FALSE"))
 #define AssertFalse(x)   Assert(!(x), ("%s is false",    #x), (#x " => TRUE"))
-#define AssertNotNull(x) Assert( (x), ("%s is not null", #x), (#x " => NULL"))
+
+#define AssertNotNull(x) do {                                                  \
+    PEDANTIC_EXTENSION void* _isNotNull = (void*)(x);                          \
+    Assert(_isNotNull, ("%s is not null", #x), (#x " => NULL"));               \
+} while (0)
 
 #define AssertNull(x) do {                                                     \
-    PEDANTIC_EXTENSION void* _x = (void*)(x);                                  \
-                                                                               \
-    Assert(!_x, ("%s is null", #x), (#x " => %p", _x));                        \
+    PEDANTIC_EXTENSION void* _isNull = (void*)(x);                             \
+    Assert(!_isNull, ("%s is null", #x), (#x " => %p", _isNull));              \
 } while(0)
 
 #define AssertInt(x, y, op, er) do {                                           \
@@ -924,8 +927,17 @@ static void sftp_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
 
     build_addr(&clientAddr, host, port);
     tcp_socket(&sockFd, ((struct sockaddr_in *)&clientAddr)->sin_family);
+    if (sockFd < 0) {
+        wolfSSH_free(*ssh);
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        *ssh = NULL;
+        return;
+    }
+
     ret = connect(sockFd, (const struct sockaddr *)&clientAddr, clientAddrSz);
     if (ret != 0){
+        WCLOSESOCKET(sockFd);
         wolfSSH_free(*ssh);
         wolfSSH_CTX_free(*ctx);
         *ctx = NULL;
@@ -942,6 +954,7 @@ static void sftp_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
         ret = wolfSSH_SFTP_connect(*ssh);
 
     if (ret != WS_SUCCESS){
+        WCLOSESOCKET(sockFd);
         wolfSSH_free(*ssh);
         wolfSSH_CTX_free(*ctx);
         *ctx = NULL;
@@ -1608,8 +1621,17 @@ static void keyboard_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
 
     build_addr(&clientAddr, host, port);
     tcp_socket(&sockFd, ((struct sockaddr_in *)&clientAddr)->sin_family);
+    if (sockFd < 0) {
+        wolfSSH_free(*ssh);
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        *ssh = NULL;
+        return;
+    }
+
     ret = connect(sockFd, (const struct sockaddr *)&clientAddr, clientAddrSz);
     if (ret != 0){
+        WCLOSESOCKET(sockFd);
         wolfSSH_free(*ssh);
         wolfSSH_CTX_free(*ctx);
         *ctx = NULL;
@@ -1625,6 +1647,7 @@ static void keyboard_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
         ret = wolfSSH_connect(*ssh);
 
     if (ret != WS_SUCCESS){
+        WCLOSESOCKET(sockFd);
         wolfSSH_free(*ssh);
         wolfSSH_CTX_free(*ctx);
         *ctx = NULL;

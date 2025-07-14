@@ -443,15 +443,33 @@ static int basic_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
         wolfSSH_CTX_free(*ctx);
         *ctx = NULL;
         *ssh = NULL;
+        WCLOSESOCKET(sockFd);
         return ret;
     }
 
     ret = wolfSSH_SetUsername(*ssh, username);
-    if (ret == WS_SUCCESS)
-        ret = wolfSSH_set_fd(*ssh, (int)sockFd);
+    if (ret != WS_SUCCESS) {
+        wolfSSH_free(*ssh);
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        *ssh = NULL;
+        WCLOSESOCKET(sockFd);
+        fprintf(stderr, "line= %d\n", __LINE__);
+        return ret;
+    }
 
-    if (ret == WS_SUCCESS)
-        ret = wolfSSH_connect(*ssh);
+    ret = wolfSSH_set_fd(*ssh, (int)sockFd);
+    if (ret != WS_SUCCESS) {
+        fprintf(stderr, "line= %d\n", __LINE__);
+        wolfSSH_free(*ssh);
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        *ssh = NULL;
+        WCLOSESOCKET(sockFd);
+        return ret;
+    }
+
+    ret = wolfSSH_connect(*ssh);
 
     return ret;
 }

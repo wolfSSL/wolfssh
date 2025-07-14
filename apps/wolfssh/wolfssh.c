@@ -900,7 +900,6 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
     SOCKADDR_IN_T clientAddr;
     socklen_t clientAddrSz = sizeof(clientAddr);
     int ret = 0;
-    const char* password = NULL;
     byte keepOpen = 1;
 #ifdef USE_WINDOWS_API
     byte rawMode = 0;
@@ -975,9 +974,6 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
     wolfSSH_SetGlobalReq(ctx, callbackGlobalReq);
     wolfSSH_SetGlobalReqCtx(ssh, &ssh); /* dummy ctx */
 #endif
-
-    if (password != NULL)
-        wolfSSH_SetUserAuthCtx(ssh, (void*)password);
 
 #ifdef WOLFSSH_AGENT
     if (useAgent) {

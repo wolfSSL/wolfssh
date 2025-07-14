@@ -245,6 +245,8 @@ static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap)
     word32 fileSz;
     word32 readSz;
 
+    WOLFSSH_UNUSED(heap);
+
     if (fileName == NULL) return NULL;
 
     if (WFOPEN(NULL, &file, fileName, "rb") != 0)
@@ -263,10 +265,9 @@ static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap)
         }
         if (bufSz)
             *bufSz = readSz;
-        WFCLOSE(NULL, file);
     }
+    WFCLOSE(NULL, file);
 
-    (void)heap;
     return buf;
 }
 #endif /* NO_FILESYSTEM */

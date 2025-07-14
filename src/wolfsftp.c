@@ -1997,6 +1997,12 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_OPEN");
 
+    #ifdef MICROCHIP_MPLAB_HARMONY
+        fd = WBADFILE;
+    #else
+        fd = -1;
+    #endif
+
     if (sizeof(WFD) > WOLFSSH_MAX_HANDLE) {
         WLOG(WS_LOG_SFTP, "Handle size is too large");
         return WS_FATAL_ERROR;
@@ -2083,7 +2089,6 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         }
 
     #ifdef MICROCHIP_MPLAB_HARMONY
-        fd = WBADFILE;
         {
             WFILE* f = &fd;
             if (WFOPEN(ssh->fs, &f, dir, m) != WS_SUCCESS) {
@@ -2111,7 +2116,8 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             WLOG(WS_LOG_SFTP, "Unable to store handle");
             res = ier;
             if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId, res,
-                "English", NULL, &outSz) != WS_SIZE_ONLY) {
+                    "English", NULL, &outSz) != WS_SIZE_ONLY) {
+                WCLOSE(ssh->fs, fd);
                 return WS_FATAL_ERROR;
             }
             ret = WS_FATAL_ERROR;
@@ -2119,14 +2125,18 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 #endif
 
-    /* create packet */
-    out = (byte*)WMALLOC(outSz, ssh->ctx->heap, DYNTYPE_BUFFER);
-    if (out == NULL) {
-        return WS_MEMORY_E;
+    if (ret == WS_SUCCESS) {
+        /* create packet */
+        out = (byte*)WMALLOC(outSz, ssh->ctx->heap, DYNTYPE_BUFFER);
+        if (out == NULL) {
+            WCLOSE(ssh->fs, fd);
+            return WS_MEMORY_E;
+        }
     }
     if (ret == WS_SUCCESS) {
         if (SFTP_CreatePacket(ssh, WOLFSSH_FTP_HANDLE, out, outSz,
             (byte*)&fd, sizeof(WFD)) != WS_SUCCESS) {
+            WCLOSE(ssh->fs, fd);
             return WS_FATAL_ERROR;
         }
     }
@@ -2134,6 +2144,9 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId, res,
                 "English", out, &outSz) != WS_SUCCESS) {
             WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
+            if (fd >= 0) {
+                WCLOSE(ssh->fs, fd);
+            }
             return WS_FATAL_ERROR;
         }
     }
