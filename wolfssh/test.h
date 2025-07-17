@@ -962,13 +962,6 @@ static INLINE void ThreadJoin(THREAD_TYPE thread)
     (void)wolfSSL_JoinThread(thread);
 }
 
-#ifdef WOLFSSL_THREAD_NO_JOIN
-static INLINE void ThreadStartNoJoin(THREAD_CB fun, void* args)
-{
-    (void)wolfSSL_NewThreadNoJoin(fun, args);
-}
-#endif
-
 #else
 typedef THREAD_RETURN (WOLFSSH_THREAD *THREAD_FUNC)(void*);
 
@@ -1066,13 +1059,6 @@ static INLINE void ThreadDetach(THREAD_TYPE thread)
 #else
     (void)thread;
 #endif
-}
-
-static INLINE void ThreadStartNoJoin(THREAD_FUNC fun, void* args)
-{
-    THREAD_TYPE thread;
-    ThreadStart(fun, args, &thread);
-    ThreadDetach(thread);
 }
 
 #endif /* !WOLFSSH_OLD_THREADING && !WOLFSSH_OLDER_THREADING */
