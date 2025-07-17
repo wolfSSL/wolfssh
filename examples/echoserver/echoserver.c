@@ -1299,16 +1299,25 @@ static int sftp_worker(thread_ctx_t* threadCtx)
 {
     WOLFSSH* ssh = threadCtx->ssh;
     WS_SOCKET_T s;
-    int ret = WS_SUCCESS;
+    int ret;
     int error = -1;
     int selected;
     unsigned char peek_buf[1];
     int timeout = TEST_SFTP_TIMEOUT;
 
     s = (WS_SOCKET_T)wolfSSH_get_fd(ssh);
+    ret = error = wolfSSH_get_error(ssh);
+
+    /* there is an edge case where the last SFTP handshake message sent got a
+     * WANT_WRITE case, keep trying to send it here. */
+    while (error == WS_WANT_WRITE) {
+        ret = wolfSSH_worker(ssh, NULL);
+        error = wolfSSH_get_error(ssh);
+    }
 
     do {
-        if (ret == WS_WANT_WRITE || wolfSSH_SFTP_PendingSend(ssh)) {
+        if (ret == WS_WANT_WRITE || ret == WS_CHAN_RXD ||
+                wolfSSH_SFTP_PendingSend(ssh)) {
             /* Yes, process the SFTP data. */
             ret = wolfSSH_SFTP_read(ssh);
             error = wolfSSH_get_error(ssh);
@@ -1327,7 +1336,7 @@ static int sftp_worker(thread_ctx_t* threadCtx)
                 error == WS_CHAN_RXD || error == WS_REKEYING ||
                 error == WS_WINDOW_FULL)
                 ret = error;
-            if (error == WS_WANT_WRITE && wolfSSH_SFTP_PendingSend(ssh)) {
+            if (error == WS_WANT_WRITE || wolfSSH_SFTP_PendingSend(ssh)) {
                 continue; /* no need to spend time attempting to pull data
                             * if there is still pending sends */
             }
@@ -1362,6 +1371,19 @@ static int sftp_worker(thread_ctx_t* threadCtx)
                 break;
             }
             if (ret != WS_SUCCESS && ret != WS_CHAN_RXD) {
+            #ifdef WOLFSSH_TEST_BLOCK
+                if (error == WS_WANT_READ) {
+                    while (error == WS_WANT_READ) {
+                        /* The socket had data but our test nonblocking code
+                        * returned want read. Loop over wolfSSH_worker here
+                        * until we get the data off the socket that select
+                        * indicated was available. */
+                        ret = wolfSSH_worker(ssh, NULL);
+                        error = wolfSSH_get_error(ssh);
+                    }
+                    continue;
+                }
+            #endif
                 if (ret == WS_WANT_WRITE) {
                     /* recall wolfSSH_worker here because is likely our custom
                      * highwater callback that returned up a WS_WANT_WRITE */
@@ -1433,20 +1455,45 @@ static int NonBlockSSH_accept(WOLFSSH* ssh)
             printf("... server would read block\n");
         else if (error == WS_WANT_WRITE)
             printf("... server would write block\n");
+        else if (error == WS_AUTH_PENDING)
+            printf("... server auth pending\n");
 
         select_ret = tcp_select(sockfd, 1);
-        if (select_ret == WS_SELECT_RECV_READY  ||
-            select_ret == WS_SELECT_ERROR_READY ||
-            error      == WS_WANT_WRITE ||
-            error      == WS_AUTH_PENDING)
-        {
+        if (select_ret == WS_SELECT_RECV_READY) {
             ret = wolfSSH_accept(ssh);
             error = wolfSSH_get_error(ssh);
+
+        #ifdef WOLFSSH_TEST_BLOCK
+            if (error == WS_WANT_READ) {
+                /* The socket had data but our test nonblocking code
+                 * returned want read. Loop over wolfSSH_accept here until
+                 * we get the data off the socket that select indicated was
+                 * available. */
+                while (error == WS_WANT_READ) {
+                    ret = wolfSSH_accept(ssh);
+                    error = wolfSSH_get_error(ssh);
+                }
+            }
+        #endif
         }
-        else if (select_ret == WS_SELECT_TIMEOUT)
-            error = WS_WANT_READ;
-        else
-            error = WS_FATAL_ERROR;
+        else if (select_ret == WS_SELECT_TIMEOUT) {
+            if (error == WS_WANT_WRITE || error == WS_AUTH_PENDING
+            #ifdef WOLFSSH_TEST_BLOCK
+                || error == WS_WANT_READ
+            #endif
+            ) {
+                /* For write or auth pending, we need to try again */
+                ret = wolfSSH_accept(ssh);
+                error = wolfSSH_get_error(ssh);
+            }
+            else {
+                error = WS_WANT_READ;
+            }
+        }
+        else {
+            ret = WS_FATAL_ERROR;
+            break;
+        }
     }
 
     return ret;
@@ -1709,7 +1756,7 @@ static void StrListFree(StrList* list)
 }
 
 
-/* Map user names to passwords */
+/* Map user names to passwords and keyboard auth prompts */
 /* Use arrays for username and p. The password or public key can
  * be hashed and the hash stored here. Then I won't need the type. */
 typedef struct PwMap {
@@ -1717,6 +1764,9 @@ typedef struct PwMap {
     byte username[32];
     word32 usernameSz;
     byte p[WC_SHA256_DIGEST_SIZE];
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+    WS_UserAuthData_Keyboard* keyboard;
+#endif
     struct PwMap* next;
 } PwMap;
 
@@ -1750,6 +1800,24 @@ static PwMap* PwMapNew(PwMapList* list, byte type, const byte* username,
 
     return map;
 }
+
+
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+/* Create new node for list of auths, adding keyboard auth prompts */
+static PwMap* PwMapKeyboardNew(PwMapList* list, byte type, const byte* username,
+                       word32 usernameSz, const byte* p, word32 pSz,
+                       WS_UserAuthData_Keyboard* keyboard)
+{
+    PwMap* map;
+
+    map = PwMapNew(list, type, username, usernameSz, p, pSz);
+    if (map) {
+        map->keyboard = keyboard;
+    }
+
+    return map;
+}
+#endif
 
 
 static void PwMapListDelete(PwMapList* list)
@@ -2013,7 +2081,8 @@ static int LoadPasswdList(StrList* strList, PwMapList* mapList)
     return count;
 }
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-static int LoadKeyboardList(StrList* strList, PwMapList* mapList)
+static int LoadKeyboardList(StrList* strList, PwMapList* mapList,
+    WS_UserAuthData_Keyboard* kbAuthData)
 {
     char names[256];
     char* passwd;
@@ -2026,9 +2095,10 @@ static int LoadKeyboardList(StrList* strList, PwMapList* mapList)
             *passwd = 0;
             passwd++;
 
-            PwMapNew(mapList, WOLFSSH_USERAUTH_KEYBOARD,
+            PwMapKeyboardNew(mapList, WOLFSSH_USERAUTH_KEYBOARD,
                     (byte*)names, (word32)WSTRLEN(names),
-                    (byte*)passwd, (word32)WSTRLEN(passwd));
+                    (byte*)passwd, (word32)WSTRLEN(passwd),
+                    kbAuthData);
         }
         else {
             fprintf(stderr, "Ignoring password: %s\n", names);
@@ -2192,6 +2262,7 @@ static int wsUserAuth(byte authType,
 #endif
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
         authType != WOLFSSH_USERAUTH_KEYBOARD &&
+        authType != WOLFSSH_USERAUTH_KEYBOARD_SETUP &&
 #endif
         authType != WOLFSSH_USERAUTH_PUBLICKEY) {
 
@@ -2315,6 +2386,14 @@ static int wsUserAuth(byte authType,
             }
             #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
             else if (authData->type == WOLFSSH_USERAUTH_KEYBOARD) {
+                if (authType == WOLFSSH_USERAUTH_KEYBOARD_SETUP) {
+                    /* setup the keyboard auth prompts */
+                    WMEMCPY(&authData->sf.keyboard, map->keyboard,
+                    sizeof(WS_UserAuthData_Keyboard));
+                    return WS_SUCCESS;
+                }
+
+                /* do keyboard auth prompts */
                 if (WMEMCMP(map->p, authHash, WC_SHA256_DIGEST_SIZE) == 0) {
                     return WOLFSSH_USERAUTH_SUCCESS;
                 }
@@ -2338,15 +2417,6 @@ static int wsUserAuth(byte authType,
     return WOLFSSH_USERAUTH_INVALID_USER;
 }
 
-#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-static int keyboardCallback(WS_UserAuthData_Keyboard *kbAuth, void *ctx)
-{
-    WS_UserAuthData_Keyboard *kbAuthData = (WS_UserAuthData_Keyboard*) ctx;
-    WMEMCPY(kbAuth, kbAuthData, sizeof(WS_UserAuthData_Keyboard));
-
-    return WS_SUCCESS;
-}
-#endif
 
 #ifdef WOLFSSH_SFTP
 /*
@@ -2800,9 +2870,6 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     if (keyboardList) {
-        LoadKeyboardList(keyboardList, &pwMapList);
-        StrListFree(keyboardList);
-        keyboardList = NULL;
         kbAuthData.promptCount = 1;
         kbAuthData.promptName = NULL;
         kbAuthData.promptNameSz = 0;
@@ -2825,7 +2892,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             ES_ERROR("Error allocating promptEcho");
         }
         kbAuthData.promptEcho[0] = 0;
-        wolfSSH_SetKeyboardAuthPrompts(ctx, keyboardCallback);
+        LoadKeyboardList(keyboardList, &pwMapList, &kbAuthData);
+        StrListFree(keyboardList);
+        keyboardList = NULL;
     }
 #endif
 
@@ -3035,9 +3104,6 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     #endif
         wolfSSH_SetUserAuthCtx(ssh, &pwMapList);
         wolfSSH_SetKeyingCompletionCbCtx(ssh, (void*)ssh);
-    #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-        wolfSSH_SetKeyboardAuthCtx(ssh, &kbAuthData);
-    #endif
 
         /* Use the session object for its own highwater callback ctx */
         if (defaultHighwater > 0) {
