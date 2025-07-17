@@ -1490,6 +1490,15 @@ extern "C" {
 #endif
 #endif /* WOLFSSH_SFTP or WOLFSSH_SCP */
 
+#ifndef WS_MAYBE_UNUSED
+    #if (defined(__GNUC__) && (__GNUC__ >= 4)) || defined(__clang__) || \
+            defined(__IAR_SYSTEMS_ICC__)
+        #define WS_MAYBE_UNUSED __attribute__((unused))
+    #else
+        #define WS_MAYBE_UNUSED
+    #endif
+#endif /* WS_MAYBE_UNUSED */
+
 /* setup compiler inlining */
 #ifndef INLINE
 #ifndef NO_INLINE
@@ -1502,10 +1511,10 @@ extern "C" {
     #elif defined(THREADX)
         #define INLINE _Inline
     #else
-        #define INLINE
+        #define INLINE WS_MAYBE_UNUSED
     #endif
 #else
-    #define INLINE
+    #define INLINE WS_MAYBE_UNUSED
 #endif
 #endif /* INLINE */
 

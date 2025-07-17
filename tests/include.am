@@ -6,67 +6,13 @@ check_PROGRAMS  += tests/unit.test tests/api.test \
                    tests/testsuite.test tests/kex.test
 
 tests_unit_test_SOURCES      = tests/unit.c tests/unit.h
-tests_unit_test_CPPFLAGS     = -DNO_MAIN_DRIVER
-if BUILD_KEYGEN
-tests_unit_test_CPPFLAGS     += -DWOLFSSH_KEYGEN
-endif
-if BUILD_SCP
-tests_unit_test_CPPFLAGS     += -DWOLFSSH_SCP
-endif
-if BUILD_SFTP
-tests_unit_test_CPPFLAGS     += -DWOLFSSH_SFTP
-endif
-if BUILD_TERM
-tests_unit_test_CPPFLAGS     += -DWOLFSSH_TERM
-endif
-if BUILD_SHELL
-tests_unit_test_CPPFLAGS     += -DWOLFSSH_SHELL
-endif
-if BUILD_AGENT
-tests_unit_test_CPPFLAGS     += -DWOLFSSH_AGENT
-endif
-if BUILD_FWD
-tests_unit_test_CPPFLAGS     += -DWOLFSSH_FWD
-endif
-if BUILD_CERTS
-tests_unit_test_CPPFLAGS     += -DWOLFSSH_CERTS
-endif
-if BUILD_KEYBOARD_INTERACTIVE
-tests_unit_test_CPPFLAGS     += -DWOLFSSH_KEYBOARD_INTERACTIVE
-endif
+tests_unit_test_CPPFLAGS     = -DNO_MAIN_DRIVER $(AM_CPPFLAGS)
 tests_unit_test_LDADD        = src/libwolfssh.la
 tests_unit_test_DEPENDENCIES = src/libwolfssh.la
 
 tests_api_test_SOURCES       = tests/api.c tests/api.h \
                                examples/echoserver/echoserver.c
-tests_api_test_CPPFLAGS      = -DNO_MAIN_DRIVER
-if BUILD_KEYGEN
-tests_api_test_CPPFLAGS     += -DWOLFSSH_KEYGEN
-endif
-if BUILD_SCP
-tests_api_test_CPPFLAGS     += -DWOLFSSH_SCP
-endif
-if BUILD_SFTP
-tests_api_test_CPPFLAGS     += -DWOLFSSH_SFTP
-endif
-if BUILD_TERM
-tests_api_test_CPPFLAGS     += -DWOLFSSH_TERM
-endif
-if BUILD_SHELL
-tests_api_test_CPPFLAGS     += -DWOLFSSH_SHELL
-endif
-if BUILD_AGENT
-tests_api_test_CPPFLAGS     += -DWOLFSSH_AGENT
-endif
-if BUILD_FWD
-tests_api_test_CPPFLAGS     += -DWOLFSSH_FWD
-endif
-if BUILD_CERTS
-tests_api_test_CPPFLAGS     += -DWOLFSSH_CERTS
-endif
-if BUILD_KEYBOARD_INTERACTIVE
-tests_api_test_CPPFLAGS     += -DWOLFSSH_KEYBOARD_INTERACTIVE
-endif
+tests_api_test_CPPFLAGS      = -DNO_MAIN_DRIVER $(AM_CPPFLAGS)
 tests_api_test_LDADD         = src/libwolfssh.la
 tests_api_test_DEPENDENCIES  = src/libwolfssh.la
 
@@ -77,65 +23,14 @@ tests_testsuite_test_SOURCES = tests/testsuite.c tests/testsuite.h \
                                examples/client/common.c \
                                examples/client/common.h \
                                examples/sftpclient/sftpclient.c
-tests_testsuite_test_CPPFLAGS  = -DNO_MAIN_DRIVER
-if BUILD_KEYGEN
-tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_KEYGEN
-endif
-if BUILD_SCP
-tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_SCP
-endif
-if BUILD_SFTP
-tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_SFTP
-endif
-if BUILD_TERM
-tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_TERM
-endif
-if BUILD_SHELL
-tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_SHELL
-endif
-if BUILD_AGENT
-tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_AGENT
-endif
-if BUILD_FWD
-tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_FWD
-endif
-if BUILD_CERTS
-tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_CERTS
-endif
-if BUILD_KEYBOARD_INTERACTIVE
-tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_KEYBOARD_INTERACTIVE
-endif
+tests_testsuite_test_CPPFLAGS = -DNO_MAIN_DRIVER $(AM_CPPFLAGS)
 tests_testsuite_test_LDADD   = src/libwolfssh.la
 tests_testsuite_test_DEPENDENCIES = src/libwolfssh.la
 
 if BUILD_KEYBOARD_INTERACTIVE
 check_PROGRAMS              += tests/auth.test
 tests_auth_test_SOURCES      = tests/auth.c tests/auth.h
-tests_auth_test_CPPFLAGS     = -DNO_MAIN_DRIVER -DWOLFSSH_KEYBOARD_INTERACTIVE
-if BUILD_KEYGEN
-tests_auth_test_CPPFLAGS    += -DWOLFSSH_KEYGEN
-endif
-if BUILD_SCP
-tests_auth_test_CPPFLAGS    += -DWOLFSSH_SCP
-endif
-if BUILD_SFTP
-tests_auth_test_CPPFLAGS    += -DWOLFSSH_SFTP
-endif
-if BUILD_TERM
-tests_auth_test_CPPFLAGS    += -DWOLFSSH_TERM
-endif
-if BUILD_SHELL
-tests_auth_test_CPPFLAGS    += -DWOLFSSH_SHELL
-endif
-if BUILD_AGENT
-tests_auth_test_CPPFLAGS    += -DWOLFSSH_AGENT
-endif
-if BUILD_FWD
-tests_auth_test_CPPFLAGS    += -DWOLFSSH_FWD
-endif
-if BUILD_CERTS
-tests_auth_test_CPPFLAGS    += -DWOLFSSH_CERTS
-endif
+tests_auth_test_CPPFLAGS     = -DNO_MAIN_DRIVER $(AM_CPPFLAGS)
 tests_auth_test_LDADD        = src/libwolfssh.la
 tests_auth_test_DEPENDENCIES = src/libwolfssh.la
 endif
@@ -145,33 +40,6 @@ tests_kex_test_SOURCES = tests/kex.c tests/kex.h \
                                examples/client/client.c \
                                examples/client/common.c \
                                examples/client/common.h
-tests_kex_test_CPPFLAGS  = -DNO_MAIN_DRIVER
-if BUILD_KEYGEN
-tests_kex_test_CPPFLAGS     += -DWOLFSSH_KEYGEN
-endif
-if BUILD_SCP
-tests_kex_test_CPPFLAGS     += -DWOLFSSH_SCP
-endif
-if BUILD_SFTP
-tests_kex_test_CPPFLAGS     += -DWOLFSSH_SFTP
-endif
-if BUILD_TERM
-tests_kex_test_CPPFLAGS     += -DWOLFSSH_TERM
-endif
-if BUILD_SHELL
-tests_kex_test_CPPFLAGS     += -DWOLFSSH_SHELL
-endif
-if BUILD_AGENT
-tests_kex_test_CPPFLAGS     += -DWOLFSSH_AGENT
-endif
-if BUILD_FWD
-tests_kex_test_CPPFLAGS     += -DWOLFSSH_FWD
-endif
-if BUILD_CERTS
-tests_kex_test_CPPFLAGS     += -DWOLFSSH_CERTS
-endif
-if BUILD_KEYBOARD_INTERACTIVE
-tests_kex_test_CPPFLAGS     += -DWOLFSSH_KEYBOARD_INTERACTIVE
-endif
+tests_kex_test_CPPFLAGS = -DNO_MAIN_DRIVER $(AM_CPPFLAGS)
 tests_kex_test_LDADD   = src/libwolfssh.la
 tests_kex_test_DEPENDENCIES = src/libwolfssh.la
