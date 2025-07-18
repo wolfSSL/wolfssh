@@ -4,7 +4,7 @@
 
 AC_COPYRIGHT([Copyright (C) 2014-2024 wolfSSL Inc.])
 AC_INIT([wolfssh],[1.4.20],[support@wolfssl.com],[wolfssh],[https://www.wolfssl.com])
-AC_PREREQ([2.63])
+AC_PREREQ([2.69])
 AC_CONFIG_AUX_DIR([build-aux])
 
 : ${CFLAGS=""}
@@ -12,7 +12,7 @@ AC_CONFIG_AUX_DIR([build-aux])
 AC_CANONICAL_HOST
 AC_CANONICAL_TARGET
 
-AM_INIT_AUTOMAKE([1.11 -Wall -Werror -Wno-portability foreign tar-ustar subdir-objects no-define color-tests])
+AM_INIT_AUTOMAKE([1.14.1 -Wall -Werror -Wno-portability foreign tar-ustar subdir-objects no-define color-tests])
 
 AC_ARG_PROGRAM
 AC_CONFIG_MACRO_DIR([m4])
@@ -33,7 +33,7 @@ WOLFSSH_LIBRARY_VERSION=17:2:10
 #                       or changed
 AC_SUBST([WOLFSSH_LIBRARY_VERSION])
 
-LT_PREREQ([2.2])
+LT_PREREQ([2.4.3])
 LT_INIT([disable-static win32-dll])
 
 gl_VISIBILITY
@@ -181,11 +181,6 @@ AC_ARG_ENABLE([tpm],
     [AS_HELP_STRING([--enable-tpm],[Enable TPM 2.0 support (default: disabled)])],
     [ENABLED_TPM=$enableval],[ENABLED_TPM=no])
 
-if test "$ENABLED_TPM" != "no"
-then
-    AC_CHECK_LIB([wolftpm],[wolfTPM2_Init],,[AC_MSG_ERROR([libwolftpm is required for ${PACKAGE}. It can be obtained from https://www.wolfssl.com/download.html/ .])])
-fi
-
 # smallstack
 AC_ARG_ENABLE([smallstack],
     [AS_HELP_STRING([--enable-smallstack],[Enable small stack (default: disabled)])],
@@ -238,51 +233,37 @@ AS_IF([test "x$ENABLED_CERTS" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_CERTS"])
 AS_IF([test "x$ENABLED_SMALLSTACK" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SMALL_STACK"])
-AS_IF([test "x$ENABLED_SSHD" = "xyes"],
-      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SSHD"])
 AS_IF([test "x$ENABLED_SSHCLIENT" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SSHCLIENT"])
 AS_IF([test "x$ENABLED_TPM" = "xyes"],
-      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_TPM"])
-
-if test "$ENABLED_SSHD" = "yes"; then
-    if test -n "$PAM_LIB"
-    then
-        AC_MSG_CHECKING([for directory $PAM_LIB])
-        if ! test -d "$PAM_LIB"
-        then
-            AC_MSG_ERROR([PAM lib dir $PAM_LIB not found.])
-        fi
-        AC_MSG_RESULT([yes])
-        AM_LDFLAGS="-L$PAM_LIB $AM_LDFLAGS"
-
-        LIBS="$LIBS -lpam"
-        AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_USE_PAM"
-        #TODO check on link to lib
-        #AC_CHECK_LIB([pam], [pam],
-        #    [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_USE_PAM"; LIBS="$LIBS -lpam"],
-        #    [AC_MSG_ERROR(libpam not found)])
-    else
-        case $host in
-            *qnx*)
-                # QNX uses liblogin for crypt operation
-                AC_CHECK_LIB([login], [login],
-                    [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_HAVE_LIBLOGIN";
-                        LIBS="$LIBS -llogin"],
-                    [AC_MSG_ERROR(liblogin not found)])
-                ;;
-            *darwin*)
-                AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_HAVE_LIBCRYPT"
-                ;;
-            *)
-                AC_CHECK_LIB([crypt], [crypt],
-                    [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_HAVE_LIBCRYPT";
-                        LIBS="$LIBS -lcrypt"],
-                    [AC_MSG_ERROR(libcrypt not found)])
-        esac
-    fi
-fi
-
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_TPM"
+       AC_CHECK_LIB([wolftpm],[wolfTPM2_Init],,[AC_MSG_ERROR([libwolftpm is required for ${PACKAGE}. It can be obtained from https://www.wolfssl.com/download.html/ .])])])
+AS_IF([test "x$ENABLED_SSHD" = "xyes"],[
+  AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SSHD"
+  AS_IF([test -n "$PAM_LIB"],[
+    AC_MSG_CHECKING([for directory $PAM_LIB])
+    AS_IF([! test -d "$PAM_LIB"],[AC_MSG_ERROR([PAM lib dir $PAM_LIB not found.])])
+    AC_MSG_RESULT([yes])
+    AM_LDFLAGS="-L$PAM_LIB $AM_LDFLAGS"
+    LIBS="$LIBS -lpam"
+    AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_USE_PAM"
+    #TODO check on link to lib
+    #AC_CHECK_LIB([pam], [pam],
+    # [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_USE_PAM"; LIBS="$LIBS -lpam"],
+    # [AC_MSG_ERROR(libpam not found)])
+  ],[
+    AS_CASE([$host],
+      [*qnx*],[
+        # QNX uses liblogin for crypt operation
+        AC_CHECK_LIB([login],[login],
+          [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_HAVE_LIBLOGIN"; LIBS="$LIBS -llogin"],
+          [AC_MSG_ERROR(liblogin not found)])],
+      [*darwin*],[AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_HAVE_LIBCRYPT"],
+      [AC_CHECK_LIB([crypt],[crypt],
+        [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_HAVE_LIBCRYPT"; LIBS="$LIBS -lcrypt"],
+        [AC_MSG_ERROR(libcrypt not found)])])
+  ])
+])
 
 # Set the automake conditionals.
 AM_CONDITIONAL([BUILD_EXAMPLE_SERVERS],[test "x$ENABLED_EXAMPLES" = "xyes"])
