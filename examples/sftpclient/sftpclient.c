@@ -249,8 +249,14 @@ static void sig_handler(const int sig)
 static void clean_path(char* path)
 {
     int  i;
-    long sz = (long)WSTRLEN(path);
+    long sz;
     byte found;
+
+    if (path == NULL) {
+        return;
+    }
+
+    sz = (long)WSTRLEN(path);
 
     /* remove any double '/' chars */
     for (i = 0; i < sz; i++) {
@@ -272,51 +278,49 @@ static void clean_path(char* path)
         }
     }
 
-    if (path != NULL) {
-        /* go through path until no cases are found */
-        do {
-            int prIdx = 0; /* begin of cut */
-            int enIdx = 0; /* end of cut */
-            sz = (long)WSTRLEN(path);
+    /* go through path until no cases are found */
+    do {
+        int prIdx = 0; /* begin of cut */
+        int enIdx = 0; /* end of cut */
+        sz = (long)WSTRLEN(path);
 
-            found = 0;
-            for (i = 0; i < sz; i++) {
-                if (path[i] == '/') {
-                    int z;
+        found = 0;
+        for (i = 0; i < sz; i++) {
+            if (path[i] == '/') {
+                int z;
 
-                    /* if next two chars are .. then delete */
-                    if (path[i+1] == '.' && path[i+2] == '.') {
-                        enIdx = i + 3;
+                /* if next two chars are .. then delete */
+                if (path[i+1] == '.' && path[i+2] == '.') {
+                    enIdx = i + 3;
 
-                        /* start at one char before / and retrace path */
-                        for (z = i - 1; z > 0; z--) {
-                            if (path[z] == '/') {
-                                prIdx = z;
-                                break;
-                            }
+                    /* start at one char before / and retrace path */
+                    for (z = i - 1; z > 0; z--) {
+                        if (path[z] == '/') {
+                            prIdx = z;
+                            break;
                         }
-
-                        /* cut out .. and previous */
-                        WMEMMOVE(path + prIdx, path + enIdx, sz - enIdx);
-                        path[sz - (enIdx - prIdx)] = '\0';
-
-                        if (enIdx == sz) {
-                            path[prIdx] = '\0';
-                        }
-
-                        /* case of at / */
-                        if (WSTRLEN(path) == 0) {
-                           path[0] = '/';
-                           path[1] = '\0';
-                        }
-
-                        found = 1;
-                        break;
                     }
+
+                    /* cut out .. and previous */
+                    WMEMMOVE(path + prIdx, path + enIdx, sz - enIdx);
+                    path[sz - (enIdx - prIdx)] = '\0';
+
+                    if (enIdx == sz) {
+                        path[prIdx] = '\0';
+                    }
+
+                    /* case of at / */
+                    if (WSTRLEN(path) == 0) {
+                       path[0] = '/';
+                       path[1] = '\0';
+                    }
+
+                    found = 1;
+                    break;
                 }
             }
-        } while (found);
-    }
+        }
+    } while (found);
 }
 
 #define WS_MAX_EXAMPLE_RW 1024

@@ -242,7 +242,7 @@ static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap)
 {
     FILE* file;
     byte* buf = NULL;
-    word32 fileSz;
+    long fileSz;
     word32 readSz;
 
     WOLFSSH_UNUSED(heap);
@@ -252,13 +252,17 @@ static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap)
     if (WFOPEN(NULL, &file, fileName, "rb") != 0)
         return NULL;
     WFSEEK(NULL, file, 0, WSEEK_END);
-    fileSz = (word32)WFTELL(NULL, file);
+    fileSz = WFTELL(NULL, file);
+    if (fileSz < 0) {
+        WFCLOSE(NULL, file);
+        return NULL;
+    }
     WREWIND(NULL, file);
 
     buf = (byte*)WMALLOC(fileSz + 1, heap, DYNTYPE_SSHD);
     if (buf != NULL) {
         readSz = (word32)WFREAD(NULL, buf, 1, fileSz, file);
-        if (readSz < fileSz) {
+        if (readSz < (size_t)fileSz) {
             WFCLOSE(NULL, file);
             WFREE(buf, heap, DYNTYPE_SSHD);
             return NULL;
@@ -1347,20 +1351,19 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         setenv("LOGNAME", pPasswd->pw_name, 1);
         setenv("SHELL", pPasswd->pw_shell, 1);
 
-        if (pPasswd->pw_shell) {
-            if (WSTRLEN(pPasswd->pw_shell) < sizeof(shell)) {
-                char* cursor;
-                char* start;
+        if (WSTRLEN(pPasswd->pw_shell) < sizeof(shell)) {
+            char* cursor;
+            char* start;
 
-                WSTRNCPY(shell, pPasswd->pw_shell, sizeof(shell));
-                cursor = shell;
-                do {
-                    start = cursor;
-                    *cursor = '-';
-                    cursor = WSTRCHR(start, '/');
-                } while (cursor && *cursor != '\0');
-                args[0] = start;
-            }
+            WSTRNCPY(shell, pPasswd->pw_shell, sizeof(shell)-1);
+            shell[sizeof(shell)-1] = 0;
+            cursor = shell;
+            do {
+                start = cursor;
+                *cursor = '-';
+                cursor = WSTRCHR(start, '/');
+            } while (cursor && *cursor != '\0');
+            args[0] = start;
         }
 
         rc = chdir(pPasswd->pw_dir);

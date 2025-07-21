@@ -76,7 +76,7 @@ static int load_der_file(const char* filename, byte** out, word32* outSz)
 {
     WFILE* file;
     byte* in;
-    word32 inSz;
+    long inSz;
     int ret;
 
     if (filename == NULL || out == NULL || outSz == NULL)
@@ -90,10 +90,10 @@ static int load_der_file(const char* filename, byte** out, word32* outSz)
         WFCLOSE(NULL, file);
         return -1;
     }
-    inSz = (word32)WFTELL(NULL, file);
+    inSz = WFTELL(NULL, file);
     WREWIND(NULL, file);
 
-    if (inSz == 0) {
+    if (inSz <= 0) {
         WFCLOSE(NULL, file);
         return -1;
     }
@@ -105,7 +105,7 @@ static int load_der_file(const char* filename, byte** out, word32* outSz)
     }
 
     ret = (int)WFREAD(NULL, in, 1, inSz, file);
-    if (ret <= 0 || (word32)ret != inSz) {
+    if (ret <= 0 || ret != inSz) {
         ret = -1;
         WFREE(in, NULL, 0);
         in = 0;
@@ -115,7 +115,7 @@ static int load_der_file(const char* filename, byte** out, word32* outSz)
         ret = 0;
 
     *out = in;
-    *outSz = inSz;
+    *outSz = (word32)inSz;
 
     WFCLOSE(NULL, file);
 

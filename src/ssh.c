@@ -1658,9 +1658,13 @@ static int DoSshPubKey(const byte* in, word32 inSz, byte** out,
     /*
        SSH format is:
        type AAAABASE64ENCODEDKEYDATA comment
+
+       allocate a copy to tokenize, add a null terminator.
     */
-    c = WSTRDUP((const char*)in, heap, DYNTYPE_STRING);
+    c = (char*)WMALLOC(inSz + 1, heap, DYNTYPE_STRING);
     if (c != NULL) {
+        WMEMCPY(c, in, inSz);
+        c[inSz-1] = 0;
         type = WSTRTOK(c, " \n", &last);
         key = WSTRTOK(NULL, " \n", &last);
     }
