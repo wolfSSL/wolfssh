@@ -15120,7 +15120,7 @@ static int GetAllowedAuth(WOLFSSH* ssh, char* authStr)
 
     typeAllowed |= WOLFSSH_USERAUTH_PASSWORD;
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-    if (ssh->ctx->keyboardAuthCb != NULL) {
+    if (ssh->ctx && ssh->ctx->keyboardAuthCb) {
         typeAllowed |= WOLFSSH_USERAUTH_KEYBOARD;
     }
 #endif
