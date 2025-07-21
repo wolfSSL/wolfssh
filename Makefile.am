@@ -1,35 +1,21 @@
 # includes append to these:
-SUFFIXES =
-TESTS =
-CLEANFILES =
-DISTCLEANFILES =
 bin_PROGRAMS =
 noinst_HEADERS =
 lib_LTLIBRARIES =
-man_MANS =
-noinst_LTLIBRARIES =
 noinst_PROGRAMS =
-include_HEADERS =
 nobase_include_HEADERS =
 check_PROGRAMS =
-EXTRA_HEADERS =
-BUILT_SOURCES=
-EXTRA_DIST=
-dist_doc_DATA=
-dist_noinst_SCRIPTS=
-check_SCRIPTS=
-
+dist_noinst_SCRIPTS =
 
 #includes additional rules from aminclude.am
 @INC_AMINCLUDE@
-DISTCLEANFILES+= aminclude.am
+DISTCLEANFILES = aminclude.am wolfssh-config
 
 exampledir = $(docdir)/example
-dist_example_DATA=
 
-ACLOCAL_AMFLAGS= -I m4
+ACLOCAL_AMFLAGS = -I m4
 
-EXTRA_DIST+= LICENSING README.md ChangeLog.md
+EXTRA_DIST = LICENSING README.md ChangeLog.md
 
 include src/include.am
 include wolfssh/include.am
@@ -40,16 +26,11 @@ include keys/include.am
 include ide/include.am
 include scripts/include.am
 
-
 TEST_EXTENSIONS = .test
-TESTS += $(check_PROGRAMS)
-
-check_SCRIPTS+= $(dist_noinst_SCRIPTS)
-TESTS += $(check_SCRIPTS)
+check_SCRIPTS = $(dist_noinst_SCRIPTS)
+TESTS = $(check_PROGRAMS) $(check_SCRIPTS)
 
 test: check
-
-DISTCLEANFILES+= wolfssh-config
 
 
 maintainer-clean-local:
@@ -97,5 +78,3 @@ merge-clean:
 	@find ./ | $(GREP) \.OTHER | xargs rm -f
 	@find ./ | $(GREP) \.BASE | xargs rm -f
 	@find ./ | $(GREP) \~$$ | xargs rm -f
-
-
