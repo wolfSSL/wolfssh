@@ -13321,7 +13321,8 @@ static int BuildUserAuthRequestKeyboard(WOLFSSH* ssh, byte* output, word32* idx,
             begin += LENGTH_SZ;
             WMEMCPY(output + begin, authData->sf.keyboard.promptName, slen);
             begin += slen;
-        } else {
+        }
+        else {
             c32toa(0, output + begin);
             begin += LENGTH_SZ;
         }
@@ -13331,7 +13332,8 @@ static int BuildUserAuthRequestKeyboard(WOLFSSH* ssh, byte* output, word32* idx,
             begin += LENGTH_SZ;
             WMEMCPY(output + begin, authData->sf.keyboard.promptInstruction, slen);
             begin += slen;
-        } else {
+        }
+        else {
             c32toa(0, output + begin);
             begin += LENGTH_SZ;
         }
@@ -13341,7 +13343,8 @@ static int BuildUserAuthRequestKeyboard(WOLFSSH* ssh, byte* output, word32* idx,
             begin += LENGTH_SZ;
             WMEMCPY(output + begin, authData->sf.keyboard.promptLanguage, slen);
             begin += slen;
-        } else {
+        }
+        else {
             c32toa(0, output + begin);
             begin += LENGTH_SZ;
         }
@@ -13373,33 +13376,38 @@ int SendUserAuthKeyboardRequest(WOLFSSH* ssh, WS_UserAuthData* authData)
     WLOG(WS_LOG_DEBUG, "Entering SendUserAuthKeyboardRequest()");
 
 
-    if (ssh == NULL || authData == NULL) {
-        ret = WS_BAD_ARGUMENT;
+    if (ssh == NULL || ssh->ctx == NULL|| authData == NULL) {
+        return WS_BAD_ARGUMENT;
     }
 
-    if (ssh->ctx->keyboardAuthCb == NULL) {
-        WLOG(WS_LOG_DEBUG, "SendUserAuthKeyboardRequest called with no Cb set");
-        ret = WS_BAD_USAGE;
+    if (ret == WS_SUCCESS){
+        if (ssh->ctx->keyboardAuthCb == NULL) {
+            WLOG(WS_LOG_DEBUG, "SendUserAuthKeyboardRequest called with no Cb set");
+            return WS_BAD_USAGE;
+        }
+        else {
+            ret = ssh->ctx->keyboardAuthCb(&authData->sf.keyboard,
+                                        ssh->keyboardAuthCtx);
+        }
     }
 
     if (ret == WS_SUCCESS) {
-        ret = ssh->ctx->keyboardAuthCb(&authData->sf.keyboard,
-                                       ssh->keyboardAuthCtx);
+        if (authData->sf.keyboard.promptCount > 0 &&
+           (authData->sf.keyboard.prompts == NULL ||
+            authData->sf.keyboard.promptLengths == NULL ||
+            authData->sf.keyboard.promptEcho == NULL)) {
+                ret = WS_BAD_USAGE;
+            }
     }
 
-    if (authData->sf.keyboard.promptCount > 0 &&
-        (authData->sf.keyboard.prompts == NULL ||
-         authData->sf.keyboard.promptLengths == NULL ||
-         authData->sf.keyboard.promptEcho == NULL)) {
-
-        ret = WS_BAD_USAGE;
+    if (ret == WS_SUCCESS) {
+        if (authData->sf.keyboard.promptCount > WOLFSSH_MAX_PROMPTS) {
+            ret = WS_BAD_USAGE;
+        }
     }
 
-    if (authData->sf.keyboard.promptCount > WOLFSSH_MAX_PROMPTS) {
-        ret = WS_BAD_USAGE;
-    }
-
-    ssh->kbAuth.promptCount = authData->sf.keyboard.promptCount;
+    if (ret == WS_SUCCESS)
+        ssh->kbAuth.promptCount = authData->sf.keyboard.promptCount;
 
     payloadSz = MSG_ID_SZ;
     if (ret == WS_SUCCESS) {
@@ -13410,12 +13418,12 @@ int SendUserAuthKeyboardRequest(WOLFSSH* ssh, WS_UserAuthData* authData)
         ret = PreparePacket(ssh, payloadSz);
     }
 
-    output = ssh->outputBuffer.buffer;
-    idx = ssh->outputBuffer.length;
-
-    output[idx++] = MSGID_USERAUTH_INFO_REQUEST;
-
     if (ret == WS_SUCCESS) {
+        output = ssh->outputBuffer.buffer;
+        idx = ssh->outputBuffer.length;
+
+        output[idx++] = MSGID_USERAUTH_INFO_REQUEST;
+
         ret = BuildUserAuthRequestKeyboard(ssh, output, &idx, authData);
     }
 
