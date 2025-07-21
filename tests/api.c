@@ -504,26 +504,38 @@ static int load_file(const char* filename, byte** buf, word32* bufSz)
     }
 
     if (ret == 0) {
-        fseek(f, 0, XSEEK_END);
-        *bufSz = (word32)ftell(f);
-        rewind(f);
-    }
-
-    if (ret == 0) {
-        *buf = (byte*)malloc(*bufSz);
-        if (*buf == NULL)
+        ret = fseek(f, 0, XSEEK_END);
+        if (ret < 0)
             ret = -3;
     }
 
     if (ret == 0) {
-        int readSz;
-        readSz = (int)fread(*buf, 1, *bufSz, f);
-        if (readSz < (int)*bufSz)
+        long sz = ftell(f);
+        if (sz < 0)
             ret = -4;
+        else
+            *bufSz = (word32)sz;
     }
 
-    if (f != NULL)
-        fclose(f);
+    if (ret == 0) {
+        rewind(f);
+        *buf = (byte*)malloc(*bufSz);
+        if (*buf == NULL)
+            ret = -5;
+    }
+
+    if (ret == 0) {
+        size_t readSz;
+        readSz = fread(*buf, 1, *bufSz, f);
+        if (readSz < *bufSz)
+            ret = -6;
+    }
+
+    if (f != NULL) {
+        ret = fclose(f);
+        if (ret < 0)
+            ret = -7;
+    }
 
     return ret;
 }

@@ -242,7 +242,7 @@ static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap)
 {
     FILE* file;
     byte* buf = NULL;
-    word32 fileSz;
+    long fileSz;
     word32 readSz;
 
     WOLFSSH_UNUSED(heap);
@@ -252,13 +252,17 @@ static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap)
     if (WFOPEN(NULL, &file, fileName, "rb") != 0)
         return NULL;
     WFSEEK(NULL, file, 0, WSEEK_END);
-    fileSz = (word32)WFTELL(NULL, file);
+    fileSz = WFTELL(NULL, file);
+    if (fileSz < 0) {
+        WFCLOSE(NULL, file);
+        return NULL;
+    }
     WREWIND(NULL, file);
 
     buf = (byte*)WMALLOC(fileSz + 1, heap, DYNTYPE_SSHD);
     if (buf != NULL) {
         readSz = (word32)WFREAD(NULL, buf, 1, fileSz, file);
-        if (readSz < fileSz) {
+        if (readSz < (size_t)fileSz) {
             WFCLOSE(NULL, file);
             WFREE(buf, heap, DYNTYPE_SSHD);
             return NULL;
