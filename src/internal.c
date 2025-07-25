@@ -877,9 +877,6 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
     ctx->algoListCipher = cannedEncAlgoNames;
     ctx->algoListMac = cannedMacAlgoNames;
     ctx->algoListKeyAccepted = cannedKeyAlgoNames;
-#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-    ctx->keyboardAuthCb = NULL;
-#endif
 
     count = (word32)(sizeof(ctx->privateKey)
             / sizeof(ctx->privateKey[0]));
@@ -7884,7 +7881,10 @@ static int DoUserAuthFailure(WOLFSSH* ssh,
                             break;
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
                         case ID_USERAUTH_KEYBOARD:
-                            authType |= WOLFSSH_USERAUTH_KEYBOARD;
+                            /* try a different auth method if failing */
+                            if (ssh->kbAuthAttempts < 3) {
+                                authType |= WOLFSSH_USERAUTH_KEYBOARD;
+                            }
                             break;
 #endif
 #if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
@@ -13380,24 +13380,23 @@ int SendUserAuthKeyboardRequest(WOLFSSH* ssh, WS_UserAuthData* authData)
         return WS_BAD_ARGUMENT;
     }
 
-    if (ret == WS_SUCCESS){
-        if (ssh->ctx->keyboardAuthCb == NULL) {
-            WLOG(WS_LOG_DEBUG, "SendUserAuthKeyboardRequest called with no Cb set");
-            return WS_BAD_USAGE;
-        }
-        else {
-            ret = ssh->ctx->keyboardAuthCb(&authData->sf.keyboard,
-                                        ssh->keyboardAuthCtx);
-        }
+    if (ret == WS_SUCCESS && ssh->ctx->userAuthCb == NULL) {
+        WLOG(WS_LOG_DEBUG, "SendUserAuthKeyboardRequest called with no Cb set");
+        ret = WS_BAD_USAGE;
     }
 
     if (ret == WS_SUCCESS) {
-        if (authData->sf.keyboard.promptCount > 0 &&
-           (authData->sf.keyboard.prompts == NULL ||
-            authData->sf.keyboard.promptLengths == NULL ||
-            authData->sf.keyboard.promptEcho == NULL)) {
-                ret = WS_BAD_USAGE;
-            }
+        authData->type = WOLFSSH_USERAUTH_KEYBOARD;
+        ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_KEYBOARD_SETUP, authData,
+                               ssh->userAuthCtx);
+        if (ret == WOLFSSH_USERAUTH_SUCCESS) {
+            ret = WS_SUCCESS;
+        }
+        else {
+            WLOG(WS_LOG_DEBUG, "Issue with keyboard auth setup, try another "
+                "auth type");
+            return  SendUserAuthFailure(ssh, 0);
+        }
     }
 
     if (ret == WS_SUCCESS) {
@@ -14957,6 +14956,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
         WMEMSET(keySig_ptr, 0, sizeof(WS_KeySignature));
         keySig_ptr->keySigId = ID_NONE;
         keySig_ptr->heap = ssh->ctx->heap;
+
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
         /* Callback happens later for keyboard auth */
         if (authType & WOLFSSH_USERAUTH_KEYBOARD) {
@@ -15085,6 +15085,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
             /* submethods */
             c32toa(0, output + idx);
             idx += LENGTH_SZ;
+            ssh->kbAuthAttempts++;
         }
 #endif
         else if (authId == ID_USERAUTH_PUBLICKEY)
@@ -15128,9 +15129,7 @@ static int GetAllowedAuth(WOLFSSH* ssh, char* authStr)
 
     typeAllowed |= WOLFSSH_USERAUTH_PASSWORD;
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-    if (ssh->ctx && ssh->ctx->keyboardAuthCb) {
-        typeAllowed |= WOLFSSH_USERAUTH_KEYBOARD;
-    }
+    typeAllowed |= WOLFSSH_USERAUTH_KEYBOARD;
 #endif
 #if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
     typeAllowed |= WOLFSSH_USERAUTH_PUBLICKEY;

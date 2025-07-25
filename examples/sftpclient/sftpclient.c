@@ -205,7 +205,8 @@ static int NonBlockSSH_connect(void)
     sockfd = (SOCKET_T)wolfSSH_get_fd(ssh);
 
     while (ret != WS_SUCCESS &&
-            (error == WS_WANT_READ || error == WS_WANT_WRITE))
+            (error == WS_WANT_READ || error == WS_WANT_WRITE ||
+             error == WS_REKEYING || error == WS_AUTH_PENDING))
     {
         if (error == WS_WANT_READ)
             printf("... client would read block\n");
@@ -219,6 +220,19 @@ static int NonBlockSSH_connect(void)
         {
             ret = wolfSSH_SFTP_connect(ssh);
             error = wolfSSH_get_error(ssh);
+
+        #ifdef WOLFSSH_TEST_BLOCK
+            if (select_ret == WS_SELECT_RECV_READY && error == WS_WANT_READ) {
+                /* The socket has data to be read but the non blocking test
+                 * code returned want read. Loop over wolfSSH_SFTP_connect here
+                 * until we get the data off the socket that select indicated
+                 * was available. */
+                while (error == WS_WANT_READ) {
+                    ret = wolfSSH_SFTP_connect(ssh);
+                    error = wolfSSH_get_error(ssh);
+                }
+            }
+        #endif
         }
         else if (select_ret == WS_SELECT_TIMEOUT)
             error = WS_WANT_READ;
@@ -1150,7 +1164,8 @@ static int doAutopilot(int cmd, char* local, char* remote)
         }
         err = wolfSSH_get_error(ssh);
     } while ((err == WS_WANT_READ || err == WS_WANT_WRITE ||
-                err == WS_CHAN_RXD) && ret == WS_FATAL_ERROR);
+                err == WS_CHAN_RXD || err == WS_REKEYING) &&
+                ret == WS_FATAL_ERROR);
 
     if (ret != WS_SUCCESS) {
         if (cmd == AUTOPILOT_PUT) {

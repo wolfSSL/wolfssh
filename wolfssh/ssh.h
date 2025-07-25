@@ -368,13 +368,6 @@ WOLFSSH_API void wolfSSH_SetUserAuthTypes(WOLFSSH_CTX*,
 WOLFSSH_API void wolfSSH_SetUserAuthCtx(WOLFSSH*, void*);
 WOLFSSH_API void* wolfSSH_GetUserAuthCtx(WOLFSSH*);
 
-#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-typedef int (*WS_CallbackKeyboardAuthPrompts)(WS_UserAuthData_Keyboard*, void*);
-WOLFSSH_API void wolfSSH_SetKeyboardAuthPrompts(WOLFSSH_CTX*,
-                                                WS_CallbackKeyboardAuthPrompts);
-WOLFSSH_API void wolfSSH_SetKeyboardAuthCtx(WOLFSSH*, void*);
-#endif
-
 typedef int (*WS_CallbackUserAuthResult)(byte result,
         WS_UserAuthData* authData, void* userAuthResultCtx);
 WOLFSSH_API void wolfSSH_SetUserAuthResult(WOLFSSH_CTX* ctx,
@@ -474,6 +467,7 @@ enum WS_FormatTypes {
 #define WOLFSSH_USERAUTH_PUBLICKEY 0x02
 #define WOLFSSH_USERAUTH_KEYBOARD  0x04
 #define WOLFSSH_USERAUTH_NONE      0x08
+#define WOLFSSH_USERAUTH_KEYBOARD_SETUP 0x10
 
 enum WS_UserAuthResults
 {
