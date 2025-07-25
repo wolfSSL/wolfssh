@@ -115,7 +115,7 @@ static const char echoserverBanner[] = "wolfSSH Example Echo Server\n";
  */
 static const char samplePasswordBuffer[] =
     "jill:upthehill\n"
-    "jack:fetchapail\n";
+    "admin:fetchapail\n";
 
 
 /* These are example public key authentication options. */
@@ -749,6 +749,9 @@ void APP_Tasks ( void )
                 SYS_CONSOLE_PRINT("Error = %d\r\n", wolfSSH_get_error(ssh));
                 appData.state = APP_SSH_CLEANUP;
             }
+        #ifdef WOLFSSH_USER_FILESYSTEM
+            wolfSSH_SetFilesystemHandle(ssh, (void*)ssh);
+        #endif
             appData.state = APP_SSH_SFTP;
             break;
             
