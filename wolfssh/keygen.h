@@ -41,11 +41,13 @@ extern "C" {
 #define WOLFSSH_ECDSAKEY_PRIME256 256
 #define WOLFSSH_ECDSAKEY_PRIME384 384
 #define WOLFSSH_ECDSAKEY_PRIME521 521
+#define WOLFSSH_ED25519KEY        256
 
 
 WOLFSSH_API int wolfSSH_MakeRsaKey(byte* out, word32 outSz,
         word32 size, word32 e);
 WOLFSSH_API int wolfSSH_MakeEcdsaKey(byte* out, word32 outSz, word32 size);
+WOLFSSH_API int wolfSSH_MakeEd25519Key(byte* out, word32 outSz, word32 size);
 
 
 #ifdef __cplusplus
