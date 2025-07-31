@@ -4080,7 +4080,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     if (ret == WS_SUCCESS) {
         /* Only checking for this is we are server. Our client does
          * not have anything to say to a server, yet. */
-        if (side == WOLFSSH_ENDPOINT_SERVER) {
+        if (side == WOLFSSH_ENDPOINT_SERVER && !ssh->extInfoSent) {
             byte extInfo;
 
             /* Match the client accepts extInfo. */
@@ -13219,6 +13219,10 @@ int SendExtInfo(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS) {
+        ssh->sendExtInfo = 0;
+        ssh->extInfoSent = 1; /* RFC 8308 section 2.4 ext. info should only be
+                               * sent after SSH_MSG_NEWKEYS or after
+                               * SSH_MSG_USERAUTH_SUCCESS. Not on re-key */
         ret = wolfSSH_SendPacket(ssh);
     }
 

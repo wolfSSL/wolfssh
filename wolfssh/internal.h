@@ -841,6 +841,7 @@ struct WOLFSSH {
     byte  sendTerminalRequest;
     byte userAuthPkDone;
     byte sendExtInfo;
+    byte extInfoSent; /* track if the ext info has already been sent */
     byte* peerSigId;
     word32 peerSigIdSz;
 
