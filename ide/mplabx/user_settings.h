@@ -44,4 +44,9 @@
 /* allow signature wrapper api for wolfSSH use */
 #undef NO_SIG_WRAPPER
 
+/* using example of overriding file system to apply custom restrictions on
+   operations */
+#undef  WOLFSSH_USER_FILESYSTEM
+#define WOLFSSH_USER_FILESYSTEM
+
 #endif
