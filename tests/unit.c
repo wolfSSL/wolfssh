@@ -265,6 +265,23 @@ static int test_EcdsaKeyGen(void)
 }
 #endif
 
+#ifndef WOLFSSH_NO_ED25519
+static int test_Ed25519KeyGen(void)
+{
+    int result = 0;
+    byte der[1200];
+    int derSz;
+
+    derSz = wolfSSH_MakeEd25519Key(der, sizeof(der), WOLFSSH_ED25519KEY);
+    if (derSz < 0) {
+        printf("Ed25519KeyGen: MakeEd25519Key failed\n");
+        result = -105;
+    }
+
+    return result;
+}
+#endif
+
 #endif
 
 
@@ -348,6 +365,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #ifndef WOLFSSH_NO_ECDSA
     unitResult = test_EcdsaKeyGen();
     printf("EcdsaKeyGen: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+#ifndef WOLFSSH_NO_ED25519
+    unitResult = test_Ed25519KeyGen();
+    printf("Ed25519KeyGen: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
 #endif
