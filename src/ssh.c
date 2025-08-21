@@ -2359,27 +2359,27 @@ int wolfSSH_CheckAlgoName(const char* name)
 }
 
 
-const char* wolfSSH_QueryKex(word32* index)
+const char* wolfSSH_QueryKex(word32* idx)
 {
-    return NameByIndexType(TYPE_KEX, index);
+    return NameByIndexType(TYPE_KEX, idx);
 }
 
 
-const char* wolfSSH_QueryKey(word32* index)
+const char* wolfSSH_QueryKey(word32* idx)
 {
-    return NameByIndexType(TYPE_KEY, index);
+    return NameByIndexType(TYPE_KEY, idx);
 }
 
 
-const char* wolfSSH_QueryCipher(word32* index)
+const char* wolfSSH_QueryCipher(word32* idx)
 {
-    return NameByIndexType(TYPE_CIPHER, index);
+    return NameByIndexType(TYPE_CIPHER, idx);
 }
 
 
-const char* wolfSSH_QueryMac(word32* index)
+const char* wolfSSH_QueryMac(word32* idx)
 {
-    return NameByIndexType(TYPE_MAC, index);
+    return NameByIndexType(TYPE_MAC, idx);
 }
 
 

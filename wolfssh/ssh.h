@@ -130,20 +130,20 @@ WOLFSSH_API const char* wolfSSH_GetAlgoListKeyAccepted(WOLFSSH* ssh);
 
 WOLFSSH_API int wolfSSH_CheckAlgoName(const char* name);
 
-WOLFSSH_API const char* wolfSSH_QueryKex(word32* index);
-WOLFSSH_API const char* wolfSSH_QueryKey(word32* index);
-WOLFSSH_API const char* wolfSSH_QueryCipher(word32* index);
-WOLFSSH_API const char* wolfSSH_QueryMac(word32* index);
+WOLFSSH_API const char* wolfSSH_QueryKex(word32* idx);
+WOLFSSH_API const char* wolfSSH_QueryKey(word32* idx);
+WOLFSSH_API const char* wolfSSH_QueryCipher(word32* idx);
+WOLFSSH_API const char* wolfSSH_QueryMac(word32* idx);
 
 typedef enum WS_Text {
-	WOLFSSH_TEXT_KEX_ALGO,
-	WOLFSSH_TEXT_KEX_CURVE,
-	WOLFSSH_TEXT_KEX_HASH,
+    WOLFSSH_TEXT_KEX_ALGO,
+    WOLFSSH_TEXT_KEX_CURVE,
+    WOLFSSH_TEXT_KEX_HASH,
 
-	WOLFSSH_TEXT_CRYPTO_IN_CIPHER,
-	WOLFSSH_TEXT_CRYPTO_IN_MAC,
-	WOLFSSH_TEXT_CRYPTO_OUT_CIPHER,
-	WOLFSSH_TEXT_CRYPTO_OUT_MAC,
+    WOLFSSH_TEXT_CRYPTO_IN_CIPHER,
+    WOLFSSH_TEXT_CRYPTO_IN_MAC,
+    WOLFSSH_TEXT_CRYPTO_OUT_CIPHER,
+    WOLFSSH_TEXT_CRYPTO_OUT_MAC,
 } WS_Text;
 
 /*

@@ -2698,23 +2698,23 @@ const char* IdToName(byte id)
 }
 
 
-const char* NameByIndexType(byte type, word32* index)
+const char* NameByIndexType(byte type, word32* idx)
 {
     const char* name = NULL;
 
-    if (index != NULL) {
+    if (idx != NULL) {
         word32 i, mapSz;
 
         mapSz = (word32)(sizeof(NameIdMap)/sizeof(NameIdPair));
 
-        for (i = *index; i < mapSz; i++) {
+        for (i = *idx; i < mapSz; i++) {
             if (NameIdMap[i].type == type) {
                 name = NameIdMap[i].name;
                 break;
             }
         }
 
-        *index = i + 1;
+        *idx = i + 1;
     }
 
     return name;
