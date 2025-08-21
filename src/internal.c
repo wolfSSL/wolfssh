@@ -7585,6 +7585,12 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             if (ret == WOLFSSH_USERAUTH_WOULD_BLOCK) {
                 ret = WS_AUTH_PENDING;
             }
+            else if (ret == WOLFSSH_USERAUTH_REJECTED) {
+                #ifndef NO_FAILURE_ON_REJECTED
+                    authFailure = 1;
+                #endif
+                ret = WS_USER_AUTH_E;
+            }
             else {
                 if (ret == WOLFSSH_USERAUTH_PARTIAL_SUCCESS) {
                     partialSuccess = 1;
