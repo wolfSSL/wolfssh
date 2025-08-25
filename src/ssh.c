@@ -3564,8 +3564,8 @@ void wolfSSH_ShowSizes(void)
             (word32)sizeof(struct HandshakeInfo));
     fprintf(stderr, "  sizeof(struct %s) = %u\n", "WOLFSSH_CHANNEL",
             (word32)sizeof(struct WOLFSSH_CHANNEL));
-    fprintf(stderr, "  sizeof(struct %s) = %u\n", "Buffer",
-            (word32)sizeof(struct Buffer));
+    fprintf(stderr, "  sizeof(struct %s) = %u\n", "WOLFSSH_BUFFER",
+            (word32)sizeof(struct WOLFSSH_BUFFER));
     #ifdef WOLFSSH_SFTP
         wolfSSH_SFTP_ShowSizes();
     #endif
