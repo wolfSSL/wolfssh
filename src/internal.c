@@ -6517,9 +6517,12 @@ static int DoUserAuthInfoResponse(WOLFSSH* ssh,
             else if (ret == WOLFSSH_USERAUTH_REJECTED) {
                 WLOG(WS_LOG_DEBUG, "DUARKB: keyboard rejected");
                 #ifndef NO_FAILURE_ON_REJECTED
-                    authFailure = 1;
-                #endif
+                ret = SendUserAuthFailure(ssh, 0);
+                if (ret == WS_SUCCESS)
+                    ret = WS_USER_AUTH_E;
+                #else
                 ret = WS_USER_AUTH_E;
+                #endif
             }
             else if (ret == WOLFSSH_USERAUTH_WOULD_BLOCK) {
                 WLOG(WS_LOG_DEBUG, "DUARKB: keyboard callback would block");
@@ -6624,9 +6627,12 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
             else if (ret == WOLFSSH_USERAUTH_REJECTED) {
                 WLOG(WS_LOG_DEBUG, "DUARPW: password rejected");
                 #ifndef NO_FAILURE_ON_REJECTED
-                    authFailure = 1;
-                #endif
+                ret = SendUserAuthFailure(ssh, 0);
+                if (ret == WS_SUCCESS)
+                    ret = WS_USER_AUTH_E;
+                #else
                 ret = WS_USER_AUTH_E;
+                #endif
             }
             else if (ret == WOLFSSH_USERAUTH_WOULD_BLOCK) {
                 WLOG(WS_LOG_DEBUG, "DUARPW: userauth callback would block");
@@ -7587,9 +7593,12 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             }
             else if (ret == WOLFSSH_USERAUTH_REJECTED) {
                 #ifndef NO_FAILURE_ON_REJECTED
-                    authFailure = 1;
-                #endif
+                ret = SendUserAuthFailure(ssh, 0);
+                if (ret == WS_SUCCESS)
+                    ret = WS_USER_AUTH_E;
+                #else
                 ret = WS_USER_AUTH_E;
+                #endif
             }
             else {
                 if (ret == WOLFSSH_USERAUTH_PARTIAL_SUCCESS) {
