@@ -476,7 +476,7 @@ enum NameIdType {
 
 WOLFSSH_LOCAL byte NameToId(const char* name, word32 nameSz);
 WOLFSSH_LOCAL const char* IdToName(byte id);
-WOLFSSH_LOCAL const char* NameByIndexType(byte type, word32* index);
+WOLFSSH_LOCAL const char* NameByIndexType(byte type, word32* idx);
 
 
 /* For cases when openssl coexist is used */
