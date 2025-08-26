@@ -1418,7 +1418,11 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
             ret = wolfSSH_SFTP_buffer_read(ssh, &state->buffer,
                     state->buffer.sz);
             if (ret < 0) {
-                if (!NoticeError(ssh)) {
+                if (NoticeError(ssh)) {
+                    /* keep state for returning to */
+                    ret = WS_FATAL_ERROR;
+                }
+                else {
                     wolfSSH_SFTP_ClearState(ssh, STATE_ID_RECV);
                 }
                 return ret;
@@ -7452,8 +7456,7 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 /* send header and type specific data */
                 ret = wolfSSH_SFTP_buffer_send(ssh, &state->buffer);
                 if (ret < 0) {
-                    if (ssh->error == WS_WANT_READ ||
-                            ssh->error == WS_WANT_WRITE) {
+                    if (NoticeError(ssh)) {
                         return WS_FATAL_ERROR;
                     }
                     state->state = STATE_SEND_WRITE_CLEANUP;
@@ -7465,12 +7468,8 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
             case STATE_SEND_WRITE_SEND_BODY:
                 WLOG(WS_LOG_SFTP, "SFTP SEND_WRITE STATE: SEND_BODY");
                 state->sentSz = wolfSSH_stream_send(ssh, in, inSz);
-                if (state->sentSz == WS_WINDOW_FULL ||
-                        state->sentSz == WS_REKEYING ||
-                        state->sentSz == WS_WANT_READ ||
-                        state->sentSz == WS_WANT_WRITE) {
-                    ret = wolfSSH_worker(ssh, NULL);
-                    continue; /* skip past rest and send more */
+                if (NoticeError(ssh)) {
+                    return WS_FATAL_ERROR;
                 }
                 if (state->sentSz <= 0) {
                     ssh->error = state->sentSz;
@@ -7496,8 +7495,7 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 state->maxSz = SFTP_GetHeader(ssh, &state->reqId, &type,
                         &state->buffer);
                 if (state->maxSz <= 0) {
-                    if (ssh->error == WS_WANT_READ ||
-                            ssh->error == WS_WANT_WRITE) {
+                    if (NoticeError(ssh)) {
                         return WS_FATAL_ERROR;
                     }
                     ssh->error = WS_SFTP_BAD_HEADER;
@@ -9167,10 +9165,9 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                             state->handle, state->handleSz, state->pOfst,
                             state->r, state->rSz);
                     if (sz <= 0) {
-                        if (ssh->error == WS_WANT_READ ||
-                                ssh->error == WS_WANT_WRITE ||
-                                ssh->error == WS_WINDOW_FULL)
+                        if (NoticeError(ssh)) {
                             return WS_FATAL_ERROR;
+			}
                     }
                     else {
                         AddAssign64(state->pOfst, sz);
