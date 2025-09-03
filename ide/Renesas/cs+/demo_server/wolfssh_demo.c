@@ -239,18 +239,18 @@ static int load_key(byte isEcc, byte* buf, word32 bufSz)
 #else
     /* using buffers instead */
     if (isEcc) {
-        if (sizeof_ecc_key_der_256 > bufSz) {
+        if (sizeof_ecc_key_der_256_ssh > bufSz) {
             return 0;
         }
-        WMEMCPY(buf, ecc_key_der_256, sizeof_ecc_key_der_256);
-        sz = sizeof_ecc_key_der_256;
+        WMEMCPY(buf, ecc_key_der_256_ssh, sizeof_ecc_key_der_256_ssh);
+        sz = sizeof_ecc_key_der_256_ssh;
     }
     else {
-        if (sizeof_rsa_key_der_2048 > bufSz) {
+        if (sizeof_rsa_key_der_2048_ssh > bufSz) {
             return 0;
         }
-        WMEMCPY(buf, rsa_key_der_2048, sizeof_rsa_key_der_2048);
-        sz = sizeof_rsa_key_der_2048;
+        WMEMCPY(buf, rsa_key_der_2048_ssh, sizeof_rsa_key_der_2048_ssh);
+        sz = sizeof_rsa_key_der_2048_ssh;
     }
 #endif
 

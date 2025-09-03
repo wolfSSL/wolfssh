@@ -1,6 +1,6 @@
 /* certs_test.h
  *
- * Copyright (C) 2014-2024 wolfSSL Inc.
+ * Copyright (C) 2014-2025 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -21,10 +21,19 @@
 #ifndef _WOLFSSH_CERTS_TEST_H_
 #define _WOLFSSH_CERTS_TEST_H_
 
+/* To distinguish these certs from those in wolfssl add suffix: _ssh
+ * See: https://github.com/wolfSSL/wolfssl/blob/master/wolfssl/certs_test.h
+ * Generate: https://github.com/wolfSSL/wolfssl/blob/master/gencertbuf.pl
+ *
+ * In C89/C90 (which Watcom generally defaults to), sizeof must be a
+ * compile-time constant expression when used in a static initializer.
+ * So don't use `static const int sizeof_`
+ */
+
 #if defined(NO_FILESYSTEM)
 
 /* ./keys/server-key-rsa.der, 2048-bit */
-static const unsigned char rsa_key_der_2048[] =
+static const unsigned char rsa_key_der_2048_ssh[] =
 {
     0x30, 0x82, 0x04, 0xA3, 0x02, 0x01, 0x00, 0x02, 0x82, 0x01,
     0x01, 0x00, 0xDA, 0x5D, 0xAD, 0x25, 0x14, 0x76, 0x15, 0x59,
@@ -147,10 +156,10 @@ static const unsigned char rsa_key_der_2048[] =
     0x56, 0xC3, 0xCE, 0x77, 0x5F, 0x5B, 0xBA, 0x6C, 0x42, 0xF1,
     0x21
 };
-static const int sizeof_rsa_key_der_2048 = sizeof(rsa_key_der_2048);
+#define sizeof_rsa_key_der_2048_ssh (sizeof(rsa_key_der_2048_ssh))
 
 /* ./keys/server-key-ecc.der, ECC */
-static const unsigned char ecc_key_der_256[] =
+static const unsigned char ecc_key_der_256_ssh[] =
 {
     0x30, 0x77, 0x02, 0x01, 0x01, 0x04, 0x20, 0x61, 0x09, 0x99,
     0x0B, 0x79, 0xD2, 0x5F, 0x28, 0x5A, 0x0F, 0x5D, 0x15, 0xCC,
@@ -166,10 +175,10 @@ static const unsigned char ecc_key_der_256[] =
     0x05, 0x58, 0x6B, 0x5F, 0x63, 0xC8, 0xDA, 0x1B, 0xC4, 0xF5,
     0x69
 };
-static const int sizeof_ecc_key_der_256 = sizeof(ecc_key_der_256);
+#define sizeof_ecc_key_der_256_ssh (sizeof(ecc_key_der_256_ssh))
 
 /* ./keys/server-key-ecc-384.der, ECC */
-static const unsigned char ecc_key_der_384[] =
+static const unsigned char ecc_key_der_384_ssh[] =
 {
     0x30, 0x81, 0xA4, 0x02, 0x01, 0x01, 0x04, 0x30, 0x3E, 0xAD,
     0xD2, 0xBB, 0xBF, 0x05, 0xA7, 0xBE, 0x3A, 0x3F, 0x7C, 0x28,
@@ -189,10 +198,10 @@ static const unsigned char ecc_key_der_384[] =
     0x3D, 0x3E, 0xB8, 0x8D, 0x46, 0x7B, 0x5F, 0x27, 0xEB, 0xAB,
     0x21, 0x61, 0xC0, 0x00, 0x66, 0xFE, 0xBD
 };
-static const int sizeof_ecc_key_der_384 = sizeof(ecc_key_der_384);
+#define sizeof_ecc_key_der_384_ssh (sizeof(ecc_key_der_384_ssh))
 
 /* ./keys/server-key-ecc-521.der, ECC */
-static const unsigned char ecc_key_der_521[] =
+static const unsigned char ecc_key_der_521_ssh[] =
 {
     0x30, 0x81, 0xDC, 0x02, 0x01, 0x01, 0x04, 0x42, 0x00, 0x4C,
     0xA4, 0xD8, 0x64, 0x28, 0xD9, 0x40, 0x0E, 0x7B, 0x2D, 0xF3,
@@ -218,7 +227,7 @@ static const unsigned char ecc_key_der_521[] =
     0x23, 0x7C, 0xA5, 0xA3, 0x45, 0xB1, 0x9E, 0x3F, 0x1A, 0x22,
     0x90, 0xB1, 0x54
 };
-static const int sizeof_ecc_key_der_521 = sizeof(ecc_key_der_521);
+#define sizeof_ecc_key_der_521_ssh (sizeof(ecc_key_der_521_ssh))
 
 #endif /* NO_FILESYSTEM */
 
