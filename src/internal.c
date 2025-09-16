@@ -8951,6 +8951,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
             word32 termSz, modesSz = 0;
             word32 widthChar, heightRows, widthPixels, heightPixels;
 
+            ssh->ptyReq = 1; /* recieved a pty request */
             termSz = (word32)sizeof(term);
             ret = GetString(term, &termSz, buf, len, &begin);
             if (ret == WS_SUCCESS)

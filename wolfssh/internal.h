@@ -913,6 +913,7 @@ struct WOLFSSH {
     word32 heightPixels; /* pixel height */
     byte* modes;
     word32 modesSz;
+    byte ptyReq:1;       /* flag for if interactive pty request was received */
 #endif
 #if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
     word32 exitStatus;

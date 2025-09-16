@@ -2539,6 +2539,25 @@ WS_SessionType wolfSSH_GetSessionType(const WOLFSSH* ssh)
 }
 
 
+#if defined(WOLFSSH_TERM)
+int wolfSSH_ReceivedPtyReq(const WOLFSSH* ssh)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ReceivedPtyReq");
+
+    if (ssh == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    if (ssh->ptyReq) {
+        return 1;
+    }
+    else {
+        return 0;
+    }
+}
+#endif
+
+
 const char* wolfSSH_GetSessionCommand(const WOLFSSH* ssh)
 {
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_GetSessionCommand()");

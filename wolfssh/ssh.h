@@ -233,6 +233,7 @@ WOLFSSH_API WS_SessionType wolfSSH_ChannelGetSessionType(
         const WOLFSSH_CHANNEL* channel);
 WOLFSSH_API const char* wolfSSH_ChannelGetSessionCommand(
         const WOLFSSH_CHANNEL* channel);
+WOLFSSH_API int wolfSSH_ReceivedPtyReq(const WOLFSSH* ssh);
 
 /* Channel callbacks */
 typedef int (*WS_CallbackChannelOpen)(WOLFSSH_CHANNEL* channel, void* ctx);
