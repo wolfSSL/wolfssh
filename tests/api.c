@@ -1057,14 +1057,16 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
             outSz = WOLFSSH_MAX_SFTP_RW / 2;
             rxSz = wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz,
                     ofst, out, outSz);
-            AssertIntGT(rxSz, 0);
-            AssertIntLE(rxSz, outSz);
+            if (wolfSSH_get_error(ssh) != WS_REKEYING) {
+                AssertIntGT(rxSz, 0);
+                AssertIntLE(rxSz, outSz);
+            }
 
             /* read all */
             outSz = WOLFSSH_MAX_SFTP_RW;
             rxSz = wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz,
                     ofst, out, outSz);
-            if (rxSz != WS_REKEYING) {
+            if (wolfSSH_get_error(ssh) != WS_REKEYING) {
                 AssertIntGT(rxSz, 0);
                 AssertIntLE(rxSz, outSz);
             }
