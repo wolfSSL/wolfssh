@@ -566,8 +566,11 @@ static int doCmds(func_args* args)
             }
 
             do {
-                while (wolfSSH_get_error(ssh) == WS_REKEYING) {
+                while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
                     ret = wolfSSH_worker(ssh, NULL);
+                    if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
+                        ret = wolfSSH_get_error(ssh);
+                    }
                 }
 
                 ret = wolfSSH_SFTP_Get(ssh, pt, to, resume, &myStatusCb);
