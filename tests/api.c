@@ -1075,6 +1075,11 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
         }
     }
 
+    /* take care of re-keying state before shutdown call */
+    while (wolfSSH_get_error(ssh) == WS_REKEYING) {
+        wolfSSH_worker(ssh, NULL);
+    }
+
     argsCount = wolfSSH_shutdown(ssh);
     if (argsCount == WS_SOCKET_ERROR_E) {
         /* If the socket is closed on shutdown, peer is gone, this is OK. */

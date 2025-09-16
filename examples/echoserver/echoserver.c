@@ -1416,8 +1416,11 @@ static int sftp_worker(thread_ctx_t* threadCtx)
         }
         else if (ret < 0) {
             error = wolfSSH_get_error(ssh);
-            if (error == WS_EOF)
+            if (error == WS_EOF) {
+                /* shutdown is happening, clear peek error */
+                ret = 0;
                 break;
+            }
         }
 
         if (ret == WS_FATAL_ERROR && error == 0) {

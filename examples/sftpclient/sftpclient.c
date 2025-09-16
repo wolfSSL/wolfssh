@@ -566,11 +566,8 @@ static int doCmds(func_args* args)
             }
 
             do {
-                while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
+                while (wolfSSH_get_error(ssh) == WS_REKEYING) {
                     ret = wolfSSH_worker(ssh, NULL);
-                    if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
-                        ret = wolfSSH_get_error(ssh);
-                    }
                 }
 
                 ret = wolfSSH_SFTP_Get(ssh, pt, to, resume, &myStatusCb);
@@ -747,6 +744,13 @@ static int doCmds(func_args* args)
 
             /* check directory is valid */
             do {
+                while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
+                    ret = wolfSSH_worker(ssh, NULL);
+                    if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
+                        ret = wolfSSH_get_error(ssh);
+                    }
+                }
+
                 ret = wolfSSH_SFTP_STAT(ssh, pt, &atrb);
                 err = wolfSSH_get_error(ssh);
             } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
@@ -828,6 +832,13 @@ static int doCmds(func_args* args)
 
             /* update permissions */
             do {
+                while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
+                    ret = wolfSSH_worker(ssh, NULL);
+                    if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
+                        ret = wolfSSH_get_error(ssh);
+                    }
+                }
+
                 ret = wolfSSH_SFTP_CHMOD(ssh, pt, mode);
                 err = wolfSSH_get_error(ssh);
             } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
@@ -878,6 +889,13 @@ static int doCmds(func_args* args)
             }
 
             do {
+                while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
+                    ret = wolfSSH_worker(ssh, NULL);
+                    if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
+                        ret = wolfSSH_get_error(ssh);
+                    }
+                }
+
                 ret = wolfSSH_SFTP_RMDIR(ssh, pt);
                 err = wolfSSH_get_error(ssh);
             } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
@@ -924,6 +942,13 @@ static int doCmds(func_args* args)
             }
 
             do {
+                while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
+                    ret = wolfSSH_worker(ssh, NULL);
+                    if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
+                        ret = wolfSSH_get_error(ssh);
+                    }
+                }
+
                 ret = wolfSSH_SFTP_Remove(ssh, pt);
                 err = wolfSSH_get_error(ssh);
             } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
@@ -1458,14 +1483,52 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 
     WFREE(workingDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     if (ret == WS_SUCCESS) {
-        if (wolfSSH_shutdown(ssh) != WS_SUCCESS) {
-            int rc;
-            rc = wolfSSH_get_error(ssh);
+        int err;
+        ret = wolfSSH_shutdown(ssh);
 
-            if (rc != WS_SOCKET_ERROR_E && rc != WS_EOF)
-                printf("error with wolfSSH_shutdown()\n");
+        /* peer hung up, stop trying to shutdown */
+        if (ret == WS_SOCKET_ERROR_E) {
+            ret = 0;
+        }
+
+        err = wolfSSH_get_error(ssh);
+        if (err != WS_SOCKET_ERROR_E &&
+                (err == WS_WANT_READ || err == WS_WANT_WRITE)) {
+            int maxAttempt = 10; /* make 10 attempts max before giving up */
+            int attempt;
+
+            for (attempt = 0; attempt < maxAttempt; attempt++) {
+                ret = wolfSSH_worker(ssh, NULL);
+                err  = wolfSSH_get_error(ssh);
+
+                /* peer succesfully closed down gracefully */
+                if (ret == WS_CHANNEL_CLOSED) {
+                    ret = 0;
+                    break;
+                }
+
+                /* peer hung up, stop shutdown */
+                if (ret == WS_SOCKET_ERROR_E) {
+                    ret = 0;
+                    break;
+                }
+
+                if (err == WS_WANT_READ || err == WS_WANT_WRITE) {
+                    /* Wanting read or wanting write. Clear ret. */
+                    ret = 0;
+                }
+                else {
+                    break;
+                }
+            }
+
+            if (attempt == maxAttempt) {
+                printf("SFTP client gave up on gracefull shutdown,"
+                       "closing the socket\n");
+            }
         }
     }
+
     WCLOSESOCKET(sockFd);
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
