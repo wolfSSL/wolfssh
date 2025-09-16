@@ -1057,14 +1057,16 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
             outSz = WOLFSSH_MAX_SFTP_RW / 2;
             rxSz = wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz,
                     ofst, out, outSz);
-            AssertIntGT(rxSz, 0);
-            AssertIntLE(rxSz, outSz);
+            if (wolfSSH_get_error(ssh) != WS_REKEYING) {
+                AssertIntGT(rxSz, 0);
+                AssertIntLE(rxSz, outSz);
+            }
 
             /* read all */
             outSz = WOLFSSH_MAX_SFTP_RW;
             rxSz = wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz,
                     ofst, out, outSz);
-            if (rxSz != WS_REKEYING) {
+            if (wolfSSH_get_error(ssh) != WS_REKEYING) {
                 AssertIntGT(rxSz, 0);
                 AssertIntLE(rxSz, outSz);
             }
@@ -1073,6 +1075,11 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
             wolfSSH_SFTP_Close(ssh, handle, handleSz);
             wolfSSH_SFTPNAME_list_free(current);
         }
+    }
+
+    /* take care of re-keying state before shutdown call */
+    while (wolfSSH_get_error(ssh) == WS_REKEYING) {
+        wolfSSH_worker(ssh, NULL);
     }
 
     argsCount = wolfSSH_shutdown(ssh);
