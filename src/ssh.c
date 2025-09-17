@@ -2539,25 +2539,6 @@ WS_SessionType wolfSSH_GetSessionType(const WOLFSSH* ssh)
 }
 
 
-#if defined(WOLFSSH_TERM)
-int wolfSSH_ReceivedPtyReq(const WOLFSSH* ssh)
-{
-    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ReceivedPtyReq");
-
-    if (ssh == NULL) {
-        return WS_BAD_ARGUMENT;
-    }
-
-    if (ssh->ptyReq) {
-        return 1;
-    }
-    else {
-        return 0;
-    }
-}
-#endif
-
-
 const char* wolfSSH_GetSessionCommand(const WOLFSSH* ssh)
 {
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_GetSessionCommand()");
@@ -3250,6 +3231,33 @@ WS_SessionType wolfSSH_ChannelGetSessionType(const WOLFSSH_CHANNEL* channel)
 
     return type;
 }
+
+
+#if defined(WOLFSSH_TERM)
+/* returns 1 if a PTY was requested, 0 if not, and negative on failure */
+int wolfSSH_ChannelIsPty(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel)
+{
+    WOLFSSH_CHANNEL* channelPtr;
+    int ret = WS_SUCCESS;
+
+    channelPtr = channel;
+
+    /* if channel is NULL than use the last rxtx channel */
+    if (channelPtr == NULL) {
+        word32 channelId = 0;
+
+        ret = wolfSSH_GetLastRxId(ssh, &channelId);
+        if (ret == WS_SUCCESS) {
+            channelPtr = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = channelPtr->ptyReq;
+    }
+    return ret;
+}
+#endif
 
 
 const char* wolfSSH_ChannelGetSessionCommand(const WOLFSSH_CHANNEL* channel)
