@@ -1164,6 +1164,23 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     #include <sys/ioctl.h>
 #endif
 
+static int SHELL_IsPty(WOLFSSH* ssh)
+{
+    WOLFSSH_CHANNEL* channel;
+    int ret = WS_SUCCESS;
+    word32 channelId = 0;
+
+    ret = wolfSSH_GetLastRxId(ssh, &channelId);
+    if (ret == WS_SUCCESS) {
+        channel = wolfSSH_ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret =  wolfSSH_ChannelIsPty(channel);
+    }
+    return ret;
+}
+
 /* handles creating a new shell env. and maintains SSH connection for incoming
  * user input as well as output of the shell.
  * return WS_SUCCESS on success */
@@ -1205,7 +1222,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 
     forcedCmd = wolfSSHD_ConfigGetForcedCmd(usrConf);
 
-    ptyReq = wolfSSH_ChannelIsPty(ssh, NULL);
+    ptyReq = SHELL_IsPty(ssh);
     if (ptyReq < 0) {
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failure get channel PTY state");
         return WS_FATAL_ERROR;
