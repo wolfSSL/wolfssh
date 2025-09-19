@@ -3233,6 +3233,18 @@ WS_SessionType wolfSSH_ChannelGetSessionType(const WOLFSSH_CHANNEL* channel)
 }
 
 
+#if defined(WOLFSSH_TERM)
+/* returns 1 if a PTY was requested, 0 if not, and negative on failure */
+int wolfSSH_ChannelIsPty(const WOLFSSH_CHANNEL* channel)
+{
+    if (channel == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+    return channel->ptyReq;
+}
+#endif
+
+
 const char* wolfSSH_ChannelGetSessionCommand(const WOLFSSH_CHANNEL* channel)
 {
     const char* cmd = NULL;

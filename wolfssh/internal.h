@@ -933,6 +933,7 @@ struct WOLFSSH_CHANNEL {
     byte eofRxd : 1;
     byte eofTxd : 1;
     byte openConfirmed : 1;
+    byte ptyReq : 1; /* flag for if interactive pty request was received */
     word32 channel;
     word32 windowSz;
     word32 maxPacketSz;

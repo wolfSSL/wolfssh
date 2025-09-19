@@ -1164,6 +1164,23 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     #include <sys/ioctl.h>
 #endif
 
+static int SHELL_IsPty(WOLFSSH* ssh)
+{
+    WOLFSSH_CHANNEL* channel;
+    int ret = WS_SUCCESS;
+    word32 channelId = 0;
+
+    ret = wolfSSH_GetLastRxId(ssh, &channelId);
+    if (ret == WS_SUCCESS) {
+        channel = wolfSSH_ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret =  wolfSSH_ChannelIsPty(channel);
+    }
+    return ret;
+}
+
 /* handles creating a new shell env. and maintains SSH connection for incoming
  * user input as well as output of the shell.
  * return WS_SUCCESS on success */
@@ -1193,6 +1210,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     int   wantWrite  = 0;
     int   peerConnected = 1;
     int   stdoutEmpty = 0;
+    int   ptyReq = 0;
 
     childFd = -1;
     stdoutPipe[0] = -1;
@@ -1203,6 +1221,12 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     stdinPipe[1] = -1;
 
     forcedCmd = wolfSSHD_ConfigGetForcedCmd(usrConf);
+
+    ptyReq = SHELL_IsPty(ssh);
+    if (ptyReq < 0) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failure get channel PTY state");
+        return WS_FATAL_ERROR;
+    }
 
     /* do not overwrite a forced command with 'exec' sub shell. Only set the
      * 'exec' command when no forced command is set */
@@ -1223,8 +1247,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         return WS_FATAL_ERROR;
     }
 
+
     /* create pipes for stdout and stderr */
-    if (forcedCmd) {
+    if (!ptyReq || forcedCmd) {
         if (pipe(stdoutPipe) != 0) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue creating stdout pipe");
             return WS_FATAL_ERROR;
@@ -1263,7 +1288,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         signal(SIGINT,  SIG_DFL);
         signal(SIGCHLD, SIG_DFL);
 
-        if (forcedCmd) {
+        if (!ptyReq || forcedCmd) {
             close(stdoutPipe[0]);
             close(stderrPipe[0]);
             close(stdinPipe[1]);
@@ -1390,7 +1415,13 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             close(stderrPipe[1]);
             close(stdinPipe[1]);
         }
-        else {
+        else if (!ptyReq) {
+            ret = execv(cmd, (char**)args);
+            close(stdoutPipe[1]);
+            close(stderrPipe[1]);
+            close(stdinPipe[1]);
+        }
+        else { /* open interactive shell */
             ret = execv(cmd, (char**)args);
         }
         if (ret && errno) {
@@ -1443,7 +1474,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 #endif
 
     wolfSSH_SetTerminalResizeCtx(ssh, (void*)&childFd);
-    if (forcedCmd) {
+    if (!ptyReq || forcedCmd) {
         close(stdoutPipe[1]);
         close(stderrPipe[1]);
         close(stdinPipe[0]);
@@ -1469,7 +1500,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 
         if (wolfSSH_stream_peek(ssh, tmp, 1) <= 0) {
             /* select on stdout/stderr pipes with forced commands */
-            if (forcedCmd) {
+            if (!ptyReq || forcedCmd) {
                 FD_SET(stdoutPipe[0], &readFds);
                 if (stdoutPipe[0] > maxFd)
                     maxFd = stdoutPipe[0];
@@ -1515,7 +1546,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                             if (cnt_r <= 0)
                                 break;
 
-                            if (forcedCmd) {
+                            if (!ptyReq || forcedCmd) {
                                 cnt_w = (int)write(stdinPipe[1], channelBuffer,
                                     cnt_r);
                             }
@@ -1555,7 +1586,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 current = wolfSSH_ChannelFind(ssh, lastChannel,
                     WS_CHANNEL_ID_SELF);
                 eof = wolfSSH_ChannelGetEof(current);
-                if (eof && forcedCmd) {
+                if (eof && (!ptyReq || forcedCmd)) {
                     /* SSH is done, close stdin pipe to child process */
                     close(stdinPipe[1]);
                     stdinPipe[1] = -1;
@@ -1585,7 +1616,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             }
         }
 
-        if (forcedCmd) {
+        if (!ptyReq || forcedCmd) {
             if (FD_ISSET(stderrPipe[0], &readFds)) {
                 cnt_r = (int)read(stderrPipe[0], shellBuffer,
                     sizeof shellBuffer);
@@ -1725,7 +1756,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     }
 
     /* check for any left over data in pipes then close them */
-    if (forcedCmd) {
+    if (!ptyReq || forcedCmd) {
         int readSz;
 
         fcntl(stdoutPipe[0], F_SETFL, fcntl(stdoutPipe[0], F_GETFL)
