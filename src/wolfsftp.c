@@ -2136,7 +2136,11 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             res = ier;
             if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId, res,
                     "English", NULL, &outSz) != WS_SIZE_ONLY) {
+            #ifdef MICROCHIP_MPLAB_HARMONY
+                WFCLOSE(ssh->fs, &fd);
+            #else
                 WCLOSE(ssh->fs, fd);
+            #endif
                 return WS_FATAL_ERROR;
             }
             ret = WS_FATAL_ERROR;
@@ -2148,14 +2152,22 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         /* create packet */
         out = (byte*)WMALLOC(outSz, ssh->ctx->heap, DYNTYPE_BUFFER);
         if (out == NULL) {
+        #ifdef MICROCHIP_MPLAB_HARMONY
+            WFCLOSE(ssh->fs, &fd);
+        #else
             WCLOSE(ssh->fs, fd);
+        #endif
             return WS_MEMORY_E;
         }
     }
     if (ret == WS_SUCCESS) {
         if (SFTP_CreatePacket(ssh, WOLFSSH_FTP_HANDLE, out, outSz,
             (byte*)&fd, sizeof(WFD)) != WS_SUCCESS) {
+        #ifdef MICROCHIP_MPLAB_HARMONY
+            WFCLOSE(ssh->fs, &fd);
+        #else
             WCLOSE(ssh->fs, fd);
+        #endif
             return WS_FATAL_ERROR;
         }
     }
@@ -2164,7 +2176,11 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
                 "English", out, &outSz) != WS_SUCCESS) {
             WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
             if (fd >= 0) {
+            #ifdef MICROCHIP_MPLAB_HARMONY
+                WFCLOSE(ssh->fs, &fd);
+            #else
                 WCLOSE(ssh->fs, fd);
+            #endif
             }
             return WS_FATAL_ERROR;
         }
@@ -5039,7 +5055,7 @@ int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
 int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
         char* name, WS_SFTP_FILEATRB* atr)
 {
-    return SFTP_GetAttributesHelper(atr, cur->name);
+    return SFTP_GetAttributesHelper(atr, name);
 }
 
 #else
