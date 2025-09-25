@@ -72,15 +72,17 @@ WOLFSSH_API int wolfSSH_LogEnabled(void);
 WOLFSSH_API void wolfSSH_Log(enum wolfSSH_LogLevel,
                              const char *const, ...) FMTCHECK;
 
+#if defined(DEBUG_WOLFSSH) || defined(WOLFSSH_SSHD)
 #define WLOG(...) do { \
                       if (wolfSSH_LogEnabled()) \
                           wolfSSH_Log(__VA_ARGS__); \
                   } while (0)
-
+#else
+#define WLOG(...)
+#endif
 
 #ifdef __cplusplus
 }
 #endif
 
 #endif /* _WOLFSSH_LOG_H_ */
-
