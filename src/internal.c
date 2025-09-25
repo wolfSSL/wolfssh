@@ -6420,7 +6420,7 @@ static int DoUserAuthInfoResponse(WOLFSSH* ssh,
     WS_UserAuthData authData;
     WS_UserAuthData_Keyboard* kb = NULL;
     int ret = WS_SUCCESS;
-    int authFailure = 0;
+    int authFailure = 0, authRejected = 0;
     byte partialSuccess = 0;
     word32 entry;
     word32 allocatedCount = 0;
@@ -6519,6 +6519,7 @@ static int DoUserAuthInfoResponse(WOLFSSH* ssh,
                 #ifndef NO_FAILURE_ON_REJECTED
                     authFailure = 1;
                 #endif
+                authRejected = 1;
                 ret = WS_USER_AUTH_E;
             }
             else if (ret == WOLFSSH_USERAUTH_WOULD_BLOCK) {
@@ -6548,6 +6549,9 @@ static int DoUserAuthInfoResponse(WOLFSSH* ssh,
 
     if (authFailure || partialSuccess) {
         ret = SendUserAuthFailure(ssh, partialSuccess);
+        if (ret == WS_SUCCESS && authRejected) {
+            ret = WS_USER_AUTH_E;
+        }
     }
     else if (ret == WOLFSSH_USERAUTH_SUCCESS_ANOTHER) {
         ret = SendUserAuthKeyboardRequest(ssh, &authData);
@@ -6569,7 +6573,7 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
     word32 begin;
     WS_UserAuthData_Password* pw = NULL;
     int ret = WS_SUCCESS;
-    int authFailure = 0;
+    int authFailure = 0, authRejected = 0;
     byte partialSuccess = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequestPassword()");
@@ -6626,6 +6630,7 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
                 #ifndef NO_FAILURE_ON_REJECTED
                     authFailure = 1;
                 #endif
+                authRejected = 1;
                 ret = WS_USER_AUTH_E;
             }
             else if (ret == WOLFSSH_USERAUTH_WOULD_BLOCK) {
@@ -6649,6 +6654,9 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
 
     if (authFailure || partialSuccess) {
         ret = SendUserAuthFailure(ssh, partialSuccess);
+        if (ret == WS_SUCCESS && authRejected) {
+            ret = WS_USER_AUTH_E;
+        }
     }
     else if (ret == WS_SUCCESS) {
         ssh->clientState = CLIENT_USERAUTH_DONE;
@@ -7421,7 +7429,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
     word32 sigBlobSz = 0;
     word32 begin;
     int ret = WS_SUCCESS;
-    int authFailure = 0;
+    int authFailure = 0, authRejected = 0;
     int partialSuccess = 0;
     byte hasSig = 0;
     byte pkTypeId = ID_NONE;
@@ -7589,6 +7597,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                 #ifndef NO_FAILURE_ON_REJECTED
                     authFailure = 1;
                 #endif
+                authRejected = 1;
                 ret = WS_USER_AUTH_E;
             }
             else {
@@ -7745,6 +7754,9 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
 
     if (authFailure) {
         ret = SendUserAuthFailure(ssh, 0);
+        if (ret == WS_SUCCESS && authRejected) {
+            ret = WS_USER_AUTH_E;
+        }
     }
     else if (partialSuccess && hasSig) {
         ret = SendUserAuthFailure(ssh, 1);
