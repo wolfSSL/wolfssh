@@ -3595,7 +3595,7 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     /* get file handle */
     ato32(data + idx, &sz); idx += UINT32_SZ;
-    if (sz + idx > maxSz || sz > WOLFSSH_MAX_HANDLE) {
+    if (sz + idx > maxSz || sz > WOLFSSH_MAX_HANDLE || sz != sizeof(WFD)) {
         WLOG(WS_LOG_SFTP, "Error with file handle size");
         res  = err;
         type = WOLFSSH_FTP_FAILURE;
@@ -3685,7 +3685,7 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     /* get file handle */
     ato32(data + idx, &sz);
     idx += UINT32_SZ;
-    if (sz + idx > maxSz || sz > WOLFSSH_MAX_HANDLE) {
+    if (sz + idx > maxSz || sz > WOLFSSH_MAX_HANDLE || sz != sizeof(HANDLE)) {
         WLOG(WS_LOG_SFTP, "Error with file handle size");
         res  = err;
         type = WOLFSSH_FTP_FAILURE;
@@ -3780,7 +3780,7 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     /* get file handle */
     ato32(data + idx, &sz); idx += UINT32_SZ;
-    if (sz + idx > maxSz || sz > WOLFSSH_MAX_HANDLE) {
+    if (sz + idx > maxSz || sz > WOLFSSH_MAX_HANDLE || sz != sizeof(WFD)) {
         return WS_BUFFER_E;
     }
     WMEMSET((byte*)&fd, 0, sizeof(WFD));
@@ -3880,7 +3880,7 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     /* get file handle */
     ato32(data + idx, &sz); idx += UINT32_SZ;
-    if (sz > maxSz - idx || sz > WOLFSSH_MAX_HANDLE) {
+    if (sz > maxSz - idx || sz > WOLFSSH_MAX_HANDLE || sz != sizeof(HANDLE)) {
         return WS_BUFFER_E;
     }
     WMEMSET((byte*)&fd, 0, sizeof(HANDLE));
@@ -5630,7 +5630,7 @@ int wolfSSH_SFTP_RecvFSetSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     /* get file handle */
     ato32(data + idx, &sz); idx += UINT32_SZ;
-    if (sz + idx > maxSz || sz > WOLFSSH_MAX_HANDLE) {
+    if (sz + idx > maxSz || sz > WOLFSSH_MAX_HANDLE || sz != sizeof(WFD)) {
         return WS_BUFFER_E;
     }
     WMEMSET((byte*)&fd, 0, sizeof(WFD));
