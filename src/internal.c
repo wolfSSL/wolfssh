@@ -605,7 +605,7 @@ INLINE static int IsMessageAllowedKeying(WOLFSSH *ssh, byte msg)
         return 1;
     }
 
-    /* case of servie request or accept in 1-19 */
+    /* case of service request or accept in 1-19 */
     if (msg == MSGID_SERVICE_REQUEST || msg == MSGID_SERVICE_ACCEPT) {
         WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by during rekeying", msg);
         ssh->error = WS_REKEYING;

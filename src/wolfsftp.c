@@ -416,6 +416,7 @@ static INLINE int NoticeError(WOLFSSH* ssh)
     return (ssh->error == WS_WANT_READ ||
             ssh->error == WS_WANT_WRITE ||
             ssh->error == WS_CHAN_RXD ||
+            ssh->error == WS_WINDOW_FULL ||
             ssh->error == WS_REKEYING);
 }
 
@@ -865,7 +866,6 @@ static int SFTP_GetHeader(WOLFSSH* ssh, word32* reqId, byte* type,
  */
 static int SFTP_SetHeader(WOLFSSH* ssh, word32 reqId, byte type, word32 len,
         byte* buf) {
-
     c32toa(len + LENGTH_SZ + MSG_ID_SZ, buf);
     buf[LENGTH_SZ] = type;
     c32toa(reqId, buf + LENGTH_SZ + MSG_ID_SZ);
@@ -7471,12 +7471,15 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
             case STATE_SEND_WRITE_SEND_BODY:
                 WLOG(WS_LOG_SFTP, "SFTP SEND_WRITE STATE: SEND_BODY");
                 state->sentSz = wolfSSH_stream_send(ssh, in, inSz);
-                if (NoticeError(ssh)) {
-                    return WS_FATAL_ERROR;
-                }
                 if (state->sentSz <= 0) {
-                    ssh->error = state->sentSz;
                     ret = WS_FATAL_ERROR;
+                    if (NoticeError(ssh)) {
+                        ret = wolfSSH_worker(ssh,NULL);
+                        continue;
+                    }
+
+                    /* if it was not a notice error then clean up the state and
+                     * exit out */
                     state->state = STATE_SEND_WRITE_CLEANUP;
                     continue;
                 }
@@ -9170,7 +9173,7 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                     if (sz <= 0) {
                         if (NoticeError(ssh)) {
                             return WS_FATAL_ERROR;
-			}
+                        }
                     }
                     else {
                         AddAssign64(state->pOfst, sz);

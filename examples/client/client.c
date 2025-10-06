@@ -481,10 +481,10 @@ static THREAD_RET readPeer(void* in)
                     }
                 }
                 else if (ret != WS_EOF) {
-		    if (ret == 0) {
+                    if (ret == 0) {
                         bytes = 0;
                         continue;
-		    }
+                    }
                     err_sys("Stream read failed.");
                 }
             }

@@ -1184,7 +1184,7 @@ static int doAutopilot(int cmd, char* local, char* remote)
     }
 
     do {
-        if (err == WS_REKEYING) { /* handle rekeying state */
+        if (err == WS_REKEYING || err == WS_WINDOW_FULL) { /* handle rekeying state */
             do {
                 ret = wolfSSH_worker(ssh, NULL);
             } while (ret == WS_REKEYING);
@@ -1198,7 +1198,8 @@ static int doAutopilot(int cmd, char* local, char* remote)
         }
         err = wolfSSH_get_error(ssh);
     } while ((err == WS_WANT_READ || err == WS_WANT_WRITE ||
-                err == WS_CHAN_RXD || err == WS_REKEYING) &&
+                err == WS_CHAN_RXD || err == WS_REKEYING ||
+                err == WS_WINDOW_FULL) &&
                 ret == WS_FATAL_ERROR);
 
     if (ret != WS_SUCCESS) {
@@ -1504,7 +1505,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
                 ret = wolfSSH_worker(ssh, NULL);
                 err  = wolfSSH_get_error(ssh);
 
-                /* peer succesfully closed down gracefully */
+                /* peer successfully closed down gracefully */
                 if (ret == WS_CHANNEL_CLOSED) {
                     ret = 0;
                     break;
