@@ -595,6 +595,40 @@ static void HandshakeInfoFree(HandshakeInfo* hs, void* heap)
 }
 
 
+/* RFC 4253 section 7.1, Once having sent SSH_MSG_KEXINIT the only messages
+* that can be sent are 1-19 (except SSH_MSG_SERVICE_REQUEST and
+* SSH_MSG_SERVICE_ACCEPT), 20-29 (except SSH_MSG_KEXINIT again), and 30-49
+*/
+INLINE static int IsMessageAllowedKeying(WOLFSSH *ssh, byte msg)
+{
+    if (ssh->isKeying == 0) {
+        return 1;
+    }
+
+    /* case of service request or accept in 1-19 */
+    if (msg == MSGID_SERVICE_REQUEST || msg == MSGID_SERVICE_ACCEPT) {
+        WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by during rekeying", msg);
+        ssh->error = WS_REKEYING;
+        return 0;
+    }
+
+    /* case of resending SSH_MSG_KEXINIT */
+    if (msg == MSGID_KEXINIT) {
+        WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by during rekeying", msg);
+        ssh->error = WS_REKEYING;
+        return 0;
+    }
+
+    /* case where message id greater than 49 */
+    if (msg >= MSGID_USERAUTH_REQUEST) {
+        WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by during rekeying", msg);
+        ssh->error = WS_REKEYING;
+        return 0;
+    }
+    return 1;
+}
+
+
 #ifndef NO_WOLFSSH_SERVER
 INLINE static int IsMessageAllowedServer(WOLFSSH *ssh, byte msg)
 {
@@ -673,8 +707,14 @@ INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
 #endif /* NO_WOLFSSH_CLIENT */
 
 
-INLINE static int IsMessageAllowed(WOLFSSH *ssh, byte msg)
+/* 'state' argument is for if trying to send a message or receive one.
+ * Returns 1 if allowed 0 if not allowed. */
+INLINE static int IsMessageAllowed(WOLFSSH *ssh, byte msg, byte state)
 {
+    if (state == WS_MSG_SEND && !IsMessageAllowedKeying(ssh, msg)) {
+        return 0;
+    }
+
 #ifndef NO_WOLFSSH_SERVER
     if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
         return IsMessageAllowedServer(ssh, msg);
@@ -5905,7 +5945,6 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         HandshakeInfoFree(ssh->handshake, ssh->ctx->heap);
         ssh->handshake = NULL;
         WLOG(WS_LOG_DEBUG, "Keying completed");
-
         if (ssh->ctx->keyingCompletionCb)
             ssh->ctx->keyingCompletionCb(ssh->keyingCompletionCtx);
     }
@@ -9322,7 +9361,7 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
         return WS_OVERFLOW_E;
     }
 
-    if (!IsMessageAllowed(ssh, msg)) {
+    if (!IsMessageAllowed(ssh, msg, WS_MSG_RECV)) {
         return WS_MSGID_NOT_ALLOWED_E;
     }
 
@@ -15663,6 +15702,12 @@ int SendChannelEof(WOLFSSH* ssh, word32 peerChannelId)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
+        if (!IsMessageAllowed(ssh, MSGID_CHANNEL_EOF, WS_MSG_SEND)) {
+            ret = WS_MSGID_NOT_ALLOWED_E;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
         channel = ChannelFind(ssh, peerChannelId, WS_CHANNEL_ID_PEER);
         if (channel == NULL)
             ret = WS_INVALID_CHANID;
@@ -16089,6 +16134,12 @@ int SendChannelWindowAdjust(WOLFSSH* ssh, word32 channelId,
 
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        if (!IsMessageAllowed(ssh, MSGID_CHANNEL_WINDOW_ADJUST, WS_MSG_SEND)) {
+            ret = WS_MSGID_NOT_ALLOWED_E;
+        }
+    }
 
     channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
     if (channel == NULL) {

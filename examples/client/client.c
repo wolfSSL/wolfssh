@@ -342,6 +342,9 @@ static THREAD_RET readInput(void* in)
         ret = wolfSSH_stream_send(args->ssh, buf, sz);
         wc_UnLockMutex(&args->lock);
         if (ret <= 0) {
+            if (ret == WS_REKEYING) {
+                continue;
+            }
             fprintf(stderr, "Couldn't send data\n");
             return THREAD_RET_SUCCESS;
         }
@@ -472,8 +475,16 @@ static THREAD_RET readPeer(void* in)
                         continue;
                     }
                     #endif /* WOLFSSH_AGENT */
+                    else if (ret == WS_REKEYING) {
+                        wolfSSH_worker(args->ssh, NULL);
+                        ret = 0;
+                    }
                 }
                 else if (ret != WS_EOF) {
+                    if (ret == 0) {
+                        bytes = 0;
+                        continue;
+                    }
                     err_sys("Stream read failed.");
                 }
             }
