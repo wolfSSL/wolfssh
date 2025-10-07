@@ -11343,6 +11343,7 @@ int wolfSSH_RsaVerify(const byte *sig, word32 sigSz,
 #endif
     if (checkSig)
         WFREE(checkSig, heap, DYNTYPE_TEMP);
+    WOLFSSH_UNUSED(loc); /* Unused when WLOG is not defined */
     return ret;
 }
 #endif /* WOLFSSH_NO_RSA */
