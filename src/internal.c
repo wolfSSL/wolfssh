@@ -11332,6 +11332,7 @@ int wolfSSH_RsaVerify(const byte *sig, word32 sigSz,
         compare = ConstantCompare(encDigest, checkDigest, encDigestSz);
 
         if (checkDigestSz < 0 || sizeCompare || compare) {
+            (void)loc; // unused if log disabled
             WLOG(WS_LOG_DEBUG, "%s: %s", loc, "Bad RSA Verify");
             ret = WS_RSA_E;
         }
