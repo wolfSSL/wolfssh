@@ -4338,7 +4338,8 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         byte scratchLen[LENGTH_SZ];
         word32 strSz = 0;
 
-        if (!ssh->isKeying) {
+        /* respond with KEX Init message if not having initiated the keying */
+        if ((ssh->isKeying & WOLFSSH_SELF_IS_KEYING) == 0) {
             WLOG(WS_LOG_DEBUG, "Keying initiated");
             ret = SendKexInit(ssh);
         }
