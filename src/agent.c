@@ -366,6 +366,7 @@ static int PostSuccess(WOLFSSH_AGENT_CTX* agent)
 }
 
 
+/* Stub that has not yet been implemented */
 static int PostLock(WOLFSSH_AGENT_CTX* agent,
         const byte* passphrase, word32 passphraseSz)
 {
@@ -378,7 +379,7 @@ static int PostLock(WOLFSSH_AGENT_CTX* agent,
     if (passphraseSz < ppSz)
         ppSz = passphraseSz;
 
-    WMEMCPY(pp, passphrase, passphraseSz);
+    WMEMCPY(pp, passphrase, ppSz);
     pp[ppSz] = 0;
     WLOG(WS_LOG_AGENT, "Locking with passphrase '%s'", pp);
 
@@ -386,6 +387,7 @@ static int PostLock(WOLFSSH_AGENT_CTX* agent,
 }
 
 
+/* Stub that has not yet been implemented */
 static int PostUnlock(WOLFSSH_AGENT_CTX* agent,
         const byte* passphrase, word32 passphraseSz)
 {
@@ -398,7 +400,7 @@ static int PostUnlock(WOLFSSH_AGENT_CTX* agent,
     if (passphraseSz < ppSz)
         ppSz = passphraseSz;
 
-    WMEMCPY(pp, passphrase, passphraseSz);
+    WMEMCPY(pp, passphrase, ppSz);
     pp[ppSz] = 0;
     WLOG(WS_LOG_AGENT, "Unlocking with passphrase '%s'", pp);
 
