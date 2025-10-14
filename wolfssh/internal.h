@@ -473,6 +473,11 @@ enum NameIdType {
     #define WOLFSSH_KEY_QUANTITY_REQ 1
 #endif
 
+/* Keep track of keying state for both sides of the connection.
+ * WOLFSSH_SELF_IS_KEYING gets set on sending KEX init and
+ * WOLFSSH_PEER_IS_KEYING gets set on receiving KEX init */
+#define WOLFSSH_PEER_IS_KEYING 0x01
+#define WOLFSSH_SELF_IS_KEYING 0x02
 
 WOLFSSH_LOCAL byte NameToId(const char* name, word32 nameSz);
 WOLFSSH_LOCAL const char* IdToName(byte id);
