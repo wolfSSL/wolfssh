@@ -8055,25 +8055,27 @@ static int DoUserAuthInfoRequest(WOLFSSH* ssh, byte* buf, word32 len,
     byte *language = NULL;
     byte *echo = NULL;
     byte **prompts = NULL;
+    void *heap = NULL;
 
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthInfoRequest()");
 
     if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
         ret = WS_BAD_ARGUMENT;
 
+    if (ssh->ctx != NULL) {
+        heap = ssh->ctx->heap;
+    }
+
     if (ret == WS_SUCCESS) {
         begin = *idx;
-        ret = GetStringAlloc(ssh->ctx->heap, (char**)&authName, buf, len,
-                             &begin);
+        ret = GetStringAlloc(heap, (char**)&authName, buf, len, &begin);
     }
 
     if (ret == WS_SUCCESS)
-        ret = GetStringAlloc(ssh->ctx->heap, (char**)&authInstruction, buf, len,
-                             &begin);
+        ret = GetStringAlloc(heap, (char**)&authInstruction, buf, len, &begin);
 
     if (ret == WS_SUCCESS)
-        ret = GetStringAlloc(ssh->ctx->heap, (char**)&language, buf, len,
-                             &begin);
+        ret = GetStringAlloc(heap, (char**)&language, buf, len, &begin);
 
     if (ret == WS_SUCCESS)
         ret = GetUint32(&promptSz, buf, len, &begin);
@@ -8085,13 +8087,13 @@ static int DoUserAuthInfoRequest(WOLFSSH* ssh, byte* buf, word32 len,
     }
 
     if (ret == WS_SUCCESS && promptSz) {
-        prompts = (byte**)WMALLOC(sizeof(byte*) * promptSz, ssh->ctx->heap,
+        prompts = (byte**)WMALLOC(sizeof(byte*) * promptSz, heap,
                                   DYNTYPE_BUFFER);
         if (!prompts) {
             ret = WS_MEMORY_E;
         } else {
             WMEMSET(prompts, '\0', sizeof(char*) * promptSz);
-            echo = (byte*)WMALLOC(sizeof(byte) * promptSz, ssh->ctx->heap,
+            echo = (byte*)WMALLOC(sizeof(byte) * promptSz, heap,
                                   DYNTYPE_BUFFER);
         }
 
@@ -8100,7 +8102,7 @@ static int DoUserAuthInfoRequest(WOLFSSH* ssh, byte* buf, word32 len,
         } else {
             WMEMSET(echo, 0, sizeof(byte) * promptSz);
             for (entry = 0; entry < promptSz; entry++) {
-                ret = GetStringAlloc(ssh->ctx->heap, (char**)&prompts[entry],
+                ret = GetStringAlloc(heap, (char**)&prompts[entry],
                                      buf, len, &begin);
                 if (ret != WS_SUCCESS)
                     break;
@@ -8123,16 +8125,16 @@ static int DoUserAuthInfoRequest(WOLFSSH* ssh, byte* buf, word32 len,
     } else {
         if (prompts) {
             for (entry = 0; entry < promptSz; entry++) {
-                WFREE((void*)prompts[entry], ssh->ctx->heap, DYNTYPE_BUFFER);
+                WFREE((void*)prompts[entry], heap, DYNTYPE_BUFFER);
             }
         }
-        WFREE(prompts, ssh->ctx->heap, DYNTYPE_BUFFER);
-        WFREE(echo, ssh->ctx->heap, DYNTYPE_BUFFER);
+        WFREE(prompts, heap, DYNTYPE_BUFFER);
+        WFREE(echo, heap, DYNTYPE_BUFFER);
 
         /* free strings in fail case */
-        WFREE(authName, ssh->ctx->heap,  DYNTYPE_STRING);
-        WFREE(authInstruction, ssh->ctx->heap,  DYNTYPE_STRING);
-        WFREE(language, ssh->ctx->heap,  DYNTYPE_STRING);
+        WFREE(authName, heap,  DYNTYPE_STRING);
+        WFREE(authInstruction, heap,  DYNTYPE_STRING);
+        WFREE(language, heap,  DYNTYPE_STRING);
     }
 
     if (ret == WS_SUCCESS) {
