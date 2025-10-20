@@ -72,7 +72,7 @@
 static const char defaultFwdFromHost[] = "0.0.0.0";
 
 
-static inline int max(int a, int b)
+static inline int findMax(int a, int b)
 {
     return (a > b) ? a : b;
 }
@@ -407,7 +407,7 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     FD_ZERO(&templateFds);
     FD_SET(sshFd, &templateFds);
     FD_SET(listenFd, &templateFds);
-    nFds = max(sshFd, listenFd) + 1;
+    nFds = findMax(sshFd, listenFd) + 1;
 
     for (;;) {
         rxFds = templateFds;
