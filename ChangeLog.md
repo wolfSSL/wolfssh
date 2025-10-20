@@ -1,3 +1,56 @@
+# wolfSSH v1.4.21 (October 20, 2025)
+
+## Vulnerabilities
+
+- [Critical] CVE-2025-11625 The client's host verification can be bypassed by a malicious server, and client credentials leaked. This affects client applications with wolfSSH version 1.4.20 and earlier. Users of wolfSSH on the client side must update or apply the fix patch and it’s recommended to update credentials used. Fixed in PR (https://github.com/wolfSSL/wolfssh/pull/840)
+
+- [Med] CVE-2025-11624 Potential for stack overflow write when reading the file handle provided by an SFTP client. After a SFTP connection was established there is the case where a SFTP client could craft a malicious read, write or set state SFTP packet which would cause the SFTP server code to write into stack. Thanks to Stanislav Fort of Aisle Research for the report. Fixed in PR (https://github.com/wolfSSL/wolfssh/pull/834)
+
+## New Features
+
+- Curve25519 interoperability with LibSSH. Update to treat curve25519-sha256@libssh.org as an alias for curve25519-sha256 (PR 789)
+- Microchip example for ATSAMV71Q21B and harmony filesystem support (PR 790)
+- Make Keyboard Interactive a compile time option, enabled using --enable-keyboard-interactive. Off by default. (PR 800)
+- wolfSSH support for using TPM based key for authentication (PR 754)
+- By default, soft disable AES-CBC. It isn't offered as a default encrypt algorithm, but may be set at runtime (PR 804)
+- Add ED25519 key generation support. (PR 823)
+
+## Improvements
+
+- Add GitHub Action for testing wolfSSH server with Paramiko SFTP client (PR 788)
+- Additional sanity checks on message types during rekey (PR 793)
+- FATFS improvements, test and Linux example (PR 787)
+- Adjust behavior when getting WOLFSSH_USERAUTH_REJECTED return from callback. It now will reject and not continue on with user auth attempts. (PR 837)
+- Rename arguments and variables to idx instead of index to avoid shadowed variables. (PR 828)
+- Move user filesystem override to the top of the ports check so that the override also overrides enabled ports. (PR 805)
+- Remove keyboard auth callback and use a generic auth callback (PR 807)
+- Update Espressif examples and add getting started info to Espressif README (PR 810, 771)
+- Disable old threading functions when SINGLE_THREADED (PR 809)
+- Replace Kyber 512 with ML-KEM 768. (PR 792)
+- Update SFTP status callback to output once per second. (PR 779)
+- Refactor to leverage wolfSSL FALLTHROUGH macro with switch statements. (PR 815)
+- Autoconf and Automake Updates (PR 821)
+- Simplify Test Build Flags (PR 818)
+- Fixed typo and spelling edits (PR 797, 798)
+
+## Fixes
+
+- Fix SFTP data truncation by moving sentSzSave to state structure(PR 785)
+- Fix SFTP Symlink Indication. (PR 791)
+- Fix warning on FATFS builds (PR 796)
+- Keyboard Interactive bug fixes (PR 801, 802)
+- Fix double-free on `wolfSSH_SFTPNAME_readdir` (PR 806)
+- Adjust the highwater check location to avoid masking the return value. (PR 795)
+- DoAsn1Key now fails when WOLFSSH_NO_RSA is defined (PR 808)
+- Avoid potential for overflow/underflow in comparison by rearranging evaluation of unsigned condition. (PR 814)
+- Fixing a batch of warning from Coverity reports. (PR 817, 820, 822)
+- Fix inet_addr accounting for '.' character (PR 816)
+- Fix to only send ext info once after SSH_MSG_NEWKEYS. (PR 819)
+- Fix "rejected" authentication in DoUserAuthRequestPublicKey() (PR 825)
+- Rename struct Buffer to WOLFSSH_BUFFER in wolfSSH_ShowSizes to match the previous rename.(PR 830)
+- Rename wolfssh test certs to avoid conflict with wolfssl test certs (PR 831)
+- Do not treat the shell as interactive until pty-req message request is received. This fixes an interoperability issue with WinSCP (PR 832)
+
 # wolfSSH v1.4.20 (Feburary 20, 2025)
 
 ## New Features
