@@ -1823,12 +1823,24 @@ int wolfSSH_AGENT_SignRequest(WOLFSSH* ssh,
                 ret = WS_AGENT_NO_KEY_E;
             }
             else {
-                WMEMCPY(sig, ssh->agent->msg, ssh->agent->msgSz);
-                *sigSz = ssh->agent->msgSz;
+                word32 maxSigSz = *sigSz;
+
+                if (ssh->agent->msgSz > maxSigSz) {
+                    WLOG(WS_LOG_AGENT,
+                        "agent signature too large for caller buffer");
+                    ret = WS_BUFFER_E;
+                }
+                else {
+                    WMEMCPY(sig, ssh->agent->msg, ssh->agent->msgSz);
+                    *sigSz = ssh->agent->msgSz;
+                }
             }
         }
         else ret = WS_AGENT_NO_KEY_E;
     }
+
+    if (ret != WS_SUCCESS && sigSz != NULL)
+        *sigSz = 0;
 
     if (agent != NULL) {
         agent->msg = NULL;
