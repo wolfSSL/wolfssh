@@ -964,6 +964,7 @@ static void setup_agent_test(WOLFSSH_CTX** ctx, WOLFSSH** ssh, AgentTestCtx* io)
     AssertIntEQ(wolfSSH_CTX_set_agent_cb(*ctx, test_agent_cb,
         test_agent_io_cb), WS_SUCCESS);
     AssertNotNull(*ssh = wolfSSH_new(*ctx));
+    AssertNotNull((*ssh)->agent = wolfSSH_AGENT_new((*ctx)->heap));
     AssertIntEQ(wolfSSH_set_agent_cb_ctx(*ssh, io), WS_SUCCESS);
     AssertIntEQ(wolfSSH_AGENT_enable(*ssh, 1), WS_SUCCESS);
 }
