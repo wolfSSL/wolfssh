@@ -75,7 +75,7 @@ do_create_average() {
 
 
 do_create_plot() {
-    gnuplot -e "set title '$TITLE';set ylabel 'MB/s';set xlabel 'File Size in Bytes';set grid; set format x \"%2.1t{/Symbol \264}10^{%L}\"; set term png;set output '$OUTPUT_FILE';plot '$LOG_FILE' using 1:2, '$AVERAGE_FILE' with lines lc rgb 'red' lw 2, '$COMPARE_TO' with lines lc rgb 'gold' lw 2"
+    gnuplot -e "set title '$TITLE';set ylabel 'MB/s' rotate by 90;set xlabel 'File Size in Bytes';set grid; set format x \"%2.1t×10^{%L}\"; set term pngcairo enhanced;set output '$OUTPUT_FILE';plot '$LOG_FILE' using 1:2, '$AVERAGE_FILE' with lines lc rgb 'red' lw 2, '$COMPARE_TO' with lines lc rgb 'gold' lw 2"
 }
 
 echo "Starting tests"
