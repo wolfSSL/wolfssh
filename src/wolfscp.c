@@ -1303,11 +1303,13 @@ int ParseScpCommand(WOLFSSH* ssh)
                             ssh->scpBasePath = ssh->scpBasePathDynamic;
                             WMEMCPY(ssh->scpBasePathDynamic, cmd + idx,
                                 cmdSz - idx);
-                            ret = ParseBasePathHelper(ssh, cmdSz);
-                            if (ret == WS_SUCCESS &&
-                                    wolfSSH_CleanPath(ssh,
-                                        ssh->scpBasePathDynamic) < 0)
+                            if (wolfSSH_CleanPath(ssh,
+                                    ssh->scpBasePathDynamic) < 0) {
                                 ret = WS_FATAL_ERROR;
+                            }
+                            else {
+                                ret = ParseBasePathHelper(ssh, cmdSz);
+                            }
                         }
                         break;
 
