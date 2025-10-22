@@ -966,6 +966,7 @@ static int GetScpFileName(WOLFSSH* ssh, byte* buf, word32 bufSz,
 {
     int ret = WS_SUCCESS;
     word32 idx, len;
+    const char* fileName;
 
     if (ssh == NULL || buf == NULL || inOutIdx == NULL)
         return WS_BAD_ARGUMENT;
@@ -977,6 +978,31 @@ static int GetScpFileName(WOLFSSH* ssh, byte* buf, word32 bufSz,
         ret = WS_SCP_CMD_E;
 
     if (ret == WS_SUCCESS) {
+        word32 i;
+
+        fileName = (const char*)(buf + idx);
+
+        if (len == 0 ||
+                (len == 1 && fileName[0] == '.') ||
+                (len == 2 && fileName[0] == '.' && fileName[1] == '.')) {
+            WLOG(WS_LOG_ERROR, "scp: invalid file name component received");
+            wolfSSH_SetScpErrorMsg(ssh, "invalid file name");
+            return WS_SCP_BAD_MSG_E;
+        }
+
+        for (i = 0; i < len; i++) {
+            char c = fileName[i];
+
+            if (c == '/' || c == '\\'
+#if defined(USE_WINDOWS_API) || defined(WOLFSSL_NUCLEUS)
+                || c == ':'
+#endif
+            ) {
+                WLOG(WS_LOG_ERROR, "scp: invalid file name component received");
+                wolfSSH_SetScpErrorMsg(ssh, "invalid file name");
+                return WS_SCP_BAD_MSG_E;
+            }
+        }
 
         if (ssh->scpFileName != NULL) {
             WFREE(ssh->scpFileName, ssh->ctx->heap, DYNTYPE_STRING);
@@ -3090,4 +3116,3 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
 #endif /* WOLFSSH_SCP_USER_CALLBACKS */
 
 #endif /* WOLFSSH_SCP */
-
