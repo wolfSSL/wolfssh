@@ -1340,6 +1340,8 @@ static int DoMessage(WOLFSSH_AGENT_CTX* agent,
 
     if (agent == NULL)
         ret = WS_SSH_NULL_E; /* WS_AGENT_NULL_E */
+    else
+        agent->lastMsgId = 0;
 
     if (ret == WS_SUCCESS) {
         if (buf == NULL || idx == NULL || len == 0)
@@ -1371,6 +1373,7 @@ static int DoMessage(WOLFSSH_AGENT_CTX* agent,
 
     if (ret == WS_SUCCESS) {
         msg = buf[begin++];
+        agent->lastMsgId = msg;
         payloadIdx = 0;
         switch (msg) {
             case MSGID_AGENT_FAILURE:
@@ -1793,6 +1796,11 @@ int wolfSSH_AGENT_SignRequest(WOLFSSH* ssh,
 
     if (ret == WS_SUCCESS) {
         agent = ssh->agent;
+        agent->requestFailure = 0;
+        agent->requestSuccess = 0;
+        agent->msg = NULL;
+        agent->msgSz = 0;
+        agent->lastMsgId = 0;
         if (ssh->ctx->agentCb)
             ret = ssh->ctx->agentCb(WOLFSSH_AGENT_LOCAL_SETUP, ssh->agentCbCtx);
     }
@@ -1801,11 +1809,16 @@ int wolfSSH_AGENT_SignRequest(WOLFSSH* ssh,
         ret = SendSignRequest(agent, digest, digestSz,
                 keyBlob, keyBlobSz, flags);
 
-    if (ret == WS_SUCCESS)
-        ret = ssh->ctx->agentIoCb(WOLFSSH_AGENT_IO_WRITE,
-                agent->msg, agent->msgSz, ssh->agentCbCtx);
+    if (ret == WS_SUCCESS) {
+        int wrote;
 
-    if (ret > 0) ret = WS_SUCCESS;
+        wrote = ssh->ctx->agentIoCb(WOLFSSH_AGENT_IO_WRITE,
+                agent->msg, agent->msgSz, ssh->agentCbCtx);
+        if (wrote != (int)agent->msgSz) {
+            WLOG(WS_LOG_AGENT, "agent write incomplete");
+            ret = WS_AGENT_CXN_FAIL;
+        }
+    }
 
     if (agent != NULL && agent->msg != NULL) {
         WFREE(ssh->agent->msg, ssh->agent->heap, DYNTYPE_AGENT_BUFFER);
@@ -1818,21 +1831,32 @@ int wolfSSH_AGENT_SignRequest(WOLFSSH* ssh,
                 rxBuf, sizeof(rxBuf), ssh->agentCbCtx);
         if (rxSz > 0) {
             ret = DoMessage(ssh->agent, rxBuf, rxSz, &idx);
-            if (ssh->agent->requestFailure) {
-                ssh->agent->requestFailure = 0;
-                ret = WS_AGENT_NO_KEY_E;
-            }
-            else {
-                word32 maxSigSz = *sigSz;
-
-                if (ssh->agent->msgSz > maxSigSz) {
+            if (ret == WS_SUCCESS) {
+                if (ssh->agent->lastMsgId != MSGID_AGENT_SIGN_RESPONSE) {
                     WLOG(WS_LOG_AGENT,
-                        "agent signature too large for caller buffer");
-                    ret = WS_BUFFER_E;
+                        "agent response was not a signature message");
+                    ret = WS_AGENT_NO_KEY_E;
                 }
                 else {
-                    WMEMCPY(sig, ssh->agent->msg, ssh->agent->msgSz);
-                    *sigSz = ssh->agent->msgSz;
+                    if (ssh->agent->requestFailure ||
+                            ssh->agent->msg == NULL ||
+                            ssh->agent->msgSz == 0) {
+                        ssh->agent->requestFailure = 0;
+                        ret = WS_AGENT_NO_KEY_E;
+                    }
+                    else {
+                        word32 maxSigSz = *sigSz;
+
+                        if (ssh->agent->msgSz > maxSigSz) {
+                            WLOG(WS_LOG_AGENT,
+                                "agent signature too large for caller buffer");
+                            ret = WS_BUFFER_E;
+                        }
+                        else {
+                            WMEMCPY(sig, ssh->agent->msg, ssh->agent->msgSz);
+                            *sigSz = ssh->agent->msgSz;
+                        }
+                    }
                 }
             }
         }
