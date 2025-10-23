@@ -31,10 +31,14 @@
 #include <wolfssh/port.h>
 
 #include <stdio.h>
+#include <string.h>
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #ifdef WOLFSSH_SCP
     #include <wolfssh/wolfscp.h>
+#endif
+#ifdef WOLFSSH_AGENT
+    #include <wolfssh/agent.h>
 #endif
 
 #ifdef WOLFSSH_SFTP
@@ -872,6 +876,210 @@ static void test_wolfSSH_SCP_CB(void)
 #else /* WOLFSSH_SCP */
 static void test_wolfSSH_SCP_CB(void) { ; }
 #endif /* WOLFSSH_SCP */
+
+#ifdef WOLFSSH_AGENT
+typedef struct AgentTestCtx {
+    int partialWrite;
+    byte response[128];
+    word32 responseSz;
+    int writeCalls;
+    int readCalls;
+} AgentTestCtx;
+
+static int test_agent_cb(WS_AgentCbAction action, void* ctx)
+{
+    (void)ctx;
+
+    if (action == WOLFSSH_AGENT_LOCAL_SETUP ||
+            action == WOLFSSH_AGENT_LOCAL_CLEANUP) {
+        return WS_AGENT_SUCCESS;
+    }
+
+    return WS_AGENT_INVALID_ACTION;
+}
+
+static void put_uint32(byte* dst, word32 value)
+{
+    dst[0] = (byte)((value >> 24) & 0xff);
+    dst[1] = (byte)((value >> 16) & 0xff);
+    dst[2] = (byte)((value >> 8) & 0xff);
+    dst[3] = (byte)(value & 0xff);
+}
+
+static void build_agent_message(byte* out, word32* outSz, byte id,
+        const byte* body, word32 bodySz)
+{
+    word32 payloadSz = 1 + bodySz;
+
+    put_uint32(out, payloadSz);
+    out[4] = id;
+    if (bodySz > 0)
+        memcpy(out + 5, body, bodySz);
+    *outSz = payloadSz + LENGTH_SZ;
+}
+
+static void build_sign_response(AgentTestCtx* ctx, const byte* sig,
+        word32 sigSz)
+{
+    byte body[4 + 64];
+
+    AssertTrue(sigSz <= 64);
+    put_uint32(body, sigSz);
+    if (sigSz > 0)
+        memcpy(body + LENGTH_SZ, sig, sigSz);
+    build_agent_message(ctx->response, &ctx->responseSz,
+        MSGID_AGENT_SIGN_RESPONSE, body, LENGTH_SZ + sigSz);
+}
+
+static void build_simple_response(AgentTestCtx* ctx, byte id)
+{
+    build_agent_message(ctx->response, &ctx->responseSz, id, NULL, 0);
+}
+
+static int test_agent_io_cb(WS_AgentIoCbAction action, void* buf, word32 bufSz,
+        void* ctx)
+{
+    AgentTestCtx* io = (AgentTestCtx*)ctx;
+
+    if (action == WOLFSSH_AGENT_IO_WRITE) {
+        io->writeCalls++;
+        if (io->partialWrite && bufSz > 0) {
+            io->partialWrite = 0;
+            return (int)(bufSz - 1);
+        }
+        return (int)bufSz;
+    }
+
+    io->readCalls++;
+    if (io->responseSz == 0 || bufSz < io->responseSz)
+        return 0;
+    memcpy(buf, io->response, io->responseSz);
+    return (int)io->responseSz;
+}
+
+static void setup_agent_test(WOLFSSH_CTX** ctx, WOLFSSH** ssh, AgentTestCtx* io)
+{
+    AssertNotNull(*ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL));
+    AssertIntEQ(wolfSSH_CTX_AGENT_enable(*ctx, 1), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_set_agent_cb(*ctx, test_agent_cb,
+        test_agent_io_cb), WS_SUCCESS);
+    AssertNotNull(*ssh = wolfSSH_new(*ctx));
+    AssertNotNull((*ssh)->agent = wolfSSH_AGENT_new((*ctx)->heap));
+    AssertIntEQ(wolfSSH_set_agent_cb_ctx(*ssh, io), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_AGENT_enable(*ssh, 1), WS_SUCCESS);
+}
+
+static void cleanup_agent_test(WOLFSSH_CTX* ctx, WOLFSSH* ssh)
+{
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+static void test_wolfSSH_agent_signrequest_partial_write(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte digest[16] = {0};
+    byte keyBlob[8] = {0};
+    byte sig[8];
+    word32 sigSz = sizeof(sig);
+    int ret;
+
+    memset(&io, 0, sizeof(io));
+    io.partialWrite = 1;
+    setup_agent_test(&ctx, &ssh, &io);
+
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_AGENT_CXN_FAIL);
+    AssertIntEQ(sigSz, 0);
+    AssertIntEQ(io.writeCalls, 1);
+    AssertIntEQ(io.readCalls, 0);
+
+    cleanup_agent_test(ctx, ssh);
+}
+
+static void test_wolfSSH_agent_signrequest_wrong_message(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte digest[16] = {0};
+    byte keyBlob[8] = {0};
+    byte sig[16];
+    word32 sigSz = sizeof(sig);
+    int ret;
+
+    memset(&io, 0, sizeof(io));
+    build_simple_response(&io, MSGID_AGENT_SUCCESS);
+    setup_agent_test(&ctx, &ssh, &io);
+
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_AGENT_NO_KEY_E);
+    AssertIntEQ(sigSz, 0);
+    AssertIntEQ(io.writeCalls, 1);
+    AssertIntEQ(io.readCalls, 1);
+
+    cleanup_agent_test(ctx, ssh);
+}
+
+static void test_wolfSSH_agent_signrequest_signature_too_large(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte digest[16] = {0};
+    byte keyBlob[8] = {0};
+    byte signatureData[12];
+    byte sig[8];
+    word32 sigSz = sizeof(sig);
+    int ret;
+
+    memset(signatureData, 0x5a, sizeof(signatureData));
+    memset(&io, 0, sizeof(io));
+    build_sign_response(&io, signatureData, sizeof(signatureData));
+    setup_agent_test(&ctx, &ssh, &io);
+
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_BUFFER_E);
+    AssertIntEQ(sigSz, 0);
+    AssertIntEQ(io.writeCalls, 1);
+    AssertIntEQ(io.readCalls, 1);
+
+    cleanup_agent_test(ctx, ssh);
+}
+
+static void test_wolfSSH_agent_signrequest_success(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte digest[16] = {0};
+    byte keyBlob[8] = {0};
+    byte signatureData[8];
+    byte sig[16];
+    word32 sigSz = sizeof(sig);
+    int ret;
+
+    memset(signatureData, 0xa5, sizeof(signatureData));
+    memset(&io, 0, sizeof(io));
+    build_sign_response(&io, signatureData, sizeof(signatureData));
+    setup_agent_test(&ctx, &ssh, &io);
+
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertIntEQ(sigSz, sizeof(signatureData));
+    AssertTrue(memcmp(sig, signatureData, sizeof(signatureData)) == 0);
+    AssertIntEQ(io.writeCalls, 1);
+    AssertIntEQ(io.readCalls, 1);
+
+    cleanup_agent_test(ctx, ssh);
+}
+#endif /* WOLFSSH_AGENT */
 
 
 #if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT) && \
@@ -1779,6 +1987,12 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_ReadKey();
     test_wolfSSH_QueryAlgoList();
     test_wolfSSH_SetAlgoList();
+#ifdef WOLFSSH_AGENT
+    test_wolfSSH_agent_signrequest_partial_write();
+    test_wolfSSH_agent_signrequest_wrong_message();
+    test_wolfSSH_agent_signrequest_signature_too_large();
+    test_wolfSSH_agent_signrequest_success();
+#endif
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     test_wolfSSH_KeyboardInteractive();
 #endif

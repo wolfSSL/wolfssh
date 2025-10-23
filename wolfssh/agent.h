@@ -140,6 +140,7 @@ struct WOLFSSH_AGENT_CTX {
     enum AgentStates state;
     int requestSuccess;
     int requestFailure;
+    byte lastMsgId;
 };
 typedef struct WOLFSSH_AGENT_CTX WOLFSSH_AGENT_CTX;
 
@@ -190,4 +191,3 @@ WOLFSSH_API int wolfSSH_AGENT_SignRequest(WOLFSSH*, const byte*, word32,
 #endif
 
 #endif /* _WOLFSSH_AGENT_H_ */
-
