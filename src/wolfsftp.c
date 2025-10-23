@@ -5717,7 +5717,7 @@ static int SFTP_ClientRecvInit(WOLFSSH* ssh) {
     switch (ssh->sftpState) {
         case SFTP_RECV:
             ret = wolfSSH_worker(ssh,NULL);
-            if (ret != WS_CHAN_RXD) {
+            if (ret != 0 && ret != WS_CHAN_RXD) {
                 return ret;
             }
 
