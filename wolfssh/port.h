@@ -558,13 +558,19 @@ extern "C" {
         #define WSNPRINTF(s,n,f,...) snprintf((s),(n),(f),##__VA_ARGS__)
         #define WVSNPRINTF(s,n,f,...) vsnprintf((s),(n),(f),##__VA_ARGS__)
         #define WSTRTOK(s1,s2,s3) strtok_r((s1),(s2),(s3))
-    #elif defined(RENESAS_CSPLUS)
+    #elif defined(RENESAS_CSPLUS) || defined(__CCRX__)
         #include <stdio.h>
         #define WSTRNCPY(s1,s2,n) strncpy((s1),(s2),(n))
         #define WSTRNCASECMP(s1,s2,n) strncasecmp((s1),(s2),(n))
-        #define WSNPRINTF(s,n,f,...) snprintf((s),(n),(f),__VA_ARGS__)
         #define WVSNPRINTF(s,n,f,...) vsnprintf((s),(n),(f),__VA_ARGS__)
+       #if defined(__CCRX__)
+        #define WSNPRINTF(s,n,f,...) snprintf((s),(n),(f),__VA_ARGS__)
+        #define WSNPRINTF0(s,n,f)    snprintf((s),(n),(f))
+        #define WSTRTOK(s1,s2,s3) strtok((s1),(s2))
+       #else
+        #define WSNPRINTF(s,n,f,...) snprintf((s),(n),(f),__VA_ARGS__)
         #define WSTRTOK(s1,s2,s3) strtok_r((s1),(s2),(s3))
+       #endif
     #else
         #ifdef WOLFSSH_ZEPHYR
             #include <strings.h>

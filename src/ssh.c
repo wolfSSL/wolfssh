@@ -3198,11 +3198,19 @@ size_t wolfSSH_GetText(WOLFSSH *ssh, WS_Text id, char *str, size_t strSz)
             #endif /* !WOLFSSH_NO_DH */
 
                 case ID_EXTINFO_S:
+                   #if defined(__CCRX__)
+                    ret = WSNPRINTF0(str, strSz, "Server extensions KEX");
+                   #else
                     ret = WSNPRINTF(str, strSz, "Server extensions KEX");
+                   #endif
                     break;
 
                 case ID_EXTINFO_C:
+                   #if defined(__CCRX__)
+                    ret = WSNPRINTF0(str, strSz, "Client extensions KEX");
+                   #else
                     ret = WSNPRINTF(str, strSz, "Client extensions KEX");
+                   #endif
                     break;
 
             }

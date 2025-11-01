@@ -1905,8 +1905,11 @@ struct fd_entry {
     int used;
 };
 
+#if defined(__CCRX__)
+static struct fd_entry fd_pool[WOLFSSH_FATFS_MAX_FILES] = {0};
+#else
 static struct fd_entry fd_pool[WOLFSSH_FATFS_MAX_FILES] = { };
-
+#endif
 int ff_open(const char *fname, int flag, int perm)
 {
     int i;
@@ -9258,7 +9261,7 @@ static int SFTP_FreeHandles(WOLFSSH* ssh)
 
     /* go through and free handles and make sure files are closed */
     while (cur != NULL) {
-    #ifdef MICROCHIP_MPLAB_HARMONY
+    #if defined(MICROCHIP_MPLAB_HARMONY) || defined(WOLFSSH_FATFS)
         WFCLOSE(ssh->fs, ((WFILE*)cur->handle));
     #else
         WCLOSE(ssh->fs, *((WFD*)cur->handle));
