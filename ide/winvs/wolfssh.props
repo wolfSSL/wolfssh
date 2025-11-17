@@ -2,7 +2,7 @@
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ImportGroup Label="PropertySheets" />
   <PropertyGroup Label="UserMacros">
-    <wolfCryptDir>..\..\..\..\wolfssl</wolfCryptDir>
+    <wolfCryptDir>..\..\..\..\wolfssl\IDE\WIN10</wolfCryptDir>
     <wolfCryptDebug32>$(wolfCryptDir)\Debug\Win32</wolfCryptDebug32>
     <wolfCryptRelease32>$(wolfCryptDir)\Release\Win32</wolfCryptRelease32>
     <wolfCryptDebug64>$(wolfCryptDir)\Debug\x64</wolfCryptDebug64>
