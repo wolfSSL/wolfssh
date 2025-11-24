@@ -595,6 +595,7 @@ static void HandshakeInfoFree(HandshakeInfo* hs, void* heap)
 }
 
 
+#if 0
 /* RFC 4253 section 7.1, Once having sent SSH_MSG_KEXINIT the only messages
 * that can be sent are 1-19 (except SSH_MSG_SERVICE_REQUEST and
 * SSH_MSG_SERVICE_ACCEPT), 20-29 (except SSH_MSG_KEXINIT again), and 30-49
@@ -627,6 +628,7 @@ INLINE static int IsMessageAllowedKeying(WOLFSSH *ssh, byte msg)
     }
     return 1;
 }
+#endif
 
 
 #ifndef NO_WOLFSSH_SERVER
@@ -785,9 +787,11 @@ INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
  * Returns 1 if allowed 0 if not allowed. */
 INLINE static int IsMessageAllowed(WOLFSSH *ssh, byte msg, byte state)
 {
+#if 0
     if (!IsMessageAllowedKeying(ssh, msg)) {
         return 0;
     }
+#endif
 
 #ifndef NO_WOLFSSH_SERVER
     if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
