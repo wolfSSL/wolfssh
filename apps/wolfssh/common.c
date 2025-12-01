@@ -45,10 +45,12 @@ static byte* userPublicKey = userPublicKeyBuf;
 static const byte* userPublicKeyType = NULL;
 static byte userPassword[256];
 static const byte* userPrivateKeyType = NULL;
+static byte userPublicKeyAlloc = 0;
 static word32 userPublicKeySz = 0;
 static byte pubKeyLoaded = 0; /* was a public key loaded */
 static byte userPrivateKeyBuf[1191];
 static byte* userPrivateKey = userPrivateKeyBuf;
+static byte userPrivateKeyAlloc = 0;
 static word32 userPublicKeyTypeSz = 0;
 static word32 userPrivateKeySz = sizeof(userPrivateKeyBuf);
 static word32 userPrivateKeyTypeSz = 0;
@@ -670,6 +672,13 @@ int ClientUseCert(const char* certName)
             userPublicKeyType = publicKeyType;
             userPublicKeyTypeSz = (word32)WSTRLEN((const char*)publicKeyType);
             pubKeyLoaded = 1;
+            userPublicKeyAlloc = 1;
+        }
+        else {
+            userPublicKey = userPublicKeyBuf;
+            userPublicKeySz = 0;
+            userPublicKeyType = NULL;
+            userPublicKeyAlloc = 0;
         }
     #else
         fprintf(stderr, "Certificate support not compiled in");
@@ -687,11 +696,21 @@ int ClientSetPrivateKey(const char* privKeyName)
 {
     int ret;
 
+    userPrivateKeyAlloc = 0;
     userPrivateKey = NULL; /* create new buffer based on parsed input */
     ret = wolfSSH_ReadKey_file(privKeyName,
             (byte**)&userPrivateKey, &userPrivateKeySz,
             (const byte**)&userPrivateKeyType, &userPrivateKeyTypeSz,
             &isPrivate, NULL);
+
+    if (ret == 0) {
+        userPrivateKeyAlloc = 1;
+    }
+    else {
+        userPrivateKey = userPrivateKeyBuf;
+        userPrivateKeySz = sizeof(userPrivateKeyBuf);
+        userPrivateKeyType = NULL;
+    }
 
     return ret;
 }
@@ -703,6 +722,7 @@ int ClientUsePubKey(const char* pubKeyName)
 {
     int ret;
 
+    userPublicKeyAlloc = 0;
     userPublicKey = NULL; /* create new buffer based on parsed input */
     ret = wolfSSH_ReadKey_file(pubKeyName,
             &userPublicKey, &userPublicKeySz,
@@ -711,6 +731,11 @@ int ClientUsePubKey(const char* pubKeyName)
 
     if (ret == 0) {
         pubKeyLoaded = 1;
+        userPublicKeyAlloc = 1;
+    }
+    else {
+        userPublicKey = userPublicKeyBuf;
+        userPublicKeySz = 0;
     }
 
     return ret;
@@ -747,11 +772,17 @@ int ClientLoadCA(WOLFSSH_CTX* ctx, const char* caCert)
 
 void ClientFreeBuffers(void)
 {
-    if (userPublicKey != userPublicKeyBuf) {
+    if (userPublicKeyAlloc && userPublicKey != NULL) {
         WFREE(userPublicKey, NULL, DYNTYPE_PRIVKEY);
+        userPublicKey = userPublicKeyBuf;
+        userPublicKeySz = 0;
+        userPublicKeyAlloc = 0;
     }
 
-    if (userPrivateKey != userPrivateKeyBuf) {
+    if (userPrivateKeyAlloc && userPrivateKey != NULL) {
         WFREE(userPrivateKey, NULL, DYNTYPE_PRIVKEY);
+        userPrivateKey = userPrivateKeyBuf;
+        userPrivateKeySz = sizeof(userPrivateKeyBuf);
+        userPrivateKeyAlloc = 0;
     }
 }

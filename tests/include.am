@@ -45,7 +45,8 @@ tests_kex_test_CPPFLAGS = -DNO_MAIN_DRIVER $(AM_CPPFLAGS)
 tests_kex_test_LDADD   = src/libwolfssh.la
 tests_kex_test_DEPENDENCIES = src/libwolfssh.la
 
-tests_regress_test_SOURCES = tests/regress.c
+tests_regress_test_SOURCES = tests/regress.c apps/wolfssh/common.c \
+                             apps/wolfssh/common.h
 tests_regress_test_CPPFLAGS = -DNO_MAIN_DRIVER -DWOLFSSH_TEST_INTERNAL $(AM_CPPFLAGS)
 tests_regress_test_LDADD   = src/libwolfssh_test.la
 tests_regress_test_DEPENDENCIES = src/libwolfssh_test.la

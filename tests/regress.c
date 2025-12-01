@@ -19,10 +19,13 @@
 #include <stdlib.h>
 #include <arpa/inet.h>
 #include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 #include <wolfssh/port.h>
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
+#include "apps/wolfssh/common.h"
 
 #ifndef WOLFSSH_NO_ABORT
     #define WABORT() abort()
@@ -362,6 +365,44 @@ static void TestKexInitRejectedWhenKeying(WOLFSSH* ssh)
     AssertFalse(allowed);
 }
 
+/* Ensure client buffer cleanup tolerates multiple invocations after allocs. */
+static void TestClientBuffersIdempotent(void)
+{
+    int ret;
+
+    ret = ClientUsePubKey("keys/gretel-key-rsa.pub");
+    AssertIntEQ(ret, 0);
+    ret = ClientSetPrivateKey("keys/gretel-key-rsa.pem");
+    AssertIntEQ(ret, 0);
+
+    ClientFreeBuffers();
+    /* Should be safe to call again without double free. */
+    ClientFreeBuffers();
+}
+
+/* Simulate Ctrl+D (stdin EOF) during password prompt; expect failure but no crash. */
+static void TestPasswordEofNoCrash(void)
+{
+    WS_UserAuthData auth;
+    int savedStdin, devNull, ret;
+
+    WMEMSET(&auth, 0, sizeof(auth));
+
+    savedStdin = dup(STDIN_FILENO);
+    devNull = open("/dev/null", O_RDONLY);
+    AssertTrue(devNull >= 0);
+    AssertTrue(dup2(devNull, STDIN_FILENO) >= 0);
+
+    ret = ClientUserAuth(WOLFSSH_USERAUTH_PASSWORD, &auth, NULL);
+    AssertIntEQ(ret, WOLFSSH_USERAUTH_FAILURE);
+
+    close(devNull);
+    dup2(savedStdin, STDIN_FILENO);
+    close(savedStdin);
+
+    ClientFreeBuffers();
+}
+
 
 int main(int argc, char** argv)
 {
@@ -390,6 +431,12 @@ int main(int argc, char** argv)
     TestChannelBlockedBeforeAuth(ssh);
     TestChannelAllowedAfterAuth(ssh);
     TestKexInitRejectedWhenKeying(ssh);
+    TestClientBuffersIdempotent();
+    TestPasswordEofNoCrash();
+
+    /* TODO: add app-level regressions that simulate stdin EOF/password
+     * prompts and mid-session socket closes once the test harness can
+     * drive the wolfssh client without real sockets/tty. */
 
     ResetSession(ssh);
     wolfSSH_free(ssh);

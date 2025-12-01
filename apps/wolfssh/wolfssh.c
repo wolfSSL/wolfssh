@@ -220,6 +220,7 @@ typedef struct thread_args {
     wolfSSL_Mutex lock;
     byte rawMode;
     byte quit;
+    int  readError;
 } thread_args;
 
 #ifdef _POSIX_THREADS
@@ -390,6 +391,7 @@ static THREAD_RET readPeer(void* in)
     int  bufSz = sizeof(buf);
     thread_args* args = (thread_args*)in;
     int ret = 0;
+    int stop = 0;
     int fd = wolfSSH_get_fd(args->ssh);
     word32 bytes;
 #ifdef USE_WINDOWS_API
@@ -397,11 +399,6 @@ static THREAD_RET readPeer(void* in)
 #endif
     fd_set readSet;
     fd_set errSet;
-
-    FD_ZERO(&readSet);
-    FD_ZERO(&errSet);
-    FD_SET(fd, &readSet);
-    FD_SET(fd, &errSet);
 
 #ifdef USE_WINDOWS_API
     if (args->rawMode == 0) {
@@ -431,9 +428,13 @@ static THREAD_RET readPeer(void* in)
 #endif
 
     while (ret >= 0) {
-    #if defined(WOLFSSH_TERM) && defined(USE_WINDOWS_API)
+#if defined(WOLFSSH_TERM) && defined(USE_WINDOWS_API)
         (void)windowMonitor(args);
-    #endif
+#endif
+        FD_ZERO(&readSet);
+        FD_ZERO(&errSet);
+        FD_SET(fd, &readSet);
+        FD_SET(fd, &errSet);
 
         bytes = select(fd + 1, &readSet, NULL, &errSet, NULL);
         wc_LockMutex(&args->lock);
@@ -458,18 +459,18 @@ static THREAD_RET readPeer(void* in)
                 } while (ret > 0);
             }
             else if (ret <= 0) {
-                if (ret == WS_FATAL_ERROR) {
-                    ret = wolfSSH_get_error(args->ssh);
-                    if (ret == WS_WANT_READ) {
-                        continue;
-                    }
-                    #ifdef WOLFSSH_AGENT
-                    else if (ret == WS_CHAN_RXD) {
-                        byte agentBuf[512];
-                        int rxd, txd;
-                        word32 channel = 0;
+                int err = (ret == WS_FATAL_ERROR) ?
+                    wolfSSH_get_error(args->ssh) : ret;
+                if (err == WS_WANT_READ) {
+                    bytes = 0;
+                }
+#ifdef WOLFSSH_AGENT
+                else if (err == WS_CHAN_RXD) {
+                    byte agentBuf[512];
+                    int rxd, txd;
+                    word32 channel = 0;
 
-                        wolfSSH_GetLastRxId(args->ssh, &channel);
+                    wolfSSH_GetLastRxId(args->ssh, &channel);
                         rxd = wolfSSH_ChannelIdRead(args->ssh, channel,
                                 agentBuf, sizeof(agentBuf));
                         if (rxd > 4) {
@@ -495,9 +496,17 @@ static THREAD_RET readPeer(void* in)
                         WMEMSET(agentBuf, 0, sizeof(agentBuf));
                         continue;
                     }
-                    #endif /* WOLFSSH_AGENT */
+#endif /* WOLFSSH_AGENT */
+                else if (err == WS_CBIO_ERR_CONN_CLOSE ||
+                         err == WS_SOCKET_ERROR_E ||
+                         err == WS_MSGID_NOT_ALLOWED_E) {
+                    args->readError = err;
+                    ret = err;
+                    stop = 1;
+                    bytes = 0;
                 }
-                else if (ret != WS_EOF) {
+                else if (err != WS_EOF) {
+                    wc_UnLockMutex(&args->lock);
                     err_sys("Stream read failed.");
                 }
             }
@@ -517,12 +526,16 @@ static THREAD_RET readPeer(void* in)
                 }
             #endif
             }
-            ret = wolfSSH_stream_peek(args->ssh, buf, bufSz);
-            if (ret <= 0) {
-                bytes = 0; /* read it all */
+            if (!stop) {
+                ret = wolfSSH_stream_peek(args->ssh, buf, bufSz);
+                if (ret <= 0) {
+                    bytes = 0; /* read it all */
+                }
             }
         }
         wc_UnLockMutex(&args->lock);
+        if (stop)
+            break;
     }
 #if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
@@ -791,7 +804,8 @@ static int config_parse_command_line(struct config* config,
         if (found != NULL) {
             *found = '\0';
             if (config->user) {
-                free(config->user);
+                WFREE(config->user, NULL, 0);
+                config->user = NULL;
             }
             sz = WSTRLEN(cursor);
             config->user = (char*)WMALLOC(sz + 1, NULL, 0);
@@ -818,7 +832,7 @@ static int config_parse_command_line(struct config* config,
             strcpy(config->hostname, cursor);
         }
 
-        free(dest);
+        WFREE(dest, NULL, 0);
         myoptind++;
     }
 
@@ -874,18 +888,23 @@ static int config_cleanup(struct config* config)
 {
     if (config->user) {
         WFREE(config->user, NULL, 0);
+        config->user = NULL;
     }
     if (config->hostname) {
         WFREE(config->hostname, NULL, 0);
+        config->hostname = NULL;
     }
     if (config->keyFile) {
         WFREE(config->keyFile, NULL, 0);
+        config->keyFile = NULL;
     }
     if (config->pubKeyFile) {
         WFREE(config->pubKeyFile, NULL, 0);
+        config->pubKeyFile = NULL;
     }
     if (config->command) {
         WFREE(config->command, NULL, 0);
+        config->command = NULL;
     }
 
     return 0;
@@ -900,6 +919,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
     SOCKADDR_IN_T clientAddr;
     socklen_t clientAddrSz = sizeof(clientAddr);
     int ret = 0;
+    int ioErr = 0;
     byte keepOpen = 1;
 #ifdef USE_WINDOWS_API
     byte rawMode = 0;
@@ -1037,6 +1057,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
 
         wc_InitMutex(&arg.lock);
         arg.ssh = ssh;
+        arg.readError = 0;
 #ifdef WOLFSSH_TERM
         arg.quit = 0;
     #if (defined(__OSX__) || defined(__APPLE__))
@@ -1082,12 +1103,14 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
         sem_destroy(&windowSem);
     #endif
 #endif /* WOLFSSH_TERM */
+        ioErr = arg.readError;
     #elif defined(_MSC_VER)
         thread_args arg;
         HANDLE thread[2];
 
         arg.ssh     = ssh;
         arg.rawMode = rawMode;
+        arg.readError = 0;
         wc_InitMutex(&arg.lock);
 
         if (config.command) {
@@ -1107,6 +1130,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
         WaitForSingleObject(thread[1], INFINITE);
         CloseHandle(thread[0]);
         CloseHandle(thread[1]);
+        ioErr = arg.readError;
     #else
         err_sys("No threading to use");
     #endif
@@ -1139,10 +1163,13 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
 #if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
     ((func_args*)args)->return_code = wolfSSH_GetExitStatus(ssh);
 #endif
+    if (ioErr != 0 && ((func_args*)args)->return_code == 0) {
+        ((func_args*)args)->return_code = 1;
+    }
 
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
-    if (ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E) {
+    if ((ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E) || ioErr != 0) {
         WLOG(WS_LOG_DEBUG, "Closing client stream failed");
     #if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
         /* override return value, do not want to return success if connection

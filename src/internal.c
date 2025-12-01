@@ -691,6 +691,8 @@ INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
 
             /* Error if expecting a specific message and didn't receive. */
             if (ssh->handshake && ssh->handshake->expectMsgId != MSGID_NONE) {
+                /* The explicit expectMsgId check supersedes the old
+                 * IsMessageAllowedKeying() stub for rekey filtering. */
                 if (msg != ssh->handshake->expectMsgId) {
                     WLOG(WS_LOG_DEBUG,
                             "Message ID %u not the expected message %u",
