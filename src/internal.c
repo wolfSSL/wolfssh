@@ -595,42 +595,6 @@ static void HandshakeInfoFree(HandshakeInfo* hs, void* heap)
 }
 
 
-#if 0
-/* RFC 4253 section 7.1, Once having sent SSH_MSG_KEXINIT the only messages
-* that can be sent are 1-19 (except SSH_MSG_SERVICE_REQUEST and
-* SSH_MSG_SERVICE_ACCEPT), 20-29 (except SSH_MSG_KEXINIT again), and 30-49
-*/
-INLINE static int IsMessageAllowedKeying(WOLFSSH *ssh, byte msg)
-{
-    if (ssh->isKeying == 0) {
-        return 1;
-    }
-
-    /* case of service request or accept in 1-19 */
-    if (msg == MSGID_SERVICE_REQUEST || msg == MSGID_SERVICE_ACCEPT) {
-        WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by during rekeying", msg);
-        ssh->error = WS_REKEYING;
-        return 0;
-    }
-
-    /* case of peer resending SSH_MSG_KEXINIT */
-    if ((ssh->isKeying & WOLFSSH_PEER_IS_KEYING) && msg == MSGID_KEXINIT) {
-        WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by during rekeying", msg);
-        ssh->error = WS_REKEYING;
-        return 0;
-    }
-
-    /* case where message id greater than 49 */
-    if (msg >= MSGID_USERAUTH_REQUEST) {
-        WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by during rekeying", msg);
-        ssh->error = WS_REKEYING;
-        return 0;
-    }
-    return 1;
-}
-#endif
-
-
 #ifndef NO_WOLFSSH_SERVER
 INLINE static int IsMessageAllowedServer(WOLFSSH *ssh, byte msg)
 {
@@ -694,6 +658,7 @@ INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
     if (msg == MSGID_SERVICE_REQUEST || msg == MSGID_USERAUTH_REQUEST) {
         WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
                 msg, "client", "ever");
+        ssh->error = WS_MSGID_NOT_ALLOWED_E;
         return 0;
     }
 
@@ -720,6 +685,7 @@ INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
             if (msg == MSGID_KEXINIT) {
                 WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
                         msg, "client", "when keying");
+                ssh->error = WS_REKEYING;
                 return 0;
             }
 
@@ -729,6 +695,7 @@ INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
                     WLOG(WS_LOG_DEBUG,
                             "Message ID %u not the expected message %u",
                             msg, ssh->handshake->expectMsgId);
+                    ssh->error = WS_REKEYING;
                     return 0;
                 }
                 else {
@@ -748,6 +715,7 @@ INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
              * when not keying. */
             WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
                     msg, "client", "when not keying");
+            ssh->error = WS_MSGID_NOT_ALLOWED_E;
             return 0;
         }
     }
@@ -761,9 +729,17 @@ INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
         if (MSGIDLIMIT_POST_USERAUTH(msg)) {
             WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
                     msg, "client", "before user authentication is complete");
+            ssh->error = WS_MSGID_NOT_ALLOWED_E;
             return 0;
         }
         else if (MSGIDLIMIT_AUTH(msg)) {
+            /* Do not accept any userauth messages until we've asked for auth. */
+            if (ssh->connectState < CONNECT_CLIENT_USERAUTH_REQUEST_SENT) {
+                WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                        msg, "client", "before sending userauth request");
+                ssh->error = WS_MSGID_NOT_ALLOWED_E;
+                return 0;
+            }
             return 1;
         }
     }
@@ -774,6 +750,7 @@ INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
         else if (MSGIDLIMIT_AUTH(msg)) {
             WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
                     msg, "client", "after user authentication");
+            ssh->error = WS_MSGID_NOT_ALLOWED_E;
             return 0;
         }
     }
@@ -787,12 +764,6 @@ INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
  * Returns 1 if allowed 0 if not allowed. */
 INLINE static int IsMessageAllowed(WOLFSSH *ssh, byte msg, byte state)
 {
-#if 0
-    if (!IsMessageAllowedKeying(ssh, msg)) {
-        return 0;
-    }
-#endif
-
 #ifndef NO_WOLFSSH_SERVER
     if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
         return IsMessageAllowedServer(ssh, msg);
@@ -806,6 +777,13 @@ INLINE static int IsMessageAllowed(WOLFSSH *ssh, byte msg, byte state)
     (void)state;
     return 0;
 }
+
+#ifdef WOLFSSH_TEST_INTERNAL
+int wolfSSH_TestIsMessageAllowed(WOLFSSH* ssh, byte msg, byte state)
+{
+    return IsMessageAllowed(ssh, msg, state);
+}
+#endif
 
 
 static const char cannedKexAlgoNames[] =

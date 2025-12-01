@@ -1300,6 +1300,11 @@ enum WS_MessageIdLimits {
 #define WS_MSG_SEND 1
 #define WS_MSG_RECV 2
 
+#ifdef WOLFSSH_TEST_INTERNAL
+    WOLFSSH_API int wolfSSH_TestIsMessageAllowed(WOLFSSH* ssh, byte msg,
+            byte state);
+#endif
+
 /* dynamic memory types */
 enum WS_DynamicTypes {
     DYNTYPE_STRING = 500,
