@@ -601,13 +601,69 @@ INLINE static int IsMessageAllowedServer(WOLFSSH *ssh, byte msg)
     /* Only the server should send these messages, never receive. */
     if (msg == MSGID_SERVICE_ACCEPT) {
         WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
-                msg, "client", "ever");
+                msg, "server", "ever");
+        ssh->error = WS_MSGID_NOT_ALLOWED_E;
         return 0;
+    }
+
+    if (msg == MSGID_SERVICE_REQUEST) {
+        if (ssh->acceptState == ACCEPT_KEYED) {
+            return 1;
+        }
+        else {
+            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                    msg, "server", "after starting user auth");
+            return 0;
+        }
     }
 
     /* Transport Layer Generic messages are always allowed. */
     if (MSGIDLIMIT_TRANS_GEN(msg)) {
         return 1;
+    }
+
+    /* Is KEX complete? */
+    if (MSGIDLIMIT_TRANS(msg)) {
+        if (ssh->isKeying & WOLFSSH_PEER_IS_KEYING) {
+            /* MSGID_KEXINIT not allowed when keying. */
+            if (msg == MSGID_KEXINIT) {
+                WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                        msg, "server", "when keying");
+                ssh->error = WS_REKEYING;
+                return 0;
+            }
+
+            /* Error if expecting a specific message and didn't receive. */
+            if (ssh->handshake && ssh->handshake->expectMsgId != MSGID_NONE) {
+                /* The explicit expectMsgId check supersedes the old
+                 * IsMessageAllowedKeying() stub for rekey filtering. */
+                if (msg != ssh->handshake->expectMsgId) {
+                    WLOG(WS_LOG_DEBUG,
+                            "Message ID %u not the expected message %u",
+                            msg, ssh->handshake->expectMsgId);
+                    ssh->error = WS_REKEYING;
+                    return 0;
+                }
+                else {
+                    /* Got the expected message, clear expectation. */
+                    ssh->handshake->expectMsgId = MSGID_NONE;
+                    return 1;
+                }
+            }
+        }
+        else {
+            /* MSGID_KEXINIT only allowed when not keying. */
+            if (msg == MSGID_KEXINIT) {
+                return 1;
+            }
+
+            /* All other transport KEX and ALGO messages are not allowed
+             * when not keying. */
+            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                    msg, "server", "when not keying");
+            ssh->error = WS_MSGID_NOT_ALLOWED_E;
+            return 0;
+        }
     }
 
     /* Has client userauth started? */
@@ -617,6 +673,7 @@ INLINE static int IsMessageAllowedServer(WOLFSSH *ssh, byte msg)
             return 0;
         }
     }
+
     /* Is server userauth complete? */
     if (ssh->acceptState < ACCEPT_SERVER_USERAUTH_SENT) {
         /* The server should only receive the user auth request message,
