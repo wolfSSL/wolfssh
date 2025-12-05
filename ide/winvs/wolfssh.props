@@ -7,11 +7,19 @@
     <wolfCryptRelease32>$(wolfCryptDir)\Release\Win32</wolfCryptRelease32>
     <wolfCryptDebug64>$(wolfCryptDir)\Debug\x64</wolfCryptDebug64>
     <wolfCryptRelease64>$(wolfCryptDir)\Release\x64</wolfCryptRelease64>
+	<wolfCryptDebug32FIPS>$(wolfCryptDir)\IDE\WIN10\Debug\Win32</wolfCryptDebug32FIPS>
+	<wolfCryptRelease32FIPS>$(wolfCryptDir)\IDE\WIN10\Release\Win32</wolfCryptRelease32FIPS>
+    <wolfCryptDebug64FIPS>$(wolfCryptDir)\IDE\WIN10\Debug\x64</wolfCryptDebug64FIPS>
+	<wolfCryptRelease64FIPS>$(wolfCryptDir)\IDE\WIN10\Release\x64</wolfCryptRelease64FIPS>
     <wolfCryptDllDebug32>$(wolfCryptDir)\DLL Debug\Win32</wolfCryptDllDebug32>
     <wolfCryptDllRelease32>$(wolfCryptDir)\DLL Release\Win32</wolfCryptDllRelease32>
     <wolfCryptDllDebug64>$(wolfCryptDir)\DLL Debug\x64</wolfCryptDllDebug64>
     <wolfCryptDllRelease64>$(wolfCryptDir)\DLL Release\x64</wolfCryptDllRelease64>
-  </PropertyGroup>
+	<wolfCryptDllDebug32FIPS>$(wolfCryptDir)\IDE\WIN10\DLL Debug\Win32</wolfCryptDllDebug32FIPS>
+	<wolfCryptDllRelease32FIPS>$(wolfCryptDir)\IDE\WIN10\DLL Release\Win32</wolfCryptDllRelease32FIPS>
+	<wolfCryptDllDebug64FIPS>$(wolfCryptDir)\IDE\WIN10\DLL Debug\x64</wolfCryptDllDebug64FIPS>
+	<wolfCryptDllRelease64FIPS>$(wolfCryptDir)\IDE\WIN10\DLL Release\x64</wolfCryptDllRelease64FIPS>
+</PropertyGroup>
   <ItemDefinitionGroup />
   <ItemGroup>
     <BuildMacro Include="wolfCryptDir">
@@ -29,6 +37,18 @@
     <BuildMacro Include="wolfCryptRelease64">
       <Value>$(wolfCryptRelease64)</Value>
     </BuildMacro>
+	<BuildMacro Include="wolfCryptDebug32FIPS">
+	    <Value>$(wolfCryptDebug32FIPS)</Value>
+	</BuildMacro>
+	<BuildMacro Include="wolfCryptRelease32FIPS">
+	    <Value>$(wolfCryptRelease32FIPS)</Value>
+	</BuildMacro>
+	<BuildMacro Include="wolfCryptDebug64FIPS">
+	    <Value>$(wolfCryptDebug64FIPS)</Value>
+	</BuildMacro>
+	<BuildMacro Include="wolfCryptRelease64FIPS">
+	    <Value>$(wolfCryptRelease64FIPS)</Value>
+	</BuildMacro>
     <BuildMacro Include="wolfCryptDllDebug32">
       <Value>$(wolfCryptDllDebug32)</Value>
     </BuildMacro>
@@ -41,5 +61,17 @@
     <BuildMacro Include="wolfCryptDllRelease64">
       <Value>$(wolfCryptDllRelease64)</Value>
     </BuildMacro>
+	<BuildMacro Include="wolfCryptDllDebug32FIPS">
+	  <Value>$(wolfCryptDllDebug32FIPS)</Value>
+	</BuildMacro>
+	<BuildMacro Include="wolfCryptDllRelease32FIPS">
+	  <Value>$(wolfCryptDllRelease32FIPS)</Value>
+	</BuildMacro>
+	<BuildMacro Include="wolfCryptDllDebug64FIPS">
+	  <Value>$(wolfCryptDllDebug64FIPS)</Value>
+	</BuildMacro>
+	<BuildMacro Include="wolfCryptDllRelease64FIPS">
+	  <Value>$(wolfCryptDllRelease64FIPS)</Value>
+	</BuildMacro>
   </ItemGroup>
 </Project>
