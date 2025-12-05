@@ -48,7 +48,7 @@
 #include <wolfssl/wolfcrypt/hmac.h>
 #include <wolfssl/wolfcrypt/signature.h>
 
-#if (LIBWOLFSSL_VERSION_HEX >= WOLFSSL_V5_0_0) \
+#if (LIBWOLFSSL_VERSION_HEX >= WOLFSSL_V5_0_0) && defined(WOLFSSL_WOLFSSH) \
     && ((defined(HAVE_FIPS) && FIPS_VERSION_GE(5,2)) \
         || defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256))
     #include <wolfssl/wolfcrypt/kdf.h>
@@ -2330,7 +2330,7 @@ int GenerateKey(byte hashId, byte keyId,
                 const byte* h, word32 hSz,
                 const byte* sessionId, word32 sessionIdSz,
                 byte doKeyPad)
-#if (LIBWOLFSSL_VERSION_HEX >= WOLFSSL_V5_0_0) \
+#if (LIBWOLFSSL_VERSION_HEX >= WOLFSSL_V5_0_0) && defined(WOLFSSL_WOLFSSH) \
     && ((defined(HAVE_FIPS) && FIPS_VERSION_GE(5,2)) \
         || defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256))
 /* Cannot use the SSH KDF with ML-KEM. With ML-KEM, doKeyPad must be false,
