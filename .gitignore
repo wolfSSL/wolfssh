@@ -103,6 +103,10 @@ Debug
 Release
 DLL Debug
 DLL Release
+DebugFIPS
+ReleaseFIPS
+DLL DebugFIPS
+DLL ReleaseFIPS
 
 # Eclipse
 .cproject
