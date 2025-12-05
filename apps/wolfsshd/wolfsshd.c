@@ -79,7 +79,7 @@
     #include <errno.h>
     #include <unix.h>
 #else
-    #include <sys/errno.h>
+    #include <errno.h>
 #endif
 
     static volatile int ChildRunning = 0;

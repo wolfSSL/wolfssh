@@ -84,11 +84,8 @@
 #if defined(__QNX__) || defined(__QNXNTO__)
     #include <errno.h>
     #include <unix.h>
-
-#elif defined(USE_WINDOWS_API)
-    #include <errno.h>
 #else
-    #include <sys/errno.h>
+    #include <errno.h>
 #endif
 #endif /* WOLFSSH_SHELL */
 
