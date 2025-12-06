@@ -159,9 +159,11 @@
     }
 #endif
 #elif defined(WOLFSSH_USER_IO)
+   #if !defined(__CCRX__)
     #include <unistd.h>
     #include <pthread.h>
     #include <fcntl.h>
+   #endif
     #include "userio_template.h"
     #ifndef SO_NOSIGPIPE
         #include <signal.h>  /* ignore SIGPIPE */
