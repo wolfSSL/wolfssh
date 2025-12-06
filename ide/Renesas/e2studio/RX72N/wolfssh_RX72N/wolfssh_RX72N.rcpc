@@ -34,8 +34,9 @@
           <Option>-include="..\..\..\..\..\..\..\wolfssl"</Option>
           <Option>-include="${ProjDirPath}\..\wolfssl_RX72N"</Option>
           <Option>-include="${ProjDirPath}\..\app_sftpclient\src\smc_gen\r_tfat_rx\src"</Option>
-          <Option>-include="${ProjDirPath}\..\app_sftpclient\src\smc_gen\r_config"</Option>
           <Option>-include="${ProjDirPath}\..\app_sftpclient\src\smc_gen\r_bsp"</Option>
+          <Option>-include="${ProjDirPath}\..\app_sftpclient\src\smc_gen\r_config"</Option>
+          <Option>-include="${ProjDirPath}\..\app_sftpclient\src\smc_gen\r_tsip_rx"</Option>
           <Option>-include="${ProjDirPath}\"</Option>
           <Option>-define=WOLFSSL_USER_SETTINGS</Option>
           <Option>-asmopt=-bank</Option>
@@ -90,8 +91,9 @@
           <IncludePathForC>"..\..\..\..\..\..\..\wolfssl"</IncludePathForC>
           <IncludePathForC>"${ProjDirPath}\..\wolfssl_RX72N"</IncludePathForC>
           <IncludePathForC>"${ProjDirPath}\..\app_sftpclient\src\smc_gen\r_tfat_rx\src"</IncludePathForC>
-          <IncludePathForC>"${ProjDirPath}\..\app_sftpclient\src\smc_gen\r_config"</IncludePathForC>
           <IncludePathForC>"${ProjDirPath}\..\app_sftpclient\src\smc_gen\r_bsp"</IncludePathForC>
+          <IncludePathForC>"${ProjDirPath}\..\app_sftpclient\src\smc_gen\r_config"</IncludePathForC>
+          <IncludePathForC>"${ProjDirPath}\..\app_sftpclient\src\smc_gen\r_tsip_rx"</IncludePathForC>
           <IncludePathForC>"${ProjDirPath}\"</IncludePathForC>
           <MacroForC>WOLFSSL_USER_SETTINGS</MacroForC>
         </CommonOptions>

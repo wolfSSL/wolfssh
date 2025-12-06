@@ -22,11 +22,8 @@
 
 #define NO_MAIN_DRIVER
 #define NO_WRITEV
-#define NO_DEV_RANDOM
 #define NO_WOLFSSL_DIR
 #define NO_WOLFSSL_STUB
-/* for compilers not allowed dynamic size array */
-#define NO_DYNAMIC_ARRAY
 #define NO_RC4
 #define NO_OLD_SHA256
 #define NO_PWDBASED
@@ -45,9 +42,9 @@
 #define ECC_TIMING_RESISTANT
 #define WC_RSA_BLINDING
 
-#define FP_MAX_BITS   4096
 #define SP_WORD_SIZE 32
 #define WOLFSSL_SP_NO_DYN_STACK
+#define WOLFSSL_SP_NO_3072
 #define WOLFSSL_SP_MATH
 #define WOLFSSL_SP_SMALL
 #define WOLFSSL_SP_NO_MALLOC
@@ -63,10 +60,22 @@
 #define NO_RSA
 
 #define BENCH_EMBEDDED
-#define USE_CERT_BUFFERS_2048
+#define USE_CERT_BUFFERS_256
 #define SIZEOF_LONG_LONG 8
+
+#define WOLFSSL_RENESAS_TSIP_CRYPTONLY
+#if defined(WOLFSSL_RENESAS_TSIP_CRYPTONLY)
+ #define WOLFSSL_RENESAS_RX72N
+ #define WOLFSSL_RENESAS_TSIP
+ #define WOLFSSL_RENESAS_TSIP_VER     121
+ #define WOLF_CRYPTO_CB
+ #define WOLFSSL_HAVE_MIN
+ #define WOLFSSL_HAVE_MAX
+#else
+ #define NO_DEV_RANDOM
 /* Warning: define your own seed gen */
-#define WOLFSSL_GENSEED_FORTEST
+ #define WOLFSSL_GENSEED_FORTEST
+#endif
 
 #define SINGLE_THREADED  /* or define RTOS  option */
 #define WOLFSSL_NO_SOCK
