@@ -9,11 +9,16 @@
     <Files>
       <Path>user_settings.h</Path>
       <Category Name="wolfcrypt">
+        <Category Name="port">
+          <Path>..\..\..\..\..\..\wolfssl\wolfcrypt\src\port\Renesas\renesas_tsip_sha.c</Path>
+          <Path>..\..\..\..\..\..\wolfssl\wolfcrypt\src\port\Renesas\renesas_tsip_util.c</Path>
+        </Category>
         <Category Name="src">
           <Path>..\..\..\..\..\..\wolfssl\wolfcrypt\src\aes.c</Path>
           <Path>..\..\..\..\..\..\wolfssl\wolfcrypt\src\asn.c</Path>
           <Path>..\..\..\..\..\..\wolfssl\wolfcrypt\src\coding.c</Path>
           <Path>..\..\..\..\..\..\wolfssl\wolfcrypt\src\cpuid.c</Path>
+          <Path>..\..\..\..\..\..\wolfssl\wolfcrypt\src\cryptocb.c</Path>
           <Path>..\..\..\..\..\..\wolfssl\wolfcrypt\src\curve25519.c</Path>
           <Path>..\..\..\..\..\..\wolfssl\wolfcrypt\src\dh.c</Path>
           <Path>..\..\..\..\..\..\wolfssl\wolfcrypt\src\dsa.c</Path>
@@ -59,6 +64,9 @@
           <Option>-dpfpu</Option>
           <Option>-include="..\..\..\..\..\..\..\wolfssl"</Option>
           <Option>-include="${ProjDirPath}\..\wolfssh_RX72N"</Option>
+          <Option>-include="${ProjDirPath}\..\wolfcrypt_test\src\smc_gen\r_bsp"</Option>
+          <Option>-include="${ProjDirPath}\..\wolfcrypt_test\src\smc_gen\r_config"</Option>
+          <Option>-include="${ProjDirPath}\..\wolfcrypt_test\src\smc_gen\r_tsip_rx"</Option>
           <Option>-include="${ProjDirPath}\"</Option>
           <Option>-define=WOLFSSL_USER_SETTINGS</Option>
           <Option>-asmopt=-bank</Option>
@@ -96,10 +104,13 @@
           <GenerateMode>None</GenerateMode>
         </LibraryGenerateOptions>
         <LinkOrder>
+          <Path>Debug\renesas_tsip_sha.obj</Path>
+          <Path>Debug\renesas_tsip_util.obj</Path>
           <Path>Debug\aes.obj</Path>
           <Path>Debug\asn.obj</Path>
           <Path>Debug\coding.obj</Path>
           <Path>Debug\cpuid.obj</Path>
+          <Path>Debug\cryptocb.obj</Path>
           <Path>Debug\curve25519.obj</Path>
           <Path>Debug\dh.obj</Path>
           <Path>Debug\dsa.obj</Path>
@@ -136,6 +147,9 @@
         <CommonOptions>
           <IncludePathForC>"..\..\..\..\..\..\..\wolfssl"</IncludePathForC>
           <IncludePathForC>"${ProjDirPath}\..\wolfssh_RX72N"</IncludePathForC>
+          <IncludePathForC>"${ProjDirPath}\..\wolfcrypt_test\src\smc_gen\r_bsp"</IncludePathForC>
+          <IncludePathForC>"${ProjDirPath}\..\wolfcrypt_test\src\smc_gen\r_config"</IncludePathForC>
+          <IncludePathForC>"${ProjDirPath}\..\wolfcrypt_test\src\smc_gen\r_tsip_rx"</IncludePathForC>
           <IncludePathForC>"${ProjDirPath}\"</IncludePathForC>
           <MacroForC>WOLFSSL_USER_SETTINGS</MacroForC>
         </CommonOptions>
