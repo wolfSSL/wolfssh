@@ -1905,11 +1905,7 @@ struct fd_entry {
     int used;
 };
 
-#if defined(__CCRX__)
-static struct fd_entry fd_pool[WOLFSSH_FATFS_MAX_FILES] = {0};
-#else
-static struct fd_entry fd_pool[WOLFSSH_FATFS_MAX_FILES] = { };
-#endif
+static struct fd_entry fd_pool[WOLFSSH_FATFS_MAX_FILES];
 int ff_open(const char *fname, int flag, int perm)
 {
     int i;
