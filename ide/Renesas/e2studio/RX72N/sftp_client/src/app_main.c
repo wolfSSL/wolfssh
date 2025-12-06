@@ -157,9 +157,7 @@ void main(void)
     Open_tcp();
     sftp_client_connect(&ctx, &ssh, port);
 
-    if (ctx == NULL || ssh == NULL) {
-
-    } else {
+    if (ctx != NULL && ssh != NULL){
         do {
             n = wolfSSH_SFTP_RealPath(ssh, (char*)".");
             ret = wolfSSH_get_error(ssh);
