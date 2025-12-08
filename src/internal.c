@@ -15043,6 +15043,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
             ret = WS_MEMORY_E;
     }
 
+    WMEMSET(&authData, 0, sizeof(authData));
     if (ret == WS_SUCCESS) {
         WMEMSET(keySig_ptr, 0, sizeof(WS_KeySignature));
         keySig_ptr->keySigId = ID_NONE;
@@ -15058,7 +15059,6 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
         if (ssh->ctx->userAuthCb != NULL) {
             WLOG(WS_LOG_DEBUG, "SUAR: Calling the userauth callback");
 
-            WMEMSET(&authData, 0, sizeof(authData));
             authData.type = authType;
             authData.username = (const byte*)ssh->userName;
             authData.usernameSz = ssh->userNameSz;
