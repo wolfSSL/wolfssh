@@ -5989,8 +5989,9 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     }
 
     if (ret == WS_SUCCESS) {
-        ret = SendNewKeys(ssh);
         ssh->handshake->expectMsgId = MSGID_NEWKEYS;
+        WLOG_EXPECT_MSGID(ssh->handshake->expectMsgId);
+        ret = SendNewKeys(ssh);
     }
 
     if (sigKeyBlock_ptr)
@@ -12729,12 +12730,10 @@ int SendKexDhGexRequest(WOLFSSH* ssh)
         ret = BundlePacket(ssh);
     }
 
-    if (ret == WS_SUCCESS)
-        ret = wolfSSH_SendPacket(ssh);
-
     if (ret == WS_SUCCESS) {
         WLOG_EXPECT_MSGID(MSGID_KEXDH_GEX_GROUP);
         ssh->handshake->expectMsgId = MSGID_KEXDH_GEX_GROUP;
+        ret = wolfSSH_SendPacket(ssh);
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving SendKexDhGexRequest(), ret = %d", ret);
@@ -13086,12 +13085,10 @@ int SendKexDhInit(WOLFSSH* ssh)
         ret = BundlePacket(ssh);
     }
 
-    if (ret == WS_SUCCESS)
-        ret = wolfSSH_SendPacket(ssh);
-
     if (ret == WS_SUCCESS) {
         WLOG_EXPECT_MSGID(expectMsgId);
         ssh->handshake->expectMsgId = expectMsgId;
+        ret = wolfSSH_SendPacket(ssh);
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving SendKexDhInit(), ret = %d", ret);
