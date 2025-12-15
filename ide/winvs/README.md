@@ -100,3 +100,11 @@ Similarly:
 - wolfSSL **Debug x64** → wolfSSH **DebugFIPS x64**
 - wolfSSL **Release Win32** → wolfSSH **ReleaseFIPS Win32**
 - wolfSSL **DLL Release x64** → wolfSSH **DLL ReleaseFIPS x64**
+
+**Notes:**
+* wolfSSH examples and applications might initially fail because the FIPS Integrity
+hash is incorrect, you'll have to rebuild wolfSSL with the FIPS hash reported by the
+wolfSSH application to get this working.
+* To stabilize the FIPS hash on Windows, you might have to disable ASLR
+(Address space layout randomization) on the system.
+
