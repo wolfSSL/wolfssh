@@ -2,6 +2,7 @@
 bin_PROGRAMS =
 noinst_HEADERS =
 lib_LTLIBRARIES =
+noinst_LTLIBRARIES =
 noinst_PROGRAMS =
 nobase_include_HEADERS =
 check_PROGRAMS =

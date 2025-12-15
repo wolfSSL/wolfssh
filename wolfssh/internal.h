@@ -607,6 +607,7 @@ typedef struct Keys {
 
 
 typedef struct HandshakeInfo {
+    byte expectMsgId;
     byte kexId;
     byte kexIdGuess;
     byte kexHashId;
@@ -1183,6 +1184,8 @@ enum ProcessReplyStates {
 
 
 enum WS_MessageIds {
+    MSGID_NONE = 0,
+
     MSGID_DISCONNECT = 1,
     MSGID_IGNORE = 2,
     MSGID_UNIMPLEMENTED = 3,
@@ -1238,19 +1241,56 @@ enum WS_MessageIds {
 };
 
 
-/* Allows the server to receive up to KEXDH GEX Request during KEX. */
-#define MSGID_KEXDH_LIMIT MSGID_KEXDH_GEX_REQUEST
+/* The following message ID ranges are described in RFC 5251, section 7. */
+enum WS_MessageIdLimits {
+/* Transport Layer Protocol: */
+    MSGIDLIMIT_TRANS_MIN = 1,
+    MSGIDLIMIT_TRANS_GEN_MIN = 1,
+    MSGIDLIMIT_TRANS_GEN_MAX = 19,
+    MSGIDLIMIT_TRANS_ALGO_MIN = 20,
+    MSGIDLIMIT_TRANS_ALGO_MAX = 29,
+    MSGIDLIMIT_TRANS_KEX_MIN = 30,
+    MSGIDLIMIT_TRANS_KEX_MAX = 49,
+    MSGIDLIMIT_TRANS_MAX = 49,
+/* User Authentication Protocol: */
+    MSGIDLIMIT_AUTH_MIN = 50,
+    MSGIDLIMIT_AUTH_GEN_MIN = 50,
+    MSGIDLIMIT_AUTH_GEN_MAX = 59,
+    MSGIDLIMIT_AUTH_METH_MIN = 60,
+    MSGIDLIMIT_AUTH_METH_MAX = 79,
+    MSGIDLIMIT_AUTH_MAX = 79,
+/* Connection Protocol: */
+    MSGIDLIMIT_CONN_MIN = 80,
+    MSGIDLIMIT_CONN_GEN_MIN = 80,
+    MSGIDLIMIT_CONN_GEN_MAX = 89,
+    MSGIDLIMIT_CONN_CHAN_MIN = 90,
+    MSGIDLIMIT_CONN_CHAN_MAX = 127,
+    MSGIDLIMIT_CONN_MAX = 127,
+/* Reserved For Client Protocols: */
+    MSGIDLIMIT_RESERVED_MIN = 128,
+    MSGIDLIMIT_RESERVED_MAX = 191,
+/* Local Extensions: */
+    MSGIDLIMIT_EXTENDED_MIN = 192,
+    MSGIDLIMIT_EXTENDED_MAX = 255,
+};
 
-/* The endpoints should not allow message IDs greater than or
- * equal to msgid 80 before user authentication is complete.
- * Per RFC 4252 section 6. */
-#define MSGID_USERAUTH_LIMIT 80
-
-/* The client should only send the user auth request message
- * (50), it should not accept it. The server should only receive
- * the user auth request message, it should not accept the other
- * user auth messages, it sends them. (>50) */
-#define MSGID_USERAUTH_RESTRICT 50
+/* Message ID bounds checking. */
+#define MSGIDLIMIT_BOUND(x,y,z) ((x) >= (y) && (x) <= (z))
+#define MSGIDLIMIT_COMP(x,name) \
+    MSGIDLIMIT_BOUND((x),MSGIDLIMIT_##name##_MIN,MSGIDLIMIT_##name##_MAX)
+#define MSGIDLIMIT_TRANS(x) MSGIDLIMIT_COMP((x),TRANS)
+#define MSGIDLIMIT_TRANS_GEN(x) MSGIDLIMIT_COMP((x),TRANS_GEN)
+#define MSGIDLIMIT_TRANS_ALGO(x) MSGIDLIMIT_COMP((x),TRANS_ALGO)
+#define MSGIDLIMIT_TRANS_KEX(x) MSGIDLIMIT_COMP((x),TRANS_KEX)
+#define MSGIDLIMIT_AUTH(x) MSGIDLIMIT_COMP((x),AUTH)
+#define MSGIDLIMIT_AUTH_GEN(x) MSGIDLIMIT_COMP((x),AUTH_GEN)
+#define MSGIDLIMIT_AUTH_METH(x) MSGIDLIMIT_COMP((x),AUTH_METH)
+#define MSGIDLIMIT_CONN(x) MSGIDLIMIT_COMP((x),CONN)
+#define MSGIDLIMIT_CONN_GEN(x) MSGIDLIMIT_COMP((x),CONN_GEN)
+#define MSGIDLIMIT_CONN_CHAN(x) MSGIDLIMIT_COMP((x),CONN_CHAN)
+#define MSGIDLIMIT_RESERVED(x) MSGIDLIMIT_COMP((x),RESERVED)
+#define MSGIDLIMIT_EXTENDED(x) MSGIDLIMIT_COMP((x),EXTENDED)
+#define MSGIDLIMIT_POST_USERAUTH(x) ((x) >= MSGIDLIMIT_CONN_MIN)
 
 
 #define CHANNEL_EXTENDED_DATA_STDERR WOLFSSH_EXT_DATA_STDERR
@@ -1259,6 +1299,11 @@ enum WS_MessageIds {
  * the message or receiving the message is allowed */
 #define WS_MSG_SEND 1
 #define WS_MSG_RECV 2
+
+#ifdef WOLFSSH_TEST_INTERNAL
+    WOLFSSH_API int wolfSSH_TestIsMessageAllowed(WOLFSSH* ssh, byte msg,
+            byte state);
+#endif
 
 /* dynamic memory types */
 enum WS_DynamicTypes {

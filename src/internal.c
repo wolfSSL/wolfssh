@@ -595,71 +595,110 @@ static void HandshakeInfoFree(HandshakeInfo* hs, void* heap)
 }
 
 
-/* RFC 4253 section 7.1, Once having sent SSH_MSG_KEXINIT the only messages
-* that can be sent are 1-19 (except SSH_MSG_SERVICE_REQUEST and
-* SSH_MSG_SERVICE_ACCEPT), 20-29 (except SSH_MSG_KEXINIT again), and 30-49
-*/
-INLINE static int IsMessageAllowedKeying(WOLFSSH *ssh, byte msg)
-{
-    if (ssh->isKeying == 0) {
-        return 1;
-    }
-
-    /* case of service request or accept in 1-19 */
-    if (msg == MSGID_SERVICE_REQUEST || msg == MSGID_SERVICE_ACCEPT) {
-        WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by during rekeying", msg);
-        ssh->error = WS_REKEYING;
-        return 0;
-    }
-
-    /* case of resending SSH_MSG_KEXINIT */
-    if (msg == MSGID_KEXINIT) {
-        WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by during rekeying", msg);
-        ssh->error = WS_REKEYING;
-        return 0;
-    }
-
-    /* case where message id greater than 49 */
-    if (msg >= MSGID_USERAUTH_REQUEST) {
-        WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by during rekeying", msg);
-        ssh->error = WS_REKEYING;
-        return 0;
-    }
-    return 1;
-}
-
-
 #ifndef NO_WOLFSSH_SERVER
 INLINE static int IsMessageAllowedServer(WOLFSSH *ssh, byte msg)
 {
-    /* Has client userauth started? */
-    if (ssh->acceptState < ACCEPT_KEYED) {
-        if (msg > MSGID_KEXDH_LIMIT) {
+    /* Only the server should send these messages, never receive. */
+    if (msg == MSGID_SERVICE_ACCEPT) {
+        WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                msg, "server", "ever");
+        ssh->error = WS_MSGID_NOT_ALLOWED_E;
+        return 0;
+    }
+
+    if (msg == MSGID_SERVICE_REQUEST) {
+        if (ssh->acceptState == ACCEPT_KEYED) {
+            return 1;
+        }
+        else {
+            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                    msg, "server", "after starting user auth");
             return 0;
         }
     }
+
+    /* Transport Layer Generic messages are always allowed. */
+    if (MSGIDLIMIT_TRANS_GEN(msg)) {
+        return 1;
+    }
+
+    /* Is KEX complete? */
+    if (MSGIDLIMIT_TRANS(msg)) {
+        if (ssh->isKeying & WOLFSSH_PEER_IS_KEYING) {
+            /* MSGID_KEXINIT not allowed when keying. */
+            if (msg == MSGID_KEXINIT) {
+                WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                        msg, "server", "when keying");
+                ssh->error = WS_REKEYING;
+                return 0;
+            }
+
+            /* Error if expecting a specific message and didn't receive. */
+            if (ssh->handshake && ssh->handshake->expectMsgId != MSGID_NONE) {
+                /* The explicit expectMsgId check supersedes the old
+                 * IsMessageAllowedKeying() stub for rekey filtering. */
+                if (msg != ssh->handshake->expectMsgId) {
+                    WLOG(WS_LOG_DEBUG,
+                            "Message ID %u not the expected message %u",
+                            msg, ssh->handshake->expectMsgId);
+                    ssh->error = WS_REKEYING;
+                    return 0;
+                }
+                else {
+                    /* Got the expected message, clear expectation. */
+                    ssh->handshake->expectMsgId = MSGID_NONE;
+                    return 1;
+                }
+            }
+        }
+        else {
+            /* MSGID_KEXINIT only allowed when not keying. */
+            if (msg == MSGID_KEXINIT) {
+                return 1;
+            }
+
+            /* All other transport KEX and ALGO messages are not allowed
+             * when not keying. */
+            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                    msg, "server", "when not keying");
+            ssh->error = WS_MSGID_NOT_ALLOWED_E;
+            return 0;
+        }
+    }
+
+    /* Has client userauth started? */
+    /* Allows the server to receive up to KEXDH GEX Request during KEX. */
+    if (ssh->acceptState < ACCEPT_KEYED) {
+        if (msg > MSGID_KEXDH_GEX_REQUEST) {
+            return 0;
+        }
+    }
+
     /* Is server userauth complete? */
     if (ssh->acceptState < ACCEPT_SERVER_USERAUTH_SENT) {
+        /* The server should only receive the user auth request message,
+         * it should not accept the other user auth messages, it sends
+         * them. (>50) */
         /* Explicitly check for messages not allowed before user
          * authentication has comleted. */
-        if (msg >= MSGID_USERAUTH_LIMIT) {
-            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by server "
-                    "before user authentication is complete", msg);
+        if (MSGIDLIMIT_POST_USERAUTH(msg)) {
+            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                    msg, "server", "before user authentication is complete");
             return 0;
         }
         /* Explicitly check for the user authentication messages that
          * only the server sends, it shouldn't receive them. */
-        if ((msg > MSGID_USERAUTH_RESTRICT) &&
+        if ((msg > MSGID_USERAUTH_REQUEST) &&
             (msg != MSGID_USERAUTH_INFO_RESPONSE)) {
-            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by server "
-                    "during user authentication", msg);
+            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                    msg, "server", "during user authentication");
             return 0;
         }
     }
     else {
-        if (msg >= MSGID_USERAUTH_RESTRICT && msg < MSGID_USERAUTH_LIMIT) {
-            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by server "
-                    "after user authentication", msg);
+        if (msg >= MSGID_USERAUTH_REQUEST && msg < MSGID_GLOBAL_REQUEST) {
+            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                    msg, "server", "after user authentication");
             return 0;
         }
     }
@@ -672,37 +711,110 @@ INLINE static int IsMessageAllowedServer(WOLFSSH *ssh, byte msg)
 #ifndef NO_WOLFSSH_CLIENT
 INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
 {
-    /* Has client userauth started? */
-    if (ssh->connectState < CONNECT_CLIENT_KEXDH_INIT_SENT) {
-        if (msg >= MSGID_KEXDH_LIMIT) {
+    /* Only the client should send these messages, never receive. */
+    if (msg == MSGID_SERVICE_REQUEST || msg == MSGID_USERAUTH_REQUEST) {
+        WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                msg, "client", "ever");
+        ssh->error = WS_MSGID_NOT_ALLOWED_E;
+        return 0;
+    }
+
+    if (msg == MSGID_SERVICE_ACCEPT) {
+        if (ssh->connectState == CONNECT_CLIENT_USERAUTH_REQUEST_SENT) {
+            return 1;
+        }
+        else {
+            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                    msg, "client", "after starting user auth");
             return 0;
         }
     }
-    /* Is client userauth complete? */
-    if (ssh->connectState < CONNECT_SERVER_USERAUTH_ACCEPT_DONE) {
-        /* Explicitly check for messages not allowed before user
-         * authentication has comleted. */
-        if (msg >= MSGID_USERAUTH_LIMIT) {
-            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by client "
-                    "before user authentication is complete", msg);
+
+    /* Transport Layer Generic messages are always allowed. */
+    if (MSGIDLIMIT_TRANS_GEN(msg)) {
+        return 1;
+    }
+
+    /* Is KEX complete? */
+    if (MSGIDLIMIT_TRANS(msg)) {
+        if (ssh->isKeying & WOLFSSH_PEER_IS_KEYING) {
+            /* MSGID_KEXINIT not allowed when keying. */
+            if (msg == MSGID_KEXINIT) {
+                WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                        msg, "client", "when keying");
+                ssh->error = WS_REKEYING;
+                return 0;
+            }
+
+            /* Error if expecting a specific message and didn't receive. */
+            if (ssh->handshake && ssh->handshake->expectMsgId != MSGID_NONE) {
+                /* The explicit expectMsgId check supersedes the old
+                 * IsMessageAllowedKeying() stub for rekey filtering. */
+                if (msg != ssh->handshake->expectMsgId) {
+                    WLOG(WS_LOG_DEBUG,
+                            "Message ID %u not the expected message %u",
+                            msg, ssh->handshake->expectMsgId);
+                    ssh->error = WS_REKEYING;
+                    return 0;
+                }
+                else {
+                    /* Got the expected message, clear expectation. */
+                    ssh->handshake->expectMsgId = MSGID_NONE;
+                    return 1;
+                }
+            }
+        }
+        else {
+            /* MSGID_KEXINIT only allowed when not keying. */
+            if (msg == MSGID_KEXINIT) {
+                return 1;
+            }
+
+            /* All other transport KEX and ALGO messages are not allowed
+             * when not keying. */
+            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                    msg, "client", "when not keying");
+            ssh->error = WS_MSGID_NOT_ALLOWED_E;
             return 0;
         }
-        /* Explicitly check for the user authentication message that
-         * only the client sends, it shouldn't receive it. */
-        if (msg == MSGID_USERAUTH_RESTRICT) {
-            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by client "
-                    "during user authentication", msg);
+    }
+
+    /* Is client userauth complete? */
+    if (ssh->connectState >= CONNECT_KEYED
+            && ssh->connectState < CONNECT_SERVER_USERAUTH_ACCEPT_DONE) {
+        /* The endpoints should not allow message IDs greater than or
+         * equal to msgid 80 before user authentication is complete.
+         * Per RFC 4252 section 6. */
+        if (MSGIDLIMIT_POST_USERAUTH(msg)) {
+            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                    msg, "client", "before user authentication is complete");
+            ssh->error = WS_MSGID_NOT_ALLOWED_E;
             return 0;
+        }
+        else if (MSGIDLIMIT_AUTH(msg)) {
+            /* Do not accept any userauth messages until we've asked for auth. */
+            if (ssh->connectState < CONNECT_CLIENT_USERAUTH_REQUEST_SENT) {
+                WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                        msg, "client", "before sending userauth request");
+                ssh->error = WS_MSGID_NOT_ALLOWED_E;
+                return 0;
+            }
+            return 1;
         }
     }
     else {
-        if (msg >= MSGID_USERAUTH_RESTRICT && msg < MSGID_USERAUTH_LIMIT) {
-            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by client "
-                    "after user authentication", msg);
+        if (MSGIDLIMIT_POST_USERAUTH(msg)) {
+            return 1;
+        }
+        else if (MSGIDLIMIT_AUTH(msg)) {
+            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                    msg, "client", "after user authentication");
+            ssh->error = WS_MSGID_NOT_ALLOWED_E;
             return 0;
         }
     }
-    return 1;
+
+    return 0;
 }
 #endif /* NO_WOLFSSH_CLIENT */
 
@@ -711,10 +823,6 @@ INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
  * Returns 1 if allowed 0 if not allowed. */
 INLINE static int IsMessageAllowed(WOLFSSH *ssh, byte msg, byte state)
 {
-    if (state == WS_MSG_SEND && !IsMessageAllowedKeying(ssh, msg)) {
-        return 0;
-    }
-
 #ifndef NO_WOLFSSH_SERVER
     if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
         return IsMessageAllowedServer(ssh, msg);
@@ -725,8 +833,16 @@ INLINE static int IsMessageAllowed(WOLFSSH *ssh, byte msg, byte state)
         return IsMessageAllowedClient(ssh, msg);
     }
 #endif /* NO_WOLFSSH_CLIENT */
+    (void)state;
     return 0;
 }
+
+#ifdef WOLFSSH_TEST_INTERNAL
+int wolfSSH_TestIsMessageAllowed(WOLFSSH* ssh, byte msg, byte state)
+{
+    return IsMessageAllowed(ssh, msg, state);
+}
+#endif
 
 
 static const char cannedKexAlgoNames[] =
@@ -5872,8 +5988,11 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         ret = GenerateKeys(ssh, hashId, !ssh->handshake->useEccMlKem);
     }
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
+        ssh->handshake->expectMsgId = MSGID_NEWKEYS;
+        WLOG_EXPECT_MSGID(ssh->handshake->expectMsgId);
         ret = SendNewKeys(ssh);
+    }
 
     if (sigKeyBlock_ptr)
         WFREE(sigKeyBlock_ptr, ssh->ctx->heap, DYNTYPE_PRIVKEY);
@@ -10648,8 +10767,9 @@ int SendKexInit(WOLFSSH* ssh)
         ret = BundlePacket(ssh);
     }
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
         ret = wolfSSH_SendPacket(ssh);
+    }
 
     if (ret != WS_WANT_WRITE && ret != WS_SUCCESS)
         PurgePacket(ssh);
@@ -12610,8 +12730,11 @@ int SendKexDhGexRequest(WOLFSSH* ssh)
         ret = BundlePacket(ssh);
     }
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
+        WLOG_EXPECT_MSGID(MSGID_KEXDH_GEX_GROUP);
+        ssh->handshake->expectMsgId = MSGID_KEXDH_GEX_GROUP;
         ret = wolfSSH_SendPacket(ssh);
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving SendKexDhGexRequest(), ret = %d", ret);
     return ret;
@@ -12701,6 +12824,7 @@ int SendKexDhInit(WOLFSSH* ssh)
 #endif
     int ret = WS_SUCCESS;
     byte msgId = MSGID_KEXDH_INIT;
+    byte expectMsgId = MSGID_KEXDH_REPLY;
     byte e[MAX_KEX_KEY_SZ+1]; /* plus 1 in case of padding. */
     word32 eSz = (word32)sizeof(e);
     byte  ePad = 0;
@@ -12752,6 +12876,7 @@ int SendKexDhInit(WOLFSSH* ssh)
             generator = ssh->handshake->generator;
             generatorSz = ssh->handshake->generatorSz;
             msgId = MSGID_KEXDH_GEX_INIT;
+            expectMsgId = MSGID_KEXDH_GEX_REPLY;
             break;
 #endif
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256
@@ -12960,8 +13085,11 @@ int SendKexDhInit(WOLFSSH* ssh)
         ret = BundlePacket(ssh);
     }
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
+        WLOG_EXPECT_MSGID(expectMsgId);
+        ssh->handshake->expectMsgId = expectMsgId;
         ret = wolfSSH_SendPacket(ssh);
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving SendKexDhInit(), ret = %d", ret);
     return ret;

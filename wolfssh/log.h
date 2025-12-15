@@ -81,6 +81,8 @@ WOLFSSH_API void wolfSSH_Log(enum wolfSSH_LogLevel,
     #define WLOG(...) WC_DO_NOTHING
 #endif
 
+#define WLOG_EXPECT_MSGID(x) WLOG(WS_LOG_DEBUG, "Expecting message %d", (x))
+
 #ifdef __cplusplus
 }
 #endif
