@@ -3584,20 +3584,13 @@ int GetString(char* s, word32* sSz, const byte* buf, word32 len, word32 *idx)
 {
     int result;
     word32 strSz;
+    const byte* str;
 
-    result = GetUint32(&strSz, buf, len, idx);
-
+    result = GetStringRef(&strSz, &str, buf, len, idx);
     if (result == WS_SUCCESS) {
-        result = WS_BUFFER_E;
-
-        /* This allows 0 length string to be decoded */
-        if (*idx <= len && strSz <= len - *idx) {
-            *sSz = (strSz >= *sSz) ? *sSz - 1 : strSz; /* -1 for null char */
-            WMEMCPY(s, buf + *idx, *sSz);
-            *idx += strSz;
-            s[*sSz] = 0;
-            result = WS_SUCCESS;
-        }
+        *sSz = (strSz >= *sSz) ? *sSz - 1 : strSz; /* -1 for null char */
+        WMEMCPY(s, str, *sSz);
+        s[*sSz] = 0;
     }
 
     return result;
@@ -3609,24 +3602,24 @@ int GetString(char* s, word32* sSz, const byte* buf, word32 len, word32 *idx)
 int GetStringAlloc(void* heap, char** s, const byte* buf, word32 len, word32 *idx)
 {
     int result;
-    char* str;
+    const byte *str;
     word32 strSz;
 
-    result = GetUint32(&strSz, buf, len, idx);
-
+    result = GetStringRef(&strSz, &str, buf, len, idx);
     if (result == WS_SUCCESS) {
-        if (*idx >= len || strSz > len - *idx)
-            return WS_BUFFER_E;
-        str = (char*)WMALLOC(strSz + 1, heap, DYNTYPE_STRING);
-        if (str == NULL)
+        char* newStr;
+
+        newStr = (char*)WMALLOC(strSz + 1, heap, DYNTYPE_STRING);
+        if (newStr == NULL)
             return WS_MEMORY_E;
-        WMEMCPY(str, buf + *idx, strSz);
-        *idx += strSz;
-        str[strSz] = '\0';
+
+        if (strSz > 0 && str)
+            WMEMCPY(newStr, str, strSz);
+        newStr[strSz] = 0;
 
         if (*s != NULL)
             WFREE(*s, heap, DYNTYPE_STRING);
-        *s = str;
+        *s = newStr;
     }
 
     return result;
@@ -3641,15 +3634,17 @@ int GetStringRef(word32* strSz, const byte** str,
     int result;
 
     result = GetUint32(strSz, buf, len, idx);
-
     if (result == WS_SUCCESS) {
-        result = WS_BUFFER_E;
-
-        if (*idx < len && *strSz <= len - *idx) {
-            *str = buf + *idx;
-            *idx += *strSz;
-            result = WS_SUCCESS;
+        if (*idx <= len && *strSz <= len - *idx) {
+            if (*strSz) {
+                *str = buf + *idx;
+                *idx += *strSz;
+            }
+            else
+                *str = NULL;
         }
+        else
+            result = WS_BUFFER_E;
     }
 
     return result;
@@ -9142,7 +9137,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
         #ifdef WOLFSSH_TERM
         else if (WSTRNCMP(type, "pty-req", typeSz) == 0) {
             char term[32];
-            const byte* modes;
+            char* modes = NULL;
             word32 termSz, modesSz = 0;
             word32 widthChar, heightRows, widthPixels, heightPixels;
 
@@ -9158,25 +9153,20 @@ static int DoChannelRequest(WOLFSSH* ssh,
             if (ret == WS_SUCCESS)
                 ret = GetUint32(&heightPixels, buf, len, &begin);
             if (ret == WS_SUCCESS)
-                ret = GetStringRef(&modesSz, &modes, buf, len, &begin);
+                ret = GetStringAlloc(&modesSz, &modes, buf, len, &begin);
             if (ret == WS_SUCCESS) {
-                ssh->modes = (byte*)WMALLOC(modesSz,
-                        ssh->ctx->heap, DYNTYPE_STRING);
-                if (ssh->modes == NULL)
-                    ret = WS_MEMORY_E;
-            }
-            if (ret == WS_SUCCESS) {
-                ssh->modesSz = modesSz;
-                WMEMCPY(ssh->modes, modes, modesSz);
                 WLOG(WS_LOG_DEBUG, "  term = %s", term);
                 WLOG(WS_LOG_DEBUG, "  widthChar = %u", widthChar);
                 WLOG(WS_LOG_DEBUG, "  heightRows = %u", heightRows);
                 WLOG(WS_LOG_DEBUG, "  widthPixels = %u", widthPixels);
                 WLOG(WS_LOG_DEBUG, "  heightPixels = %u", heightPixels);
+                WLOG(WS_LOG_DEBUG, "  modesSz = %u", modesSz);
                 ssh->widthChar = widthChar;
                 ssh->heightRows = heightRows;
                 ssh->widthPixels = widthPixels;
                 ssh->heightPixels = heightPixels;
+                ssh->modes = (byte*)modes;
+                ssh->modesSz = modesSz;
                 if (ssh->termResizeCb) {
                     if (ssh->termResizeCb(ssh, widthChar, heightRows,
                             widthPixels, heightPixels,
