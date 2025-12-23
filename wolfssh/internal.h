@@ -184,6 +184,16 @@ extern "C" {
     #undef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
     #define WOLFSSH_NO_NISTP256_MLKEM768_SHA256
 #endif
+#if !defined(WOLFSSL_HAVE_MLKEM) || !defined(WOLFSSL_SHA384) \
+    || defined(WOLFSSH_NO_ECDH_SHA2_NISTP384)
+    #undef WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
+    #define WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
+#endif
+#if !defined(WOLFSSL_HAVE_MLKEM) || defined(NO_SHA256) \
+    || !defined(HAVE_CURVE25519)
+    #undef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
+    #define WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
+#endif
 #if !defined(HAVE_CURVE25519) || defined(NO_SHA256)
     #undef WOLFSSH_NO_CURVE25519_SHA256
     #define WOLFSSH_NO_CURVE25519_SHA256
@@ -198,6 +208,8 @@ extern "C" {
     defined(WOLFSSH_NO_ECDH_SHA2_NISTP384) && \
     defined(WOLFSSH_NO_ECDH_SHA2_NISTP521) && \
     defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) && \
+    defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384) && \
+    defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256) && \
     defined(WOLFSSH_NO_CURVE25519_SHA256)
     #error "You need at least one key agreement algorithm."
 #endif
@@ -343,6 +355,12 @@ enum {
 #ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
     ID_NISTP256_MLKEM768_SHA256,
 #endif
+#ifndef WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
+    ID_NISTP384_MLKEM1024_SHA384,
+#endif
+#ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
+    ID_CURVE25519_MLKEM768_SHA256,
+#endif
 #ifndef WOLFSSH_NO_CURVE25519_SHA256
     ID_CURVE25519_SHA256,
     ID_CURVE25519_SHA256_LIBSSH,
@@ -452,7 +470,11 @@ enum NameIdType {
     #define WOLFSSH_DEFAULT_GEXDH_MAX 8192
 #endif
 #ifndef MAX_KEX_KEY_SZ
-    #ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
+    #ifndef WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
+        /* Private key size of ML-KEM 1024. Biggest artifact. */
+        #define MAX_KEX_KEY_SZ 3168
+    #elif !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
+          !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
         /* Private key size of ML-KEM 768. Biggest artifact. */
         #define MAX_KEX_KEY_SZ 2400
     #else
@@ -645,6 +667,7 @@ typedef struct HandshakeInfo {
     byte useEcc:1;
     byte useEccMlKem:1;
     byte useCurve25519:1;
+    byte useCurve25519MlKem:1;
 
     union {
 #ifndef WOLFSSH_NO_DH
