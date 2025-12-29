@@ -35,8 +35,8 @@
 extern "C" {
 #endif
 
-#define LIBWOLFSSH_VERSION_STRING "1.4.21"
-#define LIBWOLFSSH_VERSION_HEX 0x01004021
+#define LIBWOLFSSH_VERSION_STRING "1.4.22"
+#define LIBWOLFSSH_VERSION_HEX 0x01004022
 
 #ifdef __cplusplus
 }

@@ -1,3 +1,77 @@
+# wolfSSH v1.4.22 (December 31, 2025)
+
+## Vulnerabilities
+
+- [Critical] CVE-2025-14942. wolfSSH’s key exchange state machine can be
+  manipulated to leak the client’s password in the clear, trick the client to
+  send a bogus signature, or trick the client into skipping user
+  authentication. This affects client applications with wolfSSH version 1.4.21
+  and earlier. Users of wolfSSH must update or apply the fix patch and it’s
+  recommended to update credentials used. This fix is also recommended for
+  wolfSSH server applications. While there aren’t any specific attacks, the
+  same defect is present.
+
+## New Features
+
+- Added a complete SFTP client example for the Renesas RX72N platform. (PR
+  847)
+- Enabled TSIP support and provided cleaned-up configuration headers for the
+  RX72N example. (PR 847)
+- Added FIPS-enabled build configurations to the Visual Studio project files.
+  (PR 851)
+- Added documentation describing how to build and use the new FIPS Visual
+  Studio configurations. (PR 851)
+- Introduced regression tests covering SSH agent signing, including error
+  paths and successful operation. (PR 856)
+- Added regression tests that explicitly exercise WANT_READ / WANT_WRITE  paths
+  to guard against deadlocks. (PR 856)
+
+## Improvements
+
+- Refactored SSH string parsing by unifying GetString() and GetStringAlloc()
+  around GetStringRef(), simplifying maintenance and reducing duplication. (PR
+  857)
+- Enhanced SSH message-order validation by introducing explicit
+  expected-message tracking and clearer message ID range macros. (PR 855)
+- Improved server-side out-of-order message checking to align behavior with the
+  stricter client implementation. (PR 855)
+- Improved worker thread behavior under window backpressure by prioritizing
+  receive handling, preventing stalls with small-window SFTP clients. (PR 856)
+- Hardened SSH agent handling logic by validating response types, tracking
+  message IDs, and enforcing strict buffer size limits. (PR 845)
+- Improved SCP path handling by canonicalizing client-supplied base paths
+  before filesystem access. (PR 845)
+- Improved portability by replacing non-standard <sys/errno.h> includes with
+  standard <errno.h>. (PR 852)
+- Reduced logging overhead by defining WLOG as a no-op when debugging is
+  disabled. (PR 839)
+- Updated documentation to better reflect current features, examples, and build
+  options. (PR 851)
+
+## Fixes
+
+- Fixed incorrect handling of zero-length SSH strings in packet parsing. (PR
+  857)
+- Fixed a worker-thread deadlock caused by blocked sends preventing
+  window-adjust processing. (PR 856)
+- Fixed a double-free crash and eliminated a socket-close spin loop under error
+  conditions. (PR 855)
+- Fixed uninitialized authentication data that could lead to undefined behavior
+  during authentication. (PR 854)
+- Fixed SFTP connection interoperability issues discovered through
+  cross-implementation testing. SFTP fix for init to handle channel data which
+  resolves a potential interoperability SFTP connection issue. (PR 846)
+- Fixed SCP receive handling to reject traversal filenames containing path
+  separators or “dot” components. (PR 845)
+- Fixed missing declaration of wc_SSH_KDF that caused build failures under
+  strict compiler warnings. (PR 848)
+- Fixed SSH agent test setup so regression tests exercise the intended code
+  paths. (PR 845)
+- Excluded a standalone regression test from Zephyr builds where it was
+  incompatible with the Zephyr test model. (PR 855)
+
+---
+
 # wolfSSH v1.4.21 (October 20, 2025)
 
 ## Vulnerabilities
@@ -51,6 +125,8 @@
 - Rename wolfssh test certs to avoid conflict with wolfssl test certs (PR 831)
 - Do not treat the shell as interactive until pty-req message request is received. This fixes an interoperability issue with WinSCP (PR 832)
 
+---
+
 # wolfSSH v1.4.20 (Feburary 20, 2025)
 
 ## New Features
@@ -73,6 +149,7 @@
 - Reinstate support for P521 and P384 curves by default when compiled in (PR 762)
 - Fix for wolfSSH client app handling of an empty hostname (PR 768)
 
+---
 
 # wolfSSH v1.4.19 (November 1, 2024)
 
@@ -97,6 +174,7 @@
 - Minor static analysis report fixes (PR 740, 735)
 - Fix for handling SFTP transfer to non-existent folder (PR 743)
 
+---
 
 # wolfSSH v1.4.18 (July 22, 2024)
 
