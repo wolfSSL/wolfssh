@@ -9,7 +9,13 @@
   and earlier. Users of wolfSSH must update or apply the fix patch and it’s
   recommended to update credentials used. This fix is also recommended for
   wolfSSH server applications. While there aren’t any specific attacks, the
-  same defect is present.
+  same defect is present. Thanks to Aina Toky Rasoamanana of Valeo and Olivier
+  Levillain of Telecom SudParis for the report. (PR 855)
+- [Medium] CVE-2025-15382. The function used to clean up a path string may read
+  one byte off the end of the bounds of the string. The function is used by the
+  SCP handling in wolfSSH. This affects server applications with wolfSSH
+  versions 1.4.12 through 1.4.21, inclusive. Thanks to Luigino Camastra from
+  Aisle Research for the report. (PR 859)
 
 ## New Features
 
@@ -50,6 +56,7 @@
 
 ## Fixes
 
+- Fix off-by-1 read error when cleaning the file path for SCP. (PR  859)
 - Fixed incorrect handling of zero-length SSH strings in packet parsing. (PR
   857)
 - Fixed a worker-thread deadlock caused by blocked sends preventing
