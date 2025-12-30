@@ -1,6 +1,6 @@
 /* auth.h
  *
- * Copyright (C) 2025 wolfSSL Inc.
+ * Copyright (C) 2014-2026 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
