@@ -9153,8 +9153,10 @@ static int DoChannelRequest(WOLFSSH* ssh,
             if (ret == WS_SUCCESS)
                 ret = GetUint32(&heightPixels, buf, len, &begin);
             if (ret == WS_SUCCESS)
-                ret = GetStringAlloc(&modesSz, &modes, buf, len, &begin);
+                ret = GetStringAlloc(ssh->ctx->heap, &modes, buf, len, &begin);
             if (ret == WS_SUCCESS) {
+                if (modes != NULL)
+                    modesSz = (word32)WSTRLEN(modes);
                 WLOG(WS_LOG_DEBUG, "  term = %s", term);
                 WLOG(WS_LOG_DEBUG, "  widthChar = %u", widthChar);
                 WLOG(WS_LOG_DEBUG, "  heightRows = %u", heightRows);
