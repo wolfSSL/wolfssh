@@ -1,4 +1,4 @@
-# wolfSSH v1.4.22 (December 31, 2025)
+# wolfSSH v1.4.22 (January 5, 2026)
 
 ## Vulnerabilities
 
