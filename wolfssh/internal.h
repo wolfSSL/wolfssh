@@ -1024,7 +1024,7 @@ WOLFSSH_LOCAL int GetMpint(word32* mpintSz, const byte** mpint,
         const byte* buf, word32 len, word32* idx);
 WOLFSSH_LOCAL int GetString(char* s, word32* sSz,
         const byte* buf, word32 len, word32* idx);
-WOLFSSH_LOCAL int GetStringAlloc(void* heap, char** s,
+WOLFSSH_LOCAL int GetStringAlloc(void* heap, char** s, word32* sSz,
         const byte* buf, word32 len, word32* idx);
 WOLFSSH_LOCAL int GetStringRef(word32* strSz, const byte **str,
         const byte* buf, word32 len, word32* idx);

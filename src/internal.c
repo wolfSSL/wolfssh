@@ -3599,11 +3599,16 @@ int GetString(char* s, word32* sSz, const byte* buf, word32 len, word32 *idx)
 
 /* Gets the size of a string, allocates memory to hold it plus a NULL, then
  * copies it into the allocated buffer, and terminates it with a NULL. */
-int GetStringAlloc(void* heap, char** s, const byte* buf, word32 len, word32 *idx)
+int GetStringAlloc(void* heap, char** s, word32* sSz,
+        const byte* buf, word32 len, word32 *idx)
 {
     int result;
     const byte *str;
     word32 strSz;
+
+    if (s == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
 
     result = GetStringRef(&strSz, &str, buf, len, idx);
     if (result == WS_SUCCESS) {
@@ -3620,6 +3625,8 @@ int GetStringAlloc(void* heap, char** s, const byte* buf, word32 len, word32 *id
         if (*s != NULL)
             WFREE(*s, heap, DYNTYPE_STRING);
         *s = newStr;
+        if (sSz != NULL)
+            *sSz = strSz;
     }
 
     return result;
@@ -8184,14 +8191,15 @@ static int DoUserAuthInfoRequest(WOLFSSH* ssh, byte* buf, word32 len,
 
     if (ret == WS_SUCCESS) {
         begin = *idx;
-        ret = GetStringAlloc(heap, (char**)&authName, buf, len, &begin);
+        ret = GetStringAlloc(heap, (char**)&authName, NULL, buf, len, &begin);
     }
 
     if (ret == WS_SUCCESS)
-        ret = GetStringAlloc(heap, (char**)&authInstruction, buf, len, &begin);
+        ret = GetStringAlloc(heap, (char**)&authInstruction, NULL,
+                buf, len, &begin);
 
     if (ret == WS_SUCCESS)
-        ret = GetStringAlloc(heap, (char**)&language, buf, len, &begin);
+        ret = GetStringAlloc(heap, (char**)&language, NULL, buf, len, &begin);
 
     if (ret == WS_SUCCESS)
         ret = GetUint32(&promptSz, buf, len, &begin);
@@ -8218,7 +8226,7 @@ static int DoUserAuthInfoRequest(WOLFSSH* ssh, byte* buf, word32 len,
         } else {
             WMEMSET(echo, 0, sizeof(byte) * promptSz);
             for (entry = 0; entry < promptSz; entry++) {
-                ret = GetStringAlloc(heap, (char**)&prompts[entry],
+                ret = GetStringAlloc(heap, (char**)&prompts[entry], NULL,
                                      buf, len, &begin);
                 if (ret != WS_SUCCESS)
                     break;
@@ -8283,7 +8291,7 @@ static int DoGlobalRequestFwd(WOLFSSH* ssh,
     if (ret == WS_SUCCESS) {
         begin = *idx;
         WLOG(WS_LOG_INFO, "wantReply = %d, isCancel = %d", wantReply, isCancel);
-        ret = GetStringAlloc(ssh->ctx->heap, &bindAddr, buf, len, &begin);
+        ret = GetStringAlloc(ssh->ctx->heap, &bindAddr, NULL, buf, len, &begin);
     }
 
     if (ret == WS_SUCCESS) {
@@ -8398,14 +8406,14 @@ static int DoChannelOpenForward(WOLFSSH* ssh,
 
     if (ret == WS_SUCCESS) {
         begin = *idx;
-        ret = GetStringAlloc(ssh->ctx->heap, host, buf, len, &begin);
+        ret = GetStringAlloc(ssh->ctx->heap, host, NULL, buf, len, &begin);
     }
 
     if (ret == WS_SUCCESS)
         ret = GetUint32(hostPort, buf, len, &begin);
 
     if (ret == WS_SUCCESS)
-        ret = GetStringAlloc(ssh->ctx->heap, origin, buf, len, &begin);
+        ret = GetStringAlloc(ssh->ctx->heap, origin, NULL, buf, len, &begin);
 
     if (ret == WS_SUCCESS)
         ret = GetUint32(originPort, buf, len, &begin);
@@ -9113,7 +9121,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
             ssh->clientState = CLIENT_DONE;
         }
         else if (WSTRNCMP(type, "exec", typeSz) == 0) {
-            ret = GetStringAlloc(ssh->ctx->heap, &channel->command,
+            ret = GetStringAlloc(ssh->ctx->heap, &channel->command, NULL,
                     buf, len, &begin);
             channel->sessionType = WOLFSSH_SESSION_EXEC;
             if (ssh->ctx->channelReqExecCb) {
@@ -9124,7 +9132,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
             WLOG(WS_LOG_DEBUG, "  command = %s", channel->command);
         }
         else if (WSTRNCMP(type, "subsystem", typeSz) == 0) {
-            ret = GetStringAlloc(ssh->ctx->heap, &channel->command,
+            ret = GetStringAlloc(ssh->ctx->heap, &channel->command, NULL,
                     buf, len, &begin);
             channel->sessionType = WOLFSSH_SESSION_SUBSYSTEM;
             if (ssh->ctx->channelReqSubsysCb) {
@@ -9137,39 +9145,34 @@ static int DoChannelRequest(WOLFSSH* ssh,
         #ifdef WOLFSSH_TERM
         else if (WSTRNCMP(type, "pty-req", typeSz) == 0) {
             char term[32];
-            char* modes = NULL;
-            word32 termSz, modesSz = 0;
-            word32 widthChar, heightRows, widthPixels, heightPixels;
+            word32 termSz;
 
-            channel->ptyReq = 1; /* recieved a pty request */
+            channel->ptyReq = 1; /* received a pty request */
             termSz = (word32)sizeof(term);
             ret = GetString(term, &termSz, buf, len, &begin);
             if (ret == WS_SUCCESS)
-                ret = GetUint32(&widthChar, buf, len, &begin);
+                ret = GetUint32(&ssh->widthChar, buf, len, &begin);
             if (ret == WS_SUCCESS)
-                ret = GetUint32(&heightRows, buf, len, &begin);
+                ret = GetUint32(&ssh->heightRows, buf, len, &begin);
             if (ret == WS_SUCCESS)
-                ret = GetUint32(&widthPixels, buf, len, &begin);
+                ret = GetUint32(&ssh->widthPixels, buf, len, &begin);
             if (ret == WS_SUCCESS)
-                ret = GetUint32(&heightPixels, buf, len, &begin);
+                ret = GetUint32(&ssh->heightPixels, buf, len, &begin);
             if (ret == WS_SUCCESS)
-                ret = GetStringAlloc(&modesSz, &modes, buf, len, &begin);
+                ret = GetStringAlloc(ssh->ctx->heap,
+                        (char**)&ssh->modes, &ssh->modesSz,
+                        buf, len, &begin);
             if (ret == WS_SUCCESS) {
                 WLOG(WS_LOG_DEBUG, "  term = %s", term);
-                WLOG(WS_LOG_DEBUG, "  widthChar = %u", widthChar);
-                WLOG(WS_LOG_DEBUG, "  heightRows = %u", heightRows);
-                WLOG(WS_LOG_DEBUG, "  widthPixels = %u", widthPixels);
-                WLOG(WS_LOG_DEBUG, "  heightPixels = %u", heightPixels);
-                WLOG(WS_LOG_DEBUG, "  modesSz = %u", modesSz);
-                ssh->widthChar = widthChar;
-                ssh->heightRows = heightRows;
-                ssh->widthPixels = widthPixels;
-                ssh->heightPixels = heightPixels;
-                ssh->modes = (byte*)modes;
-                ssh->modesSz = modesSz;
+                WLOG(WS_LOG_DEBUG, "  widthChar = %u", ssh->widthChar);
+                WLOG(WS_LOG_DEBUG, "  heightRows = %u", ssh->heightRows);
+                WLOG(WS_LOG_DEBUG, "  widthPixels = %u", ssh->widthPixels);
+                WLOG(WS_LOG_DEBUG, "  heightPixels = %u", ssh->heightPixels);
+                WLOG(WS_LOG_DEBUG, "  modesSz = %u", ssh->modesSz);
                 if (ssh->termResizeCb) {
-                    if (ssh->termResizeCb(ssh, widthChar, heightRows,
-                            widthPixels, heightPixels,
+                    if (ssh->termResizeCb(ssh,
+                            ssh->widthChar, ssh->heightRows,
+                            ssh->widthPixels, ssh->heightPixels,
                             ssh->termCtx) != WS_SUCCESS) {
                         ret = WS_FATAL_ERROR;
                     }
