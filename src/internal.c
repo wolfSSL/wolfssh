@@ -2827,6 +2827,9 @@ byte NameToId(const char* name, word32 nameSz)
     byte id = ID_UNKNOWN;
     word32 i;
 
+    if (name == NULL)
+        return id;
+
     for (i = 0; i < (sizeof(NameIdMap)/sizeof(NameIdPair)); i++) {
         if (nameSz == (word32)WSTRLEN(NameIdMap[i].name) &&
             XMEMCMP(name, NameIdMap[i].name, nameSz) == 0) {
@@ -3582,14 +3585,20 @@ int GetMpint(word32* mpintSz, const byte** mpint,
  * the provided buffer, and terminates it with a NULL. */
 int GetString(char* s, word32* sSz, const byte* buf, word32 len, word32 *idx)
 {
-    int result;
+    int result = WS_SUCCESS;
     word32 strSz;
     const byte* str;
 
-    result = GetStringRef(&strSz, &str, buf, len, idx);
+    if (s == NULL || sSz == NULL)
+        result = WS_BAD_ARGUMENT;
+
+    if (result == WS_SUCCESS)
+        result = GetStringRef(&strSz, &str, buf, len, idx);
+
     if (result == WS_SUCCESS) {
         *sSz = (strSz >= *sSz) ? *sSz - 1 : strSz; /* -1 for null char */
-        WMEMCPY(s, str, *sSz);
+        if (strSz && str)
+            WMEMCPY(s, str, *sSz);
         s[*sSz] = 0;
     }
 
@@ -3602,22 +3611,24 @@ int GetString(char* s, word32* sSz, const byte* buf, word32 len, word32 *idx)
 int GetStringAlloc(void* heap, char** s, word32* sSz,
         const byte* buf, word32 len, word32 *idx)
 {
-    int result;
+    int result = WS_SUCCESS;
     const byte *str;
+    char* newStr;
     word32 strSz;
 
-    if (s == NULL) {
-        return WS_BAD_ARGUMENT;
-    }
+    if (s == NULL)
+        result = WS_BAD_ARGUMENT;
 
-    result = GetStringRef(&strSz, &str, buf, len, idx);
+    if (result == WS_SUCCESS)
+        result = GetStringRef(&strSz, &str, buf, len, idx);
+
     if (result == WS_SUCCESS) {
-        char* newStr;
-
         newStr = (char*)WMALLOC(strSz + 1, heap, DYNTYPE_STRING);
         if (newStr == NULL)
-            return WS_MEMORY_E;
+            result = WS_MEMORY_E;
+    }
 
+    if (result == WS_SUCCESS) {
         if (strSz > 0 && str)
             WMEMCPY(newStr, str, strSz);
         newStr[strSz] = 0;
@@ -3638,9 +3649,14 @@ int GetStringAlloc(void* heap, char** s, word32* sSz,
 int GetStringRef(word32* strSz, const byte** str,
         const byte* buf, word32 len, word32* idx)
 {
-    int result;
+    int result = WS_SUCCESS;
 
-    result = GetUint32(strSz, buf, len, idx);
+    if (str == NULL || strSz == NULL)
+        result = WS_BAD_ARGUMENT;
+
+    if (result == WS_SUCCESS)
+        result = GetUint32(strSz, buf, len, idx);
+
     if (result == WS_SUCCESS) {
         if (*idx <= len && *strSz <= len - *idx) {
             if (*strSz) {
@@ -6907,8 +6923,8 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
-        if (publicKeyTypeSz != 7 &&
-            WMEMCMP(publicKeyType, "ssh-rsa", 7) != 0) {
+        if (publicKeyTypeSz != 7 || publicKeyType == NULL
+            || WMEMCMP(publicKeyType, "ssh-rsa", 7) != 0) {
 
             WLOG(WS_LOG_DEBUG,
                 "Public Key's type does not match public key type");
@@ -6946,8 +6962,10 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
-        if (publicKeyTypeSz != pk->publicKeyTypeSz &&
-            WMEMCMP(publicKeyType, pk->publicKeyType, publicKeyTypeSz) != 0) {
+        if (publicKeyTypeSz != pk->publicKeyTypeSz
+            || publicKeyType == NULL
+            || WMEMCMP(publicKeyType, pk->publicKeyType,
+                    publicKeyTypeSz) != 0) {
 
             WLOG(WS_LOG_DEBUG,
                  "Signature's type does not match public key type");
