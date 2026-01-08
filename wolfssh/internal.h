@@ -1411,7 +1411,7 @@ WOLFSSH_LOCAL int wsScpSendCallback(WOLFSSH*, int, const char*, char*, word32,
 #endif
 
 
-WOLFSSH_LOCAL int wolfSSH_CleanPath(WOLFSSH* ssh, char* in);
+WOLFSSH_LOCAL int wolfSSH_CleanPath(WOLFSSH* ssh, char* in, int inSz);
 #ifndef WOLFSSH_NO_RSA
 WOLFSSH_LOCAL int wolfSSH_RsaVerify(
         const byte *sig, word32 sigSz,

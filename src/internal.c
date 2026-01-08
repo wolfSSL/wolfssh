@@ -16992,9 +16992,9 @@ int wolfSSH_GetPath(const char* defaultPath, byte* in, word32 inSz,
 }
 
 
-/* cleans up absolute path
+/* Cleans up absolute path, OS specific.
  * returns size of new path on success (strlen sz) and negative values on fail*/
-int wolfSSH_CleanPath(WOLFSSH* ssh, char* in)
+int wolfSSH_CleanPath(WOLFSSH* ssh, char* in, int inSz)
 {
     int  i;
     long sz;
@@ -17002,7 +17002,7 @@ int wolfSSH_CleanPath(WOLFSSH* ssh, char* in)
     char *path;
     void *heap = NULL;
 
-    if (in == NULL) {
+    if (in == NULL || inSz <= 0) {
         return WS_BAD_ARGUMENT;
     }
 
@@ -17011,7 +17011,9 @@ int wolfSSH_CleanPath(WOLFSSH* ssh, char* in)
     }
 
     sz   = (long)WSTRLEN(in);
-    path = (char*)WMALLOC(sz+1, heap, DYNTYPE_PATH);
+
+    /* +2 to handle extra delimiter and null terminator */
+    path = (char*)WMALLOC(sz+2, heap, DYNTYPE_PATH);
     if (path == NULL) {
         return WS_MEMORY_E;
     }
@@ -17094,8 +17096,6 @@ int wolfSSH_CleanPath(WOLFSSH* ssh, char* in)
         if (path[sz - 1] == ':') {
             path[sz] = WS_DELIM;
             path[sz + 1] = '\0';
-            in[sz] = WS_DELIM;
-            in[sz + 1] = '\0';
         }
 
         /* clean up any multiple drive listed i.e. A:/A: */
@@ -17141,12 +17141,13 @@ int wolfSSH_CleanPath(WOLFSSH* ssh, char* in)
     }
 
     /* copy result back to 'in' buffer */
-    if (WSTRLEN(in) < WSTRLEN(path)) {
-        WLOG(WS_LOG_ERROR, "Fatal error cleaning path");
+    sz = (long)WSTRLEN(path);
+    if (sz >= (long)inSz) {
+        /* Path would overflow input buffer */
+        WLOG(WS_LOG_ERROR, "Fatal error cleaning path: buffer overflow");
         WFREE(path, heap, DYNTYPE_PATH);
         return WS_BUFFER_E;
     }
-    sz = (long)WSTRLEN(path);
     WMEMCPY(in, path, sz);
     in[sz] = '\0';
     WFREE(path, heap, DYNTYPE_PATH);
