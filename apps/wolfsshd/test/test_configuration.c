@@ -31,7 +31,11 @@ static void CleanupWildcardTest(void)
     WDIR dir;
     struct dirent* d;
     char filepath[MAX_PATH*2]; /* d_name is max_path long */
+    size_t prefixLen;
+    size_t maxNameLen;
 
+    prefixLen  = WSTRLEN("./sshd_config.d/");
+    maxNameLen = sizeof(filepath) - prefixLen - 1; /* -1 for null terminator */
     if (!WOPENDIR(NULL, NULL, &dir, "./sshd_config.d/")) {
         while ((d = WREADDIR(NULL, &dir)) != NULL) {
         #if defined(__QNX__) || defined(__QNXNTO__)
@@ -43,8 +47,9 @@ static void CleanupWildcardTest(void)
             if (d->d_type != DT_DIR)
         #endif
             {
-                WSNPRINTF(filepath, sizeof filepath, "%s%s",
-                        "./sshd_config.d/", d->d_name);
+                WSNPRINTF(filepath, sizeof filepath, "%.*s%.*s",
+                        (int)prefixLen, "./sshd_config.d/",
+                        (int)maxNameLen, d->d_name);
                 WREMOVE(0, filepath);
             }
         }
