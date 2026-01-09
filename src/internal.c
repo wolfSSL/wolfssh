@@ -1097,9 +1097,10 @@ static int WS_TermResize(WOLFSSH* ssh, word32 col, word32 row, word32 colP,
 
     if (term != NULL) {
         char cmd[30]; /* 2 int values (11 chars max) plus \x1b[8 ; t */
-        int cmdSz  = 30;
+        int cmdSz;
         DWORD wrtn = 0;
 
+        cmdSz = (int)sizeof(cmd);
         /* VT control sequence for resizing window */
         cmdSz = snprintf(cmd, cmdSz, "\x1b[8;%d;%dt", row, col);
         if (cmdSz < 0 || cmdSz >= sizeof(cmd)) {
