@@ -1096,15 +1096,21 @@ static int WS_TermResize(WOLFSSH* ssh, word32 col, word32 row, word32 colP,
     int ret = WS_SUCCESS;
 
     if (term != NULL) {
-        char cmd[20];
-        int cmdSz = 20;
+        char cmd[30]; /* 2 int values (11 chars max) plus \x1b[8 ; t */
+        int cmdSz;
         DWORD wrtn = 0;
 
+        cmdSz = (int)sizeof(cmd);
         /* VT control sequence for resizing window */
         cmdSz = snprintf(cmd, cmdSz, "\x1b[8;%d;%dt", row, col);
-        if (WriteFile(*term, cmd, cmdSz, &wrtn, 0) != TRUE) {
-            WLOG(WS_LOG_ERROR, "Issue with pseudo console resize");
+        if (cmdSz < 0 || cmdSz >= sizeof(cmd)) {
             ret = WS_FATAL_ERROR;
+        }
+        else {
+            if (WriteFile(*term, cmd, cmdSz, &wrtn, 0) != TRUE) {
+                WLOG(WS_LOG_ERROR, "Issue with pseudo console resize");
+                ret = WS_FATAL_ERROR;
+            }
         }
     }
 
