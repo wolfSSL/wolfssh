@@ -862,24 +862,24 @@ static int ssh_worker(thread_ctx_t* threadCtx)
         ChildRunning = 1;
 #endif
 
-#if defined(WOLFSSH_TERM) && defined(WOLFSSH_SHELL)
-    /* set initial size of terminal based on saved size */
+#if !defined(NO_TERMIOS) && defined(WOLFSSH_TERM) && defined(WOLFSSH_SHELL)
 #if defined(HAVE_SYS_IOCTL_H)
-    wolfSSH_DoModes(ssh->modes, ssh->modesSz, childFd);
-    {
+    /* if not echoing, set initial size of terminal based on saved size */
+    if (!threadCtx->echo) {
         struct winsize s = {0,0,0,0};
 
+        wolfSSH_DoModes(ssh->modes, ssh->modesSz, childFd);
         s.ws_col = ssh->widthChar;
         s.ws_row = ssh->heightRows;
         s.ws_xpixel = ssh->widthPixels;
         s.ws_ypixel = ssh->heightPixels;
 
         ioctl(childFd, TIOCSWINSZ, &s);
-    }
-#endif /* HAVE_SYS_IOCTL_H */
 
         wolfSSH_SetTerminalResizeCtx(ssh, (void*)&childFd);
-#endif /* WOLFSSH_TERM && WOLFSSH_SHELL */
+    }
+#endif /* HAVE_SYS_IOCTL_H */
+#endif /* !NO_TERMIOS && WOLFSSH_TERM && WOLFSSH_SHELL */
 
         while (ChildRunning) {
             fd_set readFds;
