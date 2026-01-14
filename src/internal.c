@@ -146,8 +146,14 @@ Flags:
     Set when ECC or SHA2-512 are disabled. Set to disable use of ECDSA server
     authentication with prime NISTP521.
   WOLFSSH_NO_NISTP256_MLKEM768_SHA256
-    Set when ML-KEM is disabled in wolfssl. Set to disable use of ECDHE with
-    prime NISTP256 hybridized with post-quantum ML-KEM 768.
+    Set when ML-KEM, ECC, or SHA2-256 are disabled in wolfssl. Set to disable
+    use of ECDHE with prime NISTP256 hybridized with post-quantum ML-KEM 768.
+  WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
+    Set when ML-KEM, ECC, or SHA2-384 are disabled in wolfssl. Set to disable
+    use of ECDHE with prime NISTP384 hybridized with post-quantum ML-KEM 1024.
+  WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
+    Set when ML-KEM, Curve25519, or SHA2-256 are disabled in wolfssl. Set to
+    disable use of Curve25519 hybridized with post-quantum ML-KEM 768.
   WOLFSSH_NO_AES_CBC_SOFT_DISABLE
     AES-CBC is normally soft-disabled. The default configuration will not
     advertise the availability of AES-CBC algorithms during KEX. AES-CBC
@@ -847,14 +853,14 @@ int wolfSSH_TestIsMessageAllowed(WOLFSSH* ssh, byte msg, byte state)
 
 
 static const char cannedKexAlgoNames[] =
-#if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256)
-    "mlkem768nistp256-sha256,"
+#if !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
+    "mlkem768x25519-sha256,"
 #endif
 #if !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384)
     "mlkem1024nistp384-sha384,"
 #endif
-#if !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
-    "mlkem768x25519-sha256,"
+#if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256)
+    "mlkem768nistp256-sha256,"
 #endif
 #ifndef WOLFSSH_NO_CURVE25519_SHA256
     "curve25519-sha256,"

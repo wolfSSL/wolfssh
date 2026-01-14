@@ -3199,7 +3199,22 @@ size_t wolfSSH_GetText(WOLFSSH *ssh, WS_Text id, char *str, size_t strSz)
 
             #ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
                 case ID_NISTP256_MLKEM768_SHA256:
-                    ret = WSNPRINTF(str, strSz, "%s", "ECDH-MLKEM768");
+                    ret = WSNPRINTF(str, strSz, "%s",
+                            "ECDH-NISTP256-MLKEM768");
+                    break;
+            #endif
+
+            #ifndef WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
+                case ID_NISTP384_MLKEM1024_SHA384:
+                    ret = WSNPRINTF(str, strSz, "%s",
+                            "ECDH-NISTP384-MLKEM1024");
+                    break;
+            #endif
+
+            #ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
+                case ID_CURVE25519_MLKEM768_SHA256:
+                    ret = WSNPRINTF(str, strSz, "%s",
+                            "ECDH-CURVE25519-MLKEM768");
                     break;
             #endif
 
