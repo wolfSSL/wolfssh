@@ -72,7 +72,7 @@ int wolfSSH_Init(void)
 #ifdef HAVE_FIPS
     wolfCrypt_SetCb_fips(myFipsCb);
 #endif
-#ifdef WC_RNG_SEED_CB
+#if defined(WC_RNG_SEED_CB) && defined(HAVE_HASHDRBG)
     wc_SetSeed_Cb(wc_GenerateSeed);
 #endif
 #if !defined(NO_FILESYSTEM) && defined(WOLFSSH_ZEPHYR) && \
