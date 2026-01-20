@@ -2,9 +2,10 @@ name: Windows Build Test
 
 on:
   push:
-    branches: [ '*' ]
+    branches: [ 'master', 'main', 'release/**' ]
   pull_request:
     branches: [ '*' ]
+  workflow_dispatch:
 
 env:
   WOLFSSL_SOLUTION_FILE_PATH: wolfssl64.sln
