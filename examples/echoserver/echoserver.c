@@ -2293,7 +2293,7 @@ static int wsUserAuth(byte authType,
 {
     PwMapList* list;
     PwMap* map;
-    byte authHash[WC_SHA256_DIGEST_SIZE];
+    byte authHash[WC_SHA256_DIGEST_SIZE] = {0};
 
     if (ctx == NULL) {
         fprintf(stderr, "wsUserAuth: ctx not set");
@@ -2304,19 +2304,6 @@ static int wsUserAuth(byte authType,
         printf("User Auth would block ....\n");
         userAuthWouldBlock--;
         return WOLFSSH_USERAUTH_WOULD_BLOCK;
-    }
-
-    if (authType != WOLFSSH_USERAUTH_PASSWORD &&
-#ifdef WOLFSSH_ALLOW_USERAUTH_NONE
-        authType != WOLFSSH_USERAUTH_NONE &&
-#endif
-#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-        authType != WOLFSSH_USERAUTH_KEYBOARD &&
-        authType != WOLFSSH_USERAUTH_KEYBOARD_SETUP &&
-#endif
-        authType != WOLFSSH_USERAUTH_PUBLICKEY) {
-
-        return WOLFSSH_USERAUTH_FAILURE;
     }
 
     if (authType == WOLFSSH_USERAUTH_PASSWORD) {
@@ -2332,6 +2319,9 @@ static int wsUserAuth(byte authType,
         wc_Sha256Hash(authData->sf.keyboard.responses[0],
                       authData->sf.keyboard.responseLengths[0],
                       authHash);
+    }
+    else if (authType == WOLFSSH_USERAUTH_KEYBOARD_SETUP) {
+        /* Do nothing. */
     }
 #endif
     else if (authType == WOLFSSH_USERAUTH_PUBLICKEY) {
@@ -2405,6 +2395,14 @@ static int wsUserAuth(byte authType,
             }
         }
     #endif /* WOLFSSH_CERTS && !WOLFSSH_NO_FPKI */
+    }
+#ifdef WOLFSSH_ALLOW_USERAUTH_NONE
+    else if (authType == WOLFSSH_USERAUTH_NONE) {
+        /* Handled in the map loop below. */
+    }
+#endif
+    else {
+        return WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
     }
 
     list = (PwMapList*)ctx;
