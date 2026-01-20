@@ -74,7 +74,17 @@ STATIC INLINE word32 min(word32 a, word32 b)
 /* convert opaque to 32 bit integer */
 STATIC INLINE void ato32(const byte* c, word32* u32)
 {
-    *u32 = (c[0] << 24) | (c[1] << 16) | (c[2] << 8) | c[3];
+    word32 v = 0;
+
+    v |= (word32)(c[0] & 0xFF);
+    v <<= 8;
+    v |= (word32)(c[1] & 0xFF);
+    v <<= 8;
+    v |= (word32)(c[2] & 0xFF);
+    v <<= 8;
+    v |= (word32)(c[3] & 0xFF);
+
+    *u32 = v;
 }
 
 
