@@ -4757,7 +4757,7 @@ static int DoKexDhInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
      * in the message isn't of the DH e value. Treat the Q as e. */
     /* DYNTYPE_DH */
 
-    byte* e;
+    const byte* e;
     word32 eSz;
     word32 begin;
     int ret = WS_SUCCESS;
@@ -4776,28 +4776,20 @@ static int DoKexDhInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             *idx += len;
             return WS_SUCCESS;
         }
-    }
 
-    if (ret == WS_SUCCESS) {
         begin = *idx;
-        ret = GetUint32(&eSz, buf, len, &begin);
+        ret = GetStringRef(&eSz, &e, buf, len, &begin);
     }
 
     if (ret == WS_SUCCESS) {
         /* Validate eSz */
-        if ((len < begin) || (eSz > len - begin)) {
-            ret = WS_RECV_OVERFLOW_E;
-        }
+        if (eSz > (word32)sizeof(ssh->handshake->e) || eSz == 0)
+            ret = WS_PUBKEY_REJECTED_E;
     }
 
     if (ret == WS_SUCCESS) {
-        e = buf + begin;
-        begin += eSz;
-
-        if (eSz <= (word32)sizeof(ssh->handshake->e)) {
-            WMEMCPY(ssh->handshake->e, e, eSz);
-            ssh->handshake->eSz = eSz;
-        }
+        WMEMCPY(ssh->handshake->e, e, eSz);
+        ssh->handshake->eSz = eSz;
 
         ssh->clientState = CLIENT_KEXDH_INIT_DONE;
         *idx = begin;
