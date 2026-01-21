@@ -2,9 +2,10 @@ name: wolfSSH Paramiko SFTP Test
 
 on:
   push:
-    branches: [ '*' ]
+    branches: [ 'master', 'main', 'release/**' ]
   pull_request:
     branches: [ '*' ]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

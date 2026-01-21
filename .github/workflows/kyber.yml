@@ -2,9 +2,10 @@ name: ML-KEM Tests
 
 on:
   push:
-    branches: [ '*' ]
+    branches: [ 'master', 'main', 'release/**' ]
   pull_request:
     branches: [ '*' ]
+  workflow_dispatch:
 
 env:
   LIBOQS_REF: 0.10.0
