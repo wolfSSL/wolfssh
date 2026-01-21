@@ -1,0 +1,116 @@
+name: ML-KEM Interop Tests
+
+on:
+  pull_request:
+    branches: [ '*' ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  openssh: V_10_2_P1
+
+jobs:
+  build_wolfssl:
+    name: Build wolfSSL
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        wolfssl: [v5.8.4-stable, master]
+    timeout-minutes: 4
+    steps:
+      - name: Checking cache for wolfSSL
+        uses: actions/cache@v4
+        id: cache-wolfssl
+        with:
+          path: build-dir/
+          key: wolfssh-mlkem-wolfssl-${{ matrix.wolfssl }}
+          lookup-only: true
+
+      - name: Checkout, build, and install wolfSSL
+        if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+        uses: wolfSSL/actions-build-autotools-project@v1
+        with:
+          repository: wolfSSL/wolfssl
+          ref: ${{ matrix.wolfssl }}
+          path: wolfssl
+          configure: --enable-wolfssh --enable-mlkem --enable-ed25519 --enable-ed25519-stream --enable-curve25519 --enable-base64encode --enable-cryptonly --disable-examples --disable-crypttests
+          check: false
+          install: true
+
+  build_openssh:
+    name: Build OpenSSH
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Checking cache for OpenSSH
+        uses: actions/cache@v4
+        id: cache-openssh
+        with:
+          path: build-dir/
+          key: wolfssh-mlkem-openssh-${{ env.openssh }}
+          lookup-only: true
+
+      - name: Checkout, build, and install wolfSSL
+        if: steps.cache-openssh.outputs.cache-hit != 'true'
+        uses: wolfSSL/actions-build-autotools-project@v1
+        with:
+          repository: openssh/openssh-portable
+          ref: ${{ env.openssh }}
+          path: openssh
+          configure: --with-privsep-path=/tmp/empty
+          check: false
+          install: true
+
+  build_wolfssh:
+    name: Build and test wolfSSH
+    needs: [build_wolfssl, build_openssh]
+    strategy:
+      fail-fast: false
+      matrix:
+        wolfssl: [v5.8.4-stable, master]
+        config: [
+          '',
+          '--enable-smallstack',
+        ]
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    env:
+      build_dir: ${{ github.workspace }}/build-dir
+    steps:
+      - name: Checking cache for wolfSSL
+        uses: actions/cache@v4
+        with:
+          path: build-dir/
+          key: wolfssh-mlkem-wolfssl-${{ matrix.wolfssl }}
+          fail-on-cache-miss: true
+
+      - name: Checking cache for OpenSSH
+        uses: actions/cache@v4
+        with:
+          path: build-dir/
+          key: wolfssh-mlkem-openssh-${{ env.openssh }}
+          fail-on-cache-miss: true
+
+      - name: Checkout, build, and test wolfSSH
+        uses: wolfSSL/actions-build-autotools-project@v1
+        with:
+          repository: wolfSSL/wolfssh
+          path: wolfssh
+          configure: ${{ matrix.config }} --with-wolfssl=${{ env.build_dir }}
+          check: true
+
+      - name: Make test key
+        working-directory: ./wolfssh/
+        run: |
+          ${{ env.build_dir }}/bin/ssh-keygen -f $HOME/.ssh/id_ed25519 -N "" -t ed25519
+          cp $HOME/.ssh/id_ed25519.pub $HOME/.ssh/authorized_keys
+
+      - name: Run connect wolfSSH client to OpenSSH server test
+        working-directory: ./wolfssh/
+        run: |
+          mkdir -p /tmp/empty
+          ${{ env.build_dir }}/sbin/sshd -p 22222 -o KbdInteractiveAuthentication=no -o PasswordAuthentication=no -o KexAlgorithms=mlkem768x25519-sha256
+          ./examples/client/client -u $USER -i $HOME/.ssh/id_ed25519 -j $HOME/.ssh/id_ed25519.pub -c "ls /"

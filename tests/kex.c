@@ -138,9 +138,17 @@
 
 
 #if !defined(NO_WOLFSSH_SERVER) && !defined(NO_WOLFSSH_CLIENT) && \
-    !defined(SINGLE_THREADED) && !defined(WOLFSSH_TEST_BLOCK) && \
-    !defined(WOLFSSH_NO_DH_GROUP16_SHA512) && !defined(WOLFSSH_NO_HMAC_SHA2_512)
+    !defined(SINGLE_THREADED) && !defined(WOLFSSH_TEST_BLOCK)
 
+    #if !defined(WOLFSSH_NO_DH_GROUP16_SHA512) \
+        || !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256) \
+        || !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384)
+
+        #define KEXTEST_AVAILABLE
+    #endif
+#endif
+
+#ifdef KEXTEST_AVAILABLE
 static int tsClientUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 {
     static char password[] = "upthehill";
@@ -163,7 +171,7 @@ static int tsClientUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 #define NUMARGS 12
 #define ARGLEN 32
 
-/* 
+/*
  * Macro: ADD_ARG
  * Purpose: Adds a string argument to the argument list.
  * Parameters:
@@ -185,7 +193,7 @@ static int tsClientUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
         WSTRNCPY((argList)[(argListCount)++], (arg), ARGLEN); \
 } while (0)
 
-/* 
+/*
  * Macro: ADD_ARG_INT
  * Purpose: Adds an integer argument to the argument list as a string.
  * Parameters:
@@ -209,7 +217,7 @@ static int tsClientUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 } while (0)
 
 
-static int wolfSSH_wolfSSH_Group16_512(void)
+static int wolfSSH_KexTest_Connect(const char* kex)
 {
     tcp_ready ready;
     THREAD_TYPE serverThread;
@@ -226,27 +234,6 @@ static int wolfSSH_wolfSSH_Group16_512(void)
     int serverArgc = 0;
     int clientArgc = 0;
 
-    WSTARTTCP();
-
-    #if defined(DEBUG_WOLFSSH)
-        wolfSSH_Debugging_ON();
-    #endif
-
-    wolfSSH_Init();
-
-    #if defined(FIPS_VERSION_GE) && FIPS_VERSION_GE(5,2)
-    {
-        int i;
-        for (i = 0; i < FIPS_CAST_COUNT; i++) {
-            wc_RunCast_fips(i);
-        }
-    }
-    #endif /* HAVE_FIPS */
-
-    #if !defined(WOLFSSL_TIRTOS)
-        ChangeToWolfSshRoot();
-    #endif
-
     InitTcpReady(&ready);
 
     ADD_ARG(serverArgv, serverArgc, "echoserver");
@@ -257,7 +244,7 @@ static int wolfSSH_wolfSSH_Group16_512(void)
         ADD_ARG(serverArgv, serverArgc, "-0");
     #endif
     ADD_ARG(serverArgv, serverArgc, "-x");
-    ADD_ARG(serverArgv, serverArgc, "diffie-hellman-group16-sha512");
+    ADD_ARG(serverArgv, serverArgc, kex);
     ADD_ARG(serverArgv, serverArgc, "-m");
     ADD_ARG(serverArgv, serverArgc, "hmac-sha2-512");
     ADD_ARG(serverArgv, serverArgc, "-c");
@@ -318,7 +305,7 @@ static int wolfSSH_wolfSSH_Group16_512(void)
     return EXIT_SUCCESS;
 }
 
-#endif
+#endif /* KEXTEST_AVAILABLE */
 
 int wolfSSH_KexTest(int argc, char** argv)
 {
@@ -326,10 +313,19 @@ int wolfSSH_KexTest(int argc, char** argv)
     (void)argv;
 
 
-#if defined(NO_WOLFSSH_SERVER) || defined(NO_WOLFSSH_CLIENT) || \
-    defined(SINGLE_THREADED) || defined(WOLFSSH_TEST_BLOCK)
+#if !defined(KEXTEST_AVAILABLE)
     return 77;
 #else
+    WSTARTTCP();
+
+    #if defined(DEBUG_WOLFSSH)
+        wolfSSH_Debugging_ON();
+    #endif
+
+    #if !defined(WOLFSSL_TIRTOS)
+        ChangeToWolfSshRoot();
+    #endif
+
     AssertIntEQ(wolfSSH_Init(), WS_SUCCESS);
 
     #if defined(FIPS_VERSION_GE) && FIPS_VERSION_GE(5,2)
@@ -341,14 +337,23 @@ int wolfSSH_KexTest(int argc, char** argv)
     }
     #endif /* HAVE_FIPS */
 
-#if !defined(WOLFSSH_NO_DH_GROUP16_SHA512) && !defined(WOLFSSH_NO_HMAC_SHA2_512)
-    wolfSSH_wolfSSH_Group16_512();
+#if !defined(WOLFSSH_NO_DH_GROUP16_SHA512)
+    AssertIntEQ(wolfSSH_KexTest_Connect("diffie-hellman-group16-sha512"),
+            EXIT_SUCCESS);
+#endif
+#if !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
+    AssertIntEQ(wolfSSH_KexTest_Connect("mlkem768x25519-sha256"),
+            EXIT_SUCCESS);
+#endif
+#if !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384)
+    AssertIntEQ(wolfSSH_KexTest_Connect("mlkem1024nistp384-sha384"),
+            EXIT_SUCCESS);
 #endif
 
     AssertIntEQ(wolfSSH_Cleanup(), WS_SUCCESS);
 
     return 0;
-#endif
+#endif /* KEXTEST_AVAILABLE */
 }
 
 

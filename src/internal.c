@@ -146,8 +146,14 @@ Flags:
     Set when ECC or SHA2-512 are disabled. Set to disable use of ECDSA server
     authentication with prime NISTP521.
   WOLFSSH_NO_NISTP256_MLKEM768_SHA256
-    Set when ML-KEM is disabled in wolfssl. Set to disable use of ECDHE with
-    prime NISTP256 hybridized with post-quantum ML-KEM 768.
+    Set when ML-KEM, ECC, or SHA2-256 are disabled in wolfssl. Set to disable
+    use of ECDHE with prime NISTP256 hybridized with post-quantum ML-KEM 768.
+  WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
+    Set when ML-KEM, ECC, or SHA2-384 are disabled in wolfssl. Set to disable
+    use of ECDHE with prime NISTP384 hybridized with post-quantum ML-KEM 1024.
+  WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
+    Set when ML-KEM, Curve25519, or SHA2-256 are disabled in wolfssl. Set to
+    disable use of Curve25519 hybridized with post-quantum ML-KEM 768.
   WOLFSSH_NO_AES_CBC_SOFT_DISABLE
     AES-CBC is normally soft-disabled. The default configuration will not
     advertise the availability of AES-CBC algorithms during KEX. AES-CBC
@@ -847,6 +853,12 @@ int wolfSSH_TestIsMessageAllowed(WOLFSSH* ssh, byte msg, byte state)
 
 
 static const char cannedKexAlgoNames[] =
+#if !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
+    "mlkem768x25519-sha256,"
+#endif
+#if !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384)
+    "mlkem1024nistp384-sha384,"
+#endif
 #if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256)
     "mlkem768nistp256-sha256,"
 #endif
@@ -2746,6 +2758,14 @@ static const NameIdPair NameIdMap[] = {
     { ID_NISTP256_MLKEM768_SHA256, TYPE_KEX,
         "mlkem768nistp256-sha256" },
 #endif
+#ifndef WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
+    { ID_NISTP384_MLKEM1024_SHA384, TYPE_KEX,
+        "mlkem1024nistp384-sha384" },
+#endif
+#ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
+    { ID_CURVE25519_MLKEM768_SHA256, TYPE_KEX,
+        "mlkem768x25519-sha256" },
+#endif
 #ifndef WOLFSSH_NO_CURVE25519_SHA256
     /* See RFC 8731 */
     { ID_CURVE25519_SHA256, TYPE_KEX, "curve25519-sha256" },
@@ -4026,6 +4046,10 @@ enum wc_HashType HashForId(byte id)
         case ID_NISTP256_MLKEM768_SHA256:
             return WC_HASH_TYPE_SHA256;
 #endif
+#ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
+        case ID_CURVE25519_MLKEM768_SHA256:
+            return WC_HASH_TYPE_SHA256;
+#endif
 #ifndef WOLFSSH_NO_CURVE25519_SHA256
         case ID_CURVE25519_SHA256:
         case ID_CURVE25519_SHA256_LIBSSH:
@@ -4043,6 +4067,10 @@ enum wc_HashType HashForId(byte id)
         /* SHA2-384 */
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP384
         case ID_ECDH_SHA2_NISTP384:
+            return WC_HASH_TYPE_SHA384;
+#endif
+#ifndef WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
+        case ID_NISTP384_MLKEM1024_SHA384:
             return WC_HASH_TYPE_SHA384;
 #endif
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
@@ -4100,9 +4128,17 @@ int wcPrimeForId(byte id)
         case ID_ECDH_SHA2_NISTP384:
             return ECC_SECP384R1;
 #endif
+#ifndef WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
+        case ID_NISTP384_MLKEM1024_SHA384:
+            return ECC_SECP384R1;
+#endif
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
         case ID_ECDSA_SHA2_NISTP384:
             return ECC_SECP384R1;
+#endif
+#ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
+        case ID_CURVE25519_MLKEM768_SHA256:
+            return ECC_X25519;
 #endif
 #ifndef WOLFSSH_NO_CURVE25519_SHA256
         case ID_CURVE25519_SHA256:
@@ -5463,38 +5499,48 @@ static int KeyAgreeCurve25519_client(WOLFSSH* ssh, byte hashId,
  */
 static int KeyAgreeEcdhMlKem_client(WOLFSSH* ssh, byte hashId,
         const byte* f, word32 fSz)
-#ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
+#if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
+    !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384) || \
+    !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
 {
     int ret = WS_SUCCESS;
     byte sharedSecretHashSz = 0;
     byte *sharedSecretHash = NULL;
-    ecc_key *key_ptr = NULL;
     MlKemKey kem = {0};
     word32 length_ciphertext = 0;
     word32 length_sharedsecret = 0;
     word32 length_privatekey = 0;
-
+    int mlKemType = WC_ML_KEM_768;
+    byte kexId = ssh->handshake->kexId;
+#if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
+    !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384)
+    ecc_key *key_ptr = NULL;
     #ifndef WOLFSSH_SMALL_STACK
         ecc_key key_s;
     #endif
-    #ifdef WOLFSSH_SMALL_STACK
-        key_ptr = (ecc_key*)WMALLOC(sizeof(ecc_key),
-                ssh->ctx->heap, DYNTYPE_PRIVKEY);
-        if (key_ptr == NULL) {
-            ret = WS_MEMORY_E;
-        }
-    #else /* ! WOLFSSH_SMALL_STACK */
-        key_ptr = &key_s;
-    #endif /* WOLFSSH_SMALL_STACK */
+#endif
+#ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
+    curve25519_key *x25519_key_ptr = NULL;
+    #ifndef WOLFSSH_SMALL_STACK
+        curve25519_key x25519_key_s;
+    #endif
+#endif
 
     WLOG(WS_LOG_DEBUG, "Entering KeyAgreeEcdhMlKem_client()");
 
-    /* This is a a hybrid of ECDHE and a post-quantum KEM. In this
-     * case, I need to generated the ECC shared secret and
+    /* Determine ML-KEM type based on kexId */
+#ifndef WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
+    if (kexId == ID_NISTP384_MLKEM1024_SHA384) {
+        mlKemType = WC_ML_KEM_1024;
+    }
+#endif
+
+    /* This is a hybrid of ECC Curve25519 and a post-quantum KEM.
+     * In this case, it needs to generate the ECC shared secret and
      * decapsulate the ciphertext of the post-quantum KEM. */
 
     if (ret == 0) {
-        ret = wc_MlKemKey_Init(&kem, WC_ML_KEM_768, ssh->ctx->heap, INVALID_DEVID);
+        ret = wc_MlKemKey_Init(&kem, mlKemType, ssh->ctx->heap, INVALID_DEVID);
     }
 
     if (ret == 0) {
@@ -5517,33 +5563,92 @@ static int KeyAgreeEcdhMlKem_client(WOLFSSH* ssh, byte hashId,
         ret = WS_BUFFER_E;
     }
 
-    if (ret == 0) {
-        ret = wc_ecc_init(key_ptr);
-    }
-    #ifdef HAVE_WC_ECC_SET_RNG
-    if (ret == 0) {
-        ret = wc_ecc_set_rng(key_ptr, ssh->rng);
-    }
-    #endif
-    if (ret == 0) {
-        ret = wc_ecc_import_x963(f + length_ciphertext, fSz - length_ciphertext,
-                                 key_ptr);
-    }
-
-    if (ret == 0) {
-        PRIVATE_KEY_UNLOCK();
-        ret = wc_ecc_shared_secret(&ssh->handshake->privKey.ecc,
-                                   key_ptr, ssh->k + length_sharedsecret,
-                                   &ssh->kSz);
-        PRIVATE_KEY_LOCK();
-    }
-    wc_ecc_free(key_ptr);
+#ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
+    if (kexId == ID_CURVE25519_MLKEM768_SHA256) {
+        /* Handle Curve25519 variant */
     #ifdef WOLFSSH_SMALL_STACK
-    if (key_ptr) {
-        WFREE(key_ptr, ssh->ctx->heap, DYNTYPE_PRIVKEY);
-    }
+        x25519_key_ptr = (curve25519_key*)WMALLOC(sizeof(curve25519_key),
+                ssh->ctx->heap, DYNTYPE_PRIVKEY);
+        if (x25519_key_ptr == NULL) {
+            ret = WS_MEMORY_E;
+        }
+    #else
+        x25519_key_ptr = &x25519_key_s;
     #endif
-    wc_ecc_free(&ssh->handshake->privKey.ecc);
+
+        if (ret == 0) {
+            ret = wc_curve25519_init(x25519_key_ptr);
+        }
+        if (ret == 0) {
+            ret = wc_curve25519_check_public(f + length_ciphertext,
+                    fSz - length_ciphertext, EC25519_LITTLE_ENDIAN);
+        }
+        if (ret == 0) {
+            ret = wc_curve25519_import_public_ex(f + length_ciphertext,
+                    fSz - length_ciphertext, x25519_key_ptr,
+                    EC25519_LITTLE_ENDIAN);
+        }
+        if (ret == 0) {
+            PRIVATE_KEY_UNLOCK();
+            ret = wc_curve25519_shared_secret_ex(
+                    &ssh->handshake->privKey.curve25519,
+                    x25519_key_ptr, ssh->k + length_sharedsecret,
+                    &ssh->kSz, EC25519_LITTLE_ENDIAN);
+            PRIVATE_KEY_LOCK();
+        }
+        wc_curve25519_free(x25519_key_ptr);
+    #ifdef WOLFSSH_SMALL_STACK
+        if (x25519_key_ptr) {
+            WFREE(x25519_key_ptr, ssh->ctx->heap, DYNTYPE_PRIVKEY);
+        }
+    #endif
+        wc_curve25519_free(&ssh->handshake->privKey.curve25519);
+    }
+    else
+#endif /* WOLFSSH_NO_CURVE25519_MLKEM768_SHA256 */
+    {
+#if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
+    !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384)
+        /* Handle ECC variants (P-256 or P-384) */
+    #ifdef WOLFSSH_SMALL_STACK
+        key_ptr = (ecc_key*)WMALLOC(sizeof(ecc_key),
+                ssh->ctx->heap, DYNTYPE_PRIVKEY);
+        if (key_ptr == NULL) {
+            ret = WS_MEMORY_E;
+        }
+    #else /* ! WOLFSSH_SMALL_STACK */
+        key_ptr = &key_s;
+    #endif /* WOLFSSH_SMALL_STACK */
+
+        if (ret == 0) {
+            ret = wc_ecc_init(key_ptr);
+        }
+    #ifdef HAVE_WC_ECC_SET_RNG
+        if (ret == 0) {
+            ret = wc_ecc_set_rng(key_ptr, ssh->rng);
+        }
+    #endif
+        if (ret == 0) {
+            ret = wc_ecc_import_x963(f + length_ciphertext,
+                    fSz - length_ciphertext, key_ptr);
+        }
+
+        if (ret == 0) {
+            PRIVATE_KEY_UNLOCK();
+            ret = wc_ecc_shared_secret(&ssh->handshake->privKey.ecc,
+                                       key_ptr, ssh->k + length_sharedsecret,
+                                       &ssh->kSz);
+            PRIVATE_KEY_LOCK();
+        }
+        wc_ecc_free(key_ptr);
+    #ifdef WOLFSSH_SMALL_STACK
+        if (key_ptr) {
+            WFREE(key_ptr, ssh->ctx->heap, DYNTYPE_PRIVKEY);
+        }
+    #endif
+        wc_ecc_free(&ssh->handshake->privKey.ecc);
+#endif /* !WOLFSSH_NO_NISTP256_MLKEM768_SHA256 || !WOLFSSH_NO_NISTP384_MLKEM1024_SHA384 */
+    }
 
     if (ret == 0) {
         wc_MlKemKey_DecodePrivateKey(&kem, ssh->handshake->x,
@@ -5595,7 +5700,7 @@ static int KeyAgreeEcdhMlKem_client(WOLFSSH* ssh, byte hashId,
     WLOG(WS_LOG_DEBUG, "Leaving KeyAgreeEcdhMlKem_client(), ret = %d", ret);
     return ret;
 }
-#else /* WOLFSSH_NO_NISTP256_MLKEM768_SHA256 */
+#else /* All ML-KEM variants disabled */
 {
     WOLFSSH_UNUSED(ssh);
     WOLFSSH_UNUSED(hashId);
@@ -5603,7 +5708,7 @@ static int KeyAgreeEcdhMlKem_client(WOLFSSH* ssh, byte hashId,
     WOLFSSH_UNUSED(fSz);
     return WS_INVALID_ALGO_ID;
 }
-#endif /* WOLFSSH_NO_NISTP256_MLKEM768_SHA256 */
+#endif /* ML-KEM variants */
 
 
 /* KeyAgree_client
@@ -10838,9 +10943,12 @@ struct wolfSSH_sigKeyBlockFull {
         } sk;
 };
 
-#ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
-    /* Size of ML-KEM public key (bigger than ciphertext) and some extra for the
-     * ECC hybrid component. */
+#ifndef WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
+    /* Size of ML-KEM-1024 ciphertext (1568) plus ECC P-384 component (97). */
+    #define KEX_F_SIZE 1700
+#elif !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
+      !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
+    /* Size of ML-KEM-768 public key (1184) plus ECC/X25519 component. */
     #define KEX_F_SIZE 1300
 #elif !defined(WOLFSSH_NO_DH_GROUP16_SHA512)
     #define KEX_F_SIZE (512 + 1)
@@ -11752,7 +11860,9 @@ static int KeyAgreeCurve25519_server(WOLFSSH* ssh, byte hashId,
  */
 static int KeyAgreeEcdhMlKem_server(WOLFSSH* ssh, byte hashId,
         byte* f, word32* fSz)
-#ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
+#if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
+    !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384) || \
+    !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
 {
     int ret = WS_SUCCESS;
     byte sharedSecretHashSz = 0;
@@ -11761,39 +11871,36 @@ static int KeyAgreeEcdhMlKem_server(WOLFSSH* ssh, byte hashId,
     word32 length_publickey = 0;
     word32 length_ciphertext = 0;
     word32 length_sharedsecret = 0;
+    int mlKemType = WC_ML_KEM_768;
+    byte kexId = ssh->handshake->kexId;
+#if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
+    !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384)
     ecc_key* pubKey = NULL;
     ecc_key* privKey = NULL;
     int primeId;
-#ifndef WOLFSSH_SMALL_STACK
-    ecc_key eccKeys[2];
+    #ifndef WOLFSSH_SMALL_STACK
+        ecc_key eccKeys[2];
+    #endif
+#endif
+#ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
+    curve25519_key* x25519PubKey = NULL;
+    curve25519_key* x25519PrivKey = NULL;
+    #ifndef WOLFSSH_SMALL_STACK
+        curve25519_key x25519Keys[2];
+    #endif
 #endif
 
     WLOG(WS_LOG_DEBUG, "Entering KeyAgreeEcdhMlKem_server()");
 
-#ifdef WOLFSSH_SMALL_STACK
-    pubKey = (ecc_key*)WMALLOC(sizeof(ecc_key),
-            ssh->ctx->heap, DYNTYPE_PUBKEY);
-    privKey = (ecc_key*)WMALLOC(sizeof(ecc_key),
-            ssh->ctx->heap, DYNTYPE_PRIVKEY);
-    if (pubKey == NULL || privKey == NULL) {
-        ret = WS_MEMORY_E;
+    /* Determine ML-KEM type based on kexId */
+#ifndef WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
+    if (kexId == ID_NISTP384_MLKEM1024_SHA384) {
+        mlKemType = WC_ML_KEM_1024;
     }
-#else
-    pubKey = &eccKeys[0];
-    privKey = &eccKeys[1];
 #endif
 
     if (ret == 0) {
-        XMEMSET(pubKey, 0, sizeof(*pubKey));
-        XMEMSET(privKey, 0, sizeof(*privKey));
-
-        primeId = wcPrimeForId(ssh->handshake->kexId);
-        if (primeId == ECC_CURVE_INVALID)
-            ret = WS_INVALID_PRIME_CURVE;
-    }
-
-    if (ret == 0) {
-        ret = wc_MlKemKey_Init(&kem, WC_ML_KEM_768, ssh->ctx->heap,
+        ret = wc_MlKemKey_Init(&kem, mlKemType, ssh->ctx->heap,
                                INVALID_DEVID);
     }
 
@@ -11836,50 +11943,148 @@ static int KeyAgreeEcdhMlKem_server(WOLFSSH* ssh, byte hashId,
 
     wc_MlKemKey_Free(&kem);
 
-    if (ret == 0) {
-        ret = wc_ecc_init_ex(pubKey, ssh->ctx->heap, INVALID_DEVID);
+#ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
+    if (kexId == ID_CURVE25519_MLKEM768_SHA256) {
+        /* Handle Curve25519 variant */
+    #ifdef WOLFSSH_SMALL_STACK
+        x25519PubKey = (curve25519_key*)WMALLOC(sizeof(curve25519_key),
+                ssh->ctx->heap, DYNTYPE_PUBKEY);
+        x25519PrivKey = (curve25519_key*)WMALLOC(sizeof(curve25519_key),
+                ssh->ctx->heap, DYNTYPE_PRIVKEY);
+        if (x25519PubKey == NULL || x25519PrivKey == NULL) {
+            ret = WS_MEMORY_E;
+        }
+    #else
+        x25519PubKey = &x25519Keys[0];
+        x25519PrivKey = &x25519Keys[1];
+    #endif
+
+        if (ret == 0) {
+            ret = wc_curve25519_init(x25519PubKey);
+        }
+        if (ret == 0) {
+            ret = wc_curve25519_init(x25519PrivKey);
+        }
+        if (ret == 0) {
+            ret = wc_curve25519_check_public(
+                ssh->handshake->e + length_publickey,
+                ssh->handshake->eSz - length_publickey,
+                EC25519_LITTLE_ENDIAN);
+        }
+        if (ret == 0) {
+            ret = wc_curve25519_import_public_ex(
+                ssh->handshake->e + length_publickey,
+                ssh->handshake->eSz - length_publickey,
+                x25519PubKey, EC25519_LITTLE_ENDIAN);
+        }
+        if (ret == 0) {
+            ret = wc_curve25519_make_key(ssh->rng, CURVE25519_KEYSIZE,
+                    x25519PrivKey);
+        }
+        if (ret == 0) {
+            word32 pubKeySz = CURVE25519_KEYSIZE;
+            PRIVATE_KEY_UNLOCK();
+            ret = wc_curve25519_export_public_ex(x25519PrivKey,
+                    f + length_ciphertext, &pubKeySz, EC25519_LITTLE_ENDIAN);
+            PRIVATE_KEY_LOCK();
+            *fSz = length_ciphertext + pubKeySz;
+        }
+        if (ret == 0) {
+            word32 tmp_kSz = ssh->kSz;
+            PRIVATE_KEY_UNLOCK();
+            ret = wc_curve25519_shared_secret_ex(x25519PrivKey, x25519PubKey,
+                    ssh->k + length_sharedsecret, &tmp_kSz,
+                    EC25519_LITTLE_ENDIAN);
+            PRIVATE_KEY_LOCK();
+            ssh->kSz = length_sharedsecret + tmp_kSz;
+        }
+        if (x25519PrivKey)
+            wc_curve25519_free(x25519PrivKey);
+        if (x25519PubKey)
+            wc_curve25519_free(x25519PubKey);
+    #ifdef WOLFSSH_SMALL_STACK
+        if (x25519PubKey)
+            WFREE(x25519PubKey, ssh->ctx->heap, DYNTYPE_PUBKEY);
+        if (x25519PrivKey)
+            WFREE(x25519PrivKey, ssh->ctx->heap, DYNTYPE_PRIVKEY);
+    #endif
     }
-    if (ret == 0) {
-        ret = wc_ecc_init_ex(privKey, ssh->ctx->heap, INVALID_DEVID);
+    else
+#endif /* WOLFSSH_NO_CURVE25519_MLKEM768_SHA256 */
+    {
+#if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
+    !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384)
+        /* Handle ECC variants (P-256 or P-384) */
+    #ifdef WOLFSSH_SMALL_STACK
+        pubKey = (ecc_key*)WMALLOC(sizeof(ecc_key),
+                ssh->ctx->heap, DYNTYPE_PUBKEY);
+        privKey = (ecc_key*)WMALLOC(sizeof(ecc_key),
+                ssh->ctx->heap, DYNTYPE_PRIVKEY);
+        if (pubKey == NULL || privKey == NULL) {
+            ret = WS_MEMORY_E;
+        }
+    #else
+        pubKey = &eccKeys[0];
+        privKey = &eccKeys[1];
+    #endif
+
+        if (ret == 0) {
+            XMEMSET(pubKey, 0, sizeof(*pubKey));
+            XMEMSET(privKey, 0, sizeof(*privKey));
+
+            primeId = wcPrimeForId(ssh->handshake->kexId);
+            if (primeId == ECC_CURVE_INVALID)
+                ret = WS_INVALID_PRIME_CURVE;
+        }
+
+        if (ret == 0) {
+            ret = wc_ecc_init_ex(pubKey, ssh->ctx->heap, INVALID_DEVID);
+        }
+        if (ret == 0) {
+            ret = wc_ecc_init_ex(privKey, ssh->ctx->heap, INVALID_DEVID);
+        }
+    #ifdef HAVE_WC_ECC_SET_RNG
+        if (ret == 0) {
+            ret = wc_ecc_set_rng(privKey, ssh->rng);
+        }
+    #endif
+        if (ret == 0) {
+            ret = wc_ecc_import_x963_ex(
+                ssh->handshake->e + length_publickey,
+                ssh->handshake->eSz - length_publickey,
+                pubKey, primeId);
+        }
+        if (ret == 0) {
+            ret = wc_ecc_make_key_ex(ssh->rng,
+                      wc_ecc_get_curve_size_from_id(primeId),
+                      privKey, primeId);
+        }
+        if (ret == 0) {
+            PRIVATE_KEY_UNLOCK();
+            ret = wc_ecc_export_x963(privKey, f + length_ciphertext, fSz);
+            PRIVATE_KEY_LOCK();
+            *fSz += length_ciphertext;
+        }
+        if (ret == 0) {
+            word32 tmp_kSz = ssh->kSz;
+            PRIVATE_KEY_UNLOCK();
+            ret = wc_ecc_shared_secret(privKey, pubKey,
+                      ssh->k + length_sharedsecret, &tmp_kSz);
+            PRIVATE_KEY_LOCK();
+            ssh->kSz = length_sharedsecret + tmp_kSz;
+        }
+        if (privKey)
+            wc_ecc_free(privKey);
+        if (pubKey)
+            wc_ecc_free(pubKey);
+    #ifdef WOLFSSH_SMALL_STACK
+        if (pubKey)
+            WFREE(pubKey, ssh->ctx->heap, DYNTYPE_PUBKEY);
+        if (privKey)
+            WFREE(privKey, ssh->ctx->heap, DYNTYPE_PRIVKEY);
+    #endif
+#endif /* !WOLFSSH_NO_NISTP256_MLKEM768_SHA256 || !WOLFSSH_NO_NISTP384_MLKEM1024_SHA384 */
     }
-#ifdef HAVE_WC_ECC_SET_RNG
-    if (ret == 0) {
-        ret = wc_ecc_set_rng(privKey, ssh->rng);
-    }
-#endif
-    if (ret == 0) {
-        ret = wc_ecc_import_x963_ex(
-            ssh->handshake->e + length_publickey,
-            ssh->handshake->eSz - length_publickey,
-            pubKey, primeId);
-    }
-    if (ret == 0) {
-        ret = wc_ecc_make_key_ex(ssh->rng,
-                  wc_ecc_get_curve_size_from_id(primeId),
-                  privKey, primeId);
-    }
-    if (ret == 0) {
-        PRIVATE_KEY_UNLOCK();
-        ret = wc_ecc_export_x963(privKey, f + length_ciphertext, fSz);
-        PRIVATE_KEY_LOCK();
-        *fSz += length_ciphertext;
-    }
-    if (ret == 0) {
-        word32 tmp_kSz = ssh->kSz;
-        PRIVATE_KEY_UNLOCK();
-        ret = wc_ecc_shared_secret(privKey, pubKey,
-                  ssh->k + length_sharedsecret, &tmp_kSz);
-        PRIVATE_KEY_LOCK();
-        ssh->kSz = length_sharedsecret + tmp_kSz;
-    }
-    wc_ecc_free(privKey);
-    wc_ecc_free(pubKey);
-#ifdef WOLFSSH_SMALL_STACK
-    if (pubKey)
-        WFREE(pubKey, ssh->ctx->heap, DYNTYPE_PUBKEY);
-    if (privKey)
-        WFREE(privKey, ssh->ctx->heap, DYNTYPE_PUBKEY);
-#endif
 
     /* Replace the concatenated shared secrets with the hash. That
      * will become the new shared secret.*/
@@ -11908,7 +12113,7 @@ static int KeyAgreeEcdhMlKem_server(WOLFSSH* ssh, byte hashId,
     WLOG(WS_LOG_DEBUG, "Leaving KeyAgreeEcdhMlKem_server(), ret = %d", ret);
     return ret;
 }
-#else /* WOLFSSH_NO_NISTP256_MLKEM768_SHA256 */
+#else /* All ML-KEM variants disabled */
 {
     WOLFSSH_UNUSED(ssh);
     WOLFSSH_UNUSED(hashId);
@@ -11916,7 +12121,7 @@ static int KeyAgreeEcdhMlKem_server(WOLFSSH* ssh, byte hashId,
     WOLFSSH_UNUSED(fSz);
     return WS_INVALID_ALGO_ID;
 }
-#endif /* WOLFSSH_NO_NISTP256_MLKEM768_SHA256 */
+#endif /* ML-KEM variants */
 
 
 static int SignHRsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
@@ -12324,7 +12529,19 @@ int SendKexDhReply(WOLFSSH* ssh)
 #endif
 #ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
             case ID_NISTP256_MLKEM768_SHA256:
-                useEccMlKem = 1; /* Only support level 1 for now. */
+                useEccMlKem = 1;
+                msgId = MSGID_KEXKEM_REPLY;
+                break;
+#endif
+#ifndef WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
+            case ID_NISTP384_MLKEM1024_SHA384:
+                useEccMlKem = 1;
+                msgId = MSGID_KEXKEM_REPLY;
+                break;
+#endif
+#ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
+            case ID_CURVE25519_MLKEM768_SHA256:
+                useEccMlKem = 1;
                 msgId = MSGID_KEXKEM_REPLY;
                 break;
 #endif
@@ -12917,8 +13134,20 @@ int SendKexDhInit(WOLFSSH* ssh)
 #endif
 #ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
         case ID_NISTP256_MLKEM768_SHA256:
-            /* Only support level 1 for now. */
             ssh->handshake->useEccMlKem = 1;
+            msgId = MSGID_KEXKEM_INIT;
+            break;
+#endif
+#ifndef WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
+        case ID_NISTP384_MLKEM1024_SHA384:
+            ssh->handshake->useEccMlKem = 1;
+            msgId = MSGID_KEXKEM_INIT;
+            break;
+#endif
+#ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
+        case ID_CURVE25519_MLKEM768_SHA256:
+            ssh->handshake->useEccMlKem = 1;
+            ssh->handshake->useCurve25519MlKem = 1;
             msgId = MSGID_KEXKEM_INIT;
             break;
 #endif
@@ -12968,8 +13197,27 @@ int SendKexDhInit(WOLFSSH* ssh)
             }
         }
 #endif /* ! WOLFSSH_NO_CURVE25519_SHA256 */
+#ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
+        else if (ssh->handshake->useCurve25519MlKem) {
+            /* Handle Curve25519+ML-KEM variant - generate Curve25519 key */
+            curve25519_key* privKey = &ssh->handshake->privKey.curve25519;
+            if (ret == 0)
+                ret = wc_curve25519_init_ex(privKey, ssh->ctx->heap,
+                                            INVALID_DEVID);
+            if (ret == 0)
+                ret = wc_curve25519_make_key(ssh->rng, CURVE25519_KEYSIZE,
+                                             privKey);
+            if (ret == 0) {
+                PRIVATE_KEY_UNLOCK();
+                ret = wc_curve25519_export_public_ex(privKey, e, &eSz,
+                          EC25519_LITTLE_ENDIAN);
+                PRIVATE_KEY_LOCK();
+            }
+        }
+#endif /* WOLFSSH_NO_CURVE25519_MLKEM768_SHA256 */
         else if (ssh->handshake->useEcc
-#ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
+#if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
+    !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384)
                  || ssh->handshake->useEccMlKem
 #endif
                 ) {
@@ -13004,15 +13252,24 @@ int SendKexDhInit(WOLFSSH* ssh)
             ret = WS_INVALID_ALGO_ID;
         }
 
-#ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
+#if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
+    !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384) || \
+    !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
         if (ssh->handshake->useEccMlKem) {
             MlKemKey kem = {0};
             word32 length_publickey = 0;
             word32 length_privatekey = 0;
+            int mlKemType = WC_ML_KEM_768;
             ret = 0;
 
+#ifndef WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
+            if (ssh->handshake->kexId == ID_NISTP384_MLKEM1024_SHA384) {
+                mlKemType = WC_ML_KEM_1024;
+            }
+#endif
+
             if (ret == 0) {
-                ret = wc_MlKemKey_Init(&kem, WC_ML_KEM_768, ssh->ctx->heap,
+                ret = wc_MlKemKey_Init(&kem, mlKemType, ssh->ctx->heap,
                                        INVALID_DEVID);
             }
 
@@ -13045,14 +13302,16 @@ int SendKexDhInit(WOLFSSH* ssh)
 
             wc_MlKemKey_Free(&kem);
         }
-#endif /* ! WOLFSSH_NO_NISTP256_MLKEM768_SHA256 */
+#endif /* ML-KEM hybrid algorithms */
         if (ret == 0) {
             ret = WS_SUCCESS;
         }
     }
 
     if (ret == WS_SUCCESS
-#ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
+#if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
+    !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384) || \
+    !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
         && !ssh->handshake->useEccMlKem
 #endif
 #ifndef WOLFSSH_NO_CURVE25519_SHA256
