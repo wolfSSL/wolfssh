@@ -229,6 +229,8 @@ WOLFSSH_API int wolfSSH_ChannelRead(WOLFSSH_CHANNEL*, byte*, word32);
 WOLFSSH_API int wolfSSH_ChannelSend(WOLFSSH_CHANNEL*, const byte*, word32);
 WOLFSSH_API int wolfSSH_ChannelExit(WOLFSSH_CHANNEL*);
 WOLFSSH_API int wolfSSH_ChannelGetEof(WOLFSSH_CHANNEL*);
+WOLFSSH_API const char* wolfSSH_ChannelGetType(
+        const WOLFSSH_CHANNEL* channel);
 WOLFSSH_API WS_SessionType wolfSSH_ChannelGetSessionType(
         const WOLFSSH_CHANNEL* channel);
 WOLFSSH_API const char* wolfSSH_ChannelGetSessionCommand(
