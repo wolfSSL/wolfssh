@@ -3282,16 +3282,34 @@ void wolfSSH_SetKeyingCompletionCbCtx(WOLFSSH* ssh, void* ctx)
 }
 
 
+const char* wolfSSH_ChannelGetType(const WOLFSSH_CHANNEL* channel)
+{
+    const char* name = NULL;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelGetType()");
+
+    if (channel != NULL) {
+        name = IdToName(channel->channelType);
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelGetType(), name = %s",
+            channel ? name : "null channel");
+    return name;
+}
+
+
 WS_SessionType wolfSSH_ChannelGetSessionType(const WOLFSSH_CHANNEL* channel)
 {
     WS_SessionType type = WOLFSSH_SESSION_UNKNOWN;
 
-    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelGetType()");
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelGetSessionType()");
 
     if (channel) {
         type = (WS_SessionType)channel->sessionType;
     }
 
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelGetSessionType(), type = %d",
+            type);
     return type;
 }
 

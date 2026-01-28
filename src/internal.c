@@ -13477,7 +13477,8 @@ int SendIgnore(WOLFSSH* ssh, const unsigned char* data, word32 dataSz)
     return ret;
 }
 
-int SendGlobalRequest(WOLFSSH* ssh, const unsigned char* data, word32 dataSz, int reply)
+int SendGlobalRequest(WOLFSSH* ssh,
+        const unsigned char* data, word32 dataSz, int reply)
 {
     byte* output;
     word32 idx = 0;
@@ -13490,18 +13491,15 @@ int SendGlobalRequest(WOLFSSH* ssh, const unsigned char* data, word32 dataSz, in
 
     if (ret == WS_SUCCESS)
         ret = PreparePacket(ssh, MSG_ID_SZ + LENGTH_SZ + dataSz + BOOLEAN_SZ);
-    WLOG(WS_LOG_DEBUG, "Done PreparePacket");
 
-    if (ret == WS_SUCCESS)
-    {
+    if (ret == WS_SUCCESS) {
         output = ssh->outputBuffer.buffer;
         idx = ssh->outputBuffer.length;
 
         output[idx++] = MSGID_GLOBAL_REQUEST;
         c32toa(dataSz, output + idx);
         idx += LENGTH_SZ;
-        if (dataSz > 0)
-        {
+        if (dataSz > 0) {
             WMEMCPY(output + idx, data, dataSz);
             idx += dataSz;
         }
@@ -13512,12 +13510,11 @@ int SendGlobalRequest(WOLFSSH* ssh, const unsigned char* data, word32 dataSz, in
 
         ret = BundlePacket(ssh);
     }
-    WLOG(WS_LOG_DEBUG, "Done BundlePacket");
 
     if (ret == WS_SUCCESS)
         ret = wolfSSH_SendPacket(ssh);
 
-    WLOG(WS_LOG_DEBUG, "Leaving SendServiceRequest(), ret = %d", ret);
+    WLOG(WS_LOG_DEBUG, "Leaving SendGlobalRequest(), ret = %d", ret);
 
     return ret;
 }
@@ -13590,8 +13587,7 @@ int SendServiceRequest(WOLFSSH* ssh, byte serviceId)
         serviceName = IdToName(serviceId);
         serviceNameSz = (word32)WSTRLEN(serviceName);
 
-        ret = PreparePacket(ssh,
-                            MSG_ID_SZ + LENGTH_SZ + serviceNameSz);
+        ret = PreparePacket(ssh, MSG_ID_SZ + LENGTH_SZ + serviceNameSz);
     }
 
     if (ret == WS_SUCCESS) {
