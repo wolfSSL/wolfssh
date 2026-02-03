@@ -896,11 +896,8 @@ struct WOLFSSH {
     WS_DIR_LIST* dirList;
     word32 dirIdCount[2];
 #endif
-    WS_FILE_LIST* fileList;
     word32 fileIdCount[2];
-#ifdef WOLFSSH_STOREHANDLE
-    WS_HANDLE_LIST* handleList;
-#endif
+    WS_FILE_LIST* fileList;
     struct WS_SFTP_RECV_INIT_STATE* recvInitState;
     struct WS_SFTP_RECV_STATE* recvState;
     struct WS_SFTP_RMDIR_STATE* rmdirState;
