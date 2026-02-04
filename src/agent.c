@@ -374,6 +374,7 @@ static int PostLock(WOLFSSH_AGENT_CTX* agent,
     word32 ppSz;
 
     WLOG(WS_LOG_AGENT, "Posting lock to agent %p", agent);
+    WOLFSSH_UNUSED(agent);
 
     ppSz = sizeof(pp) - 1;
     if (passphraseSz < ppSz)
@@ -395,6 +396,7 @@ static int PostUnlock(WOLFSSH_AGENT_CTX* agent,
     word32 ppSz;
 
     WLOG(WS_LOG_AGENT, "Posting unlock to agent %p", agent);
+    WOLFSSH_UNUSED(agent);
 
     ppSz = sizeof(pp) - 1;
     if (passphraseSz < ppSz)

@@ -383,6 +383,7 @@ static int wolfSSH_AGENT_DefaultActions(WS_AgentCbAction action, void* vCtx)
     if (action == WOLFSSH_AGENT_LOCAL_SETUP) {
         struct sockaddr_un* name = &ctx->name;
         size_t size;
+        int envSet = 0, nameBound = 0;
 
         WMEMSET(name, 0, sizeof(struct sockaddr_un));
         ctx->pid = getpid();
@@ -390,15 +391,16 @@ static int wolfSSH_AGENT_DefaultActions(WS_AgentCbAction action, void* vCtx)
 
         ret = snprintf(name->sun_path, sizeof(name->sun_path),
                 "/tmp/wolfserver.%d", ctx->pid);
+        if (ret >= 0) {
+            name->sun_path[sizeof(name->sun_path) - 1] = '\0';
+            size = WSTRLEN(name->sun_path);
+            ret = (size < WSTRLEN("/tmp/wolfserver."));
+        }
 
         if (ret == 0) {
-            name->sun_path[sizeof(name->sun_path) - 1] = '\0';
-            size = WSTRLEN(name->sun_path) +
-                    offsetof(struct sockaddr_un, sun_path);
+            size += offsetof(struct sockaddr_un, sun_path);
             ctx->listenFd = socket(AF_UNIX, SOCK_STREAM, 0);
-            if (ctx->listenFd == -1) {
-                ret = -1;
-            }
+            ret = (ctx->listenFd == -1) ? -1 : 0;
         }
 
         if (ret == 0) {
@@ -407,10 +409,12 @@ static int wolfSSH_AGENT_DefaultActions(WS_AgentCbAction action, void* vCtx)
         }
 
         if (ret == 0) {
+            nameBound = 1;
             ret = setenv(EnvNameAuthPort, name->sun_path, 1);
         }
 
         if (ret == 0) {
+            envSet = 1;
             ret = listen(ctx->listenFd, 5);
         }
 
@@ -418,6 +422,16 @@ static int wolfSSH_AGENT_DefaultActions(WS_AgentCbAction action, void* vCtx)
             ctx->state = AGENT_STATE_LISTEN;
         }
         else {
+            if (nameBound) {
+                unlink(ctx->name.sun_path);
+            }
+            if (envSet) {
+                unsetenv(EnvNameAuthPort);
+            }
+            if (ctx->listenFd >= 0) {
+                close(ctx->listenFd);
+                ctx->listenFd = -1;
+            }
             ret = WS_AGENT_SETUP_E;
         }
     }
