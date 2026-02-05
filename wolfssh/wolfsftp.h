@@ -173,6 +173,13 @@ struct WS_SFTPNAME {
     #define WOLFSSH_MAX_SFTP_RECV 32768
 #endif
 
+/* SFTP buffer for nonblocking state tracking */
+typedef struct WS_SFTP_BUFFER {
+    byte*  data;
+    word32 sz;
+    word32 idx;
+} WS_SFTP_BUFFER;
+
 /* functions for establishing a connection */
 WOLFSSH_API int wolfSSH_SFTP_accept(WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_SFTP_connect(WOLFSSH* ssh);
@@ -281,6 +288,9 @@ WOLFSSL_LOCAL int SFTP_RemoveHandleNode(WOLFSSH* ssh, byte* handle,
         word32 handleSz);
 
 WOLFSSH_LOCAL void wolfSSH_SFTP_ShowSizes(void);
+
+/* SFTP buffer send - exposed for testing */
+WOLFSSH_LOCAL int wolfSSH_SFTP_buffer_send(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer);
 
 #ifdef __cplusplus
 }

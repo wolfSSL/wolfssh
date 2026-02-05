@@ -145,13 +145,8 @@ enum WS_SFTP_LSTAT_STATE_ID {
     STATE_LSTAT_CLEANUP
 };
 
-/* This structure is to help with nonblocking and keeping track of state.
+/* WS_SFTP_BUFFER is defined in wolfsftp.h for use with nonblocking state.
  * If adding any read/writes use the wolfSSH_SFTP_buffer_read/send functions */
-typedef struct WS_SFTP_BUFFER {
-    byte*  data;
-    word32 sz;
-    word32 idx;
-} WS_SFTP_BUFFER;
 
 typedef struct WS_SFTP_CHMOD_STATE {
     enum WS_SFTP_CHMOD_STATE_ID state;
@@ -513,7 +508,7 @@ static void wolfSSH_SFTP_buffer_rewind(WS_SFTP_BUFFER* buffer)
 
 /* try to send the rest of the buffer (buffer.sz - buffer.idx)
  * increments idx with amount sent */
-static int wolfSSH_SFTP_buffer_send(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer)
+WOLFSSH_LOCAL int wolfSSH_SFTP_buffer_send(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer)
 {
     int ret = WS_SUCCESS;
     int err;
@@ -524,6 +519,19 @@ static int wolfSSH_SFTP_buffer_send(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer)
 
     if (buffer->idx > buffer->sz) {
         return WS_BUFFER_E;
+    }
+
+    /* Flush any pending data in SSH output buffer first.
+     * Handles case where previous send returned WS_WANT_WRITE
+     * and data is still buffered at the SSH layer. */
+    if (ssh->outputBuffer.length > ssh->outputBuffer.idx) {
+        ret = wolfSSH_SendPacket(ssh);
+        if (ret == WS_WANT_WRITE) {
+            return ret;
+        }
+        if (ret < 0) {
+            return ret;
+        }
     }
 
     /* Call wolfSSH worker if rekeying or adjusting window size */
@@ -1600,6 +1608,14 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
                 }
                 if (wolfSSH_SFTP_buffer_idx(&state->buffer)
                         < wolfSSH_SFTP_buffer_size(&state->buffer)) {
+                    ssh->error = WS_WANT_WRITE;
+                    return WS_FATAL_ERROR;
+                }
+                /* Check if SSH layer still has pending data from WS_WANT_WRITE.
+                 * Even if SFTP buffer is fully consumed, the data may still be
+                 * sitting in the SSH output buffer waiting to be sent. */
+                if (ssh->error == WS_WANT_WRITE ||
+                        ssh->outputBuffer.length > ssh->outputBuffer.idx) {
                     ssh->error = WS_WANT_WRITE;
                     return WS_FATAL_ERROR;
                 }
