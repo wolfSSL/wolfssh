@@ -6,6 +6,7 @@ no_pid=-1
 server_pid=$no_pid
 ready_file=`pwd`/wolfssh_scp_ready$$
 counter=0
+nonblockingOnly=0
 
 [ ! -x ./examples/scpclient/wolfscp ] && echo -e "\n\nwolfscp client doesn't exist" && exit 1
 
@@ -13,9 +14,15 @@ counter=0
 ./examples/client/client -h | grep WOLFSSH_TEST_BLOCK
 if [ $? -eq 0 ]
 then
-    echo "macro NO_WOLFSSH_CLIENT was used"
-    echo "skipping for now"
-    exit 77
+    echo "WOLFSSH_TEST_BLOCK detected - running in non-blocking mode"
+    nonblockingOnly=1
+fi
+
+# Set non-blocking flag based on mode
+if [ $nonblockingOnly -eq 1 ]; then
+    NB_FLAG="-N"
+else
+    NB_FLAG=""
 fi
 
 create_port() {
@@ -66,10 +73,10 @@ trap do_trap INT TERM
 [ ! -x ./examples/scpclient/wolfscp ] && echo -e "\n\nClient doesn't exist" && exit 1
 
 echo "Test basic copy from server to local"
-./examples/echoserver/echoserver -1 -R $ready_file &
+./examples/echoserver/echoserver $NB_FLAG -1 -R $ready_file &
 server_pid=$!
 create_port
-./examples/scpclient/wolfscp -u jill -P upthehill -p $port -S $PWD/scripts/scp.test:$PWD/scp.test
+./examples/scpclient/wolfscp $NB_FLAG -u jill -P upthehill -p $port -S $PWD/scripts/scp.test:$PWD/scp.test
 RESULT=$?
 remove_ready_file
 
@@ -82,10 +89,10 @@ else
 fi
 
 echo "Test basic copy from local to server"
-./examples/echoserver/echoserver -1 -R $ready_file &
+./examples/echoserver/echoserver $NB_FLAG -1 -R $ready_file &
 server_pid=$!
 create_port
-./examples/scpclient/wolfscp -u jill -P upthehill -p $port -L $PWD/scripts/scp.test:$PWD/scp.test
+./examples/scpclient/wolfscp $NB_FLAG -u jill -P upthehill -p $port -L $PWD/scripts/scp.test:$PWD/scp.test
 RESULT=$?
 remove_ready_file
 
@@ -99,10 +106,10 @@ fi
 
 echo "Test of getting empty file"
 touch $PWD/scripts/empty
-./examples/echoserver/echoserver -1 -R $ready_file &
+./examples/echoserver/echoserver $NB_FLAG -1 -R $ready_file &
 server_pid=$!
 create_port
-./examples/scpclient/wolfscp -u jill -P upthehill -p $port -S $PWD/scripts/empty:$PWD/empty
+./examples/scpclient/wolfscp $NB_FLAG -u jill -P upthehill -p $port -S $PWD/scripts/empty:$PWD/empty
 RESULT=$?
 remove_ready_file
 rm -f $PWD/scripts/empty
@@ -117,10 +124,10 @@ fi
 
 echo "Test of sending empty file"
 touch $PWD/scripts/empty
-./examples/echoserver/echoserver -1 -R $ready_file &
+./examples/echoserver/echoserver $NB_FLAG -1 -R $ready_file &
 server_pid=$!
 create_port
-./examples/scpclient/wolfscp -u jill -P upthehill -p $port -L $PWD/scripts/empty:$PWD/empty
+./examples/scpclient/wolfscp $NB_FLAG -u jill -P upthehill -p $port -L $PWD/scripts/empty:$PWD/empty
 RESULT=$?
 remove_ready_file
 rm -f $PWD/scripts/empty
@@ -135,10 +142,10 @@ fi
 
 echo "Test of sending a file that does not exist"
 touch $PWD/scripts/empty
-./examples/echoserver/echoserver -1 -R $ready_file &
+./examples/echoserver/echoserver $NB_FLAG -1 -R $ready_file &
 server_pid=$!
 create_port
-./examples/scpclient/wolfscp -u jill -P upthehill -p $port -L $PWD/does-not-exist:$PWD/empty
+./examples/scpclient/wolfscp $NB_FLAG -u jill -P upthehill -p $port -L $PWD/does-not-exist:$PWD/empty
 RESULT=$?
 remove_ready_file
 rm -f $PWD/scripts/empty

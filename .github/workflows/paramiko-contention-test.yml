@@ -1,0 +1,252 @@
+name: wolfSSH Paramiko Contention Test
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build_wolfssl:
+    name: Build wolfssl
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Checking cache for wolfssl
+        uses: actions/cache@v4
+        id: cache-wolfssl
+        with:
+          path: build-dir/
+          key: wolfssh-paramiko-contention-wolfssl-ubuntu-latest
+          lookup-only: true
+
+      - name: Checkout, build, and install wolfssl
+        if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+        uses: wolfSSL/actions-build-autotools-project@v1
+        with:
+          repository: wolfssl/wolfssl
+          ref: master
+          path: wolfssl
+          configure: --enable-all
+          check: false
+          install: true
+
+  paramiko_contention_test:
+    needs: build_wolfssl
+    strategy:
+      fail-fast: false
+      matrix:
+        block_prob: [ 30, 50, 70 ]
+    name: Paramiko Contention Test (prob=${{ matrix.block_prob }}%)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checking cache for wolfssl
+        uses: actions/cache@v4
+        with:
+          path: build-dir/
+          key: wolfssh-paramiko-contention-wolfssl-ubuntu-latest
+          fail-on-cache-miss: true
+
+      - uses: actions/checkout@v4
+        with:
+          path: wolfssh/
+
+      - name: autogen
+        working-directory: ./wolfssh/
+        run: ./autogen.sh
+
+      - name: configure with TEST_BLOCK
+        working-directory: ./wolfssh/
+        run: |
+          ./configure --enable-all \
+            LDFLAGS="-L${{ github.workspace }}/build-dir/lib" \
+            CPPFLAGS="-I${{ github.workspace }}/build-dir/include -DWOLFSSH_TEST_BLOCK -DWOLFSSH_BLOCK_PROB=${{ matrix.block_prob }} -DWOLFSSH_NO_FPKI"
+
+      - name: make
+        working-directory: ./wolfssh/
+        run: make
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pip openssh-client
+          python3 -m pip install paramiko
+
+      - name: Create test directories
+        run: |
+          mkdir -p /tmp/sftp_upload
+          mkdir -p /tmp/sftp_download
+
+      - name: Create test files
+        run: |
+          dd if=/dev/urandom of=/tmp/sftp_upload/test_1kb.dat bs=1K count=1
+          dd if=/dev/urandom of=/tmp/sftp_upload/test_2mb.dat bs=1M count=2
+          dd if=/dev/urandom of=/tmp/sftp_upload/test_20mb.dat bs=1M count=20
+          echo "Created test files:"
+          ls -la /tmp/sftp_upload/
+          md5sum /tmp/sftp_upload/*.dat
+
+      - name: Configure wolfSSHd
+        working-directory: ./wolfssh/
+        run: |
+          # Create a minimal sshd_config file
+          cat > sshd_config.txt << EOF
+          Port 22222
+          HostKey ./keys/server-key.pem
+          PasswordAuthentication yes
+          Subsystem sftp internal-sftp
+          EOF
+
+          # Set proper permissions for keys
+          chmod 600 ./keys/server-key.pem
+
+          # Print debug info
+          echo "Contents of sshd_config.txt:"
+          cat sshd_config.txt
+
+      - name: Setup network delay with tc/netem
+        run: |
+          sudo tc qdisc add dev lo root netem delay 10ms 5ms loss 0.1%
+          echo "Network delay configured:"
+          tc qdisc show dev lo
+
+      - name: Start wolfSSHd
+        working-directory: ./wolfssh/
+        run: |
+          # Create a test user with known password
+          echo "Creating test user..."
+          sudo useradd -m testuser
+          echo "testuser:testpassword" | sudo chpasswd
+
+          # Start wolfSSHd with debug output
+          echo "Starting wolfSSHd with TEST_BLOCK enabled (prob=${{ matrix.block_prob }}%)..."
+          sudo ./apps/wolfsshd/wolfsshd -f sshd_config.txt -h ./keys/server-key.pem -p 22222 -d &
+          echo "Started wolfSSHd on port 22222"
+          sleep 5  # Give the server time to start
+
+          # Check if server is running
+          if ! nc -z 127.0.0.1 22222; then
+            echo "Error: wolfSSHd failed to start"
+            exit 1
+          fi
+
+          # Print debug info
+          echo "wolfSSHd process info:"
+          ps aux | grep wolfsshd
+
+      - name: Create Paramiko contention test script
+        run: |
+          cat > /tmp/paramiko_contention_test.py << 'EOF'
+          import paramiko
+          import os
+          import time
+          import sys
+          import hashlib
+
+          def get_file_hash(filepath):
+              """Calculate MD5 hash of a file."""
+              hash_md5 = hashlib.md5()
+              with open(filepath, "rb") as f:
+                  for chunk in iter(lambda: f.read(4096), b""):
+                      hash_md5.update(chunk)
+              return hash_md5.hexdigest()
+
+          def run_sftp_test():
+              # Create SSH client
+              ssh = paramiko.SSHClient()
+              ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+              # Connect to server using password authentication with testuser
+              print("Connecting to wolfSSHd server...")
+              max_retries = 3
+              for attempt in range(max_retries):
+                  try:
+                      ssh.connect('127.0.0.1', port=22222, username='testuser',
+                                  password='testpassword', timeout=60)
+                      break
+                  except Exception as e:
+                      print(f"Connection attempt {attempt + 1} failed: {e}")
+                      if attempt < max_retries - 1:
+                          time.sleep(2)
+                      else:
+                          raise
+
+              # Open SFTP session
+              print("Opening SFTP session...")
+              sftp = ssh.open_sftp()
+
+              test_files = [
+                  ('test_1kb.dat', '1KB'),
+                  ('test_2mb.dat', '2MB'),
+                  ('test_20mb.dat', '20MB'),
+              ]
+
+              for filename, size_label in test_files:
+                  src_path = f'/tmp/sftp_upload/{filename}'
+                  remote_path = f'/tmp/{filename}'
+                  dst_path = f'/tmp/sftp_download/{filename}'
+
+                  # Upload test
+                  print(f"Uploading {size_label} test file...")
+                  start_time = time.time()
+                  sftp.put(src_path, remote_path)
+                  upload_time = time.time() - start_time
+                  print(f"Upload completed in {upload_time:.2f} seconds")
+
+                  # Download test
+                  print(f"Downloading {size_label} test file...")
+                  start_time = time.time()
+                  sftp.get(remote_path, dst_path)
+                  download_time = time.time() - start_time
+                  print(f"Download completed in {download_time:.2f} seconds")
+
+                  # Verify integrity
+                  src_hash = get_file_hash(src_path)
+                  dst_hash = get_file_hash(dst_path)
+                  if src_hash != dst_hash:
+                      print(f"FAILED: {size_label} file integrity check")
+                      print(f"  Source hash: {src_hash}")
+                      print(f"  Downloaded hash: {dst_hash}")
+                      sftp.close()
+                      ssh.close()
+                      return False
+                  print(f"{size_label} file integrity check: PASSED")
+
+              # Close connections
+              sftp.close()
+              ssh.close()
+
+              print("SFTP session closed")
+              print("All contention tests PASSED")
+              return True
+
+          if __name__ == "__main__":
+              try:
+                  success = run_sftp_test()
+                  sys.exit(0 if success else 1)
+              except Exception as e:
+                  print(f"Error: {e}")
+                  import traceback
+                  traceback.print_exc()
+                  sys.exit(1)
+          EOF
+
+      - name: Run Paramiko contention test
+        timeout-minutes: 10
+        run: |
+          python3 /tmp/paramiko_contention_test.py
+
+      - name: Cleanup network delay
+        if: always()
+        run: sudo tc qdisc del dev lo root netem || true
+
+      - name: Stop wolfSSHd
+        if: always()
+        run: |
+          sudo pkill wolfsshd || true
