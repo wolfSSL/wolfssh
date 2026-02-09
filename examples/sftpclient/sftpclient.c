@@ -46,6 +46,17 @@
 
 #ifdef WOLFSSH_CERTS
     #include <wolfssl/wolfcrypt/asn.h>
+    #ifdef USE_WINDOWS_API
+        #include <windows.h>
+        #include <wincrypt.h>
+        #include <ncrypt.h>
+        #ifndef CERT_SYSTEM_STORE_CURRENT_USER
+            #define CERT_SYSTEM_STORE_CURRENT_USER 0x00010000
+        #endif
+        #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE
+            #define CERT_SYSTEM_STORE_LOCAL_MACHINE 0x00020000
+        #endif
+    #endif /* USE_WINDOWS_API */
 #endif
 
 #if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT)
@@ -388,6 +399,12 @@ static void ShowUsage(void)
     printf(" -g            put local filename as remote filename\n");
     printf(" -G            get remote filename as local filename\n");
     printf(" -i <filename> filename for the user's private key\n");
+#ifdef USE_WINDOWS_API
+#ifdef WOLFSSH_CERTS
+    printf(" -W <spec>     Windows cert store: \"store:subject:flags\"\n");
+    printf("               Example: -W \"My:CN=MyCert:CURRENT_USER\"\n");
+#endif /* WOLFSSH_CERTS */
+#endif /* USE_WINDOWS_API */
 #ifdef WOLFSSH_CERTS
     printf(" -J <filename> filename for DER certificate to use\n");
     printf("               Certificate example : client -u orange \\\n");
@@ -1254,13 +1271,24 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     char* pubKeyName = NULL;
     char* certName = NULL;
     char* caCert   = NULL;
+#ifdef USE_WINDOWS_API
+#ifdef WOLFSSH_CERTS
+    const char* certStoreSpec = NULL;  /* Format: "store:subject:flags" */
+#endif /* WOLFSSH_CERTS */
+#endif /* USE_WINDOWS_API */
     SFTPC_HEAP_HINT* heap = NULL;
 
     int     argc = ((func_args*)args)->argc;
     char**  argv = ((func_args*)args)->argv;
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?d:gh:i:j:l:p:r:u:EGNP:J:A:X")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?d:gh:i:j:l:p:r:u:EGNP:J:A:X"
+#ifdef USE_WINDOWS_API
+#ifdef WOLFSSH_CERTS
+            "W:"
+#endif /* WOLFSSH_CERTS */
+#endif /* USE_WINDOWS_API */
+            )) != -1) {
         switch (ch) {
             case 'd':
                 defaultSftpPath = myoptarg;
@@ -1338,6 +1366,14 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
             #endif
         #endif
 
+#ifdef USE_WINDOWS_API
+#ifdef WOLFSSH_CERTS
+            case 'W':
+                certStoreSpec = myoptarg;
+                break;
+#endif /* WOLFSSH_CERTS */
+#endif /* USE_WINDOWS_API */
+
             case '?':
                 ShowUsage();
                 exit(EXIT_SUCCESS);
@@ -1384,26 +1420,122 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     }
 #endif /* WOLFSSH_STATIC_MEMORY */
 
-    ret = ClientSetPrivateKey(privKeyName, userEcc, heap, NULL);
-    if (ret != 0) {
-        err_sys("Error setting private key");
-    }
 
+#ifdef USE_WINDOWS_API
 #ifdef WOLFSSH_CERTS
-    /* passed in certificate to use */
-    if (certName) {
-        ret = ClientUseCert(certName, heap);
-    }
-    else
-#endif
-    {
-        ret = ClientUsePubKey(pubKeyName, 0, heap);
-    }
-    if (ret != 0) {
-        err_sys("Error setting public key");
-    }
+    if (certStoreSpec != NULL) {
+        /* Parse format: "store:subject:flags" */
+        char* specCopy = NULL;
+        char* storeName = NULL;
+        char* subjectName = NULL;
+        char* flagsStr = NULL;
+        wchar_t* wStoreName = NULL;
+        wchar_t* wSubjectName = NULL;
+        DWORD dwFlags = CERT_SYSTEM_STORE_CURRENT_USER;
+        size_t specLen = WSTRLEN(certStoreSpec) + 1;
 
-    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, heap);
+        specCopy = (char*)WMALLOC(specLen, NULL, DYNTYPE_TEMP);
+        if (specCopy == NULL) {
+            err_sys("Memory allocation failed");
+        }
+        WSTRNCPY(specCopy, certStoreSpec, specLen);
+
+        /* Parse the format string */
+        storeName = specCopy;
+        subjectName = WSTRCHR(storeName, ':');
+        if (subjectName != NULL) {
+            *subjectName++ = '\0';
+            flagsStr = WSTRCHR(subjectName, ':');
+            if (flagsStr != NULL) {
+                *flagsStr++ = '\0';
+                /* Parse flags */
+                if (WSTRCMP(flagsStr, "CURRENT_USER") == 0) {
+                    dwFlags = CERT_SYSTEM_STORE_CURRENT_USER;
+                } else if (WSTRCMP(flagsStr, "LOCAL_MACHINE") == 0) {
+                    dwFlags = CERT_SYSTEM_STORE_LOCAL_MACHINE;
+                } else {
+                    dwFlags = (DWORD)atoi(flagsStr);
+                }
+            }
+        }
+
+        if (storeName == NULL || subjectName == NULL) {
+            err_sys("Invalid cert store spec format. Use: store:subject:flags");
+        }
+
+        /* Convert to wide strings */
+        {
+            size_t storeNameLen = WSTRLEN(storeName) + 1;
+            size_t subjectNameLen = WSTRLEN(subjectName) + 1;
+            int wStoreNameLen = MultiByteToWideChar(CP_UTF8, 0, storeName, -1,
+                NULL, 0);
+            int wSubjectNameLen = MultiByteToWideChar(CP_UTF8, 0, subjectName,
+                -1, NULL, 0);
+
+            wStoreName = (wchar_t*)WMALLOC(wStoreNameLen * sizeof(wchar_t),
+                NULL, DYNTYPE_TEMP);
+            wSubjectName = (wchar_t*)WMALLOC(wSubjectNameLen * sizeof(wchar_t),
+                NULL, DYNTYPE_TEMP);
+
+            if (wStoreName == NULL || wSubjectName == NULL) {
+                err_sys("Memory allocation failed for wide strings");
+            }
+
+            MultiByteToWideChar(CP_UTF8, 0, storeName, -1, wStoreName,
+                wStoreNameLen);
+            MultiByteToWideChar(CP_UTF8, 0, subjectName, -1, wSubjectName,
+                wSubjectNameLen);
+        }
+
+        /* Create context first */
+        ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, heap);
+        if (ctx == NULL) {
+            err_sys("Couldn't create wolfSSH client context.");
+        }
+
+        /* Set private key from cert store */
+        ret = ClientSetPrivateKeyFromStore(ctx, wStoreName, dwFlags,
+            wSubjectName);
+        if (ret != WS_SUCCESS) {
+            err_sys("Error setting private key from certificate store");
+        }
+
+        /* Set up auth callback globals (public key type, cert DER) so
+         * that ClientUserAuth presents the certificate for public key
+         * authentication. */
+        ret = ClientSetupCertStoreAuth(ctx);
+        if (ret != WS_SUCCESS) {
+            err_sys("Error setting up cert store auth");
+        }
+
+        WFREE(specCopy, NULL, DYNTYPE_TEMP);
+        WFREE(wStoreName, NULL, DYNTYPE_TEMP);
+        WFREE(wSubjectName, NULL, DYNTYPE_TEMP);
+    } else
+#endif /* WOLFSSH_CERTS */
+#endif /* USE_WINDOWS_API */
+    {
+        ret = ClientSetPrivateKey(privKeyName, userEcc, heap, NULL);
+        if (ret != 0) {
+            err_sys("Error setting private key");
+        }
+
+    #ifdef WOLFSSH_CERTS
+        /* passed in certificate to use */
+        if (certName) {
+            ret = ClientUseCert(certName, heap);
+        }
+        else
+    #endif
+        {
+            ret = ClientUsePubKey(pubKeyName, 0, heap);
+        }
+        if (ret != 0) {
+            err_sys("Error setting public key");
+        }
+
+        ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, heap);
+    }
     if (ctx == NULL)
         err_sys("Couldn't create wolfSSH client context.");
 

@@ -113,6 +113,16 @@
     #define SOCKET_EWOULDBLOCK WSAEWOULDBLOCK
 #endif
 
+#if defined(USE_WINDOWS_API) && defined(WOLFSSH_CERTS)
+    #include <windows.h>
+    #include <wincrypt.h>
+    #ifndef CERT_SYSTEM_STORE_CURRENT_USER
+        #define CERT_SYSTEM_STORE_CURRENT_USER 0x00010000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE
+        #define CERT_SYSTEM_STORE_LOCAL_MACHINE 0x00020000
+    #endif
+#endif
 
 #ifndef NO_WOLFSSH_SERVER
 
@@ -2528,6 +2538,9 @@ static void ShowUsage(void)
     printf(" -x <list>     set the comma separated list of key exchange algos "
            "to use\n");
     printf(" -m <list>     set the comma separated list of mac algos to use\n");
+#if defined(USE_WINDOWS_API) && defined(WOLFSSH_CERTS)
+    printf(" -W <spec>     Windows cert store: \"store:subject:flags\" (e.g. My:CN=Server:CURRENT_USER)\n");
+#endif
     printf(" -b <num>      test user auth would block\n");
     printf(" -H            set test highwater callback\n");
 }
@@ -2626,6 +2639,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     #ifdef WOLFSSH_CERTS
         char* caCert = NULL;
     #endif
+    #if defined(USE_WINDOWS_API) && defined(WOLFSSH_CERTS)
+        const char* certStoreSpec = NULL;
+    #endif
 
     int     argc = serverArgs->argc;
     char**  argv = serverArgs->argv;
@@ -2634,8 +2650,11 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     kbAuthData.promptCount = 0;
 #endif
 
+    #if defined(USE_WINDOWS_API) && defined(WOLFSSH_CERTS)
+        certStoreSpec = getenv("WOLFSSH_CERT_STORE");
+    #endif
     if (argc > 0) {
-        const char* optlist = "?1a:d:efEp:R:Ni:j:i:I:J:K:P:k:b:x:m:c:s:H";
+        const char* optlist = "?1a:d:efEp:R:Ni:j:i:I:J:K:P:k:b:x:m:c:s:HW:";
         myoptind = 0;
         while ((ch = mygetopt(argc, argv, optlist)) != -1) {
             switch (ch) {
@@ -2750,6 +2769,12 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 case 'H':
                     useCustomHighWaterCb = 1;
                     break;
+
+                #if defined(USE_WINDOWS_API) && defined(WOLFSSH_CERTS)
+                case 'W':
+                    certStoreSpec = myoptarg;
+                    break;
+                #endif
 
                 default:
                     ShowUsage();
@@ -2931,28 +2956,94 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         #endif
         bufSz = EXAMPLE_KEYLOAD_BUFFER_SZ;
 
-        bufSz = load_key(peerEcc, keyLoadBuf, bufSz);
-        if (bufSz == 0) {
-            ES_ERROR("Couldn't load first key file.\n");
-        }
-        if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, keyLoadBuf, bufSz,
-                                             WOLFSSH_FORMAT_ASN1) < 0) {
-            ES_ERROR("Couldn't use first key buffer.\n");
-        }
+#if defined(USE_WINDOWS_API) && defined(WOLFSSH_CERTS)
+        if (certStoreSpec != NULL) {
+            /* Load host key from Windows certificate store: store:subject:flags */
+            char* specCopy = NULL;
+            char* storeName = NULL;
+            char* subjectName = NULL;
+            char* flagsStr = NULL;
+            wchar_t* wStoreName = NULL;
+            wchar_t* wSubjectName = NULL;
+            DWORD dwFlags = CERT_SYSTEM_STORE_CURRENT_USER;
+            int ret;
+            size_t specLen = WSTRLEN(certStoreSpec) + 1;
 
-        #if !defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_ECC)
-        peerEcc = !peerEcc;
-        bufSz = EXAMPLE_KEYLOAD_BUFFER_SZ;
+            specCopy = (char*)WMALLOC(specLen, NULL, 0);
+            if (specCopy == NULL) {
+                ES_ERROR("Memory allocation failed for cert store spec\n");
+            }
+            WSTRNCPY(specCopy, certStoreSpec, specLen);
 
-        bufSz = load_key(peerEcc, keyLoadBuf, bufSz);
-        if (bufSz == 0) {
-            ES_ERROR("Couldn't load second key file.\n");
+            storeName = specCopy;
+            subjectName = WSTRCHR(storeName, ':');
+            if (subjectName != NULL) {
+                *subjectName++ = '\0';
+                flagsStr = WSTRCHR(subjectName, ':');
+                if (flagsStr != NULL) {
+                    *flagsStr++ = '\0';
+                    if (WSTRCMP(flagsStr, "CURRENT_USER") == 0) {
+                        dwFlags = CERT_SYSTEM_STORE_CURRENT_USER;
+                    } else if (WSTRCMP(flagsStr, "LOCAL_MACHINE") == 0) {
+                        dwFlags = CERT_SYSTEM_STORE_LOCAL_MACHINE;
+                    } else {
+                        dwFlags = (DWORD)atoi(flagsStr);
+                    }
+                }
+            }
+            if (storeName == NULL || subjectName == NULL) {
+                WFREE(specCopy, NULL, 0);
+                ES_ERROR("Invalid cert store spec. Use: store:subject:flags\n");
+            }
+
+            {
+                int wStoreNameLen = MultiByteToWideChar(CP_UTF8, 0, storeName, -1, NULL, 0);
+                int wSubjectNameLen = MultiByteToWideChar(CP_UTF8, 0, subjectName, -1, NULL, 0);
+                wStoreName = (wchar_t*)WMALLOC(wStoreNameLen * sizeof(wchar_t), NULL, 0);
+                wSubjectName = (wchar_t*)WMALLOC(wSubjectNameLen * sizeof(wchar_t), NULL, 0);
+                if (wStoreName == NULL || wSubjectName == NULL) {
+                    if (wStoreName != NULL) WFREE(wStoreName, NULL, 0);
+                    if (wSubjectName != NULL) WFREE(wSubjectName, NULL, 0);
+                    WFREE(specCopy, NULL, 0);
+                    ES_ERROR("Memory allocation failed for cert store wide strings\n");
+                }
+                MultiByteToWideChar(CP_UTF8, 0, storeName, -1, wStoreName, wStoreNameLen);
+                MultiByteToWideChar(CP_UTF8, 0, subjectName, -1, wSubjectName, wSubjectNameLen);
+            }
+
+            ret = wolfSSH_CTX_UsePrivateKey_fromStore(ctx, wStoreName, dwFlags, wSubjectName);
+            WFREE(specCopy, NULL, 0);
+            WFREE(wStoreName, NULL, 0);
+            WFREE(wSubjectName, NULL, 0);
+            if (ret != WS_SUCCESS) {
+                ES_ERROR("Couldn't load host key from certificate store.\n");
+            }
+        } else
+#endif
+        {
+            bufSz = load_key(peerEcc, keyLoadBuf, bufSz);
+            if (bufSz == 0) {
+                ES_ERROR("Couldn't load first key file.\n");
+            }
+            if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, keyLoadBuf, bufSz,
+                                                 WOLFSSH_FORMAT_ASN1) < 0) {
+                ES_ERROR("Couldn't use first key buffer.\n");
+            }
+
+            #if !defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_ECC)
+            peerEcc = !peerEcc;
+            bufSz = EXAMPLE_KEYLOAD_BUFFER_SZ;
+
+            bufSz = load_key(peerEcc, keyLoadBuf, bufSz);
+            if (bufSz == 0) {
+                ES_ERROR("Couldn't load second key file.\n");
+            }
+            if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, keyLoadBuf, bufSz,
+                                                 WOLFSSH_FORMAT_ASN1) < 0) {
+                ES_ERROR("Couldn't use second key buffer.\n");
+            }
+            #endif
         }
-        if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, keyLoadBuf, bufSz,
-                                             WOLFSSH_FORMAT_ASN1) < 0) {
-            ES_ERROR("Couldn't use second key buffer.\n");
-        }
-        #endif
 
         #ifndef NO_FILESYSTEM
         if (userPubKey) {
@@ -3249,7 +3340,29 @@ int wolfSSH_Echoserver(int argc, char** argv)
     #endif
 
 #if !defined(WOLFSSL_NUCLEUS) && !defined(INTEGRITY) && !defined(__INTEGRITY)
-    ChangeToWolfSshRoot();
+    {
+        int useStore = 0;
+    #if defined(USE_WINDOWS_API) && defined(WOLFSSH_CERTS)
+        /* When using the Windows certificate store for host keys, the
+         * echoserver does not need file-based keys, so skip the root
+         * directory search that looks for ./keys/server-key-rsa.pem. */
+        if (getenv("WOLFSSH_CERT_STORE") != NULL) {
+            useStore = 1;
+        }
+        else {
+            int i;
+            for (i = 1; i < argc; i++) {
+                if (WSTRCMP(argv[i], "-W") == 0) {
+                    useStore = 1;
+                    break;
+                }
+            }
+        }
+    #endif
+        if (!useStore) {
+            ChangeToWolfSshRoot();
+        }
+    }
 #endif
 #ifndef NO_WOLFSSH_SERVER
     echoserver_test(&args);

@@ -47,6 +47,11 @@
 
 #ifdef WOLFSSH_CERTS
     #include <wolfssl/wolfcrypt/asn.h>
+    #ifdef USE_WINDOWS_API
+        #include <windows.h>
+        #include <wincrypt.h>
+        #include <ncrypt.h>
+    #endif /* USE_WINDOWS_API */
 #endif
 
 static byte userPublicKeyBuf[512];
@@ -1138,3 +1143,85 @@ void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
     WFREE(keyboardResponseLengths, NULL, 0);
 #endif
 }
+
+#ifdef USE_WINDOWS_API
+#ifdef WOLFSSH_CERTS
+int ClientSetPrivateKeyFromStore(WOLFSSH_CTX* ctx,
+        const wchar_t* storeName, DWORD dwFlags, const wchar_t* subjectName)
+{
+    int ret = WS_SUCCESS;
+
+    if (ctx == NULL || storeName == NULL || subjectName == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    ret = wolfSSH_CTX_UsePrivateKey_fromStore(ctx, storeName, dwFlags, subjectName);
+    if (ret != WS_SUCCESS) {
+        fprintf(stderr, "Error loading private key from certificate store: %d\n", ret);
+    }
+
+    return ret;
+}
+
+
+/* After loading a cert store key, populate the global auth callback variables
+ * (userPublicKeyType, userPublicKey, etc.) so that ClientUserAuth can present
+ * the certificate for public key authentication.
+ * For x509 cert auth the "public key" is the DER certificate, and the type
+ * is the x509v3 name that matches the key algorithm. */
+int ClientSetupCertStoreAuth(WOLFSSH_CTX* ctx)
+{
+    word32 i;
+
+    if (ctx == NULL)
+        return WS_BAD_ARGUMENT;
+
+    for (i = 0; i < ctx->privateKeyCount && i < WOLFSSH_MAX_PVT_KEYS; i++) {
+        WOLFSSH_PVT_KEY* pvtKey = &ctx->privateKey[i];
+        if (!pvtKey->useCertStore)
+            continue;
+
+        /* Point userPublicKey at the DER certificate stored in the CTX.
+         * This is safe because the CTX outlives the auth callback. */
+        userPublicKey = pvtKey->cert;
+        userPublicKeySz = pvtKey->certSz;
+
+        /* Map the internal key format to the x509v3 SSH type name. */
+        switch (pvtKey->publicKeyFmt) {
+            case ID_SSH_RSA:
+            case ID_RSA_SHA2_256:
+            case ID_RSA_SHA2_512:
+                userPublicKeyType = (const byte*)"x509v3-ssh-rsa";
+                break;
+            case ID_ECDSA_SHA2_NISTP256:
+            case ID_X509V3_ECDSA_SHA2_NISTP256:
+                userPublicKeyType = (const byte*)"x509v3-ecdsa-sha2-nistp256";
+                break;
+            case ID_ECDSA_SHA2_NISTP384:
+            case ID_X509V3_ECDSA_SHA2_NISTP384:
+                userPublicKeyType = (const byte*)"x509v3-ecdsa-sha2-nistp384";
+                break;
+            case ID_ECDSA_SHA2_NISTP521:
+            case ID_X509V3_ECDSA_SHA2_NISTP521:
+                userPublicKeyType = (const byte*)"x509v3-ecdsa-sha2-nistp521";
+                break;
+            default:
+                fprintf(stderr, "Unsupported cert store key type: %d\n",
+                        pvtKey->publicKeyFmt);
+                return WS_BAD_ARGUMENT;
+        }
+        userPublicKeyTypeSz = (word32)WSTRLEN((const char*)userPublicKeyType);
+
+        /* No in-memory private key — signing goes through the cert store. */
+        userPrivateKey = NULL;
+        userPrivateKeySz = 0;
+
+        pubKeyLoaded = 1;
+        return WS_SUCCESS;
+    }
+
+    fprintf(stderr, "No cert store key found in CTX\n");
+    return WS_BAD_ARGUMENT;
+}
+#endif /* WOLFSSH_CERTS */
+#endif /* USE_WINDOWS_API */
