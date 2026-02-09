@@ -15299,8 +15299,10 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
             ret = wc_HashInit(&hash, hashId);
             if (ret == WS_SUCCESS) {
                 ret = HashUpdate(&hash, hashId, checkData, checkDataSz);
+            }
             if (ret == WS_SUCCESS)
                 ret = wc_HashFinal(&hash, hashId, digest);
+            wc_HashFree(&hash, hashId);
         }
 
 #ifdef USE_WINDOWS_API
