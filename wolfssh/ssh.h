@@ -43,6 +43,11 @@
 #include <wolftpm/tpm2_wrap.h>
 #endif
 
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+/* The Windows certificate store API below uses wchar_t strings. */
+#include <wchar.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -694,6 +699,11 @@ WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX* ctx,
             const char* name);
     WOLFSSH_API int wolfSSH_CTX_AddRootCert_file(WOLFSSH_CTX* ctx,
             const char* name);
+    #endif
+    #ifdef WOLFSSH_WINDOWS_CERT_STORE
+    WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
+            const wchar_t* storeName, word32 dwFlags,
+            const wchar_t* subjectName);
     #endif
 #endif /* WOLFSSH_CERTS */
 WOLFSSH_API int wolfSSH_CTX_SetWindowPacketSize(WOLFSSH_CTX* ctx,
