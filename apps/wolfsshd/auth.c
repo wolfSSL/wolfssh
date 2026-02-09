@@ -54,7 +54,9 @@
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/wolfcrypt/coding.h>
 
-#ifdef WOLFSSL_FPKI
+#if defined(WOLFSSL_FPKI) || defined(_WIN32)
+/* Used to bind a client certificate to the requested user name: by UPN
+ * with FPKI, by subject CN on Windows builds without FPKI. */
 #include <wolfssl/wolfcrypt/asn.h>
 #endif
 
@@ -1728,10 +1730,11 @@ static int RequestAuthentication(WS_UserAuthData* authData,
         ret = WOLFSSH_USERAUTH_REJECTED;
     }
 
-    #ifdef WOLFSSL_FPKI
+    #if defined(WOLFSSL_FPKI) || defined(_WIN32)
     if (ret == WOLFSSH_USERAUTH_SUCCESS &&
         authData->type == WOLFSSH_USERAUTH_PUBLICKEY) {
-        /* compare user name to UPN in certificate */
+        /* Bind the certificate to the requested user name via UPN with FPKI or
+         * CN without FPKI. */
         if (authData->sf.publicKey.isCert) {
             DecodedCert* dCert;
         #ifdef WOLFSSH_SMALL_STACK
@@ -1756,6 +1759,7 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                 }
                 else {
                     int usrMatch = 0;
+                #ifdef WOLFSSL_FPKI
                     int upnRealmUnchecked = 0;
                     DNS_entry* current = dCert->altNames;
                     const char* upnDomains =
@@ -1784,6 +1788,15 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                         wolfSSH_Log(WS_LOG_WARN, "[SSHD] AuthorizedUPNDomains "
                             "not set; certificate UPN domain is not checked");
                     }
+                #else
+                    /* Without FPKI compare subject CN with user name */
+                    if (dCert->subjectCN != NULL &&
+                            (int)XSTRLEN(usr) == dCert->subjectCNLen &&
+                            XSTRNCMP(usr, dCert->subjectCN,
+                                (size_t)dCert->subjectCNLen) == 0) {
+                        usrMatch = 1;
+                    }
+                #endif
 
                     if (usrMatch == 0) {
                         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] incorrect user cert "
@@ -1821,7 +1834,9 @@ static int RequestAuthentication(WS_UserAuthData* authData,
             }
             else {
             #ifdef _WIN32
-                /* Still need to get users token on Windows */
+                /* The UPN/CN-vs-username check above already bound the
+                 * certificate to the requested user. Still need to get
+                 * the users token on Windows. */
                 wolfSSH_Log(WS_LOG_INFO,
                     "[SSHD] Relying on CA for public key check");
                 rc = SetupUserTokenWin(usr, &authData->sf.publicKey,

@@ -56,12 +56,29 @@
     !defined(NO_FILESYSTEM)
     #define WOLFSSH_TEST_CERTMAN_PROMOTE
     /* The certman helpers use malloc/free and LONG_MAX; pull these in here so
-     * the tests build even when the SCP block below is not compiled. */
+     * the tests build even when the SCP block below is not compiled.
+     * certman.h itself comes from the WOLFSSH_CERTS block below. */
     #include <limits.h>
     #include <stdlib.h>
     #include <wolfssl/wolfcrypt/asn_public.h>
     #include <wolfssl/wolfcrypt/ecc.h>
+#endif
+
+#ifdef WOLFSSH_CERTS
     #include <wolfssh/certman.h>
+    #include <wolfssl/ssl.h>
+#endif
+
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    #include <windows.h>
+    #include <wincrypt.h>
+    #include <wchar.h>
+    #ifndef CERT_SYSTEM_STORE_CURRENT_USER
+        #define CERT_SYSTEM_STORE_CURRENT_USER 0x00010000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE
+        #define CERT_SYSTEM_STORE_LOCAL_MACHINE 0x00020000
+    #endif
 #endif
 
 #ifdef WOLFSSH_SFTP
@@ -6436,6 +6453,178 @@ static int test_CertMan_PromoteValidCaIntermediate(void)
 
 #endif /* WOLFSSH_TEST_CERTMAN_PROMOTE */
 
+#ifdef WOLFSSH_CERTS
+/* wolfSSH_SetCertManager imports a WOLFSSL_CERT_MANAGER by reference into
+ * the wolfSSH context. Test argument checking, importing the same manager
+ * twice, replacing an already-imported manager, and the reference count
+ * that keeps the manager alive after the WOLFSSL_CTX that created it is
+ * freed (a missing reference shows up as a use-after-free/double-free
+ * under the sanitizer builds). */
+static int test_SetCertManager(void)
+{
+    int result = 0;
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSL_CTX* sslCtx = NULL;
+    WOLFSSL_CTX* sslCtx2 = NULL;
+    WOLFSSL_CERT_MANAGER* cm = NULL;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        result = -1;
+
+    if (result == 0) {
+        sslCtx = wolfSSL_CTX_new(wolfSSLv23_server_method());
+        if (sslCtx == NULL)
+            result = -2;
+    }
+
+    /* bad arguments */
+    if (result == 0) {
+        cm = wolfSSL_CTX_GetCertManager(sslCtx);
+        if (cm == NULL)
+            result = -3;
+    }
+    if (result == 0 && wolfSSH_SetCertManager(NULL, cm) != WS_BAD_ARGUMENT)
+        result = -4;
+    if (result == 0 && wolfSSH_SetCertManager(ctx, NULL) != WS_BAD_ARGUMENT)
+        result = -5;
+
+    /* import, then import the same manager again */
+    if (result == 0 && wolfSSH_SetCertManager(ctx, cm) != WS_SUCCESS)
+        result = -6;
+    if (result == 0 && wolfSSH_SetCertManager(ctx, cm) != WS_SUCCESS)
+        result = -7;
+
+    /* the context must hold its own reference: freeing the WOLFSSL_CTX
+     * that created the manager must leave the imported manager usable */
+    if (result == 0) {
+        wolfSSL_CTX_free(sslCtx);
+        sslCtx = NULL;
+    }
+
+    /* replace the imported manager with one from a second WOLFSSL_CTX,
+     * releasing the reference on the first manager */
+    if (result == 0) {
+        sslCtx2 = wolfSSL_CTX_new(wolfSSLv23_server_method());
+        if (sslCtx2 == NULL)
+            result = -8;
+    }
+    if (result == 0) {
+        cm = wolfSSL_CTX_GetCertManager(sslCtx2);
+        if (cm == NULL)
+            result = -9;
+        else if (wolfSSH_SetCertManager(ctx, cm) != WS_SUCCESS)
+            result = -10;
+    }
+
+    if (sslCtx != NULL)
+        wolfSSL_CTX_free(sslCtx);
+    if (sslCtx2 != NULL)
+        wolfSSL_CTX_free(sslCtx2);
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+
+    return result;
+}
+#endif /* WOLFSSH_CERTS */
+
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+/* Check one wolfSSH_ParseCertStoreSpec call against expected results.
+ * expRet is the expected return value; the name/flag expectations are only
+ * checked when expRet is WS_SUCCESS. */
+static int certStoreSpecCheck(const char* spec, int expRet,
+        const wchar_t* expStore, const wchar_t* expSubject, word32 expFlags)
+{
+    int ret;
+    int result = 0;
+    wchar_t* wStoreName = NULL;
+    wchar_t* wSubjectName = NULL;
+    word32 dwFlags = 0;
+
+    ret = wolfSSH_ParseCertStoreSpec(spec, &wStoreName, &wSubjectName,
+            &dwFlags, NULL);
+    if (ret != expRet) {
+        printf("ParseCertStoreSpec(%s): ret %d, expected %d\n",
+                spec != NULL ? spec : "(null)", ret, expRet);
+        result = -1;
+    }
+    if (result == 0 && ret == WS_SUCCESS) {
+        if (wcscmp(wStoreName, expStore) != 0)
+            result = -2;
+        else if (wcscmp(wSubjectName, expSubject) != 0)
+            result = -3;
+        else if (dwFlags != expFlags)
+            result = -4;
+    }
+    /* on failure the parser must not hand back allocations */
+    if (result == 0 && ret != WS_SUCCESS &&
+            (wStoreName != NULL || wSubjectName != NULL)) {
+        result = -5;
+    }
+
+    if (wStoreName != NULL)
+        WFREE(wStoreName, NULL, DYNTYPE_TEMP);
+    if (wSubjectName != NULL)
+        WFREE(wSubjectName, NULL, DYNTYPE_TEMP);
+
+    return result;
+}
+
+
+static int test_ParseCertStoreSpec(void)
+{
+    int result;
+    wchar_t* wStoreName = NULL;
+    wchar_t* wSubjectName = NULL;
+    word32 dwFlags = 0;
+
+    /* bad arguments */
+    result = certStoreSpecCheck(NULL, WS_BAD_ARGUMENT, NULL, NULL, 0);
+    if (result == 0 && wolfSSH_ParseCertStoreSpec("My:server", NULL,
+                &wSubjectName, &dwFlags, NULL) != WS_BAD_ARGUMENT)
+        result = -10;
+    if (result == 0 && wolfSSH_ParseCertStoreSpec("My:server", &wStoreName,
+                NULL, &dwFlags, NULL) != WS_BAD_ARGUMENT)
+        result = -11;
+    if (result == 0 && wolfSSH_ParseCertStoreSpec("My:server", &wStoreName,
+                &wSubjectName, NULL, NULL) != WS_BAD_ARGUMENT)
+        result = -12;
+
+    /* full spec with named flag values */
+    if (result == 0)
+        result = certStoreSpecCheck("My:server:LOCAL_MACHINE", WS_SUCCESS,
+                L"My", L"server", CERT_SYSTEM_STORE_LOCAL_MACHINE);
+    if (result == 0)
+        result = certStoreSpecCheck("My:server:CURRENT_USER", WS_SUCCESS,
+                L"My", L"server", CERT_SYSTEM_STORE_CURRENT_USER);
+
+    /* flags default to CURRENT_USER when not given */
+    if (result == 0)
+        result = certStoreSpecCheck("My:server", WS_SUCCESS,
+                L"My", L"server", CERT_SYSTEM_STORE_CURRENT_USER);
+
+    /* numeric flags value */
+    if (result == 0)
+        result = certStoreSpecCheck("My:server:12345", WS_SUCCESS,
+                L"My", L"server", 12345);
+
+    /* missing or empty fields are rejected */
+    if (result == 0)
+        result = certStoreSpecCheck("My", WS_BAD_ARGUMENT, NULL, NULL, 0);
+    if (result == 0)
+        result = certStoreSpecCheck("My:", WS_BAD_ARGUMENT, NULL, NULL, 0);
+    if (result == 0)
+        result = certStoreSpecCheck(":server", WS_BAD_ARGUMENT, NULL, NULL, 0);
+    if (result == 0)
+        result = certStoreSpecCheck("My:server:", WS_BAD_ARGUMENT, NULL, NULL,
+                0);
+    if (result == 0)
+        result = certStoreSpecCheck("", WS_BAD_ARGUMENT, NULL, NULL, 0);
+
+    return result;
+}
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
+
 /* Tests below install a custom allocator via wolfSSL_SetAllocators. The
  * wolfSSL_Malloc_cb / wolfSSL_Free_cb / wolfSSL_Realloc_cb typedefs gain
  * extra parameters when wolfSSL is built with WOLFSSL_STATIC_MEMORY or
@@ -9370,6 +9559,19 @@ int wolfSSH_UnitTest(int argc, char** argv)
     testResult = testResult || unitResult;
 #endif /* !WOLFSSH_NO_ECDH && !WOLFSSH_NO_ECDH_SHA2_NISTP256 */
 
+#endif
+
+#if defined(WOLFSSH_TEST_INTERNAL) && defined(WOLFSSH_CERTS)
+    unitResult = test_SetCertManager();
+    printf("SetCertManager: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+#if defined(WOLFSSH_TEST_INTERNAL) && defined(WOLFSSH_WINDOWS_CERT_STORE)
+    unitResult = test_ParseCertStoreSpec();
+    printf("ParseCertStoreSpec: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
 #endif
 
 #ifdef WOLFSSH_TEST_CERTMAN_PROMOTE

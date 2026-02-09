@@ -87,6 +87,11 @@ struct WOLFSSHD_CONFIG {
     char* hostKeyFile;
     char* hostCertFile;
     char* userCAKeysFile;
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    char* hostKeyStore;
+    char* hostKeyStoreSubject;
+    char* hostKeyStoreFlags;
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
     char* hostKeyAlgos;
     char* kekAlgos;
     char* listenAddress;
@@ -94,9 +99,11 @@ struct WOLFSSHD_CONFIG {
     char* forceCmd;
     char* pidFile;
     char* authorizedUPNDomains; /* allowlist of UPN realms for cert auth */
+#ifdef USE_WINDOWS_API
     char* winUserStores;
     char* winUserDwFlags;
     char* winUserPvPara;
+#endif /* USE_WINDOWS_API */
     WOLFSSHD_CONFIG* next; /* next config in list */
     long  loginTimer;
     word16 port;
@@ -389,9 +396,16 @@ void wolfSSHD_ConfigFree(WOLFSSHD_CONFIG* conf)
         FreeString(&current->authorizedUPNDomains, heap);
         FreeString(&current->usrAppliesTo,    heap);
         FreeString(&current->groupAppliesTo,  heap);
-        FreeString(&current->winUserStores,   heap);
-        FreeString(&current->winUserDwFlags,  heap);
-        FreeString(&current->winUserPvPara,   heap);
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+        FreeString(&current->hostKeyStore,        heap);
+        FreeString(&current->hostKeyStoreSubject, heap);
+        FreeString(&current->hostKeyStoreFlags,   heap);
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
+#ifdef USE_WINDOWS_API
+        FreeString(&current->winUserStores,       heap);
+        FreeString(&current->winUserDwFlags,      heap);
+        FreeString(&current->winUserPvPara,       heap);
+#endif /* USE_WINDOWS_API */
 
         WFREE(current, heap, DYNTYPE_SSHD);
         current = next;
@@ -418,6 +432,9 @@ enum {
     OPT_PROTOCOL                = 9,
     OPT_LOGIN_GRACE_TIME        = 10,
     OPT_HOST_KEY                = 11,
+    OPT_HOST_KEY_STORE          = 50,
+    OPT_HOST_KEY_STORE_SUBJECT  = 51,
+    OPT_HOST_KEY_STORE_FLAGS    = 52,
     OPT_PASSWORD_AUTH           = 12,
     OPT_PORT                    = 13,
     OPT_PERMIT_ROOT             = 14,
@@ -434,16 +451,14 @@ enum {
     OPT_STRICT_MODES            = 25,
     OPT_TRUSTED_SYSTEM_CA_KEYS  = 26,
     OPT_TRUSTED_USER_CA_STORE   = 27,
+#ifdef USE_WINDOWS_API
     OPT_WIN_USER_STORES         = 28,
     OPT_WIN_USER_DW_FLAGS       = 29,
     OPT_WIN_USER_PV_PARA        = 30,
+#endif /* USE_WINDOWS_API */
     OPT_AUTHORIZED_UPN_DOMAINS  = 31
 };
-enum {
-    NUM_OPTIONS = 32
-};
-
-static const CONFIG_OPTION options[NUM_OPTIONS] = {
+static const CONFIG_OPTION options[] = {
     {OPT_AUTH_KEYS_FILE,          "AuthorizedKeysFile"},
     {OPT_PRIV_SEP,                "UsePrivilegeSeparation"},
     {OPT_PERMIT_EMPTY_PW,         "PermitEmptyPasswords"},
@@ -455,6 +470,14 @@ static const CONFIG_OPTION options[NUM_OPTIONS] = {
     {OPT_ACCEPT_ENV,              "AcceptEnv"},
     {OPT_PROTOCOL,                "Protocol"},
     {OPT_LOGIN_GRACE_TIME,        "LoginGraceTime"},
+    /* The config parser uses strncmp with the option-name length, so longer
+     * option names that share a common prefix MUST appear before the shorter
+     * one.  HostKeyStoreSubject/HostKeyStoreFlags before HostKeyStore,
+     * and all HostKeyStore* before HostKey.  Kept unconditional so
+     * "HostKeyStore" never prefix-matches "HostKey" on non-store builds. */
+    {OPT_HOST_KEY_STORE_SUBJECT,  "HostKeyStoreSubject"},
+    {OPT_HOST_KEY_STORE_FLAGS,    "HostKeyStoreFlags"},
+    {OPT_HOST_KEY_STORE,          "HostKeyStore"},
     {OPT_HOST_KEY,                "HostKey"},
     {OPT_PASSWORD_AUTH,           "PasswordAuthentication"},
     {OPT_PUBKEY_AUTH,             "PubkeyAuthentication"},
@@ -471,12 +494,15 @@ static const CONFIG_OPTION options[NUM_OPTIONS] = {
     {OPT_BANNER,                  "Banner"},
     {OPT_STRICT_MODES,            "StrictModes"},
     {OPT_TRUSTED_SYSTEM_CA_KEYS,  "wolfSSH_TrustedSystemCAKeys"},
-    {OPT_TRUSTED_USER_CA_STORE,   "wolfSSH_TrustedUserCaStore"},
+    {OPT_TRUSTED_USER_CA_STORE,   "wolfSSH_TrustedUserCAStore"},
+#ifdef USE_WINDOWS_API
     {OPT_WIN_USER_STORES,         "wolfSSH_WinUserStores"},
     {OPT_WIN_USER_DW_FLAGS,       "wolfSSH_WinUserDwFlags"},
     {OPT_WIN_USER_PV_PARA,        "wolfSSH_WinUserPvPara"},
+#endif /* USE_WINDOWS_API */
     {OPT_AUTHORIZED_UPN_DOMAINS,  "AuthorizedUPNDomains"},
 };
+#define NUM_OPTIONS ((int)(sizeof(options) / sizeof(*options)))
 
 /* returns WS_SUCCESS on success */
 static int HandlePrivSep(WOLFSSHD_CONFIG* conf, const char* value)
@@ -1330,9 +1356,11 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
             break;
         case OPT_STRICT_MODES:
             ret = HandleStrictModes(*conf, value);
+            break;
         case OPT_TRUSTED_USER_CA_STORE:
             ret = wolfSSHD_ConfigSetUserCAStore(*conf, value);
             break;
+    #ifdef USE_WINDOWS_API
         case OPT_WIN_USER_STORES:
             ret = wolfSSHD_ConfigSetWinUserStores(*conf, value);
             break;
@@ -1342,10 +1370,39 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
         case OPT_WIN_USER_PV_PARA:
             ret = wolfSSHD_ConfigSetWinUserPvPara(*conf, value);
             break;
+    #endif /* USE_WINDOWS_API */
         case OPT_AUTHORIZED_UPN_DOMAINS:
             ret = SetListString(&(*conf)->authorizedUPNDomains, full, fullSz,
                     (*conf)->heap);
             break;
+    #ifdef WOLFSSH_WINDOWS_CERT_STORE
+        case OPT_HOST_KEY_STORE:
+            wolfSSH_Log(WS_LOG_INFO,
+                "[SSHD] Parsed HostKeyStore = '%s'", value);
+            ret = SetFileString(&(*conf)->hostKeyStore, value, (*conf)->heap);
+            break;
+        case OPT_HOST_KEY_STORE_SUBJECT:
+            wolfSSH_Log(WS_LOG_INFO,
+                "[SSHD] Parsed HostKeyStoreSubject = '%s'", value);
+            ret = SetFileString(&(*conf)->hostKeyStoreSubject, value,
+                (*conf)->heap);
+            break;
+        case OPT_HOST_KEY_STORE_FLAGS:
+            wolfSSH_Log(WS_LOG_INFO,
+                "[SSHD] Parsed HostKeyStoreFlags = '%s'", value);
+            ret = SetFileString(&(*conf)->hostKeyStoreFlags, value,
+                (*conf)->heap);
+            break;
+    #else
+        case OPT_HOST_KEY_STORE:
+        case OPT_HOST_KEY_STORE_SUBJECT:
+        case OPT_HOST_KEY_STORE_FLAGS:
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] HostKeyStore* options require a "
+                "WOLFSSH_WINDOWS_CERT_STORE build");
+            ret = WS_NOT_COMPILED;
+            break;
+    #endif /* WOLFSSH_WINDOWS_CERT_STORE */
         default:
             break;
     }
@@ -1709,7 +1766,11 @@ int wolfSSHD_ConfigSetSystemCA(WOLFSSHD_CONFIG* conf, const char* value)
 {
     int ret = WS_SUCCESS;
 
-    if (conf != NULL) {
+    if (conf == NULL || value == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
         if (WSTRCMP(value, "yes") == 0) {
             wolfSSH_Log(WS_LOG_INFO, "[SSHD] System CAs enabled");
             conf->useSystemCA = 1;
@@ -1745,7 +1806,11 @@ int wolfSSHD_ConfigSetUserCAStore(WOLFSSHD_CONFIG* conf, const char* value)
 {
     int ret = WS_SUCCESS;
 
-    if (conf != NULL) {
+    if (conf == NULL || value == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
         if (WSTRCMP(value, "yes") == 0) {
             wolfSSH_Log(WS_LOG_INFO, "[SSHD] User CA store enabled.  Note this "
                                      "is currently only supported on Windows.");
@@ -1764,12 +1829,19 @@ int wolfSSHD_ConfigSetUserCAStore(WOLFSSHD_CONFIG* conf, const char* value)
     return ret;
 }
 
-char* wolfSSHD_ConfigGetWinUserStores(WOLFSSHD_CONFIG* conf) {
+#ifdef USE_WINDOWS_API
+char* wolfSSHD_ConfigGetWinUserStores(WOLFSSHD_CONFIG* conf)
+{
     if (conf != NULL) {
         if (conf->winUserStores == NULL) {
             /* If no value was specified, default to CERT_STORE_PROV_SYSTEM */
-            CreateString(&conf->winUserStores, "CERT_STORE_PROV_SYSTEM", 
-                         (int)WSTRLEN("CERT_STORE_PROV_SYSTEM"), conf->heap);
+            if (CreateString(&conf->winUserStores, "CERT_STORE_PROV_SYSTEM",
+                    (int)WSTRLEN("CERT_STORE_PROV_SYSTEM"), conf->heap)
+                    != WS_SUCCESS) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Unable to create default winUserStores");
+                return NULL;
+            }
         }
 
         return conf->winUserStores;
@@ -1778,24 +1850,38 @@ char* wolfSSHD_ConfigGetWinUserStores(WOLFSSHD_CONFIG* conf) {
     return NULL;
 }
 
-int wolfSSHD_ConfigSetWinUserStores(WOLFSSHD_CONFIG* conf, const char* value) {
+int wolfSSHD_ConfigSetWinUserStores(WOLFSSHD_CONFIG* conf, const char* value)
+{
     int ret = WS_SUCCESS;
 
-    if (conf == NULL) {
+    if (conf == NULL || value == NULL) {
         ret = WS_BAD_ARGUMENT;
     }
 
-    ret = CreateString(&conf->winUserStores, value, (int)WSTRLEN(value), conf->heap);
+    if (ret == WS_SUCCESS) {
+        /* free any previously set value before replacing it */
+        FreeString(&conf->winUserStores, conf->heap);
+        ret = CreateString(&conf->winUserStores, value,
+                (int)WSTRLEN(value), conf->heap);
+    }
 
     return ret;
 }
 
-char* wolfSSHD_ConfigGetWinUserDwFlags(WOLFSSHD_CONFIG* conf) {
+char* wolfSSHD_ConfigGetWinUserDwFlags(WOLFSSHD_CONFIG* conf)
+{
     if (conf != NULL) {
         if (conf->winUserDwFlags == NULL) {
-            /* If no value was specified, default to CERT_SYSTEM_STORE_CURRENT_USER */
-            CreateString(&conf->winUserDwFlags, "CERT_SYSTEM_STORE_CURRENT_USER", 
-                         (int)WSTRLEN("CERT_SYSTEM_STORE_CURRENT_USER"), conf->heap);
+            /* If no value was specified, default to
+             * CERT_SYSTEM_STORE_CURRENT_USER */
+            if (CreateString(&conf->winUserDwFlags,
+                    "CERT_SYSTEM_STORE_CURRENT_USER",
+                    (int)WSTRLEN("CERT_SYSTEM_STORE_CURRENT_USER"),
+                    conf->heap) != WS_SUCCESS) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Unable to create default winUserDwFlags");
+                return NULL;
+            }
         }
 
         return conf->winUserDwFlags;
@@ -1804,23 +1890,35 @@ char* wolfSSHD_ConfigGetWinUserDwFlags(WOLFSSHD_CONFIG* conf) {
     return NULL;
 }
 
-int wolfSSHD_ConfigSetWinUserDwFlags(WOLFSSHD_CONFIG* conf, const char* value) {
+int wolfSSHD_ConfigSetWinUserDwFlags(WOLFSSHD_CONFIG* conf, const char* value)
+{
     int ret = WS_SUCCESS;
 
-    if (conf == NULL) {
+    if (conf == NULL || value == NULL) {
         ret = WS_BAD_ARGUMENT;
     }
 
-    ret = CreateString(&conf->winUserDwFlags, value, (int)WSTRLEN(value), conf->heap);
+    if (ret == WS_SUCCESS) {
+        /* free any previously set value before replacing it */
+        FreeString(&conf->winUserDwFlags, conf->heap);
+        ret = CreateString(&conf->winUserDwFlags, value,
+                (int)WSTRLEN(value), conf->heap);
+    }
 
     return ret;
 }
 
-char* wolfSSHD_ConfigGetWinUserPvPara(WOLFSSHD_CONFIG* conf) {
+char* wolfSSHD_ConfigGetWinUserPvPara(WOLFSSHD_CONFIG* conf)
+{
     if (conf != NULL) {
         if (conf->winUserPvPara == NULL) {
             /* If no value was specified, default to MY */
-            CreateString(&conf->winUserPvPara, "MY", (int)WSTRLEN("MY"), conf->heap);
+            if (CreateString(&conf->winUserPvPara, "MY",
+                    (int)WSTRLEN("MY"), conf->heap) != WS_SUCCESS) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Unable to create default winUserPvPara");
+                return NULL;
+            }
         }
 
         return conf->winUserPvPara;
@@ -1829,17 +1927,24 @@ char* wolfSSHD_ConfigGetWinUserPvPara(WOLFSSHD_CONFIG* conf) {
     return NULL;
 }
 
-int wolfSSHD_ConfigSetWinUserPvPara(WOLFSSHD_CONFIG* conf, const char* value) {
+int wolfSSHD_ConfigSetWinUserPvPara(WOLFSSHD_CONFIG* conf, const char* value)
+{
     int ret = WS_SUCCESS;
 
-    if (conf == NULL) {
+    if (conf == NULL || value == NULL) {
         ret = WS_BAD_ARGUMENT;
     }
 
-    ret = CreateString(&conf->winUserPvPara, value, (int)WSTRLEN(value), conf->heap);
+    if (ret == WS_SUCCESS) {
+        /* free any previously set value before replacing it */
+        FreeString(&conf->winUserPvPara, conf->heap);
+        ret = CreateString(&conf->winUserPvPara, value,
+                (int)WSTRLEN(value), conf->heap);
+    }
 
     return ret;
 }
+#endif /* USE_WINDOWS_API */
 
 char* wolfSSHD_ConfigGetUserCAKeysFile(const WOLFSSHD_CONFIG* conf)
 {
@@ -1884,6 +1989,43 @@ static int SetFileString(char** dst, const char* src, void* heap)
 
     return ret;
 }
+
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+char* wolfSSHD_ConfigGetHostKeyStore(const WOLFSSHD_CONFIG* conf)
+{
+    char* ret = NULL;
+
+    if (conf != NULL) {
+        ret = conf->hostKeyStore;
+    }
+
+    return ret;
+}
+
+
+char* wolfSSHD_ConfigGetHostKeyStoreSubject(const WOLFSSHD_CONFIG* conf)
+{
+    char* ret = NULL;
+
+    if (conf != NULL) {
+        ret = conf->hostKeyStoreSubject;
+    }
+
+    return ret;
+}
+
+
+char* wolfSSHD_ConfigGetHostKeyStoreFlags(const WOLFSSHD_CONFIG* conf)
+{
+    char* ret = NULL;
+
+    if (conf != NULL) {
+        ret = conf->hostKeyStoreFlags;
+    }
+
+    return ret;
+}
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
 
 int wolfSSHD_ConfigSetHostKeyFile(WOLFSSHD_CONFIG* conf, const char* file)
 {
