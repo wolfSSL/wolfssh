@@ -337,7 +337,7 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>..\..\..\..\wolfssl\Debug\x64;..\Debug\x64</AdditionalLibraryDirectories>
-      <AdditionalDependencies>wolfssl.lib;ws2_32.lib;secur32.lib;userenv.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>wolfssl.lib;ws2_32.lib;secur32.lib;userenv.lib;crypt32.lib;ncrypt.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='DLL DebugFIPS|x64'">
@@ -385,7 +385,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>wolfssl.lib;ws2_32.lib;secur32.lib;userenv.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>wolfssl.lib;ws2_32.lib;secur32.lib;userenv.lib;crypt32.lib;ncrypt.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>..\..\..\..\wolfssl\Release\x64;..\Release\x64</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
@@ -417,7 +417,7 @@
       <WarningLevel>Level3</WarningLevel>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>wolfssl.lib;ws2_32.lib;secur32.lib;userenv.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>wolfssl.lib;ws2_32.lib;secur32.lib;userenv.lib;crypt32.lib;ncrypt.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(wolfCryptDLLRelease64)</AdditionalLibraryDirectories>
       <OptimizeReferences>true</OptimizeReferences>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
