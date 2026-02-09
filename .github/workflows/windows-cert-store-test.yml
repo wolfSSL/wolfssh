@@ -1,0 +1,731 @@
+name: Windows Certificate Store Test
+
+# Tests MS Certificate Store integration for wolfSSH. The matrix covers
+# server host keys and client user keys coming from the cert store, from
+# X.509 cert/key files, or both, plus an ECDSA cert store host key.
+#
+# Test flow per matrix entry:
+#   1. Create testuser client cert (renewcerts.sh) and, for store cases,
+#      import/create certificates in the Windows certificate store.
+#   2. If the server key comes from the store: run echoserver with -W and
+#      connect with the SFTP client.
+#   3. Run wolfsshd as a Windows service and connect with the SFTP client.
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+
+env:
+  WOLFSSL_SOLUTION_FILE_PATH: wolfssl64.sln
+  SOLUTION_FILE_PATH: wolfssh.sln
+  USER_SETTINGS_H_NEW: wolfssh/ide/winvs/user_settings.h
+  USER_SETTINGS_H: wolfssl/IDE/WIN/user_settings.h
+  INCLUDE_DIR: wolfssh
+  WOLFSSL_BUILD_CONFIGURATION: Release
+  WOLFSSH_BUILD_CONFIGURATION: Release
+  BUILD_PLATFORM: x64
+  TARGET_PLATFORM: 10
+  TEST_PORT: 22222
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+
+    - uses: actions/checkout@v4
+      with:
+        path: wolfssh
+
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@v1
+
+    - name: Restore wolfSSL NuGet packages
+      working-directory: ${{ github.workspace }}\wolfssl
+      run: nuget restore ${{env.WOLFSSL_SOLUTION_FILE_PATH}}
+
+    - name: updated user_settings.h for sshd and x509
+      working-directory: ${{ github.workspace }}
+      shell: bash
+      run: |
+        # Enable SSHD, SFTP, and X509 support (including WOLFSSH_NO_FPKI)
+        sed -i 's/#if 0/#if 1/g' ${{env.USER_SETTINGS_H_NEW}}
+        # Enable the Windows cert store API (not in the repo user_settings.h).
+        # Appended to wolfssh/ide/winvs/user_settings.h, which the VS projects
+        # put on the include path before wolfssl/IDE/WIN.
+        printf '\n/* Appended by windows-cert-store-test CI */\n#define WOLFSSH_WINDOWS_CERT_STORE\n' >> ${{env.USER_SETTINGS_H_NEW}}
+        cp ${{env.USER_SETTINGS_H_NEW}} ${{env.USER_SETTINGS_H}}
+
+    - name: Build wolfssl library
+      working-directory: ${{ github.workspace }}\wolfssl
+      run: msbuild /m /p:PlatformToolset=v142 /p:Platform=${{env.BUILD_PLATFORM}} /p:Configuration=${{env.WOLFSSL_BUILD_CONFIGURATION}} /t:wolfssl ${{env.WOLFSSL_SOLUTION_FILE_PATH}}
+
+    - name: Upload wolfSSL build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: wolfssl-windows-build
+        if-no-files-found: warn
+        retention-days: 1
+        path: |
+          wolfssl/IDE/WIN/${{env.WOLFSSL_BUILD_CONFIGURATION}}/${{env.BUILD_PLATFORM}}/**
+          wolfssl/IDE/WIN/${{env.WOLFSSL_BUILD_CONFIGURATION}}/**
+          wolfssl/${{env.WOLFSSL_BUILD_CONFIGURATION}}/${{env.BUILD_PLATFORM}}/**
+          wolfssl/${{env.WOLFSSL_BUILD_CONFIGURATION}}/**
+
+    - name: Restore NuGet packages
+      working-directory: ${{ github.workspace }}\wolfssh\ide\winvs
+      run: nuget restore ${{env.SOLUTION_FILE_PATH}}
+
+    - name: Build wolfssh
+      working-directory: ${{ github.workspace }}\wolfssh\ide\winvs
+      run: msbuild /m /p:PlatformToolset=v142 /p:Platform=${{env.BUILD_PLATFORM}} /p:WindowsTargetPlatformVersion=${{env.TARGET_PLATFORM}} /p:Configuration=${{env.WOLFSSH_BUILD_CONFIGURATION}} ${{env.SOLUTION_FILE_PATH}}
+
+    - name: Upload wolfSSH build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: wolfssh-windows-build
+        if-no-files-found: error
+        path: |
+          wolfssh/ide/winvs/**/Release/**
+
+  # Compile-only check of the WOLFSSL_SYS_CA_CERTS paths in wolfsshd, which
+  # the functional matrix never defines and so never builds.
+  build-sys-ca-certs:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+
+    - uses: actions/checkout@v4
+      with:
+        path: wolfssh
+
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@v1
+
+    - name: Restore wolfSSL NuGet packages
+      working-directory: ${{ github.workspace }}\wolfssl
+      run: nuget restore ${{env.WOLFSSL_SOLUTION_FILE_PATH}}
+
+    - name: user_settings.h with sshd, x509, cert store, and system CA certs
+      working-directory: ${{ github.workspace }}
+      shell: bash
+      run: |
+        sed -i 's/#if 0/#if 1/g' ${{env.USER_SETTINGS_H_NEW}}
+        printf '\n#define WOLFSSH_WINDOWS_CERT_STORE\n#define WOLFSSL_SYS_CA_CERTS\n' >> ${{env.USER_SETTINGS_H_NEW}}
+        cp ${{env.USER_SETTINGS_H_NEW}} ${{env.USER_SETTINGS_H}}
+
+    - name: Build wolfssl library
+      working-directory: ${{ github.workspace }}\wolfssl
+      run: msbuild /m /p:PlatformToolset=v142 /p:Platform=${{env.BUILD_PLATFORM}} /p:Configuration=${{env.WOLFSSL_BUILD_CONFIGURATION}} /t:wolfssl ${{env.WOLFSSL_SOLUTION_FILE_PATH}}
+
+    - name: Restore NuGet packages
+      working-directory: ${{ github.workspace }}\wolfssh\ide\winvs
+      run: nuget restore ${{env.SOLUTION_FILE_PATH}}
+
+    - name: Build wolfssh (compile check)
+      working-directory: ${{ github.workspace }}\wolfssh\ide\winvs
+      run: msbuild /m /p:PlatformToolset=v142 /p:Platform=${{env.BUILD_PLATFORM}} /p:WindowsTargetPlatformVersion=${{env.TARGET_PLATFORM}} /p:Configuration=${{env.WOLFSSH_BUILD_CONFIGURATION}} ${{env.SOLUTION_FILE_PATH}}
+
+  test:
+    needs: build
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - server_key_source: file
+            client_key_source: x509
+            key_algorithm: rsa
+            test_name: "Server-File-Client-X509"
+          - server_key_source: store
+            client_key_source: x509
+            key_algorithm: rsa
+            test_name: "Server-Store-Client-X509"
+          - server_key_source: file
+            client_key_source: store
+            key_algorithm: rsa
+            test_name: "Server-File-Client-Store"
+          - server_key_source: store
+            client_key_source: store
+            key_algorithm: rsa
+            test_name: "Server-Store-Client-Store"
+          - server_key_source: store
+            client_key_source: x509
+            key_algorithm: ecdsa
+            test_name: "Server-Store-Client-X509-ECDSA"
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        path: wolfssh
+
+    - name: Download wolfSSH build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: wolfssh-windows-build
+        path: .
+
+    - name: Download wolfSSL build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: wolfssl-windows-build
+        path: .
+
+    - name: Create testuser client certificate - ${{ matrix.test_name }}
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: bash
+      env:
+        # Disable MSYS path conversion - Git Bash converts /C=US/... to C:/Program Files/Git/C=US/...
+        MSYS_NO_PATHCONV: 1
+        MSYS2_ARG_CONV_EXCL: "*"
+      run: |
+        # Create an X509 certificate for testuser, signed by the test CA,
+        # using renewcerts.sh (like sshd_x509_test.sh does). Used directly
+        # for x509 clients and imported into the store for store clients.
+        cd keys
+        bash renewcerts.sh testuser
+        cd ..
+
+        if [[ ! -f "keys/testuser-cert.der" || ! -f "keys/testuser-key.der" ]]; then
+          echo "ERROR: renewcerts.sh did not create testuser-cert.der/testuser-key.der"
+          ls -la keys/
+          exit 1
+        fi
+        echo "CLIENT_CERT_FILE=keys/testuser-cert.der" >> $GITHUB_ENV
+        echo "CLIENT_KEY_FILE=keys/testuser-key.der" >> $GITHUB_ENV
+
+    - name: Set up cert store certificates
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      run: |
+        # Server host key: self-signed cert in LocalMachine\My so the
+        # wolfsshd service (LocalSystem) can access it.
+        if ("${{ matrix.server_key_source }}" -eq "store") {
+          if ("${{ matrix.key_algorithm }}" -eq "ecdsa") {
+            $serverCert = New-SelfSignedCertificate `
+                -Subject "CN=wolfSSH-Test-Server" `
+                -KeyAlgorithm ECDSA_nistP256 `
+                -CertStoreLocation "Cert:\LocalMachine\My" `
+                -KeyExportPolicy Exportable `
+                -NotAfter (Get-Date).AddYears(1) `
+                -KeyUsage DigitalSignature
+          } else {
+            $serverCert = New-SelfSignedCertificate `
+                -Subject "CN=wolfSSH-Test-Server" `
+                -KeyAlgorithm RSA `
+                -KeyLength 2048 `
+                -CertStoreLocation "Cert:\LocalMachine\My" `
+                -KeyExportPolicy Exportable `
+                -NotAfter (Get-Date).AddYears(1) `
+                -KeyUsage DigitalSignature, KeyEncipherment
+          }
+          Write-Host "Server cert created: $($serverCert.Subject) ($($serverCert.Thumbprint))"
+
+          # Grant LocalSystem access to the private key file. Required for
+          # the wolfsshd service running as LocalSystem; without this,
+          # CryptAcquireCertificatePrivateKey fails.
+          if ("${{ matrix.key_algorithm }}" -eq "ecdsa") {
+            $privKey = [System.Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPrivateKey($serverCert)
+          } else {
+            $privKey = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($serverCert)
+          }
+          $keyName = $privKey.Key.UniqueName
+          $keyFile = @(
+            "$env:ProgramData\Microsoft\Crypto\Keys\$keyName",
+            "$env:ProgramData\Microsoft\Crypto\RSA\MachineKeys\$keyName",
+            "$env:ProgramData\Microsoft\Crypto\SystemKeys\$keyName"
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $keyFile) {
+            Write-Host "ERROR: Private key file not found for $keyName"
+            exit 1
+          }
+          $acl = Get-Acl $keyFile
+          $rule = New-Object System.Security.AccessControl.FileSystemAccessRule `
+              "NT AUTHORITY\SYSTEM", "FullControl", "Allow"
+          $acl.SetAccessRule($rule)
+          Set-Acl $keyFile $acl
+          Write-Host "Granted SYSTEM FullControl on private key: $keyFile"
+
+          # Export the CN (without "CN=") for HostKeyStoreSubject
+          $subject = $serverCert.Subject
+          if ($subject -match "^CN=(.+)$") { $subject = $matches[1] }
+          Add-Content -Path $env:GITHUB_ENV -Value "SERVER_CERT_SUBJECT=$subject"
+        }
+
+        # Client user key: import the CA-signed testuser cert+key into
+        # CurrentUser\My (via PFX; openssl converts the DER files).
+        if ("${{ matrix.client_key_source }}" -eq "store") {
+          $userCertPath = (Resolve-Path $env:CLIENT_CERT_FILE).Path
+          $userKeyPath = (Resolve-Path $env:CLIENT_KEY_FILE).Path
+          $userCertPem = Join-Path $env:TEMP "testuser-cert.pem"
+          $userKeyPem = Join-Path $env:TEMP "testuser-key.pem"
+          $pfxPath = Join-Path $env:TEMP "testuser-client.pfx"
+          $pfxPassword = "TempP@ss123"
+
+          & openssl x509 -inform DER -in $userCertPath -out $userCertPem
+          if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: cert DER to PEM failed"; exit 1 }
+          & openssl rsa -inform DER -in $userKeyPath -out $userKeyPem 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            & openssl ec -inform DER -in $userKeyPath -out $userKeyPem
+            if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: key DER to PEM failed (tried RSA and ECC)"; exit 1 }
+          }
+          & openssl pkcs12 -export -out $pfxPath -inkey $userKeyPem -in $userCertPem -password "pass:$pfxPassword" -nodes
+          if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: PFX creation failed"; exit 1 }
+
+          Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation "Cert:\CurrentUser\My" `
+              -Password (ConvertTo-SecureString -String $pfxPassword -Force -AsPlainText) | Out-Null
+          Remove-Item -Path $pfxPath, $userCertPem, $userKeyPem -ErrorAction SilentlyContinue
+
+          $importedCert = Get-ChildItem -Path "Cert:\CurrentUser\My" |
+              Where-Object { $_.Subject -match "testuser" } | Select-Object -First 1
+          if (-not $importedCert) {
+            Write-Host "ERROR: imported testuser cert not found in CurrentUser\My"
+            exit 1
+          }
+          Write-Host "Client cert imported: $($importedCert.Subject) ($($importedCert.Thumbprint))"
+
+          # Export the CN for the client cert store lookup. The full X.500
+          # DN contains commas which break command-line argument parsing.
+          $cn = $importedCert.Subject
+          if ($cn -match 'CN=([^,]+)') { $cn = $matches[1].Trim() }
+          Add-Content -Path $env:GITHUB_ENV -Value "CLIENT_CERT_SUBJECT=$cn"
+        }
+
+    - name: Create Windows user testuser
+      shell: pwsh
+      run: |
+        $homeDir = "C:\Users\testuser"
+        $sshDir = "$homeDir\.ssh"
+        $authKeysFile = "$sshDir\authorized_keys"
+        # Password: <=14 chars to avoid net user "Windows 2000" prompt; mixed case, number, special.
+        # This is a test user and not a sensitive password.
+        $pw = 'T3stP@ss!xY9'
+
+        New-Item -ItemType Directory -Path $homeDir -Force | Out-Null
+        New-Item -ItemType Directory -Path $sshDir -Force | Out-Null
+
+        # Create local user testuser (net user avoids New-LocalUser password policy issues in CI)
+        $o = net user testuser $pw /add /homedir:$homeDir 2>&1
+        if ($LASTEXITCODE -ne 0) {
+          if ($o -match "already exists") {
+            net user testuser /homedir:$homeDir 2>$null
+          } else {
+            Write-Host "net user failed: $o"
+            exit 1
+          }
+        }
+
+        # X509 auth verifies the client cert against the CA; authorized_keys
+        # is not used but the file should exist.
+        "" | Out-File -FilePath $authKeysFile -Encoding ASCII -NoNewline
+        icacls $authKeysFile /grant "testuser:R" /q
+
+        # Set ProfileImagePath so SHGetKnownFolderPath(FOLDERID_Profile) returns $homeDir
+        # for testuser (GetHomeDirectory in wolfsshd uses that; otherwise it can fail for new users).
+        $sid = (New-Object System.Security.Principal.NTAccount("testuser")).Translate([System.Security.Principal.SecurityIdentifier]).Value
+        $profKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$sid"
+        if (-not (Test-Path $profKey)) { New-Item -Path $profKey -Force | Out-Null }
+        Set-ItemProperty -Path $profKey -Name "ProfileImagePath" -Value $homeDir -Force
+
+    - name: Create wolfSSHd config file
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      run: |
+        $configContent = @"
+        Port ${{env.TEST_PORT}}
+        PasswordAuthentication yes
+        PermitRootLogin yes
+        "@
+
+        # Server verifies client X509 certs against the test CA (PEM format,
+        # as per apps/wolfsshd/test/create_sshd_config.sh)
+        $caCertPath = (Resolve-Path "keys\ca-cert-ecc.pem").Path
+        $configContent += @"
+
+        TrustedUserCAKeys $caCertPath
+        "@
+
+        if ("${{ matrix.server_key_source }}" -eq "store") {
+            # The certificate is part of the store entry; do NOT specify
+            # HostCertificate separately.
+            $configContent += @"
+
+        HostKeyStore My
+        HostKeyStoreSubject $env:SERVER_CERT_SUBJECT
+        HostKeyStoreFlags LOCAL_MACHINE
+        "@
+        } else {
+            $keyPath = (Resolve-Path "keys\server-key.pem").Path
+            $certPath = (Resolve-Path "keys\server-cert.pem").Path
+            $configContent += @"
+
+        HostKey $keyPath
+        HostCertificate $certPath
+        "@
+        }
+
+        $configContent | Out-File -FilePath sshd_config_test -Encoding ASCII
+        Write-Host "=== wolfSSHd Config ==="
+        Get-Content sshd_config_test
+
+    - name: Find wolfSSH executables
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      run: |
+        $searchRoot = "${{ github.workspace }}"
+
+        $sshdExe = Get-ChildItem -Path $searchRoot -Recurse -Filter "wolfsshd.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like "*Release*" -or $_.FullName -like "*Debug*" } |
+            Select-Object -First 1
+        if (-not $sshdExe) {
+            Write-Host "ERROR: wolfsshd.exe not found"
+            Get-ChildItem -Path $searchRoot -Recurse -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object FullName
+            exit 1
+        }
+        Write-Host "wolfsshd.exe: $($sshdExe.FullName)"
+        Add-Content -Path $env:GITHUB_ENV -Value "SSHD_PATH=$($sshdExe.FullName)"
+
+        # SFTP client (project name is often wolfsftp-client)
+        $sftpExe = Get-ChildItem -Path $searchRoot -Recurse -Filter "wolfsftp.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like "*Release*" -or $_.FullName -like "*Debug*" } |
+            Select-Object -First 1
+        if (-not $sftpExe) {
+            $sftpExe = Get-ChildItem -Path $searchRoot -Recurse -Filter "wolfsftp-client.exe" -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -like "*Release*" -or $_.FullName -like "*Debug*" } |
+                Select-Object -First 1
+        }
+        if (-not $sftpExe) {
+            Write-Host "ERROR: SFTP client exe not found (wolfsftp.exe or wolfsftp-client.exe)"
+            Get-ChildItem -Path $searchRoot -Recurse -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object FullName
+            exit 1
+        }
+        Write-Host "SFTP client: $($sftpExe.FullName)"
+        Add-Content -Path $env:GITHUB_ENV -Value "SFTP_PATH=$($sftpExe.FullName)"
+
+        # echoserver (used for the cert store host key test)
+        $echoserverExe = Get-ChildItem -Path $searchRoot -Recurse -Filter "echoserver.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like "*Release*" -or $_.FullName -like "*Debug*" } |
+            Select-Object -First 1
+        if ($echoserverExe) {
+            Write-Host "echoserver.exe: $($echoserverExe.FullName)"
+            Add-Content -Path $env:GITHUB_ENV -Value "ECHOSERVER_PATH=$($echoserverExe.FullName)"
+        } elseif ("${{ matrix.server_key_source }}" -eq "store") {
+            Write-Host "ERROR: echoserver.exe not found (required for cert store server test)"
+            exit 1
+        }
+
+    - name: Copy wolfSSL DLL to executable directory (if dynamic build)
+      working-directory: ${{ github.workspace }}
+      shell: pwsh
+      run: |
+        $sshdDir = Split-Path -Parent $env:SSHD_PATH
+
+        # If wolfssl.lib is next to wolfsshd.exe, it's a static build - no DLL needed
+        if (Test-Path (Join-Path $sshdDir "wolfssl.lib")) {
+            Write-Host "wolfssl.lib present beside wolfsshd.exe - static build; wolfssl.dll not required"
+            exit 0
+        }
+
+        $wolfsslDll = Get-ChildItem -Path "${{ github.workspace }}\wolfssl" -Recurse -Filter "wolfssl.dll" -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($wolfsslDll) {
+            Copy-Item -Path $wolfsslDll.FullName -Destination (Join-Path $sshdDir "wolfssl.dll") -Force
+            Write-Host "Copied wolfssl.dll to $sshdDir"
+        } else {
+            Write-Host "wolfssl.dll not found; if build is static (wolfssl.lib in output), this is OK"
+        }
+
+    - name: Grant service (LocalSystem) access to config, keys, and executable
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      run: |
+        # wolfsshd runs as LocalSystem; it must be able to read the config
+        # and key files and run the exe (and load wolfssl.dll if dynamic).
+        # /T = apply to existing files and subdirs; (OI)(CI) = inherit to new objects
+        $wolfsshRoot = (Get-Location).Path
+        icacls $wolfsshRoot /grant "NT AUTHORITY\SYSTEM:(OI)(CI)RX" /T /q
+        if ($LASTEXITCODE -ne 0) {
+          Write-Host "ERROR: icacls failed on $wolfsshRoot"
+          exit 1
+        }
+        $sshdDir = (Resolve-Path (Split-Path -Parent $env:SSHD_PATH)).Path
+        icacls $sshdDir /grant "NT AUTHORITY\SYSTEM:(OI)(CI)RX" /T /q
+
+    - name: Start echoserver with cert store host key
+      if: matrix.server_key_source == 'store'
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      run: |
+        # Exercise the cert store host key (-W Store:Subject:Location) in the
+        # echoserver before the wolfsshd service test. Start it detached (via
+        # cmd start /B) so it survives after this step ends.
+        $echoserverPath = $env:ECHOSERVER_PATH
+        $exeDir = Split-Path -Parent $echoserverPath
+        $port = ${{env.TEST_PORT}}
+        $spec = "My:wolfSSH-Test-Server:LOCAL_MACHINE"
+        $wolfsshRoot = "${{ github.workspace }}\wolfssh"
+
+        # -a <CA cert>: verify client X.509 certs
+        # -K testuser:<client cert>: register testuser with the auth callback
+        $caCertPem = Join-Path $wolfsshRoot "keys\ca-cert-ecc.pem"
+        $clientCert = (Resolve-Path (Join-Path $wolfsshRoot $env:CLIENT_CERT_FILE)).Path
+        $echoArgs = @("-W", $spec, "-p", $port, "-a", $caCertPem, "-K", "testuser:$clientCert")
+
+        $argStr = $echoArgs -join " "
+        $echoLogFile = Join-Path $wolfsshRoot "echoserver_debug.log"
+        Add-Content -Path $env:GITHUB_ENV -Value "ECHOSERVER_LOG=$echoLogFile"
+        Write-Host "Command: $echoserverPath $argStr"
+        $cmdLine = "`"$echoserverPath`" $argStr > `"$echoLogFile`" 2>&1"
+        Start-Process -FilePath "cmd.exe" `
+          -ArgumentList "/c", "start", "/B", "cmd", "/c", $cmdLine `
+          -WorkingDirectory $exeDir -NoNewWindow -Wait:$false
+        Start-Sleep -Seconds 2
+        $proc = Get-Process -Name "echoserver" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($proc) {
+          Add-Content -Path $env:GITHUB_ENV -Value "ECHOSERVER_PID=$($proc.Id)"
+          Write-Host "echoserver started with PID $($proc.Id)"
+        }
+
+        # Wait for the port to be listening
+        $timeout = 15
+        $elapsed = 0
+        while ($elapsed -lt $timeout) {
+          Start-Sleep -Seconds 1
+          $elapsed++
+          try {
+            $conn = New-Object System.Net.Sockets.TcpClient("127.0.0.1", $port)
+            if ($conn.Connected) { $conn.Close(); break }
+          } catch {}
+          if (-not (Get-Process -Name "echoserver" -ErrorAction SilentlyContinue)) {
+            Write-Host "ERROR: echoserver exited before port was ready"
+            if (Test-Path $echoLogFile) { Get-Content $echoLogFile }
+            exit 1
+          }
+        }
+        if ($elapsed -ge $timeout) {
+          Write-Host "ERROR: Port $port not listening after ${timeout}s"
+          if (Test-Path $echoLogFile) { Get-Content $echoLogFile }
+          exit 1
+        }
+        Write-Host "echoserver is listening on port $port"
+
+    - name: Test SFTP against echoserver (cert store host key)
+      if: matrix.server_key_source == 'store'
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      run: |
+        $testPort = ${{env.TEST_PORT}}
+        $sftpPath = $env:SFTP_PATH
+
+        @"
+        pwd
+        ls
+        quit
+        "@ | Out-File -FilePath sftp_echo_commands.txt -Encoding ASCII
+
+        $sftpArgs = @("-u", "testuser", "-h", "localhost", "-p", "$testPort")
+        $caCertDer = (Resolve-Path "keys\ca-cert-ecc.der").Path
+        if ("${{ matrix.client_key_source }}" -eq "store") {
+            $sftpArgs += "-W", "My:$($env:CLIENT_CERT_SUBJECT):CURRENT_USER"
+        } else {
+            $sftpArgs += "-J", (Resolve-Path $env:CLIENT_CERT_FILE).Path
+            $sftpArgs += "-i", (Resolve-Path $env:CLIENT_KEY_FILE).Path
+        }
+        # -A: CA cert for host verification; -X: ignore peer IP vs cert checks
+        $sftpArgs += "-A", $caCertDer, "-X"
+
+        Write-Host "Running: $sftpPath $($sftpArgs -join ' ')"
+        $process = Start-Process -FilePath $sftpPath `
+            -ArgumentList $sftpArgs `
+            -RedirectStandardInput "sftp_echo_commands.txt" `
+            -RedirectStandardOutput "sftp_echo_output.txt" `
+            -RedirectStandardError "sftp_echo_error.txt" `
+            -Wait -NoNewWindow -PassThru
+
+        Write-Host "SFTP (echoserver) exit code: $($process.ExitCode)"
+        Write-Host "=== SFTP Output ==="
+        if (Test-Path sftp_echo_output.txt) { Get-Content sftp_echo_output.txt }
+        Write-Host "=== SFTP Error ==="
+        if (Test-Path sftp_echo_error.txt)  { Get-Content sftp_echo_error.txt  }
+
+        if ($process.ExitCode -ne 0) {
+            $echoLog = $env:ECHOSERVER_LOG
+            if (-not [string]::IsNullOrEmpty($echoLog) -and (Test-Path $echoLog)) {
+                Write-Host "=== Echoserver Log ==="
+                Get-Content $echoLog
+            }
+            Write-Host "ERROR: SFTP against echoserver failed"
+            exit 1
+        }
+        Write-Host "SFTP against echoserver succeeded"
+
+    - name: Stop echoserver before wolfsshd test
+      if: matrix.server_key_source == 'store'
+      shell: pwsh
+      run: |
+        $echoserverPid = $env:ECHOSERVER_PID
+        if (-not [string]::IsNullOrEmpty($echoserverPid)) {
+            Stop-Process -Id $echoserverPid -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+        }
+        # Also kill by name in case PID tracking missed it
+        Get-Process -Name "echoserver" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        # Clear the env var so cleanup step doesn't try again
+        Add-Content -Path $env:GITHUB_ENV -Value "ECHOSERVER_PID="
+
+    - name: Start wolfSSHd as Windows service
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      run: |
+        $sshdPathFull = (Resolve-Path $env:SSHD_PATH).Path
+        $configPathFull = (Resolve-Path "sshd_config_test").Path
+        $serviceName = "wolfsshd"
+
+        # Remove service if it already exists
+        $existingService = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+        if ($existingService) {
+            if ($existingService.Status -eq 'Running') {
+                Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
+                Start-Sleep -Seconds 2
+            }
+            sc.exe delete $serviceName | Out-Null
+            Start-Sleep -Seconds 2
+        }
+
+        # We do NOT include -E <log> here because LocalSystem only has RX on
+        # the wolfssh directory and cannot create a log file. Debug output
+        # from the service goes to OutputDebugString.
+        $binPath = "`"$sshdPathFull`" -f `"$configPathFull`" -p ${{env.TEST_PORT}}"
+        Write-Host "Creating service with binpath: $binPath"
+        $createResult = sc.exe create $serviceName binPath= $binPath
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "ERROR: Failed to create service"
+            Write-Host $createResult
+            exit 1
+        }
+
+        $startResult = sc.exe start $serviceName
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "ERROR: Failed to start service"
+            Write-Host $startResult
+            sc.exe query $serviceName
+            exit 1
+        }
+
+        Start-Sleep -Seconds 5
+        $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+        if (-not $service -or $service.Status -ne 'Running') {
+            Write-Host "ERROR: Service is not running. Status: $($service.Status)"
+            sc.exe query $serviceName
+            Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Service Control Manager'} -MaxEvents 20 -ErrorAction SilentlyContinue |
+                Where-Object { $_.Message -like "*$serviceName*" } |
+                Select-Object TimeCreated, LevelDisplayName, Message | Format-List
+            exit 1
+        }
+
+        Write-Host "wolfSSHd service is running"
+        Add-Content -Path $env:GITHUB_ENV -Value "SSHD_SERVICE_NAME=$serviceName"
+
+    - name: Test SFTP connection against wolfsshd
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      run: |
+        $testPort = ${{env.TEST_PORT}}
+        $sftpPath = $env:SFTP_PATH
+
+        # Verify the server is listening before running the client
+        try {
+            $tcpClient = New-Object System.Net.Sockets.TcpClient
+            $connect = $tcpClient.BeginConnect("localhost", $testPort, $null, $null)
+            $wait = $connect.AsyncWaitHandle.WaitOne(3000, $false)
+            if ($wait) {
+                $tcpClient.EndConnect($connect)
+                $tcpClient.Close()
+            } else {
+                Write-Host "ERROR: TCP connection timeout - server may not be listening on port $testPort"
+                exit 1
+            }
+        } catch {
+            Write-Host "ERROR: TCP connection failed: $_"
+            exit 1
+        }
+
+        @"
+        pwd
+        ls
+        quit
+        "@ | Out-File -FilePath sftp_commands.txt -Encoding ASCII
+
+        $sftpArgs = @("-u", "testuser", "-h", "localhost", "-p", "$testPort")
+        $caCertDer = (Resolve-Path "keys\ca-cert-ecc.der").Path
+        if ("${{ matrix.client_key_source }}" -eq "store") {
+            $sftpArgs += "-W", "My:$($env:CLIENT_CERT_SUBJECT):CURRENT_USER"
+        } else {
+            $sftpArgs += "-J", (Resolve-Path $env:CLIENT_CERT_FILE).Path
+            $sftpArgs += "-i", (Resolve-Path $env:CLIENT_KEY_FILE).Path
+        }
+        # -A: CA cert for host verification; -X: ignore peer IP vs cert checks
+        $sftpArgs += "-A", $caCertDer, "-X"
+
+        Write-Host "Running: $sftpPath $($sftpArgs -join ' ')"
+        Write-Host "Test matrix: server=${{ matrix.server_key_source }}, client=${{ matrix.client_key_source }}"
+        $process = Start-Process -FilePath $sftpPath `
+            -ArgumentList $sftpArgs `
+            -RedirectStandardInput "sftp_commands.txt" `
+            -RedirectStandardOutput "sftp_output.txt" `
+            -RedirectStandardError "sftp_error.txt" `
+            -Wait -NoNewWindow -PassThru
+
+        Write-Host "SFTP exit code: $($process.ExitCode)"
+        Write-Host "=== SFTP Output ==="
+        if (Test-Path sftp_output.txt) { Get-Content sftp_output.txt }
+        Write-Host "=== SFTP Error ==="
+        if (Test-Path sftp_error.txt) { Get-Content sftp_error.txt }
+
+        if ($process.ExitCode -ne 0) {
+            Write-Host "ERROR: SFTP client exited with code $($process.ExitCode)"
+            exit 1
+        }
+        Write-Host "Test completed - key exchange and SFTP connection succeeded"
+
+    - name: Cleanup
+      if: always()
+      shell: pwsh
+      run: |
+        # Stop echoserver if it is still running
+        $echoserverPid = $env:ECHOSERVER_PID
+        if (-not [string]::IsNullOrEmpty($echoserverPid)) {
+            Stop-Process -Id $echoserverPid -Force -ErrorAction SilentlyContinue
+        }
+        Get-Process -Name "echoserver" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+
+        # Stop and remove wolfSSHd service
+        $serviceName = $env:SSHD_SERVICE_NAME
+        if ([string]::IsNullOrEmpty($serviceName)) { $serviceName = "wolfsshd" }
+        $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+        if ($service) {
+            if ($service.Status -eq 'Running') {
+                Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
+                Start-Sleep -Seconds 2
+            }
+            sc.exe delete $serviceName | Out-Null
+        }
+
+        # Remove test certificates from the stores
+        Get-ChildItem -Path "Cert:\CurrentUser\My" | Where-Object {
+            $_.Subject -like "*wolfSSH-Test*" -or $_.Subject -like "*testuser*"
+        } | Remove-Item -Force -ErrorAction SilentlyContinue
+        Get-ChildItem -Path "Cert:\LocalMachine\My" | Where-Object {
+            $_.Subject -like "*wolfSSH-Test*"
+        } | Remove-Item -Force -ErrorAction SilentlyContinue
+        Write-Host "Cleaned up test certificates"
