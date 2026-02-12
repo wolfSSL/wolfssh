@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+
+NCSVRPORT=11111
+NCCLIPORT=12345
+ECHO_READY=ready.es.$$
+FWD_READY=ready.fwd.$$
+ESPID=0
+NCSVRPID=0
+FWDPID=0
+
+do_cleanup() {
+    rm -f "$ECHO_READY" "$FWD_READY"
+    if [ "$ESPID" -ne 0 ]
+    then
+        kill "$ESPID" >/dev/null 2>&1 || true
+    fi
+    if [ "$NCSVRPID" -ne 0 ]
+    then
+        kill "$NCSVRPID" >/dev/null 2>&1 || true
+    fi
+    if [ "$FWDPID" -ne 0 ]
+    then
+        kill "$FWDPID" >/dev/null 2>&1 || true
+    fi
+}
+
+wait_for_ready_file() {
+    READY_COUNTER=0
+    while [ ! -s "$1" ] && [ "$READY_COUNTER" -lt 20 ]
+    do
+        sleep 0.1
+        READY_COUNTER=$((READY_COUNTER + 1))
+    done
+
+    if [ ! -e "$1" ]
+    then
+        echo "$2 never started."
+        do_cleanup
+        exit 1
+    fi
+}
+
+# Check for prerequisites: build for forwarding, nc present
+
+# libtool can leave behind a script that runs the actual executable.
+if [ ! -x ./examples/echoserver/echoserver ] || \
+       ./examples/echoserver/echoserver "-?" 2>&1 | grep -q "does not exist"
+then
+    echo "This test requires the echoserver."
+    exit 1
+fi
+
+# libtool can leave behind a script that runs the actual executable.
+if [ ! -x ./examples/portfwd/portfwd ] || \
+       ./examples/portfwd/portfwd "-?" 2>&1 | grep -q "does not exist"
+then
+    echo "Port forwarding not enabled. Skipping."
+    exit 77
+fi
+
+# test for nonblocking only
+./examples/client/client -h | grep WOLFSSH_TEST_BLOCK
+if [ $? -eq 0 ]
+then
+    echo "macro WOLFSSH_TEST_BLOCK was used"
+    exit 77
+fi
+
+if [ ! -x "$(which nc)" ]
+then
+    echo "Tool nc not installed. Skipping."
+    exit 77
+fi
+
+nc -l $NCSVRPORT &
+NCSVRPID=$!
+./examples/echoserver/echoserver -1 -f -R "$ECHO_READY" &
+ESPID=$!
+wait_for_ready_file "$ECHO_READY" "Echoserver"
+./examples/portfwd/portfwd -p "$(cat $ECHO_READY)" -R "$FWD_READY" \
+        -u jill -P upthehill -f "$NCCLIPORT" -t "$NCSVRPORT" &
+FWDPID=$!
+wait_for_ready_file "$FWD_READY" "Port forwarding"
+
+nc -w 2 -4 localhost $NCCLIPORT <<END &
+This is some test text.
+And some more test text.
+Last of the test text.
+Later.
+END
+NCCLIPID=$!
+
+{
+  sleep 10
+  # If the nc client is there, kill it.
+  if kill -0 "$NCCLIPID" 2>/dev/null
+  then
+    kill "$NCCLIPID"
+  fi
+} &
+MONPID=$!
+
+wait "$NCCLIPID"
+CLIENTRESULT=$?
+
+kill "$MONPID" 2>/dev/null || true
+
+do_cleanup
+exit "$CLIENTRESULT"

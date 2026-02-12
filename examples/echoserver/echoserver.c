@@ -2753,7 +2753,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
 #ifdef WOLFSSH_TEST_BLOCK
     if (!nonBlock) {
-        ES_ERROR("Use -N when testing forced non blocking");
+        ES_ERROR("Use -N when testing forced non blocking\n");
     }
 #endif
 
