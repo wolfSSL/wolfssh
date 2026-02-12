@@ -132,12 +132,29 @@ jobs:
           import os
           import time
           import sys
-          
+          import hashlib
+          import signal
+
+          # Timeout handler for detecting hangs
+          class TimeoutError(Exception):
+              pass
+
+          def timeout_handler(signum, frame):
+              raise TimeoutError("SFTP operation timed out - possible hang detected!")
+
+          def get_file_hash(filepath):
+              """Calculate MD5 hash of a file."""
+              hash_md5 = hashlib.md5()
+              with open(filepath, "rb") as f:
+                  for chunk in iter(lambda: f.read(8192), b""):
+                      hash_md5.update(chunk)
+              return hash_md5.hexdigest()
+
           def run_sftp_test():
               # Create SSH client
               ssh = paramiko.SSHClient()
               ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-              
+
               # Connect to server using password authentication with testuser
               print("Connecting to wolfSSHd server...")
               try:
@@ -145,32 +162,69 @@ jobs:
               except Exception as e:
                   print(f"Connection error: {e}")
                   raise
-              
+
               # Open SFTP session
               print("Opening SFTP session...")
               sftp = ssh.open_sftp()
-              
+
               # Upload test
               print("Uploading 20MB test file...")
               start_time = time.time()
               sftp.put('/tmp/sftp_upload/test_upload.dat', '/tmp/test_upload.dat')
               upload_time = time.time() - start_time
               print(f"Upload completed in {upload_time:.2f} seconds")
-              
+
               # Download test
               print("Downloading 20MB test file...")
               start_time = time.time()
               sftp.get('/tmp/test_upload.dat', '/tmp/sftp_download/test_download.dat')
               download_time = time.time() - start_time
               print(f"Download completed in {download_time:.2f} seconds")
-              
+
+              # Stress test: Repeated GET operations with prefetch
+              # This tests the WS_WANT_WRITE handling during repeated transfers
+              # which was the original bug trigger (SFTP hang on non-blocking sockets)
+              print("\n=== Starting repeated GET stress test (prefetch enabled) ===")
+              num_iterations = 10
+              timeout_seconds = 30  # Per-operation timeout to detect hangs
+
+              orig_hash = get_file_hash('/tmp/sftp_upload/test_upload.dat')
+
+              for i in range(num_iterations):
+                  signal.signal(signal.SIGALRM, timeout_handler)
+                  signal.alarm(timeout_seconds)
+                  try:
+                      download_path = f'/tmp/sftp_download/stress_test_{i}.dat'
+                      start_time = time.time()
+                      # Paramiko uses prefetch by default for get()
+                      sftp.get('/tmp/test_upload.dat', download_path)
+                      elapsed = time.time() - start_time
+
+                      # Verify integrity
+                      down_hash = get_file_hash(download_path)
+                      if orig_hash != down_hash:
+                          print(f"  Iteration {i+1}: FAILED - hash mismatch!")
+                          return False
+
+                      print(f"  Iteration {i+1}/{num_iterations}: OK ({elapsed:.2f}s)")
+                      os.remove(download_path)  # Cleanup
+
+                  except TimeoutError as e:
+                      print(f"  Iteration {i+1}: FAILED - {e}")
+                      print("  This may indicate the WS_WANT_WRITE hang bug!")
+                      return False
+                  finally:
+                      signal.alarm(0)  # Always cancel alarm
+
+              print(f"=== Stress test completed: {num_iterations} iterations OK ===\n")
+
               # Close connections
               sftp.close()
               ssh.close()
-              
+
               print("SFTP session closed")
               return True
-          
+
           if __name__ == "__main__":
               try:
                   success = run_sftp_test()

@@ -40,6 +40,9 @@
 #include <wolfssh/port.h>
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
+#ifdef WOLFSSH_SFTP
+    #include <wolfssh/wolfsftp.h>
+#endif
 #include "apps/wolfssh/common.h"
 
 #ifndef WOLFSSH_NO_ABORT
@@ -482,6 +485,78 @@ static void TestWorkerReadsWhenSendWouldBlock(void)
 #endif
 
 
+#ifdef WOLFSSH_SFTP
+/* Test that wolfSSH_SFTP_buffer_send() properly handles WS_WANT_WRITE when
+ * SSH output buffer has pending data. This is a regression test for
+ * the SFTP hang issue with non-blocking sockets.
+ *
+ * The fix checks for pending data in ssh->outputBuffer at the start of
+ * wolfSSH_SFTP_buffer_send() and returns WS_WANT_WRITE if the flush fails. */
+static int sftpWantWriteCallCount = 0;
+
+static int SftpWantWriteSendCb(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    (void)ssh; (void)buf; (void)ctx;
+    sftpWantWriteCallCount++;
+    /* First call returns WANT_WRITE, subsequent calls succeed */
+    if (sftpWantWriteCallCount == 1) {
+        return WS_CBIO_ERR_WANT_WRITE;
+    }
+    return (int)sz;
+}
+
+static int SftpDummyRecv(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    (void)ssh; (void)buf; (void)sz; (void)ctx;
+    return WS_CBIO_ERR_WANT_READ;
+}
+
+static void TestSftpBufferSendPendingOutput(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    byte testData[16];
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIOSend(ctx, SftpWantWriteSendCb);
+    wolfSSH_SetIORecv(ctx, SftpDummyRecv);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    WMEMSET(testData, 0x42, sizeof(testData));
+
+    /* Simulate pending data in SSH output buffer (as if previous send
+     * returned WS_WANT_WRITE and data was buffered).
+     * Note: outputBuffer is initialized by BufferInit() with bufferSz set
+     * to at least STATIC_BUFFER_LEN (16 bytes), so we use a smaller value. */
+    ssh->outputBuffer.length = 8;   /* 8 bytes pending */
+    ssh->outputBuffer.idx = 0;      /* none sent yet */
+
+    sftpWantWriteCallCount = 0;
+
+    /* Call wolfSSH_TestSftpBufferSend - should return WS_WANT_WRITE because
+     * the fix detects pending data in outputBuffer and tries to flush it,
+     * which fails with WS_WANT_WRITE from our callback.
+     *
+     * Before the fix, the function would ignore the pending SSH output buffer
+     * data and proceed to send new SFTP data, leading to a hang because the
+     * pending data was never flushed. */
+    ret = wolfSSH_TestSftpBufferSend(ssh, testData, sizeof(testData), 0);
+    AssertIntEQ(ret, WS_WANT_WRITE);
+
+    /* Verify the SSH output buffer still has pending data */
+    AssertTrue(ssh->outputBuffer.length > ssh->outputBuffer.idx);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+#endif /* WOLFSSH_SFTP */
+
+
 int main(int argc, char** argv)
 {
     WOLFSSH_CTX* ctx;
@@ -513,6 +588,10 @@ int main(int argc, char** argv)
     TestPasswordEofNoCrash();
 #ifndef WOLFSSH_TEST_BLOCK
     TestWorkerReadsWhenSendWouldBlock();
+#endif
+
+#ifdef WOLFSSH_SFTP
+    TestSftpBufferSendPendingOutput();
 #endif
 
     /* TODO: add app-level regressions that simulate stdin EOF/password

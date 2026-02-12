@@ -282,6 +282,11 @@ WOLFSSL_LOCAL int SFTP_RemoveHandleNode(WOLFSSH* ssh, byte* handle,
 
 WOLFSSH_LOCAL void wolfSSH_SFTP_ShowSizes(void);
 
+#ifdef WOLFSSH_TEST_INTERNAL
+    WOLFSSH_API int wolfSSH_TestSftpBufferSend(WOLFSSH* ssh,
+            byte* data, word32 sz, word32 idx);
+#endif
+
 #ifdef __cplusplus
 }
 #endif
