@@ -188,6 +188,8 @@ jobs:
               num_iterations = 10
               timeout_seconds = 30  # Per-operation timeout to detect hangs
 
+              orig_hash = get_file_hash('/tmp/sftp_upload/test_upload.dat')
+
               for i in range(num_iterations):
                   signal.signal(signal.SIGALRM, timeout_handler)
                   signal.alarm(timeout_seconds)
@@ -197,10 +199,8 @@ jobs:
                       # Paramiko uses prefetch by default for get()
                       sftp.get('/tmp/test_upload.dat', download_path)
                       elapsed = time.time() - start_time
-                      signal.alarm(0)  # Cancel alarm
 
                       # Verify integrity
-                      orig_hash = get_file_hash('/tmp/sftp_upload/test_upload.dat')
                       down_hash = get_file_hash(download_path)
                       if orig_hash != down_hash:
                           print(f"  Iteration {i+1}: FAILED - hash mismatch!")
@@ -213,6 +213,8 @@ jobs:
                       print(f"  Iteration {i+1}: FAILED - {e}")
                       print("  This may indicate the WS_WANT_WRITE hang bug!")
                       return False
+                  finally:
+                      signal.alarm(0)  # Always cancel alarm
 
               print(f"=== Stress test completed: {num_iterations} iterations OK ===\n")
 

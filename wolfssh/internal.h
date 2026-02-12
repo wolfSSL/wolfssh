@@ -1072,6 +1072,7 @@ enum ChannelOpenFailReasons {
 WOLFSSH_LOCAL int DoReceive(WOLFSSH*);
 WOLFSSH_LOCAL int DoProtoId(WOLFSSH*);
 WOLFSSH_LOCAL int wolfSSH_SendPacket(WOLFSSH*);
+WOLFSSH_LOCAL int wolfSSH_OutputPending(WOLFSSH*);
 WOLFSSH_LOCAL int SendProtoId(WOLFSSH*);
 WOLFSSH_LOCAL int SendKexInit(WOLFSSH*);
 WOLFSSH_LOCAL int SendKexDhInit(WOLFSSH*);

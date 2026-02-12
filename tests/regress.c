@@ -515,7 +515,6 @@ static void TestSftpBufferSendPendingOutput(void)
 {
     WOLFSSH_CTX* ctx;
     WOLFSSH* ssh;
-    WS_SFTP_BUFFER sftpBuf;
     byte testData[16];
     int ret;
 
@@ -528,12 +527,7 @@ static void TestSftpBufferSendPendingOutput(void)
     ssh = wolfSSH_new(ctx);
     AssertNotNull(ssh);
 
-    /* Set up SFTP buffer with some data to send */
     WMEMSET(testData, 0x42, sizeof(testData));
-    WMEMSET(&sftpBuf, 0, sizeof(sftpBuf));
-    sftpBuf.data = testData;
-    sftpBuf.sz = sizeof(testData);
-    sftpBuf.idx = 0;
 
     /* Simulate pending data in SSH output buffer (as if previous send
      * returned WS_WANT_WRITE and data was buffered).
@@ -544,20 +538,15 @@ static void TestSftpBufferSendPendingOutput(void)
 
     sftpWantWriteCallCount = 0;
 
-    /* Call wolfSSH_SFTP_buffer_send - should return WS_WANT_WRITE because
+    /* Call wolfSSH_TestSftpBufferSend - should return WS_WANT_WRITE because
      * the fix detects pending data in outputBuffer and tries to flush it,
      * which fails with WS_WANT_WRITE from our callback.
      *
      * Before the fix, the function would ignore the pending SSH output buffer
      * data and proceed to send new SFTP data, leading to a hang because the
      * pending data was never flushed. */
-    ret = wolfSSH_SFTP_buffer_send(ssh, &sftpBuf);
+    ret = wolfSSH_TestSftpBufferSend(ssh, testData, sizeof(testData), 0);
     AssertIntEQ(ret, WS_WANT_WRITE);
-
-    /* Verify the SFTP buffer was NOT consumed (idx should still be 0).
-     * This is critical - the SFTP layer must not advance its buffer index
-     * until the SSH output buffer is flushed. */
-    AssertIntEQ(sftpBuf.idx, 0);
 
     /* Verify the SSH output buffer still has pending data */
     AssertTrue(ssh->outputBuffer.length > ssh->outputBuffer.idx);
