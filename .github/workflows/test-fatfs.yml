@@ -1,4 +1,4 @@
-name: Test FATFS Support
+name: Test FatFS Support
 
 on:
   push:
@@ -9,31 +9,31 @@ on:
 
 jobs:
   get-fatfs:
+    name: Get FatFS
     runs-on: ubuntu-latest
+    timeout-minutes: 4
     steps:
-      - name: Set up cache key
-        id: cache-key
-        run: echo "CACHE_KEY=ff15a-cache" >> $GITHUB_ENV
+      - name: Checking cache for FatFS
+        uses: actions/cache@v4
+        id: cache-fatfs
+        with:
+          path: ./ff15a.zip
+          key: ff15a-cache
+          lookup-only: true
 
-      - name: Download FF15a.zip
-        id: download
+      - name: Download FatFS
+        if: steps.cache-fatfs.outputs.cache-hit != 'true'
         run: |
           wget http://elm-chan.org/fsw/ff/arc/ff15a.zip -O ff15a.zip
 
-      - name: Cache the downloaded ZIP file
-        uses: actions/cache@v4
-        with:
-          path: ./ff15a.zip
-          key: ${{ env.CACHE_KEY }}
-          restore-keys: |
-            ${{ env.CACHE_KEY }}
-
   test-fatfs:
+    name: Test wolfSSH with FatFS
     needs: get-fatfs
     runs-on: ubuntu-latest
+    timeout-minutes: 4
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Checking cache for FATFS
         uses: actions/cache@v4
@@ -47,36 +47,29 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential autoconf automake libtool pkg-config openssh-server dosfstools
 
-      - name: Clone wolfSSL
-        run: |
-          cd ..
-          git clone https://github.com/wolfSSL/wolfssl.git
-          cd wolfssl
-          ./autogen.sh
+      - name: Build wolfSSL
+        uses: wolfSSL/actions-build-autotools-project@v1
+        with:
+          repository: wolfSSL/wolfssl
+          ref: master
+          path: wolfssl
+          configure: --enable-wolfssh --enable-intelasm --disable-crl --disable-examples --disable-filesystem CFLAGS="-DNO_WOLFSSL_DIR"
+          check: false
+          install: true
 
-      - name: Configure and build wolfSSL
-        run: |
-          cd ../wolfssl
-          ./configure --enable-wolfssh --enable-intelasm --disable-crl --disable-examples --disable-filesystem CFLAGS="-DNO_WOLFSSL_DIR"
-          make
-          sudo make install
-          sudo ldconfig
-
-      - name: Compile FATFS library
+      - name: Compile FatFS library
         run: |
           cd ide/Linux-FATFS
           unzip ../../ff15a.zip
           cp ffconf.h source/
           make
 
-      - name: Configure and build wolfSSH with FATFS
+      - name: Configure and build wolfSSH with FatFS
         run: |
           ./autogen.sh
           export LD_LIBRARY_PATH=$(pwd)/ide/Linux-FATFS
-          ./configure --enable-sftp CFLAGS="-DWOLFSSH_FATFS -Iide/Linux-FATFS/source -DSTDIN_FILENO=0 -DPRINTF=printf" LDFLAGS="-Lide/Linux-FATFS -lfatfs"
+          ./configure --with-wolfssl=build-dir --enable-sftp CFLAGS="-DWOLFSSH_FATFS -Iide/Linux-FATFS/source -DSTDIN_FILENO=0 -DPRINTF=printf" LDFLAGS="-Lide/Linux-FATFS -lfatfs"
           make
-
-
 
       - name: Create test file
         run: |
