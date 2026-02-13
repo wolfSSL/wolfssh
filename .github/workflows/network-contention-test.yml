@@ -1,0 +1,184 @@
+name: wolfSSH Network Contention Test
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  create_matrix:
+    runs-on: ubuntu-latest
+    outputs:
+        versions: ${{ steps.json.outputs.versions }}
+    steps:
+      - name: Create wolfSSL version matrix
+        id: json
+        run: |
+          current=`curl -s https://api.github.com/repos/wolfssl/wolfssl/releases | grep tag_name | cut -d : -f 2,3 | tr -d \" | tr -d , | tr -d ' ' | head -1`
+          last=`curl -s https://api.github.com/repos/wolfssl/wolfssl/releases | grep tag_name | cut -d : -f 2,3 | tr -d \" | tr -d , | tr -d ' ' | head -2 | tail -1`
+          VERSIONS=$(echo "[ \"master\", \"$current\", \"$last\" ]")
+          echo "wolfSSL versions found: $VERSIONS"
+          echo "versions=$VERSIONS" >> $GITHUB_OUTPUT
+
+  build_wolfssl:
+    needs: create_matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest ]
+        wolfssl: ${{ fromJson(needs.create_matrix.outputs['versions']) }}
+    name: Build wolfssl
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 4
+    steps:
+      - name: Checking cache for wolfssl
+        uses: actions/cache@v4
+        id: cache-wolfssl
+        with:
+          path: build-dir/
+          key: wolfssh-contention-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}
+          lookup-only: true
+
+      - name: Checkout, build, and install wolfssl
+        if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+        uses: wolfSSL/actions-build-autotools-project@v1
+        with:
+          repository: wolfssl/wolfssl
+          ref: ${{ matrix.wolfssl }}
+          path: wolfssl
+          configure: --enable-ssh
+          check: false
+          install: true
+
+  test_sftp_contention:
+    needs:
+      - build_wolfssl
+      - create_matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest ]
+        wolfssl: ${{ fromJson(needs.create_matrix.outputs['versions']) }}
+        block_prob: [ 30, 50, 70 ]
+    name: SFTP contention test (prob=${{ matrix.block_prob }}%)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - name: Checking cache for wolfssl
+        uses: actions/cache@v4
+        with:
+          path: build-dir/
+          key: wolfssh-contention-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}
+          fail-on-cache-miss: true
+
+      - uses: actions/checkout@v4
+        with:
+          path: wolfssh/
+
+      - name: autogen
+        working-directory: ./wolfssh/
+        run: ./autogen.sh
+
+      - name: configure with TEST_BLOCK
+        working-directory: ./wolfssh/
+        run: |
+          ./configure --enable-sftp \
+            LDFLAGS="-L${{ github.workspace }}/build-dir/lib" \
+            CPPFLAGS="-I${{ github.workspace }}/build-dir/include -DWOLFSSH_TEST_BLOCK -DWOLFSSH_BLOCK_PROB=${{ matrix.block_prob }} -DWOLFSSH_NO_FPKI"
+
+      - name: make
+        working-directory: ./wolfssh/
+        run: make
+
+      - name: Setup network delay with tc/netem
+        run: |
+          sudo tc qdisc add dev lo root netem delay 10ms 5ms loss 0.1%
+          echo "Network delay configured:"
+          tc qdisc show dev lo
+
+      - name: Run SFTP contention tests
+        working-directory: ./wolfssh/
+        timeout-minutes: 10
+        run: ./scripts/sftp.test
+
+      - name: Install expect for extended tests
+        run: sudo apt-get update && sudo apt-get install -y expect
+
+      - name: Create large test files
+        run: |
+          dd if=/dev/urandom of=/tmp/test_1kb.dat bs=1K count=1
+          dd if=/dev/urandom of=/tmp/test_2mb.dat bs=1M count=2
+          dd if=/dev/urandom of=/tmp/test_10mb.dat bs=1M count=10
+          md5sum /tmp/test_*.dat > /tmp/test_checksums.md5
+          echo "Test files created:"
+          ls -la /tmp/test_*.dat
+
+      - name: Run extended SFTP file transfer tests
+        working-directory: ./wolfssh/
+        timeout-minutes: 10
+        run: |
+          # Start echoserver in non-blocking mode
+          ./examples/echoserver/echoserver -N -f &
+          SERVER_PID=$!
+          sleep 2
+
+          # Create expect script for file transfers
+          cat > /tmp/sftp_test.exp << 'EXPECTEOF'
+          #!/usr/bin/expect -f
+          set timeout 120
+          set testfile [lindex $argv 0]
+          set outfile [lindex $argv 1]
+
+          spawn ./examples/sftpclient/wolfsftp -N -h 127.0.0.1 -p 22222 -u jill
+          expect "Password:"
+          send "upthehill\r"
+          expect "wolfSSH sftp>"
+          send "get $testfile $outfile\r"
+          expect "wolfSSH sftp>"
+          send "exit\r"
+          expect eof
+          EXPECTEOF
+          chmod +x /tmp/sftp_test.exp
+
+          # Test 1KB file transfer
+          echo "Testing 1KB file transfer..."
+          /tmp/sftp_test.exp /tmp/test_1kb.dat /tmp/recv_1kb.dat
+          if ! cmp -s /tmp/test_1kb.dat /tmp/recv_1kb.dat; then
+            echo "FAILED: 1KB file integrity check"
+            kill $SERVER_PID 2>/dev/null || true
+            exit 1
+          fi
+          echo "1KB file transfer: PASSED"
+
+          # Test 2MB file transfer
+          echo "Testing 2MB file transfer..."
+          /tmp/sftp_test.exp /tmp/test_2mb.dat /tmp/recv_2mb.dat
+          if ! cmp -s /tmp/test_2mb.dat /tmp/recv_2mb.dat; then
+            echo "FAILED: 2MB file integrity check"
+            kill $SERVER_PID 2>/dev/null || true
+            exit 1
+          fi
+          echo "2MB file transfer: PASSED"
+
+          # Test 10MB file transfer
+          echo "Testing 10MB file transfer..."
+          /tmp/sftp_test.exp /tmp/test_10mb.dat /tmp/recv_10mb.dat
+          if ! cmp -s /tmp/test_10mb.dat /tmp/recv_10mb.dat; then
+            echo "FAILED: 10MB file integrity check"
+            kill $SERVER_PID 2>/dev/null || true
+            exit 1
+          fi
+          echo "10MB file transfer: PASSED"
+
+          kill $SERVER_PID 2>/dev/null || true
+          echo "All extended SFTP tests PASSED"
+
+      - name: Cleanup network delay
+        if: always()
+        run: sudo tc qdisc del dev lo root netem || true
