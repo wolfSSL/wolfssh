@@ -1632,9 +1632,10 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
 
     wolfSSH_free(threadCtx->ssh);
 
-    /* For socket error, it could have been the previous connection just ended
-     * early. Not really an error, no need to report error and quit. */
-    if (error == WS_SOCKET_ERROR_E) {
+    /* For socket error or graceful channel closure, it could have been the
+     * previous connection just ended. Not really an error, no need to report
+     * error and quit. */
+    if (error == WS_SOCKET_ERROR_E || ret == WS_CHANNEL_CLOSED) {
         ret = 0;
     }
 
