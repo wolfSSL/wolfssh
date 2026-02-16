@@ -9,12 +9,13 @@ counter=0
 
 [ ! -x ./examples/scpclient/wolfscp ] && echo -e "\n\nwolfscp client doesn't exist" && exit 1
 
-# test for nonblocking only
+# test for nonblocking only - wolfscp does not support -N flag for non-blocking
+# mode, so we must skip when TEST_BLOCK is enabled
 ./examples/client/client -h | grep WOLFSSH_TEST_BLOCK
 if [ $? -eq 0 ]
 then
-    echo "macro NO_WOLFSSH_CLIENT was used"
-    echo "skipping for now"
+    echo "WOLFSSH_TEST_BLOCK detected"
+    echo "wolfscp client does not support non-blocking mode, skipping test"
     exit 77
 fi
 
