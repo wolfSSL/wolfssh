@@ -854,7 +854,7 @@ static int GetScpFileMode(WOLFSSH* ssh, byte* buf, word32 bufSz,
 
     for (i = 0; i < SCP_MODE_OCTET_LEN; i++)
     {
-        if (modeOctet[i] < '0' || modeOctet[0] > '7') {
+        if (modeOctet[i] < '0' || modeOctet[i] > '7') {
             ret = WS_BAD_ARGUMENT;
             break;
         }
