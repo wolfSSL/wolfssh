@@ -8944,7 +8944,7 @@ int wolfSSH_DoModes(const byte* modes, word32 modesSz, int fd)
 
     tcgetattr(fd, &term);
 
-    while (idx < modesSz && modes[idx] != WOLFSSH_TTY_OP_END
+    while (idx + TERMINAL_MODE_SZ <= modesSz && modes[idx] != WOLFSSH_TTY_OP_END
             && modes[idx] < WOLFSSH_TTY_INVALID) {
 
         ato32(modes + idx + 1, &arg);
