@@ -660,7 +660,7 @@ static WOLFSSH_AGENT_ID* FindKeyId(WOLFSSH_AGENT_ID* id,
 
     if (ret == WS_SUCCESS) {
         while (id != NULL &&
-                WMEMCMP(digest, id, WC_SHA256_DIGEST_SIZE) != 0 &&
+                WMEMCMP(digest, id->id, WC_SHA256_DIGEST_SIZE) != 0 &&
                 WMEMCMP(keyBlob, id->keyBlob, keyBlobSz)) {
             id = id->next;
         }
