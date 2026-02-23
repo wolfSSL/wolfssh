@@ -7210,8 +7210,9 @@ static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
-        if (publicKeyTypeSz != pk->publicKeyTypeSz &&
-            WMEMCMP(publicKeyType, pk->publicKeyType, publicKeyTypeSz) != 0) {
+        if (publicKeyTypeSz != pk->publicKeyTypeSz
+            || WMEMCMP(publicKeyType, pk->publicKeyType,
+                    publicKeyTypeSz) != 0) {
 
             WLOG(WS_LOG_DEBUG,
                  "Signature's type does not match public key type");
@@ -7309,8 +7310,9 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     if (ret == WS_SUCCESS) {
         publicKeyType = pk->publicKey + i;
         i += publicKeyTypeSz;
-        if (publicKeyTypeSz != pk->publicKeyTypeSz &&
-            WMEMCMP(publicKeyType, pk->publicKeyType, publicKeyTypeSz) != 0) {
+        if (publicKeyTypeSz != pk->publicKeyTypeSz
+            || WMEMCMP(publicKeyType, pk->publicKeyType,
+                    publicKeyTypeSz) != 0) {
 
             WLOG(WS_LOG_DEBUG,
                 "Public Key's type does not match public key type");
@@ -7351,8 +7353,9 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
         publicKeyType = pk->signature + i;
         i += publicKeyTypeSz;
 
-        if (publicKeyTypeSz != pk->publicKeyTypeSz &&
-            WMEMCMP(publicKeyType, pk->publicKeyType, publicKeyTypeSz) != 0) {
+        if (publicKeyTypeSz != pk->publicKeyTypeSz
+            || WMEMCMP(publicKeyType, pk->publicKeyType,
+                    publicKeyTypeSz) != 0) {
 
             WLOG(WS_LOG_DEBUG,
                  "Signature's type does not match public key type");
@@ -7620,7 +7623,7 @@ static int DoUserAuthRequestEd25519(WOLFSSH* ssh,
         publicKeyType = pk->publicKey + i;
         i += publicKeyTypeSz;
         if (publicKeyTypeSz != pk->publicKeyTypeSz
-                && WMEMCMP(publicKeyType,
+                || WMEMCMP(publicKeyType,
                         pk->publicKeyType, publicKeyTypeSz) != 0) {
             WLOG(WS_LOG_DEBUG,
                 "Public Key's type does not match public key type");
@@ -7651,8 +7654,9 @@ static int DoUserAuthRequestEd25519(WOLFSSH* ssh,
         publicKeyType = pk->signature + i;
         i += publicKeyTypeSz;
 
-        if (publicKeyTypeSz != pk->publicKeyTypeSz &&
-            WMEMCMP(publicKeyType, pk->publicKeyType, publicKeyTypeSz) != 0) {
+        if (publicKeyTypeSz != pk->publicKeyTypeSz
+            || WMEMCMP(publicKeyType, pk->publicKeyType,
+                    publicKeyTypeSz) != 0) {
 
             WLOG(WS_LOG_DEBUG,
                  "Signature's type does not match public key type");
