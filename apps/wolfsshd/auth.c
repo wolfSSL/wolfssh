@@ -1060,7 +1060,7 @@ static int DoCheckUser(const char* usr, WOLFSSHD_AUTH* auth)
             wolfSSH_Log(WS_LOG_INFO, "[SSHD] User ok.");
             ret = WOLFSSH_USERAUTH_SUCCESS;
         }
-        else if (ret == WSSHD_AUTH_FAILURE) {
+        else if (rc == WSSHD_AUTH_FAILURE) {
             wolfSSH_Log(WS_LOG_INFO, "[SSHD] User %s doesn't exist.", usr);
             ret = WOLFSSH_USERAUTH_INVALID_USER;
         }
