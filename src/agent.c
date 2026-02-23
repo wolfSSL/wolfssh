@@ -590,7 +590,7 @@ static int PostRemoveId(WOLFSSH_AGENT_CTX* agent,
             int match;
 
             match = WMEMCMP(id, cur->id, WC_SHA256_DIGEST_SIZE);
-            if (!match) {
+            if (match) {
                 prev = cur;
                 cur = cur->next;
             }
@@ -598,7 +598,7 @@ static int PostRemoveId(WOLFSSH_AGENT_CTX* agent,
                 if (prev != NULL)
                     prev->next = cur->next;
                 else
-                    agent->idList = NULL;
+                    agent->idList = cur->next;
 
                 wolfSSH_AGENT_ID_free(cur, agent->heap);
                 cur = NULL;
