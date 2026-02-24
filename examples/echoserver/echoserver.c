@@ -1524,7 +1524,7 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
     if (!threadCtx->nonBlock) {
         ret = wolfSSH_accept(threadCtx->ssh);
         if (wolfSSH_get_error(threadCtx->ssh) == WS_AUTH_PENDING) {
-            printf("Auth pending error, use -N for non blocking\n");
+            printf("Auth pending error, use -N for non-blocking\n");
             printf("Trying to close down the connection\n");
         }
     }
@@ -2763,7 +2763,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
 #ifdef WOLFSSH_TEST_BLOCK
     if (!nonBlock) {
-        ES_ERROR("Use -N when testing forced non blocking");
+        ES_ERROR("Use -N when testing forced non-blocking\n");
     }
 #endif
 

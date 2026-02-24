@@ -1,0 +1,49 @@
+#!/usr/bin/env sh
+
+# Prerequisite checking
+
+if [ ! -x "$(command -v expect)" ]
+then
+  echo "skipping: missing expect"
+  exit 77
+fi
+
+if [ ! -x ./scripts/fwd.test.expect ]
+then
+  echo "fail: missing expect script"
+  exit 1
+fi
+
+if [ ! -x "$(command -v nc)" ]
+then
+  echo "skipping: missing netcat"
+  exit 77
+fi
+
+## libtool can leave behind a script that runs the actual executable.
+if [ ! -x ./examples/echoserver/echoserver ] || \
+       ./examples/echoserver/echoserver "-?" 2>&1 | grep -q "does not exist"
+then
+    echo "fail: missing echoserver"
+    exit 1
+fi
+
+## libtool can leave behind a script that runs the actual executable.
+if [ ! -x ./examples/portfwd/portfwd ] || \
+       ./examples/portfwd/portfwd "-?" 2>&1 | grep -q "does not exist"
+then
+    echo "skipping: missing forwarding"
+    exit 77
+fi
+
+## test for nonblocking only
+if ./examples/client/client "-?" 2>&1 | grep WOLFSSH_TEST_BLOCK >/dev/null 2>&1
+then
+    echo "skipping: non-blocking test"
+    exit 77
+fi
+
+
+# Run the expect script
+
+./scripts/fwd.test.expect
