@@ -2218,7 +2218,7 @@ static int GetFileStats(void *fs, ScpSendCtx* ctx, const char* fileName,
         (word64)ctx->s.ftLastWriteTime.dwLowDateTime;
 
     *fileMode = 0555 |
-        (ctx->s.dwFileAttributes | FILE_ATTRIBUTE_READONLY ? 0 : 0200);
+        (ctx->s.dwFileAttributes & FILE_ATTRIBUTE_READONLY ? 0 : 0200);
     *fileMode |= (ctx->s.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? 0x4000 : 0;
 #else
     if (WSTAT(fs, fileName, &ctx->s) < 0) {
