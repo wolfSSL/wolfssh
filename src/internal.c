@@ -30,6 +30,7 @@
 #endif
 
 #include <stdio.h>
+#include <stdint.h>
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/log.h>
@@ -9469,11 +9470,15 @@ static int DoChannelWindowAdjust(WOLFSSH* ssh,
             WLOG(WS_LOG_INFO, "  peerWindowSz = %u",
                  channel->peerWindowSz);
 
-            channel->peerWindowSz += bytesToAdd;
-
-            WLOG(WS_LOG_INFO, "  update peerWindowSz = %u",
-                 channel->peerWindowSz);
-
+            if (bytesToAdd > UINT32_MAX - channel->peerWindowSz) {
+                ret = WS_OVERFLOW_E;
+                WLOG(WS_LOG_DEBUG, "peer window adjust would overflow");
+            }
+            else {
+                channel->peerWindowSz += bytesToAdd;
+                WLOG(WS_LOG_INFO, "  update peerWindowSz = %u",
+                     channel->peerWindowSz);
+            }
         }
     }
 
