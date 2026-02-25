@@ -1423,9 +1423,10 @@ int ReceiveScpMessage(WOLFSSH* ssh)
         if (err == 0) {
             WOLFSSH_CHANNEL* channel;
             channel = wolfSSH_ChannelFind(ssh, lastChannel, WS_CHANNEL_ID_SELF);
-            if (channel == NULL)
+            if (channel == NULL) {
                 ret = WS_INVALID_CHANID;
-            if (wolfSSH_ChannelGetEof(channel)) {
+            }
+            else if (wolfSSH_ChannelGetEof(channel)) {
                 return WS_EOF;
             }
         }
