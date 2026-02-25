@@ -413,7 +413,7 @@ static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz, WOLFS
     }
     if (ret == WS_SUCCESS) {
         storedHashCpy = WSTRDUP(storedHash, NULL, DYNTYPE_STRING);
-        if (storedHash == NULL) {
+        if (storedHashCpy == NULL) {
             wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Error getting stored hash copy");
             ret = WS_MEMORY_E;
