@@ -690,10 +690,12 @@ WOLFSSH_LOCAL int wolfSSH_GetPath(const char* defaultPath, byte* in,
 
 #ifdef WOLFSSH_SFTP
 #define WOLFSSH_MAX_SFTPOFST 3
+#define WOLFSSH_HANDLE_ID_SZ (sizeof(word32) * 2)
 
 #ifndef NO_WOLFSSH_DIR
     typedef struct WS_DIR_LIST WS_DIR_LIST;
 #endif
+typedef struct WS_FILE_LIST WS_FILE_LIST;
 typedef struct WS_HANDLE_LIST WS_HANDLE_LIST;
 typedef struct SFTP_OFST {
     word32 offset[2];
@@ -894,9 +896,8 @@ struct WOLFSSH {
     WS_DIR_LIST* dirList;
     word32 dirIdCount[2];
 #endif
-#ifdef WOLFSSH_STOREHANDLE
-    WS_HANDLE_LIST* handleList;
-#endif
+    word32 fileIdCount[2];
+    WS_FILE_LIST* fileList;
     struct WS_SFTP_RECV_INIT_STATE* recvInitState;
     struct WS_SFTP_RECV_STATE* recvState;
     struct WS_SFTP_RMDIR_STATE* rmdirState;
