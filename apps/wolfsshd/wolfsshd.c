@@ -316,7 +316,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
 
     /* create a new WOLFSSH_CTX */
     *ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
-    if (ctx == NULL) {
+    if (*ctx == NULL) {
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Couldn't allocate SSH CTX data.");
         ret = WS_MEMORY_E;
     }
