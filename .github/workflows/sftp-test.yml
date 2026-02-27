@@ -42,7 +42,7 @@ jobs:
         id: cache-wolfssl
         with:
           path: build-dir/
-          key: wolfssh-sftp-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}
+          key: wolfssh-sftp-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}-keygen
           lookup-only: true
 
       - name: Checkout, build, and install wolfssl
@@ -52,7 +52,7 @@ jobs:
           repository: wolfssl/wolfssl
           ref: ${{ matrix.wolfssl }}
           path: wolfssl
-          configure: --enable-ssh
+          configure: --enable-ssh --enable-keygen
           check: false
           install: true
 
@@ -73,7 +73,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build-dir/
-          key: wolfssh-sftp-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}
+          key: wolfssh-sftp-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}-keygen
           fail-on-cache-miss: true
 
       - uses: actions/checkout@v4
@@ -124,13 +124,13 @@ jobs:
           expect eof
           EOF
           chmod +x /tmp/sftp_test.exp
-          
+
           # Install expect
           sudo apt-get update && sudo apt-get install -y expect
-          
+
           # Run the expect script
           /tmp/sftp_test.exp
-          
+
           # Verify the files match
           echo "Verifying file integrity..."
           if cmp -s /tmp/test.dat /tmp/sftp_test_dir/test_received.dat; then
@@ -139,3 +139,90 @@ jobs:
             echo "SFTP Test FAILED: Files do not match"
             exit 1
           fi
+
+  build_wolfssh_large_rw:
+    needs:
+      - build_wolfssl
+      - create_matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest ]
+        wolfssl: ${{ fromJson(needs.create_matrix.outputs['versions']) }}
+    name: Test wolfsftp large RW (10MB chunks, 3GB file)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Checking cache for wolfssl
+        uses: actions/cache@v4
+        with:
+          path: build-dir/
+          key: wolfssh-sftp-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}-keygen
+          fail-on-cache-miss: true
+
+      - uses: actions/checkout@v4
+        with:
+          path: wolfssh/
+
+      - name: autogen
+        working-directory: ./wolfssh/
+        run: ./autogen.sh
+
+      - name: configure
+        working-directory: ./wolfssh/
+        run: |
+          ./configure --enable-all \
+            LDFLAGS="-L${{ github.workspace }}/build-dir/lib" \
+            CPPFLAGS="-I${{ github.workspace }}/build-dir/include -DWOLFSSH_NO_SFTP_TIMEOUT -DWOLFSSH_MAX_SFTP_RW=10485760 -DWOLFSSH_MAX_CHN_NAMESZ=4200"
+
+      - name: make
+        working-directory: ./wolfssh/
+        run: make
+
+      - name: Create 3GB test file
+        working-directory: ./wolfssh/
+        run: |
+          dd if=/dev/urandom of=seed.dat bs=1M count=10
+          for i in $(seq 1 308); do cat seed.dat >> large_test.dat; done
+          rm seed.dat
+          sha256sum large_test.dat > large_test.dat.sha256
+          echo "Created 3GB test file, SHA-256: $(cat large_test.dat.sha256)"
+
+      - name: Start echoserver
+        working-directory: ./wolfssh/
+        run: |
+          ./examples/echoserver/echoserver -N -1 -R /tmp/echoserver_ready -d "$(pwd)" &
+          echo $! > /tmp/echoserver.pid
+          for i in $(seq 1 30); do
+            [ -s /tmp/echoserver_ready ] && break
+            sleep 0.2
+          done
+          if [ ! -s /tmp/echoserver_ready ]; then
+            echo "ERROR: echoserver failed to start"
+            exit 1
+          fi
+          echo "Echoserver ready on port $(cat /tmp/echoserver_ready)"
+
+      - name: SFTP get 3GB file with 10MB chunk size
+        working-directory: ./wolfssh/
+        run: |
+          port=$(cat /tmp/echoserver_ready)
+          ./examples/sftpclient/wolfsftp -N -u jill -P upthehill -p "$port" \
+            -G -l /tmp/large_test_copy.dat -r "$(pwd)/large_test.dat"
+
+      - name: Verify file integrity
+        working-directory: ./wolfssh/
+        run: |
+          expected=$(awk '{print $1}' large_test.dat.sha256)
+          actual=$(sha256sum /tmp/large_test_copy.dat | awk '{print $1}')
+          echo "Expected SHA-256: $expected"
+          echo "Actual   SHA-256: $actual"
+          if [ "$expected" != "$actual" ]; then
+            echo "FAIL: SHA-256 mismatch"
+            exit 1
+          fi
+          echo "PASS: 3GB SFTP transfer with WOLFSSH_MAX_SFTP_RW=10485760 succeeded"
+
+      - name: Stop echoserver
+        if: always()
+        run: kill "$(cat /tmp/echoserver.pid)" 2>/dev/null || true

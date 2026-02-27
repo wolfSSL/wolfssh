@@ -6435,7 +6435,7 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
                 ret = wolfSSH_SFTP_buffer_read(ssh, &state->buffer,
                         wolfSSH_SFTP_buffer_size(&state->buffer));
                 if (ret < 0) {
-                    if (ssh->error != WS_WANT_READ) {
+                    if (!NoticeError(ssh)) {
                         wolfSSH_SFTP_ClearState(ssh, STATE_ID_NAME);
                     }
                     return NULL;
@@ -6443,7 +6443,7 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
 
                 wolfSSH_SFTP_buffer_rewind(&state->buffer);
                 wolfSSH_SFTP_DoStatus(ssh, reqId, &state->buffer);
-                if (ssh->error != WS_WANT_READ) {
+                if (!NoticeError(ssh)) {
                     wolfSSH_SFTP_ClearState(ssh, STATE_ID_NAME);
                 }
                 return NULL;
@@ -6458,7 +6458,7 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
                     wolfSSH_SFTP_buffer_size(&state->buffer) -
                     wolfSSH_SFTP_buffer_idx(&state->buffer));
             if (ret <= 0) {
-                if (ssh->error != WS_WANT_READ) {
+                if (!NoticeError(ssh)) {
                     wolfSSH_SFTP_ClearState(ssh, STATE_ID_NAME);
                 }
                 return NULL;
@@ -6909,8 +6909,7 @@ int wolfSSH_SFTP_CHMOD(WOLFSSH* ssh, char* n, char* oct)
         case STATE_CHMOD_GET:
             /* get current attributes of path */
             if ((ret = wolfSSH_SFTP_STAT(ssh, n, &state->atr)) != WS_SUCCESS) {
-                if (ssh->error != WS_WANT_READ
-                        && ssh->error != WS_WANT_WRITE) {
+                if (!NoticeError(ssh)) {
                     break;
                 }
                 return ret;
@@ -6990,14 +6989,12 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                 WLOG(WS_LOG_SFTP, "SFTP LSTAT STATE: SEND_TYPE_REQ");
                 ret = SendPacketType(ssh, type, (byte*)dir, state->dirSz);
                 if (ret != WS_SUCCESS) {
-                    if (ssh->error == WS_WANT_READ ||
-                            ssh->error == WS_WANT_WRITE)
+                    if (NoticeError(ssh)) {
                         return WS_FATAL_ERROR;
-                    else {
-                        ret_fatal = 1;
-                        state->state = STATE_LSTAT_CLEANUP;
-                        continue;
                     }
+                    ret_fatal = 1;
+                    state->state = STATE_LSTAT_CLEANUP;
+                    continue;
                 }
                 state->state = STATE_LSTAT_GET_HEADER;
                 FALL_THROUGH;
@@ -7008,14 +7005,12 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                 ret = SFTP_GetHeader(ssh, &state->reqId, &state->type,
                         &state->buffer);
                 if (ret <= 0) {
-                    if (ssh->error == WS_WANT_READ ||
-                            ssh->error == WS_WANT_WRITE)
+                    if (NoticeError(ssh)) {
                         return WS_FATAL_ERROR;
-                    else {
-                        state->state = STATE_LSTAT_CLEANUP;
-                        ret_fatal = 1;
-                        continue;
                     }
+                    state->state = STATE_LSTAT_CLEANUP;
+                    ret_fatal = 1;
+                    continue;
                 }
 
                 state->state = STATE_LSTAT_CHECK_REQ_ID;
@@ -7042,7 +7037,7 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                 ret = wolfSSH_SFTP_buffer_read(ssh, &state->buffer,
                         wolfSSH_SFTP_buffer_size(&state->buffer));
                 if (ret < 0) {
-                    if (ssh->error != WS_WANT_READ) {
+                    if (!NoticeError(ssh)) {
                         wolfSSH_SFTP_ClearState(ssh, STATE_ID_LSTAT);
                     }
                     return WS_FATAL_ERROR;
@@ -7211,8 +7206,7 @@ int wolfSSH_SFTP_SetSTAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
         /* send header and type specific data */
         case STATE_SET_ATR_SEND:
             if (wolfSSH_SFTP_buffer_send(ssh, &state->buffer) < 0) {
-                if (ssh->error != WS_WANT_READ
-                        && ssh->error != WS_WANT_WRITE) {
+                if (!NoticeError(ssh)) {
                     ret = WS_FATAL_ERROR;
                     break;
                 }
@@ -7229,8 +7223,7 @@ int wolfSSH_SFTP_SetSTAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
         case STATE_SET_ATR_GET:
             maxSz = SFTP_GetHeader(ssh, &state->reqId, &type, &state->buffer);
             if (maxSz <= 0) {
-                if (ssh->error != WS_WANT_READ
-                        && ssh->error != WS_WANT_WRITE) {
+                if (!NoticeError(ssh)) {
                     ret = WS_FATAL_ERROR;
                     break;
                 }
@@ -7257,8 +7250,7 @@ int wolfSSH_SFTP_SetSTAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
             ret = wolfSSH_SFTP_buffer_read(ssh, &state->buffer,
                     wolfSSH_SFTP_buffer_size(&state->buffer));
             if (ret < 0) {
-                if (ssh->error != WS_WANT_READ
-                        && ssh->error != WS_WANT_WRITE) {
+                if (!NoticeError(ssh)) {
                     ret = WS_FATAL_ERROR;
                     break;
                 }
@@ -7730,12 +7722,8 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                     if (NoticeError(ssh)) {
                         return WS_FATAL_ERROR;
                     }
-                    if (ssh->error != WS_WANT_READ &&
-                            ssh->error != WS_WANT_WRITE) {
-                        state->state = STATE_SEND_READ_CLEANUP;
-                        continue;
-                    }
-                    return ret;
+                    state->state = STATE_SEND_READ_CLEANUP;
+                    continue;
                 }
                 wolfSSH_SFTP_buffer_free(ssh, &state->buffer);
                 state->state = STATE_SEND_READ_GET_HEADER;
@@ -7746,11 +7734,11 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 /* Get response */
                 if ((ret = SFTP_GetHeader(ssh, &state->reqId, &state->type,
                                 &state->buffer)) <= 0) {
-                    if (!NoticeError(ssh)) {
-                        state->state = STATE_SEND_READ_CLEANUP;
-                        continue;
+                    if (NoticeError(ssh)) {
+                        return WS_FATAL_ERROR;
                     }
-                    return WS_FATAL_ERROR;
+                    state->state = STATE_SEND_READ_CLEANUP;
+                    continue;
                 }
                 ret = wolfSSH_SFTP_buffer_create(ssh, &state->buffer, ret);
                 if (ret != WS_SUCCESS) {
@@ -7789,11 +7777,11 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 /* get size of string and place it into out buffer */
                 ret = wolfSSH_stream_read(ssh, szFlat, UINT32_SZ);
                 if (ret < 0) {
-                    if (!NoticeError(ssh)) {
-                        state->state = STATE_SEND_READ_CLEANUP;
-                        continue;
+                    if (NoticeError(ssh)) {
+                        return WS_FATAL_ERROR;
                     }
-                    return ret;
+                    state->state = STATE_SEND_READ_CLEANUP;
+                    continue;
                 }
                 ato32(szFlat, &sz);
                 wolfSSH_SFTP_buffer_create(ssh, &state->buffer, sz);
@@ -7814,8 +7802,7 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                             out + state->recvSz,
                             wolfSSH_SFTP_buffer_size(&state->buffer));
                     if (ret < 0) {
-                        if (ssh->error == WS_WANT_READ ||
-                                ssh->error == WS_WANT_WRITE) {
+                        if (NoticeError(ssh)) {
                             return WS_FATAL_ERROR;
                         }
                         WLOG(WS_LOG_SFTP, "Error reading remainder of data");
@@ -7852,12 +7839,11 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                     ret = wolfSSH_SFTP_buffer_read(ssh, &state->buffer,
                             wolfSSH_SFTP_buffer_size(&state->buffer));
                     if (ret < 0) {
-                        if (ssh->error != WS_WANT_READ &&
-                            ssh->error != WS_WANT_WRITE) {
-                            state->state = STATE_SEND_READ_CLEANUP;
-                            continue;
+                        if (NoticeError(ssh)) {
+                            return WS_FATAL_ERROR;
                         }
-                        return WS_FATAL_ERROR;
+                        state->state = STATE_SEND_READ_CLEANUP;
+                        continue;
                     }
                     wolfSSH_SFTP_buffer_rewind(&state->buffer);
                     ret = wolfSSH_SFTP_DoStatus(ssh,
@@ -8176,8 +8162,7 @@ int wolfSSH_SFTP_Close(WOLFSSH* ssh, byte* handle, word32 handleSz)
                 ret = wolfSSH_SFTP_buffer_read(ssh, &state->buffer,
                         wolfSSH_SFTP_buffer_size(&state->buffer));
                 if (ret < 0) {
-                    if (ssh->error != WS_WANT_WRITE &&
-                                ssh->error != WS_WANT_READ) {
+                    if (!NoticeError(ssh)) {
                         wolfSSH_SFTP_buffer_free(ssh, &state->buffer);
                     }
                     return WS_FATAL_ERROR;
@@ -8523,8 +8508,7 @@ int wolfSSH_SFTP_Remove(WOLFSSH* ssh, char* f)
         case STATE_RM_LSTAT:
             /* check file is there to be removed */
             if ((ret = wolfSSH_SFTP_LSTAT(ssh, f, &atrb)) != WS_SUCCESS) {
-                if (ssh->error != WS_WANT_WRITE
-                        && ssh->error != WS_WANT_READ) {
+                if (!NoticeError(ssh)) {
                     WLOG(WS_LOG_SFTP, "Error verifying file");
                     wolfSSH_SFTP_ClearState(ssh, STATE_ID_RM);
                 }
@@ -8537,8 +8521,7 @@ int wolfSSH_SFTP_Remove(WOLFSSH* ssh, char* f)
             ret = SendPacketType(ssh, WOLFSSH_FTP_REMOVE, (byte*)f,
                     (word32)WSTRLEN(f));
             if (ret != WS_SUCCESS) {
-                if (ssh->error != WS_WANT_WRITE
-                        && ssh->error != WS_WANT_READ) {
+                if (!NoticeError(ssh)) {
                     wolfSSH_SFTP_ClearState(ssh, STATE_ID_RM);
                 }
                 return ret;
@@ -8549,8 +8532,7 @@ int wolfSSH_SFTP_Remove(WOLFSSH* ssh, char* f)
         case STATE_RM_GET:
             ret = SFTP_GetHeader(ssh, &state->reqId, &type, &state->buffer);
             if (ret <= 0 || type != WOLFSSH_FTP_STATUS) {
-                if (ssh->error != WS_WANT_WRITE
-                        && ssh->error != WS_WANT_READ) {
+                if (!NoticeError(ssh)) {
                     WLOG(WS_LOG_SFTP, "Unexpected packet type");
                     wolfSSH_SFTP_ClearState(ssh, STATE_ID_RM);
                 }
@@ -8568,8 +8550,7 @@ int wolfSSH_SFTP_Remove(WOLFSSH* ssh, char* f)
             ret = wolfSSH_SFTP_buffer_read(ssh, &state->buffer,
                     wolfSSH_SFTP_buffer_size(&state->buffer));
             if (ret < 0) {
-                if (ssh->error != WS_WANT_WRITE
-                        && ssh->error != WS_WANT_READ) {
+                if (!NoticeError(ssh)) {
                     WLOG(WS_LOG_SFTP, "Unexpected packet type");
                     wolfSSH_SFTP_ClearState(ssh, STATE_ID_RM);
                 }
@@ -8630,8 +8611,7 @@ int wolfSSH_SFTP_RMDIR(WOLFSSH* ssh, char* dir)
             ret = SendPacketType(ssh, WOLFSSH_FTP_RMDIR, (byte*)dir,
                 (word32)WSTRLEN(dir));
             if (ret != WS_SUCCESS) {
-                if (ssh->error != WS_WANT_READ
-                        && ssh->error != WS_WANT_WRITE) {
+                if (!NoticeError(ssh)) {
                     wolfSSH_SFTP_ClearState(ssh, STATE_ID_RMDIR);
                 }
                 return ret;
@@ -8642,7 +8622,7 @@ int wolfSSH_SFTP_RMDIR(WOLFSSH* ssh, char* dir)
         case STATE_RMDIR_GET:
             ret = SFTP_GetHeader(ssh, &state->reqId, &type, &state->buffer);
             if (ret <= 0 || type != WOLFSSH_FTP_STATUS) {
-                if (ssh->error != WS_WANT_READ) {
+                if (!NoticeError(ssh)) {
                     wolfSSH_SFTP_ClearState(ssh, STATE_ID_RMDIR);
                     WLOG(WS_LOG_SFTP, "Unexpected packet type");
                 }
@@ -8659,7 +8639,7 @@ int wolfSSH_SFTP_RMDIR(WOLFSSH* ssh, char* dir)
             ret = wolfSSH_SFTP_buffer_read(ssh, &state->buffer,
                     wolfSSH_SFTP_buffer_size(&state->buffer));
             if (ret < 0) {
-                if (ssh->error != WS_WANT_READ)
+                if (!NoticeError(ssh))
                     wolfSSH_SFTP_ClearState(ssh, STATE_ID_RMDIR);
                 return WS_FATAL_ERROR;
             }
@@ -8867,9 +8847,9 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                 WLOG(WS_LOG_SFTP, "SFTP GET STATE: STAT");
                 ret = wolfSSH_SFTP_STAT(ssh, from, &state->attrib);
                 if (ret != WS_SUCCESS) {
-                    if (ssh->error == WS_WANT_READ ||
-                            ssh->error == WS_WANT_WRITE)
+                    if (NoticeError(ssh)) {
                         return WS_FATAL_ERROR;
+                    }
                     WLOG(WS_LOG_SFTP, "Error verifying file");
                     state->state = STATE_GET_CLEANUP;
                     continue;
@@ -8894,8 +8874,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                 ret = wolfSSH_SFTP_Open(ssh, from, WOLFSSH_FXF_READ, NULL,
                         state->handle, &state->handleSz);
                 if (ret != WS_SUCCESS) {
-                    if (ssh->error == WS_WANT_READ ||
-                            ssh->error == WS_WANT_WRITE) {
+                    if (NoticeError(ssh)) {
                         return WS_FATAL_ERROR;
                     }
                     WLOG(WS_LOG_SFTP, "Error getting handle");
