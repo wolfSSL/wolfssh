@@ -1,0 +1,432 @@
+name: Windows wolfsshd SFTP Test
+
+# This workflow tests wolfsshd and SFTP on Windows with:
+# 1. Basic test: wolfsshd + SFTP client (pwd, ls, put/get small file)
+# 2. Large file test: WOLFSSH_NO_SFTP_TIMEOUT, WOLFSSH_MAX_SFTP_RW=10485760,
+#    WOLFSSH_MAX_CHN_NAMESZ=4200 - get and put a 3GB file
+
+on:
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ '*' ]
+
+env:
+  WOLFSSL_SOLUTION_FILE_PATH: wolfssl64.sln
+  SOLUTION_FILE_PATH: wolfssh.sln
+  USER_SETTINGS_H_NEW: wolfssh/ide/winvs/user_settings.h
+  USER_SETTINGS_H: wolfssl/IDE/WIN/user_settings.h
+  INCLUDE_DIR: wolfssh
+  WOLFSSL_BUILD_CONFIGURATION: Release
+  WOLFSSH_BUILD_CONFIGURATION: Release
+  BUILD_PLATFORM: x64
+  TARGET_PLATFORM: 10
+  TEST_PORT: 22222
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - test_type: basic
+            artifact_name: wolfssh-windows-build
+          - test_type: large_rw
+            artifact_name: wolfssh-windows-build-large-rw
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+
+    - uses: actions/checkout@v4
+      with:
+        path: wolfssh
+
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@v1
+
+    - name: Update user_settings.h for wolfSSL build
+      working-directory: ${{env.GITHUB_WORKSPACE}}
+      shell: bash
+      run: |
+        sed -i 's/#if 0/#if 1/g' ${{env.USER_SETTINGS_H_NEW}}
+        cp ${{env.USER_SETTINGS_H_NEW}} ${{env.USER_SETTINGS_H}}
+
+    - name: Restore wolfSSL NuGet packages
+      working-directory: ${{ github.workspace }}\wolfssl
+      run: nuget restore ${{env.WOLFSSL_SOLUTION_FILE_PATH}}
+
+    - name: Build wolfssl library
+      working-directory: ${{ github.workspace }}\wolfssl
+      run: msbuild /m /p:PlatformToolset=v142 /p:Platform=${{env.BUILD_PLATFORM}} /p:Configuration=${{env.WOLFSSL_BUILD_CONFIGURATION}} /t:wolfssl ${{env.WOLFSSL_SOLUTION_FILE_PATH}}
+
+    - name: Upload wolfSSL build artifacts
+      if: matrix.test_type == 'basic'
+      uses: actions/upload-artifact@v4
+      with:
+        name: wolfssl-windows-build
+        path: |
+          wolfssl/IDE/WIN/${{env.WOLFSSL_BUILD_CONFIGURATION}}/${{env.BUILD_PLATFORM}}/**
+          wolfssl/IDE/WIN/${{env.WOLFSSL_BUILD_CONFIGURATION}}/**
+          wolfssl/${{env.WOLFSSL_BUILD_CONFIGURATION}}/${{env.BUILD_PLATFORM}}/**
+          wolfssl/${{env.WOLFSSL_BUILD_CONFIGURATION}}/**
+
+    - name: Update user_settings.h for sshd and SFTP
+      working-directory: ${{env.GITHUB_WORKSPACE}}
+      shell: bash
+      run: |
+        # Enable SSHD, SFTP support (second #if 0 block)
+        sed -i 's/#if 0/#if 1/g' ${{env.USER_SETTINGS_H_NEW}}
+        cp ${{env.USER_SETTINGS_H_NEW}} ${{env.USER_SETTINGS_H}}
+        # For large_rw test: add SFTP large file defines
+        if [ "${{ matrix.test_type }}" = "large_rw" ]; then
+          echo "" >> ${{env.USER_SETTINGS_H_NEW}}
+          echo "/* SFTP large file test defines */" >> ${{env.USER_SETTINGS_H_NEW}}
+          echo "#define WOLFSSH_NO_SFTP_TIMEOUT" >> ${{env.USER_SETTINGS_H_NEW}}
+          echo "#define WOLFSSH_MAX_SFTP_RW 10485760" >> ${{env.USER_SETTINGS_H_NEW}}
+          echo "#define WOLFSSH_MAX_CHN_NAMESZ 4200" >> ${{env.USER_SETTINGS_H_NEW}}
+          echo "Added WOLFSSH_NO_SFTP_TIMEOUT, WOLFSSH_MAX_SFTP_RW=10485760, WOLFSSH_MAX_CHN_NAMESZ=4200"
+          cp ${{env.USER_SETTINGS_H_NEW}} ${{env.USER_SETTINGS_H}}
+        fi
+
+    - name: Restore NuGet packages
+      working-directory: ${{ github.workspace }}\wolfssh\ide\winvs
+      run: nuget restore ${{env.SOLUTION_FILE_PATH}}
+
+    - name: Build wolfssh
+      working-directory: ${{ github.workspace }}\wolfssh\ide\winvs
+      run: msbuild /m /p:PlatformToolset=v142 /p:Platform=${{env.BUILD_PLATFORM}} /p:WindowsTargetPlatformVersion=${{env.TARGET_PLATFORM}} /p:Configuration=${{env.WOLFSSH_BUILD_CONFIGURATION}} ${{env.SOLUTION_FILE_PATH}}
+
+    - name: Upload wolfSSH build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}
+        if-no-files-found: error
+        path: |
+          wolfssh/ide/winvs/**/Release/**
+
+  test:
+    needs: build
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - test_type: basic
+            artifact_name: wolfssh-windows-build
+          - test_type: large_rw
+            artifact_name: wolfssh-windows-build-large-rw
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        path: wolfssh
+
+    - name: Download wolfSSH build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: .
+
+    - name: Download wolfSSL build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: wolfssl-windows-build
+        path: .
+
+    - name: Create Windows user testuser and authorized_keys
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      run: |
+        $homeDir = "C:\Users\testuser"
+        $sshDir = "$homeDir\.ssh"
+        $authKeysFile = "$sshDir\authorized_keys"
+        $pw = 'T3stP@ss!xY9'
+
+        New-Item -ItemType Directory -Path $homeDir -Force | Out-Null
+        New-Item -ItemType Directory -Path $sshDir -Force | Out-Null
+
+        $o = net user testuser $pw /add /homedir:$homeDir 2>&1
+        if ($LASTEXITCODE -ne 0) {
+          if ($o -match "already exists") {
+            net user testuser /homedir:$homeDir 2>$null
+          } else {
+            Write-Host "net user failed: $o"
+            exit 1
+          }
+        }
+        Add-Content -Path $env:GITHUB_ENV -Value "TESTUSER_PASSWORD=$pw"
+
+        "" | Out-File -FilePath $authKeysFile -Encoding ASCII -NoNewline
+        icacls $authKeysFile /grant "testuser:R" /q
+
+        # Grant testuser full control of their home directory.
+        # New-Item creates the directory owned by the runner account; Windows
+        # only sets correct user ACLs during the normal profile-creation flow.
+        # Without this, ImpersonateLoggedOnUser succeeds but CreateFile fails
+        # with ACCESS_DENIED when wolfsshd tries to write files as testuser.
+        icacls $homeDir /grant "testuser:(OI)(CI)F" /T /q
+
+        $sid = (New-Object System.Security.Principal.NTAccount("testuser")).Translate([System.Security.Principal.SecurityIdentifier]).Value
+        $profKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$sid"
+        if (-not (Test-Path $profKey)) { New-Item -Path $profKey -Force | Out-Null }
+        Set-ItemProperty -Path $profKey -Name "ProfileImagePath" -Value $homeDir -Force
+
+    - name: Create wolfSSHd config file
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      run: |
+        $keyPath = Join-Path "${{ github.workspace }}" "wolfssh\keys\server-key.pem"
+        $keyPathFull = (Resolve-Path $keyPath -ErrorAction Stop)
+        $configContent = @"
+        Port ${{env.TEST_PORT}}
+        PasswordAuthentication yes
+        PermitRootLogin yes
+        HostKey $($keyPathFull.Path)
+        AuthorizedKeysFile C:\Users\testuser\.ssh\authorized_keys
+        "@
+        $configContent | Out-File -FilePath sshd_config_test -Encoding ASCII
+        Get-Content sshd_config_test
+
+    - name: Find wolfSSH executables
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      run: |
+        $searchRoot = "${{ github.workspace }}"
+        $sshdExe = Get-ChildItem -Path $searchRoot -Recurse -Filter "wolfsshd.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like "*Release*" } | Select-Object -First 1
+        if ($sshdExe) {
+            Add-Content -Path $env:GITHUB_ENV -Value "SSHD_PATH=$($sshdExe.FullName)"
+        } else {
+            Write-Host "ERROR: wolfsshd.exe not found"
+            exit 1
+        }
+
+        $sftpExe = Get-ChildItem -Path $searchRoot -Recurse -Filter "wolfsftp.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like "*Release*" } | Select-Object -First 1
+        if (-not $sftpExe) {
+            $sftpExe = Get-ChildItem -Path $searchRoot -Recurse -Filter "wolfsftp-client.exe" -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -like "*Release*" } | Select-Object -First 1
+        }
+        if ($sftpExe) {
+            Add-Content -Path $env:GITHUB_ENV -Value "SFTP_PATH=$($sftpExe.FullName)"
+        } else {
+            Write-Host "ERROR: SFTP client exe not found"
+            exit 1
+        }
+
+    - name: Copy wolfSSL DLL to executable directory
+      working-directory: ${{ github.workspace }}
+      shell: pwsh
+      run: |
+        $sshdPath = $env:SSHD_PATH
+        $sshdDir = Split-Path -Parent $sshdPath
+        if (Test-Path (Join-Path $sshdDir "wolfssl.lib")) { exit 0 }
+        $wolfsslDll = Get-ChildItem -Path "${{ github.workspace }}\wolfssl" -Recurse -Filter "wolfssl.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($wolfsslDll) {
+            Copy-Item -Path $wolfsslDll.FullName -Destination (Join-Path $sshdDir "wolfssl.dll") -Force
+        }
+
+    - name: Grant service access to config and keys
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      run: |
+        icacls (Get-Location).Path /grant "NT AUTHORITY\SYSTEM:(OI)(CI)RX" /T /q
+
+    - name: Start wolfSSHd as Windows service
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      run: |
+        $sshdPath = $env:SSHD_PATH
+        $configPathFull = (Resolve-Path "sshd_config_test").Path
+        $serviceName = "wolfsshd"
+
+        $existingService = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+        if ($existingService) {
+          if ($existingService.Status -eq 'Running') { Stop-Service -Name $serviceName -Force }
+          sc.exe delete $serviceName | Out-Null
+          Start-Sleep -Seconds 2
+        }
+
+        $binPath = "`"$sshdPath`" -f `"$configPathFull`" -p ${{env.TEST_PORT}}"
+        sc.exe create $serviceName binPath= $binPath
+        sc.exe start $serviceName
+        Start-Sleep -Seconds 5
+
+        $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+        if ($service.Status -ne 'Running') {
+          Write-Host "ERROR: Service failed to start"
+          sc.exe query $serviceName
+          exit 1
+        }
+        Add-Content -Path $env:GITHUB_ENV -Value "SSHD_SERVICE_NAME=$serviceName"
+
+    - name: Test SFTP get non-existent file (no hang, correct error)
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      timeout-minutes: 1
+      run: |
+        $sftpPath = $env:SFTP_PATH
+        $destFile = Join-Path $env:TEMP "copy.dat"
+        $getCommands = "get /this_file_does_not_exist_xyz $destFile`nquit"
+        $getCommands | Out-File -FilePath sftp_get_nonexistent_commands.txt -Encoding ASCII
+
+        $proc = Start-Process -FilePath $sftpPath `
+          -ArgumentList "-u", "testuser", "-P", $env:TESTUSER_PASSWORD, "-h", "localhost", "-p", "${{env.TEST_PORT}}" `
+          -RedirectStandardInput "sftp_get_nonexistent_commands.txt" `
+          -RedirectStandardOutput "sftp_get_nonexistent_out.txt" `
+          -RedirectStandardError "sftp_get_nonexistent_err.txt" `
+          -Wait -NoNewWindow -PassThru
+
+        Write-Host "=== SFTP Output ==="
+        $output = ""
+        if (Test-Path sftp_get_nonexistent_out.txt) {
+          $output = Get-Content sftp_get_nonexistent_out.txt -Raw
+          Write-Host $output
+        }
+        Write-Host "=== SFTP Error ==="
+        if (Test-Path sftp_get_nonexistent_err.txt) { Get-Content sftp_get_nonexistent_err.txt }
+
+        # Verify file was NOT created
+        if (Test-Path $destFile) {
+          Write-Host "ERROR: $destFile was created despite non-existent source file"
+          exit 1
+        }
+        # Verify error message was emitted
+        if ($output -notmatch "Error getting file") {
+          Write-Host "ERROR: Expected 'Error getting file' in output"
+          exit 1
+        }
+        Write-Host "PASS: SFTP get non-existent file did not create file, reported error correctly, did not hang"
+
+    - name: Test SFTP connection (basic)
+      if: matrix.test_type == 'basic'
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      run: |
+        $sftpPath = $env:SFTP_PATH
+        $testCommands = "pwd`nls`nquit"
+        $testCommands | Out-File -FilePath sftp_commands.txt -Encoding ASCII
+
+        $process = Start-Process -FilePath $sftpPath `
+          -ArgumentList "-u", "testuser", "-P", $env:TESTUSER_PASSWORD, "-h", "localhost", "-p", "${{env.TEST_PORT}}" `
+          -RedirectStandardInput "sftp_commands.txt" `
+          -RedirectStandardOutput "sftp_output.txt" `
+          -RedirectStandardError "sftp_error.txt" `
+          -Wait -NoNewWindow -PassThru
+
+        Get-Content sftp_output.txt
+        Get-Content sftp_error.txt
+        if ($process.ExitCode -ne 0) {
+          Write-Host "ERROR: SFTP basic test failed with exit $($process.ExitCode)"
+          exit 1
+        }
+        Write-Host "Basic SFTP test passed"
+
+    - name: Create 3GB test file and run SFTP get/put
+      if: matrix.test_type == 'large_rw'
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      timeout-minutes: 25
+      run: |
+        $sftpPath = $env:SFTP_PATH
+        $workDir = Join-Path $env:GITHUB_WORKSPACE "wolfssh"
+        $largeFile = Join-Path $workDir "large_test.dat"
+        $getDestPath = Join-Path $workDir "large_test_copy.dat"
+
+        # Create 3GB file: one random 10MB chunk repeated 307x + 2MB
+        Write-Host "Creating 3GB test file..."
+        $chunkSize = 10485760  # 10MB
+        $totalSize = [long]3221225472  # 3GB
+        $rng = New-Object System.Security.Cryptography.RNGCryptoServiceProvider
+        $chunk = New-Object byte[] $chunkSize
+        $rng.GetBytes($chunk)
+        $fs = [System.IO.File]::Create($largeFile)
+        $remaining = $totalSize
+        while ($remaining -gt 0) {
+          $toWrite = [int][Math]::Min([long]$chunkSize, $remaining)
+          $fs.Write($chunk, 0, $toWrite)
+          $remaining -= $toWrite
+        }
+        $fs.Close()
+
+        $hash = Get-FileHash -Path $largeFile -Algorithm SHA256
+        $hash.Hash | Out-File -FilePath (Join-Path $workDir "large_test.dat.sha256")
+        Write-Host "Created 3GB file, SHA256: $($hash.Hash)"
+
+        # SFTP PUT (upload)
+        # Use a relative remote path (no leading /) so the server resolves it
+        # under testuser's home directory.  An absolute /large_test.dat maps to
+        # the drive root (C:\) where testuser has no write permission; relative
+        # large_test.dat is prefixed by workingDir (C:\Users\testuser) on the
+        # client and becomes C:\Users\testuser\large_test.dat on the server.
+        Write-Host "SFTP PUT 3GB file..."
+        $putCommands = "put $largeFile large_test.dat`nquit"
+        $putCommands | Out-File -FilePath (Join-Path $workDir "sftp_put_commands.txt") -Encoding ASCII
+        $proc = Start-Process -FilePath $sftpPath `
+          -ArgumentList "-u", "testuser", "-P", $env:TESTUSER_PASSWORD, "-h", "localhost", "-p", "${{env.TEST_PORT}}" `
+          -WorkingDirectory $workDir `
+          -RedirectStandardInput (Join-Path $workDir "sftp_put_commands.txt") `
+          -RedirectStandardOutput (Join-Path $workDir "sftp_put_out.txt") `
+          -RedirectStandardError (Join-Path $workDir "sftp_put_err.txt") `
+          -Wait -NoNewWindow -PassThru
+
+        $putOut = Get-Content (Join-Path $workDir "sftp_put_out.txt") -Raw -ErrorAction SilentlyContinue
+        Write-Host "=== SFTP PUT output ==="; Write-Host $putOut
+        if ($proc.ExitCode -ne 0 -or $putOut -match "Error pushing file") {
+          Get-Content (Join-Path $workDir "sftp_put_err.txt") -ErrorAction SilentlyContinue
+          Write-Host "ERROR: SFTP PUT failed"
+          exit 1
+        }
+        Write-Host "PUT succeeded"
+
+        # SFTP GET (download) - relative remote and local paths.
+        # Remote large_test.dat resolves to C:\Users\testuser\large_test.dat.
+        # Local large_test_copy.dat is relative to wolfsftp's CWD ($workDir).
+        Write-Host "SFTP GET 3GB file..."
+        $getCommands = "get large_test.dat large_test_copy.dat`nquit"
+        $getCommands | Out-File -FilePath (Join-Path $workDir "sftp_get_commands.txt") -Encoding ASCII
+        $proc2 = Start-Process -FilePath $sftpPath `
+          -ArgumentList "-u", "testuser", "-P", $env:TESTUSER_PASSWORD, "-h", "localhost", "-p", "${{env.TEST_PORT}}" `
+          -WorkingDirectory $workDir `
+          -RedirectStandardInput (Join-Path $workDir "sftp_get_commands.txt") `
+          -RedirectStandardOutput (Join-Path $workDir "sftp_get_out.txt") `
+          -RedirectStandardError (Join-Path $workDir "sftp_get_err.txt") `
+          -Wait -NoNewWindow -PassThru
+
+        $getOut = Get-Content (Join-Path $workDir "sftp_get_out.txt") -Raw -ErrorAction SilentlyContinue
+        Write-Host "=== SFTP GET output ==="; Write-Host $getOut
+        if ($proc2.ExitCode -ne 0 -or $getOut -match "Error getting file") {
+          Get-Content (Join-Path $workDir "sftp_get_err.txt") -ErrorAction SilentlyContinue
+          Write-Host "ERROR: SFTP GET failed"
+          exit 1
+        }
+        Write-Host "GET succeeded"
+
+        # Verify integrity (file is in $workDir from GET with relative path)
+        $expectedHash = (Get-Content (Join-Path $workDir "large_test.dat.sha256")).Trim()
+        $actualHash = (Get-FileHash -Path $getDestPath -Algorithm SHA256).Hash
+        Write-Host "File: $getDestPath"
+        Write-Host "Expected SHA256: $expectedHash"
+        Write-Host "Actual   SHA256: $actualHash"
+        if ($expectedHash -ne $actualHash) {
+          Write-Host "ERROR: SHA256 mismatch - PUT/GET corruption"
+          exit 1
+        }
+        Write-Host "PASS: 3GB SFTP get/put succeeded"
+
+    - name: Cleanup
+      if: always()
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      run: |
+        $serviceName = $env:SSHD_SERVICE_NAME
+        if (-not $serviceName) { $serviceName = "wolfsshd" }
+        $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+        if ($service) {
+          if ($service.Status -eq 'Running') { Stop-Service -Name $serviceName -Force }
+          sc.exe delete $serviceName | Out-Null
+        }
