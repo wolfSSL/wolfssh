@@ -510,6 +510,7 @@ static int wolfSSH_DoControlSeq(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf, 
                 default:
                     WLOG(WS_LOG_DEBUG, "Unexpected erase value %d", args[0]);
             }
+            break;
 
         case 'K':
             if (numArgs == 0) { /* erase start of cursor to end of line */
