@@ -374,6 +374,7 @@ static int PostLock(WOLFSSH_AGENT_CTX* agent,
     word32 ppSz;
 
     WLOG(WS_LOG_AGENT, "Posting lock to agent %p", agent);
+    WOLFSSH_UNUSED(agent);
 
     ppSz = sizeof(pp) - 1;
     if (passphraseSz < ppSz)
@@ -395,6 +396,7 @@ static int PostUnlock(WOLFSSH_AGENT_CTX* agent,
     word32 ppSz;
 
     WLOG(WS_LOG_AGENT, "Posting unlock to agent %p", agent);
+    WOLFSSH_UNUSED(agent);
 
     ppSz = sizeof(pp) - 1;
     if (passphraseSz < ppSz)
@@ -730,8 +732,12 @@ static int SignHashEcc(WOLFSSH_AGENT_KEY_ECDSA* rawKey, int curveId,
     ecc_key key;
     int ret;
 
-    ret = wc_ecc_import_private_key_ex(rawKey->d, rawKey->dSz,
-            rawKey->q, rawKey->qSz, &key, curveId);
+    ret = wc_ecc_init(&key);
+
+    if (ret == 0) {
+        ret = wc_ecc_import_private_key_ex(rawKey->d, rawKey->dSz,
+                rawKey->q, rawKey->qSz, &key, curveId);
+    }
 
     if (ret == 0) {
         ret = wc_ecc_sign_hash(digest, digestSz, sig, sigSz, rng, &key);
