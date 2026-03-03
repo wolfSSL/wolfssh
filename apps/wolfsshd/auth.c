@@ -915,7 +915,7 @@ static int SetupUserTokenWin(const char* usr,
         authName.Buffer = MSV1_0_PACKAGE_NAME;
         authName.Length = (USHORT)WSTRLEN(MSV1_0_PACKAGE_NAME);
         authName.MaximumLength = authName.Length + 1;
-        if (rc = LsaLookupAuthenticationPackage(lsaHandle, &authName, &authId) != STATUS_SUCCESS) {
+        if ((rc = LsaLookupAuthenticationPackage(lsaHandle, &authName, &authId)) != STATUS_SUCCESS) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] LSA Lookup Authentication Package Error %d", rc);
             ret = WSSHD_AUTH_FAILURE;
         }
