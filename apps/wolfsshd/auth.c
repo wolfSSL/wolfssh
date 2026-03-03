@@ -430,6 +430,7 @@ static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz, WOLFS
     }
 
     if (pwStr != NULL) {
+        ForceZero(pwStr, pwSz + 1);
         WFREE(pwStr, NULL, DYNTYPE_STRING);
     }
     if (storedHashCpy != NULL) {
