@@ -1,0 +1,154 @@
+#!/usr/bin/env -S expect -f
+#
+# SSH Tunnel Test Script
+#
+# Tests an SSH tunnel using wolfSSH and netcat (nc).
+#
+# Architecture:
+#
+#   [nc client] --plain--> :12345 [wolfssh client]
+#                                       |
+#                                      SSH
+#                                       |
+#                               [wolfssh server] :ephem --plain--> :11111 [nc server]
+#
+# The nc client sends each line of a Lorem Ipsum paragraph through the tunnel
+# to the nc server one at a time. The server echoes each line back. Both sides
+# verify receipt of every line.
+#
+# Ports used:
+#   11111  - nc server (plain text backend)
+#   12345  - wolfssh client listener (plain text, nc connects here)
+#   22222  - wolfSSH rendezvous (SSH, internal use only)
+#
+# Requirements: nc (netcat), expect
+
+set timeout 30
+
+set lorem_lines {
+    {Lorem ipsum dolor sit amet, consectetur adipiscing elit,}
+    {sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.}
+    {Ut enim ad minim veniam, quis nostrud exercitation ullamco}
+    {laboris nisi ut aliquip ex ea commodo consequat.}
+    {Duis aute irure dolor in reprehenderit in voluptate velit esse}
+    {cillum dolore eu fugiat nulla pariatur.}
+    {Excepteur sint occaecat cupidatat non proident, sunt in culpa qui}
+    {officia deserunt mollit anim id est laborum.}
+}
+
+# PIDs for cleanup
+set nc_server_pid   ""
+set wolfssh_srv_pid ""
+set wolfssh_clt_pid ""
+set nc_client_pid   ""
+
+# --- Cleanup -----------------------------------------------------------------
+proc cleanup {} {
+    global nc_client_pid wolfssh_clt_pid wolfssh_srv_pid nc_server_pid
+
+    puts "\n--- Cleaning up ---"
+    foreach pid [list $nc_client_pid $wolfssh_clt_pid $wolfssh_srv_pid $nc_server_pid] {
+        if {$pid ne ""} {
+            catch {exec kill $pid}
+        }
+    }
+    puts "Done."
+}
+
+# --- Fail helper -------------------------------------------------------------
+proc fail {msg} {
+    puts "\n\[FAIL\] $msg"
+    cleanup
+    exit 1
+}
+
+# --- Check prerequisites -----------------------------------------------------
+foreach tool {nc} {
+    if {[auto_execok $tool] eq ""} {
+        puts "ERROR: '$tool' not found in PATH"
+        exit 1
+    }
+}
+
+# --- [1] Start nc server -----------------------------------------------------
+puts "\n\[1\] Starting nc server: nc -l 11111"
+spawn nc -l 11111
+set nc_server_id  $spawn_id
+set nc_server_pid [exp_pid]
+puts "    PID $nc_server_pid — waiting for a connection..."
+
+# --- [2] Start wolfssh server ------------------------------------------------
+puts "\n\[2\] Starting wolfssh server..."
+spawn ./examples/echoserver/echoserver -1 -f
+set wolfssh_srv_id  $spawn_id
+set wolfssh_srv_pid [exp_pid]
+puts "    PID $wolfssh_srv_pid — waiting for a connection..."
+
+# --- [3] Start wolfssh client ------------------------------------------------
+puts "\n\[3\] Starting wolfssh client (plain:12345 -> 11111)..."
+spawn ./examples/portfwd/portfwd -u jill -P upthehill -f 12345 -t 11111
+set wolfssh_clt_id  $spawn_id
+set wolfssh_clt_pid [exp_pid]
+
+expect {
+    -i $wolfssh_clt_id
+    -re {sampled} {
+        puts "    wolfssh client ready (PID $wolfssh_clt_pid)."
+    }
+    -re {(?i)(error|fatal)} {
+        fail "wolfssh client failed to start"
+    }
+    timeout {
+        fail "Timed out waiting for wolfssh client to start"
+    }
+}
+
+# Brief pause to let the wolfssh tunnels fully bind their listening ports
+sleep 1
+
+# --- [4] Start nc client -----------------------------------------------------
+puts "\n\[4\] Starting nc client: nc localhost 12345"
+spawn nc localhost 12345
+set nc_client_id  $spawn_id
+set nc_client_pid [exp_pid]
+puts "    PID $nc_client_pid"
+
+# Allow the TCP handshake and SSH negotiation to complete
+sleep 1
+
+# --- [5] Send each line, verify receipt, echo back, verify echo --------------
+set n [llength $lorem_lines]
+set i 0
+foreach line $lorem_lines {
+    incr i
+    puts "\n\[5.$i/$n\] Client sending: \"$line\""
+    send -i $nc_client_id "$line\n"
+
+    expect {
+        -i $nc_server_id
+        -ex $line {
+            puts "       \[PASS\] Server received line $i."
+        }
+        timeout {
+            fail "Server did not receive line $i within ${timeout}s"
+        }
+    }
+
+    send -i $nc_server_id "$line\n"
+
+    expect {
+        -i $nc_client_id
+        -ex $line {
+            puts "       \[PASS\] Client received echo of line $i."
+        }
+        timeout {
+            fail "Client did not receive echo of line $i within ${timeout}s"
+        }
+    }
+}
+
+# --- Done --------------------------------------------------------------------
+puts "\n=== TEST PASSED ===\n"
+
+cleanup
+exit 0

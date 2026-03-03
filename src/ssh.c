@@ -2607,7 +2607,7 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
     }
 #endif /* WOLFSSH_TEST_BLOCK */
 
-    if (ret == WS_SUCCESS) {
+    if (ret == WS_SUCCESS || ret == WS_CHAN_RXD) {
         if (channelId != NULL) {
             *channelId = ssh->lastRxId;
         }

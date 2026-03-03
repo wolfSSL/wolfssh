@@ -235,6 +235,7 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     const char* fwdToHost = NULL;
     const char* username = NULL;
     const char* password = NULL;
+    const char* readyFile = NULL;
     SOCKADDR_IN_T hostAddr;
     socklen_t hostAddrSz = sizeof(hostAddr);
     SOCKET_T sshFd;
@@ -266,7 +267,7 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
 
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?f:h:p:t:u:F:P:T:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?f:h:p:t:u:F:P:R:T:")) != -1) {
         switch (ch) {
             case 'h':
                 host = myoptarg;
@@ -304,6 +305,10 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
 
             case 'P':
                 password = myoptarg;
+                break;
+
+            case 'R':
+                readyFile = myoptarg;
                 break;
 
             case 'T':
@@ -403,6 +408,25 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     ret = wolfSSH_connect(ssh);
     if (ret != WS_SUCCESS)
         err_sys("Couldn't connect SFTP");
+
+    if (readyFile != NULL) {
+    #ifndef NO_FILESYSTEM
+        WFILE* f = NULL;
+        ret = WFOPEN(NULL, &f, readyFile, "w");
+        if (f != NULL && ret == 0) {
+            char portStr[10];
+            int l;
+
+            l = WSNPRINTF(portStr, sizeof(portStr), "%d\n", (int)fwdFromPort);
+            if (l > 0) {
+                WFWRITE(NULL, portStr, MIN((size_t)l, sizeof(portStr)), 1, f);
+            }
+            WFCLOSE(NULL, f);
+        }
+    #else
+        err_sys("cannot create readyFile with no file system.\r\n");
+    #endif
+    }
 
     FD_ZERO(&templateFds);
     FD_SET(sshFd, &templateFds);
