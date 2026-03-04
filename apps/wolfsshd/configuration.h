@@ -25,7 +25,7 @@ typedef struct WOLFSSHD_CONFIG WOLFSSHD_CONFIG;
 
 #include "auth.h"
 
-/* 0 so that privilage seperation is default on after struct memset'd on init */
+/* 0 so that privilege separation is default on after struct memset'd on init */
 #define WOLFSSHD_PRIV_SEPARAT 0
 #define WOLFSSHD_PRIV_SANDBOX 1
 #define WOLFSSHD_PRIV_OFF     2

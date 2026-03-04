@@ -1,6 +1,6 @@
 # wolfSSHd Tests
 
-These are seprate from the tests in scripts directory because of the need for
+These are separate from the tests in scripts directory because of the need for
 'sudo' when starting up an SSHd server to test against.
 
 ## Running Tests

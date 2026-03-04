@@ -2640,7 +2640,7 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 #define WS_DATE_SIZE 12
 
 #if defined(XGMTIME) && defined(XSNPRINTF)
-/* converts epoch time to recommended calender time from
+/* converts epoch time to recommended calendar time from
  * draft-ietf-secsh-filexfer-02.txt */
 static void getDate(char* buf, int len, struct tm* t)
 {
@@ -3250,7 +3250,7 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
             stat.fname[0] == '\0') {
         return WS_FATAL_ERROR;
     }
-    WLOG(WS_LOG_SFTP, "READ dir got nam %s", stat.fname);
+    WLOG(WS_LOG_SFTP, "READ dir got name %s", stat.fname);
 
     sz = (int)WSTRLEN(stat.fname);
     out->fName = (char*)WMALLOC(sz + 1, out->heap, DYNTYPE_SFTP);
@@ -4547,7 +4547,7 @@ static word32 TimeTo32(word16 d, word16 t)
 #endif /* NO_WOLFSSH_MKTIME */
 
 
-/* @TODO can be overriden by user for portability
+/* @TODO can be overridden by user for portability
  * NOTE: if atr->flags is set to a value of 0 then no attributes are set.
  * Fills out a WS_SFTP_FILEATRB structure
  * returns WS_SUCCESS on success
@@ -4623,7 +4623,7 @@ int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
 }
 
 
-/* @TODO can be overriden by user for portability
+/* @TODO can be overridden by user for portability
  * Gets attributes based on file descriptor
  * NOTE: if atr->flags is set to a value of 0 then no attributes are set.
  * Fills out a WS_SFTP_FILEATRB structure
@@ -4680,7 +4680,7 @@ int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
 
 #elif defined(USE_WINDOWS_API)
 
-/* @TODO can be overriden by user for portability
+/* @TODO can be overridden by user for portability
  * NOTE: if atr->flags is set to a value of 0 then no attributes are set.
  * Fills out a WS_SFTP_FILEATRB structure
  * returns WS_SUCCESS on success
@@ -4727,7 +4727,7 @@ int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
 
 #elif defined(FREESCALE_MQX)
 
-/* @TODO can be overriden by user for portability
+/* @TODO can be overridden by user for portability
  * NOTE: if atr->flags is set to a value of 0 then no attributes are set.
  * Fills out a WS_SFTP_FILEATRB structure
  * returns WS_SUCCESS on success */
@@ -4786,7 +4786,7 @@ int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
     return WS_SUCCESS;
 }
 
-/* @TODO can be overriden by user for portability
+/* @TODO can be overridden by user for portability
  * Gets attributes based on file descriptor
  * NOTE: if atr->flags is set to a value of 0 then no attributes are set.
  * Fills out a WS_SFTP_FILEATRB structure
@@ -5069,7 +5069,7 @@ static int SFTP_GetAttributesHelper(WS_SFTP_FILEATRB* atr, const char* fName)
 }
 
 
-/* @TODO can be overriden by user for portability
+/* @TODO can be overridden by user for portability
  * NOTE: if atr->flags is set to a value of 0 then no attributes are set.
  * Fills out a WS_SFTP_FILEATRB structure
  * returns WS_SUCCESS on success
@@ -5084,7 +5084,7 @@ int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
 }
 
 
-/* @TODO can be overriden by user for portability
+/* @TODO can be overridden by user for portability
  * Gets attributes based on file descriptor
  * NOTE: if atr->flags is set to a value of 0 then no attributes are set.
  * Fills out a WS_SFTP_FILEATRB structure
@@ -5147,7 +5147,7 @@ int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
 }
 
 
-/* @TODO can be overriden by user for portability
+/* @TODO can be overridden by user for portability
  * Gets attributes based on file descriptor
  * NOTE: if atr->flags is set to a value of 0 then no attributes are set.
  * Fills out a WS_SFTP_FILEATRB structure
@@ -6361,7 +6361,7 @@ int SFTP_ParseAtributes(WOLFSSH* ssh,  WS_SFTP_FILEATRB* atr)
  *  for count times:
  *      string filename
  *      string longname
- *      ATTRS  atributes
+ *      ATTRS  attributes
  * }
  *
  * A pointer to a malloc'd WS_SFTPNAME list is returned on success and NULL is

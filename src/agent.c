@@ -373,6 +373,7 @@ static int PostLock(WOLFSSH_AGENT_CTX* agent,
     char pp[32];
     word32 ppSz;
 
+    (void)agent;
     WLOG(WS_LOG_AGENT, "Posting lock to agent %p", agent);
     WOLFSSH_UNUSED(agent);
 
@@ -395,6 +396,7 @@ static int PostUnlock(WOLFSSH_AGENT_CTX* agent,
     char pp[32];
     word32 ppSz;
 
+    (void)agent;
     WLOG(WS_LOG_AGENT, "Posting unlock to agent %p", agent);
     WOLFSSH_UNUSED(agent);
 

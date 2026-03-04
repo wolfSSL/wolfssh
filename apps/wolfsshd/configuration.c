@@ -898,7 +898,7 @@ static int HandleMatch(WOLFSSHD_CONFIG** conf, const char* value, int valueSz)
             &newConf->groupAppliesTo);
     }
 
-    /* @TODO handle , seperated user/group list */
+    /* @TODO handle , separated user/group list */
 
     /* update current config being processed */
     if (ret == WS_SUCCESS) {

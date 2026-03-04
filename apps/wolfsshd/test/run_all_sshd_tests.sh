@@ -134,7 +134,7 @@ else
     #run_test "error_return.sh"
     #run_test "sshd_login_grace_test.sh"
 
-    # add aditional tests here, check on var USING_LOCAL_HOST if can make sshd
+    # add additional tests here, check on var USING_LOCAL_HOST if can make sshd
     # server start/restart with changes
 
     if [ "$USING_LOCAL_HOST" == 1 ]; then

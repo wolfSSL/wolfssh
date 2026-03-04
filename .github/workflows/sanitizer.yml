@@ -1,0 +1,104 @@
+name: Sanitizer Tests
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build_wolfssl:
+    name: Build wolfSSL
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout wolfSSL
+        uses: actions/checkout@v4
+        with:
+          repository: wolfssl/wolfssl
+          path: wolfssl
+
+      - name: Build wolfSSL
+        working-directory: ./wolfssl
+        run: |
+          ./autogen.sh
+          ./configure --enable-wolfssh --enable-keygen --enable-pkcallbacks
+          make -j$(nproc)
+          sudo make install
+          sudo ldconfig
+
+      - name: tar build-dir
+        run: tar -zcf wolfssl-install.tgz /usr/local/lib/libwolfssl* /usr/local/include/wolfssl
+
+      - name: Upload built lib
+        uses: actions/upload-artifact@v4
+        with:
+          name: wolfssl-sanitizer
+          path: wolfssl-install.tgz
+          retention-days: 5
+
+  sanitizer_test:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build_wolfssl
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "ASan"
+            cflags: "-fsanitize=address -fno-omit-frame-pointer -g -O1"
+            ldflags: "-fsanitize=address"
+          - name: "UBSan"
+            cflags: "-fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g"
+            ldflags: "-fsanitize=undefined"
+
+    steps:
+      - name: Workaround high-entropy ASLR
+        run: sudo sysctl vm.mmap_rnd_bits=28
+
+      - name: Checkout wolfSSH
+        uses: actions/checkout@v4
+
+      - name: Download wolfSSL
+        uses: actions/download-artifact@v4
+        with:
+          name: wolfssl-sanitizer
+
+      - name: Install wolfSSL
+        run: |
+          sudo tar -xzf wolfssl-install.tgz -C /
+          sudo ldconfig
+
+      - name: Build wolfSSH with ${{ matrix.name }}
+        run: |
+          ./autogen.sh
+          ./configure --enable-all \
+            CFLAGS="${{ matrix.cflags }}" LDFLAGS="${{ matrix.ldflags }}"
+          make -j$(nproc)
+
+      - name: Run tests
+        run: make check
+
+      - name: Show test logs on failure
+        if: failure()
+        run: |
+          echo "=== test-suite.log ==="
+          cat test-suite.log || true
+          echo ""
+          echo "=== tests/api.log ==="
+          cat tests/api.log || true
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wolfssh-${{ matrix.name }}-logs
+          path: |
+            test-suite.log
+            config.log
+          retention-days: 5

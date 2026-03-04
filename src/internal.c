@@ -688,7 +688,7 @@ INLINE static int IsMessageAllowedServer(WOLFSSH *ssh, byte msg)
          * it should not accept the other user auth messages, it sends
          * them. (>50) */
         /* Explicitly check for messages not allowed before user
-         * authentication has comleted. */
+         * authentication has completed. */
         if (MSGIDLIMIT_POST_USERAUTH(msg)) {
             WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
                     msg, "server", "before user authentication is complete");
@@ -3809,7 +3809,7 @@ static int GetNameList(byte* idList, word32* idListSz,
 
     /*
      * This iterates across a name list and finds names that end in either the
-     * comma delimeter or with the end of the list.
+     * comma delimiter or with the end of the list.
      */
 
     if (ret == WS_SUCCESS) {
@@ -8938,7 +8938,7 @@ int wolfSSH_DoModes(const byte* modes, word32 modesSz, int fd)
      * Modes is a list of opcode-argument pairs. The opcodes are
      * bytes and the arguments are uint32s. TTY_OP_END is an opcode
      * that terminates the list. Of course, it isn't clear if
-     * TTY_OP_END has an arguement or note. The RFC doesn't say,
+     * TTY_OP_END has an argument or not. The RFC doesn't say,
      * but in operation it usually doesn't. Allow for an odd single
      * byte left over.
      */
@@ -10975,7 +10975,7 @@ struct wolfSSH_sigKeyBlockFull {
 
 #ifdef WOLFSSH_CERTS
 /* places RFC6187 style cert + ocsp into output buffer and advances idx
- * [size of stiring] [string] [cert count] [cert size] [cert] [...]
+ * [size of string] [string] [cert count] [cert size] [cert] [...]
  *                            [ocsp count] [ocsp size] [ocsp] [...]
  * returns WS_SUCCESS on success
  * returns LENGTH_ONLY_E if output is null, and updates outputSz with required
@@ -12403,7 +12403,7 @@ static int SignH(WOLFSSH* ssh, byte* sig, word32* sigSz,
 
 
 /* SendKexDhReply()
- * It is also the funciton used for MSGID_KEXECDH_REPLY. The parameters
+ * It is also the function used for MSGID_KEXECDH_REPLY. The parameters
  * are analogous between the two messages. Where MSGID_KEXDH_REPLY has
  * server's public host key (K_S), f, and the signature of H;
  * MSGID_KEXECDH_REPLY has K_S, the server'e ephemeral public key (Q_S),
@@ -15349,14 +15349,14 @@ int SendUserAuthKeyboardResponse(WOLFSSH* ssh)
     authData.usernameSz = ssh->userNameSz;
     authData.sf.keyboard.promptCount = ssh->kbAuth.promptCount;
     authData.sf.keyboard.promptName = ssh->kbAuth.promptName;
-    authData.sf.keyboard.promptNameSz =
-        (word32)WSTRLEN((char*)ssh->kbAuth.promptName);
+    authData.sf.keyboard.promptNameSz = ssh->kbAuth.promptName ?
+        (word32)WSTRLEN((char*)ssh->kbAuth.promptName) : 0;
     authData.sf.keyboard.promptInstruction = ssh->kbAuth.promptInstruction;
-    authData.sf.keyboard.promptInstructionSz =
-        (word32)WSTRLEN((char*)ssh->kbAuth.promptInstruction);
+    authData.sf.keyboard.promptInstructionSz = ssh->kbAuth.promptInstruction ?
+        (word32)WSTRLEN((char*)ssh->kbAuth.promptInstruction) : 0;
     authData.sf.keyboard.promptLanguage = ssh->kbAuth.promptLanguage;
-    authData.sf.keyboard.promptLanguageSz =
-        (word32)WSTRLEN((char*)ssh->kbAuth.promptLanguage);
+    authData.sf.keyboard.promptLanguageSz = ssh->kbAuth.promptLanguage ?
+        (word32)WSTRLEN((char*)ssh->kbAuth.promptLanguage) : 0;
     authData.sf.keyboard.prompts = ssh->kbAuth.prompts;
     authData.sf.keyboard.promptEcho = ssh->kbAuth.promptEcho;
     authData.sf.keyboard.responseCount = 0;
@@ -15673,7 +15673,7 @@ int SendUserAuthFailure(WOLFSSH* ssh, byte partialSuccess)
     if (ret == WS_SUCCESS) {
         authSz = GetAllowedAuth(ssh, authStr);
         if (authSz < 0) {
-            ret = authSz; /* propogate error value */
+            ret = authSz; /* propagate error value */
         }
     }
 
@@ -17295,7 +17295,7 @@ int wolfSSH_CleanPath(WOLFSSH* ssh, char* in, int inSz)
 #endif
     sz = (long)WSTRLEN(path);
 
-    /* remove any /./ patterns, direcotries, exclude cases like ./ok./test */
+    /* remove any /./ patterns, directories, exclude cases like ./ok./test */
     for (i = 1; i + 1 < sz; i++) {
         if (path[i] == '.' && path[i - 1] == WS_DELIM && path[i + 1] == WS_DELIM) {
             WMEMMOVE(path + (i-1), path + (i+1), sz - i);

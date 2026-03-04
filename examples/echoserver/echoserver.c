@@ -676,7 +676,7 @@ static int termios_show(int fd)
     typedef WOLFSSL_HEAP_HINT ES_HEAP_HINT;
 
      /* This static buffer is tuned for building with SFTP only. The static
-      * buffer size is calulated by multiplying the pairs of sizeList items
+      * buffer size is calculated by multiplying the pairs of sizeList items
       * and distList items and summing (32*64 + 128*118 + ...) and adding
       * the sum of the distList values times the sizeof wc_Memory (rounded up
       * to a word, 24). This total was 288kb plus change, rounded up to 289. */
@@ -1598,7 +1598,7 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
                 ret = wolfSSH_worker(threadCtx->ssh, NULL);
                 error = wolfSSH_get_error(threadCtx->ssh);
 
-                /* peer succesfully closed down gracefully */
+                /* peer successfully closed down gracefully */
                 if (ret == WS_CHANNEL_CLOSED) {
                     ret = 0;
                     break;
@@ -1620,7 +1620,7 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
             }
 
             if (attempt == maxAttempt) {
-                printf("Gave up on gracefull shutdown, closing the socket\n");
+                printf("Gave up on graceful shutdown, closing the socket\n");
             }
         }
     }
@@ -2518,7 +2518,7 @@ static void ShowUsage(void)
            "               add password to accept from peer\n");
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     printf(" -i <name>:<password>\n"
-           "               add passowrd to accept via keyboard-interactive "
+           "               add password to accept via keyboard-interactive "
            "from peer\n");
 #endif
 #ifdef WOLFSSH_CERTS

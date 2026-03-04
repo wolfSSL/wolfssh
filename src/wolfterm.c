@@ -464,12 +464,12 @@ static int wolfSSH_DoControlSeq(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf, 
     }
 
     switch (c) {
-        case 'H': /* move curser to indicated row and column  -1 to account
+        case 'H': /* move cursor to indicated row and column  -1 to account
                    * for 1,1 on linux vs 0,0 on windows */
             wolfSSH_CursorMove(handle, args[1] - OFST, args[0] - OFST, 1);
             break;
 
-        case 'C': /* move curser right */
+        case 'C': /* move cursor right */
             wolfSSH_CursorMove(handle, args[0], 0, 0);
             break;
 

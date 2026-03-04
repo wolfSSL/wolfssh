@@ -742,7 +742,7 @@ struct WOLFSSH {
     byte highwaterFlag;    /* Set when highwater CB called */
     void* highwaterCtx;    /* Highwater CB context */
     void* globalReqCtx;    /* Global Request CB context */
-    void* reqSuccessCtx;   /* Global Request Sucess CB context */
+    void* reqSuccessCtx;   /* Global Request Success CB context */
     void* reqFailureCtx;   /* Global Request Failure CB context */
     void* channelOpenCtx;  /* Channel Open CB context */
     void* channelReqCtx;   /* Channel Request CB context */
