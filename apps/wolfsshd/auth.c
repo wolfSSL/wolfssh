@@ -815,7 +815,7 @@ static int CheckPasswordWIN(const char* usr, const byte* pw, word32 pwSz, WOLFSS
     }
     
     if (ret == WSSHD_AUTH_SUCCESS) {
-        if (MultiByteToWideChar(CP_UTF8, 0, pw, pwSz, pwW, pwWSz) != pwSz) {
+        if (MultiByteToWideChar(CP_UTF8, 0, pw, pwSz, pwW, pwWSz) != pwWSz) {
             ret = WSSHD_AUTH_FAILURE;
         }
         else {

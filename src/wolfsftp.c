@@ -4709,7 +4709,7 @@ int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
 
     atr->flags |= WOLFSSH_FILEATRB_PERM;
     atr->per = 0555 |
-        ((stats.dwFileAttributes | FILE_ATTRIBUTE_READONLY) ? 0 : 0200);
+        ((stats.dwFileAttributes & FILE_ATTRIBUTE_READONLY) ? 0 : 0200);
     atr->per |= ((stats.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
         ? FILEATRB_PER_DIR : FILEATRB_PER_FILE);
 

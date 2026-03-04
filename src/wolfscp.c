@@ -2253,9 +2253,9 @@ static int GetFileStats(void *fs, ScpSendCtx* ctx, const char* fileName,
         *fileMode = 0755;
         /* Mimic S_IFMT */
         if (ctx->s.type == FS_DIR_ENTRY_FILE)
-            *fileMode |= 0040000;
+            *fileMode |= 0100000;  /* S_IFREG */
         else if (ctx->s.type == FS_DIR_ENTRY_DIR)
-            *fileMode |= 0100000;
+            *fileMode |= 0040000;  /* S_IFDIR */
         else
             ret = WS_BAD_FILE_E;
 
