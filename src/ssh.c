@@ -1026,7 +1026,7 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
            ret = SendChannelEof(ssh, ssh->channelList->peerChannel);
        }
 
-       /* continue on success and in case where queing up send packets */
+       /* continue on success and in case where queueing up send packets */
        if (ret == WS_SUCCESS ||
                (ret != WS_BAD_ARGUMENT && ssh->error == WS_WANT_WRITE)) {
            ret = SendChannelExit(ssh, ssh->channelList->peerChannel,
@@ -1037,7 +1037,7 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
            #endif
        }
 
-       /* continue on success and in case where queing up send packets */
+       /* continue on success and in case where queueing up send packets */
        if (ret == WS_SUCCESS ||
                (ret != WS_BAD_ARGUMENT && ssh->error == WS_WANT_WRITE))
            ret = SendChannelClose(ssh, ssh->channelList->peerChannel);
@@ -1150,7 +1150,7 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
         WLOG(WS_LOG_DEBUG, "    Stream read ava data %u", inputBuffer->length);
         while (inputBuffer->length - inputBuffer->idx == 0) {
             WLOG(WS_LOG_DEBUG,
-                    "Starting to recieve data at current index of %u",
+                    "Starting to receive data at current index of %u",
                     inputBuffer->idx);
             ret = DoReceive(ssh);
             if (ssh->channelList == NULL || ssh->channelList->eofRxd)
@@ -2456,7 +2456,7 @@ int wolfSSH_CTX_UseCert_buffer(WOLFSSH_CTX* ctx,
 }
 
 
-/* Add a CA for verifiying the peer's certificate with.
+/* Add a CA for verifying the peer's certificate with.
  * returns WS_SUCCESS on success
  */
 int wolfSSH_CTX_AddRootCert_buffer(WOLFSSH_CTX* ctx,

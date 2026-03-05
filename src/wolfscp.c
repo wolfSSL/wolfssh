@@ -107,7 +107,7 @@ int DoScpSink(WOLFSSH* ssh)
 
                 if ( (ret = ReceiveScpMessage(ssh)) < WS_SUCCESS) {
                     if (ret == WS_EOF) {
-                        ret = WS_SUCCESS; /* successfully recieved message */
+                        ret = WS_SUCCESS; /* successfully received message */
                         ssh->scpState = SCP_DONE;
                         break;
                     }
@@ -1032,7 +1032,7 @@ static int GetScpFileName(WOLFSSH* ssh, byte* buf, word32 bufSz,
  *
  * T<modification_secs> 0 <access_secs> 0
  *
- * Places modifiation time in ssh->scpMTime and access time in
+ * Places modification time in ssh->scpMTime and access time in
  * ssh->scpATime variables.
  *
  * buf      - buffer containing size string
@@ -1606,7 +1606,7 @@ int ReceiveScpConfirmation(WOLFSSH* ssh)
                      msg[0]);
                 ret = WS_FATAL_ERROR;
 
-                /* SCP peer signaled a failure, propogate the error back
+                /* SCP peer signaled a failure, propagate the error back
                  * to the caller. If not set here WS_CHAN_RXD could be
                  * returned. */
                 ssh->error = ret;
@@ -1886,7 +1886,7 @@ static int SetTimestampInfo(const char* fileName, word64 mTime, word64 aTime)
 }
 
 /* Default SCP receive callback, called by wolfSSH when application has called
- * wolfSSH_accept() and a new SCP request has been received for an incomming
+ * wolfSSH_accept() and a new SCP request has been received for an incoming
  * file or directory.
  *
  * Handles accepting recursive directories by having wolfSSH tell the callback
@@ -1915,7 +1915,7 @@ static int SetTimestampInfo(const char* fileName, word64 mTime, word64 aTime)
  *
  * ssh   - pointer to active WOLFSSH session
  * state - current state of operation, can be one of:
- *         WOLFSSH_SCP_NEW_FILE  - new incomming file, no data yet, but size
+ *         WOLFSSH_SCP_NEW_FILE  - new incoming file, no data yet, but size
  *                                 and name
  *         WOLFSSH_SCP_FILE_PART - new file data, or continuation of
  *                                 existing file
@@ -1923,15 +1923,15 @@ static int SetTimestampInfo(const char* fileName, word64 mTime, word64 aTime)
  *         WOLFSSH_SCP_NEW_DIR   - indicates new directory, name in fileName
  *         WOLFSSH_SCP_END_DIR   - indicates leaving directory, up recursively
  * basePath    - base directory path peer is requesting that file be written to
- * fileName    - name of incomming file or directory
- * fileMode    - mode/permission of incomming file or directory
+ * fileName    - name of incoming file or directory
+ * fileMode    - mode/permission of incoming file or directory
  * mTime       - file modification time, if sent by peer in seconds since
  *               Unix epoch (00:00:00 UTC, Jan. 1, 1970). mTime is 0 if
  *               peer did not send time value.
  * aTime       - file access time, if sent by peer in seconds since Unix
  *               epoch (00:00:00 UTC, Jan. 1, 1970). aTime is 0 if peer did
  *               not send time value.
- * totalFileSz - total size of incomming file (directory size may list zero)
+ * totalFileSz - total size of incoming file (directory size may list zero)
  * buf         - file or file chunk
  * bufSz       - size of buf, bytes
  * fileOffset  - offset into total file size, where buf should be placed
@@ -2141,7 +2141,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             #else
                 if (WCHDIR(ssh->fs, fileName) != 0) {
                     WLOG(WS_LOG_ERROR,
-                            "scp: unable to cd into direcotry, abort");
+                            "scp: unable to cd into directory, abort");
                     wolfSSH_SetScpErrorMsg(ssh, "unable to cd into directory");
                     ret = WS_SCP_ABORT;
                 }
@@ -2158,7 +2158,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
         #else
             if (WCHDIR(ssh->fs, "..") != 0) {
                 WLOG(WS_LOG_ERROR,
-                            "scp: unable to cd out of direcotry, abort");
+                            "scp: unable to cd out of directory, abort");
                 wolfSSH_SetScpErrorMsg(ssh, "unable to cd out of directory");
                 ret = WS_SCP_ABORT;
             }
@@ -2606,7 +2606,7 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
 
         } else if (ScpFileIsFile(sendCtx)) {
             if (WFOPEN(ssh->fs, &(sendCtx->fp), filePath, "rb") != 0) {
-                WLOG(WS_LOG_ERROR, "scp: Error with oepning file, abort");
+                WLOG(WS_LOG_ERROR, "scp: Error with opening file, abort");
                 wolfSSH_SetScpErrorMsg(ssh, "unable to open file "
                                        "for reading");
                 ret = WS_SCP_ABORT;

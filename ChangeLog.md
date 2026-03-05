@@ -134,7 +134,7 @@
 
 ---
 
-# wolfSSH v1.4.20 (Feburary 20, 2025)
+# wolfSSH v1.4.20 (February 20, 2025)
 
 ## New Features
 
@@ -733,7 +733,7 @@
 
 - Added DH Group Exchange with SHA-256 hashing to the key exchange.
 - Removed the canned banner and provided a function to set a banner string.
-  If no sting is provided, no banner is sent.
+  If no string is provided, no banner is sent.
 - Expanded the make checking to include an API test.
 - Added a function that returns session statistics.
 - When connecting to the echoserver, hitting Ctrl-E will give you some

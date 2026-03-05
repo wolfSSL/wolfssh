@@ -203,7 +203,7 @@ enum {
 #endif
 
 /* if handling a chain it is expected to be the leaf cert first followed by
- * intermediates and CA last (CA may be ommited) */
+ * intermediates and CA last (CA may be omitted) */
 int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
         const unsigned char* certs, word32 certSz, word32 certsCount)
 {
@@ -310,7 +310,7 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
 
             /* verified successfully, add intermideate as trusted */
             if (ret == WS_SUCCESS && certIdx > 0) {
-                WLOG(WS_LOG_CERTMAN, "adding intermidiate cert as trusted");
+                WLOG(WS_LOG_CERTMAN, "adding intermediate cert as trusted");
                 ret = wolfSSH_CERTMAN_LoadRootCA_buffer(cm, certLoc[certIdx],
                     certLen[certIdx]);
             }
@@ -392,7 +392,7 @@ static int CheckProfile(DecodedCert* cert, int profile)
     if (valid) {
         valid = WSTRCMP(cert->countryOfCitizenship, "US") == 0;
         if (valid != 1)
-            WLOG(WS_LOG_CERTMAN, "cert contry of citizenship invalid");
+            WLOG(WS_LOG_CERTMAN, "cert country of citizenship invalid");
     }
 
     if (valid) {
@@ -493,12 +493,12 @@ static int CheckProfile(DecodedCert* cert, int profile)
         /* all must have UUID and worksheet 6 must have FASC-N in addition to
          * UUID */
         if (profile == PROFILE_FPKI_WORKSHEET_6 && hasFascN == 0) {
-            WLOG(WS_LOG_CERTMAN, "cert did not inclue a FASC-N");
+            WLOG(WS_LOG_CERTMAN, "cert did not include a FASC-N");
             valid = 0;
         }
 
         if (valid && hasUUID == 0) {
-            WLOG(WS_LOG_CERTMAN, "cert did not inclue a UUID");
+            WLOG(WS_LOG_CERTMAN, "cert did not include a UUID");
             valid = 0;
         }
     }
@@ -513,7 +513,7 @@ static int CheckProfile(DecodedCert* cert, int profile)
                 ((cert->extExtKeyUsageSsh & extKeyUsageSsh)
                     == extKeyUsageSsh));
         if (valid != 1) {
-            WLOG(WS_LOG_CERTMAN, "cert did not inclue all ext. key usage");
+            WLOG(WS_LOG_CERTMAN, "cert did not include all ext. key usage");
         }
     }
 

@@ -280,7 +280,7 @@ dispatch_semaphore_t windowSem;
 static sem_t windowSem;
 #endif
 
-/* capture window change signales */
+/* capture window change signals */
 static void WindowChangeSignal(int sig)
 {
 #if (defined(__OSX__) || defined(__APPLE__))
@@ -599,7 +599,7 @@ static int wolfSSH_AGENT_DefaultActions(WS_AgentCbAction action, void* vCtx)
         if (ret == WS_AGENT_SUCCESS) {
             WMEMSET(name, 0, sizeof(struct sockaddr_un));
             name->sun_family = AF_LOCAL;
-            WSTRNCPY(name->sun_path, sockName, sizeof(name->sun_path));
+            WSTRNCPY(name->sun_path, sockName, sizeof(name->sun_path) - 1);
             name->sun_path[sizeof(name->sun_path) - 1] = '\0';
             size = WSTRLEN(sockName) +
                     offsetof(struct sockaddr_un, sun_path);
@@ -1046,7 +1046,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
 
 #if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS)
 #if 0
-    if (keepOpen) /* set up for psuedo-terminal */
+    if (keepOpen) /* set up for pseudo-terminal */
         ClientSetEcho(2);
 #endif
 
@@ -1070,7 +1070,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
             int err;
 
             /* exec command does not contain initial terminal size,
-             * unlike pty-req. Send an inital terminal size for recieving
+             * unlike pty-req. Send an initial terminal size for receiving
              * the results of the command */
             err = sendCurrentWindowSize(&arg);
             if (err != WS_SUCCESS) {
@@ -1117,7 +1117,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
             int err;
 
             /* exec command does not contain initial terminal size,
-             * unlike pty-req. Send an inital terminal size for recieving
+             * unlike pty-req. Send an initial terminal size for receiving
              * the results of the command */
             err = sendCurrentWindowSize(&arg);
             if (err != WS_SUCCESS) {

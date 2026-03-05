@@ -1115,7 +1115,7 @@ static int sftpUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
     return ret;
 }
 
-/* preforms connection to port, sets WOLFSSH_CTX and WOLFSSH on success
+/* performs connection to port, sets WOLFSSH_CTX and WOLFSSH on success
  * caller needs to free ctx and ssh when done
  */
 static void sftp_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
@@ -1240,7 +1240,12 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
         }
 
         if (tmp != NULL) {
-            out = (byte*)malloc(tmp->atrb.sz[0]);
+            /* Allocate buffer large enough for maximum read size */
+            word32 allocSz = tmp->atrb.sz[0];
+            if (allocSz < WOLFSSH_MAX_SFTP_RW)
+                allocSz = WOLFSSH_MAX_SFTP_RW;
+            out = (byte*)malloc(allocSz);
+            AssertNotNull(out);
             AssertIntEQ(wolfSSH_SFTP_Open(ssh, tmp->fName, WOLFSSH_FXF_READ,
                         NULL, handle, &handleSz), WS_SUCCESS);
 
@@ -1281,8 +1286,8 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
 
             free(out);
             wolfSSH_SFTP_Close(ssh, handle, handleSz);
-            wolfSSH_SFTPNAME_list_free(current);
         }
+        wolfSSH_SFTPNAME_list_free(current);
     }
 
     /* take care of re-keying state before shutdown call */
@@ -1804,12 +1809,14 @@ static word32 kbResponseLength = 4;
 
 static int keyboardUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 {
-    (void) ctx;
     int ret = WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
+
+    (void)ctx;
 
     if (authType == WOLFSSH_USERAUTH_KEYBOARD) {
         AssertIntEQ(1, authData->sf.keyboard.promptCount);
-        AssertStrEQ("KB Auth Password: ", authData->sf.keyboard.prompts[0]);
+        AssertStrEQ("KB Auth Password: ",
+                    (const char*)authData->sf.keyboard.prompts[0]);
 
         authData->sf.keyboard.responseCount = 1;
         authData->sf.keyboard.responseLengths = &kbResponseLength;

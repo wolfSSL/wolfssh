@@ -199,7 +199,7 @@ static void ShowUsage(void)
 }
 
 
-/* catch if interupted */
+/* catch if interrupted */
 static void interruptCatch(int in)
 {
     (void)in;
@@ -1148,7 +1148,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 
         if (wolfSSH_SetExitStatus(ssh, processState) !=
             WS_SUCCESS) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue sending childs exit "
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue sending child's exit "
                 "status");
         }
 
@@ -1739,17 +1739,17 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 
         do {
             rc = waitpid(childPid, &waitStatus, 0);
-            /* if the waitpid experinced an interupt then try again */
+            /* if the waitpid experienced an interrupt then try again */
         } while (rc < 0 && errno == EINTR);
 
         if (rc < 0) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue waiting for childs exit "
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue waiting for child's exit "
                     "status");
         }
         else {
             if (wolfSSH_SetExitStatus(ssh, (word32)WEXITSTATUS(waitStatus)) !=
                 WS_SUCCESS) {
-                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue setting childs exit "
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue setting child's exit "
                     "status");
             }
         }
@@ -2026,7 +2026,7 @@ static void* HandleConnection(void* arg)
                 ret = wolfSSH_worker(ssh, NULL);
                 error = wolfSSH_get_error(ssh);
 
-                /* peer succesfully closed down gracefully */
+                /* peer successfully closed down gracefully */
                 if (ret == WS_CHANNEL_CLOSED) {
                     ret = 0;
                     break;
@@ -2052,7 +2052,7 @@ static void* HandleConnection(void* arg)
 
             if (attempt == maxAttempt) {
                 wolfSSH_Log(WS_LOG_INFO,
-                    "[SSHD] Gave up on gracefull shutdown, closing the socket");
+                    "[SSHD] Gave up on graceful shutdown, closing the socket");
             }
         }
     }
@@ -2155,7 +2155,7 @@ static int PendingConnection(WS_SOCKET_T fd)
     errno = 0;
     ret = select((int)nfds, &r, &w, &e, &t);
     if (ret < 0) {
-        /* a socket level issue happend, could just be a system call int. */
+        /* a socket level issue happened, could just be a system call int. */
         if (errno != EINTR) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] TCP socket error on select()");
             quit = 1;
@@ -2792,7 +2792,7 @@ static int SetupConsole(char* inCmd)
             WaitForInputIdle(processInfo.hProcess, 1000);
 
             do {
-                /* wait indefinitly for console process to exit */
+                /* wait indefinitely for console process to exit */
                 if (ava == 0) {
                     if (WaitForSingleObject(processInfo.hProcess, INFINITE) == WAIT_FAILED) {
                         break;

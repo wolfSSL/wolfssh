@@ -55,7 +55,7 @@ HAVE_P521=$SUPPORTED
 printf "\n"
 
 
-# Looks through the variable OUTPUT for the block of text containg the server
+# Looks through the variable OUTPUT for the block of text containing the server
 # host key algorithms sent.
 find_substring_of_algos() {
     # Extract the substring between start and end lines

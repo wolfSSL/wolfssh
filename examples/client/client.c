@@ -107,7 +107,7 @@ static void ShowUsage(void)
     printf(" -N            use non-blocking sockets\n");
 #endif
 #ifdef WOLFSSH_TERM
-    printf(" -t            use psuedo terminal\n");
+    printf(" -t            use pseudo terminal\n");
 #endif
 #if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS)
     printf(" -c <command>  executes remote command and pipe stdin/stdout\n");
@@ -248,7 +248,7 @@ dispatch_semaphore_t windowSem;
 static sem_t windowSem;
 #endif
 
-/* capture window change signales */
+/* capture window change signals */
 static void WindowChangeSignal(int sig)
 {
 #if (defined(__OSX__) || defined(__APPLE__))
@@ -572,7 +572,7 @@ static int wolfSSH_AGENT_DefaultActions(WS_AgentCbAction action, void* vCtx)
         if (ret == WS_AGENT_SUCCESS) {
             WMEMSET(name, 0, sizeof(struct sockaddr_un));
             name->sun_family = AF_LOCAL;
-            strncpy(name->sun_path, sockName, sizeof(name->sun_path));
+            strncpy(name->sun_path, sockName, sizeof(name->sun_path) - 1);
             name->sun_path[sizeof(name->sun_path) - 1] = '\0';
             size = strlen(sockName) +
                     offsetof(struct sockaddr_un, sun_path);
@@ -1020,7 +1020,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
 #if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS) && \
     defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM)
-    if (keepOpen) /* set up for psuedo-terminal */
+    if (keepOpen) /* set up for pseudo-terminal */
         ClientSetEcho(2);
 
     if (cmd != NULL || keepOpen == 1) {
@@ -1042,7 +1042,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
             int err;
 
             /* exec command does not contain initial terminal size, unlike pty-req.
-             * Send an inital terminal size for recieving the results of the command */
+             * Send an initial terminal size for receiving the results of the command */
             err = sendCurrentWindowSize(&arg);
             if (err != WS_SUCCESS) {
                 fprintf(stderr, "Issue sending exec initial terminal size\n\r");
@@ -1085,7 +1085,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
             int err;
 
             /* exec command does not contain initial terminal size, unlike pty-req.
-             * Send an inital terminal size for recieving the results of the command */
+             * Send an initial terminal size for receiving the results of the command */
             err = sendCurrentWindowSize(&arg);
             if (err != WS_SUCCESS) {
                 fprintf(stderr, "Issue sending exec initial terminal size\n\r");

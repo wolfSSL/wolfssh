@@ -579,8 +579,16 @@ extern "C" {
         #endif
         #define WSTRNCPY(s1,s2,n) strncpy((s1),(s2),(n))
         #define WSTRNCASECMP(s1,s2,n) strncasecmp((s1),(s2),(n))
+        /* suppress clang warning for GNU extension ##__VA_ARGS__ */
+        #ifdef __clang__
+            #pragma clang diagnostic push
+            #pragma clang diagnostic ignored "-Wgnu-zero-variadic-macro-arguments"
+        #endif
         #define WSNPRINTF(s,n,f,...) snprintf((s),(n),(f),##__VA_ARGS__)
         #define WVSNPRINTF(s,n,f,...) vsnprintf((s),(n),(f),##__VA_ARGS__)
+        #ifdef __clang__
+            #pragma clang diagnostic pop
+        #endif
         #define WSTRTOK(s1,s2,s3) strtok_r((s1),(s2),(s3))
     #endif
 #endif /* WSTRING_USER */

@@ -69,7 +69,7 @@ static char* workingDir;
     typedef WOLFSSL_HEAP_HINT SFTPC_HEAP_HINT;
 
      /* This static buffer is tuned for building with SFTP only. The static
-      * buffer size is calulated by multiplying the pairs of sizeList items
+      * buffer size is calculated by multiplying the pairs of sizeList items
       * and distList items and summing (32*50 + 128*100 + ...) and adding
       * the sum of the distList values times the sizeof wc_Memory (rounded up
       * to a word, 24). This total was 268kb plus change, rounded up to 269. */
@@ -1527,7 +1527,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
             }
 
             if (attempt == maxAttempt) {
-                printf("SFTP client gave up on gracefull shutdown,"
+                printf("SFTP client gave up on graceful shutdown,"
                        "closing the socket\n");
             }
         }

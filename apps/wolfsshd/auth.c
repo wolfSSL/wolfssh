@@ -107,7 +107,7 @@ struct WOLFSSHD_AUTH {
 #endif
 
 #if 0
-/* this could potentially be useful in a deeply embeded future port */
+/* this could potentially be useful in a deeply embedded future port */
 
 /* Map user names to passwords */
 /* Use arrays for username and p. The password or public key can
@@ -397,7 +397,7 @@ static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz, WOLFS
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Error getting user password info");
                 wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] Possibly permisions level error?"
+                    "[SSHD] Possibly permissions level error?"
                     " i.e SSHD not ran as sudo");
                 ret = WS_FATAL_ERROR;
             }
@@ -1049,7 +1049,7 @@ static int DoCheckUser(const char* usr, WOLFSSHD_AUTH* auth)
 
     if (wolfSSHD_ConfigGetPermitRoot(auth->conf) == 0) {
         if (XSTRCMP(usr, "root") == 0) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Login as root not permited");
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Login as root not permitted");
             ret = WOLFSSH_USERAUTH_REJECTED;
         }
     }
@@ -1075,7 +1075,7 @@ static int DoCheckUser(const char* usr, WOLFSSHD_AUTH* auth)
 
 
 /* @TODO this will take in a pipe or equivalent to talk to a privileged thread
- * rathar than having WOLFSSHD_AUTH directly with privilege separation */
+ * rather than having WOLFSSHD_AUTH directly with privilege separation */
 static int RequestAuthentication(WS_UserAuthData* authData,
                                  WOLFSSHD_AUTH* authCtx)
 {
@@ -1423,7 +1423,7 @@ static int SetDefualtUserID(WOLFSSHD_AUTH* auth)
 
 
 /* Sets the default functions to be used for authentication of peer.
- * Later the default functions could be overriden if needed.
+ * Later the default functions could be overridden if needed.
  * returns a newly created WOLFSSHD_AUTH struct success */
 WOLFSSHD_AUTH* wolfSSHD_AuthCreateUser(void* heap, const WOLFSSHD_CONFIG* conf)
 {
@@ -1501,12 +1501,12 @@ int wolfSSHD_AuthRaisePermissions(WOLFSSHD_AUTH* auth)
 #ifndef WIN32
     if (auth) {
         if (setegid(auth->sGid) != 0) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error rasing gid");
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error raising gid");
             ret = WS_FATAL_ERROR;
         }
 
         if (seteuid(auth->sUid) != 0) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error rasing uid");
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error raising uid");
             ret = WS_FATAL_ERROR;
         }
     }

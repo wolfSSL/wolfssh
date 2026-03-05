@@ -574,7 +574,7 @@ static void test_multi_prompt_KeyboardInteractive(void)
 
 static void test_multi_round_KeyboardInteractive(void)
 {
-    printf("Testing mutliple prompt rounds\n");
+    printf("Testing multiple prompt rounds\n");
     kbResponses[0] = (byte*)testText1;
     kbResponseLengths[0] = 4;
     kbResponseCount = 1;
