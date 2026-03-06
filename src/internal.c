@@ -2468,8 +2468,7 @@ int GenerateKey(byte hashId, byte keyId,
                 byte doKeyPad)
 #if defined(WOLFSSL_WOLFSSH) \
     && (LIBWOLFSSL_VERSION_HEX >= WOLFSSL_V5_0_0) \
-    && ((defined(HAVE_FIPS) && FIPS_VERSION_GE(5,2)) \
-        || defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256))
+    && (defined(HAVE_FIPS) && FIPS_VERSION_GE(5,2))
 /* Cannot use the SSH KDF with ML-KEM. With ML-KEM, doKeyPad must be false,
  * and the FIPS SSH KDF doesn't handle no-padding. Also, the ML-KEM algorithm
  * isn't in our FIPS boundary. */
@@ -13173,14 +13172,7 @@ int SendKexDhInit(WOLFSSH* ssh)
 
 
     if (ret == WS_SUCCESS) {
-        if (!ssh->handshake->useEcc
-#ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
-            && !ssh->handshake->useEccMlKem
-#endif
-#ifndef WOLFSSH_NO_CURVE25519_SHA256
-            && !ssh->handshake->useCurve25519
-#endif
-) {
+        if (ssh->handshake->useDh) {
 #ifndef WOLFSSH_NO_DH
             DhKey* privKey = &ssh->handshake->privKey.dh;
 

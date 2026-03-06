@@ -345,6 +345,10 @@ int wolfSSH_KexTest(int argc, char** argv)
     AssertIntEQ(wolfSSH_KexTest_Connect("mlkem768x25519-sha256"),
             EXIT_SUCCESS);
 #endif
+#if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256)
+    AssertIntEQ(wolfSSH_KexTest_Connect("mlkem768nistp256-sha256"),
+            EXIT_SUCCESS);
+#endif
 #if !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384)
     AssertIntEQ(wolfSSH_KexTest_Connect("mlkem1024nistp384-sha384"),
             EXIT_SUCCESS);
