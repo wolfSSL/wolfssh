@@ -154,6 +154,7 @@ static void myStatusCb(WOLFSSH* sshIn, word32* bytes, char* name)
     word32 currentTime;
 #ifndef WOLFSSH_NO_TIMESTAMP
     static word32 lastOutputTime = 0;
+    static word32 lastPrintedBytes[2] = {0, 0};
     word32 elapsedTime;
 #endif
     char buf[80];
@@ -162,12 +163,24 @@ static void myStatusCb(WOLFSSH* sshIn, word32* bytes, char* name)
 #ifndef WOLFSSH_NO_TIMESTAMP
     currentTime = current_time(0);
     if (currentTime == lastOutputTime) {
-        return;
+        if (bytes[0] != lastPrintedBytes[0] || bytes[1] != lastPrintedBytes[1]) {
+            /* Progress made in the same second — throttle but track latest */
+            lastPrintedBytes[0] = bytes[0];
+            lastPrintedBytes[1] = bytes[1];
+            return;
+        }
+        /* bytes unchanged: EOF final call — fall through to print */
     }
-    lastOutputTime = currentTime;
+    else {
+        lastOutputTime = currentTime;
+    }
+    lastPrintedBytes[0] = bytes[0];
+    lastPrintedBytes[1] = bytes[1];
     if (WSTRNCMP(currentFile, name, WSTRLEN(name)) != 0) {
         startTime = current_time(1);
         lastOutputTime = 0; /* Reset timer for new file transfer */
+        lastPrintedBytes[0] = 0;
+        lastPrintedBytes[1] = 0;
         WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
         WSTRNCPY(currentFile, name, WOLFSSH_MAX_FILENAME);
     }
@@ -756,8 +769,8 @@ static int doCmds(func_args* args)
 
                 ret = wolfSSH_SFTP_STAT(ssh, pt, &atrb);
                 err = wolfSSH_get_error(ssh);
-            } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
-                        && ret != WS_SUCCESS);
+            } while ((err == WS_WANT_READ || err == WS_WANT_WRITE ||
+                        err == WS_REKEYING) && ret != WS_SUCCESS);
             if (ret != WS_SUCCESS) {
                 if (SFTP_FPUTS(args, "Error changing directory\n") < 0) {
                     err_msg("fputs error");
@@ -844,8 +857,8 @@ static int doCmds(func_args* args)
 
                 ret = wolfSSH_SFTP_CHMOD(ssh, pt, mode);
                 err = wolfSSH_get_error(ssh);
-            } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
-                        && ret != WS_SUCCESS);
+            } while ((err == WS_WANT_READ || err == WS_WANT_WRITE ||
+                        err == WS_REKEYING) && ret != WS_SUCCESS);
             if (ret != WS_SUCCESS) {
                 if (SFTP_FPUTS(args, "Unable to change permissions of ") < 0) {
                     err_msg("fputs error");
@@ -901,8 +914,8 @@ static int doCmds(func_args* args)
 
                 ret = wolfSSH_SFTP_RMDIR(ssh, pt);
                 err = wolfSSH_get_error(ssh);
-            } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
-                        && ret != WS_SUCCESS);
+            } while ((err == WS_WANT_READ || err == WS_WANT_WRITE ||
+                        err == WS_REKEYING) && ret != WS_SUCCESS);
             if (ret != WS_SUCCESS) {
                 if (ret == WS_PERMISSIONS) {
                     if (SFTP_FPUTS(args, "Insufficient permissions\n") < 0) {
@@ -954,8 +967,8 @@ static int doCmds(func_args* args)
 
                 ret = wolfSSH_SFTP_Remove(ssh, pt);
                 err = wolfSSH_get_error(ssh);
-            } while ((err == WS_WANT_READ || err == WS_WANT_WRITE)
-                        && ret != WS_SUCCESS);
+            } while ((err == WS_WANT_READ || err == WS_WANT_WRITE ||
+                        err == WS_REKEYING) && ret != WS_SUCCESS);
             if (ret != WS_SUCCESS) {
                 if (ret == WS_PERMISSIONS) {
                     if (SFTP_FPUTS(args, "Insufficient permissions\n") < 0) {
