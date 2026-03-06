@@ -1939,45 +1939,23 @@ struct fd_entry {
     int used;
 };
 
+#define O_ACCMODE (WOLFSSH_O_RDONLY | WOLFSSH_O_WRONLY)
+
 static struct fd_entry fd_pool[WOLFSSH_FATFS_MAX_FILES];
 int ff_open(const char *fname, int flag, int perm)
 {
     int i;
-    BYTE mode;
     WOLFSSH_UNUSED(perm);
     PRINTF("\r\nfatFS open: %s", fname);
 
-    if (flag & WOLFSSH_O_RDONLY) {
-        mode = FA_READ;
-
-    } else if (flag & WOLFSSH_O_RDWR) {
-        if ((flag & WOLFSSH_O_CREAT) &&
-                (flag & WOLFSSH_O_TRUNC)) {
-            mode = FA_READ | FA_WRITE | FA_CREATE_ALWAYS;
-
-        } else if ((flag & WOLFSSH_O_CREAT) &&
-                (flag & WOLFSSH_O_APPEND)) {
-            mode = FA_READ | FA_WRITE | FA_CREATE_NEW | FA_OPEN_APPEND;
-
-        } else {
-            mode = AM_ARC;
-        }
-    } else if (flag & WOLFSSH_O_WRONLY) {
-        if ((flag & WOLFSSH_O_CREAT) &&
-                (flag & WOLFSSH_O_TRUNC)) {
-            mode = FA_READ | FA_CREATE_ALWAYS | FA_WRITE;
-        } else if ((flag & WOLFSSH_O_CREAT) &&
-                (flag & WOLFSSH_O_APPEND)) {
-            mode = FA_READ | FA_WRITE | FA_CREATE_NEW | FA_OPEN_APPEND;
-        }
-    } else {
+    /* Make sure the access mode is read or write. */
+    if ((flag & O_ACCMODE) == 0) {
         return -1;
     }
 
-
     for (i = 0; i < WOLFSSH_FATFS_MAX_FILES; i++) {
         if (fd_pool[i].used == 0) {
-            if (f_open(&(fd_pool[i].f), fname, mode) == FR_OK) {
+            if (f_open(&(fd_pool[i].f), fname, (BYTE)flag) == FR_OK) {
                 fd_pool[i].used = 1;
                 PRINTF("\r\nfatFS open success: %d", i);
                 return i;

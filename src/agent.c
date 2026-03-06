@@ -683,24 +683,25 @@ static int SignHashRsa(WOLFSSH_AGENT_KEY_RSA* rawKey, enum wc_HashType hashType,
 {
     RsaKey key;
     byte encSig[MAX_ENCODED_SIG_SZ];
-    int encSigSz;
-    int ret = 0;
+    int encSigSz, ret;
 
-    wc_InitRsaKey(&key, heap);
-    mp_read_unsigned_bin(&key.n, rawKey->n, rawKey->nSz);
-    mp_read_unsigned_bin(&key.e, rawKey->e, rawKey->eSz);
-    mp_read_unsigned_bin(&key.d, rawKey->d, rawKey->dSz);
-    mp_read_unsigned_bin(&key.p, rawKey->p, rawKey->pSz);
-    mp_read_unsigned_bin(&key.q, rawKey->q, rawKey->qSz);
-    mp_read_unsigned_bin(&key.u, rawKey->iqmp, rawKey->iqmpSz);
+    ret = wc_InitRsaKey(&key, heap);
+    if (ret == 0) {
+        mp_read_unsigned_bin(&key.n, rawKey->n, rawKey->nSz);
+        mp_read_unsigned_bin(&key.e, rawKey->e, rawKey->eSz);
+        mp_read_unsigned_bin(&key.d, rawKey->d, rawKey->dSz);
+        mp_read_unsigned_bin(&key.p, rawKey->p, rawKey->pSz);
+        mp_read_unsigned_bin(&key.q, rawKey->q, rawKey->qSz);
+        mp_read_unsigned_bin(&key.u, rawKey->iqmp, rawKey->iqmpSz);
 
-    encSigSz = wc_EncodeSignature(encSig, digest, digestSz,
-            wc_HashGetOID(hashType));
-    if (encSigSz <= 0) {
-        WLOG(WS_LOG_DEBUG, "Bad Encode Sig");
-        ret = WS_CRYPTO_FAILED;
+        encSigSz = wc_EncodeSignature(encSig, digest, digestSz,
+                wc_HashGetOID(hashType));
+        if (encSigSz <= 0) {
+            WLOG(WS_LOG_DEBUG, "Bad Encode Sig");
+            ret = WS_CRYPTO_FAILED;
+        }
     }
-    else {
+    if (ret == 0) {
         WLOG(WS_LOG_INFO, "Signing hash with RSA.");
         *sigSz = wc_RsaSSL_Sign(encSig, encSigSz, sig, *sigSz, &key, rng);
         if (*sigSz <= 0) {
@@ -734,8 +735,12 @@ static int SignHashEcc(WOLFSSH_AGENT_KEY_ECDSA* rawKey, int curveId,
     ecc_key key;
     int ret;
 
-    ret = wc_ecc_import_private_key_ex(rawKey->d, rawKey->dSz,
-            rawKey->q, rawKey->qSz, &key, curveId);
+    ret = wc_ecc_init(&key);
+
+    if (ret == 0) {
+        ret = wc_ecc_import_private_key_ex(rawKey->d, rawKey->dSz,
+                rawKey->q, rawKey->qSz, &key, curveId);
+    }
 
     if (ret == 0) {
         ret = wc_ecc_sign_hash(digest, digestSz, sig, sigSz, rng, &key);
