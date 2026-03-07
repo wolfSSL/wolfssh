@@ -121,6 +121,16 @@ AC_ARG_ENABLE([examples],
     [AS_HELP_STRING([--disable-examples],[Disable examples (default: enabled)])],
     [ENABLED_EXAMPLES=$enableval],[ENABLED_EXAMPLES=yes])
 
+# Remove server code
+AC_ARG_ENABLE([server],
+    [AS_HELP_STRING([--disable-server],[Disable server code (default: enabled)])],
+    [ENABLED_SERVER=$enableval],[ENABLED_SERVER=yes])
+
+# Remove client code
+AC_ARG_ENABLE([client],
+    [AS_HELP_STRING([--disable-client],[Disable client code (default: enabled)])],
+    [ENABLED_CLIENT=$enableval],[ENABLED_CLIENT=yes])
+
 # Key Generation
 AC_ARG_ENABLE([keygen],
     [AS_HELP_STRING([--enable-keygen],[Enable key generation (default: disabled)])],
@@ -213,6 +223,10 @@ AS_IF([test "x$ENABLED_SSHD" = "xyes"],
 # Set the defined flags for the code.
 AS_IF([test "x$ENABLED_INLINE" = "xno"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DNO_INLINE"])
+AS_IF([test "x$ENABLED_SERVER" = "xno"],
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DNO_WOLFSSH_SERVER"])
+AS_IF([test "x$ENABLED_CLIENT" = "xno"],
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DNO_WOLFSSH_CLIENT"])
 AS_IF([test "x$ENABLED_KEYGEN" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_KEYGEN"])
 AS_IF([test "x$ENABLED_KEYBOARD_INTERACTIVE" = "xyes"],
