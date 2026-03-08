@@ -88,6 +88,10 @@ extern "C" {
  * at least one algorithm to use, throw an error.
  */
 
+#if defined(NO_WOLFSSH_SERVER) && defined(NO_WOLFSSH_CLIENT)
+    #error "Both NO_WOLFSSH_SERVER and NO_WOLFSSH_CLIENT are defined. Omit one of --disable-server or --disable-client."
+#endif
+
 #ifdef NO_RSA
     #undef WOLFSSH_NO_RSA
     #define WOLFSSH_NO_RSA
