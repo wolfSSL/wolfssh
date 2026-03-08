@@ -406,7 +406,9 @@ static int SendPacketType(WOLFSSH* ssh, byte type, byte* buf, word32 bufSz);
 static int SFTP_ParseAtributes_buffer(WOLFSSH* ssh,  WS_SFTP_FILEATRB* atr,
         byte* buf, word32* idx, word32 maxIdx);
 static WS_SFTPNAME* wolfSSH_SFTPNAME_new(void* heap);
+#if !defined(NO_WOLFSSH_SERVER) && !defined(NO_WOLFSSH_DIR)
 static int SFTP_CreateLongName(WS_SFTPNAME* name);
+#endif
 
 
 /* A few errors are OK to get. They are a notice rather that a fault.
@@ -902,6 +904,7 @@ static int SFTP_SetHeader(WOLFSSH* ssh, word32 reqId, byte type, word32 len,
     return WS_SUCCESS;
 }
 
+#ifndef NO_WOLFSSH_SERVER
 static int SFTP_CreatePacket(WOLFSSH* ssh, byte type, byte* out, word32 outSz,
         byte* data, word32 dataSz)
 {
@@ -925,6 +928,7 @@ static int SFTP_CreatePacket(WOLFSSH* ssh, byte type, byte* out, word32 outSz,
     }
     return WS_SUCCESS;
 }
+#endif /* !NO_WOLFSSH_SERVER */
 
 
 /* returns the size of buffer needed to hold attributes */
@@ -1038,11 +1042,13 @@ static INLINE int SFTP_GetSz(byte* buf, word32* sz,
 }
 
 
-#ifndef NO_WOLFSSH_SERVER
-
 #if !defined(WOLFSSH_USER_FILESYSTEM)
 static int SFTP_GetAttributes(void* fs, const char* fileName,
         WS_SFTP_FILEATRB* atr, byte noFollow, void* heap);
+#endif
+
+#ifndef NO_WOLFSSH_SERVER
+#if !defined(WOLFSSH_USER_FILESYSTEM)
 static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
         char* name, WS_SFTP_FILEATRB* atr);
 #endif
@@ -3380,7 +3386,9 @@ static int wolfSSH_SFTP_SendName(WOLFSSH* ssh, WS_SFTPNAME* list, word32 count,
 
     return WS_SUCCESS;
 }
+#endif /* !NO_WOLFSSH_DIR */
 
+#endif /* !NO_WOLFSSH_SERVER */
 
 int wolfSSH_SFTP_SetDefaultPath(WOLFSSH* ssh, const char* path)
 {
@@ -3401,6 +3409,9 @@ int wolfSSH_SFTP_SetDefaultPath(WOLFSSH* ssh, const char* path)
     return WS_SUCCESS;
 }
 
+#ifndef NO_WOLFSSH_SERVER
+
+#ifndef NO_WOLFSSH_DIR
 
 /* Handles packet to read a directory
  *
@@ -3591,6 +3602,7 @@ int wolfSSH_SFTP_RecvCloseDir(WOLFSSH* ssh, byte* handle, word32 handleSz)
 
     return WS_SUCCESS;
 }
+
 #endif /* NO_WOLFSSH_DIR */
 
 /* Handles packet to write a file
@@ -4481,6 +4493,7 @@ int SFTP_RemoveHandleNode(WOLFSSH* ssh, byte* handle, word32 handleSz)
 }
 #endif /* WOLFSSH_STOREHANDLE */
 
+#endif /* !NO_WOLFSSH_SERVER */
 
 #if defined(WOLFSSH_USER_FILESYSTEM)
     /* User-defined I/O support */
@@ -4530,8 +4543,8 @@ static word32 TimeTo32(word16 d, word16 t)
  * Fills out a WS_SFTP_FILEATRB structure
  * returns WS_SUCCESS on success
  */
-int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
-        byte noFollow, void* heap)
+static int SFTP_GetAttributes(void* fs, const char* fileName,
+        WS_SFTP_FILEATRB* atr, byte noFollow, void* heap)
 {
     DSTAT stats;
     int sz = (int)WSTRLEN(fileName);
@@ -4601,13 +4614,14 @@ int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
 }
 
 
+#ifndef NO_WOLFSSH_SERVER
 /* @TODO can be overridden by user for portability
  * Gets attributes based on file descriptor
  * NOTE: if atr->flags is set to a value of 0 then no attributes are set.
  * Fills out a WS_SFTP_FILEATRB structure
  * returns WS_SUCCESS on success
  */
-int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
+static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
         char* name, WS_SFTP_FILEATRB* atr)
 {
     DSTAT stats;
@@ -4655,6 +4669,7 @@ int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
     NU_Done(&stats);
     return WS_SUCCESS;
 }
+#endif /* !NO_WOLFSSH_SERVER */
 
 #elif defined(USE_WINDOWS_API)
 
@@ -4663,8 +4678,8 @@ int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
  * Fills out a WS_SFTP_FILEATRB structure
  * returns WS_SUCCESS on success
  */
-int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
-        byte noFollow, void* heap)
+static int SFTP_GetAttributes(void* fs, const char* fileName,
+        WS_SFTP_FILEATRB* atr, byte noFollow, void* heap)
 {
     BOOL error;
     WIN32_FILE_ATTRIBUTE_DATA stats;
@@ -4709,8 +4724,8 @@ int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
  * NOTE: if atr->flags is set to a value of 0 then no attributes are set.
  * Fills out a WS_SFTP_FILEATRB structure
  * returns WS_SUCCESS on success */
-int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
-                       byte noFollow, void* heap)
+static int SFTP_GetAttributes(void* fs, const char* fileName,
+        WS_SFTP_FILEATRB* atr, byte noFollow, void* heap)
 {
     int err, sz;
     MQX_FILE_PTR mfs_ptr;
@@ -4764,13 +4779,14 @@ int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
     return WS_SUCCESS;
 }
 
+#ifndef NO_WOLFSSH_SERVER
 /* @TODO can be overridden by user for portability
  * Gets attributes based on file descriptor
  * NOTE: if atr->flags is set to a value of 0 then no attributes are set.
  * Fills out a WS_SFTP_FILEATRB structure
  * returns WS_SUCCESS on success */
-int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
-                              char* name, WS_SFTP_FILEATRB* atr)
+static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
+        char* name, WS_SFTP_FILEATRB* atr)
 {
     int err;
     MQX_FILE_PTR mfs_ptr;
@@ -4815,6 +4831,7 @@ int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
 
     return WS_SUCCESS;
 }
+#endif /* !NO_WOLFSSH_SERVER */
 
 #elif defined(WOLFSSH_FATFS)
 
@@ -4883,6 +4900,7 @@ static int SFTP_GetAttributes(void* fs, const char* fileName,
     return WS_SUCCESS;
 }
 
+#ifndef NO_WOLFSSH_SERVER
 static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
         char* name, WS_SFTP_FILEATRB* atr)
 {
@@ -4930,6 +4948,7 @@ static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
     WOLFSSH_UNUSED(handleSz);
     return WS_SUCCESS;
 }
+#endif /* !NO_WOLFSSH_SERVER */
 
 #elif defined(WOLFSSH_ZEPHYR)
 
@@ -4954,8 +4973,8 @@ static int PopulateAttributes(WS_SFTP_FILEATRB* atr, WSTAT_T* stats)
     return WS_SUCCESS;
 }
 
-int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
-        byte noFollow, void* heap)
+static int SFTP_GetAttributes(void* fs, const char* fileName,
+        WS_SFTP_FILEATRB* atr, byte noFollow, void* heap)
 {
     WSTAT_T stats;
 
@@ -4969,7 +4988,8 @@ int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
     return PopulateAttributes(atr, &stats);
 }
 
-int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
+#ifndef NO_WOLFSSH_SERVER
+static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
         char* name, WS_SFTP_FILEATRB* atr)
 {
     WOLFSSH_UNUSED(ssh);
@@ -4981,6 +5001,7 @@ int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
     WLOG(WS_LOG_SFTP, "SFTP_GetAttributes_Handle() not implemented yet");
     return WS_NOT_COMPILED;
 }
+#endif /* !NO_WOLFSSH_SERVER */
 
 #elif defined(MICROCHIP_MPLAB_HARMONY)
 int SFTP_GetAttributesStat(WS_SFTP_FILEATRB* atr, WSTAT_T* stats)
@@ -5052,8 +5073,8 @@ static int SFTP_GetAttributesHelper(WS_SFTP_FILEATRB* atr, const char* fName)
  * Fills out a WS_SFTP_FILEATRB structure
  * returns WS_SUCCESS on success
  */
-int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
-        byte noFollow, void* heap)
+static int SFTP_GetAttributes(void* fs, const char* fileName,
+        WS_SFTP_FILEATRB* atr, byte noFollow, void* heap)
 {
     WOLFSSH_UNUSED(heap);
     WOLFSSH_UNUSED(fs);
@@ -5068,11 +5089,13 @@ int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
  * Fills out a WS_SFTP_FILEATRB structure
  * returns WS_SUCCESS on success
  */
-int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
+#ifndef NO_WOLFSSH_SERVER
+static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
         char* name, WS_SFTP_FILEATRB* atr)
 {
     return SFTP_GetAttributesHelper(atr, name);
 }
+#endif /* !NO_WOLFSSH_SERVER */
 
 #else
 
@@ -5080,8 +5103,8 @@ int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
  * Fills out a WS_SFTP_FILEATRB structure
  * returns WS_SUCCESS on success
  */
-int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
-        byte noFollow, void* heap)
+static int SFTP_GetAttributes(void* fs, const char* fileName,
+        WS_SFTP_FILEATRB* atr, byte noFollow, void* heap)
 {
     WSTAT_T stats;
 
@@ -5125,13 +5148,14 @@ int SFTP_GetAttributes(void* fs, const char* fileName, WS_SFTP_FILEATRB* atr,
 }
 
 
+#ifndef NO_WOLFSSH_SERVER
 /* @TODO can be overridden by user for portability
  * Gets attributes based on file descriptor
  * NOTE: if atr->flags is set to a value of 0 then no attributes are set.
  * Fills out a WS_SFTP_FILEATRB structure
  * returns WS_SUCCESS on success
  */
-int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
+static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
         char* name, WS_SFTP_FILEATRB* atr)
 {
     struct stat stats;
@@ -5169,8 +5193,10 @@ int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
     WOLFSSH_UNUSED(name);
     return WS_SUCCESS;
 }
+#endif /* !NO_WOLFSSH_SERVER */
 #endif
 
+#ifndef NO_WOLFSSH_SERVER
 
 #ifndef USE_WINDOWS_API
 /* Handles receiving fstat packet
@@ -9273,7 +9299,7 @@ int wolfSSH_SFTP_free(WOLFSSH* ssh)
     ret = SFTP_FreeHandles(ssh);
 #endif
 
-#ifndef NO_WOLFSSH_DIR
+#if !defined(NO_WOLFSSH_DIR) && !defined(NO_WOLFSSH_SERVER)
     {
         /* free all dirs if hung up on */
         WS_DIR_LIST* cur = ssh->dirList;
@@ -9294,7 +9320,7 @@ int wolfSSH_SFTP_free(WOLFSSH* ssh)
         }
         ssh->dirList = NULL;
     }
-#endif /* NO_WOLFSSH_DIR */
+#endif /* !NO_WOLFSSH_DIR && !NO_WOLFSSH_SERVER */
 
     wolfSSH_SFTP_ClearState(ssh, STATE_ID_ALL);
     return ret;

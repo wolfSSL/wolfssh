@@ -640,7 +640,7 @@ extern "C" {
 
 #if (defined(WOLFSSH_SFTP) || \
         defined(WOLFSSH_SCP) || defined(WOLFSSH_SSHD)) && \
-    !defined(NO_WOLFSSH_SERVER) && \
+    !(defined(NO_WOLFSSH_SERVER) && defined(NO_WOLFSSH_CLIENT)) && \
     (!defined(NO_FILESYSTEM) || defined(WOLFSSH_FATFS))
 
     #ifndef SIZEOF_OFF_T
