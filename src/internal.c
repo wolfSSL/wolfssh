@@ -6523,56 +6523,36 @@ static int DoDisconnect(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 static int DoServiceRequest(WOLFSSH* ssh,
                             byte* buf, word32 len, word32* idx)
 {
-    word32 begin = *idx;
-    word32 nameSz;
-    char     serviceName[WOLFSSH_MAX_NAMESZ];
+    char name[WOLFSSH_MAX_NAMESZ+1];
+    word32 nameSz = sizeof(name);
+    int ret;
 
-    WOLFSSH_UNUSED(len);
+    ret = GetString(name, &nameSz, buf, len, idx);
 
-    ato32(buf + begin, &nameSz);
-    begin += LENGTH_SZ;
-
-    if (begin + nameSz > len || nameSz >= WOLFSSH_MAX_NAMESZ) {
-        return WS_BUFFER_E;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "Requesting service: %s", name);
+        ssh->clientState = CLIENT_USERAUTH_REQUEST_DONE;
     }
 
-    WMEMCPY(serviceName, buf + begin, nameSz);
-    begin += nameSz;
-    serviceName[nameSz] = 0;
-
-    *idx = begin;
-
-    WLOG(WS_LOG_DEBUG, "Requesting service: %s", serviceName);
-    ssh->clientState = CLIENT_USERAUTH_REQUEST_DONE;
-
-    return WS_SUCCESS;
+    return ret;
 }
 
 
 static int DoServiceAccept(WOLFSSH* ssh,
                            byte* buf, word32 len, word32* idx)
 {
-    word32 begin = *idx;
-    word32 nameSz;
-    char     serviceName[WOLFSSH_MAX_NAMESZ];
+    char name[WOLFSSH_MAX_NAMESZ+1];
+    word32 nameSz = sizeof(name);
+    int ret;
 
-    ato32(buf + begin, &nameSz);
-    begin += LENGTH_SZ;
+    ret = GetString(name, &nameSz, buf, len, idx);
 
-    if (begin + nameSz > len || nameSz >= WOLFSSH_MAX_NAMESZ) {
-        return WS_BUFFER_E;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "Accepted service: %s", name);
+        ssh->serverState = SERVER_USERAUTH_REQUEST_DONE;
     }
 
-    WMEMCPY(serviceName, buf + begin, nameSz);
-    begin += nameSz;
-    serviceName[nameSz] = 0;
-
-    *idx = begin;
-
-    WLOG(WS_LOG_DEBUG, "Accepted service: %s", serviceName);
-    ssh->serverState = SERVER_USERAUTH_REQUEST_DONE;
-
-    return WS_SUCCESS;
+    return ret;
 }
 
 
