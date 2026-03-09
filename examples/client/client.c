@@ -854,7 +854,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         err_sys("Couldn't create wolfSSH client context.");
 
     if (keyList) {
-        if (wolfSSH_CTX_SetAlgoListKey(ctx, NULL) != WS_SUCCESS) {
+        if (wolfSSH_CTX_SetAlgoListKey(ctx, keyList) != WS_SUCCESS) {
             err_sys("Error setting key list.\n");
         }
     }
