@@ -3575,12 +3575,12 @@ int GetSkip(const byte* buf, word32 len, word32* idx)
     int result;
     word32 sz;
 
-    result = GetUint32(&sz, buf, len, idx);
+    result = GetSize(&sz, buf, len, idx);
 
     if (result == WS_SUCCESS) {
         result = WS_BUFFER_E;
 
-        if (*idx < len && sz <= len - *idx) {
+        if (*idx <= len && sz <= len - *idx) {
             *idx += sz;
             result = WS_SUCCESS;
         }
@@ -6320,18 +6320,8 @@ static int DoKexDhGexGroup(WOLFSSH* ssh,
 
 static int DoIgnore(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
-    word32 dataSz;
-    word32 begin = *idx;
-
     WOLFSSH_UNUSED(ssh);
-    WOLFSSH_UNUSED(len);
-
-    ato32(buf + begin, &dataSz);
-    begin += LENGTH_SZ + dataSz;
-
-    *idx = begin;
-
-    return WS_SUCCESS;
+    return GetSkip(buf, len, idx);
 }
 
 static int DoRequestSuccess(WOLFSSH *ssh, byte *buf, word32 len, word32 *idx)
