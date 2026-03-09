@@ -6890,20 +6890,14 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
     }
 
     if (ret == WS_SUCCESS)
-        ret = GetUint32(&pw->passwordSz, buf, len, &begin);
+        ret = GetStringRef(&pw->passwordSz, &pw->password, buf, len, &begin);
 
     if (ret == WS_SUCCESS) {
-        pw->password = buf + begin;
-        begin += pw->passwordSz;
-
         if (pw->hasNewPassword) {
             /* Skip the password change. Maybe error out since we aren't
              * supporting password changes at this time. */
-            ret = GetUint32(&pw->newPasswordSz, buf, len, &begin);
-            if (ret == WS_SUCCESS) {
-                pw->newPassword = buf + begin;
-                begin += pw->newPasswordSz;
-            }
+            ret = GetStringRef(&pw->newPasswordSz, &pw->newPassword,
+                    buf, len, &begin);
         }
         else {
             pw->newPassword = NULL;
