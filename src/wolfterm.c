@@ -115,14 +115,15 @@ static void wolfSSH_ClearScreen(WOLFSSH_HANDLE handle, word32 x1, word32 y1, wor
         start.Y = y1;
 
         /* get number of cells  */
-        if (y1 == y2) { /* on same line so is x2 - x1 */
-            fill = x2 - x1;
+        if (y2 == y1) { /* on same line so is x2 - x1 */
+            fill = (x2 >= x1) ? (x2 - x1) : 0;
         }
-        else { /* | y1 - y2 | * maxX - x1 + x2 */
-            fill = y1 - y2;
-            if (fill < 0)
-                fill += fill * 2;
-            fill = fill * maxX - x1 + x2;
+        /* (y2 - y1) * maxX - x1 + x2 */
+        else if (y2 > y1) {
+            fill = (y2 - y1) * maxX - x1 + x2;
+        }
+        else {
+            fill = 0;
         }
 
         FillConsoleOutputCharacterA(handle, ' ', fill, start, &w);
