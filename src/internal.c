@@ -14400,19 +14400,27 @@ static int PrepareUserAuthRequestEcc(WOLFSSH* ssh, word32* payloadSz,
         word32 idx = 0;
         #ifdef WOLFSSH_AGENT
         if (ssh->agentEnabled) {
-            word32 sz;
-            const byte* c = (const byte*)authData->sf.publicKey.publicKey;
+            const byte* publicKey = NULL;
+            word32 publicKeySz;
 
-            ato32(c + idx, &sz);
-            idx += LENGTH_SZ + sz;
-            ato32(c + idx, &sz);
-            idx += LENGTH_SZ + sz;
-            ato32(c + idx, &sz);
-            idx += LENGTH_SZ;
-            c += idx;
-            idx = 0;
-
-            ret = wc_ecc_import_x963(c, sz, &keySig->ks.ecc.key);
+            ret = GetSkip((const byte*)authData->sf.publicKey.publicKey,
+                    authData->sf.publicKey.publicKeySz, &idx);
+            if (ret == WS_SUCCESS) {
+                ret = GetSkip((const byte*)authData->sf.publicKey.publicKey,
+                        authData->sf.publicKey.publicKeySz, &idx);
+            }
+            if (ret == WS_SUCCESS) {
+                ret = GetStringRef(&publicKeySz, &publicKey,
+                        (const byte*)authData->sf.publicKey.publicKey,
+                        authData->sf.publicKey.publicKeySz, &idx);
+            }
+            if (ret == WS_SUCCESS) {
+                ret = wc_ecc_import_x963(publicKey, publicKeySz,
+                        &keySig->ks.ecc.key);
+            }
+            if (ret == 0) {
+                ret = WS_SUCCESS;
+            }
         }
         else
         #endif
