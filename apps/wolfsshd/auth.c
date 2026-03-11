@@ -338,7 +338,8 @@ static int CheckPasswordHashUnix(const char* input, char* stored)
             if (storedSz == 0 || stored[0] == '*' ||
                     hashedInputSz == 0 || hashedInput[0] == '*' ||
                     hashedInputSz != storedSz ||
-                    WMEMCMP(hashedInput, stored, storedSz) != 0) {
+                    ConstantCompare((byte*)hashedInput,
+                        (byte*)stored, storedSz) != 0) {
                 ret = WSSHD_AUTH_FAILURE;
             }
         }
@@ -656,7 +657,7 @@ static int CheckPublicKeyUnix(const char* name,
             if (rc == WS_SUCCESS) {
                 rc = wc_Hash(WC_HASH_TYPE_SHA256, caKey, caKeySz, fingerprint,
                              WC_SHA256_DIGEST_SIZE);
-                if (rc == 0 && WMEMCMP(fingerprint, pubKeyCtx->caKey,
+                if (rc == 0 && ConstantCompare(fingerprint, pubKeyCtx->caKey,
                                        WC_SHA256_DIGEST_SIZE) == 0) {
                     foundKey = 1;
                     break;
