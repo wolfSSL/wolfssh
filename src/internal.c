@@ -17483,7 +17483,7 @@ int wolfSSH_oct2dec(WOLFSSH* ssh, byte* oct, word32 octSz)
 }
 
 #ifndef WOLFSSL_MAX_32BIT
-    #define WOLFSSL_MAX_32BIT INT_MAX
+    #define WOLFSSL_MAX_32BIT 0xffffffffU  /* wolfSSL types.h defines this */
 #endif
 
 /* addend1 += addend2 */
@@ -17493,7 +17493,7 @@ void AddAssign64(word32* addend1, word32 addend2)
         addend1[1]++;
 
         /* -1 to account for roll over digit */
-        addend1[0] = addend2 - (WOLFSSL_MAX_32BIT- addend1[0]) - 1;
+        addend1[0] = addend2 - (WOLFSSL_MAX_32BIT - addend1[0]) - 1;
     }
     else {
         addend1[0] += addend2;
