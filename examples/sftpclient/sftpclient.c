@@ -591,7 +591,8 @@ static int doCmds(func_args* args)
                     ret = wolfSSH_get_error(ssh);
                 }
             } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE ||
-                    ret == WS_CHAN_RXD || ret == WS_REKEYING);
+                    ret == WS_CHAN_RXD || ret == WS_REKEYING ||
+                    ret == WS_WINDOW_FULL);
 
 #ifndef WOLFSSH_NO_TIMESTAMP
             WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
@@ -702,7 +703,8 @@ static int doCmds(func_args* args)
                     ret = wolfSSH_get_error(ssh);
                 }
             } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE ||
-                    ret == WS_CHAN_RXD || ret == WS_REKEYING);
+                    ret == WS_CHAN_RXD || ret == WS_REKEYING ||
+                    ret == WS_WINDOW_FULL);
 
 #ifndef WOLFSSH_NO_TIMESTAMP
             WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
@@ -1058,7 +1060,8 @@ static int doCmds(func_args* args)
                     ret = wolfSSH_get_error(ssh);
                 }
             } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE ||
-                    ret == WS_CHAN_RXD || ret == WS_REKEYING);
+                    ret == WS_CHAN_RXD || ret == WS_REKEYING ||
+                    ret == WS_WINDOW_FULL);
             if (ret != WS_SUCCESS) {
                 if (SFTP_FPUTS(args, "Error with rename\n") < 0) {
                     err_msg("fputs error");
