@@ -73,16 +73,6 @@ extern "C" {
 
 
 /*
- * Not ready for rsa-sha2-512 yet.
- */
-
-#undef WOLFSSH_NO_RSA_SHA2_512
-#ifndef WOLFSSH_YES_RSA_SHA2_512
-    #define WOLFSSH_NO_RSA_SHA2_512
-#endif
-
-
-/*
  * Check options set by wolfSSL and set wolfSSH options as appropriate. If
  * the derived options and any override options leave wolfSSH without
  * at least one algorithm to use, throw an error.
@@ -1011,11 +1001,14 @@ WOLFSSH_LOCAL int wolfSSH_FwdWorker(WOLFSSH*);
 
 
 typedef struct WS_KeySignature {
-    byte keySigId;
+    byte keyId;
+    byte sigId;
     word32 sigSz;
-    const char *name;
+    const char *keyName;
+    const char *sigName;
     void *heap;
-    word32 nameSz;
+    word32 keyNameSz;
+    word32 sigNameSz;
     union {
 #ifndef WOLFSSH_NO_RSA
         struct {

@@ -943,7 +943,7 @@ static const char cannedKeyAlgoNames[] =
     "rsa-sha2-256,"
 #endif/* WOLFSSH_NO_RSA_SHA2_256 */
 #ifndef WOLFSSH_NO_RSA_SHA2_512
-    "rsa-sha2-512",
+    "rsa-sha2-512,"
 #endif /* WOLFSSH_NO_RSA_SHA2_512 */
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
     "ecdsa-sha2-nistp256,"
@@ -1403,19 +1403,19 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
 void wolfSSH_KEY_clean(WS_KeySignature* key)
 {
     if (key != NULL) {
-        if (key->keySigId == ID_SSH_RSA) {
+        if (key->keyId == ID_SSH_RSA) {
 #ifndef WOLFSSH_NO_RSA
             wc_FreeRsaKey(&key->ks.rsa.key);
 #endif
         }
-        else if (key->keySigId == ID_ED25519) {
+        else if (key->keyId == ID_ED25519) {
 #ifndef WOLFSSH_NO_ED25519
             wc_ed25519_free(&key->ks.ed25519.key);
 #endif
         }
-        else if (key->keySigId == ID_ECDSA_SHA2_NISTP256 ||
-                 key->keySigId == ID_ECDSA_SHA2_NISTP384 ||
-                 key->keySigId == ID_ECDSA_SHA2_NISTP521) {
+        else if (key->keyId == ID_ECDSA_SHA2_NISTP256 ||
+                 key->keyId == ID_ECDSA_SHA2_NISTP384 ||
+                 key->keyId == ID_ECDSA_SHA2_NISTP521) {
 #ifndef WOLFSSH_NO_ECDSA
             wc_ecc_free(&key->ks.ecc.key);
 #endif
@@ -1456,11 +1456,11 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
     }
     else {
         WMEMSET(key, 0, sizeof(*key));
-        key->keySigId = ID_UNKNOWN;
+        key->keyId = ID_UNKNOWN;
 
 #ifndef WOLFSSH_NO_RSA
         /* Check RSA key */
-        if (key->keySigId == ID_UNKNOWN) {
+        if (key->keyId == ID_UNKNOWN) {
             idx = 0;
             ret = wc_InitRsaKey(&key->ks.rsa.key, NULL);
 
@@ -1476,14 +1476,14 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
 
                 /* If decode was successful, this is an RSA key. */
                 if (ret == 0) {
-                    key->keySigId = ID_SSH_RSA;
+                    key->keyId = ID_SSH_RSA;
                 }
             }
         }
 #endif /* WOLFSSH_NO_RSA */
 #ifndef WOLFSSH_NO_ECDSA
         /* Check ECDSA key */
-        if (key->keySigId == ID_UNKNOWN) {
+        if (key->keyId == ID_UNKNOWN) {
             idx = 0;
             ret = wc_ecc_init_ex(&key->ks.ecc.key, heap, INVALID_DEVID);
 
@@ -1501,13 +1501,13 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
                 if (ret == 0) {
                     switch (wc_ecc_get_curve_id(key->ks.ecc.key.idx)) {
                         case ECC_SECP256R1:
-                            key->keySigId = ID_ECDSA_SHA2_NISTP256;
+                            key->keyId = ID_ECDSA_SHA2_NISTP256;
                             break;
                         case ECC_SECP384R1:
-                            key->keySigId = ID_ECDSA_SHA2_NISTP384;
+                            key->keyId = ID_ECDSA_SHA2_NISTP384;
                             break;
                         case ECC_SECP521R1:
-                            key->keySigId = ID_ECDSA_SHA2_NISTP521;
+                            key->keyId = ID_ECDSA_SHA2_NISTP521;
                             break;
                     }
                 }
@@ -1515,7 +1515,7 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
         }
 #endif /* WOLFSSH_NO_ECDSA */
 #if !defined(WOLFSSH_NO_ED25519)
-        if (key->keySigId == ID_UNKNOWN) {
+        if (key->keyId == ID_UNKNOWN) {
             idx = 0;
             ret = wc_ed25519_init_ex(&key->ks.ed25519.key, heap, INVALID_DEVID);
 
@@ -1532,17 +1532,17 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
 
             /* If decode was successful, this is a Ed25519 key. */
             if (ret == 0)
-                key->keySigId = ID_ED25519;
+                key->keyId = ID_ED25519;
         }
 #endif /* WOLFSSH_NO_ED25519 */
 
-        if (key->keySigId == ID_UNKNOWN) {
+        if (key->keyId == ID_UNKNOWN) {
             ret = WS_UNIMPLEMENTED_E;
         }
         else {
             if (pkey != NULL)
                 *pkey = key;
-            ret = key->keySigId;
+            ret = key->keyId;
         }
 
         /* if not returning key then free it */
@@ -1916,7 +1916,7 @@ static int GetOpenSshKey(WS_KeySignature *key,
                             str, strSz, &subIdx);
                     if (ret == WS_SUCCESS) {
                         keyId = NameToId((const char*)subStr, subStrSz);
-                        key->keySigId = keyId;
+                        key->keyId = keyId;
                     }
                     if (ret == WS_SUCCESS) {
                         switch (keyId) {
@@ -2004,14 +2004,14 @@ int IdentifyOpenSshKey(const byte* in, word32 inSz, void* heap)
     else {
         WMEMSET(key, 0, sizeof(*key));
         key->heap = heap;
-        key->keySigId = ID_NONE;
+        key->keyId = ID_NONE;
 
         ret = GetOpenSshKey(key, in, inSz, &idx);
 
         if (ret == WS_SUCCESS) {
-            ret = key->keySigId;
+            ret = key->keyId;
         }
-        else if (key->keySigId == ID_UNKNOWN) {
+        else if (key->keyId == ID_UNKNOWN) {
             ret = WS_UNIMPLEMENTED_E;
         }
 
@@ -14044,7 +14044,7 @@ static int BuildUserAuthRequestRsa(WOLFSSH* ssh,
     begin = *idx;
 
     if (ret == WS_SUCCESS) {
-        hashId = HashForId(keySig->keySigId);
+        hashId = HashForId(keySig->sigId);
         if (hashId == WC_HASH_TYPE_NONE)
             ret = WS_INVALID_ALGO_ID;
     }
@@ -14102,7 +14102,7 @@ static int BuildUserAuthRequestRsa(WOLFSSH* ssh,
             byte encDigest[MAX_ENCODED_SIG_SZ];
             int encDigestSz;
 
-            switch (keySig->keySigId) {
+            switch (keySig->sigId) {
                 #ifndef WOLFSSH_NO_SSH_RSA_SHA1
                 case ID_SSH_RSA:
                     names = cannedKeyAlgoSshRsaNames;
@@ -14273,7 +14273,7 @@ static int BuildUserAuthRequestRsaCert(WOLFSSH* ssh,
 
     if (ret == WS_SUCCESS) {
         begin = *idx;
-        hashId = HashForId(keySig->keySigId);
+        hashId = HashForId(keySig->sigId);
         if (hashId == WC_HASH_TYPE_NONE)
             ret = WS_INVALID_ALGO_ID;
         WLOG(WS_LOG_DEBUG, "HashForId = %d, ret = %d", hashId, ret);
@@ -14508,7 +14508,7 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
     begin = *idx;
 
     if (ret == WS_SUCCESS) {
-        hashId = HashForId(keySig->keySigId);
+        hashId = HashForId(keySig->sigId);
         WMEMSET(digest, 0, sizeof(digest));
         digestSz = wc_HashGetDigestSize(hashId);
         checkDataSz = LENGTH_SZ + ssh->sessionIdSz + (begin - sigStartIdx);
@@ -14574,7 +14574,7 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
             rPad = (r_ptr[0] & 0x80) ? 1 : 0;
             sPad = (s_ptr[0] & 0x80) ? 1 : 0;
 
-            switch (keySig->keySigId) {
+            switch (keySig->sigId) {
                 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
                 case ID_ECDSA_SHA2_NISTP256:
                     names = cannedKeyAlgoEcc256Names;
@@ -14746,7 +14746,7 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
     begin = *idx;
 
     if (ret == WS_SUCCESS) {
-        hashId = HashForId(keySig->keySigId);
+        hashId = HashForId(keySig->sigId);
         WMEMSET(digest, 0, sizeof(digest));
         digestSz = wc_HashGetDigestSize(hashId);
         checkDataSz = LENGTH_SZ + ssh->sessionIdSz + (begin - sigStartIdx);
@@ -14817,7 +14817,7 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
             rPad = (r[0] & 0x80) ? 1 : 0;
             sPad = (s[0] & 0x80) ? 1 : 0;
 
-            switch (keySig->keySigId) {
+            switch (keySig->sigId) {
                 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
                 case ID_ECDSA_SHA2_NISTP256:
                     names = cannedKeyAlgoEcc256Names;
@@ -15080,13 +15080,17 @@ static int PrepareUserAuthRequestPublicKey(WOLFSSH* ssh, word32* payloadSz,
     }
 
     if (ret == WS_SUCCESS) {
-        byte keyId, matchId, algoId[4];
+        byte matchId, algoId[4];
         word32 algoIdSz = 0;
 
-        keyId = NameToId(
+        keySig->keyId = NameToId(
                 (const char*)authData->sf.publicKey.publicKeyType,
                 authData->sf.publicKey.publicKeyTypeSz);
-        if (keyId == ID_SSH_RSA) {
+        keySig->keyName = (const char*)authData->sf.publicKey.publicKeyType;
+        keySig->keyNameSz = authData->sf.publicKey.publicKeyTypeSz;
+        /* Typically a 1:1 match of key type to signature type. RSA uses
+         * a key type of ssh-rsa, but different signature types. */
+        if (keySig->keyId == ID_SSH_RSA) {
         #ifndef WOLFSSH_NO_RSA_SHA2_512
             algoId[algoIdSz++] = ID_RSA_SHA2_512;
         #endif
@@ -15099,7 +15103,7 @@ static int PrepareUserAuthRequestPublicKey(WOLFSSH* ssh, word32* payloadSz,
         #endif
         }
         else {
-            algoId[algoIdSz++] = keyId;
+            algoId[algoIdSz++] = keySig->keyId;
         }
 
         /* Is that in the peerSigId list? */
@@ -15108,9 +15112,9 @@ static int PrepareUserAuthRequestPublicKey(WOLFSSH* ssh, word32* payloadSz,
         if (matchId == ID_UNKNOWN) {
             ret = WS_MATCH_KEY_ALGO_E;
         }
-        keySig->keySigId = matchId;
-        keySig->name = IdToName(matchId);
-        keySig->nameSz = (word32)WSTRLEN(keySig->name);
+        keySig->sigId = matchId;
+        keySig->sigName = IdToName(matchId);
+        keySig->sigNameSz = (word32)WSTRLEN(keySig->sigName);
     }
 
     if (ret == WS_SUCCESS) {
@@ -15118,13 +15122,11 @@ static int PrepareUserAuthRequestPublicKey(WOLFSSH* ssh, word32* payloadSz,
          * the public key algorithm name, and the public key length.
          * For the X509 types, this accounts for ONLY one certificate.*/
         *payloadSz += BOOLEAN_SZ + (LENGTH_SZ * 2) +
-            keySig->nameSz + authData->sf.publicKey.publicKeySz;
+            keySig->sigNameSz + authData->sf.publicKey.publicKeySz;
 
-        switch (keySig->keySigId) {
+        switch (keySig->keyId) {
             #ifndef WOLFSSH_NO_RSA
             case ID_SSH_RSA:
-            case ID_RSA_SHA2_256:
-            case ID_RSA_SHA2_512:
                 ret = PrepareUserAuthRequestRsa(ssh,
                         payloadSz, authData, keySig);
                 break;
@@ -15190,22 +15192,21 @@ static int BuildUserAuthRequestPublicKey(WOLFSSH* ssh,
 
         if (pk->hasSignature) {
             WLOG(WS_LOG_DEBUG, "User signature type: %s",
-                    IdToName(keySig->keySigId));
+                    IdToName(keySig->sigId));
 
-            switch (keySig->keySigId) {
+            switch (keySig->sigId) {
                 #ifndef WOLFSSH_NO_RSA
                 case ID_SSH_RSA:
                 case ID_RSA_SHA2_256:
                 case ID_RSA_SHA2_512:
-                    c32toa(keySig->nameSz, output + begin);
+                    c32toa(keySig->sigNameSz, output + begin);
                     begin += LENGTH_SZ;
-                    WMEMCPY(output + begin, keySig->name, keySig->nameSz);
-                    begin += keySig->nameSz;
+                    WMEMCPY(output + begin, keySig->sigName, keySig->sigNameSz);
+                    begin += keySig->sigNameSz;
                     c32toa(pk->publicKeySz, output + begin);
                     begin += LENGTH_SZ;
                     WMEMCPY(output + begin, pk->publicKey, pk->publicKeySz);
                     begin += pk->publicKeySz;
-                    keySig->keySigId = ID_RSA_SHA2_256;
                     ret = BuildUserAuthRequestRsa(ssh, output, &begin,
                             authData, sigStart, sigStartIdx, keySig);
                     break;
@@ -15218,7 +15219,7 @@ static int BuildUserAuthRequestPublicKey(WOLFSSH* ssh,
                             pk->publicKeyType, pk->publicKeyTypeSz);
                     begin += pk->publicKeyTypeSz;
 
-                    ret = BuildRFC6187Info(ssh, keySig->keySigId,
+                    ret = BuildRFC6187Info(ssh, keySig->keyId,
                             pk->publicKey, pk->publicKeySz, NULL, 0,
                             output, &ssh->outputBuffer.bufferSz, &begin);
                     if (ret == WS_SUCCESS) {
@@ -15256,7 +15257,7 @@ static int BuildUserAuthRequestPublicKey(WOLFSSH* ssh,
                     begin += pk->publicKeyTypeSz;
 
                     /* build RFC6178 public key to send */
-                    ret = BuildRFC6187Info(ssh, keySig->keySigId,
+                    ret = BuildRFC6187Info(ssh, keySig->keyId,
                             pk->publicKey, pk->publicKeySz, NULL, 0,
                             output, &ssh->outputBuffer.bufferSz, &begin);
                     if (ret == WS_SUCCESS) {
@@ -15424,7 +15425,8 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
     WMEMSET(&authData, 0, sizeof(authData));
     if (ret == WS_SUCCESS) {
         WMEMSET(keySig_ptr, 0, sizeof(WS_KeySignature));
-        keySig_ptr->keySigId = ID_NONE;
+        keySig_ptr->keyId = ID_NONE;
+        keySig_ptr->sigId = ID_NONE;
         keySig_ptr->heap = ssh->ctx->heap;
 
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
