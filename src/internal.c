@@ -3575,12 +3575,12 @@ int GetSkip(const byte* buf, word32 len, word32* idx)
     int result;
     word32 sz;
 
-    result = GetUint32(&sz, buf, len, idx);
+    result = GetSize(&sz, buf, len, idx);
 
     if (result == WS_SUCCESS) {
         result = WS_BUFFER_E;
 
-        if (*idx < len && sz <= len - *idx) {
+        if (*idx <= len && sz <= len - *idx) {
             *idx += sz;
             result = WS_SUCCESS;
         }
@@ -6320,18 +6320,8 @@ static int DoKexDhGexGroup(WOLFSSH* ssh,
 
 static int DoIgnore(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
-    word32 dataSz;
-    word32 begin = *idx;
-
     WOLFSSH_UNUSED(ssh);
-    WOLFSSH_UNUSED(len);
-
-    ato32(buf + begin, &dataSz);
-    begin += LENGTH_SZ + dataSz;
-
-    *idx = begin;
-
-    return WS_SUCCESS;
+    return GetSkip(buf, len, idx);
 }
 
 static int DoRequestSuccess(WOLFSSH *ssh, byte *buf, word32 len, word32 *idx)
@@ -6533,56 +6523,36 @@ static int DoDisconnect(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 static int DoServiceRequest(WOLFSSH* ssh,
                             byte* buf, word32 len, word32* idx)
 {
-    word32 begin = *idx;
-    word32 nameSz;
-    char     serviceName[WOLFSSH_MAX_NAMESZ];
+    char name[WOLFSSH_MAX_NAMESZ+1];
+    word32 nameSz = sizeof(name);
+    int ret;
 
-    WOLFSSH_UNUSED(len);
+    ret = GetString(name, &nameSz, buf, len, idx);
 
-    ato32(buf + begin, &nameSz);
-    begin += LENGTH_SZ;
-
-    if (begin + nameSz > len || nameSz >= WOLFSSH_MAX_NAMESZ) {
-        return WS_BUFFER_E;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "Requesting service: %s", name);
+        ssh->clientState = CLIENT_USERAUTH_REQUEST_DONE;
     }
 
-    WMEMCPY(serviceName, buf + begin, nameSz);
-    begin += nameSz;
-    serviceName[nameSz] = 0;
-
-    *idx = begin;
-
-    WLOG(WS_LOG_DEBUG, "Requesting service: %s", serviceName);
-    ssh->clientState = CLIENT_USERAUTH_REQUEST_DONE;
-
-    return WS_SUCCESS;
+    return ret;
 }
 
 
 static int DoServiceAccept(WOLFSSH* ssh,
                            byte* buf, word32 len, word32* idx)
 {
-    word32 begin = *idx;
-    word32 nameSz;
-    char     serviceName[WOLFSSH_MAX_NAMESZ];
+    char name[WOLFSSH_MAX_NAMESZ+1];
+    word32 nameSz = sizeof(name);
+    int ret;
 
-    ato32(buf + begin, &nameSz);
-    begin += LENGTH_SZ;
+    ret = GetString(name, &nameSz, buf, len, idx);
 
-    if (begin + nameSz > len || nameSz >= WOLFSSH_MAX_NAMESZ) {
-        return WS_BUFFER_E;
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "Accepted service: %s", name);
+        ssh->serverState = SERVER_USERAUTH_REQUEST_DONE;
     }
 
-    WMEMCPY(serviceName, buf + begin, nameSz);
-    begin += nameSz;
-    serviceName[nameSz] = 0;
-
-    *idx = begin;
-
-    WLOG(WS_LOG_DEBUG, "Accepted service: %s", serviceName);
-    ssh->serverState = SERVER_USERAUTH_REQUEST_DONE;
-
-    return WS_SUCCESS;
+    return ret;
 }
 
 
@@ -6900,20 +6870,14 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
     }
 
     if (ret == WS_SUCCESS)
-        ret = GetUint32(&pw->passwordSz, buf, len, &begin);
+        ret = GetStringRef(&pw->passwordSz, &pw->password, buf, len, &begin);
 
     if (ret == WS_SUCCESS) {
-        pw->password = buf + begin;
-        begin += pw->passwordSz;
-
         if (pw->hasNewPassword) {
             /* Skip the password change. Maybe error out since we aren't
              * supporting password changes at this time. */
-            ret = GetUint32(&pw->newPasswordSz, buf, len, &begin);
-            if (ret == WS_SUCCESS) {
-                pw->newPassword = buf + begin;
-                begin += pw->newPasswordSz;
-            }
+            ret = GetStringRef(&pw->newPasswordSz, &pw->newPassword,
+                    buf, len, &begin);
         }
         else {
             pw->newPassword = NULL;
@@ -14436,19 +14400,32 @@ static int PrepareUserAuthRequestEcc(WOLFSSH* ssh, word32* payloadSz,
         word32 idx = 0;
         #ifdef WOLFSSH_AGENT
         if (ssh->agentEnabled) {
-            word32 sz;
-            const byte* c = (const byte*)authData->sf.publicKey.publicKey;
+            const byte* publicKey = NULL;
+            word32 publicKeySz;
 
-            ato32(c + idx, &sz);
-            idx += LENGTH_SZ + sz;
-            ato32(c + idx, &sz);
-            idx += LENGTH_SZ + sz;
-            ato32(c + idx, &sz);
-            idx += LENGTH_SZ;
-            c += idx;
-            idx = 0;
-
-            ret = wc_ecc_import_x963(c, sz, &keySig->ks.ecc.key);
+            ret = GetSkip((const byte*)authData->sf.publicKey.publicKey,
+                    authData->sf.publicKey.publicKeySz, &idx);
+            if (ret == WS_SUCCESS) {
+                ret = GetSkip((const byte*)authData->sf.publicKey.publicKey,
+                        authData->sf.publicKey.publicKeySz, &idx);
+            }
+            if (ret == WS_SUCCESS) {
+                ret = GetStringRef(&publicKeySz, &publicKey,
+                        (const byte*)authData->sf.publicKey.publicKey,
+                        authData->sf.publicKey.publicKeySz, &idx);
+            }
+            if (ret == WS_SUCCESS) {
+                ret = wc_ecc_import_x963(publicKey, publicKeySz,
+                        &keySig->ks.ecc.key);
+            }
+            if (ret != 0) {
+                WLOG(WS_LOG_ERROR,
+                        "wc_ecc_import_x963 failed, ret = %d", ret);
+                ret = WS_ECC_E;
+            }
+            else {
+                ret = WS_SUCCESS;
+            }
         }
         else
         #endif
