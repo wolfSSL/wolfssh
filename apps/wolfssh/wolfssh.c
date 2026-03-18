@@ -272,22 +272,70 @@ static int sendCurrentWindowSize(thread_args* args)
 
 #ifndef _MSC_VER
 
-#if (defined(__OSX__) || defined(__APPLE__))
-#include <dispatch/dispatch.h>
-dispatch_semaphore_t windowSem;
-#else
+#include <errno.h>
+#include <fcntl.h>
 #include <semaphore.h>
-static sem_t windowSem;
-#endif
+#include <stdio.h>
+#include <unistd.h>
+
+typedef struct {
+    sem_t* s;
+    char name[32];
+} WOLFSSH_SEMAPHORE;
+
+static inline
+int wolfSSH_SEMAPHORE_Init(WOLFSSH_SEMAPHORE* s, unsigned int n)
+{
+    if (s != NULL) {
+        snprintf(s->name, sizeof(s->name), "/wolfssh_winch_%d", (int)getpid());
+        s->s = sem_open(s->name, O_CREAT | O_EXCL | O_RDWR, 0600, n);
+        if (s->s == SEM_FAILED && errno == EEXIST) {
+            /* named semaphore already exists, unlink the name and
+             * try to open it one more time. */
+            if (sem_unlink(s->name) == 0) {
+                s->s = sem_open(s->name, O_CREAT | O_RDWR, 0600, n);
+            }
+        }
+    }
+    return (s != NULL && s->s != SEM_FAILED);
+}
+
+static inline
+void wolfSSH_SEMAPHORE_Release(WOLFSSH_SEMAPHORE* s)
+{
+    if (s != NULL && s->s != NULL && s->s != SEM_FAILED) {
+        sem_close(s->s);
+        sem_unlink(s->name);
+        s->s = NULL;
+    }
+}
+
+static inline
+int wolfSSH_SEMAPHORE_Wait(WOLFSSH_SEMAPHORE* s)
+{
+    int ret = -1;
+    if (s != NULL && s->s != NULL && s->s != SEM_FAILED) {
+        do {
+            ret = sem_wait(s->s);
+        } while (ret == -1 && errno == EINTR);
+    }
+    return (ret == 0);
+}
+
+static inline
+void wolfSSH_SEMAPHORE_Post(WOLFSSH_SEMAPHORE* s)
+{
+    if (s != NULL && s->s != NULL && s->s != SEM_FAILED) {
+        sem_post(s->s);
+    }
+}
+
+static WOLFSSH_SEMAPHORE windowSem;
 
 /* capture window change signals */
 static void WindowChangeSignal(int sig)
 {
-#if (defined(__OSX__) || defined(__APPLE__))
-    dispatch_semaphore_signal(windowSem);
-#else
-    sem_post(&windowSem);
-#endif
+    wolfSSH_SEMAPHORE_Post(&windowSem);
     (void)sig;
 }
 
@@ -299,11 +347,9 @@ static THREAD_RET windowMonitor(void* in)
 
     args = (thread_args*)in;
     do {
-    #if (defined(__OSX__) || defined(__APPLE__))
-        dispatch_semaphore_wait(windowSem, DISPATCH_TIME_FOREVER);
-    #else
-        sem_wait(&windowSem);
-    #endif
+        if (!wolfSSH_SEMAPHORE_Wait(&windowSem)) {
+            break;
+        }
         if (args->quit) {
             break;
         }
@@ -1060,11 +1106,9 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
         arg.readError = 0;
 #ifdef WOLFSSH_TERM
         arg.quit = 0;
-    #if (defined(__OSX__) || defined(__APPLE__))
-        windowSem = dispatch_semaphore_create(0);
-    #else
-        sem_init(&windowSem, 0, 0);
-    #endif
+        if (!wolfSSH_SEMAPHORE_Init(&windowSem, 0)) {
+            err_sys("Couldn't initialize window semaphore.");
+        }
 
         if (config.command) {
             int err;
@@ -1087,21 +1131,14 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
 #ifdef WOLFSSH_TERM
         /* Wake the windowMonitor thread so it can exit. */
         arg.quit = 1;
-    #if (defined(__OSX__) || defined(__APPLE__))
-        dispatch_semaphore_signal(windowSem);
-    #else
-        sem_post(&windowSem);
-    #endif
+        signal(SIGWINCH, SIG_DFL);
+        wolfSSH_SEMAPHORE_Post(&windowSem);
         pthread_join(thread[0], NULL);
 #endif /* WOLFSSH_TERM */
         pthread_cancel(thread[1]);
         pthread_join(thread[1], NULL);
 #ifdef WOLFSSH_TERM
-    #if (defined(__OSX__) || defined(__APPLE__))
-        dispatch_release(windowSem);
-    #else
-        sem_destroy(&windowSem);
-    #endif
+        wolfSSH_SEMAPHORE_Release(&windowSem);
 #endif /* WOLFSSH_TERM */
         ioErr = arg.readError;
     #elif defined(_MSC_VER)
