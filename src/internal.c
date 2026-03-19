@@ -5335,7 +5335,7 @@ static void FreePubKey(struct wolfSSH_sigKeyBlock *p)
         }
         else if (p->useEd25519) {
         #ifndef WOLFSSH_NO_ED25519
-            wc_ed25519_free(p->sk.ed25519.key);
+            wc_ed25519_free(&p->sk.ed25519.key);
         #endif
         }
         p->keyAllocated = 0;
