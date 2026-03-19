@@ -5014,8 +5014,13 @@ static int ParseEd25519PubKey(WOLFSSH *ssh,
     if (ret == WS_SUCCESS) {
         ret = wc_ed25519_import_public(encA, encASz,
                 &sigKeyBlock_ptr->sk.ed25519.key);
-        if (ret != 0)
-            ret = WS_ED25519_E;
+    }
+
+    if (ret == 0) {
+        sigKeyBlock_ptr->keyAllocated = 1;
+    }
+    else {
+        ret = WS_ED25519_E;
     }
     return ret;
 }
@@ -5326,6 +5331,11 @@ static void FreePubKey(struct wolfSSH_sigKeyBlock *p)
         else if (p->useEcc) {
         #ifndef WOLFSSH_NO_ECDSA
             wc_ecc_free(&p->sk.ecc.key);
+        #endif
+        }
+        else if (p->useEd25519) {
+        #ifndef WOLFSSH_NO_ED25519
+            wc_ed25519_free(p->sk.ed25519.key);
         #endif
         }
         p->keyAllocated = 0;
