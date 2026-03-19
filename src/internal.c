@@ -9098,32 +9098,32 @@ int wolfSSH_DoModes(const byte* modes, word32 modesSz, int fd)
 
             /* Output Modes (c_oflag) */
             case WOLFSSH_OPOST:
-                TTY_SET_FLAG(term.c_lflag, OPOST, arg);
+                TTY_SET_FLAG(term.c_oflag, OPOST, arg);
                 break;
             case WOLFSSH_OLCUC:
                 #ifdef OLCUC
-                    TTY_SET_FLAG(term.c_lflag, OLCUC, arg);
+                    TTY_SET_FLAG(term.c_oflag, OLCUC, arg);
                 #endif
                 break;
             case WOLFSSH_ONLCR:
-                #ifdef ONCLR
-                    TTY_SET_FLAG(term.c_lflag, ONLCR, arg);
+                #ifdef ONLCR
+                    TTY_SET_FLAG(term.c_oflag, ONLCR, arg);
                 #endif
                 break;
             case WOLFSSH_OCRNL:
                 /* keep as default, adjusting removes echo over shell */
                 #ifdef OCRNL
-                    /* TTY_SET_FLAG(term.c_lflag, OCRNL, arg); */
+                    /* TTY_SET_FLAG(term.c_oflag, OCRNL, arg); */
                 #endif
                 break;
             case WOLFSSH_ONOCR:
                 #ifdef ONOCR
-                    TTY_SET_FLAG(term.c_lflag, ONOCR, arg);
+                    TTY_SET_FLAG(term.c_oflag, ONOCR, arg);
                 #endif
                 break;
             case WOLFSSH_ONLRET:
                 #ifdef ONLRET
-                    TTY_SET_FLAG(term.c_lflag, ONLRET, arg);
+                    TTY_SET_FLAG(term.c_oflag, ONLRET, arg);
                 #endif
                 break;
 
