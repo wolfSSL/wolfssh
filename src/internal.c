@@ -5014,13 +5014,13 @@ static int ParseEd25519PubKey(WOLFSSH *ssh,
     if (ret == WS_SUCCESS) {
         ret = wc_ed25519_import_public(encA, encASz,
                 &sigKeyBlock_ptr->sk.ed25519.key);
+        if (ret != 0) {
+            ret = WS_ED25519_E;
+        }
     }
 
     if (ret == 0) {
         sigKeyBlock_ptr->keyAllocated = 1;
-    }
-    else {
-        ret = WS_ED25519_E;
     }
     return ret;
 }
