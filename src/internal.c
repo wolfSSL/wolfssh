@@ -14090,10 +14090,12 @@ static int BuildUserAuthRequestRsa(WOLFSSH* ssh,
         if (ret == WS_SUCCESS) {
             WMEMSET(digest, 0, sizeof(digest));
             ret = wc_HashInit(&hash, hashId);
-            if (ret == WS_SUCCESS)
+            if (ret == WS_SUCCESS) {
                 ret = HashUpdate(&hash, hashId, checkData, checkDataSz);
-            if (ret == WS_SUCCESS)
-                ret = wc_HashFinal(&hash, hashId, digest);
+                if (ret == WS_SUCCESS)
+                    ret = wc_HashFinal(&hash, hashId, digest);
+                wc_HashFree(&hash, hashId);
+            }
         }
 
         if (ret == WS_SUCCESS) {
@@ -14324,11 +14326,12 @@ static int BuildUserAuthRequestRsaCert(WOLFSSH* ssh,
 
             WMEMSET(digest, 0, sizeof(digest));
             ret = wc_HashInit(&hash, hashId);
-            if (ret == WS_SUCCESS)
+            if (ret == WS_SUCCESS) {
                 ret = HashUpdate(&hash, hashId, checkData, checkDataSz);
-            if (ret == WS_SUCCESS)
-                ret = wc_HashFinal(&hash, hashId, digest);
-
+                if (ret == WS_SUCCESS)
+                    ret = wc_HashFinal(&hash, hashId, digest);
+                wc_HashFree(&hash, hashId);
+            }
             if (ret == WS_SUCCESS) {
                 c32toa(keySig->sigSz + 7 + LENGTH_SZ * 2, output + begin);
                 begin += LENGTH_SZ;
@@ -14547,16 +14550,18 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
         if (ret == WS_SUCCESS) {
             WLOG(WS_LOG_INFO, "Signing hash with ECDSA.");
             ret = wc_HashInit(&hash, hashId);
-            if (ret == WS_SUCCESS)
+            if (ret == WS_SUCCESS) {
                 ret = HashUpdate(&hash, hashId, checkData, checkDataSz);
-            if (ret == WS_SUCCESS)
-                ret = wc_HashFinal(&hash, hashId, digest);
-            if (ret == WS_SUCCESS)
-                ret = wc_ecc_sign_hash(digest, digestSz, sig_ptr, &sigSz,
-                        ssh->rng, &keySig->ks.ecc.key);
-            if (ret != WS_SUCCESS) {
-                WLOG(WS_LOG_DEBUG, "SUAR: Bad ECC Sign");
-                ret = WS_ECC_E;
+                if (ret == WS_SUCCESS)
+                    ret = wc_HashFinal(&hash, hashId, digest);
+                if (ret == WS_SUCCESS)
+                    ret = wc_ecc_sign_hash(digest, digestSz, sig_ptr, &sigSz,
+                            ssh->rng, &keySig->ks.ecc.key);
+                if (ret != WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, "SUAR: Bad ECC Sign");
+                    ret = WS_ECC_E;
+                }
+                wc_HashFree(&hash, hashId);
             }
         }
 
@@ -14787,16 +14792,18 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
         if (ret == WS_SUCCESS) {
             WLOG(WS_LOG_INFO, "Signing hash with ECDSA cert.");
             ret = wc_HashInit(&hash, hashId);
-            if (ret == WS_SUCCESS)
+            if (ret == WS_SUCCESS) {
                 ret = HashUpdate(&hash, hashId, checkData, checkDataSz);
-            if (ret == WS_SUCCESS)
-                ret = wc_HashFinal(&hash, hashId, digest);
-            if (ret == WS_SUCCESS)
-                ret = wc_ecc_sign_hash(digest, digestSz, sig, &sigSz,
-                        ssh->rng, &keySig->ks.ecc.key);
-            if (ret != WS_SUCCESS) {
-                WLOG(WS_LOG_DEBUG, "SUAR: Bad ECC Cert Sign");
-                ret = WS_ECC_E;
+                if (ret == WS_SUCCESS)
+                    ret = wc_HashFinal(&hash, hashId, digest);
+                if (ret == WS_SUCCESS)
+                    ret = wc_ecc_sign_hash(digest, digestSz, sig, &sigSz,
+                            ssh->rng, &keySig->ks.ecc.key);
+                if (ret != WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, "SUAR: Bad ECC Cert Sign");
+                    ret = WS_ECC_E;
+                }
+                wc_HashFree(&hash, hashId);
             }
         }
 
