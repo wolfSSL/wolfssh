@@ -946,7 +946,7 @@ static int SetupUserTokenWin(const char* usr,
 
             /* write domain name after the user name in buffer */
             l->DomainName.Length = (USHORT)(wcslen(dmW) * sizeof(wchar_t));
-            l->DomainName.MaximumLength = l->UserPrincipalName.Length;
+            l->DomainName.MaximumLength = l->DomainName.Length;
             l->DomainName.Buffer = (WCHAR*)((byte*)(l->UserPrincipalName.Buffer) + l->UserPrincipalName.Length);
             memcpy_s(l->DomainName.Buffer, l->DomainName.Length, dmW, l->DomainName.Length);
         }
