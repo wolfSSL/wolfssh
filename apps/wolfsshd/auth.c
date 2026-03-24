@@ -787,9 +787,9 @@ static int CheckPasswordWIN(const char* usr, const byte* pw, word32 pwSz, WOLFSS
 
     ret = WSSHD_AUTH_SUCCESS;
 
-    usrWSz = WSTRLEN(usr) * sizeof(WCHAR);
+    usrWSz = WSTRLEN(usr);
 
-    usrW = (WCHAR*)WMALLOC((usrWSz * sizeof(WCHAR)) + sizeof(WCHAR), authCtx->heap, DYNTYPE_SSHD);
+    usrW = (WCHAR*)WMALLOC((usrWSz + 1) * sizeof(WCHAR), authCtx->heap, DYNTYPE_SSHD);
     if (usrW == NULL) {
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Ran out of memory");
         ret = WSSHD_AUTH_FAILURE;
@@ -797,7 +797,7 @@ static int CheckPasswordWIN(const char* usr, const byte* pw, word32 pwSz, WOLFSS
 
     if (ret == WSSHD_AUTH_SUCCESS) {
         size_t wr = 0;
-        if (mbstowcs_s(&wr, usrW, usrWSz, usr, usrWSz-1) != 0) {
+        if (mbstowcs_s(&wr, usrW, usrWSz + 1, usr, usrWSz) != 0) {
             ret = WSSHD_AUTH_FAILURE;
         }
     }
