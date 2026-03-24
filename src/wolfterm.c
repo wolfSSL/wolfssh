@@ -181,7 +181,7 @@ static void doDisplayAttributes(WOLFSSH* ssh, WOLFSSH_HANDLE handle, word32* arg
                 break;
 
             case 30: /* set black foreground */
-                SetConsoleTextAttribute(handle, (atr & ~(WS_MASK_RBGBG)));
+                SetConsoleTextAttribute(handle, (atr & ~(WS_MASK_RBGFG)));
                 break;
 
             case 31: /* red foreground */

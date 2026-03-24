@@ -267,7 +267,7 @@ void* WS_CreateFileA(const char* fileName, unsigned long desiredAccess,
 void* WS_FindFirstFileA(const char* fileName,
         char* realFileName, size_t realFileNameSz, int* isDir, void* heap)
 {
-    HANDLE findHandle = NULL;
+    HANDLE findHandle = INVALID_HANDLE_VALUE;
     WIN32_FIND_DATAW findFileData;
     wchar_t* unicodeFileName;
     size_t unicodeFileNameSz = 0;
@@ -295,12 +295,14 @@ void* WS_FindFirstFileA(const char* fileName,
 
     WFREE(unicodeFileName, heap, PORT_DYNTYPE_STRING);
 
-    error = wcstombs_s(NULL, realFileName, realFileNameSz,
-        findFileData.cFileName, realFileNameSz);
+    if (findHandle != INVALID_HANDLE_VALUE) {
+        error = wcstombs_s(NULL, realFileName, realFileNameSz,
+            findFileData.cFileName, realFileNameSz);
 
-    if (isDir != NULL) {
-        *isDir =
-            (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        if (isDir != NULL) {
+            *isDir =
+                (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        }
     }
 
     return (void*)findHandle;

@@ -4880,16 +4880,14 @@ static int ParseRSAPubKey(WOLFSSH *ssh,
     byte* n;
     word32 nSz;
     word32 pubKeyIdx = 0;
-    word32 scratch;
 
     ret = wc_InitRsaKey(&sigKeyBlock_ptr->sk.rsa.key, ssh->ctx->heap);
     if (ret != 0)
         ret = WS_RSA_E;
-    if (ret == 0)
-        ret = GetUint32(&scratch, pubKey, pubKeySz, &pubKeyIdx);
-    /* This is the algo name. */
+    /* Skip the algo name. */
+    if (ret == WS_SUCCESS)
+        ret = GetSkip(pubKey, pubKeySz, &pubKeyIdx);
     if (ret == WS_SUCCESS) {
-        pubKeyIdx += scratch;
         ret = GetUint32(&eSz, pubKey, pubKeySz, &pubKeyIdx);
         if (ret == WS_SUCCESS && eSz > pubKeySz - pubKeyIdx)
             ret = WS_BUFFER_E;
@@ -4932,7 +4930,6 @@ static int ParseECCPubKey(WOLFSSH *ssh,
     const byte* q;
     word32 qSz, pubKeyIdx = 0;
     int primeId = 0;
-    word32 scratch;
 
     ret = wc_ecc_init_ex(&sigKeyBlock_ptr->sk.ecc.key, ssh->ctx->heap,
                                  INVALID_DEVID);
@@ -4958,12 +4955,10 @@ static int ParseECCPubKey(WOLFSSH *ssh,
 
     /* Skip the curve name since we're getting it from the algo. */
     if (ret == WS_SUCCESS)
-        ret = GetUint32(&scratch, pubKey, pubKeySz, &pubKeyIdx);
+        ret = GetSkip(pubKey, pubKeySz, &pubKeyIdx);
 
-    if (ret == WS_SUCCESS) {
-        pubKeyIdx += scratch;
+    if (ret == WS_SUCCESS)
         ret = GetStringRef(&qSz, &q, pubKey, pubKeySz, &pubKeyIdx);
-    }
 
     if (ret == WS_SUCCESS) {
         ret = wc_ecc_import_x963_ex(q, qSz,
@@ -9407,7 +9402,7 @@ static int DoChannelFailure(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
     WLOG(WS_LOG_DEBUG, "Entering DoChannelFailure()");
 
-    if (ssh == NULL || buf == NULL || len != 0 || idx == NULL)
+    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS)
