@@ -685,7 +685,8 @@ typedef struct HandshakeInfo {
 #ifndef WOLFSSH_NO_ECDH
         ecc_key ecc;
 #endif
-#ifndef WOLFSSH_NO_CURVE25519_SHA256
+#if !defined(WOLFSSH_NO_CURVE25519_SHA256) || \
+    !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
         curve25519_key curve25519;
 #endif
     } privKey;
