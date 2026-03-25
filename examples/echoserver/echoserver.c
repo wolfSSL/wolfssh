@@ -41,12 +41,14 @@
 #include <wolfssh/internal.h>
 #include <wolfssh/wolfsftp.h>
 #include <wolfssh/agent.h>
+#include <wolfssh/certman.h>
 #include <wolfssh/port.h>
 #include <wolfssh/test.h>
 #include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfssl/wolfcrypt/logging.h>
 
 #include "examples/echoserver/echoserver.h"
+#include "examples/client/common.h"
 
 #if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
     #include <pthread.h>
@@ -2958,63 +2960,22 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
 #if defined(USE_WINDOWS_API) && defined(WOLFSSH_CERTS)
         if (certStoreSpec != NULL) {
-            /* Load host key from Windows certificate store: store:subject:flags */
-            char* specCopy = NULL;
-            char* storeName = NULL;
-            char* subjectName = NULL;
-            char* flagsStr = NULL;
+            /* Load host key from Windows certificate store */
             wchar_t* wStoreName = NULL;
             wchar_t* wSubjectName = NULL;
-            DWORD dwFlags = CERT_SYSTEM_STORE_CURRENT_USER;
+            DWORD dwFlags = 0;
             int ret;
-            size_t specLen = WSTRLEN(certStoreSpec) + 1;
 
-            specCopy = (char*)WMALLOC(specLen, NULL, 0);
-            if (specCopy == NULL) {
-                ES_ERROR("Memory allocation failed for cert store spec\n");
-            }
-            WSTRNCPY(specCopy, certStoreSpec, specLen);
-
-            storeName = specCopy;
-            subjectName = WSTRCHR(storeName, ':');
-            if (subjectName != NULL) {
-                *subjectName++ = '\0';
-                flagsStr = WSTRCHR(subjectName, ':');
-                if (flagsStr != NULL) {
-                    *flagsStr++ = '\0';
-                    if (WSTRCMP(flagsStr, "CURRENT_USER") == 0) {
-                        dwFlags = CERT_SYSTEM_STORE_CURRENT_USER;
-                    } else if (WSTRCMP(flagsStr, "LOCAL_MACHINE") == 0) {
-                        dwFlags = CERT_SYSTEM_STORE_LOCAL_MACHINE;
-                    } else {
-                        dwFlags = (DWORD)atoi(flagsStr);
-                    }
-                }
-            }
-            if (storeName == NULL || subjectName == NULL) {
-                WFREE(specCopy, NULL, 0);
+            ret = wolfSSH_ParseCertStoreSpec(certStoreSpec, &wStoreName,
+                    &wSubjectName, &dwFlags, NULL);
+            if (ret != WS_SUCCESS) {
                 ES_ERROR("Invalid cert store spec. Use: store:subject:flags\n");
             }
 
-            {
-                int wStoreNameLen = MultiByteToWideChar(CP_UTF8, 0, storeName, -1, NULL, 0);
-                int wSubjectNameLen = MultiByteToWideChar(CP_UTF8, 0, subjectName, -1, NULL, 0);
-                wStoreName = (wchar_t*)WMALLOC(wStoreNameLen * sizeof(wchar_t), NULL, 0);
-                wSubjectName = (wchar_t*)WMALLOC(wSubjectNameLen * sizeof(wchar_t), NULL, 0);
-                if (wStoreName == NULL || wSubjectName == NULL) {
-                    if (wStoreName != NULL) WFREE(wStoreName, NULL, 0);
-                    if (wSubjectName != NULL) WFREE(wSubjectName, NULL, 0);
-                    WFREE(specCopy, NULL, 0);
-                    ES_ERROR("Memory allocation failed for cert store wide strings\n");
-                }
-                MultiByteToWideChar(CP_UTF8, 0, storeName, -1, wStoreName, wStoreNameLen);
-                MultiByteToWideChar(CP_UTF8, 0, subjectName, -1, wSubjectName, wSubjectNameLen);
-            }
-
-            ret = wolfSSH_CTX_UsePrivateKey_fromStore(ctx, wStoreName, dwFlags, wSubjectName);
-            WFREE(specCopy, NULL, 0);
-            WFREE(wStoreName, NULL, 0);
-            WFREE(wSubjectName, NULL, 0);
+            ret = wolfSSH_CTX_UsePrivateKey_fromStore(ctx, wStoreName,
+                    dwFlags, wSubjectName);
+            WFREE(wStoreName, NULL, DYNTYPE_TEMP);
+            WFREE(wSubjectName, NULL, DYNTYPE_TEMP);
             if (ret != WS_SUCCESS) {
                 ES_ERROR("Couldn't load host key from certificate store.\n");
             }

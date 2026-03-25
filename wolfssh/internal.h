@@ -1009,9 +1009,6 @@ WOLFSSH_LOCAL void ChannelDelete(WOLFSSH_CHANNEL*, void*);
 WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelFind(WOLFSSH*, word32, byte);
 WOLFSSH_LOCAL int ChannelRemove(WOLFSSH*, word32, byte);
 WOLFSSH_LOCAL int ChannelPutData(WOLFSSH_CHANNEL*, byte*, word32);
-WOLFSSH_LOCAL int IdentifyAsn1Key(const byte* in, word32 inSz,
-        int isPrivate, void* heap);
-WOLFSSH_LOCAL int IdentifyOpenSshKey(const byte* in, word32 inSz, void* heap);
 WOLFSSH_LOCAL void RefreshPublicKeyAlgo(WOLFSSH_CTX* ctx);
 WOLFSSH_LOCAL int wolfSSH_ProcessBuffer(WOLFSSH_CTX*,
                                         const byte*, word32,
@@ -1457,16 +1454,6 @@ WOLFSSH_LOCAL int wolfSSH_RsaVerify(
         RsaKey* key, void* heap, const char* loc);
 #endif
 
-/* Signing abstraction for MS Certificate Store support */
-#ifdef USE_WINDOWS_API
-#ifdef WOLFSSH_CERTS
-WOLFSSH_LOCAL int wolfSSH_SignWithKey(WOLFSSH* ssh,
-        const WOLFSSH_PVT_KEY* pvtKey,
-        const byte* digest, word32 digestSz,
-        enum wc_HashType hashId,
-        byte* sig, word32* sigSz);
-#endif /* WOLFSSH_CERTS */
-#endif /* USE_WINDOWS_API */
 WOLFSSH_LOCAL void DumpOctetString(const byte*, word32);
 WOLFSSH_LOCAL int wolfSSH_oct2dec(WOLFSSH* ssh, byte* oct, word32 octSz);
 WOLFSSH_LOCAL void AddAssign64(word32*, word32);

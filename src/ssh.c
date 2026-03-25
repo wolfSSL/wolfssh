@@ -2499,7 +2499,6 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
     int ret = WS_SUCCESS;
     HCERTSTORE hStore = NULL;
     PCCERT_CONTEXT pCertContext = NULL;
-    PCCERT_CONTEXT pPrevCertContext = NULL;
     word32 keyIdx = 0;
     byte keyId = ID_NONE;
     void* heap = NULL;
@@ -2514,7 +2513,7 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
     heap = ctx->heap;
 
     /* Open the certificate store */
-    hStore = CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, NULL,
+    hStore = CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, (HCRYPTPROV_LEGACY)0,
             dwFlags | CERT_STORE_OPEN_EXISTING_FLAG, storeName);
     if (hStore == NULL) {
         DWORD dwErr = GetLastError();
@@ -2564,9 +2563,41 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
             strcmp(pPubKeyInfo->Algorithm.pszObjId, szOID_RSA_ENCRYPT) == 0) {
             keyId = ID_SSH_RSA;
         } else if (strcmp(pPubKeyInfo->Algorithm.pszObjId, szOID_ECC_PUBLIC_KEY) == 0) {
-            /* For ECC, we need to check the curve from the parameters */
-            /* Default to P256, could be enhanced to detect P384/P521 */
-            keyId = ID_ECDSA_SHA2_NISTP256;
+            /* Decode the curve OID from the algorithm parameters to select
+             * the correct ECDSA key type.  The Parameters field contains
+             * a DER-encoded OID identifying the named curve. */
+            char* curveOid = NULL;
+            DWORD curveOidSz = 0;
+
+            if (pPubKeyInfo->Algorithm.Parameters.cbData > 0 &&
+                CryptDecodeObjectEx(X509_ASN_ENCODING,
+                        X509_OBJECT_IDENTIFIER,
+                        pPubKeyInfo->Algorithm.Parameters.pbData,
+                        pPubKeyInfo->Algorithm.Parameters.cbData,
+                        CRYPT_DECODE_ALLOC_FLAG, NULL,
+                        &curveOid, &curveOidSz)) {
+                /* Compare against well-known curve OIDs */
+                if (strcmp(curveOid, "1.2.840.10045.3.1.7") == 0) {
+                    keyId = ID_ECDSA_SHA2_NISTP256;
+                } else if (strcmp(curveOid, "1.3.132.0.34") == 0) {
+                    keyId = ID_ECDSA_SHA2_NISTP384;
+                } else if (strcmp(curveOid, "1.3.132.0.35") == 0) {
+                    keyId = ID_ECDSA_SHA2_NISTP521;
+                } else {
+                    WLOG(WS_LOG_DEBUG,
+                        "wolfSSH_CTX_UsePrivateKey_fromStore: "
+                        "Unrecognized ECC curve OID: %s, "
+                        "defaulting to P-256", curveOid);
+                    keyId = ID_ECDSA_SHA2_NISTP256;
+                }
+                LocalFree(curveOid);
+            } else {
+                WLOG(WS_LOG_DEBUG,
+                    "wolfSSH_CTX_UsePrivateKey_fromStore: "
+                    "Failed to decode ECC curve parameters, "
+                    "defaulting to P-256");
+                keyId = ID_ECDSA_SHA2_NISTP256;
+            }
         } else {
             CertFreeCertificateContext(pCertContext);
             CertCloseStore(hStore, 0);
@@ -2606,7 +2637,7 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
     /* Set up the private key structure */
     ctx->privateKey[keyIdx].publicKeyFmt = keyId;
     ctx->privateKey[keyIdx].useCertStore = 1;
-    ctx->privateKey[keyIdx].certStoreContext = pCertContext;
+    ctx->privateKey[keyIdx].certStoreContext = (void*)pCertContext;
     
     /* Store the store name and subject name */
     {
@@ -2624,8 +2655,8 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
             return WS_MEMORY_E;
         }
         
-        wcscpy(storeNameCopy, storeName);
-        wcscpy(subjectNameCopy, subjectName);
+        WMEMCPY(storeNameCopy, storeName, storeNameLen * sizeof(wchar_t));
+        WMEMCPY(subjectNameCopy, subjectName, subjectNameLen * sizeof(wchar_t));
         ctx->privateKey[keyIdx].storeName = storeNameCopy;
         ctx->privateKey[keyIdx].subjectName = subjectNameCopy;
         ctx->privateKey[keyIdx].dwFlags = dwFlags;
@@ -2670,6 +2701,7 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
             WFREE((void*)ctx->privateKey[keyIdx].subjectName, heap, DYNTYPE_STRING);
             WFREE(ctx->privateKey[keyIdx].cert, heap, DYNTYPE_CERT);
             ctx->privateKey[keyIdx].useCertStore = 0;
+            CertFreeCertificateContext(pCertContext);
             ctx->privateKey[keyIdx].certStoreContext = NULL;
             ctx->privateKey[keyIdx].storeName = NULL;
             ctx->privateKey[keyIdx].subjectName = NULL;
@@ -2691,6 +2723,14 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
              "access verified successfully");
     }
 
+    /* The cert context (pCertContext) is retained in
+     * privateKey[].certStoreContext for later signing operations.
+     * CertFindCertificateInStore incremented its reference count, so
+     * closing the store does not invalidate it.  It will be freed in
+     * CtxResourceFree via CertFreeCertificateContext.
+     * Note: if the certificate is removed from the store while we hold
+     * this context, CryptAcquireCertificatePrivateKey may fail at
+     * signing time. */
     CertCloseStore(hStore, 0);
 
     /* Refresh public key algorithm list */

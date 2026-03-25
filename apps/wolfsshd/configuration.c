@@ -87,9 +87,11 @@ struct WOLFSSHD_CONFIG {
     char* authKeysFile;
     char* forceCmd;
     char* pidFile;
+#ifdef USE_WINDOWS_API
     char* winUserStores;
     char* winUserDwFlags;
     char* winUserPvPara;
+#endif /* USE_WINDOWS_API */
     WOLFSSHD_CONFIG* next; /* next config in list */
     long  loginTimer;
     word16 port;
@@ -331,9 +333,11 @@ void wolfSSHD_ConfigFree(WOLFSSHD_CONFIG* conf)
 #endif /* WOLFSSH_CERTS */
 #endif /* USE_WINDOWS_API */
         FreeString(&current->pidFile,  heap);
+#ifdef USE_WINDOWS_API
         FreeString(&current->winUserStores, heap);
         FreeString(&current->winUserDwFlags, heap);
         FreeString(&current->winUserPvPara, heap);
+#endif /* USE_WINDOWS_API */
 
         WFREE(current, heap, DYNTYPE_SSHD);
         current = next;
@@ -381,13 +385,16 @@ enum {
     OPT_BANNER                  = 23,
     OPT_TRUSTED_SYSTEM_CA_KEYS  = 24,
     OPT_TRUSTED_USER_CA_STORE   = 25,
+#ifdef USE_WINDOWS_API
     OPT_WIN_USER_STORES         = 26,
     OPT_WIN_USER_DW_FLAGS       = 27,
-    OPT_WIN_USER_PV_PARA        = 28
+    OPT_WIN_USER_PV_PARA        = 28,
+#endif /* USE_WINDOWS_API */
 };
 enum {
-    NUM_OPTIONS = 29
+    NUM_OPTIONS = 26
 #ifdef USE_WINDOWS_API
+    + 3
 #ifdef WOLFSSH_CERTS
     + 3
 #endif /* WOLFSSH_CERTS */
@@ -432,9 +439,11 @@ static const CONFIG_OPTION options[NUM_OPTIONS] = {
     {OPT_BANNER,                  "Banner"},
     {OPT_TRUSTED_SYSTEM_CA_KEYS,  "wolfSSH_TrustedSystemCAKeys"},
     {OPT_TRUSTED_USER_CA_STORE,   "wolfSSH_TrustedUserCaStore"},
+#ifdef USE_WINDOWS_API
     {OPT_WIN_USER_STORES,         "wolfSSH_WinUserStores"},
     {OPT_WIN_USER_DW_FLAGS,       "wolfSSH_WinUserDwFlags"},
-    {OPT_WIN_USER_PV_PARA,        "wolfSSH_WinUserPvPara"}
+    {OPT_WIN_USER_PV_PARA,        "wolfSSH_WinUserPvPara"},
+#endif /* USE_WINDOWS_API */
 };
 
 /* returns WS_SUCCESS on success */
@@ -1088,6 +1097,7 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
         case OPT_TRUSTED_USER_CA_STORE:
             ret = wolfSSHD_ConfigSetUserCAStore(*conf, value);
             break;
+    #ifdef USE_WINDOWS_API
         case OPT_WIN_USER_STORES:
             ret = wolfSSHD_ConfigSetWinUserStores(*conf, value);
             break;
@@ -1097,6 +1107,7 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
         case OPT_WIN_USER_PV_PARA:
             ret = wolfSSHD_ConfigSetWinUserPvPara(*conf, value);
             break;
+    #endif /* USE_WINDOWS_API */
     #ifdef USE_WINDOWS_API
     #ifdef WOLFSSH_CERTS
         case OPT_HOST_KEY_STORE:
@@ -1474,11 +1485,13 @@ int wolfSSHD_ConfigSetUserCAStore(WOLFSSHD_CONFIG* conf, const char* value)
     return ret;
 }
 
-char* wolfSSHD_ConfigGetWinUserStores(WOLFSSHD_CONFIG* conf) {
+#ifdef USE_WINDOWS_API
+char* wolfSSHD_ConfigGetWinUserStores(WOLFSSHD_CONFIG* conf)
+{
     if (conf != NULL) {
         if (conf->winUserStores == NULL) {
             /* If no value was specified, default to CERT_STORE_PROV_SYSTEM */
-            CreateString(&conf->winUserStores, "CERT_STORE_PROV_SYSTEM", 
+            CreateString(&conf->winUserStores, "CERT_STORE_PROV_SYSTEM",
                          (int)WSTRLEN("CERT_STORE_PROV_SYSTEM"), conf->heap);
         }
 
@@ -1488,24 +1501,32 @@ char* wolfSSHD_ConfigGetWinUserStores(WOLFSSHD_CONFIG* conf) {
     return NULL;
 }
 
-int wolfSSHD_ConfigSetWinUserStores(WOLFSSHD_CONFIG* conf, const char* value) {
+int wolfSSHD_ConfigSetWinUserStores(WOLFSSHD_CONFIG* conf, const char* value)
+{
     int ret = WS_SUCCESS;
 
     if (conf == NULL) {
         ret = WS_BAD_ARGUMENT;
     }
 
-    ret = CreateString(&conf->winUserStores, value, (int)WSTRLEN(value), conf->heap);
+    if (ret == WS_SUCCESS) {
+        ret = CreateString(&conf->winUserStores, value,
+                (int)WSTRLEN(value), conf->heap);
+    }
 
     return ret;
 }
 
-char* wolfSSHD_ConfigGetWinUserDwFlags(WOLFSSHD_CONFIG* conf) {
+char* wolfSSHD_ConfigGetWinUserDwFlags(WOLFSSHD_CONFIG* conf)
+{
     if (conf != NULL) {
         if (conf->winUserDwFlags == NULL) {
-            /* If no value was specified, default to CERT_SYSTEM_STORE_CURRENT_USER */
-            CreateString(&conf->winUserDwFlags, "CERT_SYSTEM_STORE_CURRENT_USER", 
-                         (int)WSTRLEN("CERT_SYSTEM_STORE_CURRENT_USER"), conf->heap);
+            /* If no value was specified, default to
+             * CERT_SYSTEM_STORE_CURRENT_USER */
+            CreateString(&conf->winUserDwFlags,
+                         "CERT_SYSTEM_STORE_CURRENT_USER",
+                         (int)WSTRLEN("CERT_SYSTEM_STORE_CURRENT_USER"),
+                         conf->heap);
         }
 
         return conf->winUserDwFlags;
@@ -1514,23 +1535,29 @@ char* wolfSSHD_ConfigGetWinUserDwFlags(WOLFSSHD_CONFIG* conf) {
     return NULL;
 }
 
-int wolfSSHD_ConfigSetWinUserDwFlags(WOLFSSHD_CONFIG* conf, const char* value) {
+int wolfSSHD_ConfigSetWinUserDwFlags(WOLFSSHD_CONFIG* conf, const char* value)
+{
     int ret = WS_SUCCESS;
 
     if (conf == NULL) {
         ret = WS_BAD_ARGUMENT;
     }
 
-    ret = CreateString(&conf->winUserDwFlags, value, (int)WSTRLEN(value), conf->heap);
+    if (ret == WS_SUCCESS) {
+        ret = CreateString(&conf->winUserDwFlags, value,
+                (int)WSTRLEN(value), conf->heap);
+    }
 
     return ret;
 }
 
-char* wolfSSHD_ConfigGetWinUserPvPara(WOLFSSHD_CONFIG* conf) {
+char* wolfSSHD_ConfigGetWinUserPvPara(WOLFSSHD_CONFIG* conf)
+{
     if (conf != NULL) {
         if (conf->winUserPvPara == NULL) {
             /* If no value was specified, default to MY */
-            CreateString(&conf->winUserPvPara, "MY", (int)WSTRLEN("MY"), conf->heap);
+            CreateString(&conf->winUserPvPara, "MY",
+                         (int)WSTRLEN("MY"), conf->heap);
         }
 
         return conf->winUserPvPara;
@@ -1539,17 +1566,22 @@ char* wolfSSHD_ConfigGetWinUserPvPara(WOLFSSHD_CONFIG* conf) {
     return NULL;
 }
 
-int wolfSSHD_ConfigSetWinUserPvPara(WOLFSSHD_CONFIG* conf, const char* value) {
+int wolfSSHD_ConfigSetWinUserPvPara(WOLFSSHD_CONFIG* conf, const char* value)
+{
     int ret = WS_SUCCESS;
 
     if (conf == NULL) {
         ret = WS_BAD_ARGUMENT;
     }
 
-    ret = CreateString(&conf->winUserPvPara, value, (int)WSTRLEN(value), conf->heap);
+    if (ret == WS_SUCCESS) {
+        ret = CreateString(&conf->winUserPvPara, value,
+                (int)WSTRLEN(value), conf->heap);
+    }
 
     return ret;
 }
+#endif /* USE_WINDOWS_API */
 
 char* wolfSSHD_ConfigGetUserCAKeysFile(const WOLFSSHD_CONFIG* conf)
 {

@@ -93,6 +93,11 @@
 #endif /* WOLFSSH_CERTS */
 #endif /* USE_WINDOWS_API */
 
+#if defined(USE_WINDOWS_API) && defined(WOLFSSH_CERTS)
+static int ExtractPubKeyDerFromCert(const byte* certDer, word32 certDerSz,
+        byte** outDer, word32* outDerSz, void* heap);
+#endif
+
 #ifdef NO_INLINE
     #include <wolfssh/misc.h>
 #else
@@ -11211,28 +11216,11 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
                         ssh->ctx->privateKey[keyIdx].certSz;
 
                 if (certDer != NULL && certDerSz > 0) {
-                    struct DecodedCert dCert;
                     byte*  pubKeyDer = NULL;
                     word32 pubKeyDerSz = 0;
 
-                    wc_InitDecodedCert(&dCert, certDer, certDerSz, heap);
-                    ret = wc_ParseCert(&dCert, CERT_TYPE, 0, NULL);
-                    if (ret == 0) {
-                        ret = wc_GetPubKeyDerFromCert(&dCert,
-                                NULL, &pubKeyDerSz);
-                        if (ret == LENGTH_ONLY_E) {
-                            ret = 0;
-                            pubKeyDer = (byte*)WMALLOC(pubKeyDerSz,
-                                    heap, DYNTYPE_PUBKEY);
-                            if (pubKeyDer == NULL)
-                                ret = WS_MEMORY_E;
-                        }
-                    }
-                    if (ret == 0)
-                        ret = wc_GetPubKeyDerFromCert(&dCert,
-                                pubKeyDer, &pubKeyDerSz);
-                    wc_FreeDecodedCert(&dCert);
-
+                    ret = ExtractPubKeyDerFromCert(certDer, certDerSz,
+                            &pubKeyDer, &pubKeyDerSz, heap);
                     if (ret == 0) {
                         word32 idx2 = 0;
                         sigKeyBlock_ptr->sk.rsa.eSz =
@@ -12245,6 +12233,50 @@ static int KeyAgreeEcdhMlKem_server(WOLFSSH* ssh, byte hashId,
 
 #ifdef USE_WINDOWS_API
 #ifdef WOLFSSH_CERTS
+/* Extract DER-encoded public key from a DER certificate.
+ * Caller must WFREE(*outDer, heap, DYNTYPE_PUBKEY) on success.
+ * Returns 0 on success. */
+static int ExtractPubKeyDerFromCert(const byte* certDer, word32 certDerSz,
+        byte** outDer, word32* outDerSz, void* heap)
+{
+    struct DecodedCert dCert;
+    byte* pubKeyDer = NULL;
+    word32 pubKeyDerSz = 0;
+    int ret;
+
+    if (certDer == NULL || certDerSz == 0 || outDer == NULL ||
+            outDerSz == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    wc_InitDecodedCert(&dCert, certDer, certDerSz, heap);
+    ret = wc_ParseCert(&dCert, CERT_TYPE, 0, NULL);
+    if (ret == 0) {
+        ret = wc_GetPubKeyDerFromCert(&dCert, NULL, &pubKeyDerSz);
+        if (ret == LENGTH_ONLY_E) {
+            ret = 0;
+            pubKeyDer = (byte*)WMALLOC(pubKeyDerSz, heap, DYNTYPE_PUBKEY);
+            if (pubKeyDer == NULL)
+                ret = WS_MEMORY_E;
+        }
+    }
+    if (ret == 0)
+        ret = wc_GetPubKeyDerFromCert(&dCert, pubKeyDer, &pubKeyDerSz);
+    wc_FreeDecodedCert(&dCert);
+
+    if (ret == 0) {
+        *outDer = pubKeyDer;
+        *outDerSz = pubKeyDerSz;
+    }
+    else {
+        if (pubKeyDer != NULL)
+            WFREE(pubKeyDer, heap, DYNTYPE_PUBKEY);
+    }
+
+    return ret;
+}
+
+
 /* Signing abstraction for MS Certificate Store support
  * This function provides a clean abstraction for signing that can use
  * either traditional keys or keys from the MS Certificate Store.
@@ -12375,6 +12407,14 @@ static int SignWithCertStoreKey(WOLFSSH* ssh,
                         WLOG(WS_LOG_DEBUG, "SignWithCertStoreKey: CryptSignHash failed, error: %lu", dwErr);
                         ret = WS_CRYPTO_FAILED;
                     } else {
+                        /* CryptSignHash outputs in little-endian byte order.
+                         * SSH requires big-endian. Reverse the signature. */
+                        DWORD ii;
+                        for (ii = 0; ii < dwSigLen / 2; ii++) {
+                            byte tmp = sig[ii];
+                            sig[ii] = sig[dwSigLen - 1 - ii];
+                            sig[dwSigLen - 1 - ii] = tmp;
+                        }
                         *sigSz = dwSigLen;
                         ret = WS_SUCCESS;
                     }
@@ -12567,7 +12607,12 @@ static int SignHEcdsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
 #ifdef WOLFSSH_CERTS
         /* Check if this is a cert store key */
         if (sigKey->pvtKey != NULL && sigKey->pvtKey->useCertStore) {
-            /* Use cert store signing abstraction - ECDSA uses raw hash */
+            /* Use cert store signing abstraction - ECDSA uses raw hash.
+             * Note: unlike the RSA path, ECDSA does not self-verify here
+             * because NCryptSignHash returns raw r||s (not DER), and
+             * converting back for wc_ecc_verify_hash would add complexity.
+             * The key exchange hash comparison by the peer serves as
+             * the primary verification. */
             ret = SignWithCertStoreKey(ssh, sigKey->pvtKey, digest, digestSz,
                     hashId, sig, sigSz);
             if (ret != WS_SUCCESS) {
@@ -14598,6 +14643,7 @@ static int PrepareUserAuthRequestRsaCert(WOLFSSH* ssh, word32* payloadSz,
         else
         #endif /* WOLFSSH_AGENT */
 #ifdef USE_WINDOWS_API
+        /* Note: already inside #ifdef WOLFSSH_CERTS */
         if (authData->sf.publicKey.privateKey == NULL) {
             /* Cert store: decode public key from the stored certificate */
             word32 ki;
@@ -14605,30 +14651,13 @@ static int PrepareUserAuthRequestRsaCert(WOLFSSH* ssh, word32* payloadSz,
             for (ki = 0; ki < ssh->ctx->privateKeyCount; ki++) {
                 if (ssh->ctx->privateKey[ki].useCertStore &&
                     ssh->ctx->privateKey[ki].cert != NULL) {
-                    struct DecodedCert dCert;
                     byte*  pubKeyDer = NULL;
                     word32 pubKeyDerSz = 0;
 
-                    wc_InitDecodedCert(&dCert,
+                    ret = ExtractPubKeyDerFromCert(
                             ssh->ctx->privateKey[ki].cert,
                             ssh->ctx->privateKey[ki].certSz,
-                            ssh->ctx->heap);
-                    ret = wc_ParseCert(&dCert, CERT_TYPE, 0, NULL);
-                    if (ret == 0) {
-                        ret = wc_GetPubKeyDerFromCert(&dCert,
-                                NULL, &pubKeyDerSz);
-                        if (ret == LENGTH_ONLY_E) {
-                            ret = 0;
-                            pubKeyDer = (byte*)WMALLOC(pubKeyDerSz,
-                                    ssh->ctx->heap, DYNTYPE_PUBKEY);
-                            if (pubKeyDer == NULL)
-                                ret = WS_MEMORY_E;
-                        }
-                    }
-                    if (ret == 0)
-                        ret = wc_GetPubKeyDerFromCert(&dCert,
-                                pubKeyDer, &pubKeyDerSz);
-                    wc_FreeDecodedCert(&dCert);
+                            &pubKeyDer, &pubKeyDerSz, ssh->ctx->heap);
                     if (ret == 0) {
                         idx = 0;
                         ret = wc_RsaPublicKeyDecode(pubKeyDer, &idx,
@@ -15130,7 +15159,8 @@ static int PrepareUserAuthRequestEccCert(WOLFSSH* ssh, word32* payloadSz,
     if (ret == WS_SUCCESS) {
         word32 idx = 0;
 #ifdef USE_WINDOWS_API
-        /* Cert store: no in-memory private key — decode public key from
+        /* Note: already inside #ifdef WOLFSSH_CERTS.
+         * Cert store: no in-memory private key — decode public key from
          * the DER certificate that UsePrivateKey_fromStore saved. */
         if (authData->sf.publicKey.privateKey == NULL) {
             word32 ki;
@@ -15138,30 +15168,13 @@ static int PrepareUserAuthRequestEccCert(WOLFSSH* ssh, word32* payloadSz,
             for (ki = 0; ki < ssh->ctx->privateKeyCount; ki++) {
                 if (ssh->ctx->privateKey[ki].useCertStore &&
                     ssh->ctx->privateKey[ki].cert != NULL) {
-                    struct DecodedCert dCert;
                     byte*  pubKeyDer = NULL;
                     word32 pubKeyDerSz = 0;
 
-                    wc_InitDecodedCert(&dCert,
+                    ret = ExtractPubKeyDerFromCert(
                             ssh->ctx->privateKey[ki].cert,
                             ssh->ctx->privateKey[ki].certSz,
-                            ssh->ctx->heap);
-                    ret = wc_ParseCert(&dCert, CERT_TYPE, 0, NULL);
-                    if (ret == 0) {
-                        ret = wc_GetPubKeyDerFromCert(&dCert,
-                                NULL, &pubKeyDerSz);
-                        if (ret == LENGTH_ONLY_E) {
-                            ret = 0;
-                            pubKeyDer = (byte*)WMALLOC(pubKeyDerSz,
-                                    ssh->ctx->heap, DYNTYPE_PUBKEY);
-                            if (pubKeyDer == NULL)
-                                ret = WS_MEMORY_E;
-                        }
-                    }
-                    if (ret == 0)
-                        ret = wc_GetPubKeyDerFromCert(&dCert,
-                                pubKeyDer, &pubKeyDerSz);
-                    wc_FreeDecodedCert(&dCert);
+                            &pubKeyDer, &pubKeyDerSz, ssh->ctx->heap);
                     if (ret == 0) {
                         idx = 0;
                         ret = wc_EccPublicKeyDecode(pubKeyDer, &idx,

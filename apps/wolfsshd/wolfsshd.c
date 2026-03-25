@@ -538,7 +538,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
 
         if (ret == WS_SUCCESS) {
             if (wolfSSHD_ConfigGetUserCAStore(conf)) {
-#if defined(_WIN32)
+#ifdef USE_WINDOWS_API
                 if (wolfSSL_CTX_load_windows_user_CA_certs(sslCtx,
                         wolfSSHD_ConfigGetWinUserStores(conf),
                         wolfSSHD_ConfigGetWinUserDwFlags(conf),
@@ -550,7 +550,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
                 wolfSSH_Log(WS_LOG_INFO,
                     "[SSHD] User CA store is only supported on Windows");
                 ret = WS_BAD_ARGUMENT;
-#endif /* _WIN32 */
+#endif /* USE_WINDOWS_API */
             }
         }
 

@@ -53,12 +53,14 @@ int wolfSSHD_ConfigSetSystemCA(WOLFSSHD_CONFIG* conf, const char* value);
 int wolfSSHD_ConfigGetSystemCA(const WOLFSSHD_CONFIG* conf);
 int wolfSSHD_ConfigSetUserCAStore(WOLFSSHD_CONFIG* conf, const char* value);
 int wolfSSHD_ConfigGetUserCAStore(const WOLFSSHD_CONFIG* conf);
+#ifdef USE_WINDOWS_API
 char* wolfSSHD_ConfigGetWinUserStores(WOLFSSHD_CONFIG* conf);
 int wolfSSHD_ConfigSetWinUserStores(WOLFSSHD_CONFIG* conf, const char* value);
 char* wolfSSHD_ConfigGetWinUserDwFlags(WOLFSSHD_CONFIG* conf);
 int wolfSSHD_ConfigSetWinUserDwFlags(WOLFSSHD_CONFIG* conf, const char* value);
 char* wolfSSHD_ConfigGetWinUserPvPara(WOLFSSHD_CONFIG* conf);
 int wolfSSHD_ConfigSetWinUserPvPara(WOLFSSHD_CONFIG* conf, const char* value);
+#endif /* USE_WINDOWS_API */
 int wolfSSHD_ConfigSetUserCAKeysFile(WOLFSSHD_CONFIG* conf, const char* file);
 word16 wolfSSHD_ConfigGetPort(const WOLFSSHD_CONFIG* conf);
 char* wolfSSHD_ConfigGetAuthKeysFile(const WOLFSSHD_CONFIG* conf);

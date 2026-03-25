@@ -33,6 +33,7 @@
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/wolfsftp.h>
+#include <wolfssh/certman.h>
 #include <wolfssh/test.h>
 #include <wolfssh/port.h>
 #include <wolfssl/wolfcrypt/ecc.h>
@@ -1424,67 +1425,14 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 #ifdef USE_WINDOWS_API
 #ifdef WOLFSSH_CERTS
     if (certStoreSpec != NULL) {
-        /* Parse format: "store:subject:flags" */
-        char* specCopy = NULL;
-        char* storeName = NULL;
-        char* subjectName = NULL;
-        char* flagsStr = NULL;
         wchar_t* wStoreName = NULL;
         wchar_t* wSubjectName = NULL;
-        DWORD dwFlags = CERT_SYSTEM_STORE_CURRENT_USER;
-        size_t specLen = WSTRLEN(certStoreSpec) + 1;
+        DWORD dwFlags = 0;
 
-        specCopy = (char*)WMALLOC(specLen, NULL, DYNTYPE_TEMP);
-        if (specCopy == NULL) {
-            err_sys("Memory allocation failed");
-        }
-        WSTRNCPY(specCopy, certStoreSpec, specLen);
-
-        /* Parse the format string */
-        storeName = specCopy;
-        subjectName = WSTRCHR(storeName, ':');
-        if (subjectName != NULL) {
-            *subjectName++ = '\0';
-            flagsStr = WSTRCHR(subjectName, ':');
-            if (flagsStr != NULL) {
-                *flagsStr++ = '\0';
-                /* Parse flags */
-                if (WSTRCMP(flagsStr, "CURRENT_USER") == 0) {
-                    dwFlags = CERT_SYSTEM_STORE_CURRENT_USER;
-                } else if (WSTRCMP(flagsStr, "LOCAL_MACHINE") == 0) {
-                    dwFlags = CERT_SYSTEM_STORE_LOCAL_MACHINE;
-                } else {
-                    dwFlags = (DWORD)atoi(flagsStr);
-                }
-            }
-        }
-
-        if (storeName == NULL || subjectName == NULL) {
-            err_sys("Invalid cert store spec format. Use: store:subject:flags");
-        }
-
-        /* Convert to wide strings */
-        {
-            size_t storeNameLen = WSTRLEN(storeName) + 1;
-            size_t subjectNameLen = WSTRLEN(subjectName) + 1;
-            int wStoreNameLen = MultiByteToWideChar(CP_UTF8, 0, storeName, -1,
-                NULL, 0);
-            int wSubjectNameLen = MultiByteToWideChar(CP_UTF8, 0, subjectName,
-                -1, NULL, 0);
-
-            wStoreName = (wchar_t*)WMALLOC(wStoreNameLen * sizeof(wchar_t),
-                NULL, DYNTYPE_TEMP);
-            wSubjectName = (wchar_t*)WMALLOC(wSubjectNameLen * sizeof(wchar_t),
-                NULL, DYNTYPE_TEMP);
-
-            if (wStoreName == NULL || wSubjectName == NULL) {
-                err_sys("Memory allocation failed for wide strings");
-            }
-
-            MultiByteToWideChar(CP_UTF8, 0, storeName, -1, wStoreName,
-                wStoreNameLen);
-            MultiByteToWideChar(CP_UTF8, 0, subjectName, -1, wSubjectName,
-                wSubjectNameLen);
+        ret = wolfSSH_ParseCertStoreSpec(certStoreSpec, &wStoreName,
+                &wSubjectName, &dwFlags, NULL);
+        if (ret != WS_SUCCESS) {
+            err_sys("Invalid cert store spec. Use: store:subject:flags");
         }
 
         /* Create context first */
@@ -1508,7 +1456,6 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
             err_sys("Error setting up cert store auth");
         }
 
-        WFREE(specCopy, NULL, DYNTYPE_TEMP);
         WFREE(wStoreName, NULL, DYNTYPE_TEMP);
         WFREE(wSubjectName, NULL, DYNTYPE_TEMP);
     } else
