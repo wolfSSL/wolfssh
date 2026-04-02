@@ -2026,6 +2026,8 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     word32 idx = 0;
     int m = 0;
     int ret = WS_SUCCESS;
+    int fdOpened = 0;
+    int outOwnedBySsh = 0;
 
     word32 outSz = sizeof(WFD) + UINT32_SZ + WOLFSSH_SFTP_HEADER;
     byte*  out = NULL;
@@ -2034,6 +2036,9 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     char  ier[] = "Internal Failure";
     char  oer[] = "Open File Error";
     char  naf[] = "Not A File";
+#ifdef WOLFSSH_STOREHANDLE
+    int handleStored = 0;
+#endif
 
     if (ssh == NULL) {
         return WS_BAD_ARGUMENT;
@@ -2065,7 +2070,8 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     if (GetAndCleanPath(ssh->sftpDefaultPath,
                 data + idx, sz, dir, sizeof(dir)) != WS_SUCCESS) {
         WLOG(WS_LOG_SFTP, "Creating path for file to open failed");
-        return WS_FATAL_ERROR;
+        ret = WS_FATAL_ERROR;
+        goto cleanup;
     }
     idx += sz;
 
@@ -2118,7 +2124,8 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
                 res = naf;
                 if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
                             res, "English", NULL, &outSz) != WS_SIZE_ONLY) {
-                    return WS_FATAL_ERROR;
+                    ret = WS_FATAL_ERROR;
+                    goto cleanup;
                 }
                 ret = WS_FATAL_ERROR;
             }
@@ -2146,9 +2153,13 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             res = oer;
             if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId, res,
                     "English", NULL, &outSz) != WS_SIZE_ONLY) {
-                return WS_FATAL_ERROR;
+                ret = WS_FATAL_ERROR;
+                goto cleanup;
             }
             ret = WS_BAD_FILE_E;
+        }
+        else {
+            fdOpened = 1;
         }
     }
 
@@ -2160,58 +2171,59 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             res = ier;
             if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId, res,
                     "English", NULL, &outSz) != WS_SIZE_ONLY) {
-            #ifdef MICROCHIP_MPLAB_HARMONY
-                WFCLOSE(ssh->fs, &fd);
-            #else
-                WCLOSE(ssh->fs, fd);
-            #endif
-                return WS_FATAL_ERROR;
+                ret = WS_FATAL_ERROR;
+                goto cleanup;
             }
             ret = WS_FATAL_ERROR;
+        }
+        else {
+            handleStored = 1;
         }
     }
 #endif
 
-    if (ret == WS_SUCCESS) {
-        /* create packet */
-        out = (byte*)WMALLOC(outSz, ssh->ctx->heap, DYNTYPE_BUFFER);
-        if (out == NULL) {
-        #ifdef MICROCHIP_MPLAB_HARMONY
-            WFCLOSE(ssh->fs, &fd);
-        #else
-            WCLOSE(ssh->fs, fd);
-        #endif
-            return WS_MEMORY_E;
-        }
+    /* create packet */
+    out = (byte*)WMALLOC(outSz, ssh->ctx->heap, DYNTYPE_BUFFER);
+    if (out == NULL) {
+        ret = WS_MEMORY_E;
+        goto cleanup;
     }
+
     if (ret == WS_SUCCESS) {
         if (SFTP_CreatePacket(ssh, WOLFSSH_FTP_HANDLE, out, outSz,
             (byte*)&fd, sizeof(WFD)) != WS_SUCCESS) {
-        #ifdef MICROCHIP_MPLAB_HARMONY
-            WFCLOSE(ssh->fs, &fd);
-        #else
-            WCLOSE(ssh->fs, fd);
-        #endif
-            return WS_FATAL_ERROR;
+            ret = WS_FATAL_ERROR;
+            goto cleanup;
         }
     }
     else {
         if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId, res,
                 "English", out, &outSz) != WS_SUCCESS) {
-            WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
-            if (fd >= 0) {
-            #ifdef MICROCHIP_MPLAB_HARMONY
-                WFCLOSE(ssh->fs, &fd);
-            #else
-                WCLOSE(ssh->fs, fd);
-            #endif
-            }
-            return WS_FATAL_ERROR;
+            ret = WS_FATAL_ERROR;
+            goto cleanup;
         }
     }
 
     /* set send out buffer, "out" is taken by ssh  */
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
+    outOwnedBySsh = 1;
+
+cleanup:
+#ifdef WOLFSSH_STOREHANDLE
+    if (ret != WS_SUCCESS && handleStored) {
+        (void)SFTP_RemoveHandleNode(ssh, (byte*)&fd, sizeof(WFD));
+    }
+#endif
+    if (!outOwnedBySsh && out != NULL) {
+        WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
+    }
+    if (ret != WS_SUCCESS && fdOpened) {
+    #ifdef MICROCHIP_MPLAB_HARMONY
+        WFCLOSE(ssh->fs, &fd);
+    #else
+        WCLOSE(ssh->fs, fd);
+    #endif
+    }
 
     WOLFSSH_UNUSED(ier);
     return ret;
@@ -2228,6 +2240,8 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     DWORD creationDisp = 0;
     DWORD flagsAndAttrs = 0;
     int ret = WS_SUCCESS;
+    int fileHandleOpened = 0;
+    int outOwnedBySsh = 0;
 
     word32 outSz = sizeof(HANDLE) + UINT32_SZ + WOLFSSH_SFTP_HEADER;
     byte*  out = NULL;
@@ -2235,6 +2249,11 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     char* res   = NULL;
     char  ier[] = "Internal Failure";
     char  oer[] = "Open File Error";
+#ifdef WOLFSSH_STOREHANDLE
+    int handleStored = 0;
+#endif
+
+    fileHandle = INVALID_HANDLE_VALUE;
 
     if (ssh == NULL) {
         return WS_BAD_ARGUMENT;
@@ -2260,7 +2279,8 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     if (GetAndCleanPath(ssh->sftpDefaultPath, data + idx, sz, dir, sizeof(dir))
             != WS_SUCCESS) {
         WLOG(WS_LOG_SFTP, "Creating path for file to open failed");
-        return WS_FATAL_ERROR;
+        ret = WS_FATAL_ERROR;
+        goto cleanup;
     }
     idx += sz;
 
@@ -2305,45 +2325,72 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         res = oer;
         if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId, res,
                 "English", NULL, &outSz) != WS_SIZE_ONLY) {
-            return WS_FATAL_ERROR;
+            ret = WS_FATAL_ERROR;
+            goto cleanup;
         }
         ret = WS_BAD_FILE_E;
     }
+    else {
+        fileHandleOpened = 1;
+    }
 
 #ifdef WOLFSSH_STOREHANDLE
-    if (SFTP_AddHandleNode(ssh,
-                (byte*)&fileHandle, sizeof(HANDLE), dir) != WS_SUCCESS) {
+    if (ret == WS_SUCCESS) {
+        if (SFTP_AddHandleNode(ssh,
+                    (byte*)&fileHandle, sizeof(HANDLE), dir) != WS_SUCCESS) {
             WLOG(WS_LOG_SFTP, "Unable to store handle");
             res = ier;
             if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId, res,
                 "English", NULL, &outSz) != WS_SIZE_ONLY) {
-                return WS_FATAL_ERROR;
+                ret = WS_FATAL_ERROR;
+                goto cleanup;
             }
             ret = WS_FATAL_ERROR;
+        }
+        else {
+            handleStored = 1;
+        }
     }
 #endif
 
     /* create packet */
     out = (byte*)WMALLOC(outSz, ssh->ctx->heap, DYNTYPE_BUFFER);
     if (out == NULL) {
-        return WS_MEMORY_E;
+        ret = WS_MEMORY_E;
+        goto cleanup;
     }
+
     if (ret == WS_SUCCESS) {
         if (SFTP_CreatePacket(ssh, WOLFSSH_FTP_HANDLE, out, outSz,
             (byte*)&fileHandle, sizeof(HANDLE)) != WS_SUCCESS) {
-            return WS_FATAL_ERROR;
+            ret = WS_FATAL_ERROR;
+            goto cleanup;
         }
     }
     else {
         if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId, res,
                 "English", out, &outSz) != WS_SUCCESS) {
-            WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
-            return WS_FATAL_ERROR;
+            ret = WS_FATAL_ERROR;
+            goto cleanup;
         }
     }
 
     /* set send out buffer, "out" is taken by ssh  */
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
+    outOwnedBySsh = 1;
+
+cleanup:
+#ifdef WOLFSSH_STOREHANDLE
+    if (ret != WS_SUCCESS && handleStored) {
+        (void)SFTP_RemoveHandleNode(ssh, (byte*)&fileHandle, sizeof(HANDLE));
+    }
+#endif
+    if (!outOwnedBySsh && out != NULL) {
+        WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
+    }
+    if (ret != WS_SUCCESS && fileHandleOpened) {
+        CloseHandle(fileHandle);
+    }
 
     WOLFSSH_UNUSED(ier);
     return ret;
