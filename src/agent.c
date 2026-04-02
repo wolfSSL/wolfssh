@@ -1731,7 +1731,7 @@ int wolfSSH_AGENT_Relay(WOLFSSH* ssh,
             *msgSz = (word32)sz;
         }
         else {
-            if (ret == WS_CBIO_ERR_GENERAL) {
+            if (sz == WS_CBIO_ERR_GENERAL) {
                 if (ssh->ctx->agentCb) {
                     ret = ssh->ctx->agentCb(WOLFSSH_AGENT_LOCAL_SETUP,
                             ssh->agentCbCtx);
