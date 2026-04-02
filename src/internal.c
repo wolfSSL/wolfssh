@@ -17478,21 +17478,14 @@ int wolfSSH_oct2dec(WOLFSSH* ssh, byte* oct, word32 octSz)
     return ret;
 }
 
-#ifndef WOLFSSL_MAX_32BIT
-    #define WOLFSSL_MAX_32BIT INT_MAX
-#endif
-
 /* addend1 += addend2 */
 void AddAssign64(word32* addend1, word32 addend2)
 {
-    if (addend1[0] > (WOLFSSL_MAX_32BIT - addend2)) {
-        addend1[1]++;
+    word32 lo = addend1[0];
 
-        /* -1 to account for roll over digit */
-        addend1[0] = addend2 - (WOLFSSL_MAX_32BIT- addend1[0]) - 1;
-    }
-    else {
-        addend1[0] += addend2;
+    addend1[0] += addend2;
+    if (addend1[0] < lo) {
+        addend1[1]++;
     }
 }
 
