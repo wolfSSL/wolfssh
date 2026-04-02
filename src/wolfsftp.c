@@ -1977,6 +1977,8 @@ int ff_open(const char *fname, int flag, int perm)
 
 int ff_close(int fd)
 {
+    if (fd < 0 || fd >= WOLFSSH_FATFS_MAX_FILES)
+        return -1;
     f_close(&fd_pool[fd].f);
     if (fd_pool[fd].used)
         fd_pool[fd].used = 0;
@@ -1985,9 +1987,13 @@ int ff_close(int fd)
 
 int ff_pwrite(int fd, const byte *buffer, int sz)
 {
-    FIL *f = &fd_pool[fd].f;
+    FIL *f;
     FRESULT ret;
     unsigned int rsz;
+
+    if (fd < 0 || fd >= WOLFSSH_FATFS_MAX_FILES)
+        return -1;
+    f = &fd_pool[fd].f;
     if (fd_pool[fd].used == 0)
         return -1;
     ret = f_write(f, buffer, sz, &rsz);
@@ -1997,9 +2003,13 @@ int ff_pwrite(int fd, const byte *buffer, int sz)
 }
 int ff_pread(int fd, byte *buffer, int sz)
 {
-    FIL *f = &fd_pool[fd].f;
+    FIL *f;
     FRESULT ret;
     unsigned int rsz;
+
+    if (fd < 0 || fd >= WOLFSSH_FATFS_MAX_FILES)
+        return -1;
+    f = &fd_pool[fd].f;
     if (fd_pool[fd].used == 0)
         return -1;
     ret = f_read(f, buffer, sz, &rsz);
