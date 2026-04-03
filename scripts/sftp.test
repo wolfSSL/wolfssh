@@ -139,6 +139,32 @@ if [ $nonblockingOnly = 0 ]; then
     fi
 fi
 
+# Test SFTP status failure for non-existing file
+if [ $nonblockingOnly = 0 ]; then
+    echo "Test SFTP status failure for non-existing file"
+    ./examples/echoserver/echoserver -N -1 -R $ready_file &
+    server_pid=$!
+    create_port
+    ./examples/sftpclient/wolfsftp -N -u jill -P upthehill -p $port -G -r $PWD/this_file_does_not_exist_12345.txt -l $PWD/test_output.txt > sftp_status_failure.log 2>&1
+    RESULT=$?
+    grep "Unable to copy remote file" sftp_status_failure.log > /dev/null
+    RESULT_MSG=$?
+    remove_ready_file
+    rm -f sftp_status_failure.log
+    rm -f $PWD/test_output.txt
+    if [ $RESULT -eq 0 ]; then
+        echo -e "\n\nERROR: Should have failed for non-existing file"
+        do_cleanup
+        exit 1
+    fi
+    if [ $RESULT_MSG -ne 0 ]; then
+        echo -e "\n\nERROR: Unexpected failure path while testing missing remote file"
+        do_cleanup
+        exit 1
+    fi
+    echo "Successfully received failure status packet"
+fi
+
 echo -e "\nALL Tests Passed"
 
 exit 0
