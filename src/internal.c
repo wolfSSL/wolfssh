@@ -2403,7 +2403,10 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
         if (der == NULL)
             return WS_MEMORY_E;
 
-        ret = wc_CertPemToDer(in, inSz, der, inSz, wcType);
+        if (type == BUFTYPE_PRIVKEY)
+            ret = wc_KeyPemToDer(in, inSz, der, inSz, NULL);
+        else
+            ret = wc_CertPemToDer(in, inSz, der, inSz, wcType);
         if (ret < 0) {
             WFREE(der, heap, dynamicType);
             return WS_BAD_FILE_E;
