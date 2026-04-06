@@ -7043,11 +7043,33 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
-        if (publicKeyTypeSz != pk->publicKeyTypeSz
-            || publicKeyType == NULL
-            || WMEMCMP(publicKeyType, pk->publicKeyType,
-                    publicKeyTypeSz) != 0) {
-
+        int sigTypeOk = 0;
+        if (publicKeyType != NULL) {
+            if (publicKeyTypeSz == pk->publicKeyTypeSz
+                    && WMEMCMP(publicKeyType, pk->publicKeyType,
+                            publicKeyTypeSz) == 0) {
+                sigTypeOk = 1;
+            }
+        #ifdef WOLFSSH_CERTS
+            else if (pk->publicKeyTypeSz == 14
+                    && WMEMCMP(pk->publicKeyType,
+                            "x509v3-ssh-rsa", 14) == 0) {
+                /* RFC 6187 Section 5: the signature uses the underlying
+                 * RSA algorithm, not the X.509 key type name. */
+                if ((publicKeyTypeSz == 7
+                            && WMEMCMP(publicKeyType, "ssh-rsa", 7) == 0)
+                        || (publicKeyTypeSz == 12
+                            && WMEMCMP(publicKeyType,
+                                    "rsa-sha2-256", 12) == 0)
+                        || (publicKeyTypeSz == 12
+                            && WMEMCMP(publicKeyType,
+                                    "rsa-sha2-512", 12) == 0)) {
+                    sigTypeOk = 1;
+                }
+            }
+        #endif
+        }
+        if (!sigTypeOk) {
             WLOG(WS_LOG_DEBUG,
                  "Signature's type does not match public key type");
             ret = WS_INVALID_ALGO_ID;
@@ -7182,10 +7204,29 @@ static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
-        if (publicKeyTypeSz != pk->publicKeyTypeSz
-            || WMEMCMP(publicKeyType, pk->publicKeyType,
-                    publicKeyTypeSz) != 0) {
-
+        int sigTypeOk = 0;
+        if (publicKeyTypeSz == pk->publicKeyTypeSz
+                && WMEMCMP(publicKeyType, pk->publicKeyType,
+                        publicKeyTypeSz) == 0) {
+            sigTypeOk = 1;
+        }
+    #ifdef WOLFSSH_CERTS
+        else if (pk->publicKeyFmtId == ID_X509V3_SSH_RSA) {
+            /* RFC 6187 Section 5: the signature uses the underlying
+             * RSA algorithm, not the X.509 key type name. */
+            if ((publicKeyTypeSz == 7
+                        && WMEMCMP(publicKeyType, "ssh-rsa", 7) == 0)
+                    || (publicKeyTypeSz == 12
+                        && WMEMCMP(publicKeyType,
+                                "rsa-sha2-256", 12) == 0)
+                    || (publicKeyTypeSz == 12
+                        && WMEMCMP(publicKeyType,
+                                "rsa-sha2-512", 12) == 0)) {
+                sigTypeOk = 1;
+            }
+        }
+    #endif
+        if (!sigTypeOk) {
             WLOG(WS_LOG_DEBUG,
                  "Signature's type does not match public key type");
             ret = WS_INVALID_ALGO_ID;
