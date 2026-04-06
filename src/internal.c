@@ -7211,7 +7211,9 @@ static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
             sigTypeOk = 1;
         }
     #ifdef WOLFSSH_CERTS
-        else if (pk->publicKeyFmtId == ID_X509V3_SSH_RSA) {
+        else if (pk->publicKeyTypeSz == 14
+                    && WMEMCMP(pk->publicKeyType,
+                            "x509v3-ssh-rsa", 14) == 0) {
             /* RFC 6187 Section 5: the signature uses the underlying
              * RSA algorithm, not the X.509 key type name. */
             if ((publicKeyTypeSz == 7
