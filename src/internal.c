@@ -7205,13 +7205,15 @@ static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 
     if (ret == WS_SUCCESS) {
         int sigTypeOk = 0;
-        if (publicKeyTypeSz == pk->publicKeyTypeSz
+        if (publicKeyType != NULL
+                && publicKeyTypeSz == pk->publicKeyTypeSz
                 && WMEMCMP(publicKeyType, pk->publicKeyType,
                         publicKeyTypeSz) == 0) {
             sigTypeOk = 1;
         }
     #ifdef WOLFSSH_CERTS
-        else if (pk->publicKeyTypeSz == 14
+        else if (publicKeyType != NULL
+                    && pk->publicKeyTypeSz == 14
                     && WMEMCMP(pk->publicKeyType,
                             "x509v3-ssh-rsa", 14) == 0) {
             /* RFC 6187 Section 5: the signature uses the underlying
