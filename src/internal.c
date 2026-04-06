@@ -12670,8 +12670,20 @@ int SendKexDhReply(WOLFSSH* ssh)
      * add it to the hash and then add K. */
     if (ret == WS_SUCCESS) {
         sigBlockSz = (LENGTH_SZ * 2) + sigKeyBlock_ptr->pubKeyNameSz + sigSz;
-        payloadSz = MSG_ID_SZ + (LENGTH_SZ * 3) +
-                    sigKeyBlock_ptr->sz + fSz + fPad + sigBlockSz;
+    #ifdef WOLFSSH_CERTS
+        if (sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_SSH_RSA
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP256
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP384
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP521) {
+            payloadSz = MSG_ID_SZ + (LENGTH_SZ * 2) +
+                        sigKeyBlock_ptr->sz + fSz + fPad + sigBlockSz;
+        }
+        else
+    #endif
+        {
+            payloadSz = MSG_ID_SZ + (LENGTH_SZ * 3) +
+                        sigKeyBlock_ptr->sz + fSz + fPad + sigBlockSz;
+        }
         ret = PreparePacket(ssh, payloadSz);
     }
 
@@ -12681,15 +12693,28 @@ int SendKexDhReply(WOLFSSH* ssh)
 
         output[idx++] = msgId;
 
-        /* Copy the key block size into the buffer */
-        c32toa(sigKeyBlock_ptr->sz, output + idx);
-        idx += LENGTH_SZ;
+    #ifdef WOLFSSH_CERTS
+        if (sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_SSH_RSA
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP256
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP384
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP521) {
+            /* BuildRFC6187Info writes the complete K_S including
+             * the outer length and key type name. Skip common header. */
+        }
+        else
+    #endif
+        {
+            /* Copy the key block size into the buffer */
+            c32toa(sigKeyBlock_ptr->sz, output + idx);
+            idx += LENGTH_SZ;
 
-        /* Copy the key name into the buffer */
-        c32toa(sigKeyBlock_ptr->pubKeyFmtNameSz, output + idx);
-        idx += LENGTH_SZ;
-        WMEMCPY(output + idx, sigKeyBlock_ptr->pubKeyFmtName, sigKeyBlock_ptr->pubKeyFmtNameSz);
-        idx += sigKeyBlock_ptr->pubKeyFmtNameSz;
+            /* Copy the key name into the buffer */
+            c32toa(sigKeyBlock_ptr->pubKeyFmtNameSz, output + idx);
+            idx += LENGTH_SZ;
+            WMEMCPY(output + idx, sigKeyBlock_ptr->pubKeyFmtName,
+                    sigKeyBlock_ptr->pubKeyFmtNameSz);
+            idx += sigKeyBlock_ptr->pubKeyFmtNameSz;
+        }
 
         /* add host public key */
         switch (sigKeyBlock_ptr->pubKeyFmtId) {
