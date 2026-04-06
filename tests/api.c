@@ -593,6 +593,49 @@ static void test_wolfSSH_CTX_UseCert_buffer(void)
 }
 
 
+static void test_wolfSSH_CTX_UsePrivateKey_buffer_pem(void)
+{
+#if defined(WOLFSSH_CERTS) && !defined(WOLFSSH_NO_SERVER)
+    WOLFSSH_CTX* ctx = NULL;
+    byte* key = NULL;
+    word32 keySz = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+
+#ifndef WOLFSSH_NO_RSA
+    AssertIntEQ(0, load_file("./keys/server-key-rsa.pem", &key, &keySz));
+    AssertNotNull(key);
+    AssertIntNE(0, keySz);
+
+    /* PEM private key should load successfully */
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_UsePrivateKey_buffer(ctx, key, keySz,
+                                             WOLFSSH_FORMAT_PEM));
+
+    free(key);
+    key = NULL;
+#endif /* WOLFSSH_NO_RSA */
+
+#ifndef WOLFSSH_NO_ECDSA
+    AssertIntEQ(0, load_file("./keys/server-key-ecc.pem", &key, &keySz));
+    AssertNotNull(key);
+    AssertIntNE(0, keySz);
+
+    /* PEM ECC private key should load successfully */
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_UsePrivateKey_buffer(ctx, key, keySz,
+                                             WOLFSSH_FORMAT_PEM));
+
+    free(key);
+    key = NULL;
+#endif /* WOLFSSH_NO_ECDSA */
+
+    wolfSSH_CTX_free(ctx);
+#endif /* WOLFSSH_CERTS && !WOLFSSH_NO_SERVER */
+}
+
+
 static void test_wolfSSH_CertMan(void)
 {
 #ifdef WOLFSSH_CERTMAN
@@ -1990,6 +2033,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_ConvertConsole();
     test_wolfSSH_CTX_UsePrivateKey_buffer();
     test_wolfSSH_CTX_UseCert_buffer();
+    test_wolfSSH_CTX_UsePrivateKey_buffer_pem();
     test_wolfSSH_CertMan();
     test_wolfSSH_ReadKey();
     test_wolfSSH_QueryAlgoList();
