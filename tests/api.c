@@ -1962,6 +1962,15 @@ static void test_wolfSSH_KeyboardInteractive(void) { ; }
 #endif /* WOLFSSH_TEST_BLOCK */
 
 
+static void test_wolfSSH_ServiceRequestValidation(void)
+{
+    int nameSz = WOLFSSH_MAX_NAMESZ;
+    char serviceName[nameSz]; /* VLA: GCC/Clang fine, MSVC errors */
+    WMEMSET(serviceName, 0, nameSz);
+    AssertIntEQ(nameSz, WOLFSSH_MAX_NAMESZ);
+}
+
+
 int wolfSSH_ApiTest(int argc, char** argv)
 {
     (void)argc;
@@ -2003,6 +2012,9 @@ int wolfSSH_ApiTest(int argc, char** argv)
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     test_wolfSSH_KeyboardInteractive();
 #endif
+
+    /* Service request validation */
+    test_wolfSSH_ServiceRequestValidation();
 
     /* SCP tests */
     test_wolfSSH_SCP_CB();

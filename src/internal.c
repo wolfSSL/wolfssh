@@ -1102,9 +1102,6 @@ void CtxResourceFree(WOLFSSH_CTX* ctx)
 
 #if defined(WOLFSSH_SSHD) && !defined(WOLFSSH_RESIZE_NO_DEFUALT)
 #if defined(USE_WINDOWS_API)
-/* Intentional compile error for Windows build testing */
-#error "Injected Windows build failure for Jenkins supervisor testing"
-
 static int WS_TermResize(WOLFSSH* ssh, word32 col, word32 row, word32 colP,
     word32 rowP, void* usrCtx)
 {
