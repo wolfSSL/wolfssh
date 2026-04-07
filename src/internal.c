@@ -1102,6 +1102,9 @@ void CtxResourceFree(WOLFSSH_CTX* ctx)
 
 #if defined(WOLFSSH_SSHD) && !defined(WOLFSSH_RESIZE_NO_DEFUALT)
 #if defined(USE_WINDOWS_API)
+/* Intentional compile error for Windows build testing */
+#error "Injected Windows build failure for Jenkins supervisor testing"
+
 static int WS_TermResize(WOLFSSH* ssh, word32 col, word32 row, word32 colP,
     word32 rowP, void* usrCtx)
 {
@@ -6534,6 +6537,20 @@ static int DoServiceRequest(WOLFSSH* ssh,
 
     ret = GetString(name, &nameSz, buf, len, idx);
 
+    /* Requested service must be 'ssh-userauth' */
+    if (ret == WS_SUCCESS) {
+        const char* nameUserAuth = IdToName(ID_SERVICE_USERAUTH);
+        if (nameUserAuth == NULL
+            || nameSz != (word32)XSTRLEN(nameUserAuth)
+            || XMEMCMP(name, nameUserAuth, nameSz) != 0) {
+            WLOG(WS_LOG_DEBUG, "Requested unsupported service: %s", name);
+            /* Terminate session, ignore result of disconnect attempt */
+            (void)SendDisconnect(ssh,
+                    WOLFSSH_DISCONNECT_SERVICE_NOT_AVAILABLE);
+            ret = WS_INVALID_STATE_E;
+        }
+    }
+
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "Requesting service: %s", name);
         ssh->clientState = CLIENT_USERAUTH_REQUEST_DONE;
@@ -6551,6 +6568,20 @@ static int DoServiceAccept(WOLFSSH* ssh,
     int ret;
 
     ret = GetString(name, &nameSz, buf, len, idx);
+
+    /* Accepted service must be 'ssh-userauth' */
+    if (ret == WS_SUCCESS) {
+        const char* nameUserAuth = IdToName(ID_SERVICE_USERAUTH);
+        if (nameUserAuth == NULL
+            || nameSz != (word32)XSTRLEN(nameUserAuth)
+            || XMEMCMP(name, nameUserAuth, nameSz) != 0) {
+            WLOG(WS_LOG_DEBUG, "Accepted unexpected service: %s", name);
+            /* Terminate session, ignore result of disconnect attempt */
+            (void)SendDisconnect(ssh,
+                    WOLFSSH_DISCONNECT_SERVICE_NOT_AVAILABLE);
+            ret = WS_INVALID_STATE_E;
+        }
+    }
 
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "Accepted service: %s", name);
