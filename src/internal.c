@@ -2403,7 +2403,10 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
         if (der == NULL)
             return WS_MEMORY_E;
 
-        ret = wc_CertPemToDer(in, inSz, der, inSz, wcType);
+        if (type == BUFTYPE_PRIVKEY)
+            ret = wc_KeyPemToDer(in, inSz, der, inSz, NULL);
+        else
+            ret = wc_CertPemToDer(in, inSz, der, inSz, wcType);
         if (ret < 0) {
             WFREE(der, heap, dynamicType);
             return WS_BAD_FILE_E;
@@ -7040,11 +7043,33 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
-        if (publicKeyTypeSz != pk->publicKeyTypeSz
-            || publicKeyType == NULL
-            || WMEMCMP(publicKeyType, pk->publicKeyType,
-                    publicKeyTypeSz) != 0) {
-
+        int sigTypeOk = 0;
+        if (publicKeyType != NULL) {
+            if (publicKeyTypeSz == pk->publicKeyTypeSz
+                    && WMEMCMP(publicKeyType, pk->publicKeyType,
+                            publicKeyTypeSz) == 0) {
+                sigTypeOk = 1;
+            }
+        #ifdef WOLFSSH_CERTS
+            else if (pk->publicKeyTypeSz == 14
+                    && WMEMCMP(pk->publicKeyType,
+                            "x509v3-ssh-rsa", 14) == 0) {
+                /* RFC 6187 Section 5: the signature uses the underlying
+                 * RSA algorithm, not the X.509 key type name. */
+                if ((publicKeyTypeSz == 7
+                            && WMEMCMP(publicKeyType, "ssh-rsa", 7) == 0)
+                        || (publicKeyTypeSz == 12
+                            && WMEMCMP(publicKeyType,
+                                    "rsa-sha2-256", 12) == 0)
+                        || (publicKeyTypeSz == 12
+                            && WMEMCMP(publicKeyType,
+                                    "rsa-sha2-512", 12) == 0)) {
+                    sigTypeOk = 1;
+                }
+            }
+        #endif
+        }
+        if (!sigTypeOk) {
             WLOG(WS_LOG_DEBUG,
                  "Signature's type does not match public key type");
             ret = WS_INVALID_ALGO_ID;
@@ -7179,10 +7204,33 @@ static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
-        if (publicKeyTypeSz != pk->publicKeyTypeSz
-            || WMEMCMP(publicKeyType, pk->publicKeyType,
-                    publicKeyTypeSz) != 0) {
-
+        int sigTypeOk = 0;
+        if (publicKeyType != NULL
+                && publicKeyTypeSz == pk->publicKeyTypeSz
+                && WMEMCMP(publicKeyType, pk->publicKeyType,
+                        publicKeyTypeSz) == 0) {
+            sigTypeOk = 1;
+        }
+    #ifdef WOLFSSH_CERTS
+        else if (publicKeyType != NULL
+                    && pk->publicKeyTypeSz == 14
+                    && WMEMCMP(pk->publicKeyType,
+                            "x509v3-ssh-rsa", 14) == 0) {
+            /* RFC 6187 Section 5: the signature uses the underlying
+             * RSA algorithm, not the X.509 key type name. */
+            if ((publicKeyTypeSz == 7
+                        && WMEMCMP(publicKeyType, "ssh-rsa", 7) == 0)
+                    || (publicKeyTypeSz == 12
+                        && WMEMCMP(publicKeyType,
+                                "rsa-sha2-256", 12) == 0)
+                    || (publicKeyTypeSz == 12
+                        && WMEMCMP(publicKeyType,
+                                "rsa-sha2-512", 12) == 0)) {
+                sigTypeOk = 1;
+            }
+        }
+    #endif
+        if (!sigTypeOk) {
             WLOG(WS_LOG_DEBUG,
                  "Signature's type does not match public key type");
             ret = WS_INVALID_ALGO_ID;
@@ -12667,8 +12715,20 @@ int SendKexDhReply(WOLFSSH* ssh)
      * add it to the hash and then add K. */
     if (ret == WS_SUCCESS) {
         sigBlockSz = (LENGTH_SZ * 2) + sigKeyBlock_ptr->pubKeyNameSz + sigSz;
-        payloadSz = MSG_ID_SZ + (LENGTH_SZ * 3) +
-                    sigKeyBlock_ptr->sz + fSz + fPad + sigBlockSz;
+    #ifdef WOLFSSH_CERTS
+        if (sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_SSH_RSA
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP256
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP384
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP521) {
+            payloadSz = MSG_ID_SZ + (LENGTH_SZ * 2) +
+                        sigKeyBlock_ptr->sz + fSz + fPad + sigBlockSz;
+        }
+        else
+    #endif
+        {
+            payloadSz = MSG_ID_SZ + (LENGTH_SZ * 3) +
+                        sigKeyBlock_ptr->sz + fSz + fPad + sigBlockSz;
+        }
         ret = PreparePacket(ssh, payloadSz);
     }
 
@@ -12678,15 +12738,28 @@ int SendKexDhReply(WOLFSSH* ssh)
 
         output[idx++] = msgId;
 
-        /* Copy the key block size into the buffer */
-        c32toa(sigKeyBlock_ptr->sz, output + idx);
-        idx += LENGTH_SZ;
+    #ifdef WOLFSSH_CERTS
+        if (sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_SSH_RSA
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP256
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP384
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP521) {
+            /* BuildRFC6187Info writes the complete K_S including
+             * the outer length and key type name. Skip common header. */
+        }
+        else
+    #endif
+        {
+            /* Copy the key block size into the buffer */
+            c32toa(sigKeyBlock_ptr->sz, output + idx);
+            idx += LENGTH_SZ;
 
-        /* Copy the key name into the buffer */
-        c32toa(sigKeyBlock_ptr->pubKeyFmtNameSz, output + idx);
-        idx += LENGTH_SZ;
-        WMEMCPY(output + idx, sigKeyBlock_ptr->pubKeyFmtName, sigKeyBlock_ptr->pubKeyFmtNameSz);
-        idx += sigKeyBlock_ptr->pubKeyFmtNameSz;
+            /* Copy the key name into the buffer */
+            c32toa(sigKeyBlock_ptr->pubKeyFmtNameSz, output + idx);
+            idx += LENGTH_SZ;
+            WMEMCPY(output + idx, sigKeyBlock_ptr->pubKeyFmtName,
+                    sigKeyBlock_ptr->pubKeyFmtNameSz);
+            idx += sigKeyBlock_ptr->pubKeyFmtNameSz;
+        }
 
         /* add host public key */
         switch (sigKeyBlock_ptr->pubKeyFmtId) {
