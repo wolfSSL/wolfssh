@@ -8710,19 +8710,19 @@ static int DoChannelOpen(WOLFSSH* ssh,
     else {
         const char *description = NULL;
 
-        if (fail_reason == OPEN_ADMINISTRATIVELY_PROHIBITED)
+        if (fail_reason == OPEN_OK) {
+            fail_reason = OPEN_ADMINISTRATIVELY_PROHIBITED;
+            description = "Channel open failed.";
+        }
+        else if (fail_reason == OPEN_ADMINISTRATIVELY_PROHIBITED)
             description = "Administratively prohibited.";
         else if (fail_reason == OPEN_UNKNOWN_CHANNEL_TYPE)
             description = "Channel type not supported.";
         else if (fail_reason == OPEN_RESOURCE_SHORTAGE)
             description = "Not enough resources.";
 
-        if (description != NULL) {
-            ret = SendChannelOpenFail(ssh, peerChannelId,
-                    fail_reason, description, "en");
-        }
-        else
-            ret = SendRequestSuccess(ssh, 0); /* XXX Is this right? */
+        ret = SendChannelOpenFail(ssh, peerChannelId,
+                fail_reason, description, "en");
     }
 
 #ifdef WOLFSSH_FWD

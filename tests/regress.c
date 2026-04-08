@@ -124,6 +124,103 @@ static byte ParseMsgId(const byte* pkt, word32 sz)
     return pkt[5];
 }
 
+static word32 AppendByte(byte* buf, word32 bufSz, word32 idx, byte value)
+{
+    AssertTrue(idx < bufSz);
+    buf[idx++] = value;
+    return idx;
+}
+
+static word32 AppendUint32(byte* buf, word32 bufSz, word32 idx, word32 value)
+{
+    word32 netValue = htonl(value);
+
+    AssertTrue(idx + UINT32_SZ <= bufSz);
+    WMEMCPY(buf + idx, &netValue, UINT32_SZ);
+    idx += UINT32_SZ;
+    return idx;
+}
+
+static word32 AppendData(byte* buf, word32 bufSz, word32 idx,
+        const byte* data, word32 dataSz)
+{
+    AssertTrue(idx + dataSz <= bufSz);
+    if (dataSz > 0) {
+        WMEMCPY(buf + idx, data, dataSz);
+        idx += dataSz;
+    }
+    return idx;
+}
+
+static word32 AppendString(byte* buf, word32 bufSz, word32 idx,
+        const char* value)
+{
+    word32 valueSz = (word32)WSTRLEN(value);
+
+    idx = AppendUint32(buf, bufSz, idx, valueSz);
+    return AppendData(buf, bufSz, idx, (const byte*)value, valueSz);
+}
+
+static word32 WrapPacket(byte msgId, const byte* payload, word32 payloadSz,
+        byte* out, word32 outSz)
+{
+    word32 idx = 0;
+    word32 packetLen;
+    word32 need;
+    byte padLen = MIN_PAD_LENGTH;
+
+    while (((UINT32_SZ + PAD_LENGTH_SZ + MSG_ID_SZ + payloadSz + padLen) %
+            MIN_BLOCK_SZ) != 0) {
+        padLen++;
+    }
+
+    packetLen = PAD_LENGTH_SZ + MSG_ID_SZ + payloadSz + padLen;
+    need = UINT32_SZ + packetLen;
+
+    AssertTrue(outSz >= need);
+
+    idx = AppendUint32(out, outSz, idx, packetLen);
+    idx = AppendByte(out, outSz, idx, padLen);
+    idx = AppendByte(out, outSz, idx, msgId);
+    idx = AppendData(out, outSz, idx, payload, payloadSz);
+    AssertTrue(idx + padLen <= outSz);
+    WMEMSET(out + idx, 0, padLen);
+    idx += padLen;
+
+    return idx;
+}
+
+static word32 BuildChannelOpenPacket(const char* type, word32 peerChannelId,
+        word32 peerInitialWindowSz, word32 peerMaxPacketSz,
+        const byte* extra, word32 extraSz, byte* out, word32 outSz)
+{
+    byte payload[256];
+    word32 idx = 0;
+
+    idx = AppendString(payload, sizeof(payload), idx, type);
+    idx = AppendUint32(payload, sizeof(payload), idx, peerChannelId);
+    idx = AppendUint32(payload, sizeof(payload), idx, peerInitialWindowSz);
+    idx = AppendUint32(payload, sizeof(payload), idx, peerMaxPacketSz);
+    idx = AppendData(payload, sizeof(payload), idx, extra, extraSz);
+
+    return WrapPacket(MSGID_CHANNEL_OPEN, payload, idx, out, outSz);
+}
+
+#ifdef WOLFSSH_FWD
+static word32 BuildDirectTcpipExtra(const char* host, word32 hostPort,
+        const char* origin, word32 originPort, byte* out, word32 outSz)
+{
+    word32 idx = 0;
+
+    idx = AppendString(out, outSz, idx, host);
+    idx = AppendUint32(out, outSz, idx, hostPort);
+    idx = AppendString(out, outSz, idx, origin);
+    idx = AppendUint32(out, outSz, idx, originPort);
+
+    return idx;
+}
+#endif
+
 /* Simple in-memory transport harness */
 typedef struct {
     byte* in;      /* data to feed into client */
@@ -134,9 +231,6 @@ typedef struct {
     word32 outCap;
 } MemIo;
 
-/* Minimal send/recv helpers for future transport-level tests; keep them static
- * and unused for now to avoid warnings when Werror is on. */
-#ifdef WOLFSSH_TEST_MEMIO
 static int MemRecv(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
 {
     (void)ssh;
@@ -171,6 +265,78 @@ static void MemIoInit(MemIo* io, byte* in, word32 inSz, byte* out, word32 outCap
     io->out = out;
     io->outSz = 0;
     io->outCap = outCap;
+}
+
+typedef struct {
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte out[256];
+} ChannelOpenHarness;
+
+static void InitChannelOpenHarness(ChannelOpenHarness* harness,
+        byte* in, word32 inSz)
+{
+    WMEMSET(harness, 0, sizeof(*harness));
+
+    harness->ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(harness->ctx);
+
+    wolfSSH_SetIORecv(harness->ctx, MemRecv);
+    wolfSSH_SetIOSend(harness->ctx, MemSend);
+
+    harness->ssh = wolfSSH_new(harness->ctx);
+    AssertNotNull(harness->ssh);
+
+    MemIoInit(&harness->io, in, inSz, harness->out, sizeof(harness->out));
+    wolfSSH_SetIOReadCtx(harness->ssh, &harness->io);
+    wolfSSH_SetIOWriteCtx(harness->ssh, &harness->io);
+    harness->ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+}
+
+static void FreeChannelOpenHarness(ChannelOpenHarness* harness)
+{
+    if (harness->ssh != NULL)
+        wolfSSH_free(harness->ssh);
+    if (harness->ctx != NULL)
+        wolfSSH_CTX_free(harness->ctx);
+}
+
+static void AssertChannelOpenFailResponse(const ChannelOpenHarness* harness,
+        int ret)
+{
+    byte msgId;
+
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertIntEQ(harness->io.inOff, harness->io.inSz);
+    AssertTrue(harness->io.outSz > 0);
+    AssertTrue(harness->io.outSz <= harness->io.outCap);
+
+    msgId = ParseMsgId(harness->io.out, harness->io.outSz);
+    AssertIntEQ(msgId, MSGID_CHANNEL_OPEN_FAIL);
+    AssertFalse(msgId == MSGID_REQUEST_FAILURE);
+}
+
+static int RejectChannelOpenCb(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    (void)channel;
+    (void)ctx;
+
+    return WS_BAD_ARGUMENT;
+}
+
+#ifdef WOLFSSH_FWD
+static int RejectDirectTcpipSetup(WS_FwdCbAction action, void* ctx,
+        const char* host, word32 port)
+{
+    (void)ctx;
+    (void)host;
+    (void)port;
+
+    if (action == WOLFSSH_FWD_LOCAL_SETUP)
+        return WS_FWD_SETUP_E;
+
+    return WS_SUCCESS;
 }
 #endif
 
@@ -368,6 +534,73 @@ static void TestChannelAllowedAfterAuth(WOLFSSH* ssh)
             WS_MSG_RECV);
     AssertTrue(allowed);
 }
+
+static void TestChannelOpenCallbackRejectSendsOpenFail(void)
+{
+    ChannelOpenHarness harness;
+    byte in[128];
+    word32 inSz;
+    int ret;
+
+    inSz = BuildChannelOpenPacket("session", 7, 0x4000, 0x8000,
+            NULL, 0, in, sizeof(in));
+
+    InitChannelOpenHarness(&harness, in, inSz);
+    AssertIntEQ(wolfSSH_CTX_SetChannelOpenCb(harness.ctx, RejectChannelOpenCb),
+            WS_SUCCESS);
+
+    ret = DoReceive(harness.ssh);
+    AssertChannelOpenFailResponse(&harness, ret);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+#ifdef WOLFSSH_FWD
+static void TestDirectTcpipRejectSendsOpenFail(void)
+{
+    ChannelOpenHarness harness;
+    byte extra[128];
+    byte in[192];
+    word32 extraSz;
+    word32 inSz;
+    int ret;
+
+    extraSz = BuildDirectTcpipExtra("127.0.0.1", 8080, "127.0.0.1", 2222,
+            extra, sizeof(extra));
+    inSz = BuildChannelOpenPacket("direct-tcpip", 9, 0x4000, 0x8000,
+            extra, extraSz, in, sizeof(in));
+
+    InitChannelOpenHarness(&harness, in, inSz);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, RejectDirectTcpipSetup, NULL),
+            WS_SUCCESS);
+
+    ret = DoReceive(harness.ssh);
+    AssertChannelOpenFailResponse(&harness, ret);
+
+    FreeChannelOpenHarness(&harness);
+}
+#endif
+
+#ifdef WOLFSSH_AGENT
+static void TestAgentChannelNullAgentSendsOpenFail(void)
+{
+    ChannelOpenHarness harness;
+    byte in[128];
+    word32 inSz;
+    int ret;
+
+    inSz = BuildChannelOpenPacket("auth-agent@openssh.com", 11, 0x4000,
+            0x8000, NULL, 0, in, sizeof(in));
+
+    InitChannelOpenHarness(&harness, in, inSz);
+    AssertTrue(harness.ssh->agent == NULL);
+
+    ret = DoReceive(harness.ssh);
+    AssertChannelOpenFailResponse(&harness, ret);
+
+    FreeChannelOpenHarness(&harness);
+}
+#endif
 
 
 /* Reject a peer KEXINIT once keying is in progress. */
@@ -583,6 +816,13 @@ int main(int argc, char** argv)
     TestPublicKeyFailureAborts(ssh);
     TestChannelBlockedBeforeAuth(ssh);
     TestChannelAllowedAfterAuth(ssh);
+    TestChannelOpenCallbackRejectSendsOpenFail();
+#ifdef WOLFSSH_FWD
+    TestDirectTcpipRejectSendsOpenFail();
+#endif
+#ifdef WOLFSSH_AGENT
+    TestAgentChannelNullAgentSendsOpenFail();
+#endif
     TestKexInitRejectedWhenKeying(ssh);
     TestClientBuffersIdempotent();
     TestPasswordEofNoCrash();
