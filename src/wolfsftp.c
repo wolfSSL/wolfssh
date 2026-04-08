@@ -4458,8 +4458,8 @@ int SFTP_RemoveHandleNode(WOLFSSH* ssh, byte* handle, word32 handleSz)
         cur->prev->next = cur->next;
     }
 
-    if (cur->next == NULL && cur->prev == NULL) {
-        ssh->handleList = NULL;
+    if (cur == ssh->handleList) {
+        ssh->handleList = cur->next;
     }
 
     WFREE(cur, ssh->ctx->heap, DYNTYPE_SFTP);
