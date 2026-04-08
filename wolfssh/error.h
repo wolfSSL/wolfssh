@@ -136,8 +136,9 @@ enum WS_ErrorCodes {
     WS_ED25519_E            = -1095, /* Ed25519 failure */
     WS_AUTH_PENDING         = -1096, /* User authentication still pending */
     WS_KDF_E                = -1097, /* KDF error*/
+    WS_DISCONNECT           = -1098, /* peer sent disconnect */
 
-    WS_LAST_E               = WS_KDF_E  /* Update this to indicate last error */
+    WS_LAST_E               = WS_DISCONNECT  /* Update this to indicate last error */
 };
 
 

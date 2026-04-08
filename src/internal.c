@@ -491,6 +491,9 @@ const char* GetErrorString(int err)
         case WS_KDF_E:
             return "KDF error";
 
+        case WS_DISCONNECT:
+            return "peer sent disconnect";
+
         default:
             return "Unknown error code";
     }
@@ -6475,7 +6478,6 @@ static int DoDisconnect(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     const char* reasonStr = NULL;
     word32 begin = *idx;
 
-    WOLFSSH_UNUSED(ssh);
     WOLFSSH_UNUSED(len);
     WOLFSSH_UNUSED(reasonStr);
 
@@ -6524,7 +6526,8 @@ static int DoDisconnect(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
     *idx = begin;
 
-    return WS_SUCCESS;
+    ssh->error = WS_DISCONNECT;
+    return WS_DISCONNECT;
 }
 
 
