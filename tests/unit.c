@@ -31,7 +31,6 @@
 #include <stdio.h>
 #include <wolfssh/ssh.h>
 #include <wolfssh/keygen.h>
-#include <wolfssh/internal.h>
 
 #define WOLFSSH_TEST_HEX2BIN
 #include <wolfssh/test.h>
@@ -337,7 +336,6 @@ static int test_Errors(void)
 
     return result;
 }
-
 
 int wolfSSH_UnitTest(int argc, char** argv)
 {

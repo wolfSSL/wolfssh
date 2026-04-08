@@ -206,6 +206,18 @@ static word32 BuildChannelOpenPacket(const char* type, word32 peerChannelId,
     return WrapPacket(MSGID_CHANNEL_OPEN, payload, idx, out, outSz);
 }
 
+static word32 BuildDisconnectPacket(word32 reason, byte* out, word32 outSz)
+{
+    byte payload[64];
+    word32 idx = 0;
+
+    idx = AppendUint32(payload, sizeof(payload), idx, reason);
+    idx = AppendUint32(payload, sizeof(payload), idx, 0);
+    idx = AppendUint32(payload, sizeof(payload), idx, 0);
+
+    return WrapPacket(MSGID_DISCONNECT, payload, idx, out, outSz);
+}
+
 #ifdef WOLFSSH_FWD
 static word32 BuildDirectTcpipExtra(const char* host, word32 hostPort,
         const char* origin, word32 originPort, byte* out, word32 outSz)
@@ -906,6 +918,8 @@ static void AssertChannelOpenFailResponse(const ChannelOpenHarness* harness,
     msgId = ParseMsgId(harness->io.out, harness->io.outSz);
     AssertIntEQ(msgId, MSGID_CHANNEL_OPEN_FAIL);
     AssertFalse(msgId == MSGID_REQUEST_FAILURE);
+    AssertIntEQ(harness->ssh->channelListSz, 0);
+    AssertTrue(harness->ssh->channelList == NULL);
 }
 
 static int RejectChannelOpenCb(WOLFSSH_CHANNEL* channel, void* ctx)
@@ -1207,6 +1221,100 @@ static void TestKexInitRejectedWhenKeying(WOLFSSH* ssh)
     AssertFalse(allowed);
 }
 
+static void TestDisconnectSetsDisconnectError(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte in[128];
+    byte out[32];
+    word32 inSz;
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSend);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    inSz = BuildDisconnectPacket(WOLFSSH_DISCONNECT_BY_APPLICATION,
+            in, sizeof(in));
+    MemIoInit(&io, in, inSz, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    ret = DoReceive(ssh);
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+    AssertIntEQ(io.inOff, io.inSz);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+#ifdef WOLFSSH_SFTP
+static void TestOct2DecRejectsInvalidNonLeadingDigit(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    byte invalidOct[] = "0718";
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    ret = wolfSSH_oct2dec(ssh, invalidOct, (word32)WSTRLEN((char*)invalidOct));
+    AssertIntEQ(ret, WS_BAD_ARGUMENT);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+#ifdef WOLFSSH_STOREHANDLE
+static void TestSftpRemoveHandleHeadUpdate(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    byte firstHandle[] = { 0x01, 0x02, 0x03, 0x04 };
+    byte secondHandle[] = { 0x10, 0x20, 0x30, 0x40 };
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    ret = SFTP_AddHandleNode(ssh, firstHandle, sizeof(firstHandle), "first");
+    AssertIntEQ(ret, WS_SUCCESS);
+
+    ret = SFTP_AddHandleNode(ssh, secondHandle, sizeof(secondHandle), "second");
+    AssertIntEQ(ret, WS_SUCCESS);
+
+    ret = SFTP_RemoveHandleNode(ssh, secondHandle, sizeof(secondHandle));
+    AssertIntEQ(ret, WS_SUCCESS);
+
+    AssertNotNull(ssh->handleList);
+    AssertTrue(ssh->handleList->prev == NULL);
+    AssertIntEQ(ssh->handleList->handleSz, (int)sizeof(firstHandle));
+    AssertIntEQ(WMEMCMP(ssh->handleList->handle, firstHandle,
+            sizeof(firstHandle)), 0);
+
+    ret = SFTP_RemoveHandleNode(ssh, firstHandle, sizeof(firstHandle));
+    AssertIntEQ(ret, WS_SUCCESS);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+#endif
+#endif
+
 /* Ensure client buffer cleanup tolerates multiple invocations after allocs. */
 static void TestClientBuffersIdempotent(void)
 {
@@ -1378,6 +1486,13 @@ static void TestSftpBufferSendPendingOutput(void)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
+#if defined(WOLFSSL_NUCLEUS) && !defined(NO_WOLFSSH_MKTIME)
+static void TestNucleusMonthConversion(void)
+{
+    AssertIntEQ(wolfSSH_TestNucleusMonthFromDate((word16)(1U << 5)), 0);
+    AssertIntEQ(wolfSSH_TestNucleusMonthFromDate((word16)(12U << 5)), 11);
+}
+#endif
 #endif /* WOLFSSH_SFTP */
 
 
@@ -1415,6 +1530,7 @@ int main(int argc, char** argv)
     TestAgentChannelNullAgentSendsOpenFail();
 #endif
     TestKexInitRejectedWhenKeying(ssh);
+    TestDisconnectSetsDisconnectError();
     TestClientBuffersIdempotent();
     TestPasswordEofNoCrash();
 #ifndef WOLFSSH_TEST_BLOCK
@@ -1431,7 +1547,14 @@ int main(int argc, char** argv)
 #endif
 
 #ifdef WOLFSSH_SFTP
+    TestOct2DecRejectsInvalidNonLeadingDigit();
+    #ifdef WOLFSSH_STOREHANDLE
+    TestSftpRemoveHandleHeadUpdate();
+    #endif
     TestSftpBufferSendPendingOutput();
+    #if defined(WOLFSSL_NUCLEUS) && !defined(NO_WOLFSSH_MKTIME)
+    TestNucleusMonthConversion();
+    #endif
 #endif
 
     /* TODO: add app-level regressions that simulate stdin EOF/password

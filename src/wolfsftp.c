@@ -4535,6 +4535,13 @@ static word32 TimeTo32(word16 d, word16 t)
 
     return mktime(&tmp);
 }
+
+#ifdef WOLFSSH_TEST_INTERNAL
+int wolfSSH_TestNucleusMonthFromDate(word16 d)
+{
+    return (int)WS_GETMON(d);
+}
+#endif
 #endif /* NO_WOLFSSH_MKTIME */
 
 

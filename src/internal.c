@@ -8618,6 +8618,7 @@ static int DoChannelOpen(WOLFSSH* ssh,
     int isDirect = 0;
 #endif /* WOLFSSH_FWD */
     WOLFSSH_CHANNEL* newChannel = NULL;
+    byte channelAppended = 0;
     int ret = WS_SUCCESS;
     word32 fail_reason = OPEN_OK;
 
@@ -8712,9 +8713,13 @@ static int DoChannelOpen(WOLFSSH* ssh,
                 }
             }
         #endif /* WOLFSSH_FWD */
-            ChannelAppend(ssh, newChannel);
-
-            ssh->clientState = CLIENT_CHANNEL_OPEN_DONE;
+            if (ret == WS_SUCCESS) {
+                ret = ChannelAppend(ssh, newChannel);
+                if (ret == WS_SUCCESS) {
+                    channelAppended = 1;
+                    ssh->clientState = CLIENT_CHANNEL_OPEN_DONE;
+                }
+            }
         }
     }
 
@@ -8723,6 +8728,11 @@ static int DoChannelOpen(WOLFSSH* ssh,
     }
     else {
         const char *description = NULL;
+
+        if (newChannel != NULL && !channelAppended) {
+            ChannelDelete(newChannel, ssh->ctx->heap);
+            newChannel = NULL;
+        }
 
         if (fail_reason == OPEN_OK) {
             fail_reason = OPEN_ADMINISTRATIVELY_PROHIBITED;
