@@ -302,6 +302,594 @@ static void FreeChannelOpenHarness(ChannelOpenHarness* harness)
         wolfSSH_CTX_free(harness->ctx);
 }
 
+#if !defined(NO_WOLFSSH_SERVER) && !defined(NO_WOLFSSH_CLIENT) && \
+    !defined(WOLFSSH_NO_RSA) && !defined(NO_FILESYSTEM)
+    #if !defined(WOLFSSH_NO_DH_GROUP14_SHA256)
+        #define KEXDH_REPLY_REGRESS_KEX_ALGO "diffie-hellman-group14-sha256"
+    #elif !defined(WOLFSSH_NO_DH_GROUP16_SHA512)
+        #define KEXDH_REPLY_REGRESS_KEX_ALGO "diffie-hellman-group16-sha512"
+    #elif !defined(WOLFSSH_NO_DH_GROUP14_SHA1)
+        #define KEXDH_REPLY_REGRESS_KEX_ALGO "diffie-hellman-group14-sha1"
+    #elif !defined(WOLFSSH_NO_DH_GROUP1_SHA1)
+        #define KEXDH_REPLY_REGRESS_KEX_ALGO "diffie-hellman-group1-sha1"
+    #endif
+#endif
+
+#ifdef KEXDH_REPLY_REGRESS_KEX_ALGO
+
+#define REGRESS_DUPLEX_QUEUE_SZ 32768U
+#define REGRESS_MUTATION_SCRATCH_SZ 4096U
+#define REGRESS_SERVER_KEY_PATH "keys/server-key-rsa.der"
+#define REGRESS_USERNAME "jill"
+#define REGRESS_PASSWORD "upthehill"
+#define REGRESS_MAX_HANDSHAKE_STEPS 2048
+
+typedef struct {
+    byte data[REGRESS_DUPLEX_QUEUE_SZ];
+    word32 len;
+} DuplexQueue;
+
+typedef struct {
+    byte enabled;
+    int parseError;
+    word32 matchedPackets;
+    word32 mutatedPackets;
+    byte scratch[REGRESS_MUTATION_SCRATCH_SZ];
+    word32 scratchSz;
+} KexReplyMutator;
+
+typedef struct DuplexEndpoint {
+    DuplexQueue inbound;
+    struct DuplexEndpoint* peer;
+    KexReplyMutator* mutator;
+    byte isServer;
+} DuplexEndpoint;
+
+typedef struct {
+    WOLFSSH_CTX* clientCtx;
+    WOLFSSH_CTX* serverCtx;
+    WOLFSSH* client;
+    WOLFSSH* server;
+    DuplexEndpoint clientIo;
+    DuplexEndpoint serverIo;
+    KexReplyMutator mutator;
+} KexReplyHarness;
+
+typedef struct {
+    int clientRet;
+    int clientErr;
+    int serverRet;
+    int serverErr;
+    int clientSuccess;
+    int serverSuccess;
+    word32 steps;
+} KexReplyRunResult;
+
+static word32 ReadUint32(const byte* buf)
+{
+    return ((word32)buf[0] << 24) | ((word32)buf[1] << 16) |
+            ((word32)buf[2] << 8) | (word32)buf[3];
+}
+
+static int ReadStringRef(word32* strSz, const byte** str,
+        const byte* buf, word32 len, word32* idx)
+{
+    if (strSz == NULL || str == NULL || buf == NULL || idx == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    if (*idx > len || len - *idx < LENGTH_SZ) {
+        return WS_PARSE_E;
+    }
+
+    *strSz = ReadUint32(buf + *idx);
+    *idx += LENGTH_SZ;
+    if (*strSz > len - *idx) {
+        return WS_PARSE_E;
+    }
+
+    *str = buf + *idx;
+    *idx += *strSz;
+
+    return WS_SUCCESS;
+}
+
+static word32 AppendBlob(byte* buf, word32 bufSz, word32 idx,
+        const byte* data, word32 dataSz)
+{
+    idx = AppendUint32(buf, bufSz, idx, dataSz);
+    return AppendData(buf, bufSz, idx, data, dataSz);
+}
+
+static word32 LoadFileBuffer(const char* path, byte* buf, word32 bufSz)
+{
+    WFILE* file;
+    long fileSz;
+    word32 readSz;
+
+    if (path == NULL || buf == NULL || bufSz == 0) {
+        return 0;
+    }
+
+    if (WFOPEN(NULL, &file, path, "rb") != 0 || file == WBADFILE) {
+        return 0;
+    }
+    WFSEEK(NULL, file, 0, WSEEK_END);
+    fileSz = WFTELL(NULL, file);
+    WREWIND(NULL, file);
+
+    if (fileSz <= 0 || (word32)fileSz > bufSz) {
+        WFCLOSE(NULL, file);
+        return 0;
+    }
+
+    readSz = (word32)WFREAD(NULL, buf, 1, fileSz, file);
+    WFCLOSE(NULL, file);
+
+    if (readSz != (word32)fileSz) {
+        return 0;
+    }
+
+    return readSz;
+}
+
+static int RegressionClientUserAuth(byte authType,
+        WS_UserAuthData* authData, void* ctx)
+{
+    static const char password[] = REGRESS_PASSWORD;
+
+    (void)ctx;
+
+    if (authType != WOLFSSH_USERAUTH_PASSWORD || authData == NULL) {
+        return WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
+    }
+
+    authData->sf.password.password = (byte*)password;
+    authData->sf.password.passwordSz = (word32)WSTRLEN(password);
+
+    return WOLFSSH_USERAUTH_SUCCESS;
+}
+
+static int RegressionServerUserAuth(byte authType,
+        WS_UserAuthData* authData, void* ctx)
+{
+    static const char password[] = REGRESS_PASSWORD;
+    word32 passwordSz = (word32)WSTRLEN(password);
+
+    (void)ctx;
+
+    if (authType != WOLFSSH_USERAUTH_PASSWORD || authData == NULL) {
+        return WOLFSSH_USERAUTH_FAILURE;
+    }
+
+    if (authData->sf.password.password == NULL ||
+            authData->sf.password.passwordSz != passwordSz) {
+        return WOLFSSH_USERAUTH_FAILURE;
+    }
+
+    if (WMEMCMP(authData->sf.password.password, password, passwordSz) != 0) {
+        return WOLFSSH_USERAUTH_FAILURE;
+    }
+
+    return WOLFSSH_USERAUTH_SUCCESS;
+}
+
+static int AcceptAnyServerHostKey(const byte* pubKey, word32 pubKeySz,
+        void* ctx)
+{
+    (void)pubKey;
+    (void)pubKeySz;
+    (void)ctx;
+
+    return 0;
+}
+
+static int QueueAppend(DuplexQueue* queue, const byte* data, word32 dataSz)
+{
+    if (queue == NULL || data == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    if (dataSz > sizeof(queue->data) - queue->len) {
+        return WS_BUFFER_E;
+    }
+
+    WMEMCPY(queue->data + queue->len, data, dataSz);
+    queue->len += dataSz;
+
+    return WS_SUCCESS;
+}
+
+static int RewriteSingleKexDhReplyPacket(const byte* packet, word32 packetSz,
+        const char* replacement, byte* out, word32 outSz, word32* outLen)
+{
+    const byte* payload;
+    const byte* pubKey;
+    const byte* f;
+    const byte* sigBlob;
+    const byte* sigName;
+    const byte* sigData;
+    word32 packetLen, padLen, payloadSz;
+    word32 pubKeySz, fSz, sigBlobSz;
+    word32 sigNameSz, sigDataSz;
+    word32 idx = 0;
+    word32 innerIdx = 0;
+    word32 outerIdx = 0;
+    word32 innerSigSz;
+    byte payloadBuf[REGRESS_MUTATION_SCRATCH_SZ];
+    byte innerSig[REGRESS_MUTATION_SCRATCH_SZ];
+
+    if (replacement == NULL || out == NULL || outLen == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    if (packetSz < UINT32_SZ + PAD_LENGTH_SZ + MSG_ID_SZ) {
+        return 0;
+    }
+
+    packetLen = ReadUint32(packet);
+    if (packetLen + UINT32_SZ != packetSz) {
+        return 0;
+    }
+
+    padLen = packet[UINT32_SZ];
+    if (packetLen < PAD_LENGTH_SZ + MSG_ID_SZ + padLen) {
+        return WS_PARSE_E;
+    }
+
+    if (packet[UINT32_SZ + PAD_LENGTH_SZ] != MSGID_KEXDH_REPLY) {
+        return 0;
+    }
+
+    payload = packet + UINT32_SZ + PAD_LENGTH_SZ + MSG_ID_SZ;
+    payloadSz = packetSz - UINT32_SZ - PAD_LENGTH_SZ - MSG_ID_SZ - padLen;
+
+    if (ReadStringRef(&pubKeySz, &pubKey, payload, payloadSz, &idx) !=
+            WS_SUCCESS) {
+        return WS_PARSE_E;
+    }
+    if (ReadStringRef(&fSz, &f, payload, payloadSz, &idx) != WS_SUCCESS) {
+        return WS_PARSE_E;
+    }
+    if (ReadStringRef(&sigBlobSz, &sigBlob, payload, payloadSz, &idx) !=
+            WS_SUCCESS) {
+        return WS_PARSE_E;
+    }
+
+    if (ReadStringRef(&sigNameSz, &sigName, sigBlob, sigBlobSz, &innerIdx) !=
+            WS_SUCCESS) {
+        return WS_PARSE_E;
+    }
+    if (ReadStringRef(&sigDataSz, &sigData, sigBlob, sigBlobSz, &innerIdx) !=
+            WS_SUCCESS) {
+        return WS_PARSE_E;
+    }
+
+    if (innerIdx != sigBlobSz) {
+        return WS_PARSE_E;
+    }
+
+    (void)sigName;
+    (void)sigNameSz;
+
+    innerSigSz = 0;
+    innerSigSz = AppendString(innerSig, sizeof(innerSig), innerSigSz,
+            replacement);
+    innerSigSz = AppendBlob(innerSig, sizeof(innerSig), innerSigSz,
+            sigData, sigDataSz);
+
+    outerIdx = 0;
+    outerIdx = AppendBlob(payloadBuf, sizeof(payloadBuf), outerIdx,
+            pubKey, pubKeySz);
+    outerIdx = AppendBlob(payloadBuf, sizeof(payloadBuf), outerIdx, f, fSz);
+    outerIdx = AppendBlob(payloadBuf, sizeof(payloadBuf), outerIdx,
+            innerSig, innerSigSz);
+    *outLen = WrapPacket(MSGID_KEXDH_REPLY, payloadBuf, outerIdx, out, outSz);
+
+    return 1;
+}
+
+static int RewriteKexDhReplySignatureName(const byte* packet, word32 packetSz,
+        const char* replacement, byte* out, word32 outSz, word32* outLen)
+{
+    word32 offset = 0;
+
+    if (packet == NULL || replacement == NULL || out == NULL || outLen == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    while (packetSz - offset >= UINT32_SZ + PAD_LENGTH_SZ + MSG_ID_SZ) {
+        word32 curPacketSz = ReadUint32(packet + offset) + UINT32_SZ;
+        int rewriteRet;
+
+        if (curPacketSz > packetSz - offset) {
+            return 0;
+        }
+
+        if (packet[offset + UINT32_SZ + PAD_LENGTH_SZ] == MSGID_KEXDH_REPLY) {
+            rewriteRet = RewriteSingleKexDhReplyPacket(packet + offset,
+                    curPacketSz, replacement, out, outSz, outLen);
+            if (rewriteRet <= 0) {
+                return rewriteRet;
+            }
+
+            if (packetSz - offset - curPacketSz > outSz - *outLen) {
+                return WS_BUFFER_E;
+            }
+
+            WMEMCPY(out + *outLen, packet + offset + curPacketSz,
+                    packetSz - offset - curPacketSz);
+            *outLen += packetSz - offset - curPacketSz;
+
+            return 1;
+        }
+
+        offset += curPacketSz;
+    }
+
+    return 0;
+}
+
+static int DuplexRecv(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    DuplexEndpoint* endpoint = (DuplexEndpoint*)ctx;
+    word32 readSz;
+
+    (void)ssh;
+
+    if (endpoint == NULL || buf == NULL) {
+        return WS_CBIO_ERR_GENERAL;
+    }
+
+    if (endpoint->inbound.len == 0) {
+        return WS_CBIO_ERR_WANT_READ;
+    }
+
+    readSz = sz;
+    if (readSz > endpoint->inbound.len) {
+        readSz = endpoint->inbound.len;
+    }
+
+    WMEMCPY(buf, endpoint->inbound.data, readSz);
+    endpoint->inbound.len -= readSz;
+    if (endpoint->inbound.len > 0) {
+        WMEMMOVE(endpoint->inbound.data, endpoint->inbound.data + readSz,
+                endpoint->inbound.len);
+    }
+
+    return (int)readSz;
+}
+
+static int DuplexSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    DuplexEndpoint* endpoint = (DuplexEndpoint*)ctx;
+    const byte* output = (const byte*)buf;
+    word32 outputSz = sz;
+    int ret;
+
+    (void)ssh;
+
+    if (endpoint == NULL || endpoint->peer == NULL || buf == NULL) {
+        return WS_CBIO_ERR_GENERAL;
+    }
+
+    if (endpoint->isServer && endpoint->mutator != NULL &&
+            endpoint->mutator->enabled &&
+            endpoint->mutator->mutatedPackets == 0 &&
+            outputSz >= UINT32_SZ + PAD_LENGTH_SZ + MSG_ID_SZ &&
+            !(outputSz >= SSH_PROTO_SZ &&
+              WMEMCMP(output, "SSH-", SSH_PROTO_SZ) == 0)) {
+        word32 mutatedSz = 0;
+        int mutateRet;
+
+        mutateRet = RewriteKexDhReplySignatureName(output, outputSz, "ssh-rsa",
+                endpoint->mutator->scratch,
+                (word32)sizeof(endpoint->mutator->scratch), &mutatedSz);
+        if (mutateRet < 0) {
+            endpoint->mutator->parseError = mutateRet;
+            return WS_CBIO_ERR_GENERAL;
+        }
+        if (mutateRet > 0) {
+            endpoint->mutator->matchedPackets++;
+            endpoint->mutator->mutatedPackets++;
+            endpoint->mutator->scratchSz = mutatedSz;
+            output = endpoint->mutator->scratch;
+            outputSz = mutatedSz;
+        }
+    }
+
+    ret = QueueAppend(&endpoint->peer->inbound, output, outputSz);
+    if (ret != WS_SUCCESS) {
+        return WS_CBIO_ERR_GENERAL;
+    }
+
+    return (int)sz;
+}
+
+static void InitDuplexPair(DuplexEndpoint* client, DuplexEndpoint* server,
+        KexReplyMutator* mutator)
+{
+    WMEMSET(client, 0, sizeof(*client));
+    WMEMSET(server, 0, sizeof(*server));
+
+    client->peer = server;
+    server->peer = client;
+    server->mutator = mutator;
+    server->isServer = 1;
+}
+
+static void FreeKexReplyHarness(KexReplyHarness* harness)
+{
+    if (harness->client != NULL) {
+        wolfSSH_free(harness->client);
+    }
+    if (harness->server != NULL) {
+        wolfSSH_free(harness->server);
+    }
+    if (harness->clientCtx != NULL) {
+        wolfSSH_CTX_free(harness->clientCtx);
+    }
+    if (harness->serverCtx != NULL) {
+        wolfSSH_CTX_free(harness->serverCtx);
+    }
+}
+
+static void InitKexReplyHarness(KexReplyHarness* harness,
+        const char* keyAlgo, byte mutateReply)
+{
+    byte keyBuf[2048];
+    word32 keySz;
+
+    WMEMSET(harness, 0, sizeof(*harness));
+
+    InitDuplexPair(&harness->clientIo, &harness->serverIo, &harness->mutator);
+    harness->mutator.enabled = mutateReply;
+
+    harness->clientCtx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(harness->clientCtx);
+    harness->serverCtx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(harness->serverCtx);
+
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListKex(harness->clientCtx,
+            KEXDH_REPLY_REGRESS_KEX_ALGO), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListKex(harness->serverCtx,
+            KEXDH_REPLY_REGRESS_KEX_ALGO), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListKey(harness->clientCtx, keyAlgo),
+            WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListKey(harness->serverCtx, keyAlgo),
+            WS_SUCCESS);
+
+    wolfSSH_SetIORecv(harness->clientCtx, DuplexRecv);
+    wolfSSH_SetIOSend(harness->clientCtx, DuplexSend);
+    wolfSSH_SetIORecv(harness->serverCtx, DuplexRecv);
+    wolfSSH_SetIOSend(harness->serverCtx, DuplexSend);
+
+    wolfSSH_SetUserAuth(harness->clientCtx, RegressionClientUserAuth);
+    wolfSSH_SetUserAuth(harness->serverCtx, RegressionServerUserAuth);
+    wolfSSH_CTX_SetPublicKeyCheck(harness->clientCtx, AcceptAnyServerHostKey);
+
+    keySz = LoadFileBuffer(REGRESS_SERVER_KEY_PATH, keyBuf, sizeof(keyBuf));
+    AssertTrue(keySz > 0);
+    AssertIntEQ(wolfSSH_CTX_UsePrivateKey_buffer(harness->serverCtx, keyBuf,
+            keySz, WOLFSSH_FORMAT_ASN1), WS_SUCCESS);
+
+    harness->client = wolfSSH_new(harness->clientCtx);
+    AssertNotNull(harness->client);
+    harness->server = wolfSSH_new(harness->serverCtx);
+    AssertNotNull(harness->server);
+
+    wolfSSH_SetIOReadCtx(harness->client, &harness->clientIo);
+    wolfSSH_SetIOWriteCtx(harness->client, &harness->clientIo);
+    wolfSSH_SetIOReadCtx(harness->server, &harness->serverIo);
+    wolfSSH_SetIOWriteCtx(harness->server, &harness->serverIo);
+
+    AssertIntEQ(wolfSSH_SetUsername(harness->client, REGRESS_USERNAME),
+            WS_SUCCESS);
+}
+
+static int IsHandshakeRetryable(int err)
+{
+    return err == WS_WANT_READ || err == WS_WANT_WRITE ||
+            err == WS_AUTH_PENDING;
+}
+
+static void RunKexReplyHandshake(KexReplyHarness* harness,
+        KexReplyRunResult* result)
+{
+    word32 step;
+
+    WMEMSET(result, 0, sizeof(*result));
+    result->clientRet = WS_FATAL_ERROR;
+    result->serverRet = WS_FATAL_ERROR;
+
+    for (step = 0; step < REGRESS_MAX_HANDSHAKE_STEPS; step++) {
+        if (!result->clientSuccess) {
+            result->clientRet = wolfSSH_connect(harness->client);
+            result->clientErr = wolfSSH_get_error(harness->client);
+            if (result->clientRet == WS_SUCCESS) {
+                result->clientSuccess = 1;
+            }
+            else if (!IsHandshakeRetryable(result->clientErr)) {
+                result->steps = step + 1;
+                return;
+            }
+        }
+
+        if (!result->serverSuccess) {
+            result->serverRet = wolfSSH_accept(harness->server);
+            result->serverErr = wolfSSH_get_error(harness->server);
+            if (result->serverRet == WS_SUCCESS) {
+                result->serverSuccess = 1;
+            }
+            else if (!IsHandshakeRetryable(result->serverErr)) {
+                result->steps = step + 1;
+                return;
+            }
+        }
+
+        if (result->clientSuccess && result->serverSuccess) {
+            result->steps = step + 1;
+            return;
+        }
+    }
+
+    result->steps = REGRESS_MAX_HANDSHAKE_STEPS;
+}
+
+static void AssertHandshakeSucceeds(const char* keyAlgo)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    InitKexReplyHarness(&harness, keyAlgo, 0);
+    RunKexReplyHandshake(&harness, &result);
+
+    AssertTrue(result.clientSuccess);
+    AssertTrue(result.serverSuccess);
+    AssertIntEQ(harness.mutator.mutatedPackets, 0);
+    AssertIntEQ(harness.client->connectState, CONNECT_SERVER_CHANNEL_REQUEST_DONE);
+    AssertIntEQ(harness.server->acceptState, ACCEPT_CLIENT_SESSION_ESTABLISHED);
+
+    FreeKexReplyHarness(&harness);
+}
+
+static void AssertHandshakeRejectsMutatedReply(const char* keyAlgo)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    InitKexReplyHarness(&harness, keyAlgo, 1);
+    RunKexReplyHandshake(&harness, &result);
+
+    AssertIntEQ(harness.mutator.parseError, 0);
+    AssertIntEQ(harness.mutator.matchedPackets, 1);
+    AssertIntEQ(harness.mutator.mutatedPackets, 1);
+    AssertFalse(result.clientSuccess);
+    AssertFalse(harness.client->connectState >= CONNECT_KEYED);
+    AssertTrue(result.clientRet == WS_FATAL_ERROR);
+    AssertTrue(result.clientErr != WS_WANT_READ && result.clientErr != WS_WANT_WRITE);
+
+    FreeKexReplyHarness(&harness);
+}
+
+#ifndef WOLFSSH_NO_RSA_SHA2_256
+static void TestKexDhReplyRejectsRsaSha2_256SigNameDowngrade(void)
+{
+    AssertHandshakeSucceeds("rsa-sha2-256");
+    AssertHandshakeRejectsMutatedReply("rsa-sha2-256");
+}
+#endif
+
+#ifndef WOLFSSH_NO_RSA_SHA2_512
+static void TestKexDhReplyRejectsRsaSha2_512SigNameDowngrade(void)
+{
+    AssertHandshakeSucceeds("rsa-sha2-512");
+    AssertHandshakeRejectsMutatedReply("rsa-sha2-512");
+}
+#endif
+
+#endif /* KEXDH_REPLY_REGRESS_KEX_ALGO */
+
 static void AssertChannelOpenFailResponse(const ChannelOpenHarness* harness,
         int ret)
 {
@@ -828,6 +1416,15 @@ int main(int argc, char** argv)
     TestPasswordEofNoCrash();
 #ifndef WOLFSSH_TEST_BLOCK
     TestWorkerReadsWhenSendWouldBlock();
+#endif
+
+#ifdef KEXDH_REPLY_REGRESS_KEX_ALGO
+    #ifndef WOLFSSH_NO_RSA_SHA2_256
+    TestKexDhReplyRejectsRsaSha2_256SigNameDowngrade();
+    #endif
+    #ifndef WOLFSSH_NO_RSA_SHA2_512
+    TestKexDhReplyRejectsRsaSha2_512SigNameDowngrade();
+    #endif
 #endif
 
 #ifdef WOLFSSH_SFTP

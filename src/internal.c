@@ -5761,6 +5761,9 @@ static int KeyAgree_client(WOLFSSH* ssh, byte hashId, const byte* f, word32 fSz)
 }
 
 
+static INLINE byte SigTypeForId(byte id);
+
+
 static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
     struct wolfSSH_sigKeyBlock *sigKeyBlock_ptr = NULL;
@@ -6010,9 +6013,10 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 #ifndef WOLFSSH_NO_RSA
         int tmpIdx = begin - sigSz;
 #endif
-            /* Skip past the sig name. Check it, though. Other SSH
-             * implementations do the verify based on the name, despite what
-             * was agreed upon. XXX*/
+            const char* expectedSigName =
+                    IdToName(SigTypeForId(ssh->handshake->pubKeyId));
+            word32 expectedSigNameSz = (word32)WSTRLEN(expectedSigName);
+
             begin = 0;
             ret = GetUint32(&scratch, sig, sigSz, &begin);
             if (ret == WS_SUCCESS) {
@@ -6020,6 +6024,15 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                  * sig buffer and leaves enough room for another length. */
                 if (scratch > sigSz - begin - LENGTH_SZ) {
                     WLOG(WS_LOG_DEBUG, "sig name size is too large");
+                    ret = WS_PARSE_E;
+                }
+            }
+            if (ret == WS_SUCCESS) {
+                if (scratch != expectedSigNameSz ||
+                        WMEMCMP(sig + begin, expectedSigName, scratch) != 0) {
+                    WLOG(WS_LOG_DEBUG,
+                            "signature name %.*s did not match negotiated %s",
+                            (int)scratch, sig + begin, expectedSigName);
                     ret = WS_PARSE_E;
                 }
             }
@@ -10568,7 +10581,6 @@ static int PreparePacket(WOLFSSH* ssh, word32 payloadSz)
 
     return ret;
 }
-
 
 static int BundlePacket(WOLFSSH* ssh)
 {
