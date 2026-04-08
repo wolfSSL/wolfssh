@@ -17535,7 +17535,7 @@ int wolfSSH_oct2dec(WOLFSSH* ssh, byte* oct, word32 octSz)
 
     for (i = 0; i < octSz; i++)
     {
-        if (oct[i] < '0' || oct[0] > '7') {
+        if (oct[i] < '0' || oct[i] > '7') {
             ret = WS_BAD_ARGUMENT;
             break;
         }
