@@ -323,6 +323,8 @@ static void FreeChannelOpenHarness(ChannelOpenHarness* harness)
 #define REGRESS_USERNAME "jill"
 #define REGRESS_PASSWORD "upthehill"
 #define REGRESS_MAX_HANDSHAKE_STEPS 2048
+#define REGRESS_SSH_PROTO_PREFIX "SSH-"
+#define REGRESS_SSH_PROTO_PREFIX_SZ 4U
 
 typedef struct {
     byte data[REGRESS_DUPLEX_QUEUE_SZ];
@@ -677,8 +679,9 @@ static int DuplexSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
             endpoint->mutator->enabled &&
             endpoint->mutator->mutatedPackets == 0 &&
             outputSz >= UINT32_SZ + PAD_LENGTH_SZ + MSG_ID_SZ &&
-            !(outputSz >= SSH_PROTO_SZ &&
-              WMEMCMP(output, "SSH-", SSH_PROTO_SZ) == 0)) {
+            !(outputSz >= REGRESS_SSH_PROTO_PREFIX_SZ &&
+              WMEMCMP(output, REGRESS_SSH_PROTO_PREFIX,
+                      REGRESS_SSH_PROTO_PREFIX_SZ) == 0)) {
         word32 mutatedSz = 0;
         int mutateRet;
 

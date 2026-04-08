@@ -6032,7 +6032,8 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                         WMEMCMP(sig + begin, expectedSigName, scratch) != 0) {
                     WLOG(WS_LOG_DEBUG,
                             "signature name %.*s did not match negotiated %s",
-                            (int)scratch, sig + begin, expectedSigName);
+                            (int)scratch, (const char*)(sig + begin),
+                            expectedSigName);
                     ret = WS_PARSE_E;
                 }
             }
