@@ -4513,7 +4513,7 @@ static int SFTP_FreeHandles(WOLFSSH* ssh)
     /* mktime() expects month from 0 to 11. Nucleus months
     * are saved as 1 to 12. Hence 1 is being deducted to
     * make it compatible with Unix time stamp. */
-    #define WS_GETMON(d) (_GETMON(d) - 5)
+    #define WS_GETMON(d) (_GETMON(d) - 1)
     #define WS_GETHOUR(t) (_GETHOUR(t) - 1)
 #else
     #define WS_GETMON(d) _GETMON(d)
