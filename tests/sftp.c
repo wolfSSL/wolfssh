@@ -43,117 +43,138 @@
 #include "examples/echoserver/echoserver.h"
 #include "examples/sftpclient/sftpclient.h"
 
-static const char* cmds[] = {
-    "mkdir a",
-    "cd a",
-    "pwd",
-    "ls",
-#ifdef WOLFSSH_ZEPHYR
-    "put " CONFIG_WOLFSSH_SFTP_DEFAULT_DIR "/configure.ac",
-#else
-    "put configure.ac",
-#endif
-    "ls",
-#ifdef WOLFSSH_ZEPHYR
-    "get configure.ac " CONFIG_WOLFSSH_SFTP_DEFAULT_DIR "/test-get",
-#else
-    "get configure.ac test-get",
-#endif
-    "rm configure.ac",
-    "cd ../",
-    "ls",
-    "rename test-get test-get-2",
-    "rmdir a",
-    "ls",
-    "chmod 600 test-get-2",
-    "rm test-get-2",
-    "ls -s",
-    /* empty arg tests: trigger pt[sz-1] underflow if sz == 0 */
-    "mkdir",
-    "cd",
-    "ls",
-    "chmod",
-    "rmdir",
-    "rm",
-    "rename",
-    "get",
-    "put",
-    "exit"
-};
-static int commandIdx = 0;
+/*
+ * Each test command is paired with an optional check function that
+ * validates the output it produces. This eliminates the fragile
+ * index-based coupling between the command array and the validator.
+ */
+typedef int (*SftpTestCheck)(void);
+
+typedef struct {
+    const char* cmd;
+    SftpTestCheck check; /* validates output from THIS cmd, or NULL */
+} SftpTestCmd;
+
+/* Test buffer */
 static char inBuf[1024] = {0};
 
-/* return 0 on success */
-static int Expected(int command)
+/* check that pwd output ends in /a */
+static int checkPwdInA(void)
 {
     int i;
+    int len;
 
-    switch (command) {
-        case 3: /* pwd */
-            /* working directory should not contain a '.' at the end */
-            for (i = 0; i < (int)sizeof(inBuf); i++) {
-                if (inBuf[i] == '\n') {
-                    inBuf[i] = '\0';
-                    break;
-                }
-            }
-
-            if (inBuf[WSTRLEN(inBuf) - 2] != '/') {
-                printf("unexpected pwd of %s\n looking for '/'\n", inBuf);
-                return -1;
-            }
-            if (inBuf[WSTRLEN(inBuf) - 1] != 'a') {
-                printf("unexpected pwd of %s\n looking for 'a'\n", inBuf);
-                return -1;
-            }
+    for (i = 0; i < (int)sizeof(inBuf); i++) {
+        if (inBuf[i] == '\n') {
+            inBuf[i] = '\0';
             break;
-
-        case 4:
-            {
-#ifdef WOLFSSH_ZEPHYR
-                /* No . and .. in zephyr fs API */
-                char expt1[] = "wolfSSH sftp> ";
-                char expt2[] = "wolfSSH sftp> ";
-#else
-                char expt1[] = ".\n..\nwolfSSH sftp> ";
-                char expt2[] = "..\n.\nwolfSSH sftp> ";
-#endif
-                if (WMEMCMP(expt1, inBuf, sizeof(expt1)) != 0 &&
-                    WMEMCMP(expt2, inBuf, sizeof(expt2)) != 0) {
-                    printf("unexpected ls\n");
-                    printf("\texpected \n%s\n\tor\n%s\n\tbut got\n%s\n", expt1,
-                            expt2, inBuf);
-                    return -1;
-                }
-                else
-                    return 0;
-
-            }
-
-        case 6:
-            if (WSTRNSTR(inBuf, "configure.ac", sizeof(inBuf)) == NULL) {
-                fprintf(stderr, "configure.ac not found in %s\n", inBuf);
-                return 1;
-            }
-            else {
-                return 0;
-            }
-
-        case 10:
-            return (WSTRNSTR(inBuf, "test-get", sizeof(inBuf)) == NULL);
-
-        case 13:
-            return (WSTRNSTR(inBuf, "test-get-2", sizeof(inBuf)) == NULL);
-
-        case 16:
-            return (WSTRNSTR(inBuf, "size in bytes", sizeof(inBuf)) == NULL);
-
-        default:
-            break;
+        }
     }
-    WMEMSET(inBuf, 0, sizeof(inBuf));
+
+    len = (int)WSTRLEN(inBuf);
+    if (len < 2) {
+        printf("pwd output too short: %s\n", inBuf);
+        return -1;
+    }
+    if (inBuf[len - 2] != '/') {
+        printf("unexpected pwd of %s, looking for '/'\n", inBuf);
+        return -1;
+    }
+    if (inBuf[len - 1] != 'a') {
+        printf("unexpected pwd of %s, looking for 'a'\n", inBuf);
+        return -1;
+    }
     return 0;
 }
+
+/* check that ls of empty dir shows only . and .. */
+static int checkLsEmpty(void)
+{
+#ifdef WOLFSSH_ZEPHYR
+    /* No . and .. in zephyr fs API */
+    char expt1[] = "wolfSSH sftp> ";
+    char expt2[] = "wolfSSH sftp> ";
+#else
+    char expt1[] = ".\n..\nwolfSSH sftp> ";
+    char expt2[] = "..\n.\nwolfSSH sftp> ";
+#endif
+    if (WMEMCMP(expt1, inBuf, sizeof(expt1)) != 0 &&
+            WMEMCMP(expt2, inBuf, sizeof(expt2)) != 0) {
+        printf("unexpected ls\n");
+        printf("\texpected \n%s\n\tor\n%s\n\tbut got\n%s\n",
+            expt1, expt2, inBuf);
+        return -1;
+    }
+    return 0;
+}
+
+/* check that ls output contains a specific file */
+static int checkLsHasConfigureAc(void)
+{
+    if (WSTRNSTR(inBuf, "configure.ac", sizeof(inBuf)) == NULL) {
+        fprintf(stderr, "configure.ac not found in %s\n", inBuf);
+        return 1;
+    }
+    return 0;
+}
+
+static int checkLsHasTestGet(void)
+{
+    return (WSTRNSTR(inBuf, "test-get",
+                sizeof(inBuf)) == NULL) ? 1 : 0;
+}
+
+static int checkLsHasTestGet2(void)
+{
+    return (WSTRNSTR(inBuf, "test-get-2",
+                sizeof(inBuf)) == NULL) ? 1 : 0;
+}
+
+static int checkLsSize(void)
+{
+    return (WSTRNSTR(inBuf, "size in bytes",
+                sizeof(inBuf)) == NULL) ? 1 : 0;
+}
+
+static const SftpTestCmd cmds[] = {
+    { "mkdir a",        NULL },
+    { "cd a",           NULL },
+    { "pwd",            checkPwdInA },
+    { "ls",             checkLsEmpty },
+#ifdef WOLFSSH_ZEPHYR
+    { "put " CONFIG_WOLFSSH_SFTP_DEFAULT_DIR "/configure.ac", NULL },
+#else
+    { "put configure.ac", NULL },
+#endif
+    { "ls",             checkLsHasConfigureAc },
+#ifdef WOLFSSH_ZEPHYR
+    { "get configure.ac "
+      CONFIG_WOLFSSH_SFTP_DEFAULT_DIR "/test-get", NULL },
+#else
+    { "get configure.ac test-get", NULL },
+#endif
+    { "rm configure.ac", NULL },
+    { "cd ../",         NULL },
+    { "ls",             checkLsHasTestGet },
+    { "rename test-get test-get-2", NULL },
+    { "rmdir a",        NULL },
+    { "ls",             checkLsHasTestGet2 },
+    { "chmod 600 test-get-2", NULL },
+    { "rm test-get-2",  NULL },
+    { "ls -s",          checkLsSize },
+    /* empty arg tests: must not underflow on pt[sz-1] */
+    { "mkdir",          NULL },
+    { "cd",             NULL },
+    { "ls",             NULL },
+    { "chmod",          NULL },
+    { "rmdir",          NULL },
+    { "rm",             NULL },
+    { "rename",         NULL },
+    { "get",            NULL },
+    { "put",            NULL },
+    { "exit",           NULL },
+};
+static int commandIdx = 0;
 
 
 static int commandCb(const char* in, char* out, int outSz)
@@ -167,18 +188,26 @@ static int commandCb(const char* in, char* out, int outSz)
 
     /* get command input */
     if (out) {
-        int sz = (int)WSTRLEN(cmds[commandIdx]);
+        int sz = (int)WSTRLEN(cmds[commandIdx].cmd);
         if (outSz < sz) {
             ret = -1;
         }
         else {
-            WMEMCPY(out, cmds[commandIdx], sz);
+            WMEMCPY(out, cmds[commandIdx].cmd, sz);
         }
 
-        if (Expected(commandIdx) != 0) {
-            fprintf(stderr, "Failed on command index %d\n", commandIdx);
-            exit(1); /* abort out */
+        /* validate output from the previous command */
+        if (commandIdx > 0 &&
+                cmds[commandIdx - 1].check != NULL) {
+            if (cmds[commandIdx - 1].check() != 0) {
+                fprintf(stderr,
+                    "Check failed for \"%s\" (index %d)\n",
+                    cmds[commandIdx - 1].cmd,
+                    commandIdx - 1);
+                exit(1);
+            }
         }
+        WMEMSET(inBuf, 0, sizeof(inBuf));
         commandIdx++;
     }
     return ret;
