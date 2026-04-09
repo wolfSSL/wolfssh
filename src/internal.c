@@ -15419,55 +15419,80 @@ static int BuildUserAuthRequestPublicKey(WOLFSSH* ssh,
 int SendUserAuthKeyboardResponse(WOLFSSH* ssh)
 {
     byte* output;
+    int authRet = WOLFSSH_USERAUTH_FAILURE;
     int ret = WS_SUCCESS;
     word32 idx;
     word32 payloadSz = 0;
     word32 prompt;
     WS_UserAuthData authData;
 
+    WMEMSET(&authData, 0, sizeof(authData));
+
     WLOG(WS_LOG_DEBUG, "Entering SendUserAuthKeyboardResponse()");
 
-    authData.type = WOLFSSH_USERAUTH_KEYBOARD;
-    authData.username = (const byte*)ssh->userName;
-    authData.usernameSz = ssh->userNameSz;
-    authData.sf.keyboard.promptCount = ssh->kbAuth.promptCount;
-    authData.sf.keyboard.promptName = ssh->kbAuth.promptName;
-    authData.sf.keyboard.promptNameSz = ssh->kbAuth.promptName ?
-        (word32)WSTRLEN((char*)ssh->kbAuth.promptName) : 0;
-    authData.sf.keyboard.promptInstruction = ssh->kbAuth.promptInstruction;
-    authData.sf.keyboard.promptInstructionSz = ssh->kbAuth.promptInstruction ?
-        (word32)WSTRLEN((char*)ssh->kbAuth.promptInstruction) : 0;
-    authData.sf.keyboard.promptLanguage = ssh->kbAuth.promptLanguage;
-    authData.sf.keyboard.promptLanguageSz = ssh->kbAuth.promptLanguage ?
-        (word32)WSTRLEN((char*)ssh->kbAuth.promptLanguage) : 0;
-    authData.sf.keyboard.prompts = ssh->kbAuth.prompts;
-    authData.sf.keyboard.promptEcho = ssh->kbAuth.promptEcho;
-    authData.sf.keyboard.responseCount = 0;
-
-    WLOG(WS_LOG_DEBUG, "SUAR: Calling the userauth callback");
-    ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_KEYBOARD, &authData,
-                               ssh->userAuthCtx);
-
-    WFREE(ssh->kbAuth.promptName, ssh->ctx->heap, 0);
-    WFREE(ssh->kbAuth.promptInstruction, ssh->ctx->heap, 0);
-    WFREE(ssh->kbAuth.promptLanguage, ssh->ctx->heap, 0);
-    WFREE(ssh->kbAuth.promptEcho, ssh->ctx->heap, 0);
-    for (prompt = 0; prompt < ssh->kbAuth.promptCount; prompt++) {
-        WFREE((void*)ssh->kbAuth.prompts[prompt], ssh->ctx->heap, 0);
+    if (ssh == NULL || ssh->ctx == NULL) {
+        ret = WS_BAD_ARGUMENT;
     }
-    WFREE(ssh->kbAuth.prompts, ssh->ctx->heap, 0);
+    if (ret == WS_SUCCESS && ssh->ctx->userAuthCb == NULL) {
+        ret = WS_INVALID_STATE_E;
+    }
 
-    if (ret != WOLFSSH_USERAUTH_SUCCESS) {
-        WLOG(WS_LOG_DEBUG, "SUAR: Couldn't get keyboard auth");
-        ret = WS_FATAL_ERROR;
+    if (ret == WS_SUCCESS) {
+        authData.type = WOLFSSH_USERAUTH_KEYBOARD;
+        authData.username = (const byte*)ssh->userName;
+        authData.usernameSz = ssh->userNameSz;
+        authData.sf.keyboard.promptCount = ssh->kbAuth.promptCount;
+        authData.sf.keyboard.promptName = ssh->kbAuth.promptName;
+        authData.sf.keyboard.promptNameSz = ssh->kbAuth.promptName ?
+            (word32)WSTRLEN((char*)ssh->kbAuth.promptName) : 0;
+        authData.sf.keyboard.promptInstruction = ssh->kbAuth.promptInstruction;
+        authData.sf.keyboard.promptInstructionSz = ssh->kbAuth.promptInstruction ?
+            (word32)WSTRLEN((char*)ssh->kbAuth.promptInstruction) : 0;
+        authData.sf.keyboard.promptLanguage = ssh->kbAuth.promptLanguage;
+        authData.sf.keyboard.promptLanguageSz = ssh->kbAuth.promptLanguage ?
+            (word32)WSTRLEN((char*)ssh->kbAuth.promptLanguage) : 0;
+        authData.sf.keyboard.prompts = ssh->kbAuth.prompts;
+        authData.sf.keyboard.promptEcho = ssh->kbAuth.promptEcho;
+        authData.sf.keyboard.responseCount = 0;
+
+        WLOG(WS_LOG_DEBUG, "SUAR: Calling the userauth callback");
+        authRet = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_KEYBOARD, &authData,
+                           ssh->userAuthCtx);
     }
-    else if (ssh->kbAuth.promptCount != authData.sf.keyboard.responseCount) {
-        WLOG(WS_LOG_DEBUG,
-             "SUAR: Keyboard auth response count does not match request count");
-        ret = WS_USER_AUTH_E;
+
+    if (ret == WS_SUCCESS) {
+        if (authRet != WOLFSSH_USERAUTH_SUCCESS) {
+            WLOG(WS_LOG_DEBUG, "SUAR: Couldn't get keyboard auth");
+            ret = WS_FATAL_ERROR;
+        }
+        else if (ssh->kbAuth.promptCount != authData.sf.keyboard.responseCount) {
+            WLOG(WS_LOG_DEBUG,
+                 "SUAR: Keyboard auth response count does not match request count");
+            ret = WS_USER_AUTH_E;
+        }
+        else {
+            WLOG(WS_LOG_DEBUG, "SUAR: Callback successful keyboard");
+        }
     }
-    else {
-        WLOG(WS_LOG_DEBUG, "SUAR: Callback successful keyboard");
+
+    if (ssh != NULL && ssh->ctx != NULL) {
+        WFREE(ssh->kbAuth.promptName, ssh->ctx->heap, 0);
+        WFREE(ssh->kbAuth.promptInstruction, ssh->ctx->heap, 0);
+        WFREE(ssh->kbAuth.promptLanguage, ssh->ctx->heap, 0);
+        WFREE(ssh->kbAuth.promptEcho, ssh->ctx->heap, 0);
+        if (ssh->kbAuth.prompts != NULL) {
+            for (prompt = 0; prompt < ssh->kbAuth.promptCount; prompt++) {
+                WFREE((void*)ssh->kbAuth.prompts[prompt], ssh->ctx->heap, 0);
+            }
+        }
+        WFREE(ssh->kbAuth.prompts, ssh->ctx->heap, 0);
+
+        ssh->kbAuth.promptName = NULL;
+        ssh->kbAuth.promptInstruction = NULL;
+        ssh->kbAuth.promptLanguage = NULL;
+        ssh->kbAuth.promptEcho = NULL;
+        ssh->kbAuth.prompts = NULL;
+        ssh->kbAuth.promptCount = 0;
     }
 
     payloadSz = MSG_ID_SZ;
@@ -15479,13 +15504,13 @@ int SendUserAuthKeyboardResponse(WOLFSSH* ssh)
         ret = PreparePacket(ssh, payloadSz);
     }
 
-    output = ssh->outputBuffer.buffer;
-    idx = ssh->outputBuffer.length;
+    if (ret == WS_SUCCESS) {
+        output = ssh->outputBuffer.buffer;
+        idx = ssh->outputBuffer.length;
 
-    output[idx++] = MSGID_USERAUTH_INFO_RESPONSE;
-
-    if (ret == WS_SUCCESS)
+        output[idx++] = MSGID_USERAUTH_INFO_RESPONSE;
         ret = BuildUserAuthResponseKeyboard(ssh, output, &idx, &authData);
+    }
 
     if (ret == WS_SUCCESS) {
         ssh->outputBuffer.length = idx;
