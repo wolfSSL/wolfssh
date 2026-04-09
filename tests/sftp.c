@@ -68,6 +68,16 @@ static const char* cmds[] = {
     "chmod 600 test-get-2",
     "rm test-get-2",
     "ls -s",
+    /* empty arg tests: trigger pt[sz-1] underflow if sz == 0 */
+    "mkdir",
+    "cd",
+    "ls",
+    "chmod",
+    "rmdir",
+    "rm",
+    "rename",
+    "get",
+    "put",
     "exit"
 };
 static int commandIdx = 0;
