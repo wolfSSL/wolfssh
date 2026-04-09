@@ -137,6 +137,20 @@ static int checkLsSize(void)
 }
 
 static const SftpTestCmd cmds[] = {
+    /* If a prior run was interrupted, files and directories
+     * created during the test may still exist in the working
+     * directory, causing mkdir to fail and ls checks to see
+     * unexpected entries. Remove them here before starting.
+     * These run as SFTP commands rather than local syscalls
+     * so they are portable across all platforms (Windows,
+     * Zephyr, POSIX). Failures are silently ignored since
+     * the files may not exist. */
+    { "rm a/configure.ac", NULL },
+    { "rmdir a",        NULL },
+    { "rm test-get",    NULL },
+    { "rm test-get-2",  NULL },
+
+    /* --- test sequence starts here --- */
     { "mkdir a",        NULL },
     { "cd a",           NULL },
     { "pwd",            checkPwdInA },
