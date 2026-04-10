@@ -472,7 +472,7 @@ static int doCmds(func_args* args)
             pt += sizeof("mkdir");
             sz = (int)WSTRLEN(pt);
 
-            if (pt[sz - 1] == '\n') pt[sz - 1] = '\0';
+            if (sz > 0 && pt[sz - 1] == '\n') pt[sz - 1] = '\0';
             if (pt[0] != '/') {
                 int maxSz = (int)WSTRLEN(workingDir) + sz + 2;
                 f = (char*)WMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -522,7 +522,7 @@ static int doCmds(func_args* args)
             pt += sizeof("get");
 
             sz = (int)WSTRLEN(pt);
-            if (pt[sz - 1] == '\n') pt[sz - 1] = '\0';
+            if (sz > 0 && pt[sz - 1] == '\n') pt[sz - 1] = '\0';
 
             /* search for space delimiter */
             to = pt;
@@ -633,7 +633,7 @@ static int doCmds(func_args* args)
             pt += sizeof("put");
             sz = (int)WSTRLEN(pt);
 
-            if (pt[sz - 1] == '\n') pt[sz - 1] = '\0';
+            if (sz > 0 && pt[sz - 1] == '\n') pt[sz - 1] = '\0';
 
             to = pt;
             for (i = 0; i < sz; i++) {
@@ -739,7 +739,7 @@ static int doCmds(func_args* args)
             pt += sizeof("cd");
             sz = (int)WSTRLEN(pt);
 
-            if (pt[sz - 1] == '\n') pt[sz - 1] = '\0';
+            if (sz > 0 && pt[sz - 1] == '\n') pt[sz - 1] = '\0';
             if (pt[0] != '/') {
                 int maxSz = (int)WSTRLEN(workingDir) + sz + 2;
                 f = (char*)WMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -803,7 +803,7 @@ static int doCmds(func_args* args)
             pt += sizeof("chmod");
             sz = (word32)WSTRLEN(pt);
 
-            if (pt[sz - 1] == '\n') pt[sz - 1] = '\0';
+            if (sz > 0 && pt[sz - 1] == '\n') pt[sz - 1] = '\0';
 
             /* advance pointer to first location of non space character */
             for (idx = 0; idx < sz && pt[0] == ' '; idx++, pt++);
@@ -885,7 +885,7 @@ static int doCmds(func_args* args)
             pt += sizeof("rmdir");
             sz = (int)WSTRLEN(pt);
 
-            if (pt[sz - 1] == '\n') pt[sz - 1] = '\0';
+            if (sz > 0 && pt[sz - 1] == '\n') pt[sz - 1] = '\0';
             if (pt[0] != '/') {
                 int maxSz = (int)WSTRLEN(workingDir) + sz + 2;
                 f = (char*)WMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -942,7 +942,7 @@ static int doCmds(func_args* args)
             pt += sizeof("rm");
             sz = (int)WSTRLEN(pt);
 
-            if (pt[sz - 1] == '\n') pt[sz - 1] = '\0';
+            if (sz > 0 && pt[sz - 1] == '\n') pt[sz - 1] = '\0';
             if (pt[0] != '/') {
                 int maxSz = (int)WSTRLEN(workingDir) + sz + 2;
                 f = (char*)WMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -997,7 +997,7 @@ static int doCmds(func_args* args)
             pt += sizeof("rename");
             sz = (int)WSTRLEN(pt);
 
-            if (pt[sz - 1] == '\n') pt[sz - 1] = '\0';
+            if (sz > 0 && pt[sz - 1] == '\n') pt[sz - 1] = '\0';
 
             /* search for space delimiter */
             to = pt;
