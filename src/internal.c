@@ -10502,6 +10502,13 @@ int DoReceive(WOLFSSH* ssh)
     return ret;
 }
 
+#ifdef WOLFSSH_TEST_INTERNAL
+int wolfSSH_TestDoReceive(WOLFSSH* ssh)
+{
+    return DoReceive(ssh);
+}
+#endif
+
 
 int DoProtoId(WOLFSSH* ssh)
 {

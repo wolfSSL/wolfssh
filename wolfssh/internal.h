@@ -1323,6 +1323,7 @@ enum WS_MessageIdLimits {
 #ifdef WOLFSSH_TEST_INTERNAL
     WOLFSSH_API int wolfSSH_TestIsMessageAllowed(WOLFSSH* ssh, byte msg,
             byte state);
+    WOLFSSH_API int wolfSSH_TestDoReceive(WOLFSSH* ssh);
 #endif
 
 /* dynamic memory types */
