@@ -189,7 +189,8 @@ int wolfSSH_MakeEcdsaKey(byte* out, word32 outSz, word32 size)
 
 int wolfSSH_MakeEd25519Key(byte* out, word32 outSz, word32 size)
 {
-#ifndef WOLFSSH_NO_ED25519
+#if !defined(WOLFSSH_NO_ED25519) && defined(HAVE_ED25519) && \
+    defined(HAVE_ED25519_MAKE_KEY) && defined(HAVE_ED25519_KEY_EXPORT)
 
     int ret = WS_SUCCESS;
     WC_RNG rng;

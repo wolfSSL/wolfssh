@@ -285,6 +285,9 @@ WOLFSSH_LOCAL void wolfSSH_SFTP_ShowSizes(void);
 #ifdef WOLFSSH_TEST_INTERNAL
     WOLFSSH_API int wolfSSH_TestSftpBufferSend(WOLFSSH* ssh,
             byte* data, word32 sz, word32 idx);
+    #if defined(WOLFSSL_NUCLEUS) && !defined(NO_WOLFSSH_MKTIME)
+        WOLFSSH_API int wolfSSH_TestNucleusMonthFromDate(word16 d);
+    #endif
 #endif
 
 #ifdef __cplusplus
@@ -292,4 +295,3 @@ WOLFSSH_LOCAL void wolfSSH_SFTP_ShowSizes(void);
 #endif
 
 #endif /* _WOLFSSH_WOLFSFTP_H_ */
-

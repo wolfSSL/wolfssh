@@ -491,6 +491,9 @@ const char* GetErrorString(int err)
         case WS_KDF_E:
             return "KDF error";
 
+        case WS_DISCONNECT:
+            return "peer sent disconnect";
+
         default:
             return "Unknown error code";
     }
@@ -5758,6 +5761,9 @@ static int KeyAgree_client(WOLFSSH* ssh, byte hashId, const byte* f, word32 fSz)
 }
 
 
+static INLINE byte SigTypeForId(byte id);
+
+
 static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
     struct wolfSSH_sigKeyBlock *sigKeyBlock_ptr = NULL;
@@ -6007,9 +6013,10 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 #ifndef WOLFSSH_NO_RSA
         int tmpIdx = begin - sigSz;
 #endif
-            /* Skip past the sig name. Check it, though. Other SSH
-             * implementations do the verify based on the name, despite what
-             * was agreed upon. XXX*/
+            const char* expectedSigName =
+                    IdToName(SigTypeForId(ssh->handshake->pubKeyId));
+            word32 expectedSigNameSz = (word32)WSTRLEN(expectedSigName);
+
             begin = 0;
             ret = GetUint32(&scratch, sig, sigSz, &begin);
             if (ret == WS_SUCCESS) {
@@ -6017,6 +6024,16 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                  * sig buffer and leaves enough room for another length. */
                 if (scratch > sigSz - begin - LENGTH_SZ) {
                     WLOG(WS_LOG_DEBUG, "sig name size is too large");
+                    ret = WS_PARSE_E;
+                }
+            }
+            if (ret == WS_SUCCESS) {
+                if (scratch != expectedSigNameSz ||
+                        WMEMCMP(sig + begin, expectedSigName, scratch) != 0) {
+                    WLOG(WS_LOG_DEBUG,
+                            "signature name %.*s did not match negotiated %s",
+                            (int)scratch, (const char*)(sig + begin),
+                            expectedSigName);
                     ret = WS_PARSE_E;
                 }
             }
@@ -6475,7 +6492,6 @@ static int DoDisconnect(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     const char* reasonStr = NULL;
     word32 begin = *idx;
 
-    WOLFSSH_UNUSED(ssh);
     WOLFSSH_UNUSED(len);
     WOLFSSH_UNUSED(reasonStr);
 
@@ -6524,7 +6540,8 @@ static int DoDisconnect(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
     *idx = begin;
 
-    return WS_SUCCESS;
+    ssh->error = WS_DISCONNECT;
+    return WS_DISCONNECT;
 }
 
 
@@ -8629,6 +8646,7 @@ static int DoChannelOpen(WOLFSSH* ssh,
     int isDirect = 0;
 #endif /* WOLFSSH_FWD */
     WOLFSSH_CHANNEL* newChannel = NULL;
+    byte channelAppended = 0;
     int ret = WS_SUCCESS;
     word32 fail_reason = OPEN_OK;
 
@@ -8723,9 +8741,13 @@ static int DoChannelOpen(WOLFSSH* ssh,
                 }
             }
         #endif /* WOLFSSH_FWD */
-            ChannelAppend(ssh, newChannel);
-
-            ssh->clientState = CLIENT_CHANNEL_OPEN_DONE;
+            if (ret == WS_SUCCESS) {
+                ret = ChannelAppend(ssh, newChannel);
+                if (ret == WS_SUCCESS) {
+                    channelAppended = 1;
+                    ssh->clientState = CLIENT_CHANNEL_OPEN_DONE;
+                }
+            }
         }
     }
 
@@ -8735,19 +8757,24 @@ static int DoChannelOpen(WOLFSSH* ssh,
     else {
         const char *description = NULL;
 
-        if (fail_reason == OPEN_ADMINISTRATIVELY_PROHIBITED)
+        if (newChannel != NULL && !channelAppended) {
+            ChannelDelete(newChannel, ssh->ctx->heap);
+            newChannel = NULL;
+        }
+
+        if (fail_reason == OPEN_OK) {
+            fail_reason = OPEN_ADMINISTRATIVELY_PROHIBITED;
+            description = "Channel open failed.";
+        }
+        else if (fail_reason == OPEN_ADMINISTRATIVELY_PROHIBITED)
             description = "Administratively prohibited.";
         else if (fail_reason == OPEN_UNKNOWN_CHANNEL_TYPE)
             description = "Channel type not supported.";
         else if (fail_reason == OPEN_RESOURCE_SHORTAGE)
             description = "Not enough resources.";
 
-        if (description != NULL) {
-            ret = SendChannelOpenFail(ssh, peerChannelId,
-                    fail_reason, description, "en");
-        }
-        else
-            ret = SendRequestSuccess(ssh, 0); /* XXX Is this right? */
+        ret = SendChannelOpenFail(ssh, peerChannelId,
+                fail_reason, description, "en");
     }
 
 #ifdef WOLFSSH_FWD
@@ -10593,7 +10620,6 @@ static int PreparePacket(WOLFSSH* ssh, word32 payloadSz)
 
     return ret;
 }
-
 
 static int BundlePacket(WOLFSSH* ssh)
 {
@@ -17563,7 +17589,7 @@ int wolfSSH_oct2dec(WOLFSSH* ssh, byte* oct, word32 octSz)
 
     for (i = 0; i < octSz; i++)
     {
-        if (oct[i] < '0' || oct[0] > '7') {
+        if (oct[i] < '0' || oct[i] > '7') {
             ret = WS_BAD_ARGUMENT;
             break;
         }
