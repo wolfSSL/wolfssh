@@ -4514,7 +4514,7 @@ static int SFTP_FreeHandles(WOLFSSH* ssh)
     * are saved as 1 to 12. Hence 1 is being deducted to
     * make it compatible with Unix time stamp. */
     #define WS_GETMON(d) (_GETMON(d) - 1)
-    #define WS_GETHOUR(t) (_GETHOUR(t) - 1)
+    #define WS_GETHOUR(t) _GETHOUR(t)
 #else
     #define WS_GETMON(d) _GETMON(d)
     #define WS_GETHOUR(t) _GETHOUR(t)
