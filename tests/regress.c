@@ -1496,6 +1496,129 @@ static void TestNucleusMonthConversion(void)
 #endif /* WOLFSSH_SFTP */
 
 
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+static int KbPreparePacketFailUserAuth(byte authType, WS_UserAuthData* authData,
+        void* ctx)
+{
+    static byte* responses[1];
+    static word32 responseLens[1];
+    static byte response[] = "regress";
+
+    (void)ctx;
+
+    if (authType != WOLFSSH_USERAUTH_KEYBOARD || authData == NULL) {
+        return WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
+    }
+
+    if (authData->sf.keyboard.promptCount != 1 ||
+            authData->sf.keyboard.prompts == NULL) {
+        return WOLFSSH_USERAUTH_INVALID_PASSWORD;
+    }
+
+    responses[0] = response;
+    responseLens[0] = (word32)sizeof(response) - 1;
+    authData->sf.keyboard.responseCount = 1;
+    authData->sf.keyboard.responseLengths = responseLens;
+    authData->sf.keyboard.responses = responses;
+
+    return WOLFSSH_USERAUTH_SUCCESS;
+}
+
+static void TestKeyboardResponsePreparePacketFailure(WOLFSSH* ssh,
+        WOLFSSH_CTX* ctx)
+{
+    byte* prompt;
+    byte** prompts;
+    byte* promptEcho;
+    int ret;
+
+    AssertNotNull(ssh);
+    AssertNotNull(ctx);
+
+    ResetSession(ssh);
+    wolfSSH_SetUserAuth(ctx, KbPreparePacketFailUserAuth);
+
+    prompt = (byte*)WMALLOC(9, ctx->heap, DYNTYPE_STRING); /* "Password" */
+    prompts = (byte**)WMALLOC(sizeof(byte*), ctx->heap, DYNTYPE_STRING);
+    promptEcho = (byte*)WMALLOC(1, ctx->heap, DYNTYPE_STRING);
+    AssertNotNull(prompt);
+    AssertNotNull(prompts);
+    AssertNotNull(promptEcho);
+
+    WMEMCPY(prompt, "Password", 8);
+    prompt[8] = '\0';
+    prompts[0] = prompt;
+    promptEcho[0] = 0;
+
+    ssh->kbAuth.promptCount = 1;
+    ssh->kbAuth.prompts = prompts;
+    ssh->kbAuth.promptEcho = promptEcho;
+    ssh->kbAuth.promptName = NULL;
+    ssh->kbAuth.promptInstruction = NULL;
+    ssh->kbAuth.promptLanguage = NULL;
+
+    /* Force PreparePacket() to fail with WS_OVERFLOW_E. */
+    ssh->outputBuffer.length = 0;
+    ssh->outputBuffer.idx = 1;
+
+    ret = SendUserAuthKeyboardResponse(ssh);
+    AssertIntEQ(ret, WS_OVERFLOW_E);
+
+    /* Ensure packet purge/reset happened cleanly. */
+    AssertIntEQ(ssh->outputBuffer.idx, 0);
+    AssertIntEQ(ssh->outputBuffer.length, 0);
+
+    /* Verify SendUserAuthKeyboardResponse() cleaned up kbAuth state. */
+    AssertIntEQ(ssh->kbAuth.promptCount, 0);
+    AssertTrue(ssh->kbAuth.prompts == NULL);
+    AssertTrue(ssh->kbAuth.promptEcho == NULL);
+}
+
+static void TestKeyboardResponseNoUserAuthCallback(WOLFSSH* ssh,
+        WOLFSSH_CTX* ctx)
+{
+    int ret;
+
+    AssertNotNull(ssh);
+    AssertNotNull(ctx);
+
+    ResetSession(ssh);
+    wolfSSH_SetUserAuth(ctx, NULL);
+
+    ret = SendUserAuthKeyboardResponse(ssh);
+    AssertIntEQ(ret, WS_INVALID_STATE_E);
+
+    /* No packet should have been started. */
+    AssertIntEQ(ssh->outputBuffer.length, 0);
+    AssertIntEQ(ssh->outputBuffer.idx, 0);
+}
+
+static void TestKeyboardResponseNullSsh(void)
+{
+    int ret;
+
+    ret = SendUserAuthKeyboardResponse(NULL);
+    AssertIntEQ(ret, WS_BAD_ARGUMENT);
+}
+
+static void TestKeyboardResponseNullCtx(WOLFSSH* ssh)
+{
+    WOLFSSH_CTX* savedCtx;
+    int ret;
+
+    AssertNotNull(ssh);
+
+    savedCtx = ssh->ctx;
+    ssh->ctx = NULL;
+
+    ret = SendUserAuthKeyboardResponse(ssh);
+    AssertIntEQ(ret, WS_BAD_ARGUMENT);
+
+    ssh->ctx = savedCtx;
+}
+#endif /* WOLFSSH_KEYBOARD_INTERACTIVE */
+
+
 int main(int argc, char** argv)
 {
     WOLFSSH_CTX* ctx;
@@ -1555,6 +1678,13 @@ int main(int argc, char** argv)
     #if defined(WOLFSSL_NUCLEUS) && !defined(NO_WOLFSSH_MKTIME)
     TestNucleusMonthConversion();
     #endif
+#endif
+
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+    TestKeyboardResponsePreparePacketFailure(ssh, ctx);
+    TestKeyboardResponseNoUserAuthCallback(ssh, ctx);
+    TestKeyboardResponseNullSsh();
+    TestKeyboardResponseNullCtx(ssh);
 #endif
 
     /* TODO: add app-level regressions that simulate stdin EOF/password
