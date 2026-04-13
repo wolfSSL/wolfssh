@@ -229,7 +229,10 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
         }
     }
     if (ret == WSSHD_AUTH_SUCCESS) {
-        if (keyCandSz != keySz || WMEMCMP(key, keyCand, keySz) != 0) {
+        /* Constant-time compare to avoid leaking which prefix bytes of an
+         * authorized key match a candidate offered by a remote peer. */
+        if (keyCandSz != keySz ||
+                ConstantCompare(key, keyCand, keySz) != 0) {
             ret = WSSHD_AUTH_FAILURE;
         }
     }
