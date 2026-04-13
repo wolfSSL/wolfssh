@@ -136,6 +136,68 @@ static int checkLsSize(void)
                 sizeof(inBuf)) == NULL) ? 1 : 0;
 }
 
+static int checkCdNonexistent(void)
+{
+    if (WSTRNSTR(inBuf, "Error changing directory",
+            sizeof(inBuf)) == NULL) {
+        fprintf(stderr,
+            "cd: expected error not found in %s\n", inBuf);
+        return 1;
+    }
+    return 0;
+}
+
+#if !defined(NO_WOLFSSH_DIR) && !defined(WOLFSSH_FATFS)
+static int checkLlsHasConfigureAc(void)
+{
+    if (WSTRNSTR(inBuf, "configure.ac",
+            sizeof(inBuf)) == NULL) {
+        fprintf(stderr,
+            "lls: configure.ac not found in %s\n", inBuf);
+        return 1;
+    }
+    return 0;
+}
+#endif /* !NO_WOLFSSH_DIR && !WOLFSSH_FATFS */
+
+static int checkLcdNonexistent(void)
+{
+    if (WSTRNSTR(inBuf, "Error changing local directory",
+            sizeof(inBuf)) == NULL) {
+        fprintf(stderr,
+            "lcd: expected error not found in %s\n", inBuf);
+        return 1;
+    }
+    return 0;
+}
+
+#if !defined(NO_WOLFSSH_DIR) && !defined(WOLFSSH_FATFS) \
+    && !defined(WOLFSSH_ZEPHYR)
+/* after lcd into keys/, lls should show key files */
+static int checkLlsInKeys(void)
+{
+    if (WSTRNSTR(inBuf, ".pem", sizeof(inBuf)) == NULL &&
+            WSTRNSTR(inBuf, ".der", sizeof(inBuf)) == NULL) {
+        fprintf(stderr,
+            "lls: expected key files not found in %s\n", inBuf);
+        return 1;
+    }
+    return 0;
+}
+
+/* after lcd back to .., lls should show project root files */
+static int checkLlsBackToRoot(void)
+{
+    if (WSTRNSTR(inBuf, "configure.ac",
+            sizeof(inBuf)) == NULL) {
+        fprintf(stderr,
+            "lls: configure.ac not found after lcd ..\n");
+        return 1;
+    }
+    return 0;
+}
+#endif /* !NO_WOLFSSH_DIR && !WOLFSSH_FATFS && !WOLFSSH_ZEPHYR */
+
 static const SftpTestCmd cmds[] = {
     /* If a prior run was interrupted, files and directories
      * created during the test may still exist in the working
@@ -176,6 +238,21 @@ static const SftpTestCmd cmds[] = {
     { "chmod 600 test-get-2", NULL },
     { "rm test-get-2",  NULL },
     { "ls -s",          checkLsSize },
+    { "cd /nonexistent_path_xyz", checkCdNonexistent },
+#if !defined(NO_WOLFSSH_DIR) && !defined(WOLFSSH_FATFS)
+    { "lls",            checkLlsHasConfigureAc },
+#endif
+    { "lcd /nonexistent_path_xyz", checkLcdNonexistent },
+#if !defined(NO_WOLFSSH_DIR) && !defined(WOLFSSH_FATFS) \
+    && !defined(WOLFSSH_ZEPHYR)
+    /* lcd into a subdirectory, verify with lls, then return.
+     * Skipped on Zephyr: lls always lists the default dir
+     * (no WGETCWD) and the keys/ tree is not on the RAM fs. */
+    { "lcd keys",       NULL },
+    { "lls",            checkLlsInKeys },
+    { "lcd ..",         NULL },
+    { "lls",            checkLlsBackToRoot },
+#endif
     /* empty arg tests: must not underflow on pt[sz-1] */
     { "mkdir",          NULL },
     { "cd",             NULL },

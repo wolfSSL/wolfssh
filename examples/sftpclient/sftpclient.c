@@ -358,6 +358,8 @@ static void ShowCommands(void)
     printf("\tcd  <string>                      change directory\n");
     printf("\tchmod <mode> <path>               change mode\n");
     printf("\tget <remote file> <local file>    pulls file(s) from server\n");
+    printf("\tlcd <path>                        change local directory\n");
+    printf("\tlls                               list local directory\n");
     printf("\tls                                list current directory\n");
     printf("\tmkdir <dir name>                  creates new directory on server\n");
     printf("\tput <local file> <remote file>    push file(s) to server\n");
@@ -731,6 +733,30 @@ static int doCmds(func_args* args)
             continue;
         }
 
+        /* lcd must be checked before cd so that WSTRNSTR
+         * does not match "cd" inside "lcd" */
+    #ifndef WOLFSSH_FATFS /* WCHDIR not yet defined for FatFS */
+        if ((pt = WSTRNSTR(msg, "lcd", MAX_CMD_SZ)) != NULL) {
+            int sz;
+
+            pt += sizeof("lcd");
+            sz = (int)WSTRLEN(pt);
+
+            if (sz > 0 && pt[sz - 1] == '\n') {
+                pt[sz - 1] = '\0';
+            }
+
+            if (WCHDIR(ssh->fs, pt) != 0) {
+                if (SFTP_FPUTS(args,
+                        "Error changing local directory\n") < 0) {
+                    err_msg("fputs error");
+                    return -1;
+                }
+            }
+            continue;
+        }
+    #endif /* !WOLFSSH_FATFS */
+
         if ((pt = WSTRNSTR(msg, "cd", MAX_CMD_SZ)) != NULL) {
             WS_SFTP_FILEATRB atrb;
             int sz;
@@ -1070,6 +1096,114 @@ static int doCmds(func_args* args)
             continue;
 
         }
+
+    #if !defined(NO_WOLFSSH_DIR) && !defined(WOLFSSH_FATFS)
+        /* lls must be checked before ls so that WSTRNSTR
+         * does not match "ls" inside "lls" */
+        if (WSTRNSTR(msg, "lls", MAX_CMD_SZ) != NULL) {
+            char cwd[WOLFSSH_MAX_FILENAME];
+            int llsErr = 0;
+
+        #ifdef WOLFSSH_ZEPHYR
+            WSTRNCPY(cwd, CONFIG_WOLFSSH_SFTP_DEFAULT_DIR,
+                sizeof(cwd));
+        #else
+            if (WGETCWD(ssh->fs, cwd, sizeof(cwd)) == NULL) {
+                if (SFTP_FPUTS(args,
+                        "Error getting local directory\n") < 0) {
+                    err_msg("fputs error");
+                    return -1;
+                }
+                continue;
+            }
+        #endif
+
+        #ifdef USE_WINDOWS_API
+            {
+                WDIR findHandle;
+                char name[MAX_PATH];
+                char fileName[MAX_PATH];
+
+                WSTRNCPY(name, cwd, MAX_PATH);
+                WSTRNCAT(name, "\\*", MAX_PATH);
+                findHandle = (HANDLE)WS_FindFirstFileA(name,
+                    fileName, sizeof(fileName), NULL, NULL);
+                if (findHandle == INVALID_HANDLE_VALUE) {
+                    if (SFTP_FPUTS(args,
+                            "Error opening local directory\n") < 0) {
+                        err_msg("fputs error");
+                        return -1;
+                    }
+                    continue;
+                }
+
+                do {
+                    if (SFTP_FPUTS(args, fileName) < 0 ||
+                            SFTP_FPUTS(args, "\n") < 0) {
+                        err_msg("fputs error");
+                        llsErr = 1;
+                        break;
+                    }
+                } while (WS_FindNextFileA(findHandle,
+                            fileName, sizeof(fileName)));
+                FindClose(findHandle);
+            }
+        #elif defined(WOLFSSH_ZEPHYR)
+            {
+                WDIR dir;
+                struct fs_dirent dp;
+
+                if (WOPENDIR(ssh->fs, NULL, &dir, cwd) != 0) {
+                    if (SFTP_FPUTS(args,
+                            "Error opening local directory\n") < 0) {
+                        err_msg("fputs error");
+                        return -1;
+                    }
+                    continue;
+                }
+
+                while (fs_readdir(&dir, &dp) == 0 &&
+                        dp.name[0] != '\0') {
+                    if (SFTP_FPUTS(args, dp.name) < 0 ||
+                            SFTP_FPUTS(args, "\n") < 0) {
+                        err_msg("fputs error");
+                        llsErr = 1;
+                        break;
+                    }
+                }
+                WCLOSEDIR(ssh->fs, &dir);
+            }
+        #else
+            {
+                WDIR dir;
+                struct dirent* dp;
+
+                if (WOPENDIR(ssh->fs, NULL, &dir, cwd) != 0) {
+                    if (SFTP_FPUTS(args,
+                            "Error opening local directory\n") < 0) {
+                        err_msg("fputs error");
+                        return -1;
+                    }
+                    continue;
+                }
+
+                while ((dp = WREADDIR(ssh->fs, &dir)) != NULL) {
+                    if (SFTP_FPUTS(args, dp->d_name) < 0 ||
+                            SFTP_FPUTS(args, "\n") < 0) {
+                        err_msg("fputs error");
+                        llsErr = 1;
+                        break;
+                    }
+                }
+                WCLOSEDIR(ssh->fs, &dir);
+            }
+        #endif
+            if (llsErr) {
+                return -1;
+            }
+            continue;
+        }
+    #endif /* !NO_WOLFSSH_DIR && !WOLFSSH_FATFS */
 
         if (WSTRNSTR(msg, "ls", MAX_CMD_SZ) != NULL) {
             WS_SFTPNAME* tmp;
@@ -1503,8 +1637,9 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         int err;
         ret = wolfSSH_shutdown(ssh);
 
-        /* peer hung up, stop trying to shutdown */
-        if (ret == WS_SOCKET_ERROR_E) {
+        /* peer hung up or channel already closed, stop trying */
+        if (ret == WS_SOCKET_ERROR_E || ret == WS_ERROR ||
+                ret == WS_CHANNEL_CLOSED) {
             ret = 0;
         }
 
@@ -1525,7 +1660,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
                 }
 
                 /* peer hung up, stop shutdown */
-                if (ret == WS_SOCKET_ERROR_E) {
+                if (ret == WS_SOCKET_ERROR_E || ret == WS_ERROR) {
                     ret = 0;
                     break;
                 }
