@@ -42,13 +42,11 @@ char* wolfSSHD_ConfigGetHostCertFile(const WOLFSSHD_CONFIG* conf);
 char* wolfSSHD_ConfigGetUserCAKeysFile(const WOLFSSHD_CONFIG* conf);
 int wolfSSHD_ConfigSetHostKeyFile(WOLFSSHD_CONFIG* conf, const char* file);
 int wolfSSHD_ConfigSetHostCertFile(WOLFSSHD_CONFIG* conf, const char* file);
-#ifdef USE_WINDOWS_API
-#ifdef WOLFSSH_CERTS
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
 char* wolfSSHD_ConfigGetHostKeyStore(const WOLFSSHD_CONFIG* conf);
 char* wolfSSHD_ConfigGetHostKeyStoreSubject(const WOLFSSHD_CONFIG* conf);
 char* wolfSSHD_ConfigGetHostKeyStoreFlags(const WOLFSSHD_CONFIG* conf);
-#endif /* WOLFSSH_CERTS */
-#endif /* USE_WINDOWS_API */
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
 int wolfSSHD_ConfigSetSystemCA(WOLFSSHD_CONFIG* conf, const char* value);
 int wolfSSHD_ConfigGetSystemCA(const WOLFSSHD_CONFIG* conf);
 int wolfSSHD_ConfigSetUserCAStore(WOLFSSHD_CONFIG* conf, const char* value);

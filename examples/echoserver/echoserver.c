@@ -115,7 +115,7 @@
     #define SOCKET_EWOULDBLOCK WSAEWOULDBLOCK
 #endif
 
-#if defined(USE_WINDOWS_API) && defined(WOLFSSH_CERTS)
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
     #include <windows.h>
     #include <wincrypt.h>
     #ifndef CERT_SYSTEM_STORE_CURRENT_USER
@@ -2540,7 +2540,7 @@ static void ShowUsage(void)
     printf(" -x <list>     set the comma separated list of key exchange algos "
            "to use\n");
     printf(" -m <list>     set the comma separated list of mac algos to use\n");
-#if defined(USE_WINDOWS_API) && defined(WOLFSSH_CERTS)
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
     printf(" -W <spec>     Windows cert store: \"store:subject:flags\" (e.g. My:CN=Server:CURRENT_USER)\n");
 #endif
     printf(" -b <num>      test user auth would block\n");
@@ -2641,7 +2641,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     #ifdef WOLFSSH_CERTS
         char* caCert = NULL;
     #endif
-    #if defined(USE_WINDOWS_API) && defined(WOLFSSH_CERTS)
+    #ifdef WOLFSSH_WINDOWS_CERT_STORE
         const char* certStoreSpec = NULL;
     #endif
 
@@ -2652,7 +2652,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     kbAuthData.promptCount = 0;
 #endif
 
-    #if defined(USE_WINDOWS_API) && defined(WOLFSSH_CERTS)
+    #ifdef WOLFSSH_WINDOWS_CERT_STORE
         certStoreSpec = getenv("WOLFSSH_CERT_STORE");
     #endif
     if (argc > 0) {
@@ -2772,7 +2772,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                     useCustomHighWaterCb = 1;
                     break;
 
-                #if defined(USE_WINDOWS_API) && defined(WOLFSSH_CERTS)
+                #ifdef WOLFSSH_WINDOWS_CERT_STORE
                 case 'W':
                     certStoreSpec = myoptarg;
                     break;
@@ -2958,7 +2958,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         #endif
         bufSz = EXAMPLE_KEYLOAD_BUFFER_SZ;
 
-#if defined(USE_WINDOWS_API) && defined(WOLFSSH_CERTS)
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
         if (certStoreSpec != NULL) {
             /* Load host key from Windows certificate store */
             wchar_t* wStoreName = NULL;
@@ -3303,7 +3303,7 @@ int wolfSSH_Echoserver(int argc, char** argv)
 #if !defined(WOLFSSL_NUCLEUS) && !defined(INTEGRITY) && !defined(__INTEGRITY)
     {
         int useStore = 0;
-    #if defined(USE_WINDOWS_API) && defined(WOLFSSH_CERTS)
+    #ifdef WOLFSSH_WINDOWS_CERT_STORE
         /* When using the Windows certificate store for host keys, the
          * echoserver does not need file-based keys, so skip the root
          * directory search that looks for ./keys/server-key-rsa.pem. */

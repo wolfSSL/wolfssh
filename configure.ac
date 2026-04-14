@@ -186,6 +186,12 @@ AC_ARG_ENABLE([certs],
     [AS_HELP_STRING([--enable-certs],[Enable X.509 cert support (default: disabled)])],
     [ENABLED_CERTS=$enableval],[ENABLED_CERTS=no])
 
+# Windows certificate store (host/client keys)
+AC_ARG_ENABLE([windows-cert-store],
+    [AS_HELP_STRING([--enable-windows-cert-store],[Enable Windows certificate store integration for keys (default: disabled)])],
+    [ENABLED_WINDOWS_CERT_STORE=$enableval],
+    [ENABLED_WINDOWS_CERT_STORE=no])
+
 # TPM 2.0 Support
 AC_ARG_ENABLE([tpm],
     [AS_HELP_STRING([--enable-tpm],[Enable TPM 2.0 support (default: disabled)])],
@@ -245,6 +251,10 @@ AS_IF([test "x$ENABLED_AGENT" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_AGENT"])
 AS_IF([test "x$ENABLED_CERTS" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_CERTS"])
+AS_IF([test "x$ENABLED_WINDOWS_CERT_STORE" = "xyes"],
+    [AS_IF([test "x$ENABLED_CERTS" != "xyes"],
+        [AC_MSG_ERROR([--enable-windows-cert-store requires X.509 cert support (--enable-certs)])])
+     AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_WINDOWS_CERT_STORE"])
 AS_IF([test "x$ENABLED_SMALLSTACK" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SMALL_STACK"])
 AS_IF([test "x$ENABLED_SSHCLIENT" = "xyes"],
@@ -345,4 +355,5 @@ AS_ECHO(["   * agent:                     $ENABLED_AGENT"])
 AS_ECHO(["   * TPM 2.0 support:           $ENABLED_TPM"])
 AS_ECHO(["   * TCP/IP Forwarding:         $ENABLED_FWD"])
 AS_ECHO(["   * X.509 Certs:               $ENABLED_CERTS"])
+AS_ECHO(["   * Windows cert store:        $ENABLED_WINDOWS_CERT_STORE"])
 AS_ECHO(["   * Examples:                  $ENABLED_EXAMPLES"])

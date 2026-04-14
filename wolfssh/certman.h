@@ -59,12 +59,12 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
         const unsigned char* cert, word32 certSz, word32 certCount);
 
 
-#if defined(USE_WINDOWS_API)
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
 WOLFSSH_API
 int wolfSSH_ParseCertStoreSpec(const char* spec,
         wchar_t** wStoreName, wchar_t** wSubjectName,
         DWORD* dwFlags, void* heap);
-#endif /* USE_WINDOWS_API */
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
 
 
 #ifdef __cplusplus

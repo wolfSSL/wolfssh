@@ -47,7 +47,7 @@
 
 #ifdef WOLFSSH_CERTS
     #include <wolfssl/wolfcrypt/asn.h>
-    #ifdef USE_WINDOWS_API
+    #ifdef WOLFSSH_WINDOWS_CERT_STORE
         #include <windows.h>
         #include <wincrypt.h>
         #include <ncrypt.h>
@@ -57,7 +57,7 @@
         #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE
             #define CERT_SYSTEM_STORE_LOCAL_MACHINE 0x00020000
         #endif
-    #endif /* USE_WINDOWS_API */
+    #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 #endif
 
 #if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT)
@@ -400,12 +400,10 @@ static void ShowUsage(void)
     printf(" -g            put local filename as remote filename\n");
     printf(" -G            get remote filename as local filename\n");
     printf(" -i <filename> filename for the user's private key\n");
-#ifdef USE_WINDOWS_API
-#ifdef WOLFSSH_CERTS
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
     printf(" -W <spec>     Windows cert store: \"store:subject:flags\"\n");
     printf("               Example: -W \"My:CN=MyCert:CURRENT_USER\"\n");
-#endif /* WOLFSSH_CERTS */
-#endif /* USE_WINDOWS_API */
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
 #ifdef WOLFSSH_CERTS
     printf(" -J <filename> filename for DER certificate to use\n");
     printf("               Certificate example : client -u orange \\\n");
@@ -1272,11 +1270,9 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     char* pubKeyName = NULL;
     char* certName = NULL;
     char* caCert   = NULL;
-#ifdef USE_WINDOWS_API
-#ifdef WOLFSSH_CERTS
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
     const char* certStoreSpec = NULL;  /* Format: "store:subject:flags" */
-#endif /* WOLFSSH_CERTS */
-#endif /* USE_WINDOWS_API */
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
     SFTPC_HEAP_HINT* heap = NULL;
 
     int     argc = ((func_args*)args)->argc;
@@ -1284,11 +1280,9 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     ((func_args*)args)->return_code = 0;
 
     while ((ch = mygetopt(argc, argv, "?d:gh:i:j:l:p:r:u:EGNP:J:A:X"
-#ifdef USE_WINDOWS_API
-#ifdef WOLFSSH_CERTS
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
             "W:"
-#endif /* WOLFSSH_CERTS */
-#endif /* USE_WINDOWS_API */
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
             )) != -1) {
         switch (ch) {
             case 'd':
@@ -1367,13 +1361,11 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
             #endif
         #endif
 
-#ifdef USE_WINDOWS_API
-#ifdef WOLFSSH_CERTS
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
             case 'W':
                 certStoreSpec = myoptarg;
                 break;
-#endif /* WOLFSSH_CERTS */
-#endif /* USE_WINDOWS_API */
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
 
             case '?':
                 ShowUsage();
@@ -1422,8 +1414,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 #endif /* WOLFSSH_STATIC_MEMORY */
 
 
-#ifdef USE_WINDOWS_API
-#ifdef WOLFSSH_CERTS
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
     if (certStoreSpec != NULL) {
         wchar_t* wStoreName = NULL;
         wchar_t* wSubjectName = NULL;
@@ -1459,8 +1450,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         WFREE(wStoreName, NULL, DYNTYPE_TEMP);
         WFREE(wSubjectName, NULL, DYNTYPE_TEMP);
     } else
-#endif /* WOLFSSH_CERTS */
-#endif /* USE_WINDOWS_API */
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
     {
         ret = ClientSetPrivateKey(privKeyName, userEcc, heap, NULL);
         if (ret != 0) {

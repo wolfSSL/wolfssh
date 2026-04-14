@@ -539,8 +539,7 @@ typedef struct WOLFSSH_PVT_KEY {
     byte publicKeyFmt;
         /* Public key format for the private key. Note, some public key
          * formats are used with multiple public key signing algorithms. */
-#ifdef USE_WINDOWS_API
-#ifdef WOLFSSH_CERTS
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
     byte useCertStore:1;
         /* Flag indicating if this key is from MS Certificate Store. */
     void* certStoreContext;
@@ -552,8 +551,7 @@ typedef struct WOLFSSH_PVT_KEY {
         /* Certificate subject name or thumbprint for lookup. Owned by CTX. */
     DWORD dwFlags;
         /* Certificate store flags (e.g., CERT_SYSTEM_STORE_CURRENT_USER). */
-#endif /* WOLFSSH_CERTS */
-#endif /* USE_WINDOWS_API */
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
 } WOLFSSH_PVT_KEY;
 
 

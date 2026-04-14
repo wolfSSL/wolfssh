@@ -38,8 +38,7 @@
 #include <wolfssl/wolfcrypt/logging.h>
 #include <wolfssl/wolfcrypt/asn_public.h>
 
-#ifdef USE_WINDOWS_API
-#ifdef WOLFSSH_CERTS
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
     #include <windows.h>
     #include <wincrypt.h>
     #include <ncrypt.h>
@@ -49,8 +48,7 @@
     #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE
         #define CERT_SYSTEM_STORE_LOCAL_MACHINE 0x00020000
     #endif
-#endif /* WOLFSSH_CERTS */
-#endif /* USE_WINDOWS_API */
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
 
 #define WOLFSSH_TEST_SERVER
 #include <wolfssh/test.h>
@@ -354,8 +352,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
 
     /* Load in host private key */
     if (ret == WS_SUCCESS) {
-#ifdef USE_WINDOWS_API
-#ifdef WOLFSSH_CERTS
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
         char* hostKeyStore = wolfSSHD_ConfigGetHostKeyStore(conf);
         char* hostKeyStoreSubject = wolfSSHD_ConfigGetHostKeyStoreSubject(conf);
         char* hostKeyStoreFlags = wolfSSHD_ConfigGetHostKeyStoreFlags(conf);
@@ -408,14 +405,13 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
                 WFREE(wSubjectName, heap, DYNTYPE_SSHD);
             }
         } else
+#elif defined(WOLFSSH_CERTS)
+        wolfSSH_Log(WS_LOG_INFO,
+            "[SSHD] WOLFSSH_WINDOWS_CERT_STORE not defined - cert store support disabled");
 #else
         wolfSSH_Log(WS_LOG_INFO,
             "[SSHD] WOLFSSH_CERTS not defined - cert store support disabled");
-#endif /* WOLFSSH_CERTS */
-#else
-        wolfSSH_Log(WS_LOG_INFO,
-            "[SSHD] USE_WINDOWS_API not defined - cert store support disabled");
-#endif /* USE_WINDOWS_API */
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
         {
             char* hostKey = wolfSSHD_ConfigGetHostKeyFile(conf);
 

@@ -47,11 +47,11 @@
 
 #ifdef WOLFSSH_CERTS
     #include <wolfssl/wolfcrypt/asn.h>
-    #ifdef USE_WINDOWS_API
+    #ifdef WOLFSSH_WINDOWS_CERT_STORE
         #include <windows.h>
         #include <wincrypt.h>
         #include <ncrypt.h>
-    #endif /* USE_WINDOWS_API */
+    #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 #endif
 
 static byte userPublicKeyBuf[512];
@@ -1144,8 +1144,7 @@ void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
 #endif
 }
 
-#ifdef USE_WINDOWS_API
-#ifdef WOLFSSH_CERTS
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
 int ClientSetPrivateKeyFromStore(WOLFSSH_CTX* ctx,
         const wchar_t* storeName, DWORD dwFlags, const wchar_t* subjectName)
 {
@@ -1223,5 +1222,4 @@ int ClientSetupCertStoreAuth(WOLFSSH_CTX* ctx)
     fprintf(stderr, "No cert store key found in CTX\n");
     return WS_BAD_ARGUMENT;
 }
-#endif /* WOLFSSH_CERTS */
-#endif /* USE_WINDOWS_API */
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */

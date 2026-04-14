@@ -35,8 +35,7 @@
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/wolfcrypt/random.h>
 
-#ifdef USE_WINDOWS_API
-#ifdef WOLFSSH_CERTS
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
     #include <windows.h>
     #include <wincrypt.h>
     #include <ncrypt.h>
@@ -44,8 +43,7 @@
     #ifndef CERT_NCRYPT_KEY_SPEC
         #define CERT_NCRYPT_KEY_SPEC 0x00000003
     #endif
-#endif /* WOLFSSH_CERTS */
-#endif /* USE_WINDOWS_API */
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
 
 #ifdef NO_INLINE
     #include <wolfssh/misc.h>
@@ -2485,7 +2483,7 @@ int wolfSSH_CTX_AddRootCert_buffer(WOLFSSH_CTX* ctx,
     return ret;
 }
 
-#ifdef USE_WINDOWS_API
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
 /* Load a private key from MS Certificate Store
  * storeName: Certificate store name (e.g., L"My", L"Root")
  * dwFlags: Certificate store flags (e.g., CERT_SYSTEM_STORE_CURRENT_USER)
@@ -2755,7 +2753,7 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_CTX_UsePrivateKey_fromStore(), ret = %d", ret);
     return ret;
 }
-#endif /* USE_WINDOWS_API */
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
 #endif /* WOLFSSH_CERTS */
 
 

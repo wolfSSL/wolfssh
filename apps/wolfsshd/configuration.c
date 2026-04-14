@@ -74,13 +74,11 @@ struct WOLFSSHD_CONFIG {
     char* hostKeyFile;
     char* hostCertFile;
     char* userCAKeysFile;
-#ifdef USE_WINDOWS_API
-#ifdef WOLFSSH_CERTS
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
     char* hostKeyStore;
     char* hostKeyStoreSubject;
     char* hostKeyStoreFlags;
-#endif /* WOLFSSH_CERTS */
-#endif /* USE_WINDOWS_API */
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
     char* hostKeyAlgos;
     char* kekAlgos;
     char* listenAddress;
@@ -325,13 +323,11 @@ void wolfSSHD_ConfigFree(WOLFSSHD_CONFIG* conf)
         FreeString(&current->authKeysFile,  heap);
         FreeString(&current->hostKeyFile,   heap);
         FreeString(&current->hostCertFile,  heap);
-#ifdef USE_WINDOWS_API
-#ifdef WOLFSSH_CERTS
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
         FreeString(&current->hostKeyStore,       heap);
         FreeString(&current->hostKeyStoreSubject, heap);
         FreeString(&current->hostKeyStoreFlags,  heap);
-#endif /* WOLFSSH_CERTS */
-#endif /* USE_WINDOWS_API */
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
         FreeString(&current->pidFile,  heap);
 #ifdef USE_WINDOWS_API
         FreeString(&current->winUserStores, heap);
@@ -364,13 +360,11 @@ enum {
     OPT_PROTOCOL                = 9,
     OPT_LOGIN_GRACE_TIME        = 10,
     OPT_HOST_KEY                = 11,
-#ifdef USE_WINDOWS_API
-#ifdef WOLFSSH_CERTS
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
     OPT_HOST_KEY_STORE          = 50,
     OPT_HOST_KEY_STORE_SUBJECT  = 51,
     OPT_HOST_KEY_STORE_FLAGS    = 52,
-#endif /* WOLFSSH_CERTS */
-#endif /* USE_WINDOWS_API */
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
     OPT_PASSWORD_AUTH           = 12,
     OPT_PORT                    = 13,
     OPT_PERMIT_ROOT             = 14,
@@ -395,10 +389,10 @@ enum {
     NUM_OPTIONS = 26
 #ifdef USE_WINDOWS_API
     + 3
-#ifdef WOLFSSH_CERTS
-    + 3
-#endif /* WOLFSSH_CERTS */
 #endif /* USE_WINDOWS_API */
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    + 3
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
 };
 
 static const CONFIG_OPTION options[NUM_OPTIONS] = {
@@ -417,13 +411,11 @@ static const CONFIG_OPTION options[NUM_OPTIONS] = {
      * option names that share a common prefix MUST appear before the shorter
      * one.  HostKeyStoreSubject/HostKeyStoreFlags before HostKeyStore,
      * and all HostKeyStore* before HostKey. */
-#ifdef USE_WINDOWS_API
-#ifdef WOLFSSH_CERTS
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
     {OPT_HOST_KEY_STORE_SUBJECT,  "HostKeyStoreSubject"},
     {OPT_HOST_KEY_STORE_FLAGS,    "HostKeyStoreFlags"},
     {OPT_HOST_KEY_STORE,          "HostKeyStore"},
-#endif /* WOLFSSH_CERTS */
-#endif /* USE_WINDOWS_API */
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
     {OPT_HOST_KEY,                "HostKey"},
     {OPT_PASSWORD_AUTH,           "PasswordAuthentication"},
     {OPT_PORT,                    "Port"},
@@ -1108,8 +1100,7 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
             ret = wolfSSHD_ConfigSetWinUserPvPara(*conf, value);
             break;
     #endif /* USE_WINDOWS_API */
-    #ifdef USE_WINDOWS_API
-    #ifdef WOLFSSH_CERTS
+    #ifdef WOLFSSH_WINDOWS_CERT_STORE
         case OPT_HOST_KEY_STORE:
             wolfSSH_Log(WS_LOG_INFO,
                 "[SSHD] Parsed HostKeyStore = '%s'", value);
@@ -1127,8 +1118,7 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
             ret = SetFileString(&(*conf)->hostKeyStoreFlags, value,
                 (*conf)->heap);
             break;
-    #endif /* WOLFSSH_CERTS */
-    #endif /* USE_WINDOWS_API */
+    #endif /* WOLFSSH_WINDOWS_CERT_STORE */
         default:
             break;
     }
@@ -1616,8 +1606,7 @@ int SetFileString(char** dst, const char* src, void* heap)
     return ret;
 }
 
-#ifdef USE_WINDOWS_API
-#ifdef WOLFSSH_CERTS
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
 char* wolfSSHD_ConfigGetHostKeyStore(const WOLFSSHD_CONFIG* conf)
 {
     char* ret = NULL;
@@ -1652,8 +1641,7 @@ char* wolfSSHD_ConfigGetHostKeyStoreFlags(const WOLFSSHD_CONFIG* conf)
 
     return ret;
 }
-#endif /* WOLFSSH_CERTS */
-#endif /* USE_WINDOWS_API */
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
 
 int wolfSSHD_ConfigSetHostKeyFile(WOLFSSHD_CONFIG* conf, const char* file)
 {

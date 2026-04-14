@@ -43,7 +43,7 @@
 #include <wolfssh/internal.h>
 #include <wolfssh/certman.h>
 
-#if defined(USE_WINDOWS_API) && defined(WOLFSSH_CERTS)
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
     #include <windows.h>
     #include <wincrypt.h>
     #ifndef CERT_SYSTEM_STORE_CURRENT_USER
@@ -579,7 +579,7 @@ static int CheckProfile(DecodedCert* cert, int profile)
 #endif /* WOLFSSH_NO_FPKI */
 
 
-#if defined(USE_WINDOWS_API)
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
 /* Parse a cert store spec string "store:subject:flags" into wide-string
  * components.  Allocates wStoreName and wSubjectName via WMALLOC; caller
  * must WFREE them.  dwFlags is set to the parsed flags value.
@@ -672,7 +672,7 @@ int wolfSSH_ParseCertStoreSpec(const char* spec,
     WFREE(specCopy, heap, DYNTYPE_TEMP);
     return WS_SUCCESS;
 }
-#endif /* USE_WINDOWS_API */
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
 
 
 #endif /* WOLFSSH_CERTS */

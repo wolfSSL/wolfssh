@@ -52,6 +52,9 @@ jobs:
       run: |
         # Enable SSHD, SFTP, and X509 support (including WOLFSSH_NO_FPKI)
         sed -i 's/#if 0/#if 1/g' ${{env.USER_SETTINGS_H_NEW}}
+        # Enable Windows cert store API (not in repo user_settings.h).
+        # Must be appended to wolfssh/ide/winvs/user_settings.h: VS projects put ide/winvs on the
+        printf '\n/* Appended by windows-cert-store-test CI */\n#define WOLFSSH_WINDOWS_CERT_STORE\n' >> ${{env.USER_SETTINGS_H_NEW}}
         cp ${{env.USER_SETTINGS_H_NEW}} ${{env.USER_SETTINGS_H}}
         # Verify WOLFSSH_NO_FPKI will be defined
         if grep -q "WOLFSSH_NO_FPKI" ${{env.USER_SETTINGS_H}}; then
