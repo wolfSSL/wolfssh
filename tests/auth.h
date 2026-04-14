@@ -28,6 +28,7 @@ int wolfSSH_AuthTest(int argc, char** argv);
 typedef struct thread_args {
     int return_code;
     tcp_ready* signal;
+    void* pubkeyServerCtx; /* server callback context for pubkey tests */
 } thread_args;
 
 #endif /* _WOLFSSH_TESTS_AUTH_H_ */
