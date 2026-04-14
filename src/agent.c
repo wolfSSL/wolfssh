@@ -863,6 +863,7 @@ static int PostSignRequest(WOLFSSH_AGENT_CTX* agent,
     }
 
     if (ret == WS_SUCCESS) {
+        digestSz = (word32)wc_HashGetDigestSize(hashType);
         ret = wc_Hash(hashType, data, dataSz, digest, digestSz);
         if (ret != 0)
             ret = WS_CRYPTO_FAILED;
