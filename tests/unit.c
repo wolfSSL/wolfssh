@@ -31,6 +31,8 @@
 #include <stdio.h>
 #include <wolfssh/ssh.h>
 #include <wolfssh/keygen.h>
+#include <wolfssh/internal.h>
+#include <wolfssl/wolfcrypt/hmac.h>
 
 #define WOLFSSH_TEST_HEX2BIN
 #include <wolfssh/test.h>
@@ -285,6 +287,158 @@ static int test_Ed25519KeyGen(void)
 #endif
 
 
+#if defined(WOLFSSH_TEST_INTERNAL) && \
+    (!defined(WOLFSSH_NO_HMAC_SHA1) || \
+     !defined(WOLFSSH_NO_HMAC_SHA1_96) || \
+     !defined(WOLFSSH_NO_HMAC_SHA2_256) || \
+     !defined(WOLFSSH_NO_HMAC_SHA2_512))
+
+/* Minimal SSH binary packet: uint32 length, padding_length, msgId, padding.
+ * Same layout as tests/regress.c BuildPacket (8-byte aligned body). */
+static word32 BuildMacTestPacketPrefix(byte msgId, byte* out, word32 outSz)
+{
+    byte padLen = 6;
+    word32 packetLen = (word32)(1 + 1 + padLen);
+    word32 need = UINT32_SZ + packetLen;
+
+    if (outSz < need)
+        return 0;
+    out[0] = (byte)(packetLen >> 24);
+    out[1] = (byte)(packetLen >> 16);
+    out[2] = (byte)(packetLen >> 8);
+    out[3] = (byte)(packetLen);
+    out[4] = padLen;
+    out[5] = msgId;
+    WMEMSET(out + 6, 0, padLen);
+    return need;
+}
+
+
+static int test_DoReceive_VerifyMacFailure(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    int ret = WS_SUCCESS;
+    int result = 0;
+    byte flatSeq[LENGTH_SZ];
+    byte macKey[MAX_HMAC_SZ];
+    Hmac hmac;
+    word32 prefixLen;
+    word32 totalLen;
+    byte pkt[UINT32_SZ + 8 + MAX_HMAC_SZ];
+    int i;
+    struct {
+        byte macId;
+        int hmacType;
+        byte macSz;
+        byte keySz;
+    } cases[] = {
+#ifndef WOLFSSH_NO_HMAC_SHA1
+        { ID_HMAC_SHA1, WC_SHA, WC_SHA_DIGEST_SIZE, WC_SHA_DIGEST_SIZE },
+#endif
+    #ifndef WOLFSSH_NO_HMAC_SHA1_96
+        { ID_HMAC_SHA1_96, WC_SHA, SHA1_96_SZ, WC_SHA_DIGEST_SIZE },
+    #endif
+#ifndef WOLFSSH_NO_HMAC_SHA2_256
+        { ID_HMAC_SHA2_256, WC_SHA256, WC_SHA256_DIGEST_SIZE,
+          WC_SHA256_DIGEST_SIZE },
+#endif
+#ifndef WOLFSSH_NO_HMAC_SHA2_512
+        { ID_HMAC_SHA2_512, WC_SHA512, WC_SHA512_DIGEST_SIZE,
+          WC_SHA512_DIGEST_SIZE },
+#endif
+    };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -200;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -201;
+    }
+
+    WMEMSET(macKey, 0xA5, sizeof(macKey));
+
+    for (i = 0; i < (int)(sizeof(cases) / sizeof(cases[0])); i++) {
+        prefixLen = BuildMacTestPacketPrefix(MSGID_IGNORE, pkt, sizeof(pkt));
+        if (prefixLen == 0) {
+            result = -202;
+            goto done;
+        }
+        totalLen = prefixLen + cases[i].macSz;
+
+        ssh->peerEncryptId = ID_NONE;
+        ssh->peerAeadMode = 0;
+        ssh->peerBlockSz = MIN_BLOCK_SZ;
+        ssh->peerMacId = cases[i].macId;
+        ssh->peerMacSz = cases[i].macSz;
+        WMEMCPY(ssh->peerKeys.macKey, macKey, cases[i].keySz);
+        ssh->peerKeys.macKeySz = cases[i].keySz;
+        ssh->peerSeq = 0;
+        ssh->curSz = 0;
+        ssh->processReplyState = PROCESS_INIT;
+        ssh->error = 0;
+
+        flatSeq[0] = (byte)(ssh->peerSeq >> 24);
+        flatSeq[1] = (byte)(ssh->peerSeq >> 16);
+        flatSeq[2] = (byte)(ssh->peerSeq >> 8);
+        flatSeq[3] = (byte)(ssh->peerSeq);
+        ret = wc_HmacInit(&hmac, ssh->ctx->heap, INVALID_DEVID);
+        if (ret != WS_SUCCESS) {
+            result = -203;
+            goto done;
+        }
+        {
+            byte digest[WC_MAX_DIGEST_SIZE];
+            ret = wc_HmacSetKey(&hmac, cases[i].hmacType,
+                    ssh->peerKeys.macKey, ssh->peerKeys.macKeySz);
+            if (ret == WS_SUCCESS)
+                ret = wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
+            if (ret == WS_SUCCESS)
+                ret = wc_HmacUpdate(&hmac, pkt, prefixLen);
+            if (ret == WS_SUCCESS)
+                ret = wc_HmacFinal(&hmac, digest);
+            wc_HmacFree(&hmac);
+            if (ret == WS_SUCCESS)
+                WMEMCPY(pkt + prefixLen, digest, cases[i].macSz);
+        }
+        if (ret != WS_SUCCESS) {
+            result = -204;
+            goto done;
+        }
+
+        pkt[prefixLen] ^= 0x01;
+
+        ShrinkBuffer(&ssh->inputBuffer, 1);
+        ret = GrowBuffer(&ssh->inputBuffer, totalLen);
+        if (ret != WS_SUCCESS) {
+            result = -205;
+            goto done;
+        }
+        WMEMCPY(ssh->inputBuffer.buffer, pkt, totalLen);
+        ssh->inputBuffer.length = totalLen;
+        ssh->inputBuffer.idx = 0;
+
+        ret = wolfSSH_TestDoReceive(ssh);
+        if (ret != WS_FATAL_ERROR) {
+            result = -206;
+            goto done;
+        }
+        if (ssh->error != WS_VERIFY_MAC_E) {
+            result = -207;
+            goto done;
+        }
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* WOLFSSH_TEST_INTERNAL && any HMAC SHA variant enabled */
+
+
 /* Error Code And Message Test */
 
 static int test_Errors(void)
@@ -354,6 +508,17 @@ int wolfSSH_UnitTest(int argc, char** argv)
     unitResult = test_KDF();
     printf("KDF: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#if defined(WOLFSSH_TEST_INTERNAL) && \
+    (!defined(WOLFSSH_NO_HMAC_SHA1) || \
+     !defined(WOLFSSH_NO_HMAC_SHA1_96) || \
+     !defined(WOLFSSH_NO_HMAC_SHA2_256) || \
+     !defined(WOLFSSH_NO_HMAC_SHA2_512))
+    unitResult = test_DoReceive_VerifyMacFailure();
+    printf("DoReceiveVerifyMac: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 
 #ifdef WOLFSSH_KEYGEN
 #ifndef WOLFSSH_NO_RSA

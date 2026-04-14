@@ -7,9 +7,9 @@ check_PROGRAMS  += tests/unit.test tests/api.test \
                    tests/regress.test
 
 tests_unit_test_SOURCES      = tests/unit.c tests/unit.h
-tests_unit_test_CPPFLAGS     = -DNO_MAIN_DRIVER $(AM_CPPFLAGS)
-tests_unit_test_LDADD        = src/libwolfssh.la
-tests_unit_test_DEPENDENCIES = src/libwolfssh.la
+tests_unit_test_CPPFLAGS     = -DNO_MAIN_DRIVER -DWOLFSSH_TEST_INTERNAL $(AM_CPPFLAGS)
+tests_unit_test_LDADD        = src/libwolfssh_test.la
+tests_unit_test_DEPENDENCIES = src/libwolfssh_test.la
 
 tests_api_test_SOURCES       = tests/api.c tests/api.h \
                                examples/echoserver/echoserver.c
