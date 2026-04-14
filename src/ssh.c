@@ -2501,6 +2501,7 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
     PCCERT_CONTEXT pCertContext = NULL;
     word32 keyIdx = 0;
     byte keyId = ID_NONE;
+    byte addedNewSlot = 0;
     void* heap = NULL;
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CTX_UsePrivateKey_fromStore()");
@@ -2624,6 +2625,7 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
         if (keyIdx == WOLFSSH_MAX_PVT_KEYS && ctx->privateKeyCount < WOLFSSH_MAX_PVT_KEYS) {
             keyIdx = ctx->privateKeyCount;
             ctx->privateKeyCount++;
+            addedNewSlot = 1;
         }
     }
 
@@ -2632,6 +2634,19 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
         CertCloseStore(hStore, 0);
         WLOG(WS_LOG_DEBUG, "wolfSSH_CTX_UsePrivateKey_fromStore: No available key slot");
         return WS_MEMORY_E;
+    }
+
+    /* Free existing resources if replacing an existing slot */
+    if (ctx->privateKey[keyIdx].useCertStore) {
+        if (ctx->privateKey[keyIdx].certStoreContext != NULL)
+            CertFreeCertificateContext(
+                (PCCERT_CONTEXT)ctx->privateKey[keyIdx].certStoreContext);
+        if (ctx->privateKey[keyIdx].storeName != NULL)
+            WFREE(ctx->privateKey[keyIdx].storeName, heap, DYNTYPE_STRING);
+        if (ctx->privateKey[keyIdx].subjectName != NULL)
+            WFREE(ctx->privateKey[keyIdx].subjectName, heap, DYNTYPE_STRING);
+        if (ctx->privateKey[keyIdx].cert != NULL)
+            WFREE(ctx->privateKey[keyIdx].cert, heap, DYNTYPE_CERT);
     }
 
     /* Set up the private key structure */
@@ -2668,8 +2683,8 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
         byte* certBuf = (byte*)WMALLOC(certSz, heap, DYNTYPE_CERT);
         if (certBuf == NULL) {
             /* Cleanup */
-            WFREE((void*)ctx->privateKey[keyIdx].storeName, heap, DYNTYPE_STRING);
-            WFREE((void*)ctx->privateKey[keyIdx].subjectName, heap, DYNTYPE_STRING);
+            WFREE(ctx->privateKey[keyIdx].storeName, heap, DYNTYPE_STRING);
+            WFREE(ctx->privateKey[keyIdx].subjectName, heap, DYNTYPE_STRING);
             CertFreeCertificateContext(pCertContext);
             CertCloseStore(hStore, 0);
             WLOG(WS_LOG_DEBUG, "wolfSSH_CTX_UsePrivateKey_fromStore: Certificate buffer allocation failed");
@@ -2697,8 +2712,8 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
                  "access private key, error: %lu. Check that the current user "
                  "or service account has permission to access the key.", dwErr);
             /* Cleanup already stored data */
-            WFREE((void*)ctx->privateKey[keyIdx].storeName, heap, DYNTYPE_STRING);
-            WFREE((void*)ctx->privateKey[keyIdx].subjectName, heap, DYNTYPE_STRING);
+            WFREE(ctx->privateKey[keyIdx].storeName, heap, DYNTYPE_STRING);
+            WFREE(ctx->privateKey[keyIdx].subjectName, heap, DYNTYPE_STRING);
             WFREE(ctx->privateKey[keyIdx].cert, heap, DYNTYPE_CERT);
             ctx->privateKey[keyIdx].useCertStore = 0;
             CertFreeCertificateContext(pCertContext);
@@ -2707,7 +2722,8 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
             ctx->privateKey[keyIdx].subjectName = NULL;
             ctx->privateKey[keyIdx].cert = NULL;
             ctx->privateKey[keyIdx].certSz = 0;
-            ctx->privateKeyCount--;
+            if (addedNewSlot)
+                ctx->privateKeyCount--;
             CertCloseStore(hStore, 0);
             return WS_CRYPTO_FAILED;
         }

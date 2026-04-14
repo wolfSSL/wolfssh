@@ -169,16 +169,24 @@ jobs:
         include:
           - server_key_source: file
             client_key_source: x509
+            key_algorithm: rsa
             test_name: "Server-File-Client-X509"
           - server_key_source: store
             client_key_source: x509
+            key_algorithm: rsa
             test_name: "Server-Store-Client-X509"
           - server_key_source: file
             client_key_source: store
+            key_algorithm: rsa
             test_name: "Server-File-Client-Store"
           - server_key_source: store
             client_key_source: store
+            key_algorithm: rsa
             test_name: "Server-Store-Client-Store"
+          - server_key_source: store
+            client_key_source: x509
+            key_algorithm: ecdsa
+            test_name: "Server-Store-Client-X509-ECDSA"
 
     steps:
     - uses: actions/checkout@v4
@@ -269,14 +277,24 @@ jobs:
         # For server: use LocalMachine so service (LocalSystem) can access it
         # For client: use CurrentUser (accessed by testuser)
         if ("${{ matrix.server_key_source }}" -eq "store") {
-          $serverCert = New-SelfSignedCertificate `
-              -Subject "CN=wolfSSH-Test-Server" `
-              -KeyAlgorithm RSA `
-              -KeyLength 2048 `
-              -CertStoreLocation "Cert:\LocalMachine\My" `
-              -KeyExportPolicy Exportable `
-              -NotAfter (Get-Date).AddYears(1) `
-              -KeyUsage DigitalSignature, KeyEncipherment
+          if ("${{ matrix.key_algorithm }}" -eq "ecdsa") {
+            $serverCert = New-SelfSignedCertificate `
+                -Subject "CN=wolfSSH-Test-Server" `
+                -KeyAlgorithm ECDSA_nistP256 `
+                -CertStoreLocation "Cert:\LocalMachine\My" `
+                -KeyExportPolicy Exportable `
+                -NotAfter (Get-Date).AddYears(1) `
+                -KeyUsage DigitalSignature
+          } else {
+            $serverCert = New-SelfSignedCertificate `
+                -Subject "CN=wolfSSH-Test-Server" `
+                -KeyAlgorithm RSA `
+                -KeyLength 2048 `
+                -CertStoreLocation "Cert:\LocalMachine\My" `
+                -KeyExportPolicy Exportable `
+                -NotAfter (Get-Date).AddYears(1) `
+                -KeyUsage DigitalSignature, KeyEncipherment
+          }
           Write-Host "Server cert created in LocalMachine: $($serverCert.Subject)"
 
           # Grant LocalSystem (NT AUTHORITY\SYSTEM) access to the private key.
@@ -289,7 +307,7 @@ jobs:
           # Try multiple methods to get the private key info
           $keyFound = $false
 
-          # Method 1: Try RSACertificateExtensions
+          # Method 1: Try RSACertificateExtensions (RSA keys)
           try {
             Write-Host "Trying RSACertificateExtensions.GetRSAPrivateKey..."
             $rsaKey = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($serverCert)
@@ -309,6 +327,23 @@ jobs:
             }
           } catch {
             Write-Host "  RSACertificateExtensions method failed: $_"
+          }
+
+          # Method 1b: Try ECDsaCertificateExtensions (ECDSA keys)
+          if (-not $keyName) {
+            try {
+              Write-Host "Trying ECDsaCertificateExtensions.GetECDsaPrivateKey..."
+              $ecdsaKey = [System.Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPrivateKey($serverCert)
+              if ($ecdsaKey) {
+                Write-Host "  Got ECDSA key object: $($ecdsaKey.GetType().FullName)"
+                if ($ecdsaKey.Key) {
+                  $keyName = $ecdsaKey.Key.UniqueName
+                  Write-Host "  ECDSA CNG key unique name: $keyName"
+                }
+              }
+            } catch {
+              Write-Host "  ECDsaCertificateExtensions method failed: $_"
+            }
           }
 
           # Method 2: Try PrivateKey property (older API)

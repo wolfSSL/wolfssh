@@ -103,10 +103,13 @@ int wolfSSH_SetCertManager(WOLFSSH_CTX* ctx, WOLFSSL_CERT_MANAGER* cm)
     }
 
     /* free up existing cm if present */
+    if (ctx->certMan->cm == cm) {
+        return WS_SUCCESS;
+    }
+    wolfSSL_CertManager_up_ref(cm);
     if (ctx->certMan->cm != NULL) {
         wolfSSL_CertManagerFree(ctx->certMan->cm);
     }
-    wolfSSL_CertManager_up_ref(cm);
     ctx->certMan->cm = cm;
 
     return WS_SUCCESS;
@@ -637,6 +640,11 @@ int wolfSSH_ParseCertStoreSpec(const char* spec,
     wStoreNameLen = MultiByteToWideChar(CP_UTF8, 0, storeName, -1, NULL, 0);
     wSubjectNameLen = MultiByteToWideChar(CP_UTF8, 0, subjectName, -1,
             NULL, 0);
+
+    if (wStoreNameLen == 0 || wSubjectNameLen == 0) {
+        WFREE(specCopy, heap, DYNTYPE_TEMP);
+        return WS_FATAL_ERROR;
+    }
 
     *wStoreName = (wchar_t*)WMALLOC(wStoreNameLen * sizeof(wchar_t),
             heap, DYNTYPE_TEMP);

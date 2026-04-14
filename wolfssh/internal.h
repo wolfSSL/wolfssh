@@ -546,9 +546,9 @@ typedef struct WOLFSSH_PVT_KEY {
     void* certStoreContext;
         /* Windows certificate context (PCCERT_CONTEXT) for MS Certificate Store.
          * Owned by CTX, must be freed with CertFreeCertificateContext. */
-    const wchar_t* storeName;
+    wchar_t* storeName;
         /* Certificate store name (e.g., "My", "Root"). Owned by CTX. */
-    const wchar_t* subjectName;
+    wchar_t* subjectName;
         /* Certificate subject name or thumbprint for lookup. Owned by CTX. */
     DWORD dwFlags;
         /* Certificate store flags (e.g., CERT_SYSTEM_STORE_CURRENT_USER). */

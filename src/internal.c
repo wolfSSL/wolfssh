@@ -1127,11 +1127,11 @@ void CtxResourceFree(WOLFSSH_CTX* ctx)
                     ctx->privateKey[i].certStoreContext = NULL;
                 }
                 if (ctx->privateKey[i].storeName != NULL) {
-                    WFREE((void*)ctx->privateKey[i].storeName, ctx->heap, DYNTYPE_STRING);
+                    WFREE(ctx->privateKey[i].storeName, ctx->heap, DYNTYPE_STRING);
                     ctx->privateKey[i].storeName = NULL;
                 }
                 if (ctx->privateKey[i].subjectName != NULL) {
-                    WFREE((void*)ctx->privateKey[i].subjectName, ctx->heap, DYNTYPE_STRING);
+                    WFREE(ctx->privateKey[i].subjectName, ctx->heap, DYNTYPE_STRING);
                     ctx->privateKey[i].subjectName = NULL;
                 }
                 ctx->privateKey[i].useCertStore = 0;
@@ -11369,6 +11369,47 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
             ret = wc_ecc_init_ex(&sigKeyBlock_ptr->sk.ecc.key, heap,
                     INVALID_DEVID);
             scratch = 0;
+#ifdef USE_WINDOWS_API
+#ifdef WOLFSSH_CERTS
+            if (ret == 0 && ssh->ctx->privateKey[keyIdx].useCertStore) {
+                /* For cert store keys, extract the ECC public key from the
+                 * DER certificate.  Signing uses the cert store handle via
+                 * SignHEcdsa's cert-store branch. */
+                const byte* certDer =
+                        ssh->ctx->privateKey[keyIdx].cert;
+                word32 certDerSz =
+                        ssh->ctx->privateKey[keyIdx].certSz;
+
+                if (certDer != NULL && certDerSz > 0) {
+                    byte*  pubKeyDer = NULL;
+                    word32 pubKeyDerSz = 0;
+
+                    ret = ExtractPubKeyDerFromCert(certDer, certDerSz,
+                            &pubKeyDer, &pubKeyDerSz, heap);
+                    if (ret == 0) {
+                        word32 idx2 = 0;
+                        ret = wc_EccPublicKeyDecode(pubKeyDer, &idx2,
+                                &sigKeyBlock_ptr->sk.ecc.key, pubKeyDerSz);
+                    }
+                    if (pubKeyDer != NULL)
+                        WFREE(pubKeyDer, heap, DYNTYPE_PUBKEY);
+
+                    if (ret != 0) {
+                        WLOG(WS_LOG_DEBUG,
+                            "SendKexDhReply: cert store ECC pubkey "
+                            "decode failed %d", ret);
+                        ret = WS_CRYPTO_FAILED;
+                    }
+                }
+                else {
+                    WLOG(WS_LOG_DEBUG,
+                        "SendKexDhReply: cert store key has no cert DER");
+                    ret = WS_BAD_ARGUMENT;
+                }
+            }
+            else
+#endif /* WOLFSSH_CERTS */
+#endif /* USE_WINDOWS_API */
             if (ret == 0)
                 ret = wc_EccPrivateKeyDecode(ssh->ctx->privateKey[keyIdx].key,
                         &scratch, &sigKeyBlock_ptr->sk.ecc.key,
@@ -12655,8 +12696,19 @@ static int SignHEcdsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
         /* NCryptSignHash for ECDSA returns raw r||s (each half of sigSz),
          * NOT DER-encoded.  Split directly. */
         if (sigKey->pvtKey != NULL && sigKey->pvtKey->useCertStore) {
-            word32 halfSz = *sigSz / 2;
+            word32 halfSz;
             word32 rOff = 0, sOff = 0;
+            if (*sigSz < 2 || (*sigSz & 1) != 0) {
+                ret = WS_ECC_E;
+            }
+            halfSz = *sigSz / 2;
+            if (ret == WS_SUCCESS && (halfSz > rSz || halfSz > sSz)) {
+                ret = WS_ECC_E;
+            }
+            if (ret != WS_SUCCESS) {
+                /* skip the copy/trim below */
+            }
+            else {
             WMEMCPY(r, sig, halfSz);
             WMEMCPY(s, sig + halfSz, halfSz);
             /* Trim leading zeroes (use offset to preserve base pointer
@@ -12671,6 +12723,7 @@ static int SignHEcdsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
             if (sOff > 0)
                 WMEMMOVE(s, s + sOff, halfSz - sOff);
             sSz = halfSz - sOff;
+            }
         } else
 #endif /* WOLFSSH_CERTS */
 #endif /* USE_WINDOWS_API */
