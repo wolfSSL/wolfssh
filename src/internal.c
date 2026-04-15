@@ -12929,8 +12929,11 @@ int SendKexDhReply(WOLFSSH* ssh)
         ret = BundlePacket(ssh);
     }
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
+        ssh->handshake->expectMsgId = MSGID_NEWKEYS;
+        WLOG_EXPECT_MSGID(ssh->handshake->expectMsgId);
         ret = SendNewKeys(ssh);
+    }
 
     if (ret == WS_SUCCESS && ssh->sendExtInfo) {
         ret = SendExtInfo(ssh);
