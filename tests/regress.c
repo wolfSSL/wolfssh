@@ -1184,6 +1184,29 @@ static void TestDirectTcpipRejectSendsOpenFail(void)
 
     FreeChannelOpenHarness(&harness);
 }
+
+static void TestDirectTcpipNoFwdCbSendsOpenFail(void)
+{
+    ChannelOpenHarness harness;
+    byte extra[128];
+    byte in[192];
+    word32 extraSz;
+    word32 inSz;
+    int ret;
+
+    extraSz = BuildDirectTcpipExtra("127.0.0.1", 8080, "127.0.0.1", 2222,
+            extra, sizeof(extra));
+    inSz = BuildChannelOpenPacket("direct-tcpip", 9, 0x4000, 0x8000,
+            extra, extraSz, in, sizeof(in));
+
+    InitChannelOpenHarness(&harness, in, inSz);
+    /* Intentionally do NOT register fwdCb */
+
+    ret = DoReceive(harness.ssh);
+    AssertChannelOpenFailResponse(&harness, ret);
+
+    FreeChannelOpenHarness(&harness);
+}
 #endif
 
 #ifdef WOLFSSH_AGENT
@@ -1648,6 +1671,7 @@ int main(int argc, char** argv)
     TestChannelOpenCallbackRejectSendsOpenFail();
 #ifdef WOLFSSH_FWD
     TestDirectTcpipRejectSendsOpenFail();
+    TestDirectTcpipNoFwdCbSendsOpenFail();
 #endif
 #ifdef WOLFSSH_AGENT
     TestAgentChannelNullAgentSendsOpenFail();

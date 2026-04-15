@@ -8739,6 +8739,12 @@ static int DoChannelOpen(WOLFSSH* ssh,
                                 ssh->fwdCbCtx, NULL, newChannel->channel);
                     }
                 }
+                else {
+                    WLOG(WS_LOG_WARN, "No forward callback set for direct-tcpip channel,"
+                            " failing channel open");
+                    fail_reason = OPEN_ADMINISTRATIVELY_PROHIBITED;
+                    ret = WS_ERROR;
+                }
             }
         #endif /* WOLFSSH_FWD */
             if (ret == WS_SUCCESS) {
