@@ -151,11 +151,6 @@ USER_NODE* AddNewUser(USER_NODE* list, byte type, const byte* username,
 }
 #endif
 
-enum {
-    WSSHD_AUTH_FAILURE =  0,
-    WSSHD_AUTH_SUCCESS =  1
-};
-
 /* TODO: Can use wolfSSH_ReadKey_buffer? */
 static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
                              word32 keySz)
@@ -309,7 +304,11 @@ static int ExtractSalt(char* hash, char** salt, int saltSz)
 #endif
 
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
+#ifdef WOLFSSHD_UNIT_TEST
+int CheckPasswordHashUnix(const char* input, char* stored)
+#else
 static int CheckPasswordHashUnix(const char* input, char* stored)
+#endif
 {
     int ret = WSSHD_AUTH_SUCCESS;
     char* hashedInput;
