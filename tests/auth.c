@@ -549,6 +549,15 @@ cleanup:
     WOLFSSL_RETURN_FROM_THREAD(0);
 }
 
+static int AcceptAnyServerHostKey(const byte* pubKey, word32 pubKeySz,
+        void* ctx)
+{
+    (void)pubKey;
+    (void)pubKeySz;
+    (void)ctx;
+    return 0;
+}
+
 /* Run one pubkey auth attempt.
  * sCtx   – server context (authorised key hash)
  * cCtx   – client context (key material to present)
@@ -578,6 +587,7 @@ static int run_pubkey_test(PubkeyServerCtx* sCtx, PubkeyClientCtx* cCtx,
 
     clientCtx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
     AssertNotNull(clientCtx);
+    wolfSSH_CTX_SetPublicKeyCheck(clientCtx, AcceptAnyServerHostKey);
     wolfSSH_SetUserAuth(clientCtx, clientPubkeyUserAuth);
 
     clientSsh = wolfSSH_new(clientCtx);
@@ -977,6 +987,7 @@ static int basic_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
         return WS_BAD_ARGUMENT;
     }
 
+    wolfSSH_CTX_SetPublicKeyCheck(*ctx, AcceptAnyServerHostKey);
     wolfSSH_SetUserAuth(*ctx, keyboardUserAuth);
     *ssh = wolfSSH_new(*ctx);
     if (*ssh == NULL) {

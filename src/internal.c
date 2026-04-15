@@ -5818,8 +5818,8 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             }
         }
         else {
-            WLOG(WS_LOG_DEBUG, "DKDR: no public key check callback, accepted");
-            ret = WS_SUCCESS;
+            WLOG(WS_LOG_DEBUG, "DKDR: no public key check callback, rejected");
+            ret = WS_PUBKEY_REJECTED_E;
         }
     }
 

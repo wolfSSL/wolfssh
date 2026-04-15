@@ -1158,6 +1158,15 @@ static int sftpUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
     return ret;
 }
 
+static int AcceptAnyServerHostKey(const byte* pubKey, word32 pubKeySz,
+        void* ctx)
+{
+    (void)pubKey;
+    (void)pubKeySz;
+    (void)ctx;
+    return 0;
+}
+
 /* performs connection to port, sets WOLFSSH_CTX and WOLFSSH on success
  * caller needs to free ctx and ssh when done
  */
@@ -1180,6 +1189,7 @@ static void sftp_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
         return;
     }
 
+    wolfSSH_CTX_SetPublicKeyCheck(*ctx, AcceptAnyServerHostKey);
     wolfSSH_SetUserAuth(*ctx, sftpUserAuth);
     *ssh = wolfSSH_new(*ctx);
     if (*ssh == NULL) {
@@ -1888,6 +1898,7 @@ static void keyboard_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
         return;
     }
 
+    wolfSSH_CTX_SetPublicKeyCheck(*ctx, AcceptAnyServerHostKey);
     wolfSSH_SetUserAuth(*ctx, keyboardUserAuth);
     *ssh = wolfSSH_new(*ctx);
     if (*ssh == NULL) {
