@@ -8496,16 +8496,35 @@ static int DoGlobalRequestFwd(WOLFSSH* ssh,
                 isCancel ? " cancel" : "", bindAddr, bindPort);
     }
 
-    if (ret == WS_SUCCESS && wantReply) {
-        ret = SendGlobalRequestFwdSuccess(ssh, 1, bindPort);
-    }
-
     if (ret == WS_SUCCESS) {
         if (ssh->ctx->fwdCb) {
             ret = ssh->ctx->fwdCb(isCancel ? WOLFSSH_FWD_REMOTE_CLEANUP :
                         WOLFSSH_FWD_REMOTE_SETUP,
                     ssh->fwdCbCtx, bindAddr, bindPort);
         }
+        else {
+            WLOG(WS_LOG_WARN, "No forwarding callback set, rejecting request. "
+                "Set one with wolfSSH_CTX_SetFwdCb().");
+            ret = WS_UNIMPLEMENTED_E;
+        }
+    }
+
+    if (wantReply) {
+        if (ret == WS_SUCCESS) {
+            if (isCancel) {
+                ret = SendRequestSuccess(ssh, 1);
+            }
+            else {
+                ret = SendGlobalRequestFwdSuccess(ssh, 1, bindPort);
+            }
+        }
+        else {
+            ret = SendRequestSuccess(ssh, 0);
+        }
+    }
+    else if (ret == WS_UNIMPLEMENTED_E) {
+        /* No reply expected; silently reject without terminating connection. */
+        ret = WS_SUCCESS;
     }
 
     if (bindAddr != NULL)
