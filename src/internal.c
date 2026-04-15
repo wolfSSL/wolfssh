@@ -8816,6 +8816,8 @@ static int DoChannelOpenConf(WOLFSSH* ssh,
         ret = GetUint32(&peerMaxPacketSz, buf, len, &begin);
 
     if (ret == WS_SUCCESS) {
+        *idx = begin;
+
         WLOG(WS_LOG_INFO, "  channelId = %u", channelId);
         WLOG(WS_LOG_INFO, "  peerChannelId = %u", peerChannelId);
         WLOG(WS_LOG_INFO, "  peerInitialWindowSz = %u", peerInitialWindowSz);
