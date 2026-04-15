@@ -749,8 +749,8 @@ static void FreeKexReplyHarness(KexReplyHarness* harness)
     }
 }
 
-static void InitKexReplyHarness(KexReplyHarness* harness,
-        const char* keyAlgo, byte mutateReply)
+static void InitKexReplyHarnessEx(KexReplyHarness* harness,
+        const char* keyAlgo, byte mutateReply, byte skipPublicKeyCheck)
 {
     byte keyBuf[2048];
     word32 keySz;
@@ -781,7 +781,9 @@ static void InitKexReplyHarness(KexReplyHarness* harness,
 
     wolfSSH_SetUserAuth(harness->clientCtx, RegressionClientUserAuth);
     wolfSSH_SetUserAuth(harness->serverCtx, RegressionServerUserAuth);
-    wolfSSH_CTX_SetPublicKeyCheck(harness->clientCtx, AcceptAnyServerHostKey);
+    if (!skipPublicKeyCheck) {
+        wolfSSH_CTX_SetPublicKeyCheck(harness->clientCtx, AcceptAnyServerHostKey);
+    }
 
     keySz = LoadFileBuffer(REGRESS_SERVER_KEY_PATH, keyBuf, sizeof(keyBuf));
     AssertTrue(keySz > 0);
@@ -800,6 +802,12 @@ static void InitKexReplyHarness(KexReplyHarness* harness,
 
     AssertIntEQ(wolfSSH_SetUsername(harness->client, REGRESS_USERNAME),
             WS_SUCCESS);
+}
+
+static void InitKexReplyHarness(KexReplyHarness* harness,
+        const char* keyAlgo, byte mutateReply)
+{
+    InitKexReplyHarnessEx(harness, keyAlgo, mutateReply, 0);
 }
 
 static int IsHandshakeRetryable(int err)
@@ -902,6 +910,33 @@ static void TestKexDhReplyRejectsRsaSha2_512SigNameDowngrade(void)
     AssertHandshakeRejectsMutatedReply("rsa-sha2-512");
 }
 #endif
+
+static void AssertHandshakeRejectsWithNoPublicKeyCheck(const char* keyAlgo)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    InitKexReplyHarnessEx(&harness, keyAlgo, 0, 1 /* skipPublicKeyCheck */);
+    RunKexReplyHandshake(&harness, &result);
+
+    AssertFalse(result.clientSuccess);
+    AssertTrue(result.clientRet == WS_FATAL_ERROR);
+    AssertTrue(result.clientErr != WS_WANT_READ && result.clientErr != WS_WANT_WRITE);
+    AssertIntEQ(result.clientErr, WS_PUBKEY_REJECTED_E);
+    AssertFalse(harness.client->connectState >= CONNECT_KEYED);
+
+    FreeKexReplyHarness(&harness);
+}
+
+static void TestKexDhReplyRejectsNoPublicKeyCheck(void)
+{
+#ifndef WOLFSSH_NO_RSA_SHA2_256
+    AssertHandshakeRejectsWithNoPublicKeyCheck("rsa-sha2-256");
+#endif
+#ifndef WOLFSSH_NO_RSA_SHA2_512
+    AssertHandshakeRejectsWithNoPublicKeyCheck("rsa-sha2-512");
+#endif
+}
 
 #endif /* KEXDH_REPLY_REGRESS_KEX_ALGO */
 
@@ -1667,6 +1702,7 @@ int main(int argc, char** argv)
     #ifndef WOLFSSH_NO_RSA_SHA2_512
     TestKexDhReplyRejectsRsaSha2_512SigNameDowngrade();
     #endif
+    TestKexDhReplyRejectsNoPublicKeyCheck();
 #endif
 
 #ifdef WOLFSSH_SFTP
