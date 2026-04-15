@@ -1,3 +1,157 @@
+# wolfSSH v1.5.0 (April 17, 2026)
+
+## Vulnerabilities
+- [Low] CVE-2026-0930. Potential read out of bounds case with wolfSSHd on
+  Windows while handling a terminal resize request. An authenticated user could
+  trigger the out of bounds read after establishing a connection which would
+  leak the adjacent stack memory to the pseudo-console output. Thanks to Luigino
+  Camastra and Pavel Kohout for the report. Fixed in PR 864
+
+## New Features
+
+- Added ML-KEM hybrid KEX algorithms `mlkem1024nistp384-sha384` and
+  `mlkem768x25519-sha256` from draft-ietf-sshm-mlkem-hybrid-kex, with KEX tests
+  driven by name and a GitHub action testing interop against OpenSSH. (PR 869)
+- Allowed building wolfSSH against a wolfSSL FIPS build that has HashDRBG
+  disabled. (PR 833)
+- Added `lcd` and `lls` commands to the SFTP example client for changing and
+  listing the local working directory within a session. (PR 909)
+- Added a public accessor function for retrieving a channel's type. (PR 873)
+- Added client-side support for `rsa-sha2-512` signatures, separating the
+  key type from the signature type so `ssh-rsa` keys can be used with
+  `ssh-rsa`, `rsa-sha2-256`, or `rsa-sha2-512` signatures. (PR 890)
+- Added new CI workflows: codespell, multi-compiler builds (gcc 11/12/13 and
+  clang 14/15/17), and sanitizer builds (ASan, UBSan, LeakSan). (PR 884)
+- Added a GitHub action to run automated Coverity scans. (PR 872)
+- Added SFTP contention testing that simulates network latency with `netem`
+  to exercise the non-blocking SFTP server paths. (PR 877)
+- Added integration tests for client public-key authentication covering
+  valid RSA, valid ECC, and wrong-key rejection. (PR 913)
+- Added a unit test for `VerifyMac` using a new internal-only test entry
+  point that injects packets with corrupted MACs. (PR 912)
+- Added a Windows wolfsshd to wolfsftp large-transfer test and an additional
+  large SFTP transfer test with an enlarged SFTP read/write buffer. (PR 874)
+- Added a forwarding regression test for the echoserver. (PR 874)
+
+## Improvements
+
+- Replaced `WMEMCMP` in `CheckAuthKeysLine` with a constant-time comparison
+  to avoid leaking authorized-key material through timing. (PR 915)
+- Switched SFTP `RecvOpen` to use the same `GetAndCleanPath()` helper that
+  the other SFTP handlers use. (PR 867)
+- Hardened `wolfSSH_CleanPath` used by SCP. (PR 865)
+- Reworked `wolfSSH_SFTP_RecvOpen` to allocate the response buffer outside
+  the success path and added a centralized cleanup phase so failure cases
+  send a proper SFTP status packet. (PR 905)
+- Reworked the SFTP example tests to use a table linking each command to
+  its expected output, cleaned up working directories before each run, and
+  fixed an argument-parsing underflow when commands receive empty args.
+  (PR 911)
+- Hardened `SendUserAuthKeyboardResponse` against null `ssh` and missing
+  `userAuthCb`, validated `PreparePacket()` success, and added a regression
+  test. (PR 910)
+- Made SFTP send/read handling more robust around multi-byte passwords and
+  cleaned up file mode and attribute reporting. (PR 882)
+- Added rekey support to additional SFTP client commands, switched
+  `wolfsftp.c` to use `NoticeError` consistently, and fixed forwarding and
+  agent handling in the echoserver. (PR 874)
+- Validated channel-accept request and reply payloads. (PR 902)
+- Hardened `DoKexDhReply()` to reject the server's public key when no
+  `PublicKeyCheck` callback is registered, with a regression test added.
+  (PR 917)
+- Hardened `DoGlobalRequestFwd()` to reject `tcpip-forward` global requests
+  when no `fwdCb` is registered, and deferred `SSH_MSG_REQUEST_SUCCESS` until
+  the policy callback approves. (PR 918)
+- Hardened `DoChannelOpen()` to reject channel-open requests when the
+  required callback is not registered, with a regression test added.
+  (PR 919)
+- Added validation of the server's DH group parameters in
+  `DoKexDhGexGroup` so the prime `p` is verified to be safe (`p` prime and
+  `(p-1)/2` prime), plus unit tests covering known safe and unsafe primes.
+  (PR 922)
+- Added preprocessor guards so the Curve25519 union member used by the
+  hybrid Curve25519+ML-KEM paths is only required when one of those KEX
+  modes is enabled. (PR 901)
+- Reorganized SFTP function placement, prototypes, and build guards, and
+  fixed mismatched guards around `SFTP_FreeHandles` in
+  `wolfSSH_SFTP_free`. (PR 891)
+- Cleaned up macOS threading by switching to named POSIX semaphores and
+  consolidating semaphore use behind a single wrapper API. (PR 895,
+  resolves issue #893)
+- Improved `wolfSSH_ProcessBuffer` to validate the input type, handled
+  non-`WOLFSSH_CERTS` builds in `SendKexDhReply`, allowed
+  `DoUserAuthRequestRsa()` and `DoUserAuthRequestRsaCert()` to accept
+  `ssh-rsa`, `rsa-sha2-256`, and `rsa-sha2-512`, and added the
+  `test_wolfSSH_CTX_UsePrivateKey_buffer_pem` API test. (PR 906)
+- Updated the FatFS test to cache the source archive and follow the same
+  wolfSSL build pattern as the other workflows. (PR 878)
+- Avoided setting the terminal size to 0x0 when running the echoserver in
+  echo mode, which left vim and other tools mis-sized after tests. (PR 868)
+- Fixed an `snprintf` format-truncation warning in the wolfsshd test
+  harness and used `sizeof` to size command buffers. (PR 866)
+- Misc cleanup: whitespace in the global request functions and split the
+  echoserver portion of the testsuite into its own function. (PR 873)
+
+## Fixes
+
+- Fixed an SFTP server hang on `WS_WANT_WRITE` with non-blocking sockets:
+  `wolfSSH_SFTP_buffer_send()` now flushes any pending output buffered from
+  a previous `WS_WANT_WRITE` before queuing more data. (PR 876)
+- Fixed a Coverity untrusted-divisor finding by reworking `ato32()` to mask
+  and shift defensively. (PR 870, CID 572837)
+- Simplified and fixed `AddAssign64` when `WOLFSSL_MAX_32BIT` is not
+  defined. (PR 894)
+- Added bounds checks in the FatFS-backed `ff_close`, `ff_pwrite`, and
+  `ff_pread` SFTP helpers. (PR 904)
+- Fixed `wolfSSH_AGENT_Relay()` to evaluate the size return rather than the
+  status code. (PR 903)
+- Fixed `wolfSSH_DoModes()` to update the requested output flags rather
+  than overwriting the local mode flags. (PR 897)
+- Added missing `wc_HashFree()` calls in the RSA/ECC `BuildUserAuthRequest`
+  paths and added Ed25519 key cleanup in `FreePubKey()` with a
+  `keyAllocated` flag tracked in `ParseEd25519PubKey()`. (PR 896)
+- Fixed Windows authentication: `SetupUserTokenWin()` now uses
+  `DomainName.Length` for `DomainName.MaximumLength`, and
+  `CheckPasswordWIN()` now computes `usrWSz` as a wide-character length.
+  (PR 898)
+- Fixed several smaller findings: foreground-color mask in mode 30, an
+  error-path guard around `findHandle`, bounds-checked `GetSkip()` use in
+  `ParseRSAPubKey()` / `ParseECCPubKey()`, and a length-validation bug.
+  (PR 899)
+- Fixed compilation when `WOLFSSH_NO_NISTP256_MLKEM768_SHA256` is defined.
+  (PR 887)
+- Fixed a non-constant-time password-hash comparison and added missing
+  bounds checks in `DoIgnore`, `DoUserAuthRequestPassword`,
+  `DoServiceRequest`, and `PrepareUserAuthRequestEcc`, plus an unsigned-vs-
+  zero comparison. (PR 892)
+- Static-analysis fixes: uninitialized `mode` in FatFS `ff_open`, an
+  operator-precedence bug, missing `wc_ecc_init()` before ECC key import,
+  unchecked `wc_InitRsaKey` return, missing `break` between switch cases,
+  and missing `ForceZero` on a plaintext password copy. (PR 883)
+- Static-analysis fixes: missing null check on a duplicated string, bounds
+  check on an addition using a peer value, null dereference after a failed
+  channel lookup, wrong pointer checked for null, and a wrong bitwise
+  operator when testing an attribute. (PR 881)
+- Static-analysis fixes: logical operator in public-key type validation,
+  buffer over-read in `wolfSSH_DoModes` terminal-mode parsing, two bugs in
+  `PostRemoveId` agent identity removal, digest comparison in `FindKeyId`,
+  octal validation loop index in `GetScpFileMode`, wrong variable checked
+  in the `DoCheckUser` auth callback, and a NULL pointer dereference in
+  `wolfSSH_SetTpmDev` / `wolfSSH_SetTpmKey`. (PR 880)
+- Static-analysis fixes: an `oct2dec` typo, a linked-list leak, Nucleus
+  month and hour handling, `DoDisconnect` now signals connection
+  termination, `DoChannelOpen` returns a proper failure response (with a
+  regression test), and the host-key signature algorithm name is now
+  validated in `DoKexDhReply()`. (PR 908)
+- Fixed `PostSignRequest` to pass the correct `digestSz` to
+  `SignHashRsa()`. (PR 916)
+- Fixed `DoChannelOpenConf()` to update `idx` with the consumed length for
+  consistency and correctness. (PR 920)
+- Fixed the server-side `DoKexDhReply()` to set `expectMsgId` to
+  `MSGID_NEWKEYS` before sending its new keys message. (PR 921)
+
+---
+
 # wolfSSH v1.4.22 (January 5, 2026)
 
 ## Vulnerabilities
