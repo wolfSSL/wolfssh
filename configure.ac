@@ -280,7 +280,8 @@ AS_IF([test "x$ENABLED_SSHD" = "xyes"],[
 ])
 
 AC_CONFIG_LINKS([keys/gretel-key-rsa.pub:keys/gretel-key-rsa.pub
-                 keys/gretel-key-rsa.pem:keys/gretel-key-rsa.pem])
+                 keys/gretel-key-rsa.pem:keys/gretel-key-rsa.pem
+                 keys/server-key-rsa.der:keys/server-key-rsa.der])
 
 # Set the automake conditionals.
 AM_CONDITIONAL([BUILD_EXAMPLE_SERVERS],[test "x$ENABLED_EXAMPLES" = "xyes"])

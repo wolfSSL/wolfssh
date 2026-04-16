@@ -8,7 +8,12 @@ then
   exit 77
 fi
 
-if [ ! -x ./scripts/fwd.test.expect ]
+# Automake sets $srcdir for tests. When building out-of-tree (e.g.
+# make distcheck), the expect script only lives in the source tree,
+# not the build tree. Fall back to the current directory otherwise.
+expect_script="${srcdir:-.}/scripts/fwd.test.expect"
+
+if [ ! -x "$expect_script" ]
 then
   echo "fail: missing expect script"
   exit 1
@@ -46,4 +51,4 @@ fi
 
 # Run the expect script
 
-./scripts/fwd.test.expect
+"$expect_script"
