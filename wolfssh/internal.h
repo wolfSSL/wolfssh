@@ -476,6 +476,9 @@ enum NameIdType {
         #define MAX_KEX_KEY_SZ (WOLFSSH_DEFAULT_GEXDH_MAX / 8)
     #endif
 #endif
+#ifndef WOLFSSH_MR_ROUNDS
+    #define WOLFSSH_MR_ROUNDS 8
+#endif
 #ifndef WOLFSSH_MAX_FILE_SIZE
     #define WOLFSSH_MAX_FILE_SIZE (1024ul * 1024ul * 4)
 #endif
@@ -1324,7 +1327,12 @@ enum WS_MessageIdLimits {
     WOLFSSH_API int wolfSSH_TestIsMessageAllowed(WOLFSSH* ssh, byte msg,
             byte state);
     WOLFSSH_API int wolfSSH_TestDoReceive(WOLFSSH* ssh);
-#endif
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
+    WOLFSSH_API int wolfSSH_TestValidateKexDhGexGroup(const byte* primeGroup,
+            word32 primeGroupSz, const byte* generator, word32 generatorSz,
+            word32 minBits, word32 maxBits, WC_RNG* rng);
+#endif /* !WOLFSSH_NO_DH_GEX_SHA256 */
+#endif /* WOLFSSH_TEST_INTERNAL */
 
 /* dynamic memory types */
 enum WS_DynamicTypes {

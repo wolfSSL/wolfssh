@@ -31,7 +31,10 @@
 #include <stdio.h>
 #include <wolfssh/ssh.h>
 #include <wolfssh/keygen.h>
+#include <wolfssh/error.h>
 #include <wolfssh/internal.h>
+#include <wolfssl/wolfcrypt/random.h>
+#include <wolfssl/wolfcrypt/integer.h>
 #include <wolfssl/wolfcrypt/hmac.h>
 
 #define WOLFSSH_TEST_HEX2BIN
@@ -439,6 +442,190 @@ done:
 #endif /* WOLFSSH_TEST_INTERNAL && any HMAC SHA variant enabled */
 
 
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_DH_GEX_SHA256)
+
+typedef struct {
+    const char* candidate;
+    const char* generator;
+    word32 minBits;
+    word32 maxBits;
+    int expectedResult;
+} PrimeTestVector;
+
+static const PrimeTestVector primeTestVectors[] = {
+    {
+        /*
+         * For testing the ValidateKexDhGexGroup() function, we need to
+         * verify that the function detects unsafe primes. The following
+         * unsafe prime is the prime used with GOST-ECC. (RFC 7836) It is
+         * prime and fine for its application. It isn't safe for DH, as
+         * q = (p-1)/2 is not prime.
+         */
+        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffdc7",
+        "02",
+        512, 8192, WS_CRYPTO_FAILED
+    },
+    {
+        /*
+         * We need to verify that the function detects safe primes. The
+         * following safePrime is the MODP 2048-bit group from RFC 3526.
+         */
+        "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74"
+        "020bbea63b139b22514a08798e3404ddef9519b3cd3a431b302b0a6df25f1437"
+        "4fe1356d6d51c245e485b576625e7ec6f44c42e9a637ed6b0bff5cb6f406b7ed"
+        "ee386bfb5a899fa5ae9f24117c4b1fe649286651ece45b3dc2007cb8a163bf05"
+        "98da48361c55d39a69163fa8fd24cf5f83655d23dca3ad961c62f356208552bb"
+        "9ed529077096966d670c354e4abc9804f1746c08ca18217c32905e462e36ce3b"
+        "e39e772c180e86039b2783a2ec07a28fb5c55df06f4c52c9de2bcbf695581718"
+        "3995497cea956ae515d2261898fa051015728e5a8aacaa68ffffffffffffffff",
+        "02",
+        2048, 8192, WS_SUCCESS
+    },
+    {
+        /*
+         * This checks for g = p - 1.
+         */
+        "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74"
+        "020bbea63b139b22514a08798e3404ddef9519b3cd3a431b302b0a6df25f1437"
+        "4fe1356d6d51c245e485b576625e7ec6f44c42e9a637ed6b0bff5cb6f406b7ed"
+        "ee386bfb5a899fa5ae9f24117c4b1fe649286651ece45b3dc2007cb8a163bf05"
+        "98da48361c55d39a69163fa8fd24cf5f83655d23dca3ad961c62f356208552bb"
+        "9ed529077096966d670c354e4abc9804f1746c08ca18217c32905e462e36ce3b"
+        "e39e772c180e86039b2783a2ec07a28fb5c55df06f4c52c9de2bcbf695581718"
+        "3995497cea956ae515d2261898fa051015728e5a8aacaa68ffffffffffffffff",
+        "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74"
+        "020bbea63b139b22514a08798e3404ddef9519b3cd3a431b302b0a6df25f1437"
+        "4fe1356d6d51c245e485b576625e7ec6f44c42e9a637ed6b0bff5cb6f406b7ed"
+        "ee386bfb5a899fa5ae9f24117c4b1fe649286651ece45b3dc2007cb8a163bf05"
+        "98da48361c55d39a69163fa8fd24cf5f83655d23dca3ad961c62f356208552bb"
+        "9ed529077096966d670c354e4abc9804f1746c08ca18217c32905e462e36ce3b"
+        "e39e772c180e86039b2783a2ec07a28fb5c55df06f4c52c9de2bcbf695581718"
+        "3995497cea956ae515d2261898fa051015728e5a8aacaa68fffffffffffffffe",
+        2048, 8192, WS_CRYPTO_FAILED
+    },
+    {
+        /*
+         * This checks for g = 1.
+         */
+        "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74"
+        "020bbea63b139b22514a08798e3404ddef9519b3cd3a431b302b0a6df25f1437"
+        "4fe1356d6d51c245e485b576625e7ec6f44c42e9a637ed6b0bff5cb6f406b7ed"
+        "ee386bfb5a899fa5ae9f24117c4b1fe649286651ece45b3dc2007cb8a163bf05"
+        "98da48361c55d39a69163fa8fd24cf5f83655d23dca3ad961c62f356208552bb"
+        "9ed529077096966d670c354e4abc9804f1746c08ca18217c32905e462e36ce3b"
+        "e39e772c180e86039b2783a2ec07a28fb5c55df06f4c52c9de2bcbf695581718"
+        "3995497cea956ae515d2261898fa051015728e5a8aacaa68ffffffffffffffff",
+        "01",
+        2048, 8192, WS_CRYPTO_FAILED
+    },
+    {
+        /*
+         * This checks prime size less than minBits.
+         */
+        "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74"
+        "020bbea63b139b22514a08798e3404ddef9519b3cd3a431b302b0a6df25f1437"
+        "4fe1356d6d51c245e485b576625e7ec6f44c42e9a637ed6b0bff5cb6f406b7ed"
+        "ee386bfb5a899fa5ae9f24117c4b1fe649286651ece45b3dc2007cb8a163bf05"
+        "98da48361c55d39a69163fa8fd24cf5f83655d23dca3ad961c62f356208552bb"
+        "9ed529077096966d670c354e4abc9804f1746c08ca18217c32905e462e36ce3b"
+        "e39e772c180e86039b2783a2ec07a28fb5c55df06f4c52c9de2bcbf695581718"
+        "3995497cea956ae515d2261898fa051015728e5a8aacaa68ffffffffffffffff",
+        "02",
+        3072, 8192, WS_DH_SIZE_E
+    },
+    {
+        /*
+         * This checks prime size greater than maxBits.
+         */
+        "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74"
+        "020bbea63b139b22514a08798e3404ddef9519b3cd3a431b302b0a6df25f1437"
+        "4fe1356d6d51c245e485b576625e7ec6f44c42e9a637ed6b0bff5cb6f406b7ed"
+        "ee386bfb5a899fa5ae9f24117c4b1fe649286651ece45b3dc2007cb8a163bf05"
+        "98da48361c55d39a69163fa8fd24cf5f83655d23dca3ad961c62f356208552bb"
+        "9ed529077096966d670c354e4abc9804f1746c08ca18217c32905e462e36ce3b"
+        "e39e772c180e86039b2783a2ec07a28fb5c55df06f4c52c9de2bcbf695581718"
+        "3995497cea956ae515d2261898fa051015728e5a8aacaa68ffffffffffffffff",
+        "02",
+        512, 1024, WS_DH_SIZE_E
+    },
+    {
+        /*
+         * This checks for even p.
+         */
+        "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74"
+        "020bbea63b139b22514a08798e3404ddef9519b3cd3a431b302b0a6df25f1437"
+        "4fe1356d6d51c245e485b576625e7ec6f44c42e9a637ed6b0bff5cb6f406b7ed"
+        "ee386bfb5a899fa5ae9f24117c4b1fe649286651ece45b3dc2007cb8a163bf05"
+        "98da48361c55d39a69163fa8fd24cf5f83655d23dca3ad961c62f356208552bb"
+        "9ed529077096966d670c354e4abc9804f1746c08ca18217c32905e462e36ce3b"
+        "e39e772c180e86039b2783a2ec07a28fb5c55df06f4c52c9de2bcbf695581718"
+        "3995497cea956ae515d2261898fa051015728e5a8aacaa68fffffffffffffffe",
+        "02",
+        2048, 8192, WS_CRYPTO_FAILED
+    },
+    {
+        /*
+         * A well known composite number that breaks some MR implementations.
+         * This is calculated by wolfCrypt for one of its prime tests.
+         */
+        "000000000088cbf655be37a612fa535b4a9b81d394854ecbedfe1a4afbecdc7b"
+        "a6a263549dd3c17882b054329384962576e7c5aa281e04ab5a0e7245584ad324"
+        "9c7ac4de7caf5663bae95f6bb9e8bec4124e04d82eac54a246bda49a5c5c2a1b"
+        "366ef8c085fc7c5f87478a55832d1b2184154c24260df67561d17c4359724403",
+        "02",
+        512, 8192, WS_CRYPTO_FAILED
+    },
+};
+
+static int test_DhGexGroupValidate(void)
+{
+    WC_RNG rng;
+    const PrimeTestVector* tv;
+    byte* candidate;
+    byte* generator;
+    word32 candidateSz;
+    word32 generatorSz;
+    int tc = (int)(sizeof(primeTestVectors)/sizeof(primeTestVectors[0]));
+    int result = 0, ret, i;
+
+    if (wc_InitRng(&rng) != 0) {
+        printf("DhGexGroupValidate: wc_InitRng failed\n");
+        return -110;
+    }
+
+    for (i = 0, tv = primeTestVectors; i < tc && !result; i++, tv++) {
+        candidate = NULL;
+        candidateSz = 0;
+        generator = NULL;
+        generatorSz = 0;
+
+        ret = ConvertHexToBin(tv->candidate, &candidate, &candidateSz,
+                tv->generator, &generator, &generatorSz,
+                NULL, NULL, NULL, NULL, NULL, NULL);
+        if (ret != 0) {
+            result = -113;
+            break;
+        }
+
+        ret = wolfSSH_TestValidateKexDhGexGroup(candidate, candidateSz,
+                generator, generatorSz, tv->minBits, tv->maxBits, &rng);
+        if (ret != tv->expectedResult) {
+            printf("DhGexGroupValidate: validator returned %d, expected %d\n",
+                    ret, tv->expectedResult);
+            result = -121;
+        }
+
+        FreeBins(candidate, generator, NULL, NULL);
+    }
+
+    wc_FreeRng(&rng);
+    return result;
+}
+
+#endif /* WOLFSSH_TEST_INTERNAL && !WOLFSSH_NO_DH_GEX_SHA256 */
+
+
 /* Error Code And Message Test */
 
 static int test_Errors(void)
@@ -516,6 +703,13 @@ int wolfSSH_UnitTest(int argc, char** argv)
      !defined(WOLFSSH_NO_HMAC_SHA2_512))
     unitResult = test_DoReceive_VerifyMacFailure();
     printf("DoReceiveVerifyMac: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_DH_GEX_SHA256)
+    unitResult = test_DhGexGroupValidate();
+    printf("DhGexGroupValidate: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
