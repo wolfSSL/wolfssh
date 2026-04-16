@@ -185,6 +185,10 @@ Flags:
   WOLFSSH_NO_CURVE25519_SHA256
     Set when Curve25519 or SHA2-256 are disabled in wolfSSL. Set to disable use
     of Curve25519 key exchange.
+  WOLFSSH_MR_ROUNDS
+    Set the number of Miller-Rabin rounds used when the client checks the
+    server's prime group when using GEX key exchange. The default is 8. More
+    rounds are better, but also takes a lot longer.
 */
 
 static const char sshProtoIdStr[] = "SSH-2.0-wolfSSHv"
@@ -6284,6 +6288,141 @@ static int DoKexDhGexRequest(WOLFSSH* ssh,
 }
 
 
+/*
+ * Validate a DH GEX group received from the server against RFC 4419 sec. 3
+ * requirements, with an additional hardening/policy check:
+ *   - p's bit length falls within the client's requested [minBits, maxBits]
+ *   - p is odd and probably prime
+ *   - (additional hardening requirement) (p-1)/2 is also probably prime,
+ *     i.e. p is a safe prime, which bounds the order of g to q or 2q and
+ *     closes the small-subgroup attack
+ * Returns WS_SUCCESS if the group is acceptable.
+ */
+static int ValidateKexDhGexGroup(const byte* primeGroup, word32 primeGroupSz,
+        const byte* generator, word32 generatorSz,
+        word32 minBits, word32 maxBits, WC_RNG* rng)
+{
+    mp_int p, g, q;
+    int pgqInit = 0;
+    int bits;
+    int isPrime = MP_NO;
+    int ret = WS_SUCCESS;
+
+    if (primeGroup == NULL || primeGroupSz == 0
+            || generator == NULL || generatorSz == 0
+            || rng == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    /*
+     * Check the bounds on the size of the flat prime group and generator
+     * values. The prime group shall be LE maxBits. The generator size
+     * shall be LE prime group size. This is a check on the sizes of values
+     * sent by the peer before reading them in and checking them as mp_ints.
+     */
+    if (ret == WS_SUCCESS) {
+        word32 maxBytes = (maxBits / 8) + ((maxBits % 8) ? 1 : 0);
+        /* Adjust the sizes for signed padding. */
+        word32 adjPrimeGroupSz = primeGroupSz - ((primeGroup[0] == 0) ? 1 : 0);
+        word32 adjGeneratorSz = generatorSz - ((generator[0] == 0) ? 1 : 0);
+
+        if (adjPrimeGroupSz > maxBytes || adjGeneratorSz > adjPrimeGroupSz) {
+            ret = WS_DH_SIZE_E;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (mp_init_multi(&p, &g, &q, NULL, NULL, NULL) != MP_OKAY) {
+            ret = WS_CRYPTO_FAILED;
+        }
+        else {
+            pgqInit = 1;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (mp_read_unsigned_bin(&p, primeGroup, primeGroupSz) != MP_OKAY)
+            ret = WS_CRYPTO_FAILED;
+    }
+    if (ret == WS_SUCCESS) {
+        if (mp_read_unsigned_bin(&g, generator, generatorSz) != MP_OKAY)
+            ret = WS_CRYPTO_FAILED;
+    }
+
+    if (ret == WS_SUCCESS) {
+        bits = mp_count_bits(&p);
+        if (bits < (int)minBits || bits > (int)maxBits) {
+            WLOG(WS_LOG_DEBUG,
+                    "DH GEX: prime size %d outside requested [%u, %u]",
+                    bits, minBits, maxBits);
+            ret = WS_DH_SIZE_E;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (!mp_isodd(&p)) {
+            WLOG(WS_LOG_DEBUG, "DH GEX: prime is even");
+            ret = WS_CRYPTO_FAILED;
+        }
+    }
+
+    /* 2 <= g: reject g == 0 and g == 1. */
+    if (ret == WS_SUCCESS) {
+        if (mp_cmp_d(&g, 1) != MP_GT) {
+            WLOG(WS_LOG_DEBUG, "DH GEX: generator < 2");
+            ret = WS_CRYPTO_FAILED;
+        }
+    }
+
+    /* g <= p - 2: reject g == p - 1 (order 2) and anything larger. */
+    if (ret == WS_SUCCESS) {
+        if (mp_sub_d(&p, 1, &q) != MP_OKAY)
+            ret = WS_CRYPTO_FAILED;
+        else if (mp_cmp(&g, &q) != MP_LT) {
+            WLOG(WS_LOG_DEBUG, "DH GEX: generator >= p - 1");
+            ret = WS_CRYPTO_FAILED;
+        }
+    }
+
+    /* Miller-Rabin: p must be prime. */
+    if (ret == WS_SUCCESS) {
+        isPrime = MP_NO;
+        ret = mp_prime_is_prime_ex(&p, WOLFSSH_MR_ROUNDS, &isPrime, rng);
+        if (ret != MP_OKAY || isPrime == MP_NO) {
+            WLOG(WS_LOG_DEBUG, "DH GEX: p is not prime");
+            ret = WS_CRYPTO_FAILED;
+        }
+        else {
+            ret = WS_SUCCESS;
+        }
+    }
+
+    /* Safe prime check: q = (p - 1) / 2 must also be prime. */
+    if (ret == WS_SUCCESS) {
+        if (mp_sub_d(&p, 1, &q) != MP_OKAY || mp_div_2(&q, &q) != MP_OKAY)
+            ret = WS_CRYPTO_FAILED;
+    }
+    if (ret == WS_SUCCESS) {
+        isPrime = MP_NO;
+        ret = mp_prime_is_prime_ex(&q, WOLFSSH_MR_ROUNDS, &isPrime, rng);
+        if (ret != MP_OKAY || isPrime == MP_NO) {
+            WLOG(WS_LOG_DEBUG, "DH GEX: (p-1)/2 is not prime, p is not safe");
+            ret = WS_CRYPTO_FAILED;
+        }
+        else {
+            ret = WS_SUCCESS;
+        }
+    }
+
+    if (pgqInit) {
+        mp_clear(&q);
+        mp_clear(&g);
+        mp_clear(&p);
+    }
+
+    return ret;
+}
+
+
 static int DoKexDhGexGroup(WOLFSSH* ssh,
                            byte* buf, word32 len, word32* idx)
 {
@@ -6300,12 +6439,21 @@ static int DoKexDhGexGroup(WOLFSSH* ssh,
     if (ret == WS_SUCCESS) {
         begin = *idx;
         ret = GetMpint(&primeGroupSz, &primeGroup, buf, len, &begin);
-        if (ret == WS_SUCCESS && primeGroupSz > (MAX_KEX_KEY_SZ + 1))
+        if (ret == WS_SUCCESS && primeGroupSz > (MAX_KEX_KEY_SZ + 1)) {
             ret = WS_DH_SIZE_E;
+        }
     }
 
     if (ret == WS_SUCCESS)
         ret = GetMpint(&generatorSz, &generator, buf, len, &begin);
+
+    if (ret == WS_SUCCESS) {
+        ret = ValidateKexDhGexGroup(primeGroup, primeGroupSz,
+                generator, generatorSz,
+                ssh->handshake->dhGexMinSz,
+                ssh->handshake->dhGexMaxSz,
+                ssh->rng);
+    }
 
     if (ret == WS_SUCCESS) {
         if (ssh->handshake->primeGroup)
@@ -6340,7 +6488,17 @@ static int DoKexDhGexGroup(WOLFSSH* ssh,
 
     return ret;
 }
+
+#ifdef WOLFSSH_TEST_INTERNAL
+int wolfSSH_TestValidateKexDhGexGroup(const byte* primeGroup,
+        word32 primeGroupSz, const byte* generator, word32 generatorSz,
+        word32 minBits, word32 maxBits, WC_RNG* rng)
+{
+    return ValidateKexDhGexGroup(primeGroup, primeGroupSz,
+            generator, generatorSz, minBits, maxBits, rng);
+}
 #endif
+#endif /* !WOLFSSH_NO_DH_GEX_SHA256 */
 
 
 static int DoIgnore(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
