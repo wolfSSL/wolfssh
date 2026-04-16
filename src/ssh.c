@@ -35,6 +35,16 @@
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/wolfcrypt/random.h>
 
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    #include <windows.h>
+    #include <wincrypt.h>
+    #include <ncrypt.h>
+    #include <string.h>
+    #ifndef CERT_NCRYPT_KEY_SPEC
+        #define CERT_NCRYPT_KEY_SPEC 0x00000003
+    #endif
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
+
 #ifdef NO_INLINE
     #include <wolfssh/misc.h>
 #else
@@ -2473,6 +2483,277 @@ int wolfSSH_CTX_AddRootCert_buffer(WOLFSSH_CTX* ctx,
     return ret;
 }
 
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+/* Load a private key from MS Certificate Store
+ * storeName: Certificate store name (e.g., L"My", L"Root")
+ * dwFlags: Certificate store flags (e.g., CERT_SYSTEM_STORE_CURRENT_USER)
+ * subjectName: Certificate subject name or thumbprint for lookup
+ * returns WS_SUCCESS on success
+ */
+int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
+        const wchar_t* storeName, DWORD dwFlags,
+        const wchar_t* subjectName)
+{
+    int ret = WS_SUCCESS;
+    HCERTSTORE hStore = NULL;
+    PCCERT_CONTEXT pCertContext = NULL;
+    word32 keyIdx = 0;
+    byte keyId = ID_NONE;
+    byte addedNewSlot = 0;
+    void* heap = NULL;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CTX_UsePrivateKey_fromStore()");
+
+    if (ctx == NULL || storeName == NULL || subjectName == NULL) {
+        WLOG(WS_LOG_DEBUG, "wolfSSH_CTX_UsePrivateKey_fromStore: Bad argument");
+        return WS_BAD_ARGUMENT;
+    }
+
+    heap = ctx->heap;
+
+    /* Open the certificate store */
+    hStore = CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, (HCRYPTPROV_LEGACY)0,
+            dwFlags | CERT_STORE_OPEN_EXISTING_FLAG, storeName);
+    if (hStore == NULL) {
+        DWORD dwErr = GetLastError();
+        WLOG(WS_LOG_DEBUG, "wolfSSH_CTX_UsePrivateKey_fromStore: Failed to open store, error: %lu", dwErr);
+        return WS_FATAL_ERROR;
+    }
+
+    /* Find the certificate by subject name.
+     * CERT_FIND_SUBJECT_STR_W does a substring search on the formatted subject
+     * name. CertNameToStr with CERT_SIMPLE_NAME_STR format typically returns
+     * just the CN value without "CN=" prefix. So we try multiple searches:
+     * 1. The provided subject name as-is
+     * 2. If it starts with "CN=", try without the prefix
+     */
+    pCertContext = CertFindCertificateInStore(hStore,
+            X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+            0, CERT_FIND_SUBJECT_STR_W, subjectName, NULL);
+
+    /* If not found and subject starts with "CN=", try without the prefix */
+    if (pCertContext == NULL && wcslen(subjectName) > 3 &&
+        (wcsncmp(subjectName, L"CN=", 3) == 0 ||
+         wcsncmp(subjectName, L"cn=", 3) == 0)) {
+        WLOG(WS_LOG_DEBUG, "wolfSSH_CTX_UsePrivateKey_fromStore: Retrying "
+             "search without CN= prefix");
+        pCertContext = CertFindCertificateInStore(hStore,
+                X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+                0, CERT_FIND_SUBJECT_STR_W, subjectName + 3, NULL);
+    }
+
+    if (pCertContext == NULL) {
+        /* Try finding by thumbprint if subject name didn't work */
+        /* Note: subjectName could be a thumbprint in format "XX XX XX ..." */
+        CertCloseStore(hStore, 0);
+        WLOG(WS_LOG_ERROR, "wolfSSH_CTX_UsePrivateKey_fromStore: Certificate "
+             "not found with subject '%ls'", subjectName);
+        return WS_FATAL_ERROR;
+    }
+
+    /* Determine key type from certificate */
+    /* Get the public key info to determine algorithm */
+    PCERT_PUBLIC_KEY_INFO pPubKeyInfo = &pCertContext->pCertInfo->SubjectPublicKeyInfo;
+    
+    /* Check algorithm OID to determine key type */
+    if (pPubKeyInfo->Algorithm.pszObjId != NULL) {
+        /* Compare OID strings (they are ASCII, not wide) */
+        if (strcmp(pPubKeyInfo->Algorithm.pszObjId, szOID_RSA_RSA) == 0 ||
+            strcmp(pPubKeyInfo->Algorithm.pszObjId, szOID_RSA_ENCRYPT) == 0) {
+            keyId = ID_SSH_RSA;
+        } else if (strcmp(pPubKeyInfo->Algorithm.pszObjId, szOID_ECC_PUBLIC_KEY) == 0) {
+            /* Decode the curve OID from the algorithm parameters to select
+             * the correct ECDSA key type.  The Parameters field contains
+             * a DER-encoded OID identifying the named curve. */
+            char* curveOid = NULL;
+            DWORD curveOidSz = 0;
+
+            if (pPubKeyInfo->Algorithm.Parameters.cbData > 0 &&
+                CryptDecodeObjectEx(X509_ASN_ENCODING,
+                        X509_OBJECT_IDENTIFIER,
+                        pPubKeyInfo->Algorithm.Parameters.pbData,
+                        pPubKeyInfo->Algorithm.Parameters.cbData,
+                        CRYPT_DECODE_ALLOC_FLAG, NULL,
+                        &curveOid, &curveOidSz)) {
+                /* Compare against well-known curve OIDs */
+                if (strcmp(curveOid, "1.2.840.10045.3.1.7") == 0) {
+                    keyId = ID_ECDSA_SHA2_NISTP256;
+                } else if (strcmp(curveOid, "1.3.132.0.34") == 0) {
+                    keyId = ID_ECDSA_SHA2_NISTP384;
+                } else if (strcmp(curveOid, "1.3.132.0.35") == 0) {
+                    keyId = ID_ECDSA_SHA2_NISTP521;
+                } else {
+                    WLOG(WS_LOG_DEBUG,
+                        "wolfSSH_CTX_UsePrivateKey_fromStore: "
+                        "Unrecognized ECC curve OID: %s, "
+                        "defaulting to P-256", curveOid);
+                    keyId = ID_ECDSA_SHA2_NISTP256;
+                }
+                LocalFree(curveOid);
+            } else {
+                WLOG(WS_LOG_DEBUG,
+                    "wolfSSH_CTX_UsePrivateKey_fromStore: "
+                    "Failed to decode ECC curve parameters, "
+                    "defaulting to P-256");
+                keyId = ID_ECDSA_SHA2_NISTP256;
+            }
+        } else {
+            CertFreeCertificateContext(pCertContext);
+            CertCloseStore(hStore, 0);
+            WLOG(WS_LOG_DEBUG, "wolfSSH_CTX_UsePrivateKey_fromStore: Unsupported key algorithm: %s", pPubKeyInfo->Algorithm.pszObjId);
+            return WS_BAD_ARGUMENT;
+        }
+    } else {
+        CertFreeCertificateContext(pCertContext);
+        CertCloseStore(hStore, 0);
+        WLOG(WS_LOG_DEBUG, "wolfSSH_CTX_UsePrivateKey_fromStore: No algorithm OID");
+        return WS_BAD_ARGUMENT;
+    }
+
+    /* Find an available slot or existing key of same type */
+    keyIdx = WOLFSSH_MAX_PVT_KEYS;
+    {
+        word32 i;
+        for (i = 0; i < ctx->privateKeyCount && i < WOLFSSH_MAX_PVT_KEYS; i++) {
+            if (ctx->privateKey[i].publicKeyFmt == keyId) {
+                keyIdx = i;
+                break;
+            }
+        }
+        if (keyIdx == WOLFSSH_MAX_PVT_KEYS && ctx->privateKeyCount < WOLFSSH_MAX_PVT_KEYS) {
+            keyIdx = ctx->privateKeyCount;
+            ctx->privateKeyCount++;
+            addedNewSlot = 1;
+        }
+    }
+
+    if (keyIdx >= WOLFSSH_MAX_PVT_KEYS) {
+        CertFreeCertificateContext(pCertContext);
+        CertCloseStore(hStore, 0);
+        WLOG(WS_LOG_DEBUG, "wolfSSH_CTX_UsePrivateKey_fromStore: No available key slot");
+        return WS_MEMORY_E;
+    }
+
+    /* Free existing resources if replacing an existing slot */
+    if (ctx->privateKey[keyIdx].useCertStore) {
+        if (ctx->privateKey[keyIdx].certStoreContext != NULL)
+            CertFreeCertificateContext(
+                (PCCERT_CONTEXT)ctx->privateKey[keyIdx].certStoreContext);
+        if (ctx->privateKey[keyIdx].storeName != NULL)
+            WFREE(ctx->privateKey[keyIdx].storeName, heap, DYNTYPE_STRING);
+        if (ctx->privateKey[keyIdx].subjectName != NULL)
+            WFREE(ctx->privateKey[keyIdx].subjectName, heap, DYNTYPE_STRING);
+        if (ctx->privateKey[keyIdx].cert != NULL)
+            WFREE(ctx->privateKey[keyIdx].cert, heap, DYNTYPE_CERT);
+    }
+
+    /* Set up the private key structure */
+    ctx->privateKey[keyIdx].publicKeyFmt = keyId;
+    ctx->privateKey[keyIdx].useCertStore = 1;
+    ctx->privateKey[keyIdx].certStoreContext = (void*)pCertContext;
+    
+    /* Store the store name and subject name */
+    {
+        size_t storeNameLen = wcslen(storeName) + 1;
+        size_t subjectNameLen = wcslen(subjectName) + 1;
+        wchar_t* storeNameCopy = (wchar_t*)WMALLOC(storeNameLen * sizeof(wchar_t), heap, DYNTYPE_STRING);
+        wchar_t* subjectNameCopy = (wchar_t*)WMALLOC(subjectNameLen * sizeof(wchar_t), heap, DYNTYPE_STRING);
+        
+        if (storeNameCopy == NULL || subjectNameCopy == NULL) {
+            if (storeNameCopy != NULL) WFREE(storeNameCopy, heap, DYNTYPE_STRING);
+            if (subjectNameCopy != NULL) WFREE(subjectNameCopy, heap, DYNTYPE_STRING);
+            CertFreeCertificateContext(pCertContext);
+            CertCloseStore(hStore, 0);
+            WLOG(WS_LOG_DEBUG, "wolfSSH_CTX_UsePrivateKey_fromStore: Memory allocation failed");
+            return WS_MEMORY_E;
+        }
+        
+        WMEMCPY(storeNameCopy, storeName, storeNameLen * sizeof(wchar_t));
+        WMEMCPY(subjectNameCopy, subjectName, subjectNameLen * sizeof(wchar_t));
+        ctx->privateKey[keyIdx].storeName = storeNameCopy;
+        ctx->privateKey[keyIdx].subjectName = subjectNameCopy;
+        ctx->privateKey[keyIdx].dwFlags = dwFlags;
+    }
+
+    /* Extract certificate for public key operations */
+    {
+        DWORD certSz = pCertContext->cbCertEncoded;
+        byte* certBuf = (byte*)WMALLOC(certSz, heap, DYNTYPE_CERT);
+        if (certBuf == NULL) {
+            /* Cleanup */
+            WFREE(ctx->privateKey[keyIdx].storeName, heap, DYNTYPE_STRING);
+            WFREE(ctx->privateKey[keyIdx].subjectName, heap, DYNTYPE_STRING);
+            CertFreeCertificateContext(pCertContext);
+            CertCloseStore(hStore, 0);
+            WLOG(WS_LOG_DEBUG, "wolfSSH_CTX_UsePrivateKey_fromStore: Certificate buffer allocation failed");
+            return WS_MEMORY_E;
+        }
+        WMEMCPY(certBuf, pCertContext->pbCertEncoded, certSz);
+        ctx->privateKey[keyIdx].cert = certBuf;
+        ctx->privateKey[keyIdx].certSz = certSz;
+    }
+
+    /* Verify private key is accessible before returning success.
+     * This catches permission issues early (e.g., LocalSystem service
+     * cannot access the private key) rather than failing later during
+     * SSH handshake signing. */
+    {
+        HCRYPTPROV_OR_NCRYPT_KEY_HANDLE hKey = 0;
+        DWORD dwKeySpec = 0;
+        BOOL fCallerFree = FALSE;
+
+        if (!CryptAcquireCertificatePrivateKey(pCertContext,
+                CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG | CRYPT_ACQUIRE_SILENT_FLAG,
+                NULL, &hKey, &dwKeySpec, &fCallerFree)) {
+            DWORD dwErr = GetLastError();
+            WLOG(WS_LOG_ERROR, "wolfSSH_CTX_UsePrivateKey_fromStore: Cannot "
+                 "access private key, error: %lu. Check that the current user "
+                 "or service account has permission to access the key.", dwErr);
+            /* Cleanup already stored data */
+            WFREE(ctx->privateKey[keyIdx].storeName, heap, DYNTYPE_STRING);
+            WFREE(ctx->privateKey[keyIdx].subjectName, heap, DYNTYPE_STRING);
+            WFREE(ctx->privateKey[keyIdx].cert, heap, DYNTYPE_CERT);
+            ctx->privateKey[keyIdx].useCertStore = 0;
+            CertFreeCertificateContext(pCertContext);
+            ctx->privateKey[keyIdx].certStoreContext = NULL;
+            ctx->privateKey[keyIdx].storeName = NULL;
+            ctx->privateKey[keyIdx].subjectName = NULL;
+            ctx->privateKey[keyIdx].cert = NULL;
+            ctx->privateKey[keyIdx].certSz = 0;
+            if (addedNewSlot)
+                ctx->privateKeyCount--;
+            CertCloseStore(hStore, 0);
+            return WS_CRYPTO_FAILED;
+        }
+        /* Release the key handle since we just needed to verify access */
+        if (fCallerFree) {
+            if (dwKeySpec == CERT_NCRYPT_KEY_SPEC) {
+                NCryptFreeObject(hKey);
+            } else {
+                CryptReleaseContext(hKey, 0);
+            }
+        }
+        WLOG(WS_LOG_DEBUG, "wolfSSH_CTX_UsePrivateKey_fromStore: Private key "
+             "access verified successfully");
+    }
+
+    /* The cert context (pCertContext) is retained in
+     * privateKey[].certStoreContext for later signing operations.
+     * CertFindCertificateInStore incremented its reference count, so
+     * closing the store does not invalidate it.  It will be freed in
+     * CtxResourceFree via CertFreeCertificateContext.
+     * Note: if the certificate is removed from the store while we hold
+     * this context, CryptAcquireCertificatePrivateKey may fail at
+     * signing time. */
+    CertCloseStore(hStore, 0);
+
+    /* Refresh public key algorithm list */
+    RefreshPublicKeyAlgo(ctx);
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_CTX_UsePrivateKey_fromStore(), ret = %d", ret);
+    return ret;
+}
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
 #endif /* WOLFSSH_CERTS */
 
 

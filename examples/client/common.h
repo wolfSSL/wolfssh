@@ -35,6 +35,11 @@ void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
 #ifdef WOLFSSH_TPM
 int ClientSetTpm(WOLFSSH* ssh);
 #endif
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+int ClientSetPrivateKeyFromStore(WOLFSSH_CTX* ctx,
+        const wchar_t* storeName, DWORD dwFlags, const wchar_t* subjectName);
+int ClientSetupCertStoreAuth(WOLFSSH_CTX* ctx);
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
 
 #endif /* WOLFSSH_COMMON_H */
 

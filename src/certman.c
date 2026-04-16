@@ -36,7 +36,6 @@
 #endif
 
 
-#include <wolfssl/ssl.h>
 #include <wolfssl/ocsp.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/error-ssl.h>
@@ -44,6 +43,16 @@
 #include <wolfssh/internal.h>
 #include <wolfssh/certman.h>
 
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    #include <windows.h>
+    #include <wincrypt.h>
+    #ifndef CERT_SYSTEM_STORE_CURRENT_USER
+        #define CERT_SYSTEM_STORE_CURRENT_USER 0x00010000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE
+        #define CERT_SYSTEM_STORE_LOCAL_MACHINE 0x00020000
+    #endif
+#endif
 
 #ifdef WOLFSSH_CERTS
 
@@ -82,6 +91,29 @@ struct WOLFSSH_CERTMAN {
     void* heap;
     WOLFSSL_CERT_MANAGER* cm;
 };
+
+
+/* used to import an external cert manager, frees and replaces existing manager
+ * returns WS_SUCCESS on success
+ */
+int wolfSSH_SetCertManager(WOLFSSH_CTX* ctx, WOLFSSL_CERT_MANAGER* cm)
+{
+    if (ctx == NULL || cm == NULL || ctx->certMan == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    /* free up existing cm if present */
+    if (ctx->certMan->cm == cm) {
+        return WS_SUCCESS;
+    }
+    wolfSSL_CertManager_up_ref(cm);
+    if (ctx->certMan->cm != NULL) {
+        wolfSSL_CertManagerFree(ctx->certMan->cm);
+    }
+    ctx->certMan->cm = cm;
+
+    return WS_SUCCESS;
+}
 
 
 static WOLFSSH_CERTMAN* _CertMan_init(WOLFSSH_CERTMAN* cm, void* heap)
@@ -545,5 +577,102 @@ static int CheckProfile(DecodedCert* cert, int profile)
     return valid;
 }
 #endif /* WOLFSSH_NO_FPKI */
+
+
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+/* Parse a cert store spec string "store:subject:flags" into wide-string
+ * components.  Allocates wStoreName and wSubjectName via WMALLOC; caller
+ * must WFREE them.  dwFlags is set to the parsed flags value.
+ * Returns WS_SUCCESS on success. */
+int wolfSSH_ParseCertStoreSpec(const char* spec,
+        wchar_t** wStoreName, wchar_t** wSubjectName,
+        DWORD* dwFlags, void* heap)
+{
+    char* specCopy = NULL;
+    char* storeName = NULL;
+    char* subjectName = NULL;
+    char* flagsStr = NULL;
+    int wStoreNameLen, wSubjectNameLen;
+    size_t specLen;
+
+    if (spec == NULL || wStoreName == NULL || wSubjectName == NULL ||
+            dwFlags == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    *wStoreName = NULL;
+    *wSubjectName = NULL;
+    *dwFlags = CERT_SYSTEM_STORE_CURRENT_USER;
+
+    specLen = WSTRLEN(spec) + 1;
+    specCopy = (char*)WMALLOC(specLen, heap, DYNTYPE_TEMP);
+    if (specCopy == NULL)
+        return WS_MEMORY_E;
+    WSTRNCPY(specCopy, spec, specLen);
+
+    /* Parse "store:subject:flags" */
+    storeName = specCopy;
+    subjectName = WSTRCHR(storeName, ':');
+    if (subjectName != NULL) {
+        *subjectName++ = '\0';
+        flagsStr = WSTRCHR(subjectName, ':');
+        if (flagsStr != NULL) {
+            *flagsStr++ = '\0';
+            if (WSTRCMP(flagsStr, "CURRENT_USER") == 0) {
+                *dwFlags = CERT_SYSTEM_STORE_CURRENT_USER;
+            }
+            else if (WSTRCMP(flagsStr, "LOCAL_MACHINE") == 0) {
+                *dwFlags = CERT_SYSTEM_STORE_LOCAL_MACHINE;
+            }
+            else {
+                *dwFlags = (DWORD)atoi(flagsStr);
+            }
+        }
+    }
+
+    if (storeName == NULL || subjectName == NULL || *storeName == '\0' ||
+            *subjectName == '\0') {
+        WFREE(specCopy, heap, DYNTYPE_TEMP);
+        return WS_BAD_ARGUMENT;
+    }
+
+    /* Convert to wide strings */
+    wStoreNameLen = MultiByteToWideChar(CP_UTF8, 0, storeName, -1, NULL, 0);
+    wSubjectNameLen = MultiByteToWideChar(CP_UTF8, 0, subjectName, -1,
+            NULL, 0);
+
+    if (wStoreNameLen == 0 || wSubjectNameLen == 0) {
+        WFREE(specCopy, heap, DYNTYPE_TEMP);
+        return WS_FATAL_ERROR;
+    }
+
+    *wStoreName = (wchar_t*)WMALLOC(wStoreNameLen * sizeof(wchar_t),
+            heap, DYNTYPE_TEMP);
+    *wSubjectName = (wchar_t*)WMALLOC(wSubjectNameLen * sizeof(wchar_t),
+            heap, DYNTYPE_TEMP);
+
+    if (*wStoreName == NULL || *wSubjectName == NULL) {
+        if (*wStoreName != NULL) {
+            WFREE(*wStoreName, heap, DYNTYPE_TEMP);
+            *wStoreName = NULL;
+        }
+        if (*wSubjectName != NULL) {
+            WFREE(*wSubjectName, heap, DYNTYPE_TEMP);
+            *wSubjectName = NULL;
+        }
+        WFREE(specCopy, heap, DYNTYPE_TEMP);
+        return WS_MEMORY_E;
+    }
+
+    MultiByteToWideChar(CP_UTF8, 0, storeName, -1,
+            *wStoreName, wStoreNameLen);
+    MultiByteToWideChar(CP_UTF8, 0, subjectName, -1,
+            *wSubjectName, wSubjectNameLen);
+
+    WFREE(specCopy, heap, DYNTYPE_TEMP);
+    return WS_SUCCESS;
+}
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
+
 
 #endif /* WOLFSSH_CERTS */

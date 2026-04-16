@@ -33,6 +33,7 @@
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/wolfsftp.h>
+#include <wolfssh/certman.h>
 #include <wolfssh/test.h>
 #include <wolfssh/port.h>
 #include <wolfssl/wolfcrypt/ecc.h>
@@ -46,6 +47,17 @@
 
 #ifdef WOLFSSH_CERTS
     #include <wolfssl/wolfcrypt/asn.h>
+    #ifdef WOLFSSH_WINDOWS_CERT_STORE
+        #include <windows.h>
+        #include <wincrypt.h>
+        #include <ncrypt.h>
+        #ifndef CERT_SYSTEM_STORE_CURRENT_USER
+            #define CERT_SYSTEM_STORE_CURRENT_USER 0x00010000
+        #endif
+        #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE
+            #define CERT_SYSTEM_STORE_LOCAL_MACHINE 0x00020000
+        #endif
+    #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 #endif
 
 #if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT)
@@ -390,6 +402,10 @@ static void ShowUsage(void)
     printf(" -g            put local filename as remote filename\n");
     printf(" -G            get remote filename as local filename\n");
     printf(" -i <filename> filename for the user's private key\n");
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    printf(" -W <spec>     Windows cert store: \"store:subject:flags\"\n");
+    printf("               Example: -W \"My:CN=MyCert:CURRENT_USER\"\n");
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
 #ifdef WOLFSSH_CERTS
     printf(" -J <filename> filename for DER certificate to use\n");
     printf("               Certificate example : client -u orange \\\n");
@@ -1388,13 +1404,20 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     char* pubKeyName = NULL;
     char* certName = NULL;
     char* caCert   = NULL;
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    const char* certStoreSpec = NULL;  /* Format: "store:subject:flags" */
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
     SFTPC_HEAP_HINT* heap = NULL;
 
     int     argc = ((func_args*)args)->argc;
     char**  argv = ((func_args*)args)->argv;
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?d:gh:i:j:l:p:r:u:EGNP:J:A:X")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?d:gh:i:j:l:p:r:u:EGNP:J:A:X"
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+            "W:"
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
+            )) != -1) {
         switch (ch) {
             case 'd':
                 defaultSftpPath = myoptarg;
@@ -1472,6 +1495,12 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
             #endif
         #endif
 
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+            case 'W':
+                certStoreSpec = myoptarg;
+                break;
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
+
             case '?':
                 ShowUsage();
                 exit(EXIT_SUCCESS);
@@ -1518,26 +1547,66 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     }
 #endif /* WOLFSSH_STATIC_MEMORY */
 
-    ret = ClientSetPrivateKey(privKeyName, userEcc, heap, NULL);
-    if (ret != 0) {
-        err_sys("Error setting private key");
-    }
 
-#ifdef WOLFSSH_CERTS
-    /* passed in certificate to use */
-    if (certName) {
-        ret = ClientUseCert(certName, heap);
-    }
-    else
-#endif
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    if (certStoreSpec != NULL) {
+        wchar_t* wStoreName = NULL;
+        wchar_t* wSubjectName = NULL;
+        DWORD dwFlags = 0;
+
+        ret = wolfSSH_ParseCertStoreSpec(certStoreSpec, &wStoreName,
+                &wSubjectName, &dwFlags, NULL);
+        if (ret != WS_SUCCESS) {
+            err_sys("Invalid cert store spec. Use: store:subject:flags");
+        }
+
+        /* Create context first */
+        ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, heap);
+        if (ctx == NULL) {
+            err_sys("Couldn't create wolfSSH client context.");
+        }
+
+        /* Set private key from cert store */
+        ret = ClientSetPrivateKeyFromStore(ctx, wStoreName, dwFlags,
+            wSubjectName);
+        if (ret != WS_SUCCESS) {
+            err_sys("Error setting private key from certificate store");
+        }
+
+        /* Set up auth callback globals (public key type, cert DER) so
+         * that ClientUserAuth presents the certificate for public key
+         * authentication. */
+        ret = ClientSetupCertStoreAuth(ctx);
+        if (ret != WS_SUCCESS) {
+            err_sys("Error setting up cert store auth");
+        }
+
+        WFREE(wStoreName, NULL, DYNTYPE_TEMP);
+        WFREE(wSubjectName, NULL, DYNTYPE_TEMP);
+    } else
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
     {
-        ret = ClientUsePubKey(pubKeyName, 0, heap);
-    }
-    if (ret != 0) {
-        err_sys("Error setting public key");
-    }
+        ret = ClientSetPrivateKey(privKeyName, userEcc, heap, NULL);
+        if (ret != 0) {
+            err_sys("Error setting private key");
+        }
 
-    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, heap);
+    #ifdef WOLFSSH_CERTS
+        /* passed in certificate to use */
+        if (certName) {
+            ret = ClientUseCert(certName, heap);
+        }
+        else
+    #endif
+        {
+            ret = ClientUsePubKey(pubKeyName, 0, heap);
+        }
+        if (ret != 0) {
+            err_sys("Error setting public key");
+        }
+
+        ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, heap);
+    }
     if (ctx == NULL)
         err_sys("Couldn't create wolfSSH client context.");
 
