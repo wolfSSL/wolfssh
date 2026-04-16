@@ -1737,6 +1737,26 @@ static int load_key(byte isEcc, byte* buf, word32 bufSz)
 }
 
 
+#ifndef WOLFSSH_NO_ED25519
+/* returns buffer size on success */
+static int load_key_ed25519(byte* buf, word32 bufSz)
+{
+    word32 sz = 0;
+
+#ifndef NO_FILESYSTEM
+    sz = load_file("./keys/server-key-ed25519.der", buf, &bufSz);
+#else
+    if ((word32)sizeof_ed25519_key_der_ssh > bufSz)
+        return 0;
+    WMEMCPY(buf, ed25519_key_der_ssh, sizeof_ed25519_key_der_ssh);
+    sz = (word32)sizeof_ed25519_key_der_ssh;
+#endif
+
+    return sz;
+}
+#endif /* WOLFSSH_NO_ED25519 */
+
+
 typedef struct StrList {
     const char* str;
     struct StrList* next;
@@ -2953,6 +2973,18 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             ES_ERROR("Couldn't use second key buffer.\n");
         }
         #endif
+
+        #ifndef WOLFSSH_NO_ED25519
+        bufSz = EXAMPLE_KEYLOAD_BUFFER_SZ;
+        bufSz = load_key_ed25519(keyLoadBuf, bufSz);
+        if (bufSz == 0) {
+            ES_ERROR("Couldn't load Ed25519 key file.\n");
+        }
+        if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, keyLoadBuf, bufSz,
+                                             WOLFSSH_FORMAT_ASN1) < 0) {
+            ES_ERROR("Couldn't use Ed25519 key buffer.\n");
+        }
+        #endif /* WOLFSSH_NO_ED25519 */
 
         #ifndef NO_FILESYSTEM
         if (userPubKey) {
