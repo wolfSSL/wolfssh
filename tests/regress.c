@@ -231,6 +231,21 @@ static word32 BuildDirectTcpipExtra(const char* host, word32 hostPort,
 
     return idx;
 }
+
+static word32 BuildGlobalRequestFwdPacket(const char* bindAddr, word32 bindPort,
+        int isCancel, byte wantReply, byte* out, word32 outSz)
+{
+    byte payload[256];
+    word32 idx = 0;
+    const char* reqName = isCancel ? "cancel-tcpip-forward" : "tcpip-forward";
+
+    idx = AppendString(payload, sizeof(payload), idx, reqName);
+    idx = AppendByte  (payload, sizeof(payload), idx, wantReply);
+    idx = AppendString(payload, sizeof(payload), idx, bindAddr);
+    idx = AppendUint32(payload, sizeof(payload), idx, bindPort);
+
+    return WrapPacket(MSGID_GLOBAL_REQUEST, payload, idx, out, outSz);
+}
 #endif
 
 /* Simple in-memory transport harness */
@@ -957,6 +972,94 @@ static void AssertChannelOpenFailResponse(const ChannelOpenHarness* harness,
     AssertTrue(harness->ssh->channelList == NULL);
 }
 
+#ifdef WOLFSSH_FWD
+static word32 ParsePayloadLen(const byte* packet, word32 packetSz)
+{
+    word32 packetLen;
+    byte padLen;
+
+    AssertNotNull(packet);
+    AssertTrue(packetSz >= 6);
+
+    WMEMCPY(&packetLen, packet, sizeof(packetLen));
+    packetLen = ntohl(packetLen);
+    padLen = packet[4];
+
+    AssertTrue(packetLen >= (word32)padLen + 1);
+    AssertTrue(packetSz >= packetLen + 4);
+
+    return packetLen - padLen - 1;
+}
+
+static const byte* ParseGlobalRequestName(const byte* packet, word32 packetSz,
+        word32* nameSz)
+{
+    word32 packetLen;
+    word32 payloadLen;
+    word32 strSz;
+    const byte* payload;
+
+    AssertNotNull(packet);
+    AssertNotNull(nameSz);
+    AssertTrue(packetSz >= 10);
+
+    WMEMCPY(&packetLen, packet, sizeof(packetLen));
+    packetLen = ntohl(packetLen);
+    AssertTrue(packetSz >= packetLen + 4);
+
+    payloadLen = ParsePayloadLen(packet, packetSz);
+    payload = packet + 5;
+
+    AssertTrue(payloadLen >= 1 + sizeof(word32));
+    AssertIntEQ(payload[0], MSGID_GLOBAL_REQUEST);
+
+    WMEMCPY(&strSz, payload + 1, sizeof(strSz));
+    strSz = ntohl(strSz);
+    AssertTrue(payloadLen >= 1 + sizeof(word32) + strSz);
+
+    *nameSz = strSz;
+    return payload + 1 + sizeof(word32);
+}
+
+static void AssertGlobalRequestReply(const ChannelOpenHarness* harness,
+        byte expectedMsgId)
+{
+    byte msgId;
+    word32 payloadLen;
+
+    AssertTrue(harness->io.outSz > 0);
+    msgId = ParseMsgId(harness->io.out, harness->io.outSz);
+    AssertIntEQ(msgId, expectedMsgId);
+
+    payloadLen = ParsePayloadLen(harness->io.out, harness->io.outSz);
+    if (expectedMsgId == MSGID_REQUEST_FAILURE) {
+        AssertIntEQ(payloadLen, 1);
+    }
+    else if (expectedMsgId == MSGID_REQUEST_SUCCESS) {
+        const byte* reqName;
+        word32 reqNameSz;
+
+        reqName = ParseGlobalRequestName(harness->io.in, harness->io.inSz,
+                &reqNameSz);
+
+        if (reqNameSz == sizeof("tcpip-forward") - 1 &&
+                WMEMCMP(reqName, "tcpip-forward",
+                sizeof("tcpip-forward") - 1) == 0) {
+            AssertIntEQ(payloadLen, 5);
+        }
+        else if (reqNameSz == sizeof("cancel-tcpip-forward") - 1 &&
+                WMEMCMP(reqName, "cancel-tcpip-forward",
+                sizeof("cancel-tcpip-forward") - 1) == 0) {
+            AssertIntEQ(payloadLen, 1);
+        }
+        else {
+            Fail(("unexpected global request name"),
+                    ("%.*s", (int)reqNameSz, reqName));
+        }
+    }
+}
+#endif
+
 static int RejectChannelOpenCb(WOLFSSH_CHANNEL* channel, void* ctx)
 {
     (void)channel;
@@ -975,6 +1078,17 @@ static int RejectDirectTcpipSetup(WS_FwdCbAction action, void* ctx,
 
     if (action == WOLFSSH_FWD_LOCAL_SETUP)
         return WS_FWD_SETUP_E;
+
+    return WS_SUCCESS;
+}
+
+static int AcceptFwdCb(WS_FwdCbAction action, void* ctx,
+        const char* host, word32 port)
+{
+    (void)action;
+    (void)ctx;
+    (void)host;
+    (void)port;
 
     return WS_SUCCESS;
 }
@@ -1239,6 +1353,101 @@ static void TestDirectTcpipNoFwdCbSendsOpenFail(void)
 
     ret = DoReceive(harness.ssh);
     AssertChannelOpenFailResponse(&harness, ret);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+static void TestGlobalRequestFwdNoCbSendsFailure(void)
+{
+    ChannelOpenHarness harness;
+    byte in[256];
+    word32 inSz;
+    int ret;
+
+    inSz = BuildGlobalRequestFwdPacket("0.0.0.0", 2222, 0, 1, in, sizeof(in));
+    InitChannelOpenHarness(&harness, in, inSz);
+    /* no fwdCb registered */
+
+    ret = DoReceive(harness.ssh);
+
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertGlobalRequestReply(&harness, MSGID_REQUEST_FAILURE);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+static void TestGlobalRequestFwdNoCbNoReplyKeepsConnection(void)
+{
+    ChannelOpenHarness harness;
+    byte in[256];
+    word32 inSz;
+    int ret;
+
+    /* wantReply=0: no reply sent, connection must stay alive */
+    inSz = BuildGlobalRequestFwdPacket("0.0.0.0", 2222, 0, 0, in, sizeof(in));
+    InitChannelOpenHarness(&harness, in, inSz);
+    /* no fwdCb registered */
+
+    ret = DoReceive(harness.ssh);
+
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertIntEQ(harness.io.outSz, 0); /* no reply sent */
+
+    FreeChannelOpenHarness(&harness);
+}
+
+static void TestGlobalRequestFwdWithCbSendsSuccess(void)
+{
+    ChannelOpenHarness harness;
+    byte in[256];
+    word32 inSz;
+    int ret;
+
+    inSz = BuildGlobalRequestFwdPacket("0.0.0.0", 2222, 0, 1, in, sizeof(in));
+    InitChannelOpenHarness(&harness, in, inSz);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, AcceptFwdCb, NULL), WS_SUCCESS);
+
+    ret = DoReceive(harness.ssh);
+
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertGlobalRequestReply(&harness, MSGID_REQUEST_SUCCESS);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+static void TestGlobalRequestFwdCancelNoCbSendsFailure(void)
+{
+    ChannelOpenHarness harness;
+    byte in[256];
+    word32 inSz;
+    int ret;
+
+    inSz = BuildGlobalRequestFwdPacket("0.0.0.0", 2222, 1, 1, in, sizeof(in));
+    InitChannelOpenHarness(&harness, in, inSz);
+
+    ret = DoReceive(harness.ssh);
+
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertGlobalRequestReply(&harness, MSGID_REQUEST_FAILURE);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+static void TestGlobalRequestFwdCancelWithCbSendsSuccess(void)
+{
+    ChannelOpenHarness harness;
+    byte in[256];
+    word32 inSz;
+    int ret;
+
+    inSz = BuildGlobalRequestFwdPacket("0.0.0.0", 2222, 1, 1, in, sizeof(in));
+    InitChannelOpenHarness(&harness, in, inSz);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, AcceptFwdCb, NULL), WS_SUCCESS);
+
+    ret = DoReceive(harness.ssh);
+
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertGlobalRequestReply(&harness, MSGID_REQUEST_SUCCESS);
 
     FreeChannelOpenHarness(&harness);
 }
@@ -1707,6 +1916,11 @@ int main(int argc, char** argv)
 #ifdef WOLFSSH_FWD
     TestDirectTcpipRejectSendsOpenFail();
     TestDirectTcpipNoFwdCbSendsOpenFail();
+    TestGlobalRequestFwdNoCbSendsFailure();
+    TestGlobalRequestFwdNoCbNoReplyKeepsConnection();
+    TestGlobalRequestFwdWithCbSendsSuccess();
+    TestGlobalRequestFwdCancelNoCbSendsFailure();
+    TestGlobalRequestFwdCancelWithCbSendsSuccess();
 #endif
 #ifdef WOLFSSH_AGENT
     TestAgentChannelNullAgentSendsOpenFail();
