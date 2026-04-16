@@ -767,6 +767,169 @@ static void test_pubkey_auth_wrong_key(void)
 
 #endif /* pubkey test guard */
 
+/* -----------------------------------------------------------------------
+ * Password auth: unknown callback return value must not grant auth (issue 2486)
+ * This block intentionally has no NO_SHA256 guard — password auth does not
+ * use SHA256.  The surrounding utility functions (tcp_listen, load_key, etc.)
+ * are available because they share the base server/client/threading guard.
+ * ----------------------------------------------------------------------- */
+#if !defined(NO_WOLFSSH_SERVER) && !defined(NO_WOLFSSH_CLIENT) && \
+    !defined(SINGLE_THREADED) && !defined(WOLFSSH_TEST_BLOCK)
+
+/* Tracks how many times the server password auth callback has been invoked;
+ * must be reset to 0 before each test run. */
+static int invalidPwAttempts = 0;
+
+/* Server userAuth callback for test_invalid_cb_password.
+ * First call returns an out-of-enum value (-999) to exercise the default else
+ * branch in DoUserAuthRequestPassword.  Second call returns REJECTED so the
+ * connection terminates cleanly and wolfSSH_accept() can return an error. */
+static int invalidPasswordServerAuth(byte authType, WS_UserAuthData* authData,
+                                     void* ctx)
+{
+    (void)authData;
+    (void)ctx;
+    if (authType != WOLFSSH_USERAUTH_PASSWORD)
+        return WOLFSSH_USERAUTH_FAILURE;
+    if (invalidPwAttempts++ == 0)
+        return -999; /* unknown value: exercises default else; authFailure=1 */
+    return WOLFSSH_USERAUTH_REJECTED; /* clean termination on retry */
+}
+
+/* Client userAuth callback for password tests: supplies a dummy password so
+ * the auth request reaches the server-side callback. */
+static int clientPasswordUserAuth(byte authType, WS_UserAuthData* authData,
+                                  void* ctx)
+{
+    static const byte pw[] = "dummypass";
+    (void)ctx;
+    if (authType != WOLFSSH_USERAUTH_PASSWORD)
+        return WOLFSSH_USERAUTH_FAILURE;
+    authData->sf.password.password   = pw;
+    authData->sf.password.passwordSz = (word32)(sizeof(pw) - 1);
+    return WOLFSSH_USERAUTH_SUCCESS;
+}
+
+/* Server thread for test_invalid_cb_password.  Mirrors pubkey_server_thread
+ * but registers invalidPasswordServerAuth and stores the return code cleanly
+ * (no ES_ERROR abort) so the test can assert on it. */
+static THREAD_RETURN WOLFSSH_THREAD password_server_thread(void* args)
+{
+    thread_args* serverArgs = (thread_args*)args;
+    int ret = WS_SUCCESS;
+    word16 port = 0;
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    byte buf[EXAMPLE_KEYLOAD_BUFFER_SZ];
+    word32 bufSz;
+    WS_SOCKET_T listenFd = WOLFSSH_SOCKET_INVALID;
+    WS_SOCKET_T clientFd = WOLFSSH_SOCKET_INVALID;
+    SOCKADDR_IN_T clientAddr;
+    socklen_t clientAddrSz = sizeof(clientAddr);
+
+    serverArgs->return_code = EXIT_SUCCESS;
+
+    tcp_listen(&listenFd, &port, 1);
+    SignalTcpReady(serverArgs->signal, port);
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL) { serverArgs->return_code = WS_MEMORY_E; goto cleanup; }
+
+    wolfSSH_SetUserAuth(ctx, invalidPasswordServerAuth);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { serverArgs->return_code = WS_MEMORY_E; goto cleanup; }
+
+#ifndef WOLFSSH_NO_ECDSA
+    bufSz = (word32)load_key(1, buf, sizeof(buf));
+#else
+    bufSz = (word32)load_key(0, buf, sizeof(buf));
+#endif
+    if (bufSz == 0 || wolfSSH_CTX_UsePrivateKey_buffer(ctx, buf, bufSz,
+                                         WOLFSSH_FORMAT_ASN1) < 0) {
+        serverArgs->return_code = WS_BAD_FILE_E; goto cleanup;
+    }
+
+    clientFd = accept(listenFd, (struct sockaddr*)&clientAddr, &clientAddrSz);
+    if (clientFd == WOLFSSH_SOCKET_INVALID) {
+        serverArgs->return_code = WS_SOCKET_ERROR_E; goto cleanup;
+    }
+    wolfSSH_set_fd(ssh, (int)clientFd);
+
+    ret = wolfSSH_accept(ssh);
+    serverArgs->return_code = ret;
+
+cleanup:
+    if (ssh != NULL && clientFd != WOLFSSH_SOCKET_INVALID)
+        wolfSSH_shutdown(ssh);
+    if (ssh != NULL) wolfSSH_free(ssh);
+    if (ctx != NULL) wolfSSH_CTX_free(ctx);
+    if (clientFd != WOLFSSH_SOCKET_INVALID) WCLOSESOCKET(clientFd);
+    if (listenFd != WOLFSSH_SOCKET_INVALID) WCLOSESOCKET(listenFd);
+
+    WOLFSSL_RETURN_FROM_THREAD(0);
+}
+
+/* Test: server password-auth callback returning an unknown value must not
+ * grant authentication.  Flow:
+ *   1. Client sends password -> server callback returns -999 -> authFailure=1
+ *      -> SendUserAuthFailure (else branch in DoUserAuthRequestPassword hit).
+ *   2. Client retries -> server callback returns WOLFSSH_USERAUTH_REJECTED
+ *      -> WS_USER_AUTH_E -> server sends disconnect.
+ *   3. wolfSSH_connect() returns WS_FATAL_ERROR; server return_code != WS_SUCCESS. */
+static void test_invalid_cb_password(void)
+{
+    thread_args   serverArgs;
+    tcp_ready     ready;
+    THREAD_TYPE   serThread;
+    WOLFSSH_CTX*  clientCtx = NULL;
+    WOLFSSH*      clientSsh = NULL;
+    SOCKET_T      sockFd    = WOLFSSH_SOCKET_INVALID;
+    SOCKADDR_IN_T clientAddr;
+    socklen_t     clientAddrSz = sizeof(clientAddr);
+    int ret;
+
+    printf("Testing password auth with unknown callback return value\n");
+    invalidPwAttempts = 0;
+
+    serverArgs.signal          = &ready;
+    serverArgs.pubkeyServerCtx = NULL;
+    InitTcpReady(serverArgs.signal);
+
+    ThreadStart(password_server_thread, (void*)&serverArgs, &serThread);
+    WaitTcpReady(&ready);
+
+    clientCtx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(clientCtx);
+    wolfSSH_CTX_SetPublicKeyCheck(clientCtx, AcceptAnyServerHostKey);
+    wolfSSH_SetUserAuth(clientCtx, clientPasswordUserAuth);
+
+    clientSsh = wolfSSH_new(clientCtx);
+    AssertNotNull(clientSsh);
+    wolfSSH_SetUsername(clientSsh, "jill");
+
+    build_addr(&clientAddr, (char*)wolfSshIp, ready.port);
+    tcp_socket(&sockFd, ((struct sockaddr_in*)&clientAddr)->sin_family);
+    AssertIntEQ(connect(sockFd, (const struct sockaddr*)&clientAddr,
+                        clientAddrSz), 0);
+    wolfSSH_set_fd(clientSsh, (int)sockFd);
+
+    ret = wolfSSH_connect(clientSsh);
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+
+    wolfSSH_shutdown(clientSsh);
+    WCLOSESOCKET(sockFd);
+    wolfSSH_free(clientSsh);
+    wolfSSH_CTX_free(clientCtx);
+
+    ThreadJoin(serThread);
+    AssertIntNE(serverArgs.return_code, WS_SUCCESS); /* auth must NOT be granted */
+
+    FreeTcpReady(&ready);
+}
+
+#endif /* password invalid-cb test guard */
+
 #if !defined(NO_WOLFSSH_SERVER) && !defined(NO_WOLFSSH_CLIENT) && \
     !defined(SINGLE_THREADED) && !defined(WOLFSSH_TEST_BLOCK) && \
     !defined(NO_FILESYSTEM) && defined(WOLFSSH_KEYBOARD_INTERACTIVE)
@@ -1153,6 +1316,165 @@ static void test_unbalanced_client_KeyboardInteractive(void)
     test_client();
     unbalanced = 0;
 }
+
+/* -----------------------------------------------------------------------
+ * Keyboard-interactive auth: unknown callback return value must not grant
+ * authentication (issue 2486)
+ * ----------------------------------------------------------------------- */
+
+/* Server userAuth callback for test_invalid_cb_keyboard.
+ * KEYBOARD_SETUP is handled normally so the exchange reaches
+ * DoUserAuthInfoResponse.  For the KEYBOARD (response-validation) step the
+ * callback returns -999, an out-of-enum value, to exercise the default else
+ * branch in DoUserAuthInfoResponse. */
+static int invalidKbServerAuth(byte authType, WS_UserAuthData* authData,
+                                void* ctx)
+{
+    WS_UserAuthData_Keyboard* prompts = (WS_UserAuthData_Keyboard*)ctx;
+
+    if (authType == WOLFSSH_USERAUTH_KEYBOARD_SETUP) {
+        WMEMCPY(&authData->sf.keyboard, prompts, sizeof(WS_UserAuthData_Keyboard));
+        return WS_SUCCESS;
+    }
+    if (authType == WOLFSSH_USERAUTH_KEYBOARD)
+        return -999; /* unknown value: exercises default else; authFailure=1 */
+    return WOLFSSH_USERAUTH_FAILURE;
+}
+
+/* Server thread for test_invalid_cb_keyboard.  Sets up one keyboard prompt and
+ * registers invalidKbServerAuth.  Stores the return code cleanly (no ES_ERROR
+ * abort) so the test can assert on it. */
+static THREAD_RETURN WOLFSSH_THREAD kb_invalid_server_thread(void* args)
+{
+    thread_args* serverArgs = (thread_args*)args;
+    int ret = WS_SUCCESS;
+    word16 port = 0;
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    byte buf[EXAMPLE_KEYLOAD_BUFFER_SZ];
+    word32 bufSz;
+    WS_SOCKET_T listenFd = WOLFSSH_SOCKET_INVALID;
+    WS_SOCKET_T clientFd = WOLFSSH_SOCKET_INVALID;
+    SOCKADDR_IN_T clientAddr;
+    socklen_t clientAddrSz = sizeof(clientAddr);
+    WS_UserAuthData_Keyboard localPrompts;
+    byte* kbPrompts[1];
+    word32 kbPromptLengths[1];
+    byte kbPromptEcho[1];
+
+    serverArgs->return_code = EXIT_SUCCESS;
+
+    kbPrompts[0]       = (byte*)"Password: ";
+    kbPromptLengths[0] = 10;
+    kbPromptEcho[0]    = 0;
+    WMEMSET(&localPrompts, 0, sizeof(localPrompts));
+    localPrompts.promptCount   = 1;
+    localPrompts.prompts       = kbPrompts;
+    localPrompts.promptLengths = kbPromptLengths;
+    localPrompts.promptEcho    = kbPromptEcho;
+
+    tcp_listen(&listenFd, &port, 1);
+    SignalTcpReady(serverArgs->signal, port);
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL) { serverArgs->return_code = WS_MEMORY_E; goto cleanup; }
+
+    wolfSSH_SetUserAuth(ctx, invalidKbServerAuth);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { serverArgs->return_code = WS_MEMORY_E; goto cleanup; }
+
+    wolfSSH_SetUserAuthCtx(ssh, &localPrompts);
+
+    bufSz = (word32)load_key(1, buf, sizeof(buf));
+    if (bufSz == 0) bufSz = (word32)load_key(0, buf, sizeof(buf));
+    if (bufSz == 0 || wolfSSH_CTX_UsePrivateKey_buffer(ctx, buf, bufSz,
+                                         WOLFSSH_FORMAT_ASN1) < 0) {
+        serverArgs->return_code = WS_BAD_FILE_E; goto cleanup;
+    }
+
+    clientFd = accept(listenFd, (struct sockaddr*)&clientAddr, &clientAddrSz);
+    if (clientFd == WOLFSSH_SOCKET_INVALID) {
+        serverArgs->return_code = WS_SOCKET_ERROR_E; goto cleanup;
+    }
+    wolfSSH_set_fd(ssh, (int)clientFd);
+
+    ret = wolfSSH_accept(ssh);
+    serverArgs->return_code = ret;
+
+cleanup:
+    if (ssh != NULL && clientFd != WOLFSSH_SOCKET_INVALID)
+        wolfSSH_shutdown(ssh);
+    if (ssh != NULL) wolfSSH_free(ssh);
+    if (ctx != NULL) wolfSSH_CTX_free(ctx);
+    if (clientFd != WOLFSSH_SOCKET_INVALID) WCLOSESOCKET(clientFd);
+    if (listenFd != WOLFSSH_SOCKET_INVALID) WCLOSESOCKET(listenFd);
+
+    WOLFSSL_RETURN_FROM_THREAD(0);
+}
+
+/* Test: server keyboard-interactive callback returning an unknown value must
+ * not grant authentication.  Flow:
+ *   1. Server provides one prompt; client sends one response.
+ *   2. Server callback returns -999 -> authFailure=1 -> SendUserAuthFailure
+ *      (else branch in DoUserAuthInfoResponse hit).
+ *   3. Client retries keyboard auth; after ssh->kbAuthAttempts reaches 3 the
+ *      client stops trying keyboard and DoUserAuthFailure returns WS_USER_AUTH_E.
+ *   4. wolfSSH_connect() returns WS_FATAL_ERROR; server return_code != WS_SUCCESS. */
+static void test_invalid_cb_keyboard(void)
+{
+    thread_args   serverArgs;
+    tcp_ready     ready;
+    THREAD_TYPE   serThread;
+    WOLFSSH_CTX*  clientCtx = NULL;
+    WOLFSSH*      clientSsh = NULL;
+    SOCKET_T      sockFd    = WOLFSSH_SOCKET_INVALID;
+    SOCKADDR_IN_T clientAddr;
+    socklen_t     clientAddrSz = sizeof(clientAddr);
+    int ret;
+
+    printf("Testing keyboard-interactive auth with unknown callback return value\n");
+
+    kbResponses[0]       = (byte*)testText1;
+    kbResponseLengths[0] = 4;
+    kbResponseCount      = 1;
+
+    serverArgs.signal          = &ready;
+    serverArgs.pubkeyServerCtx = NULL;
+    InitTcpReady(serverArgs.signal);
+
+    ThreadStart(kb_invalid_server_thread, (void*)&serverArgs, &serThread);
+    WaitTcpReady(&ready);
+
+    clientCtx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(clientCtx);
+    wolfSSH_CTX_SetPublicKeyCheck(clientCtx, AcceptAnyServerHostKey);
+    wolfSSH_SetUserAuth(clientCtx, keyboardUserAuth);
+
+    clientSsh = wolfSSH_new(clientCtx);
+    AssertNotNull(clientSsh);
+    wolfSSH_SetUsername(clientSsh, "test");
+
+    build_addr(&clientAddr, (char*)wolfSshIp, ready.port);
+    tcp_socket(&sockFd, ((struct sockaddr_in*)&clientAddr)->sin_family);
+    AssertIntEQ(connect(sockFd, (const struct sockaddr*)&clientAddr,
+                        clientAddrSz), 0);
+    wolfSSH_set_fd(clientSsh, (int)sockFd);
+
+    ret = wolfSSH_connect(clientSsh);
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+
+    wolfSSH_shutdown(clientSsh);
+    WCLOSESOCKET(sockFd);
+    wolfSSH_free(clientSsh);
+    wolfSSH_CTX_free(clientCtx);
+
+    ThreadJoin(serThread);
+    AssertIntNE(serverArgs.return_code, WS_SUCCESS); /* auth must NOT be granted */
+
+    FreeTcpReady(&ready);
+}
+
 #endif /* WOLFSSH_TEST_BLOCK */
 
 int wolfSSH_AuthTest(int argc, char** argv)
@@ -1202,6 +1524,12 @@ int wolfSSH_AuthTest(int argc, char** argv)
     test_multi_prompt_KeyboardInteractive();
     test_multi_round_KeyboardInteractive();
     test_unbalanced_client_KeyboardInteractive();
+#endif
+
+    /* Unknown callback return value must not grant auth (issue 2486) */
+    test_invalid_cb_password();
+#if !defined(NO_FILESYSTEM) && defined(WOLFSSH_KEYBOARD_INTERACTIVE)
+    test_invalid_cb_keyboard();
 #endif
 
     AssertIntEQ(wolfSSH_Cleanup(), WS_SUCCESS);
