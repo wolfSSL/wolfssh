@@ -858,6 +858,30 @@ int wolfSSH_TestIsMessageAllowed(WOLFSSH* ssh, byte msg, byte state)
 {
     return IsMessageAllowed(ssh, msg, state);
 }
+
+static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx);
+static int DoKexDhInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx);
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
+static int DoKexDhGexRequest(WOLFSSH* ssh, byte* buf, word32 len, word32* idx);
+#endif
+
+int wolfSSH_TestDoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
+{
+    return DoKexInit(ssh, buf, len, idx);
+}
+
+int wolfSSH_TestDoKexDhInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
+{
+    return DoKexDhInit(ssh, buf, len, idx);
+}
+
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
+int wolfSSH_TestDoKexDhGexRequest(WOLFSSH* ssh, byte* buf, word32 len,
+        word32* idx)
+{
+    return DoKexDhGexRequest(ssh, buf, len, idx);
+}
+#endif
 #endif
 
 
@@ -6299,6 +6323,15 @@ static int DoKexDhGexRequest(WOLFSSH* ssh,
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
+        if (ssh->handshake->ignoreNextKexMsg) {
+            /* skip this message. */
+            WLOG(WS_LOG_DEBUG, "Skipping client's KEXDH_GEX_REQUEST message "
+                               "due to first_packet_follows guess mismatch.");
+            ssh->handshake->ignoreNextKexMsg = 0;
+            *idx += len;
+            return WS_SUCCESS;
+        }
+
         begin = *idx;
         ret = GetUint32(&ssh->handshake->dhGexMinSz, buf, len, &begin);
     }
