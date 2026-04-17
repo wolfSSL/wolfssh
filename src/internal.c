@@ -11929,6 +11929,16 @@ int wolfSSH_RsaVerify(const byte *sig, word32 sigSz,
     WOLFSSH_UNUSED(loc); /* Unused when WLOG is not defined */
     return ret;
 }
+
+#ifdef WOLFSSH_TEST_INTERNAL
+int wolfSSH_TestRsaVerify(const byte* sig, word32 sigSz,
+        const byte* encDigest, word32 encDigestSz,
+        RsaKey* key, void* heap)
+{
+    return wolfSSH_RsaVerify(sig, sigSz, encDigest, encDigestSz,
+            key, heap, "wolfSSH_TestRsaVerify");
+}
+#endif /* WOLFSSH_TEST_INTERNAL */
 #endif /* WOLFSSH_NO_RSA */
 
 
