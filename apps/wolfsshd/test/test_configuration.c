@@ -233,8 +233,173 @@ static int test_ParseConfigLine(void)
     return ret;
 }
 
+static int test_ConfigCopy(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* head;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_CONFIG* match;
+
+    head = wolfSSHD_ConfigNew(NULL);
+    if (head == NULL)
+        ret = WS_MEMORY_E;
+    conf = head;
+
+    /* string fields via ParseConfigLine */
+#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s))
+    if (ret == WS_SUCCESS) ret = PCL("Banner /etc/issue");
+    if (ret == WS_SUCCESS) ret = PCL("ChrootDirectory /var/chroot");
+    if (ret == WS_SUCCESS) ret = PCL("HostKey /etc/ssh/ssh_host_key");
+    if (ret == WS_SUCCESS) ret = PCL("ForceCommand /bin/restricted");
+    if (ret == WS_SUCCESS) ret = PCL("PidFile /var/run/sshd.pid");
+
+    /* string fields via public setters */
+    if (ret == WS_SUCCESS)
+        ret = wolfSSHD_ConfigSetHostCertFile(head, "/etc/ssh/host_cert.pub");
+    if (ret == WS_SUCCESS)
+        ret = wolfSSHD_ConfigSetUserCAKeysFile(head, "/etc/ssh/ca.pub");
+    if (ret == WS_SUCCESS)
+        ret = wolfSSHD_ConfigSetAuthKeysFile(head, ".ssh/authorized_keys");
+
+    /* scalar fields */
+    if (ret == WS_SUCCESS) ret = PCL("Port 2222");
+    if (ret == WS_SUCCESS) ret = PCL("LoginGraceTime 30");
+    if (ret == WS_SUCCESS) ret = PCL("PasswordAuthentication yes");
+    if (ret == WS_SUCCESS) ret = PCL("PermitEmptyPasswords yes");
+    if (ret == WS_SUCCESS) ret = PCL("PermitRootLogin yes");
+    if (ret == WS_SUCCESS) ret = PCL("UsePrivilegeSeparation yes");
+
+    /* trigger ConfigCopy via Match; conf advances to the new node */
+    if (ret == WS_SUCCESS) ret = PCL("Match User testuser");
+#undef PCL
+
+    /* retrieve match node from the list head */
+    if (ret == WS_SUCCESS) {
+        match = wolfSSHD_GetUserConf(head, "testuser", NULL, NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (match == NULL || match == head)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* verify string fields were copied */
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetBanner(match) == NULL ||
+            XSTRCMP(wolfSSHD_ConfigGetBanner(match), "/etc/issue") != 0)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetChroot(match) == NULL ||
+            XSTRCMP(wolfSSHD_ConfigGetChroot(match), "/var/chroot") != 0)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetHostKeyFile(match) == NULL ||
+            XSTRCMP(wolfSSHD_ConfigGetHostKeyFile(match),
+                    "/etc/ssh/ssh_host_key") != 0)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetHostCertFile(match) == NULL ||
+            XSTRCMP(wolfSSHD_ConfigGetHostCertFile(match),
+                    "/etc/ssh/host_cert.pub") != 0)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetUserCAKeysFile(match) == NULL ||
+            XSTRCMP(wolfSSHD_ConfigGetUserCAKeysFile(match),
+                    "/etc/ssh/ca.pub") != 0)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetAuthKeysFile(match) == NULL ||
+            XSTRCMP(wolfSSHD_ConfigGetAuthKeysFile(match),
+                    ".ssh/authorized_keys") != 0)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetForcedCmd(match) == NULL ||
+            XSTRCMP(wolfSSHD_ConfigGetForcedCmd(match),
+                    "/bin/restricted") != 0)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* verify authKeysFileSet flag was copied */
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetAuthKeysFileSet(match) == 0)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* verify scalar fields were copied */
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetPort(match) != 2222)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetGraceTime(match) != 30)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetPwAuth(match) == 0)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetPermitEmptyPw(match) == 0)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetPermitRoot(match) == 0)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetPrivilegeSeparation(match) == 0)
+            ret = WS_FATAL_ERROR;
+    }
+
+    wolfSSHD_ConfigFree(head);
+    return ret;
+}
+
+/* Verifies ConfigFree releases all string fields — most useful under ASan. */
+static int test_ConfigFree(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* head;
+    WOLFSSHD_CONFIG* conf;
+
+    head = wolfSSHD_ConfigNew(NULL);
+    if (head == NULL)
+        ret = WS_MEMORY_E;
+    conf = head;
+
+#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s))
+    if (ret == WS_SUCCESS) ret = PCL("Banner /etc/issue");
+    if (ret == WS_SUCCESS) ret = PCL("ChrootDirectory /var/chroot");
+    if (ret == WS_SUCCESS) ret = PCL("HostKey /etc/ssh/ssh_host_key");
+    if (ret == WS_SUCCESS) ret = PCL("ForceCommand /bin/restricted");
+    if (ret == WS_SUCCESS) ret = PCL("PidFile /var/run/sshd.pid");
+    if (ret == WS_SUCCESS)
+        ret = wolfSSHD_ConfigSetHostCertFile(head, "/etc/ssh/host_cert.pub");
+    if (ret == WS_SUCCESS)
+        ret = wolfSSHD_ConfigSetUserCAKeysFile(head, "/etc/ssh/ca.pub");
+    if (ret == WS_SUCCESS)
+        ret = wolfSSHD_ConfigSetAuthKeysFile(head, ".ssh/authorized_keys");
+
+    /* Match User — allocates usrAppliesTo on the copied node */
+    if (ret == WS_SUCCESS) ret = PCL("Match User alice");
+
+    /* Match Group — allocates groupAppliesTo on the next copied node */
+    if (ret == WS_SUCCESS) ret = PCL("Match Group staff");
+#undef PCL
+
+    /* Free must not crash and must release every allocation */
+    wolfSSHD_ConfigFree(head);
+    return ret;
+}
+
 const TEST_CASE testCases[] = {
-    TEST_DECL(test_ParseConfigLine)
+    TEST_DECL(test_ParseConfigLine),
+    TEST_DECL(test_ConfigCopy),
+    TEST_DECL(test_ConfigFree),
 };
 
 int main(int argc, char** argv)

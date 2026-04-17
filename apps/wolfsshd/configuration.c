@@ -277,6 +277,30 @@ static WOLFSSHD_CONFIG* wolfSSHD_ConfigCopy(WOLFSSHD_CONFIG* conf)
                                         newConf->heap);
         }
 
+        if (ret == WS_SUCCESS && conf->hostCertFile) {
+            ret = CreateString(&newConf->hostCertFile, conf->hostCertFile,
+                                        (int)WSTRLEN(conf->hostCertFile),
+                                        newConf->heap);
+        }
+
+        if (ret == WS_SUCCESS && conf->pidFile) {
+            ret = CreateString(&newConf->pidFile, conf->pidFile,
+                                        (int)WSTRLEN(conf->pidFile),
+                                        newConf->heap);
+        }
+
+        if (ret == WS_SUCCESS && conf->userCAKeysFile) {
+            ret = CreateString(&newConf->userCAKeysFile, conf->userCAKeysFile,
+                                        (int)WSTRLEN(conf->userCAKeysFile),
+                                        newConf->heap);
+        }
+
+        if (ret == WS_SUCCESS && conf->forceCmd) {
+            ret = CreateString(&newConf->forceCmd, conf->forceCmd,
+                                        (int)WSTRLEN(conf->forceCmd),
+                                        newConf->heap);
+        }
+
         if (ret == WS_SUCCESS) {
             newConf->loginTimer   = conf->loginTimer;
             newConf->port         = conf->port;
@@ -285,6 +309,11 @@ static WOLFSSHD_CONFIG* wolfSSHD_ConfigCopy(WOLFSSHD_CONFIG* conf)
             newConf->usePrivilegeSeparation = conf->usePrivilegeSeparation;
             newConf->permitRootLogin        = conf->permitRootLogin;
             newConf->permitEmptyPasswords   = conf->permitEmptyPasswords;
+            newConf->authKeysFileSet        = conf->authKeysFileSet;
+        }
+        else {
+            wolfSSHD_ConfigFree(newConf);
+            newConf = NULL;
         }
     }
 
@@ -310,8 +339,12 @@ void wolfSSHD_ConfigFree(WOLFSSHD_CONFIG* conf)
         FreeString(&current->listenAddress, heap);
         FreeString(&current->authKeysFile,  heap);
         FreeString(&current->hostKeyFile,   heap);
-        FreeString(&current->hostCertFile,  heap);
-        FreeString(&current->pidFile,  heap);
+        FreeString(&current->hostCertFile,   heap);
+        FreeString(&current->pidFile,        heap);
+        FreeString(&current->userCAKeysFile,  heap);
+        FreeString(&current->forceCmd,        heap);
+        FreeString(&current->usrAppliesTo,    heap);
+        FreeString(&current->groupAppliesTo,  heap);
 
         WFREE(current, heap, DYNTYPE_SSHD);
         current = next;
