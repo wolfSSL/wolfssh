@@ -631,12 +631,10 @@ typedef struct Keys {
 typedef struct HandshakeInfo {
     byte expectMsgId;
     byte kexId;
-    byte kexIdGuess;
     byte kexHashId;
     byte pubKeyId;
     byte encryptId;
     byte macId;
-    byte kexPacketFollows;
     byte aeadMode;
 
     byte blockSz;
@@ -663,6 +661,7 @@ typedef struct HandshakeInfo {
     word32 generatorSz;
 #endif
 
+    byte ignoreNextKexMsg:1;
     byte useDh:1;
     byte useEcc:1;
     byte useEccMlKem:1;
