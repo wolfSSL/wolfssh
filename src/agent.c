@@ -436,6 +436,7 @@ static int PostAddRsaId(WOLFSSH_AGENT_CTX* agent,
             ret = wc_Sha256Update(&sha, key, nSz + eSz + (LENGTH_SZ * 2));
         if (ret == 0)
             ret = wc_Sha256Final(&sha, id->id);
+        wc_Sha256Free(&sha);
 
         if (ret == 0)
             ret = WS_SUCCESS;
@@ -518,6 +519,7 @@ static int PostAddEcdsaId(WOLFSSH_AGENT_CTX* agent,
                     curveNameSz + qSz + (LENGTH_SZ * 2));
         if (ret == 0)
             ret = wc_Sha256Final(&sha, id->id);
+        wc_Sha256Free(&sha);
 
         if (ret == 0)
             ret = WS_SUCCESS;
@@ -584,6 +586,7 @@ static int PostRemoveId(WOLFSSH_AGENT_CTX* agent,
             ret = wc_Sha256Update(&sha, keyBlob, keyBlobSz);
         if (ret == 0)
             ret = wc_Sha256Final(&sha, id);
+        wc_Sha256Free(&sha);
         ret = (ret == 0) ? WS_SUCCESS : WS_CRYPTO_FAILED;
     }
 
@@ -661,6 +664,10 @@ static WOLFSSH_AGENT_ID* FindKeyId(WOLFSSH_AGENT_ID* id,
         ret = wc_Sha256Final(&sha, digest);
         ret = (ret == 0) ? WS_SUCCESS : WS_CRYPTO_FAILED;
     }
+    else {
+        ret = WS_CRYPTO_FAILED;
+    }
+    wc_Sha256Free(&sha);
 
     if (ret == WS_SUCCESS) {
         while (id != NULL &&
@@ -668,6 +675,9 @@ static WOLFSSH_AGENT_ID* FindKeyId(WOLFSSH_AGENT_ID* id,
                 WMEMCMP(keyBlob, id->keyBlob, keyBlobSz)) {
             id = id->next;
         }
+    }
+    else {
+        id = NULL;
     }
 
     return id;
