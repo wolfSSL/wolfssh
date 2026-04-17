@@ -214,10 +214,12 @@ static int FingerprintKey(const byte* pubKey, word32 pubKeySz, char* out)
     int ret;
 
     ret = wc_InitSha256(&sha);
-    if (ret == 0)
+    if (ret == 0) {
         ret = wc_Sha256Update(&sha, pubKey, pubKeySz);
-    if (ret == 0)
-        ret = wc_Sha256Final(&sha, digest);
+        if (ret == 0)
+            ret = wc_Sha256Final(&sha, digest);
+        wc_Sha256Free(&sha);
+    }
 
     if (ret == 0)
         ret = Base64_Encode_NoNl(digest, sizeof(digest), (byte*)fp, &fpSz);
