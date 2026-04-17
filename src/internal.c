@@ -5527,12 +5527,14 @@ static int KeyAgreeEcdhMlKem_client(WOLFSSH* ssh, byte hashId,
     int ret = WS_SUCCESS;
     byte sharedSecretHashSz = 0;
     byte *sharedSecretHash = NULL;
-    MlKemKey kem = {0};
+    MlKemKey kem;
     word32 length_ciphertext = 0;
     word32 length_sharedsecret = 0;
     word32 length_privatekey = 0;
     int mlKemType = WC_ML_KEM_768;
     byte kexId = ssh->handshake->kexId;
+
+    WMEMSET(&kem, 0, sizeof(kem));
 #if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
     !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384)
     ecc_key *key_ptr = NULL;
@@ -5694,18 +5696,26 @@ static int KeyAgreeEcdhMlKem_client(WOLFSSH* ssh, byte hashId,
     /* Replace the concatenated shared secrets with the hash. That
      * will become the new shared secret. */
     if (ret == 0) {
-        sharedSecretHashSz = wc_HashGetDigestSize(hashId);
-        sharedSecretHash = (byte *)WMALLOC(sharedSecretHashSz,
-                                           ssh->ctx->heap,
-                                           DYNTYPE_PRIVKEY);
-        if (sharedSecretHash == NULL) {
-            ret = WS_MEMORY_E;
+        int digestSz;
+
+        digestSz = wc_HashGetDigestSize((enum wc_HashType)hashId);
+        if (digestSz <= 0) {
+            ret = WS_INVALID_ALGO_ID;
+        }
+        else {
+            sharedSecretHashSz = (byte)digestSz;
+            sharedSecretHash = (byte *)WMALLOC(sharedSecretHashSz,
+                                               ssh->ctx->heap,
+                                               DYNTYPE_PRIVKEY);
+            if (sharedSecretHash == NULL) {
+                ret = WS_MEMORY_E;
+            }
         }
     }
 
     if (ret == 0) {
-        ret = wc_Hash(hashId, ssh->k, ssh->kSz, sharedSecretHash,
-                      sharedSecretHashSz);
+        ret = wc_Hash((enum wc_HashType)hashId, ssh->k, ssh->kSz,
+                      sharedSecretHash, sharedSecretHashSz);
     }
 
     if (ret == 0) {
@@ -12144,12 +12154,14 @@ static int KeyAgreeEcdhMlKem_server(WOLFSSH* ssh, byte hashId,
     int ret = WS_SUCCESS;
     byte sharedSecretHashSz = 0;
     byte *sharedSecretHash = NULL;
-    MlKemKey kem = {0};
+    MlKemKey kem;
     word32 length_publickey = 0;
     word32 length_ciphertext = 0;
     word32 length_sharedsecret = 0;
     int mlKemType = WC_ML_KEM_768;
     byte kexId = ssh->handshake->kexId;
+
+    WMEMSET(&kem, 0, sizeof(kem));
 #if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
     !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384)
     ecc_key* pubKey = NULL;
@@ -12366,16 +12378,24 @@ static int KeyAgreeEcdhMlKem_server(WOLFSSH* ssh, byte hashId,
     /* Replace the concatenated shared secrets with the hash. That
      * will become the new shared secret.*/
     if (ret == 0) {
-        sharedSecretHashSz = wc_HashGetDigestSize(hashId);
-        sharedSecretHash = (byte *)WMALLOC(sharedSecretHashSz,
-                ssh->ctx->heap, DYNTYPE_PRIVKEY);
-        if (sharedSecretHash == NULL) {
-            ret = WS_MEMORY_E;
+        int digestSz;
+
+        digestSz = wc_HashGetDigestSize((enum wc_HashType)hashId);
+        if (digestSz <= 0) {
+            ret = WS_INVALID_ALGO_ID;
+        }
+        else {
+            sharedSecretHashSz = (byte)digestSz;
+            sharedSecretHash = (byte *)WMALLOC(sharedSecretHashSz,
+                    ssh->ctx->heap, DYNTYPE_PRIVKEY);
+            if (sharedSecretHash == NULL) {
+                ret = WS_MEMORY_E;
+            }
         }
     }
     if (ret == 0) {
-        ret = wc_Hash(hashId, ssh->k, ssh->kSz, sharedSecretHash,
-                      sharedSecretHashSz);
+        ret = wc_Hash((enum wc_HashType)hashId, ssh->k, ssh->kSz,
+                      sharedSecretHash, sharedSecretHashSz);
     }
     if (ret == 0) {
         XMEMCPY(ssh->k, sharedSecretHash, sharedSecretHashSz);
@@ -13553,12 +13573,13 @@ int SendKexDhInit(WOLFSSH* ssh)
 #if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
     !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384) || \
     !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
-        if (ssh->handshake->useEccMlKem) {
-            MlKemKey kem = {0};
+        if (ret == WS_SUCCESS && ssh->handshake->useEccMlKem) {
+            MlKemKey kem;
             word32 length_publickey = 0;
             word32 length_privatekey = 0;
             int mlKemType = WC_ML_KEM_768;
-            ret = 0;
+
+            WMEMSET(&kem, 0, sizeof(kem));
 
 #ifndef WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
             if (ssh->handshake->kexId == ID_NISTP384_MLKEM1024_SHA384) {
