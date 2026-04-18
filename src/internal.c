@@ -571,6 +571,7 @@ static HandshakeInfo* HandshakeInfoNew(void* heap)
                                     heap, DYNTYPE_HS);
     if (newHs != NULL) {
         WMEMSET(newHs, 0, sizeof(HandshakeInfo));
+        newHs->expectMsgId = MSGID_NONE;
         newHs->kexId = ID_NONE;
         newHs->kexHashId = WC_HASH_TYPE_NONE;
         newHs->pubKeyId  = ID_NONE;
@@ -857,6 +858,30 @@ int wolfSSH_TestIsMessageAllowed(WOLFSSH* ssh, byte msg, byte state)
 {
     return IsMessageAllowed(ssh, msg, state);
 }
+
+static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx);
+static int DoKexDhInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx);
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
+static int DoKexDhGexRequest(WOLFSSH* ssh, byte* buf, word32 len, word32* idx);
+#endif
+
+int wolfSSH_TestDoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
+{
+    return DoKexInit(ssh, buf, len, idx);
+}
+
+int wolfSSH_TestDoKexDhInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
+{
+    return DoKexDhInit(ssh, buf, len, idx);
+}
+
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
+int wolfSSH_TestDoKexDhGexRequest(WOLFSSH* ssh, byte* buf, word32 len,
+        word32* idx)
+{
+    return DoKexDhGexRequest(ssh, buf, len, idx);
+}
+#endif
 #endif
 
 
@@ -4238,6 +4263,9 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     byte algoId;
     byte list[24] = {ID_NONE};
     byte cannedList[24] = {ID_NONE};
+    byte kexIdGuess = ID_NONE;
+    byte pubKeyIdGuess = ID_NONE;
+    byte kexPacketFollows = 0;
     word32 listSz;
     word32 cannedListSz;
     word32 cannedAlgoNamesSz;
@@ -4309,7 +4337,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 (const byte*)ssh->algoListKex, cannedAlgoNamesSz);
     }
     if (ret == WS_SUCCESS) {
-        ssh->handshake->kexIdGuess = list[0];
+        kexIdGuess = list[0];
         algoId = MatchIdLists(side, list, listSz,
                 cannedList, cannedListSz);
         if (algoId == ID_UNKNOWN) {
@@ -4354,6 +4382,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         }
     }
     if (ret == WS_SUCCESS) {
+        pubKeyIdGuess = list[0];
         algoId = MatchIdLists(side, list, listSz, cannedList, cannedListSz);
         if (algoId == ID_UNKNOWN) {
             WLOG(WS_LOG_DEBUG, "Unable to negotiate Server Host Key Algo");
@@ -4511,10 +4540,15 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     /* First KEX Packet Follows */
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "DKI: KEX Packet Follows");
-        ret = GetBoolean(&ssh->handshake->kexPacketFollows, buf, len, &begin);
+        ret = GetBoolean(&kexPacketFollows, buf, len, &begin);
         if (ret == WS_SUCCESS) {
             WLOG(WS_LOG_DEBUG, " packet follows: %s",
-                    ssh->handshake->kexPacketFollows ? "yes" : "no");
+                    kexPacketFollows ? "yes" : "no");
+            if (kexPacketFollows
+                    && (kexIdGuess != ssh->handshake->kexId
+                        || pubKeyIdGuess != ssh->handshake->pubKeyId)) {
+                ssh->handshake->ignoreNextKexMsg = 1;
+            }
         }
     }
 
@@ -4819,12 +4853,11 @@ static int DoKexDhInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
-        if (ssh->handshake->kexPacketFollows
-                && ssh->handshake->kexIdGuess != ssh->handshake->kexId) {
-
+        if (ssh->handshake->ignoreNextKexMsg) {
             /* skip this message. */
-            WLOG(WS_LOG_DEBUG, "Skipping the client's KEX init function.");
-            ssh->handshake->kexPacketFollows = 0;
+            WLOG(WS_LOG_DEBUG, "Skipping client's KEXDH_INIT message due to "
+                               "first_packet_follows guess mismatch.");
+            ssh->handshake->ignoreNextKexMsg = 0;
             *idx += len;
             return WS_SUCCESS;
         }
@@ -6273,6 +6306,15 @@ static int DoKexDhGexRequest(WOLFSSH* ssh,
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
+        if (ssh->handshake->ignoreNextKexMsg) {
+            /* skip this message. */
+            WLOG(WS_LOG_DEBUG, "Skipping client's KEXDH_GEX_REQUEST message "
+                               "due to first_packet_follows guess mismatch.");
+            ssh->handshake->ignoreNextKexMsg = 0;
+            *idx += len;
+            return WS_SUCCESS;
+        }
+
         begin = *idx;
         ret = GetUint32(&ssh->handshake->dhGexMinSz, buf, len, &begin);
     }

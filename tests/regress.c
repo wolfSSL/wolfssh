@@ -1886,6 +1886,167 @@ static void TestKeyboardResponseNullCtx(WOLFSSH* ssh)
 #endif /* WOLFSSH_KEYBOARD_INTERACTIVE */
 
 
+#if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) \
+    && !defined(WOLFSSH_NO_RSA) \
+    && !defined(WOLFSSH_NO_CURVE25519_SHA256) \
+    && !defined(WOLFSSH_NO_RSA_SHA2_256)
+
+#define FPF_KEX_GOOD "ecdh-sha2-nistp256"
+#define FPF_KEX_BAD  "curve25519-sha256"
+#define FPF_KEY_GOOD "ssh-rsa"
+#define FPF_KEY_BAD  "rsa-sha2-256"
+
+/* Build a KEXINIT payload using the server ssh's own canned cipher/MAC lists
+ * so negotiation succeeds whichever AES/HMAC modes are compiled in. */
+static word32 BuildKexInitPayload(WOLFSSH* ssh, const char* kexList,
+        const char* keyList, byte firstPacketFollows,
+        byte* out, word32 outSz)
+{
+    word32 idx = 0;
+
+    /* cookie */
+    AssertTrue(idx + COOKIE_SZ <= outSz);
+    WMEMSET(out + idx, 0, COOKIE_SZ);
+    idx += COOKIE_SZ;
+
+    idx = AppendString(out, outSz, idx, kexList);
+    idx = AppendString(out, outSz, idx, keyList);
+    idx = AppendString(out, outSz, idx, ssh->algoListCipher);
+    idx = AppendString(out, outSz, idx, ssh->algoListCipher);
+    idx = AppendString(out, outSz, idx, ssh->algoListMac);
+    idx = AppendString(out, outSz, idx, ssh->algoListMac);
+    idx = AppendString(out, outSz, idx, "none");
+    idx = AppendString(out, outSz, idx, "none");
+    idx = AppendString(out, outSz, idx, "");
+    idx = AppendString(out, outSz, idx, "");
+
+    idx = AppendByte(out, outSz, idx, firstPacketFollows);
+    idx = AppendUint32(out, outSz, idx, 0); /* reserved */
+
+    return idx;
+}
+
+typedef struct {
+    const char* description;
+    const char* kexList;
+    const char* keyList;
+    byte firstPacketFollows;
+    byte expectIgnore;
+} FirstPacketFollowsCase;
+
+static const FirstPacketFollowsCase firstPacketFollowsCases[] = {
+    { "follows=0, guesses irrelevant: flag stays off",
+      FPF_KEX_BAD "," FPF_KEX_GOOD, FPF_KEY_BAD "," FPF_KEY_GOOD, 0, 0 },
+    { "follows=1, both guesses match: do not skip",
+      FPF_KEX_GOOD, FPF_KEY_GOOD, 1, 0 },
+    { "follows=1, KEX guess wrong: skip",
+      FPF_KEX_BAD "," FPF_KEX_GOOD, FPF_KEY_GOOD, 1, 1 },
+    { "follows=1, host-key guess wrong: skip", /* regression case */
+      FPF_KEX_GOOD, FPF_KEY_BAD "," FPF_KEY_GOOD, 1, 1 },
+    { "follows=1, both guesses wrong: skip",
+      FPF_KEX_BAD "," FPF_KEX_GOOD, FPF_KEY_BAD "," FPF_KEY_GOOD, 1, 1 },
+};
+
+static void RunFirstPacketFollowsCase(const FirstPacketFollowsCase* tc)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    byte payload[512];
+    word32 payloadSz;
+    word32 idx = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, FPF_KEX_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, FPF_KEY_GOOD), WS_SUCCESS);
+
+    payloadSz = BuildKexInitPayload(ssh, tc->kexList, tc->keyList,
+            tc->firstPacketFollows, payload, sizeof(payload));
+
+    /* DoKexInit's tail hashes and sends a response; on a stripped-down
+     * WOLFSSH without a loaded host key or a primed peer proto id, that
+     * tail errors. We only care about the parse path up through
+     * first_packet_follows, where ignoreNextKexMsg is set. */
+    (void)wolfSSH_TestDoKexInit(ssh, payload, payloadSz, &idx);
+
+    AssertNotNull(ssh->handshake);
+    if (ssh->handshake->ignoreNextKexMsg != tc->expectIgnore) {
+        Fail(("ignoreNextKexMsg == %u (%s)",
+                    tc->expectIgnore, tc->description),
+             ("%u", ssh->handshake->ignoreNextKexMsg));
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+typedef int (*FirstPacketFollowsSkipFn)(WOLFSSH* ssh, byte* buf, word32 len,
+        word32* idx);
+
+/* With ignoreNextKexMsg set, the target Do* handler must consume the packet,
+ * clear the flag, and not advance clientState past CLIENT_KEXINIT_DONE. */
+static void RunFirstPacketFollowsSkipCase(FirstPacketFollowsSkipFn fn,
+        const char* label)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    byte payload[8];
+    word32 idx = 0;
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertNotNull(ssh->handshake);
+
+    ssh->handshake->ignoreNextKexMsg = 1;
+    ssh->clientState = CLIENT_KEXINIT_DONE;
+
+    /* Garbage payload — must never be parsed when skipped. */
+    WMEMSET(payload, 0xAB, sizeof(payload));
+
+    ret = fn(ssh, payload, sizeof(payload), &idx);
+    if (ret != WS_SUCCESS) {
+        Fail(("%s returns WS_SUCCESS when skipping", label), ("%d", ret));
+    }
+    AssertIntEQ(idx, sizeof(payload));
+    AssertIntEQ(ssh->handshake->ignoreNextKexMsg, 0);
+    AssertIntEQ(ssh->clientState, CLIENT_KEXINIT_DONE);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+static void TestFirstPacketFollowsSkipped(void)
+{
+    RunFirstPacketFollowsSkipCase(wolfSSH_TestDoKexDhInit, "DoKexDhInit");
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
+    RunFirstPacketFollowsSkipCase(wolfSSH_TestDoKexDhGexRequest,
+            "DoKexDhGexRequest");
+#endif
+}
+
+static void TestFirstPacketFollows(void)
+{
+    size_t i;
+    size_t n = sizeof(firstPacketFollowsCases)
+            / sizeof(firstPacketFollowsCases[0]);
+
+    for (i = 0; i < n; i++) {
+        RunFirstPacketFollowsCase(&firstPacketFollowsCases[i]);
+    }
+    TestFirstPacketFollowsSkipped();
+}
+
+#endif /* first_packet_follows coverage guard */
+
+
 int main(int argc, char** argv)
 {
     WOLFSSH_CTX* ctx;
@@ -1926,6 +2087,11 @@ int main(int argc, char** argv)
     TestAgentChannelNullAgentSendsOpenFail();
 #endif
     TestKexInitRejectedWhenKeying(ssh);
+#if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && !defined(WOLFSSH_NO_RSA) \
+    && !defined(WOLFSSH_NO_CURVE25519_SHA256) \
+    && !defined(WOLFSSH_NO_RSA_SHA2_256)
+    TestFirstPacketFollows();
+#endif
     TestDisconnectSetsDisconnectError();
     TestClientBuffersIdempotent();
     TestPasswordEofNoCrash();
