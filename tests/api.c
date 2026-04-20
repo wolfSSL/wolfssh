@@ -1479,20 +1479,29 @@ struct RealPathTestCase {
     const char* exp;
 };
 
+/* On Zephyr, wolfSSH_RealPath preserves the trailing slash after a drive-root
+ * colon (e.g. /C:/) rather than stripping it (e.g. /C:), due to the
+ * WOLFSSH_ZEPHYR guard in the ".." handler. */
+#ifdef WOLFSSH_ZEPHYR
+#define WOLFSSH_TEST_DRIVE_ROOT "/C:/"
+#else
+#define WOLFSSH_TEST_DRIVE_ROOT "/C:"
+#endif
+
 struct RealPathTestCase realPathDefault[] = {
     { ".", "/C:/Users/fred" },
     { "", "/C:/Users/fred" },
     { "/C:/Users/fred/..", "/C:/Users" },
     { "..", "/C:/Users" },
-    { "../..", "/C:" },
+    { "../..", WOLFSSH_TEST_DRIVE_ROOT },
     { "../barney", "/C:/Users/barney" },
-    { "/C:/Users/..", "/C:" },
+    { "/C:/Users/..", WOLFSSH_TEST_DRIVE_ROOT },
     { "/C:/..", "/" },
     { "/C:/../../../../../../../..", "/" },
     { "/", "/" },
-    { "/C:/Users/fred/../..", "/C:" },
+    { "/C:/Users/fred/../..", WOLFSSH_TEST_DRIVE_ROOT },
     { "/C:/Users/fred/././././.", "/C:/Users/fred" },
-    { "/C:/Users/fred/../././..", "/C:" },
+    { "/C:/Users/fred/../././..", WOLFSSH_TEST_DRIVE_ROOT },
     { "./.ssh", "/C:/Users/fred/.ssh" },
     { "./.ssh/../foo", "/C:/Users/fred/foo" },
     { "./.ssh/../foo", "/C:/Users/fred/foo" },
@@ -1514,6 +1523,10 @@ struct RealPathTestCase realPathDefault[] = {
         "/C:/Users/fred/Documents/junk.txt" },
     { "/C:\\Users\\fred/Documents\\junk.txt",
         "/C:/Users/fred/Documents/junk.txt" },
+    /* Root-preservation / canonicalization of leading ".." */
+    { "/../etc/passwd", "/etc/passwd" },
+    { "/../../../etc/passwd", "/etc/passwd" },
+    { "/C:/../../etc/passwd", "/etc/passwd" },
 };
 
 struct RealPathTestCase realPathNull[] = {
@@ -1521,6 +1534,8 @@ struct RealPathTestCase realPathNull[] = {
     { "", "/" },
     { "..", "/" },
     { "../barney", "/barney" },
+    { "/../etc/passwd", "/etc/passwd" },
+    { "/../../../etc/passwd", "/etc/passwd" },
 };
 
 static void DoRealPathTestCase(const char* path, struct RealPathTestCase* tc)
@@ -1534,14 +1549,8 @@ static void DoRealPathTestCase(const char* path, struct RealPathTestCase* tc)
     WMEMSET(checkPath, 0, sizeof checkPath);
     err = wolfSSH_RealPath(path, testPath,
             checkPath, sizeof checkPath);
-    if (err || WSTRCMP(tc->exp, checkPath) != 0) {
-        fprintf(stderr, "RealPath failure (%d)\n"
-                        "    defaultPath: %s\n"
-                        "          input: %s\n"
-                        "       expected: %s\n"
-                        "         output: %s\n", err,
-                        path, tc->in, tc->exp, checkPath);
-    }
+    AssertIntEQ(err, WS_SUCCESS);
+    AssertStrEQ(tc->exp, checkPath);
 }
 
 
@@ -1571,14 +1580,7 @@ static void DoRealPathTestFailCase(struct RealPathTestFailCase* tc)
     WMEMSET(checkPath, 0, sizeof checkPath);
     err = wolfSSH_RealPath(tc->defaultPath, testPath,
             checkPath, tc->checkPathSz);
-    if (err != tc->expErr) {
-        fprintf(stderr, "RealPath fail check failure (%d)\n"
-                        "    defaultPath: %s\n"
-                        "          input: %s\n"
-                        "    checkPathSz: %u\n"
-                        "       expected: %d\n", err,
-                        tc->defaultPath, tc->in, tc->checkPathSz, tc->expErr);
-    }
+    AssertIntEQ(err, tc->expErr);
 }
 
 
