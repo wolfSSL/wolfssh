@@ -626,6 +626,97 @@ static int test_DhGexGroupValidate(void)
 #endif /* WOLFSSH_TEST_INTERNAL && !WOLFSSH_NO_DH_GEX_SHA256 */
 
 
+#ifdef WOLFSSH_TEST_INTERNAL
+
+/* Verify DoUserAuthBanner fully consumes the payload, including a non-empty
+ * language tag. Before the fix, the tag's data bytes were left unconsumed,
+ * which would misalign packet decoding for subsequent messages. */
+static int test_DoUserAuthBanner(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    int result = 0;
+
+    /* Payload layout: [4-byte banner len][banner][4-byte lang len][lang] */
+    struct {
+        const char* banner;
+        word32      bannerSz;
+        const char* lang;
+        word32      langSz;
+        int         expectRet;
+        const char* label;
+    } cases[] = {
+        { "Welcome", 7, "",     0, WS_SUCCESS,   "empty lang tag"    },
+        { "Welcome", 7, "en-US", 5, WS_SUCCESS,  "non-empty lang tag" },
+        { NULL,      0, NULL,   0, WS_BAD_ARGUMENT, "null ssh"       },
+    };
+    int i;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -300;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -301;
+    }
+    ctx->showBanner = 0;
+
+    for (i = 0; i < (int)(sizeof(cases)/sizeof(cases[0])); i++) {
+        byte   buf[128];
+        word32 idx = 0;
+        word32 len = 0;
+        int    ret;
+
+        if (cases[i].banner == NULL) {
+            /* null-ssh case: pass NULL ssh, dummy non-null buf */
+            buf[0] = 0;
+            len = 1;
+            ret = wolfSSH_TestDoUserAuthBanner(NULL, buf, len, &idx);
+        }
+        else {
+            /* encode banner string */
+            buf[len++] = (byte)(cases[i].bannerSz >> 24);
+            buf[len++] = (byte)(cases[i].bannerSz >> 16);
+            buf[len++] = (byte)(cases[i].bannerSz >>  8);
+            buf[len++] = (byte)(cases[i].bannerSz);
+            WMEMCPY(buf + len, cases[i].banner, cases[i].bannerSz);
+            len += cases[i].bannerSz;
+            /* encode language tag string */
+            buf[len++] = (byte)(cases[i].langSz >> 24);
+            buf[len++] = (byte)(cases[i].langSz >> 16);
+            buf[len++] = (byte)(cases[i].langSz >>  8);
+            buf[len++] = (byte)(cases[i].langSz);
+            WMEMCPY(buf + len, cases[i].lang, cases[i].langSz);
+            len += cases[i].langSz;
+
+            ret = wolfSSH_TestDoUserAuthBanner(ssh, buf, len, &idx);
+        }
+
+        if (ret != cases[i].expectRet) {
+            printf("DoUserAuthBanner[%s]: ret=%d, expected=%d\n",
+                    cases[i].label, ret, cases[i].expectRet);
+            result = -302 - i;
+            break;
+        }
+
+        /* On success the entire payload must be consumed. */
+        if (ret == WS_SUCCESS && idx != len) {
+            printf("DoUserAuthBanner[%s]: idx=%u, len=%u (unconsumed bytes)\n",
+                    cases[i].label, idx, len);
+            result = -310 - i;
+            break;
+        }
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+#endif /* WOLFSSH_TEST_INTERNAL */
+
+
 /* Error Code And Message Test */
 
 static int test_Errors(void)
@@ -711,6 +802,12 @@ int wolfSSH_UnitTest(int argc, char** argv)
     unitResult = test_DhGexGroupValidate();
     printf("DhGexGroupValidate: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+#ifdef WOLFSSH_TEST_INTERNAL
+    unitResult = test_DoUserAuthBanner();
+    printf("DoUserAuthBanner: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
 
