@@ -10702,6 +10702,12 @@ int wolfSSH_TestDoReceive(WOLFSSH* ssh)
 {
     return DoReceive(ssh);
 }
+
+int wolfSSH_TestDoUserAuthBanner(WOLFSSH* ssh, byte* buf, word32 len,
+        word32* idx)
+{
+    return DoUserAuthBanner(ssh, buf, len, idx);
+}
 #endif
 
 
