@@ -1327,6 +1327,12 @@ int wolfSSH_extended_data_read(WOLFSSH* ssh, byte* out, word32 outSz)
     buf = ssh->extDataBuffer.buffer + ssh->extDataBuffer.idx;
     WMEMCPY(out, buf, bufSz);
     ssh->extDataBuffer.idx += bufSz;
+
+    if (bufSz > 0 && ssh->channelList != NULL) {
+        SendChannelWindowAdjust(ssh, ssh->channelList->channel, bufSz);
+        ssh->channelList->windowSz += bufSz;
+    }
+
     return bufSz;
 }
 

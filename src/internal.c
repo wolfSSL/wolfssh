@@ -9842,13 +9842,17 @@ static int DoChannelExtendedData(WOLFSSH* ssh,
         channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
         if (channel == NULL)
             ret = WS_INVALID_CHANID;
+        else if (dataSz > channel->windowSz) {
+            WLOG(WS_LOG_ERROR, "Internal state error, too much data");
+            ret = WS_RECV_OVERFLOW_E;
+        }
         else {
-            ret = PutBuffer(&ssh->extDataBuffer,  buf + begin, dataSz);
+            ret = PutBuffer(&ssh->extDataBuffer, buf + begin, dataSz);
             #ifdef DEBUG_WOLFSSH
             DumpOctetString(buf + begin, dataSz);
             #endif
             if (ret == WS_SUCCESS) {
-                ret = SendChannelWindowAdjust(ssh, channel->channel, dataSz);
+                channel->windowSz -= dataSz;
             }
         }
         *idx = begin + dataSz;
