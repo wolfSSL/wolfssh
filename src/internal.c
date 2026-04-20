@@ -8514,7 +8514,7 @@ static int DoUserAuthBanner(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         ret = GetString(banner, &bannerSz, buf, len, idx);
 
     if (ret == WS_SUCCESS)
-        ret = GetSize(&bannerSz, buf, len, idx);
+        ret = GetSkip(buf, len, idx);
 
     if (ret == WS_SUCCESS) {
         if (ssh->ctx->showBanner) {
@@ -10701,6 +10701,12 @@ int DoReceive(WOLFSSH* ssh)
 int wolfSSH_TestDoReceive(WOLFSSH* ssh)
 {
     return DoReceive(ssh);
+}
+
+int wolfSSH_TestDoUserAuthBanner(WOLFSSH* ssh, byte* buf, word32 len,
+        word32* idx)
+{
+    return DoUserAuthBanner(ssh, buf, len, idx);
 }
 #endif
 
