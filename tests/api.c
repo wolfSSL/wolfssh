@@ -52,6 +52,17 @@
 #ifndef WOLFSSH_TEST_BLOCK
     #define WOLFSSH_TEST_HEX2BIN
 #endif
+#ifndef SINGLE_THREADED
+    #ifndef WOLFSSH_TEST_LOCKING
+        #define WOLFSSH_TEST_LOCKING
+    #endif
+    #ifndef WOLFSSH_TEST_SERVER
+        #define WOLFSSH_TEST_SERVER
+    #endif
+    #ifndef WOLFSSH_TEST_THREADING
+        #define WOLFSSH_TEST_THREADING
+    #endif
+#endif
 #include <wolfssh/test.h>
 #include "tests/api.h"
 
@@ -2013,6 +2024,213 @@ static void test_wolfSSH_KeyboardInteractive(void) { ; }
 #endif /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
 #endif /* WOLFSSH_KEYBOARD_INTERACTIVE */
 
+/* Extended data (SSH_MSG_CHANNEL_EXTENDED_DATA) window management test.
+ * Verifies DoChannelExtendedData decrements the channel window and
+ * wolfSSH_extended_data_read restores it via SendChannelWindowAdjust. */
+#if !defined(SINGLE_THREADED) && !defined(NO_WOLFSSH_CLIENT) && \
+        !defined(NO_FILESYSTEM)
+
+static const byte extDataPayload[] = "wolfSSH extended data test";
+#define EXTDATA_PAYLOAD_SZ ((word32)(sizeof(extDataPayload) - 1))
+
+static INLINE void SignalTcpReady(tcp_ready* ready, word16 port)
+{
+#if defined(_POSIX_THREADS) && defined(NO_MAIN_DRIVER) && \
+        !defined(__MINGW32__)
+    pthread_mutex_lock(&ready->mutex);
+    ready->ready = 1;
+    ready->port  = port;
+    pthread_cond_signal(&ready->cond);
+    pthread_mutex_unlock(&ready->mutex);
+#else
+    WOLFSSH_UNUSED(ready);
+    WOLFSSH_UNUSED(port);
+#endif
+}
+
+static int extdata_load_server_key(WOLFSSH_CTX* ctx)
+{
+    byte keyBuf[2048];
+    word32 keySz;
+    WFILE* f;
+    int ret = WS_MEMORY_E;
+
+#ifndef WOLFSSH_NO_ECC
+    if (WFOPEN(NULL, &f, "./keys/server-key-ecc.der", "rb") == 0) {
+#else
+    if (WFOPEN(NULL, &f, "./keys/server-key-rsa.der", "rb") == 0) {
+#endif
+        keySz = (word32)WFREAD(NULL, keyBuf, 1, sizeof(keyBuf), f);
+        WFCLOSE(NULL, f);
+        ret = wolfSSH_CTX_UsePrivateKey_buffer(ctx, keyBuf, keySz,
+                WOLFSSH_FORMAT_ASN1);
+    }
+    return ret;
+}
+
+static int extdata_serverUserAuth(byte authType,
+        WS_UserAuthData* authData, void* ctx)
+{
+    (void)authData;
+    (void)ctx;
+    if (authType == WOLFSSH_USERAUTH_PASSWORD)
+        return WOLFSSH_USERAUTH_SUCCESS;
+    return WOLFSSH_USERAUTH_FAILURE;
+}
+
+static int extdata_clientHostKeyCheck(const byte* key, word32 keySz, void* ctx)
+{
+    (void)key;
+    (void)keySz;
+    (void)ctx;
+    return 0;
+}
+
+static int extdata_clientUserAuth(byte authType,
+        WS_UserAuthData* authData, void* ctx)
+{
+    static const byte pw[] = "upthehill";
+    (void)ctx;
+    if (authType == WOLFSSH_USERAUTH_PASSWORD) {
+        authData->sf.password.password = pw;
+        authData->sf.password.passwordSz = (word32)(sizeof(pw) - 1);
+        return WOLFSSH_USERAUTH_SUCCESS;
+    }
+    return WOLFSSH_USERAUTH_FAILURE;
+}
+
+static THREAD_RETURN WOLFSSH_THREAD extdata_server_thread(void* args)
+{
+    func_args*    funcArgs   = (func_args*)args;
+    tcp_ready*    ready      = funcArgs->signal;
+    WOLFSSH_CTX*  ctx        = NULL;
+    WOLFSSH*      ssh        = NULL;
+    WS_SOCKET_T   listenFd   = WOLFSSH_SOCKET_INVALID;
+    WS_SOCKET_T   sshFd      = WOLFSSH_SOCKET_INVALID;
+    SOCKADDR_IN_T clientAddr;
+    socklen_t     clientAddrSz = sizeof(clientAddr);
+    word16        port         = 0;
+    int           ret;
+    const byte    sentinel     = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL) goto done;
+
+    ret = extdata_load_server_key(ctx);
+    if (ret != WS_SUCCESS) goto done;
+
+    wolfSSH_SetUserAuth(ctx, extdata_serverUserAuth);
+
+    tcp_listen(&listenFd, &port, 1);
+    SignalTcpReady(ready, port);
+
+    sshFd = (WS_SOCKET_T)accept(listenFd,
+            (struct sockaddr*)&clientAddr, &clientAddrSz);
+    if (sshFd == WOLFSSH_SOCKET_INVALID) goto done;
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) goto done;
+    wolfSSH_set_fd(ssh, (int)sshFd);
+
+    do {
+        ret = wolfSSH_accept(ssh);
+    } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE);
+    if (ret != WS_SUCCESS) goto done;
+
+    wolfSSH_extended_data_send(ssh, (byte*)extDataPayload, EXTDATA_PAYLOAD_SZ);
+    wolfSSH_stream_send(ssh, (byte*)&sentinel, sizeof(sentinel));
+    wolfSSH_shutdown(ssh);
+
+done:
+    if (ssh != NULL) {
+        sshFd = wolfSSH_get_fd(ssh);
+        wolfSSH_free(ssh);
+    }
+    if (sshFd != WOLFSSH_SOCKET_INVALID)
+        WCLOSESOCKET(sshFd);
+    if (listenFd != WOLFSSH_SOCKET_INVALID)
+        WCLOSESOCKET(listenFd);
+    wolfSSH_CTX_free(ctx);
+    return 0;
+}
+
+static void test_wolfSSH_extended_data(void)
+{
+    func_args     ser;
+    tcp_ready     ready;
+    THREAD_TYPE   serThread;
+    WOLFSSH_CTX*  ctx    = NULL;
+    WOLFSSH*      ssh    = NULL;
+    WS_SOCKET_T   sockFd = WOLFSSH_SOCKET_INVALID;
+    SOCKADDR_IN_T srvAddr;
+    socklen_t     srvAddrSz = sizeof(srvAddr);
+    byte          extBuf[64];
+    byte          tmpBuf[4];
+    word32        initWindowSz;
+    int           ret;
+
+    WMEMSET(&ser, 0, sizeof(ser));
+    InitTcpReady(&ready);
+    ser.signal = &ready;
+    ThreadStart(extdata_server_thread, (void*)&ser, &serThread);
+    WaitTcpReady(&ready);
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+    wolfSSH_CTX_SetPublicKeyCheck(ctx, extdata_clientHostKeyCheck);
+    wolfSSH_SetUserAuth(ctx, extdata_clientUserAuth);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    wolfSSH_SetUsername(ssh, "jill");
+
+    build_addr(&srvAddr, wolfSshIp, ready.port);
+    tcp_socket(&sockFd, ((struct sockaddr_in*)&srvAddr)->sin_family);
+    ret = connect(sockFd, (const struct sockaddr*)&srvAddr, srvAddrSz);
+    AssertIntEQ(ret, 0);
+
+    wolfSSH_set_fd(ssh, (int)sockFd);
+    ret = wolfSSH_connect(ssh);
+    AssertIntEQ(ret, WS_SUCCESS);
+
+    initWindowSz = ssh->channelList->windowSz;
+
+    /* stream_read returns WS_EXTDATA when extended data arrives */
+    ret = wolfSSH_stream_read(ssh, tmpBuf, sizeof(tmpBuf));
+    AssertIntEQ(ret, WS_EXTDATA);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_EXTDATA);
+
+    /* DoChannelExtendedData must have decremented the window (fix in
+     * internal.c) */
+    AssertIntLT(ssh->channelList->windowSz, initWindowSz);
+
+    /* read extended data and verify content */
+    ret = wolfSSH_extended_data_read(ssh, extBuf, sizeof(extBuf));
+    AssertIntEQ(ret, (int)EXTDATA_PAYLOAD_SZ);
+    AssertIntEQ(0, WMEMCMP(extBuf, extDataPayload, EXTDATA_PAYLOAD_SZ));
+
+    /* window must be restored after application consumed data
+     * (fix in ssh.c: SendChannelWindowAdjust sent from extended_data_read) */
+    AssertIntEQ((int)ssh->channelList->windowSz, (int)initWindowSz);
+
+    /* drain the sentinel byte; ignore return — server may have closed */
+    do {
+        ret = wolfSSH_stream_read(ssh, tmpBuf, sizeof(tmpBuf));
+    } while (ret == WS_EXTDATA || ret == WS_WANT_READ);
+
+    wolfSSH_shutdown(ssh);
+    WCLOSESOCKET(sockFd);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    ThreadJoin(serThread);
+    FreeTcpReady(&ready);
+}
+
+#else
+static void test_wolfSSH_extended_data(void) { ; }
+#endif /* !SINGLE_THREADED && !NO_WOLFSSH_CLIENT && !NO_FILESYSTEM */
+
 #endif /* WOLFSSH_TEST_BLOCK */
 
 
@@ -2058,6 +2276,9 @@ int wolfSSH_ApiTest(int argc, char** argv)
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     test_wolfSSH_KeyboardInteractive();
 #endif
+
+    /* Extended data window management test */
+    test_wolfSSH_extended_data();
 
     /* SCP tests */
     test_wolfSSH_SCP_CB();
