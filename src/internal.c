@@ -4636,6 +4636,13 @@ static int CreateMpint(byte* buf, word32* sz, byte* pad)
         if (buf[i] != 0x00)
             break;
     }
+    /* all-zero buffer encodes as empty mpint per RFC 4251 */
+    if (i == *sz) {
+        *pad = 0;
+        *sz = 0;
+        return WS_SUCCESS;
+    }
+
     *pad = (buf[i] & 0x80) ? 1 : 0;
 
     /* if padding would be needed and have leading 0's already then do not add
