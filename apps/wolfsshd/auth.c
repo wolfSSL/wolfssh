@@ -1078,8 +1078,11 @@ static int DoCheckUser(const char* usr, WOLFSSHD_AUTH* auth)
 }
 
 
-/* @TODO this will take in a pipe or equivalent to talk to a privileged thread
- * rather than having WOLFSSHD_AUTH directly with privilege separation */
+/*
+ * @TODO this will take a pipe or equivalent to talk to a privileged thread
+ * rather than having WOLFSSHD_AUTH directly with privilege separation.
+ * Note: authData->type of WOLFSSH_USERAUTH_NONE is not valid for wolfsshd.
+ */
 static int RequestAuthentication(WS_UserAuthData* authData,
                                  WOLFSSHD_AUTH* authCtx)
 {
@@ -1089,6 +1092,12 @@ static int RequestAuthentication(WS_UserAuthData* authData,
 
     if (authData == NULL || authCtx == NULL) {
         return WOLFSSH_USERAUTH_FAILURE;
+    }
+
+    if (authData->type == WOLFSSH_USERAUTH_NONE) {
+        wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Auth type NONE invalid.");
+        return WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
     }
 
     usr = (const char*)authData->username;
@@ -1291,9 +1300,6 @@ int DefaultUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
     }
 
     if (authType != WOLFSSH_USERAUTH_PASSWORD &&
-#ifdef WOLFSSH_ALLOW_USERAUTH_NONE
-        authType != WOLFSSH_USERAUTH_NONE &&
-#endif
         authType != WOLFSSH_USERAUTH_PUBLICKEY) {
 
         ret = WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
