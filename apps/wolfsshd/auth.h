@@ -34,6 +34,11 @@ int DefaultUserAuthTypes(WOLFSSH* ssh, void* ctx);
 
 typedef struct WOLFSSHD_AUTH WOLFSSHD_AUTH;
 
+enum {
+    WSSHD_AUTH_FAILURE =  0,
+    WSSHD_AUTH_SUCCESS =  1
+};
+
 /*
  * Returns WSSHD_AUTH_SUCCESS if user found, WSSHD_AUTH_FAILURE if user not
  * found, and negative values if an error occurs during checking.
@@ -72,5 +77,11 @@ WOLFSSHD_CONFIG* wolfSSHD_AuthGetUserConf(const WOLFSSHD_AUTH* auth,
 #ifdef _WIN32
 HANDLE wolfSSHD_GetAuthToken(const WOLFSSHD_AUTH* auth);
 int wolfSSHD_GetHomeDirectory(WOLFSSHD_AUTH* auth, WOLFSSH* ssh, WCHAR* out, int outSz);
+#endif
+
+#ifdef WOLFSSHD_UNIT_TEST
+#if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
+int CheckPasswordHashUnix(const char* input, char* stored);
+#endif
 #endif
 #endif /* WOLFAUTH_H */

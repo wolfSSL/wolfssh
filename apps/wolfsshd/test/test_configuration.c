@@ -1,7 +1,26 @@
+/* Match auth.c's feature-test macros so crypt() is declared and so the
+ * pre-existing CleanupWildcardTest code keeps seeing DT_DIR. Must come
+ * before any system header is pulled in. */
+#ifdef __linux__
+    #ifndef _XOPEN_SOURCE
+        #define _XOPEN_SOURCE
+    #endif
+    #ifndef _GNU_SOURCE
+        #define _GNU_SOURCE
+    #endif
+#endif
+
 #include <stdarg.h>
+#if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
+    #include <unistd.h>
+#endif
+#ifdef HAVE_CRYPT_H
+    #include <crypt.h>
+#endif
 
 #include <wolfssh/ssh.h>
 #include <configuration.h>
+#include <auth.h>
 
 #ifndef WOLFSSH_DEFAULT_LOG_WIDTH
     #define WOLFSSH_DEFAULT_LOG_WIDTH 120
@@ -396,10 +415,64 @@ static int test_ConfigFree(void)
     return ret;
 }
 
+#if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
+/* Negative-path coverage for CheckPasswordHashUnix so mutation of the
+ * ConstantCompare clause (the only substantive check once crypt() has
+ * produced its fixed-length output) does not survive the test suite. */
+static int test_CheckPasswordHashUnix(void)
+{
+    int ret = WS_SUCCESS;
+    const char* correct = "wolfssh-test-pass";
+    const char* wrong   = "wolfssh-test-wrong";
+    /* SHA-512 crypt salt; portable across glibc-based crypt() impls. */
+    const char* salt = "$6$wolfsshtestsalt$";
+    char stored[128];
+    char* hash;
+    int rc;
+
+    hash = crypt(correct, salt);
+    if (hash == NULL || hash[0] == '*' || WSTRLEN(hash) == 0) {
+        Log("    crypt() unavailable or refused salt, skipping.\n");
+        return WS_SUCCESS;
+    }
+    if (WSTRLEN(hash) >= sizeof(stored)) {
+        return WS_FATAL_ERROR;
+    }
+    WMEMCPY(stored, hash, WSTRLEN(hash) + 1);
+
+    Log("    Testing scenario: correct password authenticates.");
+    rc = CheckPasswordHashUnix(correct, stored);
+    if (rc == WSSHD_AUTH_SUCCESS) {
+        Log(" PASSED.\n");
+    }
+    else {
+        Log(" FAILED.\n");
+        ret = WS_FATAL_ERROR;
+    }
+
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: wrong password is rejected.");
+        rc = CheckPasswordHashUnix(wrong, stored);
+        if (rc == WSSHD_AUTH_FAILURE) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    return ret;
+}
+#endif /* WOLFSSH_HAVE_LIBCRYPT || WOLFSSH_HAVE_LIBLOGIN */
+
 const TEST_CASE testCases[] = {
     TEST_DECL(test_ParseConfigLine),
     TEST_DECL(test_ConfigCopy),
     TEST_DECL(test_ConfigFree),
+#if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
+    TEST_DECL(test_CheckPasswordHashUnix),
+#endif
 };
 
 int main(int argc, char** argv)
