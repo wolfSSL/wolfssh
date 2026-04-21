@@ -1751,6 +1751,9 @@ static int GetOpenSshKeyEd25519(ed25519_key* key,
         ret = GetStringRef(&pubSz, &pub, buf, len, idx); /* ENC(A) */
     if (ret == WS_SUCCESS)
         ret = GetStringRef(&privSz, &priv, buf, len, idx); /* k || ENC(A) */
+    if (ret == WS_SUCCESS)
+        if (privSz < pubSz)
+            ret = WS_KEY_FORMAT_E;
 
     if (ret == WS_SUCCESS)
         ret = wc_ed25519_import_private_key(priv, privSz - pubSz,
@@ -11988,7 +11991,7 @@ static int KeyAgreeEcdh_server(WOLFSSH* ssh, byte hashId, byte* f, word32* fSz)
 #ifndef WOLFSSH_NO_ECDH
 {
     int ret = WS_SUCCESS;
-    void* heap;
+    void* heap = ssh->ctx->heap;
 #ifdef WOLFSSH_SMALL_STACK
     ecc_key *pubKey = NULL, *privKey = NULL;
     pubKey = (ecc_key*)WMALLOC(sizeof(ecc_key), heap,
@@ -12007,7 +12010,6 @@ static int KeyAgreeEcdh_server(WOLFSSH* ssh, byte hashId, byte* f, word32* fSz)
     WLOG(WS_LOG_DEBUG, "Entering KeyAgreeEcdh_server()");
     WOLFSSH_UNUSED(hashId);
 
-    heap = ssh->ctx->heap;
     primeId  = wcPrimeForId(ssh->handshake->kexId);
     if (primeId == ECC_CURVE_INVALID)
         ret = WS_INVALID_PRIME_CURVE;
