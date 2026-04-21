@@ -10777,6 +10777,12 @@ int wolfSSH_TestDoChannelRequest(WOLFSSH* ssh, byte* buf, word32 len,
 {
     return DoChannelRequest(ssh, buf, len, idx);
 }
+
+int wolfSSH_TestChannelPutData(WOLFSSH_CHANNEL* channel, byte* data,
+        word32 dataSz)
+{
+    return ChannelPutData(channel, data, dataSz);
+}
 #endif
 
 
