@@ -156,13 +156,13 @@
 
 ## Vulnerabilities
 
-- [Critical] CVE-2025-14942. wolfSSH’s key exchange state machine can be
-  manipulated to leak the client’s password in the clear, trick the client to
+- [Critical] CVE-2025-14942. wolfSSH's key exchange state machine can be
+  manipulated to leak the client's password in the clear, trick the client to
   send a bogus signature, or trick the client into skipping user
   authentication. This affects client applications with wolfSSH version 1.4.21
-  and earlier. Users of wolfSSH must update or apply the fix patch and it’s
+  and earlier. Users of wolfSSH must update or apply the fix patch and it's
   recommended to update credentials used. This fix is also recommended for
-  wolfSSH server applications. While there aren’t any specific attacks, the
+  wolfSSH server applications. While there aren't any specific attacks, the
   same defect is present. Thanks to Aina Toky Rasoamanana of Valeo and Olivier
   Levillain of Telecom SudParis for the report. (PR 855)
 - [Medium] CVE-2025-15382. The function used to clean up a path string may read
@@ -223,7 +223,7 @@
   cross-implementation testing. SFTP fix for init to handle channel data which
   resolves a potential interoperability SFTP connection issue. (PR 846)
 - Fixed SCP receive handling to reject traversal filenames containing path
-  separators or “dot” components. (PR 845)
+  separators or "dot" components. (PR 845)
 - Fixed missing declaration of wc_SSH_KDF that caused build failures under
   strict compiler warnings. (PR 848)
 - Fixed SSH agent test setup so regression tests exercise the intended code
@@ -237,7 +237,7 @@
 
 ## Vulnerabilities
 
-- [Critical] CVE-2025-11625 The client's host verification can be bypassed by a malicious server, and client credentials leaked. This affects client applications with wolfSSH version 1.4.20 and earlier. Users of wolfSSH on the client side must update or apply the fix patch and it’s recommended to update credentials used. Fixed in PR (https://github.com/wolfSSL/wolfssh/pull/840)
+- [Critical] CVE-2025-11625 The client's host verification can be bypassed by a malicious server, and client credentials leaked. This affects client applications with wolfSSH version 1.4.20 and earlier. Users of wolfSSH on the client side must update or apply the fix patch and it's recommended to update credentials used. Fixed in PR (https://github.com/wolfSSL/wolfssh/pull/840)
 
 - [Med] CVE-2025-11624 Potential for stack overflow write when reading the file handle provided by an SFTP client. After a SFTP connection was established there is the case where a SFTP client could craft a malicious read, write or set state SFTP packet which would cause the SFTP server code to write into stack. Thanks to Stanislav Fort of Aisle Research for the report. Fixed in PR (https://github.com/wolfSSL/wolfssh/pull/834)
 
@@ -330,7 +330,7 @@
 ## Fixes
 
 - Remove Inline for function HashForId() to resolve clash with WOLFSSH_LOCAL declaration (PR 738)
-- Fix for wolfSSHd’s handling of re-key and window full when processing a command with lots of stdout text (PR 719)
+- Fix for wolfSSHd's handling of re-key and window full when processing a command with lots of stdout text (PR 719)
 - Fix for wolfSSH client app to gracefully clean up on failure and added more WLOG debug messages (PR 732)
 - Minor static analysis report fixes (PR 740, 735)
 - Fix for handling SFTP transfer to non-existent folder (PR 743)
@@ -371,7 +371,7 @@
 - Add callback hooks for most channel messages including open, close, success,
   fail, and requests.
 - Reduce the number of memory allocations SCP makes.
-- Improve wolfSSHd’s behavior on closing a connection. It closes channels and
+- Improve wolfSSHd's behavior on closing a connection. It closes channels and
   waits for the peer to close the channels.
 
 ## Fixes
@@ -532,7 +532,7 @@
 - Internal refactor of client apps to simplify them and added X509 support to scpclient
 - wolfSSH_accept now returns WS_SCP_INIT and needs called again to complete the SCP operation
 - Update to document Cube Pack dependencies
-- Add carriage return for ‘enter’ key in the example client with shell connections to windows server
+- Add carriage return for 'enter' key in the example client with shell connections to windows server
 - Stack usage improvement to limit the scope of variables
 - Echoserver example SFTP non blocking improvement for want read cases
 - Increase SFTP performance with throughput
@@ -540,7 +540,7 @@
 ## Fixes
 
 - Fix for calling chdir after chroot with wolfSSHd when jailing connections on unix environments
-- Better handling on the server side for when the client’s window is filled up
+- Better handling on the server side for when the client's window is filled up
 - Fix for building the client project on windows when shell support is enabled
 - Sanity check improvements for handling memory management with non blocking connections
 - Fix for support with secondary groups with wolfSSHd
@@ -716,7 +716,7 @@
 - Fix for potential memory leak with agent and a case with wolfSHS_SFTP_GetHandle
 - Fuzzing fix for potential out of bounds read in the public key user auth messages
 - MQX build fixes
-- Sanity check that agent was set before setting the agent’s channel
+- Sanity check that agent was set before setting the agent's channel
 - Fuzzing fix for bounds checking with DoKexDhReply internal function
 - Fuzzing fix for clean up of base path with SCP use
 - Fuzzing fix for sanity checks on setting the prime group and generator
@@ -817,7 +817,7 @@
 - Fix for warning with enums used with SFTP and set socket type
 - Added example server with Renesas CS+ port
 - Fix for initializing UserAuthData to all zeros before use
-- Fix for SFTP “LS” operation when setting the default window size to 2048
+- Fix for SFTP "LS" operation when setting the default window size to 2048
 - Add structure size print out option -z to example client when the macro
   WOLFSSH_SHOW_SIZES is defined
 - Additional automated tests of wolfSSH_CTX_UsePrivateKey_buffer and fix for
@@ -853,12 +853,12 @@
 - Change name of internal function SendBuffered() to avoid clash with wolfSSL
 - Add support for SFTP on Windows
 - Use int types for arguments in examples to fix Raspberry Pi build
-- Fix for fail case with leading 0’s on MPINT
+- Fix for fail case with leading 0's on MPINT
 - Default window size (DEFAULT_WINDOW_SZ) lowered from ~ 1 MB to ~ 16 KB
 - Disable examples option added to configure (--disable-examples)
 - Callback function and example use added for checking public key sent
 - AES CTR cipher support added
-- Fix for free’ing ECC caches with examples
+- Fix for free'ing ECC caches with examples
 - Renamed example SFTP to be examples/sftpclient/wolfsftp
 
 

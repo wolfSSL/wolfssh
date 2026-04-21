@@ -559,9 +559,9 @@ static int AcceptAnyServerHostKey(const byte* pubKey, word32 pubKeySz,
 }
 
 /* Run one pubkey auth attempt.
- * sCtx   – server context (authorised key hash)
- * cCtx   – client context (key material to present)
- * expect – expected return value from both wolfSSH_connect() and
+ * sCtx   - server context (authorised key hash)
+ * cCtx   - client context (key material to present)
+ * expect - expected return value from both wolfSSH_connect() and
  *           wolfSSH_accept(): WS_SUCCESS for a valid-key test,
  *           WS_FATAL_ERROR for a reject test */
 static int run_pubkey_test(PubkeyServerCtx* sCtx, PubkeyClientCtx* cCtx,
