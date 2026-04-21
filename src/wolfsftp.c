@@ -2056,7 +2056,7 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_OPEN");
 
-    #ifdef MICROCHIP_MPLAB_HARMONY
+    #if defined(MICROCHIP_MPLAB_HARMONY) || defined(FREESCALE_MQX)
         fd = WBADFILE;
     #else
         fd = -1;
@@ -5541,7 +5541,8 @@ static int SFTP_SetMode(void* fs, char* name, word32 mode) {
 #endif
 
 #if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR) \
-    && !defined(WOLFSSH_SFTP_SETMODEHANDLE) && !defined(WOLFSSH_FATFS)
+    && !defined(WOLFSSH_SFTP_SETMODEHANDLE) && !defined(WOLFSSH_FATFS) \
+    && !defined(FREESCALE_MQX)
 /* Set the files mode
  * return WS_SUCCESS on success */
 static int SFTP_SetModeHandle(void* fs, WFD handle, word32 mode) {
@@ -5553,7 +5554,8 @@ static int SFTP_SetModeHandle(void* fs, WFD handle, word32 mode) {
 }
 #endif
 
-#if !defined(_WIN32_WCE) && !defined(WOLFSSH_ZEPHYR) && !defined(WOLFSSH_FATFS)
+#if !defined(_WIN32_WCE) && !defined(WOLFSSH_ZEPHYR) && !defined(WOLFSSH_FATFS) \
+    && !defined(FREESCALE_MQX)
 
 /* sets a files attributes
  * returns WS_SUCCESS on success */
