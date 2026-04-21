@@ -164,12 +164,12 @@ static void myStatusCb(WOLFSSH* sshIn, word32* bytes, char* name)
     currentTime = current_time(0);
     if (currentTime == lastOutputTime) {
         if (bytes[0] != lastPrintedBytes[0] || bytes[1] != lastPrintedBytes[1]) {
-            /* Progress made in the same second — throttle but track latest */
+            /* Progress made in the same second - throttle but track latest */
             lastPrintedBytes[0] = bytes[0];
             lastPrintedBytes[1] = bytes[1];
             return;
         }
-        /* bytes unchanged: EOF final call — fall through to print */
+        /* bytes unchanged: EOF final call - fall through to print */
     }
     else {
         lastOutputTime = currentTime;

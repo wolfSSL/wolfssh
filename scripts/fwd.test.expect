@@ -75,14 +75,14 @@ puts "\n\[1\] Starting nc server: nc -l 11111"
 spawn nc -l 11111
 set nc_server_id  $spawn_id
 set nc_server_pid [exp_pid]
-puts "    PID $nc_server_pid — waiting for a connection..."
+puts "    PID $nc_server_pid - waiting for a connection..."
 
 # --- [2] Start wolfssh server ------------------------------------------------
 puts "\n\[2\] Starting wolfssh server..."
 spawn ./examples/echoserver/echoserver -1 -f
 set wolfssh_srv_id  $spawn_id
 set wolfssh_srv_pid [exp_pid]
-puts "    PID $wolfssh_srv_pid — waiting for a connection..."
+puts "    PID $wolfssh_srv_pid - waiting for a connection..."
 
 # --- [3] Start wolfssh client ------------------------------------------------
 puts "\n\[3\] Starting wolfssh client (plain:12345 -> 11111)..."

@@ -378,7 +378,7 @@ static int test_ConfigCopy(void)
     return ret;
 }
 
-/* Verifies ConfigFree releases all string fields — most useful under ASan. */
+/* Verifies ConfigFree releases all string fields - most useful under ASan. */
 static int test_ConfigFree(void)
 {
     int ret = WS_SUCCESS;
@@ -403,10 +403,10 @@ static int test_ConfigFree(void)
     if (ret == WS_SUCCESS)
         ret = wolfSSHD_ConfigSetAuthKeysFile(head, ".ssh/authorized_keys");
 
-    /* Match User — allocates usrAppliesTo on the copied node */
+    /* Match User - allocates usrAppliesTo on the copied node */
     if (ret == WS_SUCCESS) ret = PCL("Match User alice");
 
-    /* Match Group — allocates groupAppliesTo on the next copied node */
+    /* Match Group - allocates groupAppliesTo on the next copied node */
     if (ret == WS_SUCCESS) ret = PCL("Match Group staff");
 #undef PCL
 
