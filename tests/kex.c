@@ -305,6 +305,81 @@ static int wolfSSH_KexTest_Connect(const char* kex)
     return EXIT_SUCCESS;
 }
 
+
+#ifndef WOLFSSH_NO_ED25519
+static int wolfSSH_KexTest_Ed25519HostKey(void)
+{
+    tcp_ready ready;
+    THREAD_TYPE serverThread;
+    func_args serverArgs;
+    func_args clientArgs;
+    char sA[NUMARGS][ARGLEN];
+    char *serverArgv[NUMARGS] =
+        { sA[0], sA[1], sA[2], sA[3], sA[4], sA[5], sA[6], sA[7], sA[8],
+          sA[9], sA[10], sA[11] };
+    char cA[NUMARGS][ARGLEN];
+    char *clientArgv[NUMARGS] =
+        { cA[0], cA[1], cA[2], cA[3], cA[4], cA[5], cA[6], cA[7], cA[8],
+          cA[9], cA[10], cA[11] };
+    int serverArgc = 0;
+    int clientArgc = 0;
+
+    InitTcpReady(&ready);
+
+    ADD_ARG(serverArgv, serverArgc, "echoserver");
+    ADD_ARG(serverArgv, serverArgc, "-1");
+    ADD_ARG(serverArgv, serverArgc, "-f");
+    #if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR)
+        ADD_ARG(serverArgv, serverArgc, "-p");
+        ADD_ARG(serverArgv, serverArgc, "-0");
+    #endif
+    ADD_ARG(serverArgv, serverArgc, "-k");
+    ADD_ARG(serverArgv, serverArgc, "ssh-ed25519");
+
+    serverArgs.argc = serverArgc;
+    serverArgs.argv = serverArgv;
+    serverArgs.return_code = EXIT_SUCCESS;
+    serverArgs.signal = &ready;
+    serverArgs.user_auth = NULL;
+    ThreadStart(echoserver_test, &serverArgs, &serverThread);
+    WaitTcpReady(&ready);
+
+    ADD_ARG(clientArgv, clientArgc, "client");
+    ADD_ARG(clientArgv, clientArgc, "-u");
+    ADD_ARG(clientArgv, clientArgc, "jill");
+    #if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR)
+        ADD_ARG(clientArgv, clientArgc, "-p");
+        ADD_ARG_INT(clientArgv, clientArgc, ready.port);
+    #endif
+
+    clientArgs.argc = clientArgc;
+    clientArgs.argv = clientArgv;
+    clientArgs.return_code = EXIT_SUCCESS;
+    clientArgs.signal = &ready;
+    clientArgs.user_auth = tsClientUserAuth;
+
+    client_test(&clientArgs);
+
+#ifdef WOLFSSH_ZEPHYR
+    k_sleep(Z_TIMEOUT_TICKS(100));
+#endif
+    ThreadJoin(serverThread);
+
+    if (clientArgs.return_code == WS_SOCKET_ERROR_E) {
+        clientArgs.return_code = WS_SUCCESS;
+    }
+    if (serverArgs.return_code == WS_SOCKET_ERROR_E) {
+        serverArgs.return_code = WS_SUCCESS;
+    }
+    AssertIntEQ(WS_SUCCESS, clientArgs.return_code);
+    AssertIntEQ(WS_SUCCESS, serverArgs.return_code);
+
+    FreeTcpReady(&ready);
+
+    return EXIT_SUCCESS;
+}
+#endif /* WOLFSSH_NO_ED25519 */
+
 #endif /* KEXTEST_AVAILABLE */
 
 int wolfSSH_KexTest(int argc, char** argv)
@@ -352,6 +427,9 @@ int wolfSSH_KexTest(int argc, char** argv)
 #if !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384)
     AssertIntEQ(wolfSSH_KexTest_Connect("mlkem1024nistp384-sha384"),
             EXIT_SUCCESS);
+#endif
+#ifndef WOLFSSH_NO_ED25519
+    AssertIntEQ(wolfSSH_KexTest_Ed25519HostKey(), EXIT_SUCCESS);
 #endif
 
     AssertIntEQ(wolfSSH_Cleanup(), WS_SUCCESS);
