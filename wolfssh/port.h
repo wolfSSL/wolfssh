@@ -449,7 +449,8 @@ extern "C" {
     #define WFSEEK(fs,s,o,w)    fseek((s),(o),(w))
     #define WFTELL(fs,s)        ftell((s))
     #define WFSTAT(fs,fd,b)     fstat((fd),(b))
-    #define WREWIND(fs,s)       rewind((s))
+    #define WREWIND(fs,s)       do { fseek((s),0,SEEK_SET); \
+                                     clearerr((s)); } while (0)
     #define WSEEK_END           SEEK_END
     #define WBADFILE            NULL
     #define WSETTIME(fs,f,a,m) (0)
