@@ -40,6 +40,9 @@
 #include <wolfssl/wolfcrypt/curve25519.h>
 #include <wolfssl/wolfcrypt/ed25519.h>
 
+#ifndef WOLFSSL_WOLFSSH
+    #error "wolfssh requires wolfSSL built with WOLFSSL_WOLFSSH"
+#endif
 #ifdef WOLFSSH_SCP
     #include <wolfssh/wolfscp.h>
 #endif
