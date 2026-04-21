@@ -2415,6 +2415,11 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
         else
             ret = wc_CertPemToDer(in, inSz, der, inSz, wcType);
         if (ret < 0) {
+            if (type == BUFTYPE_PRIVKEY) {
+                /* wc_KeyPemToDer may have written partial key material;
+                 * zeroize before free on the private-key path. */
+                ForceZero(der, inSz);
+            }
             WFREE(der, heap, dynamicType);
             return WS_BAD_FILE_E;
         }
@@ -2430,8 +2435,10 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
     if (type == BUFTYPE_PRIVKEY) {
         ret = IdentifyAsn1Key(der, derSz, 1, ctx->heap, NULL);
         if (ret < 0) {
-            if (der != NULL)
+            if (der != NULL) {
+                ForceZero(der, derSz);
                 WFREE(der, heap, dynamicType);
+            }
             return ret;
         }
         keyId = (byte)ret;
