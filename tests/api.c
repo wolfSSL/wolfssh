@@ -579,6 +579,7 @@ static void test_wolfSSH_CTX_UseCert_buffer(void)
             wolfSSH_CTX_UseCert_buffer(ctx, cert, certSz, 99));
 
     free(cert);
+    cert = NULL;
 
     AssertIntEQ(0, load_file("./keys/server-cert.der", &cert, &certSz));
     AssertNotNull(cert);
