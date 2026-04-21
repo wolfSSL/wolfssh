@@ -1648,6 +1648,7 @@ static void TestPasswordEofNoCrash(void)
     WMEMSET(&auth, 0, sizeof(auth));
 
     savedStdin = dup(STDIN_FILENO);
+    AssertTrue(savedStdin >= 0);
     devNull = open("/dev/null", O_RDONLY);
     AssertTrue(devNull >= 0);
     AssertTrue(dup2(devNull, STDIN_FILENO) >= 0);
