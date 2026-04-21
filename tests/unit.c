@@ -718,6 +718,75 @@ static int test_DoUserAuthBanner(void)
     return result;
 }
 
+static int test_ChannelPutData(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    WOLFSSH_CHANNEL* channel = NULL;
+    byte data[110];
+    int result = 0;
+    int ret;
+
+    WMEMSET(data, 0xAB, sizeof(data));
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -400;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -401;
+    }
+
+    /* Window of 100 bytes, matching the input buffer size. */
+    channel = ChannelNew(ssh, ID_CHANTYPE_SESSION, 100, 100);
+    if (channel == NULL) {
+        wolfSSH_free(ssh);
+        wolfSSH_CTX_free(ctx);
+        return -402;
+    }
+
+    /* NULL channel */
+    ret = wolfSSH_TestChannelPutData(NULL, data, 10);
+    if (ret != WS_BAD_ARGUMENT) {
+        result = -403;
+        goto done;
+    }
+
+    /* NULL data */
+    ret = wolfSSH_TestChannelPutData(channel, NULL, 10);
+    if (ret != WS_BAD_ARGUMENT) {
+        result = -404;
+        goto done;
+    }
+
+    /* dataSz exceeds windowSz: 101 > 100 */
+    ret = wolfSSH_TestChannelPutData(channel, data, 101);
+    if (ret != WS_FATAL_ERROR) {
+        result = -405;
+        goto done;
+    }
+
+    /* Valid write consuming half the window */
+    ret = wolfSSH_TestChannelPutData(channel, data, 50);
+    if (ret != WS_SUCCESS) {
+        result = -406;
+        goto done;
+    }
+
+    /* Remaining windowSz is 50; sending 51 must be rejected */
+    ret = wolfSSH_TestChannelPutData(channel, data, 51);
+    if (ret != WS_FATAL_ERROR) {
+        result = -407;
+        goto done;
+    }
+
+done:
+    ChannelDelete(channel, ctx->heap);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
 
 /* Verify DoChannelRequest sends CHANNEL_SUCCESS for known types and
  * CHANNEL_FAILURE for unrecognized ones (RFC 4254 Section 5.4).
@@ -1138,6 +1207,9 @@ int wolfSSH_UnitTest(int argc, char** argv)
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
+    unitResult = test_ChannelPutData();
+    printf("ChannelPutData: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
 #endif
 
 #ifdef WOLFSSH_KEYGEN
