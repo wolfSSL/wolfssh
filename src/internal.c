@@ -10170,7 +10170,7 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
 
 
 static INLINE int Encrypt(WOLFSSH* ssh, byte* cipher, const byte* input,
-                          word16 sz)
+                          word32 sz)
 {
     int ret = WS_SUCCESS;
 
@@ -10218,7 +10218,7 @@ static INLINE int Encrypt(WOLFSSH* ssh, byte* cipher, const byte* input,
 
 
 static INLINE int Decrypt(WOLFSSH* ssh, byte* plain, const byte* input,
-                          word16 sz)
+                          word32 sz)
 {
     int ret = WS_SUCCESS;
 
@@ -10464,9 +10464,9 @@ static INLINE void AeadIncrementExpIv(byte* iv)
 
 
 static INLINE int EncryptAead(WOLFSSH* ssh, byte* cipher,
-                              const byte* input, word16 sz,
+                              const byte* input, word32 sz,
                               byte* authTag, const byte* auth,
-                              word16 authSz)
+                              word32 authSz)
 {
     int ret = WS_SUCCESS;
 
@@ -10499,9 +10499,9 @@ static INLINE int EncryptAead(WOLFSSH* ssh, byte* cipher,
 
 
 static INLINE int DecryptAead(WOLFSSH* ssh, byte* plain,
-                              const byte* input, word16 sz,
+                              const byte* input, word32 sz,
                               const byte* authTag, const byte* auth,
-                              word16 authSz)
+                              word32 authSz)
 {
     int ret = WS_SUCCESS;
 
