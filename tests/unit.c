@@ -714,6 +714,137 @@ static int test_DoUserAuthBanner(void)
     return result;
 }
 
+
+/* Verify DoChannelRequest sends CHANNEL_SUCCESS for known types and
+ * CHANNEL_FAILURE for unrecognized ones (RFC 4254 Section 5.4).
+ *
+ * A custom IoSend callback captures the outgoing packet in plaintext
+ * (no cipher negotiated on a fresh session). The SSH packet layout is:
+ *   [4-byte packet_length][1-byte padding_length][1-byte msg_id]...
+ * so the message ID lives at byte offset 5. */
+static byte   s_chanReqCapture[256];
+static word32 s_chanReqCaptureSz = 0;
+
+static int CaptureIoSendChanReq(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    (void)ssh; (void)ctx;
+    s_chanReqCaptureSz = (sz < (word32)sizeof(s_chanReqCapture))
+                         ? sz : (word32)sizeof(s_chanReqCapture);
+    WMEMCPY(s_chanReqCapture, buf, s_chanReqCaptureSz);
+    return (int)sz;
+}
+
+static int test_DoChannelRequest(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              i;
+
+    /* Payloads: [uint32 channelId=0][string type][byte wantReply=1][extra] */
+    static const byte payShell[] = {
+        0x00,0x00,0x00,0x00,              /* channelId = 0   */
+        0x00,0x00,0x00,0x05,              /* typeSz = 5      */
+        0x73,0x68,0x65,0x6C,0x6C,         /* "shell"         */
+        0x01                              /* wantReply = 1   */
+    };
+    static const byte payExec[] = {
+        0x00,0x00,0x00,0x00,              /* channelId = 0   */
+        0x00,0x00,0x00,0x04,              /* typeSz = 4      */
+        0x65,0x78,0x65,0x63,              /* "exec"          */
+        0x01,                             /* wantReply = 1   */
+        0x00,0x00,0x00,0x02,              /* cmdSz = 2       */
+        0x6C,0x73                         /* "ls"            */
+    };
+    static const byte payUnknown[] = {
+        0x00,0x00,0x00,0x00,              /* channelId = 0   */
+        0x00,0x00,0x00,0x0C,              /* typeSz = 12     */
+        0x75,0x6E,0x6B,0x6E,0x6F,0x77,
+        0x6E,0x2D,0x74,0x79,0x70,0x65,   /* "unknown-type"  */
+        0x01                              /* wantReply = 1   */
+    };
+
+    struct {
+        const char* label;
+        const byte* payload;
+        word32      payloadSz;
+        int         expectRet;
+        byte        expectMsgId;
+    } cases[] = {
+        { "shell",
+          payShell,   (word32)sizeof(payShell),
+          WS_SUCCESS, MSGID_CHANNEL_SUCCESS },
+        { "exec",
+          payExec,    (word32)sizeof(payExec),
+          WS_SUCCESS, MSGID_CHANNEL_SUCCESS },
+        { "unknown-type",
+          payUnknown, (word32)sizeof(payUnknown),
+          WS_SUCCESS, MSGID_CHANNEL_FAILURE },
+    };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -400;
+    wolfSSH_SetIOSend(ctx, CaptureIoSendChanReq);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        result = -401;
+        goto done;
+    }
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION,
+                    DEFAULT_WINDOW_SZ, DEFAULT_MAX_PACKET_SZ);
+    if (ch == NULL) {
+        result = -402;
+        goto done;
+    }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -403;
+        goto done;
+    }
+
+    for (i = 0; i < (int)(sizeof(cases) / sizeof(cases[0])); i++) {
+        word32 idx = 0;
+        int    ret;
+
+        s_chanReqCaptureSz = 0;
+        WMEMSET(s_chanReqCapture, 0, sizeof(s_chanReqCapture));
+
+        ret = wolfSSH_TestDoChannelRequest(ssh,
+                (byte*)cases[i].payload, cases[i].payloadSz, &idx);
+
+        if (ret != cases[i].expectRet) {
+            printf("DoChannelRequest[%s]: ret=%d, expected=%d\n",
+                    cases[i].label, ret, cases[i].expectRet);
+            result = -404 - i;
+            goto done;
+        }
+
+        if (s_chanReqCaptureSz <= 5) {
+            printf("DoChannelRequest[%s]: captured packet too short (%u)\n",
+                    cases[i].label, s_chanReqCaptureSz);
+            result = -410 - i;
+            goto done;
+        }
+
+        if (s_chanReqCapture[5] != cases[i].expectMsgId) {
+            printf("DoChannelRequest[%s]: msg_id=0x%02x, expected=0x%02x\n",
+                    cases[i].label,
+                    s_chanReqCapture[5], cases[i].expectMsgId);
+            result = -420 - i;
+            goto done;
+        }
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
 #endif /* WOLFSSH_TEST_INTERNAL */
 
 
@@ -808,6 +939,10 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #ifdef WOLFSSH_TEST_INTERNAL
     unitResult = test_DoUserAuthBanner();
     printf("DoUserAuthBanner: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DoChannelRequest();
+    printf("DoChannelRequest: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
 

@@ -9652,6 +9652,10 @@ static int DoChannelRequest(WOLFSSH* ssh,
                 WLOG(WS_LOG_AGENT, "Agent callback not set, not using.");
         }
         #endif /* WOLFSSH_AGENT */
+        else {
+            WLOG(WS_LOG_DEBUG, "  unknown channel request type, rejecting.");
+            rej = 1;
+        }
     }
 
     if (ret == WS_SUCCESS) {
@@ -10707,6 +10711,12 @@ int wolfSSH_TestDoUserAuthBanner(WOLFSSH* ssh, byte* buf, word32 len,
         word32* idx)
 {
     return DoUserAuthBanner(ssh, buf, len, idx);
+}
+
+int wolfSSH_TestDoChannelRequest(WOLFSSH* ssh, byte* buf, word32 len,
+        word32* idx)
+{
+    return DoChannelRequest(ssh, buf, len, idx);
 }
 #endif
 
