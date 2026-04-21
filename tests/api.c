@@ -522,7 +522,12 @@ static int load_file(const char* filename, byte** buf, word32* bufSz)
     }
 
     if (ret == 0) {
-        rewind(f);
+        ret = fseek(f, 0, XSEEK_SET);
+        if (ret < 0)
+            ret = -8;
+    }
+
+    if (ret == 0) {
         *buf = (byte*)malloc(*bufSz);
         if (*buf == NULL)
             ret = -5;
