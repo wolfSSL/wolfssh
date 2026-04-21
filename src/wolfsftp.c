@@ -2928,7 +2928,7 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
 
         if (SFTP_GetAttributes(ssh->fs, s, &out->atrb, 0, ssh->ctx->heap)
                 != WS_SUCCESS) {
-            WLOG(WS_LOG_SFTP, "Unable to get attribute values for %s", buf);
+            WLOG(WS_LOG_SFTP, "Unable to get attribute values for %s", s);
         }
     }
 
