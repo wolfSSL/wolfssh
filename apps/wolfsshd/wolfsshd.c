@@ -1424,7 +1424,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         else { /* open interactive shell */
             ret = execv(cmd, (char**)args);
         }
-        if (ret && errno) {
+        if (ret) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue opening shell");
             exit(1);
         }
