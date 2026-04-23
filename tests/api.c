@@ -1855,6 +1855,30 @@ static void test_wolfSSH_QueryAlgoList(void)
     AssertNull(name);
 
     k = wolfSSH_CheckAlgoName("ssh-rsa");
+#ifndef WOLFSSH_NO_SSH_RSA_SHA1
+    AssertIntEQ(WS_SUCCESS, k);
+#else
+    AssertIntEQ(WS_INVALID_ALGO_ID, k);
+#endif /* WOLFSSH_NO_SSH_RSA_SHA1 */
+
+    k = wolfSSH_CheckAlgoName("ecdsa-sha2-nistp256");
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    AssertIntEQ(WS_SUCCESS, k);
+#else
+    AssertIntEQ(WS_INVALID_ALGO_ID, k);
+#endif /* WOLFSSH_NO_ECDSA_SHA2_NISTP256 */
+
+    k = wolfSSH_CheckAlgoName("diffie-hellman-group14-sha256");
+#ifndef WOLFSSH_NO_DH_GROUP14_SHA256
+    AssertIntEQ(WS_SUCCESS, k);
+#else
+    AssertIntEQ(WS_INVALID_ALGO_ID, k);
+#endif /* WOLFSSH_NO_DH_GROUP14_SHA256 */
+
+    k = wolfSSH_CheckAlgoName("server-sig-algs");
+    AssertIntEQ(WS_SUCCESS, k);
+
+    k = wolfSSH_CheckAlgoName("nistp256");
     AssertIntEQ(WS_SUCCESS, k);
 
     k = wolfSSH_CheckAlgoName("not-an-algo@wolfssl.com");

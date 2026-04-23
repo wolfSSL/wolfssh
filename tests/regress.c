@@ -1644,20 +1644,41 @@ static void TestSftpRemoveHandleHeadUpdate(void)
 #endif
 #endif
 
+#if !(defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256))
 /* Ensure client buffer cleanup tolerates multiple invocations after allocs. */
 static void TestClientBuffersIdempotent(void)
 {
-    int ret;
+#ifndef WOLFSSH_NO_RSA
+    {
+        int ret;
 
-    ret = ClientUsePubKey("keys/gretel-key-rsa.pub");
-    AssertIntEQ(ret, 0);
-    ret = ClientSetPrivateKey("keys/gretel-key-rsa.pem");
-    AssertIntEQ(ret, 0);
+        ret = ClientUsePubKey("keys/gretel-key-rsa.pub");
+        AssertIntEQ(ret, 0);
+        ret = ClientSetPrivateKey("keys/gretel-key-rsa.pem");
+        AssertIntEQ(ret, 0);
 
-    ClientFreeBuffers();
-    /* Should be safe to call again without double free. */
-    ClientFreeBuffers();
+        ClientFreeBuffers();
+        /* Should be safe to call again without double free. */
+        ClientFreeBuffers();
+    }
+#endif
+
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    {
+        int ret;
+
+        ret = ClientUsePubKey("keys/gretel-key-ecc.pub");
+        AssertIntEQ(ret, 0);
+        ret = ClientSetPrivateKey("keys/gretel-key-ecc.pem");
+        AssertIntEQ(ret, 0);
+
+        ClientFreeBuffers();
+        /* Should be safe to call again without double free. */
+        ClientFreeBuffers();
+    }
+#endif
 }
+#endif
 
 /* Simulate Ctrl+D (stdin EOF) during password prompt; expect failure but no crash. */
 static void TestPasswordEofNoCrash(void)
@@ -2157,7 +2178,9 @@ int main(int argc, char** argv)
     TestFirstPacketFollows();
 #endif
     TestDisconnectSetsDisconnectError();
+#if !(defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256))
     TestClientBuffersIdempotent();
+#endif
     TestPasswordEofNoCrash();
 #ifndef WOLFSSH_TEST_BLOCK
     TestWorkerReadsWhenSendWouldBlock();
