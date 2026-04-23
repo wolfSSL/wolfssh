@@ -1489,6 +1489,30 @@ static void TestGlobalRequestFwdCancelWithCbSendsSuccess(void)
 
     FreeChannelOpenHarness(&harness);
 }
+
+/* Verify DoRequestSuccess correctly consumes a uint32 port payload (RFC 4254
+ * §4) without treating it as a length prefix, which would overrun the buffer
+ * and produce WS_BUFFER_E. */
+static void TestRequestSuccessWithPortParsesCorrectly(void)
+{
+    ChannelOpenHarness harness;
+    byte payload[UINT32_SZ];
+    byte in[64];
+    word32 inSz;
+    word32 idx = 0;
+    int ret;
+
+    idx = AppendUint32(payload, sizeof(payload), idx, 2222);
+    inSz = WrapPacket(MSGID_REQUEST_SUCCESS, payload, idx, in, sizeof(in));
+
+    InitChannelOpenHarness(&harness, in, inSz);
+
+    ret = DoReceive(harness.ssh);
+
+    AssertIntEQ(ret, WS_SUCCESS);
+
+    FreeChannelOpenHarness(&harness);
+}
 #endif
 
 #ifdef WOLFSSH_AGENT
@@ -2121,6 +2145,7 @@ int main(int argc, char** argv)
     TestGlobalRequestFwdWithCbSendsSuccess();
     TestGlobalRequestFwdCancelNoCbSendsFailure();
     TestGlobalRequestFwdCancelWithCbSendsSuccess();
+    TestRequestSuccessWithPortParsesCorrectly();
 #endif
 #ifdef WOLFSSH_AGENT
     TestAgentChannelNullAgentSendsOpenFail();
