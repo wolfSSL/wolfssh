@@ -213,6 +213,7 @@ WOLFSSHD_CONFIG* wolfSSHD_ConfigNew(void* heap)
         /* default values */
         ret->port = 22;
         ret->passwordAuth = 1;
+        ret->loginTimer = 120;
     }
     return ret;
 
