@@ -6578,16 +6578,11 @@ static int DoIgnore(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
 static int DoRequestSuccess(WOLFSSH *ssh, byte *buf, word32 len, word32 *idx)
 {
-    word32 dataSz;
     word32 begin = *idx;
     int    ret=WS_SUCCESS;
 
-    WOLFSSH_UNUSED(ssh);
-    WOLFSSH_UNUSED(len);
-
     WLOG(WS_LOG_DEBUG, "DoRequestSuccess, *idx=%d, len=%d", *idx, len);
-    ato32(buf + begin, &dataSz);
-    begin += LENGTH_SZ + dataSz;
+    begin += len;
 
     if (ssh->ctx->reqSuccessCb != NULL)
         ret = ssh->ctx->reqSuccessCb(ssh, &(buf[*idx]), len, ssh->reqSuccessCtx);
@@ -6599,16 +6594,11 @@ static int DoRequestSuccess(WOLFSSH *ssh, byte *buf, word32 len, word32 *idx)
 
 static int DoRequestFailure(WOLFSSH *ssh, byte *buf, word32 len, word32 *idx)
 {
-    word32 dataSz;
     word32 begin = *idx;
     int ret = WS_SUCCESS;
 
-    WOLFSSH_UNUSED(ssh);
-    WOLFSSH_UNUSED(len);
-
-    WLOG(WS_LOG_DEBUG, "DoRequestFalure, *idx=%d, len=%d", *idx, len);
-    ato32(buf + begin, &dataSz);
-    begin += LENGTH_SZ + dataSz;
+    WLOG(WS_LOG_DEBUG, "DoRequestFailure, *idx=%d, len=%d", *idx, len);
+    begin += len;
 
     if (ssh->ctx->reqFailureCb != NULL)
         ret = ssh->ctx->reqFailureCb(ssh, &(buf[*idx]), len, ssh->reqFailureCtx);
