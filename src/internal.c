@@ -853,37 +853,6 @@ INLINE static int IsMessageAllowed(WOLFSSH *ssh, byte msg, byte state)
     return 0;
 }
 
-#ifdef WOLFSSH_TEST_INTERNAL
-int wolfSSH_TestIsMessageAllowed(WOLFSSH* ssh, byte msg, byte state)
-{
-    return IsMessageAllowed(ssh, msg, state);
-}
-
-static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx);
-static int DoKexDhInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx);
-#ifndef WOLFSSH_NO_DH_GEX_SHA256
-static int DoKexDhGexRequest(WOLFSSH* ssh, byte* buf, word32 len, word32* idx);
-#endif
-
-int wolfSSH_TestDoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
-{
-    return DoKexInit(ssh, buf, len, idx);
-}
-
-int wolfSSH_TestDoKexDhInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
-{
-    return DoKexDhInit(ssh, buf, len, idx);
-}
-
-#ifndef WOLFSSH_NO_DH_GEX_SHA256
-int wolfSSH_TestDoKexDhGexRequest(WOLFSSH* ssh, byte* buf, word32 len,
-        word32* idx)
-{
-    return DoKexDhGexRequest(ssh, buf, len, idx);
-}
-#endif
-#endif
-
 
 static const char cannedKexAlgoNames[] =
 #if !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
@@ -6558,15 +6527,6 @@ static int DoKexDhGexGroup(WOLFSSH* ssh,
     return ret;
 }
 
-#ifdef WOLFSSH_TEST_INTERNAL
-int wolfSSH_TestValidateKexDhGexGroup(const byte* primeGroup,
-        word32 primeGroupSz, const byte* generator, word32 generatorSz,
-        word32 minBits, word32 maxBits, WC_RNG* rng)
-{
-    return ValidateKexDhGexGroup(primeGroup, primeGroupSz,
-            generator, generatorSz, minBits, maxBits, rng);
-}
-#endif
 #endif /* !WOLFSSH_NO_DH_GEX_SHA256 */
 
 
@@ -10750,31 +10710,6 @@ int DoReceive(WOLFSSH* ssh)
     return ret;
 }
 
-#ifdef WOLFSSH_TEST_INTERNAL
-int wolfSSH_TestDoReceive(WOLFSSH* ssh)
-{
-    return DoReceive(ssh);
-}
-
-int wolfSSH_TestDoUserAuthBanner(WOLFSSH* ssh, byte* buf, word32 len,
-        word32* idx)
-{
-    return DoUserAuthBanner(ssh, buf, len, idx);
-}
-
-int wolfSSH_TestDoChannelRequest(WOLFSSH* ssh, byte* buf, word32 len,
-        word32* idx)
-{
-    return DoChannelRequest(ssh, buf, len, idx);
-}
-
-int wolfSSH_TestChannelPutData(WOLFSSH_CHANNEL* channel, byte* data,
-        word32 dataSz)
-{
-    return ChannelPutData(channel, data, dataSz);
-}
-#endif
-
 
 int DoProtoId(WOLFSSH* ssh)
 {
@@ -11968,15 +11903,6 @@ int wolfSSH_RsaVerify(const byte *sig, word32 sigSz,
     return ret;
 }
 
-#ifdef WOLFSSH_TEST_INTERNAL
-int wolfSSH_TestRsaVerify(const byte* sig, word32 sigSz,
-        const byte* encDigest, word32 encDigestSz,
-        RsaKey* key, void* heap)
-{
-    return wolfSSH_RsaVerify(sig, sigSz, encDigest, encDigestSz,
-            key, heap, "wolfSSH_TestRsaVerify");
-}
-#endif /* WOLFSSH_TEST_INTERNAL */
 #endif /* WOLFSSH_NO_RSA */
 
 
@@ -17933,3 +17859,76 @@ void AddAssign64(word32* addend1, word32 addend2)
 }
 
 #endif /* WOLFSSH_SFTP */
+
+
+#ifdef WOLFSSH_TEST_INTERNAL
+
+int wolfSSH_TestIsMessageAllowed(WOLFSSH* ssh, byte msg, byte state)
+{
+    return IsMessageAllowed(ssh, msg, state);
+}
+
+int wolfSSH_TestDoReceive(WOLFSSH* ssh)
+{
+    return DoReceive(ssh);
+}
+
+int wolfSSH_TestDoUserAuthBanner(WOLFSSH* ssh, byte* buf, word32 len,
+        word32* idx)
+{
+    return DoUserAuthBanner(ssh, buf, len, idx);
+}
+
+int wolfSSH_TestDoChannelRequest(WOLFSSH* ssh, byte* buf, word32 len,
+        word32* idx)
+{
+    return DoChannelRequest(ssh, buf, len, idx);
+}
+
+int wolfSSH_TestDoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
+{
+    return DoKexInit(ssh, buf, len, idx);
+}
+
+int wolfSSH_TestDoKexDhInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
+{
+    return DoKexDhInit(ssh, buf, len, idx);
+}
+
+int wolfSSH_TestChannelPutData(WOLFSSH_CHANNEL* channel, byte* data,
+        word32 dataSz)
+{
+    return ChannelPutData(channel, data, dataSz);
+}
+
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
+
+int wolfSSH_TestDoKexDhGexRequest(WOLFSSH* ssh, byte* buf, word32 len,
+        word32* idx)
+{
+    return DoKexDhGexRequest(ssh, buf, len, idx);
+}
+
+int wolfSSH_TestValidateKexDhGexGroup(const byte* primeGroup,
+        word32 primeGroupSz, const byte* generator, word32 generatorSz,
+        word32 minBits, word32 maxBits, WC_RNG* rng)
+{
+    return ValidateKexDhGexGroup(primeGroup, primeGroupSz,
+            generator, generatorSz, minBits, maxBits, rng);
+}
+
+#endif /* !WOLFSSH_NO_DH_GEX_SHA256 */
+
+#ifndef WOLFSSH_NO_RSA
+
+int wolfSSH_TestRsaVerify(const byte* sig, word32 sigSz,
+        const byte* encDigest, word32 encDigestSz,
+        RsaKey* key, void* heap)
+{
+    return wolfSSH_RsaVerify(sig, sigSz, encDigest, encDigestSz,
+            key, heap, "wolfSSH_TestRsaVerify");
+}
+
+#endif /* !WOLFSSH_NO_RSA */
+
+#endif /* WOLFSSH_TEST_INTERNAL */
