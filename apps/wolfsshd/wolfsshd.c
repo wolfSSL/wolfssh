@@ -1851,7 +1851,10 @@ static void* HandleConnection(void* arg)
         graceTime = wolfSSHD_AuthGetGraceTime(conn->auth);
         if (graceTime > 0) {
     #ifdef WIN32
-            /* @TODO SetTimer(NULL, NULL, graceTime, alarmCatch); */
+            /* LoginGraceTime enforcement is not yet implemented on Windows.
+             * @TODO implement via CreateWaitableTimer or similar. */
+            wolfSSH_Log(WS_LOG_WARN, "[SSHD] LoginGraceTime is set but "
+                        "not enforced on this platform");
     #else
             signal(SIGALRM, alarmCatch);
             alarm((unsigned int)graceTime);

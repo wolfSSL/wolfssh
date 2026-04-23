@@ -156,10 +156,10 @@ static int RunTest(const TEST_CASE* tc)
 
     ret = tc->func();
     if (ret != 0) {
-        Log("%s FAILED.\n", tc->name);
+        fprintf(stderr, "%s FAILED (ret=%d).\n", tc->name, ret);
     }
     else {
-        Log("%s PASSED.\n", tc->name);
+        fprintf(stderr, "%s PASSED.\n", tc->name);
     }
 
     TestCleanup();
@@ -172,6 +172,32 @@ typedef struct {
     const char* line;
     int shouldFail;
 } CONFIG_LINE_VECTOR;
+
+static int test_ConfigDefaults(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* conf;
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL)
+        ret = WS_MEMORY_E;
+
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetGraceTime(conf) != 120)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetPort(conf) != 22)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetPwAuth(conf) == 0)
+            ret = WS_FATAL_ERROR;
+    }
+
+    wolfSSHD_ConfigFree(conf);
+    return ret;
+}
 
 static int test_ParseConfigLine(void)
 {
@@ -277,8 +303,8 @@ static int test_ConfigCopy(void)
         ret = wolfSSHD_ConfigSetHostCertFile(head, "/etc/ssh/host_cert.pub");
     if (ret == WS_SUCCESS)
         ret = wolfSSHD_ConfigSetUserCAKeysFile(head, "/etc/ssh/ca.pub");
-    if (ret == WS_SUCCESS)
-        ret = wolfSSHD_ConfigSetAuthKeysFile(head, ".ssh/authorized_keys");
+    /* AuthorizedKeysFile must go through PCL so authKeysFileSet flag is set */
+    if (ret == WS_SUCCESS) ret = PCL("AuthorizedKeysFile .ssh/authorized_keys");
 
     /* scalar fields */
     if (ret == WS_SUCCESS) ret = PCL("Port 2222");
@@ -286,7 +312,7 @@ static int test_ConfigCopy(void)
     if (ret == WS_SUCCESS) ret = PCL("PasswordAuthentication yes");
     if (ret == WS_SUCCESS) ret = PCL("PermitEmptyPasswords yes");
     if (ret == WS_SUCCESS) ret = PCL("PermitRootLogin yes");
-    if (ret == WS_SUCCESS) ret = PCL("UsePrivilegeSeparation yes");
+    if (ret == WS_SUCCESS) ret = PCL("UsePrivilegeSeparation sandbox");
 
     /* trigger ConfigCopy via Match; conf advances to the new node */
     if (ret == WS_SUCCESS) ret = PCL("Match User testuser");
@@ -370,7 +396,7 @@ static int test_ConfigCopy(void)
             ret = WS_FATAL_ERROR;
     }
     if (ret == WS_SUCCESS) {
-        if (wolfSSHD_ConfigGetPrivilegeSeparation(match) == 0)
+        if (wolfSSHD_ConfigGetPrivilegeSeparation(match) != WOLFSSHD_PRIV_SANDBOX)
             ret = WS_FATAL_ERROR;
     }
 
@@ -467,6 +493,7 @@ static int test_CheckPasswordHashUnix(void)
 #endif /* WOLFSSH_HAVE_LIBCRYPT || WOLFSSH_HAVE_LIBLOGIN */
 
 const TEST_CASE testCases[] = {
+    TEST_DECL(test_ConfigDefaults),
     TEST_DECL(test_ParseConfigLine),
     TEST_DECL(test_ConfigCopy),
     TEST_DECL(test_ConfigFree),
