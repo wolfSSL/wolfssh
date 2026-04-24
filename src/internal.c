@@ -5823,6 +5823,17 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         return ret;
     }
 
+    if (ret == WS_SUCCESS) {
+        if (ssh->handshake->ignoreNextKexMsg) {
+            /* skip this message. */
+            WLOG(WS_LOG_DEBUG, "Skipping server's KEXDH_REPLY message due to "
+                               "first_packet_follows guess mismatch.");
+            ssh->handshake->ignoreNextKexMsg = 0;
+            *idx += len;
+            return WS_SUCCESS;
+        }
+    }
+
     if (ret == WS_SUCCESS && len < LENGTH_SZ*2 + *idx) {
         ret = WS_BUFFER_E;
     }
@@ -17899,6 +17910,11 @@ int wolfSSH_TestDoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 int wolfSSH_TestDoKexDhInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
     return DoKexDhInit(ssh, buf, len, idx);
+}
+
+int wolfSSH_TestDoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
+{
+    return DoKexDhReply(ssh, buf, len, idx);
 }
 
 int wolfSSH_TestChannelPutData(WOLFSSH_CHANNEL* channel, byte* data,
