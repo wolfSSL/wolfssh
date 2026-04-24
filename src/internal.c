@@ -8920,6 +8920,12 @@ static int DoChannelOpen(WOLFSSH* ssh,
             if (ssh->ctx->channelOpenCb) {
                 ret = ssh->ctx->channelOpenCb(newChannel, ssh->channelOpenCtx);
             }
+            else {
+                WLOG(WS_LOG_WARN, "No channel open callback set "
+                        "(call wolfSSH_CTX_SetChannelOpenCb()), accepting "
+                        "channel open by default; typeId=%u, peerChannelId=%u",
+                        (word32)typeId, peerChannelId);
+            }
             if (ssh->channelListSz == 0)
                 ssh->defaultPeerChannelId = peerChannelId;
         #ifdef WOLFSSH_FWD
