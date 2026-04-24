@@ -570,13 +570,11 @@ static HandshakeInfo* HandshakeInfoNew(void* heap)
                                     heap, DYNTYPE_HS);
     if (newHs != NULL) {
         WMEMSET(newHs, 0, sizeof(HandshakeInfo));
-        newHs->expectMsgId = MSGID_NONE;
-        newHs->kexId = ID_NONE;
         newHs->kexHashId = WC_HASH_TYPE_NONE;
-        newHs->pubKeyId  = ID_NONE;
-        newHs->encryptId = ID_NONE;
-        newHs->macId = ID_NONE;
         newHs->blockSz = MIN_BLOCK_SZ;
+        newHs->peerBlockSz = MIN_BLOCK_SZ;
+        /* peerEncryptId, peerMacId, peerAeadMode, peerMacSz: left at 0
+         * (== ID_NONE / no-MAC) by the WMEMSET above. */
         newHs->eSz = (word32)sizeof(newHs->e);
         newHs->xSz = (word32)sizeof(newHs->x);
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
@@ -2624,7 +2622,7 @@ static int GenerateKeys(WOLFSSH* ssh, byte hashId, byte doKeyPad)
     Keys* sK = NULL;
     int ret = WS_SUCCESS;
 
-    if (ssh == NULL)
+    if (ssh == NULL || ssh->handshake == NULL)
         ret = WS_BAD_ARGUMENT;
     else {
         if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
@@ -2657,19 +2655,17 @@ static int GenerateKeys(WOLFSSH* ssh, byte hashId, byte doKeyPad)
                           sK->encKey, sK->encKeySz,
                           ssh->k, ssh->kSz, ssh->h, ssh->hSz,
                           ssh->sessionId, ssh->sessionIdSz, doKeyPad);
-    if (ret == WS_SUCCESS) {
-        if (!ssh->handshake->aeadMode) {
-            ret = GenerateKey(hashId, 'E',
-                              cK->macKey, cK->macKeySz,
-                              ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                              ssh->sessionId, ssh->sessionIdSz, doKeyPad);
-            if (ret == WS_SUCCESS) {
-                ret = GenerateKey(hashId, 'F',
-                                  sK->macKey, sK->macKeySz,
-                                  ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                                  ssh->sessionId, ssh->sessionIdSz, doKeyPad);
-            }
-        }
+    if (ret == WS_SUCCESS && cK->macKeySz > 0) {
+        ret = GenerateKey(hashId, 'E',
+                          cK->macKey, cK->macKeySz,
+                          ssh->k, ssh->kSz, ssh->h, ssh->hSz,
+                          ssh->sessionId, ssh->sessionIdSz, doKeyPad);
+    }
+    if (ret == WS_SUCCESS && sK->macKeySz > 0) {
+        ret = GenerateKey(hashId, 'F',
+                          sK->macKey, sK->macKeySz,
+                          ssh->k, ssh->kSz, ssh->h, ssh->hSz,
+                          ssh->sessionId, ssh->sessionIdSz, doKeyPad);
     }
 
 #ifdef SHOW_SECRETS
@@ -4242,6 +4238,52 @@ static word32 AlgoListSz(const char* algoList)
 }
 
 
+static void SetLocalAlgoIds(HandshakeInfo* hs,
+                             byte encId, byte aeadMode, byte macId)
+{
+    byte blkSz = BlockSzForId(encId);
+    hs->encryptId          = encId;
+    hs->aeadMode           = aeadMode;
+    hs->blockSz            = blkSz;
+    hs->keys.encKeySz      = KeySzForId(encId);
+    if (!aeadMode) {
+        hs->keys.ivSz      = blkSz;
+        hs->macId          = macId;
+        hs->macSz          = MacSzForId(macId);
+        hs->keys.macKeySz  = KeySzForId(macId);
+    }
+    else {
+        hs->keys.ivSz      = AEAD_NONCE_SZ;
+        hs->macId          = ID_NONE;
+        hs->macSz          = blkSz;
+        hs->keys.macKeySz  = 0;
+    }
+}
+
+
+static void SetPeerAlgoIds(HandshakeInfo* hs,
+                            byte encId, byte aeadMode, byte macId)
+{
+    byte blkSz = BlockSzForId(encId);
+    hs->peerEncryptId         = encId;
+    hs->peerAeadMode          = aeadMode;
+    hs->peerBlockSz           = blkSz;
+    hs->peerKeys.encKeySz     = KeySzForId(encId);
+    if (!aeadMode) {
+        hs->peerKeys.ivSz     = blkSz;
+        hs->peerMacId         = macId;
+        hs->peerMacSz         = MacSzForId(macId);
+        hs->peerKeys.macKeySz = KeySzForId(macId);
+    }
+    else {
+        hs->peerKeys.ivSz     = AEAD_NONCE_SZ;
+        hs->peerMacId         = ID_NONE;
+        hs->peerMacSz         = blkSz;
+        hs->peerKeys.macKeySz = 0;
+    }
+}
+
+
 static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
     int ret = WS_SUCCESS;
@@ -4257,6 +4299,9 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     word32 cannedAlgoNamesSz;
     word32 skipSz = 0;
     word32 begin;
+    byte c2sEncryptId = ID_NONE, s2cEncryptId = ID_NONE;
+    byte c2sMacId     = ID_NONE, s2cMacId     = ID_NONE;
+    byte c2sAeadMode  = 0,       s2cAeadMode  = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering DoKexInit()");
 
@@ -4398,6 +4443,10 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             ret = WS_MATCH_ENC_ALGO_E;
         }
     }
+    if (ret == WS_SUCCESS) {
+        c2sEncryptId = algoId;
+        c2sAeadMode  = AeadModeForId(algoId);
+    }
 
     /* Enc Algorithms - Server to Client */
     if (ret == WS_SUCCESS) {
@@ -4406,32 +4455,21 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         ret = GetNameList(list, &listSz, buf, len, &begin);
     }
     if (ret == WS_SUCCESS) {
-        algoId = MatchIdLists(side, list, listSz, &algoId, 1);
+        cannedAlgoNamesSz = AlgoListSz(ssh->algoListCipher);
+        cannedListSz = (word32)sizeof(cannedList);
+        ret = GetNameListRaw(cannedList, &cannedListSz,
+                (const byte*)ssh->algoListCipher, cannedAlgoNamesSz);
+    }
+    if (ret == WS_SUCCESS) {
+        algoId = MatchIdLists(side, list, listSz, cannedList, cannedListSz);
         if (algoId == ID_UNKNOWN) {
             WLOG(WS_LOG_DEBUG, "Unable to negotiate Encryption Algo S2C");
             ret = WS_MATCH_ENC_ALGO_E;
         }
     }
     if (ret == WS_SUCCESS) {
-        ssh->handshake->encryptId = algoId;
-        ssh->handshake->aeadMode = AeadModeForId(algoId);
-        ssh->handshake->blockSz = BlockSzForId(algoId);
-        ssh->handshake->keys.encKeySz =
-            ssh->handshake->peerKeys.encKeySz =
-            KeySzForId(algoId);
-        if (!ssh->handshake->aeadMode) {
-            ssh->handshake->keys.ivSz =
-                ssh->handshake->peerKeys.ivSz =
-                ssh->handshake->blockSz;
-        }
-        else {
-#ifndef WOLFSSH_NO_AEAD
-            ssh->handshake->keys.ivSz =
-                ssh->handshake->peerKeys.ivSz =
-                AEAD_NONCE_SZ;
-            ssh->handshake->macSz = ssh->handshake->blockSz;
-#endif
-        }
+        s2cEncryptId = algoId;
+        s2cAeadMode  = AeadModeForId(algoId);
     }
 
     /* MAC Algorithms - Client to Server */
@@ -4440,7 +4478,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         listSz = (word32)sizeof(list);
         ret = GetNameList(list, &listSz, buf, len, &begin);
     }
-    if (ret == WS_SUCCESS && !ssh->handshake->aeadMode) {
+    if (ret == WS_SUCCESS && !c2sAeadMode) {
         cannedAlgoNamesSz = AlgoListSz(ssh->algoListMac);
         cannedListSz = (word32)sizeof(cannedList);
         ret = GetNameListRaw(cannedList, &cannedListSz,
@@ -4452,6 +4490,9 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 WLOG(WS_LOG_DEBUG, "Unable to negotiate MAC Algo C2S");
                 ret = WS_MATCH_MAC_ALGO_E;
             }
+            else {
+                c2sMacId = algoId;
+            }
         }
     }
 
@@ -4461,18 +4502,20 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         listSz = (word32)sizeof(list);
         ret = GetNameList(list, &listSz, buf, len, &begin);
     }
-    if (ret == WS_SUCCESS && !ssh->handshake->aeadMode) {
-        algoId = MatchIdLists(side, list, listSz, &algoId, 1);
-        if (algoId == ID_UNKNOWN) {
-            WLOG(WS_LOG_DEBUG, "Unable to negotiate MAC Algo S2C");
-            ret = WS_MATCH_MAC_ALGO_E;
-        }
-        else {
-            ssh->handshake->macId = algoId;
-            ssh->handshake->macSz = MacSzForId(algoId);
-            ssh->handshake->keys.macKeySz =
-                ssh->handshake->peerKeys.macKeySz =
-                KeySzForId(algoId);
+    if (ret == WS_SUCCESS && !s2cAeadMode) {
+        cannedAlgoNamesSz = AlgoListSz(ssh->algoListMac);
+        cannedListSz = (word32)sizeof(cannedList);
+        ret = GetNameListRaw(cannedList, &cannedListSz,
+                (const byte*)ssh->algoListMac, cannedAlgoNamesSz);
+        if (ret == WS_SUCCESS) {
+            algoId = MatchIdLists(side, list, listSz, cannedList, cannedListSz);
+            if (algoId == ID_UNKNOWN) {
+                WLOG(WS_LOG_DEBUG, "Unable to negotiate MAC Algo S2C");
+                ret = WS_MATCH_MAC_ALGO_E;
+            }
+            else {
+                s2cMacId = algoId;
+            }
         }
     }
 
@@ -4544,6 +4587,19 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         ret = GetUint32(&skipSz, buf, len, &begin);
         if (ret == WS_SUCCESS)
             begin += skipSz;
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
+            /* s2c = local (server outgoing), c2s = peer (client incoming) */
+            SetLocalAlgoIds(ssh->handshake, s2cEncryptId, s2cAeadMode, s2cMacId);
+            SetPeerAlgoIds (ssh->handshake, c2sEncryptId, c2sAeadMode, c2sMacId);
+        }
+        else {
+            /* c2s = local (client outgoing), s2c = peer (server incoming) */
+            SetLocalAlgoIds(ssh->handshake, c2sEncryptId, c2sAeadMode, c2sMacId);
+            SetPeerAlgoIds (ssh->handshake, s2cEncryptId, s2cAeadMode, s2cMacId);
+        }
     }
 
     if (ret == WS_SUCCESS) {
@@ -6225,11 +6281,11 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     }
 
     if (ret == WS_SUCCESS) {
-        ssh->peerEncryptId = ssh->handshake->encryptId;
-        ssh->peerMacId = ssh->handshake->macId;
-        ssh->peerBlockSz = ssh->handshake->blockSz;
-        ssh->peerMacSz = ssh->handshake->macSz;
-        ssh->peerAeadMode = ssh->handshake->aeadMode;
+        ssh->peerEncryptId = ssh->handshake->peerEncryptId;
+        ssh->peerMacId = ssh->handshake->peerMacId;
+        ssh->peerBlockSz = ssh->handshake->peerBlockSz;
+        ssh->peerMacSz = ssh->handshake->peerMacSz;
+        ssh->peerAeadMode = ssh->handshake->peerAeadMode;
         WMEMCPY(&ssh->peerKeys, &ssh->handshake->peerKeys, sizeof(Keys));
 
         switch (ssh->peerEncryptId) {
@@ -17957,6 +18013,25 @@ int wolfSSH_TestDoChannelRequest(WOLFSSH* ssh, byte* buf, word32 len,
 int wolfSSH_TestDoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
     return DoKexInit(ssh, buf, len, idx);
+}
+
+int wolfSSH_TestDoNewKeys(WOLFSSH* ssh)
+{
+    /* DoNewKeys ignores buf/len/idx (marked WOLFSSH_UNUSED internally). */
+    return DoNewKeys(ssh, NULL, 0, NULL);
+}
+
+void wolfSSH_TestFreeHandshake(WOLFSSH* ssh)
+{
+    if (ssh != NULL) {
+        HandshakeInfoFree(ssh->handshake, ssh->ctx ? ssh->ctx->heap : NULL);
+        ssh->handshake = NULL;
+    }
+}
+
+int wolfSSH_TestGenerateKeys(WOLFSSH* ssh, byte hashId)
+{
+    return GenerateKeys(ssh, hashId, 1);
 }
 
 int wolfSSH_TestDoKexDhInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
