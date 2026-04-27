@@ -480,10 +480,10 @@ extern "C" {
                     unsigned long desiredAccess, unsigned long shareMode,
                     unsigned long creationDisposition, unsigned long flags,
                     void* heap);
-            WOLFSSH_LOCAL void* WS_FindFirstFileA(const char* fileName,
+            WOLFSSH_API void* WS_FindFirstFileA(const char* fileName,
                     char* realFileName, size_t realFileNameSz, int* isDir,
                     void* heap);
-            WOLFSSH_LOCAL int WS_FindNextFileA(void* findHandle,
+            WOLFSSH_API int WS_FindNextFileA(void* findHandle,
                     char* realFileName, size_t realFileNameSz);
             WOLFSSH_LOCAL int WS_GetFileAttributesExA(const char* fileName,
                     void* fileInfo, void* heap);
