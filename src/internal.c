@@ -3359,59 +3359,68 @@ retry:
 }
 
 
-static int GetInputText(WOLFSSH* ssh, byte** pEol)
+/* Reads one CRLF- or LF-terminated line into ssh->inputBuffer. On success,
+ * *pEol points to the start of the terminator ('\r' for CRLF, '\n' for LF
+ * only) so the caller can compute line length and terminator size.
+ *
+ * Per RFC 4253 Section 4.2, the SSH version line is at most 255 octets
+ * including the terminator. The same cap is applied to pre-version banner
+ * lines: a line longer than that returns WS_VERSION_E. */
+static int GetInputLine(WOLFSSH* ssh, byte** pEol)
 {
-    int gotLine = 0;
-    int inSz = 255;
+    int inSz;
     int in;
-    char *eol = NULL;
+    char* lf;
+    byte* buffer;
 
-    if (GrowBuffer(&ssh->inputBuffer, inSz) < 0)
+    /* Compact so any unconsumed data (e.g., the remainder of a prior
+     * banner-line read) starts at buffer[0]. GrowBuffer(0) shifts the
+     * data when length > 0, and is preferred over ShrinkBuffer here
+     * because ShrinkBuffer skips the shift when data exceeds
+     * STATIC_BUFFER_LEN. */
+    if (GrowBuffer(&ssh->inputBuffer, 0) < 0)
         return WS_MEMORY_E;
 
     do {
+        buffer = ssh->inputBuffer.buffer;
+        lf = WSTRNSTR((const char*)buffer, "\n", ssh->inputBuffer.length);
+        if (lf != NULL) {
+            /* eol points to the start of the terminator: back up onto a
+             * preceding CR if present, otherwise leave it on the LF. Be
+             * lenient on the CR per RFC 4253 Section 4.2. */
+            if ((byte*)lf > buffer && lf[-1] == '\r')
+                lf--;
+            if (pEol)
+                *pEol = (byte*)lf;
+            return WS_SUCCESS;
+        }
+
+        /* 255-byte per-line cap: includes the terminator. If the buffer is
+         * already at the cap with no LF, the line is too long. */
+        if (ssh->inputBuffer.length >= WOLFSSH_PROTOID_LIMIT)
+            return WS_VERSION_E;
+
+        inSz = WOLFSSH_PROTOID_LIMIT - (int)ssh->inputBuffer.length;
+        if (GrowBuffer(&ssh->inputBuffer, inSz) != WS_SUCCESS)
+            return WS_MEMORY_E;
+
         in = ReceiveData(ssh,
-                     ssh->inputBuffer.buffer + ssh->inputBuffer.length, inSz);
+                ssh->inputBuffer.buffer + ssh->inputBuffer.length,
+                (word32)inSz);
 
-        if (in == -1) {
-            return WS_SOCKET_ERROR_E;
-        }
-
-        if (in == WS_WANT_READ) {
+        if (in == WS_WANT_READ)
             return WS_WANT_READ;
-        }
-
-        if (in > inSz) {
+        /* Any other non-positive return is treated as a connection failure:
+         * ReceiveData maps WS_CBIO_ERR_CONN_CLOSE to -1, and a clean EOF
+         * (in == 0) mid-version-exchange means the peer hung up before
+         * sending a complete identification line. */
+        if (in <= 0)
+            return WS_SOCKET_ERROR_E;
+        if (in > inSz)
             return WS_RECV_OVERFLOW_E;
-        }
 
-        ssh->inputBuffer.length += in;
-        inSz -= in;
-
-        eol = WSTRNSTR((const char*)ssh->inputBuffer.buffer, "\r\n",
-                       ssh->inputBuffer.length);
-
-        /* section 4.2 in RFC 4253 states that can be lenient on the CR for
-         * interop with older or undocumented versions of SSH */
-        if (!eol) {
-            WLOG(WS_LOG_DEBUG, "Checking for old version of protocol exchange");
-            eol = WSTRNSTR((const char*)ssh->inputBuffer.buffer, "\n",
-                       ssh->inputBuffer.length);
-        }
-
-        if (eol)
-            gotLine = 1;
-
-    } while (!gotLine && inSz);
-
-    if (pEol)
-        *pEol = (byte*)eol;
-
-    if (!gotLine) {
-        return WS_VERSION_E;
-    }
-
-    return WS_SUCCESS;
+        ssh->inputBuffer.length += (word32)in;
+    } while (1);
 }
 
 
@@ -10733,20 +10742,63 @@ int DoProtoId(WOLFSSH* ssh)
     int ret;
     word32 idSz;
     byte* eol;
-    byte  SSH_PROTO_EOL_SZ = 1;
+    byte  eolSz;
+    int   allowBanner;
 
-    if ( (ret = GetInputText(ssh, &eol)) < 0) {
-        WLOG(WS_LOG_DEBUG, "get input text failed");
-        return ret;
-    }
+    /*
+     * RFC 4253 Section 4.2: The server MAY send other lines of data before
+     * the version string. The client MUST send the version string first
+     * with no preceding data. So pre-version banner lines are accepted
+     * only when this endpoint is the client reading the server's
+     * identification. A wolfSSH server reading a client's identification
+     * rejects any non-"SSH-" line. The 255-byte per-line cap is enforced
+     * by GetInputLine, which also returns WS_SOCKET_ERROR_E if the peer
+     * stops sending before a complete line arrives. The number of banner
+     * lines is also bounded by WOLFSSH_MAX_BANNER_LINES so a peer cannot
+     * stall the connection by dribbling well-formed banner lines forever
+     * even when the embedder has not configured a connect timeout.
+     */
+    allowBanner = (ssh->ctx->side == WOLFSSH_ENDPOINT_CLIENT);
 
-    if (eol == NULL) {
-        WLOG(WS_LOG_DEBUG, "invalid EOL");
-        return WS_VERSION_E;
-    }
+    do {
+        ret = GetInputLine(ssh, &eol);
+        if (ret < 0) {
+            WLOG(WS_LOG_DEBUG, "get input line failed");
+            return ret;
+        }
 
-    if (WSTRNCASECMP((char*)ssh->inputBuffer.buffer,
-                     ssh->ctx->sshProtoIdStr, SSH_PROTO_SZ) == 0) {
+        if (ssh->inputBuffer.length >= 4
+            && WSTRNCASECMP((char*)ssh->inputBuffer.buffer, "SSH-", 4) == 0)
+            break;
+
+        if (!allowBanner) {
+            WLOG(WS_LOG_DEBUG, "non-SSH line from peer");
+            return WS_VERSION_E;
+        }
+        if (++ssh->handshake->bannerLines > WOLFSSH_MAX_BANNER_LINES) {
+            WLOG(WS_LOG_DEBUG, "too many banner lines");
+            return WS_VERSION_E;
+        }
+
+        /* Banner line: log without the terminator and advance past it.
+         * The next GetInputLine compacts so the next line starts at
+         * buffer[0]. Logged at debug level since the bytes are
+         * peer-controlled and may contain control characters. */
+        WLOG(WS_LOG_DEBUG, "peer banner: %.*s",
+             (int)(eol - ssh->inputBuffer.buffer),
+             ssh->inputBuffer.buffer);
+        ssh->inputBuffer.idx +=
+            (word32)(eol - ssh->inputBuffer.buffer)
+            + ((*eol == '\r') ? 2 : 1);
+    } while (1);
+
+    /* eol points at the start of the version line's terminator: '\r' for
+     * CRLF or '\n' for LF only. */
+    eolSz = (*eol == '\r') ? 2 : 1;
+
+    if (ssh->inputBuffer.length >= SSH_PROTO_SZ
+        && WSTRNCASECMP((char*)ssh->inputBuffer.buffer,
+                        ssh->ctx->sshProtoIdStr, SSH_PROTO_SZ) == 0) {
 
         if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER)
             ssh->clientState = CLIENT_VERSION_DONE;
@@ -10762,9 +10814,6 @@ int DoProtoId(WOLFSSH* ssh)
         ssh->clientOpenSSH = 1;
     }
 
-    if (*eol == '\r') {
-        SSH_PROTO_EOL_SZ++;
-    }
     *eol = 0;
 
     idSz = (word32)WSTRLEN((char*)ssh->inputBuffer.buffer);
@@ -10780,7 +10829,7 @@ int DoProtoId(WOLFSSH* ssh)
         ssh->peerProtoIdSz = idSz + LENGTH_SZ;
     }
 
-    ssh->inputBuffer.idx += idSz + SSH_PROTO_EOL_SZ;
+    ssh->inputBuffer.idx += idSz + eolSz;
 
     ShrinkBuffer(&ssh->inputBuffer, 0);
 
@@ -17879,6 +17928,11 @@ void AddAssign64(word32* addend1, word32 addend2)
 
 
 #ifdef WOLFSSH_TEST_INTERNAL
+
+int wolfSSH_TestDoProtoId(WOLFSSH* ssh)
+{
+    return DoProtoId(ssh);
+}
 
 int wolfSSH_TestIsMessageAllowed(WOLFSSH* ssh, byte msg, byte state)
 {
