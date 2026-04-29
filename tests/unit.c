@@ -46,6 +46,399 @@
 #include "unit.h"
 
 
+#ifdef WOLFSSH_TEST_INTERNAL
+
+typedef struct {
+    const char* name;
+    const char* proto;
+    int ioError;
+    int expected;
+    int side;       /* WOLFSSH_ENDPOINT_CLIENT or WOLFSSH_ENDPOINT_SERVER */
+} ProtoIdTestVector;
+
+typedef struct {
+    const ProtoIdTestVector* tv;
+    word32 offset;
+} ProtoIdTestState;
+
+static const ProtoIdTestVector protoIdTestVectors[] = {
+    /* Pre-version banner lines (RFC 4253 Section 4.2). DoProtoId on the
+     * client skips informational lines before the version string. */
+    { "banner lines LF before version",
+      "this is a test\n"
+      "more test line\n"
+      "SSH-2.0-wolfSSHv" LIBWOLFSSH_VERSION_STRING "\n",
+      0, WS_SUCCESS, WOLFSSH_ENDPOINT_CLIENT },
+    { "banner lines CRLF before version",
+      "this is a test\r\n"
+      "more test line\r\n"
+      "SSH-2.0-wolfSSHv" LIBWOLFSSH_VERSION_STRING "\r\n",
+      0, WS_SUCCESS, WOLFSSH_ENDPOINT_CLIENT },
+
+    /* Valid version strings with no banner. */
+    { "version with comment CRLF",
+      "SSH-2.0-wolfSSHv" LIBWOLFSSH_VERSION_STRING " some comment\r\n",
+      0, WS_SUCCESS, WOLFSSH_ENDPOINT_CLIENT },
+    { "version CRLF no comment",
+      "SSH-2.0-wolfSSHv" LIBWOLFSSH_VERSION_STRING "\r\n",
+      0, WS_SUCCESS, WOLFSSH_ENDPOINT_CLIENT },
+    { "version LF only",
+      "SSH-2.0-wolfSSHv" LIBWOLFSSH_VERSION_STRING "\n",
+      0, WS_SUCCESS, WOLFSSH_ENDPOINT_CLIENT },
+
+    /* Case-insensitive match. DoProtoId uses WSTRNCASECMP. */
+    { "lowercase ssh prefix",
+      "ssh-2.0-wolfSSHv" LIBWOLFSSH_VERSION_STRING "\r\n",
+      0, WS_SUCCESS, WOLFSSH_ENDPOINT_CLIENT },
+    { "mixed case SSH prefix",
+      "Ssh-2.0-wolfSSHv" LIBWOLFSSH_VERSION_STRING "\r\n",
+      0, WS_SUCCESS, WOLFSSH_ENDPOINT_CLIENT },
+
+    /* OpenSSH peer identification. */
+    { "OpenSSH version string",
+      "SSH-2.0-OpenSSH_8.9\r\n",
+      0, WS_SUCCESS, WOLFSSH_ENDPOINT_CLIENT },
+
+    /* Wrong SSH versions. */
+    { "SSH-1.99 version",
+      "SSH-1.99-server\r\n",
+      0, WS_VERSION_E, WOLFSSH_ENDPOINT_CLIENT },
+    { "SSH-1.0 version",
+      "SSH-1.0-old\r\n",
+      0, WS_VERSION_E, WOLFSSH_ENDPOINT_CLIENT },
+    { "SSH-3.0 future version",
+      "SSH-3.0-future\r\n",
+      0, WS_VERSION_E, WOLFSSH_ENDPOINT_CLIENT },
+
+    /* Malformed or missing version strings. Cases where the peer sends
+     * incomplete data and then closes the connection map to
+     * WS_SOCKET_ERROR_E because GetInputLine treats a 0-byte recv as EOF. */
+    { "no newline terminator",
+      "SSH-2.0-wolfSSHv" LIBWOLFSSH_VERSION_STRING,
+      0, WS_SOCKET_ERROR_E, WOLFSSH_ENDPOINT_CLIENT },
+    { "empty line only",
+      "\r\n",
+      0, WS_SOCKET_ERROR_E, WOLFSSH_ENDPOINT_CLIENT },
+    { "bare newline",
+      "\n",
+      0, WS_SOCKET_ERROR_E, WOLFSSH_ENDPOINT_CLIENT },
+    { "not SSH at all",
+      "HTTP/1.1 200 OK\r\n",
+      0, WS_SOCKET_ERROR_E, WOLFSSH_ENDPOINT_CLIENT },
+    { "SSH- prefix but truncated",
+      "SSH-\r\n",
+      0, WS_VERSION_E, WOLFSSH_ENDPOINT_CLIENT },
+
+    /* Line longer than the 255-byte per-line cap (RFC 4253 4.2). */
+    { "overlong line before version",
+      "01234567890123456789012345678901234567890123456789"
+      "01234567890123456789012345678901234567890123456789"
+      "01234567890123456789012345678901234567890123456789"
+      "01234567890123456789012345678901234567890123456789"
+      "01234567890123456789012345678901234567890123456789"
+      "01234567890123456789012345678901234567890123456789"
+      "SSH-2.0-wolfSSHv" LIBWOLFSSH_VERSION_STRING "\r\n",
+      0, WS_VERSION_E, WOLFSSH_ENDPOINT_CLIENT },
+
+    /* Banner line of exactly 255 bytes including CRLF (253 chars + CRLF).
+     * The cap is inclusive so this line should be accepted. */
+    { "banner exactly 255 bytes",
+      "01234567890123456789012345678901234567890123456789"
+      "01234567890123456789012345678901234567890123456789"
+      "01234567890123456789012345678901234567890123456789"
+      "01234567890123456789012345678901234567890123456789"
+      "01234567890123456789012345678901234567890123456789"
+      "012\r\n"
+      "SSH-2.0-wolfSSHv" LIBWOLFSSH_VERSION_STRING "\r\n",
+      0, WS_SUCCESS, WOLFSSH_ENDPOINT_CLIENT },
+
+    /* Banner consumed, then peer closes mid-version-line. Exercises a
+     * second GetInputLine call returning WS_SOCKET_ERROR_E after a prior
+     * call succeeded. */
+    { "banner then truncated SSH line",
+      "banner line\nSSH-2.0-",
+      0, WS_SOCKET_ERROR_E, WOLFSSH_ENDPOINT_CLIENT },
+
+    /* More than WOLFSSH_MAX_BANNER_LINES (default 10) banner lines before
+     * the version string. The 11th banner line trips the cap. */
+    { "too many banner lines",
+      "b1\nb2\nb3\nb4\nb5\nb6\nb7\nb8\nb9\nb10\nb11\n"
+      "SSH-2.0-wolfSSHv" LIBWOLFSSH_VERSION_STRING "\r\n",
+      0, WS_VERSION_E, WOLFSSH_ENDPOINT_CLIENT },
+
+    /* IO error cases. The IO callback returns WS_CBIO_ERR_* values.
+     * ReceiveData maps WS_CBIO_ERR_GENERAL to -1, and GetInputLine
+     * returns WS_SOCKET_ERROR_E for that. WS_CBIO_ERR_WANT_READ is
+     * mapped to WS_WANT_READ by ReceiveData and GetInputLine. */
+    { "IO recv general error",
+      "", WS_CBIO_ERR_GENERAL, WS_SOCKET_ERROR_E, WOLFSSH_ENDPOINT_CLIENT },
+    { "IO recv want read",
+      "", WS_CBIO_ERR_WANT_READ, WS_WANT_READ, WOLFSSH_ENDPOINT_CLIENT },
+
+    /* Server-side: a wolfSSH server reading the client's identification
+     * string MUST reject any non-"SSH-" line. The client is required to
+     * send the version string first per RFC 4253 4.2. */
+    { "server accepts SSH- line",
+      "SSH-2.0-OpenSSH_8.9\r\n",
+      0, WS_SUCCESS, WOLFSSH_ENDPOINT_SERVER },
+    { "server rejects banner before SSH-",
+      "client banner\r\n"
+      "SSH-2.0-OpenSSH_8.9\r\n",
+      0, WS_VERSION_E, WOLFSSH_ENDPOINT_SERVER },
+    { "server rejects non-SSH protocol",
+      "GET / HTTP/1.1\r\n",
+      0, WS_VERSION_E, WOLFSSH_ENDPOINT_SERVER },
+};
+
+static int RecvFromPtr(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
+{
+    ProtoIdTestState* state;
+    const ProtoIdTestVector* tv;
+    word32 protoSz;
+    word32 remaining;
+
+    WOLFSSH_UNUSED(ssh);
+
+    state = (ProtoIdTestState*)ctx;
+    tv = state->tv;
+
+    if (tv->ioError)
+        return tv->ioError;
+
+    protoSz = (word32)WSTRLEN(tv->proto);
+    if (state->offset >= protoSz) {
+        /* Simulate the peer closing the connection after sending all the
+         * data in the test vector. */
+        return 0;
+    }
+    remaining = protoSz - state->offset;
+    if (remaining < sz)
+        sz = remaining;
+    WMEMCPY(data, tv->proto + state->offset, sz);
+    state->offset += sz;
+
+    return sz;
+}
+
+/* Scripted IO mock for testing non-blocking control flow. A script is a
+ * sequence of steps. Each step either delivers a chunk of bytes or signals
+ * a single WS_CBIO_ERR_WANT_READ to the caller. After the script is
+ * exhausted the mock returns 0 (clean EOF). Long byte chunks are delivered
+ * across multiple IO callback invocations as needed. */
+typedef struct {
+    const char* bytes;       /* NULL means "return WS_CBIO_ERR_WANT_READ" */
+    word32 sz;               /* 0 means strlen(bytes) */
+} ProtoIdScriptStep;
+
+typedef struct {
+    const ProtoIdScriptStep* steps;
+    word32 stepCount;
+    word32 stepIdx;
+    word32 stepOffset;
+} ProtoIdScriptState;
+
+typedef struct {
+    const char* name;
+    const ProtoIdScriptStep* steps;
+    word32 stepCount;
+    int side;
+    int expected;
+} ProtoIdScriptVector;
+
+static int RecvFromScript(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
+{
+    ProtoIdScriptState* s;
+    const ProtoIdScriptStep* step;
+    word32 stepSz;
+    word32 remaining;
+
+    WOLFSSH_UNUSED(ssh);
+
+    s = (ProtoIdScriptState*)ctx;
+
+    while (s->stepIdx < s->stepCount) {
+        step = &s->steps[s->stepIdx];
+
+        if (step->bytes == NULL) {
+            /* WANT_READ marker; consume the step exactly once. */
+            s->stepIdx++;
+            s->stepOffset = 0;
+            return WS_CBIO_ERR_WANT_READ;
+        }
+
+        stepSz = step->sz ? step->sz : (word32)WSTRLEN(step->bytes);
+        if (s->stepOffset >= stepSz) {
+            s->stepIdx++;
+            s->stepOffset = 0;
+            continue;
+        }
+        remaining = stepSz - s->stepOffset;
+        if (remaining < sz)
+            sz = remaining;
+        WMEMCPY(data, step->bytes + s->stepOffset, sz);
+        s->stepOffset += sz;
+        if (s->stepOffset == stepSz) {
+            s->stepIdx++;
+            s->stepOffset = 0;
+        }
+        return (int)sz;
+    }
+
+    /* Script exhausted: simulate peer closing the connection. */
+    return 0;
+}
+
+/* WANT_READ delivered partway through a banner line. Driver retries and
+ * the partial line is completed cleanly. */
+static const ProtoIdScriptStep wantReadMidBannerSteps[] = {
+    { "this is a part", 0 },
+    { NULL, 0 },
+    { "ial banner\n"
+      "SSH-2.0-wolfSSHv" LIBWOLFSSH_VERSION_STRING "\r\n", 0 },
+};
+
+/* WANT_READ delivered partway through the SSH version line itself. */
+static const ProtoIdScriptStep wantReadMidVersionSteps[] = {
+    { "SSH-2.0-wolf", 0 },
+    { NULL, 0 },
+    { "SSHv" LIBWOLFSSH_VERSION_STRING "\r\n", 0 },
+};
+
+/* Eleven banner lines, each followed by WS_WANT_READ. WOLFSSH_MAX_BANNER_LINES
+ * defaults to 10, so the eleventh line must trip the cap. This is a
+ * regression guard: an earlier version kept the banner counter as a
+ * DoProtoId stack local, which got reset on every WS_WANT_READ retry and
+ * effectively bypassed the cap. */
+static const ProtoIdScriptStep manyBannersWantReadSteps[] = {
+    { "b1\n",  0 }, { NULL, 0 },
+    { "b2\n",  0 }, { NULL, 0 },
+    { "b3\n",  0 }, { NULL, 0 },
+    { "b4\n",  0 }, { NULL, 0 },
+    { "b5\n",  0 }, { NULL, 0 },
+    { "b6\n",  0 }, { NULL, 0 },
+    { "b7\n",  0 }, { NULL, 0 },
+    { "b8\n",  0 }, { NULL, 0 },
+    { "b9\n",  0 }, { NULL, 0 },
+    { "b10\n", 0 }, { NULL, 0 },
+    { "b11\n", 0 },
+};
+
+#define SCRIPT_LEN(s) (word32)(sizeof(s)/sizeof((s)[0]))
+
+static const ProtoIdScriptVector protoIdScriptVectors[] = {
+    { "WANT_READ mid-banner resumes",
+      wantReadMidBannerSteps, SCRIPT_LEN(wantReadMidBannerSteps),
+      WOLFSSH_ENDPOINT_CLIENT, WS_SUCCESS },
+    { "WANT_READ mid-SSH-version resumes",
+      wantReadMidVersionSteps, SCRIPT_LEN(wantReadMidVersionSteps),
+      WOLFSSH_ENDPOINT_CLIENT, WS_SUCCESS },
+    { "banners across WANT_READ still trip cap",
+      manyBannersWantReadSteps, SCRIPT_LEN(manyBannersWantReadSteps),
+      WOLFSSH_ENDPOINT_CLIENT, WS_VERSION_E },
+};
+
+/* DoProtoId() Unit Test */
+static int test_DoProtoId(void)
+{
+    WOLFSSH_CTX* clientCtx;
+    WOLFSSH_CTX* serverCtx;
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    const ProtoIdTestVector* tv;
+    int tc = (int)(sizeof(protoIdTestVectors)/sizeof(protoIdTestVectors[0]));
+    int i;
+    int ret;
+    int failures = 0;
+
+    clientCtx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (clientCtx == NULL)
+        return -100;
+    serverCtx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (serverCtx == NULL) {
+        wolfSSH_CTX_free(clientCtx);
+        return -101;
+    }
+    wolfSSH_SetIORecv(clientCtx, RecvFromPtr);
+    wolfSSH_SetIORecv(serverCtx, RecvFromPtr);
+
+    for (i = 0, tv = protoIdTestVectors; i < tc; i++, tv++) {
+        ProtoIdTestState state;
+
+        state.tv = tv;
+        state.offset = 0;
+
+        ctx = (tv->side == WOLFSSH_ENDPOINT_SERVER) ? serverCtx : clientCtx;
+        ssh = wolfSSH_new(ctx);
+        if (ssh == NULL) {
+            fprintf(stderr, "\t[%d] \"%s\" FAIL: wolfSSH_new returned NULL\n",
+                    i, tv->name);
+            failures++;
+            continue;
+        }
+        wolfSSH_SetIOReadCtx(ssh, &state);
+        ret = wolfSSH_TestDoProtoId(ssh);
+        if (ret != tv->expected) {
+            fprintf(stderr, "\t[%d] \"%s\" FAIL: got %d, expected %d\n",
+                    i, tv->name, ret, tv->expected);
+            failures++;
+        }
+        wolfSSH_free(ssh);
+    }
+
+    /* Scripted-IO vectors: exercise non-blocking flow where ReceiveData
+     * returns WS_WANT_READ partway through a line. The driver re-enters
+     * DoProtoId until it returns something other than WS_WANT_READ. */
+    wolfSSH_SetIORecv(clientCtx, RecvFromScript);
+    wolfSSH_SetIORecv(serverCtx, RecvFromScript);
+
+    {
+        const ProtoIdScriptVector* sv;
+        int sc = (int)(sizeof(protoIdScriptVectors)
+                       / sizeof(protoIdScriptVectors[0]));
+
+        for (i = 0, sv = protoIdScriptVectors; i < sc; i++, sv++) {
+            ProtoIdScriptState scriptState;
+
+            scriptState.steps = sv->steps;
+            scriptState.stepCount = sv->stepCount;
+            scriptState.stepIdx = 0;
+            scriptState.stepOffset = 0;
+
+            ctx = (sv->side == WOLFSSH_ENDPOINT_SERVER)
+                  ? serverCtx : clientCtx;
+            ssh = wolfSSH_new(ctx);
+            if (ssh == NULL) {
+                fprintf(stderr,
+                        "\t[script %d] \"%s\" FAIL: wolfSSH_new returned NULL\n",
+                        i, sv->name);
+                failures++;
+                continue;
+            }
+            wolfSSH_SetIOReadCtx(ssh, &scriptState);
+
+            do {
+                ret = wolfSSH_TestDoProtoId(ssh);
+            } while (ret == WS_WANT_READ);
+
+            if (ret != sv->expected) {
+                fprintf(stderr,
+                        "\t[script %d] \"%s\" FAIL: got %d, expected %d\n",
+                        i, sv->name, ret, sv->expected);
+                failures++;
+            }
+            wolfSSH_free(ssh);
+        }
+    }
+
+    wolfSSH_CTX_free(serverCtx);
+    wolfSSH_CTX_free(clientCtx);
+
+    return failures;
+}
+
+#endif /* WOLFSSH_TEST_INTERNAL */
+
+
 /* Key Derivation Function (KDF) Unit Test */
 
 typedef struct {
@@ -1174,6 +1567,12 @@ int wolfSSH_UnitTest(int argc, char** argv)
     unitResult = test_KDF();
     printf("KDF: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#ifdef WOLFSSH_TEST_INTERNAL
+    unitResult = test_DoProtoId();
+    printf("DoProtoId: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 
 #if defined(WOLFSSH_TEST_INTERNAL) && \
     (!defined(WOLFSSH_NO_HMAC_SHA1) || \

@@ -494,6 +494,13 @@ enum NameIdType {
 #ifndef WOLFSSH_KEY_QUANTITY_REQ
     #define WOLFSSH_KEY_QUANTITY_REQ 1
 #endif
+/* Maximum pre-version banner lines accepted by DoProtoId (RFC 4253 4.2)
+ * before requiring the SSH version string. Each line is also capped at
+ * 255 bytes by GetInputLine. */
+#ifndef WOLFSSH_MAX_BANNER_LINES
+    #define WOLFSSH_MAX_BANNER_LINES 10
+#endif
+#define WOLFSSH_PROTOID_LIMIT 255
 
 /* Keep track of keying state for both sides of the connection.
  * WOLFSSH_SELF_IS_KEYING gets set on sending KEX init and
@@ -639,6 +646,8 @@ typedef struct HandshakeInfo {
 
     byte blockSz;
     byte macSz;
+
+    word32 bannerLines;
 
     Keys keys;
     Keys peerKeys;
@@ -1326,6 +1335,7 @@ enum WS_MessageIdLimits {
 #define WS_MSG_RECV 2
 
 #ifdef WOLFSSH_TEST_INTERNAL
+    WOLFSSH_API int wolfSSH_TestDoProtoId(WOLFSSH* ssh);
     WOLFSSH_API int wolfSSH_TestIsMessageAllowed(WOLFSSH* ssh, byte msg,
             byte state);
     WOLFSSH_API int wolfSSH_TestDoReceive(WOLFSSH* ssh);
