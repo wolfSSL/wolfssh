@@ -6009,68 +6009,45 @@ static int wolfSSH_SFTP_DoStatus(WOLFSSH* ssh, word32 reqId,
         WS_SFTP_BUFFER* buffer)
 {
     word32 sz;
+    const byte* str;
     word32 status = WOLFSSH_FTP_FAILURE;
     word32 localIdx = wolfSSH_SFTP_buffer_idx(buffer);
     word32 maxIdx = wolfSSH_SFTP_buffer_size(buffer);
     byte* buf = wolfSSH_SFTP_buffer_data(buffer);
 
     WOLFSSH_UNUSED(reqId);
-    if (localIdx + UINT32_SZ > maxIdx) {
+    if (GetUint32(&status, buf, maxIdx, &localIdx) != WS_SUCCESS) {
         return WS_FATAL_ERROR;
     }
-    ato32(buf + localIdx, &status);
-    localIdx += UINT32_SZ;
 
     /* read error message */
-    if (localIdx + UINT32_SZ > maxIdx) {
+    if (GetStringRef(&sz, &str, buf, maxIdx, &localIdx) != WS_SUCCESS) {
         return WS_FATAL_ERROR;
     }
-    ato32(buf + localIdx, &sz);
-    localIdx += UINT32_SZ;
-
     if (sz > 0) {
-        byte* s;
-
-        if (sz > maxIdx - localIdx) {
-            return WS_FATAL_ERROR;
-        }
-        s = (byte*)WMALLOC(sz + 1, ssh->ctx->heap, DYNTYPE_BUFFER);
+        byte* s = (byte*)WMALLOC(sz + 1, ssh->ctx->heap, DYNTYPE_BUFFER);
         if (s == NULL) {
             return WS_MEMORY_E;
         }
-
-        /* make sure is null terminated string */
-        WMEMCPY(s, buf + localIdx, sz);
+        WMEMCPY(s, str, sz);
         s[sz] = '\0';
         WLOG(WS_LOG_SFTP, "Status Recv : %s", s);
         WFREE(s, ssh->ctx->heap, DYNTYPE_BUFFER);
-        localIdx += sz;
     }
 
     /* read language tag */
-    if (localIdx + UINT32_SZ > maxIdx) {
+    if (GetStringRef(&sz, &str, buf, maxIdx, &localIdx) != WS_SUCCESS) {
         return WS_FATAL_ERROR;
     }
-    ato32(buf + localIdx, &sz);
-    localIdx += UINT32_SZ;
-
     if (sz > 0) {
-        byte* s;
-
-        if (sz > maxIdx - localIdx) {
-            return WS_FATAL_ERROR;
-        }
-        s = (byte*)WMALLOC(sz + 1, ssh->ctx->heap, DYNTYPE_BUFFER);
+        byte* s = (byte*)WMALLOC(sz + 1, ssh->ctx->heap, DYNTYPE_BUFFER);
         if (s == NULL) {
             return WS_MEMORY_E;
         }
-
-        /* make sure is null terminated string */
-        WMEMCPY(s, buf + localIdx, sz);
+        WMEMCPY(s, str, sz);
         s[sz] = '\0';
         WLOG(WS_LOG_SFTP, "Status Language : %s", s);
         WFREE(s, ssh->ctx->heap, DYNTYPE_BUFFER);
-        localIdx += sz;
     }
 
     wolfSSH_SFTP_buffer_seek(buffer, 0, localIdx);
@@ -6131,85 +6108,61 @@ int SFTP_ParseAttributes_buffer(WOLFSSH* ssh,  WS_SFTP_FILEATRB* atr, byte* buf,
 
     WMEMSET(atr, 0, sizeof(WS_SFTP_FILEATRB));
 
-    if (localIdx + UINT32_SZ > maxIdx) {
+    /* get flags */
+    if (GetUint32(&atr->flags, buf, maxIdx, &localIdx) != WS_SUCCESS) {
         return WS_BUFFER_E;
     }
 
-    /* get flags */
-    ato32(buf + localIdx, &atr->flags); localIdx += UINT32_SZ;
-
     /* check if size attribute present */
     if (atr->flags & WOLFSSH_FILEATRB_SIZE) {
-        if (localIdx + (2*UINT32_SZ) > maxIdx) {
+        if (GetUint32(&atr->sz[1], buf, maxIdx, &localIdx) != WS_SUCCESS
+                || GetUint32(&atr->sz[0], buf, maxIdx, &localIdx)
+                    != WS_SUCCESS) {
             return WS_BUFFER_E;
         }
-        ato32(buf + localIdx, &atr->sz[1]); localIdx += UINT32_SZ;
-        ato32(buf + localIdx, &atr->sz[0]); localIdx += UINT32_SZ;
     }
 
     /* check if uid and gid attribute present */
     if (atr->flags & WOLFSSH_FILEATRB_UIDGID) {
-        if (localIdx + (2*UINT32_SZ) > maxIdx) {
+        if (GetUint32(&atr->uid, buf, maxIdx, &localIdx) != WS_SUCCESS
+                || GetUint32(&atr->gid, buf, maxIdx, &localIdx)
+                    != WS_SUCCESS) {
             return WS_BUFFER_E;
         }
-        ato32(buf + localIdx, &atr->uid); localIdx += UINT32_SZ;
-        ato32(buf + localIdx, &atr->gid); localIdx += UINT32_SZ;
     }
 
     /* check if permissions attribute present */
     if (atr->flags & WOLFSSH_FILEATRB_PERM) {
-        if (localIdx + UINT32_SZ > maxIdx) {
+        if (GetUint32(&atr->per, buf, maxIdx, &localIdx) != WS_SUCCESS) {
             return WS_BUFFER_E;
         }
-        ato32(buf + localIdx, &atr->per); localIdx += UINT32_SZ;
     }
 
     /* check if time attribute present */
     if (atr->flags & WOLFSSH_FILEATRB_TIME) {
-        if (localIdx + (2*UINT32_SZ) > maxIdx) {
+        if (GetUint32(&atr->atime, buf, maxIdx, &localIdx) != WS_SUCCESS
+                || GetUint32(&atr->mtime, buf, maxIdx, &localIdx)
+                    != WS_SUCCESS) {
             return WS_BUFFER_E;
         }
-        ato32(buf + localIdx, &atr->atime); localIdx += UINT32_SZ;
-        ato32(buf + localIdx, &atr->mtime); localIdx += UINT32_SZ;
     }
 
     /* check if extended attributes are present */
     if (atr->flags & WOLFSSH_FILEATRB_EXT) {
         word32 i;
-        word32 sz;
 
-        if (localIdx + UINT32_SZ > maxIdx) {
+        if (GetUint32(&atr->extCount, buf, maxIdx, &localIdx) != WS_SUCCESS) {
             return WS_BUFFER_E;
         }
-        ato32(buf + localIdx, &atr->extCount); localIdx += UINT32_SZ;
 
         for (i = 0; i < atr->extCount; i++) {
-            /* @TODO in the process of storing attributes */
-            if (localIdx + UINT32_SZ > maxIdx) {
+            /* @TODO extension type, in the process of storing attributes */
+            if (GetSkip(buf, maxIdx, &localIdx) != WS_SUCCESS) {
                 return WS_BUFFER_E;
             }
-            ato32(buf + localIdx, &sz); localIdx += UINT32_SZ;
-
-            if (sz > 0) {
-                if (localIdx + sz > maxIdx) {
-                    return WS_BUFFER_E;
-                }
-                /* @TODO extension type */
-                localIdx += sz;
-            }
-
-            /* @TODO in the process of storing attributes */
-            if (localIdx + UINT32_SZ > maxIdx) {
+            /* @TODO extension data, in the process of storing attributes */
+            if (GetSkip(buf, maxIdx, &localIdx) != WS_SUCCESS) {
                 return WS_BUFFER_E;
-            }
-            ato32(buf + localIdx, &sz); localIdx += UINT32_SZ;
-
-            if (sz > 0) {
-                if (localIdx + sz > maxIdx) {
-                    return WS_BUFFER_E;
-                }
-                /* @TODO extension data */
-                localIdx += sz;
             }
         }
     }
@@ -6461,6 +6414,9 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
 
             while (count > 0) {
                 word32 sz;
+                const byte* str;
+                byte* nameBuf = wolfSSH_SFTP_buffer_data(&state->buffer);
+                word32 nameMax = wolfSSH_SFTP_buffer_size(&state->buffer);
                 WS_SFTPNAME* tmp = wolfSSH_SFTPNAME_new(ssh->ctx->heap);
 
                 count--;
@@ -6477,8 +6433,9 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
                 n = tmp;
 
                 /* get filename size and name */
-                if (wolfSSH_SFTP_buffer_ato32(&state->buffer, &sz) !=
-                        WS_SUCCESS) {
+                localIdx = wolfSSH_SFTP_buffer_idx(&state->buffer);
+                if (GetStringRef(&sz, &str, nameBuf, nameMax, &localIdx)
+                        != WS_SUCCESS) {
                     ret = WS_BUFFER_E;
                     break;
                 }
@@ -6490,24 +6447,13 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
                         ret = WS_MEMORY_E;
                         break;
                     }
-
-                    if (wolfSSH_SFTP_buffer_idx(&state->buffer) + sz >
-                            wolfSSH_SFTP_buffer_size(&state->buffer)) {
-                        ret = WS_FATAL_ERROR;
-                        break;
-                    }
-                    WMEMCPY(tmp->fName,
-                            wolfSSH_SFTP_buffer_data(&state->buffer) +
-                            wolfSSH_SFTP_buffer_idx(&state->buffer),
-                            sz);
-                    wolfSSH_SFTP_buffer_seek(&state->buffer,
-                            wolfSSH_SFTP_buffer_idx(&state->buffer), sz);
+                    WMEMCPY(tmp->fName, str, sz);
                     tmp->fName[sz] = '\0';
                 }
 
                 /* get longname size and name */
-                if (wolfSSH_SFTP_buffer_ato32(&state->buffer, &sz) !=
-                        WS_SUCCESS) {
+                if (GetStringRef(&sz, &str, nameBuf, nameMax, &localIdx)
+                        != WS_SUCCESS) {
                     ret = WS_BUFFER_E;
                     break;
                 }
@@ -6519,27 +6465,13 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
                         ret = WS_MEMORY_E;
                         break;
                     }
-
-                    if (wolfSSH_SFTP_buffer_idx(&state->buffer) + sz >
-                            wolfSSH_SFTP_buffer_size(&state->buffer)) {
-                        ret = WS_FATAL_ERROR;
-                        break;
-                    }
-                    WMEMCPY(tmp->lName,
-                            wolfSSH_SFTP_buffer_data(&state->buffer) +
-                            wolfSSH_SFTP_buffer_idx(&state->buffer),
-                            sz);
-                    wolfSSH_SFTP_buffer_seek(&state->buffer,
-                            wolfSSH_SFTP_buffer_idx(&state->buffer), sz);
+                    WMEMCPY(tmp->lName, str, sz);
                     tmp->lName[sz] = '\0';
                 }
 
                 /* get attributes */
-                localIdx = wolfSSH_SFTP_buffer_idx(&state->buffer);
                 ret = SFTP_ParseAttributes_buffer(ssh, &tmp->atrb,
-                        wolfSSH_SFTP_buffer_data(&state->buffer),
-                        &localIdx,
-                        wolfSSH_SFTP_buffer_size(&state->buffer));
+                        nameBuf, &localIdx, nameMax);
                 wolfSSH_SFTP_buffer_seek(&state->buffer, 0, localIdx);
                 if (ret != WS_SUCCESS) {
                     break;
