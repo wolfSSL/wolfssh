@@ -8347,6 +8347,7 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
     word32 begin;
     int ret = WS_SUCCESS;
     byte authNameId;
+    byte serviceValid = 1;
     WS_UserAuthData authData;
 
     WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequest()");
@@ -8381,13 +8382,23 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
         authData.serviceName = buf + begin;
         begin += authData.serviceNameSz;
 
-        ret = GetSize(&authData.authNameSz, buf, len, &begin);
+        if (NameToId((const char*)authData.serviceName, authData.serviceNameSz)
+                != ID_SERVICE_CONNECTION) {
+            WLOG(WS_LOG_DEBUG, "DUAR: Invalid service name");
+            serviceValid = 0;
+            ret = SendUserAuthFailure(ssh, 0);
+            /* Consume all remaining data */
+            *idx = len;
+        }
+        else {
+            ret = GetSize(&authData.authNameSz, buf, len, &begin);
+        }
     }
 
-    if (ret == WS_SUCCESS) {
+    if (ret == WS_SUCCESS && serviceValid) {
         authData.authName = buf + begin;
         begin += authData.authNameSz;
-        authNameId = NameToId((char*)authData.authName, authData.authNameSz);
+        authNameId = NameToId((const char*)authData.authName, authData.authNameSz);
         ssh->authId = authNameId;
 
         if (authNameId == ID_USERAUTH_PASSWORD)
@@ -8410,8 +8421,10 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
 #endif
         else {
             WLOG(WS_LOG_DEBUG,
-                 "invalid userauth type: %s", IdToName(authNameId));
+                 "DUAR: invalid userauth type: %s", IdToName(authNameId));
             ret = SendUserAuthFailure(ssh, 0);
+            /* Consume all remaining data */
+            begin = len;
         }
 
         if (ret == WS_SUCCESS) {
@@ -10735,7 +10748,6 @@ int DoReceive(WOLFSSH* ssh)
 
     return ret;
 }
-
 
 int DoProtoId(WOLFSSH* ssh)
 {
@@ -17975,6 +17987,12 @@ int wolfSSH_TestChannelPutData(WOLFSSH_CHANNEL* channel, byte* data,
         word32 dataSz)
 {
     return ChannelPutData(channel, data, dataSz);
+}
+
+int wolfSSH_TestDoUserAuthRequest(WOLFSSH* ssh, byte* buf, word32 len,
+        word32* idx)
+{
+    return DoUserAuthRequest(ssh, buf, len, idx);
 }
 
 #ifndef WOLFSSH_NO_DH_GEX_SHA256

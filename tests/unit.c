@@ -1311,6 +1311,136 @@ done:
     return result;
 }
 
+/* Capture buffer for the service-name unit test. Separate from the channel-
+ * request capture so the two tests can run independently in any order. */
+static byte   s_authSvcCapture[256];
+static word32 s_authSvcCaptureSz = 0;
+
+static int CaptureIoSendAuthSvc(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    (void)ssh; (void)ctx;
+    s_authSvcCaptureSz = (sz < (word32)sizeof(s_authSvcCapture))
+                         ? sz : (word32)sizeof(s_authSvcCapture);
+    WMEMCPY(s_authSvcCapture, buf, s_authSvcCaptureSz);
+    return (int)sz;
+}
+
+/* Verify DoUserAuthRequest rejects non-"ssh-connection" service names per
+ * RFC 4252 Section 5.  For each case we assert:
+ *   1. ret == WS_SUCCESS (connection stays open for retry)
+ *   2. SSH_MSG_USERAUTH_FAILURE is actually sent (captured at packet byte 5:
+ *      [4-byte packet_length][1-byte padding_length][1-byte msg_id]...)
+ *   3. *idx == len (entire payload consumed; buffer stays aligned)
+ *
+ * For invalid-service cases the auth-method field is intentionally omitted
+ * from the payload.  DoUserAuthRequest must short-circuit at the service-name
+ * check and still satisfy all three assertions — proving it never tries to
+ * parse the missing auth-method field.  If the short-circuit were absent,
+ * GetSize() for authNameSz would hit end-of-buffer and return WS_BUFFER_E,
+ * failing assertion 1.
+ *
+ * For the valid-service case, auth method "xyz-unknown" (always unsupported
+ * regardless of compile-time options) is included.  The function reaches
+ * auth-method dispatch, falls to the unknown-method else-branch, and sends
+ * USERAUTH_FAILURE via that normal path. */
+static int test_DoUserAuthRequest_serviceName(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    int result = 0;
+    struct {
+        const char* svcName;
+        word32      svcNameSz;
+        const char* authMethod;   /* NULL = omit field (proves short-circuit) */
+        word32      authMethodSz;
+        int         expectRet;
+        const char* label;
+    } cases[] = {
+        /* valid service: auth dispatch fires, fails on unknown method */
+        { "ssh-connection", 14, "xyz-unknown", 11, WS_SUCCESS,
+          "valid svc unknown auth" },
+        /* invalid service: short-circuit, auth-method field absent */
+        { "ssh-agent",       9, NULL,           0, WS_SUCCESS,
+          "invalid ssh-agent svc"  },
+        { "bad",             3, NULL,           0, WS_SUCCESS,
+          "invalid bad svc"        },
+        /* zero-length service name: NameToId("",0)==ID_UNKNOWN, must reject */
+        { "",                0, NULL,           0, WS_SUCCESS,
+          "zero-length svc"        },
+        /* ssh-userauth: NameToId returns ID_SERVICE_USERAUTH, not
+         * ID_SERVICE_CONNECTION, so must also be rejected */
+        { "ssh-userauth",   12, NULL,           0, WS_SUCCESS,
+          "invalid ssh-userauth svc" },
+    };
+    int i;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL) return -500;
+    wolfSSH_SetIOSend(ctx, CaptureIoSendAuthSvc);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { wolfSSH_CTX_free(ctx); return -501; }
+
+    for (i = 0; i < (int)(sizeof(cases)/sizeof(cases[0])); i++) {
+        byte   buf[128];
+        word32 len = 0, idx = 0;
+        word32 snsz = cases[i].svcNameSz;
+        int    ret;
+
+        s_authSvcCaptureSz = 0;
+        WMEMSET(s_authSvcCapture, 0, sizeof(s_authSvcCapture));
+
+        /* username: "user" */
+        buf[len++] = 0; buf[len++] = 0; buf[len++] = 0; buf[len++] = 4;
+        WMEMCPY(buf + len, "user", 4); len += 4;
+
+        /* service name */
+        buf[len++] = (byte)(snsz >> 24); buf[len++] = (byte)(snsz >> 16);
+        buf[len++] = (byte)(snsz >>  8); buf[len++] = (byte)snsz;
+        WMEMCPY(buf + len, cases[i].svcName, snsz); len += snsz;
+
+        /* auth method: omit for invalid-service cases to prove short-circuit */
+        if (cases[i].authMethod != NULL) {
+            word32 amsz = cases[i].authMethodSz;
+            buf[len++] = (byte)(amsz >> 24); buf[len++] = (byte)(amsz >> 16);
+            buf[len++] = (byte)(amsz >>  8); buf[len++] = (byte)amsz;
+            WMEMCPY(buf + len, cases[i].authMethod, amsz); len += amsz;
+        }
+
+        ret = wolfSSH_TestDoUserAuthRequest(ssh, buf, len, &idx);
+
+        if (ret != cases[i].expectRet) {
+            printf("DoUserAuthRequest_svcName[%s]: ret=%d expected=%d\n",
+                   cases[i].label, ret, cases[i].expectRet);
+            result = -502 - i;
+            break;
+        }
+
+        /* MSGID_USERAUTH_FAILURE must be in the captured packet. */
+        if (s_authSvcCaptureSz <= 5 ||
+                s_authSvcCapture[5] != MSGID_USERAUTH_FAILURE) {
+            printf("DoUserAuthRequest_svcName[%s]: USERAUTH_FAILURE not sent "
+                   "(capSz=%u byte5=0x%02x)\n", cases[i].label,
+                   s_authSvcCaptureSz,
+                   s_authSvcCaptureSz > 5 ? s_authSvcCapture[5] : 0);
+            result = -520 - i;
+            break;
+        }
+
+        /* All cases must consume the entire payload. */
+        if (idx != len) {
+            printf("DoUserAuthRequest_svcName[%s]: idx=%u expected len=%u\n",
+                   cases[i].label, idx, len);
+            result = -510 - i;
+            break;
+        }
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
 #if !defined(WOLFSSH_NO_RSA)
 
 /* 2048-bit RSA private key (PKCS#1 DER).
@@ -1608,6 +1738,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #endif
     unitResult = test_ChannelPutData();
     printf("ChannelPutData: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DoUserAuthRequest_serviceName();
+    printf("DoUserAuthRequest_serviceName: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
 

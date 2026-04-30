@@ -1350,6 +1350,8 @@ enum WS_MessageIdLimits {
     WOLFSSH_API int wolfSSH_TestDoKexDhReply(WOLFSSH* ssh, byte* buf,
             word32 len, word32* idx);
     WOLFSSH_API int wolfSSH_TestChannelPutData(WOLFSSH_CHANNEL*, byte*, word32);
+    WOLFSSH_API int wolfSSH_TestDoUserAuthRequest(WOLFSSH* ssh, byte* buf,
+            word32 len, word32* idx);
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
     WOLFSSH_API int wolfSSH_TestDoKexDhGexRequest(WOLFSSH* ssh, byte* buf,
             word32 len, word32* idx);
