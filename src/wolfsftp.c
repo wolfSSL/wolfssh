@@ -403,7 +403,7 @@ typedef struct WS_SFTP_RENAME_STATE {
 
 
 static int SendPacketType(WOLFSSH* ssh, byte type, byte* buf, word32 bufSz);
-static int SFTP_ParseAtributes_buffer(WOLFSSH* ssh,  WS_SFTP_FILEATRB* atr,
+static int SFTP_ParseAttributes_buffer(WOLFSSH* ssh,  WS_SFTP_FILEATRB* atr,
         byte* buf, word32* idx, word32 maxIdx);
 static WS_SFTPNAME* wolfSSH_SFTPNAME_new(void* heap);
 
@@ -913,7 +913,7 @@ static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
 
 
 /* returns the size of buffer needed to hold attributes */
-static int SFTP_AtributesSz(WOLFSSH* ssh, WS_SFTP_FILEATRB* atr)
+static int SFTP_AttributesSz(WOLFSSH* ssh, WS_SFTP_FILEATRB* atr)
 {
     word32 sz = 0;
 
@@ -1362,7 +1362,7 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, byte* data,
     /* send response */
     outSz = WOLFSSH_SFTP_HEADER + (UINT32_SZ * 3) + (sSz * 2);
     WMEMSET(&atr, 0, sizeof(WS_SFTP_FILEATRB));
-    outSz += SFTP_AtributesSz(ssh, &atr);
+    outSz += SFTP_AttributesSz(ssh, &atr);
     lidx = 0;
 
     /* reuse state buffer if large enough */
@@ -2069,7 +2069,7 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 
     /* @TODO handle attributes */
-    SFTP_ParseAtributes_buffer(ssh, &atr, data, &idx, maxSz);
+    SFTP_ParseAttributes_buffer(ssh, &atr, data, &idx, maxSz);
     if ((reason & WOLFSSH_FXF_READ) && (reason & WOLFSSH_FXF_WRITE)) {
         WLOG(WS_LOG_SFTP, "Opening file with WOLFSSH_O_RDWR");
         m |= WOLFSSH_O_RDWR;
@@ -2277,7 +2277,7 @@ cleanup:
 
 #if 0
     /* @TODO handle attributes */
-    SFTP_ParseAtributes_buffer(ssh, &atr, data, &idx, maxSz);
+    SFTP_ParseAttributes_buffer(ssh, &atr, data, &idx, maxSz);
 #endif
 
     if (reason & WOLFSSH_FXF_READ) {
@@ -3409,7 +3409,7 @@ static int wolfSSH_SFTP_SendName(WOLFSSH* ssh, WS_SFTPNAME* list, word32 count,
                 WS_SUCCESS) {
             return WS_FATAL_ERROR;
         }
-        idx += SFTP_AtributesSz(ssh, &cur->atrb);
+        idx += SFTP_AttributesSz(ssh, &cur->atrb);
         cur = cur->next;
     }
 
@@ -3487,7 +3487,7 @@ int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             if (ret == WS_SUCCESS || ret == WS_NEXT_ERROR) {
                 count++;
                 outSz += name->fSz + name->lSz + (UINT32_SZ * 2);
-                outSz += SFTP_AtributesSz(ssh, &name->atrb);
+                outSz += SFTP_AttributesSz(ssh, &name->atrb);
                 name->next = list;
                 list = name;
             }
@@ -5259,7 +5259,7 @@ int wolfSSH_SFTP_RecvFSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         ret = WS_BAD_FILE_E;
     }
     else {
-        sz = SFTP_AtributesSz(ssh, &atr);
+        sz = SFTP_AttributesSz(ssh, &atr);
         outSz = sz + WOLFSSH_SFTP_HEADER;
     }
 
@@ -5338,7 +5338,7 @@ int wolfSSH_SFTP_RecvSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             ret = WS_BAD_FILE_E;
         }
         else {
-            sz = SFTP_AtributesSz(ssh, &atr);
+            sz = SFTP_AttributesSz(ssh, &atr);
             outSz = sz + WOLFSSH_SFTP_HEADER;
         }
     }
@@ -5421,7 +5421,7 @@ int wolfSSH_SFTP_RecvLSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             ret = WS_BAD_FILE_E;
         }
         else {
-            sz = SFTP_AtributesSz(ssh, &atr);
+            sz = SFTP_AttributesSz(ssh, &atr);
             outSz = sz + WOLFSSH_SFTP_HEADER;
         }
     }
@@ -5603,7 +5603,7 @@ int wolfSSH_SFTP_RecvSetSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 
     if (ret == WS_SUCCESS &&
-            SFTP_ParseAtributes_buffer(ssh, &atr, data, &idx, maxSz) != 0) {
+            SFTP_ParseAttributes_buffer(ssh, &atr, data, &idx, maxSz) != 0) {
         type = WOLFSSH_FTP_FAILURE;
         res  = per;
         ret  = WS_BAD_FILE_E;
@@ -5677,7 +5677,7 @@ int wolfSSH_SFTP_RecvFSetSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     WMEMCPY((byte*)&fd, str, strSz);
 
     if (ret == WS_SUCCESS &&
-            SFTP_ParseAtributes_buffer(ssh, &atr, data, &idx, maxSz) != 0) {
+            SFTP_ParseAttributes_buffer(ssh, &atr, data, &idx, maxSz) != 0) {
         type = WOLFSSH_FTP_FAILURE;
         res  = per;
         ret  = WS_BAD_FILE_E;
@@ -6124,7 +6124,7 @@ void wolfSSH_SFTPNAME_list_free(WS_SFTPNAME* n)
  *
  * returns WS_SUCCESS on success
  */
-int SFTP_ParseAtributes_buffer(WOLFSSH* ssh,  WS_SFTP_FILEATRB* atr, byte* buf,
+int SFTP_ParseAttributes_buffer(WOLFSSH* ssh,  WS_SFTP_FILEATRB* atr, byte* buf,
         word32* idx, word32 maxIdx)
 {
     word32 localIdx = *idx;
@@ -6225,7 +6225,7 @@ int SFTP_ParseAtributes_buffer(WOLFSSH* ssh,  WS_SFTP_FILEATRB* atr, byte* buf,
  *
  * returns WS_SUCCESS on success
  */
-int SFTP_ParseAtributes(WOLFSSH* ssh,  WS_SFTP_FILEATRB* atr)
+int SFTP_ParseAttributes(WOLFSSH* ssh,  WS_SFTP_FILEATRB* atr)
 {
     byte buf[UINT32_SZ * 2];
     int ret;
@@ -6536,7 +6536,7 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
 
                 /* get attributes */
                 localIdx = wolfSSH_SFTP_buffer_idx(&state->buffer);
-                ret = SFTP_ParseAtributes_buffer(ssh, &tmp->atrb,
+                ret = SFTP_ParseAttributes_buffer(ssh, &tmp->atrb,
                         wolfSSH_SFTP_buffer_data(&state->buffer),
                         &localIdx,
                         wolfSSH_SFTP_buffer_size(&state->buffer));
@@ -7036,7 +7036,7 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                 wolfSSH_SFTP_buffer_rewind(&state->buffer);
                 if (state->type == WOLFSSH_FTP_ATTRS) {
                     localIdx = wolfSSH_SFTP_buffer_idx(&state->buffer);
-                    ret = SFTP_ParseAtributes_buffer(ssh, atr,
+                    ret = SFTP_ParseAttributes_buffer(ssh, atr,
                             wolfSSH_SFTP_buffer_data(&state->buffer),
                             &localIdx,
                             wolfSSH_SFTP_buffer_size(&state->buffer));
@@ -7151,7 +7151,7 @@ int wolfSSH_SFTP_SetSTAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
     switch (state->state) {
         case STATE_SET_ATR_INIT:
             dirSz = (int)WSTRLEN(dir);
-            atrSz = SFTP_AtributesSz(ssh, atr);
+            atrSz = SFTP_AttributesSz(ssh, atr);
             if (wolfSSH_SFTP_buffer_create(ssh, &state->buffer,
                         dirSz + atrSz + WOLFSSH_SFTP_HEADER + UINT32_SZ) !=
                     WS_SUCCESS) {
