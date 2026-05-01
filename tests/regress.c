@@ -2010,6 +2010,36 @@ static word32 BuildKexInitPayload(WOLFSSH* ssh, const char* kexList,
     return idx;
 }
 
+#if !defined(WOLFSSH_NO_AES_CBC) && !defined(WOLFSSH_NO_AES_CTR) \
+    && !defined(WOLFSSH_NO_HMAC_SHA1) && !defined(WOLFSSH_NO_HMAC_SHA2_256)
+/* Like BuildKexInitPayload but with explicit per-direction cipher/MAC lists. */
+static word32 BuildKexInitPayloadFull(const char* kexList,
+        const char* keyList, const char* encC2S, const char* encS2C,
+        const char* macC2S, const char* macS2C,
+        byte firstPacketFollows, byte* out, word32 outSz)
+{
+    word32 idx = 0;
+
+    AssertTrue(idx + COOKIE_SZ <= outSz);
+    WMEMSET(out + idx, 0, COOKIE_SZ);
+    idx += COOKIE_SZ;
+    idx = AppendString(out, outSz, idx, kexList);
+    idx = AppendString(out, outSz, idx, keyList);
+    idx = AppendString(out, outSz, idx, encC2S);
+    idx = AppendString(out, outSz, idx, encS2C);
+    idx = AppendString(out, outSz, idx, macC2S);
+    idx = AppendString(out, outSz, idx, macS2C);
+    idx = AppendString(out, outSz, idx, "none");
+    idx = AppendString(out, outSz, idx, "none");
+    idx = AppendString(out, outSz, idx, "");
+    idx = AppendString(out, outSz, idx, "");
+    idx = AppendByte(out, outSz, idx, firstPacketFollows);
+    idx = AppendUint32(out, outSz, idx, 0); /* reserved */
+
+    return idx;
+}
+#endif /* AES_CBC + AES_CTR + HMAC guards (BuildKexInitPayloadFull) */
+
 typedef struct {
     const char* description;
     const char* kexList;
@@ -2137,6 +2167,406 @@ static void TestFirstPacketFollows(void)
     TestFirstPacketFollowsSkipped();
 }
 
+#if !defined(WOLFSSH_NO_AES_CBC) && !defined(WOLFSSH_NO_AES_CTR) \
+    && !defined(WOLFSSH_NO_HMAC_SHA1) && !defined(WOLFSSH_NO_HMAC_SHA2_256)
+static void TestIndependentAlgoNegotiation(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    byte payload[512];
+    word32 payloadSz;
+    word32 idx;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+
+    /* Sub-test A: different non-AEAD cipher and MAC per direction */
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, FPF_KEX_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, FPF_KEY_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListCipher(ssh,
+            "aes128-cbc,aes256-ctr"), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListMac(ssh,
+            "hmac-sha1,hmac-sha2-256"), WS_SUCCESS);
+    idx = 0;
+    payloadSz = BuildKexInitPayloadFull(
+            FPF_KEX_GOOD, FPF_KEY_GOOD,
+            "aes128-cbc",    /* C2S enc */
+            "aes256-ctr",    /* S2C enc */
+            "hmac-sha1",     /* C2S MAC */
+            "hmac-sha2-256", /* S2C MAC */
+            0, payload, (word32)sizeof(payload));
+    (void)wolfSSH_TestDoKexInit(ssh, payload, payloadSz, &idx);
+    AssertNotNull(ssh->handshake);
+    AssertIntEQ(ssh->handshake->peerEncryptId, ID_AES128_CBC);
+    AssertIntEQ(ssh->handshake->encryptId,     ID_AES256_CTR);
+    AssertIntEQ(ssh->handshake->peerMacId,     ID_HMAC_SHA1);
+    AssertIntEQ(ssh->handshake->macId,         ID_HMAC_SHA2_256);
+    AssertIntEQ(ssh->handshake->peerAeadMode,  0);
+    AssertIntEQ(ssh->handshake->aeadMode,      0);
+    /* Key sizes — server: C2S→peerKeys, S2C→keys. Validates the
+     * side-aware DoKexInit fix: wrong mapping would swap these sizes. */
+    AssertIntEQ(ssh->handshake->peerKeys.encKeySz, AES_128_KEY_SIZE);
+    AssertIntEQ(ssh->handshake->keys.encKeySz,     AES_256_KEY_SIZE);
+    AssertIntEQ(ssh->handshake->peerKeys.ivSz,     AES_BLOCK_SIZE);
+    AssertIntEQ(ssh->handshake->keys.ivSz,         AES_BLOCK_SIZE);
+    AssertIntEQ(ssh->handshake->peerKeys.macKeySz, WC_SHA_DIGEST_SIZE);
+    AssertIntEQ(ssh->handshake->keys.macKeySz,     WC_SHA256_DIGEST_SIZE);
+    wolfSSH_free(ssh);
+
+#ifndef WOLFSSH_NO_AES_GCM
+    /* Sub-test B: AEAD S2C, non-AEAD C2S — MAC only negotiated for C2S */
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, FPF_KEX_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, FPF_KEY_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListCipher(ssh,
+            "aes128-cbc,aes256-gcm@openssh.com"), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListMac(ssh,
+            "hmac-sha1,hmac-sha2-256"), WS_SUCCESS);
+    idx = 0;
+    payloadSz = BuildKexInitPayloadFull(
+            FPF_KEX_GOOD, FPF_KEY_GOOD,
+            "aes128-cbc",             /* C2S enc: non-AEAD */
+            "aes256-gcm@openssh.com", /* S2C enc: AEAD */
+            "hmac-sha1",              /* C2S MAC: negotiated */
+            "hmac-sha2-256",          /* S2C MAC: skipped (aeadMode) */
+            0, payload, (word32)sizeof(payload));
+    (void)wolfSSH_TestDoKexInit(ssh, payload, payloadSz, &idx);
+    AssertNotNull(ssh->handshake);
+    AssertIntEQ(ssh->handshake->peerEncryptId, ID_AES128_CBC);
+    AssertIntEQ(ssh->handshake->encryptId,     ID_AES256_GCM);
+    AssertIntEQ(ssh->handshake->peerAeadMode,  0);
+    AssertIntEQ(ssh->handshake->aeadMode,      1);
+    AssertIntEQ(ssh->handshake->peerMacId,     ID_HMAC_SHA1);
+    AssertIntEQ(ssh->handshake->macId,         ID_NONE);
+    /* Key sizes for split-AEAD case. */
+    AssertIntEQ(ssh->handshake->peerKeys.encKeySz, AES_128_KEY_SIZE);
+    AssertIntEQ(ssh->handshake->keys.encKeySz,     AES_256_KEY_SIZE);
+    AssertIntEQ(ssh->handshake->peerKeys.ivSz,     AES_BLOCK_SIZE);
+    AssertIntEQ(ssh->handshake->keys.ivSz,         AEAD_NONCE_SZ);
+    AssertIntEQ(ssh->handshake->peerKeys.macKeySz, WC_SHA_DIGEST_SIZE);
+    AssertIntEQ(ssh->handshake->keys.macKeySz,     0);
+    wolfSSH_free(ssh);
+#endif /* !WOLFSSH_NO_AES_GCM */
+
+    wolfSSH_CTX_free(ctx);
+}
+
+static void TestIndependentAlgoNegotiationClient(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    byte payload[512];
+    word32 payloadSz;
+    word32 idx;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    /* Sub-test A: different non-AEAD cipher and MAC per direction.
+     * Client mapping is the mirror of server: C2S→keys/encryptId,
+     * S2C→peerKeys/peerEncryptId.  A swap bug would make these asserts fail. */
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, FPF_KEX_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, FPF_KEY_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListCipher(ssh,
+            "aes128-cbc,aes256-ctr"), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListMac(ssh,
+            "hmac-sha1,hmac-sha2-256"), WS_SUCCESS);
+    idx = 0;
+    payloadSz = BuildKexInitPayloadFull(
+            FPF_KEX_GOOD, FPF_KEY_GOOD,
+            "aes128-cbc",    /* C2S enc */
+            "aes256-ctr",    /* S2C enc */
+            "hmac-sha1",     /* C2S MAC */
+            "hmac-sha2-256", /* S2C MAC */
+            0, payload, (word32)sizeof(payload));
+    (void)wolfSSH_TestDoKexInit(ssh, payload, payloadSz, &idx);
+    AssertNotNull(ssh->handshake);
+    /* Client: C2S is local outgoing → encryptId/keys */
+    AssertIntEQ(ssh->handshake->encryptId,     ID_AES128_CBC);
+    AssertIntEQ(ssh->handshake->peerEncryptId, ID_AES256_CTR);
+    AssertIntEQ(ssh->handshake->macId,         ID_HMAC_SHA1);
+    AssertIntEQ(ssh->handshake->peerMacId,     ID_HMAC_SHA2_256);
+    AssertIntEQ(ssh->handshake->aeadMode,      0);
+    AssertIntEQ(ssh->handshake->peerAeadMode,  0);
+    AssertIntEQ(ssh->handshake->keys.encKeySz,     AES_128_KEY_SIZE);
+    AssertIntEQ(ssh->handshake->peerKeys.encKeySz, AES_256_KEY_SIZE);
+    AssertIntEQ(ssh->handshake->keys.ivSz,         AES_BLOCK_SIZE);
+    AssertIntEQ(ssh->handshake->peerKeys.ivSz,     AES_BLOCK_SIZE);
+    AssertIntEQ(ssh->handshake->keys.macKeySz,     WC_SHA_DIGEST_SIZE);
+    AssertIntEQ(ssh->handshake->peerKeys.macKeySz, WC_SHA256_DIGEST_SIZE);
+    wolfSSH_free(ssh);
+
+#ifndef WOLFSSH_NO_AES_GCM
+    /* Sub-test B: AEAD S2C, non-AEAD C2S — client perspective. */
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, FPF_KEX_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, FPF_KEY_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListCipher(ssh,
+            "aes128-cbc,aes256-gcm@openssh.com"), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListMac(ssh,
+            "hmac-sha1,hmac-sha2-256"), WS_SUCCESS);
+    idx = 0;
+    payloadSz = BuildKexInitPayloadFull(
+            FPF_KEX_GOOD, FPF_KEY_GOOD,
+            "aes128-cbc",             /* C2S enc: non-AEAD */
+            "aes256-gcm@openssh.com", /* S2C enc: AEAD */
+            "hmac-sha1",              /* C2S MAC: negotiated */
+            "hmac-sha2-256",          /* S2C MAC: skipped (aeadMode) */
+            0, payload, (word32)sizeof(payload));
+    (void)wolfSSH_TestDoKexInit(ssh, payload, payloadSz, &idx);
+    AssertNotNull(ssh->handshake);
+    /* Client: C2S→encryptId/keys, S2C→peerEncryptId/peerKeys */
+    AssertIntEQ(ssh->handshake->encryptId,     ID_AES128_CBC);
+    AssertIntEQ(ssh->handshake->peerEncryptId, ID_AES256_GCM);
+    AssertIntEQ(ssh->handshake->aeadMode,      0);
+    AssertIntEQ(ssh->handshake->peerAeadMode,  1);
+    AssertIntEQ(ssh->handshake->macId,         ID_HMAC_SHA1);
+    AssertIntEQ(ssh->handshake->peerMacId,     ID_NONE);
+    AssertIntEQ(ssh->handshake->keys.encKeySz,     AES_128_KEY_SIZE);
+    AssertIntEQ(ssh->handshake->peerKeys.encKeySz, AES_256_KEY_SIZE);
+    AssertIntEQ(ssh->handshake->keys.ivSz,         AES_BLOCK_SIZE);
+    AssertIntEQ(ssh->handshake->peerKeys.ivSz,     AEAD_NONCE_SZ);
+    AssertIntEQ(ssh->handshake->keys.macKeySz,     WC_SHA_DIGEST_SIZE);
+    AssertIntEQ(ssh->handshake->peerKeys.macKeySz, 0);
+    wolfSSH_free(ssh);
+#endif /* !WOLFSSH_NO_AES_GCM */
+
+    wolfSSH_CTX_free(ctx);
+}
+
+static void TestGenerateKeysSplit(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    byte payload[512];
+    word32 payloadSz;
+    word32 idx;
+    byte zeros[AES_256_KEY_SIZE];
+
+    WMEMSET(zeros, 0, sizeof(zeros));
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+
+    /* Sub-test A: aes128-cbc C2S / aes256-ctr S2C, non-AEAD both dirs.
+     * Verifies GenerateKeys uses the correct key size for each direction. */
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, FPF_KEX_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, FPF_KEY_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListCipher(ssh,
+            "aes128-cbc,aes256-ctr"), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListMac(ssh,
+            "hmac-sha1,hmac-sha2-256"), WS_SUCCESS);
+    idx = 0;
+    payloadSz = BuildKexInitPayloadFull(
+            FPF_KEX_GOOD, FPF_KEY_GOOD,
+            "aes128-cbc",    /* C2S enc */
+            "aes256-ctr",    /* S2C enc */
+            "hmac-sha1",     /* C2S MAC */
+            "hmac-sha2-256", /* S2C MAC */
+            0, payload, (word32)sizeof(payload));
+    (void)wolfSSH_TestDoKexInit(ssh, payload, payloadSz, &idx);
+    AssertNotNull(ssh->handshake);
+
+    /* Synthetic K/H/sessionId — any non-zero values produce valid key material. */
+    WMEMSET(ssh->k, 0xAA, WC_SHA256_DIGEST_SIZE);
+    ssh->kSz = WC_SHA256_DIGEST_SIZE;
+    WMEMSET(ssh->h, 0xBB, WC_SHA256_DIGEST_SIZE);
+    ssh->hSz = WC_SHA256_DIGEST_SIZE;
+    WMEMCPY(ssh->sessionId, ssh->h, ssh->hSz);
+    ssh->sessionIdSz = ssh->hSz;
+
+    AssertIntEQ(wolfSSH_TestGenerateKeys(ssh), WS_SUCCESS);
+
+    /* C2S direction (server: peerKeys) — aes128-cbc + hmac-sha1. */
+    AssertIntEQ(ssh->handshake->peerKeys.encKeySz, AES_128_KEY_SIZE);
+    AssertTrue(WMEMCMP(ssh->handshake->peerKeys.encKey, zeros,
+                       AES_128_KEY_SIZE) != 0);
+    AssertIntEQ(ssh->handshake->peerKeys.macKeySz, WC_SHA_DIGEST_SIZE);
+    AssertTrue(WMEMCMP(ssh->handshake->peerKeys.macKey, zeros,
+                       WC_SHA_DIGEST_SIZE) != 0);
+
+    /* S2C direction (server: keys) — aes256-ctr + hmac-sha2-256. */
+    AssertIntEQ(ssh->handshake->keys.encKeySz, AES_256_KEY_SIZE);
+    AssertTrue(WMEMCMP(ssh->handshake->keys.encKey, zeros,
+                       AES_256_KEY_SIZE) != 0);
+    AssertIntEQ(ssh->handshake->keys.macKeySz, WC_SHA256_DIGEST_SIZE);
+    AssertTrue(WMEMCMP(ssh->handshake->keys.macKey, zeros,
+                       WC_SHA256_DIGEST_SIZE) != 0);
+
+    /* C2S and S2C enc keys must be independent (different RFC labels C/D). */
+    AssertTrue(WMEMCMP(ssh->handshake->peerKeys.encKey,
+                       ssh->handshake->keys.encKey, AES_128_KEY_SIZE) != 0);
+
+    wolfSSH_free(ssh);
+
+#ifndef WOLFSSH_NO_AES_GCM
+    /* Sub-test B: aes128-cbc C2S (non-AEAD) / aes256-gcm S2C (AEAD).
+     * Verifies that key 'F' is skipped for the AEAD direction (macKeySz==0). */
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, FPF_KEX_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, FPF_KEY_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListCipher(ssh,
+            "aes128-cbc,aes256-gcm@openssh.com"), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListMac(ssh,
+            "hmac-sha1,hmac-sha2-256"), WS_SUCCESS);
+    idx = 0;
+    payloadSz = BuildKexInitPayloadFull(
+            FPF_KEX_GOOD, FPF_KEY_GOOD,
+            "aes128-cbc",             /* C2S enc: non-AEAD */
+            "aes256-gcm@openssh.com", /* S2C enc: AEAD */
+            "hmac-sha1",              /* C2S MAC */
+            "hmac-sha2-256",          /* S2C MAC: skipped */
+            0, payload, (word32)sizeof(payload));
+    (void)wolfSSH_TestDoKexInit(ssh, payload, payloadSz, &idx);
+    AssertNotNull(ssh->handshake);
+
+    WMEMSET(ssh->k, 0xAA, WC_SHA256_DIGEST_SIZE);
+    ssh->kSz = WC_SHA256_DIGEST_SIZE;
+    WMEMSET(ssh->h, 0xBB, WC_SHA256_DIGEST_SIZE);
+    ssh->hSz = WC_SHA256_DIGEST_SIZE;
+    WMEMCPY(ssh->sessionId, ssh->h, ssh->hSz);
+    ssh->sessionIdSz = ssh->hSz;
+
+    AssertIntEQ(wolfSSH_TestGenerateKeys(ssh), WS_SUCCESS);
+
+    /* C2S hmac-sha1 MAC key must be generated. */
+    AssertIntEQ(ssh->handshake->peerKeys.macKeySz, WC_SHA_DIGEST_SIZE);
+    AssertTrue(WMEMCMP(ssh->handshake->peerKeys.macKey, zeros,
+                       WC_SHA_DIGEST_SIZE) != 0);
+
+    /* S2C AEAD: macKeySz==0 so key 'F' was skipped; macKey stays all-zero. */
+    AssertIntEQ(ssh->handshake->keys.macKeySz, 0);
+    AssertIntEQ(WMEMCMP(ssh->handshake->keys.macKey, zeros,
+                        WC_SHA_DIGEST_SIZE), 0);
+
+    wolfSSH_free(ssh);
+#endif /* !WOLFSSH_NO_AES_GCM */
+
+    wolfSSH_CTX_free(ctx);
+}
+static void TestGenerateKeysSplitClient(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    byte payload[512];
+    word32 payloadSz;
+    word32 idx;
+    byte zeros[AES_256_KEY_SIZE];
+
+    WMEMSET(zeros, 0, sizeof(zeros));
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    /* Sub-test A: aes128-cbc C2S / aes256-ctr S2C — client mapping.
+     * Client: C2S→keys (local outgoing), S2C→peerKeys (peer outgoing). */
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, FPF_KEX_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, FPF_KEY_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListCipher(ssh,
+            "aes128-cbc,aes256-ctr"), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListMac(ssh,
+            "hmac-sha1,hmac-sha2-256"), WS_SUCCESS);
+    idx = 0;
+    payloadSz = BuildKexInitPayloadFull(
+            FPF_KEX_GOOD, FPF_KEY_GOOD,
+            "aes128-cbc",    /* C2S enc */
+            "aes256-ctr",    /* S2C enc */
+            "hmac-sha1",     /* C2S MAC */
+            "hmac-sha2-256", /* S2C MAC */
+            0, payload, (word32)sizeof(payload));
+    (void)wolfSSH_TestDoKexInit(ssh, payload, payloadSz, &idx);
+    AssertNotNull(ssh->handshake);
+
+    WMEMSET(ssh->k, 0xAA, WC_SHA256_DIGEST_SIZE);
+    ssh->kSz = WC_SHA256_DIGEST_SIZE;
+    WMEMSET(ssh->h, 0xBB, WC_SHA256_DIGEST_SIZE);
+    ssh->hSz = WC_SHA256_DIGEST_SIZE;
+    WMEMCPY(ssh->sessionId, ssh->h, ssh->hSz);
+    ssh->sessionIdSz = ssh->hSz;
+
+    AssertIntEQ(wolfSSH_TestGenerateKeys(ssh), WS_SUCCESS);
+
+    /* C2S direction (client: keys) — aes128-cbc + hmac-sha1. */
+    AssertIntEQ(ssh->handshake->keys.encKeySz, AES_128_KEY_SIZE);
+    AssertTrue(WMEMCMP(ssh->handshake->keys.encKey, zeros,
+                       AES_128_KEY_SIZE) != 0);
+    AssertIntEQ(ssh->handshake->keys.macKeySz, WC_SHA_DIGEST_SIZE);
+    AssertTrue(WMEMCMP(ssh->handshake->keys.macKey, zeros,
+                       WC_SHA_DIGEST_SIZE) != 0);
+
+    /* S2C direction (client: peerKeys) — aes256-ctr + hmac-sha2-256. */
+    AssertIntEQ(ssh->handshake->peerKeys.encKeySz, AES_256_KEY_SIZE);
+    AssertTrue(WMEMCMP(ssh->handshake->peerKeys.encKey, zeros,
+                       AES_256_KEY_SIZE) != 0);
+    AssertIntEQ(ssh->handshake->peerKeys.macKeySz, WC_SHA256_DIGEST_SIZE);
+    AssertTrue(WMEMCMP(ssh->handshake->peerKeys.macKey, zeros,
+                       WC_SHA256_DIGEST_SIZE) != 0);
+
+    /* C2S and S2C enc keys must be independent. */
+    AssertTrue(WMEMCMP(ssh->handshake->keys.encKey,
+                       ssh->handshake->peerKeys.encKey, AES_128_KEY_SIZE) != 0);
+
+    wolfSSH_free(ssh);
+
+#ifndef WOLFSSH_NO_AES_GCM
+    /* Sub-test B: aes128-cbc C2S (non-AEAD) / aes256-gcm S2C (AEAD) — client.
+     * keys.macKeySz must be set; peerKeys.macKeySz must be 0 (AEAD, no MAC). */
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, FPF_KEX_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, FPF_KEY_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListCipher(ssh,
+            "aes128-cbc,aes256-gcm@openssh.com"), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListMac(ssh,
+            "hmac-sha1,hmac-sha2-256"), WS_SUCCESS);
+    idx = 0;
+    payloadSz = BuildKexInitPayloadFull(
+            FPF_KEX_GOOD, FPF_KEY_GOOD,
+            "aes128-cbc",             /* C2S enc: non-AEAD */
+            "aes256-gcm@openssh.com", /* S2C enc: AEAD */
+            "hmac-sha1",              /* C2S MAC */
+            "hmac-sha2-256",          /* S2C MAC: skipped */
+            0, payload, (word32)sizeof(payload));
+    (void)wolfSSH_TestDoKexInit(ssh, payload, payloadSz, &idx);
+    AssertNotNull(ssh->handshake);
+
+    WMEMSET(ssh->k, 0xAA, WC_SHA256_DIGEST_SIZE);
+    ssh->kSz = WC_SHA256_DIGEST_SIZE;
+    WMEMSET(ssh->h, 0xBB, WC_SHA256_DIGEST_SIZE);
+    ssh->hSz = WC_SHA256_DIGEST_SIZE;
+    WMEMCPY(ssh->sessionId, ssh->h, ssh->hSz);
+    ssh->sessionIdSz = ssh->hSz;
+
+    AssertIntEQ(wolfSSH_TestGenerateKeys(ssh), WS_SUCCESS);
+
+    /* C2S hmac-sha1 MAC key (client: keys) must be generated. */
+    AssertIntEQ(ssh->handshake->keys.macKeySz, WC_SHA_DIGEST_SIZE);
+    AssertTrue(WMEMCMP(ssh->handshake->keys.macKey, zeros,
+                       WC_SHA_DIGEST_SIZE) != 0);
+
+    /* S2C AEAD (client: peerKeys): macKeySz==0, macKey stays all-zero. */
+    AssertIntEQ(ssh->handshake->peerKeys.macKeySz, 0);
+    AssertIntEQ(WMEMCMP(ssh->handshake->peerKeys.macKey, zeros,
+                        WC_SHA_DIGEST_SIZE), 0);
+
+    wolfSSH_free(ssh);
+#endif /* !WOLFSSH_NO_AES_GCM */
+
+    wolfSSH_CTX_free(ctx);
+}
+#endif /* AES_CBC + AES_CTR + HMAC guards */
+
 #endif /* first_packet_follows coverage guard */
 
 
@@ -2185,6 +2615,16 @@ int main(int argc, char** argv)
     && !defined(WOLFSSH_NO_CURVE25519_SHA256) \
     && !defined(WOLFSSH_NO_RSA_SHA2_256)
     TestFirstPacketFollows();
+#endif
+#if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && !defined(WOLFSSH_NO_RSA) \
+    && !defined(WOLFSSH_NO_CURVE25519_SHA256) \
+    && !defined(WOLFSSH_NO_RSA_SHA2_256) \
+    && !defined(WOLFSSH_NO_AES_CBC) && !defined(WOLFSSH_NO_AES_CTR) \
+    && !defined(WOLFSSH_NO_HMAC_SHA1) && !defined(WOLFSSH_NO_HMAC_SHA2_256)
+    TestIndependentAlgoNegotiation();
+    TestIndependentAlgoNegotiationClient();
+    TestGenerateKeysSplit();
+    TestGenerateKeysSplitClient();
 #endif
     TestDisconnectSetsDisconnectError();
 #if !(defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256))

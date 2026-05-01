@@ -643,9 +643,14 @@ typedef struct HandshakeInfo {
     byte encryptId;
     byte macId;
     byte aeadMode;
+    byte peerEncryptId;
+    byte peerMacId;
+    byte peerAeadMode;
 
     byte blockSz;
     byte macSz;
+    byte peerBlockSz;
+    byte peerMacSz;
 
     word32 bannerLines;
 
@@ -1345,6 +1350,7 @@ enum WS_MessageIdLimits {
             word32 len, word32* idx);
     WOLFSSH_API int wolfSSH_TestDoKexInit(WOLFSSH* ssh, byte* buf,
             word32 len, word32* idx);
+    WOLFSSH_API int wolfSSH_TestGenerateKeys(WOLFSSH* ssh);
     WOLFSSH_API int wolfSSH_TestDoKexDhInit(WOLFSSH* ssh, byte* buf,
             word32 len, word32* idx);
     WOLFSSH_API int wolfSSH_TestDoKexDhReply(WOLFSSH* ssh, byte* buf,
