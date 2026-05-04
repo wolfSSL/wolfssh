@@ -25,6 +25,16 @@
 
 set timeout 30
 
+# Logs / ready file. Under --enable-debug builds wolfSSH's WLOG output is
+# voluminous; if we let it write to expect's spawned pty, the pty buffer
+# fills and the process blocks in write(), which can stall portfwd inside
+# its select() loop before it ever sends the channel-open. Redirect to
+# regular files instead, and use portfwd's -R ready file for sync.
+set srv_log "/tmp/fwd.test.echoserver.[pid].log"
+set clt_log "/tmp/fwd.test.portfwd.[pid].log"
+set clt_ready "/tmp/fwd.test.portfwd.[pid].ready"
+file delete -force $srv_log $clt_log $clt_ready
+
 set lorem_lines {
     {Lorem ipsum dolor sit amet, consectetur adipiscing elit,}
     {sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.}
@@ -45,6 +55,7 @@ set nc_client_pid   ""
 # --- Cleanup -----------------------------------------------------------------
 proc cleanup {} {
     global nc_client_pid wolfssh_clt_pid wolfssh_srv_pid nc_server_pid
+    global srv_log clt_log clt_ready
 
     puts "\n--- Cleaning up ---"
     foreach pid [list $nc_client_pid $wolfssh_clt_pid $wolfssh_srv_pid $nc_server_pid] {
@@ -52,6 +63,7 @@ proc cleanup {} {
             catch {exec kill $pid}
         }
     }
+    file delete -force $srv_log $clt_log $clt_ready
     puts "Done."
 }
 
@@ -79,32 +91,27 @@ puts "    PID $nc_server_pid - waiting for a connection..."
 
 # --- [2] Start wolfssh server ------------------------------------------------
 puts "\n\[2\] Starting wolfssh server..."
-spawn ./examples/echoserver/echoserver -1 -f
+spawn sh -c "exec ./examples/echoserver/echoserver -1 -f >$srv_log 2>&1"
 set wolfssh_srv_id  $spawn_id
 set wolfssh_srv_pid [exp_pid]
 puts "    PID $wolfssh_srv_pid - waiting for a connection..."
 
 # --- [3] Start wolfssh client ------------------------------------------------
 puts "\n\[3\] Starting wolfssh client (plain:12345 -> 11111)..."
-spawn ./examples/portfwd/portfwd -u jill -P upthehill -f 12345 -t 11111
+spawn sh -c "exec ./examples/portfwd/portfwd -u jill -P upthehill -f 12345 -t 11111 -R $clt_ready >$clt_log 2>&1"
 set wolfssh_clt_id  $spawn_id
 set wolfssh_clt_pid [exp_pid]
 
-expect {
-    -i $wolfssh_clt_id
-    -re {sampled} {
-        puts "    wolfssh client ready (PID $wolfssh_clt_pid)."
-    }
-    -re {(?i)(error|fatal)} {
-        fail "wolfssh client failed to start"
-    }
-    timeout {
-        fail "Timed out waiting for wolfssh client to start"
-    }
+# portfwd writes the listening port to $clt_ready once SSH is up.
+set elapsed 0
+while {![file exists $clt_ready] && $elapsed < $timeout} {
+    sleep 1
+    incr elapsed
 }
-
-# Brief pause to let the wolfssh tunnels fully bind their listening ports
-sleep 1
+if {![file exists $clt_ready]} {
+    fail "Timed out waiting for wolfssh client to start (no $clt_ready)"
+}
+puts "    wolfssh client ready (PID $wolfssh_clt_pid)."
 
 # --- [4] Start nc client -----------------------------------------------------
 puts "\n\[4\] Starting nc client: nc localhost 12345"
