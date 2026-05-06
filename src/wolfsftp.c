@@ -2069,7 +2069,12 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 
     /* @TODO handle attributes */
-    SFTP_ParseAttributes_buffer(ssh, &atr, data, &idx, maxSz);
+    if (SFTP_ParseAttributes_buffer(ssh, &atr, data, &idx, maxSz)
+            != WS_SUCCESS) {
+        ret = WS_BAD_FILE_E;
+        goto cleanup;
+    }
+
     if ((reason & WOLFSSH_FXF_READ) && (reason & WOLFSSH_FXF_WRITE)) {
         WLOG(WS_LOG_SFTP, "Opening file with WOLFSSH_O_RDWR");
         m |= WOLFSSH_O_RDWR;
@@ -2277,7 +2282,11 @@ cleanup:
 
 #if 0
     /* @TODO handle attributes */
-    SFTP_ParseAttributes_buffer(ssh, &atr, data, &idx, maxSz);
+    if (SFTP_ParseAttributes_buffer(ssh, &atr, data, &idx, maxSz)
+            != WS_SUCCESS) {
+        ret  = WS_BAD_FILE_E;
+        goto cleanup;
+    }
 #endif
 
     if (reason & WOLFSSH_FXF_READ) {
