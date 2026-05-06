@@ -6390,9 +6390,14 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
                 }
 
                 wolfSSH_SFTP_buffer_rewind(&state->buffer);
-                wolfSSH_SFTP_DoStatus(ssh, reqId, &state->buffer);
-                if (!NoticeError(ssh)) {
-                    wolfSSH_SFTP_ClearState(ssh, STATE_ID_NAME);
+                ret = wolfSSH_SFTP_DoStatus(ssh, reqId, &state->buffer);
+                wolfSSH_SFTP_ClearState(ssh, STATE_ID_NAME);
+                if (ret < 0) {
+                    ssh->error = ret;
+                }
+                else if (ret != WOLFSSH_FTP_OK) {
+                    WLOG(WS_LOG_SFTP, "SFTP server returned status %d", ret);
+                    ssh->error = WS_SFTP_STATUS_NOT_OK;
                 }
                 return NULL;
             }
