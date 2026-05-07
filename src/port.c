@@ -456,13 +456,19 @@ int WS_MoveFileA(const char* oldName, const char* newName, void* heap)
 
     error = mbstowcs_s(&returnSz, unicodeOldName, unicodeOldNameSz,
         oldName, oldNameSz);
+    if (error != 0) {
+        WFREE(unicodeOldName, heap, PORT_DYNTYPE_STRING);
+        return 0;
+    }
 
     newNameSz = WSTRLEN(newName);
     newName = TrimFileName(newName, &newNameSz);
 
     error = mbstowcs_s(&unicodeNewNameSz, NULL, 0, newName, 0);
-    if (error != 0)
+    if (error != 0) {
+        WFREE(unicodeOldName, heap, PORT_DYNTYPE_STRING);
         return 0;
+    }
 
     unicodeNewName = (wchar_t*)WMALLOC((unicodeNewNameSz+1)*sizeof(wchar_t),
             heap, PORT_DYNTYPE_STRING);
