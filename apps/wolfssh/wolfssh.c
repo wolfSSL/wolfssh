@@ -920,7 +920,7 @@ static int config_print(struct config* config)
         printf("port %u\n", config->port);
         printf("keyFile %s\n", config->keyFile ? config->keyFile : "none");
         printf("pubKeyFile %s\n",
-                config->keyFile ? config->keyFile : "none");
+                config->pubKeyFile ? config->pubKeyFile : "none");
         printf("noCommand %s\n", config->noCommand ? "true" : "false");
         printf("logfile %s\n", config->logFile ? config->logFile : "default");
         printf("command %s\n", config->command ? config->command : "none");
