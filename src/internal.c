@@ -6667,18 +6667,17 @@ static int DoUnimplemented(WOLFSSH* ssh,
 {
     word32 seq;
     word32 begin = *idx;
+    int ret;
 
     WOLFSSH_UNUSED(ssh);
-    WOLFSSH_UNUSED(len);
 
-    ato32(buf + begin, &seq);
-    begin += UINT32_SZ;
+    ret = GetUint32(&seq, buf, len, &begin);
+    if (ret == WS_SUCCESS) {
+        *idx = begin;
+        WLOG(WS_LOG_DEBUG, "UNIMPLEMENTED: seq %u", seq);
+    }
 
-    WLOG(WS_LOG_DEBUG, "UNIMPLEMENTED: seq %u", seq);
-
-    *idx = begin;
-
-    return WS_SUCCESS;
+    return ret;
 }
 
 
@@ -6687,57 +6686,67 @@ static int DoDisconnect(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     word32 reason;
     const char* reasonStr = NULL;
     word32 begin = *idx;
+    int ret;
 
-    WOLFSSH_UNUSED(len);
     WOLFSSH_UNUSED(reasonStr);
 
-    ato32(buf + begin, &reason);
-    begin += UINT32_SZ;
+    ret = GetUint32(&reason, buf, len, &begin);
+    if (ret == WS_SUCCESS) {
+        /* Skip the description text. */
+        ret = GetSkip(buf, len, &begin);
+    }
+    if (ret == WS_SUCCESS) {
+        /* Skip the language identifier. */
+        ret = GetSkip(buf, len, &begin);
+    }
+
+    if (ret == WS_SUCCESS) {
+        *idx = begin;
+        ssh->error = WS_DISCONNECT;
+        ret = WS_DISCONNECT;
 
 #ifdef NO_WOLFSSH_STRINGS
-    WLOG(WS_LOG_DEBUG, "DISCONNECT: (%u)", reason);
+        WLOG(WS_LOG_DEBUG, "DISCONNECT: (%u)", reason);
 #elif defined(DEBUG_WOLFSSH)
-    switch (reason) {
-        case WOLFSSH_DISCONNECT_HOST_NOT_ALLOWED_TO_CONNECT:
-            reasonStr = "host not allowed to connect"; break;
-        case WOLFSSH_DISCONNECT_PROTOCOL_ERROR:
-            reasonStr = "protocol error"; break;
-        case WOLFSSH_DISCONNECT_KEY_EXCHANGE_FAILED:
-            reasonStr = "key exchange failed"; break;
-        case WOLFSSH_DISCONNECT_RESERVED:
-            reasonStr = "reserved"; break;
-        case WOLFSSH_DISCONNECT_MAC_ERROR:
-            reasonStr = "mac error"; break;
-        case WOLFSSH_DISCONNECT_COMPRESSION_ERROR:
-            reasonStr = "compression error"; break;
-        case WOLFSSH_DISCONNECT_SERVICE_NOT_AVAILABLE:
-            reasonStr = "service not available"; break;
-        case WOLFSSH_DISCONNECT_PROTOCOL_VERSION_NOT_SUPPORTED:
-            reasonStr = "protocol version not supported"; break;
-        case WOLFSSH_DISCONNECT_HOST_KEY_NOT_VERIFIABLE:
-            reasonStr = "host key not verifiable"; break;
-        case WOLFSSH_DISCONNECT_CONNECTION_LOST:
-            reasonStr = "connection lost"; break;
-        case WOLFSSH_DISCONNECT_BY_APPLICATION:
-            reasonStr = "disconnect by application"; break;
-        case WOLFSSH_DISCONNECT_TOO_MANY_CONNECTIONS:
-            reasonStr = "too many connections"; break;
-        case WOLFSSH_DISCONNECT_AUTH_CANCELLED_BY_USER:
-            reasonStr = "auth cancelled by user"; break;
-        case WOLFSSH_DISCONNECT_NO_MORE_AUTH_METHODS_AVAILABLE:
-            reasonStr = "no more auth methods available"; break;
-        case WOLFSSH_DISCONNECT_ILLEGAL_USER_NAME:
-            reasonStr = "illegal user name"; break;
-        default:
-            reasonStr = "unknown reason";
-    }
-    WLOG(WS_LOG_DEBUG, "DISCONNECT: (%u) %s", reason, reasonStr);
+        switch (reason) {
+            case WOLFSSH_DISCONNECT_HOST_NOT_ALLOWED_TO_CONNECT:
+                reasonStr = "host not allowed to connect"; break;
+            case WOLFSSH_DISCONNECT_PROTOCOL_ERROR:
+                reasonStr = "protocol error"; break;
+            case WOLFSSH_DISCONNECT_KEY_EXCHANGE_FAILED:
+                reasonStr = "key exchange failed"; break;
+            case WOLFSSH_DISCONNECT_RESERVED:
+                reasonStr = "reserved"; break;
+            case WOLFSSH_DISCONNECT_MAC_ERROR:
+                reasonStr = "mac error"; break;
+            case WOLFSSH_DISCONNECT_COMPRESSION_ERROR:
+                reasonStr = "compression error"; break;
+            case WOLFSSH_DISCONNECT_SERVICE_NOT_AVAILABLE:
+                reasonStr = "service not available"; break;
+            case WOLFSSH_DISCONNECT_PROTOCOL_VERSION_NOT_SUPPORTED:
+                reasonStr = "protocol version not supported"; break;
+            case WOLFSSH_DISCONNECT_HOST_KEY_NOT_VERIFIABLE:
+                reasonStr = "host key not verifiable"; break;
+            case WOLFSSH_DISCONNECT_CONNECTION_LOST:
+                reasonStr = "connection lost"; break;
+            case WOLFSSH_DISCONNECT_BY_APPLICATION:
+                reasonStr = "disconnect by application"; break;
+            case WOLFSSH_DISCONNECT_TOO_MANY_CONNECTIONS:
+                reasonStr = "too many connections"; break;
+            case WOLFSSH_DISCONNECT_AUTH_CANCELLED_BY_USER:
+                reasonStr = "auth cancelled by user"; break;
+            case WOLFSSH_DISCONNECT_NO_MORE_AUTH_METHODS_AVAILABLE:
+                reasonStr = "no more auth methods available"; break;
+            case WOLFSSH_DISCONNECT_ILLEGAL_USER_NAME:
+                reasonStr = "illegal user name"; break;
+            default:
+                reasonStr = "unknown reason";
+        }
+        WLOG(WS_LOG_DEBUG, "DISCONNECT: (%u) %s", reason, reasonStr);
 #endif
+    }
 
-    *idx = begin;
-
-    ssh->error = WS_DISCONNECT;
-    return WS_DISCONNECT;
+    return ret;
 }
 
 
