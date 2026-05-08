@@ -29,7 +29,10 @@ jobs:
         run: make check
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: wolfssh-macos
-          path: src/.libs/
-          if-no-files-found: error
+          path: |
+            src/.libs/
+            src/libwolfssh*.la
+          if-no-files-found: warn
