@@ -32,11 +32,16 @@ jobs:
       - name: autogen
         run: ./autogen.sh
       - name: configure
-        run: ./configure
+        # The canonical wolfSSL action installs to ${{ github.workspace }}/build-dir,
+        # not /usr/local/lib, so wolfssh's configure can't find libwolfssl
+        # without explicit LDFLAGS/CPPFLAGS — same pattern Paramiko SFTP uses.
+        run: ./configure LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include"
       - name: make
         run: make
       - name: make check
         run: make check
+        env:
+          DYLD_LIBRARY_PATH: ${{ github.workspace }}/build-dir/lib
 
       - uses: actions/upload-artifact@v4
         if: always()
