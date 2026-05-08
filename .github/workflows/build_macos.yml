@@ -29,6 +29,8 @@ jobs:
           install: true
 
       - uses: actions/checkout@v4
+        with:
+          clean: false
       - name: Inspect wolfssl install layout
         if: always()
         run: |
