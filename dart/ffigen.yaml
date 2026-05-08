@@ -1,0 +1,58 @@
+# ffigen config for regenerating raw bindings.
+# The committed bindings in lib/src/bindings/wolfssh.g.dart are HAND-CURATED
+# to a client-only subset; running ffigen will overwrite them with the full
+# API surface. Use only when intentionally widening bindings.
+#
+# Usage: dart run ffigen --config ffigen.yaml
+
+name: WolfSshBindings
+description: Raw FFI bindings for wolfSSH (auto-generated; prefer the wrapper API).
+output: 'lib/src/bindings/wolfssh.g.dart'
+
+headers:
+  entry-points:
+    - '../wolfssh/ssh.h'
+    - '../wolfssh/error.h'
+  include-directives:
+    - '**/wolfssh/ssh.h'
+    - '**/wolfssh/error.h'
+
+compiler-opts:
+  - '-I../'
+  - '-I/usr/local/include'
+  - '-DWOLFSSH_TERM'
+
+functions:
+  include:
+    - 'wolfSSH_.*'
+  exclude:
+    - 'wolfSSH_SFTP_.*'
+    - 'wolfSSH_SCP_.*'
+    - 'wolfSSH_AGENT_.*'
+
+structs:
+  include:
+    - 'WS_UserAuthData.*'
+  rename:
+    'WS_UserAuthData': 'WsUserAuthData'
+
+enums:
+  include:
+    - 'WS_.*'
+    - 'WOLFSSH_.*'
+
+macros:
+  include:
+    - 'WOLFSSH_USERAUTH_.*'
+    - 'WS_.*_E'
+    - 'WS_SUCCESS'
+    - 'WS_WANT_.*'
+    - 'WS_EOF'
+
+preamble: |
+  // ignore_for_file: type=lint
+  // ignore_for_file: unused_field, unused_element, camel_case_types, non_constant_identifier_names
+
+comments:
+  style: any
+  length: brief
