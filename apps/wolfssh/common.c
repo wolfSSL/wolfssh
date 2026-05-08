@@ -424,6 +424,9 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
                 ret = AppendKeyToFile(knownHostsName,
                         targetName, pubKeyType, encodedKey);
             }
+            else {
+                ret = -1;
+            }
         }
     }
 
