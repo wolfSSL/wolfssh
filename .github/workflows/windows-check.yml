@@ -27,12 +27,12 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
       with:
         repository: wolfssl/wolfssl
         path: wolfssl
 
-    - uses: actions/checkout@master
+    - uses: actions/checkout@v4
       with:
         path: wolfssh
 
