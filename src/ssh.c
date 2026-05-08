@@ -2092,7 +2092,7 @@ int wolfSSH_ReadKey_file(const char* name,
                 out, outSz, outType, outTypeSz, *isPrivate, heap);
     }
 
-    WFCLOSE(ssh->fs, file);
+    WFCLOSE(NULL, file);
     WFREE(in, heap, DYNTYPE_FILE);
 
     return ret;

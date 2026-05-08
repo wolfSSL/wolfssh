@@ -225,8 +225,9 @@ static int FingerprintKey(const byte* pubKey, word32 pubKeySz, char* out)
         ret = Base64_Encode_NoNl(digest, sizeof(digest), (byte*)fp, &fpSz);
 
     if (ret == 0) {
-        if (fp[fpSz] == '=') {
-            fp[fpSz] = 0;
+        if (fpSz > 0 && fp[fpSz - 1] == '=') {
+            /* Remove trailing padding */
+            fp[fpSz - 1] = 0;
         }
 
         WSTRCAT(out, "SHA256:");
