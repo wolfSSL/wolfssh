@@ -13,9 +13,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          repository: j4qfrost/wolfssl
+          repository: wolfssl/wolfssl
+          ref: v5.9.1-stable
       - name: Setup wolfssl
-        run: ./autogen.sh && ./configure --enable-keygen --enable-cryptonly --enable-ssh && make && make check && sudo make install && sudo ln -s /usr/local/lib/libwolfssl.so.24 /usr/lib/libwolfssl.so.24
+        run: ./autogen.sh && ./configure --enable-keygen --enable-cryptonly --enable-ssh && make && make check && sudo make install && sudo ldconfig
 
       - uses: actions/checkout@v4
       - name: autogen

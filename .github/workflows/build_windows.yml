@@ -22,7 +22,7 @@ jobs:
           arch: x64
 
       - name: Get wolfssl
-        run: git clone https://github.com/j4qfrost/wolfssl.git ../wolfssl
+        run: git clone --branch v5.9.1-stable --depth 1 https://github.com/wolfssl/wolfssl.git ../wolfssl
 
       - name: Copy user_settings.h
         run: copy ide\winvs\user_settings.h ..\wolfssl\IDE\WIN\user_settings.h
