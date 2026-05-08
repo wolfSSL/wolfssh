@@ -467,8 +467,12 @@ static int wolfSSH_DoControlSeq(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf, 
     switch (c) {
         case 'H': /* move cursor to indicated row and column  -1 to account
                    * for 1,1 on linux vs 0,0 on windows */
-            wolfSSH_CursorMove(handle, args[1] - OFST, args[0] - OFST, 1);
+        {
+            word32 row = (args[0] > 0) ? args[0] : 1;
+            word32 col = (args[1] > 0) ? args[1] : 1;
+            wolfSSH_CursorMove(handle, col - OFST, row - OFST, 1);
             break;
+        }
 
         case 'C': /* move cursor right */
             wolfSSH_CursorMove(handle, args[0], 0, 0);
