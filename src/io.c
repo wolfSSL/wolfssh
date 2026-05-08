@@ -1,6 +1,6 @@
 /* io.c
  *
- * Copyright (C) 2014-2016 wolfSSL Inc.
+ * Copyright (C) 2014-2026 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -44,7 +44,7 @@
 
     /* percent of time that forced want read/write is done */
     #ifndef WOLFSSH_BLOCK_PROB
-        #define WOLFSSH_BLOCK_PROB 75
+        #define WOLFSSH_BLOCK_PROB 50
     #endif
 #endif
 
@@ -135,12 +135,13 @@ void* wolfSSH_GetIOWriteCtx(WOLFSSH* ssh)
         static int errno;
     #elif defined(MICROCHIP_MPLAB_HARMONY)
         #include "tcpip/tcpip.h"
-        #include "sys/errno.h"
         #include <errno.h>
     #elif defined(WOLFSSL_NUCLEUS)
         #include "nucleus.h"
         #include "networking/nu_networking.h"
         #include <errno.h>
+    #elif defined(WOLFSSH_ZEPHYR)
+        #include <zephyr/net/socket.h>
     #else
         #include <sys/types.h>
         #include <errno.h>
@@ -264,9 +265,9 @@ void* wolfSSH_GetIOWriteCtx(WOLFSSH* ssh)
 
 
 /* Translates return codes returned from send() and recv() if need be. */
-static INLINE int TranslateReturnCode(int old, WS_SOCKET_T sd)
+static INLINE int wsReturnCode(int old, WS_SOCKET_T sd)
 {
-    (void)sd;
+    WOLFSSH_UNUSED(sd);
 
 #ifdef FREESCALE_MQX
     if (old == 0) {
@@ -296,7 +297,7 @@ static INLINE int TranslateReturnCode(int old, WS_SOCKET_T sd)
     return old;
 }
 
-static INLINE int LastError(void)
+static INLINE int wsErrno(void)
 {
 #ifdef USE_WINDOWS_API
     return WSAGetLastError();
@@ -325,12 +326,25 @@ int wsEmbedRecv(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
     }
 #endif
 
+#ifdef MICROCHIP_MPLAB_HARMONY
+    /* check is still connected */
+    if (!TCPIP_TCP_IsConnected(sd))
+    {
+        return WS_CBIO_ERR_CONN_CLOSE;
+    }
+
+    /* check for data ready to be read */
+    if (TCPIP_TCP_GetIsReady(sd) <= 0) {
+        return WS_CBIO_ERR_WANT_READ;
+    }
+#endif
+
     recvd = (int)RECV_FUNCTION(sd, buf, sz, ssh->rflags);
 
-    recvd = TranslateReturnCode(recvd, sd);
+    recvd = wsReturnCode(recvd, sd);
 
     if (recvd < 0) {
-        err = LastError();
+        err = wsErrno();
         WLOG(WS_LOG_DEBUG,"Embed Receive error");
 
         if (err == SOCKET_EWOULDBLOCK || err == SOCKET_EAGAIN) {
@@ -404,11 +418,9 @@ int wsEmbedSend(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
 #endif /* MICROCHIP_MPLAB_HARMONY */
 
     sent = (int)SEND_FUNCTION(sd, buf, sz, ssh->wflags);
-
-    WLOG(WS_LOG_DEBUG,"Embed Send sent %d", sent);
-
+    sent = wsReturnCode(sent, sd);
     if (sent < 0) {
-        err = LastError();
+        err = wsErrno();
         WLOG(WS_LOG_DEBUG,"Embed Send error");
 
         if (err == SOCKET_EWOULDBLOCK || err == SOCKET_EAGAIN) {
@@ -428,10 +440,11 @@ int wsEmbedSend(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
             return WS_CBIO_ERR_CONN_CLOSE;
         }
         else {
-            WLOG(WS_LOG_DEBUG,"    General error");
+            WLOG(WS_LOG_DEBUG,"    General error %d", err);
             return WS_CBIO_ERR_GENERAL;
         }
     }
+    WLOG(WS_LOG_DEBUG,"Embed Send sent %d", sent);
     return sent;
 }
 

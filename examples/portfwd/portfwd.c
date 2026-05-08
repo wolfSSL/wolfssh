@@ -1,6 +1,6 @@
 /* portfwd.c
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2026 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -18,9 +18,18 @@
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#ifdef HAVE_CONFIG_H
+    #include <config.h>
+#endif
+
 #define WOLFSSH_TEST_CLIENT
 #define WOLFSSH_TEST_SERVER
 
+#ifdef WOLFSSL_USER_SETTINGS
+    #include <wolfssl/wolfcrypt/settings.h>
+#else
+    #include <wolfssl/options.h>
+#endif
 
 #include <stdio.h>
 #ifdef HAVE_TERMIOS_H
@@ -31,6 +40,7 @@
     #include <sys/select.h>
 #endif
 #include <wolfssh/ssh.h>
+#include <wolfssh/internal.h>
 #include <wolfssh/test.h>
 #include <wolfssh/port.h>
 #include <wolfssl/wolfcrypt/ecc.h>
@@ -54,18 +64,22 @@
  */
 
 
+#ifndef EXAMPLE_BUFFER_SZ
+    #define EXAMPLE_BUFFER_SZ 4096
+#endif
+
 #define INVALID_FWD_PORT 0
 static const char defaultFwdFromHost[] = "0.0.0.0";
 
 
-static inline int max(int a, int b)
+static inline int findMax(int a, int b)
 {
     return (a > b) ? a : b;
 }
 
 static void ShowUsage(void)
 {
-    printf("portfwd %s\n"
+    printf("portfwd %s linked with wolfSSL %s\n"
            " -?            display this help and exit\n"
            " -h <host>     host to connect to, default %s\n"
            " -p <num>      port to connect on, default %u\n"
@@ -76,6 +90,7 @@ static void ShowUsage(void)
            " -T <host>     host to forward to, default to host\n"
            " -t <num>      port to forward to (REQUIRED)\n",
            LIBWOLFSSH_VERSION_STRING,
+           LIBWOLFSSL_VERSION_STRING,
            wolfSshIp, wolfSshPort, defaultFwdFromHost);
 }
 
@@ -151,7 +166,7 @@ static int wsUserAuth(byte authType,
                       void* ctx)
 {
     const char* defaultPassword = (const char*)ctx;
-    word32 passwordSz;
+    word32 passwordSz = 0;
     int ret = WOLFSSH_USERAUTH_SUCCESS;
 
     (void)authType;
@@ -220,6 +235,7 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     const char* fwdToHost = NULL;
     const char* username = NULL;
     const char* password = NULL;
+    const char* readyFile = NULL;
     SOCKADDR_IN_T hostAddr;
     socklen_t hostAddrSz = sizeof(hostAddr);
     SOCKET_T sshFd;
@@ -238,23 +254,34 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     int appFdSet = 0;
     struct timeval to;
     WOLFSSH_CHANNEL* fwdChannel = NULL;
-    byte buffer[4096];
-    word32 bufferSz = sizeof(buffer);
-    word32 bufferUsed = 0;
+    byte* appBuffer = NULL;
+    byte* sshBuffer = NULL;
+    word32 appBufferSz = 0;
+    word32 appBufferUsed = 0;
+    word32 sshBufferSz = 0;
+    word32 sshBufferUsed = 0;
+#ifndef WOLFSSH_SMALL_STACK
+    byte appBuffer_s[EXAMPLE_BUFFER_SZ];
+    byte sshBuffer_s[EXAMPLE_BUFFER_SZ];
+#endif
 
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?f:h:p:t:u:F:P:T:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?f:h:p:t:u:F:P:R:T:")) != -1) {
         switch (ch) {
             case 'h':
                 host = myoptarg;
                 break;
 
             case 'f':
+                if (myoptarg == NULL)
+                    err_sys("null argument found");
                 fwdFromPort = (word16)atoi(myoptarg);
                 break;
 
             case 'p':
+                if (myoptarg == NULL)
+                    err_sys("null argument found");
                 port = (word16)atoi(myoptarg);
                 #if !defined(NO_MAIN_DRIVER) || defined(USE_WINDOWS_API)
                     if (port == 0)
@@ -263,6 +290,8 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
                 break;
 
             case 't':
+                if (myoptarg == NULL)
+                    err_sys("null argument found");
                 fwdToPort = (word16)atoi(myoptarg);
                 break;
 
@@ -276,6 +305,10 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
 
             case 'P':
                 password = myoptarg;
+                break;
+
+            case 'R':
+                readyFile = myoptarg;
                 break;
 
             case 'T':
@@ -309,9 +342,26 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
            " * password: %s\n"
            " * forward from: %s:%u\n"
            " * forward to: %s:%u\n",
-           host, port, username, password,
+           host, port, username, password ? password : "",
            fwdFromHost, fwdFromPort,
            fwdToHost, fwdToPort);
+
+#ifdef WOLFSSH_SMALL_STACK
+    appBuffer = (byte*)WMALLOC(EXAMPLE_BUFFER_SZ, NULL, 0);
+    sshBuffer = (byte*)WMALLOC(EXAMPLE_BUFFER_SZ, NULL, 0);
+    if (appBuffer == NULL || sshBuffer == NULL) {
+        WFREE(appBuffer, NULL, 0);
+        WFREE(sshBuffer, NULL, 0);
+        err_sys("couldn't allocate buffers");
+    }
+    appBufferSz = EXAMPLE_BUFFER_SZ;
+    sshBufferSz = EXAMPLE_BUFFER_SZ;
+#else
+    appBuffer = appBuffer_s;
+    sshBuffer = sshBuffer_s;
+    appBufferSz = sizeof appBuffer_s;
+    sshBufferSz = sizeof sshBuffer_s;
+#endif
 
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
     if (ctx == NULL)
@@ -336,12 +386,14 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     if (ret != WS_SUCCESS)
         err_sys("Couldn't set the username.");
 
+    /* Socket to SSH peer. */
     build_addr(&hostAddr, host, port);
-    build_addr(&fwdFromHostAddr, fwdFromHost, fwdFromPort);
+    tcp_socket(&sshFd, ((struct sockaddr_in *)&hostAddr)->sin_family);
 
-    tcp_socket(&sshFd); /* Socket to SSH peer. */
-    tcp_socket(&listenFd); /* Either receive from client application or connect
-                              to server application. */
+    /* Receive from client application or connect to server application. */
+    build_addr(&fwdFromHostAddr, fwdFromHost, fwdFromPort);
+    tcp_socket(&listenFd, ((struct sockaddr_in *)&fwdFromHostAddr)->sin_family);
+
     tcp_listen(&listenFd, &fwdFromPort, 1);
 
     printf("Connecting to the SSH server...\n");
@@ -357,10 +409,29 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     if (ret != WS_SUCCESS)
         err_sys("Couldn't connect SFTP");
 
+    if (readyFile != NULL) {
+    #ifndef NO_FILESYSTEM
+        WFILE* f = NULL;
+        ret = WFOPEN(NULL, &f, readyFile, "w");
+        if (f != NULL && ret == 0) {
+            char portStr[10];
+            int l;
+
+            l = WSNPRINTF(portStr, sizeof(portStr), "%d\n", (int)fwdFromPort);
+            if (l > 0) {
+                WFWRITE(NULL, portStr, MIN((size_t)l, sizeof(portStr)), 1, f);
+            }
+            WFCLOSE(NULL, f);
+        }
+    #else
+        err_sys("cannot create readyFile with no file system.\r\n");
+    #endif
+    }
+
     FD_ZERO(&templateFds);
     FD_SET(sshFd, &templateFds);
     FD_SET(listenFd, &templateFds);
-    nFds = max(sshFd, listenFd) + 1;
+    nFds = findMax(sshFd, listenFd) + 1;
 
     for (;;) {
         rxFds = templateFds;
@@ -387,9 +458,9 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
         if (appFdSet && FD_ISSET(appFd, &rxFds)) {
             int rxd;
             rxd = (int)recv(appFd,
-                    buffer + bufferUsed, bufferSz - bufferUsed, 0);
+                    appBuffer + appBufferUsed, appBufferSz - appBufferUsed, 0);
             if (rxd > 0)
-                bufferUsed += rxd;
+                appBufferUsed += rxd;
             else
                 break;
         }
@@ -400,18 +471,19 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
             if (ret == WS_CHAN_RXD) {
                 WOLFSSH_CHANNEL* readChannel;
 
-                bufferSz = sizeof(buffer);
+                sshBufferUsed = sshBufferSz;
                 readChannel = wolfSSH_ChannelFind(ssh,
                         channelId, WS_CHANNEL_ID_SELF);
                 ret = (readChannel == NULL) ? WS_INVALID_CHANID : WS_SUCCESS;
 
                 if (ret == WS_SUCCESS)
-                    ret = wolfSSH_ChannelRead(readChannel, buffer, bufferSz);
+                    ret = wolfSSH_ChannelRead(readChannel,
+                            sshBuffer, sshBufferUsed);
                 if (ret > 0) {
-                    bufferSz = (word32)ret;
+                    sshBufferUsed = (word32)ret;
                     if (appFd != -1) {
-                        ret = (int)send(appFd, buffer, bufferSz, 0);
-                        if (ret != (int)bufferSz)
+                        ret = (int)send(appFd, sshBuffer, sshBufferUsed, 0);
+                        if (ret != (int)sshBufferUsed)
                             break;
                     }
                 }
@@ -427,11 +499,17 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
             appFdSet = 1;
             fwdChannel = wolfSSH_ChannelFwdNew(ssh, fwdToHost, fwdToPort,
                     fwdFromHost, fwdFromPort);
+            continue;
         }
-        if (bufferUsed > 0) {
-            ret = wolfSSH_ChannelSend(fwdChannel, buffer, bufferUsed);
+        if (appBufferUsed > 0) {
+            ret = wolfSSH_ChannelSend(fwdChannel, appBuffer, appBufferUsed);
             if (ret > 0)
-                bufferUsed -= ret;
+                appBufferUsed -= ret;
+            else if (ret == WS_CHANNEL_NOT_CONF || ret == WS_CHAN_RXD) {
+            #ifdef SHELL_DEBUG
+                printf("Waiting for channel open confirmation.\n");
+            #endif
+            }
         }
     }
 
@@ -444,7 +522,11 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     WCLOSESOCKET(appFd);
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
-#if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
+#ifdef WOLFSSH_SMALL_STACK
+    WFREE(appBuffer, NULL, 0);
+    WFREE(sshBuffer, NULL, 0);
+#endif
+#if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
 

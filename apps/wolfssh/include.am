@@ -1,0 +1,11 @@
+if BUILD_SSHCLIENT
+
+bin_PROGRAMS += apps/wolfssh/wolfssh
+apps_wolfssh_wolfssh_SOURCES = apps/wolfssh/wolfssh.c \
+                               apps/wolfssh/common.c apps/wolfssh/common.h
+apps_wolfssh_wolfssh_LDADD = src/libwolfssh.la
+apps_wolfssh_wolfssh_DEPENDENCIES = src/libwolfssh.la
+
+endif BUILD_SSHCLIENT
+
+EXTRA_DIST+= apps/wolfssh/README.md

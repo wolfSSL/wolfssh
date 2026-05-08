@@ -1,6 +1,6 @@
 /* testsuite.c
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2026 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -18,11 +18,9 @@
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#define WOLFSSH_TEST_CLIENT
-#define WOLFSSH_TEST_SERVER
-#define WOLFSSH_TEST_THREADING
-#define WOLFSSH_TEST_LOCKING
-
+#ifdef HAVE_CONFIG_H
+    #include <config.h>
+#endif
 
 #include <stdio.h>
 
@@ -32,6 +30,13 @@
     #include <wolfssl/options.h>
 #endif
 
+#define WOLFSSH_TEST_CLIENT
+#define WOLFSSH_TEST_SERVER
+#ifndef SINGLE_THREADED
+    #define WOLFSSH_TEST_THREADING
+#endif
+#define WOLFSSH_TEST_LOCKING
+
 #include <wolfssh/settings.h>
 #include <wolfssh/ssh.h>
 #include <wolfssh/test.h>
@@ -39,23 +44,32 @@
 #include "examples/client/client.h"
 #include "tests/testsuite.h"
 
-#ifndef NO_TESTSUITE_MAIN_DRIVER
+#if defined(WOLFSSH_SFTP) && !defined(SINGLE_THREADED)
+    #include "tests/sftp.h"
+#endif
 
-static int TestsuiteTest(int argc, char** argv);
+#ifdef HAVE_FIPS
+    #include <wolfssl/wolfcrypt/fips_test.h>
+#endif
+
+#ifndef NO_TESTSUITE_MAIN_DRIVER
 
 int main(int argc, char** argv)
 {
-    return TestsuiteTest(argc, argv);
+    return wolfSSH_TestsuiteTest(argc, argv);
 }
 
 
 int myoptind = 0;
 char* myoptarg = NULL;
 
-#endif /* NO_TESTSUITE_MAIN_DRIVER */
+#endif /* !NO_TESTSUITE_MAIN_DRIVER */
 
 
-#if !defined(NO_WOLFSSH_SERVER) && !defined(NO_WOLFSSH_CLIENT)
+#if !defined(NO_WOLFSSH_SERVER) && !defined(NO_WOLFSSH_CLIENT) && \
+    !defined(SINGLE_THREADED) && !defined(WOLFSSH_TEST_BLOCK)
+
+#ifdef WOLFSSH_SHELL
 
 static int tsClientUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 {
@@ -79,7 +93,7 @@ static int tsClientUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 #define NUMARGS 5
 #define ARGLEN 32
 
-int TestsuiteTest(int argc, char** argv)
+static void wolfSSH_EchoTest(void)
 {
     tcp_ready ready;
     THREAD_TYPE serverThread;
@@ -94,25 +108,12 @@ int TestsuiteTest(int argc, char** argv)
     int serverArgc = 0;
     int clientArgc = 0;
 
-    (void)argc;
-    (void)argv;
-
-    WSTARTTCP();
-
-    wolfSSH_Init();
-    #if defined(DEBUG_WOLFSSH)
-        wolfSSH_Debugging_ON();
-    #endif
-    #if !defined(WOLFSSL_TIRTOS)
-        ChangeToWolfSshRoot();
-    #endif
-
     InitTcpReady(&ready);
 
     WSTRNCPY(serverArgv[serverArgc++], "echoserver", ARGLEN);
     WSTRNCPY(serverArgv[serverArgc++], "-1", ARGLEN);
     WSTRNCPY(serverArgv[serverArgc++], "-f", ARGLEN);
-    #ifndef USE_WINDOWS_API
+    #if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR)
         WSTRNCPY(serverArgv[serverArgc++], "-p", ARGLEN);
         WSTRNCPY(serverArgv[serverArgc++], "-0", ARGLEN);
     #endif
@@ -123,12 +124,12 @@ int TestsuiteTest(int argc, char** argv)
     serverArgs.signal = &ready;
     serverArgs.user_auth = NULL;
     ThreadStart(echoserver_test, &serverArgs, &serverThread);
-    WaitTcpReady(&serverArgs);
+    WaitTcpReady(&ready);
 
     WSTRNCPY(cA[clientArgc++], "client", ARGLEN);
     WSTRNCPY(cA[clientArgc++], "-u", ARGLEN);
     WSTRNCPY(cA[clientArgc++], "jill", ARGLEN);
-    #ifndef USE_WINDOWS_API
+    #if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR)
         WSTRNCPY(cA[clientArgc++], "-p", ARGLEN);
         WSNPRINTF(cA[clientArgc++], ARGLEN, "%d", ready.port);
     #endif
@@ -140,34 +141,70 @@ int TestsuiteTest(int argc, char** argv)
     clientArgs.user_auth = tsClientUserAuth;
 
     client_test(&clientArgs);
-    if (clientArgs.return_code != 0) {
-        return clientArgs.return_code;
-    }
 
+#ifdef WOLFSSH_ZEPHYR
+    /* Weird deadlock without this sleep */
+    k_sleep(Z_TIMEOUT_TICKS(100));
+#endif
     ThreadJoin(serverThread);
 
-    wolfSSH_Cleanup();
     FreeTcpReady(&ready);
+}
+#endif /* WOLFSSH_SHELL */
+
+
+int wolfSSH_TestsuiteTest(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+
+    WSTARTTCP();
+
+    #if defined(DEBUG_WOLFSSH)
+        wolfSSH_Debugging_ON();
+    #endif
+
+    wolfSSH_Init();
+
+    #if defined(FIPS_VERSION_GE) && FIPS_VERSION_GE(5,2)
+    {
+        int i;
+        for (i = 0; i < FIPS_CAST_COUNT; i++) {
+            wc_RunCast_fips(i);
+        }
+    }
+    #endif /* HAVE_FIPS */
+
+    #if !defined(WOLFSSL_TIRTOS)
+        ChangeToWolfSshRoot();
+    #endif
+
+#ifdef WOLFSSH_SHELL
+    wolfSSH_EchoTest();
+#endif
+
+    wolfSSH_Cleanup();
 
 #ifdef WOLFSSH_SFTP
     printf("testing SFTP blocking\n");
-    test_SFTP(0);
+    wolfSSH_SftpTest(0);
+#ifndef WOLFSSH_NO_NONBLOCKING
     printf("testing SFTP non blocking\n");
-    test_SFTP(1);
+    wolfSSH_SftpTest(1);
 #endif
-
+#endif
     return EXIT_SUCCESS;
 }
 
-#else /* !NO_WOLFSSH_SERVER && !NO_WOLFSSH_CLIENT */
+#else /* !NO_WOLFSSH_SERVER && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
 
-int TestsuiteTest(int argc, char** argv)
+int wolfSSH_TestsuiteTest(int argc, char** argv)
 {
     (void)argc;
     (void)argv;
     return EXIT_SUCCESS;
 }
 
-#endif /* !NO_WOLFSSH_SERVER && !NO_WOLFSSH_CLIENT */
+#endif /* !NO_WOLFSSH_SERVER && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
 
 

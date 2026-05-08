@@ -1,0 +1,25 @@
+menuconfig WOLFSSH
+	bool "wolfSSH module support"
+	select WOLFSSL
+
+if WOLFSSH
+config WOLFSSH_SETTINGS_FILE
+	string "wolfSSH settings file"
+	help
+	  Use a specific wolfSSH settings file.
+
+config WOLFSSH_SFTP_DEFAULT_DIR
+	string "wolfSSH sftp default directory"
+	help
+	  Use a specific directory as the default wolfSSH sftp working directory.
+
+config WOLFSSH_DEBUG
+	bool "wolfSSH debug activation"
+	help
+	  Enable debugging activation for wolfSSH.
+
+config ZEPHYR_WOLFSSH_MODULE
+	bool
+	depends on WOLFSSH
+endif
+

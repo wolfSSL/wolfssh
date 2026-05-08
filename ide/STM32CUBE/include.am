@@ -1,0 +1,10 @@
+# vim:ft=automake
+# included from Top Level Makefile.am
+# All paths should be given relative to the root
+
+EXTRA_DIST+= ide/STM32CUBE/main.c
+EXTRA_DIST+= ide/STM32CUBE/wolfssh_test.c
+EXTRA_DIST+= ide/STM32CUBE/wolfssh_test.h
+EXTRA_DIST+= ide/STM32CUBE/myFilesystem.h
+EXTRA_DIST+= ide/STM32CUBE/README.md
+EXTRA_DIST+= ide/STM32CUBE/default_conf.ftl

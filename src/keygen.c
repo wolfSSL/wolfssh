@@ -1,6 +1,6 @@
 /* keygen.c
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2026 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -37,10 +37,17 @@
 
 
 #include <wolfssl/wolfcrypt/random.h>
-#include <wolfssl/wolfcrypt/rsa.h>
+#include <wolfssh/internal.h>
 #include <wolfssh/error.h>
 #include <wolfssh/keygen.h>
 #include <wolfssh/log.h>
+#ifndef WOLFSSH_NO_RSA
+    #include <wolfssl/wolfcrypt/rsa.h>
+#endif
+#ifndef WOLFSSH_NO_ECDSA
+    #include <wolfssl/wolfcrypt/ecc.h>
+#endif
+#include <wolfssl/wolfcrypt/asn_public.h>
 
 #ifdef WOLFSSH_KEYGEN
 
@@ -54,10 +61,9 @@
 #endif
 
 
-int wolfSSH_MakeRsaKey(byte* out, word32 outSz,
-                       word32 size, word32 e)
+int wolfSSH_MakeRsaKey(byte* out, word32 outSz, word32 size, word32 e)
 {
-#ifndef NO_RSA
+#ifndef WOLFSSH_NO_RSA
 
     int ret = WS_SUCCESS;
     WC_RNG rng;
@@ -108,10 +114,136 @@ int wolfSSH_MakeRsaKey(byte* out, word32 outSz,
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_MakeRsaKey(), ret = %d", ret);
     return ret;
 #else
-    (void)out;
-    (void)outSz;
-    (void)size;
-    (void)e;
+    WOLFSSH_UNUSED(out);
+    WOLFSSH_UNUSED(outSz);
+    WOLFSSH_UNUSED(size);
+    WOLFSSH_UNUSED(e);
+    return WS_NOT_COMPILED;
+#endif
+}
+
+
+int wolfSSH_MakeEcdsaKey(byte* out, word32 outSz, word32 size)
+{
+#ifndef WOLFSSH_NO_ECDSA
+
+    int ret = WS_SUCCESS;
+    WC_RNG rng;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_MakeEcdsaKey()");
+
+    if (wc_InitRng(&rng) != 0) {
+        WLOG(WS_LOG_DEBUG, "Couldn't create RNG");
+        ret = WS_CRYPTO_FAILED;
+    }
+
+    if (ret == WS_SUCCESS) {
+        ecc_key key;
+
+        if (wc_ecc_init(&key) != 0)
+            ret = WS_CRYPTO_FAILED;
+
+        if (ret == WS_SUCCESS) {
+            ret = wc_ecc_make_key(&rng, size/8, &key);
+            if (ret != 0) {
+                WLOG(WS_LOG_DEBUG, "ECDSA key generation failed");
+                ret = WS_CRYPTO_FAILED;
+            }
+            else
+                ret = WS_SUCCESS;
+        }
+
+        if (ret == WS_SUCCESS) {
+            int keySz;
+
+            keySz = wc_EccKeyToDer(&key, out, outSz);
+            if (keySz < 0) {
+                WLOG(WS_LOG_DEBUG, "ECDSA key to DER failed");
+                ret = WS_CRYPTO_FAILED;
+            }
+            else
+                ret = keySz;
+        }
+
+        if (wc_ecc_free(&key) != 0) {
+            WLOG(WS_LOG_DEBUG, "ECDSA key free failed");
+            ret = WS_CRYPTO_FAILED;
+        }
+
+        if (wc_FreeRng(&rng) != 0) {
+            WLOG(WS_LOG_DEBUG, "Couldn't free RNG");
+            ret = WS_CRYPTO_FAILED;
+        }
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_MakeEcdsaKey(), ret = %d", ret);
+    return ret;
+#else
+    WOLFSSH_UNUSED(out);
+    WOLFSSH_UNUSED(outSz);
+    WOLFSSH_UNUSED(size);
+    return WS_NOT_COMPILED;
+#endif
+}
+
+
+int wolfSSH_MakeEd25519Key(byte* out, word32 outSz, word32 size)
+{
+#if !defined(WOLFSSH_NO_ED25519) && defined(HAVE_ED25519) && \
+    defined(HAVE_ED25519_MAKE_KEY) && defined(HAVE_ED25519_KEY_EXPORT)
+
+    int ret = WS_SUCCESS;
+    WC_RNG rng;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_MakeEd25519Key()");
+
+    if (wc_InitRng(&rng) != 0) {
+        WLOG(WS_LOG_DEBUG, "Couldn't create RNG");
+        ret = WS_CRYPTO_FAILED;
+    }
+
+    if (ret == WS_SUCCESS) {
+        ed25519_key key;
+
+        if (wc_ed25519_init(&key) != 0)
+            ret = WS_CRYPTO_FAILED;
+
+        if (ret == WS_SUCCESS) {
+            ret = wc_ed25519_make_key(&rng, size/8, &key);
+            if (ret != 0) {
+                WLOG(WS_LOG_DEBUG, "ED25519 key generation failed");
+                ret = WS_CRYPTO_FAILED;
+            }
+            else
+                ret = WS_SUCCESS;
+        }
+
+        if (ret == WS_SUCCESS) {
+            int keySz;
+
+            keySz = wc_Ed25519KeyToDer(&key, out, outSz);
+            if (keySz < 0) {
+                WLOG(WS_LOG_DEBUG, "ED25519 key to DER failed");
+                ret = WS_CRYPTO_FAILED;
+            }
+            else
+                ret = keySz;
+        }
+
+	wc_ed25519_free(&key);
+
+        if (wc_FreeRng(&rng) != 0) {
+            WLOG(WS_LOG_DEBUG, "Couldn't free RNG");
+            ret = WS_CRYPTO_FAILED;
+        }
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_MakeEd25519Key(), ret = %d", ret);
+    return ret;
+#else
+    WOLFSSH_UNUSED(out);
+    WOLFSSH_UNUSED(outSz);
+    WOLFSSH_UNUSED(size);
     return WS_NOT_COMPILED;
 #endif
 }

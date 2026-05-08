@@ -1,6 +1,6 @@
 /* wolfsftp.h
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2026 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -126,6 +126,14 @@ struct WS_SFTP_FILEATRB_EX {
     WS_SFTP_FILEATRB_EX* next;
 };
 
+#define FILEATRB_PER_MASK_TYPE 0770000
+#define FILEATRB_PER_FILE      0100000
+#define FILEATRB_PER_LINK      0120000
+#define FILEATRB_PER_DEV_CHAR  0020000
+#define FILEATRB_PER_DIR       0040000
+#define FILEATRB_PER_DEV_BLOCK 0060000
+#define FILEATRB_PER_MASK_PERM 0000777
+
 typedef struct WS_SFTP_FILEATRB {
     word32 flags;
     word32 sz[2]; /* sz[0] being the lower and sz[1] being the upper */
@@ -149,8 +157,17 @@ struct WS_SFTPNAME {
     WS_SFTPNAME* next;
 };
 
+/*
+ * WOLFSSH_MAX_SFTP_RW: Limit on how much file data the client will request
+ *     or send in a file transfer message. Also a limit on how much file
+ *     data a server will send per request from the client. Most SFTP clients
+ *     will allow the peer to send less than requested, but one in particular
+ *     expects the amount requested to be sent, and that's 32kiB.
+ * WOLFSSH_MAX_SFTP_RECV: Used as a bounds check on a SFTP message's size.
+ *     Is not used to allocate any buffers directly.
+ */
 #ifndef WOLFSSH_MAX_SFTP_RW
-    #define WOLFSSH_MAX_SFTP_RW 1024
+    #define WOLFSSH_MAX_SFTP_RW 32768
 #endif
 #ifndef WOLFSSH_MAX_SFTP_RECV
     #define WOLFSSH_MAX_SFTP_RECV 32768
@@ -215,6 +232,7 @@ WOLFSSH_API int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to,
 
 /* SFTP server functions */
 WOLFSSH_API int wolfSSH_SFTP_read(WOLFSSH* ssh);
+WOLFSSH_API int wolfSSH_SFTP_PendingSend(WOLFSSH* ssh);
 
 
 WOLFSSH_LOCAL int wolfSSH_SFTP_CreateStatus(WOLFSSH* ssh, word32 status,
@@ -244,6 +262,8 @@ WOLFSSH_LOCAL int wolfSSH_SFTP_RecvSetSTAT(WOLFSSH* ssh, int reqId, byte* data,
         word32 maxSz);
 WOLFSSH_LOCAL int wolfSSH_SFTP_RecvFSTAT(WOLFSSH* ssh, int reqId, byte* data,
         word32 maxSz);
+WOLFSSH_LOCAL int wolfSSH_SFTP_RecvFSetSTAT(WOLFSSH* ssh, int reqId, byte* data, 
+        word32 maxSz);
 
 #ifndef NO_WOLFSSH_DIR
 WOLFSSH_LOCAL int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data,
@@ -262,9 +282,16 @@ WOLFSSL_LOCAL int SFTP_RemoveHandleNode(WOLFSSH* ssh, byte* handle,
 
 WOLFSSH_LOCAL void wolfSSH_SFTP_ShowSizes(void);
 
+#ifdef WOLFSSH_TEST_INTERNAL
+    WOLFSSH_API int wolfSSH_TestSftpBufferSend(WOLFSSH* ssh,
+            byte* data, word32 sz, word32 idx);
+    #if defined(WOLFSSL_NUCLEUS) && !defined(NO_WOLFSSH_MKTIME)
+        WOLFSSH_API int wolfSSH_TestNucleusMonthFromDate(word16 d);
+    #endif
+#endif
+
 #ifdef __cplusplus
 }
 #endif
 
 #endif /* _WOLFSSH_WOLFSFTP_H_ */
-

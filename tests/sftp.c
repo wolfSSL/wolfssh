@@ -1,6 +1,6 @@
 /* sftp.c
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2026 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -18,7 +18,20 @@
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#ifdef HAVE_CONFIG_H
+    #include <config.h>
+#endif
+
 #include <stdio.h>
+#ifdef WOLFSSL_USER_SETTINGS
+    #include <wolfssl/wolfcrypt/settings.h>
+#else
+    #include <wolfssl/options.h>
+#endif
+#include <wolfssh/settings.h>
+
+#if defined(WOLFSSH_SFTP) && !defined(SINGLE_THREADED)
+
 #include <wolfssh/ssh.h>
 #include <wolfssh/wolfsftp.h>
 
@@ -26,85 +39,233 @@
 #define WOLFSSH_TEST_THREADING
 #include <wolfssh/test.h>
 
-#include "tests/testsuite.h"
+#include "tests/sftp.h"
 #include "examples/echoserver/echoserver.h"
 #include "examples/sftpclient/sftpclient.h"
 
-#if defined(WOLFSSH_SFTP) && !defined(SINGLE_THREADED)
+/*
+ * Each test command is paired with an optional check function that
+ * validates the output it produces. This eliminates the fragile
+ * index-based coupling between the command array and the validator.
+ */
+typedef int (*SftpTestCheck)(void);
 
-static const char* cmds[] = {
-    "mkdir a",
-    "cd a",
-    "pwd",
-    "ls",
-    "put configure",
-    "ls",
-    "get configure test-get",
-    "rm configure",
-    "cd ../",
-    "ls",
-    "rename test-get test-get-2",
-    "rmdir a",
-    "ls",
-    "chmod 600 test-get-2",
-    "rm test-get-2",
-    "exit"
-};
-static int commandIdx = 0;
+typedef struct {
+    const char* cmd;
+    SftpTestCheck check; /* validates output from THIS cmd, or NULL */
+} SftpTestCmd;
+
+/* Test buffer */
 static char inBuf[1024] = {0};
 
-/* return 0 on success */
-static int Expected(int command)
+/* check that pwd output ends in /a */
+static int checkPwdInA(void)
 {
     int i;
+    int len;
 
-    switch (command) {
-        case 3: /* pwd */
-            /* working directory should not contain a '.' at the end */
-            for (i = 0; i < (int)sizeof(inBuf); i++) {
-                if (inBuf[i] == '\n') {
-                    inBuf[i] = '\0';
-                    break;
-                }
-            }
-
-            if (inBuf[WSTRLEN(inBuf) - 2] != '/') {
-                printf("unexpected pwd of %s\n looking for '/'\n", inBuf);
-                return -1;
-            }
-            if (inBuf[WSTRLEN(inBuf) - 1] != 'a') {
-                printf("unexpected pwd of %s\n looking for 'a'\n", inBuf);
-                return -1;
-            }
+    for (i = 0; i < (int)sizeof(inBuf); i++) {
+        if (inBuf[i] == '\n') {
+            inBuf[i] = '\0';
             break;
-
-        case 4:
-            {
-                char expt1[] = ".\n..\nwolfSSH sftp> ";
-                char expt2[] = "..\n.\nwolfSSH sftp> ";
-                if (WMEMCMP(expt1, inBuf, sizeof(expt1)) != 0 &&
-                    WMEMCMP(expt2, inBuf, sizeof(expt2)) != 0)
-                    return -1;
-                else
-                    return 0;
-
-            }
-
-        case 6:
-            return (WSTRNSTR(inBuf, "configure", sizeof(inBuf)) == NULL);
-
-        case 10:
-            return (WSTRNSTR(inBuf, "test-get", sizeof(inBuf)) == NULL);
-
-        case 13:
-            return (WSTRNSTR(inBuf, "test-get-2", sizeof(inBuf)) == NULL);
-
-        default:
-            break;
+        }
     }
-    WMEMSET(inBuf, 0, sizeof(inBuf));
+
+    len = (int)WSTRLEN(inBuf);
+    if (len < 2) {
+        printf("pwd output too short: %s\n", inBuf);
+        return -1;
+    }
+    if (inBuf[len - 2] != '/') {
+        printf("unexpected pwd of %s, looking for '/'\n", inBuf);
+        return -1;
+    }
+    if (inBuf[len - 1] != 'a') {
+        printf("unexpected pwd of %s, looking for 'a'\n", inBuf);
+        return -1;
+    }
     return 0;
 }
+
+/* check that ls of empty dir shows only . and .. */
+static int checkLsEmpty(void)
+{
+#ifdef WOLFSSH_ZEPHYR
+    /* No . and .. in zephyr fs API */
+    char expt1[] = "wolfSSH sftp> ";
+    char expt2[] = "wolfSSH sftp> ";
+#else
+    char expt1[] = ".\n..\nwolfSSH sftp> ";
+    char expt2[] = "..\n.\nwolfSSH sftp> ";
+#endif
+    if (WMEMCMP(expt1, inBuf, sizeof(expt1)) != 0 &&
+            WMEMCMP(expt2, inBuf, sizeof(expt2)) != 0) {
+        printf("unexpected ls\n");
+        printf("\texpected \n%s\n\tor\n%s\n\tbut got\n%s\n",
+            expt1, expt2, inBuf);
+        return -1;
+    }
+    return 0;
+}
+
+/* check that ls output contains a specific file */
+static int checkLsHasConfigureAc(void)
+{
+    if (WSTRNSTR(inBuf, "configure.ac", sizeof(inBuf)) == NULL) {
+        fprintf(stderr, "configure.ac not found in %s\n", inBuf);
+        return 1;
+    }
+    return 0;
+}
+
+static int checkLsHasTestGet(void)
+{
+    return (WSTRNSTR(inBuf, "test-get",
+                sizeof(inBuf)) == NULL) ? 1 : 0;
+}
+
+static int checkLsHasTestGet2(void)
+{
+    return (WSTRNSTR(inBuf, "test-get-2",
+                sizeof(inBuf)) == NULL) ? 1 : 0;
+}
+
+static int checkLsSize(void)
+{
+    return (WSTRNSTR(inBuf, "size in bytes",
+                sizeof(inBuf)) == NULL) ? 1 : 0;
+}
+
+static int checkCdNonexistent(void)
+{
+    if (WSTRNSTR(inBuf, "Error changing directory",
+            sizeof(inBuf)) == NULL) {
+        fprintf(stderr,
+            "cd: expected error not found in %s\n", inBuf);
+        return 1;
+    }
+    return 0;
+}
+
+#if !defined(NO_WOLFSSH_DIR) && !defined(WOLFSSH_FATFS)
+static int checkLlsHasConfigureAc(void)
+{
+    if (WSTRNSTR(inBuf, "configure.ac",
+            sizeof(inBuf)) == NULL) {
+        fprintf(stderr,
+            "lls: configure.ac not found in %s\n", inBuf);
+        return 1;
+    }
+    return 0;
+}
+#endif /* !NO_WOLFSSH_DIR && !WOLFSSH_FATFS */
+
+static int checkLcdNonexistent(void)
+{
+    if (WSTRNSTR(inBuf, "Error changing local directory",
+            sizeof(inBuf)) == NULL) {
+        fprintf(stderr,
+            "lcd: expected error not found in %s\n", inBuf);
+        return 1;
+    }
+    return 0;
+}
+
+#if !defined(NO_WOLFSSH_DIR) && !defined(WOLFSSH_FATFS) \
+    && !defined(WOLFSSH_ZEPHYR)
+/* after lcd into keys/, lls should show key files */
+static int checkLlsInKeys(void)
+{
+    if (WSTRNSTR(inBuf, ".pem", sizeof(inBuf)) == NULL &&
+            WSTRNSTR(inBuf, ".der", sizeof(inBuf)) == NULL) {
+        fprintf(stderr,
+            "lls: expected key files not found in %s\n", inBuf);
+        return 1;
+    }
+    return 0;
+}
+
+/* after lcd back to .., lls should show project root files */
+static int checkLlsBackToRoot(void)
+{
+    if (WSTRNSTR(inBuf, "configure.ac",
+            sizeof(inBuf)) == NULL) {
+        fprintf(stderr,
+            "lls: configure.ac not found after lcd ..\n");
+        return 1;
+    }
+    return 0;
+}
+#endif /* !NO_WOLFSSH_DIR && !WOLFSSH_FATFS && !WOLFSSH_ZEPHYR */
+
+static const SftpTestCmd cmds[] = {
+    /* If a prior run was interrupted, files and directories
+     * created during the test may still exist in the working
+     * directory, causing mkdir to fail and ls checks to see
+     * unexpected entries. Remove them here before starting.
+     * These run as SFTP commands rather than local syscalls
+     * so they are portable across all platforms (Windows,
+     * Zephyr, POSIX). Failures are silently ignored since
+     * the files may not exist. */
+    { "rm a/configure.ac", NULL },
+    { "rmdir a",        NULL },
+    { "rm test-get",    NULL },
+    { "rm test-get-2",  NULL },
+
+    /* --- test sequence starts here --- */
+    { "mkdir a",        NULL },
+    { "cd a",           NULL },
+    { "pwd",            checkPwdInA },
+    { "ls",             checkLsEmpty },
+#ifdef WOLFSSH_ZEPHYR
+    { "put " CONFIG_WOLFSSH_SFTP_DEFAULT_DIR "/configure.ac", NULL },
+#else
+    { "put configure.ac", NULL },
+#endif
+    { "ls",             checkLsHasConfigureAc },
+#ifdef WOLFSSH_ZEPHYR
+    { "get configure.ac "
+      CONFIG_WOLFSSH_SFTP_DEFAULT_DIR "/test-get", NULL },
+#else
+    { "get configure.ac test-get", NULL },
+#endif
+    { "rm configure.ac", NULL },
+    { "cd ../",         NULL },
+    { "ls",             checkLsHasTestGet },
+    { "rename test-get test-get-2", NULL },
+    { "rmdir a",        NULL },
+    { "ls",             checkLsHasTestGet2 },
+    { "chmod 600 test-get-2", NULL },
+    { "rm test-get-2",  NULL },
+    { "ls -s",          checkLsSize },
+    { "cd /nonexistent_path_xyz", checkCdNonexistent },
+#if !defined(NO_WOLFSSH_DIR) && !defined(WOLFSSH_FATFS)
+    { "lls",            checkLlsHasConfigureAc },
+#endif
+    { "lcd /nonexistent_path_xyz", checkLcdNonexistent },
+#if !defined(NO_WOLFSSH_DIR) && !defined(WOLFSSH_FATFS) \
+    && !defined(WOLFSSH_ZEPHYR)
+    /* lcd into a subdirectory, verify with lls, then return.
+     * Skipped on Zephyr: lls always lists the default dir
+     * (no WGETCWD) and the keys/ tree is not on the RAM fs. */
+    { "lcd keys",       NULL },
+    { "lls",            checkLlsInKeys },
+    { "lcd ..",         NULL },
+    { "lls",            checkLlsBackToRoot },
+#endif
+    /* empty arg tests: must not underflow on pt[sz-1] */
+    { "mkdir",          NULL },
+    { "cd",             NULL },
+    { "ls",             NULL },
+    { "chmod",          NULL },
+    { "rmdir",          NULL },
+    { "rm",             NULL },
+    { "rename",         NULL },
+    { "get",            NULL },
+    { "put",            NULL },
+    { "exit",           NULL },
+};
+static int commandIdx = 0;
 
 
 static int commandCb(const char* in, char* out, int outSz)
@@ -118,17 +279,26 @@ static int commandCb(const char* in, char* out, int outSz)
 
     /* get command input */
     if (out) {
-        int sz = (int)WSTRLEN(cmds[commandIdx]);
+        int sz = (int)WSTRLEN(cmds[commandIdx].cmd);
         if (outSz < sz) {
             ret = -1;
         }
         else {
-            WMEMCPY(out, cmds[commandIdx], sz);
+            WMEMCPY(out, cmds[commandIdx].cmd, sz);
         }
 
-        if (Expected(commandIdx) != 0) {
-            exit(1); /* abort out */
+        /* validate output from the previous command */
+        if (commandIdx > 0 &&
+                cmds[commandIdx - 1].check != NULL) {
+            if (cmds[commandIdx - 1].check() != 0) {
+                fprintf(stderr,
+                    "Check failed for \"%s\" (index %d)\n",
+                    cmds[commandIdx - 1].cmd,
+                    commandIdx - 1);
+                exit(1);
+            }
         }
+        WMEMSET(inBuf, 0, sizeof(inBuf));
         commandIdx++;
     }
     return ret;
@@ -137,7 +307,7 @@ static int commandCb(const char* in, char* out, int outSz)
 
 /* test SFTP commands, if flag is set to 1 then use non blocking
  * return 0 on success */
-int test_SFTP(int flag)
+int wolfSSH_SftpTest(int flag)
 {
     func_args ser;
     func_args cli;
@@ -146,14 +316,19 @@ int test_SFTP(int flag)
     int argsCount;
 
     const char* args[10];
+#ifndef USE_WINDOWS_API
     char  portNumber[8];
+#endif
 
     THREAD_TYPE serThread;
-    THREAD_TYPE cliThread;
+
+    wolfSSH_Init();
 
     WMEMSET(&ser, 0, sizeof(func_args));
     WMEMSET(&cli, 0, sizeof(func_args));
     commandIdx = 0;
+
+    wolfSSH_Debugging_ON();
 
     argsCount = 0;
     args[argsCount++] = ".";
@@ -170,7 +345,7 @@ int test_SFTP(int flag)
     ser.signal = &ready;
     InitTcpReady(ser.signal);
     ThreadStart(echoserver_test, (void*)&ser, &serThread);
-    WaitTcpReady(&ser);
+    WaitTcpReady(&ready);
 
     argsCount = 0;
     args[argsCount++] = ".";
@@ -178,10 +353,10 @@ int test_SFTP(int flag)
     args[argsCount++] = "jill";
     args[argsCount++] = "-P";
     args[argsCount++] = "upthehill";
-    args[argsCount++] = "-p";
 
 #ifndef USE_WINDOWS_API
     /* use port that server has found */
+    args[argsCount++] = "-p";
     snprintf(portNumber, sizeof(portNumber), "%d", ready.port);
     args[argsCount++] = portNumber;
 #endif
@@ -193,11 +368,16 @@ int test_SFTP(int flag)
     cli.argc    = argsCount;
     cli.signal  = &ready;
     cli.sftp_cb = commandCb;
-    ThreadStart(sftpclient_test, (void*)&cli, &cliThread);
+    sftpclient_test(&cli);
 
+#ifdef WOLFSSH_ZEPHYR
+    /* Weird deadlock without this sleep */
+    k_sleep(Z_TIMEOUT_TICKS(100));
+#endif
 
     ThreadJoin(serThread);
-    ThreadJoin(cliThread);
+    wolfSSH_Cleanup();
+    FreeTcpReady(&ready);
 
     return ret;
 }

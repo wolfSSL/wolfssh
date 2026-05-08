@@ -1,6 +1,6 @@
 /* scpclient.c
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2026 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -18,181 +18,41 @@
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#ifdef HAVE_CONFIG_H
+    #include <config.h>
+#endif
+
 #define WOLFSSH_TEST_CLIENT
 
+#ifdef WOLFSSL_USER_SETTINGS
+    #include <wolfssl/wolfcrypt/settings.h>
+#else
+    #include <wolfssl/options.h>
+#endif
+
 #include <stdio.h>
-#if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32)
+#if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32) && \
+    !defined(WOLFSSH_ZEPHYR)
     #include <termios.h>
 #endif
 #include <wolfssh/ssh.h>
+#include <wolfssh/internal.h>
 #include <wolfssh/wolfscp.h>
 #include <wolfssh/test.h>
 #include <wolfssh/port.h>
 
 #ifndef NO_WOLFSSH_CLIENT
-#if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
+#if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     #include <wolfssl/wolfcrypt/ecc.h>
 #endif
 #include "examples/scpclient/scpclient.h"
-
-
-/* type = 2 : shell / execute command settings
- * type = 0 : password
- * type = 1 : restore default
- * return 0 on success */
-static int SetEcho(int type)
-{
-#if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32)
-    static int echoInit = 0;
-    static struct termios originalTerm;
-
-    if (!echoInit) {
-        if (tcgetattr(STDIN_FILENO, &originalTerm) != 0) {
-            printf("Couldn't get the original terminal settings.\n");
-            return -1;
-        }
-        echoInit = 1;
-    }
-    if (type == 1) {
-        if (tcsetattr(STDIN_FILENO, TCSANOW, &originalTerm) != 0) {
-            printf("Couldn't restore the terminal settings.\n");
-            return -1;
-        }
-    }
-    else {
-        struct termios newTerm;
-        memcpy(&newTerm, &originalTerm, sizeof(struct termios));
-
-        newTerm.c_lflag &= ~ECHO;
-        if (type == 2) {
-            newTerm.c_lflag &= ~(ICANON | ECHOE | ECHOK | ECHONL | ISIG);
-        }
-        else {
-            newTerm.c_lflag |= (ICANON | ECHONL);
-        }
-
-        if (tcsetattr(STDIN_FILENO, TCSANOW, &newTerm) != 0) {
-            printf("Couldn't turn off echo.\n");
-            return -1;
-        }
-    }
-#else
-    static int echoInit = 0;
-    static DWORD originalTerm;
-    static CONSOLE_SCREEN_BUFFER_INFO screenOrig;
-    HANDLE stdinHandle = GetStdHandle(STD_INPUT_HANDLE);
-    if (!echoInit) {
-        if (GetConsoleMode(stdinHandle, &originalTerm) == 0) {
-            printf("Couldn't get the original terminal settings.\n");
-            return -1;
-        }
-        echoInit = 1;
-    }
-    if (type == 1) {
-        if (SetConsoleMode(stdinHandle, originalTerm) == 0) {
-            printf("Couldn't restore the terminal settings.\n");
-            return -1;
-        }
-    }
-    else if (type == 2) {
-        DWORD newTerm = originalTerm;
-
-        newTerm &= ~ENABLE_PROCESSED_INPUT;
-        newTerm &= ~ENABLE_PROCESSED_OUTPUT;
-        newTerm &= ~ENABLE_LINE_INPUT;
-        newTerm &= ~ENABLE_ECHO_INPUT;
-        newTerm &= ~(ENABLE_EXTENDED_FLAGS | ENABLE_INSERT_MODE);
-
-        if (SetConsoleMode(stdinHandle, newTerm) == 0) {
-            printf("Couldn't turn off echo.\n");
-            return -1;
-        }
-    }
-    else {
-        DWORD newTerm = originalTerm;
-
-        newTerm &= ~ENABLE_ECHO_INPUT;
-
-        if (SetConsoleMode(stdinHandle, newTerm) == 0) {
-            printf("Couldn't turn off echo.\n");
-            return -1;
-        }
-    }
-#endif
-
-    return 0;
-}
-
-
-byte userPassword[256];
-
-static int wsUserAuth(byte authType,
-                      WS_UserAuthData* authData,
-                      void* ctx)
-{
-    const char* defaultPassword = (const char*)ctx;
-    word32 passwordSz = 0;
-    int ret = WOLFSSH_USERAUTH_SUCCESS;
-
-    if (authType == WOLFSSH_USERAUTH_PASSWORD) {
-        if (defaultPassword != NULL) {
-            passwordSz = (word32)strlen(defaultPassword);
-            memcpy(userPassword, defaultPassword, passwordSz);
-        }
-        else {
-            printf("Password: ");
-            fflush(stdout);
-            SetEcho(0);
-            if (fgets((char*)userPassword, sizeof(userPassword), stdin) == NULL) {
-                printf("Getting password failed.\n");
-                ret = WOLFSSH_USERAUTH_FAILURE;
-            }
-            else {
-                char* c = strpbrk((char*)userPassword, "\r\n");
-                if (c != NULL)
-                    *c = '\0';
-            }
-            passwordSz = (word32)strlen((const char*)userPassword);
-            SetEcho(1);
-            #ifdef USE_WINDOWS_API
-                printf("\r\n");
-            #endif
-            fflush(stdout);
-        }
-
-        if (ret == WOLFSSH_USERAUTH_SUCCESS) {
-            authData->sf.password.password = userPassword;
-            authData->sf.password.passwordSz = passwordSz;
-        }
-    }
-    else if (authType == WOLFSSH_USERAUTH_PUBLICKEY) {
-        ret = WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
-    }
-
-    return ret;
-}
-
-
-static int wsPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
-{
-    #ifdef DEBUG_WOLFSSH
-        printf("Sample public key check callback\n"
-               "  public key = %p\n"
-               "  public key size = %u\n"
-               "  ctx = %s\n", pubKey, pubKeySz, (const char*)ctx);
-    #else
-        (void)pubKey;
-        (void)pubKeySz;
-        (void)ctx;
-    #endif
-    return 0;
-}
-
+#include "examples/client/common.h"
 
 #define USAGE_WIDE "12"
 static void ShowUsage(void)
 {
-    printf("wolfscp %s\n", LIBWOLFSSH_VERSION_STRING);
+    printf("wolfscp %s linked with wolfSSL %s\n", LIBWOLFSSH_VERSION_STRING,
+        LIBWOLFSSL_VERSION_STRING);
     printf(" -%c %-" USAGE_WIDE "s %s\n", 'h', "",
             "display this help and exit");
     printf(" -%c %-" USAGE_WIDE "s %s, default %s\n", 'H', "<host>",
@@ -207,6 +67,22 @@ static void ShowUsage(void)
             "copy from local to server");
     printf(" -%c %-" USAGE_WIDE "s %s\n", 'S', "<from>:<to>",
             "copy from server to local");
+    printf(" -%c %-" USAGE_WIDE "s %s\n", 'i', "<filename>",
+            "filename for the user's private key");
+    printf(" -%c %-" USAGE_WIDE "s %s\n", 'j', "<filename>",
+            "filename for the user's public key");
+#ifdef WOLFSSH_CERTS
+    printf(" -%c %-" USAGE_WIDE "s %s\n", 'J', "<filename>",
+            "filename for DER certificate to use");
+    printf("     %-" USAGE_WIDE "s %s\n", "",
+            "Certificate example : client -u orange ");
+    printf("     %-" USAGE_WIDE "s %s\n", "",
+            "-J orange-cert.der -i orange-key.der");
+    printf(" -%c %-" USAGE_WIDE "s %s\n", 'A', "<filename>",
+            "filename for DER CA certificate to verify host");
+    printf(" -%c %-" USAGE_WIDE "s %s\n", 'X', "",
+            "Ignore IP checks on peer vs peer certificate");
+#endif
 }
 
 
@@ -220,6 +96,10 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     SOCKET_T sockFd = WOLFSSH_SOCKET_INVALID;
     SOCKADDR_IN_T clientAddr;
     socklen_t clientAddrSz = sizeof(clientAddr);
+#ifdef TEST_IPV6
+    struct sockaddr_in6 clientAddr6;
+    socklen_t clientAddrSz6 = sizeof(clientAddr6);
+#endif
     int argc = ((func_args*)args)->argc;
     int ret = 0;
     char** argv = ((func_args*)args)->argv;
@@ -231,11 +111,15 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     word16 port = wolfSshPort;
     byte nonBlock = 0;
     enum copyDir dir = copyNone;
-    char ch;
+    int ch;
+    char* pubKeyName = NULL;
+    char* privKeyName = NULL;
+    char* certName = NULL;
+    char* caCert   = NULL;
 
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "H:L:NP:S:hp:u:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "H:L:NP:S:hp:u:XJ:A:i:j:")) != -1) {
         switch (ch) {
             case 'H':
                 host = myoptarg;
@@ -268,12 +152,39 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
                 break;
 
             case 'p':
+                if (myoptarg == NULL)
+                    err_sys("null argument found");
+
                 port = (word16)atoi(myoptarg);
                 #if !defined(NO_MAIN_DRIVER) || defined(USE_WINDOWS_API)
                     if (port == 0)
                         err_sys("port number cannot be 0");
                 #endif
                 break;
+
+            case 'i':
+                privKeyName = myoptarg;
+                break;
+
+            case 'j':
+                pubKeyName = myoptarg;
+                break;
+
+        #ifdef WOLFSSH_CERTS
+            case 'J':
+                certName = myoptarg;
+                break;
+
+            case 'A':
+                caCert = myoptarg;
+                break;
+
+            #if defined(OPENSSL_ALL) || defined(WOLFSSL_IP_ALT_NAME)
+            case 'X':
+                ClientIPOverride(1);
+                break;
+            #endif
+        #endif
 
             default:
                 ShowUsage();
@@ -307,32 +218,74 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
         err_sys("Empty path values");
     }
 
+    ret = ClientSetPrivateKey(privKeyName, 0, NULL, NULL);
+    if (ret != 0) {
+        err_sys("Error setting private key");
+    }
+
+#ifdef WOLFSSH_CERTS
+    /* passed in certificate to use */
+    if (certName) {
+        ret = ClientUseCert(certName, NULL);
+    }
+    else
+#endif
+    {
+        ret = ClientUsePubKey(pubKeyName, 0, NULL);
+    }
+    if (ret != 0) {
+        err_sys("Error setting public key");
+    }
+
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
     if (ctx == NULL)
         err_sys("Couldn't create wolfSSH client context.");
 
     if (((func_args*)args)->user_auth == NULL)
-        wolfSSH_SetUserAuth(ctx, wsUserAuth);
+        wolfSSH_SetUserAuth(ctx, ClientUserAuth);
     else
         wolfSSH_SetUserAuth(ctx, ((func_args*)args)->user_auth);
+
+#ifdef WOLFSSH_CERTS
+    ClientLoadCA(ctx, caCert);
+#else
+    (void)caCert;
+    (void)certName;
+#endif /* WOLFSSH_CERTS */
+
+    wolfSSH_CTX_SetPublicKeyCheck(ctx, ClientPublicKeyCheck);
 
     ssh = wolfSSH_new(ctx);
     if (ssh == NULL)
         err_sys("Couldn't create wolfSSH session.");
 
+    wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)host);
+
     if (password != NULL)
         wolfSSH_SetUserAuthCtx(ssh, (void*)password);
-
-    wolfSSH_CTX_SetPublicKeyCheck(ctx, wsPublicKeyCheck);
-    wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)"You've been sampled!");
 
     ret = wolfSSH_SetUsername(ssh, username);
     if (ret != WS_SUCCESS)
         err_sys("Couldn't set the username.");
 
-    build_addr(&clientAddr, host, port);
-    tcp_socket(&sockFd);
-    ret = connect(sockFd, (const struct sockaddr *)&clientAddr, clientAddrSz);
+#ifdef TEST_IPV6
+    /* If it is an IPV6 address */
+    if (WSTRCHR(host, ':')) {
+        printf("IPV6 address\n");
+        build_addr_ipv6(&clientAddr6, host, port);
+        sockFd = socket(AF_INET6, SOCK_STREAM, 0);
+        ret = connect(sockFd, (const struct sockaddr *)&clientAddr6, clientAddrSz6);
+    }
+    else
+#endif
+    {
+        printf("IPV4 address\n");
+        build_addr(&clientAddr, host, port);
+        tcp_socket(&sockFd, ((struct sockaddr_in *)&clientAddr)->sin_family);
+        ret = connect(sockFd, (const struct sockaddr *)&clientAddr,
+                      clientAddrSz);
+    }
+
     if (ret != 0)
         err_sys("Couldn't connect to server.");
 
@@ -346,24 +299,53 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     if (ret != WS_SUCCESS)
         err_sys("Couldn't set the channel type.");
 
-    if (dir == copyFromSrv)
-        ret = wolfSSH_SCP_from(ssh, path1, path2);
-    else if (dir == copyToSrv)
-        ret = wolfSSH_SCP_to(ssh, path1, path2);
-    if (ret != WS_SUCCESS)
-        err_sys("Couldn't copy the file.");
+    do {
+        if (dir == copyFromSrv)
+            ret = wolfSSH_SCP_from(ssh, path1, path2);
+        else if (dir == copyToSrv)
+            ret = wolfSSH_SCP_to(ssh, path1, path2);
+        if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
+            ret = wolfSSH_get_error(ssh);
+        }
+    } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE ||
+                    ret == WS_CHAN_RXD || ret == WS_REKEYING);
+    if (ret != WS_SUCCESS) {
+        fprintf(stderr, "Couldn't copy the file.");
+        ((func_args*)args)->return_code = 1;
+    }
 
     ret = wolfSSH_shutdown(ssh);
+    /* do not continue on with shutdown process if peer already disconnected */
+    if (ret != WS_CHANNEL_CLOSED && ret != WS_SOCKET_ERROR_E &&
+            wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E &&
+            wolfSSH_get_error(ssh) != WS_CHANNEL_CLOSED) {
+        if (ret != WS_SUCCESS) {
+            WLOG(WS_LOG_DEBUG, "Sending the shutdown messages failed.");
+        }
+        else {
+            ret = wolfSSH_worker(ssh, NULL);
+            if (ret != WS_SUCCESS && ret != WS_CHANNEL_CLOSED) {
+                WLOG(WS_LOG_DEBUG,
+                    "Failed to listen for close messages from the peer.");
+            }
+        }
+    }
     WCLOSESOCKET(sockFd);
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
-    if (ret != WS_SUCCESS)
-        err_sys("Closing scp stream failed. Connection could have been closed by peer");
+    if (ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E &&
+            ret != WS_CHANNEL_CLOSED) {
+        WLOG(WS_LOG_DEBUG,
+        "Closing scp stream failed. Connection could have been closed by peer");
+    }
 
-#if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
+    ClientFreeBuffers(pubKeyName, privKeyName, NULL);
+#if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
 
+    if ((ret != WS_SUCCESS) && (ret != WS_CHANNEL_CLOSED))
+        ((func_args*)args)->return_code = 1;
     return 0;
 }
 

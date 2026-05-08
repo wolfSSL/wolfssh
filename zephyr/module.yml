@@ -1,0 +1,6 @@
+name: wolfssh
+build:
+  cmake: zephyr
+  kconfig: zephyr/Kconfig
+  depends:
+    - wolfssl

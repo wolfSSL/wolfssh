@@ -1,0 +1,61 @@
+name: Coverity scan master branch
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+
+jobs:
+  build_wolfssl:
+    name: Build wolfSSL
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Checking cache for wolfSSL
+        uses: actions/cache@v4
+        id: cache-wolfssl
+        with:
+          path: build-dir
+          key: wolfssh-coverity-wolfssl
+          lookup-only: true
+
+      - name: Build wolfSSL
+        if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+        uses: wolfSSL/actions-build-autotools-project@v1
+        with:
+          repository: wolfSSL/wolfssl
+          ref: master
+          path: wolfssl
+          configure: --enable-all
+          check: false
+          install: true
+
+  coverity:
+    name: Coverity scan
+    needs: build_wolfssl
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checking out wolfSSH
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Checking cache for wolfssl
+        uses: actions/cache@v4
+        with:
+          path: build-dir
+          key: wolfssh-coverity-wolfssl
+          fail-on-cache-miss: true
+
+      - name: Configure wolfSSH
+        run: |
+          ./autogen.sh
+          ./configure --with-wolfssl=build-dir --enable-all
+
+      - uses: vapier/coverity-scan-action@v1
+        with:
+          build_language: 'cxx'
+          project: "wolfSSH"
+          token: ${{ secrets.COVERITY_SCAN_TOKEN_WOLFSSH }}
+          email: ${{ secrets.COVERITY_SCAN_EMAIL }}
+          command: "make"

@@ -1,6 +1,6 @@
 /* wolfterm.c
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2026 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -115,14 +115,15 @@ static void wolfSSH_ClearScreen(WOLFSSH_HANDLE handle, word32 x1, word32 y1, wor
         start.Y = y1;
 
         /* get number of cells  */
-        if (y1 == y2) { /* on same line so is x2 - x1 */
-            fill = x2 - x1;
+        if (y2 == y1) { /* on same line so is x2 - x1 */
+            fill = (x2 >= x1) ? (x2 - x1) : 0;
         }
-        else { /* | y1 - y2 | * maxX - x1 + x2 */
-            fill = y1 - y2;
-            if (fill < 0)
-                fill += fill * 2;
-            fill = fill * maxX - x1 + x2;
+        /* (y2 - y1) * maxX - x1 + x2 */
+        else if (y2 > y1) {
+            fill = (y2 - y1) * maxX - x1 + x2;
+        }
+        else {
+            fill = 0;
         }
 
         FillConsoleOutputCharacterA(handle, ' ', fill, start, &w);
@@ -180,7 +181,7 @@ static void doDisplayAttributes(WOLFSSH* ssh, WOLFSSH_HANDLE handle, word32* arg
                 break;
 
             case 30: /* set black foreground */
-                SetConsoleTextAttribute(handle, (atr & ~(WS_MASK_RBGBG)));
+                SetConsoleTextAttribute(handle, (atr & ~(WS_MASK_RBGFG)));
                 break;
 
             case 31: /* red foreground */
@@ -464,12 +465,12 @@ static int wolfSSH_DoControlSeq(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf, 
     }
 
     switch (c) {
-        case 'H': /* move curser to indicated row and column  -1 to account
+        case 'H': /* move cursor to indicated row and column  -1 to account
                    * for 1,1 on linux vs 0,0 on windows */
             wolfSSH_CursorMove(handle, args[1] - OFST, args[0] - OFST, 1);
             break;
 
-        case 'C': /* move curser right */
+        case 'C': /* move cursor right */
             wolfSSH_CursorMove(handle, args[0], 0, 0);
             break;
 
@@ -510,6 +511,7 @@ static int wolfSSH_DoControlSeq(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf, 
                 default:
                     WLOG(WS_LOG_DEBUG, "Unexpected erase value %d", args[0]);
             }
+            break;
 
         case 'K':
             if (numArgs == 0) { /* erase start of cursor to end of line */
@@ -581,6 +583,11 @@ static int wolfSSH_DoControlSeq(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf, 
             }
             i += 1; /* for 'h' or 'l' */
             break;
+
+        case 'X':
+            /* @TODO (ECH) Erase <n> number of characters on current line */
+            break;
+
 
         default:
             WLOG(WS_LOG_DEBUG, "Unknown control sequence char:%c", c);

@@ -1,6 +1,6 @@
 /* test.h
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2026 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -18,6 +18,18 @@
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+/*
+ * This file contains some utility code shared between the wolfSSH test
+ * tools and examples. This is divided into a few sets of functions that
+ * may be enabled with flags included before including this file:
+ *
+ *  WOLFSSH_TEST_CLIENT: Client utility functions
+ *  WOLFSSH_TEST_SERVER: Server utility functions
+ *  WOLFSSH_TEST_LOCKING: Mutex wrappers
+ *  WOLFSSH_TEST_THREADING: Threading wrappers
+ *  WOLFSSH_TEST_HEX2BIN: Hex2Bin conversion
+ *  TEST_IPV6: IPv6 addressing options
+ */
 
 #ifndef _WOLFSSH_TEST_H_
 #define _WOLFSSH_TEST_H_
@@ -102,15 +114,80 @@
     #endif
 
     #define NUM_SOCKETS 5
+#elif defined(WOLFSSH_LWIP)
+    #include <unistd.h>
+    #include <sys/socket.h>
+    #include <pthread.h>
+    #include <lwip/tcp.h>
+    #include <lwip/inet.h>
+    #include <lwip/netdb.h>
+    #ifndef SO_NOSIGPIPE
+        #include <signal.h>  /* ignore SIGPIPE */
+    #endif
+    #define SOCKET_T int
+    #define NUM_SOCKETS 5
+#elif defined(WOLFSSH_ZEPHYR)
+    #include <zephyr/kernel.h>
+    #include <zephyr/posix/posix_types.h>
+    #include <zephyr/posix/pthread.h>
+    #include <zephyr/posix/fcntl.h>
+    #include <zephyr/net/socket.h>
+    #include <zephyr/sys/printk.h>
+    #include <zephyr/sys/util.h>
+    #include <stdlib.h>
+    #define SOCKET_T int
+    #define NUM_SOCKETS 5
+#if (defined(WOLFSSH_TEST_CLIENT) || defined(WOLFSSH_TEST_SERVER)) && \
+    !defined(TEST_IPV6)
+    static unsigned long inet_addr(const char *cp)
+    {
+        unsigned int a[4]; unsigned long ret;
+        int i, j;
+        for (i=0, j=0; i<4; i++) {
+            a[i] = 0;
+            while (cp[j] != '.' && cp[j] != '\0') {
+                a[i] *= 10;
+                a[i] += cp[j] - '0';
+                j++;
+            }
+            if (cp[j] == '.') {
+                j++; /* increment past '.' */
+            }
+        }
+        ret = ((a[3]<<24) + (a[2]<<16) + (a[1]<<8) + a[0]) ;
+        return(ret) ;
+    }
+#endif
+#elif defined(WOLFSSH_USER_IO)
+   #if !defined(__CCRX__)
+    #include <unistd.h>
+    #include <pthread.h>
+    #include <fcntl.h>
+   #endif
+    #include "userio_template.h"
+    #ifndef SO_NOSIGPIPE
+        #include <signal.h>  /* ignore SIGPIPE */
+    #endif
+    #define SOCKET_T int
+    #define NUM_SOCKETS 5
+#elif defined(WOLFSSL_ESPIDF)
+    #include "sdkconfig.h"
+    #include <esp_idf_version.h>
+    #include <esp_log.h>
+    #include <lwip/sockets.h>
+    #include <lwip/netdb.h>
+    #define SOCKET_T int
+    #define NUM_SOCKETS 5
 #else /* USE_WINDOWS_API */
     #include <unistd.h>
+    #include <sys/socket.h>
+    #include <sys/select.h>
+    #include <pthread.h>
     #include <netdb.h>
     #include <netinet/in.h>
     #include <netinet/tcp.h>
     #include <arpa/inet.h>
     #include <sys/ioctl.h>
-    #include <sys/socket.h>
-    #include <pthread.h>
     #include <fcntl.h>
     #ifndef SO_NOSIGPIPE
         #include <signal.h>  /* ignore SIGPIPE */
@@ -127,7 +204,7 @@
 #elif defined(WOLFSSH_TIRTOS)
     #define WOLFSSH_SOCKET_INVALID  ((SOCKET_T)-1)
 #else
-    #define WOLFSSH_SOCKET_INVALID  (SOCKET_T)(0)
+    #define WOLFSSH_SOCKET_INVALID  (SOCKET_T)(-1)
 #endif
 #endif /* WOLFSSH_SOCKET_INVALID */
 
@@ -149,7 +226,7 @@
 
 #ifdef USE_WINDOWS_API
     #define WCLOSESOCKET(s) closesocket(s)
-    #define WSTARTTCP() do { WSADATA wsd; WSAStartup(0x0002, &wsd); } while(0)
+    #define WSTARTTCP() do { WSADATA wsd; (void)WSAStartup(0x0002, &wsd); } while(0)
 #elif defined(MICROCHIP_TCPIP) || defined(MICROCHIP_MPLAB_HARMONY)
     #ifdef MICROCHIP_MPLAB_HARMONY
         #define WCLOSESOCKET(s) TCPIP_TCP_Close((s))
@@ -166,28 +243,6 @@
 #endif
 
 
-#ifdef SINGLE_THREADED
-    typedef unsigned int  THREAD_RETURN;
-    typedef void*         THREAD_TYPE;
-    #define WOLFSSH_THREAD
-#else
-    #if defined(_POSIX_THREADS) && !defined(__MINGW32__)
-        typedef void*         THREAD_RETURN;
-        typedef pthread_t     THREAD_TYPE;
-        #define WOLFSSH_THREAD
-        #define INFINITE -1
-        #define WAIT_OBJECT_0 0L
-    #elif defined(WOLFSSL_NUCLEUS) || defined(FREESCALE_MQX)
-        typedef unsigned int  THREAD_RETURN;
-        typedef intptr_t      THREAD_TYPE;
-        #define WOLFSSH_THREAD
-    #else
-        typedef unsigned int  THREAD_RETURN;
-        typedef intptr_t      THREAD_TYPE;
-        #define WOLFSSH_THREAD __stdcall
-    #endif
-#endif
-
 #ifdef TEST_IPV6
     typedef struct sockaddr_in6 SOCKADDR_IN_T;
     #define AF_INET_V AF_INET6
@@ -202,7 +257,9 @@
 #define serverKeyRsaPemFile "./keys/server-key-rsa.pem"
 
 
-#ifndef TEST_IPV6
+#ifdef WOLFSSH_ZEPHYR
+    static const char* const wolfSshIp = "192.0.2.1";
+#elif !defined(TEST_IPV6)
     static const char* const wolfSshIp = "127.0.0.1";
 #else /* TEST_IPV6 */
     static const char* const wolfSshIp = "::1";
@@ -226,6 +283,17 @@ static INLINE void err_sys(const char* msg)
 {
     printf("wolfSSH error: %s\n", msg);
     return;
+}
+#elif defined(INTEGRITY) || defined(__INTEGRITY)
+static INLINE void err_sys(const char* msg)
+{
+    printf("wolfSSH error: %s\n", msg);
+}
+#elif defined(WOLFSSH_ZEPHYR)
+static INLINE void err_sys(const char* msg)
+{
+    printf("wolfSSH error: %s errno: %d\n", msg, errno);
+    exit(EXIT_FAILURE);
 }
 #else
 static INLINE WS_NORETURN void err_sys(const char* msg)
@@ -372,7 +440,21 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
 
 #ifndef TEST_IPV6
     /* peer could be in human readable form */
-    if ( ((size_t)peer != INADDR_ANY) && isalpha((int)peer[0])) {
+    if ( ((size_t)peer != INADDR_ANY) && isalnum((int)peer[0])) {
+    #ifdef WOLFSSH_ZEPHYR
+        struct zsock_addrinfo hints, *addrInfo;
+        char portStr[6];
+        XSNPRINTF(portStr, sizeof(portStr), "%d", port);
+        XMEMSET(&hints, 0, sizeof(hints));
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        hints.ai_protocol = IPPROTO_TCP;
+        if (getaddrinfo((char*)peer, portStr, &hints, &addrInfo) == 0) {
+            XMEMCPY(addr, addrInfo->ai_addr, sizeof(*addr));
+            freeaddrinfo(addrInfo);
+            useLookup = 1;
+        }
+    #else
         #ifdef CYASSL_MDK_ARM
             int err;
             struct hostent* entry = gethostbyname(peer, &err);
@@ -383,6 +465,7 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
             NU_HOSTENT h;
             entry = &h;
             NU_Get_Host_By_Name((char*)peer, entry);
+        #elif defined(WOLFSSH_ZEPHYR)
         #else
             struct hostent* entry = gethostbyname(peer);
         #endif
@@ -399,6 +482,7 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
         }
         else
             err_sys("no entry for host");
+    #endif
     }
 #endif
 
@@ -440,9 +524,9 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
 
             memset(&hints, 0, sizeof(hints));
 
-            hints.ai_family   = AF_INET_V;
-            hints.ai_socktype = udp ? SOCK_DGRAM : SOCK_STREAM;
-            hints.ai_protocol = udp ? IPPROTO_UDP : IPPROTO_TCP;
+            hints.ai_family   = AF_UNSPEC;
+            hints.ai_socktype = SOCK_STREAM;
+            hints.ai_protocol = IPPROTO_TCP;
 
             WSNPRINTF(strPort, sizeof(strPort), "%d", port);
             strPort[79] = '\0';
@@ -467,17 +551,21 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
 #endif
 
 
-static INLINE void tcp_socket(WS_SOCKET_T* sockFd)
+static INLINE void tcp_socket(WS_SOCKET_T* sockFd, int targetProtocol)
 {
+    /* targetProtocol is only used if none of these platforms are defined. */
+    WOLFSSH_UNUSED(targetProtocol);
 #ifdef MICROCHIP_MPLAB_HARMONY
     /* creates socket in listen or connect */
     *sockFd = 0;
 #elif defined(MICROCHIP_TCPIP)
     *sockFd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+#elif defined(WOLFSSH_ZEPHYR)
+    *sockFd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 #elif defined(WOLFSSL_NUCLEUS)
     *sockFd = NU_Socket(NU_FAMILY_IP, NU_TYPE_STREAM, 0);
 #else
-    *sockFd = socket(AF_INET_V, SOCK_STREAM, 0);
+    *sockFd = socket(targetProtocol, SOCK_STREAM, 0);
 #endif
 
 #ifdef USE_WINDOWS_API
@@ -502,6 +590,10 @@ static INLINE void tcp_socket(WS_SOCKET_T* sockFd)
 #elif defined(MICROCHIP_MPLAB_HARMONY) && !defined(_FULL_SIGNAL_IMPLEMENTATION)
     /* not full signal implementation */
 #elif defined(WOLFSSL_NUCLEUS)
+    /* nothing to define */
+#elif defined(WOLFSSL_ESPIDF)
+    /* nothing to define */
+#elif defined(WOLFSSL_ZEPHYR)
     /* nothing to define */
 #else  /* no S_NOSIGPIPE */
     signal(SIGPIPE, SIG_IGN);
@@ -534,7 +626,8 @@ static INLINE void tcp_socket(WS_SOCKET_T* sockFd)
 #endif
 
 
-#if defined(WOLFSSH_TEST_SERVER) && !defined(FREESCALE_MQX)
+#if defined(WOLFSSH_TEST_SERVER) && !defined(FREESCALE_MQX)\
+                                 && !defined(WOLFSSH_LWIP)
 
 static INLINE void tcp_listen(WS_SOCKET_T* sockfd, word16* port, int useAnyAddr)
 {
@@ -551,11 +644,11 @@ static INLINE void tcp_listen(WS_SOCKET_T* sockfd, word16* port, int useAnyAddr)
     /* don't use INADDR_ANY by default, firewall may block, make user switch
        on */
     build_addr(&addr, (useAnyAddr ? INADDR_ANY : wolfSshIp), *port);
-    tcp_socket(sockfd);
-
-#if !defined(USE_WINDOWS_API) && !defined(WOLFSSL_MDK_ARM)\
-                              && !defined(WOLFSSL_KEIL_TCP_NET)\
-                              && !defined(WOLFSSL_NUCLEUS)
+    tcp_socket(sockfd, ((struct sockaddr_in *)&addr)->sin_family);
+#if !defined(USE_WINDOWS_API) && !defined(WOLFSSL_MDK_ARM) \
+                              && !defined(WOLFSSL_KEIL_TCP_NET) \
+                              && !defined(WOLFSSL_NUCLEUS) \
+                              && !defined(WOLFSSH_ZEPHYR)
     {
         int res;
     #ifdef MICROCHIP_TCPIP
@@ -632,15 +725,15 @@ static INLINE void tcp_set_nonblocking(WS_SOCKET_T* sockfd)
 
 
 #ifdef WOLFSSL_NUCLEUS
-	#define WFD_SET_TYPE FD_SET
-	#define WFD_SET NU_FD_Set
-	#define WFD_ZERO NU_FD_Init
-	#define WFD_ISSET NU_FD_Check
+    #define WFD_SET_TYPE FD_SET
+    #define WFD_SET NU_FD_Set
+    #define WFD_ZERO NU_FD_Init
+    #define WFD_ISSET NU_FD_Check
 #else
-	#define WFD_SET_TYPE fd_set
-	#define WFD_SET FD_SET
-	#define WFD_ZERO FD_ZERO
-	#define WFD_ISSET FD_ISSET
+    #define WFD_SET_TYPE fd_set
+    #define WFD_SET FD_SET
+    #define WFD_ZERO FD_ZERO
+    #define WFD_ISSET FD_ISSET
 #endif
 
 /* returns 1 or greater when something is ready to be read */
@@ -663,7 +756,7 @@ static INLINE int tcp_select(SOCKET_T socketfd, int to_sec)
 {
     WFD_SET_TYPE recvfds, errfds;
     int nfds = (int)socketfd + 1;
-    struct timeval timeout = {(to_sec > 0) ? to_sec : 0, 0};
+    struct timeval timeout = {(to_sec > 0) ? to_sec : 0, 100};
     int result;
 
     WFD_ZERO(&recvfds);
@@ -691,18 +784,18 @@ static INLINE int tcp_select(SOCKET_T socketfd, int to_sec)
 /* Wolf Root Directory Helper */
 /* KEIL-RL File System does not support relative directory */
 #if !defined(WOLFSSL_MDK_ARM) && !defined(WOLFSSL_KEIL_FS) && !defined(WOLFSSL_TIRTOS) \
-    && !defined(NO_WOLFSSL_DIR) && !defined(WOLFSSL_NUCLEUS)
+    && !defined(WOLFSSL_NUCLEUS)
     /* Maximum depth to search for WolfSSL root */
     #define MAX_WOLF_ROOT_DEPTH 5
 
     static INLINE int ChangeToWolfSshRoot(void)
     {
-        #if !defined(NO_FILESYSTEM)
+        #if !defined(NO_FILESYSTEM) && !defined(NO_WOLFSSL_DIR)
             int depth, res;
             WFILE* file;
             for(depth = 0; depth <= MAX_WOLF_ROOT_DEPTH; depth++) {
-                if (WFOPEN(&file, serverKeyRsaPemFile, "rb") == 0) {
-                    WFCLOSE(file);
+                if (WFOPEN(NULL, &file, serverKeyRsaPemFile, "rb") == 0) {
+                    WFCLOSE(NULL, file);
                     return depth;
                 }
             #ifdef USE_WINDOWS_API
@@ -761,39 +854,45 @@ static INLINE void InitTcpReady(tcp_ready* ready)
     ready->ready = 0;
     ready->port = 0;
     ready->srfName = NULL;
-#ifdef SINGLE_THREADED
-#elif defined(_POSIX_THREADS) && !defined(__MINGW32__)
-    pthread_mutex_init(&ready->mutex, 0);
-    pthread_cond_init(&ready->cond, 0);
+#if defined(_POSIX_THREADS) && defined(NO_MAIN_DRIVER) && \
+    !defined(__MINGW32__) && !defined(SINGLE_THREADED)
+    pthread_mutex_init(&ready->mutex, NULL);
+    pthread_cond_init(&ready->cond, NULL);
 #endif
 }
 
 
 static INLINE void FreeTcpReady(tcp_ready* ready)
 {
-#ifdef SINGLE_THREADED
-    (void)ready;
-#elif defined(_POSIX_THREADS) && !defined(__MINGW32__)
+#if defined(_POSIX_THREADS) && defined(NO_MAIN_DRIVER) && \
+    !defined(__MINGW32__) && !defined(SINGLE_THREADED)
     pthread_mutex_destroy(&ready->mutex);
     pthread_cond_destroy(&ready->cond);
 #else
-    (void)ready;
+    WOLFSSH_UNUSED(ready);
 #endif
 }
 
 
-static INLINE void WaitTcpReady(func_args* args)
+static INLINE void WaitTcpReady(tcp_ready* ready)
 {
-#if defined(_POSIX_THREADS) && !defined(__MINGW32__)
-    pthread_mutex_lock(&args->signal->mutex);
+#if defined(_POSIX_THREADS) && defined(NO_MAIN_DRIVER) && \
+    !defined(__MINGW32__) && !defined(SINGLE_THREADED)
+    pthread_mutex_lock(&ready->mutex);
 
-    if (!args->signal->ready)
-        pthread_cond_wait(&args->signal->cond, &args->signal->mutex);
-    args->signal->ready = 0; /* reset */
+    while (!ready->ready) {
+        pthread_cond_wait(&ready->cond, &ready->mutex);
+    }
 
-    pthread_mutex_unlock(&args->signal->mutex);
+    pthread_mutex_unlock(&ready->mutex);
+#ifdef WOLFSSH_ZEPHYR
+    /* It's like the server isn't ready to accept connections it is
+     * listening for despite this conditional variable. A 300ms wait
+     * seems to help. This is not ideal. (XXX) */
+    k_sleep(Z_TIMEOUT_TICKS(300));
+#endif /* WOLFSSH_ZEPHYR */
 #else
-    (void)args;
+    WOLFSSH_UNUSED(ready);
 #endif
 }
 
@@ -801,9 +900,75 @@ static INLINE void WaitTcpReady(func_args* args)
 #endif /* WOLFSSH_TEST_LOCKING */
 
 
+#include <wolfssl/version.h>
+
+/*
+ * Somewhere before the release of wolfSSL v5.5.1, these threading
+ * wrappers and types were moved from wolfssl/test.h to
+ * wolfssl/wolfcrypt/types.h and are now present in the wolfSSH build.
+ * This is good, because it keeps the compatibility code in wolfCrypt.
+ * The tag WOLFSSL_THREAD is defined as a part of this compatibility, and
+ * will also be checked for. Note that the following types and defines are
+ * used by the examples to define themselves for use as threads by the test
+ * tools, but they themselves do not use threading. Before v5.6.4, a new
+ * macro for return from threads was added.
+ */
+#define WOLFSSL_V5_5_2 0x05005002
+#define WOLFSSL_V5_6_4 0x05006004
+
+#if (LIBWOLFSSL_VERSION_HEX < WOLFSSL_V5_5_2) && !defined(WOLFSSL_THREAD)
+    #define WOLFSSH_OLDER_THREADING
+    #ifdef SINGLE_THREADED
+        typedef unsigned int  THREAD_RETURN;
+        typedef void*         THREAD_TYPE;
+        #define WOLFSSH_THREAD
+    #else
+        #if defined(_POSIX_THREADS) && !defined(__MINGW32__)
+            typedef void*         THREAD_RETURN;
+            typedef pthread_t     THREAD_TYPE;
+            #define WOLFSSH_THREAD
+            #define WAIT_OBJECT_0 0L
+        #elif defined(WOLFSSL_NUCLEUS) || defined(FREESCALE_MQX)
+            typedef unsigned int  THREAD_RETURN;
+            typedef intptr_t      THREAD_TYPE;
+            #define WOLFSSH_THREAD
+        #else
+            typedef unsigned int  THREAD_RETURN;
+            typedef intptr_t      THREAD_TYPE;
+            #define WOLFSSH_THREAD __stdcall
+        #endif
+    #endif
+#else
+    #ifndef WOLFSSH_THREAD
+        #define WOLFSSH_THREAD WOLFSSL_THREAD
+    #endif
+#endif
+
+#if (LIBWOLFSSL_VERSION_HEX < WOLFSSL_V5_6_4) \
+        && !defined(WOLFSSL_RETURN_FROM_THREAD)
+    #define WOLFSSL_RETURN_FROM_THREAD(x) return (THREAD_RETURN)(x)
+    #define WOLFSSH_OLD_THREADING
+#endif
+
+
 #ifdef WOLFSSH_TEST_THREADING
 
-typedef THREAD_RETURN WOLFSSH_THREAD THREAD_FUNC(void*);
+
+#if !defined(WOLFSSH_OLD_THREADING) && !defined(WOLFSSH_OLDER_THREADING) && \
+    !defined(SINGLE_THREADED)
+
+static INLINE void ThreadStart(THREAD_CB fun, void* args, THREAD_TYPE* thread)
+{
+    (void)wolfSSL_NewThread(thread, fun, args);
+}
+
+static INLINE void ThreadJoin(THREAD_TYPE thread)
+{
+    (void)wolfSSL_JoinThread(thread);
+}
+
+#else
+typedef THREAD_RETURN (WOLFSSH_THREAD *THREAD_FUNC)(void*);
 
 
 static INLINE void ThreadStart(THREAD_FUNC fun, void* args, THREAD_TYPE* thread)
@@ -823,20 +988,25 @@ static INLINE void ThreadStart(THREAD_FUNC fun, void* args, THREAD_TYPE* thread)
     #else
         pthread_create(thread, 0, fun, args);
     #endif
-    return;
 #elif defined(WOLFSSL_TIRTOS)
-    /* Initialize the defaults and set the parameters. */
-    Task_Params taskParams;
-    Task_Params_init(&taskParams);
-    taskParams.arg0 = (UArg)args;
-    taskParams.stackSize = 65535;
-    *thread = Task_create((Task_FuncPtr)fun, &taskParams, NULL);
-    if (*thread == NULL) {
-        printf("Failed to create new Task\n");
+    {
+        /* Initialize the defaults and set the parameters. */
+        Task_Params taskParams;
+        Task_Params_init(&taskParams);
+        taskParams.arg0 = (UArg)args;
+        taskParams.stackSize = 65535;
+        *thread = Task_create((Task_FuncPtr)fun, &taskParams, NULL);
+        if (*thread == NULL) {
+            printf("Failed to create new Task\n");
+        }
+        Task_yield();
     }
-    Task_yield();
-#else
+#elif defined(USE_WINDOWS_API)
     *thread = (THREAD_TYPE)_beginthreadex(0, 0, fun, args, 0, 0);
+#else
+    (void)fun;
+    (void)args;
+    (void)thread;
 #endif
 }
 
@@ -855,12 +1025,16 @@ static INLINE void ThreadJoin(THREAD_TYPE thread)
         }
         Task_yield();
     }
+#elif defined(USE_WINDOWS_API)
+    {
+        int res = WaitForSingleObject((HANDLE)thread, INFINITE);
+        assert(res == WAIT_OBJECT_0);
+        res = CloseHandle((HANDLE)thread);
+        assert(res);
+        (void)res; /* Suppress un-used variable warning */
+    }
 #else
-    int res = WaitForSingleObject((HANDLE)thread, INFINITE);
-    assert(res == WAIT_OBJECT_0);
-    res = CloseHandle((HANDLE)thread);
-    assert(res);
-    (void)res; /* Suppress un-used variable warning */
+    (void)thread;
 #endif
 }
 
@@ -881,14 +1055,229 @@ static INLINE void ThreadDetach(THREAD_TYPE thread)
         Task_yield();
     }
 #endif
+#elif defined(USE_WINDOWS_API)
+    {
+        int res = CloseHandle((HANDLE)thread);
+        assert(res);
+        (void)res; /* Suppress un-used variable warning */
+    }
 #else
-    int res = CloseHandle((HANDLE)thread);
-    assert(res);
-    (void)res; /* Suppress un-used variable warning */
+    (void)thread;
 #endif
 }
 
+#endif /* !WOLFSSH_OLD_THREADING && !WOLFSSH_OLDER_THREADING */
+
 #endif /* WOLFSSH_TEST_THREADING */
 
-#endif /* _WOLFSSH_TEST_H_ */
+#ifdef TEST_IPV6
+static INLINE void build_addr_ipv6(struct sockaddr_in6* addr, const char* peer,
+                              word16 port)
+{
+    memset(addr, 0, sizeof(struct sockaddr_in6));
 
+    addr->sin6_family = AF_INET6;
+    addr->sin6_port = htons(port);
+    if ((size_t)peer == INADDR_ANY)
+        addr->sin6_addr = in6addr_any;
+    else {
+        struct addrinfo  hints;
+        struct addrinfo* answer = NULL;
+        int    ret;
+        char   strPort[80];
+
+        memset(&hints, 0, sizeof(hints));
+        hints.ai_family   = AF_INET6;
+        hints.ai_socktype = SOCK_STREAM;
+        hints.ai_protocol = IPPROTO_TCP;
+
+        WSNPRINTF(strPort, sizeof(strPort), "%d", port);
+        strPort[79] = '\0';
+
+        ret = getaddrinfo(peer, strPort, &hints, &answer);
+        if (ret < 0 || answer == NULL)
+            err_sys("getaddrinfo failed");
+
+        memcpy(addr, answer->ai_addr, answer->ai_addrlen);
+        freeaddrinfo(answer);
+    }
+}
+#endif /* TEST_IPV6 */
+
+
+#ifdef WOLFSSH_TEST_HEX2BIN
+
+#define BAD 0xFF
+
+static const byte hexDecode[] =
+{
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+    BAD, BAD, BAD, BAD, BAD, BAD, BAD,
+    10, 11, 12, 13, 14, 15,  /* upper case A-F */
+    BAD, BAD, BAD, BAD, BAD, BAD, BAD, BAD,
+    BAD, BAD, BAD, BAD, BAD, BAD, BAD, BAD,
+    BAD, BAD, BAD, BAD, BAD, BAD, BAD, BAD,
+    BAD, BAD,  /* G - ` */
+    10, 11, 12, 13, 14, 15   /* lower case a-f */
+};  /* A starts at 0x41 not 0x3A */
+
+
+static int Base16_Decode(const byte* in, word32 inLen,
+                         byte* out, word32* outLen)
+{
+    word32 inIdx = 0;
+    word32 outIdx = 0;
+
+    if (in == NULL || out == NULL || outLen == NULL)
+        return WS_BAD_ARGUMENT;
+
+    if (inLen == 1 && *outLen && in) {
+        byte b = in[inIdx] - 0x30;  /* 0 starts at 0x30 */
+
+        /* sanity check */
+        if (b >=  sizeof(hexDecode)/sizeof(hexDecode[0]))
+            return -1;
+
+        b  = hexDecode[b];
+
+        if (b == BAD)
+            return -1;
+
+        out[outIdx++] = b;
+
+        *outLen = outIdx;
+        return 0;
+    }
+
+    if (inLen % 2)
+        return -1;
+
+    if (*outLen < (inLen / 2))
+        return -1;
+
+    while (inLen) {
+        byte b = in[inIdx++] - 0x30;  /* 0 starts at 0x30 */
+        byte b2 = in[inIdx++] - 0x30;
+
+        /* sanity checks */
+        if (b >=  sizeof(hexDecode)/sizeof(hexDecode[0]))
+            return -1;
+        if (b2 >= sizeof(hexDecode)/sizeof(hexDecode[0]))
+            return -1;
+
+        b  = hexDecode[b];
+        b2 = hexDecode[b2];
+
+        if (b == BAD || b2 == BAD)
+            return -1;
+
+        out[outIdx++] = (byte)((b << 4) | b2);
+        inLen -= 2;
+    }
+
+    *outLen = outIdx;
+    return 0;
+}
+
+
+static void FreeBins(byte* b1, byte* b2, byte* b3, byte* b4)
+{
+    if (b1 != NULL) free(b1);
+    if (b2 != NULL) free(b2);
+    if (b3 != NULL) free(b3);
+    if (b4 != NULL) free(b4);
+}
+
+
+/* convert hex string to binary, store size, 0 success (free mem on failure) */
+static int ConvertHexToBin(const char* h1, byte** b1, word32* b1Sz,
+                                  const char* h2, byte** b2, word32* b2Sz,
+                                  const char* h3, byte** b3, word32* b3Sz,
+                                  const char* h4, byte** b4, word32* b4Sz)
+{
+    int ret;
+
+    /* b1 */
+    if (h1 && b1 && b1Sz) {
+        *b1Sz = (word32)strlen(h1) / 2;
+        *b1 = (byte*)malloc(*b1Sz);
+        if (*b1 == NULL)
+            return -1;
+        ret = Base16_Decode((const byte*)h1, (word32)strlen(h1),
+                            *b1, b1Sz);
+        if (ret != 0) {
+            FreeBins(*b1, NULL, NULL, NULL);
+            *b1 = NULL;
+            return -1;
+        }
+    }
+
+    /* b2 */
+    if (h2 && b2 && b2Sz) {
+        *b2Sz = (word32)strlen(h2) / 2;
+        *b2 = (byte*)malloc(*b2Sz);
+        if (*b2 == NULL) {
+            FreeBins(b1 ? *b1 : NULL, NULL, NULL, NULL);
+            if (b1) *b1 = NULL;
+            return -1;
+        }
+        ret = Base16_Decode((const byte*)h2, (word32)strlen(h2),
+                            *b2, b2Sz);
+        if (ret != 0) {
+            FreeBins(b1 ? *b1 : NULL, *b2, NULL, NULL);
+            if (b1) *b1 = NULL;
+            *b2 = NULL;
+            return -1;
+        }
+    }
+
+    /* b3 */
+    if (h3 && b3 && b3Sz) {
+        *b3Sz = (word32)strlen(h3) / 2;
+        *b3 = (byte*)malloc(*b3Sz);
+        if (*b3 == NULL) {
+            FreeBins(b1 ? *b1 : NULL, b2 ? *b2 : NULL, NULL, NULL);
+            if (b1) *b1 = NULL;
+            if (b2) *b2 = NULL;
+            return -1;
+        }
+        ret = Base16_Decode((const byte*)h3, (word32)strlen(h3),
+                            *b3, b3Sz);
+        if (ret != 0) {
+            FreeBins(b1 ? *b1 : NULL, b2 ? *b2 : NULL, *b3, NULL);
+            if (b1) *b1 = NULL;
+            if (b2) *b2 = NULL;
+            *b3 = NULL;
+            return -1;
+        }
+    }
+
+    /* b4 */
+    if (h4 && b4 && b4Sz) {
+        *b4Sz = (word32)strlen(h4) / 2;
+        *b4 = (byte*)malloc(*b4Sz);
+        if (*b4 == NULL) {
+            FreeBins(b1 ? *b1 : NULL, b2 ? *b2 : NULL, b3 ? *b3 : NULL, NULL);
+            if (b1) *b1 = NULL;
+            if (b2) *b2 = NULL;
+            if (b3) *b3 = NULL;
+            return -1;
+        }
+        ret = Base16_Decode((const byte*)h4, (word32)strlen(h4),
+                            *b4, b4Sz);
+        if (ret != 0) {
+            FreeBins(b1 ? *b1 : NULL, b2 ? *b2 : NULL, b3 ? *b3 : NULL, *b4);
+            if (b1) *b1 = NULL;
+            if (b2) *b2 = NULL;
+            if (b3) *b3 = NULL;
+            *b4 = NULL;
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+#endif /* WOLFSSH_TEST_HEX2BIN */
+
+#endif /* _WOLFSSH_TEST_H_ */

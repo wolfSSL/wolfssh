@@ -1,6 +1,6 @@
 /* port.c
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2026 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -37,8 +37,33 @@
     #include <stdio.h>
 #endif
 
+/*
+Flags:
+  WOLFSSH_LOCAL_PREAD_PWRITE
+    Defined to use local implementations of pread() and pwrite(). Switched
+    on automatically if pread() or pwrite() aren't found by configure.
+*/
 
-#ifndef NO_FILESYSTEM
+
+#if !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM) && \
+    !defined(WOLFSSH_ZEPHYR)
+#if defined(MICROCHIP_MPLAB_HARMONY)
+int wfopen(WFILE* f, const char* filename, SYS_FS_FILE_OPEN_ATTRIBUTES mode)
+{
+    if (f != NULL) {
+        *f = SYS_FS_FileOpen(filename, mode);
+        if (*f == WBADFILE) {
+            WLOG(WS_LOG_SFTP, "Failed to open file %s", filename);
+            return 1;
+        }
+        else {
+            WLOG(WS_LOG_SFTP, "Opened file %s", filename);
+            return 0;
+        }
+    }
+    return 1;
+}
+#else
 int wfopen(WFILE** f, const char* filename, const char* mode)
 {
 #ifdef USE_WINDOWS_API
@@ -59,13 +84,13 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
     }
 
     if (filename != NULL && f != NULL) {
-        if ((**f = WOPEN(filename, m, 0)) < 0) {
+        if ((**f = WOPEN(ssh->fs, filename, m, 0)) < 0) {
             return **f;
         }
 
         /* fopen defaults to normal */
         if (NU_Set_Attributes(filename, 0) != NU_SUCCESS) {
-            WCLOSE(**f);
+            WCLOSE(ssh->fs, **f);
             return 1;
         }
         return 0;
@@ -81,16 +106,52 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
     return 1;
 #endif
 }
+#endif
+
+/* If either pread() or pwrite() are missing, use the local versions. */
+#if (defined(USE_OSE_API) || \
+     !defined(HAVE_DECL_PREAD) || (HAVE_DECL_PREAD == 0) || \
+     !defined(HAVE_DECL_PWRITE) || (HAVE_DECL_PWRITE == 0))
+    #undef WOLFSSH_LOCAL_PREAD_PWRITE
+    #define WOLFSSH_LOCAL_PREAD_PWRITE
+#endif
+
 
 #if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
     !defined(NO_WOLFSSH_SERVER)
 
     #if defined(USE_WINDOWS_API) || defined(WOLFSSL_NUCLEUS) || \
-        defined(FREESCALE_MQX)
+        defined(FREESCALE_MQX) || defined(WOLFSSH_ZEPHYR)
 
         /* This is current inline in the source. */
 
-    #elif defined(USE_OSE_API)
+    #elif defined(MICROCHIP_MPLAB_HARMONY)
+        int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
+                const unsigned int* shortOffset)
+        {
+            int ret;
+
+            ret = (int)WFSEEK(NULL, &fd, shortOffset[0], SYS_FS_SEEK_SET);
+            if (ret != -1) {
+                ret = (int)WFWRITE(NULL, buf, 1, sz, &fd);
+            }
+
+            return ret;
+        }
+
+        int wPread(WFD fd, unsigned char* buf, unsigned int sz,
+                const unsigned int* shortOffset)
+        {
+            int ret;
+
+            ret = (int)WFSEEK(NULL, &fd, shortOffset[0], SYS_FS_SEEK_SET);
+            if (ret != -1)
+                ret = (int)WFREAD(NULL, buf, 1, sz, &fd);
+
+            return ret;
+        }
+
+    #elif defined(WOLFSSH_LOCAL_PREAD_PWRITE)
 
         int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
                 const unsigned int* shortOffset)
@@ -104,7 +165,6 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
             return ret;
         }
 
-
         int wPread(WFD fd, unsigned char* buf, unsigned int sz,
                 const unsigned int* shortOffset)
         {
@@ -117,7 +177,7 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
             return ret;
         }
 
-    #else /* USE_WINDOWS_API USE_OSE_API */
+    #else /* USE_WINDOWS_API WOLFSSH_LOCAL_PREAD_PWRITE */
 
         int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
                 const unsigned int* shortOffset)
@@ -150,6 +210,25 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
 
 #if defined(USE_WINDOWS_API) && (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP))
 
+/*
+ * SFTP paths all start with a leading root "/". Most Windows file routines
+ * expect a drive letter when dealing with an absolute path. If the provided
+ * path, f, is of the form "/C:...", adjust the pointer f to point to the "C",
+ * and decrement the file path size, fSz, by one.
+ *
+ * @param f    pointer to a file name
+ * @param fSz  size of f in bytes
+ * @return     pointer to somewhere in f
+ */
+static const char* TrimFileName(const char* f, size_t* fSz)
+{
+    if (f != NULL && fSz != NULL && *fSz >= 3 && f[0] == '/' && f[2] == ':') {
+        f++;
+        (*fSz)--;
+    }
+    return f;
+}
+
 void* WS_CreateFileA(const char* fileName, unsigned long desiredAccess,
         unsigned long shareMode, unsigned long creationDisposition,
         unsigned long flags, void* heap)
@@ -162,6 +241,8 @@ void* WS_CreateFileA(const char* fileName, unsigned long desiredAccess,
     errno_t error;
 
     fileNameSz = WSTRLEN(fileName);
+    fileName = TrimFileName(fileName, &fileNameSz);
+
     error = mbstowcs_s(&unicodeFileNameSz, NULL, 0, fileName, 0);
     if (error)
         return INVALID_HANDLE_VALUE;
@@ -186,7 +267,7 @@ void* WS_CreateFileA(const char* fileName, unsigned long desiredAccess,
 void* WS_FindFirstFileA(const char* fileName,
         char* realFileName, size_t realFileNameSz, int* isDir, void* heap)
 {
-    HANDLE findHandle;
+    HANDLE findHandle = INVALID_HANDLE_VALUE;
     WIN32_FIND_DATAW findFileData;
     wchar_t* unicodeFileName;
     size_t unicodeFileNameSz = 0;
@@ -195,6 +276,8 @@ void* WS_FindFirstFileA(const char* fileName,
     errno_t error;
 
     fileNameSz = WSTRLEN(fileName);
+    fileName = TrimFileName(fileName, &fileNameSz);
+
     error = mbstowcs_s(&unicodeFileNameSz, NULL, 0, fileName, 0);
     if (error)
         return INVALID_HANDLE_VALUE;
@@ -212,12 +295,14 @@ void* WS_FindFirstFileA(const char* fileName,
 
     WFREE(unicodeFileName, heap, PORT_DYNTYPE_STRING);
 
-    error = wcstombs_s(NULL, realFileName, realFileNameSz,
-        findFileData.cFileName, realFileNameSz);
+    if (findHandle != INVALID_HANDLE_VALUE) {
+        error = wcstombs_s(NULL, realFileName, realFileNameSz,
+            findFileData.cFileName, realFileNameSz);
 
-    if (isDir != NULL) {
-        *isDir =
-            (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        if (isDir != NULL) {
+            *isDir =
+                (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        }
     }
 
     return (void*)findHandle;
@@ -229,7 +314,7 @@ int WS_FindNextFileA(void* findHandle,
 {
     BOOL success;
     WIN32_FIND_DATAW findFileData;
-    errno_t error;
+    errno_t error = 0;
 
     success = FindNextFileW((HANDLE)findHandle, &findFileData);
 
@@ -252,6 +337,8 @@ int WS_GetFileAttributesExA(const char* fileName, void* fileInfo, void* heap)
     errno_t error;
 
     fileNameSz = WSTRLEN(fileName);
+    fileName = TrimFileName(fileName, &fileNameSz);
+
     error = mbstowcs_s(&unicodeFileNameSz, NULL, 0, fileName, 0);
     if (error != 0)
         return 0;
@@ -285,6 +372,8 @@ int WS_RemoveDirectoryA(const char* dirName, void* heap)
     errno_t error;
 
     dirNameSz = WSTRLEN(dirName);
+    dirName = TrimFileName(dirName, &dirNameSz);
+
     error = mbstowcs_s(&unicodeDirNameSz, NULL, 0, dirName, 0);
     if (error != 0)
         return 0;
@@ -317,6 +406,8 @@ int WS_CreateDirectoryA(const char* dirName, void* heap)
     errno_t error;
 
     dirNameSz = WSTRLEN(dirName);
+    dirName = TrimFileName(dirName, &dirNameSz);
+
     error = mbstowcs_s(&unicodeDirNameSz, NULL, 0, dirName, 0);
     if (error != 0)
         return 0;
@@ -352,6 +443,7 @@ int WS_MoveFileA(const char* oldName, const char* newName, void* heap)
     errno_t error;
 
     oldNameSz = WSTRLEN(oldName);
+    oldName = TrimFileName(oldName, &oldNameSz);
 
     error = mbstowcs_s(&unicodeOldNameSz, NULL, 0, oldName, 0);
     if (error != 0)
@@ -366,6 +458,8 @@ int WS_MoveFileA(const char* oldName, const char* newName, void* heap)
         oldName, oldNameSz);
 
     newNameSz = WSTRLEN(newName);
+    newName = TrimFileName(newName, &newNameSz);
+
     error = mbstowcs_s(&unicodeNewNameSz, NULL, 0, newName, 0);
     if (error != 0)
         return 0;
@@ -401,6 +495,8 @@ int WS_DeleteFileA(const char* fileName, void* heap)
     errno_t error;
 
     fileNameSz = WSTRLEN(fileName);
+    fileName = TrimFileName(fileName, &fileNameSz);
+
     error = mbstowcs_s(&unicodeFileNameSz, NULL, 0, fileName, 0);
     if (error != 0)
         return 0;
@@ -425,7 +521,169 @@ int WS_DeleteFileA(const char* fileName, void* heap)
 
 #endif /* USE_WINDOWS_API WOLFSSH_SFTP WOLFSSH_SCP */
 
+#if !defined(NO_FILESYSTEM) && \
+    defined(WOLFSSH_ZEPHYR) && (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP))
 
+int wssh_z_fstat(const char *p, struct fs_dirent *b)
+{
+    size_t p_len;
+
+    if (p == NULL || b == NULL)
+        return -1;
+
+    p_len = WSTRLEN(p);
+    /* Detect if origin directory when it ends in ':' or ':/' */
+    if (p_len >= 3 && (p[p_len-1] == ':' ||
+            (p[p_len-1] == '/' && p[p_len-2] == ':'))) {
+        b->type = FS_DIR_ENTRY_DIR;
+        b->size = 0;
+        b->name[0] = '/';
+        b->name[1] = '\0';
+        return 0;
+    }
+    else
+        return fs_stat(p, b);
+}
+
+int z_fs_chdir(const char *path)
+{
+    /* Just make sure that the path exists and is a directory */
+    struct fs_dirent dir;
+    int ret;
+
+    ret = wssh_z_fstat(path, &dir);
+    if (ret != 0 || dir.type != FS_DIR_ENTRY_DIR)
+        ret = -1;
+    return ret;
+}
+
+static struct {
+    byte open:1;
+    WFILE zfp;
+} z_fds[WOLFSSH_MAX_DESCIPRTORS];
+static wolfSSL_Mutex z_fds_mutex;
+static int z_fds_setup = 0;
+
+int wssh_z_fds_init(void)
+{
+    int ret = 0;
+    if (!z_fds_setup) {
+        WMEMSET(z_fds, 0, sizeof(z_fds));
+        ret = wc_InitMutex(&z_fds_mutex);
+        if (ret == 0)
+            z_fds_setup = 1;
+    }
+    return ret;
+}
+
+int wssh_z_fds_cleanup(void)
+{
+    int ret = 0;
+    if (z_fds_setup) {
+        WMEMSET(z_fds, 0, sizeof(z_fds));
+        ret = wc_FreeMutex(&z_fds_mutex);
+        z_fds_setup = 0;
+    }
+    return ret;
+}
+
+WFD wssh_z_open(const char *p, int f)
+{
+    WFD ret = -1;
+    if (p != NULL) {
+        if (wc_LockMutex(&z_fds_mutex) == 0) {
+            WFD idx = 0;
+            /* find a free fd */
+            while(idx < WOLFSSH_MAX_DESCIPRTORS && z_fds[idx].open)
+                idx++;
+            if (idx < WOLFSSH_MAX_DESCIPRTORS) {
+                /* found a free fd */
+                fs_file_t_init(&z_fds[idx].zfp);
+                if (fs_open(&z_fds[idx].zfp, p, f) == 0) {
+                    z_fds[idx].open = 1;
+                    ret = idx;
+                }
+            }
+            wc_UnLockMutex(&z_fds_mutex);
+        }
+    }
+    return ret;
+}
+
+int wssh_z_close(WFD fd)
+{
+    int ret = -1;
+    if (fd >= 0 && fd < WOLFSSH_MAX_DESCIPRTORS) {
+        if (wc_LockMutex(&z_fds_mutex) == 0) {
+            if (z_fds[fd].open) {
+                z_fds[fd].open = 0;
+                if (fs_close(&z_fds[fd].zfp) == 0)
+                    ret = 0;
+            }
+            wc_UnLockMutex(&z_fds_mutex);
+        }
+    }
+    return ret;
+}
+
+int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
+        const unsigned int* shortOffset)
+{
+    int ret = -1;
+    if (fd >= 0 && fd < WOLFSSH_MAX_DESCIPRTORS) {
+        if (wc_LockMutex(&z_fds_mutex) == 0) {
+            if (z_fds[fd].open) {
+                const word32* offset = (const word32*)shortOffset;
+                if (fs_seek(&z_fds[fd].zfp, offset[0], FS_SEEK_SET) == 0)
+                    ret = fs_write(&z_fds[fd].zfp, buf, sz);
+            }
+            wc_UnLockMutex(&z_fds_mutex);
+        }
+    }
+    return ret;
+}
+
+int wPread(WFD fd, unsigned char* buf, unsigned int sz,
+        const unsigned int* shortOffset)
+{
+    int ret = -1;
+    if (fd >= 0 && fd < WOLFSSH_MAX_DESCIPRTORS) {
+        if (wc_LockMutex(&z_fds_mutex) == 0) {
+            if (z_fds[fd].open) {
+                const word32* offset = (const word32*)shortOffset;
+                if (fs_seek(&z_fds[fd].zfp, offset[0], FS_SEEK_SET) == 0)
+                    ret = fs_read(&z_fds[fd].zfp, buf, sz);
+            }
+            wc_UnLockMutex(&z_fds_mutex);
+        }
+    }
+    return ret;
+}
+
+#endif
+
+#if !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM)
+#if defined(MICROCHIP_MPLAB_HARMONY)
+int wChmod(const char *path, int mode)
+{
+    SYS_FS_RESULT ret;
+    SYS_FS_FILE_DIR_ATTR attr = 0;
+
+    /* mode is the octal value i.e 666 is 0x1B6 */
+    if ((mode & 0x180) != 0x180) { /* not octal 6XX read only */
+        attr |= SYS_FS_ATTR_RDO;
+    }
+
+    /* toggle the read only attribute */
+    ret = SYS_FS_FileDirectoryModeSet(path, attr, SYS_FS_ATTR_RDO);
+    if (ret != SYS_FS_RES_SUCCESS) {
+        WLOG(WS_LOG_SFTP, "Failed to set file/dir mode");
+        return -1;
+    }
+    return 0;
+}
+#endif
+#endif /* NO_FILESYSTEM */
 #ifndef WSTRING_USER
 
 char* wstrdup(const char* s1, void* heap, int type)

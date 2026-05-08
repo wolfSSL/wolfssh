@@ -1,6 +1,6 @@
 /* wolfssh_demo.c
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2026 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -125,11 +125,11 @@ static int dump_stats(thread_ctx_t* ctx)
 
     wolfSSH_GetStats(ctx->ssh, &txCount, &rxCount, &seq, &peerSeq);
 
-    printf(stats, 
+    sprintf(stats, 
             "Statistics for Thread #%u:\r\n"
             "  txCount = %u\r\n  rxCount = %u\r\n"
             "  seq = %u\r\n  peerSeq = %u\r\n",
-            0, txCount, rxCount, seq, peerSeq);
+            (word32)0, txCount, rxCount, seq, peerSeq);
     statsSz = (word32)strlen(stats);
 
     fprintf(stderr, "%s", stats);
@@ -239,18 +239,18 @@ static int load_key(byte isEcc, byte* buf, word32 bufSz)
 #else
     /* using buffers instead */
     if (isEcc) {
-        if (sizeof_ecc_key_der_256 > bufSz) {
+        if (sizeof_ecc_key_der_256_ssh > bufSz) {
             return 0;
         }
-        WMEMCPY(buf, ecc_key_der_256, sizeof_ecc_key_der_256);
-        sz = sizeof_ecc_key_der_256;
+        WMEMCPY(buf, ecc_key_der_256_ssh, sizeof_ecc_key_der_256_ssh);
+        sz = sizeof_ecc_key_der_256_ssh;
     }
     else {
-        if (sizeof_rsa_key_der_2048 > bufSz) {
+        if (sizeof_rsa_key_der_2048_ssh > bufSz) {
             return 0;
         }
-        WMEMCPY(buf, rsa_key_der_2048, sizeof_rsa_key_der_2048);
-        sz = sizeof_rsa_key_der_2048;
+        WMEMCPY(buf, rsa_key_der_2048_ssh, sizeof_rsa_key_der_2048_ssh);
+        sz = sizeof_rsa_key_der_2048_ssh;
     }
 #endif
 

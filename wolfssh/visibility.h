@@ -1,6 +1,6 @@
 /* visibility.h
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2026 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -41,7 +41,7 @@ extern "C" {
 */
 
 #if defined(BUILDING_WOLFSSH)
-    #if defined(_MSC_VER) || defined(__CYGWIN__)
+    #if defined(_MSC_VER) || defined(__CYGWIN__) || defined(__MINGW32__)
         #ifdef WOLFSSH_DLL
             #define WOLFSSH_API extern __declspec(dllexport)
         #else
@@ -59,7 +59,7 @@ extern "C" {
         #define WOLFSSH_LOCAL
     #endif /* HAVE_VISIBILITY */
 #else /* BUILDING_WOLFSSH */
-    #if defined(_MSC_VER) || defined(__CYGWIN__)
+    #if defined(_MSC_VER) || defined(__CYGWIN__) || defined(__MINGW32__)
         #ifdef WOLFSSH_DLL
             #define WOLFSSH_API extern __declspec(dllimport)
         #else
@@ -72,6 +72,9 @@ extern "C" {
     #endif
 #endif /* BUILDING_WOLFSSH */
 
+
+/* Do nothing tag to flag an API as deprecated. */
+#define DEPRECATED
 
 
 #ifdef __cplusplus

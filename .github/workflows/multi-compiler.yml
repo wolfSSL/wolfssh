@@ -1,0 +1,99 @@
+name: Multiple Compilers
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build_wolfssl:
+    name: Build wolfSSL
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout wolfSSL
+        uses: actions/checkout@v4
+        with:
+          repository: wolfssl/wolfssl
+          path: wolfssl
+
+      - name: Build wolfSSL
+        working-directory: ./wolfssl
+        run: |
+          ./autogen.sh
+          ./configure --enable-wolfssh --enable-keygen --enable-pkcallbacks
+          make -j$(nproc)
+          sudo make install
+          sudo ldconfig
+
+      - name: tar build-dir
+        run: tar -zcf wolfssl-install.tgz /usr/local/lib/libwolfssl* /usr/local/include/wolfssl
+
+      - name: Upload built lib
+        uses: actions/upload-artifact@v4
+        with:
+          name: wolfssl-multi-compiler
+          path: wolfssl-install.tgz
+          retention-days: 5
+
+  compiler_test:
+    name: ${{ matrix.cc }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: build_wolfssl
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cc: gcc-11
+            cxx: g++-11
+          - cc: gcc-12
+            cxx: g++-12
+          - cc: gcc-13
+            cxx: g++-13
+          - cc: clang-14
+            cxx: clang++-14
+          - cc: clang-15
+            cxx: clang++-15
+          - cc: clang-17
+            cxx: clang++-17
+
+    steps:
+      - name: Install compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.cc }}
+
+      - name: Checkout wolfSSH
+        uses: actions/checkout@v4
+
+      - name: Download wolfSSL
+        uses: actions/download-artifact@v4
+        with:
+          name: wolfssl-multi-compiler
+
+      - name: Install wolfSSL
+        run: |
+          sudo tar -xzf wolfssl-install.tgz -C /
+          sudo ldconfig
+
+      - name: Build wolfSSH with ${{ matrix.cc }}
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: |
+          ./autogen.sh
+          ./configure CFLAGS="-Wall -Wextra -Wpedantic"
+          make -j$(nproc)
+
+      - name: Make dist
+        run: make dist
+
+      - name: Show log on errors
+        if: failure()
+        run: cat config.log

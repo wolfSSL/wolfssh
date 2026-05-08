@@ -1,6 +1,6 @@
 /* wolfscp.h
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2026 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -76,13 +76,19 @@ enum WS_ScpFileStates {
     #include <errno.h>
 
     typedef struct ScpSendCtx {
-    #ifndef WOLFSSL_NUCLEUS
-        struct dirent* entry;                   /* file entry, from readdir() */
-        struct stat s;                          /* stat info from file */
-    #else
+    #ifdef WOLFSSL_NUCLEUS
         int   fd; /* file descriptor, in the case of Nucleus fp points to fd */
         DSTAT s;
         int   nextError;
+    #elif defined(USE_WINDOWS_API)
+        char* entry;
+        WIN32_FILE_ATTRIBUTE_DATA s;
+    #elif defined(WOLFSSH_ZEPHYR)
+        struct fs_dirent entry;
+        WSTAT_T s;                              /* stat info from file */
+    #else
+        struct dirent* entry;                   /* file entry, from readdir() */
+        struct stat s;                          /* stat info from file */
     #endif
         WFILE* fp;                              /* file pointer */
         struct ScpDir* currentDir;              /* dir being copied, stack */

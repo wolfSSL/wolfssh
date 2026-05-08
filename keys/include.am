@@ -17,4 +17,11 @@ EXTRA_DIST+= \
             keys/gretel-key-ecc-521.der keys/gretel-key-ecc-521.pem keys/gretel-key-ecc-521.pub \
             keys/gretel-key-rsa.der keys/gretel-key-rsa.pem keys/gretel-key-rsa.pub \
             keys/pubkeys-ecc.txt keys/pubkeys-ecc-384.txt keys/pubkeys-ecc-521.txt \
-            keys/pubkeys-rsa.txt keys/passwd.txt
+            keys/pubkeys-rsa.txt keys/passwd.txt keys/ca-cert-ecc.der \
+            keys/ca-cert-ecc.pem keys/ca-key-ecc.der keys/ca-key-ecc.pem \
+            keys/server-cert.der keys/server-cert.pem \
+            keys/fred-cert.der keys/fred-cert.pem \
+            keys/server-key.pem keys/fred-key.der keys/fred-key.pem \
+            keys/id_ecdsa keys/id_ecdsa.pub keys/id_rsa keys/id_rsa.pub \
+            keys/renewcerts.sh keys/renewcerts.cnf
+

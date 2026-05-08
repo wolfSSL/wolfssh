@@ -7,4 +7,9 @@ dist_noinst_SCRIPTS+= scripts/sftp.test
 dist_noinst_SCRIPTS+= scripts/get-put.test
 endif
 
-dist_noinst_SCRIPTS+= scripts/external.test
+if BUILD_SCP
+dist_noinst_SCRIPTS+= scripts/scp.test
+endif
+
+dist_noinst_SCRIPTS+= scripts/external.test scripts/fwd.test
+EXTRA_DIST += scripts/fwd.test.expect

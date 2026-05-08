@@ -1,6 +1,6 @@
 /* api.c
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2026 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -18,53 +18,91 @@
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#ifdef HAVE_CONFIG_H
+    #include <config.h>
+#endif
+
+#ifdef WOLFSSL_USER_SETTINGS
+    #include <wolfssl/wolfcrypt/settings.h>
+#else
+    #include <wolfssl/options.h>
+#endif
+#include <wolfssl/wolfcrypt/wc_port.h>
+#include <wolfssh/port.h>
 
 #include <stdio.h>
+#include <string.h>
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #ifdef WOLFSSH_SCP
     #include <wolfssh/wolfscp.h>
 #endif
+#ifdef WOLFSSH_AGENT
+    #include <wolfssh/agent.h>
+#endif
+
 #ifdef WOLFSSH_SFTP
     #define WOLFSSH_TEST_LOCKING
-    #define WOLFSSH_TEST_THREADING
-
+    #ifndef SINGLE_THREADED
+        #define WOLFSSH_TEST_THREADING
+    #endif
     #define WOLFSSH_TEST_SERVER
     #define WOLFSSH_TEST_ECHOSERVER
-    #include <wolfssh/test.h>
-
-    #include "examples/echoserver/echoserver.h"
-
 #endif
+#ifndef WOLFSSH_TEST_BLOCK
+    #define WOLFSSH_TEST_HEX2BIN
+#endif
+#include <wolfssh/test.h>
+#include "tests/api.h"
 
 /* for echoserver test cases */
 int myoptind = 0;
 char* myoptarg = NULL;
 
 
-#define Fail(description, result) do {                                         \
+#ifndef WOLFSSH_NO_ABORT
+    #define WABORT() abort()
+#else
+    #define WABORT()
+#endif
+
+#define PrintError(description, result) do {                                   \
     printf("\nERROR - %s line %d failed with:", __FILE__, __LINE__);           \
     printf("\n    expected: "); printf description;                            \
     printf("\n    result:   "); printf result; printf("\n\n");                 \
-    abort();                                                                   \
 } while(0)
+
+#ifdef WOLFSSH_ZEPHYR
+#define Fail(description, result) do {                                         \
+    PrintError(description, result);                                           \
+    WABORT();                                                                  \
+} while(0)
+#else
+#define Fail(description, result) do {                                         \
+    PrintError(description, result);                                           \
+    WFFLUSH(stdout);                                                           \
+    WABORT();                                                                  \
+} while(0)
+#endif
 
 #define Assert(test, description, result) if (!(test)) Fail(description, result)
 
 #define AssertTrue(x)    Assert( (x), ("%s is true",     #x), (#x " => FALSE"))
 #define AssertFalse(x)   Assert(!(x), ("%s is false",    #x), (#x " => TRUE"))
-#define AssertNotNull(x) Assert( (x), ("%s is not null", #x), (#x " => NULL"))
+
+#define AssertNotNull(x) do {                                                  \
+    PEDANTIC_EXTENSION void* _isNotNull = (void*)(x);                          \
+    Assert(_isNotNull, ("%s is not null", #x), (#x " => NULL"));               \
+} while (0)
 
 #define AssertNull(x) do {                                                     \
-    void* _x = (void *) (x);                                                   \
-                                                                               \
-    Assert(!_x, ("%s is null", #x), (#x " => %p", _x));                        \
+    PEDANTIC_EXTENSION void* _isNull = (void*)(x);                             \
+    Assert(!_isNull, ("%s is null", #x), (#x " => %p", _isNull));              \
 } while(0)
 
 #define AssertInt(x, y, op, er) do {                                           \
-    int _x = x;                                                                \
-    int _y = y;                                                                \
-                                                                               \
+    int _x = (int)(x);                                                         \
+    int _y = (int)(y);                                                         \
     Assert(_x op _y, ("%s " #op " %s", #x, #y), ("%d " #er " %d", _x, _y));    \
 } while(0)
 
@@ -76,10 +114,9 @@ char* myoptarg = NULL;
 #define AssertIntLE(x, y) AssertInt(x, y, <=,  >)
 
 #define AssertStr(x, y, op, er) do {                                           \
-    const char* _x = x;                                                        \
-    const char* _y = y;                                                        \
-    int   _z = strcmp(_x, _y);                                                 \
-                                                                               \
+    const char* _x = (const char*)(x);                                         \
+    const char* _y = (const char*)(y);                                         \
+    int         _z = (_x && _y) ? strcmp(_x, _y) : -1;                         \
     Assert(_z op 0, ("%s " #op " %s", #x, #y),                                 \
                                             ("\"%s\" " #er " \"%s\"", _x, _y));\
 } while(0)
@@ -91,250 +128,29 @@ char* myoptarg = NULL;
 #define AssertStrGE(x, y) AssertStr(x, y, >=,  <)
 #define AssertStrLE(x, y) AssertStr(x, y, <=,  >)
 
+#define AssertPtr(x, y, op, er) do {                                           \
+    PRAGMA_GCC_DIAG_PUSH                                                       \
+      /* remarkably, without this inhibition, */                               \
+      /* the _Pragma()s make the declarations warn. */                         \
+    PRAGMA_GCC("GCC diagnostic ignored \"-Wdeclaration-after-statement\"")     \
+      /* inhibit "ISO C forbids conversion of function pointer */              \
+      /* to object pointer type [-Werror=pedantic]" */                         \
+    PRAGMA_GCC("GCC diagnostic ignored \"-Wpedantic\"")                        \
+    void* _x = (void*)(x);                                                     \
+    void* _y = (void*)(y);                                                     \
+    Assert(_x op _y, ("%s " #op " %s", #x, #y), ("%p " #er " %p", _x, _y));    \
+    PRAGMA_GCC_DIAG_POP;                                                       \
+} while(0)
 
-/* Utility functions */
-
-#define BAD 0xFF
-
-const byte hexDecode[] =
-{
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
-    BAD, BAD, BAD, BAD, BAD, BAD, BAD,
-    10, 11, 12, 13, 14, 15,  /* upper case A-F */
-    BAD, BAD, BAD, BAD, BAD, BAD, BAD, BAD,
-    BAD, BAD, BAD, BAD, BAD, BAD, BAD, BAD,
-    BAD, BAD, BAD, BAD, BAD, BAD, BAD, BAD,
-    BAD, BAD,  /* G - ` */
-    10, 11, 12, 13, 14, 15   /* lower case a-f */
-};  /* A starts at 0x41 not 0x3A */
-
-
-static int Base16_Decode(const byte* in, word32 inLen,
-                         byte* out, word32* outLen)
-{
-    word32 inIdx = 0;
-    word32 outIdx = 0;
-
-    if (inLen == 1 && *outLen && in) {
-        byte b = in[inIdx++] - 0x30;  /* 0 starts at 0x30 */
-
-        /* sanity check */
-        if (b >=  sizeof(hexDecode)/sizeof(hexDecode[0]))
-            return -1;
-
-        b  = hexDecode[b];
-
-        if (b == BAD)
-            return -1;
-
-        out[outIdx++] = b;
-
-        *outLen = outIdx;
-        return 0;
-    }
-
-    if (inLen % 2)
-        return -1;
-
-    if (*outLen < (inLen / 2))
-        return -1;
-
-    while (inLen) {
-        byte b = in[inIdx++] - 0x30;  /* 0 starts at 0x30 */
-        byte b2 = in[inIdx++] - 0x30;
-
-        /* sanity checks */
-        if (b >=  sizeof(hexDecode)/sizeof(hexDecode[0]))
-            return -1;
-        if (b2 >= sizeof(hexDecode)/sizeof(hexDecode[0]))
-            return -1;
-
-        b  = hexDecode[b];
-        b2 = hexDecode[b2];
-
-        if (b == BAD || b2 == BAD)
-            return -1;
-
-        out[outIdx++] = (byte)((b << 4) | b2);
-        inLen -= 2;
-    }
-
-    *outLen = outIdx;
-    return 0;
-}
+#define AssertPtrEq(x, y) AssertPtr(x, y, ==, !=)
+#define AssertPtrNE(x, y) AssertPtr(x, y, !=, ==)
+#define AssertPtrGT(x, y) AssertPtr(x, y,  >, <=)
+#define AssertPtrLT(x, y) AssertPtr(x, y,  <, >=)
+#define AssertPtrGE(x, y) AssertPtr(x, y, >=,  <)
+#define AssertPtrLE(x, y) AssertPtr(x, y, <=,  >)
 
 
-static void FreeBins(byte* b1, byte* b2, byte* b3, byte* b4)
-{
-    if (b1 != NULL) free(b1);
-    if (b2 != NULL) free(b2);
-    if (b3 != NULL) free(b3);
-    if (b4 != NULL) free(b4);
-}
-
-
-/* convert hex string to binary, store size, 0 success (free mem on failure) */
-static int ConvertHexToBin(const char* h1, byte** b1, word32* b1Sz,
-                           const char* h2, byte** b2, word32* b2Sz,
-                           const char* h3, byte** b3, word32* b3Sz,
-                           const char* h4, byte** b4, word32* b4Sz)
-{
-    int ret;
-
-    /* b1 */
-    if (h1 && b1 && b1Sz) {
-        *b1Sz = (word32)strlen(h1) / 2;
-        *b1 = (byte*)malloc(*b1Sz);
-        if (*b1 == NULL)
-            return -1;
-        ret = Base16_Decode((const byte*)h1, (word32)strlen(h1),
-                            *b1, b1Sz);
-        if (ret != 0) {
-            FreeBins(*b1, NULL, NULL, NULL);
-            return -1;
-        }
-    }
-
-    /* b2 */
-    if (h2 && b2 && b2Sz) {
-        *b2Sz = (word32)strlen(h2) / 2;
-        *b2 = (byte*)malloc(*b2Sz);
-        if (*b2 == NULL) {
-            FreeBins(b1 ? *b1 : NULL, NULL, NULL, NULL);
-            return -1;
-        }
-        ret = Base16_Decode((const byte*)h2, (word32)strlen(h2),
-                            *b2, b2Sz);
-        if (ret != 0) {
-            FreeBins(b1 ? *b1 : NULL, *b2, NULL, NULL);
-            return -1;
-        }
-    }
-
-    /* b3 */
-    if (h3 && b3 && b3Sz) {
-        *b3Sz = (word32)strlen(h3) / 2;
-        *b3 = (byte*)malloc(*b3Sz);
-        if (*b3 == NULL) {
-            FreeBins(b1 ? *b1 : NULL, b2 ? *b2 : NULL, NULL, NULL);
-            return -1;
-        }
-        ret = Base16_Decode((const byte*)h3, (word32)strlen(h3),
-                            *b3, b3Sz);
-        if (ret != 0) {
-            FreeBins(b1 ? *b1 : NULL, b2 ? *b2 : NULL, *b3, NULL);
-            return -1;
-        }
-    }
-
-    /* b4 */
-    if (h4 && b4 && b4Sz) {
-        *b4Sz = (word32)strlen(h4) / 2;
-        *b4 = (byte*)malloc(*b4Sz);
-        if (*b4 == NULL) {
-            FreeBins(b1 ? *b1 : NULL, b2 ? *b2 : NULL, b3 ? *b3 : NULL, NULL);
-            return -1;
-        }
-        ret = Base16_Decode((const byte*)h4, (word32)strlen(h4),
-                            *b4, b4Sz);
-        if (ret != 0) {
-            FreeBins(b1 ? *b1 : NULL, b2 ? *b2 : NULL, b3 ? *b3 : NULL, *b4);
-            return -1;
-        }
-    }
-
-    return 0;
-}
-
-#if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT)
-byte userPassword[256];
-static int sftpUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
-{
-    int ret = WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
-
-    if (authType == WOLFSSH_USERAUTH_PASSWORD) {
-        const char* defaultPassword = (const char*)ctx;
-        word32 passwordSz;
-
-        ret = WOLFSSH_USERAUTH_SUCCESS;
-        if (defaultPassword != NULL) {
-            passwordSz = (word32)strlen(defaultPassword);
-            memcpy(userPassword, defaultPassword, passwordSz);
-        }
-        else {
-            printf("Expecting password set for test cases\n");
-            return ret;
-        }
-
-        if (ret == WOLFSSH_USERAUTH_SUCCESS) {
-            authData->sf.password.password = userPassword;
-            authData->sf.password.passwordSz = passwordSz;
-        }
-    }
-    return ret;
-}
-
-#ifndef NO_WOLFSSH_CLIENT
-/* preforms connection to port, sets WOLFSSH_CTX and WOLFSSH on success
- * caller needs to free ctx and ssh when done
- */
-static void sftp_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
-{
-    SOCKET_T sockFd = WOLFSSH_SOCKET_INVALID;
-    SOCKADDR_IN_T clientAddr;
-    socklen_t clientAddrSz = sizeof(clientAddr);
-    int ret;
-    char* host = (char*)wolfSshIp;
-    const char* username = "jill";
-    const char* password = "upthehill";
-
-    if (ctx == NULL || ssh == NULL) {
-        return;
-    }
-
-    *ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
-    if (*ctx == NULL) {
-        return;
-    }
-
-    wolfSSH_SetUserAuth(*ctx, sftpUserAuth);
-    *ssh = wolfSSH_new(*ctx);
-    if (*ssh == NULL) {
-        wolfSSH_CTX_free(*ctx);
-        *ctx = NULL;
-        return;
-    }
-
-    build_addr(&clientAddr, host, port);
-    tcp_socket(&sockFd);
-    ret = connect(sockFd, (const struct sockaddr *)&clientAddr, clientAddrSz);
-    if (ret != 0){
-        wolfSSH_free(*ssh);
-        wolfSSH_CTX_free(*ctx);
-        *ctx = NULL;
-        *ssh = NULL;
-        return;
-    }
-
-    wolfSSH_SetUserAuthCtx(*ssh, (void*)password);
-    ret = wolfSSH_SetUsername(*ssh, username);
-    if (ret == WS_SUCCESS)
-        ret = wolfSSH_set_fd(*ssh, (int)sockFd);
-
-    if (ret == WS_SUCCESS)
-        ret = wolfSSH_SFTP_connect(*ssh);
-
-    if (ret != WS_SUCCESS){
-        wolfSSH_free(*ssh);
-        wolfSSH_CTX_free(*ctx);
-        *ctx = NULL;
-        *ssh = NULL;
-        return;
-    }
-}
-#endif /* NO_WOLFSSH_CLIENT */
-#endif /* WOLFSSH_SFTP */
-
+#ifndef WOLFSSH_TEST_BLOCK
 
 enum WS_TestEndpointTypes {
     TEST_GOOD_ENDPOINT_SERVER = WOLFSSH_ENDPOINT_SERVER,
@@ -470,8 +286,8 @@ static const char serverKeyEccDer[] =
     "7bb87f38c66dd5a00a06082a8648ce3d030107a144034200048113ffa42bb79c"
     "45747a834c61f33fad26cf22cda9a3bca561b47ce662d4c2f755439a31fb8011"
     "20b5124b24f578d7fd22ef4635f005586b5f63c8da1bc4f569";
-static const int serverKeyEccCurveId = ECC_SECP256R1;
-#elif defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384)
+static const byte serverKeyEccCurveId = ID_ECDSA_SHA2_NISTP256;
+#elif !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384)
 static const char serverKeyEccDer[] =
     "3081a402010104303eadd2bbbf05a7be3a3f7c28151289de5bb3644d7011761d"
     "b56f2a0362fba64f98e64ff986dc4fb8efdb2d6b8da57142a00706052b810400"
@@ -479,8 +295,8 @@ static const char serverKeyEccDer[] =
     "7724316d46a23105873f2986d5c712803a6f471ab86850eb063e108961349cf8"
     "b4c6a4cf5e97bd7e51e975e3e9217261506eb9cf3c493d3eb88d467b5f27ebab"
     "2161c00066febd";
-static const int serverKeyEccCurveId = ECC_SECP384R1;
-#elif defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
+static const byte serverKeyEccCurveId = ID_ECDSA_SHA2_NISTP384;
+#elif !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
 static const char serverKeyEccDer[] =
     "3081dc0201010442004ca4d86428d9400e7b2df3912eb996c195895043af92e8"
     "6de70ae4df46f22a291a6bb2748aae82580df6c39f49b3ed82f1789ece1b657d"
@@ -489,10 +305,10 @@ static const char serverKeyEccDer[] =
     "d18046a9717f2c6f59519c827095b29a6313306218c235769400d0f96d000a19"
     "3ba346652beb409a9a45c597a3ed932dd5aaae96bf2f317e5a7ac7458b3c6cdb"
     "aa90c355382cdfcdca7377d92eb20a5e8c74237ca5a345b19e3f1a2290b154";
-static const int serverKeyEccCurveId = ECC_SECP521R1;
+static const byte serverKeyEccCurveId = ID_ECDSA_SHA2_NISTP521;
 #endif
 
-#ifndef WOLFSSH_NO_SSH_RSA_SHA1
+#ifndef WOLFSSH_NO_RSA
 static const char serverKeyRsaDer[] =
     "308204a30201000282010100da5dad2514761559f340fd3cb86230b36dc0f9ec"
     "ec8b831e9e429cca416ad38ae15234e00d13627ed40fae5c4d04f18dfac5ad77"
@@ -539,25 +355,26 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
 {
 #ifndef WOLFSSH_NO_SERVER
     WOLFSSH_CTX* ctx;
-#ifdef HAVE_ECC
+#ifndef WOLFSSH_NO_ECDSA
     byte* eccKey;
     word32 eccKeySz;
 #endif
-#ifndef NO_RSA
+#ifndef WOLFSSH_NO_RSA
     byte* rsaKey;
     word32 rsaKeySz;
 #endif
-    byte* lastKey = NULL;
+    const byte* lastKey = NULL;
     word32 lastKeySz = 0;
+    int i;
 
-#ifdef HAVE_ECC
+#ifndef WOLFSSH_NO_ECC
     AssertIntEQ(0,
             ConvertHexToBin(serverKeyEccDer, &eccKey, &eccKeySz,
                     NULL, NULL, NULL,
                     NULL, NULL, NULL,
                     NULL, NULL, NULL));
 #endif
-#ifndef NO_RSA
+#ifndef WOLFSSH_NO_RSA
     AssertIntEQ(0,
             ConvertHexToBin(serverKeyRsaDer, &rsaKey, &rsaKeySz,
                     NULL, NULL, NULL,
@@ -566,89 +383,489 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
 #endif
 
     AssertNotNull(ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL));
-    AssertNull(ctx->privateKey);
-    AssertIntEQ(0, ctx->privateKeySz);
-    AssertIntEQ(0, ctx->useEcc);
+    for (i = 0; i < WOLFSSH_MAX_PVT_KEYS; i++) {
+        AssertNull(ctx->privateKey[i].key);
+        AssertIntEQ(0, ctx->privateKey[i].keySz);
+        AssertIntEQ(ID_NONE, ctx->privateKey[i].publicKeyFmt);
+    }
+    AssertIntEQ(0, ctx->privateKeyCount);
 
     /* Fail: all NULL/BAD */
     AssertIntNE(WS_SUCCESS,
         wolfSSH_CTX_UsePrivateKey_buffer(NULL, NULL, 0, TEST_BAD_FORMAT_NEXT));
-    AssertNull(ctx->privateKey);
-    AssertIntEQ(0, ctx->privateKeySz);
-    AssertIntEQ(0, ctx->useEcc);
+    AssertNull(ctx->privateKey[0].key);
+    AssertIntEQ(0, ctx->privateKey[0].keySz);
+    AssertIntEQ(ID_NONE, ctx->privateKey[0].publicKeyFmt);
+    AssertIntEQ(0, ctx->privateKeyCount);
 
     /* Fail: ctx set, others NULL/bad */
     AssertIntNE(WS_SUCCESS,
         wolfSSH_CTX_UsePrivateKey_buffer(ctx, NULL, 0, TEST_BAD_FORMAT_NEXT));
-    AssertNull(ctx->privateKey);
-    AssertIntEQ(0, ctx->privateKeySz);
-    AssertIntEQ(0, ctx->useEcc);
+    AssertNull(ctx->privateKey[0].key);
+    AssertIntEQ(0, ctx->privateKey[0].keySz);
+    AssertIntEQ(ID_NONE, ctx->privateKey[0].publicKeyFmt);
+    AssertIntEQ(0, ctx->privateKeyCount);
 
     /* Fail: ctx set, key set, others bad */
     AssertIntNE(WS_SUCCESS,
         wolfSSH_CTX_UsePrivateKey_buffer(ctx,
                                          lastKey, 0, TEST_BAD_FORMAT_NEXT));
-    AssertNull(ctx->privateKey);
-    AssertIntEQ(0, ctx->privateKeySz);
-    AssertIntEQ(0, ctx->useEcc);
+    AssertNull(ctx->privateKey[0].key);
+    AssertIntEQ(0, ctx->privateKey[0].keySz);
+    AssertIntEQ(ID_NONE, ctx->privateKey[0].publicKeyFmt);
+    AssertIntEQ(0, ctx->privateKeyCount);
 
     /* Fail: ctx set, keySz set, others NULL/bad */
     AssertIntNE(WS_SUCCESS,
         wolfSSH_CTX_UsePrivateKey_buffer(ctx, NULL, 1, TEST_BAD_FORMAT_NEXT));
-    AssertNull(ctx->privateKey);
-    AssertIntEQ(0, ctx->privateKeySz);
-    AssertIntEQ(0, ctx->useEcc);
+    AssertNull(ctx->privateKey[0].key);
+    AssertIntEQ(0, ctx->privateKey[0].keySz);
+    AssertIntEQ(ID_NONE, ctx->privateKey[0].publicKeyFmt);
+    AssertIntEQ(0, ctx->privateKeyCount);
 
     /* Fail: ctx set, key set, keySz set, format invalid */
     AssertIntNE(WS_SUCCESS, wolfSSH_CTX_UsePrivateKey_buffer(ctx,
                 lastKey, lastKeySz, TEST_GOOD_FORMAT_PEM));
-    AssertNull(ctx->privateKey);
-    AssertIntEQ(0, ctx->privateKeySz);
-    AssertIntEQ(0, ctx->useEcc);
+    AssertNull(ctx->privateKey[0].key);
+    AssertIntEQ(0, ctx->privateKey[0].keySz);
+    AssertIntEQ(ID_NONE, ctx->privateKey[0].publicKeyFmt);
+    AssertIntEQ(0, ctx->privateKeyCount);
 
     /* Pass */
-#ifdef HAVE_ECC
-    lastKey = ctx->privateKey;
-    lastKeySz = ctx->privateKeySz;
+#if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) || \
+    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) || \
+    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
+    lastKey = ctx->privateKey[ctx->privateKeyCount].key;
+    lastKeySz = ctx->privateKey[ctx->privateKeyCount].keySz;
 
     AssertIntEQ(WS_SUCCESS,
         wolfSSH_CTX_UsePrivateKey_buffer(ctx, eccKey, eccKeySz,
                                          TEST_GOOD_FORMAT_ASN1));
-    AssertNotNull(ctx->privateKey);
-    AssertIntNE(0, ctx->privateKeySz);
-    AssertIntEQ(serverKeyEccCurveId, ctx->useEcc);
+    AssertIntEQ(1, ctx->privateKeyCount);
+    AssertNotNull(ctx->privateKey[0].key);
+    AssertIntNE(0, ctx->privateKey[0].keySz);
+    AssertIntEQ(serverKeyEccCurveId, ctx->privateKey[0].publicKeyFmt);
 
-    AssertIntEQ(0, (lastKey == ctx->privateKey));
-    AssertIntNE(lastKeySz, ctx->privateKeySz);
+    AssertIntEQ(0, (lastKey == ctx->privateKey[0].key));
+    AssertIntNE(lastKeySz, ctx->privateKey[0].keySz);
 #endif
 
-#ifndef NO_RSA
-    lastKey = ctx->privateKey;
-    lastKeySz = ctx->privateKeySz;
+#ifndef WOLFSSH_NO_SSH_RSA_SHA1
+    lastKey = ctx->privateKey[ctx->privateKeyCount].key;
+    lastKeySz = ctx->privateKey[ctx->privateKeyCount].keySz;
 
     AssertIntEQ(WS_SUCCESS,
         wolfSSH_CTX_UsePrivateKey_buffer(ctx, rsaKey, rsaKeySz,
                                          TEST_GOOD_FORMAT_ASN1));
-    AssertNotNull(ctx->privateKey);
-    AssertIntNE(0, ctx->privateKeySz);
-    AssertIntEQ(0, ctx->useEcc);
+    AssertIntNE(0, ctx->privateKeyCount);
+    AssertNotNull(ctx->privateKey[0].key);
+    AssertIntNE(0, ctx->privateKey[0].keySz);
 
-    AssertIntEQ(0, (lastKey == ctx->privateKey));
-    AssertIntNE(lastKeySz, ctx->privateKeySz);
+    AssertIntEQ(0, (lastKey == ctx->privateKey[0].key));
+    AssertIntNE(lastKeySz, ctx->privateKey[0].keySz);
+#endif
+
+    /* Add the same keys again. This should succeed. */
+#if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) || \
+    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) || \
+    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
+    AssertIntEQ(WS_SUCCESS,
+        wolfSSH_CTX_UsePrivateKey_buffer(ctx, eccKey, eccKeySz,
+                                         TEST_GOOD_FORMAT_ASN1));
+#endif
+#ifndef WOLFSSH_NO_SSH_RSA_SHA1
+    AssertIntEQ(WS_SUCCESS,
+        wolfSSH_CTX_UsePrivateKey_buffer(ctx, rsaKey, rsaKeySz,
+                                         TEST_GOOD_FORMAT_ASN1));
 #endif
 
     wolfSSH_CTX_free(ctx);
-#ifdef HAVE_ECC
+#if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) || \
+    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) || \
+    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
     FreeBins(eccKey, NULL, NULL, NULL);
 #endif
-#ifndef NO_RSA
+#ifndef WOLFSSH_NO_RSA
     FreeBins(rsaKey, NULL, NULL, NULL);
 #endif
 #endif /* WOLFSSH_NO_SERVER */
 }
 
 
+#ifdef WOLFSSH_CERTS
+static int load_file(const char* filename, byte** buf, word32* bufSz)
+{
+    FILE* f = NULL;
+    int ret = 0;
+
+    if (filename == NULL || buf == NULL || bufSz == NULL)
+        ret = -1;
+
+    if (ret == 0) {
+        f = fopen(filename, "rb");
+        if (f == NULL)
+            ret = -2;
+    }
+
+    if (ret == 0) {
+        ret = fseek(f, 0, XSEEK_END);
+        if (ret < 0)
+            ret = -3;
+    }
+
+    if (ret == 0) {
+        long sz = ftell(f);
+        if (sz < 0)
+            ret = -4;
+        else
+            *bufSz = (word32)sz;
+    }
+
+    if (ret == 0) {
+        rewind(f);
+        *buf = (byte*)malloc(*bufSz);
+        if (*buf == NULL)
+            ret = -5;
+    }
+
+    if (ret == 0) {
+        size_t readSz;
+        readSz = fread(*buf, 1, *bufSz, f);
+        if (readSz < *bufSz)
+            ret = -6;
+    }
+
+    if (f != NULL) {
+        ret = fclose(f);
+        if (ret < 0)
+            ret = -7;
+    }
+
+    return ret;
+}
+#endif
+
+
+static void test_wolfSSH_CTX_UseCert_buffer(void)
+{
+#ifdef WOLFSSH_CERTS
+
+    WOLFSSH_CTX* ctx = NULL;
+    byte* cert = NULL;
+    word32 certSz = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+
+    AssertIntEQ(0, load_file("./keys/server-cert.pem", &cert, &certSz));
+    AssertNotNull(cert);
+    AssertIntNE(0, certSz);
+
+    AssertIntEQ(WS_BAD_ARGUMENT,
+            wolfSSH_CTX_UseCert_buffer(NULL, cert, certSz, WOLFSSH_FORMAT_PEM));
+    AssertIntEQ(WS_BAD_ARGUMENT,
+            wolfSSH_CTX_UseCert_buffer(ctx, NULL, certSz, WOLFSSH_FORMAT_PEM));
+    AssertIntEQ(WS_BAD_ARGUMENT,
+            wolfSSH_CTX_UseCert_buffer(ctx, NULL, 0, WOLFSSH_FORMAT_PEM));
+
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_UseCert_buffer(ctx, cert, certSz, WOLFSSH_FORMAT_PEM));
+
+    AssertIntEQ(WS_BAD_FILETYPE_E,
+            wolfSSH_CTX_UseCert_buffer(ctx, cert, certSz, WOLFSSH_FORMAT_ASN1));
+    AssertIntEQ(WS_BAD_FILETYPE_E,
+            wolfSSH_CTX_UseCert_buffer(ctx, cert, certSz, WOLFSSH_FORMAT_RAW));
+    AssertIntEQ(WS_BAD_FILETYPE_E,
+            wolfSSH_CTX_UseCert_buffer(ctx, cert, certSz, 99));
+
+    free(cert);
+
+    AssertIntEQ(0, load_file("./keys/server-cert.der", &cert, &certSz));
+    AssertNotNull(cert);
+    AssertIntNE(0, certSz);
+
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_UseCert_buffer(ctx, cert, certSz, WOLFSSH_FORMAT_ASN1));
+
+    wolfSSH_CTX_free(ctx);
+    free(cert);
+#endif /* WOLFSSH_CERTS */
+}
+
+
+static void test_wolfSSH_CTX_UsePrivateKey_buffer_pem(void)
+{
+#if defined(WOLFSSH_CERTS) && !defined(WOLFSSH_NO_SERVER)
+    WOLFSSH_CTX* ctx = NULL;
+    byte* key = NULL;
+    word32 keySz = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+
+#ifndef WOLFSSH_NO_RSA
+    AssertIntEQ(0, load_file("./keys/server-key-rsa.pem", &key, &keySz));
+    AssertNotNull(key);
+    AssertIntNE(0, keySz);
+
+    /* PEM private key should load successfully */
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_UsePrivateKey_buffer(ctx, key, keySz,
+                                             WOLFSSH_FORMAT_PEM));
+
+    free(key);
+    key = NULL;
+#endif /* WOLFSSH_NO_RSA */
+
+#ifndef WOLFSSH_NO_ECDSA
+    AssertIntEQ(0, load_file("./keys/server-key-ecc.pem", &key, &keySz));
+    AssertNotNull(key);
+    AssertIntNE(0, keySz);
+
+    /* PEM ECC private key should load successfully */
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_UsePrivateKey_buffer(ctx, key, keySz,
+                                             WOLFSSH_FORMAT_PEM));
+
+    free(key);
+    key = NULL;
+#endif /* WOLFSSH_NO_ECDSA */
+
+    wolfSSH_CTX_free(ctx);
+#endif /* WOLFSSH_CERTS && !WOLFSSH_NO_SERVER */
+}
+
+
+static void test_wolfSSH_CertMan(void)
+{
+#ifdef WOLFSSH_CERTMAN
+    {
+        WOLFSSH_CERTMAN* cm = NULL;
+
+        cm = wolfSSH_CERTMAN_new(NULL);
+        AssertNotNull(cm);
+        AssertNull(cm->heap);
+
+        wolfSSH_CERTMAN_free(cm);
+    }
+    {
+        WOLFSSH_CERTMAN cm;
+        WOLFSSH_CERTMAN* cmRef;
+        byte fakeHeap[32];
+
+        cmRef = wolfSSH_CERTMAN_init(&cm, NULL);
+        AssertNotNull(cmRef);
+        AssertNull(cmRef->heap);
+
+        cmRef = wolfSSH_CERTMAN_init(&cm, fakeHeap);
+        AssertNotNull(cmRef);
+        AssertNotNull(cmRef->heap);
+        AssertEQ(cmRef->heap, fakeHeap);
+    }
+#endif
+}
+
+
+#define KEY_BUF_SZ 2048
+
+#ifndef WOLFSSH_NO_RSA
+
+const char id_rsa[] =
+    "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+    "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAABFwAAAAdzc2gtcn\n"
+    "NhAAAAAwEAAQAAAQEAy2cigZDlpBT+X2MJHAoHnfeFf6+LHm6BDkAT8V9ejHA4dY0Aepb6\n"
+    "NbV6u/oYZlueKPeAZ3GNztR9szoL6FSlMvkd9oqvfoxjTGu71T0981ybJelqqGATGtevHU\n"
+    "6Jko/I0+lgSQFKWQJ7D3Dj2zlZpIXB2Q7xl/i9kFZgaIqFhUHdWO9JMOwCFwoDrhd8v5xk\n"
+    "y1v3OIIZDxiYxVIKbf2J07WbwiSFAxXfiX8TjUBDLFmtqt1AF6LjAyGyaRICXkaGJQ/QJ9\n"
+    "sX85h9bkiPlGNAtQGQtNUg3tC9GqOkZ9tCKY1Efh/r0zosOA7ufxg6ymLpq1C4LU/4ENGH\n"
+    "kuRPAKvu8wAAA8gztJfmM7SX5gAAAAdzc2gtcnNhAAABAQDLZyKBkOWkFP5fYwkcCged94\n"
+    "V/r4seboEOQBPxX16McDh1jQB6lvo1tXq7+hhmW54o94BncY3O1H2zOgvoVKUy+R32iq9+\n"
+    "jGNMa7vVPT3zXJsl6WqoYBMa168dTomSj8jT6WBJAUpZAnsPcOPbOVmkhcHZDvGX+L2QVm\n"
+    "BoioWFQd1Y70kw7AIXCgOuF3y/nGTLW/c4ghkPGJjFUgpt/YnTtZvCJIUDFd+JfxONQEMs\n"
+    "Wa2q3UAXouMDIbJpEgJeRoYlD9An2xfzmH1uSI+UY0C1AZC01SDe0L0ao6Rn20IpjUR+H+\n"
+    "vTOiw4Du5/GDrKYumrULgtT/gQ0YeS5E8Aq+7zAAAAAwEAAQAAAQEAvbdBiQXkGyn1pHST\n"
+    "/5IfTqia3OCX6td5ChicQUsJvgXBs2rDopQFZmkRxBjd/0K+/0jyfAl/EgZCBBRFHPsuZp\n"
+    "/S4ayzSV6aE6J8vMT1bnLWxwKyl7+csjGwRK6HRKtVzsnjI9TPSrw0mc9ax5PzV6/mgZUd\n"
+    "o/i+nszh+UASj5mYrBGqMiINspzX6YC+qoUHor3rEJOd9p1aO+N5+1fDKiDnlkM5IO0Qsz\n"
+    "GktuwL0fzv9zBnGfnWVJz3CorfP1OW5KCtrDn7BnkQf1eBeVLzq/uoglUjS4DNnVfLA67D\n"
+    "O4ZfwtnoW8Gr2R+KdvnypvHnDeY5X51r5PDgL4+7z47pWQAAAIBNFcAzHHE19ISGN8YRHk\n"
+    "23/r/3zfvzHU68GSKR1Xj/Y4LSdRTpSm3wBrdQ17f5B4V7RVl2CJvoPekTggnBDQlLJ7fU\n"
+    "NU93/nZrY9teYdrNh03buL54VVb5tUM+KN+27zERlTj0/LmYJupN97sZXmlgKsvLbcsnM2\n"
+    "i7HuQQaFnsIQAAAIEA5wqFVatT9yovt8pS7rAyYUL/cqc50TZ/5Nwfy5uasRyf1BphHwEW\n"
+    "LEimBemVc+VrNwAkt6MFWuloK5ssqb1ubvtRI8Mntd15rRfZtq/foS3J8FJxueXLDWlECy\n"
+    "PmVyfVN1Vv4ZeirBy9BTYLiSuxMes+HYks3HucQhxIN1j8SA0AAACBAOFgRjfWXv1/93Jp\n"
+    "6CCJ5c98MWP+zu1FbLIlklxPb85osZqlazXHNPPEtblC4z+OqRGMCsv2683anU4ZzcTFIk\n"
+    "JS3lzeJ3tdAH4osQ5etKkV4mcdCmeRpjudB9VbaziVhPX02qkPWpM0ckPrgB3hVNUDPz89\n"
+    "GtJd3mlhyY5IfFL/AAAADWJvYkBsb2NhbGhvc3QBAgMEBQ==\n"
+    "-----END OPENSSH PRIVATE KEY-----\n";
+
+const char id_rsa_pub[] =
+    "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDLZyKBkOWkFP5fYwkcCged94V/r4seboEO"
+    "QBPxX16McDh1jQB6lvo1tXq7+hhmW54o94BncY3O1H2zOgvoVKUy+R32iq9+jGNMa7vVPT3z"
+    "XJsl6WqoYBMa168dTomSj8jT6WBJAUpZAnsPcOPbOVmkhcHZDvGX+L2QVmBoioWFQd1Y70kw"
+    "7AIXCgOuF3y/nGTLW/c4ghkPGJjFUgpt/YnTtZvCJIUDFd+JfxONQEMsWa2q3UAXouMDIbJp"
+    "EgJeRoYlD9An2xfzmH1uSI+UY0C1AZC01SDe0L0ao6Rn20IpjUR+H+vTOiw4Du5/GDrKYumr"
+    "ULgtT/gQ0YeS5E8Aq+7z bob@localhost\n";
+
+#endif /* WOLFSSH_NO_RSA */
+
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+
+const char id_ecdsa[] =
+    "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+    "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAaAAAABNlY2RzYS\n"
+    "1zaGEyLW5pc3RwMjU2AAAACG5pc3RwMjU2AAAAQQTAqdBgCp8bYSq2kQQ48/Ud8Iy6Mjnb\n"
+    "/fpB3LfSE/1kx9VaaE4FL3i9Gg2vDV0eLGM3PWksFNPhULxtcYJyjaBjAAAAqJAeleSQHp\n"
+    "XkAAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBMCp0GAKnxthKraR\n"
+    "BDjz9R3wjLoyOdv9+kHct9IT/WTH1VpoTgUveL0aDa8NXR4sYzc9aSwU0+FQvG1xgnKNoG\n"
+    "MAAAAgPrOgktioNqad/wHNC/rt/zVrpNqDnOwg9tNDFMOTwo8AAAANYm9iQGxvY2FsaG9z\n"
+    "dAECAw==\n"
+    "-----END OPENSSH PRIVATE KEY-----\n";
+
+const char id_ecdsa_pub[] =
+    "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABB"
+    "BMCp0GAKnxthKraRBDjz9R3wjLoyOdv9+kHct9IT/WTH1VpoTgUveL0aDa8NXR4sYzc9aSwU"
+    "0+FQvG1xgnKNoGM= bob@localhost\n";
+
+#endif /* WOLFSSH_NO_ECDSA_SHA2_NISTP256 */
+
+static void test_wolfSSH_ReadKey(void)
+{
+#if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+    byte *key, *keyCheck, *derKey;
+    const byte* keyType;
+    word32 keySz, keyTypeSz, derKeySz;
+    int ret;
+#endif
+
+#ifndef WOLFSSH_NO_RSA
+
+    /* OpenSSH Format, ssh-rsa, private, need alloc */
+    key = NULL;
+    keySz = 0;
+    keyType = NULL;
+    keyTypeSz = 0;
+    ret = wolfSSH_ReadKey_buffer((const byte*)id_rsa, (word32)WSTRLEN(id_rsa),
+            WOLFSSH_FORMAT_OPENSSH, &key, &keySz, &keyType, &keyTypeSz, NULL);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertNotNull(key);
+    AssertIntGT(keySz, 0);
+    AssertStrEQ(keyType, "ssh-rsa");
+    AssertIntEQ(keyTypeSz, (word32)WSTRLEN("ssh-rsa"));
+    WFREE(key, NULL, DYNTYPE_FILE);
+
+    /* SSL PEM Format, ssh-rsa, private, need alloc */
+    derKey = NULL;
+    derKeySz = 0;
+    key = NULL;
+    keySz = 0;
+    keyType = NULL;
+    keyTypeSz = 0;
+    ret = ConvertHexToBin(serverKeyRsaDer, &derKey, &derKeySz,
+            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+    AssertIntEQ(ret, 0);
+    ret = wolfSSH_ReadKey_buffer(derKey, derKeySz, WOLFSSH_FORMAT_ASN1,
+            &key, &keySz, &keyType, &keyTypeSz, NULL);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertNotNull(key);
+    AssertIntGT(keySz, 0);
+    AssertStrEQ(keyType, "ssh-rsa");
+    AssertIntEQ(keyTypeSz, (word32)WSTRLEN("ssh-rsa"));
+    WFREE(key, NULL, DYNTYPE_FILE);
+    WFREE(derKey, NULL, 0);
+
+    /* OpenSSH Format, ssh-rsa, public, need alloc */
+    key = NULL;
+    keySz = 0;
+    keyType = NULL;
+    keyTypeSz = 0;
+    ret = wolfSSH_ReadKey_buffer((const byte*)id_rsa_pub,
+            (word32)WSTRLEN(id_rsa_pub), WOLFSSH_FORMAT_SSH,
+            &key, &keySz, &keyType, &keyTypeSz, NULL);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertNotNull(key);
+    AssertIntGT(keySz, 0);
+    AssertStrEQ(keyType, "ssh-rsa");
+    AssertIntEQ(keyTypeSz, (word32)WSTRLEN("ssh-rsa"));
+    WFREE(key, NULL, DYNTYPE_FILE);
+
+    /* OpenSSH Format, ssh-rsa, private, no alloc */
+    keyCheck = (byte*)WMALLOC(KEY_BUF_SZ, NULL, DYNTYPE_FILE);
+    AssertNotNull(keyCheck);
+    key = keyCheck;
+    keySz = KEY_BUF_SZ;
+    keyType = NULL;
+    keyTypeSz = 0;
+    ret = wolfSSH_ReadKey_buffer((const byte*)id_rsa, (word32)WSTRLEN(id_rsa),
+            WOLFSSH_FORMAT_OPENSSH, &key, &keySz, &keyType, &keyTypeSz, NULL);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertTrue(key == keyCheck);
+    AssertIntGT(keySz, 0);
+    AssertStrEQ(keyType, "ssh-rsa");
+    AssertIntEQ(keyTypeSz, (word32)WSTRLEN("ssh-rsa"));
+    WFREE(keyCheck, NULL, DYNTYPE_FILE);
+
+#endif /* WOLFSSH_NO_RSA */
+
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+
+    /* OpenSSH Format, ecdsa-sha2-nistp256, private, need alloc */
+    (void)keyCheck;
+    key = NULL;
+    keySz = 0;
+    keyType = NULL;
+    keyTypeSz = 0;
+    ret = wolfSSH_ReadKey_buffer((const byte*)id_ecdsa,
+            (word32)WSTRLEN(id_ecdsa), WOLFSSH_FORMAT_OPENSSH,
+            &key, &keySz, &keyType, &keyTypeSz, NULL);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertNotNull(key);
+    AssertIntGT(keySz, 0);
+    AssertStrEQ(keyType, "ecdsa-sha2-nistp256");
+    AssertIntEQ(keyTypeSz, (word32)WSTRLEN("ecdsa-sha2-nistp256"));
+    WFREE(key, NULL, DYNTYPE_FILE);
+
+    /* SSL DER Format, ecdsa-sha2-nistp256, private, need alloc */
+    derKey = NULL;
+    derKeySz = 0;
+    key = NULL;
+    keySz = 0;
+    keyType = NULL;
+    keyTypeSz = 0;
+    ret = ConvertHexToBin(serverKeyEccDer, &derKey, &derKeySz,
+            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+    AssertIntEQ(ret, WS_SUCCESS);
+    ret = wolfSSH_ReadKey_buffer(derKey, derKeySz, WOLFSSH_FORMAT_ASN1,
+            &key, &keySz, &keyType, &keyTypeSz, NULL);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertNotNull(key);
+    AssertIntGT(keySz, 0);
+    AssertStrEQ(keyType, "ecdsa-sha2-nistp256");
+    AssertIntEQ(keyTypeSz, (word32)WSTRLEN("ecdsa-sha2-nistp256"));
+    WFREE(key, NULL, DYNTYPE_FILE);
+    WFREE(derKey, NULL, 0);
+
+    /* OpenSSH Format, ecdsa-sha2-nistp256, public, need alloc */
+    key = NULL;
+    keySz = 0;
+    keyType = NULL;
+    keyTypeSz = 0;
+    ret = wolfSSH_ReadKey_buffer((const byte*)id_ecdsa_pub,
+            (word32)WSTRLEN(id_ecdsa_pub), WOLFSSH_FORMAT_SSH,
+            &key, &keySz, &keyType, &keyTypeSz, NULL);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertNotNull(key);
+    AssertIntGT(keySz, 0);
+    AssertStrEQ(keyType, "ecdsa-sha2-nistp256");
+    AssertIntEQ(keyTypeSz, (word32)WSTRLEN("ecdsa-sha2-nistp256"));
+    WFREE(key, NULL, DYNTYPE_FILE);
+
+#endif /* WOLFSSH_NO_ECDSA_SHA2_NISTP256 */
+}
+
+
 #ifdef WOLFSSH_SCP
+
 static int my_ScpRecv(WOLFSSH* ssh, int state, const char* basePath,
     const char* fileName, int fileMode, word64 mTime, word64 aTime,
     word32 totalFileSz, byte* buf, word32 bufSz, word32 fileOffset,
@@ -671,12 +888,10 @@ static int my_ScpRecv(WOLFSSH* ssh, int state, const char* basePath,
 
     return WS_SCP_ABORT; /* error out for test function */
 }
-#endif
 
 
 static void test_wolfSSH_SCP_CB(void)
 {
-#ifdef WOLFSSH_SCP
     WOLFSSH_CTX* ctx;
     WOLFSSH* ssh;
     int i = 3, j = 4; /* arbitrary value */
@@ -699,15 +914,335 @@ static void test_wolfSSH_SCP_CB(void)
 
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
-#endif /* WOLFSSH_NO_CLIENT */
 }
+
+#else /* WOLFSSH_SCP */
+static void test_wolfSSH_SCP_CB(void) { ; }
+#endif /* WOLFSSH_SCP */
+
+#ifdef WOLFSSH_AGENT
+typedef struct AgentTestCtx {
+    int partialWrite;
+    byte response[128];
+    word32 responseSz;
+    int writeCalls;
+    int readCalls;
+} AgentTestCtx;
+
+static int test_agent_cb(WS_AgentCbAction action, void* ctx)
+{
+    (void)ctx;
+
+    if (action == WOLFSSH_AGENT_LOCAL_SETUP ||
+            action == WOLFSSH_AGENT_LOCAL_CLEANUP) {
+        return WS_AGENT_SUCCESS;
+    }
+
+    return WS_AGENT_INVALID_ACTION;
+}
+
+static void put_uint32(byte* dst, word32 value)
+{
+    dst[0] = (byte)((value >> 24) & 0xff);
+    dst[1] = (byte)((value >> 16) & 0xff);
+    dst[2] = (byte)((value >> 8) & 0xff);
+    dst[3] = (byte)(value & 0xff);
+}
+
+static void build_agent_message(byte* out, word32* outSz, byte id,
+        const byte* body, word32 bodySz)
+{
+    word32 payloadSz = 1 + bodySz;
+
+    put_uint32(out, payloadSz);
+    out[4] = id;
+    if (bodySz > 0)
+        memcpy(out + 5, body, bodySz);
+    *outSz = payloadSz + LENGTH_SZ;
+}
+
+static void build_sign_response(AgentTestCtx* ctx, const byte* sig,
+        word32 sigSz)
+{
+    byte body[4 + 64];
+
+    AssertTrue(sigSz <= 64);
+    put_uint32(body, sigSz);
+    if (sigSz > 0)
+        memcpy(body + LENGTH_SZ, sig, sigSz);
+    build_agent_message(ctx->response, &ctx->responseSz,
+        MSGID_AGENT_SIGN_RESPONSE, body, LENGTH_SZ + sigSz);
+}
+
+static void build_simple_response(AgentTestCtx* ctx, byte id)
+{
+    build_agent_message(ctx->response, &ctx->responseSz, id, NULL, 0);
+}
+
+static int test_agent_io_cb(WS_AgentIoCbAction action, void* buf, word32 bufSz,
+        void* ctx)
+{
+    AgentTestCtx* io = (AgentTestCtx*)ctx;
+
+    if (action == WOLFSSH_AGENT_IO_WRITE) {
+        io->writeCalls++;
+        if (io->partialWrite && bufSz > 0) {
+            io->partialWrite = 0;
+            return (int)(bufSz - 1);
+        }
+        return (int)bufSz;
+    }
+
+    io->readCalls++;
+    if (io->responseSz == 0 || bufSz < io->responseSz)
+        return 0;
+    memcpy(buf, io->response, io->responseSz);
+    return (int)io->responseSz;
+}
+
+static void setup_agent_test(WOLFSSH_CTX** ctx, WOLFSSH** ssh, AgentTestCtx* io)
+{
+    AssertNotNull(*ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL));
+    AssertIntEQ(wolfSSH_CTX_AGENT_enable(*ctx, 1), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_set_agent_cb(*ctx, test_agent_cb,
+        test_agent_io_cb), WS_SUCCESS);
+    AssertNotNull(*ssh = wolfSSH_new(*ctx));
+    AssertNotNull((*ssh)->agent = wolfSSH_AGENT_new((*ctx)->heap));
+    AssertIntEQ(wolfSSH_set_agent_cb_ctx(*ssh, io), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_AGENT_enable(*ssh, 1), WS_SUCCESS);
+}
+
+static void cleanup_agent_test(WOLFSSH_CTX* ctx, WOLFSSH* ssh)
+{
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+static void test_wolfSSH_agent_signrequest_partial_write(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte digest[16] = {0};
+    byte keyBlob[8] = {0};
+    byte sig[8];
+    word32 sigSz = sizeof(sig);
+    int ret;
+
+    memset(&io, 0, sizeof(io));
+    io.partialWrite = 1;
+    setup_agent_test(&ctx, &ssh, &io);
+
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_AGENT_CXN_FAIL);
+    AssertIntEQ(sigSz, 0);
+    AssertIntEQ(io.writeCalls, 1);
+    AssertIntEQ(io.readCalls, 0);
+
+    cleanup_agent_test(ctx, ssh);
+}
+
+static void test_wolfSSH_agent_signrequest_wrong_message(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte digest[16] = {0};
+    byte keyBlob[8] = {0};
+    byte sig[16];
+    word32 sigSz = sizeof(sig);
+    int ret;
+
+    memset(&io, 0, sizeof(io));
+    build_simple_response(&io, MSGID_AGENT_SUCCESS);
+    setup_agent_test(&ctx, &ssh, &io);
+
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_AGENT_NO_KEY_E);
+    AssertIntEQ(sigSz, 0);
+    AssertIntEQ(io.writeCalls, 1);
+    AssertIntEQ(io.readCalls, 1);
+
+    cleanup_agent_test(ctx, ssh);
+}
+
+static void test_wolfSSH_agent_signrequest_signature_too_large(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte digest[16] = {0};
+    byte keyBlob[8] = {0};
+    byte signatureData[12];
+    byte sig[8];
+    word32 sigSz = sizeof(sig);
+    int ret;
+
+    memset(signatureData, 0x5a, sizeof(signatureData));
+    memset(&io, 0, sizeof(io));
+    build_sign_response(&io, signatureData, sizeof(signatureData));
+    setup_agent_test(&ctx, &ssh, &io);
+
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_BUFFER_E);
+    AssertIntEQ(sigSz, 0);
+    AssertIntEQ(io.writeCalls, 1);
+    AssertIntEQ(io.readCalls, 1);
+
+    cleanup_agent_test(ctx, ssh);
+}
+
+static void test_wolfSSH_agent_signrequest_success(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte digest[16] = {0};
+    byte keyBlob[8] = {0};
+    byte signatureData[8];
+    byte sig[16];
+    word32 sigSz = sizeof(sig);
+    int ret;
+
+    memset(signatureData, 0xa5, sizeof(signatureData));
+    memset(&io, 0, sizeof(io));
+    build_sign_response(&io, signatureData, sizeof(signatureData));
+    setup_agent_test(&ctx, &ssh, &io);
+
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertIntEQ(sigSz, sizeof(signatureData));
+    AssertTrue(memcmp(sig, signatureData, sizeof(signatureData)) == 0);
+    AssertIntEQ(io.writeCalls, 1);
+    AssertIntEQ(io.readCalls, 1);
+
+    cleanup_agent_test(ctx, ssh);
+}
+#endif /* WOLFSSH_AGENT */
+
+
+#if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT) && \
+    !defined(SINGLE_THREADED)
+
+#include "examples/echoserver/echoserver.h"
+
+byte userPassword[256];
+
+static int sftpUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
+{
+    int ret = WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
+
+    if (authType == WOLFSSH_USERAUTH_PASSWORD) {
+        const char* defaultPassword = (const char*)ctx;
+        word32 passwordSz;
+
+        ret = WOLFSSH_USERAUTH_SUCCESS;
+        if (defaultPassword != NULL) {
+            passwordSz = (word32)strlen(defaultPassword);
+            memcpy(userPassword, defaultPassword, passwordSz);
+        }
+        else {
+            printf("Expecting password set for test cases\n");
+            return ret;
+        }
+
+        if (ret == WOLFSSH_USERAUTH_SUCCESS) {
+            authData->sf.password.password = userPassword;
+            authData->sf.password.passwordSz = passwordSz;
+        }
+    }
+    return ret;
+}
+
+static int AcceptAnyServerHostKey(const byte* pubKey, word32 pubKeySz,
+        void* ctx)
+{
+    (void)pubKey;
+    (void)pubKeySz;
+    (void)ctx;
+    return 0;
+}
+
+/* performs connection to port, sets WOLFSSH_CTX and WOLFSSH on success
+ * caller needs to free ctx and ssh when done
+ */
+static void sftp_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
+{
+    SOCKET_T sockFd = WOLFSSH_SOCKET_INVALID;
+    SOCKADDR_IN_T clientAddr;
+    socklen_t clientAddrSz = sizeof(clientAddr);
+    int ret;
+    char* host = (char*)wolfSshIp;
+    const char* username = "jill";
+    const char* password = "upthehill";
+
+    if (ctx == NULL || ssh == NULL) {
+        return;
+    }
+
+    *ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (*ctx == NULL) {
+        return;
+    }
+
+    wolfSSH_CTX_SetPublicKeyCheck(*ctx, AcceptAnyServerHostKey);
+    wolfSSH_SetUserAuth(*ctx, sftpUserAuth);
+    *ssh = wolfSSH_new(*ctx);
+    if (*ssh == NULL) {
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        return;
+    }
+
+    build_addr(&clientAddr, host, port);
+    tcp_socket(&sockFd, ((struct sockaddr_in *)&clientAddr)->sin_family);
+    if (sockFd < 0) {
+        wolfSSH_free(*ssh);
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        *ssh = NULL;
+        return;
+    }
+
+    ret = connect(sockFd, (const struct sockaddr *)&clientAddr, clientAddrSz);
+    if (ret != 0){
+        WCLOSESOCKET(sockFd);
+        wolfSSH_free(*ssh);
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        *ssh = NULL;
+        return;
+    }
+
+    wolfSSH_SetUserAuthCtx(*ssh, (void*)password);
+    ret = wolfSSH_SetUsername(*ssh, username);
+    if (ret == WS_SUCCESS)
+        ret = wolfSSH_set_fd(*ssh, (int)sockFd);
+
+    if (ret == WS_SUCCESS)
+        ret = wolfSSH_SFTP_connect(*ssh);
+
+    if (ret != WS_SUCCESS){
+        WCLOSESOCKET(sockFd);
+        wolfSSH_free(*ssh);
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        *ssh = NULL;
+        return;
+    }
+}
+
 
 static void test_wolfSSH_SFTP_SendReadPacket(void)
 {
-#if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT)
     func_args ser;
     tcp_ready ready;
     int argsCount;
+    WS_SOCKET_T clientFd;
 
     const char* args[10];
     WOLFSSH_CTX* ctx = NULL;
@@ -729,7 +1264,7 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
     ser.signal = &ready;
     InitTcpReady(ser.signal);
     ThreadStart(echoserver_test, (void*)&ser, &serThread);
-    WaitTcpReady(&ser);
+    WaitTcpReady(&ready);
 
     sftp_client_connect(&ctx, &ssh, ready.port);
     AssertNotNull(ctx);
@@ -743,6 +1278,7 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
         const char* currentDir = ".";
         byte* out = NULL;
         int outSz = 18;
+        int rxSz;
         const word32 ofst[2] = {0};
 
         current = wolfSSH_SFTP_LS(ssh, (char*)currentDir);
@@ -757,40 +1293,92 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
         }
 
         if (tmp != NULL) {
-            out = (byte*)malloc(tmp->atrb.sz[0]);
+            /* Allocate buffer large enough for maximum read size */
+            word32 allocSz = tmp->atrb.sz[0];
+            if (allocSz < WOLFSSH_MAX_SFTP_RW)
+                allocSz = WOLFSSH_MAX_SFTP_RW;
+            out = (byte*)malloc(allocSz);
+            AssertNotNull(out);
             AssertIntEQ(wolfSSH_SFTP_Open(ssh, tmp->fName, WOLFSSH_FXF_READ,
                         NULL, handle, &handleSz), WS_SUCCESS);
+
+            /*
+             * Since errors are negative, and valid return values are greater
+             * than 0, the following wolfSSH_SFTP_SendReadPacket() calls
+             * shall return greater than 0 and less-than-equal-to the amount
+             * requested, outSz. While this endpoint may request any amount of
+             * file data, the peer must not respond with more than requested.
+             */
 
             /* read 18 bytes */
             if (tmp->atrb.sz[0] >= 18) {
                 outSz = 18;
-                AssertIntEQ(wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz,
-                            ofst, out, outSz), outSz);
+                rxSz = wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz,
+                        ofst, out, outSz);
+                AssertIntGT(rxSz, 0);
+                AssertIntLE(rxSz, outSz);
             }
 
             /* partial read */
-            outSz = tmp->atrb.sz[0] / 2;
-            AssertIntEQ(wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz, ofst,
-                    out, outSz), outSz);
+            outSz = WOLFSSH_MAX_SFTP_RW / 2;
+            rxSz = wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz,
+                    ofst, out, outSz);
+            if (wolfSSH_get_error(ssh) != WS_REKEYING) {
+                AssertIntGT(rxSz, 0);
+                AssertIntLE(rxSz, outSz);
+            }
 
             /* read all */
-            outSz = tmp->atrb.sz[0];
-            AssertIntEQ(wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz, ofst,
-                    out, outSz), outSz);
+            outSz = WOLFSSH_MAX_SFTP_RW;
+            rxSz = wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz,
+                    ofst, out, outSz);
+            if (wolfSSH_get_error(ssh) != WS_REKEYING) {
+                AssertIntGT(rxSz, 0);
+                AssertIntLE(rxSz, outSz);
+            }
 
             free(out);
             wolfSSH_SFTP_Close(ssh, handle, handleSz);
-            wolfSSH_SFTPNAME_list_free(current);
         }
+        wolfSSH_SFTPNAME_list_free(current);
     }
 
-    AssertIntEQ(wolfSSH_shutdown(ssh), WS_SUCCESS);
+    /* take care of re-keying state before shutdown call */
+    while (wolfSSH_get_error(ssh) == WS_REKEYING) {
+        wolfSSH_worker(ssh, NULL);
+    }
+
+    argsCount = wolfSSH_shutdown(ssh);
+    if (argsCount == WS_SOCKET_ERROR_E) {
+        /* If the socket is closed on shutdown, peer is gone, this is OK. */
+        argsCount = WS_SUCCESS;
+    }
+
+#if DEFAULT_HIGHWATER_MARK < 8000
+    if (argsCount == WS_REKEYING) {
+        /* in cases where highwater mark is really small a re-key could happen */
+        argsCount = WS_SUCCESS;
+    }
+#endif
+
+    AssertIntEQ(argsCount, WS_SUCCESS);
+
+    /* close client socket down */
+    clientFd = wolfSSH_get_fd(ssh);
+    WCLOSESOCKET(clientFd);
+
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
-    ThreadJoin(serThread);
+#ifdef WOLFSSH_ZEPHYR
+    /* Weird deadlock without this sleep */
+    k_sleep(Z_TIMEOUT_TICKS(100));
 #endif
+    ThreadJoin(serThread);
 }
 
+#else /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
+static void test_wolfSSH_SFTP_SendReadPacket(void) { ; }
+#endif /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
 
 
 #ifdef USE_WINDOWS_API
@@ -884,9 +1472,568 @@ static void test_wstrcat(void)
 }
 
 
-int main(void)
+#if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
+    !defined(NO_WOLFSSH_SERVER)
+struct RealPathTestCase {
+    const char* in;
+    const char* exp;
+};
+
+struct RealPathTestCase realPathDefault[] = {
+    { ".", "/C:/Users/fred" },
+    { "", "/C:/Users/fred" },
+    { "/C:/Users/fred/..", "/C:/Users" },
+    { "..", "/C:/Users" },
+    { "../..", "/C:" },
+    { "../barney", "/C:/Users/barney" },
+    { "/C:/Users/..", "/C:" },
+    { "/C:/..", "/" },
+    { "/C:/../../../../../../../..", "/" },
+    { "/", "/" },
+    { "/C:/Users/fred/../..", "/C:" },
+    { "/C:/Users/fred/././././.", "/C:/Users/fred" },
+    { "/C:/Users/fred/../././..", "/C:" },
+    { "./.ssh", "/C:/Users/fred/.ssh" },
+    { "./.ssh/../foo", "/C:/Users/fred/foo" },
+    { "./.ssh/../foo", "/C:/Users/fred/foo" },
+    { "///home//////////fred///", "/home/fred" },
+    { "/home/C:/ok", "/home/C:/ok" },
+    { "/home/fred/frob/frizz/../../../barney/bar/baz/./././../..",
+        "/home/barney" },
+    { "/home/fred/sample.", "/home/fred/sample." },
+    { "/home/fred/sample.jpg", "/home/fred/sample.jpg" },
+    { "/home/fred/sample./other", "/home/fred/sample./other" },
+    { "/home/fred/sample.dir/other", "/home/fred/sample.dir/other" },
+    { "./sample.", "/C:/Users/fred/sample." },
+    { "./sample.jpg", "/C:/Users/fred/sample.jpg" },
+    { "./sample./other", "/C:/Users/fred/sample./other" },
+    { "./sample.dir/other", "/C:/Users/fred/sample.dir/other" },
+    { "\\C:\\Users\\fred\\Documents\\junk.txt",
+        "/C:/Users/fred/Documents/junk.txt" },
+    { "C:\\Users\\fred\\Documents\\junk.txt",
+        "/C:/Users/fred/Documents/junk.txt" },
+    { "/C:\\Users\\fred/Documents\\junk.txt",
+        "/C:/Users/fred/Documents/junk.txt" },
+};
+
+struct RealPathTestCase realPathNull[] = {
+    { ".", "/" },
+    { "", "/" },
+    { "..", "/" },
+    { "../barney", "/barney" },
+};
+
+static void DoRealPathTestCase(const char* path, struct RealPathTestCase* tc)
 {
+    char testPath[128];
+    char checkPath[128];
+    int err;
+
+    WSTRNCPY(testPath, tc->in, sizeof(testPath) - 1);
+    testPath[sizeof(testPath) - 1] = 0;
+    WMEMSET(checkPath, 0, sizeof checkPath);
+    err = wolfSSH_RealPath(path, testPath,
+            checkPath, sizeof checkPath);
+    if (err || WSTRCMP(tc->exp, checkPath) != 0) {
+        fprintf(stderr, "RealPath failure (%d)\n"
+                        "    defaultPath: %s\n"
+                        "          input: %s\n"
+                        "       expected: %s\n"
+                        "         output: %s\n", err,
+                        path, tc->in, tc->exp, checkPath);
+    }
+}
+
+
+struct RealPathTestFailCase {
+    const char* defaultPath;
+    const char* in;
+    word32 checkPathSz;
+    int expErr;
+};
+struct RealPathTestFailCase realPathFail[] = {
+    /* Output size less than default path length. */
+    { "12345678", "12345678", 4, WS_INVALID_PATH_E },
+    /* Output size equal to default path length. */
+    { "12345678", "12345678", 8, WS_INVALID_PATH_E },
+    /* Copy segment will not fit in output. */
+    { "1234567", "12345678", 8, WS_INVALID_PATH_E },
+};
+
+static void DoRealPathTestFailCase(struct RealPathTestFailCase* tc)
+{
+    char testPath[128];
+    char checkPath[128];
+    int err;
+
+    WSTRNCPY(testPath, tc->in, sizeof(testPath) - 1);
+    testPath[sizeof(testPath) - 1] = 0;
+    WMEMSET(checkPath, 0, sizeof checkPath);
+    err = wolfSSH_RealPath(tc->defaultPath, testPath,
+            checkPath, tc->checkPathSz);
+    if (err != tc->expErr) {
+        fprintf(stderr, "RealPath fail check failure (%d)\n"
+                        "    defaultPath: %s\n"
+                        "          input: %s\n"
+                        "    checkPathSz: %u\n"
+                        "       expected: %d\n", err,
+                        tc->defaultPath, tc->in, tc->checkPathSz, tc->expErr);
+    }
+}
+
+
+static void test_wolfSSH_RealPath(void)
+{
+    word32 testCount;
+    word32 i;
+
+    testCount = (sizeof realPathDefault)/(sizeof(struct RealPathTestCase));
+    for (i = 0; i < testCount; i++) {
+        DoRealPathTestCase("/C:/Users/fred", realPathDefault + i);
+    }
+
+    testCount = (sizeof realPathNull)/(sizeof(struct RealPathTestCase));
+    for (i = 0; i < testCount; i++) {
+        DoRealPathTestCase(NULL, realPathNull + i);
+    }
+
+    testCount = (sizeof realPathFail)/(sizeof(struct RealPathTestFailCase));
+    for (i = 0; i < testCount; i++) {
+        DoRealPathTestFailCase(realPathFail + i);
+    }
+}
+#else
+static void test_wolfSSH_RealPath(void) { ; }
+#endif
+
+
+static void test_wolfSSH_SetAlgoList(void)
+{
+    const char* newKexList = "diffie-hellman-group1-sha1,ecdh-sha2-nistp521";
+    const char* newKeyList = "rsa-sha2-512,ecdsa-sha2-nistp521";
+    const char* newCipherList = "aes128-ctr,aes128-cbc";
+    const char* newMacList = "hmac-sha1";
+    const char* newKeyAccList = "ssh-rsa";
+    const char* defaultKexList = NULL;
+    const char* defaultKeyList = NULL;
+    const char* defaultCipherList = NULL;
+    const char* defaultMacList = NULL;
+    const char* defaultKeyAccList = NULL;
+    const char* checkKexList = NULL;
+    const char* checkKeyList = NULL;
+    const char* checkCipherList = NULL;
+    const char* checkMacList = NULL;
+    const char* checkKeyAccList = NULL;
+    const char* rawKey = NULL;
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    byte* key;
+    word32 keySz;
+
+    /* Create a ctx object. */
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    /* Check that the ctx's default algo lists are not null */
+    defaultKexList = wolfSSH_CTX_GetAlgoListKex(ctx);
+    AssertNotNull(defaultKexList);
+
+    defaultKeyList = wolfSSH_CTX_GetAlgoListKey(ctx);
+    AssertNotNull(defaultKeyList);
+
+    defaultCipherList = wolfSSH_CTX_GetAlgoListCipher(ctx);
+    AssertNotNull(defaultCipherList);
+
+    defaultMacList = wolfSSH_CTX_GetAlgoListMac(ctx);
+    AssertNotNull(defaultMacList);
+
+    defaultKeyAccList = wolfSSH_CTX_GetAlgoListKeyAccepted(ctx);
+    AssertNotNull(defaultKeyAccList);
+
+    /* Create a new ssh object. */
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    /* Check that the ssh's default algo lists match the ctx's algo lists. */
+    checkKexList = wolfSSH_GetAlgoListKex(ssh);
+    AssertPtrEq(checkKexList, defaultKexList);
+
+    checkKeyList = wolfSSH_GetAlgoListKey(ssh);
+    AssertPtrEq(checkKeyList, defaultKeyList);
+
+    checkCipherList = wolfSSH_GetAlgoListCipher(ssh);
+    AssertPtrEq(checkCipherList, defaultCipherList);
+
+    checkMacList = wolfSSH_GetAlgoListMac(ssh);
+    AssertPtrEq(checkMacList, defaultMacList);
+
+    checkKeyAccList = wolfSSH_GetAlgoListKeyAccepted(ssh);
+    AssertPtrEq(checkKeyAccList, defaultKeyAccList);
+
+    /* Set the ssh's algo lists, check they match new value. */
+    wolfSSH_SetAlgoListKex(ssh, newKexList);
+    checkKexList = wolfSSH_GetAlgoListKex(ssh);
+    AssertPtrEq(checkKexList, newKexList);
+
+    wolfSSH_SetAlgoListKey(ssh, newKeyList);
+    checkKeyList = wolfSSH_GetAlgoListKey(ssh);
+    AssertPtrEq(checkKeyList, newKeyList);
+
+    wolfSSH_SetAlgoListCipher(ssh, newCipherList);
+    checkCipherList = wolfSSH_GetAlgoListCipher(ssh);
+    AssertPtrEq(checkCipherList, newCipherList);
+
+    wolfSSH_SetAlgoListMac(ssh, newMacList);
+    checkMacList = wolfSSH_GetAlgoListMac(ssh);
+    AssertPtrEq(checkMacList, newMacList);
+
+    wolfSSH_SetAlgoListKeyAccepted(ssh, newKeyAccList);
+    checkKeyAccList = wolfSSH_GetAlgoListKeyAccepted(ssh);
+    AssertPtrEq(checkKeyAccList, newKeyAccList);
+
+    /* Delete the ssh. */
+    wolfSSH_free(ssh);
+
+    /* Set new algo lists on the ctx. */
+    wolfSSH_CTX_SetAlgoListKex(ctx, newKexList);
+    defaultKexList = wolfSSH_CTX_GetAlgoListKex(ctx);
+    AssertPtrEq(defaultKexList, newKexList);
+
+    wolfSSH_CTX_SetAlgoListKey(ctx, newKeyList);
+    defaultKeyList = wolfSSH_CTX_GetAlgoListKey(ctx);
+    AssertPtrEq(checkKeyList, newKeyList);
+
+    wolfSSH_CTX_SetAlgoListCipher(ctx, newCipherList);
+    defaultCipherList = wolfSSH_CTX_GetAlgoListCipher(ctx);
+    AssertNotNull(defaultCipherList);
+
+    wolfSSH_CTX_SetAlgoListMac(ctx, newMacList);
+    defaultMacList = wolfSSH_CTX_GetAlgoListMac(ctx);
+    AssertNotNull(defaultMacList);
+
+    wolfSSH_CTX_SetAlgoListKeyAccepted(ctx, newKeyAccList);
+    defaultKeyAccList = wolfSSH_CTX_GetAlgoListKeyAccepted(ctx);
+    AssertNotNull(defaultKeyAccList);
+
+    /* Create a new ssh object. */
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    /* Check that the ssh's default algo lists match the ctx's algo lists. */
+    checkKexList = wolfSSH_GetAlgoListKex(ssh);
+    AssertPtrEq(checkKexList, defaultKexList);
+
+    checkKeyList = wolfSSH_GetAlgoListKey(ssh);
+    AssertPtrEq(checkKeyList, defaultKeyList);
+
+    checkCipherList = wolfSSH_GetAlgoListCipher(ssh);
+    AssertPtrEq(checkCipherList, defaultCipherList);
+
+    checkMacList = wolfSSH_GetAlgoListMac(ssh);
+    AssertPtrEq(checkMacList, defaultMacList);
+
+    checkKeyAccList = wolfSSH_GetAlgoListKeyAccepted(ssh);
+    AssertPtrEq(checkKeyAccList, defaultKeyAccList);
+
+    /* Cleanup */
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    /* Create a ctx object. */
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+
+    /* Check server ctx's key list is NULL. */
+    defaultKeyList = wolfSSH_CTX_GetAlgoListKey(ctx);
+    AssertNull(defaultKeyList);
+    defaultKeyAccList = wolfSSH_CTX_GetAlgoListKeyAccepted(ctx);
+    AssertNotNull(defaultKeyAccList);
+
+    /* Create a new ssh object. */
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    /* Check server ssh's key list is NULL. */
+    checkKeyList = wolfSSH_GetAlgoListKey(ssh);
+    AssertNull(checkKeyList);
+
+    /* Delete the ssh. */
+    wolfSSH_free(ssh);
+
+    /* Set key on ctx. */
+#if !defined(WOLFSSH_NO_ECDSA)
+    rawKey = serverKeyEccDer;
+#elif !defined(WOLFSSH_NO_RSA)
+    rawKey = serverKeyRsaDer;
+#endif
+    AssertNotNull(rawKey);
+    AssertIntEQ(0,
+            ConvertHexToBin(rawKey, &key, &keySz,
+                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL));
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_UsePrivateKey_buffer(ctx,
+                key, keySz, WOLFSSH_FORMAT_ASN1));
+
+    /* Check ctx's key algo list is still null. */
+    checkKeyList = wolfSSH_CTX_GetAlgoListKey(ctx);
+    AssertNull(checkKeyList);
+
+    /* Create a new ssh object. */
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    /* Check ssh's key algo list is null. */
+    checkKeyList = wolfSSH_GetAlgoListKey(ssh);
+    AssertNull(checkKeyList);
+
+    /* Set a new list on ssh. */
+    wolfSSH_SetAlgoListKey(ssh, newKeyList);
+    checkKeyList = wolfSSH_GetAlgoListKey(ssh);
+    AssertPtrEq(checkKeyList, newKeyList);
+
+    /* Cleanup */
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    FreeBins(key, NULL, NULL, NULL);
+}
+
+
+static void test_wolfSSH_QueryAlgoList(void)
+{
+    const char* name;
+    word32 i, j;
+    int k;
+
+    i = 0;
+    name = NULL;
+    do {
+        name = wolfSSH_QueryKex(&i);
+        AssertIntNE(i, 0);
+    } while (name != NULL);
+
+    i = 0;
+    name = NULL;
+    do {
+        name = wolfSSH_QueryKey(&i);
+        AssertIntNE(i, 0);
+    } while (name != NULL);
+
+    i = 0;
+    name = NULL;
+    do {
+        name = wolfSSH_QueryCipher(&i);
+        AssertIntNE(i, 0);
+    } while (name != NULL);
+
+    i = 0;
+    name = NULL;
+    do {
+        name = wolfSSH_QueryMac(&i);
+        AssertIntNE(i, 0);
+    } while (name != NULL);
+
+    /* This test case picks up where the index left off. */
+    j = i;
+    name = wolfSSH_QueryKex(&i);
+    AssertNull(name);
+    i = j;
+    name = wolfSSH_QueryKey(&i);
+    AssertNull(name);
+    i = j;
+    name = wolfSSH_QueryCipher(&i);
+    AssertNull(name);
+    i = j;
+    name = wolfSSH_QueryMac(&i);
+    AssertNull(name);
+
+    k = wolfSSH_CheckAlgoName("ssh-rsa");
+    AssertIntEQ(WS_SUCCESS, k);
+
+    k = wolfSSH_CheckAlgoName("not-an-algo@wolfssl.com");
+    AssertIntEQ(WS_INVALID_ALGO_ID, k);
+}
+
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+#if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT) && \
+    !defined(SINGLE_THREADED)
+
+static byte* kbResponse = (byte*)"test";
+static word32 kbResponseLength = 4;
+
+static int keyboardUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
+{
+    int ret = WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
+
+    (void)ctx;
+
+    if (authType == WOLFSSH_USERAUTH_KEYBOARD) {
+        AssertIntEQ(1, authData->sf.keyboard.promptCount);
+        AssertStrEQ("KB Auth Password: ",
+                    (const char*)authData->sf.keyboard.prompts[0]);
+
+        authData->sf.keyboard.responseCount = 1;
+        authData->sf.keyboard.responseLengths = &kbResponseLength;
+        authData->sf.keyboard.responses = (byte**)&kbResponse;
+        ret = WS_SUCCESS;
+    }
+    return ret;
+}
+
+
+static void keyboard_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
+{
+    SOCKET_T sockFd = WOLFSSH_SOCKET_INVALID;
+    SOCKADDR_IN_T clientAddr;
+    socklen_t clientAddrSz = sizeof(clientAddr);
+    int ret;
+    char* host = (char*)wolfSshIp;
+    const char* username = "test";
+
+    if (ctx == NULL || ssh == NULL) {
+        return;
+    }
+
+    *ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (*ctx == NULL) {
+        return;
+    }
+
+    wolfSSH_CTX_SetPublicKeyCheck(*ctx, AcceptAnyServerHostKey);
+    wolfSSH_SetUserAuth(*ctx, keyboardUserAuth);
+    *ssh = wolfSSH_new(*ctx);
+    if (*ssh == NULL) {
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        return;
+    }
+
+    build_addr(&clientAddr, host, port);
+    tcp_socket(&sockFd, ((struct sockaddr_in *)&clientAddr)->sin_family);
+    if (sockFd < 0) {
+        wolfSSH_free(*ssh);
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        *ssh = NULL;
+        return;
+    }
+
+    ret = connect(sockFd, (const struct sockaddr *)&clientAddr, clientAddrSz);
+    if (ret != 0){
+        WCLOSESOCKET(sockFd);
+        wolfSSH_free(*ssh);
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        *ssh = NULL;
+        return;
+    }
+
+    ret = wolfSSH_SetUsername(*ssh, username);
+    if (ret == WS_SUCCESS)
+        ret = wolfSSH_set_fd(*ssh, (int)sockFd);
+
+    if (ret == WS_SUCCESS)
+        ret = wolfSSH_connect(*ssh);
+
+    if (ret != WS_SUCCESS){
+        WCLOSESOCKET(sockFd);
+        wolfSSH_free(*ssh);
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        *ssh = NULL;
+        return;
+    }
+}
+
+static void test_wolfSSH_KeyboardInteractive(void)
+{
+    func_args ser;
+    tcp_ready ready;
+    int argsCount;
+    WS_SOCKET_T clientFd;
+
+    const char* args[10];
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+
+    THREAD_TYPE serThread;
+
+    WMEMSET(&ser, 0, sizeof(func_args));
+
+    argsCount = 0;
+    args[argsCount++] = ".";
+    args[argsCount++] = "-1";
+    args[argsCount++] = "-i";
+    args[argsCount++] = "test:test";
+#ifndef USE_WINDOWS_API
+    args[argsCount++] = "-p";
+    args[argsCount++] = "0";
+#endif
+    ser.argv   = (char**)args;
+    ser.argc    = argsCount;
+    ser.signal = &ready;
+    InitTcpReady(ser.signal);
+    ThreadStart(echoserver_test, (void*)&ser, &serThread);
+    WaitTcpReady(&ready);
+
+    keyboard_client_connect(&ctx, &ssh, ready.port);
+    AssertNotNull(ctx);
+    AssertNotNull(ssh);
+
+
+    argsCount = wolfSSH_shutdown(ssh);
+    if (argsCount == WS_SOCKET_ERROR_E) {
+        /* If the socket is closed on shutdown, peer is gone, this is OK. */
+        argsCount = WS_SUCCESS;
+    }
+
+#if DEFAULT_HIGHWATER_MARK < 8000
+    if (argsCount == WS_REKEYING) {
+        /* in cases where highwater mark is really small a re-key could happen */
+        argsCount = WS_SUCCESS;
+    }
+#endif
+
+    AssertIntEQ(argsCount, WS_SUCCESS);
+
+    /* close client socket down */
+    clientFd = wolfSSH_get_fd(ssh);
+    WCLOSESOCKET(clientFd);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+#ifdef WOLFSSH_ZEPHYR
+    /* Weird deadlock without this sleep */
+    k_sleep(Z_TIMEOUT_TICKS(100));
+#endif
+    ThreadJoin(serThread);
+}
+
+#else /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
+static void test_wolfSSH_KeyboardInteractive(void) { ; }
+#endif /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
+#endif /* WOLFSSH_KEYBOARD_INTERACTIVE */
+
+#endif /* WOLFSSH_TEST_BLOCK */
+
+
+int wolfSSH_ApiTest(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+
+#ifdef WOLFSSH_TEST_BLOCK
+    return 77;
+#else
     AssertIntEQ(wolfSSH_Init(), WS_SUCCESS);
+
+    #if defined(FIPS_VERSION_GE) && FIPS_VERSION_GE(5,2)
+    {
+        int i;
+        for (i = 0; i < FIPS_CAST_COUNT; i++) {
+            AssertIntEQ(wc_RunCast_fips(i), WS_SUCCESS);
+        }
+    }
+    #endif /* HAVE_FIPS */
 
     test_wstrcat();
     test_wolfSSH_CTX_new();
@@ -896,6 +2043,21 @@ int main(void)
     test_wolfSSH_SetUsername();
     test_wolfSSH_ConvertConsole();
     test_wolfSSH_CTX_UsePrivateKey_buffer();
+    test_wolfSSH_CTX_UseCert_buffer();
+    test_wolfSSH_CTX_UsePrivateKey_buffer_pem();
+    test_wolfSSH_CertMan();
+    test_wolfSSH_ReadKey();
+    test_wolfSSH_QueryAlgoList();
+    test_wolfSSH_SetAlgoList();
+#ifdef WOLFSSH_AGENT
+    test_wolfSSH_agent_signrequest_partial_write();
+    test_wolfSSH_agent_signrequest_wrong_message();
+    test_wolfSSH_agent_signrequest_signature_too_large();
+    test_wolfSSH_agent_signrequest_success();
+#endif
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+    test_wolfSSH_KeyboardInteractive();
+#endif
 
     /* SCP tests */
     test_wolfSSH_SCP_CB();
@@ -903,8 +2065,18 @@ int main(void)
     /* SFTP tests */
     test_wolfSSH_SFTP_SendReadPacket();
 
-
+    /* Either SCP or SFTP */
+    test_wolfSSH_RealPath();
     AssertIntEQ(wolfSSH_Cleanup(), WS_SUCCESS);
 
     return 0;
+#endif
 }
+
+
+#ifndef NO_APITEST_MAIN_DRIVER
+int main(int argc, char** argv)
+{
+    return wolfSSH_ApiTest(argc, argv);
+}
+#endif

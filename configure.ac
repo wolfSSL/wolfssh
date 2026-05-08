@@ -1,37 +1,39 @@
 # wolfssh
-# Copyright (C) 2014-2020 wolfSSL Inc.
+# Copyright (C) 2014-2026 wolfSSL Inc.
 # All right reserved.
 
-AC_COPYRIGHT([Copyright (C) 2014-2020 wolfSSL Inc.])
-AC_INIT([wolfssh],[1.4.6],[support@wolfssl.com],[wolfssh],[https://www.wolfssl.com])
-AC_PREREQ([2.63])
+AC_COPYRIGHT([Copyright (C) 2014-2026 wolfSSL Inc.])
+AC_INIT([wolfssh],[1.5.0],[support@wolfssl.com],[wolfssh],[https://www.wolfssl.com])
+AC_PREREQ([2.69])
 AC_CONFIG_AUX_DIR([build-aux])
 
 : ${CFLAGS=""}
 
 AC_CANONICAL_HOST
+AC_CANONICAL_TARGET
 
-AM_INIT_AUTOMAKE([1.11 -Wall -Werror -Wno-portability foreign tar-ustar subdir-objects no-define color-tests])
+AM_INIT_AUTOMAKE([1.14.1 -Wall -Werror -Wno-portability foreign tar-ustar subdir-objects no-define color-tests])
 
 AC_ARG_PROGRAM
 AC_CONFIG_MACRO_DIR([m4])
-AC_CONFIG_HEADERS([src/config.h])
+AC_CONFIG_HEADERS([config.h])
 
-WOLFSSH_LIBRARY_VERSION=12:1:3
-#                       | | |
-#                +------+ | +---+
-#                |        |     |
+WOLFSSH_LIBRARY_VERSION=20:0:2
+#                        | | |
+#                  +-----+ | +----+
+#                  |       |      |
 #               current:revision:age
-#                |        |     |
-#                |        |     +- increment if interfaces have been added
-#                |        |        set to zero if interfaces have been removed
-#                |        |        or changed
-#                |        +- increment if source code has changed
-#                |           set to zero if current is incremented
-#                +- increment if interfaces have been added, removed or changed
+#                  |       |      |
+#                  |       |      +- increment if interfaces have been added
+#                  |       |      +- set to zero if interfaces have been
+#                  |       |           removed or changed
+#                  |       +- increment if source code has changed
+#                  |       +- set to zero if current is incremented
+#                  +- increment if interfaces have been added, removed
+#                       or changed
 AC_SUBST([WOLFSSH_LIBRARY_VERSION])
 
-LT_PREREQ([2.2])
+LT_PREREQ([2.4.3])
 LT_INIT([disable-static win32-dll])
 
 gl_VISIBILITY
@@ -45,18 +47,48 @@ AC_PROG_CC
 AM_PROG_CC_C_O
 AC_PROG_INSTALL
 
-# Checks for header files.
-AC_HEADER_STDC
+# Checks for type sizes.
 AC_CHECK_SIZEOF([long long])
 AC_CHECK_SIZEOF([long])
 AC_CHECK_SIZEOF([off_t])
+AC_TYPE_SIZE_T
+AC_TYPE_UINT8_T
+AC_TYPE_UINTPTR_T
 
 # Check headers/libs
-AC_CHECK_HEADERS([sys/select.h sys/time.h pty.h util.h termios.h])
+AC_CHECK_HEADERS([limits.h sys/select.h sys/time.h sys/ioctl.h pty.h util.h termios.h])
 AC_CHECK_LIB([network],[socket])
 AC_CHECK_LIB([util],[forkpty])
+
+#wolfssl
+AC_MSG_CHECKING([for wolfSSL])
+if test "x$prefix" = "xNONE"
+then
+    wcpath=$ac_default_prefix
+else
+    wcpath=$prefix
+fi
+AC_MSG_NOTICE([prefix ${prefix}])
+WOLFSSL_URL="http://www.wolfssl.com/download.html"
+AC_ARG_WITH(wolfssl,
+  [AS_HELP_STRING([--with-wolfssl=PATH], [PATH to wolfssl install (default /usr/local)])],
+  [
+    if test "x$withval" != "xno" ; then
+      if test -d "${withval}/lib" && test -d "${withval}/include"; then
+        wcpath=${withval}
+
+        LDFLAGS="-L${wcpath}/lib $LDFLAGS"
+        CPPFLAGS="-I${wcpath}/include $CPPFLAGS"
+      else
+        AC_MSG_ERROR([wolfSSL path error (${withval}): missing lib and include])
+      fi
+    fi
+  ]
+)
+
 AC_CHECK_LIB([wolfssl],[wolfCrypt_Init],,[AC_MSG_ERROR([libwolfssl is required for ${PACKAGE}. It can be obtained from https://www.wolfssl.com/download.html/ .])])
 AC_CHECK_FUNCS([gethostbyname getaddrinfo gettimeofday inet_ntoa memset socket wc_ecc_set_rng])
+AC_CHECK_DECLS([[pread],[pwrite]],,[unistd.h])
 
 # DEBUG
 DEBUG_CFLAGS="-g -O0"
@@ -70,6 +102,7 @@ AS_IF([test "x$ax_enable_debug" = "xyes"],
        AM_CPPFLAGS="-DNDEBUG $AM_CPPFLAGS"])
 
 AX_PTHREAD([
+    AC_DEFINE([HAVE_PTHREAD], [1], [Define if you have POSIX threads libraries and header files.])
     # If AX_PTHREAD is adding -Qunused-arguments, need to prepend with
     # -Xcompiler libtool will use it. Newer versions of clang don't need
     # the -Q flag when using pthreads.
@@ -88,10 +121,25 @@ AC_ARG_ENABLE([examples],
     [AS_HELP_STRING([--disable-examples],[Disable examples (default: enabled)])],
     [ENABLED_EXAMPLES=$enableval],[ENABLED_EXAMPLES=yes])
 
+# Remove server code
+AC_ARG_ENABLE([server],
+    [AS_HELP_STRING([--disable-server],[Disable server code (default: enabled)])],
+    [ENABLED_SERVER=$enableval],[ENABLED_SERVER=yes])
+
+# Remove client code
+AC_ARG_ENABLE([client],
+    [AS_HELP_STRING([--disable-client],[Disable client code (default: enabled)])],
+    [ENABLED_CLIENT=$enableval],[ENABLED_CLIENT=yes])
+
 # Key Generation
 AC_ARG_ENABLE([keygen],
     [AS_HELP_STRING([--enable-keygen],[Enable key generation (default: disabled)])],
     [ENABLED_KEYGEN=$enableval],[ENABLED_KEYGEN=no])
+
+# Keyboard Interactive
+AC_ARG_ENABLE([keyboard-interactive],
+    [AS_HELP_STRING([--enable-keyboard-interactive],[Enable keyboard interactive authentication (default: disabled)])],
+    [ENABLED_KEYBOARD_INTERACTIVE=$enableval],[ENABLED_KEYBOARD_INTERACTIVE=no])
 
 # SCP
 AC_ARG_ENABLE([scp],
@@ -103,6 +151,16 @@ AC_ARG_ENABLE([sftp],
     [AS_HELP_STRING([--enable-sftp],[Enable SFTP support (default: disabled)])],
     [ENABLED_SFTP=$enableval],[ENABLED_SFTP=no])
 
+# SSHD
+AC_ARG_ENABLE([sshd],
+    [AS_HELP_STRING([--enable-sshd],[Enable SSHD support (default: disabled)])],
+    [ENABLED_SSHD=$enableval],[ENABLED_SSHD=no])
+
+# SSH Client
+AC_ARG_ENABLE([sshclient],
+    [AS_HELP_STRING([--enable-sshclient],[Enable SSH client app (default: disabled)])],
+    [ENABLED_SSHCLIENT=$enableval],[ENABLED_SSHCLIENT=no])
+
 # TCP/IP Forwarding
 AC_ARG_ENABLE([fwd],
     [AS_HELP_STRING([--enable-fwd],[Enable TCP/IP Forwarding support (default: disabled)])],
@@ -111,7 +169,7 @@ AC_ARG_ENABLE([fwd],
 # pseudo-terminal
 AC_ARG_ENABLE([term],
     [AS_HELP_STRING([--disable-term],[Disable pseudo-terminal support (default: enabled)])],
-    [ENABLED_PTERM=$enableval],[ENABLED_PTERM=yes])
+    [ENABLED_TERM=$enableval],[ENABLED_TERM=yes])
 
 # shell support
 AC_ARG_ENABLE([shell],
@@ -123,10 +181,26 @@ AC_ARG_ENABLE([agent],
     [AS_HELP_STRING([--enable-agent],[Enable ssh-agent support (default: disabled)])],
     [ENABLED_AGENT=$enableval],[ENABLED_AGENT=no])
 
+# X.509 certs
+AC_ARG_ENABLE([certs],
+    [AS_HELP_STRING([--enable-certs],[Enable X.509 cert support (default: disabled)])],
+    [ENABLED_CERTS=$enableval],[ENABLED_CERTS=no])
+
+# TPM 2.0 Support
+AC_ARG_ENABLE([tpm],
+    [AS_HELP_STRING([--enable-tpm],[Enable TPM 2.0 support (default: disabled)])],
+    [ENABLED_TPM=$enableval],[ENABLED_TPM=no])
+
 # smallstack
 AC_ARG_ENABLE([smallstack],
     [AS_HELP_STRING([--enable-smallstack],[Enable small stack (default: disabled)])],
     [ENABLED_SMALLSTACK=$enableval],[ENABLED_SMALLSTACK=no])
+
+# use PAM lib
+AC_ARG_WITH([pam],
+    [AS_HELP_STRING([--with-pam=PATH],[PATH to directory with the PAM library])],
+    [PAM_LIB=$withval],
+    [PAM_LIB=""])
 
 # Enable All
 AC_ARG_ENABLE([all],
@@ -142,26 +216,74 @@ AC_ARG_ENABLE([distro],
 AS_IF([test "x$ENABLED_DISTRO" = "xyes"],
       [ENABLED_ALL=yes; enable_shared=yes; enable_static=yes])
 AS_IF([test "x$ENABLED_ALL" = "xyes"],
-      [ENABLED_KEYGEN=yes; ENABLED_SCP=yes; ENABLED_SFTP=yes; ENABLED_FWD=yes; ENABLED_SHELL=yes; ENABLED_AGENT=yes])
+      [ENABLED_KEYGEN=yes; ENABLED_SCP=yes; ENABLED_SFTP=yes; ENABLED_FWD=yes; ENABLED_SHELL=yes; ENABLED_AGENT=yes; ENABLED_SSHD=yes; ENABLED_SSHCLIENT=yes; ENABLED_CERTS=yes; ENABLED_KEYBOARD_INTERACTIVE=yes])
+AS_IF([test "x$ENABLED_SSHD" = "xyes"],
+      [ENABLED_SHELL=yes])
 
 # Set the defined flags for the code.
 AS_IF([test "x$ENABLED_INLINE" = "xno"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DNO_INLINE"])
+AS_IF([test "x$ENABLED_SERVER" = "xno"],
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DNO_WOLFSSH_SERVER"])
+AS_IF([test "x$ENABLED_CLIENT" = "xno"],
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DNO_WOLFSSH_CLIENT"])
 AS_IF([test "x$ENABLED_KEYGEN" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_KEYGEN"])
+AS_IF([test "x$ENABLED_KEYBOARD_INTERACTIVE" = "xyes"],
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_KEYBOARD_INTERACTIVE"])
 AS_IF([test "x$ENABLED_SCP" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SCP"])
 AS_IF([test "x$ENABLED_SFTP" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SFTP"])
 AS_IF([test "x$ENABLED_FWD" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_FWD"])
-AS_IF([test "x$ENABLED_PTERM" = "xyes"],
+AS_IF([test "x$ENABLED_TERM" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_TERM"])
 AS_IF([test "x$ENABLED_SHELL" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SHELL"])
-AS_IF([test "x$ENABLED_AGENT" = "xyes"],[AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_AGENT"])
+AS_IF([test "x$ENABLED_AGENT" = "xyes"],
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_AGENT"])
+AS_IF([test "x$ENABLED_CERTS" = "xyes"],
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_CERTS"])
 AS_IF([test "x$ENABLED_SMALLSTACK" = "xyes"],
-       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SMALL_STACK"])
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SMALL_STACK"])
+AS_IF([test "x$ENABLED_SSHCLIENT" = "xyes"],
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SSHCLIENT"])
+AS_IF([test "x$ENABLED_TPM" = "xyes"],
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_TPM"
+       AC_CHECK_LIB([wolftpm],[wolfTPM2_Init],,[AC_MSG_ERROR([libwolftpm is required for ${PACKAGE}. It can be obtained from https://www.wolfssl.com/download.html/ .])])])
+AS_IF([test "x$ENABLED_SSHD" = "xyes"],[
+  AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SSHD"
+  AS_IF([test -n "$PAM_LIB"],[
+    AC_MSG_CHECKING([for directory $PAM_LIB])
+    AS_IF([! test -d "$PAM_LIB"],[AC_MSG_ERROR([PAM lib dir $PAM_LIB not found.])])
+    AC_MSG_RESULT([yes])
+    AM_LDFLAGS="-L$PAM_LIB $AM_LDFLAGS"
+    LIBS="$LIBS -lpam"
+    AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_USE_PAM"
+    #TODO check on link to lib
+    #AC_CHECK_LIB([pam], [pam],
+    # [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_USE_PAM"; LIBS="$LIBS -lpam"],
+    # [AC_MSG_ERROR(libpam not found)])
+  ],[
+    AS_CASE([$host],
+      [*qnx*],[
+        # QNX uses liblogin for crypt operation
+        AC_CHECK_LIB([login],[login],
+          [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_HAVE_LIBLOGIN"; LIBS="$LIBS -llogin"],
+          [AC_MSG_ERROR(liblogin not found)])],
+      [*darwin*],[AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_HAVE_LIBCRYPT"],
+      [AC_CHECK_LIB([crypt],[crypt],
+        [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_HAVE_LIBCRYPT"; LIBS="$LIBS -lcrypt"],
+        [AC_MSG_ERROR(libcrypt not found)])])
+  ])
+])
+
+AC_CONFIG_LINKS([keys/gretel-key-rsa.pub:keys/gretel-key-rsa.pub
+                 keys/gretel-key-rsa.pem:keys/gretel-key-rsa.pem
+                 keys/server-key-rsa.der:keys/server-key-rsa.der
+                 keys/server-key-ecc.der:keys/server-key-ecc.der
+                 keys/server-key-ecc-521.der:keys/server-key-ecc-521.der])
 
 # Set the automake conditionals.
 AM_CONDITIONAL([BUILD_EXAMPLE_SERVERS],[test "x$ENABLED_EXAMPLES" = "xyes"])
@@ -174,6 +296,11 @@ AM_CONDITIONAL([BUILD_FWD],[test "x$ENABLED_FWD" = "xyes"])
 AM_CONDITIONAL([BUILD_TERM],[test "x$ENABLED_TERM" = "xyes"])
 AM_CONDITIONAL([BUILD_SHELL],[test "x$ENABLED_SHELL" = "xyes"])
 AM_CONDITIONAL([BUILD_AGENT],[test "x$ENABLED_AGENT" = "xyes"])
+AM_CONDITIONAL([BUILD_SSHD],[test "x$ENABLED_SSHD" = "xyes"])
+AM_CONDITIONAL([BUILD_SSHCLIENT],[test "x$ENABLED_SSHCLIENT" = "xyes"])
+AM_CONDITIONAL([BUILD_CERTS],[test "x$ENABLED_CERTS" = "xyes"])
+AM_CONDITIONAL([BUILD_TPM],[test "x$ENABLED_TPM" = "xyes"])
+AM_CONDITIONAL([BUILD_KEYBOARD_INTERACTIVE],[test "x$ENABLED_KEYBOARD_INTERACTIVE" = "xyes"])
 
 AX_HARDEN_CC_COMPILER_FLAGS
 
@@ -210,10 +337,15 @@ AS_ECHO(["   Features"])
 AS_ECHO(["   * Inline Code:               $ENABLED_INLINE"])
 AS_ECHO(["   * Small stack:               $ENABLED_SMALLSTACK"])
 AS_ECHO(["   * keygen:                    $ENABLED_KEYGEN"])
-AS_ECHO(["   * psuedo-terminal:           $ENABLED_PTERM"])
+AS_ECHO(["   * keyboard interactive:      $ENABLED_KEYBOARD_INTERACTIVE"])
+AS_ECHO(["   * psuedo-terminal:           $ENABLED_TERM"])
 AS_ECHO(["   * echoserver shell support:  $ENABLED_SHELL"])
 AS_ECHO(["   * scp:                       $ENABLED_SCP"])
 AS_ECHO(["   * sftp:                      $ENABLED_SFTP"])
+AS_ECHO(["   * sshd:                      $ENABLED_SSHD"])
+AS_ECHO(["   * ssh client:                $ENABLED_SSHCLIENT"])
 AS_ECHO(["   * agent:                     $ENABLED_AGENT"])
+AS_ECHO(["   * TPM 2.0 support:           $ENABLED_TPM"])
 AS_ECHO(["   * TCP/IP Forwarding:         $ENABLED_FWD"])
+AS_ECHO(["   * X.509 Certs:               $ENABLED_CERTS"])
 AS_ECHO(["   * Examples:                  $ENABLED_EXAMPLES"])

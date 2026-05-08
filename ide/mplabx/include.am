@@ -1,0 +1,12 @@
+# vim:ft=automake
+# All paths should be given relative to the root
+
+EXTRA_DIST+= ide/mplabx/README.md
+EXTRA_DIST+= ide/mplabx/user_settings.h
+EXTRA_DIST+= ide/mplabx/wolfssh.c
+
+EXTRA_DIST+= ide/mplabx/wolfssh.X/Makefile
+EXTRA_DIST+= ide/mplabx/wolfssh.X/mcc-manifest-generated-success.yml
+EXTRA_DIST+= ide/mplabx/wolfssh.X/wolfssh.mc3
+EXTRA_DIST+= ide/mplabx/wolfssh.X/nbproject/configurations.xml
+EXTRA_DIST+= ide/mplabx/wolfssh.X/nbproject/project.xml

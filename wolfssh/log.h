@@ -1,6 +1,6 @@
 /* log.h
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2026 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -43,6 +43,7 @@ extern "C" {
 
 
 enum wolfSSH_LogLevel {
+    WS_LOG_CERTMAN = 9,
     WS_LOG_AGENT = 8,
     WS_LOG_SCP   = 7,
     WS_LOG_SFTP  = 6,
@@ -71,11 +72,16 @@ WOLFSSH_API int wolfSSH_LogEnabled(void);
 WOLFSSH_API void wolfSSH_Log(enum wolfSSH_LogLevel,
                              const char *const, ...) FMTCHECK;
 
-#define WLOG(...) do { \
+#if defined(DEBUG_WOLFSSH) || defined(WOLFSSH_SSHD)
+    #define WLOG(...) do { \
                       if (wolfSSH_LogEnabled()) \
                           wolfSSH_Log(__VA_ARGS__); \
                   } while (0)
+#else
+    #define WLOG(...) WC_DO_NOTHING
+#endif
 
+#define WLOG_EXPECT_MSGID(x) WLOG(WS_LOG_DEBUG, "Expecting message %d", (x))
 
 #ifdef __cplusplus
 }

@@ -1,0 +1,1 @@
+This is a semaphore file used to ensure the install script is running from the expected directory.

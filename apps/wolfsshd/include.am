@@ -1,0 +1,22 @@
+if BUILD_SSHD
+
+bin_PROGRAMS += apps/wolfsshd/wolfsshd
+apps_wolfsshd_wolfsshd_SOURCES = apps/wolfsshd/wolfsshd.c \
+                                 apps/wolfsshd/configuration.c \
+                                 apps/wolfsshd/configuration.h \
+                                 apps/wolfsshd/auth.c \
+                                 apps/wolfsshd/auth.h
+apps_wolfsshd_wolfsshd_LDADD        = src/libwolfssh.la
+apps_wolfsshd_wolfsshd_DEPENDENCIES = src/libwolfssh.la
+
+noinst_PROGRAMS += apps/wolfsshd/test/test_configuration
+apps_wolfsshd_test_test_configuration_SOURCES = apps/wolfsshd/test/test_configuration.c \
+                                                apps/wolfsshd/configuration.c \
+                                                apps/wolfsshd/configuration.h \
+                                                apps/wolfsshd/auth.c \
+                                                apps/wolfsshd/auth.h
+apps_wolfsshd_test_test_configuration_LDADD        = src/libwolfssh.la
+apps_wolfsshd_test_test_configuration_DEPENDENCIES = src/libwolfssh.la
+apps_wolfsshd_test_test_configuration_CPPFLAGS     = $(AM_CPPFLAGS) -DWOLFSSH_SSHD -DWOLFSSHD_UNIT_TEST -I$(srcdir)/apps/wolfsshd/
+
+endif BUILD_SSHD

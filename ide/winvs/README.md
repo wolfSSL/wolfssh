@@ -46,7 +46,7 @@ etc. The other user macros are the directories where the wolfSSL
 libraries for the different builds may be found. So the user macro
 `wolfCryptDllRelease64` is initially set to
 
-    $(wolfCryptDir)\x64\DLL Release
+    $(wolfCryptDir)\DLL Release\x64
 
 This value is used in the debugging environment for the echoserver's
 64-bit DLL Release build is set to
@@ -55,3 +55,56 @@ This value is used in the debugging environment for the echoserver's
 
 When you run the echoserver from the debugger, it finds the wolfSSL
 DLL in that directory.
+
+
+SSHD Service
+-----------
+
+Creating a new service
+`sc.exe create wolfSSHd binpath="D:\work\wolfssh\ide\winvs\Debug\x64\wolfsshd.exe  -f <sshd_config fils> -h <optionally load host key> -p <optional port number>"`
+
+Starting wolfSSHd service run the following command in an adminstrator power shell session:
+`sc.exe start wolfSSHd`
+
+To stop the service run the following in an adminstrator power shell session:
+`sc.exe stop wolfSSHd`
+
+To delete the service run
+`sc.exe delete wolfSSHd`
+
+
+FIPS Build Configurations
+-------------------------
+
+The solution includes FIPS build configurations to support building wolfSSH
+with the FIPS build of wolfSSL. These configurations are designed to work
+with wolfSSL FIPS builds that are located in the `IDE\WIN10` directory
+structure.
+
+The following FIPS configurations are available:
+
+- **DebugFIPS** (Win32 and x64): For debugging FIPS builds using static libraries
+- **ReleaseFIPS** (Win32 and x64): For release FIPS builds using static libraries
+- **DLL DebugFIPS** (Win32 and x64): For debugging FIPS builds using dynamic libraries
+- **DLL ReleaseFIPS** (Win32 and x64): For release FIPS builds using dynamic libraries
+
+### Matching wolfSSL FIPS Builds
+
+When building wolfSSH with FIPS configurations, ensure that the corresponding
+wolfSSL FIPS build is available.
+
+If you build the wolfSSL FIPS code in the **Release x64** configuration,
+then you should build wolfSSH with the **ReleaseFIPS x64** configuration.
+
+Similarly:
+- wolfSSL **Debug x64** → wolfSSH **DebugFIPS x64**
+- wolfSSL **Release Win32** → wolfSSH **ReleaseFIPS Win32**
+- wolfSSL **DLL Release x64** → wolfSSH **DLL ReleaseFIPS x64**
+
+**Notes:**
+* wolfSSH examples and applications might initially fail because the FIPS Integrity
+hash is incorrect, you'll have to rebuild wolfSSL with the FIPS hash reported by the
+wolfSSH application to get this working.
+* To stabilize the FIPS hash on Windows, you might have to disable ASLR
+(Address space layout randomization) on the system.
+

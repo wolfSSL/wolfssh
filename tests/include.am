@@ -3,66 +3,50 @@
 # All paths should be given relative to the root
 
 check_PROGRAMS  += tests/unit.test tests/api.test \
-                   tests/testsuite.test
-noinst_PROGRAMS += tests/unit.test tests/api.test \
-                   tests/testsuite.test
+                   tests/testsuite.test tests/kex.test \
+                   tests/regress.test
 
-tests_unit_test_SOURCES      = tests/unit.c
-tests_unit_test_CPPFLAGS     = -DNO_MAIN_DRIVER
-if BUILD_SCP
-tests_unit_test_CPPFLAGS     += -DWOLFSSH_SCP
-endif
-if BUILD_SFTP
-tests_unit_test_CPPFLAGS     += -DWOLFSSH_SFTP
-endif
-if BUILD_SHELL
-tests_unit_test_CPPFLAGS     += -DWOLFSSH_SHELL
-endif
-if BUILD_AGENT
-tests_unit_test_CPPFLAGS     += -DWOLFSSH_AGENT
-endif
-tests_unit_test_LDADD        = src/libwolfssh.la
-tests_unit_test_DEPENDENCIES = src/libwolfssh.la
+tests_unit_test_SOURCES      = tests/unit.c tests/unit.h
+tests_unit_test_CPPFLAGS     = -DNO_MAIN_DRIVER -DWOLFSSH_TEST_INTERNAL $(AM_CPPFLAGS)
+tests_unit_test_LDADD        = src/libwolfssh_test.la
+tests_unit_test_DEPENDENCIES = src/libwolfssh_test.la
 
-tests_api_test_SOURCES       = tests/api.c \
+tests_api_test_SOURCES       = tests/api.c tests/api.h \
                                examples/echoserver/echoserver.c
-tests_api_test_CPPFLAGS      = -DNO_MAIN_DRIVER
-if BUILD_SCP
-tests_api_test_CPPFLAGS     += -DWOLFSSH_SCP
-endif
-if BUILD_SFTP
-tests_api_test_CPPFLAGS     += -DWOLFSSH_SFTP
-endif
-if BUILD_SHELL
-tests_api_test_CPPFLAGS     += -DWOLFSSH_SHELL
-endif
-if BUILD_AGENT
-tests_api_test_CPPFLAGS     += -DWOLFSSH_AGENT
-endif
+tests_api_test_CPPFLAGS      = -DNO_MAIN_DRIVER $(AM_CPPFLAGS)
 tests_api_test_LDADD         = src/libwolfssh.la
 tests_api_test_DEPENDENCIES  = src/libwolfssh.la
 
-tests_testsuite_test_SOURCES = tests/testsuite.c \
-                               tests/sftp.c \
+tests_testsuite_test_SOURCES = tests/testsuite.c tests/testsuite.h \
+                               tests/sftp.c tests/sftp.h \
                                examples/echoserver/echoserver.c \
                                examples/client/client.c \
+                               examples/client/common.c \
+                               examples/client/common.h \
                                examples/sftpclient/sftpclient.c
-tests_testsuite_test_CPPFLAGS  = -DNO_MAIN_DRIVER
-if BUILD_SCP
-tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_SCP
-endif
-if BUILD_SFTP
-tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_SFTP
-endif
-if BUILD_SHELL
-tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_SHELL
-endif
-if BUILD_AGENT
-tests_testsuite_test_CPPFLAGS     += -DWOLFSSH_AGENT
-endif
+tests_testsuite_test_CPPFLAGS = -DNO_MAIN_DRIVER $(AM_CPPFLAGS)
 tests_testsuite_test_LDADD   = src/libwolfssh.la
 tests_testsuite_test_DEPENDENCIES = src/libwolfssh.la
 
-DISTCLEANFILES+= tests/.libs/unit.test tests/.libs/api.test \
-                 tests/.libs/testsuite.test
-EXTRA_DIST += tests/testsuite.h
+if BUILD_KEYBOARD_INTERACTIVE
+check_PROGRAMS              += tests/auth.test
+tests_auth_test_SOURCES      = tests/auth.c tests/auth.h
+tests_auth_test_CPPFLAGS     = -DNO_MAIN_DRIVER $(AM_CPPFLAGS)
+tests_auth_test_LDADD        = src/libwolfssh.la
+tests_auth_test_DEPENDENCIES = src/libwolfssh.la
+endif
+
+tests_kex_test_SOURCES = tests/kex.c tests/kex.h \
+                               examples/echoserver/echoserver.c \
+                               examples/client/client.c \
+                               examples/client/common.c \
+                               examples/client/common.h
+tests_kex_test_CPPFLAGS = -DNO_MAIN_DRIVER $(AM_CPPFLAGS)
+tests_kex_test_LDADD   = src/libwolfssh.la
+tests_kex_test_DEPENDENCIES = src/libwolfssh.la
+
+tests_regress_test_SOURCES = tests/regress.c apps/wolfssh/common.c \
+                             apps/wolfssh/common.h
+tests_regress_test_CPPFLAGS = -DNO_MAIN_DRIVER -DWOLFSSH_TEST_INTERNAL $(AM_CPPFLAGS)
+tests_regress_test_LDADD   = src/libwolfssh_test.la
+tests_regress_test_DEPENDENCIES = src/libwolfssh_test.la

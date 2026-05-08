@@ -1,6 +1,6 @@
 /* error.h
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2026 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -118,8 +118,27 @@ enum WS_ErrorCodes {
     WS_AGENT_NULL_E         = -1077, /* AGENT was null */
     WS_AGENT_NO_KEY_E       = -1078, /* AGENT doesn't have requested key */
     WS_AGENT_CXN_FAIL       = -1079, /* Couldn't connect to agent. */
+    WS_SFTP_BAD_HEADER      = -1080, /* SFTP bad header */
+    WS_CERT_NO_SIGNER_E     = -1081, /* No signer cert available */
+    WS_CERT_EXPIRED_E       = -1082, /* Certificate expired */
+    WS_CERT_REVOKED_E       = -1083, /* User certificate reported revoked */
+    WS_CERT_SIG_CONFIRM_E   = -1084, /* Root cert sig verify fail */
+    WS_CERT_OTHER_E         = -1085, /* Other certificate issue */
+    WS_CERT_PROFILE_E       = -1086, /* Cert doesn't meet profile reqs */
+    WS_CERT_KEY_SIZE_E      = -1087, /* Key size error */
+    WS_CTX_KEY_COUNT_E      = -1088, /* Adding too many private keys */
+    WS_MATCH_UA_KEY_ID_E    = -1089, /* Match user auth key key fail */
+    WS_KEY_AUTH_MAGIC_E     = -1090, /* OpenSSH key auth magic check fail */
+    WS_KEY_CHECK_VAL_E      = -1091, /* OpenSSH key check value fail */
+    WS_KEY_FORMAT_E         = -1092, /* OpenSSH key format fail */
+    WS_SFTP_NOT_FILE_E      = -1093, /* Not a regular file */
+    WS_MSGID_NOT_ALLOWED_E  = -1094, /* Message not allowed before userauth */
+    WS_ED25519_E            = -1095, /* Ed25519 failure */
+    WS_AUTH_PENDING         = -1096, /* User authentication still pending */
+    WS_KDF_E                = -1097, /* KDF error*/
+    WS_DISCONNECT           = -1098, /* peer sent disconnect */
 
-    WS_LAST_E               = -1079  /* Update this to indicate last error */
+    WS_LAST_E               = WS_DISCONNECT  /* Update this to indicate last error */
 };
 
 

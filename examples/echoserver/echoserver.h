@@ -1,6 +1,6 @@
 /* echoserver.h
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2026 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -24,6 +24,7 @@
 
 
 THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args);
+int wolfSSH_Echoserver(int argc, char** argv);
 
 
 #endif /* _WOLFSSH_EXAMPLES_ECHOSERVER_H_ */

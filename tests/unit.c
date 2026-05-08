@@ -1,6 +1,6 @@
 /* unit.c
  *
- * Copyright (C) 2014-2020 wolfSSL Inc.
+ * Copyright (C) 2014-2026 wolfSSL Inc.
  *
  * This file is part of wolfSSH.
  *
@@ -18,182 +18,28 @@
  * along with wolfSSH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#ifdef HAVE_CONFIG_H
+    #include <config.h>
+#endif
+
+#ifdef WOLFSSL_USER_SETTINGS
+    #include <wolfssl/wolfcrypt/settings.h>
+#else
+    #include <wolfssl/options.h>
+#endif
 
 #include <stdio.h>
 #include <wolfssh/ssh.h>
 #include <wolfssh/keygen.h>
+#include <wolfssh/error.h>
 #include <wolfssh/internal.h>
+#include <wolfssl/wolfcrypt/random.h>
+#include <wolfssl/wolfcrypt/integer.h>
+#include <wolfssl/wolfcrypt/hmac.h>
 
-
-/* Utility functions */
-
-#define BAD 0xFF
-
-const byte hexDecode[] =
-{
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
-    BAD, BAD, BAD, BAD, BAD, BAD, BAD,
-    10, 11, 12, 13, 14, 15,  /* upper case A-F */
-    BAD, BAD, BAD, BAD, BAD, BAD, BAD, BAD,
-    BAD, BAD, BAD, BAD, BAD, BAD, BAD, BAD,
-    BAD, BAD, BAD, BAD, BAD, BAD, BAD, BAD,
-    BAD, BAD,  /* G - ` */
-    10, 11, 12, 13, 14, 15   /* lower case a-f */
-};  /* A starts at 0x41 not 0x3A */
-
-
-static int Base16_Decode(const byte* in, word32 inLen,
-                         byte* out, word32* outLen)
-{
-    word32 inIdx = 0;
-    word32 outIdx = 0;
-
-    if (inLen == 1 && *outLen && in) {
-        byte b = in[inIdx] - 0x30;  /* 0 starts at 0x30 */
-
-        /* sanity check */
-        if (b >=  sizeof(hexDecode)/sizeof(hexDecode[0]))
-            return -1;
-
-        b  = hexDecode[b];
-
-        if (b == BAD)
-            return -1;
-
-        out[outIdx++] = b;
-
-        *outLen = outIdx;
-        return 0;
-    }
-
-    if (inLen % 2)
-        return -1;
-
-    if (*outLen < (inLen / 2))
-        return -1;
-
-    while (inLen) {
-        byte b = in[inIdx++] - 0x30;  /* 0 starts at 0x30 */
-        byte b2 = in[inIdx++] - 0x30;
-
-        /* sanity checks */
-        if (b >=  sizeof(hexDecode)/sizeof(hexDecode[0]))
-            return -1;
-        if (b2 >= sizeof(hexDecode)/sizeof(hexDecode[0]))
-            return -1;
-
-        b  = hexDecode[b];
-        b2 = hexDecode[b2];
-
-        if (b == BAD || b2 == BAD)
-            return -1;
-
-        out[outIdx++] = (byte)((b << 4) | b2);
-        inLen -= 2;
-    }
-
-    *outLen = outIdx;
-    return 0;
-}
-
-
-static void FreeBins(byte* b1, byte* b2, byte* b3, byte* b4)
-{
-    if (b1 != NULL) free(b1);
-    if (b2 != NULL) free(b2);
-    if (b3 != NULL) free(b3);
-    if (b4 != NULL) free(b4);
-}
-
-
-/* convert hex string to binary, store size, 0 success (free mem on failure) */
-static int ConvertHexToBin(const char* h1, byte** b1, word32* b1Sz,
-                           const char* h2, byte** b2, word32* b2Sz,
-                           const char* h3, byte** b3, word32* b3Sz,
-                           const char* h4, byte** b4, word32* b4Sz)
-{
-    int ret;
-
-    /* b1 */
-    if (h1 && b1 && b1Sz) {
-        *b1Sz = (word32)strlen(h1) / 2;
-        *b1 = (byte*)malloc(*b1Sz);
-        if (*b1 == NULL)
-            return -1;
-        ret = Base16_Decode((const byte*)h1, (word32)strlen(h1),
-                            *b1, b1Sz);
-        if (ret != 0) {
-            FreeBins(*b1, NULL, NULL, NULL);
-            *b1 = NULL;
-            return -1;
-        }
-    }
-
-    /* b2 */
-    if (h2 && b2 && b2Sz) {
-        *b2Sz = (word32)strlen(h2) / 2;
-        *b2 = (byte*)malloc(*b2Sz);
-        if (*b2 == NULL) {
-            FreeBins(b1 ? *b1 : NULL, NULL, NULL, NULL);
-            if (b1) *b1 = NULL;
-            return -1;
-        }
-        ret = Base16_Decode((const byte*)h2, (word32)strlen(h2),
-                            *b2, b2Sz);
-        if (ret != 0) {
-            FreeBins(b1 ? *b1 : NULL, *b2, NULL, NULL);
-            if (b1) *b1 = NULL;
-            *b2 = NULL;
-            return -1;
-        }
-    }
-
-    /* b3 */
-    if (h3 && b3 && b3Sz) {
-        *b3Sz = (word32)strlen(h3) / 2;
-        *b3 = (byte*)malloc(*b3Sz);
-        if (*b3 == NULL) {
-            FreeBins(b1 ? *b1 : NULL, b2 ? *b2 : NULL, NULL, NULL);
-            if (b1) *b1 = NULL;
-            if (b2) *b2 = NULL;
-            return -1;
-        }
-        ret = Base16_Decode((const byte*)h3, (word32)strlen(h3),
-                            *b3, b3Sz);
-        if (ret != 0) {
-            FreeBins(b1 ? *b1 : NULL, b2 ? *b2 : NULL, *b3, NULL);
-            if (b1) *b1 = NULL;
-            if (b2) *b2 = NULL;
-            *b3 = NULL;
-            return -1;
-        }
-    }
-
-    /* b4 */
-    if (h4 && b4 && b4Sz) {
-        *b4Sz = (word32)strlen(h4) / 2;
-        *b4 = (byte*)malloc(*b4Sz);
-        if (*b4 == NULL) {
-            FreeBins(b1 ? *b1 : NULL, b2 ? *b2 : NULL, b3 ? *b3 : NULL, NULL);
-            if (b1) *b1 = NULL;
-            if (b2) *b2 = NULL;
-            if (b3) *b3 = NULL;
-            return -1;
-        }
-        ret = Base16_Decode((const byte*)h4, (word32)strlen(h4),
-                            *b4, b4Sz);
-        if (ret != 0) {
-            FreeBins(b1 ? *b1 : NULL, b2 ? *b2 : NULL, b3 ? *b3 : NULL, *b4);
-            if (b1) *b1 = NULL;
-            if (b2) *b2 = NULL;
-            if (b3) *b3 = NULL;
-            *b4 = NULL;
-            return -1;
-        }
-    }
-
-    return 0;
-}
+#define WOLFSSH_TEST_HEX2BIN
+#include <wolfssh/test.h>
+#include "unit.h"
 
 
 /* Key Derivation Function (KDF) Unit Test */
@@ -386,6 +232,7 @@ static int test_KDF(void)
 
 #ifdef WOLFSSH_KEYGEN
 
+#ifndef WOLFSSH_NO_RSA
 static int test_RsaKeyGen(void)
 {
     int result = 0;
@@ -402,8 +249,381 @@ static int test_RsaKeyGen(void)
 
     return result;
 }
+#endif
+
+#ifndef WOLFSSH_NO_ECDSA
+static int test_EcdsaKeyGen(void)
+{
+    int result = 0;
+    byte der[1200];
+    int derSz;
+
+    derSz = wolfSSH_MakeEcdsaKey(der, sizeof(der),
+                               WOLFSSH_ECDSAKEY_PRIME256);
+    if (derSz < 0) {
+        printf("EcdsaKeyGen: MakeEcdsaKey failed\n");
+        result = -104;
+    }
+
+    return result;
+}
+#endif
+
+#if !defined(WOLFSSH_NO_ED25519) && defined(HAVE_ED25519) && \
+    defined(HAVE_ED25519_MAKE_KEY) && defined(HAVE_ED25519_KEY_EXPORT)
+static int test_Ed25519KeyGen(void)
+{
+    int result = 0;
+    byte der[1200];
+    int derSz;
+
+    derSz = wolfSSH_MakeEd25519Key(der, sizeof(der), WOLFSSH_ED25519KEY);
+    if (derSz < 0) {
+        printf("Ed25519KeyGen: MakeEd25519Key failed\n");
+        result = -105;
+    }
+
+    return result;
+}
+#endif
 
 #endif
+
+
+#if defined(WOLFSSH_TEST_INTERNAL) && \
+    (!defined(WOLFSSH_NO_HMAC_SHA1) || \
+     !defined(WOLFSSH_NO_HMAC_SHA1_96) || \
+     !defined(WOLFSSH_NO_HMAC_SHA2_256) || \
+     !defined(WOLFSSH_NO_HMAC_SHA2_512))
+
+/* Minimal SSH binary packet: uint32 length, padding_length, msgId, padding.
+ * Same layout as tests/regress.c BuildPacket (8-byte aligned body). */
+static word32 BuildMacTestPacketPrefix(byte msgId, byte* out, word32 outSz)
+{
+    byte padLen = 6;
+    word32 packetLen = (word32)(1 + 1 + padLen);
+    word32 need = UINT32_SZ + packetLen;
+
+    if (outSz < need)
+        return 0;
+    out[0] = (byte)(packetLen >> 24);
+    out[1] = (byte)(packetLen >> 16);
+    out[2] = (byte)(packetLen >> 8);
+    out[3] = (byte)(packetLen);
+    out[4] = padLen;
+    out[5] = msgId;
+    WMEMSET(out + 6, 0, padLen);
+    return need;
+}
+
+
+static int test_DoReceive_VerifyMacFailure(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    int ret = WS_SUCCESS;
+    int result = 0;
+    byte flatSeq[LENGTH_SZ];
+    byte macKey[MAX_HMAC_SZ];
+    Hmac hmac;
+    word32 prefixLen;
+    word32 totalLen;
+    byte pkt[UINT32_SZ + 8 + MAX_HMAC_SZ];
+    int i;
+    struct {
+        byte macId;
+        int hmacType;
+        byte macSz;
+        byte keySz;
+    } cases[] = {
+#ifndef WOLFSSH_NO_HMAC_SHA1
+        { ID_HMAC_SHA1, WC_SHA, WC_SHA_DIGEST_SIZE, WC_SHA_DIGEST_SIZE },
+#endif
+    #ifndef WOLFSSH_NO_HMAC_SHA1_96
+        { ID_HMAC_SHA1_96, WC_SHA, SHA1_96_SZ, WC_SHA_DIGEST_SIZE },
+    #endif
+#ifndef WOLFSSH_NO_HMAC_SHA2_256
+        { ID_HMAC_SHA2_256, WC_SHA256, WC_SHA256_DIGEST_SIZE,
+          WC_SHA256_DIGEST_SIZE },
+#endif
+#ifndef WOLFSSH_NO_HMAC_SHA2_512
+        { ID_HMAC_SHA2_512, WC_SHA512, WC_SHA512_DIGEST_SIZE,
+          WC_SHA512_DIGEST_SIZE },
+#endif
+    };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -200;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -201;
+    }
+
+    WMEMSET(macKey, 0xA5, sizeof(macKey));
+
+    for (i = 0; i < (int)(sizeof(cases) / sizeof(cases[0])); i++) {
+        prefixLen = BuildMacTestPacketPrefix(MSGID_IGNORE, pkt, sizeof(pkt));
+        if (prefixLen == 0) {
+            result = -202;
+            goto done;
+        }
+        totalLen = prefixLen + cases[i].macSz;
+
+        ssh->peerEncryptId = ID_NONE;
+        ssh->peerAeadMode = 0;
+        ssh->peerBlockSz = MIN_BLOCK_SZ;
+        ssh->peerMacId = cases[i].macId;
+        ssh->peerMacSz = cases[i].macSz;
+        WMEMCPY(ssh->peerKeys.macKey, macKey, cases[i].keySz);
+        ssh->peerKeys.macKeySz = cases[i].keySz;
+        ssh->peerSeq = 0;
+        ssh->curSz = 0;
+        ssh->processReplyState = PROCESS_INIT;
+        ssh->error = 0;
+
+        flatSeq[0] = (byte)(ssh->peerSeq >> 24);
+        flatSeq[1] = (byte)(ssh->peerSeq >> 16);
+        flatSeq[2] = (byte)(ssh->peerSeq >> 8);
+        flatSeq[3] = (byte)(ssh->peerSeq);
+        ret = wc_HmacInit(&hmac, ssh->ctx->heap, INVALID_DEVID);
+        if (ret != WS_SUCCESS) {
+            result = -203;
+            goto done;
+        }
+        {
+            byte digest[WC_MAX_DIGEST_SIZE];
+            ret = wc_HmacSetKey(&hmac, cases[i].hmacType,
+                    ssh->peerKeys.macKey, ssh->peerKeys.macKeySz);
+            if (ret == WS_SUCCESS)
+                ret = wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq));
+            if (ret == WS_SUCCESS)
+                ret = wc_HmacUpdate(&hmac, pkt, prefixLen);
+            if (ret == WS_SUCCESS)
+                ret = wc_HmacFinal(&hmac, digest);
+            wc_HmacFree(&hmac);
+            if (ret == WS_SUCCESS)
+                WMEMCPY(pkt + prefixLen, digest, cases[i].macSz);
+        }
+        if (ret != WS_SUCCESS) {
+            result = -204;
+            goto done;
+        }
+
+        pkt[prefixLen] ^= 0x01;
+
+        ShrinkBuffer(&ssh->inputBuffer, 1);
+        ret = GrowBuffer(&ssh->inputBuffer, totalLen);
+        if (ret != WS_SUCCESS) {
+            result = -205;
+            goto done;
+        }
+        WMEMCPY(ssh->inputBuffer.buffer, pkt, totalLen);
+        ssh->inputBuffer.length = totalLen;
+        ssh->inputBuffer.idx = 0;
+
+        ret = wolfSSH_TestDoReceive(ssh);
+        if (ret != WS_FATAL_ERROR) {
+            result = -206;
+            goto done;
+        }
+        if (ssh->error != WS_VERIFY_MAC_E) {
+            result = -207;
+            goto done;
+        }
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* WOLFSSH_TEST_INTERNAL && any HMAC SHA variant enabled */
+
+
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_DH_GEX_SHA256)
+
+typedef struct {
+    const char* candidate;
+    const char* generator;
+    word32 minBits;
+    word32 maxBits;
+    int expectedResult;
+} PrimeTestVector;
+
+static const PrimeTestVector primeTestVectors[] = {
+    {
+        /*
+         * For testing the ValidateKexDhGexGroup() function, we need to
+         * verify that the function detects unsafe primes. The following
+         * unsafe prime is the prime used with GOST-ECC. (RFC 7836) It is
+         * prime and fine for its application. It isn't safe for DH, as
+         * q = (p-1)/2 is not prime.
+         */
+        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffdc7",
+        "02",
+        512, 8192, WS_CRYPTO_FAILED
+    },
+    {
+        /*
+         * We need to verify that the function detects safe primes. The
+         * following safePrime is the MODP 2048-bit group from RFC 3526.
+         */
+        "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74"
+        "020bbea63b139b22514a08798e3404ddef9519b3cd3a431b302b0a6df25f1437"
+        "4fe1356d6d51c245e485b576625e7ec6f44c42e9a637ed6b0bff5cb6f406b7ed"
+        "ee386bfb5a899fa5ae9f24117c4b1fe649286651ece45b3dc2007cb8a163bf05"
+        "98da48361c55d39a69163fa8fd24cf5f83655d23dca3ad961c62f356208552bb"
+        "9ed529077096966d670c354e4abc9804f1746c08ca18217c32905e462e36ce3b"
+        "e39e772c180e86039b2783a2ec07a28fb5c55df06f4c52c9de2bcbf695581718"
+        "3995497cea956ae515d2261898fa051015728e5a8aacaa68ffffffffffffffff",
+        "02",
+        2048, 8192, WS_SUCCESS
+    },
+    {
+        /*
+         * This checks for g = p - 1.
+         */
+        "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74"
+        "020bbea63b139b22514a08798e3404ddef9519b3cd3a431b302b0a6df25f1437"
+        "4fe1356d6d51c245e485b576625e7ec6f44c42e9a637ed6b0bff5cb6f406b7ed"
+        "ee386bfb5a899fa5ae9f24117c4b1fe649286651ece45b3dc2007cb8a163bf05"
+        "98da48361c55d39a69163fa8fd24cf5f83655d23dca3ad961c62f356208552bb"
+        "9ed529077096966d670c354e4abc9804f1746c08ca18217c32905e462e36ce3b"
+        "e39e772c180e86039b2783a2ec07a28fb5c55df06f4c52c9de2bcbf695581718"
+        "3995497cea956ae515d2261898fa051015728e5a8aacaa68ffffffffffffffff",
+        "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74"
+        "020bbea63b139b22514a08798e3404ddef9519b3cd3a431b302b0a6df25f1437"
+        "4fe1356d6d51c245e485b576625e7ec6f44c42e9a637ed6b0bff5cb6f406b7ed"
+        "ee386bfb5a899fa5ae9f24117c4b1fe649286651ece45b3dc2007cb8a163bf05"
+        "98da48361c55d39a69163fa8fd24cf5f83655d23dca3ad961c62f356208552bb"
+        "9ed529077096966d670c354e4abc9804f1746c08ca18217c32905e462e36ce3b"
+        "e39e772c180e86039b2783a2ec07a28fb5c55df06f4c52c9de2bcbf695581718"
+        "3995497cea956ae515d2261898fa051015728e5a8aacaa68fffffffffffffffe",
+        2048, 8192, WS_CRYPTO_FAILED
+    },
+    {
+        /*
+         * This checks for g = 1.
+         */
+        "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74"
+        "020bbea63b139b22514a08798e3404ddef9519b3cd3a431b302b0a6df25f1437"
+        "4fe1356d6d51c245e485b576625e7ec6f44c42e9a637ed6b0bff5cb6f406b7ed"
+        "ee386bfb5a899fa5ae9f24117c4b1fe649286651ece45b3dc2007cb8a163bf05"
+        "98da48361c55d39a69163fa8fd24cf5f83655d23dca3ad961c62f356208552bb"
+        "9ed529077096966d670c354e4abc9804f1746c08ca18217c32905e462e36ce3b"
+        "e39e772c180e86039b2783a2ec07a28fb5c55df06f4c52c9de2bcbf695581718"
+        "3995497cea956ae515d2261898fa051015728e5a8aacaa68ffffffffffffffff",
+        "01",
+        2048, 8192, WS_CRYPTO_FAILED
+    },
+    {
+        /*
+         * This checks prime size less than minBits.
+         */
+        "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74"
+        "020bbea63b139b22514a08798e3404ddef9519b3cd3a431b302b0a6df25f1437"
+        "4fe1356d6d51c245e485b576625e7ec6f44c42e9a637ed6b0bff5cb6f406b7ed"
+        "ee386bfb5a899fa5ae9f24117c4b1fe649286651ece45b3dc2007cb8a163bf05"
+        "98da48361c55d39a69163fa8fd24cf5f83655d23dca3ad961c62f356208552bb"
+        "9ed529077096966d670c354e4abc9804f1746c08ca18217c32905e462e36ce3b"
+        "e39e772c180e86039b2783a2ec07a28fb5c55df06f4c52c9de2bcbf695581718"
+        "3995497cea956ae515d2261898fa051015728e5a8aacaa68ffffffffffffffff",
+        "02",
+        3072, 8192, WS_DH_SIZE_E
+    },
+    {
+        /*
+         * This checks prime size greater than maxBits.
+         */
+        "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74"
+        "020bbea63b139b22514a08798e3404ddef9519b3cd3a431b302b0a6df25f1437"
+        "4fe1356d6d51c245e485b576625e7ec6f44c42e9a637ed6b0bff5cb6f406b7ed"
+        "ee386bfb5a899fa5ae9f24117c4b1fe649286651ece45b3dc2007cb8a163bf05"
+        "98da48361c55d39a69163fa8fd24cf5f83655d23dca3ad961c62f356208552bb"
+        "9ed529077096966d670c354e4abc9804f1746c08ca18217c32905e462e36ce3b"
+        "e39e772c180e86039b2783a2ec07a28fb5c55df06f4c52c9de2bcbf695581718"
+        "3995497cea956ae515d2261898fa051015728e5a8aacaa68ffffffffffffffff",
+        "02",
+        512, 1024, WS_DH_SIZE_E
+    },
+    {
+        /*
+         * This checks for even p.
+         */
+        "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74"
+        "020bbea63b139b22514a08798e3404ddef9519b3cd3a431b302b0a6df25f1437"
+        "4fe1356d6d51c245e485b576625e7ec6f44c42e9a637ed6b0bff5cb6f406b7ed"
+        "ee386bfb5a899fa5ae9f24117c4b1fe649286651ece45b3dc2007cb8a163bf05"
+        "98da48361c55d39a69163fa8fd24cf5f83655d23dca3ad961c62f356208552bb"
+        "9ed529077096966d670c354e4abc9804f1746c08ca18217c32905e462e36ce3b"
+        "e39e772c180e86039b2783a2ec07a28fb5c55df06f4c52c9de2bcbf695581718"
+        "3995497cea956ae515d2261898fa051015728e5a8aacaa68fffffffffffffffe",
+        "02",
+        2048, 8192, WS_CRYPTO_FAILED
+    },
+    {
+        /*
+         * A well known composite number that breaks some MR implementations.
+         * This is calculated by wolfCrypt for one of its prime tests.
+         */
+        "000000000088cbf655be37a612fa535b4a9b81d394854ecbedfe1a4afbecdc7b"
+        "a6a263549dd3c17882b054329384962576e7c5aa281e04ab5a0e7245584ad324"
+        "9c7ac4de7caf5663bae95f6bb9e8bec4124e04d82eac54a246bda49a5c5c2a1b"
+        "366ef8c085fc7c5f87478a55832d1b2184154c24260df67561d17c4359724403",
+        "02",
+        512, 8192, WS_CRYPTO_FAILED
+    },
+};
+
+static int test_DhGexGroupValidate(void)
+{
+    WC_RNG rng;
+    const PrimeTestVector* tv;
+    byte* candidate;
+    byte* generator;
+    word32 candidateSz;
+    word32 generatorSz;
+    int tc = (int)(sizeof(primeTestVectors)/sizeof(primeTestVectors[0]));
+    int result = 0, ret, i;
+
+    if (wc_InitRng(&rng) != 0) {
+        printf("DhGexGroupValidate: wc_InitRng failed\n");
+        return -110;
+    }
+
+    for (i = 0, tv = primeTestVectors; i < tc && !result; i++, tv++) {
+        candidate = NULL;
+        candidateSz = 0;
+        generator = NULL;
+        generatorSz = 0;
+
+        ret = ConvertHexToBin(tv->candidate, &candidate, &candidateSz,
+                tv->generator, &generator, &generatorSz,
+                NULL, NULL, NULL, NULL, NULL, NULL);
+        if (ret != 0) {
+            result = -113;
+            break;
+        }
+
+        ret = wolfSSH_TestValidateKexDhGexGroup(candidate, candidateSz,
+                generator, generatorSz, tv->minBits, tv->maxBits, &rng);
+        if (ret != tv->expectedResult) {
+            printf("DhGexGroupValidate: validator returned %d, expected %d\n",
+                    ret, tv->expectedResult);
+            result = -121;
+        }
+
+        FreeBins(candidate, generator, NULL, NULL);
+    }
+
+    wc_FreeRng(&rng);
+    return result;
+}
+
+#endif /* WOLFSSH_TEST_INTERNAL && !WOLFSSH_NO_DH_GEX_SHA256 */
 
 
 /* Error Code And Message Test */
@@ -459,10 +679,14 @@ static int test_Errors(void)
     return result;
 }
 
-
-int main(void)
+int wolfSSH_UnitTest(int argc, char** argv)
 {
     int testResult = 0, unitResult = 0;
+
+    (void)argc;
+    (void)argv;
+
+    wolfSSH_Init();
 
     unitResult = test_Errors();
     printf("Errors: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
@@ -472,12 +696,52 @@ int main(void)
     printf("KDF: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
+#if defined(WOLFSSH_TEST_INTERNAL) && \
+    (!defined(WOLFSSH_NO_HMAC_SHA1) || \
+     !defined(WOLFSSH_NO_HMAC_SHA1_96) || \
+     !defined(WOLFSSH_NO_HMAC_SHA2_256) || \
+     !defined(WOLFSSH_NO_HMAC_SHA2_512))
+    unitResult = test_DoReceive_VerifyMacFailure();
+    printf("DoReceiveVerifyMac: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_DH_GEX_SHA256)
+    unitResult = test_DhGexGroupValidate();
+    printf("DhGexGroupValidate: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
 #ifdef WOLFSSH_KEYGEN
+#ifndef WOLFSSH_NO_RSA
     unitResult = test_RsaKeyGen();
     printf("RsaKeyGen: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
+#ifndef WOLFSSH_NO_ECDSA
+    unitResult = test_EcdsaKeyGen();
+    printf("EcdsaKeyGen: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+#if !defined(WOLFSSH_NO_ED25519) && defined(HAVE_ED25519) && \
+    defined(HAVE_ED25519_MAKE_KEY) && defined(HAVE_ED25519_KEY_EXPORT)
+    unitResult = test_Ed25519KeyGen();
+    printf("Ed25519KeyGen: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+#endif
+
+    wolfSSH_Cleanup();
 
     return (testResult ? 1 : 0);
 }
 
+
+#ifndef NO_UNITTEST_MAIN_DRIVER
+int main(int argc, char** argv)
+{
+    return wolfSSH_UnitTest(argc, argv);
+}
+#endif
