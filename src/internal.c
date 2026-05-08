@@ -4235,7 +4235,7 @@ static word32 AlgoListSz(const char* algoList)
         return 0;
 
     algoListSz = (word32)WSTRLEN(algoList);
-    if (algoList[algoListSz-1] == ',') {
+    if (algoListSz > 0 && algoList[algoListSz-1] == ',') {
         --algoListSz;
     }
 
@@ -8573,11 +8573,10 @@ static int DoUserAuthInfoRequest(WOLFSSH* ssh, byte* buf, word32 len,
     if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
         ret = WS_BAD_ARGUMENT;
 
-    if (ssh->ctx != NULL) {
-        heap = ssh->ctx->heap;
-    }
-
     if (ret == WS_SUCCESS) {
+        if (ssh->ctx != NULL) {
+            heap = ssh->ctx->heap;
+        }
         begin = *idx;
         ret = GetStringAlloc(heap, (char**)&authName, NULL, buf, len, &begin);
     }
@@ -8653,7 +8652,9 @@ static int DoUserAuthInfoRequest(WOLFSSH* ssh, byte* buf, word32 len,
         ret = SendUserAuthKeyboardResponse(ssh);
     }
 
-    ssh->authId = ID_USERAUTH_KEYBOARD;
+    if (ret == WS_SUCCESS) {
+        ssh->authId = ID_USERAUTH_KEYBOARD;
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthInfoRequest(), ret = %d", ret);
 
@@ -10948,11 +10949,11 @@ static int BundlePacket(WOLFSSH* ssh)
 
             idx += paddingSz;
 
-            WMEMSET(output + idx, 0, macSz);
             if (idx + macSz > ssh->outputBuffer.bufferSz) {
                 ret = WS_BUFFER_E;
             }
             else {
+                WMEMSET(output + idx, 0, macSz);
                 ret = CreateMac(ssh, ssh->outputBuffer.buffer +
                         ssh->packetStartIdx, ssh->outputBuffer.length -
                         ssh->packetStartIdx + paddingSz, output + idx);
