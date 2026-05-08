@@ -29,6 +29,21 @@ jobs:
           install: true
 
       - uses: actions/checkout@v4
+      - name: Inspect wolfssl install layout
+        if: always()
+        run: |
+          echo "--- workspace ---"
+          ls -la "${{ github.workspace }}" || true
+          echo "--- build-dir ---"
+          ls -la "${{ github.workspace }}/build-dir" || true
+          echo "--- build-dir/lib ---"
+          ls -la "${{ github.workspace }}/build-dir/lib" 2>/dev/null || true
+          echo "--- build-dir/include ---"
+          ls -la "${{ github.workspace }}/build-dir/include" 2>/dev/null || true
+          echo "--- /usr/local/lib/libwolfssl* ---"
+          ls -la /usr/local/lib/libwolfssl* 2>/dev/null || echo "(none)"
+          echo "--- /opt/homebrew/lib/libwolfssl* ---"
+          ls -la /opt/homebrew/lib/libwolfssl* 2>/dev/null || echo "(none)"
       - name: autogen
         run: ./autogen.sh
       - name: configure
@@ -36,6 +51,9 @@ jobs:
         # not /usr/local/lib, so wolfssh's configure can't find libwolfssl
         # without explicit LDFLAGS/CPPFLAGS — same pattern Paramiko SFTP uses.
         run: ./configure LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include"
+      - name: Show config.log on configure failure
+        if: failure()
+        run: tail -200 config.log || true
       - name: make
         run: make
       - name: make check
