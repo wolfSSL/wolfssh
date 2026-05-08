@@ -1904,7 +1904,6 @@ static int GetOpenSshKey(WS_KeySignature *key,
             word32 subStrSz = 0, subIdx = 0, check1 = 0, check2 = ~0;
             byte keyId;
 
-            idx = 0;
             ret = GetUint32(&check1, str, strSz, &subIdx); /* checkint 1 */
             if (ret == WS_SUCCESS)
                 ret = GetUint32(&check2, str, strSz, &subIdx); /* checkint 2 */
