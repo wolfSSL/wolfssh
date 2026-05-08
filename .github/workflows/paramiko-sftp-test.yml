@@ -22,7 +22,7 @@ jobs:
         id: cache-wolfssl
         with:
           path: build-dir/
-          key: wolfssh-paramiko-sftp-wolfssl-ubuntu-latest
+          key: wolfssh-paramiko-sftp-wolfssl-v5.9.1-stable-ubuntu-latest
           lookup-only: true
 
       - name: Checkout, build, and install wolfssl
@@ -46,7 +46,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build-dir/
-          key: wolfssh-paramiko-sftp-wolfssl-ubuntu-latest
+          key: wolfssh-paramiko-sftp-wolfssl-v5.9.1-stable-ubuntu-latest
           fail-on-cache-miss: true
 
       - uses: actions/checkout@v4
