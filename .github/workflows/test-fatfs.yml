@@ -51,7 +51,7 @@ jobs:
         uses: wolfSSL/actions-build-autotools-project@v1
         with:
           repository: wolfSSL/wolfssl
-          ref: master
+          ref: v5.9.1-stable
           path: wolfssl
           configure: --enable-wolfssh --enable-intelasm --disable-crl --disable-examples --disable-filesystem CFLAGS="-DNO_WOLFSSL_DIR"
           check: false

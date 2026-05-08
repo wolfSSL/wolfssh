@@ -30,7 +30,7 @@ jobs:
         uses: wolfSSL/actions-build-autotools-project@v1
         with:
           repository: wolfssl/wolfssl
-          ref: master
+          ref: v5.9.1-stable
           path: wolfssl
           configure: --enable-all
           check: false
