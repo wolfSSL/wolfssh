@@ -11,19 +11,22 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Install build prerequisites
+        run: brew install automake libtool
+
+      - name: Checkout, build, and install wolfssl
+        # Use the canonical wolfSSL composite action — same one OS Check
+        # uses on macos-latest with v5.9.1-stable, so we get a known-
+        # green baseline instead of an open-coded chain that's broken
+        # for unrelated reasons on this runner image.
+        uses: wolfSSL/actions-build-autotools-project@v1
         with:
           repository: wolfssl/wolfssl
           ref: v5.9.1-stable
-      - name: Setup wolfssl
-        # Use --enable-all to mirror the OS Check workflow that already
-        # passes wolfssl v5.9.1-stable on macos-latest. The narrower
-        # --enable-keygen --enable-cryptonly --enable-ssh combination
-        # fails configure on this matrix, while --enable-all is a
-        # superset and exercises the same APIs we need for wolfssh.
-        # Skip wolfssl's own `make check`; correctness is covered in its
-        # own CI and we only need libwolfssl installed below.
-        run: brew install automake && ./autogen.sh && ./configure --enable-all && make -j$(sysctl -n hw.ncpu) && sudo make install
+          path: wolfssl
+          configure: --enable-all
+          check: false
+          install: true
 
       - uses: actions/checkout@v4
       - name: autogen
