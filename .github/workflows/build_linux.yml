@@ -16,7 +16,9 @@ jobs:
           repository: wolfssl/wolfssl
           ref: v5.9.1-stable
       - name: Setup wolfssl
-        run: ./autogen.sh && ./configure --enable-keygen --enable-cryptonly --enable-ssh && make && make check && sudo make install && sudo ldconfig
+        # Match the configure used by the OS Check workflow which
+        # already passes wolfssl v5.9.1-stable across the matrix.
+        run: ./autogen.sh && ./configure --enable-all && make -j$(nproc) && sudo make install && sudo ldconfig
 
       - uses: actions/checkout@v4
       - name: autogen

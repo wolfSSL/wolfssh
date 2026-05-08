@@ -16,7 +16,14 @@ jobs:
           repository: wolfssl/wolfssl
           ref: v5.9.1-stable
       - name: Setup wolfssl
-        run: brew install automake && ./autogen.sh && ./configure --enable-keygen --enable-cryptonly --enable-ssh && make && make check && sudo make install
+        # Use --enable-all to mirror the OS Check workflow that already
+        # passes wolfssl v5.9.1-stable on macos-latest. The narrower
+        # --enable-keygen --enable-cryptonly --enable-ssh combination
+        # fails configure on this matrix, while --enable-all is a
+        # superset and exercises the same APIs we need for wolfssh.
+        # Skip wolfssl's own `make check`; correctness is covered in its
+        # own CI and we only need libwolfssl installed below.
+        run: brew install automake && ./autogen.sh && ./configure --enable-all && make -j$(sysctl -n hw.ncpu) && sudo make install
 
       - uses: actions/checkout@v4
       - name: autogen
