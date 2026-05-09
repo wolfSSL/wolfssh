@@ -30,7 +30,7 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          clean: false
+          path: wolfssh
       - name: Inspect wolfssl install layout
         if: always()
         run: |
@@ -47,18 +47,20 @@ jobs:
           echo "--- /opt/homebrew/lib/libwolfssl* ---"
           ls -la /opt/homebrew/lib/libwolfssl* 2>/dev/null || echo "(none)"
       - name: autogen
+        working-directory: ./wolfssh
         run: ./autogen.sh
       - name: configure
-        # The canonical wolfSSL action installs to ${{ github.workspace }}/build-dir,
-        # not /usr/local/lib, so wolfssh's configure can't find libwolfssl
-        # without explicit LDFLAGS/CPPFLAGS — same pattern Paramiko SFTP uses.
+        working-directory: ./wolfssh
         run: ./configure LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include"
       - name: Show config.log on configure failure
         if: failure()
+        working-directory: ./wolfssh
         run: tail -200 config.log || true
       - name: make
+        working-directory: ./wolfssh
         run: make
       - name: make check
+        working-directory: ./wolfssh
         run: make check
         env:
           DYLD_LIBRARY_PATH: ${{ github.workspace }}/build-dir/lib
@@ -68,6 +70,6 @@ jobs:
         with:
           name: wolfssh-macos
           path: |
-            src/.libs/
-            src/libwolfssh*.la
+            wolfssh/src/.libs/
+            wolfssh/src/libwolfssh*.la
           if-no-files-found: warn
