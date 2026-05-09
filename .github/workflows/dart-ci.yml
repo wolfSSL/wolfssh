@@ -1,0 +1,31 @@
+name: Dart package CI
+
+on:
+  pull_request:
+    paths:
+      - 'dart/**'
+      - '.github/workflows/dart-ci.yml'
+  push:
+    branches: [master, main]
+    paths:
+      - 'dart/**'
+      - '.github/workflows/dart-ci.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dart
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+      - run: dart pub get
+      - run: dart format --output=none --set-exit-if-changed .
+      - run: dart analyze --fatal-infos
+      - run: dart test
+      - run: dart pub publish --dry-run

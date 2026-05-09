@@ -1,7 +1,12 @@
 name: wolfssh
-description: Dart FFI bindings for the wolfSSH client (host-key verification mandatory).
-version: 0.1.0-dev
-publish_to: none
+description: >-
+  Unofficial Dart FFI bindings for the wolfSSH client (host-key verification
+  mandatory). Not affiliated with wolfSSL Inc.
+version: 0.1.0
+homepage: https://github.com/j4qfrost/wolfssh
+repository: https://github.com/j4qfrost/wolfssh
+issue_tracker: https://github.com/j4qfrost/wolfssh/issues
+topics: [ssh, ffi, wolfssh, security, networking]
 
 environment:
   sdk: ^3.4.0

@@ -1,5 +1,13 @@
 # Critical security paths — wolfSSH Dart FFI
 
+> **Unofficial.** This package is an independent, community-maintained
+> Dart FFI wrapper around wolfSSH and is **not affiliated with, endorsed
+> by, or supported by wolfSSL Inc.** Vulnerabilities **in this binding**
+> (the Dart wrapper, the FFI trampolines, the CMake glue) should be
+> reported to this repository's issue tracker. Vulnerabilities in
+> wolfSSH or wolfSSL **upstream** should be reported to wolfSSL Inc.
+> directly (https://www.wolfssl.com/, `licensing@wolfssl.com`).
+
 This binding wraps wolfSSH **v1.5.0-stable** (April 17, 2026). Older
 versions are out of scope and **must not** be used: CVE-2025-11625 (a
 critical client host-verification bypass) was fixed in 1.4.21+. The

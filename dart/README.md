@@ -1,5 +1,13 @@
 # wolfssh (Dart FFI)
 
+> **Unofficial.** This package is an independent, community-maintained
+> Dart FFI wrapper around wolfSSH. It is **not affiliated with, endorsed
+> by, or supported by wolfSSL Inc.** For official wolfSSH support,
+> commercial licensing, or security advisories, contact wolfSSL Inc.
+> directly (`licensing@wolfssl.com`, https://www.wolfssl.com).
+> Bugs in *this binding* should be reported to this repository's
+> issue tracker — not to wolfSSL.
+
 Dart FFI bindings for the [wolfSSH](https://www.wolfssl.com/products/wolfssh/)
 client, vendored at v1.5.0-stable. Targets desktop (Linux, macOS,
 Windows) and mobile (Android, iOS) via CMake-driven native builds.
@@ -120,4 +128,6 @@ dart/
 
 ## License
 
-Inherits from wolfSSH (GPLv2 or commercial).
+Inherits from wolfSSH (GPLv3 or commercial). See [LICENSE](LICENSE) for the
+full GPLv3 text. For a commercial license, contact wolfSSL Inc. directly
+(see disclaimer at the top of this README).
