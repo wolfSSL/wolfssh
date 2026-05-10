@@ -7,9 +7,14 @@ import 'dart:typed_data';
 
 import 'package:wolfssh/wolfssh.dart';
 
+import 'posix_socket.dart';
+
 Future<void> main(List<String> args) async {
   if (args.length < 3) {
-    stderr.writeln('usage: connect_demo <host> <port> <user> [pinFingerprint]');
+    stderr.writeln(
+        'usage: connect_demo <ipv4-host> <port> <user> [pinFingerprint]');
+    stderr.writeln('  <ipv4-host> must be a dotted quad like 127.0.0.1.');
+    stderr.writeln('  Resolve hostnames externally; this demo skips DNS.');
     exit(64);
   }
   final host = args[0];
@@ -26,42 +31,36 @@ Future<void> main(List<String> args) async {
     userAuthStrategy: UserAuthStrategy.password(user, _readPassword()),
   );
 
-  final socket = await Socket.connect(host, port);
-  // Platform note: extracting the underlying fd from a dart:io Socket
-  // is platform-sensitive. On Dart 3.4+ this requires
-  // `socket.address` plus a syscall, or a tiny platform channel on
-  // Android/iOS. Demo elides this for brevity.
-  final fd = -1;
-  if (fd < 0) {
-    stderr.writeln('TODO: extract fd from Socket on this platform.');
-    await socket.close();
-    ctx.dispose();
-    return;
-  }
-
-  final session = WolfSshSession.connect(
-    context: ctx,
-    fileDescriptor: fd,
-    username: user,
-  );
+  // Open the socket via libc so we get a raw fd that wolfSSH_set_fd
+  // can drive directly. dart:io's Socket does not surface its
+  // underlying fd; see example/posix_socket.dart for the rationale.
+  final fd = connectIpv4Tcp(host, port);
 
   try {
-    session.writeAll(Uint8List.fromList('uptime\n'.codeUnits));
-    final buf = Uint8List(4096);
-    final status = session.readOnce(buf.length, buf);
-    switch (status) {
-      case IoCompleted(:final bytes):
-        stdout.add(buf.sublist(0, bytes));
-      case IoWantRead():
-      case IoWantWrite():
-        stderr.writeln('I/O not ready; integrate with select()/epoll.');
-      case IoEof():
-        stderr.writeln('peer closed channel');
+    final session = WolfSshSession.connect(
+      context: ctx,
+      fileDescriptor: fd,
+      username: user,
+    );
+    try {
+      session.writeAll(Uint8List.fromList('uptime\n'.codeUnits));
+      final buf = Uint8List(4096);
+      final status = session.readOnce(buf.length, buf);
+      switch (status) {
+        case IoCompleted(:final bytes):
+          stdout.add(buf.sublist(0, bytes));
+        case IoWantRead():
+        case IoWantWrite():
+          stderr.writeln('I/O not ready; integrate with select()/epoll.');
+        case IoEof():
+          stderr.writeln('peer closed channel');
+      }
+    } finally {
+      session.dispose();
     }
   } finally {
-    session.dispose();
+    closeFd(fd);
     ctx.dispose();
-    await socket.close();
   }
 }
 

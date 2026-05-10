@@ -21,6 +21,11 @@ export 'src/error.dart'
         IoEof;
 export 'src/auth/host_key.dart' show HostKeyVerifier;
 export 'src/auth/user_auth.dart'
-    show UserAuthStrategy, UserCredential, PasswordCredential, UserAuthOutcome;
+    show
+        UserAuthStrategy,
+        UserCredential,
+        PasswordCredential,
+        PublicKeyCredential,
+        UserAuthOutcome;
 export 'src/context.dart' show WolfSshContext;
 export 'src/session.dart' show WolfSshSession;

@@ -68,38 +68,21 @@ class WolfSshContext implements Finalizable {
   final NativeCallable<raw.WsCallbackPublicKeyCheckNative> _hostCallable;
   bool _disposed = false;
 
-  // Long-lived native buffer holding the most recently filled password.
-  // Owned by this context, allocated lazily by [_ensurePasswordBuffer], and
-  // zeroed + freed on [dispose]. wolfSSH copies the bytes into its
-  // outbound USERAUTH_REQUEST packet synchronously inside the user-auth
-  // callback, so the buffer only needs to outlive the callback — but
-  // keeping it for the context's lifetime makes the ownership story
-  // simple and avoids per-attempt allocations during repeated auth.
-  Pointer<Uint8> _pwBuf = nullptr;
-  int _pwBufCapacity = 0;
+  // Long-lived native buffers holding the most recently filled
+  // user-auth credential bytes. Owned by this context, allocated lazily
+  // on first use, and zeroed + freed in [dispose]. wolfSSH copies the
+  // bytes into its outbound USERAUTH_REQUEST packet synchronously
+  // inside the user-auth callback, so each buffer only needs to outlive
+  // the callback — but keeping them for the context's lifetime keeps
+  // ownership simple and avoids per-attempt allocations during
+  // repeated auth.
+  final _NativeByteBuffer _pwBuf = _NativeByteBuffer();
+  final _NativeByteBuffer _pkTypeBuf = _NativeByteBuffer();
+  final _NativeByteBuffer _pkPubBuf = _NativeByteBuffer();
+  final _NativeByteBuffer _pkPrivBuf = _NativeByteBuffer();
 
   WolfSshLibrary get library => _lib;
   Pointer<raw.WOLFSSH_CTX> get nativeHandle => _ctx;
-
-  /// Resize the password buffer to hold at least [size] bytes. Caller is
-  /// expected to immediately overwrite the contents — we do not zero on
-  /// grow because the next write is going to clobber it anyway.
-  Pointer<Uint8> _ensurePasswordBuffer(int size) {
-    if (size <= _pwBufCapacity && _pwBuf != nullptr) return _pwBuf;
-    if (_pwBuf != nullptr) {
-      // Zero the OLD buffer before freeing — defence-in-depth so the
-      // previous password doesn't sit around in freed heap longer than
-      // necessary.
-      _pwBuf.asTypedList(_pwBufCapacity).fillRange(0, _pwBufCapacity, 0);
-      malloc.free(_pwBuf);
-    }
-    // size==0 is legitimate (empty password); allocate one byte to avoid
-    // returning nullptr, which the C helper would treat as WS_BAD_ARGUMENT.
-    final allocSz = size == 0 ? 1 : size;
-    _pwBuf = malloc<Uint8>(allocSz);
-    _pwBufCapacity = allocSz;
-    return _pwBuf;
-  }
 
   void dispose() {
     if (_disposed) return;
@@ -109,14 +92,12 @@ class WolfSshContext implements Finalizable {
     _hostCallable.close();
     _lib.bindings.ctxFree(_ctx);
     _ctx = nullptr;
-    if (_pwBuf != nullptr) {
-      // SECURITY: zero the password before releasing the page back to
-      // the allocator.
-      _pwBuf.asTypedList(_pwBufCapacity).fillRange(0, _pwBufCapacity, 0);
-      malloc.free(_pwBuf);
-      _pwBuf = nullptr;
-      _pwBufCapacity = 0;
-    }
+    // SECURITY: zero credential bytes before releasing the pages back
+    // to the allocator. Affects passwords + private keys.
+    _pwBuf.disposeAndZero();
+    _pkTypeBuf.disposeAndZero();
+    _pkPubBuf.disposeAndZero();
+    _pkPrivBuf.disposeAndZero();
   }
 
   // No NativeFinalizer here: a finalizer would need the address of
@@ -125,6 +106,56 @@ class WolfSshContext implements Finalizable {
   // Callers MUST call dispose(); skipping it leaks the CTX (memory only,
   // no security regression). If we add a global library singleton we
   // can revisit this and attach a finalizer.
+}
+
+/// Small helper around a malloc'd `Pointer<Uint8>` buffer that grows
+/// monotonically and zeroes itself on shrink/dispose. Used to hold
+/// user-auth credential bytes (password, public key, private key) for
+/// the lifetime of the wolfSSH callback dispatch.
+///
+/// SECURITY: every transition that releases the underlying allocation
+/// (grow, dispose) zeroes the previous capacity first so credential
+/// bytes don't linger in freed heap pages longer than necessary.
+class _NativeByteBuffer {
+  Pointer<Uint8> _ptr = nullptr;
+  int _capacity = 0;
+
+  /// Resize so the buffer can hold at least [size] bytes; returns the
+  /// pointer. Caller is expected to immediately overwrite the contents,
+  /// so we do not zero on grow (the write will clobber the old bytes).
+  Pointer<Uint8> ensure(int size) {
+    if (size <= _capacity && _ptr != nullptr) return _ptr;
+    if (_ptr != nullptr) {
+      _ptr.asTypedList(_capacity).fillRange(0, _capacity, 0);
+      malloc.free(_ptr);
+    }
+    // size==0 is legitimate (empty credential); allocate one byte to
+    // avoid returning nullptr, which the C helpers treat as
+    // WS_BAD_ARGUMENT.
+    final allocSz = size == 0 ? 1 : size;
+    _ptr = malloc<Uint8>(allocSz);
+    _capacity = allocSz;
+    return _ptr;
+  }
+
+  /// Copy [src] into the buffer, growing if needed. Returns the pointer.
+  Pointer<Uint8> writeAll(List<int> src) {
+    final p = ensure(src.length);
+    if (src.isNotEmpty) {
+      p.asTypedList(src.length).setAll(0, src);
+    }
+    return p;
+  }
+
+  /// Zero the current contents and free the allocation.
+  void disposeAndZero() {
+    if (_ptr != nullptr) {
+      _ptr.asTypedList(_capacity).fillRange(0, _capacity, 0);
+      malloc.free(_ptr);
+      _ptr = nullptr;
+      _capacity = 0;
+    }
+  }
 }
 
 // Pointer-keyed map so the C-side callback (which only sees a void*)
@@ -170,23 +201,36 @@ int _userAuthTrampoline(int authType,
     if (authType == raw.WOLFSSH_USERAUTH_PASSWORD &&
         fill.credential is PasswordCredential) {
       final cred = fill.credential as PasswordCredential;
-      // Write the password bytes into the context-owned native buffer,
-      // then have the C glue point WS_UserAuthData.sf.password at it.
-      // We can't write to the union directly from Dart because the
-      // bindings flatten the union into a `_unionBody` byte array; the
-      // helper in native/wolfssh_dart_glue.c is the authoritative way
-      // to assign the {password, passwordSz} pair using the layout the
-      // wolfSSH C compiler agrees on.
+      // Bindings flatten the WS_UserAuthData union into a `_unionBody`
+      // byte array, so we can't write {password, passwordSz} from Dart
+      // directly — the C glue does the union member assignment using
+      // the compiler-agreed layout.
       final size = cred.password.length;
-      final buf = ctx._ensurePasswordBuffer(size);
-      if (size > 0) {
-        buf.asTypedList(size).setAll(0, cred.password);
+      final buf = ctx._pwBuf.writeAll(cred.password);
+      final rc = ctx._lib.bindings.dartFillPassword(data, buf, size);
+      if (rc != raw.WS_SUCCESS) {
+        return raw.WOLFSSH_USERAUTH_FAILURE;
       }
-      final fillRc = ctx._lib.bindings.dartFillPassword(data, buf, size);
-      if (fillRc != raw.WS_SUCCESS) {
-        // Fail closed if the helper rejected the inputs (e.g. null data
-        // pointer from a misuse path). Do NOT silently fall through to
-        // success.
+      return fill.outcome.code;
+    }
+    if (authType == raw.WOLFSSH_USERAUTH_PUBLICKEY &&
+        fill.credential is PublicKeyCredential) {
+      final cred = fill.credential as PublicKeyCredential;
+      // Stage all three byte slices in context-owned native buffers
+      // so they outlive the callback. wolfSSH derives the signature
+      // internally from the private key during the second
+      // USERAUTH_REQUEST round-trip.
+      final keyTypeBytes = cred.keyTypeBytes;
+      final typeP = ctx._pkTypeBuf.writeAll(keyTypeBytes);
+      final pubP = ctx._pkPubBuf.writeAll(cred.publicKey);
+      final privP = ctx._pkPrivBuf.writeAll(cred.privateKey);
+      final rc = ctx._lib.bindings.dartFillPubkey(
+        data,
+        typeP, keyTypeBytes.length,
+        pubP, cred.publicKey.length,
+        privP, cred.privateKey.length,
+      );
+      if (rc != raw.WS_SUCCESS) {
         return raw.WOLFSSH_USERAUTH_FAILURE;
       }
       return fill.outcome.code;

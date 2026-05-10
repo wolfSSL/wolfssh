@@ -25,17 +25,24 @@ Skeleton, work-in-progress. Implemented:
   * Fail-closed host-key trampoline (rejects on null/oversize/throw).
   * Fail-closed user-auth trampoline (returns
     `WOLFSSH_USERAUTH_FAILURE` on throw).
-  * Password user-auth: callback fills `WS_UserAuthData.sf.password`
-    via `wolfssh_dart_fill_password` in the C glue, with the bytes
-    held in a context-owned native buffer that is zeroed on dispose.
+  * Password and public-key user-auth: the callback fills
+    `WS_UserAuthData.sf.password` or `WS_UserAuthData.sf.publicKey`
+    via the `wolfssh_dart_fill_password` / `wolfssh_dart_fill_pubkey`
+    helpers in the C glue. Credential bytes live in context-owned
+    native buffers that are zeroed on dispose.
   * `WolfSshSession.connect`, `readOnce` / `writeOnce` / `writeAll`.
   * `IoStatus` sum type for `WS_WANT_READ` / `WS_WANT_WRITE` / `EOF`.
+  * `example/posix_socket.dart` — small libc FFI helper that opens an
+    IPv4 TCP socket and returns the raw fd, since `dart:io`'s `Socket`
+    does not expose its underlying fd. Linux/macOS only.
 
 Not yet implemented:
 
-  * Public-key user-auth (only password is wired today).
   * Channel API beyond the default stream channel.
   * SFTP, SCP, agent forwarding, server-side accept.
+  * Windows socket helper for the example (needs WSASocket).
+  * Hostname resolution in the example (consumers should call
+    `InternetAddress.lookup` and pass a literal IPv4 dotted-quad).
 
 ## Build
 

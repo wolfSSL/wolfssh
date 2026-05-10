@@ -63,7 +63,7 @@ WSD_EXPORT int wolfssh_dart_use_default_io(WOLFSSH_CTX* ctx) {
  * USERAUTH_REQUEST packet synchronously inside the callback dispatcher,
  * but a future upstream change could in principle defer the copy; if you
  * are reading this comment because of a use-after-free, audit the buffer
- * lifetime in lib/src/context.dart::_ensurePasswordBuffer.
+ * lifetime in lib/src/context.dart::_NativeByteBuffer.
  *
  * Returns 0 on success, WS_BAD_ARGUMENT on null inputs. The function
  * does NOT validate `passwordSz` against the protocol limit; that is the
@@ -79,6 +79,39 @@ WSD_EXPORT int wolfssh_dart_fill_password(
      * wolfSSH ABI; the cast is safe because wolfSSH only reads from it. */
     data->sf.password.password = (unsigned char*)password;
     data->sf.password.passwordSz = passwordSz;
+    return WS_SUCCESS;
+}
+
+/* Fill the public-key slot of a WS_UserAuthData from the user-auth
+ * callback. wolfSSH derives the signature internally from `privateKey`
+ * during the second USERAUTH_REQUEST round-trip, so the binding does
+ * not need to expose the signing primitive separately.
+ *
+ * Lifetime constraints match wolfssh_dart_fill_password: every byte
+ * pointer must outlive the callback. The Dart side holds them in
+ * long-lived WolfSshContext-owned buffers and zeroes them on dispose.
+ *
+ * Returns 0 on success, WS_BAD_ARGUMENT on null inputs. */
+WSD_EXPORT int wolfssh_dart_fill_pubkey(
+        WS_UserAuthData* data,
+        const unsigned char* keyType,    unsigned int keyTypeSz,
+        const unsigned char* publicKey,  unsigned int publicKeySz,
+        const unsigned char* privateKey, unsigned int privateKeySz) {
+    if (data == NULL || keyType == NULL || publicKey == NULL ||
+            privateKey == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+    data->sf.publicKey.publicKeyType   = (unsigned char*)keyType;
+    data->sf.publicKey.publicKeyTypeSz = keyTypeSz;
+    data->sf.publicKey.publicKey       = (unsigned char*)publicKey;
+    data->sf.publicKey.publicKeySz     = publicKeySz;
+    data->sf.publicKey.privateKey      = (unsigned char*)privateKey;
+    data->sf.publicKey.privateKeySz    = privateKeySz;
+    /* No prefilled signature: wolfSSH computes it from privateKey.
+     * `dataToSign` is populated by wolfSSH itself when it needs to
+     * call our callback again with a signing prompt — we do not touch
+     * it here. */
+    data->sf.publicKey.hasSignature    = 0;
     return WS_SUCCESS;
 }
 
