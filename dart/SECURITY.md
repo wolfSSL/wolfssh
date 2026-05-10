@@ -14,6 +14,30 @@ critical client host-verification bypass) was fixed in 1.4.21+. The
 CMakeLists.txt also pins a tested wolfSSL release; mismatched wolfSSL
 can defeat the protocol-hardening intent of upgrading wolfSSH.
 
+## CVE regression tests
+
+The `test/` directory contains PoC tests that drive the binding with
+the input shapes a regression of each documented CVE class would have
+to accept. Each is pure-Dart and runs in CI without the native lib:
+
+  * `test/cve_host_key_bypass_test.dart` — CVE-2025-11625 (host-key
+    bypass) mitigations at the trampoline layer. Exercises NULL key
+    pointer, zero-length, oversize (> 64 KiB), and a throwing
+    verifier; asserts each is rejected (return code 1) regardless of
+    the registered verifier's policy.
+  * `test/cve_user_auth_bypass_test.dart` — auth-callback bypass
+    class (e.g. CVE-2018-10933 in libssh). Pins every
+    `UserAuthOutcome.code` to the native `WOLFSSH_USERAUTH_*`
+    constant, asserts no non-success outcome aliases to SUCCESS, and
+    asserts `UserAuthFill.decline()` defaults to FAILURE never SUCCESS.
+  * `test/cve_ffi_buffer_overflow_test.dart` — integer-truncation
+    class at the Dart `int` ↔ wolfSSH `word32` boundary. Asserts
+    `checkBufferLen` allows 0 and 0xFFFFFFFF, rejects 0x100000000,
+    INT64-large, and any negative length.
+
+A red light on any of these tests is a security regression, not a
+flake. Investigate before merging.
+
 This document inventories every place where the FFI boundary touches a
 security-sensitive path. The numbering matches `lib/src/auth/` and
 `lib/src/context.dart` so reviewers can map docs ↔ code.
