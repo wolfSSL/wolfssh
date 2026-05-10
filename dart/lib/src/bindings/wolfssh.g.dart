@@ -204,6 +204,14 @@ typedef WolfSshSetPublicKeyCheckCtxDart = void Function(
 typedef _WolfSshDartVersionC = ffi.Pointer<ffi.Char> Function();
 typedef WolfSshDartVersionDart = ffi.Pointer<ffi.Char> Function();
 
+// wolfssh_dart_fill_password(WS_UserAuthData* data,
+//                            const byte* password,
+//                            word32 passwordSz) -> int
+typedef _WolfSshDartFillPasswordC = ffi.Int Function(
+    ffi.Pointer<WsUserAuthData>, ffi.Pointer<ffi.Uint8>, ffi.Uint32);
+typedef WolfSshDartFillPasswordDart = int Function(
+    ffi.Pointer<WsUserAuthData>, ffi.Pointer<ffi.Uint8>, int);
+
 /// Lookup table for the symbols. The wrapper resolves each symbol once at
 /// startup and reuses the resulting Dart function.
 final class WolfSshBindings {
@@ -252,7 +260,9 @@ final class WolfSshBindings {
             _WolfSshSetPublicKeyCheckCtxC,
             WolfSshSetPublicKeyCheckCtxDart>('wolfSSH_SetPublicKeyCheckCtx'),
         dartVersion = lib.lookupFunction<_WolfSshDartVersionC,
-            WolfSshDartVersionDart>('wolfssh_dart_version');
+            WolfSshDartVersionDart>('wolfssh_dart_version'),
+        dartFillPassword = lib.lookupFunction<_WolfSshDartFillPasswordC,
+            WolfSshDartFillPasswordDart>('wolfssh_dart_fill_password');
 
   final WolfSshInitDart init;
   final WolfSshCleanupDart cleanup;
@@ -273,4 +283,5 @@ final class WolfSshBindings {
   final WolfSshCtxSetPublicKeyCheckDart ctxSetPublicKeyCheck;
   final WolfSshSetPublicKeyCheckCtxDart setPublicKeyCheckCtx;
   final WolfSshDartVersionDart dartVersion;
+  final WolfSshDartFillPasswordDart dartFillPassword;
 }

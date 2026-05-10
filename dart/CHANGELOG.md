@@ -7,6 +7,9 @@ Initial release.
 - FFI bindings for the wolfSSH client at v1.5.0-stable.
 - `WolfSshContext` with mandatory `HostKeyVerifier` and `UserAuthStrategy`.
 - Fail-closed host-key and user-auth callback trampolines.
+- Password user-auth: callback fills `WS_UserAuthData.sf.password` via
+  the `wolfssh_dart_fill_password` C helper, with the password bytes
+  stored in a context-owned native buffer that is zeroed on dispose.
 - `WolfSshSession.connect`, `readOnce` / `writeOnce` / `writeAll`.
 - `IoStatus` sum type for `WS_WANT_READ` / `WS_WANT_WRITE` / `EOF`.
 - PoC exploit tests covering the binding's CVE mitigations:

@@ -11,6 +11,12 @@
  *   2. wolfssh_dart_version - compile-time version string for the loaded
  *      library, so the Dart side can refuse to run against an older binary
  *      (defence-in-depth against accidental ABI mismatch).
+ *
+ *   3. wolfssh_dart_fill_password - assigns the password pointer + size
+ *      into the WS_UserAuthData union member. Dart cannot easily express
+ *      a write into a tagged union member from inside an FFI struct, so
+ *      this helper does the field assignment from C where the union
+ *      layout is statically known to the compiler.
  */
 
 #include <wolfssh/ssh.h>
@@ -47,3 +53,32 @@ WSD_EXPORT int wolfssh_dart_use_default_io(WOLFSSH_CTX* ctx) {
     (void)ctx;
     return WS_SUCCESS;
 }
+
+/* Fill the password slot of a WS_UserAuthData from the user-auth callback.
+ *
+ * SECURITY: caller (the Dart trampoline) is responsible for keeping
+ * `password` alive at least until wolfSSH_connect returns. The Dart side
+ * holds the buffer in a long-lived allocation owned by WolfSshContext and
+ * zeroes it on dispose. wolfSSH copies the bytes into its outbound
+ * USERAUTH_REQUEST packet synchronously inside the callback dispatcher,
+ * but a future upstream change could in principle defer the copy; if you
+ * are reading this comment because of a use-after-free, audit the buffer
+ * lifetime in lib/src/context.dart::_ensurePasswordBuffer.
+ *
+ * Returns 0 on success, WS_BAD_ARGUMENT on null inputs. The function
+ * does NOT validate `passwordSz` against the protocol limit; that is the
+ * Dart-side checkBufferLen helper's job. */
+WSD_EXPORT int wolfssh_dart_fill_password(
+        WS_UserAuthData* data,
+        const unsigned char* password,
+        unsigned int passwordSz) {
+    if (data == NULL || password == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+    /* `data->sf.password.password` is `byte*` not `const byte*` in the
+     * wolfSSH ABI; the cast is safe because wolfSSH only reads from it. */
+    data->sf.password.password = (unsigned char*)password;
+    data->sf.password.passwordSz = passwordSz;
+    return WS_SUCCESS;
+}
+

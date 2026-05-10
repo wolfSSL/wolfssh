@@ -25,13 +25,15 @@ Skeleton, work-in-progress. Implemented:
   * Fail-closed host-key trampoline (rejects on null/oversize/throw).
   * Fail-closed user-auth trampoline (returns
     `WOLFSSH_USERAUTH_FAILURE` on throw).
+  * Password user-auth: callback fills `WS_UserAuthData.sf.password`
+    via `wolfssh_dart_fill_password` in the C glue, with the bytes
+    held in a context-owned native buffer that is zeroed on dispose.
   * `WolfSshSession.connect`, `readOnce` / `writeOnce` / `writeAll`.
   * `IoStatus` sum type for `WS_WANT_READ` / `WS_WANT_WRITE` / `EOF`.
 
 Not yet implemented:
 
-  * Filling `WS_UserAuthData.sf.password` from Dart (requires a small
-    additional C shim — see comment in `lib/src/context.dart`).
+  * Public-key user-auth (only password is wired today).
   * Channel API beyond the default stream channel.
   * SFTP, SCP, agent forwarding, server-side accept.
 

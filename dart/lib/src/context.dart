@@ -1,5 +1,7 @@
 import 'dart:ffi';
 
+import 'package:ffi/ffi.dart';
+
 import 'auth/host_key.dart';
 import 'auth/user_auth.dart';
 import 'bindings/wolfssh.g.dart' as raw;
@@ -66,8 +68,38 @@ class WolfSshContext implements Finalizable {
   final NativeCallable<raw.WsCallbackPublicKeyCheckNative> _hostCallable;
   bool _disposed = false;
 
+  // Long-lived native buffer holding the most recently filled password.
+  // Owned by this context, allocated lazily by [_ensurePasswordBuffer], and
+  // zeroed + freed on [dispose]. wolfSSH copies the bytes into its
+  // outbound USERAUTH_REQUEST packet synchronously inside the user-auth
+  // callback, so the buffer only needs to outlive the callback — but
+  // keeping it for the context's lifetime makes the ownership story
+  // simple and avoids per-attempt allocations during repeated auth.
+  Pointer<Uint8> _pwBuf = nullptr;
+  int _pwBufCapacity = 0;
+
   WolfSshLibrary get library => _lib;
   Pointer<raw.WOLFSSH_CTX> get nativeHandle => _ctx;
+
+  /// Resize the password buffer to hold at least [size] bytes. Caller is
+  /// expected to immediately overwrite the contents — we do not zero on
+  /// grow because the next write is going to clobber it anyway.
+  Pointer<Uint8> _ensurePasswordBuffer(int size) {
+    if (size <= _pwBufCapacity && _pwBuf != nullptr) return _pwBuf;
+    if (_pwBuf != nullptr) {
+      // Zero the OLD buffer before freeing — defence-in-depth so the
+      // previous password doesn't sit around in freed heap longer than
+      // necessary.
+      _pwBuf.asTypedList(_pwBufCapacity).fillRange(0, _pwBufCapacity, 0);
+      malloc.free(_pwBuf);
+    }
+    // size==0 is legitimate (empty password); allocate one byte to avoid
+    // returning nullptr, which the C helper would treat as WS_BAD_ARGUMENT.
+    final allocSz = size == 0 ? 1 : size;
+    _pwBuf = malloc<Uint8>(allocSz);
+    _pwBufCapacity = allocSz;
+    return _pwBuf;
+  }
 
   void dispose() {
     if (_disposed) return;
@@ -77,6 +109,14 @@ class WolfSshContext implements Finalizable {
     _hostCallable.close();
     _lib.bindings.ctxFree(_ctx);
     _ctx = nullptr;
+    if (_pwBuf != nullptr) {
+      // SECURITY: zero the password before releasing the page back to
+      // the allocator.
+      _pwBuf.asTypedList(_pwBufCapacity).fillRange(0, _pwBufCapacity, 0);
+      malloc.free(_pwBuf);
+      _pwBuf = nullptr;
+      _pwBufCapacity = 0;
+    }
   }
 
   // No NativeFinalizer here: a finalizer would need the address of
@@ -130,15 +170,25 @@ int _userAuthTrampoline(int authType,
     if (authType == raw.WOLFSSH_USERAUTH_PASSWORD &&
         fill.credential is PasswordCredential) {
       final cred = fill.credential as PasswordCredential;
-      // wolfSSH expects the callback to populate
-      // data.sf.password.{password,passwordSz}. The union body lives at
-      // a fixed offset after the head; rather than recomputing offsets
-      // we rely on the C side reading whatever the strategy wrote into
-      // the password slot. Implementation note: filling the union from
-      // Dart is brittle and is deferred to a hand-written C shim
-      // (native/wolfssh_dart_glue.c) — this trampoline currently only
-      // signals success/failure based on the strategy. Connecting with
-      // a password-only flow therefore requires the C shim path.
+      // Write the password bytes into the context-owned native buffer,
+      // then have the C glue point WS_UserAuthData.sf.password at it.
+      // We can't write to the union directly from Dart because the
+      // bindings flatten the union into a `_unionBody` byte array; the
+      // helper in native/wolfssh_dart_glue.c is the authoritative way
+      // to assign the {password, passwordSz} pair using the layout the
+      // wolfSSH C compiler agrees on.
+      final size = cred.password.length;
+      final buf = ctx._ensurePasswordBuffer(size);
+      if (size > 0) {
+        buf.asTypedList(size).setAll(0, cred.password);
+      }
+      final fillRc = ctx._lib.bindings.dartFillPassword(data, buf, size);
+      if (fillRc != raw.WS_SUCCESS) {
+        // Fail closed if the helper rejected the inputs (e.g. null data
+        // pointer from a misuse path). Do NOT silently fall through to
+        // success.
+        return raw.WOLFSSH_USERAUTH_FAILURE;
+      }
       return fill.outcome.code;
     }
     return fill.outcome.code;
