@@ -3835,7 +3835,8 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     if (GetUint32(&strSz, data, maxSz, &idx) != WS_SUCCESS) {
         return WS_BUFFER_E;
     }
-    if (strSz > maxSz - WOLFSSH_SFTP_HEADER - idx) {
+    /* Bound strSz to the maximum SFTP read/write payload size. */
+    if (strSz > WOLFSSH_MAX_SFTP_RW) {
         return WS_BUFFER_E;
     }
 
@@ -3942,7 +3943,8 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     if (GetUint32(&strSz, data, maxSz, &idx) != WS_SUCCESS) {
         return WS_BUFFER_E;
     }
-    if (strSz > maxSz - WOLFSSH_SFTP_HEADER - idx) {
+    /* Bound strSz to the maximum SFTP read/write payload size. */
+    if (strSz > WOLFSSH_MAX_SFTP_RW) {
         return WS_BUFFER_E;
     }
 
