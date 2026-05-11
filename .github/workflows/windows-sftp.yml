@@ -36,12 +36,12 @@ jobs:
             artifact_name: wolfssh-windows-build-large-rw
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
         repository: wolfssl/wolfssl
         path: wolfssl
 
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
         path: wolfssh
 
@@ -65,7 +65,7 @@ jobs:
 
     - name: Upload wolfSSL build artifacts
       if: matrix.test_type == 'basic'
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: wolfssl-windows-build
         path: |
@@ -101,7 +101,7 @@ jobs:
       run: msbuild /m /p:PlatformToolset=v142 /p:Platform=${{env.BUILD_PLATFORM}} /p:WindowsTargetPlatformVersion=${{env.TARGET_PLATFORM}} /p:Configuration=${{env.WOLFSSH_BUILD_CONFIGURATION}} ${{env.SOLUTION_FILE_PATH}}
 
     - name: Upload wolfSSH build artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: ${{ matrix.artifact_name }}
         if-no-files-found: error
@@ -121,18 +121,18 @@ jobs:
             artifact_name: wolfssh-windows-build-large-rw
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
         path: wolfssh
 
     - name: Download wolfSSH build artifacts
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: ${{ matrix.artifact_name }}
         path: .
 
     - name: Download wolfSSL build artifacts
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: wolfssl-windows-build
         path: .

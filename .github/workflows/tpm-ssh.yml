@@ -12,19 +12,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
         path: wolfssh
 
     # Clone dependencies
     - name: Clone wolfSSL
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         repository: wolfSSL/wolfssl
         path: wolfssl
 
     - name: Clone wolfTPM
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         repository: wolfSSL/wolftpm
         path: wolftpm
@@ -132,7 +132,7 @@ jobs:
     # Archive artifacts for debugging
     - name: Archive test artifacts
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: test-artifacts
         path: |

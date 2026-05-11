@@ -38,7 +38,7 @@ jobs:
     timeout-minutes: 4
     steps:
       - name: Checking cache for wolfssl
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: cache-wolfssl
         with:
           path: build-dir/
@@ -70,13 +70,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checking cache for wolfssl
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build-dir/
           key: wolfssh-sftp-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}-keygen
           fail-on-cache-miss: true
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           path: wolfssh/
 
@@ -154,13 +154,13 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checking cache for wolfssl
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build-dir/
           key: wolfssh-sftp-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}-keygen
           fail-on-cache-miss: true
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           path: wolfssh/
 

@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout wolfSSL
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: wolfssl/wolfssl
           path: wolfssl
@@ -35,7 +35,7 @@ jobs:
         run: tar -zcf wolfssl-install.tgz /usr/local/lib/libwolfssl* /usr/local/include/wolfssl
 
       - name: Upload built lib
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wolfssl-multi-compiler
           path: wolfssl-install.tgz
@@ -70,10 +70,10 @@ jobs:
           sudo apt-get install -y ${{ matrix.cc }}
 
       - name: Checkout wolfSSH
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download wolfSSL
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: wolfssl-multi-compiler
 

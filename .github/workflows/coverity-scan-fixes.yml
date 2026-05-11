@@ -12,7 +12,7 @@ jobs:
     timeout-minutes: 4
     steps:
       - name: Checking cache for wolfSSL
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: cache-wolfssl
         with:
           path: build-dir
@@ -36,12 +36,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checking out wolfSSH
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: master
 
       - name: Checking cache for wolfssl
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build-dir
           key: wolfssh-coverity-wolfssl

@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 4
     steps:
       - name: Checking cache for liboqs
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: cache-liboqs
         with:
           path: build-dir/
@@ -28,7 +28,7 @@ jobs:
 
       - name: Checkout liboqs
         if: steps.cache-liboqs.outputs.cache-hit != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: open-quantum-safe/liboqs
           ref: ${{ env.LIBOQS_REF }}
@@ -50,7 +50,7 @@ jobs:
     timeout-minutes: 4
     steps:
       - name: Checking cache for wolfssl
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: cache-wolfssl
         with:
           path: build-dir/
@@ -75,14 +75,14 @@ jobs:
     needs: [build_wolfssl, build_liboqs]
     steps:
       - name: Checking cache for liboqs
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build-dir/
           key: wolfssh-mlkem-liboqs-${{ env.LIBOQS_REF }}-${{ env.OS_REF }}
           fail-on-cache-miss: true
 
       - name: Checking cache for wolfssl
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build-dir/
           key: wolfssh-mlkem-wolfssl-${{ env.WOLFSSL_REF }}-${{ env.OS_REF }}
