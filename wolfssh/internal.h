@@ -1372,6 +1372,10 @@ enum WS_MessageIdLimits {
             const byte* encDigest, word32 encDigestSz,
             RsaKey* key, void* heap);
 #endif /* !WOLFSSH_NO_RSA */
+#ifndef WOLFSSH_NO_ED25519
+    WOLFSSH_API int wolfSSH_TestDoUserAuthRequestEd25519(WOLFSSH* ssh,
+            WS_UserAuthData* authData);
+#endif /* !WOLFSSH_NO_ED25519 */
 #endif /* WOLFSSH_TEST_INTERNAL */
 
 /* dynamic memory types */

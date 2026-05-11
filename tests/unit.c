@@ -1692,6 +1692,214 @@ done:
 }
 
 #endif /* !WOLFSSH_NO_RSA */
+
+#if !defined(WOLFSSH_NO_ED25519) && defined(HAVE_ED25519) && \
+    defined(HAVE_ED25519_SIGN) && defined(HAVE_ED25519_VERIFY) && \
+    defined(WOLFSSL_ED25519_STREAMING_VERIFY)
+
+/* Locally-generated Ed25519 keypair for the DoUserAuthRequestEd25519 test.
+ * 32-byte private seed followed by the 32-byte raw public key. Created with
+ * ssh-keygen and decoded from the OpenSSH private key format so the test is
+ * deterministic and does not depend on an RNG. */
+static const byte unitTestEd25519Priv[32] = {
+    0x05, 0xf5, 0x9c, 0x02, 0x55, 0x93, 0x32, 0x93,
+    0xb9, 0xc2, 0x2e, 0xa7, 0x20, 0x05, 0x33, 0x0c,
+    0x40, 0xcd, 0xfa, 0xff, 0x73, 0xe4, 0x4a, 0xe1,
+    0x50, 0x2a, 0x4b, 0x37, 0x20, 0x66, 0xc5, 0x56
+};
+static const byte unitTestEd25519Pub[32] = {
+    0x33, 0x76, 0xaf, 0x20, 0x97, 0xce, 0x38, 0xdf,
+    0x5a, 0x76, 0x62, 0xfc, 0xb2, 0x87, 0x6e, 0x9d,
+    0xd3, 0x9e, 0x85, 0x87, 0xf3, 0x0e, 0x72, 0x6c,
+    0x1e, 0xc0, 0x01, 0xe2, 0x81, 0x96, 0xb8, 0x49
+};
+
+/* Write a 32-bit big-endian length prefix at out. */
+static void Ed25519Test_PutLen(byte* out, word32 v)
+{
+    out[0] = (byte)(v >> 24);
+    out[1] = (byte)(v >> 16);
+    out[2] = (byte)(v >>  8);
+    out[3] = (byte)(v);
+}
+
+/* DoUserAuthRequestEd25519 unit test
+ *
+ * Drives DoUserAuthRequestEd25519 directly with a fully-formed Ed25519
+ * USERAUTH_REQUEST and asserts (1) a correct signature returns WS_SUCCESS
+ * and (2) a tampered signature returns either WS_ED25519_E or
+ * WS_CRYPTO_FAILED. This is the test that makes the
+ * `status ? WS_SUCCESS : WS_ED25519_E` style mapping load-bearing -- without
+ * the negative case any mutation that hard-codes WS_SUCCESS or inverts the
+ * status would silently survive.
+ *
+ * The Ed25519 verifier in wolfSSL has two failure paths reachable from this
+ * function: wc_ed25519_verify_msg_final returns non-zero (WS_CRYPTO_FAILED)
+ * or returns zero with status=0 (WS_ED25519_E). Different wolfSSL versions
+ * have routed bad signatures through either branch; we accept either failure
+ * code so the test stays portable while still killing the most dangerous
+ * mutation -- turning either error into WS_SUCCESS.
+ */
+static int test_DoUserAuthRequestEd25519(void)
+{
+    static const char keyTypeName[] = "ssh-ed25519";
+    static const char username[]    = "wolfssh";
+    static const char serviceName[] = "ssh-connection";
+    static const char authName[]    = "publickey";
+    const word32 keyTypeNameSz = (word32)(sizeof(keyTypeName) - 1);
+    const word32 usernameSz    = (word32)(sizeof(username) - 1);
+    const word32 serviceNameSz = (word32)(sizeof(serviceName) - 1);
+    const word32 authNameSz    = (word32)(sizeof(authName) - 1);
+
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    ed25519_key signingKey;
+    int signingKeyInit = 0;
+    WS_UserAuthData authData;
+    byte pubKeyBlob[64];
+    byte sigBlob[128];
+    byte badSigBlob[128];
+    byte dataToSign[256];
+    byte checkData[512];
+    byte sig[ED25519_SIG_SIZE];
+    word32 pubKeyBlobSz = 0;
+    word32 sigBlobSz    = 0;
+    word32 dataToSignSz = 0;
+    word32 checkDataSz  = 0;
+    word32 sigSz        = sizeof(sig);
+    word32 off;
+    int result = 0;
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL) return -600;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -601; goto done; }
+
+    /* Stub a session id so the verify hash has something to absorb. */
+    ssh->sessionIdSz = 16;
+    WMEMSET(ssh->sessionId, 0xA5, ssh->sessionIdSz);
+
+    /* Load the embedded Ed25519 keypair for signing. */
+    if (wc_ed25519_init(&signingKey) != 0) { result = -602; goto done; }
+    signingKeyInit = 1;
+    if (wc_ed25519_import_private_key(unitTestEd25519Priv,
+                (word32)sizeof(unitTestEd25519Priv),
+                unitTestEd25519Pub, (word32)sizeof(unitTestEd25519Pub),
+                &signingKey) != 0) {
+        result = -603; goto done;
+    }
+
+    /* Build the SSH public key blob: string "ssh-ed25519" || string pubkey */
+    off = 0;
+    Ed25519Test_PutLen(pubKeyBlob + off, keyTypeNameSz); off += UINT32_SZ;
+    WMEMCPY(pubKeyBlob + off, keyTypeName, keyTypeNameSz);
+    off += keyTypeNameSz;
+    Ed25519Test_PutLen(pubKeyBlob + off,
+            (word32)sizeof(unitTestEd25519Pub));
+    off += UINT32_SZ;
+    WMEMCPY(pubKeyBlob + off, unitTestEd25519Pub,
+            sizeof(unitTestEd25519Pub));
+    off += (word32)sizeof(unitTestEd25519Pub);
+    pubKeyBlobSz = off;
+
+    /* Build the dataToSign region the same way the wire packet would lay it
+     * out: username || service || authmethod || hasSig=1 || pkAlgo || pkBlob.
+     * DoUserAuthRequestEd25519 hashes exactly this region. */
+    off = 0;
+    Ed25519Test_PutLen(dataToSign + off, usernameSz); off += UINT32_SZ;
+    WMEMCPY(dataToSign + off, username, usernameSz); off += usernameSz;
+    Ed25519Test_PutLen(dataToSign + off, serviceNameSz); off += UINT32_SZ;
+    WMEMCPY(dataToSign + off, serviceName, serviceNameSz);
+    off += serviceNameSz;
+    Ed25519Test_PutLen(dataToSign + off, authNameSz); off += UINT32_SZ;
+    WMEMCPY(dataToSign + off, authName, authNameSz); off += authNameSz;
+    dataToSign[off++] = 1; /* hasSignature */
+    Ed25519Test_PutLen(dataToSign + off, keyTypeNameSz); off += UINT32_SZ;
+    WMEMCPY(dataToSign + off, keyTypeName, keyTypeNameSz);
+    off += keyTypeNameSz;
+    Ed25519Test_PutLen(dataToSign + off, pubKeyBlobSz); off += UINT32_SZ;
+    WMEMCPY(dataToSign + off, pubKeyBlob, pubKeyBlobSz); off += pubKeyBlobSz;
+    dataToSignSz = off;
+
+    /* Build the bytes that get signed: sessionIdSz || sessionId ||
+     * MSGID_USERAUTH_REQUEST || dataToSign. Mirrors BuildUserAuthRequestEd25519
+     * on the client side. */
+    off = 0;
+    Ed25519Test_PutLen(checkData + off, ssh->sessionIdSz); off += UINT32_SZ;
+    WMEMCPY(checkData + off, ssh->sessionId, ssh->sessionIdSz);
+    off += ssh->sessionIdSz;
+    checkData[off++] = MSGID_USERAUTH_REQUEST;
+    WMEMCPY(checkData + off, dataToSign, dataToSignSz);
+    off += dataToSignSz;
+    checkDataSz = off;
+
+    if (wc_ed25519_sign_msg(checkData, checkDataSz, sig, &sigSz,
+                &signingKey) != 0) {
+        result = -604; goto done;
+    }
+
+    /* Build the SSH signature blob: string "ssh-ed25519" || string sig */
+    off = 0;
+    Ed25519Test_PutLen(sigBlob + off, keyTypeNameSz); off += UINT32_SZ;
+    WMEMCPY(sigBlob + off, keyTypeName, keyTypeNameSz);
+    off += keyTypeNameSz;
+    Ed25519Test_PutLen(sigBlob + off, sigSz); off += UINT32_SZ;
+    WMEMCPY(sigBlob + off, sig, sigSz); off += sigSz;
+    sigBlobSz = off;
+
+    /* Populate authData the way DoUserAuthRequest/DoUserAuthRequestPublicKey
+     * would before dispatching to DoUserAuthRequestEd25519. */
+    WMEMSET(&authData, 0, sizeof(authData));
+    authData.type        = WOLFSSH_USERAUTH_PUBLICKEY;
+    authData.username    = (const byte*)username;
+    authData.usernameSz  = usernameSz;
+    authData.serviceName = (const byte*)serviceName;
+    authData.serviceNameSz = serviceNameSz;
+    authData.authName    = (const byte*)authName;
+    authData.authNameSz  = authNameSz;
+    authData.sf.publicKey.dataToSign      = dataToSign;
+    authData.sf.publicKey.publicKeyType   = (const byte*)keyTypeName;
+    authData.sf.publicKey.publicKeyTypeSz = keyTypeNameSz;
+    authData.sf.publicKey.publicKey       = pubKeyBlob;
+    authData.sf.publicKey.publicKeySz     = pubKeyBlobSz;
+    authData.sf.publicKey.hasSignature    = 1;
+    authData.sf.publicKey.signature       = sigBlob;
+    authData.sf.publicKey.signatureSz     = sigBlobSz;
+
+    /* Positive case: untouched signature must verify. */
+    ret = wolfSSH_TestDoUserAuthRequestEd25519(ssh, &authData);
+    if (ret != WS_SUCCESS) {
+        printf("DoUserAuthRequestEd25519 positive: ret=%d (expected %d)\n",
+                ret, WS_SUCCESS);
+        result = -605; goto done;
+    }
+
+    /* Negative case: flip a byte inside the raw signature (skip past the
+     * 4 + keyTypeNameSz + 4 header so we land in the actual signature
+     * material). Must NOT return WS_SUCCESS. */
+    WMEMCPY(badSigBlob, sigBlob, sigBlobSz);
+    badSigBlob[UINT32_SZ + keyTypeNameSz + UINT32_SZ + 10] ^= 0xFF;
+    authData.sf.publicKey.signature = badSigBlob;
+
+    ret = wolfSSH_TestDoUserAuthRequestEd25519(ssh, &authData);
+    if (ret != WS_ED25519_E && ret != WS_CRYPTO_FAILED) {
+        printf("DoUserAuthRequestEd25519 tampered: ret=%d\n", ret);
+        result = -606; goto done;
+    }
+
+done:
+    if (signingKeyInit)
+        wc_ed25519_free(&signingKey);
+    if (ssh != NULL)
+        wolfSSH_free(ssh);
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+#endif /* Ed25519 verify test guards */
+
 #endif /* WOLFSSH_TEST_INTERNAL */
 
 /* Error Code And Message Test */
@@ -1799,6 +2007,14 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #if !defined(WOLFSSH_NO_RSA)
     unitResult = test_RsaVerify_BadDigest();
     printf("RsaVerify_BadDigest: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+#if !defined(WOLFSSH_NO_ED25519) && defined(HAVE_ED25519) && \
+    defined(HAVE_ED25519_SIGN) && defined(HAVE_ED25519_VERIFY) && \
+    defined(WOLFSSL_ED25519_STREAMING_VERIFY)
+    unitResult = test_DoUserAuthRequestEd25519();
+    printf("DoUserAuthRequestEd25519: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif

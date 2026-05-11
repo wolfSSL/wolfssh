@@ -8006,14 +8006,14 @@ static int DoUserAuthRequestEd25519(WOLFSSH* ssh,
                 key_ptr);
     }
 
-    if(ret == WS_SUCCESS) {
+    if (ret == WS_SUCCESS) {
         temp[0] = MSGID_USERAUTH_REQUEST;
         ret = wc_ed25519_verify_msg_update(temp, MSG_ID_SZ, key_ptr);
     }
 
     /* The rest of the fields in the signature are already
     * in the buffer. Just need to account for the sizes. */
-    if(ret == WS_SUCCESS) {
+    if (ret == WS_SUCCESS) {
         ret = wc_ed25519_verify_msg_update(pk->dataToSign,
                                     authData->usernameSz +
                                     authData->serviceNameSz +
@@ -8022,16 +8022,17 @@ static int DoUserAuthRequestEd25519(WOLFSSH* ssh,
                                     (UINT32_SZ * 5), key_ptr);
     }
 
-    if(ret == WS_SUCCESS) {
+    if (ret == WS_SUCCESS) {
         int status = 0;
-        ret = wc_ed25519_verify_msg_final(pk->signature + i, sz,
+        int verifyRet = wc_ed25519_verify_msg_final(pk->signature + i, sz,
                 &status, key_ptr);
-        if (ret != 0) {
-            WLOG(WS_LOG_DEBUG, "Could not verify signature");
+        if (verifyRet != 0) {
+            WLOG(WS_LOG_DEBUG,
+                    "DUAREd: Signature Verify fail (%d)", verifyRet);
             ret = WS_CRYPTO_FAILED;
         }
-        else
-            ret = status ? WS_SUCCESS : WS_ED25519_E;
+        else if (status == 0)
+            ret = WS_ED25519_E;
     }
 
     if (key_ptr) {
@@ -18094,5 +18095,19 @@ int wolfSSH_TestRsaVerify(const byte* sig, word32 sigSz,
 }
 
 #endif /* !WOLFSSH_NO_RSA */
+
+#ifndef WOLFSSH_NO_ED25519
+
+int wolfSSH_TestDoUserAuthRequestEd25519(WOLFSSH* ssh,
+        WS_UserAuthData* authData)
+{
+    if (authData == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    return DoUserAuthRequestEd25519(ssh, &authData->sf.publicKey, authData);
+}
+
+#endif /* !WOLFSSH_NO_ED25519 */
 
 #endif /* WOLFSSH_TEST_INTERNAL */
