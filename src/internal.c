@@ -188,6 +188,9 @@ Flags:
     Set the number of Miller-Rabin rounds used when the client checks the
     server's prime group when using GEX key exchange. The default is 8. More
     rounds are better, but also takes a lot longer.
+  WOLFSSH_DEFAULT_MSG_HIGHWATER_MARK
+    Set the default value for the number of messages to send or receive before
+    calling the highwater callback function. By default this forces a rekey.
 */
 
 static const char sshProtoIdStr[] = "SSH-2.0-wolfSSHv"
@@ -544,7 +547,10 @@ static int HashUpdate(wc_HashAlg* hash, enum wc_HashType type,
 static INLINE int HighwaterCheck(WOLFSSH* ssh, byte side)
 {
     int ret = WS_SUCCESS;
+    int fire = 0;
 
+    /* RFC 4253 Sec 9: bound bytes per key (txCount/rxCount reset on rekey)
+     * to limit cipher keystream/IV exhaustion under a single key. */
     if (!ssh->highwaterFlag && ssh->highwaterMark &&
         (ssh->txCount >= ssh->highwaterMark ||
          ssh->rxCount >= ssh->highwaterMark)) {
@@ -553,10 +559,28 @@ static INLINE int HighwaterCheck(WOLFSSH* ssh, byte side)
              (side == WOLFSSH_HWSIDE_TRANSMIT) ? "Transmit" : "Receive");
 
         ssh->highwaterFlag = 1;
-
-        if (ssh->ctx->highwaterCb)
-            ret = ssh->ctx->highwaterCb(side, ssh->highwaterCtx);
+        fire = 1;
     }
+
+    /* RFC 4344 Sec 3.1: rekey before the 32-bit SSH sequence number wraps
+     * to prevent MAC/nonce reuse. Counter is per-key (resets on rekey),
+     * not the absolute ssh->seq (which does not reset); default 2^31
+     * keeps each epoch comfortably under the 2^32 wrap. */
+    if (!ssh->msgHighwaterFlag && ssh->msgHighwaterMark &&
+        (ssh->txMsgCount >= ssh->msgHighwaterMark ||
+         ssh->rxMsgCount >= ssh->msgHighwaterMark)) {
+
+        WLOG(WS_LOG_DEBUG, "%s over msg high water mark",
+             (side == WOLFSSH_HWSIDE_TRANSMIT) ? "Transmit" : "Receive");
+
+        ssh->msgHighwaterFlag = 1;
+        fire = 1;
+    }
+
+
+    if (fire && ssh->ctx->highwaterCb)
+        ret = ssh->ctx->highwaterCb(side, ssh->highwaterCtx);
+
     return ret;
 }
 
@@ -1023,6 +1047,7 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
     ctx->ioSendCb = wsEmbedSend;
 #endif /* WOLFSSH_USER_IO */
     ctx->highwaterMark = DEFAULT_HIGHWATER_MARK;
+    ctx->msgHighwaterMark = WOLFSSH_DEFAULT_MSG_HIGHWATER_MARK;
     ctx->highwaterCb = wsHighwater;
 #if defined(WOLFSSH_SCP) && !defined(WOLFSSH_SCP_USER_CALLBACKS)
     ctx->scpRecvCb = wsScpRecvCallback;
@@ -1225,6 +1250,7 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->ioReadCtx   = &ssh->rfd;  /* prevent invalid access if not correctly */
     ssh->ioWriteCtx  = &ssh->wfd;  /* set */
     ssh->highwaterMark = ctx->highwaterMark;
+    ssh->msgHighwaterMark = ctx->msgHighwaterMark;
     ssh->highwaterCtx  = (void*)ssh;
     ssh->reqSuccessCtx = (void*)ssh;
     ssh->fs            = NULL;
@@ -6339,7 +6365,9 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
     if (ret == WS_SUCCESS) {
         ssh->rxCount = 0;
+        ssh->rxMsgCount = 0;
         ssh->highwaterFlag = 0;
+        ssh->msgHighwaterFlag = 0;
 
         /* Clear peer is keying flag */
         ssh->isKeying &= ~WOLFSSH_PEER_IS_KEYING;
@@ -10226,7 +10254,23 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
         idx += padSz;
         ssh->inputBuffer.idx = idx;
         ssh->peerSeq++;
+        ssh->rxMsgCount++;
         *bufferConsumed = 1;
+
+        /* Canonical receive-path highwater check. rxCount was advanced by
+         * Decrypt/DecryptAead in DoReceive and rxMsgCount just above, so
+         * either threshold can fire here on the crossing packet. Run the
+         * check unconditionally so the flag-set side effect and callback
+         * fire on data packets (DoChannelData et al. return informational
+         * status like WS_CHAN_RXD, not WS_SUCCESS). Only fold the result
+         * into ret when ret is currently WS_SUCCESS, so a rekey-trigger
+         * return (e.g. WS_WANT_WRITE from SendKexInit) does not mask a
+         * real packet error or informational status already in ret. */
+        {
+            int hwRet = HighwaterCheck(ssh, WOLFSSH_HWSIDE_RECEIVE);
+            if (ret == WS_SUCCESS)
+                ret = hwRet;
+        }
     }
 
     return ret;
@@ -10666,14 +10710,6 @@ int DoReceive(WOLFSSH* ssh)
                     ssh->error = ret;
                     return WS_FATAL_ERROR;
                 }
-
-                ret = HighwaterCheck(ssh, WOLFSSH_HWSIDE_RECEIVE);
-                if (ret != WS_SUCCESS) {
-                    WLOG(WS_LOG_DEBUG, "PR: First HighwaterCheck fail");
-                    ssh->error = ret;
-                    ret = WS_FATAL_ERROR;
-                    break;
-                }
             }
             FALL_THROUGH;
 
@@ -10758,14 +10794,6 @@ int DoReceive(WOLFSSH* ssh)
                 }
             }
             ssh->processReplyState = PROCESS_PACKET;
-
-            ret = HighwaterCheck(ssh, WOLFSSH_HWSIDE_RECEIVE);
-            if (ret != WS_SUCCESS) {
-                WLOG(WS_LOG_DEBUG, "PR: HighwaterCheck fail");
-                ssh->error = ret;
-                ret = WS_FATAL_ERROR;
-                break;
-            }
             FALL_THROUGH;
 
         case PROCESS_PACKET:
@@ -11055,6 +11083,7 @@ static int BundlePacket(WOLFSSH* ssh)
 
     if (ret == WS_SUCCESS) {
         ssh->seq++;
+        ssh->txMsgCount++;
         ssh->outputBuffer.length = idx;
     }
     else {
@@ -13365,6 +13394,7 @@ int SendNewKeys(WOLFSSH* ssh)
 
     if (ret == WS_SUCCESS) {
         ssh->txCount = 0;
+        ssh->txMsgCount = 0;
     }
 
     if (ret == WS_SUCCESS) {
@@ -18063,6 +18093,11 @@ int wolfSSH_TestDoUserAuthRequest(WOLFSSH* ssh, byte* buf, word32 len,
         word32* idx)
 {
     return DoUserAuthRequest(ssh, buf, len, idx);
+}
+
+int wolfSSH_TestHighwaterCheck(WOLFSSH* ssh, byte side)
+{
+    return HighwaterCheck(ssh, side);
 }
 
 #ifndef WOLFSSH_NO_DH_GEX_SHA256

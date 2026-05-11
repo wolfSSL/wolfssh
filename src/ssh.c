@@ -242,12 +242,12 @@ void* wolfSSH_GetFilesystemHandle(WOLFSSH* ssh)
 }
 
 
-int wolfSSH_SetHighwater(WOLFSSH* ssh, word32 highwater)
+int wolfSSH_SetHighwater(WOLFSSH* ssh, word32 level)
 {
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetHighwater()");
 
     if (ssh) {
-        ssh->highwaterMark = highwater;
+        ssh->highwaterMark = level;
 
         return WS_SUCCESS;
     }
@@ -267,13 +267,42 @@ word32 wolfSSH_GetHighwater(WOLFSSH* ssh)
 }
 
 
-void wolfSSH_SetHighwaterCb(WOLFSSH_CTX* ctx, word32 highwater,
-                            WS_CallbackHighwater cb)
+void wolfSSH_CTX_SetMsgHighwater(WOLFSSH_CTX* ctx, word32 level)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CTX_SetMsgHighwater()");
+
+    if (ctx)
+        ctx->msgHighwaterMark = level;
+}
+
+
+void wolfSSH_SetMsgHighwater(WOLFSSH* ssh, word32 level)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetMsgHighwater()");
+
+    if (ssh)
+        ssh->msgHighwaterMark = level;
+}
+
+
+word32 wolfSSH_GetMsgHighwater(WOLFSSH* ssh)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_GetMsgHighwater()");
+
+    if (ssh)
+        return ssh->msgHighwaterMark;
+
+    return 0;
+}
+
+
+void wolfSSH_SetHighwaterCb(WOLFSSH_CTX* ctx, word32 level,
+        WS_CallbackHighwater cb)
 {
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetHighwaterCb()");
 
     if (ctx) {
-        ctx->highwaterMark = highwater;
+        ctx->highwaterMark = level;
         ctx->highwaterCb = cb;
     }
 }
