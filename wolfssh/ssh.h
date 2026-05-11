@@ -77,15 +77,18 @@ WOLFSSH_API WS_SOCKET_T wolfSSH_get_fd(const WOLFSSH*);
 WOLFSSH_API int wolfSSH_SetFilesystemHandle(WOLFSSH*, void*);
 WOLFSSH_API void* wolfSSH_GetFilesystemHandle(WOLFSSH*);
 
-/* data high water mark functions */
-WOLFSSH_API int wolfSSH_SetHighwater(WOLFSSH*, word32);
-WOLFSSH_API word32 wolfSSH_GetHighwater(WOLFSSH*);
-
-typedef int (*WS_CallbackHighwater)(byte, void*);
-WOLFSSH_API void wolfSSH_SetHighwaterCb(WOLFSSH_CTX*, word32,
-                                        WS_CallbackHighwater);
-WOLFSSH_API void wolfSSH_SetHighwaterCtx(WOLFSSH*, void*);
-WOLFSSH_API void* wolfSSH_GetHighwaterCtx(WOLFSSH*);
+/* data high water mark functions (RFC 4253 Sec 9) */
+typedef int (*WS_CallbackHighwater)(byte side, void* ctx);
+WOLFSSH_API void wolfSSH_SetHighwaterCb(WOLFSSH_CTX* ctx, word32 level,
+        WS_CallbackHighwater cb);
+WOLFSSH_API void wolfSSH_SetHighwaterCtx(WOLFSSH* ssh, void* ctx);
+WOLFSSH_API void* wolfSSH_GetHighwaterCtx(WOLFSSH* ssh);
+WOLFSSH_API int wolfSSH_SetHighwater(WOLFSSH* ssh, word32 level);
+WOLFSSH_API word32 wolfSSH_GetHighwater(WOLFSSH* ssh);
+/* packet count high water mark functions (RFC 4344 Sec 3.1) */
+WOLFSSH_API void wolfSSH_CTX_SetMsgHighwater(WOLFSSH_CTX* ctx, word32 level);
+WOLFSSH_API void wolfSSH_SetMsgHighwater(WOLFSSH* ssh, word32 level);
+WOLFSSH_API word32 wolfSSH_GetMsgHighwater(WOLFSSH* ssh);
 
 WOLFSSH_API int wolfSSH_ReadKey_buffer_ex(const byte* in, word32 inSz, int format,
         byte** out, word32* outSz, const byte** outType, word32* outTypeSz,

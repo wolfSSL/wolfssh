@@ -1181,6 +1181,139 @@ done:
     return result;
 }
 
+/* Counter callback for test_MsgHighwater. Records each invocation without
+ * triggering wolfSSH_TriggerKeyExchange (which needs a live session). */
+typedef struct HwTestCtx {
+    int  count;
+    byte lastSide;
+} HwTestCtx;
+
+static int HwTestCb(byte side, void* ctx)
+{
+    HwTestCtx* hc = (HwTestCtx*)ctx;
+    if (hc != NULL) {
+        hc->count++;
+        hc->lastSide = side;
+    }
+    return WS_SUCCESS;
+}
+
+/* Exercise the wolfSSH_*MsgHighwater APIs and the per-key packet-count
+ * threshold path inside HighwaterCheck. Covers:
+ *   - NULL safety on getters/setters
+ *   - CTX default value matches WOLFSSH_DEFAULT_MSG_HIGHWATER_MARK
+ *   - CTX/SSH setter round-trip and CTX -> SSH inheritance on wolfSSH_new
+ *   - SSH setter does not bleed back into the CTX
+ *   - Threshold crossing fires the highwater callback exactly once per epoch
+ *     (msgHighwaterFlag gates re-firing under the same keys)
+ *   - Receive side fires independently of the transmit side
+ *   - msgHighwaterMark == 0 disables the per-key packet check */
+static int test_MsgHighwater(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    HwTestCtx    hc;
+    int          result = 0;
+
+    if (wolfSSH_GetMsgHighwater(NULL) != 0)
+        return -800;
+    wolfSSH_CTX_SetMsgHighwater(NULL, 1234);
+    wolfSSH_SetMsgHighwater(NULL, 1234);
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -801;
+
+    if (ctx->msgHighwaterMark != WOLFSSH_DEFAULT_MSG_HIGHWATER_MARK) {
+        result = -802;
+        goto done;
+    }
+
+    wolfSSH_CTX_SetMsgHighwater(ctx, 4096);
+    if (ctx->msgHighwaterMark != 4096) {
+        result = -803;
+        goto done;
+    }
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        result = -804;
+        goto done;
+    }
+    if (wolfSSH_GetMsgHighwater(ssh) != 4096) {
+        result = -805;
+        goto done;
+    }
+
+    wolfSSH_SetMsgHighwater(ssh, 16);
+    if (wolfSSH_GetMsgHighwater(ssh) != 16) {
+        result = -806;
+        goto done;
+    }
+    if (ctx->msgHighwaterMark != 4096) {
+        result = -807;
+        goto done;
+    }
+
+    /* Install a counter callback. ssh->highwaterMark stays at the inherited
+     * default (~1 GiB) and txCount/rxCount are not touched, so the byte-count
+     * branch cannot fire and only the packet-count branch is under test. */
+    WMEMSET(&hc, 0, sizeof(hc));
+    wolfSSH_SetHighwaterCb(ctx, ctx->highwaterMark, HwTestCb);
+    wolfSSH_SetHighwaterCtx(ssh, &hc);
+    wolfSSH_SetMsgHighwater(ssh, 8);
+
+    ssh->txMsgCount = 7;
+    if (wolfSSH_TestHighwaterCheck(ssh, WOLFSSH_HWSIDE_TRANSMIT) != WS_SUCCESS
+            || hc.count != 0) {
+        result = -808;
+        goto done;
+    }
+
+    ssh->txMsgCount = 8;
+    if (wolfSSH_TestHighwaterCheck(ssh, WOLFSSH_HWSIDE_TRANSMIT) != WS_SUCCESS
+            || hc.count != 1
+            || hc.lastSide != WOLFSSH_HWSIDE_TRANSMIT) {
+        result = -809;
+        goto done;
+    }
+
+    /* Flag-gated: further packets in the same epoch must not re-fire. */
+    ssh->txMsgCount = 100;
+    if (wolfSSH_TestHighwaterCheck(ssh, WOLFSSH_HWSIDE_TRANSMIT) != WS_SUCCESS
+            || hc.count != 1) {
+        result = -810;
+        goto done;
+    }
+
+    /* Simulate a fresh key epoch (msgHighwaterFlag and rx/txMsgCount are
+     * reset by DoNewKeys/SendNewKeys) and verify the receive side fires. */
+    ssh->msgHighwaterFlag = 0;
+    ssh->rxMsgCount = 8;
+    if (wolfSSH_TestHighwaterCheck(ssh, WOLFSSH_HWSIDE_RECEIVE) != WS_SUCCESS
+            || hc.count != 2
+            || hc.lastSide != WOLFSSH_HWSIDE_RECEIVE) {
+        result = -811;
+        goto done;
+    }
+
+    /* mark == 0 disables the per-key packet check entirely. */
+    wolfSSH_SetMsgHighwater(ssh, 0);
+    ssh->msgHighwaterFlag = 0;
+    ssh->txMsgCount = 0xFFFFFFFFu;
+    ssh->rxMsgCount = 0xFFFFFFFFu;
+    if (wolfSSH_TestHighwaterCheck(ssh, WOLFSSH_HWSIDE_TRANSMIT) != WS_SUCCESS
+            || hc.count != 2) {
+        result = -812;
+        goto done;
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
 /* Plaintext SSH packet from IoSend (before encryption/MAC): LENGTH_SZ,
  * PAD_LENGTH_SZ, then payload starting with the message ID (RFC 4253;
  * wolfSSH PreparePacket/BundlePacket). Not for encrypted payloads or
@@ -1507,6 +1640,7 @@ done:
     return result;
 }
 
+
 #if !defined(WOLFSSH_NO_RSA)
 
 /* 2048-bit RSA private key (PKCS#1 DER).
@@ -1806,10 +1940,15 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("ChannelPutData: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
+    unitResult = test_MsgHighwater();
+    printf("MsgHighwater: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
     unitResult = test_DoUserAuthRequest_serviceName();
     printf("DoUserAuthRequest_serviceName: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
 #endif
 
 #ifdef WOLFSSH_KEYGEN

@@ -443,6 +443,9 @@ enum NameIdType {
 #ifndef DEFAULT_HIGHWATER_MARK
     #define DEFAULT_HIGHWATER_MARK ((1024 * 1024 * 1024) - (32 * 1024))
 #endif
+#ifndef WOLFSSH_DEFAULT_MSG_HIGHWATER_MARK
+    #define WOLFSSH_DEFAULT_MSG_HIGHWATER_MARK 0x80000000U
+#endif
 #ifndef DEFAULT_WINDOW_SZ
     #define DEFAULT_WINDOW_SZ (128 * 1024)
 #endif
@@ -597,6 +600,7 @@ struct WOLFSSH_CTX {
     byte publicKeyAlgo[WOLFSSH_MAX_PUB_KEY_ALGO];
     word32 publicKeyAlgoCount;
     word32 highwaterMark;
+    word32 msgHighwaterMark;
     const char* banner;
     const char* sshProtoIdStr;
     const char* algoListKex;
@@ -754,8 +758,12 @@ struct WOLFSSH {
     int wflags;            /* optional write flags */
     word32 txCount;
     word32 rxCount;
+    word32 txMsgCount;     /* Packets sent under current keys */
+    word32 rxMsgCount;     /* Packets received under current keys */
     word32 highwaterMark;
+    word32 msgHighwaterMark; /* Per-key packet limit (RFC 4344 Sec 3.1) */
     byte highwaterFlag;    /* Set when highwater CB called */
+    byte msgHighwaterFlag; /* Set when msg-count highwater CB called */
     void* highwaterCtx;    /* Highwater CB context */
     void* globalReqCtx;    /* Global Request CB context */
     void* reqSuccessCtx;   /* Global Request Success CB context */
@@ -1360,6 +1368,7 @@ enum WS_MessageIdLimits {
     WOLFSSH_API int wolfSSH_TestChannelPutData(WOLFSSH_CHANNEL*, byte*, word32);
     WOLFSSH_API int wolfSSH_TestDoUserAuthRequest(WOLFSSH* ssh, byte* buf,
             word32 len, word32* idx);
+    WOLFSSH_API int wolfSSH_TestHighwaterCheck(WOLFSSH* ssh, byte side);
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
     WOLFSSH_API int wolfSSH_TestDoKexDhGexRequest(WOLFSSH* ssh, byte* buf,
             word32 len, word32* idx);
