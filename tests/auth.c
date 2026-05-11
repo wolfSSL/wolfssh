@@ -707,6 +707,66 @@ static void test_pubkey_auth_ecc(void)
 
     run_pubkey_test(&sCtx, &cCtx, WS_SUCCESS);
 }
+
+/* Negative test: correct ECC public key presented (passes the authorized-key
+ * hash check) but the client signs with a corrupted private key.  The wrong
+ * signature must reach and be rejected by DoUserAuthRequestEcc rather than
+ * failing on the earlier key-type mismatch path.
+ */
+static void test_pubkey_auth_ecc_bad_sig(void)
+{
+    PubkeyServerCtx sCtx;
+    PubkeyClientCtx cCtx;
+    byte  pubKeyBuf[256];
+    byte* p = pubKeyBuf;
+    word32 pubKeySz = sizeof(pubKeyBuf);
+    const byte* pubKeyType   = NULL;
+    word32      pubKeyTypeSz = 0;
+    /* Flip one byte inside the private scalar of the DER blob to produce a
+     * structurally valid ECC key whose signatures won't verify against the
+     * original public key.
+     *
+     * Per-curve scalar layout in the RFC 5915 ECPrivateKey DER encoding:
+     *   P-256:  header "30 77 02 01 01 04 20" = 7 bytes; scalar at offset 7.
+     *           Byte 10 = scalar[3].  Original 0xd3; after ^0xFF: 0x2c.
+     *   P-384:  header "30 81 a4 02 01 01 04 30" = 8 bytes; scalar at offset 8.
+     *           Byte 10 = scalar[2].  Original 0xae; after ^0xFF: 0x51.
+     *   P-521:  header "30 81 dc 02 01 01 04 42" = 8 bytes; scalar at offset 8.
+     *           Byte 10 = scalar[2].  Original 0x40; after ^0xFF: 0xbf.
+     *
+     * In all three cases the leading byte(s) of the scalar are far below the
+     * high-order byte of n, so the modified value stays within [1, n-1] and
+     * wc_EccPrivateKeyDecode accepts it without error. */
+    byte  badPrivDer[sizeof(hanselPrivateEcc)];
+    byte  badPrivBuf[256];
+    byte* badPrivPtr = badPrivBuf;
+    word32 badPrivSz = sizeof(badPrivBuf);
+    const byte* badPrivType   = NULL;  /* required by API; value not used */
+    word32      badPrivTypeSz = 0;
+
+    printf("Testing ECC pubkey auth rejection with tampered signature\n");
+
+    AssertIntEQ(wolfSSH_ReadKey_buffer((const byte*)hanselPublicEcc,
+            (word32)WSTRLEN(hanselPublicEcc), WOLFSSH_FORMAT_SSH,
+            &p, &pubKeySz, &pubKeyType, &pubKeyTypeSz, NULL), WS_SUCCESS);
+    AssertIntEQ(wc_Sha256Hash(pubKeyBuf, pubKeySz, sCtx.hash), 0);
+
+    WMEMCPY(badPrivDer, hanselPrivateEcc, hanselPrivateEccSz);
+    badPrivDer[10] ^= 0xFF;
+    AssertIntEQ(wolfSSH_ReadKey_buffer(badPrivDer, hanselPrivateEccSz,
+            WOLFSSH_FORMAT_ASN1,
+            &badPrivPtr, &badPrivSz, &badPrivType, &badPrivTypeSz, NULL),
+            WS_SUCCESS);
+
+    cCtx.publicKeyType   = pubKeyType;
+    cCtx.publicKeyTypeSz = pubKeyTypeSz;
+    cCtx.publicKey       = pubKeyBuf;
+    cCtx.publicKeySz     = pubKeySz;
+    cCtx.privateKey      = badPrivBuf;
+    cCtx.privateKeySz    = badPrivSz;
+
+    run_pubkey_test(&sCtx, &cCtx, WS_FATAL_ERROR);
+}
 #endif /* WOLFSSH_NO_ECC */
 
 #if !defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_ECC)
@@ -1511,6 +1571,7 @@ int wolfSSH_AuthTest(int argc, char** argv)
 #endif
 #ifndef WOLFSSH_NO_ECC
     test_pubkey_auth_ecc();
+    test_pubkey_auth_ecc_bad_sig();
 #endif
 #if !defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_ECC)
     test_pubkey_auth_wrong_key();
