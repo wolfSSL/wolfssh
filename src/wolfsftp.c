@@ -4861,9 +4861,6 @@ static int SFTP_GetAttributes(void* fs, const char* fileName,
     (void) noFollow;
     (void) heap;
 
-    ret = f_stat(fileName, &info);
-    if (ret != FR_OK)
-        return -1;
     WMEMSET(atr, 0, sizeof(WS_SFTP_FILEATRB));
     if (sz > 2 && fileName[sz - 2] == ':') {
         atr->flags |= WOLFSSH_FILEATRB_PERM;
@@ -4872,12 +4869,14 @@ static int SFTP_GetAttributes(void* fs, const char* fileName,
     }
 
     /* handle case of "/" */
+    /* Calling f_stat for "/" returns FR_INVALID_NAME. So we simulate the result. */
     if (sz < 3 && fileName[0] == WS_DELIM) {
         atr->flags |= WOLFSSH_FILEATRB_PERM;
         atr->per |= 0x4000;
         return WS_SUCCESS;
     }
 
+    ret = f_stat(fileName, &info);
     if (ret != FR_OK) {
         return WS_BAD_FILE_E;
     }
