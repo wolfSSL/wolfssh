@@ -1868,7 +1868,7 @@ static int DoPemKey(const byte* in, word32 inSz, byte** out,
     WOLFSSH_UNUSED(heap);
 
     if (*out == NULL) {
-        newKey = (byte*)WMALLOC(inSz, heap, DYNTYPE_PRIVKEY);
+        newKey = (byte*)WMALLOC(newKeySz, heap, DYNTYPE_PRIVKEY);
         if (newKey == NULL) {
             return WS_MEMORY_E;
         }
@@ -1879,6 +1879,7 @@ static int DoPemKey(const byte* in, word32 inSz, byte** out,
             return WS_BUFFER_E;
         }
         newKey = *out;
+        newKeySz = *outSz;
     }
 
     /* If it is PEM, convert to ASN1 then process. */
@@ -1914,6 +1915,7 @@ static int DoPemKey(const byte* in, word32 inSz, byte** out,
     }
     else {
         WLOG(WS_LOG_DEBUG, "Unable to identify PEM key");
+        ForceZero(newKey, newKeySz);
         if (*out == NULL) {
             WFREE(newKey, heap, DYNTYPE_PRIVKEY);
         }
@@ -1943,6 +1945,7 @@ static int DoOpenSshKey(const byte* in, word32 inSz, byte** out,
             return WS_BUFFER_E;
         }
         newKey = *out;
+        newKeySz = *outSz;
     }
 
     in += WSTRLEN(PrivBeginOpenSSH);
@@ -1970,6 +1973,7 @@ static int DoOpenSshKey(const byte* in, word32 inSz, byte** out,
     }
     else {
         WLOG(WS_LOG_DEBUG, "Unable to identify key");
+        ForceZero(newKey, newKeySz);
         if (*out == NULL) {
             WFREE(newKey, heap, DYNTYPE_PRIVKEY);
         }
@@ -2122,6 +2126,7 @@ int wolfSSH_ReadKey_file(const char* name,
     }
 
     WFCLOSE(NULL, file);
+    ForceZero(in, inSz);
     WFREE(in, heap, DYNTYPE_FILE);
 
     return ret;
