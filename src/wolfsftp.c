@@ -3129,7 +3129,7 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
     }
     dp = &f;
 
-    if (f_readdir(dir, dp) != FR_OK) {
+    if (f_readdir(dir, dp) != FR_OK || dp->fname[0] == 0) {
         return WS_FATAL_ERROR;
     }
     sz = (int)WSTRLEN(dp->fname);
