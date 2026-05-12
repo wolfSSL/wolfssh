@@ -2586,6 +2586,7 @@ int GenerateKey(byte hashId, byte keyId,
                 ret = wc_HashFinal(&hash, enmhashId, lastBlock);
                 if (ret == WS_SUCCESS)
                     WMEMCPY(key, lastBlock, remainder);
+                ForceZero(lastBlock, sizeof(lastBlock));
             }
         }
         else {
@@ -2631,6 +2632,7 @@ int GenerateKey(byte hashId, byte keyId,
                     ret = wc_HashFinal(&hash, enmhashId, lastBlock);
                 if (ret == WS_SUCCESS)
                     WMEMCPY(key + runningKeySz, lastBlock, remainder);
+                ForceZero(lastBlock, sizeof(lastBlock));
             }
         }
     }
