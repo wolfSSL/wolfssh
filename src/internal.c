@@ -13476,7 +13476,7 @@ int SendKexDhGexGroup(WOLFSSH* ssh)
     int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Entering SendKexDhGexGroup()");
-    if (ssh == NULL)
+    if (ssh == NULL || ssh->handshake == NULL)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
@@ -13523,8 +13523,11 @@ int SendKexDhGexGroup(WOLFSSH* ssh)
         ret = BundlePacket(ssh);
     }
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
+        WLOG_EXPECT_MSGID(MSGID_KEXDH_GEX_INIT);
+        ssh->handshake->expectMsgId = MSGID_KEXDH_GEX_INIT;
         ret = wolfSSH_SendPacket(ssh);
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving SendKexDhGexGroup(), ret = %d", ret);
     return ret;
