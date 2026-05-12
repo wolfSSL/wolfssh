@@ -1501,6 +1501,8 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
                 /* If decode was successful, this is an RSA key. */
                 if (ret == 0) {
                     key->keyId = ID_SSH_RSA;
+                } else {
+                    wc_FreeRsaKey(&key->ks.rsa.key);
                 }
             }
         }
@@ -1533,7 +1535,12 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
                         case ECC_SECP521R1:
                             key->keyId = ID_ECDSA_SHA2_NISTP521;
                             break;
+                        default:
+                            /* Not a supported curve, so free the key */
+                            wc_ecc_free(&key->ks.ecc.key);
                     }
+                } else {
+                    wc_ecc_free(&key->ks.ecc.key);
                 }
             }
         }
@@ -1552,11 +1559,14 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
                     ret = wc_Ed25519PublicKeyDecode(in, &idx,
                             &key->ks.ed25519.key, inSz);
                 }
-            }
 
-            /* If decode was successful, this is a Ed25519 key. */
-            if (ret == 0)
-                key->keyId = ID_ED25519;
+                /* If decode was successful, this is a Ed25519 key. */
+                if (ret == 0) {
+                    key->keyId = ID_ED25519;
+                } else {
+                    wc_ed25519_free(&key->ks.ed25519.key);
+                }
+            }
         }
 #endif /* WOLFSSH_NO_ED25519 */
 
@@ -13050,7 +13060,7 @@ int SendKexDhReply(WOLFSSH* ssh)
             else if (useEcc) {
                 ret = KeyAgreeEcdh_server(ssh, hashId, f_ptr, &fSz);
             }
-            if (useCurve25519) {
+            else if (useCurve25519) {
                 ret = KeyAgreeCurve25519_server(ssh, hashId, f_ptr, &fSz);
             }
             else if (useEccMlKem) {
