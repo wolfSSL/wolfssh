@@ -2775,7 +2775,6 @@ static int SFTP_CreateLongName(WS_SFTPNAME* name)
 
     name->lName = (char*)WMALLOC(totalSz + 1, name->heap, DYNTYPE_SFTP);
     if (name->lName == NULL) {
-        WFREE(name->lName, name->heap, DYNTYPE_SFTP);
         return WS_MEMORY_E;
     }
     name->lSz = totalSz;
@@ -3987,6 +3986,7 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     if (res != NULL) {
         if (wolfSSH_SFTP_CreateStatus(ssh, type, reqId, res, "English", NULL,
                 &outSz) != WS_SIZE_ONLY) {
+            WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
             return WS_FATAL_ERROR;
         }
         if (outSz > strSz) {
@@ -5282,6 +5282,7 @@ int wolfSSH_SFTP_RecvFSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     if (ret == WS_SUCCESS) {
         if (SFTP_SetHeader(ssh, reqId, WOLFSSH_FTP_ATTRS, sz, out)
                 != WS_SUCCESS) {
+            WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
             return WS_FATAL_ERROR;
         }
         SFTP_SetAttributes(ssh, out + WOLFSSH_SFTP_HEADER, sz, &atr);
