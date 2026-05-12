@@ -733,6 +733,19 @@ const char id_ecdsa_pub[] =
     "BMCp0GAKnxthKraRBDjz9R3wjLoyOdv9+kHct9IT/WTH1VpoTgUveL0aDa8NXR4sYzc9aSwU"
     "0+FQvG1xgnKNoGM= bob@localhost\n";
 
+/* Same as id_ecdsa but with the last pad byte changed from 0x03 to 0x04,
+ * so the padding sequence 1,2,3 is broken at position 3. */
+const char id_ecdsa_bad_pad[] =
+    "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+    "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAaAAAABNlY2RzYS\n"
+    "1zaGEyLW5pc3RwMjU2AAAACG5pc3RwMjU2AAAAQQTAqdBgCp8bYSq2kQQ48/Ud8Iy6Mjnb\n"
+    "/fpB3LfSE/1kx9VaaE4FL3i9Gg2vDV0eLGM3PWksFNPhULxtcYJyjaBjAAAAqJAeleSQHp\n"
+    "XkAAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBMCp0GAKnxthKraR\n"
+    "BDjz9R3wjLoyOdv9+kHct9IT/WTH1VpoTgUveL0aDa8NXR4sYzc9aSwU0+FQvG1xgnKNoG\n"
+    "MAAAAgPrOgktioNqad/wHNC/rt/zVrpNqDnOwg9tNDFMOTwo8AAAANYm9iQGxvY2FsaG9z\n"
+    "dAECBA==\n"
+    "-----END OPENSSH PRIVATE KEY-----\n";
+
 #endif /* WOLFSSH_NO_ECDSA_SHA2_NISTP256 */
 
 static void test_wolfSSH_ReadKey(void)
@@ -867,6 +880,31 @@ static void test_wolfSSH_ReadKey(void)
     WFREE(key, NULL, DYNTYPE_FILE);
 
 #endif /* WOLFSSH_NO_ECDSA_SHA2_NISTP256 */
+}
+
+
+static void test_wolfSSH_ReadKey_badPad(void)
+{
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    byte* key = NULL;
+    word32 keySz = 0;
+    const byte* keyType = NULL;
+    word32 keyTypeSz = 0;
+    int ret;
+
+    ret = wolfSSH_ReadKey_buffer((const byte*)id_ecdsa_bad_pad,
+            (word32)WSTRLEN(id_ecdsa_bad_pad), WOLFSSH_FORMAT_OPENSSH,
+            &key, &keySz, &keyType, &keyTypeSz, NULL);
+    AssertIntEQ(ret, WS_KEY_FORMAT_E);
+    /* DoOpenSshKey never assigns *outSz, *outType, or *outTypeSz
+     * on the error branch (only on success),
+     * these assertions will catch any future regression
+     * where the API partially writes output before failing. */
+    AssertNull(key);
+    AssertIntEQ(keySz, 0);
+    AssertNull(keyType);
+    AssertIntEQ(keyTypeSz, 0);
+#endif
 }
 
 
@@ -2079,6 +2117,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_CTX_UsePrivateKey_buffer_pem();
     test_wolfSSH_CertMan();
     test_wolfSSH_ReadKey();
+    test_wolfSSH_ReadKey_badPad();
     test_wolfSSH_QueryAlgoList();
     test_wolfSSH_SetAlgoList();
 #ifdef WOLFSSH_AGENT

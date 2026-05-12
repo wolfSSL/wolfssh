@@ -1990,6 +1990,8 @@ static int GetOpenSshKey(WS_KeySignature *key,
                                  check1++, subIdx++) {
                                 if (check1 != str[subIdx]) {
                                     /* Bad pad value. */
+                                    ret = WS_KEY_FORMAT_E;
+                                    break;
                                 }
                             }
                         }

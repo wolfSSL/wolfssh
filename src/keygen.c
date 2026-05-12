@@ -102,12 +102,14 @@ int wolfSSH_MakeRsaKey(byte* out, word32 outSz, word32 size, word32 e)
 
         if (wc_FreeRsaKey(&key) != 0) {
             WLOG(WS_LOG_DEBUG, "RSA key free failed");
-            ret = WS_CRYPTO_FAILED;
+            if (ret >= 0)
+                ret = WS_CRYPTO_FAILED;
         }
 
         if (wc_FreeRng(&rng) != 0) {
             WLOG(WS_LOG_DEBUG, "Couldn't free RNG");
-            ret = WS_CRYPTO_FAILED;
+            if (ret >= 0)
+                ret = WS_CRYPTO_FAILED;
         }
     }
 
@@ -167,12 +169,14 @@ int wolfSSH_MakeEcdsaKey(byte* out, word32 outSz, word32 size)
 
         if (wc_ecc_free(&key) != 0) {
             WLOG(WS_LOG_DEBUG, "ECDSA key free failed");
-            ret = WS_CRYPTO_FAILED;
+            if (ret >= 0)
+                ret = WS_CRYPTO_FAILED;
         }
 
         if (wc_FreeRng(&rng) != 0) {
             WLOG(WS_LOG_DEBUG, "Couldn't free RNG");
-            ret = WS_CRYPTO_FAILED;
+            if (ret >= 0)
+                ret = WS_CRYPTO_FAILED;
         }
     }
 
@@ -234,7 +238,8 @@ int wolfSSH_MakeEd25519Key(byte* out, word32 outSz, word32 size)
 
         if (wc_FreeRng(&rng) != 0) {
             WLOG(WS_LOG_DEBUG, "Couldn't free RNG");
-            ret = WS_CRYPTO_FAILED;
+            if (ret >= 0)
+                ret = WS_CRYPTO_FAILED;
         }
     }
 

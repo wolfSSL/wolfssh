@@ -1120,7 +1120,7 @@ WOLFSSHD_STATIC int ParseConfigLine(WOLFSSHD_CONFIG** conf, const char* l,
          */
         idx = sz;
         idx += CountWhitespace(l + idx, lSz - sz, 0);
-        sz = CountWhitespace(l + idx, lSz - sz, 1);
+        sz = CountWhitespace(l + idx, lSz - idx, 1);
         if (sz >= MAX_FILENAME_SZ) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Filename too long.");
             ret = WS_FATAL_ERROR;
