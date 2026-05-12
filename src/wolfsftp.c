@@ -3151,12 +3151,14 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
                 >= (int)sizeof(r)) {
             WLOG(WS_LOG_SFTP, "Path length too large");
             WFREE(out->fName, out->heap, DYNTYPE_SFTP);
+            out->fName = NULL;
             return WS_FATAL_ERROR;
         }
 
         if (wolfSSH_RealPath(ssh->sftpDefaultPath, r, s, sizeof(s)) < 0) {
             WLOG(WS_LOG_SFTP, "Error cleaning path to get attributes");
             WFREE(out->fName, out->heap, DYNTYPE_SFTP);
+            out->fName = NULL;
             return WS_FATAL_ERROR;
         }
         if (SFTP_GetAttributes(ssh->fs, s, &out->atrb, 0, ssh->ctx->heap)
@@ -3164,6 +3166,7 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
             WLOG(WS_LOG_SFTP, "Unable to get attribute values for %s",
                     out->fName);
             WFREE(out->fName, out->heap, DYNTYPE_SFTP);
+            out->fName = NULL;
             return WS_FATAL_ERROR;
         }
     }
@@ -3172,6 +3175,7 @@ static int wolfSSH_SFTPNAME_readdir(WOLFSSH* ssh, WDIR* dir, WS_SFTPNAME* out,
     if (SFTP_CreateLongName(out) != WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "Error creating long name for %s", out->fName);
         WFREE(out->fName, out->heap, DYNTYPE_SFTP);
+        out->fName = NULL;
         return WS_FATAL_ERROR;
     }
     return WS_SUCCESS;
