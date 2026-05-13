@@ -4850,6 +4850,61 @@ static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
 
 #elif defined(WOLFSSH_FATFS)
 
+/*
+ * fdate
+ * The date when the file was modified or the directory was created.
+ *     bit15:9
+ *         Year origin from 1980 (0..127)
+ *     bit8:5
+ *         Month (1..12)
+ *     bit4:0
+ *         Day (1..31)
+ *
+ * ftime
+ * The time when the file was modified or the directory was created.
+ *     bit15:11
+ *         Hour (0..23)
+ *     bit10:5
+ *         Minute (0..59)
+ *     bit4:0
+ *         Second / 2 (0..29)
+ *
+ * mktime() expects month from 0 to 11 and years starting at
+ * 1900. FatFS months are saved as 1 to 12 and the years
+ * start counting at 1980.
+ */
+#define FATFS_GETDAY(d) ((d) & 0x001f)
+#define FATFS_GETMON(d) ((((d) >> 5) & 0x000f) - 1)
+#define FATFS_GETYEAR(d) ((((d) >> 9) & 0x007f) + 80)
+#define FATFS_GETHOUR(t) (((t) >> 11) & 0x001f)
+#define FATFS_GETMIN(t)  (((t) >> 5 ) & 0x003f)
+#define FATFS_GETSEC(t)  (((t) << 1 ) & 0x003f)
+
+static void SetAttrTime(const FILINFO* info, WS_SFTP_FILEATRB* atr)
+{
+#ifndef NO_WOLFSSH_MKTIME
+    struct tm tmp = { 0 };
+    word32 daytime;
+
+    /* convert fatfs date and time shorts to word32
+     * returns results in Unix time stamp */
+    tmp.tm_mday = FATFS_GETDAY(info->fdate);
+    tmp.tm_mon  = FATFS_GETMON(info->fdate);
+    tmp.tm_year = FATFS_GETYEAR(info->fdate);
+    tmp.tm_hour = FATFS_GETHOUR(info->ftime);
+    tmp.tm_min  = FATFS_GETMIN(info->ftime);
+    tmp.tm_sec  = FATFS_GETSEC(info->ftime);
+    daytime = mktime(&tmp);
+
+    atr->flags |= WOLFSSH_FILEATRB_TIME;
+    atr->atime = daytime;
+    atr->mtime = daytime;
+#else
+    WOLFSSH_UNUSED(info);
+    WOLFSSH_UNUSED(atr);
+#endif /* NO_WOLFSSH_MKTIME */
+}
+
 /* FatFs has its own structure for file attributes */
 
 static int SFTP_GetAttributes(void* fs, const char* fileName,
@@ -4906,12 +4961,8 @@ static int SFTP_GetAttributes(void* fs, const char* fileName,
         }
     }
 
-#ifndef NO_WOLFSSH_MKTIME
-    /* get file times */
-    atr->flags |= WOLFSSH_FILEATRB_TIME;
-    atr->atime = info.fdate;
-    atr->mtime = info.fdate;
-#endif /* NO_WOLFSSH_MKTIME */
+    SetAttrTime(&info, atr);
+
     return WS_SUCCESS;
 }
 
@@ -4952,12 +5003,7 @@ static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
         }
     }
 
-#ifndef NO_WOLFSSH_MKTIME
-    /* get file times */
-    atr->flags |= WOLFSSH_FILEATRB_TIME;
-    atr->atime = info.ftime;
-    atr->mtime = info.ftime;
-#endif /* NO_WOLFSSH_MKTIME */
+    SetAttrTime(&info, atr);
 
     WOLFSSH_UNUSED(ssh);
     WOLFSSH_UNUSED(handleSz);
