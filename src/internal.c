@@ -4423,13 +4423,15 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     }
     /* Extension Info Flag */
     if (ret == WS_SUCCESS) {
-        /* Only checking for this is we are server. Our client does
-         * not have anything to say to a server, yet. */
-        if (side == WOLFSSH_ENDPOINT_SERVER && !ssh->extInfoSent) {
+        /* Determine whether we should send EXT_INFO after NEWKEYS based on
+         * whether the peer advertised ext-info-c (server) or ext-info-s
+         * (client). */
+        if (!ssh->extInfoSent) {
             byte extInfo;
 
-            /* Match the client accepts extInfo. */
-            algoId = ID_EXTINFO_C;
+            /* Match the peer accepts extInfo. */
+            algoId = (side == WOLFSSH_ENDPOINT_SERVER)
+                ? ID_EXTINFO_C : ID_EXTINFO_S;
             extInfo = MatchIdLists(side, list, listSz, &algoId, 1);
             ssh->sendExtInfo = extInfo == algoId;
         }
@@ -11314,6 +11316,10 @@ int SendKexInit(WOLFSSH* ssh)
             kexAlgoNamesPlus = ",ext-info-c";
             kexAlgoNamesPlusSz = (word32)WSTRLEN(kexAlgoNamesPlus);
         }
+        else {
+            kexAlgoNamesPlus = ",ext-info-s";
+            kexAlgoNamesPlusSz = (word32)WSTRLEN(kexAlgoNamesPlus);
+        }
 
         kexAlgoNamesSz = AlgoListSz(ssh->algoListKex);
         encAlgoNamesSz = AlgoListSz(ssh->algoListCipher);
@@ -14207,7 +14213,8 @@ int SendServiceAccept(WOLFSSH* ssh, byte serviceId)
 static const char serverSigAlgsName[] = "server-sig-algs";
 
 
-int SendExtInfo(WOLFSSH* ssh)
+#ifndef NO_WOLFSSH_SERVER
+static int SendExtInfoServer(WOLFSSH* ssh)
 {
     byte* output;
     word32 idx;
@@ -14215,11 +14222,7 @@ int SendExtInfo(WOLFSSH* ssh)
     word32 serverSigAlgsNameSz = 0;
     int ret = WS_SUCCESS;
 
-    WLOG(WS_LOG_DEBUG, "Entering SendExtInfo()");
-
-    if (ssh == NULL) {
-        ret = WS_BAD_ARGUMENT;
-    }
+    WLOG(WS_LOG_DEBUG, "Entering SendExtInfoServer()");
 
     if (ret == WS_SUCCESS) {
         keyAlgoNamesSz = AlgoListSz(ssh->algoListKeyAccepted);
@@ -14257,6 +14260,51 @@ int SendExtInfo(WOLFSSH* ssh)
                                * sent after SSH_MSG_NEWKEYS or after
                                * SSH_MSG_USERAUTH_SUCCESS. Not on re-key */
         ret = wolfSSH_SendPacket(ssh);
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving SendExtInfoServer(), ret = %d", ret);
+    return ret;
+}
+#endif /* NO_WOLFSSH_SERVER */
+
+
+#ifndef NO_WOLFSSH_CLIENT
+static int SendExtInfoClient(WOLFSSH* ssh)
+{
+    int ret = WS_SUCCESS;
+
+    WOLFSSH_UNUSED(ssh);
+    WLOG(WS_LOG_DEBUG, "Entering SendExtInfoClient()");
+    /* This is currently a stub. Our client doesn't have anything to say. */
+    WLOG(WS_LOG_DEBUG, "Leaving SendExtInfoClient(), ret = %d", ret);
+
+    return ret;
+}
+#endif /* NO_WOLFSSH_CLIENT */
+
+
+int SendExtInfo(WOLFSSH* ssh)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering SendExtInfo()");
+
+    if (ssh == NULL || ssh->ctx == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        /* Disabling server and client is checked at compile time. */
+    #ifndef NO_WOLFSSH_SERVER
+        if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
+            ret = SendExtInfoServer(ssh);
+        }
+    #endif
+    #ifndef NO_WOLFSSH_CLIENT
+        if (ssh->ctx->side == WOLFSSH_ENDPOINT_CLIENT) {
+            ret = SendExtInfoClient(ssh);
+        }
+    #endif
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving SendExtInfo(), ret = %d", ret);
