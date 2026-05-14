@@ -33,6 +33,7 @@
 #include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/wolfcrypt/coding.h>
+#include <wolfssl/wolfcrypt/memory.h>
 
 #ifdef WOLFSSH_TPM
     #include <wolftpm/tpm2_wrap.h>
@@ -1123,18 +1124,41 @@ void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
     if (pubKeyName != NULL && userPublicKey != NULL &&
         userPublicKey != userPublicKeyBuf) {
         WFREE(userPublicKey, heap, DYNTYPE_PRIVKEY);
+        userPublicKey = userPublicKeyBuf;
+        userPublicKeySz = 0;
     }
 
-    if (privKeyName != NULL && userPrivateKey != NULL &&
-        userPrivateKeyAlloc) {
-        WFREE(userPrivateKey, heap, DYNTYPE_PRIVKEY);
+    if (privKeyName != NULL && userPrivateKey != NULL) {
+        wc_ForceZero(userPrivateKey, userPrivateKeySz);
+        if (userPrivateKeyAlloc) {
+            WFREE(userPrivateKey, heap, DYNTYPE_PRIVKEY);
+            userPrivateKey = userPrivateKeyBuf;
+            userPrivateKeyAlloc = 0;
+        }
     }
 
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-    for (entry = 0; entry < keyboardResponseCount; entry++) {
-        WFREE(keyboardResponses[entry], NULL, 0);
+    if (keyboardResponses != NULL && keyboardResponseLengths != NULL) {
+        for (entry = 0; entry < keyboardResponseCount; entry++) {
+            if (keyboardResponses[entry] != NULL &&
+                    keyboardResponseLengths[entry] != 0) {
+                wc_ForceZero(keyboardResponses[entry],
+                        keyboardResponseLengths[entry]);
+            }
+            WFREE(keyboardResponses[entry], NULL, 0);
+        }
     }
-    WFREE(keyboardResponses, NULL, 0);
-    WFREE(keyboardResponseLengths, NULL, 0);
+    if (keyboardResponses != NULL) {
+        WFREE(keyboardResponses, NULL, 0);
+        keyboardResponses = NULL;
+    }
+    if (keyboardResponseLengths != NULL) {
+        WFREE(keyboardResponseLengths, NULL, 0);
+        keyboardResponseLengths = NULL;
+    }
+    keyboardResponseCount = 0;
 #endif
+    wc_ForceZero(userPrivateKeyBuf, sizeof(userPrivateKeyBuf));
+    userPrivateKeySz = 0;
+    wc_ForceZero(userPassword, sizeof(userPassword));
 }
