@@ -216,7 +216,7 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
 
     WLOG_ENTER();
 
-    if (cm == NULL || certs == NULL) {
+    if (cm == NULL || certs == NULL || certsCount == 0) {
         return WS_BAD_ARGUMENT;
     }
 

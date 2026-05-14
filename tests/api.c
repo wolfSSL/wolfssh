@@ -645,6 +645,8 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer_pem(void)
 static void test_wolfSSH_CertMan(void)
 {
 #ifdef WOLFSSH_CERTMAN
+    /* This chunk of test is checking the innards of the WOLFSSH_CERTMAN
+     * struct which has a private declaration at the moment. */
     {
         WOLFSSH_CERTMAN* cm = NULL;
 
@@ -668,7 +670,29 @@ static void test_wolfSSH_CertMan(void)
         AssertNotNull(cmRef->heap);
         AssertEQ(cmRef->heap, fakeHeap);
     }
-#endif
+#endif /* WOLFSSH_CERTMAN */
+
+#ifdef WOLFSSH_CERTS
+    {
+        /* VerifyCerts_buffer must reject certsCount == 0; otherwise the
+         * inner loops short-circuit and the function returns WS_SUCCESS
+         * without verifying anything. */
+        WOLFSSH_CERTMAN* cm;
+        unsigned char dummy[1] = { 0 };
+
+        cm = wolfSSH_CERTMAN_new(NULL);
+        AssertNotNull(cm);
+
+        AssertIntEQ(WS_BAD_ARGUMENT,
+                wolfSSH_CERTMAN_VerifyCerts_buffer(cm, dummy, sizeof(dummy), 0));
+        AssertIntEQ(WS_BAD_ARGUMENT,
+                wolfSSH_CERTMAN_VerifyCerts_buffer(NULL, dummy, sizeof(dummy), 1));
+        AssertIntEQ(WS_BAD_ARGUMENT,
+                wolfSSH_CERTMAN_VerifyCerts_buffer(cm, NULL, 0, 1));
+
+        wolfSSH_CERTMAN_free(cm);
+    }
+#endif /* WOLFSSH_CERTS */
 }
 
 
