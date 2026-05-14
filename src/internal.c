@@ -10923,7 +10923,7 @@ int DoProtoId(WOLFSSH* ssh)
         }
 
         if (ssh->inputBuffer.length >= 4
-            && WSTRNCASECMP((char*)ssh->inputBuffer.buffer, "SSH-", 4) == 0)
+            && WSTRNCMP((char*)ssh->inputBuffer.buffer, "SSH-", 4) == 0)
             break;
 
         if (!allowBanner) {
@@ -10952,8 +10952,8 @@ int DoProtoId(WOLFSSH* ssh)
     eolSz = (*eol == '\r') ? 2 : 1;
 
     if (ssh->inputBuffer.length >= SSH_PROTO_SZ
-        && WSTRNCASECMP((char*)ssh->inputBuffer.buffer,
-                        ssh->ctx->sshProtoIdStr, SSH_PROTO_SZ) == 0) {
+        && WSTRNCMP((char*)ssh->inputBuffer.buffer,
+                    ssh->ctx->sshProtoIdStr, SSH_PROTO_SZ) == 0) {
 
         if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER)
             ssh->clientState = CLIENT_VERSION_DONE;

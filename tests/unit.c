@@ -87,13 +87,21 @@ static const ProtoIdTestVector protoIdTestVectors[] = {
       "SSH-2.0-wolfSSHv" LIBWOLFSSH_VERSION_STRING "\n",
       0, WS_SUCCESS, WOLFSSH_ENDPOINT_CLIENT },
 
-    /* Case-insensitive match. DoProtoId uses WSTRNCASECMP. */
+    /* Case rejection. DoProtoId uses WSTRNCMP. */
     { "lowercase ssh prefix",
       "ssh-2.0-wolfSSHv" LIBWOLFSSH_VERSION_STRING "\r\n",
-      0, WS_SUCCESS, WOLFSSH_ENDPOINT_CLIENT },
+      0, WS_SOCKET_ERROR_E, WOLFSSH_ENDPOINT_CLIENT },
     { "mixed case SSH prefix",
       "Ssh-2.0-wolfSSHv" LIBWOLFSSH_VERSION_STRING "\r\n",
-      0, WS_SUCCESS, WOLFSSH_ENDPOINT_CLIENT },
+      0, WS_SOCKET_ERROR_E, WOLFSSH_ENDPOINT_CLIENT },
+
+    /* Case rejection. DoProtoId uses WSTRNCMP. */
+    { "lowercase ssh prefix",
+      "ssh-2.0-wolfSSHv" LIBWOLFSSH_VERSION_STRING "\r\n",
+      0, WS_VERSION_E, WOLFSSH_ENDPOINT_SERVER },
+    { "mixed case SSH prefix",
+      "Ssh-2.0-wolfSSHv" LIBWOLFSSH_VERSION_STRING "\r\n",
+      0, WS_VERSION_E, WOLFSSH_ENDPOINT_SERVER },
 
     /* OpenSSH peer identification. */
     { "OpenSSH version string",
