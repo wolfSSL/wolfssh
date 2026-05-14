@@ -382,10 +382,8 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
                             printf("This key matches other servers:\n");
                             otherMatch = 1;
                         }
-                        if (otherMatch) {
-                            printf("\t%s:%u: %s\n",
-                                    knownHostsName, lineCount, name);
-                        }
+                        printf("\t%s:%u: %s\n",
+                                knownHostsName, lineCount, name);
                     }
                 }
             }
