@@ -6309,10 +6309,10 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     int ret = WS_SUCCESS;
 
     WOLFSSH_UNUSED(buf);
-    WOLFSSH_UNUSED(len);
     WOLFSSH_UNUSED(idx);
 
-    if (ssh == NULL || ssh->handshake == NULL)
+    /* RFC 4253 7.3: SSH_MSG_NEWKEYS has no payload. */
+    if (ssh == NULL || ssh->handshake == NULL || len != 0)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
@@ -18074,10 +18074,9 @@ int wolfSSH_TestDoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     return DoKexInit(ssh, buf, len, idx);
 }
 
-int wolfSSH_TestDoNewKeys(WOLFSSH* ssh)
+int wolfSSH_TestDoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
-    /* DoNewKeys ignores buf/len/idx (marked WOLFSSH_UNUSED internally). */
-    return DoNewKeys(ssh, NULL, 0, NULL);
+    return DoNewKeys(ssh, buf, len, idx);
 }
 
 void wolfSSH_TestFreeHandshake(WOLFSSH* ssh)
