@@ -4457,7 +4457,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         algoId = MatchIdLists(side, list, listSz, cannedList, cannedListSz);
         if (algoId == ID_UNKNOWN) {
             WLOG(WS_LOG_DEBUG, "Unable to negotiate Server Host Key Algo");
-            return WS_MATCH_KEY_ALGO_E;
+            ret = WS_MATCH_KEY_ALGO_E;
         }
         else {
             ssh->handshake->pubKeyId = algoId;
