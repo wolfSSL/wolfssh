@@ -4621,12 +4621,14 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         }
     }
 
-    /* Skip the "for future use" length. */
+    /* RFC 4253 7.1 reserved field: fixed uint32 0, not a length prefix. */
     if (ret == WS_SUCCESS) {
-        WLOG(WS_LOG_DEBUG, "DKI: For Future Use");
+        WLOG(WS_LOG_DEBUG, "DKI: Reserved");
         ret = GetUint32(&skipSz, buf, len, &begin);
-        if (ret == WS_SUCCESS)
-            begin += skipSz;
+        if (ret == WS_SUCCESS && skipSz != 0) {
+            WLOG(WS_LOG_DEBUG, "DKI: non-zero reserved field");
+            ret = WS_PARSE_E;
+        }
     }
 
     if (ret == WS_SUCCESS) {

@@ -2167,6 +2167,43 @@ static void TestFirstPacketFollows(void)
     TestFirstPacketFollowsSkipped();
 }
 
+/* RFC 4253 7.1: the trailing uint32 in KEXINIT is reserved and must be zero.
+ * DoKexInit used to advance begin by that value (treating it as a length);
+ * the current code rejects any non-zero value with WS_PARSE_E. Lock the
+ * strict-rejection branch in so a regression that re-relaxes the check or
+ * reverts to skipping skipSz bytes would fail this test. */
+static void TestKexInitReservedNonZeroRejected(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    byte payload[512];
+    word32 payloadSz;
+    word32 idx = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, FPF_KEX_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, FPF_KEY_GOOD), WS_SUCCESS);
+
+    payloadSz = BuildKexInitPayload(ssh, FPF_KEX_GOOD, FPF_KEY_GOOD,
+            0, payload, (word32)sizeof(payload));
+
+    /* BuildKexInitPayload puts the reserved uint32 in the final 4 bytes.
+     * Overwrite them with a non-zero value to exercise the strict branch. */
+    AssertTrue(payloadSz >= UINT32_SZ);
+    (void)AppendUint32(payload, (word32)sizeof(payload),
+            payloadSz - UINT32_SZ, 0xDEADBEEFu);
+
+    AssertIntEQ(wolfSSH_TestDoKexInit(ssh, payload, payloadSz, &idx),
+            WS_PARSE_E);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
 #if !defined(WOLFSSH_NO_AES_CBC) && !defined(WOLFSSH_NO_AES_CTR) \
     && !defined(WOLFSSH_NO_HMAC_SHA1) && !defined(WOLFSSH_NO_HMAC_SHA2_256)
 static void TestIndependentAlgoNegotiation(void)
@@ -3190,6 +3227,7 @@ int main(int argc, char** argv)
     && !defined(WOLFSSH_NO_CURVE25519_SHA256) \
     && !defined(WOLFSSH_NO_RSA_SHA2_256)
     TestFirstPacketFollows();
+    TestKexInitReservedNonZeroRejected();
 #endif
 #if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && !defined(WOLFSSH_NO_RSA) \
     && !defined(WOLFSSH_NO_CURVE25519_SHA256) \
