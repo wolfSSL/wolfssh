@@ -103,13 +103,17 @@ static long GetConfigInt(const char* in, int inSz, int isTime, void* heap)
     int mult = 1; /* multiplier */
     int sz   = inSz;
 
+    if (in == NULL || inSz <= 0) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
     /* check for multipliers */
-    if (isTime) {
+    if (ret == 0 && isTime) {
         if (in[sz - 1] == 'm') {
             sz--;
             mult = 60;
         }
-        if (in[sz - 1] == 'h') {
+        else if (in[sz - 1] == 'h') {
             sz--;
             mult = 60*60;
         }
