@@ -33,6 +33,7 @@
 #include <wolfssh/keygen.h>
 #include <wolfssh/error.h>
 #include <wolfssh/internal.h>
+#include <wolfssl/wolfcrypt/memory.h>
 #include <wolfssl/wolfcrypt/random.h>
 #include <wolfssl/wolfcrypt/integer.h>
 #include <wolfssl/wolfcrypt/hmac.h>
@@ -2239,6 +2240,428 @@ static int test_IdentifyAsn1Key(void)
 done:
     return result;
 }
+
+/* Tests below install a custom allocator via wolfSSL_SetAllocators. The
+ * wolfSSL_Malloc_cb / wolfSSL_Free_cb / wolfSSL_Realloc_cb typedefs gain
+ * extra parameters when wolfSSL is built with WOLFSSL_STATIC_MEMORY or
+ * WOLFSSL_DEBUG_MEMORY, so the capturing-allocator tests only compile
+ * against the default signature. */
+#if !defined(WOLFSSL_STATIC_MEMORY) && !defined(WOLFSSL_DEBUG_MEMORY)
+#define WOLFSSH_TEST_CAPTURING_ALLOCATOR
+
+/* Retain-on-free allocator. Pass-through malloc/realloc; the free
+ * callback unconditionally diverts the pointer onto a retain list so
+ * the buffer's contents can be inspected after the API under test
+ * has called free on it. Install only across the narrow window of
+ * interest so allocations made before/after use the default allocator
+ * and can be paired with default free. */
+typedef struct RetainedBuf {
+    void* ptr;
+    struct RetainedBuf* next;
+} RetainedBuf;
+
+static RetainedBuf* retainedFrees = NULL;
+
+static void* RetainMalloc(size_t size)
+{
+    return malloc(size);
+}
+
+static void RetainFree(void* ptr)
+{
+    RetainedBuf* node;
+    if (ptr == NULL)
+        return;
+    node = (RetainedBuf*)malloc(sizeof(*node));
+    if (node == NULL) {
+        /* On bookkeeping failure, fall through to a real free; the
+         * test will not be able to inspect this buffer but we do not
+         * leak the underlying allocation. */
+        free(ptr);
+        return;
+    }
+    node->ptr = ptr;
+    node->next = retainedFrees;
+    retainedFrees = node;
+}
+
+static void* RetainRealloc(void* ptr, size_t size)
+{
+    return realloc(ptr, size);
+}
+
+static int IsRetained(void* p)
+{
+    RetainedBuf* r;
+    for (r = retainedFrees; r != NULL; r = r->next) {
+        if (r->ptr == p)
+            return 1;
+    }
+    return 0;
+}
+
+static void DrainRetained(void)
+{
+    RetainedBuf* r = retainedFrees;
+    while (r != NULL) {
+        RetainedBuf* next = r->next;
+        free(r->ptr);
+        free(r);
+        r = next;
+    }
+    retainedFrees = NULL;
+}
+
+/* Verify SshResourceFree wipes secrets that live inside the WOLFSSH struct
+ * before the struct is released:
+ *   - ssh->k:       the DH/ECDH shared secret
+ *   - ssh->keys:    active session encryption + MAC keys (our direction)
+ *   - ssh->peerKeys: active session encryption + MAC keys (peer direction)
+ * Mutation testing flagged each ForceZero in SshResourceFree as having no
+ * coverage; removing any of them would leave key material in heap memory
+ * after wolfSSH_free. To inspect the bytes after free without touching
+ * freed memory, the test installs the retain-on-free allocator just
+ * around wolfSSH_free so its frees are diverted onto a retain list. */
+static int test_SshResourceFree_zeroesSecrets(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    word32 markedSz;
+    word32 i;
+    const byte* keysBytes;
+    const byte* peerKeysBytes;
+    int result = 0;
+    int retainInstalled = 0;
+    wolfSSL_Malloc_cb prevMf = NULL;
+    wolfSSL_Free_cb prevFf = NULL;
+    wolfSSL_Realloc_cb prevRf = NULL;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -700;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        result = -701;
+        goto out;
+    }
+
+    markedSz = (word32)sizeof(ssh->k);
+    WMEMSET(ssh->k, 0xA5, markedSz);
+    ssh->kSz = markedSz;
+    WMEMSET(&ssh->keys, 0xA5, sizeof(ssh->keys));
+    WMEMSET(&ssh->peerKeys, 0xA5, sizeof(ssh->peerKeys));
+
+    wolfSSL_GetAllocators(&prevMf, &prevFf, &prevRf);
+    /* Allocators unchanged on failure; nothing to restore. */
+    if (wolfSSL_SetAllocators(RetainMalloc, RetainFree,
+                              RetainRealloc) != 0) {
+        result = -702;
+        goto out;
+    }
+    retainInstalled = 1;
+    wolfSSH_free(ssh);
+    wolfSSL_SetAllocators(prevMf, prevFf, prevRf);
+    retainInstalled = 0;
+
+    if (!IsRetained(ssh)) {
+        result = -703;
+        goto out;
+    }
+
+    for (i = 0; i < markedSz; i++) {
+        if (ssh->k[i] != 0) {
+            result = -704;
+            goto out;
+        }
+    }
+
+    keysBytes = (const byte*)&ssh->keys;
+    for (i = 0; i < (word32)sizeof(ssh->keys); i++) {
+        if (keysBytes[i] != 0) {
+            result = -705;
+            goto out;
+        }
+    }
+
+    peerKeysBytes = (const byte*)&ssh->peerKeys;
+    for (i = 0; i < (word32)sizeof(ssh->peerKeys); i++) {
+        if (peerKeysBytes[i] != 0) {
+            result = -706;
+            goto out;
+        }
+    }
+
+out:
+    if (retainInstalled)
+        wolfSSL_SetAllocators(prevMf, prevFf, prevRf);
+    DrainRetained();
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+#endif /* WOLFSSH_TEST_CAPTURING_ALLOCATOR */
+
+#ifndef WOLFSSH_NO_DH
+/* Verify KeyAgreeDh_client zeroes the ephemeral DH private key
+ * ssh->handshake->x before returning. The ForceZero is unconditional in
+ * the function (runs even if wc_DhAgree fails), so the test does not need
+ * to feed a valid peer public key - it just needs to observe that x is
+ * wiped after the call returns. The test hook wolfSSH_TestKeyAgreeDh_client
+ * exposes the static function. */
+static int test_KeyAgreeDh_client_zeroesEphemeralPrivKey(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    HandshakeInfo* hs = NULL;
+    byte bogusF[256];
+    word32 markedSz;
+    word32 i;
+    int result = 0;
+    int dhInited = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -710;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -711;
+    }
+
+    /* wolfSSH_new already allocated and zero-initialised ssh->handshake;
+     * use it directly. wolfSSH_free will release it via HandshakeInfoFree. */
+    hs = ssh->handshake;
+    if (hs == NULL) {
+        result = -712;
+        goto cleanup;
+    }
+
+    if (wc_InitDhKey(&hs->privKey.dh) != 0) {
+        result = -713;
+        goto cleanup;
+    }
+    dhInited = 1;
+
+    markedSz = (word32)sizeof(hs->x);
+    WMEMSET(hs->x, 0xA5, markedSz);
+    hs->xSz = markedSz;
+
+    /* Pass a garbage f to force wc_DhAgree to fail (the DH context has no
+     * prime group set). The ForceZero on x runs regardless of the result. */
+    WMEMSET(bogusF, 0xCC, sizeof(bogusF));
+    (void)wolfSSH_TestKeyAgreeDh_client(ssh, WC_HASH_TYPE_SHA256,
+            bogusF, (word32)sizeof(bogusF));
+    /* wc_FreeDhKey was called inside the test hook; do not free again. */
+    dhInited = 0;
+
+    for (i = 0; i < markedSz; i++) {
+        if (hs->x[i] != 0) {
+            result = -714;
+            break;
+        }
+    }
+
+cleanup:
+    if (dhInited)
+        wc_FreeDhKey(&ssh->handshake->privKey.dh);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+#if defined(WOLFSSH_SMALL_STACK) && defined(WOLFSSH_TEST_CAPTURING_ALLOCATOR)
+/* Size-tracked, poisoning capture allocator. AllocHeader stores the
+ * user-requested size in front of each allocation so tests can filter
+ * captured buffers by size after the API under test has freed them.
+ * Every fresh allocation is stamped with 0xCC so tests can tell "byte
+ * was untouched" apart from "byte was written and later zeroed". The
+ * free callback unconditionally diverts the pointer (with its size)
+ * onto a capture list. Install only across the narrow window of the
+ * call under test so allocations made outside use the default allocator
+ * and don't need header-aware free on exit. */
+typedef struct AllocHeader {
+    size_t size;
+    /* sizeof(AllocHeader) is 2 * sizeof(size_t), which preserves the
+     * alignment that the system malloc returns (16 on 64-bit, 8 on
+     * 32-bit) for the user pointer that follows. */
+    size_t pad;
+} AllocHeader;
+
+typedef struct CapturedBuf {
+    void* ptr;
+    size_t size;
+    struct CapturedBuf* next;
+} CapturedBuf;
+
+static CapturedBuf* capturedFrees = NULL;
+
+static void* CaptureMalloc(size_t size)
+{
+    AllocHeader* h = (AllocHeader*)malloc(size + sizeof(AllocHeader));
+    if (h == NULL)
+        return NULL;
+    h->size = size;
+    WMEMSET((void*)(h + 1), 0xCC, size);
+    return (void*)(h + 1);
+}
+
+static void CaptureFree(void* ptr)
+{
+    AllocHeader* h;
+    CapturedBuf* node;
+    if (ptr == NULL)
+        return;
+    h = (AllocHeader*)ptr - 1;
+    node = (CapturedBuf*)malloc(sizeof(*node));
+    if (node == NULL) {
+        /* On bookkeeping failure, fall through to a real free; the
+         * test will not be able to inspect this buffer but we do not
+         * leak the underlying allocation. */
+        free(h);
+        return;
+    }
+    node->ptr = ptr;
+    node->size = h->size;
+    node->next = capturedFrees;
+    capturedFrees = node;
+}
+
+static void* CaptureRealloc(void* ptr, size_t size)
+{
+    AllocHeader* h;
+    AllocHeader* h2;
+    size_t oldSize;
+    if (ptr == NULL)
+        return CaptureMalloc(size);
+    h = (AllocHeader*)ptr - 1;
+    oldSize = h->size;
+    h2 = (AllocHeader*)realloc(h, size + sizeof(AllocHeader));
+    if (h2 == NULL)
+        return NULL;
+    h2->size = size;
+    if (size > oldSize)
+        WMEMSET((byte*)(h2 + 1) + oldSize, 0xCC, size - oldSize);
+    return (void*)(h2 + 1);
+}
+
+static void DrainCaptured(void)
+{
+    CapturedBuf* c = capturedFrees;
+    while (c != NULL) {
+        CapturedBuf* next = c->next;
+        free((AllocHeader*)c->ptr - 1);
+        free(c);
+        c = next;
+    }
+    capturedFrees = NULL;
+}
+
+/* Verify KeyAgreeDh_server zeroes the ephemeral DH private key buffer
+ * y_ptr before WFREE returns it to the heap. y_ptr is a stack array in
+ * the default build but a heap allocation under WOLFSSH_SMALL_STACK, so
+ * the test installs the capturing allocator and inspects the captured
+ * buffer afterwards.
+ *
+ * wc_DhGenerateKeyPair writes only the leading ySz bytes of the
+ * MAX_KEX_KEY_SZ allocation (ySz is typically the prime-group size, well
+ * below MAX_KEX_KEY_SZ), and ForceZero only wipes those same ySz bytes -
+ * so the tail of the buffer is never written by the function under test.
+ * The capture allocator stamps every fresh allocation with 0xCC so that
+ * after the call:
+ *   - present ForceZero  -> [0x00 * ySz] [0xCC * (MAX - ySz)]
+ *   - removed ForceZero  -> [priv-key * ySz] [0xCC * (MAX - ySz)]
+ * The check requires a captured MAX_KEX_KEY_SZ buffer whose bytes are all
+ * either 0x00 or 0xCC AND that contains at least one 0x00. The DH private
+ * key emitted by wc_DhGenerateKeyPair is overwhelmingly unlikely to be
+ * entirely composed of 0x00 / 0xCC bytes, so this catches the mutation
+ * while staying deterministic regardless of underlying malloc state. */
+static int test_KeyAgreeDh_server_zeroesEphemeralPrivKey(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    byte f[MAX_KEX_KEY_SZ];
+    word32 fSz = (word32)sizeof(f);
+    int result = 0;
+    CapturedBuf* c;
+    int foundYPtr = 0;
+    int captureInstalled = 0;
+    wolfSSL_Malloc_cb prevMf = NULL;
+    wolfSSL_Free_cb prevFf = NULL;
+    wolfSSL_Realloc_cb prevRf = NULL;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -720;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        result = -721;
+        goto out;
+    }
+    if (ssh->handshake == NULL) {
+        result = -722;
+        goto out;
+    }
+#ifndef WOLFSSH_NO_DH_GROUP14_SHA256
+    ssh->handshake->kexId = ID_DH_GROUP14_SHA256;
+#elif !defined(WOLFSSH_NO_DH_GROUP14_SHA1)
+    ssh->handshake->kexId = ID_DH_GROUP14_SHA1;
+#else
+    ssh->handshake->kexId = ID_DH_GROUP1_SHA1;
+#endif
+
+    wolfSSL_GetAllocators(&prevMf, &prevFf, &prevRf);
+    /* Allocators unchanged on failure; nothing to restore. */
+    if (wolfSSL_SetAllocators(CaptureMalloc, CaptureFree,
+                              CaptureRealloc) != 0) {
+        result = -723;
+        goto out;
+    }
+    captureInstalled = 1;
+    (void)wolfSSH_TestKeyAgreeDh_server(ssh, WC_HASH_TYPE_SHA256, f, &fSz);
+    wolfSSL_SetAllocators(prevMf, prevFf, prevRf);
+    captureInstalled = 0;
+
+    for (c = capturedFrees; c != NULL; c = c->next) {
+        const byte* bytes;
+        word32 i;
+        int hasZero = 0;
+        int hasOther = 0;
+
+        if (c->size != MAX_KEX_KEY_SZ)
+            continue;
+        bytes = (const byte*)c->ptr;
+        for (i = 0; i < MAX_KEX_KEY_SZ; i++) {
+            if (bytes[i] == 0x00) {
+                hasZero = 1;
+            }
+            else if (bytes[i] != 0xCC) {
+                hasOther = 1;
+                break;
+            }
+        }
+        if (hasZero && !hasOther) {
+            foundYPtr = 1;
+            break;
+        }
+    }
+    if (!foundYPtr) {
+        result = -724;
+    }
+
+out:
+    if (captureInstalled)
+        wolfSSL_SetAllocators(prevMf, prevFf, prevRf);
+    DrainCaptured();
+    if (ssh != NULL)
+        wolfSSH_free(ssh);
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* WOLFSSH_SMALL_STACK && WOLFSSH_TEST_CAPTURING_ALLOCATOR */
+#endif /* !WOLFSSH_NO_DH */
+
 #endif /* WOLFSSH_TEST_INTERNAL */
 
 /* Error Code And Message Test */
@@ -2373,6 +2796,27 @@ int wolfSSH_UnitTest(int argc, char** argv)
     unitResult = test_IdentifyAsn1Key();
     printf("IdentifyAsn1Key: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#ifdef WOLFSSH_TEST_CAPTURING_ALLOCATOR
+    unitResult = test_SshResourceFree_zeroesSecrets();
+    printf("SshResourceFree_zeroesSecrets: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+#ifndef WOLFSSH_NO_DH
+    unitResult = test_KeyAgreeDh_client_zeroesEphemeralPrivKey();
+    printf("KeyAgreeDh_client_zeroesEphemeralPrivKey: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+#if defined(WOLFSSH_SMALL_STACK) && defined(WOLFSSH_TEST_CAPTURING_ALLOCATOR)
+    unitResult = test_KeyAgreeDh_server_zeroesEphemeralPrivKey();
+    printf("KeyAgreeDh_server_zeroesEphemeralPrivKey: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+#endif /* !WOLFSSH_NO_DH */
 
 #endif
 
