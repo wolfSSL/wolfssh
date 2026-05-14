@@ -424,11 +424,21 @@ static int wolfSSH_DoControlSeq(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf, 
     if (ssh->escState == WS_ESC_CSI || ssh->escBufSz > 0) {
         /* check for left overs */
         if (ssh->escBufSz > 0) {
-            word32 tmpSz = min(bufSz - *idx,
-                    WOLFSSH_MAX_CONSOLE_ARGS - (word32)ssh->escBufSz);
+            word32 tmpSz;
+
+            if (ssh->escBufSz >= WOLFSSL_MAX_ESCBUF) {
+                WLOG(WS_LOG_ERROR, "escBuf state exceeds capacity");
+                return WS_FATAL_ERROR;
+            }
+            tmpSz = min(bufSz - *idx,
+                    (word32)WOLFSSL_MAX_ESCBUF - (word32)ssh->escBufSz);
             WMEMCPY(ssh->escBuf + ssh->escBufSz, buf + *idx, tmpSz);
             i = 0;
             numArgs = getArgs(ssh->escBuf, ssh->escBufSz + tmpSz, &i, args);
+            if (i >= ssh->escBufSz + tmpSz) {
+                ssh->escBufSz += tmpSz;
+                return WS_WANT_READ;
+            }
             c = ssh->escBuf[i++];
             if (!isCommand(c)) {
                 /* expecting a command when in CSI state */
