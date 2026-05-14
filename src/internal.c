@@ -18118,6 +18118,22 @@ int wolfSSH_TestHighwaterCheck(WOLFSSH* ssh, byte side)
     return HighwaterCheck(ssh, side);
 }
 
+#ifndef WOLFSSH_NO_DH
+
+int wolfSSH_TestKeyAgreeDh_client(WOLFSSH* ssh, byte hashId,
+        const byte* f, word32 fSz)
+{
+    return KeyAgreeDh_client(ssh, hashId, f, fSz);
+}
+
+int wolfSSH_TestKeyAgreeDh_server(WOLFSSH* ssh, byte hashId,
+        byte* f, word32* fSz)
+{
+    return KeyAgreeDh_server(ssh, hashId, f, fSz);
+}
+
+#endif /* !WOLFSSH_NO_DH */
+
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
 
 int wolfSSH_TestDoKexDhGexRequest(WOLFSSH* ssh, byte* buf, word32 len,
