@@ -1835,12 +1835,11 @@ int wolfSSH_SFTP_RecvRMDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
  */
 int wolfSSH_SFTP_RecvMKDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 {
-    word32 attrFlags;
+    WS_SFTP_FILEATRB atr;
     word32 strSz;
     const byte* str;
     int    ret;
     char   dir[WOLFSSH_MAX_FILENAME];
-    word32 mode = 0;
     word32 idx  = 0;
     byte*  out;
     word32 outSz = 0;
@@ -1866,22 +1865,26 @@ int wolfSSH_SFTP_RecvMKDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         return ret;
     }
 
-    if (GetUint32(&attrFlags, data, maxSz, &idx) != WS_SUCCESS) {
+    if (SFTP_ParseAttributes_buffer(ssh, &atr, data, &idx, maxSz)
+            != WS_SUCCESS) {
         return WS_BUFFER_E;
     }
-    if (attrFlags != WOLFSSH_FILEATRB_PERM) {
-        WLOG(WS_LOG_SFTP, "Only permission attribute supported");
-        WLOG(WS_LOG_SFTP, "Skipping over attribute and using default");
-        mode = 040755;
-    }
-    else {
-        if (GetUint32(&mode, data, maxSz, &idx) != WS_SUCCESS) {
-            return WS_BUFFER_E;
-        }
-    }
-
 #ifndef USE_WINDOWS_API
-    ret = WMKDIR(ssh->fs, dir, mode);
+#ifndef WOLFSSH_FATFS
+    {
+        word32 mode = 040755;
+        if (atr.flags & WOLFSSH_FILEATRB_PERM) {
+            mode = atr.per;
+        }
+        else {
+            WLOG(WS_LOG_SFTP, "No permission attribute, using default");
+        }
+        ret = WMKDIR(ssh->fs, dir, mode);
+    }
+#else /* WOLFSSH_FATFS */
+    /* WMKDIR for FatFS drops mode argument */
+    ret = WMKDIR(ssh->fs, dir, 0);
+#endif /* WOLFSSH_FATFS */
 #else /* USE_WINDOWS_API */
     ret = WS_CreateDirectoryA(dir, ssh->ctx->heap) == 0;
 #endif /* USE_WINDOWS_API */

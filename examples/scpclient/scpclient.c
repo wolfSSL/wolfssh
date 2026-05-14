@@ -296,9 +296,6 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     if (ret != WS_SUCCESS)
         err_sys("Couldn't set the session's socket.");
 
-    if (ret != WS_SUCCESS)
-        err_sys("Couldn't set the channel type.");
-
     do {
         if (dir == copyFromSrv)
             ret = wolfSSH_SCP_from(ssh, path1, path2);
