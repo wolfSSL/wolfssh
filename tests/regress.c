@@ -3000,7 +3000,7 @@ static void TestDoNewKeys(void)
 
     /* Peer has sent NewKeys; self has already sent its own (not keying). */
     ssh->isKeying = WOLFSSH_PEER_IS_KEYING;
-    AssertIntEQ(wolfSSH_TestDoNewKeys(ssh), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_TestDoNewKeys(ssh, NULL, 0, NULL), WS_SUCCESS);
 
     /* handshake freed by DoNewKeys. */
     AssertTrue(ssh->handshake == NULL);
@@ -3055,7 +3055,7 @@ static void TestDoNewKeys(void)
     WMEMCPY(&savedPeerKeys, &ssh->handshake->peerKeys, sizeof(Keys));
 
     ssh->isKeying = WOLFSSH_PEER_IS_KEYING;
-    AssertIntEQ(wolfSSH_TestDoNewKeys(ssh), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_TestDoNewKeys(ssh, NULL, 0, NULL), WS_SUCCESS);
 
     AssertTrue(ssh->handshake == NULL);
 
@@ -3109,7 +3109,7 @@ static void TestDoNewKeys(void)
     WMEMCPY(&savedPeerKeys, &ssh->handshake->peerKeys, sizeof(Keys));
 
     ssh->isKeying = WOLFSSH_PEER_IS_KEYING;
-    AssertIntEQ(wolfSSH_TestDoNewKeys(ssh), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_TestDoNewKeys(ssh, NULL, 0, NULL), WS_SUCCESS);
 
     AssertTrue(ssh->handshake == NULL);
 
@@ -3163,7 +3163,11 @@ static void TestDoNewKeys(void)
     WMEMCPY(&savedPeerKeys, &ssh->handshake->peerKeys, sizeof(Keys));
 
     ssh->isKeying = WOLFSSH_PEER_IS_KEYING;
-    AssertIntEQ(wolfSSH_TestDoNewKeys(ssh), WS_SUCCESS);
+    /* Exercise the len != 0 rejection while handshake is still allocated,
+     * so the guard is reached and not short-circuited by handshake == NULL. */
+    AssertIntEQ(wolfSSH_TestDoNewKeys(ssh, NULL, 1, NULL), WS_BAD_ARGUMENT);
+    AssertNotNull(ssh->handshake);
+    AssertIntEQ(wolfSSH_TestDoNewKeys(ssh, NULL, 0, NULL), WS_SUCCESS);
 
     AssertTrue(ssh->handshake == NULL);
 
