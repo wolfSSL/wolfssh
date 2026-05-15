@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  WOLFSSL_REF: v5.7.0-stable
+  WOLFSSL_REF: v5.9.1-stable
 
 jobs:
   build_wolfssl:
