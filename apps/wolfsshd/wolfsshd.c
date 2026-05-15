@@ -841,7 +841,10 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 #endif
     PWSTR cmd = NULL;
     size_t cmdSz = 0;
+    PWSTR conCmdPtr = NULL;
+    size_t conCmdSz = 0;
     PROCESS_INFORMATION processInfo;
+    int processCreated = 0;
     size_t sz = 0;
     WCHAR h[MAX_PATH];
     char* forcedCmd;
@@ -946,8 +949,6 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     if (ret == WS_SUCCESS) {
         STARTUPINFOW si;
         PCWSTR conCmd = L"wolfsshd.exe -r ";
-        PWSTR conCmdPtr;
-        size_t conCmdSz;
 
         SetHandleInformation(ptyIn, HANDLE_FLAG_INHERIT, 0);
         SetHandleInformation(ptyOut, HANDLE_FLAG_INHERIT, 0);
@@ -980,13 +981,20 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             &si, &processInfo) != TRUE) {
             wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] Issue creating process, Windows error %d", GetLastError());
-            return WS_FATAL_ERROR;
+            ret = WS_FATAL_ERROR;
+            goto cleanup;
         }
 
-        CloseHandle(cnslIn);
-        CloseHandle(cnslOut);
+        processCreated = 1;
 
-        WFREE(conCmdPtr, NULL, DYNTYPE_SSHD);
+        /* Release the parent's copies of the child's stdio handles now that
+         * the child has inherited them. Holding cnslOut (write-end of stdout
+         * pipe) open would prevent the OS from signalling EOF when the child
+         * exits, making any future blocking ReadFile loop hang indefinitely. */
+        CloseHandle(cnslIn);
+        cnslIn = NULL;
+        CloseHandle(cnslOut);
+        cnslOut = NULL;
     }
 
     if (ret == WS_SUCCESS) {
@@ -1136,9 +1144,6 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             }
         } while (1);
 
-        if (cmd != NULL) {
-            WFREE(cmd, NULL, DYNTYPE_SSHD);
-        }
         wolfSSH_Log(WS_LOG_INFO,
             "[SSHD] Closing down process for console");
 
@@ -1152,10 +1157,32 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 "status");
         }
 
-        CloseHandle(processInfo.hThread);
-        CloseHandle(wolfSSHD_GetAuthToken(conn->auth));
     }
 
+cleanup:
+    if (conCmdPtr != NULL) {
+        WFREE(conCmdPtr, NULL, DYNTYPE_SSHD);
+    }
+    if (cnslIn != NULL) {
+        CloseHandle(cnslIn);
+    }
+    if (cnslOut != NULL) {
+        CloseHandle(cnslOut);
+    }
+    if (ptyIn != NULL) {
+        CloseHandle(ptyIn);
+    }
+    if (ptyOut != NULL) {
+        CloseHandle(ptyOut);
+    }
+    if (processCreated) {
+        CloseHandle(processInfo.hThread);
+        CloseHandle(processInfo.hProcess);
+        CloseHandle(wolfSSHD_GetAuthToken(conn->auth));
+    }
+    if (cmd != NULL) {
+        WFREE(cmd, NULL, DYNTYPE_SSHD);
+    }
     RevertToSelf();
     return ret;
 }
