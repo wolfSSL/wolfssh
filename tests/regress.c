@@ -993,6 +993,28 @@ static void TestKexDhReplyRejectsWhenCallbackRejects(void)
 
 #endif /* KEXDH_REPLY_REGRESS_KEX_ALGO */
 
+static word32 ParseChannelOpenFailRecipient(const byte* pkt, word32 sz)
+{
+    word32 chan;
+    /* SSH binary-packet layout: 4 (len) + 1 (pad_len) + 1 (msg_id) = 6;
+     * + 4 for the recipient_channel field itself gives the 10-byte minimum. */
+    AssertTrue(sz >= 10);
+    AssertIntEQ(pkt[5], MSGID_CHANNEL_OPEN_FAIL);
+    WMEMCPY(&chan, pkt + 6, sizeof(chan));
+    return ntohl(chan);
+}
+
+static word32 ParseChannelOpenFailReason(const byte* pkt, word32 sz)
+{
+    word32 reason;
+    /* SSH binary-packet layout: 4 (len) + 1 (pad_len) + 1 (msg_id) + 4 (chan) = 10;
+     * + 4 for the reason field itself gives the 14-byte minimum. */
+    AssertTrue(sz >= 14);
+    AssertIntEQ(pkt[5], MSGID_CHANNEL_OPEN_FAIL);
+    WMEMCPY(&reason, pkt + 10, sizeof(reason));
+    return ntohl(reason);
+}
+
 static void AssertChannelOpenFailResponse(const ChannelOpenHarness* harness,
         int ret)
 {
@@ -1343,6 +1365,54 @@ static void TestChannelOpenCallbackRejectSendsOpenFail(void)
 
     ret = DoReceive(harness.ssh);
     AssertChannelOpenFailResponse(&harness, ret);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+static void TestSecondSessionChannelRejected(void)
+{
+    ChannelOpenHarness harness;
+    byte in1[128];
+    byte in2[128];
+    word32 in1Sz;
+    word32 in2Sz;
+    int ret;
+
+    in1Sz = BuildChannelOpenPacket("session", 7, 0x4000, 0x8000,
+            NULL, 0, in1, sizeof(in1));
+    in2Sz = BuildChannelOpenPacket("session", 8, 0x4000, 0x8000,
+            NULL, 0, in2, sizeof(in2));
+
+    InitChannelOpenHarness(&harness, in1, in1Sz);
+
+    /* First channel open must succeed */
+    ret = DoReceive(harness.ssh);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertIntEQ(harness.io.inOff, harness.io.inSz);
+    AssertTrue(harness.io.outSz > 0);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_CHANNEL_OPEN_CONF);
+    AssertIntEQ(harness.ssh->channelListSz, 1);
+
+    /* Repoint input and rewind outSz so the second response writes from offset 0.
+     * io.out and outCap need no change - both still refer to harness.out[256]. */
+    harness.io.in    = in2;
+    harness.io.inSz  = in2Sz;
+    harness.io.inOff = 0;
+    harness.io.outSz = 0;
+
+    /* Second session channel open must be rejected */
+    ret = DoReceive(harness.ssh);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertIntEQ(harness.io.inOff, harness.io.inSz);
+    AssertTrue(harness.io.outSz > 0);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_CHANNEL_OPEN_FAIL);
+    AssertIntEQ(ParseChannelOpenFailRecipient(harness.io.out, harness.io.outSz),
+            8); /* RFC 4254 5.1: server must echo the peer's channel ID */
+    AssertIntEQ(ParseChannelOpenFailReason(harness.io.out, harness.io.outSz),
+            OPEN_ADMINISTRATIVELY_PROHIBITED);
+    AssertIntEQ(harness.ssh->channelListSz, 1); /* original channel intact */
 
     FreeChannelOpenHarness(&harness);
 }
@@ -3179,9 +3249,81 @@ static void TestDoNewKeys(void)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 #endif /* !WOLFSSH_NO_AES_GCM */
+
+    /* Sub-test E: SELF_IS_KEYING guard - DoNewKeys must return
+     * WS_INVALID_STATE_E when the local side has not yet sent its own
+     * NEWKEYS (WOLFSSH_SELF_IS_KEYING still set). */
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, FPF_KEX_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, FPF_KEY_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListCipher(ssh,
+            "aes128-cbc,aes256-ctr"), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListMac(ssh,
+            "hmac-sha1,hmac-sha2-256"), WS_SUCCESS);
+    idx = 0;
+    payloadSz = BuildKexInitPayloadFull(
+            FPF_KEX_GOOD, FPF_KEY_GOOD,
+            "aes128-cbc",    /* C2S enc */
+            "aes256-ctr",    /* S2C enc */
+            "hmac-sha1",     /* C2S MAC */
+            "hmac-sha2-256", /* S2C MAC */
+            0, payload, (word32)sizeof(payload));
+    (void)wolfSSH_TestDoKexInit(ssh, payload, payloadSz, &idx);
+    AssertNotNull(ssh->handshake);
+
+    /* peer has sent NEWKEYS but local NEWKEYS not yet sent.
+     * Key-material setup (k, h, sessionId, GenerateKeys) is intentionally
+     * absent - SELF_IS_KEYING must fire before key derivation reads those fields. */
+    ssh->isKeying = WOLFSSH_SELF_IS_KEYING | WOLFSSH_PEER_IS_KEYING;
+    AssertIntEQ(wolfSSH_TestDoNewKeys(ssh, NULL, 0, NULL), WS_INVALID_STATE_E);
+
+    /* DoNewKeys bailed before cleanup - handshake must still be allocated. */
+    AssertNotNull(ssh->handshake);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
 }
 
 #endif /* AES_CBC + AES_CTR + HMAC guards */
+
+/* DoKexInit's PEER_IS_KEYING guard must return WS_INVALID_STATE_E when a
+ * second SSH_MSG_KEXINIT arrives while a key exchange is already in progress,
+ * preventing HandshakeInfo corruption if the outer IsMessageAllowed filter
+ * were ever bypassed. */
+static void TestDoKexInitRejectsWhenPeerIsKeying(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    byte payload[512];
+    word32 payloadSz;
+    word32 idx = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, FPF_KEX_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, FPF_KEY_GOOD), WS_SUCCESS);
+
+    payloadSz = BuildKexInitPayload(ssh, FPF_KEX_GOOD, FPF_KEY_GOOD, 0,
+            payload, (word32)sizeof(payload));
+
+    ssh->isKeying |= WOLFSSH_PEER_IS_KEYING;
+
+    AssertIntEQ(wolfSSH_TestDoKexInit(ssh, payload, payloadSz, &idx),
+            WS_INVALID_STATE_E);
+    /* wolfSSH_new pre-allocates handshake; DoKexInit must not free it on
+     * early return, so the ongoing key-exchange state is preserved. */
+    AssertNotNull(ssh->handshake);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
 
 #endif /* first_packet_follows coverage guard */
 
@@ -3213,6 +3355,7 @@ int main(int argc, char** argv)
     TestChannelBlockedBeforeAuth(ssh);
     TestChannelAllowedAfterAuth(ssh);
     TestChannelOpenCallbackRejectSendsOpenFail();
+    TestSecondSessionChannelRejected();
 #ifdef WOLFSSH_FWD
     TestDirectTcpipRejectSendsOpenFail();
     TestDirectTcpipNoFwdCbSendsOpenFail();
@@ -3232,6 +3375,7 @@ int main(int argc, char** argv)
     && !defined(WOLFSSH_NO_RSA_SHA2_256)
     TestFirstPacketFollows();
     TestKexInitReservedNonZeroRejected();
+    TestDoKexInitRejectsWhenPeerIsKeying();
 #endif
 #if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && !defined(WOLFSSH_NO_RSA) \
     && !defined(WOLFSSH_NO_CURVE25519_SHA256) \
