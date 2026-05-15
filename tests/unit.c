@@ -1315,6 +1315,316 @@ done:
     return result;
 }
 
+static int test_DoChannelSuccess(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    word32           idx;
+
+    /* Short buffer: only 3 bytes, GetUint32 needs 4. */
+    static const byte payShort[]   = { 0x00, 0x00, 0x00 };
+    /* Unknown channel id = 99 (0x63). */
+    static const byte payUnknown[] = { 0x00, 0x00, 0x00, 0x63 };
+    /* Happy path: channel id = 0. */
+    static const byte payOk[]      = { 0x00, 0x00, 0x00, 0x00 };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -500;
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -501; goto done; }
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION,
+                    DEFAULT_WINDOW_SZ, DEFAULT_MAX_PACKET_SZ);
+    if (ch == NULL) { result = -502; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -503;
+        goto done;
+    }
+
+    /* Short buffer → WS_BUFFER_E */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelSuccess(ssh, (byte*)payShort,
+                                       (word32)sizeof(payShort), &idx);
+    if (ret != WS_BUFFER_E) { result = -510; goto done; }
+    if (idx != 0) { result = -514; goto done; }
+
+    /* Unknown channel → WS_INVALID_CHANID */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelSuccess(ssh, (byte*)payUnknown,
+                                       (word32)sizeof(payUnknown), &idx);
+    if (ret != WS_INVALID_CHANID) { result = -511; goto done; }
+    if (idx != 4) { result = -515; goto done; }
+
+    /* Happy path → WS_SUCCESS, serverState == SERVER_DONE */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelSuccess(ssh, (byte*)payOk,
+                                       (word32)sizeof(payOk), &idx);
+    if (ret != WS_SUCCESS) { result = -512; goto done; }
+    if (ssh->serverState != SERVER_DONE) { result = -513; goto done; }
+    if (idx != 4) { result = -516; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+static int test_DoChannelFailure(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    word32           idx;
+
+    static const byte payShort[]   = { 0x00, 0x00, 0x00 };
+    static const byte payUnknown[] = { 0x00, 0x00, 0x00, 0x63 };
+    static const byte payOk[]      = { 0x00, 0x00, 0x00, 0x00 };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -520;
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -521; goto done; }
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION,
+                    DEFAULT_WINDOW_SZ, DEFAULT_MAX_PACKET_SZ);
+    if (ch == NULL) { result = -522; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -523;
+        goto done;
+    }
+
+    /* Short buffer → WS_BUFFER_E */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelFailure(ssh, (byte*)payShort,
+                                       (word32)sizeof(payShort), &idx);
+    if (ret != WS_BUFFER_E) { result = -530; goto done; }
+    if (idx != 0) { result = -533; goto done; }
+
+    /* Unknown channel → WS_INVALID_CHANID */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelFailure(ssh, (byte*)payUnknown,
+                                       (word32)sizeof(payUnknown), &idx);
+    if (ret != WS_INVALID_CHANID) { result = -531; goto done; }
+    if (idx != 4) { result = -534; goto done; }
+
+    /* Happy path → WS_CHANOPEN_FAILED */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelFailure(ssh, (byte*)payOk,
+                                       (word32)sizeof(payOk), &idx);
+    if (ret != WS_CHANOPEN_FAILED) { result = -532; goto done; }
+    if (idx != 4) { result = -535; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+static int test_DoChannelData_overflow(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    word32           idx;
+
+    /* Channel id=0, dataSz=65 (> maxPacketSz of 64): overflow case.
+     * Buffer holds header only; dataSz > maxPacketSz triggers the guard
+     * before ChannelPutData is ever called. */
+    static const byte payOver[] = {
+        0x00, 0x00, 0x00, 0x00,   /* channelId = 0  */
+        0x00, 0x00, 0x00, 0x41,   /* dataSz = 65    */
+        /* 65 payload bytes follow (all zeroes) */
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00
+    };
+
+    /* Channel id=0, dataSz=32 (< maxPacketSz of 64): within-limit case. */
+    static const byte payOk[] = {
+        0x00, 0x00, 0x00, 0x00,   /* channelId = 0  */
+        0x00, 0x00, 0x00, 0x20,   /* dataSz = 32    */
+        /* 32 payload bytes */
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -540;
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -541; goto done; }
+
+    /* windowSz=128, maxPacketSz=64 */
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -542; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -543;
+        goto done;
+    }
+
+    /* dataSz=65 > maxPacketSz=64 → WS_RECV_OVERFLOW_E */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelData(ssh, (byte*)payOver,
+                                    (word32)sizeof(payOver), &idx);
+    if (ret != WS_RECV_OVERFLOW_E) { result = -550; goto done; }
+
+    /* dataSz=32 ≤ maxPacketSz=64 → WS_CHAN_RXD */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelData(ssh, (byte*)payOk,
+                                    (word32)sizeof(payOk), &idx);
+    if (ret != WS_CHAN_RXD) { result = -551; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+static int DiscardIoSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    (void)ssh; (void)buf; (void)ctx;
+    return (int)sz;
+}
+
+static int test_DoChannelExtendedData_overflow(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    word32           idx;
+
+    /* channelId=0, dataTypeCode=1 (stderr), dataSz=65 (> maxPacketSz=64) */
+    static const byte payOver[] = {
+        0x00, 0x00, 0x00, 0x00,   /* channelId = 0            */
+        0x00, 0x00, 0x00, 0x01,   /* dataTypeCode = 1 (stderr)*/
+        0x00, 0x00, 0x00, 0x41,   /* dataSz = 65              */
+        /* 65 payload bytes */
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00
+    };
+
+    /* channelId=0, dataTypeCode=1 (stderr), dataSz=32 (< maxPacketSz=64) */
+    static const byte payOk[] = {
+        0x00, 0x00, 0x00, 0x00,   /* channelId = 0            */
+        0x00, 0x00, 0x00, 0x01,   /* dataTypeCode = 1 (stderr)*/
+        0x00, 0x00, 0x00, 0x20,   /* dataSz = 32              */
+        /* 32 payload bytes */
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -580;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -581; goto done; }
+    /* Allow MSGID_CHANNEL_WINDOW_ADJUST on this bare session. */
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    /* windowSz=128, maxPacketSz=64 */
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -582; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -583;
+        goto done;
+    }
+
+    /* dataSz=65 > maxPacketSz=64 → WS_RECV_OVERFLOW_E */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)payOver,
+                                            (word32)sizeof(payOver), &idx);
+    if (ret != WS_RECV_OVERFLOW_E) { result = -590; goto done; }
+
+    /* dataSz=32 ≤ maxPacketSz=64 → WS_EXTDATA */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)payOk,
+                                            (word32)sizeof(payOk), &idx);
+    if (ret != WS_EXTDATA) { result = -591; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+static int test_SendChannelData_eofTxd(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    byte             buf[4] = { 0x00, 0x01, 0x02, 0x03 };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -560;
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -561; goto done; }
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION,
+                    DEFAULT_WINDOW_SZ, DEFAULT_MAX_PACKET_SZ);
+    if (ch == NULL) { result = -562; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -563;
+        goto done;
+    }
+
+    ch->eofTxd = 1;
+
+    /* SendChannelData after EOF → WS_EOF */
+    ret = SendChannelData(ssh, ch->channel, buf, (word32)sizeof(buf));
+    if (ret != WS_EOF) { result = -570; goto done; }
+
+    /* SendChannelExtendedData after EOF → WS_EOF */
+    ret = SendChannelExtendedData(ssh, ch->channel, buf, (word32)sizeof(buf));
+    if (ret != WS_EOF) { result = -571; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
 /* Plaintext SSH packet from IoSend (before encryption/MAC): LENGTH_SZ,
  * PAD_LENGTH_SZ, then payload starting with the message ID (RFC 4253;
  * wolfSSH PreparePacket/BundlePacket). Not for encrypted payloads or
@@ -1454,6 +1764,106 @@ static int test_DoChannelRequest(void)
             }
         }
     }
+
+    /* RFC 4254 §6.10: exit-status and exit-signal must not send a reply
+     * even if the wire wantReply byte is 1. DoChannelRequest overrides
+     * wantReply=0 for these types, so no CHANNEL_SUCCESS/FAILURE packet
+     * should be emitted. */
+#if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
+    {
+        static const byte payExitStatus[] = {
+            0x00,0x00,0x00,0x00,              /* channelId = 0        */
+            0x00,0x00,0x00,0x0B,              /* typeSz = 11          */
+            0x65,0x78,0x69,0x74,0x2D,         /* "exit-"              */
+            0x73,0x74,0x61,0x74,0x75,0x73,    /* "status"             */
+            0x01,                             /* wantReply = 1 (wire) */
+            0x00,0x00,0x00,0x00               /* exitStatus = 0       */
+        };
+        /* exit-signal: sigName="TERM", coreDumped=0, errorMsg="",
+         * languageTag="" */
+        static const byte payExitSignal[] = {
+            0x00,0x00,0x00,0x00,                    /* channelId = 0        */
+            0x00,0x00,0x00,0x0B,                    /* typeSz = 11          */
+            0x65,0x78,0x69,0x74,0x2D,               /* "exit-"              */
+            0x73,0x69,0x67,0x6E,0x61,0x6C,          /* "signal"             */
+            0x01,                                   /* wantReply = 1 (wire) */
+            0x00,0x00,0x00,0x04,                    /* sigNameSz = 4        */
+            0x54,0x45,0x52,0x4D,                    /* "TERM"               */
+            0x00,                                   /* coreDumped = false   */
+            0x00,0x00,0x00,0x00,                    /* errorMsg = ""        */
+            0x00,0x00,0x00,0x00                     /* languageTag = ""     */
+        };
+        struct { const char* label; const byte* buf; word32 sz; int errBase; }
+        noReplyCases[] = {
+            { "exit-status", payExitStatus, (word32)sizeof(payExitStatus), -430 },
+            { "exit-signal", payExitSignal, (word32)sizeof(payExitSignal), -440 },
+        };
+        int k;
+
+        for (k = 0; k < (int)(sizeof(noReplyCases)/sizeof(noReplyCases[0]));
+                k++) {
+            word32 idx2 = 0;
+            int    ret2;
+
+            s_chanReqCaptureSz = 0;
+            WMEMSET(s_chanReqCapture, 0, sizeof(s_chanReqCapture));
+
+            ret2 = wolfSSH_TestDoChannelRequest(ssh, (byte*)noReplyCases[k].buf,
+                    noReplyCases[k].sz, &idx2);
+            if (ret2 != WS_SUCCESS) {
+                printf("DoChannelRequest[%s]: ret=%d, expected=%d\n",
+                        noReplyCases[k].label, ret2, WS_SUCCESS);
+                result = noReplyCases[k].errBase;
+                goto done;
+            }
+            if (s_chanReqCaptureSz != 0) {
+                printf("DoChannelRequest[%s]: unexpected reply packet "
+                        "(sz=%u)\n", noReplyCases[k].label,
+                        s_chanReqCaptureSz);
+                result = noReplyCases[k].errBase - 1;
+                goto done;
+            }
+        }
+    }
+#endif /* WOLFSSH_TERM || WOLFSSH_SHELL */
+
+    /* RFC 4254 §6.7: window-change must not send a reply even if the
+     * wire wantReply byte is 1. */
+#if defined(WOLFSSH_SHELL) && defined(WOLFSSH_TERM)
+    {
+        static const byte payWindowChange[] = {
+            0x00,0x00,0x00,0x00,                    /* channelId = 0        */
+            0x00,0x00,0x00,0x0D,                    /* typeSz = 13          */
+            0x77,0x69,0x6E,0x64,0x6F,0x77,0x2D,    /* "window-"            */
+            0x63,0x68,0x61,0x6E,0x67,0x65,         /* "change"             */
+            0x01,                                   /* wantReply = 1 (wire) */
+            0x00,0x00,0x00,0x50,                    /* widthChar = 80       */
+            0x00,0x00,0x00,0x18,                    /* heightRows = 24      */
+            0x00,0x00,0x00,0x00,                    /* widthPixels = 0      */
+            0x00,0x00,0x00,0x00                     /* heightPixels = 0     */
+        };
+        word32 idx2 = 0;
+        int    ret2;
+
+        s_chanReqCaptureSz = 0;
+        WMEMSET(s_chanReqCapture, 0, sizeof(s_chanReqCapture));
+
+        ret2 = wolfSSH_TestDoChannelRequest(ssh, (byte*)payWindowChange,
+                (word32)sizeof(payWindowChange), &idx2);
+        if (ret2 != WS_SUCCESS) {
+            printf("DoChannelRequest[window-change]: ret=%d, expected=%d\n",
+                    ret2, WS_SUCCESS);
+            result = -450;
+            goto done;
+        }
+        if (s_chanReqCaptureSz != 0) {
+            printf("DoChannelRequest[window-change]: unexpected reply packet "
+                    "(sz=%u)\n", s_chanReqCaptureSz);
+            result = -451;
+            goto done;
+        }
+    }
+#endif /* WOLFSSH_SHELL && WOLFSSH_TERM */
 
 done:
     wolfSSH_free(ssh);
@@ -2765,6 +3175,27 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_DoChannelRequest();
     printf("DoChannelRequest: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DoChannelSuccess();
+    printf("DoChannelSuccess: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DoChannelFailure();
+    printf("DoChannelFailure: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DoChannelData_overflow();
+    printf("DoChannelData_overflow: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DoChannelExtendedData_overflow();
+    printf("DoChannelExtendedData_overflow: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_SendChannelData_eofTxd();
+    printf("SendChannelData_eofTxd: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #if !defined(WOLFSSH_NO_RSA)
     unitResult = test_RsaVerify_BadDigest();
