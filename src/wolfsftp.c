@@ -2593,6 +2593,7 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     else {
         if (sz > MAX_PATH - 2) {
             WLOG(WS_LOG_SFTP, "Path name is too long.");
+            WFREE(dirName, ssh->ctx->heap, DYNTYPE_BUFFER);
             return WS_FATAL_ERROR;
         }
         WSTRNCPY(name, dirName, MAX_PATH);
