@@ -9723,6 +9723,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
         else if (WSTRNCMP(type, "window-change", typeSz) == 0) {
             word32 widthChar, heightRows, widthPixels, heightPixels;
 
+            wantReply = 0; /* RFC 4254 §6.7: no reply for window-change */
             ret = GetUint32(&widthChar, buf, len, &begin);
             if (ret == WS_SUCCESS)
                 ret = GetUint32(&heightRows, buf, len, &begin);
@@ -9752,6 +9753,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
         #endif /* WOLFSSH_SHELL && WOLFSSH_TERM */
         #if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
         else if (WSTRNCMP(type, "exit-status", typeSz) == 0) {
+            wantReply = 0; /* RFC 4254 §6.10: no reply for exit-status */
             ret = GetUint32(&ssh->exitStatus, buf, len, &begin);
             WLOG(WS_LOG_AGENT, "Got exit status %u.", ssh->exitStatus);
         }
@@ -9760,6 +9762,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
             word32 sigSz;
             byte coreDumped;
 
+            wantReply = 0; /* RFC 4254 §6.10: no reply for exit-signal */
             WLOG(WS_LOG_AGENT, "Got exit signal, remote command terminated");
 
             sigSz = WOLFSSH_MAX_NAMESZ;
@@ -9822,6 +9825,9 @@ static int DoChannelRequest(WOLFSSH* ssh,
 
 static int DoChannelSuccess(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
+    WOLFSSH_CHANNEL* channel = NULL;
+    word32 begin;
+    word32 channelId;
     int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Entering DoChannelSuccess()");
@@ -9832,7 +9838,20 @@ static int DoChannelSuccess(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         return ret;
     }
 
-    ssh->serverState = SERVER_DONE;
+    begin = *idx;
+    ret = GetUint32(&channelId, buf, len, &begin);
+
+    if (ret == WS_SUCCESS) {
+        *idx = begin;
+        channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
+        if (channel == NULL)
+            ret = WS_INVALID_CHANID;
+    }
+
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "  channelId = %u", channelId);
+        ssh->serverState = SERVER_DONE;
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoChannelSuccess(), ret = %d", ret);
     return ret;
@@ -9841,15 +9860,34 @@ static int DoChannelSuccess(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
 static int DoChannelFailure(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
+    WOLFSSH_CHANNEL* channel = NULL;
+    word32 begin;
+    word32 channelId;
     int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Entering DoChannelFailure()");
 
-    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
+    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL) {
         ret = WS_BAD_ARGUMENT;
+        WLOG(WS_LOG_DEBUG, "Leaving DoChannelFailure(), ret = %d", ret);
+        return ret;
+    }
 
-    if (ret == WS_SUCCESS)
+    begin = *idx;
+    ret = GetUint32(&channelId, buf, len, &begin);
+
+    if (ret == WS_SUCCESS) {
+        *idx = begin;
+        channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
+        if (channel == NULL)
+            ret = WS_INVALID_CHANID;
+    }
+
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "  channelId = %u", channelId);
         ret = WS_CHANOPEN_FAILED;
+    }
+
     WLOG(WS_LOG_DEBUG, "Leaving DoChannelFailure(), ret = %d", ret);
     return ret;
 }
@@ -9924,10 +9962,17 @@ static int DoChannelData(WOLFSSH* ssh,
         *idx = begin + dataSz;
 
         channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
-        if (channel == NULL)
+        if (channel == NULL) {
             ret = WS_INVALID_CHANID;
-        else
-            ret = ChannelPutData(channel, buf + begin, dataSz);
+        }
+        else {
+            if (dataSz > channel->maxPacketSz) {
+                ret = WS_RECV_OVERFLOW_E;
+            }
+            else {
+                ret = ChannelPutData(channel, buf + begin, dataSz);
+            }
+        }
     }
 
     if (ret == WS_SUCCESS) {
@@ -9987,6 +10032,8 @@ static int DoChannelExtendedData(WOLFSSH* ssh,
         channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
         if (channel == NULL)
             ret = WS_INVALID_CHANID;
+        else if (dataSz > channel->maxPacketSz)
+            ret = WS_RECV_OVERFLOW_E;
         else {
             ret = PutBuffer(&ssh->extDataBuffer,  buf + begin, dataSz);
             #ifdef DEBUG_WOLFSSH
@@ -16923,6 +16970,13 @@ int SendChannelData(WOLFSSH* ssh, word32 channelId,
     }
 
     if (ret == WS_SUCCESS) {
+        if (channel->eofTxd) {
+            WLOG(WS_LOG_DEBUG, "Cannot send data after EOF");
+            ret = WS_EOF;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
         if (channel->peerWindowSz == 0) {
             WLOG(WS_LOG_DEBUG, "channel window is full");
             ssh->error = WS_WINDOW_FULL;
@@ -17025,6 +17079,13 @@ int SendChannelExtendedData(WOLFSSH* ssh, word32 channelId,
         if (channel == NULL) {
             WLOG(WS_LOG_DEBUG, "Invalid channel");
             ret = WS_INVALID_CHANID;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (channel->eofTxd) {
+            WLOG(WS_LOG_DEBUG, "Cannot send data after EOF");
+            ret = WS_EOF;
         }
     }
 
@@ -18105,6 +18166,30 @@ int wolfSSH_TestChannelPutData(WOLFSSH_CHANNEL* channel, byte* data,
         word32 dataSz)
 {
     return ChannelPutData(channel, data, dataSz);
+}
+
+int wolfSSH_TestDoChannelSuccess(WOLFSSH* ssh, byte* buf, word32 len,
+        word32* idx)
+{
+    return DoChannelSuccess(ssh, buf, len, idx);
+}
+
+int wolfSSH_TestDoChannelFailure(WOLFSSH* ssh, byte* buf, word32 len,
+        word32* idx)
+{
+    return DoChannelFailure(ssh, buf, len, idx);
+}
+
+int wolfSSH_TestDoChannelData(WOLFSSH* ssh, byte* buf, word32 len,
+        word32* idx)
+{
+    return DoChannelData(ssh, buf, len, idx);
+}
+
+int wolfSSH_TestDoChannelExtendedData(WOLFSSH* ssh, byte* buf, word32 len,
+        word32* idx)
+{
+    return DoChannelExtendedData(ssh, buf, len, idx);
 }
 
 int wolfSSH_TestDoUserAuthRequest(WOLFSSH* ssh, byte* buf, word32 len,
