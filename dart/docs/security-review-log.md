@@ -231,12 +231,105 @@ where today it just fails at fill time.
 
 ---
 
+## Entry 04 — Error types & FFI buffer-length boundary (`lib/src/error.dart`)
+
+**Threat model.** Two distinct hazards in one file:
+
+  1. **Integer truncation at the Dart `int` ↔ wolfSSH `word32`
+     boundary.** Dart `int` is 64-bit signed; wolfSSH's API uses
+     `word32` (uint32). A length of `0x100000000` from Dart truncates
+     to `0` on the C side, so `wolfSSH_stream_send(ssh, data, 0)`
+     returns success without sending anything, and the caller thinks
+     `4 GiB+1` bytes were processed. A negative `int` cast to `word32`
+     becomes a huge positive value (e.g. `-1` → `0xFFFFFFFF`).
+  2. **I/O return-code confusion.** wolfSSH's stream I/O can return a
+     positive byte count, `WS_WANT_READ`/`WS_WANT_WRITE`, `WS_EOF`,
+     `WS_CHANNEL_CLOSED`, or a hard error. A caller that treats the
+     `WS_WANT_READ` constant as a negative byte count or "any negative
+     is an error" gets data-loss or hangs.
+
+**Defense shape.** `checkBufferLen` for (1); `IoStatus` sealed
+hierarchy + `interpretIoReturn` for (2); `WolfSshException` +
+`throwWolfSshError` for hard errors.
+
+### Calibrated table
+
+| Item | Weight | Local ref | Permalink |
+|---|---|---|---|
+| `checkBufferLen` rejects `len < 0` and `len > 0xFFFFFFFF` | **Real defense** — pinned by `test/cve_ffi_buffer_overflow_test.dart`. Prevents the truncation class at the FFI boundary. | `error.dart:71-80` | [L71-L80](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/error.dart#L71-L80) |
+| `checkBufferLen` returns the validated value (not just throws) | Real correctness — encourages `final len = checkBufferLen(...)` idiom so the validated value is what gets passed to the C call | `error.dart:79` | [L79](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/error.dart#L79) |
+| `IoStatus` is `sealed` (forces exhaustive switch at callers) | Real defense — prevents the "negative byte count" confusion class for `WS_WANT_READ` | `error.dart:43-66` | [L43-L66](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/error.dart#L43-L66) |
+| `interpretIoReturn` default case `throw StateError` for unknown codes | Real defense — fail-loud on unknown wolfSSH return codes (e.g. after a wolfSSH bump that adds a new code) | `error.dart:96-98` | [L96-L98](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/error.dart#L96-L98) |
+| `throwWolfSshError` NULL-checks `errorToName` return before `.toDartString()` | Real correctness — wolfSSH's `wolfSSH_ErrorToName` returns NULL on unknown codes; without the check, `nullptr.cast<Utf8>().toDartString()` crashes | `error.dart:38` | [L38](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/error.dart#L38) |
+| `throwWolfSshError` returns `Never` | Correctness — compiler refuses code after the throw | `error.dart:36` | [L36](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/error.dart#L36) |
+| `WolfSshException.toString` includes code, name, optional context | Diagnostic. No security weight. `name` is a wolfSSH string-literal table return, not attacker-controlled. | `error.dart:26-30` | [L26-L30](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/error.dart#L26-L30) |
+| `interpretIoReturn` maps `WS_EOF` and `WS_CHANNEL_CLOSED` both to `IoEof` | Real correctness — callers don't need to distinguish "peer closed channel" vs "peer hung up at TCP layer" for the EOF semantic | `error.dart:93-95` | [L93-L95](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/error.dart#L93-L95) |
+
+### Found gaps / followups for entry 04
+
+1. **Found gap (medium severity, policy violation): `checkBufferLen`
+   is not routed at the user-auth fill helpers.** SECURITY.md §4
+   policy says "every `(byte*, word32)` API is gated by
+   `checkBufferLen`". The two streaming callsites comply
+   (`session.dart:79, 98`). The four user-auth fill callsites do
+   not:
+
+     * `context.dart:208` — `final size = cred.password.length;` passed
+       to `dartFillPassword` as `Uint32`
+     * `context.dart:229-231` — `keyTypeBytes.length`,
+       `cred.publicKey.length`, `cred.privateKey.length` all passed to
+       `dartFillPubkey` as `Uint32`
+
+   Permalinks:
+   [context.dart:208-210](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/context.dart#L208-L210),
+   [context.dart:227-232](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/context.dart#L227-L232).
+
+   Real-world exploitability is low — a Uint8List with > 4 GiB of
+   password/key bytes is implausible — but the policy is the policy
+   and the fix is one line per length. Until fixed, the cve test at
+   `test/cve_ffi_buffer_overflow_test.dart` is **incomplete coverage**
+   for §4: it pins the helper but doesn't exercise the auth path.
+
+   **Recommended fix.** Wrap each `.length` with `checkBufferLen`:
+   ```dart
+   final size = checkBufferLen(cred.password.length,
+                               where: 'PasswordCredential.password.length');
+   ```
+   and similarly for the three pubkey lengths.
+
+2. **Misleading comment: "constant-time-ish" at `error.dart:68`.**
+   Buffer lengths aren't secrets; constant-time isn't a property this
+   function needs to maintain. The "ish" is honestly conceding that
+   Dart's int representation isn't strictly constant-time, but the
+   framing invites a future reviewer to ask whether timing
+   side-channels matter. They don't. Suggest renaming the comment to
+   just "Length validator at the FFI boundary".
+   [L68](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/error.dart#L68)
+
+3. **`setFd` (`session.dart:54`) passes a Dart `int` file descriptor
+   to a C `int` parameter without `checkBufferLen`.** This is *not* a
+   word32 boundary (it's `int`, typically 32-bit signed on POSIX),
+   and file descriptors are OS-bounded to well below INT_MAX. Calling
+   it out so future reviewers don't think it's an oversight: it's
+   intentionally not gated because the truncation class doesn't apply
+   to fd values. If we ever support APIs that take Dart `int` ↔ C
+   `int` for *non*-fd values where truncation matters, consider a
+   separate `checkIntArg` helper.
+
+### Action items from entry 04
+
+  * **[planned]** Route the four auth-fill length args through
+    `checkBufferLen`. One commit, four lines.
+  * **[planned]** Extend `test/cve_ffi_buffer_overflow_test.dart` to
+    cover the auth path so §4 coverage is genuine.
+  * **[optional]** Reword the "constant-time-ish" comment.
+
+---
+
 ## Pending entries
 
 Sections not yet reviewed:
 
-  * Entry 04 — Error / buffer-length boundary (`lib/src/error.dart`),
-    in particular `checkBufferLen` (called out in SECURITY.md §4).
   * Entry 05 — Session lifecycle (`lib/src/session.dart`): dispose
     ordering, `setFd`, `connect`, `accept`.
   * Entry 06 — Stream I/O return-code semantics (`lib/src/stream.dart`
