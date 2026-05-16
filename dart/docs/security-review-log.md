@@ -536,12 +536,171 @@ call `wolfSSH_get_error` on hard errors.
 
 ---
 
-## Pending entries
+## Entry 07 — CVE regression tests (`test/cve_*`)
 
-Sections not yet reviewed:
+**Threat model.** A regression test that *looks* like a PoC but
+tests a different surface than the one the defense lives on is worse
+than no test: it lets a real regression ship behind a green CI light.
+For each of the three CVE test files I audited:
 
-  * Entry 07 — CVE regression tests (`test/cve_*`): assert they
-    actually trip the conditions they claim.
+  1. Does each test actually exercise the defense it names?
+  2. Are there sanity-check (positive control) tests so the "rejected"
+     assertions aren't vacuously true on a broken implementation?
+  3. Are there *coverage gaps* — defenses described in SECURITY.md
+     that have no direct PoC at all?
+
+### 07.a — `cve_host_key_bypass_test.dart` (8 tests)
+
+| Test | What it pins | Honest assessment |
+|---|---|---|
+| NULL key pointer rejected even with `acceptAnyDangerous` | `host_key.dart:236-238` NULL guard | Real PoC — directly exercises the trampoline branch |
+| Zero-length with valid pointer rejected | Same NULL/zero guard | Real PoC — different branch of the same `if` |
+| Oversize > 64 KiB rejected | `host_key.dart:239-243` | Real PoC — pins behavior; note from entry 01 that this is a "modest defense", but the test correctly anchors the chosen behavior |
+| Throwing verifier → reject | `host_key.dart:246-249` catch envelope | **Real PoC — load-bearing for the fail-closed contract** |
+| Negative control: rejecting verifier rejects | Sanity | Real — anchors `? 0 : 1` direction at L245 |
+| Positive control: accepting verifier accepts | Sanity | Real — without this, every other "rejected" assertion is vacuously true |
+| `_CaptureVerifier` sees exact bytes | Truncation/padding attack at trampoline | **Real PoC — confirms `Uint8List.fromList(...)` doesn't mangle the buffer** |
+| "Compile-time guard" string-literal check | Documentation | **Weak — tests a string literal in the test itself, not the source.** The `required HostKeyVerifier` enforcement is at `context.dart:30` and is enforced by Dart's null-safety; this test would still pass if the source removed `required`. Acknowledged in the test's own comment (L142-149). |
+
+Permalink to file: [cve_host_key_bypass_test.dart](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/test/cve_host_key_bypass_test.dart)
+
+**Coverage gap (modest):** `acceptAnyDangerous` is constructed (at
+L49, L59, L76) but only to drive the NULL/zero/oversize/throwing
+PoCs. There's no test asserting that on *legitimate* input
+`acceptAnyDangerous` actually accepts — only the synthetic
+`_ConstantVerifier(true)`. Both go through the same trampoline
+branch so this isn't a real risk, but if you wanted full coverage
+you'd add one positive-acceptance test for `acceptAnyDangerous`.
+
+### 07.b — `cve_user_auth_bypass_test.dart` (7 tests)
+
+| Test | What it pins | Honest assessment |
+|---|---|---|
+| Each `UserAuthOutcome.*.code == raw.WOLFSSH_USERAUTH_*` | Enum-to-native ABI | Real PoC — pins the load-bearing defense from entry 03 |
+| Each non-success outcome is `!= WOLFSSH_USERAUTH_SUCCESS` | "No aliasing to success" | Real PoC — defense in depth against an upstream constant renumber |
+| All variants have unique codes | "No two outcomes share a code" | Real PoC — defense in depth |
+| `UserAuthFill.decline()` defaults to failure | `user_auth.dart:118-119` | Real PoC — pins the "decline → fail" contract |
+| `UserAuthFill.password` defaults to success | Negative control | Real — without this, the decline test could be vacuously true under a global "everything defaults to failure" refactor |
+| `_PasswordStrategy.fill(PASSWORD)` returns credential + success | Built-in strategy contract | Real |
+| `_PasswordStrategy.fill(unknownType)` declines, not success | "Unknown auth types never succeed" | Real PoC — pins one of the two arms of the strategy's `if (authType == ...)` |
+
+Permalink: [cve_user_auth_bypass_test.dart](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/test/cve_user_auth_bypass_test.dart)
+
+**Coverage gap (real, medium): no test exercises
+`_userAuthTrampoline` directly.** This file tests the enum and the
+fill helpers but not the trampoline at `context.dart:192-242`. The
+`exceptionalReturn: WOLFSSH_USERAUTH_FAILURE` (L53), the catch-all
+(L239-241), the `if (rc != WS_SUCCESS) return FAILURE` (L211, L233),
+and the type-mismatch silent-drop (L238 flagged as design question
+in entry 02) all live there and have **no PoC**. A refactor that
+broke any of them would not be caught by these tests.
+
+**Recommended.** Add a fourth group:
+```
+group('user-auth trampoline: fail-closed', () {
+  test('throwing strategy → FAILURE', ...);
+  test('strategy returns mismatched credential type → ?', ...);
+  test('helper returns non-WS_SUCCESS → FAILURE', ...);
+});
+```
+The trampoline isn't directly callable (it's `static` and takes a
+raw `Pointer<WsUserAuthData>`), so the test would need either to
+mock `dartFillPassword` or to instantiate a `WolfSshContext` and
+invoke the callback via the registered NativeCallable. The first is
+simpler.
+
+### 07.c — `cve_ffi_buffer_overflow_test.dart` (8 tests)
+
+| Test | What it pins | Honest assessment |
+|---|---|---|
+| `checkBufferLen(0)` → 0 | Boundary: empty allowed | Real |
+| `checkBufferLen(1)` → 1 | Sanity | Real |
+| `checkBufferLen(0xFFFFFFFF)` → 0xFFFFFFFF | word32 max boundary | Real — anchors the upper bound |
+| `checkBufferLen(0x100000000)` throws | One past word32 max | **Real PoC for the truncation class** |
+| `checkBufferLen(1 << 53)` throws | Pathological large length | Real |
+| `checkBufferLen(-1)` throws | Negative-as-uint underflow | **Real PoC for the underflow class** |
+| `checkBufferLen(-2147483648)` (INT32_MIN) throws | Different smallint code path | Real |
+| Error message contains `where:` field name | Diagnostic quality | Real correctness |
+
+Permalink: [cve_ffi_buffer_overflow_test.dart](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/test/cve_ffi_buffer_overflow_test.dart)
+
+**Coverage gap (real, medium — same as found in entry 04):** these
+tests pin `checkBufferLen` in isolation, but **do not verify that
+every length-passing FFI callsite actually routes through it**. As
+recorded in entry 04, the user-auth fill helpers
+(`context.dart:208, 229-231`) skip `checkBufferLen` entirely. The
+tests here would still all pass with that gap present.
+
+The mitigation is a structural one — either:
+
+  * **(a)** Add tests that drive each FFI callsite with an oversize
+    length and assert the trampoline rejects. Requires either real
+    native calls (heavy) or careful mocking.
+  * **(b)** A static-check test that greps the source for callers of
+    `bindings.streamSend/streamRead/dartFillPassword/dartFillPubkey`
+    and asserts each one has `checkBufferLen` on the preceding lines.
+    Brittle but cheap.
+
+(a) is the right shape; (b) is what you reach for if (a) is
+expensive.
+
+### Cross-cutting findings for entry 07
+
+1. **Missing trampoline-level PoCs for the user-auth and FFI-length
+   paths.** Both flagged above. Host-key has full trampoline PoC
+   coverage; auth and length do not. The host-key file is the
+   template; the other two should reach parity.
+
+2. **The compile-time-guard test in `cve_host_key_bypass_test.dart`
+   (L137-153) is a string check, not a source check.** Either delete
+   (the `required` keyword is compile-time-checked by Dart) or
+   upgrade to read `lib/src/context.dart` from disk and assert the
+   pattern is present.
+
+3. **No test for the `Uint8List.fromList(...)` defense at
+   `host_key.dart:244` specifically.** The `_CaptureVerifier` test
+   asserts the verifier *sees* the right bytes; it doesn't assert
+   that the bytes are a *copy* (i.e., that they survive past the
+   trampoline return). A test that retains the captured bytes and
+   re-reads them after the trampoline returns would actually pin
+   that defense.
+
+4. **No test of the `_NativeByteBuffer.writeAll` stale-tail issue
+   (found gap from entry 02).** Recording so it isn't lost.
+
+### Action items from entry 07
+
+  * **[planned]** Add a trampoline-level group to
+    `cve_user_auth_bypass_test.dart`.
+  * **[planned]** Add a callsite-coverage test for
+    `cve_ffi_buffer_overflow_test.dart` (option (a) preferred, (b)
+    acceptable).
+  * **[planned]** Add a `_CaptureVerifier`-style test that asserts
+    *copy* (not just *value*) at the host-key trampoline.
+  * **[optional]** Delete or upgrade the "compile-time guard" test.
+
+---
+
+## Review summary
+
+Seven entries logged. Headline findings across the review:
+
+| Severity | Entry | Item | Action |
+|---|---|---|---|
+| **Medium** | 06 | `wolfssh_dart_version` exported but never called — old binary could load silently | Wire the check into `WolfSshLibrary.load` |
+| **Medium** | 04 / 07 | `checkBufferLen` not routed at the four user-auth fill callsites; PoC tests don't catch this | Add `checkBufferLen` to fills; add trampoline-level PoC tests |
+| **Modest** | 02 | `_NativeByteBuffer.writeAll` stale-tail leaves credential bytes in heap until next grow or dispose | One-line zero-fill in `writeAll` |
+| **Modest** | 05 | No enforcement against `context.dispose()` with live sessions | Doc + sentinel check |
+| **Low** | 05 | NUL byte in username silently truncated | Validate in factory |
+| **Low** | 03 | `assert(credential is X)` in `UserAuthFill.password/.publicKey` is debug-only | Comment clarifying runtime check is at trampoline |
+| **Doc** | 04 | "constant-time-ish" comment in `error.dart` is misleading | Rename comment |
+| **Doc** | 06 | "Per-process" claim for `wolfSSH_Init` is actually "per-isolate" | Update comment + SECURITY.md |
+
+Self-correction note kept from entry 01: the host-key trampoline's
+NULL/oversize guards and `Uint8List.fromList` copy are hygiene-level,
+not load-bearing defenses. The actual defenses are the try/catch
+envelope, the `? 0 : 1` direction, the `required` non-null verifier,
+and the `exceptionalReturn` on the NativeCallable.
 
 ---
 
