@@ -326,18 +326,120 @@ hierarchy + `interpretIoReturn` for (2); `WolfSshException` +
 
 ---
 
+## Entry 05 — Session lifecycle & stream I/O (`lib/src/session.dart`)
+
+**Threat model.** Three failure classes:
+
+  1. **Use-after-free of `WOLFSSH*`** — calling `writeOnce` /
+     `readOnce` / `writeAll` after `dispose`, or after the parent
+     context has been disposed. Without a guard, this dereferences a
+     freed pointer.
+  2. **Memory leak on partial-connect failure** — `connect` allocates
+     the `WOLFSSH*` and a Utf8-encoded username buffer; any throw
+     between those allocations and the successful return must free
+     both.
+  3. **Out-of-bounds write into caller's read destination** — if
+     `readOnce` copied `maxBytes` instead of `bytes actually read`,
+     the tail of an under-filled buffer would leak uninitialized
+     `malloc` bytes into the caller's `Uint8List`.
+
+Stream I/O on top of `WolfSshSession` is also where most of the
+`IoStatus`-class confusion (entry 04) is actually consumed; the
+classifier here intentionally diverges from `interpretIoReturn` to
+call `wolfSSH_get_error` on hard errors.
+
+### Calibrated table
+
+| Item | Weight | Local ref | Permalink |
+|---|---|---|---|
+| `connect` requires non-null context/fd/username and NULL-checks `sshNew` | Real defense (API) + real correctness | `session.dart:25-34` | [L25-L34](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/session.dart#L25-L34) |
+| Passes `context.nativeHandle` (not session ptr) as the callback userdata | Real defense — matches the trampolines' `lookupContextByAddress`; documented in SECURITY.md §8 | `session.dart:39-41` | [L39-L41](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/session.dart#L39-L41) |
+| `setUserAuthCtx` + `setPublicKeyCheckCtx` called before any handshake step | Real defense — without these the trampolines would be invoked with NULL userdata, lookup would miss, callbacks fail-closed (still safe, but every session would fail) | `session.dart:40-41` | [L40-L41](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/session.dart#L40-L41) |
+| `try/finally` around `usernameC` so the Utf8 buffer is freed even on `setUsername` failure | Real correctness — no memory leak on failed-handshake throw paths | `session.dart:43-52` | [L43-L52](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/session.dart#L43-L52) |
+| Every error branch in `connect` calls `sshFree(ssh)` before throwing | Real correctness — no `WOLFSSH*` leak | `session.dart:47, 56, 63` | [L47](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/session.dart#L47), [L56](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/session.dart#L56), [L63](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/session.dart#L63) |
+| `connect` failure path calls `getError(ssh)` for the real wolfSSH error code (not the bare `rc`) | Real correctness — wolfSSH's outer return is often `WS_FATAL_ERROR`; the real reason is inside `getError` | `session.dart:62` | [L62](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/session.dart#L62) |
+| `WolfSshSession.context` field holds the parent context by strong reference | Real defense — keeps the context wrapper (and its NativeCallables) alive at least as long as the session | `session.dart:70` | [L70](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/session.dart#L70) |
+| `_ensureOpen` rejects use after dispose / NULL `_ssh` | Real defense — prevents UAF on session methods | `session.dart:155-159` | [L155-L159](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/session.dart#L155-L159) |
+| `_ssh = nullptr` after `sshFree` in `dispose` | Real defense — `_ensureOpen`'s NULL check actually fires | `session.dart:170` | [L170](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/session.dart#L170) |
+| `writeOnce` malloc + memcpy of caller's `Uint8List` (instead of passing Dart-backed pointer) | Real defense — pinned native allocation can't be moved by Dart GC during the FFI call | `session.dart:80-87` | [L80-L87](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/session.dart#L80-L87) |
+| `readOnce` pre-checks `into.length >= maxBytes` | Real defense — without this, `into.setRange(0, bytes, ...)` could OOB-write | `session.dart:94-97` | [L94-L97](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/session.dart#L94-L97) |
+| `readOnce` copies `status.bytes` (actual), not `maxBytes` (requested), back to `into` | **Real defense — uninitialized-byte leak prevention.** If wolfSSH reports `bytes < maxBytes`, the tail of `buf` is uninitialized `malloc` memory; copying `maxBytes` would expose process memory to the caller. | `session.dart:103-104` | [L103-L104](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/session.dart#L103-L104) |
+| `readOnce` `try/finally` frees `buf` even on classification throw | Real correctness | `session.dart:99-109` | [L99-L109](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/session.dart#L99-L109) |
+| `writeAll` throws on mid-stream `IoEof` instead of silently returning short | Real correctness — caller learns about partial flush | `session.dart:132-134` | [L132-L134](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/session.dart#L132-L134) |
+| `_classify` calls `getError(_ssh)` on hard-error default | Real correctness — surfaces wolfSSH's real reason, not the wrapper rc | `session.dart:149-152` | [L149-L152](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/session.dart#L149-L152) |
+| `dispose` is idempotent (`if (_disposed) return`) | Real correctness — caller `try/finally` patterns can double-dispose without UB | `session.dart:163` | [L163](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/session.dart#L163) |
+| `dispose` calls `shutdown` before `sshFree` | Real hygiene — clean SSH disconnect; comment notes return is ignored | `session.dart:168-169` | [L168-L169](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/session.dart#L168-L169) |
+
+### Found gaps / followups for entry 05
+
+1. **No protection against `context.dispose()` while a session is
+   alive.** *Found gap, robustness.* The session holds the context by
+   strong Dart reference (`session.dart:70`), so the wrapper object
+   stays alive — but the *native* `WOLFSSH_CTX*` is freed as soon as
+   the user calls `context.dispose()`. Subsequent session I/O
+   dereferences a freed CTX. This is documented in SECURITY.md §3
+   ("do not dispose the context while sessions are open") but not
+   enforced. Two options:
+     * (a) Track open sessions in `WolfSshContext` and refuse
+       `dispose()` (or sessions decrement a count on their own
+       `dispose()`).
+     * (b) Leave the contract; loud doc + a `StateError` from a
+       sentinel inside session methods if `context._disposed`.
+
+   Not network-exploitable. Recording.
+   [context.dart:87-101](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/context.dart#L87-L101),
+   [session.dart:70](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/session.dart#L70).
+
+2. **NUL byte in `username` String is silently truncated.** *Found
+   gap, low.* `username.toNativeUtf8()` (`session.dart:43`) encodes
+   the String to UTF-8 + final NUL. If the caller passes
+   `"alice\x00sudo"`, the buffer has the NUL in the middle, and
+   `wolfSSH_SetUsername` uses `strlen`-semantics → treats the
+   username as `"alice"`. Not network-exploitable (we don't accept
+   usernames from the network), but a Dart-side caller bug becomes a
+   silent semantic change. Suggested: validate
+   `!username.codeUnits.contains(0)` before encoding, throw
+   `ArgumentError` if it does.
+   [session.dart:43](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/session.dart#L43).
+
+3. **`writeAll` busy-spins on `WS_WANT_WRITE` / `WS_WANT_READ`.**
+   *Performance, not security.* The doc-comment at
+   `session.dart:114-115` already concedes production callers should
+   integrate with their selector. Recording for the follow-up
+   "high-level stream wrapper" work.
+   [session.dart:116-137](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/session.dart#L116-L137).
+
+4. **`_classify` (`session.dart:139-153`) vs `interpretIoReturn`
+   (`error.dart:84-100`) overlap.** *Code smell, not a bug.* The two
+   differ intentionally: `_classify` calls `getError` and throws a
+   `WolfSshException` on hard errors; `interpretIoReturn` throws
+   `StateError` on unknown codes. Worth one-line comment noting the
+   divergence so a future refactor doesn't accidentally collapse
+   them. No security weight.
+
+5. **No `NativeFinalizer`** for `WOLFSSH*`. Already covered in
+   SECURITY.md §3 — same reason as `WOLFSSH_CTX*`. Recording for
+   audit completeness.
+
+### Action items from entry 05
+
+  * **[planned]** Decide between (a) refcount sessions in context vs
+    (b) cross-check `context._disposed` flag at session-method
+    entry. (b) is one line and cheap; suggest it.
+  * **[planned]** NUL-byte validation in `username`.
+  * **[optional]** Cross-reference comment between `_classify` and
+    `interpretIoReturn`.
+
+---
+
 ## Pending entries
 
 Sections not yet reviewed:
 
-  * Entry 05 — Session lifecycle (`lib/src/session.dart`): dispose
-    ordering, `setFd`, `connect`, `accept`.
-  * Entry 06 — Stream I/O return-code semantics (`lib/src/stream.dart`
-    or wherever `IoStatus` lives).
-  * Entry 07 — Library loading (`lib/src/library.dart`): version-check
+  * Entry 06 — Library loading (`lib/src/library.dart`): version-check
     against `wolfssh_dart_version_hex`, `.so`/`.dylib`/`.dll` search
     path.
-  * Entry 08 — CVE regression tests (`test/cve_*`): assert they
+  * Entry 07 — CVE regression tests (`test/cve_*`): assert they
     actually trip the conditions they claim.
 
 ---
