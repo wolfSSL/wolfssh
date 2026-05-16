@@ -432,13 +432,114 @@ call `wolfSSH_get_error` on hard errors.
 
 ---
 
+## Entry 06 — Library loading (`lib/src/library.dart`)
+
+**Threat model.** Three failure classes:
+
+  1. **Wrong library loaded.** A native binary older than the one the
+     Dart bindings were generated against has a different ABI, missing
+     symbols, or — relevant to security — missing CVE fixes. The
+     binding requires `wolfSSH v1.5.0-stable` (post CVE-2025-11625);
+     loading an older `libwolfssh_dart.so` could silently degrade to
+     the bypass class.
+  2. **wolfSSH_Init not exactly-once per process.** wolfSSH's
+     comment-documented contract is one init per process; double-init
+     could corrupt RNG state, wolfCrypt globals, etc.
+  3. **Library-search-path injection.** Standard `LD_PRELOAD`-class
+     concern when loading unqualified library names. Not unique to
+     this binding; flagged for completeness.
+
+### Calibrated table
+
+| Item | Weight | Local ref | Permalink |
+|---|---|---|---|
+| `_instance` singleton (per isolate) | Real correctness — ensures `wolfSSH_Init` runs once per isolate | `library.dart:20-37` | [L20-L37](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/library.dart#L20-L37) |
+| `wolfSSH_Init` return checked, throws `StateError` on non-zero | Real correctness — fail-loud on init failure | `library.dart:31-34` | [L31-L34](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/library.dart#L31-L34) |
+| iOS uses `DynamicLibrary.process()` (symbols statically linked) | Real correctness — iOS doesn't allow loading arbitrary `.dylib` from app sandbox | `library.dart:46-48` | [L46-L48](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/library.dart#L46-L48) |
+| `overridePath` takes precedence over env var | Real correctness — explicit caller intent wins | `library.dart:42` | [L42](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/library.dart#L42) |
+| `WOLFSSH_DART_LIB` env var documented as "debug helper" | Real expectation-setting — caller-readable warning | `library.dart:11` | [L11](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/library.dart#L11) |
+| Platform-specific default name (`libwolfssh_dart.so/.dylib`, `wolfssh_dart.dll`) | Standard FFI pattern — relies on OS dynamic-linker search path | `library.dart:49-56` | [L49-L56](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/library.dart#L49-L56) |
+
+### Found gaps / followups for entry 06
+
+1. **Found gap (medium severity): `wolfssh_dart_version` exported but
+   never called.** The C glue defines two version probes:
+
+   ```c
+   WSD_EXPORT const char* wolfssh_dart_version(void);      // string
+   WSD_EXPORT unsigned int wolfssh_dart_version_hex(void); // numeric
+   ```
+
+   ([`wolfssh_dart_glue.c:32-38`](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/native/wolfssh_dart_glue.c#L32-L38))
+   The C-side comment at
+   [`wolfssh_dart_glue.c:11-13`](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/native/wolfssh_dart_glue.c#L11-L13)
+   explains the intent: *"so the Dart side can refuse to run against
+   an older binary (defence-in-depth against accidental ABI
+   mismatch)"*. The Dart bindings expose only `dartVersion` (the
+   string) at
+   [`wolfssh.g.dart:302`](https://github.com/j4qfrost/wolfssh/blob/9e923177a66b38baf562e1a96d4eefedc40ecd06/dart/lib/src/bindings/wolfssh.g.dart#L302),
+   and `library.dart:load` **never calls it**.
+
+   Consequence: a `libwolfssh_dart.so` built against an older wolfSSH
+   (e.g. 1.4.6, pre-CVE-2025-11625) on the search path will load
+   silently. SECURITY.md §1 documents the v1.5.0 minimum, but the
+   binding does not enforce it.
+
+   **Recommended fix.** In `load()`, after `bindings.init()`,
+   read `dartVersion()`, parse the version string, and refuse to
+   continue (throw `StateError`) if it's `< 1.5.0`. Even better:
+   regenerate bindings to also expose `wolfssh_dart_version_hex` so
+   the comparison is integer (`>= 0x01050000`) rather than string
+   parsing. This is the most actionable finding from the whole
+   review so far.
+
+2. **Per-isolate `_instance`, not per-process.** *Found gap, low-
+   medium.* The comment at `library.dart:22-23` states
+   `wolfSSH_Init` must run once per process. The implementation
+   enforces "once per isolate" via the Dart `static` field — which
+   is isolate-local in Dart. Multiple isolates each loading the
+   library would call `wolfSSH_Init` once each, at the C level
+   probably non-idempotently. Two mitigations:
+     * (a) Use a Dart `Isolate.spawn`-aware singleton (complex).
+     * (b) Document the constraint: "Use one isolate, or share
+       `WolfSshLibrary` via `Isolate.exit`."
+
+   Note: Dart's `--enable-vm-service` and Flutter both run a
+   service isolate. If that isolate happened to import this package
+   and call `load()`, we'd get the double-init. Unlikely but not
+   theoretical. Recording.
+
+3. **No validation of `overridePath` / env-var path.** Standard FFI
+   pattern; an attacker with env-set capability already has more
+   than enough. Recording only to confirm no oversight here.
+
+4. **Library-search-path injection.** Same standard pattern —
+   `LD_LIBRARY_PATH` / `DYLD_INSERT_LIBRARIES` / Windows
+   `PATH`-search can substitute the binary. Documented for
+   completeness. Mitigations (caller-side):
+     * Production deployments should pin `overridePath` to an
+       absolute path under a system-managed directory.
+     * Or use code-signing + `--prebuilt` distribution.
+
+### Action items from entry 06
+
+  * **[urgent]** Wire the `wolfssh_dart_version` check into
+    `WolfSshLibrary.load`. The C symbol already exists, the Dart
+    binding already exists, the threat model (CVE-2025-11625
+    silent-bypass) is exactly what the check defends. One commit.
+  * **[planned]** Regenerate `wolfssh.g.dart` to include
+    `wolfssh_dart_version_hex` for integer comparison; convert the
+    version check to `>= 0x01050000`.
+  * **[doc]** Update `library.dart:22-23` comment to clarify
+    "per-isolate" vs "per-process" semantics. Add a usage note in
+    SECURITY.md about multi-isolate caveats.
+
+---
+
 ## Pending entries
 
 Sections not yet reviewed:
 
-  * Entry 06 — Library loading (`lib/src/library.dart`): version-check
-    against `wolfssh_dart_version_hex`, `.so`/`.dylib`/`.dll` search
-    path.
   * Entry 07 — CVE regression tests (`test/cve_*`): assert they
     actually trip the conditions they claim.
 
