@@ -27,6 +27,16 @@ class WolfSshSession implements Finalizable {
     required int fileDescriptor,
     required String username,
   }) {
+    if (context.isDisposed) {
+      throw StateError('WolfSshContext used after dispose()');
+    }
+    // wolfSSH_SetUsername uses strlen-semantics; an embedded NUL would
+    // silently truncate the username. Reject up front so the caller
+    // can't accidentally authenticate as a prefix of what they meant.
+    if (username.codeUnits.contains(0)) {
+      throw ArgumentError.value(
+          username, 'username', 'must not contain a NUL byte');
+    }
     final lib = context.library;
     final ssh = lib.bindings.sshNew(context.nativeHandle);
     if (ssh == nullptr) {
@@ -155,6 +165,11 @@ class WolfSshSession implements Finalizable {
   void _ensureOpen() {
     if (_disposed || _ssh == nullptr) {
       throw StateError('WolfSshSession used after dispose()');
+    }
+    if (context.isDisposed) {
+      throw StateError(
+          'WolfSshContext was disposed while the session was alive; '
+          'sessions must outlive their parent context');
     }
   }
 

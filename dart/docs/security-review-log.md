@@ -704,6 +704,118 @@ and the `exceptionalReturn` on the NativeCallable.
 
 ---
 
+## Gap closure log
+
+Code changes applied after the review. Each entry links the
+implementation commit and points to the new tests where applicable.
+
+### G1 (medium): Anti-downgrade gate at library load — **closed**
+
+- **Was:** `wolfssh_dart_version` and `wolfssh_dart_version_hex` were
+  exported by the C glue but the Dart side never called either; a
+  stale `libwolfssh_dart.so` built against pre-1.5.0 wolfSSH would
+  load silently.
+- **Now:** `WolfSshLibrary.load` reads `wolfssh_dart_version_hex` and
+  refuses to continue if it's below `0x01005000` (1.5.0). The
+  comparison is factored into the static
+  `WolfSshLibrary.validateNativeVersion(int)` so it can be unit
+  tested without the native library.
+- **Code:** `dart/lib/src/library.dart`, `dart/lib/src/bindings/wolfssh.g.dart`.
+- **Test:** `dart/test/library_version_test.dart`.
+
+### G2 (medium): `checkBufferLen` on user-auth fill path — **closed**
+
+- **Was:** Password length and the three pubkey lengths flowed from
+  `Uint8List.length` to a `Uint32` C parameter without
+  `checkBufferLen`, violating SECURITY.md §4.
+- **Now:** All four lengths routed through `checkBufferLen` with
+  descriptive `where:` labels (e.g.
+  `PasswordCredential.password.length`).
+- **Code:** `dart/lib/src/context.dart` (`_userAuthTrampoline`).
+- **Test:** existing `cve_ffi_buffer_overflow_test.dart` pins the
+  helper; the auth-path trampoline PoCs remain a planned follow-up
+  (see "Remaining planned work" below).
+
+### G3 (modest): `_NativeByteBuffer.writeAll` stale-tail — **closed**
+
+- **Was:** Writing a smaller credential after a larger one left the
+  tail `[src.length, _capacity)` containing previous credential
+  bytes until next grow or `dispose`.
+- **Now:** `writeAll` explicitly zeros `[src.length, _capacity)`
+  after `setAll`. Wire output is unchanged (wolfSSH gets `(ptr,
+  size)`); the change only reduces credential dwell time in heap
+  pages.
+- **Code:** `dart/lib/src/context.dart` (`_NativeByteBuffer.writeAll`).
+
+### G4 (modest): Context-dispose-with-live-session — **closed**
+
+- **Was:** Calling `context.dispose()` while a session was alive
+  freed the native `WOLFSSH_CTX*`; the next session method would
+  dereference a freed pointer.
+- **Now:** `WolfSshContext.isDisposed` getter added. Both
+  `WolfSshSession.connect` (factory entry) and
+  `WolfSshSession._ensureOpen` (every method) throw `StateError`
+  before any native call if the context is disposed.
+- **Code:** `dart/lib/src/context.dart`, `dart/lib/src/session.dart`.
+
+### G5 (low): NUL-byte username — **closed**
+
+- **Was:** A `username` String containing an embedded NUL would be
+  silently truncated by `wolfSSH_SetUsername`'s strlen-semantics.
+- **Now:** `WolfSshSession.connect` validates `!codeUnits.contains(0)`
+  and throws `ArgumentError.value` with the offending input.
+- **Code:** `dart/lib/src/session.dart`.
+
+### G6 (low): `assert(credential is X)` documentation — **closed**
+
+- **Was:** Reviewers could mistake the debug-only assertion in
+  `UserAuthFill.password` / `.publicKey` for runtime enforcement.
+- **Now:** Doc comment on each factory explicitly notes the assert is
+  debug-only and that runtime enforcement is in `_userAuthTrampoline`.
+- **Code:** `dart/lib/src/auth/user_auth.dart`.
+
+### G7 (doc): "constant-time-ish" comment — **closed**
+
+- **Was:** `error.dart:68` comment implied timing-side-channel
+  protection that wasn't relevant (buffer lengths are not secret).
+- **Now:** Comment rewritten to describe the actual purpose
+  (truncation/underflow guard at the FFI boundary) with an explicit
+  "not constant-time" note.
+- **Code:** `dart/lib/src/error.dart`.
+
+### G8 (doc): per-isolate vs per-process — **closed**
+
+- **Was:** `library.dart` comment said "exactly once per process";
+  implementation actually enforces "once per isolate" via a Dart
+  static field.
+- **Now:** Comment updated to describe the per-isolate semantics,
+  the multi-isolate caveat, and to point at SECURITY.md for the
+  cross-isolate sharing pattern.
+- **Code:** `dart/lib/src/library.dart`.
+
+### Remaining planned work (NOT closed in this pass)
+
+Recorded so reviewers don't think these were closed silently:
+
+- **Trampoline-level PoCs for `_userAuthTrampoline`** (entry 07.b).
+  Would require refactoring the trampoline body into a top-level
+  testable function (mirroring `hostKeyCallbackTrampoline`) so a
+  pure-Dart test can drive it. Out of scope for this hardening pass.
+- **Callsite-coverage test for `checkBufferLen`** (entry 07.c). The
+  underlying gap is *closed* (G2), but there's no test asserting
+  that future callsites added to the binding won't bypass it.
+- **`Uint8List.fromList` copy test** at the host-key trampoline
+  (entry 07 cross-cutting). The current `_CaptureVerifier` test
+  asserts the bytes are right, not that they survive past the
+  trampoline return.
+- **Optional: NativeFinalizer for `WOLFSSH_CTX*` / `WOLFSSH*`**
+  (SECURITY.md §3, entry 02/05). Memory leak only; no security
+  regression from omitting it.
+- **Optional: hash-known-hosts compatibility** (entry 01). OpenSSH
+  parity; privacy nicety for mobile.
+
+---
+
 ## Process notes
 
   * Each entry has a calibration legend applied. If a future reviewer

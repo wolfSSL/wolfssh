@@ -65,9 +65,12 @@ class IoEof extends IoStatus {
   const IoEof();
 }
 
-/// Constant-time-ish length validator for buffer/length pairs at the FFI
-/// boundary. wolfSSH takes `word32` (uint32) sizes; Dart `List.length` is
-/// a 64-bit int. Reject anything that would silently truncate.
+/// Length validator for `(buffer*, length)` pairs crossing the FFI
+/// boundary. wolfSSH's API takes `word32` (uint32) sizes; Dart
+/// `List.length` is a 64-bit int. Reject anything that would silently
+/// truncate to a different value on the C side (`> 0xFFFFFFFF`) or that
+/// would alias to a huge unsigned value (negatives). Buffer lengths are
+/// not secret, so this does not need to be constant-time.
 int checkBufferLen(int len, {String? where}) {
   if (len < 0 || len > 0xFFFFFFFF) {
     throw ArgumentError.value(

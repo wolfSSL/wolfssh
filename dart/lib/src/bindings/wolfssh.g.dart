@@ -204,6 +204,9 @@ typedef WolfSshSetPublicKeyCheckCtxDart = void Function(
 typedef _WolfSshDartVersionC = ffi.Pointer<ffi.Char> Function();
 typedef WolfSshDartVersionDart = ffi.Pointer<ffi.Char> Function();
 
+typedef _WolfSshDartVersionHexC = ffi.Uint32 Function();
+typedef WolfSshDartVersionHexDart = int Function();
+
 // wolfssh_dart_fill_password(WS_UserAuthData* data,
 //                            const byte* password,
 //                            word32 passwordSz) -> int
@@ -276,6 +279,8 @@ final class WolfSshBindings {
             WolfSshSetPublicKeyCheckCtxDart>('wolfSSH_SetPublicKeyCheckCtx'),
         dartVersion = lib.lookupFunction<_WolfSshDartVersionC,
             WolfSshDartVersionDart>('wolfssh_dart_version'),
+        dartVersionHex = lib.lookupFunction<_WolfSshDartVersionHexC,
+            WolfSshDartVersionHexDart>('wolfssh_dart_version_hex'),
         dartFillPassword = lib.lookupFunction<_WolfSshDartFillPasswordC,
             WolfSshDartFillPasswordDart>('wolfssh_dart_fill_password'),
         dartFillPubkey = lib.lookupFunction<_WolfSshDartFillPubkeyC,
@@ -300,6 +305,7 @@ final class WolfSshBindings {
   final WolfSshCtxSetPublicKeyCheckDart ctxSetPublicKeyCheck;
   final WolfSshSetPublicKeyCheckCtxDart setPublicKeyCheckCtx;
   final WolfSshDartVersionDart dartVersion;
+  final WolfSshDartVersionHexDart dartVersionHex;
   final WolfSshDartFillPasswordDart dartFillPassword;
   final WolfSshDartFillPubkeyDart dartFillPubkey;
 }

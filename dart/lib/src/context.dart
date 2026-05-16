@@ -5,6 +5,7 @@ import 'package:ffi/ffi.dart';
 import 'auth/host_key.dart';
 import 'auth/user_auth.dart';
 import 'bindings/wolfssh.g.dart' as raw;
+import 'error.dart';
 import 'library.dart';
 
 /// Wraps a `WOLFSSH_CTX*`. Owns the native pointer; freed by either
@@ -84,6 +85,10 @@ class WolfSshContext implements Finalizable {
   WolfSshLibrary get library => _lib;
   Pointer<raw.WOLFSSH_CTX> get nativeHandle => _ctx;
 
+  /// True once [dispose] has run. Sessions check this before calling
+  /// into the (now freed) native context.
+  bool get isDisposed => _disposed;
+
   void dispose() {
     if (_disposed) return;
     _disposed = true;
@@ -139,10 +144,20 @@ class _NativeByteBuffer {
   }
 
   /// Copy [src] into the buffer, growing if needed. Returns the pointer.
+  ///
+  /// SECURITY: zeroes the tail `[src.length .. _capacity)` after
+  /// writing so a previous larger credential doesn't linger in the
+  /// allocation. wolfSSH reads exactly `src.length` bytes, but
+  /// minimising the dwell time of credential bytes in heap pages is
+  /// cheap hygiene worth doing on every write.
   Pointer<Uint8> writeAll(List<int> src) {
     final p = ensure(src.length);
+    final view = p.asTypedList(_capacity);
     if (src.isNotEmpty) {
-      p.asTypedList(src.length).setAll(0, src);
+      view.setAll(0, src);
+    }
+    if (src.length < _capacity) {
+      view.fillRange(src.length, _capacity, 0);
     }
     return p;
   }
@@ -205,7 +220,8 @@ int _userAuthTrampoline(int authType,
       // byte array, so we can't write {password, passwordSz} from Dart
       // directly — the C glue does the union member assignment using
       // the compiler-agreed layout.
-      final size = cred.password.length;
+      final size = checkBufferLen(cred.password.length,
+          where: 'PasswordCredential.password.length');
       final buf = ctx._pwBuf.writeAll(cred.password);
       final rc = ctx._lib.bindings.dartFillPassword(data, buf, size);
       if (rc != raw.WS_SUCCESS) {
@@ -221,14 +237,20 @@ int _userAuthTrampoline(int authType,
       // internally from the private key during the second
       // USERAUTH_REQUEST round-trip.
       final keyTypeBytes = cred.keyTypeBytes;
+      final keyTypeSz = checkBufferLen(keyTypeBytes.length,
+          where: 'PublicKeyCredential.keyType.length');
+      final pubSz = checkBufferLen(cred.publicKey.length,
+          where: 'PublicKeyCredential.publicKey.length');
+      final privSz = checkBufferLen(cred.privateKey.length,
+          where: 'PublicKeyCredential.privateKey.length');
       final typeP = ctx._pkTypeBuf.writeAll(keyTypeBytes);
       final pubP = ctx._pkPubBuf.writeAll(cred.publicKey);
       final privP = ctx._pkPrivBuf.writeAll(cred.privateKey);
       final rc = ctx._lib.bindings.dartFillPubkey(
         data,
-        typeP, keyTypeBytes.length,
-        pubP, cred.publicKey.length,
-        privP, cred.privateKey.length,
+        typeP, keyTypeSz,
+        pubP, pubSz,
+        privP, privSz,
       );
       if (rc != raw.WS_SUCCESS) {
         return raw.WOLFSSH_USERAUTH_FAILURE;

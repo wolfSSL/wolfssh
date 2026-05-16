@@ -103,12 +103,20 @@ class UserAuthFill {
   /// Provide a password credential to wolfSSH and return [outcome] from
   /// the callback. The default outcome is `success` because for the
   /// password flow the strategy supplying a password indicates intent.
+  ///
+  /// The `assert` is **debug-only**. Runtime enforcement of the
+  /// credential ↔ auth-type pairing lives in `_userAuthTrampoline`
+  /// (`context.dart`), which checks `fill.credential is
+  /// PasswordCredential` before dispatching to the password fill.
   UserAuthFill.password(this.credential, {this.outcome = UserAuthOutcome.success})
       : assert(credential is PasswordCredential);
 
   /// Provide a public-key credential to wolfSSH. Same outcome semantics
   /// as [UserAuthFill.password] — defaulting to `success` indicates
   /// the strategy is committing to this key.
+  ///
+  /// As with [UserAuthFill.password], the `assert` is debug-only; the
+  /// runtime check is in `_userAuthTrampoline`.
   UserAuthFill.publicKey(this.credential,
       {this.outcome = UserAuthOutcome.success})
       : assert(credential is PublicKeyCredential);
