@@ -363,7 +363,8 @@ static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz, WOLFS
     char* storedHash;
     char* storedHashCpy = NULL;
 
-    if (usr == NULL || pw == NULL) {
+    /* Allow zero length passwords, but not NULL pointers. */
+    if (usr == NULL || (pw == NULL && pwSz != 0)) {
         ret = WS_BAD_ARGUMENT;
     }
 
@@ -373,7 +374,9 @@ static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz, WOLFS
             ret = WS_MEMORY_E;
         }
         else {
-            XMEMCPY(pwStr, pw, pwSz);
+            if (pwSz > 0) {
+                XMEMCPY(pwStr, pw, pwSz);
+            }
             pwStr[pwSz] = 0;
         }
     }
