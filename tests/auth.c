@@ -829,7 +829,7 @@ static void test_pubkey_auth_wrong_key(void)
 
 /* -----------------------------------------------------------------------
  * Password auth: unknown callback return value must not grant auth (issue 2486)
- * This block intentionally has no NO_SHA256 guard — password auth does not
+ * This block intentionally has no NO_SHA256 guard -- password auth does not
  * use SHA256.  The surrounding utility functions (tcp_listen, load_key, etc.)
  * are available because they share the base server/client/threading guard.
  * ----------------------------------------------------------------------- */

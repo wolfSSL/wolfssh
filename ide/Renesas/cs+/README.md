@@ -45,7 +45,7 @@ This demo is tested with the following condition.
   - Add project properties of linking library in ap_rx71m_0a_usbfunc_sample_cs.mtpj  
     wolfssh\ide\Renesas\cs+\Projects\wolfssl_lib\DefaultBuild\wolfssl_lib.lib  
     wolfssh\ide\Renesas\cs+\Projects\wolfssh_lib\DefaultBuild\wolfssh_lib.lib  
-　  wolfssh\ide\Renesas\cs+\Projects\demo_server\DefaultBuild\demo_sever.lib 
+    wolfssh\ide\Renesas\cs+\Projects\demo_server\DefaultBuild\demo_sever.lib
     
   - Set CC-RX(Build Tool)->Library Geberation->Library Configuration to"C99" and enable ctype.h.
 
