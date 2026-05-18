@@ -1347,21 +1347,21 @@ static int test_DoChannelSuccess(void)
         goto done;
     }
 
-    /* Short buffer → WS_BUFFER_E */
+    /* Short buffer -> WS_BUFFER_E */
     idx = 0;
     ret = wolfSSH_TestDoChannelSuccess(ssh, (byte*)payShort,
                                        (word32)sizeof(payShort), &idx);
     if (ret != WS_BUFFER_E) { result = -510; goto done; }
     if (idx != 0) { result = -514; goto done; }
 
-    /* Unknown channel → WS_INVALID_CHANID */
+    /* Unknown channel -> WS_INVALID_CHANID */
     idx = 0;
     ret = wolfSSH_TestDoChannelSuccess(ssh, (byte*)payUnknown,
                                        (word32)sizeof(payUnknown), &idx);
     if (ret != WS_INVALID_CHANID) { result = -511; goto done; }
     if (idx != 4) { result = -515; goto done; }
 
-    /* Happy path → WS_SUCCESS, serverState == SERVER_DONE */
+    /* Happy path -> WS_SUCCESS, serverState == SERVER_DONE */
     idx = 0;
     ret = wolfSSH_TestDoChannelSuccess(ssh, (byte*)payOk,
                                        (word32)sizeof(payOk), &idx);
@@ -1404,21 +1404,21 @@ static int test_DoChannelFailure(void)
         goto done;
     }
 
-    /* Short buffer → WS_BUFFER_E */
+    /* Short buffer -> WS_BUFFER_E */
     idx = 0;
     ret = wolfSSH_TestDoChannelFailure(ssh, (byte*)payShort,
                                        (word32)sizeof(payShort), &idx);
     if (ret != WS_BUFFER_E) { result = -530; goto done; }
     if (idx != 0) { result = -533; goto done; }
 
-    /* Unknown channel → WS_INVALID_CHANID */
+    /* Unknown channel -> WS_INVALID_CHANID */
     idx = 0;
     ret = wolfSSH_TestDoChannelFailure(ssh, (byte*)payUnknown,
                                        (word32)sizeof(payUnknown), &idx);
     if (ret != WS_INVALID_CHANID) { result = -531; goto done; }
     if (idx != 4) { result = -534; goto done; }
 
-    /* Happy path → WS_CHANOPEN_FAILED */
+    /* Happy path -> WS_CHANOPEN_FAILED */
     idx = 0;
     ret = wolfSSH_TestDoChannelFailure(ssh, (byte*)payOk,
                                        (word32)sizeof(payOk), &idx);
@@ -1485,13 +1485,13 @@ static int test_DoChannelData_overflow(void)
         goto done;
     }
 
-    /* dataSz=65 > maxPacketSz=64 → WS_RECV_OVERFLOW_E */
+    /* dataSz=65 > maxPacketSz=64 -> WS_RECV_OVERFLOW_E */
     idx = 0;
     ret = wolfSSH_TestDoChannelData(ssh, (byte*)payOver,
                                     (word32)sizeof(payOver), &idx);
     if (ret != WS_RECV_OVERFLOW_E) { result = -550; goto done; }
 
-    /* dataSz=32 ≤ maxPacketSz=64 → WS_CHAN_RXD */
+    /* dataSz=32 <= maxPacketSz=64 -> WS_CHAN_RXD */
     idx = 0;
     ret = wolfSSH_TestDoChannelData(ssh, (byte*)payOk,
                                     (word32)sizeof(payOk), &idx);
@@ -1566,13 +1566,13 @@ static int test_DoChannelExtendedData_overflow(void)
         goto done;
     }
 
-    /* dataSz=65 > maxPacketSz=64 → WS_RECV_OVERFLOW_E */
+    /* dataSz=65 > maxPacketSz=64 -> WS_RECV_OVERFLOW_E */
     idx = 0;
     ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)payOver,
                                             (word32)sizeof(payOver), &idx);
     if (ret != WS_RECV_OVERFLOW_E) { result = -590; goto done; }
 
-    /* dataSz=32 ≤ maxPacketSz=64 → WS_EXTDATA */
+    /* dataSz=32 <= maxPacketSz=64 -> WS_EXTDATA */
     idx = 0;
     ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)payOk,
                                             (word32)sizeof(payOk), &idx);
@@ -1611,11 +1611,11 @@ static int test_SendChannelData_eofTxd(void)
 
     ch->eofTxd = 1;
 
-    /* SendChannelData after EOF → WS_EOF */
+    /* SendChannelData after EOF -> WS_EOF */
     ret = SendChannelData(ssh, ch->channel, buf, (word32)sizeof(buf));
     if (ret != WS_EOF) { result = -570; goto done; }
 
-    /* SendChannelExtendedData after EOF → WS_EOF */
+    /* SendChannelExtendedData after EOF -> WS_EOF */
     ret = SendChannelExtendedData(ssh, ch->channel, buf, (word32)sizeof(buf));
     if (ret != WS_EOF) { result = -571; goto done; }
 
@@ -1765,7 +1765,7 @@ static int test_DoChannelRequest(void)
         }
     }
 
-    /* RFC 4254 §6.10: exit-status and exit-signal must not send a reply
+    /* RFC 4254 sec 6.10: exit-status and exit-signal must not send a reply
      * even if the wire wantReply byte is 1. DoChannelRequest overrides
      * wantReply=0 for these types, so no CHANNEL_SUCCESS/FAILURE packet
      * should be emitted. */
@@ -1827,7 +1827,7 @@ static int test_DoChannelRequest(void)
     }
 #endif /* WOLFSSH_TERM || WOLFSSH_SHELL */
 
-    /* RFC 4254 §6.7: window-change must not send a reply even if the
+    /* RFC 4254 sec 6.7: window-change must not send a reply even if the
      * wire wantReply byte is 1. */
 #if defined(WOLFSSH_SHELL) && defined(WOLFSSH_TERM)
     {

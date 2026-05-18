@@ -9723,7 +9723,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
         else if (WSTRNCMP(type, "window-change", typeSz) == 0) {
             word32 widthChar, heightRows, widthPixels, heightPixels;
 
-            wantReply = 0; /* RFC 4254 §6.7: no reply for window-change */
+            wantReply = 0; /* RFC 4254 sec 6.7: no reply for window-change */
             ret = GetUint32(&widthChar, buf, len, &begin);
             if (ret == WS_SUCCESS)
                 ret = GetUint32(&heightRows, buf, len, &begin);
@@ -9753,7 +9753,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
         #endif /* WOLFSSH_SHELL && WOLFSSH_TERM */
         #if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
         else if (WSTRNCMP(type, "exit-status", typeSz) == 0) {
-            wantReply = 0; /* RFC 4254 §6.10: no reply for exit-status */
+            wantReply = 0; /* RFC 4254 sec 6.10: no reply for exit-status */
             ret = GetUint32(&ssh->exitStatus, buf, len, &begin);
             WLOG(WS_LOG_AGENT, "Got exit status %u.", ssh->exitStatus);
         }
@@ -9762,7 +9762,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
             word32 sigSz;
             byte coreDumped;
 
-            wantReply = 0; /* RFC 4254 §6.10: no reply for exit-signal */
+            wantReply = 0; /* RFC 4254 sec 6.10: no reply for exit-signal */
             WLOG(WS_LOG_AGENT, "Got exit signal, remote command terminated");
 
             sigSz = WOLFSSH_MAX_NAMESZ;

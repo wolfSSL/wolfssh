@@ -97,9 +97,9 @@ If you build the wolfSSL FIPS code in the **Release x64** configuration,
 then you should build wolfSSH with the **ReleaseFIPS x64** configuration.
 
 Similarly:
-- wolfSSL **Debug x64** → wolfSSH **DebugFIPS x64**
-- wolfSSL **Release Win32** → wolfSSH **ReleaseFIPS Win32**
-- wolfSSL **DLL Release x64** → wolfSSH **DLL ReleaseFIPS x64**
+- wolfSSL **Debug x64** -> wolfSSH **DebugFIPS x64**
+- wolfSSL **Release Win32** -> wolfSSH **ReleaseFIPS Win32**
+- wolfSSL **DLL Release x64** -> wolfSSH **DLL ReleaseFIPS x64**
 
 **Notes:**
 * wolfSSH examples and applications might initially fail because the FIPS Integrity
