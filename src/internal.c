@@ -4457,7 +4457,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         algoId = MatchIdLists(side, list, listSz, cannedList, cannedListSz);
         if (algoId == ID_UNKNOWN) {
             WLOG(WS_LOG_DEBUG, "Unable to negotiate Server Host Key Algo");
-            return WS_MATCH_KEY_ALGO_E;
+            ret = WS_MATCH_KEY_ALGO_E;
         }
         else {
             ssh->handshake->pubKeyId = algoId;
@@ -4621,12 +4621,14 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         }
     }
 
-    /* Skip the "for future use" length. */
+    /* RFC 4253 7.1 reserved field: fixed uint32 0, not a length prefix. */
     if (ret == WS_SUCCESS) {
-        WLOG(WS_LOG_DEBUG, "DKI: For Future Use");
+        WLOG(WS_LOG_DEBUG, "DKI: Reserved");
         ret = GetUint32(&skipSz, buf, len, &begin);
-        if (ret == WS_SUCCESS)
-            begin += skipSz;
+        if (ret == WS_SUCCESS && skipSz != 0) {
+            WLOG(WS_LOG_DEBUG, "DKI: non-zero reserved field");
+            ret = WS_PARSE_E;
+        }
     }
 
     if (ret == WS_SUCCESS) {
@@ -6307,10 +6309,10 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     int ret = WS_SUCCESS;
 
     WOLFSSH_UNUSED(buf);
-    WOLFSSH_UNUSED(len);
     WOLFSSH_UNUSED(idx);
 
-    if (ssh == NULL || ssh->handshake == NULL)
+    /* RFC 4253 7.3: SSH_MSG_NEWKEYS has no payload. */
+    if (ssh == NULL || ssh->handshake == NULL || len != 0)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
@@ -10874,7 +10876,7 @@ int DoProtoId(WOLFSSH* ssh)
         }
 
         if (ssh->inputBuffer.length >= 4
-            && WSTRNCASECMP((char*)ssh->inputBuffer.buffer, "SSH-", 4) == 0)
+            && WSTRNCMP((char*)ssh->inputBuffer.buffer, "SSH-", 4) == 0)
             break;
 
         if (!allowBanner) {
@@ -10903,8 +10905,8 @@ int DoProtoId(WOLFSSH* ssh)
     eolSz = (*eol == '\r') ? 2 : 1;
 
     if (ssh->inputBuffer.length >= SSH_PROTO_SZ
-        && WSTRNCASECMP((char*)ssh->inputBuffer.buffer,
-                        ssh->ctx->sshProtoIdStr, SSH_PROTO_SZ) == 0) {
+        && WSTRNCMP((char*)ssh->inputBuffer.buffer,
+                    ssh->ctx->sshProtoIdStr, SSH_PROTO_SZ) == 0) {
 
         if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER)
             ssh->clientState = CLIENT_VERSION_DONE;
@@ -18072,10 +18074,9 @@ int wolfSSH_TestDoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     return DoKexInit(ssh, buf, len, idx);
 }
 
-int wolfSSH_TestDoNewKeys(WOLFSSH* ssh)
+int wolfSSH_TestDoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
-    /* DoNewKeys ignores buf/len/idx (marked WOLFSSH_UNUSED internally). */
-    return DoNewKeys(ssh, NULL, 0, NULL);
+    return DoNewKeys(ssh, buf, len, idx);
 }
 
 void wolfSSH_TestFreeHandshake(WOLFSSH* ssh)

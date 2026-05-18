@@ -31,6 +31,7 @@
 #include <wolfssh/port.h>
 #include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfssl/wolfcrypt/coding.h>
+#include <wolfssl/wolfcrypt/memory.h>
 #include "apps/wolfssh/common.h"
 #ifndef USE_WINDOWS_API
     #include <termios.h>
@@ -382,10 +383,8 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
                             printf("This key matches other servers:\n");
                             otherMatch = 1;
                         }
-                        if (otherMatch) {
-                            printf("\t%s:%u: %s\n",
-                                    knownHostsName, lineCount, name);
-                        }
+                        printf("\t%s:%u: %s\n",
+                                knownHostsName, lineCount, name);
                     }
                 }
             }
@@ -789,9 +788,13 @@ void ClientFreeBuffers(void)
     }
 
     if (userPrivateKeyAlloc && userPrivateKey != NULL) {
+        wc_ForceZero(userPrivateKey, userPrivateKeySz);
         WFREE(userPrivateKey, NULL, DYNTYPE_PRIVKEY);
         userPrivateKey = userPrivateKeyBuf;
-        userPrivateKeySz = sizeof(userPrivateKeyBuf);
         userPrivateKeyAlloc = 0;
     }
+
+    wc_ForceZero(userPrivateKeyBuf, sizeof(userPrivateKeyBuf));
+    userPrivateKeySz = 0;
+    wc_ForceZero(userPassword, sizeof(userPassword));
 }
