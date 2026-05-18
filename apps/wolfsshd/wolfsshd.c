@@ -1543,8 +1543,14 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             }
 
             rc = select((int)maxFd + 1, &readFds, &writeFds, NULL, NULL);
-            if (rc == -1)
+            if (rc == -1) {
+                /* Signal (e.g. SIGCHLD from child exit) interrupted select.
+                 * Re-evaluate the loop condition so any pending windowFull
+                 * data and remaining pipe contents still get drained. */
+                if (errno == EINTR)
+                    continue;
                 break;
+            }
         }
         else {
             pending = 1; /* found some pending SSH data */
