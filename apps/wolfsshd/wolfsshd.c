@@ -1234,6 +1234,10 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     int   windowFull = 0; /* Contains size of bytes from shellBuffer that did
                            * not get passed on to wolfSSH yet. This happens
                            * with window full errors or when rekeying.  */
+    int   windowFullExt = 0; /* Nonzero when the bytes held in shellBuffer
+                              * belong to the extended (stderr) data stream
+                              * and must be resent with
+                              * wolfSSH_extended_data_send().  */
     int   wantWrite  = 0;
     int   peerConnected = 1;
     int   stdoutEmpty = 0;
@@ -1629,8 +1633,14 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 
         /* if the window was previously full, try resending the data */
         if (windowFull) {
-            cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
-                    shellBuffer, windowFull);
+            if (windowFullExt) {
+                cnt_w = wolfSSH_extended_data_send(ssh, shellBuffer,
+                        windowFull);
+            }
+            else {
+                cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
+                        shellBuffer, windowFull);
+            }
             if (cnt_w == WS_WINDOW_FULL || cnt_w == WS_REKEYING) {
                 continue;
             }
@@ -1646,6 +1656,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 }
                 if (windowFull < 0)
                     windowFull = 0;
+                windowFullExt = 0;
             }
         }
 
@@ -1666,12 +1677,17 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                             cnt_r);
                         if (cnt_w > 0 && cnt_w < cnt_r) { /* partial send */
                             windowFull = cnt_r - cnt_w;
+                            windowFullExt = 1;
                             WMEMMOVE(shellBuffer, shellBuffer + cnt_w,
                                 windowFull);
+                            /* don't let the stdout read below trample the
+                             * buffered stderr remainder */
+                            continue;
                         }
                         else if (cnt_w == WS_WINDOW_FULL ||
                                  cnt_w == WS_REKEYING) {
                             windowFull = cnt_r; /* save amount to be sent */
+                            windowFullExt = 1;
                             continue;
                         }
                         else if (cnt_w == WS_WANT_WRITE) {
