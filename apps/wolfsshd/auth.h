@@ -83,5 +83,7 @@ int wolfSSHD_GetHomeDirectory(WOLFSSHD_AUTH* auth, WOLFSSH* ssh, WCHAR* out, int
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
 int CheckPasswordHashUnix(const char* input, char* stored);
 #endif
+int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
+                      word32 keySz);
 #endif
 #endif /* WOLFAUTH_H */

@@ -152,8 +152,13 @@ USER_NODE* AddNewUser(USER_NODE* list, byte type, const byte* username,
 #endif
 
 /* TODO: Can use wolfSSH_ReadKey_buffer? */
+#ifdef WOLFSSHD_UNIT_TEST
+int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
+                      word32 keySz)
+#else
 static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
                              word32 keySz)
+#endif
 {
     int ret = WSSHD_AUTH_SUCCESS;
     char* type = NULL;
