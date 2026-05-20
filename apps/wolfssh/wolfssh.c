@@ -794,7 +794,15 @@ static int config_parse_command_line(struct config* config,
                 break;
 
             case 'l':
-                config->user = myoptarg;
+                if (config->user) {
+                    WFREE(config->user, NULL, 0);
+                    config->user = NULL;
+                }
+                config->user = WSTRDUP(myoptarg, NULL, 0);
+                if (config->user == NULL) {
+                    fprintf(stderr, "Couldn't capture the user name.\n");
+                    exit(EXIT_FAILURE);
+                }
                 break;
 
             case 'N':
