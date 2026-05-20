@@ -19,6 +19,7 @@
 #endif
 
 #include <wolfssh/ssh.h>
+#include <wolfssl/wolfcrypt/coding.h>
 #include <configuration.h>
 #include <auth.h>
 
@@ -38,10 +39,9 @@ void Log(const char *const, ...) FMTCHECK;
 void Log(const char *const fmt, ...)
 {
     va_list vlist;
-    char    msgStr[WOLFSSH_DEFAULT_LOG_WIDTH];
 
     va_start(vlist, fmt);
-    WVSNPRINTF(msgStr, sizeof(msgStr), fmt, vlist);
+    vfprintf(stderr, fmt, vlist);
     va_end(vlist);
 }
 
@@ -494,11 +494,113 @@ static int test_CheckPasswordHashUnix(void)
 }
 #endif /* WOLFSSH_HAVE_LIBCRYPT || WOLFSSH_HAVE_LIBLOGIN */
 
+#ifdef WOLFSSL_BASE64_ENCODE
+/* Build a mutable "ssh-rsa <base64(key)>" line; WSTRTOK mutates in place. */
+static int BuildAuthKeysLine(const byte* key, word32 keySz,
+                             char* lineOut, word32 lineOutSz)
+{
+    static const char prefix[] = "ssh-rsa ";
+    word32 prefixLen = (word32)(sizeof(prefix) - 1);
+    word32 b64Sz;
+
+    if (lineOutSz <= prefixLen) {
+        return WS_BUFFER_E;
+    }
+    WMEMCPY(lineOut, prefix, prefixLen);
+    b64Sz = lineOutSz - prefixLen;
+    if (Base64_Encode_NoNl(key, keySz, (byte*)lineOut + prefixLen, &b64Sz)
+            != 0) {
+        return WS_FATAL_ERROR;
+    }
+    /* Base64_Encode_NoNl does not null-terminate; do it ourselves. */
+    if (prefixLen + b64Sz >= lineOutSz) {
+        return WS_BUFFER_E;
+    }
+    lineOut[prefixLen + b64Sz] = '\0';
+    return WS_SUCCESS;
+}
+
+/* Negative-path coverage for CheckAuthKeysLine so mutation of the
+ * ConstantCompare clause (the only substantive bytewise check after the
+ * length comparison) does not survive the test suite. */
+static int test_CheckAuthKeysLine(void)
+{
+    int ret = WS_SUCCESS;
+    /* Three equal-length payloads. keyB differs from keyA throughout;
+     * keyALastByte differs from keyA only in the final byte -- this is the
+     * case that kills a "delete the ConstantCompare" mutation, since the
+     * length comparison alone would accept it. */
+    static const char keyAStr[] = "wolfssh-auth-key-test-A-AAAAAAA";
+    static const char keyBStr[] = "wolfssh-auth-key-test-B-BBBBBBB";
+    const byte* keyA = (const byte*)keyAStr;
+    const byte* keyB = (const byte*)keyBStr;
+    const word32 keySz = (word32)(sizeof(keyAStr) - 1);
+    byte keyALastByte[sizeof(keyAStr) - 1];
+    char line[256];
+    char lineCopy[256];
+    int rc;
+
+    WMEMCPY(keyALastByte, keyA, keySz);
+    keyALastByte[keySz - 1] ^= 0x01;
+
+    ret = BuildAuthKeysLine(keyA, keySz, line, sizeof(line));
+    if (ret != WS_SUCCESS) {
+        return ret;
+    }
+
+    Log("    Testing scenario: matching key authenticates.");
+    WMEMCPY(lineCopy, line, WSTRLEN(line) + 1);
+    rc = CheckAuthKeysLine(lineCopy, (word32)WSTRLEN(lineCopy),
+                           keyA, keySz);
+    if (rc == WSSHD_AUTH_SUCCESS) {
+        Log(" PASSED.\n");
+    }
+    else {
+        Log(" FAILED (rc=%d).\n", rc);
+        ret = WS_FATAL_ERROR;
+    }
+
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: different same-length key is rejected.");
+        WMEMCPY(lineCopy, line, WSTRLEN(line) + 1);
+        rc = CheckAuthKeysLine(lineCopy, (word32)WSTRLEN(lineCopy),
+                               keyB, keySz);
+        if (rc == WSSHD_AUTH_FAILURE) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: same-length key differing in last byte is "
+            "rejected.");
+        WMEMCPY(lineCopy, line, WSTRLEN(line) + 1);
+        rc = CheckAuthKeysLine(lineCopy, (word32)WSTRLEN(lineCopy),
+                               keyALastByte, keySz);
+        if (rc == WSSHD_AUTH_FAILURE) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    return ret;
+}
+#endif /* WOLFSSL_BASE64_ENCODE */
+
 const TEST_CASE testCases[] = {
     TEST_DECL(test_ConfigDefaults),
     TEST_DECL(test_ParseConfigLine),
     TEST_DECL(test_ConfigCopy),
     TEST_DECL(test_ConfigFree),
+#ifdef WOLFSSL_BASE64_ENCODE
+    TEST_DECL(test_CheckAuthKeysLine),
+#endif
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
     TEST_DECL(test_CheckPasswordHashUnix),
 #endif
