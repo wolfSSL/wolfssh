@@ -2280,9 +2280,6 @@ static int StartSSHD(int argc, char** argv)
 
     logFile = stderr;
     wolfSSH_SetLoggingCb(wolfSSHDLoggingCb);
-#ifdef DEBUG_WOLFSSL
-    wolfSSL_Debugging_ON();
-#endif
 
 #ifdef _WIN32
     char** argv = NULL;
@@ -2382,6 +2379,8 @@ static int StartSSHD(int argc, char** argv)
 
         case 'd':
             debugMode = 1; /* turn on debug mode */
+            wolfSSL_Debugging_ON();
+            wolfSSH_Debugging_ON();
             break;
 
         case 'D':
@@ -2700,6 +2699,11 @@ static int StartSSHD(int argc, char** argv)
     wolfSSHD_ConfigFree(conf);
     wolfSSHD_AuthFreeUser(auth);
     wolfSSH_Cleanup();
+
+    if (debugMode) {
+        wolfSSH_Debugging_OFF();
+        wolfSSL_Debugging_OFF();
+    }
 
 #ifdef _WIN32
     if (isDaemon) { /* free up temporary memory used for conversion of args from wchar_t */
