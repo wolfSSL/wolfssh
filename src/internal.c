@@ -1302,6 +1302,7 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->scpRequestType  = WOLFSSH_SCP_SINGLE_FILE_REQUEST;
     ssh->scpIsRecursive  = 0;
     ssh->scpDirection    = WOLFSSH_SCP_DIR_NONE;
+    ssh->scpDirDepth     = 0;
 #endif
 
 #ifdef WOLFSSH_SFTP

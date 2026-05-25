@@ -2005,12 +2005,18 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                     NU_Done(&stat);
                 }
             }
+            if (ret != WS_SCP_ABORT) {
+                ssh->scpDirDepth = 0;
+            }
     #else
             if (WCHDIR(ssh->fs, basePath) != 0) {
                 WLOG(WS_LOG_ERROR,
                     "scp: invalid destination directory, abort");
                 wolfSSH_SetScpErrorMsg(ssh, "invalid destination directory");
                 ret = WS_SCP_ABORT;
+            }
+            else {
+                ssh->scpDirDepth = 0;
             }
     #endif
             break;
@@ -2138,6 +2144,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                 WSTRNCAT((char*)basePath, "/", sizeof("/"));
                 WSTRNCAT((char*)basePath, fileName, WOLFSSH_MAX_FILENAME);
                 wolfSSH_CleanPath(ssh, (char*)basePath, WOLFSSH_MAX_FILENAME);
+                ssh->scpDirDepth++;
             #else
                 if (WCHDIR(ssh->fs, fileName) != 0) {
                     WLOG(WS_LOG_ERROR,
@@ -2145,22 +2152,39 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                     wolfSSH_SetScpErrorMsg(ssh, "unable to cd into directory");
                     ret = WS_SCP_ABORT;
                 }
+                else {
+                    ssh->scpDirDepth++;
+                }
             #endif
             }
             break;
 
         case WOLFSSH_SCP_END_DIR:
 
+            /* abort if peer sent END_DIR without a matching NEW_DIR */
+            if (ssh->scpDirDepth == 0) {
+                WLOG(WS_LOG_ERROR,
+                    "scp: end directory without matching start, abort");
+                wolfSSH_SetScpErrorMsg(ssh,
+                    "end directory without matching start");
+                ret = WS_SCP_ABORT;
+                break;
+            }
+
             /* cd out of directory */
         #ifdef WOLFSSL_NUCLEUS
                 WSTRNCAT((char*)basePath, "/..", WOLFSSH_MAX_FILENAME - 1);
                 wolfSSH_CleanPath(ssh, (char*)basePath, WOLFSSH_MAX_FILENAME);
+                ssh->scpDirDepth--;
         #else
             if (WCHDIR(ssh->fs, "..") != 0) {
                 WLOG(WS_LOG_ERROR,
                             "scp: unable to cd out of directory, abort");
                 wolfSSH_SetScpErrorMsg(ssh, "unable to cd out of directory");
                 ret = WS_SCP_ABORT;
+            }
+            else {
+                ssh->scpDirDepth--;
             }
         #endif
             break;
