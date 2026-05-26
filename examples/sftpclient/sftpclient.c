@@ -1291,6 +1291,33 @@ static int doCmds(func_args* args)
 }
 
 
+/* Resolve the CWD via RealPath (passing "." to get the current directory)
+ * and append the relative remote path into fullpath.  WS_REKEYING and
+ * WS_WINDOW_FULL are intentionally excluded from the retry condition below;
+ * they require a wolfSSH_worker call that the caller's outer loop provides. */
+static int doBuildRemotePath(const char* remote, char* fullpath, word32 fullpathSz,
+                      WS_SFTPNAME** nameOut)
+{
+    int err;
+
+    if (remote == NULL || fullpath == NULL || fullpathSz == 0 || nameOut == NULL)
+        return WS_BAD_ARGUMENT;
+    do {
+        *nameOut = wolfSSH_SFTP_RealPath(ssh, (char*)".");
+        err = wolfSSH_get_error(ssh);
+    } while (err == WS_WANT_READ || err == WS_WANT_WRITE);
+    if (*nameOut == NULL)
+        return (err == WS_SUCCESS) ? WS_FATAL_ERROR : err;
+    if (snprintf(fullpath, fullpathSz, "%s/%s", (*nameOut)->fName, remote)
+            >= (int)fullpathSz) {
+        wolfSSH_SFTPNAME_list_free(*nameOut);
+        *nameOut = NULL;
+        return WS_FATAL_ERROR;
+    }
+    return WS_SUCCESS;
+}
+
+
 /* alternate main loop for the autopilot get/receive */
 static int doAutopilot(int cmd, char* local, char* remote)
 {
@@ -1319,22 +1346,33 @@ static int doAutopilot(int cmd, char* local, char* remote)
        WSTRNCPY(fullpath, remote, sizeof(fullpath) - 1);
     }
     else {
-        do {
-            name = wolfSSH_SFTP_RealPath(ssh, fullpath);
-            err = wolfSSH_get_error(ssh);
-        } while ((err == WS_WANT_READ || err == WS_WANT_WRITE) &&
-            ret != WS_SUCCESS);
-
-        snprintf(fullpath, sizeof(fullpath), "%s/%s",
-            name == NULL ? "." : name->fName,
-            remote);
+        err = doBuildRemotePath(remote, fullpath, sizeof(fullpath), &name);
+        if (err != WS_SUCCESS && err != WS_REKEYING && err != WS_WINDOW_FULL)
+            return WS_FATAL_ERROR;
     }
 
     do {
-        if (err == WS_REKEYING || err == WS_WINDOW_FULL) { /* handle rekeying state */
+        if (err == WS_REKEYING || err == WS_WINDOW_FULL) { /* handle rekeying and window-full state */
             do {
                 ret = wolfSSH_worker(ssh, NULL);
-            } while (ret == WS_REKEYING);
+            } while (ret == WS_REKEYING || ret == WS_WINDOW_FULL ||
+                     wolfSSH_get_error(ssh) == WS_REKEYING);
+
+            /* wolfSSH_worker returns WS_FATAL_ERROR when the socket
+             * would block (DoReceive -> GetInputData -> WS_WANT_READ),
+             * so check ssh->error rather than ret for blocking conditions. */
+            if (ret != WS_SUCCESS && ret != WS_CHAN_RXD &&
+                    wolfSSH_get_error(ssh) != WS_WANT_READ &&
+                    wolfSSH_get_error(ssh) != WS_WANT_WRITE)
+                break;
+
+            if (!remoteAbsPath && name == NULL) {
+                err = doBuildRemotePath(remote, fullpath, sizeof(fullpath), &name);
+                if (err != WS_SUCCESS) {
+                    ret = WS_FATAL_ERROR;
+                    continue; /* skip wolfSSH_get_error; outer loop retries on err from doBuildRemotePath */
+                }
+            }
         }
 
         if (cmd == AUTOPILOT_PUT) {
