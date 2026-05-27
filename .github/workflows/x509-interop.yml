@@ -1,0 +1,253 @@
+name: wolfSSH x509 Interop Test
+
+on:
+  schedule:
+    # Weekly: Mondays at 06:00 UTC
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  WOLFSSL_REF: v5.9.1-stable
+  PKIXSSH_VERSION: 14.4
+
+jobs:
+  build_wolfssl:
+    name: Build wolfSSL
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checking cache for wolfSSL
+        uses: actions/cache@v5
+        id: cache-wolfssl
+        with:
+          path: build-dir/
+          key: wolfssh-x509-interop-wolfssl-${{ env.WOLFSSL_REF }}-ubuntu-latest
+          lookup-only: true
+
+      - name: Checkout, build, and install wolfSSL
+        if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+        uses: wolfSSL/actions-build-autotools-project@v1
+        with:
+          repository: wolfssl/wolfssl
+          ref: ${{ env.WOLFSSL_REF }}
+          path: wolfssl
+          configure: --enable-ssh --enable-keygen --enable-ed25519 --enable-curve25519
+          check: false
+          install: true
+
+  build_pkixssh:
+    name: Build PKIX-SSH
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checking cache for PKIX-SSH
+        uses: actions/cache@v5
+        id: cache-pkixssh
+        with:
+          path: build-dir/
+          key: wolfssh-x509-interop-pkixssh-${{ env.PKIXSSH_VERSION }}-ubuntu-latest
+          lookup-only: true
+
+      - name: Install build dependencies
+        if: steps.cache-pkixssh.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get -y update
+          sudo apt-get -y install libssl-dev zlib1g-dev
+
+      - name: Download, build, and install PKIX-SSH
+        if: steps.cache-pkixssh.outputs.cache-hit != 'true'
+        run: |
+          curl -L -o pkixssh.tar.gz \
+            "https://roumenpetrov.info/secsh/src/pkixssh-${PKIXSSH_VERSION}.tar.gz"
+          echo "3d3b34a3e60dcc69995aeea25a9dafb9a3abbb72a413ef0654b64f7103aa4928  pkixssh.tar.gz" \
+            | sha256sum -c -
+          tar xzf pkixssh.tar.gz
+          sudo mkdir -p /var/empty
+          cd pkixssh-${PKIXSSH_VERSION}
+          ./configure \
+            --prefix=$PWD/../build-dir/ \
+            --with-privsep-path=/var/empty \
+            --with-privsep-user=nobody \
+            --disable-strip
+          make
+          make install
+
+  x509_interop:
+    name: Run x509 interop test
+    needs: [build_wolfssl, build_pkixssh]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Restore wolfSSL cache
+        uses: actions/cache@v5
+        with:
+          path: build-dir/
+          key: wolfssh-x509-interop-wolfssl-${{ env.WOLFSSL_REF }}-ubuntu-latest
+          fail-on-cache-miss: true
+
+      - name: Restore PKIX-SSH cache
+        uses: actions/cache@v5
+        with:
+          path: build-dir/
+          key: wolfssh-x509-interop-pkixssh-${{ env.PKIXSSH_VERSION }}-ubuntu-latest
+          fail-on-cache-miss: true
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get -y update
+          sudo apt-get -y install netcat-traditional
+
+      - uses: actions/checkout@v6
+        with:
+          path: wolfssh/
+
+      - name: autogen
+        working-directory: ./wolfssh/
+        run: ./autogen.sh
+
+      - name: configure
+        working-directory: ./wolfssh/
+        run: |
+          ./configure --enable-all --enable-certs \
+            LDFLAGS="-L${{ github.workspace }}/build-dir/lib" \
+            CPPFLAGS="-I${{ github.workspace }}/build-dir/include -DWOLFSSH_NO_FPKI"
+
+      - name: make
+        working-directory: ./wolfssh/
+        run: make
+
+      - name: Create test user fred
+        run: |
+          sudo useradd -m fred
+
+      - name: Prepare client cert in PKIX-SSH format
+        working-directory: ./wolfssh/
+        run: |
+          chmod 600 ./keys/fred-key.pem
+          cat ./keys/fred-cert.pem >> ./keys/fred-key.pem
+          ../build-dir/bin/ssh-keygen -y -f ./keys/fred-key.pem \
+            > ./keys/fred-key.pem.pub
+
+      - name: Write PKIX-SSH client config
+        working-directory: ./wolfssh/
+        run: |
+          echo "CACertificateFile $PWD/keys/ca-cert-ecc.pem" \
+            > ssh-pkixssh-config
+
+      - name: Write wolfSSHd config
+        working-directory: ./wolfssh/
+        run: |
+          rm -f sshd_config
+          cat > sshd_config <<EOT
+          Port 22222
+          Protocol 2
+          LoginGraceTime 600
+          PermitRootLogin yes
+          PasswordAuthentication yes
+          PermitEmptyPasswords no
+
+          TrustedUserCAKeys $PWD/keys/ca-cert-ecc.pem
+          HostKey $PWD/keys/server-key.pem
+          HostCertificate $PWD/keys/server-cert.pem
+          EOT
+
+      - name: Start wolfSSHd
+        working-directory: ./wolfssh/
+        run: |
+          sudo ./apps/wolfsshd/wolfsshd -f sshd_config -d \
+            -E $PWD/wolfsshd-log.txt &
+          for i in $(seq 1 20); do
+            if nc -z 127.0.0.1 22222; then
+              echo "wolfSSHd is up"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "wolfSSHd failed to start"
+          cat wolfsshd-log.txt || true
+          exit 1
+
+      - name: Test PKIX-SSH client exit
+        working-directory: ./wolfssh/
+        run: |
+          ../build-dir/bin/ssh -o StrictHostKeyChecking=accept-new \
+            -o PreferredAuthentications=publickey \
+            -p 22222 -F ssh-pkixssh-config \
+            -i ./keys/fred-key.pem fred@127.0.0.1 exit
+
+      - name: Test PKIX-SSH client ls command
+        working-directory: ./wolfssh/
+        run: |
+          ../build-dir/bin/ssh -o StrictHostKeyChecking=accept-new \
+            -o PreferredAuthentications=publickey \
+            -p 22222 -F ssh-pkixssh-config \
+            -i ./keys/fred-key.pem fred@127.0.0.1 ls
+
+      - name: Test PKIX-SSH sftp interop
+        working-directory: ./wolfssh/
+        run: |
+          ../build-dir/bin/sftp -o StrictHostKeyChecking=accept-new \
+            -o PreferredAuthentications=publickey \
+            -P 22222 -F ssh-pkixssh-config \
+            -S ../build-dir/bin/ssh \
+            -i ./keys/fred-key.pem \
+            fred@127.0.0.1 <<EOF
+          exit
+          EOF
+
+      - name: Show wolfSSHd log on failure
+        if: failure()
+        working-directory: ./wolfssh/
+        run: cat wolfsshd-log.txt || true
+
+      - name: Stop wolfSSHd
+        if: always()
+        run: sudo pkill wolfsshd || true
+
+  notify_failure:
+    name: Open issue on scheduled failure
+    needs: [build_wolfssl, build_pkixssh, x509_interop]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const label = 'x509-interop-failure';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/` +
+              `${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              'The weekly x509 interop workflow failed.',
+              '',
+              `Run: ${runUrl}`,
+              `Commit: ${context.sha}`,
+            ].join('\n');
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: label,
+            });
+            if (existing.data.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.data[0].number,
+                body: body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'Weekly x509 interop test failed',
+                body: body,
+                labels: [label],
+              });
+            }
