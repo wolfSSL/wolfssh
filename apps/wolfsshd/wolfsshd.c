@@ -1691,6 +1691,8 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                             continue;
                         }
                         else if (cnt_w == WS_WANT_WRITE) {
+                            windowFull = cnt_r;
+                            windowFullExt = 1;
                             wantWrite = 1;
                             continue;
                         }
@@ -1729,6 +1731,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                             continue;
                         }
                         else if (cnt_w == WS_WANT_WRITE) {
+                            windowFull = cnt_r;
                             wantWrite = 1;
                             continue;
                         }
@@ -1765,6 +1768,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                             continue;
                         }
                         else if (cnt_w == WS_WANT_WRITE) {
+                            windowFull = cnt_r;
                             wantWrite = 1;
                             continue;
                         }
