@@ -1648,6 +1648,10 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 wantWrite = 1;
                 continue;
             }
+            else if (cnt_w < 0) {
+                kill(childPid, SIGINT);
+                break;
+            }
             else {
                 windowFull -= cnt_w;
                 if (windowFull > 0) {
@@ -1722,16 +1726,19 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                                 shellBuffer, cnt_r);
                         if (cnt_w > 0 && cnt_w < cnt_r) { /* partial send */
                             windowFull = cnt_r - cnt_w;
+                            windowFullExt = 0;
                             WMEMMOVE(shellBuffer, shellBuffer + cnt_w,
                                 windowFull);
                         }
                         else if (cnt_w == WS_WINDOW_FULL ||
                                  cnt_w == WS_REKEYING) {
                             windowFull = cnt_r; /* save amount to be sent */
+                            windowFullExt = 0;
                             continue;
                         }
                         else if (cnt_w == WS_WANT_WRITE) {
                             windowFull = cnt_r;
+                            windowFullExt = 0;
                             wantWrite = 1;
                             continue;
                         }
@@ -1759,16 +1766,19 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                                 shellBuffer, cnt_r);
                         if (cnt_w > 0 && cnt_w < cnt_r) { /* partial send */
                             windowFull = cnt_r - cnt_w;
+                            windowFullExt = 0;
                             WMEMMOVE(shellBuffer, shellBuffer + cnt_w,
                                 windowFull);
                         }
                         else if (cnt_w == WS_WINDOW_FULL ||
                                  cnt_w == WS_REKEYING) {
                             windowFull = cnt_r;
+                            windowFullExt = 0;
                             continue;
                         }
                         else if (cnt_w == WS_WANT_WRITE) {
                             windowFull = cnt_r;
+                            windowFullExt = 0;
                             wantWrite = 1;
                             continue;
                         }
