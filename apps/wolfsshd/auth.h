@@ -80,6 +80,10 @@ int wolfSSHD_GetHomeDirectory(WOLFSSHD_AUTH* auth, WOLFSSH* ssh, WCHAR* out, int
 #endif
 
 #ifdef WOLFSSHD_UNIT_TEST
+#ifndef _WIN32
+extern int (*wsshd_setregid_cb)(WGID_T, WGID_T);
+extern int (*wsshd_setreuid_cb)(WUID_T, WUID_T);
+#endif
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
 int CheckPasswordHashUnix(const char* input, char* stored);
 #endif
