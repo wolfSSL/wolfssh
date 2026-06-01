@@ -593,6 +593,116 @@ static int test_CheckAuthKeysLine(void)
 }
 #endif /* WOLFSSL_BASE64_ENCODE */
 
+#ifndef _WIN32
+static WGID_T s_setregid_arg0, s_setregid_arg1;
+static WUID_T s_setreuid_arg0, s_setreuid_arg1;
+static int    s_setregid_ret;
+static int    s_setreuid_ret;
+static int    s_setregid_called;
+static int    s_setreuid_called;
+
+static int stub_setregid(WGID_T rgid, WGID_T egid)
+{
+    s_setregid_called = 1;
+    s_setregid_arg0   = rgid;
+    s_setregid_arg1   = egid;
+    return s_setregid_ret;
+}
+
+static int stub_setreuid(WUID_T ruid, WUID_T euid)
+{
+    s_setreuid_called = 1;
+    s_setreuid_arg0   = ruid;
+    s_setreuid_arg1   = euid;
+    return s_setreuid_ret;
+}
+
+static void InstallPrivDropStubs(int regidRet, int reuidRet,
+    int (**savedRegid)(WGID_T, WGID_T),
+    int (**savedReuid)(WUID_T, WUID_T))
+{
+    *savedRegid       = wsshd_setregid_cb;
+    *savedReuid       = wsshd_setreuid_cb;
+    wsshd_setregid_cb = stub_setregid;
+    wsshd_setreuid_cb = stub_setreuid;
+    s_setregid_ret    = regidRet;
+    s_setreuid_ret    = reuidRet;
+    s_setregid_called = 0;
+    s_setreuid_called = 0;
+    s_setregid_arg0   = s_setregid_arg1 = 0;
+    s_setreuid_arg0   = s_setreuid_arg1 = 0;
+}
+
+static int test_AuthReducePermissionsUser_ok(void)
+{
+    int    ret     = WS_SUCCESS;
+    WUID_T testUid = 1001;
+    WGID_T testGid = 1002;
+    int (*savedRegid)(WGID_T, WGID_T);
+    int (*savedReuid)(WUID_T, WUID_T);
+
+    InstallPrivDropStubs(0, 0, &savedRegid, &savedReuid);
+
+    if (wolfSSHD_AuthReducePermissionsUser(NULL, testUid, testGid)
+            != WS_SUCCESS)
+        ret = WS_FATAL_ERROR;
+    if (ret == WS_SUCCESS && !s_setregid_called)
+        ret = WS_FATAL_ERROR;
+    if (ret == WS_SUCCESS
+            && (s_setregid_arg0 != testGid || s_setregid_arg1 != testGid))
+        ret = WS_FATAL_ERROR;
+    if (ret == WS_SUCCESS && !s_setreuid_called)
+        ret = WS_FATAL_ERROR;
+    if (ret == WS_SUCCESS
+            && (s_setreuid_arg0 != testUid || s_setreuid_arg1 != testUid))
+        ret = WS_FATAL_ERROR;
+
+    wsshd_setregid_cb = savedRegid;
+    wsshd_setreuid_cb = savedReuid;
+    return ret;
+}
+
+static int test_AuthReducePermissionsUser_gid_fail(void)
+{
+    int ret = WS_SUCCESS;
+    int (*savedRegid)(WGID_T, WGID_T);
+    int (*savedReuid)(WUID_T, WUID_T);
+
+    InstallPrivDropStubs(-1, 0, &savedRegid, &savedReuid);
+
+    if (wolfSSHD_AuthReducePermissionsUser(NULL, 1001, 1002)
+            != WS_FATAL_ERROR)
+        ret = WS_FATAL_ERROR;
+    if (ret == WS_SUCCESS && !s_setregid_called)
+        ret = WS_FATAL_ERROR;
+    if (ret == WS_SUCCESS && s_setreuid_called)
+        ret = WS_FATAL_ERROR;
+
+    wsshd_setregid_cb = savedRegid;
+    wsshd_setreuid_cb = savedReuid;
+    return ret;
+}
+
+static int test_AuthReducePermissionsUser_uid_fail(void)
+{
+    int ret = WS_SUCCESS;
+    int (*savedRegid)(WGID_T, WGID_T);
+    int (*savedReuid)(WUID_T, WUID_T);
+
+    InstallPrivDropStubs(0, -1, &savedRegid, &savedReuid);
+
+    if (wolfSSHD_AuthReducePermissionsUser(NULL, 1001, 1002)
+            != WS_FATAL_ERROR)
+        ret = WS_FATAL_ERROR;
+    if (ret == WS_SUCCESS && !s_setreuid_called)
+        ret = WS_FATAL_ERROR;
+
+    wsshd_setregid_cb = savedRegid;
+    wsshd_setreuid_cb = savedReuid;
+    return ret;
+}
+#endif /* !_WIN32 */
+
 const TEST_CASE testCases[] = {
     TEST_DECL(test_ConfigDefaults),
     TEST_DECL(test_ParseConfigLine),
@@ -600,6 +710,11 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_ConfigFree),
 #ifdef WOLFSSL_BASE64_ENCODE
     TEST_DECL(test_CheckAuthKeysLine),
+#endif
+#ifndef _WIN32
+    TEST_DECL(test_AuthReducePermissionsUser_ok),
+    TEST_DECL(test_AuthReducePermissionsUser_gid_fail),
+    TEST_DECL(test_AuthReducePermissionsUser_uid_fail),
 #endif
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
     TEST_DECL(test_CheckPasswordHashUnix),

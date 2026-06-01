@@ -79,6 +79,11 @@
 #define HAVE_SHADOW
 #endif
 
+#if defined(WOLFSSHD_UNIT_TEST) && !defined(_WIN32)
+int (*wsshd_setregid_cb)(WGID_T, WGID_T) = setregid;
+int (*wsshd_setreuid_cb)(WUID_T, WUID_T) = setreuid;
+#endif
+
 struct WOLFSSHD_AUTH {
     CallbackCheckUser      checkUserCb;
     CallbackCheckPassword  checkPasswordCb;
@@ -1543,12 +1548,20 @@ int wolfSSHD_AuthReducePermissionsUser(WOLFSSHD_AUTH* auth, WUID_T uid,
     WGID_T gid)
 {
 #ifndef WIN32
+#ifdef WOLFSSHD_UNIT_TEST
+    if (wsshd_setregid_cb(gid, gid) != 0) {
+#else
     if (setregid(gid, gid) != 0) {
+#endif
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting user gid");
         return WS_FATAL_ERROR;
     }
 
+#ifdef WOLFSSHD_UNIT_TEST
+    if (wsshd_setreuid_cb(uid, uid) != 0) {
+#else
     if (setreuid(uid, uid) != 0) {
+#endif
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting user uid");
         return WS_FATAL_ERROR;
     }
