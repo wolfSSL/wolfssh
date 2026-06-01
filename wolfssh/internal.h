@@ -449,6 +449,10 @@ enum NameIdType {
 #ifndef DEFAULT_WINDOW_SZ
     #define DEFAULT_WINDOW_SZ (128 * 1024)
 #endif
+#ifndef WINDOW_SZ_UPPER_BOUND
+    /* Upper bound accepted by wolfSSH_CTX_SetWindowPacketSize(). */
+    #define WINDOW_SZ_UPPER_BOUND (256 * 1024)
+#endif
 #ifndef DEFAULT_MAX_PACKET_SZ
     /* This is from RFC 4253 section 6.1. */
     #define DEFAULT_MAX_PACKET_SZ 32768

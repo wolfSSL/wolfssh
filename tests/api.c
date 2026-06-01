@@ -642,6 +642,51 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer_pem(void)
 }
 
 
+static void test_wolfSSH_CTX_SetWindowPacketSize(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+
+    /* NULL ctx must be rejected. */
+    AssertIntEQ(WS_BAD_ARGUMENT,
+            wolfSSH_CTX_SetWindowPacketSize(NULL, 0, 0));
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+
+    /* Both zero: should default without error. */
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_SetWindowPacketSize(ctx, 0, 0));
+
+    /* windowSz exactly at upper bound: must succeed and be stored. */
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_SetWindowPacketSize(ctx, WINDOW_SZ_UPPER_BOUND, 0));
+    AssertIntEQ(WINDOW_SZ_UPPER_BOUND, (int)ctx->windowSz);
+
+    /* windowSz one above upper bound: must fail. */
+    AssertIntEQ(WS_BAD_ARGUMENT,
+            wolfSSH_CTX_SetWindowPacketSize(ctx,
+                    WINDOW_SZ_UPPER_BOUND + 1, 0));
+
+    /* maxPacketSz exactly at transport limit: must succeed and be stored. */
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_SetWindowPacketSize(ctx, 0, MAX_PACKET_SZ));
+    AssertIntEQ(MAX_PACKET_SZ, (int)ctx->maxPacketSz);
+
+    /* maxPacketSz one above transport limit: must fail. */
+    AssertIntEQ(WS_BAD_ARGUMENT,
+            wolfSSH_CTX_SetWindowPacketSize(ctx, 0, MAX_PACKET_SZ + 1));
+
+    /* Both valid non-zero values: must succeed and be stored. */
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_SetWindowPacketSize(ctx,
+                    DEFAULT_WINDOW_SZ, DEFAULT_MAX_PACKET_SZ));
+    AssertIntEQ(DEFAULT_WINDOW_SZ, (int)ctx->windowSz);
+    AssertIntEQ(DEFAULT_MAX_PACKET_SZ, (int)ctx->maxPacketSz);
+
+    wolfSSH_CTX_free(ctx);
+}
+
+
 static void test_wolfSSH_CertMan(void)
 {
 #ifdef WOLFSSH_CERTMAN
@@ -2277,6 +2322,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_CTX_UsePrivateKey_buffer();
     test_wolfSSH_CTX_UseCert_buffer();
     test_wolfSSH_CTX_UsePrivateKey_buffer_pem();
+    test_wolfSSH_CTX_SetWindowPacketSize();
     test_wolfSSH_CertMan();
     test_wolfSSH_ReadKey();
     test_wolfSSH_ReadKey_badPad();
