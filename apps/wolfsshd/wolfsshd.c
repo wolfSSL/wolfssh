@@ -1753,12 +1753,15 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         else {
             if (FD_ISSET(childFd, &readFds)) {
                 cnt_r = (int)read(childFd, shellBuffer, sizeof shellBuffer);
-                /* This read will return 0 on EOF */
-                if (cnt_r <= 0) {
+                /* Treat a 0 return as EOF so the loop can shut down. */
+                if (cnt_r < 0) {
                     int err = errno;
                     if (err != EAGAIN && err != 0) {
                         break;
                     }
+                }
+                else if (cnt_r == 0) {
+                    stdoutEmpty = 1;
                 }
                 else {
                     if (cnt_r > 0) {
