@@ -147,6 +147,68 @@ static int checkCdNonexistent(void)
     return 0;
 }
 
+#if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_FATFS) && \
+    !defined(WOLFSSH_ZEPHYR)
+/* Captured once before any threads start; used to compute the expected
+ * post-open file mode without changing process-wide umask state. */
+static mode_t sftpTestUmask = 0;
+
+/* Verify SFTP_SetFileAttributes stripped setuid/setgid/sticky bits when
+ * the client sent chmod 4777 (setuid + rwxrwxrwx). */
+static int checkChmodStripsSpecialBits(void)
+{
+    WSTAT_T st;
+
+    WMEMSET(&st, 0, sizeof(WSTAT_T));
+    if (WSTAT(NULL, "test-get-2", &st) != 0) {
+        fprintf(stderr, "stat test-get-2 failed\n");
+        return 1;
+    }
+    if (st.st_mode & 07000) {
+        fprintf(stderr,
+            "WOLFSSH_SFTP_SAFE_MODE: special bits not stripped: mode=%06o\n",
+            (unsigned)(st.st_mode & 07777));
+        return 1;
+    }
+    if ((st.st_mode & 0777) != 0777) {
+        fprintf(stderr,
+            "WOLFSSH_SFTP_SAFE_MODE: unexpected base mode=%06o, want 0777\n",
+            (unsigned)(st.st_mode & 07777));
+        return 1;
+    }
+    return 0;
+}
+
+/* Verify wolfSSH_SFTP_RecvOpen stripped setuid/setgid/sticky bits when the
+ * client sent creat 04755 (setuid + rwxr-xr-x).  The expected base mode is
+ * 0755 with the process umask applied, captured before any threads start. */
+static int checkCreatStripsSpecialBits(void)
+{
+    WSTAT_T st;
+    unsigned int expectedMode;
+
+    expectedMode = (unsigned int)(0755 & ~sftpTestUmask);
+    WMEMSET(&st, 0, sizeof(WSTAT_T));
+    if (WSTAT(NULL, "test-creat-special", &st) != 0) {
+        fprintf(stderr, "stat test-creat-special failed\n");
+        return 1;
+    }
+    if (st.st_mode & 07000) {
+        fprintf(stderr,
+            "WOLFSSH_SFTP_SAFE_MODE (RecvOpen): special bits not stripped: "
+            "mode=%06o\n", (unsigned)(st.st_mode & 07777));
+        return 1;
+    }
+    if ((st.st_mode & 0777) != expectedMode) {
+        fprintf(stderr,
+            "WOLFSSH_SFTP_SAFE_MODE (RecvOpen): unexpected base mode=%06o, "
+            "want %04o\n", (unsigned)(st.st_mode & 07777), expectedMode);
+        return 1;
+    }
+    return 0;
+}
+#endif /* !USE_WINDOWS_API && !WOLFSSH_FATFS && !WOLFSSH_ZEPHYR */
+
 #if !defined(NO_WOLFSSH_DIR) && !defined(WOLFSSH_FATFS)
 static int checkLlsHasConfigureAc(void)
 {
@@ -209,8 +271,9 @@ static const SftpTestCmd cmds[] = {
      * the files may not exist. */
     { "rm a/configure.ac", NULL },
     { "rmdir a",        NULL },
-    { "rm test-get",    NULL },
-    { "rm test-get-2",  NULL },
+    { "rm test-get",           NULL },
+    { "rm test-get-2",         NULL },
+    { "rm test-creat-special", NULL },
 
     /* --- test sequence starts here --- */
     { "mkdir a",        NULL },
@@ -235,6 +298,16 @@ static const SftpTestCmd cmds[] = {
     { "rename test-get test-get-2", NULL },
     { "rmdir a",        NULL },
     { "ls",             checkLsHasTestGet2 },
+#if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_FATFS) && \
+    !defined(WOLFSSH_ZEPHYR)
+    /* chmod with setuid bit set; checkChmodStripsSpecialBits verifies
+     * SFTP_SetFileAttributes applied WOLFSSH_SFTP_SAFE_MODE. */
+    { "chmod 4777 test-get-2", checkChmodStripsSpecialBits },
+    /* creat with setuid bit; checkCreatStripsSpecialBits verifies
+     * wolfSSH_SFTP_RecvOpen applied WOLFSSH_SFTP_SAFE_MODE. */
+    { "creat 04755 test-creat-special", checkCreatStripsSpecialBits },
+    { "rm test-creat-special",          NULL },
+#endif
     { "chmod 600 test-get-2", NULL },
     { "rm test-get-2",  NULL },
     { "ls -s",          checkLsSize },
@@ -258,6 +331,7 @@ static const SftpTestCmd cmds[] = {
     { "cd",             NULL },
     { "ls",             NULL },
     { "chmod",          NULL },
+    { "creat",          NULL },
     { "rmdir",          NULL },
     { "rm",             NULL },
     { "rename",         NULL },
@@ -329,6 +403,13 @@ int wolfSSH_SftpTest(int flag)
     commandIdx = 0;
 
     wolfSSH_Debugging_ON();
+
+#if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_FATFS) && \
+    !defined(WOLFSSH_ZEPHYR)
+    /* Read umask non-destructively before spawning threads. */
+    sftpTestUmask = umask(0);
+    umask(sftpTestUmask);
+#endif
 
     argsCount = 0;
     args[argsCount++] = ".";

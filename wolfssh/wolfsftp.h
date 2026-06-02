@@ -133,6 +133,8 @@ struct WS_SFTP_FILEATRB_EX {
 #define FILEATRB_PER_DIR       0040000
 #define FILEATRB_PER_DEV_BLOCK 0060000
 #define FILEATRB_PER_MASK_PERM 0000777
+/* Strip setuid/setgid/sticky bits from peer-supplied permissions. */
+#define WOLFSSH_SFTP_SAFE_MODE(m) ((m) & FILEATRB_PER_MASK_PERM)
 
 typedef struct WS_SFTP_FILEATRB {
     word32 flags;
