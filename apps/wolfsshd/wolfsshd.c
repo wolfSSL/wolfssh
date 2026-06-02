@@ -831,6 +831,10 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 #endif
     byte shellBuffer[WOLFSSHD_SHELL_BUFFER_SZ];
     int cnt_r, cnt_w;
+    int windowFull = 0; /* bytes left in shellBuffer that a prior send could
+                         * not pass on to wolfSSH yet. This happens with window
+                         * full, rekey, or want-write; resent before reading
+                         * more so the buffered data is not overwritten. */
     HANDLE ptyIn = NULL, ptyOut = NULL;
     HANDLE cnslIn = NULL, cnslOut = NULL;
     STARTUPINFOEX ext;
@@ -1063,7 +1067,10 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                                 continue;
                             }
                         }
-                        break;
+                        /* keep looping while buffered data still needs to be
+                         * flushed to the SSH channel */
+                        if (!windowFull)
+                            break;
                     }
                 }
                 if (wolfSSH_stream_peek(ssh, tmp, 1) <= 0) {
@@ -1123,7 +1130,30 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 }
             }
 
-            if (readPending) {
+            /* if a previous send could not complete, resend the buffered data
+             * before reading more so shellBuffer is not overwritten */
+            if (windowFull) {
+                cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
+                    shellBuffer, windowFull);
+                if (cnt_w == WS_WINDOW_FULL || cnt_w == WS_REKEYING ||
+                    cnt_w == WS_WANT_WRITE) {
+                    continue;
+                }
+                else if (cnt_w < 0) {
+                    break;
+                }
+                else {
+                    windowFull -= cnt_w;
+                    if (windowFull > 0) {
+                        WMEMMOVE(shellBuffer, shellBuffer + cnt_w, windowFull);
+                        continue;
+                    }
+                    if (windowFull < 0)
+                        windowFull = 0;
+                }
+            }
+
+            if (readPending && !windowFull) {
                 WMEMSET(shellBuffer, 0, WOLFSSHD_SHELL_BUFFER_SZ);
 
                 if (ReadFile(ptyOut, shellBuffer, WOLFSSHD_SHELL_BUFFER_SZ, &cnt_r,
@@ -1137,8 +1167,19 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     if (cnt_r > 0) {
                         cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
                             shellBuffer, cnt_r);
-                        if (cnt_w < 0)
+                        if (cnt_w > 0 && cnt_w < cnt_r) { /* partial send */
+                            windowFull = cnt_r - cnt_w;
+                            WMEMMOVE(shellBuffer, shellBuffer + cnt_w,
+                                windowFull);
+                        }
+                        else if (cnt_w == WS_WINDOW_FULL ||
+                                 cnt_w == WS_REKEYING ||
+                                 cnt_w == WS_WANT_WRITE) {
+                            windowFull = cnt_r; /* save amount to be sent */
+                        }
+                        else if (cnt_w < 0) {
                             break;
+                        }
                     }
                 }
             }
