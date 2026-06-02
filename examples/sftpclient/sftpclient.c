@@ -357,6 +357,7 @@ static void ShowCommands(void)
     printf("\n\nCommands :\n");
     printf("\tcd  <string>                      change directory\n");
     printf("\tchmod <mode> <path>               change mode\n");
+    printf("\tcreat <mode> <path>               create file with given permissions\n");
     printf("\tget <remote file> <local file>    pulls file(s) from server\n");
     printf("\tlcd <path>                        change local directory\n");
     printf("\tlls                               list local directory\n");
@@ -430,6 +431,76 @@ static INLINE char* SFTP_FGETS(func_args* args, char* msg, int msgSz)
         ret = WFGETS(msg, msgSz, fin);
 
     return ret;
+}
+
+
+/*
+ * Parse "<mode> <path>" from a SFTP command argument string.
+ * pt:         points past the command keyword (caller advanced by sizeof).
+ * modeBuf:    caller buffer of WOLFSSH_MAX_OCTET_LEN bytes; receives the
+ *             null-terminated octal mode token on success.
+ * pathOut:    receives a pointer to the resolved remote path on success.
+ * allocOut:   receives a malloc'd absolute-path buffer when pt was relative
+ *             (caller must WFREE); NULL when the path was already absolute.
+ * remoteDir:  current remote working directory.
+ * Returns  0 on success,
+ *          1 if no mode token found (caller prints error and continues),
+ *         -1 on malloc failure (caller returns -1).
+ */
+static int sftpParseModeAndPath(char* pt, char* modeBuf, char** pathOut,
+        char** allocOut, const char* remoteDir)
+{
+    word32 sz, idx;
+    char*  f;
+
+    *allocOut = NULL;
+    *pathOut  = NULL;
+
+    sz = (word32)WSTRLEN(pt);
+    if (sz > 0 && pt[sz - 1] == '\n') {
+        pt[sz - 1] = '\0';
+        sz--;
+    }
+
+    for (idx = 0; idx < sz && pt[0] == ' '; idx++, pt++);
+    sz = (word32)WSTRLEN(pt);
+
+    sz = (sz < WOLFSSH_MAX_OCTET_LEN - 1) ? sz : WOLFSSH_MAX_OCTET_LEN - 1;
+    WMEMCPY(modeBuf, pt, sz);
+    modeBuf[sz] = '\0';
+    for (idx = 0; idx < sz; idx++) {
+        if (modeBuf[idx] == ' ') {
+            modeBuf[idx] = '\0';
+            break;
+        }
+    }
+    if (idx == 0 || (idx == sz && pt[sz] != ' '))
+        return 1;
+
+    pt += (word32)WSTRLEN(modeBuf);
+    sz = (word32)WSTRLEN(pt);
+    for (idx = 0; idx < sz && pt[0] == ' '; idx++, pt++);
+
+    if (pt[0] == '\0')
+        return 1;
+
+    if (pt[0] != '/') {
+        int maxSz = (int)WSTRLEN(remoteDir) + (int)WSTRLEN(pt) + 2;
+        f = (char*)WMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (f == NULL)
+            return -1;
+        f[0] = '\0';
+        WSTRNCAT(f, remoteDir, maxSz);
+        if (WSTRLEN(remoteDir) > 1)
+            WSTRNCAT(f, "/", maxSz);
+        WSTRNCAT(f, pt, maxSz);
+        *allocOut = f;
+        *pathOut  = f;
+    }
+    else {
+        *pathOut = pt;
+    }
+    return 0;
 }
 
 
@@ -822,54 +893,20 @@ static int doCmds(func_args* args)
         }
 
         if ((pt = WSTRNSTR(msg, "chmod", MAX_CMD_SZ)) != NULL) {
-            word32 sz, idx;
             char* f = NULL;
-            char mode[WOLFSSH_MAX_OCTET_LEN];
+            char* path;
+            char  mode[WOLFSSH_MAX_OCTET_LEN];
+            int   parseRet;
 
             pt += sizeof("chmod");
-            sz = (word32)WSTRLEN(pt);
-
-            if (sz > 0 && pt[sz - 1] == '\n') pt[sz - 1] = '\0';
-
-            /* advance pointer to first location of non space character */
-            for (idx = 0; idx < sz && pt[0] == ' '; idx++, pt++);
-            sz = (word32)WSTRLEN(pt);
-
-            /* get mode */
-            sz = (sz < WOLFSSH_MAX_OCTET_LEN - 1)? sz :
-                                                   WOLFSSH_MAX_OCTET_LEN -1;
-            WMEMCPY(mode, pt, sz);
-            mode[WOLFSSH_MAX_OCTET_LEN - 1] = '\0';
-            for (idx = 0; idx < sz; idx++) {
-                if (mode[idx] == ' ') {
-                    mode[idx] = '\0';
-                    break;
-                }
-            }
-            if (idx == 0) {
+            parseRet = sftpParseModeAndPath(pt, mode, &path, &f, workingDir);
+            if (parseRet == 1) {
                 printf("error with getting mode\r\n");
                 continue;
             }
-            pt += (word32)WSTRLEN(mode);
-            sz = (word32)WSTRLEN(pt);
-            for (idx = 0; idx < sz && pt[0] == ' '; idx++, pt++);
-
-            if (pt[0] != '/') {
-                int maxSz = (int)WSTRLEN(workingDir) + sz + 2;
-                f = (char*)WMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-                if (f == NULL) {
-                    err_msg("Error malloc'ing");
-                    return -1;
-                }
-
-                f[0] = '\0';
-                WSTRNCAT(f, workingDir, maxSz);
-                if (WSTRLEN(workingDir) > 1) {
-                    WSTRNCAT(f, "/", maxSz);
-                }
-                WSTRNCAT(f, pt, maxSz);
-
-                pt = f;
+            if (parseRet == -1) {
+                err_msg("Error malloc'ing");
+                return -1;
             }
 
             /* update permissions */
@@ -881,21 +918,104 @@ static int doCmds(func_args* args)
                     }
                 }
 
-                ret = wolfSSH_SFTP_CHMOD(ssh, pt, mode);
+                ret = wolfSSH_SFTP_CHMOD(ssh, path, mode);
                 err = wolfSSH_get_error(ssh);
             } while ((err == WS_WANT_READ || err == WS_WANT_WRITE ||
                         err == WS_REKEYING) && ret != WS_SUCCESS);
             if (ret != WS_SUCCESS) {
                 if (SFTP_FPUTS(args, "Unable to change permissions of ") < 0) {
                     err_msg("fputs error");
+                    WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                     return -1;
                 }
-                if (SFTP_FPUTS(args, pt) < 0) {
+                if (SFTP_FPUTS(args, path) < 0) {
                     err_msg("fputs error");
+                    WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                     return -1;
                 }
                 if (SFTP_FPUTS(args, "\n") < 0) {
                     err_msg("fputs error");
+                    WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                    return -1;
+                }
+            }
+
+            WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            continue;
+        }
+
+        if ((pt = WSTRNSTR(msg, "creat", MAX_CMD_SZ)) != NULL) {
+            char*            f = NULL;
+            char*            path;
+            char             mode[WOLFSSH_MAX_OCTET_LEN];
+            byte             handle[WOLFSSH_MAX_HANDLE];
+            word32           handleSz = WOLFSSH_MAX_HANDLE;
+            WS_SFTP_FILEATRB atr;
+            int              parseRet;
+            int              openRet = WS_FATAL_ERROR;
+            unsigned long    perVal;
+            char*            modeEnd;
+
+            pt += sizeof("creat");
+            parseRet = sftpParseModeAndPath(pt, mode, &path, &f, workingDir);
+            if (parseRet == 1) {
+                printf("error with getting mode\r\n");
+                continue;
+            }
+            if (parseRet == -1) {
+                err_msg("Error malloc'ing");
+                return -1;
+            }
+
+            /* build permission attribute from octal mode string;
+             * wolfSSH_oct2dec is internal scope so strtoul is used here */
+            perVal = strtoul(mode, &modeEnd, 8);
+            if (*modeEnd == '\0' && perVal <= 07777) {
+                WMEMSET(&atr, 0, sizeof(WS_SFTP_FILEATRB));
+                atr.flags = WOLFSSH_FILEATRB_PERM;
+                atr.per   = (word32)perVal;
+
+                /* open (create) remote file with the given permissions */
+                handleSz = WOLFSSH_MAX_HANDLE;
+                do {
+                    while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
+                        ret = wolfSSH_worker(ssh, NULL);
+                        if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
+                            ret = wolfSSH_get_error(ssh);
+                        }
+                    }
+                    ret = wolfSSH_SFTP_Open(ssh, path,
+                            WOLFSSH_FXF_WRITE | WOLFSSH_FXF_CREAT |
+                            WOLFSSH_FXF_TRUNC, &atr, handle, &handleSz);
+                    err = wolfSSH_get_error(ssh);
+                } while ((err == WS_WANT_READ || err == WS_WANT_WRITE ||
+                            err == WS_REKEYING) && ret != WS_SUCCESS);
+                openRet = ret;
+            }
+            if (openRet == WS_SUCCESS) {
+                do {
+                    while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
+                        ret = wolfSSH_worker(ssh, NULL);
+                        if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
+                            ret = wolfSSH_get_error(ssh);
+                        }
+                    }
+                    ret = wolfSSH_SFTP_Close(ssh, handle, handleSz);
+                    err = wolfSSH_get_error(ssh);
+                } while ((err == WS_WANT_READ || err == WS_WANT_WRITE ||
+                            err == WS_REKEYING) && ret != WS_SUCCESS);
+                if (ret != WS_SUCCESS) {
+                    if (SFTP_FPUTS(args, "Unable to close file handle\n") < 0) {
+                        err_msg("fputs error");
+                        WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                        return -1;
+                    }
+                }
+            }
+            else {
+                if (SFTP_FPUTS(args, "Unable to create file\n") < 0) {
+                    err_msg("fputs error");
+                    WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                     return -1;
                 }
             }

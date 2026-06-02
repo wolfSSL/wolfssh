@@ -1872,9 +1872,9 @@ int wolfSSH_SFTP_RecvMKDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 #ifndef USE_WINDOWS_API
 #ifndef WOLFSSH_FATFS
     {
-        word32 mode = 040755;
+        word32 mode = 0755;
         if (atr.flags & WOLFSSH_FILEATRB_PERM) {
-            mode = atr.per;
+            mode = WOLFSSH_SFTP_SAFE_MODE(atr.per);
         }
         else {
             WLOG(WS_LOG_SFTP, "No permission attribute, using default");
@@ -2144,7 +2144,7 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             }
         }
     #else
-        fd = WOPEN(ssh->fs, dir, m, atr.per);
+        fd = WOPEN(ssh->fs, dir, m, WOLFSSH_SFTP_SAFE_MODE(atr.per));
     #endif
         if (fd < 0) {
             WLOG(WS_LOG_SFTP, "Error opening file %s", dir);
@@ -5581,7 +5581,7 @@ static int SFTP_SetFileAttributes(WOLFSSH* ssh,
 #if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR)
     /* check if permissions attribute present */
     if (atr->flags & WOLFSSH_FILEATRB_PERM) {
-        ret = SFTP_SetMode(ssh->fs, name, atr->per);
+        ret = SFTP_SetMode(ssh->fs, name, WOLFSSH_SFTP_SAFE_MODE(atr->per));
     }
 #endif
 
@@ -5622,7 +5622,7 @@ static int SFTP_SetFileAttributesHandle(WOLFSSH* ssh,
 #ifndef USE_WINDOWS_API
     /* check if permissions attribute present */
     if (atr->flags & WOLFSSH_FILEATRB_PERM) {
-        ret = SFTP_SetModeHandle(ssh->fs, handle, atr->per);
+        ret = SFTP_SetModeHandle(ssh->fs, handle, WOLFSSH_SFTP_SAFE_MODE(atr->per));
     }
 #endif
 
@@ -7280,7 +7280,8 @@ int wolfSSH_SFTP_SetSTAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
  * dir      NULL terminated string holding file name
  * reason   the reason file is being opened for i.e. WOLFSSH_FXF_READ,
  *          WOLFSSH_FXF_WRITE, ....
- * atr      attributes of file
+ * atr      attributes serialized into the SSH_FXP_OPEN packet; NULL sends an
+ *          empty attributes block (flags=0), preserving the prior behavior
  * handle   resulting handle from opening the file
  * handleSz gets set to resulting handle size. Should initially be size of
  *          handle buffer when passed in
@@ -7293,6 +7294,7 @@ int wolfSSH_SFTP_Open(WOLFSSH* ssh, char* dir, word32 reason,
     WS_SFTP_OPEN_STATE* state = NULL;
     int ret = WS_SUCCESS;
     int sz;
+    int atrSz;
 
     WLOG(WS_LOG_SFTP, "Entering wolfSSH_SFTP_Open()");
     if (ssh == NULL || dir == NULL) {
@@ -7320,8 +7322,10 @@ int wolfSSH_SFTP_Open(WOLFSSH* ssh, char* dir, word32 reason,
             case STATE_OPEN_INIT:
                 WLOG(WS_LOG_SFTP, "SFTP OPEN STATE: INIT");
                 sz = (int)WSTRLEN(dir);
+                atrSz = (atr != NULL) ? SFTP_AttributesSz(ssh, atr) :
+                        UINT32_SZ;
                 if (wolfSSH_SFTP_buffer_create(ssh, &state->buffer, sz +
-                            WOLFSSH_SFTP_HEADER + UINT32_SZ * 3) !=
+                            WOLFSSH_SFTP_HEADER + UINT32_SZ * 2 + atrSz) !=
                         WS_SUCCESS) {
                     ssh->error = WS_MEMORY_E;
                     ret = WS_FATAL_ERROR;
@@ -7330,7 +7334,7 @@ int wolfSSH_SFTP_Open(WOLFSSH* ssh, char* dir, word32 reason,
                 }
 
                 ret = SFTP_SetHeader(ssh, ssh->reqId, WOLFSSH_FTP_OPEN,
-                                     sz + UINT32_SZ * 3,
+                                     sz + UINT32_SZ * 2 + atrSz,
                                      wolfSSH_SFTP_buffer_data(&state->buffer));
                 if (ret != WS_SUCCESS) {
                     state->state = STATE_OPEN_CLEANUP;
@@ -7347,9 +7351,20 @@ int wolfSSH_SFTP_Open(WOLFSSH* ssh, char* dir, word32 reason,
                     wolfSSH_SFTP_buffer_idx(&state->buffer), sz);
                 wolfSSH_SFTP_buffer_c32toa(&state->buffer, reason);
 
-                /* @TODO handle adding attributes here */
-                WOLFSSH_UNUSED(atr);
-                wolfSSH_SFTP_buffer_c32toa(&state->buffer, 0x00000000);
+                if (atr != NULL) {
+                    ret = SFTP_SetAttributes(ssh,
+                        wolfSSH_SFTP_buffer_data(&state->buffer) +
+                        wolfSSH_SFTP_buffer_idx(&state->buffer), atrSz, atr);
+                    if (ret != WS_SUCCESS) {
+                        state->state = STATE_OPEN_CLEANUP;
+                        continue;
+                    }
+                    wolfSSH_SFTP_buffer_seek(&state->buffer,
+                        wolfSSH_SFTP_buffer_idx(&state->buffer), atrSz);
+                }
+                else {
+                    wolfSSH_SFTP_buffer_c32toa(&state->buffer, 0x00000000);
+                }
                 ret = wolfSSH_SFTP_buffer_set_size(&state->buffer,
                         wolfSSH_SFTP_buffer_idx(&state->buffer));
                 if (ret != WS_SUCCESS) {
