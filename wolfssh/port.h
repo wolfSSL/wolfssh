@@ -1127,7 +1127,7 @@ extern "C" {
                 fseek(fd, ofst, 0);
             }
 
-            return fwrite(buf, sz, 1, fd);
+            return fwrite(buf, sizeof(unsigned char), sz, fd);
         }
         #define WPWRITE(fs,fd,b,s,o) wPwrite((fd),(b),(s),(o))
     #endif
@@ -1143,7 +1143,7 @@ extern "C" {
             fseek(fd, ofst, 0);
         }
 
-        return fread(buf, 1, sz, fd);
+        return fread(buf, sizeof(unsigned char), sz, fd);
     }
     #define WPREAD(fs,fd,b,s,o)  wPread((fd),(b),(s),(o))
 #endif
