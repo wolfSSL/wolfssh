@@ -111,13 +111,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y expect
 
       - name: Create large test files
+        working-directory: ./wolfssh/
         run: |
-          dd if=/dev/urandom of=/tmp/test_1kb.dat bs=1K count=1
-          dd if=/dev/urandom of=/tmp/test_2mb.dat bs=1M count=2
-          dd if=/dev/urandom of=/tmp/test_10mb.dat bs=1M count=10
-          md5sum /tmp/test_*.dat > /tmp/test_checksums.md5
+          dd if=/dev/urandom of=test_1kb.dat bs=1K count=1
+          dd if=/dev/urandom of=test_2mb.dat bs=1M count=2
+          dd if=/dev/urandom of=test_10mb.dat bs=1M count=10
           echo "Test files created:"
-          ls -la /tmp/test_*.dat
+          ls -la test_*.dat
 
       - name: Run extended SFTP file transfer tests
         working-directory: ./wolfssh/
@@ -148,8 +148,8 @@ jobs:
 
           # Test 1KB file transfer
           echo "Testing 1KB file transfer..."
-          /tmp/sftp_test.exp /tmp/test_1kb.dat /tmp/recv_1kb.dat
-          if ! cmp -s /tmp/test_1kb.dat /tmp/recv_1kb.dat; then
+          /tmp/sftp_test.exp test_1kb.dat /tmp/recv_1kb.dat
+          if ! cmp -s test_1kb.dat /tmp/recv_1kb.dat; then
             echo "FAILED: 1KB file integrity check"
             kill $SERVER_PID 2>/dev/null || true
             exit 1
@@ -158,8 +158,8 @@ jobs:
 
           # Test 2MB file transfer
           echo "Testing 2MB file transfer..."
-          /tmp/sftp_test.exp /tmp/test_2mb.dat /tmp/recv_2mb.dat
-          if ! cmp -s /tmp/test_2mb.dat /tmp/recv_2mb.dat; then
+          /tmp/sftp_test.exp test_2mb.dat /tmp/recv_2mb.dat
+          if ! cmp -s test_2mb.dat /tmp/recv_2mb.dat; then
             echo "FAILED: 2MB file integrity check"
             kill $SERVER_PID 2>/dev/null || true
             exit 1
@@ -168,8 +168,8 @@ jobs:
 
           # Test 10MB file transfer
           echo "Testing 10MB file transfer..."
-          /tmp/sftp_test.exp /tmp/test_10mb.dat /tmp/recv_10mb.dat
-          if ! cmp -s /tmp/test_10mb.dat /tmp/recv_10mb.dat; then
+          /tmp/sftp_test.exp test_10mb.dat /tmp/recv_10mb.dat
+          if ! cmp -s test_10mb.dat /tmp/recv_10mb.dat; then
             echo "FAILED: 10MB file integrity check"
             kill $SERVER_PID 2>/dev/null || true
             exit 1

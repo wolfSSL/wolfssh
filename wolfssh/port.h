@@ -1505,6 +1505,22 @@ extern "C" {
 #endif
 #endif /* WOLFSSH_SFTP or WOLFSSH_SCP */
 
+/* SFTP path confinement must reject symbolic links because wolfSSH_RealPath
+ * only normalizes the path string and does not resolve them.  Define
+ * WOLFSSH_HAVE_SYMLINK on the filesystems that can actually store a link -
+ * POSIX (checked with lstat) and Windows (reparse points) - so the check is
+ * compiled out on FAT-based and similar link-less embedded filesystems, and on
+ * user-supplied filesystems that own their own policy.  Define
+ * WOLFSSH_NO_SYMLINK_CHECK to force it off. */
+#if !defined(WOLFSSH_NO_SYMLINK_CHECK) && \
+    (defined(USE_WINDOWS_API) || \
+     (!defined(WOLFSSL_NUCLEUS) && !defined(FREESCALE_MQX) && \
+      !defined(WOLFSSH_FATFS) && !defined(WOLFSSH_ZEPHYR) && \
+      !defined(MICROCHIP_MPLAB_HARMONY) && !defined(WOLFSSH_USER_FILESYSTEM) && \
+      !defined(USE_OSE_API) && !defined(NO_FILESYSTEM)))
+    #define WOLFSSH_HAVE_SYMLINK
+#endif
+
 #ifndef WS_MAYBE_UNUSED
     #if (defined(__GNUC__) && (__GNUC__ >= 4)) || defined(__clang__) || \
             defined(__IAR_SYSTEMS_ICC__)
