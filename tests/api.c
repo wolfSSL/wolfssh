@@ -32,6 +32,14 @@
 
 #include <stdio.h>
 #include <string.h>
+#if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT) && \
+    !defined(SINGLE_THREADED) && !defined(WOLFSSH_ZEPHYR) && \
+    !defined(USE_WINDOWS_API)
+    /* mkdtemp() for staging unique, per-test out-of-jail SFTP fixtures and
+     * symlink() for the symlink-escape confinement case */
+    #include <stdlib.h>
+    #include <unistd.h>
+#endif
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #ifdef WOLFSSH_SCP
@@ -1625,10 +1633,462 @@ static void test_wolfSSH_SFTP_ReKey_NonBlock(void)
     sftp_rekey_test(1);
 }
 
+static void test_wolfSSH_SFTP_Confinement(void)
+{
+    func_args        ser;
+    tcp_ready        ready;
+    int              argsCount;
+    WS_SOCKET_T      clientFd;
+    const char*      args[10];
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    THREAD_TYPE      serThread;
+    WS_SFTPNAME*     ls = NULL;
+    WS_SFTP_FILEATRB atr;
+    byte             handle[WOLFSSH_MAX_HANDLE];
+    word32           handleSz;
+    int              ret;
+    char             curDir[]    = ".";
+    char             inJailDir[] = "confine_injail_dir";
+    /* The server is confined to its working directory (".").  Every "escape"
+     * targets an absolute, out-of-jail path.  None of these are real system
+     * files, so a confinement bypass can never damage anything important. */
+#if !defined(WOLFSSH_ZEPHYR) && !defined(USE_WINDOWS_API)
+    /* On hosted POSIX, stage real out-of-jail targets under a unique per-test
+     * temporary directory created with mkdtemp().  Fixed /tmp names race
+     * against parallel test jobs and against stale paths owned by another
+     * user, producing false failures unrelated to confinement; a private
+     * mkdtemp() directory we own avoids both.  Because the fixtures exist on
+     * disk, a confinement bypass for read/stat/delete/rename would actually
+     * succeed and trip the assertions below - not merely fail with ENOENT.
+     * escMkdir/escDest are left absent so a leaked create also trips an
+     * assertion.
+     *
+     * The echoserver's jail is its working directory (".", which here is the
+     * test process's own cwd).  If the temp root resolves inside that jail
+     * (e.g. the suite is run from within /tmp), the "escape" paths would fall
+     * in-jail and the rejection assertions would invert; that case is detected
+     * below and skipped.  The in-jail positive case is covered by the repeated
+     * wolfSSH_SFTP_LS(ssh, ".") below, which must succeed after each reject.
+     * Blocking-mode LS handles any in-progress rekey transparently
+     * (buffer_read/buffer_send), so no manual rekey-drive helper is needed. */
+    char             escRoot[]   = "/tmp/wolfssh_confine_XXXXXX";
+    char             escFile[WOLFSSH_MAX_FILENAME];
+    char             escDir[WOLFSSH_MAX_FILENAME];
+    char             escMkdir[WOLFSSH_MAX_FILENAME];
+    char             escDest[WOLFSSH_MAX_FILENAME];
+    char             jailCwd[WOLFSSH_MAX_FILENAME];
+    /* a relative ".." traversal that resolves to the same real out-of-jail
+     * file as escFile, exercising the post-RealPath containment check on the
+     * relative-escape path (not just absolute paths) */
+    char             escRel[WOLFSSH_MAX_FILENAME];
+    /* a real sibling directory whose name is the jail's name with a distinctive
+     * suffix appended directly (no separator); its resolved path matches the
+     * jail for the full prefix length but the next byte is not a delimiter, so
+     * only GetAndCleanPath's boundary check (not a plain prefix compare) rejects
+     * it.  The suffix is test-specific so it will not collide with real user
+     * directories, and it is only created/removed when this run actually staged
+     * it.  Empty when the cwd could not be resolved, the name would truncate, or
+     * such a directory already exists (the sub-test is then skipped rather than
+     * touching unrelated data). */
+    char             escSibling[WOLFSSH_MAX_FILENAME];
+#ifdef WOLFSSH_HAVE_SYMLINK
+    /* an in-jail symlink pointing at the out-of-jail temp root, and a path
+     * that traverses it; both must be rejected even though they resolve to an
+     * in-jail string, since wolfSSH_RealPath does not follow links.  Guarded by
+     * WOLFSSH_HAVE_SYMLINK to match the server-side check's feature gate: on
+     * POSIX builds that compile the check out (e.g. WOLFSSH_USER_FILESYSTEM)
+     * the link would be followed as designed, so these assertions must not
+     * run. */
+    char             escSymlink[] = "confine_symlink";
+    char             escSymThru[WOLFSSH_MAX_FILENAME];
+#endif
+    WFILE*           fp = NULL;
+    int              snLen;
+#else
+    /* Zephyr (and Windows, which does not run this via "make check") lack the
+     * getcwd()/fopen() wrappers to stage out-of-jail files, so fall back to
+     * non-existent out-of-jail paths.  A leaked MKDIR still trips its
+     * assertion; read/stat/delete bypasses are not detectable here. */
+    char             escFile[]   = "/wolfssh_confine_test_file";
+    char             escDir[]    = "/wolfssh_confine_test_dir";
+    char             escMkdir[]  = "/wolfssh_confine_test_mkdir";
+    char             escDest[]   = "/wolfssh_confine_test_renamed";
+#endif
+
+    /* best effort removal of anything a previous aborted run may have left */
+    WRMDIR(NULL, inJailDir);
+#if defined(WOLFSSH_ZEPHYR) || defined(USE_WINDOWS_API)
+    WREMOVE(NULL, escFile);
+    WRMDIR(NULL, escDir);
+    WRMDIR(NULL, escMkdir);
+    WREMOVE(NULL, escDest);
+#else
+    /* Create a private, unique temp directory to hold the out-of-jail
+     * fixtures, then derive the individual escape paths from it. */
+    AssertNotNull(mkdtemp(escRoot));
+
+    /* If the temp root resolves inside the jail (the test process's cwd),
+     * the "escape" paths would actually be in-jail and the rejection
+     * assertions would invert; skip the staged-fixture checks in that
+     * unusual case rather than report a bogus confinement failure. */
+    WMEMSET(jailCwd, 0, sizeof(jailCwd));
+    escSibling[0] = '\0';
+    if (WGETCWD(NULL, jailCwd, sizeof(jailCwd) - 1) != NULL) {
+        size_t jailLen = WSTRLEN(jailCwd);
+        if (WSTRLEN(escRoot) >= jailLen &&
+                WSTRNCMP(escRoot, jailCwd, jailLen) == 0) {
+            WRMDIR(NULL, escRoot);
+            return;
+        }
+        /* "<cwd>_wolfssh_confine_sibling" - a sibling of the jail sharing its
+         * name as a string prefix, with a distinctive test-specific suffix so
+         * it will not match a real user directory.  The first byte past the
+         * jail prefix is '_' (not a delimiter), so the boundary check rejects
+         * it.  If the name would truncate, leave escSibling empty so the
+         * boundary-check case is skipped rather than staged at a wrong path. */
+        snLen = WSNPRINTF(escSibling, sizeof(escSibling),
+                "%s_wolfssh_confine_sibling", jailCwd);
+        if (snLen < 0 || (size_t)snLen >= sizeof(escSibling)) {
+            escSibling[0] = '\0';
+        }
+    }
+
+    WSNPRINTF(escFile,  sizeof(escFile),  "%s/real_file", escRoot);
+    WSNPRINTF(escDir,   sizeof(escDir),   "%s/real_dir",  escRoot);
+    WSNPRINTF(escMkdir, sizeof(escMkdir), "%s/mkdir",     escRoot);
+    WSNPRINTF(escDest,  sizeof(escDest),  "%s/renamed",   escRoot);
+    /* climb to filesystem root with a generous ".." count (RealPath clamps the
+     * excess at root) then re-descend to escFile, so this relative path
+     * resolves to the very same out-of-jail file the absolute escFile does */
+    snLen = WSNPRINTF(escRel, sizeof(escRel),
+        "../../../../../../../../../../../../../../../../%s", escFile + 1);
+    AssertIntGE(snLen, 0);
+    AssertIntLT(snLen, (int)sizeof(escRel));
+#ifdef WOLFSSH_HAVE_SYMLINK
+    /* a path that traverses the in-jail symlink out to the staged real file */
+    WSNPRINTF(escSymThru, sizeof(escSymThru), "%s/real_file", escSymlink);
+#endif
+
+    /* stage the real out-of-jail file and directory */
+    AssertIntEQ(WFOPEN(NULL, &fp, escFile, "wb"), 0);
+    AssertNotNull(fp);
+    WFCLOSE(NULL, fp);
+    AssertIntEQ(WMKDIR(NULL, escDir, 0755), 0);
+
+    /* stage the sibling so a boundary-check regression would actually
+     * enumerate it (rather than fail with ENOENT).  Never remove a pre-existing
+     * directory: only create it when absent, and if creation fails (e.g. it
+     * already exists, possibly user data despite the distinctive name), clear
+     * escSibling so the sub-test is skipped and cleanup leaves it untouched.
+     * escSibling is thus non-empty only when this run created the directory. */
+    if (escSibling[0] != '\0') {
+        if (WMKDIR(NULL, escSibling, 0755) != 0) {
+            escSibling[0] = '\0';
+        }
+    }
+
+#ifdef WOLFSSH_HAVE_SYMLINK
+    /* stage an in-jail symlink pointing at the out-of-jail temp root */
+    WREMOVE(NULL, escSymlink);
+    AssertIntEQ(symlink(escRoot, escSymlink), 0);
+#endif
+#endif
+
+    WMEMSET(&ser, 0, sizeof(func_args));
+    argsCount = 0;
+    args[argsCount++] = ".";
+    args[argsCount++] = "-1";
+#ifndef USE_WINDOWS_API
+    args[argsCount++] = "-p";
+    args[argsCount++] = "0";
+#endif
+    ser.argv = (char**)args;
+    ser.argc = argsCount;
+    ser.signal = &ready;
+    InitTcpReady(ser.signal);
+    ThreadStart(echoserver_test, (void*)&ser, &serThread);
+    WaitTcpReady(&ready);
+
+    sftp_client_connect(&ctx, &ssh, ready.port);
+    AssertNotNull(ctx);
+    AssertNotNull(ssh);
+
+    /* The client API maps PERMISSION and FAILURE both to WS_FATAL_ERROR;
+     * assert != WS_SUCCESS and verify the session stays alive afterward. */
+
+    /* Remove: out-of-jail absolute path -> rejected, session survives */
+    ret = wolfSSH_SFTP_Remove(ssh, escFile);
+    AssertIntNE(ret, WS_SUCCESS);
+    ls = wolfSSH_SFTP_LS(ssh, curDir);
+    AssertNotNull(ls);
+    wolfSSH_SFTPNAME_list_free(ls);
+    ls = NULL;
+
+    /* Remove: relative ".." traversal resolving to the same real out-of-jail
+     * file -> rejected by the post-RealPath containment check, session
+     * survives.  escFile still exists afterward (a bypass would have deleted
+     * it, failing the absolute-path assertions on a re-run).  escRel/fp are
+     * staged only on hosted POSIX (mkdtemp/fopen), so this case is POSIX-only;
+     * on Zephyr/Windows the absolute-path rejection above already covers the
+     * Remove sink. */
+#if !defined(WOLFSSH_ZEPHYR) && !defined(USE_WINDOWS_API)
+    ret = wolfSSH_SFTP_Remove(ssh, escRel);
+    AssertIntNE(ret, WS_SUCCESS);
+    AssertIntEQ(WFOPEN(NULL, &fp, escFile, "rb"), 0);
+    AssertNotNull(fp);
+    WFCLOSE(NULL, fp);
+    ls = wolfSSH_SFTP_LS(ssh, curDir);
+    AssertNotNull(ls);
+    wolfSSH_SFTPNAME_list_free(ls);
+    ls = NULL;
+#endif
+
+    /* RMDIR: out-of-jail path -> rejected, session survives */
+    ret = wolfSSH_SFTP_RMDIR(ssh, escDir);
+    AssertIntNE(ret, WS_SUCCESS);
+    ls = wolfSSH_SFTP_LS(ssh, curDir);
+    AssertNotNull(ls);
+    wolfSSH_SFTPNAME_list_free(ls);
+    ls = NULL;
+
+    /* MKDIR: out-of-jail path -> rejected, session survives */
+    WMEMSET(&atr, 0, sizeof(atr));
+    ret = wolfSSH_SFTP_MKDIR(ssh, escMkdir, &atr);
+    AssertIntNE(ret, WS_SUCCESS);
+    ls = wolfSSH_SFTP_LS(ssh, curDir);
+    AssertNotNull(ls);
+    wolfSSH_SFTPNAME_list_free(ls);
+    ls = NULL;
+
+    /* Open: out-of-jail path -> rejected, session survives */
+    handleSz = WOLFSSH_MAX_HANDLE;
+    ret = wolfSSH_SFTP_Open(ssh, escFile, WOLFSSH_FXF_READ, NULL,
+            handle, &handleSz);
+    AssertIntNE(ret, WS_SUCCESS);
+    ls = wolfSSH_SFTP_LS(ssh, curDir);
+    AssertNotNull(ls);
+    wolfSSH_SFTPNAME_list_free(ls);
+    ls = NULL;
+
+    /* LS (OpenDir): out-of-jail path -> rejected, session survives */
+    ls = wolfSSH_SFTP_LS(ssh, escDir);
+    AssertNull(ls);
+    ls = wolfSSH_SFTP_LS(ssh, curDir);
+    AssertNotNull(ls);
+    wolfSSH_SFTPNAME_list_free(ls);
+    ls = NULL;
+
+#if !defined(WOLFSSH_ZEPHYR) && !defined(USE_WINDOWS_API)
+    /* LS (OpenDir) on the "<jail>_wolfssh_confine_sibling" sibling: its resolved
+     * path shares the jail prefix exactly but the next byte is '_' (not a
+     * delimiter), so it must be rejected by the boundary check even though a
+     * plain prefix compare would accept it.  The dir really exists, so a
+     * regression would return a non-NULL listing. */
+    if (escSibling[0] != '\0') {
+        ls = wolfSSH_SFTP_LS(ssh, escSibling);
+        AssertNull(ls);
+        ls = wolfSSH_SFTP_LS(ssh, curDir);
+        AssertNotNull(ls);
+        wolfSSH_SFTPNAME_list_free(ls);
+        ls = NULL;
+    }
+#endif
+
+    /* Rename: out-of-jail path -> rejected, session survives */
+    ret = wolfSSH_SFTP_Rename(ssh, escFile, escDest);
+    AssertIntNE(ret, WS_SUCCESS);
+    ls = wolfSSH_SFTP_LS(ssh, curDir);
+    AssertNotNull(ls);
+    wolfSSH_SFTPNAME_list_free(ls);
+    ls = NULL;
+
+    /* STAT: out-of-jail path -> rejected, session survives */
+    WMEMSET(&atr, 0, sizeof(atr));
+    ret = wolfSSH_SFTP_STAT(ssh, escFile, &atr);
+    AssertIntNE(ret, WS_SUCCESS);
+    ls = wolfSSH_SFTP_LS(ssh, curDir);
+    AssertNotNull(ls);
+    wolfSSH_SFTPNAME_list_free(ls);
+    ls = NULL;
+
+    /* LSTAT: out-of-jail path -> rejected, session survives */
+    WMEMSET(&atr, 0, sizeof(atr));
+    ret = wolfSSH_SFTP_LSTAT(ssh, escFile, &atr);
+    AssertIntNE(ret, WS_SUCCESS);
+    ls = wolfSSH_SFTP_LS(ssh, curDir);
+    AssertNotNull(ls);
+    wolfSSH_SFTPNAME_list_free(ls);
+    ls = NULL;
+
+    /* SetSTAT: out-of-jail path -> rejected, session survives */
+    WMEMSET(&atr, 0, sizeof(atr));
+    ret = wolfSSH_SFTP_SetSTAT(ssh, escFile, &atr);
+    AssertIntNE(ret, WS_SUCCESS);
+    ls = wolfSSH_SFTP_LS(ssh, curDir);
+    AssertNotNull(ls);
+    wolfSSH_SFTPNAME_list_free(ls);
+    ls = NULL;
+
+#if !defined(WOLFSSH_ZEPHYR) && !defined(USE_WINDOWS_API) && \
+        defined(WOLFSSH_HAVE_SYMLINK)
+    /* Symlink escape: an in-jail symlink to the out-of-jail tree resolves to
+     * an in-jail path string, so the prefix check alone would pass; the
+     * per-component link check must reject both listing the link itself and
+     * opening a file through it.  Without the fix these would follow the link
+     * and succeed, escaping the jail.  Guarded to match the POSIX-only staging
+     * above (mkdtemp/symlink) and WOLFSSH_HAVE_SYMLINK so it only runs where
+     * both the fixtures and the server-side link check exist. */
+    ls = wolfSSH_SFTP_LS(ssh, escSymlink);
+    AssertNull(ls);
+    ls = wolfSSH_SFTP_LS(ssh, curDir);
+    AssertNotNull(ls);
+    wolfSSH_SFTPNAME_list_free(ls);
+    ls = NULL;
+
+    handleSz = WOLFSSH_MAX_HANDLE;
+    ret = wolfSSH_SFTP_Open(ssh, escSymThru, WOLFSSH_FXF_READ, NULL,
+            handle, &handleSz);
+    AssertIntNE(ret, WS_SUCCESS);
+    ls = wolfSSH_SFTP_LS(ssh, curDir);
+    AssertNotNull(ls);
+    wolfSSH_SFTPNAME_list_free(ls);
+    ls = NULL;
+#endif
+
+    /* Positive case: a relative write op that resolves inside the jail must be
+     * allowed.  This guards the GetAndCleanPath prefix-compare allow path (and
+     * the s[dpLen] boundary check) against an over-restrictive regression that
+     * would only be caught by the broader CI shell scripts otherwise.  MKDIR
+     * the in-jail name, assert success, then RMDIR it back to a clean state. */
+    WMEMSET(&atr, 0, sizeof(atr));
+    ret = wolfSSH_SFTP_MKDIR(ssh, inJailDir, &atr);
+    AssertIntEQ(ret, WS_SUCCESS);
+    ret = wolfSSH_SFTP_RMDIR(ssh, inJailDir);
+    AssertIntEQ(ret, WS_SUCCESS);
+    ls = wolfSSH_SFTP_LS(ssh, curDir);
+    AssertNotNull(ls);
+    wolfSSH_SFTPNAME_list_free(ls);
+    ls = NULL;
+
+    /* Drain any pending rekey before shutdown. */
+    while (wolfSSH_get_error(ssh) == WS_REKEYING)
+        wolfSSH_worker(ssh, NULL);
+
+    ret = wolfSSH_shutdown(ssh);
+    if (ret == WS_SOCKET_ERROR_E) {
+        ret = WS_SUCCESS;
+    }
+#if DEFAULT_HIGHWATER_MARK < 8000
+    if (ret == WS_REKEYING) {
+        ret = WS_SUCCESS;
+    }
+#endif
+    AssertIntEQ(ret, WS_SUCCESS);
+    clientFd = wolfSSH_get_fd(ssh);
+    WCLOSESOCKET(clientFd);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+#ifdef WOLFSSH_ZEPHYR
+    k_sleep(Z_TIMEOUT_TICKS(100));
+#endif
+    ThreadJoin(serThread);
+
+    /* remove staged targets; escMkdir/escDest only exist if confinement
+     * leaked, and inJailDir only if the positive-case RMDIR did not run, so
+     * their removal is best effort */
+    WREMOVE(NULL, escFile);
+    WRMDIR(NULL, escDir);
+    WRMDIR(NULL, escMkdir);
+    WREMOVE(NULL, escDest);
+    WRMDIR(NULL, inJailDir);
+#if !defined(WOLFSSH_ZEPHYR) && !defined(USE_WINDOWS_API)
+#ifdef WOLFSSH_HAVE_SYMLINK
+    WREMOVE(NULL, escSymlink);
+#endif
+    WRMDIR(NULL, escRoot);
+    /* escSibling is non-empty only if this run created it (see staging above),
+     * so this never removes a pre-existing directory belonging to the user */
+    if (escSibling[0] != '\0') {
+        WRMDIR(NULL, escSibling);
+    }
+#endif
+}
+
+
+/* Direct unit coverage for wolfSSH_SFTP_SetDefaultPath, exercising the new
+ * canonicalization and error branches that test_wolfSSH_SFTP_Confinement only
+ * reaches indirectly (it always passes an already-absolute realpath):
+ * NULL ssh, the too-long-path guard, NULL path (no change), absolute-path
+ * canonicalization, the repeated-call free path, and relative-path resolution
+ * against the canonicalized cwd. */
+static void test_wolfSSH_SFTP_SetDefaultPath(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    char         longPath[WOLFSSH_MAX_FILENAME + 4];
+#if !defined(WOLFSSH_ZEPHYR) && !defined(USE_WINDOWS_API)
+    char         cwdBuf[WOLFSSH_MAX_FILENAME];
+    char         cwdReal[WOLFSSH_MAX_FILENAME];
+    char         expect[WOLFSSH_MAX_FILENAME];
+    char         rel[]   = "sdp_rel_seg";
+#endif
+
+    AssertNotNull(ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL));
+    AssertNotNull(ssh = wolfSSH_new(ctx));
+
+    /* NULL ssh is rejected */
+    AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(NULL, "/"), WS_BAD_ARGUMENT);
+
+    /* NULL path leaves the (still unset) default path unchanged */
+    AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, NULL), WS_SUCCESS);
+    AssertNull(ssh->sftpDefaultPath);
+
+    /* A path that does not fit the working buffer is rejected up front and
+     * does not store anything */
+    WMEMSET(longPath, 'a', sizeof(longPath));
+    longPath[0] = '/';
+    longPath[WOLFSSH_MAX_FILENAME + 1] = '\0'; /* length == MAX_FILENAME + 1 */
+    AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, longPath), WS_BUFFER_E);
+    AssertNull(ssh->sftpDefaultPath);
+
+    /* An absolute path is stored in lexically canonical form */
+    AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, "/tmp/../tmp/sdp"),
+            WS_SUCCESS);
+    AssertNotNull(ssh->sftpDefaultPath);
+    AssertStrEQ(ssh->sftpDefaultPath, "/tmp/sdp");
+
+    /* A repeated call frees the previous path (no leak) and stores the new
+     * one - the wolfsshd "/" then home-dir sequence */
+    AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, "/var/sdp2"), WS_SUCCESS);
+    AssertNotNull(ssh->sftpDefaultPath);
+    AssertStrEQ(ssh->sftpDefaultPath, "/var/sdp2");
+
+#if !defined(WOLFSSH_ZEPHYR) && !defined(USE_WINDOWS_API)
+    /* A relative path is resolved against the canonicalized cwd, so the stored
+     * path is absolute and matches cwd + "/seg" rather than a lexical "/seg" -
+     * confirming the relative branch ran.  The expected value is built with
+     * the same two RealPath passes the implementation uses. */
+    AssertNotNull(WGETCWD(NULL, cwdBuf, sizeof(cwdBuf) - 1));
+    AssertIntEQ(wolfSSH_RealPath(NULL, cwdBuf, cwdReal, sizeof(cwdReal)),
+            WS_SUCCESS);
+    AssertIntEQ(wolfSSH_RealPath(cwdReal, rel, expect, sizeof(expect)),
+            WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, "sdp_rel_seg"), WS_SUCCESS);
+    AssertNotNull(ssh->sftpDefaultPath);
+    AssertStrEQ(ssh->sftpDefaultPath, expect);
+#endif
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
 #else /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
 static void test_wolfSSH_SFTP_SendReadPacket(void) { ; }
 static void test_wolfSSH_SFTP_ReKey(void) { ; }
 static void test_wolfSSH_SFTP_ReKey_NonBlock(void) { ; }
+static void test_wolfSSH_SFTP_Confinement(void) { ; }
+static void test_wolfSSH_SFTP_SetDefaultPath(void) { ; }
 #endif /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
 
 
@@ -2345,6 +2805,8 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_SFTP_SendReadPacket();
     test_wolfSSH_SFTP_ReKey();
     test_wolfSSH_SFTP_ReKey_NonBlock();
+    test_wolfSSH_SFTP_Confinement();
+    test_wolfSSH_SFTP_SetDefaultPath();
 
     /* Either SCP or SFTP */
     test_wolfSSH_RealPath();

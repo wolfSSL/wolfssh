@@ -167,17 +167,19 @@ jobs:
               print("Opening SFTP session...")
               sftp = ssh.open_sftp()
 
+              remote_path = 'test_upload.dat'
+
               # Upload test
               print("Uploading 20MB test file...")
               start_time = time.time()
-              sftp.put('/tmp/sftp_upload/test_upload.dat', '/tmp/test_upload.dat')
+              sftp.put('/tmp/sftp_upload/test_upload.dat', remote_path)
               upload_time = time.time() - start_time
               print(f"Upload completed in {upload_time:.2f} seconds")
 
               # Download test
               print("Downloading 20MB test file...")
               start_time = time.time()
-              sftp.get('/tmp/test_upload.dat', '/tmp/sftp_download/test_download.dat')
+              sftp.get(remote_path, '/tmp/sftp_download/test_download.dat')
               download_time = time.time() - start_time
               print(f"Download completed in {download_time:.2f} seconds")
 
@@ -197,7 +199,7 @@ jobs:
                       download_path = f'/tmp/sftp_download/stress_test_{i}.dat'
                       start_time = time.time()
                       # Paramiko uses prefetch by default for get()
-                      sftp.get('/tmp/test_upload.dat', download_path)
+                      sftp.get(remote_path, download_path)
                       elapsed = time.time() - start_time
 
                       # Verify integrity

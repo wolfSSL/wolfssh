@@ -109,7 +109,6 @@ jobs:
       - name: Run SFTP test
         working-directory: ./wolfssh/
         run: |
-          mkdir -p /tmp/sftp_test_dir
           # Create expect script to automate the SFTP client interaction
           cat > /tmp/sftp_test.exp << 'EOF'
           #!/usr/bin/expect -f
@@ -118,7 +117,7 @@ jobs:
           expect "Password:"
           send "upthehill\r"
           expect "wolfSSH sftp>"
-          send "put /tmp/test.dat /tmp/sftp_test_dir/test_received.dat\r"
+          send "put /tmp/test.dat test_received.dat\r"
           expect "wolfSSH sftp>"
           send "exit\r"
           expect eof
@@ -131,9 +130,9 @@ jobs:
           # Run the expect script
           /tmp/sftp_test.exp
 
-          # Verify the files match
+          # Verify the files match (echoserver's CWD is ./wolfssh/)
           echo "Verifying file integrity..."
-          if cmp -s /tmp/test.dat /tmp/sftp_test_dir/test_received.dat; then
+          if cmp -s /tmp/test.dat test_received.dat; then
             echo "SFTP Test PASSED: Files match"
           else
             echo "SFTP Test FAILED: Files do not match"
