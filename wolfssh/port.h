@@ -622,6 +622,8 @@ extern "C" {
     #define WOLFSSH_NO_TIMESTAMP /* no strftime() */
 #elif defined(WOLFSSH_ZEPHYR)
     #define WTIME time
+    /* Zephyr's minimal libc provides gmtime_r but not localtime_r,
+     * so timestamps are reported in UTC on this platform. */
     #define WLOCALTIME(c,r) (gmtime_r((c),(r))!=NULL)
 #elif defined(WOLFSSL_NUCLEUS)
     #define WTIME time
