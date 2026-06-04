@@ -91,8 +91,16 @@ struct WOLFSSHD_CONFIG {
     byte authKeysFileSet:1; /* if not set then no explicit authorized keys */
 };
 
-int CountWhitespace(const char* in, int inSz, byte inv);
-int SetFileString(char** dst, const char* src, void* heap);
+/* Maximum depth of nested Include directives. Bounds the recursion
+ * through wolfSSHD_ConfigLoad -> ParseConfigLine -> HandleConfigOption
+ * -> HandleInclude -> wolfSSHD_ConfigLoad. */
+#ifndef WOLFSSHD_MAX_INCLUDE_DEPTH
+#define WOLFSSHD_MAX_INCLUDE_DEPTH 16
+#endif
+static int ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename, int depth);
+
+static int CountWhitespace(const char* in, int inSz, byte inv);
+static int SetFileString(char** dst, const char* src, void* heap);
 
 /* convert a string into seconds, handles if 'm' for minutes follows the string
  * number, i.e. 2m
@@ -616,7 +624,8 @@ static int HandlePort(WOLFSSHD_CONFIG* conf, const char* value)
     return ret;
 }
 
-static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
+/* NOLINTNEXTLINE(misc-no-recursion): bounded by WOLFSSHD_MAX_INCLUDE_DEPTH */
+static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value, int depth)
 {
     const char *ptr;
     const char *ptr2;
@@ -802,7 +811,7 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
                                 WSNPRINTF(filepath, PATH_MAX, "%s/%s", path,
                                          fileNames[i]);
                             }
-                            ret = wolfSSHD_ConfigLoad(conf, filepath);
+                            ret = ConfigLoad(conf, filepath, depth);
                             if (ret != WS_SUCCESS) {
                                 break;
                             }
@@ -834,7 +843,7 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value)
 #endif
         }
         else {
-            ret = wolfSSHD_ConfigLoad(conf, value);
+            ret = ConfigLoad(conf, value, depth);
         }
     }
     return ret;
@@ -974,8 +983,9 @@ static int HandleForcedCommand(WOLFSSHD_CONFIG* conf, const char* value,
 }
 
 /* returns WS_SUCCESS on success */
+/* NOLINTNEXTLINE(misc-no-recursion): bounded by WOLFSSHD_MAX_INCLUDE_DEPTH */
 static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
-        const char* value, const char* full, int fullSz)
+        const char* value, const char* full, int fullSz, int depth)
 {
     int ret = WS_BAD_ARGUMENT;
 
@@ -1043,7 +1053,7 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
             ret = WS_SUCCESS;
             break;
         case OPT_INCLUDE:
-            ret = HandleInclude(*conf, value);
+            ret = HandleInclude(*conf, value, depth);
             break;
         case OPT_CHROOT_DIR:
             ret = HandleChrootDir(*conf, value);
@@ -1074,7 +1084,7 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
 
 /* helper function to count white spaces, returns the number of white spaces on
  * success */
-int CountWhitespace(const char* in, int inSz, byte inv)
+static int CountWhitespace(const char* in, int inSz, byte inv)
 {
     int i = 0;
 
@@ -1100,8 +1110,9 @@ int CountWhitespace(const char* in, int inSz, byte inv)
  * Fails if any option is found that is unknown/unsupported
  * Match command will create new configs for specific matching cases
  */
+/* NOLINTNEXTLINE(misc-no-recursion): bounded by WOLFSSHD_MAX_INCLUDE_DEPTH */
 WOLFSSHD_STATIC int ParseConfigLine(WOLFSSHD_CONFIG** conf, const char* l,
-                                    int lSz)
+                                    int lSz, int depth)
 {
     int ret = WS_BAD_ARGUMENT;
     int sz  = 0;
@@ -1132,7 +1143,8 @@ WOLFSSHD_STATIC int ParseConfigLine(WOLFSSHD_CONFIG** conf, const char* l,
         else {
             WMEMCPY(tmp, l + idx, sz);
             tmp[sz] = 0;
-            ret = HandleConfigOption(conf, found->tag, tmp, l + idx, lSz - idx);
+            ret = HandleConfigOption(conf,
+                    found->tag, tmp, l + idx, lSz - idx, depth);
         }
     }
     else {
@@ -1154,6 +1166,13 @@ WOLFSSHD_STATIC int ParseConfigLine(WOLFSSHD_CONFIG** conf, const char* l,
  */
 int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename)
 {
+    return ConfigLoad(conf, filename, 0);
+}
+
+
+/* NOLINTNEXTLINE(misc-no-recursion): bounded by WOLFSSHD_MAX_INCLUDE_DEPTH */
+static int ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename, int depth)
+{
     WFILE *f;
     WOLFSSHD_CONFIG* currentConfig;
     int ret = WS_SUCCESS;
@@ -1163,12 +1182,20 @@ int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename)
     if (conf == NULL || filename == NULL)
         return BAD_FUNC_ARG;
 
+    if (depth >= WOLFSSHD_MAX_INCLUDE_DEPTH) {
+        wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Include depth (%d) exceeded loading %s",
+                WOLFSSHD_MAX_INCLUDE_DEPTH, filename);
+        return WS_BAD_ARGUMENT;
+    }
+
     if (WFOPEN(NULL, &f, filename, "rb") != 0) {
         wolfSSH_Log(WS_LOG_ERROR, "Unable to open SSHD config file %s",
                 filename);
         return BAD_FUNC_ARG;
     }
     wolfSSH_Log(WS_LOG_INFO, "[SSHD] parsing config file %s", filename);
+    depth++;
 
     currentConfig = conf;
     while ((current = XFGETS(buf, MAX_LINE_SIZE, f)) != NULL) {
@@ -1189,7 +1216,7 @@ int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename)
             continue; /* commented out line */
         }
 
-        ret = ParseConfigLine(&currentConfig, current, currentSz);
+        ret = ParseConfigLine(&currentConfig, current, currentSz, depth);
         if (ret != WS_SUCCESS) {
             fprintf(stderr, "Unable to parse config line : %s\n", current);
             break;
@@ -1356,7 +1383,7 @@ char* wolfSSHD_ConfigGetUserCAKeysFile(const WOLFSSHD_CONFIG* conf)
     return ret;
 }
 
-int SetFileString(char** dst, const char* src, void* heap)
+static int SetFileString(char** dst, const char* src, void* heap)
 {
     int ret = WS_SUCCESS;
 
