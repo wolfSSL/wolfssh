@@ -268,7 +268,7 @@ static void sig_handler(const int sig)
     (void)sig;
 
     interrupt = 1;
-    wolfSSH_SFTP_Interrupt(ssh);
+    wolfSSH_SFTP_Interrupt(ssh); /* NOLINT(bugprone-signal-handler) */
 }
 #endif /* WS_NO_SIGNAL */
 

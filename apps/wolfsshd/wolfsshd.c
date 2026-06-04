@@ -203,8 +203,6 @@ static void ShowUsage(void)
 static void interruptCatch(int in)
 {
     (void)in;
-    if (logFile)
-        fprintf(logFile, "Closing down wolfSSHD\n");
     quit = 1;
 }
 
@@ -2761,6 +2759,9 @@ static int StartSSHD(int argc, char** argv)
                 quit = 1;
             }
 #endif
+        }
+        if (quit && logFile) {
+            fprintf(logFile, "Closing down wolfSSHD\n");
         }
     }
 
