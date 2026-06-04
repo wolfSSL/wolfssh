@@ -69,8 +69,8 @@ WOLFSSH_API int wolfSSH_LogEnabled(void);
 #endif /* __GNUC__ */
 
 
-WOLFSSH_API void wolfSSH_Log(enum wolfSSH_LogLevel,
-                             const char *const, ...) FMTCHECK;
+WOLFSSH_API void wolfSSH_Log(enum wolfSSH_LogLevel level,
+                             const char *const fmt, ...) FMTCHECK;
 
 #if defined(DEBUG_WOLFSSH) || defined(WOLFSSH_SSHD)
     #define WLOG(...) do { \

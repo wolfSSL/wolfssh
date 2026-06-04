@@ -37,13 +37,13 @@
 
 
 #ifndef min
-WOLFSSH_LOCAL word32 min(word32, word32);
+WOLFSSH_LOCAL word32 min(word32 a, word32 b);
 #endif /* min */
 
-WOLFSSH_LOCAL void ato32(const byte*, word32*);
-WOLFSSH_LOCAL void c32toa(word32, byte*);
-WOLFSSH_LOCAL void ForceZero(const void*, word32);
-WOLFSSH_LOCAL int ConstantCompare(const byte*, const byte*, word32);
+WOLFSSH_LOCAL void ato32(const byte* c, word32* u32);
+WOLFSSH_LOCAL void c32toa(word32 u32, byte* c);
+WOLFSSH_LOCAL void ForceZero(const void* mem, word32 length);
+WOLFSSH_LOCAL int ConstantCompare(const byte* a, const byte* b, word32 length);
 
 
 #endif /* NO_INLINE */

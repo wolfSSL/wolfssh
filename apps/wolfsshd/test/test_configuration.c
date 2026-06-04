@@ -35,7 +35,7 @@
 #endif /* __GNUC__ */
 
 
-void Log(const char *const, ...) FMTCHECK;
+void Log(const char *const fmt, ...) FMTCHECK;
 void Log(const char *const fmt, ...)
 {
     va_list vlist;

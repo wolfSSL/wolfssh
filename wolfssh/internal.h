@@ -316,7 +316,7 @@ extern "C" {
 #endif
 
 
-WOLFSSH_LOCAL const char* GetErrorString(int);
+WOLFSSH_LOCAL const char* GetErrorString(int err);
 
 
 enum {
@@ -1015,24 +1015,30 @@ struct WOLFSSH_CHANNEL {
 };
 
 
-WOLFSSH_LOCAL WOLFSSH_CTX* CtxInit(WOLFSSH_CTX*, byte, void*);
-WOLFSSH_LOCAL void CtxResourceFree(WOLFSSH_CTX*);
-WOLFSSH_LOCAL WOLFSSH* SshInit(WOLFSSH*, WOLFSSH_CTX*);
-WOLFSSH_LOCAL void SshResourceFree(WOLFSSH*, void*);
+WOLFSSH_LOCAL WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap);
+WOLFSSH_LOCAL void CtxResourceFree(WOLFSSH_CTX* ctx);
+WOLFSSH_LOCAL WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx);
+WOLFSSH_LOCAL void SshResourceFree(WOLFSSH* ssh, void* heap);
 
-WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelNew(WOLFSSH*, byte, word32, word32);
-WOLFSSH_LOCAL int ChannelUpdatePeer(WOLFSSH_CHANNEL*, word32, word32, word32);
-WOLFSSH_LOCAL int ChannelUpdateForward(WOLFSSH_CHANNEL*,
-        const char*, word32, const char*, word32, int);
+WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelNew(WOLFSSH* ssh, byte channelType,
+        word32 initialWindowSz, word32 maxPacketSz);
+WOLFSSH_LOCAL int ChannelUpdatePeer(WOLFSSH_CHANNEL* channel,
+        word32 peerChannelId, word32 peerInitialWindowSz,
+        word32 peerMaxPacketSz);
+WOLFSSH_LOCAL int ChannelUpdateForward(WOLFSSH_CHANNEL* channel,
+        const char* host, word32 hostPort,
+        const char* origin, word32 originPort, int isDirect);
 WOLFSSH_LOCAL int ChannelAppend(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel);
-WOLFSSH_LOCAL void ChannelDelete(WOLFSSH_CHANNEL*, void*);
-WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelFind(WOLFSSH*, word32, byte);
-WOLFSSH_LOCAL int ChannelRemove(WOLFSSH*, word32, byte);
-WOLFSSH_LOCAL int ChannelPutData(WOLFSSH_CHANNEL*, byte*, word32);
-WOLFSSH_LOCAL int wolfSSH_ProcessBuffer(WOLFSSH_CTX*,
-                                        const byte*, word32,
-                                        int, int);
-WOLFSSH_LOCAL int wolfSSH_FwdWorker(WOLFSSH*);
+WOLFSSH_LOCAL void ChannelDelete(WOLFSSH_CHANNEL* channel, void* heap);
+WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelFind(WOLFSSH* ssh, word32 channel,
+        byte peer);
+WOLFSSH_LOCAL int ChannelRemove(WOLFSSH* ssh, word32 channel, byte peer);
+WOLFSSH_LOCAL int ChannelPutData(WOLFSSH_CHANNEL* channel, byte* data,
+        word32 dataSz);
+WOLFSSH_LOCAL int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
+                                        const byte* in, word32 inSz,
+                                        int format, int type);
+WOLFSSH_LOCAL int wolfSSH_FwdWorker(WOLFSSH* ssh);
 
 
 typedef struct WS_KeySignature {
@@ -1090,8 +1096,8 @@ WOLFSSH_LOCAL int GetStringRef(word32* strSz, const byte **str,
 #ifndef WOLFSSH_USER_IO
 
 /* default I/O handlers */
-WOLFSSH_LOCAL int wsEmbedRecv(WOLFSSH*, void*, word32, void*);
-WOLFSSH_LOCAL int wsEmbedSend(WOLFSSH*, void*, word32, void*);
+WOLFSSH_LOCAL int wsEmbedRecv(WOLFSSH* ssh, void* data, word32 sz, void* ctx);
+WOLFSSH_LOCAL int wsEmbedSend(WOLFSSH* ssh, void* data, word32 sz, void* ctx);
 
 #endif /* WOLFSSH_USER_IO */
 
@@ -1103,63 +1109,78 @@ enum ChannelOpenFailReasons {
     OPEN_RESOURCE_SHORTAGE
 };
 
-WOLFSSH_LOCAL int DoReceive(WOLFSSH*);
-WOLFSSH_LOCAL int DoProtoId(WOLFSSH*);
-WOLFSSH_LOCAL int wolfSSH_SendPacket(WOLFSSH*);
-WOLFSSH_LOCAL int wolfSSH_OutputPending(WOLFSSH*);
-WOLFSSH_LOCAL int SendProtoId(WOLFSSH*);
-WOLFSSH_LOCAL int SendKexInit(WOLFSSH*);
-WOLFSSH_LOCAL int SendKexDhInit(WOLFSSH*);
-WOLFSSH_LOCAL int SendKexDhReply(WOLFSSH*);
-WOLFSSH_LOCAL int SendKexDhGexRequest(WOLFSSH*);
-WOLFSSH_LOCAL int SendKexDhGexGroup(WOLFSSH*);
-WOLFSSH_LOCAL int SendNewKeys(WOLFSSH*);
-WOLFSSH_LOCAL int SendUnimplemented(WOLFSSH*);
-WOLFSSH_LOCAL int SendDisconnect(WOLFSSH*, word32);
-WOLFSSH_LOCAL int SendIgnore(WOLFSSH*, const unsigned char*, word32);
-WOLFSSH_LOCAL int SendGlobalRequestFwdSuccess(WOLFSSH *, int, word32);
-WOLFSSH_LOCAL int SendGlobalRequest(WOLFSSH *, const unsigned char *, word32, int);
-WOLFSSH_LOCAL int SendDebug(WOLFSSH*, byte, const char*);
-WOLFSSH_LOCAL int SendServiceRequest(WOLFSSH*, byte);
-WOLFSSH_LOCAL int SendServiceAccept(WOLFSSH*, byte);
+WOLFSSH_LOCAL int DoReceive(WOLFSSH* ssh);
+WOLFSSH_LOCAL int DoProtoId(WOLFSSH* ssh);
+WOLFSSH_LOCAL int wolfSSH_SendPacket(WOLFSSH* ssh);
+WOLFSSH_LOCAL int wolfSSH_OutputPending(WOLFSSH* ssh);
+WOLFSSH_LOCAL int SendProtoId(WOLFSSH* ssh);
+WOLFSSH_LOCAL int SendKexInit(WOLFSSH* ssh);
+WOLFSSH_LOCAL int SendKexDhInit(WOLFSSH* ssh);
+WOLFSSH_LOCAL int SendKexDhReply(WOLFSSH* ssh);
+WOLFSSH_LOCAL int SendKexDhGexRequest(WOLFSSH* ssh);
+WOLFSSH_LOCAL int SendKexDhGexGroup(WOLFSSH* ssh);
+WOLFSSH_LOCAL int SendNewKeys(WOLFSSH* ssh);
+WOLFSSH_LOCAL int SendUnimplemented(WOLFSSH* ssh);
+WOLFSSH_LOCAL int SendDisconnect(WOLFSSH* ssh, word32 reason);
+WOLFSSH_LOCAL int SendIgnore(WOLFSSH* ssh, const unsigned char* data,
+        word32 dataSz);
+WOLFSSH_LOCAL int SendGlobalRequestFwdSuccess(WOLFSSH * ssh, int success,
+        word32 port);
+WOLFSSH_LOCAL int SendGlobalRequest(WOLFSSH * ssh,
+        const unsigned char * data, word32 dataSz, int reply);
+WOLFSSH_LOCAL int SendDebug(WOLFSSH* ssh, byte alwaysDisplay, const char* msg);
+WOLFSSH_LOCAL int SendServiceRequest(WOLFSSH* ssh, byte serviceId);
+WOLFSSH_LOCAL int SendServiceAccept(WOLFSSH* ssh, byte serviceId);
 WOLFSSH_LOCAL int SendExtInfo(WOLFSSH* ssh);
-WOLFSSH_LOCAL int SendUserAuthRequest(WOLFSSH*, byte, int);
+WOLFSSH_LOCAL int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig);
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-WOLFSSH_LOCAL int SendUserAuthKeyboardResponse(WOLFSSH*);
-WOLFSSH_LOCAL int SendUserAuthKeyboardRequest(WOLFSSH*, WS_UserAuthData*);
+WOLFSSH_LOCAL int SendUserAuthKeyboardResponse(WOLFSSH* ssh);
+WOLFSSH_LOCAL int SendUserAuthKeyboardRequest(WOLFSSH* ssh,
+        WS_UserAuthData* authData);
 #endif
-WOLFSSH_LOCAL int SendUserAuthSuccess(WOLFSSH*);
-WOLFSSH_LOCAL int SendUserAuthFailure(WOLFSSH*, byte);
-WOLFSSH_LOCAL int SendUserAuthBanner(WOLFSSH*);
-WOLFSSH_LOCAL int SendUserAuthPkOk(WOLFSSH*, const byte*, word32,
-                                   const byte*, word32);
-WOLFSSH_LOCAL int SendRequestSuccess(WOLFSSH*, int);
-WOLFSSH_LOCAL int SendChannelOpenSession(WOLFSSH*, WOLFSSH_CHANNEL*);
-WOLFSSH_LOCAL int SendChannelOpenForward(WOLFSSH*, WOLFSSH_CHANNEL*);
-WOLFSSH_LOCAL int SendChannelOpenConf(WOLFSSH*, WOLFSSH_CHANNEL*);
+WOLFSSH_LOCAL int SendUserAuthSuccess(WOLFSSH* ssh);
+WOLFSSH_LOCAL int SendUserAuthFailure(WOLFSSH* ssh, byte partialSuccess);
+WOLFSSH_LOCAL int SendUserAuthBanner(WOLFSSH* ssh);
+WOLFSSH_LOCAL int SendUserAuthPkOk(WOLFSSH* ssh,
+                                   const byte* algoName, word32 algoNameSz,
+                                   const byte* publicKey, word32 publicKeySz);
+WOLFSSH_LOCAL int SendRequestSuccess(WOLFSSH* ssh, int success);
+WOLFSSH_LOCAL int SendChannelOpenSession(WOLFSSH* ssh,
+        WOLFSSH_CHANNEL* channel);
+WOLFSSH_LOCAL int SendChannelOpenForward(WOLFSSH* ssh,
+        WOLFSSH_CHANNEL* channel);
+WOLFSSH_LOCAL int SendChannelOpenConf(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel);
 WOLFSSH_LOCAL int SendChannelOpenFail(WOLFSSH* ssh, word32 channel,
         word32 reason, const char* description, const char* language);
-WOLFSSH_LOCAL int SendChannelEof(WOLFSSH*, word32);
-WOLFSSH_LOCAL int SendChannelEow(WOLFSSH*, word32);
-WOLFSSH_LOCAL int SendChannelClose(WOLFSSH*, word32);
-WOLFSSH_LOCAL int SendChannelExit(WOLFSSH*, word32, int);
-WOLFSSH_LOCAL int SendChannelData(WOLFSSH*, word32, byte*, word32);
-WOLFSSH_LOCAL int SendChannelExtendedData(WOLFSSH*, word32, byte*, word32);
-WOLFSSH_LOCAL int SendChannelWindowAdjust(WOLFSSH*, word32, word32);
-WOLFSSH_LOCAL int SendChannelRequest(WOLFSSH*, byte*, word32);
-WOLFSSH_LOCAL int SendChannelTerminalResize(WOLFSSH*, word32, word32, word32,
-    word32);
+WOLFSSH_LOCAL int SendChannelEof(WOLFSSH* ssh, word32 peerChannelId);
+WOLFSSH_LOCAL int SendChannelEow(WOLFSSH* ssh, word32 peerChannelId);
+WOLFSSH_LOCAL int SendChannelClose(WOLFSSH* ssh, word32 peerChannelId);
+WOLFSSH_LOCAL int SendChannelExit(WOLFSSH* ssh, word32 peerChannelId,
+        int status);
+WOLFSSH_LOCAL int SendChannelData(WOLFSSH* ssh, word32 channelId,
+        byte* data, word32 dataSz);
+WOLFSSH_LOCAL int SendChannelExtendedData(WOLFSSH* ssh, word32 channelId,
+        byte* data, word32 dataSz);
+WOLFSSH_LOCAL int SendChannelWindowAdjust(WOLFSSH* ssh, word32 channelId,
+        word32 bytesToAdd);
+WOLFSSH_LOCAL int SendChannelRequest(WOLFSSH* ssh, byte* name, word32 nameSz);
+WOLFSSH_LOCAL int SendChannelTerminalResize(WOLFSSH* ssh, word32 columns,
+    word32 rows, word32 widthPixels, word32 heightPixels);
 WOLFSSH_LOCAL int SendChannelTerminalRequest(WOLFSSH* ssh);
 WOLFSSH_LOCAL int SendChannelAgentRequest(WOLFSSH* ssh);
-WOLFSSH_LOCAL int SendChannelSuccess(WOLFSSH*, word32, int);
+WOLFSSH_LOCAL int SendChannelSuccess(WOLFSSH* ssh, word32 channelId,
+        int success);
 WOLFSSH_LOCAL int SendChannelExitStatus(WOLFSSH* ssh, word32 channelId,
     word32 exitStatus);
-WOLFSSH_LOCAL int GenerateKey(byte, byte, byte*, word32, const byte*, word32,
-                              const byte*, word32, const byte*, word32, byte doKeyPad);
+WOLFSSH_LOCAL int GenerateKey(byte hashId, byte keyId, byte* key,
+                              word32 keySz, const byte* k, word32 kSz,
+                              const byte* h, word32 hSz,
+                              const byte* sessionId, word32 sessionIdSz,
+                              byte doKeyPad);
 #if !defined(WOLFSSH_NO_ECDSA) || !defined(WOLFSSH_NO_ECDH)
-WOLFSSH_LOCAL int wcPrimeForId(byte);
+WOLFSSH_LOCAL int wcPrimeForId(byte id);
 #endif
-WOLFSSH_LOCAL enum wc_HashType HashForId(byte);
+WOLFSSH_LOCAL enum wc_HashType HashForId(byte id);
 
 
 enum AcceptStates {
@@ -1381,7 +1402,8 @@ enum WS_MessageIdLimits {
             word32 len, word32* idx);
     WOLFSSH_API int wolfSSH_TestDoKexDhReply(WOLFSSH* ssh, byte* buf,
             word32 len, word32* idx);
-    WOLFSSH_API int wolfSSH_TestChannelPutData(WOLFSSH_CHANNEL*, byte*, word32);
+    WOLFSSH_API int wolfSSH_TestChannelPutData(WOLFSSH_CHANNEL* channel,
+            byte* data, word32 dataSz);
     WOLFSSH_API int wolfSSH_TestDoUserAuthRequest(WOLFSSH* ssh, byte* buf,
             word32 len, word32* idx);
     WOLFSSH_API int wolfSSH_TestHighwaterCheck(WOLFSSH* ssh, byte side);
@@ -1495,23 +1517,30 @@ enum WS_ScpDirection {
     WOLFSSH_SCP_FROM
 };
 
-WOLFSSH_LOCAL int ChannelCommandIsScp(WOLFSSH*);
-WOLFSSH_LOCAL int DoScpRequest(WOLFSSH*);
+WOLFSSH_LOCAL int ChannelCommandIsScp(WOLFSSH* ssh);
+WOLFSSH_LOCAL int DoScpRequest(WOLFSSH* ssh);
 WOLFSSH_LOCAL int DoScpSink(WOLFSSH* ssh);
 WOLFSSH_LOCAL int DoScpSource(WOLFSSH* ssh);
-WOLFSSH_LOCAL int ParseScpCommand(WOLFSSH*);
-WOLFSSH_LOCAL int ReceiveScpMessage(WOLFSSH*);
-WOLFSSH_LOCAL int ReceiveScpFile(WOLFSSH*);
-WOLFSSH_LOCAL int SendScpConfirmation(WOLFSSH*);
-WOLFSSH_LOCAL int ReceiveScpConfirmation(WOLFSSH*);
+WOLFSSH_LOCAL int ParseScpCommand(WOLFSSH* ssh);
+WOLFSSH_LOCAL int ReceiveScpMessage(WOLFSSH* ssh);
+WOLFSSH_LOCAL int ReceiveScpFile(WOLFSSH* ssh);
+WOLFSSH_LOCAL int SendScpConfirmation(WOLFSSH* ssh);
+WOLFSSH_LOCAL int ReceiveScpConfirmation(WOLFSSH* ssh);
 
 /* default SCP callbacks */
-WOLFSSH_LOCAL int wsScpRecvCallback(WOLFSSH*, int, const char*, const char*,
-                                    int, word64, word64, word32, byte*,
-                                    word32, word32, void*);
-WOLFSSH_LOCAL int wsScpSendCallback(WOLFSSH*, int, const char*, char*, word32,
-                                    word64*, word64*, int*, word32, word32*,
-                                    byte*, word32, void*);
+WOLFSSH_LOCAL int wsScpRecvCallback(WOLFSSH* ssh, int state,
+                                    const char* basePath,
+                                    const char* fileName, int fileMode,
+                                    word64 mTime, word64 aTime,
+                                    word32 totalFileSz, byte* buf,
+                                    word32 bufSz, word32 fileOffset,
+                                    void* ctx);
+WOLFSSH_LOCAL int wsScpSendCallback(WOLFSSH* ssh, int state,
+                                    const char* peerRequest, char* fileName,
+                                    word32 fileNameSz, word64* mTime,
+                                    word64* aTime, int* fileMode,
+                                    word32 fileOffset, word32* totalFileSz,
+                                    byte* buf, word32 bufSz, void* ctx);
 #endif
 
 
@@ -1522,9 +1551,9 @@ WOLFSSH_LOCAL int wolfSSH_RsaVerify(
         const byte* encDigest, word32 encDigestSz,
         RsaKey* key, void* heap, const char* loc);
 #endif
-WOLFSSH_LOCAL void DumpOctetString(const byte*, word32);
+WOLFSSH_LOCAL void DumpOctetString(const byte* input, word32 inputSz);
 WOLFSSH_LOCAL int wolfSSH_oct2dec(WOLFSSH* ssh, byte* oct, word32 octSz);
-WOLFSSH_LOCAL void AddAssign64(word32*, word32);
+WOLFSSH_LOCAL void AddAssign64(word32* addend1, word32 addend2);
 
 #ifdef WOLFSSH_TERM
 /* values from section 8 of rfc 4254 */

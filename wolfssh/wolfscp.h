@@ -116,27 +116,34 @@ enum WS_ScpFileStates {
 #endif /* NO_FILESYSTEM */
 #endif /* WOLFSSH_SCP_USER_CALLBACKS */
 
-typedef int (*WS_CallbackScpRecv)(WOLFSSH*, int, const char*, const char*,
-                                  int, word64, word64, word32, byte*, word32,
-                                  word32, void*);
-typedef int (*WS_CallbackScpSend)(WOLFSSH*, int, const char*, char*, word32,
-                                  word64*, word64*, int*, word32, word32*,
-                                  byte*, word32, void*);
+typedef int (*WS_CallbackScpRecv)(WOLFSSH* ssh, int state,
+                                  const char* basePath, const char* fileName,
+                                  int fileMode, word64 mTime, word64 aTime,
+                                  word32 totalFileSz, byte* buf, word32 bufSz,
+                                  word32 fileOffset, void* ctx);
+typedef int (*WS_CallbackScpSend)(WOLFSSH* ssh, int state,
+                                  const char* peerRequest, char* fileName,
+                                  word32 fileNameSz, word64* mTime,
+                                  word64* aTime, int* fileMode,
+                                  word32 fileOffset, word32* totalFileSz,
+                                  byte* buf, word32 bufSz, void* ctx);
 
-WOLFSSH_API void  wolfSSH_SetScpRecv(WOLFSSH_CTX*, WS_CallbackScpRecv);
-WOLFSSH_API void  wolfSSH_SetScpSend(WOLFSSH_CTX*, WS_CallbackScpSend);
+WOLFSSH_API void  wolfSSH_SetScpRecv(WOLFSSH_CTX* ctx, WS_CallbackScpRecv cb);
+WOLFSSH_API void  wolfSSH_SetScpSend(WOLFSSH_CTX* ctx, WS_CallbackScpSend cb);
 
-WOLFSSH_API void  wolfSSH_SetScpRecvCtx(WOLFSSH*, void*);
-WOLFSSH_API void  wolfSSH_SetScpSendCtx(WOLFSSH*, void*);
+WOLFSSH_API void  wolfSSH_SetScpRecvCtx(WOLFSSH* ssh, void* ctx);
+WOLFSSH_API void  wolfSSH_SetScpSendCtx(WOLFSSH* ssh, void* ctx);
 
-WOLFSSH_API void* wolfSSH_GetScpRecvCtx(WOLFSSH*);
-WOLFSSH_API void* wolfSSH_GetScpSendCtx(WOLFSSH*);
+WOLFSSH_API void* wolfSSH_GetScpRecvCtx(WOLFSSH* ssh);
+WOLFSSH_API void* wolfSSH_GetScpSendCtx(WOLFSSH* ssh);
 
-WOLFSSH_API int   wolfSSH_SetScpErrorMsg(WOLFSSH*, const char*);
+WOLFSSH_API int   wolfSSH_SetScpErrorMsg(WOLFSSH* ssh, const char* message);
 
-WOLFSSH_API int   wolfSSH_SCP_connect(WOLFSSH*, byte*);
-WOLFSSH_API int   wolfSSH_SCP_to(WOLFSSH*, const char*, const char*);
-WOLFSSH_API int   wolfSSH_SCP_from(WOLFSSH*, const char*, const char*);
+WOLFSSH_API int   wolfSSH_SCP_connect(WOLFSSH* ssh, byte* cmd);
+WOLFSSH_API int   wolfSSH_SCP_to(WOLFSSH* ssh, const char* src,
+        const char* dst);
+WOLFSSH_API int   wolfSSH_SCP_from(WOLFSSH* ssh, const char* src,
+        const char* dst);
 
 
 #ifdef __cplusplus
