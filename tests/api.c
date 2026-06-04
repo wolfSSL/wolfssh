@@ -1444,8 +1444,146 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
     ThreadJoin(serThread);
 }
 
+/* Upper bound on non-blocking retry iterations. A legitimate LS/shutdown across
+ * forced rekeys completes in well under this; the bound keeps a regression from
+ * hanging CI by tripping the AssertNotNull/AssertIntEQ below instead. */
+#define SFTP_REKEY_MAX_TRIES 100
+
+static void sftp_rekey_test(int nonBlock)
+{
+    func_args ser;
+    tcp_ready ready;
+    int argsCount;
+    int err;
+    int tries;
+    WS_SOCKET_T clientFd;
+    WS_SFTPNAME* ls;
+    int i;
+
+    const char* args[10];
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+
+    THREAD_TYPE serThread;
+
+    WMEMSET(&ser, 0, sizeof(func_args));
+
+    argsCount = 0;
+    args[argsCount++] = ".";
+    args[argsCount++] = "-1";
+#ifndef USE_WINDOWS_API
+    args[argsCount++] = "-p";
+    args[argsCount++] = "0";
+#endif
+    ser.argv   = (char**)args;
+    ser.argc    = argsCount;
+    ser.signal = &ready;
+    InitTcpReady(ser.signal);
+    ThreadStart(echoserver_test, (void*)&ser, &serThread);
+    WaitTcpReady(&ready);
+
+    sftp_client_connect(&ctx, &ssh, ready.port);
+    AssertNotNull(ctx);
+    AssertNotNull(ssh);
+
+    /* Handshake completed in blocking mode; switch to non-blocking so the
+     * LS/rekey phase exercises the WS_WANT_READ/WS_WANT_WRITE early-return
+     * path in buffer_send/buffer_read. */
+    clientFd = wolfSSH_get_fd(ssh);
+    if (nonBlock) {
+        tcp_set_nonblocking(&clientFd);
+    }
+
+    /* Low threshold makes the client cross its own highwater mid-SFTP and fire
+     * the default highwater callback (wsHighwater -> TriggerKeyExchange), so the
+     * client initiates a rekey. In blocking mode the buffer_read/buffer_send
+     * fixes drive it internally; in non-blocking mode the retry loop below
+     * advances it on WS_WANT_READ/WS_WANT_WRITE/WS_REKEYING. */
+    AssertIntEQ(wolfSSH_SetHighwater(ssh, 256), WS_SUCCESS);
+
+    ls = NULL;
+    for (i = 0; i < 3; i++) {
+        /* The retry loop only applies to non-blocking. In blocking mode the
+         * buffer_read/buffer_send fixes must handle the rekey transparently, so
+         * a single LS call returns the listing; gating on nonBlock keeps the
+         * blocking path from masking a regression that exposes WS_REKEYING. */
+        tries = 0;
+        do {
+            ls  = wolfSSH_SFTP_LS(ssh, (char*)".");
+            err = wolfSSH_get_error(ssh);
+            /* tcp_select() waits for receive-readiness; on WS_WANT_WRITE it has
+             * no write event to wait on, so its 1s timeout is the intended
+             * (rare) fallback that yields the CPU instead of busy-spinning. */
+            if (nonBlock && ls == NULL && (err == WS_WANT_READ
+                        || err == WS_WANT_WRITE || err == WS_REKEYING)) {
+                tcp_select(clientFd, 1);
+            }
+            tries++;
+        } while (nonBlock && ls == NULL && (err == WS_WANT_READ
+                    || err == WS_WANT_WRITE || err == WS_REKEYING)
+                && tries <= SFTP_REKEY_MAX_TRIES);
+        /* Fails fast (instead of hanging CI) if a regression keeps the LS stuck
+         * in a want/rekey state past the retry bound. The loop cap is one above
+         * the assert threshold so a legitimate success on the last allowed
+         * iteration is not misreported as a hang. */
+        AssertIntLE(tries, SFTP_REKEY_MAX_TRIES);
+        AssertNotNull(ls);
+        wolfSSH_SFTPNAME_list_free(ls);
+        ls = NULL;
+    }
+
+    tries = 0;
+    do {
+        argsCount = wolfSSH_shutdown(ssh);
+        err = wolfSSH_get_error(ssh);
+        if (argsCount != WS_SUCCESS && (err == WS_WANT_READ
+                    || err == WS_WANT_WRITE || err == WS_REKEYING)) {
+            tcp_select(clientFd, 1);
+        }
+        tries++;
+    } while (argsCount != WS_SUCCESS && (err == WS_WANT_READ
+                || err == WS_WANT_WRITE || err == WS_REKEYING)
+            && tries <= SFTP_REKEY_MAX_TRIES);
+    /* Fails fast if shutdown stays stuck in a want/rekey state past the bound,
+     * before the WS_REKEYING fixup below could otherwise mask it. The loop cap
+     * is one above the assert threshold to leave last-iteration headroom. */
+    AssertIntLE(tries, SFTP_REKEY_MAX_TRIES);
+    if (argsCount == WS_SOCKET_ERROR_E) {
+        argsCount = WS_SUCCESS;
+    }
+#if DEFAULT_HIGHWATER_MARK < 8000
+    if (argsCount == WS_REKEYING) {
+        /* in cases where highwater mark is really small a re-key could happen */
+        argsCount = WS_SUCCESS;
+    }
+#endif
+    AssertIntEQ(argsCount, WS_SUCCESS);
+
+    clientFd = wolfSSH_get_fd(ssh);
+    WCLOSESOCKET(clientFd);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+#ifdef WOLFSSH_ZEPHYR
+    k_sleep(Z_TIMEOUT_TICKS(100));
+#endif
+    ThreadJoin(serThread);
+}
+
+static void test_wolfSSH_SFTP_ReKey(void)
+{
+    sftp_rekey_test(0);
+}
+
+static void test_wolfSSH_SFTP_ReKey_NonBlock(void)
+{
+    sftp_rekey_test(1);
+}
+
 #else /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
 static void test_wolfSSH_SFTP_SendReadPacket(void) { ; }
+static void test_wolfSSH_SFTP_ReKey(void) { ; }
+static void test_wolfSSH_SFTP_ReKey_NonBlock(void) { ; }
 #endif /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
 
 
@@ -2159,6 +2297,8 @@ int wolfSSH_ApiTest(int argc, char** argv)
 
     /* SFTP tests */
     test_wolfSSH_SFTP_SendReadPacket();
+    test_wolfSSH_SFTP_ReKey();
+    test_wolfSSH_SFTP_ReKey_NonBlock();
 
     /* Either SCP or SFTP */
     test_wolfSSH_RealPath();

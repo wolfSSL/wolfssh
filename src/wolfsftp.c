@@ -517,7 +517,7 @@ static int wolfSSH_SFTP_buffer_send(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer)
     int ret = WS_SUCCESS;
     int err;
 
-    if (buffer == NULL) {
+    if (buffer == NULL || ssh == NULL) {
         return WS_BAD_ARGUMENT;
     }
 
@@ -538,11 +538,30 @@ static int wolfSSH_SFTP_buffer_send(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer)
         }
     }
 
-    /* Call wolfSSH worker if rekeying or adjusting window size */
+    /* Best-effort: drive the worker while a rekey or full window blocks sending.
+     * Also checks ssh->isKeying for a rekey triggered by a receive
+     * (HighwaterCheck) where ssh->error holds a different code. If the window is
+     * still full after this (e.g. worker returned WS_CHAN_RXD), stream_send
+     * returns WS_WINDOW_FULL and the caller retries via NoticeError().
+     * Termination: in non-blocking mode any status other than
+     * WS_REKEYING/WS_WINDOW_FULL/WS_CHAN_RXD returns below; in blocking mode the
+     * worker's DoReceive blocks on the socket rather than spinning, so progress
+     * depends on the peer (rekey completion / window adjust), the same semantics
+     * as any blocking read. */
     err = wolfSSH_get_error(ssh);
-    if (err == WS_WINDOW_FULL || err == WS_REKEYING) {
-        (void)wolfSSH_worker(ssh, NULL);
+    while (ssh->isKeying || err == WS_WINDOW_FULL || err == WS_REKEYING) {
+        ret = wolfSSH_worker(ssh, NULL);
+        /* Only a rekey/window/channel-data status means "keep driving". Any
+         * other negative status (fatal error, or WS_WANT_READ/WS_WANT_WRITE on
+         * a non-blocking socket) is returned so a stalled or dead rekey cannot
+         * spin forever. */
+        if (ret < 0 && ret != WS_REKEYING && ret != WS_WINDOW_FULL
+                && ret != WS_CHAN_RXD) {
+            return ret;
+        }
+        err = wolfSSH_get_error(ssh);
     }
+    ret = WS_SUCCESS;
 
     if (buffer->idx < buffer->sz) {
         ret = wolfSSH_stream_send(ssh, buffer->data + buffer->idx,
@@ -577,6 +596,7 @@ static int wolfSSH_SFTP_buffer_read(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer,
         int readSz)
 {
     int ret;
+    int polled;
     byte peekBuf[1];
 
     if (buffer == NULL || ssh == NULL) {
@@ -598,9 +618,28 @@ static int wolfSSH_SFTP_buffer_read(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer,
     }
 
     do {
+        polled = 0;
+
+        /* Flush any queued output (e.g. a KEXINIT enqueued by a receive-side
+         * highwater rekey) before reading. In the non-blocking worker DoReceive
+         * runs ahead of its own flush, so without this the peer can be left
+         * waiting for our KEXINIT while we block on a read. Mirrors the pre-send
+         * flush in wolfSSH_SFTP_buffer_send; WS_WANT_WRITE is preserved so the
+         * caller can wait for writability instead of treating it as fatal. */
+        if (wolfSSH_OutputPending(ssh)) {
+            ret = wolfSSH_SendPacket(ssh);
+            if (ret == WS_WANT_WRITE) {
+                return ret;
+            }
+            if (ret < 0) {
+                return WS_FATAL_ERROR;
+            }
+        }
+
         if (!wolfSSH_stream_peek(ssh, peekBuf, 1)) {
             /* poll more data off the wire */
             ret = wolfSSH_worker(ssh, NULL);
+            polled = 1;
         }
         else {
             ret = WS_CHAN_RXD; /* existing data found with peek */
@@ -611,6 +650,21 @@ static int wolfSSH_SFTP_buffer_read(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer,
                 buffer->sz - buffer->idx);
         }
         if (ret < 0) {
+            if (wolfSSH_get_error(ssh) == WS_REKEYING) {
+                /* Drive the rekey forward only if the top of the loop did not
+                 * already poll this iteration. Keep looping while it is still
+                 * in progress; on a genuine failure ssh->error moves off
+                 * WS_REKEYING and we return WS_FATAL_ERROR (the cause is
+                 * available via wolfSSH_get_error()). */
+                if (!polled) {
+                    ret = wolfSSH_worker(ssh, NULL);
+                    if (ret < 0 && ret != WS_CHAN_RXD
+                            && wolfSSH_get_error(ssh) != WS_REKEYING) {
+                        return WS_FATAL_ERROR;
+                    }
+                }
+                continue;
+            }
             return WS_FATAL_ERROR;
         }
         buffer->idx += (word32)ret;
