@@ -1170,8 +1170,10 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
             }
         } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE);
 
-        rxBuf[ret] = '\0';
-        printf("Server said: %s\n", rxBuf);
+        if (ret > 0 && ret < (int)sizeof(rxBuf)) {
+            rxBuf[ret] = '\0';
+            printf("Server said: %s\n", rxBuf);
+        }
 
 #if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
         sleep(10);
