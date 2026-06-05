@@ -406,6 +406,101 @@ static int test_ConfigCopy(void)
     return ret;
 }
 
+/* Verifies that a Match block override of the auth-relevant settings is the
+ * value returned by wolfSSHD_GetUserConf, and that it differs from the global
+ * node. RequestAuthentication and DoCheckUser resolve the per-user config via
+ * wolfSSHD_AuthGetUserConf (a wrapper around wolfSSHD_GetUserConf) before
+ * consulting PwAuth, PermitEmptyPw, PermitRootLogin and AuthKeysFileSet, so
+ * this locks in that resolution: a regression that reverts to the global node
+ * would be caught here.
+ *
+ * Coverage note: the new fail-closed branches in DoCheckUser and
+ * RequestAuthentication (rejecting auth when wolfSSHD_AuthGetUserConf returns
+ * NULL, and the Match-aware PermitRootLogin check) are not exercised directly.
+ * Those paths require a populated WOLFSSHD_AUTH context (opaque to this test)
+ * plus real system users, group lookups, callbacks, and privilege raising, so
+ * they are validated here only at the config-resolution layer they depend on.
+ * The auth-boundary enforcement itself (a tightened Match node is honored, and
+ * a NULL per-user config rejects rather than falls through to the global node)
+ * is covered by manual/integration testing of wolfsshd against an sshd_config
+ * containing a Match block that disables password auth and PermitRootLogin. */
+static int test_GetUserConfMatchOverride(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* head;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_CONFIG* match;
+    WOLFSSHD_CONFIG* other;
+
+    head = wolfSSHD_ConfigNew(NULL);
+    if (head == NULL)
+        ret = WS_MEMORY_E;
+    conf = head;
+
+#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s))
+    /* permissive global settings */
+    if (ret == WS_SUCCESS) ret = PCL("PasswordAuthentication yes");
+    if (ret == WS_SUCCESS) ret = PCL("PermitEmptyPasswords yes");
+    if (ret == WS_SUCCESS) ret = PCL("PermitRootLogin yes");
+
+    /* Match block tightens the auth settings for testuser. Lines after the
+     * Match keyword apply to the newly created per-user node, leaving the
+     * global head node unchanged. */
+    if (ret == WS_SUCCESS) ret = PCL("Match User testuser");
+    if (ret == WS_SUCCESS) ret = PCL("PasswordAuthentication no");
+    if (ret == WS_SUCCESS) ret = PCL("PermitEmptyPasswords no");
+    if (ret == WS_SUCCESS) ret = PCL("PermitRootLogin no");
+    if (ret == WS_SUCCESS) ret = PCL("AuthorizedKeysFile .ssh/match_keys");
+#undef PCL
+
+    /* the global head node must keep the permissive values */
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetPwAuth(head) != 1 ||
+            wolfSSHD_ConfigGetPermitEmptyPw(head) != 1 ||
+            wolfSSHD_ConfigGetPermitRoot(head) != 1)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* resolving testuser must return the per-user node, not the global head */
+    if (ret == WS_SUCCESS) {
+        match = wolfSSHD_GetUserConf(head, "testuser", NULL, NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (match == NULL || match == head)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* the resolved node must carry the tightened (overridden) values, i.e. the
+     * ones RequestAuthentication and DoCheckUser will now enforce */
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetPwAuth(match) != 0 ||
+            wolfSSHD_ConfigGetPermitEmptyPw(match) != 0 ||
+            wolfSSHD_ConfigGetPermitRoot(match) != 0)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetAuthKeysFileSet(match) == 0)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetAuthKeysFile(match) == NULL ||
+            XSTRCMP(wolfSSHD_ConfigGetAuthKeysFile(match),
+                    ".ssh/match_keys") != 0)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* a user with no Match block must fall back to the permissive global head,
+     * confirming the default behavior is unchanged for non-Match users */
+    if (ret == WS_SUCCESS) {
+        other = wolfSSHD_GetUserConf(head, "otheruser", NULL, NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (other != head)
+            ret = WS_FATAL_ERROR;
+    }
+
+    wolfSSHD_ConfigFree(head);
+    return ret;
+}
+
 /* Verifies ConfigFree releases all string fields - most useful under ASan. */
 static int test_ConfigFree(void)
 {
@@ -703,10 +798,69 @@ static int test_AuthReducePermissionsUser_uid_fail(void)
 }
 #endif /* !_WIN32 */
 
+/* Locks in the NULL-safe comparison used by RequestAuthentication to fail
+ * closed when a Match block's TrustedUserCAKeys differs from the global one.
+ * Covers all four permutations: both NULL (equal), exactly one NULL (differ),
+ * equal strings (equal), and differing strings (differ). */
+static int test_CAKeysFileDiffers(void)
+{
+    int ret = WS_SUCCESS;
+    static const char caA[] = "/etc/ssh/ca_a.pem";
+    static const char caB[] = "/etc/ssh/ca_b.pem";
+    static const char caADup[] = "/etc/ssh/ca_a.pem";
+
+    Log("    Testing scenario: both NULL compares equal.");
+    if (CAKeysFileDiffers(NULL, NULL) != 0) {
+        Log(" FAILED.\n");
+        ret = WS_FATAL_ERROR;
+    }
+    else {
+        Log(" PASSED.\n");
+    }
+
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: NULL vs non-NULL compares different.");
+        if (CAKeysFileDiffers(NULL, caA) != 1 ||
+            CAKeysFileDiffers(caA, NULL) != 1) {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            Log(" PASSED.\n");
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: equal strings compare equal.");
+        if (CAKeysFileDiffers(caA, caADup) != 0) {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            Log(" PASSED.\n");
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: differing strings compare different.");
+        if (CAKeysFileDiffers(caA, caB) != 1) {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            Log(" PASSED.\n");
+        }
+    }
+
+    return ret;
+}
+
 const TEST_CASE testCases[] = {
     TEST_DECL(test_ConfigDefaults),
     TEST_DECL(test_ParseConfigLine),
     TEST_DECL(test_ConfigCopy),
+    TEST_DECL(test_GetUserConfMatchOverride),
+    TEST_DECL(test_CAKeysFileDiffers),
     TEST_DECL(test_ConfigFree),
 #ifdef WOLFSSL_BASE64_ENCODE
     TEST_DECL(test_CheckAuthKeysLine),

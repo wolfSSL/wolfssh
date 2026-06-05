@@ -1197,8 +1197,6 @@ int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename)
     }
     WFCLOSE(NULL, f);
 
-    SetAuthKeysPattern(conf->authKeysFile);
-
     return ret;
 }
 
