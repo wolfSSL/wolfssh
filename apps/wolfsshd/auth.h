@@ -28,7 +28,6 @@ USER_NODE* AddNewUser(USER_NODE* list, byte type, const byte* username,
                        word32 usernameSz, const byte* value, word32 valueSz);
 #endif
 
-void SetAuthKeysPattern(const char* pattern);
 int DefaultUserAuth(byte authType, WS_UserAuthData* authData, void* ctx);
 int DefaultUserAuthTypes(WOLFSSH* ssh, void* ctx);
 
@@ -59,7 +58,9 @@ typedef int (*CallbackCheckPassword)(const char* usr, const byte* psw,
  */
 typedef int (*CallbackCheckPublicKey)(const char* usr,
                                       const WS_UserAuthData_PublicKey* pubKey,
-                                      const char* usrCaKeysFile, WOLFSSHD_AUTH* authCtx);
+                                      const char* usrCaKeysFile,
+                                      const char* authorizedKeysFile,
+                                      WOLFSSHD_AUTH* authCtx);
 
 WOLFSSHD_AUTH* wolfSSHD_AuthCreateUser(void* heap, const WOLFSSHD_CONFIG* conf);
 int wolfSSHD_AuthFreeUser(WOLFSSHD_AUTH* auth);
@@ -89,5 +90,6 @@ int CheckPasswordHashUnix(const char* input, char* stored);
 #endif
 int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
                       word32 keySz);
+int CAKeysFileDiffers(const char* a, const char* b);
 #endif
 #endif /* WOLFAUTH_H */

@@ -463,18 +463,14 @@ static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz, WOLFS
 
 
 static const char authKeysDefault[] = ".ssh/authorized_keys";
-static char authKeysPattern[MAX_PATH_SZ] = { 0 };
 
-void SetAuthKeysPattern(const char* pattern)
-{
-    if (pattern != NULL) {
-        WMEMSET(authKeysPattern, 0, sizeof(authKeysPattern));
-        WSTRNCPY(authKeysPattern, pattern, sizeof(authKeysPattern) - 1);
-    }
-}
-
-
-static int ResolveAuthKeysPath(const char* homeDir, char* resolved)
+/* Resolve the authorized keys file path for a user. The pattern is the user's
+ * configured AuthorizedKeysFile (resolved per request from the per-user config)
+ * and is passed in explicitly rather than read from shared state so concurrent
+ * authentications (e.g. Windows threaded mode) cannot race on it. A NULL or
+ * empty pattern falls back to the default authorized_keys location. */
+static int ResolveAuthKeysPath(const char* homeDir, const char* pattern,
+                               char* resolved)
 {
     int ret = WS_SUCCESS;
     char* idx;
@@ -486,14 +482,25 @@ static int ResolveAuthKeysPath(const char* homeDir, char* resolved)
     }
 
     if (ret == WS_SUCCESS) {
-        if (*authKeysPattern != 0) {
+        if (pattern != NULL && *pattern != 0) {
             /* TODO: token substitutions (e.g. %h) */
-            if (*authKeysPattern == '/') {
-                WSTRNCPY(resolved, authKeysPattern, MAX_PATH_SZ);
-                return WS_SUCCESS;
+            if (*pattern == '/') {
+                /* Absolute path is used as-is. Error out rather than
+                 * silently truncate when it does not fit, mirroring the
+                 * relative-path branch below. */
+                if (WSTRLEN(pattern) >= MAX_PATH_SZ) {
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Path for key file larger than max allowed");
+                    ret = WS_FATAL_ERROR;
+                }
+                else {
+                    WSTRNCPY(resolved, pattern, MAX_PATH_SZ - 1);
+                    resolved[MAX_PATH_SZ - 1] = '\0';
+                }
+                return ret;
             }
             else {
-                suffix = authKeysPattern;
+                suffix = pattern;
             }
         }
     }
@@ -519,7 +526,8 @@ static int ResolveAuthKeysPath(const char* homeDir, char* resolved)
     return ret;
 }
 
-static int SearchForPubKey(const char* path, const WS_UserAuthData_PublicKey* pubKeyCtx)
+static int SearchForPubKey(const char* path, const char* authKeysFile,
+                           const WS_UserAuthData_PublicKey* pubKeyCtx)
 {
     int ret = WSSHD_AUTH_SUCCESS;
     char authKeysPath[MAX_PATH_SZ];
@@ -531,7 +539,7 @@ static int SearchForPubKey(const char* path, const WS_UserAuthData_PublicKey* pu
     int rc = 0;
 
     WMEMSET(authKeysPath, 0, sizeof(authKeysPath));
-    rc = ResolveAuthKeysPath(path, authKeysPath);
+    rc = ResolveAuthKeysPath(path, authKeysFile, authKeysPath);
     if (rc != WS_SUCCESS) {
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failed to resolve authorized keys"
             " file path.");
@@ -616,7 +624,9 @@ static int CheckUserUnix(const char* name) {
 
 static int CheckPublicKeyUnix(const char* name,
                               const WS_UserAuthData_PublicKey* pubKeyCtx,
-                              const char* usrCaKeysFile, WOLFSSHD_AUTH* authCtx)
+                              const char* usrCaKeysFile,
+                              const char* authorizedKeysFile,
+                              WOLFSSHD_AUTH* authCtx)
 {
     int ret = WSSHD_AUTH_SUCCESS;
     struct passwd* pwInfo;
@@ -695,7 +705,7 @@ static int CheckPublicKeyUnix(const char* name,
         }
 
         if (ret == WSSHD_AUTH_SUCCESS) {
-            ret = SearchForPubKey(pwInfo->pw_dir, pubKeyCtx);
+            ret = SearchForPubKey(pwInfo->pw_dir, authorizedKeysFile, pubKeyCtx);
         }
     }
 
@@ -1015,7 +1025,8 @@ static int SetupUserTokenWin(const char* usr,
 /* Uses Windows LSA for getting an impersination token */
 static int CheckPublicKeyWIN(const char* usr,
     const WS_UserAuthData_PublicKey* pubKeyCtx,
-    const char* usrCaKeysFile, WOLFSSHD_AUTH* authCtx)
+    const char* usrCaKeysFile, const char* authorizedKeysFile,
+    WOLFSSHD_AUTH* authCtx)
 {
     int ret;
 
@@ -1038,7 +1049,7 @@ static int CheckPublicKeyWIN(const char* usr,
             if (ret == WSSHD_AUTH_SUCCESS) {
                 r[rSz-1] = L'\0';
 
-                ret = SearchForPubKey(r, pubKeyCtx);
+                ret = SearchForPubKey(r, authorizedKeysFile, pubKeyCtx);
                 if (ret != WSSHD_AUTH_SUCCESS) {
                     wolfSSH_Log(WS_LOG_ERROR,
                         "[SSHD] Failed to find public key for user %s", usr);
@@ -1062,11 +1073,24 @@ static int DoCheckUser(const char* usr, WOLFSSHD_AUTH* auth)
 {
     int ret = WOLFSSH_USERAUTH_SUCCESS;
     int rc;
+    WOLFSSHD_CONFIG* usrConf;
 
     wolfSSH_Log(WS_LOG_INFO, "[SSHD] Checking user name %s", usr);
 
-    if (wolfSSHD_ConfigGetPermitRoot(auth->conf) == 0) {
-        if (XSTRCMP(usr, "root") == 0) {
+    if (XSTRCMP(usr, "root") == 0) {
+        /* Resolve the per-user configuration so that a Match block override of
+         * PermitRootLogin is honored, rather than only consulting the global
+         * config node. The lookup is only needed for the root user, so it is
+         * scoped to this branch.
+         *
+         * A NULL return means the root user's configuration could not be
+         * resolved (e.g. getgrgid() failure inside wolfSSHD_AuthGetUserConf).
+         * Fail closed and reject the login in that case rather than falling
+         * back to the global node, since denying root on an unresolvable
+         * configuration is the safe choice. */
+        usrConf = wolfSSHD_AuthGetUserConf(auth, usr, NULL, NULL, NULL, NULL,
+                                           NULL);
+        if (usrConf == NULL || wolfSSHD_ConfigGetPermitRoot(usrConf) == 0) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Login as root not permitted");
             ret = WOLFSSH_USERAUTH_REJECTED;
         }
@@ -1092,10 +1116,49 @@ static int DoCheckUser(const char* usr, WOLFSSHD_AUTH* auth)
 }
 
 
+/* NULL-safe comparison of two TrustedUserCAKeys file settings. Returns 1 when
+ * they differ (including the case where exactly one is NULL), 0 when they are
+ * equal. */
+#ifdef WOLFSSHD_UNIT_TEST
+int CAKeysFileDiffers(const char* a, const char* b)
+#else
+static int CAKeysFileDiffers(const char* a, const char* b)
+#endif
+{
+    int ret;
+
+    if (a == NULL || b == NULL) {
+        ret = (a != b) ? 1 : 0;
+    }
+    else {
+        ret = (WSTRCMP(a, b) != 0) ? 1 : 0;
+    }
+
+    return ret;
+}
+
+
 /*
  * @TODO this will take a pipe or equivalent to talk to a privileged thread
  * rather than having WOLFSSHD_AUTH directly with privilege separation.
  * Note: authData->type of WOLFSSH_USERAUTH_NONE is not valid for wolfsshd.
+ *
+ * Certificate auth limitation: the X.509 CA store is loaded once at startup
+ * from the global TrustedUserCAKeys (see SetupCTX in wolfsshd.c) and wolfSSH
+ * verifies the client cert chain against it before this callback runs. A
+ * per-user "Match ... TrustedUserCAKeys" override is never loaded into that
+ * store, so it cannot be enforced for certificate verification. Rather than
+ * silently accept a cert validated against the wrong (global) CA, the
+ * CA-only branch below fails closed when a Match block sets a CA file that
+ * differs from the global one.
+ *
+ * Note: the comparison is against the *resolved* per-user value. Match nodes
+ * are built by copying the preceding config node (see HandleMatch in
+ * configuration.c), so with multiple Match blocks a user can inherit a
+ * TrustedUserCAKeys set by an earlier block even though that user's own Match
+ * never set it. Such a user is also rejected for certificate auth, which is
+ * consistent with the fail-closed intent: the resolved CA still differs from
+ * the global store the chain was verified against.
  */
 static int RequestAuthentication(WS_UserAuthData* authData,
                                  WOLFSSHD_AUTH* authCtx)
@@ -1103,6 +1166,7 @@ static int RequestAuthentication(WS_UserAuthData* authData,
     int ret;
     int rc;
     const char* usr;
+    WOLFSSHD_CONFIG* usrConf = NULL;
 
     if (authData == NULL || authCtx == NULL) {
         return WOLFSSH_USERAUTH_FAILURE;
@@ -1124,10 +1188,34 @@ static int RequestAuthentication(WS_UserAuthData* authData,
         ret = WOLFSSH_USERAUTH_FAILURE;
     }
 
+    /* Resolve the per-user configuration so that Match block overrides are
+     * honored. wolfSSHD_AuthGetUserConf defaults to the global config when no
+     * user-specific node applies, so this matches the existing behavior for
+     * non-Match users while enforcing Match restrictions.
+     *
+     * A NULL return here means the user's configuration could not be resolved
+     * (e.g. the primary group is unresolvable and getgrgid() failed inside
+     * wolfSSHD_AuthGetUserConf). DoCheckUser has already confirmed the user
+     * exists, so this is a rare edge. Fail closed rather than fall back to the
+     * permissive global node: such a user cannot complete a session anyway
+     * (session setup in wolfsshd.c rejects an unresolvable user config with
+     * WS_FATAL_ERROR), so denying auth here is safe and avoids evaluating
+     * password/public-key authorization against the wrong config node. */
+    if (ret == WOLFSSH_USERAUTH_SUCCESS) {
+        usrConf = wolfSSHD_AuthGetUserConf(authCtx, usr, NULL, NULL, NULL, NULL,
+                                           NULL);
+        if (usrConf == NULL) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Failure to get user configuration for auth (user=%s)",
+                    usr);
+            ret = WOLFSSH_USERAUTH_FAILURE;
+        }
+    }
+
     if (ret == WOLFSSH_USERAUTH_SUCCESS &&
         authData->type == WOLFSSH_USERAUTH_PASSWORD) {
 
-        if (wolfSSHD_ConfigGetPwAuth(authCtx->conf) != 1) {
+        if (wolfSSHD_ConfigGetPwAuth(usrConf) != 1) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Password authentication not "
                         "allowed by configuration!");
             ret = WOLFSSH_USERAUTH_REJECTED;
@@ -1135,7 +1223,7 @@ static int RequestAuthentication(WS_UserAuthData* authData,
         /* Check if password is valid for this user. */
         /* first handle empty password cases */
         else if (authData->sf.password.passwordSz == 0 &&
-                 wolfSSHD_ConfigGetPermitEmptyPw(authCtx->conf) != 1) {
+                 wolfSSHD_ConfigGetPermitEmptyPw(usrConf) != 1) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Empty passwords not allowed by "
                         "configuration!");
             ret = WOLFSSH_USERAUTH_FAILURE;
@@ -1238,30 +1326,48 @@ static int RequestAuthentication(WS_UserAuthData* authData,
         /* if this is a certificate and no specific authorized keys file has
             * been set then rely on CA to have verified the cert */
         if (authData->sf.publicKey.isCert &&
-                !wolfSSHD_ConfigGetAuthKeysFileSet(authCtx->conf)) {
-            wolfSSH_Log(WS_LOG_INFO,
-                "[SSHD] Relying on CA for public key check");
-        #ifdef WIN32
-            /* Still need to get users token on Windows */
-            rc = SetupUserTokenWin(usr, &authData->sf.publicKey,
-                wolfSSHD_ConfigGetUserCAKeysFile(authCtx->conf), authCtx);
-            if (rc == WSSHD_AUTH_SUCCESS) {
-                wolfSSH_Log(WS_LOG_INFO, "[SSHD] Got users token ok.");
-                ret = WOLFSSH_USERAUTH_SUCCESS;
+                !wolfSSHD_ConfigGetAuthKeysFileSet(usrConf)) {
+            /* The cert chain was already verified by wolfSSH against the CA
+             * store loaded once from the global TrustedUserCAKeys. A per-user
+             * Match override of TrustedUserCAKeys is not part of that store and
+             * cannot be enforced here, so fail closed instead of accepting a
+             * cert validated against the wrong CA. See the function comment. */
+            if (CAKeysFileDiffers(
+                    wolfSSHD_ConfigGetUserCAKeysFile(authCtx->conf),
+                    wolfSSHD_ConfigGetUserCAKeysFile(usrConf))) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Per-user TrustedUserCAKeys override is not enforced "
+                    "for certificate authentication; rejecting (user=%s)", usr);
+                ret = WOLFSSH_USERAUTH_REJECTED;
             }
             else {
-                wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] Error getting users token.");
-                ret = WOLFSSH_USERAUTH_FAILURE;
+                wolfSSH_Log(WS_LOG_INFO,
+                    "[SSHD] Relying on CA for public key check");
+            #ifdef WIN32
+                /* Still need to get users token on Windows */
+                rc = SetupUserTokenWin(usr, &authData->sf.publicKey,
+                    wolfSSHD_ConfigGetUserCAKeysFile(usrConf), authCtx);
+                if (rc == WSSHD_AUTH_SUCCESS) {
+                    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Got users token ok.");
+                    ret = WOLFSSH_USERAUTH_SUCCESS;
+                }
+                else {
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Error getting users token.");
+                    ret = WOLFSSH_USERAUTH_FAILURE;
+                }
+            #else
+                ret = WOLFSSH_USERAUTH_SUCCESS;
+            #endif
             }
-        #else
-            ret = WOLFSSH_USERAUTH_SUCCESS;
-        #endif
         }
         else {
-            /* if not a certificate then parse through authorized key file */
+            /* if not a certificate then parse through authorized key file.
+             * Pass this user's resolved AuthorizedKeysFile so a Match-block
+             * override is honored without relying on shared mutable state. */
             rc = authCtx->checkPublicKeyCb(usr, &authData->sf.publicKey,
-                            wolfSSHD_ConfigGetUserCAKeysFile(authCtx->conf),
+                            wolfSSHD_ConfigGetUserCAKeysFile(usrConf),
+                            wolfSSHD_ConfigGetAuthKeysFile(usrConf),
                             authCtx);
             if (rc == WSSHD_AUTH_SUCCESS) {
                 wolfSSH_Log(WS_LOG_INFO, "[SSHD] Public key ok.");
