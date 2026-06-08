@@ -798,3 +798,146 @@ void ClientFreeBuffers(void)
     userPrivateKeySz = 0;
     wc_ForceZero(userPassword, sizeof(userPassword));
 }
+
+
+/* Parse an SSH destination into its parts. Two forms are accepted:
+ *   - [user@]hostname
+ *   - ssh://[user@]hostname[:port]
+ * The "ssh://" prefix is only recognized at the start of the string. Parsing
+ * builds into local buffers and only commits to the outputs once the whole
+ * destination has parsed successfully, so on failure the caller's
+ * user/hostname/port are left untouched (no partial output, no leak). When a
+ * user is present, any existing *user is freed and replaced; likewise for
+ * *hostname. *hostname is set only when host text is present, so a malformed
+ * "ssh://" or "ssh://user@" leaves it untouched and the caller's NULL check can
+ * reject it cleanly. *port is overwritten only when an explicit port is given
+ * (URI form); a port that is non-numeric or outside 1..65535 is rejected with
+ * WS_BAD_ARGUMENT rather than silently truncated. Returns WS_SUCCESS on
+ * success, or a negative WS error code. */
+int ClientParseDestination(const char* in, char** user, char** hostname,
+        word16* port)
+{
+    int ret = WS_SUCCESS;
+    const char* uriPrefix = "ssh://";
+    char* dest = NULL;
+    char* cursor = NULL;
+    char* found = NULL;
+    char* newUser = NULL;
+    char* newHostname = NULL;
+    char* endptr = NULL;
+    long portVal = 0;
+    word16 newPort = 0;
+    size_t sz = 0;
+    int checkPort = 0;
+
+    if (in == NULL || user == NULL || hostname == NULL || port == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        newPort = *port; /* keep the caller's default unless overridden */
+        sz = WSTRLEN(in) + 1;
+        dest = (char*)WMALLOC(sz, NULL, 0);
+        if (dest == NULL) {
+            ret = WS_MEMORY_E;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        WMEMCPY(dest, in, sz);
+        cursor = dest;
+
+        if (WSTRNCMP(cursor, uriPrefix, WSTRLEN(uriPrefix)) == 0) {
+            checkPort = 1;
+            cursor += WSTRLEN(uriPrefix);
+        }
+
+        found = WSTRCHR(cursor, '@');
+        if (found == cursor) {
+            fprintf(stderr, "note: empty user name before '@'\n");
+        }
+        if (found != NULL) {
+            *found = '\0';
+            sz = WSTRLEN(cursor) + 1;
+            newUser = (char*)WMALLOC(sz, NULL, 0);
+            if (newUser == NULL) {
+                ret = WS_MEMORY_E;
+            }
+            else {
+                WMEMCPY(newUser, cursor, sz);
+                cursor = found + 1;
+            }
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (checkPort) {
+            found = WSTRCHR(cursor, ':');
+            if (found != NULL) {
+                *found = '\0';
+            }
+        }
+        else {
+            found = NULL;
+        }
+
+        if (*cursor != 0) {
+            sz = WSTRLEN(cursor) + 1;
+            newHostname = (char*)WMALLOC(sz, NULL, 0);
+            if (newHostname == NULL) {
+                ret = WS_MEMORY_E;
+            }
+            else {
+                WMEMCPY(newHostname, cursor, sz);
+            }
+        }
+    }
+
+    if (ret == WS_SUCCESS && found != NULL) {
+        cursor = found + 1;
+        if (*cursor != 0) {
+            portVal = strtol(cursor, &endptr, 10);
+            if (endptr == cursor || *endptr != '\0'
+                    || portVal < 1 || portVal > 65535) {
+                fprintf(stderr, "invalid port \"%s\"\n", cursor);
+                ret = WS_BAD_ARGUMENT;
+            }
+            else {
+                newPort = (word16)portVal;
+            }
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        /* Commit: replace the caller's values only now that parsing has fully
+         * succeeded, freeing any prior allocations. */
+        if (newUser != NULL) {
+            if (*user != NULL) {
+                WFREE(*user, NULL, 0);
+            }
+            *user = newUser;
+            newUser = NULL;
+        }
+        if (newHostname != NULL) {
+            if (*hostname != NULL) {
+                WFREE(*hostname, NULL, 0);
+            }
+            *hostname = newHostname;
+            newHostname = NULL;
+        }
+        *port = newPort;
+    }
+
+    /* Free the working buffer and any allocations not committed above. */
+    if (dest != NULL) {
+        WFREE(dest, NULL, 0);
+    }
+    if (newUser != NULL) {
+        WFREE(newUser, NULL, 0);
+    }
+    if (newHostname != NULL) {
+        WFREE(newHostname, NULL, 0);
+    }
+
+    return ret;
+}

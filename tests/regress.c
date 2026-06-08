@@ -3382,6 +3382,203 @@ static void TestDoKexInitRejectsWhenPeerIsKeying(void)
 #endif /* first_packet_follows coverage guard */
 
 
+/* Regression coverage for issue 5575: the documented ssh://hostname form must
+ * set the hostname even without an explicit port, and a malformed destination
+ * with no host text must leave the hostname unset so the client can reject it.
+ */
+static void TestClientParseDestination(void)
+{
+    char* user;
+    char* hostname;
+    word16 port;
+
+    /* ssh:// without an explicit port: hostname set, default port kept. */
+    user = NULL; hostname = NULL; port = 22;
+    AssertIntEQ(ClientParseDestination("ssh://127.0.0.1",
+                &user, &hostname, &port), WS_SUCCESS);
+    AssertNotNull(hostname);
+    AssertIntEQ(WSTRCMP(hostname, "127.0.0.1"), 0);
+    AssertIntEQ(port, 22);
+    AssertTrue(user == NULL);
+    WFREE(hostname, NULL, 0);
+
+    /* ssh://user@host without a port: user and hostname set, default port. */
+    user = NULL; hostname = NULL; port = 22;
+    AssertIntEQ(ClientParseDestination("ssh://tester@127.0.0.1",
+                &user, &hostname, &port), WS_SUCCESS);
+    AssertNotNull(user);
+    AssertIntEQ(WSTRCMP(user, "tester"), 0);
+    AssertNotNull(hostname);
+    AssertIntEQ(WSTRCMP(hostname, "127.0.0.1"), 0);
+    AssertIntEQ(port, 22);
+    WFREE(user, NULL, 0);
+    WFREE(hostname, NULL, 0);
+
+    /* ssh://host:port: explicit port parsed. */
+    user = NULL; hostname = NULL; port = 22;
+    AssertIntEQ(ClientParseDestination("ssh://127.0.0.1:2222",
+                &user, &hostname, &port), WS_SUCCESS);
+    AssertNotNull(hostname);
+    AssertIntEQ(WSTRCMP(hostname, "127.0.0.1"), 0);
+    AssertIntEQ(port, 2222);
+    AssertTrue(user == NULL);
+    WFREE(hostname, NULL, 0);
+
+    /* ssh://user@host:port: all parts parsed. */
+    user = NULL; hostname = NULL; port = 22;
+    AssertIntEQ(ClientParseDestination("ssh://tester@127.0.0.1:2222",
+                &user, &hostname, &port), WS_SUCCESS);
+    AssertNotNull(user);
+    AssertIntEQ(WSTRCMP(user, "tester"), 0);
+    AssertNotNull(hostname);
+    AssertIntEQ(WSTRCMP(hostname, "127.0.0.1"), 0);
+    AssertIntEQ(port, 2222);
+    WFREE(user, NULL, 0);
+    WFREE(hostname, NULL, 0);
+
+    /* Plain (non-URI) hostname. */
+    user = NULL; hostname = NULL; port = 22;
+    AssertIntEQ(ClientParseDestination("127.0.0.1",
+                &user, &hostname, &port), WS_SUCCESS);
+    AssertNotNull(hostname);
+    AssertIntEQ(WSTRCMP(hostname, "127.0.0.1"), 0);
+    AssertIntEQ(port, 22);
+    AssertTrue(user == NULL);
+    WFREE(hostname, NULL, 0);
+
+    /* Plain (non-URI) user@hostname. */
+    user = NULL; hostname = NULL; port = 22;
+    AssertIntEQ(ClientParseDestination("tester@127.0.0.1",
+                &user, &hostname, &port), WS_SUCCESS);
+    AssertNotNull(user);
+    AssertIntEQ(WSTRCMP(user, "tester"), 0);
+    AssertNotNull(hostname);
+    AssertIntEQ(WSTRCMP(hostname, "127.0.0.1"), 0);
+    AssertIntEQ(port, 22);
+    WFREE(user, NULL, 0);
+    WFREE(hostname, NULL, 0);
+
+    /* Malformed URI with no host text: hostname stays unset. */
+    user = NULL; hostname = NULL; port = 22;
+    AssertIntEQ(ClientParseDestination("ssh://",
+                &user, &hostname, &port), WS_SUCCESS);
+    AssertTrue(hostname == NULL);
+    AssertTrue(user == NULL);
+
+    /* Malformed URI with a user but no host text: user set, hostname unset. */
+    user = NULL; hostname = NULL; port = 22;
+    AssertIntEQ(ClientParseDestination("ssh://tester@",
+                &user, &hostname, &port), WS_SUCCESS);
+    AssertNotNull(user);
+    AssertIntEQ(WSTRCMP(user, "tester"), 0);
+    AssertTrue(hostname == NULL);
+    WFREE(user, NULL, 0);
+
+    /* A pre-seeded user (as config_init_default does from $USER) is freed and
+     * replaced when the destination carries its own user. */
+    hostname = NULL; port = 22;
+    user = (char*)WMALLOC(WSTRLEN("seeded") + 1, NULL, 0);
+    AssertNotNull(user);
+    WMEMCPY(user, "seeded", WSTRLEN("seeded") + 1);
+    AssertIntEQ(ClientParseDestination("tester@127.0.0.1",
+                &user, &hostname, &port), WS_SUCCESS);
+    AssertNotNull(user);
+    AssertIntEQ(WSTRCMP(user, "tester"), 0);
+    AssertNotNull(hostname);
+    AssertIntEQ(WSTRCMP(hostname, "127.0.0.1"), 0);
+    WFREE(user, NULL, 0);
+    WFREE(hostname, NULL, 0);
+
+    /* A leading '@' (no user text) is accepted with an empty user string. */
+    user = NULL; hostname = NULL; port = 22;
+    AssertIntEQ(ClientParseDestination("ssh://@127.0.0.1",
+                &user, &hostname, &port), WS_SUCCESS);
+    AssertNotNull(user);
+    AssertIntEQ(WSTRCMP(user, ""), 0);
+    AssertNotNull(hostname);
+    AssertIntEQ(WSTRCMP(hostname, "127.0.0.1"), 0);
+    WFREE(user, NULL, 0);
+    WFREE(hostname, NULL, 0);
+
+    /* Non-URI "user@" with no host text: user set, hostname stays unset. */
+    user = NULL; hostname = NULL; port = 22;
+    AssertIntEQ(ClientParseDestination("tester@",
+                &user, &hostname, &port), WS_SUCCESS);
+    AssertNotNull(user);
+    AssertIntEQ(WSTRCMP(user, "tester"), 0);
+    AssertTrue(hostname == NULL);
+    WFREE(user, NULL, 0);
+
+    /* Non-URI leading '@': empty user, hostname set (no ssh:// prefix). */
+    user = NULL; hostname = NULL; port = 22;
+    AssertIntEQ(ClientParseDestination("@127.0.0.1",
+                &user, &hostname, &port), WS_SUCCESS);
+    AssertNotNull(user);
+    AssertIntEQ(WSTRCMP(user, ""), 0);
+    AssertNotNull(hostname);
+    AssertIntEQ(WSTRCMP(hostname, "127.0.0.1"), 0);
+    WFREE(user, NULL, 0);
+    WFREE(hostname, NULL, 0);
+
+    /* An out-of-range port is rejected (not silently truncated) and the
+     * caller's port and outputs are left untouched. */
+    user = NULL; hostname = NULL; port = 22;
+    AssertIntEQ(ClientParseDestination("ssh://127.0.0.1:70000",
+                &user, &hostname, &port), WS_BAD_ARGUMENT);
+    AssertIntEQ(port, 22);
+    AssertTrue(user == NULL);
+    AssertTrue(hostname == NULL);
+
+    /* Non-numeric, trailing-garbage, and zero ports are rejected too. */
+    user = NULL; hostname = NULL; port = 22;
+    AssertIntEQ(ClientParseDestination("ssh://127.0.0.1:abc",
+                &user, &hostname, &port), WS_BAD_ARGUMENT);
+    AssertIntEQ(port, 22);
+    user = NULL; hostname = NULL; port = 22;
+    AssertIntEQ(ClientParseDestination("ssh://127.0.0.1:22x",
+                &user, &hostname, &port), WS_BAD_ARGUMENT);
+    AssertIntEQ(port, 22);
+    user = NULL; hostname = NULL; port = 22;
+    AssertIntEQ(ClientParseDestination("ssh://127.0.0.1:0",
+                &user, &hostname, &port), WS_BAD_ARGUMENT);
+    AssertIntEQ(port, 22);
+
+    /* A valid in-range port is still accepted. */
+    user = NULL; hostname = NULL; port = 22;
+    AssertIntEQ(ClientParseDestination("ssh://127.0.0.1:65535",
+                &user, &hostname, &port), WS_SUCCESS);
+    AssertIntEQ(port, 65535);
+    WFREE(hostname, NULL, 0);
+
+    /* "ssh://" is only a prefix when it starts the string; a later occurrence
+     * is treated as ordinary host text, not a URI. */
+    user = NULL; hostname = NULL; port = 22;
+    AssertIntEQ(ClientParseDestination("user@ssh://127.0.0.1",
+                &user, &hostname, &port), WS_SUCCESS);
+    AssertNotNull(user);
+    AssertIntEQ(WSTRCMP(user, "user"), 0);
+    AssertNotNull(hostname);
+    AssertIntEQ(WSTRCMP(hostname, "ssh://127.0.0.1"), 0);
+    AssertIntEQ(port, 22);
+    WFREE(user, NULL, 0);
+    WFREE(hostname, NULL, 0);
+
+    /* Each NULL output pointer (and a NULL input) is rejected. */
+    user = NULL; hostname = NULL; port = 22;
+    AssertIntEQ(ClientParseDestination(NULL, &user, &hostname, &port),
+            WS_BAD_ARGUMENT);
+    AssertIntEQ(ClientParseDestination("127.0.0.1", NULL, &hostname, &port),
+            WS_BAD_ARGUMENT);
+    AssertIntEQ(ClientParseDestination("127.0.0.1", &user, NULL, &port),
+            WS_BAD_ARGUMENT);
+    AssertIntEQ(ClientParseDestination("127.0.0.1", &user, &hostname, NULL),
+            WS_BAD_ARGUMENT);
+    /* No output should have been touched by the rejected calls. */
+    AssertTrue(user == NULL);
+    AssertTrue(hostname == NULL);
+}
+
+
 int main(int argc, char** argv)
 {
     WOLFSSH_CTX* ctx;
@@ -3398,6 +3595,7 @@ int main(int argc, char** argv)
     ssh = wolfSSH_new(ctx);
     AssertNotNull(ssh);
 
+    TestClientParseDestination();
     TestAuthMessageBlockedDuringKeying(ssh);
     TestUserauthFailureDuringKeying(ssh);
     TestPasswordLeakAborts(ssh);
