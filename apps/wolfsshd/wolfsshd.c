@@ -1002,8 +1002,10 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS) {
-        char cmdWSize[20];
-        int cmdWSizeSz = 20;
+        /* Worst case "\x1b[8;%u;%ut" with two 10-digit word32 values is 26
+         * bytes plus the terminator; size generously. */
+        char cmdWSize[32];
+        int cmdWSizeSz;
         DWORD wrtn = 0;
 
         wolfSSH_Log(WS_LOG_INFO, "[SSHD] Successfully created process for "
@@ -1011,8 +1013,15 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 
         WaitForInputIdle(processInfo.hProcess, 1000);
 
-        /* Send initial terminal size to pseudo console with VT control sequence */
-        cmdWSizeSz = snprintf(cmdWSize, cmdWSizeSz, "\x1b[8;%d;%dt", ssh->heightRows, ssh->widthChar);
+        /* Send initial terminal size to pseudo console with VT control sequence.
+         * heightRows/widthChar are peer-supplied word32 values, so format them
+         * with %u and clamp the return value before handing it to WriteFile to
+         * avoid over-reading the stack buffer. */
+        cmdWSizeSz = WSNPRINTF(cmdWSize, sizeof(cmdWSize), "\x1b[8;%u;%ut",
+            ssh->heightRows, ssh->widthChar);
+        if (cmdWSizeSz < 0 || cmdWSizeSz > (int)sizeof(cmdWSize)) {
+            cmdWSizeSz = (int)sizeof(cmdWSize);
+        }
         if (WriteFile(ptyIn, cmdWSize, cmdWSizeSz, &wrtn, 0) != TRUE) {
             WLOG(WS_LOG_ERROR, "Issue with pseudo console resize");
             ret = WS_FATAL_ERROR;
