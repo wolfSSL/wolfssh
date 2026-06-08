@@ -2867,17 +2867,17 @@ static int SFTP_CreateLongName(WS_SFTPNAME* name)
         else {
             perm[i++] = '-';
         }
-        perm[i++] = (tmp & 0x100)?'r':'-';
-        perm[i++] = (tmp & 0x080)?'w':'-';
-        perm[i++] = (tmp & 0x040)?'x':'-';
+        perm[i++] = (tmp & 0400)?'r':'-';
+        perm[i++] = (tmp & 0200)?'w':'-';
+        perm[i++] = (tmp & 0100)?'x':'-';
 
-        perm[i++] = (tmp & 0x020)?'r':'-';
-        perm[i++] = (tmp & 0x010)?'w':'-';
-        perm[i++] = (tmp & 0x008)?'x':'-';
+        perm[i++] = (tmp & 0040)?'r':'-';
+        perm[i++] = (tmp & 0020)?'w':'-';
+        perm[i++] = (tmp & 0010)?'x':'-';
 
-        perm[i++] = (tmp & 0x004)?'r':'-';
-        perm[i++] = (tmp & 0x002)?'w':'-';
-        perm[i++] = (tmp & 0x001)?'x':'-';
+        perm[i++] = (tmp & 0004)?'r':'-';
+        perm[i++] = (tmp & 0002)?'w':'-';
+        perm[i++] = (tmp & 0001)?'x':'-';
     }
     totalSz += i;
     perm[i] = '\0';
@@ -4731,14 +4731,14 @@ static int SFTP_GetAttributes(void* fs, const char* fileName,
     WMEMSET(atr, 0, sizeof(WS_SFTP_FILEATRB));
     if (sz > 2 && fileName[sz - 2] == ':' && ret == NUF_NOFILE) {
         atr->flags |= WOLFSSH_FILEATRB_PERM;
-        atr->per |= 0x4000;
+        atr->per |= 040000;
         return WS_SUCCESS;
     }
 
     /* handle case of "/" */
     if (sz < 3 && fileName[0] == WS_DELIM && ret == NUF_NOFILE) {
         atr->flags |= WOLFSSH_FILEATRB_PERM;
-        atr->per |= 0x4000;
+        atr->per |= 040000;
         return WS_SUCCESS;
     }
 
@@ -4755,16 +4755,16 @@ static int SFTP_GetAttributes(void* fs, const char* fileName,
         byte atrib = stats.fattribute;
         atr->flags |= WOLFSSH_FILEATRB_PERM;
         if (atrib & ADIRENT) {
-            atr->per |= 0x41ED; /* 755 with directory */
+            atr->per |= 040755;
         }
         else {
-            atr->per |= 0x8000;
+            atr->per |= 0100000;
         }
         if ((atrib & 0x01) == ANORMAL) {
-            atr->per |= 0x1ED; /* octal 755 */
+            atr->per |= 0755;
         }
         if (atrib & ARDONLY) {
-            atr->per |= 0x124; /* octal 444 */
+            atr->per |= 0444;
         }
     }
 
@@ -4812,16 +4812,16 @@ static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
         byte atrib = stats.fattribute;
         atr->flags |= WOLFSSH_FILEATRB_PERM;
         if (atrib & ADIRENT) {
-            atr->per |= 0x41ED; /* 755 with directory */
+            atr->per |= 040755;
         }
         else {
-            atr->per |= 0x8000;
+            atr->per |= 0100000;
         }
         if ((atrib & 0x01) == ANORMAL) {
-            atr->per |= 0x1ED; /* octal 755 */
+            atr->per |= 0755;
         }
         if (atrib & ARDONLY) {
-            atr->per |= 0x124; /* octal 444 */
+            atr->per |= 0444;
         }
     }
 
@@ -4909,7 +4909,7 @@ static int SFTP_GetAttributes(void* fs, const char* fileName,
     /* handle case of '<drive>:/.' */
     if ((sz >= 3) && (WSTRNCMP(fileName + sz - 3, ":/.", 3) == 0)) {
         atr->flags |= WOLFSSH_FILEATRB_PERM;
-        atr->per |= 0x4000;
+        atr->per |= 040000;
         return WS_SUCCESS;
     }
 
@@ -4932,16 +4932,16 @@ static int SFTP_GetAttributes(void* fs, const char* fileName,
     /* file permissions */
     atr->flags |= WOLFSSH_FILEATRB_PERM;
     if (search_data.ATTRIBUTE & MFS_ATTR_DIR_NAME) {
-        atr->per |= 0x41ED; /* 755 with directory */
+        atr->per |= 040755;
     } else {
-        atr->per |= 0x8000;
+        atr->per |= 0100000;
     }
 
     /* check for read only */
     if (search_data.ATTRIBUTE & MFS_ATTR_READ_ONLY) {
-        atr->per |= 0x124; /* octal 444 */
+        atr->per |= 0444;
     } else {
-        atr->per |= 0x1ED; /* octal 755 */
+        atr->per |= 0755;
     }
 
     return WS_SUCCESS;
@@ -4985,16 +4985,16 @@ static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
     /* file permissions */
     atr->flags |= WOLFSSH_FILEATRB_PERM;
     if (search_data.ATTRIBUTE & MFS_ATTR_DIR_NAME) {
-        atr->per |= 0x41ED; /* 755 with directory */
+        atr->per |= 040755;
     } else {
-        atr->per |= 0x8000;
+        atr->per |= 0100000;
     }
 
     /* check for read only */
     if (search_data.ATTRIBUTE & MFS_ATTR_READ_ONLY) {
-        atr->per |= 0x124; /* octal 444 */
+        atr->per |= 0444;
     } else {
-        atr->per |= 0x1ED; /* octal 755 */
+        atr->per |= 0755;
     }
 
     return WS_SUCCESS;
@@ -5074,7 +5074,7 @@ static int SFTP_GetAttributes(void* fs, const char* fileName,
     WMEMSET(atr, 0, sizeof(WS_SFTP_FILEATRB));
     if (sz > 2 && fileName[sz - 2] == ':') {
         atr->flags |= WOLFSSH_FILEATRB_PERM;
-        atr->per |= 0x4000;
+        atr->per |= 040000;
         return WS_SUCCESS;
     }
 
@@ -5082,7 +5082,7 @@ static int SFTP_GetAttributes(void* fs, const char* fileName,
     /* Calling f_stat for "/" returns FR_INVALID_NAME. So we simulate the result. */
     if (sz < 3 && fileName[0] == WS_DELIM) {
         atr->flags |= WOLFSSH_FILEATRB_PERM;
-        atr->per |= 0x4000;
+        atr->per |= 040000;
         return WS_SUCCESS;
     }
 
@@ -5100,16 +5100,16 @@ static int SFTP_GetAttributes(void* fs, const char* fileName,
         byte atrib = info.fattrib;
         atr->flags |= WOLFSSH_FILEATRB_PERM;
         if (atrib & AM_DIR) {
-            atr->per |= 0x41ED; /* 755 with directory */
+            atr->per |= 040755;
         }
         else {
-            atr->per |= 0x8000;
+            atr->per |= 0100000;
         }
         if ((atrib & AM_ARC) == AM_ARC) {
-            atr->per |= 0x1ED; /* octal 755 */
+            atr->per |= 0755;
         }
         if ((atrib & AM_SYS) || (atrib & AM_RDO)) {
-            atr->per |= 0x124; /* octal 444 */
+            atr->per |= 0444;
         }
     }
 
@@ -5142,16 +5142,16 @@ static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
         byte atrib = info.fattrib;
         atr->flags |= WOLFSSH_FILEATRB_PERM;
         if (atrib & AM_DIR) {
-            atr->per |= 0x41ED; /* 755 with directory */
+            atr->per |= 040755;
         }
         else {
-            atr->per |= 0x8000;
+            atr->per |= 0100000;
         }
         if ((atrib & AM_ARC) == AM_ARC) {
-            atr->per |= 0x1ED; /* octal 755 */
+            atr->per |= 0755;
         }
         if ((atrib & AM_RDO) || (atrib & AM_SYS)) {
-            atr->per |= 0x124; /* octal 444 */
+            atr->per |= 0444;
         }
     }
 
@@ -5227,18 +5227,18 @@ static int SFTP_GetAttributesStat(WS_SFTP_FILEATRB* atr, WSTAT_T* stats)
     /* file permissions */
     atr->flags |= WOLFSSH_FILEATRB_PERM;
     if ((stats->fattrib & SYS_FS_ATTR_DIR) & SYS_FS_ATTR_MASK) {
-        atr->per |= 0x41ED; /* 755 with directory */
+        atr->per |= 040755;
     }
     else {
-        atr->per |= 0x8000;
+        atr->per |= 0100000;
     }
 
     /* check for read only */
     if ((stats->fattrib & SYS_FS_ATTR_RDO) & SYS_FS_ATTR_MASK) {
-        atr->per |= 0x124; /* octal 444 */
+        atr->per |= 0444;
     }
     else {
-        atr->per |= 0x1ED; /* octal 755 */
+        atr->per |= 0755;
     }
 
     /* last modified time */
@@ -5260,8 +5260,7 @@ static int SFTP_GetAttributesHelper(WS_SFTP_FILEATRB* atr, const char* fName)
     if (res == SYS_FS_RES_SUCCESS) {
         if (WSTRCMP(fName, buffer) == 0) {
             atr->flags |= WOLFSSH_FILEATRB_PERM;
-            atr->per |= 0x41ED; /* 755 with directory */
-            atr->per |= 0x1ED;  /* octal 755 */
+            atr->per |= 040755;
 
             atr->flags |= WOLFSSH_FILEATRB_SIZE;
             atr->sz[0] = 0;
@@ -8085,7 +8084,7 @@ int wolfSSH_SFTP_MKDIR(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
 
                 /* @TODO handle setting attributes */
                 WOLFSSH_UNUSED(atr);
-                wolfSSH_SFTP_buffer_c32toa(&state->buffer, 0x000001FF);
+                wolfSSH_SFTP_buffer_c32toa(&state->buffer, 0777);
 
                 ret = wolfSSH_SFTP_buffer_set_size(&state->buffer,
                         wolfSSH_SFTP_buffer_idx(&state->buffer));

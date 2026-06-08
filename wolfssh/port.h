@@ -159,7 +159,7 @@ extern "C" {
 
         /* Set attribute value */
         atr = atr & 0xF0; /* clear first byte */
-        if (mode == 0x124) {
+        if (mode == 0444) {
             atr |= ARDONLY;   /* set read only value */
         }
         else {
@@ -232,7 +232,7 @@ extern "C" {
         }
 
         /* set file attributes */
-        if (mode == 0x124) {
+        if (mode == 0444) {
             /* set read only value */
             attribute |= MFS_ATTR_READ_ONLY;
             err = ioctl(mfs_ptr, IO_IOCTL_SET_FILE_ATTR, (uint32_t*)&attr);
@@ -1280,7 +1280,7 @@ extern "C" {
 
         /* Set attribute value */
         atr = atr & 0xF0; /* clear first byte */
-        if (mode == 0x124) {
+        if (mode == 0444) {
             atr |= AM_RDO;   /* set read only value */
         }
         else {

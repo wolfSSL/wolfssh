@@ -2243,14 +2243,14 @@ static int GetFileStats(void *fs, ScpSendCtx* ctx, const char* fileName,
 
     *fileMode = 0555 |
         (ctx->s.dwFileAttributes & FILE_ATTRIBUTE_READONLY ? 0 : 0200);
-    *fileMode |= (ctx->s.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? 0x4000 : 0;
+    *fileMode |= (ctx->s.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? 040000 : 0;
 #else
     if (WSTAT(fs, fileName, &ctx->s) < 0) {
         ret = WS_BAD_FILE_E;
         #ifdef WOLFSSL_NUCLEUS
         if (WSTRLEN(fileName) < 4 && WSTRLEN(fileName) > 2 &&
                 fileName[1] == ':') {
-            *fileMode = 0x1ED; /* octal 755 */
+            *fileMode = 0755;
             ret = WS_SUCCESS;
         }
         #endif
@@ -2258,13 +2258,13 @@ static int GetFileStats(void *fs, ScpSendCtx* ctx, const char* fileName,
     else {
     #ifdef WOLFSSL_NUCLEUS
         if (ctx->s.fattribute & ARDONLY) {
-            *fileMode = 0x124; /* octal 444 */
+            *fileMode = 0444;
         }
         if (ctx->s.fattribute == ANORMAL) { /* ANORMAL = 0 */
-            *fileMode = 0x1B6; /* octal 666 */
+            *fileMode = 0666;
         }
         if (ctx->s.fattribute == ADIRENT) {
-            *fileMode = 0x1ED; /* octal 755 */
+            *fileMode = 0755;
         }
         *mTime = ctx->s.fupdate;
         *aTime = ctx->s.faccdate;

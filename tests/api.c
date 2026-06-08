@@ -1399,7 +1399,7 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
         while (tmp != NULL) {
             if ((tmp->atrb.sz[0] > 0) &&
                     (tmp->atrb.flags & WOLFSSH_FILEATRB_PERM) &&
-                    !(tmp->atrb.per & 0x4000)) {
+                    !(tmp->atrb.per & 040000)) {
                 break;
             }
             tmp = tmp->next;
