@@ -3811,20 +3811,46 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             return WS_BUFFER_E;
         }
 
-        ret = WPWRITE(ssh->fs, fd, (byte*)str, strSz, ofst);
-        if (ret < 0) {
-    #if defined(WOLFSSL_NUCLEUS) && defined(DEBUG_WOLFSSH)
-            if (ret == NUF_NOSPC) {
-                WLOG(WS_LOG_SFTP, "Ran out of memory");
+        {
+            word32 written = 0;
+
+            /* Retry while WPWRITE makes forward progress; bail on error
+             * or zero return to avoid spinning on a stuck backend. */
+            while (written < strSz) {
+                ret = WPWRITE(ssh->fs, fd, (byte*)str + written,
+                        strSz - written, ofst);
+                if (ret <= 0) {
+                    break;
+                }
+                written += (word32)ret;
+                /* Advance the split 64-bit offset, propagating carry. */
+                ofst[0] += (word32)ret;
+                if (ofst[0] < (word32)ret) {
+                    ofst[1] += 1;
+                }
             }
-    #endif
-            WLOG(WS_LOG_SFTP, "Error writing to file");
-            res  = err;
-            type = WOLFSSH_FTP_FAILURE;
-            ret  = WS_INVALID_STATE_E;
-        }
-        else {
-            ret = WS_SUCCESS;
+
+            if (ret < 0) {
+        #if defined(WOLFSSL_NUCLEUS) && defined(DEBUG_WOLFSSH)
+                if (ret == NUF_NOSPC) {
+                    WLOG(WS_LOG_SFTP, "Ran out of memory");
+                }
+        #endif
+                WLOG(WS_LOG_SFTP, "Error writing to file");
+                res  = err;
+                type = WOLFSSH_FTP_FAILURE;
+                ret  = WS_INVALID_STATE_E;
+            }
+            else if (written != strSz) {
+                WLOG(WS_LOG_SFTP, "Short write: %u of %u bytes",
+                        written, strSz);
+                res  = err;
+                type = WOLFSSH_FTP_FAILURE;
+                ret  = WS_INVALID_STATE_E;
+            }
+            else {
+                ret = WS_SUCCESS;
+            }
         }
     }
 
