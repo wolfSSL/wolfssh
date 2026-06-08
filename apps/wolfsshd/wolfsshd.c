@@ -1019,8 +1019,8 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
          * avoid over-reading the stack buffer. */
         cmdWSizeSz = WSNPRINTF(cmdWSize, sizeof(cmdWSize), "\x1b[8;%u;%ut",
             ssh->heightRows, ssh->widthChar);
-        if (cmdWSizeSz < 0 || cmdWSizeSz > (int)sizeof(cmdWSize)) {
-            cmdWSizeSz = (int)sizeof(cmdWSize);
+        if (cmdWSizeSz < 0 || cmdWSizeSz >= (int)sizeof(cmdWSize)) {
+            cmdWSizeSz = (int)sizeof(cmdWSize) - 1;
         }
         if (WriteFile(ptyIn, cmdWSize, cmdWSizeSz, &wrtn, 0) != TRUE) {
             WLOG(WS_LOG_ERROR, "Issue with pseudo console resize");
