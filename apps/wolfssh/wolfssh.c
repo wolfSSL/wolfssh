@@ -829,64 +829,17 @@ static int config_parse_command_line(struct config* config,
      *  - [user@]hostname
      *  - ssh://[user@]hostname[:port] */
     if (myoptind < argc) {
-        const char* uriPrefix = "ssh://";
-        char* dest;
-        char* cursor;
-        char* found;
-        size_t sz;
-        int checkPort;
+        int ret;
 
         myoptarg = argv[myoptind];
 
-        sz = WSTRLEN(myoptarg) + 1;
-        dest = (char*)WMALLOC(sz, NULL, 0);
-        WMEMCPY(dest, myoptarg, sz);
-        cursor = dest;
-
-        if (WSTRSTR(cursor, uriPrefix)) {
-            checkPort = 1;
-            cursor += WSTRLEN(uriPrefix);
-        }
-        else {
-            checkPort = 0;
+        ret = ClientParseDestination(myoptarg, &config->user,
+                &config->hostname, &config->port);
+        if (ret != WS_SUCCESS) {
+            fprintf(stderr, "Couldn't parse the destination.\n");
+            exit(EXIT_FAILURE);
         }
 
-        found = WSTRCHR(cursor, '@');
-        if (found == cursor) {
-            fprintf(stderr, "can't start destination with just an @\n");
-        }
-        if (found != NULL) {
-            *found = '\0';
-            if (config->user) {
-                WFREE(config->user, NULL, 0);
-                config->user = NULL;
-            }
-            sz = WSTRLEN(cursor);
-            config->user = (char*)WMALLOC(sz + 1, NULL, 0);
-            strcpy(config->user, cursor);
-            cursor = found + 1;
-        }
-
-        if (checkPort) {
-            found = WSTRCHR(cursor, ':');
-            if (found != NULL) {
-                *found = '\0';
-                sz = WSTRLEN(cursor);
-                config->hostname = (char*)WMALLOC(sz + 1, NULL, 0);
-                strcpy(config->hostname, cursor);
-                cursor = found + 1;
-                if (*cursor != 0) {
-                    config->port = atoi(cursor);
-                }
-            }
-        }
-        else {
-            sz = WSTRLEN(cursor);
-            config->hostname = (char*)WMALLOC(sz + 1, NULL, 0);
-            strcpy(config->hostname, cursor);
-        }
-
-        WFREE(dest, NULL, 0);
         myoptind++;
     }
 
