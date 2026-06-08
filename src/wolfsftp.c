@@ -516,6 +516,7 @@ static int wolfSSH_SFTP_buffer_send(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer)
 {
     int ret = WS_SUCCESS;
     int err;
+    word32 sendSz;
 
     if (buffer == NULL || ssh == NULL) {
         return WS_BAD_ARGUMENT;
@@ -564,8 +565,14 @@ static int wolfSSH_SFTP_buffer_send(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer)
     ret = WS_SUCCESS;
 
     if (buffer->idx < buffer->sz) {
-        ret = wolfSSH_stream_send(ssh, buffer->data + buffer->idx,
-            buffer->sz - buffer->idx);
+        sendSz = buffer->sz - buffer->idx;
+    #ifdef WOLFSSH_TEST_INTERNAL
+        /* Test hook: force a partial send to exercise the resume path. */
+        if (ssh->testSftpSendCap > 0 && sendSz > ssh->testSftpSendCap) {
+            sendSz = ssh->testSftpSendCap;
+        }
+    #endif
+        ret = wolfSSH_stream_send(ssh, buffer->data + buffer->idx, sendSz);
         if (ret > 0) {
             buffer->idx += ret;
         }
@@ -574,6 +581,47 @@ static int wolfSSH_SFTP_buffer_send(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer)
     }
 
     return ret;
+}
+
+
+/* Decide whether an SFTP request buffer has been fully handed to the peer after
+ * a wolfSSH_SFTP_buffer_send call. Two conditions must both hold:
+ *   1. the buffer is fully consumed (idx == sz), i.e. SendChannelData did not
+ *      clamp the send to a partial count, and
+ *   2. nothing is still queued in the SSH output buffer; SendChannelData can
+ *      report the full dataSz while leaving the bytes buffered and returning
+ *      WS_WANT_WRITE under socket back-pressure, so idx == sz alone is not
+ *      enough.
+ * Returns WS_SUCCESS when the request is fully sent. Otherwise sets
+ * ssh->error = WS_WANT_WRITE and returns WS_WANT_WRITE so the caller can
+ * preserve its state/buffer and resume on the next call. */
+static int wolfSSH_SFTP_buffer_send_finish(WOLFSSH* ssh,
+        WS_SFTP_BUFFER* buffer)
+{
+    if (buffer == NULL || ssh == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    if (wolfSSH_SFTP_buffer_idx(buffer) < wolfSSH_SFTP_buffer_size(buffer)) {
+        ssh->error = WS_WANT_WRITE;
+        return WS_WANT_WRITE;
+    }
+#ifdef WOLFSSH_TEST_INTERNAL
+    /* Test hook: simulate the SSH output buffer still holding queued bytes
+     * (socket back-pressure) so the caller takes the flush-only resume path
+     * (idx == sz, buffer_send returns WS_SUCCESS) even over loopback, where
+     * real writes rarely block. */
+    if (ssh->testSftpStallPending > 0) {
+        ssh->testSftpStallPending--;
+        ssh->error = WS_WANT_WRITE;
+        return WS_WANT_WRITE;
+    }
+#endif
+    if (wolfSSH_OutputPending(ssh)) {
+        ssh->error = WS_WANT_WRITE;
+        return WS_WANT_WRITE;
+    }
+    return WS_SUCCESS;
 }
 
 
@@ -587,6 +635,33 @@ int wolfSSH_TestSftpBufferSend(WOLFSSH* ssh,
     buffer.sz = sz;
     buffer.idx = idx;
     return wolfSSH_SFTP_buffer_send(ssh, &buffer);
+}
+
+
+/* Test hook: cap the number of bytes wolfSSH_SFTP_buffer_send writes per call
+ * so a single send returns a positive-but-partial count. A cap of 0 disables
+ * the limit. */
+int wolfSSH_TestSftpSendCap(WOLFSSH* ssh, word32 cap)
+{
+    if (ssh == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+    ssh->testSftpSendCap = cap;
+    return WS_SUCCESS;
+}
+
+
+/* Test hook: make the next `count` fully-sent SFTP buffers report as still
+ * pending in wolfSSH_SFTP_buffer_send_finish, simulating socket back-pressure
+ * so the flush-only resume path (idx == sz, buffer_send returns WS_SUCCESS)
+ * can be exercised deterministically. A count of 0 disables it. */
+int wolfSSH_TestSftpStallPending(WOLFSSH* ssh, word32 count)
+{
+    if (ssh == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+    ssh->testSftpStallPending = count;
+    return WS_SUCCESS;
 }
 #endif
 
@@ -1681,16 +1756,10 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
                     }
                     return WS_FATAL_ERROR;
                 }
-                if (wolfSSH_SFTP_buffer_idx(&state->buffer)
-                        < wolfSSH_SFTP_buffer_size(&state->buffer)) {
-                    ssh->error = WS_WANT_WRITE;
-                    return WS_FATAL_ERROR;
-                }
-                /* Check if SSH layer still has pending data from WS_WANT_WRITE.
-                 * Even if SFTP buffer is fully consumed, the data may still be
-                 * sitting in the SSH output buffer waiting to be sent. */
-                if (wolfSSH_OutputPending(ssh)) {
-                    ssh->error = WS_WANT_WRITE;
+                /* Resume if the request is only partially sent or is still
+                 * queued in the SSH output buffer waiting to be flushed. */
+                if (wolfSSH_SFTP_buffer_send_finish(ssh, &state->buffer)
+                        != WS_SUCCESS) {
                     return WS_FATAL_ERROR;
                 }
                 ret = WS_SUCCESS;
@@ -7467,6 +7536,13 @@ int wolfSSH_SFTP_SetSTAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
                 return WS_FATAL_ERROR;
             }
 
+            /* resume if the request is only partially sent or still queued
+             * in the SSH output buffer */
+            if (wolfSSH_SFTP_buffer_send_finish(ssh, &state->buffer)
+                    != WS_SUCCESS) {
+                return WS_FATAL_ERROR;
+            }
+
             /* free up the buffer used to send data so that a new fresh buffer
              * can be created when next reading the attribute packet header */
             wolfSSH_SFTP_buffer_free(ssh, &state->buffer);
@@ -7641,6 +7717,12 @@ int wolfSSH_SFTP_Open(WOLFSSH* ssh, char* dir, word32 reason,
                         continue;
                     }
                 }
+                /* resume if the request is only partially sent or still queued
+                 * in the SSH output buffer */
+                if (wolfSSH_SFTP_buffer_send_finish(ssh, &state->buffer)
+                        != WS_SUCCESS) {
+                    return WS_FATAL_ERROR;
+                }
                 wolfSSH_SFTP_buffer_free(ssh, &state->buffer);
                 state->state = STATE_OPEN_GETHANDLE;
                 FALL_THROUGH;
@@ -7772,6 +7854,12 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                     }
                     state->state = STATE_SEND_WRITE_CLEANUP;
                     continue;
+                }
+                /* keep state and buffer until the header is fully flushed so
+                 * the body is not interleaved into a half-written header */
+                if (wolfSSH_SFTP_buffer_send_finish(ssh, &state->buffer)
+                        != WS_SUCCESS) {
+                    return WS_FATAL_ERROR;
                 }
                 state->state = STATE_SEND_WRITE_SEND_BODY;
                 FALL_THROUGH;
@@ -7993,6 +8081,12 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                     }
                     state->state = STATE_SEND_READ_CLEANUP;
                     continue;
+                }
+                /* resume if the request is only partially sent or still queued
+                 * in the SSH output buffer */
+                if (wolfSSH_SFTP_buffer_send_finish(ssh, &state->buffer)
+                        != WS_SUCCESS) {
+                    return WS_FATAL_ERROR;
                 }
                 wolfSSH_SFTP_buffer_free(ssh, &state->buffer);
                 state->state = STATE_SEND_READ_GET_HEADER;
@@ -8227,6 +8321,13 @@ int wolfSSH_SFTP_MKDIR(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
                     wolfSSH_SFTP_ClearState(ssh, STATE_ID_MKDIR);
                 }
                 return ret;
+            }
+
+            /* resume if the request is only partially sent or still queued
+             * in the SSH output buffer */
+            if (wolfSSH_SFTP_buffer_send_finish(ssh, &state->buffer)
+                    != WS_SUCCESS) {
+                return WS_FATAL_ERROR;
             }
 
             /* free data pointer to reuse it later */
@@ -8751,13 +8852,19 @@ int wolfSSH_SFTP_Rename(WOLFSSH* ssh, const char* old, const char* nw)
                 WLOG(WS_LOG_SFTP, "SFTP RENAME STATE: SEND");
                 /* send header and type specific data */
                 ret = wolfSSH_SFTP_buffer_send(ssh, &state->buffer);
-                if (ret <= 0) {
+                if (ret < 0) {
                     if (ssh->error == WS_WANT_READ ||
                             ssh->error == WS_WANT_WRITE) {
                         return WS_FATAL_ERROR;
                     }
                     state->state = STATE_RENAME_CLEANUP;
                     continue;
+                }
+                /* resume if the request is only partially sent or still queued
+                 * in the SSH output buffer */
+                if (wolfSSH_SFTP_buffer_send_finish(ssh, &state->buffer)
+                        != WS_SUCCESS) {
+                    return WS_FATAL_ERROR;
                 }
                 wolfSSH_SFTP_buffer_free(ssh, &state->buffer);
                 state->state = STATE_RENAME_GET_HEADER;
