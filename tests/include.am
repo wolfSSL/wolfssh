@@ -13,9 +13,10 @@ tests_unit_test_DEPENDENCIES = src/libwolfssh_test.la
 
 tests_api_test_SOURCES       = tests/api.c tests/api.h \
                                examples/echoserver/echoserver.c
-tests_api_test_CPPFLAGS      = -DNO_MAIN_DRIVER $(AM_CPPFLAGS)
-tests_api_test_LDADD         = src/libwolfssh.la
-tests_api_test_DEPENDENCIES  = src/libwolfssh.la
+tests_api_test_CPPFLAGS      = -DNO_MAIN_DRIVER -DWOLFSSH_TEST_INTERNAL \
+                               $(AM_CPPFLAGS)
+tests_api_test_LDADD         = src/libwolfssh_test.la
+tests_api_test_DEPENDENCIES  = src/libwolfssh_test.la
 
 tests_testsuite_test_SOURCES = tests/testsuite.c tests/testsuite.h \
                                tests/sftp.c tests/sftp.h \

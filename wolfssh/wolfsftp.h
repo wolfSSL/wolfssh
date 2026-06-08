@@ -291,6 +291,8 @@ WOLFSSH_LOCAL void wolfSSH_SFTP_ShowSizes(void);
     WOLFSSH_API int wolfSSH_TestSftpValidateFileHandle(WOLFSSH* ssh,
             const byte* handle, word32 handleSz);
     #endif
+    WOLFSSH_API int wolfSSH_TestSftpSendCap(WOLFSSH* ssh, word32 cap);
+    WOLFSSH_API int wolfSSH_TestSftpStallPending(WOLFSSH* ssh, word32 count);
     #if defined(WOLFSSL_NUCLEUS) && !defined(NO_WOLFSSH_MKTIME)
         WOLFSSH_API int wolfSSH_TestNucleusMonthFromDate(word16 d);
     #endif

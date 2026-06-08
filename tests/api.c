@@ -1393,6 +1393,16 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
         int outSz = 18;
         int rxSz;
         const word32 ofst[2] = {0};
+#ifdef WOLFSSH_TEST_INTERNAL
+        int err;
+        int tries;
+        int sawPartial;
+        int wrRet;
+        byte whandle[WOLFSSH_MAX_HANDLE];
+        word32 whandleSz;
+        byte wrData[32];
+        char wrName[] = "wolfssh_5574_write.tmp";
+#endif
 
         current = wolfSSH_SFTP_LS(ssh, (char*)currentDir);
         tmp = current;
@@ -1450,10 +1460,91 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
                 AssertIntLE(rxSz, outSz);
             }
 
+#ifdef WOLFSSH_TEST_INTERNAL
+            /* Issue 5574: force partial positive sends of the read request and
+             * confirm STATE_SEND_READ_SEND_REQ preserves the buffer (returning
+             * WS_WANT_WRITE) instead of freeing it after the first chunk. With
+             * a 1-byte cap the request can only drain over many calls, so the
+             * read must still complete with uncorrupted data once consumed.
+             * Note: this covers the window/max-packet clamped-partial case
+             * (idx < sz). The complementary socket back-pressure case, where
+             * the buffer reports fully sent but bytes are still queued in the
+             * SSH output buffer, is handled by the same
+             * wolfSSH_SFTP_buffer_send_finish() OutputPending guard but is
+             * not exercised here because loopback writes rarely back-pressure. */
+            AssertIntEQ(wolfSSH_TestSftpSendCap(ssh, 1), WS_SUCCESS);
+            outSz = 18;
+            rxSz = WS_FATAL_ERROR;
+            sawPartial = 0;
+            for (tries = 0; tries < 1000; tries++) {
+                rxSz = wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz,
+                        ofst, out, outSz);
+                if (rxSz > 0) {
+                    break;
+                }
+                err = wolfSSH_get_error(ssh);
+                if (err == WS_WANT_WRITE) {
+                    sawPartial = 1;
+                }
+                else if (err != WS_WANT_READ && err != WS_REKEYING) {
+                    break; /* unexpected error */
+                }
+            }
+            AssertIntEQ(wolfSSH_TestSftpSendCap(ssh, 0), WS_SUCCESS);
+            AssertIntEQ(sawPartial, 1);
+            AssertIntLT(tries, 1000);
+            AssertIntGT(rxSz, 0);
+            AssertIntLE(rxSz, outSz);
+#endif /* WOLFSSH_TEST_INTERNAL */
+
             free(out);
             wolfSSH_SFTP_Close(ssh, handle, handleSz);
         }
         wolfSSH_SFTPNAME_list_free(current);
+
+#ifdef WOLFSSH_TEST_INTERNAL
+        /* Issue 5574: exercise the partial-send resume path for
+         * wolfSSH_SFTP_SendWritePacket. STATE_SEND_WRITE_SEND_HEADER must not
+         * advance to STATE_SEND_WRITE_SEND_BODY until the request header is
+         * fully sent; otherwise the body is interleaved into a half-written
+         * header and corrupts the stream. The 1-byte cap forces the header to
+         * drain over many WS_WANT_WRITE returns (the cap only clamps the header
+         * buffer_send; the body uses stream_send directly). The target file is
+         * created over SFTP so it is independent of the server's working
+         * directory, and is removed afterward. Skipped if create is denied. */
+        whandleSz = WOLFSSH_MAX_HANDLE;
+        WMEMSET(wrData, 'a', sizeof(wrData));
+        if (wolfSSH_SFTP_Open(ssh, wrName,
+                WOLFSSH_FXF_WRITE | WOLFSSH_FXF_CREAT | WOLFSSH_FXF_TRUNC,
+                NULL, whandle, &whandleSz) == WS_SUCCESS) {
+            AssertIntEQ(wolfSSH_TestSftpSendCap(ssh, 1), WS_SUCCESS);
+            wrRet = WS_FATAL_ERROR;
+            sawPartial = 0;
+            for (tries = 0; tries < 1000; tries++) {
+                wrRet = wolfSSH_SFTP_SendWritePacket(ssh, whandle, whandleSz,
+                        ofst, wrData, (word32)sizeof(wrData));
+                if (wrRet > 0) {
+                    break;
+                }
+                err = wolfSSH_get_error(ssh);
+                if (err == WS_WANT_WRITE) {
+                    sawPartial = 1;
+                    continue;
+                }
+                if (err == WS_WANT_READ || err == WS_REKEYING) {
+                    continue;
+                }
+                break; /* unexpected error */
+            }
+            AssertIntEQ(wolfSSH_TestSftpSendCap(ssh, 0), WS_SUCCESS);
+            AssertIntEQ(sawPartial, 1); /* header drained over partial sends */
+            AssertIntLT(tries, 1000);
+            AssertIntEQ(wrRet, (int)sizeof(wrData));
+
+            wolfSSH_SFTP_Close(ssh, whandle, whandleSz);
+            wolfSSH_SFTP_Remove(ssh, wrName);
+        }
+#endif /* WOLFSSH_TEST_INTERNAL */
     }
 
     /* take care of re-keying state before shutdown call */
@@ -1487,6 +1578,276 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
     k_sleep(Z_TIMEOUT_TICKS(100));
 #endif
     ThreadJoin(serThread);
+}
+
+
+/* Issue 5574: drive SFTP client request states through the 1-byte send cap (and
+ * the stall hook) so the partial-send resume path (wolfSSH_SFTP_buffer_send_
+ * finish) is exercised. Each op is run in a bounded loop: with the cap set the
+ * request drains over many WS_WANT_WRITE returns and must still complete. Test
+ * objects are created and removed over SFTP so the test does not depend on the
+ * server's working directory. The whole body is test-only (needs the cap hook).
+ *
+ * Coverage of the seven sites that call wolfSSH_SFTP_buffer_send_finish:
+ *   STATE_OPEN_SEND            - covered here (Open under cap)
+ *   STATE_MKDIR_SEND           - covered here (MKDIR under cap)
+ *   STATE_SET_ATR_SEND         - covered here (SetSTAT under cap)
+ *   STATE_RENAME_SEND          - covered here (cap + stall sub-cases)
+ *   STATE_SEND_READ_SEND_REQ   - covered by test_wolfSSH_SFTP_SendReadPacket
+ *   STATE_SEND_WRITE_SEND_HEADER - covered by test_wolfSSH_SFTP_SendReadPacket
+ *   STATE_RECV_SEND            - NOT directly driven (see below)
+ *
+ * STATE_RECV_SEND is the server side sending a read/dir/stat response from
+ * wolfSSH_SFTP_read(). The send cap is a per-WOLFSSH flag, but this test only
+ * holds the client ssh; the in-process echoserver's accepted server ssh
+ * (threadCtx->ssh in examples/echoserver) has no test hook to set the cap on,
+ * and capping the whole server SFTP session risks destabilizing the threaded
+ * exchange. STATE_RECV_SEND runs the identical wolfSSH_SFTP_buffer_send_finish
+ * logic already exercised by all six client-side cases above, so it is left as
+ * a documented coverage gap (residual risk is the call-site wiring only). */
+static void test_wolfSSH_SFTP_PartialSend(void)
+{
+#ifdef WOLFSSH_TEST_INTERNAL
+    func_args ser;
+    tcp_ready ready;
+    int argsCount;
+    WS_SOCKET_T clientFd;
+
+    const char* args[10];
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+
+    THREAD_TYPE serThread;
+
+    int err;
+    int tries;
+    int sawPartial;
+    int ret;
+    byte handle[WOLFSSH_MAX_HANDLE];
+    word32 handleSz;
+    WS_SFTP_FILEATRB atr;
+    char openName[] = "wolfssh_5574_open.tmp";
+    char mkName[]   = "wolfssh_5574_mkdir.tmp";
+    char atrName[]  = "wolfssh_5574_setatr.tmp";
+    char renA[]     = "wolfssh_5574_rename_a.tmp";
+    char renB[]     = "wolfssh_5574_rename_b.tmp";
+    char renBad[]   = "wolfssh_5574_nodir/sub.tmp";
+
+    WMEMSET(&ser, 0, sizeof(func_args));
+
+    argsCount = 0;
+    args[argsCount++] = ".";
+    args[argsCount++] = "-1";
+#ifndef USE_WINDOWS_API
+    args[argsCount++] = "-p";
+    args[argsCount++] = "0";
+#endif
+    ser.argv   = (char**)args;
+    ser.argc    = argsCount;
+    ser.signal = &ready;
+    InitTcpReady(ser.signal);
+    ThreadStart(echoserver_test, (void*)&ser, &serThread);
+    WaitTcpReady(&ready);
+
+    sftp_client_connect(&ctx, &ssh, ready.port);
+    AssertNotNull(ctx);
+    AssertNotNull(ssh);
+
+    /* STATE_OPEN_SEND: create a file, then open it for read under the cap so
+     * the open request must drain over several partial sends. */
+    handleSz = WOLFSSH_MAX_HANDLE;
+    if (wolfSSH_SFTP_Open(ssh, openName,
+            WOLFSSH_FXF_WRITE | WOLFSSH_FXF_CREAT | WOLFSSH_FXF_TRUNC,
+            NULL, handle, &handleSz) == WS_SUCCESS) {
+        wolfSSH_SFTP_Close(ssh, handle, handleSz);
+
+        AssertIntEQ(wolfSSH_TestSftpSendCap(ssh, 1), WS_SUCCESS);
+        ret = WS_FATAL_ERROR;
+        sawPartial = 0;
+        handleSz = WOLFSSH_MAX_HANDLE;
+        for (tries = 0; tries < 1000; tries++) {
+            ret = wolfSSH_SFTP_Open(ssh, openName, WOLFSSH_FXF_READ,
+                    NULL, handle, &handleSz);
+            if (ret == WS_SUCCESS) {
+                break;
+            }
+            err = wolfSSH_get_error(ssh);
+            if (err == WS_WANT_WRITE) {
+                sawPartial = 1;
+                continue;
+            }
+            if (err == WS_WANT_READ || err == WS_REKEYING) {
+                continue;
+            }
+            break; /* unexpected error */
+        }
+        AssertIntEQ(wolfSSH_TestSftpSendCap(ssh, 0), WS_SUCCESS);
+        AssertIntEQ(sawPartial, 1);
+        AssertIntLT(tries, 1000);
+        AssertIntEQ(ret, WS_SUCCESS);
+
+        wolfSSH_SFTP_Close(ssh, handle, handleSz);
+        wolfSSH_SFTP_Remove(ssh, openName);
+    }
+
+    /* STATE_MKDIR_SEND: make a directory under the cap. RMDIR any stale dir
+     * first so a leftover from a prior run does not fail the create. */
+    wolfSSH_SFTP_RMDIR(ssh, mkName);
+    AssertIntEQ(wolfSSH_TestSftpSendCap(ssh, 1), WS_SUCCESS);
+    ret = WS_FATAL_ERROR;
+    sawPartial = 0;
+    for (tries = 0; tries < 1000; tries++) {
+        ret = wolfSSH_SFTP_MKDIR(ssh, mkName, NULL);
+        if (ret == WS_SUCCESS) {
+            break;
+        }
+        err = wolfSSH_get_error(ssh);
+        if (err == WS_WANT_WRITE) {
+            sawPartial = 1;
+            continue;
+        }
+        if (err == WS_WANT_READ || err == WS_REKEYING) {
+            continue;
+        }
+        break; /* unexpected error */
+    }
+    AssertIntEQ(wolfSSH_TestSftpSendCap(ssh, 0), WS_SUCCESS);
+    AssertIntEQ(sawPartial, 1);
+    AssertIntLT(tries, 1000);
+    AssertIntEQ(ret, WS_SUCCESS);
+    wolfSSH_SFTP_RMDIR(ssh, mkName);
+
+    /* STATE_SET_ATR_SEND: SetSTAT needs an existing file and a non-NULL atr.
+     * Create the file, STAT it to populate the atr, then SetSTAT under cap. */
+    handleSz = WOLFSSH_MAX_HANDLE;
+    if (wolfSSH_SFTP_Open(ssh, atrName,
+            WOLFSSH_FXF_WRITE | WOLFSSH_FXF_CREAT | WOLFSSH_FXF_TRUNC,
+            NULL, handle, &handleSz) == WS_SUCCESS) {
+        wolfSSH_SFTP_Close(ssh, handle, handleSz);
+
+        if (wolfSSH_SFTP_STAT(ssh, atrName, &atr) == WS_SUCCESS) {
+            AssertIntEQ(wolfSSH_TestSftpSendCap(ssh, 1), WS_SUCCESS);
+            ret = WS_FATAL_ERROR;
+            sawPartial = 0;
+            for (tries = 0; tries < 1000; tries++) {
+                ret = wolfSSH_SFTP_SetSTAT(ssh, atrName, &atr);
+                if (ret == WS_SUCCESS) {
+                    break;
+                }
+                err = wolfSSH_get_error(ssh);
+                if (err == WS_WANT_WRITE) {
+                    sawPartial = 1;
+                    continue;
+                }
+                if (err == WS_WANT_READ || err == WS_REKEYING) {
+                    continue;
+                }
+                break; /* unexpected error */
+            }
+            AssertIntEQ(wolfSSH_TestSftpSendCap(ssh, 0), WS_SUCCESS);
+            AssertIntEQ(sawPartial, 1);
+            AssertIntLT(tries, 1000);
+            AssertIntEQ(ret, WS_SUCCESS);
+        }
+        wolfSSH_SFTP_Remove(ssh, atrName);
+    }
+
+    /* STATE_RENAME_SEND. Rename first STATs the source, so create it over SFTP.
+     * Two sub-cases exercise both branches of the state's resume handling. */
+    handleSz = WOLFSSH_MAX_HANDLE;
+    if (wolfSSH_SFTP_Open(ssh, renA,
+            WOLFSSH_FXF_WRITE | WOLFSSH_FXF_CREAT | WOLFSSH_FXF_TRUNC,
+            NULL, handle, &handleSz) == WS_SUCCESS) {
+        wolfSSH_SFTP_Close(ssh, handle, handleSz);
+        wolfSSH_SFTP_Remove(ssh, renB); /* clear any stale target */
+
+        /* (a) clamped-partial: the request drains over many WS_WANT_WRITE
+         * returns under the 1-byte cap; renA -> renB. */
+        AssertIntEQ(wolfSSH_TestSftpSendCap(ssh, 1), WS_SUCCESS);
+        ret = WS_FATAL_ERROR;
+        sawPartial = 0;
+        for (tries = 0; tries < 1000; tries++) {
+            ret = wolfSSH_SFTP_Rename(ssh, renA, renB);
+            if (ret == WS_SUCCESS) {
+                break;
+            }
+            err = wolfSSH_get_error(ssh);
+            if (err == WS_WANT_WRITE) {
+                sawPartial = 1;
+                continue;
+            }
+            if (err == WS_WANT_READ || err == WS_REKEYING) {
+                continue;
+            }
+            break; /* unexpected error */
+        }
+        AssertIntEQ(wolfSSH_TestSftpSendCap(ssh, 0), WS_SUCCESS);
+        AssertIntEQ(sawPartial, 1);
+        AssertIntLT(tries, 1000);
+        AssertIntEQ(ret, WS_SUCCESS);
+        AssertIntEQ(wolfSSH_SFTP_STAT(ssh, renB, &atr), WS_SUCCESS); /* renA->renB */
+
+        /* (b) flush-only resume (HIGH-1): the stall hook makes the fully-sent
+         * request report as still pending once, so the next buffer_send returns
+         * WS_SUCCESS (0) with idx == sz. STATE_RENAME_SEND's `ret < 0` guard
+         * must let that fall through to read the server's response, while the
+         * old `ret <= 0` guard treated the 0 as terminal and returned WS_SUCCESS
+         * without reading the status. Because the request bytes are already on
+         * the wire by the resume call, the server performs/answers the request
+         * either way, so the only client-visible difference is the return code:
+         * rename into a non-existent directory so the server *rejects* it -
+         * correct code surfaces the failure; the buggy guard swallows it and
+         * returns WS_SUCCESS. This also exercises the OutputPending branch. */
+        AssertIntEQ(wolfSSH_TestSftpStallPending(ssh, 1), WS_SUCCESS);
+        ret = WS_SUCCESS;
+        sawPartial = 0;
+        for (tries = 0; tries < 1000; tries++) {
+            ret = wolfSSH_SFTP_Rename(ssh, renB, renBad);
+            err = wolfSSH_get_error(ssh);
+            if (err == WS_WANT_WRITE) {
+                sawPartial = 1;
+                continue;
+            }
+            if (err == WS_WANT_READ || err == WS_REKEYING) {
+                continue;
+            }
+            break; /* terminal: success or a server-rejected failure */
+        }
+        AssertIntEQ(wolfSSH_TestSftpStallPending(ssh, 0), WS_SUCCESS);
+        AssertIntEQ(sawPartial, 1);   /* flush-only resume path was taken */
+        AssertIntLT(tries, 1000);     /* terminated; did not spin */
+        AssertIntNE(ret, WS_SUCCESS); /* server rejection must not be swallowed */
+
+        wolfSSH_SFTP_Remove(ssh, renA);
+        wolfSSH_SFTP_Remove(ssh, renB);
+    }
+
+    /* take care of re-keying state before shutdown call */
+    while (wolfSSH_get_error(ssh) == WS_REKEYING) {
+        wolfSSH_worker(ssh, NULL);
+    }
+
+    argsCount = wolfSSH_shutdown(ssh);
+    if (argsCount == WS_SOCKET_ERROR_E) {
+        argsCount = WS_SUCCESS;
+    }
+#if DEFAULT_HIGHWATER_MARK < 8000
+    if (argsCount == WS_REKEYING) {
+        argsCount = WS_SUCCESS;
+    }
+#endif
+    AssertIntEQ(argsCount, WS_SUCCESS);
+
+    clientFd = wolfSSH_get_fd(ssh);
+    WCLOSESOCKET(clientFd);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+#ifdef WOLFSSH_ZEPHYR
+    k_sleep(Z_TIMEOUT_TICKS(100));
+#endif
+    ThreadJoin(serThread);
+#endif /* WOLFSSH_TEST_INTERNAL */
 }
 
 /* Upper bound on non-blocking retry iterations. A legitimate LS/shutdown across
@@ -1627,6 +1988,7 @@ static void test_wolfSSH_SFTP_ReKey_NonBlock(void)
 
 #else /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
 static void test_wolfSSH_SFTP_SendReadPacket(void) { ; }
+static void test_wolfSSH_SFTP_PartialSend(void) { ; }
 static void test_wolfSSH_SFTP_ReKey(void) { ; }
 static void test_wolfSSH_SFTP_ReKey_NonBlock(void) { ; }
 #endif /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
@@ -2343,6 +2705,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
 
     /* SFTP tests */
     test_wolfSSH_SFTP_SendReadPacket();
+    test_wolfSSH_SFTP_PartialSend();
     test_wolfSSH_SFTP_ReKey();
     test_wolfSSH_SFTP_ReKey_NonBlock();
 
