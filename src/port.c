@@ -675,8 +675,7 @@ int wChmod(const char *path, int mode)
     SYS_FS_RESULT ret;
     SYS_FS_FILE_DIR_ATTR attr = 0;
 
-    /* mode is the octal value i.e 666 is 0x1B6 */
-    if ((mode & 0x180) != 0x180) { /* not octal 6XX read only */
+    if ((mode & 0600) != 0600) {
         attr |= SYS_FS_ATTR_RDO;
     }
 
