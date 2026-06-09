@@ -1118,6 +1118,18 @@ static void AssertGlobalRequestReply(const ChannelOpenHarness* harness,
         }
     }
 }
+
+static word32 ParseGlobalRequestSuccessPort(const byte* packet, word32 packetSz)
+{
+    word32 port;
+
+    AssertNotNull(packet);
+    AssertTrue(packetSz >= 10);
+    AssertIntEQ(packet[5], MSGID_REQUEST_SUCCESS);
+    WMEMCPY(&port, packet + 6, sizeof(port));
+
+    return ntohl(port);
+}
 #endif
 
 static int RejectChannelOpenCb(WOLFSSH_CHANNEL* channel, void* ctx)
@@ -1130,7 +1142,7 @@ static int RejectChannelOpenCb(WOLFSSH_CHANNEL* channel, void* ctx)
 
 #ifdef WOLFSSH_FWD
 static int RejectDirectTcpipSetup(WS_FwdCbAction action, void* ctx,
-        const char* host, word32 port)
+        const char* host, word32* port)
 {
     (void)ctx;
     (void)host;
@@ -1143,12 +1155,41 @@ static int RejectDirectTcpipSetup(WS_FwdCbAction action, void* ctx,
 }
 
 static int AcceptFwdCb(WS_FwdCbAction action, void* ctx,
-        const char* host, word32 port)
+        const char* host, word32* port)
 {
     (void)action;
     (void)ctx;
     (void)host;
     (void)port;
+
+    return WS_SUCCESS;
+}
+
+#define REGRESS_FWD_ALLOC_PORT 49152
+
+static int AllocatePortFwdCb(WS_FwdCbAction action, void* ctx,
+        const char* host, word32* port)
+{
+    (void)ctx;
+    (void)host;
+
+    if (action == WOLFSSH_FWD_REMOTE_SETUP && port != NULL && *port == 0)
+        *port = REGRESS_FWD_ALLOC_PORT;
+
+    return WS_SUCCESS;
+}
+
+/* Accepts the remote setup but never reports an allocated port. Records
+ * whether the server asks it to clean the setup back up. */
+static int NoPortFwdCb(WS_FwdCbAction action, void* ctx,
+        const char* host, word32* port)
+{
+    int* cleanupCalled = (int*)ctx;
+    (void)host;
+    (void)port;
+
+    if (action == WOLFSSH_FWD_REMOTE_CLEANUP && cleanupCalled != NULL)
+        *cleanupCalled = 1;
 
     return WS_SUCCESS;
 }
@@ -1519,6 +1560,56 @@ static void TestGlobalRequestFwdWithCbSendsSuccess(void)
 
     AssertIntEQ(ret, WS_SUCCESS);
     AssertGlobalRequestReply(&harness, MSGID_REQUEST_SUCCESS);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+static void TestGlobalRequestFwdPort0ReturnsAllocatedPort(void)
+{
+    ChannelOpenHarness harness;
+    byte in[256];
+    word32 inSz;
+    int ret;
+
+    /* A bind port of 0 asks the server to allocate a port. The success reply
+     * must carry the port the callback allocated, not the requested 0. */
+    inSz = BuildGlobalRequestFwdPacket("0.0.0.0", 0, 0, 1, in, sizeof(in));
+    InitChannelOpenHarness(&harness, in, inSz);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, AllocatePortFwdCb, NULL),
+            WS_SUCCESS);
+
+    ret = DoReceive(harness.ssh);
+
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertGlobalRequestReply(&harness, MSGID_REQUEST_SUCCESS);
+    AssertIntEQ(ParseGlobalRequestSuccessPort(harness.io.out, harness.io.outSz),
+            REGRESS_FWD_ALLOC_PORT);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+static void TestGlobalRequestFwdPort0NoAllocSendsFailure(void)
+{
+    ChannelOpenHarness harness;
+    byte in[256];
+    word32 inSz;
+    int ret;
+    int cleanupCalled = 0;
+
+    /* The peer asked the server to choose a port (0), but the callback
+     * accepts without reporting one. The server must reject and tear the
+     * setup back down rather than reply with a non-compliant port 0. */
+    inSz = BuildGlobalRequestFwdPacket("0.0.0.0", 0, 0, 1, in, sizeof(in));
+    InitChannelOpenHarness(&harness, in, inSz);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, NoPortFwdCb, NULL),
+            WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetFwdCbCtx(harness.ssh, &cleanupCalled), WS_SUCCESS);
+
+    ret = DoReceive(harness.ssh);
+
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertGlobalRequestReply(&harness, MSGID_REQUEST_FAILURE);
+    AssertIntEQ(cleanupCalled, 1);
 
     FreeChannelOpenHarness(&harness);
 }
@@ -3614,6 +3705,8 @@ int main(int argc, char** argv)
     TestGlobalRequestFwdNoCbSendsFailure();
     TestGlobalRequestFwdNoCbNoReplyKeepsConnection();
     TestGlobalRequestFwdWithCbSendsSuccess();
+    TestGlobalRequestFwdPort0ReturnsAllocatedPort();
+    TestGlobalRequestFwdPort0NoAllocSendsFailure();
     TestGlobalRequestFwdCancelNoCbSendsFailure();
     TestGlobalRequestFwdCancelWithCbSendsSuccess();
     TestRequestSuccessWithPortParsesCorrectly();

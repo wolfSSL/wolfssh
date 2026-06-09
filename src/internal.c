@@ -8782,6 +8782,7 @@ static int DoGlobalRequestFwd(WOLFSSH* ssh,
     int ret = WS_SUCCESS;
     char* bindAddr = NULL;
     word32 bindPort;
+    word32 requestedPort = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering DoGlobalRequestFwd()");
 
@@ -8800,6 +8801,7 @@ static int DoGlobalRequestFwd(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS) {
+        requestedPort = bindPort;
         WLOG(WS_LOG_INFO, "Requesting forwarding%s for address %s on port %u.",
                 isCancel ? " cancel" : "", bindAddr, bindPort);
     }
@@ -8808,12 +8810,33 @@ static int DoGlobalRequestFwd(WOLFSSH* ssh,
         if (ssh->ctx->fwdCb) {
             ret = ssh->ctx->fwdCb(isCancel ? WOLFSSH_FWD_REMOTE_CLEANUP :
                         WOLFSSH_FWD_REMOTE_SETUP,
-                    ssh->fwdCbCtx, bindAddr, bindPort);
+                    ssh->fwdCbCtx, bindAddr, &bindPort);
         }
         else {
             WLOG(WS_LOG_WARN, "No forwarding callback set, rejecting request. "
                 "Set one with wolfSSH_CTX_SetFwdCb().");
             ret = WS_UNIMPLEMENTED_E;
+        }
+    }
+
+    if (ret == WS_SUCCESS && !isCancel) {
+        /* A remote forward was set up successfully. RFC 4254 7.1 requires a
+         * port-0 (dynamic) request to be answered with the allocated port; if
+         * the callback reported none we cannot comply, so undo the setup and
+         * reject instead of sending a success carrying port 0. */
+        if (requestedPort == 0 && bindPort == 0) {
+            int cleanupRet;
+            word32 cleanupPort = bindPort;
+
+            WLOG(WS_LOG_WARN, "Forward callback reported no allocated port "
+                    "for a port-0 request; rejecting.");
+            cleanupRet = ssh->ctx->fwdCb(WOLFSSH_FWD_REMOTE_CLEANUP,
+                    ssh->fwdCbCtx, bindAddr, &cleanupPort);
+            if (cleanupRet != WS_SUCCESS) {
+                WLOG(WS_LOG_WARN, "Forward cleanup after rejection failed, "
+                        "ret = %d", cleanupRet);
+            }
+            ret = WS_FWD_SETUP_E;
         }
     }
 
@@ -8830,7 +8853,7 @@ static int DoGlobalRequestFwd(WOLFSSH* ssh,
             ret = SendRequestSuccess(ssh, 0);
         }
     }
-    else if (ret == WS_UNIMPLEMENTED_E) {
+    else if (ret == WS_UNIMPLEMENTED_E || ret == WS_FWD_SETUP_E) {
         /* No reply expected; silently reject without terminating connection. */
         ret = WS_SUCCESS;
     }
@@ -8970,6 +8993,7 @@ static int DoChannelOpen(WOLFSSH* ssh,
     char* host = NULL;
     char* origin = NULL;
     word32 hostPort = 0, originPort = 0;
+    word32 channelId = 0;
     int isDirect = 0;
 #endif /* WOLFSSH_FWD */
     WOLFSSH_CHANNEL* newChannel = NULL;
@@ -9066,10 +9090,13 @@ static int DoChannelOpen(WOLFSSH* ssh,
 
                 if (ssh->ctx->fwdCb) {
                     ret = ssh->ctx->fwdCb(WOLFSSH_FWD_LOCAL_SETUP,
-                            ssh->fwdCbCtx, host, hostPort);
+                            ssh->fwdCbCtx, host, &hostPort);
                     if (ret == WS_SUCCESS) {
+                        /* Pass a copy so the callback cannot mutate the
+                         * channel id and corrupt channel bookkeeping. */
+                        channelId = newChannel->channel;
                         ret = ssh->ctx->fwdCb(WOLFSSH_FWD_CHANNEL_ID,
-                                ssh->fwdCbCtx, NULL, newChannel->channel);
+                                ssh->fwdCbCtx, NULL, &channelId);
                     }
                 }
                 else {
