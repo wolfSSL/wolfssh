@@ -521,6 +521,8 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
     else if (action == WOLFSSH_FWD_REMOTE_SETUP) {
         struct sockaddr_in addr;
         socklen_t addrSz = 0;
+        socklen_t boundSz = sizeof(addr);
+        word32 allocatedPort = 0;
 
         ctx->hostName = WSTRDUP(name, NULL, 0);
         ctx->hostPort = port;
@@ -545,7 +547,7 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
             }
             else {
                 printf("Not using IPv6 yet.\n");
-                ret = WS_FWD_SETUP_E;
+                ret = -1;
             }
         }
 
@@ -558,8 +560,35 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
             ret = listen(ctx->listenFd, 5);
         }
 
+        if (ret == 0 && port == 0) {
+            /* The peer requested port 0, so the OS picked the port during
+             * bind(). Recover it to report back to the caller. */
+            WMEMSET(&addr, 0, sizeof addr);
+            if (getsockname(ctx->listenFd,
+                    (struct sockaddr*)&addr, &boundSz) == 0) {
+                allocatedPort = (word32)ntohs(addr.sin_port);
+                /* The library reads a return below WS_FWD_PORT_CHECK as a
+                 * status, not a port, so an allocated port must be reportable.
+                 * An unprivileged OS-chosen port always is; guard anyway. */
+                if (allocatedPort < WS_FWD_PORT_CHECK) {
+                    printf("Allocated port %u not reportable.\n", allocatedPort);
+                    ret = -1;
+                }
+                else {
+                    ctx->hostPort = allocatedPort;
+                }
+            }
+            else {
+                printf("getsockname failed for forwarded port.\n");
+                ret = -1;
+            }
+        }
+
         if (ret == 0) {
             ctx->state = FWD_STATE_LISTEN;
+            /* Report any dynamically allocated port to the library through the
+             * return value; 0 keeps the port the peer requested. */
+            ret = (int)allocatedPort;
         }
         else {
             if (ctx->hostName != NULL) {

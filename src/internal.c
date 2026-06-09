@@ -8957,6 +8957,7 @@ static int DoGlobalRequestFwd(WOLFSSH* ssh,
     int ret = WS_SUCCESS;
     char* bindAddr = NULL;
     word32 bindPort;
+    word32 requestedPort = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering DoGlobalRequestFwd()");
 
@@ -8975,20 +8976,62 @@ static int DoGlobalRequestFwd(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS) {
+        requestedPort = bindPort;
         WLOG(WS_LOG_INFO, "Requesting forwarding%s for address %s on port %u.",
                 isCancel ? " cancel" : "", bindAddr, bindPort);
     }
 
     if (ret == WS_SUCCESS) {
         if (ssh->ctx->fwdCb) {
-            ret = ssh->ctx->fwdCb(isCancel ? WOLFSSH_FWD_REMOTE_CLEANUP :
+            int cbRet = ssh->ctx->fwdCb(isCancel ? WOLFSSH_FWD_REMOTE_CLEANUP :
                         WOLFSSH_FWD_REMOTE_SETUP,
                     ssh->fwdCbCtx, bindAddr, bindPort);
+            /* A return at or above WS_FWD_PORT_CHECK is the unprivileged port
+             * the callback allocated for a remote port-0 request; anything
+             * below it is a WS_FwdCbError status, where WS_FWD_SUCCESS is
+             * success and any other value is a rejection. An allocated port is
+             * only meaningful for a port-0 (dynamic) request and must be a
+             * valid port number; for a non-zero request the callback should
+             * return WS_FWD_SUCCESS, so a port-like value is ignored and the
+             * requested port stands. An out-of-range value for a port-0
+             * request leaves bindPort unchanged and is rejected by the
+             * port-0 compliance check below. */
+            if (!isCancel && cbRet >= WS_FWD_PORT_CHECK) {
+                if (requestedPort == 0 && cbRet <= 65535) {
+                    bindPort = (word32)cbRet;
+                }
+            }
+            else if (cbRet != WS_FWD_SUCCESS) {
+                WLOG(WS_LOG_WARN, "Forward callback rejected the request, "
+                        "WS_FwdCbError = %d", cbRet);
+                ret = WS_RESOURCE_E;
+            }
         }
         else {
             WLOG(WS_LOG_WARN, "No forwarding callback set, rejecting request. "
                 "Set one with wolfSSH_CTX_SetFwdCb().");
             ret = WS_UNIMPLEMENTED_E;
+        }
+    }
+
+    if (ret == WS_SUCCESS && !isCancel) {
+        /* A remote forward was set up successfully. RFC 4254 7.1 requires a
+         * port-0 (dynamic) request to be answered with the actual unprivileged
+         * port allocated. A successful callback that did not report one leaves
+         * bindPort below WS_FWD_PORT_CHECK, so we cannot comply: undo the setup
+         * and reject instead of sending a non-compliant success. */
+        if (requestedPort == 0 && bindPort < WS_FWD_PORT_CHECK) {
+            WLOG(WS_LOG_WARN, "Forward callback reported no unprivileged port "
+                    "for a port-0 request; rejecting.");
+            if (ssh->ctx->fwdCb) {
+                int cleanupRet = ssh->ctx->fwdCb(WOLFSSH_FWD_REMOTE_CLEANUP,
+                        ssh->fwdCbCtx, bindAddr, bindPort);
+                if (cleanupRet != WS_SUCCESS) {
+                    WLOG(WS_LOG_WARN, "Forward cleanup after rejection failed, "
+                            "ret = %d", cleanupRet);
+                }
+                ret = WS_RESOURCE_E;
+            }
         }
     }
 
@@ -9005,7 +9048,7 @@ static int DoGlobalRequestFwd(WOLFSSH* ssh,
             ret = SendRequestSuccess(ssh, 0);
         }
     }
-    else if (ret == WS_UNIMPLEMENTED_E) {
+    else if (ret == WS_UNIMPLEMENTED_E || ret == WS_RESOURCE_E) {
         /* No reply expected; silently reject without terminating connection. */
         ret = WS_SUCCESS;
     }

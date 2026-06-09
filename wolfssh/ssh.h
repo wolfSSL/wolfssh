@@ -206,6 +206,21 @@ typedef enum WS_FwdCbError {
     WS_FWD_PEER_E,
 } WS_FwdCbError;
 
+#ifndef WS_FWD_PORT_CHECK
+    /* Boundary of the WS_CallbackFwd return convention below; not an error
+     * code. The lowest unprivileged port, and must stay above WS_FWD_PEER_E. */
+    #define WS_FWD_PORT_CHECK 1024
+#else
+    #if (WS_FWD_PEER_E > WS_FWD_PORT_CHECK)
+        #error "WS_FWD_PORT_CHECK set to value in WS_FwdCbError range."
+    #endif
+#endif
+
+/* Return value: below WS_FWD_PORT_CHECK is a WS_FwdCbError status
+ * (WS_FWD_SUCCESS is success); at or above it is the unprivileged port a
+ * WOLFSSH_FWD_REMOTE_SETUP allocated for a port-0 request, for the server to
+ * report to the peer. A rejected port-0 setup gets a WOLFSSH_FWD_REMOTE_CLEANUP
+ * even though the setup returned success. */
 typedef int (*WS_CallbackFwd)(WS_FwdCbAction action, void* fwdCbCtx,
         const char* address, word32 port);
 typedef int (*WS_CallbackFwdIO)(WS_FwdIoCbAction action, void* buf,
