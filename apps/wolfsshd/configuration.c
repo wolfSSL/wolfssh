@@ -32,11 +32,8 @@
 /* functions for parsing out options from a config file and for handling loading
  * key/certs using the env. filesystem */
 
-#ifdef WOLFSSHD_UNIT_TEST
-#define WOLFSSHD_STATIC
-#else
-#define WOLFSSHD_STATIC static
-#endif
+/* WOLFSSHD_STATIC is defined in configuration.h so configuration.c and auth.c
+ * share the same test-visibility convention. */
 
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
@@ -217,6 +214,7 @@ WOLFSSHD_CONFIG* wolfSSHD_ConfigNew(void* heap)
         /* default values */
         ret->port = 22;
         ret->passwordAuth = 1;
+        ret->pubKeyAuth = 1;
         ret->loginTimer = 120;
     }
     return ret;
@@ -388,9 +386,10 @@ enum {
     OPT_TRUSTED_USER_CA_KEYS    = 21,
     OPT_PIDFILE                 = 22,
     OPT_BANNER                  = 23,
+    OPT_PUBKEY_AUTH             = 24,
 };
 enum {
-    NUM_OPTIONS = 24
+    NUM_OPTIONS = 25
 };
 
 static const CONFIG_OPTION options[NUM_OPTIONS] = {
@@ -407,6 +406,7 @@ static const CONFIG_OPTION options[NUM_OPTIONS] = {
     {OPT_LOGIN_GRACE_TIME,        "LoginGraceTime"},
     {OPT_HOST_KEY,                "HostKey"},
     {OPT_PASSWORD_AUTH,           "PasswordAuthentication"},
+    {OPT_PUBKEY_AUTH,             "PubkeyAuthentication"},
     {OPT_PORT,                    "Port"},
     {OPT_PERMIT_ROOT,             "PermitRootLogin"},
     {OPT_USE_DNS,                 "UseDNS"},
@@ -544,6 +544,32 @@ static int HandlePwAuth(WOLFSSHD_CONFIG* conf, const char* value)
         }
         else if (WSTRCMP(value, "yes") == 0) {
             conf->passwordAuth = 1;
+        }
+        else {
+            ret = WS_BAD_ARGUMENT;
+        }
+    }
+
+    return ret;
+}
+
+/* returns WS_SUCCESS on success */
+static int HandlePubKeyAuth(WOLFSSHD_CONFIG* conf, const char* value)
+{
+    int ret = WS_SUCCESS;
+
+    if (conf == NULL || value == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (WSTRCMP(value, "no") == 0) {
+            wolfSSH_Log(WS_LOG_INFO,
+                "[SSHD] public key authentication disabled");
+            conf->pubKeyAuth = 0;
+        }
+        else if (WSTRCMP(value, "yes") == 0) {
+            conf->pubKeyAuth = 1;
         }
         else {
             ret = WS_BAD_ARGUMENT;
@@ -1032,6 +1058,9 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
         case OPT_PASSWORD_AUTH:
             ret = HandlePwAuth(*conf, value);
             break;
+        case OPT_PUBKEY_AUTH:
+            ret = HandlePubKeyAuth(*conf, value);
+            break;
         case OPT_PORT:
             ret = HandlePort(*conf, value);
             break;
@@ -1462,6 +1491,17 @@ byte wolfSSHD_ConfigGetPwAuth(const WOLFSSHD_CONFIG* conf)
 
     if (conf != NULL) {
         ret = conf->passwordAuth;
+    }
+
+    return ret;
+}
+
+byte wolfSSHD_ConfigGetPubKeyAuth(const WOLFSSHD_CONFIG* conf)
+{
+    byte ret = 0;
+
+    if (conf != NULL) {
+        ret = conf->pubKeyAuth;
     }
 
     return ret;

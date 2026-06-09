@@ -1253,6 +1253,14 @@ static int RequestAuthentication(WS_UserAuthData* authData,
     }
 
 
+    if (ret == WOLFSSH_USERAUTH_SUCCESS &&
+        authData->type == WOLFSSH_USERAUTH_PUBLICKEY &&
+        wolfSSHD_ConfigGetPubKeyAuth(usrConf) != 1) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Public key authentication not "
+                    "allowed by configuration!");
+        ret = WOLFSSH_USERAUTH_REJECTED;
+    }
+
     #ifdef WOLFSSL_FPKI
     if (ret == WOLFSSH_USERAUTH_SUCCESS &&
         authData->type == WOLFSSH_USERAUTH_PUBLICKEY) {
@@ -1434,6 +1442,26 @@ int DefaultUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 }
 
 
+/* Builds the bit mask of authentication methods advertised to a peer based on
+ * the resolved per-user configuration. A method is only offered when its
+ * corresponding config option is enabled, so PasswordAuthentication no and
+ * PubkeyAuthentication no remove the method from the advertisement. Returns 0
+ * when both are disabled (no methods advertised). */
+WOLFSSHD_STATIC int wolfSSHD_GetUserAuthTypes(const WOLFSSHD_CONFIG* usrConf)
+{
+    int ret = 0;
+
+    if (wolfSSHD_ConfigGetPwAuth(usrConf) == 1) {
+        ret |= WOLFSSH_USERAUTH_PASSWORD;
+    }
+    if (wolfSSHD_ConfigGetPubKeyAuth(usrConf) == 1) {
+        ret |= WOLFSSH_USERAUTH_PUBLICKEY;
+    }
+
+    return ret;
+}
+
+
 int DefaultUserAuthTypes(WOLFSSH* ssh, void* ctx)
 {
     WOLFSSHD_CONFIG* usrConf;
@@ -1453,10 +1481,7 @@ int DefaultUserAuthTypes(WOLFSSH* ssh, void* ctx)
         ret = WS_BAD_ARGUMENT;
     }
     else {
-        if (wolfSSHD_ConfigGetPwAuth(usrConf) == 1) {
-            ret |= WOLFSSH_USERAUTH_PASSWORD;
-        }
-        ret |= WOLFSSH_USERAUTH_PUBLICKEY;
+        ret = wolfSSHD_GetUserAuthTypes(usrConf);
     }
 
     return ret;
