@@ -169,6 +169,13 @@ jobs:
       - name: Start wolfSSHd
         working-directory: ./wolfssh/
         run: |
+          # wolfSSHd loads the host key, host cert, and user CA through the
+          # secure gate. The daemon runs under sudo (euid 0), so make all three
+          # root-owned. The secret host key must also be 0600; the public cert
+          # and CA stay 0644 (not group/world writable, still runner readable).
+          sudo chmod 600 $PWD/keys/server-key.pem
+          sudo chown 0:0 $PWD/keys/server-key.pem $PWD/keys/server-cert.pem \
+            $PWD/keys/ca-cert-ecc.pem
           sudo ./apps/wolfsshd/wolfsshd -f sshd_config -d \
             -E $PWD/wolfsshd-log.txt &
           for i in $(seq 1 20); do

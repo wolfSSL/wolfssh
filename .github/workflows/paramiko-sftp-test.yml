@@ -94,9 +94,14 @@ jobs:
           Subsystem sftp internal-sftp
           EOF
           
-          # Set proper permissions for keys
+          # Set proper permissions for keys. wolfSSHd loads the host key
+          # through the secure gate, which refuses a key not owned by root or
+          # the daemon's user, or one that is group/world readable or writable.
+          # The daemon is launched with sudo (euid 0) while the checkout key is
+          # owned by the runner, so make it root-owned and 0600.
           chmod 600 ./keys/server-key.pem
-          
+          sudo chown 0:0 ./keys/server-key.pem
+
           # Print debug info
           echo "Contents of sshd_config.txt:"
           cat sshd_config.txt

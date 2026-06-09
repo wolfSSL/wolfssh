@@ -56,6 +56,7 @@ word16 wolfSSHD_ConfigGetPort(const WOLFSSHD_CONFIG* conf);
 char* wolfSSHD_ConfigGetAuthKeysFile(const WOLFSSHD_CONFIG* conf);
 int wolfSSHD_ConfigGetAuthKeysFileSet(const WOLFSSHD_CONFIG* conf);
 int wolfSSHD_ConfigSetAuthKeysFile(WOLFSSHD_CONFIG* conf, const char* file);
+int wolfSSHD_ConfigGetStrictModes(const WOLFSSHD_CONFIG* conf);
 byte wolfSSHD_ConfigGetPermitEmptyPw(const WOLFSSHD_CONFIG* conf);
 byte wolfSSHD_ConfigGetPermitRoot(const WOLFSSHD_CONFIG* conf);
 byte wolfSSHD_ConfigGetPrivilegeSeparation(const WOLFSSHD_CONFIG* conf);

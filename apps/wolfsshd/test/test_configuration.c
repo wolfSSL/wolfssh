@@ -27,6 +27,13 @@
 #include <configuration.h>
 #include <auth.h>
 
+#ifndef _WIN32
+    #include <unistd.h>
+    #include <sys/stat.h>
+    #include <stdio.h>
+    #include <stdlib.h>
+#endif
+
 #ifndef WOLFSSH_DEFAULT_LOG_WIDTH
     #define WOLFSSH_DEFAULT_LOG_WIDTH 120
 #endif
@@ -202,6 +209,11 @@ static int test_ConfigDefaults(void)
         if (wolfSSHD_ConfigGetPubKeyAuth(conf) == 0)
             ret = WS_FATAL_ERROR;
     }
+    if (ret == WS_SUCCESS) {
+        /* StrictModes defaults to on */
+        if (wolfSSHD_ConfigGetStrictModes(conf) != 1)
+            ret = WS_FATAL_ERROR;
+    }
 
     wolfSSHD_ConfigFree(conf);
     return ret;
@@ -254,6 +266,11 @@ static int test_ParseConfigLine(void)
         {"Pubkey auth no", "PubkeyAuthentication no", 0},
         {"Pubkey auth yes", "PubkeyAuthentication yes", 0},
         {"Pubkey auth invalid", "PubkeyAuthentication wolfsshd", 1},
+
+        /* StrictModes tests. */
+        {"Strict modes no", "StrictModes no", 0},
+        {"Strict modes yes", "StrictModes yes", 0},
+        {"Strict modes invalid", "StrictModes wolfsshd", 1},
 
         /* Include files tests. */
         {"Include file bad", "Include sshd_config.d/test.bad", 1},
@@ -332,6 +349,8 @@ static int test_ConfigCopy(void)
     if (ret == WS_SUCCESS) ret = PCL("PermitEmptyPasswords yes");
     if (ret == WS_SUCCESS) ret = PCL("PermitRootLogin yes");
     if (ret == WS_SUCCESS) ret = PCL("UsePrivilegeSeparation sandbox");
+    /* set to non-default (default is on) so a dropped copy is detected */
+    if (ret == WS_SUCCESS) ret = PCL("StrictModes no");
 
     /* trigger ConfigCopy via Match; conf advances to the new node */
     if (ret == WS_SUCCESS) ret = PCL("Match User testuser");
@@ -422,6 +441,11 @@ static int test_ConfigCopy(void)
     }
     if (ret == WS_SUCCESS) {
         if (wolfSSHD_ConfigGetPrivilegeSeparation(match) != WOLFSSHD_PRIV_SANDBOX)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        /* source set StrictModes off; the copy must carry it over */
+        if (wolfSSHD_ConfigGetStrictModes(match) != 0)
             ret = WS_FATAL_ERROR;
     }
 
@@ -1661,6 +1685,221 @@ static int test_GetUserAuthTypes(void)
     return ret;
 }
 
+#ifndef _WIN32
+/* report a single secure-open scenario; returns WS_SUCCESS when the observed
+ * result matches expectation (wantOk != 0 means expect acceptance) */
+static int smExpect(const char* desc, int gotRet, int wantOk)
+{
+    int ok = wantOk ? (gotRet == WS_SUCCESS) : (gotRet != WS_SUCCESS);
+
+    Log("    Testing scenario: %s. %s\n", desc, ok ? "PASSED" : "FAILED");
+    return ok ? WS_SUCCESS : WS_FATAL_ERROR;
+}
+
+/* establish a scenario precondition; returns WS_SUCCESS when the chmod
+ * succeeded so a failed setup does not masquerade as a passing scenario */
+static int smChmod(const char* path, mode_t mode)
+{
+    int ret = WS_SUCCESS;
+
+    if (chmod(path, mode) != 0) {
+        Log("    chmod of %s failed.\n", path);
+        ret = WS_FATAL_ERROR;
+    }
+    return ret;
+}
+
+/* open 'path' through the secure gate and immediately close it, returning the
+ * gate's verdict so a scenario can assert acceptance or rejection */
+static int smOpen(const char* path, WUID_T ownerUid, int rejectReadable)
+{
+    WFILE* f = WBADFILE;
+    int ret = wolfSSHD_OpenSecureFile(path, ownerUid, rejectReadable, NULL, &f);
+
+    if (ret == WS_SUCCESS && f != WBADFILE) {
+        WFCLOSE(NULL, f);
+    }
+    return ret;
+}
+
+static int test_OpenSecureFile(void)
+{
+    int ret = WS_SUCCESS;
+    char base[] = "/tmp/wolfsshd_smXXXXXX";
+    /* initialized so the unconditional cleanup is harmless if mkdtemp fails */
+    char ssh[64] = "";
+    char keys[96] = "";
+    char hostkey[96] = "";
+    char linkKeys[96] = "";
+    char wopen[80] = "";
+    char wopenKeys[160] = "";
+    WUID_T uid = getuid();
+    FILE* f = NULL;
+
+    if (mkdtemp(base) == NULL) {
+        Log("    mkdtemp failed.\n");
+        ret = WS_FATAL_ERROR;
+    }
+
+    if (ret == WS_SUCCESS) {
+        snprintf(ssh, sizeof(ssh), "%s/.ssh", base);
+        snprintf(keys, sizeof(keys), "%s/.ssh/authorized_keys", base);
+        snprintf(hostkey, sizeof(hostkey), "%s/host_key", base);
+        snprintf(linkKeys, sizeof(linkKeys), "%s/.ssh/link_keys", base);
+        snprintf(wopen, sizeof(wopen), "%s/wopen", base);
+        snprintf(wopenKeys, sizeof(wopenKeys), "%s/wopen/keys", base);
+
+        if (mkdir(ssh, 0700) != 0) {
+            ret = WS_FATAL_ERROR;
+        }
+    }
+    if (ret == WS_SUCCESS) {
+        f = fopen(keys, "w");
+        if (f == NULL) {
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            fputs("ssh-rsa AAAA test\n", f);
+            fclose(f);
+        }
+    }
+    if (ret == WS_SUCCESS) {
+        f = fopen(hostkey, "w");
+        if (f == NULL) {
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            fputs("KEYDATA\n", f);
+            fclose(f);
+        }
+    }
+
+    /* authorized_keys style: owner, writable path, and symlink checks. The temp
+     * tree lives under /tmp (mode 1777); the sticky bit makes that world
+     * writable ancestor safe, so a good 0600 file is still accepted. */
+    if (ret == WS_SUCCESS)
+        ret = smChmod(base, 0700);
+    if (ret == WS_SUCCESS)
+        ret = smChmod(ssh, 0700);
+    if (ret == WS_SUCCESS)
+        ret = smChmod(keys, 0600);
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("good perms accepted", smOpen(keys, uid, 0), 1);
+    }
+    if (ret == WS_SUCCESS)
+        ret = smChmod(keys, 0660);
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("group-writable file rejected", smOpen(keys, uid, 0), 0);
+    }
+    if (ret == WS_SUCCESS)
+        ret = smChmod(keys, 0606);
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("world-writable file rejected", smOpen(keys, uid, 0), 0);
+    }
+    if (ret == WS_SUCCESS)
+        ret = smChmod(keys, 0600);
+    if (ret == WS_SUCCESS)
+        ret = smChmod(ssh, 0770);
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("group-writable parent dir rejected",
+            smOpen(keys, uid, 0), 0);
+    }
+    /* a sticky world-writable parent (as /tmp itself is) is tolerated, since
+     * the sticky bit blocks substitution by other users */
+    if (ret == WS_SUCCESS)
+        ret = smChmod(ssh, 01777);
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("sticky world-writable parent dir accepted",
+            smOpen(keys, uid, 0), 1);
+    }
+    if (ret == WS_SUCCESS)
+        ret = smChmod(ssh, 0700);
+    /* The helper accepts root-owned files, so the wrong-owner assertion is only
+     * meaningful when the test is not running as root. */
+    if (ret == WS_SUCCESS && uid != 0) {
+        ret = smExpect("wrong owner rejected", smOpen(keys, uid + 1, 0), 0);
+    }
+    /* a symlinked leaf is rejected outright; lstat() sees the link */
+    if (ret == WS_SUCCESS) {
+        if (symlink(keys, linkKeys) != 0) {
+            Log("    symlink creation failed.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("symlinked leaf rejected", smOpen(linkKeys, uid, 0), 0);
+    }
+    /* a non-sticky world-writable ancestor directory is rejected */
+    if (ret == WS_SUCCESS) {
+        if (mkdir(wopen, 0700) != 0) {
+            ret = WS_FATAL_ERROR;
+        }
+    }
+    if (ret == WS_SUCCESS) {
+        f = fopen(wopenKeys, "w");
+        if (f == NULL) {
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            fputs("ssh-rsa AAAA test\n", f);
+            fclose(f);
+        }
+    }
+    if (ret == WS_SUCCESS)
+        ret = smChmod(wopenKeys, 0600);
+    if (ret == WS_SUCCESS)
+        ret = smChmod(wopen, 0777);
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("non-sticky world-writable ancestor rejected",
+            smOpen(wopenKeys, uid, 0), 0);
+    }
+    if (ret == WS_SUCCESS)
+        ret = smChmod(wopen, 0700);
+    /* a non-regular-file target (here a directory) is rejected */
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("directory target rejected (not a regular file)",
+            smOpen(ssh, uid, 0), 0);
+    }
+
+    /* host key style: secret, reject group/world readable */
+    if (ret == WS_SUCCESS)
+        ret = smChmod(hostkey, 0600);
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("host key 0600 accepted", smOpen(hostkey, uid, 1), 1);
+    }
+    if (ret == WS_SUCCESS)
+        ret = smChmod(hostkey, 0640);
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("group-readable host key rejected",
+            smOpen(hostkey, uid, 1), 0);
+    }
+    if (ret == WS_SUCCESS)
+        ret = smChmod(hostkey, 0604);
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("world-readable host key rejected",
+            smOpen(hostkey, uid, 1), 0);
+    }
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("missing file rejected",
+            smOpen("/tmp/wolfsshd_sm_dne_xyz", uid, 0), 0);
+    }
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("NULL path rejected", smOpen(NULL, uid, 0), 0);
+    }
+
+    /* cleanup */
+    unlink(linkKeys);
+    unlink(keys);
+    unlink(hostkey);
+    unlink(wopenKeys);
+    rmdir(wopen);
+    rmdir(ssh);
+    rmdir(base);
+
+    return ret;
+}
+#endif /* !_WIN32 */
+
 const TEST_CASE testCases[] = {
     TEST_DECL(test_ConfigDefaults),
     TEST_DECL(test_ParseConfigLine),
@@ -1679,6 +1918,9 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_GetUserAuthTypes),
     TEST_DECL(test_ConfigSetAuthKeysFile),
     TEST_DECL(test_ConfigFree),
+#ifndef _WIN32
+    TEST_DECL(test_OpenSecureFile),
+#endif
 #ifdef WOLFSSL_BASE64_ENCODE
     TEST_DECL(test_CheckAuthKeysLine),
 #endif

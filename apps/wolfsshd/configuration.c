@@ -86,6 +86,7 @@ struct WOLFSSHD_CONFIG {
     byte permitRootLogin:1;
     byte permitEmptyPasswords:1;
     byte authKeysFileSet:1; /* if not set then no explicit authorized keys */
+    byte strictModes:1; /* enforce file permission/ownership checks */
 };
 
 /* Maximum depth of nested Include directives. Bounds the recursion
@@ -224,6 +225,7 @@ WOLFSSHD_CONFIG* wolfSSHD_ConfigNew(void* heap)
         ret->passwordAuth = 1;
         ret->pubKeyAuth = 1;
         ret->loginTimer = 120;
+        ret->strictModes = 1; /* on by default, matching OpenSSH */
     }
     return ret;
 
@@ -321,6 +323,7 @@ static WOLFSSHD_CONFIG* wolfSSHD_ConfigCopy(WOLFSSHD_CONFIG* conf)
             newConf->permitRootLogin        = conf->permitRootLogin;
             newConf->permitEmptyPasswords   = conf->permitEmptyPasswords;
             newConf->authKeysFileSet        = conf->authKeysFileSet;
+            newConf->strictModes            = conf->strictModes;
         }
         else {
             wolfSSHD_ConfigFree(newConf);
@@ -395,9 +398,10 @@ enum {
     OPT_PIDFILE                 = 22,
     OPT_BANNER                  = 23,
     OPT_PUBKEY_AUTH             = 24,
+    OPT_STRICT_MODES            = 25,
 };
 enum {
-    NUM_OPTIONS = 25
+    NUM_OPTIONS = 26
 };
 
 static const CONFIG_OPTION options[NUM_OPTIONS] = {
@@ -426,6 +430,7 @@ static const CONFIG_OPTION options[NUM_OPTIONS] = {
     {OPT_TRUSTED_USER_CA_KEYS,    "TrustedUserCAKeys"},
     {OPT_PIDFILE,                 "PidFile"},
     {OPT_BANNER,                  "Banner"},
+    {OPT_STRICT_MODES,            "StrictModes"},
 };
 
 /* returns WS_SUCCESS on success */
@@ -578,6 +583,31 @@ static int HandlePubKeyAuth(WOLFSSHD_CONFIG* conf, const char* value)
         }
         else if (WSTRCMP(value, "yes") == 0) {
             conf->pubKeyAuth = 1;
+        }
+        else {
+            ret = WS_BAD_ARGUMENT;
+        }
+    }
+
+    return ret;
+}
+
+/* returns WS_SUCCESS on success */
+static int HandleStrictModes(WOLFSSHD_CONFIG* conf, const char* value)
+{
+    int ret = WS_SUCCESS;
+
+    if (conf == NULL || value == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (WSTRCMP(value, "no") == 0) {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] StrictModes disabled");
+            conf->strictModes = 0;
+        }
+        else if (WSTRCMP(value, "yes") == 0) {
+            conf->strictModes = 1;
         }
         else {
             ret = WS_BAD_ARGUMENT;
@@ -1241,6 +1271,9 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
         case OPT_BANNER:
             ret = SetFileString(&(*conf)->banner, value, (*conf)->heap);
             break;
+        case OPT_STRICT_MODES:
+            ret = HandleStrictModes(*conf, value);
+            break;
         default:
             break;
     }
@@ -1492,6 +1525,19 @@ int wolfSSHD_ConfigGetAuthKeysFileSet(const WOLFSSHD_CONFIG* conf)
 
     if (conf != NULL) {
         ret = conf->authKeysFileSet;
+    }
+
+    return ret;
+}
+
+/* returns 1 if StrictModes is enabled and 0 if not. Defaults to enabled (fail
+ * safe) when conf is NULL. */
+int wolfSSHD_ConfigGetStrictModes(const WOLFSSHD_CONFIG* conf)
+{
+    int ret = 1;
+
+    if (conf != NULL) {
+        ret = conf->strictModes;
     }
 
     return ret;
