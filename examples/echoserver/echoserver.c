@@ -501,7 +501,7 @@ static WS_SOCKET_T connect_addr(const char* name, word16 port)
 
 
 static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
-        const char* name, word32 port)
+        const char* name, word32* port)
 {
     WS_AppCtx *appCtx = (WS_AppCtx *)vCtx;
     WS_FwdCbActionCtx* fwdCbCtx = (WS_FwdCbActionCtx *)appCtx->privateData;
@@ -509,7 +509,7 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
 
     if (action == WOLFSSH_FWD_LOCAL_SETUP) {
         fwdCbCtx->hostName = WSTRDUP(name, NULL, 0);
-        fwdCbCtx->hostPort = port;
+        fwdCbCtx->hostPort = *port;
         fwdCbCtx->isDirect = 1;
         appCtx->state = APP_STATE_CONNECT;
     }
@@ -529,9 +529,10 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
     else if (action == WOLFSSH_FWD_REMOTE_SETUP) {
         struct sockaddr_in addr;
         socklen_t addrSz = 0;
+        socklen_t boundSz = sizeof(addr);
 
         fwdCbCtx->hostName = WSTRDUP(name, NULL, 0);
-        fwdCbCtx->hostPort = port;
+        fwdCbCtx->hostPort = *port;
 
         appCtx->listenFd = socket(AF_INET, SOCK_STREAM, 0);
         if (appCtx->listenFd == -1) {
@@ -548,7 +549,7 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
 
                 addr.sin_addr.s_addr = INADDR_ANY;
                 addr.sin_family = AF_INET;
-                addr.sin_port = htons((word16)port);
+                addr.sin_port = htons((word16)*port);
                 addrSz = sizeof addr;
             }
             else {
@@ -564,6 +565,21 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
 
         if (ret == 0) {
             ret = listen(appCtx->listenFd, 5);
+        }
+
+        if (ret == 0 && *port == 0) {
+            /* The peer requested port 0, so the OS picked the port during
+             * bind(). Report the actual port back to the caller. */
+            WMEMSET(&addr, 0, sizeof addr);
+            if (getsockname(appCtx->listenFd,
+                    (struct sockaddr*)&addr, &boundSz) == 0) {
+                *port = (word32)ntohs(addr.sin_port);
+                fwdCbCtx->hostPort = *port;
+            }
+            else {
+                printf("getsockname failed for forwarded port.\n");
+                ret = -1;
+            }
         }
 
         if (ret == 0) {
@@ -597,7 +613,7 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
         appCtx->state = APP_STATE_INIT;
     }
     else if (action == WOLFSSH_FWD_CHANNEL_ID) {
-        appCtx->channelId = port;
+        appCtx->channelId = *port;
     }
     else
         ret = WS_FWD_INVALID_ACTION;

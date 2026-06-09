@@ -206,8 +206,11 @@ typedef enum WS_FwdCbError {
     WS_FWD_PEER_E,
 } WS_FwdCbError;
 
+/* The port argument is in/out: for WOLFSSH_FWD_REMOTE_SETUP a requested port
+ * of 0 means the callback should bind an unprivileged port and write the
+ * allocated port back so the server can report it to the peer. */
 typedef int (*WS_CallbackFwd)(WS_FwdCbAction action, void* fwdCbCtx,
-        const char* address, word32 port);
+        const char* address, word32* port);
 typedef int (*WS_CallbackFwdIO)(WS_FwdIoCbAction action, void* buf,
         word32 bufSz, void* fwdCbCtx);
 

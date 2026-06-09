@@ -2828,6 +2828,7 @@ WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNewRemote(WOLFSSH* ssh,
         const char* origin, word32 originPort)
 {
     WOLFSSH_CHANNEL* newChannel = NULL;
+    word32 channelId = 0;
     int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelFwdNewRemote()");
@@ -2848,8 +2849,11 @@ WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNewRemote(WOLFSSH* ssh,
         ret = SendChannelOpenForward(ssh, newChannel);
     if (ret == WS_SUCCESS) {
         if (ssh->ctx->fwdCb) {
+            /* Pass a copy so the callback cannot mutate the channel id and
+             * corrupt channel bookkeeping. */
+            channelId = newChannel->channel;
             ret = ssh->ctx->fwdCb(WOLFSSH_FWD_CHANNEL_ID, ssh->fwdCbCtx,
-                    NULL, newChannel->channel);
+                    NULL, &channelId);
         }
     }
 
