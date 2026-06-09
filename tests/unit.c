@@ -2158,6 +2158,128 @@ done:
 }
 
 
+/* userAuthTypesCb that advertises no methods (returns mask 0). Mirrors a
+ * wolfsshd configuration with both PasswordAuthentication no and
+ * PubkeyAuthentication no. */
+static int UnitAuthTypesReturnZero(WOLFSSH* ssh, void* ctx)
+{
+    (void)ssh;
+    (void)ctx;
+    return 0;
+}
+
+/* Regression test for the 0-mask case (issue 4115 follow-up). When the
+ * userAuthTypesCb advertises no methods, SendUserAuthFailure must still emit a
+ * well-formed USERAUTH_FAILURE carrying an empty "authentications that can
+ * continue" name-list (RFC 4252 Section 5.1) and return WS_SUCCESS, instead of
+ * underflowing the name-list length to -1 and dropping the connection.
+ *
+ * Asserts:
+ *   1. wolfSSH_TestSendUserAuthFailure() returns WS_SUCCESS (not negative).
+ *   2. Exactly one packet is emitted (connection not dropped).
+ *   3. The packet's message id is MSGID_USERAUTH_FAILURE.
+ *   4. The name-list length field is 0 (empty method list).
+ *
+ * The control case (a permissive callback advertising publickey+password)
+ * confirms the same path produces a non-empty name-list, so the empty result
+ * is specific to the 0-mask input rather than the test always seeing 0. */
+static int test_SendUserAuthFailure_emptyMethods(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    int result = 0;
+    int i;
+    struct {
+        WS_CallbackUserAuthTypes cb;
+        int    expectEmpty;   /* 1 = name-list must be empty, 0 = non-empty */
+        const char* label;
+    } cases[] = {
+        { UnitAuthTypesReturnZero, 1, "no methods advertised" },
+        { NULL,                    0, "default methods advertised" },
+    };
+    word32 off = LENGTH_SZ + PAD_LENGTH_SZ;
+
+    for (i = 0; i < (int)(sizeof(cases)/sizeof(cases[0])); i++) {
+        word32 nameListSz;
+        int    capMsgId;
+        int    ret;
+
+        ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+        if (ctx == NULL) { result = -600; break; }
+        if (cases[i].cb != NULL) {
+            wolfSSH_SetUserAuthTypes(ctx, cases[i].cb);
+        }
+        wolfSSH_SetIOSend(ctx, CaptureIoSendAuthSvc);
+
+        ssh = wolfSSH_new(ctx);
+        if (ssh == NULL) { result = -601; break; }
+
+        s_authSvcCaptureSz = 0;
+        s_authSvcSendCount = 0;
+        WMEMSET(s_authSvcCapture, 0, sizeof(s_authSvcCapture));
+
+        ret = wolfSSH_TestSendUserAuthFailure(ssh, 0);
+
+        if (ret != WS_SUCCESS) {
+            printf("SendUserAuthFailure[%s]: ret=%d expected WS_SUCCESS\n",
+                   cases[i].label, ret);
+            result = -602 - i;
+            break;
+        }
+
+        if (s_authSvcSendCount != 1) {
+            printf("SendUserAuthFailure[%s]: expected 1 send, got %u\n",
+                   cases[i].label, s_authSvcSendCount);
+            result = -610 - i;
+            break;
+        }
+
+        capMsgId = CaptureMsgId(s_authSvcCapture, s_authSvcCaptureSz);
+        if (capMsgId != MSGID_USERAUTH_FAILURE) {
+            printf("SendUserAuthFailure[%s]: msgId=%d expected USERAUTH_FAILURE\n",
+                   cases[i].label, capMsgId);
+            result = -620 - i;
+            break;
+        }
+
+        /* name-list length is the 4 bytes following the message id */
+        if (s_authSvcCaptureSz < off + MSG_ID_SZ + LENGTH_SZ) {
+            printf("SendUserAuthFailure[%s]: packet too short (%u)\n",
+                   cases[i].label, s_authSvcCaptureSz);
+            result = -630 - i;
+            break;
+        }
+        nameListSz =
+            ((word32)s_authSvcCapture[off + MSG_ID_SZ]     << 24) |
+            ((word32)s_authSvcCapture[off + MSG_ID_SZ + 1] << 16) |
+            ((word32)s_authSvcCapture[off + MSG_ID_SZ + 2] <<  8) |
+            ((word32)s_authSvcCapture[off + MSG_ID_SZ + 3]);
+
+        if (cases[i].expectEmpty && nameListSz != 0) {
+            printf("SendUserAuthFailure[%s]: nameListSz=%u expected 0\n",
+                   cases[i].label, nameListSz);
+            result = -640 - i;
+            break;
+        }
+        if (!cases[i].expectEmpty && nameListSz == 0) {
+            printf("SendUserAuthFailure[%s]: nameListSz=0 expected non-empty\n",
+                   cases[i].label);
+            result = -650 - i;
+            break;
+        }
+
+        wolfSSH_free(ssh);
+        ssh = NULL;
+        wolfSSH_CTX_free(ctx);
+        ctx = NULL;
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+
 #if !defined(WOLFSSH_NO_RSA)
 
 /* 2048-bit RSA private key (PKCS#1 DER).
@@ -4533,6 +4655,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_DoUserAuthRequest_serviceName();
     printf("DoUserAuthRequest_serviceName: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_SendUserAuthFailure_emptyMethods();
+    printf("SendUserAuthFailure_emptyMethods: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
