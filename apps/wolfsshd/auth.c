@@ -69,6 +69,7 @@
 
 #ifndef _WIN32
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <pwd.h>
 #include <grp.h>
 #include <errno.h>
@@ -526,8 +527,176 @@ static int ResolveAuthKeysPath(const char* homeDir, const char* pattern,
     return ret;
 }
 
+/* OpenSSH "StrictModes" style permission/ownership check. Verifies that 'path'
+ * is not group or world writable. When 'checkOwner' is set the file (and any
+ * walked directory) must also be owned by 'uid' or by root. When 'checkChain'
+ * is set, each parent directory up to and including 'homeDir' is checked the
+ * same way (a writable ancestor directory would let an attacker substitute the
+ * file). When 'noReadOthers' is set (used for secret files such as the host
+ * private key) the file is also rejected if it is group or world readable.
+ *
+ * Public keys are not secret, so for authorized_keys we guard against write
+ * access (key injection) and enforce ownership by the user. For the host
+ * private key we guard against disclosure; ownership is not enforced there
+ * because the server may run privileged (e.g. via sudo) against a key owned by
+ * an unprivileged service account.
+ *
+ * Returns WS_SUCCESS when the path is considered safe. On platforms without
+ * POSIX ownership/mode semantics this is a no-op returning WS_SUCCESS. */
+int wolfSSHD_CheckFilePermissions(const char* path, const char* homeDir,
+        WUID_T uid, int checkOwner, int checkChain, int noReadOthers)
+{
+#ifndef _WIN32
+    int ret = WS_SUCCESS;
+    int fileInHome;
+    struct stat s;
+    char pathBuf[MAX_PATH_SZ];
+    char* slash;
+    word32 pathSz;
+    word32 homeLen;
+    word32 i;
+
+    if (path == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    /* check the target file itself. stat() (not lstat()) is used so symlinked
+     * key paths resolve to their target and are validated, rather than being
+     * rejected outright. */
+    if (ret == WS_SUCCESS) {
+        if (stat(path, &s) != 0) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Unable to stat %s for permission check", path);
+            ret = WS_BAD_FILE_E;
+        }
+        else if (!S_ISREG(s.st_mode)) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] %s is not a regular file", path);
+            ret = WS_BAD_FILE_E;
+        }
+    }
+    if (ret == WS_SUCCESS && checkOwner) {
+        if (s.st_uid != uid && s.st_uid != 0) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Bad owner on %s, must be owned by the user or root",
+                path);
+            ret = WS_BAD_FILE_E;
+        }
+    }
+    if (ret == WS_SUCCESS) {
+        if ((s.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] %s is group or world writable", path);
+            ret = WS_BAD_FILE_E;
+        }
+    }
+    if (ret == WS_SUCCESS && noReadOthers) {
+        if ((s.st_mode & (S_IRGRP | S_IROTH)) != 0) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] %s is group or world readable", path);
+            ret = WS_BAD_FILE_E;
+        }
+    }
+
+    /* Walk parent directories checking that none is group or world writable,
+     * since a writable ancestor would let another user rename it and substitute
+     * the key file. When the file is inside the user's home directory the walk
+     * stops at the home directory and also enforces ownership (the user/root
+     * must own the file and each directory down from home). When the file is a
+     * custom AuthorizedKeysFile outside the home directory, the walk continues
+     * to the filesystem root but only checks writability, not ownership, since
+     * those ancestors are system-managed and not owned by the user.
+     *
+     * homeLen is normalized to ignore any trailing slash on homeDir so the
+     * subtree test does not depend on how pw_dir is formatted. */
+    homeLen = (homeDir != NULL) ? (word32)WSTRLEN(homeDir) : 0;
+    while (homeLen > 0 && homeDir[homeLen - 1] == '/') {
+        homeLen--;
+    }
+    fileInHome = (homeDir != NULL &&
+                  WSTRNCMP(path, homeDir, homeLen) == 0 &&
+                  (path[homeLen] == '/' || path[homeLen] == '\0'));
+    if (ret == WS_SUCCESS && checkChain && homeDir != NULL) {
+        pathSz = (word32)WSTRLEN(path);
+        if (pathSz >= MAX_PATH_SZ) {
+            ret = WS_BAD_FILE_E;
+        }
+        else {
+            WMEMCPY(pathBuf, path, pathSz);
+            pathBuf[pathSz] = '\0';
+
+            while (ret == WS_SUCCESS) {
+                /* trim the last path component to move up one directory */
+                slash = NULL;
+                for (i = 0; pathBuf[i] != '\0'; i++) {
+                    if (pathBuf[i] == '/') {
+                        slash = &pathBuf[i];
+                    }
+                }
+                if (slash == NULL) {
+                    break; /* no more parent directories */
+                }
+                if (slash == pathBuf) {
+                    pathBuf[1] = '\0'; /* parent is root "/" */
+                }
+                else {
+                    *slash = '\0';
+                }
+
+                if (stat(pathBuf, &s) != 0) {
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Unable to stat directory %s", pathBuf);
+                    ret = WS_BAD_FILE_E;
+                    break;
+                }
+                if (!S_ISDIR(s.st_mode)) {
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] %s is not a directory", pathBuf);
+                    ret = WS_BAD_FILE_E;
+                    break;
+                }
+                if (checkOwner && fileInHome &&
+                        s.st_uid != uid && s.st_uid != 0) {
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Bad owner on directory %s", pathBuf);
+                    ret = WS_BAD_FILE_E;
+                    break;
+                }
+                if ((s.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Directory %s is group or world writable",
+                        pathBuf);
+                    ret = WS_BAD_FILE_E;
+                    break;
+                }
+
+                /* stop at the home directory (in-home files) or the
+                 * filesystem root (out-of-home files) */
+                if ((fileInHome &&
+                        WSTRNCMP(pathBuf, homeDir, homeLen) == 0 &&
+                        pathBuf[homeLen] == '\0') ||
+                        WSTRCMP(pathBuf, "/") == 0) {
+                    break;
+                }
+            }
+        }
+    }
+
+    return ret;
+#else
+    WOLFSSH_UNUSED(path);
+    WOLFSSH_UNUSED(homeDir);
+    WOLFSSH_UNUSED(uid);
+    WOLFSSH_UNUSED(checkOwner);
+    WOLFSSH_UNUSED(checkChain);
+    WOLFSSH_UNUSED(noReadOthers);
+    return WS_SUCCESS;
+#endif
+}
+
 static int SearchForPubKey(const char* path, const char* authKeysFile,
-                           const WS_UserAuthData_PublicKey* pubKeyCtx)
+                           const WS_UserAuthData_PublicKey* pubKeyCtx,
+                           WUID_T uid, int strictModes)
 {
     int ret = WSSHD_AUTH_SUCCESS;
     char authKeysPath[MAX_PATH_SZ];
@@ -544,6 +713,20 @@ static int SearchForPubKey(const char* path, const char* authKeysFile,
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failed to resolve authorized keys"
             " file path.");
         ret = rc;
+    }
+
+    /* When StrictModes is enabled, refuse the authorized keys file if it or any
+     * parent directory up to the home directory is owned by another user or is
+     * group/world writable. */
+    if (ret == WSSHD_AUTH_SUCCESS && strictModes) {
+        if (wolfSSHD_CheckFilePermissions(authKeysPath, path, uid,
+                1 /* checkOwner */, 1 /* checkChain */, 0 /* noReadOthers */)
+                != WS_SUCCESS) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Authorized keys file %s failed StrictModes check",
+                authKeysPath);
+            ret = WSSHD_AUTH_FAILURE;
+        }
     }
 
     if (ret == WSSHD_AUTH_SUCCESS) {
@@ -705,7 +888,8 @@ static int CheckPublicKeyUnix(const char* name,
         }
 
         if (ret == WSSHD_AUTH_SUCCESS) {
-            ret = SearchForPubKey(pwInfo->pw_dir, authorizedKeysFile, pubKeyCtx);
+            ret = SearchForPubKey(pwInfo->pw_dir, authorizedKeysFile, pubKeyCtx,
+                pwInfo->pw_uid, wolfSSHD_ConfigGetStrictModes(authCtx->conf));
         }
     }
 
@@ -1049,7 +1233,8 @@ static int CheckPublicKeyWIN(const char* usr,
             if (ret == WSSHD_AUTH_SUCCESS) {
                 r[rSz-1] = L'\0';
 
-                ret = SearchForPubKey(r, authorizedKeysFile, pubKeyCtx);
+                ret = SearchForPubKey(r, authorizedKeysFile, pubKeyCtx, 0,
+                    wolfSSHD_ConfigGetStrictModes(authCtx->conf));
                 if (ret != WSSHD_AUTH_SUCCESS) {
                     wolfSSH_Log(WS_LOG_ERROR,
                         "[SSHD] Failed to find public key for user %s", usr);

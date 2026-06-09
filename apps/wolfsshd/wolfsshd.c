@@ -347,6 +347,20 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] No host private key set");
             ret = WS_BAD_ARGUMENT;
         }
+#ifndef _WIN32
+        /* When StrictModes is enabled, refuse the host private key if it is
+         * group/world readable or writable (it is a secret). Ownership is not
+         * checked because the server may run privileged against a key owned by
+         * an unprivileged service account. */
+        else if (wolfSSHD_ConfigGetStrictModes(conf) &&
+                 wolfSSHD_CheckFilePermissions(hostKey, NULL, getuid(),
+                    0 /* checkOwner */, 0 /* checkChain */, 1 /* noReadOthers */)
+                    != WS_SUCCESS) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Host private key %s failed StrictModes check", hostKey);
+            ret = WS_BAD_FILE_E;
+        }
+#endif
         else {
             byte* data;
             word32 dataSz = 0;

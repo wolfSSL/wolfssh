@@ -23,6 +23,13 @@
 #include <configuration.h>
 #include <auth.h>
 
+#ifndef _WIN32
+    #include <unistd.h>
+    #include <sys/stat.h>
+    #include <stdio.h>
+    #include <stdlib.h>
+#endif
+
 #ifndef WOLFSSH_DEFAULT_LOG_WIDTH
     #define WOLFSSH_DEFAULT_LOG_WIDTH 120
 #endif
@@ -194,6 +201,11 @@ static int test_ConfigDefaults(void)
         if (wolfSSHD_ConfigGetPwAuth(conf) == 0)
             ret = WS_FATAL_ERROR;
     }
+    if (ret == WS_SUCCESS) {
+        /* StrictModes defaults to on */
+        if (wolfSSHD_ConfigGetStrictModes(conf) != 1)
+            ret = WS_FATAL_ERROR;
+    }
 
     wolfSSHD_ConfigFree(conf);
     return ret;
@@ -241,6 +253,11 @@ static int test_ParseConfigLine(void)
         {"Password auth no", "PasswordAuthentication no", 0},
         {"Password auth yes", "PasswordAuthentication yes", 0},
         {"Password auth invalid", "PasswordAuthentication wolfsshd", 1},
+
+        /* StrictModes tests. */
+        {"Strict modes no", "StrictModes no", 0},
+        {"Strict modes yes", "StrictModes yes", 0},
+        {"Strict modes invalid", "StrictModes wolfsshd", 1},
 
         /* Include files tests. */
         {"Include file bad", "Include sshd_config.d/test.bad", 1},
@@ -315,6 +332,8 @@ static int test_ConfigCopy(void)
     if (ret == WS_SUCCESS) ret = PCL("PermitEmptyPasswords yes");
     if (ret == WS_SUCCESS) ret = PCL("PermitRootLogin yes");
     if (ret == WS_SUCCESS) ret = PCL("UsePrivilegeSeparation sandbox");
+    /* set to non-default (default is on) so a dropped copy is detected */
+    if (ret == WS_SUCCESS) ret = PCL("StrictModes no");
 
     /* trigger ConfigCopy via Match; conf advances to the new node */
     if (ret == WS_SUCCESS) ret = PCL("Match User testuser");
@@ -399,6 +418,11 @@ static int test_ConfigCopy(void)
     }
     if (ret == WS_SUCCESS) {
         if (wolfSSHD_ConfigGetPrivilegeSeparation(match) != WOLFSSHD_PRIV_SANDBOX)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        /* source set StrictModes off; the copy must carry it over */
+        if (wolfSSHD_ConfigGetStrictModes(match) != 0)
             ret = WS_FATAL_ERROR;
     }
 
@@ -855,6 +879,200 @@ static int test_CAKeysFileDiffers(void)
     return ret;
 }
 
+#ifndef _WIN32
+/* report a single CheckFilePermissions scenario; returns WS_SUCCESS when the
+ * observed result matches expectation (wantOk != 0 means expect acceptance) */
+static int smExpect(const char* desc, int gotRet, int wantOk)
+{
+    int ok = wantOk ? (gotRet == WS_SUCCESS) : (gotRet != WS_SUCCESS);
+
+    Log("    Testing scenario: %s. %s\n", desc, ok ? "PASSED" : "FAILED");
+    return ok ? WS_SUCCESS : WS_FATAL_ERROR;
+}
+
+/* establish a scenario precondition; returns WS_SUCCESS when the chmod
+ * succeeded so a failed setup does not masquerade as a passing scenario */
+static int smChmod(const char* path, mode_t mode)
+{
+    int ret = WS_SUCCESS;
+
+    if (chmod(path, mode) != 0) {
+        Log("    chmod of %s failed.\n", path);
+        ret = WS_FATAL_ERROR;
+    }
+    return ret;
+}
+
+static int test_CheckFilePermissions(void)
+{
+    int ret = WS_SUCCESS;
+    char base[] = "/tmp/wolfsshd_smXXXXXX";
+    /* initialized so the unconditional cleanup is harmless if mkdtemp fails */
+    char ssh[64] = "";
+    char keys[96] = "";
+    char hostkey[96] = "";
+    char linkKeys[96] = "";
+    WUID_T uid = getuid();
+    FILE* f = NULL;
+
+    if (mkdtemp(base) == NULL) {
+        Log("    mkdtemp failed.\n");
+        ret = WS_FATAL_ERROR;
+    }
+
+    if (ret == WS_SUCCESS) {
+        snprintf(ssh, sizeof(ssh), "%s/.ssh", base);
+        snprintf(keys, sizeof(keys), "%s/.ssh/authorized_keys", base);
+        snprintf(hostkey, sizeof(hostkey), "%s/host_key", base);
+        snprintf(linkKeys, sizeof(linkKeys), "%s/.ssh/link_keys", base);
+
+        if (mkdir(ssh, 0700) != 0) {
+            ret = WS_FATAL_ERROR;
+        }
+    }
+    if (ret == WS_SUCCESS) {
+        f = fopen(keys, "w");
+        if (f == NULL) {
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            fputs("ssh-rsa AAAA test\n", f);
+            fclose(f);
+        }
+    }
+    if (ret == WS_SUCCESS) {
+        f = fopen(hostkey, "w");
+        if (f == NULL) {
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            fputs("KEYDATA\n", f);
+            fclose(f);
+        }
+    }
+
+    /* authorized_keys style: owner + write + chain */
+    if (ret == WS_SUCCESS)
+        ret = smChmod(base, 0700);
+    if (ret == WS_SUCCESS)
+        ret = smChmod(ssh, 0700);
+    if (ret == WS_SUCCESS)
+        ret = smChmod(keys, 0600);
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("good perms accepted",
+            wolfSSHD_CheckFilePermissions(keys, base, uid, 1, 1, 0), 1);
+    }
+    if (ret == WS_SUCCESS)
+        ret = smChmod(keys, 0660);
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("group-writable file rejected",
+            wolfSSHD_CheckFilePermissions(keys, base, uid, 1, 1, 0), 0);
+    }
+    if (ret == WS_SUCCESS)
+        ret = smChmod(keys, 0606);
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("world-writable file rejected",
+            wolfSSHD_CheckFilePermissions(keys, base, uid, 1, 1, 0), 0);
+    }
+    if (ret == WS_SUCCESS)
+        ret = smChmod(keys, 0600);
+    if (ret == WS_SUCCESS)
+        ret = smChmod(ssh, 0770);
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("group-writable parent dir rejected",
+            wolfSSHD_CheckFilePermissions(keys, base, uid, 1, 1, 0), 0);
+    }
+    if (ret == WS_SUCCESS)
+        ret = smChmod(ssh, 0700);
+    /* The temp dir lives under the world-writable /tmp. An in-home lookup stops
+     * at the home directory, so /tmp above it is never checked (see "good perms
+     * accepted"). Treating the same file as outside the home directory makes the
+     * walk continue to the filesystem root, where the world-writable /tmp
+     * ancestor is rejected. Ownership is not enforced on out-of-home ancestors,
+     * only writability. */
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("out-of-home file walks to root, writable ancestor rejected",
+            wolfSSHD_CheckFilePermissions(keys, "/nonexistent_home", uid,
+                1, 1, 0), 0);
+    }
+    /* The helper accepts root-owned files, so the wrong-owner assertion is only
+     * meaningful when the test is not running as root. */
+    if (ret == WS_SUCCESS && uid != 0) {
+        ret = smExpect("wrong owner rejected",
+            wolfSSHD_CheckFilePermissions(keys, base, uid + 1, 1, 1, 0), 0);
+    }
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("wrong owner ignored when checkOwner=0",
+            wolfSSHD_CheckFilePermissions(keys, base, uid + 1, 0, 1, 0), 1);
+    }
+    /* a symlinked authorized_keys pointing at a safe regular file is accepted:
+     * stat() follows the link and validates the target */
+    if (ret == WS_SUCCESS) {
+        if (symlink(keys, linkKeys) != 0) {
+            Log("    symlink creation failed.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("symlinked authorized_keys accepted",
+            wolfSSHD_CheckFilePermissions(linkKeys, base, uid, 1, 1, 0), 1);
+    }
+    /* with checkChain=0 the parent directories are intentionally not inspected,
+     * so a group-writable .ssh does not cause rejection */
+    if (ret == WS_SUCCESS)
+        ret = smChmod(ssh, 0770);
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("checkChain=0 skips parent dirs",
+            wolfSSHD_CheckFilePermissions(keys, base, uid, 1, 0, 0), 1);
+    }
+    if (ret == WS_SUCCESS)
+        ret = smChmod(ssh, 0700);
+    /* a non-regular-file target (here a directory) is rejected */
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("directory target rejected (not a regular file)",
+            wolfSSHD_CheckFilePermissions(ssh, base, uid, 1, 0, 0), 0);
+    }
+
+    /* host key style: no owner check, reject group/world readable */
+    if (ret == WS_SUCCESS)
+        ret = smChmod(hostkey, 0600);
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("host key 0600 accepted",
+            wolfSSHD_CheckFilePermissions(hostkey, NULL, uid, 0, 0, 1), 1);
+    }
+    if (ret == WS_SUCCESS)
+        ret = smChmod(hostkey, 0640);
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("group-readable host key rejected",
+            wolfSSHD_CheckFilePermissions(hostkey, NULL, uid, 0, 0, 1), 0);
+    }
+    if (ret == WS_SUCCESS)
+        ret = smChmod(hostkey, 0604);
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("world-readable host key rejected",
+            wolfSSHD_CheckFilePermissions(hostkey, NULL, uid, 0, 0, 1), 0);
+    }
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("missing file rejected",
+            wolfSSHD_CheckFilePermissions("/tmp/wolfsshd_sm_dne_xyz", NULL,
+                uid, 0, 0, 0), 0);
+    }
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("NULL path rejected",
+            wolfSSHD_CheckFilePermissions(NULL, NULL, uid, 0, 0, 0), 0);
+    }
+
+    /* cleanup */
+    unlink(linkKeys);
+    unlink(keys);
+    unlink(hostkey);
+    rmdir(ssh);
+    rmdir(base);
+
+    return ret;
+}
+#endif /* !_WIN32 */
+
 const TEST_CASE testCases[] = {
     TEST_DECL(test_ConfigDefaults),
     TEST_DECL(test_ParseConfigLine),
@@ -862,6 +1080,9 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_GetUserConfMatchOverride),
     TEST_DECL(test_CAKeysFileDiffers),
     TEST_DECL(test_ConfigFree),
+#ifndef _WIN32
+    TEST_DECL(test_CheckFilePermissions),
+#endif
 #ifdef WOLFSSL_BASE64_ENCODE
     TEST_DECL(test_CheckAuthKeysLine),
 #endif
