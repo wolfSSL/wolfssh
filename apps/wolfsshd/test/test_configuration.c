@@ -194,6 +194,10 @@ static int test_ConfigDefaults(void)
         if (wolfSSHD_ConfigGetPwAuth(conf) == 0)
             ret = WS_FATAL_ERROR;
     }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetPubKeyAuth(conf) == 0)
+            ret = WS_FATAL_ERROR;
+    }
 
     wolfSSHD_ConfigFree(conf);
     return ret;
@@ -241,6 +245,11 @@ static int test_ParseConfigLine(void)
         {"Password auth no", "PasswordAuthentication no", 0},
         {"Password auth yes", "PasswordAuthentication yes", 0},
         {"Password auth invalid", "PasswordAuthentication wolfsshd", 1},
+
+        /* Public key auth tests. */
+        {"Pubkey auth no", "PubkeyAuthentication no", 0},
+        {"Pubkey auth yes", "PubkeyAuthentication yes", 0},
+        {"Pubkey auth invalid", "PubkeyAuthentication wolfsshd", 1},
 
         /* Include files tests. */
         {"Include file bad", "Include sshd_config.d/test.bad", 1},
@@ -312,6 +321,9 @@ static int test_ConfigCopy(void)
     if (ret == WS_SUCCESS) ret = PCL("Port 2222");
     if (ret == WS_SUCCESS) ret = PCL("LoginGraceTime 30");
     if (ret == WS_SUCCESS) ret = PCL("PasswordAuthentication yes");
+    /* set to the non-default value so a dropped copy (which would leave the
+     * wolfSSHD_ConfigNew default of 1) is caught */
+    if (ret == WS_SUCCESS) ret = PCL("PubkeyAuthentication no");
     if (ret == WS_SUCCESS) ret = PCL("PermitEmptyPasswords yes");
     if (ret == WS_SUCCESS) ret = PCL("PermitRootLogin yes");
     if (ret == WS_SUCCESS) ret = PCL("UsePrivilegeSeparation sandbox");
@@ -389,6 +401,12 @@ static int test_ConfigCopy(void)
         if (wolfSSHD_ConfigGetPwAuth(match) == 0)
             ret = WS_FATAL_ERROR;
     }
+    /* pubKeyAuth was set to the non-default 'no' (0) on the head, so the copy
+     * must carry 0; a dropped copy would surface as the default 1 here */
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetPubKeyAuth(match) != 0)
+            ret = WS_FATAL_ERROR;
+    }
     if (ret == WS_SUCCESS) {
         if (wolfSSHD_ConfigGetPermitEmptyPw(match) == 0)
             ret = WS_FATAL_ERROR;
@@ -448,14 +466,17 @@ static int test_GetUserConfMatchOverride(void)
      * global head node unchanged. */
     if (ret == WS_SUCCESS) ret = PCL("Match User testuser");
     if (ret == WS_SUCCESS) ret = PCL("PasswordAuthentication no");
+    if (ret == WS_SUCCESS) ret = PCL("PubkeyAuthentication no");
     if (ret == WS_SUCCESS) ret = PCL("PermitEmptyPasswords no");
     if (ret == WS_SUCCESS) ret = PCL("PermitRootLogin no");
     if (ret == WS_SUCCESS) ret = PCL("AuthorizedKeysFile .ssh/match_keys");
 #undef PCL
 
-    /* the global head node must keep the permissive values */
+    /* the global head node must keep the permissive values (pubKeyAuth keeps
+     * its default of 1, proving the Match override did not leak to the head) */
     if (ret == WS_SUCCESS) {
         if (wolfSSHD_ConfigGetPwAuth(head) != 1 ||
+            wolfSSHD_ConfigGetPubKeyAuth(head) != 1 ||
             wolfSSHD_ConfigGetPermitEmptyPw(head) != 1 ||
             wolfSSHD_ConfigGetPermitRoot(head) != 1)
             ret = WS_FATAL_ERROR;
@@ -473,6 +494,7 @@ static int test_GetUserConfMatchOverride(void)
      * ones RequestAuthentication and DoCheckUser will now enforce */
     if (ret == WS_SUCCESS) {
         if (wolfSSHD_ConfigGetPwAuth(match) != 0 ||
+            wolfSSHD_ConfigGetPubKeyAuth(match) != 0 ||
             wolfSSHD_ConfigGetPermitEmptyPw(match) != 0 ||
             wolfSSHD_ConfigGetPermitRoot(match) != 0)
             ret = WS_FATAL_ERROR;
@@ -1005,6 +1027,73 @@ static int test_CAKeysFileDiffers(void)
     return ret;
 }
 
+/* Exercises the auth-method advertisement logic used by DefaultUserAuthTypes:
+ * a method is only offered when its config option is enabled. Covers all four
+ * permutations of PasswordAuthentication and PubkeyAuthentication, including the
+ * security-relevant cases where pubkey is disabled and where both are disabled
+ * (no methods advertised, mask == 0). */
+static int test_GetUserAuthTypes(void)
+{
+    int ret = WS_SUCCESS;
+    int i;
+
+    static const struct {
+        const char* desc;
+        int pwAuth;     /* 1 = leave enabled, 0 = PasswordAuthentication no */
+        int pubKeyAuth; /* 1 = leave enabled, 0 = PubkeyAuthentication no */
+        int expected;
+    } vectors[] = {
+        {"both enabled advertises both", 1, 1,
+            WOLFSSH_USERAUTH_PASSWORD | WOLFSSH_USERAUTH_PUBLICKEY},
+        {"pubkey disabled advertises password only", 1, 0,
+            WOLFSSH_USERAUTH_PASSWORD},
+        {"password disabled advertises pubkey only", 0, 1,
+            WOLFSSH_USERAUTH_PUBLICKEY},
+        {"both disabled advertises nothing", 0, 0, 0},
+    };
+    const int numVectors = (int)(sizeof(vectors) / sizeof(*vectors));
+    WOLFSSHD_CONFIG* conf;
+
+    for (i = 0; i < numVectors && ret == WS_SUCCESS; ++i) {
+        Log("    Testing scenario: %s.", vectors[i].desc);
+
+        conf = wolfSSHD_ConfigNew(NULL);
+        if (conf == NULL) {
+            Log(" FAILED.\n");
+            ret = WS_MEMORY_E;
+            break;
+        }
+
+        /* both options default to enabled in wolfSSHD_ConfigNew, so only the
+         * disabled cases need an explicit directive */
+        if (vectors[i].pwAuth == 0) {
+            ret = ParseConfigLine(&conf, "PasswordAuthentication no",
+                    (int)WSTRLEN("PasswordAuthentication no"), 0);
+        }
+        if (ret == WS_SUCCESS && vectors[i].pubKeyAuth == 0) {
+            ret = ParseConfigLine(&conf, "PubkeyAuthentication no",
+                    (int)WSTRLEN("PubkeyAuthentication no"), 0);
+        }
+
+        if (ret == WS_SUCCESS) {
+            if (wolfSSHD_GetUserAuthTypes(conf) != vectors[i].expected) {
+                Log(" FAILED.\n");
+                ret = WS_FATAL_ERROR;
+            }
+            else {
+                Log(" PASSED.\n");
+            }
+        }
+        else {
+            Log(" FAILED.\n");
+        }
+
+        wolfSSHD_ConfigFree(conf);
+    }
+
+    return ret;
+}
+
 const TEST_CASE testCases[] = {
     TEST_DECL(test_ConfigDefaults),
     TEST_DECL(test_ParseConfigLine),
@@ -1013,6 +1102,7 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_MatchUnsupportedSelector),
     TEST_DECL(test_CAKeysFileDiffers),
     TEST_DECL(test_IncludeRecursionBound),
+    TEST_DECL(test_GetUserAuthTypes),
     TEST_DECL(test_ConfigFree),
 #ifdef WOLFSSL_BASE64_ENCODE
     TEST_DECL(test_CheckAuthKeysLine),

@@ -23,6 +23,15 @@
 
 typedef struct WOLFSSHD_CONFIG WOLFSSHD_CONFIG;
 
+/* Expose otherwise-static wolfsshd internals to the unit tests while keeping
+ * them file-local in normal builds. Shared so configuration.c and auth.c use
+ * the same convention. */
+#ifdef WOLFSSHD_UNIT_TEST
+#define WOLFSSHD_STATIC
+#else
+#define WOLFSSHD_STATIC static
+#endif
+
 #include "auth.h"
 
 /* 0 so that privilege separation is default on after struct memset'd on init */
@@ -52,6 +61,7 @@ byte wolfSSHD_ConfigGetPermitRoot(const WOLFSSHD_CONFIG* conf);
 byte wolfSSHD_ConfigGetPrivilegeSeparation(const WOLFSSHD_CONFIG* conf);
 long wolfSSHD_ConfigGetGraceTime(const WOLFSSHD_CONFIG* conf);
 byte wolfSSHD_ConfigGetPwAuth(const WOLFSSHD_CONFIG* conf);
+byte wolfSSHD_ConfigGetPubKeyAuth(const WOLFSSHD_CONFIG* conf);
 WOLFSSHD_CONFIG* wolfSSHD_GetUserConf(const WOLFSSHD_CONFIG* conf,
         const char* usr, const char* grp, const char* host,
         const char* localAdr, word16* localPort, const char* RDomain,

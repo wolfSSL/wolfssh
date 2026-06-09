@@ -16466,6 +16466,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
 static int GetAllowedAuth(WOLFSSH* ssh, char* authStr)
 {
     int typeAllowed = 0;
+    int authStrSz;
 
     if (ssh == NULL || authStr == NULL)
         return WS_BAD_ARGUMENT;
@@ -16496,8 +16497,16 @@ static int GetAllowedAuth(WOLFSSH* ssh, char* authStr)
     }
 #endif
 
-    /* remove last comma from the list */
-    return (int)XSTRLEN(authStr) - 1;
+    /* Remove the trailing comma from the list. An empty list (no auth methods
+     * allowed, e.g. a server callback that returns 0) has length 0 and must not
+     * underflow to a negative size; return 0 so SendUserAuthFailure emits a
+     * valid USERAUTH_FAILURE with an empty name-list per RFC 4252. */
+    authStrSz = (int)XSTRLEN(authStr);
+    if (authStrSz > 0) {
+        authStrSz--;
+    }
+
+    return authStrSz;
 }
 
 int SendUserAuthFailure(WOLFSSH* ssh, byte partialSuccess)
@@ -18457,6 +18466,11 @@ int wolfSSH_TestDoUserAuthRequest(WOLFSSH* ssh, byte* buf, word32 len,
         word32* idx)
 {
     return DoUserAuthRequest(ssh, buf, len, idx);
+}
+
+int wolfSSH_TestSendUserAuthFailure(WOLFSSH* ssh, byte partialSuccess)
+{
+    return SendUserAuthFailure(ssh, partialSuccess);
 }
 
 int wolfSSH_TestHighwaterCheck(WOLFSSH* ssh, byte side)
