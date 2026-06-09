@@ -235,8 +235,20 @@ static void freeBufferFromFile(byte* buf, void* heap)
 }
 
 
+/* Load class for getBufferFromFile(). NORMAL files (e.g. the banner) are opened
+ * directly. TRUST and SECRET files are trust anchors loaded through the secure
+ * gate (no symlink, owned by root or the daemon, no group/world writable path
+ * component); SECRET additionally rejects a group/world readable file, used for
+ * the host private key. */
+enum {
+    WOLFSSHD_LOAD_NORMAL = 0,
+    WOLFSSHD_LOAD_TRUST  = 1,
+    WOLFSSHD_LOAD_SECRET = 2
+};
+
 /* set bufSz to size wanted if too small and buf is null */
-static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap)
+static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap,
+        int loadClass)
 {
     FILE* file;
     byte* buf = NULL;
@@ -247,8 +259,26 @@ static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap)
 
     if (fileName == NULL) return NULL;
 
-    if (WFOPEN(NULL, &file, fileName, "rb") != 0)
-        return NULL;
+    if (loadClass == WOLFSSHD_LOAD_NORMAL) {
+        if (WFOPEN(NULL, &file, fileName, "rb") != 0)
+            return NULL;
+    }
+    else {
+        /* Trust anchors always go through the secure gate, regardless of
+         * StrictModes. The owner is the daemon's effective user (or root), and
+         * the host private key (SECRET) is also refused if group/world
+         * readable. */
+        if (wolfSSHD_OpenSecureFile(fileName,
+#ifndef _WIN32
+                geteuid(),
+#else
+                0,
+#endif
+                loadClass == WOLFSSHD_LOAD_SECRET /* rejectReadable */,
+                heap, &file) != WS_SUCCESS) {
+            return NULL;
+        }
+    }
     WFSEEK(NULL, file, 0, WSEEK_END);
     fileSz = WFTELL(NULL, file);
     if (fileSz < 0) {
@@ -265,6 +295,10 @@ static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap)
             WFREE(buf, heap, DYNTYPE_SSHD);
             return NULL;
         }
+        /* NUL terminate so callers that treat the buffer as a C string (e.g.
+         * the banner via wolfSSH_CTX_SetBanner/WSTRLEN) do not read past the
+         * allocation. The extra byte was already accounted for above. */
+        buf[readSz] = '\0';
         if (bufSz)
             *bufSz = readSz;
     }
@@ -329,7 +363,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
     if (ret == WS_SUCCESS) {
 #ifndef NO_FILESYSTEM
         *banner = getBufferFromFile(wolfSSHD_ConfigGetBanner(conf),
-                NULL, heap);
+                NULL, heap, WOLFSSHD_LOAD_NORMAL);
 #endif
         if (*banner) {
             wolfSSH_CTX_SetBanner(*ctx, (char*)*banner);
@@ -349,11 +383,19 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
             byte* data;
             word32 dataSz = 0;
 
-            data = getBufferFromFile(hostKey, &dataSz, heap);
+            /* The host private key is a secret trust anchor: refuse a symlink,
+             * an unsafe owner or path, or a group/world readable/writable
+             * file. */
+            data = getBufferFromFile(hostKey, &dataSz, heap,
+                WOLFSSHD_LOAD_SECRET);
             if (data == NULL) {
+                /* NULL means the secure gate rejected the file (bad owner,
+                 * symlink, group/world writable/readable; reason already
+                 * logged) or the read failed, so report a file error rather
+                 * than a memory error. */
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Error reading host key file.");
-                ret = WS_MEMORY_E;
+                ret = WS_BAD_FILE_E;
 
             }
 
@@ -393,11 +435,13 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
             byte*  data;
             word32 dataSz = 0;
 
-            data = getBufferFromFile(hostCert, &dataSz, heap);
+            data = getBufferFromFile(hostCert, &dataSz, heap,
+                WOLFSSHD_LOAD_TRUST);
             if (data == NULL) {
+                /* secure-gate rejection or read failure, not memory */
                 wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] Error reading host key file.");
-                ret = WS_MEMORY_E;
+                    "[SSHD] Error reading host certificate file.");
+                ret = WS_BAD_FILE_E;
 
             }
 
@@ -439,11 +483,13 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
 
 
             wolfSSH_Log(WS_LOG_INFO, "[SSHD] Using CA keys file %s", caCert);
-            data = getBufferFromFile(caCert, &dataSz, heap);
+            data = getBufferFromFile(caCert, &dataSz, heap,
+                WOLFSSHD_LOAD_TRUST);
             if (data == NULL) {
+                /* secure-gate rejection or read failure, not memory */
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Error reading CA cert file.");
-                ret = WS_MEMORY_E;
+                ret = WS_BAD_FILE_E;
 
             }
 

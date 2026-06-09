@@ -80,6 +80,12 @@ HANDLE wolfSSHD_GetAuthToken(const WOLFSSHD_AUTH* auth);
 int wolfSSHD_GetHomeDirectory(WOLFSSHD_AUTH* auth, WOLFSSH* ssh, WCHAR* out, int outSz);
 #endif
 
+/* Secure open for trusted files, shared by the authorized_keys path (auth.c)
+ * and the trust-anchor loads in wolfsshd.c (host key, host cert, user CA keys).
+ * See the definition in auth.c for the meaning of each argument. */
+int wolfSSHD_OpenSecureFile(const char* path, WUID_T ownerUid,
+    int rejectReadable, void* heap, WFILE** out);
+
 #ifdef WOLFSSHD_UNIT_TEST
 #ifndef _WIN32
 extern int (*wsshd_setregid_cb)(WGID_T, WGID_T);

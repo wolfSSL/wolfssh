@@ -69,9 +69,22 @@
 
 #ifndef _WIN32
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <pwd.h>
 #include <grp.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <limits.h>
+#include <stdlib.h>
+#ifndef O_NOFOLLOW
+    /* Older platforms lack O_NOFOLLOW; the lstat() pre-check and the post-open
+     * st_dev/st_ino comparison still reject a symlinked leaf there. */
+    #define O_NOFOLLOW 0
+#endif
+#ifndef PATH_MAX
+    #define PATH_MAX 4096
+#endif
 #endif
 
 #if !defined(_WIN32) && !(defined(__OSX__) || defined(__APPLE__))
@@ -526,8 +539,225 @@ static int ResolveAuthKeysPath(const char* homeDir, const char* pattern,
     return ret;
 }
 
+/* Securely open a trusted file, failing closed on a symlink, bad ownership, or
+ * unsafe permissions, and hand back an open stream ready for reading. This is
+ * the single gate for every security-critical file wolfsshd loads: a user's
+ * authorized_keys, the host private key, the host certificate, and the user
+ * certificate-authority keys.
+ *
+ *   path           - file to open.
+ *   ownerUid       - the file itself must be owned by this user id or by root
+ *                    (0). authorized_keys uses the owning user's id; the
+ *                    daemon's trust anchors use the effective user id. Parent
+ *                    directories are checked for writability but not ownership,
+ *                    so a file may legitimately live under a directory owned by
+ *                    a third party (e.g. a key under a build checkout or a
+ *                    service account's tree).
+ *   rejectReadable - when set, also refuse a file that is group or world
+ *                    readable. Used for secrets such as the host private key.
+ *   heap           - heap hint for the temporary path buffer.
+ *   out            - set to the open stream on success, WBADFILE otherwise.
+ *
+ * Returns WS_SUCCESS and sets *out on success; a specific reason is logged on
+ * failure. On platforms without POSIX ownership semantics (_WIN32) the checks
+ * are skipped and the file is opened directly, relying on filesystem ACLs. */
+int wolfSSHD_OpenSecureFile(const char* path, WUID_T ownerUid,
+        int rejectReadable, void* heap, WFILE** out)
+{
+#ifndef _WIN32
+    int ret = WS_SUCCESS;
+    int fd = -1;
+    int flags;
+    struct stat lst;
+    struct stat st;
+    WFILE* f;
+    char* resolved = NULL;
+    char* slash;
+    word32 i;
+
+    if (path == NULL || out == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+    *out = WBADFILE;
+
+    /* The leaf must be a real, regular file. lstat() (not stat()) is used so a
+     * symlinked leaf is rejected outright rather than silently followed to an
+     * attacker-chosen target. */
+    if (lstat(path, &lst) != 0 || !S_ISREG(lst.st_mode)) {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] Refusing to load %s: missing, not a regular file, or a "
+            "symlink", path);
+        ret = WS_BAD_FILE_E;
+    }
+
+    /* Canonicalize the path with realpath(), resolving any intermediate
+     * symlinks, then open and validate that canonical path so the file opened
+     * and the parent chain validated below are one and the same. */
+    if (ret == WS_SUCCESS) {
+        resolved = (char*)WMALLOC(PATH_MAX, heap, DYNTYPE_BUFFER);
+        if (resolved == NULL) {
+            ret = WS_MEMORY_E;
+        }
+    }
+    if (ret == WS_SUCCESS) {
+        if (realpath(path, resolved) == NULL) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to resolve path %s", path);
+            ret = WS_BAD_FILE_E;
+        }
+    }
+
+    /* Open the canonicalized path (not the original) so the directory chain
+     * validated below is exactly the chain open() traverses. realpath() already
+     * resolved every intermediate symlink; O_NOFOLLOW guards the
+     * already-verified non-symlink leaf, and O_NONBLOCK keeps the open from
+     * stalling on a FIFO swapped in after the lstat() and is cleared before the
+     * buffered reads. The original path is used only in log messages. */
+    if (ret == WS_SUCCESS) {
+        fd = open(resolved, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+        if (fd < 0) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to open %s", path);
+            ret = WS_BAD_FILE_E;
+        }
+    }
+    if (ret == WS_SUCCESS) {
+        if (fstat(fd, &st) != 0) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to stat %s", path);
+            ret = WS_BAD_FILE_E;
+        }
+    }
+    /* The ownership and mode checks run on the opened descriptor so there is no
+     * window to swap the file after the check. Comparing st_dev/st_ino against
+     * the earlier lstat() closes the narrow swap window on platforms where
+     * O_NOFOLLOW is unavailable and compiles to 0. */
+    if (ret == WS_SUCCESS) {
+        if (!S_ISREG(st.st_mode)) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Refusing to load %s: not a regular file", path);
+            ret = WS_BAD_FILE_E;
+        }
+        else if (st.st_uid != ownerUid && st.st_uid != 0) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Refusing to load %s: not owned by the user or root",
+                path);
+            ret = WS_BAD_FILE_E;
+        }
+        else if ((st.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Refusing to load %s: group or world writable", path);
+            ret = WS_BAD_FILE_E;
+        }
+        else if (rejectReadable && (st.st_mode & (S_IRGRP | S_IROTH)) != 0) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Refusing to load %s: group or world readable", path);
+            ret = WS_BAD_FILE_E;
+        }
+        else if (st.st_dev != lst.st_dev || st.st_ino != lst.st_ino) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Refusing to load %s: file changed during open", path);
+            ret = WS_BAD_FILE_E;
+        }
+    }
+
+    /* Validate every parent directory of the canonicalized path up to the
+     * filesystem root: none may be group or world writable (unless sticky),
+     * which is what would let another user rename the file and swap it. Ancestor
+     * ownership is not enforced; the leaf owner check above is what stops a file
+     * owned by a third party from being loaded. Since realpath() resolved all
+     * intermediate symlinks, this is the same chain open() traversed. The walk
+     * trims components from 'resolved' in place, which is fine now that the file
+     * is already open. */
+    while (ret == WS_SUCCESS) {
+        /* trim the last component to move up one directory */
+        slash = NULL;
+        for (i = 0; resolved[i] != '\0'; i++) {
+            if (resolved[i] == '/') {
+                slash = &resolved[i];
+            }
+        }
+        if (slash == NULL) {
+            break; /* no further parent (realpath always returns an absolute
+                    * path, so this is not expected) */
+        }
+        if (slash == resolved) {
+            resolved[1] = '\0'; /* parent is the root directory "/" */
+        }
+        else {
+            *slash = '\0';
+        }
+
+        if (stat(resolved, &st) != 0) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Unable to stat directory %s", resolved);
+            ret = WS_BAD_FILE_E;
+        }
+        else if (!S_ISDIR(st.st_mode)) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] %s is not a directory", resolved);
+            ret = WS_BAD_FILE_E;
+        }
+        else if ((st.st_mode & (S_IWGRP | S_IWOTH)) != 0 &&
+                 (st.st_mode & S_ISVTX) == 0) {
+            /* A world/group writable directory is unsafe unless it is sticky:
+             * the sticky bit stops a non-owner from renaming or deleting files
+             * they do not own, which is exactly the substitution this guards
+             * against (e.g. /tmp is mode 1777). */
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Directory %s is group or world writable", resolved);
+            ret = WS_BAD_FILE_E;
+        }
+
+        if (ret != WS_SUCCESS || WSTRCMP(resolved, "/") == 0) {
+            break; /* reached the filesystem root */
+        }
+    }
+
+    /* The target is a regular file, so restore blocking semantics for the
+     * buffered reads the caller will perform. */
+    if (ret == WS_SUCCESS) {
+        flags = fcntl(fd, F_GETFL);
+        if (flags != -1) {
+            (void)fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+        }
+        f = fdopen(fd, "rb");
+        if (f == NULL) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Unable to open stream for %s", path);
+            ret = WS_BAD_FILE_E;
+        }
+        else {
+            fd = -1; /* ownership of the descriptor moved to the stream */
+            *out = f;
+        }
+    }
+
+    if (fd >= 0) {
+        close(fd);
+    }
+    if (resolved != NULL) {
+        WFREE(resolved, heap, DYNTYPE_BUFFER);
+    }
+
+    return ret;
+#else
+    WOLFSSH_UNUSED(ownerUid);
+    WOLFSSH_UNUSED(rejectReadable);
+    WOLFSSH_UNUSED(heap);
+
+    if (path == NULL || out == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+    *out = WBADFILE;
+    if (WFOPEN(NULL, out, path, "rb") != 0) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to open %s", path);
+        return WS_BAD_FILE_E;
+    }
+    return WS_SUCCESS;
+#endif
+}
+
 static int SearchForPubKey(const char* path, const char* authKeysFile,
-                           const WS_UserAuthData_PublicKey* pubKeyCtx)
+                           const WS_UserAuthData_PublicKey* pubKeyCtx,
+                           WUID_T uid, int strictModes)
 {
     int ret = WSSHD_AUTH_SUCCESS;
     char authKeysPath[MAX_PATH_SZ];
@@ -546,8 +776,21 @@ static int SearchForPubKey(const char* path, const char* authKeysFile,
         ret = rc;
     }
 
+    /* When StrictModes is enabled, open through the secure gate: the file must
+     * be a regular file (no symlink), owned by the user or root, with no
+     * group/world writable component in its path. When disabled, fall back to a
+     * plain open. */
     if (ret == WSSHD_AUTH_SUCCESS) {
-        if (WFOPEN(NULL, &f, authKeysPath, "rb") != 0) {
+        if (strictModes) {
+            if (wolfSSHD_OpenSecureFile(authKeysPath, uid,
+                    0 /* rejectReadable */, NULL, &f) != WS_SUCCESS) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Authorized keys file %s failed StrictModes check",
+                    authKeysPath);
+                ret = WSSHD_AUTH_FAILURE;
+            }
+        }
+        else if (WFOPEN(NULL, &f, authKeysPath, "rb") != 0) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to open %s",
                 authKeysPath);
             ret = WS_BAD_FILE_E;
@@ -591,6 +834,10 @@ static int SearchForPubKey(const char* path, const char* authKeysFile,
 
     if (f != WBADFILE) {
         WFCLOSE(NULL, f);
+    }
+
+    if (lineBuf != NULL) {
+        WFREE(lineBuf, NULL, DYNTYPE_BUFFER);
     }
 
     if (ret == WSSHD_AUTH_SUCCESS && !foundKey) {
@@ -705,7 +952,8 @@ static int CheckPublicKeyUnix(const char* name,
         }
 
         if (ret == WSSHD_AUTH_SUCCESS) {
-            ret = SearchForPubKey(pwInfo->pw_dir, authorizedKeysFile, pubKeyCtx);
+            ret = SearchForPubKey(pwInfo->pw_dir, authorizedKeysFile, pubKeyCtx,
+                pwInfo->pw_uid, wolfSSHD_ConfigGetStrictModes(authCtx->conf));
         }
     }
 
@@ -1049,7 +1297,8 @@ static int CheckPublicKeyWIN(const char* usr,
             if (ret == WSSHD_AUTH_SUCCESS) {
                 r[rSz-1] = L'\0';
 
-                ret = SearchForPubKey(r, authorizedKeysFile, pubKeyCtx);
+                ret = SearchForPubKey(r, authorizedKeysFile, pubKeyCtx, 0,
+                    wolfSSHD_ConfigGetStrictModes(authCtx->conf));
                 if (ret != WSSHD_AUTH_SUCCESS) {
                     wolfSSH_Log(WS_LOG_ERROR,
                         "[SSHD] Failed to find public key for user %s", usr);
