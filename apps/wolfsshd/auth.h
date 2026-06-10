@@ -80,6 +80,12 @@ HANDLE wolfSSHD_GetAuthToken(const WOLFSSHD_AUTH* auth);
 int wolfSSHD_GetHomeDirectory(WOLFSSHD_AUTH* auth, WOLFSSH* ssh, WCHAR* out, int outSz);
 #endif
 
+/* StrictModes permission/ownership check, shared by the authorized_keys path
+ * (auth.c) and the host private key load (wolfsshd.c). See the definition in
+ * auth.c for the meaning of each flag. */
+int wolfSSHD_CheckFilePermissions(const char* path, const char* homeDir,
+    WUID_T uid, int checkOwner, int checkChain, int noReadOthers);
+
 #ifdef WOLFSSHD_UNIT_TEST
 #ifndef _WIN32
 extern int (*wsshd_setregid_cb)(WGID_T, WGID_T);

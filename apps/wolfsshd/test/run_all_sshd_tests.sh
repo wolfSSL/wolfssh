@@ -104,6 +104,72 @@ run_test() {
     fi
 }
 
+# Negative StrictModes check: a group/world readable host private key must make
+# wolfSSHd refuse to start when StrictModes is enabled (guards the wiring
+# between SetupCTX and wolfSSHD_CheckFilePermissions). Runs without sudo:
+# privilege separation is off and a high port is used, so no root is needed.
+run_strictmodes_negative_test() {
+    printf "StrictModes negative host key test ... "
+    # Use a relative host key path: wolfSSH log lines are capped at 120 chars,
+    # so a long absolute path would truncate the "failed StrictModes check"
+    # message this test greps for.
+    cp ../../../keys/server-key.pem strictmodes_hostkey.pem
+    chmod 644 strictmodes_hostkey.pem
+    cat <<EOF > sshd_config_test_strictmodes
+Port 22622
+StrictModes yes
+UsePrivilegeSeparation no
+HostKey strictmodes_hostkey.pem
+EOF
+    rm -f strictmodes_log.txt
+    # -D keeps wolfSSHd in the foreground; a StrictModes failure makes it exit
+    # rather than serve, so this returns on its own. Wrap in 'timeout' when
+    # available so a regression fails the test instead of hanging the runner.
+    TIMEOUT=""
+    if command -v timeout >/dev/null 2>&1; then
+        TIMEOUT="timeout 30"
+    fi
+    $TIMEOUT ../wolfsshd -D -d -f sshd_config_test_strictmodes -E strictmodes_log.txt
+    TOTAL=$((TOTAL+1))
+    if grep -q "failed StrictModes check" strictmodes_log.txt; then
+        printf "PASSED\n"
+    else
+        printf "FAILED!\n"
+        cat strictmodes_log.txt
+        rm -f strictmodes_hostkey.pem sshd_config_test_strictmodes strictmodes_log.txt
+        stop_wolfsshd
+        exit 1
+    fi
+    rm -f strictmodes_hostkey.pem sshd_config_test_strictmodes strictmodes_log.txt
+}
+
+# Negative authorized_keys StrictModes test: a group/world writable
+# authorized_keys file must make public-key authentication fail (exercises the
+# StrictModes branch in SearchForPubKey). Uses the already-running local sshd,
+# whose AuthorizedKeysFile is ./authorized_keys_test.
+run_strictmodes_authkeys_negative_test() {
+    printf "StrictModes negative authorized_keys test ... "
+    chmod 0666 authorized_keys_test
+    local tmo=""
+    if command -v timeout >/dev/null 2>&1; then
+        tmo="timeout 30"
+    fi
+    # public-key auth must be refused while authorized_keys is world writable
+    ( cd ../../.. && $tmo ./examples/client/client -c 'exit' -u "$USER" \
+        -i ./keys/hansel-key-ecc.der -j ./keys/hansel-key-ecc.pub \
+        -h "$TEST_HOST" -p "$TEST_PORT" ) > /dev/null 2>&1
+    local result=$?
+    chmod 0644 authorized_keys_test
+    TOTAL=$((TOTAL+1))
+    if [ "$result" != 0 ]; then
+        printf "PASSED\n"
+    else
+        printf "FAILED! (public-key auth succeeded with world-writable authorized_keys)\n"
+        stop_wolfsshd
+        exit 1
+    fi
+}
+
 # Run the tests
 if [[ -n "$MATCH" ]]; then
     if [[ " ${test_cases[*]} " =~ " $MATCH " ]]; then
@@ -137,6 +203,13 @@ else
     # add additional tests here, check on var USING_LOCAL_HOST if can make sshd
     # server start/restart with changes
 
+    # exercise the authorized_keys StrictModes path against the running sshd
+    if [ "$USING_LOCAL_HOST" == 1 ]; then
+        run_strictmodes_authkeys_negative_test
+    else
+        SKIPPED=$((SKIPPED+1))
+    fi
+
     if [ "$USING_LOCAL_HOST" == 1 ]; then
         printf "Shutting down test wolfSSHd\n"
         stop_wolfsshd
@@ -147,9 +220,10 @@ else
         run_test "sshd_forcedcmd_test.sh"
         run_test "sshd_window_full_test.sh"
         run_test "sshd_empty_password_test.sh"
+        run_strictmodes_negative_test
     else
         printf "Skipping tests that need to setup local SSHD\n"
-        SKIPPED=$((SKIPPED+3))
+        SKIPPED=$((SKIPPED+4))
     fi
 
     # these tests run with X509 sshd-config loaded
