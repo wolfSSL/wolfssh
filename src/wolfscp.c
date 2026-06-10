@@ -2610,6 +2610,18 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
             WSTRNCPY(fileName, sendCtx->entry->d_name,
                      DEFAULT_SCP_FILE_NAME_SZ);
         #endif
+        #ifdef WOLFSSH_HAVE_SYMLINK
+            /* filePath is now fully built.  Reject a planted symlink here,
+             * before GetFileStats (which classifies via WSTAT and follows
+             * links) or any later descend/open follows it - the whole point is
+             * to refuse the link before any file operation traverses it. */
+            if (ret == WS_SUCCESS && WS_IsSymlink(filePath)) {
+                WLOG(WS_LOG_ERROR,
+                    "scp: symlink entry rejected, aborting transfer");
+                ret = WS_SCP_ABORT;
+            }
+        #endif /* WOLFSSH_HAVE_SYMLINK */
+
             if (ret == WS_SUCCESS) {
                 ret = GetFileStats(ssh->fs, sendCtx, filePath, mTime, aTime, fileMode);
             }
@@ -2652,7 +2664,10 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
         }
 
     } else {
-        if (ret != WS_NEXT_ERROR) {
+        /* WS_SCP_ABORT entries (e.g. a rejected symlink) were already logged at
+         * their source, so only the generic, unexpected-error case is noted
+         * here to avoid a misleading second log line. */
+        if (ret != WS_NEXT_ERROR && ret != WS_SCP_ABORT) {
             WLOG(WS_LOG_ERROR, "scp: ret does not equal WS_NEXT_ERROR, abort");
             ret = WS_SCP_ABORT;
         }
@@ -2771,8 +2786,19 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             break;
 
         case WOLFSSH_SCP_SINGLE_FILE_REQUEST:
-            if ((sendCtx == NULL) || WFOPEN(ssh->fs, &(sendCtx->fp), peerRequest,
-                                            "rb") != 0) {
+        #ifdef WOLFSSH_HAVE_SYMLINK
+            /* WFOPEN follows symlinks; refuse to open one so its target is not
+             * streamed to the peer. */
+            if (WS_IsSymlink(peerRequest)) {
+                WLOG(WS_LOG_ERROR, "scp: refusing to open symlink, abort");
+                wolfSSH_SetScpErrorMsg(ssh, "unable to open file for reading");
+                ret = WS_BAD_FILE_E;
+            }
+        #endif /* WOLFSSH_HAVE_SYMLINK */
+
+            if (ret == WS_SUCCESS &&
+                ((sendCtx == NULL) || WFOPEN(ssh->fs, &(sendCtx->fp),
+                                             peerRequest, "rb") != 0)) {
 
                 WLOG(WS_LOG_ERROR, "scp: unable to open file, abort");
                 wolfSSH_SetScpErrorMsg(ssh, "unable to open file for reading");
@@ -2828,7 +2854,17 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
 
             if (ScpDirStackIsEmpty(sendCtx)) {
 
-                /* first request, keep track of request directory */
+                /* first request, keep track of request directory.  The
+                 * peer-named recursive root is intentionally not run through
+                 * WS_IsSymlink here: unlike SFTP there is no library-level
+                 * trusted base path to contain a resolved root against (SCP
+                 * confinement in wolfsshd is enforced by OS chroot, inside
+                 * which the kernel already prevents a symlink from escaping),
+                 * and wolfSSH_RealPath does not resolve links so a "stays under
+                 * the root" check is not possible.  Symlinks discovered while
+                 * traversing below the root are still rejected by
+                 * ScpProcessEntry, which is the planted-link threat this guards
+                 * against. */
                 ret = ScpPushDir(ssh->fs, sendCtx, peerRequest, ssh->ctx->heap);
 
                 if (ret == WS_SUCCESS) {
