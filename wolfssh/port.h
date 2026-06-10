@@ -1531,6 +1531,13 @@ extern "C" {
     #define WOLFSSH_HAVE_SYMLINK
 #endif
 
+#if defined(WOLFSSH_HAVE_SYMLINK) && \
+    (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP))
+    /* Shared, un-followed symlink/reparse-point check used by both the SFTP
+     * path-confinement guard and the SCP send guards. */
+    WOLFSSH_LOCAL int WS_IsSymlink(const char* path);
+#endif
+
 #ifndef WS_MAYBE_UNUSED
     #if (defined(__GNUC__) && (__GNUC__ >= 4)) || defined(__clang__) || \
             defined(__IAR_SYSTEMS_ICC__)

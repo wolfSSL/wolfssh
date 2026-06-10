@@ -527,6 +527,44 @@ int WS_DeleteFileA(const char* fileName, void* heap)
 
 #endif /* USE_WINDOWS_API WOLFSSH_SFTP WOLFSSH_SCP */
 
+#if defined(WOLFSSH_HAVE_SYMLINK) && \
+    (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP))
+/* Returns 1 if path is a symbolic link (POSIX) or a reparse point such as a
+ * symlink or junction (Windows), otherwise 0.  A NULL or non-existent path
+ * (stat fails) is reported as not-a-link.  Shared by the SFTP path-confinement
+ * check and the SCP send guards: both must reject a link before a file
+ * operation follows it, and one implementation keeps that security-relevant
+ * test from drifting between the two. */
+int WS_IsSymlink(const char* path)
+{
+    int isLink = 0;
+#ifdef USE_WINDOWS_API
+    WIN32_FILE_ATTRIBUTE_DATA attrs;
+#else
+    WSTAT_T lst;
+#endif
+
+    if (path == NULL)
+        return 0;
+
+#ifdef USE_WINDOWS_API
+    /* GetFileAttributesEx reports the link's own attributes; it does not follow
+     * the reparse point.  WS_GetFileAttributesExA trims any leading slash from
+     * the SFTP-canonical "/C:/..." form and uses the wide-char API like every
+     * other Windows file op here. */
+    if (WS_GetFileAttributesExA(path, &attrs, NULL) != 0 &&
+            (attrs.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+        isLink = 1;
+    }
+#else
+    if (WLSTAT(NULL, path, &lst) == 0 && S_ISLNK(lst.st_mode)) {
+        isLink = 1;
+    }
+#endif
+    return isLink;
+}
+#endif /* WOLFSSH_HAVE_SYMLINK && (WOLFSSH_SFTP || WOLFSSH_SCP) */
+
 #if !defined(NO_FILESYSTEM) && \
     defined(WOLFSSH_ZEPHYR) && (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP))
 
