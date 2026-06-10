@@ -719,6 +719,82 @@ int wIsSymlink(const char* path)
 #endif
     return isLink;
 }
+
+/* Open path for reading without following a final-component symbolic link.
+ * On POSIX this is atomic through O_NOFOLLOW: the open itself fails if the leaf
+ * is a link, closing the check-then-open race.  Where no such primitive exists
+ * (Windows, or O_NOFOLLOW undefined) it falls back to a best-effort wIsSymlink
+ * test before the follow-prone open.  Returns 0 on success and non-zero on
+ * failure, matching the wfopen convention. */
+int wFopenNoFollow(void* fs, WFILE** f, const char* path)
+{
+    int ret = 0;
+#if !defined(USE_WINDOWS_API) && defined(O_NOFOLLOW)
+    WFD fd = -1;
+#endif
+
+    if (f != NULL)
+        *f = NULL;
+    if (f == NULL || path == NULL)
+        ret = 1;
+
+#if !defined(USE_WINDOWS_API) && defined(O_NOFOLLOW)
+    if (ret == 0) {
+        fd = WOPEN(fs, path, WOLFSSH_O_RDONLY | WOLFSSH_O_NOFOLLOW, 0);
+        if (fd < 0)
+            ret = 1;
+    }
+    if (ret == 0 && WFDOPEN(fs, f, fd, "rb") != 0) {
+        WCLOSE(fs, fd);
+        ret = 1;
+    }
+#else
+    if (ret == 0 && wIsSymlink(path))
+        ret = 1;
+    if (ret == 0 && WFOPEN(fs, f, path, "rb") != 0)
+        ret = 1;
+#endif
+    WOLFSSH_UNUSED(fs);
+    return ret;
+}
+
+#if !defined(USE_WINDOWS_API) && !defined(NO_WOLFSSH_DIR)
+/* Open a directory without following a final-component symlink: POSIX uses
+ * O_DIRECTORY|O_NOFOLLOW + fdopendir (atomic), else falls back to wIsSymlink +
+ * opendir.  Returns 0 on success, non-zero on failure (matches WOPENDIR). */
+int wOpendirNoFollow(void* fs, WDIR* dir, const char* path)
+{
+    int ret = 0;
+#if defined(O_NOFOLLOW) && defined(O_DIRECTORY)
+    WFD fd = -1;
+#endif
+
+    if (dir != NULL)
+        *dir = NULL;
+    if (dir == NULL || path == NULL)
+        ret = 1;
+
+#if defined(O_NOFOLLOW) && defined(O_DIRECTORY)
+    if (ret == 0) {
+        fd = WOPEN(fs, path, WOLFSSH_O_RDONLY | WOLFSSH_O_DIRECTORY |
+                   WOLFSSH_O_NOFOLLOW, 0);
+        if (fd < 0)
+            ret = 1;
+    }
+    if (ret == 0 && WFDOPENDIR(fs, dir, fd) != 0) {
+        WCLOSE(fs, fd);
+        ret = 1;
+    }
+#else
+    if (ret == 0 && wIsSymlink(path))
+        ret = 1;
+    if (ret == 0 && WOPENDIR(fs, NULL, dir, path) != 0)
+        ret = 1;
+#endif
+    WOLFSSH_UNUSED(fs);
+    return ret;
+}
+#endif /* !USE_WINDOWS_API && !NO_WOLFSSH_DIR */
 #endif /* WOLFSSH_HAVE_SYMLINK && (WOLFSSH_SFTP || WOLFSSH_SCP) */
 
 #ifndef WSTRING_USER

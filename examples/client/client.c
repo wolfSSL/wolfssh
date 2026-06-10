@@ -129,6 +129,11 @@ static void ShowUsage(void)
     printf(" -k            set the list of key algos\n");
     printf(" -C            set the list of encrypt algos\n");
     printf(" -q            turn off debugging output\n");
+#ifndef WOLFSSH_HAVE_SYMLINK
+    /* report disabled symlink checking so test scripts can skip the
+     * symlink-rejection cases the server would otherwise follow */
+    printf("               symlink checking off (e.g. WOLFSSH_NO_SYMLINK_CHECK)\n");
+#endif
 }
 
 

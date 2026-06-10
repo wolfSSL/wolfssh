@@ -54,6 +54,9 @@ do_cleanup() {
         kill -9 $server_pid
     fi
     remove_ready_file
+    # remove symlink-test artifacts so an early exit (e.g. create_port failure)
+    # does not leave a planted secret/symlink behind in the source tree
+    [ -n "$scp_secret" ] && rm -f "$scp_secret" "$scp_symlink" "$scp_symlink_out"
 }
 
 do_trap() {
@@ -148,6 +151,59 @@ if test $RESULT -eq 0; then
     echo -e "\n\nshould fail out sending a file that does not exist"
     do_cleanup
     exit 1
+fi
+
+# The symlink-rejection guard is compiled out by WOLFSSH_NO_SYMLINK_CHECK, which
+# the example client reports in its usage output (-?).  Skip this test when it is
+# set: the server then follows symlinks by design and the check below would
+# false-fail.
+./examples/client/client '-?' | grep WOLFSSH_NO_SYMLINK_CHECK
+if [ $? -eq 0 ]; then
+    echo "symlink checking disabled, skipping symlink test"
+else
+    echo "Test that the server refuses to follow a symlink (server to local)"
+    # This exercises the single-file send path (WOLFSSH_SCP_SINGLE_FILE_REQUEST),
+    # whose file open now goes through wFopenNoFollow (atomic O_NOFOLLOW on
+    # POSIX), so this case drives the no-follow open end to end.
+    # The recursive sinks (the recursive-root leaf check and the per-entry check
+    # in ScpProcessEntry) use the same shared wIsSymlink helper but cannot be
+    # driven from here: the wolfSSH example client (wolfSSH_SCP_from) only ever
+    # issues "scp -f <path>", never "scp -f -r", so the server's recursive
+    # request state is never reached by this harness.  wIsSymlink itself is
+    # additionally exercised through the SFTP confinement unit test
+    # (test_wolfSSH_SFTP_Confinement), so the detection logic shared by all sinks
+    # is covered even though the SCP recursive wiring is not driven e2e.
+    scp_secret=$PWD/scripts/scp_secret_$$
+    scp_symlink=$PWD/scp_symlink_$$
+    scp_symlink_out=$PWD/scp_symlink_out_$$
+    echo "TOP SECRET SYMLINK TARGET" > $scp_secret
+    # A symlink whose target exists would, without the fix, be opened and its
+    # contents streamed to the client. The fix must reject it instead.
+    ln -s $scp_secret $scp_symlink
+    if test -L $scp_symlink; then
+        ./examples/echoserver/echoserver -1 -R $ready_file &
+        server_pid=$!
+        create_port
+        ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -S $scp_symlink:$scp_symlink_out
+        remove_ready_file
+
+        # The server must not deliver the symlink target: no local output file
+        # may be produced from the refused request. The client exit code is not
+        # asserted (as with the other -S cases it does not propagate a
+        # server-side SCP abort); connectivity in this environment is already
+        # proven by the "basic copy from server to local" case above, which uses
+        # the same mechanism and aborts the whole script on failure, so this
+        # cannot pass vacuously.
+        if test -e $scp_symlink_out; then
+            rm -f $scp_symlink_out $scp_secret $scp_symlink
+            echo -e "\n\nserver followed a symlink, confinement bypass"
+            do_cleanup
+            exit 1
+        fi
+    else
+        echo "symlink not supported on this filesystem, skipping symlink test"
+    fi
+    rm -f $scp_secret $scp_symlink $scp_symlink_out
 fi
 
 echo -e "\nALL Tests Passed"

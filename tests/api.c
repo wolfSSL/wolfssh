@@ -32,11 +32,13 @@
 
 #include <stdio.h>
 #include <string.h>
-#if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT) && \
+#if ((defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT)) || \
+     (defined(WOLFSSH_SCP) && defined(WOLFSSH_HAVE_SYMLINK) && \
+      !defined(WOLFSSH_SCP_USER_CALLBACKS))) && \
     !defined(SINGLE_THREADED) && !defined(WOLFSSH_ZEPHYR) && \
     !defined(USE_WINDOWS_API)
-    /* mkdtemp() for staging unique, per-test out-of-jail SFTP fixtures and
-     * symlink() for the symlink-escape confinement case */
+    /* mkdtemp() and symlink() for the SFTP confinement and SCP symlink-reject
+     * tests (staging out-of-jail fixtures and planted links) */
     #include <stdlib.h>
     #include <unistd.h>
 #endif
@@ -1044,6 +1046,142 @@ static void test_wolfSSH_SCP_CB(void)
 #else /* WOLFSSH_SCP */
 static void test_wolfSSH_SCP_CB(void) { ; }
 #endif /* WOLFSSH_SCP */
+
+#if defined(WOLFSSH_SCP) && defined(WOLFSSH_HAVE_SYMLINK) && \
+    !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(SINGLE_THREADED) && \
+    !defined(WOLFSSH_ZEPHYR) && !defined(USE_WINDOWS_API) && \
+    !defined(NO_WOLFSSH_DIR)
+/* The default SCP send callback must refuse a symlink so its target is not
+ * streamed to the peer.  The example client cannot issue "scp -f -r", so the
+ * recursive guards are unreachable through scripts/scp.test; drive both the
+ * recursive-root and per-entry guards here at the callback level, and exercise
+ * wFopenNoFollow (shared by the file opens) directly. */
+static void test_wolfSSH_SCP_SendSymlinkReject(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    ScpSendCtx   sendCtx;
+    WFILE*       fp = NULL;
+    WDIR         wdir;
+    char   scpRoot[]  = "/tmp/wolfssh_scp_sym_XXXXXX";
+    char   realFile[WOLFSSH_MAX_FILENAME];
+    char   symToFile[WOLFSSH_MAX_FILENAME];
+    char   symToDir[WOLFSSH_MAX_FILENAME];
+    char   symToDirSlash[WOLFSSH_MAX_FILENAME];
+    char   subDir[WOLFSSH_MAX_FILENAME];
+    char   subLink[WOLFSSH_MAX_FILENAME];
+    char   fileName[DEFAULT_SCP_FILE_NAME_SZ];
+    byte   buf[256];
+    word64 mTime = 0;
+    word64 aTime = 0;
+    int    fileMode = 0;
+    word32 totalSz = 0;
+
+    AssertNotNull(mkdtemp(scpRoot));
+
+    WSNPRINTF(realFile,  sizeof(realFile),  "%s/secret",    scpRoot);
+    WSNPRINTF(symToFile, sizeof(symToFile), "%s/link_file", scpRoot);
+    WSNPRINTF(symToDir,  sizeof(symToDir),  "%s/link_dir",  scpRoot);
+
+    /* stage an empty real file plus a symlink to it and to the temp dir */
+    AssertIntEQ(WFOPEN(NULL, &fp, realFile, "wb"), 0);
+    WFCLOSE(NULL, fp);
+    fp = NULL;
+    AssertIntEQ(symlink(realFile, symToFile), 0);
+    AssertIntEQ(symlink(scpRoot,  symToDir),  0);
+
+    /* the guard's discriminator: a real path is not a link, the planted ones
+     * are - so a genuine directory would not trip the recursive-root check */
+    AssertIntEQ(wIsSymlink(scpRoot),  0);
+    AssertIntEQ(wIsSymlink(symToDir), 1);
+
+    /* wFopenNoFollow opens a real file but refuses a symlink */
+    AssertIntEQ(wFopenNoFollow(NULL, &fp, realFile), 0);
+    AssertNotNull(fp);
+    WFCLOSE(NULL, fp);
+    fp = NULL;
+    AssertIntNE(wFopenNoFollow(NULL, &fp, symToFile), 0);
+    AssertNull(fp);
+
+    /* wOpendirNoFollow opens a real directory but refuses a symlinked one */
+    AssertIntEQ(wOpendirNoFollow(NULL, &wdir, scpRoot), 0);
+    WCLOSEDIR(NULL, &wdir);
+    AssertIntNE(wOpendirNoFollow(NULL, &wdir, symToDir), 0);
+
+    AssertNotNull(ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL));
+    AssertNotNull(ssh = wolfSSH_new(ctx));
+    WMEMSET(&sendCtx, 0, sizeof(sendCtx));
+    WMEMSET(fileName, 0, sizeof(fileName));
+
+    /* a benign state returns success (the callback does not blanket-abort) */
+    AssertIntEQ(wsScpSendCallback(ssh, WOLFSSH_SCP_NEW_REQUEST, symToDir,
+            fileName, (word32)sizeof(fileName), &mTime, &aTime, &fileMode, 0,
+            &totalSz, buf, (word32)sizeof(buf), &sendCtx), WS_SUCCESS);
+
+    /* a single-file request for a symlink is refused (WS_BAD_FILE_E) */
+    AssertIntEQ(wsScpSendCallback(ssh, WOLFSSH_SCP_SINGLE_FILE_REQUEST,
+            symToFile, fileName, (word32)sizeof(fileName), &mTime, &aTime,
+            &fileMode, 0, &totalSz, buf, (word32)sizeof(buf), &sendCtx),
+            WS_BAD_FILE_E);
+    AssertNull(sendCtx.fp);
+
+    /* a recursive root that is a symlink aborts before any directory is
+     * opened, so nothing is pushed onto the stack and nothing leaks */
+    AssertIntEQ(wsScpSendCallback(ssh, WOLFSSH_SCP_RECURSIVE_REQUEST, symToDir,
+            fileName, (word32)sizeof(fileName), &mTime, &aTime, &fileMode, 0,
+            &totalSz, buf, (word32)sizeof(buf), &sendCtx), WS_SCP_ABORT);
+    AssertNull(sendCtx.currentDir);
+
+    /* a trailing separator must not bypass the root guard: lstat on "link/"
+     * would follow the link, so the guard strips it before checking */
+    WSNPRINTF(symToDirSlash, sizeof(symToDirSlash), "%s/link_dir/", scpRoot);
+    AssertIntEQ(wsScpSendCallback(ssh, WOLFSSH_SCP_RECURSIVE_REQUEST,
+            symToDirSlash, fileName, (word32)sizeof(fileName), &mTime, &aTime,
+            &fileMode, 0, &totalSz, buf, (word32)sizeof(buf), &sendCtx),
+            WS_SCP_ABORT);
+    AssertNull(sendCtx.currentDir);
+
+    /* a recursive root with a missing path must abort, not dereference NULL */
+    AssertIntEQ(wsScpSendCallback(ssh, WOLFSSH_SCP_RECURSIVE_REQUEST, NULL,
+            fileName, (word32)sizeof(fileName), &mTime, &aTime, &fileMode, 0,
+            &totalSz, buf, (word32)sizeof(buf), &sendCtx), WS_SCP_ABORT);
+    AssertNull(sendCtx.currentDir);
+
+    /* per-entry guard: drive two iterations so ScpProcessEntry processes a
+     * planted entry.  The link points at a directory on purpose - a symlinked
+     * dir entry is caught only by the per-entry wIsSymlink check (not the
+     * file-open no-follow guard), so this isolates that branch. */
+    WSNPRINTF(subDir,  sizeof(subDir),  "%s/sub",      scpRoot);
+    WSNPRINTF(subLink, sizeof(subLink), "%s/sub/evil", scpRoot);
+    AssertIntEQ(WMKDIR(NULL, subDir, 0700), 0);
+    AssertIntEQ(symlink(scpRoot, subLink), 0);
+
+    WMEMSET(&sendCtx, 0, sizeof(sendCtx));
+    AssertIntEQ(wsScpSendCallback(ssh, WOLFSSH_SCP_RECURSIVE_REQUEST, subDir,
+            fileName, (word32)sizeof(fileName), &mTime, &aTime, &fileMode, 0,
+            &totalSz, buf, (word32)sizeof(buf), &sendCtx), WS_SCP_ENTER_DIR);
+    AssertIntEQ(wsScpSendCallback(ssh, WOLFSSH_SCP_RECURSIVE_REQUEST, subDir,
+            fileName, (word32)sizeof(fileName), &mTime, &aTime, &fileMode, 0,
+            &totalSz, buf, (word32)sizeof(buf), &sendCtx), WS_SCP_ABORT);
+    /* the per-entry abort left the pushed dir on the stack (this is what would
+     * leak); the production teardown drain must release it */
+    AssertNotNull(sendCtx.currentDir);
+    ScpSendCtxFreeDirs(ssh->fs, &sendCtx, ssh->ctx->heap);
+    AssertNull(sendCtx.currentDir);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    WREMOVE(NULL, subLink);
+    WRMDIR(NULL, subDir);
+    WREMOVE(NULL, symToFile);
+    WREMOVE(NULL, symToDir);
+    WREMOVE(NULL, realFile);
+    WRMDIR(NULL, scpRoot);
+}
+#else
+static void test_wolfSSH_SCP_SendSymlinkReject(void) { ; }
+#endif
 
 #ifdef WOLFSSH_AGENT
 typedef struct AgentTestCtx {
@@ -3610,6 +3748,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
 
     /* SCP tests */
     test_wolfSSH_SCP_CB();
+    test_wolfSSH_SCP_SendSymlinkReject();
     test_wolfSSH_SCP_ReKey();
     test_wolfSSH_SCP_ReKey_NonBlock();
     test_wolfSSH_SCP_ReKey_ToServer();
