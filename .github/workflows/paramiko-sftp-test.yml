@@ -94,8 +94,12 @@ jobs:
           Subsystem sftp internal-sftp
           EOF
           
-          # Set proper permissions for keys
+          # wolfSSHd refuses to load a host key unless it is owned by root or
+          # the daemon's user and is not group or world writable. The daemon is
+          # launched with sudo (euid 0) while the checkout key is owned by the
+          # runner user, so make the key root-owned and 0600.
           chmod 600 ./keys/server-key.pem
+          sudo chown 0:0 ./keys/server-key.pem
           
           # Print debug info
           echo "Contents of sshd_config.txt:"

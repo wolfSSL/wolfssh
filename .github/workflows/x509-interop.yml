@@ -158,6 +158,12 @@ jobs:
       - name: Start wolfSSHd
         working-directory: ./wolfssh/
         run: |
+          # wolfSSHd refuses a trust anchor not owned by root or the daemon's
+          # user. The daemon runs under sudo (euid 0), so make the host key,
+          # host cert, and user CA root-owned. Modes stay non-group/world
+          # writable so other steps can still read them.
+          sudo chown 0:0 ./keys/server-key.pem ./keys/server-cert.pem \
+            ./keys/ca-cert-ecc.pem
           sudo ./apps/wolfsshd/wolfsshd -f sshd_config -d \
             -E $PWD/wolfsshd-log.txt &
           for i in $(seq 1 20); do
