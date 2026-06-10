@@ -2362,9 +2362,9 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     if (ret == WS_SUCCESS) {
         /* Generate unique file handle ID and add to tracking list */
-        id[0] = ssh->fileIdCount[0];
-        id[1] = ssh->fileIdCount[1];
-        AddAssign64(ssh->fileIdCount, 1);
+        id[0] = ssh->handleIdCount[0];
+        id[1] = ssh->handleIdCount[1];
+        AddAssign64(ssh->handleIdCount, 1);
 
         if ((ret = SFTP_AddFileHandle(ssh, fd, dir, id)) != WS_SUCCESS) {
             WLOG(WS_LOG_SFTP, "Unable to store handle");
@@ -2546,9 +2546,9 @@ cleanup:
 
     if (ret == WS_SUCCESS) {
         /* Generate unique file handle ID and add to tracking list */
-        id[0] = ssh->fileIdCount[0];
-        id[1] = ssh->fileIdCount[1];
-        AddAssign64(ssh->fileIdCount, 1);
+        id[0] = ssh->handleIdCount[0];
+        id[1] = ssh->handleIdCount[1];
+        AddAssign64(ssh->handleIdCount, 1);
 
         if (SFTP_AddFileHandle(ssh, fileHandle, dir, id) != WS_SUCCESS) {
             WLOG(WS_LOG_SFTP, "Unable to store handle");
@@ -2718,11 +2718,11 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 #else
         cur->dir  = ctx;
 #endif
-        cur->id[0] = id[0] = ssh->dirIdCount[0];
-        cur->id[1] = id[1] = ssh->dirIdCount[1];
+        cur->id[0] = id[0] = ssh->handleIdCount[0];
+        cur->id[1] = id[1] = ssh->handleIdCount[1];
         c32toa(id[0], idFlat);
         c32toa(id[1], idFlat + UINT32_SZ);
-        AddAssign64(ssh->dirIdCount, 1);
+        AddAssign64(ssh->handleIdCount, 1);
         cur->isEof = 0;
         cur->next  = ssh->dirList;
         ssh->dirList          = cur;
@@ -2877,11 +2877,11 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             return WS_MEMORY_E;
         }
         cur->dir = INVALID_HANDLE_VALUE;
-        cur->id[0] = id[0] = ssh->dirIdCount[0];
-        cur->id[1] = id[1] = ssh->dirIdCount[1];
+        cur->id[0] = id[0] = ssh->handleIdCount[0];
+        cur->id[1] = id[1] = ssh->handleIdCount[1];
         c32toa(id[0], idFlat);
         c32toa(id[1], idFlat + UINT32_SZ);
-        AddAssign64(ssh->dirIdCount, 1);
+        AddAssign64(ssh->handleIdCount, 1);
         cur->isEof = 0;
         cur->dirName = dirName; /* take over ownership of buffer */
         cur->next    = ssh->dirList;
