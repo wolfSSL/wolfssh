@@ -1702,6 +1702,16 @@ static void test_wolfSSH_SFTP_Confinement(void)
      * run. */
     char             escSymlink[] = "confine_symlink";
     char             escSymThru[WOLFSSH_MAX_FILENAME];
+    /* an in-jail symlink whose leaf points at an in-jail regular file.  The
+     * path resolves and stays inside the jail and the target is a real file.
+     * This block is guarded by WOLFSSH_HAVE_SYMLINK, so GetAndCleanPath's
+     * per-component link check is always present here and rejects the leaf
+     * symlink first; the assertion therefore verifies the end-to-end "open a
+     * symlinked file is refused" behavior.  The new RecvOpen lstat/O_NOFOLLOW
+     * handling is defense-in-depth behind that check, closing the TOCTOU window
+     * between the type check and the open. */
+    char             leafTarget[]  = "confine_leaf_target";
+    char             leafSymlink[] = "confine_leaf_symlink";
 #endif
     WFILE*           fp = NULL;
     int              snLen;
@@ -1792,6 +1802,14 @@ static void test_wolfSSH_SFTP_Confinement(void)
     /* stage an in-jail symlink pointing at the out-of-jail temp root */
     WREMOVE(NULL, escSymlink);
     AssertIntEQ(symlink(escRoot, escSymlink), 0);
+
+    /* stage an in-jail regular file and an in-jail symlink that targets it */
+    WREMOVE(NULL, leafTarget);
+    AssertIntEQ(WFOPEN(NULL, &fp, leafTarget, "wb"), 0);
+    AssertNotNull(fp);
+    WFCLOSE(NULL, fp);
+    WREMOVE(NULL, leafSymlink);
+    AssertIntEQ(symlink(leafTarget, leafSymlink), 0);
 #endif
 #endif
 
@@ -1954,6 +1972,42 @@ static void test_wolfSSH_SFTP_Confinement(void)
     AssertNotNull(ls);
     wolfSSH_SFTPNAME_list_free(ls);
     ls = NULL;
+
+    /* Positive control: opening the in-jail regular file directly must still
+     * succeed, proving the symlink rejection below does not also block plain
+     * regular-file opens. */
+    handleSz = WOLFSSH_MAX_HANDLE;
+    ret = wolfSSH_SFTP_Open(ssh, leafTarget, WOLFSSH_FXF_READ, NULL,
+            handle, &handleSz);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SFTP_Close(ssh, handle, handleSz), WS_SUCCESS);
+    ls = wolfSSH_SFTP_LS(ssh, curDir);
+    AssertNotNull(ls);
+    wolfSSH_SFTPNAME_list_free(ls);
+    ls = NULL;
+
+    /* opening a leaf that is itself a symlink to an in-jail regular file must
+     * be rejected, not silently followed to the target.
+     *
+     * Coverage gap (intentional): this block is compiled under
+     * WOLFSSH_HAVE_SYMLINK, so GetAndCleanPath's per-component check is always
+     * present and rejects the leaf symlink first.  This assertion therefore
+     * verifies only the end-to-end "symlinked file open is refused" behavior;
+     * it still passes if the RecvOpen lstat/O_NOFOLLOW branch is removed, so it
+     * does not independently exercise that branch.  Isolating it requires a
+     * build where the per-component check is compiled out but lstat/O_NOFOLLOW
+     * stay real (WOLFSSH_NO_SYMLINK_CHECK on POSIX), which is not part of the
+     * default test build.  That branch was confirmed by hand by disabling the
+     * GetAndCleanPath walk and checking that the open is followed without the
+     * fix and refused with it. */
+    handleSz = WOLFSSH_MAX_HANDLE;
+    ret = wolfSSH_SFTP_Open(ssh, leafSymlink, WOLFSSH_FXF_READ, NULL,
+            handle, &handleSz);
+    AssertIntNE(ret, WS_SUCCESS);
+    ls = wolfSSH_SFTP_LS(ssh, curDir);
+    AssertNotNull(ls);
+    wolfSSH_SFTPNAME_list_free(ls);
+    ls = NULL;
 #endif
 
     /* Positive case: a relative write op that resolves inside the jail must be
@@ -2005,6 +2059,8 @@ static void test_wolfSSH_SFTP_Confinement(void)
 #if !defined(WOLFSSH_ZEPHYR) && !defined(USE_WINDOWS_API)
 #ifdef WOLFSSH_HAVE_SYMLINK
     WREMOVE(NULL, escSymlink);
+    WREMOVE(NULL, leafSymlink);
+    WREMOVE(NULL, leafTarget);
 #endif
     WRMDIR(NULL, escRoot);
     /* escSibling is non-empty only if this run created it (see staging above),

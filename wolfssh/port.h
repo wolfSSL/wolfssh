@@ -1484,6 +1484,9 @@ extern "C" {
     #define WOLFSSH_O_CREAT  O_CREAT
     #define WOLFSSH_O_TRUNC  O_TRUNC
     #define WOLFSSH_O_EXCL   O_EXCL
+    #ifdef O_NOFOLLOW
+        #define WOLFSSH_O_NOFOLLOW O_NOFOLLOW
+    #endif
 
     #define WOPEN(fs,f,m,p) open((f),(m),(p))
     #define WCLOSE(fs,fd) close((fd))
@@ -1504,6 +1507,12 @@ extern "C" {
 #endif /* NO_WOLFSSH_DIR */
 #endif
 #endif /* WOLFSSH_SFTP or WOLFSSH_SCP */
+
+/* Platforms without an open(2)-style O_NOFOLLOW (or without a filesystem) get a
+ * harmless no-op so callers can OR it into the open flags unconditionally. */
+#ifndef WOLFSSH_O_NOFOLLOW
+    #define WOLFSSH_O_NOFOLLOW 0
+#endif
 
 /* SFTP path confinement must reject symbolic links because wolfSSH_RealPath
  * only normalizes the path string and does not resolve them.  Define
