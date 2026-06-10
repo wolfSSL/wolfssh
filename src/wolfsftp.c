@@ -6124,6 +6124,92 @@ int wolfSSH_SFTP_RecvFSetSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 }
 
 #endif /* _WIN32_WCE */
+
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(USE_WINDOWS_API) && \
+    !defined(NO_FILESYSTEM)
+/* Test-only plumbing for the forged-handle regression test in tests/regress.c.
+ *
+ * The SFTP request handlers buffer their status/handle reply into ssh->recvState
+ * via wolfSSH_SFTP_RecvSetSend(). When a test drives the handlers directly that
+ * state is not otherwise allocated, so these accessors let the test own its
+ * lifetime (and inspect the buffered reply) without exposing the private
+ * WS_SFTP_RECV_STATE type. */
+
+/* Allocate ssh->recvState so handler replies are captured instead of leaked. */
+int wolfSSH_SFTP_TestRecvStateInit(WOLFSSH* ssh)
+{
+    if (ssh == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+    if (ssh->recvState == NULL) {
+        ssh->recvState = (WS_SFTP_RECV_STATE*)WMALLOC(
+                sizeof(WS_SFTP_RECV_STATE), ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+        if (ssh->recvState == NULL) {
+            return WS_MEMORY_E;
+        }
+        WMEMSET(ssh->recvState, 0, sizeof(WS_SFTP_RECV_STATE));
+    }
+    return WS_SUCCESS;
+}
+
+/* Return the most recent buffered reply (data + size) produced by a handler. */
+const byte* wolfSSH_SFTP_TestRecvReply(WOLFSSH* ssh, word32* sz)
+{
+    if (ssh == NULL || ssh->recvState == NULL) {
+        if (sz != NULL) {
+            *sz = 0;
+        }
+        return NULL;
+    }
+    if (sz != NULL) {
+        *sz = ssh->recvState->buffer.sz;
+    }
+    return ssh->recvState->buffer.data;
+}
+
+/* Free ssh->recvState and any buffered reply. */
+void wolfSSH_SFTP_TestRecvStateFree(WOLFSSH* ssh)
+{
+    if (ssh != NULL) {
+        wolfSSH_SFTP_ClearState(ssh, STATE_ID_ALL);
+    }
+}
+
+/* Return the number of open file handles tracked for the session. Lets the
+ * handle-cap and close-failure regression tests observe the tracking list
+ * without exposing the private WS_FILE_LIST type. */
+int wolfSSH_SFTP_TestFileHandleCount(WOLFSSH* ssh)
+{
+    WS_FILE_LIST* cur;
+    int count = 0;
+
+    if (ssh == NULL) {
+        return 0;
+    }
+    for (cur = ssh->fileList; cur != NULL; cur = cur->next) {
+        count++;
+    }
+    return count;
+}
+
+/* Close the underlying descriptor of the head tracked file handle out of band,
+ * leaving the node in the list with a now-stale fd. The next RecvClose on that
+ * handle will see its close() fail, exercising the path that must still drop
+ * the handle from the tracking list. Returns WS_SUCCESS if a node was found. */
+int wolfSSH_SFTP_TestInvalidateHeadFd(WOLFSSH* ssh)
+{
+    if (ssh == NULL || ssh->fileList == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+#ifdef MICROCHIP_MPLAB_HARMONY
+    WFCLOSE(ssh->fs, &ssh->fileList->fd);
+#else
+    WCLOSE(ssh->fs, ssh->fileList->fd);
+#endif
+    return WS_SUCCESS;
+}
+#endif /* WOLFSSH_TEST_INTERNAL && !USE_WINDOWS_API && !NO_FILESYSTEM */
+
 #endif /* !NO_WOLFSSH_SERVER */
 
 
