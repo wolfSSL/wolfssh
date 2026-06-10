@@ -1870,6 +1870,457 @@ static void TestSftpBufferSendPendingOutput(void)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
+
+#if !defined(NO_WOLFSSH_SERVER) && !defined(USE_WINDOWS_API) && \
+        !defined(NO_FILESYSTEM)
+/* Write a big-endian uint32 (the SFTP wire encoding). */
+static void SftpPutU32(word32 val, byte* out)
+{
+    out[0] = (byte)(val >> 24);
+    out[1] = (byte)(val >> 16);
+    out[2] = (byte)(val >> 8);
+    out[3] = (byte)(val);
+}
+
+/* Read a big-endian uint32 (the SFTP wire encoding). */
+static word32 SftpGetU32(const byte* in)
+{
+    return ((word32)in[0] << 24) | ((word32)in[1] << 16) |
+           ((word32)in[2] << 8)  | (word32)in[3];
+}
+
+/* Return 1 if needle occurs in haystack, 0 otherwise. */
+static int SftpBufContains(const byte* hay, word32 haySz,
+        const byte* needle, word32 needleSz)
+{
+    word32 i;
+
+    if (hay == NULL || needle == NULL || needleSz == 0 || haySz < needleSz) {
+        return 0;
+    }
+    for (i = 0; i + needleSz <= haySz; i++) {
+        if (WMEMCMP(hay + i, needle, needleSz) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Adversarial regression test for the SFTP file-handle IDOR class affecting
+ * RecvWrite -> pwrite, RecvRead -> pread, RecvFSetSTAT -> fchmod, and
+ * RecvClose -> close.
+ *
+ * Before the per-session opaque-handle rework these handlers accepted a raw
+ * file-descriptor integer from the peer after only a byte-length check and
+ * passed it straight to the matching syscall. This test opens a descriptor the
+ * server holds but never handed out over SFTP, then forges SFTP handles that
+ * encode that descriptor and confirms every handler rejects them and leaves the
+ * victim file untouched. A legitimately opened handle is exercised first as a
+ * positive control so a blanket-reject regression cannot pass silently.
+ *
+ * Two forged handle encodings are tried against every handler: the original
+ * exploit form (raw sizeof(WFD) bytes), which must now fail the 8-byte size
+ * check, and a correctly sized opaque ID whose first word is the victim fd,
+ * which must fail the per-session ownership lookup. POSIX only. */
+static void TestSftpForgedHandleRejected(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    int f;
+    int rid = 100;
+    int rc;
+    WFD victimFd = -1;
+    WFD ownedRead;
+    WSTAT_T st;
+    word32 victimMode;
+    word32 idx;
+    word32 replySz;
+    word32 ofst[2] = {0, 0};
+    const byte* reply;
+
+    char ownedPath[64];
+    char victimPath[64];
+    const char sentinel[]   = "DAEMON-PRIVATE-SECRET";
+    const char positive[]   = "POSITIVE-CONTROL-DATA";
+    const char attack[]     = "HANDLE-IDOR-OVERWRITE";
+
+    byte legitHandle[WOLFSSH_HANDLE_ID_SZ]; /* first opened file -> id {0,0} */
+    byte forgedId[WOLFSSH_HANDLE_ID_SZ];    /* 8-byte id whose word[0]==fd   */
+    byte forgedRaw[sizeof(WFD)];            /* original raw-fd exploit bytes  */
+    const byte* fHandle[2];
+    word32      fHandleSz[2];
+    byte pkt[256];
+    byte rbuf[64];
+    char cwd[WOLFSSH_MAX_FILENAME];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    /* unique per-process fixture names so parallel runs don't collide and we
+     * never clobber a same-named file in the working directory */
+    WSNPRINTF(ownedPath, sizeof(ownedPath), "wolfssh_poc_owned_%d.tmp",
+            (int)getpid());
+    WSNPRINTF(victimPath, sizeof(victimPath), "wolfssh_poc_victim_%d.tmp",
+            (int)getpid());
+
+    /* capture the handlers' buffered replies instead of leaking them */
+    AssertIntEQ(wolfSSH_SFTP_TestRecvStateInit(ssh), WS_SUCCESS);
+
+    /* confine the server to an absolute working directory */
+    WMEMSET(cwd, 0, sizeof(cwd));
+    AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
+    AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
+
+    /* ---- positive control: legitimately open a file over SFTP ----
+     * RecvOpen assigns the first handle the per-session id {0,0}. */
+    WMEMSET(legitHandle, 0, sizeof(legitHandle));
+
+    idx = 0;
+    SftpPutU32((word32)WSTRLEN(ownedPath), pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, ownedPath, WSTRLEN(ownedPath));
+    idx += (word32)WSTRLEN(ownedPath);
+    SftpPutU32(WOLFSSH_FXF_READ | WOLFSSH_FXF_WRITE | WOLFSSH_FXF_CREAT |
+            WOLFSSH_FXF_TRUNC, pkt + idx); idx += UINT32_SZ;
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;          /* no attributes */
+    AssertIntEQ(wolfSSH_SFTP_RecvOpen(ssh, rid++, pkt, idx), WS_SUCCESS);
+
+    /* write through the legitimate handle: must succeed */
+    idx = 0;
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, legitHandle, WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;          /* offset hi */
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;          /* offset lo */
+    SftpPutU32((word32)(sizeof(positive) - 1), pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, positive, sizeof(positive) - 1);
+    idx += (word32)(sizeof(positive) - 1);
+    AssertIntEQ(wolfSSH_SFTP_RecvWrite(ssh, rid++, pkt, idx), WS_SUCCESS);
+
+    /* confirm the bytes really landed in the owned file */
+    ownedRead = WOPEN(ssh->fs, ownedPath, WOLFSSH_O_RDONLY, 0);
+    AssertTrue(ownedRead >= 0);
+    WMEMSET(rbuf, 0, sizeof(rbuf));
+    rc = WPREAD(ssh->fs, ownedRead, rbuf, (word32)(sizeof(positive) - 1), ofst);
+    AssertIntEQ(rc, (int)(sizeof(positive) - 1));
+    AssertIntEQ(WMEMCMP(rbuf, positive, sizeof(positive) - 1), 0);
+    WCLOSE(ssh->fs, ownedRead);
+
+    /* positive control: FSTAT on the legitimate handle must report the owned
+     * file's real size (the bytes just written). The handle is the opaque id
+     * {0,0}; a regression that fstat()s the handle bytes as a raw descriptor
+     * would stat fd 0 (stdin) and return the wrong size, which this catches. */
+    idx = 0;
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, legitHandle, WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+    AssertIntEQ(wolfSSH_SFTP_RecvFSTAT(ssh, rid++, pkt, idx), WS_SUCCESS);
+    reply = wolfSSH_SFTP_TestRecvReply(ssh, &replySz);
+    AssertNotNull(reply);
+    /* header(9) = len(4) type(1) reqId(4); ATTRS payload = flags(4) szHi(4) szLo(4) */
+    AssertTrue(replySz >= WOLFSSH_SFTP_HEADER + (UINT32_SZ * 3));
+    AssertIntEQ(reply[LENGTH_SZ], WOLFSSH_FTP_ATTRS);
+    AssertTrue((SftpGetU32(reply + WOLFSSH_SFTP_HEADER) & WOLFSSH_FILEATRB_SIZE)
+            != 0);
+    AssertIntEQ((int)SftpGetU32(reply + WOLFSSH_SFTP_HEADER + (UINT32_SZ * 2)),
+            (int)(sizeof(positive) - 1));
+
+    /* ---- victim: a descriptor the server holds, never opened over SFTP ---- */
+    victimFd = WOPEN(ssh->fs, victimPath,
+            WOLFSSH_O_RDWR | WOLFSSH_O_CREAT | WOLFSSH_O_TRUNC, 0600);
+    AssertTrue(victimFd >= 0);
+    AssertIntEQ(WPWRITE(ssh->fs, victimFd, (byte*)sentinel,
+            (word32)(sizeof(sentinel) - 1), ofst),
+            (int)(sizeof(sentinel) - 1));
+    AssertIntEQ(WFCHMOD(ssh->fs, victimFd, 0600), 0);
+    AssertIntEQ(WFSTAT(ssh->fs, victimFd, &st), 0);
+    victimMode = (word32)(st.st_mode & 0777);
+
+    /* the two forged handle encodings every handler must reject */
+    WMEMCPY(forgedRaw, &victimFd, sizeof(WFD));
+    SftpPutU32((word32)victimFd, forgedId);
+    SftpPutU32(0, forgedId + UINT32_SZ);
+    fHandle[0]   = forgedRaw; fHandleSz[0] = (word32)sizeof(WFD);
+    fHandle[1]   = forgedId;  fHandleSz[1] = WOLFSSH_HANDLE_ID_SZ;
+
+    for (f = 0; f < 2; f++) {
+        /* --- 4232: forged WRITE must not pwrite() the victim fd --- */
+        idx = 0;
+        SftpPutU32(fHandleSz[f], pkt + idx); idx += UINT32_SZ;
+        WMEMCPY(pkt + idx, fHandle[f], fHandleSz[f]); idx += fHandleSz[f];
+        SftpPutU32(0, pkt + idx); idx += UINT32_SZ;
+        SftpPutU32(0, pkt + idx); idx += UINT32_SZ;
+        SftpPutU32((word32)(sizeof(attack) - 1), pkt + idx); idx += UINT32_SZ;
+        WMEMCPY(pkt + idx, attack, sizeof(attack) - 1);
+        idx += (word32)(sizeof(attack) - 1);
+        AssertTrue(wolfSSH_SFTP_RecvWrite(ssh, rid++, pkt, idx) != WS_SUCCESS);
+
+        /* --- 4346: forged READ must not pread() the victim fd --- */
+        idx = 0;
+        SftpPutU32(fHandleSz[f], pkt + idx); idx += UINT32_SZ;
+        WMEMCPY(pkt + idx, fHandle[f], fHandleSz[f]); idx += fHandleSz[f];
+        SftpPutU32(0, pkt + idx); idx += UINT32_SZ;
+        SftpPutU32(0, pkt + idx); idx += UINT32_SZ;
+        SftpPutU32((word32)(sizeof(sentinel) - 1), pkt + idx); idx += UINT32_SZ;
+        AssertTrue(wolfSSH_SFTP_RecvRead(ssh, rid++, pkt, idx) != WS_SUCCESS);
+        /* the secret must never appear in the buffered reply */
+        reply = wolfSSH_SFTP_TestRecvReply(ssh, &replySz);
+        AssertIntEQ(SftpBufContains(reply, replySz, (const byte*)sentinel,
+                (word32)(sizeof(sentinel) - 1)), 0);
+
+        /* --- 4343: forged FSETSTAT must not fchmod() the victim fd --- */
+        idx = 0;
+        SftpPutU32(fHandleSz[f], pkt + idx); idx += UINT32_SZ;
+        WMEMCPY(pkt + idx, fHandle[f], fHandleSz[f]); idx += fHandleSz[f];
+        SftpPutU32(WOLFSSH_FILEATRB_PERM, pkt + idx); idx += UINT32_SZ;
+        SftpPutU32(0777, pkt + idx); idx += UINT32_SZ;
+        AssertTrue(wolfSSH_SFTP_RecvFSetSTAT(ssh, rid++, pkt, idx) != WS_SUCCESS);
+
+        /* --- forged FSTAT must not fstat() the victim fd --- */
+        idx = 0;
+        SftpPutU32(fHandleSz[f], pkt + idx); idx += UINT32_SZ;
+        WMEMCPY(pkt + idx, fHandle[f], fHandleSz[f]); idx += fHandleSz[f];
+        AssertTrue(wolfSSH_SFTP_RecvFSTAT(ssh, rid++, pkt, idx) != WS_SUCCESS);
+
+        /* --- 4349: forged CLOSE must not close() the victim fd --- */
+        idx = 0;
+        SftpPutU32(fHandleSz[f], pkt + idx); idx += UINT32_SZ;
+        WMEMCPY(pkt + idx, fHandle[f], fHandleSz[f]); idx += fHandleSz[f];
+        AssertTrue(wolfSSH_SFTP_RecvClose(ssh, rid++, pkt, idx) != WS_SUCCESS);
+    }
+
+    /* ---- verify the victim was left completely untouched ---- */
+    WMEMSET(rbuf, 0, sizeof(rbuf));
+    rc = WPREAD(ssh->fs, victimFd, rbuf, (word32)(sizeof(sentinel) - 1), ofst);
+    AssertTrue(rc >= 0);                                  /* 4349: not closed */
+    AssertIntEQ(rc, (int)(sizeof(sentinel) - 1));
+    AssertIntEQ(WMEMCMP(rbuf, sentinel, sizeof(sentinel) - 1), 0); /* 4232 */
+    AssertIntEQ(WFSTAT(ssh->fs, victimFd, &st), 0);
+    AssertIntEQ((int)(st.st_mode & 0777), (int)victimMode);       /* 4343 */
+
+    /* the legitimate handle must still be open and owned: a real CLOSE on it
+     * succeeds, proving the forged closes did not disturb the session list */
+    idx = 0;
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, legitHandle, WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+    AssertIntEQ(wolfSSH_SFTP_RecvClose(ssh, rid++, pkt, idx), WS_SUCCESS);
+
+    if (victimFd >= 0) {
+        WCLOSE(ssh->fs, victimFd);
+    }
+    (void)WREMOVE(ssh->fs, ownedPath);
+    (void)WREMOVE(ssh->fs, victimPath);
+    wolfSSH_SFTP_TestRecvStateFree(ssh);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+#ifndef NO_WOLFSSH_DIR
+/* File and directory handle IDs are drawn from a single shared counter
+ * (ssh->handleIdCount), so a file handle and a directory handle can never
+ * collide. This test confirms that property and that each SFTP operation
+ * routes only to its own resource type:
+ *   - a directory handle is rejected by the file handlers (READ/WRITE/FSETSTAT)
+ *   - a file handle is rejected by the directory handler (READDIR)
+ *   - closing the file leaves the directory handle valid (no cross-type close)
+ * With per-type counters both handles could share id {0,0} and a CLOSE could
+ * match the wrong resource. */
+static void TestSftpHandleNamespaceIsolation(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    int rid = 200;
+    word32 idx;
+    word32 replySz;
+    const byte* reply;
+    const word32 hOff = WOLFSSH_SFTP_HEADER + UINT32_SZ; /* handle in reply */
+
+    char ownedPath[64];
+    const char attack[]    = "WRONG-TYPE";
+    byte dirHandle[WOLFSSH_HANDLE_ID_SZ];
+    byte fileHandle[WOLFSSH_HANDLE_ID_SZ];
+    byte pkt[256];
+    char cwd[WOLFSSH_MAX_FILENAME];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SFTP_TestRecvStateInit(ssh), WS_SUCCESS);
+
+    /* unique per-process fixture name (see TestSftpForgedHandleRejected) */
+    WSNPRINTF(ownedPath, sizeof(ownedPath), "wolfssh_poc_ns_%d.tmp",
+            (int)getpid());
+
+    WMEMSET(cwd, 0, sizeof(cwd));
+    AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
+    AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
+
+    /* open a directory -> first id from the shared counter */
+    idx = 0;
+    SftpPutU32(1, pkt + idx); idx += UINT32_SZ;      /* path "." */
+    pkt[idx++] = '.';
+    AssertIntEQ(wolfSSH_SFTP_RecvOpenDir(ssh, rid++, pkt, idx), WS_SUCCESS);
+    reply = wolfSSH_SFTP_TestRecvReply(ssh, &replySz);
+    AssertNotNull(reply);
+    AssertTrue(replySz >= hOff + WOLFSSH_HANDLE_ID_SZ);
+    WMEMCPY(dirHandle, reply + hOff, WOLFSSH_HANDLE_ID_SZ);
+
+    /* open a file -> next id from the same counter */
+    idx = 0;
+    SftpPutU32((word32)WSTRLEN(ownedPath), pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, ownedPath, WSTRLEN(ownedPath));
+    idx += (word32)WSTRLEN(ownedPath);
+    SftpPutU32(WOLFSSH_FXF_READ | WOLFSSH_FXF_WRITE | WOLFSSH_FXF_CREAT |
+            WOLFSSH_FXF_TRUNC, pkt + idx); idx += UINT32_SZ;
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;
+    AssertIntEQ(wolfSSH_SFTP_RecvOpen(ssh, rid++, pkt, idx), WS_SUCCESS);
+    reply = wolfSSH_SFTP_TestRecvReply(ssh, &replySz);
+    AssertNotNull(reply);
+    AssertTrue(replySz >= hOff + WOLFSSH_HANDLE_ID_SZ);
+    WMEMCPY(fileHandle, reply + hOff, WOLFSSH_HANDLE_ID_SZ);
+
+    /* shared namespace: the file and directory handles must not collide */
+    AssertTrue(WMEMCMP(dirHandle, fileHandle, WOLFSSH_HANDLE_ID_SZ) != 0);
+
+    /* --- file handlers must reject the directory handle --- */
+    idx = 0;                                         /* READ */
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, dirHandle, WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;
+    SftpPutU32(16, pkt + idx); idx += UINT32_SZ;
+    AssertTrue(wolfSSH_SFTP_RecvRead(ssh, rid++, pkt, idx) != WS_SUCCESS);
+
+    idx = 0;                                         /* WRITE */
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, dirHandle, WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;
+    SftpPutU32((word32)(sizeof(attack) - 1), pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, attack, sizeof(attack) - 1);
+    idx += (word32)(sizeof(attack) - 1);
+    AssertTrue(wolfSSH_SFTP_RecvWrite(ssh, rid++, pkt, idx) != WS_SUCCESS);
+
+    idx = 0;                                         /* FSETSTAT */
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, dirHandle, WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+    SftpPutU32(WOLFSSH_FILEATRB_PERM, pkt + idx); idx += UINT32_SZ;
+    SftpPutU32(0777, pkt + idx); idx += UINT32_SZ;
+    AssertTrue(wolfSSH_SFTP_RecvFSetSTAT(ssh, rid++, pkt, idx) != WS_SUCCESS);
+
+    idx = 0;                                         /* FSTAT */
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, dirHandle, WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+    AssertTrue(wolfSSH_SFTP_RecvFSTAT(ssh, rid++, pkt, idx) != WS_SUCCESS);
+
+    /* --- directory handler must reject the file handle --- */
+    idx = 0;                                         /* READDIR */
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, fileHandle, WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+    AssertTrue(wolfSSH_SFTP_RecvReadDir(ssh, rid++, pkt, idx) != WS_SUCCESS);
+
+    /* closing the file must not disturb the directory handle: close the file,
+     * then the directory close still succeeds (it would fail if the ids had
+     * collided and the file close had matched the directory). */
+    idx = 0;
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, fileHandle, WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+    AssertIntEQ(wolfSSH_SFTP_RecvClose(ssh, rid++, pkt, idx), WS_SUCCESS);
+
+    idx = 0;
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, dirHandle, WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+    AssertIntEQ(wolfSSH_SFTP_RecvClose(ssh, rid++, pkt, idx), WS_SUCCESS);
+
+    (void)WREMOVE(ssh->fs, ownedPath);
+    wolfSSH_SFTP_TestRecvStateFree(ssh);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+#endif /* NO_WOLFSSH_DIR */
+
+/* A failed close() must still drop the handle from the session tracking list;
+ * otherwise the stale descriptor lingers and is closed a second time when the
+ * session is torn down. Open a file, invalidate its descriptor out of band so
+ * RecvClose's close() fails, then confirm RecvClose reports the failure yet
+ * the handle is gone from the list. */
+static void TestSftpCloseFailureRemovesHandle(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    int rid = 400;
+    word32 idx;
+    word32 replySz;
+    const byte* reply;
+    const word32 hOff = WOLFSSH_SFTP_HEADER + UINT32_SZ; /* handle in reply */
+    byte handle[WOLFSSH_HANDLE_ID_SZ];
+    byte pkt[256];
+    char cwd[WOLFSSH_MAX_FILENAME];
+    char path[64];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SFTP_TestRecvStateInit(ssh), WS_SUCCESS);
+
+    /* unique per-process fixture name (see TestSftpForgedHandleRejected) */
+    WSNPRINTF(path, sizeof(path), "wolfssh_closefail_%d.tmp", (int)getpid());
+
+    WMEMSET(cwd, 0, sizeof(cwd));
+    AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
+    AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
+
+    idx = 0;
+    SftpPutU32((word32)WSTRLEN(path), pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, path, WSTRLEN(path));
+    idx += (word32)WSTRLEN(path);
+    SftpPutU32(WOLFSSH_FXF_READ | WOLFSSH_FXF_WRITE | WOLFSSH_FXF_CREAT |
+            WOLFSSH_FXF_TRUNC, pkt + idx); idx += UINT32_SZ;
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;
+    AssertIntEQ(wolfSSH_SFTP_RecvOpen(ssh, rid++, pkt, idx), WS_SUCCESS);
+    reply = wolfSSH_SFTP_TestRecvReply(ssh, &replySz);
+    AssertNotNull(reply);
+    AssertTrue(replySz >= hOff + WOLFSSH_HANDLE_ID_SZ);
+    WMEMCPY(handle, reply + hOff, WOLFSSH_HANDLE_ID_SZ);
+    AssertIntEQ(wolfSSH_SFTP_TestFileHandleCount(ssh), 1);
+
+    /* close the underlying descriptor behind the server's back */
+    AssertIntEQ(wolfSSH_SFTP_TestInvalidateHeadFd(ssh), WS_SUCCESS);
+
+    /* RecvClose now sees close() fail, but must still remove the handle */
+    idx = 0;
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, handle, WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+    AssertTrue(wolfSSH_SFTP_RecvClose(ssh, rid++, pkt, idx) != WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SFTP_TestFileHandleCount(ssh), 0);
+
+    /* a second close of the same handle finds nothing and still fails */
+    idx = 0;
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, handle, WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+    AssertTrue(wolfSSH_SFTP_RecvClose(ssh, rid++, pkt, idx) != WS_SUCCESS);
+
+    (void)WREMOVE(ssh->fs, path);
+    wolfSSH_SFTP_TestRecvStateFree(ssh);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+#endif /* !NO_WOLFSSH_SERVER && !USE_WINDOWS_API && !NO_FILESYSTEM */
+
 #if defined(WOLFSSL_NUCLEUS) && !defined(NO_WOLFSSH_MKTIME)
 static void TestNucleusMonthConversion(void)
 {
@@ -3574,6 +4025,17 @@ int main(int argc, char** argv)
 #ifdef WOLFSSH_SFTP
     TestOct2DecRejectsInvalidNonLeadingDigit();
     TestSftpBufferSendPendingOutput();
+    #if !defined(NO_WOLFSSH_SERVER) && !defined(USE_WINDOWS_API) && \
+            !defined(NO_FILESYSTEM)
+    /* fenrir 4232/4343/4346/4349: forged SFTP file handles must be rejected */
+    TestSftpForgedHandleRejected();
+    #ifndef NO_WOLFSSH_DIR
+    /* file and directory handle IDs share one namespace and never cross-close */
+    TestSftpHandleNamespaceIsolation();
+    #endif
+    /* a failed close still drops the handle from the tracking list */
+    TestSftpCloseFailureRemovesHandle();
+    #endif
     #if defined(WOLFSSL_NUCLEUS) && !defined(NO_WOLFSSH_MKTIME)
     TestNucleusMonthConversion();
     #endif
