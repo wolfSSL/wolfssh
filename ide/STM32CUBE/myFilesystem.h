@@ -140,9 +140,9 @@ static inline int SFTP_GetAttributes(void* fs, const char* fileName,
 
 }
 
-static inline int SFTP_GetAttributes_Handle(void* ssh, byte* handle, int handleSz,
+static inline int SFTP_GetAttributes_Handle(void* ssh, WFD fd,
         char* name, void* atr) {
-            (void)ssh; (void)handle; (void)handleSz; (void)name;
+            (void)ssh; (void)fd; (void)name; (void)atr;
 
         return 0;
 }
