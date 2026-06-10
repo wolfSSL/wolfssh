@@ -927,9 +927,11 @@ struct WOLFSSH {
     char* sftpDefaultPath;
 #ifndef NO_WOLFSSH_DIR
     WS_DIR_LIST* dirList;
-    word32 dirIdCount[2];
 #endif
-    word32 fileIdCount[2];
+    /* Shared counter for both file and directory handle IDs. A single
+     * namespace guarantees IDs are unique across files and directories so a
+     * close request cannot match the wrong resource type. */
+    word32 handleIdCount[2];
     WS_FILE_LIST* fileList;
     struct WS_SFTP_RECV_INIT_STATE* recvInitState;
     struct WS_SFTP_RECV_STATE* recvState;
