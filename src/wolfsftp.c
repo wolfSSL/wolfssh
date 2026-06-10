@@ -41,7 +41,7 @@
     #endif
 #endif
 
-/* for XGMTIME if defined */
+/* for WLOCALTIME if defined */
 #include <wolfssl/wolfcrypt/wc_port.h>
 
 
@@ -2944,9 +2944,13 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 }
 #endif /* USE_WINDOWS_API */
 
-#define WS_DATE_SIZE 12
+#define WS_DATE_SIZE 13
+/*
+ * Example: "Jan 31 13:31 "
+ *   Added a space to the end.
+ */
 
-#if defined(XGMTIME) && defined(XSNPRINTF)
+#if defined(WSNPRINTF)
 /* converts epoch time to recommended calendar time from
  * draft-ietf-secsh-filexfer-02.txt */
 static void getDate(char* buf, int len, struct tm* t)
@@ -2959,25 +2963,25 @@ static void getDate(char* buf, int len, struct tm* t)
     /* place month in buffer */
     buf[0] = '\0';
     switch(t->tm_mon) {
-        case 0:  XSTRNCAT(buf, "Jan ", 5); break;
-        case 1:  XSTRNCAT(buf, "Feb ", 5); break;
-        case 2:  XSTRNCAT(buf, "Mar ", 5); break;
-        case 3:  XSTRNCAT(buf, "Apr ", 5); break;
-        case 4:  XSTRNCAT(buf, "May ", 5); break;
-        case 5:  XSTRNCAT(buf, "Jun ", 5); break;
-        case 6:  XSTRNCAT(buf, "Jul ", 5); break;
-        case 7:  XSTRNCAT(buf, "Aug ", 5); break;
-        case 8:  XSTRNCAT(buf, "Sep ", 5); break;
-        case 9:  XSTRNCAT(buf, "Oct ", 5); break;
-        case 10: XSTRNCAT(buf, "Nov ", 5); break;
-        case 11: XSTRNCAT(buf, "Dec ", 5); break;
+        case 0:  WSTRNCAT(buf, "Jan ", 5); break;
+        case 1:  WSTRNCAT(buf, "Feb ", 5); break;
+        case 2:  WSTRNCAT(buf, "Mar ", 5); break;
+        case 3:  WSTRNCAT(buf, "Apr ", 5); break;
+        case 4:  WSTRNCAT(buf, "May ", 5); break;
+        case 5:  WSTRNCAT(buf, "Jun ", 5); break;
+        case 6:  WSTRNCAT(buf, "Jul ", 5); break;
+        case 7:  WSTRNCAT(buf, "Aug ", 5); break;
+        case 8:  WSTRNCAT(buf, "Sep ", 5); break;
+        case 9:  WSTRNCAT(buf, "Oct ", 5); break;
+        case 10: WSTRNCAT(buf, "Nov ", 5); break;
+        case 11: WSTRNCAT(buf, "Dec ", 5); break;
         default:
             return;
 
     }
     idx = 4; /* use idx now for char buffer */
 
-    XSNPRINTF(buf + idx, len - idx, "%2d %02d:%02d",
+    WSNPRINTF(buf + idx, len - idx, "%2d %02d:%02d ",
               t->tm_mday, t->tm_hour, t->tm_min);
     buf[WS_DATE_SIZE] = '\0';
 }
@@ -2987,12 +2991,12 @@ static void getDate(char* buf, int len, struct tm* t)
  * return WS_SUCCESS on success */
 static int SFTP_CreateLongName(WS_SFTPNAME* name)
 {
-#if defined(XGMTIME) && defined(XSNPRINTF)
+#if defined(WSNPRINTF)
     char sizeStr[32];
     char perm[11];
-    int linkCount = 1; /* @TODO set to correct value */
     char date[WS_DATE_SIZE + 1]; /* +1 for null terminator */
-    struct tm* localTime = NULL;
+    struct tm localTime;
+    time_t mtime;
     int i;
     WS_SFTP_FILEATRB* atr;
 #endif
@@ -3002,16 +3006,21 @@ static int SFTP_CreateLongName(WS_SFTPNAME* name)
         return WS_BAD_ARGUMENT;
     }
 
-#if defined(XGMTIME) && defined(XSNPRINTF)
+#if defined(WSNPRINTF)
     atr = &name->atrb;
+    mtime = (time_t)atr->mtime;
 
-    /* get date as calendar date */
-    localTime = XGMTIME((const time_t*)&atr->mtime, &localTime);
-    if (localTime == NULL) {
+#if defined(WLOCALTIME)
+    if (!WLOCALTIME(&mtime, &localTime)) {
         return WS_MEMORY_E;
     }
-    getDate(date, sizeof(date), localTime);
+    getDate(date, sizeof(date), &localTime);
     totalSz += WS_DATE_SIZE;
+#else
+    date[0] = ' ';
+    date[1] = 0;
+    totalSz++;
+#endif
 
     /* set permissions */
     for (i = 0; i < 10; i++) {
@@ -3043,12 +3052,12 @@ static int SFTP_CreateLongName(WS_SFTPNAME* name)
         perm[i++] = (tmp & 0002)?'w':'-';
         perm[i++] = (tmp & 0001)?'x':'-';
     }
-    totalSz += i;
     perm[i] = '\0';
+    totalSz += i;
 
     totalSz += name->fSz; /* size of file name */
-    totalSz += 7; /* for all ' ' spaces */
-    totalSz += 3 + 8 + 8; /* linkCount + uid + gid */
+    totalSz += 7; /* for all ' ' spaces in fmt */
+    totalSz += 1 + 10 + 10; /* '?' + uid + gid */
     WSNPRINTF(sizeStr, sizeof(sizeStr) - 1, "%8lld",
             ((long long int)atr->sz[1] << 32) + (long long int)(atr->sz[0]));
     totalSz += (int)WSTRLEN(sizeStr);
@@ -3061,11 +3070,11 @@ static int SFTP_CreateLongName(WS_SFTPNAME* name)
         return WS_MEMORY_E;
     }
     name->lSz = totalSz;
-    name->lName[totalSz] = '\0';
 
-#if defined(XGMTIME) && defined(XSNPRINTF)
-    WSNPRINTF(name->lName, totalSz, "%s %3d %8d %8d %s %s %s",
-            perm, linkCount, atr->uid, atr->gid, sizeStr, date, name->fName);
+#if defined(WSNPRINTF)
+    /* Note, in the format, the date handles its trailing space. */
+    WSNPRINTF(name->lName, totalSz + 1, "%s   ? %10u %10u %s %s%s",
+            perm, atr->uid, atr->gid, sizeStr, date, name->fName);
 #else
     WMEMCPY(name->lName, name->fName, totalSz);
 #endif
@@ -5418,6 +5427,31 @@ static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
 
 #else
 
+static void SFTP_GetAttributesHelper(WS_SFTP_FILEATRB* a, WSTAT_T* s)
+{
+    WMEMSET(a, 0, sizeof(*a));
+
+    a->flags |= WOLFSSH_FILEATRB_SIZE;
+    a->sz[0] = (word32)(s->st_size & 0xFFFFFFFF);
+#if SIZEOF_OFF_T == 8
+    a->sz[1] = (word32)((s->st_size >> 32) & 0xFFFFFFFF);
+#endif
+
+    a->flags |= WOLFSSH_FILEATRB_UIDGID;
+    a->uid = (word32)s->st_uid;
+    a->gid = (word32)s->st_gid;
+
+    a->flags |= WOLFSSH_FILEATRB_PERM;
+    a->per = (word32)s->st_mode;
+
+    a->flags |= WOLFSSH_FILEATRB_TIME;
+    a->atime = (word32)s->st_atime;
+    a->mtime = (word32)s->st_mtime;
+
+    /* @TODO handle attribute extensions */
+}
+
+
 /* NOTE: if atr->flags is set to a value of 0 then no attributes are set.
  * Fills out a WS_SFTP_FILEATRB structure
  * returns WS_SUCCESS on success
@@ -5442,26 +5476,7 @@ static int SFTP_GetAttributes(void* fs, const char* fileName,
         }
     }
 
-    WMEMSET(atr, 0, sizeof(WS_SFTP_FILEATRB));
-
-    atr->flags |= WOLFSSH_FILEATRB_SIZE;
-    atr->sz[0] = (word32)(stats.st_size & 0xFFFFFFFF);
-#if SIZEOF_OFF_T == 8
-    atr->sz[1] = (word32)((stats.st_size >> 32) & 0xFFFFFFFF);
-#endif
-
-    atr->flags |= WOLFSSH_FILEATRB_UIDGID;
-    atr->uid = (word32)stats.st_uid;
-    atr->gid = (word32)stats.st_gid;
-
-    atr->flags |= WOLFSSH_FILEATRB_PERM;
-    atr->per = (word32)stats.st_mode;
-
-    atr->flags |= WOLFSSH_FILEATRB_TIME;
-    atr->atime = (word32)stats.st_atime;
-    atr->mtime = (word32)stats.st_mtime;
-
-    /* @TODO handle attribute extensions */
+    SFTP_GetAttributesHelper(atr, &stats);
 
     return WS_SUCCESS;
 }
@@ -5487,26 +5502,7 @@ static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
             return WS_BAD_FILE_E;
     }
 
-    WMEMSET(atr, 0, sizeof(WS_SFTP_FILEATRB));
-
-    atr->flags |= WOLFSSH_FILEATRB_SIZE;
-    atr->sz[0] = (word32)(stats.st_size & 0xFFFFFFFF);
-#if SIZEOF_OFF_T == 8
-    atr->sz[1] = (word32)((stats.st_size >> 32) & 0xFFFFFFFF);
-#endif
-
-    atr->flags |= WOLFSSH_FILEATRB_UIDGID;
-    atr->uid = (word32)stats.st_uid;
-    atr->gid = (word32)stats.st_gid;
-
-    atr->flags |= WOLFSSH_FILEATRB_PERM;
-    atr->per = (word32)stats.st_mode;
-
-    atr->flags |= WOLFSSH_FILEATRB_TIME;
-    atr->atime = (word32)stats.st_atime;
-    atr->mtime = (word32)stats.st_mtime;
-
-    /* @TODO handle attribute extensions */
+    SFTP_GetAttributesHelper(atr, &stats);
 
     WOLFSSH_UNUSED(ssh);
     WOLFSSH_UNUSED(name);

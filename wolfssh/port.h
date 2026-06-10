@@ -112,7 +112,7 @@ extern "C" {
     #include "storage/nu_storage.h"
 
     #define WFILE int
-    WOLFSSH_API int wfopen(WFILE**, const char*, const char*);
+    WOLFSSH_API int wfopen(WFILE** f, const char* filename, const char* mode);
 
     #define WFOPEN(fs,f,fn,m)   wfopen((f),(fn),(m))
     #define WFCLOSE(fs,f)       NU_Close(*(f))
@@ -191,7 +191,7 @@ extern "C" {
         #define MQX_MFS_DEVICE  "a:"
     #endif
 
-    WOLFSSH_API int wfopen(WFILE**, const char*, const char*);
+    WOLFSSH_API int wfopen(WFILE** f, const char* filename, const char* mode);
 
     #define WFOPEN(fs,f,fn,m)   wfopen((f),(fn),(m))
     #define WFCLOSE(fs,f)       fclose((f))
@@ -438,7 +438,7 @@ extern "C" {
         #include <stdio.h>
     #endif
     #define WFILE FILE
-    WOLFSSH_API int wfopen(WFILE**, const char*, const char*);
+    WOLFSSH_API int wfopen(WFILE** f, const char* filename, const char* mode);
 
     #define WFFLUSH             fflush
 
@@ -538,9 +538,9 @@ extern "C" {
     #define WSTRCPY(s1,s2)    strcpy((s1),(s2))
 
     /* for these string functions use internal versions */
-    WOLFSSH_API char* wstrnstr(const char*, const char*, unsigned int);
-    WOLFSSH_API char* wstrncat(char*, const char*, size_t);
-    WOLFSSH_API char* wstrdup(const char*, void*, int);
+    WOLFSSH_API char* wstrnstr(const char* s1, const char* s2, unsigned int n);
+    WOLFSSH_API char* wstrncat(char* s1, const char* s2, size_t n);
+    WOLFSSH_API char* wstrdup(const char* s1, void* heap, int type);
     #define WSTRNSTR(s1,s2,n) wstrnstr((s1),(s2),(n))
     #define WSTRNCAT(s1,s2,n) wstrncat((s1),(s2),(n))
     #define WSTRDUP(s,h,t)    wstrdup((s),(h),(t))
@@ -622,6 +622,8 @@ extern "C" {
     #define WOLFSSH_NO_TIMESTAMP /* no strftime() */
 #elif defined(WOLFSSH_ZEPHYR)
     #define WTIME time
+    /* Zephyr's minimal libc provides gmtime_r but not localtime_r,
+     * so timestamps are reported in UTC on this platform. */
     #define WLOCALTIME(c,r) (gmtime_r((c),(r))!=NULL)
 #elif defined(WOLFSSL_NUCLEUS)
     #define WTIME time
@@ -1325,8 +1327,10 @@ extern "C" {
     #define WCLOSE(fs,fd)        _close((fd))
 
     #define WFD int
-    int wPwrite(WFD, unsigned char*, unsigned int, const unsigned int*);
-    int wPread(WFD, unsigned char*, unsigned int, const unsigned int*);
+    int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
+            const unsigned int* shortOffset);
+    int wPread(WFD fd, unsigned char* buf, unsigned int sz,
+            const unsigned int* shortOffset);
     #define WPWRITE(fs,fd,b,s,o) wPwrite((fd),(b),(s),(o))
     #define WPREAD(fs,fd,b,s,o)  wPread((fd),(b),(s),(o))
     #define WS_DELIM          '\\'
@@ -1382,8 +1386,10 @@ extern "C" {
     #define WOPEN(fs,p,f,m)   wssh_z_open((p),(f))
     int wssh_z_close(WFD fd);
     #define WCLOSE(fs,fd)     wssh_z_close((fd))
-    int wPwrite(WFD, unsigned char*, unsigned int, const unsigned int*);
-    int wPread(WFD, unsigned char*, unsigned int, const unsigned int*);
+    int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
+            const unsigned int* shortOffset);
+    int wPread(WFD fd, unsigned char* buf, unsigned int sz,
+            const unsigned int* shortOffset);
     #define WPWRITE(fs,fd,b,s,o) wPwrite((fd),(b),(s),(o))
     #define WPREAD(fs,fd,b,s,o)  wPread((fd),(b),(s),(o))
 
@@ -1451,8 +1457,10 @@ extern "C" {
     /* Our "file descriptor" wrapper */
 
     #define WFD SYS_FS_HANDLE
-    int wPwrite(WFD, unsigned char*, unsigned int, const unsigned int*);
-    int wPread(WFD, unsigned char*, unsigned int, const unsigned int*);
+    int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
+            const unsigned int* shortOffset);
+    int wPread(WFD fd, unsigned char* buf, unsigned int sz,
+            const unsigned int* shortOffset);
     #define WPWRITE(fs,fd,b,s,o) wPwrite((fd),(b),(s),(o))
     #define WPREAD(fs,fd,b,s,o)  wPread((fd),(b),(s),(o))
 
@@ -1487,8 +1495,10 @@ extern "C" {
 
     #define WOPEN(fs,f,m,p) open((f),(m),(p))
     #define WCLOSE(fs,fd) close((fd))
-    int wPwrite(WFD, unsigned char*, unsigned int, const unsigned int*);
-    int wPread(WFD, unsigned char*, unsigned int, const unsigned int*);
+    int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
+            const unsigned int* shortOffset);
+    int wPread(WFD fd, unsigned char* buf, unsigned int sz,
+            const unsigned int* shortOffset);
     #define WPWRITE(fs,fd,b,s,o) wPwrite((fd),(b),(s),(o))
     #define WPREAD(fs,fd,b,s,o)  wPread((fd),(b),(s),(o))
 

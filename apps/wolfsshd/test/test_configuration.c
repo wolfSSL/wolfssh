@@ -35,7 +35,7 @@
 #endif /* __GNUC__ */
 
 
-void Log(const char *const, ...) FMTCHECK;
+void Log(const char *const fmt, ...) FMTCHECK;
 void Log(const char *const fmt, ...)
 {
     va_list vlist;
@@ -261,7 +261,7 @@ static int test_ParseConfigLine(void)
             Log("    Testing scenario: %s.", vectors[i].desc);
 
             ret = ParseConfigLine(&conf, vectors[i].line,
-                                  (int)WSTRLEN(vectors[i].line));
+                                  (int)WSTRLEN(vectors[i].line), 0);
 
             if ((ret == WS_SUCCESS && !vectors[i].shouldFail) ||
                 (ret != WS_SUCCESS && vectors[i].shouldFail)) {
@@ -293,7 +293,7 @@ static int test_ConfigCopy(void)
     conf = head;
 
     /* string fields via ParseConfigLine */
-#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s))
+#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s), 0)
     if (ret == WS_SUCCESS) ret = PCL("Banner /etc/issue");
     if (ret == WS_SUCCESS) ret = PCL("ChrootDirectory /var/chroot");
     if (ret == WS_SUCCESS) ret = PCL("HostKey /etc/ssh/ssh_host_key");
@@ -437,7 +437,7 @@ static int test_GetUserConfMatchOverride(void)
         ret = WS_MEMORY_E;
     conf = head;
 
-#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s))
+#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s), 0)
     /* permissive global settings */
     if (ret == WS_SUCCESS) ret = PCL("PasswordAuthentication yes");
     if (ret == WS_SUCCESS) ret = PCL("PermitEmptyPasswords yes");
@@ -501,6 +501,82 @@ static int test_GetUserConfMatchOverride(void)
     return ret;
 }
 
+/* Bounded recursion through Include directives: a self-including config
+ * must fail with WS_BAD_ARGUMENT once the depth limit is hit, and the
+ * config object must remain usable so a subsequent load of a normal
+ * config on the same WOLFSSHD_CONFIG still succeeds. */
+static int test_IncludeRecursionBound(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* conf = NULL;
+    WFILE* f = NULL;
+    const char* loopPath = "./include_loop.conf";
+    const char* normalPath = "./include_normal.conf";
+    const char* loopContents = "Include ./include_loop.conf\n";
+    const char* normalContents = "Port 22\n";
+    word32 sz, wr;
+
+    WFOPEN(NULL, &f, loopPath, "w");
+    if (f == NULL) {
+        Log("    Could not create %s.\n", loopPath);
+        return WS_FATAL_ERROR;
+    }
+    sz = (word32)WSTRLEN(loopContents);
+    wr = (word32)WFWRITE(NULL, loopContents, sizeof(char), sz, f);
+    WFCLOSE(NULL, f);
+    if (sz != wr) {
+        WREMOVE(0, loopPath);
+        return WS_FATAL_ERROR;
+    }
+
+    WFOPEN(NULL, &f, normalPath, "w");
+    if (f == NULL) {
+        WREMOVE(0, loopPath);
+        Log("    Could not create %s.\n", normalPath);
+        return WS_FATAL_ERROR;
+    }
+    sz = (word32)WSTRLEN(normalContents);
+    wr = (word32)WFWRITE(NULL, normalContents, sizeof(char), sz, f);
+    WFCLOSE(NULL, f);
+    if (sz != wr) {
+        WREMOVE(0, loopPath);
+        WREMOVE(0, normalPath);
+        return WS_FATAL_ERROR;
+    }
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL) {
+        ret = WS_MEMORY_E;
+    }
+
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: self-include hits depth bound.");
+        if (wolfSSHD_ConfigLoad(conf, loopPath) == WS_BAD_ARGUMENT) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: config reusable after failed include.");
+        if (wolfSSHD_ConfigLoad(conf, normalPath) == WS_SUCCESS) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    wolfSSHD_ConfigFree(conf);
+    WREMOVE(0, loopPath);
+    WREMOVE(0, normalPath);
+    return ret;
+}
+
 /* Verifies ConfigFree releases all string fields - most useful under ASan. */
 static int test_ConfigFree(void)
 {
@@ -513,7 +589,7 @@ static int test_ConfigFree(void)
         ret = WS_MEMORY_E;
     conf = head;
 
-#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s))
+#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s), 0)
     if (ret == WS_SUCCESS) ret = PCL("Banner /etc/issue");
     if (ret == WS_SUCCESS) ret = PCL("ChrootDirectory /var/chroot");
     if (ret == WS_SUCCESS) ret = PCL("HostKey /etc/ssh/ssh_host_key");
@@ -861,6 +937,7 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_ConfigCopy),
     TEST_DECL(test_GetUserConfMatchOverride),
     TEST_DECL(test_CAKeysFileDiffers),
+    TEST_DECL(test_IncludeRecursionBound),
     TEST_DECL(test_ConfigFree),
 #ifdef WOLFSSL_BASE64_ENCODE
     TEST_DECL(test_CheckAuthKeysLine),

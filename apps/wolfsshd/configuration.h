@@ -59,7 +59,7 @@ WOLFSSHD_CONFIG* wolfSSHD_GetUserConf(const WOLFSSHD_CONFIG* conf,
 void wolfSSHD_ConfigSavePID(const WOLFSSHD_CONFIG* conf);
 
 #ifdef WOLFSSHD_UNIT_TEST
-int ParseConfigLine(WOLFSSHD_CONFIG** conf, const char* l, int lSz);
+int ParseConfigLine(WOLFSSHD_CONFIG** conf, const char* l, int lSz, int depth);
 #endif
 
 #endif /* WOLFSSHD_H */

@@ -1078,12 +1078,19 @@ static int GetScpTimestamp(WOLFSSH* ssh, byte* buf, word32 bufSz,
 
     /* skip '0 ' */
     if (ret == WS_SUCCESS) {
-        if (buf[idx] != '0' || ++idx > bufSz)
+        if (buf[idx] != '0') {
             ret = WS_SCP_TIMESTAMP_E;
-
-        if (ret == WS_SUCCESS) {
-            if (buf[idx] != ' ' || ++idx > bufSz)
+        }
+        else {
+            idx++;
+            if (idx >= bufSz || buf[idx] != ' ') {
                 ret = WS_SCP_TIMESTAMP_E;
+            }
+            else {
+                idx++;
+                if (idx >= bufSz)
+                    ret = WS_SCP_TIMESTAMP_E;
+            }
         }
     }
 

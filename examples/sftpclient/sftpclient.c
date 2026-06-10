@@ -105,7 +105,7 @@ static void err_msg(const char* s)
     static word32 startTime;
     #define TIMEOUT_VALUE 120
 
-    word32 current_time(int);
+    word32 current_time(int reset);
 #ifdef USE_WINDOWS_API
     #include <time.h>
     #define WIN32_LEAN_AND_MEAN
@@ -268,7 +268,7 @@ static void sig_handler(const int sig)
     (void)sig;
 
     interrupt = 1;
-    wolfSSH_SFTP_Interrupt(ssh);
+    wolfSSH_SFTP_Interrupt(ssh); /* NOLINT(bugprone-signal-handler) */
 }
 #endif /* WS_NO_SIGNAL */
 

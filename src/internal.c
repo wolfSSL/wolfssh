@@ -7563,7 +7563,6 @@ static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
                         publicKeyTypeSz) == 0) {
             sigTypeOk = 1;
         }
-    #ifdef WOLFSSH_CERTS
         else if (publicKeyType != NULL
                     && pk->publicKeyTypeSz == 14
                     && WMEMCMP(pk->publicKeyType,
@@ -7581,7 +7580,6 @@ static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
                 sigTypeOk = 1;
             }
         }
-    #endif
         if (!sigTypeOk) {
             WLOG(WS_LOG_DEBUG,
                  "Signature's type does not match public key type");

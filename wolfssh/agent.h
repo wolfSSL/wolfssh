@@ -165,25 +165,29 @@ typedef enum WS_AgentCbError {
 } WS_AgentCbError;
 
 
-typedef int (*WS_CallbackAgent)(WS_AgentCbAction, void*);
-typedef int (*WS_CallbackAgentIO)(WS_AgentIoCbAction, void*, word32, void*);
+typedef int (*WS_CallbackAgent)(WS_AgentCbAction action, void* agentCbCtx);
+typedef int (*WS_CallbackAgentIO)(WS_AgentIoCbAction action, void* buf,
+        word32 bufSz, void* agentCbCtx);
 
 
-WOLFSSH_API WOLFSSH_AGENT_CTX* wolfSSH_AGENT_new(void*);
-WOLFSSH_API void wolfSSH_AGENT_free(WOLFSSH_AGENT_CTX*);
-WOLFSSH_LOCAL WOLFSSH_AGENT_ID* wolfSSH_AGENT_ID_new(byte, word32, void*);
-WOLFSSH_LOCAL void wolfSSH_AGENT_ID_free(WOLFSSH_AGENT_ID*, void*);
-WOLFSSH_LOCAL void wolfSSH_AGENT_ID_list_free(WOLFSSH_AGENT_ID*, void*);
-WOLFSSH_API int wolfSSH_CTX_set_agent_cb(WOLFSSH_CTX*,
-        WS_CallbackAgent, WS_CallbackAgentIO);
-WOLFSSH_API int wolfSSH_set_agent_cb_ctx(WOLFSSH*, void*);
-WOLFSSH_API int wolfSSH_CTX_AGENT_enable(WOLFSSH_CTX*, byte);
-WOLFSSH_API int wolfSSH_AGENT_enable(WOLFSSH*, byte);
-WOLFSSH_LOCAL int wolfSSH_AGENT_worker(WOLFSSH*);
-WOLFSSH_API int wolfSSH_AGENT_Relay(WOLFSSH*,
-        const byte*, word32*, byte*, word32*);
-WOLFSSH_API int wolfSSH_AGENT_SignRequest(WOLFSSH*, const byte*, word32,
-        byte*, word32*, const byte*, word32, word32);
+WOLFSSH_API WOLFSSH_AGENT_CTX* wolfSSH_AGENT_new(void* heap);
+WOLFSSH_API void wolfSSH_AGENT_free(WOLFSSH_AGENT_CTX* agent);
+WOLFSSH_LOCAL WOLFSSH_AGENT_ID* wolfSSH_AGENT_ID_new(byte keyType,
+        word32 keySz, void* heap);
+WOLFSSH_LOCAL void wolfSSH_AGENT_ID_free(WOLFSSH_AGENT_ID* id, void* heap);
+WOLFSSH_LOCAL void wolfSSH_AGENT_ID_list_free(WOLFSSH_AGENT_ID* id, void* heap);
+WOLFSSH_API int wolfSSH_CTX_set_agent_cb(WOLFSSH_CTX* ctx,
+        WS_CallbackAgent agentCb, WS_CallbackAgentIO agentIoCb);
+WOLFSSH_API int wolfSSH_set_agent_cb_ctx(WOLFSSH* ssh, void* ctx);
+WOLFSSH_API int wolfSSH_CTX_AGENT_enable(WOLFSSH_CTX* ctx, byte isEnabled);
+WOLFSSH_API int wolfSSH_AGENT_enable(WOLFSSH* ssh, byte isEnabled);
+WOLFSSH_LOCAL int wolfSSH_AGENT_worker(WOLFSSH* ssh);
+WOLFSSH_API int wolfSSH_AGENT_Relay(WOLFSSH* ssh,
+        const byte* msg, word32* msgSz, byte* rsp, word32* rspSz);
+WOLFSSH_API int wolfSSH_AGENT_SignRequest(WOLFSSH* ssh,
+        const byte* digest, word32 digestSz,
+        byte* sig, word32* sigSz,
+        const byte* keyBlob, word32 keyBlobSz, word32 flags);
 
 
 #ifdef __cplusplus

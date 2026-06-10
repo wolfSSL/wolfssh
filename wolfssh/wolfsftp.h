@@ -224,7 +224,7 @@ WOLFSSH_API int wolfSSH_SFTP_Rename(WOLFSSH* ssh, const char* old,
 WOLFSSH_API WS_SFTPNAME* wolfSSH_SFTP_LS(WOLFSSH* ssh, char* dir);
 WOLFSSH_API int wolfSSH_SFTP_CHMOD(WOLFSSH* ssh, char* n, char* oct);
 
-typedef void(WS_STATUS_CB)(WOLFSSH*, word32*, char*);
+typedef void(WS_STATUS_CB)(WOLFSSH* ssh, word32* offset, char* fileName);
 WOLFSSH_API int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from, char* to,
         byte resume, WS_STATUS_CB* statusCb);
 WOLFSSH_API int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to,
