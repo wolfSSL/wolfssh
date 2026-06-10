@@ -46,6 +46,19 @@
 
 #include <signal.h>
 
+#ifndef _WIN32
+    /* Used by getBufferFromFile() to load security-critical files without
+     * following an attacker-supplied symlink or trusting an unsafe owner. */
+    #include <fcntl.h>
+    #include <sys/stat.h>
+    #include <unistd.h>
+    #ifndef O_NOFOLLOW
+        /* Older platforms lack O_NOFOLLOW; the lstat() pre-check still
+         * rejects a symlinked leaf there. */
+        #define O_NOFOLLOW 0
+    #endif
+#endif
+
 #ifdef NO_INLINE
     #include <wolfssh/misc.h>
 #else
@@ -235,20 +248,88 @@ static void freeBufferFromFile(byte* buf, void* heap)
 }
 
 
-/* set bufSz to size wanted if too small and buf is null */
-static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap)
+/* Reads a file into a newly allocated buffer. When secure is non-zero the file
+ * holds a trust anchor (host key, host cert, or user CA) so the load is refused
+ * unless it is a regular file, reached without a symlink, owned by root or the
+ * daemon's effective user, and not group or world writable. This blocks a local
+ * user from substituting the file via a symlink or a writable parent directory.
+ * set bufSz to size wanted if too small and buf is null */
+static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap,
+        int secure)
 {
     FILE* file;
     byte* buf = NULL;
     long fileSz;
     word32 readSz;
+#ifndef _WIN32
+    struct stat lst;
+    struct stat st;
+    int fd;
+    int flags;
+#endif
 
     WOLFSSH_UNUSED(heap);
+#ifdef _WIN32
+    WOLFSSH_UNUSED(secure);
+#endif
 
     if (fileName == NULL) return NULL;
 
+#ifndef _WIN32
+    if (secure) {
+        /* lstat() rejects a symlink or any non-regular leaf such as a FIFO or
+         * device, O_NOFOLLOW keeps open() from following a symlink, and
+         * O_NONBLOCK keeps open() from blocking on a FIFO swapped in after the
+         * lstat(). The owner and mode checks run on the opened fd so there is
+         * no window to swap the file after the check. */
+        if (lstat(fileName, &lst) != 0 || !S_ISREG(lst.st_mode)) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Refusing to load %s: missing or not a regular file",
+                fileName);
+            return NULL;
+        }
+        fd = open(fileName, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+        if (fd < 0) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to open %s", fileName);
+            return NULL;
+        }
+        if (fstat(fd, &st) != 0) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to stat %s", fileName);
+            close(fd);
+            return NULL;
+        }
+        if (!S_ISREG(st.st_mode) ||
+                (st.st_uid != 0 && st.st_uid != geteuid()) ||
+                (st.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Refusing to load %s: must be a regular file owned by "
+                "root or the daemon and not group or world writable", fileName);
+            close(fd);
+            return NULL;
+        }
+        /* The target is a regular file, so clear O_NONBLOCK before the
+         * buffered reads below, which expect ordinary blocking semantics. */
+        flags = fcntl(fd, F_GETFL);
+        if (flags != -1)
+            (void)fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+        file = fdopen(fd, "rb");
+        if (file == NULL) {
+            close(fd);
+            return NULL;
+        }
+    }
+    else {
+        if (WFOPEN(NULL, &file, fileName, "rb") != 0)
+            return NULL;
+    }
+#else
+    /* The secure ownership and symlink gate is POSIX only. Windows has no
+     * comparable uid model and relies on filesystem ACLs to protect the
+     * trust-anchor files, so the file is opened directly regardless of the
+     * secure flag. */
     if (WFOPEN(NULL, &file, fileName, "rb") != 0)
         return NULL;
+#endif
     WFSEEK(NULL, file, 0, WSEEK_END);
     fileSz = WFTELL(NULL, file);
     if (fileSz < 0) {
@@ -329,7 +410,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
     if (ret == WS_SUCCESS) {
 #ifndef NO_FILESYSTEM
         *banner = getBufferFromFile(wolfSSHD_ConfigGetBanner(conf),
-                NULL, heap);
+                NULL, heap, 0);
 #endif
         if (*banner) {
             wolfSSH_CTX_SetBanner(*ctx, (char*)*banner);
@@ -349,7 +430,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
             byte* data;
             word32 dataSz = 0;
 
-            data = getBufferFromFile(hostKey, &dataSz, heap);
+            data = getBufferFromFile(hostKey, &dataSz, heap, 1);
             if (data == NULL) {
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Error reading host key file.");
@@ -393,10 +474,10 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
             byte*  data;
             word32 dataSz = 0;
 
-            data = getBufferFromFile(hostCert, &dataSz, heap);
+            data = getBufferFromFile(hostCert, &dataSz, heap, 1);
             if (data == NULL) {
                 wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] Error reading host key file.");
+                    "[SSHD] Error reading host certificate file.");
                 ret = WS_MEMORY_E;
 
             }
@@ -439,7 +520,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
 
 
             wolfSSH_Log(WS_LOG_INFO, "[SSHD] Using CA keys file %s", caCert);
-            data = getBufferFromFile(caCert, &dataSz, heap);
+            data = getBufferFromFile(caCert, &dataSz, heap, 1);
             if (data == NULL) {
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Error reading CA cert file.");
