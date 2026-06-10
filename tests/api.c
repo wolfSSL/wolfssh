@@ -49,7 +49,7 @@
     #include <wolfssh/agent.h>
 #endif
 
-#ifdef WOLFSSH_SFTP
+#if defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)
     #define WOLFSSH_TEST_LOCKING
     #ifndef SINGLE_THREADED
         #define WOLFSSH_TEST_THREADING
@@ -62,6 +62,9 @@
 #endif
 #include <wolfssh/test.h>
 #include "tests/api.h"
+#ifdef WOLFSSH_TEST_ECHOSERVER
+    #include "examples/echoserver/echoserver.h"
+#endif
 
 /* for echoserver test cases */
 int myoptind = 0;
@@ -1249,8 +1252,6 @@ static void test_wolfSSH_agent_signrequest_success(void)
 #if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT) && \
     !defined(SINGLE_THREADED)
 
-#include "examples/echoserver/echoserver.h"
-
 byte userPassword[256];
 
 static int sftpUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
@@ -1286,6 +1287,14 @@ static int AcceptAnyServerHostKey(const byte* pubKey, word32 pubKeySz,
     (void)pubKeySz;
     (void)ctx;
     return 0;
+}
+
+/* Counts keying completions (initial handshake and each rekey) so the test can
+ * assert a mid-transfer rekey actually fired. ctx points to an int counter. */
+static void sftpKeyingCompleteCb(void* ctx)
+{
+    if (ctx != NULL)
+        (*(int*)ctx)++;
 }
 
 /* performs connection to port, sets WOLFSSH_CTX and WOLFSSH on success
@@ -1509,6 +1518,7 @@ static void sftp_rekey_test(int nonBlock)
     int argsCount;
     int err;
     int tries;
+    int kexCount = 0;
     WS_SOCKET_T clientFd;
     WS_SFTPNAME* ls;
     int i;
@@ -1538,6 +1548,12 @@ static void sftp_rekey_test(int nonBlock)
     sftp_client_connect(&ctx, &ssh, ready.port);
     AssertNotNull(ctx);
     AssertNotNull(ssh);
+
+    /* Count keying completions from here on. The initial handshake already ran
+     * inside sftp_client_connect, so kexCount stays 0 until the highwater rekey
+     * fires mid-SFTP; the AssertIntGT below then proves it did. */
+    wolfSSH_SetKeyingCompletionCb(ctx, sftpKeyingCompleteCb);
+    wolfSSH_SetKeyingCompletionCbCtx(ssh, &kexCount);
 
     /* Handshake completed in blocking mode; switch to non-blocking so the
      * LS/rekey phase exercises the WS_WANT_READ/WS_WANT_WRITE early-return
@@ -1584,6 +1600,10 @@ static void sftp_rekey_test(int nonBlock)
         wolfSSH_SFTPNAME_list_free(ls);
         ls = NULL;
     }
+
+    /* A mid-SFTP rekey must have fired; otherwise the test silently stops
+     * exercising the buffer_send/buffer_read rekey paths it was written for. */
+    AssertIntGT(kexCount, 0);
 
     tries = 0;
     do {
@@ -2090,6 +2110,362 @@ static void test_wolfSSH_SFTP_ReKey_NonBlock(void) { ; }
 static void test_wolfSSH_SFTP_Confinement(void) { ; }
 static void test_wolfSSH_SFTP_SetDefaultPath(void) { ; }
 #endif /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
+
+
+#if defined(WOLFSSH_SCP) && !defined(NO_WOLFSSH_CLIENT) && \
+    !defined(SINGLE_THREADED) && !defined(NO_FILESYSTEM) && \
+    !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(WOLFSSH_ZEPHYR)
+
+/* Upper bound on non-blocking retry iterations. A legitimate transfer across a
+ * forced rekey completes in well under this; the bound keeps a regression from
+ * hanging CI by tripping the AssertIntLE below instead. */
+#define SCP_REKEY_MAX_TRIES 100
+
+/* Payload larger than the forced highwater so the transfer straddles it. */
+#define SCP_REKEY_FILE_SZ 2048
+
+static byte scpUserPassword[256];
+
+static int scpUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
+{
+    int ret = WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
+
+    if (authType == WOLFSSH_USERAUTH_PASSWORD) {
+        const char* password = (const char*)ctx;
+        word32 passwordSz;
+
+        if (password != NULL) {
+            passwordSz = (word32)WSTRLEN(password);
+            if (passwordSz > (word32)sizeof(scpUserPassword))
+                passwordSz = (word32)sizeof(scpUserPassword);
+            WMEMCPY(scpUserPassword, password, passwordSz);
+            authData->sf.password.password = scpUserPassword;
+            authData->sf.password.passwordSz = passwordSz;
+            ret = WOLFSSH_USERAUTH_SUCCESS;
+        }
+    }
+
+    return ret;
+}
+
+static int scpAcceptAnyServerHostKey(const byte* pubKey, word32 pubKeySz,
+        void* ctx)
+{
+    (void)pubKey;
+    (void)pubKeySz;
+    (void)ctx;
+    return 0;
+}
+
+/* Counts keying completions (initial handshake and each rekey) so the test can
+ * assert a mid-transfer rekey actually fired. ctx points to an int counter. */
+static void scpKeyingCompleteCb(void* ctx)
+{
+    if (ctx != NULL)
+        (*(int*)ctx)++;
+}
+
+/* Writes sz bytes of buf to name. Returns 0 on success. */
+static int scpWriteTestFile(const char* name, const byte* buf, word32 sz)
+{
+    WFILE* fp = NULL;
+    int ret = 0;
+
+    if (WFOPEN(NULL, &fp, name, "wb") != 0 || fp == NULL)
+        return -1;
+
+    if (WFWRITE(NULL, buf, 1, sz, fp) != sz)
+        ret = -1;
+
+    WFCLOSE(NULL, fp);
+    return ret;
+}
+
+/* Returns 0 if the first sz bytes of name match expect. */
+static int scpFilesMatch(const char* name, const byte* expect, word32 sz)
+{
+    WFILE* fp = NULL;
+    byte got[SCP_REKEY_FILE_SZ];
+    int ret = 0;
+
+    if (sz > sizeof(got))
+        return -1;
+
+    if (WFOPEN(NULL, &fp, name, "rb") != 0 || fp == NULL)
+        return -1;
+
+    if (WFREAD(NULL, got, 1, sz, fp) != sz)
+        ret = -1;
+
+    if (ret == 0 && XMEMCMP(got, expect, sz) != 0)
+        ret = -1;
+
+    WFCLOSE(NULL, fp);
+    return ret;
+}
+
+/* Connects an SCP client to port, completes the SSH handshake and opens the
+ * exec channel carrying cmd, leaving ssh ready for wolfSSH_SCP_to/from. Doing
+ * the handshake here (rather than inside the transfer call) lets the caller set
+ * a low highwater before the data phase so a rekey fires mid-transfer.
+ */
+static void scp_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port,
+        const char* cmd)
+{
+    WS_SOCKET_T sockFd = WOLFSSH_SOCKET_INVALID;
+    SOCKADDR_IN_T clientAddr;
+    socklen_t clientAddrSz = sizeof(clientAddr);
+    int ret;
+    char* host = (char*)wolfSshIp;
+    const char* username = "jill";
+    const char* password = "upthehill";
+
+    if (ctx == NULL || ssh == NULL)
+        return;
+
+    *ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (*ctx == NULL)
+        return;
+
+    wolfSSH_CTX_SetPublicKeyCheck(*ctx, scpAcceptAnyServerHostKey);
+    wolfSSH_SetUserAuth(*ctx, scpUserAuth);
+    *ssh = wolfSSH_new(*ctx);
+    if (*ssh == NULL) {
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        return;
+    }
+
+    build_addr(&clientAddr, host, port);
+    tcp_socket(&sockFd, ((struct sockaddr_in *)&clientAddr)->sin_family);
+    if (sockFd < 0) {
+        wolfSSH_free(*ssh);
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        *ssh = NULL;
+        return;
+    }
+
+    ret = connect(sockFd, (const struct sockaddr *)&clientAddr, clientAddrSz);
+    if (ret != 0) {
+        WCLOSESOCKET(sockFd);
+        wolfSSH_free(*ssh);
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        *ssh = NULL;
+        return;
+    }
+
+    wolfSSH_SetUserAuthCtx(*ssh, (void*)password);
+    ret = wolfSSH_SetUsername(*ssh, username);
+    if (ret == WS_SUCCESS)
+        ret = wolfSSH_SetChannelType(*ssh, WOLFSSH_SESSION_EXEC, (byte*)cmd,
+                (word32)WSTRLEN(cmd));
+    if (ret == WS_SUCCESS)
+        ret = wolfSSH_set_fd(*ssh, (int)sockFd);
+    if (ret == WS_SUCCESS)
+        ret = wolfSSH_connect(*ssh);
+
+    if (ret != WS_SUCCESS) {
+        WCLOSESOCKET(sockFd);
+        wolfSSH_free(*ssh);
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        *ssh = NULL;
+        return;
+    }
+}
+
+/* Drives an SCP transfer with a forced mid-transfer rekey.
+ *
+ * toServer == 0: client SINK (wolfSSH_SCP_from), exercises ScpStreamRead, the
+ *                confirmed hang path. toServer == 1: client SOURCE
+ *                (wolfSSH_SCP_to), exercises the ScpStreamSend rekey/window
+ *                drain loop. nonBlock drives the non-blocking retry path.
+ */
+static void scp_rekey_test(int nonBlock, int toServer)
+{
+    func_args ser;
+    tcp_ready ready;
+    int argsCount;
+    int ret;
+    int err;
+    int tries;
+    int kexCount = 0;
+    word32 i;
+    WS_SOCKET_T clientFd;
+#ifdef USE_WINDOWS_API
+    DWORD rcvTimeout = 20000;
+#else
+    struct timeval rcvTimeout;
+#endif
+    byte fileData[SCP_REKEY_FILE_SZ];
+    char cmd[64];
+    const char* args[10];
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    /* Fixed names used for filesystem create/verify/cleanup. The *Buf copies
+     * are what get passed to the SCP API, which rewrites the path in place
+     * (rename/clean), so they cannot be reused to name the file afterward. The
+     * leading "./" keeps a directory component so the base-dir open succeeds,
+     * as the real scpclient passes $PWD-prefixed paths. */
+    const char* srcName  = "./scp_rekey_src.txt";
+    const char* fromName = "./scp_rekey_from.txt";
+    const char* toName   = "./scp_rekey_to.txt";
+    char srcBuf[32];
+    char fromBuf[32];
+    char toBuf[32];
+    const char* verifyName;
+
+    THREAD_TYPE serThread;
+
+    /* mutable copies for the SCP API (rewritten in place during the transfer) */
+    WSTRNCPY(srcBuf, srcName, sizeof(srcBuf));
+    WSTRNCPY(fromBuf, fromName, sizeof(fromBuf));
+    WSTRNCPY(toBuf, toName, sizeof(toBuf));
+
+    /* deterministic source content */
+    for (i = 0; i < SCP_REKEY_FILE_SZ; i++)
+        fileData[i] = (byte)(i & 0xff);
+    AssertIntEQ(scpWriteTestFile(srcName, fileData, SCP_REKEY_FILE_SZ), 0);
+
+    WMEMSET(&ser, 0, sizeof(func_args));
+    argsCount = 0;
+    args[argsCount++] = ".";
+    args[argsCount++] = "-1";
+#ifndef USE_WINDOWS_API
+    args[argsCount++] = "-p";
+    args[argsCount++] = "0";
+#endif
+    ser.argv   = (char**)args;
+    ser.argc   = argsCount;
+    ser.signal = &ready;
+    InitTcpReady(ser.signal);
+    ThreadStart(echoserver_test, (void*)&ser, &serThread);
+    WaitTcpReady(&ready);
+
+    /* -f: server is source (client SINK); -t: server is sink (client SOURCE) */
+    if (toServer) {
+        WSNPRINTF(cmd, sizeof(cmd), "scp -t %s", toName);
+        verifyName = toName;
+    }
+    else {
+        WSNPRINTF(cmd, sizeof(cmd), "scp -f %s", srcName);
+        verifyName = fromName;
+    }
+
+    scp_client_connect(&ctx, &ssh, ready.port, cmd);
+    AssertNotNull(ctx);
+    AssertNotNull(ssh);
+
+    /* Count keying completions from here on. The initial handshake already ran
+     * inside scp_client_connect, so kexCount stays 0 until the highwater-driven
+     * rekey fires mid-transfer; the AssertIntGT below then proves it did. */
+    wolfSSH_SetKeyingCompletionCb(ctx, scpKeyingCompleteCb);
+    wolfSSH_SetKeyingCompletionCbCtx(ssh, &kexCount);
+
+    /* handshake done in blocking mode; switch to non-blocking for the data
+     * phase so the WS_WANT_READ/WS_WANT_WRITE retry path is exercised */
+    clientFd = wolfSSH_get_fd(ssh);
+    if (nonBlock)
+        tcp_set_nonblocking(&clientFd);
+
+    /* Bound the blocking-mode recv so a KEXINIT/rekey deadlock regression fails
+     * the AssertIntEQ below instead of hanging CI forever. The
+     * SCP_REKEY_MAX_TRIES bound only covers the non-blocking retry loop; a
+     * non-blocking socket never blocks in recv, so this is a no-op there. */
+#ifdef USE_WINDOWS_API
+    (void)setsockopt(clientFd, SOL_SOCKET, SO_RCVTIMEO,
+            (const char*)&rcvTimeout, sizeof(rcvTimeout));
+#else
+    rcvTimeout.tv_sec = 20;
+    rcvTimeout.tv_usec = 0;
+    (void)setsockopt(clientFd, SOL_SOCKET, SO_RCVTIMEO,
+            &rcvTimeout, sizeof(rcvTimeout));
+#endif
+
+    /* 256 is well below the 2 KB payload, so the highwater check fires partway
+     * through and the ScpStreamRead/ScpStreamSend rekey handling must carry the
+     * transfer to completion. */
+    AssertIntEQ(wolfSSH_SetHighwater(ssh, 256), WS_SUCCESS);
+
+    /* The retry loop only applies to non-blocking. In blocking mode the
+     * ScpStreamRead/ScpStreamSend fixes must carry the rekey transparently, so
+     * a single call completes the transfer; gating on nonBlock keeps the
+     * blocking path from masking a regression that leaves WS_REKEYING set. */
+    tries = 0;
+    do {
+        if (toServer)
+            ret = wolfSSH_SCP_to(ssh, srcBuf, toBuf);
+        else
+            ret = wolfSSH_SCP_from(ssh, srcBuf, fromBuf);
+        err = wolfSSH_get_error(ssh);
+        /* tcp_select() waits for receive-readiness; on WS_WANT_WRITE it has no
+         * write event to wait on, so its 1s timeout is the intended (rare)
+         * fallback that yields the CPU instead of busy-spinning. */
+        if (nonBlock && ret != WS_SUCCESS && (err == WS_WANT_READ
+                    || err == WS_WANT_WRITE || err == WS_REKEYING
+                    || err == WS_CHAN_RXD))
+            tcp_select(clientFd, 1);
+        tries++;
+    } while (nonBlock && ret != WS_SUCCESS && (err == WS_WANT_READ
+                || err == WS_WANT_WRITE || err == WS_REKEYING
+                || err == WS_CHAN_RXD)
+            && tries <= SCP_REKEY_MAX_TRIES);
+    /* Fails fast (instead of hanging CI) if a regression keeps the transfer
+     * stuck in a want/rekey state past the retry bound. */
+    AssertIntLE(tries, SCP_REKEY_MAX_TRIES);
+    AssertIntEQ(ret, WS_SUCCESS);
+
+    /* A mid-transfer rekey must have fired; otherwise the test silently stops
+     * exercising the ScpStreamSend/ScpStreamRead rekey paths it was written
+     * for. */
+    AssertIntGT(kexCount, 0);
+
+    /* best-effort shutdown; the completed transfer above is the real assertion */
+    ret = wolfSSH_shutdown(ssh);
+    (void)ret;
+
+    clientFd = wolfSSH_get_fd(ssh);
+    WCLOSESOCKET(clientFd);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    ThreadJoin(serThread);
+
+    /* verify the transferred file matches the source once the server is done */
+    AssertIntEQ(scpFilesMatch(verifyName, fileData, SCP_REKEY_FILE_SZ), 0);
+
+    WREMOVE(NULL, srcName);
+    WREMOVE(NULL, verifyName);
+}
+
+static void test_wolfSSH_SCP_ReKey(void)
+{
+    scp_rekey_test(0, 0);
+}
+
+static void test_wolfSSH_SCP_ReKey_NonBlock(void)
+{
+    scp_rekey_test(1, 0);
+}
+
+static void test_wolfSSH_SCP_ReKey_ToServer(void)
+{
+    scp_rekey_test(0, 1);
+}
+
+static void test_wolfSSH_SCP_ReKey_ToServer_NonBlock(void)
+{
+    scp_rekey_test(1, 1);
+}
+
+#else /* WOLFSSH_SCP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED &&
+       * !NO_FILESYSTEM && !WOLFSSH_SCP_USER_CALLBACKS && !WOLFSSH_ZEPHYR */
+static void test_wolfSSH_SCP_ReKey(void) { ; }
+static void test_wolfSSH_SCP_ReKey_NonBlock(void) { ; }
+static void test_wolfSSH_SCP_ReKey_ToServer(void) { ; }
+static void test_wolfSSH_SCP_ReKey_ToServer_NonBlock(void) { ; }
+#endif
 
 
 #ifdef USE_WINDOWS_API
@@ -2800,6 +3176,10 @@ int wolfSSH_ApiTest(int argc, char** argv)
 
     /* SCP tests */
     test_wolfSSH_SCP_CB();
+    test_wolfSSH_SCP_ReKey();
+    test_wolfSSH_SCP_ReKey_NonBlock();
+    test_wolfSSH_SCP_ReKey_ToServer();
+    test_wolfSSH_SCP_ReKey_ToServer_NonBlock();
 
     /* SFTP tests */
     test_wolfSSH_SFTP_SendReadPacket();
