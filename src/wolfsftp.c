@@ -1816,6 +1816,22 @@ static int SFTP_IsSymlink(const char* path)
 #endif /* WOLFSSH_HAVE_SYMLINK */
 
 
+/* Length of the confining prefix of an SFTP default path: its length with any
+ * trailing separators stripped (a lone "/" is kept).  A result > 1 means the
+ * session is confined to something deeper than the filesystem root.  Defined
+ * once here so the confinement gate stays consistent between GetAndCleanPath
+ * and SFTP_SessionConfined.  Caller must pass a non-NULL path. */
+static word32 SFTP_ConfinedPathLen(const char* defaultPath)
+{
+    word32 dpLen = (word32)WSTRLEN(defaultPath);
+
+    while (dpLen > 1 && WOLFSSH_SFTP_IS_DELIM(defaultPath[dpLen - 1])) {
+        dpLen--;
+    }
+    return dpLen;
+}
+
+
 /*
  * This is a wrapper around the function wolfSSH_RealPath. Since it modifies
  * the source path value, copy the path from the data stream into a local
@@ -1845,11 +1861,7 @@ static int GetAndCleanPath(const char* defaultPath,
         /* defaultPath is stored in canonical form by
          * wolfSSH_SFTP_SetDefaultPath, so a direct prefix compare against the
          * canonical resolved request path enforces confinement. */
-        dpLen = (word32)WSTRLEN(defaultPath);
-        /* strip trailing separator(s), but keep a lone "/" as-is */
-        while (dpLen > 1 && WOLFSSH_SFTP_IS_DELIM(defaultPath[dpLen - 1])) {
-            dpLen--;
-        }
+        dpLen = SFTP_ConfinedPathLen(defaultPath);
         if (dpLen > 1) {
             /* resolved path must equal the default path or be within its
              * subtree. On Windows the filesystem is case-insensitive and the
@@ -1909,6 +1921,22 @@ static int GetAndCleanPath(const char* defaultPath,
 
     return ret;
 }
+
+
+#ifndef USE_WINDOWS_API
+/* Returns 1 when the session is confined to a default path deeper than the
+ * filesystem root.  This mirrors the gate GetAndCleanPath uses for its
+ * per-component symlink check, so the open-time symlink defenses stay limited
+ * to confined sessions and do not change behavior for servers that
+ * intentionally follow symlinks (the default, like OpenSSH's sftp-server). */
+static int SFTP_SessionConfined(const char* defaultPath)
+{
+    if (defaultPath == NULL) {
+        return 0;
+    }
+    return (SFTP_ConfinedPathLen(defaultPath) > 1) ? 1 : 0;
+}
+#endif /* !USE_WINDOWS_API */
 
 
 /* Builds a status packet and queues it for send.
@@ -2271,6 +2299,7 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     int rc;
     int fdOpened = 0;
     int outOwnedBySsh = 0;
+    int confined;
 
     word32 outSz = sizeof(WFD) + UINT32_SZ + WOLFSSH_SFTP_HEADER;
     byte*  out = NULL;
@@ -2289,6 +2318,10 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_OPEN");
+
+    /* only apply the symlink-follow defenses when the session is confined, so
+     * unconfined servers keep following symlinks as they did before */
+    confined = SFTP_SessionConfined(ssh->sftpDefaultPath);
 
     #if defined(MICROCHIP_MPLAB_HARMONY) || defined(FREESCALE_MQX)
         fd = WBADFILE;
@@ -2369,7 +2402,8 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         WS_SFTP_FILEATRB fileAtr;
         WMEMSET(&fileAtr, 0, sizeof(fileAtr));
         if (SFTP_GetAttributes(ssh->fs,
-                        dir, &fileAtr, 0, ssh->ctx->heap) == WS_SUCCESS) {
+                        dir, &fileAtr, (byte)confined, ssh->ctx->heap)
+                        == WS_SUCCESS) {
             if ((fileAtr.per & FILEATRB_PER_MASK_TYPE)
                         != FILEATRB_PER_FILE) {
                 ssh->error = WS_SFTP_NOT_FILE_E;
@@ -2389,6 +2423,13 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         /* if file permissions not set then use default */
         if (!(atr.flags & WOLFSSH_FILEATRB_PERM)) {
             atr.per = 0644;
+        }
+
+        /* when confined, refuse to follow a symlink leaf, closing the TOCTOU
+         * window between the type check above and the open below. No-op where
+         * the platform has no O_NOFOLLOW (WOLFSSH_O_NOFOLLOW is 0). */
+        if (confined) {
+            m |= WOLFSSH_O_NOFOLLOW;
         }
 
     #ifdef MICROCHIP_MPLAB_HARMONY
