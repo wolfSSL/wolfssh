@@ -2276,6 +2276,34 @@ int ff_pread(int fd, byte *buffer, int sz)
 
 #endif /* WOLFSSH_FATFS */
 
+#ifndef NO_WOLFSSH_SERVER
+
+/* SFTP handle IDs are an opaque WOLFSSH_HANDLE_ID_SZ byte session value made
+ * up of two big-endian word32s. */
+static void SFTP_HandleIdDecode(const byte* in, word32 id[2])
+{
+    ato32(in, &id[0]);
+    ato32(in + UINT32_SZ, &id[1]);
+}
+
+
+static void SFTP_HandleIdEncode(const word32 id[2], byte* out)
+{
+    c32toa(id[0], out);
+    c32toa(id[1], out + UINT32_SZ);
+}
+
+
+/* Take the next session handle ID and advance the shared counter. */
+static void SFTP_HandleIdNext(WOLFSSH* ssh, word32 id[2])
+{
+    id[0] = ssh->handleIdCount[0];
+    id[1] = ssh->handleIdCount[1];
+    AddAssign64(ssh->handleIdCount, 1);
+}
+
+#endif /* !NO_WOLFSSH_SERVER */
+
 /* Handles packet to open a file
  *
  * returns WS_SUCCESS on success
@@ -2442,9 +2470,7 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     if (ret == WS_SUCCESS) {
         /* Generate unique file handle ID and add to tracking list */
-        id[0] = ssh->fileIdCount[0];
-        id[1] = ssh->fileIdCount[1];
-        AddAssign64(ssh->fileIdCount, 1);
+        SFTP_HandleIdNext(ssh, id);
 
         if ((ret = SFTP_AddFileHandle(ssh, fd, dir, id)) != WS_SUCCESS) {
             WLOG(WS_LOG_SFTP, "Unable to store handle");
@@ -2469,8 +2495,7 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 
     if (ret == WS_SUCCESS) {
-        c32toa(id[0], idFlat);
-        c32toa(id[1], idFlat + UINT32_SZ);
+        SFTP_HandleIdEncode(id, idFlat);
         if (SFTP_CreatePacket(ssh, WOLFSSH_FTP_HANDLE, out, outSz,
             idFlat, sizeof(idFlat)) != WS_SUCCESS) {
             ret = WS_FATAL_ERROR;
@@ -2626,9 +2651,7 @@ cleanup:
 
     if (ret == WS_SUCCESS) {
         /* Generate unique file handle ID and add to tracking list */
-        id[0] = ssh->fileIdCount[0];
-        id[1] = ssh->fileIdCount[1];
-        AddAssign64(ssh->fileIdCount, 1);
+        SFTP_HandleIdNext(ssh, id);
 
         if (SFTP_AddFileHandle(ssh, fileHandle, dir, id) != WS_SUCCESS) {
             WLOG(WS_LOG_SFTP, "Unable to store handle");
@@ -2653,8 +2676,7 @@ cleanup:
     }
 
     if (ret == WS_SUCCESS) {
-        c32toa(id[0], idFlat);
-        c32toa(id[1], idFlat + UINT32_SZ);
+        SFTP_HandleIdEncode(id, idFlat);
         if (SFTP_CreatePacket(ssh, WOLFSSH_FTP_HANDLE, out, outSz,
             idFlat, sizeof(idFlat)) != WS_SUCCESS) {
             ret = WS_FATAL_ERROR;
@@ -2731,7 +2753,6 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     word32 outSz = WOLFSSH_HANDLE_ID_SZ + WOLFSSH_SFTP_HEADER + UINT32_SZ;
     byte*  out = NULL;
-    word32 id[2];
     byte idFlat[WOLFSSH_HANDLE_ID_SZ];
     char per[] = "Permission denied";
 
@@ -2798,11 +2819,8 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 #else
         cur->dir  = ctx;
 #endif
-        cur->id[0] = id[0] = ssh->dirIdCount[0];
-        cur->id[1] = id[1] = ssh->dirIdCount[1];
-        c32toa(id[0], idFlat);
-        c32toa(id[1], idFlat + UINT32_SZ);
-        AddAssign64(ssh->dirIdCount, 1);
+        SFTP_HandleIdNext(ssh, cur->id);
+        SFTP_HandleIdEncode(cur->id, idFlat);
         cur->isEof = 0;
         cur->next  = ssh->dirList;
         ssh->dirList          = cur;
@@ -2846,7 +2864,6 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     word32 outSz = WOLFSSH_HANDLE_ID_SZ + WOLFSSH_SFTP_HEADER + UINT32_SZ;
     byte*  out = NULL;
-    word32 id[2];
     byte idFlat[WOLFSSH_HANDLE_ID_SZ];
     char name[MAX_PATH];
     char clean[WOLFSSH_MAX_FILENAME];
@@ -2957,11 +2974,8 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             return WS_MEMORY_E;
         }
         cur->dir = INVALID_HANDLE_VALUE;
-        cur->id[0] = id[0] = ssh->dirIdCount[0];
-        cur->id[1] = id[1] = ssh->dirIdCount[1];
-        c32toa(id[0], idFlat);
-        c32toa(id[1], idFlat + UINT32_SZ);
-        AddAssign64(ssh->dirIdCount, 1);
+        SFTP_HandleIdNext(ssh, cur->id);
+        SFTP_HandleIdEncode(cur->id, idFlat);
         cur->isEof = 0;
         cur->dirName = dirName; /* take over ownership of buffer */
         cur->next    = ssh->dirList;
@@ -3925,8 +3939,7 @@ int wolfSSH_SFTP_RecvCloseDir(WOLFSSH* ssh, byte* handle, word32 handleSz)
 
     /* find DIR given handle */
     cur = ssh->dirList;
-    ato32(handle, &h[0]);
-    ato32(handle + UINT32_SZ, &h[1]);
+    SFTP_HandleIdDecode(handle, h);
     while (cur != NULL) {
         if (cur->id[0] == h[0] && cur->id[1] == h[1]) {
             break;
@@ -4152,8 +4165,7 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             word32 handle[2] = {0, 0};
             WS_FILE_LIST* fileEntry = NULL;
 
-            ato32(str, &handle[0]);
-            ato32(str + UINT32_SZ, &handle[1]);
+            SFTP_HandleIdDecode(str, handle);
 
             fileEntry = SFTP_FindFileHandle(ssh, handle);
             if (fileEntry == NULL) {
@@ -4274,8 +4286,7 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             word32 handle[2] = {0, 0};
             WS_FILE_LIST* fileEntry = NULL;
 
-            ato32(str, &handle[0]);
-            ato32(str + UINT32_SZ, &handle[1]);
+            SFTP_HandleIdDecode(str, handle);
 
             fileEntry = SFTP_FindFileHandle(ssh, handle);
             if (fileEntry == NULL) {
@@ -4375,8 +4386,7 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         word32 handle[2] = {0, 0};
         WS_FILE_LIST* fileEntry = NULL;
 
-        ato32(str, &handle[0]);
-        ato32(str + UINT32_SZ, &handle[1]);
+        SFTP_HandleIdDecode(str, handle);
 
         /* Find the file handle in our tracking list */
         fileEntry = SFTP_FindFileHandle(ssh, handle);
@@ -4504,8 +4514,7 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         word32 handle[2] = {0, 0};
         WS_FILE_LIST* fileEntry = NULL;
 
-        ato32(str, &handle[0]);
-        ato32(str + UINT32_SZ, &handle[1]);
+        SFTP_HandleIdDecode(str, handle);
 
         /* Find the file handle in our tracking list */
         fileEntry = SFTP_FindFileHandle(ssh, handle);
@@ -5696,8 +5705,7 @@ int wolfSSH_SFTP_RecvFSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         WS_FILE_LIST* cur;
         word32 handleId[2] = {0, 0};
 
-        ato32(handle, &handleId[0]);
-        ato32(handle + UINT32_SZ, &handleId[1]);
+        SFTP_HandleIdDecode(handle, handleId);
 
         cur = SFTP_FindFileHandle(ssh, handleId);
         if (cur == NULL) {
@@ -6176,8 +6184,7 @@ int wolfSSH_SFTP_RecvFSetSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         word32 handle[2] = {0, 0};
         WS_FILE_LIST* fileEntry = NULL;
 
-        ato32(str, &handle[0]);
-        ato32(str + UINT32_SZ, &handle[1]);
+        SFTP_HandleIdDecode(str, handle);
 
         /* Find the file handle in our tracking list */
         fileEntry = SFTP_FindFileHandle(ssh, handle);
