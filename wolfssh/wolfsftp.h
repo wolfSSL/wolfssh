@@ -277,20 +277,11 @@ WOLFSSH_LOCAL int wolfSSH_SFTP_RecvCloseDir(WOLFSSH* ssh, byte* handle,
 #endif /* NO_WOLFSSH_DIR */
 
 WOLFSSL_LOCAL int wolfSSH_SFTP_free(WOLFSSH* ssh);
-WOLFSSL_LOCAL int SFTP_AddHandleNode(WOLFSSH* ssh, byte* handle,
-        word32 handleSz, const char* name);
-WOLFSSL_LOCAL int SFTP_RemoveHandleNode(WOLFSSH* ssh, const byte* handle,
-        word32 handleSz);
-
 WOLFSSH_LOCAL void wolfSSH_SFTP_ShowSizes(void);
 
 #ifdef WOLFSSH_TEST_INTERNAL
     WOLFSSH_API int wolfSSH_TestSftpBufferSend(WOLFSSH* ssh,
             byte* data, word32 sz, word32 idx);
-    #ifndef NO_WOLFSSH_SERVER
-    WOLFSSH_API int wolfSSH_TestSftpValidateFileHandle(WOLFSSH* ssh,
-            const byte* handle, word32 handleSz);
-    #endif
     #if defined(WOLFSSL_NUCLEUS) && !defined(NO_WOLFSSH_MKTIME)
         WOLFSSH_API int wolfSSH_TestNucleusMonthFromDate(word16 d);
     #endif
