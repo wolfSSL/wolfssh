@@ -174,6 +174,7 @@ struct WS_SFTPNAME {
 #ifndef WOLFSSH_MAX_SFTP_RECV
     #define WOLFSSH_MAX_SFTP_RECV 32768
 #endif
+
 /*
  * WOLFSSH_MAX_SFTP_PACKET: Upper bound on the body size of an inbound SFTP
  *     request the server accepts in its steady-state receive loop
@@ -188,6 +189,9 @@ struct WS_SFTPNAME {
 #ifndef WOLFSSH_MAX_SFTP_PACKET
     #define WOLFSSH_MAX_SFTP_PACKET (WOLFSSH_MAX_SFTP_RW + WOLFSSH_MAX_SFTP_RECV)
 #endif
+
+#define WOLFSSH_HANDLE_ID_SZ (sizeof(word32) * 2)
+    /* The handle IDs are an array[2] of word32. */
 
 /* functions for establishing a connection */
 WOLFSSH_API int wolfSSH_SFTP_accept(WOLFSSH* ssh);
@@ -291,21 +295,12 @@ WOLFSSH_LOCAL int wolfSSH_SFTP_RecvCloseDir(WOLFSSH* ssh, byte* handle,
 #endif /* NO_WOLFSSH_DIR */
 
 WOLFSSL_LOCAL int wolfSSH_SFTP_free(WOLFSSH* ssh);
-WOLFSSL_LOCAL int SFTP_AddHandleNode(WOLFSSH* ssh, byte* handle,
-        word32 handleSz, const char* name);
-WOLFSSL_LOCAL int SFTP_RemoveHandleNode(WOLFSSH* ssh, const byte* handle,
-        word32 handleSz);
-
 WOLFSSH_LOCAL void wolfSSH_SFTP_ShowSizes(void);
 
 #ifdef WOLFSSH_TEST_INTERNAL
     WOLFSSH_API int wolfSSH_TestSftpBufferSend(WOLFSSH* ssh,
             byte* data, word32 sz, word32 idx);
     WOLFSSH_API int wolfSSH_TestSftpRecvSizeCheck(int sz);
-    #ifndef NO_WOLFSSH_SERVER
-    WOLFSSH_API int wolfSSH_TestSftpValidateFileHandle(WOLFSSH* ssh,
-            const byte* handle, word32 handleSz);
-    #endif
     WOLFSSH_API int wolfSSH_TestSftpSendCap(WOLFSSH* ssh, word32 cap);
     WOLFSSH_API int wolfSSH_TestSftpStallPending(WOLFSSH* ssh, word32 count);
     #if defined(WOLFSSL_NUCLEUS) && !defined(NO_WOLFSSH_MKTIME)

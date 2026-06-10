@@ -1675,97 +1675,6 @@ static void TestOct2DecRejectsInvalidNonLeadingDigit(void)
     wolfSSH_CTX_free(ctx);
 }
 
-#ifndef NO_WOLFSSH_SERVER
-static void TestSftpRemoveHandleHeadUpdate(void)
-{
-    WOLFSSH_CTX* ctx;
-    WOLFSSH* ssh;
-    byte firstHandle[] = { 0x01, 0x02, 0x03, 0x04 };
-    byte secondHandle[] = { 0x10, 0x20, 0x30, 0x40 };
-    int ret;
-
-    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
-    AssertNotNull(ctx);
-
-    ssh = wolfSSH_new(ctx);
-    AssertNotNull(ssh);
-
-    ret = SFTP_AddHandleNode(ssh, firstHandle, sizeof(firstHandle), "first");
-    AssertIntEQ(ret, WS_SUCCESS);
-
-    ret = SFTP_AddHandleNode(ssh, secondHandle, sizeof(secondHandle), "second");
-    AssertIntEQ(ret, WS_SUCCESS);
-
-    ret = SFTP_RemoveHandleNode(ssh, secondHandle, sizeof(secondHandle));
-    AssertIntEQ(ret, WS_SUCCESS);
-
-    AssertNotNull(ssh->handleList);
-    AssertTrue(ssh->handleList->prev == NULL);
-    AssertIntEQ(ssh->handleList->handleSz, (int)sizeof(firstHandle));
-    AssertIntEQ(WMEMCMP(ssh->handleList->handle, firstHandle,
-            sizeof(firstHandle)), 0);
-
-    ret = SFTP_RemoveHandleNode(ssh, firstHandle, sizeof(firstHandle));
-    AssertIntEQ(ret, WS_SUCCESS);
-
-    wolfSSH_free(ssh);
-    wolfSSH_CTX_free(ctx);
-}
-
-static void TestSftpValidateFileHandle(void)
-{
-    WOLFSSH_CTX* ctx;
-    WOLFSSH* ssh;
-#ifndef USE_WINDOWS_API
-    byte goodHandle[sizeof(WFD)];
-    byte badHandle[sizeof(WFD)];
-#else
-    byte goodHandle[sizeof(HANDLE)];
-    byte badHandle[sizeof(HANDLE)];
-#endif
-    int ret;
-
-    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
-    AssertNotNull(ctx);
-    ssh = wolfSSH_new(ctx);
-    AssertNotNull(ssh);
-
-    WMEMSET(goodHandle, 0x11, sizeof(goodHandle));
-    WMEMSET(badHandle,  0x22, sizeof(badHandle));
-
-    ret = SFTP_AddHandleNode(ssh, goodHandle, sizeof(goodHandle), "testfile");
-    AssertIntEQ(ret, WS_SUCCESS);
-
-    /* registered handle passes */
-    ret = wolfSSH_TestSftpValidateFileHandle(ssh, goodHandle, sizeof(goodHandle));
-    AssertIntEQ(ret, WS_SUCCESS);
-
-    /* wrong size is rejected */
-    ret = wolfSSH_TestSftpValidateFileHandle(ssh, goodHandle, 1);
-    AssertIntEQ(ret, WS_BAD_FILE_E);
-
-    /* correct size but not registered is rejected */
-    ret = wolfSSH_TestSftpValidateFileHandle(ssh, badHandle, sizeof(badHandle));
-    AssertIntEQ(ret, WS_BAD_FILE_E);
-
-    /* NULL handle pointer with valid size is rejected */
-    ret = wolfSSH_TestSftpValidateFileHandle(ssh, NULL, sizeof(goodHandle));
-    AssertIntEQ(ret, WS_BAD_FILE_E);
-
-    /* NULL ssh pointer returns WS_BAD_ARGUMENT, distinct from WS_BAD_FILE_E */
-    ret = wolfSSH_TestSftpValidateFileHandle(NULL, goodHandle, sizeof(goodHandle));
-    AssertIntEQ(ret, WS_BAD_ARGUMENT);
-
-    /* handle removed from table is rejected */
-    ret = SFTP_RemoveHandleNode(ssh, goodHandle, sizeof(goodHandle));
-    AssertIntEQ(ret, WS_SUCCESS);
-    ret = wolfSSH_TestSftpValidateFileHandle(ssh, goodHandle, sizeof(goodHandle));
-    AssertIntEQ(ret, WS_BAD_FILE_E);
-
-    wolfSSH_free(ssh);
-    wolfSSH_CTX_free(ctx);
-}
-#endif /* !NO_WOLFSSH_SERVER */
 #endif /* WOLFSSH_SFTP */
 
 #if !(defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256))
@@ -3664,10 +3573,6 @@ int main(int argc, char** argv)
 
 #ifdef WOLFSSH_SFTP
     TestOct2DecRejectsInvalidNonLeadingDigit();
-    #ifndef NO_WOLFSSH_SERVER
-    TestSftpRemoveHandleHeadUpdate();
-    TestSftpValidateFileHandle();
-    #endif
     TestSftpBufferSendPendingOutput();
     #if defined(WOLFSSL_NUCLEUS) && !defined(NO_WOLFSSH_MKTIME)
     TestNucleusMonthConversion();
