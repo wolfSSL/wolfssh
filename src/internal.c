@@ -1415,6 +1415,10 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
         ssh->scpBasePathDynamic = NULL;
         ssh->scpBasePathSz = 0;
     }
+    #if !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
+    /* free any send-side directory stack left by an aborted recursive transfer */
+    ScpSendCtxFreeDirs(ssh->fs, &ssh->scpSendCbCtx, heap);
+    #endif
 #endif
 #ifdef WOLFSSH_SFTP
     if (ssh->sftpDefaultPath) {

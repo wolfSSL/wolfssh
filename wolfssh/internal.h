@@ -1575,6 +1575,9 @@ WOLFSSH_LOCAL int wsScpSendCallback(WOLFSSH* ssh, int state,
                                     word64* aTime, int* fileMode,
                                     word32 fileOffset, word32* totalFileSz,
                                     byte* buf, word32 bufSz, void* ctx);
+#if !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
+WOLFSSH_LOCAL void ScpSendCtxFreeDirs(void* fs, ScpSendCtx* ctx, void* heap);
+#endif
 #endif
 
 

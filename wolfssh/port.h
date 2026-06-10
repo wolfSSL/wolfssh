@@ -1325,6 +1325,7 @@ extern "C" {
     #define WGETCWD(fs,r,rSz)    _getcwd((r),(rSz))
     #define WOPEN(fs,f,m,p)      _open((f),(m),(p))
     #define WCLOSE(fs,fd)        _close((fd))
+    #define WFDOPEN(fs,f,fd,m)   ((*(f) = _fdopen((fd),(m))) == NULL)
 
     #define WFD int
     int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
@@ -1363,6 +1364,7 @@ extern "C" {
     #define WMKDIR(fs,p,m)    fs_mkdir((p))
     #define WRMDIR(fs,d)      fs_unlink((d))
     #define WSTAT(fs,p,b)     wssh_z_fstat((p),(b))
+    #define WLSTAT(fs,p,b)    wssh_z_fstat((p),(b))
     #define WREMOVE(fs,d)     fs_unlink((d))
     #define WRENAME(fs,o,n)   fs_rename((o),(n))
     #define WS_DELIM          '/'
@@ -1403,6 +1405,7 @@ extern "C" {
     #define WMKDIR(fs,p,m)    SYS_FS_DirectoryMake((p))
     #define WRMDIR(fs,d)      SYS_FS_FileDirectoryRemove((d))
     #define WSTAT(fs,p,b)     wStat((p), (b))
+    #define WLSTAT(fs,p,b)    wStat((p), (b))
     #define WREMOVE(fs,d)     SYS_FS_FileDirectoryRemove((d))
     #define WRENAME(fs,o,n)   SYS_FS_FileDirectoryRenameMove((o),(n))
     #define WS_DELIM          '/'
@@ -1495,6 +1498,7 @@ extern "C" {
 
     #define WOPEN(fs,f,m,p) open((f),(m),(p))
     #define WCLOSE(fs,fd) close((fd))
+    #define WFDOPEN(fs,f,fd,m) ((*(f) = fdopen((fd),(m))) == NULL)
     int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
             const unsigned int* shortOffset);
     int wPread(WFD fd, unsigned char* buf, unsigned int sz,
@@ -1508,6 +1512,7 @@ extern "C" {
 
     /* returns 0 on success */
     #define WOPENDIR(fs,h,c,d)  ((*(c) = opendir((d))) == NULL)
+    #define WFDOPENDIR(fs,d,fd) ((*(d) = fdopendir((fd))) == NULL)
     #define WCLOSEDIR(fs,d)  closedir(*(d))
     #define WREADDIR(fs,d)   readdir(*(d))
     #define WREWINDDIR(fs,d) rewinddir(*(d))
@@ -1534,10 +1539,42 @@ extern "C" {
 /* wIsSymlink lives in the always-compiled port.c, but its filesystem
  * dependencies (WSTAT_T/WLSTAT/S_ISLNK on POSIX, WS_GetFileAttributesExA on
  * Windows) and its only callers exist solely in the SFTP and SCP code, so
- * gate it on those features in addition to the platform capability. */
+ * gate it on those features in addition to the platform capability.  Shared by
+ * the SFTP path-confinement guard and the SCP send guards. */
 #if defined(WOLFSSH_HAVE_SYMLINK) && \
     (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP))
     WOLFSSH_LOCAL int wIsSymlink(const char* path);
+
+    /* Open flag that refuses to follow a final-component symbolic link, so the
+     * open is atomic against a swapped link.  Maps to the platform primitive
+     * where available (POSIX O_NOFOLLOW) and to 0 elsewhere (Windows and any
+     * filesystem lacking it), where wFopenNoFollow falls back to a wIsSymlink
+     * check before the open. */
+    #ifdef O_NOFOLLOW
+        #define WOLFSSH_O_NOFOLLOW O_NOFOLLOW
+    #else
+        #define WOLFSSH_O_NOFOLLOW 0
+    #endif
+    /* Require the opened path to be a directory; pairs with O_NOFOLLOW so a
+     * symlinked directory leaf is refused atomically.  0 where unavailable. */
+    #ifdef O_DIRECTORY
+        #define WOLFSSH_O_DIRECTORY O_DIRECTORY
+    #else
+        #define WOLFSSH_O_DIRECTORY 0
+    #endif
+
+    /* Open a file for reading without following a final-component symlink.
+     * Returns 0 on success, non-zero on failure, matching the wfopen
+     * convention.  Shared, un-followed read-open used by the SCP send guards. */
+    WOLFSSH_LOCAL int wFopenNoFollow(void* fs, WFILE** f, const char* path);
+    /* Open a directory without following a final-component symlink; returns 0
+     * on success, non-zero on failure, matching WOPENDIR.  Not provided for
+     * Windows, which opens directories via WS_FindFirstFileA, nor when the
+     * directory macros are compiled out (NO_WOLFSSH_DIR). */
+    #if !defined(USE_WINDOWS_API) && !defined(NO_WOLFSSH_DIR)
+        WOLFSSH_LOCAL int wOpendirNoFollow(void* fs, WDIR* dir,
+                const char* path);
+    #endif
 #endif
 
 #ifndef WS_MAYBE_UNUSED

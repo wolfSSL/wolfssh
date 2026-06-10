@@ -646,6 +646,16 @@ int DoScpSource(WOLFSSH* ssh)
                     continue;
 
                 } else if (ssh->scpConfirm == WS_SCP_ABORT) {
+                #if !defined(NO_FILESYSTEM) && \
+                        !defined(WOLFSSH_SCP_USER_CALLBACKS)
+                    /* drain any partial recursive dir stack so a later exec on
+                     * this connection starts from a fresh root, not a stale
+                     * handle left by the aborted walk */
+                    ScpSendCtx* sendCtx =
+                        (ScpSendCtx*)wolfSSH_GetScpSendCtx(ssh);
+                    if (sendCtx != NULL)
+                        ScpSendCtxFreeDirs(ssh->fs, sendCtx, ssh->ctx->heap);
+                #endif
                     ssh->scpState = SCP_SEND_CONFIRMATION;
                     ssh->scpNextState = SCP_DONE;
                     continue;
@@ -2455,7 +2465,14 @@ static int GetFileStats(void *fs, ScpSendCtx* ctx, const char* fileName,
         (ctx->s.dwFileAttributes & FILE_ATTRIBUTE_READONLY ? 0 : 0200);
     *fileMode |= (ctx->s.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? 040000 : 0;
 #else
+    /* WLSTAT (lstat on POSIX) leaves a symlink unfollowed, so it classifies as
+     * neither dir nor file and is skipped; WOLFSSH_NO_SYMLINK_CHECK falls back
+     * to WSTAT so links are followed by design. */
+#ifdef WOLFSSH_HAVE_SYMLINK
+    if (WLSTAT(fs, fileName, &ctx->s) < 0) {
+#else
     if (WSTAT(fs, fileName, &ctx->s) < 0) {
+#endif
         ret = WS_BAD_FILE_E;
         #ifdef WOLFSSL_NUCLEUS
         if (WSTRLEN(fileName) < 4 && WSTRLEN(fileName) > 2 &&
@@ -2543,11 +2560,16 @@ static ScpDir* ScpNewDir(void *fs, const char* path, void* heap)
         }
     }
 #else
+    #ifdef WOLFSSH_HAVE_SYMLINK
+    /* refuse a symlinked directory leaf atomically (closes the descend race) */
+    if (wOpendirNoFollow(fs, &entry->dir, path) != 0) {
+    #else
     if (WOPENDIR(fs, heap, &entry->dir, path) != 0
         #if !defined(WOLFSSL_NUCLEUS) && !defined(WOLFSSH_ZEPHYR)
             || entry->dir == NULL
         #endif
             ) {
+    #endif
         WFREE(entry, heap, DYNTYPE_SCPDIR);
         WLOG(WS_LOG_ERROR, scpError, "opendir failed on directory",
              WS_INVALID_PATH_E);
@@ -2624,6 +2646,17 @@ int ScpPopDir(void *fs, ScpSendCtx* ctx, void* heap)
 
     WOLFSSH_UNUSED(heap);
     return WS_SUCCESS;
+}
+
+/* Drain dir-stack entries (and open dir handles) left on a send context after
+ * a recursive transfer aborts mid-tree before popping.  Safe on an empty
+ * stack. */
+void ScpSendCtxFreeDirs(void* fs, ScpSendCtx* ctx, void* heap)
+{
+    if (ctx != NULL) {
+        while (ctx->currentDir != NULL)
+            (void)ScpPopDir(fs, ctx, heap);
+    }
 }
 
 /* Get next entry in directory, either file or directory, skips self (.)
@@ -2820,6 +2853,16 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
             WSTRNCPY(fileName, sendCtx->entry->d_name,
                      DEFAULT_SCP_FILE_NAME_SZ);
         #endif
+        #ifdef WOLFSSH_HAVE_SYMLINK
+            /* filePath is fully built; reject a planted symlink before
+             * GetFileStats or any descend/open follows it. */
+            if (ret == WS_SUCCESS && wIsSymlink(filePath)) {
+                WLOG(WS_LOG_ERROR,
+                    "scp: symlink entry rejected, aborting transfer");
+                ret = WS_SCP_ABORT;
+            }
+        #endif /* WOLFSSH_HAVE_SYMLINK */
+
             if (ret == WS_SUCCESS) {
                 ret = GetFileStats(ssh->fs, sendCtx, filePath, mTime, aTime, fileMode);
             }
@@ -2839,7 +2882,11 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
             }
 
         } else if (ScpFileIsFile(sendCtx)) {
+        #ifdef WOLFSSH_HAVE_SYMLINK
+            if (wFopenNoFollow(ssh->fs, &(sendCtx->fp), filePath) != 0) {
+        #else
             if (WFOPEN(ssh->fs, &(sendCtx->fp), filePath, "rb") != 0) {
+        #endif
                 WLOG(WS_LOG_ERROR, "scp: Error with opening file, abort");
                 wolfSSH_SetScpErrorMsg(ssh, "unable to open file "
                                        "for reading");
@@ -2862,7 +2909,10 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
         }
 
     } else {
-        if (ret != WS_NEXT_ERROR) {
+        /* WS_SCP_ABORT entries (e.g. a rejected symlink) were already logged at
+         * their source, so only the generic, unexpected-error case is noted
+         * here to avoid a misleading second log line. */
+        if (ret != WS_NEXT_ERROR && ret != WS_SCP_ABORT) {
             WLOG(WS_LOG_ERROR, "scp: ret does not equal WS_NEXT_ERROR, abort");
             ret = WS_SCP_ABORT;
         }
@@ -2948,6 +2998,22 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
  *                                   is complete.
  *     WS_SCP_ABORT                - abort file transfer request
  *     WS_BAD_FILE_E               - local file open error hit
+ *
+ * Symlink handling: file-content opens go through wFopenNoFollow and directory
+ * opens (both the recursive root and every descend) go through wOpendirNoFollow.
+ * Both are atomic against a swapped link on POSIX (O_NOFOLLOW, plus O_DIRECTORY
+ * for the directory open) and fall back to a wIsSymlink check-then-open on
+ * Windows or where O_NOFOLLOW is absent.  The root also gets an explicit
+ * wIsSymlink pre-check because a trailing separator (open("link/", O_NOFOLLOW))
+ * can still follow the link; symlinks below the root are rejected as
+ * ScpProcessEntry traverses them.  No "stays under a trusted base" containment
+ * is attempted: SCP has no library-level base path (wolfsshd relies on OS
+ * chroot) and wolfSSH_RealPath does not resolve links.  GetFileStats uses WLSTAT
+ * so it does not follow a link for metadata or classification.  On the
+ * Windows/fallback path the open is check-then-open, so a concurrent in-jail
+ * writer racing it remains a best-effort gap.  For hostile multi-tenant use,
+ * confine the session with an OS mechanism (chroot, dropped privileges) and
+ * treat these checks as defense in depth.
  */
 int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
         char* fileName, word32 fileNameSz, word64* mTime, word64* aTime,
@@ -2981,9 +3047,14 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             break;
 
         case WOLFSSH_SCP_SINGLE_FILE_REQUEST:
-            if ((sendCtx == NULL) || WFOPEN(ssh->fs, &(sendCtx->fp), peerRequest,
-                                            "rb") != 0) {
-
+            /* open without following a symlink so its target is not streamed
+             * to the peer; see this function's symlink-handling note. */
+            if ((sendCtx == NULL) ||
+        #ifdef WOLFSSH_HAVE_SYMLINK
+                wFopenNoFollow(ssh->fs, &(sendCtx->fp), peerRequest) != 0) {
+        #else
+                WFOPEN(ssh->fs, &(sendCtx->fp), peerRequest, "rb") != 0) {
+        #endif
                 WLOG(WS_LOG_ERROR, "scp: unable to open file, abort");
                 wolfSSH_SetScpErrorMsg(ssh, "unable to open file for reading");
                 ret = WS_BAD_FILE_E;
@@ -3037,9 +3108,51 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
         case WOLFSSH_SCP_RECURSIVE_REQUEST:
 
             if (ScpDirStackIsEmpty(sendCtx)) {
+            #ifdef WOLFSSH_HAVE_SYMLINK
+                word32 rootLen;
+            #endif
 
-                /* first request, keep track of request directory */
-                ret = ScpPushDir(ssh->fs, sendCtx, peerRequest, ssh->ctx->heap);
+                /* first request, keep track of request directory.  Reject a
+                 * symlink root here (a trailing separator can still follow);
+                 * see the symlink-handling note in this function's header. */
+                ret = WS_SUCCESS;
+                if (peerRequest == NULL) {
+                    WLOG(WS_LOG_ERROR,
+                        "scp: missing recursive root path, abort");
+                    ret = WS_SCP_ABORT;
+                }
+            #ifdef WOLFSSH_HAVE_SYMLINK
+                /* lstat() follows the link when the path ends in a separator,
+                 * so check the root with any trailing separators removed */
+                else {
+                    rootLen = (word32)WSTRLEN(peerRequest);
+                    while (rootLen > 1 && (peerRequest[rootLen - 1] == '/' ||
+                                           peerRequest[rootLen - 1] == '\\'))
+                        rootLen--;
+                    if (rootLen >= DEFAULT_SCP_FILE_NAME_SZ) {
+                        WLOG(WS_LOG_ERROR,
+                            "scp: recursive root path too long, abort");
+                        wolfSSH_SetScpErrorMsg(ssh,
+                            "unable to open file for reading");
+                        ret = WS_SCP_ABORT;
+                    }
+                    else {
+                        WMEMCPY(filePath, peerRequest, rootLen);
+                        filePath[rootLen] = '\0';
+                        if (wIsSymlink(filePath)) {
+                            WLOG(WS_LOG_ERROR,
+                                "scp: refusing recursive root symlink, abort");
+                            wolfSSH_SetScpErrorMsg(ssh,
+                                "unable to open file for reading");
+                            ret = WS_SCP_ABORT;
+                        }
+                    }
+                }
+            #endif /* WOLFSSH_HAVE_SYMLINK */
+
+                if (ret == WS_SUCCESS)
+                    ret = ScpPushDir(ssh->fs, sendCtx, peerRequest,
+                                     ssh->ctx->heap);
 
                 if (ret == WS_SUCCESS) {
                     /* get file name from request */
@@ -3053,7 +3166,9 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
 
                 if (ret == WS_SUCCESS) {
                     ret = WS_SCP_ENTER_DIR;
-                } else {
+                } else if (ret != WS_SCP_ABORT) {
+                    /* a rejected symlink root already logged its own reason;
+                     * only note the generic stat failure here */
                     WLOG(WS_LOG_ERROR, "scp: error getting file stats, abort");
                     ret = WS_SCP_ABORT;
                 }
