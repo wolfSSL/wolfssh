@@ -4658,11 +4658,16 @@ int wolfSSH_SFTP_RecvRename(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 }
 
 
+#ifndef WOLFSSH_MAX_SFTP_HANDLES
+    #define WOLFSSH_MAX_SFTP_HANDLES 64
+#endif
+
 /* add a name and handle to the handle list
  * return WS_SUCCESS on success */
 int SFTP_AddHandleNode(WOLFSSH* ssh, byte* handle, word32 handleSz, const char* name)
 {
     WS_HANDLE_LIST* cur;
+    word32 count = 0;
     int sz;
 
     if (ssh == NULL || handle == NULL || name == NULL) {
@@ -4671,6 +4676,12 @@ int SFTP_AddHandleNode(WOLFSSH* ssh, byte* handle, word32 handleSz, const char* 
 
     if (handleSz > WOLFSSH_MAX_HANDLE) {
         return WS_BUFFER_E;
+    }
+
+    for (cur = ssh->handleList; cur != NULL; cur = cur->next) {
+        if (++count >= WOLFSSH_MAX_SFTP_HANDLES) {
+            return WS_MEMORY_E;
+        }
     }
 
     cur = (WS_HANDLE_LIST*)WMALLOC(sizeof(WS_HANDLE_LIST), ssh->ctx->heap,
