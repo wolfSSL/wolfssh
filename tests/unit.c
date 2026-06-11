@@ -5021,6 +5021,91 @@ static int test_SftpRecvSizeBoundAccept(void)
 }
 #endif /* WOLFSSH_SFTP */
 
+#if defined(WOLFSSH_TEST_INTERNAL) && defined(WOLFSSH_SCP) && \
+    !defined(WOLFSSH_SCP_USER_CALLBACKS)
+/* Exercises ExtractFileName, the SCP source helper that splits the leaf name
+ * from a request path. A bare name with no path separator must be accepted
+ * (the whole string is the file name); this is the recursive-source
+ * regression. */
+static int test_ScpExtractFileName(void)
+{
+    char name[64];
+    int ret;
+
+    /* bare name, no separator: whole string is the file name (regression) */
+    WMEMSET(name, 0, sizeof(name));
+    ret = wolfSSH_TestScpExtractFileName("scp_rk_src", name, sizeof(name));
+    if (ret != WS_SUCCESS || WSTRCMP(name, "scp_rk_src") != 0)
+        return -900;
+
+    /* leading "./" prefix */
+    WMEMSET(name, 0, sizeof(name));
+    ret = wolfSSH_TestScpExtractFileName("./scp_rk_src", name, sizeof(name));
+    if (ret != WS_SUCCESS || WSTRCMP(name, "scp_rk_src") != 0)
+        return -901;
+
+    /* relative nested path */
+    WMEMSET(name, 0, sizeof(name));
+    ret = wolfSSH_TestScpExtractFileName("a/b/c", name, sizeof(name));
+    if (ret != WS_SUCCESS || WSTRCMP(name, "c") != 0)
+        return -902;
+
+    /* absolute path */
+    WMEMSET(name, 0, sizeof(name));
+    ret = wolfSSH_TestScpExtractFileName("/tmp/x/y", name, sizeof(name));
+    if (ret != WS_SUCCESS || WSTRCMP(name, "y") != 0)
+        return -903;
+
+    /* empty path is rejected */
+    ret = wolfSSH_TestScpExtractFileName("", name, sizeof(name));
+    if (ret != WS_BAD_ARGUMENT)
+        return -904;
+
+    /* NULL arguments are rejected */
+    ret = wolfSSH_TestScpExtractFileName(NULL, name, sizeof(name));
+    if (ret != WS_BAD_ARGUMENT)
+        return -905;
+    ret = wolfSSH_TestScpExtractFileName("scp_rk_src", NULL, sizeof(name));
+    if (ret != WS_BAD_ARGUMENT)
+        return -906;
+
+    /* destination too small for name plus null terminator */
+    ret = wolfSSH_TestScpExtractFileName("scp_rk_src", name, 4);
+    if (ret != WS_SCP_PATH_LEN_E)
+        return -907;
+
+    /* bare "." and ".." are accepted as-is (separator-less leaf names); the
+     * recursive walk skips "."/".." directory entries separately */
+    WMEMSET(name, 0, sizeof(name));
+    ret = wolfSSH_TestScpExtractFileName(".", name, sizeof(name));
+    if (ret != WS_SUCCESS || WSTRCMP(name, ".") != 0)
+        return -908;
+
+    WMEMSET(name, 0, sizeof(name));
+    ret = wolfSSH_TestScpExtractFileName("..", name, sizeof(name));
+    if (ret != WS_SUCCESS || WSTRCMP(name, "..") != 0)
+        return -909;
+
+    /* trailing separator yields an empty leaf name with success */
+    WMEMSET(name, 0, sizeof(name));
+    ret = wolfSSH_TestScpExtractFileName("a/b/", name, sizeof(name));
+    if (ret != WS_SUCCESS || WSTRCMP(name, "") != 0)
+        return -910;
+
+    /* exact-fit boundary of the (fileLen + 1 > fileNameSz) size check:
+     * "scp_rk_src" is 10 chars, so 11 just fits and 10 is one too small */
+    WMEMSET(name, 0, sizeof(name));
+    ret = wolfSSH_TestScpExtractFileName("scp_rk_src", name, 11);
+    if (ret != WS_SUCCESS || WSTRCMP(name, "scp_rk_src") != 0)
+        return -911;
+    ret = wolfSSH_TestScpExtractFileName("scp_rk_src", name, 10);
+    if (ret != WS_SCP_PATH_LEN_E)
+        return -912;
+
+    return 0;
+}
+#endif /* WOLFSSH_TEST_INTERNAL && WOLFSSH_SCP && !WOLFSSH_SCP_USER_CALLBACKS */
+
 #endif /* WOLFSSH_TEST_INTERNAL */
 
 /* Error Code And Message Test */
@@ -5252,6 +5337,13 @@ int wolfSSH_UnitTest(int argc, char** argv)
     unitResult = test_ScpRecvCallback_SymlinkGuard();
     printf("ScpRecvCallback_SymlinkGuard: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+#if defined(WOLFSSH_TEST_INTERNAL) && defined(WOLFSSH_SCP) && \
+    !defined(WOLFSSH_SCP_USER_CALLBACKS)
+    unitResult = test_ScpExtractFileName();
+    printf("ScpExtractFileName: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
 
