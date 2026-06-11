@@ -1341,10 +1341,10 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                 ret = WOLFSSH_USERAUTH_REJECTED;
             }
             else {
-                wolfSSH_Log(WS_LOG_INFO,
-                    "[SSHD] Relying on CA for public key check");
             #ifdef WIN32
                 /* Still need to get users token on Windows */
+                wolfSSH_Log(WS_LOG_INFO,
+                    "[SSHD] Relying on CA for public key check");
                 rc = SetupUserTokenWin(usr, &authData->sf.publicKey,
                     wolfSSHD_ConfigGetUserCAKeysFile(usrConf), authCtx);
                 if (rc == WSSHD_AUTH_SUCCESS) {
@@ -1356,8 +1356,23 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                         "[SSHD] Error getting users token.");
                     ret = WOLFSSH_USERAUTH_FAILURE;
                 }
-            #else
+            #elif defined(WOLFSSL_FPKI)
+                /* The UPN-vs-username check above already bound the certificate
+                 * to the requested user, so the CA-verified chain is
+                 * sufficient. */
+                wolfSSH_Log(WS_LOG_INFO,
+                    "[SSHD] Relying on CA for public key check");
                 ret = WOLFSSH_USERAUTH_SUCCESS;
+            #else
+                /* Without FPKI the certificate UPN/principal cannot be read, so
+                 * the requested user cannot be bound to the certificate. Fail
+                 * closed: require AuthorizedKeysFile (per-user key/cert mapping)
+                 * or a wolfSSL build with FPKI. */
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Certificate authentication cannot bind the requested "
+                    "user without FPKI or AuthorizedKeysFile; rejecting "
+                    "(user=%s)", usr);
+                ret = WOLFSSH_USERAUTH_REJECTED;
             #endif
             }
         }
