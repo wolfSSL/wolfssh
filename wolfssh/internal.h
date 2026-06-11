@@ -1424,6 +1424,9 @@ enum WS_MessageIdLimits {
     WOLFSSH_API int wolfSSH_TestRsaVerify(const byte* sig, word32 sigSz,
             const byte* encDigest, word32 encDigestSz,
             RsaKey* key, void* heap);
+    WOLFSSH_API int wolfSSH_TestDoUserAuthRequestRsa(WOLFSSH* ssh,
+            WS_UserAuthData_PublicKey* pk, int hashId, byte* digest,
+            word32 digestSz);
 #endif /* !WOLFSSH_NO_RSA */
 #ifndef WOLFSSH_NO_ED25519
     WOLFSSH_API int wolfSSH_TestDoUserAuthRequestEd25519(WOLFSSH* ssh,

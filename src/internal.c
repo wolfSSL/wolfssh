@@ -3649,22 +3649,20 @@ int GetSkip(const byte* buf, word32 len, word32* idx)
 
 
 /* Gets the size of the mpint, and puts the pointer to the start of
- * buf's number into *mpint. This function does not copy. */
+ * buf's number into *mpint. This function does not copy. Note that a
+ * zero-length mpint sets *mpint to NULL. */
 int GetMpint(word32* mpintSz, const byte** mpint,
         const byte* buf, word32 len, word32* idx)
 {
     int result;
 
-    result = GetUint32(mpintSz, buf, len, idx);
+    result = GetStringRef(mpintSz, mpint, buf, len, idx);
 
     if (result == WS_SUCCESS) {
-        result = WS_BUFFER_E;
-
-        if (*idx < len && *mpintSz <= len - *idx) {
-            *mpint = buf + *idx;
-            *idx += *mpintSz;
-            result = WS_SUCCESS;
-        }
+        /* All mpints used in SSH are positive. Reject values with
+         * the sign bit set as non-canonical. (RFC 4251 Section 5) */
+        if (*mpintSz > 0 && (**mpint & 0x80) != 0)
+            result = WS_PARSE_E;
     }
 
     return result;
@@ -7429,7 +7427,9 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
-        ret = GetMpint(&sigSz, &sig, pk->signature, pk->signatureSz, &i);
+        /* RFC 4253 Section 6.6: the RSA signature blob is a string of
+         * raw signature bytes, not an mpint. */
+        ret = GetStringRef(&sigSz, &sig, pk->signature, pk->signatureSz, &i);
     }
 
     if (ret == WS_SUCCESS) {
@@ -7588,7 +7588,9 @@ static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
-        ret = GetMpint(&sigSz, &sig, pk->signature, pk->signatureSz, &i);
+        /* RFC 4253 Section 6.6: the RSA signature blob is a string of
+         * raw signature bytes, not an mpint. */
+        ret = GetStringRef(&sigSz, &sig, pk->signature, pk->signatureSz, &i);
     }
 
     if (ret == WS_SUCCESS) {
@@ -18293,6 +18295,14 @@ int wolfSSH_TestRsaVerify(const byte* sig, word32 sigSz,
 {
     return wolfSSH_RsaVerify(sig, sigSz, encDigest, encDigestSz,
             key, heap, "wolfSSH_TestRsaVerify");
+}
+
+int wolfSSH_TestDoUserAuthRequestRsa(WOLFSSH* ssh,
+        WS_UserAuthData_PublicKey* pk, int hashId, byte* digest,
+        word32 digestSz)
+{
+    return DoUserAuthRequestRsa(ssh, pk, (enum wc_HashType)hashId,
+            digest, digestSz);
 }
 
 #endif /* !WOLFSSH_NO_RSA */
