@@ -5062,11 +5062,8 @@ static int ParseECCPubKey(WOLFSSH *ssh,
 {
     int ret;
 #ifndef WOLFSSH_NO_ECDSA
-    const byte* q;
-    word32 qSz, pubKeyIdx = 0;
+    word32 pubKeyIdx = 0;
     int primeId = 0;
-    const char* algoName;
-    const char* curveName;
 
     ret = wc_ecc_init_ex(&sigKeyBlock_ptr->sk.ecc.key, ssh->ctx->heap,
                                  INVALID_DEVID);
@@ -5077,50 +5074,73 @@ static int ParseECCPubKey(WOLFSSH *ssh,
     if (ret != 0)
         ret = WS_ECC_E;
     else
-        ret = GetStringRef(&qSz, &q, pubKey, pubKeySz, &pubKeyIdx);
+        ret = WS_SUCCESS;
 
-    /* The algorithm name in the key blob must match the negotiated host key
-     * algorithm. A MitM must not be able to swap in a different curve by
-     * lying in the blob, so don't trust the blob to choose the curve. */
+    /* Get the algorithm name in the key block. It must match the
+     * negotiated host key algorithm. Do not trust the key blob to
+     * choose the curve. */
     if (ret == WS_SUCCESS) {
-        algoName = IdToName(ssh->handshake->pubKeyId);
-        if (qSz != (word32)WSTRLEN(algoName)
-                || WMEMCMP(q, algoName, qSz) != 0)
-            ret = WS_INVALID_ALGO_ID;
+        const char* algoName;
+        const byte* keyAlgoName;
+        word32 keyAlgoNameSz;
+
+        ret = GetStringRef(&keyAlgoNameSz, &keyAlgoName,
+                pubKey, pubKeySz, &pubKeyIdx);
+
+        if (ret == WS_SUCCESS) {
+            algoName = IdToName(ssh->handshake->pubKeyId);
+            if (keyAlgoNameSz != (word32)WSTRLEN(algoName)
+                    || WMEMCMP(keyAlgoName, algoName, keyAlgoNameSz) != 0) {
+                ret = WS_INVALID_ALGO_ID;
+            }
+        }
     }
 
     /* Derive the curve from the negotiated algorithm, not from the blob. */
     if (ret == WS_SUCCESS) {
         primeId = wcPrimeForId(ssh->handshake->pubKeyId);
-        if (primeId == ECC_CURVE_INVALID)
+        if (primeId == ECC_CURVE_INVALID) {
             ret = WS_INVALID_PRIME_CURVE;
+        }
     }
 
     /* The curve name (RFC 5656 section 3.1) in the blob must match the
      * curve of the negotiated algorithm. */
-    if (ret == WS_SUCCESS)
-        ret = GetStringRef(&qSz, &q, pubKey, pubKeySz, &pubKeyIdx);
-
     if (ret == WS_SUCCESS) {
-        curveName = PrimeNameForId(ssh->handshake->pubKeyId);
-        if (qSz != (word32)WSTRLEN(curveName)
-                || WMEMCMP(q, curveName, qSz) != 0)
-            ret = WS_INVALID_PRIME_CURVE;
+        const char* curveName;
+        const byte* keyCurveName;
+        word32 keyCurveNameSz;
+
+        ret = GetStringRef(&keyCurveNameSz, &keyCurveName,
+                pubKey, pubKeySz, &pubKeyIdx);
+
+        if (ret == WS_SUCCESS) {
+            curveName = PrimeNameForId(ssh->handshake->pubKeyId);
+            if (keyCurveNameSz != (word32)WSTRLEN(curveName)
+                    || WMEMCMP(keyCurveName, curveName, keyCurveNameSz) != 0) {
+                ret = WS_INVALID_PRIME_CURVE;
+            }
+        }
     }
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
+        const byte* q;
+        word32 qSz;
+
         ret = GetStringRef(&qSz, &q, pubKey, pubKeySz, &pubKeyIdx);
 
-    if (ret == WS_SUCCESS) {
-        ret = wc_ecc_import_x963_ex(q, qSz,
-                &sigKeyBlock_ptr->sk.ecc.key, primeId);
-        if (ret == 0) {
-            sigKeyBlock_ptr->keySz =
-                (word32)sizeof(sigKeyBlock_ptr->sk.ecc.key);
-            sigKeyBlock_ptr->keyAllocated = 1;
+        if (ret == WS_SUCCESS) {
+            ret = wc_ecc_import_x963_ex(q, qSz,
+                    &sigKeyBlock_ptr->sk.ecc.key, primeId);
+            if (ret == 0) {
+                sigKeyBlock_ptr->keySz =
+                    (word32)sizeof(sigKeyBlock_ptr->sk.ecc.key);
+                sigKeyBlock_ptr->keyAllocated = 1;
+            }
+            else {
+                ret = WS_ECC_E;
+            }
         }
-        else
-            ret = WS_ECC_E;
     }
 #else
     WOLFSSH_UNUSED(ssh);
