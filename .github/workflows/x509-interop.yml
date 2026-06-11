@@ -25,7 +25,7 @@ jobs:
         id: cache-wolfssl
         with:
           path: build-dir/
-          key: wolfssh-x509-interop-wolfssl-${{ env.WOLFSSL_REF }}-ubuntu-latest
+          key: wolfssh-x509-interop-wolfssl-${{ env.WOLFSSL_REF }}-all-ubuntu-latest
           lookup-only: true
 
       - name: Checkout, build, and install wolfSSL
@@ -35,7 +35,18 @@ jobs:
           repository: wolfssl/wolfssl
           ref: ${{ env.WOLFSSL_REF }}
           path: wolfssl
-          configure: --enable-ssh --enable-keygen --enable-ed25519 --enable-curve25519
+          # --enable-all defines WOLFSSL_FPKI, which compiles the UPN-vs-username
+          # binding in wolfSSHd (apps/wolfsshd/auth.c). The client cert carries
+          # UPN:fred@example, so user "fred" is bound to the certificate. The
+          # wolfSSHd build still passes -DWOLFSSH_NO_FPKI below so the strict
+          # FPKI profile (FASCN) is not required of the fred test certificate.
+          #
+          # Coverage note: this FPKI build exercises only the WOLFSSL_FPKI
+          # success/binding path of RequestAuthentication. The non-FPKI
+          # fail-closed reject branch (apps/wolfsshd/auth.c) is intentionally
+          # not run here; it is verified at compile time and would need a
+          # separate non-FPKI build to exercise at runtime.
+          configure: --enable-all
           check: false
           install: true
 
@@ -86,7 +97,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: build-dir/
-          key: wolfssh-x509-interop-wolfssl-${{ env.WOLFSSL_REF }}-ubuntu-latest
+          key: wolfssh-x509-interop-wolfssl-${{ env.WOLFSSL_REF }}-all-ubuntu-latest
           fail-on-cache-miss: true
 
       - name: Restore PKIX-SSH cache
@@ -198,6 +209,39 @@ jobs:
             fred@127.0.0.1 <<EOF
           exit
           EOF
+
+      - name: Negative test - fred cert must not authenticate as another user
+        working-directory: ./wolfssh/
+        run: |
+          # Regression guard for the cert principal-binding fix: a certificate
+          # issued for "fred" (UPN:fred@example) must not be accepted for a
+          # different SSH username. PreferredAuthentications=publickey plus
+          # BatchMode keep this to a single publickey attempt with no password
+          # fallback. The preceding positive tests already proved connectivity
+          # and that fred's cert works; here we additionally require the failure
+          # to be an authentication denial, so an unrelated ssh error (transport,
+          # host-key, option change) cannot masquerade as a passing negative test.
+          sudo useradd -m otheruser
+          set +e
+          ../build-dir/bin/ssh -o StrictHostKeyChecking=accept-new \
+            -o PreferredAuthentications=publickey \
+            -o BatchMode=yes -o NumberOfPasswordPrompts=0 \
+            -p 22222 -F ssh-pkixssh-config \
+            -i ./keys/fred-key.pem otheruser@127.0.0.1 exit \
+            > ssh-neg.out 2> ssh-neg.err
+          rc=$?
+          set -e
+          cat ssh-neg.err || true
+          if [ "$rc" -eq 0 ]; then
+            echo "SECURITY FAILURE: fred certificate authenticated as otheruser"
+            exit 1
+          fi
+          if ! grep -qi "permission denied" ssh-neg.err; then
+            echo "Negative test inconclusive: ssh failed but not with an auth"
+            echo "denial (possible transport/config error, not a binding reject)"
+            exit 1
+          fi
+          echo "OK: fred certificate correctly rejected for otheruser (auth denied)"
 
       - name: Show wolfSSHd log on failure
         if: failure()
