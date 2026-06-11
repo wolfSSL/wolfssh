@@ -1428,6 +1428,10 @@ enum WS_MessageIdLimits {
             WS_UserAuthData_PublicKey* pk, int hashId, byte* digest,
             word32 digestSz);
 #endif /* !WOLFSSH_NO_RSA */
+#ifndef WOLFSSH_NO_ECDSA
+    WOLFSSH_API int wolfSSH_TestParseECCPubKey(WOLFSSH* ssh, byte* pubKey,
+            word32 pubKeySz);
+#endif /* !WOLFSSH_NO_ECDSA */
 #ifndef WOLFSSH_NO_ED25519
     WOLFSSH_API int wolfSSH_TestDoUserAuthRequestEd25519(WOLFSSH* ssh,
             WS_UserAuthData* authData);

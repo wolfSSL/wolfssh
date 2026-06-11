@@ -5065,6 +5065,8 @@ static int ParseECCPubKey(WOLFSSH *ssh,
     const byte* q;
     word32 qSz, pubKeyIdx = 0;
     int primeId = 0;
+    const char* algoName;
+    const char* curveName;
 
     ret = wc_ecc_init_ex(&sigKeyBlock_ptr->sk.ecc.key, ssh->ctx->heap,
                                  INVALID_DEVID);
@@ -5077,20 +5079,34 @@ static int ParseECCPubKey(WOLFSSH *ssh,
     else
         ret = GetStringRef(&qSz, &q, pubKey, pubKeySz, &pubKeyIdx);
 
+    /* The algorithm name in the key blob must match the negotiated host key
+     * algorithm. A MitM must not be able to swap in a different curve by
+     * lying in the blob, so don't trust the blob to choose the curve. */
     if (ret == WS_SUCCESS) {
-        primeId = (int)NameToId((const char*)q, qSz);
-        if (primeId != ID_UNKNOWN) {
-            primeId = wcPrimeForId((byte)primeId);
-            if (primeId == ECC_CURVE_INVALID)
-                ret = WS_INVALID_PRIME_CURVE;
-        }
-        else
+        algoName = IdToName(ssh->handshake->pubKeyId);
+        if (qSz != (word32)WSTRLEN(algoName)
+                || WMEMCMP(q, algoName, qSz) != 0)
             ret = WS_INVALID_ALGO_ID;
     }
 
-    /* Skip the curve name since we're getting it from the algo. */
+    /* Derive the curve from the negotiated algorithm, not from the blob. */
+    if (ret == WS_SUCCESS) {
+        primeId = wcPrimeForId(ssh->handshake->pubKeyId);
+        if (primeId == ECC_CURVE_INVALID)
+            ret = WS_INVALID_PRIME_CURVE;
+    }
+
+    /* The curve name (RFC 5656 section 3.1) in the blob must match the
+     * curve of the negotiated algorithm. */
     if (ret == WS_SUCCESS)
-        ret = GetSkip(pubKey, pubKeySz, &pubKeyIdx);
+        ret = GetStringRef(&qSz, &q, pubKey, pubKeySz, &pubKeyIdx);
+
+    if (ret == WS_SUCCESS) {
+        curveName = PrimeNameForId(ssh->handshake->pubKeyId);
+        if (qSz != (word32)WSTRLEN(curveName)
+                || WMEMCMP(q, curveName, qSz) != 0)
+            ret = WS_INVALID_PRIME_CURVE;
+    }
 
     if (ret == WS_SUCCESS)
         ret = GetStringRef(&qSz, &q, pubKey, pubKeySz, &pubKeyIdx);
@@ -18306,6 +18322,23 @@ int wolfSSH_TestDoUserAuthRequestRsa(WOLFSSH* ssh,
 }
 
 #endif /* !WOLFSSH_NO_RSA */
+
+#ifndef WOLFSSH_NO_ECDSA
+
+int wolfSSH_TestParseECCPubKey(WOLFSSH* ssh, byte* pubKey, word32 pubKeySz)
+{
+    struct wolfSSH_sigKeyBlock sigKeyBlock;
+    int ret;
+
+    WMEMSET(&sigKeyBlock, 0, sizeof(sigKeyBlock));
+    sigKeyBlock.useEcc = 1;
+    ret = ParseECCPubKey(ssh, &sigKeyBlock, pubKey, pubKeySz);
+    FreePubKey(&sigKeyBlock);
+
+    return ret;
+}
+
+#endif /* !WOLFSSH_NO_ECDSA */
 
 #ifndef WOLFSSH_NO_ED25519
 
