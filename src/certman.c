@@ -38,6 +38,7 @@
 
 #include <wolfssl/ssl.h>
 #include <wolfssl/ocsp.h>
+#include <wolfssl/wolfcrypt/asn.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/error-ssl.h>
 
@@ -202,6 +203,31 @@ enum {
     #define MAX_CHAIN_DEPTH 9
 #endif
 
+/* Returns 1 if der is a CA: isCA set and, unless self-signed, keyCertSign
+ * set. Already signature-verified by the caller, so parse NO_VERIFY. */
+static int CertManIntermediateIsCA(WOLFSSH_CERTMAN* cm,
+        const unsigned char* der, word32 derSz)
+{
+    DecodedCert decoded;
+    int isCA = 0;
+
+    wc_InitDecodedCert(&decoded, der, derSz, cm->heap);
+    if (wc_ParseCert(&decoded, WOLFSSL_FILETYPE_ASN1, NO_VERIFY, NULL) == 0) {
+        isCA = decoded.isCA;
+    #ifndef ALLOW_INVALID_CERTSIGN
+        if (isCA && !decoded.selfSigned && decoded.extKeyUsageSet &&
+                (decoded.extKeyUsage & KEYUSE_KEY_CERT_SIGN) == 0) {
+            /* If a KeyUsage extension is present, an intermediate CA must
+             * assert the keyCertSign bit. */
+            isCA = 0;
+        }
+    #endif
+    }
+    wc_FreeDecodedCert(&decoded);
+
+    return isCA;
+}
+
 /* if handling a chain it is expected to be the leaf cert first followed by
  * intermediates and CA last (CA may be omitted) */
 int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
@@ -308,11 +334,20 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
             }
         #endif /* HAVE_OCSP */
 
-            /* verified successfully, add intermideate as trusted */
+            /* promote the intermediate so the next cert has a signer, but
+             * only if it's actually a CA */
             if (ret == WS_SUCCESS && certIdx > 0) {
-                WLOG(WS_LOG_CERTMAN, "adding intermediate cert as trusted");
-                ret = wolfSSH_CERTMAN_LoadRootCA_buffer(cm, certLoc[certIdx],
-                    certLen[certIdx]);
+                if (CertManIntermediateIsCA(cm, certLoc[certIdx],
+                        certLen[certIdx])) {
+                    WLOG(WS_LOG_CERTMAN, "adding intermediate cert as trusted");
+                    ret = wolfSSH_CERTMAN_LoadRootCA_buffer(cm,
+                        certLoc[certIdx], certLen[certIdx]);
+                }
+                else {
+                    WLOG(WS_LOG_CERTMAN,
+                        "peer intermediate is not a CA; not promoting");
+                    ret = WS_CERT_NO_SIGNER_E;
+                }
             }
 
             if (ret != WS_SUCCESS) {
