@@ -1835,7 +1835,10 @@ static int ExtractFileName(const char* filePath, char* fileName,
         idx++;
     }
 
-    if (separator < 0)
+    /* a path with no separator is a bare file or directory name; the whole
+     * string is then the file name (separator == -1 is handled correctly by
+     * the length math below) */
+    if (pathLen == 0)
         return WS_BAD_ARGUMENT;
 
     fileLen = pathLen - separator - 1;
@@ -1847,6 +1850,14 @@ static int ExtractFileName(const char* filePath, char* fileName,
 
     return ret;
 }
+
+#ifdef WOLFSSH_TEST_INTERNAL
+int wolfSSH_TestScpExtractFileName(const char* filePath, char* fileName,
+                                   word32 fileNameSz)
+{
+    return ExtractFileName(filePath, fileName, fileNameSz);
+}
+#endif
 
 #if !defined(NO_FILESYSTEM)
 
@@ -2837,21 +2848,32 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
 
                 /* first request, keep track of request directory */
                 ret = ScpPushDir(ssh->fs, sendCtx, peerRequest, ssh->ctx->heap);
+                if (ret != WS_SUCCESS) {
+                    WLOG(WS_LOG_ERROR,
+                         "scp: error opening base directory, abort");
+                }
 
                 if (ret == WS_SUCCESS) {
                     /* get file name from request */
                     ret = ExtractFileName(peerRequest, fileName, fileNameSz);
+                    if (ret != WS_SUCCESS) {
+                        WLOG(WS_LOG_ERROR,
+                             "scp: error extracting directory name, abort");
+                    }
                 }
 
                 if (ret == WS_SUCCESS) {
                     ret = GetFileStats(ssh->fs, sendCtx, peerRequest, mTime, aTime,
                                        fileMode);
+                    if (ret != WS_SUCCESS) {
+                        WLOG(WS_LOG_ERROR,
+                             "scp: error getting file stats, abort");
+                    }
                 }
 
                 if (ret == WS_SUCCESS) {
                     ret = WS_SCP_ENTER_DIR;
                 } else {
-                    WLOG(WS_LOG_ERROR, "scp: error getting file stats, abort");
                     ret = WS_SCP_ABORT;
                 }
 
