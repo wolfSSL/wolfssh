@@ -63,6 +63,17 @@ const char scpError[] = "scp error: %s, %d";
 const char scpState[] = "scp state: %s";
 
 
+/* Logs an SCP state error, except a non-blocking WS_WANT_READ/WS_WANT_WRITE,
+ * which is normal back-pressure the caller retries (matching the quiet
+ * SCP_SEND_FILE handling) rather than a transfer failure. */
+static void LogScpStateError(const char* state, int ret)
+{
+    (void)state;
+    if (ret != WS_WANT_READ && ret != WS_WANT_WRITE)
+        WLOG(WS_LOG_ERROR, scpError, state, ret);
+}
+
+
 static int _DumpExtendedData(WOLFSSH* ssh)
 {
     byte msg[WOLFSSH_DEFAULT_EXTDATA_SZ];
@@ -76,6 +87,122 @@ static int _DumpExtendedData(WOLFSSH* ssh)
     }
 
     return msgSz;
+}
+
+
+/* Sends sz bytes from data, completing any rekey or full window that blocks
+ * the send.
+ *
+ * Attempts the send; on a WS_WINDOW_FULL (peer window reached zero) or
+ * WS_REKEYING result, drives wolfSSH_worker once to pick up the peer's window
+ * adjust or to advance the rekey, then retries the send. The retry is what
+ * clears the status: wolfSSH_worker does not reset ssh->error, so a loop that
+ * keyed on ssh->error staying WS_WINDOW_FULL would keep driving the worker
+ * after the window already reopened and stall the transfer. This mirrors the
+ * original SCP_SEND_FILE handling, extended to the control-message senders so a
+ * rekey or full window during a timestamp/header/confirmation send is no longer
+ * reported as fatal. Termination needs no retry count: in blocking mode
+ * wolfSSH_worker waits on the socket for the peer's packet; in non-blocking
+ * mode it returns WS_WANT_READ/WS_WANT_WRITE, which is returned to the caller
+ * so a stalled rekey cannot spin forever. Returns the byte count from
+ * wolfSSH_stream_send (>= 0) or a negative error code, matching the wrapped
+ * call so callers keep their existing return handling.
+ */
+static int ScpStreamSend(WOLFSSH* ssh, byte* data, word32 sz)
+{
+    int ret = WS_SUCCESS;
+    int err;
+    int done = 0;
+
+    if (ssh == NULL || data == NULL)
+        return WS_BAD_ARGUMENT;
+
+    /* Flush queued output before sending. Otherwise a KEXINIT enqueued by a
+     * rekey triggered on the prior send sits unsent while wolfSSH_worker runs
+     * DoReceive before its own flush, blocking on the socket with the peer
+     * waiting for our KEXINIT. */
+    if (wolfSSH_OutputPending(ssh)) {
+        ret = wolfSSH_SendPacket(ssh);
+        if (ret < 0)
+            return ret;
+    }
+
+    while (!done) {
+        ret = wolfSSH_stream_send(ssh, data, sz);
+        if (ret >= 0) {
+            /* sent (full or partial byte count); exits via while (!done) */
+            done = 1;
+        }
+        else {
+            err = wolfSSH_get_error(ssh);
+            if (err == WS_WINDOW_FULL || err == WS_REKEYING) {
+                ret = wolfSSH_worker(ssh, NULL);
+                err = wolfSSH_get_error(ssh);
+                /* A non-blocking want surfaces as a generic worker error with
+                 * the want recorded in ssh->error (see GetInputData). Return it
+                 * so the caller retries instead of tearing down the send. */
+                if (err == WS_WANT_READ || err == WS_WANT_WRITE)
+                    return err;
+                /* Only a rekey/window/channel-data status means "keep driving".
+                 * Any other negative status is fatal and returned. */
+                if (ret < 0 && ret != WS_REKEYING && ret != WS_WINDOW_FULL
+                        && ret != WS_CHAN_RXD)
+                    return ret;
+                /* otherwise loop and retry the send, which clears the status */
+            }
+            else {
+                /* Fatal or other final status; return it unchanged. */
+                done = 1;
+            }
+        }
+    }
+
+    return ret;
+}
+
+
+/* Reads up to sz bytes into data, completing any rekey that fires mid-read.
+ *
+ * Flushes queued output before reading so a KEXINIT enqueued by a receive-side
+ * highwater rekey is actually sent, otherwise the peer can wait for our KEXINIT
+ * while we block on the read. On a read that fails with WS_REKEYING the worker
+ * is driven to finish the rekey and the read is retried. The helper is
+ * error-code transparent: every other status (WS_EOF, WS_EXTDATA,
+ * WS_CHANNEL_CLOSED, WS_SOCKET_ERROR_E, WS_WANT_READ/WS_WANT_WRITE, byte count)
+ * is returned unchanged so each caller keeps its existing branch handling.
+ */
+static int ScpStreamRead(WOLFSSH* ssh, byte* data, word32 sz)
+{
+    int ret = WS_SUCCESS;
+    int done = 0;
+
+    if (ssh == NULL || data == NULL)
+        return WS_BAD_ARGUMENT;
+
+    do {
+        if (wolfSSH_OutputPending(ssh)) {
+            ret = wolfSSH_SendPacket(ssh);
+            if (ret < 0)
+                return ret;
+        }
+
+        ret = wolfSSH_stream_read(ssh, data, sz);
+        if (ret < 0 && wolfSSH_get_error(ssh) == WS_REKEYING) {
+            /* Drive the rekey to completion, then retry the read. A worker
+             * status that is not rekey or channel data means the rekey stalled
+             * or a non-blocking want occurred, so return it rather than
+             * spin. */
+            ret = wolfSSH_worker(ssh, NULL);
+            if (ret < 0 && ret != WS_CHAN_RXD
+                    && wolfSSH_get_error(ssh) != WS_REKEYING)
+                return ret;
+        }
+        else {
+            done = 1;
+        }
+    } while (!done);
+
+    return ret;
 }
 
 
@@ -112,7 +239,7 @@ int DoScpSink(WOLFSSH* ssh)
                         break;
                     }
 
-                    WLOG(WS_LOG_ERROR, scpError, "RECEIVE_MESSAGE", ret);
+                    LogScpStateError("RECEIVE_MESSAGE", ret);
                     break;
                 }
 
@@ -153,7 +280,7 @@ int DoScpSink(WOLFSSH* ssh)
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SEND_CONFIRMATION");
 
                 if ( (ret = SendScpConfirmation(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "SEND_CONFIRMATION", ret);
+                    LogScpStateError("SEND_CONFIRMATION", ret);
                     break;
                 }
 
@@ -164,7 +291,7 @@ int DoScpSink(WOLFSSH* ssh)
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_RECEIVE_CONFIRMATION");
 
                 if ( (ret = ReceiveScpConfirmation(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "RECEIVE_CONFIRMATION", ret);
+                    LogScpStateError("RECEIVE_CONFIRMATION", ret);
                     break;
                 }
 
@@ -175,7 +302,7 @@ int DoScpSink(WOLFSSH* ssh)
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_RECEIVE_FILE");
 
                 if ( (ret = ReceiveScpFile(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "RECEIVE_FILE", ret);
+                    LogScpStateError("RECEIVE_FILE", ret);
                     break;
                 }
 
@@ -283,12 +410,16 @@ static int SendScpTimestamp(WOLFSSH* ssh)
 #endif
     bufSz = (int)WSTRLEN(buf);
 
-    ret = wolfSSH_stream_send(ssh, (byte*)buf, bufSz);
-    if (ret != bufSz) {
-        ret = WS_FATAL_ERROR;
-    } else {
+    ret = ScpStreamSend(ssh, (byte*)buf, bufSz);
+    if (ret == bufSz) {
         WLOG(WS_LOG_DEBUG, "scp: sent timestamp: %s", buf);
         ret = WS_SUCCESS;
+    }
+    /* A non-blocking want is left as WS_WANT_READ/WS_WANT_WRITE for the caller
+     * to retry (nothing is queued yet, so the resend is clean), consistent with
+     * the SCP_SEND_FILE data path; only a real short send is fatal. */
+    else if (ret != WS_WANT_READ && ret != WS_WANT_WRITE) {
+        ret = WS_FATAL_ERROR;
     }
 
     return ret;
@@ -324,12 +455,15 @@ static int SendScpFileHeader(WOLFSSH* ssh)
         return WS_BAD_ARGUMENT;
 #endif
     bufSz = (int)WSTRLEN(filehdr);
-    ret = wolfSSH_stream_send(ssh, (byte*)filehdr, bufSz);
-    if (ret != bufSz) {
-        ret = WS_FATAL_ERROR;
-    } else {
+    ret = ScpStreamSend(ssh, (byte*)filehdr, bufSz);
+    if (ret == bufSz) {
         WLOG(WS_LOG_DEBUG, "scp: sent file header: %s", filehdr);
         ret = WS_SUCCESS;
+    }
+    /* leave a non-blocking want for the caller to retry; only a real short
+     * send is fatal (see SendScpTimestamp) */
+    else if (ret != WS_WANT_READ && ret != WS_WANT_WRITE) {
+        ret = WS_FATAL_ERROR;
     }
     return ret;
 }
@@ -357,12 +491,15 @@ static int SendScpEnterDirectory(WOLFSSH* ssh)
 
     bufSz = (int)WSTRLEN(buf);
 
-    ret = wolfSSH_stream_send(ssh, (byte*)buf, bufSz);
-    if (ret != bufSz) {
-        ret = WS_FATAL_ERROR;
-    } else {
+    ret = ScpStreamSend(ssh, (byte*)buf, bufSz);
+    if (ret == bufSz) {
         WLOG(WS_LOG_DEBUG, "scp: sent directory msg: %s", buf);
         ret = WS_SUCCESS;
+    }
+    /* leave a non-blocking want for the caller to retry; only a real short
+     * send is fatal (see SendScpTimestamp) */
+    else if (ret != WS_WANT_READ && ret != WS_WANT_WRITE) {
+        ret = WS_FATAL_ERROR;
     }
 
     return ret;
@@ -383,12 +520,15 @@ static int SendScpExitDirectory(WOLFSSH* ssh)
     buf[0] = 'E';
     buf[1] = '\n';
 
-    ret = wolfSSH_stream_send(ssh, (byte*)buf, sizeof(buf));
-    if (ret != sizeof(buf)) {
-        ret = WS_FATAL_ERROR;
-    } else {
+    ret = ScpStreamSend(ssh, (byte*)buf, sizeof(buf));
+    if (ret == sizeof(buf)) {
         WLOG(WS_LOG_DEBUG, "scp: sent end directory msg: E");
         ret = WS_SUCCESS;
+    }
+    /* leave a non-blocking want for the caller to retry; only a real short
+     * send is fatal (see SendScpTimestamp) */
+    else if (ret != WS_WANT_READ && ret != WS_WANT_WRITE) {
+        ret = WS_FATAL_ERROR;
     }
 
     return ret;
@@ -436,7 +576,7 @@ int DoScpSource(WOLFSSH* ssh)
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SEND_CONFIRMATION");
 
                 if ( (ret = SendScpConfirmation(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "SEND_CONFIRMATION", ret);
+                    LogScpStateError("SEND_CONFIRMATION", ret);
                     break;
                 }
 
@@ -447,7 +587,7 @@ int DoScpSource(WOLFSSH* ssh)
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_CONFIRMATION_WITH_RECEIPT");
 
                 if ( (ret = SendScpConfirmation(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "SEND_CONFIRMATION", ret);
+                    LogScpStateError("SEND_CONFIRMATION", ret);
                     break;
                 }
 
@@ -459,8 +599,7 @@ int DoScpSource(WOLFSSH* ssh)
                      "SCP_RECEIVE_CONFIRMATION_WITH_RECEIPT");
 
                 if ( (ret = ReceiveScpConfirmation(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError,
-                         "RECEIVE_CONFIRMATION_WITH_RECEIPT", ret);
+                    LogScpStateError("RECEIVE_CONFIRMATION_WITH_RECEIPT", ret);
                     break;
                 }
 
@@ -471,7 +610,7 @@ int DoScpSource(WOLFSSH* ssh)
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_RECEIVE_CONFIRMATION");
 
                 if ( (ret = ReceiveScpConfirmation(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "RECEIVE_CONFIRMATION", ret);
+                    LogScpStateError("RECEIVE_CONFIRMATION", ret);
                     break;
                 }
 
@@ -540,7 +679,7 @@ int DoScpSource(WOLFSSH* ssh)
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SEND_TIMESTAMP");
 
                 if ( (ret = SendScpTimestamp(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "SEND_TIMESTAMP", ret);
+                    LogScpStateError("SEND_TIMESTAMP", ret);
                     break;
                 }
 
@@ -552,7 +691,7 @@ int DoScpSource(WOLFSSH* ssh)
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SEND_ENTER_DIRECTORY");
 
                 if ( (ret = SendScpEnterDirectory(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "SEND_ENTER_DIRECTORY", ret);
+                    LogScpStateError("SEND_ENTER_DIRECTORY", ret);
                     break;
                 }
 
@@ -564,7 +703,7 @@ int DoScpSource(WOLFSSH* ssh)
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SEND_EXIT_DIRECTORY");
 
                 if ( (ret = SendScpExitDirectory(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "SEND_EXIT_DIRECTORY", ret);
+                    LogScpStateError("SEND_EXIT_DIRECTORY", ret);
                     break;
                 }
 
@@ -576,7 +715,7 @@ int DoScpSource(WOLFSSH* ssh)
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SEND_EXIT_DIRECTORY_FINAL");
 
                 if ( (ret = SendScpExitDirectory(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "SEND_EXIT_DIRECTORY", ret);
+                    LogScpStateError("SEND_EXIT_DIRECTORY", ret);
                     break;
                 }
 
@@ -587,7 +726,7 @@ int DoScpSource(WOLFSSH* ssh)
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SEND_FILE_HEADER");
 
                 if ( (ret = SendScpFileHeader(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "SEND_FILE_HEADER", ret);
+                    LogScpStateError("SEND_FILE_HEADER", ret);
                     break;
                 }
 
@@ -598,12 +737,15 @@ int DoScpSource(WOLFSSH* ssh)
             case SCP_SEND_FILE:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SEND_FILE");
 
-                ret = wolfSSH_stream_send(ssh, ssh->scpFileBuffer,
-                                          ssh->scpBufferedSz);
-                if (ret == WS_WINDOW_FULL || ret == WS_REKEYING) {
-                    ret = wolfSSH_worker(ssh, NULL);
-                    if (ret == WS_SUCCESS || ssh->error == WS_WANT_READ)
-                        continue;
+                ret = ScpStreamSend(ssh, ssh->scpFileBuffer,
+                                    ssh->scpBufferedSz);
+                if (ret == WS_WANT_READ || ret == WS_WANT_WRITE) {
+                    /* ScpStreamSend already drove the worker through any rekey
+                     * or full window; a non-blocking want means the socket is
+                     * not ready. Surface it for the caller to retry without
+                     * closing the file mid-transfer. scpBufferedSz and
+                     * scpFileOffset are preserved for the next call. */
+                    break;
                 }
                 if (ret == WS_EXTDATA) {
                     _DumpExtendedData(ssh);
@@ -718,14 +860,14 @@ int DoScpRequest(WOLFSSH* ssh)
             case SCP_SINK:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SINK");
                 if ( (ret = DoScpSink(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "SCP_SINK", ret);
+                    LogScpStateError("SCP_SINK", ret);
                 }
                 break;
 
             case SCP_SOURCE:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SOURCE");
                 if ( (ret = DoScpSource(ssh)) < WS_SUCCESS) {
-                    WLOG(WS_LOG_ERROR, scpError, "SCP_SOURCE", ret);
+                    LogScpStateError("SCP_SOURCE", ret);
                 }
                 break;
         }
@@ -736,7 +878,7 @@ int DoScpRequest(WOLFSSH* ssh)
 
         /* Peer MUST send back a SSH_MSG_CHANNEL_CLOSE unless already
             sent*/
-        ret = wolfSSH_stream_read(ssh, buf, 1);
+        ret = ScpStreamRead(ssh, buf, 1);
         if (ret == WS_SOCKET_ERROR_E || ret == WS_CHANNEL_CLOSED) {
             WLOG(WS_LOG_DEBUG, scpState, "Peer hung up, but SCP is done");
             ret = WS_SUCCESS;
@@ -1395,6 +1537,33 @@ int ReceiveScpMessage(WOLFSSH* ssh)
             return WS_BUFFER_E;
         }
 
+        /* Flush queued output before polling. A KEXINIT enqueued by a rekey
+         * would otherwise sit unsent while wolfSSH_worker runs DoReceive before
+         * its own flush, deadlocking against a peer that waits for our
+         * KEXINIT. */
+        if (wolfSSH_OutputPending(ssh)) {
+            ret = wolfSSH_SendPacket(ssh);
+            if (ret < 0)
+                return ret;
+        }
+
+        /* If channel data is already buffered, read it directly rather than
+         * polling the socket. A control message delivered into the channel
+         * buffer while a rekey was completing leaves wolfSSH_worker returning
+         * the rekey status (not WS_CHAN_RXD), so without this the buffered
+         * message is never read and the next worker blocks on the socket. */
+        if (wolfSSH_stream_peek(ssh, NULL, 1) > 0) {
+            sz = wolfSSH_stream_read(ssh, buf + ssh->scpRecvMsgSz,
+                    DEFAULT_SCP_MSG_SZ - ssh->scpRecvMsgSz);
+            /* match the WS_CHAN_RXD branch below: return on a non-positive
+             * read so a hypothetical zero cannot re-loop this peek path */
+            if (sz <= 0)
+                return sz;
+            ssh->scpRecvMsgSz += sz;
+            sz = ssh->scpRecvMsgSz;
+            continue;
+        }
+
         err = wolfSSH_worker(ssh, &lastChannel);
         if (err < 0) {
             int rc;
@@ -1517,7 +1686,7 @@ int ReceiveScpFile(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS) {
-        ret = wolfSSH_stream_read(ssh, ssh->scpFileBuffer, partSz);
+        ret = ScpStreamRead(ssh, ssh->scpFileBuffer, partSz);
         if (ret > 0) {
             ssh->scpFileBufferSz = ret;
         }
@@ -1559,11 +1728,8 @@ int SendScpConfirmation(WOLFSSH* ssh)
 
     /* skip first byte for accurate strlen, may be 0 */
     msgSz = (int)XSTRLEN(msg + 1) + 1;
-    ret = wolfSSH_stream_send(ssh, (byte*)msg, msgSz);
-    if (ret != msgSz || ssh->scpConfirm == WS_SCP_ABORT) {
-        ret = WS_FATAL_ERROR;
-
-    } else {
+    ret = ScpStreamSend(ssh, (byte*)msg, msgSz);
+    if (ret == msgSz && ssh->scpConfirm != WS_SCP_ABORT) {
         ret = WS_SUCCESS;
         WLOG(WS_LOG_DEBUG, "scp: sent confirmation (code: %d)", msg[0]);
 
@@ -1572,6 +1738,11 @@ int SendScpConfirmation(WOLFSSH* ssh)
             ssh->scpConfirmMsg = NULL;
             ssh->scpConfirmMsgSz = 0;
         }
+    }
+    /* leave a non-blocking want for the caller to retry; a real short send or a
+     * peer abort is fatal (see SendScpTimestamp) */
+    else if (ret != WS_WANT_READ && ret != WS_WANT_WRITE) {
+        ret = WS_FATAL_ERROR;
     }
 
     return ret;
@@ -1587,7 +1758,7 @@ int ReceiveScpConfirmation(WOLFSSH* ssh)
         return WS_BAD_ARGUMENT;
 
     WMEMSET(msg, 0, sizeof(msg));
-    msgSz = wolfSSH_stream_read(ssh, msg, DEFAULT_SCP_MSG_SZ);
+    msgSz = ScpStreamRead(ssh, msg, DEFAULT_SCP_MSG_SZ);
 
     if (msgSz < 0) {
         if (wolfSSH_get_error(ssh) == WS_EXTDATA)
