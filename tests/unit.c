@@ -46,6 +46,19 @@
 #include <wolfssh/test.h>
 #include "unit.h"
 
+/* Regression coverage for finding F-5851 (non-CA intermediate promotion).
+ * Needs WOLFSSH_TEST_INTERNAL (the test bodies are in that section), the cert
+ * manager, runtime cert generation to forge the attack cert, ECDSA (the test
+ * certs are ECC), and a filesystem to load the test certs. */
+#if defined(WOLFSSH_TEST_INTERNAL) && defined(WOLFSSH_CERTS) && \
+    defined(WOLFSSL_CERT_GEN) && !defined(WOLFSSH_NO_ECDSA) && \
+    !defined(NO_FILESYSTEM)
+    #define WOLFSSH_TEST_CERTMAN_PROMOTE
+    #include <wolfssl/wolfcrypt/asn_public.h>
+    #include <wolfssl/wolfcrypt/ecc.h>
+    #include <wolfssh/certman.h>
+#endif
+
 #if defined(WOLFSSH_SCP) && !defined(WOLFSSH_SCP_USER_CALLBACKS) && \
     !defined(NO_FILESYSTEM) && !defined(WOLFSSL_NUCLEUS) && \
     !defined(_WIN32) && !defined(WOLFSSH_ZEPHYR)
@@ -2669,6 +2682,463 @@ done:
     return result;
 }
 
+#ifdef WOLFSSH_TEST_CERTMAN_PROMOTE
+
+/* Read a whole file into a freshly malloc'd buffer. Caller frees *buf. */
+static int certmanLoadFile(const char* fn, byte** buf, word32* bufSz)
+{
+    FILE* f;
+    long sz;
+    size_t rd;
+
+    *buf = NULL;
+    *bufSz = 0;
+
+    f = fopen(fn, "rb");
+    if (f == NULL)
+        return -1;
+    if (fseek(f, 0, SEEK_END) != 0 || (sz = ftell(f)) < 0) {
+        fclose(f);
+        return -1;
+    }
+#if LONG_MAX > 0xFFFFFFFFL
+    /* The size is later stored in a word32; reject anything that would not
+     * round-trip so *bufSz stays consistent with the allocated/read size. */
+    if (sz > 0xFFFFFFFFL) {
+        fclose(f);
+        return -1;
+    }
+#endif
+    rewind(f);
+
+    *buf = (byte*)malloc((size_t)sz);
+    if (*buf == NULL) {
+        fclose(f);
+        return -1;
+    }
+    rd = fread(*buf, 1, (size_t)sz, f);
+    fclose(f);
+    if (rd != (size_t)sz) {
+        free(*buf);
+        *buf = NULL;
+        return -1;
+    }
+
+    *bufSz = (word32)sz;
+    return 0;
+}
+
+/* Forge an end-entity cert whose issuer is the supplied cert and which is
+ * signed with the supplied (non-CA) key. Fills der/derSz on success. */
+static int certmanForgeChild(const byte* issuerCert, word32 issuerCertSz,
+        const byte* issuerKey, word32 issuerKeySz, byte* der, word32* derSz)
+{
+    ecc_key key;
+    WC_RNG rng;
+    Cert cert;
+    word32 idx = 0;
+    int ret;
+    int sz;
+    int haveKey = 0, haveRng = 0;
+
+    ret = wc_ecc_init(&key);
+    if (ret == 0) {
+        haveKey = 1;
+        ret = wc_InitRng(&rng);
+    }
+    if (ret == 0) {
+        haveRng = 1;
+        ret = wc_EccPrivateKeyDecode(issuerKey, &idx, &key, issuerKeySz);
+    }
+    if (ret == 0)
+        ret = wc_InitCert(&cert);
+    if (ret == 0) {
+        WSTRNCPY(cert.subject.country, "US", CTC_NAME_SIZE);
+        WSTRNCPY(cert.subject.commonName, "Mallory", CTC_NAME_SIZE);
+        cert.sigType = CTC_SHA256wECDSA;
+        cert.daysValid = 365;
+        cert.isCA = 0;
+        ret = wc_SetIssuerBuffer(&cert, issuerCert, (int)issuerCertSz);
+    }
+    if (ret == 0) {
+        /* Reuse the issuer key as the subject key; only the issuer and the
+         * signature matter for the signer lookup under test. */
+        sz = wc_MakeCert(&cert, der, *derSz, NULL, &key, &rng);
+        if (sz < 0)
+            ret = sz;
+    }
+    if (ret == 0) {
+        sz = wc_SignCert(cert.bodySz, cert.sigType, der, *derSz, NULL, &key,
+                &rng);
+        if (sz < 0)
+            ret = sz;
+        else
+            *derSz = (word32)sz;
+    }
+
+    if (haveRng)
+        wc_FreeRng(&rng);
+    if (haveKey)
+        wc_ecc_free(&key);
+
+    return ret;
+}
+
+/* Forge a cert with the given subject CN. When isCA is set the cert asserts
+ * basicConstraints CA=TRUE. When keyUsage is non-NULL the cert carries a
+ * KeyUsage extension with the named usage(s) (e.g. "keyCertSign" or
+ * "digitalSignature"); NULL omits the extension entirely. The issuer name is
+ * taken from issuerCert, the subject public key from subjectKey, and the cert
+ * is signed with issuerKey. Fills der/derSz on success. */
+static int certmanForgeCert(const char* cn, int isCA, const char* keyUsage,
+        const byte* issuerCert, word32 issuerCertSz,
+        ecc_key* issuerKey, ecc_key* subjectKey, byte* der, word32* derSz)
+{
+    WC_RNG rng;
+    Cert cert;
+    int ret;
+    int sz;
+    int haveRng = 0;
+
+    ret = wc_InitRng(&rng);
+    if (ret == 0) {
+        haveRng = 1;
+        ret = wc_InitCert(&cert);
+    }
+    if (ret == 0) {
+        /* wc_InitCert zeroed the struct, so leaving the final byte untouched
+         * keeps the name NUL-terminated and avoids a strncpy truncation
+         * warning on the runtime cn pointer. */
+        WSTRNCPY(cert.subject.country, "US", CTC_NAME_SIZE - 1);
+        WSTRNCPY(cert.subject.commonName, cn, CTC_NAME_SIZE - 1);
+        cert.sigType = CTC_SHA256wECDSA;
+        cert.daysValid = 365;
+        cert.isCA = isCA;
+        if (keyUsage != NULL) {
+        #ifdef WOLFSSL_CERT_EXT
+            ret = wc_SetKeyUsage(&cert, keyUsage);
+        #else
+            ret = BAD_FUNC_ARG;
+        #endif
+        }
+    }
+    if (ret == 0)
+        ret = wc_SetIssuerBuffer(&cert, issuerCert, (int)issuerCertSz);
+    if (ret == 0) {
+        sz = wc_MakeCert(&cert, der, *derSz, NULL, subjectKey, &rng);
+        if (sz < 0)
+            ret = sz;
+    }
+    if (ret == 0) {
+        sz = wc_SignCert(cert.bodySz, cert.sigType, der, *derSz, NULL,
+                issuerKey, &rng);
+        if (sz < 0)
+            ret = sz;
+        else
+            *derSz = (word32)sz;
+    }
+
+    if (haveRng)
+        wc_FreeRng(&rng);
+
+    return ret;
+}
+
+static void certmanPutU32(byte* p, word32 v)
+{
+    p[0] = (byte)(v >> 24);
+    p[1] = (byte)(v >> 16);
+    p[2] = (byte)(v >> 8);
+    p[3] = (byte)(v);
+}
+
+/* Append a length-prefixed cert (the framing VerifyCerts_buffer expects).
+ * chainCap is the capacity of chain; on insufficient space the chain is left
+ * unchanged so a cert-size regression surfaces as a failed assertion rather
+ * than memory corruption. The subtractions are ordered to avoid word32
+ * underflow. */
+static word32 certmanAppendCert(byte* chain, word32 chainCap, word32 chainSz,
+        const byte* cert, word32 certSz)
+{
+    if (chainSz > chainCap ||
+            certSz > chainCap - chainSz ||
+            UINT32_SZ > chainCap - chainSz - certSz) {
+        return chainSz;
+    }
+    certmanPutU32(chain + chainSz, certSz);
+    chainSz += UINT32_SZ;
+    WMEMCPY(chain + chainSz, cert, certSz);
+    chainSz += certSz;
+    return chainSz;
+}
+
+/* Regression test for finding F-5851: a peer-supplied end-entity (non-CA)
+ * certificate presented at an intermediate position in a chain must not be
+ * promoted into the cert manager's trust store. If it were, the holder of any
+ * ordinary leaf cert issued by a trusted root could then forge certs binding
+ * arbitrary SSH principals.
+ *
+ * Fred's cert is a non-CA leaf issued by the test root (ca-cert-ecc). We forge
+ * a child ("Mallory") issued by Fred and signed with Fred's key, then:
+ *   1. Sanity: with Fred explicitly trusted as a CA, the forged child gets
+ *      past the no-signer stage, proving the child is well-formed and chains
+ *      to Fred -- so the regression check below cannot pass vacuously.
+ *   2. Regression: run the attack chain [child, fred] through verify (a
+ *      vulnerable build promotes Fred here), then confirm the store was not
+ *      mutated -- verifying the child alone must now fail with
+ *      WS_CERT_NO_SIGNER_E. */
+static int test_CertMan_NoPromoteNonCaIntermediate(void)
+{
+    int result = 0;
+    int ret;
+    byte* root = NULL;
+    byte* fred = NULL;
+    byte* fredKey = NULL;
+    word32 rootSz = 0, fredSz = 0, fredKeySz = 0;
+    byte child[2048];
+    word32 childSz = sizeof(child);
+    byte chain[6144];
+    word32 chainSz;
+    WOLFSSH_CERTMAN* cm = NULL;
+
+    if (certmanLoadFile("./keys/ca-cert-ecc.der", &root, &rootSz) != 0) {
+        printf("CertMan: can't load root cert\n");
+        result = -900; goto done;
+    }
+    if (certmanLoadFile("./keys/fred-cert.der", &fred, &fredSz) != 0) {
+        printf("CertMan: can't load fred cert\n");
+        result = -901; goto done;
+    }
+    if (certmanLoadFile("./keys/fred-key.der", &fredKey, &fredKeySz) != 0) {
+        printf("CertMan: can't load fred key\n");
+        result = -902; goto done;
+    }
+
+    ret = certmanForgeChild(fred, fredSz, fredKey, fredKeySz, child, &childSz);
+    if (ret != 0) {
+        printf("CertMan: forge child failed, ret=%d\n", ret);
+        result = -903; goto done;
+    }
+
+    /* 1. Sanity: with Fred explicitly trusted, the child chains to Fred. */
+    cm = wolfSSH_CERTMAN_new(NULL);
+    if (cm == NULL) {
+        result = -904; goto done;
+    }
+    if (wolfSSH_CERTMAN_LoadRootCA_buffer(cm, root, rootSz) != WS_SUCCESS) {
+        result = -905; goto done;
+    }
+    if (wolfSSH_CERTMAN_LoadRootCA_buffer(cm, fred, fredSz) != WS_SUCCESS) {
+        result = -906; goto done;
+    }
+    chainSz = certmanAppendCert(chain, (word32)sizeof(chain), 0,
+            child, childSz);
+    ret = wolfSSH_CERTMAN_VerifyCerts_buffer(cm, chain, chainSz, 1);
+    if (ret == WS_CERT_NO_SIGNER_E) {
+        printf("CertMan: sanity check failed, child didn't chain to Fred\n");
+        result = -907; goto done;
+    }
+    wolfSSH_CERTMAN_free(cm);
+    cm = NULL;
+
+    /* 2. Regression: Fred NOT explicitly trusted. Run the attack chain so a
+     *    vulnerable build would promote Fred, then confirm the store was not
+     *    mutated. */
+    cm = wolfSSH_CERTMAN_new(NULL);
+    if (cm == NULL) {
+        result = -908; goto done;
+    }
+    if (wolfSSH_CERTMAN_LoadRootCA_buffer(cm, root, rootSz) != WS_SUCCESS) {
+        result = -909; goto done;
+    }
+
+    chainSz = certmanAppendCert(chain, (word32)sizeof(chain), 0,
+            child, childSz);
+    chainSz = certmanAppendCert(chain, (word32)sizeof(chain), chainSz,
+            fred, fredSz);
+    /* The attack chain itself must be rejected. */
+    ret = wolfSSH_CERTMAN_VerifyCerts_buffer(cm, chain, chainSz, 2);
+    if (ret == WS_SUCCESS) {
+        printf("CertMan: attack chain unexpectedly verified\n");
+        result = -910; goto done;
+    }
+
+    /* The trust store must be unchanged: verifying the forged child alone must
+     * now fail with no available signer, proving Fred was not promoted. */
+    chainSz = certmanAppendCert(chain, (word32)sizeof(chain), 0,
+            child, childSz);
+    ret = wolfSSH_CERTMAN_VerifyCerts_buffer(cm, chain, chainSz, 1);
+    if (ret != WS_CERT_NO_SIGNER_E) {
+        printf("CertMan: non-CA intermediate was promoted! ret=%d\n", ret);
+        result = -911; goto done;
+    }
+
+done:
+    if (cm != NULL)
+        wolfSSH_CERTMAN_free(cm);
+    free(root);
+    free(fred);
+    free(fredKey);
+    return result;
+}
+
+/* Drives CertManIntermediateIsCA through a forged [leaf <- intermediate] chain
+ * with only the root trusted, so the intermediate CA must be promoted for the
+ * leaf to find a signer.
+ *
+ * interKeyUsage selects the intermediate's KeyUsage extension:
+ *   NULL              omits KeyUsage entirely. Pins the extKeyUsageSet guard:
+ *                     without it the intermediate (extKeyUsage==0) would be
+ *                     wrongly demoted to non-CA.
+ *   "keyCertSign"     the RFC 5280 conforming CA case (needs cert-ext support).
+ *   "digitalSignature" KeyUsage present but lacking keyCertSign: an intermediate
+ *                     CA that must be demoted (the keyCertSign-rejection branch).
+ *
+ * expectPromote==1 asserts the intermediate was promoted (verify returns
+ * anything but WS_CERT_NO_SIGNER_E); ==0 asserts it was not (verify returns
+ * WS_CERT_NO_SIGNER_E). Promotion is the unit under test, not full chain
+ * success: with FPKI profile enforcement (--enable-all) a promoted chain's
+ * synthetic leaf is rejected later with WS_CERT_PROFILE_E, which is
+ * orthogonal -- hence the "anything but WS_CERT_NO_SIGNER_E" success criterion
+ * mirroring the negative test's sanity check. */
+static int certmanCheckIntermediate(const char* interKeyUsage, int expectPromote)
+{
+    int result = 0;
+    int ret;
+    byte* root = NULL;
+    byte* rootKeyBuf = NULL;
+    word32 rootSz = 0, rootKeySz = 0;
+    byte inter[2048];
+    word32 interSz = sizeof(inter);
+    byte leaf[2048];
+    word32 leafSz = sizeof(leaf);
+    byte chain[6144];
+    word32 chainSz;
+    word32 idx;
+    ecc_key rootKey, interKey, leafKey;
+    int haveRootKey = 0, haveInterKey = 0, haveLeafKey = 0;
+    WC_RNG rng;
+    int haveRng = 0;
+    WOLFSSH_CERTMAN* cm = NULL;
+
+    if (certmanLoadFile("./keys/ca-cert-ecc.der", &root, &rootSz) != 0) {
+        printf("CertMan: can't load root cert\n");
+        result = -920; goto done;
+    }
+    if (certmanLoadFile("./keys/ca-key-ecc.der", &rootKeyBuf, &rootKeySz) != 0) {
+        printf("CertMan: can't load root key\n");
+        result = -921; goto done;
+    }
+
+    if (wc_InitRng(&rng) != 0) {
+        result = -922; goto done;
+    }
+    haveRng = 1;
+
+    /* Only the root key must match the trusted root cert; the intermediate and
+     * leaf use freshly generated keys. */
+    if (wc_ecc_init(&rootKey) != 0) {
+        result = -923; goto done;
+    }
+    haveRootKey = 1;
+    idx = 0;
+    if (wc_EccPrivateKeyDecode(rootKeyBuf, &idx, &rootKey, rootKeySz) != 0) {
+        result = -924; goto done;
+    }
+    if (wc_ecc_init(&interKey) != 0) {
+        result = -925; goto done;
+    }
+    haveInterKey = 1;
+    if (wc_ecc_make_key(&rng, 32, &interKey) != 0) {
+        result = -926; goto done;
+    }
+    if (wc_ecc_init(&leafKey) != 0) {
+        result = -927; goto done;
+    }
+    haveLeafKey = 1;
+    if (wc_ecc_make_key(&rng, 32, &leafKey) != 0) {
+        result = -928; goto done;
+    }
+
+    /* Intermediate CA signed by the root. */
+    ret = certmanForgeCert("IntermediateCA", 1, interKeyUsage,
+            root, rootSz, &rootKey, &interKey, inter, &interSz);
+    if (ret != 0) {
+        printf("CertMan: forge intermediate failed, ret=%d\n", ret);
+        result = -929; goto done;
+    }
+
+    /* Leaf signed by the intermediate. */
+    ret = certmanForgeCert("ValidLeaf", 0, NULL, inter, interSz,
+            &interKey, &leafKey, leaf, &leafSz);
+    if (ret != 0) {
+        printf("CertMan: forge leaf failed, ret=%d\n", ret);
+        result = -930; goto done;
+    }
+
+    /* Trust only the root; the valid intermediate CA must be promoted so the
+     * leaf chains all the way up. */
+    cm = wolfSSH_CERTMAN_new(NULL);
+    if (cm == NULL) {
+        result = -931; goto done;
+    }
+    if (wolfSSH_CERTMAN_LoadRootCA_buffer(cm, root, rootSz) != WS_SUCCESS) {
+        result = -932; goto done;
+    }
+
+    chainSz = certmanAppendCert(chain, (word32)sizeof(chain), 0,
+            leaf, leafSz);
+    chainSz = certmanAppendCert(chain, (word32)sizeof(chain), chainSz,
+            inter, interSz);
+    ret = wolfSSH_CERTMAN_VerifyCerts_buffer(cm, chain, chainSz, 2);
+    if (expectPromote && ret == WS_CERT_NO_SIGNER_E) {
+        printf("CertMan: valid intermediate CA not promoted, ret=%d\n", ret);
+        result = -933; goto done;
+    }
+    if (!expectPromote && ret != WS_CERT_NO_SIGNER_E) {
+        printf("CertMan: intermediate CA without keyCertSign was promoted, "
+               "ret=%d\n", ret);
+        result = -934; goto done;
+    }
+
+done:
+    if (cm != NULL)
+        wolfSSH_CERTMAN_free(cm);
+    if (haveRootKey)
+        wc_ecc_free(&rootKey);
+    if (haveInterKey)
+        wc_ecc_free(&interKey);
+    if (haveLeafKey)
+        wc_ecc_free(&leafKey);
+    if (haveRng)
+        wc_FreeRng(&rng);
+    free(root);
+    free(rootKeyBuf);
+    return result;
+}
+
+static int test_CertMan_PromoteValidCaIntermediate(void)
+{
+    int result;
+
+    /* A CA intermediate with no KeyUsage extension must still be promoted. */
+    result = certmanCheckIntermediate(NULL, 1);
+#ifdef WOLFSSL_CERT_EXT
+    /* As must a CA intermediate that explicitly asserts keyCertSign. */
+    if (result == 0)
+        result = certmanCheckIntermediate("keyCertSign", 1);
+#ifndef ALLOW_INVALID_CERTSIGN
+    /* But a CA intermediate carrying a KeyUsage extension that omits
+     * keyCertSign must be rejected (the keyCertSign-rejection branch). */
+    if (result == 0)
+        result = certmanCheckIntermediate("digitalSignature", 0);
+#endif
+#endif
+    return result;
+}
+
+#endif /* WOLFSSH_TEST_CERTMAN_PROMOTE */
+
 /* Tests below install a custom allocator via wolfSSL_SetAllocators. The
  * wolfSSL_Malloc_cb / wolfSSL_Free_cb / wolfSSL_Realloc_cb typedefs gain
  * extra parameters when wolfSSL is built with WOLFSSL_STATIC_MEMORY or
@@ -3580,6 +4050,18 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #endif
 #endif /* !WOLFSSH_NO_DH */
 
+#endif
+
+#ifdef WOLFSSH_TEST_CERTMAN_PROMOTE
+    unitResult = test_CertMan_NoPromoteNonCaIntermediate();
+    printf("CertMan_NoPromoteNonCaIntermediate: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_CertMan_PromoteValidCaIntermediate();
+    printf("CertMan_PromoteValidCaIntermediate: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
 #endif
 
 #ifdef WOLFSSH_KEYGEN
