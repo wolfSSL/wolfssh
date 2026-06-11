@@ -3461,6 +3461,109 @@ cleanup:
 #endif /* WOLFSSH_SCP recv callback depth guard test */
 
 
+/* ParseECCPubKey() Unit Test */
+
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+
+/* The payload of keys/gretel-key-ecc.pub:
+ *   string "ecdsa-sha2-nistp256" | string "nistp256" | string Q
+ * ParseECCPubKey() must reject blobs whose algorithm name or curve name
+ * does not match the negotiated host key algorithm. A MitM must not be
+ * able to choose a different curve by lying in the blob. */
+static const byte eccPubKeyBlob[] = {
+    0x00, 0x00, 0x00, 0x13, 0x65, 0x63, 0x64, 0x73, 0x61, 0x2D, 0x73, 0x68,
+    0x61, 0x32, 0x2D, 0x6E, 0x69, 0x73, 0x74, 0x70, 0x32, 0x35, 0x36, 0x00,
+    0x00, 0x00, 0x08, 0x6E, 0x69, 0x73, 0x74, 0x70, 0x32, 0x35, 0x36, 0x00,
+    0x00, 0x00, 0x41, 0x04, 0xA0, 0x2D, 0x1F, 0xC7, 0x2A, 0x68, 0x36, 0xED,
+    0x24, 0x58, 0xED, 0xBE, 0x22, 0xE8, 0x6C, 0x70, 0x66, 0x8C, 0x2B, 0x46,
+    0xE7, 0xA0, 0xCC, 0x90, 0xFE, 0x80, 0xE0, 0xCD, 0x87, 0xF7, 0x35, 0xF6,
+    0xFD, 0x80, 0xA0, 0xD6, 0x1F, 0x5B, 0x61, 0x2E, 0xD6, 0x1D, 0xDF, 0x54,
+    0x40, 0x3C, 0x17, 0x3B, 0x51, 0xE1, 0x21, 0x9C, 0xD1, 0x61, 0xE7, 0x17,
+    0x87, 0xB4, 0x86, 0xF4, 0xFE, 0x06, 0x85, 0x16,
+};
+
+/* Offsets of interest in eccPubKeyBlob. */
+#define ECC_BLOB_ALGO_DIGITS  20 /* the "256" in "ecdsa-sha2-nistp256" */
+#define ECC_BLOB_CURVE_DIGITS 32 /* the "256" in "nistp256" */
+#define ECC_BLOB_POINT        39 /* leading byte (0x04) of Q */
+#define ECC_BLOB_TRUNC_SZ     30 /* cuts the blob mid curve name */
+
+static const byte eccBadPointFormat[] = { 0x05 };
+
+typedef struct {
+    const char* name;
+    word32 patchIdx;
+    const byte* patch;
+    word32 patchSz;     /* 0 = no patch */
+    word32 blobSz;
+    byte pubKeyId;      /* negotiated host key algorithm */
+    int expected;
+} ParseECCPubKeyTestVector;
+
+static const ParseECCPubKeyTestVector parseECCPubKeyTestVectors[] = {
+    { "valid nistp256 blob", 0, NULL, 0, sizeof(eccPubKeyBlob),
+        ID_ECDSA_SHA2_NISTP256, WS_SUCCESS },
+    { "algo name mismatch", ECC_BLOB_ALGO_DIGITS, (const byte*)"384", 3,
+        sizeof(eccPubKeyBlob), ID_ECDSA_SHA2_NISTP256, WS_INVALID_ALGO_ID },
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+    { "blob downgrades negotiated nistp384", 0, NULL, 0,
+        sizeof(eccPubKeyBlob), ID_ECDSA_SHA2_NISTP384, WS_INVALID_ALGO_ID },
+#endif
+    { "curve name mismatch", ECC_BLOB_CURVE_DIGITS, (const byte*)"384", 3,
+        sizeof(eccPubKeyBlob), ID_ECDSA_SHA2_NISTP256,
+        WS_INVALID_PRIME_CURVE },
+    { "corrupt point format", ECC_BLOB_POINT, eccBadPointFormat, 1,
+        sizeof(eccPubKeyBlob), ID_ECDSA_SHA2_NISTP256, WS_ECC_E },
+    { "truncated blob", 0, NULL, 0, ECC_BLOB_TRUNC_SZ,
+        ID_ECDSA_SHA2_NISTP256, WS_BUFFER_E },
+};
+
+static int test_ParseECCPubKey(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    const ParseECCPubKeyTestVector* tv;
+    int tc = (int)(sizeof(parseECCPubKeyTestVectors)
+            / sizeof(parseECCPubKeyTestVectors[0]));
+    int i;
+    int ret;
+    int failures = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return 1;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL || ssh->handshake == NULL) {
+        wolfSSH_free(ssh);
+        wolfSSH_CTX_free(ctx);
+        return 1;
+    }
+
+    for (i = 0, tv = parseECCPubKeyTestVectors; i < tc; i++, tv++) {
+        byte blob[sizeof(eccPubKeyBlob)];
+
+        WMEMCPY(blob, eccPubKeyBlob, sizeof(eccPubKeyBlob));
+        if (tv->patchSz > 0)
+            WMEMCPY(blob + tv->patchIdx, tv->patch, tv->patchSz);
+        ssh->handshake->pubKeyId = tv->pubKeyId;
+
+        ret = wolfSSH_TestParseECCPubKey(ssh, blob, tv->blobSz);
+        if (ret != tv->expected) {
+            fprintf(stderr, "\t[%d] \"%s\" FAIL: got %d, expected %d\n",
+                    i, tv->name, ret, tv->expected);
+            failures++;
+        }
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    return failures;
+}
+
+#endif /* !WOLFSSH_NO_ECDSA_SHA2_NISTP256 */
+
+
 /* DoUserAuthRequestRsa() Unit Test */
 
 #if !defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_SSH_RSA_SHA1)
@@ -3764,6 +3867,12 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #if !defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_SSH_RSA_SHA1)
     unitResult = test_DoUserAuthRequestRsa();
     printf("DoUserAuthRequestRsa: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+#if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+    unitResult = test_ParseECCPubKey();
+    printf("ParseECCPubKey: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
