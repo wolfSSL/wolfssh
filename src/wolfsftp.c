@@ -416,6 +416,7 @@ static int SFTP_AddFileHandle(WOLFSSH* ssh,
 #endif
     const char* fileName, word32 id[2]);
 static int SFTP_RemoveFileHandle(WOLFSSH* ssh, word32 id[2]);
+static int SFTP_FileHandleCapped(WOLFSSH* ssh);
 #endif /* !NO_WOLFSSH_SERVER */
 
 /* Returns WS_SUCCESS if a server-side inbound SFTP message body of the given
@@ -2348,6 +2349,7 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     char  oer[] = "Open File Error";
     char  naf[] = "Not A File";
     char  per[] = "Permission denied";
+    char  tmf[] = "Too Many Open File Handles";
     int handleStored = 0;
 
     if (ssh == NULL) {
@@ -2383,6 +2385,16 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     else if (ret != WS_SUCCESS) {
         WLOG(WS_LOG_SFTP, "Creating path for file to open failed");
         ret = WS_FATAL_ERROR;
+        goto cleanup;
+    }
+
+    /* Check the cap before opening. The open flags may carry O_CREAT/O_TRUNC,
+     * so refusing after the fact would leave the file created or truncated on
+     * a request the peer is told failed. */
+    if (SFTP_FileHandleCapped(ssh)) {
+        WLOG(WS_LOG_SFTP, "Too many open file handles for session");
+        rc = SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId, tmf);
+        ret = (rc == WS_SUCCESS) ? WS_BAD_FILE_E : rc;
         goto cleanup;
     }
 
@@ -2572,6 +2584,7 @@ cleanup:
     char  ier[] = "Internal Failure";
     char  oer[] = "Open File Error";
     char  per[] = "Permission denied";
+    char  tmf[] = "Too Many Open File Handles";
     int handleStored = 0;
 
     fileHandle = INVALID_HANDLE_VALUE;
@@ -2603,6 +2616,16 @@ cleanup:
     else if (ret != WS_SUCCESS) {
         WLOG(WS_LOG_SFTP, "Creating path for file to open failed");
         ret = WS_FATAL_ERROR;
+        goto cleanup;
+    }
+
+    /* Check the cap before opening. The open flags may carry O_CREAT/O_TRUNC,
+     * so refusing after the fact would leave the file created or truncated on
+     * a request the peer is told failed. */
+    if (SFTP_FileHandleCapped(ssh)) {
+        WLOG(WS_LOG_SFTP, "Too many open file handles for session");
+        rc = SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId, tmf);
+        ret = (rc == WS_SUCCESS) ? WS_BAD_FILE_E : rc;
         goto cleanup;
     }
 
@@ -4003,6 +4026,22 @@ int wolfSSH_SFTP_RecvCloseDir(WOLFSSH* ssh, byte* handle, word32 handleSz)
 
 #endif /* NO_WOLFSSH_DIR */
 
+/* returns 1 when the session already holds the maximum file handles */
+static int SFTP_FileHandleCapped(WOLFSSH* ssh)
+{
+    WS_FILE_LIST* cur;
+    word32 count = 0;
+
+    for (cur = ssh->fileList; cur != NULL; cur = cur->next) {
+        if (++count >= WOLFSSH_MAX_SFTP_HANDLES) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+
 /* Add a file handle to the tracking list keeping track of open files
  * returns WS_SUCCESS on success */
 static int SFTP_AddFileHandle(WOLFSSH* ssh,
@@ -4019,6 +4058,14 @@ static int SFTP_AddFileHandle(WOLFSSH* ssh,
 
     if (ssh == NULL || fileName == NULL) {
         return WS_BAD_ARGUMENT;
+    }
+
+    /* Backstop only. RecvOpen checks the cap before opening the file, so a
+     * refused request leaves no O_CREAT/O_TRUNC side effect behind; reaching
+     * the cap here means a caller skipped that check. */
+    if (SFTP_FileHandleCapped(ssh)) {
+        WLOG(WS_LOG_SFTP, "Too many open file handles for session");
+        return WS_MEMORY_E;
     }
 
     cur = (WS_FILE_LIST*)WMALLOC(sizeof(WS_FILE_LIST), ssh->ctx->heap,
