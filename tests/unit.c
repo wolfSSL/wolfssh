@@ -63,6 +63,10 @@
     #include <wolfssh/certman.h>
 #endif
 
+#ifdef WOLFSSH_SFTP
+#include <wolfssh/wolfsftp.h>
+#endif
+
 #if defined(WOLFSSH_SCP) && !defined(WOLFSSH_SCP_USER_CALLBACKS) && \
     !defined(NO_FILESYSTEM) && !defined(WOLFSSL_NUCLEUS) && \
     !defined(_WIN32) && !defined(WOLFSSH_ZEPHYR)
@@ -4362,6 +4366,203 @@ static int test_DoUserAuthRequestRsaCert(void)
 
 #endif /* !WOLFSSH_NO_RSA && !WOLFSSH_NO_SSH_RSA_SHA1 */
 
+#ifdef WOLFSSH_SFTP
+/* Property test for the server-side received-packet size bound applied in
+ * wolfSSH_SFTP_read(). A non-positive size or one above the largest legal
+ * inbound SFTP message must be rejected before any buffer is allocated;
+ * in-range sizes are accepted. */
+static int test_SftpRecvSizeBound(void)
+{
+    int testVals[7];
+    int expectOk;
+    int ret;
+    int i;
+    int maxWriteBody;
+
+    testVals[0] = -1;                          /* underflow / error sentinel */
+    testVals[1] = 0;                           /* empty body */
+    testVals[2] = 1;                           /* smallest accepted body */
+    testVals[3] = WOLFSSH_MAX_SFTP_PACKET;     /* upper bound, accepted */
+    testVals[4] = WOLFSSH_MAX_SFTP_PACKET + 1; /* just over the bound */
+    testVals[5] = 0x40000000;                  /* the ~1 GB attack value */
+    testVals[6] = 0x7FFFFFFF;                  /* INT32_MAX */
+
+    for (i = 0; i < (int)(sizeof(testVals) / sizeof(testVals[0])); i++) {
+        ret = wolfSSH_TestSftpRecvSizeCheck(testVals[i]);
+
+        expectOk = (testVals[i] > 0 &&
+                    testVals[i] <= WOLFSSH_MAX_SFTP_PACKET);
+
+        if (expectOk) {
+            if (ret != WS_SUCCESS)
+                return -900 - i;
+        }
+        else {
+            if (ret == WS_SUCCESS)
+                return -920 - i;
+        }
+    }
+
+    /* The bound value must be large enough to admit a real maximum-size WRITE,
+     * otherwise legitimate large writes would be silently rejected. A WRITE
+     * body is a handle string (length prefix + up to WOLFSSH_MAX_HANDLE), an
+     * 8-byte file offset, then a data string (length prefix + up to
+     * WOLFSSH_MAX_SFTP_RW). Guards against a future shrink of the bound (e.g.
+     * to WOLFSSH_MAX_SFTP_RECV alone). */
+    maxWriteBody = UINT32_SZ + WOLFSSH_MAX_HANDLE   /* handle string  */
+                 + (2 * UINT32_SZ)                  /* 64-bit offset  */
+                 + UINT32_SZ + WOLFSSH_MAX_SFTP_RW; /* data string    */
+    if (wolfSSH_TestSftpRecvSizeCheck(maxWriteBody) != WS_SUCCESS)
+        return -930;
+
+    return 0;
+}
+
+/* IORecv mock that reports no data is available yet. ReceiveData maps this to
+ * WS_WANT_READ, letting the receive loop reach its body-read state without a
+ * live socket. */
+static int RecvAlwaysWantRead(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(data);
+    WOLFSSH_UNUSED(sz);
+    WOLFSSH_UNUSED(ctx);
+    return WS_CBIO_ERR_WANT_READ;
+}
+
+/* Drives a single crafted SFTP request header through wolfSSH_SFTP_read() on a
+ * fresh server session. The on-wire length field is set to len and the message
+ * type to WRITE; only the 9-byte header is staged in the channel input buffer,
+ * never a body. ioRecv, when non-NULL, stands in for the socket if the loop is
+ * admitted and reaches its body-read state. On success fills *outRet with the
+ * wolfSSH_SFTP_read() return and *outErr with ssh->error, and returns 0; on a
+ * setup failure returns a negative sentinel. DiscardIoSend absorbs the
+ * window-adjust emitted after the header is consumed, and acceptState is
+ * advanced so that adjust is allowed on the bare session. */
+static int SftpRecvDriveHeader(word32 len, WS_CallbackIORecv ioRecv,
+        int* outRet, int* outErr)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int  result = 0;
+    byte header[WOLFSSH_SFTP_HEADER];
+
+    *outRet = WS_SUCCESS;
+    *outErr = WS_SUCCESS;
+
+    header[0] = (byte)((len >> 24) & 0xFF);
+    header[1] = (byte)((len >> 16) & 0xFF);
+    header[2] = (byte)((len >>  8) & 0xFF);
+    header[3] = (byte)( len        & 0xFF);
+    header[LENGTH_SZ] = WOLFSSH_FTP_WRITE;            /* message type */
+    header[LENGTH_SZ + MSG_ID_SZ + 0] = 0x00;        /* request id = 1 */
+    header[LENGTH_SZ + MSG_ID_SZ + 1] = 0x00;
+    header[LENGTH_SZ + MSG_ID_SZ + 2] = 0x00;
+    header[LENGTH_SZ + MSG_ID_SZ + 3] = 0x01;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1000;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+    if (ioRecv != NULL)
+        wolfSSH_SetIORecv(ctx, ioRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1001; goto done; }
+    /* Allow MSGID_CHANNEL_WINDOW_ADJUST on this bare session. */
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch == NULL) { result = -1002; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1003;
+        goto done;
+    }
+
+    if (wolfSSH_TestChannelPutData(ssh->channelList, header,
+                (word32)sizeof(header)) != WS_SUCCESS) {
+        result = -1004;
+        goto done;
+    }
+
+    *outRet = wolfSSH_SFTP_read(ssh);
+    *outErr = wolfSSH_get_error(ssh);
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* End-to-end check that the receive loop itself rejects an invalid declared
+ * inbound length, not just the SFTP_CheckRecvSz helper in isolation. Drives two
+ * crafted headers whose decoded body length the bound must refuse: one well
+ * past WOLFSSH_MAX_SFTP_PACKET and one of zero. Each must return WS_FATAL_ERROR
+ * with ssh->error == WS_BUFFER_E and allocate no body buffer. The zero case
+ * also guards against ssh->error being left at 0, which a caller could misread
+ * as a clean channel close. */
+static int test_SftpRecvSizeBoundIntegration(void)
+{
+    word32 lens[2];
+    int    rc;
+    int    ret;
+    int    err;
+    int    i;
+
+    /* On-wire length field counts the type byte, request id, and body. */
+    lens[0] = (word32)WOLFSSH_MAX_SFTP_PACKET + 100 + MSG_ID_SZ + UINT32_SZ;
+    lens[1] = (word32)(MSG_ID_SZ + UINT32_SZ);   /* decoded body length 0 */
+
+    for (i = 0; i < (int)(sizeof(lens) / sizeof(lens[0])); i++) {
+        rc = SftpRecvDriveHeader(lens[i], NULL, &ret, &err);
+        if (rc != 0)
+            return rc;
+        if (ret != WS_FATAL_ERROR)
+            return -945 - (i * 10);
+        if (err != WS_BUFFER_E)
+            return -946 - (i * 10);
+    }
+
+    return 0;
+}
+
+/* End-to-end check that a legitimate maximum-size WRITE is NOT rejected by the
+ * server bound. The decoded body length equals the largest real WRITE body
+ * (handle + 8-byte offset + max data). The bound must admit it: the loop
+ * allocates the body buffer and then asks for the body that has not arrived, so
+ * the call returns WS_FATAL_ERROR with ssh->error == WS_WANT_READ (a benign
+ * retry) rather than WS_BUFFER_E (a bound rejection). RecvAlwaysWantRead stands
+ * in for a non-blocking socket with no data yet. */
+static int test_SftpRecvSizeBoundAccept(void)
+{
+    word32 len;
+    int    rc;
+    int    ret;
+    int    err;
+
+    /* Largest legitimate WRITE body, matching test_SftpRecvSizeBound, plus the
+     * type byte and request id the on-wire length field carries. */
+    len = (word32)(UINT32_SZ + WOLFSSH_MAX_HANDLE
+                 + (2 * UINT32_SZ)
+                 + UINT32_SZ + WOLFSSH_MAX_SFTP_RW)
+        + MSG_ID_SZ + UINT32_SZ;
+
+    rc = SftpRecvDriveHeader(len, RecvAlwaysWantRead, &ret, &err);
+    if (rc != 0)
+        return rc;
+    if (ret != WS_FATAL_ERROR)
+        return -955;
+    /* WS_WANT_READ confirms the bound admitted the body and the loop is waiting
+     * on it; WS_BUFFER_E here would mean a legitimate max WRITE was rejected. */
+    if (err != WS_WANT_READ)
+        return -956;
+
+    return 0;
+}
+#endif /* WOLFSSH_SFTP */
+
 #endif /* WOLFSSH_TEST_INTERNAL */
 
 /* Error Code And Message Test */
@@ -4539,6 +4740,22 @@ int wolfSSH_UnitTest(int argc, char** argv)
     unitResult = test_IdentifyAsn1Key();
     printf("IdentifyAsn1Key: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#ifdef WOLFSSH_SFTP
+    unitResult = test_SftpRecvSizeBound();
+    printf("SftpRecvSizeBound: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_SftpRecvSizeBoundIntegration();
+    printf("SftpRecvSizeBoundIntegration: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_SftpRecvSizeBoundAccept();
+    printf("SftpRecvSizeBoundAccept: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 
 #if defined(WOLFSSH_SCP) && !defined(WOLFSSH_SCP_USER_CALLBACKS) && \
     !defined(NO_FILESYSTEM) && !defined(WOLFSSL_NUCLEUS) && \

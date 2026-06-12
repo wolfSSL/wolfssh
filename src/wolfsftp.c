@@ -408,6 +408,25 @@ static int SFTP_ParseAttributes_buffer(WOLFSSH* ssh,  WS_SFTP_FILEATRB* atr,
 static WS_SFTPNAME* wolfSSH_SFTPNAME_new(void* heap);
 
 
+/* Returns WS_SUCCESS if a server-side inbound SFTP message body of the given
+ * size is acceptable, WS_BUFFER_E otherwise. The largest legitimate request a
+ * server receives is a WRITE carrying WOLFSSH_MAX_SFTP_RW bytes of file data
+ * plus the handle, offset, and length framing, so the body must be positive
+ * and no larger than WOLFSSH_MAX_SFTP_PACKET. Bounding this before allocation
+ * stops an authenticated client from declaring an arbitrarily large length.
+ * Only defined when it has a caller: the server receive loop or the test hook;
+ * a client-only build without WOLFSSH_TEST_INTERNAL leaves it unused. */
+#if !defined(NO_WOLFSSH_SERVER) || defined(WOLFSSH_TEST_INTERNAL)
+static INLINE int SFTP_CheckRecvSz(int sz)
+{
+    if (sz <= 0 || sz > WOLFSSH_MAX_SFTP_PACKET) {
+        return WS_BUFFER_E;
+    }
+    return WS_SUCCESS;
+}
+#endif
+
+
 /* A few errors are OK to get. They are a notice rather that a fault.
  * return TRUE if ssh->error is one of the following: */
 static INLINE int NoticeError(WOLFSSH* ssh)
@@ -662,6 +681,16 @@ int wolfSSH_TestSftpStallPending(WOLFSSH* ssh, word32 count)
     }
     ssh->testSftpStallPending = count;
     return WS_SUCCESS;
+}
+
+
+/* Exposes the server-side received-packet size bound applied in
+ * wolfSSH_SFTP_read() so the unit tests can exercise the boundary between the
+ * largest legal inbound SFTP message and an over-large peer-declared length.
+ * Returns WS_SUCCESS when the size is accepted, WS_BUFFER_E otherwise. */
+int wolfSSH_TestSftpRecvSizeCheck(int sz)
+{
+    return SFTP_CheckRecvSz(sz);
 }
 #endif
 
@@ -1562,7 +1591,24 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
              * packet expected to come. */
             ret = SFTP_GetHeader(ssh, (word32*)&state->reqId,
                     &state->type, &state->buffer);
-            if (ret <= 0) {
+            if (SFTP_CheckRecvSz(ret) != WS_SUCCESS) {
+                /* A positive ret is a genuine over-large declared length; log
+                 * it as such. */
+                if (ret > 0) {
+                    WLOG(WS_LOG_SFTP,
+                            "Received SFTP packet size out of bounds");
+                }
+                /* If no lower layer left a reason (ssh->error == 0), the header
+                 * parsed but the declared body length is invalid - over the
+                 * cap, zero, or underflowed to negative - so record WS_BUFFER_E.
+                 * This keeps the caller from seeing ret == WS_FATAL_ERROR with
+                 * ssh->error == 0 and misclassifying it as a clean close via the
+                 * channel-EOF fallback. Genuine header-read failures set
+                 * ssh->error themselves (WS_WANT_READ to retry, WS_EOF on close,
+                 * or a transport error) and are left untouched. */
+                if (ssh->error == WS_SUCCESS) {
+                    ssh->error = WS_BUFFER_E;
+                }
                 return WS_FATAL_ERROR;
             }
             if (wolfSSH_SFTP_buffer_create(ssh, &state->buffer, ret) !=
