@@ -712,17 +712,12 @@ WOLFSSH_LOCAL int wolfSSH_GetPath(const char* defaultPath, byte* in,
 
 #ifdef WOLFSSH_SFTP
 #define WOLFSSH_MAX_SFTPOFST 3
+#define WOLFSSH_HANDLE_ID_SZ (sizeof(word32) * 2)
 
 #ifndef NO_WOLFSSH_DIR
     typedef struct WS_DIR_LIST WS_DIR_LIST;
 #endif
-    typedef struct WS_HANDLE_LIST {
-        byte handle[WOLFSSH_MAX_HANDLE];
-        word32 handleSz;
-        char name[WOLFSSH_MAX_FILENAME];
-        struct WS_HANDLE_LIST* next;
-        struct WS_HANDLE_LIST* prev;
-    } WS_HANDLE_LIST;
+typedef struct WS_FILE_LIST WS_FILE_LIST;
 typedef struct SFTP_OFST {
     word32 offset[2];
     char from[WOLFSSH_MAX_FILENAME];
@@ -925,9 +920,12 @@ struct WOLFSSH {
     char* sftpDefaultPath;
 #ifndef NO_WOLFSSH_DIR
     WS_DIR_LIST* dirList;
-    word32 dirIdCount[2];
 #endif
-    WS_HANDLE_LIST* handleList;
+    /* Shared counter for both file and directory handle IDs. A single
+     * namespace guarantees IDs are unique across files and directories so a
+     * close request cannot match the wrong resource type. */
+    word32 handleIdCount[2];
+    WS_FILE_LIST* fileList;
     struct WS_SFTP_RECV_INIT_STATE* recvInitState;
     struct WS_SFTP_RECV_STATE* recvState;
     struct WS_SFTP_RMDIR_STATE* rmdirState;

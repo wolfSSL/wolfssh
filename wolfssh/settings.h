@@ -52,33 +52,13 @@ extern "C" {
     #define USE_WOLFSSH_MEMORY  /* default memory handlers */
 #endif /* WMALLOC_USER */
 
-/* SFTP requires storehandle when fatfs is in use */
-#ifdef WOLFSSH_FATFS
-    #define WOLFSSH_STOREHANDLE
-#endif
-
 #if defined (_WIN32)
     #define USE_WINDOWS_API
     #define _CRT_SECURE_NO_WARNINGS
 #endif
 
-#ifdef WOLFSSL_NUCLEUS
-    #ifndef WOLFSSH_STOREHANDLE
-    #define WOLFSSH_STOREHANDLE
-    #endif
-#endif
-
-#ifdef MICROCHIP_MPLAB_HARMONY
-    #ifndef WOLFSSH_STOREHANDLE
-    #define WOLFSSH_STOREHANDLE
-    #endif
-#endif  
-
 #ifdef FREESCALE_MQX
     #define NO_STDIO_FILESYSTEM
-    #ifndef WOLFSSH_STOREHANDLE
-        #define WOLFSSH_STOREHANDLE
-    #endif
 
     #ifdef WOLFSSH_SCP
         #error wolfSSH SCP not ported to MQX yet
