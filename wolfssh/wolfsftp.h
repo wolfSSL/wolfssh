@@ -174,6 +174,20 @@ struct WS_SFTPNAME {
 #ifndef WOLFSSH_MAX_SFTP_RECV
     #define WOLFSSH_MAX_SFTP_RECV 32768
 #endif
+/*
+ * WOLFSSH_MAX_SFTP_PACKET: Upper bound on the body size of an inbound SFTP
+ *     request the server accepts in its steady-state receive loop
+ *     (wolfSSH_SFTP_read). The largest legitimate request is a WRITE carrying
+ *     WOLFSSH_MAX_SFTP_RW bytes of file data plus the handle, offset, and
+ *     length framing, so the bound is WOLFSSH_MAX_SFTP_RW plus the message
+ *     overhead allowance of WOLFSSH_MAX_SFTP_RECV. Used to reject an over-large
+ *     client-declared length before any buffer is allocated. This bound does
+ *     not apply to client-side response handling (e.g. NAME directory listings
+ *     or READ data), whose sizes are not derived from WOLFSSH_MAX_SFTP_RW.
+ */
+#ifndef WOLFSSH_MAX_SFTP_PACKET
+    #define WOLFSSH_MAX_SFTP_PACKET (WOLFSSH_MAX_SFTP_RW + WOLFSSH_MAX_SFTP_RECV)
+#endif
 
 /* functions for establishing a connection */
 WOLFSSH_API int wolfSSH_SFTP_accept(WOLFSSH* ssh);
@@ -287,6 +301,7 @@ WOLFSSH_LOCAL void wolfSSH_SFTP_ShowSizes(void);
 #ifdef WOLFSSH_TEST_INTERNAL
     WOLFSSH_API int wolfSSH_TestSftpBufferSend(WOLFSSH* ssh,
             byte* data, word32 sz, word32 idx);
+    WOLFSSH_API int wolfSSH_TestSftpRecvSizeCheck(int sz);
     #ifndef NO_WOLFSSH_SERVER
     WOLFSSH_API int wolfSSH_TestSftpValidateFileHandle(WOLFSSH* ssh,
             const byte* handle, word32 handleSz);
