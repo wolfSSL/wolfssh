@@ -23,34 +23,59 @@ if [ ${RESULT} = 1 ]; then
     exit 1
 fi
 
+# tear down the tmux session on any exit, so a timeout failure does not
+# leave a stale session that breaks the next run with "duplicate session"
+trap 'tmux kill-session -t test 2>/dev/null || true' EXIT
+
+# Wait until the remote shell produces some output (i.e. a prompt), so the
+# SSH session is known to be up before keys are sent to it. CI runners can
+# take several seconds to get through key exchange and login.
+wait_for_session() {
+    for _ in $(seq 1 10); do
+        if tmux capture-pane -p -t test | grep -q '[^[:space:]]'; then
+            return 0
+        fi
+        sleep 1
+    done
+    echo "Timed out waiting for SSH session output"
+    tmux capture-pane -p -t test
+    return 1
+}
+
+# Ask the remote shell for its size and poll the pane until a line of the
+# form "<columns> <rows>" shows up. The result is left in SIZE_LINE.
+get_size_line() {
+    SIZE_LINE=""
+    tmux send-keys -t test 'echo;echo $COLUMNS $LINES;echo'
+    tmux send-keys -t test 'ENTER'
+    for _ in $(seq 1 10); do
+        sleep 1
+        SIZE_LINE=$(tmux capture-pane -p -t test | grep -E '^[0-9]+ [0-9]+$' | tail -n 1)
+        if [ -n "$SIZE_LINE" ]; then
+            return 0
+        fi
+    done
+    echo "Timed out waiting for terminal size output"
+    tmux capture-pane -p -t test
+    return 1
+}
+
 echo "Creating tmux session at $PWD with command :"
 echo "tmux new-session -d -s test \"$TEST_CLIENT -q -t -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h \"$1\" -p \"$2\"\""
 tmux new-session -d -s test "$TEST_CLIENT -q -t -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h \"$1\" -p \"$2\""
 echo "Result of tmux new-session = $?"
 
-# give the command a second to establish SSH connection
-sleep 1
+wait_for_session || exit 1
 
 COL=`tmux display -p -t test '#{pane_width}'`
 ROW=`tmux display -p -t test '#{pane_height}'`
 echo "tmux 'test' session has COL = ${COL} and ROW = ${ROW}"
 
 # get the terminals columns and lines
-tmux send-keys -t test 'echo;echo $COLUMNS $LINES;echo'
-tmux send-keys -t test 'ENTER'
+get_size_line || exit 1
+echo "Captured terminal size line: '$SIZE_LINE'"
 
-# give the command a second to run
-sleep 1
-
-tmux capture-pane -t test
-RESULT=$(tmux show-buffer | grep '^[0-9]* [0-9]*$')
-tmux show-buffer
-
-echo "$RESULT"
-echo ""
-echo ""
-ROW_FOUND=$(echo "$RESULT" | sed -e 's/[0-9]* \([0-9]*\)/\1/')
-COL_FOUND=$(echo "$RESULT" | sed -e 's/\([0-9]*\) [0-9]*/\1/')
+read -r COL_FOUND ROW_FOUND <<< "$SIZE_LINE"
 
 if [ "$COL" != "$COL_FOUND" ]; then
     echo "Col found was $COL_FOUND which does not match expected $COL"
@@ -80,22 +105,13 @@ echo "Starting another session with a smaller window size"
 echo "tmux new-session -d -x 50 -y 10 -s test \"$TEST_CLIENT -q -t -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h \"$1\" -p \"$2\"\""
 tmux new-session -d -x 50 -y 10 -s test "$TEST_CLIENT -q -t -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h \"$1\" -p \"$2\""
 
-# give the command a second to establish SSH connection
-sleep 1
+wait_for_session || exit 1
 
 echo "Sending keys to tmux session for displaying column/rows"
-tmux send-keys -t test 'echo;echo $COLUMNS $LINES;echo'
-tmux send-keys -t test 'ENTER'
-tmux capture-pane -t test
-RESULT=$(tmux show-buffer | grep '^[0-9]* [0-9]*$')
+get_size_line || exit 1
+echo "Captured terminal size line: '$SIZE_LINE'"
 
-ROW_FOUND=$( echo "$RESULT" | sed -e 's/[0-9]* \([0-9]*\)/\1/' )
-COL_FOUND=$( echo "$RESULT" | sed -e 's/\([0-9]*\) [0-9]*/\1/' )
-
-#remove any newlines, tabs, or returns
-ROW_FOUND=$( tr -d '\n\t\r ' <<<"$ROW_FOUND" )
-COL_FOUND=$( tr -d '\n\t\r ' <<<"$COL_FOUND" )
-
+read -r COL_FOUND ROW_FOUND <<< "$SIZE_LINE"
 
 if [ "50" != "$COL_FOUND" ]; then
     echo "Col found was $COL_FOUND which does not match expected 50"

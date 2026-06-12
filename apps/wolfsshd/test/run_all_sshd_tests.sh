@@ -61,6 +61,17 @@ done
 TOTAL=0
 SKIPPED=0
 
+# validate the requested test before any setup so a bad name does not leave
+# a wolfSSHd running
+if [[ -n "$MATCH" ]] && [[ ! " ${test_cases[*]} " =~ " $MATCH " ]]; then
+    echo "Error: Test '$MATCH' not found."
+    echo "All test cases:"
+    for test in "${test_cases[@]}"; do
+        echo "    $test"
+    done
+    exit 1
+fi
+
 # setup
 set -e
 ./create_authorized_test_file.sh
@@ -106,13 +117,8 @@ run_test() {
 
 # Run the tests
 if [[ -n "$MATCH" ]]; then
-    if [[ " ${test_cases[*]} " =~ " $MATCH " ]]; then
-        echo "Running test: $MATCH"
-        run_test "$MATCH"
-    else
-        echo "Error: Test '$MATCH' not found."
-        exit 1
-    fi
+    echo "Running test: $MATCH"
+    run_test "$MATCH"
 
     if [ "$USING_LOCAL_HOST" == 1 ]; then
         printf "Shutting down test wolfSSHd\n"
