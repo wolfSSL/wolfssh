@@ -1427,6 +1427,11 @@ enum WS_MessageIdLimits {
     WOLFSSH_API int wolfSSH_TestDoUserAuthRequestRsa(WOLFSSH* ssh,
             WS_UserAuthData_PublicKey* pk, int hashId, byte* digest,
             word32 digestSz);
+#ifdef WOLFSSH_CERTS
+    WOLFSSH_API int wolfSSH_TestDoUserAuthRequestRsaCert(WOLFSSH* ssh,
+            WS_UserAuthData_PublicKey* pk, int hashId, byte* digest,
+            word32 digestSz);
+#endif /* WOLFSSH_CERTS */
 #endif /* !WOLFSSH_NO_RSA */
 #ifndef WOLFSSH_NO_ECDSA
     WOLFSSH_API int wolfSSH_TestParseECCPubKey(WOLFSSH* ssh, byte* pubKey,

@@ -18345,6 +18345,18 @@ int wolfSSH_TestDoUserAuthRequestRsa(WOLFSSH* ssh,
             digest, digestSz);
 }
 
+#ifdef WOLFSSH_CERTS
+
+int wolfSSH_TestDoUserAuthRequestRsaCert(WOLFSSH* ssh,
+        WS_UserAuthData_PublicKey* pk, int hashId, byte* digest,
+        word32 digestSz)
+{
+    return DoUserAuthRequestRsaCert(ssh, pk, (enum wc_HashType)hashId,
+            digest, digestSz);
+}
+
+#endif /* WOLFSSH_CERTS */
+
 #endif /* !WOLFSSH_NO_RSA */
 
 #ifndef WOLFSSH_NO_ECDSA
