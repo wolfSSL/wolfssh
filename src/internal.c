@@ -5067,6 +5067,11 @@ static int ParseECCPubKey(WOLFSSH *ssh,
 
     ret = wc_ecc_init_ex(&sigKeyBlock_ptr->sk.ecc.key, ssh->ctx->heap,
                                  INVALID_DEVID);
+    if (ret == 0) {
+        /* The key is initialized. Mark it so that FreePubKey() cleans
+         * it up on all paths, including the error paths below. */
+        sigKeyBlock_ptr->keyAllocated = 1;
+    }
 #ifdef HAVE_WC_ECC_SET_RNG
     if (ret == 0)
         ret = wc_ecc_set_rng(&sigKeyBlock_ptr->sk.ecc.key, ssh->rng);
@@ -5135,7 +5140,6 @@ static int ParseECCPubKey(WOLFSSH *ssh,
             if (ret == 0) {
                 sigKeyBlock_ptr->keySz =
                     (word32)sizeof(sigKeyBlock_ptr->sk.ecc.key);
-                sigKeyBlock_ptr->keyAllocated = 1;
             }
             else {
                 ret = WS_ECC_E;
