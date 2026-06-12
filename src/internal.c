@@ -3649,22 +3649,20 @@ int GetSkip(const byte* buf, word32 len, word32* idx)
 
 
 /* Gets the size of the mpint, and puts the pointer to the start of
- * buf's number into *mpint. This function does not copy. */
+ * buf's number into *mpint. This function does not copy. Note that a
+ * zero-length mpint sets *mpint to NULL. */
 int GetMpint(word32* mpintSz, const byte** mpint,
         const byte* buf, word32 len, word32* idx)
 {
     int result;
 
-    result = GetUint32(mpintSz, buf, len, idx);
+    result = GetStringRef(mpintSz, mpint, buf, len, idx);
 
     if (result == WS_SUCCESS) {
-        result = WS_BUFFER_E;
-
-        if (*idx < len && *mpintSz <= len - *idx) {
-            *mpint = buf + *idx;
-            *idx += *mpintSz;
-            result = WS_SUCCESS;
-        }
+        /* All mpints used in SSH are positive. Reject values with
+         * the sign bit set as non-canonical. (RFC 4251 Section 5) */
+        if (*mpintSz > 0 && (**mpint & 0x80) != 0)
+            result = WS_PARSE_E;
     }
 
     return result;
@@ -5064,12 +5062,16 @@ static int ParseECCPubKey(WOLFSSH *ssh,
 {
     int ret;
 #ifndef WOLFSSH_NO_ECDSA
-    const byte* q;
-    word32 qSz, pubKeyIdx = 0;
+    word32 pubKeyIdx = 0;
     int primeId = 0;
 
     ret = wc_ecc_init_ex(&sigKeyBlock_ptr->sk.ecc.key, ssh->ctx->heap,
                                  INVALID_DEVID);
+    if (ret == 0) {
+        /* The key is initialized. Mark it so that FreePubKey() cleans
+         * it up on all paths, including the error paths below. */
+        sigKeyBlock_ptr->keyAllocated = 1;
+    }
 #ifdef HAVE_WC_ECC_SET_RNG
     if (ret == 0)
         ret = wc_ecc_set_rng(&sigKeyBlock_ptr->sk.ecc.key, ssh->rng);
@@ -5077,36 +5079,72 @@ static int ParseECCPubKey(WOLFSSH *ssh,
     if (ret != 0)
         ret = WS_ECC_E;
     else
-        ret = GetStringRef(&qSz, &q, pubKey, pubKeySz, &pubKeyIdx);
+        ret = WS_SUCCESS;
 
+    /* Get the algorithm name in the key block. It must match the
+     * negotiated host key algorithm. Do not trust the key blob to
+     * choose the curve. */
     if (ret == WS_SUCCESS) {
-        primeId = (int)NameToId((const char*)q, qSz);
-        if (primeId != ID_UNKNOWN) {
-            primeId = wcPrimeForId((byte)primeId);
-            if (primeId == ECC_CURVE_INVALID)
-                ret = WS_INVALID_PRIME_CURVE;
+        const char* algoName;
+        const byte* keyAlgoName;
+        word32 keyAlgoNameSz;
+
+        ret = GetStringRef(&keyAlgoNameSz, &keyAlgoName,
+                pubKey, pubKeySz, &pubKeyIdx);
+
+        if (ret == WS_SUCCESS) {
+            algoName = IdToName(ssh->handshake->pubKeyId);
+            if (keyAlgoNameSz != (word32)WSTRLEN(algoName)
+                    || WMEMCMP(keyAlgoName, algoName, keyAlgoNameSz) != 0) {
+                ret = WS_INVALID_ALGO_ID;
+            }
         }
-        else
-            ret = WS_INVALID_ALGO_ID;
     }
 
-    /* Skip the curve name since we're getting it from the algo. */
-    if (ret == WS_SUCCESS)
-        ret = GetSkip(pubKey, pubKeySz, &pubKeyIdx);
+    /* Derive the curve from the negotiated algorithm, not from the blob. */
+    if (ret == WS_SUCCESS) {
+        primeId = wcPrimeForId(ssh->handshake->pubKeyId);
+        if (primeId == ECC_CURVE_INVALID) {
+            ret = WS_INVALID_PRIME_CURVE;
+        }
+    }
 
-    if (ret == WS_SUCCESS)
-        ret = GetStringRef(&qSz, &q, pubKey, pubKeySz, &pubKeyIdx);
+    /* The curve name (RFC 5656 section 3.1) in the blob must match the
+     * curve of the negotiated algorithm. */
+    if (ret == WS_SUCCESS) {
+        const char* curveName;
+        const byte* keyCurveName;
+        word32 keyCurveNameSz;
+
+        ret = GetStringRef(&keyCurveNameSz, &keyCurveName,
+                pubKey, pubKeySz, &pubKeyIdx);
+
+        if (ret == WS_SUCCESS) {
+            curveName = PrimeNameForId(ssh->handshake->pubKeyId);
+            if (keyCurveNameSz != (word32)WSTRLEN(curveName)
+                    || WMEMCMP(keyCurveName, curveName, keyCurveNameSz) != 0) {
+                ret = WS_INVALID_PRIME_CURVE;
+            }
+        }
+    }
 
     if (ret == WS_SUCCESS) {
-        ret = wc_ecc_import_x963_ex(q, qSz,
-                &sigKeyBlock_ptr->sk.ecc.key, primeId);
-        if (ret == 0) {
-            sigKeyBlock_ptr->keySz =
-                (word32)sizeof(sigKeyBlock_ptr->sk.ecc.key);
-            sigKeyBlock_ptr->keyAllocated = 1;
+        const byte* q;
+        word32 qSz;
+
+        ret = GetStringRef(&qSz, &q, pubKey, pubKeySz, &pubKeyIdx);
+
+        if (ret == WS_SUCCESS) {
+            ret = wc_ecc_import_x963_ex(q, qSz,
+                    &sigKeyBlock_ptr->sk.ecc.key, primeId);
+            if (ret == 0) {
+                sigKeyBlock_ptr->keySz =
+                    (word32)sizeof(sigKeyBlock_ptr->sk.ecc.key);
+            }
+            else {
+                ret = WS_ECC_E;
+            }
         }
-        else
-            ret = WS_ECC_E;
     }
 #else
     WOLFSSH_UNUSED(ssh);
@@ -7429,7 +7467,9 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
-        ret = GetMpint(&sigSz, &sig, pk->signature, pk->signatureSz, &i);
+        /* RFC 4253 Section 6.6: the RSA signature blob is a string of
+         * raw signature bytes, not an mpint. */
+        ret = GetStringRef(&sigSz, &sig, pk->signature, pk->signatureSz, &i);
     }
 
     if (ret == WS_SUCCESS) {
@@ -7588,7 +7628,9 @@ static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
-        ret = GetMpint(&sigSz, &sig, pk->signature, pk->signatureSz, &i);
+        /* RFC 4253 Section 6.6: the RSA signature blob is a string of
+         * raw signature bytes, not an mpint. */
+        ret = GetStringRef(&sigSz, &sig, pk->signature, pk->signatureSz, &i);
     }
 
     if (ret == WS_SUCCESS) {
@@ -18295,7 +18337,44 @@ int wolfSSH_TestRsaVerify(const byte* sig, word32 sigSz,
             key, heap, "wolfSSH_TestRsaVerify");
 }
 
+int wolfSSH_TestDoUserAuthRequestRsa(WOLFSSH* ssh,
+        WS_UserAuthData_PublicKey* pk, int hashId, byte* digest,
+        word32 digestSz)
+{
+    return DoUserAuthRequestRsa(ssh, pk, (enum wc_HashType)hashId,
+            digest, digestSz);
+}
+
+#ifdef WOLFSSH_CERTS
+
+int wolfSSH_TestDoUserAuthRequestRsaCert(WOLFSSH* ssh,
+        WS_UserAuthData_PublicKey* pk, int hashId, byte* digest,
+        word32 digestSz)
+{
+    return DoUserAuthRequestRsaCert(ssh, pk, (enum wc_HashType)hashId,
+            digest, digestSz);
+}
+
+#endif /* WOLFSSH_CERTS */
+
 #endif /* !WOLFSSH_NO_RSA */
+
+#ifndef WOLFSSH_NO_ECDSA
+
+int wolfSSH_TestParseECCPubKey(WOLFSSH* ssh, byte* pubKey, word32 pubKeySz)
+{
+    struct wolfSSH_sigKeyBlock sigKeyBlock;
+    int ret;
+
+    WMEMSET(&sigKeyBlock, 0, sizeof(sigKeyBlock));
+    sigKeyBlock.useEcc = 1;
+    ret = ParseECCPubKey(ssh, &sigKeyBlock, pubKey, pubKeySz);
+    FreePubKey(&sigKeyBlock);
+
+    return ret;
+}
+
+#endif /* !WOLFSSH_NO_ECDSA */
 
 #ifndef WOLFSSH_NO_ED25519
 
