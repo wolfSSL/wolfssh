@@ -28,7 +28,9 @@ if [ "$WOLFSSHD_PID_COUNT" = "$WOLFSSHD_PID_COUNT_AFTER" ]; then
     exit 1
 fi
 
-netstat -nt | grep ESTABLISHED
+# Only consider sockets for the test port so unrelated host traffic
+# (other CLOSE_WAIT/TIME_WAIT connections) does not skew the result.
+netstat -nt | grep ":$2 " | grep ESTABLISHED
 RESULT=$?
 if [ "$RESULT" != "0" ]; then
     echo "Expecting to find the TCP connection established"
@@ -37,14 +39,14 @@ fi
 
 sleep 2
 
-netstat -nt | grep CLOSE_WAIT
+netstat -nt | grep ":$2 " | grep CLOSE_WAIT
 RESULT=$?
 if [ "$RESULT" = "0" ]; then
     echo "Found close wait and was not expecting it"
     exit 1
 fi
 
-netstat -nt | grep TIME_WAIT
+netstat -nt | grep ":$2 " | grep TIME_WAIT
 RESULT=$?
 if [ "$RESULT" != "0" ]; then
     echo "Did not find timed wait for TCP close down"
