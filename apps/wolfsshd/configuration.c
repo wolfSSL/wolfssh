@@ -798,18 +798,17 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value, int depth)
                                             WSTRLEN(fileNames[i]) -
                                             WSTRLEN(postfix),
                                             postfix, WSTRLEN(postfix))
-                                        == 0) {
-                                    WSNPRINTF(filepath, PATH_MAX, "%s/%s", path,
-                                             fileNames[i]);
-                                }
-                                else {
+                                        != 0) {
                                     /* Not a match */
                                     continue;
                                 }
                             }
-                            else {
-                                WSNPRINTF(filepath, PATH_MAX, "%s/%s", path,
-                                         fileNames[i]);
+                            ret = WSNPRINTF(filepath, PATH_MAX, "%s/%s", path,
+                                        fileNames[i]);
+                            if (ret < 0 || ret >= PATH_MAX) {
+                                /* Path is too long for the buffer */
+                                ret = WS_INVALID_PATH_E;
+                                break;
                             }
                             ret = ConfigLoad(conf, filepath, depth);
                             if (ret != WS_SUCCESS) {
