@@ -327,6 +327,14 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
                     WLOG(WS_LOG_CERTMAN, "ocsp lookup: ocsp revoked");
                     ret = WS_CERT_REVOKED_E;
                 }
+                else if (ret == OCSP_NEED_URL) {
+                    /* The cert carries no OCSP responder URL and certman has
+                     * no default responder configured, so OCSP cannot be
+                     * performed. Treat as not revoked rather than failing the
+                     * whole verification. */
+                    WLOG(WS_LOG_CERTMAN, "ocsp lookup: no responder url, skipping");
+                    ret = WS_SUCCESS;
+                }
                 else {
                     WLOG(WS_LOG_CERTMAN, "ocsp lookup: other error (%d)", ret);
                     ret = WS_CERT_OTHER_E;
