@@ -168,14 +168,29 @@ void wolfSSH_Log(enum wolfSSH_LogLevel level, const char *const fmt, ...)
 {
     va_list vlist;
     char    msgStr[WOLFSSH_DEFAULT_LOG_WIDTH];
+    word32  i;
+    byte    c;
 
     if (level < logLevel)
         return;   /* don't need to output */
 
     /* format msg */
     va_start(vlist, fmt);
-    WVSNPRINTF(msgStr, sizeof(msgStr)-1, fmt, vlist);
+    WVSNPRINTF(msgStr, sizeof(msgStr), fmt, vlist);
     va_end(vlist);
+    /* guarantee termination; some vsnprintf variants skip it on truncation */
+    msgStr[sizeof(msgStr) - 1] = '\0';
+
+    /* Replace control bytes (except tab) and DEL in the formatted message so
+     * untrusted protocol strings logged with %s cannot inject newlines or
+     * terminal escape sequences into the log output. The parsed protocol data
+     * is unaffected; only this formatted copy is scrubbed. The loop is bounded
+     * by the buffer length in case the message is not NUL terminated. */
+    for (i = 0; i < sizeof(msgStr) && msgStr[i] != 0; i++) {
+        c = (byte)msgStr[i];
+        if ((c < 0x20 && c != '\t') || c == 0x7f)
+            msgStr[i] = '?';
+    }
 
     if (logFunction)
         logFunction(level, msgStr);
