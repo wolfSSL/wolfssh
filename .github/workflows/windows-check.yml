@@ -139,12 +139,13 @@ jobs:
       run: nuget restore ${{env.WOLFSSL_SOLUTION_FILE_PATH}}
 
     # These env paths already include the wolfssh/ and wolfssl/ checkout
-    # prefixes, so they must run from the workspace root (as the build job does).
-    - name: updated user_settings.h for sshd and x509
-      run: cp ${{env.USER_SETTINGS_H_NEW}} ${{env.USER_SETTINGS_H}}
-
-    - name: replace wolfSSL user_settings.h with wolfSSH user_settings.h
-      run: get-content ${{env.USER_SETTINGS_H_NEW}} | %{$_ -replace "if 0","if 1"}
+    # prefixes, so this runs from the default working directory, the workspace
+    # root.
+    - name: Enable wolfSSH options (sshd, sftp, x509) in user_settings.h
+      shell: bash
+      run: |
+        sed -i 's/#if 0/#if 1/g' ${{env.USER_SETTINGS_H_NEW}}
+        cp ${{env.USER_SETTINGS_H_NEW}} ${{env.USER_SETTINGS_H}}
 
     # WholeProgramOptimization=false disables /GL so the v142-independent objects
     # link without a cross-version code-generation requirement (C1047).

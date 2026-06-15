@@ -1533,6 +1533,9 @@ enum WS_MessageIdLimits {
             word32 bufSz, word32* inOutIdx);
     WOLFSSH_API int wolfSSH_TestScpGetTimestamp(WOLFSSH* ssh, byte* buf,
             word32 bufSz, word32* inOutIdx);
+#if !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
+    WOLFSSH_API int wolfSSH_TestScpPushDir(const char* path);
+#endif
 #endif /* WOLFSSH_SCP */
 #ifndef WOLFSSH_NO_DH
     WOLFSSH_API int wolfSSH_TestKeyAgreeDh_client(WOLFSSH* ssh, byte hashId,

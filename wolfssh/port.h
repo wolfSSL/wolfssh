@@ -642,6 +642,14 @@ extern "C" {
     #endif
 #endif /* WSTRING_USER */
 
+/* Measures a formatted string's length; _snprintf_s rejects the NULL/0 probe
+ * form that WSNPRINTF maps to on Windows. Defined outside WSTRING_USER so
+ * custom string ports need not supply it, and left overridable. */
+#if defined(USE_WINDOWS_API) && !defined(WSCPRINTF)
+    #include <stdio.h>
+    #define WSCPRINTF(f,...) _scprintf((f),##__VA_ARGS__)
+#endif
+
 /* get local time for debug print out */
 #if defined(USE_WINDOWS_API) || defined(__MINGW32__)
     #define WTIME time

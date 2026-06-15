@@ -8705,6 +8705,39 @@ static int test_ScpExtractFileName(void)
 }
 #endif /* WOLFSSH_TEST_INTERNAL && WOLFSSH_SCP && !WOLFSSH_SCP_USER_CALLBACKS */
 
+#if defined(WOLFSSH_TEST_INTERNAL) && defined(WOLFSSH_SCP) && \
+    !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
+/* ScpPushDir bounds the request path against ctx->dirName before copying it.
+ * The accept side stops short of WS_SUCCESS because no directory that long
+ * exists to open, so it asserts the guard did not fire rather than success. */
+static int test_ScpPushDir(void)
+{
+    char path[DEFAULT_SCP_FILE_NAME_SZ + 1];
+    int ret;
+
+    /* one byte too long for ctx->dirName: rejected before anything is opened */
+    WMEMSET(path, 'a', DEFAULT_SCP_FILE_NAME_SZ);
+    path[DEFAULT_SCP_FILE_NAME_SZ] = '\0';
+    ret = wolfSSH_TestScpPushDir(path);
+    if (ret != WS_BUFFER_E)
+        return -913;
+
+    /* exact fit clears the length guard and fails at the open instead */
+    path[DEFAULT_SCP_FILE_NAME_SZ - 1] = '\0';
+    ret = wolfSSH_TestScpPushDir(path);
+    if (ret == WS_BUFFER_E)
+        return -914;
+
+    /* NULL path is rejected */
+    ret = wolfSSH_TestScpPushDir(NULL);
+    if (ret != WS_BAD_ARGUMENT)
+        return -915;
+
+    return 0;
+}
+#endif /* WOLFSSH_TEST_INTERNAL && WOLFSSH_SCP &&
+        * !WOLFSSH_SCP_USER_CALLBACKS && !NO_FILESYSTEM */
+
 #endif /* WOLFSSH_TEST_INTERNAL */
 
 /* Error Code And Message Test */
@@ -9311,6 +9344,14 @@ int wolfSSH_UnitTest(int argc, char** argv)
     !defined(WOLFSSH_SCP_USER_CALLBACKS)
     unitResult = test_ScpExtractFileName();
     printf("ScpExtractFileName: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+#if defined(WOLFSSH_TEST_INTERNAL) && defined(WOLFSSH_SCP) && \
+    !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
+    unitResult = test_ScpPushDir();
+    printf("ScpPushDir: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
