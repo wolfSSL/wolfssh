@@ -1303,7 +1303,7 @@ static int ScpCheckForRename(WOLFSSH* ssh, int cmdSz)
         return WS_BUFFER_E;
     }
 
-    WSTRNCPY(buf, ssh->scpBasePath, cmdSz);
+    WSTRNCPY(buf, ssh->scpBasePath, sizeof(buf));
     buf[sz] = '\0';
     WSTRNCAT(buf, "/..", DEFAULT_SCP_MSG_SZ);
 
@@ -1904,7 +1904,11 @@ static char* MakeScpCmd(const char* name, char dir, void* heap)
     char* cmd;
     int sz;
 
+#ifdef USE_WINDOWS_API
+    sz = WSCPRINTF("scp -%c %s", dir, name) + 1;
+#else
     sz = WSNPRINTF(NULL, 0, "scp -%c %s", dir, name) + 1;
+#endif
     if (sz <= 0) {
         return NULL;
     }
@@ -2586,6 +2590,9 @@ int ScpPushDir(void *fs, ScpSendCtx* ctx, const char* path, void* heap)
 
     if (ctx == NULL || path == NULL)
         return WS_BAD_ARGUMENT;
+
+    if (WSTRLEN(path) >= DEFAULT_SCP_FILE_NAME_SZ - 1)
+        return WS_BUFFER_E;
 
     entry = ScpNewDir(fs, path, heap);
     if (entry == NULL) {
