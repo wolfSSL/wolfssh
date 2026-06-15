@@ -156,6 +156,7 @@ static void myStatusCb(WOLFSSH* sshIn, word32* bytes, char* name)
     static word32 lastOutputTime = 0;
     static word32 lastPrintedBytes[2] = {0, 0};
     word32 elapsedTime;
+    word32 nameSz;
 #endif
     char buf[80];
     word64 longBytes = ((word64)bytes[1] << 32) | bytes[0];
@@ -176,13 +177,19 @@ static void myStatusCb(WOLFSSH* sshIn, word32* bytes, char* name)
     }
     lastPrintedBytes[0] = bytes[0];
     lastPrintedBytes[1] = bytes[1];
-    if (WSTRNCMP(currentFile, name, WSTRLEN(name)) != 0) {
+    /* clamp over-long names: currentFile holds the truncated prefix, so the
+     * comparison must use the same bound or every call looks like a new file */
+    nameSz = (word32)WSTRLEN(name);
+    if (nameSz >= sizeof(currentFile))
+        nameSz = (word32)sizeof(currentFile) - 1;
+    if (WSTRNCMP(currentFile, name, nameSz) != 0 ||
+            currentFile[nameSz] != '\0') {
         startTime = current_time(1);
         lastOutputTime = 0; /* Reset timer for new file transfer */
         lastPrintedBytes[0] = 0;
         lastPrintedBytes[1] = 0;
-        WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
-        WSTRNCPY(currentFile, name, WOLFSSH_MAX_FILENAME);
+        WMEMSET(currentFile, 0, sizeof(currentFile));
+        WMEMCPY(currentFile, name, nameSz);
     }
     elapsedTime = currentTime - startTime;
     WSNPRINTF(buf, sizeof(buf), "Processed %8llu\t bytes in %d seconds\r",
@@ -191,7 +198,7 @@ static void myStatusCb(WOLFSSH* sshIn, word32* bytes, char* name)
     if (elapsedTime > TIMEOUT_VALUE) {
         WSNPRINTF(buf, sizeof(buf), "\nProcess timed out at %d seconds, "
                 "stopping\r", elapsedTime);
-        WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
+        WMEMSET(currentFile, 0, sizeof(currentFile));
         wolfSSH_SFTP_Interrupt(ssh);
     }
 #endif
@@ -667,7 +674,7 @@ static int doCmds(func_args* args)
                     ret == WS_CHAN_RXD || ret == WS_REKEYING);
 
 #ifndef WOLFSSH_NO_TIMESTAMP
-            WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
+            WMEMSET(currentFile, 0, sizeof(currentFile));
 #endif
 
             if (ret != WS_SUCCESS) {
@@ -778,7 +785,7 @@ static int doCmds(func_args* args)
                     ret == WS_CHAN_RXD || ret == WS_REKEYING);
 
 #ifndef WOLFSSH_NO_TIMESTAMP
-            WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
+            WMEMSET(currentFile, 0, sizeof(currentFile));
 #endif
 
             if (ret != WS_SUCCESS) {
@@ -1445,6 +1452,7 @@ static int doAutopilot(int cmd, char* local, char* remote)
     int ret = WS_SUCCESS;
     char fullpath[128] = ".";
     WS_SFTPNAME* name  = NULL;
+    word32 remoteSz;
     byte remoteAbsPath = 0;
 
     /* check if is absolute path before making it one */
@@ -1462,8 +1470,11 @@ static int doAutopilot(int cmd, char* local, char* remote)
 
     if (remoteAbsPath) {
        /* use remote absolute path if provided */
+       remoteSz = (word32)WSTRLEN(remote);
+       if (remoteSz >= sizeof(fullpath))
+           return WS_BUFFER_E;
        WMEMSET(fullpath, 0, sizeof(fullpath));
-       WSTRNCPY(fullpath, remote, sizeof(fullpath) - 1);
+       WMEMCPY(fullpath, remote, remoteSz + 1);
     }
     else {
         err = doBuildRemotePath(remote, fullpath, sizeof(fullpath), &name);

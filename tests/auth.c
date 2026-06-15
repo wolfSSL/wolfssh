@@ -1836,6 +1836,7 @@ static void test_client(void)
     if (!unbalanced) {
         AssertIntEQ(serverArgs.return_code, WS_SUCCESS);
     }
+    FreeTcpReady(&ready);
 }
 
 static void test_basic_KeyboardInteractive(void)

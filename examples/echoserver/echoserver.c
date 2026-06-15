@@ -2249,6 +2249,11 @@ static int LoadPasswdList(StrList* strList, PwMapList* mapList)
     int count = 0;
 
     while (strList) {
+        if (WSTRLEN(strList->str) >= sizeof names - 1) {
+            fprintf(stderr, "Ignoring over-long entry: %.32s\n", strList->str);
+            strList = strList->next;
+            continue;
+        }
         WSTRNCPY(names, strList->str, sizeof names - 1);
         passwd = WSTRCHR(names, ':');
         if (passwd != NULL) {
@@ -2278,6 +2283,11 @@ static int LoadKeyboardList(StrList* strList, PwMapList* mapList,
     int count = 0;
 
     while (strList) {
+        if (WSTRLEN(strList->str) >= sizeof names - 1) {
+            fprintf(stderr, "Ignoring over-long entry: %.32s\n", strList->str);
+            strList = strList->next;
+            continue;
+        }
         WSTRNCPY(names, strList->str, sizeof names - 1);
         passwd = WSTRCHR(names, ':');
         if (passwd != NULL) {
@@ -2314,6 +2324,11 @@ static int LoadPubKeyList(StrList* strList, int format, PwMapList* mapList)
         buf = NULL;
         bufSz = 0;
 
+        if (WSTRLEN(strList->str) >= sizeof names - 1) {
+            fprintf(stderr, "Ignoring over-long entry: %.32s\n", strList->str);
+            strList = strList->next;
+            continue;
+        }
         WSTRNCPY(names, strList->str, sizeof names - 1);
         fileName = WSTRCHR(names, ':');
         if (fileName != NULL) {
@@ -2834,6 +2849,12 @@ static INLINE void SignalTcpReady(tcp_ready* ready, word16 port)
     ready->port = port;
     pthread_cond_signal(&ready->cond);
     pthread_mutex_unlock(&ready->mutex);
+#elif defined(USE_WINDOWS_API) && defined(NO_MAIN_DRIVER) && \
+    !defined(SINGLE_THREADED)
+    ready->ready = 1;
+    ready->port = port;
+    /* SetEvent is a full barrier; this one-shot signal needs no lock */
+    SetEvent(ready->readyEvent);
 #else
     WOLFSSH_UNUSED(ready);
     WOLFSSH_UNUSED(port);
@@ -2979,7 +3000,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                     }
                     else {
                         port = (word16)atoi(myoptarg);
-                        #if !defined(NO_MAIN_DRIVER) || defined(USE_WINDOWS_API)
+                        #if !defined(NO_MAIN_DRIVER)
                             if (port == 0) {
                                 ES_ERROR("port number cannot be 0");
                             }

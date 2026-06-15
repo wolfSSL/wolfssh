@@ -1952,12 +1952,19 @@ int wolfSSH_SCP_connect(WOLFSSH* ssh, byte* cmd)
 }
 
 
+/* Shared format so the size probe and the write cannot drift. */
+#define SCP_CMD_FMT "scp -%c %s"
+
 static char* MakeScpCmd(const char* name, char dir, void* heap)
 {
     char* cmd;
     int sz;
 
-    sz = WSNPRINTF(NULL, 0, "scp -%c %s", dir, name) + 1;
+#ifdef USE_WINDOWS_API
+    sz = WSCPRINTF(SCP_CMD_FMT, dir, name) + 1;
+#else
+    sz = WSNPRINTF(NULL, 0, SCP_CMD_FMT, dir, name) + 1;
+#endif
     if (sz <= 0) {
         return NULL;
     }
@@ -1965,7 +1972,7 @@ static char* MakeScpCmd(const char* name, char dir, void* heap)
     if (cmd == NULL) {
         return NULL;
     }
-    sz = WSNPRINTF(cmd, sz, "scp -%c %s", dir, name);
+    sz = WSNPRINTF(cmd, sz, SCP_CMD_FMT, dir, name);
     if (sz <= 0) {
         WFREE(cmd, heap, DYNTYPE_STRING);
         return NULL;
@@ -2717,9 +2724,14 @@ static ScpDir* ScpNewDir(void *fs, const char* path, void* heap)
 int ScpPushDir(void *fs, ScpSendCtx* ctx, const char* path, void* heap)
 {
     ScpDir* entry;
+    word32  pathSz;
 
     if (ctx == NULL || path == NULL)
         return WS_BAD_ARGUMENT;
+
+    pathSz = (word32)WSTRLEN(path);
+    if (pathSz >= sizeof(ctx->dirName))
+        return WS_BUFFER_E;
 
     entry = ScpNewDir(fs, path, heap);
     if (entry == NULL) {
@@ -2734,12 +2746,27 @@ int ScpPushDir(void *fs, ScpSendCtx* ctx, const char* path, void* heap)
         ctx->currentDir = entry;
     }
 
-    /* append directory name to ctx->dirName */
-    WSTRNCPY(ctx->dirName, path, DEFAULT_SCP_FILE_NAME_SZ-1);
-    ctx->dirName[DEFAULT_SCP_FILE_NAME_SZ-1] = '\0';
+    /* append directory name to ctx->dirName, terminator included; the guard
+     * above bounds pathSz so the copy always fits */
+    WMEMCPY(ctx->dirName, path, pathSz + 1);
 
     return WS_SUCCESS;
 }
+
+#ifdef WOLFSSH_TEST_INTERNAL
+int wolfSSH_TestScpPushDir(const char* path)
+{
+    ScpSendCtx ctx;
+    int ret;
+
+    WMEMSET(&ctx, 0, sizeof(ctx));
+    ret = ScpPushDir(NULL, &ctx, path, NULL);
+    if (ret == WS_SUCCESS)
+        ScpSendCtxFreeDirs(NULL, &ctx, NULL);
+
+    return ret;
+}
+#endif /* WOLFSSH_TEST_INTERNAL */
 
 /* Remove top ScpDir from directory stack, remove dir from ctx->dirName */
 int ScpPopDir(void *fs, ScpSendCtx* ctx, void* heap)
