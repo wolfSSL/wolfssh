@@ -43,13 +43,12 @@ jobs:
       working-directory: ${{env.GITHUB_WORKSPACE}}wolfssl
       run: nuget restore ${{env.WOLFSSL_SOLUTION_FILE_PATH}}
 
-    - name: updated user_settings.h for sshd and x509
+    - name: Enable wolfSSH options (sshd, sftp, x509) in user_settings.h
       working-directory: ${{env.GITHUB_WORKSPACE}}
-      run: cp ${{env.USER_SETTINGS_H_NEW}} ${{env.USER_SETTINGS_H}}
-
-    - name: replace wolfSSL user_settings.h with wolfSSH user_settings.h
-      working-directory: ${{env.GITHUB_WORKSPACE}}
-      run: get-content ${{env.USER_SETTINGS_H_NEW}} | %{$_ -replace "if 0","if 1"}
+      shell: bash
+      run: |
+        sed -i 's/#if 0/#if 1/g' ${{env.USER_SETTINGS_H_NEW}}
+        cp ${{env.USER_SETTINGS_H_NEW}} ${{env.USER_SETTINGS_H}}
 
     - name: Build wolfssl library
       working-directory: ${{env.GITHUB_WORKSPACE}}wolfssl
@@ -64,6 +63,30 @@ jobs:
       # Add additional options to the MSBuild command line here (like platform or verbosity level).
       # See https://docs.microsoft.com/visualstudio/msbuild/msbuild-command-line-reference
       run: msbuild /m /p:PlatformToolset=v142 /p:Platform=${{env.BUILD_PLATFORM}} /p:WindowsTargetPlatformVersion=${{env.TARGET_PLATFORM}} /p:Configuration=${{env.WOLFSSH_BUILD_CONFIGURATION}} ${{env.SOLUTION_FILE_PATH}}
+
+    - name: Locate wolfsshd.exe and stage wolfssl.dll
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      run: |
+        $sshdExe = Get-ChildItem -Path "${{ github.workspace }}\wolfssh" -Recurse -Filter "wolfsshd.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like "*Release*" } | Select-Object -First 1
+        if (-not $sshdExe) {
+            Write-Host "ERROR: wolfsshd.exe not found"
+            exit 1
+        }
+        Add-Content -Path $env:GITHUB_ENV -Value "SSHD_PATH=$($sshdExe.FullName)"
+
+        $sshdDir = Split-Path -Parent $sshdExe.FullName
+        $wolfsslDll = Get-ChildItem -Path "${{ github.workspace }}\wolfssl" -Recurse -Filter "wolfssl.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($wolfsslDll -and -not (Test-Path (Join-Path $sshdDir "wolfssl.dll"))) {
+            Copy-Item -Path $wolfsslDll.FullName -Destination (Join-Path $sshdDir "wolfssl.dll") -Force
+        }
+
+    - name: Test LoginGraceTime enforcement on Windows
+      working-directory: ${{ github.workspace }}\wolfssh\apps\wolfsshd\test
+      shell: pwsh
+      timeout-minutes: 2
+      run: .\sshd_login_grace_test.ps1 -SshdExe "$env:SSHD_PATH"
 
   # Build and run the self-contained unit tests with the MSVC AddressSanitizer.
   # This is the only job that executes wolfSSH tests under a sanitizer on
