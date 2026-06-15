@@ -33,6 +33,9 @@ AuthorizedKeysFile $PWD/authorized_keys_test
 EOF
 
 start_wolfsshd "sshd_config_test_login_grace"
+# ensure the daemon is stopped on every exit path, including the failure
+# exits below, so a leftover wolfsshd cannot interfere with later tests
+trap stop_wolfsshd EXIT
 pushd ../../..
 
 TEST_CLIENT="./examples/client/client"
@@ -47,22 +50,56 @@ if [ "$RESULT" != 0 ]; then
     exit 1
 fi
 
-# attempt clearing out stdin from previous echo/grep
-read -t 1 -n 1000 discard
-
-# test grace login timeout by stalling on password prompt
-timeout --foreground 7 "$TEST_CLIENT" -u "$USER" -h "$TEST_HOST" -p "$TEST_PORT" -t
-
 popd
-cat ./log.txt | grep "Failed login within grace period"
-RESULT=$?
-if [ "$RESULT" != 0 ]; then
-    echo "FAIL: Grace period not hit"
-    cat ./log.txt
+
+# Test the grace-time timeout behaviorally: open a raw TCP connection, never
+# authenticate, and confirm the server closes it at the grace deadline. This
+# asserts the actual behavior rather than scraping the log, matching the Windows
+# PowerShell test (and not relying on the daemon log being readable).
+GRACE=5
+exec 3<>"/dev/tcp/$TEST_HOST/$TEST_PORT"
+if [ "$?" != 0 ]; then
+    echo "FAIL: could not connect to $TEST_HOST:$TEST_PORT"
     exit 1
 fi
 
-stop_wolfsshd
+# The server sends its banner, waits for ours (which never comes), then closes
+# the connection once the grace time expires. Read until the server closes the
+# connection (EOF) or the per-read timeout elapses, and measure how long it
+# took. Use a large read timeout (GRACE + 8) and decide by elapsed time rather
+# than read's exit status, which differs across bash versions (timeout returns
+# >128 on modern bash but 1 on the macOS bash 3.2).
+START=$SECONDS
+while true; do
+    if IFS= read -r -t $((GRACE + 8)) -n 1024 _ <&3; then
+        : # received banner/data, keep waiting for the server to close
+    else
+        break # server closed (EOF) or the read timeout elapsed
+    fi
+done
+ELAPSED=$((SECONDS - START))
+exec 3>&-
+
+# An exit well before the read timeout means the server closed the connection;
+# an exit near GRACE + 8 means it stayed open (not enforced).
+if [ "$ELAPSED" -le $((GRACE + 4)) ]; then
+    DROPPED=1
+else
+    DROPPED=0
+fi
+
+echo "connection closed=$DROPPED after ${ELAPSED}s (grace=$GRACE)"
+
+if [ "$DROPPED" = 1 ] && [ "$ELAPSED" -ge $((GRACE - 1)) ]; then
+    echo "PASS: unauthenticated connection dropped at login grace deadline"
+elif [ "$DROPPED" = 1 ]; then
+    echo "FAIL: connection closed at ${ELAPSED}s, before the grace deadline ($GRACE s)"
+    exit 1
+else
+    echo "FAIL: connection still open past the grace time (not enforced)"
+    exit 1
+fi
+
 exit 0
 
 
