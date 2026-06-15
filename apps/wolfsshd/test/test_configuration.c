@@ -501,6 +501,80 @@ static int test_GetUserConfMatchOverride(void)
     return ret;
 }
 
+/* Only the User and Group Match selectors are implemented. A Match block keyed
+ * on any other selector (Address, Host, LocalAddress, LocalPort, RDomain) would
+ * otherwise be accepted but never apply, a fail-open misconfiguration. Verify
+ * that User/Group are accepted while the unsupported selectors are rejected. */
+static int test_MatchUnsupportedSelector(void)
+{
+    int ret = WS_SUCCESS;
+    int i;
+    WOLFSSHD_CONFIG* head;
+    WOLFSSHD_CONFIG* conf;
+
+    static CONFIG_LINE_VECTOR vectors[] = {
+        /* supported selectors */
+        {"Match User", "Match User testuser", 0},
+        {"Match Group", "Match Group testgroup", 0},
+
+        /* combined supported selectors must be accepted, in either order */
+        {"Match User+Group", "Match User alice Group dev", 0},
+        {"Match Group+User", "Match Group dev User alice", 0},
+
+        /* unsupported selectors must be rejected, not silently ignored */
+        {"Match Address", "Match Address 10.0.0.0/8", 1},
+        {"Match Host", "Match Host example.com", 1},
+        {"Match LocalAddress", "Match LocalAddress 192.168.1.1", 1},
+        {"Match LocalPort", "Match LocalPort 22", 1},
+        {"Match RDomain", "Match RDomain vrf-external", 1},
+
+        /* no-selector forms must also be rejected, not silently accepted */
+        {"Match all", "Match all", 1},
+        {"Bare Match", "Match", 1},
+
+        /* supported selector with no argument: passes the selector check but
+         * fails while parsing the (missing) name, exercising the cleanup of
+         * the already allocated config node */
+        {"Match User no arg", "Match User", 1},
+
+        /* mixed supported+unsupported selectors must be rejected; the
+         * unsupported part must not be silently dropped */
+        {"Mixed User+Address", "Match User alice Address 10.0.0.0/8", 1},
+        {"Mixed Group+Host", "Match Group dev Host example.com", 1},
+    };
+    const int numVectors = (int)(sizeof(vectors) / sizeof(*vectors));
+
+    head = wolfSSHD_ConfigNew(NULL);
+    if (head == NULL) {
+        ret = WS_MEMORY_E;
+    }
+    conf = head;
+
+    if (ret == WS_SUCCESS) {
+        for (i = 0; i < numVectors; ++i) {
+            int rc;
+
+            Log("    Testing scenario: %s.", vectors[i].desc);
+
+            rc = ParseConfigLine(&conf, vectors[i].line,
+                                 (int)WSTRLEN(vectors[i].line), 0);
+
+            if ((rc == WS_SUCCESS && !vectors[i].shouldFail) ||
+                (rc != WS_SUCCESS && vectors[i].shouldFail)) {
+                Log(" PASSED.\n");
+            }
+            else {
+                Log(" FAILED.\n");
+                ret = WS_FATAL_ERROR;
+                break;
+            }
+        }
+        wolfSSHD_ConfigFree(head);
+    }
+
+    return ret;
+}
+
 /* Bounded recursion through Include directives: a self-including config
  * must fail with WS_BAD_ARGUMENT once the depth limit is hit, and the
  * config object must remain usable so a subsequent load of a normal
@@ -936,6 +1010,7 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_ParseConfigLine),
     TEST_DECL(test_ConfigCopy),
     TEST_DECL(test_GetUserConfMatchOverride),
+    TEST_DECL(test_MatchUnsupportedSelector),
     TEST_DECL(test_CAKeysFileDiffers),
     TEST_DECL(test_IncludeRecursionBound),
     TEST_DECL(test_ConfigFree),

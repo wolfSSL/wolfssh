@@ -914,6 +914,61 @@ static int AddRestrictedCase(WOLFSSHD_CONFIG* config, const char* mtch,
 }
 
 
+/* returns WS_SUCCESS when every selector keyword in 'value' is one that is
+ * implemented. Only the User and Group selectors are handled. The Match value
+ * is a whitespace separated list of "keyword argument" pairs; any keyword that
+ * is not User or Group (Address, Host, LocalAddress, LocalPort, RDomain, ...),
+ * and a Match with no selector at all (bare "Match", "Match all"), is rejected.
+ * This also catches mixed forms such as "User alice Address 10.0.0.0/8" where
+ * the unsupported selector would otherwise be silently dropped. */
+static int CheckMatchSelectors(const char* value)
+{
+    int ret = WS_SUCCESS;
+    int i   = 0;
+    int sz;
+    int len;
+    int found = 0;
+
+    sz = (value != NULL) ? (int)XSTRLEN(value) : 0;
+
+    while (ret == WS_SUCCESS && i < sz) {
+        /* skip whitespace before the keyword */
+        i += CountWhitespace(value + i, sz - i, 0);
+        if (i >= sz) {
+            break;
+        }
+
+        /* length of the keyword token */
+        len = CountWhitespace(value + i, sz - i, 1);
+        if (len == (int)(sizeof("User") - 1) &&
+                WSTRNCMP(value + i, "User", sizeof("User") - 1) == 0) {
+            found = 1;
+        }
+        else if (len == (int)(sizeof("Group") - 1) &&
+                WSTRNCMP(value + i, "Group", sizeof("Group") - 1) == 0) {
+            found = 1;
+        }
+        else {
+            ret = WS_FATAL_ERROR;
+        }
+        i += len;
+
+        if (ret == WS_SUCCESS) {
+            /* skip whitespace then the argument token for this keyword */
+            i += CountWhitespace(value + i, sz - i, 0);
+            i += CountWhitespace(value + i, sz - i, 1);
+        }
+    }
+
+    /* a Match with no implemented selector at all is also rejected */
+    if (ret == WS_SUCCESS && !found) {
+        ret = WS_FATAL_ERROR;
+    }
+
+    return ret;
+}
+
+
 /* returns WS_SUCCESS on success, on success it update the conf pointed to
  * and makes it point to the newly created conf node */
 static int HandleMatch(WOLFSSHD_CONFIG** conf, const char* value, int valueSz)
@@ -923,6 +978,19 @@ static int HandleMatch(WOLFSSHD_CONFIG** conf, const char* value, int valueSz)
 
     if (conf == NULL || *conf == NULL || value == NULL) {
         ret = WS_BAD_ARGUMENT;
+    }
+
+    /* Only the User and Group selectors are implemented. Reject any Match
+     * directive that names an unsupported selector (even when mixed with a
+     * supported one) or names no selector at all, rather than accepting it and
+     * silently dropping the unsupported part, which would fail open. */
+    if (ret == WS_SUCCESS) {
+        ret = CheckMatchSelectors(value);
+        if (ret != WS_SUCCESS) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Unsupported Match selector, only User and Group are "
+                "handled");
+        }
     }
 
     /* create new configure for altered options specific to the match */
@@ -946,6 +1014,12 @@ static int HandleMatch(WOLFSSHD_CONFIG** conf, const char* value, int valueSz)
     }
 
     /* @TODO handle , separated user/group list */
+
+    /* on failure free the config that will not be added to the list */
+    if (ret != WS_SUCCESS && newConf != NULL) {
+        wolfSSHD_ConfigFree(newConf);
+        newConf = NULL;
+    }
 
     /* update current config being processed */
     if (ret == WS_SUCCESS) {
