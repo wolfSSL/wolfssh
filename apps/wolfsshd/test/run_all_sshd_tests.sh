@@ -370,7 +370,6 @@ else
 
     #Github actions needs resolved for these test cases
     #run_test "error_return.sh"
-    #run_test "sshd_login_grace_test.sh"
 
     # add additional tests here, check on var USING_LOCAL_HOST if can make sshd
     # server start/restart with changes
@@ -397,9 +396,10 @@ else
         run_test "sshd_window_full_test.sh"
         run_test "sshd_empty_password_test.sh"
         run_strictmodes_negative_test
+        run_test "sshd_login_grace_test.sh"
     else
         printf "Skipping tests that need to setup local SSHD\n"
-        SKIPPED=$((SKIPPED+4))
+        SKIPPED=$((SKIPPED+5))
     fi
 
     # these tests run with X509 sshd-config loaded
