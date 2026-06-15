@@ -17,6 +17,10 @@
 #ifdef HAVE_CRYPT_H
     #include <crypt.h>
 #endif
+#ifndef _WIN32
+    #include <unistd.h>
+    #include <pwd.h>
+#endif
 
 #include <wolfssh/ssh.h>
 #include <wolfssl/wolfcrypt/coding.h>
@@ -334,7 +338,7 @@ static int test_ConfigCopy(void)
 
     /* retrieve match node from the list head */
     if (ret == WS_SUCCESS) {
-        match = wolfSSHD_GetUserConf(head, "testuser", NULL, NULL, NULL,
+        match = wolfSSHD_GetUserConf(head, "testuser", NULL, 0, NULL, NULL,
                                      NULL, NULL, NULL);
         if (match == NULL || match == head)
             ret = WS_FATAL_ERROR;
@@ -484,7 +488,7 @@ static int test_GetUserConfMatchOverride(void)
 
     /* resolving testuser must return the per-user node, not the global head */
     if (ret == WS_SUCCESS) {
-        match = wolfSSHD_GetUserConf(head, "testuser", NULL, NULL, NULL,
+        match = wolfSSHD_GetUserConf(head, "testuser", NULL, 0, NULL, NULL,
                                      NULL, NULL, NULL);
         if (match == NULL || match == head)
             ret = WS_FATAL_ERROR;
@@ -513,7 +517,7 @@ static int test_GetUserConfMatchOverride(void)
     /* a user with no Match block must fall back to the permissive global head,
      * confirming the default behavior is unchanged for non-Match users */
     if (ret == WS_SUCCESS) {
-        other = wolfSSHD_GetUserConf(head, "otheruser", NULL, NULL, NULL,
+        other = wolfSSHD_GetUserConf(head, "otheruser", NULL, 0, NULL, NULL,
                                      NULL, NULL, NULL);
         if (other != head)
             ret = WS_FATAL_ERROR;
@@ -593,7 +597,199 @@ static int test_MatchUnsupportedSelector(void)
         }
         wolfSSHD_ConfigFree(head);
     }
+    return ret;
+}
 
+/* A combined 'Match User X Group Y' directive is a conjunction: it applies only
+ * to a user who satisfies BOTH selectors, matching OpenSSH semantics. This
+ * locks in that wolfSSHD_GetUserConf does not return such a block for a user
+ * who satisfies only one selector (the policy-bypass case), while single
+ * selector 'Match User' and 'Match Group' blocks keep applying on their one
+ * selector alone. */
+static int test_GetUserConfMatchGroupAnd(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* head;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_CONFIG* combined;
+    WOLFSSHD_CONFIG* userOnly;
+    WOLFSSHD_CONFIG* groupOnly;
+    WOLFSSHD_CONFIG* match;
+    const char* grps[1];
+
+    head = wolfSSHD_ConfigNew(NULL);
+    if (head == NULL)
+        ret = WS_MEMORY_E;
+    conf = head;
+
+#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s), 0)
+    /* restrictive global default: SFTP only for everyone */
+    if (ret == WS_SUCCESS) ret = PCL("ForceCommand internal-sftp");
+
+    /* combined block relaxes the restriction, but only for a user who is both
+     * 'alice' AND in group 'admins' */
+    if (ret == WS_SUCCESS) ret = PCL("Match User alice Group admins");
+    if (ret == WS_SUCCESS) ret = PCL("ForceCommand /bin/sh");
+    if (ret == WS_SUCCESS) combined = conf;
+
+    /* single selector blocks must keep matching on their one selector */
+    if (ret == WS_SUCCESS) ret = PCL("Match User bob");
+    if (ret == WS_SUCCESS) ret = PCL("ForceCommand /bin/bob");
+    if (ret == WS_SUCCESS) userOnly = conf;
+
+    if (ret == WS_SUCCESS) ret = PCL("Match Group staff");
+    if (ret == WS_SUCCESS) ret = PCL("ForceCommand /bin/staff");
+    if (ret == WS_SUCCESS) groupOnly = conf;
+#undef PCL
+
+    /* alice in admins satisfies both selectors -> gets the combined block */
+    if (ret == WS_SUCCESS) {
+        grps[0] = "admins";
+        match = wolfSSHD_GetUserConf(head, "alice", grps, 1, NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (match != combined)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* alice in a different group satisfies only the user selector -> must NOT
+     * get the combined block; falls back to the restrictive global head */
+    if (ret == WS_SUCCESS) {
+        grps[0] = "users";
+        match = wolfSSHD_GetUserConf(head, "alice", grps, 1, NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (match != head)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* carol in admins satisfies only the group selector -> must NOT get the
+     * combined block; falls back to the restrictive global head */
+    if (ret == WS_SUCCESS) {
+        grps[0] = "admins";
+        match = wolfSSHD_GetUserConf(head, "carol", grps, 1, NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (match != head)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* alice with no resolved group must NOT get the combined block: an empty
+     * group set cannot satisfy the group selector, so it fails closed to the
+     * global head. This is the WIN32 / failed group-lookup path where
+     * wolfSSHD_AuthGetUserConf passes an empty group list. */
+    if (ret == WS_SUCCESS) {
+        match = wolfSSHD_GetUserConf(head, "alice", NULL, 0, NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (match != head)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* single selector 'Match User bob' still applies on the user alone */
+    if (ret == WS_SUCCESS) {
+        grps[0] = "anygroup";
+        match = wolfSSHD_GetUserConf(head, "bob", grps, 1, NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (match != userOnly)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* single selector 'Match Group staff' still applies on the group alone */
+    if (ret == WS_SUCCESS) {
+        grps[0] = "staff";
+        match = wolfSSHD_GetUserConf(head, "anyuser", grps, 1, NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (match != groupOnly)
+            ret = WS_FATAL_ERROR;
+    }
+
+    wolfSSHD_ConfigFree(head);
+    return ret;
+}
+
+/* A 'Match Group' directive must match on any of the user's groups, primary or
+ * supplementary, the way OpenSSH evaluates it. The matcher receives the full
+ * group set as a list, so a group named only in a secondary slot still selects
+ * the block. The combined 'Match User X Group Y' conjunction must likewise be
+ * satisfiable when the group is a secondary one. */
+static int test_GetUserConfMatchSecondaryGroup(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* head;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_CONFIG* blockWS;
+    WOLFSSHD_CONFIG* blockComb;
+    WOLFSSHD_CONFIG* match;
+    const char* grps[3];
+
+    head = wolfSSHD_ConfigNew(NULL);
+    if (head == NULL)
+        ret = WS_MEMORY_E;
+    conf = head;
+
+#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s), 0)
+    /* restrictive global default */
+    if (ret == WS_SUCCESS) ret = PCL("ForceCommand internal-sftp");
+
+    /* single group selector */
+    if (ret == WS_SUCCESS) ret = PCL("Match Group wireshark");
+    if (ret == WS_SUCCESS) ret = PCL("ForceCommand /bin/ws");
+    if (ret == WS_SUCCESS) blockWS = conf;
+
+    /* combined user AND group selector */
+    if (ret == WS_SUCCESS) ret = PCL("Match User john Group admins");
+    if (ret == WS_SUCCESS) ret = PCL("ForceCommand /bin/adm");
+    if (ret == WS_SUCCESS) blockComb = conf;
+#undef PCL
+
+    /* wireshark present only in a secondary slot must still select the block */
+    if (ret == WS_SUCCESS) {
+        grps[0] = "alice";
+        grps[1] = "staff";
+        grps[2] = "wireshark";
+        match = wolfSSHD_GetUserConf(head, "alice", grps, 3, NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (match != blockWS)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* combined block satisfied with the group in a secondary slot */
+    if (ret == WS_SUCCESS) {
+        grps[0] = "john";
+        grps[1] = "admins";
+        match = wolfSSHD_GetUserConf(head, "john", grps, 2, NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (match != blockComb)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* combined block: user matches but group absent -> falls back to head */
+    if (ret == WS_SUCCESS) {
+        grps[0] = "john";
+        grps[1] = "users";
+        match = wolfSSHD_GetUserConf(head, "john", grps, 2, NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (match != head)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* combined block: group matches but user differs -> falls back to head */
+    if (ret == WS_SUCCESS) {
+        grps[0] = "bob";
+        grps[1] = "admins";
+        match = wolfSSHD_GetUserConf(head, "bob", grps, 2, NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (match != head)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* user in none of the selector groups -> falls back to head */
+    if (ret == WS_SUCCESS) {
+        grps[0] = "carol";
+        match = wolfSSHD_GetUserConf(head, "carol", grps, 1, NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (match != head)
+            ret = WS_FATAL_ERROR;
+    }
+
+    wolfSSHD_ConfigFree(head);
     return ret;
 }
 
@@ -611,6 +807,7 @@ static int test_GetUserConfMatchSubstring(void)
     WOLFSSHD_CONFIG* conf;
     WOLFSSHD_CONFIG* match;
     WOLFSSHD_CONFIG* ghost;
+    const char* grps[1];
 
     head = wolfSSHD_ConfigNew(NULL);
     if (head == NULL)
@@ -627,7 +824,7 @@ static int test_GetUserConfMatchSubstring(void)
 
     /* lookup by the real user name must resolve to the Match node */
     if (ret == WS_SUCCESS) {
-        match = wolfSSHD_GetUserConf(head, "GroupAdmin", NULL, NULL, NULL,
+        match = wolfSSHD_GetUserConf(head, "GroupAdmin", NULL, 0, NULL, NULL,
                                      NULL, NULL, NULL);
         if (match == NULL || match == head)
             ret = WS_FATAL_ERROR;
@@ -640,7 +837,8 @@ static int test_GetUserConfMatchSubstring(void)
     /* lookup by the ghost group token ("Admin") must NOT match; it falls back
      * to the permissive-denied global head */
     if (ret == WS_SUCCESS) {
-        ghost = wolfSSHD_GetUserConf(head, NULL, "Admin", NULL, NULL,
+        grps[0] = "Admin";
+        ghost = wolfSSHD_GetUserConf(head, NULL, grps, 1, NULL, NULL,
                                      NULL, NULL, NULL);
         if (ghost != head)
             ret = WS_FATAL_ERROR;
@@ -667,6 +865,7 @@ static int test_GetUserConfMatchSubstringGroup(void)
     WOLFSSHD_CONFIG* conf;
     WOLFSSHD_CONFIG* match;
     WOLFSSHD_CONFIG* ghost;
+    const char* grps[1];
 
     head = wolfSSHD_ConfigNew(NULL);
     if (head == NULL)
@@ -683,7 +882,8 @@ static int test_GetUserConfMatchSubstringGroup(void)
 
     /* lookup by the real group name must resolve to the Match node */
     if (ret == WS_SUCCESS) {
-        match = wolfSSHD_GetUserConf(head, NULL, "UserStaff", NULL, NULL,
+        grps[0] = "UserStaff";
+        match = wolfSSHD_GetUserConf(head, NULL, grps, 1, NULL, NULL,
                                      NULL, NULL, NULL);
         if (match == NULL || match == head)
             ret = WS_FATAL_ERROR;
@@ -696,7 +896,7 @@ static int test_GetUserConfMatchSubstringGroup(void)
     /* lookup by the ghost user token ("Staff") must NOT match; it falls back
      * to the permissive-denied global head */
     if (ret == WS_SUCCESS) {
-        ghost = wolfSSHD_GetUserConf(head, "Staff", NULL, NULL, NULL,
+        ghost = wolfSSHD_GetUserConf(head, "Staff", NULL, 0, NULL, NULL,
                                      NULL, NULL, NULL);
         if (ghost != head)
             ret = WS_FATAL_ERROR;
@@ -726,6 +926,7 @@ static int test_GetUserConfMatchLiteralKeywordName(void)
     WOLFSSHD_CONFIG* conf;
     WOLFSSHD_CONFIG* match;
     WOLFSSHD_CONFIG* ghost;
+    const char* grps[1];
 
     head = wolfSSHD_ConfigNew(NULL);
     if (head == NULL)
@@ -742,7 +943,7 @@ static int test_GetUserConfMatchLiteralKeywordName(void)
 
     /* lookup by the user name "Group" must resolve to the Match node */
     if (ret == WS_SUCCESS) {
-        match = wolfSSHD_GetUserConf(head, "Group", NULL, NULL, NULL,
+        match = wolfSSHD_GetUserConf(head, "Group", NULL, 0, NULL, NULL,
                                      NULL, NULL, NULL);
         if (match == NULL || match == head)
             ret = WS_FATAL_ERROR;
@@ -755,7 +956,8 @@ static int test_GetUserConfMatchLiteralKeywordName(void)
     /* the user name must NOT have leaked into groupAppliesTo: a lookup by group
      * "Group" must fall back to the permissive-denied global head */
     if (ret == WS_SUCCESS) {
-        ghost = wolfSSHD_GetUserConf(head, NULL, "Group", NULL, NULL,
+        grps[0] = "Group";
+        ghost = wolfSSHD_GetUserConf(head, NULL, grps, 1, NULL, NULL,
                                      NULL, NULL, NULL);
         if (ghost != head)
             ret = WS_FATAL_ERROR;
@@ -835,7 +1037,7 @@ static int test_GetUserConfMatchRepeatedKeyword(void)
 
     /* lookup by the replacement name "b" must resolve to the Match node */
     if (ret == WS_SUCCESS) {
-        match = wolfSSHD_GetUserConf(head, "b", NULL, NULL, NULL,
+        match = wolfSSHD_GetUserConf(head, "b", NULL, 0, NULL, NULL,
                                      NULL, NULL, NULL);
         if (match == NULL || match == head ||
             wolfSSHD_ConfigGetPwAuth(match) != 1)
@@ -844,71 +1046,9 @@ static int test_GetUserConfMatchRepeatedKeyword(void)
 
     /* lookup by the replaced name "a" must NOT match; it falls back to head */
     if (ret == WS_SUCCESS) {
-        old = wolfSSHD_GetUserConf(head, "a", NULL, NULL, NULL,
+        old = wolfSSHD_GetUserConf(head, "a", NULL, 0, NULL, NULL,
                                    NULL, NULL, NULL);
         if (old != head)
-            ret = WS_FATAL_ERROR;
-    }
-    if (ret == WS_SUCCESS) {
-        if (wolfSSHD_ConfigGetPwAuth(head) != 0)
-            ret = WS_FATAL_ERROR;
-    }
-
-    wolfSSHD_ConfigFree(head);
-    return ret;
-}
-
-/* A single Match line carrying both criteria ("Match User alice Group admins")
- * is parsed as two keyword/name pairs, setting both usrAppliesTo="alice" and
- * groupAppliesTo="admins" on one node. Both the user and the group lookup must
- * resolve to that node, while unrelated names fall back to the global head.
- * This locks in that the parser still extracts both names when both keywords
- * share a line. */
-static int test_GetUserConfMatchUserAndGroup(void)
-{
-    int ret = WS_SUCCESS;
-    WOLFSSHD_CONFIG* head;
-    WOLFSSHD_CONFIG* conf;
-    WOLFSSHD_CONFIG* byUsr;
-    WOLFSSHD_CONFIG* byGrp;
-    WOLFSSHD_CONFIG* other;
-
-    head = wolfSSHD_ConfigNew(NULL);
-    if (head == NULL)
-        ret = WS_MEMORY_E;
-    conf = head;
-
-#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s), 0)
-    if (ret == WS_SUCCESS) ret = PCL("PasswordAuthentication no");
-
-    /* both criteria on one line */
-    if (ret == WS_SUCCESS) ret = PCL("Match User alice Group admins");
-    if (ret == WS_SUCCESS) ret = PCL("PasswordAuthentication yes");
-#undef PCL
-
-    /* lookup by the user criterion must resolve to the Match node */
-    if (ret == WS_SUCCESS) {
-        byUsr = wolfSSHD_GetUserConf(head, "alice", NULL, NULL, NULL,
-                                     NULL, NULL, NULL);
-        if (byUsr == NULL || byUsr == head ||
-            wolfSSHD_ConfigGetPwAuth(byUsr) != 1)
-            ret = WS_FATAL_ERROR;
-    }
-
-    /* lookup by the group criterion must resolve to the same Match node */
-    if (ret == WS_SUCCESS) {
-        byGrp = wolfSSHD_GetUserConf(head, NULL, "admins", NULL, NULL,
-                                     NULL, NULL, NULL);
-        if (byGrp == NULL || byGrp == head ||
-            wolfSSHD_ConfigGetPwAuth(byGrp) != 1)
-            ret = WS_FATAL_ERROR;
-    }
-
-    /* unrelated user and group must fall back to the permissive-denied head */
-    if (ret == WS_SUCCESS) {
-        other = wolfSSHD_GetUserConf(head, "bob", "staff", NULL, NULL,
-                                     NULL, NULL, NULL);
-        if (other != head)
             ret = WS_FATAL_ERROR;
     }
     if (ret == WS_SUCCESS) {
@@ -1229,6 +1369,47 @@ static void InstallPrivDropStubs(int regidRet, int reuidRet,
     s_setreuid_arg0   = s_setreuid_arg1 = 0;
 }
 
+/* Exercises the group-name enumeration helper against the account running the
+ * test. Covers the allocation and ownership contract end to end (the names
+ * array, each duplicated name, and the gid scratch buffer) so a sanitizer run
+ * guards the new auth.c cleanup paths. */
+static int test_GetUserGroupNames(void)
+{
+    int ret = WS_SUCCESS;
+    struct passwd* pw;
+    char** names = NULL;
+    word32 count = 0;
+    word32 i;
+
+    pw = getpwuid(getuid());
+    if (pw == NULL) {
+        /* no account for the running uid, nothing to exercise */
+        return WS_SUCCESS;
+    }
+
+    ret = wolfSSHD_GetUserGroupNames(NULL, pw->pw_name, pw->pw_gid, &names,
+            &count);
+
+    /* every user belongs to at least their primary group */
+    if (ret == WS_SUCCESS) {
+        if (names == NULL || count == 0)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* unresolvable gids are skipped, so every populated entry is non-NULL */
+    if (ret == WS_SUCCESS) {
+        for (i = 0; i < count; i++) {
+            if (names[i] == NULL) {
+                ret = WS_FATAL_ERROR;
+                break;
+            }
+        }
+    }
+
+    wolfSSHD_FreeUserGroupNames(NULL, names, count);
+    return ret;
+}
+
 static int test_AuthReducePermissionsUser_ok(void)
 {
     int    ret     = WS_SUCCESS;
@@ -1434,7 +1615,8 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_GetUserConfMatchLiteralKeywordName),
     TEST_DECL(test_GetUserConfMatchBareKeyword),
     TEST_DECL(test_GetUserConfMatchRepeatedKeyword),
-    TEST_DECL(test_GetUserConfMatchUserAndGroup),
+    TEST_DECL(test_GetUserConfMatchGroupAnd),
+    TEST_DECL(test_GetUserConfMatchSecondaryGroup),
     TEST_DECL(test_CAKeysFileDiffers),
     TEST_DECL(test_IncludeRecursionBound),
     TEST_DECL(test_GetUserAuthTypes),
@@ -1443,6 +1625,7 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_CheckAuthKeysLine),
 #endif
 #ifndef _WIN32
+    TEST_DECL(test_GetUserGroupNames),
     TEST_DECL(test_AuthReducePermissionsUser_ok),
     TEST_DECL(test_AuthReducePermissionsUser_gid_fail),
     TEST_DECL(test_AuthReducePermissionsUser_uid_fail),

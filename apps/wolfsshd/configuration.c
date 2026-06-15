@@ -1397,30 +1397,56 @@ static int ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename, int depth)
 
 /* returns the config associated with the user */
 WOLFSSHD_CONFIG* wolfSSHD_GetUserConf(const WOLFSSHD_CONFIG* conf,
-        const char* usr, const char* grp, const char* host,
+        const char* usr, const char** grps, word32 grpCount, const char* host,
         const char* localAdr, word16* localPort, const char* RDomain,
         const char* adr)
 {
     WOLFSSHD_CONFIG* ret;
     WOLFSSHD_CONFIG* current;
+    int matches;
+    word32 i;
 
     /* default to return head of list */
     ret = current = (WOLFSSHD_CONFIG*)conf;
     while (current != NULL) {
-        /* compare current configs user */
-        if (usr != NULL && current->usrAppliesTo != NULL) {
-            if (XSTRCMP(current->usrAppliesTo, usr) == 0) {
-                ret = current;
-                break;
+        /* A node is a Match candidate only if it carries at least one
+         * selector. Every non-NULL selector on the node must match for the
+         * node to apply, so a combined 'Match User X Group Y' is treated as a
+         * conjunction the same way OpenSSH treats a Match line. A NULL
+         * selector acts as a wildcard. */
+        matches = 0;
+        if (current->usrAppliesTo != NULL || current->groupAppliesTo != NULL) {
+            matches = 1;
+
+            if (current->usrAppliesTo != NULL) {
+                if (usr == NULL ||
+                        XSTRCMP(current->usrAppliesTo, usr) != 0) {
+                    matches = 0;
+                }
+            }
+
+            /* The group selector matches when it equals any group the user
+             * belongs to, primary or supplementary, mirroring how OpenSSH
+             * evaluates 'Match Group'. An empty group list matches no group
+             * selector, so combined blocks fail closed. */
+            if (matches && current->groupAppliesTo != NULL) {
+                matches = 0;
+                if (grps != NULL) {
+                    for (i = 0; i < grpCount; i++) {
+                        if (grps[i] == NULL)
+                            continue;
+                        if (XSTRCMP(current->groupAppliesTo, grps[i]) == 0) {
+                            matches = 1;
+                            break;
+                        }
+                    }
+                }
             }
         }
 
-        /* compare current configs group */
-        if (grp != NULL && current->groupAppliesTo != NULL) {
-            if (XSTRCMP(current->groupAppliesTo, grp) == 0) {
-                ret = current;
-                break;
-            }
+        if (matches) {
+            ret = current;
+            break;
         }
 
         current = current->next;

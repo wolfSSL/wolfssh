@@ -1084,10 +1084,10 @@ static int DoCheckUser(const char* usr, WOLFSSHD_AUTH* auth)
          * scoped to this branch.
          *
          * A NULL return means the root user's configuration could not be
-         * resolved (e.g. getgrgid() failure inside wolfSSHD_AuthGetUserConf).
-         * Fail closed and reject the login in that case rather than falling
-         * back to the global node, since denying root on an unresolvable
-         * configuration is the safe choice. */
+         * resolved (e.g. group set enumeration failed inside
+         * wolfSSHD_AuthGetUserConf). Fail closed and reject the login in that
+         * case rather than falling back to the global node, since denying root
+         * on an unresolvable configuration is the safe choice. */
         usrConf = wolfSSHD_AuthGetUserConf(auth, usr, NULL, NULL, NULL, NULL,
                                            NULL);
         if (usrConf == NULL || wolfSSHD_ConfigGetPermitRoot(usrConf) == 0) {
@@ -1194,7 +1194,7 @@ static int RequestAuthentication(WS_UserAuthData* authData,
      * non-Match users while enforcing Match restrictions.
      *
      * A NULL return here means the user's configuration could not be resolved
-     * (e.g. the primary group is unresolvable and getgrgid() failed inside
+     * (e.g. the user's group set could not be enumerated inside
      * wolfSSHD_AuthGetUserConf). DoCheckUser has already confirmed the user
      * exists, so this is a rare edge. Fail closed rather than fall back to the
      * permissive global node: such a user cannot complete a session anyway
@@ -1752,6 +1752,144 @@ int wolfSSHD_AuthReducePermissions(WOLFSSHD_AUTH* auth)
 #else
     #define WGETGROUPLIST(x,y,z,w) getgrouplist((x),(y),(z),(w))
 #endif
+
+/* Initial guess and upper bound for the number of groups a user can be in.
+ * getgrouplist cannot be reliably sized with a NULL probe (macOS returns
+ * success with size 0 and, when the buffer is too small, echoes the input size
+ * rather than the needed count), so the buffer grows from the guess up to the
+ * bound. */
+#ifndef WOLFSSHD_GROUP_LIST_INIT
+#define WOLFSSHD_GROUP_LIST_INIT 32
+#endif
+#ifndef WOLFSSHD_GROUP_LIST_MAX
+#define WOLFSSHD_GROUP_LIST_MAX 65536
+#endif
+
+/* frees a group name array previously built by wolfSSHD_GetUserGroupNames */
+WOLFSSHD_STATIC void wolfSSHD_FreeUserGroupNames(void* heap, char** names,
+        word32 count)
+{
+    word32 i;
+
+    if (names != NULL) {
+        for (i = 0; i < count; i++) {
+            WFREE(names[i], heap, DYNTYPE_SSHD);
+        }
+        WFREE(names, heap, DYNTYPE_SSHD);
+    }
+}
+
+/* Builds the list of group names the user belongs to, primary plus
+ * supplementary, so Match Group can be evaluated against the full set. On
+ * success sets *outNames to an owned array of owned names and *outCount to the
+ * entry count; the caller frees them with wolfSSHD_FreeUserGroupNames. Returns
+ * WS_SUCCESS on success, leaving *outNames NULL on failure. */
+WOLFSSHD_STATIC int wolfSSHD_GetUserGroupNames(void* heap, const char* usr,
+        WGID_T primaryGid, char*** outNames, word32* outCount)
+{
+    int ret = WS_SUCCESS;
+    int grpListSz = 0;
+    int allocSz;
+    int res;
+    int i;
+    gid_t* grpList = NULL;
+    char** names = NULL;
+    struct group* g;
+    word32 count = 0;
+
+    *outNames = NULL;
+    *outCount = 0;
+
+#if defined(__QNX__) || defined(__QNXNTO__)
+    /* QNX cannot report the size ahead of time, so allocate the max and fill
+     * once; getgrouplist returns 0 on success there. */
+    allocSz = (int)sysconf(_SC_NGROUPS_MAX);
+    if (allocSz <= 0) {
+        ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        grpList = (gid_t*)WMALLOC(sizeof(gid_t) * allocSz, heap, DYNTYPE_SSHD);
+        if (grpList == NULL) {
+            ret = WS_MEMORY_E;
+        }
+    }
+    if (ret == WS_SUCCESS) {
+        grpListSz = allocSz;
+        res = WGETGROUPLIST(usr, primaryGid, grpList, &grpListSz);
+        if (res != 0) {
+            ret = WS_FATAL_ERROR;
+        }
+    }
+#else
+    /* Grow the buffer until the lookup fits: a NULL probe is unreliable and a
+     * too-small buffer does not report the needed count on all platforms. On
+     * success grpListSz holds the actual number of groups. */
+    allocSz = WOLFSSHD_GROUP_LIST_INIT;
+    res = -1;
+    while (ret == WS_SUCCESS && res < 0) {
+        grpList = (gid_t*)WMALLOC(sizeof(gid_t) * allocSz, heap, DYNTYPE_SSHD);
+        if (grpList == NULL) {
+            ret = WS_MEMORY_E;
+            break;
+        }
+
+        grpListSz = allocSz;
+        res = WGETGROUPLIST(usr, primaryGid, grpList, &grpListSz);
+        if (res < 0) {
+            /* buffer too small: discard, grow, and retry up to the cap */
+            WFREE(grpList, heap, DYNTYPE_SSHD);
+            grpList = NULL;
+            if (allocSz >= WOLFSSHD_GROUP_LIST_MAX) {
+                ret = WS_FATAL_ERROR;
+                break;
+            }
+            allocSz *= 2;
+            if (allocSz > WOLFSSHD_GROUP_LIST_MAX) {
+                allocSz = WOLFSSHD_GROUP_LIST_MAX;
+            }
+        }
+    }
+#endif
+
+    if (ret == WS_SUCCESS) {
+        names = (char**)WMALLOC(sizeof(char*) * grpListSz, heap, DYNTYPE_SSHD);
+        if (names == NULL) {
+            ret = WS_MEMORY_E;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        for (i = 0; i < grpListSz; i++) {
+            /* Skip gids that do not resolve to a name rather than failing the
+             * login, matching OpenSSH. Copy immediately, since getgrgid reuses
+             * a static buffer the next call overwrites. */
+            g = getgrgid(grpList[i]);
+            if (g == NULL || g->gr_name == NULL) {
+                continue;
+            }
+            names[count] = WSTRDUP(g->gr_name, heap, DYNTYPE_SSHD);
+            if (names[count] == NULL) {
+                ret = WS_MEMORY_E;
+                break;
+            }
+            count++;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        *outNames = names;
+        *outCount = count;
+    }
+    else {
+        wolfSSHD_FreeUserGroupNames(heap, names, count);
+    }
+
+    if (grpList != NULL) {
+        WFREE(grpList, heap, DYNTYPE_SSHD);
+    }
+
+    return ret;
+}
 #endif /* WIN32 */
 
 /* sets the extended groups the user is in, returns WS_SUCCESS on success */
@@ -1827,32 +1965,38 @@ WOLFSSHD_CONFIG* wolfSSHD_AuthGetUserConf(const WOLFSSHD_AUTH* auth,
         const char* adr)
 {
     WOLFSSHD_CONFIG* ret = NULL;
+    char** grpNames = NULL;
+    word32 grpCount = 0;
 
     if (auth != NULL) {
-        char* gName = NULL;
-
         if (usr != NULL) {
 #ifdef WIN32
-            //LogonUserEx()
+            /* LogonUserEx(): group lookup is not implemented on Windows, so
+             * Match Group directives do not apply here */
 #else
             struct passwd* p_passwd;
-            struct group* g = NULL;
 
             p_passwd = getpwnam((const char *)usr);
             if (p_passwd == NULL) {
                 return NULL;
             }
 
-            g = getgrgid(p_passwd->pw_gid);
-            if (g == NULL) {
+            /* Resolve the full group set (primary and supplementary) so a
+             * Match Group directive matches on any of the user's groups.
+             * Fail closed if the groups cannot be enumerated. */
+            if (wolfSSHD_GetUserGroupNames(auth->heap, usr, p_passwd->pw_gid,
+                    &grpNames, &grpCount) != WS_SUCCESS) {
                 return NULL;
             }
-            gName = g->gr_name;
 #endif
         }
 
-        ret = wolfSSHD_GetUserConf(auth->conf, usr, gName, host, localAdr,
-            localPort, RDomain, adr);
+        ret = wolfSSHD_GetUserConf(auth->conf, usr, (const char**)grpNames,
+            grpCount, host, localAdr, localPort, RDomain, adr);
+
+#ifndef WIN32
+        wolfSSHD_FreeUserGroupNames(auth->heap, grpNames, grpCount);
+#endif
     }
     return ret;
 }
