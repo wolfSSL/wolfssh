@@ -63,7 +63,7 @@ long wolfSSHD_ConfigGetGraceTime(const WOLFSSHD_CONFIG* conf);
 byte wolfSSHD_ConfigGetPwAuth(const WOLFSSHD_CONFIG* conf);
 byte wolfSSHD_ConfigGetPubKeyAuth(const WOLFSSHD_CONFIG* conf);
 WOLFSSHD_CONFIG* wolfSSHD_GetUserConf(const WOLFSSHD_CONFIG* conf,
-        const char* usr, const char* grp, const char* host,
+        const char* usr, const char** grps, word32 grpCount, const char* host,
         const char* localAdr, word16* localPort, const char* RDomain,
         const char* adr);
 void wolfSSHD_ConfigSavePID(const WOLFSSHD_CONFIG* conf);

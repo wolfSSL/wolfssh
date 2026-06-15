@@ -17,6 +17,8 @@ apps_wolfsshd_test_test_configuration_SOURCES = apps/wolfsshd/test/test_configur
                                                 apps/wolfsshd/auth.h
 apps_wolfsshd_test_test_configuration_LDADD        = src/libwolfssh.la
 apps_wolfsshd_test_test_configuration_DEPENDENCIES = src/libwolfssh.la
-apps_wolfsshd_test_test_configuration_CPPFLAGS     = $(AM_CPPFLAGS) -DWOLFSSH_SSHD -DWOLFSSHD_UNIT_TEST -I$(srcdir)/apps/wolfsshd/
+# Force the smallest initial group buffer so test_GetUserGroupNames exercises
+# the getgrouplist buffer-growth/realloc loop under the sanitizers.
+apps_wolfsshd_test_test_configuration_CPPFLAGS     = $(AM_CPPFLAGS) -DWOLFSSH_SSHD -DWOLFSSHD_UNIT_TEST -DWOLFSSHD_GROUP_LIST_INIT=1 -I$(srcdir)/apps/wolfsshd/
 
 endif BUILD_SSHD
