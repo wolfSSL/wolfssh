@@ -723,7 +723,7 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value, int depth)
 
             if (ret == WS_SUCCESS) {
                 if (!WOPENDIR(NULL, conf->heap, &d, path)) {
-                    word32 fileCount = 0, i, j;
+                    word32 fileCount = 0, fileFilled = 0, i, j;
                     char** fileNames = NULL;
 
                     /* Count up the number of files */
@@ -749,6 +749,12 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value, int depth)
                         if (fileNames == NULL) {
                             ret = WS_MEMORY_E;
                         }
+                        else {
+                            /* Zero so any slot not filled by the second pass
+                             * (e.g. files removed from the directory between
+                             * the two passes) is NULL rather than garbage. */
+                            WMEMSET(fileNames, 0, fileCount * sizeof(char*));
+                        }
                     }
 
                     if (ret == WS_SUCCESS) {
@@ -764,21 +770,33 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value, int depth)
                             if (dir->d_type != DT_DIR)
                         #endif
                             {
+                                /* Duplicate the name; readdir() may reuse its
+                                 * dirent storage on the next call, so the
+                                 * pointer cannot be retained across the loop. */
+                                char* nameCopy = WSTRDUP(dir->d_name, conf->heap,
+                                        DYNTYPE_PATH);
+                                if (nameCopy == NULL) {
+                                    ret = WS_MEMORY_E;
+                                    break;
+                                }
                                 /* Insert in string order */
                                 for (j = 0; j < i; j++) {
-                                    if (WSTRCMP(dir->d_name, fileNames[j])
-                                            < 0) {
+                                    if (WSTRCMP(nameCopy, fileNames[j]) < 0) {
                                         WMEMMOVE(fileNames+j+1, fileNames+j,
                                                 (i - j)*sizeof(char*));
                                         break;
                                     }
                                 }
-                                fileNames[j] = dir->d_name;
+                                fileNames[j] = nameCopy;
                                 i++;
                             }
                         }
+                        /* Only process slots actually filled by the second
+                         * pass; the directory may have shrunk since the
+                         * count pass. */
+                        fileFilled = i;
 
-                        for (i = 0; i < fileCount; i++) {
+                        for (i = 0; ret == WS_SUCCESS && i < fileFilled; i++) {
                             /* Check if filename prefix matches */
                             if (prefixLen > 0) {
                                 if ((int)WSTRLEN(fileNames[i]) <= prefixLen) {
@@ -817,6 +835,14 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value, int depth)
                             }
                         }
 
+                        /* Free the duplicated names. fileFilled counts the
+                         * slots actually populated, so every entry below it
+                         * holds a valid pointer. */
+                        for (i = 0; i < fileFilled; i++) {
+                            if (fileNames[i] != NULL) {
+                                WFREE(fileNames[i], conf->heap, DYNTYPE_PATH);
+                            }
+                        }
                         if (fileNames != NULL) {
                             WFREE(fileNames, conf->heap, DYNTYPE_PATH);
                         }
