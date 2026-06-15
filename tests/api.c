@@ -42,6 +42,7 @@
 #endif
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
+#include <wolfssh/log.h>
 #ifdef WOLFSSH_SCP
     #include <wolfssh/wolfscp.h>
 #endif
@@ -2948,6 +2949,49 @@ static void test_wstrcat(void)
 }
 
 
+#if defined(DEBUG_WOLFSSH) || defined(WOLFSSH_SSHD)
+static char logCaptureBuf[256];
+static void logCaptureCb(enum wolfSSH_LogLevel level, const char* msg)
+{
+    (void)level;
+    WSTRNCPY(logCaptureBuf, msg, sizeof(logCaptureBuf));
+    logCaptureBuf[sizeof(logCaptureBuf) - 1] = '\0';
+}
+#endif
+
+static void test_wolfSSH_Log_sanitize(void)
+{
+#if defined(DEBUG_WOLFSSH) || defined(WOLFSSH_SSHD)
+    /* This installs a capture callback that is intentionally left in place:
+     * wolfSSH_SetLoggingCb() ignores NULL and the default callback has internal
+     * linkage, so there is no way to restore it. This is safe for the suite
+     * because logging is disabled by default (wolfSSH_LogEnabled() is 0, so
+     * WLOG() sinks do not fire) and no later test inspects log output. If a
+     * future test needs the default sink, restore it here instead. */
+    wolfSSH_SetLoggingCb(logCaptureCb);
+
+    /* an embedded CR/LF in a %s argument must not reach the sink intact */
+    logCaptureBuf[0] = '\0';
+    wolfSSH_Log(WS_LOG_DEBUG, "value = %s", "a\r\nFORGED [INFO] ok");
+    AssertNotNull(WSTRSTR(logCaptureBuf, "value = a"));
+    AssertNull(WSTRCHR(logCaptureBuf, '\n'));
+    AssertNull(WSTRCHR(logCaptureBuf, '\r'));
+
+    /* other control bytes and DEL are scrubbed; tab is preserved */
+    logCaptureBuf[0] = '\0';
+    wolfSSH_Log(WS_LOG_DEBUG, "%s", "x\033[31m\177\ty");
+    AssertNull(WSTRCHR(logCaptureBuf, '\033'));
+    AssertNull(WSTRCHR(logCaptureBuf, '\177'));
+    AssertNotNull(WSTRCHR(logCaptureBuf, '\t'));
+
+    /* clean strings pass through unchanged */
+    logCaptureBuf[0] = '\0';
+    wolfSSH_Log(WS_LOG_DEBUG, "ssh-userauth %u", 22u);
+    AssertStrEQ(logCaptureBuf, "ssh-userauth 22");
+#endif /* DEBUG_WOLFSSH || WOLFSSH_SSHD */
+}
+
+
 #if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
     !defined(NO_WOLFSSH_SERVER)
 struct RealPathTestCase {
@@ -3538,6 +3582,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     #endif /* HAVE_FIPS */
 
     test_wstrcat();
+    test_wolfSSH_Log_sanitize();
     test_wolfSSH_CTX_new();
     test_server_wolfSSH_new();
     test_client_wolfSSH_new();
