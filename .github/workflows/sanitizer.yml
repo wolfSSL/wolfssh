@@ -12,9 +12,21 @@ concurrency:
 
 jobs:
   build_wolfssl:
-    name: Build wolfSSL
+    name: Build wolfSSL (${{ matrix.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: spmath
+            config: "--enable-wolfssh --enable-keygen --enable-pkcallbacks"
+          # Heap math keeps big numbers (RSA/ECC key material) in heap
+          # allocations. The default SP math keeps them in fixed buffers
+          # inside the key struct, so a leaked key is invisible to
+          # LeakSanitizer. This variant makes such leaks detectable.
+          - name: heapmath
+            config: "--enable-wolfssh --enable-keygen --enable-pkcallbacks --enable-heapmath"
     steps:
       - name: Checkout wolfSSL
         uses: actions/checkout@v6
@@ -26,7 +38,7 @@ jobs:
         working-directory: ./wolfssl
         run: |
           ./autogen.sh
-          ./configure --enable-wolfssh --enable-keygen --enable-pkcallbacks
+          ./configure ${{ matrix.config }}
           make -j$(nproc)
           sudo make install
           sudo ldconfig
@@ -37,7 +49,7 @@ jobs:
       - name: Upload built lib
         uses: actions/upload-artifact@v7
         with:
-          name: wolfssl-sanitizer
+          name: wolfssl-sanitizer-${{ matrix.name }}
           path: wolfssl-install.tgz
           retention-days: 5
 
@@ -51,11 +63,19 @@ jobs:
       matrix:
         include:
           - name: "ASan"
+            wolfssl: spmath
             cflags: "-fsanitize=address -fno-omit-frame-pointer -g -O1"
             ldflags: "-fsanitize=address"
           - name: "UBSan"
+            wolfssl: spmath
             cflags: "-fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g"
             ldflags: "-fsanitize=undefined"
+          # ASan against a heap-math wolfSSL so LeakSanitizer can see a
+          # leaked key (see the build_wolfssl heapmath note above).
+          - name: "ASan (heap math)"
+            wolfssl: heapmath
+            cflags: "-fsanitize=address -fno-omit-frame-pointer -g -O1"
+            ldflags: "-fsanitize=address"
 
     steps:
       - name: Workaround high-entropy ASLR
@@ -67,7 +87,7 @@ jobs:
       - name: Download wolfSSL
         uses: actions/download-artifact@v8
         with:
-          name: wolfssl-sanitizer
+          name: wolfssl-sanitizer-${{ matrix.wolfssl }}
 
       - name: Install wolfSSL
         run: |

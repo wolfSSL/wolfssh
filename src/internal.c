@@ -5099,6 +5099,10 @@ struct wolfSSH_sigKeyBlock {
 };
 
 
+/* Defined next to its counterpart FreePubKey() below. */
+static int InitPubKey(struct wolfSSH_sigKeyBlock *p, WOLFSSH *ssh);
+
+
 /* Parse out a RAW RSA public key from buffer */
 static int ParseRSAPubKey(WOLFSSH *ssh,
     struct wolfSSH_sigKeyBlock *sigKeyBlock_ptr, byte *pubKey, word32 pubKeySz)
@@ -5111,9 +5115,7 @@ static int ParseRSAPubKey(WOLFSSH *ssh,
     word32 nSz;
     word32 pubKeyIdx = 0;
 
-    ret = wc_InitRsaKey(&sigKeyBlock_ptr->sk.rsa.key, ssh->ctx->heap);
-    if (ret != 0)
-        ret = WS_RSA_E;
+    ret = InitPubKey(sigKeyBlock_ptr, ssh);
     /* Skip the algo name. */
     if (ret == WS_SUCCESS)
         ret = GetSkip(pubKey, pubKeySz, &pubKeyIdx);
@@ -5137,7 +5139,6 @@ static int ParseRSAPubKey(WOLFSSH *ssh,
 
     if (ret == 0) {
         sigKeyBlock_ptr->keySz = (word32)sizeof(sigKeyBlock_ptr->sk.rsa.key);
-        sigKeyBlock_ptr->keyAllocated = 1;
     }
     else
         ret = WS_RSA_E;
@@ -5160,21 +5161,12 @@ static int ParseECCPubKey(WOLFSSH *ssh,
     word32 pubKeyIdx = 0;
     int primeId = 0;
 
-    ret = wc_ecc_init_ex(&sigKeyBlock_ptr->sk.ecc.key, ssh->ctx->heap,
-                                 INVALID_DEVID);
-    if (ret == 0) {
-        /* The key is initialized. Mark it so that FreePubKey() cleans
-         * it up on all paths, including the error paths below. */
-        sigKeyBlock_ptr->keyAllocated = 1;
-    }
+    ret = InitPubKey(sigKeyBlock_ptr, ssh);
 #ifdef HAVE_WC_ECC_SET_RNG
-    if (ret == 0)
-        ret = wc_ecc_set_rng(&sigKeyBlock_ptr->sk.ecc.key, ssh->rng);
-#endif
-    if (ret != 0)
+    if (ret == WS_SUCCESS
+            && wc_ecc_set_rng(&sigKeyBlock_ptr->sk.ecc.key, ssh->rng) != 0)
         ret = WS_ECC_E;
-    else
-        ret = WS_SUCCESS;
+#endif
 
     /* Get the algorithm name in the key block. It must match the
      * negotiated host key algorithm. Do not trust the key blob to
@@ -5262,10 +5254,7 @@ static int ParseEd25519PubKey(WOLFSSH *ssh,
     const byte* encA;
     word32 encASz, pubKeyIdx = 0;
 
-    ret = wc_ed25519_init_ex(&sigKeyBlock_ptr->sk.ed25519.key,
-            ssh->ctx->heap, INVALID_DEVID);
-    if (ret != 0)
-        ret = WS_ED25519_E;
+    ret = InitPubKey(sigKeyBlock_ptr, ssh);
 
     /* Skip the algo name */
     if (ret == WS_SUCCESS) {
@@ -5284,9 +5273,6 @@ static int ParseEd25519PubKey(WOLFSSH *ssh,
         }
     }
 
-    if (ret == 0) {
-        sigKeyBlock_ptr->keyAllocated = 1;
-    }
     return ret;
 }
 #else
@@ -5466,8 +5452,7 @@ static int ParseECCPubKeyCert(WOLFSSH *ssh,
 
     ret = ParsePubKeyCert(ssh, pubKey, pubKeySz, &der, &derSz);
     if (ret == WS_SUCCESS) {
-        error = wc_ecc_init_ex(&sigKeyBlock_ptr->sk.ecc.key, ssh->ctx->heap,
-                                 INVALID_DEVID);
+        error = InitPubKey(sigKeyBlock_ptr, ssh);
     #ifdef HAVE_WC_ECC_SET_RNG
         if (error == 0)
             error = wc_ecc_set_rng(&sigKeyBlock_ptr->sk.ecc.key, ssh->rng);
@@ -5477,7 +5462,6 @@ static int ParseECCPubKeyCert(WOLFSSH *ssh,
                 &sigKeyBlock_ptr->sk.ecc.key, derSz);
         if (error == 0) {
             sigKeyBlock_ptr->keySz = (word32)sizeof(sigKeyBlock_ptr->sk.ecc.key);
-            sigKeyBlock_ptr->keyAllocated = 1;
         }
         if (error != 0)
             ret = error;
@@ -5508,14 +5492,13 @@ static int ParseRSAPubKeyCert(WOLFSSH *ssh,
 
     ret = ParsePubKeyCert(ssh, pubKey, pubKeySz, &der, &derSz);
     if (ret == WS_SUCCESS) {
-        error = wc_InitRsaKey(&sigKeyBlock_ptr->sk.rsa.key, ssh->ctx->heap);
+        error = InitPubKey(sigKeyBlock_ptr, ssh);
         if (error == 0)
             error = wc_RsaPublicKeyDecode(der, &idx,
                                           &sigKeyBlock_ptr->sk.rsa.key, derSz);
         if (error == 0) {
             sigKeyBlock_ptr->keySz =
                 (word32)sizeof(sigKeyBlock_ptr->sk.rsa.key);
-            sigKeyBlock_ptr->keyAllocated = 1;
         }
         if (error != 0)
             ret = error;
@@ -5580,6 +5563,43 @@ static int ParsePubKey(WOLFSSH *ssh,
         default:
             ret = WS_INVALID_ALGO_ID;
     }
+
+    return ret;
+}
+
+
+/* Initialize the key in the block for its negotiated type. Sets
+ * keyAllocated so FreePubKey() releases it on every path, including the
+ * callers' error paths. Counterpart to FreePubKey(); the caller sets the
+ * use* flag before calling. */
+static int InitPubKey(struct wolfSSH_sigKeyBlock *p, WOLFSSH *ssh)
+{
+    int ret = WS_INVALID_ALGO_ID;
+    WOLFSSH_UNUSED(ssh);
+
+    if (p->useRsa) {
+    #ifndef WOLFSSH_NO_RSA
+        ret = (wc_InitRsaKey(&p->sk.rsa.key, ssh->ctx->heap) == 0) ?
+            WS_SUCCESS : WS_RSA_E;
+    #endif
+    }
+    else if (p->useEcc) {
+    #ifndef WOLFSSH_NO_ECDSA
+        ret = (wc_ecc_init_ex(&p->sk.ecc.key, ssh->ctx->heap, INVALID_DEVID)
+            == 0) ? WS_SUCCESS : WS_ECC_E;
+    #endif
+    }
+    else if (p->useEd25519) {
+    #ifndef WOLFSSH_NO_ED25519
+        ret = (wc_ed25519_init_ex(&p->sk.ed25519.key, ssh->ctx->heap,
+            INVALID_DEVID) == 0) ? WS_SUCCESS : WS_ED25519_E;
+    #endif
+    }
+
+    /* Mark the key allocated as soon as init succeeds so FreePubKey()
+     * frees it even if a later parse step fails. */
+    if (ret == WS_SUCCESS)
+        p->keyAllocated = 1;
 
     return ret;
 }
@@ -18542,6 +18562,19 @@ int wolfSSH_TestDoUserAuthRequestRsaCert(WOLFSSH* ssh,
 
 #endif /* WOLFSSH_CERTS */
 
+int wolfSSH_TestParseRSAPubKey(WOLFSSH* ssh, byte* pubKey, word32 pubKeySz)
+{
+    struct wolfSSH_sigKeyBlock sigKeyBlock;
+    int ret;
+
+    WMEMSET(&sigKeyBlock, 0, sizeof(sigKeyBlock));
+    sigKeyBlock.useRsa = 1;
+    ret = ParseRSAPubKey(ssh, &sigKeyBlock, pubKey, pubKeySz);
+    FreePubKey(&sigKeyBlock);
+
+    return ret;
+}
+
 #endif /* !WOLFSSH_NO_RSA */
 
 #ifndef WOLFSSH_NO_ECDSA
@@ -18562,6 +18595,19 @@ int wolfSSH_TestParseECCPubKey(WOLFSSH* ssh, byte* pubKey, word32 pubKeySz)
 #endif /* !WOLFSSH_NO_ECDSA */
 
 #ifndef WOLFSSH_NO_ED25519
+
+int wolfSSH_TestParseEd25519PubKey(WOLFSSH* ssh, byte* pubKey, word32 pubKeySz)
+{
+    struct wolfSSH_sigKeyBlock sigKeyBlock;
+    int ret;
+
+    WMEMSET(&sigKeyBlock, 0, sizeof(sigKeyBlock));
+    sigKeyBlock.useEd25519 = 1;
+    ret = ParseEd25519PubKey(ssh, &sigKeyBlock, pubKey, pubKeySz);
+    FreePubKey(&sigKeyBlock);
+
+    return ret;
+}
 
 int wolfSSH_TestDoUserAuthRequestEd25519(WOLFSSH* ssh,
         WS_UserAuthData* authData)
