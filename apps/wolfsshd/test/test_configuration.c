@@ -575,6 +575,329 @@ static int test_MatchUnsupportedSelector(void)
     return ret;
 }
 
+/* A Match directive whose user name contains the substring "Group" (e.g.
+ * "GroupAdmin") must not yield a spurious group applies-to value. The parser is
+ * a positional tokenizer, so "Match User GroupAdmin" sets only the user
+ * applies-to: a lookup by the real user name resolves to the Match node, while
+ * a lookup by the ghost group token ("Admin") must fall back to the global
+ * head. This prevents an unrelated OS account whose primary group equals the
+ * ghost token from inheriting the Match block's auth overrides. */
+static int test_GetUserConfMatchSubstring(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* head;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_CONFIG* match;
+    WOLFSSHD_CONFIG* ghost;
+
+    head = wolfSSHD_ConfigNew(NULL);
+    if (head == NULL)
+        ret = WS_MEMORY_E;
+    conf = head;
+
+#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s), 0)
+    if (ret == WS_SUCCESS) ret = PCL("PasswordAuthentication no");
+
+    /* user name embeds the "Group" keyword as a substring */
+    if (ret == WS_SUCCESS) ret = PCL("Match User GroupAdmin");
+    if (ret == WS_SUCCESS) ret = PCL("PasswordAuthentication yes");
+#undef PCL
+
+    /* lookup by the real user name must resolve to the Match node */
+    if (ret == WS_SUCCESS) {
+        match = wolfSSHD_GetUserConf(head, "GroupAdmin", NULL, NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (match == NULL || match == head)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetPwAuth(match) != 1)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* lookup by the ghost group token ("Admin") must NOT match; it falls back
+     * to the permissive-denied global head */
+    if (ret == WS_SUCCESS) {
+        ghost = wolfSSHD_GetUserConf(head, NULL, "Admin", NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (ghost != head)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetPwAuth(head) != 0)
+            ret = WS_FATAL_ERROR;
+    }
+
+    wolfSSHD_ConfigFree(head);
+    return ret;
+}
+
+/* Symmetric counterpart to test_GetUserConfMatchSubstring: a Match directive
+ * whose group name contains the substring "User" (e.g. "UserStaff") must not
+ * yield a spurious user applies-to value. "Match Group UserStaff" sets only the
+ * group applies-to: a lookup by the real group name resolves to the Match node,
+ * while a lookup by the ghost user token ("Staff") must fall back to the global
+ * head. This locks in the "User" keyword direction of the positional parser. */
+static int test_GetUserConfMatchSubstringGroup(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* head;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_CONFIG* match;
+    WOLFSSHD_CONFIG* ghost;
+
+    head = wolfSSHD_ConfigNew(NULL);
+    if (head == NULL)
+        ret = WS_MEMORY_E;
+    conf = head;
+
+#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s), 0)
+    if (ret == WS_SUCCESS) ret = PCL("PasswordAuthentication no");
+
+    /* group name embeds the "User" keyword as a substring */
+    if (ret == WS_SUCCESS) ret = PCL("Match Group UserStaff");
+    if (ret == WS_SUCCESS) ret = PCL("PasswordAuthentication yes");
+#undef PCL
+
+    /* lookup by the real group name must resolve to the Match node */
+    if (ret == WS_SUCCESS) {
+        match = wolfSSHD_GetUserConf(head, NULL, "UserStaff", NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (match == NULL || match == head)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetPwAuth(match) != 1)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* lookup by the ghost user token ("Staff") must NOT match; it falls back
+     * to the permissive-denied global head */
+    if (ret == WS_SUCCESS) {
+        ghost = wolfSSHD_GetUserConf(head, "Staff", NULL, NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (ghost != head)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetPwAuth(head) != 0)
+            ret = WS_FATAL_ERROR;
+    }
+
+    wolfSSHD_ConfigFree(head);
+    return ret;
+}
+
+/* A principal named exactly like the opposite keyword must be handled by token
+ * position, not by the embedded keyword. "Match User Group" names a user whose
+ * name happens to be "Group": it must set usrAppliesTo="Group" and leave
+ * groupAppliesTo unset. The positional parser consumes the token after the
+ * "User" keyword as the name and never re-examines it as a keyword, so the
+ * "Group" token here is treated as the user name, not the Group keyword. A
+ * lookup by user "Group" must resolve to the Match node, while a lookup by
+ * group "Group" must fall back to the head. This locks the behavior against a
+ * refactor that would treat a name token spelling a keyword as a keyword. */
+static int test_GetUserConfMatchLiteralKeywordName(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* head;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_CONFIG* match;
+    WOLFSSHD_CONFIG* ghost;
+
+    head = wolfSSHD_ConfigNew(NULL);
+    if (head == NULL)
+        ret = WS_MEMORY_E;
+    conf = head;
+
+#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s), 0)
+    if (ret == WS_SUCCESS) ret = PCL("PasswordAuthentication no");
+
+    /* user literally named "Group" (the opposite keyword) at end of line */
+    if (ret == WS_SUCCESS) ret = PCL("Match User Group");
+    if (ret == WS_SUCCESS) ret = PCL("PasswordAuthentication yes");
+#undef PCL
+
+    /* lookup by the user name "Group" must resolve to the Match node */
+    if (ret == WS_SUCCESS) {
+        match = wolfSSHD_GetUserConf(head, "Group", NULL, NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (match == NULL || match == head)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetPwAuth(match) != 1)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* the user name must NOT have leaked into groupAppliesTo: a lookup by group
+     * "Group" must fall back to the permissive-denied global head */
+    if (ret == WS_SUCCESS) {
+        ghost = wolfSSHD_GetUserConf(head, NULL, "Group", NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (ghost != head)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetPwAuth(head) != 0)
+            ret = WS_FATAL_ERROR;
+    }
+
+    wolfSSHD_ConfigFree(head);
+    return ret;
+}
+
+/* A Match directive whose keyword has no following name (e.g. a bare
+ * "Match User") is a configuration error and must fail closed: ParseConfigLine
+ * returns an error rather than silently loading a dead node that would discard
+ * the admin's subsequent settings. The global head must be left untouched. */
+static int test_GetUserConfMatchBareKeyword(void)
+{
+    int ret = WS_SUCCESS;
+    int rc;
+    WOLFSSHD_CONFIG* head;
+    WOLFSSHD_CONFIG* conf;
+
+    head = wolfSSHD_ConfigNew(NULL);
+    if (head == NULL)
+        ret = WS_MEMORY_E;
+    conf = head;
+
+#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s), 0)
+    if (ret == WS_SUCCESS) ret = PCL("PasswordAuthentication no");
+
+    /* bare keyword with no name must be rejected */
+    if (ret == WS_SUCCESS) {
+        rc = PCL("Match User");
+        if (rc == WS_SUCCESS)
+            ret = WS_FATAL_ERROR;
+    }
+#undef PCL
+
+    /* the rejected directive must not have altered the global head */
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetPwAuth(head) != 0)
+            ret = WS_FATAL_ERROR;
+    }
+
+    wolfSSHD_ConfigFree(head);
+    return ret;
+}
+
+/* A keyword repeated on one Match line ("Match User a User b") replaces the
+ * earlier name: the parser frees the first usrAppliesTo ("a") before storing
+ * the second ("b"). The final value must be "b", so a lookup by user "b"
+ * resolves to the Match node while a lookup by the replaced name "a" falls back
+ * to the global head. This exercises the free-then-reallocate path (run under
+ * ASan to catch a leak or double-free regression). */
+static int test_GetUserConfMatchRepeatedKeyword(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* head;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_CONFIG* match;
+    WOLFSSHD_CONFIG* old;
+
+    head = wolfSSHD_ConfigNew(NULL);
+    if (head == NULL)
+        ret = WS_MEMORY_E;
+    conf = head;
+
+#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s), 0)
+    if (ret == WS_SUCCESS) ret = PCL("PasswordAuthentication no");
+
+    /* same keyword twice; the second name must replace the first */
+    if (ret == WS_SUCCESS) ret = PCL("Match User a User b");
+    if (ret == WS_SUCCESS) ret = PCL("PasswordAuthentication yes");
+#undef PCL
+
+    /* lookup by the replacement name "b" must resolve to the Match node */
+    if (ret == WS_SUCCESS) {
+        match = wolfSSHD_GetUserConf(head, "b", NULL, NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (match == NULL || match == head ||
+            wolfSSHD_ConfigGetPwAuth(match) != 1)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* lookup by the replaced name "a" must NOT match; it falls back to head */
+    if (ret == WS_SUCCESS) {
+        old = wolfSSHD_GetUserConf(head, "a", NULL, NULL, NULL,
+                                   NULL, NULL, NULL);
+        if (old != head)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetPwAuth(head) != 0)
+            ret = WS_FATAL_ERROR;
+    }
+
+    wolfSSHD_ConfigFree(head);
+    return ret;
+}
+
+/* A single Match line carrying both criteria ("Match User alice Group admins")
+ * is parsed as two keyword/name pairs, setting both usrAppliesTo="alice" and
+ * groupAppliesTo="admins" on one node. Both the user and the group lookup must
+ * resolve to that node, while unrelated names fall back to the global head.
+ * This locks in that the parser still extracts both names when both keywords
+ * share a line. */
+static int test_GetUserConfMatchUserAndGroup(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* head;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_CONFIG* byUsr;
+    WOLFSSHD_CONFIG* byGrp;
+    WOLFSSHD_CONFIG* other;
+
+    head = wolfSSHD_ConfigNew(NULL);
+    if (head == NULL)
+        ret = WS_MEMORY_E;
+    conf = head;
+
+#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s), 0)
+    if (ret == WS_SUCCESS) ret = PCL("PasswordAuthentication no");
+
+    /* both criteria on one line */
+    if (ret == WS_SUCCESS) ret = PCL("Match User alice Group admins");
+    if (ret == WS_SUCCESS) ret = PCL("PasswordAuthentication yes");
+#undef PCL
+
+    /* lookup by the user criterion must resolve to the Match node */
+    if (ret == WS_SUCCESS) {
+        byUsr = wolfSSHD_GetUserConf(head, "alice", NULL, NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (byUsr == NULL || byUsr == head ||
+            wolfSSHD_ConfigGetPwAuth(byUsr) != 1)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* lookup by the group criterion must resolve to the same Match node */
+    if (ret == WS_SUCCESS) {
+        byGrp = wolfSSHD_GetUserConf(head, NULL, "admins", NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (byGrp == NULL || byGrp == head ||
+            wolfSSHD_ConfigGetPwAuth(byGrp) != 1)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* unrelated user and group must fall back to the permissive-denied head */
+    if (ret == WS_SUCCESS) {
+        other = wolfSSHD_GetUserConf(head, "bob", "staff", NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (other != head)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetPwAuth(head) != 0)
+            ret = WS_FATAL_ERROR;
+    }
+
+    wolfSSHD_ConfigFree(head);
+    return ret;
+}
+
 /* Bounded recursion through Include directives: a self-including config
  * must fail with WS_BAD_ARGUMENT once the depth limit is hit, and the
  * config object must remain usable so a subsequent load of a normal
@@ -1011,6 +1334,12 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_ConfigCopy),
     TEST_DECL(test_GetUserConfMatchOverride),
     TEST_DECL(test_MatchUnsupportedSelector),
+    TEST_DECL(test_GetUserConfMatchSubstring),
+    TEST_DECL(test_GetUserConfMatchSubstringGroup),
+    TEST_DECL(test_GetUserConfMatchLiteralKeywordName),
+    TEST_DECL(test_GetUserConfMatchBareKeyword),
+    TEST_DECL(test_GetUserConfMatchRepeatedKeyword),
+    TEST_DECL(test_GetUserConfMatchUserAndGroup),
     TEST_DECL(test_CAKeysFileDiffers),
     TEST_DECL(test_IncludeRecursionBound),
     TEST_DECL(test_ConfigFree),
