@@ -461,6 +461,47 @@ extern "C" {
         #include <sys/utime.h>
     #else
         #define WUTIMES(f,t)      utimes((f),(t))
+        /* Bind timestamp updates to the open descriptor with futimens()
+         * (POSIX.1-2008) when the build detected it, immune to a symlink
+         * swapped in over the path. The SCP code passes a timeval pair
+         * (matching WUTIMES), so convert it to the timespec pair futimens()
+         * expects. Falls back to the path-based WUTIMES when futimens() is not
+         * present. */
+        #ifdef HAVE_FUTIMENS
+            #include <sys/stat.h>
+            #include <sys/time.h>
+            #include <time.h>
+            static inline int wFutimes(int fd, const struct timeval t[2])
+            {
+                struct timespec ts[2];
+                ts[0].tv_sec  = t[0].tv_sec;
+                ts[0].tv_nsec = (long)t[0].tv_usec * 1000;
+                ts[1].tv_sec  = t[1].tv_sec;
+                ts[1].tv_nsec = (long)t[1].tv_usec * 1000;
+                return futimens(fd, ts);
+            }
+            #define WFUTIMES(fd,t)    wFutimes((fd),(t))
+        #endif
+        /* Path-based fallback for builds without futimens(): utimensat() with
+         * AT_SYMLINK_NOFOLLOW so a swapped symlink is not followed. Converts
+         * the timeval pair (matching WUTIMES) to the timespec utimensat wants. */
+        #ifdef HAVE_UTIMENSAT
+            #include <fcntl.h>
+            #include <sys/stat.h>
+            #include <sys/time.h>
+            #include <time.h>
+            static inline int wUtimesNoFollow(const char* f,
+                    const struct timeval t[2])
+            {
+                struct timespec ts[2];
+                ts[0].tv_sec  = t[0].tv_sec;
+                ts[0].tv_nsec = (long)t[0].tv_usec * 1000;
+                ts[1].tv_sec  = t[1].tv_sec;
+                ts[1].tv_nsec = (long)t[1].tv_usec * 1000;
+                return utimensat(AT_FDCWD, f, ts, AT_SYMLINK_NOFOLLOW);
+            }
+            #define WUTIMES_NOFOLLOW(f,t)    wUtimesNoFollow((f),(t))
+        #endif
     #endif
 
     #ifndef USE_WINDOWS_API

@@ -88,6 +88,30 @@ AC_ARG_WITH(wolfssl,
 
 AC_CHECK_LIB([wolfssl],[wolfCrypt_Init],,[AC_MSG_ERROR([libwolfssl is required for ${PACKAGE}. It can be obtained from https://www.wolfssl.com/download.html/ .])])
 AC_CHECK_FUNCS([gethostbyname getaddrinfo gettimeofday inet_ntoa memset socket wc_ecc_set_rng])
+
+# futimens()/utimensat() declarations are feature-test-macro gated, so a plain
+# AC_CHECK_FUNCS link test can pass while the prototype stays hidden at compile
+# time. Probe through the real header so a positive result is build-safe.
+AC_MSG_CHECKING([for futimens])
+AC_LINK_IFELSE(
+  [AC_LANG_PROGRAM([[#include <sys/stat.h>
+#include <time.h>]],
+                   [[struct timespec ts[2]; (void)futimens(0, ts);]])],
+  [AC_DEFINE([HAVE_FUTIMENS], [1], [futimens() available and declared])
+   AC_MSG_RESULT([yes])],
+  [AC_MSG_RESULT([no])])
+
+AC_MSG_CHECKING([for utimensat])
+AC_LINK_IFELSE(
+  [AC_LANG_PROGRAM([[#include <fcntl.h>
+#include <sys/stat.h>
+#include <time.h>]],
+                   [[struct timespec ts[2];
+                     (void)utimensat(AT_FDCWD, "x", ts, AT_SYMLINK_NOFOLLOW);]])],
+  [AC_DEFINE([HAVE_UTIMENSAT], [1], [utimensat() available and declared])
+   AC_MSG_RESULT([yes])],
+  [AC_MSG_RESULT([no])])
+
 AC_CHECK_DECLS([[pread],[pwrite]],,[unistd.h])
 
 # DEBUG
