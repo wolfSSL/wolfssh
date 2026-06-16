@@ -1898,39 +1898,6 @@ int wolfSSH_SFTP_CreateStatus(WOLFSSH* ssh, word32 status, word32 reqId,
 }
 
 
-#ifdef WOLFSSH_HAVE_SYMLINK
-/* Returns 1 if path is a symbolic link (POSIX) or a reparse point such as a
- * symlink or junction (Windows), otherwise 0.  A non-existent path (stat
- * fails) is reported as not-a-link so that create requests for a new leaf are
- * still permitted by the caller. */
-static int SFTP_IsSymlink(const char* path)
-{
-    int isLink = 0;
-#ifdef USE_WINDOWS_API
-    WIN32_FILE_ATTRIBUTE_DATA attrs;
-
-    /* GetAndCleanPath produces an SFTP-canonical "/C:/..." path.  Route it
-     * through WS_GetFileAttributesExA, which trims the leading slash and uses
-     * the wide-char API like every other Windows file op here; calling
-     * GetFileAttributesA on the raw "/C:/..." form would always fail and
-     * silently disable link detection.  GetFileAttributesEx reports the link's
-     * own attributes (it does not follow the reparse point). */
-    if (WS_GetFileAttributesExA(path, &attrs, NULL) != 0 &&
-            (attrs.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
-        isLink = 1;
-    }
-#else
-    WSTAT_T lst;
-
-    if (WLSTAT(NULL, path, &lst) == 0 && S_ISLNK(lst.st_mode)) {
-        isLink = 1;
-    }
-#endif
-    return isLink;
-}
-#endif /* WOLFSSH_HAVE_SYMLINK */
-
-
 /*
  * This is a wrapper around the function wolfSSH_RealPath. Since it modifies
  * the source path value, copy the path from the data stream into a local
@@ -2014,7 +1981,7 @@ static int GetAndCleanPath(const char* defaultPath,
             }
             saved = s[i];
             s[i] = '\0';
-            if (SFTP_IsSymlink(s)) {
+            if (wIsSymlink(s)) {
                 ret = WS_PERMISSIONS;
             }
             s[i] = saved;

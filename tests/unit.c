@@ -4133,6 +4133,174 @@ cleanup:
     return result;
 }
 
+/* A pre-existing symlink in the destination directory must not be followed
+ * out of that directory, neither when entering it as a directory nor when
+ * opening it as a file. */
+static int test_ScpRecvCallback_SymlinkGuard(void)
+{
+#ifndef WOLFSSH_HAVE_SYMLINK
+    /* symlink rejection is compiled out on this configuration */
+    return 0;
+#else
+    char tmpDir[] = "/tmp/wolfssh_scpXXXXXX";
+    char basePathRaw[PATH_MAX];
+    char outsidePath[PATH_MAX];
+    char linkDirPath[PATH_MAX];
+    char linkFilePath[PATH_MAX];
+    char leakedPath[PATH_MAX];
+    char origCwd[PATH_MAX];
+    char* basePath = NULL;
+    struct stat st;
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    int baseMkdirDone = 0;
+    int outsideMkdirDone = 0;
+    int linkDirDone = 0;
+    int linkFileDone = 0;
+    int origCwdSaved = 0;
+    int ret;
+    int result = 0;
+
+    basePathRaw[0] = '\0';
+    outsidePath[0] = '\0';
+    linkDirPath[0] = '\0';
+    linkFilePath[0] = '\0';
+    leakedPath[0] = '\0';
+
+    if (getcwd(origCwd, sizeof(origCwd)) == NULL)
+        return -840;
+    origCwdSaved = 1;
+
+    if (mkdtemp(tmpDir) == NULL)
+        return -841;
+
+    ret = snprintf(basePathRaw, sizeof(basePathRaw), "%s/scp_target", tmpDir);
+    if (!scpTestSnprintfOk(ret, sizeof(basePathRaw))) {
+        result = -842;
+        goto cleanup;
+    }
+    if (mkdir(basePathRaw, 0755) != 0) {
+        result = -843;
+        goto cleanup;
+    }
+    baseMkdirDone = 1;
+
+    ret = snprintf(outsidePath, sizeof(outsidePath), "%s/outside", tmpDir);
+    if (!scpTestSnprintfOk(ret, sizeof(outsidePath))) {
+        result = -844;
+        goto cleanup;
+    }
+    if (mkdir(outsidePath, 0755) != 0) {
+        result = -845;
+        goto cleanup;
+    }
+    outsideMkdirDone = 1;
+
+    basePath = realpath(basePathRaw, NULL);
+    if (basePath == NULL) {
+        result = -846;
+        goto cleanup;
+    }
+
+    ret = snprintf(linkDirPath, sizeof(linkDirPath), "%s/linkdir", basePath);
+    if (!scpTestSnprintfOk(ret, sizeof(linkDirPath))) {
+        result = -847;
+        goto cleanup;
+    }
+    ret = snprintf(linkFilePath, sizeof(linkFilePath), "%s/linkfile", basePath);
+    if (!scpTestSnprintfOk(ret, sizeof(linkFilePath))) {
+        result = -858;
+        goto cleanup;
+    }
+    ret = snprintf(leakedPath, sizeof(leakedPath), "%s/leaked.txt", outsidePath);
+    if (!scpTestSnprintfOk(ret, sizeof(leakedPath))) {
+        result = -859;
+        goto cleanup;
+    }
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL) {
+        result = -848;
+        goto cleanup;
+    }
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        result = -849;
+        goto cleanup;
+    }
+
+    /* NEW_REQUEST changes the working directory into basePath */
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_REQUEST, basePath,
+            NULL, 0, 0, 0, 0, NULL, 0, 0, NULL);
+    if (ret != WS_SCP_CONTINUE) {
+        result = -850;
+        goto cleanup;
+    }
+
+    /* plant a directory symlink pointing outside basePath */
+    if (symlink(outsidePath, linkDirPath) != 0) {
+        result = -851;
+        goto cleanup;
+    }
+    linkDirDone = 1;
+
+    /* WMKDIR returns EEXIST for the existing symlink; the callback must
+     * refuse to chdir through it rather than escape basePath */
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_DIR, basePath,
+            "linkdir", 0755, 0, 0, 0, NULL, 0, 0, NULL);
+    if (ret != WS_SCP_ABORT) {
+        result = -852;
+        goto cleanup;
+    }
+    if (ssh->scpDirDepth != 0) {
+        result = -853;
+        goto cleanup;
+    }
+
+    /* plant a (dangling) file symlink pointing outside basePath */
+    if (symlink(leakedPath, linkFilePath) != 0) {
+        result = -854;
+        goto cleanup;
+    }
+    linkFileDone = 1;
+
+    /* the callback must refuse to open the symlink rather than write through
+     * it to the outside target */
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_FILE, basePath,
+            "linkfile", 0644, 0, 0, 0, NULL, 0, 0, NULL);
+    if (ret != WS_SCP_ABORT) {
+        result = -855;
+        goto cleanup;
+    }
+    if (stat(leakedPath, &st) == 0) {
+        (void)remove(leakedPath);
+        result = -856;
+        goto cleanup;
+    }
+
+cleanup:
+    if (ssh != NULL)
+        wolfSSH_free(ssh);
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    free(basePath);
+    /* NEW_REQUEST changed the process CWD into basePath, so leave it before
+     * removing the created directories or the rmdir calls would fail */
+    if (origCwdSaved && chdir(origCwd) != 0 && result == 0)
+        result = -857;
+    if (linkDirDone)
+        (void)remove(linkDirPath);
+    if (linkFileDone)
+        (void)remove(linkFilePath);
+    if (outsideMkdirDone)
+        (void)rmdir(outsidePath);
+    if (baseMkdirDone)
+        (void)rmdir(basePathRaw);
+    (void)rmdir(tmpDir);
+    return result;
+#endif /* WOLFSSH_HAVE_SYMLINK */
+}
+
 #endif /* WOLFSSH_SCP recv callback depth guard test */
 
 
@@ -4975,6 +5143,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_ScpRecvCallback_NewDirChdirFail();
     printf("ScpRecvCallback_NewDirChdirFail: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ScpRecvCallback_SymlinkGuard();
+    printf("ScpRecvCallback_SymlinkGuard: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif

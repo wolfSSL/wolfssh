@@ -2220,6 +2220,17 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             wolfSSH_CleanPath(ssh, abslut, WOLFSSH_MAX_FILENAME);
             if (WFOPEN(ssh->fs, &fp, abslut, "wb") != 0) {
         #else
+        #ifdef WOLFSSH_HAVE_SYMLINK
+            /* refuse to write through a pre-existing symlink, which would
+             * escape the destination directory */
+            if (wIsSymlink(fileName)) {
+                WLOG(WS_LOG_ERROR,
+                    "scp: refusing to write through symlink, abort");
+                wolfSSH_SetScpErrorMsg(ssh, "symlink target rejected");
+                ret = WS_SCP_ABORT;
+                break;
+            }
+        #endif
             if (WFOPEN(ssh->fs, &fp, fileName, "wb") != 0) {
         #endif
                 WLOG(WS_LOG_ERROR,
@@ -2334,6 +2345,17 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                 wolfSSH_CleanPath(ssh, (char*)basePath, WOLFSSH_MAX_FILENAME);
                 ssh->scpDirDepth++;
             #else
+            #ifdef WOLFSSH_HAVE_SYMLINK
+                /* WMKDIR returning EEXIST above may have matched a pre-existing
+                 * symlink; refuse to follow it out of the destination dir */
+                if (wIsSymlink(fileName)) {
+                    WLOG(WS_LOG_ERROR,
+                        "scp: refusing to enter symlinked directory, abort");
+                    wolfSSH_SetScpErrorMsg(ssh, "symlink in destination path");
+                    ret = WS_SCP_ABORT;
+                    break;
+                }
+            #endif
                 if (WCHDIR(ssh->fs, fileName) != 0) {
                     WLOG(WS_LOG_ERROR,
                             "scp: unable to cd into directory, abort");

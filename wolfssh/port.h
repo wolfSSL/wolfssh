@@ -1531,6 +1531,15 @@ extern "C" {
     #define WOLFSSH_HAVE_SYMLINK
 #endif
 
+/* wIsSymlink lives in the always-compiled port.c, but its filesystem
+ * dependencies (WSTAT_T/WLSTAT/S_ISLNK on POSIX, WS_GetFileAttributesExA on
+ * Windows) and its only callers exist solely in the SFTP and SCP code, so
+ * gate it on those features in addition to the platform capability. */
+#if defined(WOLFSSH_HAVE_SYMLINK) && \
+    (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP))
+    WOLFSSH_LOCAL int wIsSymlink(const char* path);
+#endif
+
 #ifndef WS_MAYBE_UNUSED
     #if (defined(__GNUC__) && (__GNUC__ >= 4)) || defined(__clang__) || \
             defined(__IAR_SYSTEMS_ICC__)

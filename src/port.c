@@ -689,6 +689,38 @@ int wChmod(const char *path, int mode)
 }
 #endif
 #endif /* NO_FILESYSTEM */
+
+#if defined(WOLFSSH_HAVE_SYMLINK) && \
+    (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP))
+/* Returns 1 if path is a symbolic link (POSIX) or a reparse point such as a
+ * symlink or junction (Windows), otherwise 0.  A non-existent path (stat
+ * fails) is reported as not-a-link so that create requests for a new leaf are
+ * still permitted by the caller.  Shared by the SFTP and SCP path-confinement
+ * checks. */
+int wIsSymlink(const char* path)
+{
+    int isLink = 0;
+#ifdef USE_WINDOWS_API
+    WIN32_FILE_ATTRIBUTE_DATA attrs;
+
+    /* Route through WS_GetFileAttributesExA so the wide-char API and any path
+     * trimming match the other Windows file ops.  GetFileAttributesEx reports
+     * the link's own attributes; it does not follow the reparse point. */
+    if (path != NULL && WS_GetFileAttributesExA(path, &attrs, NULL) != 0 &&
+            (attrs.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+        isLink = 1;
+    }
+#else
+    WSTAT_T lst;
+
+    if (path != NULL && WLSTAT(NULL, path, &lst) == 0 && S_ISLNK(lst.st_mode)) {
+        isLink = 1;
+    }
+#endif
+    return isLink;
+}
+#endif /* WOLFSSH_HAVE_SYMLINK && (WOLFSSH_SFTP || WOLFSSH_SCP) */
+
 #ifndef WSTRING_USER
 
 char* wstrdup(const char* s1, void* heap, int type)
