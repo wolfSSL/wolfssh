@@ -2688,6 +2688,58 @@ static void Ed25519Test_PutLen(byte* out, word32 v)
     out[3] = (byte)(v);
 }
 
+static int test_ParseEd25519PubKey(void)
+{
+    static const char keyTypeName[] = "ssh-ed25519";
+    const word32 keyTypeNameSz = (word32)(sizeof(keyTypeName) - 1);
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    byte blob[64];
+    word32 blobSz, off;
+    int ret;
+    int failures = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return 1;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return 1;
+    }
+
+    /* string "ssh-ed25519" || string pubkey */
+    off = 0;
+    Ed25519Test_PutLen(blob + off, keyTypeNameSz); off += UINT32_SZ;
+    WMEMCPY(blob + off, keyTypeName, keyTypeNameSz); off += keyTypeNameSz;
+    Ed25519Test_PutLen(blob + off, (word32)sizeof(unitTestEd25519Pub));
+    off += UINT32_SZ;
+    WMEMCPY(blob + off, unitTestEd25519Pub, sizeof(unitTestEd25519Pub));
+    off += (word32)sizeof(unitTestEd25519Pub);
+    blobSz = off;
+
+    /* valid blob */
+    ret = wolfSSH_TestParseEd25519PubKey(ssh, blob, blobSz);
+    if (ret != WS_SUCCESS) {
+        fprintf(stderr, "\t\"valid\" FAIL: got %d, expected %d\n",
+                ret, WS_SUCCESS);
+        failures++;
+    }
+
+    /* truncated blob: fails after the key is initialized */
+    ret = wolfSSH_TestParseEd25519PubKey(ssh, blob, blobSz - 4);
+    if (ret != WS_BUFFER_E) {
+        fprintf(stderr, "\t\"truncated\" FAIL: got %d, expected %d\n",
+                ret, WS_BUFFER_E);
+        failures++;
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    return failures;
+}
+
 /* DoUserAuthRequestEd25519 unit test
  *
  * Drives DoUserAuthRequestEd25519 directly with a fully-formed Ed25519
@@ -4570,6 +4622,47 @@ static int test_DoUserAuthRequestRsa(void)
     return failures;
 }
 
+static int test_ParseRSAPubKey(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    byte blob[sizeof(userAuthRsaPubKeyBlob)];
+    int ret;
+    int failures = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return 1;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return 1;
+    }
+
+    WMEMCPY(blob, userAuthRsaPubKeyBlob, sizeof(blob));
+
+    /* valid blob */
+    ret = wolfSSH_TestParseRSAPubKey(ssh, blob, (word32)sizeof(blob));
+    if (ret != WS_SUCCESS) {
+        fprintf(stderr, "\t\"valid\" FAIL: got %d, expected %d\n",
+                ret, WS_SUCCESS);
+        failures++;
+    }
+
+    /* truncated blob: fails after the key is initialized */
+    ret = wolfSSH_TestParseRSAPubKey(ssh, blob, (word32)(sizeof(blob) / 2));
+    if (ret != WS_RSA_E) {
+        fprintf(stderr, "\t\"truncated\" FAIL: got %d, expected %d\n",
+                ret, WS_RSA_E);
+        failures++;
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    return failures;
+}
+
 #ifdef WOLFSSH_CERTS
 
 /* DoUserAuthRequestRsaCert() parses the signature blob the same way as
@@ -5068,6 +5161,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("DoUserAuthRequestRsa: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+    unitResult = test_ParseRSAPubKey();
+    printf("ParseRSAPubKey: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
 #ifdef WOLFSSH_CERTS
     unitResult = test_DoUserAuthRequestRsaCert();
     printf("DoUserAuthRequestRsaCert: %s\n",
@@ -5086,6 +5184,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
     defined(WOLFSSL_ED25519_STREAMING_VERIFY)
     unitResult = test_DoUserAuthRequestEd25519();
     printf("DoUserAuthRequestEd25519: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ParseEd25519PubKey();
+    printf("ParseEd25519PubKey: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
