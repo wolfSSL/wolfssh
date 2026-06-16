@@ -73,6 +73,7 @@
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -4353,6 +4354,258 @@ cleanup:
 #endif /* WOLFSSH_HAVE_SYMLINK */
 }
 
+/* Drive the default SCP receive callback through a full single-file receive
+ * and confirm the peer-supplied modification/access times end up on the
+ * written file.
+ *
+ * Which code path applies the timestamp is decided at build time, not by this
+ * test: when futimens is detected (HAVE_FUTIMENS) the callback sets it on the
+ * open descriptor before the closing flush, otherwise it sets it by path after
+ * close. Both must yield the peer-supplied times, which is what this end-to-end
+ * test asserts. When the descriptor path is compiled in, this also guards its
+ * ordering relative to the closing flush: applying the timestamp before the
+ * buffered data was flushed would leave the modification time at the current
+ * time rather than the peer value. */
+static int test_ScpRecvCallback_Timestamp(void)
+{
+    char tmpDir[] = "/tmp/wolfssh_scptsXXXXXX";
+    char filePath[PATH_MAX];
+    char origCwd[PATH_MAX];
+    const char data[] = "wolfssh scp timestamp regression\n";
+    const word64 mTime = 1234567890; /* 2009-02-13 23:31:30 UTC */
+    const word64 aTime = 1000000000; /* 2001-09-09 01:46:40 UTC */
+    struct stat st;
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    char* basePath = NULL;
+    int origCwdSaved = 0;
+    int baseReady = 0;
+    int ret;
+    int result = 0;
+
+    filePath[0] = '\0';
+
+    if (getcwd(origCwd, sizeof(origCwd)) == NULL)
+        return -850;
+    origCwdSaved = 1;
+
+    if (mkdtemp(tmpDir) == NULL)
+        return -851;
+    baseReady = 1;
+
+    basePath = realpath(tmpDir, NULL);
+    if (basePath == NULL) {
+        result = -852;
+        goto cleanup;
+    }
+
+    ret = snprintf(filePath, sizeof(filePath), "%s/ts_file.txt", basePath);
+    if (!scpTestSnprintfOk(ret, sizeof(filePath))) {
+        result = -853;
+        goto cleanup;
+    }
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL) {
+        result = -854;
+        goto cleanup;
+    }
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        result = -855;
+        goto cleanup;
+    }
+
+    /* enter the destination directory */
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_REQUEST, basePath,
+            NULL, 0, 0, 0, 0, NULL, 0, 0, NULL);
+    if (ret != WS_SCP_CONTINUE) {
+        result = -856;
+        goto cleanup;
+    }
+
+    /* open the destination file */
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_FILE, basePath,
+            "ts_file.txt", 0644, mTime, aTime, sizeof(data) - 1, NULL, 0, 0,
+            NULL);
+    if (ret != WS_SCP_CONTINUE) {
+        result = -857;
+        goto cleanup;
+    }
+
+    /* write the file contents */
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_FILE_PART, basePath,
+            "ts_file.txt", 0644, mTime, aTime, sizeof(data) - 1,
+            (byte*)data, sizeof(data) - 1, 0, wolfSSH_GetScpRecvCtx(ssh));
+    if (ret != WS_SCP_CONTINUE) {
+        result = -858;
+        goto cleanup;
+    }
+
+    /* close the file and apply the peer-supplied timestamps */
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_FILE_DONE, basePath,
+            "ts_file.txt", 0644, mTime, aTime, sizeof(data) - 1, NULL, 0, 0,
+            wolfSSH_GetScpRecvCtx(ssh));
+    if (ret != WS_SCP_CONTINUE) {
+        result = -859;
+        goto cleanup;
+    }
+
+    /* the written file must carry the peer-supplied timestamps */
+    if (stat(filePath, &st) != 0) {
+        result = -860;
+        goto cleanup;
+    }
+    if ((word64)st.st_mtime != mTime) {
+        result = -861;
+        goto cleanup;
+    }
+    if ((word64)st.st_atime != aTime) {
+        result = -862;
+        goto cleanup;
+    }
+
+#ifdef HAVE_FUTIMENS
+    /* Descriptor build only: a FILE_DONE carrying timestamps but no open file
+     * (NULL ctx) must abort rather than silently fall back to a path-based
+     * update that could follow a swapped symlink. Use distinct times and
+     * confirm the existing file's modification time is left untouched. */
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_FILE_DONE, basePath,
+            "ts_file.txt", 0644, mTime + 100, aTime + 100, 0, NULL, 0, 0,
+            NULL);
+    if (ret != WS_SCP_ABORT) {
+        result = -864;
+        goto cleanup;
+    }
+    if (stat(filePath, &st) != 0) {
+        result = -865;
+        goto cleanup;
+    }
+    if ((word64)st.st_mtime != mTime) {
+        result = -866;
+        goto cleanup;
+    }
+#endif
+
+cleanup:
+    if (ssh != NULL)
+        wolfSSH_free(ssh);
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    if (filePath[0] != '\0')
+        (void)remove(filePath);
+    free(basePath);
+    if (origCwdSaved && chdir(origCwd) != 0 && result == 0)
+        result = -863;
+    if (baseReady)
+        (void)rmdir(tmpDir);
+    return result;
+}
+
+#if defined(HAVE_UTIMENSAT) && defined(WOLFSSH_HAVE_SYMLINK)
+/* Exercise the no-follow path fallback (no descriptor-based call available).
+ * Setting times through a symlink must land on the symlink itself, not the
+ * target, so a swapped symlink cannot redirect a peer-supplied timestamp. */
+static int test_ScpTimestamp_NoFollow(void)
+{
+    char tmpDir[] = "/tmp/wolfssh_scpnfXXXXXX";
+    char canaryPath[PATH_MAX];
+    char linkPath[PATH_MAX];
+    const word64 mTime = 1222333444; /* distinct from the canary's own time */
+    const word64 aTime = 1100000000;
+    struct timeval tv[2];
+    struct stat st;
+    time_t canaryOrig;
+    int baseReady = 0;
+    int canaryReady = 0;
+    int linkReady = 0;
+    int ret;
+    int result = 0;
+    int fd;
+
+    canaryPath[0] = '\0';
+    linkPath[0] = '\0';
+
+    if (mkdtemp(tmpDir) == NULL)
+        return -870;
+    baseReady = 1;
+
+    ret = snprintf(canaryPath, sizeof(canaryPath), "%s/canary.txt", tmpDir);
+    if (!scpTestSnprintfOk(ret, sizeof(canaryPath))) {
+        result = -871;
+        goto cleanup;
+    }
+    ret = snprintf(linkPath, sizeof(linkPath), "%s/link", tmpDir);
+    if (!scpTestSnprintfOk(ret, sizeof(linkPath))) {
+        result = -872;
+        goto cleanup;
+    }
+
+    fd = open(canaryPath, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (fd < 0) {
+        result = -873;
+        goto cleanup;
+    }
+    canaryReady = 1;
+    if (write(fd, "canary\n", 7) != 7) {
+        close(fd);
+        result = -881;
+        goto cleanup;
+    }
+    close(fd);
+
+    if (stat(canaryPath, &st) != 0) {
+        result = -874;
+        goto cleanup;
+    }
+    canaryOrig = st.st_mtime;
+
+    if (symlink(canaryPath, linkPath) != 0) {
+        result = -875;
+        goto cleanup;
+    }
+    linkReady = 1;
+
+    tv[0].tv_sec = (time_t)aTime;
+    tv[0].tv_usec = 0;
+    tv[1].tv_sec = (time_t)mTime;
+    tv[1].tv_usec = 0;
+    if (WUTIMES_NOFOLLOW(linkPath, tv) != 0) {
+        result = -876;
+        goto cleanup;
+    }
+
+    /* the symlink's own modification time must carry the supplied value */
+    if (lstat(linkPath, &st) != 0) {
+        result = -877;
+        goto cleanup;
+    }
+    if ((word64)st.st_mtime != mTime) {
+        result = -878;
+        goto cleanup;
+    }
+
+    /* the target the symlink points at must be left untouched */
+    if (stat(canaryPath, &st) != 0) {
+        result = -879;
+        goto cleanup;
+    }
+    if (st.st_mtime != canaryOrig) {
+        result = -880;
+        goto cleanup;
+    }
+
+cleanup:
+    if (linkReady)
+        (void)remove(linkPath);
+    if (canaryReady)
+        (void)remove(canaryPath);
+    if (baseReady)
+        (void)rmdir(tmpDir);
+    return result;
+}
+#endif /* HAVE_UTIMENSAT && WOLFSSH_HAVE_SYMLINK */
+
 #endif /* WOLFSSH_SCP recv callback depth guard test */
 
 
@@ -5338,6 +5591,18 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("ScpRecvCallback_SymlinkGuard: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+    unitResult = test_ScpRecvCallback_Timestamp();
+    printf("ScpRecvCallback_Timestamp: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+#if defined(HAVE_UTIMENSAT) && defined(WOLFSSH_HAVE_SYMLINK)
+    unitResult = test_ScpTimestamp_NoFollow();
+    printf("ScpTimestamp_NoFollow: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 #endif
 
 #if defined(WOLFSSH_TEST_INTERNAL) && defined(WOLFSSH_SCP) && \

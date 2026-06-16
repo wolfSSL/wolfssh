@@ -2059,9 +2059,32 @@ static INLINE int wolfSSH_LastError(void)
 }
 
 
+/* WOLFSSH_SCP_FD_UTIMES is defined for platforms that can set file timestamps
+ * on the still-open descriptor, binding the update to the inode. On those the
+ * timestamp is applied before the file is closed. Other platforms fall back to
+ * applying the timestamp by path after the file is closed. */
+#if defined(USE_WINDOWS_API) || defined(WFUTIMES)
+    #define WOLFSSH_SCP_FD_UTIMES
+#endif
+
 /* set file access and modification times
+ *
+ * On descriptor-capable platforms (fp != NULL and WOLFSSH_SCP_FD_UTIMES) the
+ * timestamps are applied to the open descriptor so the update is bound to the
+ * inode. This avoids a race where the path could be replaced by a symlink
+ * between closing the file and a path-based time update, which would let a
+ * peer-supplied timestamp be applied to an arbitrary target. Buffered file
+ * data is flushed first so the later close does not write and overwrite the
+ * modification time. On the POSIX path-based fallback, fp is NULL because the
+ * file has already been closed and the timestamp is applied by path; that path
+ * update uses utimensat() with AT_SYMLINK_NOFOLLOW when available so a swapped
+ * symlink is not followed, and only drops to plain utimes() otherwise. The
+ * Windows branch always requires an open fp and rejects fp == NULL with
+ * WS_BAD_ARGUMENT (there is no path-based fallback there).
+ *
  * Returns WS_SUCCESS on success, or negative upon error */
-static int SetTimestampInfo(const char* fileName, word64 mTime, word64 aTime)
+static int SetTimestampInfo(WFILE* fp, const char* fileName,
+        word64 mTime, word64 aTime)
 {
     int ret = WS_SUCCESS;
 #ifdef USE_WINDOWS_API
@@ -2076,18 +2099,43 @@ static int SetTimestampInfo(const char* fileName, word64 mTime, word64 aTime)
 
     if (ret == WS_SUCCESS) {
 #ifdef USE_WINDOWS_API
-        tmp.actime  = aTime;
-        tmp.modtime = mTime;
-        _sopen_s(&fd, fileName, _O_RDWR, _SH_DENYNO, 0);
-        _futime(fd, &tmp);
-        _close(fd);
+        if (fp == NULL) {
+            ret = WS_BAD_ARGUMENT;
+        }
+        else {
+            fd = _fileno(fp);
+            tmp.actime  = aTime;
+            tmp.modtime = mTime;
+            /* commit buffered data to disk before stamping so the close cannot
+             * flush a write that bumps the modification time back */
+            if (WFFLUSH(fp) != 0 || _commit(fd) != 0 || _futime(fd, &tmp) != 0)
+                ret = WS_FATAL_ERROR;
+        }
 #else
         tmp[0].tv_sec = (time_t)aTime;
         tmp[0].tv_usec = 0;
         tmp[1].tv_sec = (time_t)mTime;
         tmp[1].tv_usec = 0;
 
-        ret = WUTIMES(fileName, tmp);
+    #ifdef WFUTIMES
+        if (fp != NULL) {
+            if (WFFLUSH(fp) != 0 || WFUTIMES(fileno(fp), tmp) != 0)
+                ret = WS_FATAL_ERROR;
+        }
+        else
+    #endif
+        {
+            (void)fp;
+            /* no open descriptor to bind to; prefer the no-follow path update
+             * so a swapped symlink is not followed, falling back to plain
+             * utimes() only when utimensat() is unavailable */
+    #ifdef WUTIMES_NOFOLLOW
+            if (WUTIMES_NOFOLLOW(fileName, tmp) != 0)
+    #else
+            if (WUTIMES(fileName, tmp) != 0)
+    #endif
+                ret = WS_FATAL_ERROR;
+        }
 #endif
     }
 
@@ -2307,14 +2355,32 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                 (void)fsync(fileno(fp));
                 flush_bytes = 0;
 #endif
+#ifdef WOLFSSH_SCP_FD_UTIMES
+                /* set timestamp info on the open file, before closing, so the
+                 * update is bound to the inode and cannot be redirected to a
+                 * symlink swapped in over the path */
+                if (mTime != 0 || aTime != 0)
+                    ret = SetTimestampInfo(fp, fileName, mTime, aTime);
+#endif
                 WFCLOSE(ssh->fs, fp);
                 fp = NULL;
             }
+#ifdef WOLFSSH_SCP_FD_UTIMES
+            else if (mTime != 0 || aTime != 0) {
+                /* descriptor-based update required but the file was never
+                 * opened; do not fall back to a path update that could follow
+                 * a swapped symlink, fail so the handling below aborts */
+                ret = WS_FATAL_ERROR;
+            }
+#endif
 
             /* set timestamp info */
             if (mTime != 0 || aTime != 0) {
-                ret = SetTimestampInfo(fileName, mTime, aTime);
-
+#ifndef WOLFSSH_SCP_FD_UTIMES
+                /* no descriptor-based update available, set by path now that
+                 * the file is closed so the close cannot overwrite the time */
+                ret = SetTimestampInfo(NULL, fileName, mTime, aTime);
+#endif
                 if (ret == WS_SUCCESS) {
                     ret = WS_SCP_CONTINUE;
                 } else {
