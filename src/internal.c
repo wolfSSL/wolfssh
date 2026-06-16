@@ -12827,7 +12827,8 @@ static int SignHRsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
         WLOG(WS_LOG_INFO, "Signing hash with %s.",
             IdToName(ssh->handshake->pubKeyId));
         #ifdef WOLFSSH_TPM
-        if (ssh->handshake->useTpm) {
+        if (ssh->handshake->useTpm && ssh->ctx->tpmDev != NULL
+                && ssh->ctx->tpmKey != NULL) {
             /* Pass the raw digest; the TPM builds the PKCS#1 DigestInfo. */
             ret = wolfTPM2_SignHashScheme(ssh->ctx->tpmDev,
                 ssh->ctx->tpmKey, digest, (int)digestSz, sig, (int*)sigSz,

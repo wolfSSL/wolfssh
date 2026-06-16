@@ -2237,113 +2237,51 @@ static int LoadPubKeyList(StrList* strList, int format, PwMapList* mapList)
 #endif
 
 #ifdef WOLFSSH_TPM
-/* Default key auth produced by 'keygen ... -ecc -t -eh' (override with -auth). */
-#define ECHOSERVER_TPM_KEY_AUTH "ThisIsMyKeyAuth"
+/* Default key auth produced by 'keygen ... -t -eh'; pass a different value to
+ * EchoserverInitTpmHostKey() to override. */
+#define ECHOSERVER_TPM_KEY_AUTH_DEFAULT "ThisIsMyKeyAuth"
 static WOLFTPM2_DEV tpmHostDev;
 static WOLFTPM2_KEY tpmHostKey;
 static int tpmHostKeyValid = 0;
 
-static int EchoserverReadKeyBlob(const char* filename, WOLFTPM2_KEYBLOB* key)
-{
-    int rc = 0;
-#if !defined(NO_FILESYSTEM) && !defined(NO_WRITE_TEMP_FILES)
-    WFILE* fp = NULL;
-    size_t fileSz = 0;
-    size_t bytesRead = 0;
-    byte pubAreaBuffer[sizeof(TPM2B_PUBLIC)];
-    int pubAreaSize;
-
-    WMEMSET(key, 0, sizeof(WOLFTPM2_KEYBLOB));
-
-    if (WFOPEN(NULL, &fp, filename, "rb") != 0 || fp == WBADFILE) {
-        fprintf(stderr, "Failed to open TPM key blob %s\n", filename);
-        return BUFFER_E;
-    }
-
-    WFSEEK(NULL, fp, 0, WSEEK_END);
-    fileSz = WFTELL(NULL, fp);
-    WREWIND(NULL, fp);
-
-    if (fileSz > sizeof(key->priv) + sizeof(key->pub)) {
-        rc = BUFFER_E;
-    }
-
-    if (rc == 0) {
-        bytesRead = WFREAD(NULL, &key->pub.size, 1, sizeof(key->pub.size), fp);
-        if (bytesRead != sizeof(key->pub.size))
-            rc = BUFFER_E;
-        else
-            fileSz -= bytesRead;
-    }
-
-    if (rc == 0 &&
-            (sizeof(UINT16) + (size_t)key->pub.size) > sizeof(pubAreaBuffer)) {
-        rc = BUFFER_E;
-    }
-
-    if (rc == 0) {
-        bytesRead = WFREAD(NULL, pubAreaBuffer, 1,
-            sizeof(UINT16) + key->pub.size, fp);
-        if (bytesRead != sizeof(UINT16) + key->pub.size)
-            rc = BUFFER_E;
-        else
-            fileSz -= bytesRead;
-    }
-
-    if (rc == 0) {
-        /* Bound the parse to the bytes actually read so a malformed size
-         * field cannot consume the uninitialized tail of the buffer. */
-        rc = TPM2_ParsePublic(&key->pub, pubAreaBuffer,
-            (word32)(sizeof(UINT16) + key->pub.size), &pubAreaSize);
-    }
-
-    if (rc == 0 &&
-            pubAreaSize != (int)(sizeof(UINT16) + key->pub.size)) {
-        rc = BUFFER_E;
-    }
-
-    if (rc == 0 && fileSz > sizeof(key->priv)) {
-        rc = BUFFER_E;
-    }
-
-    if (rc == 0 && fileSz > 0) {
-        bytesRead = WFREAD(NULL, &key->priv, 1, fileSz, fp);
-        if (bytesRead != fileSz)
-            rc = BUFFER_E;
-    }
-
-    if (rc == 0 && key->priv.size > sizeof(key->priv.buffer)) {
-        rc = BUFFER_E;
-    }
-
-    WFCLOSE(NULL, fp);
-#else
-    (void)filename;
-    (void)key;
-    rc = WS_NOT_COMPILED;
-#endif
-    return rc;
-}
-
-/* Loads an ECC host key blob into the TPM and registers it as the server host
- * key so the private key never enters RAM. */
-static int EchoserverInitTpmHostKey(WOLFSSH_CTX* ctx, const char* keyFile)
+/* Loads a TPM host key blob (ECC or RSA) into the TPM and registers it as the
+ * server host key so the private key never enters RAM. */
+static int EchoserverInitTpmHostKey(WOLFSSH_CTX* ctx, const char* keyFile,
+        const char* keyAuth)
 {
     int rc;
     TPMI_ALG_PUBLIC alg = TPM_ALG_ECC;
     WOLFTPM2_KEY endorse;
     WOLFTPM2_KEYBLOB keyBlob;
     WOLFTPM2_SESSION tpmSession;
+#ifndef NO_FILESYSTEM
+    byte fileBuf[sizeof(WOLFTPM2_KEYBLOB)];
+    word32 fileSz = (word32)sizeof(fileBuf);
+    int readSz = 0;
+#endif
 
     WMEMSET(&endorse, 0, sizeof(endorse));
     WMEMSET(&tpmSession, 0, sizeof(tpmSession));
+    WMEMSET(&keyBlob, 0, sizeof(keyBlob));
     WMEMSET(&tpmHostKey, 0, sizeof(tpmHostKey));
 
     rc = wolfTPM2_Init(&tpmHostDev, TPM2_IoCb, NULL);
 
+    /* Read the key blob and parse it with the shared wolfTPM helper. */
+#ifndef NO_FILESYSTEM
     if (rc == 0) {
-        rc = EchoserverReadKeyBlob(keyFile, &keyBlob);
+        readSz = load_file(keyFile, fileBuf, &fileSz);
+        if (readSz <= 0)
+            rc = WS_BAD_FILE_E;
     }
+    if (rc == 0) {
+        rc = wolfTPM2_SetKeyBlobFromBuffer(&keyBlob, fileBuf, (word32)readSz);
+    }
+#else
+    (void)keyFile;
+    if (rc == 0)
+        rc = WS_NOT_COMPILED;
+#endif
 
     /* Match the endorsement key type to the host key (RSA or ECC). */
     if (rc == 0) {
@@ -2360,9 +2298,13 @@ static int EchoserverInitTpmHostKey(WOLFSSH_CTX* ctx, const char* keyFile)
         rc = wolfTPM2_SetAuthSession(&tpmHostDev, 0, &tpmSession, 0);
     }
 
+    if (rc == 0 && XSTRLEN(keyAuth) > sizeof(keyBlob.handle.auth.buffer)) {
+        rc = WS_BAD_ARGUMENT;
+    }
+
     if (rc == 0) {
-        keyBlob.handle.auth.size = (word32)XSTRLEN(ECHOSERVER_TPM_KEY_AUTH);
-        XMEMCPY(keyBlob.handle.auth.buffer, ECHOSERVER_TPM_KEY_AUTH,
+        keyBlob.handle.auth.size = (word32)XSTRLEN(keyAuth);
+        XMEMCPY(keyBlob.handle.auth.buffer, keyAuth,
                 keyBlob.handle.auth.size);
         rc = wolfTPM2_LoadKey(&tpmHostDev, &keyBlob, &endorse.handle);
     }
@@ -2390,6 +2332,9 @@ static int EchoserverInitTpmHostKey(WOLFSSH_CTX* ctx, const char* keyFile)
     /* keyBlob holds the private blob and key auth; the session may hold auth. */
     wc_ForceZero(&keyBlob, sizeof(keyBlob));
     wc_ForceZero(&tpmSession, sizeof(tpmSession));
+#ifndef NO_FILESYSTEM
+    wc_ForceZero(fileBuf, sizeof(fileBuf));
+#endif
 
     return rc;
 }
@@ -3163,7 +3108,8 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
     #ifdef WOLFSSH_TPM
         if (tpmHostKeyPath != NULL) {
-            if (EchoserverInitTpmHostKey(ctx, tpmHostKeyPath) != 0) {
+            if (EchoserverInitTpmHostKey(ctx, tpmHostKeyPath,
+                    ECHOSERVER_TPM_KEY_AUTH_DEFAULT) != 0) {
                 ES_ERROR("Couldn't load TPM host key from %s.\n", tpmHostKeyPath);
             }
             loadDefaultHostKeys = 0;
