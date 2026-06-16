@@ -923,44 +923,86 @@ static int HandleChrootDir(WOLFSSHD_CONFIG* conf, const char* value)
 }
 
 
-/* returns WS_SUCCESS on success, helps with adding a restricted case to the
- * config */
-static int AddRestrictedCase(WOLFSSHD_CONFIG* config, const char* mtch,
-    const char* value, char** out)
+/* Parse the value of a Match directive into the user and group applies-to
+ * fields of 'config'. The value is a whitespace separated sequence of
+ * keyword/name pairs, e.g. "User alice Group admins". The token immediately
+ * following a "User" or "Group" keyword is taken literally as the name and is
+ * never re-examined as a keyword, so a principal named like the opposite
+ * keyword (e.g. "Match User Group") is handled by position rather than by a
+ * substring search. A recognized keyword with no following name (e.g. a bare
+ * "Match User") is a configuration error so the admin's intent is not silently
+ * dropped. Unrecognized tokens are ignored to stay lenient toward Match
+ * criteria that are not yet supported. Returns WS_SUCCESS on success. */
+static int ParseMatchCriteria(WOLFSSHD_CONFIG* config, const char* value)
 {
     int ret = WS_SUCCESS;
-    char* pt;
+    const char* pt;
 
-    pt = (char*)XSTRSTR(value, mtch);
-    if (pt != NULL) {
-        int sz, i;
+    if (config == NULL || value == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
 
-        pt += (int)XSTRLEN(mtch);
-        sz   = (int)XSTRLEN(pt);
+    pt = value;
+    while (ret == WS_SUCCESS && pt != NULL && *pt != '\0') {
+        const char* tok;
+        int tokSz;
+        char** out = NULL;
 
-        /* remove spaces between 'mtch' and the user name */
-        for (i = 0; i < sz; i++) {
-            if (pt[i] != ' ') break;
+        /* skip separators preceding the keyword token */
+        while (WISSPACE((unsigned char)*pt)) {
+            pt++;
         }
-        if (i == sz) {
-            wolfSSH_Log(WS_LOG_ERROR,
-                "[SSHD] No valid input found with Match");
-            ret = WS_FATAL_ERROR;
+        if (*pt == '\0') {
+            break;
         }
 
-        if (ret == WS_SUCCESS) {
-            pt += i;
-            sz  -= i;
+        /* read the keyword token */
+        tok = pt;
+        while (*pt != '\0' && !WISSPACE((unsigned char)*pt)) {
+            pt++;
+        }
+        tokSz = (int)(pt - tok);
 
-            /* get the actual size of the user name */
-            for (i = 0; i < sz; i++) {
-                if (pt[i] == ' ' || pt[i] == '\r' || pt[i] == '\n') break;
+        /* map the keyword to its applies-to field; ignore anything else */
+        if (tokSz == (int)XSTRLEN("User") &&
+                WSTRNCMP(tok, "User", tokSz) == 0) {
+            out = &config->usrAppliesTo;
+        }
+        else if (tokSz == (int)XSTRLEN("Group") &&
+                WSTRNCMP(tok, "Group", tokSz) == 0) {
+            out = &config->groupAppliesTo;
+        }
+
+        if (out != NULL) {
+            /* skip separators between the keyword and its name */
+            while (WISSPACE((unsigned char)*pt)) {
+                pt++;
             }
-            sz = i;
 
-            ret = CreateString(out, pt, sz, config->heap);
+            /* the next token is the name, taken literally */
+            tok = pt;
+            while (*pt != '\0' && !WISSPACE((unsigned char)*pt)) {
+                pt++;
+            }
+            tokSz = (int)(pt - tok);
+
+            if (tokSz == 0) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Match %s directive is missing a name",
+                    (out == &config->usrAppliesTo) ? "User" : "Group");
+                ret = WS_FATAL_ERROR;
+            }
+
+            if (ret == WS_SUCCESS) {
+                /* a repeated keyword replaces the earlier value */
+                if (*out != NULL) {
+                    FreeString(out, config->heap);
+                }
+                ret = CreateString(out, tok, tokSz, config->heap);
+            }
         }
     }
+
     return ret;
 }
 
@@ -1052,16 +1094,9 @@ static int HandleMatch(WOLFSSHD_CONFIG** conf, const char* value, int valueSz)
         }
     }
 
-    /* users the settings apply to */
+    /* parse the User/Group criteria the settings apply to */
     if (ret == WS_SUCCESS) {
-        ret = AddRestrictedCase(newConf, "User", value,
-            &newConf->usrAppliesTo);
-    }
-
-    /* groups the settings apply to */
-    if (ret == WS_SUCCESS) {
-        ret = AddRestrictedCase(newConf, "Group", value,
-            &newConf->groupAppliesTo);
+        ret = ParseMatchCriteria(newConf, value);
     }
 
     /* @TODO handle , separated user/group list */
@@ -1076,6 +1111,10 @@ static int HandleMatch(WOLFSSHD_CONFIG** conf, const char* value, int valueSz)
     if (ret == WS_SUCCESS) {
         (*conf)->next = newConf;
         (*conf)       = newConf;
+    }
+    else {
+        /* newConf was allocated but not linked into the list; free it */
+        wolfSSHD_ConfigFree(newConf);
     }
 
     (void)valueSz;
