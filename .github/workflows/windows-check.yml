@@ -65,3 +65,134 @@ jobs:
       # See https://docs.microsoft.com/visualstudio/msbuild/msbuild-command-line-reference
       run: msbuild /m /p:PlatformToolset=v142 /p:Platform=${{env.BUILD_PLATFORM}} /p:WindowsTargetPlatformVersion=${{env.TARGET_PLATFORM}} /p:Configuration=${{env.WOLFSSH_BUILD_CONFIGURATION}} ${{env.SOLUTION_FILE_PATH}}
 
+  # Build and run the self-contained unit tests with the MSVC AddressSanitizer.
+  # This is the only job that executes wolfSSH tests under a sanitizer on
+  # Windows, where the USE_WINDOWS_API console code (e.g. wolfSSH_DoOSC) is
+  # compiled, so it guards that path against out-of-bounds reads.
+  asan-tests:
+    runs-on: windows-latest
+
+    env:
+      # print_stats=1 emits allocator stats at exit, positive evidence that the
+      # ASan runtime was active in-process during each test run.
+      ASAN_OPTIONS: abort_on_error=1:print_stats=1
+
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+
+    - uses: actions/checkout@master
+      with:
+        path: wolfssh
+
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@v1
+
+    # The pinned v142 toolset does not ship the AddressSanitizer runtime libs on
+    # the runner. Find an installed MSVC toolset that does and build everything in
+    # this job with it, recording its lib/bin dirs for the link and run steps.
+    # wolfssl, wolfssh and the test projects must share one compiler version
+    # because /GL (whole program optimization) does code generation at link time.
+    - name: Locate MSVC AddressSanitizer runtime
+      shell: pwsh
+      run: |
+        $vs = & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+        $lib = Get-ChildItem "$vs\VC\Tools\MSVC\*\lib\x64\clang_rt.asan_dynamic_runtime_thunk-x86_64.lib" -ErrorAction SilentlyContinue |
+            Sort-Object { [version]($_.FullName -replace '.*\\MSVC\\([0-9.]+)\\.*','$1') } |
+            Select-Object -Last 1
+        if ($null -eq $lib) { throw "MSVC AddressSanitizer runtime not found in any installed toolset" }
+        $msvcDir = $lib.Directory.Parent.Parent.FullName
+        $ver = [version]($msvcDir.Split('\')[-1])
+        if ($ver.Minor -ge 30) { $toolset = "v143" } else { $toolset = "v142" }
+        "ASAN_TOOLSET=$toolset"                                 | Out-File $env:GITHUB_ENV -Append
+        "ASAN_LIB_DIR=$($lib.Directory.FullName)"               | Out-File $env:GITHUB_ENV -Append
+        "ASAN_BIN_DIR=$(Join-Path $msvcDir 'bin\Hostx64\x64')"  | Out-File $env:GITHUB_ENV -Append
+        Write-Host "Using toolset $toolset (MSVC $ver)"
+
+    - name: Restore wolfSSL NuGet packages
+      working-directory: wolfssl
+      run: nuget restore ${{env.WOLFSSL_SOLUTION_FILE_PATH}}
+
+    # These env paths already include the wolfssh/ and wolfssl/ checkout
+    # prefixes, so they must run from the workspace root (as the build job does).
+    - name: updated user_settings.h for sshd and x509
+      run: cp ${{env.USER_SETTINGS_H_NEW}} ${{env.USER_SETTINGS_H}}
+
+    - name: replace wolfSSL user_settings.h with wolfSSH user_settings.h
+      run: get-content ${{env.USER_SETTINGS_H_NEW}} | %{$_ -replace "if 0","if 1"}
+
+    # WholeProgramOptimization=false disables /GL so the v142-independent objects
+    # link without a cross-version code-generation requirement (C1047).
+    - name: Build wolfssl library
+      working-directory: wolfssl
+      shell: pwsh
+      run: |
+        msbuild /m /p:PlatformToolset=$env:ASAN_TOOLSET /p:Platform=${{env.BUILD_PLATFORM}} /p:Configuration=${{env.WOLFSSL_BUILD_CONFIGURATION}} /p:WholeProgramOptimization=false /t:wolfssl ${{env.WOLFSSL_SOLUTION_FILE_PATH}}
+        if ($LASTEXITCODE -ne 0) { throw "wolfssl build failed" }
+
+    - name: Restore NuGet packages
+      working-directory: wolfssh\ide\winvs
+      run: nuget restore ${{env.SOLUTION_FILE_PATH}}
+
+    # EnableASAN=true adds /fsanitize=address to each test project and to the
+    # referenced wolfssh library project, instrumenting src/wolfterm.c. The
+    # AddressSanitizer lib dir is added to LIB so the runtime thunk resolves.
+    - name: Build api-test and unit-test with AddressSanitizer
+      working-directory: wolfssh\ide\winvs
+      shell: pwsh
+      run: |
+        $env:LIB = "$env:ASAN_LIB_DIR;$env:LIB"
+        foreach ($p in @("api-test\api-test.vcxproj", "unit-test\unit-test.vcxproj")) {
+          msbuild /m /p:PlatformToolset=$env:ASAN_TOOLSET /p:Platform=${{env.BUILD_PLATFORM}} /p:WindowsTargetPlatformVersion=${{env.TARGET_PLATFORM}} /p:Configuration=${{env.WOLFSSH_BUILD_CONFIGURATION}} /p:EnableASAN=true /p:WholeProgramOptimization=false $p
+          if ($LASTEXITCODE -ne 0) { throw "build failed: $p" }
+        }
+
+    # Positive control: compile a deliberate heap overflow with the same toolset
+    # and confirm ASan aborts on it. This proves ASan detection actually works on
+    # this runner, so a clean test run is meaningful rather than a silent no-op.
+    - name: Verify AddressSanitizer detection (positive control)
+      shell: pwsh
+      run: |
+        $vs = & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+        Import-Module "$vs\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
+        Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments "-arch=x64" | Out-Null
+        Set-Content canary.c 'int main(int argc, char** argv) { volatile char b[1]; (void)argv; return b[argc + 10]; }'
+        cl /nologo /fsanitize=address /MD canary.c
+        if ($LASTEXITCODE -ne 0) { throw "canary failed to compile" }
+        $out = & .\canary.exe 2>&1 | Out-String
+        $code = $LASTEXITCODE
+        Write-Host $out
+        if ($code -eq 0 -or $out -notmatch "AddressSanitizer") {
+          throw "Positive control FAILED: ASan did not detect the deliberate overflow"
+        }
+        Write-Host "Positive control OK: ASan detected the deliberate out-of-bounds access"
+        # canary.exe aborts with a non-zero code by design; reset so the step
+        # itself reports success.
+        exit 0
+
+    # Building a .vcxproj directly leaves $(SolutionDir) unset, so each project
+    # writes to its own <project>\Release\x64 dir. Run from the wolfssh repo root
+    # so the tests find keys/ and certs/, and copy the dynamic ASAN runtime next
+    # to each binary so it loads without a full developer-prompt environment.
+    - name: Run tests under AddressSanitizer
+      working-directory: wolfssh
+      shell: pwsh
+      run: |
+        $cfg = "${{env.WOLFSSH_BUILD_CONFIGURATION}}\${{env.BUILD_PLATFORM}}"
+        $dll = Join-Path $env:ASAN_BIN_DIR "clang_rt.asan_dynamic-x86_64.dll"
+        if (-not (Test-Path $dll)) { throw "ASAN runtime DLL not found: $dll" }
+        foreach ($t in @("api-test", "unit-test")) {
+          $dir = "ide\winvs\$t\$cfg"
+          # Static signal: confirm the binary really imports the ASan runtime, so
+          # we are exercising an instrumented build and not a stale one.
+          $deps = & "$env:ASAN_BIN_DIR\dumpbin.exe" /dependents "$dir\$t.exe" | Out-String
+          if ($deps -notmatch "clang_rt.asan") { throw "$t is not linked against the ASan runtime" }
+          Write-Host "$t links the ASan runtime:"
+          ($deps -split "`n" | Select-String "asan").Line.Trim() | ForEach-Object { Write-Host "  $_" }
+          Copy-Item $dll $dir
+          & "$dir\$t.exe"
+          if ($LASTEXITCODE -ne 0) { throw "$t failed under ASAN (exit $LASTEXITCODE)" }
+        }
+

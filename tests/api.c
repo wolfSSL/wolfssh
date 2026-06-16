@@ -2865,6 +2865,22 @@ static byte color_test[] = {
     0x1B, 0x5B, 0x34, 0x39, 0x6D, 0x64, 0x65, 0x66,
     0x61, 0x75, 0x6C, 0x74, 0x20, 0x62, 0x67, 0x0A,
 };
+
+/* OSC (ESC ]) sequences that end before the command is complete. These
+ * exercise the bounds checks in wolfSSH_DoOSC; each truncated sequence is
+ * dropped (WS_SUCCESS) without reading past the end of the buffer. */
+static byte osc_trunc_cmd[] = { /* ends right after "ESC ]" */
+    0x1B, 0x5D
+};
+static byte osc_trunc_arg[] = { /* ends after "ESC ] 0" */
+    0x1B, 0x5D, 0x30
+};
+static byte osc_trunc_str[] = { /* "ESC ] 0 ; title" with no BEL terminator */
+    0x1B, 0x5D, 0x30, 0x3B, 0x74, 0x69, 0x74, 0x6C, 0x65
+};
+static byte osc_full[] = { /* well formed "ESC ] 0 ; hi BEL" */
+    0x1B, 0x5D, 0x30, 0x3B, 0x68, 0x69, 0x07
+};
 #endif /* USE_WINDOWS_API */
 
 
@@ -2900,6 +2916,17 @@ static void test_wolfSSH_ConvertConsole(void)
             WS_WANT_READ);
     AssertIntEQ(wolfSSH_ConvertConsole(ssh, stdoutHandle, color_test, 1),
             WS_SUCCESS); /* should skip over unknown console code */
+
+    /* truncated OSC sequences must be dropped without an out of bounds read */
+    AssertIntEQ(wolfSSH_ConvertConsole(ssh, stdoutHandle, osc_trunc_cmd,
+                sizeof(osc_trunc_cmd)), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_ConvertConsole(ssh, stdoutHandle, osc_trunc_arg,
+                sizeof(osc_trunc_arg)), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_ConvertConsole(ssh, stdoutHandle, osc_trunc_str,
+                sizeof(osc_trunc_str)), WS_SUCCESS);
+    /* a well formed OSC sequence still parses */
+    AssertIntEQ(wolfSSH_ConvertConsole(ssh, stdoutHandle, osc_full,
+                sizeof(osc_full)), WS_SUCCESS);
 
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);

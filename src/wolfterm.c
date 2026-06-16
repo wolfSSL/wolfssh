@@ -356,6 +356,15 @@ static int getArgs(byte* buf, word32 bufSz, word32* idx, word32* out)
 static int wolfSSH_DoOSC(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf,
         word32 bufSz, word32* idx)
 {
+    /* A truncated OSC sequence is dropped rather than resumed: OSC state is
+     * not saved to escBuf and escState is never set to WS_ESC_OSC, so there is
+     * no resume path. Returning WS_SUCCESS lets the caller advance past the
+     * sequence and reset escState cleanly. */
+    if (*idx >= bufSz) {
+        /* missing the OSC command byte, drop the sequence */
+        return WS_SUCCESS;
+    }
+
     if (buf[*idx] == 'P') { /* color pallet */
         WLOG(WS_LOG_DEBUG, "Color pallet not yet supported");
         return WS_SUCCESS;
@@ -375,6 +384,9 @@ static int wolfSSH_DoOSC(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf,
             word32 i;
 
             *idx += 1;
+            if (*idx >= bufSz) {
+                break; /* truncated sequence, drop it */
+            }
             if (buf[*idx] == ';') {
                 *idx += 1;
             }
@@ -385,8 +397,11 @@ static int wolfSSH_DoOSC(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf,
             /* BEL (0x07) ends string */
             i = *idx;
             while (i < bufSz && buf[i] != 0x07) i++;
-            if (buf[i] != 0x07) {
-                break; /*bell not found, possible want read? */
+            if (i >= bufSz) {
+                /* bell not found, consume and drop the truncated sequence so
+                 * the partial title is not emitted as raw output */
+                *idx = bufSz;
+                break;
             }
 
             /* sanity check on underflow */
