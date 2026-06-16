@@ -1049,8 +1049,14 @@ static int test_CheckPasswordHashUnix(void)
     int rc;
 
     hash = crypt(correct, salt);
-    if (hash == NULL || hash[0] == '*' || WSTRLEN(hash) == 0) {
-        Log("    crypt() unavailable or refused salt, skipping.\n");
+    /* Skip if crypt() did not honor the $6$ SHA-512 request. macOS/Darwin and
+     * some BSD libc only implement legacy DES, which ignores the modular salt,
+     * truncates the password to 8 bytes, and returns a valid-looking 13-char
+     * hash that begins "$6l..." (no second '$'). A real $6$ hash begins with
+     * "$6$<salt>$", so the prefix check cleanly distinguishes them. */
+    if (hash == NULL || hash[0] == '*' || WSTRLEN(hash) == 0 ||
+            WSTRNCMP(hash, "$6$", 3) != 0) {
+        Log("    crypt() did not honor $6$ SHA-512, skipping.\n");
         return WS_SUCCESS;
     }
     if (WSTRLEN(hash) >= sizeof(stored)) {
