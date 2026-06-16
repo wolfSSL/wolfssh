@@ -293,6 +293,8 @@ WOLFSSH_API void wolfSSH_SetTpmDev(WOLFSSH* ssh, WOLFTPM2_DEV* dev);
 WOLFSSH_API void wolfSSH_SetTpmKey(WOLFSSH* ssh, WOLFTPM2_KEY* key);
 WOLFSSH_API void* wolfSSH_GetTpmDev(WOLFSSH* ssh);
 WOLFSSH_API void* wolfSSH_GetTpmKey(WOLFSSH* ssh);
+WOLFSSH_API int wolfSSH_CTX_UseTpmHostKey(WOLFSSH_CTX* ctx,
+        WOLFTPM2_DEV* dev, WOLFTPM2_KEY* key);
 #endif /* WOLFSSH_TPM */
 
 /* I/O callbacks */

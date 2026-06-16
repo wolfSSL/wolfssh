@@ -478,6 +478,75 @@ void* wolfSSH_GetTpmKey(WOLFSSH* ssh)
     }
     return NULL;
 }
+
+
+int wolfSSH_CTX_UseTpmHostKey(WOLFSSH_CTX* ctx,
+        WOLFTPM2_DEV* dev, WOLFTPM2_KEY* key)
+{
+    int ret = WS_SUCCESS;
+    byte keyId = ID_NONE;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CTX_UseTpmHostKey()");
+
+    if (ctx == NULL || dev == NULL || key == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    /* Only one TPM host key is supported per context (single ctx->tpmKey). */
+    if (ret == WS_SUCCESS && ctx->tpmKey != NULL && ctx->tpmKey != key) {
+        WLOG(WS_LOG_DEBUG,
+            "wolfSSH_CTX_UseTpmHostKey: a TPM host key is already set");
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (key->pub.publicArea.type == TPM_ALG_ECC) {
+            switch (key->pub.publicArea.parameters.eccDetail.curveID) {
+            #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+                case TPM_ECC_NIST_P256:
+                    keyId = ID_ECDSA_SHA2_NISTP256;
+                    break;
+            #endif
+            #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+                case TPM_ECC_NIST_P384:
+                    keyId = ID_ECDSA_SHA2_NISTP384;
+                    break;
+            #endif
+            #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+                case TPM_ECC_NIST_P521:
+                    keyId = ID_ECDSA_SHA2_NISTP521;
+                    break;
+            #endif
+                default:
+                    ret = WS_INVALID_PRIME_CURVE;
+            }
+        }
+        else if (key->pub.publicArea.type == TPM_ALG_RSA) {
+        #if !defined(WOLFSSH_NO_RSA) && \
+            (!defined(WOLFSSH_NO_RSA_SHA2_256) || \
+             !defined(WOLFSSH_NO_RSA_SHA2_512) || \
+             (defined(WOLFSSH_NO_SHA1_SOFT_DISABLE) && \
+              !defined(WOLFSSH_NO_SSH_RSA_SHA1)))
+            keyId = ID_SSH_RSA;
+        #else
+            ret = WS_INVALID_ALGO_ID;
+        #endif
+        }
+        else {
+            ret = WS_INVALID_ALGO_ID;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        ctx->tpmDev = dev;
+        ctx->tpmKey = key;
+        ret = wolfSSH_SetHostTpmKey(ctx, keyId);
+    }
+
+    WLOG(WS_LOG_DEBUG,
+            "Leaving wolfSSH_CTX_UseTpmHostKey(), ret = %d", ret);
+    return ret;
+}
 #endif /* WOLFSSH_TPM */
 
 
