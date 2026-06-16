@@ -167,12 +167,23 @@ struct WS_SFTPNAME {
  *     expects the amount requested to be sent, and that's 32kiB.
  * WOLFSSH_MAX_SFTP_RECV: Used as a bounds check on a SFTP message's size.
  *     Is not used to allocate any buffers directly.
+ * WOLFSSH_MAX_SFTP_NAME: Upper bound on the size of a single SFTP NAME
+ *     response (READDIR, REALPATH, LS). The client allocates one buffer of
+ *     this size for the message and then one WS_SFTPNAME node per entry, so
+ *     an unbounded NAME packet lets a malicious or MITM server amplify a
+ *     modest packet into several times that much live heap. The default of
+ *     1 MiB leaves room for very large single-packet directory listings (the
+ *     server sends a whole directory in one NAME packet) while bounding peak
+ *     heap to a few MiB.
  */
 #ifndef WOLFSSH_MAX_SFTP_RW
     #define WOLFSSH_MAX_SFTP_RW 32768
 #endif
 #ifndef WOLFSSH_MAX_SFTP_RECV
     #define WOLFSSH_MAX_SFTP_RECV 32768
+#endif
+#ifndef WOLFSSH_MAX_SFTP_NAME
+    #define WOLFSSH_MAX_SFTP_NAME (1024 * 1024)
 #endif
 
 /*
@@ -301,6 +312,7 @@ WOLFSSH_LOCAL void wolfSSH_SFTP_ShowSizes(void);
     WOLFSSH_API int wolfSSH_TestSftpBufferSend(WOLFSSH* ssh,
             byte* data, word32 sz, word32 idx);
     WOLFSSH_API int wolfSSH_TestSftpRecvSizeCheck(int sz);
+    WOLFSSH_API int wolfSSH_TestSftpDoName(WOLFSSH* ssh);
     WOLFSSH_API int wolfSSH_TestSftpSendCap(WOLFSSH* ssh, word32 cap);
     WOLFSSH_API int wolfSSH_TestSftpStallPending(WOLFSSH* ssh, word32 count);
     #if !defined(NO_WOLFSSH_SERVER) && !defined(USE_WINDOWS_API) && \

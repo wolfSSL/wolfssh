@@ -6948,7 +6948,28 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
 
         case SFTP_NAME_GETHEADER_PACKET:
             maxSz = SFTP_GetHeader(ssh, &reqId, &type, &state->buffer);
-            if (maxSz <= 0 || ssh->error == WS_WANT_READ) {
+            if (maxSz <= 0) {
+                /* Non-positive size: a retryable notice keeps NAME state for
+                 * resume; otherwise (including an int wrap above INT_MAX)
+                 * record a size error if unset and clear state. */
+                if (!NoticeError(ssh)) {
+                    if (ssh->error == WS_SUCCESS) {
+                        ssh->error = WS_BUFFER_E;
+                    }
+                    wolfSSH_SFTP_ClearState(ssh, STATE_ID_NAME);
+                }
+                return NULL;
+            }
+
+            /* Bound the NAME size: the buffer is allocated at this size and a
+             * WS_SFTPNAME node is made per entry, so an over-large packet
+             * would amplify into several times that much live heap. */
+            if (maxSz > WOLFSSH_MAX_SFTP_NAME) {
+                WLOG(WS_LOG_SFTP,
+                        "SFTP NAME packet size %d exceeds limit %d",
+                        maxSz, (int)WOLFSSH_MAX_SFTP_NAME);
+                ssh->error = WS_BUFFER_E;
+                wolfSSH_SFTP_ClearState(ssh, STATE_ID_NAME);
                 return NULL;
             }
 
@@ -7108,6 +7129,26 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
     WOLFSSH_UNUSED(maxSz);
     return n;
 }
+
+
+#ifdef WOLFSSH_TEST_INTERNAL
+/* Drive wolfSSH_SFTP_DoName for unit testing. Frees any returned name list
+ * and reports ssh->error so the caller can check the NAME size bound. */
+int wolfSSH_TestSftpDoName(WOLFSSH* ssh)
+{
+    WS_SFTPNAME* name;
+
+    if (ssh == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    name = wolfSSH_SFTP_DoName(ssh);
+    if (name != NULL) {
+        wolfSSH_SFTPNAME_list_free(name);
+    }
+    return ssh->error;
+}
+#endif
 
 
 /* get the file handle from SSH stream

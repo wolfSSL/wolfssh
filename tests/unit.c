@@ -5161,6 +5161,110 @@ static int test_Errors(void)
     return result;
 }
 
+#if defined(WOLFSSH_SFTP) && defined(WOLFSSH_TEST_INTERNAL)
+/* Inject a crafted SFTP NAME header declaring an on-wire payload length of
+ * 'wireLen' into a channel, drive wolfSSH_SFTP_DoName, and report ssh->error
+ * via outErr. Only the 9-byte header is needed: the NAME size bound is
+ * checked before the message body is read. Returns 0 on setup success. */
+static int sftpDoNameInjectErr(word32 wireLen, int* outErr)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    byte   hdr[LENGTH_SZ + MSG_ID_SZ + UINT32_SZ];
+    int    result = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -560;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -561;
+    }
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 128);
+    if (ch == NULL) {
+        result = -562;
+        goto done;
+    }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -563;
+        goto done;
+    }
+
+    /* SFTP header: [uint32 length][byte type][uint32 reqId]. */
+    hdr[0] = (byte)(wireLen >> 24);
+    hdr[1] = (byte)(wireLen >> 16);
+    hdr[2] = (byte)(wireLen >> 8);
+    hdr[3] = (byte)(wireLen);
+    hdr[LENGTH_SZ] = WOLFSSH_FTP_NAME;
+    hdr[LENGTH_SZ + MSG_ID_SZ + 0] = 0;
+    hdr[LENGTH_SZ + MSG_ID_SZ + 1] = 0;
+    hdr[LENGTH_SZ + MSG_ID_SZ + 2] = 0;
+    hdr[LENGTH_SZ + MSG_ID_SZ + 3] = 0;
+
+    /* Leave reqId non-matching so an in-bound header exits at the request-id
+     * check without setting WS_BUFFER_E. */
+    ssh->reqId = 0xFFFFFFFF;
+    ssh->error = WS_SUCCESS;
+
+    if (wolfSSH_TestChannelPutData(ch, hdr, (word32)sizeof(hdr))
+            != WS_SUCCESS) {
+        result = -564;
+        goto done;
+    }
+
+    *outErr = wolfSSH_TestSftpDoName(ssh);
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* Verify wolfSSH_SFTP_DoName rejects a NAME message larger than
+ * WOLFSSH_MAX_SFTP_NAME and accepts one at the limit. SFTP_GetHeader
+ * returns the wire length minus the type and request-id fields, so the
+ * reported maxSz is wireLen - (UINT32_SZ + MSG_ID_SZ). */
+static int test_SftpDoName_sizeBound(void)
+{
+    word32 overhead = UINT32_SZ + MSG_ID_SZ;
+    int    err = 0;
+    int    result;
+
+    /* maxSz = WOLFSSH_MAX_SFTP_NAME + 1 -> over the bound, rejected. */
+    err = WS_SUCCESS;
+    result = sftpDoNameInjectErr(WOLFSSH_MAX_SFTP_NAME + overhead + 1, &err);
+    if (result != 0)
+        return result;
+    if (err != WS_BUFFER_E)
+        return -570;
+
+    /* maxSz = WOLFSSH_MAX_SFTP_NAME -> at the bound, not rejected (exits at
+     * the request-id check instead). */
+    err = WS_SUCCESS;
+    result = sftpDoNameInjectErr(WOLFSSH_MAX_SFTP_NAME + overhead, &err);
+    if (result != 0)
+        return result;
+    if (err == WS_BUFFER_E)
+        return -571;
+
+    /* A wire length above INT_MAX makes SFTP_GetHeader's int result wrap
+     * non-positive; this must be reported as a size error, not a silent
+     * NULL with WS_SUCCESS. */
+    err = WS_SUCCESS;
+    result = sftpDoNameInjectErr(0x80000000U + overhead, &err);
+    if (result != 0)
+        return result;
+    if (err != WS_BUFFER_E)
+        return -572;
+
+    return 0;
+}
+#endif /* WOLFSSH_SFTP && WOLFSSH_TEST_INTERNAL */
+
 int wolfSSH_UnitTest(int argc, char** argv)
 {
     int testResult = 0, unitResult = 0;
@@ -5235,6 +5339,12 @@ int wolfSSH_UnitTest(int argc, char** argv)
     unitResult = test_SendChannelData_eofTxd();
     printf("SendChannelData_eofTxd: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#ifdef WOLFSSH_SFTP
+    unitResult = test_SftpDoName_sizeBound();
+    printf("SftpDoName_sizeBound: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 #if !defined(WOLFSSH_NO_RSA)
     unitResult = test_RsaVerify_BadDigest();
     printf("RsaVerify_BadDigest: %s\n",
