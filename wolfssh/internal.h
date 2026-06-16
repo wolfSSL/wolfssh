@@ -559,6 +559,11 @@ typedef struct WOLFSSH_PVT_KEY {
     byte publicKeyFmt;
         /* Public key format for the private key. Note, some public key
          * formats are used with multiple public key signing algorithms. */
+#ifdef WOLFSSH_TPM
+    byte isTpm;
+        /* When set, the host key material lives in the TPM and key/keySz are
+         * unused; signing and the public K_S come from ctx->tpmKey. */
+#endif
 } WOLFSSH_PVT_KEY;
 
 
@@ -689,6 +694,9 @@ typedef struct HandshakeInfo {
     byte useEccMlKem:1;
     byte useCurve25519:1;
     byte useCurve25519MlKem:1;
+#ifdef WOLFSSH_TPM
+    byte useTpm:1;
+#endif
 
     union {
 #ifndef WOLFSSH_NO_DH
@@ -1038,6 +1046,9 @@ WOLFSSH_LOCAL int ChannelPutData(WOLFSSH_CHANNEL* channel, byte* data,
 WOLFSSH_LOCAL int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
                                         const byte* in, word32 inSz,
                                         int format, int type);
+#ifdef WOLFSSH_TPM
+WOLFSSH_LOCAL int wolfSSH_SetHostTpmKey(WOLFSSH_CTX* ctx, byte keyId);
+#endif
 WOLFSSH_LOCAL int wolfSSH_FwdWorker(WOLFSSH* ssh);
 
 

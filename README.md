@@ -588,6 +588,40 @@ If you used a custom password for keygen you must specify the password you used:
 
     $ ./examples/client/client -i ../wolfTPM/keyblob.bin -u hansel -K <custompassword>
 
+TPM SERVER HOST KEY (ECDSA / RSA)
+=================================
+
+The server can also keep its own host key inside the TPM so the host private
+key is never present in RAM. Build wolfSSL, wolfTPM, and wolfSSH the same way
+as above (`--enable-tpm`). Both ECDSA and RSA host keys are supported.
+
+Generate a host key blob under the endorsement hierarchy (ECC or RSA):
+
+    $ ./examples/keygen/keygen hostkey.bin -ecc -t -eh
+    $ ./examples/keygen/keygen hostkey.bin -rsa -t -eh
+
+Start the echoserver with the TPM-resident host key using `-G`:
+
+    $ ./examples/echoserver/echoserver -G ../wolfTPM/hostkey.bin
+
+The server loads the key blob into the TPM, registers it with
+`wolfSSH_CTX_UseTpmHostKey()`, and advertises the matching host key algorithm
+(`ecdsa-sha2-nistp256` or `rsa-sha2-256`). The exchange hash is signed by the
+TPM; the host private key never leaves it. Any client that accepts the host
+key can connect:
+
+    $ ssh -o HostKeyAlgorithms=ecdsa-sha2-nistp256 user@host
+    $ ssh -o HostKeyAlgorithms=rsa-sha2-256 user@host
+
+To integrate this into your own server, provision the key once into the TPM,
+load its handle at boot into a `WOLFTPM2_KEY`, and register it:
+
+    wolfSSH_CTX_UseTpmHostKey(ctx, &tpmDev, &tpmKey);
+
+Note: RSA host keys are signed with `rsa-sha2-256`. The default echoserver key
+auth produced by keygen is `ThisIsMyKeyAuth` (override with the `-G` example's
+`ECHOSERVER_TPM_KEY_AUTH`).
+
 WOLFSSH APPLICATIONS
 ====================
 

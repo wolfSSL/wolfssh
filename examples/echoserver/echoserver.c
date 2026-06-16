@@ -45,6 +45,10 @@
 #include <wolfssh/test.h>
 #include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfssl/wolfcrypt/logging.h>
+#ifdef WOLFSSH_TPM
+    #include <wolftpm/tpm2_wrap.h>
+    #include <hal/tpm_io.h>
+#endif
 
 #include "examples/echoserver/echoserver.h"
 
@@ -2233,6 +2237,173 @@ static int LoadPubKeyList(StrList* strList, int format, PwMapList* mapList)
 #endif
 
 #ifdef WOLFSSH_TPM
+/* Default key auth produced by 'keygen ... -ecc -t -eh' (override with -auth). */
+#define ECHOSERVER_TPM_KEY_AUTH "ThisIsMyKeyAuth"
+static WOLFTPM2_DEV tpmHostDev;
+static WOLFTPM2_KEY tpmHostKey;
+static int tpmHostKeyValid = 0;
+
+static int EchoserverReadKeyBlob(const char* filename, WOLFTPM2_KEYBLOB* key)
+{
+    int rc = 0;
+#if !defined(NO_FILESYSTEM) && !defined(NO_WRITE_TEMP_FILES)
+    WFILE* fp = NULL;
+    size_t fileSz = 0;
+    size_t bytesRead = 0;
+    byte pubAreaBuffer[sizeof(TPM2B_PUBLIC)];
+    int pubAreaSize;
+
+    WMEMSET(key, 0, sizeof(WOLFTPM2_KEYBLOB));
+
+    if (WFOPEN(NULL, &fp, filename, "rb") != 0 || fp == WBADFILE) {
+        fprintf(stderr, "Failed to open TPM key blob %s\n", filename);
+        return BUFFER_E;
+    }
+
+    WFSEEK(NULL, fp, 0, WSEEK_END);
+    fileSz = WFTELL(NULL, fp);
+    WREWIND(NULL, fp);
+
+    if (fileSz > sizeof(key->priv) + sizeof(key->pub)) {
+        rc = BUFFER_E;
+    }
+
+    if (rc == 0) {
+        bytesRead = WFREAD(NULL, &key->pub.size, 1, sizeof(key->pub.size), fp);
+        if (bytesRead != sizeof(key->pub.size))
+            rc = BUFFER_E;
+        else
+            fileSz -= bytesRead;
+    }
+
+    if (rc == 0 &&
+            (sizeof(UINT16) + (size_t)key->pub.size) > sizeof(pubAreaBuffer)) {
+        rc = BUFFER_E;
+    }
+
+    if (rc == 0) {
+        bytesRead = WFREAD(NULL, pubAreaBuffer, 1,
+            sizeof(UINT16) + key->pub.size, fp);
+        if (bytesRead != sizeof(UINT16) + key->pub.size)
+            rc = BUFFER_E;
+        else
+            fileSz -= bytesRead;
+    }
+
+    if (rc == 0) {
+        /* Bound the parse to the bytes actually read so a malformed size
+         * field cannot consume the uninitialized tail of the buffer. */
+        rc = TPM2_ParsePublic(&key->pub, pubAreaBuffer,
+            (word32)(sizeof(UINT16) + key->pub.size), &pubAreaSize);
+    }
+
+    if (rc == 0 &&
+            pubAreaSize != (int)(sizeof(UINT16) + key->pub.size)) {
+        rc = BUFFER_E;
+    }
+
+    if (rc == 0 && fileSz > sizeof(key->priv)) {
+        rc = BUFFER_E;
+    }
+
+    if (rc == 0 && fileSz > 0) {
+        bytesRead = WFREAD(NULL, &key->priv, 1, fileSz, fp);
+        if (bytesRead != fileSz)
+            rc = BUFFER_E;
+    }
+
+    if (rc == 0 && key->priv.size > sizeof(key->priv.buffer)) {
+        rc = BUFFER_E;
+    }
+
+    WFCLOSE(NULL, fp);
+#else
+    (void)filename;
+    (void)key;
+    rc = WS_NOT_COMPILED;
+#endif
+    return rc;
+}
+
+/* Loads an ECC host key blob into the TPM and registers it as the server host
+ * key so the private key never enters RAM. */
+static int EchoserverInitTpmHostKey(WOLFSSH_CTX* ctx, const char* keyFile)
+{
+    int rc;
+    TPMI_ALG_PUBLIC alg = TPM_ALG_ECC;
+    WOLFTPM2_KEY endorse;
+    WOLFTPM2_KEYBLOB keyBlob;
+    WOLFTPM2_SESSION tpmSession;
+
+    WMEMSET(&endorse, 0, sizeof(endorse));
+    WMEMSET(&tpmSession, 0, sizeof(tpmSession));
+    WMEMSET(&tpmHostKey, 0, sizeof(tpmHostKey));
+
+    rc = wolfTPM2_Init(&tpmHostDev, TPM2_IoCb, NULL);
+
+    if (rc == 0) {
+        rc = EchoserverReadKeyBlob(keyFile, &keyBlob);
+    }
+
+    /* Match the endorsement key type to the host key (RSA or ECC). */
+    if (rc == 0) {
+        alg = keyBlob.pub.publicArea.type;
+        rc = wolfTPM2_CreateEK(&tpmHostDev, &endorse, alg);
+    }
+
+    if (rc == 0) {
+        endorse.handle.policyAuth = 1;
+        rc = wolfTPM2_CreateAuthSession_EkPolicy(&tpmHostDev, &tpmSession);
+    }
+
+    if (rc == 0) {
+        rc = wolfTPM2_SetAuthSession(&tpmHostDev, 0, &tpmSession, 0);
+    }
+
+    if (rc == 0) {
+        keyBlob.handle.auth.size = (word32)XSTRLEN(ECHOSERVER_TPM_KEY_AUTH);
+        XMEMCPY(keyBlob.handle.auth.buffer, ECHOSERVER_TPM_KEY_AUTH,
+                keyBlob.handle.auth.size);
+        rc = wolfTPM2_LoadKey(&tpmHostDev, &keyBlob, &endorse.handle);
+    }
+
+    if (rc == 0) {
+        XMEMCPY(&tpmHostKey.handle, &keyBlob.handle, sizeof(tpmHostKey.handle));
+        XMEMCPY(&tpmHostKey.pub, &keyBlob.pub, sizeof(tpmHostKey.pub));
+        rc = wolfSSH_CTX_UseTpmHostKey(ctx, &tpmHostDev, &tpmHostKey);
+    }
+
+    /* The EK and policy session are only needed to load the key. Drop the
+     * session so signing uses the key's own auth, then flush both handles. */
+    wolfTPM2_UnsetAuth(&tpmHostDev, 0);
+    wolfTPM2_UnloadHandle(&tpmHostDev, &endorse.handle);
+    wolfTPM2_UnloadHandle(&tpmHostDev, &tpmSession.handle);
+
+    if (rc == 0) {
+        tpmHostKeyValid = 1;
+    }
+    else {
+        wolfTPM2_UnloadHandle(&tpmHostDev, &tpmHostKey.handle);
+        wolfTPM2_Cleanup(&tpmHostDev);
+    }
+
+    /* keyBlob holds the private blob and key auth; the session may hold auth. */
+    wc_ForceZero(&keyBlob, sizeof(keyBlob));
+    wc_ForceZero(&tpmSession, sizeof(tpmSession));
+
+    return rc;
+}
+
+static void EchoserverCleanupTpmHostKey(void)
+{
+    if (tpmHostKeyValid) {
+        wolfTPM2_UnloadHandle(&tpmHostDev, &tpmHostKey.handle);
+        wolfTPM2_Cleanup(&tpmHostDev);
+        wc_ForceZero(&tpmHostKey, sizeof(tpmHostKey));
+        tpmHostKeyValid = 0;
+    }
+}
+
 static char* LoadTpmSshKey(const char* keyFile, const char* username)
 {
     WFILE* file = NULL;
@@ -2546,6 +2717,9 @@ static void ShowUsage(void)
     printf(" -I <name>:<file>\n"
            "               load in a SSH public key to accept from peer\n");
     printf(" -s <file>     load in a TPM public key file to replace default hansel key\n");
+#ifdef WOLFSSH_TPM
+    printf(" -G <file>     load an ECC/RSA host key blob from the TPM (private key stays in the TPM)\n");
+#endif
     printf(" -J <name>:<file>\n"
            "               load in an X.509 PEM cert to accept from peer\n");
     printf(" -K <name>:<file>\n"
@@ -2584,11 +2758,20 @@ static INLINE void SignalTcpReady(tcp_ready* ready, word16 port)
 #endif
 }
 
+#ifdef WOLFSSH_TPM
+#define ES_ERROR(...) do { \
+    fprintf(stderr, __VA_ARGS__); \
+    serverArgs->return_code = EXIT_FAILURE; \
+    EchoserverCleanupTpmHostKey(); \
+    WOLFSSL_RETURN_FROM_THREAD(0); \
+} while(0)
+#else
 #define ES_ERROR(...) do { \
     fprintf(stderr, __VA_ARGS__); \
     serverArgs->return_code = EXIT_FAILURE; \
     WOLFSSL_RETURN_FROM_THREAD(0); \
 } while(0)
+#endif
 
 
 static byte wantwrite = 0; /*flag to return want write on first highwater call*/
@@ -2646,6 +2829,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     ES_HEAP_HINT* heap = NULL;
     #ifdef WOLFSSH_TPM
         static char* tpmKeyPath = NULL;
+        static char* tpmHostKeyPath = NULL;
     #endif
     int multipleConnections = 1;
     int userEcc = 0;
@@ -2671,7 +2855,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 #endif
 
     if (argc > 0) {
-        const char* optlist = "?1a:d:efEp:R:Ni:j:i:I:J:K:P:k:b:x:m:c:s:H";
+        const char* optlist = "?1a:d:efEp:R:Ni:j:i:I:J:K:P:k:b:x:m:c:s:G:H";
         myoptind = 0;
         while ((ch = mygetopt(argc, argv, optlist)) != -1) {
             switch (ch) {
@@ -2780,6 +2964,15 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 case 's':
                     #ifdef WOLFSSH_TPM
                         tpmKeyPath = myoptarg;
+                    #endif
+                    break;
+
+                case 'G':
+                    #ifdef WOLFSSH_TPM
+                        tpmHostKeyPath = myoptarg;
+                    #else
+                        ES_ERROR("-G requires wolfSSH built with "
+                                 "WOLFSSH_TPM (--enable-tpm)\n");
                     #endif
                     break;
 
@@ -2950,6 +3143,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
     {
         const char* bufName = NULL;
+        int loadDefaultHostKeys = 1;
     #ifndef WOLFSSH_SMALL_STACK
         byte buf[EXAMPLE_KEYLOAD_BUFFER_SZ];
     #endif
@@ -2967,40 +3161,51 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         #endif
         bufSz = EXAMPLE_KEYLOAD_BUFFER_SZ;
 
-        bufSz = load_key(peerEcc, keyLoadBuf, bufSz);
-        if (bufSz == 0) {
-            ES_ERROR("Couldn't load first key file.\n");
+    #ifdef WOLFSSH_TPM
+        if (tpmHostKeyPath != NULL) {
+            if (EchoserverInitTpmHostKey(ctx, tpmHostKeyPath) != 0) {
+                ES_ERROR("Couldn't load TPM host key from %s.\n", tpmHostKeyPath);
+            }
+            loadDefaultHostKeys = 0;
         }
-        if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, keyLoadBuf, bufSz,
-                                             WOLFSSH_FORMAT_ASN1) < 0) {
-            ES_ERROR("Couldn't use first key buffer.\n");
-        }
+    #endif
+
+        if (loadDefaultHostKeys) {
+            bufSz = load_key(peerEcc, keyLoadBuf, bufSz);
+            if (bufSz == 0) {
+                ES_ERROR("Couldn't load first key file.\n");
+            }
+            if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, keyLoadBuf, bufSz,
+                                                 WOLFSSH_FORMAT_ASN1) < 0) {
+                ES_ERROR("Couldn't use first key buffer.\n");
+            }
 
         #if !defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_ECC)
-        peerEcc = !peerEcc;
-        bufSz = EXAMPLE_KEYLOAD_BUFFER_SZ;
+            peerEcc = !peerEcc;
+            bufSz = EXAMPLE_KEYLOAD_BUFFER_SZ;
 
-        bufSz = load_key(peerEcc, keyLoadBuf, bufSz);
-        if (bufSz == 0) {
-            ES_ERROR("Couldn't load second key file.\n");
-        }
-        if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, keyLoadBuf, bufSz,
-                                             WOLFSSH_FORMAT_ASN1) < 0) {
-            ES_ERROR("Couldn't use second key buffer.\n");
-        }
+            bufSz = load_key(peerEcc, keyLoadBuf, bufSz);
+            if (bufSz == 0) {
+                ES_ERROR("Couldn't load second key file.\n");
+            }
+            if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, keyLoadBuf, bufSz,
+                                                 WOLFSSH_FORMAT_ASN1) < 0) {
+                ES_ERROR("Couldn't use second key buffer.\n");
+            }
         #endif
 
         #ifndef WOLFSSH_NO_ED25519
-        bufSz = EXAMPLE_KEYLOAD_BUFFER_SZ;
-        bufSz = load_key_ed25519(keyLoadBuf, bufSz);
-        if (bufSz == 0) {
-            ES_ERROR("Couldn't load Ed25519 key file.\n");
-        }
-        if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, keyLoadBuf, bufSz,
-                                             WOLFSSH_FORMAT_ASN1) < 0) {
-            ES_ERROR("Couldn't use Ed25519 key buffer.\n");
-        }
+            bufSz = EXAMPLE_KEYLOAD_BUFFER_SZ;
+            bufSz = load_key_ed25519(keyLoadBuf, bufSz);
+            if (bufSz == 0) {
+                ES_ERROR("Couldn't load Ed25519 key file.\n");
+            }
+            if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, keyLoadBuf, bufSz,
+                                                 WOLFSSH_FORMAT_ASN1) < 0) {
+                ES_ERROR("Couldn't use Ed25519 key buffer.\n");
+            }
         #endif /* WOLFSSH_NO_ED25519 */
+        }
 
         #ifndef NO_FILESYSTEM
         if (userPubKey) {
@@ -3269,6 +3474,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     wc_FreeMutex(&doneLock);
     PwMapListDelete(&pwMapList);
     wolfSSH_CTX_free(ctx);
+#ifdef WOLFSSH_TPM
+    EchoserverCleanupTpmHostKey();
+#endif
 #ifdef WOLFSSH_STATIC_MEMORY
     wolfSSH_MemoryPrintStats(heap);
 #endif

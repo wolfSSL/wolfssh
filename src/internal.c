@@ -2247,23 +2247,50 @@ static int UpdateHostCertificates(WOLFSSH_CTX* ctx,
     if (HINTISSET(keyHint) && HINTISSET(certHint)) {
         byte* key = NULL;
         word32 keySz;
+#ifdef WOLFSSH_TPM
+        int keyIsTpm = ctx->privateKey[keyHint].isTpm;
+#endif
 
-        keySz = ctx->privateKey[keyHint].keySz;
-        key = (byte*)WMALLOC(keySz, ctx->heap, DYNTYPE_PRIVKEY);
-        if (key == NULL) {
-            ret = WS_MEMORY_E;
-        }
-        else {
-            WMEMCPY(key, ctx->privateKey[keyHint].key, keySz);
-
+#ifdef WOLFSSH_TPM
+        /* A TPM-backed key has no software bytes to copy; clear any stale
+         * software key on the certificate slot and mark it TPM-backed. */
+        if (keyIsTpm) {
             if (ctx->privateKey[certHint].key != NULL) {
                 ForceZero(ctx->privateKey[certHint].key,
                         ctx->privateKey[certHint].keySz);
                 WFREE(ctx->privateKey[certHint].key,
                         ctx->heap, DYNTYPE_PRIVKEY);
+                ctx->privateKey[certHint].key = NULL;
+                ctx->privateKey[certHint].keySz = 0;
             }
-            ctx->privateKey[certHint].key = key;
-            ctx->privateKey[certHint].keySz = keySz;
+            ctx->privateKey[certHint].isTpm = 1;
+        }
+#endif
+        if (ret == WS_SUCCESS
+#ifdef WOLFSSH_TPM
+                && !keyIsTpm
+#endif
+                ) {
+            keySz = ctx->privateKey[keyHint].keySz;
+            key = (byte*)WMALLOC(keySz, ctx->heap, DYNTYPE_PRIVKEY);
+            if (key == NULL) {
+                ret = WS_MEMORY_E;
+            }
+            else {
+                WMEMCPY(key, ctx->privateKey[keyHint].key, keySz);
+
+                if (ctx->privateKey[certHint].key != NULL) {
+                    ForceZero(ctx->privateKey[certHint].key,
+                            ctx->privateKey[certHint].keySz);
+                    WFREE(ctx->privateKey[certHint].key,
+                            ctx->heap, DYNTYPE_PRIVKEY);
+                }
+                ctx->privateKey[certHint].key = key;
+                ctx->privateKey[certHint].keySz = keySz;
+            #ifdef WOLFSSH_TPM
+                ctx->privateKey[certHint].isTpm = 0;
+            #endif
+            }
         }
     }
 
@@ -2367,6 +2394,9 @@ static int SetHostPrivateKey(WOLFSSH_CTX* ctx,
 
         pvtKey->key = der;
         pvtKey->keySz = derSz;
+        #ifdef WOLFSSH_TPM
+        pvtKey->isTpm = 0;
+        #endif
 
         #ifdef WOLFSSH_CERTS
         if (ret == WS_SUCCESS) {
@@ -2382,6 +2412,71 @@ static int SetHostPrivateKey(WOLFSSH_CTX* ctx,
 
     return ret;
 }
+
+
+#ifdef WOLFSSH_TPM
+/* Registers a host key whose private material lives in the TPM. The slot
+ * carries only the key type so KEX can advertise it; signing and K_S come
+ * from ctx->tpmKey. */
+int wolfSSH_SetHostTpmKey(WOLFSSH_CTX* ctx, byte keyId)
+{
+    word32 destIdx = 0;
+    int ret = WS_SUCCESS;
+#ifdef WOLFSSH_CERTS
+    word32 certIdx;
+    byte certId;
+#endif
+
+    while (destIdx < ctx->privateKeyCount
+            && ctx->privateKey[destIdx].publicKeyFmt != keyId) {
+        destIdx++;
+    }
+
+    if (destIdx >= WOLFSSH_MAX_PVT_KEYS) {
+        ret = WS_CTX_KEY_COUNT_E;
+    }
+    else {
+        WOLFSSH_PVT_KEY* pvtKey = ctx->privateKey + destIdx;
+
+        if (pvtKey->publicKeyFmt != keyId) {
+            ctx->privateKeyCount++;
+            pvtKey->publicKeyFmt = keyId;
+        }
+        else if (pvtKey->key != NULL) {
+            ForceZero(pvtKey->key, pvtKey->keySz);
+            WFREE(pvtKey->key, ctx->heap, DYNTYPE_PRIVKEY);
+        }
+
+        pvtKey->key = NULL;
+        pvtKey->keySz = 0;
+        pvtKey->isTpm = 1;
+
+    #ifdef WOLFSSH_CERTS
+        /* Mark the matching certificate slot TPM-backed so certificate KEX
+         * also signs through the TPM instead of a stale software key. */
+        certId = CertTypeForId(keyId);
+        for (certIdx = 0; certIdx < ctx->privateKeyCount; certIdx++) {
+            if (ctx->privateKey[certIdx].publicKeyFmt == certId) {
+                if (ctx->privateKey[certIdx].key != NULL) {
+                    ForceZero(ctx->privateKey[certIdx].key,
+                        ctx->privateKey[certIdx].keySz);
+                    WFREE(ctx->privateKey[certIdx].key, ctx->heap,
+                        DYNTYPE_PRIVKEY);
+                    ctx->privateKey[certIdx].key = NULL;
+                    ctx->privateKey[certIdx].keySz = 0;
+                }
+                ctx->privateKey[certIdx].isTpm = 1;
+                break;
+            }
+        }
+    #endif /* WOLFSSH_CERTS */
+
+        RefreshPublicKeyAlgo(ctx);
+    }
+
+    return ret;
+}
+#endif /* WOLFSSH_TPM */
 
 
 int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
@@ -11657,6 +11752,10 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
 
     heap = ssh->ctx->heap;
 
+#ifdef WOLFSSH_TPM
+    ssh->handshake->useTpm = ssh->ctx->privateKey[keyIdx].isTpm;
+#endif
+
     switch (sigKeyBlock_ptr->pubKeyId) {
         #ifndef WOLFSSH_NO_RSA
         #ifdef WOLFSSH_CERTS
@@ -11673,6 +11772,16 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
             sigKeyBlock_ptr->sk.rsa.nSz =
                     (word32)sizeof(sigKeyBlock_ptr->sk.rsa.n);
             ret = wc_InitRsaKey(&sigKeyBlock_ptr->sk.rsa.key, heap);
+        #ifdef WOLFSSH_TPM
+            if (ret == 0 && ssh->ctx->privateKey[keyIdx].isTpm) {
+                /* No private key in RAM; take the public key from the TPM. */
+                ret = wolfTPM2_RsaKey_TpmToWolf(ssh->ctx->tpmDev,
+                        ssh->ctx->tpmKey, &sigKeyBlock_ptr->sk.rsa.key);
+                if (ret != 0)
+                    ret = WS_RSA_E;
+            }
+            else
+        #endif /* WOLFSSH_TPM */
             if (ret == 0)
                 ret = wc_RsaPrivateKeyDecode(ssh->ctx->privateKey[keyIdx].key,
                         &scratch, &sigKeyBlock_ptr->sk.rsa.key,
@@ -11782,6 +11891,16 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
             ret = wc_ecc_init_ex(&sigKeyBlock_ptr->sk.ecc.key, heap,
                     INVALID_DEVID);
             scratch = 0;
+        #ifdef WOLFSSH_TPM
+            if (ret == 0 && ssh->ctx->privateKey[keyIdx].isTpm) {
+                /* No private key in RAM; take the public point from the TPM. */
+                ret = wolfTPM2_EccKey_TpmToWolf(ssh->ctx->tpmDev,
+                        ssh->ctx->tpmKey, &sigKeyBlock_ptr->sk.ecc.key);
+                if (ret != 0)
+                    ret = WS_ECC_E;
+            }
+            else
+        #endif /* WOLFSSH_TPM */
             if (ret == 0)
                 ret = wc_EccPrivateKeyDecode(ssh->ctx->privateKey[keyIdx].key,
                         &scratch, &sigKeyBlock_ptr->sk.ecc.key,
@@ -12708,10 +12827,15 @@ static int SignHRsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
         WLOG(WS_LOG_INFO, "Signing hash with %s.",
             IdToName(ssh->handshake->pubKeyId));
         #ifdef WOLFSSH_TPM
-        if (ssh->ctx->tpmDev && ssh->ctx->tpmKey) {
+        if (ssh->handshake->useTpm) {
+            /* Pass the raw digest; the TPM builds the PKCS#1 DigestInfo. */
             ret = wolfTPM2_SignHashScheme(ssh->ctx->tpmDev,
-                ssh->ctx->tpmKey, encSig, encSigSz, sig, (int*)sigSz,
+                ssh->ctx->tpmKey, digest, (int)digestSz, sig, (int*)sigSz,
                 TPM_ALG_RSASSA, TPM2_GetTpmHashType(hashId));
+            if (ret == 0)
+                ret = (int)*sigSz;
+            else
+                ret = WS_RSA_E;
         }
         else
         #endif /* WOLFSSH_TPM */
@@ -12728,7 +12852,11 @@ static int SignHRsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
         }
     }
 
-    if (ret == WS_SUCCESS) {
+    if (ret == WS_SUCCESS
+    #ifdef WOLFSSH_TPM
+            && !ssh->handshake->useTpm
+    #endif
+            ) {
         ret = wolfSSH_RsaVerify(sig, *sigSz, encSig, encSigSz,
                 &sigKey->sk.rsa.key, heap, "SignHRsa");
     }
@@ -12770,8 +12898,20 @@ static int SignHEcdsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
     byte r_s[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
     byte s_s[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
 #endif
+#ifdef WOLFSSH_TPM
+    byte rawSig[2 * MAX_ECC_BYTES];
+    word32 rawSigSz = (word32)sizeof(rawSig);
+    word32 curveSz = 0;
+    word32 rOff = 0, sOff = 0;
+    byte useTpm = 0;
+#endif
 
     WLOG(WS_LOG_DEBUG, "Entering SignHEcdsa()");
+
+#ifdef WOLFSSH_TPM
+    useTpm = (ssh->handshake->useTpm && ssh->ctx->tpmDev != NULL
+            && ssh->ctx->tpmKey != NULL) ? 1 : 0;
+#endif
 
     hashId = HashForId(ssh->handshake->pubKeyId);
     digestSz = wc_HashGetDigestSize(hashId);
@@ -12784,9 +12924,16 @@ static int SignHEcdsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_INFO, "Signing hash with %s.",
                 IdToName(ssh->handshake->pubKeyId));
+    #ifdef WOLFSSH_TPM
+        if (useTpm)
+            ret = wolfTPM2_SignHashScheme(ssh->ctx->tpmDev, ssh->ctx->tpmKey,
+                    digest, (int)digestSz, rawSig, (int*)&rawSigSz,
+                    TPM_ALG_ECDSA, TPM2_GetTpmHashType(hashId));
+        else
+    #endif /* WOLFSSH_TPM */
         ret = wc_ecc_sign_hash(digest, digestSz, sig, sigSz, ssh->rng,
                 &sigKey->sk.ecc.key);
-        if (ret != MP_OKAY) {
+        if (ret != 0) {
             WLOG(WS_LOG_DEBUG, "SignHEcdsa: Bad ECDSA Sign");
             ret = WS_ECC_E;
         }
@@ -12810,7 +12957,30 @@ static int SignHEcdsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
     }
 
     if (ret == WS_SUCCESS) {
+    #ifdef WOLFSSH_TPM
+        if (useTpm) {
+            /* TPM returns raw R||S, each half left-padded to the curve size. */
+            curveSz = (word32)TPM2_GetCurveSize(
+                ssh->ctx->tpmKey->pub.publicArea.parameters.eccDetail.curveID);
+            if (curveSz == 0 || (curveSz * 2) > rawSigSz) {
+                ret = WS_ECC_E;
+            }
+            else {
+                /* Strip leading zeros so R and S are minimal mpints. */
+                while (rOff < curveSz - 1 && rawSig[rOff] == 0)
+                    rOff++;
+                while (sOff < curveSz - 1 && rawSig[curveSz + sOff] == 0)
+                    sOff++;
+                rSz = curveSz - rOff;
+                sSz = curveSz - sOff;
+                WMEMCPY(r, rawSig + rOff, rSz);
+                WMEMCPY(s, rawSig + curveSz + sOff, sSz);
+            }
+        }
+        else
+    #endif /* WOLFSSH_TPM */
         ret = wc_ecc_sig_to_rs(sig, *sigSz, r, &rSz, s, &sSz);
+
         if (ret != 0) {
             ret = WS_ECC_E;
         }
