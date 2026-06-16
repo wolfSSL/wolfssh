@@ -863,8 +863,9 @@ static int GetScpFileMode(WOLFSSH* ssh, byte* buf, word32 bufSz,
     }
 
     if (ret == WS_SUCCESS) {
-        /* store file mode */
-        ssh->scpFileMode = mode;
+        /* store file mode, masking off setuid/setgid/sticky bits from the
+         * peer-supplied value to match the send path */
+        ssh->scpFileMode = mode & WOLFSSH_MODE_MASK;
         /* eat trailing space */
         if (bufSz >= (word32)(idx +1))
             idx++;
@@ -874,6 +875,15 @@ static int GetScpFileMode(WOLFSSH* ssh, byte* buf, word32 bufSz,
 
     return ret;
 }
+
+
+#ifdef WOLFSSH_TEST_INTERNAL
+int wolfSSH_TestScpGetFileMode(WOLFSSH* ssh, byte* buf, word32 bufSz,
+        word32* inOutIdx)
+{
+    return GetScpFileMode(ssh, buf, bufSz, inOutIdx);
+}
+#endif /* WOLFSSH_TEST_INTERNAL */
 
 
 /* Locates first space present in given string (buf) and sets inOutIdx

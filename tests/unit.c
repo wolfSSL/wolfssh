@@ -1147,6 +1147,81 @@ static int test_DoUserAuthBanner(void)
     return result;
 }
 
+#if defined(WOLFSSH_TEST_INTERNAL) && defined(WOLFSSH_SCP)
+/* Verify GetScpFileMode strips setuid/setgid/sticky bits from a peer-supplied
+ * SCP C/D record mode, matching the masking already done on the send path.
+ * The receive path cannot be exercised end-to-end because both peers mask the
+ * mode before transmitting, so this drives the parser directly. */
+static int test_ScpGetFileMode(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    static const char* hdrs[] = {
+        "C4755 0 f\n",  /* setuid set */
+        "D2755 0 d\n",  /* setgid set */
+        "D1755 0 d\n",  /* sticky set */
+        "D7777 0 d\n",  /* all special bits set */
+        "C0644 0 f\n"   /* ordinary mode, unaffected */
+    };
+    static const int expected[] = { 0755, 0755, 0755, 0777, 0644 };
+    /* records the parser must reject */
+    static const char* badHdrs[] = {
+        "C8755 0 f\n",  /* '8' is not an octal digit */
+        "X4755 0 f\n",  /* prefix is neither 'C' nor 'D' */
+        "C75"           /* shorter than the mode field */
+    };
+    int result = 0;
+    int ret;
+    int i;
+    word32 idx;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -420;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -421;
+    }
+
+    for (i = 0; i < (int)(sizeof(hdrs) / sizeof(hdrs[0])); i++) {
+        idx = 0;
+        ssh->scpFileMode = 0;
+        ret = wolfSSH_TestScpGetFileMode(ssh, (byte*)hdrs[i],
+                (word32)WSTRLEN(hdrs[i]), &idx);
+        if (ret != WS_SUCCESS) {
+            result = -422;
+            break;
+        }
+        if (ssh->scpFileMode != expected[i]) {
+            result = -423;
+            break;
+        }
+        /* index advances past the 'C'/'D', four mode octets, and the
+         * trailing space */
+        if (idx != 6) {
+            result = -424;
+            break;
+        }
+    }
+
+    for (i = 0; result == 0 &&
+            i < (int)(sizeof(badHdrs) / sizeof(badHdrs[0])); i++) {
+        idx = 0;
+        ret = wolfSSH_TestScpGetFileMode(ssh, (byte*)badHdrs[i],
+                (word32)WSTRLEN(badHdrs[i]), &idx);
+        if (ret != WS_BAD_ARGUMENT) {
+            result = -425;
+            break;
+        }
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* WOLFSSH_TEST_INTERNAL && WOLFSSH_SCP */
+
 static int test_ChannelPutData(void)
 {
     WOLFSSH_CTX* ctx = NULL;
@@ -4005,6 +4080,12 @@ int wolfSSH_UnitTest(int argc, char** argv)
     unitResult = test_ChannelPutData();
     printf("ChannelPutData: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#if defined(WOLFSSH_TEST_INTERNAL) && defined(WOLFSSH_SCP)
+    unitResult = test_ScpGetFileMode();
+    printf("ScpGetFileMode: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 
     unitResult = test_MsgHighwater();
     printf("MsgHighwater: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
