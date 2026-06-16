@@ -1424,6 +1424,10 @@ enum WS_MessageIdLimits {
     WOLFSSH_API int wolfSSH_TestSendUserAuthFailure(WOLFSSH* ssh,
             byte partialSuccess);
     WOLFSSH_API int wolfSSH_TestHighwaterCheck(WOLFSSH* ssh, byte side);
+#ifdef WOLFSSH_SCP
+    WOLFSSH_API int wolfSSH_TestScpGetFileMode(WOLFSSH* ssh, byte* buf,
+            word32 bufSz, word32* inOutIdx);
+#endif /* WOLFSSH_SCP */
 #ifndef WOLFSSH_NO_DH
     WOLFSSH_API int wolfSSH_TestKeyAgreeDh_client(WOLFSSH* ssh, byte hashId,
             const byte* f, word32 fSz);
