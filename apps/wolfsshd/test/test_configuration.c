@@ -314,7 +314,8 @@ static int test_ConfigCopy(void)
         ret = wolfSSHD_ConfigSetHostCertFile(head, "/etc/ssh/host_cert.pub");
     if (ret == WS_SUCCESS)
         ret = wolfSSHD_ConfigSetUserCAKeysFile(head, "/etc/ssh/ca.pub");
-    /* AuthorizedKeysFile must go through PCL so authKeysFileSet flag is set */
+    /* AuthorizedKeysFile via PCL to also exercise the config-parse path; the
+     * authKeysFileSet flag is set either way and must survive the copy */
     if (ret == WS_SUCCESS) ret = PCL("AuthorizedKeysFile .ssh/authorized_keys");
 
     /* scalar fields */
@@ -996,6 +997,62 @@ static int test_IncludeRecursionBound(void)
     return ret;
 }
 
+/* The public wolfSSHD_ConfigSetAuthKeysFile setter must mark the authorized
+ * keys file as explicitly configured, otherwise certificate public-key logins
+ * skip the authorized-keys check and rely on CA validation alone. */
+static int test_ConfigSetAuthKeysFile(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* conf;
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL)
+        ret = WS_MEMORY_E;
+
+    /* fresh config has no explicit authorized keys file */
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetAuthKeysFileSet(conf) != 0)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* configuring a file through the public setter must set the flag */
+    if (ret == WS_SUCCESS)
+        ret = wolfSSHD_ConfigSetAuthKeysFile(conf, ".ssh/authorized_keys");
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetAuthKeysFileSet(conf) == 0)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* a failed update must leave the existing configuration intact: an
+     * all-whitespace file makes CreateString fail, and both the previously
+     * configured file and the flag must be untouched, not half cleared */
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigSetAuthKeysFile(conf, " ") == WS_SUCCESS)
+            ret = WS_FATAL_ERROR; /* the bad value should have been rejected */
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetAuthKeysFile(conf) == NULL ||
+            XSTRCMP(wolfSSHD_ConfigGetAuthKeysFile(conf),
+                    ".ssh/authorized_keys") != 0)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetAuthKeysFileSet(conf) == 0)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* removing the file must clear the flag again */
+    if (ret == WS_SUCCESS)
+        ret = wolfSSHD_ConfigSetAuthKeysFile(conf, NULL);
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetAuthKeysFileSet(conf) != 0)
+            ret = WS_FATAL_ERROR;
+    }
+
+    wolfSSHD_ConfigFree(conf);
+    return ret;
+}
+
 /* Verifies ConfigFree releases all string fields - most useful under ASan. */
 static int test_ConfigFree(void)
 {
@@ -1438,6 +1495,7 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_CAKeysFileDiffers),
     TEST_DECL(test_IncludeRecursionBound),
     TEST_DECL(test_GetUserAuthTypes),
+    TEST_DECL(test_ConfigSetAuthKeysFile),
     TEST_DECL(test_ConfigFree),
 #ifdef WOLFSSL_BASE64_ENCODE
     TEST_DECL(test_CheckAuthKeysLine),
