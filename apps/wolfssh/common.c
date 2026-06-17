@@ -193,20 +193,82 @@ void ClientIPOverride(int flag)
 #endif /* WOLFSSH_CERTS */
 
 
-static int AppendKeyToFile(const char* filename, const char* name,
-        const char* type, const char* key)
+/* A known_hosts entry is whitespace-delimited and newline-terminated. Each
+ * stored field must be non-empty and free of spaces and control bytes,
+ * otherwise it could inject extra fields or a forged entry into the file.
+ * Returns WS_SUCCESS when the field is safe to store, WS_BAD_ARGUMENT
+ * otherwise. */
+static int IsFieldStorable(const char* field)
 {
-    WFILE *f;
-    int ret;
+    const char* p;
+    int ret = WS_SUCCESS;
 
-    ret = WFOPEN(NULL, &f, filename, "a");
-    if (ret == 0 && f != WBADFILE) {
-        fprintf(f, "%s %s %s\n", name, type, key);
-        WFCLOSE(NULL, f);
+    if (field == NULL || *field == '\0') {
+        ret = WS_BAD_ARGUMENT;
+    }
+    else {
+        for (p = field; *p != '\0'; p++) {
+            if ((unsigned char)*p <= ' ' || (unsigned char)*p == 0x7f) {
+                ret = WS_BAD_ARGUMENT;
+                break;
+            }
+        }
     }
 
     return ret;
 }
+
+
+static int AppendKeyToFile(const char* filename, const char* name,
+        const char* type, const char* key)
+{
+    WFILE *f = WBADFILE;
+    int ret;
+
+    /* The host name comes from the command line and the key type comes from
+     * the peer's host-key blob; both are untrusted and must not carry field or
+     * line separators. The key is Base64 and cannot contain a separator, so
+     * the same check on it only guards against a NULL or empty value reaching
+     * fprintf. */
+    ret = IsFieldStorable(name);
+    if (ret == WS_SUCCESS) {
+        ret = IsFieldStorable(type);
+    }
+    if (ret == WS_SUCCESS) {
+        ret = IsFieldStorable(key);
+    }
+    if (ret == WS_SUCCESS) {
+        ret = WFOPEN(NULL, &f, filename, "a");
+        if (ret == 0 && f != WBADFILE) {
+            /* Check the write and the close so a failed or truncated entry
+             * (for example on a full disk) is reported rather than appearing
+             * to pin the key. The close flushes buffered output, so a write
+             * error can surface there. */
+            if (fprintf(f, "%s %s %s\n", name, type, key) < 0) {
+                ret = WS_BAD_FILE_E;
+            }
+            if (WFCLOSE(NULL, f) != 0 && ret == WS_SUCCESS) {
+                ret = WS_BAD_FILE_E;
+            }
+        }
+        else if (ret == 0) {
+            /* WFOPEN reported success but produced no usable handle; surface
+             * an error instead of silently returning success. */
+            ret = WS_BAD_FILE_E;
+        }
+    }
+
+    return ret;
+}
+
+
+#ifdef WOLFSSH_TEST_INTERNAL
+int wolfSSH_TestAppendKeyToFile(const char* filename, const char* name,
+        const char* type, const char* key)
+{
+    return AppendKeyToFile(filename, name, type, key);
+}
+#endif
 
 
 static int FingerprintKey(const byte* pubKey, word32 pubKeySz, char* out)

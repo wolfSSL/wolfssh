@@ -342,6 +342,43 @@ static void FreeChannelOpenHarness(ChannelOpenHarness* harness)
     #endif
 #endif
 
+/* Read a whole file into buf, returning the byte count (0 on any failure).
+ * Used by the DH KEX regression below and by TestAppendKeyToFile, so it is
+ * available whenever either of those is compiled. */
+#if defined(KEXDH_REPLY_REGRESS_KEX_ALGO) || defined(WOLFSSH_TEST_INTERNAL)
+static word32 LoadFileBuffer(const char* path, byte* buf, word32 bufSz)
+{
+    WFILE* file;
+    long fileSz;
+    word32 readSz;
+
+    if (path == NULL || buf == NULL || bufSz == 0) {
+        return 0;
+    }
+
+    if (WFOPEN(NULL, &file, path, "rb") != 0 || file == WBADFILE) {
+        return 0;
+    }
+    WFSEEK(NULL, file, 0, WSEEK_END);
+    fileSz = WFTELL(NULL, file);
+    WREWIND(NULL, file);
+
+    if (fileSz <= 0 || (word32)fileSz > bufSz) {
+        WFCLOSE(NULL, file);
+        return 0;
+    }
+
+    readSz = (word32)WFREAD(NULL, buf, 1, fileSz, file);
+    WFCLOSE(NULL, file);
+
+    if (readSz != (word32)fileSz) {
+        return 0;
+    }
+
+    return readSz;
+}
+#endif /* KEXDH_REPLY_REGRESS_KEX_ALGO || WOLFSSH_TEST_INTERNAL */
+
 #ifdef KEXDH_REPLY_REGRESS_KEX_ALGO
 
 #define REGRESS_DUPLEX_QUEUE_SZ 32768U
@@ -428,38 +465,6 @@ static word32 AppendBlob(byte* buf, word32 bufSz, word32 idx,
 {
     idx = AppendUint32(buf, bufSz, idx, dataSz);
     return AppendData(buf, bufSz, idx, data, dataSz);
-}
-
-static word32 LoadFileBuffer(const char* path, byte* buf, word32 bufSz)
-{
-    WFILE* file;
-    long fileSz;
-    word32 readSz;
-
-    if (path == NULL || buf == NULL || bufSz == 0) {
-        return 0;
-    }
-
-    if (WFOPEN(NULL, &file, path, "rb") != 0 || file == WBADFILE) {
-        return 0;
-    }
-    WFSEEK(NULL, file, 0, WSEEK_END);
-    fileSz = WFTELL(NULL, file);
-    WREWIND(NULL, file);
-
-    if (fileSz <= 0 || (word32)fileSz > bufSz) {
-        WFCLOSE(NULL, file);
-        return 0;
-    }
-
-    readSz = (word32)WFREAD(NULL, buf, 1, fileSz, file);
-    WFCLOSE(NULL, file);
-
-    if (readSz != (word32)fileSz) {
-        return 0;
-    }
-
-    return readSz;
 }
 
 static int RegressionClientUserAuth(byte authType,
@@ -4128,6 +4133,109 @@ static void TestClientParseDestination(void)
 }
 
 
+#ifdef WOLFSSH_TEST_INTERNAL
+/* AppendKeyToFile must refuse a host name or key type that carries whitespace
+ * or control bytes, so an attacker-controlled value cannot inject extra fields
+ * or a forged entry into the known_hosts file. Exercised through the
+ * wolfSSH_TestAppendKeyToFile hook. */
+static void TestAppendKeyToFile(void)
+{
+    const char* path = "regress_known_hosts.tmp";
+    char buf[128];
+    word32 readSz;
+
+    /* A clean name and type write one well-formed, newline-terminated entry. */
+    (void)remove(path);
+    AssertIntEQ(wolfSSH_TestAppendKeyToFile(path, "host.example.com",
+                "ssh-rsa", "AAAA"), WS_SUCCESS);
+    WMEMSET(buf, 0, sizeof(buf));
+    readSz = LoadFileBuffer(path, (byte*)buf, sizeof(buf) - 1);
+    AssertTrue(readSz > 0);
+    AssertIntEQ(WSTRCMP(buf, "host.example.com ssh-rsa AAAA\n"), 0);
+
+    /* A second call appends rather than truncating, preserving the first
+     * entry (the file is opened in append mode). */
+    AssertIntEQ(wolfSSH_TestAppendKeyToFile(path, "host2.example.com",
+                "ssh-ed25519", "BBBB"), WS_SUCCESS);
+    WMEMSET(buf, 0, sizeof(buf));
+    readSz = LoadFileBuffer(path, (byte*)buf, sizeof(buf) - 1);
+    AssertTrue(readSz > 0);
+    AssertIntEQ(WSTRCMP(buf,
+                "host.example.com ssh-rsa AAAA\n"
+                "host2.example.com ssh-ed25519 BBBB\n"), 0);
+
+    /* A newline in the name would forge an extra entry; it is rejected and
+     * nothing is written to the file. */
+    (void)remove(path);
+    AssertIntEQ(wolfSSH_TestAppendKeyToFile(path,
+                "127.0.0.1\nevil.example.com ssh-rsa BBBB", "ssh-rsa", "CCCC"),
+            WS_BAD_ARGUMENT);
+    AssertIntEQ(LoadFileBuffer(path, (byte*)buf, sizeof(buf) - 1), 0);
+
+    /* A space in the name would forge extra fields; it is rejected. */
+    (void)remove(path);
+    AssertIntEQ(wolfSSH_TestAppendKeyToFile(path, "real.example.com other",
+                "ssh-rsa", "CCCC"), WS_BAD_ARGUMENT);
+    AssertIntEQ(LoadFileBuffer(path, (byte*)buf, sizeof(buf) - 1), 0);
+
+    /* The key type is peer-supplied and is checked the same way: a newline in
+     * it is rejected and nothing is written. */
+    (void)remove(path);
+    AssertIntEQ(wolfSSH_TestAppendKeyToFile(path, "host.example.com",
+                "ssh-rsa\nevil.example.com ssh-rsa DDDD", "EEEE"),
+            WS_BAD_ARGUMENT);
+    AssertIntEQ(LoadFileBuffer(path, (byte*)buf, sizeof(buf) - 1), 0);
+
+    /* Tab, carriage return, and DEL (0x7f) are rejected too, and each leaves
+     * the file unwritten. */
+    (void)remove(path);
+    AssertIntEQ(wolfSSH_TestAppendKeyToFile(path, "host\tname", "ssh-rsa",
+                "CCCC"), WS_BAD_ARGUMENT);
+    AssertIntEQ(LoadFileBuffer(path, (byte*)buf, sizeof(buf) - 1), 0);
+    AssertIntEQ(wolfSSH_TestAppendKeyToFile(path, "host\rname", "ssh-rsa",
+                "CCCC"), WS_BAD_ARGUMENT);
+    AssertIntEQ(LoadFileBuffer(path, (byte*)buf, sizeof(buf) - 1), 0);
+    AssertIntEQ(wolfSSH_TestAppendKeyToFile(path, "host\x7fname", "ssh-rsa",
+                "CCCC"), WS_BAD_ARGUMENT);
+    AssertIntEQ(LoadFileBuffer(path, (byte*)buf, sizeof(buf) - 1), 0);
+
+    /* A NULL or empty name, type, or key is rejected and nothing is written.
+     * The key check guards fprintf against a NULL or empty value. */
+    AssertIntEQ(wolfSSH_TestAppendKeyToFile(path, NULL, "ssh-rsa", "CCCC"),
+            WS_BAD_ARGUMENT);
+    AssertIntEQ(wolfSSH_TestAppendKeyToFile(path, "", "ssh-rsa", "CCCC"),
+            WS_BAD_ARGUMENT);
+    AssertIntEQ(wolfSSH_TestAppendKeyToFile(path, "host.example.com", "",
+                "CCCC"), WS_BAD_ARGUMENT);
+    AssertIntEQ(wolfSSH_TestAppendKeyToFile(path, "host.example.com", "ssh-rsa",
+                NULL), WS_BAD_ARGUMENT);
+    AssertIntEQ(wolfSSH_TestAppendKeyToFile(path, "host.example.com", "ssh-rsa",
+                ""), WS_BAD_ARGUMENT);
+    AssertIntEQ(LoadFileBuffer(path, (byte*)buf, sizeof(buf) - 1), 0);
+
+    /* High-bit (non-ASCII) bytes are only above the control range, so an
+     * internationalized host name is stored intact rather than rejected. This
+     * pins the unsigned-char handling: a signed-char compare would wrongly
+     * reject 0x80-0xff. */
+    (void)remove(path);
+    AssertIntEQ(wolfSSH_TestAppendKeyToFile(path, "h\xC3\xA9st", "ssh-rsa",
+                "AAAA"), WS_SUCCESS);
+    WMEMSET(buf, 0, sizeof(buf));
+    readSz = LoadFileBuffer(path, (byte*)buf, sizeof(buf) - 1);
+    AssertTrue(readSz > 0);
+    AssertIntEQ(WSTRCMP(buf, "h\xC3\xA9st ssh-rsa AAAA\n"), 0);
+
+    /* When the file cannot be opened (here, a path under a directory that does
+     * not exist), the function reports the failure rather than claiming
+     * success. */
+    AssertTrue(wolfSSH_TestAppendKeyToFile("regress_no_such_dir/known_hosts",
+                "host.example.com", "ssh-rsa", "AAAA") != WS_SUCCESS);
+
+    (void)remove(path);
+}
+#endif /* WOLFSSH_TEST_INTERNAL */
+
+
 int main(int argc, char** argv)
 {
     WOLFSSH_CTX* ctx;
@@ -4145,6 +4253,9 @@ int main(int argc, char** argv)
     AssertNotNull(ssh);
 
     TestClientParseDestination();
+#ifdef WOLFSSH_TEST_INTERNAL
+    TestAppendKeyToFile();
+#endif
     TestAuthMessageBlockedDuringKeying(ssh);
     TestUserauthFailureDuringKeying(ssh);
     TestPasswordLeakAborts(ssh);

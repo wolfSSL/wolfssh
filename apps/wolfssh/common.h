@@ -34,5 +34,9 @@ WOLFSSH_LOCAL void ClientIPOverride(int flag);
 WOLFSSH_LOCAL void ClientFreeBuffers(void);
 WOLFSSH_LOCAL int ClientParseDestination(const char* in, char** user,
         char** hostname, word16* port);
+#ifdef WOLFSSH_TEST_INTERNAL
+WOLFSSH_LOCAL int wolfSSH_TestAppendKeyToFile(const char* filename,
+        const char* name, const char* type, const char* key);
+#endif
 
 #endif /* APPS_WOLFSSH_COMMON_H */
