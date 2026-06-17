@@ -1155,7 +1155,6 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
 
     switch (opt) {
         case OPT_AUTH_KEYS_FILE:
-            (*conf)->authKeysFileSet = 1;
             ret = wolfSSHD_ConfigSetAuthKeysFile(*conf, value);
             break;
         case OPT_PRIV_SEP:
@@ -1501,9 +1500,16 @@ int wolfSSHD_ConfigGetAuthKeysFileSet(const WOLFSSHD_CONFIG* conf)
 int wolfSSHD_ConfigSetAuthKeysFile(WOLFSSHD_CONFIG* conf, const char* file)
 {
     int ret = WS_SUCCESS;
+    char* newFile = NULL;
 
     if (conf == NULL) {
         ret = WS_BAD_ARGUMENT;
+    }
+
+    /* allocate the replacement string first so a failure leaves the existing
+     * authKeysFile and authKeysFileSet untouched rather than half updated */
+    if (ret == WS_SUCCESS && file != NULL) {
+        ret = CreateString(&newFile, file, (int)WSTRLEN(file), conf->heap);
     }
 
     if (ret == WS_SUCCESS) {
@@ -1512,10 +1518,11 @@ int wolfSSHD_ConfigSetAuthKeysFile(WOLFSSHD_CONFIG* conf, const char* file)
             conf->authKeysFile = NULL;
         }
 
-        if (file != NULL) {
-            ret = CreateString(&conf->authKeysFile, file,
-                                        (int)WSTRLEN(file), conf->heap);
-        }
+        /* swap in the new file and keep authKeysFileSet consistent with it:
+         * set when a file is explicitly configured so certificate public-key
+         * logins are still checked against it, cleared when removed */
+        conf->authKeysFile = newFile;
+        conf->authKeysFileSet = (file != NULL) ? 1 : 0;
     }
 
     return ret;
