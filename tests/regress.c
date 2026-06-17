@@ -3892,6 +3892,12 @@ static void TestDoNewKeys(void)
     AssertIntEQ(ssh->peerAeadMode,  0);
     AssertTrue(WMEMCMP(&ssh->peerKeys, &savedPeerKeys, sizeof(Keys)) == 0);
 
+    /* Cipher lifecycle: DoNewKeys must init and key the decrypt cipher and
+     * record its type, so wolfSSH_free()'s CipherClear frees exactly one
+     * initialized AES context (aes128-cbc, non-AEAD). */
+    AssertIntEQ(ssh->decryptCipher.isInit, 1);
+    AssertIntEQ(ssh->decryptCipher.cipherType, expectedPeerEncryptId);
+
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 
@@ -3944,6 +3950,11 @@ static void TestDoNewKeys(void)
     AssertIntEQ(ssh->peerMacId,     expectedPeerMacId);
     AssertIntEQ(ssh->peerAeadMode,  1); /* must be C2S AEAD, not S2C non-AEAD */
     AssertTrue(WMEMCMP(&ssh->peerKeys, &savedPeerKeys, sizeof(Keys)) == 0);
+
+    /* Cipher lifecycle for the AEAD path: aes256-gcm decrypt cipher inited
+     * and typed. */
+    AssertIntEQ(ssh->decryptCipher.isInit, 1);
+    AssertIntEQ(ssh->decryptCipher.cipherType, expectedPeerEncryptId);
 
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
@@ -4093,6 +4104,22 @@ static void TestDoNewKeys(void)
 
     /* DoNewKeys bailed before cleanup - handshake must still be allocated. */
     AssertNotNull(ssh->handshake);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    /* Sub-test F: never-keyed free. A session that never reached NEWKEYS has
+     * uninitialized cipher contexts (isInit == 0); wolfSSH_free() must run
+     * clean without calling wc_AesFree() on them. Locks in the uninitialized-
+     * free behavior this PR's CipherClear guard fixes (best observed under
+     * valgrind/ASan). */
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    AssertIntEQ(ssh->encryptCipher.isInit, 0);
+    AssertIntEQ(ssh->decryptCipher.isInit, 0);
 
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);

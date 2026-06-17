@@ -681,6 +681,8 @@ struct WOLFSSH_CTX {
 
 typedef struct Ciphers {
     Aes aes;
+    byte cipherType;
+    byte isInit;
 } Ciphers;
 
 
