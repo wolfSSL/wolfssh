@@ -1245,6 +1245,152 @@ static int WS_TermResize(WOLFSSH* ssh, word32 col, word32 row, word32 colP,
 
 #endif /* WOLFSSH_TERM */
 
+
+static void CipherClear(Ciphers* cipher)
+{
+    if (cipher != NULL && cipher->isInit) {
+        switch (cipher->cipherType) {
+#ifndef WOLFSSH_NO_AES_CBC
+            case ID_AES128_CBC:
+            case ID_AES192_CBC:
+            case ID_AES256_CBC:
+                wc_AesFree(&cipher->aes);
+                break;
+#endif
+
+#ifndef WOLFSSH_NO_AES_CTR
+            case ID_AES128_CTR:
+            case ID_AES192_CTR:
+            case ID_AES256_CTR:
+                wc_AesFree(&cipher->aes);
+                break;
+#endif
+
+#ifndef WOLFSSH_NO_AES_GCM
+            case ID_AES128_GCM:
+            case ID_AES192_GCM:
+            case ID_AES256_GCM:
+                wc_AesFree(&cipher->aes);
+                break;
+#endif
+
+            default:
+                break;
+        }
+        cipher->cipherType = ID_NONE;
+        cipher->isInit = 0;
+    }
+}
+
+
+static int CipherSetKey(Ciphers* cipher, byte cryptId, int isEnc,
+        const byte* iv, const byte* key, word32 keySz, void* heap)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering CipherSetKey()");
+
+    if (cipher == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        int cryptErr = 0;
+
+        CipherClear(cipher);
+
+        switch (cryptId) {
+            case ID_NONE:
+                WOLFSSH_UNUSED(iv);
+                WOLFSSH_UNUSED(key);
+                WOLFSSH_UNUSED(keySz);
+                WOLFSSH_UNUSED(heap);
+                WOLFSSH_UNUSED(isEnc);
+                WLOG(WS_LOG_DEBUG, "CSK:%s using cipher %s",
+                        isEnc ? "" : " peer", "none");
+                break;
+
+#ifndef WOLFSSH_NO_AES_CBC
+            case ID_AES128_CBC:
+            case ID_AES192_CBC:
+            case ID_AES256_CBC:
+                WLOG(WS_LOG_DEBUG, "CSK:%s using cipher %s",
+                        isEnc ? "" : " peer", "aes-cbc");
+                if (iv != NULL) {
+                    cryptErr = wc_AesInit(&cipher->aes, heap, INVALID_DEVID);
+                    if (cryptErr == 0) {
+                        cipher->isInit = 1;
+                        cipher->cipherType = cryptId;
+                        cryptErr = wc_AesSetKey(&cipher->aes, key, keySz, iv,
+                                       isEnc ? AES_ENCRYPTION : AES_DECRYPTION);
+                    }
+                }
+                else {
+                    ret = WS_BAD_ARGUMENT;
+                }
+                break;
+#endif
+
+#ifndef WOLFSSH_NO_AES_CTR
+            case ID_AES128_CTR:
+            case ID_AES192_CTR:
+            case ID_AES256_CTR:
+                WLOG(WS_LOG_DEBUG, "CSK:%s using cipher %s",
+                        isEnc ? "" : " peer", "aes-ctr");
+                if (iv != NULL) {
+                    cryptErr = wc_AesInit(&cipher->aes, heap, INVALID_DEVID);
+                    if (cryptErr == 0) {
+                        cipher->isInit = 1;
+                        cipher->cipherType = cryptId;
+                        cryptErr = wc_AesSetKey(&cipher->aes, key, keySz, iv,
+                                AES_ENCRYPTION);
+                    }
+                }
+                else {
+                    ret = WS_BAD_ARGUMENT;
+                }
+                break;
+#endif
+
+#ifndef WOLFSSH_NO_AES_GCM
+            case ID_AES128_GCM:
+            case ID_AES192_GCM:
+            case ID_AES256_GCM:
+                WOLFSSH_UNUSED(iv);
+                WLOG(WS_LOG_DEBUG, "CSK:%s using cipher %s",
+                        isEnc ? "" : " peer", "aes-gcm");
+                cryptErr = wc_AesInit(&cipher->aes, heap, INVALID_DEVID);
+                if (cryptErr == 0) {
+                    cipher->isInit = 1;
+                    cipher->cipherType = cryptId;
+                    cryptErr = wc_AesGcmSetKey(&cipher->aes, key, keySz);
+                }
+                break;
+#endif
+
+            default:
+                WOLFSSH_UNUSED(iv);
+                WOLFSSH_UNUSED(key);
+                WOLFSSH_UNUSED(keySz);
+                WOLFSSH_UNUSED(heap);
+                WOLFSSH_UNUSED(isEnc);
+                WLOG(WS_LOG_DEBUG, "CSK:%s using cipher %s",
+                        isEnc ? "" : " peer", "invalid");
+                ret = WS_INVALID_ALGO_ID;
+                break;
+        }
+
+        if (ret == WS_SUCCESS && cryptErr != 0) {
+            ret = WS_CRYPTO_FAILED;
+            CipherClear(cipher);
+        }
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving CipherSetKey(), ret = %d", ret);
+    return ret;
+}
+
+
 WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
 {
 #if defined(STM32F2) || defined(STM32F4) || defined(FREESCALE_MQX)
@@ -1429,8 +1575,8 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
             cur = next;
         }
     }
-    wc_AesFree(&ssh->encryptCipher.aes);
-    wc_AesFree(&ssh->decryptCipher.aes);
+    CipherClear(&ssh->encryptCipher);
+    CipherClear(&ssh->decryptCipher);
     if (ssh->peerSigId) {
         WFREE(ssh->peerSigId, heap, DYNTYPE_ID);
     }
@@ -7005,53 +7151,10 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         ssh->peerAeadMode = ssh->handshake->peerAeadMode;
         WMEMCPY(&ssh->peerKeys, &ssh->handshake->peerKeys, sizeof(Keys));
 
-        switch (ssh->peerEncryptId) {
-            case ID_NONE:
-                WLOG(WS_LOG_DEBUG, "DNK: peer using cipher none");
-                break;
-
-#ifndef WOLFSSH_NO_AES_CBC
-            case ID_AES128_CBC:
-            case ID_AES192_CBC:
-            case ID_AES256_CBC:
-                WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes-cbc");
-                ret = wc_AesSetKey(&ssh->decryptCipher.aes,
-                                   ssh->peerKeys.encKey, ssh->peerKeys.encKeySz,
-                                   ssh->peerKeys.iv, AES_DECRYPTION);
-                break;
-#endif
-
-#ifndef WOLFSSH_NO_AES_CTR
-            case ID_AES128_CTR:
-            case ID_AES192_CTR:
-            case ID_AES256_CTR:
-                WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes-ctr");
-                ret = wc_AesSetKey(&ssh->decryptCipher.aes,
-                                   ssh->peerKeys.encKey, ssh->peerKeys.encKeySz,
-                                   ssh->peerKeys.iv, AES_ENCRYPTION);
-                break;
-#endif
-
-#ifndef WOLFSSH_NO_AES_GCM
-            case ID_AES128_GCM:
-            case ID_AES192_GCM:
-            case ID_AES256_GCM:
-                WLOG(WS_LOG_DEBUG, "DNK: peer using cipher aes-gcm");
-                ret = wc_AesGcmSetKey(&ssh->decryptCipher.aes,
-                                      ssh->peerKeys.encKey,
-                                      ssh->peerKeys.encKeySz);
-                break;
-#endif
-
-            default:
-                WLOG(WS_LOG_DEBUG, "DNK: peer using cipher invalid");
-                break;
-        }
-
-        if (ret == 0)
-            ret = WS_SUCCESS;
-        else
-            ret = WS_CRYPTO_FAILED;
+        ret = CipherSetKey(&ssh->decryptCipher,
+                ssh->peerEncryptId, 0, ssh->peerKeys.iv,
+                ssh->peerKeys.encKey, ssh->peerKeys.encKeySz,
+                ssh->ctx->heap);
     }
 
     if (ret == WS_SUCCESS) {
@@ -14717,55 +14820,16 @@ int SendNewKeys(WOLFSSH* ssh)
         ssh->aeadMode = ssh->handshake->aeadMode;
         WMEMCPY(&ssh->keys, &ssh->handshake->keys, sizeof(Keys));
 
-        switch (ssh->encryptId) {
-            case ID_NONE:
-                WLOG(WS_LOG_DEBUG, "SNK: using cipher none");
-                break;
-
-#ifndef WOLFSSH_NO_AES_CBC
-            case ID_AES128_CBC:
-            case ID_AES192_CBC:
-            case ID_AES256_CBC:
-                WLOG(WS_LOG_DEBUG, "SNK: using cipher aes-cbc");
-                ret = wc_AesSetKey(&ssh->encryptCipher.aes,
-                                  ssh->keys.encKey, ssh->keys.encKeySz,
-                                  ssh->keys.iv, AES_ENCRYPTION);
-                break;
-#endif
-
-#ifndef WOLFSSH_NO_AES_CTR
-            case ID_AES128_CTR:
-            case ID_AES192_CTR:
-            case ID_AES256_CTR:
-                WLOG(WS_LOG_DEBUG, "SNK: using cipher aes-ctr");
-                ret = wc_AesSetKey(&ssh->encryptCipher.aes,
-                                  ssh->keys.encKey, ssh->keys.encKeySz,
-                                  ssh->keys.iv, AES_ENCRYPTION);
-                break;
-#endif
-
-#ifndef WOLFSSH_NO_AES_GCM
-            case ID_AES128_GCM:
-            case ID_AES192_GCM:
-            case ID_AES256_GCM:
-                WLOG(WS_LOG_DEBUG, "SNK: using cipher aes-gcm");
-                ret = wc_AesGcmSetKey(&ssh->encryptCipher.aes,
-                                     ssh->keys.encKey, ssh->keys.encKeySz);
-                break;
-#endif
-
-            default:
-                WLOG(WS_LOG_DEBUG, "SNK: using cipher invalid");
-                ret = WS_INVALID_ALGO_ID;
-        }
+        ret = CipherSetKey(&ssh->encryptCipher,
+                ssh->encryptId, 1, ssh->keys.iv,
+                ssh->keys.encKey, ssh->keys.encKeySz,
+                ssh->ctx->heap);
     }
 
     if (ret == WS_SUCCESS) {
         ssh->txCount = 0;
         ssh->txMsgCount = 0;
-    }
 
-    if (ret == WS_SUCCESS) {
         ret = wolfSSH_SendPacket(ssh);
 
         /* Clear self is keying flag */
