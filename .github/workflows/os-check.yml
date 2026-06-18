@@ -71,6 +71,7 @@ jobs:
         config: [
           '',
           '--enable-all',
+          '--enable-all --enable-ossh-certs',
           '--enable-sftp',
           '--enable-sftp --disable-sftp-zeroize',
           '--enable-scp',

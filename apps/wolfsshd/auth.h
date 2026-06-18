@@ -78,6 +78,14 @@ int wolfSSHD_AuthReducePermissionsUser(WOLFSSHD_AUTH* auth, WUID_T uid,
 int wolfSSHD_AuthSetGroups(const WOLFSSHD_AUTH* auth, const char* usr,
     WGID_T gid);
 long wolfSSHD_AuthGetGraceTime(const WOLFSSHD_AUTH* auth);
+#ifdef WOLFSSH_OSSH_CERTS
+void wolfSSHD_AuthSetPeerIp(WOLFSSHD_AUTH* auth, const char* ip);
+const char* wolfSSHD_AuthGetForcedCmd(const WOLFSSHD_AUTH* auth);
+const char* wolfSSHD_AuthMergeForcedCmd(const char* configCmd,
+        const char* certCmd);
+int wolfSSHD_AuthSetCertForcedCmd(WOLFSSHD_AUTH* auth, const byte* cmd,
+        word32 cmdSz);
+#endif
 WOLFSSHD_CONFIG* wolfSSHD_AuthGetUserConf(const WOLFSSHD_AUTH* auth,
         const char* usr, const char* host,
         const char* localAdr, word16* localPort, const char* RDomain,
@@ -121,5 +129,15 @@ int CAKeysFileDiffers(const char* a, const char* b);
 int MatchUPNToUser(const char* usr, const char* name, int nameSz,
                    const char* allowList);
 int wolfSSHD_GetUserAuthTypes(const WOLFSSHD_CONFIG* usrConf);
+#if defined(WOLFSSH_OSSH_CERTS) && !defined(_WIN32)
+int OsshPrefixMatch(const byte* a, const byte* b, int bits, int len);
+int OsshSourceAddrMatch(const byte* list, word32 listSz, const char* peerIp);
+int OsshCertCheckPrincipal(const WS_UserAuthData_PublicKey* pubKeyCtx,
+        const char* name);
+int OsshCertCheckValidity(const WS_UserAuthData_PublicKey* pubKeyCtx);
+int CheckPublicKeyUnix(const char* name,
+        const WS_UserAuthData_PublicKey* pubKeyCtx, const char* usrCaKeysFile,
+        const char* authorizedKeysFile, WOLFSSHD_AUTH* authCtx);
+#endif
 #endif
 #endif /* WOLFAUTH_H */
