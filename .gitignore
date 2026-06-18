@@ -78,6 +78,8 @@ apps/wolfsshd/test/stdout.txt
 keys/root-*
 keys/*.csr
 keys/renewcerts-*.cnf
+# Per-user OpenSSH certificates issued at test time by renew-ossh-certs.sh.
+keys/*-ossh-*cert.pub
 random-test.txt
 random-test-result.txt
 test.dat

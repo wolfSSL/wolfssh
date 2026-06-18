@@ -403,6 +403,23 @@ typedef struct WS_UserAuthData_PublicKey {
     const byte* signature;
     word32 signatureSz;
     byte isCert:1;
+    word32 dataToSignSz; /* signed request length; 0 = derive from the fields */
+#ifdef WOLFSSH_OSSH_CERTS
+    /* Set while isOsshCert; the callback must trust-check caKey. Keep last so
+     * the members above hold their offsets in both builds. */
+    byte isOsshCert:1;
+    const byte* caKey;
+    word32 caKeySz;
+    const byte* principals;
+    word32 principalsSz;
+    word64 validAfter;  /* epoch seconds */
+    word64 validBefore;
+    /* NULL when absent; sourceAddress is a comma-separated CIDR list. */
+    const byte* forceCommand;
+    word32 forceCommandSz;
+    const byte* sourceAddress;
+    word32 sourceAddressSz;
+#endif /* WOLFSSH_OSSH_CERTS */
 } WS_UserAuthData_PublicKey;
 
 typedef struct WS_UserAuthData {

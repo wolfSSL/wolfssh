@@ -19,5 +19,5 @@ nobase_include_HEADERS+= \
                          wolfssh/certs_test.h \
                          wolfssh/wolfsftp.h
 
-noinst_HEADERS+= wolfssh/internal.h
+noinst_HEADERS+= wolfssh/internal.h wolfssh/ossh.h
 

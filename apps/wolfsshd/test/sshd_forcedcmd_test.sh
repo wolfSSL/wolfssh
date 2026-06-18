@@ -51,6 +51,33 @@ echo exit | $TEST_SFTP -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p 
 
 cd $PWD
 stop_wolfsshd
+
+# A configured ForceCommand that is not "internal-sftp" must still permit the
+# SFTP subsystem. Only a certificate force-command denies file transfer, so a
+# long-standing ForceCommand config keeps working.
+cat <<EOF > sshd_config_test_forcedcmd_sftp
+Port $TEST_PORT
+Protocol 2
+LoginGraceTime 600
+PermitRootLogin yes
+PasswordAuthentication yes
+PermitEmptyPasswords no
+UsePrivilegeSeparation no
+UseDNS no
+HostKey $PWD/../../../keys/server-key.pem
+AuthorizedKeysFile $PWD/authorized_keys_test
+
+Match User $USER
+	ForceCommand /bin/echo
+EOF
+
+start_wolfsshd "sshd_config_test_forcedcmd_sftp"
+cd ../../..
+
+echo exit | $TEST_SFTP -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT
+
+cd $PWD
+stop_wolfsshd
 exit 0
 
 
