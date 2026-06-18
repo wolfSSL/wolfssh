@@ -2784,6 +2784,7 @@ static int test_DoUserAuthRequestEd25519(void)
     word32 dataToSignSz = 0;
     word32 checkDataSz  = 0;
     word32 sigSz        = sizeof(sig);
+    word32 fieldSum     = 0;
     word32 off;
     int result = 0;
     int ret;
@@ -2884,12 +2885,31 @@ static int test_DoUserAuthRequestEd25519(void)
     authData.sf.publicKey.signature       = sigBlob;
     authData.sf.publicKey.signatureSz     = sigBlobSz;
 
-    /* Positive case: untouched signature must verify. */
+    /* Positive case: untouched signature must verify. authData was zeroed, so
+     * dataToSignSz is 0 here and the field-sum fallback is exercised. */
     ret = wolfSSH_TestDoUserAuthRequestEd25519(ssh, &authData);
     if (ret != WS_SUCCESS) {
         printf("DoUserAuthRequestEd25519 positive: ret=%d (expected %d)\n",
                 ret, WS_SUCCESS);
         result = -605; goto done;
+    }
+
+    /* The wire-derived signed length must equal the legacy field-sum for a
+     * plain Ed25519 request and verify identically; lock in that equivalence
+     * so the non-certificate path cannot regress. */
+    fieldSum = usernameSz + serviceNameSz + authNameSz + BOOLEAN_SZ +
+            keyTypeNameSz + pubKeyBlobSz + (UINT32_SZ * 5);
+    if (fieldSum != dataToSignSz) {
+        printf("DoUserAuthRequestEd25519 length mismatch: wire=%u sum=%u\n",
+                dataToSignSz, fieldSum);
+        result = -607; goto done;
+    }
+    authData.sf.publicKey.dataToSignSz = dataToSignSz;
+    ret = wolfSSH_TestDoUserAuthRequestEd25519(ssh, &authData);
+    if (ret != WS_SUCCESS) {
+        printf("DoUserAuthRequestEd25519 wire-length: ret=%d (expected %d)\n",
+                ret, WS_SUCCESS);
+        result = -608; goto done;
     }
 
     /* Negative case: flip a byte inside the raw signature (skip past the

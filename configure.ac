@@ -186,6 +186,11 @@ AC_ARG_ENABLE([certs],
     [AS_HELP_STRING([--enable-certs],[Enable X.509 cert support (default: disabled)])],
     [ENABLED_CERTS=$enableval],[ENABLED_CERTS=no])
 
+# OpenSSH certs
+AC_ARG_ENABLE([ossh-certs],
+    [AS_HELP_STRING([--enable-ossh-certs],[Enable OpenSSH certificate user auth (default: disabled)])],
+    [ENABLED_OSSH_CERTS=$enableval],[ENABLED_OSSH_CERTS=no])
+
 # TPM 2.0 Support
 AC_ARG_ENABLE([tpm],
     [AS_HELP_STRING([--enable-tpm],[Enable TPM 2.0 support (default: disabled)])],
@@ -216,7 +221,7 @@ AC_ARG_ENABLE([distro],
 AS_IF([test "x$ENABLED_DISTRO" = "xyes"],
       [ENABLED_ALL=yes; enable_shared=yes; enable_static=yes])
 AS_IF([test "x$ENABLED_ALL" = "xyes"],
-      [ENABLED_KEYGEN=yes; ENABLED_SCP=yes; ENABLED_SFTP=yes; ENABLED_FWD=yes; ENABLED_SHELL=yes; ENABLED_AGENT=yes; ENABLED_SSHD=yes; ENABLED_SSHCLIENT=yes; ENABLED_CERTS=yes; ENABLED_KEYBOARD_INTERACTIVE=yes])
+      [ENABLED_KEYGEN=yes; ENABLED_SCP=yes; ENABLED_SFTP=yes; ENABLED_FWD=yes; ENABLED_SHELL=yes; ENABLED_AGENT=yes; ENABLED_SSHD=yes; ENABLED_SSHCLIENT=yes; ENABLED_CERTS=yes; ENABLED_KEYBOARD_INTERACTIVE=yes; ENABLED_OSSH_CERTS=yes])
 AS_IF([test "x$ENABLED_SSHD" = "xyes"],
       [ENABLED_SHELL=yes])
 
@@ -245,6 +250,8 @@ AS_IF([test "x$ENABLED_AGENT" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_AGENT"])
 AS_IF([test "x$ENABLED_CERTS" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_CERTS"])
+AS_IF([test "x$ENABLED_OSSH_CERTS" = "xyes"],
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_OSSH_CERTS"])
 AS_IF([test "x$ENABLED_SMALLSTACK" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SMALL_STACK"])
 AS_IF([test "x$ENABLED_SSHCLIENT" = "xyes"],
@@ -348,4 +355,5 @@ AS_ECHO(["   * agent:                     $ENABLED_AGENT"])
 AS_ECHO(["   * TPM 2.0 support:           $ENABLED_TPM"])
 AS_ECHO(["   * TCP/IP Forwarding:         $ENABLED_FWD"])
 AS_ECHO(["   * X.509 Certs:               $ENABLED_CERTS"])
+AS_ECHO(["   * OpenSSH Certs:             $ENABLED_OSSH_CERTS"])
 AS_ECHO(["   * Examples:                  $ENABLED_EXAMPLES"])

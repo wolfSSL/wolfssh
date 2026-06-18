@@ -1604,6 +1604,238 @@ static int test_GetUserAuthTypes(void)
     return ret;
 }
 
+#if defined(WOLFSSH_OSSH_CERTS) && !defined(_WIN32)
+/* Direct coverage for the bit-level prefix matcher used by the certificate
+ * source-address check: byte boundaries, partial-byte masks, the zero-prefix
+ * match-all case, and the out-of-range guard. */
+static int test_OsshPrefixMatch(void)
+{
+    int ret = WS_SUCCESS;
+    int i;
+    static const byte a[4] = { 0xAB, 0xCD, 0xEF, 0x12 };
+    static const byte b[4] = { 0xAB, 0xCD, 0x00, 0x00 };
+    static const byte c[4] = { 0xAB, 0xCD, 0xE0, 0xFF };
+    static const struct {
+        const char* desc;
+        const byte* other;
+        int bits;
+        int expected;
+    } vectors[] = {
+        { "zero prefix matches anything",   b,  0, 1 },
+        { "one full byte matches",          b,  8, 1 },
+        { "two full bytes match",           b, 16, 1 },
+        { "third full byte differs",        b, 24, 0 },
+        { "partial byte differs at bit 17", b, 17, 0 },
+        { "full-length compare differs",    b, 32, 0 },
+        { "prefix beyond length rejected",  b, 33, 0 },
+        { "negative prefix rejected",       b, -1, 0 },
+        { "partial-byte mask matches",      c, 20, 1 },
+        { "partial-byte boundary differs",  c, 24, 0 },
+    };
+
+    for (i = 0; i < (int)(sizeof(vectors) / sizeof(vectors[0])); i++) {
+        Log("    Testing OsshPrefixMatch: %s.", vectors[i].desc);
+        if (OsshPrefixMatch(a, vectors[i].other, vectors[i].bits, 4)
+                != vectors[i].expected) {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+            break;
+        }
+        Log(" PASSED.\n");
+    }
+
+    return ret;
+}
+
+/* Direct coverage for the comma-separated CIDR matcher: IPv4/IPv6 prefixes,
+ * exact (prefix-less) entries, the match-all /0 case, family mismatch, oversize
+ * and empty prefixes, negation (fail closed), and over-length entries. */
+static int test_OsshSourceAddrMatch(void)
+{
+    int ret = WS_SUCCESS;
+    int i;
+    word32 n;
+    char buf[160];
+    /* 90-character entry, longer than the matcher's internal buffer: must be
+     * skipped rather than truncated-and-parsed. */
+    static const char longEnt[] =
+        "123456789012345678901234567890123456789012345678901234567890"
+        "123456789012345678901234567890";
+    static const struct {
+        const char* desc;
+        const char* list;
+        const char* peer;
+        int expected;
+    } vectors[] = {
+        { "ipv4 inside /24",            "192.168.1.0/24",  "192.168.1.50", 1 },
+        { "ipv4 outside /24",           "192.168.1.0/24",  "192.168.2.50", 0 },
+        { "ipv4 exact no-prefix match", "10.0.0.5",        "10.0.0.5",     1 },
+        { "ipv4 exact no-prefix miss",  "10.0.0.5",        "10.0.0.6",     0 },
+        { "ipv4 /32 exact",             "192.168.1.5/32",  "192.168.1.5",  1 },
+        { "ipv4 /0 matches all",        "0.0.0.0/0",       "8.8.8.8",      1 },
+        { "second list entry matches",
+                "192.168.1.0/24,10.0.0.0/8", "10.1.2.3",                   1 },
+        { "ipv6 inside /32",            "2001:db8::/32",   "2001:db8::1",  1 },
+        { "ipv6 outside /32",           "2001:db8::/32",   "2001:db9::1",  0 },
+        { "family mismatch v4 vs v6",   "192.168.1.0/24",  "2001:db8::1",  0 },
+        { "oversize prefix skipped",    "192.168.1.0/33",  "192.168.1.1",  0 },
+        { "empty prefix skipped",       "192.168.1.0/",    "192.168.1.1",  0 },
+        { "negation fails closed",      "!192.168.1.0/24", "192.168.1.1",  0 },
+        { "malformed entry skipped",    "not-an-ip",       "1.2.3.4",      0 },
+    };
+
+    for (i = 0; i < (int)(sizeof(vectors) / sizeof(vectors[0])); i++) {
+        Log("    Testing OsshSourceAddrMatch: %s.", vectors[i].desc);
+        if (OsshSourceAddrMatch((const byte*)vectors[i].list,
+                (word32)WSTRLEN(vectors[i].list), vectors[i].peer)
+                != vectors[i].expected) {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+            break;
+        }
+        Log(" PASSED.\n");
+    }
+
+    if (ret == WS_SUCCESS) {
+        /* An over-length entry is skipped; a following valid entry still
+         * matches, proving parsing continues past the skip. */
+        n = (word32)WSTRLEN(longEnt);
+        WMEMCPY(buf, longEnt, n);
+        WMEMCPY(buf + n, ",10.0.0.0/8", WSTRLEN(",10.0.0.0/8") + 1);
+        Log("    Testing OsshSourceAddrMatch: over-length entry skipped.");
+        if (OsshSourceAddrMatch((const byte*)buf, (word32)WSTRLEN(buf),
+                "10.1.1.1") != 1) {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            Log(" PASSED.\n");
+        }
+    }
+
+    return ret;
+}
+
+/* Direct coverage for principal binding: empty list rejected (matching OpenSSH
+ * sshd), exact and multi-entry matches/misses, and a malformed length-prefixed
+ * blob. */
+static int test_OsshCertCheckPrincipal(void)
+{
+    int ret = WS_SUCCESS;
+    WS_UserAuthData_PublicKey pub;
+    /* SSH string list: uint32 length prefix + bytes, repeated. */
+    static const byte one[] = { 0,0,0,4, 'f','r','e','d' };
+    static const byte two[] = { 0,0,0,5, 'a','l','i','c','e',
+                                0,0,0,4, 'f','r','e','d' };
+    static const byte bad[] = { 0,0,0,9, 'f','r','e','d' }; /* len > data */
+
+    WMEMSET(&pub, 0, sizeof(pub));
+    pub.principals = NULL;
+    pub.principalsSz = 0;
+    Log("    Testing OsshCertCheckPrincipal: empty list rejected.");
+    if (OsshCertCheckPrincipal(&pub, "anyone") != WSSHD_AUTH_FAILURE) {
+        Log(" FAILED.\n");
+        ret = WS_FATAL_ERROR;
+    }
+    else {
+        Log(" PASSED.\n");
+    }
+
+    if (ret == WS_SUCCESS) {
+        pub.principals = one;
+        pub.principalsSz = (word32)sizeof(one);
+        Log("    Testing OsshCertCheckPrincipal: exact match / miss.");
+        if (OsshCertCheckPrincipal(&pub, "fred") != WSSHD_AUTH_SUCCESS ||
+                OsshCertCheckPrincipal(&pub, "bob") != WSSHD_AUTH_FAILURE) {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            Log(" PASSED.\n");
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        pub.principals = two;
+        pub.principalsSz = (word32)sizeof(two);
+        Log("    Testing OsshCertCheckPrincipal: multi-entry match / miss.");
+        if (OsshCertCheckPrincipal(&pub, "fred") != WSSHD_AUTH_SUCCESS ||
+                OsshCertCheckPrincipal(&pub, "alice") != WSSHD_AUTH_SUCCESS ||
+                OsshCertCheckPrincipal(&pub, "carol") != WSSHD_AUTH_FAILURE) {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            Log(" PASSED.\n");
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        pub.principals = bad;
+        pub.principalsSz = (word32)sizeof(bad);
+        Log("    Testing OsshCertCheckPrincipal: malformed blob rejected.");
+        if (OsshCertCheckPrincipal(&pub, "fred") != WSSHD_AUTH_FAILURE) {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            Log(" PASSED.\n");
+        }
+    }
+
+    return ret;
+}
+
+/* Direct coverage for the validity window: inclusive lower bound, exclusive
+ * upper bound, expired, and not-yet-valid, relative to the current time. */
+static int test_OsshCertCheckValidity(void)
+{
+    int ret = WS_SUCCESS;
+    WS_UserAuthData_PublicKey pub;
+    word64 now = (word64)WTIME(NULL);
+
+    WMEMSET(&pub, 0, sizeof(pub));
+    pub.validAfter = now;            /* inclusive lower bound */
+    pub.validBefore = now + 1000;
+    Log("    Testing OsshCertCheckValidity: inside window.");
+    if (OsshCertCheckValidity(&pub) != WSSHD_AUTH_SUCCESS) {
+        Log(" FAILED.\n");
+        ret = WS_FATAL_ERROR;
+    }
+    else {
+        Log(" PASSED.\n");
+    }
+
+    if (ret == WS_SUCCESS) {
+        pub.validAfter = 0;
+        pub.validBefore = now;       /* exclusive upper bound */
+        Log("    Testing OsshCertCheckValidity: expired at upper bound.");
+        if (OsshCertCheckValidity(&pub) != WSSHD_AUTH_FAILURE) {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            Log(" PASSED.\n");
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        pub.validAfter = now + 1000;
+        pub.validBefore = now + 2000;
+        Log("    Testing OsshCertCheckValidity: not yet valid.");
+        if (OsshCertCheckValidity(&pub) != WSSHD_AUTH_FAILURE) {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            Log(" PASSED.\n");
+        }
+    }
+
+    return ret;
+}
+#endif /* WOLFSSH_OSSH_CERTS && !_WIN32 */
+
 const TEST_CASE testCases[] = {
     TEST_DECL(test_ConfigDefaults),
     TEST_DECL(test_ParseConfigLine),
@@ -1632,6 +1864,12 @@ const TEST_CASE testCases[] = {
 #endif
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
     TEST_DECL(test_CheckPasswordHashUnix),
+#endif
+#if defined(WOLFSSH_OSSH_CERTS) && !defined(_WIN32)
+    TEST_DECL(test_OsshPrefixMatch),
+    TEST_DECL(test_OsshSourceAddrMatch),
+    TEST_DECL(test_OsshCertCheckPrincipal),
+    TEST_DECL(test_OsshCertCheckValidity),
 #endif
 };
 
