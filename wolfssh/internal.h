@@ -345,6 +345,11 @@ extern "C" {
     #undef WOLFSSH_NO_ECDSA
     #define WOLFSSH_NO_ECDSA
 #endif
+#if defined(WOLFSSH_NO_RSA) || \
+    (defined(WOLFSSH_NO_RSA_SHA2_256) && defined(WOLFSSH_NO_RSA_SHA2_512))
+    #undef WOLFSSH_NO_OSSH_CERT_RSA
+    #define WOLFSSH_NO_OSSH_CERT_RSA
+#endif
 
 
 #ifdef WOLFSSH_NO_AEAD
@@ -463,6 +468,13 @@ enum {
     ID_X509V3_MLDSA65,
     ID_X509V3_MLDSA87,
 #endif
+
+    /* OpenSSH certificate public key algorithms */
+    ID_OSSH_CERT_RSA,
+    ID_OSSH_CERT_ECDSA_SHA2_NISTP256,
+    ID_OSSH_CERT_ECDSA_SHA2_NISTP384,
+    ID_OSSH_CERT_ECDSA_SHA2_NISTP521,
+    ID_OSSH_CERT_ED25519,
 
     /* Service IDs */
     ID_SERVICE_USERAUTH,
@@ -1270,6 +1282,12 @@ WOLFSSH_LOCAL int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, vo
     WS_KeySignature **pkey);
 WOLFSSH_LOCAL void wolfSSH_KEY_clean(WS_KeySignature* key);
 WOLFSSH_LOCAL int IdentifyOpenSshKey(const byte* in, word32 inSz, void* heap);
+WOLFSSH_LOCAL int GetOpenSshKey(WS_KeySignature *key,
+        const byte* buf, word32 len, word32* idx);
+#ifdef WOLFSSH_TPM
+WOLFSSH_LOCAL int GetOpenSshPublicKey(WS_KeySignature *key,
+        const byte* buf, word32 len, word32* idx);
+#endif
 
 
 /* Parsing functions */
@@ -1277,6 +1295,10 @@ WOLFSSH_LOCAL int GetBoolean(byte* v,
         const byte* buf, word32 len, word32* idx);
 WOLFSSH_LOCAL int GetUint32(word32* v,
         const byte* buf, word32 len, word32* idx);
+#ifdef WOLFSSH_OSSH_CERTS
+WOLFSSH_LOCAL int GetUint64(word64* v,
+        const byte* buf, word32 len, word32* idx);
+#endif
 WOLFSSH_LOCAL int GetSize(word32* v,
         const byte* buf, word32 len, word32* idx);
 WOLFSSH_LOCAL int GetSkip(const byte* buf, word32 len, word32* idx);

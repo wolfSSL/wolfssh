@@ -403,6 +403,27 @@ typedef struct WS_UserAuthData_PublicKey {
     const byte* signature;
     word32 signatureSz;
     byte isCert:1;
+#ifdef WOLFSSH_OSSH_CERTS
+    /* Valid while isOsshCert is set. The library verifies the CA signature and
+     * key possession only; the callback must trust-check caKey and enforce
+     * policy. */
+    byte isOsshCert:1;
+    const byte* caKey;
+    word32 caKeySz;
+    const byte* principals;
+    word32 principalsSz;
+    word64 validAfter;  /* seconds since epoch */
+    word64 validBefore; /* seconds since epoch */
+    /* Critical options, NULL when absent. forceCommand overrides the session
+     * command; sourceAddress is a comma-separated CIDR list. */
+    const byte* forceCommand;
+    word32 forceCommandSz;
+    const byte* sourceAddress;
+    word32 sourceAddressSz;
+#endif /* WOLFSSH_OSSH_CERTS */
+    /* Appended last so the members above keep their offsets; enabling
+     * WOLFSSH_OSSH_CERTS changes the layout, so app and library must agree. */
+    word32 dataToSignSz; /* signed request length; 0 = derive from the fields */
 } WS_UserAuthData_PublicKey;
 
 typedef struct WS_UserAuthData {
@@ -478,6 +499,10 @@ WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX* ctx,
     WOLFSSH_API int wolfSSH_CTX_AddRootCert_buffer(WOLFSSH_CTX* ctx,
             const byte* cert, word32 certSz, int format);
 #endif /* WOLFSSH_CERTS */
+#ifdef WOLFSSH_OSSH_CERTS
+    WOLFSSH_API int wolfSSH_CTX_UseOsshCert_buffer(WOLFSSH_CTX* ctx,
+            const byte* cert, word32 certSz);
+#endif /* WOLFSSH_OSSH_CERTS */
 WOLFSSH_API int wolfSSH_CTX_SetWindowPacketSize(WOLFSSH_CTX* ctx,
         word32 windowSz, word32 maxPacketSz);
 

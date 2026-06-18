@@ -77,6 +77,10 @@
 #include <unistd.h>
 #include <limits.h>
 #include <stdlib.h>
+#ifdef WOLFSSH_OSSH_CERTS
+#include <netinet/in.h> /* in6_addr, AF_INET6 */
+#include <arpa/inet.h>  /* inet_pton for source-address matching */
+#endif
 #ifndef O_NOFOLLOW
     /* Older platforms lack O_NOFOLLOW; the lstat() pre-check and the post-open
      * st_dev/st_ino comparison still reject a symlinked leaf there. */
@@ -109,6 +113,13 @@ struct passwd* (*wsshd_getpwnam_cb)(const char*) = getpwnam;
 int (*wsshd_setgroups_cb)(int, const WGID_T*) = wsshd_setgroups_default;
 #endif
 
+#ifdef WOLFSSH_OSSH_CERTS
+/* Peer IP string buffer; sized above INET6_ADDRSTRLEN (46) with room to spare. */
+#define WOLFSSHD_PEER_IP_SZ 64
+/* One source-address CIDR entry ("addr/len"); an IPv6 entry is well under this. */
+#define WOLFSSHD_CIDR_ENTRY_SZ 80
+#endif
+
 struct WOLFSSHD_AUTH {
     CallbackCheckUser      checkUserCb;
     CallbackCheckPassword  checkPasswordCb;
@@ -123,6 +134,12 @@ struct WOLFSSHD_AUTH {
     int sUid; /* saved uid */
     int attempts;
     void* heap;
+#ifdef WOLFSSH_OSSH_CERTS
+    /* Per-connection cert state, written only on the forked Unix path (the
+     * writes are compiled out on Windows); see HandleConnection. */
+    char peerIp[WOLFSSHD_PEER_IP_SZ]; /* connection peer IP, for source-address */
+    char* certForcedCmd;  /* force-command from an authenticated OpenSSH cert */
+#endif
 };
 
 #ifndef WOLFSSHD_MAX_PASSWORD_ATTEMPTS
@@ -266,7 +283,9 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
             }
         }
         if (!typeOk) {
-            ret = WS_FATAL_ERROR;
+            /* Skip unsupported key types so the scan continues to later
+             * entries instead of aborting the whole file. */
+            ret = WSSHD_AUTH_FAILURE;
         }
     }
     if (ret == WSSHD_AUTH_SUCCESS) {
@@ -894,47 +913,38 @@ int wolfSSHD_OpenSecureFile(const char* path, WUID_T ownerUid,
 #endif
 }
 
-WOLFSSHD_STATIC int SearchForPubKey(const char* path,
-                                    const char* authKeysFile, const char* user,
-                                    const WS_UserAuthData_PublicKey* pubKeyCtx,
-                                    WUID_T uid, int strictModes)
+/* Scan a resolved keys file (authorized_keys or TrustedUserCAKeys) for
+ * (key, keySz). Fails closed with WSSHD_AUTH_FAILURE when no line matches.
+ * strictModes opens through the secure gate; the file must be owned by uid. */
+static int SearchKeysFile(const char* keysFilePath, const byte* key,
+                          word32 keySz, WUID_T uid, int strictModes)
 {
     int ret = WSSHD_AUTH_SUCCESS;
-    char authKeysPath[MAX_PATH_SZ];
-    WFILE *f = XBADFILE;
+    WFILE *f = WBADFILE;
     char* lineBuf = NULL;
     char* current;
     word32 currentSz;
     int foundKey = 0;
     int rc = 0;
 
-    WMEMSET(authKeysPath, 0, sizeof(authKeysPath));
-    rc = ResolveAuthKeysPath(path, authKeysFile, user, authKeysPath);
-    if (rc != WS_SUCCESS) {
-        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failed to resolve authorized keys"
-            " file path.");
-        ret = rc;
+    if (keysFilePath == NULL || key == NULL || keySz == 0) {
+        return WS_BAD_ARGUMENT;
     }
 
-    /* When StrictModes is enabled, open through the secure gate: the file must
-     * be a regular file (no symlink), owned by the user or root, with no
-     * group/world writable component in its path. When disabled, fall back to a
-     * plain open. */
-    if (ret == WSSHD_AUTH_SUCCESS) {
-        if (strictModes) {
-            if (wolfSSHD_OpenSecureFile(authKeysPath, uid,
-                    0 /* rejectReadable */, NULL, &f) != WS_SUCCESS) {
-                wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] Authorized keys file %s failed StrictModes check",
-                    authKeysPath);
-                ret = WSSHD_AUTH_FAILURE;
-            }
+    /* StrictModes opens through the secure gate: a regular file, no symlink,
+     * owned by the user or root, no group/world writable path component.
+     * Otherwise fall back to a plain open. */
+    if (strictModes) {
+        if (wolfSSHD_OpenSecureFile(keysFilePath, uid,
+                0 /* rejectReadable */, NULL, &f) != WS_SUCCESS) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Keys file %s failed StrictModes check", keysFilePath);
+            ret = WSSHD_AUTH_FAILURE;
         }
-        else if (WFOPEN(NULL, &f, authKeysPath, "rb") != 0) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to open %s",
-                authKeysPath);
-            ret = WS_BAD_FILE_E;
-        }
+    }
+    else if (WFOPEN(NULL, &f, keysFilePath, "rb") != 0) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to open %s", keysFilePath);
+        ret = WS_BAD_FILE_E;
     }
     if (ret == WSSHD_AUTH_SUCCESS) {
         lineBuf = (char*)WMALLOC(MAX_LINE_SZ, NULL, DYNTYPE_BUFFER);
@@ -960,8 +970,7 @@ WOLFSSHD_STATIC int SearchForPubKey(const char* path,
             continue; /* commented out line */
         }
 
-        rc = CheckAuthKeysLine(current, currentSz, pubKeyCtx->publicKey,
-            pubKeyCtx->publicKeySz);
+        rc = CheckAuthKeysLine(current, currentSz, key, keySz);
         if (rc == WSSHD_AUTH_SUCCESS) {
             foundKey = 1;
             break;
@@ -982,6 +991,32 @@ WOLFSSHD_STATIC int SearchForPubKey(const char* path,
 
     if (ret == WSSHD_AUTH_SUCCESS && !foundKey) {
         ret = WSSHD_AUTH_FAILURE;
+    }
+
+    return ret;
+}
+
+
+WOLFSSHD_STATIC int SearchForPubKey(const char* path,
+                                    const char* authKeysFile, const char* user,
+                                    const WS_UserAuthData_PublicKey* pubKeyCtx,
+                                    WUID_T uid, int strictModes)
+{
+    int ret = WSSHD_AUTH_SUCCESS;
+    char authKeysPath[MAX_PATH_SZ];
+    int rc = 0;
+
+    WMEMSET(authKeysPath, 0, sizeof(authKeysPath));
+    rc = ResolveAuthKeysPath(path, authKeysFile, user, authKeysPath);
+    if (rc != WS_SUCCESS) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failed to resolve authorized keys"
+            " file path.");
+        ret = rc;
+    }
+
+    if (ret == WSSHD_AUTH_SUCCESS) {
+        ret = SearchKeysFile(authKeysPath, pubKeyCtx->publicKey,
+                pubKeyCtx->publicKeySz, uid, strictModes);
     }
 
     return ret;
@@ -1009,74 +1044,331 @@ static int CheckUserUnix(const char* name) {
     return ret;
 }
 
+#ifdef WOLFSSH_OSSH_CERTS
+/* Return WSSHD_AUTH_SUCCESS when name appears in the certificate's principal
+ * list. A principal-less certificate is rejected, matching OpenSSH sshd
+ * (sshkey_cert_check_authority rejects a user cert with no principals). */
+#ifdef WOLFSSHD_UNIT_TEST
+int OsshCertCheckPrincipal(const WS_UserAuthData_PublicKey* pubKeyCtx,
+        const char* name)
+#else
+static int OsshCertCheckPrincipal(const WS_UserAuthData_PublicKey* pubKeyCtx,
+        const char* name)
+#endif
+{
+    const byte* p = pubKeyCtx->principals;
+    word32 sz = pubKeyCtx->principalsSz;
+    word32 idx = 0;
+    word32 nameSz;
+    word32 entSz;
+
+    /* OpenSSH sshd rejects a principal-less user certificate; the empty-list
+     * "any principal" rule in PROTOCOL.certkeys is wire format, not policy.
+     * Fail closed so such a cert cannot authenticate as an arbitrary user. */
+    if (p == NULL || sz == 0) {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] OpenSSH certificate lacks a principal list");
+        return WSSHD_AUTH_FAILURE;
+    }
+
+    nameSz = (word32)WSTRLEN(name);
+    while (idx + UINT32_SZ <= sz) {
+        ato32(p + idx, &entSz);
+        idx += UINT32_SZ;
+        if (entSz > sz - idx) {
+            break; /* malformed principals region */
+        }
+        if (entSz == nameSz && XMEMCMP(p + idx, name, nameSz) == 0) {
+            return WSSHD_AUTH_SUCCESS;
+        }
+        idx += entSz;
+    }
+
+    wolfSSH_Log(WS_LOG_ERROR,
+        "[SSHD] User %s is not a listed certificate principal", name);
+    return WSSHD_AUTH_FAILURE;
+}
+
+
+/* Return WSSHD_AUTH_SUCCESS when the current time is within the certificate's
+ * validity window. */
+#ifdef WOLFSSHD_UNIT_TEST
+int OsshCertCheckValidity(const WS_UserAuthData_PublicKey* pubKeyCtx)
+#else
+static int OsshCertCheckValidity(const WS_UserAuthData_PublicKey* pubKeyCtx)
+#endif
+{
+    word64 now = (word64)WTIME(NULL);
+
+    if (now < pubKeyCtx->validAfter || now >= pubKeyCtx->validBefore) {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] OpenSSH certificate is outside its validity window");
+        return WSSHD_AUTH_FAILURE;
+    }
+
+    return WSSHD_AUTH_SUCCESS;
+}
+
+
+/* Return 1 if the first 'bits' bits of a and b match, over 'len' bytes. */
+#ifdef WOLFSSHD_UNIT_TEST
+int OsshPrefixMatch(const byte* a, const byte* b, int bits, int len)
+#else
+static int OsshPrefixMatch(const byte* a, const byte* b, int bits, int len)
+#endif
+{
+    int fullBytes = bits / 8;
+    int remBits = bits % 8;
+    byte mask;
+
+    if (bits < 0 || bits > len * 8) {
+        return 0;
+    }
+    if (fullBytes > 0 && XMEMCMP(a, b, fullBytes) != 0) {
+        return 0;
+    }
+    if (remBits != 0) {
+        mask = (byte)(0xFFu << (8 - remBits));
+        if ((a[fullBytes] & mask) != (b[fullBytes] & mask)) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+
+/* Return 1 if peerIp is permitted by the comma-separated CIDR list, following
+ * OpenSSH addr_match_cidr_list: any malformed entry, including a negated one,
+ * invalidates the whole list and denies. IPv4/IPv6, POSIX inet_pton. */
+#ifdef WOLFSSHD_UNIT_TEST
+int OsshSourceAddrMatch(const byte* list, word32 listSz,
+        const char* peerIp)
+#else
+static int OsshSourceAddrMatch(const byte* list, word32 listSz,
+        const char* peerIp)
+#endif
+{
+    byte peer[16];
+    byte addr[16];
+    int peerLen = 0;
+    int addrLen = 0;
+    int prefix;
+    int allow = 0;
+    word32 i = 0;
+    word32 entLen;
+    char ent[WOLFSSHD_CIDR_ENTRY_SZ];
+    char* p;
+    char* slash;
+    char* pp;
+    struct in_addr v4;
+    struct in6_addr v6;
+
+    if (inet_pton(AF_INET, peerIp, &v4) == 1) {
+        XMEMCPY(peer, &v4, 4);
+        peerLen = 4;
+    }
+    else if (inet_pton(AF_INET6, peerIp, &v6) == 1) {
+        /* An IPv4 client on a dual-stack listener arrives as ::ffff:a.b.c.d.
+         * Compare it as IPv4 so IPv4 list entries still match. */
+        if (IN6_IS_ADDR_V4MAPPED(&v6)) {
+            XMEMCPY(peer, ((const byte*)&v6) + 12, 4);
+            peerLen = 4;
+        }
+        else {
+            XMEMCPY(peer, &v6, 16);
+            peerLen = 16;
+        }
+    }
+    else {
+        return 0;
+    }
+
+    while (i < listSz) {
+        entLen = 0;
+        while (i < listSz && list[i] != ',') {
+            if (entLen < (word32)sizeof(ent) - 1) {
+                ent[entLen] = (char)list[i];
+            }
+            entLen++; /* count full length, even past the buffer */
+            i++;
+        }
+        if (i < listSz) {
+            i++; /* skip comma */
+        }
+        /* An entry too long to hold cannot be parsed, so the list is not
+         * usable; deny rather than skip it. */
+        if (entLen >= (word32)sizeof(ent)) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Certificate source-address entry too long: denying");
+            return 0;
+        }
+        ent[entLen] = '\0';
+
+        p = ent;
+        if (*p == '\0') {
+            return 0; /* empty entry: malformed list */
+        }
+        /* The cert option is validated with addr_match_cidr_list, which has no
+         * negation, so "!" is an invalid character that voids the list. */
+        if (*p == '!') {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Certificate source-address negation is not valid: "
+                "denying");
+            return 0;
+        }
+
+        slash = WSTRCHR(p, '/');
+        if (slash == NULL) {
+            prefix = -1; /* no prefix: full-length match */
+        }
+        else {
+            *slash = '\0';
+            pp = slash + 1;
+            if (*pp == '\0') {
+                return 0; /* empty prefix: malformed list */
+            }
+            prefix = 0;
+            while (*pp >= '0' && *pp <= '9') {
+                prefix = prefix * 10 + (*pp - '0');
+                if (prefix > 128) {
+                    break; /* oversize; the check below rejects it */
+                }
+                pp++;
+            }
+            if (*pp != '\0') {
+                return 0; /* non-numeric prefix: malformed list */
+            }
+        }
+
+        if (inet_pton(AF_INET, p, &v4) == 1) {
+            XMEMCPY(addr, &v4, 4);
+            addrLen = 4;
+        }
+        else if (inet_pton(AF_INET6, p, &v6) == 1) {
+            XMEMCPY(addr, &v6, 16);
+            addrLen = 16;
+        }
+        else {
+            return 0; /* unparsable address: malformed list */
+        }
+
+        if (prefix < 0) {
+            prefix = addrLen * 8; /* no prefix given: full-length */
+        }
+        else if (prefix > addrLen * 8) {
+            return 0; /* prefix too large for the family: malformed list */
+        }
+
+        /* A different family cannot match, but is not malformed. */
+        if (addrLen != peerLen) {
+            continue;
+        }
+        if (OsshPrefixMatch(peer, addr, prefix, addrLen)) {
+            allow = 1;
+        }
+    }
+
+    return allow;
+}
+
+
+/* Enforce the certificate's source-address restriction (if any) against the
+ * connection peer IP. Returns WSSHD_AUTH_SUCCESS when allowed. */
+static int OsshCertCheckSourceAddress(
+        const WS_UserAuthData_PublicKey* pubKeyCtx, const char* peerIp)
+{
+    if (pubKeyCtx->sourceAddress == NULL || pubKeyCtx->sourceAddressSz == 0) {
+        return WSSHD_AUTH_SUCCESS; /* no restriction */
+    }
+
+    if (peerIp == NULL || peerIp[0] == '\0') {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] Cannot enforce certificate source-address: no peer IP");
+        return WSSHD_AUTH_FAILURE;
+    }
+
+    if (OsshSourceAddrMatch(pubKeyCtx->sourceAddress,
+            pubKeyCtx->sourceAddressSz, peerIp)) {
+        return WSSHD_AUTH_SUCCESS;
+    }
+
+    wolfSSH_Log(WS_LOG_ERROR,
+        "[SSHD] Peer %s not permitted by certificate source-address", peerIp);
+    return WSSHD_AUTH_FAILURE;
+}
+#endif /* WOLFSSH_OSSH_CERTS */
+
+
+#if defined(WOLFSSHD_UNIT_TEST) && defined(WOLFSSH_OSSH_CERTS)
+int CheckPublicKeyUnix(const char* name,
+                       const WS_UserAuthData_PublicKey* pubKeyCtx,
+                       const char* usrCaKeysFile,
+                       const char* authorizedKeysFile,
+                       WOLFSSHD_AUTH* authCtx)
+#else
 static int CheckPublicKeyUnix(const char* name,
                               const WS_UserAuthData_PublicKey* pubKeyCtx,
                               const char* usrCaKeysFile,
                               const char* authorizedKeysFile,
                               WOLFSSHD_AUTH* authCtx)
+#endif
 {
     int ret = WSSHD_AUTH_SUCCESS;
     struct passwd* pwInfo;
 
 #ifdef WOLFSSH_OSSH_CERTS
     if (pubKeyCtx->isOsshCert) {
-        int rc;
-        byte* caKey = NULL;
-        word32 caKeySz;
-        const byte* caKeyType = NULL;
-        word32 caKeyTypeSz;
-        byte fingerprint[WC_SHA256_DIGEST_SIZE];
-
-        if (pubKeyCtx->caKey == NULL ||
-            pubKeyCtx->caKeySz != WC_SHA256_DIGEST_SIZE) {
+        /* caKey is the raw signing-CA blob, identical to a decoded
+         * TrustedUserCAKeys line, so it reuses the authorized_keys scanner. */
+        if (pubKeyCtx->caKey == NULL || pubKeyCtx->caKeySz == 0) {
             ret = WS_FATAL_ERROR;
         }
 
-        if (ret == WSSHD_AUTH_SUCCESS) {
-            f = XFOPEN(usrCaKeysFile, "rb");
-            if (f == XBADFILE) {
-                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to open %s",
-                            usrCaKeysFile);
-                ret = WS_BAD_FILE_E;
-            }
+        if (ret == WSSHD_AUTH_SUCCESS && usrCaKeysFile == NULL) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] No TrustedUserCAKeys configured for certificate auth");
+            ret = WSSHD_AUTH_FAILURE;
         }
+
+        /* The requested user must be a real local account. */
         if (ret == WSSHD_AUTH_SUCCESS) {
-            lineBuf = (char*)WMALLOC(MAX_LINE_SZ, NULL, DYNTYPE_BUFFER);
-            if (lineBuf == NULL) {
-                ret = WS_MEMORY_E;
-            }
-        }
-        while (ret == WSSHD_AUTH_SUCCESS &&
-               (current = XFGETS(lineBuf, MAX_LINE_SZ, f)) != NULL) {
-            currentSz = (word32)XSTRLEN(current);
-
-            /* remove leading spaces */
-            while (currentSz > 0 && current[0] == ' ') {
-                currentSz = currentSz - 1;
-                current   = current + 1;
-            }
-
-            if (currentSz <= 1) {
-                continue; /* empty line */
-            }
-
-            if (current[0] == '#') {
-                continue; /* commented out line */
-            }
-
-            rc = wolfSSH_ReadKey_buffer((const byte*)current, currentSz,
-                                        WOLFSSH_FORMAT_SSH, &caKey, &caKeySz,
-                                        &caKeyType, &caKeyTypeSz, NULL);
-            if (rc == WS_SUCCESS) {
-                rc = wc_Hash(WC_HASH_TYPE_SHA256, caKey, caKeySz, fingerprint,
-                             WC_SHA256_DIGEST_SIZE);
-                if (rc == 0 && ConstantCompare(fingerprint, pubKeyCtx->caKey,
-                                       WC_SHA256_DIGEST_SIZE) == 0) {
-                    foundKey = 1;
-                    break;
+            errno = 0;
+            pwInfo = getpwnam((const char*)name);
+            if (pwInfo == NULL) {
+                if (errno != 0) {
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Error calling getpwnam for user %s.", name);
                 }
+                ret = WS_FATAL_ERROR;
             }
         }
+
+        /* The signing CA must be listed in TrustedUserCAKeys. A daemon trust
+         * anchor, so it is always secure-gated, regardless of StrictModes. */
+        if (ret == WSSHD_AUTH_SUCCESS) {
+            ret = SearchKeysFile(usrCaKeysFile, pubKeyCtx->caKey,
+                    pubKeyCtx->caKeySz, geteuid(), 1 /* strictModes */);
+        }
+
+        /* Bind the certificate to the requested user via its principals. */
+        if (ret == WSSHD_AUTH_SUCCESS) {
+            ret = OsshCertCheckPrincipal(pubKeyCtx, name);
+        }
+
+        if (ret == WSSHD_AUTH_SUCCESS) {
+            ret = OsshCertCheckValidity(pubKeyCtx);
+        }
+
+        /* A NULL authCtx leaves the peer IP unknown, so the source-address
+         * check below fails closed if the certificate restricts it. */
+        if (ret == WSSHD_AUTH_SUCCESS) {
+            ret = OsshCertCheckSourceAddress(pubKeyCtx,
+                    (authCtx != NULL) ? authCtx->peerIp : NULL);
+        }
+
+        /* The force-command is stashed in UserAuthResult, after the signature
+         * verifies, so it binds to the credential that authenticated. */
     }
     else
     #endif /* WOLFSSH_OSSH_CERTS */
@@ -1420,6 +1712,16 @@ static int CheckPublicKeyWIN(const char* usr,
     int ret;
 
     wolfSSH_Log(WS_LOG_INFO, "[SSHD] Windows check public key");
+
+#ifdef WOLFSSH_OSSH_CERTS
+    /* Certificate enforcement lives only in CheckPublicKeyUnix, so fail
+     * closed here rather than accept the reconstructed key. */
+    if (pubKeyCtx->isOsshCert) {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] OpenSSH certificate auth is not supported on Windows");
+        return WSSHD_AUTH_FAILURE;
+    }
+#endif
 
     ret = SetupUserTokenWin(usr, pubKeyCtx,usrCaKeysFile, authCtx);
 
@@ -2078,6 +2380,9 @@ WOLFSSHD_AUTH* wolfSSHD_AuthCreateUser(void* heap, const WOLFSSHD_CONFIG* conf)
     if (auth != NULL) {
         int ret;
 
+        /* Zero first so optional members (e.g. certForcedCmd, peerIp) start in a
+         * known state; the fields below are then set explicitly. */
+        WMEMSET(auth, 0, sizeof(WOLFSSHD_AUTH));
         auth->heap = heap;
         auth->conf = conf;
         auth->attempts = WOLFSSHD_MAX_PASSWORD_ATTEMPTS;
@@ -2131,10 +2436,84 @@ WOLFSSHD_AUTH* wolfSSHD_AuthCreateUser(void* heap, const WOLFSSHD_CONFIG* conf)
 int wolfSSHD_AuthFreeUser(WOLFSSHD_AUTH* auth)
 {
     if (auth != NULL) {
+    #ifdef WOLFSSH_OSSH_CERTS
+        if (auth->certForcedCmd != NULL) {
+            WFREE(auth->certForcedCmd, auth->heap, DYNTYPE_STRING);
+            auth->certForcedCmd = NULL;
+        }
+    #endif
         WFREE(auth, auth->heap, DYNTYPE_SSHD);
     }
     return WS_SUCCESS;
 }
+
+
+#ifdef WOLFSSH_OSSH_CERTS
+/* Record the connection peer IP for certificate source-address enforcement. */
+void wolfSSHD_AuthSetPeerIp(WOLFSSHD_AUTH* auth, const char* ip)
+{
+    word32 ipSz;
+
+    if (auth != NULL && ip != NULL) {
+        ipSz = (word32)WSTRLEN(ip);
+        /* An address too long to store could not be matched anyway, so leave
+         * peerIp empty and let the source-address check fail closed. */
+        if (ipSz < sizeof(auth->peerIp)) {
+            WMEMCPY(auth->peerIp, ip, ipSz + 1);
+        }
+        else {
+            auth->peerIp[0] = '\0';
+        }
+    }
+}
+
+
+/* Return the force-command from an authenticated OpenSSH certificate, or NULL
+ * when none was present. */
+const char* wolfSSHD_AuthGetForcedCmd(const WOLFSSHD_AUTH* auth)
+{
+    if (auth != NULL) {
+        return auth->certForcedCmd;
+    }
+    return NULL;
+}
+
+
+/* A configured ForceCommand overrides a certificate's force-command; the
+ * certificate command applies only when the configuration sets none. */
+const char* wolfSSHD_AuthMergeForcedCmd(const char* configCmd,
+        const char* certCmd)
+{
+    return (configCmd != NULL) ? configCmd : certCmd;
+}
+
+
+/* Store a copy of a verified certificate's force-command on the auth context,
+ * replacing any previous value. Called only after the signature verifies. */
+int wolfSSHD_AuthSetCertForcedCmd(WOLFSSHD_AUTH* auth, const byte* cmd,
+        word32 cmdSz)
+{
+    char* copy = NULL;
+
+    if (auth == NULL || cmd == NULL || cmdSz == 0) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    copy = (char*)WMALLOC(cmdSz + 1, auth->heap, DYNTYPE_STRING);
+    if (copy == NULL) {
+        return WS_MEMORY_E;
+    }
+    WMEMCPY(copy, cmd, cmdSz);
+    copy[cmdSz] = '\0';
+
+    if (auth->certForcedCmd != NULL) {
+        WFREE(auth->certForcedCmd, auth->heap, DYNTYPE_STRING);
+    }
+    auth->certForcedCmd = copy;
+
+    return WS_SUCCESS;
+}
+#endif /* WOLFSSH_OSSH_CERTS */
 
 
 /* return WS_SUCCESS on success */
