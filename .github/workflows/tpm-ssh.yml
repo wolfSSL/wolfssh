@@ -10,6 +10,7 @@ on:
 jobs:
   test-tpm-ssh:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     strategy:
       fail-fast: false
@@ -139,8 +140,8 @@ jobs:
         ./examples/echoserver/echoserver -1 -s key.ssh &
         echo "Echoserver (authorized TPM client key) PID: $!"
         sleep 2
-        ./examples/client/client -i ../wolftpm/keyblob.bin -u hansel \
-            -K ThisIsMyKeyAuth
+        timeout 20 ./examples/client/client -i ../wolftpm/keyblob.bin \
+            -u hansel -K ThisIsMyKeyAuth
 
     - name: Archive test artifacts
       if: always()
