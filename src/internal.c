@@ -622,6 +622,22 @@ static void HandshakeInfoFree(HandshakeInfo* hs, void* heap)
 #ifndef WOLFSSH_NO_DH
         WFREE(hs->primeGroup, heap, DYNTYPE_MPINT);
         WFREE(hs->generator, heap, DYNTYPE_MPINT);
+        if (hs->useDh) {
+            wc_FreeDhKey(&hs->privKey.dh);
+        }
+#endif
+#ifndef WOLFSSH_NO_ECDH
+        /* privKey is a union; the Curve25519+ML-KEM case also sets
+         * useEccMlKem but generates a curve25519 key, so free it below. */
+        if (hs->useEcc || (hs->useEccMlKem && !hs->useCurve25519MlKem)) {
+            wc_ecc_free(&hs->privKey.ecc);
+        }
+#endif
+#if !defined(WOLFSSH_NO_CURVE25519_SHA256) || \
+    !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
+        if (hs->useCurve25519 || hs->useCurve25519MlKem) {
+            wc_curve25519_free(&hs->privKey.curve25519);
+        }
 #endif
         if (hs->kexHashId != WC_HASH_TYPE_NONE)  {
             wc_HashFree(&hs->kexHash, (enum wc_HashType)hs->kexHashId);
