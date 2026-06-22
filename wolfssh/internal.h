@@ -1433,7 +1433,14 @@ enum WS_MessageIdLimits {
             const byte* f, word32 fSz);
     WOLFSSH_API int wolfSSH_TestKeyAgreeDh_server(WOLFSSH* ssh, byte hashId,
             byte* f, word32* fSz);
+    WOLFSSH_API int wolfSSH_TestSetDhKexKey(WOLFSSH* ssh);
 #endif /* !WOLFSSH_NO_DH */
+#ifndef WOLFSSH_NO_ECDH
+    WOLFSSH_API int wolfSSH_TestKeyAgreeEcdh_server(WOLFSSH* ssh, byte hashId,
+            byte* f, word32* fSz);
+    WOLFSSH_API int wolfSSH_TestKeyAgreeEcdh_client(WOLFSSH* ssh, byte hashId,
+            const byte* f, word32 fSz);
+#endif /* !WOLFSSH_NO_ECDH */
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
     WOLFSSH_API int wolfSSH_TestDoKexDhGexRequest(WOLFSSH* ssh, byte* buf,
             word32 len, word32* idx);

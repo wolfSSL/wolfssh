@@ -5658,16 +5658,24 @@ static int KeyAgreeDh_client(WOLFSSH* ssh, byte hashId,
     WLOG(WS_LOG_DEBUG, "Entering KeyAgreeDh_client()");
     WOLFSSH_UNUSED(hashId);
 
-    PRIVATE_KEY_UNLOCK();
-    ret = wc_DhAgree(&ssh->handshake->privKey.dh,
-                     ssh->k, &ssh->kSz,
-                     ssh->handshake->x, ssh->handshake->xSz,
-                     f, fSz);
-    PRIVATE_KEY_LOCK();
+    ret = wc_DhCheckPubKey(&ssh->handshake->privKey.dh, f, fSz);
     if (ret != 0) {
         WLOG(WS_LOG_ERROR,
-                "Generate DH shared secret failed, %d", ret);
+                "Peer DH public key out of range, %d", ret);
         ret = WS_CRYPTO_FAILED;
+    }
+    if (ret == 0) {
+        PRIVATE_KEY_UNLOCK();
+        ret = wc_DhAgree(&ssh->handshake->privKey.dh,
+                         ssh->k, &ssh->kSz,
+                         ssh->handshake->x, ssh->handshake->xSz,
+                         f, fSz);
+        PRIVATE_KEY_LOCK();
+        if (ret != 0) {
+            WLOG(WS_LOG_ERROR,
+                    "Generate DH shared secret failed, %d", ret);
+            ret = WS_CRYPTO_FAILED;
+        }
     }
     ForceZero(ssh->handshake->x, ssh->handshake->xSz);
     wc_FreeDhKey(&ssh->handshake->privKey.dh);
@@ -5684,6 +5692,41 @@ static int KeyAgreeDh_client(WOLFSSH* ssh, byte hashId,
     return WS_INVALID_ALGO_ID;
 }
 #endif /* WOLFSSH_NO_DH */
+
+
+#if !defined(WOLFSSH_NO_ECDH) || \
+    !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
+    !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384)
+/* Import a peer's X9.63 ECC point and validate it before it is used to derive
+ * a shared secret. Shared by the plain and ML-KEM-hybrid ECDH paths, on both
+ * client and server, so the peer point validation cannot diverge between them:
+ * a single unit test on the plain path exercises the same import+check logic
+ * the hybrid paths rely on. When primeId is ECC_CURVE_INVALID the curve is
+ * inferred from the point length (wc_ecc_import_x963), matching the client's
+ * behavior; otherwise the expected curve is enforced (wc_ecc_import_x963_ex),
+ * matching the server's. wc_ecc_check_key rejects off-curve and degenerate
+ * points that import does not catch in builds without
+ * WOLFSSL_VALIDATE_ECC_IMPORT. Returns a wolfCrypt status (0 on success). */
+static int EccCheckPeerKey(ecc_key* key, const byte* peer, word32 peerSz,
+        int primeId, WC_RNG* rng)
+{
+    int ret;
+
+    if (primeId == ECC_CURVE_INVALID)
+        ret = wc_ecc_import_x963(peer, peerSz, key);
+    else
+        ret = wc_ecc_import_x963_ex(peer, peerSz, key, primeId);
+#ifdef HAVE_WC_ECC_SET_RNG
+    if (ret == 0)
+        ret = wc_ecc_set_rng(key, rng);
+#endif
+    if (ret == 0)
+        ret = wc_ecc_check_key(key);
+
+    WOLFSSH_UNUSED(rng);
+    return ret;
+}
+#endif
 
 
 /* KeyAgreeEcdh_client
@@ -5714,12 +5757,8 @@ static int KeyAgreeEcdh_client(WOLFSSH* ssh, byte hashId,
         key_ptr = &key_s;
     #endif /* WOLFSSH_SMALL_STACK */
     ret = wc_ecc_init(key_ptr);
-    #ifdef HAVE_WC_ECC_SET_RNG
     if (ret == 0)
-        ret = wc_ecc_set_rng(key_ptr, ssh->rng);
-    #endif
-    if (ret == 0)
-        ret = wc_ecc_import_x963(f, fSz, key_ptr);
+        ret = EccCheckPeerKey(key_ptr, f, fSz, ECC_CURVE_INVALID, ssh->rng);
     if (ret == 0) {
         PRIVATE_KEY_UNLOCK();
         ret = wc_ecc_shared_secret(&ssh->handshake->privKey.ecc,
@@ -5942,14 +5981,13 @@ static int KeyAgreeEcdhMlKem_client(WOLFSSH* ssh, byte hashId,
         if (ret == 0) {
             ret = wc_ecc_init(key_ptr);
         }
-    #ifdef HAVE_WC_ECC_SET_RNG
+        /* Import and validate the peer ECC point via the shared helper, the
+         * same path the plain KeyAgreeEcdh_client uses, so the off-curve
+         * rejection cannot diverge between the plain and hybrid code. The ECC
+         * point sits after the ML-KEM ciphertext in f. */
         if (ret == 0) {
-            ret = wc_ecc_set_rng(key_ptr, ssh->rng);
-        }
-    #endif
-        if (ret == 0) {
-            ret = wc_ecc_import_x963(f + length_ciphertext,
-                    fSz - length_ciphertext, key_ptr);
+            ret = EccCheckPeerKey(key_ptr, f + length_ciphertext,
+                    fSz - length_ciphertext, ECC_CURVE_INVALID, ssh->rng);
         }
 
         if (ret == 0) {
@@ -12372,6 +12410,9 @@ static int KeyAgreeDh_server(WOLFSSH* ssh, byte hashId, byte* f, word32* fSz)
             ret = wc_DhSetKey(privKey, primeGroup, primeGroupSz,
                     generator, generatorSz);
         if (ret == 0)
+            ret = wc_DhCheckPubKey(privKey, ssh->handshake->e,
+                    ssh->handshake->eSz);
+        if (ret == 0)
             ret = wc_DhGenerateKeyPair(privKey, ssh->rng,
                     y_ptr, &ySz, f, fSz);
         if (ret == 0) {
@@ -12446,9 +12487,8 @@ static int KeyAgreeEcdh_server(WOLFSSH* ssh, byte hashId, byte* f, word32* fSz)
 #endif
 
     if (ret == 0)
-        ret = wc_ecc_import_x963_ex(ssh->handshake->e,
-                                    ssh->handshake->eSz,
-                                    pubKey, primeId);
+        ret = EccCheckPeerKey(pubKey, ssh->handshake->e,
+                              ssh->handshake->eSz, primeId, ssh->rng);
 
     if (ret == 0)
         ret = wc_ecc_make_key_ex(ssh->rng,
@@ -12767,11 +12807,15 @@ static int KeyAgreeEcdhMlKem_server(WOLFSSH* ssh, byte hashId,
             ret = wc_ecc_set_rng(privKey, ssh->rng);
         }
     #endif
+        /* Import and validate the peer ECC point via the shared helper, the
+         * same path the plain KeyAgreeEcdh_server uses, so the off-curve
+         * rejection cannot diverge between the plain and hybrid code. The ECC
+         * point sits after the ML-KEM public key in e. */
         if (ret == 0) {
-            ret = wc_ecc_import_x963_ex(
+            ret = EccCheckPeerKey(pubKey,
                 ssh->handshake->e + length_publickey,
                 ssh->handshake->eSz - length_publickey,
-                pubKey, primeId);
+                primeId, ssh->rng);
         }
         if (ret == 0) {
             ret = wc_ecc_make_key_ex(ssh->rng,
@@ -18528,7 +18572,69 @@ int wolfSSH_TestKeyAgreeDh_server(WOLFSSH* ssh, byte hashId,
     return KeyAgreeDh_server(ssh, hashId, f, fSz);
 }
 
+/* Generate the client's ephemeral DH key for the prime group selected by
+ * ssh->handshake->kexId, mirroring the setup SendKexDhInit() performs before
+ * KeyAgreeDh_client() runs (group set, key pair generated into
+ * handshake->x). Lets unit tests exercise the peer public key range check
+ * with a real private exponent in place, so removing the check would let
+ * wc_DhAgree proceed rather than failing for lack of a private key. */
+int wolfSSH_TestSetDhKexKey(WOLFSSH* ssh)
+{
+    int ret;
+    DhKey* privKey = &ssh->handshake->privKey.dh;
+    const byte* primeGroup = NULL;
+    const byte* generator = NULL;
+    word32 primeGroupSz = 0;
+    word32 generatorSz = 0;
+    byte e[MAX_KEX_KEY_SZ];
+    word32 eSz = (word32)sizeof(e);
+    int keyInited = 0;
+
+    ret = GetDHPrimeGroup(ssh->handshake->kexId, &primeGroup, &primeGroupSz,
+            &generator, &generatorSz);
+    if (ret == WS_SUCCESS) {
+        ret = wc_InitDhKey(privKey);
+        if (ret == WS_SUCCESS)
+            keyInited = 1;
+    }
+    if (ret == WS_SUCCESS)
+        ret = wc_DhSetKey(privKey, primeGroup, primeGroupSz,
+                generator, generatorSz);
+    if (ret == WS_SUCCESS) {
+        ssh->handshake->xSz = (word32)sizeof(ssh->handshake->x);
+        ret = wc_DhGenerateKeyPair(privKey, ssh->rng,
+                ssh->handshake->x, &ssh->handshake->xSz, e, &eSz);
+    }
+    if (ret == WS_SUCCESS) {
+        /* Mark the DH key live, mirroring the real handshake, so
+         * HandshakeInfoFree() reclaims it if the test exits before
+         * KeyAgreeDh_client() runs. wc_FreeDhKey() is idempotent, so the
+         * later free in KeyAgreeDh_client() and HandshakeInfoFree() is safe. */
+        ssh->handshake->useDh = 1;
+    }
+    else if (keyInited) {
+        /* Free the key only when wc_InitDhKey succeeded so wc_DhSetKey's
+         * mp_int storage is not leaked. */
+        wc_FreeDhKey(privKey);
+    }
+    return ret;
+}
+
 #endif /* !WOLFSSH_NO_DH */
+
+#ifndef WOLFSSH_NO_ECDH
+int wolfSSH_TestKeyAgreeEcdh_server(WOLFSSH* ssh, byte hashId,
+        byte* f, word32* fSz)
+{
+    return KeyAgreeEcdh_server(ssh, hashId, f, fSz);
+}
+
+int wolfSSH_TestKeyAgreeEcdh_client(WOLFSSH* ssh, byte hashId,
+        const byte* f, word32 fSz)
+{
+    return KeyAgreeEcdh_client(ssh, hashId, f, fSz);
+}
+#endif /* !WOLFSSH_NO_ECDH */
 
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
 
