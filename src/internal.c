@@ -60,6 +60,10 @@
     #include <wolfssl/wolfcrypt/wc_mlkem.h>
 #endif
 
+#ifndef WOLFSSH_NO_MLDSA
+    #include <wolfssl/wolfcrypt/dilithium.h>
+#endif
+
 #ifdef NO_INLINE
     #include <wolfssh/misc.h>
 #else
@@ -133,6 +137,14 @@ Flags:
   WOLFSSH_NO_SSH_RSA_SHA1
     Set when RSA or SHA1 are disabled. Set to disable use of RSA server
     authentication.
+  WOLFSSH_NO_MLDSA
+    Set when MLDSA is disabled and/or not included in wolfssl downloaded.
+  WOLFSSH_NO_MLDSA44
+    Set for ML-DSA-44.
+  WOLFSSH_NO_MLDSA65
+    Set for ML-DSA-65.
+  WOLFSSH_NO_MLDSA87
+    Set for ML-DSA-87.
   WOLFSSH_NO_ECDSA
     Set when ECC is disabled. Set to disable use of ECDSA server and user
     authentication.
@@ -490,6 +502,9 @@ const char* GetErrorString(int err)
 
         case WS_ED25519_E:
             return "Ed25519 buffer error";
+
+        case WS_MLDSA_E:
+            return "ML-DSA error";
 
         case WS_AUTH_PENDING:
             return "userauth is still pending (callback would block)";
@@ -972,14 +987,45 @@ static const char cannedKexAlgoNames[] =
 #ifndef WOLFSSH_NO_ED25519
     static const char cannedKeyAlgoEd25519Name[] = "ssh-ed25519";
 #endif
+#ifdef WOLFSSH_CERTS
+#ifndef WOLFSSH_NO_MLDSA44
+    static const char cannedKeyAlgoX509Mldsa44Names[] = "x509v3-ssh-mldsa-44";
+#endif
+#ifndef WOLFSSH_NO_MLDSA65
+    static const char cannedKeyAlgoX509Mldsa65Names[] = "x509v3-ssh-mldsa-65";
+#endif
+#ifndef WOLFSSH_NO_MLDSA87
+    static const char cannedKeyAlgoX509Mldsa87Names[] = "x509v3-ssh-mldsa-87";
+#endif
+#endif /* WOLFSSH_CERTS */
 
 static const char cannedKeyAlgoNames[] =
+#ifndef WOLFSSH_NO_MLDSA87
+    "ssh-mldsa-87,"
+#endif
+#ifndef WOLFSSH_NO_MLDSA65
+    "ssh-mldsa-65,"
+#endif
+#ifndef WOLFSSH_NO_MLDSA44
+    "ssh-mldsa-44,"
+#endif
+#ifdef WOLFSSH_CERTS
+    #ifndef WOLFSSH_NO_MLDSA87
+        "x509v3-ssh-mldsa-87,"
+    #endif
+    #ifndef WOLFSSH_NO_MLDSA65
+        "x509v3-ssh-mldsa-65,"
+    #endif
+    #ifndef WOLFSSH_NO_MLDSA44
+        "x509v3-ssh-mldsa-44,"
+    #endif
+#endif /* WOLFSSH_CERTS */
 #ifndef WOLFSSH_NO_ED25519
     "ssh-ed25519,"
 #endif /* WOLFSSH_NO_ED25519 */
 #ifndef WOLFSSH_NO_RSA_SHA2_256
     "rsa-sha2-256,"
-#endif/* WOLFSSH_NO_RSA_SHA2_256 */
+#endif /* WOLFSSH_NO_RSA_SHA2_256 */
 #ifndef WOLFSSH_NO_RSA_SHA2_512
     "rsa-sha2-512,"
 #endif /* WOLFSSH_NO_RSA_SHA2_512 */
@@ -1448,7 +1494,8 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
 void wolfSSH_KEY_clean(WS_KeySignature* key)
 {
     if (key != NULL) {
-        if (key->keyId == ID_SSH_RSA) {
+        if (key->keyId == ID_SSH_RSA ||
+            key->keyId == ID_X509V3_SSH_RSA) {
 #ifndef WOLFSSH_NO_RSA
             wc_FreeRsaKey(&key->ks.rsa.key);
 #endif
@@ -1458,9 +1505,22 @@ void wolfSSH_KEY_clean(WS_KeySignature* key)
             wc_ed25519_free(&key->ks.ed25519.key);
 #endif
         }
+#ifndef WOLFSSH_NO_MLDSA
+        else if (key->keyId == ID_MLDSA44 ||
+                 key->keyId == ID_MLDSA65 ||
+                 key->keyId == ID_MLDSA87 ||
+                 key->keyId == ID_X509V3_MLDSA44 ||
+                 key->keyId == ID_X509V3_MLDSA65 ||
+                 key->keyId == ID_X509V3_MLDSA87) {
+            wc_MlDsaKey_Free(&key->ks.mldsa.key);
+        }
+#endif
         else if (key->keyId == ID_ECDSA_SHA2_NISTP256 ||
                  key->keyId == ID_ECDSA_SHA2_NISTP384 ||
-                 key->keyId == ID_ECDSA_SHA2_NISTP521) {
+                 key->keyId == ID_ECDSA_SHA2_NISTP521 ||
+                 key->keyId == ID_X509V3_ECDSA_SHA2_NISTP256 ||
+                 key->keyId == ID_X509V3_ECDSA_SHA2_NISTP384 ||
+                 key->keyId == ID_X509V3_ECDSA_SHA2_NISTP521) {
 #ifndef WOLFSSH_NO_ECDSA
             wc_ecc_free(&key->ks.ecc.key);
 #endif
@@ -1470,7 +1530,8 @@ void wolfSSH_KEY_clean(WS_KeySignature* key)
 
 
 /*
- * Identifies the flavor of an ASN.1 key, RSA or ECDSA, and returns the key
+ * Identifies the flavor of an ASN.1 key, RSA or ECDSA or MLDSA, and returns
+ * the key
  * type ID. The process is to decode the key as if it was RSA and if that
  * fails try to load it as if ECDSA. Both public and private keys can be
  * decoded. For RSA keys, the key format is described as "ssh-rsa".
@@ -1489,6 +1550,10 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
     word32 idx;
     int ret;
     int dynType = isPrivate ? DYNTYPE_PRIVKEY : DYNTYPE_PUBKEY;
+#ifndef WOLFSSH_NO_MLDSA
+    byte mlDsaLevel = 0;
+    int mlDsaInit = 0;
+#endif
     WOLFSSH_UNUSED(dynType);
 
     if (pkey != NULL) {
@@ -1566,6 +1631,74 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
             }
         }
 #endif /* WOLFSSH_NO_ECDSA */
+#ifndef WOLFSSH_NO_MLDSA
+        if (key->keyId == ID_UNKNOWN) {
+            idx = 0;
+            mlDsaLevel = 0;
+            mlDsaInit = 0;
+            ret = wc_MlDsaKey_Init(&key->ks.mldsa.key, heap, INVALID_DEVID);
+            if (ret == 0) {
+                mlDsaInit = 1;
+                if (isPrivate) {
+                    ret = wc_MlDsaKey_PrivateKeyDecode(&key->ks.mldsa.key,
+                                                       in, inSz, &idx);
+                }
+                else {
+                    /* PublicKeyDecode auto-detects level from SPKI OID. */
+                    ret = wc_MlDsaKey_PublicKeyDecode(&key->ks.mldsa.key,
+                                                      in, inSz, &idx);
+                    if (ret != 0) {
+                        /* Raw bytes from cert (BIT STRING stripped by
+                         * wolfSSL's StoreKey): no OID wrapper, probe each
+                         * level by expected size. Re-init between attempts
+                         * so SetParams starts from a clean key struct. */
+                        struct { byte level; byte id; } kProbe[3]; /* one per ML-DSA level (44/65/87) */
+                        word32 nProbe = 0, li;
+#ifndef WOLFSSH_NO_MLDSA44
+                        kProbe[nProbe].level = WC_ML_DSA_44;
+                        kProbe[nProbe].id    = ID_MLDSA44;
+                        nProbe++;
+#endif
+#ifndef WOLFSSH_NO_MLDSA65
+                        kProbe[nProbe].level = WC_ML_DSA_65;
+                        kProbe[nProbe].id    = ID_MLDSA65;
+                        nProbe++;
+#endif
+#ifndef WOLFSSH_NO_MLDSA87
+                        kProbe[nProbe].level = WC_ML_DSA_87;
+                        kProbe[nProbe].id    = ID_MLDSA87;
+                        nProbe++;
+#endif
+                        for (li = 0; li < nProbe; li++) {
+                            wc_MlDsaKey_Free(&key->ks.mldsa.key);
+                            mlDsaInit = 0;
+                            if (wc_MlDsaKey_Init(&key->ks.mldsa.key, heap,
+                                                 INVALID_DEVID) != 0)
+                                break;
+                            mlDsaInit = 1;
+                            if (wc_MlDsaKey_SetParams(&key->ks.mldsa.key,
+                                                      kProbe[li].level) == 0 &&
+                                    wc_MlDsaKey_ImportPubRaw(
+                                        &key->ks.mldsa.key, in, inSz) == 0) {
+                                key->keyId = kProbe[li].id;
+                                ret = 0;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if (ret == 0 && key->keyId == ID_UNKNOWN &&
+                    wc_MlDsaKey_GetParams(&key->ks.mldsa.key,
+                                          &mlDsaLevel) == 0) {
+                if      (mlDsaLevel == WC_ML_DSA_44) key->keyId = ID_MLDSA44;
+                else if (mlDsaLevel == WC_ML_DSA_65) key->keyId = ID_MLDSA65;
+                else if (mlDsaLevel == WC_ML_DSA_87) key->keyId = ID_MLDSA87;
+            }
+            if (mlDsaInit && (key->keyId == ID_UNKNOWN || ret != 0))
+                wc_MlDsaKey_Free(&key->ks.mldsa.key);
+        }
+#endif /* WOLFSSH_NO_MLDSA */
 #if !defined(WOLFSSH_NO_ED25519)
         if (key->keyId == ID_UNKNOWN) {
             idx = 0;
@@ -1814,6 +1947,42 @@ static int GetOpenSshKeyEd25519(ed25519_key* key,
 }
 #endif
 
+#ifndef WOLFSSH_NO_MLDSA
+/* Parse an OpenSSH-format ML-DSA public key blob into key. */
+static int GetOpenSshKeyMlDsa(MlDsaKey* key,
+        const byte* buf, word32 len, word32* idx, byte level)
+{
+    const byte *pub = NULL;
+    const byte *priv = NULL;
+    word32 pubSz = 0;
+    word32 privSz = 0;
+    int ret;
+
+    ret = wc_MlDsaKey_Init(key, key->heap, INVALID_DEVID);
+    if (ret == 0) {
+        ret = wc_MlDsaKey_SetParams(key, level);
+        if (ret != 0) {
+            wc_MlDsaKey_Free(key);
+            return WS_CRYPTO_FAILED;
+        }
+    }
+    else {
+        return WS_CRYPTO_FAILED;
+    }
+
+    ret = GetStringRef(&pubSz, &pub, buf, len, idx);
+    if (ret == WS_SUCCESS)
+        ret = GetStringRef(&privSz, &priv, buf, len, idx);
+    if (ret == WS_SUCCESS)
+        ret = wc_MlDsaKey_ImportKey(key, priv, privSz, pub, pubSz);
+    if (ret != 0) {
+        wc_MlDsaKey_Free(key);
+        ret = WS_KEY_FORMAT_E;
+    }
+    return ret;
+}
+#endif
+
 #ifdef WOLFSSH_TPM
 
 #ifndef WOLFSSH_NO_ECDSA
@@ -1839,6 +2008,37 @@ static int GetOpenSshKeyPublicEd25519(ed25519_key* key, const byte* buf,
     (void)len;
     (void)idx;
     /* TODO: Add ECC public key: See DoUserAuthRequestEd25519 and wc_ed25519_import_public */
+    return ret;
+}
+#endif
+#ifndef WOLFSSH_NO_MLDSA
+static int GetOpenSshKeyPublicMlDsa(MlDsaKey* key, const byte* buf,
+    word32 len, word32* idx, byte level)
+{
+    int ret;
+    const byte* pub = NULL;
+    word32 pubSz = 0;
+
+    ret = wc_MlDsaKey_Init(key, key->heap, INVALID_DEVID);
+    if (ret == 0) {
+        ret = wc_MlDsaKey_SetParams(key, level);
+        if (ret != 0) {
+            wc_MlDsaKey_Free(key);
+            return WS_CRYPTO_FAILED;
+        }
+    }
+    else {
+        return WS_CRYPTO_FAILED;
+    }
+
+    ret = GetStringRef(&pubSz, &pub, buf, len, idx);
+    if (ret == WS_SUCCESS) {
+        ret = wc_MlDsaKey_ImportPubRaw(key, pub, pubSz);
+    }
+    if (ret != 0) {
+        wc_MlDsaKey_Free(key);
+        ret = WS_CRYPTO_FAILED;
+    }
     return ret;
 }
 #endif
@@ -1887,6 +2087,20 @@ static int GetOpenSshPublicKey(WS_KeySignature *key,
         case ID_ECDSA_SHA2_NISTP384:
         case ID_ECDSA_SHA2_NISTP521:
             ret = GetOpenSshPublicKeyEcc(&key->ks.ecc.key, buf, len, idx);
+            break;
+    #endif
+    #ifndef WOLFSSH_NO_MLDSA
+        case ID_MLDSA44:
+            ret = GetOpenSshKeyPublicMlDsa(&key->ks.mldsa.key, buf, len,
+                                           idx, WC_ML_DSA_44);
+            break;
+        case ID_MLDSA65:
+            ret = GetOpenSshKeyPublicMlDsa(&key->ks.mldsa.key, buf, len,
+                                           idx, WC_ML_DSA_65);
+            break;
+        case ID_MLDSA87:
+            ret = GetOpenSshKeyPublicMlDsa(&key->ks.mldsa.key, buf, len,
+                                           idx, WC_ML_DSA_87);
             break;
     #endif
     #ifndef WOLFSSH_NO_ED25519
@@ -1991,6 +2205,23 @@ static int GetOpenSshKey(WS_KeySignature *key,
                                         str, strSz, &subIdx);
                                 break;
                         #endif
+                        #ifndef WOLFSSH_NO_MLDSA
+                            case ID_MLDSA44:
+                                ret = GetOpenSshKeyMlDsa(
+                                    &key->ks.mldsa.key,
+                                    str, strSz, &subIdx, WC_ML_DSA_44);
+                                break;
+                            case ID_MLDSA65:
+                                ret = GetOpenSshKeyMlDsa(
+                                    &key->ks.mldsa.key,
+                                    str, strSz, &subIdx, WC_ML_DSA_65);
+                                break;
+                            case ID_MLDSA87:
+                                ret = GetOpenSshKeyMlDsa(
+                                    &key->ks.mldsa.key,
+                                    str, strSz, &subIdx, WC_ML_DSA_87);
+                                break;
+                        #endif
                         #ifndef WOLFSSH_NO_ED25519
                             case ID_ED25519:
                                 ret = GetOpenSshKeyEd25519(&key->ks.ed25519.key,
@@ -2037,7 +2268,7 @@ static int GetOpenSshKey(WS_KeySignature *key,
 
 
 /*
- * Identifies the flavor of an OpenSSH key, RSA or ECDSA, and returns the
+ * Identifies the flavor of an OpenSSH key, RSA, ML-DSA, or ECDSA, and returns
  * key type ID. The process is to decode the key extracting the identifiers,
  * and try to decode the key as the type indicated type. For RSA keys, the
  * key format is described as "ssh-rsa".
@@ -2084,7 +2315,7 @@ int IdentifyOpenSshKey(const byte* in, word32 inSz, void* heap)
 
 #ifdef WOLFSSH_CERTS
 /*
- * Identifies the flavor of an X.509 certificate, RSA or ECDSA, and returns
+ * Identifies the flavor of an X.509 certificate, RSA, ML-DSA or ECDSA, returns
  * the key type ID. The process is to decode the certificate and pass the
  * public key to IdentifyAsn1Key.
  *
@@ -2217,6 +2448,21 @@ static INLINE byte CertTypeForId(byte id)
     #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
         case ID_ECDSA_SHA2_NISTP521:
             id = ID_X509V3_ECDSA_SHA2_NISTP521;
+            break;
+    #endif
+    #ifndef WOLFSSH_NO_MLDSA44
+        case ID_MLDSA44:
+            id = ID_X509V3_MLDSA44;
+            break;
+    #endif
+    #ifndef WOLFSSH_NO_MLDSA65
+        case ID_MLDSA65:
+            id = ID_X509V3_MLDSA65;
+            break;
+    #endif
+    #ifndef WOLFSSH_NO_MLDSA87
+        case ID_MLDSA87:
+            id = ID_X509V3_MLDSA87;
             break;
     #endif
     }
@@ -2960,7 +3206,25 @@ static const NameIdPair NameIdMap[] = {
 #ifndef WOLFSSH_NO_ED25519
     { ID_ED25519, TYPE_KEY, "ssh-ed25519" },
 #endif
+#ifndef WOLFSSH_NO_MLDSA44
+    { ID_MLDSA44, TYPE_KEY, "ssh-mldsa-44" },
+#endif
+#ifndef WOLFSSH_NO_MLDSA65
+    { ID_MLDSA65, TYPE_KEY, "ssh-mldsa-65" },
+#endif
+#ifndef WOLFSSH_NO_MLDSA87
+    { ID_MLDSA87, TYPE_KEY, "ssh-mldsa-87" },
+#endif
 #ifdef WOLFSSH_CERTS
+#ifndef WOLFSSH_NO_MLDSA44
+    { ID_X509V3_MLDSA44, TYPE_KEY, "x509v3-ssh-mldsa-44" },
+#endif
+#ifndef WOLFSSH_NO_MLDSA65
+    { ID_X509V3_MLDSA65, TYPE_KEY, "x509v3-ssh-mldsa-65" },
+#endif
+#ifndef WOLFSSH_NO_MLDSA87
+    { ID_X509V3_MLDSA87, TYPE_KEY, "x509v3-ssh-mldsa-87" },
+#endif
 #ifndef WOLFSSH_NO_SSH_RSA_SHA1
     { ID_X509V3_SSH_RSA, TYPE_KEY, "x509v3-ssh-rsa" },
 #endif
@@ -3999,8 +4263,18 @@ static int GetNameList(byte* idList, word32* idListSz,
     return ret;
 }
 
+/* ML-DSA listed first (post-quantum priority), then ECDSA, ED25519, RSA. */
 static const byte  cannedKeyAlgoClient[] = {
 #ifdef WOLFSSH_CERTS
+    #ifndef WOLFSSH_NO_MLDSA87
+        ID_X509V3_MLDSA87,
+    #endif
+    #ifndef WOLFSSH_NO_MLDSA65
+        ID_X509V3_MLDSA65,
+    #endif
+    #ifndef WOLFSSH_NO_MLDSA44
+        ID_X509V3_MLDSA44,
+    #endif
     #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
         ID_X509V3_ECDSA_SHA2_NISTP521,
     #endif
@@ -4016,6 +4290,15 @@ static const byte  cannedKeyAlgoClient[] = {
         #endif /* WOLFSSH_NO_SSH_RSA_SHA1 */
     #endif /* WOLFSSH_NO_SHA1_SOFT_DISABLE */
 #endif /* WOLFSSH_CERTS */
+#ifndef WOLFSSH_NO_MLDSA87
+    ID_MLDSA87,
+#endif
+#ifndef WOLFSSH_NO_MLDSA65
+    ID_MLDSA65,
+#endif
+#ifndef WOLFSSH_NO_MLDSA44
+    ID_MLDSA44,
+#endif
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
     ID_ECDSA_SHA2_NISTP521,
 #endif
@@ -4024,6 +4307,9 @@ static const byte  cannedKeyAlgoClient[] = {
 #endif
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
     ID_ECDSA_SHA2_NISTP256,
+#endif
+#ifndef WOLFSSH_NO_ED25519
+    ID_ED25519,
 #endif
 #ifndef WOLFSSH_NO_RSA_SHA2_512
     ID_RSA_SHA2_512,
@@ -4036,9 +4322,6 @@ static const byte  cannedKeyAlgoClient[] = {
         ID_SSH_RSA,
     #endif /* WOLFSSH_NO_SSH_RSA_SHA1 */
 #endif /* WOLFSSH_NO_SHA1_SOFT_DISABLE */
-#ifndef WOLFSSH_NO_ED25519
-    ID_ED25519,
-#endif
 };
 
 static const word32 cannedKeyAlgoClientSz = (word32)sizeof(cannedKeyAlgoClient);
@@ -4241,6 +4524,27 @@ enum wc_HashType HashForId(byte id)
         case ID_ED25519:
             return WC_HASH_TYPE_SHA512;
 #endif
+#ifndef WOLFSSH_NO_MLDSA44
+        case ID_MLDSA44:
+    #ifdef WOLFSSH_CERTS
+        case ID_X509V3_MLDSA44:
+    #endif
+            return WC_HASH_TYPE_NONE;
+#endif
+#ifndef WOLFSSH_NO_MLDSA65
+        case ID_MLDSA65:
+    #ifdef WOLFSSH_CERTS
+        case ID_X509V3_MLDSA65:
+    #endif
+            return WC_HASH_TYPE_NONE;
+#endif
+#ifndef WOLFSSH_NO_MLDSA87
+        case ID_MLDSA87:
+    #ifdef WOLFSSH_CERTS
+        case ID_X509V3_MLDSA87:
+    #endif
+            return WC_HASH_TYPE_NONE;
+#endif
         /* SHA2-384 */
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP384
         case ID_ECDH_SHA2_NISTP384:
@@ -4374,6 +4678,32 @@ static INLINE byte AeadModeForId(byte id)
             return 0;
     }
 }
+
+
+#ifndef WOLFSSH_NO_MLDSA
+static INLINE int KeyIdToMlDsaLevel(byte id)
+{
+    switch (id) {
+    case ID_MLDSA44:
+    #ifdef WOLFSSH_CERTS
+    case ID_X509V3_MLDSA44:
+    #endif
+        return WC_ML_DSA_44;
+    case ID_MLDSA65:
+    #ifdef WOLFSSH_CERTS
+    case ID_X509V3_MLDSA65:
+    #endif
+        return WC_ML_DSA_65;
+    case ID_MLDSA87:
+    #ifdef WOLFSSH_CERTS
+    case ID_X509V3_MLDSA87:
+    #endif
+        return WC_ML_DSA_87;
+    default:
+        return -1;
+    }
+}
+#endif
 
 
 static word32 AlgoListSz(const char* algoList)
@@ -5096,6 +5426,7 @@ static int DoKexDhInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 struct wolfSSH_sigKeyBlock {
     byte useRsa:1;
     byte useEcc:1;
+    byte useMlDsa:1;
     byte useEd25519:1;
     byte keyAllocated:1;
     word32 keySz;
@@ -5109,6 +5440,11 @@ struct wolfSSH_sigKeyBlock {
         struct {
             ecc_key key;
         } ecc;
+#endif
+#ifndef WOLFSSH_NO_MLDSA
+        struct {
+            MlDsaKey key;
+        } mldsa;
 #endif
 #ifndef WOLFSSH_NO_ED25519
         struct {
@@ -5305,6 +5641,56 @@ static int ParseEd25519PubKey(WOLFSSH *ssh,
 }
 #endif
 
+#ifndef WOLFSSH_NO_MLDSA
+/* Parse out a RAW ML-DSA public key from buffer */
+static int ParseMlDsaPubKey(WOLFSSH* ssh,
+        struct wolfSSH_sigKeyBlock* sigKeyBlock_ptr,
+        byte* pubKey, word32 pubKeySz, byte keyId)
+{
+    int ret;
+    const byte* pub;
+    word32 pubSz, pubKeyIdx = 0;
+    byte level;
+
+    {
+        int mlLevel = KeyIdToMlDsaLevel(keyId);
+        if (mlLevel < 0)
+            return WS_INVALID_ALGO_ID;
+        level = (byte)mlLevel;
+    }
+
+    ret = wc_MlDsaKey_Init(&sigKeyBlock_ptr->sk.mldsa.key,
+                            ssh->ctx->heap, INVALID_DEVID);
+    if (ret == 0) {
+        ret = wc_MlDsaKey_SetParams(&sigKeyBlock_ptr->sk.mldsa.key, level);
+        if (ret != 0) {
+            wc_MlDsaKey_Free(&sigKeyBlock_ptr->sk.mldsa.key);
+            return WS_INVALID_ALGO_ID;
+        }
+    }
+    else {
+        return WS_INVALID_ALGO_ID;
+    }
+
+    /* skip the algo name string */
+    ret = GetSkip(pubKey, pubKeySz, &pubKeyIdx);
+    if (ret == WS_SUCCESS)
+        ret = GetStringRef(&pubSz, &pub, pubKey, pubKeySz, &pubKeyIdx);
+    if (ret == WS_SUCCESS)
+        ret = wc_MlDsaKey_ImportPubRaw(&sigKeyBlock_ptr->sk.mldsa.key,
+                                       pub, pubSz);
+    if (ret == 0) {
+        sigKeyBlock_ptr->keyAllocated = 1;
+        /* keySz intentionally not set */
+    }
+    else {
+        wc_MlDsaKey_Free(&sigKeyBlock_ptr->sk.mldsa.key);
+        ret = WS_INVALID_ALGO_ID;
+    }
+
+    return ret;
+}
+#endif
 
 #ifdef WOLFSSH_CERTS
 /* finds the leaf certificate and optionally the bounds of the cert chain,
@@ -5534,6 +5920,51 @@ static int ParseRSAPubKeyCert(WOLFSSH *ssh,
 
     return ret;
 }
+
+#ifndef WOLFSSH_NO_MLDSA
+/* Parse ML-DSA public key from an X.509 certificate blob. */
+static int ParseMlDsaPubKeyCert(WOLFSSH *ssh,
+    struct wolfSSH_sigKeyBlock *sigKeyBlock_ptr, byte *pubKey,
+    word32 pubKeySz, byte keyId)
+{
+    int ret;
+    byte* der = NULL;
+    word32 derSz, idx = 0;
+    int error;
+    int initDone = 0;
+    byte level;
+
+    {
+        int mlLevel = KeyIdToMlDsaLevel(keyId);
+        if (mlLevel < 0)
+            return WS_INVALID_ALGO_ID;
+        level = (byte)mlLevel;
+    }
+
+    ret = ParsePubKeyCert(ssh, pubKey, pubKeySz, &der, &derSz);
+    if (ret == WS_SUCCESS) {
+        error = wc_MlDsaKey_Init(&sigKeyBlock_ptr->sk.mldsa.key, ssh->ctx->heap,
+                                 INVALID_DEVID);
+        if (error == 0) {
+            initDone = 1;
+            error = wc_MlDsaKey_SetParams(&sigKeyBlock_ptr->sk.mldsa.key, level);
+        }
+        if (error == 0)
+            error = wc_MlDsaKey_PublicKeyDecode(&sigKeyBlock_ptr->sk.mldsa.key,
+                                                der, derSz, &idx);
+        if (error == 0) {
+            sigKeyBlock_ptr->keyAllocated = 1;
+        }
+        else {
+            if (initDone)
+                wc_MlDsaKey_Free(&sigKeyBlock_ptr->sk.mldsa.key);
+            ret = WS_INVALID_ALGO_ID;
+        }
+        WFREE(der, NULL, 0);
+    }
+    return ret;
+}
+#endif
 #endif /* WOLFSSH_CERTS */
 
 
@@ -5579,6 +6010,25 @@ static int ParsePubKey(WOLFSSH *ssh,
             sigKeyBlock_ptr->useEd25519 = 1;
             ret = ParseEd25519PubKey(ssh, sigKeyBlock_ptr, pubKey, pubKeySz);
             break;
+
+#ifndef WOLFSSH_NO_MLDSA
+        case ID_MLDSA44:
+        case ID_MLDSA65:
+        case ID_MLDSA87:
+            sigKeyBlock_ptr->useMlDsa = 1;
+            ret = ParseMlDsaPubKey(ssh, sigKeyBlock_ptr, pubKey,
+                pubKeySz, ssh->handshake->pubKeyId);
+            break;
+    #ifdef WOLFSSH_CERTS
+        case ID_X509V3_MLDSA44:
+        case ID_X509V3_MLDSA65:
+        case ID_X509V3_MLDSA87:
+            sigKeyBlock_ptr->useMlDsa = 1;
+            ret = ParseMlDsaPubKeyCert(ssh, sigKeyBlock_ptr, pubKey,
+                pubKeySz, ssh->handshake->pubKeyId);
+            break;
+    #endif
+#endif
 
         default:
             ret = WS_INVALID_ALGO_ID;
@@ -5641,6 +6091,11 @@ static void FreePubKey(struct wolfSSH_sigKeyBlock *p)
         else if (p->useEd25519) {
         #ifndef WOLFSSH_NO_ED25519
             wc_ed25519_free(&p->sk.ed25519.key);
+        #endif
+        }
+        else if (p->useMlDsa) {
+        #ifndef WOLFSSH_NO_MLDSA
+            wc_MlDsaKey_Free(&p->sk.mldsa.key);
         #endif
         }
         p->keyAllocated = 0;
@@ -6453,6 +6908,19 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                         ret = WS_ED25519_E;
                     }
 #endif /* WOLFSSH_NO_ED25519 */
+                }
+                else if (sigKeyBlock_ptr->useMlDsa) {
+#ifndef WOLFSSH_NO_MLDSA
+                    int res = 0;
+                    ret = wc_MlDsaKey_VerifyCtx(&sigKeyBlock_ptr->sk.mldsa.key,
+                            sig, sigSz, NULL, 0, ssh->h, ssh->hSz, &res);
+                    if (ret != 0 || res != 1) {
+                        WLOG(WS_LOG_DEBUG,
+                            "DoKexDhReply: ML-DSA Signature Verify fail (%d)",
+                            ret);
+                        ret = WS_MLDSA_E;
+                    }
+#endif /* WOLFSSH_NO_MLDSA */
                 }
                 else {
                     ret = WS_INVALID_ALGO_ID;
@@ -8119,6 +8587,204 @@ static int DoUserAuthRequestEccCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 #endif /* ! WOLFSSH_NO_ECDSA */
 
 
+#ifndef WOLFSSH_NO_MLDSA
+#ifdef WOLFSSH_CERTS
+/* Extract ML-DSA public key from X.509 cert blob and import into key. */
+static int DoUserAuthRequestMlDsaImportCertPubKey(WOLFSSH* ssh,
+        WS_UserAuthData_PublicKey* pk, MlDsaKey* key)
+{
+    DecodedCert* cert = NULL;
+    byte* pubRaw = NULL;
+    word32 pubKeySz = 0;
+    word32 idx = 0;
+    int ret = WS_SUCCESS;
+
+    cert = (DecodedCert*)WMALLOC(sizeof(DecodedCert), ssh->ctx->heap,
+            DYNTYPE_CERT);
+    if (cert == NULL)
+        return WS_MEMORY_E;
+
+    wc_InitDecodedCert(cert, pk->publicKey, pk->publicKeySz, ssh->ctx->heap);
+    ret = wc_ParseCert(cert, CA_TYPE, 0, NULL);
+    if (ret == 0) {
+        ret = wc_GetPubKeyDerFromCert(cert, NULL, &pubKeySz);
+        if (ret == LENGTH_ONLY_E) {
+            pubRaw = (byte*)WMALLOC(pubKeySz, ssh->ctx->heap, DYNTYPE_PUBKEY);
+            if (pubRaw == NULL) {
+                ret = WS_MEMORY_E;
+            }
+            else {
+                ret = wc_GetPubKeyDerFromCert(cert, pubRaw, &pubKeySz);
+                if (ret == 0)
+                    ret = wc_MlDsaKey_PublicKeyDecode(key, pubRaw, pubKeySz,
+                            &idx);
+                WFREE(pubRaw, ssh->ctx->heap, DYNTYPE_PUBKEY);
+            }
+        }
+    }
+    wc_FreeDecodedCert(cert);
+    WFREE(cert, ssh->ctx->heap, DYNTYPE_CERT);
+    return ret;
+}
+#endif /* WOLFSSH_CERTS */
+
+/* Verify an ML-DSA (or ML-DSA cert) public-key user auth request. */
+static int DoUserAuthRequestMlDsa(WOLFSSH* ssh,
+        WS_UserAuthData_PublicKey* pk, WS_UserAuthData* authData, byte level,
+        byte isCert, word32 pubKeyBlobSz)
+{
+    const byte* publicKeyType;
+    const byte* pubRawRef = NULL;
+    word32 publicKeyTypeSz = 0;
+    word32 pubRawSz = 0;
+    word32 sigSz = 0;
+    word32 i = 0;
+    int ret = WS_SUCCESS;
+    int wcRet = 0;
+    int mlDsaInit = 0;
+    MlDsaKey *key_ptr = NULL;
+    byte* checkData = NULL;
+    word32 checkDataSz = 0;
+
+    WLOG(WS_LOG_DEBUG, "Entering DoUserAuthRequestMlDsa()");
+
+    if (ssh == NULL || ssh->ctx == NULL || pk == NULL || authData == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        key_ptr = (MlDsaKey*)WMALLOC(sizeof(MlDsaKey), ssh->ctx->heap,
+                DYNTYPE_PUBKEY);
+        if (key_ptr == NULL)
+            ret = WS_MEMORY_E;
+    }
+
+    if (ret == WS_SUCCESS) {
+        wcRet = wc_MlDsaKey_Init(key_ptr, ssh->ctx->heap, INVALID_DEVID);
+        if (wcRet == 0) {
+            mlDsaInit = 1;
+            wcRet = wc_MlDsaKey_SetParams(key_ptr, level);
+        }
+        if (wcRet != 0) {
+            ret = WS_CRYPTO_FAILED;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (isCert) {
+#ifdef WOLFSSH_CERTS
+            ret = DoUserAuthRequestMlDsaImportCertPubKey(ssh, pk, key_ptr);
+#else
+            ret = WS_INVALID_ALGO_ID;
+#endif
+        }
+        else {
+            /* Check that the public key's type matches what we expect. */
+            ret = GetSize(&publicKeyTypeSz, pk->publicKey, pk->publicKeySz, &i);
+
+            if (ret == WS_SUCCESS) {
+                publicKeyType = pk->publicKey + i;
+                i += publicKeyTypeSz;
+                if (publicKeyTypeSz != pk->publicKeyTypeSz
+                        || WMEMCMP(publicKeyType,
+                                pk->publicKeyType, publicKeyTypeSz) != 0) {
+                    WLOG(WS_LOG_DEBUG,
+                        "Public Key's type does not match public key type");
+                    ret = WS_INVALID_ALGO_ID;
+                }
+            }
+
+            if (ret == WS_SUCCESS) {
+                ret = GetStringRef(&pubRawSz, &pubRawRef, pk->publicKey,
+                        pk->publicKeySz, &i);
+                if (ret == WS_SUCCESS)
+                    ret = wc_MlDsaKey_ImportPubRaw(key_ptr, pubRawRef,
+                            pubRawSz);
+            }
+        }
+    }
+
+    if (ret != 0) {
+        WLOG(WS_LOG_DEBUG, "Could not decode public key");
+        ret = WS_CRYPTO_FAILED;
+    }
+
+    /* Verify signature */
+    if (ret == WS_SUCCESS) {
+        i = 0;
+        ret = GetSize(&publicKeyTypeSz, pk->signature, pk->signatureSz, &i);
+    }
+
+    if (ret == WS_SUCCESS) {
+        publicKeyType = pk->signature + i;
+        i += publicKeyTypeSz;
+
+        if (publicKeyTypeSz != pk->publicKeyTypeSz
+            || WMEMCMP(publicKeyType, pk->publicKeyType,
+                    publicKeyTypeSz) != 0) {
+
+            WLOG(WS_LOG_DEBUG,
+                 "Signature's type does not match public key type");
+            ret = WS_INVALID_ALGO_ID;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = GetSize(&sigSz, pk->signature, pk->signatureSz, &i);
+    }
+
+    if (ret == WS_SUCCESS) {
+        word32 dataToSignSz = authData->usernameSz +
+                              authData->serviceNameSz +
+                              authData->authNameSz + BOOLEAN_SZ +
+                              pk->publicKeyTypeSz + pubKeyBlobSz +
+                              (UINT32_SZ * 5);
+        checkDataSz = UINT32_SZ + ssh->sessionIdSz + MSG_ID_SZ + dataToSignSz;
+        checkData = (byte*)WMALLOC(checkDataSz, ssh->ctx->heap, DYNTYPE_TEMP);
+        if (checkData == NULL) {
+            ret = WS_MEMORY_E;
+        }
+        else {
+            word32 idx = 0;
+            c32toa(ssh->sessionIdSz, checkData + idx);
+            idx += UINT32_SZ;
+            WMEMCPY(checkData + idx, ssh->sessionId, ssh->sessionIdSz);
+            idx += ssh->sessionIdSz;
+            checkData[idx++] = MSGID_USERAUTH_REQUEST;
+            WMEMCPY(checkData + idx, pk->dataToSign, dataToSignSz);
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        int status = 0;
+        ret = wc_MlDsaKey_VerifyCtx(key_ptr, pk->signature + i, sigSz,
+                                    NULL, 0, checkData, checkDataSz, &status);
+        if (ret != 0) {
+            WLOG(WS_LOG_DEBUG, "DUARMlDsa: Signature Verify fail (%d)", ret);
+            ret = WS_CRYPTO_FAILED;
+        }
+        else if (status != 1) {
+            ret = WS_MLDSA_E;
+        }
+    }
+
+    if (checkData != NULL) {
+        ForceZero(checkData, checkDataSz);
+        WFREE(checkData, ssh->ctx->heap, DYNTYPE_TEMP);
+    }
+
+    if (key_ptr != NULL) {
+        if (mlDsaInit)
+            wc_MlDsaKey_Free(key_ptr);
+        WFREE(key_ptr, ssh->ctx->heap, DYNTYPE_PUBKEY);
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthRequestMlDsa(), ret = %d", ret);
+    return ret;
+}
+#endif /* !WOLFSSH_NO_MLDSA */
+
+
 #ifndef WOLFSSH_NO_ED25519
 static int DoUserAuthRequestEd25519(WOLFSSH* ssh,
         WS_UserAuthData_PublicKey* pk, WS_UserAuthData* authData)
@@ -8269,7 +8935,8 @@ static int DoUserAuthRequestEd25519(WOLFSSH* ssh,
 }
 #endif /* !WOLFSSH_NO_ED25519 */
 
-#if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
+#if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA) \
+    || !defined(WOLFSSH_NO_ED25519) || !defined(WOLFSSH_NO_MLDSA)
 /* Utility for DoUserAuthRequest() */
 static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                                       byte* buf, word32 len, word32* idx)
@@ -8376,7 +9043,17 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
         if (pkTypeId == ID_X509V3_SSH_RSA
                 || pkTypeId == ID_X509V3_ECDSA_SHA2_NISTP256
                 || pkTypeId == ID_X509V3_ECDSA_SHA2_NISTP384
-                || pkTypeId == ID_X509V3_ECDSA_SHA2_NISTP521) {
+                || pkTypeId == ID_X509V3_ECDSA_SHA2_NISTP521
+    #ifndef WOLFSSH_NO_MLDSA44
+                || pkTypeId == ID_X509V3_MLDSA44
+    #endif
+    #ifndef WOLFSSH_NO_MLDSA65
+                || pkTypeId == ID_X509V3_MLDSA65
+    #endif
+    #ifndef WOLFSSH_NO_MLDSA87
+                || pkTypeId == ID_X509V3_MLDSA87
+    #endif
+                ) {
             byte *cert = NULL;
             word32 certSz = 0;
 
@@ -8489,7 +9166,30 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
 #else
                 ret = WS_INVALID_ALGO_ID;
 #endif
-            } else {
+            }
+#ifndef WOLFSSH_NO_MLDSA
+            else if (pkTypeId == ID_MLDSA44 ||
+                     pkTypeId == ID_MLDSA65 ||
+                     pkTypeId == ID_MLDSA87) {
+                int mlLevel = KeyIdToMlDsaLevel(pkTypeId);
+                if (mlLevel < 0)
+                    ret = WS_INVALID_ALGO_ID;
+                else
+                    ret = DoUserAuthRequestMlDsa(ssh, &authData->sf.publicKey,
+                              authData, (byte)mlLevel, 0, pubKeyBlobSz);
+            }
+            else if (pkTypeId == ID_X509V3_MLDSA44 ||
+                     pkTypeId == ID_X509V3_MLDSA65 ||
+                     pkTypeId == ID_X509V3_MLDSA87) {
+                int mlLevel = KeyIdToMlDsaLevel(pkTypeId);
+                if (mlLevel < 0)
+                    ret = WS_INVALID_ALGO_ID;
+                else
+                    ret = DoUserAuthRequestMlDsa(ssh, &authData->sf.publicKey,
+                              authData, (byte)mlLevel, 1, pubKeyBlobSz);
+            }
+#endif
+            else {
                 wc_HashAlg hash;
                 byte digest[WC_MAX_DIGEST_SIZE];
                 word32 digestSz = 0;
@@ -8624,7 +9324,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthRequestPublicKey(), ret = %d", ret);
     return ret;
 }
-#endif
+#endif /* !WOLFSSH_NO_RSA || !WOLFSSH_NO_ECDSA || !WOLFSSH_NO_ED25519 || !WOLFSSH_NO_MLDSA */
 
 
 static int DoUserAuthRequest(WOLFSSH* ssh,
@@ -8679,7 +9379,8 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
             ret = SendUserAuthKeyboardRequest(ssh, &authData);
         }
 #endif
-#if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
+#if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA) \
+    || !defined(WOLFSSH_NO_ED25519) || !defined(WOLFSSH_NO_MLDSA)
         else if (authNameId == ID_USERAUTH_PUBLICKEY) {
             authData.sf.publicKey.dataToSign = buf + *idx;
             ret = DoUserAuthRequestPublicKey(ssh, &authData, buf, len, &begin);
@@ -11624,7 +12325,7 @@ struct wolfSSH_sigKeyBlockFull {
                 const char *primeName;
                 word32 primeNameSz;
             } ecc;
-
+#endif
 #ifndef WOLFSSH_NO_ED25519
             struct {
                 ed25519_key key;
@@ -11636,6 +12337,12 @@ struct wolfSSH_sigKeyBlockFull {
                 byte qPad;
             } ed;
 #endif
+#ifndef WOLFSSH_NO_MLDSA
+            struct {
+                MlDsaKey key;
+                byte q[WC_MLDSA_87_PUB_KEY_SIZE]; /* max-level size; qSz tracks actual */
+                word32 qSz;
+            } mldsa;
 #endif
         } sk;
 };
@@ -11653,7 +12360,11 @@ struct wolfSSH_sigKeyBlockFull {
     #define KEX_F_SIZE (256 + 1)
 #endif
 
-#define KEX_SIG_SIZE (512)
+#ifdef WOLFSSH_NO_MLDSA
+    #define KEX_SIG_SIZE (512)
+#else
+    #define KEX_SIG_SIZE MLDSA_MAX_SIG_SIZE
+#endif
 
 #ifdef WOLFSSH_CERTS
 /* places RFC6187 style cert + ocsp into output buffer and advances idx
@@ -11696,6 +12407,22 @@ static int BuildRFC6187Info(WOLFSSH* ssh, int pubKeyID,
         #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
         case ID_X509V3_ECDSA_SHA2_NISTP521:
             publicKeyType = (const byte*)cannedKeyAlgoX509Ecc521Names;
+            break;
+        #endif
+
+        #ifndef WOLFSSH_NO_MLDSA44
+        case ID_X509V3_MLDSA44:
+            publicKeyType = (const byte*)cannedKeyAlgoX509Mldsa44Names;
+            break;
+        #endif
+        #ifndef WOLFSSH_NO_MLDSA65
+        case ID_X509V3_MLDSA65:
+            publicKeyType = (const byte*)cannedKeyAlgoX509Mldsa65Names;
+            break;
+        #endif
+        #ifndef WOLFSSH_NO_MLDSA87
+        case ID_X509V3_MLDSA87:
+            publicKeyType = (const byte*)cannedKeyAlgoX509Mldsa87Names;
             break;
         #endif
 
@@ -12093,6 +12820,89 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
         #endif
         #endif
 
+        #ifndef WOLFSSH_NO_MLDSA
+        #ifdef WOLFSSH_CERTS
+        case ID_X509V3_MLDSA44:
+        case ID_X509V3_MLDSA65:
+        case ID_X509V3_MLDSA87:
+            isCert = 1;
+            FALL_THROUGH;
+        #endif
+        case ID_MLDSA44:
+        case ID_MLDSA65:
+        case ID_MLDSA87:
+        {
+            byte level;
+
+            WLOG(WS_LOG_DEBUG, "Using ML-DSA Host key");
+
+            {
+                int mlLevel = KeyIdToMlDsaLevel(sigKeyBlock_ptr->pubKeyId);
+                if (mlLevel < 0) {
+                    ret = WS_INVALID_ALGO_ID;
+                    break;
+                }
+                level = (byte)mlLevel;
+            }
+
+            sigKeyBlock_ptr->sk.mldsa.qSz =
+                    sizeof(sigKeyBlock_ptr->sk.mldsa.q);
+
+            ret = wc_MlDsaKey_Init(&sigKeyBlock_ptr->sk.mldsa.key,
+                                   heap, INVALID_DEVID);
+            if (ret == 0)
+                ret = wc_MlDsaKey_SetParams(&sigKeyBlock_ptr->sk.mldsa.key,
+                                            level);
+            scratch = 0;
+            if (ret == 0)
+                ret = wc_MlDsaKey_PrivateKeyDecode(
+                        &sigKeyBlock_ptr->sk.mldsa.key,
+                        ssh->ctx->privateKey[keyIdx].key,
+                        ssh->ctx->privateKey[keyIdx].keySz, &scratch);
+            if (ret == 0)
+                ret = wc_MlDsaKey_ExportPubRaw(
+                        &sigKeyBlock_ptr->sk.mldsa.key,
+                        sigKeyBlock_ptr->sk.mldsa.q,
+                        &sigKeyBlock_ptr->sk.mldsa.qSz);
+
+            /* Hash in raw public key only for non-cert path. */
+            if (!isCert) {
+                /* Hash in the length of the public key block. */
+                if (ret == 0) {
+                    sigKeyBlock_ptr->sz = (LENGTH_SZ * 2) +
+                                     sigKeyBlock_ptr->pubKeyFmtNameSz +
+                                     sigKeyBlock_ptr->sk.mldsa.qSz;
+                    c32toa(sigKeyBlock_ptr->sz, scratchLen);
+                    ret = wc_HashUpdate(hash, hashId,
+                                        scratchLen, LENGTH_SZ);
+                }
+                /* Hash in the length of the key type string. */
+                if (ret == 0) {
+                    c32toa(sigKeyBlock_ptr->pubKeyFmtNameSz, scratchLen);
+                    ret = wc_HashUpdate(hash, hashId,
+                                        scratchLen, LENGTH_SZ);
+                }
+                /* Hash in the key type string. */
+                if (ret == 0)
+                    ret = wc_HashUpdate(hash, hashId,
+                                        (byte*)sigKeyBlock_ptr->pubKeyFmtName,
+                                        sigKeyBlock_ptr->pubKeyFmtNameSz);
+                /* Hash in the length of the public key. */
+                if (ret == 0) {
+                    c32toa(sigKeyBlock_ptr->sk.mldsa.qSz, scratchLen);
+                    ret = wc_HashUpdate(hash, hashId,
+                                        scratchLen, LENGTH_SZ);
+                }
+                /* Hash in the public key. */
+                if (ret == 0)
+                    ret = wc_HashUpdate(hash, hashId,
+                                        sigKeyBlock_ptr->sk.mldsa.q,
+                                        sigKeyBlock_ptr->sk.mldsa.qSz);
+            }
+            break;
+        }
+        #endif /* WOLFSSH_NO_MLDSA */
+
             default:
                 ret = WS_INVALID_ALGO_ID;
         }
@@ -12234,6 +13044,21 @@ static INLINE byte SigTypeForId(byte id)
     #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
         case ID_X509V3_ECDSA_SHA2_NISTP521:
             id = ID_ECDSA_SHA2_NISTP521;
+            break;
+    #endif
+    #ifndef WOLFSSH_NO_MLDSA44
+        case ID_X509V3_MLDSA44:
+            id = ID_MLDSA44;
+            break;
+    #endif
+    #ifndef WOLFSSH_NO_MLDSA65
+        case ID_X509V3_MLDSA65:
+            id = ID_MLDSA65;
+            break;
+    #endif
+    #ifndef WOLFSSH_NO_MLDSA87
+        case ID_X509V3_MLDSA87:
+            id = ID_MLDSA87;
             break;
     #endif
     }
@@ -13139,6 +13964,24 @@ static int SignHEd25519(WOLFSSH* ssh, byte* sig, word32* sigSz,
 #endif /* WOLFSSH_NO_ED25519 */
 
 
+#ifndef WOLFSSH_NO_MLDSA
+static int SignHMlDsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
+        struct wolfSSH_sigKeyBlockFull *sigKey)
+{
+    int ret;
+    WLOG(WS_LOG_DEBUG, "Entering SignHMlDsa()");
+    ret = wc_MlDsaKey_SignCtx(&sigKey->sk.mldsa.key, NULL, 0,
+                              sig, sigSz, ssh->h, ssh->hSz, ssh->rng);
+    if (ret != 0) {
+        WLOG(WS_LOG_DEBUG, "SignHMlDsa: Bad ML-DSA Sign (error: %d)", ret);
+        ret = WS_MLDSA_E;
+    }
+    WLOG(WS_LOG_DEBUG, "Leaving SignHMlDsa(), ret = %d", ret);
+    return ret;
+}
+#endif
+
+
 static int SignH(WOLFSSH* ssh, byte* sig, word32* sigSz,
         struct wolfSSH_sigKeyBlockFull *sigKey)
 {
@@ -13162,6 +14005,16 @@ static int SignH(WOLFSSH* ssh, byte* sig, word32* sigSz,
         case ID_ED25519:
             ret = SignHEd25519(ssh, sig, sigSz, sigKey);
             break;
+#ifndef WOLFSSH_NO_MLDSA
+        case ID_MLDSA44:
+        case ID_MLDSA65:
+        case ID_MLDSA87:
+        case ID_X509V3_MLDSA44:
+        case ID_X509V3_MLDSA65:
+        case ID_X509V3_MLDSA87:
+            ret = SignHMlDsa(ssh, sig, sigSz, sigKey);
+            break;
+#endif
         default:
             ret = WS_INVALID_ALGO_ID;
     }
@@ -13198,7 +14051,9 @@ int SendKexDhReply(WOLFSSH* ssh)
     struct wolfSSH_sigKeyBlockFull *sigKeyBlock_ptr = NULL;
 #ifndef WOLFSSH_SMALL_STACK
     byte f_s[KEX_F_SIZE];
+#ifdef WOLFSSH_NO_MLDSA
     byte sig_s[KEX_SIG_SIZE];
+#endif
 #endif
     byte msgId = 0;
     byte useDh = 0;
@@ -13225,7 +14080,13 @@ int SendKexDhReply(WOLFSSH* ssh)
         ret = WS_MEMORY_E;
 #else
     f_ptr = f_s;
+#ifdef WOLFSSH_NO_MLDSA
     sig_ptr = sig_s;
+#else
+    sig_ptr = (byte*)WMALLOC(KEX_SIG_SIZE, heap, DYNTYPE_BUFFER);
+    if (sig_ptr == NULL)
+        ret = WS_MEMORY_E;
+#endif
 #endif
 
     sigKeyBlock_ptr = (struct wolfSSH_sigKeyBlockFull*)WMALLOC(
@@ -13439,14 +14300,16 @@ int SendKexDhReply(WOLFSSH* ssh)
     }
 
     if (sigKeyBlock_ptr != NULL) {
-        if (sigKeyBlock_ptr->pubKeyFmtId == ID_SSH_RSA) {
+        if (sigKeyBlock_ptr->pubKeyId == ID_SSH_RSA
+                || sigKeyBlock_ptr->pubKeyId == ID_RSA_SHA2_256
+                || sigKeyBlock_ptr->pubKeyId == ID_RSA_SHA2_512) {
 #ifndef WOLFSSH_NO_RSA
             wc_FreeRsaKey(&sigKeyBlock_ptr->sk.rsa.key);
 #endif
         }
-        else if (sigKeyBlock_ptr->pubKeyFmtId == ID_ECDSA_SHA2_NISTP256
-                || sigKeyBlock_ptr->pubKeyFmtId == ID_ECDSA_SHA2_NISTP384
-                || sigKeyBlock_ptr->pubKeyFmtId == ID_ECDSA_SHA2_NISTP521) {
+        else if (sigKeyBlock_ptr->pubKeyId == ID_ECDSA_SHA2_NISTP256
+                || sigKeyBlock_ptr->pubKeyId == ID_ECDSA_SHA2_NISTP384
+                || sigKeyBlock_ptr->pubKeyId == ID_ECDSA_SHA2_NISTP521) {
 #ifndef WOLFSSH_NO_ECDSA
             wc_ecc_free(&sigKeyBlock_ptr->sk.ecc.key);
 #endif
@@ -13456,6 +14319,20 @@ int SendKexDhReply(WOLFSSH* ssh)
             wc_ed25519_free(&sigKeyBlock_ptr->sk.ed.key);
 #endif
         }
+#if !defined(WOLFSSH_NO_MLDSA)
+        /* Include cert IDs; RSA/ECDSA above only check bare IDs (pre-existing). */
+        else if (sigKeyBlock_ptr->pubKeyId == ID_MLDSA44 ||
+                sigKeyBlock_ptr->pubKeyId == ID_MLDSA65 ||
+                sigKeyBlock_ptr->pubKeyId == ID_MLDSA87
+        #ifdef WOLFSSH_CERTS
+                || sigKeyBlock_ptr->pubKeyId == ID_X509V3_MLDSA44
+                || sigKeyBlock_ptr->pubKeyId == ID_X509V3_MLDSA65
+                || sigKeyBlock_ptr->pubKeyId == ID_X509V3_MLDSA87
+        #endif
+                ) {
+            wc_MlDsaKey_Free(&sigKeyBlock_ptr->sk.mldsa.key);
+        }
+#endif
     }
 
     if (ret == WS_SUCCESS) {
@@ -13471,7 +14348,13 @@ int SendKexDhReply(WOLFSSH* ssh)
         if (sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_SSH_RSA
                 || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP256
                 || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP384
-                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP521) {
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP521
+        #ifndef WOLFSSH_NO_MLDSA
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_MLDSA44
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_MLDSA65
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_MLDSA87
+        #endif
+                ) {
             payloadSz = MSG_ID_SZ + (LENGTH_SZ * 2) +
                         sigKeyBlock_ptr->sz + fSz + fPad + sigBlockSz;
         }
@@ -13494,7 +14377,13 @@ int SendKexDhReply(WOLFSSH* ssh)
         if (sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_SSH_RSA
                 || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP256
                 || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP384
-                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP521) {
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP521
+#ifndef WOLFSSH_NO_MLDSA
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_MLDSA44
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_MLDSA65
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_MLDSA87
+#endif
+                ) {
             /* BuildRFC6187Info writes the complete K_S including
              * the outer length and key type name. Skip common header. */
         }
@@ -13570,11 +14459,32 @@ int SendKexDhReply(WOLFSSH* ssh)
             }
             break;
 
+#ifndef WOLFSSH_NO_MLDSA
+            case ID_MLDSA44:
+            case ID_MLDSA65:
+            case ID_MLDSA87:
+            {
+#if !defined(WOLFSSH_NO_MLDSA)
+            c32toa(sigKeyBlock_ptr->sk.mldsa.qSz, output + idx);
+            idx += LENGTH_SZ;
+            WMEMCPY(output + idx, sigKeyBlock_ptr->sk.mldsa.q,
+                    sigKeyBlock_ptr->sk.mldsa.qSz);
+            idx += sigKeyBlock_ptr->sk.mldsa.qSz;
+#endif
+            }
+            break;
+#endif
+
         #ifdef WOLFSSH_CERTS
             case ID_X509V3_SSH_RSA:
             case ID_X509V3_ECDSA_SHA2_NISTP256:
             case ID_X509V3_ECDSA_SHA2_NISTP384:
             case ID_X509V3_ECDSA_SHA2_NISTP521:
+#ifndef WOLFSSH_NO_MLDSA
+            case ID_X509V3_MLDSA44:
+            case ID_X509V3_MLDSA65:
+            case ID_X509V3_MLDSA87:
+#endif
             {
                 ret = BuildRFC6187Info(ssh, sigKeyBlock_ptr->pubKeyId,
                     ssh->ctx->privateKey[keyIdx].cert,
@@ -13631,6 +14541,9 @@ int SendKexDhReply(WOLFSSH* ssh)
 #ifdef WOLFSSH_SMALL_STACK
     if (f_ptr)
         WFREE(f_ptr, heap, DYNTYPE_BUFFER);
+    if (sig_ptr)
+        WFREE(sig_ptr, heap, DYNTYPE_BUFFER);
+#elif !defined(WOLFSSH_NO_MLDSA)
     if (sig_ptr)
         WFREE(sig_ptr, heap, DYNTYPE_BUFFER);
 #endif
@@ -15953,8 +16866,250 @@ static int BuildUserAuthRequestEd25519(WOLFSSH* ssh,
 #endif /* WOLFSSH_NO_ED25519 */
 
 
+#ifndef WOLFSSH_NO_MLDSA
+/* Load ML-DSA private key into keySig and compute the signature payload size. */
+static int PrepareUserAuthRequestMlDsa(WOLFSSH* ssh, word32* payloadSz,
+        const WS_UserAuthData* authData, WS_KeySignature* keySig)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering PrepareUserAuthRequestMlDsa()");
+    if (ssh == NULL || payloadSz == NULL || authData == NULL || keySig == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        word32 idx = 0;
+        byte level = 0;
+        {
+            int mlLevel = KeyIdToMlDsaLevel(keySig->keyId);
+            if (mlLevel < 0) ret = WS_INVALID_ALGO_ID;
+            else             level = (byte)mlLevel;
+        }
+        if (ret == WS_SUCCESS) {
+            int mlDsaInit = 0;
+            ret = wc_MlDsaKey_Init(&keySig->ks.mldsa.key, keySig->heap,
+                    INVALID_DEVID);
+            if (ret == 0) {
+                mlDsaInit = 1;
+                ret = wc_MlDsaKey_SetParams(&keySig->ks.mldsa.key, level);
+            }
+            if (ret == 0)
+                ret = wc_MlDsaKey_PrivateKeyDecode(&keySig->ks.mldsa.key,
+                        authData->sf.publicKey.privateKey,
+                        authData->sf.publicKey.privateKeySz, &idx);
+            if (ret != 0) {
+                if (mlDsaInit) {
+                    wc_MlDsaKey_Free(&keySig->ks.mldsa.key);
+                    keySig->keyId = ID_NONE;
+                }
+                idx = 0;
+                ret = GetOpenSshKey(keySig,
+                        authData->sf.publicKey.privateKey,
+                        authData->sf.publicKey.privateKeySz, &idx);
+                if (ret == WS_SUCCESS && KeyIdToMlDsaLevel(keySig->keyId) < 0) {
+                    wolfSSH_KEY_clean(keySig);
+                    keySig->keyId = ID_NONE;
+                    ret = WS_KEY_FORMAT_E;
+                }
+            }
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (authData->sf.publicKey.hasSignature) {
+            int sigSz = wc_MlDsaKey_SigSize(&keySig->ks.mldsa.key);
+
+            if (sigSz >= 0) {
+                *payloadSz += (LENGTH_SZ * 3) + (word32)sigSz +
+                        authData->sf.publicKey.publicKeyTypeSz;
+                keySig->sigSz = sigSz;
+            }
+            else {
+                wc_MlDsaKey_Free(&keySig->ks.mldsa.key);
+                keySig->keyId = ID_NONE;
+                ret = WS_CRYPTO_FAILED;
+            }
+        }
+    }
+
+    WLOG(WS_LOG_DEBUG,
+            "Leaving PrepareUserAuthRequestMlDsa(), ret = %d", ret);
+    return ret;
+}
+
+#ifdef WOLFSSH_CERTS
+/* Load ML-DSA cert private key into keySig and compute signature payload size. */
+static int PrepareUserAuthRequestMlDsaCert(WOLFSSH* ssh, word32* payloadSz,
+        const WS_UserAuthData* authData, WS_KeySignature* keySig)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering PrepareUserAuthRequestMlDsaCert()");
+    if (ssh == NULL || payloadSz == NULL || authData == NULL || keySig == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        int mlLevel = KeyIdToMlDsaLevel(keySig->keyId);
+        if (mlLevel < 0) {
+            ret = WS_INVALID_ALGO_ID;
+        }
+        else {
+            byte level = (byte)mlLevel;
+            int  wcRet;
+            int  mlDsaInit = 0;
+
+            wcRet = wc_MlDsaKey_Init(&keySig->ks.mldsa.key,
+                keySig->heap, INVALID_DEVID);
+            if (wcRet == 0) {
+                mlDsaInit = 1;
+                wcRet = wc_MlDsaKey_SetParams(&keySig->ks.mldsa.key, level);
+            }
+            if (wcRet != 0) {
+                if (mlDsaInit) {
+                    wc_MlDsaKey_Free(&keySig->ks.mldsa.key);
+                    keySig->keyId = ID_NONE;
+                }
+                ret = WS_CRYPTO_FAILED;
+            }
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        /* Reaching here guarantees the key is initialized: the preceding
+         * Init+SetParams block sets ret to WS_SUCCESS only on success. */
+        word32 idx = 0;
+        int wcRet = wc_MlDsaKey_PrivateKeyDecode(&keySig->ks.mldsa.key,
+                authData->sf.publicKey.privateKey,
+                authData->sf.publicKey.privateKeySz, &idx);
+        if (wcRet != 0) {
+            wc_MlDsaKey_Free(&keySig->ks.mldsa.key);
+            keySig->keyId = ID_NONE;
+            ret = WS_CRYPTO_FAILED;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        *payloadSz += (LENGTH_SZ + authData->sf.publicKey.publicKeyTypeSz) +
+                (UINT32_SZ * 2); /* certificate and ocsp counts */
+
+        if (authData->sf.publicKey.hasSignature) {
+            int sigSz = wc_MlDsaKey_SigSize(&keySig->ks.mldsa.key);
+
+            if (sigSz >= 0) {
+                *payloadSz += (LENGTH_SZ * 3) + (word32)sigSz +
+                        authData->sf.publicKey.publicKeyTypeSz;
+                keySig->sigSz = sigSz;
+            }
+            else {
+                wc_MlDsaKey_Free(&keySig->ks.mldsa.key);
+                keySig->keyId = ID_NONE;
+                ret = WS_CRYPTO_FAILED;
+            }
+        }
+    }
+
+    WLOG(WS_LOG_DEBUG,
+            "Leaving PrepareUserAuthRequestMlDsaCert(), ret = %d", ret);
+    return ret;
+}
+#endif /* WOLFSSH_CERTS */
+
+/* Sign the user auth request with the ML-DSA key from keySig. */
+static int BuildUserAuthRequestMlDsa(WOLFSSH* ssh,
+        byte* output, word32* idx,
+        const WS_UserAuthData* authData,
+        const byte* sigStart, word32 sigStartIdx,
+        WS_KeySignature* keySig)
+{
+    word32 begin;
+    int ret = WS_SUCCESS;
+    byte* sig;
+    word32 sigSz;
+    byte* checkData = NULL;
+    word32 checkDataSz = 0;
+
+    WLOG(WS_LOG_DEBUG, "Entering BuildUserAuthRequestMlDsa()");
+    if (ssh == NULL || output == NULL || idx == NULL || authData == NULL ||
+            sigStart == NULL || keySig == NULL) {
+        ret = WS_BAD_ARGUMENT;
+        return ret;
+    }
+
+    sigSz = (word32)keySig->sigSz;
+
+    sig = (byte*)WMALLOC(sigSz, keySig->heap, DYNTYPE_BUFFER);
+    if (sig == NULL)
+        ret = WS_MEMORY_E;
+
+    begin = *idx;
+
+    if (ret == WS_SUCCESS) {
+        checkDataSz = LENGTH_SZ + ssh->sessionIdSz + (begin - sigStartIdx);
+        checkData = (byte*)WMALLOC(checkDataSz, keySig->heap, DYNTYPE_TEMP);
+        if (checkData == NULL)
+            ret = WS_MEMORY_E;
+    }
+
+    if (ret == WS_SUCCESS) {
+        word32 i = 0;
+
+        c32toa(ssh->sessionIdSz, checkData + i);
+        i += LENGTH_SZ;
+        WMEMCPY(checkData + i, ssh->sessionId, ssh->sessionIdSz);
+        i += ssh->sessionIdSz;
+        WMEMCPY(checkData + i, sigStart, begin - sigStartIdx);
+    }
+
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_INFO, "Signing with ML-DSA.");
+        ret = wc_MlDsaKey_SignCtx(&keySig->ks.mldsa.key, NULL, 0,
+                                  sig, &sigSz, checkData, checkDataSz, ssh->rng);
+        if (ret != 0) {
+            WLOG(WS_LOG_DEBUG, "BUAR: Bad ML-DSA Sign");
+            ret = WS_MLDSA_E;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        const char* name = IdToName(keySig->keyId);
+        word32 nameSz = (word32)WSTRLEN(name);
+
+        c32toa(LENGTH_SZ * 2 + nameSz + sigSz, output + begin);
+        begin += LENGTH_SZ;
+
+        c32toa(nameSz, output + begin);
+        begin += LENGTH_SZ;
+
+        WMEMCPY(output + begin, name, nameSz);
+        begin += nameSz;
+
+        c32toa(sigSz, output + begin);
+        begin += LENGTH_SZ;
+
+        WMEMCPY(output + begin, sig, sigSz);
+        begin += sigSz;
+    }
+
+    if (ret == WS_SUCCESS)
+        *idx = begin;
+
+    if (checkData != NULL) {
+        ForceZero(checkData, checkDataSz);
+        WFREE(checkData, keySig->heap, DYNTYPE_TEMP);
+    }
+
+    if (sig != NULL) {
+        WFREE(sig, keySig->heap, DYNTYPE_BUFFER);
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving BuildUserAuthRequestMlDsa(), ret = %d", ret);
+    return ret;
+}
+#endif /* !WOLFSSH_NO_MLDSA */
+
+
 #if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA) \
-    || !defined(WOLFSSH_NO_ED25519)
+    || !defined(WOLFSSH_NO_ED25519) || !defined(WOLFSSH_NO_MLDSA)
 static int PrepareUserAuthRequestPublicKey(WOLFSSH* ssh, word32* payloadSz,
         WS_UserAuthData* authData, WS_KeySignature* keySig)
 {
@@ -16045,6 +17200,22 @@ static int PrepareUserAuthRequestPublicKey(WOLFSSH* ssh, word32* payloadSz,
                 ret = PrepareUserAuthRequestEd25519(ssh,
                         payloadSz, authData, keySig);
                 break;
+            #endif
+            #ifndef WOLFSSH_NO_MLDSA
+            case ID_MLDSA44:
+            case ID_MLDSA65:
+            case ID_MLDSA87:
+                ret = PrepareUserAuthRequestMlDsa(ssh,
+                        payloadSz, authData, keySig);
+                break;
+            #ifdef WOLFSSH_CERTS
+            case ID_X509V3_MLDSA44:
+            case ID_X509V3_MLDSA65:
+            case ID_X509V3_MLDSA87:
+                ret = PrepareUserAuthRequestMlDsaCert(ssh,
+                        payloadSz, authData, keySig);
+                break;
+            #endif
             #endif
             default:
                 ret = WS_INVALID_ALGO_ID;
@@ -16169,6 +17340,44 @@ static int BuildUserAuthRequestPublicKey(WOLFSSH* ssh,
                         authData, sigStart, sigStartIdx, keySig);
                     break;
                 #endif
+                #ifndef WOLFSSH_NO_MLDSA
+                case ID_MLDSA44:
+                case ID_MLDSA65:
+                case ID_MLDSA87:
+                    c32toa(pk->publicKeyTypeSz, output + begin);
+                    begin += LENGTH_SZ;
+                    WMEMCPY(output + begin,
+                            pk->publicKeyType, pk->publicKeyTypeSz);
+                    begin += pk->publicKeyTypeSz;
+                    c32toa(pk->publicKeySz, output + begin);
+                    begin += LENGTH_SZ;
+                    WMEMCPY(output + begin, pk->publicKey, pk->publicKeySz);
+                    begin += pk->publicKeySz;
+                    ret = BuildUserAuthRequestMlDsa(ssh, output, &begin,
+                        authData, sigStart, sigStartIdx, keySig);
+                    break;
+                #ifdef WOLFSSH_CERTS
+                case ID_X509V3_MLDSA44:
+                case ID_X509V3_MLDSA65:
+                case ID_X509V3_MLDSA87:
+                    /* public key type name */
+                    c32toa(pk->publicKeyTypeSz, output + begin);
+                    begin += LENGTH_SZ;
+                    WMEMCPY(output + begin,
+                            pk->publicKeyType, pk->publicKeyTypeSz);
+                    begin += pk->publicKeyTypeSz;
+
+                    /* build RFC6187 public key to send */
+                    ret = BuildRFC6187Info(ssh, keySig->keyId,
+                            pk->publicKey, pk->publicKeySz, NULL, 0,
+                            output, &ssh->outputBuffer.bufferSz, &begin);
+                    if (ret == WS_SUCCESS) {
+                        ret = BuildUserAuthRequestMlDsa(ssh, output, &begin,
+                            authData, sigStart, sigStartIdx, keySig);
+                    }
+                    break;
+                #endif
+                #endif
                 default:
                     ret = WS_INVALID_ALGO_ID;
             }
@@ -16187,7 +17396,7 @@ static int BuildUserAuthRequestPublicKey(WOLFSSH* ssh,
 }
 
 
-#endif /* !WOLFSSH_NO_RSA || !WOLFSSH_NO_ECDSA || !WOLFSSH_NO_ED25519 */
+#endif /* !WOLFSSH_NO_RSA || !WOLFSSH_NO_ECDSA || !WOLFSSH_NO_ED25519 || !WOLFSSH_NO_MLDSA */
 
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
 int SendUserAuthKeyboardResponse(WOLFSSH* ssh)
@@ -18640,5 +19849,62 @@ int wolfSSH_TestDoUserAuthRequestEd25519(WOLFSSH* ssh,
 }
 
 #endif /* !WOLFSSH_NO_ED25519 */
+
+#ifndef WOLFSSH_NO_MLDSA
+
+WOLFSSH_API int wolfSSH_TestDoUserAuthRequestMlDsa(WOLFSSH* ssh,
+        WS_UserAuthData* authData, word32 pubKeyBlobSz)
+{
+    byte keyId;
+    int  mlLevel;
+    byte isCert = 0;
+
+    if (authData == NULL)
+        return WS_BAD_ARGUMENT;
+
+    keyId = NameToId((const char*)authData->sf.publicKey.publicKeyType,
+                     authData->sf.publicKey.publicKeyTypeSz);
+
+    mlLevel = KeyIdToMlDsaLevel(keyId);
+    if (mlLevel < 0)
+        return WS_INVALID_ALGO_ID;
+
+#ifdef WOLFSSH_CERTS
+    isCert = (keyId == ID_X509V3_MLDSA44 ||
+              keyId == ID_X509V3_MLDSA65 ||
+              keyId == ID_X509V3_MLDSA87) ? 1 : 0;
+#endif
+
+    return DoUserAuthRequestMlDsa(ssh, &authData->sf.publicKey, authData,
+                                  (byte)mlLevel, isCert, pubKeyBlobSz);
+}
+
+WOLFSSH_API int wolfSSH_TestPrepareUserAuthRequestMlDsa(WOLFSSH* ssh,
+        word32* payloadSz, const WS_UserAuthData* authData,
+        WS_KeySignature* keySig)
+{
+    return PrepareUserAuthRequestMlDsa(ssh, payloadSz, authData, keySig);
+}
+
+#ifdef WOLFSSH_CERTS
+WOLFSSH_API int wolfSSH_TestPrepareUserAuthRequestMlDsaCert(WOLFSSH* ssh,
+        word32* payloadSz, const WS_UserAuthData* authData,
+        WS_KeySignature* keySig)
+{
+    return PrepareUserAuthRequestMlDsaCert(ssh, payloadSz, authData, keySig);
+}
+#endif /* WOLFSSH_CERTS */
+
+WOLFSSH_API int wolfSSH_TestBuildUserAuthRequestMlDsa(WOLFSSH* ssh,
+        byte* output, word32* idx,
+        const WS_UserAuthData* authData,
+        const byte* sigStart, word32 sigStartIdx,
+        WS_KeySignature* keySig)
+{
+    return BuildUserAuthRequestMlDsa(ssh, output, idx, authData,
+                                     sigStart, sigStartIdx, keySig);
+}
+
+#endif /* !WOLFSSH_NO_MLDSA */
 
 #endif /* WOLFSSH_TEST_INTERNAL */

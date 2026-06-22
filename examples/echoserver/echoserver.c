@@ -1777,6 +1777,46 @@ static int load_key_ed25519(byte* buf, word32 bufSz)
 #endif /* WOLFSSH_NO_ED25519 */
 
 
+#ifndef WOLFSSH_NO_MLDSA44
+static int load_key_mldsa44(byte* buf, word32 bufSz)
+{
+    word32 sz = 0;
+#ifndef NO_FILESYSTEM
+    sz = load_file("./keys/server-key-mldsa44.der", buf, &bufSz);
+#else
+    (void)buf; (void)bufSz;
+#endif
+    return sz;
+}
+#endif /* WOLFSSH_NO_MLDSA44 */
+
+#ifndef WOLFSSH_NO_MLDSA65
+static int load_key_mldsa65(byte* buf, word32 bufSz)
+{
+    word32 sz = 0;
+#ifndef NO_FILESYSTEM
+    sz = load_file("./keys/server-key-mldsa65.der", buf, &bufSz);
+#else
+    (void)buf; (void)bufSz;
+#endif
+    return sz;
+}
+#endif /* WOLFSSH_NO_MLDSA65 */
+
+#ifndef WOLFSSH_NO_MLDSA87
+static int load_key_mldsa87(byte* buf, word32 bufSz)
+{
+    word32 sz = 0;
+#ifndef NO_FILESYSTEM
+    sz = load_file("./keys/server-key-mldsa87.der", buf, &bufSz);
+#else
+    (void)buf; (void)bufSz;
+#endif
+    return sz;
+}
+#endif /* WOLFSSH_NO_MLDSA87 */
+
+
 typedef struct StrList {
     const char* str;
     struct StrList* next;
@@ -2410,6 +2450,7 @@ static int wsUserAuth(byte authType,
     PwMapList* list;
     PwMap* map;
     byte authHash[WC_SHA256_DIGEST_SIZE] = {0};
+    int userFound = 0;
 
     if (ctx == NULL) {
         fprintf(stderr, "wsUserAuth: ctx not set");
@@ -2530,12 +2571,12 @@ static int wsUserAuth(byte authType,
             authData->type == map->type) {
 
             if (authData->type == WOLFSSH_USERAUTH_PUBLICKEY) {
+                userFound = 1;
                 if (WMEMCMP(map->p, authHash, WC_SHA256_DIGEST_SIZE) == 0) {
                     return WOLFSSH_USERAUTH_SUCCESS;
                 }
-                else {
-                   return WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
-                }
+                /* Hash mismatch: continue checking other registered keys
+                 * for this user (a user may have multiple public keys). */
             }
             else if (authData->type == WOLFSSH_USERAUTH_PASSWORD) {
                 if (WMEMCMP(map->p, authHash, WC_SHA256_DIGEST_SIZE) == 0) {
@@ -2578,6 +2619,8 @@ static int wsUserAuth(byte authType,
         map = map->next;
     }
 
+    if (userFound)
+        return WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
     return WOLFSSH_USERAUTH_INVALID_USER;
 }
 
@@ -3150,6 +3193,57 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             }
         #endif /* WOLFSSH_NO_ED25519 */
         }
+
+        /* Load only the ML-DSA levels requested in keyList; loading all levels
+         * unconditionally would force mldsa negotiation on non-mldsa tests. */
+        #ifndef WOLFSSH_NO_MLDSA
+        if (keyList != NULL && WSTRSTR(keyList, "mldsa") != NULL) {
+            #define MLDSA_KEY_LOAD_BUF_SZ MLDSA_MAX_BOTH_KEY_DER_SIZE
+            byte* mldsaBuf = (byte*)WMALLOC(MLDSA_KEY_LOAD_BUF_SZ, NULL, 0);
+            if (mldsaBuf == NULL) {
+                ES_ERROR("Couldn't allocate ML-DSA key load buffer.\n");
+            }
+            else {
+                word32 mldsaSz;
+
+                #ifndef WOLFSSH_NO_MLDSA44
+                if (WSTRSTR(keyList, "mldsa-44") != NULL) {
+                    mldsaSz = load_key_mldsa44(mldsaBuf, MLDSA_KEY_LOAD_BUF_SZ);
+                    if (mldsaSz == 0)
+                        ES_ERROR("Couldn't load ML-DSA-44 key file.\n");
+                    else if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, mldsaBuf,
+                                mldsaSz, WOLFSSH_FORMAT_ASN1) < 0)
+                        ES_ERROR("Couldn't use ML-DSA-44 key buffer.\n");
+                }
+                #endif /* WOLFSSH_NO_MLDSA44 */
+
+                #ifndef WOLFSSH_NO_MLDSA65
+                if (WSTRSTR(keyList, "mldsa-65") != NULL) {
+                    mldsaSz = load_key_mldsa65(mldsaBuf, MLDSA_KEY_LOAD_BUF_SZ);
+                    if (mldsaSz == 0)
+                        ES_ERROR("Couldn't load ML-DSA-65 key file.\n");
+                    else if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, mldsaBuf,
+                                mldsaSz, WOLFSSH_FORMAT_ASN1) < 0)
+                        ES_ERROR("Couldn't use ML-DSA-65 key buffer.\n");
+                }
+                #endif /* WOLFSSH_NO_MLDSA65 */
+
+                #ifndef WOLFSSH_NO_MLDSA87
+                if (WSTRSTR(keyList, "mldsa-87") != NULL) {
+                    mldsaSz = load_key_mldsa87(mldsaBuf, MLDSA_KEY_LOAD_BUF_SZ);
+                    if (mldsaSz == 0)
+                        ES_ERROR("Couldn't load ML-DSA-87 key file.\n");
+                    else if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, mldsaBuf,
+                                mldsaSz, WOLFSSH_FORMAT_ASN1) < 0)
+                        ES_ERROR("Couldn't use ML-DSA-87 key buffer.\n");
+                }
+                #endif /* WOLFSSH_NO_MLDSA87 */
+
+                WFREE(mldsaBuf, NULL, 0);
+            }
+            #undef MLDSA_KEY_LOAD_BUF_SZ
+        }
+        #endif /* WOLFSSH_NO_MLDSA */
 
         #ifndef NO_FILESYSTEM
         if (userPubKey) {

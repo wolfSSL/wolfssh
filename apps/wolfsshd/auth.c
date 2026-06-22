@@ -105,7 +105,12 @@ struct WOLFSSHD_AUTH {
 #endif
 
 #ifndef MAX_LINE_SZ
-    #define MAX_LINE_SZ 900
+    /* Sized to hold the largest authorized_keys entry. */
+    #ifndef WOLFSSH_NO_MLDSA
+        #define MAX_LINE_SZ ((WC_MLDSA_87_PUB_KEY_SIZE + 2) / 3 * 4 + 640)
+    #else
+        #define MAX_LINE_SZ 900
+    #endif
 #endif
 #ifndef MAX_PATH_SZ
     #define MAX_PATH_SZ 80
@@ -174,11 +179,55 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
     char* last = NULL;
 
     enum {
+        NUM_BASE_TYPES = 5,
     #ifdef WOLFSSH_CERTS
-        NUM_ALLOWED_TYPES = 9
+        NUM_CERT_TYPES = 4,
     #else
-        NUM_ALLOWED_TYPES = 5
+        NUM_CERT_TYPES = 0,
     #endif
+    #ifndef WOLFSSH_NO_MLDSA
+        #ifndef WOLFSSH_NO_MLDSA44
+            MLDSA44_COUNT = 1,
+        #else
+            MLDSA44_COUNT = 0,
+        #endif
+        #ifndef WOLFSSH_NO_MLDSA65
+            MLDSA65_COUNT = 1,
+        #else
+            MLDSA65_COUNT = 0,
+        #endif
+        #ifndef WOLFSSH_NO_MLDSA87
+            MLDSA87_COUNT = 1,
+        #else
+            MLDSA87_COUNT = 0,
+        #endif
+        NUM_MLDSA_TYPES = MLDSA44_COUNT + MLDSA65_COUNT + MLDSA87_COUNT,
+    #else
+        NUM_MLDSA_TYPES = 0,
+    #endif
+    #if !defined(WOLFSSH_NO_MLDSA) && defined(WOLFSSH_CERTS)
+        #ifndef WOLFSSH_NO_MLDSA44
+            MLDSA44_CERT_COUNT = 1,
+        #else
+            MLDSA44_CERT_COUNT = 0,
+        #endif
+        #ifndef WOLFSSH_NO_MLDSA65
+            MLDSA65_CERT_COUNT = 1,
+        #else
+            MLDSA65_CERT_COUNT = 0,
+        #endif
+        #ifndef WOLFSSH_NO_MLDSA87
+            MLDSA87_CERT_COUNT = 1,
+        #else
+            MLDSA87_CERT_COUNT = 0,
+        #endif
+        NUM_MLDSA_CERT_TYPES = MLDSA44_CERT_COUNT + MLDSA65_CERT_COUNT +
+                               MLDSA87_CERT_COUNT,
+    #else
+        NUM_MLDSA_CERT_TYPES = 0,
+    #endif
+        NUM_ALLOWED_TYPES = NUM_BASE_TYPES + NUM_CERT_TYPES +
+                            NUM_MLDSA_TYPES + NUM_MLDSA_CERT_TYPES
     };
     static const char* allowedTypes[NUM_ALLOWED_TYPES] = {
         "ssh-rsa",
@@ -191,6 +240,28 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
         "x509v3-ecdsa-sha2-nistp256",
         "x509v3-ecdsa-sha2-nistp384",
         "x509v3-ecdsa-sha2-nistp521",
+    #endif
+    #ifndef WOLFSSH_NO_MLDSA
+        #ifndef WOLFSSH_NO_MLDSA44
+        "ssh-mldsa-44",
+        #endif
+        #ifndef WOLFSSH_NO_MLDSA65
+        "ssh-mldsa-65",
+        #endif
+        #ifndef WOLFSSH_NO_MLDSA87
+        "ssh-mldsa-87",
+        #endif
+        #ifdef WOLFSSH_CERTS
+        #ifndef WOLFSSH_NO_MLDSA44
+        "x509v3-ssh-mldsa-44",
+        #endif
+        #ifndef WOLFSSH_NO_MLDSA65
+        "x509v3-ssh-mldsa-65",
+        #endif
+        #ifndef WOLFSSH_NO_MLDSA87
+        "x509v3-ssh-mldsa-87",
+        #endif
+        #endif
     #endif
     };
     int typeOk = 0;
@@ -1377,9 +1448,9 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                  * closed: require AuthorizedKeysFile (per-user key/cert mapping)
                  * or a wolfSSL build with FPKI. */
                 wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] Certificate authentication cannot bind the requested "
-                    "user without FPKI or AuthorizedKeysFile; rejecting "
-                    "(user=%s)", usr);
+                    "[SSHD] Certificate authentication cannot bind "
+                    "the requested user without FPKI or "
+                    "AuthorizedKeysFile; rejecting (user=%s)", usr);
                 ret = WOLFSSH_USERAUTH_REJECTED;
             #endif
             }
@@ -1573,6 +1644,11 @@ static int SetDefualtUserID(WOLFSSHD_AUTH* auth)
     struct passwd* pwInfo;
     int ret = WS_SUCCESS;
 
+    if (wolfSSHD_ConfigGetPrivilegeSeparation(auth->conf) ==
+            WOLFSSHD_PRIV_OFF) {
+        return WS_SUCCESS;
+    }
+
     pwInfo = getpwnam(WOLFSSH_USER_STRING(WOLFSSH_SSHD_USER));
     if (pwInfo == NULL) {
         /* user name not found on system */
@@ -1665,23 +1741,30 @@ int wolfSSHD_AuthFreeUser(WOLFSSHD_AUTH* auth)
 /* return WS_SUCCESS on success */
 int wolfSSHD_AuthRaisePermissions(WOLFSSHD_AUTH* auth)
 {
-    int ret = 0;
+    int ret = WS_SUCCESS;
 
-    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Attempting to raise permissions level");
 #ifndef WIN32
-    if (auth) {
-        if (setegid(auth->sGid) != 0) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error raising gid");
-            ret = WS_FATAL_ERROR;
+    {
+        byte flag = 0;
+
+        if (!auth) {
+            return WS_BAD_ARGUMENT;
         }
 
-        if (seteuid(auth->sUid) != 0) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error raising uid");
-            ret = WS_FATAL_ERROR;
+        flag = wolfSSHD_ConfigGetPrivilegeSeparation(auth->conf);
+        if (flag == WOLFSSHD_PRIV_SEPARAT || flag == WOLFSSHD_PRIV_SANDBOX) {
+            wolfSSH_Log(WS_LOG_INFO,
+                "[SSHD] Attempting to raise permissions level");
+            if (setegid(auth->sGid) != 0) {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error raising gid");
+                ret = WS_FATAL_ERROR;
+            }
+
+            if (seteuid(auth->sUid) != 0) {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error raising uid");
+                ret = WS_FATAL_ERROR;
+            }
         }
-    }
-    else {
-        ret = WS_BAD_ARGUMENT;
     }
 #endif
 
