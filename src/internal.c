@@ -11099,6 +11099,13 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
     idx += UINT32_SZ;
     padSz = buf[idx++];
 
+    /* RFC 4253 section 6 requires at least four bytes of padding. */
+    if (padSz < MIN_PAD_LENGTH) {
+        WLOG(WS_LOG_DEBUG, "Packet padding length %u below minimum %u",
+             (word32)padSz, (word32)MIN_PAD_LENGTH);
+        return WS_BUFFER_E;
+    }
+
     /* check for underflow */
     if ((word32)(PAD_LENGTH_SZ + padSz + MSG_ID_SZ) > ssh->curSz) {
         return WS_OVERFLOW_E;
