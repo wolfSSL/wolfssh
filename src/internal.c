@@ -642,15 +642,17 @@ static void HandshakeInfoFree(HandshakeInfo* hs, void* heap)
         }
 #endif
 #ifndef WOLFSSH_NO_ECDH
-        /* privKey is a union; Curve25519+ML-KEM sets useEccMlKem but uses
-         * a curve25519 key, freed in the curve25519 block below. */
-        if (hs->useEcc || (hs->useEccMlKem && !hs->useCurve25519MlKem)) {
+        /* privKey is a union; the Curve25519+ML-KEM hybrid sets both
+         * useMlKem and useCurve25519 but generates a curve25519 key, which is
+         * freed below. The NIST ECC hybrid sets useEcdh, so useEcdh alone
+         * covers every case that generates an ecc key. */
+        if (hs->useEcdh) {
             wc_ecc_free(&hs->privKey.ecc);
         }
 #endif
 #if !defined(WOLFSSH_NO_CURVE25519_SHA256) || \
     !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
-        if (hs->useCurve25519 || hs->useCurve25519MlKem) {
+        if (hs->useCurve25519) {
             wc_curve25519_free(&hs->privKey.curve25519);
         }
 #endif
@@ -6583,14 +6585,17 @@ static int KeyAgree_client(WOLFSSH* ssh, byte hashId, const byte* f, word32 fSz)
     if (ssh->handshake->useDh) {
         ret = KeyAgreeDh_client(ssh, hashId, f, fSz);
     }
-    else if (ssh->handshake->useEcc) {
+    /* Check useMlKem before the plain classical flags: a hybrid sets both
+     * useMlKem and its classical flag (useEcdh or useCurve25519) and must
+     * route to the hybrid agreement. */
+    else if (ssh->handshake->useMlKem) {
+        ret = KeyAgreeEcdhMlKem_client(ssh, hashId, f, fSz);
+    }
+    else if (ssh->handshake->useEcdh) {
         ret = KeyAgreeEcdh_client(ssh, hashId, f, fSz);
     }
     else if (ssh->handshake->useCurve25519) {
         ret = KeyAgreeCurve25519_client(ssh, hashId, f, fSz);
-    }
-    else if (ssh->handshake->useEccMlKem) {
-        ret = KeyAgreeEcdhMlKem_client(ssh, hashId, f, fSz);
     }
     else {
         ret = WS_INVALID_ALGO_ID;
@@ -6820,7 +6825,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
         /* Hash in the shared secret K. */
         if (ret == WS_SUCCESS) {
-            if (!ssh->handshake->useEccMlKem) {
+            if (!ssh->handshake->useMlKem) {
                 ret = CreateMpint(ssh->k, &ssh->kSz, &kPad);
             }
         }
@@ -7000,8 +7005,8 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     }
 
     if (ret == WS_SUCCESS) {
-        /* If we aren't using ECC with ML-KEM, use padding. */
-        ret = GenerateKeys(ssh, hashId, !ssh->handshake->useEccMlKem);
+        /* If we aren't using an ML-KEM hybrid, use padding. */
+        ret = GenerateKeys(ssh, hashId, !ssh->handshake->useMlKem);
     }
 
     if (ret == WS_SUCCESS) {
@@ -14223,9 +14228,9 @@ int SendKexDhReply(WOLFSSH* ssh)
 #endif
     byte msgId = 0;
     byte useDh = 0;
-    byte useEcc = 0;
+    byte useEcdh = 0;
     byte useCurve25519 = 0;
-    byte useEccMlKem = 0;
+    byte useMlKem = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering SendKexDhReply()");
 
@@ -14313,19 +14318,19 @@ int SendKexDhReply(WOLFSSH* ssh)
 #endif
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256
             case ID_ECDH_SHA2_NISTP256:
-                useEcc = 1;
+                useEcdh = 1;
                 msgId = MSGID_KEXDH_REPLY;
                 break;
 #endif
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP384
             case ID_ECDH_SHA2_NISTP384:
-                useEcc = 1;
+                useEcdh = 1;
                 msgId = MSGID_KEXDH_REPLY;
                 break;
 #endif
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP521
             case ID_ECDH_SHA2_NISTP521:
-                useEcc = 1;
+                useEcdh = 1;
                 msgId = MSGID_KEXDH_REPLY;
                 break;
 #endif
@@ -14338,19 +14343,22 @@ int SendKexDhReply(WOLFSSH* ssh)
 #endif
 #ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
             case ID_NISTP256_MLKEM768_SHA256:
-                useEccMlKem = 1;
+                useEcdh = 1;
+                useMlKem = 1;
                 msgId = MSGID_KEXKEM_REPLY;
                 break;
 #endif
 #ifndef WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
             case ID_NISTP384_MLKEM1024_SHA384:
-                useEccMlKem = 1;
+                useEcdh = 1;
+                useMlKem = 1;
                 msgId = MSGID_KEXKEM_REPLY;
                 break;
 #endif
 #ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
             case ID_CURVE25519_MLKEM768_SHA256:
-                useEccMlKem = 1;
+                useCurve25519 = 1;
+                useMlKem = 1;
                 msgId = MSGID_KEXKEM_REPLY;
                 break;
 #endif
@@ -14392,19 +14400,22 @@ int SendKexDhReply(WOLFSSH* ssh)
             if (useDh) {
                 ret = KeyAgreeDh_server(ssh, hashId, f_ptr, &fSz);
             }
-            else if (useEcc) {
+            /* Check useMlKem before the plain classical flags: a hybrid sets
+             * both useMlKem and its classical flag. */
+            else if (useMlKem) {
+                ret = KeyAgreeEcdhMlKem_server(ssh, hashId, f_ptr, &fSz);
+            }
+            else if (useEcdh) {
                 ret = KeyAgreeEcdh_server(ssh, hashId, f_ptr, &fSz);
             }
             else if (useCurve25519) {
                 ret = KeyAgreeCurve25519_server(ssh, hashId, f_ptr, &fSz);
             }
-            else if (useEccMlKem) {
-                ret = KeyAgreeEcdhMlKem_server(ssh, hashId, f_ptr, &fSz);
-            }
         }
 
-        /* Hash in the server's DH f-value. */
-        if (ret == 0 && (useDh || useEcc)) {
+        /* Hash in the server's DH f-value. Only plain DH and plain ECDH
+         * encode f as an mpint. */
+        if (ret == 0 && (useDh || (useEcdh && !useMlKem))) {
             ret = CreateMpint(f_ptr, &fSz, &fPad);
         }
         if (ret == 0) {
@@ -14420,7 +14431,7 @@ int SendKexDhReply(WOLFSSH* ssh)
         }
 
         /* Hash in the shared secret K. */
-        if (ret == 0 && !useEccMlKem) {
+        if (ret == 0 && !useMlKem) {
             ret = CreateMpint(ssh->k, &ssh->kSz, &kPad);
         }
         if (ret == 0) {
@@ -14510,8 +14521,8 @@ int SendKexDhReply(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS) {
-        /* If we aren't using ECC with ML-KEM, use padding. */
-        ret = GenerateKeys(ssh, hashId, !useEccMlKem);
+        /* If we aren't using an ML-KEM hybrid, use padding. */
+        ret = GenerateKeys(ssh, hashId, !useMlKem);
     }
 
     /* Get the buffer, copy the packet data, once f is laid into the buffer,
@@ -15011,19 +15022,19 @@ int SendKexDhInit(WOLFSSH* ssh)
 #endif
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256
         case ID_ECDH_SHA2_NISTP256:
-            ssh->handshake->useEcc = 1;
+            ssh->handshake->useEcdh = 1;
             msgId = MSGID_KEXECDH_INIT;
             break;
 #endif
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP384
         case ID_ECDH_SHA2_NISTP384:
-            ssh->handshake->useEcc = 1;
+            ssh->handshake->useEcdh = 1;
             msgId = MSGID_KEXECDH_INIT;
             break;
 #endif
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP521
         case ID_ECDH_SHA2_NISTP521:
-            ssh->handshake->useEcc = 1;
+            ssh->handshake->useEcdh = 1;
             msgId = MSGID_KEXECDH_INIT;
             break;
 #endif
@@ -15036,20 +15047,22 @@ int SendKexDhInit(WOLFSSH* ssh)
 #endif
 #ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
         case ID_NISTP256_MLKEM768_SHA256:
-            ssh->handshake->useEccMlKem = 1;
+            ssh->handshake->useEcdh = 1;
+            ssh->handshake->useMlKem = 1;
             msgId = MSGID_KEXKEM_INIT;
             break;
 #endif
 #ifndef WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
         case ID_NISTP384_MLKEM1024_SHA384:
-            ssh->handshake->useEccMlKem = 1;
+            ssh->handshake->useEcdh = 1;
+            ssh->handshake->useMlKem = 1;
             msgId = MSGID_KEXKEM_INIT;
             break;
 #endif
 #ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
         case ID_CURVE25519_MLKEM768_SHA256:
-            ssh->handshake->useEccMlKem = 1;
-            ssh->handshake->useCurve25519MlKem = 1;
+            ssh->handshake->useCurve25519 = 1;
+            ssh->handshake->useMlKem = 1;
             msgId = MSGID_KEXKEM_INIT;
             break;
 #endif
@@ -15075,8 +15088,11 @@ int SendKexDhInit(WOLFSSH* ssh)
                                            e, &eSz);
 #endif
         }
-#ifndef WOLFSSH_NO_CURVE25519_SHA256
+#if !defined(WOLFSSH_NO_CURVE25519_SHA256) || \
+    !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
         else if (ssh->handshake->useCurve25519) {
+            /* Plain Curve25519 or the Curve25519+ML-KEM hybrid; both need a
+             * Curve25519 key. The ML-KEM component, if any, is added below. */
             curve25519_key* privKey = &ssh->handshake->privKey.curve25519;
             if (ret == 0)
                 ret = wc_curve25519_init_ex(privKey, ssh->ctx->heap,
@@ -15091,31 +15107,8 @@ int SendKexDhInit(WOLFSSH* ssh)
                 PRIVATE_KEY_LOCK();
             }
         }
-#endif /* ! WOLFSSH_NO_CURVE25519_SHA256 */
-#ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
-        else if (ssh->handshake->useCurve25519MlKem) {
-            /* Handle Curve25519+ML-KEM variant - generate Curve25519 key */
-            curve25519_key* privKey = &ssh->handshake->privKey.curve25519;
-            if (ret == 0)
-                ret = wc_curve25519_init_ex(privKey, ssh->ctx->heap,
-                                            INVALID_DEVID);
-            if (ret == 0)
-                ret = wc_curve25519_make_key(ssh->rng, CURVE25519_KEYSIZE,
-                                             privKey);
-            if (ret == 0) {
-                PRIVATE_KEY_UNLOCK();
-                ret = wc_curve25519_export_public_ex(privKey, e, &eSz,
-                          EC25519_LITTLE_ENDIAN);
-                PRIVATE_KEY_LOCK();
-            }
-        }
-#endif /* WOLFSSH_NO_CURVE25519_MLKEM768_SHA256 */
-        else if (ssh->handshake->useEcc
-#if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
-    !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384)
-                 || ssh->handshake->useEccMlKem
-#endif
-                ) {
+#endif /* Curve25519 or Curve25519+ML-KEM */
+        else if (ssh->handshake->useEcdh) {
 #if !defined(WOLFSSH_NO_ECDH)
             ecc_key* privKey = &ssh->handshake->privKey.ecc;
             int primeId = wcPrimeForId(ssh->handshake->kexId);
@@ -15150,7 +15143,7 @@ int SendKexDhInit(WOLFSSH* ssh)
 #if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
     !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384) || \
     !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
-        if (ret == WS_SUCCESS && ssh->handshake->useEccMlKem) {
+        if (ret == WS_SUCCESS && ssh->handshake->useMlKem) {
             MlKemKey kem;
             word32 length_publickey = 0;
             word32 length_privatekey = 0;
@@ -15208,7 +15201,7 @@ int SendKexDhInit(WOLFSSH* ssh)
 #if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
     !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384) || \
     !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
-        && !ssh->handshake->useEccMlKem
+        && !ssh->handshake->useMlKem
 #endif
 #ifndef WOLFSSH_NO_CURVE25519_SHA256
         && !ssh->handshake->useCurve25519

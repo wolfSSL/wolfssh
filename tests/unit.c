@@ -5765,7 +5765,7 @@ static int test_KeyAgreeEcdh_client_rejectsOffCurvePoint(void)
         result = -772;
         goto out;
     }
-    ssh->handshake->useEcc = 1;
+    ssh->handshake->useEcdh = 1;
 #ifdef HAVE_WC_ECC_SET_RNG
     if (wc_ecc_set_rng(&ssh->handshake->privKey.ecc, ssh->rng) != 0) {
         result = -774;
