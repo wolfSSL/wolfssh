@@ -950,6 +950,78 @@ done:
 #endif /* WOLFSSH_TEST_INTERNAL && any HMAC SHA variant enabled */
 
 
+#ifdef WOLFSSH_TEST_INTERNAL
+/* Verify DoReceive rejects a binary packet whose padding_length is below the
+ * RFC 4253 section 6 minimum of four bytes, returning WS_BUFFER_E. The packet
+ * is delivered in the clear (no cipher, no MAC), matching the pre-key-exchange
+ * transport, so DoPacket's padding check is what rejects it. */
+static int test_DoReceive_RejectsShortPadding(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    int ret;
+    int result = 0;
+    /* A well-formed MSGID_IGNORE packet carrying an empty string, but with
+     * padding_length = 1 (below MIN_PAD_LENGTH). Aside from the short padding
+     * the packet parses cleanly, so the padding check is the only thing that
+     * can reject it. Layout: uint32 packet_length=7, padding_length=1,
+     * msgId, uint32 string_len=0, 1 pad byte => 11 bytes total. */
+    byte pkt[11];
+    word32 totalLen = (word32)sizeof(pkt);
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -760;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -761;
+    }
+
+    pkt[0] = 0; pkt[1] = 0; pkt[2] = 0; pkt[3] = 7; /* packet_length */
+    pkt[4] = 1;             /* padding_length, below MIN_PAD_LENGTH (4) */
+    pkt[5] = MSGID_IGNORE;
+    pkt[6] = 0; pkt[7] = 0; pkt[8] = 0; pkt[9] = 0; /* string_len = 0 */
+    pkt[10] = 0;            /* padding */
+
+    ssh->peerEncryptId = ID_NONE;
+    ssh->peerAeadMode = 0;
+    ssh->peerBlockSz = MIN_BLOCK_SZ;
+    ssh->peerMacId = ID_NONE;
+    ssh->peerMacSz = 0;
+    ssh->peerSeq = 0;
+    ssh->curSz = 0;
+    ssh->processReplyState = PROCESS_INIT;
+    ssh->error = 0;
+
+    ShrinkBuffer(&ssh->inputBuffer, 1);
+    ret = GrowBuffer(&ssh->inputBuffer, totalLen);
+    if (ret != WS_SUCCESS) {
+        result = -762;
+        goto done2;
+    }
+    WMEMCPY(ssh->inputBuffer.buffer, pkt, totalLen);
+    ssh->inputBuffer.length = totalLen;
+    ssh->inputBuffer.idx = 0;
+
+    ret = wolfSSH_TestDoReceive(ssh);
+    if (ret != WS_FATAL_ERROR) {
+        result = -763;
+        goto done2;
+    }
+    if (ssh->error != WS_BUFFER_E) {
+        result = -764;
+        goto done2;
+    }
+
+done2:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* WOLFSSH_TEST_INTERNAL */
+
+
 #if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_DH_GEX_SHA256)
 
 typedef struct {
@@ -5338,6 +5410,13 @@ int wolfSSH_UnitTest(int argc, char** argv)
      !defined(WOLFSSH_NO_HMAC_SHA2_512))
     unitResult = test_DoReceive_VerifyMacFailure();
     printf("DoReceiveVerifyMac: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+#ifdef WOLFSSH_TEST_INTERNAL
+    unitResult = test_DoReceive_RejectsShortPadding();
+    printf("DoReceiveRejectsShortPadding: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
