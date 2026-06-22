@@ -627,15 +627,16 @@ static void HandshakeInfoFree(HandshakeInfo* hs, void* heap)
         }
 #endif
 #ifndef WOLFSSH_NO_ECDH
-        /* privKey is a union; the Curve25519+ML-KEM case also sets
-         * useEccMlKem but generates a curve25519 key, so free it below. */
-        if (hs->useEcc || (hs->useEccMlKem && !hs->useCurve25519MlKem)) {
+        /* privKey is a union; the Curve25519+ML-KEM hybrid sets both
+         * useEccMlKem and useCurve25519 but generates a curve25519 key, so
+         * it is freed below rather than here. */
+        if (hs->useEcc || (hs->useEccMlKem && !hs->useCurve25519)) {
             wc_ecc_free(&hs->privKey.ecc);
         }
 #endif
 #if !defined(WOLFSSH_NO_CURVE25519_SHA256) || \
     !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
-        if (hs->useCurve25519 || hs->useCurve25519MlKem) {
+        if (hs->useCurve25519) {
             wc_curve25519_free(&hs->privKey.curve25519);
         }
 #endif
@@ -6096,11 +6097,13 @@ static int KeyAgree_client(WOLFSSH* ssh, byte hashId, const byte* f, word32 fSz)
     else if (ssh->handshake->useEcc) {
         ret = KeyAgreeEcdh_client(ssh, hashId, f, fSz);
     }
-    else if (ssh->handshake->useCurve25519) {
-        ret = KeyAgreeCurve25519_client(ssh, hashId, f, fSz);
-    }
+    /* Check useEccMlKem before useCurve25519: the Curve25519+ML-KEM hybrid
+     * sets both flags and must route to the hybrid agreement. */
     else if (ssh->handshake->useEccMlKem) {
         ret = KeyAgreeEcdhMlKem_client(ssh, hashId, f, fSz);
+    }
+    else if (ssh->handshake->useCurve25519) {
+        ret = KeyAgreeCurve25519_client(ssh, hashId, f, fSz);
     }
     else {
         ret = WS_INVALID_ALGO_ID;
@@ -14001,8 +14004,11 @@ int SendKexDhInit(WOLFSSH* ssh)
 #endif
 #ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
         case ID_CURVE25519_MLKEM768_SHA256:
+            /* The Curve25519+ML-KEM hybrid is identified by both flags:
+             * useEccMlKem (ML-KEM component) and useCurve25519 (classical
+             * component). */
             ssh->handshake->useEccMlKem = 1;
-            ssh->handshake->useCurve25519MlKem = 1;
+            ssh->handshake->useCurve25519 = 1;
             msgId = MSGID_KEXKEM_INIT;
             break;
 #endif
@@ -14028,8 +14034,11 @@ int SendKexDhInit(WOLFSSH* ssh)
                                            e, &eSz);
 #endif
         }
-#ifndef WOLFSSH_NO_CURVE25519_SHA256
+#if !defined(WOLFSSH_NO_CURVE25519_SHA256) || \
+    !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
         else if (ssh->handshake->useCurve25519) {
+            /* Plain Curve25519 or the Curve25519+ML-KEM hybrid; both need a
+             * Curve25519 key. The ML-KEM component, if any, is added below. */
             curve25519_key* privKey = &ssh->handshake->privKey.curve25519;
             if (ret == 0)
                 ret = wc_curve25519_init_ex(privKey, ssh->ctx->heap,
@@ -14044,25 +14053,7 @@ int SendKexDhInit(WOLFSSH* ssh)
                 PRIVATE_KEY_LOCK();
             }
         }
-#endif /* ! WOLFSSH_NO_CURVE25519_SHA256 */
-#ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
-        else if (ssh->handshake->useCurve25519MlKem) {
-            /* Handle Curve25519+ML-KEM variant - generate Curve25519 key */
-            curve25519_key* privKey = &ssh->handshake->privKey.curve25519;
-            if (ret == 0)
-                ret = wc_curve25519_init_ex(privKey, ssh->ctx->heap,
-                                            INVALID_DEVID);
-            if (ret == 0)
-                ret = wc_curve25519_make_key(ssh->rng, CURVE25519_KEYSIZE,
-                                             privKey);
-            if (ret == 0) {
-                PRIVATE_KEY_UNLOCK();
-                ret = wc_curve25519_export_public_ex(privKey, e, &eSz,
-                          EC25519_LITTLE_ENDIAN);
-                PRIVATE_KEY_LOCK();
-            }
-        }
-#endif /* WOLFSSH_NO_CURVE25519_MLKEM768_SHA256 */
+#endif /* Curve25519 or Curve25519+ML-KEM */
         else if (ssh->handshake->useEcc
 #if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
     !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384)

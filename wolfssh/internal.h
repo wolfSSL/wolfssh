@@ -693,7 +693,6 @@ typedef struct HandshakeInfo {
     byte useEcc:1;
     byte useEccMlKem:1;
     byte useCurve25519:1;
-    byte useCurve25519MlKem:1;
 #ifdef WOLFSSH_TPM
     byte useTpm:1;
 #endif
