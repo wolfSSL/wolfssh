@@ -2309,6 +2309,107 @@ done:
 }
 
 
+/* userauth callback that records whether it was invoked. Returns SUCCESS so
+ * that, if it were ever reached for a password-change request, the request
+ * would be (incorrectly) authenticated - making a missed rejection visible. */
+static int s_pwChangeCbCalled = 0;
+static int UnitAuthAlwaysSucceed(byte authType, WS_UserAuthData* authData,
+        void* ctx)
+{
+    (void)authData;
+    (void)ctx;
+    if (authType == WOLFSSH_USERAUTH_PASSWORD) {
+        s_pwChangeCbCalled = 1;
+    }
+    return WOLFSSH_USERAUTH_SUCCESS;
+}
+
+/* Verify DoUserAuthRequest rejects a password request that sets the
+ * password-change flag (RFC 4252 Section 8: an expired password MUST NOT be
+ * used for authentication). The request is otherwise well-formed and the
+ * userauth callback would return SUCCESS, so a missing rejection would let the
+ * old password authenticate. Asserts:
+ *   1. ret == WS_SUCCESS (connection stays open for retry)
+ *   2. the userauth callback is never invoked
+ *   3. exactly one packet is sent and it is SSH_MSG_USERAUTH_FAILURE
+ *   4. *idx == len (the new-password field is fully consumed) */
+static int test_DoUserAuthRequest_rejectsPasswordChange(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    int result = 0;
+    int ret;
+    int capMsgId;
+    byte buf[128];
+    word32 len = 0, idx = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -660;
+    wolfSSH_SetIOSend(ctx, CaptureIoSendAuthSvc);
+    wolfSSH_SetUserAuth(ctx, UnitAuthAlwaysSucceed);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        result = -661;
+        goto out;
+    }
+
+    s_pwChangeCbCalled = 0;
+    s_authSvcCaptureSz = 0;
+    s_authSvcSendCount = 0;
+    WMEMSET(s_authSvcCapture, 0, sizeof(s_authSvcCapture));
+
+    /* username: "user" */
+    buf[len++] = 0; buf[len++] = 0; buf[len++] = 0; buf[len++] = 4;
+    WMEMCPY(buf + len, "user", 4); len += 4;
+    /* service name: "ssh-connection" */
+    buf[len++] = 0; buf[len++] = 0; buf[len++] = 0; buf[len++] = 14;
+    WMEMCPY(buf + len, "ssh-connection", 14); len += 14;
+    /* auth method: "password" */
+    buf[len++] = 0; buf[len++] = 0; buf[len++] = 0; buf[len++] = 8;
+    WMEMCPY(buf + len, "password", 8); len += 8;
+    /* password-change flag: TRUE */
+    buf[len++] = 1;
+    /* current password: "oldpass" */
+    buf[len++] = 0; buf[len++] = 0; buf[len++] = 0; buf[len++] = 7;
+    WMEMCPY(buf + len, "oldpass", 7); len += 7;
+    /* new password: "newpass" */
+    buf[len++] = 0; buf[len++] = 0; buf[len++] = 0; buf[len++] = 7;
+    WMEMCPY(buf + len, "newpass", 7); len += 7;
+
+    ret = wolfSSH_TestDoUserAuthRequest(ssh, buf, len, &idx);
+
+    if (ret != WS_SUCCESS) {
+        result = -662;
+        goto out;
+    }
+    if (s_pwChangeCbCalled) {
+        /* The callback must not run for a password-change request. */
+        result = -663;
+        goto out;
+    }
+    if (s_authSvcSendCount != 1) {
+        result = -664;
+        goto out;
+    }
+    capMsgId = CaptureMsgId(s_authSvcCapture, s_authSvcCaptureSz);
+    if (capMsgId != MSGID_USERAUTH_FAILURE) {
+        result = -665;
+        goto out;
+    }
+    if (idx != len) {
+        result = -666;
+        goto out;
+    }
+
+out:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+
 /* userAuthTypesCb that advertises no methods (returns mask 0). Mirrors a
  * wolfsshd configuration with both PasswordAuthentication no and
  * PubkeyAuthentication no. */
@@ -5515,6 +5616,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_DoUserAuthRequest_serviceName();
     printf("DoUserAuthRequest_serviceName: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DoUserAuthRequest_rejectsPasswordChange();
+    printf("DoUserAuthRequest_rejectsPasswordChange: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 

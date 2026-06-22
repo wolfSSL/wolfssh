@@ -7444,50 +7444,58 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
 
     if (ret == WS_SUCCESS) {
         if (pw->hasNewPassword) {
-            /* Skip the password change. Maybe error out since we aren't
-             * supporting password changes at this time. */
+            /* Password changes are not supported. Parse the new password
+             * field so the message is fully consumed, then reject the
+             * request rather than authenticating with the current password
+             * (RFC 4252 section 8: an expired password MUST NOT be used for
+             * authentication). The userauth callback is not called. */
             ret = GetStringRef(&pw->newPasswordSz, &pw->newPassword,
                     buf, len, &begin);
+            if (ret == WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG,
+                     "DUARPW: rejecting unsupported password change request");
+                authFailure = 1;
+            }
         }
         else {
             pw->newPassword = NULL;
             pw->newPasswordSz = 0;
-        }
 
-        if (ssh->ctx->userAuthCb != NULL) {
-            WLOG(WS_LOG_DEBUG, "DUARPW: Calling the userauth callback");
-            ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PASSWORD,
-                                       authData, ssh->userAuthCtx);
-            if (ret == WOLFSSH_USERAUTH_SUCCESS) {
-                WLOG(WS_LOG_DEBUG, "DUARPW: password check success");
-                ret = WS_SUCCESS;
-            }
-            else if (ret == WOLFSSH_USERAUTH_PARTIAL_SUCCESS) {
-                WLOG(WS_LOG_DEBUG, "DUARPW: password check partial success");
-                partialSuccess = 1;
-                ret = WS_SUCCESS;
-            }
-            else if (ret == WOLFSSH_USERAUTH_REJECTED) {
-                WLOG(WS_LOG_DEBUG, "DUARPW: password rejected");
-                #ifndef NO_FAILURE_ON_REJECTED
+            if (ssh->ctx->userAuthCb != NULL) {
+                WLOG(WS_LOG_DEBUG, "DUARPW: Calling the userauth callback");
+                ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PASSWORD,
+                                           authData, ssh->userAuthCtx);
+                if (ret == WOLFSSH_USERAUTH_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, "DUARPW: password check success");
+                    ret = WS_SUCCESS;
+                }
+                else if (ret == WOLFSSH_USERAUTH_PARTIAL_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, "DUARPW: password check partial success");
+                    partialSuccess = 1;
+                    ret = WS_SUCCESS;
+                }
+                else if (ret == WOLFSSH_USERAUTH_REJECTED) {
+                    WLOG(WS_LOG_DEBUG, "DUARPW: password rejected");
+                    #ifndef NO_FAILURE_ON_REJECTED
+                        authFailure = 1;
+                    #endif
+                    authRejected = 1;
+                    ret = WS_USER_AUTH_E;
+                }
+                else if (ret == WOLFSSH_USERAUTH_WOULD_BLOCK) {
+                    WLOG(WS_LOG_DEBUG, "DUARPW: userauth callback would block");
+                    ret = WS_AUTH_PENDING;
+                }
+                else {
+                    WLOG(WS_LOG_DEBUG, "DUARPW: password check failed, retry");
                     authFailure = 1;
-                #endif
-                authRejected = 1;
-                ret = WS_USER_AUTH_E;
-            }
-            else if (ret == WOLFSSH_USERAUTH_WOULD_BLOCK) {
-                WLOG(WS_LOG_DEBUG, "DUARPW: userauth callback would block");
-                ret = WS_AUTH_PENDING;
+                    ret = WS_SUCCESS;
+                }
             }
             else {
-                WLOG(WS_LOG_DEBUG, "DUARPW: password check failed, retry");
+                WLOG(WS_LOG_DEBUG, "DUARPW: No user auth callback");
                 authFailure = 1;
-                ret = WS_SUCCESS;
             }
-        }
-        else {
-            WLOG(WS_LOG_DEBUG, "DUARPW: No user auth callback");
-            authFailure = 1;
         }
     }
 
