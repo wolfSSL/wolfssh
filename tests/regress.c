@@ -340,8 +340,12 @@ static void FreeChannelOpenHarness(ChannelOpenHarness* harness)
         wolfSSH_CTX_free(harness->ctx);
 }
 
+/* Needs server, client, key files, and one covered host-key algorithm. */
 #if !defined(NO_WOLFSSH_SERVER) && !defined(NO_WOLFSSH_CLIENT) && \
-    !defined(WOLFSSH_NO_RSA) && !defined(NO_FILESYSTEM)
+    !defined(NO_FILESYSTEM) && \
+    (!defined(WOLFSSH_NO_RSA_SHA2_256) || \
+     !defined(WOLFSSH_NO_RSA_SHA2_512) || \
+     !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) || !defined(WOLFSSH_NO_ED25519))
     #if !defined(WOLFSSH_NO_DH_GROUP14_SHA256)
         #define KEXDH_REPLY_REGRESS_KEX_ALGO "diffie-hellman-group14-sha256"
     #elif !defined(WOLFSSH_NO_DH_GROUP16_SHA512)
@@ -395,11 +399,32 @@ static word32 LoadFileBuffer(const char* path, byte* buf, word32 bufSz)
 #define REGRESS_DUPLEX_QUEUE_SZ 32768U
 #define REGRESS_MUTATION_SCRATCH_SZ 4096U
 #define REGRESS_SERVER_KEY_PATH "keys/server-key-rsa.der"
+#define REGRESS_SERVER_KEY_ECC_PATH "keys/server-key-ecc.der"
+#define REGRESS_SERVER_KEY_ED25519_PATH "keys/server-key-ed25519.der"
 #define REGRESS_USERNAME "jill"
 #define REGRESS_PASSWORD "upthehill"
 #define REGRESS_MAX_HANDSHAKE_STEPS 2048
 #define REGRESS_SSH_PROTO_PREFIX "SSH-"
 #define REGRESS_SSH_PROTO_PREFIX_SZ 4U
+
+/* Host key used by the tests that are not tied to one key algorithm. */
+#if !defined(WOLFSSH_NO_RSA_SHA2_256)
+    #define REGRESS_DEFAULT_KEY_ALGO "rsa-sha2-256"
+    #define REGRESS_DEFAULT_KEY_PATH REGRESS_SERVER_KEY_PATH
+#elif !defined(WOLFSSH_NO_RSA_SHA2_512)
+    #define REGRESS_DEFAULT_KEY_ALGO "rsa-sha2-512"
+    #define REGRESS_DEFAULT_KEY_PATH REGRESS_SERVER_KEY_PATH
+#elif !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+    #define REGRESS_DEFAULT_KEY_ALGO "ecdsa-sha2-nistp256"
+    #define REGRESS_DEFAULT_KEY_PATH REGRESS_SERVER_KEY_ECC_PATH
+#else
+    #define REGRESS_DEFAULT_KEY_ALGO "ssh-ed25519"
+    #define REGRESS_DEFAULT_KEY_PATH REGRESS_SERVER_KEY_ED25519_PATH
+#endif
+
+/* KEXDH_REPLY mutation modes for the duplex mutator. */
+#define REGRESS_MUTATE_SIG_NAME 0
+#define REGRESS_MUTATE_SIG_DATA 1
 
 typedef struct {
     byte data[REGRESS_DUPLEX_QUEUE_SZ];
@@ -407,12 +432,14 @@ typedef struct {
 } DuplexQueue;
 
 typedef struct {
+    const char* replaceName;
     byte enabled;
     int parseError;
     word32 matchedPackets;
     word32 mutatedPackets;
     byte scratch[REGRESS_MUTATION_SCRATCH_SZ];
     word32 scratchSz;
+    byte mode;
 } KexReplyMutator;
 
 typedef struct DuplexEndpoint {
@@ -549,8 +576,10 @@ static int QueueAppend(DuplexQueue* queue, const byte* data, word32 dataSz)
     return WS_SUCCESS;
 }
 
+/* SIG_NAME replaces the signature name; SIG_DATA flips a signature byte. */
 static int RewriteSingleKexDhReplyPacket(const byte* packet, word32 packetSz,
-        const char* replacement, byte* out, word32 outSz, word32* outLen)
+        byte mode, const char* replacement, byte* out, word32 outSz,
+        word32* outLen)
 {
     const byte* payload;
     const byte* pubKey;
@@ -568,7 +597,10 @@ static int RewriteSingleKexDhReplyPacket(const byte* packet, word32 packetSz,
     byte payloadBuf[REGRESS_MUTATION_SCRATCH_SZ];
     byte innerSig[REGRESS_MUTATION_SCRATCH_SZ];
 
-    if (replacement == NULL || out == NULL || outLen == NULL) {
+    if (out == NULL || outLen == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+    if (mode == REGRESS_MUTATE_SIG_NAME && replacement == NULL) {
         return WS_BAD_ARGUMENT;
     }
 
@@ -618,14 +650,38 @@ static int RewriteSingleKexDhReplyPacket(const byte* packet, word32 packetSz,
         return WS_PARSE_E;
     }
 
-    (void)sigName;
-    (void)sigNameSz;
-
     innerSigSz = 0;
-    innerSigSz = AppendString(innerSig, sizeof(innerSig), innerSigSz,
-            replacement);
-    innerSigSz = AppendBlob(innerSig, sizeof(innerSig), innerSigSz,
-            sigData, sigDataSz);
+    if (mode == REGRESS_MUTATE_SIG_DATA) {
+        word32 dataStart;
+        word32 flipIdx;
+
+        if (sigDataSz <= LENGTH_SZ) {
+            return WS_PARSE_E;
+        }
+        innerSigSz = AppendBlob(innerSig, sizeof(innerSig), innerSigSz,
+                sigName, sigNameSz);
+        /* Signature data value bytes start after their length prefix. */
+        dataStart = innerSigSz + LENGTH_SZ;
+        innerSigSz = AppendBlob(innerSig, sizeof(innerSig), innerSigSz,
+                sigData, sigDataSz);
+
+        if (sigNameSz == sizeof("ssh-ed25519") - 1
+                && WMEMCMP(sigName, "ssh-ed25519", sigNameSz) == 0) {
+            /* Raw R || S: flip a byte of S so the verify rejects it. */
+            flipIdx = dataStart + sigDataSz / 2;
+        }
+        else {
+            /* RSA raw signature or ECC mpint r: flip an interior data byte. */
+            flipIdx = dataStart + LENGTH_SZ;
+        }
+        innerSig[flipIdx] ^= 0xFF;
+    }
+    else {
+        innerSigSz = AppendString(innerSig, sizeof(innerSig), innerSigSz,
+                replacement);
+        innerSigSz = AppendBlob(innerSig, sizeof(innerSig), innerSigSz,
+                sigData, sigDataSz);
+    }
 
     outerIdx = 0;
     outerIdx = AppendBlob(payloadBuf, sizeof(payloadBuf), outerIdx,
@@ -638,12 +694,13 @@ static int RewriteSingleKexDhReplyPacket(const byte* packet, word32 packetSz,
     return 1;
 }
 
-static int RewriteKexDhReplySignatureName(const byte* packet, word32 packetSz,
-        const char* replacement, byte* out, word32 outSz, word32* outLen)
+static int RewriteKexDhReplyPacket(const byte* packet, word32 packetSz,
+        byte mode, const char* replacement, byte* out, word32 outSz,
+        word32* outLen)
 {
     word32 offset = 0;
 
-    if (packet == NULL || replacement == NULL || out == NULL || outLen == NULL) {
+    if (packet == NULL || out == NULL || outLen == NULL) {
         return WS_BAD_ARGUMENT;
     }
 
@@ -657,7 +714,7 @@ static int RewriteKexDhReplySignatureName(const byte* packet, word32 packetSz,
 
         if (packet[offset + UINT32_SZ + PAD_LENGTH_SZ] == MSGID_KEXDH_REPLY) {
             rewriteRet = RewriteSingleKexDhReplyPacket(packet + offset,
-                    curPacketSz, replacement, out, outSz, outLen);
+                    curPacketSz, mode, replacement, out, outSz, outLen);
             if (rewriteRet <= 0) {
                 return rewriteRet;
             }
@@ -732,7 +789,8 @@ static int DuplexSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
         word32 mutatedSz = 0;
         int mutateRet;
 
-        mutateRet = RewriteKexDhReplySignatureName(output, outputSz, "ssh-rsa",
+        mutateRet = RewriteKexDhReplyPacket(output, outputSz,
+                endpoint->mutator->mode, endpoint->mutator->replaceName,
                 endpoint->mutator->scratch,
                 (word32)sizeof(endpoint->mutator->scratch), &mutatedSz);
         if (mutateRet < 0) {
@@ -785,7 +843,8 @@ static void FreeKexReplyHarness(KexReplyHarness* harness)
 }
 
 static void InitKexReplyHarnessEx(KexReplyHarness* harness,
-        const char* keyAlgo, byte mutateReply, byte skipPublicKeyCheck)
+        const char* keyAlgo, const char* keyPath, byte mutateReply,
+        byte mutateMode, const char* replaceName, byte skipPublicKeyCheck)
 {
     byte keyBuf[2048];
     word32 keySz;
@@ -794,6 +853,8 @@ static void InitKexReplyHarnessEx(KexReplyHarness* harness,
 
     InitDuplexPair(&harness->clientIo, &harness->serverIo, &harness->mutator);
     harness->mutator.enabled = mutateReply;
+    harness->mutator.mode = mutateMode;
+    harness->mutator.replaceName = replaceName;
 
     harness->clientCtx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
     AssertNotNull(harness->clientCtx);
@@ -820,7 +881,7 @@ static void InitKexReplyHarnessEx(KexReplyHarness* harness,
         wolfSSH_CTX_SetPublicKeyCheck(harness->clientCtx, AcceptAnyServerHostKey);
     }
 
-    keySz = LoadFileBuffer(REGRESS_SERVER_KEY_PATH, keyBuf, sizeof(keyBuf));
+    keySz = LoadFileBuffer(keyPath, keyBuf, sizeof(keyBuf));
     AssertTrue(keySz > 0);
     AssertIntEQ(wolfSSH_CTX_UsePrivateKey_buffer(harness->serverCtx, keyBuf,
             keySz, WOLFSSH_FORMAT_ASN1), WS_SUCCESS);
@@ -840,9 +901,11 @@ static void InitKexReplyHarnessEx(KexReplyHarness* harness,
 }
 
 static void InitKexReplyHarness(KexReplyHarness* harness,
-        const char* keyAlgo, byte mutateReply)
+        const char* keyAlgo, const char* keyPath, byte mutateReply,
+        const char* replaceName)
 {
-    InitKexReplyHarnessEx(harness, keyAlgo, mutateReply, 0);
+    InitKexReplyHarnessEx(harness, keyAlgo, keyPath,
+            mutateReply, REGRESS_MUTATE_SIG_NAME, replaceName, 0);
 }
 
 static int IsHandshakeRetryable(int err)
@@ -894,12 +957,13 @@ static void RunKexReplyHandshake(KexReplyHarness* harness,
     result->steps = REGRESS_MAX_HANDSHAKE_STEPS;
 }
 
-static void AssertHandshakeSucceeds(const char* keyAlgo)
+static void AssertHandshakeSucceeds(const char* keyAlgo, const char* keyPath)
 {
     KexReplyHarness harness;
     KexReplyRunResult result;
 
-    InitKexReplyHarness(&harness, keyAlgo, 0);
+    InitKexReplyHarnessEx(&harness, keyAlgo, keyPath, 0,
+            REGRESS_MUTATE_SIG_NAME, NULL, 0);
     RunKexReplyHandshake(&harness, &result);
 
     AssertTrue(result.clientSuccess);
@@ -911,12 +975,13 @@ static void AssertHandshakeSucceeds(const char* keyAlgo)
     FreeKexReplyHarness(&harness);
 }
 
-static void AssertHandshakeRejectsMutatedReply(const char* keyAlgo)
+static void AssertHandshakeRejectsMutatedReply(const char* keyAlgo,
+        const char* keyPath, const char* replaceName, int expectedErr)
 {
     KexReplyHarness harness;
     KexReplyRunResult result;
 
-    InitKexReplyHarness(&harness, keyAlgo, 1);
+    InitKexReplyHarness(&harness, keyAlgo, keyPath, 1, replaceName);
     RunKexReplyHandshake(&harness, &result);
 
     AssertIntEQ(harness.mutator.parseError, 0);
@@ -926,6 +991,7 @@ static void AssertHandshakeRejectsMutatedReply(const char* keyAlgo)
     AssertFalse(harness.client->connectState >= CONNECT_KEYED);
     AssertTrue(result.clientRet == WS_FATAL_ERROR);
     AssertTrue(result.clientErr != WS_WANT_READ && result.clientErr != WS_WANT_WRITE);
+    AssertIntEQ(result.clientErr, expectedErr);
 
     FreeKexReplyHarness(&harness);
 }
@@ -933,25 +999,49 @@ static void AssertHandshakeRejectsMutatedReply(const char* keyAlgo)
 #ifndef WOLFSSH_NO_RSA_SHA2_256
 static void TestKexDhReplyRejectsRsaSha2_256SigNameDowngrade(void)
 {
-    AssertHandshakeSucceeds("rsa-sha2-256");
-    AssertHandshakeRejectsMutatedReply("rsa-sha2-256");
+    AssertHandshakeSucceeds("rsa-sha2-256", REGRESS_SERVER_KEY_PATH);
+    /* Same-length wrong name reaches the WMEMCMP, not just the length check. */
+    AssertHandshakeRejectsMutatedReply("rsa-sha2-256", REGRESS_SERVER_KEY_PATH,
+            "rsa-sha2-512", WS_PARSE_E);
 }
 #endif
 
 #ifndef WOLFSSH_NO_RSA_SHA2_512
 static void TestKexDhReplyRejectsRsaSha2_512SigNameDowngrade(void)
 {
-    AssertHandshakeSucceeds("rsa-sha2-512");
-    AssertHandshakeRejectsMutatedReply("rsa-sha2-512");
+    AssertHandshakeSucceeds("rsa-sha2-512", REGRESS_SERVER_KEY_PATH);
+    AssertHandshakeRejectsMutatedReply("rsa-sha2-512", REGRESS_SERVER_KEY_PATH,
+            "rsa-sha2-256", WS_PARSE_E);
 }
 #endif
 
-static void AssertHandshakeRejectsWithNoPublicKeyCheck(const char* keyAlgo)
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+static void TestKexDhReplyRejectsEccSigNameDowngrade(void)
+{
+    AssertHandshakeSucceeds("ecdsa-sha2-nistp256", REGRESS_SERVER_KEY_ECC_PATH);
+    AssertHandshakeRejectsMutatedReply("ecdsa-sha2-nistp256",
+            REGRESS_SERVER_KEY_ECC_PATH, "ecdsa-sha2-nistp384", WS_PARSE_E);
+}
+#endif
+
+#ifndef WOLFSSH_NO_ED25519
+static void TestKexDhReplyRejectsEd25519SigNameDowngrade(void)
+{
+    AssertHandshakeSucceeds("ssh-ed25519", REGRESS_SERVER_KEY_ED25519_PATH);
+    /* No same-length sibling; "ssh-rsa" hits the length-check branch. */
+    AssertHandshakeRejectsMutatedReply("ssh-ed25519",
+            REGRESS_SERVER_KEY_ED25519_PATH, "ssh-rsa", WS_PARSE_E);
+}
+#endif
+
+static void AssertHandshakeRejectsWithNoPublicKeyCheck(const char* keyAlgo,
+        const char* keyPath)
 {
     KexReplyHarness harness;
     KexReplyRunResult result;
 
-    InitKexReplyHarnessEx(&harness, keyAlgo, 0, 1 /* skipPublicKeyCheck */);
+    InitKexReplyHarnessEx(&harness, keyAlgo, keyPath, 0,
+            REGRESS_MUTATE_SIG_NAME, NULL, 1 /* skipPublicKeyCheck */);
     RunKexReplyHandshake(&harness, &result);
 
     AssertFalse(result.clientSuccess);
@@ -965,20 +1055,21 @@ static void AssertHandshakeRejectsWithNoPublicKeyCheck(const char* keyAlgo)
 
 static void TestKexDhReplyRejectsNoPublicKeyCheck(void)
 {
-#ifndef WOLFSSH_NO_RSA_SHA2_256
-    AssertHandshakeRejectsWithNoPublicKeyCheck("rsa-sha2-256");
-#endif
-#ifndef WOLFSSH_NO_RSA_SHA2_512
-    AssertHandshakeRejectsWithNoPublicKeyCheck("rsa-sha2-512");
+    AssertHandshakeRejectsWithNoPublicKeyCheck(REGRESS_DEFAULT_KEY_ALGO,
+            REGRESS_DEFAULT_KEY_PATH);
+#if !defined(WOLFSSH_NO_RSA_SHA2_256) && !defined(WOLFSSH_NO_RSA_SHA2_512)
+    AssertHandshakeRejectsWithNoPublicKeyCheck("rsa-sha2-512",
+            REGRESS_SERVER_KEY_PATH);
 #endif
 }
 
-static void AssertHandshakeRejectsWhenCallbackRejects(const char* keyAlgo)
+static void AssertHandshakeRejectsWhenCallbackRejects(const char* keyAlgo,
+        const char* keyPath)
 {
     KexReplyHarness harness;
     KexReplyRunResult result;
 
-    InitKexReplyHarness(&harness, keyAlgo, 0);
+    InitKexReplyHarness(&harness, keyAlgo, keyPath, 0, NULL);
     wolfSSH_CTX_SetPublicKeyCheck(harness.clientCtx, RejectAnyServerHostKey);
     RunKexReplyHandshake(&harness, &result);
 
@@ -993,13 +1084,70 @@ static void AssertHandshakeRejectsWhenCallbackRejects(const char* keyAlgo)
 
 static void TestKexDhReplyRejectsWhenCallbackRejects(void)
 {
-#ifndef WOLFSSH_NO_RSA_SHA2_256
-    AssertHandshakeRejectsWhenCallbackRejects("rsa-sha2-256");
-#endif
-#ifndef WOLFSSH_NO_RSA_SHA2_512
-    AssertHandshakeRejectsWhenCallbackRejects("rsa-sha2-512");
+    AssertHandshakeRejectsWhenCallbackRejects(REGRESS_DEFAULT_KEY_ALGO,
+            REGRESS_DEFAULT_KEY_PATH);
+#if !defined(WOLFSSH_NO_RSA_SHA2_256) && !defined(WOLFSSH_NO_RSA_SHA2_512)
+    AssertHandshakeRejectsWhenCallbackRejects("rsa-sha2-512",
+            REGRESS_SERVER_KEY_PATH);
 #endif
 }
+
+/* Valid name, flipped data byte: the client reaches the verify and rejects. */
+static void AssertHandshakeRejectsCorruptedSig(const char* keyAlgo,
+        const char* keyPath, int expectedErr)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    InitKexReplyHarnessEx(&harness, keyAlgo, keyPath, 1,
+            REGRESS_MUTATE_SIG_DATA, NULL, 0);
+    RunKexReplyHandshake(&harness, &result);
+
+    AssertIntEQ(harness.mutator.parseError, 0);
+    AssertIntEQ(harness.mutator.matchedPackets, 1);
+    AssertIntEQ(harness.mutator.mutatedPackets, 1);
+    AssertFalse(result.clientSuccess);
+    AssertFalse(harness.client->connectState >= CONNECT_KEYED);
+    AssertTrue(result.clientRet == WS_FATAL_ERROR);
+    AssertTrue(result.clientErr != WS_WANT_READ &&
+            result.clientErr != WS_WANT_WRITE);
+    AssertIntEQ(result.clientErr, expectedErr);
+
+    FreeKexReplyHarness(&harness);
+}
+
+#ifndef WOLFSSH_NO_RSA_SHA2_256
+static void TestKexDhReplyRejectsRsaSha2_256CorruptSig(void)
+{
+    AssertHandshakeRejectsCorruptedSig("rsa-sha2-256",
+            REGRESS_SERVER_KEY_PATH, WS_RSA_E);
+}
+#endif
+
+#ifndef WOLFSSH_NO_RSA_SHA2_512
+static void TestKexDhReplyRejectsRsaSha2_512CorruptSig(void)
+{
+    AssertHandshakeRejectsCorruptedSig("rsa-sha2-512",
+            REGRESS_SERVER_KEY_PATH, WS_RSA_E);
+}
+#endif
+
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+/* The flip preserves r's mpint length, so the verify fails with WS_ECC_E. */
+static void TestKexDhReplyRejectsEccCorruptSig(void)
+{
+    AssertHandshakeRejectsCorruptedSig("ecdsa-sha2-nistp256",
+            REGRESS_SERVER_KEY_ECC_PATH, WS_ECC_E);
+}
+#endif
+
+#ifndef WOLFSSH_NO_ED25519
+static void TestKexDhReplyRejectsEd25519CorruptSig(void)
+{
+    AssertHandshakeRejectsCorruptedSig("ssh-ed25519",
+            REGRESS_SERVER_KEY_ED25519_PATH, WS_ED25519_E);
+}
+#endif
 
 #endif /* KEXDH_REPLY_REGRESS_KEX_ALGO */
 
@@ -5007,8 +5155,26 @@ int main(int argc, char** argv)
     #ifndef WOLFSSH_NO_RSA_SHA2_512
     TestKexDhReplyRejectsRsaSha2_512SigNameDowngrade();
     #endif
+    #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    TestKexDhReplyRejectsEccSigNameDowngrade();
+    #endif
+    #ifndef WOLFSSH_NO_ED25519
+    TestKexDhReplyRejectsEd25519SigNameDowngrade();
+    #endif
     TestKexDhReplyRejectsNoPublicKeyCheck();
     TestKexDhReplyRejectsWhenCallbackRejects();
+    #ifndef WOLFSSH_NO_RSA_SHA2_256
+    TestKexDhReplyRejectsRsaSha2_256CorruptSig();
+    #endif
+    #ifndef WOLFSSH_NO_RSA_SHA2_512
+    TestKexDhReplyRejectsRsaSha2_512CorruptSig();
+    #endif
+    #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    TestKexDhReplyRejectsEccCorruptSig();
+    #endif
+    #ifndef WOLFSSH_NO_ED25519
+    TestKexDhReplyRejectsEd25519CorruptSig();
+    #endif
 #endif
 
 #ifdef WOLFSSH_SFTP
