@@ -10165,25 +10165,25 @@ static int DoChannelData(WOLFSSH* ssh,
 }
 
 
-/* deletes current buffer and updates it
- * return WS_SUCCESS on success */
+/* Appends data to the buffer, preserving any bytes not yet read. This is an
+ * accumulating buffer: unread data is kept, already-read data (everything
+ * below idx) is compacted away, and the new data is appended after the unread
+ * region. Returns WS_SUCCESS on success. */
 static int PutBuffer(WOLFSSH_BUFFER* buf, byte* data, word32 dataSz)
 {
     int ret;
 
-    /* reset "used" section of buffer back to 0 */
-    buf->length = 0;
-    buf->idx    = 0;
-
-    if (dataSz > buf->bufferSz) {
-        if ((ret = GrowBuffer(buf, dataSz)) != WS_SUCCESS) {
-            return ret;
-        }
+    /* GrowBuffer compacts the consumed prefix (bytes below idx) down to the
+     * front and guarantees room for dataSz more bytes after the unread data,
+     * reallocating only when needed. On return idx is 0 and length is the
+     * count of unread bytes. */
+    ret = GrowBuffer(buf, dataSz);
+    if (ret == WS_SUCCESS) {
+        WMEMCPY(buf->buffer + buf->length, data, dataSz);
+        buf->length += dataSz;
     }
-    WMEMCPY(buf->buffer, data, dataSz);
-    buf->length = dataSz;
 
-    return WS_SUCCESS;
+    return ret;
 }
 
 
@@ -10203,9 +10203,6 @@ static int DoChannelExtendedData(WOLFSSH* ssh,
     if (ret == WS_SUCCESS)
         ret = GetUint32(&dataTypeCode, buf, len, &begin);
     if (ret == WS_SUCCESS)
-        ret = (dataTypeCode == CHANNEL_EXTENDED_DATA_STDERR) ?
-            WS_SUCCESS : WS_INVALID_EXTDATA;
-    if (ret == WS_SUCCESS)
         ret = GetSize(&dataSz, buf, len, &begin);
 
     if (ret == WS_SUCCESS) {
@@ -10214,21 +10211,34 @@ static int DoChannelExtendedData(WOLFSSH* ssh,
             ret = WS_INVALID_CHANID;
         else if (dataSz > channel->maxPacketSz)
             ret = WS_RECV_OVERFLOW_E;
-        else {
-            ret = PutBuffer(&ssh->extDataBuffer,  buf + begin, dataSz);
+        else if (dataTypeCode == CHANNEL_EXTENDED_DATA_STDERR) {
+            /* Buffer the stderr data for the application to read. The
+             * extended data buffer accumulates unread data instead of
+             * overwriting it, so a blob arriving before the application
+             * reads the previous one is no longer silently lost. */
+            ret = PutBuffer(&ssh->extDataBuffer, buf + begin, dataSz);
             #ifdef DEBUG_WOLFSSH
             DumpOctetString(buf + begin, dataSz);
             #endif
-            if (ret == WS_SUCCESS) {
+            if (ret == WS_SUCCESS)
                 ret = SendChannelWindowAdjust(ssh, channel->channel, dataSz);
+            if (ret == WS_SUCCESS) {
+                ssh->lastRxId = channelId;
+                ret = WS_EXTDATA;
             }
         }
+        else {
+            /* Unknown extended data type. RFC 4254/4251 call for unknown
+             * values to be ignored rather than rejected, so consume and
+             * discard the payload. Nothing is buffered for the application,
+             * so replenish the window immediately. */
+            WLOG(WS_LOG_INFO, "Ignoring unknown extended data type %u",
+                    dataTypeCode);
+            ret = SendChannelWindowAdjust(ssh, channel->channel, dataSz);
+            if (ret == WS_SUCCESS)
+                ssh->lastRxId = channelId;
+        }
         *idx = begin + dataSz;
-    }
-
-    if (ret == WS_SUCCESS) {
-        ssh->lastRxId = channelId;
-        ret = WS_EXTDATA;
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoChannelExtendedData(), ret = %d", ret);

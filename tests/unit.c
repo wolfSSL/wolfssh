@@ -1769,6 +1769,103 @@ done:
     return result;
 }
 
+/* Exercises the accumulating extended-data buffer: two stderr blobs that
+ * arrive before the application reads must both be preserved (no silent
+ * overwrite), and an unknown extended data type must be ignored rather than
+ * rejected. */
+static int test_DoChannelExtendedData_flow(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    word32           idx;
+    byte             out[32];
+
+    /* channelId=0, type=1 (stderr), dataSz=10, payload all 0x11 */
+    static const byte blob1[] = {
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x0A,
+        0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11
+    };
+    /* channelId=0, type=1 (stderr), dataSz=10, payload all 0x22 */
+    static const byte blob2[] = {
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x0A,
+        0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22
+    };
+    /* channelId=0, unknown type=2, dataSz=5, payload all 0x33 */
+    static const byte unknownBlob[] = {
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x02,
+        0x00, 0x00, 0x00, 0x05,
+        0x33, 0x33, 0x33, 0x33, 0x33
+    };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -600;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -601; goto done; }
+    /* Allow MSGID_CHANNEL_WINDOW_ADJUST on this bare session. */
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    /* windowSz=128, maxPacketSz=64 */
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -602; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -603;
+        goto done;
+    }
+
+    /* First stderr blob: buffered. */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blob1,
+                                            (word32)sizeof(blob1), &idx);
+    if (ret != WS_EXTDATA) { result = -604; goto done; }
+
+    /* Second stderr blob before any read: must accumulate, not overwrite. */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blob2,
+                                            (word32)sizeof(blob2), &idx);
+    if (ret != WS_EXTDATA) { result = -606; goto done; }
+
+    /* Read everything: both blobs present and in order (no data loss). */
+    ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+    if (ret != 20) { result = -608; goto done; }
+    {
+        int i;
+        for (i = 0; i < 10; i++)
+            if (out[i] != 0x11) { result = -609; goto done; }
+        for (i = 10; i < 20; i++)
+            if (out[i] != 0x22) { result = -610; goto done; }
+    }
+
+    /* Buffer drained; a further read returns 0. */
+    ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+    if (ret != 0) { result = -612; goto done; }
+
+    /* Unknown extended data type: ignored (consumed), not rejected. Nothing
+     * is buffered for the application. */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)unknownBlob,
+                                            (word32)sizeof(unknownBlob), &idx);
+    if (ret != WS_SUCCESS) { result = -613; goto done; }
+    ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+    if (ret != 0) { result = -615; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
 static int test_SendChannelData_eofTxd(void)
 {
     WOLFSSH_CTX*     ctx = NULL;
@@ -5144,6 +5241,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_DoChannelExtendedData_overflow();
     printf("DoChannelExtendedData_overflow: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DoChannelExtendedData_flow();
+    printf("DoChannelExtendedData_flow: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
