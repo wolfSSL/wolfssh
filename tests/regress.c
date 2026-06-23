@@ -3203,6 +3203,47 @@ static void RunFirstPacketFollowsSkipCase(FirstPacketFollowsSkipFn fn,
     wolfSSH_CTX_free(ctx);
 }
 
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
+/* After skipping a wrong-guess packet, the real first packet of the negotiated
+ * KEX must still pass the message gate even when it sits across the GEX
+ * boundary from the guess. Drives skip-then-real through IsMessageAllowed and
+ * checks the skip did not pin expectMsgId to the discarded message's ID. */
+static void RunFirstPacketFollowsCrossBoundaryCase(FirstPacketFollowsSkipFn fn,
+        const char* label, byte realMsg)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    byte payload[8];
+    word32 idx = 0;
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertNotNull(ssh->handshake);
+
+    ssh->clientState = CLIENT_KEXINIT_DONE;
+    ssh->isKeying |= WOLFSSH_PEER_IS_KEYING;
+    ssh->handshake->ignoreNextKexMsg = 1;
+    ssh->handshake->expectMsgId = MSGID_NONE;
+
+    WMEMSET(payload, 0xAB, sizeof(payload));
+
+    ret = fn(ssh, payload, sizeof(payload), &idx);
+    if (ret != WS_SUCCESS)
+        Fail(("%s returns WS_SUCCESS when skipping", label), ("%d", ret));
+
+    /* Gate must not be pinned to the discarded guess's ID. */
+    AssertIntEQ(ssh->handshake->expectMsgId, MSGID_NONE);
+    /* The negotiated first-KEX packet must be accepted. */
+    AssertIntEQ(wolfSSH_TestIsMessageAllowed(ssh, realMsg, 0), 1);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+#endif /* WOLFSSH_NO_DH_GEX_SHA256 */
+
 static void TestFirstPacketFollowsSkipped(void)
 {
     RunFirstPacketFollowsSkipCase(wolfSSH_TestDoKexDhInit,
@@ -3210,6 +3251,13 @@ static void TestFirstPacketFollowsSkipped(void)
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
     RunFirstPacketFollowsSkipCase(wolfSSH_TestDoKexDhGexRequest,
             "DoKexDhGexRequest", WOLFSSH_ENDPOINT_SERVER, CLIENT_KEXINIT_DONE);
+    RunFirstPacketFollowsSkipCase(wolfSSH_TestDoKexDhGexGroup,
+            "DoKexDhGexGroup", WOLFSSH_ENDPOINT_CLIENT, SERVER_KEXINIT_DONE);
+    /* Guess/negotiation straddling the GEX boundary, both directions. */
+    RunFirstPacketFollowsCrossBoundaryCase(wolfSSH_TestDoKexDhInit,
+            "DoKexDhInit->GEX_REQUEST", MSGID_KEXDH_GEX_REQUEST);
+    RunFirstPacketFollowsCrossBoundaryCase(wolfSSH_TestDoKexDhGexRequest,
+            "DoKexDhGexRequest->KEXDH_INIT", MSGID_KEXDH_INIT);
 #endif
     RunFirstPacketFollowsSkipCase(wolfSSH_TestDoKexDhReply,
             "DoKexDhReply", WOLFSSH_ENDPOINT_CLIENT, SERVER_KEXINIT_DONE);
