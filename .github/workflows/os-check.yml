@@ -72,6 +72,7 @@ jobs:
           '',
           '--enable-all',
           '--enable-sftp',
+          '--enable-sftp --disable-sftp-zeroize',
           '--enable-scp',
           '--enable-keyboard-interactive',
           '--enable-shell',

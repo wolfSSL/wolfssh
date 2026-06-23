@@ -151,6 +151,11 @@ AC_ARG_ENABLE([sftp],
     [AS_HELP_STRING([--enable-sftp],[Enable SFTP support (default: disabled)])],
     [ENABLED_SFTP=$enableval],[ENABLED_SFTP=no])
 
+# SFTP buffer zeroization
+AC_ARG_ENABLE([sftp-zeroize],
+    [AS_HELP_STRING([--disable-sftp-zeroize],[Disable zeroization of SFTP file payload buffers before free (default: enabled)])],
+    [ENABLED_SFTP_ZEROIZE=$enableval],[ENABLED_SFTP_ZEROIZE=yes])
+
 # SSHD
 AC_ARG_ENABLE([sshd],
     [AS_HELP_STRING([--enable-sshd],[Enable SSHD support (default: disabled)])],
@@ -235,6 +240,8 @@ AS_IF([test "x$ENABLED_SCP" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SCP"])
 AS_IF([test "x$ENABLED_SFTP" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SFTP"])
+AS_IF([test "x$ENABLED_SFTP_ZEROIZE" = "xno"],
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_NO_SFTP_BUFFER_ZERO"])
 AS_IF([test "x$ENABLED_FWD" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_FWD"])
 AS_IF([test "x$ENABLED_TERM" = "xyes"],
@@ -342,6 +349,7 @@ AS_ECHO(["   * psuedo-terminal:           $ENABLED_TERM"])
 AS_ECHO(["   * echoserver shell support:  $ENABLED_SHELL"])
 AS_ECHO(["   * scp:                       $ENABLED_SCP"])
 AS_ECHO(["   * sftp:                      $ENABLED_SFTP"])
+AS_ECHO(["   * sftp buffer zeroize:       $ENABLED_SFTP_ZEROIZE"])
 AS_ECHO(["   * sshd:                      $ENABLED_SSHD"])
 AS_ECHO(["   * ssh client:                $ENABLED_SSHCLIENT"])
 AS_ECHO(["   * agent:                     $ENABLED_AGENT"])
