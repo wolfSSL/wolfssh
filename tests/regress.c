@@ -141,6 +141,12 @@ static word32 AppendUint32(byte* buf, word32 bufSz, word32 idx, word32 value)
     return idx;
 }
 
+static word32 ReadUint32(const byte* buf)
+{
+    return ((word32)buf[0] << 24) | ((word32)buf[1] << 16) |
+            ((word32)buf[2] << 8) | (word32)buf[3];
+}
+
 static word32 AppendData(byte* buf, word32 bufSz, word32 idx,
         const byte* data, word32 dataSz)
 {
@@ -430,12 +436,6 @@ typedef struct {
     int serverSuccess;
     word32 steps;
 } KexReplyRunResult;
-
-static word32 ReadUint32(const byte* buf)
-{
-    return ((word32)buf[0] << 24) | ((word32)buf[1] << 16) |
-            ((word32)buf[2] << 8) | (word32)buf[3];
-}
 
 static int ReadStringRef(word32* strSz, const byte** str,
         const byte* buf, word32 len, word32* idx)
@@ -3014,6 +3014,77 @@ static void TestKexInitTrailingComma(void)
     wolfSSH_CTX_free(ctx);
 }
 
+/* The two KEXINIT language name-lists were skipped with an unchecked
+ * begin += skipSz, so a bogus length could wrap begin back into the payload
+ * and let a malformed packet parse as valid. GetSkip now bounds the declared
+ * length against the remaining payload; an overlong language length must be
+ * rejected. */
+static void TestKexInitLanguageLengthOverflow(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    byte payload[512];
+    word32 payloadSz;
+    word32 idx = 0;
+    word32 off;
+    int i;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, FPF_KEX_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, FPF_KEY_GOOD), WS_SUCCESS);
+
+    payloadSz = BuildKexInitPayload(ssh, FPF_KEX_GOOD, FPF_KEY_GOOD,
+            0, payload, (word32)sizeof(payload));
+
+    /* Walk past the cookie and the eight algorithm name-lists to reach the
+     * first (client-to-server) language length field. */
+    off = COOKIE_SZ;
+    for (i = 0; i < 8; i++)
+        off += UINT32_SZ + ReadUint32(payload + off);
+
+    /* Overlong length (2^32-4) causes integer wraparound; GetSkip must
+     * reject with WS_BUFFER_E instead of failing downstream. */
+    (void)AppendUint32(payload, (word32)sizeof(payload), off, 0xFFFFFFFCu);
+
+    AssertIntEQ(wolfSSH_TestDoKexInit(ssh, payload, payloadSz, &idx),
+            WS_BUFFER_E);
+
+    wolfSSH_free(ssh);
+
+    /* Sub-test 2: Corrupt the second (server-to-client) language length.
+     * Create a fresh ssh context to reset state. */
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, FPF_KEX_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, FPF_KEY_GOOD), WS_SUCCESS);
+
+    payloadSz = BuildKexInitPayload(ssh, FPF_KEX_GOOD, FPF_KEY_GOOD,
+            0, payload, (word32)sizeof(payload));
+
+    /* Walk past the cookie and the eight algorithm name-lists, then the
+     * first (client-to-server) language name-list, to reach the second
+     * (server-to-client) language length field. */
+    off = COOKIE_SZ;
+    for (i = 0; i < 8; i++)
+        off += UINT32_SZ + ReadUint32(payload + off);
+    off += UINT32_SZ + ReadUint32(payload + off);
+
+    /* Corrupt the S2C language length with the same overflow value to
+     * verify GetSkip rejects it with WS_BUFFER_E, confirming the fix is
+     * applied to both language name-list skips at internal.c:4730 and 4736. */
+    (void)AppendUint32(payload, (word32)sizeof(payload), off, 0xFFFFFFFCu);
+
+    idx = 0;
+    AssertIntEQ(wolfSSH_TestDoKexInit(ssh, payload, payloadSz, &idx),
+            WS_BUFFER_E);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
 #if !defined(WOLFSSH_NO_AES_CBC) && !defined(WOLFSSH_NO_AES_CTR) \
     && !defined(WOLFSSH_NO_HMAC_SHA1) && !defined(WOLFSSH_NO_HMAC_SHA2_256)
 static void TestIndependentAlgoNegotiation(void)
@@ -4426,6 +4497,7 @@ int main(int argc, char** argv)
     TestKexInitReservedNonZeroRejected();
     TestKexInitNameListCaps();
     TestKexInitTrailingComma();
+    TestKexInitLanguageLengthOverflow();
     TestDoKexInitRejectsWhenPeerIsKeying();
 #endif
 #if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && !defined(WOLFSSH_NO_RSA) \
