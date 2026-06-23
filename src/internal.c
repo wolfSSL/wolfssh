@@ -4181,6 +4181,11 @@ static int GetNameListRaw(byte* idList, word32* idListSz,
         return WS_BAD_ARGUMENT;
     }
 
+    /* Adjust nameListSz for a trailing comma. */
+    if (nameListSz > 0 && nameList[nameListSz - 1] == ',') {
+        nameListSz--;
+    }
+
     /* Reject oversized name-lists to bound the per-token NameToId scan cost.
      * Applies to every list parsed here; the built-in canned lists are far
      * under these caps. */
