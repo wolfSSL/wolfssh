@@ -1769,10 +1769,16 @@ done:
     return result;
 }
 
-/* Exercises the accumulating extended-data buffer: two stderr blobs that
- * arrive before the application reads must both be preserved (no silent
- * overwrite), and an unknown extended data type must be ignored rather than
- * rejected. */
+/* Exercises the accumulating extended-data buffer and its window
+ * back-pressure: two stderr blobs that arrive before the application reads
+ * must both be preserved (no silent overwrite), the channel window must be
+ * charged on receipt and replenished on read, a partial read followed by an
+ * append must preserve byte ordering and window accounting across the
+ * GrowBuffer compaction, and an unknown extended data type must be ignored
+ * rather than rejected. A final case pins the documented single-session
+ * limitation: stderr arriving on a second channel before the first is drained
+ * is dropped (its window replenished immediately) rather than corrupting the
+ * shared buffer's window accounting. */
 static int test_DoChannelExtendedData_flow(void)
 {
     WOLFSSH_CTX*     ctx = NULL;
@@ -1824,17 +1830,20 @@ static int test_DoChannelExtendedData_flow(void)
         goto done;
     }
 
-    /* First stderr blob: buffered. */
+    /* First stderr blob: buffered, window charged 128 -> 118. */
     idx = 0;
     ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blob1,
                                             (word32)sizeof(blob1), &idx);
     if (ret != WS_EXTDATA) { result = -604; goto done; }
+    if (ch->windowSz != 118) { result = -605; goto done; }
 
-    /* Second stderr blob before any read: must accumulate, not overwrite. */
+    /* Second stderr blob before any read: must accumulate, not overwrite.
+     * Window charged 118 -> 108. */
     idx = 0;
     ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blob2,
                                             (word32)sizeof(blob2), &idx);
     if (ret != WS_EXTDATA) { result = -606; goto done; }
+    if (ch->windowSz != 108) { result = -607; goto done; }
 
     /* Read everything: both blobs present and in order (no data loss). */
     ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
@@ -1846,19 +1855,259 @@ static int test_DoChannelExtendedData_flow(void)
         for (i = 10; i < 20; i++)
             if (out[i] != 0x22) { result = -610; goto done; }
     }
+    /* Draining replenishes the window: 108 + 20 -> 128. */
+    if (ch->windowSz != 128) { result = -611; goto done; }
 
     /* Buffer drained; a further read returns 0. */
     ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
     if (ret != 0) { result = -612; goto done; }
 
+    /* Partial-read-then-append: read part of one blob (leaving idx > 0), then
+     * receive another blob. The append forces GrowBuffer to compact a non-zero
+     * idx in place (WMEMMOVE) before adding the new data, and the window must
+     * track a read that is split across the receipt of more data. */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blob1,
+                                            (word32)sizeof(blob1), &idx);
+    if (ret != WS_EXTDATA) { result = -630; goto done; }
+    if (ch->windowSz != 118) { result = -631; goto done; }
+
+    /* Read 4 of the 10 buffered bytes: window 118 + 4 -> 122, idx left at 4. */
+    ret = wolfSSH_extended_data_read(ssh, out, 4);
+    if (ret != 4) { result = -632; goto done; }
+    {
+        int i;
+        for (i = 0; i < 4; i++)
+            if (out[i] != 0x11) { result = -633; goto done; }
+    }
+    if (ch->windowSz != 122) { result = -634; goto done; }
+
+    /* Append blob2 with 6 unread bytes still pending (idx=4, length=10): the
+     * 6 remaining 0x11 bytes must be preserved ahead of the new 0x22 bytes.
+     * Window charged 122 -> 112. */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blob2,
+                                            (word32)sizeof(blob2), &idx);
+    if (ret != WS_EXTDATA) { result = -635; goto done; }
+    if (ch->windowSz != 112) { result = -636; goto done; }
+
+    /* Read the rest: 6 leftover 0x11 followed by 10 0x22, in order. Window
+     * 112 + 16 -> 128. */
+    ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+    if (ret != 16) { result = -637; goto done; }
+    {
+        int i;
+        for (i = 0; i < 6; i++)
+            if (out[i] != 0x11) { result = -638; goto done; }
+        for (i = 6; i < 16; i++)
+            if (out[i] != 0x22) { result = -639; goto done; }
+    }
+    if (ch->windowSz != 128) { result = -640; goto done; }
+
+    /* Drained again. */
+    ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+    if (ret != 0) { result = -641; goto done; }
+
     /* Unknown extended data type: ignored (consumed), not rejected. Nothing
-     * is buffered for the application. */
+     * is buffered and the window is left intact (replenished on receipt). */
     idx = 0;
     ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)unknownBlob,
                                             (word32)sizeof(unknownBlob), &idx);
     if (ret != WS_SUCCESS) { result = -613; goto done; }
+    if (ch->windowSz != 128) { result = -614; goto done; }
     ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
     if (ret != 0) { result = -615; goto done; }
+
+    /* Window-overflow branch: draw the window down below a blob that is
+     * still <= maxPacketSz, then confirm the next blob is rejected by the
+     * "dataSz > windowSz" branch and not the maxPacketSz branch. dataSz=60
+     * stays under maxPacketSz=64 so the maxPacketSz check cannot fire first. */
+    {
+        byte big[12 + 60];
+        int  i;
+
+        WMEMSET(big, 0, sizeof(big));
+        big[7]  = 0x01;        /* type = stderr */
+        big[11] = 0x3C;        /* dataSz = 60 */
+        for (i = 12; i < (int)sizeof(big); i++)
+            big[i] = 0x44;
+
+        /* window 128 -> 68 */
+        idx = 0;
+        ret = wolfSSH_TestDoChannelExtendedData(ssh, big,
+                                                (word32)sizeof(big), &idx);
+        if (ret != WS_EXTDATA) { result = -616; goto done; }
+        if (ch->windowSz != 68) { result = -617; goto done; }
+
+        /* window 68 -> 8 */
+        idx = 0;
+        ret = wolfSSH_TestDoChannelExtendedData(ssh, big,
+                                                (word32)sizeof(big), &idx);
+        if (ret != WS_EXTDATA) { result = -618; goto done; }
+        if (ch->windowSz != 8) { result = -619; goto done; }
+
+        /* dataSz=60 <= maxPacketSz but > windowSz=8: window-overflow reject,
+         * window left unchanged. */
+        idx = 0;
+        ret = wolfSSH_TestDoChannelExtendedData(ssh, big,
+                                                (word32)sizeof(big), &idx);
+        if (ret != WS_RECV_OVERFLOW_E) { result = -620; goto done; }
+        if (ch->windowSz != 8) { result = -621; goto done; }
+    }
+
+    /* Cross-channel fail safe: the extData buffer and extDataChannelId are
+     * shared across channels, so only one channel's stderr can be buffered at a
+     * time. Stderr arriving on a second channel before the first is drained is
+     * dropped (its window replenished immediately) instead of corrupting the
+     * window accounting. This pins the documented single-session limitation.
+     * First drain the 120 bytes still pending on channel 0 from the overflow
+     * block (8 + 120 -> 128 on read) to reach a clean state. */
+    {
+        WOLFSSH_CHANNEL* chB = NULL;
+        /* channelId=1, type=1 (stderr), dataSz=10, payload all 0x22 */
+        static const byte blobB[] = {
+            0x00, 0x00, 0x00, 0x01,
+            0x00, 0x00, 0x00, 0x01,
+            0x00, 0x00, 0x00, 0x0A,
+            0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22
+        };
+
+        ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+        if (ret != 32) { result = -650; goto done; }
+        ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+        if (ret != 32) { result = -651; goto done; }
+        ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+        if (ret != 32) { result = -652; goto done; }
+        ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+        if (ret != 24) { result = -653; goto done; }
+        ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+        if (ret != 0) { result = -654; goto done; }
+        if (ch->windowSz != 128) { result = -655; goto done; }
+
+        /* Second channel, id 1, same window/packet sizes as channel 0. */
+        chB = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+        if (chB == NULL) { result = -656; goto done; }
+        if (ChannelAppend(ssh, chB) != WS_SUCCESS) {
+            ChannelDelete(chB, ssh->ctx->heap);
+            result = -657;
+            goto done;
+        }
+
+        /* Channel 0 buffers stderr first: charged 128 -> 118, extDataChannelId
+         * becomes 0, no warning (nothing was pending). */
+        idx = 0;
+        ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blob1,
+                                                (word32)sizeof(blob1), &idx);
+        if (ret != WS_EXTDATA) { result = -658; goto done; }
+        if (ch->windowSz != 118) { result = -659; goto done; }
+
+        /* Channel 1 sends stderr while channel 0 still has unread data. The
+         * shared single-session buffer can only hold one channel's stderr, so
+         * this blob is dropped (fail safe) rather than corrupting the window
+         * accounting. Its window is replenished immediately (SendChannelWindow-
+         * Adjust returns WS_SUCCESS), so chB stays at 128, the data is not
+         * buffered, and extDataChannelId is left at channel 0. */
+        idx = 0;
+        ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blobB,
+                                                (word32)sizeof(blobB), &idx);
+        if (ret != WS_SUCCESS) { result = -660; goto done; }
+        if (chB->windowSz != 128) { result = -661; goto done; }
+
+        /* One read drains only channel 0's buffered 10 bytes (channel 1's were
+         * dropped, not buffered) and credits them back to channel 0:
+         * 118 + 10 -> 128. No window is leaked and no channel is over-credited. */
+        ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+        if (ret != 10) { result = -662; goto done; }
+        {
+            int i;
+            for (i = 0; i < 10; i++)
+                if (out[i] != 0x11) { result = -663; goto done; }
+        }
+        if (ch->windowSz != 128) { result = -665; goto done; }
+        if (chB->windowSz != 128) { result = -666; goto done; }
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* Counts IoSend calls so a test can assert whether anything went on the wire. */
+static word32 s_extSendCount = 0;
+static int CountIoSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    (void)ssh; (void)buf; (void)ctx;
+    s_extSendCount++;
+    return (int)sz;
+}
+
+/* RFC 4253 section 7.1: no connection-layer message (such as
+ * SSH_MSG_CHANNEL_WINDOW_ADJUST) may go out between KEXINIT and NEWKEYS. The
+ * receive-path discard branches in DoChannelExtendedData() must therefore not
+ * send a window adjust mid-KEX; they park the owed credit on the channel and
+ * SendPendingChannelWindowAdjust() flushes it once keying completes. */
+static int test_DoChannelExtendedData_keying(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    word32           idx;
+
+    /* channelId=0, unknown type=2, dataSz=5, payload all 0x33 */
+    static const byte unknownBlob[] = {
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x02,
+        0x00, 0x00, 0x00, 0x05,
+        0x33, 0x33, 0x33, 0x33, 0x33
+    };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -700;
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -701; goto done; }
+    /* Allow MSGID_CHANNEL_WINDOW_ADJUST on this bare session. */
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -702; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -703;
+        goto done;
+    }
+
+    /* Pretend a rekey is in progress. Unknown extended data is consumed, but
+     * the owed window credit must not go on the wire; it is parked instead. */
+    ssh->isKeying = WOLFSSH_SELF_IS_KEYING;
+    s_extSendCount = 0;
+
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)unknownBlob,
+                                            (word32)sizeof(unknownBlob), &idx);
+    if (ret != WS_SUCCESS) { result = -704; goto done; }
+    if (s_extSendCount != 0) { result = -705; goto done; }
+    if (ch->pendingWindowAdjust != 5) { result = -706; goto done; }
+    /* Discarded data is never charged to the local window. */
+    if (ch->windowSz != 128) { result = -707; goto done; }
+
+    /* Flushing while still keying is a no-op: credit stays parked. */
+    ret = wolfSSH_TestSendPendingChannelWindowAdjust(ssh);
+    if (ret != WS_SUCCESS) { result = -708; goto done; }
+    if (s_extSendCount != 0) { result = -709; goto done; }
+    if (ch->pendingWindowAdjust != 5) { result = -710; goto done; }
+
+    /* Keying complete: the parked WINDOW_ADJUST is sent and the credit clears. */
+    ssh->isKeying = 0;
+    ret = wolfSSH_TestSendPendingChannelWindowAdjust(ssh);
+    if (ret != WS_SUCCESS) { result = -711; goto done; }
+    if (s_extSendCount != 1) { result = -712; goto done; }
+    if (ch->pendingWindowAdjust != 0) { result = -713; goto done; }
 
 done:
     wolfSSH_free(ssh);
@@ -5246,6 +5495,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_DoChannelExtendedData_flow();
     printf("DoChannelExtendedData_flow: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DoChannelExtendedData_keying();
+    printf("DoChannelExtendedData_keying: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 

@@ -6480,6 +6480,56 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 }
 
 
+/* Flush any receive-window credit that was deferred while a rekey was in
+ * progress. DoChannelExtendedData() parks the credit for discarded extended
+ * data on the channel (pendingWindowAdjust) instead of sending a WINDOW_ADJUST,
+ * because RFC 4253 section 7.1 forbids connection-layer messages between KEXINIT
+ * and NEWKEYS and IsMessageAllowed() does not gate connection-layer messages on
+ * isKeying. This is called when keying completes. */
+static int SendPendingChannelWindowAdjust(WOLFSSH* ssh)
+{
+    WOLFSSH_CHANNEL* cur;
+    int savedError;
+
+    if (ssh == NULL)
+        return WS_BAD_ARGUMENT;
+
+    /* Still mid-KEX: leave the credit parked until both sides finish. */
+    if (ssh->isKeying)
+        return WS_SUCCESS;
+
+    /* Flushing parked credit is incidental to the keying flow that triggered
+     * it, so do not disturb ssh->error: SendChannelWindowAdjust ->
+     * wolfSSH_SendPacket sets it to WS_WANT_WRITE when the bundled adjust
+     * cannot flush in non-blocking mode, and the bundled bytes are sent on the
+     * next flush regardless. Mirror wolfSSH_extended_data_read(). */
+    savedError = ssh->error;
+
+    for (cur = ssh->channelList; cur != NULL; cur = cur->next) {
+        word32 amount = cur->pendingWindowAdjust;
+        int adjustResult;
+
+        if (amount == 0)
+            continue;
+
+        /* Clear before sending: the credit is owed regardless of the send
+         * result. On WS_WANT_WRITE the adjust is bundled into outputBuffer and
+         * reaches the peer on a later flush; on a hard failure the channel is
+         * already failing, so dropping the deferred credit is moot. */
+        cur->pendingWindowAdjust = 0;
+        adjustResult = SendChannelWindowAdjust(ssh, cur->channel, amount);
+        if (adjustResult != WS_SUCCESS && adjustResult != WS_WANT_WRITE)
+            WLOG(WS_LOG_ERROR,
+                 "SendPendingChannelWindowAdjust: window adjust send failed "
+                 "(%d) for channel %u; deferred credit dropped",
+                 adjustResult, cur->channel);
+    }
+
+    ssh->error = savedError;
+    return WS_SUCCESS;
+}
+
+
 static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
     int ret = WS_SUCCESS;
@@ -6565,6 +6615,9 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         ssh->isKeying &= ~WOLFSSH_PEER_IS_KEYING;
         HandshakeInfoFree(ssh->handshake, ssh->ctx->heap);
         ssh->handshake = NULL;
+        /* If this was the last keying flag to clear, flush any window credit
+         * that was deferred during the rekey (RFC 4253 section 7.1). */
+        SendPendingChannelWindowAdjust(ssh);
         WLOG(WS_LOG_DEBUG, "Keying completed");
         if (ssh->ctx->keyingCompletionCb)
             ssh->ctx->keyingCompletionCb(ssh->keyingCompletionCtx);
@@ -10211,32 +10264,81 @@ static int DoChannelExtendedData(WOLFSSH* ssh,
             ret = WS_INVALID_CHANID;
         else if (dataSz > channel->maxPacketSz)
             ret = WS_RECV_OVERFLOW_E;
+        else if (dataSz > channel->windowSz)
+            /* Peer sent more than the window we advertised. */
+            ret = WS_RECV_OVERFLOW_E;
         else if (dataTypeCode == CHANNEL_EXTENDED_DATA_STDERR) {
             /* Buffer the stderr data for the application to read. The
              * extended data buffer accumulates unread data instead of
              * overwriting it, so a blob arriving before the application
-             * reads the previous one is no longer silently lost. */
-            ret = PutBuffer(&ssh->extDataBuffer, buf + begin, dataSz);
-            #ifdef DEBUG_WOLFSSH
-            DumpOctetString(buf + begin, dataSz);
-            #endif
-            if (ret == WS_SUCCESS)
-                ret = SendChannelWindowAdjust(ssh, channel->channel, dataSz);
-            if (ret == WS_SUCCESS) {
-                ssh->lastRxId = channelId;
-                ret = WS_EXTDATA;
+             * reads the previous one is no longer silently lost.
+             *
+             * Extended data consumes channel window the same as ordinary
+             * data (RFC 4254 section 5.2). Charge the window now and only
+             * replenish it once the application drains the data in
+             * wolfSSH_extended_data_read(). That gives stderr real
+             * back-pressure instead of replenishing on receipt, which
+             * previously let the peer keep clobbering the buffer. */
+            int hadPending = ssh->extDataBuffer.idx < ssh->extDataBuffer.length;
+
+            if (hadPending && ssh->extDataChannelId != channel->channel) {
+                /* Buffer and extDataChannelId are shared (single-session
+                 * limitation, see WOLFSSH.extDataBuffer in internal.h), so only
+                 * one channel's stderr buffers at a time. Buffering a second
+                 * would desync windows (displaced channel never credited, this
+                 * one over-credited). Fail safe: drop it and replenish its
+                 * window (now, or deferred past a rekey) so nothing leaks. */
+                WLOG(WS_LOG_ERROR,
+                     "Extended data from channel %u dropped; channel %u still "
+                     "has unread stderr buffered (only one channel's stderr "
+                     "can be buffered at a time)",
+                     channel->channel, ssh->extDataChannelId);
+                if (ssh->isKeying) {
+                    /* RFC 4253 section 7.1: no WINDOW_ADJUST between KEXINIT
+                     * and NEWKEYS. Park the credit; flushed when keying ends. */
+                    channel->pendingWindowAdjust += dataSz;
+                    ssh->lastRxId = channelId;
+                    ret = WS_SUCCESS;
+                }
+                else {
+                    ret = SendChannelWindowAdjust(ssh, channel->channel,
+                                                  dataSz);
+                    if (ret == WS_SUCCESS)
+                        ssh->lastRxId = channelId;
+                }
+            }
+            else {
+                ret = PutBuffer(&ssh->extDataBuffer, buf + begin, dataSz);
+                #ifdef DEBUG_WOLFSSH
+                DumpOctetString(buf + begin, dataSz);
+                #endif
+                if (ret == WS_SUCCESS) {
+                    channel->windowSz -= dataSz;
+                    ssh->extDataChannelId = channel->channel;
+                    ssh->lastRxId = channelId;
+                    ret = WS_EXTDATA;
+                }
             }
         }
         else {
             /* Unknown extended data type. RFC 4254/4251 call for unknown
              * values to be ignored rather than rejected, so consume and
              * discard the payload. Nothing is buffered for the application,
-             * so replenish the window immediately. */
+             * so replenish the window (now, or deferred past a rekey). */
             WLOG(WS_LOG_INFO, "Ignoring unknown extended data type %u",
                     dataTypeCode);
-            ret = SendChannelWindowAdjust(ssh, channel->channel, dataSz);
-            if (ret == WS_SUCCESS)
+            if (ssh->isKeying) {
+                /* RFC 4253 section 7.1: no WINDOW_ADJUST between KEXINIT and
+                 * NEWKEYS. Park the credit; flushed when keying ends. */
+                channel->pendingWindowAdjust += dataSz;
                 ssh->lastRxId = channelId;
+                ret = WS_SUCCESS;
+            }
+            else {
+                ret = SendChannelWindowAdjust(ssh, channel->channel, dataSz);
+                if (ret == WS_SUCCESS)
+                    ssh->lastRxId = channelId;
+            }
         }
         *idx = begin + dataSz;
     }
@@ -13734,6 +13836,10 @@ int SendNewKeys(WOLFSSH* ssh)
 
         /* Clear self is keying flag */
         ssh->isKeying &= ~WOLFSSH_SELF_IS_KEYING;
+
+        /* If this was the last keying flag to clear, flush any window credit
+         * that was deferred during the rekey (RFC 4253 section 7.1). */
+        SendPendingChannelWindowAdjust(ssh);
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving SendNewKeys(), ret = %d", ret);
@@ -18510,6 +18616,11 @@ int wolfSSH_TestDoChannelExtendedData(WOLFSSH* ssh, byte* buf, word32 len,
         word32* idx)
 {
     return DoChannelExtendedData(ssh, buf, len, idx);
+}
+
+int wolfSSH_TestSendPendingChannelWindowAdjust(WOLFSSH* ssh)
+{
+    return SendPendingChannelWindowAdjust(ssh);
 }
 
 int wolfSSH_TestDoUserAuthRequest(WOLFSSH* ssh, byte* buf, word32 len,
