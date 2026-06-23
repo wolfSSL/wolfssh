@@ -2688,6 +2688,40 @@ static void TestKexInitReservedNonZeroRejected(void)
     wolfSSH_CTX_free(ctx);
 }
 
+/* A peer name list may legally end with a trailing comma. GetNameListRaw
+ * used to fold that comma into the final name, yielding ID_UNKNOWN and a
+ * failed negotiation. Build a KEXINIT whose KEX list ends in a comma and
+ * assert the algorithm still negotiates. */
+static void TestKexInitTrailingComma(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    byte payload[512];
+    word32 payloadSz;
+    word32 idx = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, FPF_KEX_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, FPF_KEY_GOOD), WS_SUCCESS);
+
+    /* KEX list carries a trailing comma. */
+    payloadSz = BuildKexInitPayload(ssh, FPF_KEX_GOOD ",", FPF_KEY_GOOD,
+            0, payload, (word32)sizeof(payload));
+
+    /* The tail (host key/send) errors on this bare ssh, but negotiation
+     * runs first and records the result in handshake->kexId. */
+    (void)wolfSSH_TestDoKexInit(ssh, payload, payloadSz, &idx);
+
+    AssertNotNull(ssh->handshake);
+    AssertIntEQ(ssh->handshake->kexId, ID_ECDH_SHA2_NISTP256);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
 #if !defined(WOLFSSH_NO_AES_CBC) && !defined(WOLFSSH_NO_AES_CTR) \
     && !defined(WOLFSSH_NO_HMAC_SHA1) && !defined(WOLFSSH_NO_HMAC_SHA2_256)
 static void TestIndependentAlgoNegotiation(void)
@@ -3987,6 +4021,7 @@ int main(int argc, char** argv)
     && !defined(WOLFSSH_NO_RSA_SHA2_256)
     TestFirstPacketFollows();
     TestKexInitReservedNonZeroRejected();
+    TestKexInitTrailingComma();
     TestDoKexInitRejectsWhenPeerIsKeying();
 #endif
 #if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && !defined(WOLFSSH_NO_RSA) \
