@@ -1769,6 +1769,108 @@ done:
     return result;
 }
 
+/* DoChannelWindowAdjust adds the peer's advertised bytes to peerWindowSz.
+ * A crafted bytesToAdd that would wrap the word32 must be rejected with
+ * WS_OVERFLOW_E and leave the window untouched; a value that fits must be
+ * applied. No other test exercises this handler. */
+static int test_DoChannelWindowAdjust_overflow(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    word32           idx;
+
+    /* channelId=0, bytesToAdd=0xFFFFFFFF (UINT32_MAX): wraps peerWindowSz. */
+    static const byte payOver[] = {
+        0x00, 0x00, 0x00, 0x00,   /* channelId  = 0          */
+        0xFF, 0xFF, 0xFF, 0xFF    /* bytesToAdd = UINT32_MAX  */
+    };
+
+    /* channelId=0, bytesToAdd=0x40 (64): fits, advances the window. */
+    static const byte payOk[] = {
+        0x00, 0x00, 0x00, 0x00,   /* channelId  = 0  */
+        0x00, 0x00, 0x00, 0x40    /* bytesToAdd = 64 */
+    };
+
+    /* channelId=0, bytesToAdd=UINT32_MAX-1024 (0xFFFFFBFF): the largest value
+     * a 1024-byte window accepts. Fills peerWindowSz to exactly UINT32_MAX and
+     * exercises the exact boundary of the > guard (a >= off-by-one rejects). */
+    static const byte payEdgeOk[] = {
+        0x00, 0x00, 0x00, 0x00,   /* channelId  = 0                 */
+        0xFF, 0xFF, 0xFB, 0xFF    /* bytesToAdd = UINT32_MAX - 1024 */
+    };
+
+    /* channelId=0, bytesToAdd=UINT32_MAX-1024+1 (0xFFFFFC00): one past the
+     * boundary, must overflow a 1024-byte window. */
+    static const byte payEdgeOver[] = {
+        0x00, 0x00, 0x00, 0x00,   /* channelId  = 0                     */
+        0xFF, 0xFF, 0xFC, 0x00    /* bytesToAdd = UINT32_MAX - 1024 + 1 */
+    };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -600;
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -601; goto done; }
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION,
+                    DEFAULT_WINDOW_SZ, DEFAULT_MAX_PACKET_SZ);
+    if (ch == NULL) { result = -602; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -603;
+        goto done;
+    }
+
+    /* Non-zero peer window so a UINT32_MAX adjustment would wrap it. */
+    ch->peerWindowSz = 1024;
+
+    /* bytesToAdd = UINT32_MAX -> WS_OVERFLOW_E, window left unchanged. */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelWindowAdjust(ssh, (byte*)payOver,
+                                            (word32)sizeof(payOver), &idx);
+    if (ret != WS_OVERFLOW_E) { result = -610; goto done; }
+    if (ch->peerWindowSz != 1024) { result = -611; goto done; }
+    if (idx != 8) { result = -612; goto done; }
+
+    /* bytesToAdd = 64 fits -> WS_SUCCESS, window advances by 64. */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelWindowAdjust(ssh, (byte*)payOk,
+                                            (word32)sizeof(payOk), &idx);
+    if (ret != WS_SUCCESS) { result = -613; goto done; }
+    if (ch->peerWindowSz != 1024 + 64) { result = -614; goto done; }
+    if (idx != 8) { result = -615; goto done; }
+
+    /* Boundary +1: bytesToAdd = UINT32_MAX - 1024 + 1 overflows a 1024-byte
+     * window -> WS_OVERFLOW_E, window left unchanged. */
+    ch->peerWindowSz = 1024;
+    idx = 0;
+    ret = wolfSSH_TestDoChannelWindowAdjust(ssh, (byte*)payEdgeOver,
+                                            (word32)sizeof(payEdgeOver), &idx);
+    if (ret != WS_OVERFLOW_E) { result = -616; goto done; }
+    if (ch->peerWindowSz != 1024) { result = -617; goto done; }
+    if (idx != 8) { result = -618; goto done; }
+
+    /* Boundary: bytesToAdd = UINT32_MAX - 1024 is the largest value that fits
+     * -> WS_SUCCESS, window filled to exactly UINT32_MAX. This is the case a
+     * >= off-by-one in the guard would wrongly reject. */
+    ch->peerWindowSz = 1024;
+    idx = 0;
+    ret = wolfSSH_TestDoChannelWindowAdjust(ssh, (byte*)payEdgeOk,
+                                            (word32)sizeof(payEdgeOk), &idx);
+    if (ret != WS_SUCCESS) { result = -619; goto done; }
+    if (ch->peerWindowSz != 0xFFFFFFFF) { result = -620; goto done; }
+    if (idx != 8) { result = -621; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
 static int test_SendChannelData_eofTxd(void)
 {
     WOLFSSH_CTX*     ctx = NULL;
@@ -5144,6 +5246,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_DoChannelExtendedData_overflow();
     printf("DoChannelExtendedData_overflow: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DoChannelWindowAdjust_overflow();
+    printf("DoChannelWindowAdjust_overflow: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 

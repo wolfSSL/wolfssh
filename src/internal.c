@@ -18502,6 +18502,12 @@ int wolfSSH_TestDoChannelExtendedData(WOLFSSH* ssh, byte* buf, word32 len,
     return DoChannelExtendedData(ssh, buf, len, idx);
 }
 
+int wolfSSH_TestDoChannelWindowAdjust(WOLFSSH* ssh, byte* buf, word32 len,
+        word32* idx)
+{
+    return DoChannelWindowAdjust(ssh, buf, len, idx);
+}
+
 int wolfSSH_TestDoUserAuthRequest(WOLFSSH* ssh, byte* buf, word32 len,
         word32* idx)
 {
