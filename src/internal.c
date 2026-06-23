@@ -4717,17 +4717,13 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     /* Languages - Client to Server, skip */
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "DKI: Languages - Client to Server");
-        ret = GetUint32(&skipSz, buf, len, &begin);
-        if (ret == WS_SUCCESS)
-            begin += skipSz;
+        ret = GetSkip(buf, len, &begin);
     }
 
     /* Languages - Server to Client, skip */
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "DKI: Languages - Server to Client");
-        ret = GetUint32(&skipSz, buf, len, &begin);
-        if (ret == WS_SUCCESS)
-            begin += skipSz;
+        ret = GetSkip(buf, len, &begin);
     }
 
     /* First KEX Packet Follows */
