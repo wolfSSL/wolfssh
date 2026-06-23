@@ -6765,10 +6765,20 @@ static int DoKexDhGexGroup(WOLFSSH* ssh,
     word32 begin;
     int ret = WS_SUCCESS;
 
-    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
+    if (ssh == NULL || ssh->handshake == NULL || buf == NULL || len == 0 ||
+            idx == NULL)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
+        if (ssh->handshake->ignoreNextKexMsg) {
+            /* skip this message. */
+            WLOG(WS_LOG_DEBUG, "Skipping server's KEXDH_GEX_GROUP message due "
+                               "to first_packet_follows guess mismatch.");
+            ssh->handshake->ignoreNextKexMsg = 0;
+            *idx += len;
+            return WS_SUCCESS;
+        }
+
         begin = *idx;
         ret = GetMpint(&primeGroupSz, &primeGroup, buf, len, &begin);
         if (ret == WS_SUCCESS && primeGroupSz > (MAX_KEX_KEY_SZ + 1)) {
@@ -18540,6 +18550,12 @@ int wolfSSH_TestDoKexDhGexRequest(WOLFSSH* ssh, byte* buf, word32 len,
         word32* idx)
 {
     return DoKexDhGexRequest(ssh, buf, len, idx);
+}
+
+int wolfSSH_TestDoKexDhGexGroup(WOLFSSH* ssh, byte* buf, word32 len,
+        word32* idx)
+{
+    return DoKexDhGexGroup(ssh, buf, len, idx);
 }
 
 int wolfSSH_TestValidateKexDhGexGroup(const byte* primeGroup,

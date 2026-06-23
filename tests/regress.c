@@ -2634,6 +2634,8 @@ static void TestFirstPacketFollowsSkipped(void)
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
     RunFirstPacketFollowsSkipCase(wolfSSH_TestDoKexDhGexRequest,
             "DoKexDhGexRequest", WOLFSSH_ENDPOINT_SERVER, CLIENT_KEXINIT_DONE);
+    RunFirstPacketFollowsSkipCase(wolfSSH_TestDoKexDhGexGroup,
+            "DoKexDhGexGroup", WOLFSSH_ENDPOINT_CLIENT, SERVER_KEXINIT_DONE);
 #endif
     RunFirstPacketFollowsSkipCase(wolfSSH_TestDoKexDhReply,
             "DoKexDhReply", WOLFSSH_ENDPOINT_CLIENT, SERVER_KEXINIT_DONE);
