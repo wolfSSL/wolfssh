@@ -1493,6 +1493,9 @@ enum WS_MessageIdLimits {
     WOLFSSH_API int wolfSSH_TestKeyAgreeDh_server(WOLFSSH* ssh, byte hashId,
             byte* f, word32* fSz);
     WOLFSSH_API int wolfSSH_TestSetDhKexKey(WOLFSSH* ssh);
+    WOLFSSH_API int wolfSSH_TestGetDHPrimeGroup(WOLFSSH* ssh,
+            const byte** primeGroup, word32* primeGroupSz,
+            const byte** generator, word32* generatorSz);
 #endif /* !WOLFSSH_NO_DH */
 #ifndef WOLFSSH_NO_ECDH
     WOLFSSH_API int wolfSSH_TestKeyAgreeEcdh_server(WOLFSSH* ssh, byte hashId,
@@ -1508,6 +1511,9 @@ enum WS_MessageIdLimits {
     WOLFSSH_API int wolfSSH_TestValidateKexDhGexGroup(const byte* primeGroup,
             word32 primeGroupSz, const byte* generator, word32 generatorSz,
             word32 minBits, word32 maxBits, WC_RNG* rng);
+    WOLFSSH_API int wolfSSH_TestSelectKexDhGexGroup(word32 minBits,
+            word32 preferredBits, word32 maxBits, const byte** primeGroup,
+            word32* primeGroupSz);
 #endif /* !WOLFSSH_NO_DH_GEX_SHA256 */
 #ifndef WOLFSSH_NO_RSA
     WOLFSSH_API int wolfSSH_TestRsaVerify(const byte* sig, word32 sigSz,

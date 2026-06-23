@@ -12778,11 +12778,77 @@ static int BuildRFC6187Info(WOLFSSH* ssh, int pubKeyID,
 #endif /* WOLFSSH_CERTS */
 
 
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
+/* Pick the in-window group closest to preferredBits, ties favoring the
+ * smaller. WS_DH_SIZE_E if none fits. */
+static int SelectKexDhGexGroup(word32 minBits, word32 preferredBits,
+        word32 maxBits, const byte** primeGroup, word32* primeGroupSz)
+{
+    static const struct {
+        word32 bits;
+        const byte* group;
+        const word32* groupSz;
+    } candidates[] = {
+        #ifndef WOLFSSH_NO_DH_GROUP1_SHA1
+        { 1024, dhPrimeGroup1,  &dhPrimeGroup1Sz  },
+        #endif
+        { 2048, dhPrimeGroup14, &dhPrimeGroup14Sz },
+        #ifndef WOLFSSH_NO_DH_GROUP16_SHA512
+        { 4096, dhPrimeGroup16, &dhPrimeGroup16Sz },
+        #endif
+    };
+    word32 i;
+    word32 best = 0;
+    word32 bestDelta = 0;
+    int haveBest = 0;
+    int ret = WS_SUCCESS;
+
+    if (primeGroup == NULL || primeGroupSz == NULL)
+        return WS_BAD_ARGUMENT;
+
+    for (i = 0; i < (word32)(sizeof(candidates) / sizeof(candidates[0])); i++) {
+        word32 bits = candidates[i].bits;
+        word32 delta;
+
+        if (bits < minBits || bits > maxBits)
+            continue;
+        delta = (bits > preferredBits) ? (bits - preferredBits)
+                                       : (preferredBits - bits);
+        /* Ascending scan with a strict '<' keeps the smaller group on a tie. */
+        if (!haveBest || delta < bestDelta) {
+            best = i;
+            bestDelta = delta;
+            haveBest = 1;
+        }
+    }
+
+    if (!haveBest) {
+        WLOG(WS_LOG_DEBUG,
+                "DH GEX: no built-in group within client window [%u, %u]",
+                minBits, maxBits);
+        ret = WS_DH_SIZE_E;
+    }
+    else {
+        *primeGroup = candidates[best].group;
+        *primeGroupSz = *candidates[best].groupSz;
+    }
+
+    return ret;
+}
+#endif /* !WOLFSSH_NO_DH_GEX_SHA256 */
+
+
 #ifndef WOLFSSH_NO_DH
-static int GetDHPrimeGroup(int kexId, const byte** primeGroup,
+static int GetDHPrimeGroup(WOLFSSH* ssh, const byte** primeGroup,
     word32* primeGroupSz, const byte** generator, word32* generatorSz)
 {
     int ret = WS_SUCCESS;
+    int kexId;
+
+    if (ssh == NULL || ssh->handshake == NULL)
+        return WS_BAD_ARGUMENT;
+
+    kexId = ssh->handshake->kexId;
 
     switch (kexId) {
         #ifndef WOLFSSH_NO_DH_GROUP1_SHA1
@@ -12819,10 +12885,27 @@ static int GetDHPrimeGroup(int kexId, const byte** primeGroup,
         #endif
         #ifndef WOLFSSH_NO_DH_GEX_SHA256
         case ID_DH_GEX_SHA256:
-            *primeGroup = dhPrimeGroup14;
-            *primeGroupSz = dhPrimeGroup14Sz;
-            *generator = dhGenerator;
-            *generatorSz = dhGeneratorSz;
+            /* Reuse the group SendKexDhGexGroup cached on the handshake so the
+             * exchange hash and the shared secret match the group that was put
+             * on the wire. Fall back to selecting from the client's window if
+             * the cache is somehow unset, so this path can never desynchronize
+             * from the wire group. */
+            if (ssh->handshake->primeGroup != NULL) {
+                *primeGroup = ssh->handshake->primeGroup;
+                *primeGroupSz = ssh->handshake->primeGroupSz;
+                *generator = dhGenerator;
+                *generatorSz = dhGeneratorSz;
+            }
+            else {
+                ret = SelectKexDhGexGroup(ssh->handshake->dhGexMinSz,
+                        ssh->handshake->dhGexPreferredSz,
+                        ssh->handshake->dhGexMaxSz,
+                        primeGroup, primeGroupSz);
+                if (ret == WS_SUCCESS) {
+                    *generator = dhGenerator;
+                    *generatorSz = dhGeneratorSz;
+                }
+            }
             break;
         #endif
         default:
@@ -13236,7 +13319,7 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
         if (ssh->handshake->kexId == ID_DH_GEX_SHA256) {
             byte primeGroupPad = 0, generatorPad = 0;
 
-            if (GetDHPrimeGroup(ssh->handshake->kexId, &primeGroup,
+            if (GetDHPrimeGroup(ssh, &primeGroup,
                 &primeGroupSz, &generator, &generatorSz) != WS_SUCCESS) {
                 ret = WS_BAD_ARGUMENT;
             }
@@ -13476,7 +13559,7 @@ static int KeyAgreeDh_server(WOLFSSH* ssh, byte hashId, byte* f, word32* fSz)
         ret = WS_MEMORY_E;
     #else
     DhKey privKey[1];
-    byte y_s[MAX_KEX_KEY_SZ];
+    byte y_s[MAX_KEX_KEY_SZ] = {0};
     y_ptr = y_s;
     #endif
 
@@ -13484,7 +13567,7 @@ static int KeyAgreeDh_server(WOLFSSH* ssh, byte hashId, byte* f, word32* fSz)
     WOLFSSH_UNUSED(hashId);
 
     if (ret == WS_SUCCESS) {
-        ret = GetDHPrimeGroup(ssh->handshake->kexId, &primeGroup,
+        ret = GetDHPrimeGroup(ssh, &primeGroup,
             &primeGroupSz, &generator, &generatorSz);
 
         if (ret == WS_SUCCESS) {
@@ -14988,8 +15071,8 @@ int SendKexDhGexGroup(WOLFSSH* ssh)
     byte* output;
     word32 idx = 0;
     word32 payloadSz;
-    const byte* primeGroup = dhPrimeGroup14;
-    word32 primeGroupSz = dhPrimeGroup14Sz;
+    const byte* primeGroup = NULL;
+    word32 primeGroupSz = 0;
     const byte* generator = dhGenerator;
     word32 generatorSz = dhGeneratorSz;
     byte primePad = 0;
@@ -14999,6 +15082,30 @@ int SendKexDhGexGroup(WOLFSSH* ssh)
     WLOG(WS_LOG_DEBUG, "Entering SendKexDhGexGroup()");
     if (ssh == NULL || ssh->handshake == NULL)
         ret = WS_BAD_ARGUMENT;
+
+    /* Pick a group that satisfies the client's requested min/preferred/max
+     * rather than always sending the 2048-bit group 14. */
+    if (ret == WS_SUCCESS) {
+        ret = SelectKexDhGexGroup(ssh->handshake->dhGexMinSz,
+                ssh->handshake->dhGexPreferredSz,
+                ssh->handshake->dhGexMaxSz,
+                &primeGroup, &primeGroupSz);
+    }
+
+    /* Cache the selected group so the exchange hash and shared secret
+     * (GetDHPrimeGroup) reuse exactly what goes on the wire here. */
+    if (ret == WS_SUCCESS) {
+        if (ssh->handshake->primeGroup != NULL)
+            WFREE(ssh->handshake->primeGroup, ssh->ctx->heap, DYNTYPE_MPINT);
+        ssh->handshake->primeGroup =
+            (byte*)WMALLOC(primeGroupSz, ssh->ctx->heap, DYNTYPE_MPINT);
+        if (ssh->handshake->primeGroup == NULL)
+            ret = WS_MEMORY_E;
+        else {
+            WMEMCPY(ssh->handshake->primeGroup, primeGroup, primeGroupSz);
+            ssh->handshake->primeGroupSz = primeGroupSz;
+        }
+    }
 
     if (ret == WS_SUCCESS) {
         if (primeGroup[0] & 0x80)
@@ -20054,7 +20161,7 @@ int wolfSSH_TestSetDhKexKey(WOLFSSH* ssh)
     word32 eSz = (word32)sizeof(e);
     int keyInited = 0;
 
-    ret = GetDHPrimeGroup(ssh->handshake->kexId, &primeGroup, &primeGroupSz,
+    ret = GetDHPrimeGroup(ssh, &primeGroup, &primeGroupSz,
             &generator, &generatorSz);
     if (ret == WS_SUCCESS) {
         ret = wc_InitDhKey(privKey);
@@ -20082,6 +20189,13 @@ int wolfSSH_TestSetDhKexKey(WOLFSSH* ssh)
         wc_FreeDhKey(privKey);
     }
     return ret;
+}
+
+int wolfSSH_TestGetDHPrimeGroup(WOLFSSH* ssh, const byte** primeGroup,
+        word32* primeGroupSz, const byte** generator, word32* generatorSz)
+{
+    return GetDHPrimeGroup(ssh, primeGroup, primeGroupSz,
+            generator, generatorSz);
 }
 
 #endif /* !WOLFSSH_NO_DH */
@@ -20120,6 +20234,13 @@ int wolfSSH_TestValidateKexDhGexGroup(const byte* primeGroup,
 {
     return ValidateKexDhGexGroup(primeGroup, primeGroupSz,
             generator, generatorSz, minBits, maxBits, rng);
+}
+
+int wolfSSH_TestSelectKexDhGexGroup(word32 minBits, word32 preferredBits,
+        word32 maxBits, const byte** primeGroup, word32* primeGroupSz)
+{
+    return SelectKexDhGexGroup(minBits, preferredBits, maxBits,
+            primeGroup, primeGroupSz);
 }
 
 #endif /* !WOLFSSH_NO_DH_GEX_SHA256 */
