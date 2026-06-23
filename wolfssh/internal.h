@@ -1459,6 +1459,8 @@ enum WS_MessageIdLimits {
             word32 len, word32* idx);
     WOLFSSH_API int wolfSSH_TestDoChannelExtendedData(WOLFSSH* ssh, byte* buf,
             word32 len, word32* idx);
+    WOLFSSH_API int wolfSSH_TestDoChannelWindowAdjust(WOLFSSH* ssh, byte* buf,
+            word32 len, word32* idx);
     WOLFSSH_API int wolfSSH_TestDoKexInit(WOLFSSH* ssh, byte* buf,
             word32 len, word32* idx);
     WOLFSSH_API int wolfSSH_TestDoNewKeys(WOLFSSH* ssh, byte* buf,
