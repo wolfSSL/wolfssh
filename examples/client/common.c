@@ -331,6 +331,9 @@ static int ParseRFC6187(const byte* in, word32 inSz, byte** leafOut,
 
     /* Skip the name */
     ato32(in, &l);
+    if (l > inSz - sizeof(word32))
+        return WS_BUFFER_E;
+
     m += l + sizeof(word32);
 
     /* Get the cert count */
