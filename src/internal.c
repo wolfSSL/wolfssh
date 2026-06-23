@@ -5533,6 +5533,23 @@ static const byte dhPrimeGroup16[] = {
 static const word32 dhPrimeGroup16Sz = (word32)sizeof(dhPrimeGroup16);
 #endif
 
+/* RFC 4253 sec. 7.1: discard the KEX packet a peer sent after a wrong
+ * first_packet_follows guess. Leave expectMsgId at MSGID_NONE -- the real
+ * follow-up's ID comes from the negotiated KEX, not the guess, and may cross
+ * the GEX boundary. Returns 1 if consumed, else 0. Caller validates handshake. */
+static int SkipGuessedKexMsg(WOLFSSH* ssh, const char* what,
+        word32 len, word32* idx)
+{
+    WOLFSSH_UNUSED(what);
+    if (!ssh->handshake->ignoreNextKexMsg)
+        return 0;
+    WLOG(WS_LOG_DEBUG, "Skipping %s due to first_packet_follows guess mismatch.",
+            what);
+    ssh->handshake->ignoreNextKexMsg = 0;
+    *idx += len;
+    return 1;
+}
+
 static int DoKexDhInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
     /* First get the length of the MP_INT, and then add in the hash of the
@@ -5554,14 +5571,9 @@ static int DoKexDhInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
-        if (ssh->handshake->ignoreNextKexMsg) {
-            /* skip this message. */
-            WLOG(WS_LOG_DEBUG, "Skipping client's KEXDH_INIT message due to "
-                               "first_packet_follows guess mismatch.");
-            ssh->handshake->ignoreNextKexMsg = 0;
-            *idx += len;
+        if (SkipGuessedKexMsg(ssh, "client's KEXDH_INIT message",
+                len, idx))
             return WS_SUCCESS;
-        }
 
         begin = *idx;
         ret = GetStringRef(&eSz, &e, buf, len, &begin);
@@ -6781,14 +6793,9 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     }
 
     if (ret == WS_SUCCESS) {
-        if (ssh->handshake->ignoreNextKexMsg) {
-            /* skip this message. */
-            WLOG(WS_LOG_DEBUG, "Skipping server's KEXDH_REPLY message due to "
-                               "first_packet_follows guess mismatch.");
-            ssh->handshake->ignoreNextKexMsg = 0;
-            *idx += len;
+        if (SkipGuessedKexMsg(ssh, "server's KEXDH_REPLY message",
+                len, idx))
             return WS_SUCCESS;
-        }
     }
 
     if (ret == WS_SUCCESS && len < LENGTH_SZ*2 + *idx) {
@@ -7232,14 +7239,9 @@ static int DoKexDhGexRequest(WOLFSSH* ssh,
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
-        if (ssh->handshake->ignoreNextKexMsg) {
-            /* skip this message. */
-            WLOG(WS_LOG_DEBUG, "Skipping client's KEXDH_GEX_REQUEST message "
-                               "due to first_packet_follows guess mismatch.");
-            ssh->handshake->ignoreNextKexMsg = 0;
-            *idx += len;
+        if (SkipGuessedKexMsg(ssh, "client's KEXDH_GEX_REQUEST message",
+                len, idx))
             return WS_SUCCESS;
-        }
 
         begin = *idx;
         ret = GetUint32(&ssh->handshake->dhGexMinSz, buf, len, &begin);
@@ -7411,10 +7413,19 @@ static int DoKexDhGexGroup(WOLFSSH* ssh,
     word32 begin;
     int ret = WS_SUCCESS;
 
-    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
+    if (ssh == NULL || ssh->handshake == NULL || buf == NULL || len == 0 ||
+            idx == NULL)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
+        /* A conformant server sends GROUP only in response to the client's
+         * REQUEST, so it should never set first_packet_follows here. Discard
+         * the message defensively if a peer sets it anyway, mirroring the other
+         * Do* handlers. */
+        if (SkipGuessedKexMsg(ssh, "server's KEXDH_GEX_GROUP message",
+                len, idx))
+            return WS_SUCCESS;
+
         begin = *idx;
         ret = GetMpint(&primeGroupSz, &primeGroup, buf, len, &begin);
         if (ret == WS_SUCCESS && primeGroupSz > (MAX_KEX_KEY_SZ + 1)) {
@@ -20095,6 +20106,12 @@ int wolfSSH_TestDoKexDhGexRequest(WOLFSSH* ssh, byte* buf, word32 len,
         word32* idx)
 {
     return DoKexDhGexRequest(ssh, buf, len, idx);
+}
+
+int wolfSSH_TestDoKexDhGexGroup(WOLFSSH* ssh, byte* buf, word32 len,
+        word32* idx)
+{
+    return DoKexDhGexGroup(ssh, buf, len, idx);
 }
 
 int wolfSSH_TestValidateKexDhGexGroup(const byte* primeGroup,
