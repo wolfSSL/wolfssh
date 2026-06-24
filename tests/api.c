@@ -3708,6 +3708,8 @@ int wolfSSH_ApiTest(int argc, char** argv)
 #ifdef WOLFSSH_TEST_BLOCK
     return 77;
 #else
+    WSTARTTCP();
+
     AssertIntEQ(wolfSSH_Init(), WS_SUCCESS);
 
     #if defined(FIPS_VERSION_GE) && FIPS_VERSION_GE(5,2)
