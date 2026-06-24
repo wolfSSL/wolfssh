@@ -9266,23 +9266,45 @@ static int DoChannelOpen(WOLFSSH* ssh,
         else {
             ChannelUpdatePeer(newChannel, peerChannelId,
                           peerInitialWindowSz, peerMaxPacketSz);
-            if (ssh->ctx->channelOpenCb) {
-                ret = ssh->ctx->channelOpenCb(newChannel, ssh->channelOpenCtx);
-            }
-            else {
-                WLOG(WS_LOG_WARN, "No channel open callback set "
-                        "(call wolfSSH_CTX_SetChannelOpenCb()), accepting "
-                        "channel open by default; typeId=%u, peerChannelId=%u",
-                        (word32)typeId, peerChannelId);
-            }
-            if (ssh->channelListSz == 0)
-                ssh->defaultPeerChannelId = peerChannelId;
         #ifdef WOLFSSH_FWD
-            if (typeId == ID_CHANTYPE_TCPIP_DIRECT) {
-                ChannelUpdateForward(newChannel,
-                        host, hostPort, origin, originPort, isDirect);
-
+            /* A forwarded-tcpip open is a server-to-client message sent in
+             * response to a tcpip-forward request, so only a client should
+             * ever receive one. Reject opens arriving in the wrong direction
+             * up front, before any policy callback runs or channel state is
+             * updated. direct-tcpip is intentionally not direction-checked:
+             * either forwarding side may legitimately request a direct
+             * forward. */
+            if (typeId == ID_CHANTYPE_TCPIP_FORWARD &&
+                    ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
+                WLOG(WS_LOG_WARN, "Rejecting forwarded-tcpip channel open "
+                        "received by a server (wrong direction)");
+                fail_reason = OPEN_ADMINISTRATIVELY_PROHIBITED;
+                ret = WS_ERROR;
+            }
+        #endif /* WOLFSSH_FWD */
+            if (ret == WS_SUCCESS) {
+                if (ssh->ctx->channelOpenCb) {
+                    ret = ssh->ctx->channelOpenCb(newChannel,
+                            ssh->channelOpenCtx);
+                }
+                else {
+                    WLOG(WS_LOG_WARN, "No channel open callback set "
+                            "(call wolfSSH_CTX_SetChannelOpenCb()), accepting "
+                            "channel open by default; typeId=%u, "
+                            "peerChannelId=%u",
+                            (word32)typeId, peerChannelId);
+                }
+                if (ssh->channelListSz == 0)
+                    ssh->defaultPeerChannelId = peerChannelId;
+            }
+        #ifdef WOLFSSH_FWD
+            if (ret == WS_SUCCESS &&
+                    (typeId == ID_CHANTYPE_TCPIP_DIRECT ||
+                     typeId == ID_CHANTYPE_TCPIP_FORWARD)) {
                 if (ssh->ctx->fwdCb) {
+                    ChannelUpdateForward(newChannel,
+                            host, hostPort, origin, originPort, isDirect);
+
                     ret = ssh->ctx->fwdCb(WOLFSSH_FWD_LOCAL_SETUP,
                             ssh->fwdCbCtx, host, hostPort);
                     if (ret == WS_SUCCESS) {
@@ -9291,8 +9313,11 @@ static int DoChannelOpen(WOLFSSH* ssh,
                     }
                 }
                 else {
-                    WLOG(WS_LOG_WARN, "No forward callback set for direct-tcpip channel,"
-                            " failing channel open");
+                    /* Both forwarding channel types require an explicit policy
+                     * callback; without one, fail closed rather than letting
+                     * the default-accept channelOpenCb path admit them. */
+                    WLOG(WS_LOG_WARN, "No forward callback set for forwarding "
+                            "channel, failing channel open");
                     fail_reason = OPEN_ADMINISTRATIVELY_PROHIBITED;
                     ret = WS_ERROR;
                 }
