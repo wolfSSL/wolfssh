@@ -1525,6 +1525,33 @@ static void TestDirectTcpipNoFwdCbSendsOpenFail(void)
     FreeChannelOpenHarness(&harness);
 }
 
+static void TestForwardedTcpipOnServerSendsOpenFail(void)
+{
+    ChannelOpenHarness harness;
+    byte extra[128];
+    byte in[192];
+    word32 extraSz;
+    word32 inSz;
+    int ret;
+
+    /* forwarded-tcpip is only ever sent server-to-client. A server receiving
+     * one is the wrong direction and must be rejected even with a fwdCb set,
+     * before the forwarding policy hook runs. */
+    extraSz = BuildDirectTcpipExtra("127.0.0.1", 8080, "127.0.0.1", 2222,
+            extra, sizeof(extra));
+    inSz = BuildChannelOpenPacket("forwarded-tcpip", 9, 0x4000, 0x8000,
+            extra, extraSz, in, sizeof(in));
+
+    InitChannelOpenHarness(&harness, in, inSz);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, AcceptFwdCb, NULL),
+            WS_SUCCESS);
+
+    ret = DoReceive(harness.ssh);
+    AssertChannelOpenFailResponse(&harness, ret);
+
+    FreeChannelOpenHarness(&harness);
+}
+
 static void TestGlobalRequestFwdNoCbSendsFailure(void)
 {
     ChannelOpenHarness harness;
@@ -4133,6 +4160,7 @@ int main(int argc, char** argv)
 #ifdef WOLFSSH_FWD
     TestDirectTcpipRejectSendsOpenFail();
     TestDirectTcpipNoFwdCbSendsOpenFail();
+    TestForwardedTcpipOnServerSendsOpenFail();
     TestGlobalRequestFwdNoCbSendsFailure();
     TestGlobalRequestFwdNoCbNoReplyKeepsConnection();
     TestGlobalRequestFwdWithCbSendsSuccess();
