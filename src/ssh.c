@@ -3087,6 +3087,80 @@ WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNew(WOLFSSH* ssh,
     return wolfSSH_ChannelFwdNewLocal(ssh, host, hostPort, origin, originPort);
 }
 
+
+/* Send "tcpip-forward", asking the peer to listen on bindAddr:bindPort. Port 0
+ * lets the peer choose; with wantReply it names the port it bound through the
+ * request-success callback (wolfSSH_SetReqSuccess). Inbound connections arrive
+ * as "forwarded-tcpip" channels via the forwarding callback.
+ *
+ * RFC 4254 7.1 defines tcpip-forward as client-to-server, and a server rejects
+ * the resulting forwarded-tcpip opens, so this is client-only. */
+int wolfSSH_FwdRemoteSetup(WOLFSSH* ssh, const char* bindAddr,
+        word32 bindPort, int wantReply)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_FwdRemoteSetup()");
+
+    if (ssh == NULL || ssh->ctx == NULL || bindAddr == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    /* A port is 16 bits on the wire; 0 asks the peer to allocate one. */
+    if (ret == WS_SUCCESS && bindPort > 65535)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS && wantReply != 0 && wantReply != 1)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS && ssh->ctx->side != WOLFSSH_ENDPOINT_CLIENT)
+        ret = WS_BAD_ARGUMENT;
+
+    /* A global request must not go out mid-rekey; only KEX traffic may. */
+    if (ret == WS_SUCCESS && ssh->isKeying)
+        ret = WS_REKEYING;
+
+    if (ret == WS_SUCCESS)
+        ret = SendGlobalRequestFwd(ssh, bindAddr, bindPort, 0, wantReply);
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_FwdRemoteSetup(), ret = %d", ret);
+    return ret;
+}
+
+
+/* Send "cancel-tcpip-forward", tearing down a wolfSSH_FwdRemoteSetup()
+ * listener. bindPort must be the port the peer bound, which after a port-0
+ * request is the one it reported, not 0. Client-only, as with the setup. */
+int wolfSSH_FwdRemoteCancel(WOLFSSH* ssh, const char* bindAddr,
+        word32 bindPort, int wantReply)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_FwdRemoteCancel()");
+
+    if (ssh == NULL || ssh->ctx == NULL || bindAddr == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    /* Unlike the setup, 0 names no listener the peer could have bound. */
+    if (ret == WS_SUCCESS && (bindPort == 0 || bindPort > 65535))
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS && wantReply != 0 && wantReply != 1)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS && ssh->ctx->side != WOLFSSH_ENDPOINT_CLIENT)
+        ret = WS_BAD_ARGUMENT;
+
+    /* A global request must not go out mid-rekey; only KEX traffic may. */
+    if (ret == WS_SUCCESS && ssh->isKeying)
+        ret = WS_REKEYING;
+
+    if (ret == WS_SUCCESS)
+        ret = SendGlobalRequestFwd(ssh, bindAddr, bindPort, 1, wantReply);
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_FwdRemoteCancel(), ret = %d", ret);
+    return ret;
+}
+
 #endif /* WOLFSSH_FWD */
 
 

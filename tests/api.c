@@ -4049,6 +4049,65 @@ static void test_wolfSSH_CheckAlgoList(void)
 }
 
 
+#ifdef WOLFSSH_FWD
+
+/* Argument validation for the remote-forward request APIs. Only the rejection
+ * paths are exercised here; sending a real request needs a live session, which
+ * scripts/fwd.test covers. */
+static void test_wolfSSH_FwdRemote_badArgs(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    /* NULL session or bind address. */
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(NULL, "0.0.0.0", 22, 1),
+            WS_BAD_ARGUMENT);
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(ssh, NULL, 22, 1), WS_BAD_ARGUMENT);
+    AssertIntEQ(wolfSSH_FwdRemoteCancel(NULL, "0.0.0.0", 22, 1),
+            WS_BAD_ARGUMENT);
+    AssertIntEQ(wolfSSH_FwdRemoteCancel(ssh, NULL, 22, 1), WS_BAD_ARGUMENT);
+
+    /* A port is 16 bits on the wire. */
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(ssh, "0.0.0.0", 65536, 1),
+            WS_BAD_ARGUMENT);
+    AssertIntEQ(wolfSSH_FwdRemoteCancel(ssh, "0.0.0.0", 65536, 1),
+            WS_BAD_ARGUMENT);
+
+    /* Port 0 asks the peer to allocate, so it cannot name one to cancel. */
+    AssertIntEQ(wolfSSH_FwdRemoteCancel(ssh, "0.0.0.0", 0, 1),
+            WS_BAD_ARGUMENT);
+
+    /* wantReply is a boolean. */
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(ssh, "0.0.0.0", 22, 2),
+            WS_BAD_ARGUMENT);
+    AssertIntEQ(wolfSSH_FwdRemoteCancel(ssh, "0.0.0.0", 22, -1),
+            WS_BAD_ARGUMENT);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    /* tcpip-forward is client-to-server; a server must not send one. */
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(ssh, "0.0.0.0", 22, 1),
+            WS_BAD_ARGUMENT);
+    AssertIntEQ(wolfSSH_FwdRemoteCancel(ssh, "0.0.0.0", 22, 1),
+            WS_BAD_ARGUMENT);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+#endif /* WOLFSSH_FWD */
+
 static void test_wolfSSH_QueryAlgoList(void)
 {
     const char* name;
@@ -4329,6 +4388,9 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_SetMaxAuthAttempts();
     test_wolfSSH_SetAlgoList();
     test_wolfSSH_CheckAlgoList();
+#ifdef WOLFSSH_FWD
+    test_wolfSSH_FwdRemote_badArgs();
+#endif
 #ifdef WOLFSSH_AGENT
     test_wolfSSH_agent_signrequest_partial_write();
     test_wolfSSH_agent_signrequest_wrong_message();
