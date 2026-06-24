@@ -253,6 +253,10 @@ DEPRECATED WOLFSSH_API int wolfSSH_ChannelSetFwdFd(WOLFSSH_CHANNEL* channel,
         int fwdFd);
 DEPRECATED WOLFSSH_API int wolfSSH_ChannelGetFwdFd(
         const WOLFSSH_CHANNEL* channel);
+WOLFSSH_API int wolfSSH_FwdRemoteSetup(WOLFSSH* ssh, const char* bindAddr,
+        word32 bindPort, int wantReply);
+WOLFSSH_API int wolfSSH_FwdRemoteCancel(WOLFSSH* ssh, const char* bindAddr,
+        word32 bindPort, int wantReply);
 
 WOLFSSH_API int wolfSSH_ChannelFree(WOLFSSH_CHANNEL* channel);
 WOLFSSH_API int wolfSSH_ChannelGetId(WOLFSSH_CHANNEL* channel, word32* id,
