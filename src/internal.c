@@ -14409,6 +14409,67 @@ int SendGlobalRequest(WOLFSSH* ssh,
     return ret;
 }
 
+
+#ifdef WOLFSSH_FWD
+/* Send a "tcpip-forward" (or "cancel-tcpip-forward") global request asking the
+ * peer to set up (or tear down) a remote listener. The request-specific data
+ * follows the want-reply boolean, so the generic SendGlobalRequest() framing
+ * (which places the boolean last) cannot express it. See RFC 4254 7.1. */
+int SendGlobalRequestFwd(WOLFSSH* ssh,
+        const char* bindAddr, word32 bindPort, int isCancel, int wantReply)
+{
+    byte* output;
+    word32 idx = 0;
+    word32 reqNameSz;
+    word32 bindAddrSz;
+    const char* reqName;
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering SendGlobalRequestFwd()");
+
+    if (ssh == NULL || bindAddr == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        reqName = isCancel ? "cancel-tcpip-forward" : "tcpip-forward";
+        reqNameSz = (word32)WSTRLEN(reqName);
+        bindAddrSz = (word32)WSTRLEN(bindAddr);
+
+        ret = PreparePacket(ssh, MSG_ID_SZ + LENGTH_SZ + reqNameSz + BOOLEAN_SZ
+                + LENGTH_SZ + bindAddrSz + UINT32_SZ);
+    }
+
+    if (ret == WS_SUCCESS) {
+        output = ssh->outputBuffer.buffer;
+        idx = ssh->outputBuffer.length;
+
+        output[idx++] = MSGID_GLOBAL_REQUEST;
+        c32toa(reqNameSz, output + idx);
+        idx += LENGTH_SZ;
+        WMEMCPY(output + idx, reqName, reqNameSz);
+        idx += reqNameSz;
+        output[idx++] = (byte)(wantReply != 0);
+        c32toa(bindAddrSz, output + idx);
+        idx += LENGTH_SZ;
+        WMEMCPY(output + idx, bindAddr, bindAddrSz);
+        idx += bindAddrSz;
+        c32toa(bindPort, output + idx);
+        idx += UINT32_SZ;
+
+        ssh->outputBuffer.length = idx;
+
+        ret = BundlePacket(ssh);
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = wolfSSH_SendPacket(ssh);
+
+    WLOG(WS_LOG_DEBUG, "Leaving SendGlobalRequestFwd(), ret = %d", ret);
+
+    return ret;
+}
+#endif /* WOLFSSH_FWD */
+
 static const char cannedLangTag[] = "en-us";
 static const word32 cannedLangTagSz = (word32)sizeof(cannedLangTag) - 1;
 

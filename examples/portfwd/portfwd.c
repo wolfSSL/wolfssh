@@ -88,7 +88,10 @@ static void ShowUsage(void)
            " -F <host>     host to forward from, default %s\n"
            " -f <num>      host port to forward from (REQUIRED)\n"
            " -T <host>     host to forward to, default to host\n"
-           " -t <num>      port to forward to (REQUIRED)\n",
+           " -t <num>      port to forward to (REQUIRED)\n"
+           " -r            remote (reverse) forward: ask the SSH server to\n"
+           "               listen on -F/-f and tunnel connections back to\n"
+           "               the local -T/-t target\n",
            LIBWOLFSSH_VERSION_STRING,
            LIBWOLFSSL_VERSION_STRING,
            wolfSshIp, wolfSshPort, defaultFwdFromHost);
@@ -212,6 +215,102 @@ static int wsPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 }
 
 
+/* State shared with the remote-forward callbacks. A single reverse connection
+ * is supported here; a production tool would key a table by channel id. */
+typedef struct PortfwdState {
+    const char* fwdToHost;  /* local target to connect inbound channels to */
+    word16 fwdToPort;
+    SOCKET_T appFd;         /* socket to the local target, -1 when idle */
+    word32 channelId;       /* id of the inbound forwarded-tcpip channel */
+    int pending;            /* a new channel is waiting to be wired up */
+    word16 boundPort;       /* port the peer reported binding */
+} PortfwdState;
+
+
+/* Open a TCP connection to the local forward target. Returns -1 on failure. */
+static SOCKET_T connectTarget(const char* host, word16 port)
+{
+    SOCKADDR_IN_T addr;
+    SOCKET_T fd;
+
+    build_addr(&addr, host, port);
+    tcp_socket(&fd, ((struct sockaddr_in*)&addr)->sin_family);
+    if (connect(fd, (const struct sockaddr*)&addr, sizeof(addr)) != 0) {
+        WCLOSESOCKET(fd);
+        return (SOCKET_T)-1;
+    }
+    return fd;
+}
+
+
+/* Forwarding callback for client-side remote forwarding. The peer opens a
+ * forwarded-tcpip channel for each inbound connection on its listener; the
+ * library reports it here as a LOCAL_SETUP followed by a CHANNEL_ID. */
+static int portfwdRemoteFwdCb(WS_FwdCbAction action, void* ctx,
+        const char* address, word32 port)
+{
+    PortfwdState* st = (PortfwdState*)ctx;
+    int ret = WS_FWD_SUCCESS;
+
+    switch (action) {
+        case WOLFSSH_FWD_LOCAL_SETUP:
+            /* address/port describe the peer's bound listener, not the local
+             * target, so connect to the configured forward-to address. */
+            (void)address;
+            (void)port;
+            st->appFd = connectTarget(st->fwdToHost, st->fwdToPort);
+            if (st->appFd == (SOCKET_T)-1) {
+                printf("Couldn't connect to forward target %s:%u\n",
+                        st->fwdToHost, st->fwdToPort);
+                ret = WS_FWD_SETUP_E;
+            }
+            break;
+        case WOLFSSH_FWD_CHANNEL_ID:
+            /* The new channel's id arrives in the port argument. */
+            st->channelId = port;
+            st->pending = 1;
+            break;
+        case WOLFSSH_FWD_LOCAL_CLEANUP:
+            (void)address;
+            (void)port;
+            if (st->appFd != (SOCKET_T)-1) {
+                WCLOSESOCKET(st->appFd);
+                st->appFd = (SOCKET_T)-1;
+            }
+            break;
+        case WOLFSSH_FWD_REMOTE_SETUP:
+        case WOLFSSH_FWD_REMOTE_CLEANUP:
+            /* Server-side actions; a client requesting remote forwarding does
+             * not receive these. */
+        default:
+            break;
+    }
+
+    return ret;
+}
+
+
+/* Request-success callback. The reply to a want-reply tcpip-forward carries the
+ * bound port (relevant when port 0 was requested). */
+static int portfwdReqSuccessCb(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    PortfwdState* st = (PortfwdState*)ctx;
+    const byte* p = (const byte*)buf;
+
+    (void)ssh;
+    if (p != NULL && sz >= 4) {
+        word32 boundPort = ((word32)p[0] << 24) | ((word32)p[1] << 16) |
+                ((word32)p[2] << 8) | (word32)p[3];
+        st->boundPort = (word16)boundPort;
+        printf("Remote forward established; peer bound port %u\n", boundPort);
+    }
+    else {
+        printf("Remote forward established.\n");
+    }
+    return WS_SUCCESS;
+}
+
+
 /*
  * fwdFromHost - address to bind the local listener socket to (default: any)
  * fwdFromHostPort - port number to bind the local listener socket to
@@ -241,7 +340,7 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     SOCKET_T sshFd;
     SOCKADDR_IN_T fwdFromHostAddr;
     socklen_t fwdFromHostAddrSz = sizeof(fwdFromHostAddr);
-    SOCKET_T listenFd;
+    SOCKET_T listenFd = -1;
     SOCKET_T appFd = -1;
     int argc = ((func_args*)args)->argc;
     char** argv = ((func_args*)args)->argv;
@@ -252,6 +351,8 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     int ret;
     int ch;
     int appFdSet = 0;
+    int reverse = 0;
+    PortfwdState fwdState;
     struct timeval to;
     WOLFSSH_CHANNEL* fwdChannel = NULL;
     byte* appBuffer = NULL;
@@ -267,7 +368,7 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
 
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?f:h:p:t:u:F:P:R:T:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?rf:h:p:t:u:F:P:R:T:")) != -1) {
         switch (ch) {
             case 'h':
                 host = myoptarg;
@@ -313,6 +414,10 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
 
             case 'T':
                 fwdToHost = myoptarg;
+                break;
+
+            case 'r':
+                reverse = 1;
                 break;
 
             case '?':
@@ -386,15 +491,32 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     if (ret != WS_SUCCESS)
         err_sys("Couldn't set the username.");
 
+    if (reverse) {
+        /* The peer (SSH server) does the listening; we receive its inbound
+         * forwarded-tcpip channels through the forwarding callback and the
+         * bound-port reply through the request-success callback. */
+        memset(&fwdState, 0, sizeof(fwdState));
+        fwdState.fwdToHost = fwdToHost;
+        fwdState.fwdToPort = fwdToPort;
+        fwdState.appFd = (SOCKET_T)-1;
+        wolfSSH_CTX_SetFwdCb(ctx, portfwdRemoteFwdCb, NULL);
+        wolfSSH_SetFwdCbCtx(ssh, &fwdState);
+        wolfSSH_SetReqSuccess(ctx, portfwdReqSuccessCb);
+        wolfSSH_SetReqSuccessCtx(ssh, &fwdState);
+    }
+
     /* Socket to SSH peer. */
     build_addr(&hostAddr, host, port);
     tcp_socket(&sshFd, ((struct sockaddr_in *)&hostAddr)->sin_family);
 
-    /* Receive from client application or connect to server application. */
-    build_addr(&fwdFromHostAddr, fwdFromHost, fwdFromPort);
-    tcp_socket(&listenFd, ((struct sockaddr_in *)&fwdFromHostAddr)->sin_family);
+    if (!reverse) {
+        /* Receive from client application or connect to server application. */
+        build_addr(&fwdFromHostAddr, fwdFromHost, fwdFromPort);
+        tcp_socket(&listenFd,
+                ((struct sockaddr_in *)&fwdFromHostAddr)->sin_family);
 
-    tcp_listen(&listenFd, &fwdFromPort, 1);
+        tcp_listen(&listenFd, &fwdFromPort, 1);
+    }
 
     printf("Connecting to the SSH server...\n");
     ret = connect(sshFd, (const struct sockaddr *)&hostAddr, hostAddrSz);
@@ -408,6 +530,13 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     ret = wolfSSH_connect(ssh);
     if (ret != WS_SUCCESS)
         err_sys("Couldn't connect SFTP");
+
+    if (reverse) {
+        /* Ask the server to open a listener and tunnel connections back. */
+        ret = wolfSSH_FwdRemoteSetup(ssh, fwdFromHost, fwdFromPort, 1);
+        if (ret != WS_SUCCESS)
+            err_sys("Couldn't request remote port forward.");
+    }
 
     if (readyFile != NULL) {
     #ifndef NO_FILESYSTEM
@@ -430,8 +559,13 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
 
     FD_ZERO(&templateFds);
     FD_SET(sshFd, &templateFds);
-    FD_SET(listenFd, &templateFds);
-    nFds = findMax(sshFd, listenFd) + 1;
+    if (!reverse) {
+        FD_SET(listenFd, &templateFds);
+        nFds = findMax(sshFd, listenFd) + 1;
+    }
+    else {
+        nFds = (int)sshFd + 1;
+    }
 
     for (;;) {
         rxFds = templateFds;
@@ -451,7 +585,7 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
 
         if ((appFdSet && FD_ISSET(appFd, &errFds)) ||
             FD_ISSET(sshFd, &errFds) ||
-            FD_ISSET(listenFd, &errFds)) {
+            (!reverse && FD_ISSET(listenFd, &errFds))) {
 
                 err_sys("some socket had an error");
             }
@@ -488,8 +622,22 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
                     }
                 }
             }
+
+            /* A reverse channel may have been opened by the peer while the
+             * worker ran. Wire its local target socket into the select set. */
+            if (reverse && fwdState.pending && !appFdSet) {
+                appFd = fwdState.appFd;
+                fwdChannel = wolfSSH_ChannelFind(ssh, fwdState.channelId,
+                        WS_CHANNEL_ID_SELF);
+                if (appFd != (SOCKET_T)-1 && fwdChannel != NULL) {
+                    FD_SET(appFd, &templateFds);
+                    nFds = findMax((int)sshFd, (int)appFd) + 1;
+                    appFdSet = 1;
+                }
+                fwdState.pending = 0;
+            }
         }
-        if (!appFdSet && FD_ISSET(listenFd, &rxFds)) {
+        if (!reverse && !appFdSet && FD_ISSET(listenFd, &rxFds)) {
             appFd = accept(listenFd,
                     (struct sockaddr*)&fwdFromHostAddr, &fwdFromHostAddrSz);
             if (appFd < 0)
@@ -513,12 +661,16 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
         }
     }
 
+    if (reverse)
+        wolfSSH_FwdRemoteCancel(ssh, fwdFromHost, fwdFromPort, 0);
+
     ret = wolfSSH_shutdown(ssh);
     if (ret != WS_SUCCESS)
         err_sys("Closing port forward stream failed.");
 
     WCLOSESOCKET(sshFd);
-    WCLOSESOCKET(listenFd);
+    if (listenFd != (SOCKET_T)-1)
+        WCLOSESOCKET(listenFd);
     WCLOSESOCKET(appFd);
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);

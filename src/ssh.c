@@ -2875,6 +2875,39 @@ WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNew(WOLFSSH* ssh,
     return wolfSSH_ChannelFwdNewLocal(ssh, host, hostPort, origin, originPort);
 }
 
+
+/* Ask the peer to open a remote listener (client-side remote port forwarding).
+ * Sends a "tcpip-forward" global request for bindAddr:bindPort. A bindPort of 0
+ * asks the peer to choose a port; with wantReply set the peer reports it back
+ * through the request-success callback (wolfSSH_SetReqSuccess). The peer then
+ * opens a "forwarded-tcpip" channel for each inbound connection, delivered
+ * through the forwarding callback (wolfSSH_CTX_SetFwdCb). */
+int wolfSSH_FwdRemoteSetup(WOLFSSH* ssh, const char* bindAddr,
+        word32 bindPort, int wantReply)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_FwdRemoteSetup()");
+    if (ssh == NULL || bindAddr == NULL)
+        return WS_BAD_ARGUMENT;
+    if (wantReply != 0 && wantReply != 1)
+        return WS_BAD_ARGUMENT;
+    return SendGlobalRequestFwd(ssh, bindAddr, bindPort, 0, wantReply);
+}
+
+
+/* Tear down a remote listener previously set up with wolfSSH_FwdRemoteSetup().
+ * Sends a "cancel-tcpip-forward" global request for the same bindAddr:bindPort
+ * that was requested. */
+int wolfSSH_FwdRemoteCancel(WOLFSSH* ssh, const char* bindAddr,
+        word32 bindPort, int wantReply)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_FwdRemoteCancel()");
+    if (ssh == NULL || bindAddr == NULL)
+        return WS_BAD_ARGUMENT;
+    if (wantReply != 0 && wantReply != 1)
+        return WS_BAD_ARGUMENT;
+    return SendGlobalRequestFwd(ssh, bindAddr, bindPort, 1, wantReply);
+}
+
 #endif /* WOLFSSH_FWD */
 
 

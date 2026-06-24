@@ -1148,6 +1148,10 @@ WOLFSSH_LOCAL int SendGlobalRequestFwdSuccess(WOLFSSH * ssh, int success,
         word32 port);
 WOLFSSH_LOCAL int SendGlobalRequest(WOLFSSH * ssh,
         const unsigned char * data, word32 dataSz, int reply);
+#ifdef WOLFSSH_FWD
+WOLFSSH_LOCAL int SendGlobalRequestFwd(WOLFSSH* ssh,
+        const char* bindAddr, word32 bindPort, int isCancel, int wantReply);
+#endif
 WOLFSSH_LOCAL int SendDebug(WOLFSSH* ssh, byte alwaysDisplay, const char* msg);
 WOLFSSH_LOCAL int SendServiceRequest(WOLFSSH* ssh, byte serviceId);
 WOLFSSH_LOCAL int SendServiceAccept(WOLFSSH* ssh, byte serviceId);
