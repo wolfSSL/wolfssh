@@ -6771,7 +6771,10 @@ static int DoKexDhGexGroup(WOLFSSH* ssh,
 
     if (ret == WS_SUCCESS) {
         if (ssh->handshake->ignoreNextKexMsg) {
-            /* skip this message. */
+            /* A conformant server sends GROUP only in response to the client's
+             * REQUEST, so it should never set first_packet_follows here.
+             * Discard the message defensively if a peer sets it anyway (RFC
+             * 4253 7.1), mirroring the other Do* handlers. */
             WLOG(WS_LOG_DEBUG, "Skipping server's KEXDH_GEX_GROUP message due "
                                "to first_packet_follows guess mismatch.");
             ssh->handshake->ignoreNextKexMsg = 0;
@@ -11768,12 +11771,24 @@ static int BuildRFC6187Info(WOLFSSH* ssh, int pubKeyID,
 
 
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
+
+/* Lower bound on the GEX modulus the server will hand out, regardless of how
+ * small a window the client requests. RFC 8270 (updating RFC 4419) says a
+ * server SHOULD NOT select a group smaller than 2048 bits; clamping here keeps
+ * the 1024-bit group 1 from being reachable via GEX even when it is otherwise
+ * enabled for direct group1-sha1 negotiation. */
+#ifndef WOLFSSH_DH_GEX_MIN_BITS
+    #define WOLFSSH_DH_GEX_MIN_BITS 2048
+#endif
+
 /* Select a built-in DH group for a GEX exchange that fits the client's
  * requested window. Picks the group whose modulus size in bits lies within
  * [minBits, maxBits] and is closest to preferredBits; ties favor the smaller
  * group, which preserves the historical 2048-bit choice for a default client.
- * Returns WS_SUCCESS with primeGroup/primeGroupSz set, or WS_DH_SIZE_E if no
- * built-in group falls inside the client's window -- the server rejects the
+ * The client's lower bound is first raised to WOLFSSH_DH_GEX_MIN_BITS so the
+ * server never downgrades below the 2048-bit floor (RFC 8270). Returns
+ * WS_SUCCESS with primeGroup/primeGroupSz set, or WS_DH_SIZE_E if no built-in
+ * group falls inside the (clamped) client window -- the server rejects the
  * exchange rather than silently handing back a group the client did not ask
  * for (RFC 4419 sec. 3). */
 static int SelectKexDhGexGroup(word32 minBits, word32 preferredBits,
@@ -11801,6 +11816,18 @@ static int SelectKexDhGexGroup(word32 minBits, word32 preferredBits,
     if (primeGroup == NULL || primeGroupSz == NULL)
         return WS_BAD_ARGUMENT;
 
+    /* Never select below the 2048-bit floor even if the client asks for less.
+     * If the client's max is also below the floor, no candidate matches and we
+     * reject (WS_DH_SIZE_E) rather than downgrade. */
+    if (minBits < WOLFSSH_DH_GEX_MIN_BITS)
+        minBits = WOLFSSH_DH_GEX_MIN_BITS;
+
+    /* Cap to the server's own key buffer (MAX_KEX_KEY_SZ sizes the private
+     * exponent in KeyAgreeDh_server) so the client window can't select a group
+     * larger than it holds. */
+    if (maxBits > (word32)(MAX_KEX_KEY_SZ * 8))
+        maxBits = (word32)(MAX_KEX_KEY_SZ * 8);
+
     for (i = 0; i < (word32)(sizeof(candidates) / sizeof(candidates[0])); i++) {
         word32 bits = candidates[i].bits;
         word32 delta;
@@ -11819,7 +11846,7 @@ static int SelectKexDhGexGroup(word32 minBits, word32 preferredBits,
 
     if (!haveBest) {
         WLOG(WS_LOG_DEBUG,
-                "DH GEX: no built-in group within client window [%u, %u]",
+                "DH GEX: no built-in group within effective window [%u, %u]",
                 minBits, maxBits);
         ret = WS_DH_SIZE_E;
     }

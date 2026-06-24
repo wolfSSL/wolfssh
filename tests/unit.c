@@ -1190,16 +1190,27 @@ static int test_DhGexGroupSelect(void)
     }
 #endif
 
-#ifndef WOLFSSH_NO_DH_GROUP1_SHA1
-    /* A window only the 1024-bit group fits returns group 1 (128 bytes). */
+    /* A sub-2048 window must be rejected, not downgraded to the 1024-bit group
+     * 1, even when group 1 is compiled in for direct group1-sha1: the GEX path
+     * enforces the WOLFSSH_DH_GEX_MIN_BITS (2048) floor from RFC 8270. The
+     * client's max (1536) is below the floor, so no candidate fits. */
     group = NULL; groupSz = 0;
     ret = wolfSSH_TestSelectKexDhGexGroup(1024, 1024, 1536, &group, &groupSz);
-    if (ret != WS_SUCCESS || groupSz != 128) {
-        printf("DhGexGroupSelect: 1024 window got ret %d sz %u\n",
+    if (ret != WS_DH_SIZE_E) {
+        printf("DhGexGroupSelect: sub-2048 window got ret %d sz %u\n",
                 ret, groupSz);
         return -204;
     }
-#endif
+
+    /* A window whose minimum is below the floor but whose max admits 2048 must
+     * clamp up to the 2048-bit group (256 bytes), never the 1024-bit group. */
+    group = NULL; groupSz = 0;
+    ret = wolfSSH_TestSelectKexDhGexGroup(1024, 1024, 4096, &group, &groupSz);
+    if (ret != WS_SUCCESS || groupSz != 256) {
+        printf("DhGexGroupSelect: floor-clamp window got ret %d sz %u\n",
+                ret, groupSz);
+        return -205;
+    }
 
     return 0;
 }
@@ -1307,6 +1318,79 @@ out:
 #else
     /* Without group 16 nothing forces a non-default selection, so there is no
      * meaningful send-vs-hash divergence to guard against here. */
+    return 0;
+#endif /* !WOLFSSH_NO_DH_GROUP16_SHA512 */
+}
+
+/* Exercise the GetDHPrimeGroup cache-miss fallback: with the cached group
+ * cleared, it must re-select the same group from the client window (and set a
+ * generator), not desync from the wire. */
+static int test_DhGexGroupCacheMissFallback(void)
+{
+#ifndef WOLFSSH_NO_DH_GROUP16_SHA512
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    byte request[UINT32_SZ * 3];
+    word32 idx = 0;
+    const byte* group = NULL;
+    word32 groupSz = 0;
+    const byte* generator = NULL;
+    word32 generatorSz = 0;
+    int ret;
+    int result = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -220;
+    wolfSSH_SetIOSend(ctx, GexSinkSend);
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL || ssh->handshake == NULL) {
+        result = -221;
+        goto out;
+    }
+    ssh->handshake->kexId = ID_DH_GEX_SHA256;
+
+    PutU32BE(request, 4096);
+    PutU32BE(request + UINT32_SZ, 4096);
+    PutU32BE(request + UINT32_SZ * 2, 8192);
+
+    ret = wolfSSH_TestDoKexDhGexRequest(ssh, request, sizeof(request), &idx);
+    if (ret != WS_SUCCESS) {
+        result = -222;
+        goto out;
+    }
+
+    /* Drop the cache to force the fallback branch. primeGroup is a WMALLOC'd
+     * copy; the fallback returns a pointer into static group data. */
+    if (ssh->handshake->primeGroup != NULL) {
+        WFREE(ssh->handshake->primeGroup, ssh->ctx->heap, DYNTYPE_MPINT);
+        ssh->handshake->primeGroup = NULL;
+    }
+
+    ret = wolfSSH_TestGetDHPrimeGroup(ssh, &group, &groupSz,
+            &generator, &generatorSz);
+    if (ret != WS_SUCCESS) {
+        printf("DhGexGroupCacheMissFallback: fallback ret %d\n", ret);
+        result = -223;
+        goto out;
+    }
+    /* Must re-select the same 4096-bit group 16 the wire used, with a
+     * non-NULL generator. */
+    if (group == NULL || groupSz != 512 || generator == NULL ||
+            generatorSz == 0) {
+        printf("DhGexGroupCacheMissFallback: group sz %u gen %p\n",
+                groupSz, (void*)generator);
+        result = -224;
+        goto out;
+    }
+
+out:
+    if (ssh != NULL)
+        wolfSSH_free(ssh);
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    return result;
+#else
     return 0;
 #endif /* !WOLFSSH_NO_DH_GROUP16_SHA512 */
 }
@@ -5307,6 +5391,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_DhGexGroupSendHashConsistency();
     printf("DhGexGroupSendHashConsistency: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DhGexGroupCacheMissFallback();
+    printf("DhGexGroupCacheMissFallback: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
