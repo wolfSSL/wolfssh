@@ -3915,6 +3915,14 @@ static int GetNameListRaw(byte* idList, word32* idListSz,
         return WS_BAD_ARGUMENT;
     }
 
+    /* A peer name list arrives via GetStringRef with its exact wire size,
+     * which may include a trailing comma (e.g. "aes128-cbc,"). Trim it so the
+     * final name is not folded together with the comma and mis-parsed as
+     * ID_UNKNOWN. Mirrors AlgoListSz, which does this for local lists. */
+    if (nameListSz > 0 && nameList[nameListSz - 1] == ',') {
+        nameListSz--;
+    }
+
     /*
      * The strings we want are now in the bounds of the message, and the
      * length of the list. Find the commas, or end of list, and then decode
@@ -4709,17 +4717,13 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     /* Languages - Client to Server, skip */
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "DKI: Languages - Client to Server");
-        ret = GetUint32(&skipSz, buf, len, &begin);
-        if (ret == WS_SUCCESS)
-            begin += skipSz;
+        ret = GetSkip(buf, len, &begin);
     }
 
     /* Languages - Server to Client, skip */
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "DKI: Languages - Server to Client");
-        ret = GetUint32(&skipSz, buf, len, &begin);
-        if (ret == WS_SUCCESS)
-            begin += skipSz;
+        ret = GetSkip(buf, len, &begin);
     }
 
     /* First KEX Packet Follows */
