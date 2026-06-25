@@ -676,7 +676,7 @@ static INLINE void tcp_listen(WS_SOCKET_T* sockfd, word16* port, int useAnyAddr)
         err_sys("tcp listen failed");
 #endif
 
-    #if !defined(USE_WINDOWS_API) && !defined(WOLFSSL_TIRTOS) && !defined(WOLFSSL_NUCLEUS)
+    #if !defined(WOLFSSL_TIRTOS) && !defined(WOLFSSL_NUCLEUS)
         if (*port == 0) {
             socklen_t len = sizeof(addr);
             if (getsockname(*sockfd, (struct sockaddr*)&addr, &len) == 0) {
@@ -826,6 +826,9 @@ typedef struct tcp_ready {
 #if defined(_POSIX_THREADS) && !defined(__MINGW32__)
     pthread_mutex_t mutex;
     pthread_cond_t  cond;
+#elif defined(USE_WINDOWS_API)
+    CRITICAL_SECTION cs;
+    HANDLE           readyEvent; /* manual-reset event, set when ready */
 #endif
 } tcp_ready;
 
@@ -849,6 +852,14 @@ typedef struct func_args {
 
 #ifdef WOLFSSH_TEST_LOCKING
 
+#if defined(USE_WINDOWS_API) && defined(NO_MAIN_DRIVER) && \
+    !defined(SINGLE_THREADED)
+/* Upper bound on the wait for the server to become ready. The signal fires
+ * right after the listen() so the real wait is sub-second; this generous
+ * bound only keeps a dead server from hanging the run. */
+#define TCP_READY_TIMEOUT_MS 30000
+#endif
+
 static INLINE void InitTcpReady(tcp_ready* ready)
 {
     ready->ready = 0;
@@ -858,6 +869,10 @@ static INLINE void InitTcpReady(tcp_ready* ready)
     !defined(__MINGW32__) && !defined(SINGLE_THREADED)
     pthread_mutex_init(&ready->mutex, NULL);
     pthread_cond_init(&ready->cond, NULL);
+#elif defined(USE_WINDOWS_API) && defined(NO_MAIN_DRIVER) && \
+    !defined(SINGLE_THREADED)
+    InitializeCriticalSection(&ready->cs);
+    ready->readyEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
 #endif
 }
 
@@ -868,6 +883,13 @@ static INLINE void FreeTcpReady(tcp_ready* ready)
     !defined(__MINGW32__) && !defined(SINGLE_THREADED)
     pthread_mutex_destroy(&ready->mutex);
     pthread_cond_destroy(&ready->cond);
+#elif defined(USE_WINDOWS_API) && defined(NO_MAIN_DRIVER) && \
+    !defined(SINGLE_THREADED)
+    if (ready->readyEvent != NULL) {
+        CloseHandle(ready->readyEvent);
+        ready->readyEvent = NULL;
+    }
+    DeleteCriticalSection(&ready->cs);
 #else
     WOLFSSH_UNUSED(ready);
 #endif
@@ -891,6 +913,11 @@ static INLINE void WaitTcpReady(tcp_ready* ready)
      * seems to help. This is not ideal. (XXX) */
     k_sleep(Z_TIMEOUT_TICKS(300));
 #endif /* WOLFSSH_ZEPHYR */
+#elif defined(USE_WINDOWS_API) && defined(NO_MAIN_DRIVER) && \
+    !defined(SINGLE_THREADED)
+    /* manual-reset event, so a late waiter still sees the ready state; on
+     * timeout fall through with port still 0 so the caller fails fast. */
+    WaitForSingleObject(ready->readyEvent, TCP_READY_TIMEOUT_MS);
 #else
     WOLFSSH_UNUSED(ready);
 #endif

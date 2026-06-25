@@ -1524,10 +1524,8 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
     argsCount = 0;
     args[argsCount++] = ".";
     args[argsCount++] = "-1";
-#ifndef USE_WINDOWS_API
     args[argsCount++] = "-p";
     args[argsCount++] = "0";
-#endif
     ser.argv   = (char**)args;
     ser.argc    = argsCount;
     ser.signal = &ready;
@@ -1709,8 +1707,12 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
     }
 
     argsCount = wolfSSH_shutdown(ssh);
-    if (argsCount == WS_SOCKET_ERROR_E) {
-        /* If the socket is closed on shutdown, peer is gone, this is OK. */
+    if (argsCount == WS_SOCKET_ERROR_E ||
+            (argsCount == WS_ERROR &&
+             wolfSSH_get_error(ssh) == WS_SOCKET_ERROR_E)) {
+        /* If the socket is closed on shutdown, peer is gone, this is OK. On
+         * Windows the recv path returns generic WS_FATAL_ERROR with the specific
+         * code stashed in wolfSSH_get_error. */
         argsCount = WS_SUCCESS;
     }
 
@@ -1734,6 +1736,7 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
     k_sleep(Z_TIMEOUT_TICKS(100));
 #endif
     ThreadJoin(serThread);
+    FreeTcpReady(&ready);
 }
 
 
@@ -1794,10 +1797,8 @@ static void test_wolfSSH_SFTP_PartialSend(void)
     argsCount = 0;
     args[argsCount++] = ".";
     args[argsCount++] = "-1";
-#ifndef USE_WINDOWS_API
     args[argsCount++] = "-p";
     args[argsCount++] = "0";
-#endif
     ser.argv   = (char**)args;
     ser.argc    = argsCount;
     ser.signal = &ready;
@@ -1984,7 +1985,11 @@ static void test_wolfSSH_SFTP_PartialSend(void)
     }
 
     argsCount = wolfSSH_shutdown(ssh);
-    if (argsCount == WS_SOCKET_ERROR_E) {
+    /* Benign peer reset: WS_SOCKET_ERROR_E either as the return (send path) or in
+     * wolfSSH_get_error while shutdown returns generic WS_FATAL_ERROR (recv path). */
+    if (argsCount == WS_SOCKET_ERROR_E ||
+            (argsCount == WS_ERROR &&
+             wolfSSH_get_error(ssh) == WS_SOCKET_ERROR_E)) {
         argsCount = WS_SUCCESS;
     }
 #if DEFAULT_HIGHWATER_MARK < 8000
@@ -2003,6 +2008,7 @@ static void test_wolfSSH_SFTP_PartialSend(void)
     k_sleep(Z_TIMEOUT_TICKS(100));
 #endif
     ThreadJoin(serThread);
+    FreeTcpReady(&ready);
 #endif /* WOLFSSH_TEST_INTERNAL */
 }
 
@@ -2034,10 +2040,8 @@ static void sftp_rekey_test(int nonBlock)
     argsCount = 0;
     args[argsCount++] = ".";
     args[argsCount++] = "-1";
-#ifndef USE_WINDOWS_API
     args[argsCount++] = "-p";
     args[argsCount++] = "0";
-#endif
     ser.argv   = (char**)args;
     ser.argc    = argsCount;
     ser.signal = &ready;
@@ -2121,7 +2125,11 @@ static void sftp_rekey_test(int nonBlock)
      * before the WS_REKEYING fixup below could otherwise mask it. The loop cap
      * is one above the assert threshold to leave last-iteration headroom. */
     AssertIntLE(tries, SFTP_REKEY_MAX_TRIES);
-    if (argsCount == WS_SOCKET_ERROR_E) {
+    /* Benign peer reset: WS_SOCKET_ERROR_E either as the return (send path) or in
+     * wolfSSH_get_error while shutdown returns generic WS_FATAL_ERROR (recv path). */
+    if (argsCount == WS_SOCKET_ERROR_E ||
+            (argsCount == WS_ERROR &&
+             wolfSSH_get_error(ssh) == WS_SOCKET_ERROR_E)) {
         argsCount = WS_SUCCESS;
     }
 #if DEFAULT_HIGHWATER_MARK < 8000
@@ -2141,6 +2149,7 @@ static void sftp_rekey_test(int nonBlock)
     k_sleep(Z_TIMEOUT_TICKS(100));
 #endif
     ThreadJoin(serThread);
+    FreeTcpReady(&ready);
 }
 
 static void test_wolfSSH_SFTP_ReKey(void)
@@ -2319,10 +2328,8 @@ static void test_wolfSSH_SFTP_Confinement(void)
     argsCount = 0;
     args[argsCount++] = ".";
     args[argsCount++] = "-1";
-#ifndef USE_WINDOWS_API
     args[argsCount++] = "-p";
     args[argsCount++] = "0";
-#endif
     ser.argv = (char**)args;
     ser.argc = argsCount;
     ser.signal = &ready;
@@ -2496,7 +2503,12 @@ static void test_wolfSSH_SFTP_Confinement(void)
         wolfSSH_worker(ssh, NULL);
 
     ret = wolfSSH_shutdown(ssh);
-    if (ret == WS_SOCKET_ERROR_E) {
+    if (ret == WS_SOCKET_ERROR_E ||
+            (ret == WS_ERROR &&
+             wolfSSH_get_error(ssh) == WS_SOCKET_ERROR_E)) {
+        /* If the socket is closed on shutdown, peer is gone, this is OK. On
+         * Windows the recv path returns generic WS_FATAL_ERROR with the specific
+         * code stashed in wolfSSH_get_error. */
         ret = WS_SUCCESS;
     }
 #if DEFAULT_HIGHWATER_MARK < 8000
@@ -2513,6 +2525,7 @@ static void test_wolfSSH_SFTP_Confinement(void)
     k_sleep(Z_TIMEOUT_TICKS(100));
 #endif
     ThreadJoin(serThread);
+    FreeTcpReady(&ready);
 
     /* remove staged targets; escMkdir/escDest only exist if confinement
      * leaked, and inJailDir only if the positive-case RMDIR did not run, so
@@ -2834,10 +2847,8 @@ static void scp_rekey_test(int nonBlock, int toServer)
     argsCount = 0;
     args[argsCount++] = ".";
     args[argsCount++] = "-1";
-#ifndef USE_WINDOWS_API
     args[argsCount++] = "-p";
     args[argsCount++] = "0";
-#endif
     ser.argv   = (char**)args;
     ser.argc   = argsCount;
     ser.signal = &ready;
@@ -2932,6 +2943,7 @@ static void scp_rekey_test(int nonBlock, int toServer)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
     ThreadJoin(serThread);
+    FreeTcpReady(&ready);
 
     /* verify the transferred file matches the source once the server is done */
     AssertIntEQ(scpFilesMatch(verifyName, fileData, SCP_REKEY_FILE_SZ), 0);
@@ -3648,10 +3660,8 @@ static void test_wolfSSH_KeyboardInteractive(void)
     args[argsCount++] = "-1";
     args[argsCount++] = "-i";
     args[argsCount++] = "test:test";
-#ifndef USE_WINDOWS_API
     args[argsCount++] = "-p";
     args[argsCount++] = "0";
-#endif
     ser.argv   = (char**)args;
     ser.argc    = argsCount;
     ser.signal = &ready;
@@ -3665,8 +3675,12 @@ static void test_wolfSSH_KeyboardInteractive(void)
 
 
     argsCount = wolfSSH_shutdown(ssh);
-    if (argsCount == WS_SOCKET_ERROR_E) {
-        /* If the socket is closed on shutdown, peer is gone, this is OK. */
+    if (argsCount == WS_SOCKET_ERROR_E ||
+            (argsCount == WS_ERROR &&
+             wolfSSH_get_error(ssh) == WS_SOCKET_ERROR_E)) {
+        /* If the socket is closed on shutdown, peer is gone, this is OK. On
+         * Windows the recv path returns generic WS_FATAL_ERROR with the specific
+         * code stashed in wolfSSH_get_error. */
         argsCount = WS_SUCCESS;
     }
 
@@ -3690,6 +3704,7 @@ static void test_wolfSSH_KeyboardInteractive(void)
     k_sleep(Z_TIMEOUT_TICKS(100));
 #endif
     ThreadJoin(serThread);
+    FreeTcpReady(&ready);
 }
 
 #else /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
@@ -3708,6 +3723,8 @@ int wolfSSH_ApiTest(int argc, char** argv)
 #ifdef WOLFSSH_TEST_BLOCK
     return 77;
 #else
+    WSTARTTCP();
+
     AssertIntEQ(wolfSSH_Init(), WS_SUCCESS);
 
     #if defined(FIPS_VERSION_GE) && FIPS_VERSION_GE(5,2)

@@ -551,6 +551,7 @@ extern "C" {
         #define WSTRNCASECMP(s1,s2,n) _strnicmp((s1),(s2),(n))
         #define WSNPRINTF(s,n,f,...) _snprintf_s((s),(n),_TRUNCATE,(f),##__VA_ARGS__)
         #define WVSNPRINTF(s,n,f,...) _vsnprintf_s((s),(n),_TRUNCATE,(f),##__VA_ARGS__)
+        #define WSCPRINTF(f,...) _scprintf((f),##__VA_ARGS__)
         #define WSTRTOK(s1,s2,s3) strtok_s((s1),(s2),(s3))
     #elif defined(MICROCHIP_MPLAB_HARMONY) || defined(MICROCHIP_PIC32)
         #include <stdio.h>
