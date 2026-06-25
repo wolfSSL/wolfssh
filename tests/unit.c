@@ -950,6 +950,78 @@ done:
 #endif /* WOLFSSH_TEST_INTERNAL && any HMAC SHA variant enabled */
 
 
+#ifdef WOLFSSH_TEST_INTERNAL
+/* Verify DoReceive rejects a binary packet whose padding_length is below the
+ * RFC 4253 section 6 minimum of four bytes, returning WS_BUFFER_E. The packet
+ * is delivered in the clear (no cipher, no MAC), matching the pre-key-exchange
+ * transport, so DoPacket's padding check is what rejects it. */
+static int test_DoReceive_RejectsShortPadding(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    int ret;
+    int result = 0;
+    /* A well-formed MSGID_IGNORE packet carrying an empty string, but with
+     * padding_length = 1 (below MIN_PAD_LENGTH). Aside from the short padding
+     * the packet parses cleanly, so the padding check is the only thing that
+     * can reject it. Layout: uint32 packet_length=7, padding_length=1,
+     * msgId, uint32 string_len=0, 1 pad byte => 11 bytes total. */
+    byte pkt[11];
+    word32 totalLen = (word32)sizeof(pkt);
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -760;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -761;
+    }
+
+    pkt[0] = 0; pkt[1] = 0; pkt[2] = 0; pkt[3] = 7; /* packet_length */
+    pkt[4] = 1;             /* padding_length, below MIN_PAD_LENGTH (4) */
+    pkt[5] = MSGID_IGNORE;
+    pkt[6] = 0; pkt[7] = 0; pkt[8] = 0; pkt[9] = 0; /* string_len = 0 */
+    pkt[10] = 0;            /* padding */
+
+    ssh->peerEncryptId = ID_NONE;
+    ssh->peerAeadMode = 0;
+    ssh->peerBlockSz = MIN_BLOCK_SZ;
+    ssh->peerMacId = ID_NONE;
+    ssh->peerMacSz = 0;
+    ssh->peerSeq = 0;
+    ssh->curSz = 0;
+    ssh->processReplyState = PROCESS_INIT;
+    ssh->error = 0;
+
+    ShrinkBuffer(&ssh->inputBuffer, 1);
+    ret = GrowBuffer(&ssh->inputBuffer, totalLen);
+    if (ret != WS_SUCCESS) {
+        result = -762;
+        goto done2;
+    }
+    WMEMCPY(ssh->inputBuffer.buffer, pkt, totalLen);
+    ssh->inputBuffer.length = totalLen;
+    ssh->inputBuffer.idx = 0;
+
+    ret = wolfSSH_TestDoReceive(ssh);
+    if (ret != WS_FATAL_ERROR) {
+        result = -763;
+        goto done2;
+    }
+    if (ssh->error != WS_BUFFER_E) {
+        result = -764;
+        goto done2;
+    }
+
+done2:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* WOLFSSH_TEST_INTERNAL */
+
+
 #if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_DH_GEX_SHA256)
 
 typedef struct {
@@ -2231,6 +2303,107 @@ static int test_DoUserAuthRequest_serviceName(void)
     }
 
 done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+
+/* userauth callback that records whether it was invoked. Returns SUCCESS so
+ * that, if it were ever reached for a password-change request, the request
+ * would be (incorrectly) authenticated - making a missed rejection visible. */
+static int s_pwChangeCbCalled = 0;
+static int UnitAuthAlwaysSucceed(byte authType, WS_UserAuthData* authData,
+        void* ctx)
+{
+    (void)authData;
+    (void)ctx;
+    if (authType == WOLFSSH_USERAUTH_PASSWORD) {
+        s_pwChangeCbCalled = 1;
+    }
+    return WOLFSSH_USERAUTH_SUCCESS;
+}
+
+/* Verify DoUserAuthRequest rejects a password request that sets the
+ * password-change flag (RFC 4252 Section 8: an expired password MUST NOT be
+ * used for authentication). The request is otherwise well-formed and the
+ * userauth callback would return SUCCESS, so a missing rejection would let the
+ * old password authenticate. Asserts:
+ *   1. ret == WS_SUCCESS (connection stays open for retry)
+ *   2. the userauth callback is never invoked
+ *   3. exactly one packet is sent and it is SSH_MSG_USERAUTH_FAILURE
+ *   4. *idx == len (the new-password field is fully consumed) */
+static int test_DoUserAuthRequest_rejectsPasswordChange(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    int result = 0;
+    int ret;
+    int capMsgId;
+    byte buf[128];
+    word32 len = 0, idx = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -660;
+    wolfSSH_SetIOSend(ctx, CaptureIoSendAuthSvc);
+    wolfSSH_SetUserAuth(ctx, UnitAuthAlwaysSucceed);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        result = -661;
+        goto out;
+    }
+
+    s_pwChangeCbCalled = 0;
+    s_authSvcCaptureSz = 0;
+    s_authSvcSendCount = 0;
+    WMEMSET(s_authSvcCapture, 0, sizeof(s_authSvcCapture));
+
+    /* username: "user" */
+    buf[len++] = 0; buf[len++] = 0; buf[len++] = 0; buf[len++] = 4;
+    WMEMCPY(buf + len, "user", 4); len += 4;
+    /* service name: "ssh-connection" */
+    buf[len++] = 0; buf[len++] = 0; buf[len++] = 0; buf[len++] = 14;
+    WMEMCPY(buf + len, "ssh-connection", 14); len += 14;
+    /* auth method: "password" */
+    buf[len++] = 0; buf[len++] = 0; buf[len++] = 0; buf[len++] = 8;
+    WMEMCPY(buf + len, "password", 8); len += 8;
+    /* password-change flag: TRUE */
+    buf[len++] = 1;
+    /* current password: "oldpass" */
+    buf[len++] = 0; buf[len++] = 0; buf[len++] = 0; buf[len++] = 7;
+    WMEMCPY(buf + len, "oldpass", 7); len += 7;
+    /* new password: "newpass" */
+    buf[len++] = 0; buf[len++] = 0; buf[len++] = 0; buf[len++] = 7;
+    WMEMCPY(buf + len, "newpass", 7); len += 7;
+
+    ret = wolfSSH_TestDoUserAuthRequest(ssh, buf, len, &idx);
+
+    if (ret != WS_SUCCESS) {
+        result = -662;
+        goto out;
+    }
+    if (s_pwChangeCbCalled) {
+        /* The callback must not run for a password-change request. */
+        result = -663;
+        goto out;
+    }
+    if (s_authSvcSendCount != 1) {
+        result = -664;
+        goto out;
+    }
+    capMsgId = CaptureMsgId(s_authSvcCapture, s_authSvcCaptureSz);
+    if (capMsgId != MSGID_USERAUTH_FAILURE) {
+        result = -665;
+        goto out;
+    }
+    if (idx != len) {
+        result = -666;
+        goto out;
+    }
+
+out:
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
     return result;
@@ -3696,6 +3869,111 @@ cleanup:
     return result;
 }
 
+/* Verify KeyAgreeDh_server rejects a degenerate peer DH public key.
+ * The peer public 'e' is read from ssh->handshake->e; a value of 1 sits at
+ * the low end of RFC 4253 section 8's permitted [1, p-1] range, but it is a
+ * weak/degenerate value that wc_DhCheckPubKey rejects (stricter than the
+ * RFC's bare minimum) before the shared secret is computed. Without that
+ * guard wc_DhAgree would happily derive the degenerate secret 1. */
+static int test_KeyAgreeDh_server_rejectsBadPeerPublic(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    byte f[MAX_KEX_KEY_SZ];
+    word32 fSz = (word32)sizeof(f);
+    int result = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -730;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL || ssh->handshake == NULL) {
+        result = -731;
+        goto out;
+    }
+#ifndef WOLFSSH_NO_DH_GROUP14_SHA256
+    ssh->handshake->kexId = ID_DH_GROUP14_SHA256;
+#elif !defined(WOLFSSH_NO_DH_GROUP14_SHA1)
+    ssh->handshake->kexId = ID_DH_GROUP14_SHA1;
+#else
+    ssh->handshake->kexId = ID_DH_GROUP1_SHA1;
+#endif
+
+    /* Degenerate peer public key e = 1 (yields the shared secret 1). */
+    ssh->handshake->e[0] = 0x01;
+    ssh->handshake->eSz = 1;
+
+    if (wolfSSH_TestKeyAgreeDh_server(ssh, WC_HASH_TYPE_SHA256, f, &fSz) == 0) {
+        /* The degenerate peer public must not be accepted. */
+        result = -732;
+    }
+
+out:
+    if (ssh != NULL)
+        wolfSSH_free(ssh);
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* Verify KeyAgreeDh_client rejects a degenerate peer DH public key. The
+ * peer public 'f' is passed straight to the function; a value of 1 sits at the
+ * low end of RFC 4253 section 8's permitted [1, p-1] range, but it is a
+ * weak/degenerate value that the wc_DhCheckPubKey guard rejects (stricter than
+ * the RFC's bare minimum) before the shared secret is used.
+ * wolfSSH_TestSetDhKexKey installs the prime
+ * group and generates a real ephemeral key pair first, mirroring SendKexDhInit,
+ * so the rejection is driven by the bad peer key rather than a missing private
+ * exponent. This guard is defense-in-depth: wc_DhAgree in wolfCrypt also
+ * enforces the same range, so the test confirms the client rejection behavior
+ * but does not isolate the wolfSSH check from the underlying wolfCrypt one. */
+static int test_KeyAgreeDh_client_rejectsBadPeerPublic(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    byte f[1];
+    int result = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -750;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL || ssh->handshake == NULL) {
+        result = -751;
+        goto out;
+    }
+#ifndef WOLFSSH_NO_DH_GROUP14_SHA256
+    ssh->handshake->kexId = ID_DH_GROUP14_SHA256;
+#elif !defined(WOLFSSH_NO_DH_GROUP14_SHA1)
+    ssh->handshake->kexId = ID_DH_GROUP14_SHA1;
+#else
+    ssh->handshake->kexId = ID_DH_GROUP1_SHA1;
+#endif
+
+    /* Install the prime group on the client's ephemeral DH key, as the client
+     * KEX path does before KeyAgreeDh_client runs. */
+    if (wolfSSH_TestSetDhKexKey(ssh) != 0) {
+        result = -752;
+        goto out;
+    }
+
+    /* Degenerate peer public key f = 1 (yields the shared secret 1). */
+    f[0] = 0x01;
+
+    if (wolfSSH_TestKeyAgreeDh_client(ssh, WC_HASH_TYPE_SHA256, f,
+            (word32)sizeof(f)) == 0) {
+        /* The degenerate peer public must not be accepted. */
+        result = -753;
+    }
+
+out:
+    if (ssh != NULL)
+        wolfSSH_free(ssh);
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    return result;
+}
+
 #if defined(WOLFSSH_SMALL_STACK) && defined(WOLFSSH_TEST_CAPTURING_ALLOCATOR)
 /* Size-tracked, poisoning capture allocator. AllocHeader stores the
  * user-requested size in front of each allocation so tests can filter
@@ -3887,6 +4165,129 @@ out:
 }
 #endif /* WOLFSSH_SMALL_STACK && WOLFSSH_TEST_CAPTURING_ALLOCATOR */
 #endif /* !WOLFSSH_NO_DH */
+
+#if !defined(WOLFSSH_NO_ECDH) && !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256)
+/* Verify KeyAgreeEcdh_server rejects an off-curve peer ECC point. The peer
+ * point is read from ssh->handshake->e as an X9.63 uncompressed point; (1, 1)
+ * is a well-formed encoding that is not on P-256. In builds without
+ * WOLFSSL_VALIDATE_ECC_IMPORT (the common embedded case this hardening targets)
+ * wc_ecc_import_x963 accepts the coordinates, so the wc_ecc_check_key call in
+ * the shared EccCheckPeerKey helper is what rejects it before
+ * wc_ecc_shared_secret is reached; with WOLFSSL_VALIDATE_ECC_IMPORT the import
+ * itself rejects it. Either way the function must fail. P-256 has cofactor 1,
+ * so an off-curve point (not a wrong-subgroup one) is the meaningful test. */
+static int test_KeyAgreeEcdh_server_rejectsOffCurvePoint(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    byte f[MAX_KEX_KEY_SZ];
+    word32 fSz = (word32)sizeof(f);
+    int result = 0;
+    /* X9.63 uncompressed point for P-256: 0x04 || X(32) || Y(32), here the
+     * off-curve point (X=1, Y=1). */
+    byte point[1 + 32 + 32];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -740;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL || ssh->handshake == NULL) {
+        result = -741;
+        goto out;
+    }
+    ssh->handshake->kexId = ID_ECDH_SHA2_NISTP256;
+
+    WMEMSET(point, 0, sizeof(point));
+    point[0] = 0x04;                  /* uncompressed */
+    point[32] = 0x01;                 /* X = 1 (big-endian, last byte) */
+    point[64] = 0x01;                 /* Y = 1 */
+    WMEMCPY(ssh->handshake->e, point, sizeof(point));
+    ssh->handshake->eSz = (word32)sizeof(point);
+
+    if (wolfSSH_TestKeyAgreeEcdh_server(ssh, WC_HASH_TYPE_SHA256, f, &fSz)
+            == 0) {
+        /* The off-curve peer point must not be accepted. */
+        result = -742;
+    }
+
+out:
+    if (ssh != NULL)
+        wolfSSH_free(ssh);
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* Verify KeyAgreeEcdh_client rejects an off-curve peer ECC point. The peer
+ * point 'f' is an X9.63 uncompressed encoding; (1, 1) is well-formed but is
+ * not on P-256. In builds without WOLFSSL_VALIDATE_ECC_IMPORT (the common
+ * embedded case this hardening targets) wc_ecc_import_x963 accepts the
+ * coordinates, so the wc_ecc_check_key call in the shared EccCheckPeerKey
+ * helper is what rejects it before wc_ecc_shared_secret is reached; with
+ * WOLFSSL_VALIDATE_ECC_IMPORT the import itself rejects it. Either way the
+ * function must fail. P-256 has cofactor 1, so an off-curve point (not a
+ * wrong-subgroup one) is the meaningful test. */
+static int test_KeyAgreeEcdh_client_rejectsOffCurvePoint(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    int result = 0;
+    /* X9.63 uncompressed point for P-256: 0x04 || X(32) || Y(32), here the
+     * off-curve point (X=1, Y=1). */
+    byte point[1 + 32 + 32];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -770;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL || ssh->handshake == NULL) {
+        result = -771;
+        goto out;
+    }
+    ssh->handshake->kexId = ID_ECDH_SHA2_NISTP256;
+
+    /* Generate a real client ephemeral P-256 key, as SendKexDhInit() does
+     * before KeyAgreeEcdh_client() runs. With a live private key in place the
+     * only way the call can fail is the peer point validation, so the test
+     * actually exercises the wc_ecc_check_key guard rather than tripping over a
+     * missing private key. KeyAgreeEcdh_client() frees privKey.ecc on the way
+     * out, so the cleanup path stays well defined. */
+    if (wc_ecc_init(&ssh->handshake->privKey.ecc) != 0) {
+        result = -772;
+        goto out;
+    }
+    ssh->handshake->useEcc = 1;
+#ifdef HAVE_WC_ECC_SET_RNG
+    if (wc_ecc_set_rng(&ssh->handshake->privKey.ecc, ssh->rng) != 0) {
+        result = -772;
+        goto out;
+    }
+#endif
+    if (wc_ecc_make_key_ex(ssh->rng, 32, &ssh->handshake->privKey.ecc,
+            ECC_SECP256R1) != 0) {
+        result = -772;
+        goto out;
+    }
+
+    WMEMSET(point, 0, sizeof(point));
+    point[0] = 0x04;                  /* uncompressed */
+    point[32] = 0x01;                 /* X = 1 (big-endian, last byte) */
+    point[64] = 0x01;                 /* Y = 1 */
+
+    if (wolfSSH_TestKeyAgreeEcdh_client(ssh, WC_HASH_TYPE_SHA256, point,
+            (word32)sizeof(point)) == 0) {
+        /* The off-curve peer point must not be accepted. */
+        result = -773;
+    }
+
+out:
+    if (ssh != NULL)
+        wolfSSH_free(ssh);
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* !WOLFSSH_NO_ECDH && !WOLFSSH_NO_ECDH_SHA2_NISTP256 */
 
 #if defined(WOLFSSH_SCP) && !defined(WOLFSSH_SCP_USER_CALLBACKS) && \
     !defined(NO_FILESYSTEM) && !defined(WOLFSSL_NUCLEUS) && \
@@ -5199,6 +5600,13 @@ int wolfSSH_UnitTest(int argc, char** argv)
     testResult = testResult || unitResult;
 #endif
 
+#ifdef WOLFSSH_TEST_INTERNAL
+    unitResult = test_DoReceive_RejectsShortPadding();
+    printf("DoReceiveRejectsShortPadding: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
 #if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_DH_GEX_SHA256)
     unitResult = test_DhGexGroupValidate();
     printf("DhGexGroupValidate: %s\n",
@@ -5296,6 +5704,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
+    unitResult = test_DoUserAuthRequest_rejectsPasswordChange();
+    printf("DoUserAuthRequest_rejectsPasswordChange: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
     unitResult = test_SendUserAuthFailure_emptyMethods();
     printf("SendUserAuthFailure_emptyMethods: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
@@ -5360,6 +5773,16 @@ int wolfSSH_UnitTest(int argc, char** argv)
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
+    unitResult = test_KeyAgreeDh_server_rejectsBadPeerPublic();
+    printf("KeyAgreeDh_server_rejectsBadPeerPublic: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_KeyAgreeDh_client_rejectsBadPeerPublic();
+    printf("KeyAgreeDh_client_rejectsBadPeerPublic: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
 #if defined(WOLFSSH_SMALL_STACK) && defined(WOLFSSH_TEST_CAPTURING_ALLOCATOR)
     unitResult = test_KeyAgreeDh_server_zeroesEphemeralPrivKey();
     printf("KeyAgreeDh_server_zeroesEphemeralPrivKey: %s\n",
@@ -5367,6 +5790,18 @@ int wolfSSH_UnitTest(int argc, char** argv)
     testResult = testResult || unitResult;
 #endif
 #endif /* !WOLFSSH_NO_DH */
+
+#if !defined(WOLFSSH_NO_ECDH) && !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256)
+    unitResult = test_KeyAgreeEcdh_server_rejectsOffCurvePoint();
+    printf("KeyAgreeEcdh_server_rejectsOffCurvePoint: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_KeyAgreeEcdh_client_rejectsOffCurvePoint();
+    printf("KeyAgreeEcdh_client_rejectsOffCurvePoint: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif /* !WOLFSSH_NO_ECDH && !WOLFSSH_NO_ECDH_SHA2_NISTP256 */
 
 #endif
 
