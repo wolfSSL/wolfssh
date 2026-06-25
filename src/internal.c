@@ -1337,6 +1337,14 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
 
     ssh->keyingCompletionCtx = (void*)ssh;
 
+    if (wc_AesInit(&ssh->encryptCipher.aes, heap, INVALID_DEVID) != 0 ||
+        wc_AesInit(&ssh->decryptCipher.aes, heap, INVALID_DEVID) != 0) {
+
+        WLOG(WS_LOG_DEBUG, "SshInit: Cannot initialize ciphers.\n");
+        wolfSSH_free(ssh);
+        return NULL;
+    }
+
     if (BufferInit(&ssh->inputBuffer, 0, ctx->heap) != WS_SUCCESS  ||
         BufferInit(&ssh->outputBuffer, 0, ctx->heap) != WS_SUCCESS ||
         BufferInit(&ssh->extDataBuffer, 0, ctx->heap) != WS_SUCCESS) {
