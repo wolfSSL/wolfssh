@@ -1389,7 +1389,7 @@ static void test_wolfSSH_agent_signrequest_success(void)
 
 
 #if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT) && \
-    !defined(SINGLE_THREADED)
+    !defined(SINGLE_THREADED) && !defined(USE_WINDOWS_API)
 
 byte userPassword[256];
 
@@ -2615,7 +2615,8 @@ static void test_wolfSSH_SFTP_SetDefaultPath(void) { ; }
 
 #if defined(WOLFSSH_SCP) && !defined(NO_WOLFSSH_CLIENT) && \
     !defined(SINGLE_THREADED) && !defined(NO_FILESYSTEM) && \
-    !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(WOLFSSH_ZEPHYR)
+    !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(WOLFSSH_ZEPHYR) && \
+    !defined(USE_WINDOWS_API)
 
 /* Upper bound on non-blocking retry iterations. A legitimate transfer across a
  * forced rekey completes in well under this; the bound keeps a regression from
@@ -3708,6 +3709,8 @@ int wolfSSH_ApiTest(int argc, char** argv)
 #ifdef WOLFSSH_TEST_BLOCK
     return 77;
 #else
+    WSTARTTCP();
+
     AssertIntEQ(wolfSSH_Init(), WS_SUCCESS);
 
     #if defined(FIPS_VERSION_GE) && FIPS_VERSION_GE(5,2)
