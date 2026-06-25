@@ -874,7 +874,24 @@ struct WOLFSSH {
 
     WOLFSSH_BUFFER inputBuffer;
     WOLFSSH_BUFFER outputBuffer;
-    WOLFSSH_BUFFER extDataBuffer; /* extended data ready to be read */
+    WOLFSSH_BUFFER extDataBuffer; /* extended data ready to be read. Shared
+                                   * across channels, so stderr buffering and
+                                   * its window back-pressure are effectively
+                                   * single-channel: only extDataChannelId is
+                                   * replenished on read. */
+    word32 extDataChannelId;      /* self channel id whose window the buffered
+                                   * extended data was charged against; its
+                                   * window is replenished as the app reads.
+                                   * The buffer and this id are shared, so only
+                                   * one channel's stderr can be buffered at a
+                                   * time. While that channel's stderr is still
+                                   * unread, stderr arriving on a different
+                                   * channel is dropped (fail safe) and that
+                                   * channel's window is credited back, rather
+                                   * than overwriting this id and desyncing the
+                                   * windows; see DoChannelExtendedData().
+                                   * Buffered stderr is intended for the
+                                   * single-session case. */
     WC_RNG* rng;
 
     byte h[WC_MAX_DIGEST_SIZE];
@@ -1009,6 +1026,15 @@ struct WOLFSSH_CHANNEL {
     word32 peerChannel;
     word32 peerWindowSz;
     word32 peerMaxPacketSz;
+    word32 pendingWindowAdjust; /* receive-window credit owed to the peer for
+                                 * discarded extended data (unknown type, or
+                                 * stderr dropped while another channel's stderr
+                                 * is still buffered) that could not be sent
+                                 * because a rekey was in progress. RFC 4253
+                                 * section 7.1 forbids connection-layer messages
+                                 * between KEXINIT and NEWKEYS. Flushed by
+                                 * SendPendingChannelWindowAdjust() once keying
+                                 * completes. */
 #ifdef WOLFSSH_FWD
     char* host;
     word32 hostPort;
@@ -1404,6 +1430,7 @@ enum WS_MessageIdLimits {
             word32 len, word32* idx);
     WOLFSSH_API int wolfSSH_TestDoChannelExtendedData(WOLFSSH* ssh, byte* buf,
             word32 len, word32* idx);
+    WOLFSSH_API int wolfSSH_TestSendPendingChannelWindowAdjust(WOLFSSH* ssh);
     WOLFSSH_API int wolfSSH_TestDoKexInit(WOLFSSH* ssh, byte* buf,
             word32 len, word32* idx);
     WOLFSSH_API int wolfSSH_TestDoNewKeys(WOLFSSH* ssh, byte* buf,

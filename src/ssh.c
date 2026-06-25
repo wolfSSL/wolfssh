@@ -1404,9 +1404,14 @@ int wolfSSH_extended_data_send(WOLFSSH* ssh, byte* buf, word32 bufSz)
 }
 
 
-/* Reads pending data from extended data buffer. Currently can be used to get
- * STDERR information sent across the channel.
- * Returns the number of bytes read on success */
+/* Reads pending STDERR data from the extended data buffer. Returns bytes read
+ * (>= 0) or a negative WS_ error. See wolfssh/ssh.h for the public contract
+ * (callers MUST drain stderr; WS_REKEYING during key exchange).
+ *
+ * A successful read drains the buffer and sends a window adjust for the bytes
+ * consumed, releasing back-pressure. The read still succeeds if that send
+ * cannot complete: WS_WANT_WRITE is absorbed (adjust stays queued) and a hard
+ * failure is logged, not returned. ssh->error is saved/restored across it. */
 int wolfSSH_extended_data_read(WOLFSSH* ssh, byte* out, word32 outSz)
 {
     byte*  buf;
@@ -1414,6 +1419,14 @@ int wolfSSH_extended_data_read(WOLFSSH* ssh, byte* out, word32 outSz)
 
     if (ssh == NULL || out == NULL) {
         return WS_BAD_ARGUMENT;
+    }
+
+    /* A read sends a window adjust, which must not go out between KEXINIT and
+     * NEWKEYS. IsMessageAllowed() gates only transport messages on isKeying,
+     * not connection-layer ones, so gate here like wolfSSH_stream_read(). */
+    if (ssh->isKeying) {
+        ssh->error = WS_REKEYING;
+        return WS_REKEYING;
     }
 
     /* sanity check to make sure idx is not in a bad state */
@@ -1425,6 +1438,48 @@ int wolfSSH_extended_data_read(WOLFSSH* ssh, byte* out, word32 outSz)
     buf = ssh->extDataBuffer.buffer + ssh->extDataBuffer.idx;
     WMEMCPY(out, buf, bufSz);
     ssh->extDataBuffer.idx += bufSz;
+
+    /* Replenish the channel window for the bytes just consumed. The window
+     * was charged when the extended data arrived (DoChannelExtendedData), so
+     * draining it here is what releases back-pressure to the peer. If the
+     * channel is gone the data is still returned; there is just no window to
+     * adjust. */
+    if (bufSz > 0) {
+        WOLFSSH_CHANNEL* channel;
+
+        channel = ChannelFind(ssh, ssh->extDataChannelId, WS_CHANNEL_ID_SELF);
+        if (channel != NULL) {
+            int adjustResult;
+            int savedError = ssh->error;
+
+            /* Credit the window locally regardless of send result, mirroring
+             * _UpdateChannelWindow(). On WS_WANT_WRITE the adjust is already
+             * bundled into outputBuffer and the peer is credited on a later
+             * flush; on a hard failure the channel is already failing, so a
+             * transient local over-advertisement is moot and crediting avoids
+             * permanently leaking the window for the bytes just consumed.
+             *
+             * The bytes are already in out, so this is a completed read: it
+             * reports the byte count and must not disturb ssh->error. Stomping
+             * ssh->error here would be invisible to callers that only check the
+             * return value and surprising to callers that inspect
+             * wolfSSH_get_error() after a successful read. SendChannelWindow-
+             * Adjust -> wolfSSH_SendPacket sets ssh->error = WS_WANT_WRITE when
+             * the bundled adjust cannot be flushed in non-blocking mode, so
+             * save ssh->error across the send and restore it; a hard send
+             * failure is logged, not returned. */
+            adjustResult = SendChannelWindowAdjust(ssh, channel->channel,
+                                                   bufSz);
+            channel->windowSz += bufSz;
+            ssh->error = savedError;
+            if (adjustResult != WS_SUCCESS && adjustResult != WS_WANT_WRITE)
+                WLOG(WS_LOG_ERROR,
+                     "wolfSSH_extended_data_read: window adjust send failed "
+                     "(%d); window credited locally, read still succeeded",
+                     adjustResult);
+        }
+    }
+
     return bufSz;
 }
 

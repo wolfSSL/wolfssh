@@ -97,7 +97,11 @@ enum WS_ErrorCodes {
     WS_SFTP_COMPLETE        = -1055, /* SFTP connection established */
     WS_NEXT_ERROR           = -1056, /* Getting next value/state is error */
     WS_CHAN_RXD             = -1057, /* Status that channel data received. */
-    WS_INVALID_EXTDATA      = -1058, /* invalid Channel Extended Data Type */
+    WS_INVALID_EXTDATA      = -1058, /* invalid Channel Extended Data Type.
+                                      * Retained for compat; unknown extended
+                                      * data types are now ignored per RFC 4254
+                                      * rather than rejected, so this is no
+                                      * longer produced. */
     WS_SFTP_BAD_REQ_ID      = -1060, /* SFTP Bad request ID */
     WS_SFTP_BAD_REQ_TYPE    = -1061, /* SFTP Bad request ID */
     WS_SFTP_STATUS_NOT_OK   = -1062, /* SFTP Status not OK */

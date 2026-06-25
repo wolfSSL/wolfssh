@@ -457,6 +457,13 @@ WOLFSSH_API int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_stream_exit(WOLFSSH* ssh, int status);
 WOLFSSH_API int wolfSSH_extended_data_send(WOLFSSH* ssh, byte* buf, word32 bufSz);
+/* Reads buffered stderr into out; returns bytes read (>= 0) or a negative
+ * WS_ error (WS_REKEYING during key exchange).
+ *
+ * Apps MUST drain stderr: it shares the channel receive window with stdout
+ * (RFC 4254 5.2) and is only replenished here, so unread stderr stalls the
+ * channel. Only one channel's stderr buffers at a time; a second channel's is
+ * dropped (window replenished, nothing leaks). */
 WOLFSSH_API int wolfSSH_extended_data_read(WOLFSSH* ssh, byte* out,
         word32 outSz);
 WOLFSSH_API int wolfSSH_TriggerKeyExchange(WOLFSSH* ssh);
