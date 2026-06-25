@@ -24,5 +24,21 @@ EXTRA_DIST+= \
             keys/server-key.pem keys/fred-key.der keys/fred-key.pem \
             keys/id_ecdsa keys/id_ecdsa.pub keys/id_rsa keys/id_rsa.pub \
             keys/renewcerts.sh keys/renewcerts.cnf \
-            keys/server-key-ed25519.der keys/server-key-ed25519.pem
+            keys/server-key-ed25519.der keys/server-key-ed25519.pem \
+            keys/renew-ossh-certs.sh \
+            keys/ossh-ca keys/ossh-ca.pub \
+            keys/ossh-ca-rsa keys/ossh-ca-rsa.pub \
+            keys/ossh-ca-ecdsa keys/ossh-ca-ecdsa.pub \
+            keys/ossh-bad-ca keys/ossh-bad-ca.pub \
+            keys/ossh-user keys/ossh-user.pub \
+            keys/ossh-user-rsa keys/ossh-user-rsa.pub \
+            keys/ossh-user-ecdsa keys/ossh-user-ecdsa.pub \
+            keys/fred-ossh-cert.pub keys/fred-ossh-badca-cert.pub \
+            keys/fred-ossh-wrongprincipal-cert.pub keys/fred-ossh-unkcrit-cert.pub \
+            keys/fred-ossh-forcecmd-cert.pub \
+            keys/fred-ossh-srcok-cert.pub keys/fred-ossh-srcbad-cert.pub \
+            keys/fred-ossh-rsaca-cert.pub keys/fred-ossh-ecdsaca-cert.pub \
+            keys/fred-ossh-rsauser-cert.pub keys/fred-ossh-ecdsauser-cert.pub \
+            keys/fred-ossh-expired-cert.pub keys/fred-ossh-internalsftp-cert.pub \
+            keys/fred-ossh-noprincipal-cert.pub
 

@@ -176,6 +176,14 @@ else
         printf "Shutting down test wolfSSHd\n"
         stop_wolfsshd
     fi
+
+    # OpenSSH certificate user-auth test (self-contained: starts its own
+    # wolfSSHd; skips when not built with --enable-ossh-certs). Runs the suite
+    # against the wolfSSH example client and, for interop, the system OpenSSH
+    # client when present.
+    if [ "$USING_LOCAL_HOST" == 1 ]; then
+        run_test "sshd_ossh_cert_test.sh"
+    fi
 fi
 
 printf "All tests ran, $TOTAL passed, $SKIPPED skipped\n"
