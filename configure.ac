@@ -18,7 +18,21 @@ AC_ARG_PROGRAM
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_HEADERS([config.h])
 
-WOLFSSH_LIBRARY_VERSION=20:0:2
+# The three numbers in the libwolfssh.so.*.*.* file name.
+
+# increment if interfaces have been removed or changed
+WOLFSSH_LIBRARY_VERSION_FIRST=20
+
+# increment if interfaces have been added
+# set to zero if WOLFSSH_LIBRARY_VERSION_FIRST is incremented
+WOLFSSH_LIBRARY_VERSION_SECOND=0
+
+# increment if source code has changed
+# set to zero if WOLFSSH_LIBRARY_VERSION_FIRST is incremented or
+# WOLFSSH_LIBRARY_VERSION_SECOND is incremented
+WOLFSSH_LIBRARY_VERSION_THIRD=2
+
+WOLFSSH_LIBRARY_VERSION=${WOLFSSH_LIBRARY_VERSION_FIRST}:${WOLFSSH_LIBRARY_VERSION_SECOND}:${WOLFSSH_LIBRARY_VERSION_THIRD}
 #                        | | |
 #                  +-----+ | +----+
 #                  |       |      |
@@ -32,6 +46,9 @@ WOLFSSH_LIBRARY_VERSION=20:0:2
 #                  +- increment if interfaces have been added, removed
 #                       or changed
 AC_SUBST([WOLFSSH_LIBRARY_VERSION])
+AC_SUBST([WOLFSSH_LIBRARY_VERSION_FIRST])
+AC_SUBST([WOLFSSH_LIBRARY_VERSION_SECOND])
+AC_SUBST([WOLFSSH_LIBRARY_VERSION_THIRD])
 
 LT_PREREQ([2.4.3])
 LT_INIT([disable-static win32-dll])
@@ -315,6 +332,9 @@ CREATE_HEX_VERSION
 AC_SUBST([AM_CPPFLAGS])
 AC_SUBST([AM_CFLAGS])
 AC_SUBST([AM_LDFLAGS])
+
+AC_PATH_PROG([PYTHON3], [python3])
+AC_PATH_PROG([PYSPDXTOOLS], [pyspdxtools])
 
 # FINAL
 AC_CONFIG_FILES([Makefile wolfssh/version.h])
