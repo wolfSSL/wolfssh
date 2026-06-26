@@ -2882,6 +2882,104 @@ static void TestKexInitReservedNonZeroRejected(void)
     wolfSSH_CTX_free(ctx);
 }
 
+/* Run a KEXINIT whose KEX-algorithms field is kexList through DoKexInit. The
+ * list uses unknown tokens, so on accept it fails to match
+ * (WS_MATCH_KEX_ALGO_E); a list rejected by the caps returns WS_BUFFER_E. */
+static int RunKexInitKexListCase(const char* kexList)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    byte* payload;
+    word32 payloadSz;
+    word32 idx = 0;
+    int ret;
+    word32 bufSz = WOLFSSH_MAX_NAMELIST_SZ + 2048;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, FPF_KEX_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, FPF_KEY_GOOD), WS_SUCCESS);
+
+    payload = (byte*)WMALLOC(bufSz, NULL, DYNTYPE_BUFFER);
+    AssertNotNull(payload);
+
+    payloadSz = BuildKexInitPayload(ssh, kexList, FPF_KEY_GOOD, 0,
+            payload, bufSz);
+    ret = wolfSSH_TestDoKexInit(ssh, payload, payloadSz, &idx);
+
+    WFREE(payload, NULL, DYNTYPE_BUFFER);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    return ret;
+}
+
+/* Build "a,a,...,a" with count unknown tokens into a freshly allocated,
+ * NULL-terminated buffer. */
+static char* BuildTokenListStr(word32 count)
+{
+    char* list;
+    word32 listSz;
+    word32 i;
+
+    AssertTrue(count > 0);
+    listSz = (count * 2) - 1;
+
+    list = (char*)WMALLOC(listSz + 1, NULL, DYNTYPE_STRING);
+    AssertNotNull(list);
+    for (i = 0; i < count; i++) {
+        list[i * 2] = 'a';
+        if (i + 1 < count)
+            list[(i * 2) + 1] = ',';
+    }
+    list[listSz] = '\0';
+
+    return list;
+}
+
+/* Build a single unknown token of byteSz 'a' characters. */
+static char* BuildSingleTokenStr(word32 byteSz)
+{
+    char* list;
+
+    list = (char*)WMALLOC(byteSz + 1, NULL, DYNTYPE_STRING);
+    AssertNotNull(list);
+    WMEMSET(list, 'a', byteSz);
+    list[byteSz] = '\0';
+
+    return list;
+}
+
+/* Lock in both KEXINIT name-list boundaries (name count and byte size) so a
+ * future retune or refactor that disables the bound or flips the off-by-one
+ * fails here. */
+static void TestKexInitNameListCaps(void)
+{
+    char* list;
+
+    /* Exactly the name-count cap parses (then fails to match). */
+    list = BuildTokenListStr(WOLFSSH_MAX_NAMELIST_CNT);
+    AssertIntEQ(RunKexInitKexListCase(list), WS_MATCH_KEX_ALGO_E);
+    WFREE(list, NULL, DYNTYPE_STRING);
+
+    /* One past the name-count cap is rejected. */
+    list = BuildTokenListStr(WOLFSSH_MAX_NAMELIST_CNT + 1);
+    AssertIntEQ(RunKexInitKexListCase(list), WS_BUFFER_E);
+    WFREE(list, NULL, DYNTYPE_STRING);
+
+    /* Exactly the byte cap parses (then fails to match). */
+    list = BuildSingleTokenStr(WOLFSSH_MAX_NAMELIST_SZ);
+    AssertIntEQ(RunKexInitKexListCase(list), WS_MATCH_KEX_ALGO_E);
+    WFREE(list, NULL, DYNTYPE_STRING);
+
+    /* One past the byte cap is rejected. */
+    list = BuildSingleTokenStr(WOLFSSH_MAX_NAMELIST_SZ + 1);
+    AssertIntEQ(RunKexInitKexListCase(list), WS_BUFFER_E);
+    WFREE(list, NULL, DYNTYPE_STRING);
+}
+
 #if !defined(WOLFSSH_NO_AES_CBC) && !defined(WOLFSSH_NO_AES_CTR) \
     && !defined(WOLFSSH_NO_HMAC_SHA1) && !defined(WOLFSSH_NO_HMAC_SHA2_256)
 static void TestIndependentAlgoNegotiation(void)
@@ -4292,6 +4390,7 @@ int main(int argc, char** argv)
     && !defined(WOLFSSH_NO_RSA_SHA2_256)
     TestFirstPacketFollows();
     TestKexInitReservedNonZeroRejected();
+    TestKexInitNameListCaps();
     TestDoKexInitRejectsWhenPeerIsKeying();
 #endif
 #if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && !defined(WOLFSSH_NO_RSA) \
