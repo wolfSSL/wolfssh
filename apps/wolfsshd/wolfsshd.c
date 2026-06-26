@@ -601,12 +601,10 @@ static int SCP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     if (wolfSSHD_AuthReducePermissionsUser(conn->auth, pPasswd->pw_uid,
             pPasswd->pw_gid) != WS_SUCCESS) {
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting user ID");
-        if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
-            /* stop everything if not able to reduce permissions level */
-            exit(1);
-        }
-
-        return WS_FATAL_ERROR;
+        /* could not drop to the authenticated user; terminate the
+         * per-connection process rather than continue at a higher
+         * privilege level */
+        exit(1);
     }
 #else
     /* impersonate the logged on user for file permissions */
@@ -720,12 +718,10 @@ static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     if (wolfSSHD_AuthReducePermissionsUser(conn->auth, pPasswd->pw_uid,
             pPasswd->pw_gid) != WS_SUCCESS) {
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting user ID");
-        if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
-            /* stop everything if not able to reduce permissions level */
-            exit(1);
-        }
-
-        return WS_FATAL_ERROR;
+        /* could not drop to the authenticated user; terminate the
+         * per-connection process rather than continue at a higher
+         * privilege level */
+        exit(1);
     }
 #else
     char r[MAX_PATH];
@@ -1410,7 +1406,8 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         return WS_FATAL_ERROR;
     }
     else if (childPid == 0) {
-        /* Child process */
+        /* Child process. Any setup failure below exit(1)s rather than returning
+         * into the connection handler while still at a raised privilege level. */
         const char *args[] = {"-sh", NULL, NULL, NULL};
         char cmd[MAX_COMMAND_SZ];
         char shell[MAX_COMMAND_SZ];
@@ -1430,29 +1427,17 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             if (dup2(stdinPipe[0], STDIN_FILENO) == -1) {
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Error redirecting stdin pipe");
-                if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
-                    exit(1);
-                }
-
-                return WS_FATAL_ERROR;
+                exit(1);
             }
             if (dup2(stdoutPipe[1], STDOUT_FILENO) == -1) {
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Error redirecting stdout pipe");
-                if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
-                    exit(1);
-                }
-
-                return WS_FATAL_ERROR;
+                exit(1);
             }
             if (dup2(stderrPipe[1], STDERR_FILENO) == -1) {
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Error redirecting stderr pipe");
-                if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
-                    exit(1);
-                }
-
-                return WS_FATAL_ERROR;
+                exit(1);
             }
         }
 
@@ -1460,47 +1445,27 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         if (wolfSSHD_AuthSetGroups(conn->auth, wolfSSH_GetUsername(ssh),
                 pPasswd->pw_gid) != WS_SUCCESS) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting groups");
-            if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
-                /* stop everything if not able to reduce permissions level */
-                exit(1);
-            }
-
-            return WS_FATAL_ERROR;
+            exit(1);
         }
 
         rc = SetupChroot(usrConf);
         if (rc < 0) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting chroot");
-            if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
-                /* stop everything if not able to reduce permissions level */
-                exit(1);
-            }
-
-            return WS_FATAL_ERROR;
+            exit(1);
         }
         else if (rc == 1) {
             rc = chdir("/");
             if (rc != 0) {
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Error going to / after chroot");
-                if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
-                    /* stop everything if not able to reduce permissions level */
-                    exit(1);
-                }
-
-                return WS_FATAL_ERROR;
+                exit(1);
             }
         }
 
         if (wolfSSHD_AuthReducePermissionsUser(conn->auth, pPasswd->pw_uid,
             pPasswd->pw_gid) != WS_SUCCESS) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting user ID");
-            if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
-                /* stop everything if not able to reduce permissions level */
-                exit(1);
-            }
-
-            return WS_FATAL_ERROR;
+            exit(1);
         }
 
         setenv("HOME", pPasswd->pw_dir, 1);
@@ -1565,12 +1530,11 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     if (wolfSSHD_AuthReducePermissionsUser(conn->auth, pPasswd->pw_uid,
         pPasswd->pw_gid) != WS_SUCCESS) {
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting user ID");
-        if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
-            /* stop everything if not able to reduce permissions level */
-            exit(1);
-        }
-
-        return WS_FATAL_ERROR;
+        /* could not drop to the authenticated user; kill the already
+         * forked shell child and terminate the per-connection process
+         * rather than continue at a higher privilege level */
+        kill(childPid, SIGKILL);
+        exit(1);
     }
     sshFd = wolfSSH_get_fd(ssh);
 
@@ -2176,7 +2140,8 @@ static void* HandleConnection(void* arg)
                 #ifdef WOLFSSH_SHELL
                     if (ret == WS_SUCCESS) {
                         wolfSSH_Log(WS_LOG_INFO, "[SSHD] Entering new shell");
-                        SHELL_Subsystem(conn, ssh, pPasswd, usrConf, NULL);
+                        ret = SHELL_Subsystem(conn, ssh, pPasswd, usrConf,
+                                NULL);
                     }
                 #else
                     wolfSSH_Log(WS_LOG_ERROR,
@@ -2222,7 +2187,7 @@ static void* HandleConnection(void* arg)
                         wolfSSH_Log(WS_LOG_INFO,
                             "[SSHD] Entering exec session [%s]",
                                 wolfSSH_GetSessionCommand(ssh));
-                        SHELL_Subsystem(conn, ssh, pPasswd, usrConf,
+                        ret = SHELL_Subsystem(conn, ssh, pPasswd, usrConf,
                                 wolfSSH_GetSessionCommand(ssh));
                     }
                 #endif /* WOLFSSH_SHELL */
