@@ -117,6 +117,11 @@ typedef struct WOLFSSHD_CONNECTION {
     int            listenFd;
     char           ip[INET6_ADDRSTRLEN];
     byte           isThreaded;
+    /* set when the login grace time expires before authentication completes */
+    volatile byte  timeOut;
+#ifdef _WIN32
+    PTP_TIMER      loginTimer; /* threadpool timer enforcing login grace time */
+#endif
 } WOLFSSHD_CONNECTION;
 
 #ifdef __unix__
@@ -217,11 +222,11 @@ static void interruptCatch(int in)
 static void wolfSSHDLoggingCb(enum wolfSSH_LogLevel lvl, const char *const str)
 {
     /* always log errors and optionally log other info/debug level messages */
-    if (lvl == WS_LOG_ERROR) {
+    if (lvl == WS_LOG_ERROR || debugMode) {
         fprintf(logFile, "[PID %d]: %s\n", WGETPID(), str);
-    }
-    else if (debugMode) {
-        fprintf(logFile, "[PID %d]: %s\n", WGETPID(), str);
+        /* flush so each line is visible immediately, e.g. to a consumer
+         * reading the log file while the daemon is still running */
+        fflush(logFile);
     }
 }
 
@@ -1900,26 +1905,72 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 #endif
 #endif
 
-#ifdef WIN32
-static volatile int timeOut = 0;
+#ifdef _WIN32
+/* Cancels and frees the login grace time threadpool timer for a connection. */
+static void CancelLoginTimer(WOLFSSHD_CONNECTION* conn)
+{
+    if (conn != NULL && conn->loginTimer != NULL) {
+        /* setting the due time to NULL cancels any pending timer */
+        SetThreadpoolTimer(conn->loginTimer, NULL, 0, 0);
+        WaitForThreadpoolTimerCallbacks(conn->loginTimer, TRUE);
+        CloseThreadpoolTimer(conn->loginTimer);
+        conn->loginTimer = NULL;
+    }
+}
+
+/* threadpool callback marking a connection as timed out at the grace deadline */
+static VOID CALLBACK GraceTimeoutCb(PTP_CALLBACK_INSTANCE instance, PVOID ctx,
+        PTP_TIMER timer)
+{
+    WOLFSSHD_CONNECTION* conn = (WOLFSSHD_CONNECTION*)ctx;
+
+    if (conn != NULL) {
+        /* published with an interlocked write so the connection thread reading
+         * the flag in LoginGraceExpired() sees it without a data race */
+        InterlockedExchange8((volatile CHAR*)&conn->timeOut, 1);
+    }
+    (void)instance;
+    (void)timer;
+}
 #else
-static __thread int timeOut = 0;
-#endif
+/* Set by the SIGALRM handler when the login grace time expires. A signal
+ * handler may only access a volatile sig_atomic_t object, so the handler sets
+ * just this flag and the accept loop observes it. */
+static volatile sig_atomic_t loginGraceTimedOut = 0;
+
 static void alarmCatch(int signum)
 {
-    timeOut = 1;
+    loginGraceTimedOut = 1;
     (void)signum;
+}
+#endif
+
+/* Returns non-zero once the login grace time has expired for this connection.
+ * On Windows the threadpool callback records it on the connection; on POSIX the
+ * SIGALRM handler sets a sig_atomic_t flag that the accept loop reads here. */
+static int LoginGraceExpired(WOLFSSHD_CONNECTION* conn)
+{
+#ifdef _WIN32
+    /* interlocked read pairs with the InterlockedExchange8 in GraceTimeoutCb;
+     * the OR with 0 is a read-modify-write, hence the non-const parameter */
+    return InterlockedOr8((volatile CHAR*)&conn->timeOut, 0);
+#else
+    (void)conn;
+    return (int)loginGraceTimedOut;
+#endif
 }
 
 static int UserAuthResult(byte result,
         WS_UserAuthData* authData, void* userAuthResultCtx)
 {
     (void)authData;
-    (void)userAuthResultCtx;
 
     if (result == WOLFSSH_USERAUTH_SUCCESS) {
-    #ifndef WIN32
-        /* @TODO alarm catch on windows */
+        /* authentication finished in time, cancel the login grace timer */
+    #ifdef _WIN32
+        CancelLoginTimer((WOLFSSHD_CONNECTION*)userAuthResultCtx);
+    #else
+        (void)userAuthResultCtx;
         alarm(0);
     #endif
     }
@@ -1956,28 +2007,44 @@ static void* HandleConnection(void* arg)
 
     if (ret == WS_SUCCESS) {
         int select_ret = 0;
+        int timedOut = 0;
         long graceTime;
 
         wolfSSH_set_fd(ssh, conn->fd);
         wolfSSH_SetUserAuthCtx(ssh, conn->auth);
+        /* let UserAuthResult reach this connection to cancel the grace timer */
+        wolfSSH_SetUserAuthResultCtx(ssh, conn);
 
-        /* set alarm for login grace time */
+        /* arm the login grace timer */
         graceTime = wolfSSHD_AuthGetGraceTime(conn->auth);
         if (graceTime > 0) {
-    #ifdef WIN32
-            /* LoginGraceTime enforcement is not yet implemented on Windows.
-             * @TODO implement via CreateWaitableTimer or similar. */
-            wolfSSH_Log(WS_LOG_WARN, "[SSHD] LoginGraceTime is set but "
-                        "not enforced on this platform");
+    #ifdef _WIN32
+            FILETIME due;
+            ULARGE_INTEGER rel;
+
+            /* negative relative time, in 100 ns units */
+            rel.QuadPart = (ULONGLONG)(-((LONGLONG)graceTime * 10000000LL));
+            due.dwLowDateTime  = rel.LowPart;
+            due.dwHighDateTime = rel.HighPart;
+
+            conn->loginTimer = CreateThreadpoolTimer(GraceTimeoutCb, conn, NULL);
+            if (conn->loginTimer == NULL) {
+                wolfSSH_Log(WS_LOG_WARN, "[SSHD] Unable to create login grace "
+                            "timer, LoginGraceTime not enforced");
+            }
+            else {
+                SetThreadpoolTimer(conn->loginTimer, &due, 0, 0);
+            }
     #else
             signal(SIGALRM, alarmCatch);
+            loginGraceTimedOut = 0; /* clear any stale state before arming */
             alarm((unsigned int)graceTime);
     #endif
         }
 
         ret = wolfSSH_accept(ssh);
         error = wolfSSH_get_error(ssh);
-        while (timeOut == 0 && (ret != WS_SUCCESS
+        while (LoginGraceExpired(conn) == 0 && (ret != WS_SUCCESS
                 && ret != WS_SCP_INIT && ret != WS_SFTP_COMPLETE)
                 && (error == WS_WANT_READ || error == WS_WANT_WRITE)) {
 
@@ -1995,16 +2062,24 @@ static void* HandleConnection(void* arg)
                 error = WS_FATAL_ERROR;
         }
 
-        wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] grace time = %ld timeout = %d", graceTime, timeOut);
+        /* read the flag once through the accessor; on Windows this is an
+         * interlocked read of the value the threadpool callback published, on
+         * POSIX it is the SIGALRM handler's loginGraceTimedOut flag */
+        timedOut = LoginGraceExpired(conn);
+        wolfSSH_Log(WS_LOG_INFO,
+                    "[SSHD] grace time = %ld timeout = %d", graceTime,
+                    timedOut);
         if (graceTime > 0) {
-            if (timeOut) {
+            /* only report a grace failure when authentication did not also
+             * complete in the same accept iteration */
+            if (timedOut && ret != WS_SUCCESS &&
+                ret != WS_SFTP_COMPLETE && ret != WS_SCP_INIT) {
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Failed login within grace period");
              }
 
-    #ifdef WIN32
-            /* @TODO SetTimer(NULL, NULL, graceTime, alarmCatch); */
+    #ifdef _WIN32
+            CancelLoginTimer(conn); /* cancel any pending timer */
     #else
             alarm(0); /* cancel any alarm */
     #endif
@@ -2690,6 +2765,10 @@ static int StartSSHD(int argc, char** argv)
             conn->auth = auth;
             conn->listenFd = (int)listenFd;
             conn->isThreaded = isDaemon;
+            conn->timeOut = 0;
+#ifdef _WIN32
+            conn->loginTimer = NULL;
+#endif
 
             /* wait for a connection */
             if (PendingConnection(listenFd)) {
