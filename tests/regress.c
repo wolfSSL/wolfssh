@@ -69,6 +69,10 @@
 #define AssertNotNull(x) Assert((x), ("%s is not null", #x), (#x " => NULL"))
 #define AssertIntEQ(x, y) do { int _x = (int)(x); int _y = (int)(y);           \
     Assert(_x == _y, ("%s == %s", #x, #y), ("%d != %d", _x, _y)); } while (0)
+#define AssertStrEQ(x, y) do { const char* _x = (const char*)(x);              \
+    const char* _y = (const char*)(y);                                         \
+    Assert(WSTRCMP(_x, _y) == 0, ("%s == %s", #x, #y),                         \
+        ("\"%s\" != \"%s\"", _x, _y)); } while (0)
 
 
 static void ResetSession(WOLFSSH* ssh)
@@ -1476,6 +1480,225 @@ static void TestSecondSessionChannelRejected(void)
 
     FreeChannelOpenHarness(&harness);
 }
+
+/* Records the username the auth callback was invoked with, so a test can prove
+ * which identity a userauth request bound to. */
+static char authCbUserName[64];
+static word32 authCbUserNameSz;
+static int authCbInvoked;
+
+static void ResetAuthCbRecord(void)
+{
+    WMEMSET(authCbUserName, 0, sizeof(authCbUserName));
+    authCbUserNameSz = 0;
+    authCbInvoked = 0;
+}
+
+static int RecordUserAuthCb(byte authType, WS_UserAuthData* authData, void* ctx)
+{
+    (void)ctx;
+#ifndef WOLFSSH_KEYBOARD_INTERACTIVE
+    (void)authType;
+#endif
+
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+    if (authType == WOLFSSH_USERAUTH_KEYBOARD_SETUP) {
+        static byte kbPrompt[] = "Password: ";
+        static byte* kbPrompts[1];
+        static word32 kbPromptLengths[1];
+        static byte kbPromptEcho[1];
+
+        kbPrompts[0] = kbPrompt;
+        kbPromptLengths[0] = (word32)sizeof(kbPrompt) - 1;
+        kbPromptEcho[0] = 0;
+        authData->sf.keyboard.promptCount = 1;
+        authData->sf.keyboard.prompts = kbPrompts;
+        authData->sf.keyboard.promptLengths = kbPromptLengths;
+        authData->sf.keyboard.promptEcho = kbPromptEcho;
+        authData->sf.keyboard.promptName = NULL;
+        authData->sf.keyboard.promptInstruction = NULL;
+        authData->sf.keyboard.promptLanguage = NULL;
+        return WOLFSSH_USERAUTH_SUCCESS;
+    }
+#endif
+
+    authCbInvoked = 1;
+    authCbUserNameSz = authData->usernameSz;
+    if (authCbUserNameSz >= (word32)sizeof(authCbUserName))
+        authCbUserNameSz = (word32)sizeof(authCbUserName) - 1;
+    if (authData->username != NULL && authCbUserNameSz > 0)
+        WMEMCPY(authCbUserName, authData->username, authCbUserNameSz);
+    authCbUserName[authCbUserNameSz] = '\0';
+
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+    if (authType == WOLFSSH_USERAUTH_KEYBOARD)
+        return WOLFSSH_USERAUTH_SUCCESS;
+#endif
+    /* Reject other methods so the connection stays up for the next request
+     * without completing authentication. */
+    return WOLFSSH_USERAUTH_INVALID_PASSWORD;
+}
+
+static word32 BuildUserAuthPasswordRequest(const char* user, const char* pw,
+        byte* out, word32 outSz)
+{
+    byte payload[256];
+    word32 idx = 0;
+
+    idx = AppendString(payload, sizeof(payload), idx, user);
+    idx = AppendString(payload, sizeof(payload), idx, "ssh-connection");
+    idx = AppendString(payload, sizeof(payload), idx, "password");
+    idx = AppendByte(payload, sizeof(payload), idx, 0); /* not changing pw */
+    idx = AppendString(payload, sizeof(payload), idx, pw);
+
+    return WrapPacket(MSGID_USERAUTH_REQUEST, payload, idx, out, outSz);
+}
+
+/* Drive a userauth request against a fresh in-memory server harness. The accept
+ * state is rewound to before userauth completes so USERAUTH_REQUEST and
+ * USERAUTH_INFO_RESPONSE are accepted by the message filter. */
+static void InitUserAuthHarness(ChannelOpenHarness* harness,
+        byte* in, word32 inSz)
+{
+    InitChannelOpenHarness(harness, in, inSz);
+    wolfSSH_SetUserAuth(harness->ctx, RecordUserAuthCb);
+    harness->ssh->acceptState = ACCEPT_SERVER_USERAUTH_ACCEPT_SENT;
+}
+
+static void RepointHarnessInput(ChannelOpenHarness* harness,
+        byte* in, word32 inSz)
+{
+    harness->io.in = in;
+    harness->io.inSz = inSz;
+    harness->io.inOff = 0;
+    harness->io.outSz = 0;
+}
+
+/* A username change after the first userauth request must end the session. */
+static void TestUsernameChangeDisconnects(void)
+{
+    ChannelOpenHarness harness;
+    byte inAlice[128];
+    byte inBob[128];
+    word32 inAliceSz;
+    word32 inBobSz;
+
+    inAliceSz = BuildUserAuthPasswordRequest("alice", "pw",
+            inAlice, sizeof(inAlice));
+    inBobSz = BuildUserAuthPasswordRequest("bob", "pw", inBob, sizeof(inBob));
+
+    ResetAuthCbRecord();
+    InitUserAuthHarness(&harness, inAlice, inAliceSz);
+
+    /* First request binds the username; callback sees alice and rejects. */
+    AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+    AssertStrEQ(authCbUserName, "alice");
+
+    /* Second request changes the username: session must be torn down and the
+     * callback must not be invoked as bob. */
+    ResetAuthCbRecord();
+    RepointHarnessInput(&harness, inBob, inBobSz);
+    AssertIntEQ(DoReceive(harness.ssh), WS_FATAL_ERROR);
+    AssertIntEQ(harness.ssh->error, WS_INVALID_STATE_E);
+    AssertTrue(harness.io.outSz > 0);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz), MSGID_DISCONNECT);
+    AssertIntEQ(authCbInvoked, 0);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+static word32 BuildUserAuthKeyboardRequest(const char* user,
+        byte* out, word32 outSz)
+{
+    byte payload[256];
+    word32 idx = 0;
+
+    idx = AppendString(payload, sizeof(payload), idx, user);
+    idx = AppendString(payload, sizeof(payload), idx, "ssh-connection");
+    idx = AppendString(payload, sizeof(payload), idx, "keyboard-interactive");
+    idx = AppendString(payload, sizeof(payload), idx, ""); /* language tag */
+    idx = AppendString(payload, sizeof(payload), idx, ""); /* submethods */
+
+    return WrapPacket(MSGID_USERAUTH_REQUEST, payload, idx, out, outSz);
+}
+
+static word32 BuildUserAuthInfoResponse(const char* response,
+        byte* out, word32 outSz)
+{
+    byte payload[128];
+    word32 idx = 0;
+
+    idx = AppendUint32(payload, sizeof(payload), idx, 1); /* responseCount */
+    idx = AppendString(payload, sizeof(payload), idx, response);
+
+    return WrapPacket(MSGID_USERAUTH_INFO_RESPONSE, payload, idx, out, outSz);
+}
+
+/* The reported attack: pipeline a keyboard-interactive request for alice then
+ * bob before answering. The bob request must end the session, not rebind the
+ * pending challenge. */
+static void TestKbUsernameChangeDisconnects(void)
+{
+    ChannelOpenHarness harness;
+    byte inAlice[128];
+    byte inBob[128];
+    word32 inAliceSz;
+    word32 inBobSz;
+
+    inAliceSz = BuildUserAuthKeyboardRequest("alice", inAlice, sizeof(inAlice));
+    inBobSz = BuildUserAuthKeyboardRequest("bob", inBob, sizeof(inBob));
+
+    ResetAuthCbRecord();
+    InitUserAuthHarness(&harness, inAlice, inAliceSz);
+
+    /* alice's request opens the challenge: server emits an INFO_REQUEST. */
+    AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+    AssertTrue(harness.io.outSz > 0);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_USERAUTH_INFO_REQUEST);
+    AssertIntEQ(authCbInvoked, 0); /* setup only, no response yet */
+
+    /* bob's pipelined request must disconnect, never reach the callback. */
+    ResetAuthCbRecord();
+    RepointHarnessInput(&harness, inBob, inBobSz);
+    AssertIntEQ(DoReceive(harness.ssh), WS_FATAL_ERROR);
+    AssertIntEQ(harness.ssh->error, WS_INVALID_STATE_E);
+    AssertTrue(harness.io.outSz > 0);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz), MSGID_DISCONNECT);
+    AssertIntEQ(authCbInvoked, 0);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* A single-user keyboard-interactive exchange still reaches the callback bound
+ * to the originating user. */
+static void TestKbSameUserResponseSucceeds(void)
+{
+    ChannelOpenHarness harness;
+    byte inReq[128];
+    byte inResp[128];
+    word32 inReqSz;
+    word32 inRespSz;
+
+    inReqSz = BuildUserAuthKeyboardRequest("alice", inReq, sizeof(inReq));
+    inRespSz = BuildUserAuthInfoResponse("secret", inResp, sizeof(inResp));
+
+    ResetAuthCbRecord();
+    InitUserAuthHarness(&harness, inReq, inReqSz);
+
+    AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_USERAUTH_INFO_REQUEST);
+
+    RepointHarnessInput(&harness, inResp, inRespSz);
+    AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(authCbInvoked, 1);
+    AssertStrEQ(authCbUserName, "alice");
+
+    FreeChannelOpenHarness(&harness);
+}
+#endif /* WOLFSSH_KEYBOARD_INTERACTIVE */
 
 #ifdef WOLFSSH_FWD
 static void TestDirectTcpipRejectSendsOpenFail(void)
@@ -4157,6 +4380,7 @@ int main(int argc, char** argv)
     TestChannelAllowedAfterAuth(ssh);
     TestChannelOpenCallbackRejectSendsOpenFail();
     TestSecondSessionChannelRejected();
+    TestUsernameChangeDisconnects();
 #ifdef WOLFSSH_FWD
     TestDirectTcpipRejectSendsOpenFail();
     TestDirectTcpipNoFwdCbSendsOpenFail();
@@ -4240,6 +4464,8 @@ int main(int argc, char** argv)
     TestKeyboardResponseNoUserAuthCallback(ssh, ctx);
     TestKeyboardResponseNullSsh();
     TestKeyboardResponseNullCtx(ssh);
+    TestKbUsernameChangeDisconnects();
+    TestKbSameUserResponseSucceeds();
 #endif
 
     /* TODO: add app-level regressions that simulate stdin EOF/password
