@@ -12523,6 +12523,9 @@ static int KeyAgreeEcdh_server(WOLFSSH* ssh, byte hashId, byte* f, word32* fSz)
                                     pubKey, primeId);
 
     if (ret == 0)
+        ret = wc_ecc_check_key(pubKey);
+
+    if (ret == 0)
         ret = wc_ecc_make_key_ex(ssh->rng,
                              wc_ecc_get_curve_size_from_id(primeId),
                              privKey, primeId);
@@ -12844,6 +12847,9 @@ static int KeyAgreeEcdhMlKem_server(WOLFSSH* ssh, byte hashId,
                 ssh->handshake->e + length_publickey,
                 ssh->handshake->eSz - length_publickey,
                 pubKey, primeId);
+        }
+        if (ret == 0) {
+            ret = wc_ecc_check_key(pubKey);
         }
         if (ret == 0) {
             ret = wc_ecc_make_key_ex(ssh->rng,
