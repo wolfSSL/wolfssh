@@ -128,10 +128,21 @@
     #define NUM_SOCKETS 5
 #elif defined(WOLFSSH_ZEPHYR)
     #include <zephyr/kernel.h>
+    #include <zephyr/version.h>
     #include <zephyr/posix/posix_types.h>
     #include <zephyr/posix/pthread.h>
     #include <zephyr/posix/fcntl.h>
     #include <zephyr/net/socket.h>
+    #if ZEPHYR_VERSION_CODE >= ZEPHYR_VERSION(4, 1, 0)
+        /* Zephyr 4.1 removed NET_SOCKETS_POSIX_NAMES; the BSD/POSIX names
+         * (fd_set, select(), struct timeval, getaddrinfo()) now come from
+         * the POSIX headers, enabled via CONFIG_POSIX_API. Older Zephyr
+         * exposes them through <zephyr/net/socket.h> above. */
+        #include <zephyr/posix/sys/time.h>
+        #include <zephyr/posix/sys/select.h>
+        #include <zephyr/posix/sys/socket.h>
+        #include <zephyr/posix/netdb.h>
+    #endif
     #include <zephyr/sys/printk.h>
     #include <zephyr/sys/util.h>
     #include <stdlib.h>

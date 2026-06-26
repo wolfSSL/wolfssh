@@ -367,6 +367,13 @@ extern "C" {
 #elif defined(WOLFSSH_ZEPHYR)
 
     #include <zephyr/fs/fs.h>
+    #include <zephyr/version.h>
+    #if ZEPHYR_VERSION_CODE >= ZEPHYR_VERSION(4, 1, 0)
+        /* struct timeval: pre-4.1 it arrived via the socket headers when
+         * NET_SOCKETS_POSIX_NAMES was set; 4.1+ needs the POSIX header
+         * (CONFIG_POSIX_API). */
+        #include <zephyr/posix/sys/time.h>
+    #endif
     #include <stdlib.h>
     #include <stdio.h>
 
@@ -393,7 +400,7 @@ extern "C" {
     #define WFGETS(b,s,f)       NULL /* Not ported yet */
     #undef  WFPUTS
     #define WFPUTS(b,s)         EOF /* Not ported yet */
-    #define WUTIMES(a,b)        (0) /* Not ported yet */
+    #define WUTIMES(a,b)        ((void)(a),(void)(b),0) /* Not ported yet */
     #define WCHDIR(fs,b)        z_fs_chdir((b))
 
 #elif defined(MICROCHIP_MPLAB_HARMONY)
