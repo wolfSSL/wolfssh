@@ -795,6 +795,63 @@ static int test_Ed25519KeyGen(void)
 }
 #endif
 
+#ifndef WOLFSSH_NO_MLDSA
+static int test_MlDsaKeyGen(void)
+{
+    static const struct {
+        word32 level;
+        word32 derSz;
+        const char* name;
+    } params[] = {
+    #ifndef WOLFSSH_NO_MLDSA44
+        { WOLFSSH_MLDSAKEY_44, WC_MLDSA_44_BOTH_KEY_DER_SIZE, "44" },
+    #endif
+    #ifndef WOLFSSH_NO_MLDSA65
+        { WOLFSSH_MLDSAKEY_65, WC_MLDSA_65_BOTH_KEY_DER_SIZE, "65" },
+    #endif
+    #ifndef WOLFSSH_NO_MLDSA87
+        { WOLFSSH_MLDSAKEY_87, WC_MLDSA_87_BOTH_KEY_DER_SIZE, "87" },
+    #endif
+    };
+    word32 i;
+    int result = 0;
+
+    for (i = 0; i < (word32)(sizeof(params) / sizeof(params[0])); i++) {
+        byte* der;
+        int sz;
+
+        der = (byte*)WMALLOC(params[i].derSz, NULL, DYNTYPE_BUFFER);
+        if (der == NULL) {
+            printf("MlDsaKeyGen: alloc failed for level %s\n", params[i].name);
+            result = -106;
+            break;
+        }
+
+        sz = wolfSSH_MakeMlDsaKey(der, params[i].derSz, params[i].level);
+        if (sz < 0) {
+            printf("MlDsaKeyGen: MakeMlDsaKey level %s failed (%d)\n",
+                   params[i].name, sz);
+            WFREE(der, NULL, DYNTYPE_BUFFER);
+            result = -106;
+            break;
+        }
+
+        sz = wolfSSH_MakeMlDsaKey(der, params[i].derSz - 1, params[i].level);
+        if (sz != WS_CRYPTO_FAILED) {
+            printf("MlDsaKeyGen: undersized buffer wrong result %d, level %s\n",
+                   sz, params[i].name);
+            WFREE(der, NULL, DYNTYPE_BUFFER);
+            result = -107;
+            break;
+        }
+
+        WFREE(der, NULL, DYNTYPE_BUFFER);
+    }
+
+    return result;
+}
+#endif
+
 #endif
 
 
@@ -2559,6 +2616,177 @@ static const byte unitTestEd25519PrivKey[] = {
 };
 #endif /* !WOLFSSH_NO_ED25519 */
 
+#if !defined(WOLFSSH_NO_MLDSA)
+/* keys/server-key-mldsa44.der - MlDsa44 OneAsymmetricKey */
+static const byte unitTestMlDsaPrivKey[] = {
+    0x30, 0x82, 0x0a, 0x3e, 0x02, 0x01, 0x00, 0x30, 0x0b, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65,
+    0x03, 0x04, 0x03, 0x11, 0x04, 0x82, 0x0a, 0x2a, 0x30, 0x82, 0x0a, 0x26, 0x04, 0x20, 0x07, 0x99,
+    0x36, 0x30, 0xd1, 0xef, 0x77, 0x3e, 0x75, 0x79, 0xbc, 0x3f, 0xb5, 0x78, 0xfa, 0x10, 0x26, 0x77,
+    0x79, 0x27, 0x19, 0x34, 0xf7, 0x68, 0x83, 0xce, 0x08, 0xb6, 0xbb, 0xe9, 0x06, 0x18, 0x04, 0x82,
+    0x0a, 0x00, 0x9d, 0x7b, 0x66, 0x85, 0x9a, 0xb3, 0xcb, 0xdf, 0x19, 0xc5, 0xaa, 0xe2, 0xac, 0x2a,
+    0x79, 0xaf, 0xf1, 0xfd, 0xe2, 0xb8, 0x8d, 0x91, 0xda, 0xf5, 0x8e, 0x86, 0xb4, 0x91, 0x3c, 0x15,
+    0x2a, 0x12, 0xc6, 0x98, 0x49, 0x63, 0xed, 0x50, 0xcb, 0x79, 0x0d, 0x58, 0x43, 0xf2, 0x00, 0x8e,
+    0x35, 0x5f, 0x25, 0x2f, 0x3c, 0xcb, 0xab, 0xd9, 0x04, 0x85, 0x20, 0x1d, 0x5e, 0x55, 0x88, 0x94,
+    0x64, 0x37, 0x4f, 0xd3, 0x64, 0x89, 0xbe, 0xe2, 0xcb, 0xdc, 0x96, 0xcc, 0x62, 0x99, 0x56, 0xde,
+    0x26, 0x8c, 0xde, 0x30, 0x18, 0x66, 0xf9, 0xd9, 0x1b, 0xf1, 0xcf, 0x32, 0xc5, 0x78, 0x48, 0x02,
+    0x04, 0xb2, 0x3b, 0x16, 0x3d, 0xe9, 0xa8, 0x6c, 0x81, 0x06, 0x9f, 0xf4, 0x69, 0x77, 0x7e, 0x86,
+    0x34, 0xa5, 0xdd, 0xb1, 0x49, 0x20, 0xe0, 0x2f, 0x17, 0x2b, 0xdc, 0x62, 0xf9, 0x93, 0x5e, 0x17,
+    0x51, 0x38, 0x4a, 0x82, 0x08, 0x48, 0x06, 0x24, 0x08, 0x48, 0x60, 0x92, 0xb4, 0x51, 0x13, 0x05,
+    0x28, 0x1a, 0xb8, 0x8d, 0x89, 0xb4, 0x28, 0x90, 0xa8, 0x64, 0x0c, 0x81, 0x44, 0xe3, 0xc6, 0x89,
+    0x84, 0x16, 0x0e, 0x44, 0x02, 0x40, 0x0b, 0x97, 0x2d, 0xd9, 0x48, 0x92, 0x01, 0x15, 0x64, 0x42,
+    0x38, 0x68, 0x1a, 0x27, 0x8e, 0x13, 0x13, 0x52, 0x00, 0x31, 0x02, 0xc4, 0x02, 0x26, 0x14, 0x42,
+    0x4d, 0x10, 0x28, 0x90, 0x20, 0x31, 0x32, 0x01, 0xc1, 0x60, 0x0b, 0x01, 0x6c, 0x80, 0x00, 0x6c,
+    0x63, 0x26, 0x50, 0x02, 0x80, 0x45, 0x4a, 0xa6, 0x40, 0x1c, 0xb2, 0x25, 0x08, 0x21, 0x62, 0x24,
+    0x49, 0x4e, 0x21, 0x87, 0x48, 0x1b, 0x48, 0x02, 0x1c, 0x86, 0x64, 0x04, 0xa2, 0x90, 0xda, 0xb0,
+    0x89, 0x14, 0x19, 0x4e, 0x49, 0x26, 0x05, 0x18, 0xc9, 0x00, 0x9a, 0xa4, 0x85, 0xdc, 0xa4, 0x48,
+    0x41, 0x22, 0x81, 0x02, 0x35, 0x70, 0x63, 0x26, 0x8a, 0xd4, 0x10, 0x61, 0x20, 0x44, 0x88, 0xa3,
+    0xa2, 0x60, 0x02, 0xa2, 0x81, 0x19, 0xb4, 0x70, 0x9c, 0x16, 0x84, 0x81, 0x02, 0x41, 0x22, 0xb5,
+    0x91, 0xd2, 0x08, 0x51, 0x12, 0x34, 0x41, 0xd3, 0xb8, 0x11, 0x08, 0x21, 0x32, 0x42, 0x44, 0x65,
+    0x00, 0x48, 0x69, 0x92, 0x46, 0x12, 0x22, 0x94, 0x61, 0xc2, 0xb6, 0x70, 0xe2, 0x98, 0x8d, 0xd3,
+    0x26, 0x09, 0x84, 0x22, 0x0a, 0x09, 0xb9, 0x0d, 0x4c, 0xb0, 0x64, 0x03, 0x24, 0x2e, 0x01, 0x96,
+    0x84, 0x99, 0x04, 0x11, 0x9b, 0xc8, 0x11, 0xa3, 0x12, 0x90, 0x0c, 0x16, 0x0a, 0x8c, 0x20, 0x2c,
+    0x94, 0x08, 0x46, 0x04, 0xb6, 0x0d, 0x60, 0xb0, 0x88, 0xdc, 0x04, 0x22, 0x9a, 0x46, 0x42, 0x21,
+    0x42, 0x4d, 0x49, 0x46, 0x29, 0x24, 0x27, 0x62, 0x13, 0x25, 0x05, 0x0a, 0x84, 0x05, 0x4a, 0x10,
+    0x46, 0xa4, 0x06, 0x80, 0x1c, 0x34, 0x82, 0x1a, 0xa5, 0x4c, 0x19, 0x96, 0x89, 0x24, 0x26, 0x61,
+    0x10, 0x46, 0x8c, 0xc1, 0x18, 0x48, 0x1c, 0x19, 0x6d, 0x04, 0x98, 0x8d, 0x8b, 0x46, 0x02, 0x02,
+    0x90, 0x0d, 0x5c, 0x12, 0x65, 0x4a, 0x14, 0x72, 0x02, 0xc1, 0x65, 0x1b, 0x21, 0x4d, 0x5c, 0x38,
+    0x6d, 0x03, 0x41, 0x8c, 0xa4, 0x26, 0x0e, 0x89, 0xa2, 0x80, 0x4a, 0x40, 0x26, 0x1c, 0x99, 0x69,
+    0x81, 0x12, 0x30, 0xc3, 0x40, 0x21, 0x22, 0x46, 0x61, 0x22, 0x43, 0x72, 0x02, 0x47, 0x26, 0x10,
+    0xa1, 0x09, 0x81, 0x22, 0x06, 0xc3, 0x22, 0x2e, 0x64, 0x32, 0x12, 0x01, 0xb2, 0x01, 0x59, 0x96,
+    0x45, 0x04, 0x35, 0x08, 0xc3, 0xb6, 0x8d, 0x14, 0x30, 0x6c, 0x0c, 0x95, 0x0c, 0xa3, 0x48, 0x80,
+    0x63, 0x40, 0x50, 0x00, 0x20, 0x26, 0xdc, 0x20, 0x24, 0x01, 0x46, 0x71, 0xe1, 0x40, 0x51, 0xc2,
+    0x12, 0x0d, 0xc4, 0x10, 0x40, 0x0c, 0x43, 0x24, 0x02, 0x33, 0x26, 0x02, 0xc8, 0x04, 0x1a, 0x23,
+    0x08, 0xe0, 0x16, 0x8a, 0x9a, 0xb0, 0x2d, 0x13, 0x40, 0x08, 0x43, 0x22, 0x32, 0x44, 0x38, 0x6d,
+    0xd1, 0x44, 0x90, 0xd4, 0x86, 0x09, 0x48, 0x82, 0x00, 0xe2, 0x98, 0x68, 0x12, 0xb1, 0x91, 0x09,
+    0x90, 0x6d, 0xc9, 0x30, 0x85, 0xc0, 0x84, 0x80, 0x9c, 0xc6, 0x4c, 0xe1, 0x10, 0x91, 0xd8, 0x96,
+    0x30, 0xda, 0xb6, 0x68, 0xc8, 0xc6, 0x65, 0xe3, 0x06, 0x50, 0x5c, 0x14, 0x11, 0x02, 0x44, 0x49,
+    0x9b, 0xa2, 0x68, 0x5a, 0x32, 0x90, 0x52, 0x80, 0x45, 0x00, 0x26, 0x30, 0x02, 0x46, 0x4c, 0xd4,
+    0xc8, 0x49, 0x9c, 0xb8, 0x90, 0xc4, 0x20, 0x8a, 0x0c, 0x15, 0x0d, 0x09, 0x37, 0x8e, 0x12, 0x46,
+    0x45, 0x08, 0x23, 0x25, 0x21, 0xa1, 0x11, 0x80, 0x90, 0x65, 0x93, 0x46, 0x72, 0xe1, 0x28, 0x6d,
+    0x44, 0x96, 0x51, 0x81, 0x12, 0x80, 0x04, 0x46, 0x4a, 0x8b, 0x10, 0x6d, 0x13, 0x46, 0x51, 0x53,
+    0x36, 0x4a, 0xe1, 0xa6, 0x45, 0xe0, 0x22, 0x01, 0x48, 0xa6, 0x00, 0x12, 0x91, 0x70, 0x23, 0xb3,
+    0x40, 0x02, 0xa8, 0x65, 0xdb, 0x42, 0x06, 0xe0, 0x06, 0x6a, 0xe3, 0x96, 0x61, 0x48, 0x94, 0x65,
+    0x43, 0x22, 0x69, 0xdc, 0x22, 0x85, 0x9b, 0x84, 0x89, 0x59, 0x18, 0x64, 0x43, 0xb0, 0x20, 0x8b,
+    0xa8, 0x29, 0x58, 0x30, 0x24, 0x0a, 0x17, 0x8e, 0x11, 0x41, 0x2d, 0x24, 0xb8, 0x25, 0x89, 0x14,
+    0x20, 0x14, 0x41, 0x91, 0x23, 0xa2, 0x24, 0x21, 0x17, 0x21, 0x11, 0xb1, 0x04, 0x03, 0x84, 0x4c,
+    0x0b, 0x23, 0x62, 0x50, 0x86, 0x65, 0x54, 0x22, 0x42, 0x42, 0x82, 0x80, 0x08, 0xa5, 0x51, 0xd9,
+    0x06, 0x31, 0x23, 0x00, 0x91, 0x10, 0xa9, 0x4d, 0xe2, 0x04, 0x66, 0x44, 0x36, 0x30, 0x8b, 0xb2,
+    0x49, 0x98, 0xc6, 0x70, 0x19, 0xa4, 0x8c, 0x5a, 0xa6, 0x0d, 0x63, 0x00, 0x2e, 0x9b, 0x94, 0x70,
+    0x8a, 0x20, 0x2d, 0x62, 0x26, 0x2c, 0x42, 0x26, 0x6c, 0x12, 0x13, 0x2e, 0xdb, 0x18, 0x08, 0x11,
+    0x21, 0x2e, 0x8a, 0xb0, 0x71, 0x01, 0xc1, 0x2c, 0xe3, 0x44, 0x62, 0xe3, 0x94, 0x28, 0x0b, 0x38,
+    0x70, 0x40, 0x14, 0x65, 0x62, 0xc0, 0x41, 0xa1, 0x06, 0x21, 0x82, 0xa2, 0x44, 0x94, 0xb0, 0x2c,
+    0x21, 0x10, 0x8d, 0x14, 0x96, 0x71, 0x12, 0x14, 0x05, 0x11, 0x27, 0x04, 0x12, 0x97, 0x65, 0xc4,
+    0x02, 0x6e, 0x58, 0xc4, 0x6c, 0xc0, 0x10, 0x70, 0x84, 0xc0, 0x45, 0x99, 0x12, 0x52, 0x80, 0xa8,
+    0x88, 0xd3, 0xb8, 0x28, 0x01, 0x17, 0x70, 0x03, 0xc3, 0x10, 0x88, 0x18, 0x0a, 0x53, 0x92, 0x40,
+    0x53, 0xc6, 0x20, 0x93, 0xc0, 0x81, 0xa4, 0x90, 0x90, 0x93, 0x92, 0x05, 0x22, 0x88, 0x08, 0xc8,
+    0x00, 0x64, 0xf0, 0x19, 0xcf, 0xdf, 0x37, 0x19, 0x32, 0xc9, 0xaf, 0x0a, 0x3c, 0x4a, 0x8f, 0x9c,
+    0xb3, 0xb4, 0x4a, 0x29, 0x5c, 0x6d, 0xd2, 0x81, 0x10, 0x3f, 0x9f, 0x4d, 0x23, 0x18, 0x65, 0xee,
+    0x03, 0xa7, 0xeb, 0x14, 0x99, 0xc0, 0xab, 0x6c, 0x2e, 0xad, 0x31, 0xa0, 0x15, 0x7f, 0xfd, 0x12,
+    0xc3, 0x0b, 0x86, 0x8d, 0x1d, 0x0f, 0x19, 0x8e, 0x2c, 0xdd, 0xc1, 0xce, 0xf2, 0x75, 0xc2, 0x3f,
+    0xff, 0xc3, 0xbc, 0x7d, 0x5c, 0x40, 0x50, 0x81, 0xd5, 0x92, 0xc9, 0xdc, 0x89, 0x56, 0x00, 0x04,
+    0x64, 0x66, 0x27, 0xa9, 0xc0, 0x43, 0xcd, 0x5d, 0xd6, 0xe6, 0xc7, 0x84, 0xa8, 0xf0, 0x02, 0xda,
+    0xa3, 0xf2, 0xd7, 0x27, 0xac, 0x52, 0x30, 0xb3, 0x95, 0x53, 0x34, 0x31, 0x1f, 0x06, 0xf2, 0x74,
+    0xba, 0x58, 0x52, 0xcf, 0xb9, 0x0b, 0xd1, 0x39, 0x3e, 0x60, 0xfe, 0xd9, 0x55, 0x72, 0xfb, 0xd9,
+    0x5c, 0x2d, 0x9e, 0x5f, 0x5d, 0x95, 0xe3, 0xf8, 0x25, 0x6d, 0x14, 0x70, 0x24, 0xf8, 0x15, 0x04,
+    0x24, 0x14, 0x15, 0xab, 0xa5, 0x33, 0xc9, 0xe0, 0xfd, 0x9c, 0xb3, 0x3d, 0x57, 0xef, 0xf4, 0xe2,
+    0x87, 0x21, 0x9b, 0xd4, 0x27, 0x3e, 0x6e, 0x7b, 0x23, 0x9e, 0x56, 0x7c, 0x67, 0xd2, 0x39, 0xea,
+    0x52, 0xb5, 0xbd, 0x6d, 0xda, 0x00, 0xc7, 0x1e, 0x0a, 0xee, 0x6d, 0x16, 0xfb, 0x9a, 0x34, 0xae,
+    0x8b, 0x85, 0x7b, 0x69, 0x9a, 0x98, 0xd6, 0x15, 0x26, 0x19, 0x4f, 0x09, 0xbd, 0xe0, 0x06, 0x79,
+    0x93, 0x2c, 0x9e, 0xaa, 0x87, 0x3c, 0xc6, 0xab, 0xca, 0x07, 0x98, 0xa9, 0xb4, 0x63, 0x90, 0x78,
+    0x13, 0x28, 0xdc, 0x62, 0xf3, 0x04, 0x04, 0xd5, 0x55, 0x8a, 0x91, 0xfb, 0x8b, 0xdc, 0x1d, 0x6a,
+    0x53, 0x16, 0xde, 0x19, 0x88, 0xe7, 0x96, 0xfc, 0xb1, 0xb5, 0x11, 0xe7, 0x91, 0x4e, 0x62, 0xc6,
+    0xa4, 0xb8, 0xab, 0x08, 0x7f, 0x75, 0x06, 0x45, 0x0b, 0x54, 0x63, 0x78, 0x7d, 0x0a, 0x84, 0x64,
+    0x96, 0xa3, 0x9d, 0x44, 0x73, 0xf6, 0x16, 0x74, 0x46, 0x35, 0x10, 0xa2, 0x9c, 0xbe, 0x5b, 0xc0,
+    0xe1, 0x5e, 0xc4, 0xa8, 0x24, 0xab, 0xe1, 0xc2, 0x59, 0x52, 0x16, 0xd8, 0xc9, 0xb6, 0x3e, 0x58,
+    0xad, 0xfb, 0xc8, 0x36, 0x65, 0x7e, 0xf1, 0x8e, 0x4f, 0x91, 0xc8, 0xe2, 0xf3, 0xa7, 0xd3, 0x28,
+    0xab, 0x62, 0x21, 0x96, 0x96, 0x31, 0xef, 0xa1, 0xaf, 0xe9, 0x2e, 0x36, 0xfe, 0x09, 0xeb, 0xf1,
+    0x8d, 0xfa, 0xfb, 0x58, 0x39, 0xa3, 0xce, 0x45, 0xe4, 0x1f, 0xdd, 0x8c, 0x24, 0xa9, 0xd7, 0x33,
+    0x80, 0xf5, 0xbb, 0x05, 0x11, 0x52, 0xcb, 0xbc, 0xb3, 0x09, 0x14, 0x2e, 0x0a, 0xdd, 0x44, 0xe4,
+    0x2f, 0x85, 0x84, 0x4e, 0x09, 0xda, 0x0b, 0x20, 0x78, 0x61, 0x2a, 0xb9, 0x67, 0x9c, 0x84, 0xe0,
+    0xeb, 0xbb, 0x95, 0xd0, 0x31, 0x5d, 0x83, 0x91, 0x15, 0xbf, 0x27, 0xf5, 0x1e, 0x25, 0xc9, 0xc5,
+    0x48, 0xa8, 0xaa, 0x8c, 0xfc, 0xea, 0x60, 0x7a, 0xcd, 0x97, 0x92, 0xab, 0x07, 0xc7, 0x9e, 0x0b,
+    0x54, 0xbc, 0x41, 0xdc, 0x7f, 0xf7, 0x89, 0x72, 0x12, 0xee, 0x85, 0x18, 0x86, 0x1b, 0xe0, 0x44,
+    0xe1, 0x4f, 0x7b, 0x75, 0x3d, 0x27, 0xf7, 0x82, 0xee, 0x38, 0xf7, 0x61, 0xe3, 0xc9, 0xa5, 0xdb,
+    0x59, 0xff, 0x20, 0x0d, 0x7c, 0xb8, 0xd2, 0x2c, 0xec, 0x88, 0x5d, 0xc4, 0x03, 0x08, 0x67, 0xb4,
+    0x72, 0x3b, 0x5c, 0xc6, 0x16, 0xab, 0x1a, 0x6b, 0x72, 0x99, 0x87, 0x80, 0xa7, 0x35, 0x5a, 0xb9,
+    0x91, 0x4e, 0x5c, 0x7a, 0xc6, 0x94, 0x18, 0xd2, 0xe5, 0x97, 0x7c, 0xd5, 0x91, 0x5d, 0x57, 0x56,
+    0xe9, 0xff, 0x5a, 0x64, 0xf9, 0xc8, 0xff, 0x2a, 0x5a, 0xba, 0xce, 0x0d, 0xcf, 0x67, 0x09, 0xb1,
+    0x2d, 0x63, 0xc5, 0x72, 0x78, 0xc7, 0x4f, 0xc1, 0xc0, 0x23, 0x42, 0xaf, 0xf2, 0xb8, 0x2f, 0x79,
+    0xb7, 0xf7, 0x5d, 0xa5, 0xba, 0xd5, 0x0f, 0xa8, 0x9b, 0xf2, 0xaf, 0x5d, 0x72, 0x92, 0x86, 0xce,
+    0x10, 0x52, 0xd3, 0xdd, 0x15, 0x15, 0x65, 0xa8, 0x38, 0xc2, 0x98, 0x27, 0x47, 0x4e, 0xb1, 0xde,
+    0x05, 0x8b, 0xd9, 0x36, 0xd7, 0x0f, 0xf5, 0x33, 0x6e, 0x4c, 0x9c, 0x49, 0x7d, 0x8e, 0x07, 0x79,
+    0x77, 0x14, 0x8a, 0xea, 0x3b, 0x86, 0xc4, 0xaf, 0xf9, 0x4c, 0x8f, 0x43, 0x26, 0xbf, 0xa4, 0x68,
+    0xf4, 0xb3, 0xe7, 0xd2, 0x03, 0xc4, 0x85, 0x1c, 0xd5, 0x0a, 0x18, 0x55, 0x51, 0xfe, 0xb1, 0x5b,
+    0x8e, 0x79, 0xed, 0x07, 0x87, 0x7d, 0xba, 0xd4, 0x09, 0x98, 0x93, 0xcb, 0xa9, 0x4f, 0x31, 0xce,
+    0xe2, 0xab, 0x3a, 0xf2, 0x6d, 0x3a, 0xeb, 0x4f, 0x2c, 0x1a, 0x6b, 0xf2, 0xff, 0x81, 0xfa, 0xf4,
+    0x34, 0xbe, 0xb5, 0x4e, 0x1a, 0xea, 0xf2, 0x10, 0x7b, 0x3e, 0x96, 0xcf, 0x67, 0x37, 0xd8, 0xae,
+    0xf0, 0x3d, 0x03, 0xa8, 0xe6, 0x93, 0x1d, 0x59, 0xbc, 0x1a, 0x06, 0xb4, 0x1c, 0x0d, 0x68, 0xf2,
+    0xbe, 0x27, 0x58, 0x1a, 0x66, 0x92, 0xca, 0x37, 0x63, 0x67, 0x2a, 0x59, 0x62, 0xbd, 0x40, 0xd5,
+    0xe9, 0xd9, 0x4a, 0x49, 0x69, 0x8c, 0x4c, 0xf4, 0x65, 0x85, 0x34, 0xcc, 0x37, 0xd0, 0x5e, 0x3e,
+    0x65, 0x8a, 0x73, 0x6b, 0x32, 0xd2, 0xfa, 0x6c, 0x54, 0x94, 0xb7, 0x20, 0x75, 0x6e, 0x4a, 0xc9,
+    0xf8, 0x72, 0xc8, 0xdc, 0xda, 0x09, 0xca, 0xe3, 0x94, 0x9b, 0xf8, 0xeb, 0xe8, 0x32, 0xbe, 0xbb,
+    0x41, 0x68, 0xb6, 0x01, 0x8d, 0xe9, 0x9f, 0xd3, 0x7f, 0xfd, 0x91, 0xe2, 0x2b, 0xc0, 0x4e, 0xf9,
+    0x42, 0x5b, 0xa2, 0xec, 0xc8, 0x35, 0x0f, 0x36, 0xd9, 0xd1, 0x88, 0x65, 0xa2, 0x2a, 0xea, 0x50,
+    0x99, 0x19, 0x50, 0x31, 0x24, 0x10, 0x7b, 0x56, 0x67, 0xa4, 0xa5, 0xca, 0xe3, 0xa5, 0xc9, 0x77,
+    0xb4, 0xd1, 0x8a, 0xdc, 0xa4, 0xff, 0xca, 0xee, 0xd8, 0x58, 0x3e, 0x6d, 0xa5, 0xd4, 0xb3, 0x39,
+    0x15, 0xa2, 0xcb, 0x02, 0x9c, 0xfe, 0x93, 0x66, 0x18, 0xd8, 0xd2, 0xce, 0xb2, 0x8d, 0x4d, 0x28,
+    0x62, 0xc4, 0x7b, 0x39, 0xe2, 0x2a, 0x02, 0x6e, 0x38, 0x59, 0xcc, 0x35, 0xda, 0x99, 0xb2, 0xc1,
+    0x93, 0x24, 0xb6, 0x63, 0xa8, 0xfe, 0x37, 0x91, 0x32, 0x78, 0x11, 0xf9, 0x95, 0x72, 0x2d, 0xd1,
+    0x51, 0x40, 0x13, 0x90, 0xfa, 0xa7, 0x3d, 0x5d, 0xfa, 0xce, 0xc1, 0x3d, 0xd4, 0xab, 0xb7, 0x4b,
+    0x8c, 0xd1, 0xd9, 0x45, 0xc6, 0x7e, 0x0c, 0xc6, 0xbc, 0xdd, 0x11, 0xfa, 0x52, 0x83, 0x59, 0x2d,
+    0xa7, 0xa8, 0xae, 0x3f, 0xb8, 0x58, 0xa2, 0x84, 0x14, 0x05, 0x77, 0xf9, 0xb9, 0xfe, 0x05, 0xd1,
+    0x4a, 0xf9, 0xe8, 0x7d, 0x1e, 0xb8, 0xb4, 0x39, 0xfc, 0x80, 0x1d, 0xb2, 0x38, 0x8d, 0xc4, 0x63,
+    0xc0, 0xe9, 0x15, 0x5f, 0xfe, 0xf6, 0x81, 0xb2, 0x3d, 0xe0, 0x13, 0xec, 0xd0, 0x75, 0x1d, 0x03,
+    0xb8, 0x6b, 0xdc, 0x13, 0xb6, 0x09, 0xb1, 0x82, 0xe4, 0x02, 0x12, 0x18, 0xcb, 0x1e, 0x2d, 0xce,
+    0xee, 0xf2, 0xc4, 0xa4, 0x9a, 0x1b, 0xa6, 0x51, 0xc3, 0xfd, 0x73, 0xc1, 0xc5, 0x85, 0xe7, 0xbb,
+    0x44, 0xe7, 0x61, 0x9e, 0x00, 0x03, 0x0a, 0x18, 0xe4, 0x62, 0x86, 0x45, 0xd8, 0xfa, 0x5b, 0x71,
+    0x46, 0x86, 0x0e, 0x3a, 0x89, 0x6d, 0xb2, 0xd7, 0x0e, 0xd7, 0x65, 0x3e, 0xcc, 0x16, 0xe5, 0x9c,
+    0x2d, 0xf2, 0x0e, 0x44, 0x64, 0x14, 0xfd, 0xa9, 0x2f, 0xb6, 0xe8, 0x78, 0xa2, 0x54, 0xa3, 0x45,
+    0x5e, 0xb0, 0x14, 0x02, 0xf7, 0xa1, 0xe0, 0x16, 0x58, 0xd9, 0xc3, 0x58, 0x5a, 0xe6, 0x72, 0xa7,
+    0x0a, 0x9f, 0x33, 0xf8, 0xd5, 0x18, 0x54, 0x1e, 0x80, 0x54, 0x1e, 0x51, 0x69, 0x53, 0x60, 0x57,
+    0xf0, 0xf9, 0xc6, 0x97, 0x4b, 0x5b, 0x98, 0xe6, 0x1a, 0xc1, 0xb4, 0x61, 0xed, 0x3d, 0xc7, 0xe8,
+    0x14, 0xd6, 0x92, 0x49, 0x7c, 0x46, 0x1e, 0x3a, 0x20, 0xb6, 0x20, 0xb3, 0x25, 0xe0, 0xf8, 0x39,
+    0xea, 0xc9, 0x7d, 0xcb, 0x38, 0x98, 0x03, 0x95, 0x9a, 0x99, 0x69, 0xae, 0xd4, 0x0c, 0x1e, 0x50,
+    0x34, 0x6d, 0x85, 0x6a, 0x33, 0x2f, 0x8c, 0x03, 0x6a, 0xa4, 0x1a, 0xfd, 0xac, 0x8a, 0x34, 0x08,
+    0xe9, 0x88, 0xb6, 0xa0, 0xb9, 0x96, 0xa7, 0x41, 0x37, 0x7f, 0xe7, 0xc2, 0xd1, 0xaf, 0xe5, 0x60,
+    0x68, 0x06, 0xfe, 0x70, 0x81, 0x80, 0xb4, 0xfe, 0xf7, 0x6d, 0x88, 0xec, 0xc6, 0x90, 0x38, 0x04,
+    0x34, 0x24, 0x1b, 0xb8, 0x57, 0x86, 0x40, 0xd2, 0x19, 0xec, 0xa1, 0x36, 0x11, 0xff, 0x22, 0x34,
+    0x8c, 0x31, 0x3f, 0x63, 0xa1, 0x4f, 0xce, 0x67, 0x73, 0x5c, 0x78, 0x5d, 0x85, 0xc8, 0xd8, 0x40,
+    0x5a, 0x40, 0xdf, 0x88, 0x3d, 0xf3, 0x6d, 0xf4, 0x9b, 0xb6, 0x29, 0xbf, 0x07, 0xdd, 0xd9, 0x51,
+    0x27, 0xa6, 0x97, 0xb2, 0x6f, 0x61, 0xef, 0x1c, 0xa9, 0x01, 0x52, 0x2b, 0xd0, 0x12, 0xe4, 0x40,
+    0xa6, 0xea, 0x25, 0x80, 0xba, 0x80, 0x61, 0x87, 0xa5, 0x8d, 0x7e, 0x71, 0x09, 0x68, 0xfb, 0xc6,
+    0x08, 0x2f, 0x98, 0x2c, 0xe7, 0xab, 0x30, 0xb4, 0xde, 0x39, 0xb6, 0x71, 0xff, 0x32, 0x90, 0x61,
+    0x65, 0xf9, 0xc4, 0x16, 0x7e, 0xda, 0xc4, 0x05, 0x77, 0x0b, 0xf1, 0xf9, 0xe0, 0xc0, 0x7d, 0x14,
+    0x57, 0x6f, 0x48, 0xba, 0xea, 0xe0, 0xc5, 0x93, 0x60, 0x14, 0xe3, 0xf8, 0x6a, 0x67, 0xb2, 0xdc,
+    0x56, 0xe8, 0x37, 0x7f, 0x59, 0x63, 0x5c, 0x77, 0xd2, 0xe3, 0xa7, 0x73, 0x53, 0x9c, 0x8d, 0xf4,
+    0xac, 0xe9, 0x07, 0x8a, 0x1c, 0xbe, 0xa7, 0x4d, 0x1f, 0x60, 0x36, 0x9f, 0x33, 0x9d, 0xf4, 0x2d,
+    0x4f, 0x61, 0xdd, 0x33, 0x40, 0x1f, 0x6e, 0x10, 0x9f, 0xf7, 0x1f, 0xf0, 0x95, 0x89, 0x62, 0x8c,
+    0x04, 0xf7, 0x64, 0xe0, 0x66, 0xd0, 0x4b, 0x4a, 0x79, 0x96, 0x70, 0x56, 0xdb, 0x07, 0xda, 0xaf,
+    0x00, 0xd1, 0x54, 0xec, 0x07, 0xac, 0x09, 0x25, 0x91, 0x46, 0xd1, 0x4f, 0xbf, 0x50, 0xe9, 0xe6,
+    0x54, 0x73, 0x91, 0xc7, 0xfb, 0x67, 0x33, 0xeb, 0x01, 0x1b, 0xdc, 0x45, 0x5a, 0xdc, 0xa3, 0x96,
+    0x35, 0x6c, 0x71, 0x9b, 0xa6, 0xe7, 0x2b, 0x65, 0x95, 0x2d, 0xae, 0x81, 0x0a, 0x28, 0x31, 0xf0,
+    0x2a, 0x9e, 0x01, 0xe2, 0x83, 0x2f, 0xe0, 0xa4, 0x65, 0xca, 0x92, 0x4a, 0x0f, 0x32, 0x45, 0xb5,
+    0xe6, 0x19, 0x24, 0x44, 0x2b, 0x2b, 0xea, 0x64, 0x46, 0xb2, 0x49, 0xd0, 0x2f, 0xe2, 0x64, 0x0d,
+    0x1f, 0xee, 0xe4, 0x29, 0x04, 0x99, 0x80, 0x8b, 0x7c, 0x7a, 0x3a, 0x4c, 0xd4, 0x18, 0xd4, 0xf7,
+    0x3b, 0x0c, 0x44, 0x39, 0x3d, 0x0f, 0x10, 0xd4, 0x1f, 0x47, 0x7f, 0xb1, 0xdf, 0xd2, 0xc1, 0xd7,
+    0x1d, 0x1f, 0xf7, 0x29, 0x36, 0x54, 0x4b, 0x8e, 0x55, 0x9b, 0xcb, 0x08, 0xf5, 0x31, 0x0f, 0xd4,
+    0x0c, 0x5e, 0x18, 0x59, 0x7e, 0xea, 0xef, 0x5a, 0xd2, 0x0d, 0xc6, 0x94, 0x5d, 0x83, 0xbd, 0x55,
+    0xa9, 0x2f, 0xfe, 0x85, 0x82, 0xd9, 0xa9, 0x91, 0x40, 0xf6, 0xcc, 0xf9, 0x88, 0xba, 0x72, 0x09,
+    0x36, 0x9f, 0xa1, 0xc5, 0x7c, 0xea, 0x93, 0xd4, 0xae, 0x48, 0xaa, 0x2e, 0x91, 0x93, 0x2f, 0x1b,
+    0x66, 0x3e, 0x87, 0x0e, 0xdd, 0xa0, 0x1e, 0x19, 0x8d, 0x25, 0xdf, 0xbf, 0x39, 0x82, 0xdf, 0x7a,
+    0x7c, 0x7c, 0x95, 0xb2, 0xbd, 0x27, 0x2b, 0x3d, 0x76, 0xef, 0x05, 0x38, 0xfc, 0x8a, 0x38, 0x46,
+    0x6d, 0xd5, 0xaa, 0x39, 0x6b, 0xa9, 0xca, 0xf5, 0x9f, 0xfd, 0x81, 0xc2, 0x4f, 0xa5, 0x8c, 0x12,
+    0x90, 0xa3, 0x03, 0xe6, 0xfd, 0x79, 0x6a, 0x48, 0x69, 0x6c, 0xc3, 0x78, 0x30, 0x9d, 0x79, 0xa6,
+    0x81, 0xa7, 0xf4, 0xe9, 0xcf, 0x4e, 0x9d, 0x58, 0x01, 0x10, 0xed, 0x2c, 0x27, 0x2e, 0x5c, 0xaa,
+    0xc8, 0xd0, 0x57, 0xef, 0x05, 0xa5, 0xe7, 0x9f, 0x8d, 0x07, 0xa7, 0xd7, 0x48, 0x05, 0x7b, 0x70,
+    0x17, 0xac, 0xe3, 0xd4, 0x4a, 0x09, 0x92, 0xc4, 0x8e, 0x84, 0x03, 0x74, 0x5a, 0x61, 0x61, 0x0e,
+    0x1a, 0x0c, 0x1f, 0x8c, 0x4e, 0xd9, 0x6c, 0x96, 0x42, 0xac, 0x93, 0x0b, 0xd4, 0x14, 0x6c, 0xd8,
+    0x27, 0x0e, 0x9b, 0xb9, 0x77, 0x0d, 0xd5, 0xdd, 0x82, 0x08, 0xf5, 0x89, 0xdb, 0x44, 0x86, 0x8d,
+    0xb2, 0x2c, 0xa8, 0x06, 0x5f, 0xbc, 0x4c, 0x73, 0x27, 0xfe, 0x32, 0x26, 0x3c, 0x33, 0x83, 0xda,
+    0x18, 0xc9
+};
+#endif /* !WOLFSSH_NO_MLDSA */
+
 #ifndef WOLFSSH_NO_ECDSA
 /* P-256 DER with the OID last byte changed 0x07 -> 0x01 (secp192r1).
  * Forces wc_EccPrivateKeyDecode to fail or to return an unsupported curve id,
@@ -2917,6 +3145,962 @@ done:
 
 #endif /* Ed25519 verify test guards */
 
+#ifndef WOLFSSH_NO_MLDSA
+static void MlDsaTest_PutLen(byte* out, word32 v)
+{
+    out[0] = (byte)(v >> 24);
+    out[1] = (byte)(v >> 16);
+    out[2] = (byte)(v >>  8);
+    out[3] = (byte)(v);
+}
+
+static int test_DoUserAuthRequestMlDsa_Params(const char* keyTypeName, byte level)
+{
+    static const char username[]    = "wolfssh";
+    static const char serviceName[] = "ssh-connection";
+    static const char authName[]    = "publickey";
+    const word32 keyTypeNameSz = (word32)(WSTRLEN(keyTypeName));
+    const word32 usernameSz    = (word32)(sizeof(username) - 1);
+    const word32 serviceNameSz = (word32)(sizeof(serviceName) - 1);
+    const word32 authNameSz    = (word32)(sizeof(authName) - 1);
+
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    MlDsaKey signingKey;
+    int signingKeyInit = 0;
+    WC_RNG rng;
+    int rngInit = 0;
+    WS_UserAuthData authData;
+
+    byte* pubKeyBlob = NULL;
+    byte* sigBlob = NULL;
+    byte* badSigBlob = NULL;
+    byte* dataToSign = NULL;
+    byte* checkData = NULL;
+    byte* sig = NULL;
+    byte* pubRaw = NULL;
+
+    word32 pubKeyBlobSz = 0;
+    word32 sigBlobSz    = 0;
+    word32 dataToSignSz = 0;
+    word32 checkDataSz  = 0;
+    int    sigSzInt;
+    word32 sigSz    = 0;
+    int    pubRawSzInt;
+    word32 pubRawSz = 0;
+    word32 off;
+    int result = 0;
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL) return -700;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -701; goto done; }
+
+    /* Stub a session id so the verify hash has something to absorb. */
+    ssh->sessionIdSz = 16;
+    WMEMSET(ssh->sessionId, 0xA5, ssh->sessionIdSz);
+
+    if (wc_InitRng(&rng) != 0) {
+        result = -702;
+        goto done;
+    }
+    rngInit = 1;
+
+    if (wc_MlDsaKey_Init(&signingKey, NULL, INVALID_DEVID) != 0) { result = -703; goto done; }
+    signingKeyInit = 1;
+    if (wc_MlDsaKey_SetParams(&signingKey, level) != 0) { result = -704; goto done; }
+    if (wc_MlDsaKey_MakeKey(&signingKey, &rng) != 0) { result = -705; goto done; }
+
+    sigSzInt = wc_MlDsaKey_SigSize(&signingKey);
+    if (sigSzInt < 0) { result = -706; goto done; }
+    sigSz = (word32)sigSzInt;
+    sig = (byte*)WMALLOC(sigSz, NULL, 0);
+    if (sig == NULL) { result = -718; goto done; }
+
+    /* Get raw public key to build pubKeyBlob */
+    pubRawSzInt = wc_MlDsaKey_PubSize(&signingKey);
+    if (pubRawSzInt < 0) { result = -707; goto done; }
+    pubRawSz = (word32)pubRawSzInt;
+    pubRaw = (byte*)WMALLOC(pubRawSz, NULL, 0);
+    if (pubRaw == NULL) { result = -717; goto done; }
+    if (wc_MlDsaKey_ExportPubRaw(&signingKey, pubRaw, &pubRawSz) != 0) { result = -708; goto done; }
+
+    pubKeyBlob = (byte*)WMALLOC(UINT32_SZ * 2 + keyTypeNameSz + pubRawSz, NULL, 0);
+    if (pubKeyBlob == NULL) { result = -709; goto done; }
+
+    /* Build the SSH public key blob: string keyTypeName || string pubkey */
+    off = 0;
+    MlDsaTest_PutLen(pubKeyBlob + off, keyTypeNameSz); off += UINT32_SZ;
+    WMEMCPY(pubKeyBlob + off, keyTypeName, keyTypeNameSz);
+    off += keyTypeNameSz;
+    MlDsaTest_PutLen(pubKeyBlob + off, pubRawSz); off += UINT32_SZ;
+    WMEMCPY(pubKeyBlob + off, pubRaw, pubRawSz); off += pubRawSz;
+    pubKeyBlobSz = off;
+
+    /* Build the dataToSign region: username || service || authmethod || hasSig=1 || pkAlgo || pkBlob. */
+    dataToSignSz = UINT32_SZ * 5 + usernameSz + serviceNameSz + authNameSz + 1 + keyTypeNameSz + pubKeyBlobSz;
+    dataToSign = (byte*)WMALLOC(dataToSignSz, NULL, 0);
+    if (dataToSign == NULL) { result = -710; goto done; }
+
+    off = 0;
+    MlDsaTest_PutLen(dataToSign + off, usernameSz); off += UINT32_SZ;
+    WMEMCPY(dataToSign + off, username, usernameSz); off += usernameSz;
+    MlDsaTest_PutLen(dataToSign + off, serviceNameSz); off += UINT32_SZ;
+    WMEMCPY(dataToSign + off, serviceName, serviceNameSz); off += serviceNameSz;
+    MlDsaTest_PutLen(dataToSign + off, authNameSz); off += UINT32_SZ;
+    WMEMCPY(dataToSign + off, authName, authNameSz); off += authNameSz;
+    dataToSign[off++] = 1; /* hasSignature */
+    MlDsaTest_PutLen(dataToSign + off, keyTypeNameSz); off += UINT32_SZ;
+    WMEMCPY(dataToSign + off, keyTypeName, keyTypeNameSz); off += keyTypeNameSz;
+    MlDsaTest_PutLen(dataToSign + off, pubKeyBlobSz); off += UINT32_SZ;
+    WMEMCPY(dataToSign + off, pubKeyBlob, pubKeyBlobSz); off += pubKeyBlobSz;
+
+    /* Build checkData: sessionIdSz || sessionId || MSGID_USERAUTH_REQUEST || dataToSign. */
+    checkDataSz = UINT32_SZ + ssh->sessionIdSz + MSG_ID_SZ + dataToSignSz;
+    checkData = (byte*)WMALLOC(checkDataSz, NULL, 0);
+    if (checkData == NULL) { result = -711; goto done; }
+
+    off = 0;
+    MlDsaTest_PutLen(checkData + off, ssh->sessionIdSz); off += UINT32_SZ;
+    WMEMCPY(checkData + off, ssh->sessionId, ssh->sessionIdSz); off += ssh->sessionIdSz;
+    checkData[off++] = MSGID_USERAUTH_REQUEST;
+    WMEMCPY(checkData + off, dataToSign, dataToSignSz);
+
+    if (wc_MlDsaKey_SignCtx(&signingKey, NULL, 0, sig, &sigSz, checkData,
+                checkDataSz, &rng) != 0) {
+        result = -712; goto done;
+    }
+
+    /* Build the SSH signature blob: string keyTypeName || string sig */
+    sigBlobSz = UINT32_SZ * 2 + keyTypeNameSz + sigSz;
+    sigBlob = (byte*)WMALLOC(sigBlobSz, NULL, 0);
+    if (sigBlob == NULL) { result = -713; goto done; }
+
+    off = 0;
+    MlDsaTest_PutLen(sigBlob + off, keyTypeNameSz); off += UINT32_SZ;
+    WMEMCPY(sigBlob + off, keyTypeName, keyTypeNameSz); off += keyTypeNameSz;
+    MlDsaTest_PutLen(sigBlob + off, sigSz); off += UINT32_SZ;
+    WMEMCPY(sigBlob + off, sig, sigSz); off += sigSz;
+    sigBlobSz = off;
+
+    /* Populate authData */
+    WMEMSET(&authData, 0, sizeof(authData));
+    authData.type        = WOLFSSH_USERAUTH_PUBLICKEY;
+    authData.username    = (const byte*)username;
+    authData.usernameSz  = usernameSz;
+    authData.serviceName = (const byte*)serviceName;
+    authData.serviceNameSz = serviceNameSz;
+    authData.authName    = (const byte*)authName;
+    authData.authNameSz  = authNameSz;
+    authData.sf.publicKey.dataToSign      = dataToSign;
+    authData.sf.publicKey.publicKeyType   = (const byte*)keyTypeName;
+    authData.sf.publicKey.publicKeyTypeSz = keyTypeNameSz;
+    authData.sf.publicKey.publicKey       = pubKeyBlob;
+    authData.sf.publicKey.publicKeySz     = pubKeyBlobSz;
+    authData.sf.publicKey.hasSignature    = 1;
+    authData.sf.publicKey.signature       = sigBlob;
+    authData.sf.publicKey.signatureSz     = sigBlobSz;
+
+    /* Positive case: untouched signature must verify. */
+    ret = wolfSSH_TestDoUserAuthRequestMlDsa(ssh, &authData, pubKeyBlobSz);
+    if (ret != WS_SUCCESS) {
+        printf("DoUserAuthRequestMlDsa positive (%s): ret=%d (expected %d)\n",
+                keyTypeName, ret, WS_SUCCESS);
+        result = -714; goto done;
+    }
+
+    /* Negative case: flip a byte inside the raw signature */
+    badSigBlob = (byte*)WMALLOC(sigBlobSz, NULL, 0);
+    if (badSigBlob == NULL) { result = -715; goto done; }
+    WMEMCPY(badSigBlob, sigBlob, sigBlobSz);
+    badSigBlob[UINT32_SZ + keyTypeNameSz + UINT32_SZ + 10] ^= 0xFF;
+    authData.sf.publicKey.signature = badSigBlob;
+
+    ret = wolfSSH_TestDoUserAuthRequestMlDsa(ssh, &authData, pubKeyBlobSz);
+    if (ret != WS_MLDSA_E && ret != WS_CRYPTO_FAILED) {
+        printf("DoUserAuthRequestMlDsa tampered (%s): ret=%d (expected %d)\n",
+                keyTypeName, ret, WS_MLDSA_E);
+        result = -716; goto done;
+    }
+
+done:
+    if (signingKeyInit)
+        wc_MlDsaKey_Free(&signingKey);
+    if (rngInit)
+        wc_FreeRng(&rng);
+    if (pubKeyBlob != NULL) WFREE(pubKeyBlob, NULL, 0);
+    if (sigBlob != NULL) WFREE(sigBlob, NULL, 0);
+    if (badSigBlob != NULL) WFREE(badSigBlob, NULL, 0);
+    if (dataToSign != NULL) WFREE(dataToSign, NULL, 0);
+    if (checkData != NULL) WFREE(checkData, NULL, 0);
+    if (sig != NULL) WFREE(sig, NULL, 0);
+    if (pubRaw != NULL) WFREE(pubRaw, NULL, 0);
+    if (ssh != NULL) wolfSSH_free(ssh);
+    if (ctx != NULL) wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* unknown publicKeyType must be rejected at the boundary */
+static int test_DoUserAuthRequestMlDsa_BadAlgo(void)
+{
+    static const char badAlgo[] = "not-an-mldsa-key";
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    WS_UserAuthData authData;
+    int result = 0;
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL) return -800;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -801; goto done; }
+
+    WMEMSET(&authData, 0, sizeof(authData));
+    authData.type = WOLFSSH_USERAUTH_PUBLICKEY;
+    authData.sf.publicKey.publicKeyType =
+            (const byte*)badAlgo;
+    authData.sf.publicKey.publicKeyTypeSz =
+            (word32)(sizeof(badAlgo) - 1);
+
+    /* pubKeyBlobSz=0: the bad key type is rejected before dataToSign is sized,
+     * so the value is irrelevant for this code path. */
+    ret = wolfSSH_TestDoUserAuthRequestMlDsa(ssh, &authData, 0);
+    if (ret != WS_INVALID_ALGO_ID) {
+        printf("DoUserAuthRequestMlDsa bad-algo: ret=%d expected %d\n",
+                ret, WS_INVALID_ALGO_ID);
+        result = -802;
+    }
+
+done:
+    if (ssh != NULL) wolfSSH_free(ssh);
+    if (ctx != NULL) wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+#ifdef WOLFSSH_CERTS
+ /* Confirm the cert branch is entered, ParseCertChainVerify intentionally
+ * rejects this. */
+static int test_DoUserAuthRequestMlDsa_CertPath(const char* keyTypeName)
+{
+    static const char username[]    = "wolfssh";
+    static const char serviceName[] = "ssh-connection";
+    static const char authName[]    = "publickey";
+    const word32 keyTypeNameSz = (word32)WSTRLEN(keyTypeName);
+    /* NOTE: pubKeyBlob is an RFC 6187 wire blob, not leaf-cert DER. The real
+     * server path calls ParseLeafCert() first to extract DER. This test
+     * exercises ASN.1-invalid rejection rather than cryptographic rejection —
+     * valid for a negative path test, but does not cover the DER-valid case. */
+    static const byte junkCert[] = { 0x30, 0x05, 0x00, 0x00, 0x00, 0x00 };
+    const word32 junkCertSz = (word32)sizeof(junkCert);
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    WS_UserAuthData authData;
+    byte* pubKeyBlob = NULL;
+    byte* sigBlob = NULL;
+    word32 pubKeyBlobSz, off;
+    int result = 0;
+    int ret;
+
+    /* RFC 6187 cert chain blob:
+     *   string keyTypeName
+     *   uint32 certCount=1
+     *   string junkCert
+     *   uint32 ocspCount=0 */
+    pubKeyBlobSz = UINT32_SZ + keyTypeNameSz + UINT32_SZ +
+                   UINT32_SZ + junkCertSz + UINT32_SZ;
+    pubKeyBlob = (byte*)WMALLOC(pubKeyBlobSz, NULL, 0);
+    if (pubKeyBlob == NULL) { result = -820; goto done; }
+    off = 0;
+    MlDsaTest_PutLen(pubKeyBlob + off, keyTypeNameSz); off += UINT32_SZ;
+    WMEMCPY(pubKeyBlob + off, keyTypeName, keyTypeNameSz); off += keyTypeNameSz;
+    MlDsaTest_PutLen(pubKeyBlob + off, 1); off += UINT32_SZ;
+    MlDsaTest_PutLen(pubKeyBlob + off, junkCertSz); off += UINT32_SZ;
+    WMEMCPY(pubKeyBlob + off, junkCert, junkCertSz); off += junkCertSz;
+    MlDsaTest_PutLen(pubKeyBlob + off, 0); off += UINT32_SZ;
+
+    /* Minimal sig blob: string keyTypeName || string(1 zero byte) */
+    sigBlob = (byte*)WMALLOC(UINT32_SZ * 2 + keyTypeNameSz + 1, NULL, 0);
+    if (sigBlob == NULL) { result = -821; goto done; }
+    off = 0;
+    MlDsaTest_PutLen(sigBlob + off, keyTypeNameSz); off += UINT32_SZ;
+    WMEMCPY(sigBlob + off, keyTypeName, keyTypeNameSz); off += keyTypeNameSz;
+    MlDsaTest_PutLen(sigBlob + off, 1); off += UINT32_SZ;
+    sigBlob[off] = 0x00;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL) { result = -822; goto done; }
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -823; goto done; }
+    ssh->sessionIdSz = 16;
+    WMEMSET(ssh->sessionId, 0xA5, ssh->sessionIdSz);
+
+    WMEMSET(&authData, 0, sizeof(authData));
+    authData.type                          = WOLFSSH_USERAUTH_PUBLICKEY;
+    authData.username                      = (const byte*)username;
+    authData.usernameSz                    = (word32)(sizeof(username) - 1);
+    authData.serviceName                   = (const byte*)serviceName;
+    authData.serviceNameSz                 = (word32)(sizeof(serviceName) - 1);
+    authData.authName                      = (const byte*)authName;
+    authData.authNameSz                    = (word32)(sizeof(authName) - 1);
+    authData.sf.publicKey.publicKeyType    = (const byte*)keyTypeName;
+    authData.sf.publicKey.publicKeyTypeSz  = keyTypeNameSz;
+    authData.sf.publicKey.publicKey        = pubKeyBlob;
+    authData.sf.publicKey.publicKeySz      = pubKeyBlobSz;
+    authData.sf.publicKey.hasSignature     = 1;
+    authData.sf.publicKey.signature        = sigBlob;
+    authData.sf.publicKey.signatureSz      = UINT32_SZ * 2 + keyTypeNameSz + 1;
+
+    ret = wolfSSH_TestDoUserAuthRequestMlDsa(ssh, &authData, pubKeyBlobSz);
+    if (ret == WS_INVALID_ALGO_ID) {
+        /* Routing failed: x509v3-mldsa-* was not recognised and hit the
+         * unknown-algo guard instead of the cert parse path. */
+        printf("DoUserAuthRequestMlDsa cert-path (%s): routing failed\n",
+                keyTypeName);
+        result = -824;
+    }
+    else if (ret == WS_SUCCESS) {
+        /* Wrongful acceptance: junk cert should have been rejected */
+        printf("DoUserAuthRequestMlDsa cert-path (%s): wrongfully accepted junk cert\n",
+                keyTypeName);
+        result = -825;
+    }
+    /* Any other error is expected: junk cert correctly rejected. */
+
+done:
+    if (pubKeyBlob != NULL) WFREE(pubKeyBlob, NULL, 0);
+    if (sigBlob != NULL) WFREE(sigBlob, NULL, 0);
+    if (ssh != NULL) wolfSSH_free(ssh);
+    if (ctx != NULL) wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+#if defined(WOLFSSH_CERTS) && defined(WOLFSSL_CERT_GEN)
+/* Positive cert-path test: generate a real ML-DSA self-signed cert, build a
+ * valid auth request, and verify that DoUserAuthRequestMlDsa accepts it. */
+static int test_DoUserAuthRequestMlDsa_CertPath_Valid(
+        const char* keyTypeName, byte level, int certSigType)
+{
+    static const char username[]    = "wolfssh";
+    static const char serviceName[] = "ssh-connection";
+    static const char authName[]    = "publickey";
+    const word32 keyTypeNameSz = (word32)WSTRLEN(keyTypeName);
+    const word32 usernameSz    = (word32)(sizeof(username) - 1);
+    const word32 serviceNameSz = (word32)(sizeof(serviceName) - 1);
+    const word32 authNameSz    = (word32)(sizeof(authName) - 1);
+
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    MlDsaKey signingKey;
+    int signingKeyInit = 0;
+    WC_RNG rng;
+    int rngInit = 0;
+    Cert myCert;
+    WS_UserAuthData authData;
+
+    byte* certDER    = NULL;
+    byte* rfcBlob    = NULL;   /* RFC6187 cert chain blob */
+    byte* sigBlob    = NULL;
+    byte* dataToSign = NULL;
+    byte* checkData  = NULL;
+    byte* sig        = NULL;
+
+    word32 certDERSz    = 0;
+    word32 rfcBlobSz    = 0;
+    word32 sigBlobSz    = 0;
+    word32 dataToSignSz = 0;
+    word32 checkDataSz  = 0;
+    int    sigSzInt;
+    word32 sigSz        = 0;
+    int    mldsaKeyType;
+    word32 off;
+    int result = 0;
+    int ret;
+
+    mldsaKeyType = (level == WC_ML_DSA_44) ? ML_DSA_44_TYPE :
+                   (level == WC_ML_DSA_65) ? ML_DSA_65_TYPE : ML_DSA_87_TYPE;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL) return -850;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -851; goto done; }
+    ssh->sessionIdSz = 16;
+    WMEMSET(ssh->sessionId, 0xA5, ssh->sessionIdSz);
+
+    if (wc_InitRng(&rng) != 0) { result = -852; goto done; }
+    rngInit = 1;
+
+    if (wc_MlDsaKey_Init(&signingKey, NULL, INVALID_DEVID) != 0) { result = -853; goto done; }
+    signingKeyInit = 1;
+    if (wc_MlDsaKey_SetParams(&signingKey, level) != 0) { result = -854; goto done; }
+    if (wc_MlDsaKey_MakeKey(&signingKey, &rng) != 0) { result = -855; goto done; }
+
+    /* Generate a self-signed X.509 cert containing the ML-DSA public key.
+     * 16384 bytes is sufficient for the largest ML-DSA variant (ML-DSA-87). */
+    certDER = (byte*)WMALLOC(16384, NULL, 0);
+    if (certDER == NULL) { result = -856; goto done; }
+
+    wc_InitCert(&myCert);
+    WSTRNCPY(myCert.subject.commonName, "wolfSSH-mldsa-test", CTC_NAME_SIZE - 1);
+    myCert.subject.commonNameEnc = CTC_UTF8;
+    WSTRNCPY(myCert.subject.country, "US", CTC_NAME_SIZE - 1);
+    myCert.daysValid  = 365;
+    myCert.selfSigned = 1;
+    myCert.sigType    = certSigType;
+
+    ret = wc_MakeCert_ex(&myCert, certDER, 16384, mldsaKeyType, &signingKey, &rng);
+    if (ret <= 0) { result = -857; goto done; }
+    ret = wc_SignCert_ex(ret, certSigType, certDER, 16384, mldsaKeyType, &signingKey, &rng);
+    if (ret <= 0) { result = -858; goto done; }
+    certDERSz = (word32)ret;
+
+    /* Build RFC6187 cert chain blob:
+     *   string keyTypeName | uint32 certCount=1 | string certDER | uint32 ocspCount=0 */
+    rfcBlobSz = UINT32_SZ + keyTypeNameSz + UINT32_SZ +
+                UINT32_SZ + certDERSz + UINT32_SZ;
+    rfcBlob = (byte*)WMALLOC(rfcBlobSz, NULL, 0);
+    if (rfcBlob == NULL) { result = -859; goto done; }
+    off = 0;
+    MlDsaTest_PutLen(rfcBlob + off, keyTypeNameSz); off += UINT32_SZ;
+    WMEMCPY(rfcBlob + off, keyTypeName, keyTypeNameSz); off += keyTypeNameSz;
+    MlDsaTest_PutLen(rfcBlob + off, 1); off += UINT32_SZ;
+    MlDsaTest_PutLen(rfcBlob + off, certDERSz); off += UINT32_SZ;
+    WMEMCPY(rfcBlob + off, certDER, certDERSz); off += certDERSz;
+    MlDsaTest_PutLen(rfcBlob + off, 0); off += UINT32_SZ;
+
+    /* Build dataToSign; the pubkey blob length field uses the RFC6187 blob size. */
+    dataToSignSz = UINT32_SZ * 5 + usernameSz + serviceNameSz + authNameSz +
+                   1 + keyTypeNameSz + rfcBlobSz;
+    dataToSign = (byte*)WMALLOC(dataToSignSz, NULL, 0);
+    if (dataToSign == NULL) { result = -860; goto done; }
+    off = 0;
+    MlDsaTest_PutLen(dataToSign + off, usernameSz);    off += UINT32_SZ;
+    WMEMCPY(dataToSign + off, username, usernameSz);   off += usernameSz;
+    MlDsaTest_PutLen(dataToSign + off, serviceNameSz); off += UINT32_SZ;
+    WMEMCPY(dataToSign + off, serviceName, serviceNameSz); off += serviceNameSz;
+    MlDsaTest_PutLen(dataToSign + off, authNameSz);    off += UINT32_SZ;
+    WMEMCPY(dataToSign + off, authName, authNameSz);   off += authNameSz;
+    dataToSign[off++] = 1; /* hasSig */
+    MlDsaTest_PutLen(dataToSign + off, keyTypeNameSz); off += UINT32_SZ;
+    WMEMCPY(dataToSign + off, keyTypeName, keyTypeNameSz); off += keyTypeNameSz;
+    MlDsaTest_PutLen(dataToSign + off, rfcBlobSz);     off += UINT32_SZ;
+    WMEMCPY(dataToSign + off, rfcBlob, rfcBlobSz);     off += rfcBlobSz;
+
+    /* Build checkData and sign it. */
+    sigSzInt = wc_MlDsaKey_SigSize(&signingKey);
+    if (sigSzInt < 0) { result = -861; goto done; }
+    sigSz = (word32)sigSzInt;
+    sig = (byte*)WMALLOC(sigSz, NULL, 0);
+    if (sig == NULL) { result = -871; goto done; }
+
+    checkDataSz = UINT32_SZ + ssh->sessionIdSz + MSG_ID_SZ + dataToSignSz;
+    checkData = (byte*)WMALLOC(checkDataSz, NULL, 0);
+    if (checkData == NULL) { result = -862; goto done; }
+    off = 0;
+    MlDsaTest_PutLen(checkData + off, ssh->sessionIdSz); off += UINT32_SZ;
+    WMEMCPY(checkData + off, ssh->sessionId, ssh->sessionIdSz); off += ssh->sessionIdSz;
+    checkData[off++] = MSGID_USERAUTH_REQUEST;
+    WMEMCPY(checkData + off, dataToSign, dataToSignSz);
+
+    if (wc_MlDsaKey_SignCtx(&signingKey, NULL, 0, sig, &sigSz, checkData,
+                            checkDataSz, &rng) != 0) {
+        result = -863; goto done;
+    }
+
+    /* Build signature blob: string keyTypeName || string sig */
+    sigBlobSz = UINT32_SZ * 2 + keyTypeNameSz + sigSz;
+    sigBlob = (byte*)WMALLOC(sigBlobSz, NULL, 0);
+    if (sigBlob == NULL) { result = -864; goto done; }
+    off = 0;
+    MlDsaTest_PutLen(sigBlob + off, keyTypeNameSz); off += UINT32_SZ;
+    WMEMCPY(sigBlob + off, keyTypeName, keyTypeNameSz); off += keyTypeNameSz;
+    MlDsaTest_PutLen(sigBlob + off, sigSz); off += UINT32_SZ;
+    WMEMCPY(sigBlob + off, sig, sigSz); off += sigSz;
+    sigBlobSz = off;
+
+    /* DoUserAuthRequestMlDsa with isCert=1 expects pk->publicKey to be the
+     * leaf cert DER. Pass rfcBlobSz explicitly so dataToSign is sized from
+     * the wire blob length, not the cert DER length. */
+    WMEMSET(&authData, 0, sizeof(authData));
+    authData.type                         = WOLFSSH_USERAUTH_PUBLICKEY;
+    authData.username                     = (const byte*)username;
+    authData.usernameSz                   = usernameSz;
+    authData.serviceName                  = (const byte*)serviceName;
+    authData.serviceNameSz                = serviceNameSz;
+    authData.authName                     = (const byte*)authName;
+    authData.authNameSz                   = authNameSz;
+    authData.sf.publicKey.dataToSign      = dataToSign;
+    authData.sf.publicKey.publicKeyType   = (const byte*)keyTypeName;
+    authData.sf.publicKey.publicKeyTypeSz = keyTypeNameSz;
+    authData.sf.publicKey.publicKey       = certDER;
+    authData.sf.publicKey.publicKeySz     = certDERSz;
+    authData.sf.publicKey.hasSignature    = 1;
+    authData.sf.publicKey.isCert          = 1;
+    authData.sf.publicKey.signature       = sigBlob;
+    authData.sf.publicKey.signatureSz     = sigBlobSz;
+
+    ret = wolfSSH_TestDoUserAuthRequestMlDsa(ssh, &authData, rfcBlobSz);
+    if (ret != WS_SUCCESS) {
+        printf("DoUserAuthRequestMlDsa cert-path valid (%s): ret=%d expected %d\n",
+               keyTypeName, ret, WS_SUCCESS);
+        result = -865;
+    }
+
+done:
+    if (signingKeyInit) wc_MlDsaKey_Free(&signingKey);
+    if (rngInit) wc_FreeRng(&rng);
+    if (certDER    != NULL) WFREE(certDER,    NULL, 0);
+    if (rfcBlob    != NULL) WFREE(rfcBlob,    NULL, 0);
+    if (sigBlob    != NULL) WFREE(sigBlob,    NULL, 0);
+    if (dataToSign != NULL) WFREE(dataToSign, NULL, 0);
+    if (checkData  != NULL) WFREE(checkData,  NULL, 0);
+    if (sig        != NULL) WFREE(sig,        NULL, 0);
+    if (ssh != NULL) wolfSSH_free(ssh);
+    if (ctx != NULL) wolfSSH_CTX_free(ctx);
+    return result;
+}
+/* Cross-level mismatch: cert has ML-DSA key at a different level than
+ * keyTypeName claims. PublicKeyDecode fails, should return WS_CRYPTO_FAILED. */
+static int test_DoUserAuthRequestMlDsa_CertPath_WrongLevel(void)
+{
+    /* Claim ML-DSA-44 type but embed an ML-DSA-65 key in the cert. */
+    static const char keyTypeName[]  = "x509v3-ssh-mldsa-44";
+    static const char username[]     = "wolfssh";
+    static const char serviceName[]  = "ssh-connection";
+    static const char authName[]     = "publickey";
+    const word32 keyTypeNameSz  = (word32)WSTRLEN(keyTypeName);
+    const word32 usernameSz     = (word32)(sizeof(username)     - 1);
+    const word32 serviceNameSz  = (word32)(sizeof(serviceName)  - 1);
+    const word32 authNameSz     = (word32)(sizeof(authName)     - 1);
+
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    MlDsaKey signingKey;
+    int signingKeyInit = 0;
+    WC_RNG rng;
+    int rngInit = 0;
+    Cert myCert;
+    WS_UserAuthData authData;
+
+    byte* certDER    = NULL;
+    byte* sigBlob    = NULL;
+    byte* dataToSign = NULL;
+    word32 certDERSz    = 0;
+    word32 dataToSignSz = 0;
+    word32 off;
+    int result = 0;
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL) return -880;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -881; goto done; }
+    ssh->sessionIdSz = 16;
+    WMEMSET(ssh->sessionId, 0xA5, ssh->sessionIdSz);
+
+    if (wc_InitRng(&rng) != 0) { result = -882; goto done; }
+    rngInit = 1;
+
+    if (wc_MlDsaKey_Init(&signingKey, NULL, INVALID_DEVID) != 0) { result = -883; goto done; }
+    signingKeyInit = 1;
+    if (wc_MlDsaKey_SetParams(&signingKey, WC_ML_DSA_65) != 0) { result = -884; goto done; }
+    if (wc_MlDsaKey_MakeKey(&signingKey, &rng) != 0) { result = -885; goto done; }
+
+    certDER = (byte*)WMALLOC(16384, NULL, 0);
+    if (certDER == NULL) { result = -886; goto done; }
+
+    wc_InitCert(&myCert);
+    WSTRNCPY(myCert.subject.commonName, "wolfSSH-mldsa-test", CTC_NAME_SIZE - 1);
+    myCert.subject.commonNameEnc = CTC_UTF8;
+    WSTRNCPY(myCert.subject.country, "US", CTC_NAME_SIZE - 1);
+    myCert.daysValid  = 365;
+    myCert.selfSigned = 1;
+    myCert.sigType    = CTC_ML_DSA_65;
+
+    ret = wc_MakeCert_ex(&myCert, certDER, 16384, ML_DSA_65_TYPE, &signingKey, &rng);
+    if (ret <= 0) { result = -887; goto done; }
+    ret = wc_SignCert_ex(ret, CTC_ML_DSA_65, certDER, 16384, ML_DSA_65_TYPE, &signingKey, &rng);
+    if (ret <= 0) { result = -888; goto done; }
+    certDERSz = (word32)ret;
+
+    /* Dummy sig blob: keyTypeName || one zero byte. */
+    sigBlob = (byte*)WMALLOC(UINT32_SZ * 2 + keyTypeNameSz + 1, NULL, 0);
+    if (sigBlob == NULL) { result = -889; goto done; }
+    off = 0;
+    MlDsaTest_PutLen(sigBlob + off, keyTypeNameSz); off += UINT32_SZ;
+    WMEMCPY(sigBlob + off, keyTypeName, keyTypeNameSz); off += keyTypeNameSz;
+    MlDsaTest_PutLen(sigBlob + off, 1); off += UINT32_SZ;
+    sigBlob[off] = 0x00;
+
+    /* Sized to match the checkData formula in DoUserAuthRequestMlDsa with
+     * pubKeyBlobSz=0. Populated with zeros - not a valid payload, but
+     * non-NULL so that if key-level enforcement ever relaxes, execution fails
+     * at sig verify rather than crashing on a NULL deref. */
+    dataToSignSz = UINT32_SZ * 5 + usernameSz + serviceNameSz + authNameSz +
+                   BOOLEAN_SZ + keyTypeNameSz;
+    dataToSign = (byte*)WMALLOC(dataToSignSz, NULL, 0);
+    if (dataToSign == NULL) { result = -890; goto done; }
+    WMEMSET(dataToSign, 0, dataToSignSz);
+
+    WMEMSET(&authData, 0, sizeof(authData));
+    authData.type                          = WOLFSSH_USERAUTH_PUBLICKEY;
+    authData.username                      = (const byte*)username;
+    authData.usernameSz                    = usernameSz;
+    authData.serviceName                   = (const byte*)serviceName;
+    authData.serviceNameSz                 = serviceNameSz;
+    authData.authName                      = (const byte*)authName;
+    authData.authNameSz                    = authNameSz;
+    authData.sf.publicKey.publicKeyType    = (const byte*)keyTypeName;
+    authData.sf.publicKey.publicKeyTypeSz  = keyTypeNameSz;
+    authData.sf.publicKey.publicKey        = certDER;
+    authData.sf.publicKey.publicKeySz      = certDERSz;
+    authData.sf.publicKey.hasSignature     = 1;
+    authData.sf.publicKey.isCert           = 1;
+    authData.sf.publicKey.dataToSign       = dataToSign;
+    authData.sf.publicKey.signature        = sigBlob;
+    authData.sf.publicKey.signatureSz      = UINT32_SZ * 2 + keyTypeNameSz + 1;
+
+    ret = wolfSSH_TestDoUserAuthRequestMlDsa(ssh, &authData, 0);
+    if (ret == WS_SUCCESS) {
+        printf("DoUserAuthRequestMlDsa cert-path wrong-level: wrongfully accepted\n");
+        result = -891;
+    }
+    else if (ret != WS_CRYPTO_FAILED) {
+        printf("DoUserAuthRequestMlDsa cert-path wrong-level: ret=%d expected %d\n",
+               ret, WS_CRYPTO_FAILED);
+        result = -892;
+    }
+
+done:
+    if (signingKeyInit) wc_MlDsaKey_Free(&signingKey);
+    if (rngInit) wc_FreeRng(&rng);
+    if (certDER    != NULL) WFREE(certDER,    NULL, 0);
+    if (sigBlob    != NULL) WFREE(sigBlob,    NULL, 0);
+    if (dataToSign != NULL) WFREE(dataToSign, NULL, 0);
+    if (ssh != NULL) wolfSSH_free(ssh);
+    if (ctx != NULL) wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* WOLFSSH_CERTS && WOLFSSL_CERT_GEN */
+#endif /* WOLFSSH_CERTS */
+
+static int test_PrepareUserAuthRequestMlDsa_Params(word32 keygenLevel,
+        byte keyId, int derBufSz)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    WS_UserAuthData authData;
+    WS_KeySignature keySig;
+    byte* derKey = NULL;
+    word32 payloadSz;
+    int derKeySz;
+    int result = 0;
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL) return -900;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -901; goto done; }
+
+    derKey = (byte*)WMALLOC(derBufSz, NULL, 0);
+    if (derKey == NULL) { result = -902; goto done; }
+
+    derKeySz = wolfSSH_MakeMlDsaKey(derKey, (word32)derBufSz, keygenLevel);
+    if (derKeySz < 0) { result = -903; goto done; }
+
+    /* DER success path */
+    WMEMSET(&authData, 0, sizeof(authData));
+    WMEMSET(&keySig,   0, sizeof(keySig));
+    payloadSz = 0;
+    authData.sf.publicKey.privateKey   = derKey;
+    authData.sf.publicKey.privateKeySz = (word32)derKeySz;
+    authData.sf.publicKey.hasSignature = 0;
+    keySig.keyId = keyId;
+    keySig.heap  = NULL;
+    ret = wolfSSH_TestPrepareUserAuthRequestMlDsa(ssh, &payloadSz,
+            &authData, &keySig);
+    if (ret != WS_SUCCESS) { result = -904; goto done; }
+    wc_MlDsaKey_Free(&keySig.ks.mldsa.key);
+
+    /* Fallback path: garbage fails PrivateKeyDecode, then fails OpenSSH
+     * magic check; function must return an error (not leak the Init'd key). */
+    {
+        static const byte badKey[] = { 0xFF, 0xFE, 0x00, 0x01 };
+        WMEMSET(&authData, 0, sizeof(authData));
+        WMEMSET(&keySig,   0, sizeof(keySig));
+        payloadSz = 0;
+        authData.sf.publicKey.privateKey   = badKey;
+        authData.sf.publicKey.privateKeySz = sizeof(badKey);
+        authData.sf.publicKey.hasSignature = 0;
+        keySig.keyId = keyId;
+        keySig.heap  = NULL;
+        ret = wolfSSH_TestPrepareUserAuthRequestMlDsa(ssh, &payloadSz,
+                &authData, &keySig);
+        if (ret == WS_SUCCESS) {
+            wc_MlDsaKey_Free(&keySig.ks.mldsa.key);
+            result = -905;
+            goto done;
+        }
+    }
+
+    /* hasSignature=1 path: exercises payload-size accumulation and sigSz. */
+    {
+        WMEMSET(&authData, 0, sizeof(authData));
+        WMEMSET(&keySig,   0, sizeof(keySig));
+        payloadSz = 0;
+        authData.sf.publicKey.privateKey    = derKey;
+        authData.sf.publicKey.privateKeySz  = (word32)derKeySz;
+        authData.sf.publicKey.hasSignature  = 1;
+        keySig.keyId = keyId;
+        keySig.heap  = NULL;
+        ret = wolfSSH_TestPrepareUserAuthRequestMlDsa(ssh, &payloadSz,
+                &authData, &keySig);
+        /* On failure the function frees the key internally; only free on
+         * success paths where the key was left initialized for the caller. */
+        if (ret != WS_SUCCESS) { result = -906; goto done; }
+        if (keySig.sigSz == 0) { wc_MlDsaKey_Free(&keySig.ks.mldsa.key); result = -907; goto done; }
+        if (payloadSz == 0)    { wc_MlDsaKey_Free(&keySig.ks.mldsa.key); result = -908; goto done; }
+        wc_MlDsaKey_Free(&keySig.ks.mldsa.key);
+    }
+
+done:
+    WFREE(derKey, NULL, 0);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+static int test_DoUserAuthRequestMlDsa(void)
+{
+    int ret;
+    ret = test_DoUserAuthRequestMlDsa_Params("ssh-mldsa-44", WC_ML_DSA_44);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsa_Params("ssh-mldsa-65", WC_ML_DSA_65);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsa_Params("ssh-mldsa-87", WC_ML_DSA_87);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsa_BadAlgo();
+    if (ret != 0) return ret;
+#ifdef WOLFSSH_CERTS
+    ret = test_DoUserAuthRequestMlDsa_CertPath("x509v3-ssh-mldsa-44");
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsa_CertPath("x509v3-ssh-mldsa-65");
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsa_CertPath("x509v3-ssh-mldsa-87");
+    if (ret != 0) return ret;
+#ifdef WOLFSSL_CERT_GEN
+    ret = test_DoUserAuthRequestMlDsa_CertPath_Valid(
+            "x509v3-ssh-mldsa-44", WC_ML_DSA_44, CTC_ML_DSA_44);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsa_CertPath_Valid(
+            "x509v3-ssh-mldsa-65", WC_ML_DSA_65, CTC_ML_DSA_65);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsa_CertPath_Valid(
+            "x509v3-ssh-mldsa-87", WC_ML_DSA_87, CTC_ML_DSA_87);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsa_CertPath_WrongLevel();
+    if (ret != 0) return ret;
+#endif /* WOLFSSL_CERT_GEN */
+#endif /* WOLFSSH_CERTS */
+    return 0;
+}
+
+static int test_PrepareUserAuthRequestMlDsa(void)
+{
+    int ret = 0;
+#ifndef WOLFSSH_NO_MLDSA44
+    ret = test_PrepareUserAuthRequestMlDsa_Params(WOLFSSH_MLDSAKEY_44,
+            ID_MLDSA44, WC_MLDSA_44_BOTH_KEY_DER_SIZE);
+    if (ret != 0) return ret;
+#endif
+#ifndef WOLFSSH_NO_MLDSA65
+    ret = test_PrepareUserAuthRequestMlDsa_Params(WOLFSSH_MLDSAKEY_65,
+            ID_MLDSA65, WC_MLDSA_65_BOTH_KEY_DER_SIZE);
+    if (ret != 0) return ret;
+#endif
+#ifndef WOLFSSH_NO_MLDSA87
+    ret = test_PrepareUserAuthRequestMlDsa_Params(WOLFSSH_MLDSAKEY_87,
+            ID_MLDSA87, WC_MLDSA_87_BOTH_KEY_DER_SIZE);
+    if (ret != 0) return ret;
+#endif
+    (void)ret;
+    return 0;
+}
+
+#ifdef WOLFSSH_CERTS
+static int test_PrepareUserAuthRequestMlDsaCert_Params(word32 keygenLevel,
+        byte keyId, int derBufSz)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    WS_UserAuthData authData;
+    WS_KeySignature keySig;
+    byte* derKey = NULL;
+    word32 payloadSz;
+    int derKeySz;
+    int result = 0;
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL) return -920;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -921; goto done; }
+
+    derKey = (byte*)WMALLOC(derBufSz, NULL, 0);
+    if (derKey == NULL) { result = -922; goto done; }
+
+    derKeySz = wolfSSH_MakeMlDsaKey(derKey, (word32)derBufSz, keygenLevel);
+    if (derKeySz < 0) { result = -923; goto done; }
+
+    /* Success path: good key, hasSignature=0 */
+    WMEMSET(&authData, 0, sizeof(authData));
+    WMEMSET(&keySig,   0, sizeof(keySig));
+    payloadSz = 0;
+    authData.sf.publicKey.privateKey   = derKey;
+    authData.sf.publicKey.privateKeySz = (word32)derKeySz;
+    authData.sf.publicKey.hasSignature = 0;
+    keySig.keyId = keyId;
+    keySig.heap  = NULL;
+    ret = wolfSSH_TestPrepareUserAuthRequestMlDsaCert(ssh, &payloadSz,
+            &authData, &keySig);
+    if (ret != WS_SUCCESS) { result = -924; goto done; }
+    wc_MlDsaKey_Free(&keySig.ks.mldsa.key);
+
+    /* Bad key: exercises the PrivateKeyDecode failure free path */
+    {
+        static const byte badKey[] = { 0xFF, 0xFE, 0x00, 0x01 };
+        WMEMSET(&authData, 0, sizeof(authData));
+        WMEMSET(&keySig,   0, sizeof(keySig));
+        payloadSz = 0;
+        authData.sf.publicKey.privateKey   = badKey;
+        authData.sf.publicKey.privateKeySz = sizeof(badKey);
+        authData.sf.publicKey.hasSignature = 0;
+        keySig.keyId = keyId;
+        keySig.heap  = NULL;
+        ret = wolfSSH_TestPrepareUserAuthRequestMlDsaCert(ssh, &payloadSz,
+                &authData, &keySig);
+        if (ret == WS_SUCCESS) { result = -925; goto done; }
+    }
+
+    /* hasSignature=1 path: exercises sigSz accumulation */
+    {
+        WMEMSET(&authData, 0, sizeof(authData));
+        WMEMSET(&keySig,   0, sizeof(keySig));
+        payloadSz = 0;
+        authData.sf.publicKey.privateKey   = derKey;
+        authData.sf.publicKey.privateKeySz = (word32)derKeySz;
+        authData.sf.publicKey.hasSignature = 1;
+        keySig.keyId = keyId;
+        keySig.heap  = NULL;
+        ret = wolfSSH_TestPrepareUserAuthRequestMlDsaCert(ssh, &payloadSz,
+                &authData, &keySig);
+        if (ret != WS_SUCCESS) { wc_MlDsaKey_Free(&keySig.ks.mldsa.key); result = -926; goto done; }
+        if (keySig.sigSz == 0) { wc_MlDsaKey_Free(&keySig.ks.mldsa.key); result = -927; goto done; }
+        if (payloadSz == 0)    { wc_MlDsaKey_Free(&keySig.ks.mldsa.key); result = -928; goto done; }
+        wc_MlDsaKey_Free(&keySig.ks.mldsa.key);
+    }
+
+done:
+    WFREE(derKey, NULL, 0);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+static int test_PrepareUserAuthRequestMlDsaCert(void)
+{
+    int ret = 0;
+#ifndef WOLFSSH_NO_MLDSA44
+    ret = test_PrepareUserAuthRequestMlDsaCert_Params(WOLFSSH_MLDSAKEY_44,
+            ID_X509V3_MLDSA44, WC_MLDSA_44_BOTH_KEY_DER_SIZE);
+    if (ret != 0) return ret;
+#endif
+#ifndef WOLFSSH_NO_MLDSA65
+    ret = test_PrepareUserAuthRequestMlDsaCert_Params(WOLFSSH_MLDSAKEY_65,
+            ID_X509V3_MLDSA65, WC_MLDSA_65_BOTH_KEY_DER_SIZE);
+    if (ret != 0) return ret;
+#endif
+#ifndef WOLFSSH_NO_MLDSA87
+    ret = test_PrepareUserAuthRequestMlDsaCert_Params(WOLFSSH_MLDSAKEY_87,
+            ID_X509V3_MLDSA87, WC_MLDSA_87_BOTH_KEY_DER_SIZE);
+    if (ret != 0) return ret;
+#endif
+    (void)ret;
+    return 0;
+}
+#endif /* WOLFSSH_CERTS */
+
+static int test_BuildUserAuthRequestMlDsa(void)
+{
+#ifndef WOLFSSH_NO_MLDSA44
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    WS_KeySignature keySig;
+    WS_UserAuthData authData;
+    byte  output[4096];
+    word32 idx = 0;
+    word32 idx0 = 0;
+    int   sigSz;
+    int   result = 0;
+    int   ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL) { result = -700; goto done; }
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -701; goto done; }
+
+    ssh->sessionIdSz = 16;
+    WMEMSET(ssh->sessionId, 0xA5, ssh->sessionIdSz);
+
+    WMEMSET(&keySig, 0, sizeof(keySig));
+    keySig.keyId = ID_MLDSA44;
+    keySig.heap  = NULL;
+    ret = wc_MlDsaKey_Init(&keySig.ks.mldsa.key, NULL, INVALID_DEVID);
+    if (ret != 0) { result = -702; goto done; }
+    {
+        word32 kidx = 0;
+        ret = wc_MlDsaKey_PrivateKeyDecode(&keySig.ks.mldsa.key,
+                unitTestMlDsaPrivKey,
+                (word32)sizeof(unitTestMlDsaPrivKey), &kidx);
+    }
+    if (ret != 0) {
+        wc_MlDsaKey_Free(&keySig.ks.mldsa.key);
+        result = -703;
+        goto done;
+    }
+    sigSz = wc_MlDsaKey_SigSize(&keySig.ks.mldsa.key);
+    if (sigSz < 0) {
+        wc_MlDsaKey_Free(&keySig.ks.mldsa.key);
+        result = -704;
+        goto done;
+    }
+    keySig.sigSz = (word32)sigSz;
+
+    WMEMSET(&authData, 0, sizeof(authData));
+    authData.sf.publicKey.hasSignature    = 1;
+    authData.sf.publicKey.publicKeyType   = (const byte*)"ssh-mldsa-44";
+    authData.sf.publicKey.publicKeyTypeSz = 12;
+
+    ret = wolfSSH_TestBuildUserAuthRequestMlDsa(ssh, output, &idx,
+            &authData, output, idx0, &keySig);
+
+    wc_MlDsaKey_Free(&keySig.ks.mldsa.key);
+
+    if (ret != WS_SUCCESS) {
+        printf("BuildUserAuthRequestMlDsa failed: %d\n", ret);
+        result = -705;
+    }
+
+done:
+    if (ssh) wolfSSH_free(ssh);
+    if (ctx) wolfSSH_CTX_free(ctx);
+    return result;
+#else
+    return 0;
+#endif
+}
+#endif
+
 /* IdentifyAsn1Key unit test
  *
  * Exercises every new wc_Free* error-path added in IdentifyAsn1Key:
@@ -2978,6 +4162,72 @@ static int test_IdentifyAsn1Key(void)
     if (ret != ID_ED25519) {
         printf("IdentifyAsn1Key: Ed25519 priv failed, ret=%d\n", ret);
         result = -604; goto done;
+    }
+#endif
+
+#if !defined(WOLFSSH_NO_MLDSA)
+    ret = IdentifyAsn1Key(unitTestMlDsaPrivKey,
+                          (word32)sizeof(unitTestMlDsaPrivKey),
+                          1, NULL, NULL);
+    if (ret != ID_MLDSA44) {
+        printf("IdentifyAsn1Key: MlDsa priv failed, ret=%d\n", ret);
+        result = -606;
+        goto done;
+    }
+
+    /* Raw public key probe path: extract the public key from the private key
+     * test vector, then pass the raw bytes (no SPKI wrapper) to
+     * IdentifyAsn1Key. This exercises the level-probing fallback added for
+     * certificate-extracted public keys. */
+    {
+        wc_MlDsaKey mlKey;
+        byte* mlPub = NULL;
+        word32 mlPubSz = 0;
+        word32 mlIdx = 0;
+
+        if (wc_MlDsaKey_Init(&mlKey, NULL, INVALID_DEVID) != 0) {
+            result = -607; goto done;
+        }
+        if (wc_MlDsaKey_PrivateKeyDecode(&mlKey, unitTestMlDsaPrivKey,
+                                         sizeof(unitTestMlDsaPrivKey),
+                                         &mlIdx) != 0) {
+            wc_MlDsaKey_Free(&mlKey);
+            result = -608; goto done;
+        }
+        {
+            int mlPubSzInt = wc_MlDsaKey_PubSize(&mlKey);
+            if (mlPubSzInt < 0) { wc_MlDsaKey_Free(&mlKey); result = -609; goto done; }
+            mlPubSz = (word32)mlPubSzInt;
+        }
+        mlPub = (byte*)WMALLOC(mlPubSz, NULL, 0);
+        if (mlPub == NULL) {
+            wc_MlDsaKey_Free(&mlKey);
+            result = -619; goto done;
+        }
+        if (wc_MlDsaKey_ExportPubRaw(&mlKey, mlPub, &mlPubSz) != 0) {
+            WFREE(mlPub, NULL, 0);
+            wc_MlDsaKey_Free(&mlKey);
+            result = -610; goto done;
+        }
+        wc_MlDsaKey_Free(&mlKey);
+
+        ret = IdentifyAsn1Key(mlPub, mlPubSz, 0, NULL, NULL);
+        WFREE(mlPub, NULL, 0);
+        /* unitTestMlDsaPrivKey encodes a level-44 key (OID id-ml-dsa-44),
+         * so the probe must return ID_MLDSA44 when level-44 is compiled in. */
+#ifndef WOLFSSH_NO_MLDSA44
+        if (ret != ID_MLDSA44) {
+            printf("IdentifyAsn1Key: MlDsa raw pub probe failed, ret=%d\n",
+                   ret);
+            result = -611; goto done;
+        }
+#else
+        if (ret >= 0) {
+            printf("IdentifyAsn1Key: MlDsa raw pub probe failed, ret=%d\n",
+                   ret);
+            result = -611; goto done;
+        }
+#endif
     }
 #endif
 
@@ -5387,6 +6637,26 @@ int wolfSSH_UnitTest(int argc, char** argv)
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
+#ifndef WOLFSSH_NO_MLDSA
+    unitResult = test_DoUserAuthRequestMlDsa();
+    printf("DoUserAuthRequestMlDsa: %s (result=%d)\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"), unitResult);
+    testResult = testResult || (unitResult != 0);
+    unitResult = test_PrepareUserAuthRequestMlDsa();
+    printf("PrepareUserAuthRequestMlDsa: %s (result=%d)\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"), unitResult);
+    testResult = testResult || (unitResult != 0);
+#ifdef WOLFSSH_CERTS
+    unitResult = test_PrepareUserAuthRequestMlDsaCert();
+    printf("PrepareUserAuthRequestMlDsaCert: %s (result=%d)\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"), unitResult);
+    testResult = testResult || (unitResult != 0);
+#endif /* WOLFSSH_CERTS */
+    unitResult = test_BuildUserAuthRequestMlDsa();
+    printf("BuildUserAuthRequestMlDsa: %s (result=%d)\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"), unitResult);
+    testResult = testResult || (unitResult != 0);
+#endif
     unitResult = test_ChannelPutData();
     printf("ChannelPutData: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
@@ -5509,13 +6779,17 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("Ed25519KeyGen: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
+#ifndef WOLFSSH_NO_MLDSA
+    unitResult = test_MlDsaKeyGen();
+    printf("MlDsaKeyGen: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 #endif
 
     wolfSSH_Cleanup();
 
     return (testResult ? 1 : 0);
 }
-
 
 #ifndef NO_UNITTEST_MAIN_DRIVER
 int main(int argc, char** argv)

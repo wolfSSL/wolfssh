@@ -43,6 +43,9 @@
 #ifndef WOLFSSL_WOLFSSH
     #error "wolfssh requires wolfSSL built with WOLFSSL_WOLFSSH"
 #endif
+#ifdef HAVE_DILITHIUM
+    #include <wolfssl/wolfcrypt/dilithium.h>
+#endif
 #ifdef WOLFSSH_SCP
     #include <wolfssh/wolfscp.h>
 #endif
@@ -102,6 +105,17 @@ extern "C" {
     #define WOLFSSH_NO_DH
 #endif
 
+#ifndef HAVE_DILITHIUM
+    #undef WOLFSSH_NO_MLDSA
+    #define WOLFSSH_NO_MLDSA
+    #undef WOLFSSH_NO_MLDSA44
+    #undef WOLFSSH_NO_MLDSA65
+    #undef WOLFSSH_NO_MLDSA87
+    #define WOLFSSH_NO_MLDSA44
+    #define WOLFSSH_NO_MLDSA65
+    #define WOLFSSH_NO_MLDSA87
+#endif
+
 #ifdef NO_SHA
     #undef WOLFSSH_NO_SHA1
     #define WOLFSSH_NO_SHA1
@@ -138,7 +152,6 @@ extern "C" {
     #error "You need at least one MAC algorithm."
 #endif
 
-
 #if defined(WOLFSSH_NO_DH) || defined(WOLFSSH_NO_SHA1)
     #undef WOLFSSH_NO_DH_GROUP1_SHA1
     #define WOLFSSH_NO_DH_GROUP1_SHA1
@@ -159,6 +172,16 @@ extern "C" {
     #undef WOLFSSH_NO_DH_GEX_SHA256
     #define WOLFSSH_NO_DH_GEX_SHA256
 #endif
+
+#ifdef WOLFSSH_NO_MLDSA
+    #undef WOLFSSH_NO_MLDSA44
+    #undef WOLFSSH_NO_MLDSA65
+    #undef WOLFSSH_NO_MLDSA87
+    #define WOLFSSH_NO_MLDSA44
+    #define WOLFSSH_NO_MLDSA65
+    #define WOLFSSH_NO_MLDSA87
+#endif
+
 #if defined(WOLFSSH_NO_ECDH) \
     || defined(NO_SHA256) || defined(NO_ECC256)
     #undef WOLFSSH_NO_ECDH_SHA2_NISTP256
@@ -262,7 +285,10 @@ extern "C" {
     defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && \
     defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && \
     defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521) && \
-    defined(WOLFSSH_NO_ED25519)
+    defined(WOLFSSH_NO_ED25519) && \
+    defined(WOLFSSH_NO_MLDSA44) && \
+    defined(WOLFSSH_NO_MLDSA65) && \
+    defined(WOLFSSH_NO_MLDSA87)
     #error "You need at least one signing algorithm."
 #endif
 
@@ -373,10 +399,21 @@ enum {
     ID_ECDSA_SHA2_NISTP384,
     ID_ECDSA_SHA2_NISTP521,
     ID_ED25519,
+/* ML-DSA enum values shift with WOLFSSH_NO_MLDSA/WOLFSSH_CERTS; internal-only, never serialized. */
+#ifndef WOLFSSH_NO_MLDSA
+    ID_MLDSA44,
+    ID_MLDSA65,
+    ID_MLDSA87,
+#endif
     ID_X509V3_SSH_RSA,
     ID_X509V3_ECDSA_SHA2_NISTP256,
     ID_X509V3_ECDSA_SHA2_NISTP384,
     ID_X509V3_ECDSA_SHA2_NISTP521,
+#ifndef WOLFSSH_NO_MLDSA
+    ID_X509V3_MLDSA44,
+    ID_X509V3_MLDSA65,
+    ID_X509V3_MLDSA87,
+#endif
 
     /* Service IDs */
     ID_SERVICE_USERAUTH,
@@ -1078,6 +1115,11 @@ typedef struct WS_KeySignature {
             ed25519_key key;
         } ed25519;
 #endif
+#ifndef WOLFSSH_NO_MLDSA
+        struct {
+            MlDsaKey key;
+        } mldsa;
+#endif /* WOLFSSH_NO_MLDSA */
     } ks;
 } WS_KeySignature;
 
@@ -1463,6 +1505,21 @@ enum WS_MessageIdLimits {
     WOLFSSH_API int wolfSSH_TestDoUserAuthRequestEd25519(WOLFSSH* ssh,
             WS_UserAuthData* authData);
 #endif /* !WOLFSSH_NO_ED25519 */
+#ifndef WOLFSSH_NO_MLDSA
+    WOLFSSH_API int wolfSSH_TestDoUserAuthRequestMlDsa(WOLFSSH* ssh,
+            WS_UserAuthData* authData, word32 pubKeyBlobSz);
+    WOLFSSH_API int wolfSSH_TestPrepareUserAuthRequestMlDsa(WOLFSSH* ssh,
+            word32* payloadSz, const WS_UserAuthData* authData,
+            WS_KeySignature* keySig);
+#ifdef WOLFSSH_CERTS
+    WOLFSSH_API int wolfSSH_TestPrepareUserAuthRequestMlDsaCert(WOLFSSH* ssh,
+            word32* payloadSz, const WS_UserAuthData* authData,
+            WS_KeySignature* keySig);
+#endif /* WOLFSSH_CERTS */
+    WOLFSSH_API int wolfSSH_TestBuildUserAuthRequestMlDsa(WOLFSSH* ssh,
+            byte* output, word32* idx, const WS_UserAuthData* authData,
+            const byte* sigStart, word32 sigStartIdx, WS_KeySignature* keySig);
+#endif /* !WOLFSSH_NO_MLDSA */
 #if defined(WOLFSSH_SCP) && !defined(WOLFSSH_SCP_USER_CALLBACKS)
     WOLFSSH_API int wolfSSH_TestScpExtractFileName(const char* filePath,
             char* fileName, word32 fileNameSz);
