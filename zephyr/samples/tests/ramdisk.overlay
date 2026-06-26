@@ -1,0 +1,10 @@
+/* RAM disk for the SFTP tests (Zephyr >= 3.5, devicetree). disk-name matches
+ * CONFIG_WOLFSSH_SFTP_DEFAULT_DIR "/RAM:" in prj.conf; 128 * 512 = 64 KiB. */
+/ {
+	ramdisk0 {
+		compatible = "zephyr,ram-disk";
+		disk-name = "RAM";
+		sector-size = <512>;
+		sector-count = <128>;
+	};
+};
