@@ -93,6 +93,8 @@ int CheckPasswordHashUnix(const char* input, char* stored);
 #endif
 int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
                       word32 keySz);
+int ResolveAuthKeysPath(const char* homeDir, const char* pattern,
+                        const char* user, char* resolved);
 int CAKeysFileDiffers(const char* a, const char* b);
 int wolfSSHD_GetUserAuthTypes(const WOLFSSHD_CONFIG* usrConf);
 #endif
