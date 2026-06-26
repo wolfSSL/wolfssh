@@ -1,0 +1,16 @@
+/*
+ * RAM disk node for the wolfSSH SFTP tests.
+ *
+ * Zephyr 3.5 moved the RAM disk driver from Kconfig (CONFIG_DISK_RAM_VOLUME_*)
+ * to devicetree. The disk-name must match CONFIG_WOLFSSH_SFTP_DEFAULT_DIR
+ * ("/RAM:") in prj.conf. 128 sectors * 512 bytes = 64 KiB, matching the old
+ * CONFIG_DISK_RAM_VOLUME_SIZE=64.
+ */
+/ {
+	ramdisk0 {
+		compatible = "zephyr,ram-disk";
+		disk-name = "RAM";
+		sector-size = <512>;
+		sector-count = <128>;
+	};
+};

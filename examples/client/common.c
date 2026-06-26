@@ -1115,7 +1115,7 @@ int ClientLoadCA(WOLFSSH_CTX* ctx, const char* caCert)
 void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
         void* heap)
 {
-#if defined(WOLFSSH_TERM) && defined(WOLFSSH_KEYBOARD_INTERACTIVE)
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     word32 entry;
 #endif
 #ifdef WOLFSSH_TPM
