@@ -2176,6 +2176,130 @@ static int test_OpenSecureFile(void)
 }
 #endif /* !_WIN32 */
 
+/* Verify AuthorizedKeysFile token substitution so an absolute pattern with %u
+ * resolves to a per-user path instead of the same literal string for every
+ * user. */
+static int test_ResolveAuthKeysPath(void)
+{
+    int ret = WS_SUCCESS;
+    int rc;
+    word32 i;
+    char resolved[MAX_PATH_SZ];
+    char longPat[MAX_PATH_SZ + 16];
+    char longHome[MAX_PATH_SZ];
+    static const struct {
+        const char* home;
+        const char* pattern;
+        const char* user;
+        int expectRet;
+        const char* expect;
+    } vectors[] = {
+        /* absolute pattern with %u resolves to a distinct path per user */
+        { "/home/alice", "/etc/ssh/keys/%u", "alice", WS_SUCCESS,
+          "/etc/ssh/keys/alice" },
+        { "/home/bob",   "/etc/ssh/keys/%u", "bob",   WS_SUCCESS,
+          "/etc/ssh/keys/bob" },
+        /* %h expands to the home directory */
+        { "/home/alice", "%h/.ssh/authorized_keys", "alice", WS_SUCCESS,
+          "/home/alice/.ssh/authorized_keys" },
+        /* %% is a literal percent */
+        { "/home/alice", "/keys/100%%/%u", "alice", WS_SUCCESS,
+          "/keys/100%/alice" },
+        /* relative pattern is taken under the home directory */
+        { "/home/alice", "keys/%u", "alice", WS_SUCCESS,
+          "/home/alice/keys/alice" },
+#ifdef _WIN32
+        /* drive-letter and backslash roots are absolute on Windows */
+        { "/home/alice", "C:\\keys\\%u", "alice", WS_SUCCESS,
+          "C:\\keys\\alice" },
+        { "/home/alice", "\\keys\\%u", "alice", WS_SUCCESS,
+          "\\keys\\alice" },
+#else
+        /* on POSIX they are relative, taken under the home directory */
+        { "/home/alice", "C:\\keys\\%u", "alice", WS_SUCCESS,
+          "/home/alice/C:\\keys\\alice" },
+        { "/home/alice", "\\keys\\%u", "alice", WS_SUCCESS,
+          "/home/alice/\\keys\\alice" },
+#endif
+        /* a bare "X:" is drive-relative, not absolute, on either platform and
+         * so resolves under the home directory */
+        { "/home/alice", "C:keys\\%u", "alice", WS_SUCCESS,
+          "/home/alice/C:keys\\alice" },
+        { "/home/alice", "C:%u", "alice", WS_SUCCESS,
+          "/home/alice/C:alice" },
+        /* NULL pattern falls back to the default location */
+        { "/home/alice", NULL, "alice", WS_SUCCESS,
+          "/home/alice/.ssh/authorized_keys" },
+        /* a trailing lone '%' is treated as a literal */
+        { "/home/alice", "/etc/keys/%u%", "alice", WS_SUCCESS,
+          "/etc/keys/alice%" },
+        /* unrecognized token fails closed */
+        { "/home/alice", "/etc/keys/%q", "alice", WS_FATAL_ERROR, NULL },
+        /* recognized token with no available value (NULL user) fails closed */
+        { "/home/alice", "/etc/keys/%u", NULL, WS_FATAL_ERROR, NULL },
+    };
+
+    for (i = 0; ret == WS_SUCCESS && i < sizeof(vectors) / sizeof(vectors[0]);
+         i++) {
+        Log("    Testing scenario: pattern \"%s\" user \"%s\".",
+            vectors[i].pattern != NULL ? vectors[i].pattern : "(null)",
+            vectors[i].user != NULL ? vectors[i].user : "(null)");
+        /* non-zero fill so a missing null terminator cannot pass unnoticed */
+        WMEMSET(resolved, 0xA5, sizeof(resolved));
+        rc = ResolveAuthKeysPath(vectors[i].home, vectors[i].pattern,
+                                 vectors[i].user, resolved);
+        if (rc != vectors[i].expectRet) {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+        else if (vectors[i].expect != NULL &&
+                 WSTRCMP(resolved, vectors[i].expect) != 0) {
+            Log(" FAILED (got \"%s\").\n", resolved);
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            Log(" PASSED.\n");
+        }
+    }
+
+    /* an expansion that exceeds MAX_PATH_SZ fails closed */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: over-length pattern is rejected.");
+        WMEMSET(longPat, 'a', sizeof(longPat) - 1);
+        longPat[0] = '/';
+        longPat[sizeof(longPat) - 1] = '\0';
+        WMEMSET(resolved, 0, sizeof(resolved));
+        rc = ResolveAuthKeysPath("/home/alice", longPat, "alice", resolved);
+        if (rc == WS_FATAL_ERROR) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    /* a relative pattern under a long home directory fails closed */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: relative pattern under long home is "
+            "rejected.");
+        WMEMSET(longHome, 'a', sizeof(longHome) - 1);
+        longHome[0] = '/';
+        longHome[sizeof(longHome) - 1] = '\0';
+        WMEMSET(resolved, 0, sizeof(resolved));
+        rc = ResolveAuthKeysPath(longHome, "keys/%u", "alice", resolved);
+        if (rc == WS_FATAL_ERROR) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    return ret;
+}
+
 const TEST_CASE testCases[] = {
     TEST_DECL(test_ConfigDefaults),
     TEST_DECL(test_ParseConfigLine),
@@ -2193,6 +2317,7 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_IncludeRecursionBound),
     TEST_DECL(test_GetUserAuthTypes),
     TEST_DECL(test_ConfigSetAuthKeysFile),
+    TEST_DECL(test_ResolveAuthKeysPath),
     TEST_DECL(test_ConfigFree),
 #ifndef _WIN32
     TEST_DECL(test_OpenSecureFile),

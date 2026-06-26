@@ -135,9 +135,6 @@ struct WOLFSSHD_AUTH {
         #define MAX_LINE_SZ 900
     #endif
 #endif
-#ifndef MAX_PATH_SZ
-    #define MAX_PATH_SZ 80
-#endif
 
 #if 0
 /* this could potentially be useful in a deeply embedded future port */
@@ -509,15 +506,122 @@ static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz, WOLFS
 
 static const char authKeysDefault[] = ".ssh/authorized_keys";
 
-/* Resolve the authorized keys file path for a user. The pattern is the user's
- * configured AuthorizedKeysFile (resolved per request from the per-user config)
- * and is passed in explicitly rather than read from shared state so concurrent
- * authentications (e.g. Windows threaded mode) cannot race on it. A NULL or
- * empty pattern falls back to the default authorized_keys location. */
-static int ResolveAuthKeysPath(const char* homeDir, const char* pattern,
+/* Expand AuthorizedKeysFile tokens (%% literal, %h home dir, %u user name)
+ * from pattern into out. Unrecognized tokens fail closed so a per-user pattern
+ * cannot collapse to one shared path. Returns WS_SUCCESS or a negative error. */
+static int ExpandAuthKeysTokens(const char* pattern, const char* homeDir,
+                                const char* user, char* out, word32 outSz)
+{
+    int ret = WS_SUCCESS;
+    word32 outIdx = 0;
+    word32 i = 0;
+    word32 patSz;
+    word32 insSz;
+    const char* ins;
+    char lit[2];
+
+    if (pattern == NULL || out == NULL || outSz == 0) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        patSz = (word32)WSTRLEN(pattern);
+        lit[1] = '\0';
+
+        while (ret == WS_SUCCESS && i < patSz) {
+            ins = NULL;
+
+            if (pattern[i] == '%' && (i + 1) < patSz) {
+                switch (pattern[i + 1]) {
+                    case '%':
+                        lit[0] = '%';
+                        ins = lit;
+                        break;
+                    case 'h':
+                        ins = homeDir;
+                        break;
+                    case 'u':
+                        ins = user;
+                        break;
+                    default:
+                        wolfSSH_Log(WS_LOG_ERROR,
+                            "[SSHD] Unsupported AuthorizedKeysFile token");
+                        ret = WS_FATAL_ERROR;
+                        break;
+                }
+                /* token recognized but its value is unavailable */
+                if (ret == WS_SUCCESS && ins == NULL) {
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] No value for AuthorizedKeysFile token");
+                    ret = WS_FATAL_ERROR;
+                }
+                i += 2;
+            }
+            else {
+                /* literal character (including a trailing lone '%') */
+                lit[0] = pattern[i];
+                ins = lit;
+                i += 1;
+            }
+
+            if (ret == WS_SUCCESS) {
+                insSz = (word32)WSTRLEN(ins);
+                /* leave room for the terminating null */
+                if (outIdx + insSz >= outSz) {
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Path for key file larger than max allowed");
+                    ret = WS_FATAL_ERROR;
+                }
+                else {
+                    WMEMCPY(out + outIdx, ins, insSz);
+                    outIdx += insSz;
+                }
+            }
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        out[outIdx] = '\0';
+    }
+
+    return ret;
+}
+
+/* True for a fully qualified path. POSIX roots only at '/'; Windows also roots
+ * at a '\' or a drive letter followed by a separator ("X:\"). A bare "X:" is
+ * drive-relative, not absolute, so it is left to resolve under the home dir. */
+static int IsAbsoluteAuthKeysPath(const char* path)
+{
+    int ret = 0;
+
+    if (path != NULL) {
+        if (path[0] == '/') {
+            ret = 1;
+        }
+#ifdef _WIN32
+        else if (path[0] == '\\') {
+            ret = 1;
+        }
+        else if (((path[0] >= 'A' && path[0] <= 'Z') ||
+                  (path[0] >= 'a' && path[0] <= 'z')) && path[1] == ':' &&
+                 (path[2] == '\\' || path[2] == '/')) {
+            ret = 1;
+        }
+#endif
+    }
+
+    return ret;
+}
+
+/* Resolve the authorized keys file path for a user. The pattern is passed in
+ * explicitly so concurrent authentications cannot race on it, and its tokens
+ * are expanded so each user resolves to a distinct path. */
+WOLFSSHD_STATIC int ResolveAuthKeysPath(const char* homeDir,
+                               const char* pattern, const char* user,
                                char* resolved)
 {
     int ret = WS_SUCCESS;
+    char expanded[MAX_PATH_SZ];
     char* idx;
     int homeDirSz;
     const char* suffix = authKeysDefault;
@@ -528,24 +632,19 @@ static int ResolveAuthKeysPath(const char* homeDir, const char* pattern,
 
     if (ret == WS_SUCCESS) {
         if (pattern != NULL && *pattern != 0) {
-            /* TODO: token substitutions (e.g. %h) */
-            if (*pattern == '/') {
-                /* Absolute path is used as-is. Error out rather than
-                 * silently truncate when it does not fit, mirroring the
-                 * relative-path branch below. */
-                if (WSTRLEN(pattern) >= MAX_PATH_SZ) {
-                    wolfSSH_Log(WS_LOG_ERROR,
-                        "[SSHD] Path for key file larger than max allowed");
-                    ret = WS_FATAL_ERROR;
-                }
-                else {
-                    WSTRNCPY(resolved, pattern, MAX_PATH_SZ - 1);
-                    resolved[MAX_PATH_SZ - 1] = '\0';
-                }
+            ret = ExpandAuthKeysTokens(pattern, homeDir, user, expanded,
+                                       (word32)sizeof(expanded));
+            if (ret != WS_SUCCESS) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Failed to expand AuthorizedKeysFile pattern");
+            }
+            /* expanded is NUL-terminated and shorter than MAX_PATH_SZ */
+            else if (IsAbsoluteAuthKeysPath(expanded)) {
+                WMEMCPY(resolved, expanded, WSTRLEN(expanded) + 1);
                 return ret;
             }
             else {
-                suffix = pattern;
+                suffix = expanded;
             }
         }
     }
@@ -563,8 +662,8 @@ static int ResolveAuthKeysPath(const char* homeDir, const char* pattern,
             XMEMCPY(idx, homeDir, homeDirSz);
             idx += homeDirSz;
             *(idx++) = '/';
-            /* Intentionally copying the null term from suffix. */
-            XMEMCPY(idx, suffix, WSTRLEN(suffix));
+            /* the bound check above leaves room for suffix and its null term */
+            XMEMCPY(idx, suffix, WSTRLEN(suffix) + 1);
         }
     }
 
@@ -788,6 +887,7 @@ int wolfSSHD_OpenSecureFile(const char* path, WUID_T ownerUid,
 }
 
 static int SearchForPubKey(const char* path, const char* authKeysFile,
+                           const char* user,
                            const WS_UserAuthData_PublicKey* pubKeyCtx,
                            WUID_T uid, int strictModes)
 {
@@ -801,7 +901,7 @@ static int SearchForPubKey(const char* path, const char* authKeysFile,
     int rc = 0;
 
     WMEMSET(authKeysPath, 0, sizeof(authKeysPath));
-    rc = ResolveAuthKeysPath(path, authKeysFile, authKeysPath);
+    rc = ResolveAuthKeysPath(path, authKeysFile, user, authKeysPath);
     if (rc != WS_SUCCESS) {
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failed to resolve authorized keys"
             " file path.");
@@ -984,8 +1084,9 @@ static int CheckPublicKeyUnix(const char* name,
         }
 
         if (ret == WSSHD_AUTH_SUCCESS) {
-            ret = SearchForPubKey(pwInfo->pw_dir, authorizedKeysFile, pubKeyCtx,
-                pwInfo->pw_uid, wolfSSHD_ConfigGetStrictModes(authCtx->conf));
+            ret = SearchForPubKey(pwInfo->pw_dir, authorizedKeysFile, name,
+                pubKeyCtx, pwInfo->pw_uid,
+                wolfSSHD_ConfigGetStrictModes(authCtx->conf));
         }
     }
 
@@ -1329,7 +1430,7 @@ static int CheckPublicKeyWIN(const char* usr,
             if (ret == WSSHD_AUTH_SUCCESS) {
                 r[rSz-1] = L'\0';
 
-                ret = SearchForPubKey(r, authorizedKeysFile, pubKeyCtx, 0,
+                ret = SearchForPubKey(r, authorizedKeysFile, usr, pubKeyCtx, 0,
                     wolfSSHD_ConfigGetStrictModes(authCtx->conf));
                 if (ret != WSSHD_AUTH_SUCCESS) {
                     wolfSSH_Log(WS_LOG_ERROR,
