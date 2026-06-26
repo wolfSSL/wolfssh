@@ -68,6 +68,7 @@ examples/scpclient/wolfscp
 apps/wolfssh/wolfssh
 apps/wolfsshd/wolfsshd
 apps/wolfsshd/test/test_configuration
+apps/wolfsshd/test/sshd_privdrop_preload.so
 apps/wolfsshd/test/log.txt
 apps/wolfsshd/test/sshd_config_*
 apps/wolfsshd/test/authorized_keys_test

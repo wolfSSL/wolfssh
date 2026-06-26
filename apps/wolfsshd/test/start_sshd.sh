@@ -81,8 +81,10 @@ EOF
         fi
     fi
 
-    # find a port
-    sudo ../wolfsshd -d -E ./log.txt -f "$CONFIG"
+    # SSHD_BIN picks the binary; SSHD_ENV passes env (e.g. LD_PRELOAD) that plain
+    # sudo would strip. SSHD_ENV is unquoted to split NAME=VALUE, so no spaces.
+    SSHD_BIN="${SSHD_BIN:-../wolfsshd}"
+    sudo env $SSHD_ENV "$SSHD_BIN" -d -E ./log.txt -f "$CONFIG"
 
     # set the PID of started sshd
     NEW_PID=`ps -e | grep wolfsshd | grep -oE "[0-9]+"`
