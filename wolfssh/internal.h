@@ -464,6 +464,14 @@ enum NameIdType {
     /* This is from RFC 4253 section 6.1. */
     #define MAX_PACKET_SZ 35000
 #endif
+#ifndef WOLFSSH_MAX_NAMELIST_SZ
+    /* Per-field byte cap on a peer-supplied SSH name-list. */
+    #define WOLFSSH_MAX_NAMELIST_SZ 4096
+#endif
+#ifndef WOLFSSH_MAX_NAMELIST_CNT
+    /* Per-field cap on the number of names in a name-list. */
+    #define WOLFSSH_MAX_NAMELIST_CNT 64
+#endif
 #ifndef WOLFSSH_DEFAULT_GEXDH_MIN
     #define WOLFSSH_DEFAULT_GEXDH_MIN 1024
 #endif

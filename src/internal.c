@@ -3908,11 +3908,19 @@ static int GetNameListRaw(byte* idList, word32* idListSz,
         const byte* nameList, word32 nameListSz)
 {
     const byte* name = nameList;
-    word32 nameSz = 0, nameListIdx = 0, idListIdx = 0;
+    word32 nameSz = 0, nameListIdx = 0, idListIdx = 0, tokenCount = 0;
     int ret = WS_SUCCESS;
 
     if (idList == NULL || nameList == NULL || idListSz == NULL) {
         return WS_BAD_ARGUMENT;
+    }
+
+    /* Reject oversized name-lists to bound the per-token NameToId scan cost.
+     * Applies to every list parsed here; the built-in canned lists are far
+     * under these caps. */
+    if (nameListSz > WOLFSSH_MAX_NAMELIST_SZ) {
+        WLOG(WS_LOG_ERROR, "Name list too large");
+        return WS_BUFFER_E;
     }
 
     /*
@@ -3929,6 +3937,11 @@ static int GetNameListRaw(byte* idList, word32* idListSz,
 
         if (nameListIdx == nameListSz || name[nameSz] == ',') {
             byte id;
+
+            if (++tokenCount > WOLFSSH_MAX_NAMELIST_CNT) {
+                WLOG(WS_LOG_ERROR, "Too many names in list");
+                return WS_BUFFER_E;
+            }
 
             id = NameToId((char*)name, nameSz);
             {
