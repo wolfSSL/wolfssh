@@ -603,6 +603,12 @@ int ClientUserAuth(byte authType,
             }
         }
     }
+#elif defined(WOLFSSH_KEYBOARD_INTERACTIVE)
+    else if (authType == WOLFSSH_USERAUTH_KEYBOARD) {
+        /* Without a terminal there is nowhere to prompt for the responses, so
+         * this build cannot answer a keyboard-interactive request. */
+        ret = WOLFSSH_USERAUTH_FAILURE;
+    }
 #endif
     return ret;
 }
@@ -1115,7 +1121,7 @@ int ClientLoadCA(WOLFSSH_CTX* ctx, const char* caCert)
 void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
         void* heap)
 {
-#if defined(WOLFSSH_TERM) && defined(WOLFSSH_KEYBOARD_INTERACTIVE)
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     word32 entry;
 #endif
 #ifdef WOLFSSH_TPM
