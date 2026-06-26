@@ -6778,10 +6778,23 @@ static int DoKexDhGexGroup(WOLFSSH* ssh,
     word32 begin;
     int ret = WS_SUCCESS;
 
-    if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
+    if (ssh == NULL || ssh->handshake == NULL || buf == NULL || len == 0 ||
+            idx == NULL)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
+        if (ssh->handshake->ignoreNextKexMsg) {
+            /* A conformant server sends GROUP only in response to the client's
+             * REQUEST, so it should never set first_packet_follows here.
+             * Discard the message defensively if a peer sets it anyway (RFC
+             * 4253 7.1), mirroring the other Do* handlers. */
+            WLOG(WS_LOG_DEBUG, "Skipping server's KEXDH_GEX_GROUP message due "
+                               "to first_packet_follows guess mismatch.");
+            ssh->handshake->ignoreNextKexMsg = 0;
+            *idx += len;
+            return WS_SUCCESS;
+        }
+
         begin = *idx;
         ret = GetMpint(&primeGroupSz, &primeGroup, buf, len, &begin);
         if (ret == WS_SUCCESS && primeGroupSz > (MAX_KEX_KEY_SZ + 1)) {
@@ -11838,11 +11851,107 @@ static int BuildRFC6187Info(WOLFSSH* ssh, int pubKeyID,
 #endif /* WOLFSSH_CERTS */
 
 
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
+
+/* Lower bound on the GEX modulus the server will hand out, regardless of how
+ * small a window the client requests. RFC 8270 (updating RFC 4419) says a
+ * server SHOULD NOT select a group smaller than 2048 bits; clamping here keeps
+ * the 1024-bit group 1 from being reachable via GEX even when it is otherwise
+ * enabled for direct group1-sha1 negotiation. */
+#ifndef WOLFSSH_DH_GEX_MIN_BITS
+    #define WOLFSSH_DH_GEX_MIN_BITS 2048
+#endif
+
+/* Select a built-in DH group for a GEX exchange that fits the client's
+ * requested window. Picks the group whose modulus size in bits lies within
+ * [minBits, maxBits] and is closest to preferredBits; ties favor the smaller
+ * group, which preserves the historical 2048-bit choice for a default client.
+ * The client's lower bound is first raised to WOLFSSH_DH_GEX_MIN_BITS so the
+ * server never downgrades below the 2048-bit floor (RFC 8270). Returns
+ * WS_SUCCESS with primeGroup/primeGroupSz set, or WS_DH_SIZE_E if no built-in
+ * group falls inside the (clamped) client window -- the server rejects the
+ * exchange rather than silently handing back a group the client did not ask
+ * for (RFC 4419 sec. 3). */
+static int SelectKexDhGexGroup(word32 minBits, word32 preferredBits,
+        word32 maxBits, const byte** primeGroup, word32* primeGroupSz)
+{
+    static const struct {
+        word32 bits;
+        const byte* group;
+        const word32* groupSz;
+    } candidates[] = {
+        #ifndef WOLFSSH_NO_DH_GROUP1_SHA1
+        { 1024, dhPrimeGroup1,  &dhPrimeGroup1Sz  },
+        #endif
+        { 2048, dhPrimeGroup14, &dhPrimeGroup14Sz },
+        #ifndef WOLFSSH_NO_DH_GROUP16_SHA512
+        { 4096, dhPrimeGroup16, &dhPrimeGroup16Sz },
+        #endif
+    };
+    word32 i;
+    word32 best = 0;
+    word32 bestDelta = 0;
+    int haveBest = 0;
+    int ret = WS_SUCCESS;
+
+    if (primeGroup == NULL || primeGroupSz == NULL)
+        return WS_BAD_ARGUMENT;
+
+    /* Never select below the 2048-bit floor even if the client asks for less.
+     * If the client's max is also below the floor, no candidate matches and we
+     * reject (WS_DH_SIZE_E) rather than downgrade. */
+    if (minBits < WOLFSSH_DH_GEX_MIN_BITS)
+        minBits = WOLFSSH_DH_GEX_MIN_BITS;
+
+    /* Cap to the server's own key buffer (MAX_KEX_KEY_SZ sizes the private
+     * exponent in KeyAgreeDh_server) so the client window can't select a group
+     * larger than it holds. */
+    if (maxBits > (word32)(MAX_KEX_KEY_SZ * 8))
+        maxBits = (word32)(MAX_KEX_KEY_SZ * 8);
+
+    for (i = 0; i < (word32)(sizeof(candidates) / sizeof(candidates[0])); i++) {
+        word32 bits = candidates[i].bits;
+        word32 delta;
+
+        if (bits < minBits || bits > maxBits)
+            continue;
+        delta = (bits > preferredBits) ? (bits - preferredBits)
+                                       : (preferredBits - bits);
+        /* Ascending scan with a strict '<' keeps the smaller group on a tie. */
+        if (!haveBest || delta < bestDelta) {
+            best = i;
+            bestDelta = delta;
+            haveBest = 1;
+        }
+    }
+
+    if (!haveBest) {
+        WLOG(WS_LOG_DEBUG,
+                "DH GEX: no built-in group within effective window [%u, %u]",
+                minBits, maxBits);
+        ret = WS_DH_SIZE_E;
+    }
+    else {
+        *primeGroup = candidates[best].group;
+        *primeGroupSz = *candidates[best].groupSz;
+    }
+
+    return ret;
+}
+#endif /* !WOLFSSH_NO_DH_GEX_SHA256 */
+
+
 #ifndef WOLFSSH_NO_DH
-static int GetDHPrimeGroup(int kexId, const byte** primeGroup,
+static int GetDHPrimeGroup(WOLFSSH* ssh, const byte** primeGroup,
     word32* primeGroupSz, const byte** generator, word32* generatorSz)
 {
     int ret = WS_SUCCESS;
+    int kexId;
+
+    if (ssh == NULL || ssh->handshake == NULL)
+        return WS_BAD_ARGUMENT;
+
+    kexId = ssh->handshake->kexId;
 
     switch (kexId) {
         #ifndef WOLFSSH_NO_DH_GROUP1_SHA1
@@ -11879,10 +11988,27 @@ static int GetDHPrimeGroup(int kexId, const byte** primeGroup,
         #endif
         #ifndef WOLFSSH_NO_DH_GEX_SHA256
         case ID_DH_GEX_SHA256:
-            *primeGroup = dhPrimeGroup14;
-            *primeGroupSz = dhPrimeGroup14Sz;
-            *generator = dhGenerator;
-            *generatorSz = dhGeneratorSz;
+            /* Reuse the group SendKexDhGexGroup cached on the handshake so the
+             * exchange hash and the shared secret match the group that was put
+             * on the wire. Fall back to selecting from the client's window if
+             * the cache is somehow unset, so this path can never desynchronize
+             * from the wire group. */
+            if (ssh->handshake->primeGroup != NULL) {
+                *primeGroup = ssh->handshake->primeGroup;
+                *primeGroupSz = ssh->handshake->primeGroupSz;
+                *generator = dhGenerator;
+                *generatorSz = dhGeneratorSz;
+            }
+            else {
+                ret = SelectKexDhGexGroup(ssh->handshake->dhGexMinSz,
+                        ssh->handshake->dhGexPreferredSz,
+                        ssh->handshake->dhGexMaxSz,
+                        primeGroup, primeGroupSz);
+                if (ret == WS_SUCCESS) {
+                    *generator = dhGenerator;
+                    *generatorSz = dhGeneratorSz;
+                }
+            }
             break;
         #endif
         default:
@@ -12213,7 +12339,7 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
         if (ssh->handshake->kexId == ID_DH_GEX_SHA256) {
             byte primeGroupPad = 0, generatorPad = 0;
 
-            if (GetDHPrimeGroup(ssh->handshake->kexId, &primeGroup,
+            if (GetDHPrimeGroup(ssh, &primeGroup,
                 &primeGroupSz, &generator, &generatorSz) != WS_SUCCESS) {
                 ret = WS_BAD_ARGUMENT;
             }
@@ -12446,7 +12572,7 @@ static int KeyAgreeDh_server(WOLFSSH* ssh, byte hashId, byte* f, word32* fSz)
     WOLFSSH_UNUSED(hashId);
 
     if (ret == WS_SUCCESS) {
-        ret = GetDHPrimeGroup(ssh->handshake->kexId, &primeGroup,
+        ret = GetDHPrimeGroup(ssh, &primeGroup,
             &primeGroupSz, &generator, &generatorSz);
 
         if (ret == WS_SUCCESS) {
@@ -13867,8 +13993,8 @@ int SendKexDhGexGroup(WOLFSSH* ssh)
     byte* output;
     word32 idx = 0;
     word32 payloadSz;
-    const byte* primeGroup = dhPrimeGroup14;
-    word32 primeGroupSz = dhPrimeGroup14Sz;
+    const byte* primeGroup = NULL;
+    word32 primeGroupSz = 0;
     const byte* generator = dhGenerator;
     word32 generatorSz = dhGeneratorSz;
     byte primePad = 0;
@@ -13878,6 +14004,32 @@ int SendKexDhGexGroup(WOLFSSH* ssh)
     WLOG(WS_LOG_DEBUG, "Entering SendKexDhGexGroup()");
     if (ssh == NULL || ssh->handshake == NULL)
         ret = WS_BAD_ARGUMENT;
+
+    /* Pick a group that satisfies the client's requested min/preferred/max
+     * rather than always sending the 2048-bit group 14. */
+    if (ret == WS_SUCCESS) {
+        ret = SelectKexDhGexGroup(ssh->handshake->dhGexMinSz,
+                ssh->handshake->dhGexPreferredSz,
+                ssh->handshake->dhGexMaxSz,
+                &primeGroup, &primeGroupSz);
+    }
+
+    /* Cache the selected group on the handshake so the exchange hash and the
+     * shared secret (GetDHPrimeGroup) reuse exactly what goes on the wire here,
+     * making the wire group the single source of truth instead of re-running
+     * the selection independently. */
+    if (ret == WS_SUCCESS) {
+        if (ssh->handshake->primeGroup)
+            WFREE(ssh->handshake->primeGroup, ssh->ctx->heap, DYNTYPE_MPINT);
+        ssh->handshake->primeGroup =
+            (byte*)WMALLOC(primeGroupSz, ssh->ctx->heap, DYNTYPE_MPINT);
+        if (ssh->handshake->primeGroup == NULL)
+            ret = WS_MEMORY_E;
+        else {
+            WMEMCPY(ssh->handshake->primeGroup, primeGroup, primeGroupSz);
+            ssh->handshake->primeGroupSz = primeGroupSz;
+        }
+    }
 
     if (ret == WS_SUCCESS) {
         if (primeGroup[0] & 0x80)
@@ -18613,6 +18765,13 @@ int wolfSSH_TestKeyAgreeDh_server(WOLFSSH* ssh, byte hashId,
     return KeyAgreeDh_server(ssh, hashId, f, fSz);
 }
 
+int wolfSSH_TestGetDHPrimeGroup(WOLFSSH* ssh, const byte** primeGroup,
+        word32* primeGroupSz, const byte** generator, word32* generatorSz)
+{
+    return GetDHPrimeGroup(ssh, primeGroup, primeGroupSz,
+            generator, generatorSz);
+}
+
 #endif /* !WOLFSSH_NO_DH */
 
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
@@ -18623,12 +18782,25 @@ int wolfSSH_TestDoKexDhGexRequest(WOLFSSH* ssh, byte* buf, word32 len,
     return DoKexDhGexRequest(ssh, buf, len, idx);
 }
 
+int wolfSSH_TestDoKexDhGexGroup(WOLFSSH* ssh, byte* buf, word32 len,
+        word32* idx)
+{
+    return DoKexDhGexGroup(ssh, buf, len, idx);
+}
+
 int wolfSSH_TestValidateKexDhGexGroup(const byte* primeGroup,
         word32 primeGroupSz, const byte* generator, word32 generatorSz,
         word32 minBits, word32 maxBits, WC_RNG* rng)
 {
     return ValidateKexDhGexGroup(primeGroup, primeGroupSz,
             generator, generatorSz, minBits, maxBits, rng);
+}
+
+int wolfSSH_TestSelectKexDhGexGroup(word32 minBits, word32 preferredBits,
+        word32 maxBits, const byte** primeGroup, word32* primeGroupSz)
+{
+    return SelectKexDhGexGroup(minBits, preferredBits, maxBits,
+            primeGroup, primeGroupSz);
 }
 
 #endif /* !WOLFSSH_NO_DH_GEX_SHA256 */

@@ -1132,6 +1132,270 @@ static int test_DhGexGroupValidate(void)
     return result;
 }
 
+/* Server-side group selection for DH GEX. Confirms the server honors the
+ * client's requested min/preferred/max window instead of always handing back
+ * the 2048-bit group 14, and rejects windows no built-in group can satisfy. */
+static int test_DhGexGroupSelect(void)
+{
+    const byte* group;
+    word32 groupSz;
+    int ret;
+
+    /* Default-ish window: with group 16 enabled, preferred 3072 is equidistant
+     * from 2048 and 4096 and the tie favors the smaller group; without group 16,
+     * 2048 is simply the closest in-window candidate. Either way a stock client
+     * still receives the historical 2048-bit group (256 bytes). */
+    group = NULL; groupSz = 0;
+    ret = wolfSSH_TestSelectKexDhGexGroup(1024, 3072, 8192, &group, &groupSz);
+    if (ret != WS_SUCCESS || groupSz != 256) {
+        printf("DhGexGroupSelect: default window got ret %d sz %u\n",
+                ret, groupSz);
+        return -200;
+    }
+
+    /* A max below 4096 must cap the choice even when preferred is huge. */
+    group = NULL; groupSz = 0;
+    ret = wolfSSH_TestSelectKexDhGexGroup(1024, 8192, 2048, &group, &groupSz);
+    if (ret != WS_SUCCESS || groupSz != 256) {
+        printf("DhGexGroupSelect: max-cap window got ret %d sz %u\n",
+                ret, groupSz);
+        return -201;
+    }
+
+    /* A window no built-in group falls inside must be rejected, not silently
+     * served a group outside it. */
+    group = NULL; groupSz = 0;
+    ret = wolfSSH_TestSelectKexDhGexGroup(3000, 3000, 3500, &group, &groupSz);
+    if (ret != WS_DH_SIZE_E) {
+        printf("DhGexGroupSelect: impossible window got ret %d\n", ret);
+        return -202;
+    }
+
+#ifndef WOLFSSH_NO_DH_GROUP16_SHA512
+    /* A client demanding a 4096-bit minimum gets the 4096-bit group (512
+     * bytes), never a silent downgrade to 2048. */
+    group = NULL; groupSz = 0;
+    ret = wolfSSH_TestSelectKexDhGexGroup(4096, 4096, 8192, &group, &groupSz);
+    if (ret != WS_SUCCESS || groupSz != 512) {
+        printf("DhGexGroupSelect: 4096 min got ret %d sz %u\n", ret, groupSz);
+        return -203;
+    }
+#else
+    /* Without group 16 there is nothing >= 4096, so the request is rejected
+     * rather than downgraded. */
+    group = NULL; groupSz = 0;
+    ret = wolfSSH_TestSelectKexDhGexGroup(4096, 4096, 8192, &group, &groupSz);
+    if (ret != WS_DH_SIZE_E) {
+        printf("DhGexGroupSelect: 4096 min (no group16) got ret %d\n", ret);
+        return -203;
+    }
+#endif
+
+    /* A sub-2048 window must be rejected, not downgraded to the 1024-bit group
+     * 1, even when group 1 is compiled in for direct group1-sha1: the GEX path
+     * enforces the WOLFSSH_DH_GEX_MIN_BITS (2048) floor from RFC 8270. The
+     * client's max (1536) is below the floor, so no candidate fits. */
+    group = NULL; groupSz = 0;
+    ret = wolfSSH_TestSelectKexDhGexGroup(1024, 1024, 1536, &group, &groupSz);
+    if (ret != WS_DH_SIZE_E) {
+        printf("DhGexGroupSelect: sub-2048 window got ret %d sz %u\n",
+                ret, groupSz);
+        return -204;
+    }
+
+    /* A window whose minimum is below the floor but whose max admits 2048 must
+     * clamp up to the 2048-bit group (256 bytes), never the 1024-bit group. */
+    group = NULL; groupSz = 0;
+    ret = wolfSSH_TestSelectKexDhGexGroup(1024, 1024, 4096, &group, &groupSz);
+    if (ret != WS_SUCCESS || groupSz != 256) {
+        printf("DhGexGroupSelect: floor-clamp window got ret %d sz %u\n",
+                ret, groupSz);
+        return -205;
+    }
+
+    return 0;
+}
+
+/* Send sink so SendKexDhGexGroup can run the real server path (select the
+ * group, build the KEXDH_GEX_GROUP packet, drain it) without a live transport.
+ * We only care that the group it selects gets cached on the handshake. */
+static int GexSinkSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    (void)ssh;
+    (void)buf;
+    (void)ctx;
+    return (int)sz;
+}
+
+/* Write a big-endian uint32 without the internal-only c32toa(). */
+static void PutU32BE(byte* out, word32 v)
+{
+    out[0] = (byte)(v >> 24);
+    out[1] = (byte)(v >> 16);
+    out[2] = (byte)(v >> 8);
+    out[3] = (byte)(v);
+}
+
+/* End-to-end consistency check for DH GEX server group selection: the group
+ * SendKexDhGexGroup puts on the wire must be the exact group GetDHPrimeGroup
+ * hands the exchange-hash and key-agreement path. The default window resolves
+ * to the historical 2048-bit group 14, so every stock GEX handshake test would
+ * pass even if the two paths disagreed. This drives a client window that forces
+ * the 4096-bit group 16 and confirms the cached wire group and the group that
+ * GetDHPrimeGroup returns are one and the same -- the property the send/hash
+ * cache exists to guarantee. */
+static int test_DhGexGroupSendHashConsistency(void)
+{
+#ifndef WOLFSSH_NO_DH_GROUP16_SHA512
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    byte request[UINT32_SZ * 3];
+    word32 idx = 0;
+    const byte* hashGroup = NULL;
+    word32 hashGroupSz = 0;
+    const byte* generator = NULL;
+    word32 generatorSz = 0;
+    int ret;
+    int result = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -210;
+    wolfSSH_SetIOSend(ctx, GexSinkSend);
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL || ssh->handshake == NULL) {
+        result = -211;
+        goto out;
+    }
+    ssh->handshake->kexId = ID_DH_GEX_SHA256;
+
+    /* Client window demanding a 4096-bit minimum -> forces group 16, never the
+     * default group 14 a desync could silently fall back to. */
+    PutU32BE(request, 4096);
+    PutU32BE(request + UINT32_SZ, 4096);
+    PutU32BE(request + UINT32_SZ * 2, 8192);
+
+    /* Real server entry point: parse the window, select the group, send it on
+     * the wire, and cache it on the handshake. */
+    ret = wolfSSH_TestDoKexDhGexRequest(ssh, request, sizeof(request), &idx);
+    if (ret != WS_SUCCESS) {
+        printf("DhGexGroupSendHashConsistency: request ret %d\n", ret);
+        result = -212;
+        goto out;
+    }
+    /* The group put on the wire / cached must be the 4096-bit group 16
+     * (512 bytes), not a silent fallback to the 256-byte group 14. */
+    if (ssh->handshake->primeGroup == NULL ||
+            ssh->handshake->primeGroupSz != 512) {
+        printf("DhGexGroupSendHashConsistency: wire group sz %u\n",
+                ssh->handshake->primeGroupSz);
+        result = -213;
+        goto out;
+    }
+
+    /* The exchange-hash / key-agreement path must hand back the identical group
+     * -- same pointer, same size -- not an independently re-selected one. */
+    ret = wolfSSH_TestGetDHPrimeGroup(ssh, &hashGroup, &hashGroupSz,
+            &generator, &generatorSz);
+    if (ret != WS_SUCCESS) {
+        printf("DhGexGroupSendHashConsistency: hash group ret %d\n", ret);
+        result = -214;
+        goto out;
+    }
+    if (hashGroup != ssh->handshake->primeGroup ||
+            hashGroupSz != ssh->handshake->primeGroupSz) {
+        printf("DhGexGroupSendHashConsistency: hash group sz %u != wire %u\n",
+                hashGroupSz, ssh->handshake->primeGroupSz);
+        result = -215;
+        goto out;
+    }
+
+out:
+    if (ssh != NULL)
+        wolfSSH_free(ssh);
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    return result;
+#else
+    /* Without group 16 nothing forces a non-default selection, so there is no
+     * meaningful send-vs-hash divergence to guard against here. */
+    return 0;
+#endif /* !WOLFSSH_NO_DH_GROUP16_SHA512 */
+}
+
+/* Exercise the GetDHPrimeGroup cache-miss fallback: with the cached group
+ * cleared, it must re-select the same group from the client window (and set a
+ * generator), not desync from the wire. */
+static int test_DhGexGroupCacheMissFallback(void)
+{
+#ifndef WOLFSSH_NO_DH_GROUP16_SHA512
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    byte request[UINT32_SZ * 3];
+    word32 idx = 0;
+    const byte* group = NULL;
+    word32 groupSz = 0;
+    const byte* generator = NULL;
+    word32 generatorSz = 0;
+    int ret;
+    int result = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -220;
+    wolfSSH_SetIOSend(ctx, GexSinkSend);
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL || ssh->handshake == NULL) {
+        result = -221;
+        goto out;
+    }
+    ssh->handshake->kexId = ID_DH_GEX_SHA256;
+
+    PutU32BE(request, 4096);
+    PutU32BE(request + UINT32_SZ, 4096);
+    PutU32BE(request + UINT32_SZ * 2, 8192);
+
+    ret = wolfSSH_TestDoKexDhGexRequest(ssh, request, sizeof(request), &idx);
+    if (ret != WS_SUCCESS) {
+        result = -222;
+        goto out;
+    }
+
+    /* Drop the cache to force the fallback branch. primeGroup is a WMALLOC'd
+     * copy; the fallback returns a pointer into static group data. */
+    if (ssh->handshake->primeGroup != NULL) {
+        WFREE(ssh->handshake->primeGroup, ssh->ctx->heap, DYNTYPE_MPINT);
+        ssh->handshake->primeGroup = NULL;
+    }
+
+    ret = wolfSSH_TestGetDHPrimeGroup(ssh, &group, &groupSz,
+            &generator, &generatorSz);
+    if (ret != WS_SUCCESS) {
+        printf("DhGexGroupCacheMissFallback: fallback ret %d\n", ret);
+        result = -223;
+        goto out;
+    }
+    /* Must re-select the same 4096-bit group 16 the wire used, with a
+     * non-NULL generator. */
+    if (group == NULL || groupSz != 512 || generator == NULL ||
+            generatorSz == 0) {
+        printf("DhGexGroupCacheMissFallback: group sz %u gen %p\n",
+                groupSz, (void*)generator);
+        result = -224;
+        goto out;
+    }
+
+out:
+    if (ssh != NULL)
+        wolfSSH_free(ssh);
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    return result;
+#else
+    return 0;
+#endif /* !WOLFSSH_NO_DH_GROUP16_SHA512 */
+}
+
 #endif /* WOLFSSH_TEST_INTERNAL && !WOLFSSH_NO_DH_GEX_SHA256 */
 
 
@@ -5559,6 +5823,21 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_DH_GEX_SHA256)
     unitResult = test_DhGexGroupValidate();
     printf("DhGexGroupValidate: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DhGexGroupSelect();
+    printf("DhGexGroupSelect: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DhGexGroupSendHashConsistency();
+    printf("DhGexGroupSendHashConsistency: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DhGexGroupCacheMissFallback();
+    printf("DhGexGroupCacheMissFallback: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
