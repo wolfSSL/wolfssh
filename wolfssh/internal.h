@@ -1041,6 +1041,7 @@ struct WOLFSSH {
     word32 testSftpSendCap;      /* test hook: cap per-call SFTP buffer send */
     word32 testSftpStallPending; /* test hook: force N flush-only resumes */
 #endif
+    byte userAuthSeen; /* a userauth request has bound the username */
 };
 
 

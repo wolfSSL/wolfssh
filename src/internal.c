@@ -9562,6 +9562,25 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS && serviceValid) {
+        /* Bind the username to the first userauth request. A later request
+         * that changes it ends the session, so a pipelined request cannot
+         * rebind a pending keyboard-interactive exchange to another user. */
+        if (!ssh->userAuthSeen) {
+            ret = wolfSSH_SetUsernameRaw(ssh,
+                    authData.username, authData.usernameSz);
+            if (ret == WS_SUCCESS)
+                ssh->userAuthSeen = 1;
+        }
+        else if (authData.usernameSz != ssh->userNameSz
+                || WMEMCMP(authData.username, ssh->userName,
+                        authData.usernameSz) != 0) {
+            WLOG(WS_LOG_DEBUG, "DUAR: username change not allowed");
+            (void)SendDisconnect(ssh, WOLFSSH_DISCONNECT_PROTOCOL_ERROR);
+            ret = WS_INVALID_STATE_E;
+        }
+    }
+
+    if (ret == WS_SUCCESS && serviceValid) {
         authNameId = NameToId((const char*)authData.authName, authData.authNameSz);
         ssh->authId = authNameId;
 
@@ -9590,12 +9609,6 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
             ret = SendUserAuthFailure(ssh, 0);
             /* Consume all remaining data */
             begin = len;
-        }
-
-        if (ret == WS_SUCCESS) {
-            /* Set the username for valid service only */
-            ret = wolfSSH_SetUsernameRaw(ssh,
-                    authData.username, authData.usernameSz);
         }
 
         *idx = begin;
