@@ -182,6 +182,8 @@ static void myStatusCb(WOLFSSH* sshIn, word32* bytes, char* name)
         lastPrintedBytes[0] = 0;
         lastPrintedBytes[1] = 0;
         WMEMSET(currentFile, 0, WOLFSSH_MAX_FILENAME);
+        if (WSTRLEN(name) >= WOLFSSH_MAX_FILENAME)
+            return;
         WSTRNCPY(currentFile, name, WOLFSSH_MAX_FILENAME);
     }
     elapsedTime = currentTime - startTime;
@@ -1462,6 +1464,8 @@ static int doAutopilot(int cmd, char* local, char* remote)
 
     if (remoteAbsPath) {
        /* use remote absolute path if provided */
+       if (WSTRLEN(remote) >= sizeof(fullpath) - 1)
+           return WS_BUFFER_E;
        WMEMSET(fullpath, 0, sizeof(fullpath));
        WSTRNCPY(fullpath, remote, sizeof(fullpath) - 1);
     }
