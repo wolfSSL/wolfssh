@@ -876,6 +876,30 @@ static void test_wolfSSH_ReadKey(void)
     WFREE(key, NULL, DYNTYPE_FILE);
     WFREE(derKey, NULL, 0);
 
+    /* SSL DER Format, ssh-rsa, private, caller buffer too small.
+     * Exercises the DoAsn1Key error path that must not leak the key. */
+    derKey = NULL;
+    derKeySz = 0;
+    ret = ConvertHexToBin(serverKeyRsaDer, &derKey, &derKeySz,
+            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+    AssertIntEQ(ret, 0);
+    keyCheck = (byte*)WMALLOC(derKeySz, NULL, DYNTYPE_FILE);
+    AssertNotNull(keyCheck);
+    key = keyCheck;
+    keySz = derKeySz - 1;
+    keyType = NULL;
+    keyTypeSz = 0;
+    ret = wolfSSH_ReadKey_buffer(derKey, derKeySz, WOLFSSH_FORMAT_ASN1,
+            &key, &keySz, &keyType, &keyTypeSz, NULL);
+    AssertIntEQ(ret, WS_BUFFER_E);
+    AssertTrue(key == keyCheck);
+    /* output params left untouched on the error path */
+    AssertIntEQ(keySz, derKeySz - 1);
+    AssertNull(keyType);
+    AssertIntEQ(keyTypeSz, 0);
+    WFREE(keyCheck, NULL, DYNTYPE_FILE);
+    WFREE(derKey, NULL, 0);
+
     /* OpenSSH Format, ssh-rsa, public, need alloc */
     key = NULL;
     keySz = 0;
