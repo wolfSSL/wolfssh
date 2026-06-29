@@ -91,7 +91,7 @@ static int tsClientUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 
 
 #define NUMARGS 5
-#define ARGLEN 32
+#define ARGLEN 64
 
 static void wolfSSH_EchoTest(void)
 {
@@ -150,6 +150,79 @@ static void wolfSSH_EchoTest(void)
 
     FreeTcpReady(&ready);
 }
+
+static void wolfSSH_EchoTest_MultiPubKey(void)
+{
+    tcp_ready ready;
+    THREAD_TYPE serverThread;
+    func_args serverArgs;
+    func_args clientArgs;
+    char sA[15][ARGLEN];
+    char *serverArgv[15] =
+        { sA[0], sA[1], sA[2], sA[3], sA[4], sA[5], sA[6], sA[7], sA[8], sA[9], sA[10] };
+    char cA[15][ARGLEN];
+    char *clientArgv[15] =
+        { cA[0], cA[1], cA[2], cA[3], cA[4], cA[5], cA[6], cA[7], cA[8], cA[9], cA[10], cA[11], cA[12] };
+    int serverArgc = 0;
+    int clientArgc = 0;
+
+    InitTcpReady(&ready);
+
+    WSTRNCPY(serverArgv[serverArgc++], "echoserver", ARGLEN);
+    WSTRNCPY(serverArgv[serverArgc++], "-1", ARGLEN);
+    WSTRNCPY(serverArgv[serverArgc++], "-f", ARGLEN);
+    #if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR)
+        WSTRNCPY(serverArgv[serverArgc++], "-p", ARGLEN);
+        WSTRNCPY(serverArgv[serverArgc++], "-0", ARGLEN);
+    #endif
+    WSTRNCPY(serverArgv[serverArgc++], "-I", ARGLEN);
+    WSTRNCPY(serverArgv[serverArgc++], "hansel:./keys/hansel-key-rsa.pub", ARGLEN);
+    WSTRNCPY(serverArgv[serverArgc++], "-I", ARGLEN);
+    WSTRNCPY(serverArgv[serverArgc++], "hansel:./keys/hansel-key-ecc.pub", ARGLEN);
+
+    serverArgs.argc = serverArgc;
+    serverArgs.argv = serverArgv;
+    serverArgs.return_code = EXIT_SUCCESS;
+    serverArgs.signal = &ready;
+    serverArgs.user_auth = NULL;
+    ThreadStart(echoserver_test, &serverArgs, &serverThread);
+    WaitTcpReady(&ready);
+
+    WSTRNCPY(cA[clientArgc++], "client", ARGLEN);
+    WSTRNCPY(cA[clientArgc++], "-u", ARGLEN);
+    WSTRNCPY(cA[clientArgc++], "hansel", ARGLEN);
+    WSTRNCPY(cA[clientArgc++], "-j", ARGLEN);
+    WSTRNCPY(cA[clientArgc++], "./keys/hansel-key-ecc.pub", ARGLEN);
+    WSTRNCPY(cA[clientArgc++], "-i", ARGLEN);
+    WSTRNCPY(cA[clientArgc++], "./keys/hansel-key-ecc.der", ARGLEN);
+    #if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR)
+        WSTRNCPY(cA[clientArgc++], "-p", ARGLEN);
+        WSNPRINTF(cA[clientArgc++], ARGLEN, "%d", ready.port);
+    #endif
+
+    clientArgs.argc = clientArgc;
+    clientArgs.argv = clientArgv;
+    clientArgs.return_code = EXIT_SUCCESS;
+    clientArgs.signal = &ready;
+    clientArgs.user_auth = NULL;
+
+    client_test(&clientArgs);
+    if (clientArgs.return_code != EXIT_SUCCESS) {
+        err_sys("client_test failed");
+    }
+
+#ifdef WOLFSSH_ZEPHYR
+    /* Weird deadlock without this sleep */
+    k_sleep(Z_TIMEOUT_TICKS(100));
+#endif
+    ThreadJoin(serverThread);
+    if (serverArgs.return_code != EXIT_SUCCESS) {
+        err_sys("server_test failed");
+    }
+
+    FreeTcpReady(&ready);
+}
+
 #endif /* WOLFSSH_SHELL */
 
 
@@ -181,6 +254,7 @@ int wolfSSH_TestsuiteTest(int argc, char** argv)
 
 #ifdef WOLFSSH_SHELL
     wolfSSH_EchoTest();
+    wolfSSH_EchoTest_MultiPubKey();
 #endif
 
     wolfSSH_Cleanup();

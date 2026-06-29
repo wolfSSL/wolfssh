@@ -1559,6 +1559,282 @@ static int test_AuthReducePermissionsUser_uid_fail(void)
     wsshd_setreuid_cb = savedReuid;
     return ret;
 }
+
+static WGID_T s_setegid_arg;
+static WUID_T s_seteuid_arg;
+static int    s_setegid_ret;
+static int    s_seteuid_ret;
+static int    s_setegid_called;
+static int    s_seteuid_called;
+
+static int stub_setegid(WGID_T egid)
+{
+    s_setegid_called = 1;
+    s_setegid_arg    = egid;
+    return s_setegid_ret;
+}
+
+static int stub_seteuid(WUID_T euid)
+{
+    s_seteuid_called = 1;
+    s_seteuid_arg    = euid;
+    return s_seteuid_ret;
+}
+
+static void InstallPrivRaiseStubs(int egidRet, int euidRet,
+    int (**savedEgid)(WGID_T), int (**savedEuid)(WUID_T))
+{
+    *savedEgid       = wsshd_setegid_cb;
+    *savedEuid       = wsshd_seteuid_cb;
+    wsshd_setegid_cb = stub_setegid;
+    wsshd_seteuid_cb = stub_seteuid;
+    s_setegid_ret    = egidRet;
+    s_seteuid_ret    = euidRet;
+    s_setegid_called = 0;
+    s_seteuid_called = 0;
+    s_setegid_arg    = 0;
+    s_seteuid_arg    = 0;
+}
+
+/* Synthetic "sshd" account used so privilege-separation tests don't depend
+ * on the host actually having an sshd system user configured. */
+static struct passwd stub_sshd_pw;
+
+static struct passwd* stub_getpwnam(const char* name)
+{
+    if (name != NULL && WSTRCMP(name, WOLFSSH_USER_STRING(WOLFSSH_SSHD_USER)) == 0) {
+        WMEMSET(&stub_sshd_pw, 0, sizeof(stub_sshd_pw));
+        stub_sshd_pw.pw_name = (char*)WOLFSSH_USER_STRING(WOLFSSH_SSHD_USER);
+        stub_sshd_pw.pw_uid  = 1000;
+        stub_sshd_pw.pw_gid  = 1000;
+        return &stub_sshd_pw;
+    }
+    return NULL;
+}
+
+static void InstallGetpwnamStub(struct passwd* (**savedGetpwnam)(const char*))
+{
+    *savedGetpwnam   = wsshd_getpwnam_cb;
+    wsshd_getpwnam_cb = stub_getpwnam;
+}
+
+/* UsePrivilegeSeparation no must let SetDefaultUserID succeed without a
+ * configured sshd system user, since no uid/gid switching will ever happen. */
+static int test_AuthCreateUser_privSepOff(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_AUTH* auth;
+    static const char line[] = "UsePrivilegeSeparation no";
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL) {
+        return WS_MEMORY_E;
+    }
+
+    if (ParseConfigLine(&conf, line, (int)WSTRLEN(line), 0) != WS_SUCCESS) {
+        ret = WS_FATAL_ERROR;
+    }
+
+    if (ret == WS_SUCCESS) {
+        auth = wolfSSHD_AuthCreateUser(NULL, conf);
+        if (auth == NULL) {
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            wolfSSHD_AuthFreeUser(auth);
+        }
+    }
+
+    wolfSSHD_ConfigFree(conf);
+    return ret;
+}
+
+/* wolfSSHD_AuthRaisePermissions must not touch setegid/seteuid at all when
+ * privilege separation is off, since the process never dropped privileges. */
+static int test_AuthRaisePermissions_offSkipsSyscalls(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_AUTH* auth;
+    int (*savedEgid)(WGID_T);
+    int (*savedEuid)(WUID_T);
+    static const char line[] = "UsePrivilegeSeparation no";
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL) {
+        return WS_MEMORY_E;
+    }
+
+    if (ParseConfigLine(&conf, line, (int)WSTRLEN(line), 0) != WS_SUCCESS) {
+        ret = WS_FATAL_ERROR;
+    }
+
+    if (ret == WS_SUCCESS) {
+        auth = wolfSSHD_AuthCreateUser(NULL, conf);
+        if (auth == NULL) {
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            InstallPrivRaiseStubs(0, 0, &savedEgid, &savedEuid);
+
+            if (wolfSSHD_AuthRaisePermissions(auth) != WS_SUCCESS)
+                ret = WS_FATAL_ERROR;
+            if (ret == WS_SUCCESS
+                    && (s_setegid_called || s_seteuid_called))
+                ret = WS_FATAL_ERROR;
+
+            wsshd_setegid_cb = savedEgid;
+            wsshd_seteuid_cb = savedEuid;
+            wolfSSHD_AuthFreeUser(auth);
+        }
+    }
+
+    wolfSSHD_ConfigFree(conf);
+    return ret;
+}
+
+/* With privilege separation on, wolfSSHD_AuthRaisePermissions restores the
+ * uid/gid the process started with (captured at AuthCreateUser time). Uses a
+ * stubbed getpwnam("sshd") so the test doesn't depend on the environment
+ * actually having an sshd system user configured. */
+static int test_AuthRaisePermissions_separateCallsSyscalls(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_AUTH* auth;
+    int (*savedEgid)(WGID_T);
+    int (*savedEuid)(WUID_T);
+    struct passwd* (*savedGetpwnam)(const char*);
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL) {
+        return WS_MEMORY_E;
+    }
+
+    InstallGetpwnamStub(&savedGetpwnam);
+
+    /* privilege separation defaults to on */
+    auth = wolfSSHD_AuthCreateUser(NULL, conf);
+    if (auth == NULL) {
+        ret = WS_FATAL_ERROR;
+    }
+    else {
+        InstallPrivRaiseStubs(0, 0, &savedEgid, &savedEuid);
+
+        if (wolfSSHD_AuthRaisePermissions(auth) != WS_SUCCESS)
+            ret = WS_FATAL_ERROR;
+        if (ret == WS_SUCCESS && (!s_setegid_called || !s_seteuid_called))
+            ret = WS_FATAL_ERROR;
+        if (ret == WS_SUCCESS && s_setegid_arg != getgid())
+            ret = WS_FATAL_ERROR;
+        if (ret == WS_SUCCESS && s_seteuid_arg != getuid())
+            ret = WS_FATAL_ERROR;
+
+        wsshd_setegid_cb = savedEgid;
+        wsshd_seteuid_cb = savedEuid;
+        wolfSSHD_AuthFreeUser(auth);
+    }
+
+    wsshd_getpwnam_cb = savedGetpwnam;
+    wolfSSHD_ConfigFree(conf);
+    return ret;
+}
+
+/* wolfSSHD_AuthRaisePermissions must reject a NULL auth argument instead of
+ * dereferencing it. */
+static int test_AuthRaisePermissions_nullArg(void)
+{
+    if (wolfSSHD_AuthRaisePermissions(NULL) != WS_BAD_ARGUMENT)
+        return WS_FATAL_ERROR;
+    return WS_SUCCESS;
+}
+
+/* When setegid fails, wolfSSHD_AuthRaisePermissions must report the failure
+ * and short-circuit seteuid rather than attempting it anyway. */
+static int test_AuthRaisePermissions_gidFailSkipsUid(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_AUTH* auth;
+    int (*savedEgid)(WGID_T);
+    int (*savedEuid)(WUID_T);
+    struct passwd* (*savedGetpwnam)(const char*);
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL) {
+        return WS_MEMORY_E;
+    }
+
+    InstallGetpwnamStub(&savedGetpwnam);
+
+    /* privilege separation defaults to on */
+    auth = wolfSSHD_AuthCreateUser(NULL, conf);
+    if (auth == NULL) {
+        ret = WS_FATAL_ERROR;
+    }
+    else {
+        InstallPrivRaiseStubs(-1, 0, &savedEgid, &savedEuid);
+
+        if (wolfSSHD_AuthRaisePermissions(auth) != WS_FATAL_ERROR)
+            ret = WS_FATAL_ERROR;
+        if (ret == WS_SUCCESS && !s_setegid_called)
+            ret = WS_FATAL_ERROR;
+        if (ret == WS_SUCCESS && s_seteuid_called)
+            ret = WS_FATAL_ERROR;
+
+        wsshd_setegid_cb = savedEgid;
+        wsshd_seteuid_cb = savedEuid;
+        wolfSSHD_AuthFreeUser(auth);
+    }
+
+    wsshd_getpwnam_cb = savedGetpwnam;
+    wolfSSHD_ConfigFree(conf);
+    return ret;
+}
+
+/* When setegid succeeds but seteuid fails, wolfSSHD_AuthRaisePermissions must
+ * still report the failure. */
+static int test_AuthRaisePermissions_uidFail(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_AUTH* auth;
+    int (*savedEgid)(WGID_T);
+    int (*savedEuid)(WUID_T);
+    struct passwd* (*savedGetpwnam)(const char*);
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL) {
+        return WS_MEMORY_E;
+    }
+
+    InstallGetpwnamStub(&savedGetpwnam);
+
+    /* privilege separation defaults to on */
+    auth = wolfSSHD_AuthCreateUser(NULL, conf);
+    if (auth == NULL) {
+        ret = WS_FATAL_ERROR;
+    }
+    else {
+        InstallPrivRaiseStubs(0, -1, &savedEgid, &savedEuid);
+
+        if (wolfSSHD_AuthRaisePermissions(auth) != WS_FATAL_ERROR)
+            ret = WS_FATAL_ERROR;
+        if (ret == WS_SUCCESS && !s_setegid_called)
+            ret = WS_FATAL_ERROR;
+        if (ret == WS_SUCCESS && !s_seteuid_called)
+            ret = WS_FATAL_ERROR;
+
+        wsshd_setegid_cb = savedEgid;
+        wsshd_seteuid_cb = savedEuid;
+        wolfSSHD_AuthFreeUser(auth);
+    }
+
+    wsshd_getpwnam_cb = savedGetpwnam;
+    wolfSSHD_ConfigFree(conf);
+    return ret;
+}
 #endif /* !_WIN32 */
 
 /* Locks in the NULL-safe comparison used by RequestAuthentication to fail
@@ -1929,6 +2205,12 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_AuthReducePermissionsUser_ok),
     TEST_DECL(test_AuthReducePermissionsUser_gid_fail),
     TEST_DECL(test_AuthReducePermissionsUser_uid_fail),
+    TEST_DECL(test_AuthCreateUser_privSepOff),
+    TEST_DECL(test_AuthRaisePermissions_offSkipsSyscalls),
+    TEST_DECL(test_AuthRaisePermissions_separateCallsSyscalls),
+    TEST_DECL(test_AuthRaisePermissions_nullArg),
+    TEST_DECL(test_AuthRaisePermissions_gidFailSkipsUid),
+    TEST_DECL(test_AuthRaisePermissions_uidFail),
 #endif
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
     TEST_DECL(test_CheckPasswordHashUnix),

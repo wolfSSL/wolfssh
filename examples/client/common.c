@@ -1138,6 +1138,7 @@ void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
             userPrivateKey = userPrivateKeyBuf;
             userPrivateKeyAlloc = 0;
         }
+        userPrivateKeySz = 0;
     }
 
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
@@ -1164,4 +1165,5 @@ void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
     wc_ForceZero(userPrivateKeyBuf, sizeof(userPrivateKeyBuf));
     userPrivateKeySz = 0;
     wc_ForceZero(userPassword, sizeof(userPassword));
+    pubKeyLoaded = 0;
 }

@@ -21,7 +21,14 @@
 #ifndef WOLFAUTH_H
 #define WOLFAUTH_H
 
+#ifndef WOLFSSH_SSHD_USER
+    #define WOLFSSH_SSHD_USER sshd
+#endif
+#define WOLFSSH_USER_GET_STRING(x) #x
+#define WOLFSSH_USER_STRING(x) WOLFSSH_USER_GET_STRING(x)
+
 #if 0
+
 typedef struct USER_NODE USER_NODE;
 
 USER_NODE* AddNewUser(USER_NODE* list, byte type, const byte* username,
@@ -90,6 +97,9 @@ int wolfSSHD_OpenSecureFile(const char* path, WUID_T ownerUid,
 #ifndef _WIN32
 extern int (*wsshd_setregid_cb)(WGID_T, WGID_T);
 extern int (*wsshd_setreuid_cb)(WUID_T, WUID_T);
+extern int (*wsshd_setegid_cb)(WGID_T);
+extern int (*wsshd_seteuid_cb)(WUID_T);
+extern struct passwd* (*wsshd_getpwnam_cb)(const char*);
 int wolfSSHD_GetUserGroupNames(void* heap, const char* usr, WGID_T primaryGid,
         char*** outNames, word32* outCount);
 void wolfSSHD_FreeUserGroupNames(void* heap, char** names, word32 count);
