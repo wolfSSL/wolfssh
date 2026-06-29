@@ -1785,7 +1785,6 @@ static int load_key(byte isEcc, byte* buf, word32 bufSz)
     return sz;
 }
 
-
 #ifndef WOLFSSH_NO_ED25519
 /* returns buffer size on success */
 static int load_key_ed25519(byte* buf, word32 bufSz)
@@ -1804,6 +1803,7 @@ static int load_key_ed25519(byte* buf, word32 bufSz)
     return sz;
 }
 #endif /* WOLFSSH_NO_ED25519 */
+
 
 
 typedef struct StrList {
@@ -2358,7 +2358,7 @@ static int EchoserverInitTpmHostKey(WOLFSSH_CTX* ctx, const char* keyFile,
         wolfTPM2_Cleanup(&tpmHostDev);
     }
 
-    /* keyBlob holds the private blob and key auth; the session may hold auth. */
+    /* zeroize key material; session may also hold auth data */
     wc_ForceZero(&keyBlob, sizeof(keyBlob));
     wc_ForceZero(&tpmSession, sizeof(tpmSession));
 #ifndef NO_FILESYSTEM
@@ -2439,6 +2439,7 @@ static int wsUserAuth(byte authType,
     PwMapList* list;
     PwMap* map;
     byte authHash[WC_SHA256_DIGEST_SIZE] = {0};
+    int userFound = 0;
 
     if (ctx == NULL) {
         fprintf(stderr, "wsUserAuth: ctx not set");
@@ -2559,12 +2560,12 @@ static int wsUserAuth(byte authType,
             authData->type == map->type) {
 
             if (authData->type == WOLFSSH_USERAUTH_PUBLICKEY) {
+                userFound = 1;
                 if (WMEMCMP(map->p, authHash, WC_SHA256_DIGEST_SIZE) == 0) {
                     return WOLFSSH_USERAUTH_SUCCESS;
                 }
-                else {
-                   return WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
-                }
+                /* Hash mismatch: continue checking other registered keys
+                 * for this user (a user may have multiple public keys). */
             }
             else if (authData->type == WOLFSSH_USERAUTH_PASSWORD) {
                 if (WMEMCMP(map->p, authHash, WC_SHA256_DIGEST_SIZE) == 0) {
@@ -2607,6 +2608,8 @@ static int wsUserAuth(byte authType,
         map = map->next;
     }
 
+    if (userFound)
+        return WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
     return WOLFSSH_USERAUTH_INVALID_USER;
 }
 
@@ -2690,7 +2693,8 @@ static void ShowUsage(void)
            "               load in a SSH public key to accept from peer\n");
     printf(" -s <file>     load in a TPM public key file to replace default hansel key\n");
 #ifdef WOLFSSH_TPM
-    printf(" -G <file>     load an ECC/RSA host key blob from the TPM (private key stays in the TPM)\n");
+    printf(" -G <file>     load ECC/RSA host key blob from TPM"
+           " (private key stays in TPM)\n");
 #endif
     printf(" -J <name>:<file>\n"
            "               load in an X.509 PEM cert to accept from peer\n");
@@ -3096,14 +3100,17 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         if (kbAuthData.prompts == NULL) {
             ES_ERROR("Error allocating prompts");
         }
-        kbAuthData.prompts[0] = (byte*)"KB Auth Password: ";
         kbAuthData.promptLengths = (word32*)WMALLOC(sizeof(word32), NULL, 0);
-        if (kbAuthData.prompts == NULL) {
+        if (kbAuthData.promptLengths == NULL) {
+            WFREE(kbAuthData.prompts, NULL, 0);
             ES_ERROR("Error allocating promptLengths");
         }
+        kbAuthData.prompts[0] = (byte*)"KB Auth Password: ";
         kbAuthData.promptLengths[0] = 18;
         kbAuthData.promptEcho = (byte*)WMALLOC(sizeof(byte), NULL, 0);
-        if (kbAuthData.prompts == NULL) {
+        if (kbAuthData.promptEcho == NULL) {
+            WFREE(kbAuthData.prompts, NULL, 0);
+            WFREE(kbAuthData.promptLengths, NULL, 0);
             ES_ERROR("Error allocating promptEcho");
         }
         kbAuthData.promptEcho[0] = 0;
@@ -3137,7 +3144,11 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         if (tpmHostKeyPath != NULL) {
             if (EchoserverInitTpmHostKey(ctx, tpmHostKeyPath,
                     ECHOSERVER_TPM_KEY_AUTH_DEFAULT) != 0) {
-                ES_ERROR("Couldn't load TPM host key from %s.\n", tpmHostKeyPath);
+                #ifdef WOLFSSH_SMALL_STACK
+                WFREE(keyLoadBuf, NULL, 0);
+                #endif
+                ES_ERROR("Couldn't load TPM host key from %s.\n",
+                         tpmHostKeyPath);
             }
             loadDefaultHostKeys = 0;
         }
@@ -3146,10 +3157,16 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         if (loadDefaultHostKeys) {
             bufSz = load_key(peerEcc, keyLoadBuf, bufSz);
             if (bufSz == 0) {
+                #ifdef WOLFSSH_SMALL_STACK
+                WFREE(keyLoadBuf, NULL, 0);
+                #endif
                 ES_ERROR("Couldn't load first key file.\n");
             }
             if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, keyLoadBuf, bufSz,
                                                  WOLFSSH_FORMAT_ASN1) < 0) {
+                #ifdef WOLFSSH_SMALL_STACK
+                WFREE(keyLoadBuf, NULL, 0);
+                #endif
                 ES_ERROR("Couldn't use first key buffer.\n");
             }
 
@@ -3159,10 +3176,16 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
             bufSz = load_key(peerEcc, keyLoadBuf, bufSz);
             if (bufSz == 0) {
+                #ifdef WOLFSSH_SMALL_STACK
+                WFREE(keyLoadBuf, NULL, 0);
+                #endif
                 ES_ERROR("Couldn't load second key file.\n");
             }
             if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, keyLoadBuf, bufSz,
                                                  WOLFSSH_FORMAT_ASN1) < 0) {
+                #ifdef WOLFSSH_SMALL_STACK
+                WFREE(keyLoadBuf, NULL, 0);
+                #endif
                 ES_ERROR("Couldn't use second key buffer.\n");
             }
         #endif
@@ -3171,10 +3194,16 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             bufSz = EXAMPLE_KEYLOAD_BUFFER_SZ;
             bufSz = load_key_ed25519(keyLoadBuf, bufSz);
             if (bufSz == 0) {
+                #ifdef WOLFSSH_SMALL_STACK
+                WFREE(keyLoadBuf, NULL, 0);
+                #endif
                 ES_ERROR("Couldn't load Ed25519 key file.\n");
             }
             if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, keyLoadBuf, bufSz,
                                                  WOLFSSH_FORMAT_ASN1) < 0) {
+                #ifdef WOLFSSH_SMALL_STACK
+                WFREE(keyLoadBuf, NULL, 0);
+                #endif
                 ES_ERROR("Couldn't use Ed25519 key buffer.\n");
             }
         #endif /* WOLFSSH_NO_ED25519 */
@@ -3190,11 +3219,17 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
             /* create temp buffer and load in file */
             if (userBufSz == 0) {
+                #ifdef WOLFSSH_SMALL_STACK
+                WFREE(keyLoadBuf, NULL, 0);
+                #endif
                 ES_ERROR("Couldn't find size of file %s.\n", userPubKey);
             }
 
             userBuf = (byte*)WMALLOC(userBufSz, NULL, 0);
             if (userBuf == NULL) {
+                #ifdef WOLFSSH_SMALL_STACK
+                WFREE(keyLoadBuf, NULL, 0);
+                #endif
                 ES_ERROR("WMALLOC failed\n");
             }
             load_file(userPubKey, userBuf, &userBufSz);
@@ -3212,17 +3247,27 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             load_file(caCert, NULL, &certBufSz);
 
             if (certBufSz == 0) {
+                #ifdef WOLFSSH_SMALL_STACK
+                WFREE(keyLoadBuf, NULL, 0);
+                #endif
                 ES_ERROR("Couldn't find size of file %s.\n", caCert);
             }
 
             certBuf = (byte*)WMALLOC(certBufSz, NULL, 0);
             if (certBuf == NULL) {
+                #ifdef WOLFSSH_SMALL_STACK
+                WFREE(keyLoadBuf, NULL, 0);
+                #endif
                 ES_ERROR("WMALLOC failed\n");
             }
             load_file(caCert, certBuf, &certBufSz);
             ret = wolfSSH_CTX_AddRootCert_buffer(ctx, certBuf, certBufSz,
                     WOLFSSH_FORMAT_PEM);
             if (ret != 0) {
+                #ifdef WOLFSSH_SMALL_STACK
+                WFREE(keyLoadBuf, NULL, 0);
+                #endif
+                WFREE(certBuf, NULL, 0);
                 ES_ERROR("Couldn't add root cert\n");
             }
             WFREE(certBuf, NULL, 0);
