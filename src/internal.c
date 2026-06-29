@@ -13520,14 +13520,24 @@ int SendKexDhReply(WOLFSSH* ssh)
     }
 
     if (sigKeyBlock_ptr != NULL) {
-        if (sigKeyBlock_ptr->pubKeyFmtId == ID_SSH_RSA) {
+        if (sigKeyBlock_ptr->pubKeyFmtId == ID_SSH_RSA
+        #ifdef WOLFSSH_CERTS
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_SSH_RSA
+        #endif
+                ) {
 #ifndef WOLFSSH_NO_RSA
             wc_FreeRsaKey(&sigKeyBlock_ptr->sk.rsa.key);
 #endif
         }
         else if (sigKeyBlock_ptr->pubKeyFmtId == ID_ECDSA_SHA2_NISTP256
                 || sigKeyBlock_ptr->pubKeyFmtId == ID_ECDSA_SHA2_NISTP384
-                || sigKeyBlock_ptr->pubKeyFmtId == ID_ECDSA_SHA2_NISTP521) {
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_ECDSA_SHA2_NISTP521
+        #ifdef WOLFSSH_CERTS
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP256
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP384
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP521
+        #endif
+                ) {
 #ifndef WOLFSSH_NO_ECDSA
             wc_ecc_free(&sigKeyBlock_ptr->sk.ecc.key);
 #endif

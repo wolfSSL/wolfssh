@@ -1813,7 +1813,7 @@ static int SetDefaultPublicKeyCheck(WOLFSSHD_AUTH* auth)
 #define WOLFSSH_USER_GET_STRING(x) #x
 #define WOLFSSH_USER_STRING(x) WOLFSSH_USER_GET_STRING(x)
 
-static int SetDefualtUserID(WOLFSSHD_AUTH* auth)
+static int SetDefaultUserID(WOLFSSHD_AUTH* auth)
 {
 #ifdef _WIN32
     /* TODO: Implement for Windows. */
@@ -1821,6 +1821,11 @@ static int SetDefualtUserID(WOLFSSHD_AUTH* auth)
 #else
     struct passwd* pwInfo;
     int ret = WS_SUCCESS;
+
+    if (wolfSSHD_ConfigGetPrivilegeSeparation(auth->conf) ==
+            WOLFSSHD_PRIV_OFF) {
+        return WS_SUCCESS;
+    }
 
     pwInfo = getpwnam(WOLFSSH_USER_STRING(WOLFSSH_SSHD_USER));
     if (pwInfo == NULL) {
@@ -1882,7 +1887,7 @@ WOLFSSHD_AUTH* wolfSSHD_AuthCreateUser(void* heap, const WOLFSSHD_CONFIG* conf)
         }
 
         if (ret == WS_SUCCESS) {
-            ret = SetDefualtUserID(auth);
+            ret = SetDefaultUserID(auth);
             if (ret != WS_SUCCESS) {
                 wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting default "
                     "user ID.");
@@ -1914,23 +1919,30 @@ int wolfSSHD_AuthFreeUser(WOLFSSHD_AUTH* auth)
 /* return WS_SUCCESS on success */
 int wolfSSHD_AuthRaisePermissions(WOLFSSHD_AUTH* auth)
 {
-    int ret = 0;
+    int ret = WS_SUCCESS;
 
-    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Attempting to raise permissions level");
 #ifndef WIN32
-    if (auth) {
-        if (setegid(auth->sGid) != 0) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error raising gid");
-            ret = WS_FATAL_ERROR;
+    {
+        byte flag = 0;
+
+        if (auth == NULL) {
+            return WS_BAD_ARGUMENT;
         }
 
-        if (seteuid(auth->sUid) != 0) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error raising uid");
-            ret = WS_FATAL_ERROR;
+        flag = wolfSSHD_ConfigGetPrivilegeSeparation(auth->conf);
+        if (flag == WOLFSSHD_PRIV_SEPARAT || flag == WOLFSSHD_PRIV_SANDBOX) {
+            wolfSSH_Log(WS_LOG_INFO,
+                "[SSHD] Attempting to raise permissions level");
+            if (setegid(auth->sGid) != 0) {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error raising gid");
+                ret = WS_FATAL_ERROR;
+            }
+
+            if (ret == WS_SUCCESS && seteuid(auth->sUid) != 0) {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error raising uid");
+                ret = WS_FATAL_ERROR;
+            }
         }
-    }
-    else {
-        ret = WS_BAD_ARGUMENT;
     }
 #endif
 
