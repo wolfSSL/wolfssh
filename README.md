@@ -451,22 +451,30 @@ The wolfSSH client and server will automatically negotiate using Curve25519.
 POST-QUANTUM
 ============
 
-wolfSSH now supports the post-quantum algorithm ML-KEM (formerly known as
-Kyber). It uses the ML-KEM-768 parameter set and is hybridized with ECDHE over
-the P-256 ECC curve.
+wolfSSH supports both post-quantum key exchange via ML-KEM (formerly known as
+Kyber) and post-quantum signature verification via ML-DSA (formerly known as
+Dilithium).
 
-In order to use this key exchange you must build and install wolfSSL on your
-system. Here is an example of an effective configuration:
+* **ML-KEM**: Uses the ML-KEM-768 parameter set hybridized with ECDHE over the
+  P-256 ECC curve.
+* **ML-DSA**: Supports ML-DSA-44, ML-DSA-65, and ML-DSA-87 parameter sets for
+  both server host keys and client public key authentication. When built with
+  certificate support, ML-DSA X.509 certificates (`x509v3-ssh-mldsa-44`,
+  `x509v3-ssh-mldsa-65`, and `x509v3-ssh-mldsa-87`) are also supported.
 
-    $ ./configure --enable-wolfssh --enable-mlkem
+In order to use these algorithms you must build and install wolfSSL with
+support for them. Here is an example of an effective configuration:
 
-After that, simply configure and build wolfssh as usual:
+    $ ./configure --enable-wolfssh --enable-mlkem --enable-mldsa
+
+After that, configure and build wolfSSH as usual:
 
     $ ./configure
     $ make all
 
 The wolfSSH client and server will automatically negotiate using ML-KEM-768
-hybridized with ECDHE over the P-256 ECC curve.
+hybridized with ECDHE over the P-256 ECC curve and ML-DSA for host keys/client
+public key authentication.
 
     $ ./examples/echoserver/echoserver -f
 
@@ -476,7 +484,7 @@ On the client side, you will see the following output:
 
 Server said: Hello, wolfSSH!
 
-If you want to see interoperability with OpenQauntumSafe's fork of OpenSSH, you
+If you want to see interoperability with OpenQuantumSafe's fork of OpenSSH, you
 can build and execute the fork while the echoserver is running. Download the
 release from here:
 
@@ -497,6 +505,7 @@ NOTE: when prompted, enter the password which is "upthehill".
 
 You can type a line of text and when you press enter, the line will be echoed
 back. Use CTRL-C to terminate the connection.
+
 
 CERTIFICATE SUPPORT
 ===================
