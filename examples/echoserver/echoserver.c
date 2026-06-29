@@ -1777,6 +1777,123 @@ static int load_key_ed25519(byte* buf, word32 bufSz)
 #endif /* WOLFSSH_NO_ED25519 */
 
 
+#ifndef WOLFSSH_NO_MLDSA44
+static int load_key_mldsa44(byte* buf, word32 bufSz)
+{
+    word32 sz = 0;
+#ifndef NO_FILESYSTEM
+    sz = load_file("./keys/server-key-mldsa44.der", buf, &bufSz);
+#else
+    (void)buf; (void)bufSz;
+#endif
+    return sz;
+}
+#endif /* WOLFSSH_NO_MLDSA44 */
+
+#ifndef WOLFSSH_NO_MLDSA65
+static int load_key_mldsa65(byte* buf, word32 bufSz)
+{
+    word32 sz = 0;
+#ifndef NO_FILESYSTEM
+    sz = load_file("./keys/server-key-mldsa65.der", buf, &bufSz);
+#else
+    (void)buf; (void)bufSz;
+#endif
+    return sz;
+}
+#endif /* WOLFSSH_NO_MLDSA65 */
+
+#ifndef WOLFSSH_NO_MLDSA87
+static int load_key_mldsa87(byte* buf, word32 bufSz)
+{
+    word32 sz = 0;
+#ifndef NO_FILESYSTEM
+    sz = load_file("./keys/server-key-mldsa87.der", buf, &bufSz);
+#else
+    (void)buf; (void)bufSz;
+#endif
+    return sz;
+}
+#endif /* WOLFSSH_NO_MLDSA87 */
+
+
+#ifndef WOLFSSH_NO_MLDSA
+static int LoadMlDsaHostKeys(WOLFSSH_CTX* ctx, const char* keyList)
+{
+    byte* mldsaBuf;
+    int loaded = 0;
+
+    mldsaBuf = (byte*)WMALLOC(MLDSA_MAX_BOTH_KEY_DER_SIZE, NULL, 0);
+    if (mldsaBuf == NULL) {
+        fprintf(stderr, "Couldn't allocate ML-DSA key load buffer.\n");
+        return -1;
+    }
+
+    #ifndef WOLFSSH_NO_MLDSA44
+    if (WSTRSTR(keyList, "mldsa-44") != NULL) {
+        int mldsaSz = load_key_mldsa44(mldsaBuf, MLDSA_MAX_BOTH_KEY_DER_SIZE);
+        if (mldsaSz <= 0) {
+            fprintf(stderr, "Couldn't load ML-DSA-44 key file.\n");
+            WFREE(mldsaBuf, NULL, 0);
+            return -1;
+        }
+        if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, mldsaBuf, (word32)mldsaSz,
+                                             WOLFSSH_FORMAT_ASN1) < 0) {
+            fprintf(stderr, "Couldn't use ML-DSA-44 key buffer.\n");
+            WFREE(mldsaBuf, NULL, 0);
+            return -1;
+        }
+        loaded++;
+    }
+    #endif /* WOLFSSH_NO_MLDSA44 */
+
+    #ifndef WOLFSSH_NO_MLDSA65
+    if (WSTRSTR(keyList, "mldsa-65") != NULL) {
+        int mldsaSz = load_key_mldsa65(mldsaBuf, MLDSA_MAX_BOTH_KEY_DER_SIZE);
+        if (mldsaSz <= 0) {
+            fprintf(stderr, "Couldn't load ML-DSA-65 key file.\n");
+            WFREE(mldsaBuf, NULL, 0);
+            return -1;
+        }
+        if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, mldsaBuf, (word32)mldsaSz,
+                                             WOLFSSH_FORMAT_ASN1) < 0) {
+            fprintf(stderr, "Couldn't use ML-DSA-65 key buffer.\n");
+            WFREE(mldsaBuf, NULL, 0);
+            return -1;
+        }
+        loaded++;
+    }
+    #endif /* WOLFSSH_NO_MLDSA65 */
+
+    #ifndef WOLFSSH_NO_MLDSA87
+    if (WSTRSTR(keyList, "mldsa-87") != NULL) {
+        int mldsaSz = load_key_mldsa87(mldsaBuf, MLDSA_MAX_BOTH_KEY_DER_SIZE);
+        if (mldsaSz <= 0) {
+            fprintf(stderr, "Couldn't load ML-DSA-87 key file.\n");
+            WFREE(mldsaBuf, NULL, 0);
+            return -1;
+        }
+        if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, mldsaBuf, (word32)mldsaSz,
+                                             WOLFSSH_FORMAT_ASN1) < 0) {
+            fprintf(stderr, "Couldn't use ML-DSA-87 key buffer.\n");
+            WFREE(mldsaBuf, NULL, 0);
+            return -1;
+        }
+        loaded++;
+    }
+    #endif /* WOLFSSH_NO_MLDSA87 */
+
+    WFREE(mldsaBuf, NULL, 0);
+    if (loaded == 0) {
+        fprintf(stderr, "ML-DSA key list '%s' matched no supported level.\n",
+                keyList);
+        return -1;
+    }
+    return 0;
+}
+#endif /* WOLFSSH_NO_MLDSA */
+
+
 typedef struct StrList {
     const char* str;
     struct StrList* next;
@@ -3108,7 +3225,8 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         if (tpmHostKeyPath != NULL) {
             if (EchoserverInitTpmHostKey(ctx, tpmHostKeyPath,
                     ECHOSERVER_TPM_KEY_AUTH_DEFAULT) != 0) {
-                ES_ERROR("Couldn't load TPM host key from %s.\n", tpmHostKeyPath);
+                ES_ERROR("Couldn't load TPM host key from %s.\n",
+                         tpmHostKeyPath);
             }
             loadDefaultHostKeys = 0;
         }
@@ -3150,6 +3268,19 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             }
         #endif /* WOLFSSH_NO_ED25519 */
         }
+
+        /* Load only the ML-DSA levels requested in keyList; loading all levels
+         * unconditionally would force mldsa negotiation on non-mldsa tests. */
+        #ifndef WOLFSSH_NO_MLDSA
+        if (keyList != NULL && WSTRSTR(keyList, "mldsa") != NULL) {
+            if (LoadMlDsaHostKeys(ctx, keyList) != 0) {
+                #ifdef WOLFSSH_SMALL_STACK
+                WFREE(keyLoadBuf, NULL, 0);
+                #endif
+                ES_ERROR("Error loading ML-DSA host keys.\n");
+            }
+        }
+        #endif /* WOLFSSH_NO_MLDSA */
 
         #ifndef NO_FILESYSTEM
         if (userPubKey) {

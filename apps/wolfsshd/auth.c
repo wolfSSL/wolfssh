@@ -105,7 +105,18 @@ struct WOLFSSHD_AUTH {
 #endif
 
 #ifndef MAX_LINE_SZ
-    #define MAX_LINE_SZ 900
+    /* Sized to hold the largest authorized_keys entry. */
+    #ifndef WOLFSSH_NO_MLDSA
+        #ifndef WOLFSSH_NO_MLDSA87
+            #define MAX_LINE_SZ ((WC_MLDSA_87_PUB_KEY_SIZE + 2) / 3 * 4 + 640)
+        #elif !defined(WOLFSSH_NO_MLDSA65)
+            #define MAX_LINE_SZ ((WC_MLDSA_65_PUB_KEY_SIZE + 2) / 3 * 4 + 640)
+        #else
+            #define MAX_LINE_SZ ((WC_MLDSA_44_PUB_KEY_SIZE + 2) / 3 * 4 + 640)
+        #endif
+    #else
+        #define MAX_LINE_SZ 900
+    #endif
 #endif
 #ifndef MAX_PATH_SZ
     #define MAX_PATH_SZ 80
@@ -173,14 +184,7 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
     word32 keyCandSz = 0;
     char* last = NULL;
 
-    enum {
-    #ifdef WOLFSSH_CERTS
-        NUM_ALLOWED_TYPES = 9
-    #else
-        NUM_ALLOWED_TYPES = 5
-    #endif
-    };
-    static const char* allowedTypes[NUM_ALLOWED_TYPES] = {
+    static const char* allowedTypes[] = {
         "ssh-rsa",
         "ssh-ed25519",
         "ecdsa-sha2-nistp256",
@@ -192,7 +196,31 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
         "x509v3-ecdsa-sha2-nistp384",
         "x509v3-ecdsa-sha2-nistp521",
     #endif
+    #ifndef WOLFSSH_NO_MLDSA
+        #ifndef WOLFSSH_NO_MLDSA44
+        "ssh-mldsa-44",
+        #endif
+        #ifndef WOLFSSH_NO_MLDSA65
+        "ssh-mldsa-65",
+        #endif
+        #ifndef WOLFSSH_NO_MLDSA87
+        "ssh-mldsa-87",
+        #endif
+        #ifdef WOLFSSH_CERTS
+        #ifndef WOLFSSH_NO_MLDSA44
+        "x509v3-ssh-mldsa-44",
+        #endif
+        #ifndef WOLFSSH_NO_MLDSA65
+        "x509v3-ssh-mldsa-65",
+        #endif
+        #ifndef WOLFSSH_NO_MLDSA87
+        "x509v3-ssh-mldsa-87",
+        #endif
+        #endif
+    #endif
     };
+    const int NUM_ALLOWED_TYPES =
+        (int)(sizeof(allowedTypes) / sizeof(allowedTypes[0]));
     int typeOk = 0;
     int i;
 

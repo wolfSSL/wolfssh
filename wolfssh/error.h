@@ -137,8 +137,9 @@ enum WS_ErrorCodes {
     WS_AUTH_PENDING         = -1096, /* User authentication still pending */
     WS_KDF_E                = -1097, /* KDF error*/
     WS_DISCONNECT           = -1098, /* peer sent disconnect */
+    WS_MLDSA_E              = -1099, /* MLDSA failure */
 
-    WS_LAST_E               = WS_DISCONNECT  /* Update this to indicate last error */
+    WS_LAST_E               = WS_MLDSA_E  /* Last error indicator */
 };
 
 
