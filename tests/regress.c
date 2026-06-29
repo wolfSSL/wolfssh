@@ -329,6 +329,91 @@ static void FreeChannelOpenHarness(ChannelOpenHarness* harness)
         wolfSSH_CTX_free(harness->ctx);
 }
 
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+/* Build a plaintext SSH_MSG_USERAUTH_INFO_RESPONSE. The wire response count is
+ * "responseCount"; "stringCount" "x" response strings are actually appended.
+ * The count-mismatch and too-many-responses guards reject before parsing the
+ * body, so a short body is sufficient to drive them. */
+static word32 BuildInfoResponsePacket(word32 responseCount, word32 stringCount,
+        byte* out, word32 outSz)
+{
+    byte payload[128];
+    word32 idx = 0;
+    word32 i;
+
+    idx = AppendUint32(payload, sizeof(payload), idx, responseCount);
+    for (i = 0; i < stringCount; i++) {
+        idx = AppendString(payload, sizeof(payload), idx, "x");
+    }
+
+    return WrapPacket(MSGID_USERAUTH_INFO_RESPONSE, payload, idx, out, outSz);
+}
+
+/* Place the server mid keyboard-interactive auth, expecting an INFO_RESPONSE
+ * for "promptCount" prompts. */
+static void InitKbInfoResponseHarness(ChannelOpenHarness* harness,
+        byte* in, word32 inSz, word32 promptCount)
+{
+    InitChannelOpenHarness(harness, in, inSz);
+    harness->ssh->acceptState = ACCEPT_CLIENT_USERAUTH_REQUEST_DONE;
+    harness->ssh->authId = ID_USERAUTH_KEYBOARD;
+    harness->ssh->kbAuth.promptCount = promptCount;
+}
+
+/* Post-condition for a rejected INFO_RESPONSE: the transport survives and the
+ * server's reply is a USERAUTH_FAILURE rather than a teardown. */
+static void AssertKbInfoResponseSentFailure(const ChannelOpenHarness* harness,
+        int ret)
+{
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertIntEQ(harness->io.inOff, harness->io.inSz);
+    AssertTrue(harness->io.outSz > 0);
+    AssertIntEQ(ParseMsgId(harness->io.out, harness->io.outSz),
+            MSGID_USERAUTH_FAILURE);
+}
+
+/* A response count that disagrees with the server's prompt count must yield a
+ * USERAUTH_FAILURE, not a transport teardown (RFC 4256). */
+static void TestKbInfoResponseCountMismatchSendsFailure(void)
+{
+    ChannelOpenHarness harness;
+    byte in[128];
+    word32 inSz;
+    int ret;
+
+    /* Server expects 1 response; client sends 2. */
+    inSz = BuildInfoResponsePacket(2, 2, in, sizeof(in));
+    InitKbInfoResponseHarness(&harness, in, inSz, 1);
+
+    ret = DoReceive(harness.ssh);
+
+    AssertKbInfoResponseSentFailure(&harness, ret);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* A response count above WOLFSSH_MAX_PROMPTS must yield a USERAUTH_FAILURE, not
+ * a transport teardown. promptCount matches so the mismatch guard passes and
+ * the too-many guard fires. */
+static void TestKbInfoResponseTooManySendsFailure(void)
+{
+    ChannelOpenHarness harness;
+    byte in[128];
+    word32 tooMany = WOLFSSH_MAX_PROMPTS + 1;
+    word32 inSz;
+    int ret;
+
+    inSz = BuildInfoResponsePacket(tooMany, 0, in, sizeof(in));
+    InitKbInfoResponseHarness(&harness, in, inSz, tooMany);
+
+    ret = DoReceive(harness.ssh);
+
+    AssertKbInfoResponseSentFailure(&harness, ret);
+
+    FreeChannelOpenHarness(&harness);
+}
+#endif /* WOLFSSH_KEYBOARD_INTERACTIVE */
+
 #if !defined(NO_WOLFSSH_SERVER) && !defined(NO_WOLFSSH_CLIENT) && \
     !defined(WOLFSSH_NO_RSA) && !defined(NO_FILESYSTEM)
     #if !defined(WOLFSSH_NO_DH_GROUP14_SHA256)
@@ -4366,6 +4451,10 @@ int main(int argc, char** argv)
     TestChannelAllowedAfterAuth(ssh);
     TestChannelOpenCallbackRejectSendsOpenFail();
     TestSecondSessionChannelRejected();
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+    TestKbInfoResponseCountMismatchSendsFailure();
+    TestKbInfoResponseTooManySendsFailure();
+#endif
 #ifdef WOLFSSH_FWD
     TestDirectTcpipRejectSendsOpenFail();
     TestDirectTcpipNoFwdCbSendsOpenFail();
