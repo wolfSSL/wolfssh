@@ -1602,11 +1602,14 @@ static THREAD_RETURN WOLFSSH_THREAD server_thread(void* args)
         promptData.promptLengths =
             (word32*)WMALLOC(sizeof(word32) * kbResponseCount, NULL, 0);
         if (promptData.promptLengths == NULL) {
+            WFREE(promptData.prompts, NULL, 0);
             ES_ERROR("Could not allocate promptLengths");
         }
         promptData.promptEcho =
             (byte*)WMALLOC(sizeof(byte) * kbResponseCount, NULL, 0);
         if (promptData.promptEcho == NULL) {
+            WFREE(promptData.prompts, NULL, 0);
+            WFREE(promptData.promptLengths, NULL, 0);
             ES_ERROR("Could not allocate promptEcho");
         }
         for (word32 prompt = 0; prompt < kbResponseCount; prompt++) {

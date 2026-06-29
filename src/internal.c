@@ -12957,7 +12957,9 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
     ssh->handshake->useTpm = ssh->ctx->privateKey[keyIdx].isTpm;
 #endif
 
-    switch (sigKeyBlock_ptr->pubKeyId) {
+    /* Dispatches on pubKeyFmtId to sync with SendKexDhReply's free chain.
+     * ID_RSA_SHA2_256/512 already collapse to ID_SSH_RSA. */
+    switch (sigKeyBlock_ptr->pubKeyFmtId) {
         #ifndef WOLFSSH_NO_RSA
         #ifdef WOLFSSH_CERTS
         case ID_X509V3_SSH_RSA:
@@ -12965,8 +12967,6 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
             FALL_THROUGH;
         #endif
         case ID_SSH_RSA:
-        case ID_RSA_SHA2_256:
-        case ID_RSA_SHA2_512:
             /* Decode the user-configured RSA private key. */
             sigKeyBlock_ptr->sk.rsa.eSz =
                     (word32)sizeof(sigKeyBlock_ptr->sk.rsa.e);
@@ -14723,44 +14723,44 @@ int SendKexDhReply(WOLFSSH* ssh)
         ret = SignH(ssh, sig_ptr, &sigSz, sigKeyBlock_ptr);
     }
 
+    /* Note: this free chain uses pubKeyFmtId, but it must structurally mirror
+     * the initialization switch in SendKexGetSigningKey which dispatches on pubKeyFmtId. */
     if (sigKeyBlock_ptr != NULL) {
-        if (sigKeyBlock_ptr->pubKeyId == ID_SSH_RSA
-                || sigKeyBlock_ptr->pubKeyId == ID_RSA_SHA2_256
-                || sigKeyBlock_ptr->pubKeyId == ID_RSA_SHA2_512
+        if (sigKeyBlock_ptr->pubKeyFmtId == ID_SSH_RSA
         #ifdef WOLFSSH_CERTS
-                || sigKeyBlock_ptr->pubKeyId == ID_X509V3_SSH_RSA
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_SSH_RSA
         #endif
                 ) {
 #ifndef WOLFSSH_NO_RSA
             wc_FreeRsaKey(&sigKeyBlock_ptr->sk.rsa.key);
 #endif
         }
-        else if (sigKeyBlock_ptr->pubKeyId == ID_ECDSA_SHA2_NISTP256
-                || sigKeyBlock_ptr->pubKeyId == ID_ECDSA_SHA2_NISTP384
-                || sigKeyBlock_ptr->pubKeyId == ID_ECDSA_SHA2_NISTP521
+        else if (sigKeyBlock_ptr->pubKeyFmtId == ID_ECDSA_SHA2_NISTP256
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_ECDSA_SHA2_NISTP384
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_ECDSA_SHA2_NISTP521
         #ifdef WOLFSSH_CERTS
-                || sigKeyBlock_ptr->pubKeyId == ID_X509V3_ECDSA_SHA2_NISTP256
-                || sigKeyBlock_ptr->pubKeyId == ID_X509V3_ECDSA_SHA2_NISTP384
-                || sigKeyBlock_ptr->pubKeyId == ID_X509V3_ECDSA_SHA2_NISTP521
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP256
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP384
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_ECDSA_SHA2_NISTP521
         #endif
                 ) {
 #ifndef WOLFSSH_NO_ECDSA
             wc_ecc_free(&sigKeyBlock_ptr->sk.ecc.key);
 #endif
         }
-        else if (sigKeyBlock_ptr->pubKeyId == ID_ED25519) {
+        else if (sigKeyBlock_ptr->pubKeyFmtId == ID_ED25519) {
 #if !defined(WOLFSSH_NO_ED25519)
             wc_ed25519_free(&sigKeyBlock_ptr->sk.ed.key);
 #endif
         }
 #if !defined(WOLFSSH_NO_MLDSA)
-        else if (sigKeyBlock_ptr->pubKeyId == ID_MLDSA44 ||
-                sigKeyBlock_ptr->pubKeyId == ID_MLDSA65 ||
-                sigKeyBlock_ptr->pubKeyId == ID_MLDSA87
+        else if (sigKeyBlock_ptr->pubKeyFmtId == ID_MLDSA44 ||
+                sigKeyBlock_ptr->pubKeyFmtId == ID_MLDSA65 ||
+                sigKeyBlock_ptr->pubKeyFmtId == ID_MLDSA87
         #ifdef WOLFSSH_CERTS
-                || sigKeyBlock_ptr->pubKeyId == ID_X509V3_MLDSA44
-                || sigKeyBlock_ptr->pubKeyId == ID_X509V3_MLDSA65
-                || sigKeyBlock_ptr->pubKeyId == ID_X509V3_MLDSA87
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_MLDSA44
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_MLDSA65
+                || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_MLDSA87
         #endif
                 ) {
             wc_MlDsaKey_Free(&sigKeyBlock_ptr->sk.mldsa.key);
