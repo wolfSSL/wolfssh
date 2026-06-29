@@ -1892,23 +1892,23 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
             newKey = (byte*)WMALLOC(inSz, heap, DYNTYPE_PRIVKEY);
             if (newKey == NULL) {
                 ret = WS_MEMORY_E;
-                return ret;
             }
         }
+        else if (*outSz < inSz) {
+            WLOG(WS_LOG_DEBUG, "DER private key output size too small");
+            ret = WS_BUFFER_E;
+        }
         else {
-            if (*outSz < inSz) {
-                WLOG(WS_LOG_DEBUG, "DER private key output size too small");
-                ret = WS_BUFFER_E;
-                return ret;
-            }
             newKey = *out;
         }
 
-        *out = newKey;
-        *outSz = inSz;
-        WMEMCPY(newKey, in, inSz);
-        *outType = (const byte*)IdToName(ret);
-        *outTypeSz = (word32)WSTRLEN((const char*)*outType);
+        if (ret > 0) {
+            *out = newKey;
+            *outSz = inSz;
+            WMEMCPY(newKey, in, inSz);
+            *outType = (const byte*)IdToName(ret);
+            *outTypeSz = (word32)WSTRLEN((const char*)*outType);
+        }
     }
 
     wolfSSH_KEY_clean(key);
