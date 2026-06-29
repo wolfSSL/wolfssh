@@ -79,6 +79,7 @@ static void ResetSession(WOLFSSH* ssh)
     }
     ssh->isKeying = 0;
     ssh->connectState = CONNECT_BEGIN;
+    ssh->acceptState = ACCEPT_BEGIN;
     ssh->error = 0;
 }
 
@@ -1413,6 +1414,125 @@ static void TestChannelAllowedAfterAuth(WOLFSSH* ssh)
             WS_MSG_RECV);
     AssertTrue(allowed);
 }
+
+
+#ifndef NO_WOLFSSH_SERVER
+/* The client gate tests above run against a client endpoint, so the server
+ * branch of IsMessageAllowed was never exercised. The tests below drive a
+ * server endpoint to cover its pre-authentication message gate. */
+
+/* Reject connection-protocol messages on the server before user
+ * authentication completes. */
+static void TestServerChannelBlockedBeforeAuth(WOLFSSH* ssh)
+{
+    int allowed;
+
+    ResetSession(ssh);
+    /* The state just below the auth-complete boundary
+     * (ACCEPT_SERVER_USERAUTH_SENT). */
+    ssh->acceptState = ACCEPT_CLIENT_USERAUTH_DONE;
+
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_CHANNEL_OPEN,
+            WS_MSG_RECV);
+    AssertFalse(allowed);
+
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_GLOBAL_REQUEST,
+            WS_MSG_RECV);
+    AssertFalse(allowed);
+}
+
+
+/* Allow connection-protocol messages on the server once user authentication
+ * completes. Pins the acceptState boundary against a relaxed comparison. */
+static void TestServerChannelAllowedAfterAuth(WOLFSSH* ssh)
+{
+    int allowed;
+
+    ResetSession(ssh);
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_CHANNEL_OPEN,
+            WS_MSG_RECV);
+    AssertTrue(allowed);
+
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_GLOBAL_REQUEST,
+            WS_MSG_RECV);
+    AssertTrue(allowed);
+}
+
+
+/* Reject the user auth request while the server is still keying, then accept
+ * it once keyed. Pins the pre-keyed message-range bound. */
+static void TestServerUserauthBlockedBeforeKeyed(WOLFSSH* ssh)
+{
+    int allowed;
+
+    ResetSession(ssh);
+    ssh->acceptState = ACCEPT_SERVER_KEXINIT_SENT;
+
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_USERAUTH_REQUEST,
+            WS_MSG_RECV);
+    AssertFalse(allowed);
+
+    ssh->acceptState = ACCEPT_CLIENT_USERAUTH_DONE;
+
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_USERAUTH_REQUEST,
+            WS_MSG_RECV);
+    AssertTrue(allowed);
+}
+
+
+/* Reject the user auth messages that only the server sends, while still
+ * accepting the keyboard-interactive info response that it receives. */
+static void TestServerOnlyUserauthMsgsBlocked(WOLFSSH* ssh)
+{
+    int allowed;
+
+    ResetSession(ssh);
+    ssh->acceptState = ACCEPT_CLIENT_USERAUTH_DONE;
+
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_USERAUTH_FAILURE,
+            WS_MSG_RECV);
+    AssertFalse(allowed);
+
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_USERAUTH_SUCCESS,
+            WS_MSG_RECV);
+    AssertFalse(allowed);
+
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_USERAUTH_INFO_RESPONSE,
+            WS_MSG_RECV);
+    AssertTrue(allowed);
+}
+
+
+/* The server accepts a service request only once keyed, and never accepts
+ * the service accept that only it sends. */
+static void TestServerServiceRequestStateGated(WOLFSSH* ssh)
+{
+    int allowed;
+
+    ResetSession(ssh);
+    ssh->acceptState = ACCEPT_KEYED;
+
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_SERVICE_REQUEST,
+            WS_MSG_RECV);
+    AssertTrue(allowed);
+
+    ssh->acceptState = ACCEPT_SERVER_KEXINIT_SENT;
+
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_SERVICE_REQUEST,
+            WS_MSG_RECV);
+    AssertFalse(allowed);
+
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_SERVICE_ACCEPT,
+            WS_MSG_RECV);
+    AssertFalse(allowed);
+    /* Of the messages exercised here, only SERVICE_ACCEPT sets an error
+     * on reject. */
+    AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
+}
+#endif /* NO_WOLFSSH_SERVER */
+
 
 static void TestChannelOpenCallbackRejectSendsOpenFail(void)
 {
@@ -4338,6 +4458,10 @@ int main(int argc, char** argv)
 {
     WOLFSSH_CTX* ctx;
     WOLFSSH* ssh;
+#ifndef NO_WOLFSSH_SERVER
+    WOLFSSH_CTX* serverCtx;
+    WOLFSSH* serverSsh;
+#endif
 
     (void)argc;
     (void)argv;
@@ -4349,6 +4473,14 @@ int main(int argc, char** argv)
 
     ssh = wolfSSH_new(ctx);
     AssertNotNull(ssh);
+
+#ifndef NO_WOLFSSH_SERVER
+    serverCtx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(serverCtx);
+
+    serverSsh = wolfSSH_new(serverCtx);
+    AssertNotNull(serverSsh);
+#endif
 
     TestClientParseDestination();
 #ifdef WOLFSSH_TEST_INTERNAL
@@ -4364,6 +4496,13 @@ int main(int argc, char** argv)
     TestPublicKeyFailureAborts(ssh);
     TestChannelBlockedBeforeAuth(ssh);
     TestChannelAllowedAfterAuth(ssh);
+#ifndef NO_WOLFSSH_SERVER
+    TestServerChannelBlockedBeforeAuth(serverSsh);
+    TestServerChannelAllowedAfterAuth(serverSsh);
+    TestServerUserauthBlockedBeforeKeyed(serverSsh);
+    TestServerOnlyUserauthMsgsBlocked(serverSsh);
+    TestServerServiceRequestStateGated(serverSsh);
+#endif
     TestChannelOpenCallbackRejectSendsOpenFail();
     TestSecondSessionChannelRejected();
 #ifdef WOLFSSH_FWD
@@ -4459,6 +4598,11 @@ int main(int argc, char** argv)
     ResetSession(ssh);
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
+#ifndef NO_WOLFSSH_SERVER
+    ResetSession(serverSsh);
+    wolfSSH_free(serverSsh);
+    wolfSSH_CTX_free(serverCtx);
+#endif
     wolfSSH_Cleanup();
 
     printf("regress: PASS\n");
