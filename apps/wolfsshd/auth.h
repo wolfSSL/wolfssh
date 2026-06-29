@@ -101,5 +101,15 @@ int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
                       word32 keySz);
 int CAKeysFileDiffers(const char* a, const char* b);
 int wolfSSHD_GetUserAuthTypes(const WOLFSSHD_CONFIG* usrConf);
+#if defined(WOLFSSHD_UNIT_TEST) && defined(WOLFSSH_OSSH_CERTS) && \
+    !defined(NO_SHA256) && !defined(_WIN32)
+int wolfSSHD_TestCheckOsshCertCa(const byte* caKeyHash,
+                                  word32 caKeyHashSz,
+                                  const char* caKeysFile,
+                                  const char* name,
+                                  const byte* validPrincipals,
+                                  word32 validPrincipalsSz,
+                                  int strictModes);
+#endif
 #endif
 #endif /* WOLFAUTH_H */
