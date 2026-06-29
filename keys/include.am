@@ -24,5 +24,7 @@ EXTRA_DIST+= \
             keys/server-key.pem keys/fred-key.der keys/fred-key.pem \
             keys/id_ecdsa keys/id_ecdsa.pub keys/id_rsa keys/id_rsa.pub \
             keys/renewcerts.sh keys/renewcerts.cnf \
-            keys/server-key-ed25519.der keys/server-key-ed25519.pem
+            keys/server-key-ed25519.der keys/server-key-ed25519.pem \
+            keys/server-key-mldsa44.der keys/server-key-mldsa65.der \
+            keys/server-key-mldsa87.der
 

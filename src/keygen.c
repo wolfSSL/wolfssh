@@ -253,6 +253,82 @@ int wolfSSH_MakeEd25519Key(byte* out, word32 outSz, word32 size)
 #endif
 }
 
+int wolfSSH_MakeMlDsaKey(byte* out, word32 outSz, word32 level)
+{
+#if !defined(WOLFSSH_NO_MLDSA)
+    int ret = WS_SUCCESS;
+    WC_RNG rng = {0};
+    byte wc_level;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_MakeMlDsaKey()");
+
+    if      (level == WOLFSSH_MLDSAKEY_44) wc_level = WC_ML_DSA_44;
+    else if (level == WOLFSSH_MLDSAKEY_65) wc_level = WC_ML_DSA_65;
+    else if (level == WOLFSSH_MLDSAKEY_87) wc_level = WC_ML_DSA_87;
+    else {
+        WLOG(WS_LOG_DEBUG, "Invalid ML-DSA key level requested");
+        return WS_BAD_ARGUMENT;
+    }
+
+    if (wc_InitRng(&rng) != 0) {
+        WLOG(WS_LOG_DEBUG, "Couldn't create RNG");
+        ret = WS_CRYPTO_FAILED;
+    }
+
+    if (ret == WS_SUCCESS) {
+        MlDsaKey key;
+        int keyInit = 0;
+
+        if (wc_MlDsaKey_Init(&key, NULL, INVALID_DEVID) != 0)
+            ret = WS_CRYPTO_FAILED;
+        else {
+            keyInit = 1;
+            if (wc_MlDsaKey_SetParams(&key, wc_level) != 0)
+                ret = WS_CRYPTO_FAILED;
+        }
+
+        if (ret == WS_SUCCESS) {
+            ret = wc_MlDsaKey_MakeKey(&key, &rng);
+            if (ret != 0) {
+                WLOG(WS_LOG_DEBUG, "ML-DSA key generation failed");
+                ret = WS_CRYPTO_FAILED;
+            }
+            else
+                ret = WS_SUCCESS;
+        }
+
+        if (ret == WS_SUCCESS) {
+            int keySz;
+
+            keySz = wc_MlDsaKey_KeyToDer(&key, out, outSz);
+            if (keySz < 0) {
+                WLOG(WS_LOG_DEBUG, "ML-DSA key to DER failed");
+                ret = WS_CRYPTO_FAILED;
+            }
+            else
+                ret = keySz;
+        }
+
+        if (keyInit) {
+            wc_MlDsaKey_Free(&key);
+        }
+
+        if (wc_FreeRng(&rng) != 0) {
+            WLOG(WS_LOG_DEBUG, "Couldn't free RNG");
+            if (ret >= 0)
+                ret = WS_CRYPTO_FAILED;
+        }
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_MakeMlDsaKey(), ret = %d", ret);
+    return ret;
+#else
+    WOLFSSH_UNUSED(out);
+    WOLFSSH_UNUSED(outSz);
+    WOLFSSH_UNUSED(level);
+    return WS_NOT_COMPILED;
+#endif
+}
 
 #else /* WOLFSSL_KEY_GEN */
     #error "wolfSSH keygen requires that keygen is enabled in wolfSSL, use --enable-keygen or #define WOLFSSL_KEY_GEN."

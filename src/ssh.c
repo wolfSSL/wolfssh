@@ -1712,6 +1712,9 @@ char* wolfSSH_GetUsername(WOLFSSH* ssh)
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/asn_public.h>
 #include <wolfssl/wolfcrypt/coding.h>
+#ifndef WOLFSSH_NO_MLDSA
+    #include <wolfssl/wolfcrypt/dilithium.h>
+#endif
 
 union wolfSSH_key {
 #ifndef WOLFSSH_NO_RSA
@@ -1833,7 +1836,72 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
     }
 
     if (ret > 0 && !isPrivate) {
+#ifndef WOLFSSH_NO_MLDSA
+        if (
+#ifndef WOLFSSH_NO_MLDSA44
+            ret == ID_MLDSA44 ||
+#endif
+#ifndef WOLFSSH_NO_MLDSA65
+            ret == ID_MLDSA65 ||
+#endif
+#ifndef WOLFSSH_NO_MLDSA87
+            ret == ID_MLDSA87 ||
+#endif
+            0) {
+            byte* rawPub = NULL;
+            word32 rawPubSz =
+#ifndef WOLFSSH_NO_MLDSA87
+                WC_MLDSA_87_PUB_KEY_SIZE;
+#elif !defined(WOLFSSH_NO_MLDSA65)
+                WC_MLDSA_65_PUB_KEY_SIZE;
+#else
+                WC_MLDSA_44_PUB_KEY_SIZE;
+#endif
+            const char* name = IdToName(ret);
+            word32 nameLen = (word32)WSTRLEN(name);
+            word32 localIdx = 0;
+
+            *outType = (const byte*)name;
+            *outTypeSz = nameLen;
+
+            rawPub = (byte*)WMALLOC(rawPubSz, heap, DYNTYPE_PUBKEY);
+            if (rawPub == NULL) {
+                ret = WS_MEMORY_E;
+            }
+            else {
+                int wcRet = wc_MlDsaKey_ExportPubRaw(&key->ks.mldsa.key,
+                                                      rawPub, &rawPubSz);
+                if (wcRet != 0) {
+                    ret = WS_CRYPTO_FAILED;
+                }
+                else {
+                    *outSz = LENGTH_SZ + nameLen + LENGTH_SZ + rawPubSz;
+                    newKey = (byte*)WMALLOC(*outSz, heap, DYNTYPE_PUBKEY);
+                    if (newKey == NULL) {
+                        ret = WS_MEMORY_E;
+                    }
+                    else {
+                        c32toa(nameLen, &newKey[localIdx]);
+                        localIdx += LENGTH_SZ;
+                        WMEMCPY(&newKey[localIdx], name, nameLen);
+                        localIdx += nameLen;
+                        c32toa(rawPubSz, &newKey[localIdx]);
+                        localIdx += LENGTH_SZ;
+                        WMEMCPY(&newKey[localIdx], rawPub, rawPubSz);
+                        *out = newKey;
+                        ret = WS_SUCCESS;
+                    }
+                }
+                WFREE(rawPub, heap, DYNTYPE_PUBKEY);
+            }
+        }
+        /* The else below intentionally straddles a preprocessor boundary:
+         * when WOLFSSH_NO_MLDSA is defined the entire if/else is removed and
+         * the RSA block becomes a standalone scope, which is harmless. */
+        else
+#endif /* WOLFSSH_NO_MLDSA */
 #ifndef WOLFSSH_NO_RSA
+        {
         long e;
         byte n[RSA_MAX_SIZE]; /* TODO: Handle small stack */
         word32 nSz = (word32)sizeof(n), eSz = (word32)sizeof(e);
@@ -1882,9 +1950,12 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
 
             *out = newKey;
         }
+        }
 #else
+        {
         WLOG(WS_LOG_DEBUG, "DoAsn1Key failed; WOLFSSH_NO_RSA disabled RSA");
         ret = WS_UNIMPLEMENTED_E;
+        }
 #endif
     }
     else if (ret > 0 && isPrivate) {
@@ -1892,23 +1963,22 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
             newKey = (byte*)WMALLOC(inSz, heap, DYNTYPE_PRIVKEY);
             if (newKey == NULL) {
                 ret = WS_MEMORY_E;
-                return ret;
             }
+        }
+        else if (*outSz < inSz) {
+            WLOG(WS_LOG_DEBUG, "DER private key output size too small");
+            ret = WS_BUFFER_E;
         }
         else {
-            if (*outSz < inSz) {
-                WLOG(WS_LOG_DEBUG, "DER private key output size too small");
-                ret = WS_BUFFER_E;
-                return ret;
-            }
             newKey = *out;
         }
-
-        *out = newKey;
-        *outSz = inSz;
-        WMEMCPY(newKey, in, inSz);
-        *outType = (const byte*)IdToName(ret);
-        *outTypeSz = (word32)WSTRLEN((const char*)*outType);
+        if (ret > 0) {
+            *out = newKey;
+            *outSz = inSz;
+            WMEMCPY(newKey, in, inSz);
+            *outType = (const byte*)IdToName(ret);
+            *outTypeSz = (word32)WSTRLEN((const char*)*outType);
+        }
     }
 
     wolfSSH_KEY_clean(key);
@@ -2169,7 +2239,11 @@ int wolfSSH_ReadKey_file(const char* name,
                 || WSTRNSTR((const char*)in,
                     "ecdsa-sha2-nistp", inSz) == (const char*)in
                 || WSTRNSTR((const char*)in,
-                    "ssh-ed25519", inSz) == (const char*)in) {
+                    "ssh-ed25519", inSz) == (const char*)in
+                || WSTRNSTR((const char*)in,
+                    "ssh-mldsa-", inSz) == (const char*)in
+                || WSTRNSTR((const char*)in,
+                    "x509v3-ssh-mldsa-", inSz) == (const char*)in) {
             *isPrivate = 0;
             format = WOLFSSH_FORMAT_SSH;
             in[inSz] = 0;
