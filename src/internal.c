@@ -7936,12 +7936,17 @@ static int DoUserAuthInfoResponse(WOLFSSH* ssh,
     if ((ret == WS_SUCCESS) &&
         (ssh->kbAuth.promptCount != kb->responseCount)) {
         WLOG(WS_LOG_DEBUG, "DUARKB: Invalid number of responses received");
+        /* Respond with USERAUTH_FAILURE rather than
+         * tearing down the transport. Keep ret non-success so the
+         * allocation, parse, and callback steps below are skipped. */
+        authFailure = 1;
         ret = WS_USER_AUTH_E;
     }
 
     if (ret == WS_SUCCESS && kb->responseCount > WOLFSSH_MAX_PROMPTS) {
         WLOG(WS_LOG_DEBUG, "DUARKB: Received too many responses (%d), max: %d",
              kb->responseCount, WOLFSSH_MAX_PROMPTS);
+        authFailure = 1;
         ret = WS_USER_AUTH_E;
     }
 
@@ -8030,6 +8035,11 @@ static int DoUserAuthInfoResponse(WOLFSSH* ssh,
 
     if (ret == WS_SUCCESS || ret == WOLFSSH_USERAUTH_SUCCESS_ANOTHER) {
         *idx = begin;
+    }
+    else if (authFailure) {
+        /* On a failure response, report the whole payload consumed, matching
+         * the contract of the success path above. */
+        *idx = len;
     }
 
     if (authFailure || partialSuccess) {
