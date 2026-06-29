@@ -39,6 +39,10 @@ typedef struct WOLFSSHD_CONFIG WOLFSSHD_CONFIG;
 #define WOLFSSHD_PRIV_SANDBOX 1
 #define WOLFSSHD_PRIV_OFF     2
 
+#ifndef MAX_PATH_SZ
+    #define MAX_PATH_SZ 80
+#endif
+
 WOLFSSHD_CONFIG* wolfSSHD_ConfigNew(void* heap);
 void wolfSSHD_ConfigFree(WOLFSSHD_CONFIG* conf);
 int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename);
