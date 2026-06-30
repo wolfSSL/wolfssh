@@ -1898,6 +1898,196 @@ static int test_OpenSecureFile(void)
 
     return ret;
 }
+
+/* load a config whose PidFile is 'pidTarget' and run wolfSSHD_ConfigSavePID
+ * under umask(0), restoring the umask afterward so later tests are unaffected */
+static int pidSave(const char* confPath, const char* pidTarget)
+{
+    int ret;
+    mode_t old;
+    WOLFSSHD_CONFIG* cfg;
+    FILE* f;
+
+    f = fopen(confPath, "w");
+    if (f == NULL) {
+        return WS_FATAL_ERROR;
+    }
+    fprintf(f, "PidFile %s\n", pidTarget);
+    fclose(f);
+
+    cfg = wolfSSHD_ConfigNew(NULL);
+    if (cfg == NULL) {
+        return WS_MEMORY_E;
+    }
+    ret = wolfSSHD_ConfigLoad(cfg, confPath);
+    if (ret == WS_SUCCESS) {
+        /* deliberate worst case: prove the explicit 0644 mode holds even when
+         * the umask would not mask any bits */
+        old = umask(0);
+        wolfSSHD_ConfigSavePID(cfg);
+        umask(old);
+    }
+    wolfSSHD_ConfigFree(cfg);
+    return ret;
+}
+
+/* wolfSSHD_ConfigSavePID must refuse a symlink at the PID path so a planted
+ * link cannot truncate another file, and must create the PID file without
+ * group or world write even under a permissive umask. */
+static int test_ConfigSavePID(void)
+{
+    int ret = WS_SUCCESS;
+    int rd;
+    long pid = -1;
+    char base[] = "/tmp/wolfsshd_pidXXXXXX";
+    char conf[80] = "";
+    char pidPath[96] = "";
+    char victim[96] = "";
+    char linkPath[96] = "";
+    char hvictim[96] = "";
+    char hlink[96] = "";
+    char fifo[96] = "";
+    const char* secret = "VICTIM-CONTENTS\n";
+    FILE* f = NULL;
+    struct stat st;
+    char rbuf[64];
+
+    if (mkdtemp(base) == NULL) {
+        Log("    mkdtemp failed.\n");
+        ret = WS_FATAL_ERROR;
+    }
+
+    if (ret == WS_SUCCESS) {
+        snprintf(conf, sizeof(conf), "%s/sshd_config", base);
+        snprintf(pidPath, sizeof(pidPath), "%s/wolfsshd.pid", base);
+        snprintf(victim, sizeof(victim), "%s/victim", base);
+        snprintf(linkPath, sizeof(linkPath), "%s/link.pid", base);
+        snprintf(hvictim, sizeof(hvictim), "%s/hvictim", base);
+        snprintf(hlink, sizeof(hlink), "%s/hlink.pid", base);
+        snprintf(fifo, sizeof(fifo), "%s/fifo.pid", base);
+    }
+
+    /* Scenario 1: a normal path is written with our PID and is not group or
+     * world writable despite umask(0). */
+    if (ret == WS_SUCCESS) {
+        ret = pidSave(conf, pidPath);
+    }
+    if (ret == WS_SUCCESS) {
+        if (stat(pidPath, &st) != 0) {
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            f = fopen(pidPath, "r");
+            rd = (f != NULL) ? fscanf(f, "%ld", &pid) : 0;
+            if (f != NULL) {
+                fclose(f);
+            }
+            ret = smExpect("normal PID file written with our PID",
+                (rd == 1 && pid == (long)getpid()) ? WS_SUCCESS
+                                                    : WS_FATAL_ERROR, 1);
+            if (ret == WS_SUCCESS) {
+                ret = smExpect("PID file not group or world writable",
+                    (st.st_mode & (S_IWGRP | S_IWOTH)) ? WS_FATAL_ERROR
+                                                        : WS_SUCCESS, 1);
+            }
+        }
+    }
+
+    /* Scenario 2: a symlink at the PID path is refused, link target untouched.
+     * The common build exercises the atomic O_NOFOLLOW path; the lstat fallback
+     * needs a symlink-capable platform without O_NOFOLLOW. */
+    if (ret == WS_SUCCESS) {
+        f = fopen(victim, "w");
+        if (f == NULL) {
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            fputs(secret, f);
+            fclose(f);
+        }
+    }
+    if (ret == WS_SUCCESS && symlink(victim, linkPath) != 0) {
+        ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        ret = pidSave(conf, linkPath);
+    }
+    if (ret == WS_SUCCESS) {
+        f = fopen(victim, "r");
+        WMEMSET(rbuf, 0, sizeof(rbuf));
+        rd = (f != NULL) ? (int)fread(rbuf, 1, sizeof(rbuf) - 1, f) : -1;
+        if (f != NULL) {
+            fclose(f);
+        }
+        (void)rd;
+        /* A WOLFSSH_NO_SYMLINK_CHECK build does no symlink check by design, so
+         * only assert the target survived when the check is compiled in. */
+#ifdef WOLFSSH_HAVE_SYMLINK
+        ret = smExpect("symlinked PID path not followed, target intact",
+            (WSTRCMP(rbuf, secret) == 0) ? WS_SUCCESS : WS_FATAL_ERROR, 1);
+#else
+        (void)rbuf;
+#endif
+    }
+
+    /* Scenario 3: a hard link at the PID path is refused (O_NOFOLLOW stops a
+     * symlink but not a hard link), leaving the link target untouched. The
+     * st_nlink check that enforces this is unconditional, so this always runs. */
+    if (ret == WS_SUCCESS) {
+        f = fopen(hvictim, "w");
+        if (f == NULL) {
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            fputs(secret, f);
+            fclose(f);
+        }
+    }
+    if (ret == WS_SUCCESS && link(hvictim, hlink) != 0) {
+        ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        ret = pidSave(conf, hlink);
+    }
+    if (ret == WS_SUCCESS) {
+        f = fopen(hvictim, "r");
+        WMEMSET(rbuf, 0, sizeof(rbuf));
+        rd = (f != NULL) ? (int)fread(rbuf, 1, sizeof(rbuf) - 1, f) : -1;
+        if (f != NULL) {
+            fclose(f);
+        }
+        (void)rd;
+        ret = smExpect("hard-linked PID path refused, target intact",
+            (WSTRCMP(rbuf, secret) == 0) ? WS_SUCCESS : WS_FATAL_ERROR, 1);
+    }
+
+    /* Scenario 4: a FIFO at the PID path is rejected (O_NONBLOCK fast-fails the
+     * open and the S_ISREG check refuses it), and the FIFO is left in place
+     * rather than replaced by a regular PID file. */
+    if (ret == WS_SUCCESS && mkfifo(fifo, 0600) != 0) {
+        ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        ret = pidSave(conf, fifo);
+    }
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("FIFO PID path refused, still a FIFO",
+            (lstat(fifo, &st) == 0 && S_ISFIFO(st.st_mode)) ? WS_SUCCESS
+                                                            : WS_FATAL_ERROR, 1);
+    }
+
+    /* cleanup */
+    unlink(fifo);
+    unlink(linkPath);
+    unlink(victim);
+    unlink(hlink);
+    unlink(hvictim);
+    unlink(pidPath);
+    unlink(conf);
+    rmdir(base);
+
+    return ret;
+}
 #endif /* !_WIN32 */
 
 const TEST_CASE testCases[] = {
@@ -1920,6 +2110,7 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_ConfigFree),
 #ifndef _WIN32
     TEST_DECL(test_OpenSecureFile),
+    TEST_DECL(test_ConfigSavePID),
 #endif
 #ifdef WOLFSSL_BASE64_ENCODE
     TEST_DECL(test_CheckAuthKeysLine),
