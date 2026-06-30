@@ -701,6 +701,34 @@ static void test_wolfSSH_CTX_SetWindowPacketSize(void)
 }
 
 
+#if defined(WOLFSSH_CERTS) && !defined(WOLFSSH_NO_ECDSA)
+/* Build the length-prefixed single-cert chain buffer that
+ * wolfSSH_CERTMAN_VerifyCerts_buffer expects. Caller frees *chain. */
+static int certman_make_chain(const byte* cert, word32 certSz,
+        byte** chain, word32* chainSz)
+{
+    int ret = 0;
+    byte* buf;
+
+    buf = (byte*)malloc(UINT32_SZ + certSz);
+    if (buf != NULL) {
+        buf[0] = (byte)(certSz >> 24);
+        buf[1] = (byte)(certSz >> 16);
+        buf[2] = (byte)(certSz >> 8);
+        buf[3] = (byte)(certSz);
+        memcpy(buf + UINT32_SZ, cert, certSz);
+        *chain = buf;
+        *chainSz = UINT32_SZ + certSz;
+    }
+    else {
+        ret = -1;
+    }
+
+    return ret;
+}
+#endif /* WOLFSSH_CERTS && !WOLFSSH_NO_ECDSA */
+
+
 static void test_wolfSSH_CertMan(void)
 {
 #ifdef WOLFSSH_CERTMAN
@@ -751,6 +779,67 @@ static void test_wolfSSH_CertMan(void)
 
         wolfSSH_CERTMAN_free(cm);
     }
+    /* ECC trust anchor and leaf, so guard on ECDSA like the sibling tests. */
+#ifndef WOLFSSH_NO_ECDSA
+    {
+        /* Negative control: a trusted CA presented as the leaf (index 0) must
+         * be rejected as an end-entity cert in both FPKI and non-FPKI builds;
+         * otherwise a trusted CA could be used to bypass authentication. */
+        WOLFSSH_CERTMAN* cm;
+        byte* caCert = NULL;
+        byte* chain = NULL;
+        word32 caCertSz = 0;
+        word32 chainSz;
+
+        cm = wolfSSH_CERTMAN_new(NULL);
+        AssertNotNull(cm);
+
+        AssertIntEQ(0, load_file("./keys/ca-cert-ecc.der", &caCert, &caCertSz));
+        AssertIntEQ(WS_SUCCESS,
+                wolfSSH_CERTMAN_LoadRootCA_buffer(cm, caCert, caCertSz));
+
+        AssertIntEQ(0, certman_make_chain(caCert, caCertSz, &chain, &chainSz));
+        AssertIntEQ(WS_CERT_PROFILE_E,
+                wolfSSH_CERTMAN_VerifyCerts_buffer(cm, chain, chainSz, 1));
+
+        free(chain);
+        free(caCert);
+        wolfSSH_CERTMAN_free(cm);
+    }
+#ifdef WOLFSSH_NO_FPKI
+    {
+        /* Positive control: a genuine end-entity leaf signed by the CA still
+         * verifies. The leaf is not an FPKI cert, so only assert this when
+         * FPKI profile checking is compiled out. */
+        WOLFSSH_CERTMAN* cm;
+        byte* caCert = NULL;
+        byte* leafCert = NULL;
+        byte* chain = NULL;
+        word32 caCertSz = 0;
+        word32 leafCertSz = 0;
+        word32 chainSz;
+
+        cm = wolfSSH_CERTMAN_new(NULL);
+        AssertNotNull(cm);
+
+        AssertIntEQ(0, load_file("./keys/ca-cert-ecc.der", &caCert, &caCertSz));
+        AssertIntEQ(WS_SUCCESS,
+                wolfSSH_CERTMAN_LoadRootCA_buffer(cm, caCert, caCertSz));
+
+        AssertIntEQ(0,
+                load_file("./keys/fred-cert.der", &leafCert, &leafCertSz));
+        AssertIntEQ(0,
+                certman_make_chain(leafCert, leafCertSz, &chain, &chainSz));
+        AssertIntEQ(WS_SUCCESS,
+                wolfSSH_CERTMAN_VerifyCerts_buffer(cm, chain, chainSz, 1));
+
+        free(chain);
+        free(caCert);
+        free(leafCert);
+        wolfSSH_CERTMAN_free(cm);
+    }
+#endif /* WOLFSSH_NO_FPKI */
+#endif /* WOLFSSH_NO_ECDSA */
 #endif /* WOLFSSH_CERTS */
 }
 
