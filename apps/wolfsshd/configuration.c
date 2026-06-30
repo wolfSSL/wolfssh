@@ -29,6 +29,18 @@
 #endif
 
 #ifdef WOLFSSH_SSHD
+
+/* Define POSIX feature-test macros before any system header (as auth.c does) so
+ * fdopen/ftruncate/lstat/S_ISLNK are declared under strict -std= builds. */
+#ifdef __linux__
+    #ifndef _XOPEN_SOURCE
+        #define _XOPEN_SOURCE
+    #endif
+    #ifndef _GNU_SOURCE
+        #define _GNU_SOURCE
+    #endif
+#endif
+
 /* functions for parsing out options from a config file and for handling loading
  * key/certs using the env. filesystem */
 
@@ -51,10 +63,13 @@
 
 #include "configuration.h"
 
-#ifndef WIN32
+#ifndef _WIN32
 #include <dirent.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
 #endif
-#ifdef WIN32
+#ifdef _WIN32
 #include <process.h>
 #endif
 #ifdef HAVE_LIMITS_H
@@ -1779,18 +1794,105 @@ void wolfSSHD_ConfigSavePID(const WOLFSSHD_CONFIG* conf)
 {
     FILE* f;
     char buf[12]; /* large enough to hold 'int' type with null terminator */
+    word32 pidLen;
+    int writeOk;
+#ifndef _WIN32
+    int fd;
+    int ok = 1;
+    struct stat st;
+#endif
 
     if (conf->pidFile != NULL) {
         WMEMSET(buf, 0, sizeof(buf));
-        if (WFOPEN(NULL, &f, conf->pidFile, "wb") == 0) {
-    #ifndef WIN32
-            WSNPRINTF(buf, sizeof(buf), "%d", getpid());
-    #else
-            WSNPRINTF(buf, sizeof(buf), "%d", _getpid());
-    #endif
-            WFWRITE(NULL, buf, 1, WSTRLEN(buf), f);
-            WFCLOSE(NULL, f);
+        /* Reached only on real POSIX (wolfsshd requires fork/getpwnam), so raw
+         * open/fstat/ftruncate/fdopen are safe; the O_NOFOLLOW hardening needs
+         * a real fd that WFOPEN does not expose. */
+#ifndef _WIN32
+#if defined(WOLFSSH_HAVE_SYMLINK) && WOLFSSH_O_NOFOLLOW == 0
+        /* Symlinks are a concern here but O_NOFOLLOW is unavailable, so reject a
+         * symlinked leaf with a best-effort lstat pre-check (racy, the closest
+         * guard without the atomic primitive). */
+        if (lstat(conf->pidFile, &st) == 0 && S_ISLNK(st.st_mode)) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Refusing symlinked PID file %s", conf->pidFile);
+            ok = 0;
         }
+#endif
+        /* Open with O_NOFOLLOW and an explicit 0644 mode so a pre-positioned
+         * symlink at the PID file path cannot redirect the write to another
+         * file, and the result is never world-writable under a relaxed umask. */
+        if (ok) {
+            /* No O_TRUNC (truncate only after the fstat check below) and
+             * O_NONBLOCK so a planted FIFO fails fast instead of stalling the
+             * open before that check runs. */
+            fd = open(conf->pidFile,
+                      O_WRONLY | O_CREAT | O_NONBLOCK | WOLFSSH_O_NOFOLLOW,
+                      0644);
+            if (fd < 0) {
+                /* covers a refused symlink leaf (O_NOFOLLOW) as well as any
+                 * other open failure. */
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Unable to open PID file %s", conf->pidFile);
+            }
+            /* O_NOFOLLOW blocks a symlink but not a hard link onto a root-owned
+             * file; require a single-link regular file before truncating. */
+            else if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) ||
+                     st.st_nlink != 1) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Refusing unsafe PID file %s", conf->pidFile);
+                close(fd);
+            }
+            else if (ftruncate(fd, 0) != 0) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Unable to truncate PID file %s", conf->pidFile);
+                close(fd);
+            }
+            else {
+                /* O_NONBLOCK left set is a no-op on a regular-file write. */
+                f = fdopen(fd, "wb");
+                if (f == NULL) {
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Unable to open PID file stream %s",
+                        conf->pidFile);
+                    close(fd);
+                    /* the file was created or truncated above; remove the empty
+                     * leftover so no reader parses a zero-length PID. */
+                    unlink(conf->pidFile);
+                }
+                else {
+                    WSNPRINTF(buf, sizeof(buf), "%d", getpid());
+                    pidLen = (word32)WSTRLEN(buf);
+                    writeOk = ((word32)WFWRITE(NULL, buf, 1, pidLen, f) == pidLen);
+                    /* always close, then drop a short-written or unflushed PID
+                     * file so no reader parses a truncated value. */
+                    if (WFCLOSE(NULL, f) != 0) {
+                        writeOk = 0;
+                    }
+                    if (!writeOk) {
+                        wolfSSH_Log(WS_LOG_ERROR,
+                            "[SSHD] Failed to write PID file %s", conf->pidFile);
+                        unlink(conf->pidFile);
+                    }
+                }
+            }
+        }
+#else
+        if (WFOPEN(NULL, &f, conf->pidFile, "wb") == 0) {
+            WSNPRINTF(buf, sizeof(buf), "%d", _getpid());
+            pidLen = (word32)WSTRLEN(buf);
+            writeOk = ((word32)WFWRITE(NULL, buf, 1, pidLen, f) == pidLen);
+            /* always close, then drop a short-written or unflushed PID file so
+             * no reader parses a truncated value. */
+            if (WFCLOSE(NULL, f) != 0) {
+                writeOk = 0;
+            }
+            if (!writeOk) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Failed to write PID file %s", conf->pidFile);
+                WREMOVE(NULL, conf->pidFile);
+            }
+        }
+#endif
     }
 }
 
