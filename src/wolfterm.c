@@ -473,6 +473,18 @@ static int wolfSSH_DoControlSeq(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf, 
         }
         else {
             numArgs = getArgs(buf, bufSz, &i, args);
+
+            if (i >= bufSz) {
+                /* args ran to end of buffer with no command char yet, save
+                 * left overs for next call rather than reading past buf */
+                if (bufSz - *idx >= WOLFSSL_MAX_ESCBUF) {
+                    WLOG(WS_LOG_ERROR, "escBuf state exceeds capacity");
+                    return WS_FATAL_ERROR;
+                }
+                WMEMCPY(ssh->escBuf, buf + *idx, bufSz - *idx);
+                ssh->escBufSz = bufSz - *idx;
+                return WS_WANT_READ;
+            }
             c = buf[i]; i++;
         }
     }
@@ -482,6 +494,10 @@ static int wolfSSH_DoControlSeq(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf, 
 
         if (i >= bufSz) {
             /* save left overs for next call */
+            if (bufSz - *idx >= WOLFSSL_MAX_ESCBUF) {
+                WLOG(WS_LOG_ERROR, "escBuf state exceeds capacity");
+                return WS_FATAL_ERROR;
+            }
             WMEMCPY(ssh->escBuf, buf + *idx, bufSz - *idx);
             ssh->escBufSz = bufSz - *idx;
             return WS_WANT_READ;
@@ -669,6 +685,9 @@ int wolfSSH_ConvertConsole(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf,
             if (ret == WS_WANT_READ) {
                 return ret;
             }
+            /* sequence is finished, clear state so the next call starts
+             * fresh and does not re-enter CSI parsing on plain bytes */
+            ssh->escState = WC_ESC_NONE;
             ssh->escBufSz = 0;
             break;
 
@@ -677,6 +696,7 @@ int wolfSSH_ConvertConsole(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf,
             if (ret == WS_WANT_READ) {
                 return ret;
             }
+            ssh->escState = WC_ESC_NONE;
             ssh->escBufSz = 0;
             break;
 
