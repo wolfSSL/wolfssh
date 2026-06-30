@@ -210,22 +210,42 @@ enum {
 static int CertManIntermediateIsCA(WOLFSSH_CERTMAN* cm,
         const unsigned char* der, word32 derSz)
 {
-    DecodedCert decoded;
+    DecodedCert* decoded = NULL;
+#ifndef WOLFSSH_SMALL_STACK
+    DecodedCert decoded_s;
+#endif
     int isCA = 0;
 
-    wc_InitDecodedCert(&decoded, der, derSz, cm->heap);
-    if (wc_ParseCert(&decoded, WOLFSSL_FILETYPE_ASN1, NO_VERIFY, NULL) == 0) {
-        isCA = decoded.isCA;
-    #ifndef ALLOW_INVALID_CERTSIGN
-        if (isCA && !decoded.selfSigned && decoded.extKeyUsageSet &&
-                (decoded.extKeyUsage & KEYUSE_KEY_CERT_SIGN) == 0) {
-            /* If a KeyUsage extension is present, an intermediate CA must
-             * assert the keyCertSign bit. */
-            isCA = 0;
+#ifndef WOLFSSH_SMALL_STACK
+    decoded = &decoded_s;
+#else
+    decoded = (DecodedCert*)WMALLOC(sizeof(DecodedCert), cm->heap,
+        DYNTYPE_CERT);
+#endif
+
+    if (decoded != NULL) {
+        wc_InitDecodedCert(decoded, der, derSz, cm->heap);
+        if (wc_ParseCert(decoded, WOLFSSL_FILETYPE_ASN1, NO_VERIFY, NULL) == 0) {
+            isCA = decoded->isCA;
+        #ifndef ALLOW_INVALID_CERTSIGN
+            if (isCA && !decoded->selfSigned && decoded->extKeyUsageSet &&
+                    (decoded->extKeyUsage & KEYUSE_KEY_CERT_SIGN) == 0) {
+                /* If a KeyUsage extension is present, an intermediate CA must
+                 * assert the keyCertSign bit. */
+                isCA = 0;
+            }
+        #endif
         }
+        wc_FreeDecodedCert(decoded);
+    #ifdef WOLFSSH_SMALL_STACK
+        WFREE(decoded, cm->heap, DYNTYPE_CERT);
     #endif
     }
-    wc_FreeDecodedCert(&decoded);
+    else {
+        /* allocation failed; fail closed (not a CA) but log the real cause so
+         * it is not mistaken for a genuine non-CA intermediate */
+        WLOG(WS_LOG_CERTMAN, "could not allocate cert to check intermediate CA");
+    }
 
     return isCA;
 }
@@ -366,32 +386,51 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
         }
     }
 
-#ifndef WOLFSSH_NO_FPKI
-    /* FPKI checking on the leaf certificate */
+    /* Leaf (index 0) must be an end-entity cert; reject a CA leaf even without
+     * FPKI, and match a profile when FPKI is on. cm->cm resolves the signer
+     * (ca) that CheckProfile needs for the issuer-DN match. */
     if (ret == WS_SUCCESS) {
-        DecodedCert decoded;
+        DecodedCert* decoded = NULL;
+#ifndef WOLFSSH_SMALL_STACK
+        DecodedCert decoded_s;
 
-        wc_InitDecodedCert(&decoded, certLoc[0], certLen[0], cm->heap);
-        ret = wc_ParseCert(&decoded, WOLFSSL_FILETYPE_ASN1, 0, cm->cm);
+        decoded = &decoded_s;
+#else
+        decoded = (DecodedCert*)WMALLOC(sizeof(DecodedCert), cm->heap,
+            DYNTYPE_CERT);
+        if (decoded == NULL) {
+            ret = WS_MEMORY_E;
+        }
+#endif
 
-        if (ret == 0) {
-            ret =
-                CheckProfile(&decoded, PROFILE_FPKI_WORKSHEET_6) ||
-                CheckProfile(&decoded, PROFILE_FPKI_WORKSHEET_10) ||
-                CheckProfile(&decoded, PROFILE_FPKI_WORKSHEET_16);
-
-            if (ret == 0) {
+        if (ret == WS_SUCCESS) {
+            wc_InitDecodedCert(decoded, certLoc[0], certLen[0], cm->heap);
+            if (wc_ParseCert(decoded, WOLFSSL_FILETYPE_ASN1, NO_VERIFY, cm->cm)
+                    != 0) {
+                WLOG(WS_LOG_CERTMAN, "unable to parse leaf certificate");
+                ret = WS_CERT_OTHER_E;
+            }
+            else if (decoded->isCA) {
+                WLOG(WS_LOG_CERTMAN, "leaf certificate is a CA; rejecting");
+                ret = WS_CERT_PROFILE_E;
+            }
+#ifndef WOLFSSH_NO_FPKI
+            else if (!(CheckProfile(decoded, PROFILE_FPKI_WORKSHEET_6) ||
+                       CheckProfile(decoded, PROFILE_FPKI_WORKSHEET_10) ||
+                       CheckProfile(decoded, PROFILE_FPKI_WORKSHEET_16))) {
                 WLOG(WS_LOG_CERTMAN, "certificate didn't match profile");
                 ret = WS_CERT_PROFILE_E;
             }
-            else {
-                ret = WS_SUCCESS;
-            }
+#endif /* WOLFSSH_NO_FPKI */
+            wc_FreeDecodedCert(decoded);
         }
 
-        FreeDecodedCert(&decoded);
+#ifdef WOLFSSH_SMALL_STACK
+        if (decoded != NULL) {
+            WFREE(decoded, cm->heap, DYNTYPE_CERT);
+        }
+#endif
     }
-#endif /* WOLFSSH_NO_FPKI */
 
     if (certLoc != NULL)
         WFREE(certLoc, cm->heap, DYNTYPE_CERT);
@@ -440,11 +479,8 @@ static int CheckProfile(DecodedCert* cert, int profile)
             WLOG(WS_LOG_CERTMAN, "cert country of citizenship invalid");
     }
 
-    if (valid) {
-        valid = !cert->isCA;
-        if (valid != 1)
-            WLOG(WS_LOG_CERTMAN, "cert basic constraint invalid");
-    }
+    /* leaf isCA (basic constraint) is enforced unconditionally by the caller
+     * before CheckProfile runs, so it is not re-checked here */
 
     if (valid) {
         valid =
