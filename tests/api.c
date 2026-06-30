@@ -3020,6 +3020,18 @@ static byte osc_trunc_str[] = { /* "ESC ] 0 ; title" with no BEL terminator */
 static byte osc_full[] = { /* well formed "ESC ] 0 ; hi BEL" */
     0x1B, 0x5D, 0x30, 0x3B, 0x68, 0x69, 0x07
 };
+static byte csi_open[] = { /* "ESC [" with no args yet, escBufSz left at 0 */
+    0x1B, 0x5B
+};
+static byte csi_args[] = { /* pure args "12" with no command char */
+    0x31, 0x32
+};
+static byte csi_cmd[] = { /* command char 'm' completes the sequence */
+    0x6D
+};
+static byte csi_inline[] = { /* "ESC [ 1 2" args run to end of one buffer */
+    0x1B, 0x5B, 0x31, 0x32
+};
 #endif /* USE_WINDOWS_API */
 
 
@@ -3066,6 +3078,29 @@ static void test_wolfSSH_ConvertConsole(void)
     /* a well formed OSC sequence still parses */
     AssertIntEQ(wolfSSH_ConvertConsole(ssh, stdoutHandle, osc_full,
                 sizeof(osc_full)), WS_SUCCESS);
+
+    /* a CSI sequence split so the first packet ends right after "ESC [" and
+     * the second carries only argument bytes must not read past the buffer
+     * while waiting for the command char */
+    AssertIntEQ(wolfSSH_ConvertConsole(ssh, stdoutHandle, csi_open,
+                sizeof(csi_open)), WS_WANT_READ);
+    AssertIntEQ(wolfSSH_ConvertConsole(ssh, stdoutHandle, csi_args,
+                sizeof(csi_args)), WS_WANT_READ);
+    /* the trailing command char completes the reassembled sequence */
+    AssertIntEQ(wolfSSH_ConvertConsole(ssh, stdoutHandle, csi_cmd,
+                sizeof(csi_cmd)), WS_SUCCESS);
+    /* after the split sequence completes the esc state must be cleared, so a
+     * following plain argument byte is printed rather than swallowed back into
+     * CSI parsing (which would return WS_WANT_READ) */
+    AssertIntEQ(wolfSSH_ConvertConsole(ssh, stdoutHandle, csi_args, 1),
+                WS_SUCCESS);
+
+    /* a single buffer whose CSI arguments run to the end with no command char
+     * must save the partial args and wait, then complete on the next byte */
+    AssertIntEQ(wolfSSH_ConvertConsole(ssh, stdoutHandle, csi_inline,
+                sizeof(csi_inline)), WS_WANT_READ);
+    AssertIntEQ(wolfSSH_ConvertConsole(ssh, stdoutHandle, csi_cmd,
+                sizeof(csi_cmd)), WS_SUCCESS);
 
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
