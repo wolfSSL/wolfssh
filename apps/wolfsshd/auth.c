@@ -1520,6 +1520,70 @@ static int CAKeysFileDiffers(const char* a, const char* b)
 }
 
 
+/* Returns 1 when the certificate UPN <user>@<domain> in name[0..nameSz)
+ * authorizes login as 'usr'. allowList is a whitespace/comma list of permitted
+ * realms; NULL/empty matches the local part only, else domain must be listed. */
+#if defined(WOLFSSL_FPKI) || defined(WOLFSSHD_UNIT_TEST)
+WOLFSSHD_STATIC int MatchUPNToUser(const char* usr, const char* name,
+                                   int nameSz, const char* allowList)
+{
+    int ret = 0;
+    int idx = 0;
+    int domainSz;
+    int tokSz;
+    const char* domain;
+    const char* p;
+    const char* tok;
+
+    if (usr != NULL && name != NULL && nameSz >= 0) {
+        /* locate the '@' separating the local part from the domain */
+        for (idx = 0; idx < nameSz; idx++) {
+            if (name[idx] == '@') {
+                break;
+            }
+        }
+
+        /* the local part must equal the requested user name exactly */
+        if ((int)XSTRLEN(usr) == idx && XSTRNCMP(usr, name, idx) == 0) {
+            if (allowList == NULL || *allowList == '\0') {
+                /* no allowlist configured: keep local-part-only matching */
+                ret = 1;
+            }
+            else if (idx < nameSz) {
+                /* an allowlist is set: the UPN domain must be present and
+                 * listed as an exact, case-insensitive match */
+                domain = name + idx + 1;
+                domainSz = nameSz - idx - 1;
+
+                p = allowList;
+                while (*p != '\0' && ret == 0) {
+                    /* skip separators preceding the realm token */
+                    while (*p == ' ' || *p == '\t' || *p == '\r' ||
+                            *p == '\n' || *p == ',') {
+                        p++;
+                    }
+
+                    tok = p;
+                    while (*p != '\0' && *p != ' ' && *p != '\t' &&
+                            *p != '\r' && *p != '\n' && *p != ',') {
+                        p++;
+                    }
+                    tokSz = (int)(p - tok);
+
+                    if (tokSz > 0 && tokSz == domainSz &&
+                            WSTRNCASECMP(tok, domain, (size_t)domainSz) == 0) {
+                        ret = 1;
+                    }
+                }
+            }
+        }
+    }
+
+    return ret;
+}
+#endif /* WOLFSSL_FPKI || WOLFSSHD_UNIT_TEST */
+
+
 /*
  * @TODO this will take a pipe or equivalent to talk to a privileged thread
  * rather than having WOLFSSHD_AUTH directly with privilege separation.
@@ -1671,29 +1735,33 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                 }
                 else {
                     int usrMatch = 0;
+                    int upnRealmUnchecked = 0;
                     DNS_entry* current = dCert->altNames;
+                    const char* upnDomains =
+                        wolfSSHD_ConfigGetAuthorizedUPNDomains(usrConf);
 
                     while (current != NULL) {
                         if (current->type == ASN_OTHER_TYPE &&
                                 current->oidSum == UPN_OID) {
-                            /* found UPN oid, check name against user */
-                            int idx;
-
-                            for (idx = 0; idx < current->len; idx++) {
-                                if (current->name[idx] == '@') break;
-                                /* UPN format is <user>@<domain>
-                                 * since currently not doing any checks on
-                                 * domain it is  not treated as an error if only
-                                 * the user name is present without the domain
-                                 */
-                            }
-
-                            if ((int)XSTRLEN(usr) == idx &&
-                                    XSTRNCMP(usr, current->name, idx) == 0) {
+                            /* bind the cert identity to the requested user;
+                             * MatchUPNToUser also enforces the realm allowlist
+                             * when AuthorizedUPNDomains is set */
+                            if (MatchUPNToUser(usr, current->name, current->len,
+                                    upnDomains)) {
                                 usrMatch = 1;
+                                if (upnDomains == NULL || *upnDomains == '\0') {
+                                    upnRealmUnchecked = 1;
+                                }
                             }
                         }
                         current = current->next;
+                    }
+
+                    /* a UPN matched but no realm policy is set; warn per auth
+                     * attempt so the opt-in gap is visible, no shared state */
+                    if (upnRealmUnchecked) {
+                        wolfSSH_Log(WS_LOG_WARN, "[SSHD] AuthorizedUPNDomains "
+                            "not set; certificate UPN domain is not checked");
                     }
 
                     if (usrMatch == 0) {
