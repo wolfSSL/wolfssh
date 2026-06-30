@@ -991,6 +991,117 @@ static void test_wolfSSH_ReadKey_badPad(void)
 }
 
 
+static void test_wolfSSH_ReadKey_shortBuffer(void)
+{
+    /* Truncated and malformed OpenSSH private key buffers that previously
+     * underflowed inSz inside DoOpenSshKey(), driving an out-of-bounds read in
+     * Base64_Decode(). Exact-size, non-terminated heap copies are used so the
+     * over-read is caught by AddressSanitizer if the fix ever regresses. Each
+     * input must be rejected with WS_PARSE_E and leave the outputs untouched. */
+    static const char* goodPrefix =
+        "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    static const char* badPrefix =
+        "-----BEGIN NOT AN OPENSSH KEY-------\n"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    const char* srcs[4];
+    word32 sizes[4];
+    byte* in;
+    byte* key;
+    word32 keySz;
+    const byte* keyType;
+    word32 keyTypeSz;
+    int ret;
+    int i;
+    int numCases = (int)(sizeof(srcs) / sizeof(srcs[0]));
+
+    /* begin marker only */
+    srcs[0] = goodPrefix;
+    sizes[0] = 35;
+    /* begin marker plus base64, no end marker, under the marker-pair length */
+    srcs[1] = goodPrefix;
+    sizes[1] = 50;
+    /* begin marker plus base64, no end marker, one byte under the old 70 */
+    srcs[2] = goodPrefix;
+    sizes[2] = 69;
+    /* wrong begin marker */
+    srcs[3] = badPrefix;
+    sizes[3] = 69;
+
+    for (i = 0; i < numCases; i++) {
+        in = (byte*)WMALLOC(sizes[i], NULL, DYNTYPE_FILE);
+        AssertNotNull(in);
+        WMEMCPY(in, srcs[i], sizes[i]);
+
+        key = NULL;
+        keySz = 0;
+        keyType = NULL;
+        keyTypeSz = 0;
+        ret = wolfSSH_ReadKey_buffer(in, sizes[i], WOLFSSH_FORMAT_OPENSSH,
+                &key, &keySz, &keyType, &keyTypeSz, NULL);
+        AssertIntEQ(ret, WS_PARSE_E);
+        AssertNull(key);
+        AssertIntEQ(keySz, 0);
+        AssertNull(keyType);
+        AssertIntEQ(keyTypeSz, 0);
+
+        WFREE(in, NULL, DYNTYPE_FILE);
+    }
+}
+
+
+static void test_wolfSSH_ReadKey_noTrailingNewline(void)
+{
+#ifndef WOLFSSH_NO_RSA
+    /* A valid OpenSSH key whose buffer ends exactly at the end marker, with no
+     * trailing newline, must decode to the same bytes as the canonical form.
+     * The old fixed "inSz - 70" arithmetic assumed a trailing newline and
+     * dropped the final base64 character for such inputs. */
+    static const char* endMarker = "-----END OPENSSH PRIVATE KEY-----";
+    byte* keyRef = NULL;
+    byte* keyTrim = NULL;
+    word32 keyRefSz = 0;
+    word32 keyTrimSz = 0;
+    const byte* keyType = NULL;
+    word32 keyTypeSz = 0;
+    const char* end;
+    word32 fullSz = (word32)WSTRLEN(id_rsa);
+    word32 trimSz;
+    int ret;
+
+    /* Canonical parse, the input ends with a trailing newline. */
+    ret = wolfSSH_ReadKey_buffer((const byte*)id_rsa, fullSz,
+            WOLFSSH_FORMAT_OPENSSH, &keyRef, &keyRefSz,
+            &keyType, &keyTypeSz, NULL);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertNotNull(keyRef);
+    AssertIntGT(keyRefSz, 0);
+
+    /* Length up to and including the end marker, with the trailing newline
+     * dropped so the buffer ends on the last marker byte. */
+    end = WSTRNSTR(id_rsa, endMarker, fullSz);
+    AssertNotNull(end);
+    trimSz = (word32)(end - id_rsa) + (word32)WSTRLEN(endMarker);
+    AssertIntLT(trimSz, fullSz);
+
+    keyType = NULL;
+    keyTypeSz = 0;
+    ret = wolfSSH_ReadKey_buffer((const byte*)id_rsa, trimSz,
+            WOLFSSH_FORMAT_OPENSSH, &keyTrim, &keyTrimSz,
+            &keyType, &keyTypeSz, NULL);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertNotNull(keyTrim);
+    /* Must match the canonical decode exactly, not be truncated by a byte. */
+    AssertIntEQ(keyTrimSz, keyRefSz);
+    AssertIntEQ(WMEMCMP(keyTrim, keyRef, keyRefSz), 0);
+    AssertStrEQ(keyType, "ssh-rsa");
+
+    WFREE(keyRef, NULL, DYNTYPE_FILE);
+    WFREE(keyTrim, NULL, DYNTYPE_FILE);
+#endif
+}
+
+
 #ifdef WOLFSSH_SCP
 
 static int my_ScpRecv(WOLFSSH* ssh, int state, const char* basePath,
@@ -3734,6 +3845,8 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_CertMan();
     test_wolfSSH_ReadKey();
     test_wolfSSH_ReadKey_badPad();
+    test_wolfSSH_ReadKey_shortBuffer();
+    test_wolfSSH_ReadKey_noTrailingNewline();
     test_wolfSSH_QueryAlgoList();
     test_wolfSSH_SetAlgoList();
 #ifdef WOLFSSH_AGENT

@@ -2001,6 +2001,35 @@ static int DoOpenSshKey(const byte* in, word32 inSz, byte** out,
     int ret = WS_SUCCESS;
     byte* newKey = NULL;
     word32 newKeySz = inSz; /* binary will be smaller than PEM */
+    word32 beginSz = (word32)WSTRLEN(PrivBeginOpenSSH);
+    word32 endSz = (word32)WSTRLEN(PrivEndOpenSSH);
+    const byte* b64 = NULL;
+    const char* footer = NULL;
+    word32 b64Sz = 0;
+
+    /* Reject buffers too small to hold both markers. Without this guard the
+     * subtraction used to locate the base64 region underflows inSz. */
+    if (inSz <= beginSz + endSz) {
+        WLOG(WS_LOG_DEBUG, "OpenSSH private key buffer too small");
+        return WS_PARSE_E;
+    }
+
+    /* The begin marker must lead the buffer. */
+    if (WMEMCMP(in, PrivBeginOpenSSH, beginSz) != 0) {
+        WLOG(WS_LOG_DEBUG, "OpenSSH private key missing begin marker");
+        return WS_PARSE_E;
+    }
+
+    /* Locate the end marker so the base64 region is bounded by the input. */
+    footer = WSTRNSTR((const char*)in + beginSz, PrivEndOpenSSH,
+            inSz - beginSz);
+    if (footer == NULL) {
+        WLOG(WS_LOG_DEBUG, "OpenSSH private key missing end marker");
+        return WS_PARSE_E;
+    }
+
+    b64 = in + beginSz;
+    b64Sz = (word32)(footer - (const char*)b64);
 
     if (*out == NULL) {
         newKey = (byte*)WMALLOC(newKeySz, heap, DYNTYPE_PRIVKEY);
@@ -2017,10 +2046,7 @@ static int DoOpenSshKey(const byte* in, word32 inSz, byte** out,
         newKeySz = *outSz;
     }
 
-    in += WSTRLEN(PrivBeginOpenSSH);
-    inSz -= (word32)(WSTRLEN(PrivBeginOpenSSH) + WSTRLEN(PrivEndOpenSSH) + 2);
-
-    ret = Base64_Decode((byte*)in, inSz, newKey, &newKeySz);
+    ret = Base64_Decode((byte*)b64, b64Sz, newKey, &newKeySz);
     if (ret == 0) {
         ret = WS_SUCCESS;
     }
