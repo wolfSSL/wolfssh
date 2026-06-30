@@ -1577,20 +1577,15 @@ extern "C" {
     #define WOLFSSH_HAVE_SYMLINK
 #endif
 
-/* wIsSymlink lives in the always-compiled port.c, but its filesystem
- * dependencies (WSTAT_T/WLSTAT/S_ISLNK on POSIX, WS_GetFileAttributesExA on
- * Windows) and its only callers exist solely in the SFTP and SCP code, so
- * gate it on those features in addition to the platform capability.  Shared by
- * the SFTP path-confinement guard and the SCP send guards. */
-#if defined(WOLFSSH_HAVE_SYMLINK) && \
-    (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP))
-    WOLFSSH_LOCAL int wIsSymlink(const char* path);
-
-    /* Open flag that refuses to follow a final-component symbolic link, so the
-     * open is atomic against a swapped link.  Maps to the platform primitive
-     * where available (POSIX O_NOFOLLOW) and to 0 elsewhere (Windows and any
-     * filesystem lacking it), where wFopenNoFollow falls back to a wIsSymlink
-     * check before the open. */
+/* No-follow open flags, defined for every filesystem that can store a symlink
+ * (POSIX and Windows) so the SFTP, SCP, and SSHD code share one definition. */
+#ifdef WOLFSSH_HAVE_SYMLINK
+    #ifndef USE_WINDOWS_API
+        #include <fcntl.h> /* supplies O_NOFOLLOW/O_DIRECTORY on POSIX */
+    #endif
+    /* Open flag refusing to follow a final-component symlink, so the open is
+     * atomic against a swapped link.  0 where unavailable (Windows, link-less
+     * filesystems), where the caller falls back to a wIsSymlink check. */
     #ifdef O_NOFOLLOW
         #define WOLFSSH_O_NOFOLLOW O_NOFOLLOW
     #else
@@ -1603,6 +1598,22 @@ extern "C" {
     #else
         #define WOLFSSH_O_DIRECTORY 0
     #endif
+#endif /* WOLFSSH_HAVE_SYMLINK */
+
+/* Catch-all so callers can use WOLFSSH_O_NOFOLLOW unconditionally; resolves to
+ * 0 when symlinks are not a concern (no-symlink filesystems, opt-out builds). */
+#ifndef WOLFSSH_O_NOFOLLOW
+    #define WOLFSSH_O_NOFOLLOW 0
+#endif
+
+/* wIsSymlink lives in the always-compiled port.c, but its filesystem
+ * dependencies (WSTAT_T/WLSTAT/S_ISLNK on POSIX, WS_GetFileAttributesExA on
+ * Windows) and its only callers exist solely in the SFTP and SCP code, so
+ * gate it on those features in addition to the platform capability.  Shared by
+ * the SFTP path-confinement guard and the SCP send guards. */
+#if defined(WOLFSSH_HAVE_SYMLINK) && \
+    (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP))
+    WOLFSSH_LOCAL int wIsSymlink(const char* path);
 
     /* Open a file for reading without following a final-component symlink.
      * Returns 0 on success, non-zero on failure, matching the wfopen
