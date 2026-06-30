@@ -470,7 +470,10 @@ static int test_ConfigCopy(void)
  * The auth-boundary enforcement itself (a tightened Match node is honored, and
  * a NULL per-user config rejects rather than falls through to the global node)
  * is covered by manual/integration testing of wolfsshd against an sshd_config
- * containing a Match block that disables password auth and PermitRootLogin. */
+ * containing a Match block that disables password auth and PermitRootLogin.
+ * On Unix the PermitRootLogin check now resolves the account and gates on
+ * uid 0 (not the literal name "root"), so a non-"root" uid 0 alias is also
+ * rejected; that behavior is covered by sshd_permitroot_test.sh. */
 static int test_GetUserConfMatchOverride(void)
 {
     int ret = WS_SUCCESS;

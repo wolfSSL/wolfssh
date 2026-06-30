@@ -1455,21 +1455,34 @@ static int DoCheckUser(const char* usr, WOLFSSHD_AUTH* auth)
 {
     int ret = WOLFSSH_USERAUTH_SUCCESS;
     int rc;
+    int isRoot = 0;
     WOLFSSHD_CONFIG* usrConf;
+#ifndef _WIN32
+    struct passwd* pwInfo;
+#endif
 
     wolfSSH_Log(WS_LOG_INFO, "[SSHD] Checking user name %s", usr);
 
+#ifndef _WIN32
+    /* PermitRootLogin covers every uid 0 account (so an alias like "toor"
+     * cannot bypass it) and the literal name "root", so a transient getpwnam
+     * failure cannot skip the check for root. */
+    pwInfo = getpwnam(usr);
+    if ((pwInfo != NULL && pwInfo->pw_uid == 0) || XSTRCMP(usr, "root") == 0) {
+        isRoot = 1;
+    }
+#else
+    /* No uid 0 on Windows and no logon token yet at this pre-auth stage, so
+     * fall back to the literal name; a token based Administrators membership
+     * check would belong after authentication. */
     if (XSTRCMP(usr, "root") == 0) {
-        /* Resolve the per-user configuration so that a Match block override of
-         * PermitRootLogin is honored, rather than only consulting the global
-         * config node. The lookup is only needed for the root user, so it is
-         * scoped to this branch.
-         *
-         * A NULL return means the root user's configuration could not be
-         * resolved (e.g. group set enumeration failed inside
-         * wolfSSHD_AuthGetUserConf). Fail closed and reject the login in that
-         * case rather than falling back to the global node, since denying root
-         * on an unresolvable configuration is the safe choice. */
+        isRoot = 1;
+    }
+#endif
+
+    if (isRoot == 1) {
+        /* Resolve per-user config so a Match override is honored; a NULL
+         * result is unresolvable, so fail closed and reject. */
         usrConf = wolfSSHD_AuthGetUserConf(auth, usr, NULL, NULL, NULL, NULL,
                                            NULL);
         if (usrConf == NULL || wolfSSHD_ConfigGetPermitRoot(usrConf) == 0) {
