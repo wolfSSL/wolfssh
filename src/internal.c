@@ -5675,16 +5675,26 @@ static int KeyAgreeDh_client(WOLFSSH* ssh, byte hashId,
     WLOG(WS_LOG_DEBUG, "Entering KeyAgreeDh_client()");
     WOLFSSH_UNUSED(hashId);
 
-    PRIVATE_KEY_UNLOCK();
-    ret = wc_DhAgree(&ssh->handshake->privKey.dh,
-                     ssh->k, &ssh->kSz,
-                     ssh->handshake->x, ssh->handshake->xSz,
-                     f, fSz);
-    PRIVATE_KEY_LOCK();
+    /* Reject a peer public value outside the safe range [2, p-2] before key
+     * agreement. Keeps wolfSSH independent of whether the linked wolfSSL
+     * validates the peer key inside wc_DhAgree. */
+    ret = wc_DhCheckPubKey(&ssh->handshake->privKey.dh, f, fSz);
     if (ret != 0) {
-        WLOG(WS_LOG_ERROR,
-                "Generate DH shared secret failed, %d", ret);
+        WLOG(WS_LOG_ERROR, "Peer DH public value rejected, %d", ret);
         ret = WS_CRYPTO_FAILED;
+    }
+    if (ret == 0) {
+        PRIVATE_KEY_UNLOCK();
+        ret = wc_DhAgree(&ssh->handshake->privKey.dh,
+                         ssh->k, &ssh->kSz,
+                         ssh->handshake->x, ssh->handshake->xSz,
+                         f, fSz);
+        PRIVATE_KEY_LOCK();
+        if (ret != 0) {
+            WLOG(WS_LOG_ERROR,
+                    "Generate DH shared secret failed, %d", ret);
+            ret = WS_CRYPTO_FAILED;
+        }
     }
     ForceZero(ssh->handshake->x, ssh->handshake->xSz);
     wc_FreeDhKey(&ssh->handshake->privKey.dh);
@@ -12459,6 +12469,11 @@ static int KeyAgreeDh_server(WOLFSSH* ssh, byte hashId, byte* f, word32* fSz)
         if (ret == 0)
             ret = wc_DhGenerateKeyPair(privKey, ssh->rng,
                     y_ptr, &ySz, f, fSz);
+        /* Reject a peer public value outside the safe range [2, p-2] before
+         * key agreement, independent of the linked wolfSSL's own check. */
+        if (ret == 0)
+            ret = wc_DhCheckPubKey(privKey, ssh->handshake->e,
+                    ssh->handshake->eSz);
         if (ret == 0) {
             PRIVATE_KEY_UNLOCK();
             ret = wc_DhAgree(privKey, ssh->k, &ssh->kSz, y_ptr, ySz,
