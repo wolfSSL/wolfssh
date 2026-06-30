@@ -77,6 +77,7 @@ struct WOLFSSHD_CONFIG {
     char* authKeysFile;
     char* forceCmd;
     char* pidFile;
+    char* authorizedUPNDomains; /* allowlist of UPN realms for cert auth */
     WOLFSSHD_CONFIG* next; /* next config in list */
     long  loginTimer;
     word16 port;
@@ -314,6 +315,13 @@ static WOLFSSHD_CONFIG* wolfSSHD_ConfigCopy(WOLFSSHD_CONFIG* conf)
                                         newConf->heap);
         }
 
+        if (ret == WS_SUCCESS && conf->authorizedUPNDomains) {
+            ret = CreateString(&newConf->authorizedUPNDomains,
+                                        conf->authorizedUPNDomains,
+                                        (int)WSTRLEN(conf->authorizedUPNDomains),
+                                        newConf->heap);
+        }
+
         if (ret == WS_SUCCESS) {
             newConf->loginTimer   = conf->loginTimer;
             newConf->port         = conf->port;
@@ -357,6 +365,7 @@ void wolfSSHD_ConfigFree(WOLFSSHD_CONFIG* conf)
         FreeString(&current->pidFile,        heap);
         FreeString(&current->userCAKeysFile,  heap);
         FreeString(&current->forceCmd,        heap);
+        FreeString(&current->authorizedUPNDomains, heap);
         FreeString(&current->usrAppliesTo,    heap);
         FreeString(&current->groupAppliesTo,  heap);
 
@@ -399,9 +408,10 @@ enum {
     OPT_BANNER                  = 23,
     OPT_PUBKEY_AUTH             = 24,
     OPT_STRICT_MODES            = 25,
+    OPT_AUTHORIZED_UPN_DOMAINS  = 26,
 };
 enum {
-    NUM_OPTIONS = 26
+    NUM_OPTIONS = 27
 };
 
 static const CONFIG_OPTION options[NUM_OPTIONS] = {
@@ -431,6 +441,7 @@ static const CONFIG_OPTION options[NUM_OPTIONS] = {
     {OPT_PIDFILE,                 "PidFile"},
     {OPT_BANNER,                  "Banner"},
     {OPT_STRICT_MODES,            "StrictModes"},
+    {OPT_AUTHORIZED_UPN_DOMAINS,  "AuthorizedUPNDomains"},
 };
 
 /* returns WS_SUCCESS on success */
@@ -1152,27 +1163,27 @@ static int HandleMatch(WOLFSSHD_CONFIG** conf, const char* value, int valueSz)
 }
 
 
-/* returns WS_SUCCESS on success */
-static int HandleForcedCommand(WOLFSSHD_CONFIG* conf, const char* value,
-    int valueSz)
+/* returns WS_SUCCESS on success. Replaces *dst with a length-bounded copy of
+ * the full line remainder so a whitespace separated multi value list is kept
+ * rather than truncated at the first token. */
+static int SetListString(char** dst, const char* value, int valueSz,
+    void* heap)
 {
     int ret = WS_SUCCESS;
 
-    if (conf == NULL || value == NULL) {
+    if (dst == NULL || value == NULL) {
         ret = WS_BAD_ARGUMENT;
     }
 
     if (ret == WS_SUCCESS) {
-        if (conf->forceCmd != NULL) {
-            FreeString(&conf->forceCmd, conf->heap);
-            conf->forceCmd = NULL;
+        if (*dst != NULL) {
+            FreeString(dst, heap);
+            *dst = NULL;
         }
 
-        ret = CreateString(&conf->forceCmd, value, valueSz, conf->heap);
+        ret = CreateString(dst, value, valueSz, heap);
     }
 
-
-    (void)valueSz;
     return ret;
 }
 
@@ -1259,7 +1270,8 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
             ret = HandleMatch(conf, full, fullSz);
             break;
         case OPT_FORCE_CMD:
-            ret = HandleForcedCommand(*conf, full, fullSz);
+            ret = SetListString(&(*conf)->forceCmd, full, fullSz,
+                    (*conf)->heap);
             break;
         case OPT_TRUSTED_USER_CA_KEYS:
             /* TODO: Add logic to check if file exists? */
@@ -1273,6 +1285,10 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
             break;
         case OPT_STRICT_MODES:
             ret = HandleStrictModes(*conf, value);
+            break;
+        case OPT_AUTHORIZED_UPN_DOMAINS:
+            ret = SetListString(&(*conf)->authorizedUPNDomains, full, fullSz,
+                    (*conf)->heap);
             break;
         default:
             break;
@@ -1624,6 +1640,17 @@ char* wolfSSHD_ConfigGetUserCAKeysFile(const WOLFSSHD_CONFIG* conf)
 
     if (conf != NULL) {
         ret = conf->userCAKeysFile;
+    }
+
+    return ret;
+}
+
+char* wolfSSHD_ConfigGetAuthorizedUPNDomains(const WOLFSSHD_CONFIG* conf)
+{
+    char* ret = NULL;
+
+    if (conf != NULL) {
+        ret = conf->authorizedUPNDomains;
     }
 
     return ret;

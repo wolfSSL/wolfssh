@@ -329,6 +329,7 @@ static int test_ConfigCopy(void)
     if (ret == WS_SUCCESS) ret = PCL("HostKey /etc/ssh/ssh_host_key");
     if (ret == WS_SUCCESS) ret = PCL("ForceCommand /bin/restricted");
     if (ret == WS_SUCCESS) ret = PCL("PidFile /var/run/sshd.pid");
+    if (ret == WS_SUCCESS) ret = PCL("AuthorizedUPNDomains corp.example");
 
     /* string fields via public setters */
     if (ret == WS_SUCCESS)
@@ -446,6 +447,12 @@ static int test_ConfigCopy(void)
     if (ret == WS_SUCCESS) {
         /* source set StrictModes off; the copy must carry it over */
         if (wolfSSHD_ConfigGetStrictModes(match) != 0)
+            ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetAuthorizedUPNDomains(match) == NULL ||
+            XSTRCMP(wolfSSHD_ConfigGetAuthorizedUPNDomains(match),
+                    "corp.example") != 0)
             ret = WS_FATAL_ERROR;
     }
 
@@ -1618,6 +1625,119 @@ static int test_CAKeysFileDiffers(void)
     return ret;
 }
 
+/* Parses an AuthorizedUPNDomains line and confirms the stored value is returned
+ * by the getter, locking in the new config option's plumbing. */
+static int test_ConfigParseAuthorizedUPNDomains(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* conf;
+    const char* line = "AuthorizedUPNDomains corp.example other.example";
+    char* got;
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL) {
+        ret = WS_MEMORY_E;
+    }
+
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: parse AuthorizedUPNDomains.");
+        ret = ParseConfigLine(&conf, line, (int)WSTRLEN(line), 0);
+        if (ret == WS_SUCCESS) {
+            got = wolfSSHD_ConfigGetAuthorizedUPNDomains(conf);
+            if (got == NULL ||
+                    XSTRCMP(got, "corp.example other.example") != 0) {
+                ret = WS_FATAL_ERROR;
+            }
+        }
+        Log(ret == WS_SUCCESS ? " PASSED.\n" : " FAILED.\n");
+    }
+
+    if (conf != NULL) {
+        wolfSSHD_ConfigFree(conf);
+    }
+
+    return ret;
+}
+
+/* Exercises the UPN-to-user binding helper directly: local-part matching with
+ * no allowlist (back-compat), and the realm allowlist enforcement that fixes
+ * the cross-domain authentication bypass. */
+static int test_MatchUPNToUser(void)
+{
+    int ret = WS_SUCCESS;
+    int i;
+    int sz;
+
+    /* name buffers are not necessarily NUL terminated in a real cert, so the
+     * helper is length bounded. For vectors with nameSz == 0, the test derives
+     * the length from WSTRLEN(name); a non-zero nameSz bounds a longer buffer to
+     * prove bytes past it are ignored. */
+    static const struct {
+        const char* desc;
+        const char* usr;
+        const char* name;
+        const char* allowList;
+        int expect;
+        int nameSz;
+    } vectors[] = {
+        /* no allowlist: local part only, any/absent domain is accepted */
+        {"no allowlist, domain ignored", "alice", "alice@other.example", NULL,
+            1, 0},
+        {"no allowlist, bare local part", "alice", "alice", NULL, 1, 0},
+        {"no allowlist, wrong local part", "bob", "alice@corp.example", NULL,
+            0, 0},
+        {"empty allowlist, domain ignored", "alice", "alice@x.example", "", 1,
+            0},
+
+        /* allowlist set: realm must be present and listed */
+        {"allowlist match", "alice", "alice@corp.example", "corp.example", 1,
+            0},
+        {"allowlist mismatch", "alice", "alice@other.example", "corp.example",
+            0, 0},
+        {"allowlist, missing domain", "alice", "alice", "corp.example", 0, 0},
+        {"allowlist, empty domain", "alice", "alice@", "corp.example", 0, 0},
+        {"allowlist, wrong local part", "bob", "alice@corp.example",
+            "corp.example", 0, 0},
+        {"allowlist multi, first", "alice", "alice@corp.example",
+            "corp.example other.example", 1, 0},
+        {"allowlist multi, second", "alice", "alice@other.example",
+            "corp.example other.example", 1, 0},
+        {"allowlist comma separated", "alice", "alice@other.example",
+            "corp.example,other.example", 1, 0},
+        {"allowlist case-insensitive", "alice", "alice@CORP.EXAMPLE",
+            "corp.example", 1, 0},
+        {"allowlist tab separated", "alice", "alice@other.example",
+            "corp.example\tother.example", 1, 0},
+        {"allowlist mixed ws separators", "alice", "alice@other.example",
+            "corp.example\t\r\nother.example", 1, 0},
+
+        /* length-bounded: bytes past nameSz must be ignored. With the full
+         * string these would flip the result, so expect=1 only holds if the
+         * helper honors nameSz instead of reading to the NUL. */
+        {"bounded domain ignores trailing", "alice", "alice@corp.exampleEVIL",
+            "corp.example", 1, 18}, /* 18 == strlen("alice@corp.example") */
+        {"bounded '@' search ignores trailing", "alice",
+            "alice.bob@corp.example", NULL, 1, 5}, /* 5 == strlen("alice") */
+    };
+    const int numVectors = (int)(sizeof(vectors) / sizeof(*vectors));
+
+    for (i = 0; i < numVectors && ret == WS_SUCCESS; ++i) {
+        sz = (vectors[i].nameSz != 0) ? vectors[i].nameSz
+                                      : (int)WSTRLEN(vectors[i].name);
+        Log("    Testing scenario: %s.", vectors[i].desc);
+        if (MatchUPNToUser(vectors[i].usr, vectors[i].name, sz,
+                vectors[i].allowList) != vectors[i].expect) {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            Log(" PASSED.\n");
+        }
+    }
+
+    return ret;
+}
+
 /* Exercises the auth-method advertisement logic used by DefaultUserAuthTypes:
  * a method is only offered when its config option is enabled. Covers all four
  * permutations of PasswordAuthentication and PubkeyAuthentication, including the
@@ -1914,6 +2034,8 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_GetUserConfMatchGroupAnd),
     TEST_DECL(test_GetUserConfMatchSecondaryGroup),
     TEST_DECL(test_CAKeysFileDiffers),
+    TEST_DECL(test_ConfigParseAuthorizedUPNDomains),
+    TEST_DECL(test_MatchUPNToUser),
     TEST_DECL(test_IncludeRecursionBound),
     TEST_DECL(test_GetUserAuthTypes),
     TEST_DECL(test_ConfigSetAuthKeysFile),

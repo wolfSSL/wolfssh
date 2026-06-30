@@ -196,6 +196,12 @@ static void ShowUsage(void)
     printf(" -D             Run in foreground (do not detach)\n");
     printf(" -h <file name> host private key file to use\n");
     printf(" -E <file name> append to log file\n");
+#ifdef WOLFSSL_FPKI
+    /* build-capability note, separated from the option list; also greppable by
+     * test scripts, for the cert UPN domain check (AuthorizedUPNDomains) */
+    printf("\n");
+    printf("Build features: FPKI certificate UPN domain checking\n");
+#endif
 }
 
 
