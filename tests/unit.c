@@ -3674,8 +3674,8 @@ static int test_KeyAgreeDh_client_zeroesEphemeralPrivKey(void)
     WMEMSET(hs->x, 0xA5, markedSz);
     hs->xSz = markedSz;
 
-    /* Pass a garbage f to force wc_DhAgree to fail (the DH context has no
-     * prime group set). The ForceZero on x runs regardless of the result. */
+    /* No prime group is set, so wc_DhCheckPubKey fails before wc_DhAgree is
+     * reached. The ForceZero on x is unconditional and runs regardless. */
     WMEMSET(bogusF, 0xCC, sizeof(bogusF));
     (void)wolfSSH_TestKeyAgreeDh_client(ssh, WC_HASH_TYPE_SHA256,
             bogusF, (word32)sizeof(bogusF));
@@ -3802,7 +3802,12 @@ static void DrainCaptured(void)
  * either 0x00 or 0xCC AND that contains at least one 0x00. The DH private
  * key emitted by wc_DhGenerateKeyPair is overwhelmingly unlikely to be
  * entirely composed of 0x00 / 0xCC bytes, so this catches the mutation
- * while staying deterministic regardless of underlying malloc state. */
+ * while staying deterministic regardless of underlying malloc state.
+ *
+ * The peer value ssh->handshake->e is left zero, so the new
+ * wc_DhCheckPubKey now fails between wc_DhGenerateKeyPair and wc_DhAgree;
+ * the ForceZero on y_ptr is unconditional and still runs, so the buffer
+ * assertion above is unaffected. */
 static int test_KeyAgreeDh_server_zeroesEphemeralPrivKey(void)
 {
     WOLFSSH_CTX* ctx = NULL;
@@ -3887,6 +3892,124 @@ out:
     return result;
 }
 #endif /* WOLFSSH_SMALL_STACK && WOLFSSH_TEST_CAPTURING_ALLOCATOR */
+
+/* Verify KeyAgreeDh_server rejects an out-of-range peer public value.
+ * The server hook loads the SSH prime group from kexId itself, so feeding
+ * ssh->handshake->e a value of 0 or 1 (outside [2, p-2]) must make
+ * wc_DhCheckPubKey fail and the call return non-WS_SUCCESS instead of
+ * deriving a known shared secret. On a wolfSSL whose wc_DhAgree already
+ * validates the peer key this is an equivalent guard; its value is
+ * defense-in-depth for builds whose wc_DhAgree does not validate. */
+static int test_KeyAgreeDh_server_rejectsOutOfRangePeer(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    HandshakeInfo* hs = NULL;
+    byte f[MAX_KEX_KEY_SZ];
+    word32 fSz;
+    word32 c;
+    int result = 0;
+    static const byte badVals[2] = { 0x00, 0x01 };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -740;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -741;
+    }
+    hs = ssh->handshake;
+    if (hs == NULL) {
+        result = -742;
+        goto cleanup;
+    }
+#ifndef WOLFSSH_NO_DH_GROUP14_SHA256
+    hs->kexId = ID_DH_GROUP14_SHA256;
+#elif !defined(WOLFSSH_NO_DH_GROUP14_SHA1)
+    hs->kexId = ID_DH_GROUP14_SHA1;
+#else
+    hs->kexId = ID_DH_GROUP1_SHA1;
+#endif
+
+    for (c = 0; c < (word32)sizeof(badVals); c++) {
+        int ret;
+        hs->e[0] = badVals[c];
+        hs->eSz = 1;
+        fSz = (word32)sizeof(f);
+        ret = wolfSSH_TestKeyAgreeDh_server(ssh, WC_HASH_TYPE_SHA256, f, &fSz);
+        if (ret == WS_SUCCESS) {
+            result = -743;
+            break;
+        }
+    }
+
+cleanup:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+#ifdef HAVE_FFDHE_2048
+/* Verify KeyAgreeDh_client rejects an out-of-range peer public value.
+ * A real prime group is loaded into ssh->handshake->privKey.dh so that an
+ * f of 0 or 1 (outside [2, p-2]) is caught by wc_DhCheckPubKey before key
+ * agreement, yielding WS_CRYPTO_FAILED rather than a known shared secret.
+ * Equivalent-mutant caveat as in the server case above: it is a regression
+ * guard for builds whose wc_DhAgree does not validate the peer key. */
+static int test_KeyAgreeDh_client_rejectsOutOfRangePeer(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    HandshakeInfo* hs = NULL;
+    byte badF[1];
+    word32 c;
+    int result = 0;
+    static const byte badVals[2] = { 0x00, 0x01 };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -750;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -751;
+    }
+    hs = ssh->handshake;
+    if (hs == NULL) {
+        result = -752;
+        goto cleanup;
+    }
+
+    for (c = 0; c < (word32)sizeof(badVals); c++) {
+        int ret;
+        /* The hook frees privKey.dh on return, so re-init each iteration. */
+        if (wc_InitDhKey(&hs->privKey.dh) != 0) {
+            result = -753;
+            break;
+        }
+        if (wc_DhSetNamedKey(&hs->privKey.dh, WC_FFDHE_2048) != 0) {
+            wc_FreeDhKey(&hs->privKey.dh);
+            result = -754;
+            break;
+        }
+        /* x is unused on the reject path but ForceZero still runs over it. */
+        hs->xSz = 0;
+        badF[0] = badVals[c];
+        ret = wolfSSH_TestKeyAgreeDh_client(ssh, WC_HASH_TYPE_SHA256,
+                badF, (word32)sizeof(badF));
+        if (ret != WS_CRYPTO_FAILED) {
+            result = -755;
+            break;
+        }
+    }
+
+cleanup:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* HAVE_FFDHE_2048 */
 #endif /* !WOLFSSH_NO_DH */
 
 #if defined(WOLFSSH_SCP) && !defined(WOLFSSH_SCP_USER_CALLBACKS) && \
@@ -5738,6 +5861,18 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #if defined(WOLFSSH_SMALL_STACK) && defined(WOLFSSH_TEST_CAPTURING_ALLOCATOR)
     unitResult = test_KeyAgreeDh_server_zeroesEphemeralPrivKey();
     printf("KeyAgreeDh_server_zeroesEphemeralPrivKey: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+    unitResult = test_KeyAgreeDh_server_rejectsOutOfRangePeer();
+    printf("KeyAgreeDh_server_rejectsOutOfRangePeer: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+#ifdef HAVE_FFDHE_2048
+    unitResult = test_KeyAgreeDh_client_rejectsOutOfRangePeer();
+    printf("KeyAgreeDh_client_rejectsOutOfRangePeer: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
