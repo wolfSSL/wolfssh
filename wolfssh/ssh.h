@@ -384,6 +384,23 @@ typedef struct WS_UserAuthData_PublicKey {
     const byte* signature;
     word32 signatureSz;
     byte isCert:1;
+#ifdef WOLFSSH_OSSH_CERTS
+    byte isOsshCert:1;
+    const byte* caKeyHash;
+    word32 caKeyHashSz;
+    /* Wire-format sequence of SSH strings (uint32 len + bytes each).
+     * Non-empty: connecting username must appear in this list.
+     * Empty/NULL: cert is valid for any user.
+     *
+     * TODO: currently only populated by the unit-test shim
+     * (wolfSSHD_TestCheckOsshCertCa).  A companion change in
+     * src/internal.c is required to extract the valid_principals list
+     * from the client's presented OpenSSH certificate and write it here
+     * before the user-auth callback fires, so that CheckPublicKeyUnix
+     * enforces principal matching in production. */
+    const byte* validPrincipals;
+    word32 validPrincipalsSz;
+#endif
 } WS_UserAuthData_PublicKey;
 
 typedef struct WS_UserAuthData {
@@ -580,4 +597,3 @@ WOLFSSH_API void wolfSSH_ShowSizes(void);
 #endif
 
 #endif /* _WOLFSSH_SSH_H_ */
-

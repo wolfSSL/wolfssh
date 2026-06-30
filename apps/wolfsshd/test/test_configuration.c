@@ -23,6 +23,7 @@
 #endif
 
 #include <wolfssh/ssh.h>
+#include <wolfssh/internal.h>
 #include <wolfssl/wolfcrypt/coding.h>
 #include <configuration.h>
 #include <auth.h>
@@ -1900,6 +1901,493 @@ static int test_OpenSecureFile(void)
 }
 #endif /* !_WIN32 */
 
+#if defined(WOLFSSH_OSSH_CERTS) && !defined(NO_SHA256) && !defined(_WIN32)
+#include <wolfssl/wolfcrypt/sha256.h>
+static int test_CheckOsshCertCa(void)
+{
+    int ret = WS_SUCCESS;
+    int rc;
+    /* ECC-P256 public key in OpenSSH format used as a stand-in CA key. */
+    static const char caKeyStr[] =
+        "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAA"
+        "BBBNkI5JTP6D0lF42tbxX19cE87hztUS6FSDoGvPfiU0CgeNSbI+aFdKIzTP5CQEJSvm25"
+        "qUzgDtH7oyaQROUnNvk= hansel";
+    static const char caKeyFile[] = "./test_ossh_ca_keys.txt";
+    byte fingerprint[WC_SHA256_DIGEST_SIZE];
+    byte wrongHash[WC_SHA256_DIGEST_SIZE];
+    byte* caKeyRaw = NULL;
+    word32 caKeyRawSz = 0;
+    const byte* caKeyType = NULL;
+    word32 caKeyTypeSz = 0;
+    WFILE* f = WBADFILE;
+
+    rc = wolfSSH_ReadKey_buffer((const byte*)caKeyStr,
+                                (word32)WSTRLEN(caKeyStr),
+                                WOLFSSH_FORMAT_SSH, &caKeyRaw, &caKeyRawSz,
+                                &caKeyType, &caKeyTypeSz, NULL);
+    if (rc != WS_SUCCESS) {
+        Log("    Failed to parse CA key: %d\n", rc);
+        return WS_FATAL_ERROR;
+    }
+    rc = wc_Sha256Hash(caKeyRaw, caKeyRawSz, fingerprint);
+    WFREE(caKeyRaw, NULL, DYNTYPE_PRIVKEY);
+    if (rc != 0) {
+        Log("    Failed to hash CA key: %d\n", rc);
+        return WS_FATAL_ERROR;
+    }
+
+    /* Write a one-line CA keys file. */
+    if (WFOPEN(NULL, &f, caKeyFile, "w") != 0) {
+        Log("    Failed to create CA keys file\n");
+        return WS_FATAL_ERROR;
+    }
+    if (WFWRITE(NULL, caKeyStr, sizeof(char), WSTRLEN(caKeyStr), f)
+            != WSTRLEN(caKeyStr) ||
+        WFWRITE(NULL, "\n", sizeof(char), 1, f) != 1) {
+        WFCLOSE(NULL, f);
+        Log("    Failed to write CA keys file\n");
+        WREMOVE(0, caKeyFile);
+        return WS_FATAL_ERROR;
+    }
+    WFCLOSE(NULL, f);
+
+    Log("    Testing: matching CA fingerprint.");
+    rc = wolfSSHD_TestCheckOsshCertCa(fingerprint, WC_SHA256_DIGEST_SIZE,
+                                       caKeyFile, NULL, NULL, 0, 0);
+    if (rc == WSSHD_AUTH_SUCCESS) {
+        Log(" PASSED.\n");
+    }
+    else {
+        Log(" FAILED (rc=%d).\n", rc);
+        ret = WS_FATAL_ERROR;
+    }
+
+    if (ret == WS_SUCCESS) {
+        WMEMSET(wrongHash, 0xBB, WC_SHA256_DIGEST_SIZE);
+        Log("    Testing: non-matching CA fingerprint.");
+        rc = wolfSSHD_TestCheckOsshCertCa(wrongHash, WC_SHA256_DIGEST_SIZE,
+                                           caKeyFile, NULL, NULL, 0, 0);
+        if (rc == WSSHD_AUTH_FAILURE) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    /* Empty file: no matching key fails with WSSHD_AUTH_FAILURE */
+    if (ret == WS_SUCCESS) {
+        if (WFOPEN(NULL, &f, caKeyFile, "w") != 0) {
+            Log("    Failed to recreate CA keys file (empty)\n");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            WFCLOSE(NULL, f);
+            Log("    Testing: empty CA keys file.");
+            rc = wolfSSHD_TestCheckOsshCertCa(fingerprint,
+                                               WC_SHA256_DIGEST_SIZE,
+                                               caKeyFile, NULL, NULL, 0, 0);
+            if (rc == WSSHD_AUTH_FAILURE) {
+                Log(" PASSED.\n");
+            }
+            else {
+                Log(" FAILED (rc=%d).\n", rc);
+                ret = WS_FATAL_ERROR;
+            }
+        }
+    }
+
+    /* Comment-only file: no matching key fails with WSSHD_AUTH_FAILURE */
+    if (ret == WS_SUCCESS) {
+        static const char comment[] = "# trusted CAs\n";
+        if (WFOPEN(NULL, &f, caKeyFile, "w") != 0) {
+            Log("    Failed to recreate CA keys file (comment-only)\n");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            if (WFWRITE(NULL, comment, sizeof(char), WSTRLEN(comment), f)
+                    != WSTRLEN(comment)) {
+                WFCLOSE(NULL, f);
+                Log("    Failed to write comment CA keys file\n");
+                ret = WS_FATAL_ERROR;
+            }
+            else {
+                WFCLOSE(NULL, f);
+                Log("    Testing: comment-only CA keys file.");
+                rc = wolfSSHD_TestCheckOsshCertCa(fingerprint,
+                                                   WC_SHA256_DIGEST_SIZE,
+                                                   caKeyFile, NULL, NULL, 0, 0);
+                if (rc == WSSHD_AUTH_FAILURE) {
+                    Log(" PASSED.\n");
+                }
+                else {
+                    Log(" FAILED (rc=%d).\n", rc);
+                    ret = WS_FATAL_ERROR;
+                }
+            }
+        }
+    }
+
+    WREMOVE(0, caKeyFile);
+    return ret;
+}
+static int test_CheckOsshCertCa_Malformed(void)
+{
+    int ret = WS_SUCCESS;
+    int rc;
+    static const char caKeyStr[] =
+        "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAA"
+        "BBBNkI5JTP6D0lF42tbxX19cE87hztUS6FSDoGvPfiU0CgeNSbI+aFdKIzTP5CQEJSvm25"
+        "qUzgDtH7oyaQROUnNvk= hansel";
+    static const char caKeyFile[] = "./test_ossh_ca_keys_malformed.txt";
+    static const char badLine[] = "not-a-valid-key\n";
+    byte fingerprint[WC_SHA256_DIGEST_SIZE];
+    byte* caKeyRaw = NULL;
+    word32 caKeyRawSz = 0;
+    const byte* caKeyType = NULL;
+    word32 caKeyTypeSz = 0;
+    WFILE* f = WBADFILE;
+
+    rc = wolfSSH_ReadKey_buffer((const byte*)caKeyStr,
+                                (word32)WSTRLEN(caKeyStr),
+                                WOLFSSH_FORMAT_SSH, &caKeyRaw, &caKeyRawSz,
+                                &caKeyType, &caKeyTypeSz, NULL);
+    if (rc != WS_SUCCESS) { return WS_FATAL_ERROR; }
+    rc = wc_Sha256Hash(caKeyRaw, caKeyRawSz, fingerprint);
+    WFREE(caKeyRaw, NULL, DYNTYPE_PRIVKEY);
+    if (rc != 0) { return WS_FATAL_ERROR; }
+
+    /* write malformed line */
+    if (WFOPEN(NULL, &f, caKeyFile, "w") != 0) {
+        return WS_FATAL_ERROR;
+    }
+    if (WFWRITE(NULL, badLine, sizeof(char), WSTRLEN(badLine), f)
+            != WSTRLEN(badLine)) {
+        WFCLOSE(NULL, f);
+        return WS_FATAL_ERROR;
+    }
+    WFCLOSE(NULL, f);
+
+    Log("    Testing: malformed key line CA keys file.");
+    rc = wolfSSHD_TestCheckOsshCertCa(fingerprint, WC_SHA256_DIGEST_SIZE,
+                                      caKeyFile, NULL, NULL, 0, 0);
+    if (rc == WSSHD_AUTH_FAILURE) {
+        Log(" PASSED.\n");
+    } else {
+        Log(" FAILED (rc=%d).\n", rc);
+        ret = WS_FATAL_ERROR;
+    }
+
+    WREMOVE(0, caKeyFile);
+    return ret;
+}
+
+/* Covers the usrCaKeysFile == NULL guard and the StrictModes-gated
+ * wolfSSHD_OpenSecureFile() branch in CheckPublicKeyUnix, neither of which
+ * is reachable through the strictModes=0 calls above.
+ * Returns WS_SUCCESS on success, WS_FATAL_ERROR on failure. */
+static int test_CheckOsshCertCa_StrictModes(void)
+{
+    int ret = WS_SUCCESS;
+    int rc;
+    static const char caKeyStr[] =
+        "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAA"
+        "BBBNkI5JTP6D0lF42tbxX19cE87hztUS6FSDoGvPfiU0CgeNSbI+aFdKIzTP5CQEJSvm25"
+        "qUzgDtH7oyaQROUnNvk= hansel";
+    /* StrictModes also gates parent-directory permissions, so the CA file
+     * lives in its own private temp dir rather than the (group/world
+     * writable) test working directory used by the strictModes=0 tests. */
+    char base[] = "/tmp/wolfsshd_ossh_caXXXXXX";
+    char caKeyFile[96] = "";
+    byte fingerprint[WC_SHA256_DIGEST_SIZE] = {0};
+    byte* caKeyRaw = NULL;
+    word32 caKeyRawSz = 0;
+    const byte* caKeyType = NULL;
+    word32 caKeyTypeSz = 0;
+    WFILE* f = WBADFILE;
+
+    Log("    Testing: NULL usrCaKeysFile rejected.");
+    rc = wolfSSHD_TestCheckOsshCertCa(fingerprint, WC_SHA256_DIGEST_SIZE,
+                                      NULL, NULL, NULL, 0, 0);
+    if (rc != WSSHD_AUTH_SUCCESS) {
+        Log(" PASSED.\n");
+    }
+    else {
+        Log(" FAILED (rc=%d).\n", rc);
+        ret = WS_FATAL_ERROR;
+    }
+
+    if (mkdtemp(base) == NULL) {
+        Log("    mkdtemp failed.\n");
+        return WS_FATAL_ERROR;
+    }
+    snprintf(caKeyFile, sizeof(caKeyFile), "%s/ca_keys.txt", base);
+    if (smChmod(base, 0700) != WS_SUCCESS) {
+        ret = WS_FATAL_ERROR;
+        goto exit;
+    }
+
+    rc = wolfSSH_ReadKey_buffer((const byte*)caKeyStr,
+                                (word32)WSTRLEN(caKeyStr),
+                                WOLFSSH_FORMAT_SSH, &caKeyRaw, &caKeyRawSz,
+                                &caKeyType, &caKeyTypeSz, NULL);
+    if (rc != WS_SUCCESS) {
+        Log("    Failed to parse CA key: %d\n", rc);
+        ret = WS_FATAL_ERROR;
+        goto exit;
+    }
+    rc = wc_Sha256Hash(caKeyRaw, caKeyRawSz, fingerprint);
+    WFREE(caKeyRaw, NULL, DYNTYPE_PRIVKEY);
+    if (rc != 0) {
+        Log("    Failed to hash CA key: %d\n", rc);
+        ret = WS_FATAL_ERROR;
+        goto exit;
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (WFOPEN(NULL, &f, caKeyFile, "w") != 0) {
+            Log("    Failed to create CA keys file\n");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            if (WFWRITE(NULL, caKeyStr, sizeof(char), WSTRLEN(caKeyStr), f)
+                    != WSTRLEN(caKeyStr) ||
+                WFWRITE(NULL, "\n", sizeof(char), 1, f) != 1) {
+                WFCLOSE(NULL, f);
+                Log("    Failed to write CA keys file\n");
+                ret = WS_FATAL_ERROR;
+            }
+            else {
+                WFCLOSE(NULL, f);
+            }
+        }
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = smChmod(caKeyFile, 0600);
+    if (ret == WS_SUCCESS) {
+        Log("    Testing: StrictModes on, securely-permissioned CA file.");
+        rc = wolfSSHD_TestCheckOsshCertCa(fingerprint, WC_SHA256_DIGEST_SIZE,
+                                           caKeyFile, NULL, NULL, 0, 1);
+        if (rc == WSSHD_AUTH_SUCCESS) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    /* strictModes=-1 drives the test shim's authCtx==NULL path, exercising
+     * CheckPublicKeyUnix's fail-safe default (StrictModes on when authCtx
+     * is NULL). A securely-permissioned file must still be accepted. */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing: NULL authCtx fail-safe default accepts good perms.");
+        rc = wolfSSHD_TestCheckOsshCertCa(fingerprint, WC_SHA256_DIGEST_SIZE,
+                                           caKeyFile, NULL, NULL, 0, -1);
+        if (rc == WSSHD_AUTH_SUCCESS) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = smChmod(caKeyFile, 0606);
+    if (ret == WS_SUCCESS) {
+        Log("    Testing: StrictModes on, world-writable CA file rejected.");
+        rc = wolfSSHD_TestCheckOsshCertCa(fingerprint, WC_SHA256_DIGEST_SIZE,
+                                           caKeyFile, NULL, NULL, 0, 1);
+        if (rc == WSSHD_AUTH_FAILURE) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    /* The same insecure permissions are accepted when StrictModes is off,
+     * confirming the rejection above is StrictModes-driven. */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing: StrictModes off, same file accepted.");
+        rc = wolfSSHD_TestCheckOsshCertCa(fingerprint, WC_SHA256_DIGEST_SIZE,
+                                           caKeyFile, NULL, NULL, 0, 0);
+        if (rc == WSSHD_AUTH_SUCCESS) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+exit:
+    WREMOVE(0, caKeyFile);
+    rmdir(base);
+    return ret;
+}
+/* Verify checking of OpenSSH principal restrictions.
+ * Returns WS_SUCCESS on success, WS_FATAL_ERROR on failure. */
+static int test_CheckOsshCertCa_Principals(void)
+{
+    int ret = WS_SUCCESS;
+    int rc;
+    static const char caKeyStr[] =
+        "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAA"
+        "BBBNkI5JTP6D0lF42tbxX19cE87hztUS6FSDoGvPfiU0CgeNSbI+aFdKIzTP5CQEJSvm25"
+        "qUzgDtH7oyaQROUnNvk= hansel";
+    static const char caKeyFile[] = "./test_ossh_ca_principals.txt";
+    /* SSH wire-format principal lists: uint32 len (big-endian) + bytes */
+    static const byte princsMatch[] = {
+        0x00, 0x00, 0x00, 0x06, 'h', 'a', 'n', 's', 'e', 'l'
+    };
+    static const byte princsNoMatch[] = {
+        0x00, 0x00, 0x00, 0x06, 'g', 'r', 'e', 't', 'e', 'l'
+    };
+    /* "gretel" followed by "hansel": match is at a non-first position,
+     * exercising the idx += pSz skip-and-advance path. */
+    static const byte princsMatchSecond[] = {
+        0x00, 0x00, 0x00, 0x06, 'g', 'r', 'e', 't', 'e', 'l',
+        0x00, 0x00, 0x00, 0x06, 'h', 'a', 'n', 's', 'e', 'l'
+    };
+    /* Declared length (8) exceeds remaining bytes (4): exercises the
+     * truncation-guard break in PrincipalInList. */
+    static const byte princsTruncated[] = {
+        0x00, 0x00, 0x00, 0x08, 'h', 'a', 'n', 's'
+    };
+    byte fingerprint[WC_SHA256_DIGEST_SIZE];
+    byte* caKeyRaw = NULL;
+    word32 caKeyRawSz = 0;
+    const byte* caKeyType = NULL;
+    word32 caKeyTypeSz = 0;
+    WFILE* f = WBADFILE;
+
+    rc = wolfSSH_ReadKey_buffer((const byte*)caKeyStr,
+                                (word32)WSTRLEN(caKeyStr),
+                                WOLFSSH_FORMAT_SSH, &caKeyRaw, &caKeyRawSz,
+                                &caKeyType, &caKeyTypeSz, NULL);
+    if (rc != WS_SUCCESS) {
+        Log("    Failed to parse CA key: %d\n", rc);
+        return WS_FATAL_ERROR;
+    }
+    rc = wc_Sha256Hash(caKeyRaw, caKeyRawSz, fingerprint);
+    WFREE(caKeyRaw, NULL, DYNTYPE_PRIVKEY);
+    if (rc != 0) {
+        Log("    Failed to hash CA key: %d\n", rc);
+        return WS_FATAL_ERROR;
+    }
+
+    if (WFOPEN(NULL, &f, caKeyFile, "w") != 0) {
+        Log("    Failed to create CA keys file\n");
+        return WS_FATAL_ERROR;
+    }
+    {
+        word32 wr, sz;
+        wr = (word32)WFWRITE(NULL, caKeyStr, sizeof(char),
+                              WSTRLEN(caKeyStr), f);
+        sz = (word32)WSTRLEN(caKeyStr);
+        if (sz != wr || (word32)WFWRITE(NULL, "\n", sizeof(char), 1, f) != 1) {
+            WFCLOSE(NULL, f);
+            Log("    Failed to write CA keys file\n");
+            WREMOVE(0, caKeyFile);
+            return WS_FATAL_ERROR;
+        }
+    }
+    WFCLOSE(NULL, f);
+
+    /* Empty principals list: any user should be accepted. */
+    Log("    Testing: empty principals (any user).");
+    rc = wolfSSHD_TestCheckOsshCertCa(fingerprint, WC_SHA256_DIGEST_SIZE,
+                                       caKeyFile, "hansel", NULL, 0, 0);
+    if (rc == WSSHD_AUTH_SUCCESS) {
+        Log(" PASSED.\n");
+    }
+    else {
+        Log(" FAILED (rc=%d).\n", rc);
+        ret = WS_FATAL_ERROR;
+    }
+
+    /* Principal list contains the connecting user. */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing: matching principal.");
+        rc = wolfSSHD_TestCheckOsshCertCa(fingerprint, WC_SHA256_DIGEST_SIZE,
+            caKeyFile, "hansel", princsMatch, sizeof(princsMatch), 0);
+        if (rc == WSSHD_AUTH_SUCCESS) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    /* Principal list does not contain the connecting user. */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing: non-matching principal.");
+        rc = wolfSSHD_TestCheckOsshCertCa(fingerprint, WC_SHA256_DIGEST_SIZE,
+            caKeyFile, "hansel", princsNoMatch, sizeof(princsNoMatch), 0);
+        if (rc == WSSHD_AUTH_FAILURE) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    /* name=NULL is rejected if the list is non-empty. */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing: name=NULL fails principal check.");
+        rc = wolfSSHD_TestCheckOsshCertCa(fingerprint, WC_SHA256_DIGEST_SIZE,
+            caKeyFile, NULL, princsNoMatch, sizeof(princsNoMatch), 0);
+        if (rc == WSSHD_AUTH_FAILURE) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    /* Multi-entry list: user is at the second position, exercises skip path. */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing: matching principal at non-first position.");
+        rc = wolfSSHD_TestCheckOsshCertCa(fingerprint, WC_SHA256_DIGEST_SIZE,
+            caKeyFile, "hansel", princsMatchSecond,
+            sizeof(princsMatchSecond), 0);
+        if (rc == WSSHD_AUTH_SUCCESS) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    /* Truncated entry: declared pSz exceeds remaining bytes, should reject. */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing: truncated principal list rejected.");
+        rc = wolfSSHD_TestCheckOsshCertCa(fingerprint, WC_SHA256_DIGEST_SIZE,
+            caKeyFile, "hansel", princsTruncated,
+            sizeof(princsTruncated), 0);
+        if (rc == WSSHD_AUTH_FAILURE) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    WREMOVE(0, caKeyFile);
+    return ret;
+}
+#endif /* WOLFSSH_OSSH_CERTS && !NO_SHA256 && !_WIN32 */
+
 const TEST_CASE testCases[] = {
     TEST_DECL(test_ConfigDefaults),
     TEST_DECL(test_ParseConfigLine),
@@ -1932,6 +2420,12 @@ const TEST_CASE testCases[] = {
 #endif
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
     TEST_DECL(test_CheckPasswordHashUnix),
+#endif
+#if defined(WOLFSSH_OSSH_CERTS) && !defined(NO_SHA256) && !defined(_WIN32)
+    TEST_DECL(test_CheckOsshCertCa),
+    TEST_DECL(test_CheckOsshCertCa_Malformed),
+    TEST_DECL(test_CheckOsshCertCa_StrictModes),
+    TEST_DECL(test_CheckOsshCertCa_Principals),
 #endif
 };
 

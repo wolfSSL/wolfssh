@@ -446,27 +446,81 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
             }
 
             if (ret == WS_SUCCESS) {
-            #ifdef WOLFSSH_OPENSSH_CERTS
+                int certUsed = 0;
+            #ifdef WOLFSSH_OSSH_CERTS
+                /* TODO: Host OpenSSH certificates are not yet supported by
+                 * wolfSSH (wolfSSH_CTX_UseOsshCert_buffer is pending
+                 * implementation in the library). Once implemented, the
+                 * block below can be enabled. */
+            #if 0
                 if (wolfSSH_CTX_UseOsshCert_buffer(*ctx, data, dataSz) < 0) {
                     wolfSSH_Log(WS_LOG_ERROR,
                         "[SSHD] Failed to use host certificate.");
                     ret = WS_BAD_ARGUMENT;
                 }
-            #endif
-            #ifdef WOLFSSH_CERTS
-                if (ret == WS_SUCCESS || ret == WS_BAD_ARGUMENT) {
-                    ret = wolfSSH_CTX_UseCert_buffer(*ctx, data, dataSz,
-                        WOLFSSH_FORMAT_PEM);
-                    if (ret != WS_SUCCESS) {
-                        ret = wolfSSH_CTX_UseCert_buffer(*ctx, data, dataSz,
-                            WOLFSSH_FORMAT_ASN1);
+                else {
+                    certUsed = 1;
+                }
+            #else
+                {
+                    /* OpenSSH cert key types are always of the form
+                     * "<base-type>-cert-v01@openssh.com" - check the
+                     * suffix of the first (whitespace-delimited) field
+                     * so a plain OpenSSH public key (e.g. "ssh-rsa ...")
+                     * is not misidentified as a certificate. */
+                    static const char certSuffix[] = "-cert-v01@openssh.com";
+                    const word32 certSuffixLen =
+                        (word32)WSTRLEN(certSuffix);
+                    word32 typeLen = 0;
+
+                    while ((typeLen < dataSz) &&
+                            (data[typeLen] != ' ') &&
+                            (data[typeLen] != '\t') &&
+                            (data[typeLen] != '\r') &&
+                            (data[typeLen] != '\n')) {
+                        typeLen++;
                     }
-                    if (ret != WS_SUCCESS) {
+
+                    if ((typeLen >= certSuffixLen) &&
+                        (WMEMCMP(data + (typeLen - certSuffixLen),
+                            certSuffix, certSuffixLen) == 0)) {
                         wolfSSH_Log(WS_LOG_ERROR,
-                            "[SSHD] Failed to load in host certificate.");
+                            "[SSHD] Host OpenSSH certificates are not "
+                            "yet supported by wolfSSH.");
+                        ret = WS_BAD_ARGUMENT;
                     }
                 }
             #endif
+            #endif
+            #ifdef WOLFSSH_CERTS
+                if (((ret == WS_SUCCESS) ||
+                     (ret == WS_BAD_ARGUMENT)) && !certUsed) {
+                    int useRet = wolfSSH_CTX_UseCert_buffer(*ctx, data, dataSz,
+                        WOLFSSH_FORMAT_PEM);
+                    if (useRet != WS_SUCCESS) {
+                        useRet = wolfSSH_CTX_UseCert_buffer(*ctx, data, dataSz,
+                            WOLFSSH_FORMAT_ASN1);
+                    }
+                    if (useRet != WS_SUCCESS) {
+                        if (ret == WS_SUCCESS) {
+                            wolfSSH_Log(WS_LOG_ERROR,
+                                "[SSHD] Failed to load in host certificate.");
+                            ret = useRet;
+                        }
+                    }
+                    else {
+                        ret = WS_SUCCESS;
+                        certUsed = 1;
+                    }
+                }
+            #endif
+
+                if (ret == WS_SUCCESS && !certUsed) {
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Host certificate configured but "
+                        "cannot be applied.");
+                    ret = NOT_COMPILED_IN;
+                }
 
                 freeBufferFromFile(data, heap);
             }
@@ -501,7 +555,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
                         WOLFSSH_FORMAT_ASN1);
                 }
                 if (ret != WS_SUCCESS) {
-                #ifdef WOLFSSH_OPENSSH_CERTS
+                #ifdef WOLFSSH_OSSH_CERTS
                     wolfSSH_Log(WS_LOG_INFO,
                         "[SSHD] Continuing on in case CA is openssh "
                         "style.");

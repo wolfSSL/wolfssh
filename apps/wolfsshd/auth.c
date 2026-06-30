@@ -835,7 +835,6 @@ static int SearchForPubKey(const char* path, const char* authKeysFile,
     if (f != WBADFILE) {
         WFCLOSE(NULL, f);
     }
-
     if (lineBuf != NULL) {
         WFREE(lineBuf, NULL, DYNTYPE_BUFFER);
     }
@@ -869,6 +868,37 @@ static int CheckUserUnix(const char* name) {
     return ret;
 }
 
+#if defined(WOLFSSH_OSSH_CERTS) && !defined(NO_SHA256)
+/* Returns 1 if name is found in the SSH wire-format principals list
+ * (sequence of uint32-prefixed strings, big-endian), 0 otherwise. */
+static int PrincipalInList(const byte* list, word32 listSz, const char* name)
+{
+    word32 idx = 0;
+    word32 nameSz;
+
+    if (list == NULL || name == NULL)
+        return 0;
+    nameSz = (word32)WSTRLEN(name);
+
+    while (listSz - idx >= 4) {
+        word32 pSz = ((word32)list[idx    ] << 24) |
+                     ((word32)list[idx + 1] << 16) |
+                     ((word32)list[idx + 2] <<  8) |
+                      (word32)list[idx + 3];
+        idx += 4;
+        if (pSz > listSz - idx) {
+            break;
+        }
+        if ((pSz == nameSz) &&
+            (WMEMCMP(list + idx, name, nameSz) == 0)) {
+            return 1;
+        }
+        idx += pSz;
+    }
+    return 0;
+}
+#endif /* WOLFSSH_OSSH_CERTS && !NO_SHA256 */
+
 static int CheckPublicKeyUnix(const char* name,
                               const WS_UserAuthData_PublicKey* pubKeyCtx,
                               const char* usrCaKeysFile,
@@ -878,23 +908,45 @@ static int CheckPublicKeyUnix(const char* name,
     int ret = WSSHD_AUTH_SUCCESS;
     struct passwd* pwInfo;
 
-#ifdef WOLFSSH_OSSH_CERTS
+#if defined(WOLFSSH_OSSH_CERTS) && !defined(NO_SHA256)
     if (pubKeyCtx->isOsshCert) {
         int rc;
         byte* caKey = NULL;
-        word32 caKeySz;
+        word32 caKeySz = 0;
         const byte* caKeyType = NULL;
-        word32 caKeyTypeSz;
+        word32 caKeyTypeSz = 0;
         byte fingerprint[WC_SHA256_DIGEST_SIZE];
+        WFILE* f = WBADFILE;
+        char* lineBuf = NULL;
+        char* current = NULL;
+        word32 currentSz = 0;
+        int foundKey = 0;
 
-        if (pubKeyCtx->caKey == NULL ||
-            pubKeyCtx->caKeySz != WC_SHA256_DIGEST_SIZE) {
+        if (pubKeyCtx->caKeyHash == NULL ||
+            pubKeyCtx->caKeyHashSz != WC_SHA256_DIGEST_SIZE) {
             ret = WS_FATAL_ERROR;
         }
 
         if (ret == WSSHD_AUTH_SUCCESS) {
-            f = XFOPEN(usrCaKeysFile, "rb");
-            if (f == XBADFILE) {
+            if (usrCaKeysFile == NULL) {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] TrustedUserCAKeys not "
+                            "configured");
+                ret = WS_BAD_ARGUMENT;
+            }
+        }
+        if (ret == WSSHD_AUTH_SUCCESS) {
+            int strictModes = wolfSSHD_ConfigGetStrictModes(
+                (authCtx != NULL) ? authCtx->conf : NULL);
+            if (strictModes) {
+                if (wolfSSHD_OpenSecureFile(usrCaKeysFile, geteuid(),
+                        0, NULL, &f) != WS_SUCCESS) {
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] CA keys file %s failed StrictModes check",
+                        usrCaKeysFile);
+                    ret = WSSHD_AUTH_FAILURE;
+                }
+            }
+            else if (WFOPEN(NULL, &f, usrCaKeysFile, "rb") != 0) {
                 wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to open %s",
                             usrCaKeysFile);
                 ret = WS_BAD_FILE_E;
@@ -907,8 +959,8 @@ static int CheckPublicKeyUnix(const char* name,
             }
         }
         while (ret == WSSHD_AUTH_SUCCESS &&
-               (current = XFGETS(lineBuf, MAX_LINE_SZ, f)) != NULL) {
-            currentSz = (word32)XSTRLEN(current);
+               (current = WFGETS(lineBuf, MAX_LINE_SZ, f)) != NULL) {
+            currentSz = (word32)WSTRLEN(current);
 
             /* remove leading spaces */
             while (currentSz > 0 && current[0] == ' ') {
@@ -924,22 +976,77 @@ static int CheckPublicKeyUnix(const char* name,
                 continue; /* commented out line */
             }
 
+            if (caKey != NULL) {
+                WFREE(caKey, NULL, DYNTYPE_PRIVKEY);
+                caKey = NULL;
+                caKeySz = 0;
+                caKeyType = NULL;
+                caKeyTypeSz = 0;
+            }
+
             rc = wolfSSH_ReadKey_buffer((const byte*)current, currentSz,
                                         WOLFSSH_FORMAT_SSH, &caKey, &caKeySz,
                                         &caKeyType, &caKeyTypeSz, NULL);
             if (rc == WS_SUCCESS) {
+                /* fingerprint is fully overwritten by wc_Hash on success
+                 * and discarded on failure, so no pre-clear is needed. */
                 rc = wc_Hash(WC_HASH_TYPE_SHA256, caKey, caKeySz, fingerprint,
                              WC_SHA256_DIGEST_SIZE);
-                if (rc == 0 && ConstantCompare(fingerprint, pubKeyCtx->caKey,
-                                       WC_SHA256_DIGEST_SIZE) == 0) {
-                    foundKey = 1;
+                if (rc != 0) {
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Failed to hash CA key entry (rc=%d)", rc);
+                    ret = WS_FATAL_ERROR;
+                    break;
+                }
+                if (ConstantCompare(fingerprint, pubKeyCtx->caKeyHash,
+                                    WC_SHA256_DIGEST_SIZE) == 0) {
+                    /* name=NULL is a test-only caller convention used by
+                     * wolfSSHD_TestCheckOsshCertCa.  In the default wolfSSHD
+                     * production path name is always non-NULL (set by
+                     * DoCheckUser before the callback fires).  Custom
+                     * CallbackCheckPublicKey implementations that pass NULL
+                     * for name when validPrincipals is non-empty will cause
+                     * the principal check below to unconditionally deny
+                     * access (name == NULL short-circuits to failure), not
+                     * grant it. */
+                    /* TODO: validPrincipals is not yet populated
+                     * outside the unit-test shim; see
+                     * WS_UserAuthData_PublicKey.validPrincipals in ssh.h. */
+                    if ((pubKeyCtx->validPrincipals != NULL) &&
+                        (pubKeyCtx->validPrincipalsSz > 0) &&
+                        ((name == NULL) ||
+                         (!PrincipalInList(pubKeyCtx->validPrincipals,
+                                           pubKeyCtx->validPrincipalsSz,
+                                           name)))) {
+                        wolfSSH_Log(WS_LOG_ERROR,
+                            "[SSHD] Certificate principal does not "
+                            "match user %s", name ? name : "NULL");
+                        ret = WSSHD_AUTH_FAILURE;
+                    }
+                    else {
+                        foundKey = 1;
+                    }
                     break;
                 }
             }
         }
+
+        if (caKey != NULL) {
+            WFREE(caKey, NULL, DYNTYPE_PRIVKEY);
+        }
+        if (f != WBADFILE) {
+            WFCLOSE(NULL, f);
+        }
+        if (lineBuf != NULL) {
+            WFREE(lineBuf, NULL, DYNTYPE_BUFFER);
+        }
+
+        if (ret == WSSHD_AUTH_SUCCESS && !foundKey) {
+            ret = WSSHD_AUTH_FAILURE;
+        }
     }
     else
-    #endif /* WOLFSSH_OSSH_CERTS */
+    #endif /* WOLFSSH_OSSH_CERTS && !NO_SHA256 */
     {
         errno = 0;
         pwInfo = getpwnam((const char*)name);
@@ -957,8 +1064,9 @@ static int CheckPublicKeyUnix(const char* name,
         }
     }
 
+#if !defined(WOLFSSH_OSSH_CERTS) || defined(NO_SHA256)
     WOLFSSH_UNUSED(usrCaKeysFile);
-    WOLFSSH_UNUSED(authCtx);
+#endif
     return ret;
 }
 #endif /* !_WIN32*/
@@ -1626,9 +1734,9 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                  * closed: require AuthorizedKeysFile (per-user key/cert mapping)
                  * or a wolfSSL build with FPKI. */
                 wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] Certificate authentication cannot bind the requested "
-                    "user without FPKI or AuthorizedKeysFile; rejecting "
-                    "(user=%s)", usr);
+                    "[SSHD] Certificate authentication cannot bind "
+                    "the requested user without FPKI or "
+                    "AuthorizedKeysFile; rejecting (user=%s)", usr);
                 ret = WOLFSSH_USERAUTH_REJECTED;
             #endif
             }
@@ -2249,4 +2357,59 @@ WOLFSSHD_CONFIG* wolfSSHD_AuthGetUserConf(const WOLFSSHD_AUTH* auth,
     }
     return ret;
 }
+#if defined(WOLFSSHD_UNIT_TEST) && defined(WOLFSSH_OSSH_CERTS) && \
+    !defined(NO_SHA256) && !defined(_WIN32)
+/* Expose the OSSH CA-fingerprint matching path of CheckPublicKeyUnix for
+ * unit testing. caKeyHash must be a SHA-256 digest of the raw public key.
+ * strictModes drives the file-open gate: <0 exercises the no-authCtx
+ * (fail-safe default) path, 0/1 build a real WOLFSSHD_AUTH/config pair
+ * with StrictModes forced off/on so the wolfSSHD_OpenSecureFile() branch is
+ * reachable from tests.
+ * Returns WSSHD_AUTH_SUCCESS on success, WSSHD_AUTH_FAILURE or error code on
+ * failure. */
+int wolfSSHD_TestCheckOsshCertCa(const byte* caKeyHash,
+                                  word32 caKeyHashSz,
+                                  const char* caKeysFile,
+                                  const char* name,
+                                  const byte* validPrincipals,
+                                  word32 validPrincipalsSz,
+                                  int strictModes)
+{
+    WS_UserAuthData_PublicKey pk;
+    WOLFSSHD_AUTH authCtx;
+    WOLFSSHD_CONFIG* conf = NULL;
+    int ret;
+
+    WMEMSET(&pk, 0, sizeof(pk));
+    pk.isOsshCert = 1;
+    pk.caKeyHash  = caKeyHash;
+    pk.caKeyHashSz = caKeyHashSz;
+    pk.validPrincipals   = validPrincipals;
+    pk.validPrincipalsSz = validPrincipalsSz;
+
+    if (strictModes < 0) {
+        return CheckPublicKeyUnix(name, &pk, caKeysFile, NULL, NULL);
+    }
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL) {
+        return WS_MEMORY_E;
+    }
+    {
+        const char* strictModesStr = strictModes ? "StrictModes yes" :
+                                                   "StrictModes no";
+        if (ParseConfigLine(&conf, strictModesStr,
+                (int)WSTRLEN(strictModesStr), 0) != WS_SUCCESS) {
+            wolfSSHD_ConfigFree(conf);
+            return WS_FATAL_ERROR;
+        }
+    }
+
+    WMEMSET(&authCtx, 0, sizeof(authCtx));
+    authCtx.conf = conf;
+    ret = CheckPublicKeyUnix(name, &pk, caKeysFile, NULL, &authCtx);
+    wolfSSHD_ConfigFree(conf);
+    return ret;
+}
+#endif /* WOLFSSHD_UNIT_TEST && WOLFSSH_OSSH_CERTS && !NO_SHA256 && !_WIN32 */
 #endif /* WOLFSSH_SSHD */
