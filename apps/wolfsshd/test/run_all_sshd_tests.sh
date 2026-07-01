@@ -411,6 +411,16 @@ else
         printf "Shutting down test wolfSSHd\n"
         stop_wolfsshd
     fi
+
+    # negative test: a certificate UPN realm outside AuthorizedUPNDomains must
+    # be rejected. Needs the dedicated bad-domain config, so only runs when we
+    # control the local daemon.
+    if [ "$USING_LOCAL_HOST" == 1 ]; then
+        start_wolfsshd "sshd_config_test_x509_upn_bad"
+        run_test "sshd_x509_upn_fail.sh"
+        printf "Shutting down test wolfSSHd\n"
+        stop_wolfsshd
+    fi
 fi
 
 # Teardown safety net: the start/stop pairs above stop each daemon they start,
