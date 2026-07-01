@@ -369,7 +369,7 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
     if (ret == WS_SUCCESS) {
         DecodedCert decoded;
 
-        wc_InitDecodedCert(&decoded, certLoc[0], certLen[0], cm->cm);
+        wc_InitDecodedCert(&decoded, certLoc[0], certLen[0], cm->heap);
         ret = wc_ParseCert(&decoded, WOLFSSL_FILETYPE_ASN1, 0, cm->cm);
 
         if (ret == 0) {
