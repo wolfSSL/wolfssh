@@ -3835,7 +3835,7 @@ int wolfSSH_RealPath(const char* defaultPath, char* in,
         }
         /* Everything else is copied */
         else {
-            if (curSz >= outSz - segSz) {
+            if (segSz > outSz || curSz >= outSz - segSz) {
                 return WS_INVALID_PATH_E;
             }
 
