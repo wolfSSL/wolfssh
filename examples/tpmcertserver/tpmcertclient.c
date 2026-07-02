@@ -52,8 +52,12 @@ static int TpmCcUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 }
 
 
-/* The server host key is an X.509 certificate; it was already verified against
- * the root CA loaded with wolfSSH_CTX_AddRootCert_buffer(). Accept it. */
+/* Host key acceptance callback. wolfSSH verifies the server's X.509 certificate
+ * chain against the root CA loaded with wolfSSH_CTX_AddRootCert_buffer() later,
+ * during the key exchange, when it extracts the public key from the certificate.
+ * Because the client only accepts x509v3 host key algorithms, that CA
+ * verification is always performed. This callback just accepts the presented
+ * host key blob. */
 static int TpmCcHostKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 {
     WOLFSSH_UNUSED(pubKey);

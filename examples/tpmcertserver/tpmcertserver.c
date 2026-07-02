@@ -146,13 +146,14 @@ static int TpmCsMakeKeyAndCert(WOLFTPM2_DEV* dev, WOLFTPM2_KEY* key,
         rc = 0;
     }
 
-    /* The crypto callback is only needed to self-sign the certificate. Clear
-     * it before wolfSSH runs: host-key signing uses wolfTPM2_SignHashScheme()
-     * directly, and a registered callback would route wolfSSH's certificate
-     * parsing through the TPM. This reset is required, so treat a failure as
-     * fatal. */
-    if (rc == 0 && devId != INVALID_DEVID) {
-        rc = wolfTPM2_ClearCryptoDevCb(dev, devId);
+    /* The crypto callback is only needed to self-sign the certificate. Always
+     * clear it (including on error paths) before wolfSSH runs: host-key signing
+     * uses wolfTPM2_SignHashScheme() directly, and a registered callback would
+     * route wolfSSH's certificate parsing through the TPM. */
+    if (devId != INVALID_DEVID) {
+        int clearRc = wolfTPM2_ClearCryptoDevCb(dev, devId);
+        if (rc == 0)
+            rc = clearRc;
     }
 
     /* Restore a clean password session on the device. The certificate signing
