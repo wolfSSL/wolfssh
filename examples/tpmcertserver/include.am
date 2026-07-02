@@ -1,0 +1,21 @@
+# vim:ft=automake
+# All paths should be given relative to the root
+
+if BUILD_TPM
+if BUILD_CERTS
+if BUILD_EXAMPLE_SERVERS
+noinst_PROGRAMS += examples/tpmcertserver/tpmcertserver
+examples_tpmcertserver_tpmcertserver_SOURCES      = \
+                                    examples/tpmcertserver/tpmcertserver.c
+examples_tpmcertserver_tpmcertserver_LDADD        = src/libwolfssh.la
+examples_tpmcertserver_tpmcertserver_DEPENDENCIES = src/libwolfssh.la
+endif
+if BUILD_EXAMPLE_CLIENTS
+noinst_PROGRAMS += examples/tpmcertserver/tpmcertclient
+examples_tpmcertserver_tpmcertclient_SOURCES      = \
+                                    examples/tpmcertserver/tpmcertclient.c
+examples_tpmcertserver_tpmcertclient_LDADD        = src/libwolfssh.la
+examples_tpmcertserver_tpmcertclient_DEPENDENCIES = src/libwolfssh.la
+endif
+endif
+endif
