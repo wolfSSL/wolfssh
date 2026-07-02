@@ -17,6 +17,10 @@ jobs:
       matrix:
         keytype: [ rsa, ecc ]
         sim: [ ibmswtpm2, fwtpm ]
+        # raw: plain TPM host key (verified with OpenSSH).
+        # x509: TPM host key presented as an X.509 certificate, verified by the
+        #       tpmcertserver/tpmcertclient example.
+        hostkey: [ raw, x509 ]
 
     steps:
     - uses: actions/checkout@v6
@@ -47,8 +51,12 @@ jobs:
       run: |
         cd wolfssl
         ./autogen.sh
+        # certgen/certreq/certext: generate the X.509 host certificate from the
+        # TPM key. WC_SIG_MIN_HASH_TYPE=SHA: the RSA x509v3-ssh-rsa host cert is
+        # SHA-1; modern wolfSSL otherwise rejects SHA-1 RSA signatures.
         ./configure --enable-wolftpm --enable-wolfssh --enable-keygen \
-            CFLAGS="-DWC_RSA_NO_PADDING"
+            --enable-certgen --enable-certreq --enable-certext \
+            CFLAGS="-DWC_RSA_NO_PADDING -DWC_SIG_MIN_HASH_TYPE=WC_HASH_TYPE_SHA"
         make
         sudo make install
         sudo ldconfig
@@ -97,13 +105,14 @@ jobs:
       run: |
         cd wolfssh
         ./autogen.sh
-        ./configure --enable-tpm
+        ./configure --enable-tpm --enable-certs
         make
         sudo make install
         sudo ldconfig
 
     # Server host key resident in the TPM: the private key never enters RAM.
     - name: Test TPM host key (${{ matrix.keytype }})
+      if: matrix.hostkey == 'raw'
       run: |
         cd wolftpm
         ./examples/keygen/keygen hostkey.bin -${{ matrix.keytype }} -t -eh
@@ -129,9 +138,55 @@ jobs:
         cat ssh_out.txt
         grep -q "Authenticated to localhost" ssh_out.txt
 
+    # Server presents an X.509 host certificate whose private key lives in the
+    # TPM. The client verifies the certificate against it as the trusted CA and
+    # rejects a mismatched CA; the exchange hash is signed inside the TPM.
+    - name: Test TPM X.509 host certificate (${{ matrix.keytype }})
+      if: matrix.hostkey == 'x509'
+      run: |
+        cd wolfssh
+        ./examples/tpmcertserver/tpmcertserver -k ${{ matrix.keytype }} \
+            -p 22223 > tpmcert_server.txt 2>&1 &
+        echo "tpmcertserver (X.509 ${{ matrix.keytype }}) PID: $!"
+        # RSA key generation inside the TPM can take longer than ECC.
+        for i in $(seq 1 40); do
+            if ss -ltn 2>/dev/null | grep -q ':22223'; then break; fi
+            sleep 1
+        done
+        ./examples/tpmcertserver/tpmcertclient -A tpm-server-cert.der \
+            -p 22223 -h 127.0.0.1 > tpmcert_client.txt 2>&1
+        echo "----- server -----"; cat tpmcert_server.txt
+        echo "----- client -----"; cat tpmcert_client.txt
+        grep -q "verified server X.509 host certificate" tpmcert_client.txt
+        grep -q "Client connected and verified the TPM-backed host certificate" \
+            tpmcert_server.txt
+
+    # Negative test: a client that trusts an unrelated CA must reject the server.
+    - name: Test TPM X.509 host certificate rejects wrong CA (${{ matrix.keytype }})
+      if: matrix.hostkey == 'x509'
+      run: |
+        cd wolfssh
+        ./examples/tpmcertserver/tpmcertserver -k ${{ matrix.keytype }} \
+            -p 22224 > tpmcert_server_neg.txt 2>&1 &
+        echo "tpmcertserver (X.509 neg ${{ matrix.keytype }}) PID: $!"
+        for i in $(seq 1 40); do
+            if ss -ltn 2>/dev/null | grep -q ':22224'; then break; fi
+            sleep 1
+        done
+        # keys/ca-cert-ecc.der is an unrelated CA; the self-signed host cert
+        # does not chain to it, so the client must refuse to connect.
+        if ./examples/tpmcertserver/tpmcertclient -A keys/ca-cert-ecc.der \
+            -p 22224 -h 127.0.0.1 > tpmcert_client_neg.txt 2>&1; then
+            echo "ERROR: client accepted a server with an untrusted CA"
+            cat tpmcert_client_neg.txt
+            exit 1
+        fi
+        echo "client correctly rejected the untrusted server:"
+        cat tpmcert_client_neg.txt
+
     # Client public-key authentication with a TPM-resident key (RSA only).
     - name: Test TPM client public-key auth
-      if: matrix.keytype == 'rsa'
+      if: matrix.keytype == 'rsa' && matrix.hostkey == 'raw'
       run: |
         cd wolftpm
         ./examples/keygen/keygen keyblob.bin -rsa -t -pem -eh
@@ -147,7 +202,12 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v7
       with:
-        name: test-artifacts-${{ matrix.keytype }}-${{ matrix.sim }}
+        name: test-artifacts-${{ matrix.keytype }}-${{ matrix.sim }}-${{ matrix.hostkey }}
+        if-no-files-found: ignore
         path: |
           wolftpm/hostkey.bin
           wolfssh/ssh_out.txt
+          wolfssh/tpmcert_server.txt
+          wolfssh/tpmcert_client.txt
+          wolfssh/tpmcert_server_neg.txt
+          wolfssh/tpmcert_client_neg.txt

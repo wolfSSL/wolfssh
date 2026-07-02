@@ -631,6 +631,65 @@ Note: RSA host keys are signed with `rsa-sha2-256`. The default echoserver key
 auth produced by keygen is `ThisIsMyKeyAuth` (override with the `-G` example's
 `ECHOSERVER_TPM_KEY_AUTH`).
 
+TPM SERVER HOST KEY WITH X.509 CERTIFICATE (ECDSA / RSA)
+=======================================================
+
+The server can present an X.509 certificate as its host key while the matching
+private key stays non-exportable inside the TPM. The client verifies the
+certificate against a trusted CA, so the server's identity is authenticated and
+a man-in-the-middle cannot impersonate it. The exchange hash is signed inside
+the TPM; the private key never enters RAM.
+
+This requires wolfSSH built with certificate support in addition to TPM support,
+and wolfSSL/wolfTPM built with certificate generation:
+
+    wolfSSL
+        $ ./configure --enable-wolfssh --enable-wolftpm --enable-keygen \
+              --enable-certgen --enable-certreq --enable-certext \
+              CFLAGS="-DWC_RSA_NO_PADDING"
+    wolfTPM
+        $ ./configure --enable-fwtpm --enable-swtpm
+    wolfSSH
+        $ ./configure --enable-tpm --enable-certs
+
+The example under `examples/tpmcertserver` creates a signing key inside the TPM,
+generates a self-signed X.509 certificate from it with
+`wolfTPM2_CSR_Generate_ex()`, then serves with `wolfSSH_CTX_UseTpmHostKey()` and
+`wolfSSH_CTX_UseCert_buffer()`. Run a TPM simulator first (`fwtpm_server` or
+`ibmswtpm2`), then:
+
+    ECDSA:  $ ./examples/tpmcertserver/tpmcertserver -k ecc
+    RSA:    $ ./examples/tpmcertserver/tpmcertserver -k rsa
+
+The server writes its certificate to `tpm-server-cert.der`. The companion
+client verifies the server against that certificate used as the trusted root:
+
+    $ ./examples/tpmcertserver/tpmcertclient -A tpm-server-cert.der
+
+To integrate this into your own server, load the certificate and bind the TPM
+key. Call `wolfSSH_CTX_UseTpmHostKey()` before `wolfSSH_CTX_UseCert_buffer()` so
+the certificate is linked to the TPM key slot:
+
+    wolfSSH_CTX_UseTpmHostKey(ctx, &tpmDev, &tpmKey);
+    wolfSSH_CTX_UseCert_buffer(ctx, certDer, certDerSz, WOLFSSH_FORMAT_ASN1);
+
+On the client, restrict the accepted host key algorithms to the certificate
+algorithms so the connection cannot silently fall back to a plain host key and
+skip certificate (CA) verification:
+
+    wolfSSH_CTX_SetAlgoListKey(ctx,
+        "x509v3-ecdsa-sha2-nistp256,x509v3-ssh-rsa");
+    wolfSSH_CTX_AddRootCert_buffer(ctx, caDer, caDerSz, WOLFSSH_FORMAT_ASN1);
+
+Notes:
+
+- ECDSA is recommended. It uses SHA-256 and needs no extra build options.
+- RSA certificate host keys use the `x509v3-ssh-rsa` algorithm, which is defined
+  with SHA-1. Modern wolfSSL rejects SHA-1 RSA signatures by default, so RSA
+  additionally requires wolfSSL built with
+  `-DWC_SIG_MIN_HASH_TYPE=WC_HASH_TYPE_SHA`. This re-enables a deprecated hash;
+  prefer ECDSA unless RSA is mandated.
+
 WOLFSSH APPLICATIONS
 ====================
 
