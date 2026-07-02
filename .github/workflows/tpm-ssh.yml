@@ -51,12 +51,17 @@ jobs:
       run: |
         cd wolfssl
         ./autogen.sh
-        # certgen/certreq/certext: generate the X.509 host certificate from the
-        # TPM key. WC_SIG_MIN_HASH_TYPE=SHA: the RSA x509v3-ssh-rsa host cert is
-        # SHA-1; modern wolfSSL otherwise rejects SHA-1 RSA signatures.
+        # certgen/certreq/certext/cryptocb: generate the X.509 host certificate
+        # from the TPM key via the crypto callback.
+        EXTRA_CFLAGS="-DWC_RSA_NO_PADDING"
+        # The RSA x509v3-ssh-rsa host cert is SHA-1; modern wolfSSL otherwise
+        # rejects SHA-1 RSA signatures. Only needed for the RSA cells.
+        if [ "${{ matrix.keytype }}" = "rsa" ]; then
+            EXTRA_CFLAGS="$EXTRA_CFLAGS -DWC_SIG_MIN_HASH_TYPE=WC_HASH_TYPE_SHA"
+        fi
         ./configure --enable-wolftpm --enable-wolfssh --enable-keygen \
-            --enable-certgen --enable-certreq --enable-certext \
-            CFLAGS="-DWC_RSA_NO_PADDING -DWC_SIG_MIN_HASH_TYPE=WC_HASH_TYPE_SHA"
+            --enable-certgen --enable-certreq --enable-certext --enable-cryptocb \
+            CFLAGS="$EXTRA_CFLAGS"
         make
         sudo make install
         sudo ldconfig

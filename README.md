@@ -646,6 +646,7 @@ and wolfSSL/wolfTPM built with certificate generation:
     wolfSSL
         $ ./configure --enable-wolfssh --enable-wolftpm --enable-keygen \
               --enable-certgen --enable-certreq --enable-certext \
+              --enable-cryptocb \
               CFLAGS="-DWC_RSA_NO_PADDING"
     wolfTPM
         $ ./configure --enable-fwtpm --enable-swtpm
