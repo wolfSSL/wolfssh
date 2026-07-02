@@ -9486,11 +9486,6 @@ static int DoUserAuthFailure(WOLFSSH* ssh,
             for (j = 0; j < sizeof(ssh->supportedAuth); j++) {
                 if (authList[i] == ssh->supportedAuth[j]) {
                     switch(authList[i]) {
-#ifdef WOLFSSH_TPM
-                        case ID_USERAUTH_PUBLICKEY:
-                            authType |= WOLFSSH_USERAUTH_PUBLICKEY;
-                            break;
-#else /* !WOLFSSH_TPM */
                         case ID_USERAUTH_PASSWORD:
                             authType |= WOLFSSH_USERAUTH_PASSWORD;
                             break;
@@ -9502,12 +9497,12 @@ static int DoUserAuthFailure(WOLFSSH* ssh,
                             }
                             break;
 #endif
-#if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
+#if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA) || \
+    defined(WOLFSSH_TPM)
                         case ID_USERAUTH_PUBLICKEY:
                             authType |= WOLFSSH_USERAUTH_PUBLICKEY;
                             break;
 #endif
-#endif /* WOLFSSH_TPM */
                         default:
                             break;
                     }
@@ -17689,6 +17684,19 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
         keySig_ptr->keyId = ID_NONE;
         keySig_ptr->sigId = ID_NONE;
         keySig_ptr->heap = ssh->ctx->heap;
+
+#ifdef WOLFSSH_TPM
+        /* When the client has a TPM key configured, prefer publickey auth so
+         * the TPM key is used even if the server also offers password or
+         * keyboard-interactive. Applied before any method-specific branch. */
+        if (ssh->ctx->tpmKey != NULL
+                && (authType & WOLFSSH_USERAUTH_PUBLICKEY)) {
+            authType &= ~WOLFSSH_USERAUTH_PASSWORD;
+        #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+            authType &= ~WOLFSSH_USERAUTH_KEYBOARD;
+        #endif
+        }
+#endif
 
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
         /* Callback happens later for keyboard auth */
