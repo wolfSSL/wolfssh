@@ -244,6 +244,10 @@ int main(int argc, char* argv[])
     byte certDer[TPMCS_CERT_MAX];
     word32 certDerSz = (word32)sizeof(certDer);
 
+    /* Line-buffer stdout so progress is visible immediately when redirected to
+     * a file (the server runs while a test reads its output). */
+    setvbuf(stdout, NULL, _IOLBF, 0);
+
     XMEMSET(&dev, 0, sizeof(dev));
     XMEMSET(&hostKey, 0, sizeof(hostKey));
 

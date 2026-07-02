@@ -101,6 +101,9 @@ int main(int argc, char* argv[])
     byte txt[] = "hello from tpmcertclient\n";
     byte rxBuf[TPMCC_BUF_SZ];
 
+    /* Line-buffer stdout so output is visible immediately when redirected. */
+    setvbuf(stdout, NULL, _IOLBF, 0);
+
     for (i = 1; i < argc; i++) {
         if (XSTRCMP(argv[i], "-p") == 0 && i + 1 < argc)
             port = (word16)atoi(argv[++i]);
