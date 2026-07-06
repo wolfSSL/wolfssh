@@ -39,6 +39,9 @@
 #include <wolfssh/internal.h>
 #include <wolfssh/log.h>
 
+#include <errno.h>
+#include <stdint.h>
+
 
 #ifdef NO_INLINE
     #include <wolfssh/misc.h>
@@ -1093,19 +1096,35 @@ static int GetScpFileSize(WOLFSSH* ssh, byte* buf, word32 bufSz,
         ret = WS_SCP_BAD_MSG_E;
 
     if (ret == WS_SUCCESS) {
-        /* replace space with newline for atoi */
+        /* replace space with newline to terminate the size field, then parse
+         * with strtoull() which parses in 64-bit width, so a negative field
+         * such as "-1" wraps above UINT32_MAX and is rejected by the bound
+         * below instead of becoming a huge word32 size */
+        char* endptr = NULL;
+        word64 fileSz;
+
         buf[spaceIdx] = '\n';
-        ssh->scpFileSz = atoi((char *)(buf + idx));
-
-        /* restore space, increment idx to space */
+        errno = 0;
+        fileSz = (word64)strtoull((char*)(buf + idx), &endptr, 10);
         buf[spaceIdx] = ' ';
-        idx = spaceIdx;
 
-        /* eat trailing space */
-        if (bufSz >= (word32)(idx + 1))
-            idx++;
+        /* reject any parse error (e.g. ERANGE overflow), a non-numeric field
+         * (parse must consume every character up to the separator), and
+         * sizes too large for the word32 scpFileSz */
+        if (errno != 0 || endptr != (char*)(buf + spaceIdx) ||
+            fileSz > UINT32_MAX) {
+            ret = WS_SCP_BAD_MSG_E;
+        }
+        else {
+            ssh->scpFileSz = (word32)fileSz;
 
-        *inOutIdx = idx;
+            /* increment idx to space, then eat trailing space */
+            idx = spaceIdx;
+            if (bufSz >= (word32)(idx + 1))
+                idx++;
+
+            *inOutIdx = idx;
+        }
     }
 
     return ret;
@@ -1225,15 +1244,23 @@ static int GetScpTimestamp(WOLFSSH* ssh, byte* buf, word32 bufSz,
 
     /* read modification time */
     if (ret == WS_SUCCESS) {
-        /* replace space with newline for atoi */
-        buf[spaceIdx] = '\n';
-        ssh->scpMTime = atoi((char*)(buf + idx));
+        char* endptr = NULL;
 
-        /* restore space, increment idx past it */
+        /* replace space with newline to terminate the field */
+        buf[spaceIdx] = '\n';
+        errno = 0;
+        ssh->scpMTime = (word64)strtoull((char*)(buf + idx), &endptr, 10);
         buf[spaceIdx] = ' ';
-        if (spaceIdx + 1 < bufSz) {
+
+        /* reject any parse error (e.g. ERANGE overflow) and a non-numeric
+         * field, then step past the separating space */
+        if (errno != 0 || endptr != (char*)(buf + spaceIdx)) {
+            ret = WS_SCP_TIMESTAMP_E;
+        }
+        else if (spaceIdx + 1 < bufSz) {
             idx = spaceIdx + 1;
-        } else {
+        }
+        else {
             ret = WS_SCP_TIMESTAMP_E;
         }
     }
@@ -1264,15 +1291,21 @@ static int GetScpTimestamp(WOLFSSH* ssh, byte* buf, word32 bufSz,
     }
 
     if (ret == WS_SUCCESS) {
-        /* replace space with newline for atoi */
+        char* endptr = NULL;
+        /* replace space with newline for strtoull */
         buf[spaceIdx] = '\n';
-        ssh->scpATime = atoi((char*)(buf + idx));
-
+        errno = 0;
+        ssh->scpATime = (word64)strtoull((char*)(buf + idx), &endptr, 10);
         /* restore space, increment idx past it */
         buf[spaceIdx] = ' ';
-        if (spaceIdx + 1 < bufSz) {
+
+        if (errno != 0 || endptr != (char*)(buf + spaceIdx)) {
+            ret = WS_SCP_TIMESTAMP_E;
+        }
+        else if (spaceIdx + 1 < bufSz) {
             idx = spaceIdx + 1;
-        } else {
+        }
+        else {
             ret = WS_SCP_TIMESTAMP_E;
         }
     }
