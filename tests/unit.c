@@ -5516,6 +5516,148 @@ static int test_SftpDoName_sizeBound(void)
 
     return 0;
 }
+
+/* Inject an SFTP HANDLE reply declaring 'declHandleLen' with 'payloadSz'
+ * payload bytes, drive wolfSSH_SFTP_GetHandle, and report result, ssh->error,
+ * and the resulting handle bytes/length (last two optional). 0 on setup ok. */
+static int sftpGetHandleInject(word32 payloadSz, word32 declHandleLen,
+        int* outRet, int* outErr, byte* outHandle, word32* outHandleSz)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    byte   pkt[LENGTH_SZ + MSG_ID_SZ + UINT32_SZ
+               + UINT32_SZ + WOLFSSH_MAX_HANDLE];
+    byte   handle[WOLFSSH_MAX_HANDLE];
+    word32 handleSz = WOLFSSH_MAX_HANDLE;
+    word32 wireLen;
+    word32 i;
+    int    result = 0;
+
+    if (payloadSz > UINT32_SZ + WOLFSSH_MAX_HANDLE)
+        return -580;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -581;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -582;
+    }
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION,
+            (word32)sizeof(pkt), (word32)sizeof(pkt));
+    if (ch == NULL) {
+        result = -583;
+        goto done;
+    }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -584;
+        goto done;
+    }
+
+    /* SFTP header: [uint32 length][byte type][uint32 reqId], then payload of
+     * [uint32 declHandleLen][handle bytes]. length counts type + reqId +
+     * payload. */
+    wireLen = MSG_ID_SZ + UINT32_SZ + payloadSz;
+    pkt[0] = (byte)(wireLen >> 24);
+    pkt[1] = (byte)(wireLen >> 16);
+    pkt[2] = (byte)(wireLen >> 8);
+    pkt[3] = (byte)(wireLen);
+    pkt[LENGTH_SZ] = WOLFSSH_FTP_HANDLE;
+    pkt[LENGTH_SZ + MSG_ID_SZ + 0] = 0;
+    pkt[LENGTH_SZ + MSG_ID_SZ + 1] = 0;
+    pkt[LENGTH_SZ + MSG_ID_SZ + 2] = 0;
+    pkt[LENGTH_SZ + MSG_ID_SZ + 3] = 1;
+    pkt[LENGTH_SZ + MSG_ID_SZ + UINT32_SZ + 0] = (byte)(declHandleLen >> 24);
+    pkt[LENGTH_SZ + MSG_ID_SZ + UINT32_SZ + 1] = (byte)(declHandleLen >> 16);
+    pkt[LENGTH_SZ + MSG_ID_SZ + UINT32_SZ + 2] = (byte)(declHandleLen >> 8);
+    pkt[LENGTH_SZ + MSG_ID_SZ + UINT32_SZ + 3] = (byte)(declHandleLen);
+    for (i = UINT32_SZ; i < payloadSz; i++) {
+        pkt[LENGTH_SZ + MSG_ID_SZ + UINT32_SZ + i] = (byte)i;
+    }
+
+    /* Match the request id so the flow reaches the handle-copy path. */
+    ssh->reqId = 1;
+    ssh->error = WS_SUCCESS;
+
+    if (wolfSSH_TestChannelPutData(ch, pkt,
+            LENGTH_SZ + MSG_ID_SZ + UINT32_SZ + payloadSz) != WS_SUCCESS) {
+        result = -585;
+        goto done;
+    }
+
+    *outRet = wolfSSH_TestSftpGetHandle(ssh, handle, &handleSz);
+    *outErr = ssh->error;
+    if (outHandleSz != NULL)
+        *outHandleSz = handleSz;
+    if (outHandle != NULL)
+        WMEMCPY(outHandle, handle, sizeof(handle));
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* Verify wolfSSH_SFTP_GetHandle bounds the declared handle length against the
+ * received payload: a length exceeding the payload is rejected with WS_BUFFER_E
+ * instead of over-reading the buffer, while an exact-fit handle is accepted. */
+static int test_SftpGetHandle_sizeBound(void)
+{
+    byte   handle[WOLFSSH_MAX_HANDLE];
+    word32 handleSz = 0;
+    word32 j;
+    int    ret = WS_SUCCESS;
+    int    err = WS_SUCCESS;
+    int    result;
+
+    /* payload = 4 bytes (length prefix only) but declares a 256-byte handle:
+     * without the payload bound this over-reads the 4-byte buffer. */
+    result = sftpGetHandleInject(UINT32_SZ, WOLFSSH_MAX_HANDLE, &ret, &err,
+            NULL, NULL);
+    if (result != 0)
+        return result;
+    if (ret == WS_SUCCESS)
+        return -590;
+    if (err != WS_BUFFER_E)
+        return -591;
+
+    /* payload = 8 bytes (4-byte prefix + 4 handle bytes) but declares a 5-byte
+     * handle: UINT32_SZ + 5 = 9 > 8, so the off-by-one boundary is rejected. */
+    ret = WS_SUCCESS;
+    err = WS_SUCCESS;
+    result = sftpGetHandleInject(UINT32_SZ + 4, 5, &ret, &err, NULL, NULL);
+    if (result != 0)
+        return result;
+    if (ret == WS_SUCCESS)
+        return -596;
+    if (err != WS_BUFFER_E)
+        return -597;
+
+    /* payload = 8 bytes carrying a 4-byte handle: exact fit, accepted. The
+     * injected handle bytes are (byte)(UINT32_SZ + j) for j in [0, 4). */
+    ret = WS_FATAL_ERROR;
+    err = WS_FATAL_ERROR;
+    result = sftpGetHandleInject(UINT32_SZ + 4, 4, &ret, &err,
+            handle, &handleSz);
+    if (result != 0)
+        return result;
+    if (ret != WS_SUCCESS)
+        return -592;
+    if (err != WS_SUCCESS)
+        return -593;
+    if (handleSz != 4)
+        return -594;
+    for (j = 0; j < handleSz; j++) {
+        if (handle[j] != (byte)(UINT32_SZ + j))
+            return -595;
+    }
+
+    return 0;
+}
 #endif /* WOLFSSH_SFTP && WOLFSSH_TEST_INTERNAL */
 
 int wolfSSH_UnitTest(int argc, char** argv)
@@ -5596,6 +5738,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #ifdef WOLFSSH_SFTP
     unitResult = test_SftpDoName_sizeBound();
     printf("SftpDoName_sizeBound: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_SftpGetHandle_sizeBound();
+    printf("SftpGetHandle_sizeBound: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
 #if !defined(WOLFSSH_NO_RSA)
