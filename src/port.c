@@ -839,7 +839,14 @@ char* wstrnstr(const char* s1, const char* s2, unsigned int n)
  * end of s1 including a null terminator. */
 char* wstrncat(char* s1, const char* s2, size_t n)
 {
-    size_t freeSpace = n - strlen(s1) - 1;
+    size_t s1_len = strlen(s1);
+    size_t freeSpace;
+
+    if (s1_len >= n) {
+        return NULL;
+    }
+
+    freeSpace = n - s1_len - 1;
 
     if (freeSpace >= strlen(s2)) {
         #ifndef USE_WINDOWS_API
