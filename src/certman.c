@@ -178,7 +178,7 @@ int wolfSSH_CERTMAN_LoadRootCA_buffer(WOLFSSH_CERTMAN* cm,
 
     WLOG_ENTER();
 
-    if (cm != NULL) {
+    if (cm != NULL && rootCa != NULL && rootCaSz > 0) {
         ret = wolfSSL_CertManagerLoadCABuffer(cm->cm, rootCa, rootCaSz,
                 WOLFSSL_FILETYPE_ASN1);
         if (ret == WOLFSSL_SUCCESS) {

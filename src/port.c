@@ -839,8 +839,12 @@ char* wstrnstr(const char* s1, const char* s2, unsigned int n)
  * end of s1 including a null terminator. */
 char* wstrncat(char* s1, const char* s2, size_t n)
 {
-    size_t s1_len = strlen(s1);
+    size_t s1_len = 0;
     size_t freeSpace;
+
+    while (s1_len < n && s1[s1_len] != '\0') {
+        s1_len++;
+    }
 
     if (s1_len >= n) {
         return NULL;

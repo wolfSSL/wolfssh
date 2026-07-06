@@ -61,6 +61,11 @@
 #endif
 
 
+#ifndef WOLFSSH_MAX_PASSPHRASE_SZ
+    #define WOLFSSH_MAX_PASSPHRASE_SZ 256
+#endif
+
+
 /* payloadSz is an estimate, but it shall be greater-than/equal-to
  * the actual value. */
 static int PrepareMessage(WOLFSSH_AGENT_CTX* agent, word32 payloadSz)
@@ -1265,7 +1270,8 @@ static int DoAgentLock(WOLFSSH_AGENT_CTX* agent,
         ato32(buf + begin, &passphraseSz);
         begin += LENGTH_SZ;
 
-        if (begin + passphraseSz > len) {
+        if (passphraseSz > WOLFSSH_MAX_PASSPHRASE_SZ ||
+                begin + passphraseSz > len) {
             ret = WS_PARSE_E;
         }
     }
@@ -1309,7 +1315,8 @@ static int DoAgentUnlock(WOLFSSH_AGENT_CTX* agent,
         ato32(buf + begin, &passphraseSz);
         begin += LENGTH_SZ;
 
-        if (begin + passphraseSz > len)
+        if (passphraseSz > WOLFSSH_MAX_PASSPHRASE_SZ ||
+                begin + passphraseSz > len)
             ret = WS_PARSE_E;
     }
 
