@@ -174,14 +174,16 @@ void wolfSSH_CERTMAN_free(WOLFSSH_CERTMAN* cm)
 int wolfSSH_CERTMAN_LoadRootCA_buffer(WOLFSSH_CERTMAN* cm,
         const unsigned char* rootCa, word32 rootCaSz)
 {
-    int ret;
+    int ret = WS_BAD_ARGUMENT;
 
     WLOG_ENTER();
 
-    ret = wolfSSL_CertManagerLoadCABuffer(cm->cm, rootCa, rootCaSz,
-            WOLFSSL_FILETYPE_ASN1);
-    if (ret == WOLFSSL_SUCCESS) {
-        ret = WS_SUCCESS;
+    if (cm != NULL) {
+        ret = wolfSSL_CertManagerLoadCABuffer(cm->cm, rootCa, rootCaSz,
+                WOLFSSL_FILETYPE_ASN1);
+        if (ret == WOLFSSL_SUCCESS) {
+            ret = WS_SUCCESS;
+        }
     }
 
     WLOG_LEAVE(ret);
