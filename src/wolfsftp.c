@@ -7315,6 +7315,20 @@ static int wolfSSH_SFTP_GetHandle(WOLFSSH* ssh, byte* handle, word32* handleSz)
 }
 
 
+#ifdef WOLFSSH_TEST_INTERNAL
+/* Drive wolfSSH_SFTP_GetHandle for unit testing so the handle-length bound
+ * against the received payload can be exercised. Returns the function result. */
+int wolfSSH_TestSftpGetHandle(WOLFSSH* ssh, byte* handle, word32* handleSz)
+{
+    if (ssh == NULL || handle == NULL || handleSz == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    return wolfSSH_SFTP_GetHandle(ssh, handle, handleSz);
+}
+#endif
+
+
 /* Used to get a list of all files and their attributes from a directory.
  *
  * dir  NULL terminated string of the directory to list
