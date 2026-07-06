@@ -370,22 +370,28 @@ static int PostSuccess(WOLFSSH_AGENT_CTX* agent)
 static int PostLock(WOLFSSH_AGENT_CTX* agent,
         const byte* passphrase, word32 passphraseSz)
 {
-    char pp[32];
-    word32 ppSz;
+    char* pp;
+    int ret = WS_SUCCESS;
 
-    (void)agent;
     WLOG(WS_LOG_AGENT, "Posting lock to agent %p", agent);
-    WOLFSSH_UNUSED(agent);
 
-    ppSz = sizeof(pp) - 1;
-    if (passphraseSz < ppSz)
-        ppSz = passphraseSz;
+    pp = (char*)WMALLOC(passphraseSz + 1, agent->heap, DYNTYPE_STRING);
+    if (pp == NULL)
+        ret = WS_MEMORY_E;
 
-    WMEMCPY(pp, passphrase, ppSz);
-    pp[ppSz] = 0;
-    WLOG(WS_LOG_AGENT, "Locking with passphrase '%s'", pp);
+    if (ret == WS_SUCCESS) {
+        WMEMCPY(pp, passphrase, passphraseSz);
+        pp[passphraseSz] = 0;
+#ifdef SHOW_SECRETS
+        WLOG(WS_LOG_AGENT, "Locking with passphrase '%s'", pp);
+#else
+        WLOG(WS_LOG_AGENT, "Locking with passphrase");
+#endif
+        ForceZero(pp, passphraseSz);
+        WFREE(pp, agent->heap, DYNTYPE_STRING);
+    }
 
-    return WS_SUCCESS;
+    return ret;
 }
 
 
@@ -393,22 +399,28 @@ static int PostLock(WOLFSSH_AGENT_CTX* agent,
 static int PostUnlock(WOLFSSH_AGENT_CTX* agent,
         const byte* passphrase, word32 passphraseSz)
 {
-    char pp[32];
-    word32 ppSz;
+    char* pp;
+    int ret = WS_SUCCESS;
 
-    (void)agent;
     WLOG(WS_LOG_AGENT, "Posting unlock to agent %p", agent);
-    WOLFSSH_UNUSED(agent);
 
-    ppSz = sizeof(pp) - 1;
-    if (passphraseSz < ppSz)
-        ppSz = passphraseSz;
+    pp = (char*)WMALLOC(passphraseSz + 1, agent->heap, DYNTYPE_STRING);
+    if (pp == NULL)
+        ret = WS_MEMORY_E;
 
-    WMEMCPY(pp, passphrase, ppSz);
-    pp[ppSz] = 0;
-    WLOG(WS_LOG_AGENT, "Unlocking with passphrase '%s'", pp);
+    if (ret == WS_SUCCESS) {
+        WMEMCPY(pp, passphrase, passphraseSz);
+        pp[passphraseSz] = 0;
+#ifdef SHOW_SECRETS
+        WLOG(WS_LOG_AGENT, "Unlocking with passphrase '%s'", pp);
+#else
+        WLOG(WS_LOG_AGENT, "Unlocking with passphrase");
+#endif
+        ForceZero(pp, passphraseSz);
+        WFREE(pp, agent->heap, DYNTYPE_STRING);
+    }
 
-    return WS_SUCCESS;
+    return ret;
 }
 
 
