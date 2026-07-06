@@ -4960,13 +4960,14 @@ static int SFTP_GetAttributes(void* fs, const char* fileName,
     int ret;
 
     WOLFSSH_UNUSED(heap);
+    /* WSTAT/WLSTAT discard the fs handle on Nucleus, so fs stays unused. */
     WOLFSSH_UNUSED(fs);
 
     if (noFollow) {
-        ret = WLSTAT(ssh->fs, fileName, &stats);
+        ret = WLSTAT(fs, fileName, &stats);
     }
     else {
-        ret = WSTAT(ssh->fs, fileName, &stats);
+        ret = WSTAT(fs, fileName, &stats);
     }
 
     WMEMSET(atr, 0, sizeof(WS_SFTP_FILEATRB));
@@ -5530,11 +5531,15 @@ static int SFTP_GetAttributesStat(WS_SFTP_FILEATRB* atr, WSTAT_T* stats)
 }
 
 
-static int SFTP_GetAttributesHelper(WS_SFTP_FILEATRB* atr, const char* fName)
+static int SFTP_GetAttributesHelper(void* fs, WS_SFTP_FILEATRB* atr,
+        const char* fName)
 {
     WSTAT_T stats;
     SYS_FS_RESULT res;
     char buffer[255];
+
+    /* WSTAT discards the fs handle on Harmony, so fs stays unused. */
+    WOLFSSH_UNUSED(fs);
 
     WMEMSET(atr, 0, sizeof(WS_SFTP_FILEATRB));
     WMEMSET(buffer, 0, sizeof(buffer));
@@ -5554,7 +5559,7 @@ static int SFTP_GetAttributesHelper(WS_SFTP_FILEATRB* atr, const char* fName)
         }
     }
 
-    if (WSTAT(ssh->fs, fName, &stats) != 0) {
+    if (WSTAT(fs, fName, &stats) != 0) {
         WLOG(WS_LOG_SFTP, "Issue with WSTAT call");
         return WS_BAD_FILE_E;
     }
@@ -5571,9 +5576,8 @@ static int SFTP_GetAttributes(void* fs, const char* fileName,
         WS_SFTP_FILEATRB* atr, byte noFollow, void* heap)
 {
     WOLFSSH_UNUSED(heap);
-    WOLFSSH_UNUSED(fs);
 
-    return SFTP_GetAttributesHelper(atr, fileName);
+    return SFTP_GetAttributesHelper(fs, atr, fileName);
 }
 
 
@@ -5587,9 +5591,8 @@ static int SFTP_GetAttributes(void* fs, const char* fileName,
 static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, WFD fd,
         char* name, WS_SFTP_FILEATRB* atr)
 {
-    WOLFSSH_UNUSED(ssh);
     WOLFSSH_UNUSED(fd);
-    return SFTP_GetAttributesHelper(atr, name);
+    return SFTP_GetAttributesHelper(ssh->fs, atr, name);
 }
 #endif /* !NO_WOLFSSH_SERVER */
 
