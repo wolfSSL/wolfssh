@@ -16420,9 +16420,12 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
 #ifdef WOLFSSH_TPM
         /* When the client has a TPM key configured, prefer publickey auth so
          * the TPM key is used even if the server also offers password or
-         * keyboard-interactive. Applied before any method-specific branch. */
-        if (ssh->ctx->tpmKey != NULL
+         * keyboard-interactive. Only strip the other methods on the first
+         * attempt; once publickey has been tried and rejected, allow fallback
+         * to password/keyboard on the next DoUserAuthFailure() retry. */
+        if (ssh->ctx->tpmKey != NULL && !ssh->tpmPubkeyTried
                 && (authType & WOLFSSH_USERAUTH_PUBLICKEY)) {
+            ssh->tpmPubkeyTried = 1;
             authType &= ~WOLFSSH_USERAUTH_PASSWORD;
         #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
             authType &= ~WOLFSSH_USERAUTH_KEYBOARD;

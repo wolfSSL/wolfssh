@@ -84,11 +84,11 @@ static int TpmCsMakeKeyAndCert(WOLFTPM2_DEV* dev, WOLFTPM2_KEY* key,
 {
     int rc;
     int devId = INVALID_DEVID;
-    int sigType;
+    int sigType = 0;
     TpmCryptoDevCtx tpmCtx;
     WOLFTPM2_KEY srk;
     TPMT_PUBLIC pub;
-    const char* subject;
+    const char* subject = NULL;
     const char* keyUsage = "serverAuth,clientAuth";
     TPMA_OBJECT attr;
 

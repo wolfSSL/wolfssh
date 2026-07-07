@@ -72,14 +72,18 @@ static int TpmCcLoadFile(const char* file, byte* buf, word32* bufSz)
     int ret = 0;
     FILE* f = fopen(file, "rb");
     size_t n;
+    int extra;
 
     if (f == NULL) {
         ret = -1;
     }
     else {
         n = fread(buf, 1, *bufSz, f);
+        /* If the buffer filled exactly, the file may be larger than the buffer;
+         * reject a truncated read rather than loading a partial certificate. */
+        extra = (n == (size_t)*bufSz) ? fgetc(f) : EOF;
         fclose(f);
-        if (n == 0)
+        if (n == 0 || extra != EOF)
             ret = -1;
         else
             *bufSz = (word32)n;

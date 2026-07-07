@@ -186,8 +186,14 @@ jobs:
             cat tpmcert_client_neg.txt
             exit 1
         fi
+        echo "----- server -----"; cat tpmcert_server_neg.txt
         echo "client correctly rejected the untrusted server:"
         cat tpmcert_client_neg.txt
+        # Guard against a false pass: the server must have come up, and the
+        # client must have failed inside the SSH handshake (certificate
+        # rejection) rather than from a plain connection failure.
+        grep -q "Listening on port" tpmcert_server_neg.txt
+        grep -q "wolfSSH_connect failed" tpmcert_client_neg.txt
 
     # Client public-key authentication with a TPM-resident key (RSA only).
     - name: Test TPM client public-key auth
