@@ -1033,6 +1033,9 @@ struct WOLFSSH {
     WS_UserAuthData_Keyboard kbAuth;
     byte kbAuthAttempts;
 #endif
+#ifdef WOLFSSH_TPM
+    byte tpmPubkeyTried; /* client tried TPM publickey; allow auth fallback */
+#endif
 #ifdef WOLFSSH_TEST_INTERNAL
     word32 testSftpSendCap;      /* test hook: cap per-call SFTP buffer send */
     word32 testSftpStallPending; /* test hook: force N flush-only resumes */
