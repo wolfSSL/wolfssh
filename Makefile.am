@@ -86,8 +86,37 @@ SBOM_SPDX    = wolfssh-$(PACKAGE_VERSION).spdx.json
 SBOM_SPDX_TV = wolfssh-$(PACKAGE_VERSION).spdx
 sbomdir      = $(datadir)/doc/$(PACKAGE)
 
+# Shared-library / Mach-O basenames in priority order (versioned first) so
+# `make sbom` finds the built artifact on ELF, Mach-O, and PE targets.  Static
+# (.a) and Windows (.dll/.lib) variants are appended at the call-site because
+# their prefixes differ.
+WOLFSSH_LIB_DSO_BASENAMES = \
+    libwolfssh.so.[0-9]* \
+    libwolfssh.so \
+    libwolfssh.[0-9]*.dylib \
+    libwolfssh.dylib
+
 .PHONY: sbom install-sbom uninstall-sbom
 
+# Stage a `make install` into a private tree, discover the installed library
+# artifact (shared or static, ELF/Mach-O/PE), hash it, capture the configured
+# build macros, generate SPDX+CDX, validate the SPDX, then convert to
+# tag-value.  The staging tree and temp defines file are removed
+# unconditionally via `trap`, even on failure.  Honors SOURCE_DATE_EPOCH for
+# reproducible builds (set to the last git commit time when unset and a git
+# tree is available), matching wolfssl's `make sbom`.
+#
+# User-overridable variables:
+#   WOLFSSL_DIR            Path to a wolfssl source tree containing
+#                          scripts/gen-sbom (required).
+#   SBOM_LICENSE_OVERRIDE  SPDX expression to use instead of the licence ID
+#                          parsed from LICENSING (e.g. commercial licensees:
+#                          LicenseRef-wolfSSL-Commercial).
+#   SBOM_LICENSE_TEXT      Path to the licence text for any LicenseRef-* used
+#                          in SBOM_LICENSE_OVERRIDE (required by SPDX 2.3).
+#   SBOM_WOLFSSL_VERSION   Version string recorded for the wolfssl dependency.
+#                          Auto-detected from WOLFSSL_DIR/wolfssl/version.h or
+#                          pkg-config when unset.
 sbom:
 	@if test -z "$(PYTHON3)"; then \
 	    echo ""; \
@@ -116,25 +145,67 @@ sbom:
 	    echo ""; \
 	    exit 1; \
 	fi
-	rm -rf $(abs_builddir)/_sbom_staging $(abs_builddir)/_sbom_defines.h
-	$(MAKE) install DESTDIR=$(abs_builddir)/_sbom_staging
-	$(CC) -dM -E -I$(srcdir) $(CPPFLAGS) -x c /dev/null \
-	    > $(abs_builddir)/_sbom_defines.h
+	@rm -rf $(abs_builddir)/_sbom_staging
 	@set -e; \
-	_so=$$(ls $(abs_builddir)/_sbom_staging$(libdir)/libwolfssh.so.[0-9]*.[0-9]*.[0-9]* 2>/dev/null | head -1); \
-	test -n "$$_so" || { echo "ERROR: libwolfssh.so not found in staging dir" >&2; exit 1; }; \
+	_defines=`mktemp $(abs_builddir)/_sbom_defines.XXXXXX`; \
+	trap 'rm -rf $(abs_builddir)/_sbom_staging "$$_defines"' EXIT INT TERM HUP; \
+	$(MAKE) install DESTDIR=$(abs_builddir)/_sbom_staging; \
+	sbom_lib=""; \
+	for lib in \
+	    $(addprefix "$(abs_builddir)/_sbom_staging$(libdir)"/,$(WOLFSSH_LIB_DSO_BASENAMES)) \
+	    "$(abs_builddir)/_sbom_staging$(libdir)"/libwolfssh.dll \
+	    "$(abs_builddir)/_sbom_staging$(libdir)"/libwolfssh.dll.a \
+	    "$(abs_builddir)/_sbom_staging$(libdir)"/libwolfssh.lib \
+	    "$(abs_builddir)/_sbom_staging$(libdir)"/wolfssh.lib \
+	    "$(abs_builddir)/_sbom_staging$(libdir)"/libwolfssh.a; do \
+	    if test -f "$$lib"; then sbom_lib="$$lib"; break; fi; \
+	done; \
+	if test -z "$$sbom_lib"; then \
+	    echo ""; \
+	    echo "ERROR: No installed wolfSSH library artifact found for SBOM."; \
+	    echo "       Searched in $(abs_builddir)/_sbom_staging$(libdir)"; \
+	    echo "       (configure with --enable-shared or --enable-static)"; \
+	    echo ""; \
+	    exit 1; \
+	fi; \
+	echo "SBOM: hashing $$sbom_lib"; \
+	$(CC) -dM -E $(DEFAULT_INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) \
+	    $(if $(wildcard $(abs_builddir)/config.h),-include $(abs_builddir)/config.h) \
+	    -x c /dev/null > "$$_defines"; \
+	wolfssl_ver="$(SBOM_WOLFSSL_VERSION)"; \
+	if test -z "$$wolfssl_ver" && test -f "$(WOLFSSL_DIR)/wolfssl/version.h"; then \
+	    wolfssl_ver=`sed -n 's/.*LIBWOLFSSL_VERSION_STRING[ \t]*"\([^"]*\)".*/\1/p' \
+	        "$(WOLFSSL_DIR)/wolfssl/version.h"`; \
+	fi; \
+	if test -z "$${SOURCE_DATE_EPOCH:-}" && test -n "$(GIT)" && \
+	   $(GIT) -C "$(srcdir)" rev-parse --git-dir >/dev/null 2>&1; then \
+	    sde=`$(GIT) -C "$(srcdir)" log -1 --format=%ct 2>/dev/null`; \
+	    if test -n "$$sde"; then SOURCE_DATE_EPOCH="$$sde"; export SOURCE_DATE_EPOCH; fi; \
+	fi; \
+	dep_args=""; \
+	if $(PYTHON3) $(WOLFSSL_DIR)/scripts/gen-sbom --help 2>/dev/null \
+	    | $(GREP) -q -- '--dep-wolfssl'; then \
+	    dep_args="--dep-wolfssl yes"; \
+	    if test -n "$$wolfssl_ver"; then \
+	        dep_args="$$dep_args --dep-version wolfssl=$$wolfssl_ver"; \
+	    fi; \
+	else \
+	    echo "NOTE: this gen-sbom has no --dep-wolfssl; the SBOM will not list"; \
+	    echo "      wolfssl as a dependency component. Point WOLFSSL_DIR at a"; \
+	    echo "      wolfSSL tree whose scripts/gen-sbom supports it to enable it."; \
+	fi; \
 	$(PYTHON3) $(WOLFSSL_DIR)/scripts/gen-sbom \
 	    --name wolfssh \
 	    --version $(PACKAGE_VERSION) \
 	    --supplier "wolfSSL Inc." \
 	    --license-file $(srcdir)/LICENSING \
-	    --options-h $(abs_builddir)/_sbom_defines.h \
-	    --lib "$$_so" \
-	    $(if $(SBOM_LICENSE_OVERRIDE),--license-override $(SBOM_LICENSE_OVERRIDE)) \
-	    $(if $(SBOM_LICENSE_TEXT),--license-text $(SBOM_LICENSE_TEXT)) \
+	    --options-h "$$_defines" \
+	    --lib "$$sbom_lib" \
+	    $$dep_args \
+	    $(if $(SBOM_LICENSE_OVERRIDE),--license-override '$(SBOM_LICENSE_OVERRIDE)') \
+	    $(if $(SBOM_LICENSE_TEXT),--license-text '$(SBOM_LICENSE_TEXT)') \
 	    --cdx-out $(abs_builddir)/$(SBOM_CDX) \
-	    --spdx-out $(abs_builddir)/$(SBOM_SPDX)
-	rm -rf $(abs_builddir)/_sbom_staging $(abs_builddir)/_sbom_defines.h
+	    --spdx-out $(abs_builddir)/$(SBOM_SPDX); \
 	$(PYSPDXTOOLS) --infile $(abs_builddir)/$(SBOM_SPDX) \
 	    --outfile $(abs_builddir)/$(SBOM_SPDX_TV)
 
