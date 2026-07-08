@@ -1288,22 +1288,24 @@ static int GetScpTimestamp(WOLFSSH* ssh, byte* buf, word32 bufSz,
  *
  * returns WS_SUCCESS on success
  */
-static int ScpCheckForRename(WOLFSSH* ssh, int cmdSz)
+static int ScpCheckForRename(WOLFSSH* ssh)
 {
     /* case of file, not directory */
     char buf[DEFAULT_SCP_MSG_SZ];
     int  sz = (int)WSTRLEN(ssh->scpBasePath);
     int  idx;
 
-    if (sz >= DEFAULT_SCP_MSG_SZ) {
+    /* buf holds scpBasePath plus the "/.." suffix and a terminator, so bound
+     * by sz. The old checks bounded by cmdSz, the peer command/source length,
+     * which is unrelated to scpBasePath. */
+    if (sz + 4 > DEFAULT_SCP_MSG_SZ) {
         return WS_BUFFER_E;
     }
 
-    if (cmdSz + 4 > DEFAULT_SCP_MSG_SZ) {
-        return WS_BUFFER_E;
-    }
-
-    WSTRNCPY(buf, ssh->scpBasePath, cmdSz);
+    /* Copy the full base path including its terminator; copying a partial
+     * length would leave the tail of buf uninitialized and make the CleanPath
+     * result below depend on stack garbage. */
+    WMEMCPY(buf, ssh->scpBasePath, sz + 1);
     buf[sz] = '\0';
     WSTRNCAT(buf, "/..", DEFAULT_SCP_MSG_SZ);
 
@@ -1323,7 +1325,9 @@ static int ScpCheckForRename(WOLFSSH* ssh, int cmdSz)
         idx--; /* no delimiter at base */
     }
 #endif
-    if (idx > cmdSz || idx > sz) {
+    /* idx is the offset of the filename component within scpBasePath, so it
+     * cannot exceed the base path length. */
+    if (idx > sz) {
         return WS_BUFFER_E;
     }
 
@@ -1366,10 +1370,10 @@ static int ScpCheckForRename(WOLFSSH* ssh, int cmdSz)
 
 /* helps with checking if the base path is a directory or file
  * returns WS_SUCCESS on success */
-static int ParseBasePathHelper(WOLFSSH* ssh, int cmdSz)
+static int ParseBasePathHelper(WOLFSSH* ssh)
 {
     int ret;
-    ret = ScpCheckForRename(ssh, cmdSz);
+    ret = ScpCheckForRename(ssh);
 #ifndef NO_FILESYSTEM
     if (ret == WS_SUCCESS) {
         ScpSendCtx ctx;
@@ -1478,7 +1482,7 @@ int ParseScpCommand(WOLFSSH* ssh)
                                 ret = WS_FATAL_ERROR;
                             }
                             else {
-                                ret = ParseBasePathHelper(ssh, cmdSz);
+                                ret = ParseBasePathHelper(ssh);
                             }
                         }
                         break;
@@ -1981,8 +1985,7 @@ int wolfSSH_SCP_from(WOLFSSH* ssh, const char* src, const char* dst)
         ssh->scpBasePath = dst;
         ret = wolfSSH_SCP_connect(ssh, (byte*)cmd);
         if (ret == WS_SUCCESS) {
-            word32 srcSz = (word32)WSTRLEN(src);
-            ret = ParseBasePathHelper(ssh, srcSz);
+            ret = ParseBasePathHelper(ssh);
         }
         if (ret == WS_SUCCESS) {
             ssh->scpState = SCP_SINK_BEGIN;
