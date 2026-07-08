@@ -100,6 +100,8 @@ extern int (*wsshd_setreuid_cb)(WUID_T, WUID_T);
 extern int (*wsshd_setegid_cb)(WGID_T);
 extern int (*wsshd_seteuid_cb)(WUID_T);
 extern struct passwd* (*wsshd_getpwnam_cb)(const char*);
+extern int (*wsshd_setgroups_cb)(int, const WGID_T*);
+extern int (*wsshd_getgrouplist_cb)(const char*, WGID_T, WGID_T*, int*);
 int wolfSSHD_GetUserGroupNames(void* heap, const char* usr, WGID_T primaryGid,
         char*** outNames, word32* outCount);
 void wolfSSHD_FreeUserGroupNames(void* heap, char** names, word32 count);

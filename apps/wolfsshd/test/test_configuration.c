@@ -34,6 +34,7 @@
     #include <signal.h>
     #include <stdio.h>
     #include <stdlib.h>
+    #include <grp.h>
 #endif
 
 #ifndef WOLFSSH_DEFAULT_LOG_WIDTH
@@ -1462,6 +1463,88 @@ static void InstallPrivDropStubs(int regidRet, int reuidRet,
     s_setreuid_arg0   = s_setreuid_arg1 = 0;
 }
 
+#define GROUP_STUB_MAX 16
+static WGID_T       s_grouplist_groups[GROUP_STUB_MAX];
+static int          s_grouplist_count;
+static int          s_grouplist_always_fail;
+static int          s_grouplist_calls;
+static WGID_T       s_setgroups_seen[GROUP_STUB_MAX];
+static int          s_setgroups_size;
+static int          s_setgroups_list_nonnull;
+static int          s_setgroups_ret;
+static int          s_setgroups_called;
+
+static int stub_getgrouplist(const char* usr, WGID_T grp, WGID_T* groups,
+        int* ngroups)
+{
+    int i;
+
+    WOLFSSH_UNUSED(usr);
+    WOLFSSH_UNUSED(grp);
+    s_grouplist_calls++;
+    /* simulate a lookup that never fits, exercising the resolve failure path */
+    if (s_grouplist_always_fail) {
+        *ngroups = s_grouplist_count;
+        return -1;
+    }
+    /* too-small buffer: echo the needed size and return -1 so the caller grows
+     * and retries, matching the getgrouplist(3) contract. */
+    if (groups == NULL || *ngroups < s_grouplist_count) {
+        *ngroups = s_grouplist_count;
+        return -1;
+    }
+    for (i = 0; i < s_grouplist_count; i++) {
+        groups[i] = s_grouplist_groups[i];
+    }
+    *ngroups = s_grouplist_count;
+#if defined(__QNX__) || defined(__QNXNTO__)
+    /* QNX getgrouplist returns 0 on success rather than the count */
+    return 0;
+#else
+    return s_grouplist_count;
+#endif
+}
+
+static int stub_setgroups(int size, const WGID_T* list)
+{
+    int i;
+
+    s_setgroups_called = 1;
+    s_setgroups_size   = size;
+    /* record what we can while the buffer is live; the caller frees it on
+     * return, so the pointer itself must not be inspected afterwards. */
+    s_setgroups_list_nonnull = (list != NULL);
+    for (i = 0; list != NULL && i < size && i < GROUP_STUB_MAX; i++) {
+        s_setgroups_seen[i] = list[i];
+    }
+    return s_setgroups_ret;
+}
+
+static void InstallGroupStubs(int setgroupsRet,
+    int (**savedGrouplist)(const char*, WGID_T, WGID_T*, int*),
+    int (**savedSetgroups)(int, const WGID_T*))
+{
+    int i;
+
+    *savedGrouplist       = wsshd_getgrouplist_cb;
+    *savedSetgroups       = wsshd_setgroups_cb;
+    wsshd_getgrouplist_cb = stub_getgrouplist;
+    wsshd_setgroups_cb    = stub_setgroups;
+    s_grouplist_count     = 3;
+    s_grouplist_groups[0] = 1001;
+    s_grouplist_groups[1] = 1002;
+    s_grouplist_groups[2] = 1003;
+    s_grouplist_always_fail = 0;
+    s_grouplist_calls     = 0;
+    s_setgroups_ret       = setgroupsRet;
+    s_setgroups_called    = 0;
+    s_setgroups_size      = 0;
+    s_setgroups_list_nonnull = 0;
+    for (i = 0; i < GROUP_STUB_MAX; i++) {
+        s_setgroups_seen[i] = 0;
+    }
+}
+
 /* Exercises the group-name enumeration helper against the account running the
  * test. Covers the allocation and ownership contract end to end (the names
  * array, each duplicated name, and the gid scratch buffer) so a sanitizer run
@@ -1845,6 +1928,134 @@ static int test_AuthRaisePermissions_uidFail(void)
 
     wsshd_getpwnam_cb = savedGetpwnam;
     wolfSSHD_ConfigFree(conf);
+    return ret;
+}
+
+/* Drives the supplementary-group drop with getgrouplist and setgroups mocked
+ * so it is deterministic across platforms; asserts setgroups is invoked with
+ * the resolved group count. */
+static int test_AuthSetGroups_ok(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* conf = NULL;
+    WOLFSSHD_AUTH*   auth = NULL;
+    int (*savedGrouplist)(const char*, WGID_T, WGID_T*, int*);
+    int (*savedSetgroups)(int, const WGID_T*);
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL)
+        ret = WS_FATAL_ERROR;
+    if (ret == WS_SUCCESS) {
+        auth = wolfSSHD_AuthCreateUser(NULL, conf);
+        if (auth == NULL)
+            ret = WS_FATAL_ERROR;
+    }
+
+    InstallGroupStubs(0, &savedGrouplist, &savedSetgroups);
+
+    if (ret == WS_SUCCESS
+            && wolfSSHD_AuthSetGroups(auth, "testuser", 1000) != WS_SUCCESS)
+        ret = WS_FATAL_ERROR;
+
+    /* the drop must actually call setgroups with the resolved list */
+    if (ret == WS_SUCCESS && !s_setgroups_called)
+        ret = WS_FATAL_ERROR;
+    if (ret == WS_SUCCESS && s_setgroups_size != s_grouplist_count)
+        ret = WS_FATAL_ERROR;
+    if (ret == WS_SUCCESS && !s_setgroups_list_nonnull)
+        ret = WS_FATAL_ERROR;
+    /* the exact resolved gids must reach setgroups, not just the count */
+    if (ret == WS_SUCCESS
+            && (s_setgroups_seen[0] != 1001 || s_setgroups_seen[1] != 1002
+                || s_setgroups_seen[2] != 1003))
+        ret = WS_FATAL_ERROR;
+#if !defined(__QNX__) && !defined(__QNXNTO__)
+    /* the small init size (-DWOLFSSHD_GROUP_LIST_INIT=1) forces at least one
+     * grow-and-retry before the lookup fits, covering that branch */
+    if (ret == WS_SUCCESS && s_grouplist_calls < 2)
+        ret = WS_FATAL_ERROR;
+#endif
+
+    wsshd_getgrouplist_cb = savedGrouplist;
+    wsshd_setgroups_cb    = savedSetgroups;
+    if (auth != NULL)
+        (void)wolfSSHD_AuthFreeUser(auth);
+    if (conf != NULL)
+        wolfSSHD_ConfigFree(conf);
+    return ret;
+}
+
+/* A setgroups(2) failure must abort the privilege setup with WS_FATAL_ERROR
+ * rather than being silently ignored. */
+static int test_AuthSetGroups_setgroups_fail(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* conf = NULL;
+    WOLFSSHD_AUTH*   auth = NULL;
+    int (*savedGrouplist)(const char*, WGID_T, WGID_T*, int*);
+    int (*savedSetgroups)(int, const WGID_T*);
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL)
+        ret = WS_FATAL_ERROR;
+    if (ret == WS_SUCCESS) {
+        auth = wolfSSHD_AuthCreateUser(NULL, conf);
+        if (auth == NULL)
+            ret = WS_FATAL_ERROR;
+    }
+
+    InstallGroupStubs(-1, &savedGrouplist, &savedSetgroups);
+
+    if (ret == WS_SUCCESS
+            && wolfSSHD_AuthSetGroups(auth, "testuser", 1000) != WS_FATAL_ERROR)
+        ret = WS_FATAL_ERROR;
+    if (ret == WS_SUCCESS && !s_setgroups_called)
+        ret = WS_FATAL_ERROR;
+
+    wsshd_getgrouplist_cb = savedGrouplist;
+    wsshd_setgroups_cb    = savedSetgroups;
+    if (auth != NULL)
+        (void)wolfSSHD_AuthFreeUser(auth);
+    if (conf != NULL)
+        wolfSSHD_ConfigFree(conf);
+    return ret;
+}
+
+/* A getgrouplist lookup that never succeeds must fail closed with
+ * WS_FATAL_ERROR and never reach the setgroups drop. */
+static int test_AuthSetGroups_getgrouplist_fail(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* conf = NULL;
+    WOLFSSHD_AUTH*   auth = NULL;
+    int (*savedGrouplist)(const char*, WGID_T, WGID_T*, int*);
+    int (*savedSetgroups)(int, const WGID_T*);
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL)
+        ret = WS_FATAL_ERROR;
+    if (ret == WS_SUCCESS) {
+        auth = wolfSSHD_AuthCreateUser(NULL, conf);
+        if (auth == NULL)
+            ret = WS_FATAL_ERROR;
+    }
+
+    InstallGroupStubs(0, &savedGrouplist, &savedSetgroups);
+    s_grouplist_always_fail = 1;
+
+    if (ret == WS_SUCCESS
+            && wolfSSHD_AuthSetGroups(auth, "testuser", 1000) != WS_FATAL_ERROR)
+        ret = WS_FATAL_ERROR;
+    /* group resolution failed, so the drop must not have run */
+    if (ret == WS_SUCCESS && s_setgroups_called)
+        ret = WS_FATAL_ERROR;
+
+    wsshd_getgrouplist_cb = savedGrouplist;
+    wsshd_setgroups_cb    = savedSetgroups;
+    if (auth != NULL)
+        (void)wolfSSHD_AuthFreeUser(auth);
+    if (conf != NULL)
+        wolfSSHD_ConfigFree(conf);
     return ret;
 }
 #endif /* !_WIN32 */
@@ -2798,6 +3009,9 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_AuthRaisePermissions_nullArg),
     TEST_DECL(test_AuthRaisePermissions_gidFailSkipsUid),
     TEST_DECL(test_AuthRaisePermissions_uidFail),
+    TEST_DECL(test_AuthSetGroups_ok),
+    TEST_DECL(test_AuthSetGroups_setgroups_fail),
+    TEST_DECL(test_AuthSetGroups_getgrouplist_fail),
 #endif
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
     TEST_DECL(test_CheckPasswordHashUnix),
