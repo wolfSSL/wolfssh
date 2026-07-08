@@ -1,0 +1,255 @@
+name: SBOM Test
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+  workflow_dispatch:
+    inputs:
+      wolfssl_ref:
+        description: 'wolfssl git ref that provides scripts/gen-sbom'
+        default: 'master'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# This workflow only reads the repo and uploads artefacts; no API writes.
+permissions:
+  contents: read
+
+jobs:
+  sbom:
+    name: wolfSSH SBOM generation (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout wolfssh
+        uses: actions/checkout@v4
+        with:
+          path: wolfssh
+
+      # wolfssl is checked out once and used for two things: built + installed
+      # so wolfssh has a library to link, and its source tree (scripts/gen-sbom
+      # + wolfssl/version.h) is passed to `make sbom` via WOLFSSL_DIR.  Default
+      # ref is master; until the wolfSSL SBOM change is on master, use the
+      # "Run workflow" button with wolfssl_ref set to the SBOM branch.
+      - name: Checkout wolfssl (gen-sbom + library source)
+        uses: actions/checkout@v4
+        with:
+          repository: wolfSSL/wolfssl
+          ref: ${{ github.event.inputs.wolfssl_ref || 'master' }}
+          path: wolfssl
+
+      - name: Install SBOM validator (pyspdxtools) and pcpp
+        run: |
+          # spdx-tools -> pyspdxtools (validation); pcpp -> the embedded
+          # (--user-settings) path's C preprocessor for walking user_settings.h.
+          python3 -m pip install --user 'spdx-tools==0.8.*' pcpp
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Build and install wolfssl
+        working-directory: wolfssl
+        run: |
+          autoreconf -ivf
+          ./configure --enable-all --prefix="$GITHUB_WORKSPACE/wolfssl-install"
+          make -j"$(nproc)"
+          make install
+
+      # gen-sbom lives in wolfssl and may not be on the checked-out ref yet
+      # (the wolfSSL SBOM change can land separately).  Gate on its presence so
+      # this workflow is safe to merge before that: it stays green and simply
+      # skips SBOM generation until a ref that carries the script is used.
+      - name: Detect gen-sbom availability and capabilities
+        id: gate
+        run: |
+          GS="$GITHUB_WORKSPACE/wolfssl/scripts/gen-sbom"
+          if [ ! -f "$GS" ]; then
+            echo "have=no" >> "$GITHUB_OUTPUT"
+            echo "::notice::wolfssl scripts/gen-sbom not present on this ref; skipping SBOM generation. Re-run via 'Run workflow' with wolfssl_ref set to a branch that has it until it merges to wolfssl master."
+            exit 0
+          fi
+          echo "have=yes" >> "$GITHUB_OUTPUT"
+          if python3 "$GS" --help 2>/dev/null | grep -q -- '--dep-wolfssl'; then
+            echo "dep_wolfssl=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "dep_wolfssl=no" >> "$GITHUB_OUTPUT"
+            echo "::notice::gen-sbom on this ref has no --dep-wolfssl; the wolfssl dependency + name-derived identity assertions will be skipped (wolfSSL SBOM change not merged yet)."
+          fi
+
+      - name: Configure and build wolfssh
+        if: steps.gate.outputs.have == 'yes'
+        working-directory: wolfssh
+        run: |
+          autoreconf -ivf
+          ./configure --with-wolfssl="$GITHUB_WORKSPACE/wolfssl-install"
+          make -j"$(nproc)"
+
+      - name: Generate SBOM
+        if: steps.gate.outputs.have == 'yes'
+        working-directory: wolfssh
+        run: make sbom WOLFSSL_DIR="$GITHUB_WORKSPACE/wolfssl"
+
+      - name: Outputs exist and SPDX validates
+        if: steps.gate.outputs.have == 'yes'
+        working-directory: wolfssh
+        run: |
+          ls wolfssh-*.cdx.json wolfssh-*.spdx.json wolfssh-*.spdx
+          pyspdxtools --infile wolfssh-*.spdx.json
+
+      - name: CycloneDX is valid JSON with expected identity
+        if: steps.gate.outputs.have == 'yes'
+        working-directory: wolfssh
+        run: |
+          python3 - <<'PY'
+          import glob, json
+          cdx = json.load(open(glob.glob('wolfssh-*.cdx.json')[0]))
+          assert cdx['bomFormat'] == 'CycloneDX', cdx.get('bomFormat')
+          assert cdx['specVersion'] == '1.6', cdx.get('specVersion')
+          m = cdx['metadata']['component']
+          assert m['name'] == 'wolfssh', m['name']
+          assert m['purl'].startswith('pkg:github/wolfSSL/wolfssh@'), m['purl']
+          props = {p['name'] for p in m.get('properties', [])}
+          # The AM_CPPFLAGS/config.h snapshot must capture real build config;
+          # PACKAGE_VERSION always lands from config.h, so its absence means
+          # the options snapshot regressed to empty.
+          assert any(n.startswith('wolfssl:build:') for n in props), \
+              'no wolfssl:build:* properties - options snapshot is empty'
+          print('CDX identity ok:', m['name'], m['purl'])
+          PY
+
+      - name: Reproducible across two runs (SOURCE_DATE_EPOCH)
+        if: steps.gate.outputs.have == 'yes'
+        working-directory: wolfssh
+        run: |
+          rm -f wolfssh-*.cdx.json wolfssh-*.spdx.json wolfssh-*.spdx
+          SOURCE_DATE_EPOCH=1700000000 make sbom \
+              WOLFSSL_DIR="$GITHUB_WORKSPACE/wolfssl"
+          sha256sum wolfssh-*.cdx.json wolfssh-*.spdx.json > /tmp/a.sums
+          rm -f wolfssh-*.cdx.json wolfssh-*.spdx.json wolfssh-*.spdx
+          SOURCE_DATE_EPOCH=1700000000 make sbom \
+              WOLFSSL_DIR="$GITHUB_WORKSPACE/wolfssl"
+          sha256sum wolfssh-*.cdx.json wolfssh-*.spdx.json > /tmp/b.sums
+          diff /tmp/a.sums /tmp/b.sums
+
+      - name: wolfssl recorded as a dependency + wolfssh identity
+        if: steps.gate.outputs.have == 'yes' && steps.gate.outputs.dep_wolfssl == 'yes'
+        working-directory: wolfssh
+        run: |
+          python3 - <<'PY'
+          import glob, json
+          d = json.load(open(glob.glob('wolfssh-*.spdx.json')[0]))
+          pkgs = {p['name']: p for p in d['packages']}
+          assert 'wolfssl' in pkgs, list(pkgs)
+          main = pkgs['wolfssh']
+          assert main['SPDXID'] == 'SPDXRef-Package-wolfssh', main['SPDXID']
+          assert 'github.com/wolfSSL/wolfssh' in main['downloadLocation'], \
+              main['downloadLocation']
+          rels = [(r['spdxElementId'], r['relationshipType'],
+                   r['relatedSpdxElement']) for r in d['relationships']]
+          assert ('SPDXRef-Package-wolfssh', 'DEPENDS_ON',
+                  'SPDXRef-Package-wolfssl') in rels, rels
+          print('wolfssl dependency + wolfssh identity ok')
+          PY
+
+      # ---- Embedded / IDE path (no autotools) ----------------------------
+      # Firmware customers don't run ./configure: there's no options.h and no
+      # installed libwolfssh to hash.  gen-sbom reads config from user_settings.h
+      # (via pcpp) and hashes the wolfSSH source set instead.  This exercises
+      # that path the same way the docs tell customers to invoke it.
+      - name: Generate embedded SBOM (user_settings.h + source set)
+        if: steps.gate.outputs.have == 'yes'
+        working-directory: wolfssh
+        run: |
+          VER=$(sed -n 's/^AC_INIT(\[wolfssh\],\[\([^]]*\)\].*/\1/p' configure.ac)
+          VER=${VER:-0.0.0}
+          mkdir -p sbom-embedded/cfg sbom-embedded-2
+          # A minimal embedded-style config; the assertions below prove these
+          # #defines survive pcpp and land as build properties in the SBOM.
+          {
+            echo '#ifndef USER_SETTINGS_H'
+            echo '#define USER_SETTINGS_H'
+            echo '#define WOLFSSH_TERM'
+            echo '#define WOLFSSH_SFTP'
+            echo '#define WOLFSSH_SCP'
+            echo '#endif'
+          } > sbom-embedded/cfg/user_settings.h
+          DEP=()
+          if [ "${{ steps.gate.outputs.dep_wolfssl }}" = "yes" ]; then
+            DEP+=(--dep-wolfssl yes)
+          fi
+          gen() {
+            SOURCE_DATE_EPOCH=1700000000 python3 \
+              "$GITHUB_WORKSPACE/wolfssl/scripts/gen-sbom" \
+              --name wolfssh --version "$VER" \
+              --license-file LICENSING \
+              --user-settings wolfssh/settings.h \
+              --user-settings-include . \
+              --user-settings-include "$GITHUB_WORKSPACE/wolfssl" \
+              --user-settings-include sbom-embedded/cfg \
+              --user-settings-define WOLFSSL_USER_SETTINGS \
+              --srcs src/*.c \
+              "${DEP[@]}" \
+              --cdx-out "$1/wolfssh-embedded.cdx.json" \
+              --spdx-out "$1/wolfssh-embedded.spdx.json"
+          }
+          gen sbom-embedded
+          gen sbom-embedded-2
+          # Reproducible: identical bytes across runs (SOURCE_DATE_EPOCH fixed,
+          # namespace is uuid5(name,version), source-set hash is path-independent).
+          a=$(sha256sum < sbom-embedded/wolfssh-embedded.cdx.json)
+          b=$(sha256sum < sbom-embedded-2/wolfssh-embedded.cdx.json)
+          test "$a" = "$b" || { echo "embedded SBOM not reproducible"; exit 1; }
+
+      - name: Embedded SBOM validates + reflects user_settings.h + source hash
+        if: steps.gate.outputs.have == 'yes'
+        working-directory: wolfssh
+        run: |
+          pyspdxtools --infile sbom-embedded/wolfssh-embedded.spdx.json
+          python3 - <<'PY'
+          import json
+          cdx = json.load(open('sbom-embedded/wolfssh-embedded.cdx.json'))
+          m = cdx['metadata']['component']
+          assert m['name'] == 'wolfssh', m['name']
+          assert m['purl'].startswith('pkg:github/wolfSSL/wolfssh@'), m['purl']
+          # Embedded identity is the source-set hash (no library artifact exists).
+          algs = {h['alg'] for h in m.get('hashes', [])}
+          assert algs, 'no component hash - source-set (--srcs) hash missing'
+          # Config must come from user_settings.h through pcpp, not be empty.
+          props = {p['name'] for p in m.get('properties', [])}
+          assert any(n.endswith('WOLFSSH_SFTP') for n in props), \
+              'user_settings.h option WOLFSSH_SFTP not captured: %r' % sorted(props)
+          print('embedded ok:', m['name'], m['purl'],
+                '| user_settings props:',
+                sorted(n for n in props if 'WOLFSSH' in n))
+          PY
+
+      - name: Embedded SBOM records wolfssl dependency
+        if: steps.gate.outputs.have == 'yes' && steps.gate.outputs.dep_wolfssl == 'yes'
+        working-directory: wolfssh
+        run: |
+          python3 - <<'PY'
+          import json
+          d = json.load(open('sbom-embedded/wolfssh-embedded.spdx.json'))
+          assert 'wolfssl' in {p['name'] for p in d['packages']}, \
+              [p['name'] for p in d['packages']]
+          rels = [(r['spdxElementId'], r['relationshipType'],
+                   r['relatedSpdxElement']) for r in d['relationships']]
+          assert ('SPDXRef-Package-wolfssh', 'DEPENDS_ON',
+                  'SPDXRef-Package-wolfssl') in rels, rels
+          print('embedded wolfssl dependency ok')
+          PY
+
+      - name: Upload SBOM artefacts
+        if: always() && steps.gate.outputs.have == 'yes'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wolfssh-sbom-${{ github.sha }}
+          path: |
+            wolfssh/wolfssh-*.cdx.json
+            wolfssh/wolfssh-*.spdx.json
+            wolfssh/wolfssh-*.spdx
+            wolfssh/sbom-embedded/wolfssh-embedded.*
+          if-no-files-found: warn
+          retention-days: 90
