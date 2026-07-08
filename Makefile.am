@@ -86,6 +86,16 @@ SBOM_SPDX    = wolfssh-$(PACKAGE_VERSION).spdx.json
 SBOM_SPDX_TV = wolfssh-$(PACKAGE_VERSION).spdx
 sbomdir      = $(datadir)/doc/$(PACKAGE)
 
+# wolfSSH is licensed GPLv3-or-commercial.  Its LICENSING file uses the
+# abbreviation "GPLv3", which older gen-sbom detect_license does not recognise
+# (it matches only the long form "GNU General Public License version 3") and so
+# falls back to NOASSERTION.  Default the override to the correct SPDX id so the
+# SBOM is right regardless of gen-sbom version; commercial licensees can still
+# override it (e.g. SBOM_LICENSE_OVERRIDE=LicenseRef-wolfSSL-Commercial).  Once
+# the detect_license GPLv-abbreviation fix lands in gen-sbom (wolfSSL/wolfssl#10343)
+# this default is redundant-but-harmless (GPL-3.0-only is what detection returns).
+SBOM_LICENSE_OVERRIDE ?= GPL-3.0-only
+
 # Shared-library / Mach-O basenames in priority order (versioned first) so
 # `make sbom` finds the built artifact on ELF, Mach-O, and PE targets.  Static
 # (.a) and Windows (.dll/.lib) variants are appended at the call-site because
@@ -109,8 +119,9 @@ WOLFSSH_LIB_DSO_BASENAMES = \
 # User-overridable variables:
 #   WOLFSSL_DIR            Path to a wolfssl source tree containing
 #                          scripts/gen-sbom (required).
-#   SBOM_LICENSE_OVERRIDE  SPDX expression to use instead of the licence ID
-#                          parsed from LICENSING (e.g. commercial licensees:
+#   SBOM_LICENSE_OVERRIDE  SPDX expression to record as the licence.  Defaults
+#                          to GPL-3.0-only (wolfSSH's licence); commercial
+#                          licensees override it (e.g.
 #                          LicenseRef-wolfSSL-Commercial).
 #   SBOM_LICENSE_TEXT      Path to the licence text for any LicenseRef-* used
 #                          in SBOM_LICENSE_OVERRIDE (required by SPDX 2.3).
@@ -190,9 +201,11 @@ sbom:
 	        dep_args="$$dep_args --dep-version wolfssl=$$wolfssl_ver"; \
 	    fi; \
 	else \
-	    echo "NOTE: this gen-sbom has no --dep-wolfssl; the SBOM will not list"; \
-	    echo "      wolfssl as a dependency component. Point WOLFSSL_DIR at a"; \
-	    echo "      wolfSSL tree whose scripts/gen-sbom supports it to enable it."; \
+	    echo "NOTE: this gen-sbom has no --dep-wolfssl support, so the SBOM"; \
+	    echo "      will not list wolfssl as a dependency component. That"; \
+	    echo "      support is added by wolfSSL/wolfssl#10343; until it merges"; \
+	    echo "      to wolfssl master, point WOLFSSL_DIR at that PR's branch to"; \
+	    echo "      enable it. The generated SBOM is valid either way."; \
 	fi; \
 	$(PYTHON3) $(WOLFSSL_DIR)/scripts/gen-sbom \
 	    --name wolfssh \
