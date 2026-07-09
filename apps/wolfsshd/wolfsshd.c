@@ -553,12 +553,16 @@ static int SetupChroot(WOLFSSHD_CONFIG* usrConf)
                 "[SSHD] chdir to chroot path failed, %s", chrootPath);
             ret = WS_FATAL_ERROR;
         }
-        if (chroot(chrootPath) != 0) {
+        /* Only chroot() once the chdir() into the target succeeded, and only
+         * chdir("/") once inside the new root. Running a later step after an
+         * earlier failure could leave the process chrooted with a working
+         * directory outside the new root. */
+        if (ret > 0 && chroot(chrootPath) != 0) {
             wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] chroot failed to path %s", chrootPath);
             ret = WS_FATAL_ERROR;
         }
-        if (chdir("/") != 0) {
+        if (ret > 0 && chdir("/") != 0) {
             wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] chdir after chroot failed");
             ret = WS_FATAL_ERROR;
