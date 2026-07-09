@@ -75,8 +75,14 @@ static int sftpUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
  */
 static void sftp_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
 {
-    const char* username = "jill";
-    const char* password = "upthehill";
+#ifndef SFTP_DEFAULT_USERNAME
+    #define SFTP_DEFAULT_USERNAME ""
+#endif
+#ifndef SFTP_DEFAULT_PASSWORD
+    #define SFTP_DEFAULT_PASSWORD ""
+#endif
+    const char* username = SFTP_DEFAULT_USERNAME;
+    const char* password = SFTP_DEFAULT_PASSWORD;
     
     int ret;
 
