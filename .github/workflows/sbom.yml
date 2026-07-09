@@ -9,7 +9,8 @@ on:
     inputs:
       wolfssl_ref:
         description: 'wolfssl git ref that provides scripts/gen-sbom'
-        default: 'master'
+        # TODO: switch back to 'master' once wolfSSL/wolfssl#10343 merges.
+        default: 'refs/pull/10343/head'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -32,14 +33,16 @@ jobs:
 
       # wolfssl is checked out once and used for two things: built + installed
       # so wolfssh has a library to link, and its source tree (scripts/gen-sbom
-      # + wolfssl/version.h) is passed to `make sbom` via WOLFSSL_DIR.  Default
-      # ref is master; until the wolfSSL SBOM change is on master, use the
-      # "Run workflow" button with wolfssl_ref set to the SBOM branch.
+      # + wolfssl/version.h) is passed to `make sbom` via WOLFSSL_DIR.  gen-sbom
+      # is not yet on wolfssl master, so default to the open PR head that carries
+      # it (wolfSSL/wolfssl#10343) so CI actually exercises `make sbom` instead of
+      # silently skipping.  TODO: switch the fallback back to 'master' once
+      # #10343 merges.
       - name: Checkout wolfssl (gen-sbom + library source)
         uses: actions/checkout@v4
         with:
           repository: wolfSSL/wolfssl
-          ref: ${{ github.event.inputs.wolfssl_ref || 'master' }}
+          ref: ${{ github.event.inputs.wolfssl_ref || 'refs/pull/10343/head' }}
           path: wolfssl
 
       - name: Install SBOM validator (pyspdxtools) and pcpp
