@@ -1413,7 +1413,7 @@ enum WS_MessageIdLimits {
     MSGIDLIMIT_RESERVED_MAX = 191,
 /* Local Extensions: */
     MSGIDLIMIT_EXTENDED_MIN = 192,
-    MSGIDLIMIT_EXTENDED_MAX = 255,
+    MSGIDLIMIT_EXTENDED_MAX = 255
 };
 
 /* Message ID bounds checking. */
