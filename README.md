@@ -633,9 +633,10 @@ the apps directory for more information.
 wolfSSH generates a Software Bill of Materials (SBOM) in CycloneDX 1.6 and
 SPDX 2.3 formats to support compliance with the EU Cyber Resilience Act (CRA).
 The SBOM records the configured build options, hashes the built library
-artifact (shared or static; ELF, Mach-O, or PE), and lists wolfSSL as a
-dependency so vulnerability scanners can associate wolfSSL advisories with a
-wolfSSH deployment. Output is reproducible: set `SOURCE_DATE_EPOCH` (or build
+artifact (shared or static; ELF, Mach-O, or PE), and (with a sufficiently new
+`gen-sbom`) lists wolfSSL as a dependency so vulnerability scanners can
+associate wolfSSL advisories with a wolfSSH deployment. Output is reproducible:
+set `SOURCE_DATE_EPOCH` (or build
 from a git checkout, which uses the last commit time) and repeated runs are
 byte-identical.
 
