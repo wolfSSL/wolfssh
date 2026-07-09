@@ -5332,6 +5332,11 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 ret = ssh->error;
         }
     }
+    /* RFC 4253 11.1: best-effort SSH_MSG_DISCONNECT on negotiation failure. */
+    if (ret == WS_MATCH_KEX_ALGO_E || ret == WS_MATCH_KEY_ALGO_E ||
+            ret == WS_MATCH_ENC_ALGO_E || ret == WS_MATCH_MAC_ALGO_E) {
+        (void)SendDisconnect(ssh, WOLFSSH_DISCONNECT_KEY_EXCHANGE_FAILED);
+    }
     WLOG(WS_LOG_DEBUG, "Leaving DoKexInit(), ret = %d", ret);
     return ret;
 }
