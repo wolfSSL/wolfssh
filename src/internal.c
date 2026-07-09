@@ -5077,6 +5077,14 @@ static void SetPeerAlgoIds(HandshakeInfo* hs,
 }
 
 
+/* The KEXINIT negotiation failures DoKexInit() answers with a disconnect. */
+static int IsKexMatchError(int ret)
+{
+    return ret == WS_MATCH_KEX_ALGO_E || ret == WS_MATCH_KEY_ALGO_E ||
+        ret == WS_MATCH_ENC_ALGO_E || ret == WS_MATCH_MAC_ALGO_E;
+}
+
+
 static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
     int ret = WS_SUCCESS;
@@ -5472,6 +5480,10 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             if (ssh->error != 0)
                 ret = ssh->error;
         }
+    }
+    /* RFC 4253 7.1: no common algorithm means both sides disconnect. */
+    if (IsKexMatchError(ret)) {
+        (void)SendDisconnect(ssh, WOLFSSH_DISCONNECT_KEY_EXCHANGE_FAILED);
     }
     WLOG(WS_LOG_DEBUG, "Leaving DoKexInit(), ret = %d", ret);
     return ret;
@@ -11674,7 +11686,10 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
         case MSGID_KEXINIT:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXINIT");
             ret = DoKexInit(ssh, buf + idx, payloadSz, &payloadIdx);
-            if (ssh->isKeying &&
+            /* Don't answer a KEXINIT that failed to negotiate; DoKexInit()
+             * has already disconnected. A healthy rekey lands here as
+             * WS_REKEYING, so this cannot test for WS_SUCCESS. */
+            if (!IsKexMatchError(ret) && ssh->isKeying &&
                     ssh->connectState == CONNECT_SERVER_CHANNEL_REQUEST_DONE) {
                 if (ssh->handshake->kexId == ID_DH_GEX_SHA256) {
 #if !defined(WOLFSSH_NO_DH) && !defined(WOLFSSH_NO_DH_GEX_SHA256)
