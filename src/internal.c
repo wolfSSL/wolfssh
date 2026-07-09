@@ -7254,6 +7254,16 @@ static int DoKexDhGexRequest(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS) {
+        if (ssh->handshake->dhGexMinSz < WOLFSSH_DEFAULT_GEXDH_MIN ||
+            ssh->handshake->dhGexMaxSz > WOLFSSH_DEFAULT_GEXDH_MAX ||
+            ssh->handshake->dhGexMinSz > ssh->handshake->dhGexPreferredSz ||
+            ssh->handshake->dhGexPreferredSz > ssh->handshake->dhGexMaxSz) {
+            WLOG(WS_LOG_DEBUG, "Invalid DH GEX request parameters");
+            ret = WS_BAD_ARGUMENT;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_INFO, "  min = %u, preferred = %u, max = %u",
                 ssh->handshake->dhGexMinSz,
                 ssh->handshake->dhGexPreferredSz,
