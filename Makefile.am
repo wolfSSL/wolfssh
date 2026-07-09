@@ -89,12 +89,12 @@ SBOM_PKGNAME      = wolfssh
 SBOM_LICENSE_FILE = $(srcdir)/LICENSING
 SBOM_DEP_WOLFSSL  = yes
 
-# wolfSSH is GPLv3-or-commercial; its LICENSING uses the "GPLv3" abbreviation
-# that older gen-sbom cannot parse (falls back to NOASSERTION).  Default to the
-# correct SPDX id so the SBOM is right regardless of gen-sbom version; commercial
-# licensees can still override it (e.g. LicenseRef-wolfSSL-Commercial).
-# Redundant-but-harmless once the detect_license fix lands in gen-sbom
-# (wolfSSL/wolfssl#10343).
-SBOM_LICENSE_OVERRIDE ?= GPL-3.0-only
+# wolfSSH is GPLv3-or-later (per the per-file source headers: "either version 3
+# of the License, or (at your option) any later version") or commercial.  Its
+# LICENSING summary uses the "GPLv3" abbreviation, which gen-sbom's
+# detect_license maps to GPL-3.0-only -- contradicting the headers -- so pin the
+# header-accurate SPDX id here.  Commercial licensees can still override it
+# (e.g. LicenseRef-wolfSSL-Commercial).
+SBOM_LICENSE_OVERRIDE ?= GPL-3.0-or-later
 
 include scripts/sbom.am
