@@ -3179,6 +3179,12 @@ WOLFSSH_CHANNEL* ChannelNew(WOLFSSH* ssh, byte channelType,
                 WMEMSET(newChannel, 0, sizeof(WOLFSSH_CHANNEL));
                 newChannel->ssh = ssh;
                 newChannel->channelType = channelType;
+                /* Skip channel ids already in use to avoid collisions when
+                 * nextChannel (word32) wraps around. */
+                while (ChannelFind(ssh, ssh->nextChannel,
+                                   WS_CHANNEL_ID_SELF) != NULL) {
+                    ssh->nextChannel++;
+                }
                 newChannel->channel = ssh->nextChannel++;
                 WLOG(WS_LOG_DEBUG, "New channel id = %u", newChannel->channel);
                 newChannel->windowSz = initialWindowSz;
@@ -4142,11 +4148,7 @@ static int GetNameList(byte* idList, word32* idListSz,
      */
 
     if (ret == WS_SUCCESS) {
-        if (*idx >= len || *idx + 4 >= len)
-            ret = WS_BUFFER_E;
-    }
-
-    if (ret == WS_SUCCESS) {
+        /* GetStringRef bounds the length prefix and the list. */
         ret = GetStringRef(&nameListSz, &nameList, buf, len, idx);
     }
 
@@ -6554,7 +6556,6 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     word32 pubKeySz;
     word32 fSz;
     word32 sigSz;
-    word32 scratch;
     word32 begin;
     int ret = WS_SUCCESS;
     enum wc_HashType hashId;
@@ -6796,59 +6797,43 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
         /* Verify h with the server's public key. */
         if (ret == WS_SUCCESS) {
-#ifndef WOLFSSH_NO_RSA
-        int tmpIdx = begin - sigSz;
-#endif
             const char* expectedSigName =
                     IdToName(SigTypeForId(ssh->handshake->pubKeyId));
             word32 expectedSigNameSz = (word32)WSTRLEN(expectedSigName);
+            const byte* sigName = NULL;
+            word32 sigNameSz = 0;
+            word32 sigBlobSz = 0;
 
             begin = 0;
-            ret = GetUint32(&scratch, sig, sigSz, &begin);
+            ret = GetStringRef(&sigNameSz, &sigName, sig, sigSz, &begin);
             if (ret == WS_SUCCESS) {
-                /* Check that scratch isn't larger than the remainder of the
-                 * sig buffer and leaves enough room for another length. */
-                if (scratch > sigSz - begin - LENGTH_SZ) {
-                    WLOG(WS_LOG_DEBUG, "sig name size is too large");
-                    ret = WS_PARSE_E;
-                }
-            }
-            if (ret == WS_SUCCESS) {
-                if (scratch != expectedSigNameSz ||
-                        WMEMCMP(sig + begin, expectedSigName, scratch) != 0) {
+                /* expectedSigName is never empty, so a null sigName fails
+                 * on size first. */
+                if (sigNameSz != expectedSigNameSz ||
+                        WMEMCMP(sigName, expectedSigName, sigNameSz) != 0) {
                     WLOG(WS_LOG_DEBUG,
                             "signature name %.*s did not match negotiated %s",
-                            (int)scratch, (const char*)(sig + begin),
+                            (int)sigNameSz,
+                            (sigName != NULL) ? (const char*)sigName : "",
                             expectedSigName);
                     ret = WS_PARSE_E;
                 }
             }
             if (ret == WS_SUCCESS) {
-                begin += scratch;
-                ret = GetUint32(&scratch, sig, sigSz, &begin);
-            }
-            if (ret == WS_SUCCESS) {
-                if (scratch > sigSz - begin) {
-                    WLOG(WS_LOG_DEBUG, "sig name size is too large");
-                    ret = WS_PARSE_E;
-                }
+                /* GetSize leaves begin at the blob, and sig non-null when
+                 * the blob is empty. */
+                ret = GetSize(&sigBlobSz, sig, sigSz, &begin);
             }
             if (ret == WS_SUCCESS) {
                 sig = sig + begin;
                 /* In the fuzz, sigSz ends up 1 and it has issues. */
-                sigSz = scratch;
+                sigSz = sigBlobSz;
 
                 if (sigKeyBlock_ptr->useRsa) {
 #ifndef WOLFSSH_NO_RSA
                     if (sigSz < MIN_RSA_SIG_SZ) {
                         WLOG(WS_LOG_DEBUG, "Provided signature is too small.");
                         ret = WS_RSA_E;
-                    }
-
-                    if (sigSz + begin + tmpIdx > len) {
-                        WLOG(WS_LOG_DEBUG,
-                                "Signature size found would result in error 2");
-                        ret = WS_BUFFER_E;
                     }
 
                     if (ret == WS_SUCCESS) {
@@ -12538,6 +12523,14 @@ static int BuildNameList(char* buf, word32 bufSz,
     WLOG(WS_LOG_DEBUG, "Entering BuildNameList()");
 
     idx = 0;
+
+    if (srcSz == 0) {
+        /* Terminate: callers measure buf with WSTRLEN. */
+        if (buf != NULL && bufSz > 0) {
+            buf[0] = '\0';
+        }
+        return 0;
+    }
 
     do {
         name = IdToName(*src);
@@ -19270,15 +19263,22 @@ int SendChannelData(WOLFSSH* ssh, word32 channelId,
         word32 bound = min(channel->peerWindowSz, channel->peerMaxPacketSz);
         bound = min(bound, channel->maxPacketSz);
 
-        if (dataSz > bound) {
-            WLOG(WS_LOG_DEBUG,
-                 "Trying to send %u, client will only accept %u, limiting",
-                 dataSz, bound);
-            dataSz = bound;
+        if (bound == 0 && dataSz != 0) {
+            WLOG(WS_LOG_DEBUG, "peer max packet size is zero");
+            ssh->error = WS_WINDOW_FULL;
+            ret = WS_WINDOW_FULL;
         }
+        else {
+            if (dataSz > bound) {
+                WLOG(WS_LOG_DEBUG,
+                     "Trying to send %u, client will only accept %u, limiting",
+                     dataSz, bound);
+                dataSz = bound;
+            }
 
-        ret = PreparePacket(ssh,
-                MSG_ID_SZ + UINT32_SZ + LENGTH_SZ + dataSz);
+            ret = PreparePacket(ssh,
+                    MSG_ID_SZ + UINT32_SZ + LENGTH_SZ + dataSz);
+        }
     }
 
     if (ret == WS_SUCCESS) {
@@ -19383,15 +19383,22 @@ int SendChannelExtendedData(WOLFSSH* ssh, word32 channelId,
         word32 bound = min(channel->peerWindowSz, channel->peerMaxPacketSz);
         bound = min(bound, channel->maxPacketSz);
 
-        if (dataSz > bound) {
-            WLOG(WS_LOG_DEBUG,
-                 "Trying to send %u, client will only accept %u, limiting",
-                 dataSz, bound);
-            dataSz = bound;
+        if (bound == 0 && dataSz != 0) {
+            WLOG(WS_LOG_DEBUG, "peer max packet size is zero");
+            ssh->error = WS_WINDOW_FULL;
+            ret = WS_WINDOW_FULL;
         }
+        else {
+            if (dataSz > bound) {
+                WLOG(WS_LOG_DEBUG,
+                     "Trying to send %u, client will only accept %u, limiting",
+                     dataSz, bound);
+                dataSz = bound;
+            }
 
-        ret = PreparePacket(ssh,
-                MSG_ID_SZ + UINT32_SZ + UINT32_SZ + LENGTH_SZ + dataSz);
+            ret = PreparePacket(ssh,
+                    MSG_ID_SZ + UINT32_SZ + UINT32_SZ + LENGTH_SZ + dataSz);
+        }
     }
 
     if (ret == WS_SUCCESS) {
