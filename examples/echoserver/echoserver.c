@@ -299,7 +299,6 @@ static void *global_req(void *ctx)
     int ret;
     const char str[] = "SampleRequest";
     thread_ctx_t *threadCtx = (thread_ctx_t *)ctx;
-    byte buf[0];
 
     wolfSSH_SetReqSuccess(threadCtx->ctx, callbackReqSuccess);
     wolfSSH_SetReqSuccessCtx(threadCtx->ssh, &threadCtx->ssh); /* dummy ctx */
@@ -315,14 +314,6 @@ static void *global_req(void *ctx)
         if (ret != WS_SUCCESS)
         {
             printf("Global Request Failed.\n");
-            wolfSSH_shutdown(threadCtx->ssh);
-            return NULL;
-        }
-
-        wolfSSH_stream_read(threadCtx->ssh, buf, 0);
-        if (ret != WS_SUCCESS)
-        {
-            printf("wolfSSH_stream_read Failed.\n");
             wolfSSH_shutdown(threadCtx->ssh);
             return NULL;
         }
