@@ -1916,6 +1916,8 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         }
     }
 
+    WS_FORCEZERO(channelBuffer, sizeof channelBuffer);
+    WS_FORCEZERO(shellBuffer, sizeof shellBuffer);
     (void)conn;
     return WS_SUCCESS;
 }
