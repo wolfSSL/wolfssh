@@ -747,7 +747,7 @@ int wolfSSH_ConvertConsole(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf,
 
                 case 'D':
                     /* linefeed */
-                    if (WS_WRITECONSOLE(handle, "\n", sizeof("\n"), &wrt, NULL)
+                    if (WS_WRITECONSOLE(handle, "\n", 1, &wrt, NULL)
                         == 0) {
                         WLOG(WS_LOG_DEBUG, "Error writing newline to handle");
                         return WS_FATAL_ERROR;
@@ -755,7 +755,7 @@ int wolfSSH_ConvertConsole(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf,
                     break;
 
                 case 'E': /* newline */
-                    if (WS_WRITECONSOLE(handle, "\n", sizeof("\n"), &wrt, NULL)
+                    if (WS_WRITECONSOLE(handle, "\n", 1, &wrt, NULL)
                             == 0) {
                         WLOG(WS_LOG_DEBUG, "Error writing newline to handle");
                         return WS_FATAL_ERROR;
