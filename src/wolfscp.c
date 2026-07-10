@@ -1068,6 +1068,35 @@ static int FindSpaceInString(byte* buf, word32 bufSz, word32* inOutIdx)
     return WS_SUCCESS;
 }
 
+/* Parse a base-10 unsigned integer from a newline- or NUL-terminated
+ * string (the SCP header field). Rejects empty input, any non-digit
+ * character, and values that overflow max. Returns WS_SUCCESS on
+ * success, WS_SCP_BAD_MSG_E on malformed/out-of-range input. */
+static int ScpParseUInt64(const char* str, word64 max, word64* out)
+{
+    word64 val = 0;
+    int digits = 0;
+
+    if (str == NULL || out == NULL)
+        return WS_BAD_ARGUMENT;
+
+    while (*str >= '0' && *str <= '9') {
+        word64 d = (word64)(*str - '0');
+        if (val > (max - d) / 10)
+            return WS_SCP_BAD_MSG_E;
+        val = val * 10 + d;
+        digits++;
+        str++;
+    }
+
+    if (digits == 0 || (*str != '\n' && *str != '\0'))
+        return WS_SCP_BAD_MSG_E;
+
+    *out = val;
+    return WS_SUCCESS;
+}
+
+
 /* Reads file size from beginning of string, expects space to be after,
  * places size in ssh->scpFileSz.
  *
@@ -1093,9 +1122,14 @@ static int GetScpFileSize(WOLFSSH* ssh, byte* buf, word32 bufSz,
         ret = WS_SCP_BAD_MSG_E;
 
     if (ret == WS_SUCCESS) {
-        /* replace space with newline for atoi */
+        /* replace space with newline for parsing */
         buf[spaceIdx] = '\n';
-        ssh->scpFileSz = atoi((char *)(buf + idx));
+        {
+            word64 scpFileSz64 = 0;
+            ret = ScpParseUInt64((char *)(buf + idx), 0xFFFFFFFFUL,
+                                 &scpFileSz64);
+            ssh->scpFileSz = (word32)scpFileSz64;
+        }
 
         /* restore space, increment idx to space */
         buf[spaceIdx] = ' ';
@@ -1225,9 +1259,10 @@ static int GetScpTimestamp(WOLFSSH* ssh, byte* buf, word32 bufSz,
 
     /* read modification time */
     if (ret == WS_SUCCESS) {
-        /* replace space with newline for atoi */
+        /* replace space with newline for parsing */
         buf[spaceIdx] = '\n';
-        ssh->scpMTime = atoi((char*)(buf + idx));
+        ret = ScpParseUInt64((char*)(buf + idx), 0xFFFFFFFFFFFFFFFFULL,
+                             &ssh->scpMTime);
 
         /* restore space, increment idx past it */
         buf[spaceIdx] = ' ';
@@ -1264,9 +1299,10 @@ static int GetScpTimestamp(WOLFSSH* ssh, byte* buf, word32 bufSz,
     }
 
     if (ret == WS_SUCCESS) {
-        /* replace space with newline for atoi */
+        /* replace space with newline for parsing */
         buf[spaceIdx] = '\n';
-        ssh->scpATime = atoi((char*)(buf + idx));
+        ret = ScpParseUInt64((char*)(buf + idx), 0xFFFFFFFFFFFFFFFFULL,
+                             &ssh->scpATime);
 
         /* restore space, increment idx past it */
         buf[spaceIdx] = ' ';
