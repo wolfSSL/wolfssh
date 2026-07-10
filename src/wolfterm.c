@@ -473,6 +473,9 @@ static int wolfSSH_DoControlSeq(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf, 
         }
         else {
             numArgs = getArgs(buf, bufSz, &i, args);
+            if (i >= bufSz) {
+                return WS_FATAL_ERROR;
+            }
             c = buf[i]; i++;
         }
     }
@@ -670,6 +673,7 @@ int wolfSSH_ConvertConsole(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf,
                 return ret;
             }
             ssh->escBufSz = 0;
+            ssh->escState = WC_ESC_NONE;
             break;
 
         case WS_ESC_OSC:
@@ -678,6 +682,7 @@ int wolfSSH_ConvertConsole(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf,
                 return ret;
             }
             ssh->escBufSz = 0;
+            ssh->escState = WC_ESC_NONE;
             break;
 
         default:

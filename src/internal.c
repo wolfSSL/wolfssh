@@ -19705,8 +19705,10 @@ int wolfSSH_CleanPath(WOLFSSH* ssh, char* in, int inSz)
                 if (path[i] == WS_DELIM) {
                     int z;
 
-                    /* if next two chars are .. then delete */
-                    if (path[i+1] == '.' && path[i+2] == '.') {
+                    /* if next two chars are .. (and the component ends there)
+                     * then delete; guard against '..X' components */
+                    if (path[i+1] == '.' && path[i+2] == '.' &&
+                        (path[i+3] == WS_DELIM || path[i+3] == '\0')) {
                         enIdx = i + 3;
 
                         /* start at one char before / and retrace path */

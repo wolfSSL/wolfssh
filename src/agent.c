@@ -383,7 +383,8 @@ static int PostLock(WOLFSSH_AGENT_CTX* agent,
 
     WMEMCPY(pp, passphrase, ppSz);
     pp[ppSz] = 0;
-    WLOG(WS_LOG_AGENT, "Locking with passphrase '%s'", pp);
+    WLOG(WS_LOG_AGENT, "Locking requested");
+    ForceZero(pp, sizeof(pp));
 
     return WS_SUCCESS;
 }
@@ -406,7 +407,8 @@ static int PostUnlock(WOLFSSH_AGENT_CTX* agent,
 
     WMEMCPY(pp, passphrase, ppSz);
     pp[ppSz] = 0;
-    WLOG(WS_LOG_AGENT, "Unlocking with passphrase '%s'", pp);
+    WLOG(WS_LOG_AGENT, "Unlocking requested");
+    ForceZero(pp, sizeof(pp));
 
     return WS_SUCCESS;
 }
