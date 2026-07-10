@@ -8215,6 +8215,14 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
+        int keySz = wc_RsaEncryptSize(key) * 8;
+        if (keySz < WOLFSSH_RSA_MIN_KEY_BITS) {
+            WLOG(WS_LOG_DEBUG, "RSA auth key too small (%d bits)", keySz);
+            ret = WS_CERT_KEY_SIZE_E;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
         i = 0;
         /* Check that the signature's pubkey type matches the expected one. */
         ret = GetStringRef(&publicKeyTypeSz, &publicKeyType,
@@ -8371,7 +8379,7 @@ static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 
     if (ret == WS_SUCCESS) {
         int keySz = wc_RsaEncryptSize(key) * 8;
-        if (keySz < 2048) {
+        if (keySz < WOLFSSH_RSA_MIN_KEY_BITS) {
             WLOG(WS_LOG_DEBUG, "Key size too small (%d)", keySz);
             ret = WS_CERT_KEY_SIZE_E;
         }
