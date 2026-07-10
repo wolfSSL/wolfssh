@@ -96,6 +96,7 @@ void wolfSSHD_FreeUserGroupNames(void* heap, char** names, word32 count);
 #endif
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
 int CheckPasswordHashUnix(const char* input, char* stored);
+int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz, WOLFSSHD_AUTH* authCtx);
 #endif
 int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
                       word32 keySz);

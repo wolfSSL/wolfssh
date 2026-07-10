@@ -5332,6 +5332,89 @@ out:
     return result;
 }
 
+/* Verify HandshakeInfoFree wipes the HandshakeInfo before releasing it:
+ *   - hs->keys / hs->peerKeys: negotiated session enc+MAC keys
+ *   - hs->e / hs->x:           KEX public value and ephemeral private
+ *   - hs->privKey:             ephemeral KEX key union
+ * Mutation testing flagged the ForceZero(hs, sizeof(HandshakeInfo)) in
+ * HandshakeInfoFree (src/internal.c) as uncovered; removing it would leave
+ * this material in heap memory after free. wolfSSH_TestFreeHandshake exposes
+ * the free path; the retain-on-free allocator diverts the freed block so its
+ * bytes can be inspected. Only data fields are marked - pointer fields stay
+ * NULL (from wolfSSH_new zero-init) and the useX/kexHashId flags stay 0 so no
+ * per-key free runs over the poisoned bytes. */
+static int test_HandshakeInfoFree_zeroesSecrets(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    HandshakeInfo* hs = NULL;
+    word32 i;
+    const byte* p;
+    int result = 0;
+    int retainInstalled = 0;
+    wolfSSL_Malloc_cb prevMf = NULL;
+    wolfSSL_Free_cb prevFf = NULL;
+    wolfSSL_Realloc_cb prevRf = NULL;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -760;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        result = -761;
+        goto out;
+    }
+    hs = ssh->handshake;
+    if (hs == NULL) {
+        result = -762;
+        goto out;
+    }
+
+    WMEMSET(&hs->keys, 0xA5, sizeof(hs->keys));
+    WMEMSET(&hs->peerKeys, 0xA5, sizeof(hs->peerKeys));
+    WMEMSET(hs->e, 0xA5, sizeof(hs->e));
+    WMEMSET(hs->x, 0xA5, sizeof(hs->x));
+    WMEMSET(&hs->privKey, 0xA5, sizeof(hs->privKey));
+
+    wolfSSL_GetAllocators(&prevMf, &prevFf, &prevRf);
+    if (wolfSSL_SetAllocators(RetainMalloc, RetainFree,
+                              RetainRealloc) != 0) {
+        result = -763;
+        goto out;
+    }
+    retainInstalled = 1;
+    wolfSSH_TestFreeHandshake(ssh); /* frees hs via HandshakeInfoFree */
+    wolfSSL_SetAllocators(prevMf, prevFf, prevRf);
+    retainInstalled = 0;
+
+    if (!IsRetained(hs)) {
+        result = -764;
+        goto out;
+    }
+
+    p = (const byte*)&hs->keys;
+    for (i = 0; i < (word32)sizeof(hs->keys); i++)
+        if (p[i] != 0) { result = -765; goto out; }
+    p = (const byte*)&hs->peerKeys;
+    for (i = 0; i < (word32)sizeof(hs->peerKeys); i++)
+        if (p[i] != 0) { result = -766; goto out; }
+    for (i = 0; i < (word32)sizeof(hs->e); i++)
+        if (hs->e[i] != 0) { result = -767; goto out; }
+    for (i = 0; i < (word32)sizeof(hs->x); i++)
+        if (hs->x[i] != 0) { result = -768; goto out; }
+    p = (const byte*)&hs->privKey;
+    for (i = 0; i < (word32)sizeof(hs->privKey); i++)
+        if (p[i] != 0) { result = -769; goto out; }
+
+out:
+    if (retainInstalled)
+        wolfSSL_SetAllocators(prevMf, prevFf, prevRf);
+    DrainRetained();
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    return result;
+}
+
 #endif /* WOLFSSH_TEST_CAPTURING_ALLOCATOR */
 
 #ifndef WOLFSSH_NO_DH
@@ -7843,6 +7926,10 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #ifdef WOLFSSH_TEST_CAPTURING_ALLOCATOR
     unitResult = test_SshResourceFree_zeroesSecrets();
     printf("SshResourceFree_zeroesSecrets: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+    unitResult = test_HandshakeInfoFree_zeroesSecrets();
+    printf("HandshakeInfoFree_zeroesSecrets: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif

@@ -24,6 +24,7 @@
 
 #include <wolfssh/ssh.h>
 #include <wolfssl/wolfcrypt/coding.h>
+#include <wolfssl/wolfcrypt/memory.h>
 #include <configuration.h>
 #include <auth.h>
 
@@ -1307,6 +1308,129 @@ static int test_CheckPasswordHashUnix(void)
         }
     }
 
+    /* (a) empty input + empty stored hash -> SUCCESS (pins the empty branch). */
+    if (ret == WS_SUCCESS) {
+        char emptyStored[2];
+        emptyStored[0] = 0;
+        Log("    Testing scenario: empty password + empty stored hash authenticates.");
+        rc = CheckPasswordHashUnix("", emptyStored);
+        if (rc == WSSHD_AUTH_SUCCESS) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    /* (b) empty input + real $6$ hash -> FAILURE (kills the && -> || mutant). */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: empty password + real hash is rejected.");
+        rc = CheckPasswordHashUnix("", stored);
+        if (rc == WSSHD_AUTH_FAILURE) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    /* (c) non-empty input + empty stored hash -> FAILURE. */
+    if (ret == WS_SUCCESS) {
+        char emptyStored[2];
+        emptyStored[0] = 0;
+        Log("    Testing scenario: non-empty password + empty stored hash is rejected.");
+        rc = CheckPasswordHashUnix(correct, emptyStored);
+        if (rc == WSSHD_AUTH_FAILURE) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    /* (d) locked account (stored[0]=='*') -> FAILURE (pins the '*' guard). */
+    if (ret == WS_SUCCESS) {
+        char lockedStored[3];
+        lockedStored[0] = '*';
+        lockedStored[1] = 0;
+        Log("    Testing scenario: locked account is rejected.");
+        rc = CheckPasswordHashUnix(correct, lockedStored);
+        if (rc == WSSHD_AUTH_FAILURE) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    return ret;
+}
+
+/* Verify CheckPasswordUnix zeroes the pwStr buffer before freeing it. The
+ * cleanup ForceZero(pwStr, pwSz+1) in auth.c is otherwise uncovered; removing
+ * it leaves the plaintext password in freed heap memory. getpwnam() fails for
+ * the bogus user, so pwStr (size pwSz+1) is the only wolfSSL-heap allocation
+ * on this path and storedHashCpy stays NULL. The capturing allocator copies
+ * the buffer's bytes at free time so they can be inspected. */
+static void*  pwCapPtr = NULL;
+static byte   pwCapBuf[7]; /* pwSz(6) + 1 */
+static int    pwCapDone = 0;
+
+static void* pwCapMalloc(size_t size)
+{
+    void* p = malloc(size);
+    if (p != NULL && size == sizeof(pwCapBuf) && pwCapPtr == NULL)
+        pwCapPtr = p;
+    return p;
+}
+
+static void pwCapFree(void* ptr)
+{
+    if (ptr != NULL && ptr == pwCapPtr) {
+        WMEMCPY(pwCapBuf, ptr, sizeof(pwCapBuf));
+        pwCapDone = 1;
+    }
+    free(ptr);
+}
+
+static void* pwCapRealloc(void* ptr, size_t size)
+{
+    return realloc(ptr, size);
+}
+
+static int test_CheckPasswordUnix(void)
+{
+    int ret = WS_SUCCESS;
+    word32 i;
+
+    pwCapPtr = NULL;
+    pwCapDone = 0;
+    WMEMSET(pwCapBuf, 0xA5, sizeof(pwCapBuf));
+
+    Log("    Testing scenario: CheckPasswordUnix wipes pwStr before free.");
+    if (wolfSSL_SetAllocators(pwCapMalloc, pwCapFree, pwCapRealloc) != 0) {
+        Log(" FAILED (set allocators).\n");
+        return WS_FATAL_ERROR;
+    }
+    (void)CheckPasswordUnix("wolfsshd-no-such-user-xyz",
+                            (const byte*)"secret", 6, NULL);
+    wolfSSL_SetAllocators(NULL, NULL, NULL);
+
+    if (!pwCapDone) {
+        Log(" FAILED (pwStr allocation not captured).\n");
+        return WS_FATAL_ERROR;
+    }
+    for (i = 0; i < (word32)sizeof(pwCapBuf); i++) {
+        if (pwCapBuf[i] != 0) {
+            ret = WS_FATAL_ERROR;
+            break;
+        }
+    }
+    Log(ret == WS_SUCCESS ? " PASSED.\n" : " FAILED.\n");
     return ret;
 }
 #endif /* WOLFSSH_HAVE_LIBCRYPT || WOLFSSH_HAVE_LIBLOGIN */
@@ -1932,6 +2056,7 @@ const TEST_CASE testCases[] = {
 #endif
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
     TEST_DECL(test_CheckPasswordHashUnix),
+    TEST_DECL(test_CheckPasswordUnix),
 #endif
 };
 
