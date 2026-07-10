@@ -3509,6 +3509,12 @@ WOLFSSH_CHANNEL* ChannelNew(WOLFSSH* ssh, byte channelType,
                 WMEMSET(newChannel, 0, sizeof(WOLFSSH_CHANNEL));
                 newChannel->ssh = ssh;
                 newChannel->channelType = channelType;
+                /* Skip channel ids already in use to avoid collisions when
+                 * nextChannel (word32) wraps around. */
+                while (ChannelFind(ssh, ssh->nextChannel,
+                                   WS_CHANNEL_ID_SELF) != NULL) {
+                    ssh->nextChannel++;
+                }
                 newChannel->channel = ssh->nextChannel++;
                 WLOG(WS_LOG_DEBUG, "New channel id = %u", newChannel->channel);
                 newChannel->windowSz = initialWindowSz;
@@ -4415,7 +4421,7 @@ static int GetNameList(byte* idList, word32* idListSz,
      */
 
     if (ret == WS_SUCCESS) {
-        if (*idx >= len || *idx + 4 >= len)
+        if (*idx >= len || *idx + 4 > len)
             ret = WS_BUFFER_E;
     }
 
@@ -7023,7 +7029,8 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             if (ret == WS_SUCCESS) {
                 /* Check that scratch isn't larger than the remainder of the
                  * sig buffer and leaves enough room for another length. */
-                if (scratch > sigSz - begin - LENGTH_SZ) {
+                if (begin + LENGTH_SZ > sigSz ||
+                        scratch > sigSz - begin - LENGTH_SZ) {
                     WLOG(WS_LOG_DEBUG, "sig name size is too large");
                     ret = WS_PARSE_E;
                 }
@@ -12361,6 +12368,10 @@ static int BuildNameList(char* buf, word32 bufSz,
     WLOG(WS_LOG_DEBUG, "Entering BuildNameList()");
 
     idx = 0;
+
+    if (srcSz == 0) {
+        return 0;
+    }
 
     do {
         name = IdToName(*src);
@@ -18773,7 +18784,12 @@ int SendChannelData(WOLFSSH* ssh, word32 channelId,
         word32 bound = min(channel->peerWindowSz, channel->peerMaxPacketSz);
         bound = min(bound, channel->maxPacketSz);
 
-        if (dataSz > bound) {
+        if (bound == 0 && dataSz != 0) {
+            WLOG(WS_LOG_DEBUG, "peer max packet size is zero");
+            ssh->error = WS_WINDOW_FULL;
+            ret = WS_WINDOW_FULL;
+        }
+        else if (dataSz > bound) {
             WLOG(WS_LOG_DEBUG,
                  "Trying to send %u, client will only accept %u, limiting",
                  dataSz, bound);
@@ -18886,7 +18902,12 @@ int SendChannelExtendedData(WOLFSSH* ssh, word32 channelId,
         word32 bound = min(channel->peerWindowSz, channel->peerMaxPacketSz);
         bound = min(bound, channel->maxPacketSz);
 
-        if (dataSz > bound) {
+        if (bound == 0 && dataSz != 0) {
+            WLOG(WS_LOG_DEBUG, "peer max packet size is zero");
+            ssh->error = WS_WINDOW_FULL;
+            ret = WS_WINDOW_FULL;
+        }
+        else if (dataSz > bound) {
             WLOG(WS_LOG_DEBUG,
                  "Trying to send %u, client will only accept %u, limiting",
                  dataSz, bound);

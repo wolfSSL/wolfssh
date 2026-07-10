@@ -672,7 +672,8 @@ static WOLFSSH_AGENT_ID* FindKeyId(WOLFSSH_AGENT_ID* id,
     if (ret == WS_SUCCESS) {
         while (id != NULL &&
                 WMEMCMP(digest, id->id, WC_SHA256_DIGEST_SIZE) != 0 &&
-                WMEMCMP(keyBlob, id->keyBlob, keyBlobSz)) {
+                (keyBlobSz != id->keyBlobSz ||
+                 WMEMCMP(keyBlob, id->keyBlob, keyBlobSz) != 0)) {
             id = id->next;
         }
     }
@@ -1386,7 +1387,7 @@ static int DoMessage(WOLFSSH_AGENT_CTX* agent,
         ato32(buf + begin, &payloadSz);
         WLOG(WS_LOG_AGENT, "payloadSz = %u", payloadSz);
         begin += LENGTH_SZ;
-        if (payloadSz > len - begin) {
+        if (payloadSz == 0 || payloadSz > len - begin) {
             ret = WS_OVERFLOW_E;
         }
     }
