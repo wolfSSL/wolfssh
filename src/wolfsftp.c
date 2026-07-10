@@ -6634,6 +6634,14 @@ static int wolfSSH_SFTP_DoStatus(WOLFSSH* ssh, word32 reqId,
         return WS_FATAL_ERROR;
     }
 
+    /* status is a small enumerated value (0..WOLFSSH_FTP_UNSUPPORTED). An
+     * out-of-range value from a malicious or broken server must not be
+     * returned as a negative int, where it would alias an internal WS_*
+     * error code and bypass the WOLFSSH_FTP_* classification in callers. */
+    if (status > (word32)WOLFSSH_FTP_UNSUPPORTED) {
+        status = WOLFSSH_FTP_FAILURE;
+    }
+
     /* read error message */
     if (GetStringRef(&sz, &str, buf, maxIdx, &localIdx) != WS_SUCCESS) {
         return WS_FATAL_ERROR;

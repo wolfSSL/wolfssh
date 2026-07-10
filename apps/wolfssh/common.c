@@ -391,11 +391,17 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
         pubKeyType[0] = 0;
         fp[0] = 0;
 
-        /* Get the key type out of the key. */
-        ato32(pubKey, &sz);
-        if ((sz > pubKeySz - sizeof(word32))
-                    || (sz > WOLFSSH_CLIENT_PUBKEYTYPE_SIZE_ESTIMATE - 1)) {
+        /* Get the key type out of the key. Require at least a word32
+         * length prefix to avoid an unsigned underflow below. */
+        if (pubKeySz < (word32)sizeof(word32)) {
             ret = -1;
+        }
+        else {
+            ato32(pubKey, &sz);
+            if ((sz > pubKeySz - sizeof(word32))
+                        || (sz > WOLFSSH_CLIENT_PUBKEYTYPE_SIZE_ESTIMATE - 1)) {
+                ret = -1;
+            }
         }
     }
 
