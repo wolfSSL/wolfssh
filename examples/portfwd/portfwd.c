@@ -172,6 +172,8 @@ static int wsUserAuth(byte authType,
     (void)authType;
     if (defaultPassword != NULL) {
         passwordSz = (word32)strlen(defaultPassword);
+        if (passwordSz > (word32)sizeof(userPassword))
+            passwordSz = (word32)sizeof(userPassword);
         memcpy(userPassword, defaultPassword, passwordSz);
     }
     else {

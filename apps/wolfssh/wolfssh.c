@@ -563,7 +563,7 @@ static THREAD_RET readPeer(void* in)
                 buf[bufSz - 1] = '\0';
 
             #ifdef USE_WINDOWS_API
-                if (WriteFile(stdoutHandle, buf, bufSz, &writtn, NULL) == FALSE) {
+                if (WriteFile(stdoutHandle, buf, (DWORD)ret, &writtn, NULL) == FALSE) {
                     err_sys("Failed to write to stdout handle");
                 }
             #else

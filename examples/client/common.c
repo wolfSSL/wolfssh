@@ -519,6 +519,8 @@ int ClientUserAuth(byte authType,
     else if (authType == WOLFSSH_USERAUTH_PASSWORD) {
         if (defaultPassword != NULL) {
             passwordSz = (word32)strlen(defaultPassword);
+            if (passwordSz > (word32)sizeof(userPassword))
+                passwordSz = (word32)sizeof(userPassword);
             memcpy(userPassword, defaultPassword, passwordSz);
         }
 #ifdef WOLFSSH_TERM
