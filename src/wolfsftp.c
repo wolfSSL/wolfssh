@@ -9654,7 +9654,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
             #elif defined(USE_WINDOWS_API)
                     {
                         DWORD desiredAccess = GENERIC_WRITE;
-                        if (state->gOfst > 0)
+                        if (state->gOfst[0] > 0 || state->gOfst[1] > 0)
                             desiredAccess |= FILE_APPEND_DATA;
                         state->fileHandle = WS_CreateFileA(to, desiredAccess,
                             (FILE_SHARE_DELETE | FILE_SHARE_READ |
