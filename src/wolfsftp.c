@@ -7280,7 +7280,9 @@ static int wolfSSH_SFTP_GetHandle(WOLFSSH* ssh, byte* handle, word32* handleSz)
                  * max size */
                 wolfSSH_SFTP_buffer_rewind(&state->buffer);
                 if (wolfSSH_SFTP_buffer_ato32(&state->buffer, &sz) != WS_SUCCESS
-                       || sz > WOLFSSH_MAX_HANDLE || *handleSz < sz) {
+                       || sz > WOLFSSH_MAX_HANDLE || *handleSz < sz
+                       || UINT32_SZ + sz
+                              > wolfSSH_SFTP_buffer_size(&state->buffer)) {
                     WLOG(WS_LOG_SFTP, "Handle size found was too big");
                     WLOG(WS_LOG_SFTP, "Check size set in input handleSz");
                     ssh->error = WS_BUFFER_E;
