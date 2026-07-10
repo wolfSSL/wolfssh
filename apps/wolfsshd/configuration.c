@@ -787,9 +787,13 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value, int depth)
                         /* Skip sub-directories */
                     #if defined(__QNX__) || defined(__QNXNTO__)
                         struct stat s;
+                        int pathLen;
 
-                        lstat(dir->d_name, &s);
-                        if (!S_ISDIR(s.st_mode))
+                        pathLen = WSNPRINTF(filepath, PATH_MAX, "%s/%s",
+                                path, dir->d_name);
+                        if (pathLen > 0 && pathLen < PATH_MAX &&
+                                lstat(filepath, &s) == 0 &&
+                                !S_ISDIR(s.st_mode))
                     #else
                         if (dir->d_type != DT_DIR)
                     #endif
@@ -819,9 +823,13 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value, int depth)
                             /* Skip sub-directories */
                         #if defined(__QNX__) || defined(__QNXNTO__)
                             struct stat s;
+                            int pathLen;
 
-                            lstat(dir->d_name, &s);
-                            if (!S_ISDIR(s.st_mode))
+                            pathLen = WSNPRINTF(filepath, PATH_MAX, "%s/%s",
+                                    path, dir->d_name);
+                            if (pathLen > 0 && pathLen < PATH_MAX &&
+                                    lstat(filepath, &s) == 0 &&
+                                    !S_ISDIR(s.st_mode))
                         #else
                             if (dir->d_type != DT_DIR)
                         #endif
