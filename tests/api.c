@@ -3390,6 +3390,8 @@ struct RealPathTestFailCase realPathFail[] = {
     { "12345678", "12345678", 8, WS_INVALID_PATH_E },
     /* Copy segment will not fit in output. */
     { "1234567", "12345678", 8, WS_INVALID_PATH_E },
+    /* Separator plus segment must leave room for the NUL. */
+    { NULL, "aaa/bbb", 8, WS_INVALID_PATH_E },
 };
 
 static void DoRealPathTestFailCase(struct RealPathTestFailCase* tc)
