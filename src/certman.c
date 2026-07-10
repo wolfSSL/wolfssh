@@ -562,6 +562,18 @@ static int CheckProfile(DecodedCert* cert, int profile)
         }
     }
 
+    if (valid) {
+        valid =
+            cert->signatureOID == CTC_SHA256wRSA ||
+            cert->signatureOID == CTC_SHA384wRSA ||
+            cert->signatureOID == CTC_SHA512wRSA ||
+            cert->signatureOID == CTC_SHA256wECDSA ||
+            cert->signatureOID == CTC_SHA384wECDSA ||
+            cert->signatureOID == CTC_SHA512wECDSA;
+        if (valid != 1)
+            WLOG(WS_LOG_CERTMAN, "cert signature algorithm not FPKI approved");
+    }
+
 #ifdef DEBUG_WOLFSSH
     switch (profile) {
         case PROFILE_FPKI_WORKSHEET_6:
