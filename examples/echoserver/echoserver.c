@@ -319,7 +319,7 @@ static void *global_req(void *ctx)
             return NULL;
         }
 
-        wolfSSH_stream_read(threadCtx->ssh, buf, 0);
+        ret = wolfSSH_stream_read(threadCtx->ssh, buf, 0);
         if (ret != WS_SUCCESS)
         {
             printf("wolfSSH_stream_read Failed.\n");
