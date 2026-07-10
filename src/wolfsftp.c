@@ -850,7 +850,7 @@ static void wolfSSH_SFTP_ClearState(WOLFSSH* ssh, enum WS_SFTP_STATE_ID state)
 
         if (state & STATE_ID_GET) {
             if (ssh->getState) {
-                WS_FORCEZERO(ssh->getState->r, WOLFSSH_MAX_SFTP_RW);
+                WS_FORCEZERO(ssh->getState, sizeof(WS_SFTP_GET_STATE));
                 WFREE(ssh->getState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
                 ssh->getState = NULL;
             }
@@ -929,7 +929,7 @@ static void wolfSSH_SFTP_ClearState(WOLFSSH* ssh, enum WS_SFTP_STATE_ID state)
 
         if (state & STATE_ID_PUT) {
             if (ssh->putState) {
-                WS_FORCEZERO(ssh->putState->r, WOLFSSH_MAX_SFTP_RW);
+                WS_FORCEZERO(ssh->putState, sizeof(WS_SFTP_PUT_STATE));
                 WFREE(ssh->putState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
                 ssh->putState = NULL;
             }
@@ -9795,7 +9795,7 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
             case STATE_GET_CLEANUP:
                 WLOG(WS_LOG_SFTP, "SFTP GET STATE: CLEANUP");
                 if (ssh->getState != NULL) {
-                    WS_FORCEZERO(ssh->getState->r, WOLFSSH_MAX_SFTP_RW);
+                    WS_FORCEZERO(ssh->getState, sizeof(WS_SFTP_GET_STATE));
                     WFREE(ssh->getState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
                     ssh->getState = NULL;
                 }
@@ -10019,7 +10019,7 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
             case STATE_PUT_CLEANUP:
                 WLOG(WS_LOG_SFTP, "SFTP PUT STATE: CLEANUP");
                 if (ssh->putState != NULL) {
-                    WS_FORCEZERO(ssh->putState->r, WOLFSSH_MAX_SFTP_RW);
+                    WS_FORCEZERO(ssh->putState, sizeof(WS_SFTP_PUT_STATE));
                     WFREE(ssh->putState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
                     ssh->putState = NULL;
                 }

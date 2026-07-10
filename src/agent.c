@@ -1607,7 +1607,7 @@ void wolfSSH_AGENT_ID_free(WOLFSSH_AGENT_ID* id, void* heap)
             WS_FORCEZERO(id->keyBuffer, id->keyBufferSz);
             WFREE(id->keyBuffer, heap, DYNTYPE_STRING);
         }
-        WMEMSET(id, 0, sizeof(WOLFSSH_AGENT_ID));
+        WS_FORCEZERO(id, sizeof(WOLFSSH_AGENT_ID));
         WFREE(id, heap, DYNTYPE_AGENT_ID);
     }
 

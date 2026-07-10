@@ -1561,6 +1561,10 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
     HandshakeInfoFree(ssh->handshake, heap);
     WS_FORCEZERO(&ssh->keys, sizeof(Keys));
     WS_FORCEZERO(&ssh->peerKeys, sizeof(Keys));
+    WS_FORCEZERO(ssh->h, sizeof(ssh->h));
+    ssh->hSz = 0;
+    WS_FORCEZERO(ssh->sessionId, sizeof(ssh->sessionId));
+    ssh->sessionIdSz = 0;
     if (ssh->rng) {
         wc_FreeRng(ssh->rng);
         WFREE(ssh->rng, heap, DYNTYPE_RNG);
@@ -6799,6 +6803,9 @@ static int KeyAgreeEcdhMlKem_client(WOLFSSH* ssh, byte hashId,
              ret);
     }
 
+    /* Zero the ML-KEM private key material in handshake->x now that
+     * decapsulation is done, matching the DH path's post-use WS_FORCEZERO. */
+    WS_FORCEZERO(ssh->handshake->x, ssh->handshake->xSz);
     wc_MlKemKey_Free(&kem);
 
     WS_FORCEZERO(ssh->handshake->x, ssh->handshake->xSz);
@@ -8468,8 +8475,11 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
         WFREE(key, ssh->ctx->heap, DYNTYPE_PUBKEY);
     }
     if (encDigest) {
+        WS_FORCEZERO(encDigest, MAX_ENCODED_SIG_SZ);
         WFREE(encDigest, ssh->ctx->heap, DYNTYPE_BUFFER);
     }
+#else
+    WS_FORCEZERO(encDigest, sizeof(encDigest));
 #endif
 
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthRequestRsa(), ret = %d", ret);
@@ -8629,8 +8639,11 @@ static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
         WFREE(key, ssh->ctx->heap, DYNTYPE_PUBKEY);
     }
     if (encDigest) {
+        WS_FORCEZERO(encDigest, MAX_ENCODED_SIG_SZ);
         WFREE(encDigest, ssh->ctx->heap, DYNTYPE_BUFFER);
     }
+#else
+    WS_FORCEZERO(encDigest, sizeof(encDigest));
 #endif
 
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthRequestRsaCert(), ret = %d", ret);
@@ -9671,6 +9684,8 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                             ret = WS_INVALID_ALGO_ID;
                     }
                 }
+
+                WS_FORCEZERO(digest, sizeof(digest));
             }
 
             if (ret != WS_SUCCESS) {
@@ -14385,9 +14400,14 @@ static int SignHRsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
                 &sigKey->sk.rsa.key, heap, "SignHRsa");
     }
 
+    WS_FORCEZERO(digest, sizeof(digest));
     #ifdef WOLFSSH_SMALL_STACK
-    if (encSig != NULL)
+    if (encSig != NULL) {
+        WS_FORCEZERO(encSig, MAX_ENCODED_SIG_SZ);
         WFREE(encSig, heap, DYNTYPE_TEMP);
+    }
+    #else
+    WS_FORCEZERO(encSig, MAX_ENCODED_SIG_SZ);
     #endif
     WLOG(WS_LOG_DEBUG, "Leaving SignHRsa(), ret = %d", ret);
     return ret;
@@ -14529,6 +14549,7 @@ static int SignHEcdsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
         WMEMCPY(sig + idx, s, sSz);
     }
 
+    WS_FORCEZERO(digest, sizeof(digest));
 #ifdef WOLFSSH_SMALL_STACK
     if (r)
         WFREE(r, heap, DYNTYPE_BUFFER);
@@ -16623,6 +16644,8 @@ static int BuildUserAuthRequestRsa(WOLFSSH* ssh,
 
             if (ret == WS_SUCCESS)
                 begin += keySig->sigSz;
+
+            WS_FORCEZERO(encDigest, sizeof(encDigest));
         }
     }
 
@@ -16634,6 +16657,7 @@ static int BuildUserAuthRequestRsa(WOLFSSH* ssh,
         WFREE(checkData, ssh->ctx->heap, DYNTYPE_TEMP);
     }
 
+    WS_FORCEZERO(digest, sizeof(digest));
     return ret;
 } /* END BuildUserAuthRequestRsa */
 
@@ -16803,6 +16827,8 @@ static int BuildUserAuthRequestRsaCert(WOLFSSH* ssh,
 
             if (ret == WS_SUCCESS)
                 begin += keySig->sigSz;
+
+            WS_FORCEZERO(encDigest, sizeof(encDigest));
         }
     }
 
@@ -16814,6 +16840,7 @@ static int BuildUserAuthRequestRsaCert(WOLFSSH* ssh,
         WFREE(checkData, ssh->ctx->heap, DYNTYPE_TEMP);
     }
 
+    WS_FORCEZERO(digest, sizeof(digest));
     WLOG(WS_LOG_DEBUG, "Leaving BuildUserAuthRequestRsaCert(), ret = %d",
             ret);
     return ret;
@@ -17081,6 +17108,7 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
         WFREE(checkData, ssh->ctx->heap, DYNTYPE_TEMP);
     }
 
+    WS_FORCEZERO(digest, sizeof(digest));
 #ifdef WOLFSSH_SMALL_STACK
     if (r_ptr)
         WFREE(r_ptr, ssh->ctx->heap, DYNTYPE_BUFFER);
@@ -17341,6 +17369,7 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
         WFREE(checkData, ssh->ctx->heap, DYNTYPE_TEMP);
     }
 
+    WS_FORCEZERO(digest, sizeof(digest));
     return ret;
 }
 
