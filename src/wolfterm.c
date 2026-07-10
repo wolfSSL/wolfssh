@@ -473,6 +473,15 @@ static int wolfSSH_DoControlSeq(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf, 
         }
         else {
             numArgs = getArgs(buf, bufSz, &i, args);
+            if (i >= bufSz) {
+                /* save left overs for next call */
+                if (bufSz - *idx > WOLFSSL_MAX_ESCBUF) {
+                    return WS_FATAL_ERROR;
+                }
+                WMEMCPY(ssh->escBuf, buf + *idx, bufSz - *idx);
+                ssh->escBufSz = bufSz - *idx;
+                return WS_WANT_READ;
+            }
             c = buf[i]; i++;
         }
     }
@@ -669,6 +678,7 @@ int wolfSSH_ConvertConsole(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf,
             if (ret == WS_WANT_READ) {
                 return ret;
             }
+            ssh->escState = WC_ESC_NONE;
             ssh->escBufSz = 0;
             break;
 
