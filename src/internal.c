@@ -8458,6 +8458,28 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
 }
 
 #ifndef WOLFSSH_NO_RSA
+/* Utility for the RSA user auth paths. */
+/* returns WS_SUCCESS when the key clears WOLFSSH_RSA_MIN_KEY_BITS. */
+static int CheckRsaKeyBits(RsaKey* key)
+{
+    int ret = WS_SUCCESS;
+    int keyBits;
+
+    /* The encrypt size rounds up to a byte; offload builds leave n empty. */
+    keyBits = mp_count_bits(&key->n);
+    if (keyBits == 0) {
+        keyBits = wc_RsaEncryptSize(key) * 8;
+    }
+
+    if (keyBits < WOLFSSH_RSA_MIN_KEY_BITS) {
+        WLOG(WS_LOG_DEBUG, "RSA auth key too small (%d bits)", keyBits);
+        ret = WS_CERT_KEY_SIZE_E;
+    }
+
+    return ret;
+}
+
+
 /* Utility for DoUserAuthRequestPublicKey() */
 /* returns negative for error, positive is size of digest. */
 static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
@@ -8544,6 +8566,10 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
                 ret = WS_CRYPTO_FAILED;
             }
         }
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = CheckRsaKeyBits(key);
     }
 
     if (ret == WS_SUCCESS) {
@@ -8705,11 +8731,7 @@ static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
-        int keySz = wc_RsaEncryptSize(key) * 8;
-        if (keySz < 2048) {
-            WLOG(WS_LOG_DEBUG, "Key size too small (%d)", keySz);
-            ret = WS_CERT_KEY_SIZE_E;
-        }
+        ret = CheckRsaKeyBits(key);
     }
 
     if (ret == WS_SUCCESS) {
