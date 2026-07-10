@@ -1704,14 +1704,10 @@ int wolfSSH_AGENT_worker(WOLFSSH* ssh)
     if (ssh == NULL)
         ret = WS_SSH_NULL_E;
 
-    while (1) {
-        if (ret == WS_SUCCESS) {
-
-            SendSuccess(NULL);
-            DoMessage(NULL, NULL, 0, NULL);
-            ssh->agent->state = AGENT_STATE_DONE;
-            break;
-        }
+    if (ret == WS_SUCCESS) {
+        SendSuccess(NULL);
+        DoMessage(NULL, NULL, 0, NULL);
+        ssh->agent->state = AGENT_STATE_DONE;
     }
 
     WLOG_LEAVE(ret);
