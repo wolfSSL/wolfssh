@@ -1680,7 +1680,7 @@ int wolfSSH_AGENT_worker(WOLFSSH* ssh)
     WLOG_ENTER();
 
     if (ssh == NULL)
-        ret = WS_SSH_NULL_E;
+        return WS_SSH_NULL_E;
 
     while (1) {
         if (ret == WS_SUCCESS) {

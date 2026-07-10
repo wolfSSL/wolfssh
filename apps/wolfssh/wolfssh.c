@@ -857,6 +857,10 @@ static int config_parse_command_line(struct config* config,
         }
 
         command = (char*)WMALLOC(commandSz, NULL, 0);
+        if (command == NULL) {
+            fprintf(stderr, "Couldn't allocate command buffer.\n");
+            exit(EXIT_FAILURE);
+        }
         config->command = command;
         cursor = command;
 
