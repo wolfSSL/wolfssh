@@ -687,6 +687,7 @@ static WOLFSSH_AGENT_ID* FindKeyId(WOLFSSH_AGENT_ID* id,
     wc_Sha256Free(&sha);
 
     if (ret == WS_SUCCESS) {
+        /* only compare equal-length blobs to avoid an over-read */
         while (id != NULL &&
                 WMEMCMP(digest, id->id, WC_SHA256_DIGEST_SIZE) != 0 &&
                 (id->keyBlobSz != keyBlobSz ||
