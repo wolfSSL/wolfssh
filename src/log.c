@@ -49,7 +49,7 @@
 #endif
 
 
-#ifndef WOLFSSL_NO_DEFAULT_LOGGING_CB
+#ifndef WOLFSSH_NO_DEFAULT_LOGGING_CB
     static void DefaultLoggingCb(enum wolfSSH_LogLevel level,
             const char *const msgStr);
     static wolfSSH_LoggingCb logFunction = DefaultLoggingCb;
