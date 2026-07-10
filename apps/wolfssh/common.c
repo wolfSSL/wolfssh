@@ -392,10 +392,15 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
         fp[0] = 0;
 
         /* Get the key type out of the key. */
-        ato32(pubKey, &sz);
-        if ((sz > pubKeySz - sizeof(word32))
-                    || (sz > WOLFSSH_CLIENT_PUBKEYTYPE_SIZE_ESTIMATE - 1)) {
+        if (pubKeySz < sizeof(word32)) {
             ret = -1;
+        }
+        else {
+            ato32(pubKey, &sz);
+            if ((sz > pubKeySz - sizeof(word32))
+                        || (sz > WOLFSSH_CLIENT_PUBKEYTYPE_SIZE_ESTIMATE - 1)) {
+                ret = -1;
+            }
         }
     }
 
