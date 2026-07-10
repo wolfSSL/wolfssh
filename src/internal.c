@@ -6678,6 +6678,8 @@ static int KeyAgreeEcdhMlKem_client(WOLFSSH* ssh, byte hashId,
 
     wc_MlKemKey_Free(&kem);
 
+    WS_FORCEZERO(ssh->handshake->x, ssh->handshake->xSz);
+
     /* Replace the concatenated shared secrets with the hash. That
      * will become the new shared secret. */
     if (ret == 0) {
