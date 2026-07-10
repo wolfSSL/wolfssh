@@ -37,6 +37,7 @@
 #include <wolfssl/wolfcrypt/random.h>
 #include <wolfssl/wolfcrypt/integer.h>
 #include <wolfssl/wolfcrypt/hmac.h>
+#include <wolfssl/wolfcrypt/error-crypt.h>
 #ifndef WOLFSSH_NO_RSA
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/asn.h>
@@ -868,7 +869,8 @@ static int test_MlDsaKeyGen(void)
     (!defined(WOLFSSH_NO_HMAC_SHA1) || \
      !defined(WOLFSSH_NO_HMAC_SHA1_96) || \
      !defined(WOLFSSH_NO_HMAC_SHA2_256) || \
-     !defined(WOLFSSH_NO_HMAC_SHA2_512))
+     !defined(WOLFSSH_NO_HMAC_SHA2_512) || \
+     !defined(WOLFSSH_NO_AES_GCM))
 
 /* Minimal SSH binary packet: uint32 length, padding_length, msgId, padding.
  * Same layout as tests/regress.c BuildPacket (8-byte aligned body). */
@@ -889,7 +891,14 @@ static word32 BuildMacTestPacketPrefix(byte msgId, byte* out, word32 outSz)
     WMEMSET(out + 6, 0, padLen);
     return need;
 }
+#endif
 
+
+#if defined(WOLFSSH_TEST_INTERNAL) && \
+    (!defined(WOLFSSH_NO_HMAC_SHA1) || \
+     !defined(WOLFSSH_NO_HMAC_SHA1_96) || \
+     !defined(WOLFSSH_NO_HMAC_SHA2_256) || \
+     !defined(WOLFSSH_NO_HMAC_SHA2_512))
 
 static int test_DoReceive_VerifyMacFailure(void)
 {
@@ -1014,6 +1023,111 @@ done:
     return result;
 }
 #endif /* WOLFSSH_TEST_INTERNAL && any HMAC SHA variant enabled */
+
+
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_AES_GCM)
+/* Verify DoReceive rejects an AES-GCM record whose ciphertext has been
+ * tampered with, so the AEAD tag check fails and the connection is torn down.
+ * Mirrors test_DoReceive_VerifyMacFailure for the AEAD path. */
+static int test_DoReceive_AeadTagFailure(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    Aes encAes;
+    int ret;
+    int result = 0;
+    int aesInited = 0;
+    byte key[AES_256_KEY_SIZE];
+    byte iv[GCM_NONCE_MID_SZ];
+    byte pkt[UINT32_SZ + 8];
+    byte record[UINT32_SZ + 8 + AES_BLOCK_SIZE];
+    word32 prefixLen, payloadSz, totalLen;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -220;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -221;
+    }
+
+    WMEMSET(key, 0x5A, sizeof(key));
+    WMEMSET(iv, 0x31, sizeof(iv));
+
+    prefixLen = BuildMacTestPacketPrefix(MSGID_IGNORE, pkt, sizeof(pkt));
+    if (prefixLen == 0) {
+        result = -222;
+        goto done;
+    }
+    payloadSz = prefixLen - UINT32_SZ;
+
+    ret = wc_AesInit(&encAes, NULL, INVALID_DEVID);
+    if (ret != 0) {
+        result = -223;
+        goto done;
+    }
+    aesInited = 1;
+    if (wc_AesGcmSetKey(&encAes, key, sizeof(key)) != 0) {
+        result = -224;
+        goto done;
+    }
+    WMEMCPY(record, pkt, UINT32_SZ);
+    if (wc_AesGcmEncrypt(&encAes, record + UINT32_SZ, pkt + UINT32_SZ,
+            payloadSz, iv, sizeof(iv), record + UINT32_SZ + payloadSz,
+            AES_BLOCK_SIZE, record, UINT32_SZ) != 0) {
+        result = -225;
+        goto done;
+    }
+    totalLen = UINT32_SZ + payloadSz + AES_BLOCK_SIZE;
+
+    /* Tamper with a ciphertext byte so the tag check must fail. */
+    record[UINT32_SZ] ^= 0x01;
+
+    if (wc_AesInit(&ssh->decryptCipher.aes, ssh->ctx->heap, INVALID_DEVID) != 0
+            || wc_AesGcmSetKey(&ssh->decryptCipher.aes, key, sizeof(key)) != 0) {
+        result = -226;
+        goto done;
+    }
+    ssh->decryptCipher.isInit = 1;
+    ssh->decryptCipher.cipherType = ID_AES256_GCM;
+    ssh->peerEncryptId = ID_AES256_GCM;
+    ssh->peerAeadMode = 1;
+    ssh->peerBlockSz = UINT32_SZ;
+    ssh->peerMacSz = AES_BLOCK_SIZE;
+    WMEMCPY(ssh->peerKeys.iv, iv, sizeof(iv));
+    ssh->peerKeys.ivSz = sizeof(iv);
+    ssh->curSz = 0;
+    ssh->processReplyState = PROCESS_INIT;
+    ssh->error = 0;
+
+    ShrinkBuffer(&ssh->inputBuffer, 1);
+    if (GrowBuffer(&ssh->inputBuffer, totalLen) != WS_SUCCESS) {
+        result = -227;
+        goto done;
+    }
+    WMEMCPY(ssh->inputBuffer.buffer, record, totalLen);
+    ssh->inputBuffer.length = totalLen;
+    ssh->inputBuffer.idx = 0;
+
+    ret = wolfSSH_TestDoReceive(ssh);
+    if (ret != WS_FATAL_ERROR) {
+        result = -228;
+        goto done;
+    }
+    if (ssh->error != AES_GCM_AUTH_E) {
+        result = -229;
+        goto done;
+    }
+
+done:
+    if (aesInited)
+        wc_AesFree(&encAes);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* WOLFSSH_TEST_INTERNAL && !WOLFSSH_NO_AES_GCM */
 
 
 #ifdef WOLFSSH_TEST_INTERNAL
@@ -8784,6 +8898,13 @@ int wolfSSH_UnitTest(int argc, char** argv)
      !defined(WOLFSSH_NO_HMAC_SHA2_512))
     unitResult = test_DoReceive_VerifyMacFailure();
     printf("DoReceiveVerifyMac: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_AES_GCM)
+    unitResult = test_DoReceive_AeadTagFailure();
+    printf("DoReceiveAeadTag: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
