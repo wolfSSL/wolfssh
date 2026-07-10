@@ -317,11 +317,25 @@ static int isCommand(byte c)
 }
 
 
+/* Bounded VT100 parameter parse. atoi() has UB on overflow (C99 7.20.1),
+ * cannot report errors, and lets peer-supplied "-1" wrap to 0xFFFFFFFF.
+ * Clamp to 0 any param that is empty, has bytes left over after the
+ * digits, or falls outside 0..65535, which covers the VT100 params. */
+static word32 parseArg(const byte* s)
+{
+    char* endp;
+    long v = strtol((const char*)s, &endp, 10);
+    if (endp == (const char*)s || *endp != '\0' || v < 0 || v > 65535L) {
+        v = 0;
+    }
+    return (word32)v;
+}
+
+
 /* returns the number of args found */
 static int getArgs(byte* buf, word32 bufSz, word32* idx, word32* out)
 {
     word32 i = 0, numArgs = 0;
-    word32 maxIdx = WOLFSSH_MAX_CONSOLE_ARGS * 4;
     byte tmpBuf[WOLFSSH_MAX_CONSOLE_ARGS * 4];
     word32 tmpBufIdx = 0;
 
@@ -331,7 +345,7 @@ static int getArgs(byte* buf, word32 bufSz, word32* idx, word32* out)
 
         if (buf[*idx + i] == ';') {
             tmpBuf[tmpBufIdx] = '\0';
-            out[numArgs] = atoi(tmpBuf);
+            out[numArgs] = parseArg(tmpBuf);
             numArgs++;
             tmpBufIdx = 0;
         }
@@ -343,7 +357,7 @@ static int getArgs(byte* buf, word32 bufSz, word32* idx, word32* out)
 
     if (i > 0 && tmpBufIdx > 0) {
         tmpBuf[tmpBufIdx] = '\0';
-        out[numArgs] = atoi(tmpBuf);
+        out[numArgs] = parseArg(tmpBuf);
         numArgs++;
     }
 

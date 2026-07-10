@@ -2693,10 +2693,10 @@ static int test_ScpGetFileMode(void)
     return result;
 }
 
-/* Drive GetScpFileSize directly, covering the strtoull()-based parsing added to
- * replace atoi: valid sizes up to UINT32_MAX are accepted, while negative,
- * out-of-range, and non-numeric fields are rejected instead of silently
- * wrapping into a bogus word32 size. */
+/* Drive GetScpFileSize directly, covering the digit-validating parsing added to
+ * replace atoi: valid sizes up to UINT32_MAX are accepted, while signed,
+ * whitespace-padded, empty, out-of-range, and non-numeric fields are rejected
+ * instead of silently wrapping into a bogus word32 size. */
 static int test_ScpGetFileSize(void)
 {
     WOLFSSH_CTX* ctx = NULL;
@@ -2704,13 +2704,17 @@ static int test_ScpGetFileSize(void)
     static const char* good[] = {
         "0 f\n",
         "1024 file.txt\n",
+        "007 f\n",          /* leading zeros are accepted */
         "4294967295 f\n"    /* UINT32_MAX, the largest accepted size */
     };
-    static const word32 goodSz[] = { 0, 1024, 4294967295UL };
+    static const word32 goodSz[] = { 0, 1024, 7, 4294967295UL };
     static const char* bad[] = {
-        "-1 f\n",                    /* negative wraps above UINT32_MAX */
+        "-1 f\n",                    /* a sign is not a digit */
+        "+1 f\n",
+        "\t1 f\n",                   /* leading whitespace is not a digit */
+        " f\n",                      /* empty field, separator comes first */
         "4294967296 f\n",            /* one past UINT32_MAX */
-        "18446744073709551616 f\n",  /* overflows 64-bit width (ERANGE) */
+        "18446744073709551616 f\n",  /* overflows the 64-bit accumulator */
         "12x34 f\n",                 /* trailing junk before the separator */
         "abc f\n"                    /* not numeric at all */
     };
@@ -2759,26 +2763,44 @@ static int test_ScpGetFileSize(void)
         }
     }
 
+    /* a NUL byte inside the field does not make it a short field: parsing by
+     * length rejects "1\0" "23" rather than stopping at the NUL to accept 1 */
+    if (result == 0) {
+        WMEMSET(tmp, 0, sizeof(tmp));
+        WMEMCPY(tmp, "1\0" "23 f\n", 7);
+        idx = 0;
+        ret = wolfSSH_TestScpGetFileSize(ssh, (byte*)tmp, 7, &idx);
+        if (ret == WS_SUCCESS)
+            result = -435;
+    }
+
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
     return result;
 }
 
-/* Drive GetScpTimestamp directly, covering the strtoull()-based parsing of the
+/* Drive GetScpTimestamp directly, covering the digit-validating parsing of the
  * "T<mtime> 0 <atime> 0" record: a well-formed record populates both times,
- * while a missing 'T', malformed separator, non-numeric field, and overflowing
- * field are all rejected. */
+ * while a missing 'T', malformed separator, signed, whitespace-padded,
+ * non-numeric, and overflowing field are all rejected. These fields are
+ * unbounded, so a sign is the only thing keeping "-1" from being taken as the
+ * wrapped 64-bit maximum. */
 static int test_ScpGetTimestamp(void)
 {
     WOLFSSH_CTX* ctx = NULL;
     WOLFSSH* ssh = NULL;
     static const char* bad[] = {
         "1609459200 0 1609459200 0\n",           /* missing leading 'T' */
+        "T-1 0 100 0\n",                          /* a sign is not a digit */
+        "T+1 0 100 0\n",
+        "T\t1 0 100 0\n",                         /* leading whitespace */
         "T12x 0 100 0\n",                         /* mtime not fully numeric */
-        "T99999999999999999999999999 0 100 0\n",  /* mtime overflow (ERANGE) */
+        "T18446744073709551616 0 100 0\n",        /* one past the 64-bit max */
+        "T99999999999999999999999999 0 100 0\n",  /* mtime overflow */
         "T100 5 100 0\n",                         /* mtime separator not "0 " */
+        "T100 0 -1 0\n",                          /* negative atime */
         "T100 0 abc 0\n",                         /* atime not numeric */
-        "T100 0 99999999999999999999999999 0\n"   /* atime overflow (ERANGE) */
+        "T100 0 99999999999999999999999999 0\n"   /* atime overflow */
     };
     char tmp[64];
     int result = 0;
@@ -2821,6 +2843,24 @@ static int test_ScpGetTimestamp(void)
             result = -445;
             break;
         }
+    }
+
+    /* the fields are unbounded, so the 64-bit maximum itself is accepted */
+    if (result == 0) {
+        WMEMSET(tmp, 0, sizeof(tmp));
+        WSTRNCPY(tmp, "T18446744073709551615 0 18446744073709551614 0\n",
+                sizeof(tmp) - 1);
+        idx = 0;
+        ssh->scpMTime = 0;
+        ssh->scpATime = 0;
+        ret = wolfSSH_TestScpGetTimestamp(ssh, (byte*)tmp,
+                (word32)WSTRLEN(tmp), &idx);
+        if (ret != WS_SUCCESS)
+            result = -446;
+        else if (ssh->scpMTime != W64LIT(0xFFFFFFFFFFFFFFFF))
+            result = -447;
+        else if (ssh->scpATime != W64LIT(0xFFFFFFFFFFFFFFFE))
+            result = -448;
     }
 
     wolfSSH_free(ssh);
