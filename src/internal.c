@@ -19901,6 +19901,12 @@ int wolfSSH_TestDoReceive(WOLFSSH* ssh)
     return DoReceive(ssh);
 }
 
+int wolfSSH_TestBuildNameList(char* buf, word32 bufSz,
+        const byte* src, word32 srcSz)
+{
+    return BuildNameList(buf, bufSz, src, srcSz);
+}
+
 int wolfSSH_TestDoUserAuthBanner(WOLFSSH* ssh, byte* buf, word32 len,
         word32* idx)
 {

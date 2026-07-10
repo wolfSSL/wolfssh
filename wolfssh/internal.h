@@ -1544,6 +1544,8 @@ enum WS_MessageIdLimits {
     WOLFSSH_API int wolfSSH_TestScpExtractFileName(const char* filePath,
             char* fileName, word32 fileNameSz);
 #endif /* WOLFSSH_SCP && !WOLFSSH_SCP_USER_CALLBACKS */
+    WOLFSSH_API int wolfSSH_TestBuildNameList(char* buf, word32 bufSz,
+            const byte* src, word32 srcSz);
 #endif /* WOLFSSH_TEST_INTERNAL */
 
 /* dynamic memory types */

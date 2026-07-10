@@ -2724,6 +2724,47 @@ static void test_wolfSSH_SFTP_SetDefaultPath(void) { ; }
 #endif /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
 
 
+#ifdef WOLFSSH_TEST_INTERNAL
+static void test_wolfSSH_BuildNameList(void)
+{
+    /* Fixed, valid IDs; oracle = comma-joined IdToName() per RFC 4253 7.1 */
+    const byte ids[] = { ID_ECDH_SHA2_NISTP256, ID_AES128_CTR,
+                         ID_HMAC_SHA2_256 };
+    const word32 n = (word32)(sizeof(ids) / sizeof(ids[0]));
+    char expected[256];
+    char buf[256];
+    word32 i;
+    int sizeMode, writeMode;
+    size_t expLen;
+
+    expected[0] = '\0';
+    for (i = 0; i < n; i++) {
+        if (i > 0)
+            strcat(expected, ",");
+        strcat(expected, IdToName(ids[i]));  /* independent oracle */
+    }
+    expLen = strlen(expected);
+
+    sizeMode  = wolfSSH_TestBuildNameList(NULL, 0, ids, n);
+    writeMode = wolfSSH_TestBuildNameList(buf, sizeof(buf), ids, n);
+
+    AssertIntEQ(sizeMode,  (int)expLen);        /* size mode == oracle */
+    AssertIntEQ(writeMode, (int)expLen);        /* write mode == oracle */
+    AssertIntEQ(strcmp(buf, expected), 0);      /* content == oracle    */
+    AssertIntNE(buf[writeMode - 1], ',');       /* no trailing comma    */
+    AssertIntNE(buf[writeMode - 1], '\0');      /* last char is a name  */
+
+    /* Undersized buffer must be rejected with a negative error, not
+     * overflow. BuildNameList sets idx = WS_BUFFER_E then returns idx - 1,
+     * so the exact code is implementation detail; the safety property is
+     * that the call fails rather than writing past the buffer. */
+    AssertIntLT(wolfSSH_TestBuildNameList(buf, 1, ids, n), 0);
+}
+#else
+static void test_wolfSSH_BuildNameList(void) { ; }
+#endif
+
+
 #if defined(WOLFSSH_SCP) && !defined(NO_WOLFSSH_CLIENT) && \
     !defined(SINGLE_THREADED) && !defined(NO_FILESYSTEM) && \
     !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(WOLFSSH_ZEPHYR)
@@ -3866,6 +3907,8 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_SCP_ReKey_NonBlock();
     test_wolfSSH_SCP_ReKey_ToServer();
     test_wolfSSH_SCP_ReKey_ToServer_NonBlock();
+
+    test_wolfSSH_BuildNameList();
 
     /* SFTP tests */
     test_wolfSSH_SFTP_SendReadPacket();

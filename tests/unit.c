@@ -37,6 +37,7 @@
 #include <wolfssl/wolfcrypt/random.h>
 #include <wolfssl/wolfcrypt/integer.h>
 #include <wolfssl/wolfcrypt/hmac.h>
+#include <wolfssl/wolfcrypt/error-crypt.h>
 #ifndef WOLFSSH_NO_RSA
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/asn.h>
@@ -1014,6 +1015,127 @@ done:
     return result;
 }
 #endif /* WOLFSSH_TEST_INTERNAL && any HMAC SHA variant enabled */
+
+
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_AES_GCM)
+/* Verify DoReceive rejects a tampered AES-256-GCM packet, returning
+ * WS_FATAL_ERROR with ssh->error == AES_GCM_AUTH_E. The valid ciphertext and
+ * tag are produced by a SEPARATE Aes context (independent oracle), never
+ * ssh->decryptCipher, so the test is not self-referential. One ciphertext byte
+ * is flipped before delivery; the AEAD auth check must reject it. */
+static int test_DoReceive_AeadTamperFailure(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    int ret;
+    int result = 0;
+    int encReady = 0;
+    Aes enc;
+    byte key[AES_256_KEY_SIZE];
+    byte iv[AEAD_NONCE_SZ];
+    byte pt[16];
+    byte ct[16];
+    byte tag[AES_BLOCK_SIZE];
+    byte lenField[UINT32_SZ];
+    byte pkt[UINT32_SZ + 16 + AES_BLOCK_SIZE];
+    word32 curSz = 16;
+    word32 totalLen = UINT32_SZ + 16 + AES_BLOCK_SIZE;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -300;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -301;
+    }
+
+    WMEMSET(key, 0xA5, sizeof(key));
+    WMEMSET(iv, 0x5A, sizeof(iv));
+
+    /* Plaintext = MSG_IGNORE carrying an empty string. Contents past what
+     * triggers decrypt are irrelevant: the auth reject fires before DoPacket. */
+    WMEMSET(pt, 0, sizeof(pt));
+    pt[0] = 4;              /* padding_length */
+    pt[1] = MSGID_IGNORE;   /* pt[2..5] = uint32 string len 0; rest padding */
+
+    /* AAD = 4-byte big-endian packet_length field (== curSz). */
+    lenField[0] = (byte)(curSz >> 24);
+    lenField[1] = (byte)(curSz >> 16);
+    lenField[2] = (byte)(curSz >> 8);
+    lenField[3] = (byte)(curSz);
+
+    /* Independent oracle: encrypt with a SEPARATE Aes context. */
+    ret = wc_AesInit(&enc, ssh->ctx->heap, INVALID_DEVID);
+    if (ret != 0) {
+        result = -302;
+        goto done;
+    }
+    encReady = 1;
+    ret = wc_AesGcmSetKey(&enc, key, sizeof(key));
+    if (ret == 0)
+        ret = wc_AesGcmEncrypt(&enc, ct, pt, curSz, iv, sizeof(iv),
+                tag, sizeof(tag), lenField, UINT32_SZ);
+    if (ret != 0) {
+        result = -303;
+        goto done;
+    }
+
+    /* Set up ssh receive state to match DecryptAead's expectations. */
+    ssh->peerEncryptId = ID_AES256_GCM;
+    ssh->peerAeadMode = 1;
+    ssh->peerBlockSz = AES_BLOCK_SIZE;
+    ssh->peerMacSz = AES_BLOCK_SIZE;   /* GCM tag size, per SetPeerAlgoIds */
+    WMEMCPY(ssh->peerKeys.iv, iv, sizeof(iv));
+    ssh->peerKeys.ivSz = AEAD_NONCE_SZ;
+    ret = wc_AesInit(&ssh->decryptCipher.aes, ssh->ctx->heap, INVALID_DEVID);
+    if (ret == 0)
+        ret = wc_AesGcmSetKey(&ssh->decryptCipher.aes, key, sizeof(key));
+    if (ret != 0) {
+        result = -304;
+        goto done;
+    }
+    ssh->decryptCipher.cipherType = ID_AES256_GCM;
+    ssh->decryptCipher.isInit = 1;   /* let wolfSSH_free clean it up */
+    ssh->peerSeq = 0;
+    ssh->curSz = 0;
+    ssh->processReplyState = PROCESS_INIT;
+    ssh->error = 0;
+
+    /* Assemble wire packet [lenField][ct][tag], then tamper one byte. */
+    WMEMCPY(pkt, lenField, UINT32_SZ);
+    WMEMCPY(pkt + UINT32_SZ, ct, curSz);
+    WMEMCPY(pkt + UINT32_SZ + curSz, tag, sizeof(tag));
+    pkt[UINT32_SZ] ^= 0x01;   /* flip a ciphertext byte */
+
+    ShrinkBuffer(&ssh->inputBuffer, 1);
+    ret = GrowBuffer(&ssh->inputBuffer, totalLen);
+    if (ret != WS_SUCCESS) {
+        result = -305;
+        goto done;
+    }
+    WMEMCPY(ssh->inputBuffer.buffer, pkt, totalLen);
+    ssh->inputBuffer.length = totalLen;
+    ssh->inputBuffer.idx = 0;
+
+    ret = wolfSSH_TestDoReceive(ssh);
+    if (ret != WS_FATAL_ERROR) {
+        result = -306;
+        goto done;
+    }
+    if (ssh->error != AES_GCM_AUTH_E) {
+        result = -307;
+        goto done;
+    }
+
+done:
+    if (encReady)
+        wc_AesFree(&enc);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* WOLFSSH_TEST_INTERNAL && !WOLFSSH_NO_AES_GCM */
 
 
 #ifdef WOLFSSH_TEST_INTERNAL
@@ -7635,6 +7757,13 @@ int wolfSSH_UnitTest(int argc, char** argv)
      !defined(WOLFSSH_NO_HMAC_SHA2_512))
     unitResult = test_DoReceive_VerifyMacFailure();
     printf("DoReceiveVerifyMac: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_AES_GCM)
+    unitResult = test_DoReceive_AeadTamperFailure();
+    printf("DoReceiveAeadTamper: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
