@@ -11678,23 +11678,39 @@ static const byte userAuthRsaSigBlob[] = {
 /* 257: one past the actual signature size */
 static const byte userAuthRsaSigLenOverrun[] = { 0x00, 0x00, 0x01, 0x01 };
 
+/* Offsets of interest in userAuthRsaPubKeyBlob. */
+#define RSA_PUB_BLOB_NLEN 18  /* length of the modulus mpint */
+#define RSA_PUB_BLOB_N    23  /* first byte of the modulus, past the pad */
+
+/* 129: the mpint pad byte plus a 1024 bit modulus */
+static const byte userAuthRsaPubKeyNLen1024[] = { 0x00, 0x00, 0x00, 0x81 };
+/* Clears the modulus' top bit, leaving 2047 bits in 256 bytes. */
+static const byte userAuthRsaPubKeyMsb2047[] = { 0x7F };
+
 typedef struct {
     const char* name;
     word32 patchIdx;
     const byte* patch;
     word32 patchSz;     /* 0 = no patch */
     word32 flipIdx;     /* XOR 0x01 into this index; 0 = none */
+    word32 pubPatchIdx;
+    const byte* pubPatch;
+    word32 pubPatchSz;  /* 0 = no patch */
     int expected;
 } UserAuthRsaTestVector;
 
 static const UserAuthRsaTestVector userAuthRsaTestVectors[] = {
-    { "high bit signature accepted", 0, NULL, 0, 0, WS_SUCCESS },
+    { "high bit signature accepted", 0, NULL, 0, 0, 0, NULL, 0, WS_SUCCESS },
     { "corrupt signature rejected", 0, NULL, 0, RSA_SIG_BLOB_SIG + 128,
-        WS_RSA_E },
+        0, NULL, 0, WS_RSA_E },
     { "signature length overrun", RSA_SIG_BLOB_LEN, userAuthRsaSigLenOverrun,
-        4, 0, WS_BUFFER_E },
+        4, 0, 0, NULL, 0, WS_BUFFER_E },
     { "signature algo name mismatch", RSA_SIG_BLOB_ALGO,
-        (const byte*)"ssh-dss", 7, 0, WS_INVALID_ALGO_ID },
+        (const byte*)"ssh-dss", 7, 0, 0, NULL, 0, WS_INVALID_ALGO_ID },
+    { "1024 bit key rejected", 0, NULL, 0, 0,
+        RSA_PUB_BLOB_NLEN, userAuthRsaPubKeyNLen1024, 4, WS_CERT_KEY_SIZE_E },
+    { "2047 bit key rejected", 0, NULL, 0, 0,
+        RSA_PUB_BLOB_N, userAuthRsaPubKeyMsb2047, 1, WS_CERT_KEY_SIZE_E },
 };
 
 static int test_DoUserAuthRequestRsa(void)
@@ -11716,6 +11732,15 @@ static int test_DoUserAuthRequestRsa(void)
         return 1;
     }
 
+    /* The key size vectors patch the modulus in place, so the offsets have
+     * to still point at a 257 byte mpint holding a 2048 bit modulus. */
+    if (userAuthRsaPubKeyBlob[RSA_PUB_BLOB_NLEN + 2] != 0x01
+            || userAuthRsaPubKeyBlob[RSA_PUB_BLOB_NLEN + 3] != 0x01
+            || (userAuthRsaPubKeyBlob[RSA_PUB_BLOB_N] & 0x80) == 0) {
+        fprintf(stderr, "\tuserAuthRsaPubKeyBlob offsets are stale\n");
+        return 1;
+    }
+
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
     if (ctx == NULL)
         return 1;
@@ -11727,21 +11752,25 @@ static int test_DoUserAuthRequestRsa(void)
 
     for (i = 0, tv = userAuthRsaTestVectors; i < tc; i++, tv++) {
         byte sigBlob[sizeof(userAuthRsaSigBlob)];
+        byte pubBlob[sizeof(userAuthRsaPubKeyBlob)];
         byte digest[sizeof(userAuthRsaDigest)];
         WS_UserAuthData_PublicKey pk;
 
         WMEMCPY(sigBlob, userAuthRsaSigBlob, sizeof(sigBlob));
+        WMEMCPY(pubBlob, userAuthRsaPubKeyBlob, sizeof(pubBlob));
         WMEMCPY(digest, userAuthRsaDigest, sizeof(digest));
         if (tv->patchSz > 0)
             WMEMCPY(sigBlob + tv->patchIdx, tv->patch, tv->patchSz);
         if (tv->flipIdx > 0)
             sigBlob[tv->flipIdx] ^= 0x01;
+        if (tv->pubPatchSz > 0)
+            WMEMCPY(pubBlob + tv->pubPatchIdx, tv->pubPatch, tv->pubPatchSz);
 
         WMEMSET(&pk, 0, sizeof(pk));
         pk.publicKeyType = (const byte*)"ssh-rsa";
         pk.publicKeyTypeSz = 7;
-        pk.publicKey = userAuthRsaPubKeyBlob;
-        pk.publicKeySz = (word32)sizeof(userAuthRsaPubKeyBlob);
+        pk.publicKey = pubBlob;
+        pk.publicKeySz = (word32)sizeof(pubBlob);
         pk.hasSignature = 1;
         pk.signature = sigBlob;
         pk.signatureSz = (word32)sizeof(sigBlob);
@@ -11927,6 +11956,11 @@ static int test_DoUserAuthRequestRsaCert(void)
         byte sigBlob[sizeof(userAuthRsaSigBlob)];
         byte digest[sizeof(userAuthRsaDigest)];
         WS_UserAuthData_PublicKey pk;
+
+        /* Vectors that patch the raw public key blob don't apply here; the
+         * cert path takes its key from a fixed certificate. */
+        if (tv->pubPatchSz > 0)
+            continue;
 
         WMEMCPY(sigBlob, userAuthRsaSigBlob, sizeof(sigBlob));
         WMEMCPY(digest, userAuthRsaDigest, sizeof(digest));
