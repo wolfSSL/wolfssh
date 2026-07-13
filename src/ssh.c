@@ -1614,6 +1614,12 @@ int wolfSSH_SetChannelType(WOLFSSH* ssh, byte type, byte* name, word32 nameSz)
 
     switch (type) {
         case WOLFSSH_SESSION_SHELL:
+            /* shell has no name; drop any name left by a prior subsystem/exec */
+            if (ssh->channelName != NULL) {
+                WFREE(ssh->channelName, ssh->ctx->heap, DYNTYPE_STRING);
+                ssh->channelName = NULL;
+            }
+            ssh->channelNameSz = 0;
             ssh->connectChannelId = type;
             break;
 
@@ -1624,21 +1630,45 @@ int wolfSSH_SetChannelType(WOLFSSH* ssh, byte type, byte* name, word32 nameSz)
             }
             FALL_THROUGH;
 
-        case WOLFSSH_SESSION_SUBSYSTEM:
-            ssh->connectChannelId = type;
-            if (name != NULL && nameSz < WOLFSSH_MAX_CHN_NAMESZ) {
-                WMEMCPY(ssh->channelName, name, nameSz);
-                ssh->channelNameSz = nameSz;
+        case WOLFSSH_SESSION_SUBSYSTEM: {
+            byte* newName;
+
+            if (name != NULL && nameSz > 0 && nameSz < WOLFSSH_MAX_CHN_NAMESZ) {
+                /* only (re)allocate when the name changed; SFTP/SCP retry
+                 * loops re-set the same name on every poll */
+                if (ssh->channelName == NULL || ssh->channelNameSz != nameSz ||
+                        WMEMCMP(ssh->channelName, name, nameSz) != 0) {
+                    newName = (byte*)WMALLOC(nameSz + 1, ssh->ctx->heap,
+                            DYNTYPE_STRING);
+                    if (newName == NULL) {
+                        return WS_MEMORY_E;
+                    }
+                    WMEMCPY(newName, name, nameSz);
+                    newName[nameSz] = 0;
+                    if (ssh->channelName != NULL) {
+                        WFREE(ssh->channelName, ssh->ctx->heap, DYNTYPE_STRING);
+                    }
+                    ssh->channelName = newName;
+                    ssh->channelNameSz = nameSz;
+                }
             }
             else {
+                /* invalid name ignored; type set but WS_SUCCESS returned */
                 WLOG(WS_LOG_DEBUG, "No subsystem name or name was too large");
             }
+            ssh->connectChannelId = type;
             break;
+        }
 
 #ifdef WOLFSSH_TERM
         case WOLFSSH_SESSION_TERMINAL:
             /* send a pseudo-terminal request and shell channel */
             ssh->sendTerminalRequest = 1;
+            if (ssh->channelName != NULL) {
+                WFREE(ssh->channelName, ssh->ctx->heap, DYNTYPE_STRING);
+                ssh->channelName = NULL;
+            }
+            ssh->channelNameSz = 0;
             ssh->connectChannelId = WOLFSSH_SESSION_SHELL;
             break;
 #endif

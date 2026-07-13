@@ -285,6 +285,102 @@ static void test_wolfSSH_SetUsername(void)
 }
 
 
+static void test_wolfSSH_SetChannelType(void)
+{
+#ifndef NO_WOLFSSH_CLIENT
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    const byte sub1[] = "sftp";
+    const byte sub2[] = "a-longer-subsystem-name";
+    byte* prevName;
+
+    AssertIntNE(WS_SUCCESS, wolfSSH_SetChannelType(NULL,
+                WOLFSSH_SESSION_SHELL, NULL, 0));
+
+    AssertNotNull(ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL));
+    AssertNotNull(ssh = wolfSSH_new(ctx));
+
+    AssertIntEQ(WS_SUCCESS, wolfSSH_SetChannelType(ssh,
+                WOLFSSH_SESSION_SHELL, NULL, 0));
+    AssertNull(ssh->channelName);
+    AssertIntEQ(0, ssh->channelNameSz);
+
+    AssertIntEQ(WS_SUCCESS, wolfSSH_SetChannelType(ssh,
+                WOLFSSH_SESSION_SUBSYSTEM, NULL, 0));
+    AssertNull(ssh->channelName);
+
+    AssertIntEQ(WS_SUCCESS, wolfSSH_SetChannelType(ssh,
+                WOLFSSH_SESSION_SUBSYSTEM, (byte*)sub1, WOLFSSH_MAX_CHN_NAMESZ));
+    AssertNull(ssh->channelName);
+
+    AssertIntEQ(WS_SUCCESS, wolfSSH_SetChannelType(ssh,
+                WOLFSSH_SESSION_SUBSYSTEM, (byte*)sub1,
+                (word32)(sizeof(sub1) - 1)));
+    AssertNotNull(ssh->channelName);
+    AssertIntEQ((int)(sizeof(sub1) - 1), (int)ssh->channelNameSz);
+    AssertIntEQ(0, strcmp((const char*)ssh->channelName, (const char*)sub1));
+    AssertIntEQ(0, ssh->channelName[ssh->channelNameSz]); /* NUL terminated */
+
+    /* re-setting the same name must not reallocate (no churn) */
+    prevName = ssh->channelName;
+    AssertIntEQ(WS_SUCCESS, wolfSSH_SetChannelType(ssh,
+                WOLFSSH_SESSION_SUBSYSTEM, (byte*)sub1,
+                (word32)(sizeof(sub1) - 1)));
+    AssertIntEQ(1, ssh->channelName == prevName);
+
+    /* a rejected (oversize) name must leave the previous buffer intact */
+    AssertIntEQ(WS_SUCCESS, wolfSSH_SetChannelType(ssh,
+                WOLFSSH_SESSION_SUBSYSTEM, (byte*)sub1, WOLFSSH_MAX_CHN_NAMESZ));
+    AssertIntEQ(1, ssh->channelName == prevName);
+    AssertIntEQ((int)(sizeof(sub1) - 1), (int)ssh->channelNameSz);
+    AssertIntEQ(0, strcmp((const char*)ssh->channelName, (const char*)sub1));
+
+    /* a zero-length name is ignored and preserves the stored name */
+    AssertIntEQ(WS_SUCCESS, wolfSSH_SetChannelType(ssh,
+                WOLFSSH_SESSION_SUBSYSTEM, (byte*)sub1, 0));
+    AssertIntEQ(1, ssh->channelName == prevName);
+    AssertIntEQ((int)(sizeof(sub1) - 1), (int)ssh->channelNameSz);
+
+    /* repeated set frees the previous buffer before replacing it */
+    AssertIntEQ(WS_SUCCESS, wolfSSH_SetChannelType(ssh,
+                WOLFSSH_SESSION_SUBSYSTEM, (byte*)sub2,
+                (word32)(sizeof(sub2) - 1)));
+    AssertNotNull(ssh->channelName);
+    AssertIntEQ((int)(sizeof(sub2) - 1), (int)ssh->channelNameSz);
+    AssertIntEQ(0, strcmp((const char*)ssh->channelName, (const char*)sub2));
+
+    /* EXEC reaches the same alloc path via fallthrough on the client side */
+    AssertIntEQ(WS_SUCCESS, wolfSSH_SetChannelType(ssh,
+                WOLFSSH_SESSION_EXEC, (byte*)sub1,
+                (word32)(sizeof(sub1) - 1)));
+    AssertNotNull(ssh->channelName);
+    AssertIntEQ((int)(sizeof(sub1) - 1), (int)ssh->channelNameSz);
+    AssertIntEQ(0, strcmp((const char*)ssh->channelName, (const char*)sub1));
+
+    /* switching to SHELL frees and clears a prior subsystem/exec name */
+    AssertIntEQ(WS_SUCCESS, wolfSSH_SetChannelType(ssh,
+                WOLFSSH_SESSION_SHELL, NULL, 0));
+    AssertNull(ssh->channelName);
+    AssertIntEQ(0, ssh->channelNameSz);
+
+    /* unknown channel type is rejected */
+    AssertIntNE(WS_SUCCESS, wolfSSH_SetChannelType(ssh,
+                WOLFSSH_SESSION_UNKNOWN, NULL, 0));
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    /* server-side EXEC is rejected */
+    AssertNotNull(ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL));
+    AssertNotNull(ssh = wolfSSH_new(ctx));
+    AssertIntNE(WS_SUCCESS, wolfSSH_SetChannelType(ssh,
+                WOLFSSH_SESSION_EXEC, (byte*)sub1, (word32)(sizeof(sub1) - 1)));
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+#endif /* NO_WOLFSSH_CLIENT */
+}
+
+
 enum WS_TestFormatTypes {
     TEST_GOOD_FORMAT_ASN1 = WOLFSSH_FORMAT_ASN1,
     TEST_GOOD_FORMAT_PEM = WOLFSSH_FORMAT_PEM,
@@ -3837,6 +3933,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_client_wolfSSH_new();
     test_wolfSSH_set_fd();
     test_wolfSSH_SetUsername();
+    test_wolfSSH_SetChannelType();
     test_wolfSSH_ConvertConsole();
     test_wolfSSH_CTX_UsePrivateKey_buffer();
     test_wolfSSH_CTX_UseCert_buffer();
