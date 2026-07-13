@@ -1565,6 +1565,11 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
     if (ssh->userName) {
         WFREE(ssh->userName, heap, DYNTYPE_STRING);
     }
+    if (ssh->channelName != NULL) {
+        WFREE(ssh->channelName, heap, DYNTYPE_STRING);
+        ssh->channelName = NULL;
+        ssh->channelNameSz = 0;
+    }
     if (ssh->peerProtoId) {
         WFREE(ssh->peerProtoId, heap, DYNTYPE_STRING);
     }
@@ -19200,6 +19205,9 @@ int SendChannelRequest(WOLFSSH* ssh, byte* name, word32 nameSz)
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
+    if (ret == WS_SUCCESS && nameSz > 0 && name == NULL)
+        ret = WS_BAD_ARGUMENT;
+
     if (ret == WS_SUCCESS) {
         channel = ChannelFind(ssh,
                 ssh->defaultPeerChannelId, WS_CHANNEL_ID_PEER);
@@ -19264,17 +19272,19 @@ int SendChannelRequest(WOLFSSH* ssh, byte* name, word32 nameSz)
 
     #ifdef DEBUG_WOLFSSH
         /* only compile in code for checks on type if in debug mode */
-        switch (ssh->connectChannelId) {
-            case WOLFSSH_SESSION_EXEC:
-                WLOG(WS_LOG_INFO, "  command = %s", name);
-                break;
+        if (name != NULL) {
+            switch (ssh->connectChannelId) {
+                case WOLFSSH_SESSION_EXEC:
+                    WLOG(WS_LOG_INFO, "  command = %.*s", (int)nameSz, name);
+                    break;
 
-            case WOLFSSH_SESSION_SUBSYSTEM:
-                WLOG(WS_LOG_INFO, "  subsystem = %s", name);
-                break;
+                case WOLFSSH_SESSION_SUBSYSTEM:
+                    WLOG(WS_LOG_INFO, "  subsystem = %.*s", (int)nameSz, name);
+                    break;
 
-            default:
-                break;
+                default:
+                    break;
+            }
         }
     #endif
 
