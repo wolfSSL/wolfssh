@@ -33,6 +33,13 @@
 #                       auto-detected from WOLFSSL_DIR/wolfssl/version.h when unset.
 #   SBOM_OPENSSL_VERSION   Version recorded for the OpenSSL dependency;
 #                       gen-sbom resolves it via pkg-config when unset.
+#   SBOM_CONFIG_H       Path to the configure-generated config header to
+#                       force-include when capturing the configured build
+#                       macros.  Products whose AC_CONFIG_HEADERS lives in a
+#                       subdirectory MUST override this so config.h defines are
+#                       captured (e.g. wolfEngine: $(abs_builddir)/include/config.h;
+#                       wolfCLU: $(abs_builddir)/src/config.h).
+#                       Default: $(abs_builddir)/config.h.
 #
 # The wolfSSL/OpenSSL dependency flags are feature-detected against gen-sbom
 # --help, so a product wired for them still produces a valid SBOM (with a NOTE)
@@ -48,6 +55,7 @@ SBOM_LIB_STEM ?= lib$(SBOM_PKGNAME)
 SBOM_BIN_NAME ?= $(SBOM_PKGNAME)
 SBOM_DEP_WOLFSSL ?= no
 SBOM_DEP_OPENSSL ?= no
+SBOM_CONFIG_H ?= $(abs_builddir)/config.h
 
 SBOM_CDX     = $(SBOM_PKGNAME)-$(PACKAGE_VERSION).cdx.json
 SBOM_SPDX    = $(SBOM_PKGNAME)-$(PACKAGE_VERSION).spdx.json
@@ -84,7 +92,9 @@ CLEANFILES += $(SBOM_CDX) $(SBOM_SPDX) $(SBOM_SPDX_TV)
 
 # Stage a `make install` into a private tree, discover the installed artifact
 # (shared/static library or program; ELF/Mach-O/PE), hash it, capture the
-# configured build macros (AM_CPPFLAGS + config.h), generate SPDX+CDX, validate
+# configured build macros (AM_CPPFLAGS/AM_CFLAGS/CFLAGS + config.h; some
+# products carry their feature -D flags in AM_CFLAGS rather than AM_CPPFLAGS),
+# generate SPDX+CDX, validate
 # the SPDX, then convert to tag-value.  The staging tree and temp defines file
 # are removed unconditionally via `trap`, even on failure.  SOURCE_DATE_EPOCH is
 # honoured for reproducible output (defaults to the last git commit time).
@@ -127,7 +137,8 @@ sbom:
 	fi; \
 	echo "SBOM: hashing $$sbom_art"; \
 	$(CC) -dM -E $(DEFAULT_INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) \
-	    $(if $(wildcard $(abs_builddir)/config.h),-include $(abs_builddir)/config.h) \
+	    $(AM_CFLAGS) $(CFLAGS) \
+	    $(if $(wildcard $(SBOM_CONFIG_H)),-include $(SBOM_CONFIG_H)) \
 	    -x c /dev/null > "$$_defines"; \
 	if test -z "$${SOURCE_DATE_EPOCH:-}" && test -n "$(GIT)" && \
 	   $(GIT) -C "$(srcdir)" rev-parse --git-dir >/dev/null 2>&1; then \
