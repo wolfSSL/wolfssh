@@ -1269,76 +1269,162 @@ static int test_DhGexGroupValidate(void)
     return result;
 }
 
-/* Server-side group selection for DH GEX. Confirms the server honors the
- * client's requested min/preferred/max window instead of always handing back
- * the 2048-bit group 14, and rejects windows no built-in group can satisfy. */
-static int test_DhGexGroupSelect(void)
+#if WOLFSSH_DH_GEX_MIN_BITS == 2048
+/* Assert the selector returns a group of exactly expectSz bytes, and that the
+ * bytes really are a built-in DH prime: every one of RFC 2409/3526 group 1,
+ * 14, and 16 begins and ends with 0xFF. Checking the pointer and not just the
+ * size keeps a mispaired (group, sizeof) entry in candidates[] from passing.
+ * Returns 0, or code on mismatch. */
+static int DhGexExpectGroup(word32 minBits, word32 prefBits, word32 maxBits,
+        word32 expectSz, int code, const char* what)
 {
-    const byte* group;
-    word32 groupSz;
+    const byte* group = NULL;
+    word32 groupSz = 0;
     int ret;
 
-    /* Default-ish window: with group 16 enabled, preferred 3072 is equidistant
-     * from 2048 and 4096 and the tie favors the smaller group; without group 16,
-     * 2048 is simply the closest in-window candidate. Either way a stock client
-     * still receives the historical 2048-bit group (256 bytes). */
-    group = NULL; groupSz = 0;
-    ret = wolfSSH_TestSelectKexDhGexGroup(1024, 3072, 8192, &group, &groupSz);
-    if (ret != WS_SUCCESS || groupSz != 256) {
-        printf("DhGexGroupSelect: default window got ret %d sz %u\n",
-                ret, groupSz);
-        return -200;
+    ret = wolfSSH_TestSelectKexDhGexGroup(minBits, prefBits, maxBits,
+            &group, &groupSz);
+    if (ret != WS_SUCCESS || groupSz != expectSz || group == NULL) {
+        printf("DhGexGroupSelect: %s got ret %d sz %u want %u\n",
+                what, ret, groupSz, expectSz);
+        return code;
+    }
+    if (group[0] != 0xFF || group[groupSz - 1] != 0xFF) {
+        printf("DhGexGroupSelect: %s group is not a built-in prime\n", what);
+        return code;
+    }
+    return 0;
+}
+#endif /* WOLFSSH_DH_GEX_MIN_BITS == 2048 */
+
+/* The selector must reject the window rather than serve a group outside it. */
+static int DhGexExpectReject(word32 minBits, word32 prefBits, word32 maxBits,
+        int code, const char* what)
+{
+    const byte* group = NULL;
+    word32 groupSz = 0;
+    int ret;
+
+    ret = wolfSSH_TestSelectKexDhGexGroup(minBits, prefBits, maxBits,
+            &group, &groupSz);
+    if (ret != WS_DH_SIZE_E) {
+        printf("DhGexGroupSelect: %s got ret %d sz %u\n", what, ret, groupSz);
+        return code;
+    }
+    return 0;
+}
+
+/* Server-side group selection for DH GEX. Confirms the server honors the
+ * client's requested min/preferred/max window instead of always handing back
+ * the 2048-bit group 14, and rejects windows no built-in group can satisfy.
+ * The concrete group sizes below are only meaningful at the default 2048-bit
+ * floor; a build that overrides WOLFSSH_DH_GEX_MIN_BITS gets the
+ * floor-relative checks instead. */
+static int test_DhGexGroupSelect(void)
+{
+    int ret;
+
+#if WOLFSSH_DH_GEX_MIN_BITS == 2048
+    /* NULL out-params are rejected before anything else. */
+    if (wolfSSH_TestSelectKexDhGexGroup(2048, 2048, 8192, NULL, NULL)
+            != WS_BAD_ARGUMENT) {
+        printf("DhGexGroupSelect: NULL out-params not rejected\n");
+        return -199;
     }
 
+    /* Default-ish window. RFC 4419 sec. 3: return the smallest group at or
+     * above the client's preferred size. With group 16 that is 4096 (512
+     * bytes) for a preferred of 3072; without it -- or when a reduced
+     * MAX_KEX_KEY_SZ / KEX_F_SIZE caps the selector's maxBits below 4096 --
+     * nothing reaches 3072 and the largest in-window group, 2048 (256 bytes),
+     * is returned instead. Guard on the same buffer sizes SelectKexDhGexGroup
+     * caps against, matching test_DhGexGroup16KeyAgree. */
+#if !defined(WOLFSSH_NO_DH_GROUP16_SHA512) && \
+        (MAX_KEX_KEY_SZ * 8) >= 4096 && ((KEX_F_SIZE - 1) * 8) >= 4096
+    ret = DhGexExpectGroup(1024, 3072, 8192, 512, -200, "default window");
+#else
+    ret = DhGexExpectGroup(1024, 3072, 8192, 256, -200, "default window");
+#endif
+    if (ret != 0)
+        return ret;
+
+    /* A preferred size that a group matches exactly takes that group: the
+     * comparison is >=, not the RFC's literal "larger than". */
+    ret = DhGexExpectGroup(2048, 2048, 8192, 256, -201, "exact-preferred");
+    if (ret != 0)
+        return ret;
+
     /* A max below 4096 must cap the choice even when preferred is huge. */
-    group = NULL; groupSz = 0;
-    ret = wolfSSH_TestSelectKexDhGexGroup(1024, 8192, 2048, &group, &groupSz);
-    if (ret != WS_SUCCESS || groupSz != 256) {
-        printf("DhGexGroupSelect: max-cap window got ret %d sz %u\n",
-                ret, groupSz);
-        return -201;
-    }
+    ret = DhGexExpectGroup(1024, 8192, 2048, 256, -202, "max-cap window");
+    if (ret != 0)
+        return ret;
 
     /* A window no built-in group falls inside must be rejected, not silently
      * served a group outside it. */
-    group = NULL; groupSz = 0;
-    ret = wolfSSH_TestSelectKexDhGexGroup(3000, 3000, 3500, &group, &groupSz);
-    if (ret != WS_DH_SIZE_E) {
-        printf("DhGexGroupSelect: impossible window got ret %d\n", ret);
-        return -202;
-    }
+    ret = DhGexExpectReject(3000, 3000, 3500, -203, "impossible window");
+    if (ret != 0)
+        return ret;
 
-#ifndef WOLFSSH_NO_DH_GROUP16_SHA512
+#if !defined(WOLFSSH_NO_DH_GROUP16_SHA512) && \
+        (MAX_KEX_KEY_SZ * 8) >= 4096 && ((KEX_F_SIZE - 1) * 8) >= 4096
     /* A client demanding a 4096-bit minimum gets the 4096-bit group (512
      * bytes), never a silent downgrade to 2048. */
-    group = NULL; groupSz = 0;
-    ret = wolfSSH_TestSelectKexDhGexGroup(4096, 4096, 8192, &group, &groupSz);
-    if (ret != WS_SUCCESS || groupSz != 512) {
-        printf("DhGexGroupSelect: 4096 min got ret %d sz %u\n", ret, groupSz);
-        return -203;
-    }
+    ret = DhGexExpectGroup(4096, 4096, 8192, 512, -204, "4096 min");
 #else
-    /* Without group 16 there is nothing >= 4096, so the request is rejected
-     * rather than downgraded. */
-    group = NULL; groupSz = 0;
-    ret = wolfSSH_TestSelectKexDhGexGroup(4096, 4096, 8192, &group, &groupSz);
-    if (ret != WS_DH_SIZE_E) {
-        printf("DhGexGroupSelect: 4096 min (no group16) got ret %d\n", ret);
-        return -203;
-    }
+    /* Without group 16 -- or when the selector's buffers cap maxBits below
+     * 4096 -- there is nothing >= 4096, so the request is rejected rather than
+     * downgraded. */
+    ret = DhGexExpectReject(4096, 4096, 8192, -204, "4096 min (no group16)");
+#endif
+    if (ret != 0)
+        return ret;
+
+    /* A sub-2048 window must be rejected, not downgraded to the 1024-bit group
+     * 1, even when group 1 is compiled in for direct group1-sha1: the GEX path
+     * enforces the WOLFSSH_DH_GEX_MIN_BITS (2048) floor from RFC 8270. The
+     * client's max (1536) is below the floor, so no candidate fits. */
+    ret = DhGexExpectReject(1024, 1024, 1536, -205, "sub-2048 window");
+    if (ret != 0)
+        return ret;
+
+    /* A window whose minimum is below the floor but whose max admits 2048 must
+     * clamp up to the 2048-bit group (256 bytes), never the 1024-bit group.
+     * The low preferred size keeps the choice at 2048 rather than 4096. */
+    ret = DhGexExpectGroup(1024, 1024, 4096, 256, -206, "floor-clamp window");
+    if (ret != 0)
+        return ret;
+#else
+    /* No built-in group lies in [3000, 3500] at any floor: either the window
+     * is empty on its own, or the clamped min exceeds the max. */
+    ret = DhGexExpectReject(3000, 3000, 3500, -207, "impossible window");
+    if (ret != 0)
+        return ret;
+
+    /* A window topping out below the floor is rejected, never downgraded.
+     * Guarded so a zero floor cannot underflow the max into 0xFFFFFFFF. */
+#if WOLFSSH_DH_GEX_MIN_BITS >= 2
+    ret = DhGexExpectReject(1, 1, WOLFSSH_DH_GEX_MIN_BITS - 1, -209,
+            "sub-floor window");
+    if (ret != 0)
+        return ret;
 #endif
 
-#ifndef WOLFSSH_NO_DH_GROUP1_SHA1
-    /* A window only the 1024-bit group fits returns group 1 (128 bytes). */
-    group = NULL; groupSz = 0;
-    ret = wolfSSH_TestSelectKexDhGexGroup(1024, 1024, 1536, &group, &groupSz);
-    if (ret != WS_SUCCESS || groupSz != 128) {
-        printf("DhGexGroupSelect: 1024 window got ret %d sz %u\n",
-                ret, groupSz);
-        return -204;
-    }
-#endif
+    /* A wide-open window never selects a group below the floor. */
+    {
+        const byte* group = NULL;
+        word32 groupSz = 0;
 
+        ret = wolfSSH_TestSelectKexDhGexGroup(1, 1, 8192, &group, &groupSz);
+        if (ret == WS_SUCCESS &&
+                (groupSz * 8) < (word32)WOLFSSH_DH_GEX_MIN_BITS) {
+            printf("DhGexGroupSelect: floor %d violated, sz %u\n",
+                    WOLFSSH_DH_GEX_MIN_BITS, groupSz);
+            return -208;
+        }
+    }
+#endif /* WOLFSSH_DH_GEX_MIN_BITS == 2048 */
+
+    (void)ret;
     return 0;
 }
 
@@ -1445,14 +1531,17 @@ static int test_DhGexGroupSendHashConsistency(void)
     int ret;
 
     /* Default client window. Covers the cache plumbing on every build,
-     * including group14-only ones. */
+     * including group14-only ones. A floor raised above the largest built-in
+     * group leaves nothing to select, and this case reports that. */
     ret = DhGexSendHashConsistencyCase(WOLFSSH_DEFAULT_GEXDH_MIN,
             WOLFSSH_DEFAULT_GEXDH_PREFERRED, WOLFSSH_DEFAULT_GEXDH_MAX,
             0, -210);
     if (ret != 0)
         return ret;
 
-#ifndef WOLFSSH_NO_DH_GROUP16_SHA512
+#if !defined(WOLFSSH_NO_DH_GROUP16_SHA512) && \
+        WOLFSSH_DH_GEX_MIN_BITS == 2048 && \
+        (MAX_KEX_KEY_SZ * 8) >= 4096 && ((KEX_F_SIZE - 1) * 8) >= 4096
     /* Force the 4096-bit group 16 (512 bytes) so a send/hash divergence can't
      * hide behind both paths independently landing on the default group 14. */
     ret = DhGexSendHashConsistencyCase(4096, 4096, 8192, 512, -230);
@@ -1461,6 +1550,417 @@ static int test_DhGexGroupSendHashConsistency(void)
 #endif
 
     return 0;
+}
+
+/* Exercise the GetDHPrimeGroup cache-miss fallback: with the cached group
+ * cleared, it must re-select the same group from the client window (and set a
+ * generator), not desync from the wire. */
+static int test_DhGexGroupCacheMissFallback(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    byte request[UINT32_SZ * 3];
+    word32 idx = 0;
+    const byte* group = NULL;
+    word32 groupSz = 0;
+    const byte* generator = NULL;
+    word32 generatorSz = 0;
+    word32 wireSz = 0;
+    int ret;
+    int result = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -240;
+    wolfSSH_SetIOSend(ctx, GexSinkSend);
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL || ssh->handshake == NULL) {
+        result = -241;
+        goto out;
+    }
+    ssh->handshake->kexId = ID_DH_GEX_SHA256;
+
+    PutU32BE(request, WOLFSSH_DEFAULT_GEXDH_MIN);
+    PutU32BE(request + UINT32_SZ, WOLFSSH_DEFAULT_GEXDH_PREFERRED);
+    PutU32BE(request + UINT32_SZ * 2, WOLFSSH_DEFAULT_GEXDH_MAX);
+
+    ret = wolfSSH_TestDoKexDhGexRequest(ssh, request, sizeof(request), &idx);
+    if (ret != WS_SUCCESS || ssh->handshake->primeGroup == NULL) {
+        printf("DhGexGroupCacheMissFallback: request ret %d\n", ret);
+        result = -242;
+        goto out;
+    }
+    wireSz = ssh->handshake->primeGroupSz;
+
+    /* Drop the cache to force the fallback branch. primeGroup is a WMALLOC'd
+     * copy; the fallback returns a pointer into static group data. */
+    WFREE(ssh->handshake->primeGroup, ssh->ctx->heap, DYNTYPE_MPINT);
+    ssh->handshake->primeGroup = NULL;
+
+    ret = wolfSSH_TestGetDHPrimeGroup(ssh, &group, &groupSz,
+            &generator, &generatorSz);
+    if (ret != WS_SUCCESS) {
+        printf("DhGexGroupCacheMissFallback: fallback ret %d\n", ret);
+        result = -243;
+        goto out;
+    }
+    /* Must re-select the group the wire used, with a non-NULL generator. */
+    if (group == NULL || groupSz != wireSz || generator == NULL ||
+            generatorSz == 0) {
+        printf("DhGexGroupCacheMissFallback: group sz %u wire %u gen %p\n",
+                groupSz, wireSz, (const void*)generator);
+        result = -244;
+        goto out;
+    }
+
+out:
+    if (ssh != NULL)
+        wolfSSH_free(ssh);
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* Drive the real server request path with a client window no built-in group
+ * satisfies (3000..3500, and no group exists between 2048 and 4096). The server
+ * must return WS_DH_SIZE_E and leave no group cached, rather than emit a
+ * KEXDH_GEX_GROUP with a NULL prime. The window is impossible at any floor, so
+ * this is not gated on WOLFSSH_DH_GEX_MIN_BITS. */
+static int test_DhGexServerRejectsUnsatisfiableWindow(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    byte request[UINT32_SZ * 3];
+    word32 idx = 0;
+    int ret;
+    int result = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -280;
+    wolfSSH_SetIOSend(ctx, GexSinkSend);
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL || ssh->handshake == NULL) {
+        result = -281;
+        goto out;
+    }
+    ssh->handshake->kexId = ID_DH_GEX_SHA256;
+
+    PutU32BE(request, 3000);
+    PutU32BE(request + UINT32_SZ, 3000);
+    PutU32BE(request + UINT32_SZ * 2, 3500);
+
+    ret = wolfSSH_TestDoKexDhGexRequest(ssh, request, sizeof(request), &idx);
+    if (ret != WS_DH_SIZE_E) {
+        printf("DhGexServerRejectsUnsatisfiableWindow: ret %d want %d\n",
+                ret, WS_DH_SIZE_E);
+        result = -282;
+        goto out;
+    }
+    /* A rejected selection must not leave a half-cached group behind. */
+    if (ssh->handshake->primeGroup != NULL ||
+            ssh->handshake->primeGroupSz != 0) {
+        printf("DhGexServerRejectsUnsatisfiableWindow: stale cache %p sz %u\n",
+                (const void*)ssh->handshake->primeGroup,
+                ssh->handshake->primeGroupSz);
+        result = -283;
+        goto out;
+    }
+
+out:
+    if (ssh != NULL)
+        wolfSSH_free(ssh);
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* Drive SendKexDhGexRequest with the window preset on the handshake. The send
+ * sink swallows the packet; the caller inspects the window it advertised. */
+static int DhGexRequestCase(word32 minBits, word32 prefBits, word32 maxBits,
+        int expectRet, WOLFSSH_CTX* ctx, WOLFSSH** sshOut)
+{
+    WOLFSSH* ssh = wolfSSH_new(ctx);
+
+    *sshOut = ssh;
+    if (ssh == NULL || ssh->handshake == NULL)
+        return -1;
+
+    ssh->handshake->kexId = ID_DH_GEX_SHA256;
+    ssh->handshake->dhGexMinSz = minBits;
+    ssh->handshake->dhGexPreferredSz = prefBits;
+    ssh->handshake->dhGexMaxSz = maxBits;
+
+    return (wolfSSH_TestSendKexDhGexRequest(ssh) == expectRet) ? 0 : -1;
+}
+
+/* The client must advertise the same minimum DoKexDhGexGroup enforces on the
+ * reply. Otherwise a lowered WOLFSSH_DEFAULT_GEXDH_MIN asks for a group that
+ * the accept path then rejects. */
+static int test_DhGexRequestFloorClamp(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    /* Window edges expressed relative to the floor so the clamp is exercised at
+     * any WOLFSSH_DH_GEX_MIN_BITS, not just the 2048-bit default. */
+    word32 subFloor = WOLFSSH_DH_GEX_MIN_BITS / 2;
+    word32 prefAbove = WOLFSSH_DH_GEX_MIN_BITS + (WOLFSSH_DH_GEX_MIN_BITS / 2);
+    word32 maxHigh = WOLFSSH_DH_GEX_MIN_BITS * 4;
+    int result = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -290;
+    wolfSSH_SetIOSend(ctx, GexSinkSend);
+
+    /* A sub-floor min is raised to the floor, and the preferred size rides up
+     * with it so the advertised triple stays min <= preferred. */
+    if (DhGexRequestCase(subFloor, subFloor, maxHigh, WS_SUCCESS, ctx, &ssh)
+            != 0) {
+        result = -291;
+        goto out;
+    }
+    if (ssh->handshake->dhGexMinSz != WOLFSSH_DH_GEX_MIN_BITS ||
+            ssh->handshake->dhGexPreferredSz != WOLFSSH_DH_GEX_MIN_BITS) {
+        printf("DhGexRequestFloorClamp: min %u pref %u want %u\n",
+                ssh->handshake->dhGexMinSz, ssh->handshake->dhGexPreferredSz,
+                (word32)WOLFSSH_DH_GEX_MIN_BITS);
+        result = -292;
+        goto out;
+    }
+    wolfSSH_free(ssh);
+    ssh = NULL;
+
+    /* A window topping out below the floor has nothing to ask for. Reject it
+     * here rather than emit a request whose reply we would refuse. */
+    if (DhGexRequestCase(subFloor, subFloor, WOLFSSH_DH_GEX_MIN_BITS - 1,
+            WS_DH_SIZE_E, ctx, &ssh) != 0) {
+        result = -293;
+        goto out;
+    }
+    wolfSSH_free(ssh);
+    ssh = NULL;
+
+    /* A window already at or above the floor is advertised untouched. */
+    if (DhGexRequestCase(WOLFSSH_DH_GEX_MIN_BITS, prefAbove, maxHigh, WS_SUCCESS,
+            ctx, &ssh) != 0) {
+        result = -294;
+        goto out;
+    }
+    if (ssh->handshake->dhGexMinSz != WOLFSSH_DH_GEX_MIN_BITS ||
+            ssh->handshake->dhGexPreferredSz != prefAbove ||
+            ssh->handshake->dhGexMaxSz != maxHigh) {
+        result = -295;
+        goto out;
+    }
+    wolfSSH_free(ssh);
+    ssh = NULL;
+
+    /* A preferred size above the max is clamped down to the max, so the
+     * advertised triple keeps min <= preferred <= max (RFC 4419 sec. 3). */
+    if (DhGexRequestCase(WOLFSSH_DH_GEX_MIN_BITS, prefAbove,
+            WOLFSSH_DH_GEX_MIN_BITS, WS_SUCCESS, ctx, &ssh) != 0) {
+        result = -296;
+        goto out;
+    }
+    if (ssh->handshake->dhGexPreferredSz != WOLFSSH_DH_GEX_MIN_BITS ||
+            ssh->handshake->dhGexMaxSz != WOLFSSH_DH_GEX_MIN_BITS) {
+        printf("DhGexRequestFloorClamp: pref %u max %u want %u\n",
+                ssh->handshake->dhGexPreferredSz, ssh->handshake->dhGexMaxSz,
+                (word32)WOLFSSH_DH_GEX_MIN_BITS);
+        result = -297;
+        goto out;
+    }
+
+out:
+    if (ssh != NULL)
+        wolfSSH_free(ssh);
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* Mirror of test_DhGexRequestFloorClamp for the accept side: even when the
+ * client advertised a sub-floor min, DoKexDhGexGroup must clamp the accept
+ * minimum up to WOLFSSH_DH_GEX_MIN_BITS and reject a below-floor group the
+ * server sent anyway (RFC 8270). Without the clamp, a 1024-bit prime paired
+ * with dhGexMinSz == 1024 would pass. The size check runs before primality,
+ * so an arbitrary 1024-bit value is a sufficient fixture. */
+static int test_DhGexGroupAcceptFloor(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    /* A prime half the floor's bit length: below the floor at any
+     * WOLFSSH_DH_GEX_MIN_BITS, so the accept-side clamp must reject it. */
+    word32 magBytes = WOLFSSH_DH_GEX_MIN_BITS / 16;
+    byte group[UINT32_SZ + 1 + (WOLFSSH_DH_GEX_MIN_BITS / 16)
+            + UINT32_SZ + 1];
+    word32 gIdx = 0;
+    word32 idx = 0;
+    int ret;
+    int result = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -270;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL || ssh->handshake == NULL) {
+        result = -271;
+        goto out;
+    }
+    ssh->handshake->kexId = ID_DH_GEX_SHA256;
+    /* Sub-floor min: the accept-side clamp, not this value, must govern. */
+    ssh->handshake->dhGexMinSz = WOLFSSH_DH_GEX_MIN_BITS / 2;
+    ssh->handshake->dhGexMaxSz = WOLFSSH_DH_GEX_MIN_BITS * 4;
+
+    /* mpint prime: a canonical (floor/2)-bit value (0x00 sign pad, then a 0x80
+     * top byte so GetMpint accepts it), followed by mpint generator 2. The
+     * size check runs before primality, so an arbitrary value is sufficient. */
+    PutU32BE(group + gIdx, 1 + magBytes);
+    gIdx += UINT32_SZ;
+    group[gIdx++] = 0x00;
+    group[gIdx++] = 0x80;
+    WMEMSET(group + gIdx, 0xFF, magBytes - 1);
+    gIdx += magBytes - 1;
+    PutU32BE(group + gIdx, 1);
+    gIdx += UINT32_SZ;
+    group[gIdx++] = 0x02;
+
+    ret = wolfSSH_TestDoKexDhGexGroup(ssh, group, gIdx, &idx);
+    if (ret != WS_DH_SIZE_E) {
+        printf("DhGexGroupAcceptFloor: ret %d want %d\n", ret, WS_DH_SIZE_E);
+        result = -272;
+        goto out;
+    }
+
+out:
+    if (ssh != NULL)
+        wolfSSH_free(ssh);
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* Drive a real 4096-bit GEX key agreement on the server. Selecting group 16 is
+ * now the ordinary outcome for a stock client window (preferred 3072), so the
+ * 512-byte modulus has to survive KeyAgreeDh_server's f buffer (KEX_F_SIZE)
+ * and shared-secret buffer (ssh->k). Confirms the server's f and k are a real
+ * DH pair by recomputing the secret from the client side. */
+static int test_DhGexGroup16KeyAgree(void)
+{
+#if !defined(WOLFSSH_NO_DH_GROUP16_SHA512) && \
+        WOLFSSH_DH_GEX_MIN_BITS == 2048 && \
+        (MAX_KEX_KEY_SZ * 8) >= 4096 && ((KEX_F_SIZE - 1) * 8) >= 4096
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    byte request[UINT32_SZ * 3];
+    word32 idx = 0;
+    const byte* group = NULL;
+    word32 groupSz = 0;
+    const byte* generator = NULL;
+    word32 generatorSz = 0;
+    DhKey clientKey;
+    int keyInited = 0;
+    byte f[KEX_F_SIZE];
+    word32 fSz = (word32)sizeof(f);
+    byte cPriv[MAX_KEX_KEY_SZ];
+    word32 cPrivSz = (word32)sizeof(cPriv);
+    byte cPub[KEX_F_SIZE];
+    word32 cPubSz = (word32)sizeof(cPub);
+    byte cSecret[MAX_KEX_KEY_SZ];
+    word32 cSecretSz = (word32)sizeof(cSecret);
+    int ret;
+    int result = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -250;
+    wolfSSH_SetIOSend(ctx, GexSinkSend);
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL || ssh->handshake == NULL) {
+        result = -251;
+        goto out;
+    }
+    ssh->handshake->kexId = ID_DH_GEX_SHA256;
+
+    /* Window that resolves to group 16 under the RFC 4419 rule. */
+    PutU32BE(request, 2048);
+    PutU32BE(request + UINT32_SZ, 4096);
+    PutU32BE(request + UINT32_SZ * 2, 8192);
+
+    ret = wolfSSH_TestDoKexDhGexRequest(ssh, request, sizeof(request), &idx);
+    if (ret != WS_SUCCESS || ssh->handshake->primeGroupSz != 512) {
+        printf("DhGexGroup16KeyAgree: request ret %d sz %u\n",
+                ret, ssh->handshake->primeGroupSz);
+        result = -252;
+        goto out;
+    }
+
+    /* Build a client key pair over the very group the server put on the wire. */
+    ret = wolfSSH_TestGetDHPrimeGroup(ssh, &group, &groupSz,
+            &generator, &generatorSz);
+    if (ret != WS_SUCCESS) {
+        result = -253;
+        goto out;
+    }
+    if (wc_InitDhKey(&clientKey) != 0) {
+        result = -254;
+        goto out;
+    }
+    keyInited = 1;
+    if (wc_DhSetKey(&clientKey, group, groupSz, generator, generatorSz) != 0) {
+        result = -255;
+        goto out;
+    }
+    if (wc_DhGenerateKeyPair(&clientKey, ssh->rng, cPriv, &cPrivSz,
+            cPub, &cPubSz) != 0) {
+        result = -256;
+        goto out;
+    }
+
+    /* Hand the client's public value to the server and run the agreement. */
+    WMEMCPY(ssh->handshake->e, cPub, cPubSz);
+    ssh->handshake->eSz = cPubSz;
+    ssh->kSz = MAX_KEX_KEY_SZ;
+
+    ret = wolfSSH_TestKeyAgreeDh_server(ssh, WC_HASH_TYPE_SHA256, f, &fSz);
+    if (ret != WS_SUCCESS || fSz == 0 || fSz > 512) {
+        printf("DhGexGroup16KeyAgree: agree ret %d fSz %u\n", ret, fSz);
+        result = -257;
+        goto out;
+    }
+    if (ssh->primeGroupSz != 512 || ssh->kSz == 0) {
+        printf("DhGexGroup16KeyAgree: primeGroupSz %u kSz %u\n",
+                ssh->primeGroupSz, ssh->kSz);
+        result = -258;
+        goto out;
+    }
+
+    /* The server's k must be the shared secret the client derives from f. */
+    if (wc_DhAgree(&clientKey, cSecret, &cSecretSz, cPriv, cPrivSz,
+            f, fSz) != 0) {
+        result = -259;
+        goto out;
+    }
+    if (cSecretSz != ssh->kSz ||
+            WMEMCMP(cSecret, ssh->k, cSecretSz) != 0) {
+        printf("DhGexGroup16KeyAgree: secret mismatch, client %u server %u\n",
+                cSecretSz, ssh->kSz);
+        result = -260;
+        goto out;
+    }
+
+out:
+    if (keyInited)
+        wc_FreeDhKey(&clientKey);
+    if (ssh != NULL)
+        wolfSSH_free(ssh);
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    return result;
+#else
+    return 0;
+#endif
 }
 
 /* Drive a successful client-side GEX GROUP accept and confirm the client honors
@@ -8306,8 +8806,33 @@ int wolfSSH_UnitTest(int argc, char** argv)
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
+    unitResult = test_DhGexRequestFloorClamp();
+    printf("DhGexRequestFloorClamp: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DhGexGroupAcceptFloor();
+    printf("DhGexGroupAcceptFloor: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DhGexServerRejectsUnsatisfiableWindow();
+    printf("DhGexServerRejectsUnsatisfiableWindow: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
     unitResult = test_DhGexGroupSendHashConsistency();
     printf("DhGexGroupSendHashConsistency: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DhGexGroupCacheMissFallback();
+    printf("DhGexGroupCacheMissFallback: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DhGexGroup16KeyAgree();
+    printf("DhGexGroup16KeyAgree: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
