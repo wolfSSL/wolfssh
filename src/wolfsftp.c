@@ -9447,7 +9447,9 @@ int wolfSSH_SFTP_SaveOfst(WOLFSSH* ssh, char* frm, char* to, const word32* ofst)
         return WS_MEMORY_E;
     }
 
-    if (frmSz > WOLFSSH_MAX_FILENAME || toSz > WOLFSSH_MAX_FILENAME) {
+    /* the stored names are NUL terminated, so they need to be at least one
+     * byte shorter than the field they are copied into */
+    if (frmSz >= WOLFSSH_MAX_FILENAME || toSz >= WOLFSSH_MAX_FILENAME) {
         WLOG(WS_LOG_SFTP, "File name is too large");
         return WS_BUFFER_E;
     }

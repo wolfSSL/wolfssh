@@ -2714,6 +2714,59 @@ static void test_wolfSSH_SFTP_SetDefaultPath(void)
     wolfSSH_CTX_free(ctx);
 }
 
+/* Saved reget/reput names are NUL terminated in char[WOLFSSH_MAX_FILENAME]
+ * fields, so a name of exactly WOLFSSH_MAX_FILENAME must be rejected. */
+static void test_wolfSSH_SFTP_SaveOfst(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    char         maxName[WOLFSSH_MAX_FILENAME + 1];
+    char         fitName[WOLFSSH_MAX_FILENAME];
+    word32       ofst[2];
+    word32       got[2];
+
+    AssertNotNull(ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL));
+    AssertNotNull(ssh = wolfSSH_new(ctx));
+
+    /* name of length WOLFSSH_MAX_FILENAME, leaving no room for a terminator */
+    WMEMSET(maxName, 'a', WOLFSSH_MAX_FILENAME);
+    maxName[WOLFSSH_MAX_FILENAME] = '\0';
+
+    /* longest name that still fits the field with its terminator */
+    WMEMSET(fitName, 'b', WOLFSSH_MAX_FILENAME - 1);
+    fitName[WOLFSSH_MAX_FILENAME - 1] = '\0';
+
+    ofst[0] = 0x2000;
+    ofst[1] = 1;
+
+    AssertIntEQ(wolfSSH_SFTP_SaveOfst(NULL, fitName, fitName, ofst),
+            WS_BAD_ARGUMENT);
+    AssertIntEQ(wolfSSH_SFTP_SaveOfst(ssh, maxName, fitName, ofst),
+            WS_BUFFER_E);
+    AssertIntEQ(wolfSSH_SFTP_SaveOfst(ssh, fitName, maxName, ofst),
+            WS_BUFFER_E);
+
+    /* the rejected calls stored nothing */
+    got[0] = 1;
+    got[1] = 1;
+    AssertIntEQ(wolfSSH_SFTP_GetOfst(ssh, maxName, fitName, got), WS_SUCCESS);
+    AssertIntEQ(got[0], 0);
+    AssertIntEQ(got[1], 0);
+    AssertIntEQ(wolfSSH_SFTP_GetOfst(ssh, fitName, maxName, got), WS_SUCCESS);
+    AssertIntEQ(got[0], 0);
+    AssertIntEQ(got[1], 0);
+
+    /* a name that fits is saved and read back */
+    AssertIntEQ(wolfSSH_SFTP_SaveOfst(ssh, fitName, fitName, ofst),
+            WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SFTP_GetOfst(ssh, fitName, fitName, got), WS_SUCCESS);
+    AssertIntEQ(got[0], (int)ofst[0]);
+    AssertIntEQ(got[1], (int)ofst[1]);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
 #else /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
 static void test_wolfSSH_SFTP_SendReadPacket(void) { ; }
 static void test_wolfSSH_SFTP_PartialSend(void) { ; }
@@ -2721,6 +2774,7 @@ static void test_wolfSSH_SFTP_ReKey(void) { ; }
 static void test_wolfSSH_SFTP_ReKey_NonBlock(void) { ; }
 static void test_wolfSSH_SFTP_Confinement(void) { ; }
 static void test_wolfSSH_SFTP_SetDefaultPath(void) { ; }
+static void test_wolfSSH_SFTP_SaveOfst(void) { ; }
 #endif /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
 
 
@@ -3874,6 +3928,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_SFTP_ReKey_NonBlock();
     test_wolfSSH_SFTP_Confinement();
     test_wolfSSH_SFTP_SetDefaultPath();
+    test_wolfSSH_SFTP_SaveOfst();
 
     /* Either SCP or SFTP */
     test_wolfSSH_RealPath();
