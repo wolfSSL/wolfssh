@@ -511,13 +511,62 @@ enum NameIdType {
     #define WOLFSSH_MAX_NAMELIST_CNT 64
 #endif
 #ifndef WOLFSSH_DEFAULT_GEXDH_MIN
-    #define WOLFSSH_DEFAULT_GEXDH_MIN 1024
+    #define WOLFSSH_DEFAULT_GEXDH_MIN 2048
 #endif
 #ifndef WOLFSSH_DEFAULT_GEXDH_PREFERRED
     #define WOLFSSH_DEFAULT_GEXDH_PREFERRED 3072
 #endif
 #ifndef WOLFSSH_DEFAULT_GEXDH_MAX
     #define WOLFSSH_DEFAULT_GEXDH_MAX 8192
+#endif
+/* Floor on the GEX modulus, enforced when the server selects a group and when
+ * the client accepts one (RFC 8270). Lowering it below 2048 re-enables group
+ * 1, when group 1 is compiled in. */
+#ifndef WOLFSSH_DH_GEX_MIN_BITS
+    #define WOLFSSH_DH_GEX_MIN_BITS 2048
+#endif
+/* Size of the buffer holding the server's KEX public value f. For DH this
+ * bounds the modulus: a p of n bytes needs n+1 here for the mpint sign pad. */
+#ifndef KEX_F_SIZE
+    #ifndef WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
+        /* Size of ML-KEM-1024 ciphertext (1568) plus ECC P-384 component
+         * (97). */
+        #define KEX_F_SIZE 1700
+    #elif !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
+          !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
+        /* Size of ML-KEM-768 public key (1184) plus ECC/X25519 component. */
+        #define KEX_F_SIZE 1300
+    #elif !defined(WOLFSSH_NO_DH_GROUP16_SHA512)
+        #define KEX_F_SIZE (512 + 1)
+    #else
+        #define KEX_F_SIZE (256 + 1)
+    #endif
+#endif
+/* A user-supplied KEX_F_SIZE override must still hold the largest f/ciphertext
+ * the enabled algorithms write; the KeyAgree*_server paths do not bound-check
+ * it at runtime. A DH-enabled build writes at least a classical DH group 14 f
+ * (a 2048-bit p needs 257 bytes) and its ECDH points are smaller, so assert
+ * that floor whenever DH is compiled in -- it matches the (256 + 1) baseline
+ * the derivation above falls back to. DH GEX is self-limiting: SelectKexDhGexGroup
+ * caps its selection at (KEX_F_SIZE - 1) * 8 bits, so it needs no separate
+ * assert. Add the larger group 16 and ML-KEM sizes on top only when those are
+ * enabled. A DH-disabled (ECC/Curve25519/ML-KEM-only) build writes no DH f; its
+ * largest f fits well under the 257-byte default, and the ML-KEM asserts below
+ * cover the PQ builds, so this floor does not apply there. */
+#ifndef WOLFSSH_NO_DH
+    #if KEX_F_SIZE < (256 + 1)
+        #error "KEX_F_SIZE too small for DH group 14 (2048-bit p needs 257 bytes)"
+    #endif
+#endif
+#if !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384) && KEX_F_SIZE < 1700
+    #error "KEX_F_SIZE too small for the ML-KEM-1024 ciphertext"
+#endif
+#if (!defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
+     !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)) && KEX_F_SIZE < 1300
+    #error "KEX_F_SIZE too small for the ML-KEM-768 artifact"
+#endif
+#if !defined(WOLFSSH_NO_DH_GROUP16_SHA512) && KEX_F_SIZE < (512 + 1)
+    #error "KEX_F_SIZE too small for DH group 16 (4096-bit p needs 513 bytes)"
 #endif
 #ifndef MAX_KEX_KEY_SZ
     #ifndef WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
@@ -1500,6 +1549,7 @@ enum WS_MessageIdLimits {
             const byte* f, word32 fSz);
 #endif /* !WOLFSSH_NO_ECDH */
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
+    WOLFSSH_API int wolfSSH_TestSendKexDhGexRequest(WOLFSSH* ssh);
     WOLFSSH_API int wolfSSH_TestDoKexDhGexRequest(WOLFSSH* ssh, byte* buf,
             word32 len, word32* idx);
     WOLFSSH_API int wolfSSH_TestDoKexDhGexGroup(WOLFSSH* ssh, byte* buf,
