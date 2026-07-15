@@ -787,11 +787,20 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value, int depth)
                         /* Skip sub-directories */
                     #if defined(__QNX__) || defined(__QNXNTO__)
                         struct stat s;
+                        int qnxRet = WSNPRINTF(filepath, PATH_MAX, "%s/%s",
+                                path, dir->d_name);
 
-                        lstat(dir->d_name, &s);
-                        if (!S_ISDIR(s.st_mode))
+                        /* Full path is needed: lstat resolves relative to CWD,
+                         * not the include dir. On snprintf/lstat failure treat
+                         * as a non-directory so both passes agree. */
+                        if (qnxRet < 0 || qnxRet >= PATH_MAX ||
+                                lstat(filepath, &s) != 0 ||
+                                !S_ISDIR(s.st_mode))
                     #else
-                        if (dir->d_type != DT_DIR)
+                        /* Skip sub-directories and symlinks (CWE-61: a
+                         * symlink in the Include dir would otherwise be
+                         * followed by fopen and parsed as config). */
+                        if (dir->d_type != DT_DIR && dir->d_type != DT_LNK)
                     #endif
                         {
                             fileCount++;
@@ -819,11 +828,18 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value, int depth)
                             /* Skip sub-directories */
                         #if defined(__QNX__) || defined(__QNXNTO__)
                             struct stat s;
+                            int qnxRet = WSNPRINTF(filepath, PATH_MAX, "%s/%s",
+                                    path, dir->d_name);
 
-                            lstat(dir->d_name, &s);
-                            if (!S_ISDIR(s.st_mode))
+                            /* Full path is needed: lstat resolves relative to
+                             * CWD, not the include dir. On snprintf/lstat
+                             * failure treat as a non-directory so both passes
+                             * agree. */
+                            if (qnxRet < 0 || qnxRet >= PATH_MAX ||
+                                    lstat(filepath, &s) != 0 ||
+                                    !S_ISDIR(s.st_mode))
                         #else
-                            if (dir->d_type != DT_DIR)
+                            if (dir->d_type != DT_DIR && dir->d_type != DT_LNK)
                         #endif
                             {
                                 /* Duplicate the name; readdir() may reuse its
