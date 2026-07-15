@@ -23,6 +23,7 @@
 #endif
 
 #include <wolfssh/ssh.h>
+#include <wolfssh/internal.h>
 #include <wolfssl/wolfcrypt/coding.h>
 #include <configuration.h>
 #include <auth.h>
@@ -230,6 +231,44 @@ static int test_ConfigDefaults(void)
     return ret;
 }
 
+/* Pins PermitRootLogin prohibit-password/without-password parsing. */
+static int test_PermitRootProhibitPassword(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* conf;
+
+#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s), 0)
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL)
+        ret = WS_MEMORY_E;
+
+    if (ret == WS_SUCCESS) ret = PCL("PermitRootLogin prohibit-password");
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetPermitRoot(conf) !=
+                WOLFSSHD_PERMIT_ROOT_PROHIBIT_PW)
+            ret = WS_FATAL_ERROR;
+    }
+
+    if (ret == WS_SUCCESS) ret = PCL("PermitRootLogin without-password");
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetPermitRoot(conf) !=
+                WOLFSSHD_PERMIT_ROOT_PROHIBIT_PW)
+            ret = WS_FATAL_ERROR;
+    }
+
+    if (ret == WS_SUCCESS) ret = PCL("PermitRootLogin forced-commands-only");
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetPermitRoot(conf) !=
+                WOLFSSHD_PERMIT_ROOT_FORCED_CMD)
+            ret = WS_FATAL_ERROR;
+    }
+#undef PCL
+
+    if (conf != NULL)
+        wolfSSHD_ConfigFree(conf);
+    return ret;
+}
+
 static int test_ParseConfigLine(void)
 {
     int ret = WS_SUCCESS;
@@ -277,6 +316,17 @@ static int test_ParseConfigLine(void)
         {"Pubkey auth no", "PubkeyAuthentication no", 0},
         {"Pubkey auth yes", "PubkeyAuthentication yes", 0},
         {"Pubkey auth invalid", "PubkeyAuthentication wolfsshd", 1},
+
+        /* Permit root login tests. */
+        {"Permit root login no", "PermitRootLogin no", 0},
+        {"Permit root login yes", "PermitRootLogin yes", 0},
+        {"Permit root login prohibit-password",
+            "PermitRootLogin prohibit-password", 0},
+        {"Permit root login without-password",
+            "PermitRootLogin without-password", 0},
+        {"Permit root login forced-commands-only",
+            "PermitRootLogin forced-commands-only", 0},
+        {"Permit root login invalid", "PermitRootLogin wolfsshd", 1},
 
         /* StrictModes tests. */
         {"Strict modes no", "StrictModes no", 0},
@@ -471,27 +521,16 @@ static int test_ConfigCopy(void)
     return ret;
 }
 
-/* Verifies that a Match block override of the auth-relevant settings is the
- * value returned by wolfSSHD_GetUserConf, and that it differs from the global
- * node. RequestAuthentication and DoCheckUser resolve the per-user config via
- * wolfSSHD_AuthGetUserConf (a wrapper around wolfSSHD_GetUserConf) before
- * consulting PwAuth, PermitEmptyPw, PermitRootLogin and AuthKeysFileSet, so
- * this locks in that resolution: a regression that reverts to the global node
- * would be caught here.
+/* Verifies a Match block override is returned by wolfSSHD_GetUserConf and
+ * differs from the global node; RequestAuthentication/DoCheckUser depend on
+ * this resolution for PwAuth, PermitEmptyPw, PermitRootLogin, and
+ * AuthKeysFileSet.
  *
- * Coverage note: the new fail-closed branches in DoCheckUser and
- * RequestAuthentication (rejecting auth when wolfSSHD_AuthGetUserConf returns
- * NULL, and the Match-aware PermitRootLogin check) are not exercised directly.
- * Those paths require a populated WOLFSSHD_AUTH context (opaque to this test)
- * plus real system users, group lookups, callbacks, and privilege raising, so
- * they are validated here only at the config-resolution layer they depend on.
- * The auth-boundary enforcement itself (a tightened Match node is honored, and
- * a NULL per-user config rejects rather than falls through to the global node)
- * is covered by manual/integration testing of wolfsshd against an sshd_config
- * containing a Match block that disables password auth and PermitRootLogin.
- * On Unix the PermitRootLogin check now resolves the account and gates on
- * uid 0 (not the literal name "root"), so a non-"root" uid 0 alias is also
- * rejected; that behavior is covered by sshd_permitroot_test.sh. */
+ * Not covered here: the fail-closed NULL-config branches and the Match-aware
+ * PermitRootLogin modes (prohibit-password, forced-commands-only) need a
+ * real WOLFSSHD_AUTH context and system users, so they're covered instead by
+ * sshd_permitroot_test.sh, sshd_permitroot_prohibit_password.sh, and
+ * sshd_permitroot_forced_cmd.sh. */
 static int test_GetUserConfMatchOverride(void)
 {
     int ret = WS_SUCCESS;
@@ -1342,12 +1381,13 @@ static int test_CheckPasswordHashUnix(void)
         }
     }
 
-    /* (a) empty input + empty stored hash -> SUCCESS (pins the empty branch). */
     if (ret == WS_SUCCESS) {
-        char emptyStored[2];
-        emptyStored[0] = 0;
-        Log("    Testing scenario: empty password + empty stored hash authenticates.");
-        rc = CheckPasswordHashUnix("", emptyStored);
+        char empty[1];
+
+        empty[0] = '\0';
+
+        Log("    Empty password + empty stored: ");
+        rc = CheckPasswordHashUnix(empty, empty);
         if (rc == WSSHD_AUTH_SUCCESS) {
             Log(" PASSED.\n");
         }
@@ -1357,10 +1397,13 @@ static int test_CheckPasswordHashUnix(void)
         }
     }
 
-    /* (b) empty input + real $6$ hash -> FAILURE (kills the && -> || mutant). */
     if (ret == WS_SUCCESS) {
-        Log("    Testing scenario: empty password + real hash is rejected.");
-        rc = CheckPasswordHashUnix("", stored);
+        char empty[1];
+
+        empty[0] = '\0';
+
+        Log("    Empty password vs real hash: ");
+        rc = CheckPasswordHashUnix(empty, stored);
         if (rc == WSSHD_AUTH_FAILURE) {
             Log(" PASSED.\n");
         }
@@ -1370,13 +1413,18 @@ static int test_CheckPasswordHashUnix(void)
         }
     }
 
-    /* (c) non-empty input + empty stored hash -> FAILURE. */
     if (ret == WS_SUCCESS) {
-        char emptyStored[2];
-        emptyStored[0] = 0;
-        Log("    Testing scenario: non-empty password + empty stored hash is rejected.");
+        char emptyStored[1];
+
+        emptyStored[0] = '\0';
+
+        /* A hardened libxcrypt may reject the degenerate salt outright
+         * (crypt() returns NULL -> WS_FATAL_ERROR) rather than proceeding
+         * to a mismatched comparison (WSSHD_AUTH_FAILURE); either is a
+         * correct "not authenticated" outcome. */
+        Log("    Non-empty password vs empty stored: ");
         rc = CheckPasswordHashUnix(correct, emptyStored);
-        if (rc == WSSHD_AUTH_FAILURE) {
+        if (rc == WSSHD_AUTH_FAILURE || rc == WS_FATAL_ERROR) {
             Log(" PASSED.\n");
         }
         else {
@@ -1385,14 +1433,13 @@ static int test_CheckPasswordHashUnix(void)
         }
     }
 
-    /* (d) locked account (stored[0]=='*') -> FAILURE (pins the '*' guard). */
     if (ret == WS_SUCCESS) {
-        char lockedStored[3];
-        lockedStored[0] = '*';
-        lockedStored[1] = 0;
-        Log("    Testing scenario: locked account is rejected.");
-        rc = CheckPasswordHashUnix(correct, lockedStored);
-        if (rc == WSSHD_AUTH_FAILURE) {
+        char locked[] = "*";
+
+        /* Same NULL-tolerant reasoning as the empty-salt case above. */
+        Log("    Locked account (stored[0] == '*'): ");
+        rc = CheckPasswordHashUnix(correct, locked);
+        if (rc == WSSHD_AUTH_FAILURE || rc == WS_FATAL_ERROR) {
             Log(" PASSED.\n");
         }
         else {
@@ -1400,6 +1447,91 @@ static int test_CheckPasswordHashUnix(void)
             ret = WS_FATAL_ERROR;
         }
     }
+
+    if (ret == WS_SUCCESS) {
+        char lockedWithSalt[130];
+
+        /* A locked ('!') account with a valid hash must still fail auth, even if salt-reuse lets crypt() match. */
+        lockedWithSalt[0] = '!';
+        WMEMCPY(lockedWithSalt + 1, stored, WSTRLEN(stored) + 1);
+
+        /* Same NULL-tolerant reasoning as the empty-salt case above. */
+        Log("    Locked account with reusable '!' salt: ");
+        rc = CheckPasswordHashUnix(correct, lockedWithSalt);
+        if (rc == WSSHD_AUTH_FAILURE || rc == WS_FATAL_ERROR) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    return ret;
+}
+
+static int test_DefaultUserAuth_OOBRead(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_AUTH* authCtx;
+    WS_UserAuthData authData;
+    char* passwordHeap;
+    word32 passwordSz = 16;
+    int rc;
+    /* Privilege separation off so RequestAuthentication's unconditional
+     * wolfSSHD_AuthReducePermissions() -> exit(1) on failure never fires:
+     * SetDefaultUserID then uses this process's own uid/gid, making the
+     * permission drop a no-op regardless of whether an 'sshd' account
+     * exists on the test machine. */
+    static const char line[] = "UsePrivilegeSeparation no";
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL) return WS_MEMORY_E;
+
+    if (ParseConfigLine(&conf, line, (int)WSTRLEN(line), 0) != WS_SUCCESS) {
+        wolfSSHD_ConfigFree(conf);
+        return WS_FATAL_ERROR;
+    }
+
+    authCtx = wolfSSHD_AuthCreateUser(NULL, conf);
+    if (authCtx == NULL) {
+        wolfSSHD_ConfigFree(conf);
+        Log("    Skipping test: wolfSSHD_AuthCreateUser failed (likely missing 'sshd' user).\n");
+        return WS_SUCCESS;
+    }
+
+    passwordHeap = (char*)WMALLOC(passwordSz, NULL, DYNTYPE_STRING);
+    if (passwordHeap != NULL) {
+        WMEMSET(passwordHeap, 'A', passwordSz);
+
+        WMEMSET(&authData, 0, sizeof(authData));
+        authData.type = WOLFSSH_USERAUTH_PASSWORD;
+        authData.username = (const byte*)"nonexistent_test_user_xyz";
+        authData.usernameSz = (word32)WSTRLEN((const char*)authData.username);
+        authData.sf.password.password = (const byte*)passwordHeap;
+        authData.sf.password.passwordSz = passwordSz;
+
+        Log("    Testing scenario: DefaultUserAuth with non-NUL-terminated password (OOB read check).");
+        rc = DefaultUserAuth(WOLFSSH_USERAUTH_PASSWORD, &authData, authCtx);
+        if (rc == WOLFSSH_USERAUTH_INVALID_USER ||
+                rc == WOLFSSH_USERAUTH_FAILURE ||
+                rc == WOLFSSH_USERAUTH_REJECTED) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+
+        WFREE(passwordHeap, NULL, DYNTYPE_STRING);
+    }
+    else {
+        ret = WS_MEMORY_E;
+    }
+
+    wolfSSHD_AuthFreeUser(authCtx);
+    wolfSSHD_ConfigFree(conf);
 
     return ret;
 }
@@ -2350,6 +2482,108 @@ static int test_CAKeysFileDiffers(void)
     return ret;
 }
 
+/* Locks in the enforcement decisions RequestAuthentication and DoCheckUser
+ * make for each PermitRootLogin mode, without needing a live sshd (the
+ * Match-aware end-to-end behavior is covered separately by
+ * sshd_permitroot_test.sh, sshd_permitroot_prohibit_password.sh, and
+ * sshd_permitroot_forced_cmd.sh). */
+static int test_PermitRootLoginModes(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_CONFIG* head;
+
+#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s), 0)
+
+    /* PermitRootLogin no: root is denied outright, and never reaches the
+     * password/pubkey checks since DoCheckUser rejects first. */
+    Log("    Testing scenario: PermitRootLogin no.");
+    head = wolfSSHD_ConfigNew(NULL);
+    conf = head;
+    if (conf == NULL || PCL("PermitRootLogin no") != WS_SUCCESS) {
+        ret = WS_FATAL_ERROR;
+    }
+    else if (IsRootLoginDenied(1, conf) != 1 ||
+             IsRootLoginDenied(0, conf) != 0) {
+        ret = WS_FATAL_ERROR;
+    }
+    Log((ret == WS_SUCCESS) ? " PASSED.\n" : " FAILED.\n");
+    wolfSSHD_ConfigFree(head);
+
+    /* PermitRootLogin yes: nothing is blocked for root. */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: PermitRootLogin yes.");
+        head = wolfSSHD_ConfigNew(NULL);
+        conf = head;
+        if (conf == NULL || PCL("PermitRootLogin yes") != WS_SUCCESS) {
+            ret = WS_FATAL_ERROR;
+        }
+        else if (IsRootLoginDenied(1, conf) != 0 ||
+                 IsRootPasswordAuthBlocked(1, conf) != 0 ||
+                 IsRootPubKeyForcedCmdMissing(1, conf) != 0) {
+            ret = WS_FATAL_ERROR;
+        }
+        Log((ret == WS_SUCCESS) ? " PASSED.\n" : " FAILED.\n");
+        wolfSSHD_ConfigFree(head);
+    }
+
+    /* PermitRootLogin prohibit-password: password auth blocked, pubkey auth
+     * is not required to carry a forced command. */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: PermitRootLogin prohibit-password.");
+        head = wolfSSHD_ConfigNew(NULL);
+        conf = head;
+        if (conf == NULL ||
+                PCL("PermitRootLogin prohibit-password") != WS_SUCCESS) {
+            ret = WS_FATAL_ERROR;
+        }
+        else if (IsRootLoginDenied(1, conf) != 0 ||
+                 IsRootPasswordAuthBlocked(1, conf) != 1 ||
+                 IsRootPasswordAuthBlocked(0, conf) != 0 ||
+                 IsRootPubKeyForcedCmdMissing(1, conf) != 0) {
+            ret = WS_FATAL_ERROR;
+        }
+        Log((ret == WS_SUCCESS) ? " PASSED.\n" : " FAILED.\n");
+        wolfSSHD_ConfigFree(head);
+    }
+
+    /* PermitRootLogin forced-commands-only: password auth blocked; pubkey
+     * auth requires a ForceCommand, and passes once one is configured. */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: PermitRootLogin forced-commands-only, "
+            "no ForceCommand.");
+        head = wolfSSHD_ConfigNew(NULL);
+        conf = head;
+        if (conf == NULL ||
+                PCL("PermitRootLogin forced-commands-only") != WS_SUCCESS) {
+            ret = WS_FATAL_ERROR;
+        }
+        else if (IsRootPasswordAuthBlocked(1, conf) != 1 ||
+                 IsRootPubKeyForcedCmdMissing(1, conf) != 1 ||
+                 IsRootPubKeyForcedCmdMissing(0, conf) != 0) {
+            ret = WS_FATAL_ERROR;
+        }
+        Log((ret == WS_SUCCESS) ? " PASSED.\n" : " FAILED.\n");
+
+        if (ret == WS_SUCCESS) {
+            Log("    Testing scenario: PermitRootLogin "
+                "forced-commands-only, with ForceCommand.");
+            if (PCL("ForceCommand internal-sftp") != WS_SUCCESS) {
+                ret = WS_FATAL_ERROR;
+            }
+            else if (IsRootPubKeyForcedCmdMissing(1, conf) != 0) {
+                ret = WS_FATAL_ERROR;
+            }
+            Log((ret == WS_SUCCESS) ? " PASSED.\n" : " FAILED.\n");
+        }
+        wolfSSHD_ConfigFree(head);
+    }
+
+#undef PCL
+
+    return ret;
+}
+
 /* Parses an AuthorizedUPNDomains line and confirms the stored value is returned
  * by the getter, locking in the new config option's plumbing. */
 static int test_ConfigParseAuthorizedUPNDomains(void)
@@ -2525,6 +2759,23 @@ static int test_GetUserAuthTypes(void)
         }
 
         wolfSSHD_ConfigFree(conf);
+    }
+
+    return ret;
+}
+
+/* Ensures DefaultUserAuthTypes returns a safe 0 (no auth methods) on NULL args instead of corrupting the bitmask with an error code. */
+static int test_DefaultUserAuthTypesNullArgs(void)
+{
+    int ret = WS_SUCCESS;
+
+    Log("    Testing scenario: DefaultUserAuthTypes with NULL ssh and ctx.");
+    if (DefaultUserAuthTypes(NULL, NULL) != 0) {
+        Log(" FAILED.\n");
+        ret = WS_FATAL_ERROR;
+    }
+    else {
+        Log(" PASSED.\n");
     }
 
     return ret;
@@ -3750,6 +4001,7 @@ static int test_ResolveAuthKeysPath(void)
 
 const TEST_CASE testCases[] = {
     TEST_DECL(test_ConfigDefaults),
+    TEST_DECL(test_PermitRootProhibitPassword),
     TEST_DECL(test_ParseConfigLine),
     TEST_DECL(test_ConfigCopy),
     TEST_DECL(test_GetUserConfMatchOverride),
@@ -3762,10 +4014,12 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_GetUserConfMatchGroupAnd),
     TEST_DECL(test_GetUserConfMatchSecondaryGroup),
     TEST_DECL(test_CAKeysFileDiffers),
+    TEST_DECL(test_PermitRootLoginModes),
     TEST_DECL(test_ConfigParseAuthorizedUPNDomains),
     TEST_DECL(test_MatchUPNToUser),
     TEST_DECL(test_IncludeRecursionBound),
     TEST_DECL(test_GetUserAuthTypes),
+    TEST_DECL(test_DefaultUserAuthTypesNullArgs),
     TEST_DECL(test_ConfigSetAuthKeysFile),
     TEST_DECL(test_ResolveAuthKeysPath),
     TEST_DECL(test_ConfigFree),
@@ -3796,6 +4050,7 @@ const TEST_CASE testCases[] = {
 #endif
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
     TEST_DECL(test_CheckPasswordHashUnix),
+    TEST_DECL(test_DefaultUserAuth_OOBRead),
 #endif
 #if defined(WOLFSSH_OSSH_CERTS) && !defined(_WIN32)
     TEST_DECL(test_OsshPrefixMatch),
