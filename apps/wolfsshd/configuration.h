@@ -43,6 +43,14 @@ typedef struct WOLFSSHD_CONFIG WOLFSSHD_CONFIG;
     #define MAX_PATH_SZ 80
 #endif
 
+/* 0 so that root login is default off after struct memset'd on init */
+#define WOLFSSHD_PERMIT_ROOT_NO           0
+#define WOLFSSHD_PERMIT_ROOT_YES          1
+#define WOLFSSHD_PERMIT_ROOT_PROHIBIT_PW  2
+/* Prohibits passwords; pubkey logins require a configured ForceCommand
+ * (ignores authorized_keys command="..." restrictions). */
+#define WOLFSSHD_PERMIT_ROOT_FORCED_CMD   3
+
 WOLFSSHD_CONFIG* wolfSSHD_ConfigNew(void* heap);
 void wolfSSHD_ConfigFree(WOLFSSHD_CONFIG* conf);
 int wolfSSHD_ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename);
