@@ -1317,6 +1317,22 @@ static int GetScpTimestamp(WOLFSSH* ssh, byte* buf, word32 bufSz,
     return ret;
 }
 
+
+#ifdef WOLFSSH_TEST_INTERNAL
+int wolfSSH_TestScpGetFileSize(WOLFSSH* ssh, byte* buf, word32 bufSz,
+        word32* inOutIdx)
+{
+    return GetScpFileSize(ssh, buf, bufSz, inOutIdx);
+}
+
+int wolfSSH_TestScpGetTimestamp(WOLFSSH* ssh, byte* buf, word32 bufSz,
+        word32* inOutIdx)
+{
+    return GetScpTimestamp(ssh, buf, bufSz, inOutIdx);
+}
+#endif /* WOLFSSH_TEST_INTERNAL */
+
+
 /* checks for if directory is being renamed in command
  *
  * returns WS_SUCCESS on success
@@ -2463,7 +2479,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
 
                 /* cd into directory */
             #ifdef WOLFSSL_NUCLEUS
-                WSTRNCAT((char*)basePath, "/", sizeof("/"));
+                WSTRNCAT((char*)basePath, "/", WOLFSSH_MAX_FILENAME);
                 WSTRNCAT((char*)basePath, fileName, WOLFSSH_MAX_FILENAME);
                 wolfSSH_CleanPath(ssh, (char*)basePath, WOLFSSH_MAX_FILENAME);
                 ssh->scpDirDepth++;
