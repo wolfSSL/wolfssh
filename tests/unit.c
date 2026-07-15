@@ -1433,6 +1433,141 @@ static int test_ScpGetFileMode(void)
     wolfSSH_CTX_free(ctx);
     return result;
 }
+
+/* Drive GetScpFileSize directly, covering the strtoull()-based parsing added to
+ * replace atoi: valid sizes up to UINT32_MAX are accepted, while negative,
+ * out-of-range, and non-numeric fields are rejected instead of silently
+ * wrapping into a bogus word32 size. */
+static int test_ScpGetFileSize(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    static const char* good[] = {
+        "0 f\n",
+        "1024 file.txt\n",
+        "4294967295 f\n"    /* UINT32_MAX, the largest accepted size */
+    };
+    static const word32 goodSz[] = { 0, 1024, 4294967295UL };
+    static const char* bad[] = {
+        "-1 f\n",                    /* negative wraps above UINT32_MAX */
+        "4294967296 f\n",            /* one past UINT32_MAX */
+        "18446744073709551616 f\n",  /* overflows 64-bit width (ERANGE) */
+        "12x34 f\n",                 /* trailing junk before the separator */
+        "abc f\n"                    /* not numeric at all */
+    };
+    char tmp[48];
+    int result = 0;
+    int ret;
+    int i;
+    word32 idx;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -430;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -431;
+    }
+
+    for (i = 0; i < (int)(sizeof(good) / sizeof(good[0])); i++) {
+        WMEMSET(tmp, 0, sizeof(tmp));
+        WSTRNCPY(tmp, good[i], sizeof(tmp) - 1);
+        idx = 0;
+        ssh->scpFileSz = 0;
+        ret = wolfSSH_TestScpGetFileSize(ssh, (byte*)tmp,
+                (word32)WSTRLEN(tmp), &idx);
+        if (ret != WS_SUCCESS) {
+            result = -432;
+            break;
+        }
+        if (ssh->scpFileSz != goodSz[i]) {
+            result = -433;
+            break;
+        }
+    }
+
+    for (i = 0; result == 0 &&
+            i < (int)(sizeof(bad) / sizeof(bad[0])); i++) {
+        WMEMSET(tmp, 0, sizeof(tmp));
+        WSTRNCPY(tmp, bad[i], sizeof(tmp) - 1);
+        idx = 0;
+        ret = wolfSSH_TestScpGetFileSize(ssh, (byte*)tmp,
+                (word32)WSTRLEN(tmp), &idx);
+        if (ret == WS_SUCCESS) {
+            result = -434;
+            break;
+        }
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* Drive GetScpTimestamp directly, covering the strtoull()-based parsing of the
+ * "T<mtime> 0 <atime> 0" record: a well-formed record populates both times,
+ * while a missing 'T', malformed separator, non-numeric field, and overflowing
+ * field are all rejected. */
+static int test_ScpGetTimestamp(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    static const char* bad[] = {
+        "1609459200 0 1609459200 0\n",           /* missing leading 'T' */
+        "T12x 0 100 0\n",                         /* mtime not fully numeric */
+        "T99999999999999999999999999 0 100 0\n",  /* mtime overflow (ERANGE) */
+        "T100 5 100 0\n",                         /* mtime separator not "0 " */
+        "T100 0 abc 0\n",                         /* atime not numeric */
+        "T100 0 99999999999999999999999999 0\n"   /* atime overflow (ERANGE) */
+    };
+    char tmp[64];
+    int result = 0;
+    int ret;
+    int i;
+    word32 idx;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -440;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -441;
+    }
+
+    /* a valid record parses both the modification and access times */
+    WMEMSET(tmp, 0, sizeof(tmp));
+    WSTRNCPY(tmp, "T1609459200 0 1609459201 0\n", sizeof(tmp) - 1);
+    idx = 0;
+    ssh->scpMTime = 0;
+    ssh->scpATime = 0;
+    ret = wolfSSH_TestScpGetTimestamp(ssh, (byte*)tmp,
+            (word32)WSTRLEN(tmp), &idx);
+    if (ret != WS_SUCCESS)
+        result = -442;
+    else if (ssh->scpMTime != (word64)1609459200)
+        result = -443;
+    else if (ssh->scpATime != (word64)1609459201)
+        result = -444;
+
+    for (i = 0; result == 0 &&
+            i < (int)(sizeof(bad) / sizeof(bad[0])); i++) {
+        WMEMSET(tmp, 0, sizeof(tmp));
+        WSTRNCPY(tmp, bad[i], sizeof(tmp) - 1);
+        idx = 0;
+        ret = wolfSSH_TestScpGetTimestamp(ssh, (byte*)tmp,
+                (word32)WSTRLEN(tmp), &idx);
+        if (ret == WS_SUCCESS) {
+            result = -445;
+            break;
+        }
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
 #endif /* WOLFSSH_TEST_INTERNAL && WOLFSSH_SCP */
 
 static int test_ChannelPutData(void)
@@ -7866,6 +8001,14 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #if defined(WOLFSSH_TEST_INTERNAL) && defined(WOLFSSH_SCP)
     unitResult = test_ScpGetFileMode();
     printf("ScpGetFileMode: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ScpGetFileSize();
+    printf("ScpGetFileSize: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ScpGetTimestamp();
+    printf("ScpGetTimestamp: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
 

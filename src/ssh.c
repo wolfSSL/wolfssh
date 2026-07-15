@@ -3835,15 +3835,26 @@ int wolfSSH_RealPath(const char* defaultPath, char* in,
         }
         /* Everything else is copied */
         else {
-            if (segSz > outSz || curSz >= outSz - segSz) {
+            word32 sepSz = (curSz != 1) ? 1 : 0;
+
+            /* Need room for the optional separator, the segment, and the
+             * terminating null. Guard the subtraction against underflow. */
+            if (segSz >= outSz || curSz + sepSz >= outSz - segSz) {
                 return WS_INVALID_PATH_E;
             }
 
+            /* Pass the full buffer size to WSTRNCAT: it measures the current
+             * contents itself and returns NULL if the append would not fit,
+             * so a truncated append is reported rather than silently kept. */
             if (curSz != 1) {
-                WSTRNCAT(out, "/", outSz - curSz);
+                if (WSTRNCAT(out, "/", outSz) == NULL) {
+                    return WS_INVALID_PATH_E;
+                }
                 curSz++;
             }
-            WSTRNCAT(out, seg, outSz - curSz);
+            if (WSTRNCAT(out, seg, outSz) == NULL) {
+                return WS_INVALID_PATH_E;
+            }
             curSz += segSz;
         }
     }
