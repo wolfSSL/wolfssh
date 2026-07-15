@@ -387,13 +387,13 @@ static int ExtractSalt(char* hash, char** salt, int saltSz)
 
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
 #ifdef WOLFSSHD_UNIT_TEST
-int CheckPasswordHashUnix(const char* input, char* stored)
+int CheckPasswordHashUnix(const char* input, const char* stored)
 #else
-static int CheckPasswordHashUnix(const char* input, char* stored)
+static int CheckPasswordHashUnix(const char* input, const char* stored)
 #endif
 {
     int ret = WSSHD_AUTH_SUCCESS;
-    char* hashedInput;
+    char* hashedInput = NULL;
     word32 hashedInputSz = 0, storedSz = 0;
 
     if (input == NULL || stored == NULL) {
@@ -1760,42 +1760,75 @@ static int CheckPublicKeyWIN(const char* usr,
 }
 #endif /* _WIN32*/
 
-/* return WOLFSSH_USERAUTH_SUCCESS on success */
-static int DoCheckUser(const char* usr, WOLFSSHD_AUTH* auth)
+/* Returns 1 if 'usr' is root-equivalent for PermitRootLogin (any uid 0
+ * account, or the literal name "root"; name-only on Windows). Shared by
+ * DoCheckUser and RequestAuthentication so all enforcement points agree. */
+static int IsRootUser(const char* usr)
 {
-    int ret = WOLFSSH_USERAUTH_SUCCESS;
-    int rc;
     int isRoot = 0;
-    WOLFSSHD_CONFIG* usrConf;
 #ifndef _WIN32
     struct passwd* pwInfo;
-#endif
 
-    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Checking user name %s", usr);
-
-#ifndef _WIN32
-    /* PermitRootLogin covers every uid 0 account (so an alias like "toor"
-     * cannot bypass it) and the literal name "root", so a transient getpwnam
-     * failure cannot skip the check for root. */
     pwInfo = getpwnam(usr);
     if ((pwInfo != NULL && pwInfo->pw_uid == 0) || XSTRCMP(usr, "root") == 0) {
         isRoot = 1;
     }
 #else
-    /* No uid 0 on Windows and no logon token yet at this pre-auth stage, so
-     * fall back to the literal name; a token based Administrators membership
-     * check would belong after authentication. */
     if (XSTRCMP(usr, "root") == 0) {
         isRoot = 1;
     }
 #endif
+    return isRoot;
+}
+
+/* Returns 1 if root login is denied outright, i.e. PermitRootLogin no.
+ * Used by DoCheckUser. */
+WOLFSSHD_STATIC int IsRootLoginDenied(int isRoot, WOLFSSHD_CONFIG* usrConf)
+{
+    return (isRoot == 1 &&
+            wolfSSHD_ConfigGetPermitRoot(usrConf) == WOLFSSHD_PERMIT_ROOT_NO);
+}
+
+/* Returns 1 if root password authentication is blocked, i.e.
+ * PermitRootLogin prohibit-password or forced-commands-only. Used by
+ * RequestAuthentication for WOLFSSH_USERAUTH_PASSWORD. */
+WOLFSSHD_STATIC int IsRootPasswordAuthBlocked(int isRoot,
+        WOLFSSHD_CONFIG* usrConf)
+{
+    return (isRoot == 1 &&
+            (wolfSSHD_ConfigGetPermitRoot(usrConf) ==
+                 WOLFSSHD_PERMIT_ROOT_PROHIBIT_PW ||
+             wolfSSHD_ConfigGetPermitRoot(usrConf) ==
+                 WOLFSSHD_PERMIT_ROOT_FORCED_CMD));
+}
+
+/* Returns 1 if root public key login is missing the ForceCommand required by
+ * PermitRootLogin forced-commands-only. Used by RequestAuthentication for
+ * WOLFSSH_USERAUTH_PUBLICKEY. */
+WOLFSSHD_STATIC int IsRootPubKeyForcedCmdMissing(int isRoot,
+        WOLFSSHD_CONFIG* usrConf)
+{
+    return (isRoot == 1 &&
+            wolfSSHD_ConfigGetPermitRoot(usrConf) ==
+                WOLFSSHD_PERMIT_ROOT_FORCED_CMD &&
+            wolfSSHD_ConfigGetForcedCmd(usrConf) == NULL);
+}
+
+/* return WOLFSSH_USERAUTH_SUCCESS on success */
+static int DoCheckUser(const char* usr, WOLFSSHD_AUTH* auth, int isRoot)
+{
+    int ret = WOLFSSH_USERAUTH_SUCCESS;
+    int rc;
+    WOLFSSHD_CONFIG* usrConf;
+
+    wolfSSH_Log(WS_LOG_INFO, "[SSHD] Checking user name %s", usr);
 
     if (isRoot == 1) {
         /* Resolve per-user config so a Match override is honored; a NULL
          * result is unresolvable, so fail closed and reject. */
         usrConf = wolfSSHD_AuthGetUserConf(auth, usr, NULL, NULL, NULL, NULL,
                                            NULL);
-        if (usrConf == NULL || wolfSSHD_ConfigGetPermitRoot(usrConf) == 0) {
+        if (usrConf == NULL || IsRootLoginDenied(isRoot, usrConf)) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Login as root not permitted");
             ret = WOLFSSH_USERAUTH_REJECTED;
         }
@@ -1934,6 +1967,7 @@ static int RequestAuthentication(WS_UserAuthData* authData,
 {
     int ret;
     int rc;
+    int isRoot;
     const char* usr;
     WOLFSSHD_CONFIG* usrConf = NULL;
 
@@ -1948,7 +1982,9 @@ static int RequestAuthentication(WS_UserAuthData* authData,
     }
 
     usr = (const char*)authData->username;
-    ret = DoCheckUser(usr, authCtx);
+    isRoot = IsRootUser(usr);
+    ret = DoCheckUser(usr, authCtx, isRoot);
+
     /* temporarily elevate permissions */
     if (ret == WOLFSSH_USERAUTH_SUCCESS &&
             wolfSSHD_AuthRaisePermissions(authCtx) != WS_SUCCESS) {
@@ -1983,10 +2019,15 @@ static int RequestAuthentication(WS_UserAuthData* authData,
 
     if (ret == WOLFSSH_USERAUTH_SUCCESS &&
         authData->type == WOLFSSH_USERAUTH_PASSWORD) {
-
         if (wolfSSHD_ConfigGetPwAuth(usrConf) != 1) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Password authentication not "
                         "allowed by configuration!");
+            ret = WOLFSSH_USERAUTH_REJECTED;
+        }
+        else if (IsRootPasswordAuthBlocked(isRoot, usrConf)) {
+            /* prohibit-password and forced-commands-only both block this. */
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Password authentication for "
+                        "root not allowed by configuration!");
             ret = WOLFSSH_USERAUTH_REJECTED;
         }
         /* Check if password is valid for this user. */
@@ -2000,6 +2041,7 @@ static int RequestAuthentication(WS_UserAuthData* authData,
         else {
             rc = authCtx->checkPasswordCb(usr, authData->sf.password.password,
                                      authData->sf.password.passwordSz, authCtx);
+
             if (rc == WSSHD_AUTH_SUCCESS) {
                 wolfSSH_Log(WS_LOG_INFO, "[SSHD] Password ok.");
             }
@@ -2027,6 +2069,15 @@ static int RequestAuthentication(WS_UserAuthData* authData,
         wolfSSHD_ConfigGetPubKeyAuth(usrConf) != 1) {
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Public key authentication not "
                     "allowed by configuration!");
+        ret = WOLFSSH_USERAUTH_REJECTED;
+    }
+
+    if (ret == WOLFSSH_USERAUTH_SUCCESS &&
+        authData->type == WOLFSSH_USERAUTH_PUBLICKEY &&
+        IsRootPubKeyForcedCmdMissing(isRoot, usrConf)) {
+        /* forced-commands-only requires a forced command for root pubkey. */
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Public key login for root requires "
+                    "a forced command by configuration!");
         ret = WOLFSSH_USERAUTH_REJECTED;
     }
 
@@ -2258,7 +2309,7 @@ int DefaultUserAuthTypes(WOLFSSH* ssh, void* ctx)
     int   ret = 0;
 
     if (ssh == NULL || ctx == NULL)
-        return WS_BAD_ARGUMENT;
+        return 0;
     authCtx = (WOLFSSHD_AUTH*)ctx;
 
     /* get configuration for user */
@@ -2266,7 +2317,7 @@ int DefaultUserAuthTypes(WOLFSSH* ssh, void* ctx)
     usrConf = wolfSSHD_AuthGetUserConf(authCtx, usr, NULL, NULL,
             NULL, NULL, NULL);
     if (usrConf == NULL) {
-        ret = WS_BAD_ARGUMENT;
+        ret = 0;
     }
     else {
         ret = wolfSSHD_GetUserAuthTypes(usrConf);

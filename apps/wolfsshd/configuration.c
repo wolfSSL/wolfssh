@@ -100,7 +100,7 @@ struct WOLFSSHD_CONFIG {
     byte usePrivilegeSeparation:2;
     byte passwordAuth:1;
     byte pubKeyAuth:1;
-    byte permitRootLogin:1;
+    byte permitRootLogin:2;
     byte permitEmptyPasswords:1;
     byte authKeysFileSet:1; /* if not set then no explicit authorized keys */
     byte strictModes:1; /* enforce file permission/ownership checks */
@@ -555,10 +555,20 @@ static int HandlePermitRoot(WOLFSSHD_CONFIG* conf, const char* value)
 
     if (ret == WS_SUCCESS) {
         if (WSTRCMP(value, "no") == 0) {
-            conf->permitRootLogin = 0;
+            conf->permitRootLogin = WOLFSSHD_PERMIT_ROOT_NO;
         }
         else if (WSTRCMP(value, "yes") == 0) {
-            conf->permitRootLogin = 1;
+            conf->permitRootLogin = WOLFSSHD_PERMIT_ROOT_YES;
+        }
+        else if (WSTRCMP(value, "prohibit-password") == 0 ||
+                 WSTRCMP(value, "without-password") == 0) {
+            conf->permitRootLogin = WOLFSSHD_PERMIT_ROOT_PROHIBIT_PW;
+        }
+        else if (WSTRCMP(value, "forced-commands-only") == 0) {
+            wolfSSH_Log(WS_LOG_WARN, "[SSHD] PermitRootLogin "
+                        "forced-commands-only: authorized_keys command= "
+                        "restrictions not enforced");
+            conf->permitRootLogin = WOLFSSHD_PERMIT_ROOT_FORCED_CMD;
         }
         else {
             ret = WS_BAD_ARGUMENT;

@@ -2094,6 +2094,47 @@ static int UserAuthResult(byte result,
     return ret;
 }
 
+#if defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)
+/* Returns 1 if root's forced-commands-only ForceCommand isn't
+ * "internal-sftp": SFTP/SCP never honor ForceCommand (only SHELL_Subsystem
+ * does), so this blocks the confinement bypass. No-op on Windows
+ * (pPasswd is NULL there). */
+static int IsRootTransferBlocked(WPASSWD* pPasswd, WOLFSSHD_CONFIG* usrConf)
+{
+#ifdef _WIN32
+    (void)pPasswd;
+    (void)usrConf;
+    return 0;
+#else
+    char* forcedCmd;
+
+    if (pPasswd == NULL || pPasswd->pw_uid != 0) {
+        return 0;
+    }
+    if (wolfSSHD_ConfigGetPermitRoot(usrConf) !=
+            WOLFSSHD_PERMIT_ROOT_FORCED_CMD) {
+        return 0;
+    }
+
+    forcedCmd = wolfSSHD_ConfigGetForcedCmd(usrConf);
+    return (forcedCmd == NULL || WSTRCMP(forcedCmd, "internal-sftp") != 0);
+#endif
+}
+
+/* Logs and returns 1 if 'what' (e.g. "SFTP subsystem", "SCP session") is
+ * blocked for root by IsRootTransferBlocked(); 0 otherwise. */
+static int RejectRootTransfer(WPASSWD* pPasswd, WOLFSSHD_CONFIG* usrConf,
+        const char* what)
+{
+    if (IsRootTransferBlocked(pPasswd, usrConf)) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] %s for root requires ForceCommand "
+            "internal-sftp under forced-commands-only", what);
+        return 1;
+    }
+    return 0;
+}
+#endif /* WOLFSSH_SFTP || WOLFSSH_SCP */
+
 /* handle wolfSSH accept and directing to correct subsystem */
 #ifdef _WIN32
 static DWORD HandleConnection(void* arg)
@@ -2281,7 +2322,14 @@ static void* HandleConnection(void* arg)
                     switch (ret) {
                         case WS_SFTP_COMPLETE:
                         #ifdef WOLFSSH_SFTP
-                            ret = SFTP_Subsystem(conn, ssh, pPasswd, usrConf);
+                            if (RejectRootTransfer(pPasswd, usrConf,
+                                    "SFTP subsystem")) {
+                                ret = WS_FATAL_ERROR;
+                            }
+                            else {
+                                ret = SFTP_Subsystem(conn, ssh, pPasswd,
+                                        usrConf);
+                            }
                         #else
                             err_sys("SFTP not compiled in. Please use "
                                     "--enable-sftp");
@@ -2299,7 +2347,13 @@ static void* HandleConnection(void* arg)
                                     wolfSSH_GetUsername(ssh));
                                 ret = WS_FATAL_ERROR;
                             }
+                            else if (RejectRootTransfer(pPasswd, usrConf,
+                                    "SCP session")) {
+                                ret = WS_FATAL_ERROR;
+                            }
                             else {
+                                /* Intentional: SCP grants no more than the
+                                 * SFTP access already permitted above. */
                                 ret = SCP_Subsystem(conn, ssh, pPasswd,
                                         usrConf);
                             }
@@ -2341,7 +2395,13 @@ static void* HandleConnection(void* arg)
                                 "denying SCP", wolfSSH_GetUsername(ssh));
                             ret = WS_FATAL_ERROR;
                         }
+                        else if (RejectRootTransfer(pPasswd, usrConf,
+                                "SCP session")) {
+                            ret = WS_FATAL_ERROR;
+                        }
                         else {
+                            /* Intentional: SCP grants no more than the
+                             * SFTP access already permitted above. */
                             ret = SCP_Subsystem(conn, ssh, pPasswd, usrConf);
                         }
                     #else

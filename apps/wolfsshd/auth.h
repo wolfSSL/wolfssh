@@ -119,7 +119,7 @@ int SearchForPubKey(const char* path, const char* authKeysFile,
                     WUID_T uid, int strictModes);
 #endif
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
-int CheckPasswordHashUnix(const char* input, char* stored);
+int CheckPasswordHashUnix(const char* input, const char* stored);
 #endif
 int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
                       word32 keySz);
@@ -128,6 +128,9 @@ int ResolveAuthKeysPath(const char* homeDir, const char* pattern,
 int CAKeysFileDiffers(const char* a, const char* b);
 int MatchUPNToUser(const char* usr, const char* name, int nameSz,
                    const char* allowList);
+int IsRootLoginDenied(int isRoot, WOLFSSHD_CONFIG* usrConf);
+int IsRootPasswordAuthBlocked(int isRoot, WOLFSSHD_CONFIG* usrConf);
+int IsRootPubKeyForcedCmdMissing(int isRoot, WOLFSSHD_CONFIG* usrConf);
 int wolfSSHD_GetUserAuthTypes(const WOLFSSHD_CONFIG* usrConf);
 #if defined(WOLFSSH_OSSH_CERTS) && !defined(_WIN32)
 int OsshPrefixMatch(const byte* a, const byte* b, int bits, int len);
