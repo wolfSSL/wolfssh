@@ -349,6 +349,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
         byte** banner)
 {
     int ret = WS_SUCCESS;
+    byte* keyDer = NULL;
     byte* privBuf = NULL;
     word32 privBufSz = 0;
     void* heap = NULL;
@@ -411,20 +412,13 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
             }
 
             if (ret == WS_SUCCESS) {
-                /* Host keys may be PEM or DER. Detect by content: a DER key is
-                 * an ASN.1 SEQUENCE (leading 0x30); anything else is treated as
-                 * PEM text and decoded with wc_KeyPemToDer(), which handles
-                 * PKCS#1, SEC1 and PKCS#8 "PRIVATE KEY" bodies.
-                 *
-                 * The previous code used wc_PemToDer(..., PRIVATEKEY_TYPE, ...),
-                 * which only recognizes the classic "RSA/EC PRIVATE KEY" PEM
-                 * headers. On a PKCS#8 body (how ML-DSA host keys are emitted)
-                 * it returns *success* but yields a malformed body (leading
-                 * 0x04, not a 0x30 SEQUENCE), which
-                 * wolfSSH_CTX_UsePrivateKey_buffer() then rejects with
-                 * WS_BAD_FILETYPE_E, so ML-DSA PEM host keys could not load. */
-                byte* keyDer = NULL;
-
+                /* Host keys may be OpenSSH, PEM, or DER.
+                 * wolfSSHD_DetectPrivKeyFormat() uses wc_KeyPemToDer() (not
+                 * wc_PemToDer(..., PRIVATEKEY_TYPE, ...), which unwraps
+                 * PKCS#8 via ToTraditional() and mangles key types with no
+                 * traditional DER form, e.g. ML-DSA) and also detects the
+                 * OpenSSH private-key format, used by composite ML-DSA host
+                 * keys generated in that format. */
                 if (dataSz == 0) {
                     /* An empty (0-byte) file passes the NULL check above but
                      * carries no key material. Handle it explicitly as a file
@@ -434,36 +428,31 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
                     wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Host key file is empty.");
                     ret = WS_BAD_FILE_E;
                 }
-                else if (data[0] == 0x30) {
-                    privBuf = data;
-                    privBufSz = dataSz;
-                }
                 else {
-                    keyDer = (byte*)WMALLOC(dataSz, heap, DYNTYPE_SSHD);
-                    if (keyDer == NULL) {
-                        ret = WS_MEMORY_E;
+                    int keyFormat = wolfSSHD_DetectPrivKeyFormat(data, dataSz,
+                            heap, &keyDer, &privBuf, &privBufSz);
+
+                    if (keyFormat < 0) {
+                        wolfSSH_Log(WS_LOG_ERROR,
+                            "[SSHD] Host private key file is invalid.");
+                        ret = WS_BAD_FILE_E;
+                    }
+                    else if (keyFormat == WOLFSSH_FORMAT_OPENSSH) {
+                        wolfSSH_Log(WS_LOG_DEBUG, "[SSHD] Loading host private "
+                                    "key as OpenSSH format.");
                     }
                     else {
-                        int keyDerSz = wc_KeyPemToDer(data, dataSz, keyDer,
-                                                      (int)dataSz, NULL);
-                        if (keyDerSz <= 0) {
-                            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failed to convert "
-                                        "host private key from PEM.");
-                            ret = WS_BAD_FILE_E;
-                        }
-                        else {
-                            privBuf = keyDer;
-                            privBufSz = (word32)keyDerSz;
-                        }
+                        wolfSSH_Log(WS_LOG_DEBUG, "[SSHD] Loading host private "
+                                    "key as DER format.");
                     }
-                }
 
-                if (ret == WS_SUCCESS
-                        && wolfSSH_CTX_UsePrivateKey_buffer(*ctx, privBuf,
-                                privBufSz, WOLFSSH_FORMAT_ASN1) < 0) {
-                    wolfSSH_Log(WS_LOG_ERROR,
-                        "[SSHD] Failed to use host private key.");
-                    ret = WS_BAD_ARGUMENT;
+                    if (ret == WS_SUCCESS &&
+                            wolfSSH_CTX_UsePrivateKey_buffer(*ctx, privBuf,
+                                    privBufSz, keyFormat) < 0) {
+                        wolfSSH_Log(WS_LOG_ERROR,
+                            "[SSHD] Failed to use host private key.");
+                        ret = WS_BAD_ARGUMENT;
+                    }
                 }
 
                 if (keyDer != NULL) {

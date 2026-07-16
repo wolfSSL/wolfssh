@@ -108,6 +108,10 @@ int wolfSSHD_GetHomeDirectory(WOLFSSHD_AUTH* auth, WOLFSSH* ssh, WCHAR* out, int
 int wolfSSHD_OpenSecureFile(const char* path, WUID_T ownerUid,
     int rejectReadable, void* heap, WFILE** out);
 
+/* classifies a loaded host private key buffer as OpenSSH or ASN1/DER */
+int wolfSSHD_DetectPrivKeyFormat(byte* data, word32 dataSz, void* heap,
+    byte** keyDer, byte** privBuf, word32* privBufSz);
+
 #ifdef WOLFSSHD_UNIT_TEST
 #ifndef _WIN32
 extern int (*wsshd_setregid_cb)(WGID_T, WGID_T);
