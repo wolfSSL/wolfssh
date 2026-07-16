@@ -6398,7 +6398,7 @@ static void DrainRetained(void)
  *   - ssh->k:       the DH/ECDH shared secret
  *   - ssh->keys:    active session encryption + MAC keys (our direction)
  *   - ssh->peerKeys: active session encryption + MAC keys (peer direction)
- * Mutation testing flagged each ForceZero in SshResourceFree as having no
+ * Mutation testing flagged each WS_FORCEZERO in SshResourceFree as having no
  * coverage; removing any of them would leave key material in heap memory
  * after wolfSSH_free. To inspect the bytes after free without touching
  * freed memory, the test installs the retain-on-free allocator just
@@ -6485,7 +6485,7 @@ out:
 
 #ifndef WOLFSSH_NO_DH
 /* Verify KeyAgreeDh_client zeroes the ephemeral DH private key
- * ssh->handshake->x before returning. The ForceZero is unconditional in
+ * ssh->handshake->x before returning. The WS_FORCEZERO is unconditional in
  * the function (runs even if wc_DhAgree fails), so the test does not need
  * to feed a valid peer public key - it just needs to observe that x is
  * wiped after the call returns. The test hook wolfSSH_TestKeyAgreeDh_client
@@ -6529,7 +6529,7 @@ static int test_KeyAgreeDh_client_zeroesEphemeralPrivKey(void)
     hs->xSz = markedSz;
 
     /* No prime group is set, so wc_DhCheckPubKey fails before wc_DhAgree is
-     * reached. The ForceZero on x is unconditional and runs regardless. */
+     * reached. The WS_FORCEZERO on x is unconditional and runs regardless. */
     WMEMSET(bogusF, 0xCC, sizeof(bogusF));
     (void)wolfSSH_TestKeyAgreeDh_client(ssh, WC_HASH_TYPE_SHA256,
             bogusF, (word32)sizeof(bogusF));
@@ -6765,12 +6765,12 @@ static void DrainCaptured(void)
  *
  * wc_DhGenerateKeyPair writes only the leading ySz bytes of the
  * MAX_KEX_KEY_SZ allocation (ySz is typically the prime-group size, well
- * below MAX_KEX_KEY_SZ), and ForceZero only wipes those same ySz bytes -
+ * below MAX_KEX_KEY_SZ), and WS_FORCEZERO only wipes those same ySz bytes -
  * so the tail of the buffer is never written by the function under test.
  * The capture allocator stamps every fresh allocation with 0xCC so that
  * after the call:
- *   - present ForceZero  -> [0x00 * ySz] [0xCC * (MAX - ySz)]
- *   - removed ForceZero  -> [priv-key * ySz] [0xCC * (MAX - ySz)]
+ *   - present WS_FORCEZERO  -> [0x00 * ySz] [0xCC * (MAX - ySz)]
+ *   - removed WS_FORCEZERO  -> [priv-key * ySz] [0xCC * (MAX - ySz)]
  * The check requires a captured MAX_KEX_KEY_SZ buffer whose bytes are all
  * either 0x00 or 0xCC AND that contains at least one 0x00. The DH private
  * key emitted by wc_DhGenerateKeyPair is overwhelmingly unlikely to be
@@ -6779,7 +6779,7 @@ static void DrainCaptured(void)
  *
  * The peer value ssh->handshake->e is left zero, so the new
  * wc_DhCheckPubKey now fails between wc_DhGenerateKeyPair and wc_DhAgree;
- * the ForceZero on y_ptr is unconditional and still runs, so the buffer
+ * the WS_FORCEZERO on y_ptr is unconditional and still runs, so the buffer
  * assertion above is unaffected. */
 static int test_KeyAgreeDh_server_zeroesEphemeralPrivKey(void)
 {
@@ -6978,7 +6978,7 @@ static int test_KeyAgreeDh_client_rejectsOutOfRangePeer(void)
             result = -754;
             break;
         }
-        /* x is unused on the reject path but ForceZero still runs over it. */
+        /* x is unused on the reject path but WS_FORCEZERO still runs over it. */
         hs->xSz = 0;
         badF[0] = badVals[c];
         ret = wolfSSH_TestKeyAgreeDh_client(ssh, WC_HASH_TYPE_SHA256,

@@ -659,7 +659,7 @@ static void HandshakeInfoFree(HandshakeInfo* hs, void* heap)
         if (hs->kexHashId != WC_HASH_TYPE_NONE)  {
             wc_HashFree(&hs->kexHash, (enum wc_HashType)hs->kexHashId);
         }
-        ForceZero(hs, sizeof(HandshakeInfo));
+        WS_FORCEZERO(hs, sizeof(HandshakeInfo));
         WFREE(hs, heap, DYNTYPE_HS);
     }
 }
@@ -1160,7 +1160,7 @@ void CtxResourceFree(WOLFSSH_CTX* ctx)
 
         for (i = 0; i < ctx->privateKeyCount; i++) {
             if (ctx->privateKey[i].key != NULL) {
-                ForceZero(ctx->privateKey[i].key, ctx->privateKey[i].keySz);
+                WS_FORCEZERO(ctx->privateKey[i].key, ctx->privateKey[i].keySz);
                 WFREE(ctx->privateKey[i].key, ctx->heap, DYNTYPE_PRIVKEY);
                 ctx->privateKey[i].key = NULL;
                 ctx->privateKey[i].keySz = 0;
@@ -1554,10 +1554,10 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
     ShrinkBuffer(&ssh->inputBuffer, 1);
     ShrinkBuffer(&ssh->outputBuffer, 1);
     ShrinkBuffer(&ssh->extDataBuffer, 1);
-    ForceZero(ssh->k, ssh->kSz);
+    WS_FORCEZERO(ssh->k, ssh->kSz);
     HandshakeInfoFree(ssh->handshake, heap);
-    ForceZero(&ssh->keys, sizeof(Keys));
-    ForceZero(&ssh->peerKeys, sizeof(Keys));
+    WS_FORCEZERO(&ssh->keys, sizeof(Keys));
+    WS_FORCEZERO(&ssh->peerKeys, sizeof(Keys));
     if (ssh->rng) {
         wc_FreeRng(ssh->rng);
         WFREE(ssh->rng, heap, DYNTYPE_RNG);
@@ -1590,7 +1590,7 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
         ssh->scpConfirmMsgSz = 0;
     }
     if (ssh->scpFileBuffer) {
-        ForceZero(ssh->scpFileBuffer, ssh->scpFileBufferSz);
+        WS_FORCEZERO(ssh->scpFileBuffer, ssh->scpFileBufferSz);
         WFREE(ssh->scpFileBuffer, heap, DYNTYPE_BUFFER);
         ssh->scpFileBuffer = NULL;
         ssh->scpFileBufferSz = 0;
@@ -2674,7 +2674,7 @@ static int UpdateHostCertificates(WOLFSSH_CTX* ctx,
          * software key on the certificate slot and mark it TPM-backed. */
         if (keyIsTpm) {
             if (ctx->privateKey[certHint].key != NULL) {
-                ForceZero(ctx->privateKey[certHint].key,
+                WS_FORCEZERO(ctx->privateKey[certHint].key,
                         ctx->privateKey[certHint].keySz);
                 WFREE(ctx->privateKey[certHint].key,
                         ctx->heap, DYNTYPE_PRIVKEY);
@@ -2698,7 +2698,7 @@ static int UpdateHostCertificates(WOLFSSH_CTX* ctx,
                 WMEMCPY(key, ctx->privateKey[keyHint].key, keySz);
 
                 if (ctx->privateKey[certHint].key != NULL) {
-                    ForceZero(ctx->privateKey[certHint].key,
+                    WS_FORCEZERO(ctx->privateKey[certHint].key,
                             ctx->privateKey[certHint].keySz);
                     WFREE(ctx->privateKey[certHint].key,
                             ctx->heap, DYNTYPE_PRIVKEY);
@@ -2801,7 +2801,7 @@ static int SetHostPrivateKey(WOLFSSH_CTX* ctx,
 
         if (pvtKey->publicKeyFmt == keyId) {
             if (pvtKey->key != NULL) {
-                ForceZero(pvtKey->key, pvtKey->keySz);
+                WS_FORCEZERO(pvtKey->key, pvtKey->keySz);
                 WFREE(pvtKey->key, ctx->heap, dynamicType);
             }
         }
@@ -2859,7 +2859,7 @@ int wolfSSH_SetHostTpmKey(WOLFSSH_CTX* ctx, byte keyId)
             pvtKey->publicKeyFmt = keyId;
         }
         else if (pvtKey->key != NULL) {
-            ForceZero(pvtKey->key, pvtKey->keySz);
+            WS_FORCEZERO(pvtKey->key, pvtKey->keySz);
             WFREE(pvtKey->key, ctx->heap, DYNTYPE_PRIVKEY);
         }
 
@@ -2874,7 +2874,7 @@ int wolfSSH_SetHostTpmKey(WOLFSSH_CTX* ctx, byte keyId)
         for (certIdx = 0; certIdx < ctx->privateKeyCount; certIdx++) {
             if (ctx->privateKey[certIdx].publicKeyFmt == certId) {
                 if (ctx->privateKey[certIdx].key != NULL) {
-                    ForceZero(ctx->privateKey[certIdx].key,
+                    WS_FORCEZERO(ctx->privateKey[certIdx].key,
                         ctx->privateKey[certIdx].keySz);
                     WFREE(ctx->privateKey[certIdx].key, ctx->heap,
                         DYNTYPE_PRIVKEY);
@@ -2961,7 +2961,7 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
             if (type == BUFTYPE_PRIVKEY) {
                 /* wc_KeyPemToDer may have written partial key material;
                  * zeroize before free on the private-key path. */
-                ForceZero(der, inSz);
+                WS_FORCEZERO(der, inSz);
             }
             WFREE(der, heap, dynamicType);
             return WS_BAD_FILE_E;
@@ -2979,7 +2979,7 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
         ret = IdentifyAsn1Key(der, derSz, 1, ctx->heap, NULL);
         if (ret < 0) {
             if (der != NULL) {
-                ForceZero(der, derSz);
+                WS_FORCEZERO(der, derSz);
                 WFREE(der, heap, dynamicType);
             }
             return ret;
@@ -3108,7 +3108,7 @@ int GenerateKey(byte hashId, byte keyId,
                 ret = wc_HashFinal(&hash, enmhashId, lastBlock);
                 if (ret == WS_SUCCESS)
                     WMEMCPY(key, lastBlock, remainder);
-                ForceZero(lastBlock, sizeof(lastBlock));
+                WS_FORCEZERO(lastBlock, sizeof(lastBlock));
             }
         }
         else {
@@ -3154,7 +3154,7 @@ int GenerateKey(byte hashId, byte keyId,
                     ret = wc_HashFinal(&hash, enmhashId, lastBlock);
                 if (ret == WS_SUCCESS)
                     WMEMCPY(key + runningKeySz, lastBlock, remainder);
-                ForceZero(lastBlock, sizeof(lastBlock));
+                WS_FORCEZERO(lastBlock, sizeof(lastBlock));
             }
         }
     }
@@ -6315,7 +6315,7 @@ static int KeyAgreeDh_client(WOLFSSH* ssh, byte hashId,
             ret = WS_CRYPTO_FAILED;
         }
     }
-    ForceZero(ssh->handshake->x, ssh->handshake->xSz);
+    WS_FORCEZERO(ssh->handshake->x, ssh->handshake->xSz);
     wc_FreeDhKey(&ssh->handshake->privKey.dh);
 
     WLOG(WS_LOG_DEBUG, "Leaving KeyAgreeDh_client(), ret = %d", ret);
@@ -6709,7 +6709,7 @@ static int KeyAgreeEcdhMlKem_client(WOLFSSH* ssh, byte hashId,
     }
 
     if (sharedSecretHash) {
-        ForceZero(sharedSecretHash, sharedSecretHashSz);
+        WS_FORCEZERO(sharedSecretHash, sharedSecretHashSz);
         WFREE(sharedSecretHash, ssh->ctx->heap, DYNTYPE_PRIVKEY);
     }
 
@@ -8980,7 +8980,7 @@ static int DoUserAuthRequestMlDsa(WOLFSSH* ssh,
     }
 
     if (checkData != NULL) {
-        ForceZero(checkData, checkDataSz);
+        WS_FORCEZERO(checkData, checkDataSz);
         WFREE(checkData, ssh->ctx->heap, DYNTYPE_TEMP);
     }
 
@@ -11541,7 +11541,7 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
             in += AES_BLOCK_SIZE;
             sz -= AES_BLOCK_SIZE;
         }
-        ForceZero(scratch, sizeof(scratch));
+        WS_FORCEZERO(scratch, sizeof(scratch));
 
         return ret;
     }
@@ -13612,7 +13612,7 @@ static int KeyAgreeDh_server(WOLFSSH* ssh, byte hashId, byte* f, word32* fSz)
                     ssh->handshake->e, ssh->handshake->eSz);
             PRIVATE_KEY_LOCK();
         }
-        ForceZero(y_ptr, ySz);
+        WS_FORCEZERO(y_ptr, ySz);
         if (keyInited)
             wc_FreeDhKey(privKey);
     }
@@ -14081,7 +14081,7 @@ static int KeyAgreeEcdhMlKem_server(WOLFSSH* ssh, byte hashId,
     }
 
     if (sharedSecretHash) {
-        ForceZero(sharedSecretHash, sharedSecretHashSz);
+        WS_FORCEZERO(sharedSecretHash, sharedSecretHashSz);
         WFREE(sharedSecretHash, ssh->ctx->heap, DYNTYPE_PRIVKEY);
     }
 
@@ -14968,7 +14968,7 @@ int SendKexDhReply(WOLFSSH* ssh)
 
     WLOG(WS_LOG_DEBUG, "Leaving SendKexDhReply(), ret = %d", ret);
     if (sigKeyBlock_ptr) {
-        ForceZero(sigKeyBlock_ptr, sizeof(struct wolfSSH_sigKeyBlockFull));
+        WS_FORCEZERO(sigKeyBlock_ptr, sizeof(struct wolfSSH_sigKeyBlockFull));
         WFREE(sigKeyBlock_ptr, heap, DYNTYPE_PRIVKEY);
     }
 #ifdef WOLFSSH_SMALL_STACK
@@ -16414,7 +16414,7 @@ static int BuildUserAuthRequestRsa(WOLFSSH* ssh,
         *idx = begin;
 
     if (checkData != NULL) {
-        ForceZero(checkData, checkDataSz);
+        WS_FORCEZERO(checkData, checkDataSz);
         WFREE(checkData, ssh->ctx->heap, DYNTYPE_TEMP);
     }
 
@@ -16594,7 +16594,7 @@ static int BuildUserAuthRequestRsaCert(WOLFSSH* ssh,
         *idx = begin;
 
     if (checkData != NULL) {
-        ForceZero(checkData, checkDataSz);
+        WS_FORCEZERO(checkData, checkDataSz);
         WFREE(checkData, ssh->ctx->heap, DYNTYPE_TEMP);
     }
 
@@ -16861,7 +16861,7 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
         *idx = begin;
 
     if (checkData != NULL) {
-        ForceZero(checkData, checkDataSz);
+        WS_FORCEZERO(checkData, checkDataSz);
         WFREE(checkData, ssh->ctx->heap, DYNTYPE_TEMP);
     }
 
@@ -17121,7 +17121,7 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
         *idx = begin;
 
     if (checkData != NULL) {
-        ForceZero(checkData, checkDataSz);
+        WS_FORCEZERO(checkData, checkDataSz);
         WFREE(checkData, ssh->ctx->heap, DYNTYPE_TEMP);
     }
 
@@ -17276,7 +17276,7 @@ static int BuildUserAuthRequestEd25519(WOLFSSH* ssh,
         *idx = begin;
 
     if (checkData != NULL) {
-        ForceZero(checkData, checkDataSz);
+        WS_FORCEZERO(checkData, checkDataSz);
         WFREE(checkData, keySig->heap, DYNTYPE_TEMP);
     }
 
@@ -17523,7 +17523,7 @@ static int BuildUserAuthRequestMlDsa(WOLFSSH* ssh,
         *idx = begin;
 
     if (checkData != NULL) {
-        ForceZero(checkData, checkDataSz);
+        WS_FORCEZERO(checkData, checkDataSz);
         WFREE(checkData, keySig->heap, DYNTYPE_TEMP);
     }
 
@@ -17936,7 +17936,7 @@ int SendUserAuthKeyboardResponse(WOLFSSH* ssh)
     if (ret != WS_WANT_WRITE && ret != WS_SUCCESS)
         PurgePacket(ssh);
 
-    ForceZero(&authData, sizeof(WS_UserAuthData));
+    WS_FORCEZERO(&authData, sizeof(WS_UserAuthData));
 
     WLOG(WS_LOG_DEBUG, "Leaving SendUserAuthKeyboardResponse(), ret = %d", ret);
 
@@ -18145,7 +18145,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
     if (ret != WS_WANT_WRITE && ret != WS_SUCCESS)
         PurgePacket(ssh);
 
-    ForceZero(&authData, sizeof(WS_UserAuthData));
+    WS_FORCEZERO(&authData, sizeof(WS_UserAuthData));
     WLOG(WS_LOG_DEBUG, "Leaving SendUserAuthRequest(), ret = %d", ret);
 
     if (keySig_ptr)
