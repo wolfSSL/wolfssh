@@ -542,17 +542,11 @@ enum NameIdType {
         #define KEX_F_SIZE (256 + 1)
     #endif
 #endif
-/* A user-supplied KEX_F_SIZE override must still hold the largest f/ciphertext
- * the enabled algorithms write; the KeyAgree*_server paths do not bound-check
- * it at runtime. A DH-enabled build writes at least a classical DH group 14 f
- * (a 2048-bit p needs 257 bytes) and its ECDH points are smaller, so assert
- * that floor whenever DH is compiled in -- it matches the (256 + 1) baseline
- * the derivation above falls back to. DH GEX is self-limiting: SelectKexDhGexGroup
- * caps its selection at (KEX_F_SIZE - 1) * 8 bits, so it needs no separate
- * assert. Add the larger group 16 and ML-KEM sizes on top only when those are
- * enabled. A DH-disabled (ECC/Curve25519/ML-KEM-only) build writes no DH f; its
- * largest f fits well under the 257-byte default, and the ML-KEM asserts below
- * cover the PQ builds, so this floor does not apply there. */
+/* The KeyAgree*_server paths do not bound-check KEX_F_SIZE at runtime, so
+ * assert here that an override still holds every enabled algorithm's f. DH GEX
+ * needs no assert: SelectKexDhGexGroup caps itself at (KEX_F_SIZE - 1) * 8
+ * bits. A DH-disabled build writes no DH f and its ECDH points fit the 257-byte
+ * default, so the DH floor is guarded on WOLFSSH_NO_DH. */
 #ifndef WOLFSSH_NO_DH
     #if KEX_F_SIZE < (256 + 1)
         #error "KEX_F_SIZE too small for DH group 14 (2048-bit p needs 257 bytes)"
@@ -779,6 +773,10 @@ typedef struct HandshakeInfo {
     word32 dhGexMinSz;
     word32 dhGexPreferredSz;
     word32 dhGexMaxSz;
+    /* GEX group cache, role-dependent. Server: SendKexDhGexGroup stores the
+     * group it chose and leaves generator NULL, meaning dhGenerator. Client:
+     * DoKexDhGexGroup stores the group the peer sent and its generator. A NULL
+     * primeGroup means no GROUP crossed the wire. */
     byte* primeGroup;
     word32 primeGroupSz;
     byte* generator;

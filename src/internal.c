@@ -5534,7 +5534,7 @@ static const word32 dhPrimeGroup16Sz = (word32)sizeof(dhPrimeGroup16);
 #endif
 
 /* RFC 4253 sec. 7.1: discard the KEX packet a peer sent after a wrong
- * first_packet_follows guess. Leave expectMsgId at MSGID_NONE -- the real
+ * first_packet_follows guess. Leave expectMsgId at MSGID_NONE, the real
  * follow-up's ID comes from the negotiated KEX, not the guess, and may cross
  * the GEX boundary. Returns 1 if consumed, else 0. Caller validates handshake. */
 static int SkipGuessedKexMsg(WOLFSSH* ssh, const char* what,
@@ -12896,19 +12896,9 @@ static int GetDHPrimeGroup(WOLFSSH* ssh, const byte** primeGroup,
         #endif
         #ifndef WOLFSSH_NO_DH_GEX_SHA256
         case ID_DH_GEX_SHA256:
-            /* Reuse the group SendKexDhGexGroup cached on the handshake so the
-             * exchange hash and the shared secret match the group that was put
-             * on the wire. An unset cache means no GROUP was ever sent (the
-             * peer skipped GEX_REQUEST); there is no wire group to match, so
-             * re-select from whatever window the handshake holds.
-             *
-             * handshake->primeGroup has a role-dependent meaning: on the server
-             * SendKexDhGexGroup caches the group we chose (generator always
-             * dhGenerator, and handshake->generator stays NULL); on the client
-             * DoKexDhGexGroup caches the group the peer sent and its generator
-             * separately in handshake->generator. Pair the cached prime with
-             * the cached generator when present so a peer's g != 2 is honored,
-             * falling back to dhGenerator on the server. */
+            /* Reuse the cached wire group so the exchange hash and the shared
+             * secret match what was sent. An unset cache means the peer skipped
+             * GEX_REQUEST, so re-select from the handshake's window. */
             if (ssh->handshake->primeGroup != NULL) {
                 *primeGroup = ssh->handshake->primeGroup;
                 *primeGroupSz = ssh->handshake->primeGroupSz;
@@ -15150,8 +15140,9 @@ int SendKexDhGexGroup(WOLFSSH* ssh)
     /* Cache the selected group so the exchange hash and shared secret
      * (GetDHPrimeGroup) reuse exactly what goes on the wire here. */
     if (ret == WS_SUCCESS) {
-        if (ssh->handshake->primeGroup != NULL)
+        if (ssh->handshake->primeGroup != NULL) {
             WFREE(ssh->handshake->primeGroup, ssh->ctx->heap, DYNTYPE_MPINT);
+        }
         ssh->handshake->primeGroup =
             (byte*)WMALLOC(primeGroupSz, ssh->ctx->heap, DYNTYPE_MPINT);
         if (ssh->handshake->primeGroup == NULL) {
