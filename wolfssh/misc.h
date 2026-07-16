@@ -42,7 +42,7 @@ WOLFSSH_LOCAL word32 min(word32 a, word32 b);
 
 WOLFSSH_LOCAL void ato32(const byte* c, word32* u32);
 WOLFSSH_LOCAL void c32toa(word32 u32, byte* c);
-WOLFSSH_LOCAL void ForceZero(const void* mem, word32 length);
+WOLFSSH_LOCAL void ForceZero(void* mem, word32 length);
 WOLFSSH_LOCAL int ConstantCompare(const byte* a, const byte* b, word32 length);
 
 
