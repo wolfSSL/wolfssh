@@ -99,7 +99,7 @@ STATIC INLINE void c32toa(word32 u32, byte* c)
 
 
 /* Make sure compiler doesn't skip */
-STATIC INLINE void ForceZero(const void* mem, word32 length)
+STATIC INLINE void ForceZero(void* mem, word32 length)
 {
     volatile byte* z = (volatile byte*)mem;
 
