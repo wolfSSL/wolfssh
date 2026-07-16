@@ -297,6 +297,78 @@ static int GetOpenSshKeyMlDsa(MlDsaKey* key,
     }
     return ret;
 }
+
+/* Parse OpenSSH ML-DSA composite private key blob; see
+ * GetOpenSshKeyPublicMlDsaComposite() for the public-key-only counterpart.
+ * Returns WS_SUCCESS or negative WS_* error. */
+static int GetOpenSshKeyMlDsaComposite(byte keyId, MlDsaKey* mldsa,
+        void* tradKey, void* heap, const byte* buf, word32 len, word32* idx)
+{
+    const byte *pub = NULL;
+    const byte *priv = NULL;
+    word32 pubSz = 0;
+    word32 privSz = 0;
+    int ret;
+    CompositeParams params;
+    const CompositeTradOps* ops;
+
+    ret = WS_GetCompositeParams(keyId, &params);
+    if (ret != WS_SUCCESS) return ret;
+
+    ops = WS_GetTradOps(params.tradType);
+
+    /* caller doesn't clean up on error; each path below frees what it
+     * already initialized */
+    ret = wc_MlDsaKey_Init(mldsa, heap, INVALID_DEVID);
+    if (ret != 0) {
+        return WS_CRYPTO_FAILED;
+    }
+    ret = wc_MlDsaKey_SetParams(mldsa, params.mldsaLevel);
+    if (ret != 0) {
+        wc_MlDsaKey_Free(mldsa);
+        return WS_CRYPTO_FAILED;
+    }
+    if (ops == NULL) {
+        wc_MlDsaKey_Free(mldsa);
+        return WS_UNIMPLEMENTED_E;
+    }
+    ret = ops->init(tradKey, heap);
+    if (ret != 0) {
+        wc_MlDsaKey_Free(mldsa);
+        return WS_CRYPTO_FAILED;
+    }
+
+    ret = GetStringRef(&pubSz, &pub, buf, len, idx);
+    if (ret == WS_SUCCESS)
+        ret = GetStringRef(&privSz, &priv, buf, len, idx);
+
+    if (ret == WS_SUCCESS) {
+        word32 expectedPrivSz = MLDSA_SEED_SZ + params.tradPrivSz;
+
+        if (pubSz != (params.mldsaPubSz + params.tradPubSz) ||
+            privSz != expectedPrivSz) {
+            ret = WS_KEY_FORMAT_E;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = wc_MlDsaKey_ImportPubRaw(mldsa, pub, params.mldsaPubSz);
+    }
+    if (ret == WS_SUCCESS) {
+        ret = wc_MlDsaKey_MakeKeyFromSeed(mldsa, priv);
+    }
+    if (ret == WS_SUCCESS) {
+        ret = ops->importPriv(tradKey, priv + MLDSA_SEED_SZ, params.tradPrivSz,
+                pub + params.mldsaPubSz, params.tradPubSz);
+    }
+
+    if (ret != 0) {
+        wc_MlDsaKey_Free(mldsa);
+        ops->free(tradKey);
+        ret = WS_KEY_FORMAT_E;
+    }
+    return ret;
+}
 #endif
 
 #ifdef WOLFSSH_TPM
@@ -353,6 +425,64 @@ static int GetOpenSshKeyPublicMlDsa(MlDsaKey* key, const byte* buf,
     }
     if (ret != 0) {
         wc_MlDsaKey_Free(key);
+        ret = WS_CRYPTO_FAILED;
+    }
+    return ret;
+}
+
+/* public-key-only counterpart to GetOpenSshKeyMlDsaComposite(); no trailing
+ * private-key string to parse. Returns WS_SUCCESS or negative WS_* error */
+static int GetOpenSshKeyPublicMlDsaComposite(byte keyId, MlDsaKey* mldsa,
+        void* tradKey, void* heap, const byte* buf, word32 len, word32* idx)
+{
+    int ret;
+    int mldsaInit = 0;
+    int tradInit = 0;
+    const byte* pub = NULL;
+    word32 pubSz = 0;
+    CompositeParams params;
+    const CompositeTradOps* ops;
+
+    ret = WS_GetCompositeParams(keyId, &params);
+    if (ret != WS_SUCCESS) return ret;
+
+    ops = WS_GetTradOps(params.tradType);
+
+    ret = wc_MlDsaKey_Init(mldsa, heap, INVALID_DEVID);
+    if (ret == 0) {
+        mldsaInit = 1;
+        ret = wc_MlDsaKey_SetParams(mldsa, params.mldsaLevel);
+    }
+    if (ret == 0) {
+        if (ops == NULL) {
+            ret = WS_UNIMPLEMENTED_E;
+        }
+        else {
+            ret = ops->init(tradKey, heap);
+            if (ret == 0) tradInit = 1;
+        }
+    }
+
+    if (ret == 0) {
+        ret = GetStringRef(&pubSz, &pub, buf, len, idx);
+    }
+    if (ret == 0) {
+        if (pubSz != (params.mldsaPubSz + params.tradPubSz)) {
+            ret = WS_KEY_FORMAT_E;
+        }
+    }
+    if (ret == 0) {
+        ret = wc_MlDsaKey_ImportPubRaw(mldsa, pub, params.mldsaPubSz);
+    }
+    if (ret == 0) {
+        ret = ops->importPub(tradKey, pub + params.mldsaPubSz, params.tradPubSz);
+    }
+
+    if (ret != 0) {
+        if (mldsaInit) wc_MlDsaKey_Free(mldsa);
+        if (tradInit) {
+            ops->free(tradKey);
+        }
         ret = WS_CRYPTO_FAILED;
     }
     return ret;
@@ -422,6 +552,12 @@ int GetOpenSshPublicKey(WS_KeySignature *key,
         case ID_MLDSA87:
             ret = GetOpenSshKeyPublicMlDsa(&key->ks.mldsa.key, buf, len,
                                            idx, WC_ML_DSA_87);
+            break;
+        case ID_MLDSA44_ED25519:
+            ret = GetOpenSshKeyPublicMlDsaComposite(keyId,
+                    &key->ks.mldsa_composite.mldsa,
+                    &key->ks.mldsa_composite.trad,
+                    key->heap, buf, len, idx);
             break;
     #endif
         default:
@@ -532,16 +668,36 @@ int GetOpenSshKey(WS_KeySignature *key,
                                 ret = GetOpenSshKeyMlDsa(
                                     &key->ks.mldsa.key,
                                     str, strSz, &subIdx, WC_ML_DSA_44);
+                                /* clear keyId: key already freed, avoid
+                                 * double free */
+                                if (ret != WS_SUCCESS)
+                                    key->keyId = ID_NONE;
                                 break;
                             case ID_MLDSA65:
                                 ret = GetOpenSshKeyMlDsa(
                                     &key->ks.mldsa.key,
                                     str, strSz, &subIdx, WC_ML_DSA_65);
+                                if (ret != WS_SUCCESS)
+                                    key->keyId = ID_NONE;
                                 break;
                             case ID_MLDSA87:
                                 ret = GetOpenSshKeyMlDsa(
                                     &key->ks.mldsa.key,
                                     str, strSz, &subIdx, WC_ML_DSA_87);
+                                if (ret != WS_SUCCESS)
+                                    key->keyId = ID_NONE;
+                                break;
+                            case ID_MLDSA44_ED25519:
+                                ret = GetOpenSshKeyMlDsaComposite(
+                                        key->keyId,
+                                        &key->ks.mldsa_composite.mldsa,
+                                        &key->ks.mldsa_composite.trad,
+                                        key->heap,
+                                        str, strSz, &subIdx);
+                                /* clear keyId: key already freed, avoid
+                                 * double free */
+                                if (ret != WS_SUCCESS)
+                                    key->keyId = ID_NONE;
                                 break;
                         #endif
                             default:
@@ -571,7 +727,9 @@ int GetOpenSshKey(WS_KeySignature *key,
                                  check1 <= check2;
                                  check1++, subIdx++) {
                                 if (check1 != str[subIdx]) {
-                                    /* Bad pad value. */
+                                    /* bad pad: free key decoded above */
+                                    wolfSSH_KEY_clean(key);
+                                    key->keyId = ID_NONE;
                                     ret = WS_KEY_FORMAT_E;
                                     break;
                                 }
