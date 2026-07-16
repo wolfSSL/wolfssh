@@ -1421,6 +1421,126 @@ static int test_CheckAuthKeysLine(void)
 
     return ret;
 }
+
+#ifndef _WIN32
+/* Drive SearchForPubKey against a temp authorized_keys file to cover the
+ * "no line matched -> WSSHD_AUTH_FAILURE" gate: the authorized key kills a
+ * condition inversion, the unauthorized key kills a deletion of the gate. */
+static int test_SearchForPubKey(void)
+{
+    int ret = WS_SUCCESS;
+    static const char keyAStr[] = "wolfssh-auth-key-test-A-AAAAAAA";
+    static const char keyBStr[] = "wolfssh-auth-key-test-B-BBBBBBB";
+    const byte* keyA = (const byte*)keyAStr;
+    const byte* keyB = (const byte*)keyBStr;
+    const word32 keySz = (word32)(sizeof(keyAStr) - 1);
+    char base[] = "/tmp/wolfsshd_pkXXXXXX";
+    char keysPath[64] = "";
+    char missPath[64] = "";
+    char line[256];
+    WS_UserAuthData_PublicKey pubKeyCtx;
+    WUID_T uid = getuid();
+    FILE* f = NULL;
+    int rc;
+
+    if (mkdtemp(base) == NULL) {
+        Log("    mkdtemp failed.\n");
+        ret = WS_FATAL_ERROR;
+    }
+
+    if (ret == WS_SUCCESS) {
+        snprintf(keysPath, sizeof(keysPath), "%s/authorized_keys", base);
+        snprintf(missPath, sizeof(missPath), "%s/absent_keys", base);
+        ret = BuildAuthKeysLine(keyA, keySz, line, sizeof(line));
+    }
+
+    if (ret == WS_SUCCESS) {
+        f = fopen(keysPath, "w");
+        if (f == NULL) {
+            Log("    fopen of authorized_keys failed.\n");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            fputs(line, f);
+            fputs("\n", f);
+            fclose(f);
+        }
+    }
+
+    /* Force 0600 so the StrictModes secure-open is not tripped by a permissive
+     * umask leaving the file group or world writable. */
+    if (ret == WS_SUCCESS && chmod(keysPath, S_IRUSR | S_IWUSR) != 0) {
+        Log("    chmod of authorized_keys failed.\n");
+        ret = WS_FATAL_ERROR;
+    }
+
+    WMEMSET(&pubKeyCtx, 0, sizeof(pubKeyCtx));
+    pubKeyCtx.publicKeySz = keySz;
+
+    /* StrictModes disabled so the check stays hermetic (no ownership gate). */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: authorized key is accepted.");
+        pubKeyCtx.publicKey = keyA;
+        rc = SearchForPubKey(base, keysPath, &pubKeyCtx, uid, 0);
+        if (rc == WSSHD_AUTH_SUCCESS) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    /* The temp file is user-owned with safe perms, so the StrictModes
+     * secure-open branch must also accept the authorized key. */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: authorized key accepted under StrictModes.");
+        pubKeyCtx.publicKey = keyA;
+        rc = SearchForPubKey(base, keysPath, &pubKeyCtx, uid, 1);
+        if (rc == WSSHD_AUTH_SUCCESS) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: unauthorized key is rejected.");
+        pubKeyCtx.publicKey = keyB;
+        rc = SearchForPubKey(base, keysPath, &pubKeyCtx, uid, 0);
+        if (rc == WSSHD_AUTH_FAILURE) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    /* A missing authorized_keys file is an error, not a silent accept. */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: missing keys file returns an error.");
+        pubKeyCtx.publicKey = keyA;
+        rc = SearchForPubKey(base, missPath, &pubKeyCtx, uid, 0);
+        if (rc < 0) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    if (keysPath[0] != '\0') {
+        unlink(keysPath);
+    }
+    rmdir(base);
+
+    return ret;
+}
+#endif /* !_WIN32 */
 #endif /* WOLFSSL_BASE64_ENCODE */
 
 #ifndef _WIN32
@@ -2997,6 +3117,9 @@ const TEST_CASE testCases[] = {
 #endif
 #ifdef WOLFSSL_BASE64_ENCODE
     TEST_DECL(test_CheckAuthKeysLine),
+#endif
+#if defined(WOLFSSL_BASE64_ENCODE) && !defined(_WIN32)
+    TEST_DECL(test_SearchForPubKey),
 #endif
 #ifndef _WIN32
     TEST_DECL(test_GetUserGroupNames),
