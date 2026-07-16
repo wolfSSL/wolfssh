@@ -473,7 +473,7 @@ static int wolfSSH_SFTP_buffer_set_size(WS_SFTP_BUFFER* buffer, word32 sz)
 #ifndef WOLFSSH_NO_SFTP_BUFFER_ZERO
     /* wipe any payload in the region being trimmed off before shrinking */
     if (buffer->data != NULL && sz < buffer->sz) {
-        ForceZero(buffer->data + sz, buffer->sz - sz);
+        WS_FORCEZERO(buffer->data + sz, buffer->sz - sz);
     }
 #endif
     buffer->sz = sz;
@@ -801,7 +801,7 @@ static void wolfSSH_SFTP_buffer_free(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer)
     if (ssh != NULL && buffer != NULL) {
         if (buffer->data != NULL) {
 #ifndef WOLFSSH_NO_SFTP_BUFFER_ZERO
-            ForceZero(buffer->data, buffer->sz);
+            WS_FORCEZERO(buffer->data, buffer->sz);
 #endif
             WFREE(buffer->data, ssh->ctx->heap, DYNTYPE_BUFFER);
             buffer->data = NULL;
@@ -1434,7 +1434,7 @@ static void wolfSSH_SFTP_RecvSetSend(WOLFSSH* ssh, byte* buf, int sz)
     /* free up existing data if needed */
     if (buf != state->buffer.data && state->buffer.data != NULL) {
 #ifndef WOLFSSH_NO_SFTP_BUFFER_ZERO
-        ForceZero(state->buffer.data, state->buffer.sz);
+        WS_FORCEZERO(state->buffer.data, state->buffer.sz);
 #endif
         WFREE(state->buffer.data, ssh->ctx->heap, DYNTYPE_BUFFER);
         state->buffer.data = NULL;

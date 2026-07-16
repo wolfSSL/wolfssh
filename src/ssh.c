@@ -2054,7 +2054,7 @@ static int DoPemKey(const byte* in, word32 inSz, byte** out,
     }
     else {
         WLOG(WS_LOG_DEBUG, "Unable to identify PEM key");
-        ForceZero(newKey, newKeySz);
+        WS_FORCEZERO(newKey, newKeySz);
         if (*out == NULL) {
             WFREE(newKey, heap, DYNTYPE_PRIVKEY);
         }
@@ -2138,7 +2138,7 @@ static int DoOpenSshKey(const byte* in, word32 inSz, byte** out,
     }
     else {
         WLOG(WS_LOG_DEBUG, "Unable to identify key");
-        ForceZero(newKey, newKeySz);
+        WS_FORCEZERO(newKey, newKeySz);
         if (*out == NULL) {
             WFREE(newKey, heap, DYNTYPE_PRIVKEY);
         }
@@ -2295,7 +2295,7 @@ int wolfSSH_ReadKey_file(const char* name,
     }
 
     WFCLOSE(NULL, file);
-    ForceZero(in, inSz);
+    WS_FORCEZERO(in, inSz);
     WFREE(in, heap, DYNTYPE_FILE);
 
     return ret;

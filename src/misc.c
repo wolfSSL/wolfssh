@@ -98,13 +98,15 @@ STATIC INLINE void c32toa(word32 u32, byte* c)
 }
 
 
+#ifdef WOLFSSH_NO_FORCEZERO
 /* Make sure compiler doesn't skip */
-STATIC INLINE void ForceZero(void* mem, word32 length)
+STATIC INLINE void wolfSSH_ForceZero(void* mem, size_t len)
 {
     volatile byte* z = (volatile byte*)mem;
 
-    while (length--) *z++ = 0;
+    while (len--) *z++ = 0;
 }
+#endif
 
 
 /* check all length bytes for equality, return 0 on success */

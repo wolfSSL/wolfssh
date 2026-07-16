@@ -392,7 +392,7 @@ static int PostLock(WOLFSSH_AGENT_CTX* agent,
 #else
         WLOG(WS_LOG_AGENT, "Locking with passphrase");
 #endif
-        ForceZero(pp, passphraseSz);
+        WS_FORCEZERO(pp, passphraseSz);
         WFREE(pp, agent->heap, DYNTYPE_STRING);
     }
 
@@ -421,7 +421,7 @@ static int PostUnlock(WOLFSSH_AGENT_CTX* agent,
 #else
         WLOG(WS_LOG_AGENT, "Unlocking with passphrase");
 #endif
-        ForceZero(pp, passphraseSz);
+        WS_FORCEZERO(pp, passphraseSz);
         WFREE(pp, agent->heap, DYNTYPE_STRING);
     }
 
