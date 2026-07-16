@@ -53,6 +53,7 @@
 #include <wolfssl/wolfcrypt/wc_port.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/wolfcrypt/coding.h>
+#include <wolfssl/wolfcrypt/asn_public.h>
 
 #ifdef WOLFSSL_FPKI
 #include <wolfssl/wolfcrypt/asn.h>
@@ -130,14 +131,41 @@ struct WOLFSSHD_AUTH {
 #endif
 
 #ifndef MAX_LINE_SZ
-    /* Sized to hold the largest authorized_keys entry. */
+    /* sized for the largest authorized_keys entry, composite pubkeys
+     * included */
     #ifndef WOLFSSH_NO_MLDSA
         #ifndef WOLFSSH_NO_MLDSA87
-            #define MAX_LINE_SZ ((WC_MLDSA_87_PUB_KEY_SIZE + 2) / 3 * 4 + 640)
+            #if defined(WOLFSSH_CERTS)
+                /* x509v3-ssh-mldsa-87: ML-DSA-87 pubkey + CA sig + DER
+                 * overhead, base64-encoded */
+                #define MAX_LINE_SZ \
+                    ((WC_MLDSA_87_PUB_KEY_SIZE + WC_MLDSA_87_SIG_SIZE + \
+                      COMPOSITE_MAX_TRAD_PUB_SZ + 1024 + 2) / 3 * 4 + 640)
+            #else
+                #define MAX_LINE_SZ \
+                    ((WC_MLDSA_87_PUB_KEY_SIZE + COMPOSITE_MAX_TRAD_PUB_SZ + \
+                      2) / 3 * 4 + 640)
+            #endif
         #elif !defined(WOLFSSH_NO_MLDSA65)
-            #define MAX_LINE_SZ ((WC_MLDSA_65_PUB_KEY_SIZE + 2) / 3 * 4 + 640)
+            #if defined(WOLFSSH_CERTS)
+                #define MAX_LINE_SZ \
+                    ((WC_MLDSA_65_PUB_KEY_SIZE + WC_MLDSA_65_SIG_SIZE + \
+                      COMPOSITE_MAX_TRAD_PUB_SZ + 1024 + 2) / 3 * 4 + 640)
+            #else
+                #define MAX_LINE_SZ \
+                    ((WC_MLDSA_65_PUB_KEY_SIZE + COMPOSITE_MAX_TRAD_PUB_SZ + \
+                      2) / 3 * 4 + 640)
+            #endif
         #else
-            #define MAX_LINE_SZ ((WC_MLDSA_44_PUB_KEY_SIZE + 2) / 3 * 4 + 640)
+            #if defined(WOLFSSH_CERTS)
+                #define MAX_LINE_SZ \
+                    ((WC_MLDSA_44_PUB_KEY_SIZE + WC_MLDSA_44_SIG_SIZE + \
+                      COMPOSITE_MAX_TRAD_PUB_SZ + 1024 + 2) / 3 * 4 + 640)
+            #else
+                #define MAX_LINE_SZ \
+                    ((WC_MLDSA_44_PUB_KEY_SIZE + COMPOSITE_MAX_TRAD_PUB_SZ + \
+                      2) / 3 * 4 + 640)
+            #endif
         #endif
     #else
         #define MAX_LINE_SZ 900
@@ -240,9 +268,10 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
         #endif
         #endif
     #endif
+    #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519)
+        "ssh-mldsa44-ed25519@openssh.com",
+    #endif
     };
-    const int NUM_ALLOWED_TYPES =
-        (int)(sizeof(allowedTypes) / sizeof(allowedTypes[0]));
     int typeOk = 0;
     int i;
 
@@ -259,8 +288,9 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
         }
     }
     if (ret == WSSHD_AUTH_SUCCESS) {
-        for (i = 0; i < NUM_ALLOWED_TYPES; ++i) {
-            if (WSTRCMP(type, allowedTypes[i]) == 0) {
+        for (i = 0; i < (int)(sizeof(allowedTypes) / sizeof(allowedTypes[0]));
+                ++i) {
+            if (allowedTypes[i] != NULL && WSTRCMP(type, allowedTypes[i]) == 0) {
                 typeOk = 1;
                 break;
             }
@@ -892,6 +922,50 @@ int wolfSSHD_OpenSecureFile(const char* path, WUID_T ownerUid,
     }
     return WS_SUCCESS;
 #endif
+}
+
+/* detects OpenSSH vs ASN1/DER format of a raw host private key buffer;
+ * privBuf/privBufSz are set to the buffer to actually load (data, or der's
+ * buffer if PEM decoded); returns WOLFSSH_FORMAT_ASN1/WOLFSSH_FORMAT_OPENSSH,
+ * or negative on error */
+int wolfSSHD_DetectPrivKeyFormat(byte* data, word32 dataSz, DerBuffer** der,
+        byte** privBuf, word32* privBufSz)
+{
+    int keyFormat = WOLFSSH_FORMAT_ASN1;
+
+    if (data == NULL || dataSz == 0 || der == NULL || privBuf == NULL ||
+            privBufSz == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    if (wc_PemToDer(data, dataSz, PRIVATEKEY_TYPE, der, NULL, NULL, NULL)
+            != 0) {
+        *privBuf = data;
+        *privBufSz = dataSz;
+
+        if (WSTRNSTR((const char*)*privBuf,
+                "-----BEGIN OPENSSH PRIVATE KEY-----", *privBufSz) != NULL) {
+            keyFormat = WOLFSSH_FORMAT_OPENSSH;
+        }
+        else if (*privBufSz >= sizeof("openssh-key-v1") &&
+                 WMEMCMP(*privBuf, "openssh-key-v1",
+                         sizeof("openssh-key-v1")) == 0) {
+            /* sizeof() includes the magic's trailing NUL */
+            keyFormat = WOLFSSH_FORMAT_OPENSSH;
+        }
+    }
+    else {
+        *privBuf = (*der)->buffer;
+        *privBufSz = (*der)->length;
+        /* PEM-decoded result may still be an OpenSSH binary blob */
+        if (*privBufSz >= sizeof("openssh-key-v1") &&
+                WMEMCMP(*privBuf, "openssh-key-v1",
+                        sizeof("openssh-key-v1")) == 0) {
+            keyFormat = WOLFSSH_FORMAT_OPENSSH;
+        }
+    }
+
+    return keyFormat;
 }
 
 WOLFSSHD_STATIC int SearchForPubKey(const char* path,

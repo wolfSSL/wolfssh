@@ -1835,8 +1835,70 @@ static int load_key_mldsa87(byte* buf, word32 bufSz)
 }
 #endif /* WOLFSSH_NO_MLDSA87 */
 
+#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519)
+/* buf NULL: *bufSz set to file size; else file read into buf (bufSz max) */
+static int load_key_mldsa44_ed25519(byte* buf, word32* bufSz)
+{
+    word32 sz = 0;
+#ifndef NO_FILESYSTEM
+    sz = load_file("./keys/server-key-mldsa44ed25519", buf, bufSz);
+#else
+    (void)buf; (void)bufSz;
+#endif
+    return sz;
+}
+#endif /* !WOLFSSH_NO_MLDSA44 && !WOLFSSH_NO_ED25519 */
 
 #ifndef WOLFSSH_NO_MLDSA
+/* composite key buffer must be sized from the file, not a fixed constant */
+static int LoadMlDsaCompositeHostKey(WOLFSSH_CTX* ctx,
+        int (*loadFn)(byte*, word32*), const char* label)
+{
+    byte* compBuf = NULL;
+    word32 compBufSz = 0;
+    word32 compSz;
+
+    loadFn(NULL, &compBufSz);
+    if (compBufSz == 0) {
+        fprintf(stderr, "Couldn't find size of %s key file.\n", label);
+        return -1;
+    }
+    compBuf = (byte*)WMALLOC(compBufSz, NULL, 0);
+    if (compBuf == NULL) {
+        fprintf(stderr, "Couldn't allocate %s key buffer.\n", label);
+        return -1;
+    }
+    compSz = loadFn(compBuf, &compBufSz);
+    if (compSz == 0) {
+        WFREE(compBuf, NULL, 0);
+        fprintf(stderr, "Couldn't load %s key file.\n", label);
+        return -1;
+    }
+    if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, compBuf, compSz,
+                WOLFSSH_FORMAT_OPENSSH) < 0) {
+        WFREE(compBuf, NULL, 0);
+        fprintf(stderr, "Couldn't use %s key buffer.\n", label);
+        return -1;
+    }
+    WFREE(compBuf, NULL, 0);
+    return 0;
+}
+
+typedef struct {
+    const char* substr;
+    int (*loadFn)(byte*, word32*);
+    const char* label;
+} MlDsaCompositeEntry;
+
+/* NULL-terminated so the table is never empty if ECDSA and Ed25519/Ed448
+ * are both disabled */
+static const MlDsaCompositeEntry mldsaCompositeEntries[] = {
+#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519)
+    { "mldsa44-ed25519", load_key_mldsa44_ed25519, "ML-DSA-44+Ed25519" },
+#endif
+    { NULL, NULL, NULL }
+};
+
 static int LoadMlDsaHostKeys(WOLFSSH_CTX* ctx, const char* keyList)
 {
     byte* mldsaBuf;
@@ -3326,12 +3388,58 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
          * unconditionally would force mldsa negotiation on non-mldsa tests. */
         #ifndef WOLFSSH_NO_MLDSA
         if (keyList != NULL && WSTRSTR(keyList, "mldsa") != NULL) {
-            if (LoadMlDsaHostKeys(ctx, keyList) != 0) {
+            int mldsaErr = 0;
+            int mldsaMatched = 0;
+
+            /* skip LoadMlDsaHostKeys() for a purely composite keyList; it
+             * only knows plain "mldsa-NN" names and would abort */
+            if (WSTRSTR(keyList, "mldsa-44") != NULL ||
+                    WSTRSTR(keyList, "mldsa-65") != NULL ||
+                    WSTRSTR(keyList, "mldsa-87") != NULL) {
+                mldsaMatched = 1;
+                if (LoadMlDsaHostKeys(ctx, keyList) != 0) {
+                    mldsaErr = 1;
+                }
+            }
+
+            if (mldsaErr) {
                 #ifdef WOLFSSH_SMALL_STACK
                 wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
                 WFREE(keyLoadBuf, NULL, 0);
                 #endif
                 ES_ERROR("Error loading ML-DSA host keys.\n");
+            }
+            else {
+                word32 mldsaIdx;
+
+                for (mldsaIdx = 0;
+                        mldsaCompositeEntries[mldsaIdx].substr != NULL;
+                        mldsaIdx++) {
+                    const MlDsaCompositeEntry* entry =
+                        &mldsaCompositeEntries[mldsaIdx];
+
+                    if (WSTRSTR(keyList, entry->substr) != NULL) {
+                        mldsaMatched = 1;
+                        if (LoadMlDsaCompositeHostKey(ctx, entry->loadFn,
+                                entry->label) != 0) {
+                            #ifdef WOLFSSH_SMALL_STACK
+                            wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
+                            WFREE(keyLoadBuf, NULL, 0);
+                            #endif
+                            ES_ERROR("Error loading %s host key.\n",
+                                     entry->label);
+                        }
+                    }
+                }
+
+                if (!mldsaMatched) {
+                    #ifdef WOLFSSH_SMALL_STACK
+                    wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
+                    WFREE(keyLoadBuf, NULL, 0);
+                    #endif
+                    ES_ERROR("ML-DSA key list '%s' matched no supported "
+                             "level.\n", keyList);
+                }
             }
         }
         #endif /* WOLFSSH_NO_MLDSA */

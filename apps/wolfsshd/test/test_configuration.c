@@ -1325,18 +1325,19 @@ static int test_CheckPasswordHashUnix(void)
 #endif /* WOLFSSH_HAVE_LIBCRYPT || WOLFSSH_HAVE_LIBLOGIN */
 
 #ifdef WOLFSSL_BASE64_ENCODE
-/* Build a mutable "ssh-rsa <base64(key)>" line; WSTRTOK mutates in place. */
-static int BuildAuthKeysLine(const byte* key, word32 keySz,
-                             char* lineOut, word32 lineOutSz)
+/* Build a mutable "<type> <base64(key)>" line; WSTRTOK mutates in place. */
+static int BuildAuthKeysLineType(const char* type, const byte* key,
+                                 word32 keySz, char* lineOut, word32 lineOutSz)
 {
-    static const char prefix[] = "ssh-rsa ";
-    word32 prefixLen = (word32)(sizeof(prefix) - 1);
+    word32 typeLen = (word32)WSTRLEN(type);
+    word32 prefixLen = typeLen + 1;
     word32 b64Sz;
 
     if (lineOutSz <= prefixLen) {
         return WS_BUFFER_E;
     }
-    WMEMCPY(lineOut, prefix, prefixLen);
+    WMEMCPY(lineOut, type, typeLen);
+    lineOut[typeLen] = ' ';
     b64Sz = lineOutSz - prefixLen;
     if (Base64_Encode_NoNl(key, keySz, (byte*)lineOut + prefixLen, &b64Sz)
             != 0) {
@@ -1347,6 +1348,108 @@ static int BuildAuthKeysLine(const byte* key, word32 keySz,
         return WS_BUFFER_E;
     }
     lineOut[prefixLen + b64Sz] = '\0';
+    return WS_SUCCESS;
+}
+
+static int BuildAuthKeysLine(const byte* key, word32 keySz,
+                             char* lineOut, word32 lineOutSz)
+{
+    return BuildAuthKeysLineType("ssh-rsa", key, keySz, lineOut, lineOutSz);
+}
+
+/* Confirms every key-type string in CheckAuthKeysLine's allowedTypes[] table
+ * is recognized, guarding against allowedTypes[]/NUM_ALLOWED_TYPES drifting
+ * out of sync as the ML-DSA/composite/cert #ifdef branches change. */
+static int test_CheckAuthKeysLineTypes(void)
+{
+    static const char* types[] = {
+        "ssh-rsa",
+        "ssh-ed25519",
+        "ecdsa-sha2-nistp256",
+        "ecdsa-sha2-nistp384",
+        "ecdsa-sha2-nistp521",
+    #ifdef WOLFSSH_CERTS
+        "x509v3-ssh-rsa",
+        "x509v3-ecdsa-sha2-nistp256",
+        "x509v3-ecdsa-sha2-nistp384",
+        "x509v3-ecdsa-sha2-nistp521",
+    #endif
+    #ifndef WOLFSSH_NO_MLDSA
+        #ifndef WOLFSSH_NO_MLDSA44
+        "ssh-mldsa-44",
+        #endif
+        #ifndef WOLFSSH_NO_MLDSA65
+        "ssh-mldsa-65",
+        #endif
+        #ifndef WOLFSSH_NO_MLDSA87
+        "ssh-mldsa-87",
+        #endif
+        #ifdef WOLFSSH_CERTS
+        #ifndef WOLFSSH_NO_MLDSA44
+        "x509v3-ssh-mldsa-44",
+        #endif
+        #ifndef WOLFSSH_NO_MLDSA65
+        "x509v3-ssh-mldsa-65",
+        #endif
+        #ifndef WOLFSSH_NO_MLDSA87
+        "x509v3-ssh-mldsa-87",
+        #endif
+        #endif
+    #endif
+    #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519)
+        "ssh-mldsa44-ed25519@openssh.com",
+    #endif
+    };
+    static const char keyAStr[] = "wolfssh-auth-key-test-A-AAAAAAA";
+    static const char keyBStr[] = "wolfssh-auth-key-test-B-BBBBBBB";
+    const byte* keyA = (const byte*)keyAStr;
+    const byte* keyB = (const byte*)keyBStr;
+    const word32 keySz = (word32)(sizeof(keyAStr) - 1);
+    char line[256];
+    char lineCopy[256];
+    word32 i;
+    int ret = WS_SUCCESS;
+    int rc;
+
+    for (i = 0; i < (word32)(sizeof(types) / sizeof(types[0])); i++) {
+        ret = BuildAuthKeysLineType(types[i], keyA, keySz, line, sizeof(line));
+        if (ret != WS_SUCCESS) {
+            Log("    CheckAuthKeysLine type %s: build failed.\n", types[i]);
+            return ret;
+        }
+        Log("    Testing scenario: known type %s reaches key comparison.",
+            types[i]);
+        WMEMCPY(lineCopy, line, WSTRLEN(line) + 1);
+        /* Non-matching key: a recognized type must proceed to the key
+         * comparison and report a plain auth failure, not a negative error. */
+        rc = CheckAuthKeysLine(lineCopy, (word32)WSTRLEN(lineCopy),
+                               keyB, keySz);
+        if (rc == WSSHD_AUTH_FAILURE) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            return WS_FATAL_ERROR;
+        }
+    }
+
+    /* An unknown type must be rejected with a negative status. */
+    ret = BuildAuthKeysLineType("ssh-bogus-type", keyA, keySz, line,
+                                sizeof(line));
+    if (ret != WS_SUCCESS) {
+        return ret;
+    }
+    Log("    Testing scenario: unknown type is rejected.");
+    WMEMCPY(lineCopy, line, WSTRLEN(line) + 1);
+    rc = CheckAuthKeysLine(lineCopy, (word32)WSTRLEN(lineCopy), keyA, keySz);
+    if (rc < 0) {
+        Log(" PASSED.\n");
+    }
+    else {
+        Log(" FAILED (rc=%d).\n", rc);
+        return WS_FATAL_ERROR;
+    }
+
     return WS_SUCCESS;
 }
 
@@ -3090,6 +3193,146 @@ static int test_ResolveAuthKeysPath(void)
     return ret;
 }
 
+/* read an entire file into a heap buffer; *outSz is set to the file size.
+ * returns NULL on any failure */
+static byte* ReadWholeFile(const char* path, word32* outSz)
+{
+    FILE* f;
+    byte* buf = NULL;
+    long sz;
+
+    f = fopen(path, "rb");
+    if (f == NULL) {
+        return NULL;
+    }
+    if (fseek(f, 0, SEEK_END) != 0 || (sz = ftell(f)) < 0 ||
+            fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return NULL;
+    }
+    buf = (byte*)malloc((size_t)sz);
+    if (buf != NULL) {
+        if (fread(buf, 1, (size_t)sz, f) != (size_t)sz) {
+            free(buf);
+            buf = NULL;
+        }
+    }
+    fclose(f);
+    if (buf != NULL) {
+        *outSz = (word32)sz;
+    }
+    return buf;
+}
+
+/* locate the repo's keys/ directory regardless of whether this binary is run
+ * from the repo root or from apps/wolfsshd/test/ */
+static int BuildKeyPath(const char* name, char* out, size_t outSz)
+{
+    static const char* candidates[] = { "keys/", "../../../keys/" };
+    word32 i;
+    FILE* f;
+
+    for (i = 0; i < (word32)(sizeof(candidates) / sizeof(candidates[0]));
+            i++) {
+        snprintf(out, outSz, "%s%s", candidates[i], name);
+        f = fopen(out, "rb");
+        if (f != NULL) {
+            fclose(f);
+            return WS_SUCCESS;
+        }
+    }
+    return WS_FATAL_ERROR;
+}
+
+/* Regression coverage for wolfSSHD_DetectPrivKeyFormat(), the host-key
+ * format auto-detection SetupCTX() relies on to load PEM-armored OpenSSH
+ * keys, raw binary openssh-key-v1 blobs (including composite ML-DSA host
+ * keys, which are only ever stored in that raw form), and traditional
+ * PEM/DER keys. */
+static int test_DetectPrivKeyFormat(void)
+{
+    typedef struct {
+        const char* desc;
+        const char* file;
+        int wantFormat;
+    } DPK_CASE;
+    static const DPK_CASE cases[] = {
+        { "PEM-armored OpenSSH key", "id_ecdsa", WOLFSSH_FORMAT_OPENSSH },
+        { "raw binary openssh-key-v1 composite ML-DSA key",
+            "server-key-mldsa44ed25519", WOLFSSH_FORMAT_OPENSSH },
+        { "PEM traditional key decodes to DER/ASN1", "server-key-ecc.pem",
+            WOLFSSH_FORMAT_ASN1 },
+    };
+    word32 i;
+    int ret = WS_SUCCESS;
+    byte dummy = 0;
+    DerBuffer* badDer = NULL;
+    byte* badPrivBuf = NULL;
+    word32 badPrivBufSz = 0;
+    int badGot;
+
+    /* A 0-byte host key file (or otherwise bad arguments) must be rejected
+     * without touching the out-params, matching the empty-file case
+     * getBufferFromFile() can hand back. */
+    badGot = wolfSSHD_DetectPrivKeyFormat(&dummy, 0, &badDer, &badPrivBuf,
+            &badPrivBufSz);
+    Log("    Testing scenario: 0-length buffer. %s\n",
+        (badGot == WS_BAD_ARGUMENT && badPrivBuf == NULL && badPrivBufSz == 0)
+            ? "PASSED" : "FAILED");
+    if (badGot != WS_BAD_ARGUMENT || badPrivBuf != NULL ||
+            badPrivBufSz != 0) {
+        return WS_FATAL_ERROR;
+    }
+
+    badGot = wolfSSHD_DetectPrivKeyFormat(NULL, sizeof(dummy), &badDer,
+            &badPrivBuf, &badPrivBufSz);
+    Log("    Testing scenario: NULL data pointer. %s\n",
+        (badGot == WS_BAD_ARGUMENT) ? "PASSED" : "FAILED");
+    if (badGot != WS_BAD_ARGUMENT) {
+        return WS_FATAL_ERROR;
+    }
+
+    for (i = 0; i < (word32)(sizeof(cases) / sizeof(cases[0])); i++) {
+        char path[128];
+        byte* data;
+        word32 dataSz = 0;
+        DerBuffer* der = NULL;
+        byte* privBuf = NULL;
+        word32 privBufSz = 0;
+        int gotFormat;
+
+        if (BuildKeyPath(cases[i].file, path, sizeof(path)) != WS_SUCCESS) {
+            Log("    Testing scenario: %s. FAILED (couldn't locate %s)\n",
+                cases[i].desc, cases[i].file);
+            return WS_FATAL_ERROR;
+        }
+
+        data = ReadWholeFile(path, &dataSz);
+        if (data == NULL) {
+            Log("    Testing scenario: %s. FAILED (couldn't read %s)\n",
+                cases[i].desc, path);
+            return WS_FATAL_ERROR;
+        }
+
+        gotFormat = wolfSSHD_DetectPrivKeyFormat(data, dataSz, &der, &privBuf,
+                &privBufSz);
+
+        Log("    Testing scenario: %s. %s\n", cases[i].desc,
+            (gotFormat == cases[i].wantFormat) ? "PASSED" : "FAILED");
+        if (gotFormat != cases[i].wantFormat) {
+            ret = WS_FATAL_ERROR;
+        }
+
+        wc_FreeDer(&der);
+        free(data);
+        if (ret != WS_SUCCESS) {
+            return ret;
+        }
+    }
+
+    return ret;
+}
+
 const TEST_CASE testCases[] = {
     TEST_DECL(test_ConfigDefaults),
     TEST_DECL(test_ParseConfigLine),
@@ -3115,8 +3358,10 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_OpenSecureFile),
     TEST_DECL(test_ConfigSavePID),
 #endif
+    TEST_DECL(test_DetectPrivKeyFormat),
 #ifdef WOLFSSL_BASE64_ENCODE
     TEST_DECL(test_CheckAuthKeysLine),
+    TEST_DECL(test_CheckAuthKeysLineTypes),
 #endif
 #if defined(WOLFSSL_BASE64_ENCODE) && !defined(_WIN32)
     TEST_DECL(test_SearchForPubKey),

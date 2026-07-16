@@ -515,6 +515,13 @@ int wolfSSH_KexTest(int argc, char** argv)
 #ifndef WOLFSSH_NO_MLDSA87
     AssertIntEQ(wolfSSH_KexTest_MlDsaHostKey("ssh-mldsa-87"), EXIT_SUCCESS);
 #endif
+#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519)
+    /* Uses the "@openssh.com" wire name that OpenSSH negotiates for this
+     * algorithm, matching what wolfSSH now emits (see NameIdMap). */
+    AssertIntEQ(
+        wolfSSH_KexTest_MlDsaHostKey("ssh-mldsa44-ed25519@openssh.com"),
+        EXIT_SUCCESS);
+#endif
 
     AssertIntEQ(wolfSSH_Cleanup(), WS_SUCCESS);
 

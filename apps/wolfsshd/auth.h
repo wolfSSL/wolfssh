@@ -27,6 +27,8 @@
 #define WOLFSSH_USER_GET_STRING(x) #x
 #define WOLFSSH_USER_STRING(x) WOLFSSH_USER_GET_STRING(x)
 
+#include <wolfssl/wolfcrypt/asn_public.h> /* for DerBuffer */
+
 #if 0
 
 typedef struct USER_NODE USER_NODE;
@@ -92,6 +94,10 @@ int wolfSSHD_GetHomeDirectory(WOLFSSHD_AUTH* auth, WOLFSSH* ssh, WCHAR* out, int
  * See the definition in auth.c for the meaning of each argument. */
 int wolfSSHD_OpenSecureFile(const char* path, WUID_T ownerUid,
     int rejectReadable, void* heap, WFILE** out);
+
+/* classifies a loaded host private key buffer as OpenSSH or ASN1/DER */
+int wolfSSHD_DetectPrivKeyFormat(byte* data, word32 dataSz, DerBuffer** der,
+    byte** privBuf, word32* privBufSz);
 
 #ifdef WOLFSSHD_UNIT_TEST
 #ifndef _WIN32

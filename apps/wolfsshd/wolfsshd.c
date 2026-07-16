@@ -350,8 +350,8 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
 {
     int ret = WS_SUCCESS;
     DerBuffer* der = NULL;
-    byte* privBuf;
-    word32 privBufSz;
+    byte* privBuf = NULL;
+    word32 privBufSz = 0;
     void* heap = NULL;
 
     if (ctx == NULL) {
@@ -412,21 +412,26 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
             }
 
             if (ret == WS_SUCCESS) {
-                if (wc_PemToDer(data, dataSz, PRIVATEKEY_TYPE, &der, NULL,
-                                NULL, NULL) != 0) {
-                    wolfSSH_Log(WS_LOG_DEBUG, "[SSHD] Failed to convert host "
-                                "private key from PEM. Assuming key in DER "
-                                "format.");
-                    privBuf = data;
-                    privBufSz = dataSz;
+                int keyFormat = wolfSSHD_DetectPrivKeyFormat(data, dataSz,
+                        &der, &privBuf, &privBufSz);
+
+                if (keyFormat < 0) {
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Host private key file is invalid.");
+                    ret = WS_BAD_FILE_E;
+                }
+                else if (keyFormat == WOLFSSH_FORMAT_OPENSSH) {
+                    wolfSSH_Log(WS_LOG_DEBUG, "[SSHD] Loading host private "
+                                "key as OpenSSH format.");
                 }
                 else {
-                    privBuf = der->buffer;
-                    privBufSz = der->length;
+                    wolfSSH_Log(WS_LOG_DEBUG, "[SSHD] Loading host private "
+                                "key as DER format.");
                 }
 
-                if (wolfSSH_CTX_UsePrivateKey_buffer(*ctx, privBuf, privBufSz,
-                                                     WOLFSSH_FORMAT_ASN1) < 0) {
+                if (ret == WS_SUCCESS &&
+                        wolfSSH_CTX_UsePrivateKey_buffer(*ctx, privBuf,
+                                privBufSz, keyFormat) < 0) {
                     wolfSSH_Log(WS_LOG_ERROR,
                         "[SSHD] Failed to use host private key.");
                     ret = WS_BAD_ARGUMENT;
