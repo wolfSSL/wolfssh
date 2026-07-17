@@ -1369,6 +1369,25 @@ done2:
     wolfSSH_CTX_free(ctx);
     return result;
 }
+
+/* Send sink, so a test can run a real send path (build the packet, drain it)
+ * without a live transport. */
+static int UnitIoSendSink(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    (void)ssh;
+    (void)buf;
+    (void)ctx;
+    return (int)sz;
+}
+
+/* Write a big-endian uint32 without the internal-only c32toa(). */
+static void PutU32BE(byte* out, word32 v)
+{
+    out[0] = (byte)(v >> 24);
+    out[1] = (byte)(v >> 16);
+    out[2] = (byte)(v >> 8);
+    out[3] = (byte)(v);
+}
 #endif /* WOLFSSH_TEST_INTERNAL */
 
 
@@ -1712,26 +1731,6 @@ static int test_DhGexGroupSelect(void)
     return 0;
 }
 
-/* Send sink so SendKexDhGexGroup can run the real server path (select the
- * group, build the KEXDH_GEX_GROUP packet, drain it) without a live transport.
- * We only care that the group it selects gets cached on the handshake. */
-static int GexSinkSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
-{
-    (void)ssh;
-    (void)buf;
-    (void)ctx;
-    return (int)sz;
-}
-
-/* Write a big-endian uint32 without the internal-only c32toa(). */
-static void PutU32BE(byte* out, word32 v)
-{
-    out[0] = (byte)(v >> 24);
-    out[1] = (byte)(v >> 16);
-    out[2] = (byte)(v >> 8);
-    out[3] = (byte)(v);
-}
-
 /* One send/hash consistency case. Runs the real server request path for the
  * given client window, then confirms GetDHPrimeGroup hands the exchange-hash
  * and key-agreement path the exact group SendKexDhGexGroup cached and put on
@@ -1754,7 +1753,7 @@ static int DhGexSendHashConsistencyCase(word32 minBits, word32 prefBits,
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
     if (ctx == NULL)
         return base;
-    wolfSSH_SetIOSend(ctx, GexSinkSend);
+    wolfSSH_SetIOSend(ctx, UnitIoSendSink);
     ssh = wolfSSH_new(ctx);
     if (ssh == NULL || ssh->handshake == NULL) {
         result = base - 1;
@@ -1856,7 +1855,7 @@ static int test_DhGexGroupCacheMissFallback(void)
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
     if (ctx == NULL)
         return -240;
-    wolfSSH_SetIOSend(ctx, GexSinkSend);
+    wolfSSH_SetIOSend(ctx, UnitIoSendSink);
     ssh = wolfSSH_new(ctx);
     if (ssh == NULL || ssh->handshake == NULL) {
         result = -241;
@@ -1922,7 +1921,7 @@ static int test_DhGexServerRejectsUnsatisfiableWindow(void)
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
     if (ctx == NULL)
         return -280;
-    wolfSSH_SetIOSend(ctx, GexSinkSend);
+    wolfSSH_SetIOSend(ctx, UnitIoSendSink);
     ssh = wolfSSH_new(ctx);
     if (ssh == NULL || ssh->handshake == NULL) {
         result = -281;
@@ -1995,7 +1994,7 @@ static int test_DhGexRequestFloorClamp(void)
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
     if (ctx == NULL)
         return -290;
-    wolfSSH_SetIOSend(ctx, GexSinkSend);
+    wolfSSH_SetIOSend(ctx, UnitIoSendSink);
 
     /* A sub-floor min is raised to the floor, and the preferred size rides up
      * with it so the advertised triple stays min <= preferred. */
@@ -2159,7 +2158,7 @@ static int test_DhGexGroup16KeyAgree(void)
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
     if (ctx == NULL)
         return -250;
-    wolfSSH_SetIOSend(ctx, GexSinkSend);
+    wolfSSH_SetIOSend(ctx, UnitIoSendSink);
     ssh = wolfSSH_new(ctx);
     if (ssh == NULL || ssh->handshake == NULL) {
         result = -251;
@@ -2282,7 +2281,7 @@ static int test_DhGexGroupAcceptHonorsGenerator(void)
     sctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
     if (sctx == NULL)
         return -300;
-    wolfSSH_SetIOSend(sctx, GexSinkSend);
+    wolfSSH_SetIOSend(sctx, UnitIoSendSink);
     sssh = wolfSSH_new(sctx);
     if (sssh == NULL || sssh->handshake == NULL) {
         result = -301;
@@ -2328,7 +2327,7 @@ static int test_DhGexGroupAcceptHonorsGenerator(void)
         result = -305;
         goto out;
     }
-    wolfSSH_SetIOSend(cctx, GexSinkSend);
+    wolfSSH_SetIOSend(cctx, UnitIoSendSink);
     cssh = wolfSSH_new(cctx);
     if (cssh == NULL || cssh->handshake == NULL) {
         result = -306;
@@ -2409,7 +2408,7 @@ static int test_DhGexGroupSendRecache(void)
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
     if (ctx == NULL)
         return -320;
-    wolfSSH_SetIOSend(ctx, GexSinkSend);
+    wolfSSH_SetIOSend(ctx, UnitIoSendSink);
     ssh = wolfSSH_new(ctx);
     if (ssh == NULL || ssh->handshake == NULL) {
         result = -321;
@@ -3624,6 +3623,114 @@ static int test_DoChannelRequest(void)
 done:
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* IO send that always wants write, the state a peer forces by not reading. */
+static int UnitIoSendWantWrite(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    (void)ssh; (void)buf; (void)sz; (void)ctx;
+    return WS_CBIO_ERR_WANT_WRITE;
+}
+
+static int UnitAuthAlwaysFail(byte authType, WS_UserAuthData* authData,
+        void* ctx)
+{
+    (void)authType; (void)authData; (void)ctx;
+    return WOLFSSH_USERAUTH_INVALID_PASSWORD;
+}
+
+/* Build a "password" USERAUTH_REQUEST payload, as DoUserAuthRequest() sees it
+ * with the message id already consumed. Returns the payload size. */
+static word32 BuildAuthPwRequest(byte* buf, word32 bufSz)
+{
+    static const char* fields[] = { "jill", "ssh-connection", "password" };
+    word32 idx = 0, i, fieldSz;
+
+    for (i = 0; i < sizeof(fields)/sizeof(fields[0]); i++) {
+        fieldSz = (word32)WSTRLEN(fields[i]);
+        if (idx + UINT32_SZ + fieldSz > bufSz)
+            return 0;
+        PutU32BE(buf + idx, fieldSz);
+        idx += UINT32_SZ;
+        WMEMCPY(buf + idx, fields[i], fieldSz);
+        idx += fieldSz;
+    }
+
+    fieldSz = (word32)WSTRLEN("badpass");
+    if (idx + 1 + UINT32_SZ + fieldSz > bufSz)
+        return 0;
+    buf[idx++] = 0;               /* no password change */
+    PutU32BE(buf + idx, fieldSz);
+    idx += UINT32_SZ;
+    WMEMCPY(buf + idx, "badpass", fieldSz);
+    idx += fieldSz;
+
+    return idx;
+}
+
+/* Verify the failed-userauth cap actually fires, and that it fires whether or
+ * not the USERAUTH_FAILURE send completes. The want-write case is the
+ * regression: WS_WANT_WRITE is non-fatal in DoReceive(), so a peer that stops
+ * reading its socket must not be able to pipeline uncounted guesses.
+ *
+ * Asserts, with the limit set to 3: attempts 1 and 2 leave the connection up
+ * (WS_SUCCESS, or WS_WANT_WRITE when the send blocks) and attempt 3 returns
+ * WS_USER_AUTH_E, ending the accept loop. */
+static int test_MaxAuthAttempts(void)
+{
+    byte request[128];
+    word32 requestSz;
+    int result = 0;
+    int i;
+    struct {
+        WS_CallbackIOSend send;
+        int    expectRet;     /* return for the under-the-limit attempts */
+        const char* label;
+    } cases[] = {
+        { UnitIoSendSink,          WS_SUCCESS,    "send completes" },
+        { UnitIoSendWantWrite,  WS_WANT_WRITE, "send wants write" },
+    };
+
+    requestSz = BuildAuthPwRequest(request, (word32)sizeof(request));
+    if (requestSz == 0)
+        return -700;
+
+    for (i = 0; i < (int)(sizeof(cases)/sizeof(cases[0])); i++) {
+        WOLFSSH_CTX* ctx = NULL;
+        WOLFSSH* ssh = NULL;
+        int attempt;
+
+        ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+        if (ctx == NULL) { result = -701; break; }
+        wolfSSH_SetUserAuth(ctx, UnitAuthAlwaysFail);
+        wolfSSH_SetIOSend(ctx, cases[i].send);
+        if (wolfSSH_CTX_SetMaxAuthAttempts(ctx, 3) != WS_SUCCESS) {
+            wolfSSH_CTX_free(ctx);
+            result = -702;
+            break;
+        }
+
+        ssh = wolfSSH_new(ctx);
+        if (ssh == NULL) { wolfSSH_CTX_free(ctx); result = -703; break; }
+
+        for (attempt = 1; attempt <= 3 && result == 0; attempt++) {
+            word32 idx = 0;
+            int expect = (attempt < 3) ? cases[i].expectRet : WS_USER_AUTH_E;
+            int ret = wolfSSH_TestDoUserAuthRequest(ssh, request, requestSz,
+                    &idx);
+
+            if (ret != expect) {
+                printf("MaxAuthAttempts[%s]: attempt %d ret=%d expected %d\n",
+                       cases[i].label, attempt, ret, expect);
+                result = -710 - (i * 10) - attempt;
+            }
+        }
+
+        wolfSSH_free(ssh);
+        wolfSSH_CTX_free(ctx);
+    }
+
     return result;
 }
 
@@ -9469,6 +9576,10 @@ int wolfSSH_UnitTest(int argc, char** argv)
     unitResult = test_SendUserAuthFailure_emptyMethods();
     printf("SendUserAuthFailure_emptyMethods: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_MaxAuthAttempts();
+    printf("MaxAuthAttempts: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
     unitResult = test_IdentifyAsn1Key();

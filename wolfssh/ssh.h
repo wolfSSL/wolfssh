@@ -437,6 +437,19 @@ WOLFSSH_API char* wolfSSH_GetUsername(WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_CTX_SetBanner(WOLFSSH_CTX* ctx, const char* newBanner);
 WOLFSSH_API int wolfSSH_CTX_SetSshProtoIdStr(WOLFSSH_CTX* ctx,
         const char* protoIdStr);
+/* Set the server-side limit on failed userauth attempts per connection. The
+ * default is DEFAULT_MAX_AUTH_ATTEMPTS (6), the same value as the OpenSSH
+ * MaxAuthTries default. When the limit is reached the server sends an
+ * SSH_MSG_DISCONNECT and drops the connection. A value <= 0 restores the
+ * built-in default; there is no "unlimited" setting. Every request that does
+ * not fully authenticate is charged, including a partial success; only the
+ * opening "none" probe clients use to learn the method list is exempt.
+ * The WOLFSSH setter overrides the value inherited from the CTX for one
+ * session; the getters return the current value or WS_BAD_ARGUMENT. */
+WOLFSSH_API int wolfSSH_CTX_SetMaxAuthAttempts(WOLFSSH_CTX* ctx, int value);
+WOLFSSH_API int wolfSSH_CTX_GetMaxAuthAttempts(WOLFSSH_CTX* ctx);
+WOLFSSH_API int wolfSSH_SetMaxAuthAttempts(WOLFSSH* ssh, int value);
+WOLFSSH_API int wolfSSH_GetMaxAuthAttempts(WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX* ctx,
                                                  const byte* in, word32 inSz,
                                                  int format);

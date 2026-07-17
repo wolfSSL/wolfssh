@@ -3651,6 +3651,50 @@ static void test_wolfSSH_RealPath(void) { ; }
 #endif
 
 
+static void test_wolfSSH_SetMaxAuthAttempts(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    int defaultValue;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+
+    /* NULL is rejected. */
+    AssertIntEQ(wolfSSH_CTX_SetMaxAuthAttempts(NULL, 3), WS_BAD_ARGUMENT);
+    AssertIntEQ(wolfSSH_CTX_GetMaxAuthAttempts(NULL), WS_BAD_ARGUMENT);
+    AssertIntEQ(wolfSSH_SetMaxAuthAttempts(NULL, 3), WS_BAD_ARGUMENT);
+    AssertIntEQ(wolfSSH_GetMaxAuthAttempts(NULL), WS_BAD_ARGUMENT);
+
+    defaultValue = wolfSSH_CTX_GetMaxAuthAttempts(ctx);
+    AssertIntGT(defaultValue, 0);
+
+    /* A positive value is accepted. */
+    AssertIntEQ(wolfSSH_CTX_SetMaxAuthAttempts(ctx, 3), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_GetMaxAuthAttempts(ctx), 3);
+
+    /* Zero and negative values restore the default without error. */
+    AssertIntEQ(wolfSSH_CTX_SetMaxAuthAttempts(ctx, 0), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_GetMaxAuthAttempts(ctx), defaultValue);
+    AssertIntEQ(wolfSSH_CTX_SetMaxAuthAttempts(ctx, -1), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_GetMaxAuthAttempts(ctx), defaultValue);
+
+    /* A session inherits the CTX value and can override it. */
+    AssertIntEQ(wolfSSH_CTX_SetMaxAuthAttempts(ctx, 4), WS_SUCCESS);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_GetMaxAuthAttempts(ssh), 4);
+    AssertIntEQ(wolfSSH_SetMaxAuthAttempts(ssh, 2), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_GetMaxAuthAttempts(ssh), 2);
+    AssertIntEQ(wolfSSH_CTX_GetMaxAuthAttempts(ctx), 4);
+    AssertIntEQ(wolfSSH_SetMaxAuthAttempts(ssh, 0), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_GetMaxAuthAttempts(ssh), defaultValue);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
 static void test_wolfSSH_SetAlgoList(void)
 {
     const char* newKexList = "diffie-hellman-group1-sha1,ecdh-sha2-nistp521";
@@ -4119,6 +4163,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_ReadKey_shortBuffer();
     test_wolfSSH_ReadKey_noTrailingNewline();
     test_wolfSSH_QueryAlgoList();
+    test_wolfSSH_SetMaxAuthAttempts();
     test_wolfSSH_SetAlgoList();
 #ifdef WOLFSSH_AGENT
     test_wolfSSH_agent_signrequest_partial_write();

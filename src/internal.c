@@ -1127,6 +1127,7 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
 #endif /* WOLFSSH_CERTS */
     ctx->windowSz = DEFAULT_WINDOW_SZ;
     ctx->maxPacketSz = DEFAULT_MAX_PACKET_SZ;
+    ctx->maxAuthAttempts = DEFAULT_MAX_AUTH_ATTEMPTS;
     ctx->sshProtoIdStr = sshProtoIdStr;
     ctx->algoListKex = cannedKexAlgoNames;
     if (side == WOLFSSH_ENDPOINT_CLIENT) {
@@ -1462,6 +1463,7 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->ioWriteCtx  = &ssh->wfd;  /* set */
     ssh->highwaterMark = ctx->highwaterMark;
     ssh->msgHighwaterMark = ctx->msgHighwaterMark;
+    ssh->maxAuthAttempts = ctx->maxAuthAttempts;
     ssh->highwaterCtx  = (void*)ssh;
     ssh->reqSuccessCtx = (void*)ssh;
     ssh->fs            = NULL;
@@ -7837,6 +7839,46 @@ static int DoExtInfo(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 }
 
 
+/* Count a non-authenticating server-side userauth attempt and enforce the
+ * per-session limit. On reaching it, disconnect the peer and return a fatal
+ * error so the accept loop stops. Not for pending (would-block) or successful
+ * attempts; partial success and rejection are both charged. */
+static int CountUserAuthFailure(WOLFSSH* ssh)
+{
+    int ret = WS_SUCCESS;
+
+    ssh->authFailures++;
+    if (ssh->authFailures >= ssh->maxAuthAttempts) {
+        WLOG(WS_LOG_DEBUG, "Max userauth attempts reached, disconnecting");
+        (void)SendDisconnect(ssh,
+                WOLFSSH_DISCONNECT_NO_MORE_AUTH_METHODS_AVAILABLE);
+        ret = WS_USER_AUTH_E;
+    }
+
+    return ret;
+}
+
+
+/* Send a userauth failure, counting the attempt when count is set. Counts
+ * even when the send returns WS_WANT_WRITE, which DoReceive() treats as
+ * non-fatal; a stalled peer would otherwise pipeline uncounted guesses. */
+static int SendUserAuthFailureCount(WOLFSSH* ssh, byte partialSuccess,
+        int count)
+{
+    int ret;
+
+    ret = SendUserAuthFailure(ssh, partialSuccess);
+    if (count) {
+        int cntRet = CountUserAuthFailure(ssh);
+
+        if (cntRet != WS_SUCCESS)
+            ret = cntRet;
+    }
+
+    return ret;
+}
+
+
 #ifdef WOLFSSH_ALLOW_USERAUTH_NONE
 /* Utility for DoUserAuthRequest() */
 static int DoUserAuthRequestNone(WOLFSSH* ssh, WS_UserAuthData* authData,
@@ -7865,14 +7907,13 @@ static int DoUserAuthRequestNone(WOLFSSH* ssh, WS_UserAuthData* authData,
                 ret = WS_SUCCESS;
             }
             else if (ret == WOLFSSH_USERAUTH_REJECTED) {
-                WLOG(WS_LOG_DEBUG, "DUARN: password rejected");
+                WLOG(WS_LOG_DEBUG, "DUARN: none rejected");
                 #ifndef NO_FAILURE_ON_REJECTED
-                ret = SendUserAuthFailure(ssh, 0);
-                if (ret == WS_SUCCESS)
-                    ret = WS_USER_AUTH_E;
-                #else
-                ret = WS_USER_AUTH_E;
+                /* Count before failing: a send that blocks returns
+                 * WS_WANT_WRITE, which isn't fatal on its own. */
+                (void)SendUserAuthFailureCount(ssh, 0, 1);
                 #endif
+                ret = WS_USER_AUTH_E;
             }
             else if (ret == WOLFSSH_USERAUTH_WOULD_BLOCK) {
                 WLOG(WS_LOG_DEBUG, "DUARN: userauth callback would block");
@@ -7880,14 +7921,13 @@ static int DoUserAuthRequestNone(WOLFSSH* ssh, WS_UserAuthData* authData,
             }
             else {
                 WLOG(WS_LOG_DEBUG, "DUARN: none check failed, retry");
-                ret = SendUserAuthFailure(ssh, 0);
+                ret = SendUserAuthFailureCount(ssh, 0, 1);
             }
         }
         else {
             WLOG(WS_LOG_DEBUG, "DUARN: No user auth callback");
-            ret = SendUserAuthFailure(ssh, 0);
-            if (ret == WS_SUCCESS)
-                ret = WS_FATAL_ERROR;
+            (void)SendUserAuthFailureCount(ssh, 0, 1);
+            ret = WS_FATAL_ERROR;
         }
     }
 
@@ -7923,6 +7963,8 @@ static int DoUserAuthInfoResponse(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS) {
+        /* Response arrived; the exchange is answered. */
+        ssh->kbSetupPending = 0;
         WMEMSET(&authData, 0, sizeof(authData));
         begin = *idx;
         kb = &authData.sf.keyboard;
@@ -8033,13 +8075,16 @@ static int DoUserAuthInfoResponse(WOLFSSH* ssh,
     }
 
     if (authFailure || partialSuccess) {
-        ret = SendUserAuthFailure(ssh, partialSuccess);
-        if (ret == WS_SUCCESS && authRejected) {
+        /* Charge every non-authenticating outcome: an uncounted partial
+         * success replays forever, and a rejection isn't fatal on its own if
+         * the send blocks. */
+        ret = SendUserAuthFailureCount(ssh, partialSuccess, 1);
+        if (authRejected) {
             ret = WS_USER_AUTH_E;
         }
     }
     else if (ret == WOLFSSH_USERAUTH_SUCCESS_ANOTHER) {
-        ret = SendUserAuthKeyboardRequest(ssh, &authData);
+        ret = SendUserAuthKeyboardRequest(ssh, &authData, 0);
     }
     else if (ret == WS_SUCCESS) {
         ssh->clientState = CLIENT_USERAUTH_DONE;
@@ -8140,8 +8185,11 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
         *idx = begin;
 
     if (authFailure || partialSuccess) {
-        ret = SendUserAuthFailure(ssh, partialSuccess);
-        if (ret == WS_SUCCESS && authRejected) {
+        /* Charge every non-authenticating outcome: an uncounted partial
+         * success replays forever, and a rejection isn't fatal on its own if
+         * the send blocks. */
+        ret = SendUserAuthFailureCount(ssh, partialSuccess, 1);
+        if (authRejected) {
             ret = WS_USER_AUTH_E;
         }
     }
@@ -9533,13 +9581,15 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
     }
 
     if (authFailure) {
-        ret = SendUserAuthFailure(ssh, 0);
-        if (ret == WS_SUCCESS && authRejected) {
+        /* Count even with partialSuccess set: the callback can grant partial
+         * success and the signature still fail. */
+        ret = SendUserAuthFailureCount(ssh, 0, 1);
+        if (authRejected) {
             ret = WS_USER_AUTH_E;
         }
     }
     else if (partialSuccess && hasSig) {
-        ret = SendUserAuthFailure(ssh, 1);
+        ret = SendUserAuthFailureCount(ssh, 1, 1);
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthRequestPublicKey(), ret = %d", ret);
@@ -9579,7 +9629,7 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
                 != ID_SERVICE_CONNECTION) {
             WLOG(WS_LOG_DEBUG, "DUAR: Invalid service name");
             serviceValid = 0;
-            ret = SendUserAuthFailure(ssh, 0);
+            ret = SendUserAuthFailureCount(ssh, 0, 1);
             /* Consume all remaining data */
             *idx = len;
         }
@@ -9611,12 +9661,27 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
     if (ret == WS_SUCCESS && serviceValid) {
         authNameId = NameToId((const char*)authData.authName, authData.authNameSz);
         ssh->authId = authNameId;
+        ssh->authRequests++;
 
+        /* Each method branch counts its own failures; it can't be centralized
+         * here since handlers return WS_SUCCESS for both success and
+         * failure-sent. */
         if (authNameId == ID_USERAUTH_PASSWORD)
             ret = DoUserAuthRequestPassword(ssh, &authData, buf, len, &begin);
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
         else if (authNameId == ID_USERAUTH_KEYBOARD) {
-            ret = SendUserAuthKeyboardRequest(ssh, &authData);
+            int counted = 0;
+
+            /* Restarting before answering the prior INFO_REQUEST counts as a
+             * failure; else a peer loops here without ever responding. Clear
+             * the flag first so the send below doesn't charge it twice. */
+            if (ssh->kbSetupPending) {
+                ssh->kbSetupPending = 0;
+                counted = 1;
+                ret = CountUserAuthFailure(ssh);
+            }
+            if (ret == WS_SUCCESS)
+                ret = SendUserAuthKeyboardRequest(ssh, &authData, counted);
         }
 #endif
 #if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA) \
@@ -9632,9 +9697,13 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
         }
 #endif
         else {
+            /* Don't charge the opening "none" probe every client sends to
+             * learn the method list; OpenSSH exempts it too. */
+            int countIt = !(authNameId == ID_NONE && ssh->authRequests == 1);
+
             WLOG(WS_LOG_DEBUG,
                  "DUAR: invalid userauth type: %s", IdToName(authNameId));
-            ret = SendUserAuthFailure(ssh, 0);
+            ret = SendUserAuthFailureCount(ssh, 0, countIt);
             /* Consume all remaining data */
             begin = len;
         }
@@ -16052,7 +16121,8 @@ static int BuildUserAuthRequestKeyboard(WOLFSSH* ssh, byte* output, word32* idx,
     return ret;
 }
 
-int SendUserAuthKeyboardRequest(WOLFSSH* ssh, WS_UserAuthData* authData)
+int SendUserAuthKeyboardRequest(WOLFSSH* ssh, WS_UserAuthData* authData,
+        int counted)
 {
     byte* output;
     word32 idx;
@@ -16078,10 +16148,20 @@ int SendUserAuthKeyboardRequest(WOLFSSH* ssh, WS_UserAuthData* authData)
         if (ret == WOLFSSH_USERAUTH_SUCCESS) {
             ret = WS_SUCCESS;
         }
+        else if (ret == WOLFSSH_USERAUTH_WOULD_BLOCK) {
+            /* Not a decline; retry on the next pass like the other
+             * handlers, uncharged. */
+            WLOG(WS_LOG_DEBUG, "SUAKR: keyboard setup callback would block");
+            ssh->kbSetupPending = 0;
+            return WS_AUTH_PENDING;
+        }
         else {
             WLOG(WS_LOG_DEBUG, "Issue with keyboard auth setup, try another "
                 "auth type");
-            return  SendUserAuthFailure(ssh, 0);
+            /* No INFO_REQUEST sent, so charge the rejection here unless the
+             * caller already did; else a peer loops unbounded. */
+            ssh->kbSetupPending = 0;
+            return SendUserAuthFailureCount(ssh, 0, !counted);
         }
     }
 
@@ -16091,8 +16171,9 @@ int SendUserAuthKeyboardRequest(WOLFSSH* ssh, WS_UserAuthData* authData)
         }
     }
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
         ssh->kbAuth.promptCount = authData->sf.keyboard.promptCount;
+    }
 
     payloadSz = MSG_ID_SZ;
     if (ret == WS_SUCCESS) {
@@ -16121,7 +16202,11 @@ int SendUserAuthKeyboardRequest(WOLFSSH* ssh, WS_UserAuthData* authData)
         ret = wolfSSH_SendPacket(ssh);
     }
 
-    if ((ret != WS_WANT_WRITE) && (ret != WS_SUCCESS)) {
+    if ((ret == WS_WANT_WRITE) || (ret == WS_SUCCESS)) {
+        /* INFO_REQUEST sent or buffered; the exchange is now outstanding. */
+        ssh->kbSetupPending = 1;
+    }
+    else {
         PurgePacket(ssh);
     }
 
