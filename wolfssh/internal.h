@@ -498,6 +498,11 @@ enum NameIdType {
 #ifndef DEFAULT_NEXT_CHANNEL
     #define DEFAULT_NEXT_CHANNEL 0
 #endif
+#ifndef DEFAULT_MAX_AUTH_ATTEMPTS
+    /* Server-side cap on failed userauth attempts, same value as the OpenSSH
+     * MaxAuthTries default. */
+    #define DEFAULT_MAX_AUTH_ATTEMPTS 6
+#endif
 #ifndef MAX_PACKET_SZ
     /* This is from RFC 4253 section 6.1. */
     #define MAX_PACKET_SZ 35000
@@ -709,6 +714,7 @@ struct WOLFSSH_CTX {
     word32 bannerSz;
     word32 windowSz;
     word32 maxPacketSz;
+    word32 maxAuthAttempts;           /* server cap on failed userauth */
     byte side;                        /* client or server */
     byte showBanner;
 #ifdef WOLFSSH_AGENT
@@ -1080,6 +1086,7 @@ struct WOLFSSH {
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     WS_UserAuthData_Keyboard kbAuth;
     byte kbAuthAttempts;
+    byte kbSetupPending; /* server sent INFO_REQUEST, awaiting a response */
 #endif
 #ifdef WOLFSSH_TPM
     byte tpmPubkeyTried; /* client tried TPM publickey; allow auth fallback */
@@ -1089,6 +1096,9 @@ struct WOLFSSH {
     word32 testSftpStallPending; /* test hook: force N flush-only resumes */
 #endif
     byte userAuthSeen; /* a userauth request has bound the username */
+    word32 maxAuthAttempts; /* server cap on failed userauth attempts */
+    word32 authFailures;    /* count of failed userauth attempts */
+    word32 authRequests;    /* count of userauth requests received */
 };
 
 
@@ -1250,8 +1260,11 @@ WOLFSSH_LOCAL int SendExtInfo(WOLFSSH* ssh);
 WOLFSSH_LOCAL int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig);
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
 WOLFSSH_LOCAL int SendUserAuthKeyboardResponse(WOLFSSH* ssh);
+/* Send an INFO_REQUEST for keyboard-interactive auth. Set counted when the
+ * caller already charged a failure for this message, so a declined setup
+ * callback doesn't charge it twice. */
 WOLFSSH_LOCAL int SendUserAuthKeyboardRequest(WOLFSSH* ssh,
-        WS_UserAuthData* authData);
+        WS_UserAuthData* authData, int counted);
 #endif
 WOLFSSH_LOCAL int SendUserAuthSuccess(WOLFSSH* ssh);
 WOLFSSH_LOCAL int SendUserAuthFailure(WOLFSSH* ssh, byte partialSuccess);

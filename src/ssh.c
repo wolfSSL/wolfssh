@@ -2644,6 +2644,51 @@ int wolfSSH_CTX_SetBanner(WOLFSSH_CTX* ctx,
     return WS_SUCCESS;
 }
 
+int wolfSSH_CTX_SetMaxAuthAttempts(WOLFSSH_CTX* ctx, int value)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CTX_SetMaxAuthAttempts()");
+
+    if (ctx == NULL)
+        return WS_BAD_ARGUMENT;
+
+    /* A value <= 0 restores the built-in default. */
+    if (value <= 0)
+        ctx->maxAuthAttempts = DEFAULT_MAX_AUTH_ATTEMPTS;
+    else
+        ctx->maxAuthAttempts = (word32)value;
+
+    return WS_SUCCESS;
+}
+
+
+int wolfSSH_CTX_GetMaxAuthAttempts(WOLFSSH_CTX* ctx)
+{
+    return (ctx == NULL) ? WS_BAD_ARGUMENT : (int)ctx->maxAuthAttempts;
+}
+
+
+int wolfSSH_SetMaxAuthAttempts(WOLFSSH* ssh, int value)
+{
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetMaxAuthAttempts()");
+
+    if (ssh == NULL)
+        return WS_BAD_ARGUMENT;
+
+    /* A value <= 0 restores the built-in default. */
+    if (value <= 0)
+        ssh->maxAuthAttempts = DEFAULT_MAX_AUTH_ATTEMPTS;
+    else
+        ssh->maxAuthAttempts = (word32)value;
+
+    return WS_SUCCESS;
+}
+
+
+int wolfSSH_GetMaxAuthAttempts(WOLFSSH* ssh)
+{
+    return (ssh == NULL) ? WS_BAD_ARGUMENT : (int)ssh->maxAuthAttempts;
+}
+
 int wolfSSH_CTX_SetSshProtoIdStr(WOLFSSH_CTX* ctx,
                                           const char* protoIdStr)
 {
