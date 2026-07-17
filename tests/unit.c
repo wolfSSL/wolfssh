@@ -3482,6 +3482,61 @@ done:
     return result;
 }
 
+/* An unknown extended data type must be ignored (consumed and discarded) per
+ * RFC 4254, not rejected: the call returns WS_SUCCESS and nothing is buffered
+ * for the application. */
+static int test_DoChannelExtendedData_unknown_type(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    word32           idx;
+    byte             out[32];
+
+    /* channelId=0, unknown type=2, dataSz=5, payload all 0x33 */
+    static const byte unknownBlob[] = {
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x02,
+        0x00, 0x00, 0x00, 0x05,
+        0x33, 0x33, 0x33, 0x33, 0x33
+    };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -680;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -681; goto done; }
+    /* Allow MSGID_CHANNEL_WINDOW_ADJUST on this bare session. */
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    /* windowSz=128, maxPacketSz=64 */
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -682; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -683;
+        goto done;
+    }
+
+    /* Unknown extended data type: ignored (consumed), not rejected. Nothing
+     * is buffered for the application. */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)unknownBlob,
+                                            (word32)sizeof(unknownBlob), &idx);
+    if (ret != WS_SUCCESS) { result = -684; goto done; }
+    ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+    if (ret != 0) { result = -685; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
 static int test_SendChannelData_eofTxd(void)
 {
     WOLFSSH_CTX*     ctx = NULL;
@@ -9601,6 +9656,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_GetString_zeroDestSz();
     printf("GetString_zeroDestSz: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DoChannelExtendedData_unknown_type();
+    printf("DoChannelExtendedData_unknown_type: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 

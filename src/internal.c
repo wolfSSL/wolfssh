@@ -11388,9 +11388,6 @@ static int DoChannelExtendedData(WOLFSSH* ssh,
     if (ret == WS_SUCCESS)
         ret = GetUint32(&dataTypeCode, buf, len, &begin);
     if (ret == WS_SUCCESS)
-        ret = (dataTypeCode == CHANNEL_EXTENDED_DATA_STDERR) ?
-            WS_SUCCESS : WS_INVALID_EXTDATA;
-    if (ret == WS_SUCCESS)
         ret = GetSize(&dataSz, buf, len, &begin);
 
     if (ret == WS_SUCCESS) {
@@ -11399,21 +11396,26 @@ static int DoChannelExtendedData(WOLFSSH* ssh,
             ret = WS_INVALID_CHANID;
         else if (dataSz > channel->maxPacketSz)
             ret = WS_RECV_OVERFLOW_E;
-        else {
-            ret = PutBuffer(&ssh->extDataBuffer,  buf + begin, dataSz);
+        else if (dataTypeCode == CHANNEL_EXTENDED_DATA_STDERR) {
+            ret = PutBuffer(&ssh->extDataBuffer, buf + begin, dataSz);
             #ifdef DEBUG_WOLFSSH
             DumpOctetString(buf + begin, dataSz);
             #endif
-            if (ret == WS_SUCCESS) {
+            if (ret == WS_SUCCESS)
                 ret = SendChannelWindowAdjust(ssh, channel->channel, dataSz);
+            if (ret == WS_SUCCESS) {
+                ssh->lastRxId = channelId;
+                ret = WS_EXTDATA;
             }
         }
+        else {
+            WLOG(WS_LOG_INFO, "Ignoring unknown extended data type %u",
+                    dataTypeCode);
+            ret = SendChannelWindowAdjust(ssh, channel->channel, dataSz);
+            if (ret == WS_SUCCESS)
+                ssh->lastRxId = channelId;
+        }
         *idx = begin + dataSz;
-    }
-
-    if (ret == WS_SUCCESS) {
-        ssh->lastRxId = channelId;
-        ret = WS_EXTDATA;
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoChannelExtendedData(), ret = %d", ret);
