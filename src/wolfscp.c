@@ -77,19 +77,24 @@ static void LogScpStateError(const char* state, int ret)
 }
 
 
+/* Drain all buffered stderr, not just the first msg-sized chunk: the window is
+ * only credited for bytes read, so a residue strands that credit and stalls the
+ * channel. A blob can be maxPacketSz (32KB). */
 static int _DumpExtendedData(WOLFSSH* ssh)
 {
     byte msg[WOLFSSH_DEFAULT_EXTDATA_SZ];
     int msgSz;
 
-    msgSz = wolfSSH_extended_data_read(ssh, msg, WOLFSSH_DEFAULT_EXTDATA_SZ-1);
-    if (msgSz > 0) {
-        msg[msgSz] = 0;
-        fprintf(stderr, "%s", msg);
-        msgSz = WS_SUCCESS;
-    }
+    do {
+        msgSz = wolfSSH_extended_data_read(ssh, msg,
+                WOLFSSH_DEFAULT_EXTDATA_SZ - 1);
+        if (msgSz > 0) {
+            msg[msgSz] = 0;
+            fprintf(stderr, "%s", msg);
+        }
+    } while (msgSz > 0);
 
-    return msgSz;
+    return (msgSz < 0) ? msgSz : WS_SUCCESS;
 }
 
 

@@ -269,6 +269,13 @@ WOLFSSH_API int wolfSSH_ChannelRead(WOLFSSH_CHANNEL* channel, byte* buf,
         word32 bufSz);
 WOLFSSH_API int wolfSSH_ChannelSend(WOLFSSH_CHANNEL* channel, const byte* buf,
         word32 bufSz);
+/* The Ext variants carry extended data (stderr) rather than normal data. See
+ * wolfSSH_extended_data_read() below for the drain contract; these read and
+ * write the named channel instead of the first one in the channel list. */
+WOLFSSH_API int wolfSSH_ChannelReadExt(WOLFSSH_CHANNEL* channel, byte* buf,
+        word32 bufSz);
+WOLFSSH_API int wolfSSH_ChannelSendExt(WOLFSSH_CHANNEL* channel,
+        const byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_ChannelExit(WOLFSSH_CHANNEL* channel);
 WOLFSSH_API int wolfSSH_ChannelGetEof(WOLFSSH_CHANNEL* channel);
 WOLFSSH_API const char* wolfSSH_ChannelGetType(
@@ -482,6 +489,32 @@ WOLFSSH_API int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_stream_exit(WOLFSSH* ssh, int status);
 WOLFSSH_API int wolfSSH_extended_data_send(WOLFSSH* ssh, byte* buf, word32 bufSz);
+/* Reads the buffered stderr of the first channel in the channel list into out;
+ * returns the number of bytes read (>= 0) or a negative WS_ error. outSz of 0
+ * is WS_BAD_ARGUMENT. This is the stderr counterpart of wolfSSH_stream_read(),
+ * and reads the same channel it does.
+ *
+ * Apps MUST drain stderr: it shares the channel receive window with stdout
+ * (RFC 4254 5.2) and the window is only replenished here, so unread stderr
+ * eventually stalls the channel. Call after wolfSSH_stream_read() returns
+ * WS_EXTDATA, until this returns 0.
+ *
+ * A session with more than one open channel cannot be served by this pair:
+ * wolfSSH_stream_read() reports data, normal or extended, only for the first
+ * channel and fails with WS_ERROR on anything else. Read those channels with
+ * wolfSSH_ChannelIdRead() and wolfSSH_ChannelIdReadExt(), which name the
+ * channel, and drain each one's stderr for the same reason;
+ * wolfSSH_worker() names the channel the extended data arrived on when it
+ * returns WS_EXTDATA.
+ *
+ * Draining sends the peer a window adjust. On a non-blocking socket that send
+ * can be short: the byte count is still returned, but wolfSSH_get_error() is
+ * left at WS_WANT_WRITE to show a flush is owed. An app that only reads must
+ * then flush, with wolfSSH_worker(), or the peer's window is never replenished
+ * and the channel stalls.
+ *
+ * The buffer lives on the channel: anything unread when the channel is removed
+ * (the peer's CHANNEL_CLOSE) is discarded with it. */
 WOLFSSH_API int wolfSSH_extended_data_read(WOLFSSH* ssh, byte* out,
         word32 outSz);
 WOLFSSH_API int wolfSSH_TriggerKeyExchange(WOLFSSH* ssh);
@@ -492,6 +525,10 @@ WOLFSSH_API int wolfSSH_global_request(WOLFSSH* ssh, const unsigned char* data,
 WOLFSSH_API int wolfSSH_ChannelIdRead(WOLFSSH* ssh, word32 channelId,
         byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_ChannelIdSend(WOLFSSH* ssh, word32 channelId,
+        byte* buf, word32 bufSz);
+WOLFSSH_API int wolfSSH_ChannelIdReadExt(WOLFSSH* ssh, word32 channelId,
+        byte* buf, word32 bufSz);
+WOLFSSH_API int wolfSSH_ChannelIdSendExt(WOLFSSH* ssh, word32 channelId,
         byte* buf, word32 bufSz);
 
 WOLFSSH_API void wolfSSH_GetStats(WOLFSSH* ssh,

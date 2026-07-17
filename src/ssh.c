@@ -1208,6 +1208,7 @@ int wolfSSH_stream_peek(WOLFSSH* ssh, byte* buf, word32 bufSz)
 
 
 static int _UpdateChannelWindow(WOLFSSH_CHANNEL* channel);
+static int _ChannelReadExt(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz);
 
 
 /* Wrapper function for ease of use to get data after it has been decrypted from
@@ -1253,6 +1254,16 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
             ret = DoReceive(ssh);
             if (ssh->channelList == NULL || ssh->channelList->eofRxd)
                 ret = WS_EOF;
+            if (ret == WS_EXTDATA &&
+                    ssh->lastRxId != ssh->channelList->channel) {
+                /* Extended data for another channel. wolfSSH_extended_data_read()
+                 * only drains the head of the list, so reporting it here would
+                 * strand the data with its window charged. Filter it like
+                 * WS_CHAN_RXD below; multi-channel apps read with
+                 * wolfSSH_ChannelIdReadExt(). */
+                ret = WS_ERROR;
+                break;
+            }
             if (ret < 0 && ret != WS_CHAN_RXD) {
                 break;
             }
@@ -1347,6 +1358,42 @@ int wolfSSH_ChannelIdSend(WOLFSSH* ssh, word32 channelId,
 }
 
 
+int wolfSSH_ChannelIdSendExt(WOLFSSH* ssh, word32 channelId,
+        byte* buf, word32 bufSz)
+{
+    WOLFSSH_CHANNEL* channel;
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelIdSendExt(), ID = %u",
+            channelId);
+
+    if (ssh == NULL || buf == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS) {
+        channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
+        if (channel == NULL) {
+            WLOG(WS_LOG_DEBUG, "Invalid channel");
+            ret = WS_INVALID_CHANID;
+        }
+        else {
+            if (!channel->openConfirmed) {
+                WLOG(WS_LOG_DEBUG, "Channel not confirmed yet.");
+                ret = WS_CHANNEL_NOT_CONF;
+            }
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "Sending extended data.");
+        ret = SendChannelExtendedData(ssh, channelId, buf, bufSz);
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelIdSendExt(), txd = %d", ret);
+    return ret;
+}
+
+
 int wolfSSH_stream_exit(WOLFSSH* ssh, int status)
 {
     int ret = WS_SUCCESS;
@@ -1404,28 +1451,22 @@ int wolfSSH_extended_data_send(WOLFSSH* ssh, byte* buf, word32 bufSz)
 }
 
 
-/* Reads pending data from extended data buffer. Currently can be used to get
- * STDERR information sent across the channel.
- * Returns the number of bytes read on success */
+/* Reads STDERR from the channel at the head of the channel list, like
+ * wolfSSH_stream_read(). See wolfssh/ssh.h for the contract. */
 int wolfSSH_extended_data_read(WOLFSSH* ssh, byte* out, word32 outSz)
 {
-    byte*  buf;
-    word32 bufSz;
+    int bytesRxd;
 
-    if (ssh == NULL || out == NULL) {
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_extended_data_read()");
+
+    if (ssh == NULL || out == NULL || ssh->channelList == NULL)
         return WS_BAD_ARGUMENT;
-    }
 
-    /* sanity check to make sure idx is not in a bad state */
-    if (ssh->extDataBuffer.idx > ssh->extDataBuffer.length) {
-        WLOG(WS_LOG_ERROR, "Bad internal state for buffer index");
-        return WS_INVALID_STATE_E;
-    }
-    bufSz = min(outSz, ssh->extDataBuffer.length - ssh->extDataBuffer.idx);
-    buf = ssh->extDataBuffer.buffer + ssh->extDataBuffer.idx;
-    WMEMCPY(out, buf, bufSz);
-    ssh->extDataBuffer.idx += bufSz;
-    return bufSz;
+    bytesRxd = _ChannelReadExt(ssh->channelList, out, outSz);
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_extended_data_read(), rxd = %d",
+            bytesRxd);
+    return bytesRxd;
 }
 
 
@@ -2926,12 +2967,16 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
     }
 #endif /* WOLFSSH_TEST_BLOCK */
 
-    if (ret == WS_SUCCESS || ret == WS_CHAN_RXD) {
+    /* WS_EXTDATA reports the channel too, so a multi-channel caller can route
+     * the drain to wolfSSH_ChannelIdReadExt(). */
+    if (ret == WS_SUCCESS || ret == WS_CHAN_RXD || ret == WS_EXTDATA) {
         if (channelId != NULL) {
             *channelId = ssh->lastRxId;
         }
 
-        if (ssh->isKeying) {
+        /* WS_EXTDATA is raised once, on arrival; masking it would strand the
+         * buffered stderr and its window credit. */
+        if (ssh->isKeying && ret != WS_EXTDATA) {
             ssh->error = WS_REKEYING;
             return WS_REKEYING;
         }
@@ -3265,8 +3310,12 @@ static int _UpdateChannelWindow(WOLFSSH_CHANNEL* channel)
                      inputBuffer->buffer + bytesToAdd, usedSz);
         }
 
-        sendResult = SendChannelWindowAdjust(channel->ssh, channel->channel,
-                                             bytesToAdd);
+        /* Credit through the channel, not a direct send: credit that cannot go
+         * out now is parked (mid-rekey per RFC 4253 section 7.1, or a failed
+         * send) and a zero-byte adjust is suppressed. Stderr charges the window
+         * without consuming this buffer, so windowSz == 0 above can fire with
+         * nothing read here. */
+        sendResult = ChannelCreditWindow(channel->ssh, channel, bytesToAdd);
 
         WLOG(WS_LOG_INFO, "  bytesToAdd = %u", bytesToAdd);
         WLOG(WS_LOG_INFO, "  windowSz = %u", channel->windowSz);
@@ -3299,6 +3348,68 @@ static int _ChannelRead(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz)
         updateResult = bufSz;
 
     return updateResult;
+}
+
+
+/* Drains buffered extended data (stderr) and credits the channel window for the
+ * bytes taken, releasing the back-pressure DoChannelExtendedData() applied.
+ * Always reports the bytes copied, even when the window adjust cannot go out:
+ * they are already in the caller's buffer, and ChannelCreditWindow() keeps the
+ * credit owed. */
+static int _ChannelReadExt(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz)
+{
+    WOLFSSH_BUFFER* extDataBuffer;
+    WOLFSSH* ssh;
+
+    if (channel == NULL || buf == NULL || bufSz == 0)
+        return WS_BAD_ARGUMENT;
+
+    ssh = channel->ssh;
+    extDataBuffer = &channel->extDataBuffer;
+
+    /* sanity check to make sure idx is not in a bad state */
+    if (extDataBuffer->idx > extDataBuffer->length) {
+        WLOG(WS_LOG_ERROR, "Bad internal state for buffer index");
+        return WS_INVALID_STATE_E;
+    }
+
+    bufSz = min(bufSz, extDataBuffer->length - extDataBuffer->idx);
+    WMEMCPY(buf, extDataBuffer->buffer + extDataBuffer->idx, bufSz);
+    extDataBuffer->idx += bufSz;
+
+    if (bufSz > 0) {
+        int adjustResult;
+        int savedError = ssh->error;
+
+        /* Credit locally regardless of the send result; ChannelCreditWindow()
+         * owns getting it to the peer. */
+        channel->windowSz += bufSz;
+
+        /* Fully drained: release the allocation. */
+        if (extDataBuffer->idx == extDataBuffer->length)
+            ShrinkBuffer(extDataBuffer, 0);
+
+        adjustResult = ChannelCreditWindow(ssh, channel, bufSz);
+        if (adjustResult == WS_SUCCESS) {
+            /* Don't restore an owed-flush status once the buffer has drained. */
+            if (savedError == WS_WANT_WRITE && ssh->outputBuffer.length == 0)
+                ssh->error = WS_SUCCESS;
+            else
+                ssh->error = savedError;
+        }
+        else {
+            /* SendPacket() sets ssh->error only for WS_WANT_WRITE, so hard
+             * failures must be recorded here or they stay hidden. */
+            ssh->error = adjustResult;
+            if (adjustResult != WS_WANT_WRITE) {
+                WLOG(WS_LOG_ERROR,
+                     "_ChannelReadExt: window adjust send failed (%d); read "
+                     "still succeeded", adjustResult);
+            }
+        }
+    }
+
+    return (int)bufSz;
 }
 
 
@@ -3344,6 +3455,50 @@ int wolfSSH_ChannelRead(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz)
 }
 
 
+int wolfSSH_ChannelIdReadExt(WOLFSSH* ssh, word32 channelId,
+        byte* buf, word32 bufSz)
+{
+    WOLFSSH_CHANNEL* channel = NULL;
+    int bytesRxd;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelIdReadExt(), ID = %u",
+            channelId);
+
+    if (ssh == NULL || buf == NULL)
+        return WS_BAD_ARGUMENT;
+
+    channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
+    if (channel == NULL)
+        return WS_INVALID_CHANID;
+
+    bytesRxd = _ChannelReadExt(channel, buf, bufSz);
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelIdReadExt(), rxd = %d",
+            bytesRxd);
+    return bytesRxd;
+}
+
+
+/* Unlike wolfSSH_ChannelRead(), this does not fail with WS_REKEYING while
+ * keying: the bytes are already buffered, and the window credit the read owes
+ * is parked until the rekey completes. Failing here would drop the data. */
+int wolfSSH_ChannelReadExt(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz)
+{
+    int bytesRxd;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelReadExt()");
+
+    if (channel == NULL || buf == NULL || bufSz == 0)
+        return WS_BAD_ARGUMENT;
+
+    bytesRxd = _ChannelReadExt(channel, buf, bufSz);
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelReadExt(), bytesRxd = %d",
+            bytesRxd);
+    return bytesRxd;
+}
+
+
 int wolfSSH_ChannelSend(WOLFSSH_CHANNEL* channel,
         const byte* buf, word32 bufSz)
 {
@@ -3372,6 +3527,41 @@ int wolfSSH_ChannelSend(WOLFSSH_CHANNEL* channel,
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelSend(), bytesTxd = %d",
+            bytesTxd);
+    return bytesTxd;
+}
+
+
+int wolfSSH_ChannelSendExt(WOLFSSH_CHANNEL* channel,
+        const byte* buf, word32 bufSz)
+{
+    int bytesTxd = 0;
+
+    if (channel == NULL || buf == NULL) {
+        WLOG(WS_LOG_DEBUG,
+                "Entering wolfSSH_ChannelSendExt() with bad argument");
+        return WS_BAD_ARGUMENT;
+    }
+
+    WLOG(WS_LOG_DEBUG,
+            "Entering wolfSSH_ChannelSendExt(), ID = %d, peerID = %d",
+            channel->channel, channel->peerChannel);
+
+#ifdef DEBUG_WOLFSSH
+    DumpOctetString(buf, bufSz);
+#endif
+
+    if (!channel->openConfirmed) {
+        WLOG(WS_LOG_DEBUG, "Channel not confirmed yet.");
+        bytesTxd = WS_CHANNEL_NOT_CONF;
+    }
+    else {
+        WLOG(WS_LOG_DEBUG, "Sending extended data.");
+        bytesTxd = SendChannelExtendedData(channel->ssh, channel->channel,
+                (byte*)buf, bufSz);
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelSendExt(), bytesTxd = %d",
             bytesTxd);
     return bytesTxd;
 }

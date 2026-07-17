@@ -1032,7 +1032,6 @@ struct WOLFSSH {
 
     WOLFSSH_BUFFER inputBuffer;
     WOLFSSH_BUFFER outputBuffer;
-    WOLFSSH_BUFFER extDataBuffer; /* extended data ready to be read */
     WC_RNG* rng;
 
     byte h[WC_MAX_DIGEST_SIZE];
@@ -1175,6 +1174,12 @@ struct WOLFSSH_CHANNEL {
     word32 peerChannel;
     word32 peerWindowSz;
     word32 peerMaxPacketSz;
+    word32 pendingWindowAdjust; /* Receive-window credit owed to the peer but not
+                                 * sent yet: a rekey was in progress (RFC 4253
+                                 * section 7.1) or the WINDOW_ADJUST send failed.
+                                 * ChannelCreditWindow() folds it into the next
+                                 * adjust; SendPendingChannelWindowAdjust()
+                                 * flushes it when keying completes. */
 #ifdef WOLFSSH_FWD
     char* host;
     word32 hostPort;
@@ -1184,6 +1189,13 @@ struct WOLFSSH_CHANNEL {
     int isDirect;
 #endif /* WOLFSSH_FWD */
     WOLFSSH_BUFFER inputBuffer;
+    WOLFSSH_BUFFER extDataBuffer; /* Buffered extended data (stderr) awaiting the
+                                   * app, per channel like inputBuffer. Shares the
+                                   * receive window with ordinary data (RFC 4254
+                                   * section 5.2): charged against windowSz on
+                                   * arrival, credited back as the app drains it.
+                                   * Accumulates unread data, does not overwrite
+                                   * it. */
     char* command;
     struct WOLFSSH* ssh;
     struct WOLFSSH_CHANNEL* next;
@@ -1210,6 +1222,8 @@ WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelFind(WOLFSSH* ssh, word32 channel,
 WOLFSSH_LOCAL int ChannelRemove(WOLFSSH* ssh, word32 channel, byte peer);
 WOLFSSH_LOCAL int ChannelPutData(WOLFSSH_CHANNEL* channel, byte* data,
         word32 dataSz);
+WOLFSSH_LOCAL int ChannelCreditWindow(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel,
+        word32 amount);
 WOLFSSH_LOCAL int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
                                         const byte* in, word32 inSz,
                                         int format, int type);
@@ -1352,7 +1366,7 @@ WOLFSSH_LOCAL int SendChannelData(WOLFSSH* ssh, word32 channelId,
 WOLFSSH_LOCAL int SendChannelExtendedData(WOLFSSH* ssh, word32 channelId,
         byte* data, word32 dataSz);
 WOLFSSH_LOCAL int SendChannelWindowAdjust(WOLFSSH* ssh, word32 channelId,
-        word32 bytesToAdd);
+        word32 bytesToAdd, byte* bundled);
 WOLFSSH_LOCAL int SendChannelRequest(WOLFSSH* ssh, byte* name, word32 nameSz);
 WOLFSSH_LOCAL int SendChannelTerminalResize(WOLFSSH* ssh, word32 columns,
     word32 rows, word32 widthPixels, word32 heightPixels);
@@ -1584,6 +1598,7 @@ enum WS_MessageIdLimits {
             word32 len, word32* idx);
     WOLFSSH_API int wolfSSH_TestDoChannelWindowAdjust(WOLFSSH* ssh, byte* buf,
             word32 len, word32* idx);
+    WOLFSSH_API int wolfSSH_TestSendPendingChannelWindowAdjust(WOLFSSH* ssh);
     WOLFSSH_API int wolfSSH_TestDoKexInit(WOLFSSH* ssh, byte* buf,
             word32 len, word32* idx);
     WOLFSSH_API int wolfSSH_TestDoNewKeys(WOLFSSH* ssh, byte* buf,
