@@ -3646,6 +3646,11 @@ void ChannelDelete(WOLFSSH_CHANNEL* channel, void* heap)
         if (channel->origin)
             WFREE(channel->origin, heap, DYNTYPE_STRING);
     #endif /* WOLFSSH_FWD */
+        /* Scrub decrypted channel data before releasing the buffer. */
+        if (channel->inputBuffer.buffer != NULL) {
+            WS_FORCEZERO(channel->inputBuffer.buffer,
+                         channel->inputBuffer.bufferSz);
+        }
         WFREE(channel->inputBuffer.buffer,
               channel->inputBuffer.heap, DYNTYPE_BUFFER);
         if (channel->command)
@@ -3915,9 +3920,16 @@ int GrowBuffer(WOLFSSH_BUFFER* buf, word32 sz)
             }
 
             if (!buf->dynamicFlag) {
+                /* Promoting off the static buffer; scrub its plaintext. */
+                WS_FORCEZERO(buf->staticBuffer, STATIC_BUFFER_LEN);
                 buf->dynamicFlag = 1;
             }
             else {
+                /* Scrub decrypted traffic before releasing the old buffer.
+                 * Must cover bufferSz, not length: the compacting WMEMMOVE
+                 * below lowers length while leaving a stale copy of the
+                 * shifted-out bytes above it. */
+                WS_FORCEZERO(buf->buffer, buf->bufferSz);
                 WFREE(buf->buffer, buf->heap, DYNTYPE_BUFFER);
             }
 
@@ -3962,7 +3974,15 @@ void ShrinkBuffer(WOLFSSH_BUFFER* buf, int forcedFree)
 
         if (buf->dynamicFlag) {
             WLOG(WS_LOG_DEBUG, "SB: releasing dynamic buffer");
+            /* Scrub decrypted traffic before releasing the dynamic buffer.
+             * Must cover bufferSz, not length: GrowBuffer()'s compaction and
+             * the shift-down above both leave plaintext above length. */
+            WS_FORCEZERO(buf->buffer, buf->bufferSz);
             WFREE(buf->buffer, buf->heap, DYNTYPE_BUFFER);
+        }
+        if (forcedFree) {
+            /* Scrub plaintext a prior shift-down left in the static buffer. */
+            WS_FORCEZERO(buf->staticBuffer, STATIC_BUFFER_LEN);
         }
         buf->dynamicFlag = 0;
         buf->buffer = buf->staticBuffer;
