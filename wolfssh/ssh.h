@@ -104,6 +104,14 @@ WOLFSSH_API int wolfSSH_ReadKey_file(const char* name,
         byte** out, word32* outSz, const byte** outType, word32* outTypeSz,
         byte* isPrivate, void* heap);
 
+/* SetAlgoList* validate the list, returning WS_SUCCESS, WS_INVALID_ALGO_ID for
+ * a bad list, or WS_SSH_CTX_NULL_E / WS_SSH_NULL_E for a NULL ctx / ssh.
+ * Kex/Cipher/Mac reject NULL. Key accepts NULL only on a server, restoring the
+ * default of deriving the host key list from the loaded private keys; a client
+ * has no such fallback. KeyAccepted accepts NULL on either side, but that
+ * empties the list rather than restoring a default: the server then advertises
+ * an empty RFC 8308 "server-sig-algs", telling clients it accepts no signature
+ * algorithms, which stops OpenSSH clients offering rsa-sha2-256/512. */
 WOLFSSH_API int wolfSSH_CTX_SetAlgoListKex(WOLFSSH_CTX* ctx, const char* list);
 WOLFSSH_API const char* wolfSSH_CTX_GetAlgoListKex(WOLFSSH_CTX* ctx);
 WOLFSSH_API int wolfSSH_SetAlgoListKex(WOLFSSH* ssh, const char* list);

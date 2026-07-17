@@ -3197,22 +3197,23 @@ static int GenerateKeys(WOLFSSH* ssh, byte hashId, byte doKeyPad)
         }
     }
 
-    if (ret == WS_SUCCESS)
+    /* The "none" cipher has no key or IV; skip zero-length derivations. */
+    if (ret == WS_SUCCESS && cK->ivSz > 0)
         ret = GenerateKey(hashId, 'A',
                           cK->iv, cK->ivSz,
                           ssh->k, ssh->kSz, ssh->h, ssh->hSz,
                           ssh->sessionId, ssh->sessionIdSz, doKeyPad);
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS && sK->ivSz > 0)
         ret = GenerateKey(hashId, 'B',
                           sK->iv, sK->ivSz,
                           ssh->k, ssh->kSz, ssh->h, ssh->hSz,
                           ssh->sessionId, ssh->sessionIdSz, doKeyPad);
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS && cK->encKeySz > 0)
         ret = GenerateKey(hashId, 'C',
                           cK->encKey, cK->encKeySz,
                           ssh->k, ssh->kSz, ssh->h, ssh->hSz,
                           ssh->sessionId, ssh->sessionIdSz, doKeyPad);
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS && sK->encKeySz > 0)
         ret = GenerateKey(hashId, 'D',
                           sK->encKey, sK->encKeySz,
                           ssh->k, ssh->kSz, ssh->h, ssh->hSz,
@@ -3436,7 +3437,9 @@ static const NameIdPair NameIdMap[] = {
 };
 
 
-byte NameToId(const char* name, word32 nameSz)
+/* Look up a name and, on a match, return its category via 'type'. Returns the
+ * ID, or ID_UNKNOWN if the name is not in the table. 'type' may be NULL. */
+static byte NameToIdType(const char* name, word32 nameSz, byte* type)
 {
     byte id = ID_UNKNOWN;
     word32 i;
@@ -3449,11 +3452,19 @@ byte NameToId(const char* name, word32 nameSz)
             XMEMCMP(name, NameIdMap[i].name, nameSz) == 0) {
 
             id = NameIdMap[i].id;
+            if (type != NULL)
+                *type = NameIdMap[i].type;
             break;
         }
     }
 
     return id;
+}
+
+
+byte NameToId(const char* name, word32 nameSz)
+{
+    return NameToIdType(name, nameSz, NULL);
 }
 
 
@@ -3493,6 +3504,79 @@ const char* NameByIndexType(byte type, word32* idx)
     }
 
     return name;
+}
+
+
+int CheckAlgoList(const char* list, byte type)
+{
+    const char* name;
+    word32 nameSz, listSz, i;
+    int usableCount = 0;
+    int ret = WS_SUCCESS;
+
+    if (list == NULL)
+        return WS_INVALID_ALGO_ID;
+
+    listSz = (word32)WSTRLEN(list);
+    name = list;
+    nameSz = 0;
+
+    for (i = 0; i <= listSz; i++) {
+        if (i == listSz || list[i] == ',') {
+            if (nameSz == 0) {
+                /* Only the empty element a single trailing comma leaves is
+                 * legal; AlgoListSz() strips that one. Others would reach
+                 * KEXINIT as a zero-length name, banned by RFC 4251. */
+                if (i != listSz || i == 0) {
+                    ret = WS_INVALID_ALGO_ID;
+                    break;
+                }
+            }
+            else {
+                byte tokenType = TYPE_OTHER;
+                byte id = NameToIdType(name, nameSz, &tokenType);
+
+                if (id == ID_NONE) {
+                    int noneOk = 0;
+
+                    /* "none" names the null cipher/MAC, not a host key. It
+                     * disables the transport, so it needs the build flag. */
+#ifdef WOLFSSH_ALLOW_NONE_CIPHER
+                    if (type == TYPE_CIPHER || type == TYPE_MAC) {
+                        noneOk = 1;
+                    }
+#endif
+                    if (!noneOk) {
+                        ret = WS_INVALID_ALGO_ID;
+                        break;
+                    }
+                    usableCount++;
+                }
+                else if (id != ID_UNKNOWN) {
+                    /* Wrong category is a caller mistake, not a build
+                     * difference. */
+                    if (tokenType != type) {
+                        ret = WS_INVALID_ALGO_ID;
+                        break;
+                    }
+                    usableCount++;
+                }
+                /* Unknown names are skipped, not rejected: callers pass
+                 * portable supersets, and negotiation ignores them too. */
+            }
+            name = list + i + 1;
+            nameSz = 0;
+        }
+        else {
+            nameSz++;
+        }
+    }
+
+    /* Nothing usable left; fail here, not as a later KEX failure. */
+    if (ret == WS_SUCCESS && usableCount == 0)
+        ret = WS_INVALID_ALGO_ID;
+
+    return ret;
 }
 
 
@@ -4542,6 +4626,10 @@ static byte MatchIdLists(int side, const byte* left, word32 leftSz,
 static INLINE byte BlockSzForId(byte id)
 {
     switch (id) {
+        case ID_NONE:
+            /* RFC 4253 still pads to 8 under the null cipher, and a 0 here
+             * divides by zero in BundlePacket() once NEWKEYS installs it. */
+            return MIN_BLOCK_SZ;
 #ifndef WOLFSSH_NO_AES_CBC
         case ID_AES128_CBC:
         case ID_AES192_CBC:
@@ -7774,11 +7862,16 @@ static int DoExtInfoServerSigAlgs(WOLFSSH* ssh,
     byte algoId;
 
     peerSigIdSz = CountNameList(names, namesSz);
-    if (peerSigIdSz > 0) {
-        peerSigId = (byte*)WMALLOC(peerSigIdSz, ssh->ctx->heap, DYNTYPE_ID);
-        if (peerSigId == NULL) {
-            ret = WS_MEMORY_E;
-        }
+    if (peerSigIdSz == 0) {
+        /* Treat an empty list as no extension. GetNameListRaw() would reject
+         * the NULL idList and drop the connection. */
+        WLOG(WS_LOG_DEBUG, "DEISSA: peer sent an empty server-sig-algs");
+        return WS_SUCCESS;
+    }
+
+    peerSigId = (byte*)WMALLOC(peerSigIdSz, ssh->ctx->heap, DYNTYPE_ID);
+    if (peerSigId == NULL) {
+        ret = WS_MEMORY_E;
     }
 
     if (ret == WS_SUCCESS) {
@@ -15916,8 +16009,11 @@ static int SendExtInfoServer(WOLFSSH* ssh)
 
         c32toa(keyAlgoNamesSz, output + idx);
         idx += LENGTH_SZ;
-        WMEMCPY(output + idx, ssh->algoListKeyAccepted, keyAlgoNamesSz);
-        idx += keyAlgoNamesSz;
+        /* List may be cleared (NULL). */
+        if (keyAlgoNamesSz > 0) {
+            WMEMCPY(output + idx, ssh->algoListKeyAccepted, keyAlgoNamesSz);
+            idx += keyAlgoNamesSz;
+        }
 
         ssh->outputBuffer.length = idx;
 
