@@ -3483,8 +3483,8 @@ done:
 }
 
 /* An unknown extended data type must be ignored (consumed and discarded) per
- * RFC 4254, not rejected: the call returns WS_SUCCESS and nothing is buffered
- * for the application. */
+ * RFC 4254, not rejected: the call returns WS_SUCCESS, nothing is buffered for
+ * the application, and the window is left intact (replenished on receipt). */
 static int test_DoChannelExtendedData_unknown_type(void)
 {
     WOLFSSH_CTX*     ctx = NULL;
@@ -3523,13 +3523,1712 @@ static int test_DoChannelExtendedData_unknown_type(void)
     }
 
     /* Unknown extended data type: ignored (consumed), not rejected. Nothing
-     * is buffered for the application. */
+     * is buffered and the window is left intact (replenished on receipt). */
     idx = 0;
     ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)unknownBlob,
                                             (word32)sizeof(unknownBlob), &idx);
     if (ret != WS_SUCCESS) { result = -684; goto done; }
+    if (ch->windowSz != 128) { result = -685; goto done; }
     ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
-    if (ret != 0) { result = -685; goto done; }
+    if (ret != 0) { result = -686; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* Exercises the accumulating extended-data buffer and its window
+ * back-pressure: two stderr blobs that arrive before the application reads
+ * must both be preserved (no silent overwrite), the channel window must be
+ * charged on receipt and replenished on read, and a partial read followed by
+ * an append must preserve byte ordering and window accounting across the
+ * GrowBuffer compaction. The final cases cover two channels buffering stderr
+ * at once (each on its own channel buffer and window, neither displacing the
+ * other) and removing a channel that still has stderr buffered. */
+static int test_DoChannelExtendedData_flow(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    word32           idx;
+    byte             out[32];
+
+    /* channelId=0, type=1 (stderr), dataSz=10, payload all 0x11 */
+    static const byte blob1[] = {
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x0A,
+        0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11
+    };
+    /* channelId=0, type=1 (stderr), dataSz=10, payload all 0x22 */
+    static const byte blob2[] = {
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x0A,
+        0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22
+    };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -600;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -601; goto done; }
+    /* Allow MSGID_CHANNEL_WINDOW_ADJUST on this bare session. */
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    /* windowSz=128, maxPacketSz=64 */
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -602; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -603;
+        goto done;
+    }
+
+    /* First stderr blob: buffered, window charged 128 -> 118. */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blob1,
+                                            (word32)sizeof(blob1), &idx);
+    if (ret != WS_EXTDATA) { result = -604; goto done; }
+    if (ch->windowSz != 118) { result = -605; goto done; }
+
+    /* Second stderr blob before any read: must accumulate, not overwrite.
+     * Window charged 118 -> 108. */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blob2,
+                                            (word32)sizeof(blob2), &idx);
+    if (ret != WS_EXTDATA) { result = -606; goto done; }
+    if (ch->windowSz != 108) { result = -607; goto done; }
+
+    /* Read everything: both blobs present and in order (no data loss). */
+    ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+    if (ret != 20) { result = -608; goto done; }
+    {
+        int i;
+        for (i = 0; i < 10; i++)
+            if (out[i] != 0x11) { result = -609; goto done; }
+        for (i = 10; i < 20; i++)
+            if (out[i] != 0x22) { result = -610; goto done; }
+    }
+    /* Draining replenishes the window: 108 + 20 -> 128. */
+    if (ch->windowSz != 128) { result = -611; goto done; }
+
+    /* Buffer drained; a further read returns 0. */
+    ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+    if (ret != 0) { result = -612; goto done; }
+
+    /* Partial-read-then-append: read part of one blob (leaving idx > 0), then
+     * receive another blob. The append forces GrowBuffer to compact a non-zero
+     * idx in place (WMEMMOVE) before adding the new data, and the window must
+     * track a read that is split across the receipt of more data. */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blob1,
+                                            (word32)sizeof(blob1), &idx);
+    if (ret != WS_EXTDATA) { result = -630; goto done; }
+    if (ch->windowSz != 118) { result = -631; goto done; }
+
+    /* Read 4 of the 10 buffered bytes: window 118 + 4 -> 122, idx left at 4. */
+    ret = wolfSSH_extended_data_read(ssh, out, 4);
+    if (ret != 4) { result = -632; goto done; }
+    {
+        int i;
+        for (i = 0; i < 4; i++)
+            if (out[i] != 0x11) { result = -633; goto done; }
+    }
+    if (ch->windowSz != 122) { result = -634; goto done; }
+
+    /* Append blob2 with 6 unread bytes still pending (idx=4, length=10): the
+     * 6 remaining 0x11 bytes must be preserved ahead of the new 0x22 bytes.
+     * Window charged 122 -> 112. */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blob2,
+                                            (word32)sizeof(blob2), &idx);
+    if (ret != WS_EXTDATA) { result = -635; goto done; }
+    if (ch->windowSz != 112) { result = -636; goto done; }
+
+    /* Read the rest: 6 leftover 0x11 followed by 10 0x22, in order. Window
+     * 112 + 16 -> 128. */
+    ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+    if (ret != 16) { result = -637; goto done; }
+    {
+        int i;
+        for (i = 0; i < 6; i++)
+            if (out[i] != 0x11) { result = -638; goto done; }
+        for (i = 6; i < 16; i++)
+            if (out[i] != 0x22) { result = -639; goto done; }
+    }
+    if (ch->windowSz != 128) { result = -640; goto done; }
+
+    /* Drained again. */
+    ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+    if (ret != 0) { result = -641; goto done; }
+
+    /* Window-overflow branch: draw the window down below a blob that is
+     * still <= maxPacketSz, then confirm the next blob is rejected by the
+     * "dataSz > windowSz" branch and not the maxPacketSz branch. dataSz=60
+     * stays under maxPacketSz=64 so the maxPacketSz check cannot fire first. */
+    {
+        byte big[12 + 60];
+        int  i;
+
+        WMEMSET(big, 0, sizeof(big));
+        big[7]  = 0x01;        /* type = stderr */
+        big[11] = 0x3C;        /* dataSz = 60 */
+        for (i = 12; i < (int)sizeof(big); i++)
+            big[i] = 0x44;
+
+        /* window 128 -> 68 */
+        idx = 0;
+        ret = wolfSSH_TestDoChannelExtendedData(ssh, big,
+                                                (word32)sizeof(big), &idx);
+        if (ret != WS_EXTDATA) { result = -616; goto done; }
+        if (ch->windowSz != 68) { result = -617; goto done; }
+
+        /* window 68 -> 8 */
+        idx = 0;
+        ret = wolfSSH_TestDoChannelExtendedData(ssh, big,
+                                                (word32)sizeof(big), &idx);
+        if (ret != WS_EXTDATA) { result = -618; goto done; }
+        if (ch->windowSz != 8) { result = -619; goto done; }
+
+        /* dataSz=60 <= maxPacketSz but > windowSz=8: window-overflow reject,
+         * window left unchanged. */
+        idx = 0;
+        ret = wolfSSH_TestDoChannelExtendedData(ssh, big,
+                                                (word32)sizeof(big), &idx);
+        if (ret != WS_RECV_OVERFLOW_E) { result = -620; goto done; }
+        if (ch->windowSz != 8) { result = -621; goto done; }
+    }
+
+    /* Two channels buffer stderr independently: the buffer lives on the
+     * channel, so neither displaces the other and each window is charged and
+     * credited on its own. First drain the 120 bytes still pending on channel 0
+     * from the overflow block (8 + 120 -> 128 on read) to reach a clean state. */
+    {
+        WOLFSSH_CHANNEL* chB = NULL;
+        /* channelId=1, type=1 (stderr), dataSz=10, payload all 0x22 */
+        static const byte blobB[] = {
+            0x00, 0x00, 0x00, 0x01,
+            0x00, 0x00, 0x00, 0x01,
+            0x00, 0x00, 0x00, 0x0A,
+            0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22
+        };
+
+        ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+        if (ret != 32) { result = -650; goto done; }
+        ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+        if (ret != 32) { result = -651; goto done; }
+        ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+        if (ret != 32) { result = -652; goto done; }
+        ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+        if (ret != 24) { result = -653; goto done; }
+        ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+        if (ret != 0) { result = -654; goto done; }
+        if (ch->windowSz != 128) { result = -655; goto done; }
+
+        /* Second channel, id 1, same window/packet sizes as channel 0. */
+        chB = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+        if (chB == NULL) { result = -656; goto done; }
+        if (ChannelAppend(ssh, chB) != WS_SUCCESS) {
+            ChannelDelete(chB, ssh->ctx->heap);
+            result = -657;
+            goto done;
+        }
+
+        /* Channel 0 buffers stderr: charged 128 -> 118. */
+        idx = 0;
+        ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blob1,
+                                                (word32)sizeof(blob1), &idx);
+        if (ret != WS_EXTDATA) { result = -658; goto done; }
+        if (ch->windowSz != 118) { result = -659; goto done; }
+
+        /* Channel 1 sends stderr while channel 0 still has unread data. It is
+         * buffered on channel 1 (not dropped, not appended to channel 0), and
+         * charged to channel 1's window: 128 -> 118. */
+        idx = 0;
+        ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blobB,
+                                                (word32)sizeof(blobB), &idx);
+        if (ret != WS_EXTDATA) { result = -660; goto done; }
+        if (chB->windowSz != 118) { result = -661; goto done; }
+        if (ch->windowSz != 118) { result = -662; goto done; }
+
+        /* wolfSSH_ChannelIdReadExt() reads the named channel, not the head of
+         * the list: it drains channel 1's 0x22 bytes and credits only channel
+         * 1 (118 + 10 -> 128), leaving channel 0's 0x11 bytes buffered and its
+         * window still charged. Neither channel's buffer holds the other's
+         * bytes. */
+        ret = wolfSSH_ChannelIdReadExt(ssh, 1, out, (word32)sizeof(out));
+        if (ret != 10) { result = -663; goto done; }
+        {
+            int i;
+            for (i = 0; i < 10; i++)
+                if (out[i] != 0x22) { result = -664; goto done; }
+        }
+        if (chB->windowSz != 128) { result = -665; goto done; }
+        if (ch->windowSz != 118) { result = -666; goto done; }
+
+        ret = wolfSSH_ChannelIdReadExt(ssh, 1, out, (word32)sizeof(out));
+        if (ret != 0) { result = -667; goto done; }
+
+        /* An unknown channel id is rejected, not silently read off the head. */
+        ret = wolfSSH_ChannelIdReadExt(ssh, 99, out, (word32)sizeof(out));
+        if (ret != WS_INVALID_CHANID) { result = -668; goto done; }
+
+        /* wolfSSH_extended_data_read() still reads the head of the channel
+         * list (channel 0), like wolfSSH_stream_read(): 118 + 10 -> 128. */
+        ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+        if (ret != 10) { result = -669; goto done; }
+        {
+            int i;
+            for (i = 0; i < 10; i++)
+                if (out[i] != 0x11) { result = -670; goto done; }
+        }
+        if (ch->windowSz != 128) { result = -671; goto done; }
+
+        /* Closing channel 0 must not strand channel 1's stderr. Buffer stderr
+         * on channel 1 again (128 -> 118), remove channel 0, and confirm
+         * channel 1's bytes are still delivered -- here through the channel
+         * pointer variant -- and its window still credited: 118 + 10 -> 128.
+         * Before the buffer moved onto the channel, a shared buffer left
+         * pointing at a removed channel wedged every later channel's stderr. */
+        idx = 0;
+        ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blobB,
+                                                (word32)sizeof(blobB), &idx);
+        if (ret != WS_EXTDATA) { result = -672; goto done; }
+        if (chB->windowSz != 118) { result = -673; goto done; }
+
+        if (ChannelRemove(ssh, 0, WS_CHANNEL_ID_SELF) != WS_SUCCESS) {
+            result = -674; goto done;
+        }
+        ch = NULL;
+        if (ssh->channelList != chB) { result = -675; goto done; }
+
+        ret = wolfSSH_ChannelReadExt(chB, out, (word32)sizeof(out));
+        if (ret != 10) { result = -676; goto done; }
+        {
+            int i;
+            for (i = 0; i < 10; i++)
+                if (out[i] != 0x22) { result = -677; goto done; }
+        }
+        if (chB->windowSz != 128) { result = -678; goto done; }
+
+        ret = wolfSSH_ChannelReadExt(chB, out, (word32)sizeof(out));
+        if (ret != 0) { result = -679; goto done; }
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* Counts IoSend calls so a test can assert whether anything went on the wire. */
+static word32 s_extSendCount = 0;
+static int CountIoSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    (void)ssh; (void)buf; (void)ctx;
+    s_extSendCount++;
+    return (int)sz;
+}
+
+/* RFC 4253 section 7.1: no connection-layer message (such as
+ * SSH_MSG_CHANNEL_WINDOW_ADJUST) may go out between KEXINIT and NEWKEYS.
+ * Neither DoChannelExtendedData() discarding an unknown data type nor
+ * wolfSSH_extended_data_read() draining stderr may therefore send a window
+ * adjust mid-KEX; both park the owed credit on the channel, and
+ * SendPendingChannelWindowAdjust() flushes it once keying completes. */
+static int test_DoChannelExtendedData_keying(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    word32           idx;
+    byte             out[32];
+
+    /* channelId=0, unknown type=2, dataSz=5, payload all 0x33 */
+    static const byte unknownBlob[] = {
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x02,
+        0x00, 0x00, 0x00, 0x05,
+        0x33, 0x33, 0x33, 0x33, 0x33
+    };
+    /* channelId=0, type=1 (stderr), dataSz=10, payload all 0x11 */
+    static const byte stderrBlob[] = {
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x0A,
+        0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11
+    };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -700;
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -701; goto done; }
+    /* Allow MSGID_CHANNEL_WINDOW_ADJUST on this bare session. */
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -702; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -703;
+        goto done;
+    }
+
+    /* Pretend a rekey is in progress. Unknown extended data is consumed, but
+     * the owed window credit must not go on the wire; it is parked instead. */
+    ssh->isKeying = WOLFSSH_SELF_IS_KEYING;
+    s_extSendCount = 0;
+
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)unknownBlob,
+                                            (word32)sizeof(unknownBlob), &idx);
+    if (ret != WS_SUCCESS) { result = -704; goto done; }
+    if (s_extSendCount != 0) { result = -705; goto done; }
+    if (ch->pendingWindowAdjust != 5) { result = -706; goto done; }
+    /* Discarded data is never charged to the local window. */
+    if (ch->windowSz != 128) { result = -707; goto done; }
+
+    /* Flushing while still keying is a no-op: credit stays parked. */
+    ret = wolfSSH_TestSendPendingChannelWindowAdjust(ssh);
+    if (ret != WS_SUCCESS) { result = -708; goto done; }
+    if (s_extSendCount != 0) { result = -709; goto done; }
+    if (ch->pendingWindowAdjust != 5) { result = -710; goto done; }
+
+    /* Keying complete: the parked WINDOW_ADJUST is sent and the credit clears. */
+    ssh->isKeying = 0;
+    ret = wolfSSH_TestSendPendingChannelWindowAdjust(ssh);
+    if (ret != WS_SUCCESS) { result = -711; goto done; }
+    if (s_extSendCount != 1) { result = -712; goto done; }
+    if (ch->pendingWindowAdjust != 0) { result = -713; goto done; }
+
+    /* Reading stderr mid-rekey: extended data is still received while keying
+     * (IsMessageAllowed() does not gate connection-layer messages on isKeying),
+     * so the app can drain it, but the resulting window credit must not go on
+     * the wire until keying ends. The read returns the bytes -- it must not
+     * fail, or the drained bytes would be lost -- and parks the credit. */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)stderrBlob,
+                                            (word32)sizeof(stderrBlob), &idx);
+    if (ret != WS_EXTDATA) { result = -714; goto done; }
+    if (ch->windowSz != 118) { result = -715; goto done; }
+
+    ssh->isKeying = WOLFSSH_SELF_IS_KEYING;
+    s_extSendCount = 0;
+
+    ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+    if (ret != 10) { result = -716; goto done; }
+    {
+        int i;
+        for (i = 0; i < 10; i++)
+            if (out[i] != 0x11) { result = -717; goto done; }
+    }
+    /* Window credited locally, nothing on the wire, credit parked. */
+    if (ch->windowSz != 128) { result = -718; goto done; }
+    if (s_extSendCount != 0) { result = -719; goto done; }
+    if (ch->pendingWindowAdjust != 10) { result = -720; goto done; }
+
+    /* Keying complete: the parked credit reaches the peer. */
+    ssh->isKeying = 0;
+    ret = wolfSSH_TestSendPendingChannelWindowAdjust(ssh);
+    if (ret != WS_SUCCESS) { result = -721; goto done; }
+    if (s_extSendCount != 1) { result = -722; goto done; }
+    if (ch->pendingWindowAdjust != 0) { result = -723; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* The parked credit must also reach the wire through the real end-of-keying
+ * path, not just the SendPendingChannelWindowAdjust() test hook: DoNewKeys()
+ * flushes only after it clears WOLFSSH_PEER_IS_KEYING, and reordering those two
+ * would park the credit forever. */
+static int test_DoChannelExtendedData_newkeys(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    word32           idx;
+    byte             out[32];
+
+    /* channelId=0, type=1 (stderr), dataSz=10, payload all 0x11 */
+    static const byte stderrBlob[] = {
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x0A,
+        0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11
+    };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1200;
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1201; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -1202; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1203;
+        goto done;
+    }
+
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)stderrBlob,
+                                            (word32)sizeof(stderrBlob), &idx);
+    if (ret != WS_EXTDATA) { result = -1204; goto done; }
+
+    /* Only the peer is keying, which is what DoNewKeys() finishes. Draining now
+     * must park the credit rather than send it. */
+    ssh->isKeying = WOLFSSH_PEER_IS_KEYING;
+    s_extSendCount = 0;
+
+    ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+    if (ret != 10) { result = -1205; goto done; }
+    if (s_extSendCount != 0) { result = -1206; goto done; }
+    if (ch->pendingWindowAdjust != 10) { result = -1207; goto done; }
+
+    /* NEWKEYS from the peer: no payload, and it must flush the parked credit. */
+    idx = 0;
+    ret = wolfSSH_TestDoNewKeys(ssh, NULL, 0, &idx);
+    if (ret != WS_SUCCESS) { result = -1208; goto done; }
+    if (ssh->isKeying != 0) { result = -1209; goto done; }
+    if (s_extSendCount != 1) { result = -1210; goto done; }
+    if (ch->pendingWindowAdjust != 0) { result = -1211; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* A peer may trickle stderr in tiny packets while the app is slow to drain. The
+ * data it can send before draining is bounded by the receive window, and the
+ * buffer holding it must stay bounded too: an AppendBuffer() that reallocates
+ * on every packet ratchets capacity up by the unread count each time, so
+ * capacity grows with the square of the packet count while only windowSz bytes
+ * are ever buffered. Fill a real DEFAULT_WINDOW_SZ channel one byte at a time
+ * and hold the allocation to a small multiple of the bytes actually held. */
+static int test_ChannelExtDataBufferGrowth(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    word32           i, idx, drained;
+    byte             blob[13];
+    byte             out[64];
+
+    /* Enough one-byte packets that a quadratic capacity is unmistakable: the
+     * old growth reaches ~8MB of buffer for 4KB of held data. */
+    const word32 count = 4096;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1230;
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1231; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION,
+                    DEFAULT_WINDOW_SZ, DEFAULT_MAX_PACKET_SZ);
+    if (ch == NULL) { result = -1232; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1233;
+        goto done;
+    }
+
+    /* channelId=0, type=1 (stderr), dataSz=1, one payload byte. */
+    WMEMSET(blob, 0, sizeof(blob));
+    blob[7] = 0x01;
+    blob[11] = 0x01;
+
+    for (i = 0; i < count; i++) {
+        /* Vary the payload so the drain below proves ordering survived every
+         * compaction and reallocation. */
+        blob[12] = (byte)(i & 0xFF);
+
+        idx = 0;
+        ret = wolfSSH_TestDoChannelExtendedData(ssh, blob, (word32)sizeof(blob),
+                                                &idx);
+        if (ret != WS_EXTDATA) { result = -1234; goto done; }
+    }
+
+    /* Nothing drained yet: every byte is held, and the window paid for it. */
+    if (ch->extDataBuffer.length - ch->extDataBuffer.idx != count) {
+        result = -1235;
+        goto done;
+    }
+    if (ch->windowSz != DEFAULT_WINDOW_SZ - count) { result = -1236; goto done; }
+
+    /* The allocation tracks the data held, not the number of packets it
+     * arrived in. Doubling settles at 4096 here; the old code reached ~8MB. */
+    if (ch->extDataBuffer.bufferSz > 4 * count) { result = -1237; goto done; }
+
+    /* Drain it all back, in order. */
+    drained = 0;
+    while (drained < count) {
+        word32 j;
+
+        ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+        if (ret <= 0) { result = -1238; goto done; }
+
+        for (j = 0; j < (word32)ret; j++) {
+            if (out[j] != (byte)((drained + j) & 0xFF)) {
+                result = -1239;
+                goto done;
+            }
+        }
+        drained += (word32)ret;
+    }
+
+    if (drained != count) { result = -1240; goto done; }
+    /* Fully drained: the window is whole again and the buffer is released. */
+    if (ch->windowSz != DEFAULT_WINDOW_SZ) { result = -1241; goto done; }
+    if (wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out)) != 0) {
+        result = -1242;
+        goto done;
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* Fires once the message highwater mark is crossed and reports an error. */
+static int FailHighwater(byte side, void* ctx)
+{
+    (void)side; (void)ctx;
+    return WS_FATAL_ERROR;
+}
+
+/* wolfSSH_SendPacket() runs the highwater check after the packet is on the wire
+ * and returns the highwater callback's status, so a failing callback makes a
+ * delivered WINDOW_ADJUST look like a failed send. Credit re-parked then is
+ * credit the peer already has: resending it would grow the peer's send window
+ * past our receive window, and the data it let through would be rejected as an
+ * overflow. Assert the delivered credit is not owed again. */
+static int test_ChannelExtDataCreditHighwater(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    word32           idx;
+    byte             out[32];
+
+    /* channelId=0, type=1 (stderr), dataSz=10, payload all 0x11 */
+    static const byte blob[] = {
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x0A,
+        0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11
+    };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1260;
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+    /* Level 0 leaves the byte-count highwater off; the message count drives
+     * this test. */
+    wolfSSH_SetHighwaterCb(ctx, 0, FailHighwater);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1261; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+    /* Any packet sent now trips the highwater callback. */
+    ssh->msgHighwaterMark = 1;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -1262; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1263;
+        goto done;
+    }
+
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blob,
+                                            (word32)sizeof(blob), &idx);
+    if (ret != WS_EXTDATA) { result = -1264; goto done; }
+
+    s_extSendCount = 0;
+
+    /* The drain sends the adjust; the send itself succeeds and only the
+     * highwater callback afterwards fails. The read still reports its bytes. */
+    ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+    if (ret != 10) { result = -1265; goto done; }
+
+    /* It went out ... */
+    if (s_extSendCount != 1) { result = -1266; goto done; }
+    /* ... so the peer has the credit and it must not be owed a second time. */
+    if (ch->pendingWindowAdjust != 0) { result = -1267; goto done; }
+    if (ch->windowSz != 128) { result = -1268; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* Stdout and stderr draw on one window (RFC 4254 section 5.2), but only stdout
+ * consumes the fixed-size channel input buffer. ChannelPutData()'s overflow
+ * guard depends on windowSz never outrunning the room left in that buffer, an
+ * invariant stderr can now move without touching the buffer at all. Interleave
+ * the two on one channel: every byte charged must come back, from either path,
+ * and a full-window CHANNEL_DATA must still be accepted afterwards. */
+static int test_ChannelWindowSharedStdoutStderr(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    word32           idx;
+    byte             out[128];
+    byte             data[8 + 64];
+    byte             ext[12 + 64];
+    int              i;
+
+    /* CHANNEL_DATA on channel 0: channelId, dataSz, payload. */
+    WMEMSET(data, 0, sizeof(data));
+    data[7] = 0x32;                       /* dataSz = 50 */
+    for (i = 8; i < 8 + 50; i++)
+        data[i] = 0x55;
+
+    /* CHANNEL_EXTENDED_DATA on channel 0: channelId, type, dataSz, payload. */
+    WMEMSET(ext, 0, sizeof(ext));
+    ext[7]  = 0x01;                       /* type = stderr */
+    ext[11] = 0x0A;                       /* dataSz = 10 */
+    for (i = 12; i < 12 + 10; i++)
+        ext[i] = 0x66;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -960;
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -961; goto done; }
+    /* Allow MSGID_CHANNEL_WINDOW_ADJUST on this bare session. */
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    /* windowSz=128, maxPacketSz=64. The input buffer is windowSz bytes. */
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -962; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -963;
+        goto done;
+    }
+
+    /* Stderr charges the window, leaving the input buffer alone: 128 -> 118 */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, ext, 12 + 10, &idx);
+    if (ret != WS_EXTDATA) { result = -964; goto done; }
+    if (ch->windowSz != 118) { result = -965; goto done; }
+
+    /* Two stdout blobs on the same window: 118 -> 68 -> 18, input buffer at
+     * 100 of 128 bytes. The second is accepted only because stderr's 10 bytes
+     * left enough window; ChannelPutData() would reject it otherwise. */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelData(ssh, data, 8 + 50, &idx);
+    if (ret != WS_CHAN_RXD) { result = -966; goto done; }
+    if (ch->windowSz != 68) { result = -967; goto done; }
+
+    idx = 0;
+    ret = wolfSSH_TestDoChannelData(ssh, data, 8 + 50, &idx);
+    if (ret != WS_CHAN_RXD) { result = -968; goto done; }
+    if (ch->windowSz != 18) { result = -969; goto done; }
+    if (ch->inputBuffer.length != 100) { result = -970; goto done; }
+
+    /* Drain stdout. _ChannelRead() advances idx before crediting, so the whole
+     * 100 bytes come back at once: 18 -> 118. Stderr's 10 stay charged. */
+    ret = wolfSSH_ChannelIdRead(ssh, 0, out, (word32)sizeof(out));
+    if (ret != 100) { result = -971; goto done; }
+    for (i = 0; i < 100; i++)
+        if (out[i] != 0x55) { result = -972; goto done; }
+    if (ch->windowSz != 118) { result = -973; goto done; }
+
+    /* Drain stderr: the last 10 come back through the other path, 118 -> 128.
+     * Every byte charged has now been credited exactly once. */
+    ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+    if (ret != 10) { result = -974; goto done; }
+    for (i = 0; i < 10; i++)
+        if (out[i] != 0x66) { result = -975; goto done; }
+    if (ch->windowSz != 128) { result = -976; goto done; }
+
+    /* Stderr alone can now drive the window to 0 while the input buffer sits
+     * empty: two maxPacketSz blobs spend all 128 bytes, and none of it lands
+     * in the input buffer. */
+    ext[11] = 0x40;                       /* dataSz = 64 */
+    for (i = 0; i < 2; i++) {
+        idx = 0;
+        ret = wolfSSH_TestDoChannelExtendedData(ssh, ext, 12 + 64, &idx);
+        if (ret != WS_EXTDATA) { result = -977; goto done; }
+    }
+    if (ch->windowSz != 0) { result = -978; goto done; }
+    if (ch->inputBuffer.length != 0) { result = -979; goto done; }
+
+    /* A stdout read now hits _UpdateChannelWindow()'s windowSz == 0 case with
+     * nothing consumed to credit. It must not put a WINDOW_ADJUST for zero
+     * bytes on the wire, which it would repeat on every read until the app
+     * drains stderr. */
+    s_extSendCount = 0;
+    ret = wolfSSH_ChannelIdRead(ssh, 0, out, (word32)sizeof(out));
+    if (ret != 0) { result = -980; goto done; }
+    if (s_extSendCount != 0) { result = -981; goto done; }
+    if (ch->windowSz != 0) { result = -982; goto done; }
+
+    /* Draining the stderr that spent the window is what reopens it. */
+    ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+    if (ret != 128) { result = -983; goto done; }
+    if (ch->windowSz != 128) { result = -984; goto done; }
+
+    /* The window is whole and the input buffer empty, so a full maxPacketSz
+     * CHANNEL_DATA is accepted: neither read path over- or under-credited, and
+     * windowSz never outran the room left in the input buffer. */
+    data[7] = 0x40;                       /* dataSz = 64 */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelData(ssh, data, 8 + 64, &idx);
+    if (ret != WS_CHAN_RXD) { result = -985; goto done; }
+    if (ch->windowSz != 64) { result = -986; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+
+/* Fails every send, discarding whatever was bundled (WS_CBIO_ERR_GENERAL makes
+ * wolfSSH_SendPacket() shrink the output buffer), so an adjust sent through it
+ * never reaches the peer. */
+static int FailIoSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    (void)ssh; (void)buf; (void)sz; (void)ctx;
+    return WS_CBIO_ERR_GENERAL;
+}
+
+/* The peer's window only grows by the WINDOW_ADJUSTs it receives, so credit
+ * counted locally but never sent stalls the channel for good. Covers the two
+ * ways credit can go missing: an app that under-drains stderr, and an adjust
+ * whose send fails. */
+static int test_ChannelExtDataCredit(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    WOLFSSH_CHANNEL* chB = NULL;
+    int              result = 0;
+    int              ret;
+    int              i;
+    word32           idx;
+    byte             out[32];
+
+    /* channelId=0, type=1 (stderr), dataSz=10, payload all 0x11 */
+    static const byte blob[] = {
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x0A,
+        0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11
+    };
+    /* channelId=1, type=1 (stderr), dataSz=10, payload all 0x22 */
+    static const byte blobB[] = {
+        0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x0A,
+        0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22
+    };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1100;
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1101; goto done; }
+    /* Allow MSGID_CHANNEL_WINDOW_ADJUST on this bare session. */
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -1102; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1103;
+        goto done;
+    }
+
+    /* Under-drain: three 10-byte blobs arrive, the app reads 4 bytes of each
+     * (a caller with a small buffer that does not loop). 30 charged, 12
+     * credited: 18 stay charged and the window erodes every round. */
+    for (i = 0; i < 3; i++) {
+        idx = 0;
+        ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blob,
+                                                (word32)sizeof(blob), &idx);
+        if (ret != WS_EXTDATA) { result = -1104; goto done; }
+
+        ret = wolfSSH_extended_data_read(ssh, out, 4);
+        if (ret != 4) { result = -1105; goto done; }
+    }
+    if (ch->windowSz != 128 - 18) { result = -1106; goto done; }
+
+    /* Window charged always matches the bytes still buffered. */
+    if (ch->extDataBuffer.length - ch->extDataBuffer.idx != 18) {
+        result = -1107; goto done;
+    }
+
+    /* Draining the rest restores the window in full. */
+    ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+    if (ret != 18) { result = -1108; goto done; }
+    if (ch->windowSz != 128) { result = -1109; goto done; }
+    if (ch->pendingWindowAdjust != 0) { result = -1110; goto done; }
+
+    /* Failed send: the credit is parked, not forgotten. The read still reports
+     * the bytes; they are already in the caller's buffer. */
+    wolfSSH_SetIOSend(ctx, FailIoSend);
+
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blob,
+                                            (word32)sizeof(blob), &idx);
+    if (ret != WS_EXTDATA) { result = -1111; goto done; }
+    if (ch->windowSz != 118) { result = -1112; goto done; }
+
+    ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+    if (ret != 10) { result = -1113; goto done; }
+    if (ch->windowSz != 128) { result = -1114; goto done; }
+    if (ch->pendingWindowAdjust != 10) { result = -1115; goto done; }
+
+    /* The next credit folds in the parked 10 bytes: one adjust returns all 20.
+     * Nothing lost to the failure, nothing double counted. */
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+    s_extSendCount = 0;
+
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blob,
+                                            (word32)sizeof(blob), &idx);
+    if (ret != WS_EXTDATA) { result = -1116; goto done; }
+
+    ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+    if (ret != 10) { result = -1117; goto done; }
+    if (s_extSendCount != 1) { result = -1118; goto done; }
+    if (ch->pendingWindowAdjust != 0) { result = -1119; goto done; }
+    if (ch->windowSz != 128) { result = -1120; goto done; }
+
+    /* One flush clears every channel, not just the head of the list. */
+    chB = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (chB == NULL) { result = -1121; goto done; }
+    if (ChannelAppend(ssh, chB) != WS_SUCCESS) {
+        ChannelDelete(chB, ssh->ctx->heap);
+        result = -1122;
+        goto done;
+    }
+
+    ssh->isKeying = WOLFSSH_SELF_IS_KEYING;
+    s_extSendCount = 0;
+
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blob,
+                                            (word32)sizeof(blob), &idx);
+    if (ret != WS_EXTDATA) { result = -1123; goto done; }
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blobB,
+                                            (word32)sizeof(blobB), &idx);
+    if (ret != WS_EXTDATA) { result = -1124; goto done; }
+
+    ret = wolfSSH_ChannelReadExt(ch, out, (word32)sizeof(out));
+    if (ret != 10) { result = -1125; goto done; }
+    ret = wolfSSH_ChannelReadExt(chB, out, (word32)sizeof(out));
+    if (ret != 10) { result = -1126; goto done; }
+    if (s_extSendCount != 0) { result = -1127; goto done; }
+    if (ch->pendingWindowAdjust != 10) { result = -1128; goto done; }
+    if (chB->pendingWindowAdjust != 10) { result = -1129; goto done; }
+
+    ssh->isKeying = 0;
+    ret = wolfSSH_TestSendPendingChannelWindowAdjust(ssh);
+    if (ret != WS_SUCCESS) { result = -1130; goto done; }
+    if (s_extSendCount != 2) { result = -1131; goto done; }
+    if (ch->pendingWindowAdjust != 0) { result = -1132; goto done; }
+    if (chB->pendingWindowAdjust != 0) { result = -1133; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* Reports a short (would-block) write, so an adjust bundled into the output
+ * buffer reaches the transport but does not fully flush: wolfSSH_SendPacket()
+ * maps WS_CBIO_ERR_WANT_WRITE to WS_WANT_WRITE. */
+static int WantWriteIoSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    (void)ssh; (void)buf; (void)sz; (void)ctx;
+    return WS_CBIO_ERR_WANT_WRITE;
+}
+
+/* A drain whose window-adjust send only partially completes (WS_WANT_WRITE)
+ * must still report the bytes copied -- they are already in the caller's buffer
+ * -- and leave wolfSSH_get_error() at WS_WANT_WRITE so the caller knows a flush
+ * is owed. The adjust was bundled into the output buffer before the short
+ * write, so the credit is NOT re-parked: re-sending it on the next drain would
+ * hand the peer the same window twice. */
+static int test_ChannelExtDataCreditWantWrite(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    int              i;
+    word32           idx;
+    byte             out[32];
+
+    /* channelId=0, type=1 (stderr), dataSz=10, payload all 0x11 */
+    static const byte blob[] = {
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x0A,
+        0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11
+    };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1300;
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1301; goto done; }
+    /* Allow MSGID_CHANNEL_WINDOW_ADJUST on this bare session. */
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -1302; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1303;
+        goto done;
+    }
+
+    /* Buffer a stderr blob: window charged 128 -> 118. */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blob,
+                                            (word32)sizeof(blob), &idx);
+    if (ret != WS_EXTDATA) { result = -1304; goto done; }
+    if (ch->windowSz != 118) { result = -1305; goto done; }
+
+    /* The next send blocks after the adjust is bundled. */
+    wolfSSH_SetIOSend(ctx, WantWriteIoSend);
+
+    ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+    /* The bytes are reported despite the short write. */
+    if (ret != 10) { result = -1306; goto done; }
+    for (i = 0; i < 10; i++)
+        if (out[i] != 0x11) { result = -1307; goto done; }
+
+    /* The window is credited locally regardless of the send result. */
+    if (ch->windowSz != 128) { result = -1308; goto done; }
+    /* The caller can tell a flush is owed. */
+    if (wolfSSH_get_error(ssh) != WS_WANT_WRITE) { result = -1309; goto done; }
+    /* Bundled, not re-parked: the credit sits in the output buffer. */
+    if (ch->pendingWindowAdjust != 0) { result = -1310; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* ChannelCreditWindow() guards its two defensive early exits: a NULL ssh or
+ * channel returns WS_BAD_ARGUMENT, and folding a credit that would push
+ * pendingWindowAdjust past UINT32_MAX returns WS_OVERFLOW_E and leaves the
+ * parked credit untouched. The overflow bound is exclusive: a credit landing
+ * exactly on UINT32_MAX is accepted. */
+static int test_ChannelCreditWindowGuards(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1320;
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1321; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -1322; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1323;
+        goto done;
+    }
+
+    /* NULL arguments are rejected before anything is touched. */
+    if (ChannelCreditWindow(NULL, ch, 0) != WS_BAD_ARGUMENT) {
+        result = -1324; goto done;
+    }
+    if (ChannelCreditWindow(ssh, NULL, 0) != WS_BAD_ARGUMENT) {
+        result = -1325; goto done;
+    }
+
+    /* A credit that would overflow the parked total is refused, and the parked
+     * credit is left exactly as it was. */
+    ch->pendingWindowAdjust = UINT32_MAX - 5;
+    ret = ChannelCreditWindow(ssh, ch, 10);
+    if (ret != WS_OVERFLOW_E) { result = -1326; goto done; }
+    if (ch->pendingWindowAdjust != UINT32_MAX - 5) {
+        result = -1327; goto done;
+    }
+
+    /* Exactly UINT32_MAX does not overflow. Park it (keying) rather than send a
+     * 4GB adjust; the fold must reach the bound. */
+    ssh->isKeying = WOLFSSH_SELF_IS_KEYING;
+    ret = ChannelCreditWindow(ssh, ch, 5);
+    if (ret != WS_SUCCESS) { result = -1328; goto done; }
+    if (ch->pendingWindowAdjust != UINT32_MAX) { result = -1329; goto done; }
+
+    /* Leave nothing parked for teardown to trip over. */
+    ssh->isKeying = 0;
+    ch->pendingWindowAdjust = 0;
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* The read-side extended-data entry points reject bad arguments the same way
+ * their send-side counterparts do (see test_ChannelSendExt). Each guard has an
+ * early WS_BAD_ARGUMENT return -- NULL handle, NULL buffer, or zero length --
+ * and wolfSSH_extended_data_read() additionally rejects a session with no
+ * channels. An unknown channel id is WS_INVALID_CHANID, not a silent read off
+ * the list head. */
+static int test_ChannelReadExtBadArgs(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    byte             out[32];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1340;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1341; goto done; }
+
+    /* No channel yet: wolfSSH_extended_data_read() rejects a NULL channelList,
+     * a NULL ssh, and a NULL output before any channel exists. */
+    if (wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out))
+            != WS_BAD_ARGUMENT) {
+        result = -1342; goto done;
+    }
+    if (wolfSSH_extended_data_read(NULL, out, (word32)sizeof(out))
+            != WS_BAD_ARGUMENT) {
+        result = -1343; goto done;
+    }
+    if (wolfSSH_extended_data_read(ssh, NULL, (word32)sizeof(out))
+            != WS_BAD_ARGUMENT) {
+        result = -1344; goto done;
+    }
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -1345; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1346;
+        goto done;
+    }
+
+    /* With a channel present, a zero-length read is still rejected. */
+    if (wolfSSH_extended_data_read(ssh, out, 0) != WS_BAD_ARGUMENT) {
+        result = -1347; goto done;
+    }
+
+    /* wolfSSH_ChannelReadExt(): NULL channel, NULL buffer, zero length. */
+    if (wolfSSH_ChannelReadExt(NULL, out, (word32)sizeof(out))
+            != WS_BAD_ARGUMENT) {
+        result = -1348; goto done;
+    }
+    if (wolfSSH_ChannelReadExt(ch, NULL, (word32)sizeof(out))
+            != WS_BAD_ARGUMENT) {
+        result = -1349; goto done;
+    }
+    if (wolfSSH_ChannelReadExt(ch, out, 0) != WS_BAD_ARGUMENT) {
+        result = -1350; goto done;
+    }
+
+    /* wolfSSH_ChannelIdReadExt(): NULL ssh, NULL buffer, zero length, and an
+     * unknown channel id (distinct from the bad-argument cases). */
+    if (wolfSSH_ChannelIdReadExt(NULL, 0, out, (word32)sizeof(out))
+            != WS_BAD_ARGUMENT) {
+        result = -1351; goto done;
+    }
+    if (wolfSSH_ChannelIdReadExt(ssh, 0, NULL, (word32)sizeof(out))
+            != WS_BAD_ARGUMENT) {
+        result = -1352; goto done;
+    }
+    if (wolfSSH_ChannelIdReadExt(ssh, 0, out, 0) != WS_BAD_ARGUMENT) {
+        result = -1353; goto done;
+    }
+    if (wolfSSH_ChannelIdReadExt(ssh, 99, out, (word32)sizeof(out))
+            != WS_INVALID_CHANID) {
+        result = -1354; goto done;
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* A crafted transport packet staged for the receive path, and the running
+ * offset PacketIoRecv has delivered. */
+static const byte* s_recvPkt    = NULL;
+static word32      s_recvPktSz  = 0;
+static word32      s_recvPktOff = 0;
+
+/* IORecv mock that hands out the staged packet, then reports WS_WANT_READ once
+ * it is drained so a further DoReceive() does not block on a live socket. */
+static int PacketIoRecv(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    word32 avail, n;
+
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(ctx);
+
+    avail = s_recvPktSz - s_recvPktOff;
+    if (avail == 0)
+        return WS_CBIO_ERR_WANT_READ;
+
+    n = (sz < avail) ? sz : avail;
+    WMEMCPY(buf, s_recvPkt + s_recvPktOff, n);
+    s_recvPktOff += n;
+    return (int)n;
+}
+
+/* Builds a plaintext CHANNEL_EXTENDED_DATA (stderr) SSH packet addressed to
+ * channelId, carrying 10 bytes of payload set to fill, into pkt (needs 32
+ * bytes) and returns its size. A bare session negotiates no cipher
+ * (peerEncryptId ID_NONE, so Decrypt() is a passthrough) and no MAC
+ * (peerMacSz 0), so the packet goes on the wire in the clear. The total size is
+ * a multiple of the 8-byte MIN_BLOCK_SZ and the padding meets MIN_PAD_LENGTH.
+ *
+ * Layout: [len=28][pad=4][msgid=95][chan][type=1][dataSz=10][data*10][pad*4]. */
+static word32 BuildExtDataStderrPacket(byte* pkt, word32 channelId, byte fill)
+{
+    word32 i = 0;
+
+    /* packet_length = padLen(1) + msgid(1) + chan(4) + type(4) + dataSz(4)
+     *               + data(10) + padding(4) = 28. */
+    pkt[i++] = 0x00; pkt[i++] = 0x00; pkt[i++] = 0x00; pkt[i++] = 0x1C;
+    pkt[i++] = 0x04;                          /* padding length */
+    pkt[i++] = MSGID_CHANNEL_EXTENDED_DATA;
+
+    pkt[i++] = (byte)((channelId >> 24) & 0xFF);
+    pkt[i++] = (byte)((channelId >> 16) & 0xFF);
+    pkt[i++] = (byte)((channelId >>  8) & 0xFF);
+    pkt[i++] = (byte)( channelId        & 0xFF);
+
+    pkt[i++] = 0x00; pkt[i++] = 0x00; pkt[i++] = 0x00;
+    pkt[i++] = (byte)CHANNEL_EXTENDED_DATA_STDERR;   /* data type = stderr (1) */
+
+    pkt[i++] = 0x00; pkt[i++] = 0x00; pkt[i++] = 0x00; pkt[i++] = 0x0A; /* 10 */
+
+    WMEMSET(pkt + i, fill, 10); i += 10;
+    WMEMSET(pkt + i, 0x00, 4);  i += 4;       /* padding bytes */
+
+    return i;                                 /* 32 */
+}
+
+/* Integration (M-3): a peer sending stderr on a channel that is not the head of
+ * the channel list must not surface as stream data. wolfSSH_stream_read() reads
+ * the head channel only; when DoReceive() returns WS_EXTDATA for another
+ * channel it returns WS_ERROR rather than stranding the buffered data (whose
+ * window is already charged). Drives the real receive path -- DoReceive() ->
+ * DoPacket() -> DoChannelExtendedData() -- via a crafted plaintext packet, then
+ * confirms the data is still recoverable on the channel it arrived on through
+ * wolfSSH_ChannelIdReadExt(). */
+static int test_StreamReadExtDataOtherChannel(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch0 = NULL;
+    WOLFSSH_CHANNEL* ch1 = NULL;
+    int              result = 0;
+    int              ret;
+    int              i;
+    byte             pkt[32];
+    byte             out[32];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1360;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1361; goto done; }
+    /* Allow the received CHANNEL_EXTENDED_DATA and the drain's window adjust. */
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch0 = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch0 == NULL) { result = -1362; goto done; }
+    if (ChannelAppend(ssh, ch0) != WS_SUCCESS) {
+        ChannelDelete(ch0, ssh->ctx->heap);
+        result = -1363;
+        goto done;
+    }
+
+    ch1 = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch1 == NULL) { result = -1364; goto done; }
+    if (ChannelAppend(ssh, ch1) != WS_SUCCESS) {
+        ChannelDelete(ch1, ssh->ctx->heap);
+        result = -1365;
+        goto done;
+    }
+
+    /* The first channel appended is the head that stream_read() drains. */
+    if (ssh->channelList != ch0) { result = -1366; goto done; }
+
+    /* Stage stderr for the non-head channel. */
+    s_recvPkt = pkt;
+    s_recvPktSz = BuildExtDataStderrPacket(pkt, ch1->channel, 0x11);
+    s_recvPktOff = 0;
+
+    /* Reading the head channel receives the packet, sees it is for another
+     * channel, and reports WS_ERROR instead of the extended data. */
+    ret = wolfSSH_stream_read(ssh, out, (word32)sizeof(out));
+    if (ret != WS_ERROR) { result = -1367; goto done; }
+
+    /* The bytes were buffered on ch1 and its window charged, not lost. */
+    if (ch1->windowSz != 1024 - 10) { result = -1368; goto done; }
+    if (ch0->windowSz != 1024) { result = -1369; goto done; }
+
+    /* A multi-channel app recovers them with the id-addressed reader. */
+    ret = wolfSSH_ChannelIdReadExt(ssh, ch1->channel, out,
+                                   (word32)sizeof(out));
+    if (ret != 10) { result = -1370; goto done; }
+    for (i = 0; i < 10; i++)
+        if (out[i] != 0x11) { result = -1371; goto done; }
+    if (ch1->windowSz != 1024) { result = -1372; goto done; }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* Integration (L-5): wolfSSH_worker() reports the channel that extended data
+ * arrived on so a multi-channel caller can route the drain to
+ * wolfSSH_ChannelIdReadExt(). Drives a crafted stderr packet through the real
+ * receive path and confirms worker() returns WS_EXTDATA and writes the
+ * receiving channel's id into *channelId, and that the data then drains. */
+static int test_WorkerReportsExtDataChannel(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    int              i;
+    word32           reportedId = 0xFFFFFFFF;
+    byte             pkt[32];
+    byte             out[32];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1380;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1381; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch == NULL) { result = -1382; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1383;
+        goto done;
+    }
+
+    s_recvPkt = pkt;
+    s_recvPktSz = BuildExtDataStderrPacket(pkt, ch->channel, 0x22);
+    s_recvPktOff = 0;
+
+    ret = wolfSSH_worker(ssh, &reportedId);
+    if (ret != WS_EXTDATA) { result = -1384; goto done; }
+    if (reportedId != ch->channel) { result = -1385; goto done; }
+    if (ch->windowSz != 1024 - 10) { result = -1386; goto done; }
+
+    /* The reported channel is the one to drain. */
+    ret = wolfSSH_ChannelIdReadExt(ssh, reportedId, out, (word32)sizeof(out));
+    if (ret != 10) { result = -1387; goto done; }
+    for (i = 0; i < 10; i++)
+        if (out[i] != 0x22) { result = -1388; goto done; }
+    if (ch->windowSz != 1024) { result = -1389; goto done; }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* Regression: extended data arriving while a rekey is in flight must still be
+ * reported. WS_EXTDATA is raised once, on arrival, so folding it into
+ * WS_REKEYING at the isKeying check in wolfSSH_worker() strands the buffered
+ * stderr and the window credit already charged for it -- nothing re-raises it.
+ * RFC 4253 section 7.1 requires accepting data the peer sent before it saw our
+ * KEXINIT, so this is a normal sequence, not a corner case. */
+static int test_WorkerReportsExtDataChannelKeying(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    int              i;
+    word32           reportedId = 0xFFFFFFFF;
+    byte             pkt[32];
+    byte             out[32];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1390;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1391; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch == NULL) { result = -1392; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1393;
+        goto done;
+    }
+
+    s_recvPkt = pkt;
+    s_recvPktSz = BuildExtDataStderrPacket(pkt, ch->channel, 0x33);
+    s_recvPktOff = 0;
+
+    /* A rekey is underway when the stderr packet lands. */
+    ssh->isKeying = WOLFSSH_SELF_IS_KEYING;
+
+    ret = wolfSSH_worker(ssh, &reportedId);
+    if (ret != WS_EXTDATA) { result = -1394; goto done; }
+    if (reportedId != ch->channel) { result = -1395; goto done; }
+    if (ch->windowSz != 1024 - 10) { result = -1396; goto done; }
+
+    /* The drain works mid-rekey; the credit parks rather than going out, since
+     * no WINDOW_ADJUST may be sent during KEX. */
+    ret = wolfSSH_ChannelIdReadExt(ssh, reportedId, out, (word32)sizeof(out));
+    if (ret != 10) { result = -1397; goto done; }
+    for (i = 0; i < 10; i++)
+        if (out[i] != 0x33) { result = -1398; goto done; }
+    if (ch->windowSz != 1024) { result = -1399; goto done; }
+    if (ch->pendingWindowAdjust != 10) { result = -1400; goto done; }
+
+    /* Once keying completes the parked credit flushes. */
+    ssh->isKeying = 0;
+    ret = wolfSSH_TestSendPendingChannelWindowAdjust(ssh);
+    if (ret != WS_SUCCESS) { result = -1401; goto done; }
+    if (ch->pendingWindowAdjust != 0) { result = -1402; goto done; }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* The documented primary flow: wolfSSH_stream_read() reports WS_EXTDATA when
+ * stderr arrives on the head channel, and the caller drains it with
+ * wolfSSH_extended_data_read() until that returns 0 (wolfssh/ssh.h). */
+static int test_StreamReadExtDataHeadChannel(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    int              i;
+    byte             pkt[32];
+    byte             out[32];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1410;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1411; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch == NULL) { result = -1412; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1413;
+        goto done;
+    }
+
+    s_recvPkt = pkt;
+    s_recvPktSz = BuildExtDataStderrPacket(pkt, ch->channel, 0x44);
+    s_recvPktOff = 0;
+
+    /* Stderr on the head channel surfaces as WS_EXTDATA, not stream data. */
+    ret = wolfSSH_stream_read(ssh, out, (word32)sizeof(out));
+    if (ret != WS_EXTDATA) { result = -1414; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_EXTDATA) { result = -1415; goto done; }
+    if (ch->windowSz != 1024 - 10) { result = -1416; goto done; }
+
+    ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+    if (ret != 10) { result = -1417; goto done; }
+    for (i = 0; i < 10; i++)
+        if (out[i] != 0x44) { result = -1418; goto done; }
+    if (ch->windowSz != 1024) { result = -1419; goto done; }
+
+    /* Drained: the documented loop terminates. */
+    ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+    if (ret != 0) { result = -1420; goto done; }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* SendPendingChannelWindowAdjust() must report transport backpressure rather
+ * than swallowing it, so the keying path can tell a flush is still owed. The
+ * empty-channel-list case is what keeps the initial handshake unaffected: with
+ * no channels there is nothing to flush, so it cannot perturb accept/connect. */
+static int test_SendPendingWindowAdjustReportsWantWrite(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1430;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1431; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    /* No channels yet, as during the initial KEX: nothing to flush. */
+    ret = wolfSSH_TestSendPendingChannelWindowAdjust(ssh);
+    if (ret != WS_SUCCESS) { result = -1432; goto done; }
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch == NULL) { result = -1433; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1434;
+        goto done;
+    }
+
+    /* Park credit as a mid-rekey drain would. */
+    ch->pendingWindowAdjust = 10;
+
+    /* The flush blocks: the status must reach the caller, not be discarded. */
+    wolfSSH_SetIOSend(ctx, WantWriteIoSend);
+    ssh->error = WS_SUCCESS;
+
+    ret = wolfSSH_TestSendPendingChannelWindowAdjust(ssh);
+    if (ret != WS_WANT_WRITE) { result = -1435; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_WANT_WRITE) { result = -1436; goto done; }
+    /* Bundled before the short write, so not re-parked. */
+    if (ch->pendingWindowAdjust != 0) { result = -1437; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* A drain whose window adjust hits a dead socket must surface the transport
+ * failure. wolfSSH_SendPacket() sets ssh->error only for WS_WANT_WRITE, so
+ * leaving it untouched on a hard failure preserves whatever was there before --
+ * in the documented flow, the WS_EXTDATA that prompted the drain -- and
+ * wolfSSH_get_error() reports a healthy session on a broken connection. Drives
+ * the real receive path so ssh->error genuinely holds WS_EXTDATA first. */
+static int test_ChannelReadExtHardFailureReported(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    byte             pkt[32];
+    byte             out[32];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1440;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1441; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch == NULL) { result = -1442; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1443;
+        goto done;
+    }
+
+    s_recvPkt = pkt;
+    s_recvPktSz = BuildExtDataStderrPacket(pkt, ch->channel, 0x55);
+    s_recvPktOff = 0;
+
+    ret = wolfSSH_stream_read(ssh, out, (word32)sizeof(out));
+    if (ret != WS_EXTDATA) { result = -1444; goto done; }
+    /* The stale value the drain must not leave in place. */
+    if (wolfSSH_get_error(ssh) != WS_EXTDATA) { result = -1445; goto done; }
+
+    /* The peer drops the connection before the adjust goes out. */
+    wolfSSH_SetIOSend(ctx, FailIoSend);
+
+    ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+    /* The bytes are in the caller's buffer, so they are still reported. */
+    if (ret != 10) { result = -1446; goto done; }
+    /* ...but the broken transport is visible, not the stale WS_EXTDATA. */
+    if (wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E) { result = -1447; goto done; }
+    /* The send discarded what it bundled, so the credit stays owed. */
+    if (ch->pendingWindowAdjust != 10) { result = -1448; goto done; }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* Draining in a loop, as wolfssh/ssh.h mandates, must not resurrect a spent
+ * WS_WANT_WRITE. wolfSSH_SendPacket() does not clear ssh->error once it drains
+ * the output buffer, so restoring the saved value unconditionally leaves the
+ * caller polling for writability with nothing left to write. */
+static int test_ChannelReadExtClearsStaleWantWrite(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    word32           idx;
+    byte             out[10];
+
+    /* channelId=0, type=1 (stderr), dataSz=10 */
+    static const byte blobA[] = {
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x0A,
+        0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11
+    };
+    static const byte blobB[] = {
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x0A,
+        0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22
+    };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1450;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1451; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch == NULL) { result = -1452; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1453;
+        goto done;
+    }
+
+    /* Two chunks, so the documented drain loop makes two passes. */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blobA,
+                                            (word32)sizeof(blobA), &idx);
+    if (ret != WS_EXTDATA) { result = -1454; goto done; }
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blobB,
+                                            (word32)sizeof(blobB), &idx);
+    if (ret != WS_EXTDATA) { result = -1455; goto done; }
+
+    /* Pass 1 blocks: a flush is genuinely owed. */
+    wolfSSH_SetIOSend(ctx, WantWriteIoSend);
+    ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+    if (ret != 10) { result = -1456; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_WANT_WRITE) { result = -1457; goto done; }
+
+    /* Pass 2 succeeds and drains the output buffer completely. */
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+    ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+    if (ret != 10) { result = -1458; goto done; }
+    if (ssh->outputBuffer.length != 0) { result = -1459; goto done; }
+    /* Nothing is queued, so no flush may be reported as owed. */
+    if (wolfSSH_get_error(ssh) == WS_WANT_WRITE) { result = -1460; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_SUCCESS) { result = -1461; goto done; }
 
 done:
     wolfSSH_free(ssh);
@@ -3607,6 +5306,115 @@ static int CaptureIoSendChanReq(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
                          ? sz : (word32)sizeof(s_chanReqCapture);
     WMEMCPY(s_chanReqCapture, buf, s_chanReqCaptureSz);
     return (int)sz;
+}
+
+/* The Ext send functions put a CHANNEL_EXTENDED_DATA message on the wire where
+ * their non-Ext counterparts put CHANNEL_DATA, address the channel they are
+ * given rather than the head of the channel list, and share the non-Ext
+ * argument and open-confirmed checks. */
+static int test_ChannelSendExt(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    WOLFSSH_CHANNEL* chB = NULL;
+    int              result = 0;
+    int              ret;
+    byte             payload[4] = { 0x11, 0x22, 0x33, 0x44 };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -730;
+    wolfSSH_SetIOSend(ctx, CaptureIoSendChanReq);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -731; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -732; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -733;
+        goto done;
+    }
+
+    chB = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (chB == NULL) { result = -734; goto done; }
+    if (ChannelAppend(ssh, chB) != WS_SUCCESS) {
+        ChannelDelete(chB, ssh->ctx->heap);
+        result = -735;
+        goto done;
+    }
+
+    /* Bad arguments, matching wolfSSH_ChannelSend/wolfSSH_ChannelIdSend. */
+    ret = wolfSSH_ChannelSendExt(NULL, payload, (word32)sizeof(payload));
+    if (ret != WS_BAD_ARGUMENT) { result = -736; goto done; }
+    ret = wolfSSH_ChannelSendExt(ch, NULL, (word32)sizeof(payload));
+    if (ret != WS_BAD_ARGUMENT) { result = -737; goto done; }
+    ret = wolfSSH_ChannelIdSendExt(NULL, 0, payload, (word32)sizeof(payload));
+    if (ret != WS_BAD_ARGUMENT) { result = -738; goto done; }
+    ret = wolfSSH_ChannelIdSendExt(ssh, 99, payload, (word32)sizeof(payload));
+    if (ret != WS_INVALID_CHANID) { result = -739; goto done; }
+
+    /* Both refuse to send before the channel is confirmed open. */
+    ret = wolfSSH_ChannelSendExt(ch, payload, (word32)sizeof(payload));
+    if (ret != WS_CHANNEL_NOT_CONF) { result = -740; goto done; }
+    ret = wolfSSH_ChannelIdSendExt(ssh, 0, payload, (word32)sizeof(payload));
+    if (ret != WS_CHANNEL_NOT_CONF) { result = -741; goto done; }
+
+    ch->openConfirmed = 1;
+    chB->openConfirmed = 1;
+
+    /* CHANNEL_OPEN_CONFIRMATION normally supplies these; without a peer window
+     * a send is refused with WS_WINDOW_FULL. */
+    ch->peerWindowSz = 128;
+    ch->peerMaxPacketSz = 64;
+    chB->peerWindowSz = 128;
+    chB->peerMaxPacketSz = 64;
+
+    /* Ext send emits CHANNEL_EXTENDED_DATA... */
+    s_chanReqCaptureSz = 0;
+    ret = wolfSSH_ChannelSendExt(ch, payload, (word32)sizeof(payload));
+    if (ret != (int)sizeof(payload)) { result = -742; goto done; }
+    if (CaptureMsgId(s_chanReqCapture, s_chanReqCaptureSz)
+            != MSGID_CHANNEL_EXTENDED_DATA) {
+        result = -743; goto done;
+    }
+
+    /* ...where the non-Ext send emits CHANNEL_DATA. */
+    s_chanReqCaptureSz = 0;
+    ret = wolfSSH_ChannelSend(ch, payload, (word32)sizeof(payload));
+    if (ret != (int)sizeof(payload)) { result = -744; goto done; }
+    if (CaptureMsgId(s_chanReqCapture, s_chanReqCaptureSz)
+            != MSGID_CHANNEL_DATA) {
+        result = -745; goto done;
+    }
+
+    /* The Id variant addresses the named channel, not the list head: sending on
+     * channel 1 draws down channel 1's peer window, leaving channel 0's alone. */
+    {
+        word32 peerWindowB = chB->peerWindowSz;
+        word32 peerWindowA = ch->peerWindowSz;
+
+        s_chanReqCaptureSz = 0;
+        ret = wolfSSH_ChannelIdSendExt(ssh, 1, payload,
+                                       (word32)sizeof(payload));
+        if (ret != (int)sizeof(payload)) { result = -746; goto done; }
+        if (CaptureMsgId(s_chanReqCapture, s_chanReqCaptureSz)
+                != MSGID_CHANNEL_EXTENDED_DATA) {
+            result = -747; goto done;
+        }
+        if (chB->peerWindowSz != peerWindowB - sizeof(payload)) {
+            result = -748; goto done;
+        }
+        if (ch->peerWindowSz != peerWindowA) { result = -749; goto done; }
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
 }
 
 static int test_DoChannelRequest(void)
@@ -9659,8 +11467,97 @@ int wolfSSH_UnitTest(int argc, char** argv)
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
+    unitResult = test_DoChannelExtendedData_flow();
+    printf("DoChannelExtendedData_flow: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
     unitResult = test_DoChannelExtendedData_unknown_type();
     printf("DoChannelExtendedData_unknown_type: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DoChannelExtendedData_keying();
+    printf("DoChannelExtendedData_keying: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DoChannelExtendedData_newkeys();
+    printf("DoChannelExtendedData_newkeys: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ChannelExtDataBufferGrowth();
+    printf("ChannelExtDataBufferGrowth: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ChannelExtDataCredit();
+    printf("ChannelExtDataCredit: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ChannelExtDataCreditHighwater();
+    printf("ChannelExtDataCreditHighwater: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ChannelWindowSharedStdoutStderr();
+    printf("ChannelWindowSharedStdoutStderr: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ChannelSendExt();
+    printf("ChannelSendExt: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ChannelExtDataCreditWantWrite();
+    printf("ChannelExtDataCreditWantWrite: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ChannelCreditWindowGuards();
+    printf("ChannelCreditWindowGuards: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ChannelReadExtBadArgs();
+    printf("ChannelReadExtBadArgs: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_StreamReadExtDataOtherChannel();
+    printf("StreamReadExtDataOtherChannel: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_WorkerReportsExtDataChannel();
+    printf("WorkerReportsExtDataChannel: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_WorkerReportsExtDataChannelKeying();
+    printf("WorkerReportsExtDataChannelKeying: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_StreamReadExtDataHeadChannel();
+    printf("StreamReadExtDataHeadChannel: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_SendPendingWindowAdjustReportsWantWrite();
+    printf("SendPendingWindowAdjustReportsWantWrite: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ChannelReadExtHardFailureReported();
+    printf("ChannelReadExtHardFailureReported: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ChannelReadExtClearsStaleWantWrite();
+    printf("ChannelReadExtClearsStaleWantWrite: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
