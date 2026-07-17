@@ -3697,11 +3697,12 @@ static void test_wolfSSH_SetMaxAuthAttempts(void)
 
 static void test_wolfSSH_SetAlgoList(void)
 {
-    const char* newKexList = "diffie-hellman-group1-sha1,ecdh-sha2-nistp521";
-    const char* newKeyList = "rsa-sha2-512,ecdsa-sha2-nistp521";
-    const char* newCipherList = "aes128-ctr,aes128-cbc";
-    const char* newMacList = "hmac-sha1";
-    const char* newKeyAccList = "ssh-rsa";
+    const char* newKexList;
+    const char* newKeyList;
+    const char* newCipherList;
+    const char* newMacList;
+    const char* newKeyAccList;
+    word32 queryIdx;
     const char* defaultKexList = NULL;
     const char* defaultKeyList = NULL;
     const char* defaultCipherList = NULL;
@@ -3717,6 +3718,19 @@ static void test_wolfSSH_SetAlgoList(void)
     WOLFSSH* ssh;
     byte* key;
     word32 keySz;
+
+    /* Use algorithms compiled into this build so reduced-crypto configs don't
+     * break the test; Query* returns a stable name pointer. KeyAccepted is a
+     * TYPE_KEY list. */
+    queryIdx = 0; newKexList = wolfSSH_QueryKex(&queryIdx);
+    queryIdx = 0; newKeyList = wolfSSH_QueryKey(&queryIdx);
+    queryIdx = 0; newCipherList = wolfSSH_QueryCipher(&queryIdx);
+    queryIdx = 0; newMacList = wolfSSH_QueryMac(&queryIdx);
+    newKeyAccList = newKeyList;
+    AssertNotNull(newKexList);
+    AssertNotNull(newKeyList);
+    AssertNotNull(newCipherList);
+    AssertNotNull(newMacList);
 
     /* Create a ctx object. */
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
@@ -3759,23 +3773,23 @@ static void test_wolfSSH_SetAlgoList(void)
     AssertPtrEq(checkKeyAccList, defaultKeyAccList);
 
     /* Set the ssh's algo lists, check they match new value. */
-    wolfSSH_SetAlgoListKex(ssh, newKexList);
+    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, newKexList), WS_SUCCESS);
     checkKexList = wolfSSH_GetAlgoListKex(ssh);
     AssertPtrEq(checkKexList, newKexList);
 
-    wolfSSH_SetAlgoListKey(ssh, newKeyList);
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, newKeyList), WS_SUCCESS);
     checkKeyList = wolfSSH_GetAlgoListKey(ssh);
     AssertPtrEq(checkKeyList, newKeyList);
 
-    wolfSSH_SetAlgoListCipher(ssh, newCipherList);
+    AssertIntEQ(wolfSSH_SetAlgoListCipher(ssh, newCipherList), WS_SUCCESS);
     checkCipherList = wolfSSH_GetAlgoListCipher(ssh);
     AssertPtrEq(checkCipherList, newCipherList);
 
-    wolfSSH_SetAlgoListMac(ssh, newMacList);
+    AssertIntEQ(wolfSSH_SetAlgoListMac(ssh, newMacList), WS_SUCCESS);
     checkMacList = wolfSSH_GetAlgoListMac(ssh);
     AssertPtrEq(checkMacList, newMacList);
 
-    wolfSSH_SetAlgoListKeyAccepted(ssh, newKeyAccList);
+    AssertIntEQ(wolfSSH_SetAlgoListKeyAccepted(ssh, newKeyAccList), WS_SUCCESS);
     checkKeyAccList = wolfSSH_GetAlgoListKeyAccepted(ssh);
     AssertPtrEq(checkKeyAccList, newKeyAccList);
 
@@ -3783,23 +3797,24 @@ static void test_wolfSSH_SetAlgoList(void)
     wolfSSH_free(ssh);
 
     /* Set new algo lists on the ctx. */
-    wolfSSH_CTX_SetAlgoListKex(ctx, newKexList);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListKex(ctx, newKexList), WS_SUCCESS);
     defaultKexList = wolfSSH_CTX_GetAlgoListKex(ctx);
     AssertPtrEq(defaultKexList, newKexList);
 
-    wolfSSH_CTX_SetAlgoListKey(ctx, newKeyList);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListKey(ctx, newKeyList), WS_SUCCESS);
     defaultKeyList = wolfSSH_CTX_GetAlgoListKey(ctx);
-    AssertPtrEq(checkKeyList, newKeyList);
+    AssertPtrEq(defaultKeyList, newKeyList);
 
-    wolfSSH_CTX_SetAlgoListCipher(ctx, newCipherList);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, newCipherList), WS_SUCCESS);
     defaultCipherList = wolfSSH_CTX_GetAlgoListCipher(ctx);
     AssertNotNull(defaultCipherList);
 
-    wolfSSH_CTX_SetAlgoListMac(ctx, newMacList);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListMac(ctx, newMacList), WS_SUCCESS);
     defaultMacList = wolfSSH_CTX_GetAlgoListMac(ctx);
     AssertNotNull(defaultMacList);
 
-    wolfSSH_CTX_SetAlgoListKeyAccepted(ctx, newKeyAccList);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListKeyAccepted(ctx, newKeyAccList),
+            WS_SUCCESS);
     defaultKeyAccList = wolfSSH_CTX_GetAlgoListKeyAccepted(ctx);
     AssertNotNull(defaultKeyAccList);
 
@@ -3875,14 +3890,150 @@ static void test_wolfSSH_SetAlgoList(void)
     AssertNull(checkKeyList);
 
     /* Set a new list on ssh. */
-    wolfSSH_SetAlgoListKey(ssh, newKeyList);
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, newKeyList), WS_SUCCESS);
     checkKeyList = wolfSSH_GetAlgoListKey(ssh);
     AssertPtrEq(checkKeyList, newKeyList);
+
+    /* NULL restores the server auto-derive default for the key lists. */
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, NULL), WS_SUCCESS);
+    AssertNull(wolfSSH_GetAlgoListKey(ssh));
+    AssertIntEQ(wolfSSH_SetAlgoListKeyAccepted(ssh, NULL), WS_SUCCESS);
+    AssertNull(wolfSSH_GetAlgoListKeyAccepted(ssh));
 
     /* Cleanup */
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
     FreeBins(key, NULL, NULL, NULL);
+}
+
+
+/* Exercise CheckAlgoList()'s rejection paths through the public setters. */
+static void test_wolfSSH_CheckAlgoList(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    const char* validCipher;
+    const char* secondCipher;
+    const char* aKexName;
+    char listBuf[128];
+    word32 queryIdx;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+
+    queryIdx = 0;
+    validCipher = wolfSSH_QueryCipher(&queryIdx);
+    secondCipher = wolfSSH_QueryCipher(&queryIdx);
+    queryIdx = 0; aKexName = wolfSSH_QueryKex(&queryIdx);
+    AssertNotNull(validCipher);
+    AssertNotNull(aKexName);
+
+    /* Every built-in default must pass its own setter, in any build config. */
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListKex(ctx,
+            wolfSSH_CTX_GetAlgoListKex(ctx)), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx,
+            wolfSSH_CTX_GetAlgoListCipher(ctx)), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListMac(ctx,
+            wolfSSH_CTX_GetAlgoListMac(ctx)), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListKey(ctx,
+            wolfSSH_CTX_GetAlgoListKey(ctx)), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListKeyAccepted(ctx,
+            wolfSSH_CTX_GetAlgoListKeyAccepted(ctx)), WS_SUCCESS);
+
+    /* A list with no usable name in it is rejected. */
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, "not-an-algorithm"),
+            WS_INVALID_ALGO_ID);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, "not-one,nor-this"),
+            WS_INVALID_ALGO_ID);
+
+    /* Category mismatch: a KEX name in the cipher slot is rejected. */
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, aKexName),
+            WS_INVALID_ALGO_ID);
+
+    /* Empty and all-comma lists are rejected. */
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, ""), WS_INVALID_ALGO_ID);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, ",,,"), WS_INVALID_ALGO_ID);
+
+    /* A rejected list must leave the previous value intact. */
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, validCipher), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, "bogus"),
+            WS_INVALID_ALGO_ID);
+    AssertPtrEq(wolfSSH_CTX_GetAlgoListCipher(ctx), validCipher);
+
+    /* One trailing comma is tolerated; the canned lists carry one. */
+    WSNPRINTF(listBuf, sizeof(listBuf), "%s,", validCipher);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, listBuf), WS_SUCCESS);
+
+    /* Any other empty element would reach KEXINIT as a zero-length name. */
+    WSNPRINTF(listBuf, sizeof(listBuf), ",%s", validCipher);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, listBuf),
+            WS_INVALID_ALGO_ID);
+
+    WSNPRINTF(listBuf, sizeof(listBuf), "%s,,", validCipher);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, listBuf),
+            WS_INVALID_ALGO_ID);
+
+    /* An unknown name is skipped, so one superset list works on any build. */
+    WSNPRINTF(listBuf, sizeof(listBuf), "%s,bogus", validCipher);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, listBuf), WS_SUCCESS);
+
+    /* A known name in the wrong category still fails the whole list. */
+    WSNPRINTF(listBuf, sizeof(listBuf), "%s,%s", validCipher, aKexName);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, listBuf),
+            WS_INVALID_ALGO_ID);
+
+    /* Reduced-crypto builds may have only one cipher. */
+    if (secondCipher != NULL) {
+        WSNPRINTF(listBuf, sizeof(listBuf), "%s,%s",
+                validCipher, secondCipher);
+        AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, listBuf), WS_SUCCESS);
+
+        WSNPRINTF(listBuf, sizeof(listBuf), "bogus,%s", secondCipher);
+        AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, listBuf), WS_SUCCESS);
+
+        WSNPRINTF(listBuf, sizeof(listBuf), "%s,,%s",
+                validCipher, secondCipher);
+        AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, listBuf),
+                WS_INVALID_ALGO_ID);
+    }
+
+    /* "none" names no host key, and needs the build flag for cipher/MAC. */
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListKey(ctx, "none"), WS_INVALID_ALGO_ID);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListKeyAccepted(ctx, "none"),
+            WS_INVALID_ALGO_ID);
+#ifndef WOLFSSH_ALLOW_NONE_CIPHER
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, "none"), WS_INVALID_ALGO_ID);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListMac(ctx, "none"), WS_INVALID_ALGO_ID);
+#endif
+
+    /* Restore a static list; the setters store the caller's pointer and
+     * listBuf goes out of scope at return. */
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, validCipher), WS_SUCCESS);
+
+    /* NULL is rejected for kex/cipher/mac, accepted for the key lists. */
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListKex(ctx, NULL), WS_INVALID_ALGO_ID);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, NULL), WS_INVALID_ALGO_ID);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListMac(ctx, NULL), WS_INVALID_ALGO_ID);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListKey(ctx, NULL), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListKeyAccepted(ctx, NULL), WS_SUCCESS);
+
+    wolfSSH_CTX_free(ctx);
+
+    /* Client: NULL rejected for Key, accepted for KeyAccepted. */
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListKey(ctx, NULL), WS_INVALID_ALGO_ID);
+    AssertNotNull(wolfSSH_CTX_GetAlgoListKey(ctx));
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListKeyAccepted(ctx, NULL), WS_SUCCESS);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, NULL), WS_INVALID_ALGO_ID);
+    AssertNotNull(wolfSSH_GetAlgoListKey(ssh));
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
 }
 
 
@@ -4165,6 +4316,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_QueryAlgoList();
     test_wolfSSH_SetMaxAuthAttempts();
     test_wolfSSH_SetAlgoList();
+    test_wolfSSH_CheckAlgoList();
 #ifdef WOLFSSH_AGENT
     test_wolfSSH_agent_signrequest_partial_write();
     test_wolfSSH_agent_signrequest_wrong_message();

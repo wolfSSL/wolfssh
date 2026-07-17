@@ -151,6 +151,15 @@ extern "C" {
     defined(WOLFSSH_NO_HMAC_SHA2_512)
     #error "You need at least one MAC algorithm."
 #endif
+/* The SHA-1 MACs only join the default algorithm list when the soft disable
+ * is lifted. Without them there is nothing left to offer, and an empty
+ * default list can never negotiate. */
+#if defined(WOLFSSH_NO_HMAC_SHA2_256) && \
+    defined(WOLFSSH_NO_HMAC_SHA2_512) && \
+    !defined(WOLFSSH_NO_SHA1_SOFT_DISABLE)
+    #error "The only MAC algorithms left are soft-disabled. Define " \
+           "WOLFSSH_NO_SHA1_SOFT_DISABLE to offer them."
+#endif
 
 #if defined(WOLFSSH_NO_DH) || defined(WOLFSSH_NO_SHA1)
     #undef WOLFSSH_NO_DH_GROUP1_SHA1
@@ -233,6 +242,21 @@ extern "C" {
     defined(WOLFSSH_NO_CURVE25519_SHA256)
     #error "You need at least one key agreement algorithm."
 #endif
+/* Likewise, the SHA-1 groups are the only soft-disabled KEX names. */
+#if defined(WOLFSSH_NO_DH_GROUP14_SHA256) && \
+    defined(WOLFSSH_NO_DH_GROUP16_SHA512) && \
+    defined(WOLFSSH_NO_DH_GEX_SHA256) && \
+    defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && \
+    defined(WOLFSSH_NO_ECDH_SHA2_NISTP384) && \
+    defined(WOLFSSH_NO_ECDH_SHA2_NISTP521) && \
+    defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) && \
+    defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384) && \
+    defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256) && \
+    defined(WOLFSSH_NO_CURVE25519_SHA256) && \
+    !defined(WOLFSSH_NO_SHA1_SOFT_DISABLE)
+    #error "The only key agreement algorithms left are soft-disabled. " \
+           "Define WOLFSSH_NO_SHA1_SOFT_DISABLE to offer them."
+#endif
 
 #if defined(WOLFSSH_NO_DH_GROUP1_SHA1) && \
     defined(WOLFSSH_NO_DH_GROUP14_SHA1) && \
@@ -291,6 +315,23 @@ extern "C" {
     defined(WOLFSSH_NO_MLDSA87)
     #error "You need at least one signing algorithm."
 #endif
+/* ssh-rsa is the only soft-disabled signing name. Client-only: a server
+ * negotiates host keys from ctx->publicKeyAlgo, not cannedKeyAlgoNames, so
+ * an empty canned list only costs it the server-sig-algs advertisement. */
+#if !defined(NO_WOLFSSH_CLIENT) && \
+    defined(WOLFSSH_NO_RSA_SHA2_256) && \
+    defined(WOLFSSH_NO_RSA_SHA2_512) && \
+    defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && \
+    defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && \
+    defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521) && \
+    defined(WOLFSSH_NO_ED25519) && \
+    defined(WOLFSSH_NO_MLDSA44) && \
+    defined(WOLFSSH_NO_MLDSA65) && \
+    defined(WOLFSSH_NO_MLDSA87) && \
+    !defined(WOLFSSH_NO_SHA1_SOFT_DISABLE)
+    #error "The only signing algorithms left are soft-disabled. Define " \
+           "WOLFSSH_NO_SHA1_SOFT_DISABLE to offer them."
+#endif
 
 #if defined(WOLFSSH_NO_SSH_RSA_SHA1) && \
     defined(WOLFSSH_NO_RSA_SHA2_256) && \
@@ -328,6 +369,13 @@ extern "C" {
     defined(WOLFSSH_NO_AES_CTR) && \
     defined(WOLFSSH_NO_AES_GCM)
     #error "You need at least one encryption algorithm."
+#endif
+/* AES-CBC is the only soft-disabled cipher. */
+#if defined(WOLFSSH_NO_AES_CTR) && \
+    defined(WOLFSSH_NO_AES_GCM) && \
+    !defined(WOLFSSH_NO_AES_CBC_SOFT_DISABLE)
+    #error "The only encryption algorithms left are soft-disabled. Define " \
+           "WOLFSSH_NO_AES_CBC_SOFT_DISABLE to offer them."
 #endif
 
 #if defined(WOLFSSH_NO_AES_GCM)
@@ -612,6 +660,16 @@ enum NameIdType {
 WOLFSSH_LOCAL byte NameToId(const char* name, word32 nameSz);
 WOLFSSH_LOCAL const char* IdToName(byte id);
 WOLFSSH_LOCAL const char* NameByIndexType(byte type, word32* idx);
+/* Validate a comma-separated algorithm list against a category (a TYPE_* value).
+ * Unknown names are skipped, so a caller can pass a portable superset; a known
+ * name of the wrong category is rejected, and at least one usable name must
+ * remain. One trailing comma is allowed, as the canned lists carry one; any
+ * other empty element is rejected, since only that one is stripped before the
+ * list goes on the wire. "none" is rejected for TYPE_KEY, and accepted for
+ * TYPE_CIPHER/TYPE_MAC only under WOLFSSH_ALLOW_NONE_CIPHER
+ * (--enable-none-cipher) -- an insecure, testing-only plaintext transport.
+ * Returns WS_SUCCESS or WS_INVALID_ALGO_ID; a NULL list is invalid. */
+WOLFSSH_LOCAL int CheckAlgoList(const char* list, byte type);
 
 
 /* For cases when openssl coexist is used */

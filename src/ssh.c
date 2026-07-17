@@ -2339,8 +2339,10 @@ int wolfSSH_CTX_SetAlgoListKex(WOLFSSH_CTX* ctx, const char* list)
     int ret = WS_SSH_CTX_NULL_E;
 
     if (ctx) {
-        ctx->algoListKex = list;
-        ret = WS_SUCCESS;
+        ret = CheckAlgoList(list, TYPE_KEX);
+        if (ret == WS_SUCCESS) {
+            ctx->algoListKex = list;
+        }
     }
 
     return ret;
@@ -2364,8 +2366,10 @@ int wolfSSH_SetAlgoListKex(WOLFSSH* ssh, const char* list)
     int ret = WS_SSH_NULL_E;
 
     if (ssh) {
-        ssh->algoListKex = list;
-        ret = WS_SUCCESS;
+        ret = CheckAlgoList(list, TYPE_KEX);
+        if (ret == WS_SUCCESS) {
+            ssh->algoListKex = list;
+        }
     }
 
     return ret;
@@ -2389,8 +2393,17 @@ int wolfSSH_CTX_SetAlgoListKey(WOLFSSH_CTX* ctx, const char* list)
     int ret = WS_SSH_CTX_NULL_E;
 
     if (ctx) {
-        ctx->algoListKey = list;
-        ret = WS_SUCCESS;
+        /* NULL restores the server's auto-derived list; a client has none. */
+        if (list == NULL) {
+            ret = (ctx->side == WOLFSSH_ENDPOINT_SERVER) ?
+                WS_SUCCESS : WS_INVALID_ALGO_ID;
+        }
+        else {
+            ret = CheckAlgoList(list, TYPE_KEY);
+        }
+        if (ret == WS_SUCCESS) {
+            ctx->algoListKey = list;
+        }
     }
 
     return ret;
@@ -2414,8 +2427,18 @@ int wolfSSH_SetAlgoListKey(WOLFSSH* ssh, const char* list)
     int ret = WS_SSH_NULL_E;
 
     if (ssh) {
-        ssh->algoListKey = list;
-        ret = WS_SUCCESS;
+        /* NULL is server-only. */
+        if (list == NULL) {
+            ret = (ssh->ctx != NULL
+                    && ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) ?
+                WS_SUCCESS : WS_INVALID_ALGO_ID;
+        }
+        else {
+            ret = CheckAlgoList(list, TYPE_KEY);
+        }
+        if (ret == WS_SUCCESS) {
+            ssh->algoListKey = list;
+        }
     }
 
     return ret;
@@ -2439,8 +2462,10 @@ int wolfSSH_CTX_SetAlgoListCipher(WOLFSSH_CTX* ctx, const char* list)
     int ret = WS_SSH_CTX_NULL_E;
 
     if (ctx) {
-        ctx->algoListCipher = list;
-        ret = WS_SUCCESS;
+        ret = CheckAlgoList(list, TYPE_CIPHER);
+        if (ret == WS_SUCCESS) {
+            ctx->algoListCipher = list;
+        }
     }
 
     return ret;
@@ -2464,8 +2489,10 @@ int wolfSSH_SetAlgoListCipher(WOLFSSH* ssh, const char* list)
     int ret = WS_SSH_NULL_E;
 
     if (ssh) {
-        ssh->algoListCipher = list;
-        ret = WS_SUCCESS;
+        ret = CheckAlgoList(list, TYPE_CIPHER);
+        if (ret == WS_SUCCESS) {
+            ssh->algoListCipher = list;
+        }
     }
 
     return ret;
@@ -2489,8 +2516,10 @@ int wolfSSH_CTX_SetAlgoListMac(WOLFSSH_CTX* ctx, const char* list)
     int ret = WS_SSH_CTX_NULL_E;
 
     if (ctx) {
-        ctx->algoListMac = list;
-        ret = WS_SUCCESS;
+        ret = CheckAlgoList(list, TYPE_MAC);
+        if (ret == WS_SUCCESS) {
+            ctx->algoListMac = list;
+        }
     }
 
     return ret;
@@ -2514,8 +2543,10 @@ int wolfSSH_SetAlgoListMac(WOLFSSH* ssh, const char* list)
     int ret = WS_SSH_NULL_E;
 
     if (ssh) {
-        ssh->algoListMac = list;
-        ret = WS_SUCCESS;
+        ret = CheckAlgoList(list, TYPE_MAC);
+        if (ret == WS_SUCCESS) {
+            ssh->algoListMac = list;
+        }
     }
 
     return ret;
@@ -2539,8 +2570,11 @@ int wolfSSH_CTX_SetAlgoListKeyAccepted(WOLFSSH_CTX* ctx, const char* list)
     int ret = WS_SSH_CTX_NULL_E;
 
     if (ctx) {
-        ctx->algoListKeyAccepted = list;
-        ret = WS_SUCCESS;
+        /* NULL empties the advertised list, it does not restore a default. */
+        ret = (list == NULL) ? WS_SUCCESS : CheckAlgoList(list, TYPE_KEY);
+        if (ret == WS_SUCCESS) {
+            ctx->algoListKeyAccepted = list;
+        }
     }
 
     return ret;
@@ -2564,8 +2598,11 @@ int wolfSSH_SetAlgoListKeyAccepted(WOLFSSH* ssh, const char* list)
     int ret = WS_SSH_NULL_E;
 
     if (ssh) {
-        ssh->algoListKeyAccepted = list;
-        ret = WS_SUCCESS;
+        /* NULL empties the advertised list, it does not restore a default. */
+        ret = (list == NULL) ? WS_SUCCESS : CheckAlgoList(list, TYPE_KEY);
+        if (ret == WS_SUCCESS) {
+            ssh->algoListKeyAccepted = list;
+        }
     }
 
     return ret;
