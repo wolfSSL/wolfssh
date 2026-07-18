@@ -258,10 +258,13 @@ WS_SOCKET_T wolfSSH_get_fd(const WOLFSSH* ssh)
     if (ssh)
         return ssh->rfd;
 
+    /* Return the same invalid-socket sentinel wolfSSH_new() initializes
+     * rfd/wfd to, rather than an error enum, so callers get a value of the
+     * socket type they can compare against. */
 #ifdef USE_WINDOWS_API
     return INVALID_SOCKET;
 #else
-    return WS_BAD_ARGUMENT;
+    return -1;
 #endif
 }
 
