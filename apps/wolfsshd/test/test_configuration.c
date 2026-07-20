@@ -83,24 +83,24 @@ static void CleanupWildcardTest(void)
                 WSNPRINTF(filepath, sizeof filepath, "%.*s%.*s",
                         (int)prefixLen, "./sshd_config.d/",
                         (int)maxNameLen, d->d_name);
-                WREMOVE(0, filepath);
+                (void)WREMOVE(NULL, filepath);
             }
         }
-        WCLOSEDIR(NULL, &dir);
-        WRMDIR(0, "./sshd_config.d/");
+        (void)WCLOSEDIR(NULL, &dir);
+        (void)WRMDIR(NULL, "./sshd_config.d/");
     }
 }
 
 static int SetupWildcardTest(void)
 {
-    WFILE* f;
+    WFILE* f = WBADFILE;
     const byte fileIds[] = { 0, 1, 50, 59, 99 };
     word32 fileIdsSz = (word32)(sizeof(fileIds) / sizeof(byte));
     word32 i;
     int ret;
     char filepath[MAX_PATH];
 
-    ret = WMKDIR(0, "./sshd_config.d/", 0755);
+    ret = WMKDIR(NULL, "./sshd_config.d/", 0755);
 
     if (ret == 0) {
         for (i = 0; i < fileIdsSz; i++) {
@@ -113,17 +113,25 @@ static int SetupWildcardTest(void)
                         "./sshd_config.d/");
             }
 
-            WFOPEN(NULL, &f, filepath, "w");
-            if (f) {
+            if (WFOPEN(NULL, &f, filepath, "w") == 0 && f != WBADFILE) {
                 word32 sz, wr;
+                int cl;
                 char contents[20];
                 WSNPRINTF(contents, sizeof contents, "LoginGraceTime %02u",
                         fileIds[i]);
                 sz = (word32)WSTRLEN(contents);
                 wr = (word32)WFWRITE(NULL, contents, sizeof(char), sz, f);
-                WFCLOSE(NULL, f);
+                cl = WFCLOSE(NULL, f);
+                f = WBADFILE;
+                /* both can fail from one I/O error, so report the
+                 * write first, it is the more specific message */
                 if (sz != wr) {
                     Log("Couldn't write the contents of file %s\n", filepath);
+                    ret = WS_FATAL_ERROR;
+                    break;
+                }
+                if (cl != 0) {
+                    Log("Couldn't close the file %s\n", filepath);
                     ret = WS_FATAL_ERROR;
                     break;
                 }
@@ -1106,38 +1114,52 @@ static int test_IncludeRecursionBound(void)
 {
     int ret = WS_SUCCESS;
     WOLFSSHD_CONFIG* conf = NULL;
-    WFILE* f = NULL;
+    WFILE* f = WBADFILE;
     const char* loopPath = "./include_loop.conf";
     const char* normalPath = "./include_normal.conf";
     const char* loopContents = "Include ./include_loop.conf\n";
     const char* normalContents = "Port 22\n";
     word32 sz, wr;
+    int cl;
 
-    WFOPEN(NULL, &f, loopPath, "w");
-    if (f == NULL) {
+    if (WFOPEN(NULL, &f, loopPath, "w") != 0 || f == WBADFILE) {
         Log("    Could not create %s.\n", loopPath);
         return WS_FATAL_ERROR;
     }
     sz = (word32)WSTRLEN(loopContents);
     wr = (word32)WFWRITE(NULL, loopContents, sizeof(char), sz, f);
-    WFCLOSE(NULL, f);
+    cl = WFCLOSE(NULL, f);
+    f = WBADFILE;
     if (sz != wr) {
-        WREMOVE(0, loopPath);
+        Log("    Could not write %s.\n", loopPath);
+        (void)WREMOVE(NULL, loopPath);
+        return WS_FATAL_ERROR;
+    }
+    if (cl != 0) {
+        Log("    Could not close %s.\n", loopPath);
+        (void)WREMOVE(NULL, loopPath);
         return WS_FATAL_ERROR;
     }
 
-    WFOPEN(NULL, &f, normalPath, "w");
-    if (f == NULL) {
-        WREMOVE(0, loopPath);
+    if (WFOPEN(NULL, &f, normalPath, "w") != 0 || f == WBADFILE) {
+        (void)WREMOVE(NULL, loopPath);
         Log("    Could not create %s.\n", normalPath);
         return WS_FATAL_ERROR;
     }
     sz = (word32)WSTRLEN(normalContents);
     wr = (word32)WFWRITE(NULL, normalContents, sizeof(char), sz, f);
-    WFCLOSE(NULL, f);
+    cl = WFCLOSE(NULL, f);
+    f = WBADFILE;
     if (sz != wr) {
-        WREMOVE(0, loopPath);
-        WREMOVE(0, normalPath);
+        Log("    Could not write %s.\n", normalPath);
+        (void)WREMOVE(NULL, loopPath);
+        (void)WREMOVE(NULL, normalPath);
+        return WS_FATAL_ERROR;
+    }
+    if (cl != 0) {
+        Log("    Could not close %s.\n", normalPath);
+        (void)WREMOVE(NULL, loopPath);
+        (void)WREMOVE(NULL, normalPath);
         return WS_FATAL_ERROR;
     }
 
@@ -1169,8 +1191,8 @@ static int test_IncludeRecursionBound(void)
     }
 
     wolfSSHD_ConfigFree(conf);
-    WREMOVE(0, loopPath);
-    WREMOVE(0, normalPath);
+    (void)WREMOVE(NULL, loopPath);
+    (void)WREMOVE(NULL, normalPath);
     return ret;
 }
 
@@ -2449,7 +2471,8 @@ static int smOpen(const char* path, WUID_T ownerUid, int rejectReadable)
     int ret = wolfSSHD_OpenSecureFile(path, ownerUid, rejectReadable, NULL, &f);
 
     if (ret == WS_SUCCESS && f != WBADFILE) {
-        WFCLOSE(NULL, f);
+        /* read-only handle; a close failure has no bearing on the verdict */
+        (void)WFCLOSE(NULL, f);
     }
     return ret;
 }
