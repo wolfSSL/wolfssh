@@ -894,16 +894,10 @@ int wolfSSHD_OpenSecureFile(const char* path, WUID_T ownerUid,
 #endif
 }
 
-#if defined(WOLFSSHD_UNIT_TEST) && !defined(_WIN32)
-int SearchForPubKey(const char* path, const char* authKeysFile,
-                    const WS_UserAuthData_PublicKey* pubKeyCtx,
-                    WUID_T uid, int strictModes)
-#else
-static int SearchForPubKey(const char* path, const char* authKeysFile,
-                           const char* user,
-                           const WS_UserAuthData_PublicKey* pubKeyCtx,
-                           WUID_T uid, int strictModes)
-#endif
+WOLFSSHD_STATIC int SearchForPubKey(const char* path,
+                                    const char* authKeysFile, const char* user,
+                                    const WS_UserAuthData_PublicKey* pubKeyCtx,
+                                    WUID_T uid, int strictModes)
 {
     int ret = WSSHD_AUTH_SUCCESS;
     char authKeysPath[MAX_PATH_SZ];

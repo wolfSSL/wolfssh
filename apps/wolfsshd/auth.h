@@ -106,6 +106,7 @@ int wolfSSHD_GetUserGroupNames(void* heap, const char* usr, WGID_T primaryGid,
         char*** outNames, word32* outCount);
 void wolfSSHD_FreeUserGroupNames(void* heap, char** names, word32 count);
 int SearchForPubKey(const char* path, const char* authKeysFile,
+                    const char* user,
                     const WS_UserAuthData_PublicKey* pubKeyCtx,
                     WUID_T uid, int strictModes);
 #endif
