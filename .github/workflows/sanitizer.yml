@@ -102,16 +102,20 @@ jobs:
           make -j$(nproc)
 
       - name: Run tests
-        run: make check
+        run: timeout -k 30 300 make check
 
       - name: Show test logs on failure
         if: failure()
         run: |
+          # print all test logs
           echo "=== test-suite.log ==="
           cat test-suite.log || true
-          echo ""
-          echo "=== tests/api.log ==="
-          cat tests/api.log || true
+          for f in tests/*.log scripts/*.log; do
+            [ -f "$f" ] || continue
+            echo ""
+            echo "=== $f ==="
+            cat "$f"
+          done
 
       - name: Upload failure logs
         if: failure()
@@ -120,5 +124,7 @@ jobs:
           name: wolfssh-${{ matrix.name }}-logs
           path: |
             test-suite.log
+            tests/*.log
+            scripts/*.log
             config.log
           retention-days: 5
