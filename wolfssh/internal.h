@@ -1607,6 +1607,15 @@ enum WS_MessageIdLimits {
     WOLFSSH_API int wolfSSH_TestScpExtractFileName(const char* filePath,
             char* fileName, word32 fileNameSz);
 #endif /* WOLFSSH_SCP && !WOLFSSH_SCP_USER_CALLBACKS */
+#ifndef WOLFSSH_NO_AEAD
+    WOLFSSH_API void wolfSSH_TestAeadIncrementExpIv(byte* iv);
+    WOLFSSH_API int wolfSSH_TestEncryptAead(WOLFSSH* ssh, byte* cipher,
+            const byte* input, word32 sz,
+            byte* authTag, const byte* auth, word32 authSz);
+    WOLFSSH_API int wolfSSH_TestDecryptAead(WOLFSSH* ssh, byte* plain,
+            const byte* input, word32 sz,
+            const byte* authTag, const byte* auth, word32 authSz);
+#endif /* !WOLFSSH_NO_AEAD */
 #endif /* WOLFSSH_TEST_INTERNAL */
 
 /* dynamic memory types */

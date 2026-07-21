@@ -1130,6 +1130,176 @@ done:
 #endif /* WOLFSSH_TEST_INTERNAL && !WOLFSSH_NO_AES_GCM */
 
 
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_AEAD)
+/* The explicit half of the AES-GCM nonce (RFC 5647) is a big-endian counter
+ * bumped after every record. The implicit half must never move. */
+static int test_AeadIncrementExpIv(void)
+{
+    const byte impIv[AEAD_IMP_IV_SZ] = { 0xDE, 0xAD, 0xBE, 0xEF };
+    byte iv[AEAD_NONCE_SZ];
+    int i;
+
+    WMEMCPY(iv, impIv, AEAD_IMP_IV_SZ);
+    WMEMSET(iv + AEAD_IMP_IV_SZ, 0, AEAD_EXP_IV_SZ);
+
+    wolfSSH_TestAeadIncrementExpIv(iv);
+    if (WMEMCMP(iv, impIv, AEAD_IMP_IV_SZ) != 0)
+        return -1010;
+    for (i = 0; i < AEAD_EXP_IV_SZ - 1; i++) {
+        if (iv[AEAD_IMP_IV_SZ + i] != 0)
+            return -1011;
+    }
+    if (iv[AEAD_NONCE_SZ - 1] != 1)
+        return -1012;
+
+    wolfSSH_TestAeadIncrementExpIv(iv);
+    if (iv[AEAD_NONCE_SZ - 1] != 2)
+        return -1013;
+
+    /* carry out of the low byte */
+    iv[AEAD_NONCE_SZ - 1] = 0xFF;
+    wolfSSH_TestAeadIncrementExpIv(iv);
+    if (iv[AEAD_NONCE_SZ - 1] != 0 || iv[AEAD_NONCE_SZ - 2] != 1)
+        return -1014;
+
+    /* carry through every explicit byte wraps to zero and leaves the
+     * implicit half alone */
+    WMEMSET(iv + AEAD_IMP_IV_SZ, 0xFF, AEAD_EXP_IV_SZ);
+    wolfSSH_TestAeadIncrementExpIv(iv);
+    if (WMEMCMP(iv, impIv, AEAD_IMP_IV_SZ) != 0)
+        return -1015;
+    for (i = 0; i < AEAD_EXP_IV_SZ; i++) {
+        if (iv[AEAD_IMP_IV_SZ + i] != 0)
+            return -1016;
+    }
+
+    return 0;
+}
+#endif /* WOLFSSH_TEST_INTERNAL && !WOLFSSH_NO_AEAD */
+
+
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_AES_GCM)
+/* Every packet gets a fresh nonce: the same plaintext must not encrypt to the
+ * same record, and the receive side must advance in step. */
+static int test_AeadNoncePerPacket(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    int result = 0;
+    byte key[AES_256_KEY_SIZE];
+    byte iv[AEAD_NONCE_SZ];
+    byte expIv[AEAD_NONCE_SZ];
+    const byte auth[UINT32_SZ] = { 0x00, 0x00, 0x00, 0x10 };
+    byte plain[AES_BLOCK_SIZE];
+    byte first[AES_BLOCK_SIZE], second[AES_BLOCK_SIZE];
+    byte firstTag[AES_BLOCK_SIZE], secondTag[AES_BLOCK_SIZE];
+    byte out[AES_BLOCK_SIZE];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -1020;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -1021;
+    }
+
+    WMEMSET(key, 0x5A, sizeof(key));
+    WMEMSET(iv, 0x31, sizeof(iv));
+    WMEMSET(plain, 0x7E, sizeof(plain));
+
+    if (wc_AesInit(&ssh->encryptCipher.aes, ssh->ctx->heap,
+            INVALID_DEVID) != 0) {
+        result = -1022;
+        goto done;
+    }
+    /* claim the context before setting the key so wolfSSH_free frees it
+     * even if the key set fails */
+    ssh->encryptCipher.isInit = 1;
+    ssh->encryptCipher.cipherType = ID_AES256_GCM;
+    if (wc_AesGcmSetKey(&ssh->encryptCipher.aes, key, sizeof(key)) != 0) {
+        result = -1022;
+        goto done;
+    }
+    ssh->encryptId = ID_AES256_GCM;
+    ssh->aeadMode = 1;
+    ssh->macSz = AES_BLOCK_SIZE;
+    WMEMCPY(ssh->keys.iv, iv, sizeof(iv));
+    ssh->keys.ivSz = sizeof(iv);
+
+    if (wolfSSH_TestEncryptAead(ssh, first, plain, sizeof(plain), firstTag,
+            auth, sizeof(auth)) != WS_SUCCESS) {
+        result = -1023;
+        goto done;
+    }
+    if (wolfSSH_TestEncryptAead(ssh, second, plain, sizeof(plain), secondTag,
+            auth, sizeof(auth)) != WS_SUCCESS) {
+        result = -1024;
+        goto done;
+    }
+
+    if (WMEMCMP(first, second, sizeof(first)) == 0) {
+        result = -1025;
+        goto done;
+    }
+    if (WMEMCMP(firstTag, secondTag, sizeof(firstTag)) == 0) {
+        result = -1026;
+        goto done;
+    }
+    WMEMCPY(expIv, iv, sizeof(expIv));
+    expIv[AEAD_NONCE_SZ - 1] = (byte)(iv[AEAD_NONCE_SZ - 1] + 2);
+    if (WMEMCMP(ssh->keys.iv, expIv, sizeof(expIv)) != 0) {
+        result = -1027;
+        goto done;
+    }
+
+    if (wc_AesInit(&ssh->decryptCipher.aes, ssh->ctx->heap,
+            INVALID_DEVID) != 0) {
+        result = -1028;
+        goto done;
+    }
+    ssh->decryptCipher.isInit = 1;
+    ssh->decryptCipher.cipherType = ID_AES256_GCM;
+    if (wc_AesGcmSetKey(&ssh->decryptCipher.aes, key, sizeof(key)) != 0) {
+        result = -1028;
+        goto done;
+    }
+    ssh->peerEncryptId = ID_AES256_GCM;
+    ssh->peerAeadMode = 1;
+    ssh->peerMacSz = AES_BLOCK_SIZE;
+    WMEMCPY(ssh->peerKeys.iv, iv, sizeof(iv));
+    ssh->peerKeys.ivSz = sizeof(iv);
+
+    if (wolfSSH_TestDecryptAead(ssh, out, first, sizeof(first), firstTag,
+            auth, sizeof(auth)) != WS_SUCCESS
+            || WMEMCMP(out, plain, sizeof(plain)) != 0) {
+        result = -1029;
+        goto done;
+    }
+    if (wolfSSH_TestDecryptAead(ssh, out, second, sizeof(second), secondTag,
+            auth, sizeof(auth)) != WS_SUCCESS
+            || WMEMCMP(out, plain, sizeof(plain)) != 0) {
+        result = -1030;
+        goto done;
+    }
+
+    /* rewind the receive counter: the second record must no longer
+     * authenticate */
+    WMEMCPY(ssh->peerKeys.iv, iv, sizeof(iv));
+    if (wolfSSH_TestDecryptAead(ssh, out, second, sizeof(second), secondTag,
+            auth, sizeof(auth)) == WS_SUCCESS) {
+        result = -1031;
+        goto done;
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* WOLFSSH_TEST_INTERNAL && !WOLFSSH_NO_AES_GCM */
+
+
 #ifdef WOLFSSH_TEST_INTERNAL
 /* Verify DoReceive rejects a binary packet whose padding_length is below the
  * RFC 4253 section 6 minimum of four bytes, returning WS_BUFFER_E. The packet
@@ -9047,6 +9217,18 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_AES_GCM)
     unitResult = test_DoReceive_AeadTagFailure();
     printf("DoReceiveAeadTag: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_AeadNoncePerPacket();
+    printf("AeadNoncePerPacket: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_AEAD)
+    unitResult = test_AeadIncrementExpIv();
+    printf("AeadIncrementExpIv: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
