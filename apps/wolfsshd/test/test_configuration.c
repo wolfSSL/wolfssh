@@ -21,6 +21,9 @@
     #include <unistd.h>
     #include <pwd.h>
 #endif
+#if !defined(_WIN32) && !(defined(__OSX__) || defined(__APPLE__))
+    #include <shadow.h>
+#endif
 
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
@@ -1333,9 +1336,11 @@ static int test_ConfigFree(void)
 }
 
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
-/* Negative-path coverage for CheckPasswordHashUnix so mutation of the
- * ConstantCompare clause (the only substantive check once crypt() has
- * produced its fixed-length output) does not survive the test suite. */
+/* Negative-path coverage for CheckPasswordHashUnix to prevent mutation of
+ * the ConstantCompare clause.
+ *
+ * fakeHashMD5/fakeHashDES fallback is not covered because glibc crypt()
+ * returns "*0" rather than NULL, making the branch unreachable here. */
 static int test_CheckPasswordHashUnix(void)
 {
     int ret = WS_SUCCESS;
@@ -1455,11 +1460,11 @@ static int test_CheckPasswordHashUnix(void)
     if (ret == WS_SUCCESS) {
         char lockedWithSalt[130];
 
-        /* A locked ('!') account with a valid hash must still fail auth, even if salt-reuse lets crypt() match. */
+        /* A locked account starting with '!' exercises salt-reuse instead of
+         * fake hash fallback. It must fail auth even with a correct password. */
         lockedWithSalt[0] = '!';
         WMEMCPY(lockedWithSalt + 1, stored, WSTRLEN(stored) + 1);
 
-        /* Same NULL-tolerant reasoning as the empty-salt case above. */
         Log("    Locked account with reusable '!' salt: ");
         rc = CheckPasswordHashUnix(correct, lockedWithSalt);
         if (rc == WSSHD_AUTH_FAILURE || rc == WS_FATAL_ERROR) {
@@ -1470,6 +1475,7 @@ static int test_CheckPasswordHashUnix(void)
             ret = WS_FATAL_ERROR;
         }
     }
+
 
     return ret;
 }
@@ -1539,6 +1545,776 @@ static int test_DefaultUserAuth_OOBRead(void)
 
     return ret;
 }
+
+#ifdef WOLFSSHD_HAVE_SHADOW
+/* Coverage for GetFakeHashFromTemplate's format-specific branches: bcrypt's
+ * fixed-width copy, the dollar-counting split used by SHA/MD5/yescrypt, and
+ * the buffer-bound fallbacks that must not overflow `out`. */
+static int test_GetFakeHashFromTemplate(void)
+{
+    int ret = WS_SUCCESS;
+    char out[256];
+
+    Log("    Non modular-crypt-format template falls back to '!' alone: ");
+    WMEMSET(out, 0, sizeof(out));
+    GetFakeHashFromTemplate("plaintextnotahash", out, sizeof(out));
+    /* Must be "!" alone, not "!*": CheckPasswordHashUnix only reuses the
+     * stored salt when storedSz > 1, so a bare "!" correctly falls through
+     * to the fixed-cost fakeHashSHA512 salt instead of reusing a "*" that
+     * fails crypt() immediately and skips that cost. */
+    if (out[0] == '!' && out[1] == '\0') {
+        Log(" PASSED.\n");
+    }
+    else {
+        Log(" FAILED.\n");
+        ret = WS_FATAL_ERROR;
+    }
+
+    if (ret == WS_SUCCESS) {
+        /* bcrypt: prefix+cost (7) + salt (22) copied, never the 31-byte
+         * digest that follows. */
+        const char* bcryptTmpl =
+            "$2b$12$abcdefghijklmnopqrstuvXYZZYXWVUTSRQPONMLKJIHGFEDCBA";
+
+        Log("    bcrypt template copies only prefix+salt, not digest: ");
+        WMEMSET(out, 0, sizeof(out));
+        GetFakeHashFromTemplate(bcryptTmpl, out, sizeof(out));
+        if (out[0] == '!' && WSTRLEN(out) == 1 + 7 + 22 &&
+                WSTRNCMP(out + 1, bcryptTmpl, 4) == 0 &&
+                WSTRSTR(out, "XYZZYXWVUTSRQPONMLKJIHGFEDCBA") == NULL &&
+                WSTRSTR(out, "abcdefghijklmnopqrstuv") == NULL) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        /* Legacy "$2$NN$" bcrypt has a 6-byte prefix, one shorter than
+         * "$2b$NN$"'s 7. */
+        const char* bcryptBareTmpl =
+            "$2$12$abcdefghijklmnopqrstuvXYZZYXWVUTSRQPONMLKJIHGFEDCBA";
+
+        Log("    Bare \"$2$NN$\" bcrypt template copies only prefix+salt, "
+            "not digest: ");
+        WMEMSET(out, 0, sizeof(out));
+        GetFakeHashFromTemplate(bcryptBareTmpl, out, sizeof(out));
+        if (out[0] == '!' && WSTRLEN(out) == 1 + 6 + 22 &&
+                WSTRNCMP(out + 1, bcryptBareTmpl, 3) == 0 &&
+                WSTRSTR(out, "XYZZYXWVUTSRQPONMLKJIHGFEDCBA") == NULL) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        const char* bcryptTruncated = "$2a$10$tooshort";
+
+        Log("    bcrypt template shorter than salt length is not overrun: ");
+        WMEMSET(out, 0, sizeof(out));
+        GetFakeHashFromTemplate(bcryptTruncated, out, sizeof(out));
+        if (out[0] == '!' &&
+                WSTRLEN(out) == 1 + WSTRLEN(bcryptTruncated)) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        /* $6$rounds=5000$salt$digest -- prevDollarIdx sits just before the
+         * real salt, so the copied prefix is "$6$rounds=5000$"; both the
+         * real salt and digest are dropped and replaced by a fixed dummy
+         * salt, keeping only the algorithm id and rounds cost. */
+        const char* sha512Tmpl =
+            "$6$rounds=5000$realsaltvalue$realdigestshouldnotappearhere";
+
+        Log("    SHA-512 template drops real salt and digest, keeps "
+            "prefix+rounds: ");
+        WMEMSET(out, 0, sizeof(out));
+        GetFakeHashFromTemplate(sha512Tmpl, out, sizeof(out));
+        if (WSTRCMP(out, "!$6$rounds=5000$wolfSSHFakeSalt$") == 0 &&
+                WSTRSTR(out, "realsaltvalue") == NULL &&
+                WSTRSTR(out, "realdigestshouldnotappearhere") == NULL) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        /* Only a single '$' in the whole template: dollarCount < 3, so this
+         * must fall back to '!*' rather than reading past the template. */
+        const char* singleDollar = "$onlyonedollar";
+
+        Log("    Template with fewer than 3 salt dollars falls back: ");
+        WMEMSET(out, 0, sizeof(out));
+        GetFakeHashFromTemplate(singleDollar, out, sizeof(out));
+        if (out[0] == '!' && WSTRCMP(out + 1, "*") == 0) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        /* A tiny output buffer must not be overrun regardless of template
+         * shape or which branch is taken. */
+        char tiny[3];
+        const char* sha512Tmpl =
+            "$6$rounds=5000$realsaltvalue$realdigestshouldnotappearhere";
+
+        Log("    Undersized output buffer is not overrun: ");
+        WMEMSET(tiny, 0, sizeof(tiny));
+        GetFakeHashFromTemplate(sha512Tmpl, tiny, sizeof(tiny));
+        if (tiny[0] == '!' && WSTRLEN(tiny) < sizeof(tiny)) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        Log("    NULL template/out and outSz < 3 are rejected without a crash: ");
+        GetFakeHashFromTemplate(NULL, out, sizeof(out));
+        GetFakeHashFromTemplate("$6$a$b$c", NULL, sizeof(out));
+        WMEMSET(out, 0, sizeof(out));
+        GetFakeHashFromTemplate("$6$a$b$c", out, 2);
+        if (out[0] == '\0') {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    return ret;
+}
+#endif /* WOLFSSHD_HAVE_SHADOW */
+
+
+#ifdef WOLFSSHD_HAVE_SHADOW
+/* wolfSSHD_AuthInit() (which populates cachedFakeHash) is never called by
+ * this suite, so seed it directly to exercise DoFakePasswordCheck(), which
+ * RequestAuthentication calls after DoCheckUser rejects the nonexistent
+ * user (CheckPasswordUnix is never reached for this username). */
+static int test_CachedFakeHashConsumption(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_AUTH* authCtx;
+    WS_UserAuthData authData;
+    char* passwordHeap;
+    word32 passwordSz = 8;
+    int rc;
+    static const char line1[] = "UsePrivilegeSeparation no";
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL) return WS_MEMORY_E;
+
+    /* Privilege separation is irrelevant to this test's scenario and its
+     * real raise/reduce syscalls require resolving an actual "sshd"
+     * account; disable it so the test doesn't depend on host state and
+     * doesn't leave the test process's privileges altered for later
+     * tests. */
+    if (ParseConfigLine(&conf, line1, (int)WSTRLEN(line1), 0) != WS_SUCCESS) {
+        wolfSSHD_ConfigFree(conf);
+        return WS_FATAL_ERROR;
+    }
+
+    authCtx = wolfSSHD_AuthCreateUser(NULL, conf);
+    if (authCtx == NULL) {
+        wolfSSHD_ConfigFree(conf);
+        Log("    Skipping test: wolfSSHD_AuthCreateUser failed (likely missing 'sshd' user).\n");
+        return WS_SUCCESS;
+    }
+
+    wolfSSHD_SetCachedFakeHashForTest("!$6$wolfsshtestsalt$wolfSSHFakeSalt$");
+
+    passwordHeap = (char*)WMALLOC(passwordSz, NULL, DYNTYPE_STRING);
+    if (passwordHeap != NULL) {
+        WMEMCPY(passwordHeap, "guessme", passwordSz);
+
+        WMEMSET(&authData, 0, sizeof(authData));
+        authData.type = WOLFSSH_USERAUTH_PASSWORD;
+        authData.username = (const byte*)"nonexistent_test_user_xyz";
+        authData.usernameSz = (word32)WSTRLEN((const char*)authData.username);
+        authData.sf.password.password = (const byte*)passwordHeap;
+        authData.sf.password.passwordSz = passwordSz;
+
+        Log("    Testing scenario: nonexistent user checked against seeded "
+            "cachedFakeHash.");
+        rc = DefaultUserAuth(WOLFSSH_USERAUTH_PASSWORD, &authData, authCtx);
+        if (rc == WOLFSSH_USERAUTH_FAILURE || rc == WOLFSSH_USERAUTH_REJECTED ||
+                rc == WOLFSSH_USERAUTH_INVALID_PASSWORD ||
+                rc == WOLFSSH_USERAUTH_INVALID_USER) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+
+        WFREE(passwordHeap, NULL, DYNTYPE_STRING);
+    }
+    else {
+        ret = WS_MEMORY_E;
+    }
+
+    wolfSSHD_SetCachedFakeHashForTest(NULL);
+    wolfSSHD_AuthFreeUser(authCtx);
+    wolfSSHD_ConfigFree(conf);
+
+    return ret;
+}
+
+/* Synthetic account used to drive CheckPasswordUnix's shadow-lookup
+ * branches without depending on the host's real shadow file contents. */
+static struct passwd stub_shadow_test_pw;
+static struct spwd   stub_shadow_test_sp;
+static char          stub_shadow_test_hash[300];
+
+static struct passwd* stub_getpwnam_shadowUser(const char* name)
+{
+    if (name != NULL && WSTRCMP(name, "shadow_branch_test_user") == 0) {
+        WMEMSET(&stub_shadow_test_pw, 0, sizeof(stub_shadow_test_pw));
+        stub_shadow_test_pw.pw_name   = (char*)"shadow_branch_test_user";
+        stub_shadow_test_pw.pw_uid    = 1002;
+        stub_shadow_test_pw.pw_gid    = 1002;
+        stub_shadow_test_pw.pw_passwd = (char*)"x";
+        return &stub_shadow_test_pw;
+    }
+    return NULL;
+}
+
+static struct passwd* stub_getpwnam_null(const char* name)
+{
+    (void)name;
+    return NULL;
+}
+
+static struct spwd* stub_getspnam_null(const char* name)
+{
+    (void)name;
+    return NULL;
+}
+
+static struct spwd* stub_getspnam_oversizedHash(const char* name)
+{
+    (void)name;
+    WMEMSET(&stub_shadow_test_sp, 0, sizeof(stub_shadow_test_sp));
+    stub_shadow_test_sp.sp_namp = (char*)"shadow_branch_test_user";
+    /* hashBuf in CheckPasswordUnix is 256 bytes; this exceeds it. */
+    WMEMSET(stub_shadow_test_hash, 'A', sizeof(stub_shadow_test_hash) - 1);
+    stub_shadow_test_hash[sizeof(stub_shadow_test_hash) - 1] = '\0';
+    stub_shadow_test_sp.sp_pwdp = stub_shadow_test_hash;
+    return &stub_shadow_test_sp;
+}
+
+/* getspnam() entry exists (e.g. NIS/LDAP-backed root account) but has no
+ * password field populated. */
+static struct spwd* stub_getspnam_nullPassword(const char* name)
+{
+    (void)name;
+    WMEMSET(&stub_shadow_test_sp, 0, sizeof(stub_shadow_test_sp));
+    stub_shadow_test_sp.sp_namp = (char*)"root";
+    stub_shadow_test_sp.sp_pwdp = NULL;
+    return &stub_shadow_test_sp;
+}
+
+/* Unknown user must fall through to the "*" stored hash and fail via
+ * CheckPasswordHashUnix, not crash or succeed. */
+static int test_CheckPasswordUnix_unknownUser(void)
+{
+    int ret = WS_SUCCESS;
+#if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
+    int rc;
+    struct passwd* (*savedGetpwnam)(const char*);
+    static const byte pw[] = "guessme";
+
+    savedGetpwnam = wsshd_getpwnam_cb;
+    wsshd_getpwnam_cb = stub_getpwnam_null;
+
+    rc = CheckPasswordUnix("nonexistent_test_user_xyz", pw,
+            (word32)(sizeof(pw) - 1), NULL);
+    if (rc != WSSHD_AUTH_FAILURE) {
+        Log("    FAILED: expected WSSHD_AUTH_FAILURE for unknown user, "
+            "got %d.\n", rc);
+        ret = WS_FATAL_ERROR;
+    }
+
+    wsshd_getpwnam_cb = savedGetpwnam;
+#else
+    (void)stub_getpwnam_null;
+    Log("    Skipping test: password hash checking not compiled in.\n");
+#endif
+    return ret;
+}
+
+/* getspnam() failing (e.g. SSHD not run as root) must fail closed rather
+ * than silently falling through to compare against the "*" default hash. */
+static int test_CheckPasswordUnix_shadowLookupFails(void)
+{
+    int ret = WS_SUCCESS;
+    int rc;
+    struct passwd* (*savedGetpwnam)(const char*);
+    struct spwd* (*savedGetspnam)(const char*);
+    static const byte pw[] = "guessme";
+
+    savedGetpwnam = wsshd_getpwnam_cb;
+    savedGetspnam = wsshd_getspnam_cb;
+    wsshd_getpwnam_cb = stub_getpwnam_shadowUser;
+    wsshd_getspnam_cb = stub_getspnam_null;
+
+    rc = CheckPasswordUnix("shadow_branch_test_user", pw,
+            (word32)(sizeof(pw) - 1), NULL);
+    if (rc != WS_FATAL_ERROR) {
+        Log("    FAILED: expected WS_FATAL_ERROR when getspnam() fails.\n");
+        ret = WS_FATAL_ERROR;
+    }
+
+    wsshd_getpwnam_cb = savedGetpwnam;
+    wsshd_getspnam_cb = savedGetspnam;
+    return ret;
+}
+
+/* A shadow hash too long for CheckPasswordUnix's fixed hashBuf must fail
+ * closed instead of being silently truncated. */
+static int test_CheckPasswordUnix_shadowHashTooLong(void)
+{
+    int ret = WS_SUCCESS;
+    int rc;
+    struct passwd* (*savedGetpwnam)(const char*);
+    struct spwd* (*savedGetspnam)(const char*);
+    static const byte pw[] = "guessme";
+
+    savedGetpwnam = wsshd_getpwnam_cb;
+    savedGetspnam = wsshd_getspnam_cb;
+    wsshd_getpwnam_cb = stub_getpwnam_shadowUser;
+    wsshd_getspnam_cb = stub_getspnam_oversizedHash;
+
+    rc = CheckPasswordUnix("shadow_branch_test_user", pw,
+            (word32)(sizeof(pw) - 1), NULL);
+    if (rc != WS_FATAL_ERROR) {
+        Log("    FAILED: expected WS_FATAL_ERROR for oversized shadow hash.\n");
+        ret = WS_FATAL_ERROR;
+    }
+
+    wsshd_getpwnam_cb = savedGetpwnam;
+    wsshd_getspnam_cb = savedGetspnam;
+    return ret;
+}
+
+/* A shadow entry with a NULL sp_pwdp (e.g. an NIS/LDAP-backed account) must
+ * fail closed instead of crashing on a NULL dereference in WSTRLEN(). */
+static int test_CheckPasswordUnix_shadowNullPassword(void)
+{
+    int ret = WS_SUCCESS;
+    int rc;
+    struct passwd* (*savedGetpwnam)(const char*);
+    struct spwd* (*savedGetspnam)(const char*);
+    static const byte pw[] = "guessme";
+
+    savedGetpwnam = wsshd_getpwnam_cb;
+    savedGetspnam = wsshd_getspnam_cb;
+    wsshd_getpwnam_cb = stub_getpwnam_shadowUser;
+    wsshd_getspnam_cb = stub_getspnam_nullPassword;
+
+    rc = CheckPasswordUnix("shadow_branch_test_user", pw,
+            (word32)(sizeof(pw) - 1), NULL);
+    if (rc != WS_FATAL_ERROR) {
+        Log("    FAILED: expected WS_FATAL_ERROR for a shadow entry with a "
+            "NULL password field, got %d.\n", rc);
+        ret = WS_FATAL_ERROR;
+    }
+
+    wsshd_getpwnam_cb = savedGetpwnam;
+    wsshd_getspnam_cb = savedGetspnam;
+    return ret;
+}
+
+static struct spwd* stub_getspnam_validHash(const char* name)
+{
+    (void)name;
+    WMEMSET(&stub_shadow_test_sp, 0, sizeof(stub_shadow_test_sp));
+    stub_shadow_test_sp.sp_namp = (char*)"shadow_branch_test_user";
+    stub_shadow_test_sp.sp_pwdp = stub_shadow_test_hash;
+    return &stub_shadow_test_sp;
+}
+
+/* Copy-then-succeed path: a normal-length shadow hash copied into
+ * CheckPasswordUnix's hashBuf, then compared for real. */
+static int test_CheckPasswordUnix_shadowLookupSucceeds(void)
+{
+    int ret = WS_SUCCESS;
+#if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
+    int rc;
+    struct passwd* (*savedGetpwnam)(const char*);
+    struct spwd* (*savedGetspnam)(const char*);
+    static const byte correctPw[] = "guessme";
+    static const byte wrongPw[] = "wrongpw";
+    /* SHA-512 crypt salt; portable across glibc-based crypt() impls. */
+    const char* salt = "$6$wolfsshtestsalt$";
+    char* hash;
+
+    hash = crypt((const char*)correctPw, salt);
+    /* See test_CheckPasswordHashUnix: some libc (macOS/BSD) ignore the
+     * modular salt and fall back to legacy DES, so skip there. */
+    if (hash == NULL || hash[0] == '*' || WSTRLEN(hash) == 0 ||
+            WSTRNCMP(hash, "$6$", 3) != 0) {
+        Log("    crypt() did not honor $6$ SHA-512, skipping.\n");
+        return WS_SUCCESS;
+    }
+    if (WSTRLEN(hash) >= sizeof(stub_shadow_test_hash)) {
+        return WS_FATAL_ERROR;
+    }
+    WMEMCPY(stub_shadow_test_hash, hash, WSTRLEN(hash) + 1);
+
+    savedGetpwnam = wsshd_getpwnam_cb;
+    savedGetspnam = wsshd_getspnam_cb;
+    wsshd_getpwnam_cb = stub_getpwnam_shadowUser;
+    wsshd_getspnam_cb = stub_getspnam_validHash;
+
+    Log("    Testing scenario: correct password against copied shadow hash.");
+    rc = CheckPasswordUnix("shadow_branch_test_user", correctPw,
+            (word32)(sizeof(correctPw) - 1), NULL);
+    if (rc == WSSHD_AUTH_SUCCESS) {
+        Log(" PASSED.\n");
+    }
+    else {
+        Log(" FAILED.\n");
+        ret = WS_FATAL_ERROR;
+    }
+
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: wrong password against copied shadow hash.");
+        rc = CheckPasswordUnix("shadow_branch_test_user", wrongPw,
+                (word32)(sizeof(wrongPw) - 1), NULL);
+        if (rc == WSSHD_AUTH_FAILURE) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    wsshd_getpwnam_cb = savedGetpwnam;
+    wsshd_getspnam_cb = savedGetspnam;
+#else
+    Log("    Skipping test: password hash checking not compiled in.\n");
+#endif
+    return ret;
+}
+
+/* authData->sf is a union; for a non-password auth type DoFakePasswordCheck
+ * must not read the password/passwordSz members at all. Poison those exact
+ * bytes (invalid pointer, huge length) via the union before tagging the type
+ * as PUBLICKEY, so a regression that reinstates an unconditional read would
+ * dereference an invalid pointer here instead of quietly working by luck. */
+static int test_DoFakePasswordCheck_pubkeyUnionSafety(void)
+{
+    WS_UserAuthData authData;
+
+    WMEMSET(&authData, 0, sizeof(authData));
+    authData.sf.password.password = (const byte*)(size_t)1;
+    authData.sf.password.passwordSz = 0xFFFFFFFFU;
+    authData.type = WOLFSSH_USERAUTH_PUBLICKEY;
+
+    Log("    Testing scenario: DoFakePasswordCheck with PUBLICKEY type and "
+        "poisoned password union fields.");
+    DoFakePasswordCheck(&authData);
+    Log(" PASSED.\n");
+
+    return WS_SUCCESS;
+}
+
+/* Exercises wolfSSHD_AuthInit() itself, rather than just seeding
+ * cachedFakeHash through the test hook, to catch regressions in its
+ * getspnam("root")/sp_pwdp wiring (wrong struct field, wrong sizeof, etc).
+ * Requires read access to the shadow file; skips gracefully otherwise. */
+static int test_AuthInit(void)
+{
+    int ret = WS_SUCCESS;
+    struct spwd* rootShadow;
+    struct spwd* (*savedGetspnam)(const char*);
+    char expected[256];
+    char actual[256];
+
+    wolfSSHD_SetCachedFakeHashForTest(NULL);
+
+    /* Force the real getspnam(), independent of what earlier tests left
+     * this global as. */
+    savedGetspnam = wsshd_getspnam_cb;
+    wsshd_getspnam_cb = getspnam;
+
+    rootShadow = getspnam("root");
+    if (rootShadow == NULL || rootShadow->sp_pwdp == NULL) {
+        Log("    Skipping test: no read access to the shadow file "
+            "(likely not running as root).\n");
+        wsshd_getspnam_cb = savedGetspnam;
+        return WS_SUCCESS;
+    }
+
+    WMEMSET(expected, 0, sizeof(expected));
+    GetFakeHashFromTemplate(rootShadow->sp_pwdp, expected, sizeof(expected));
+
+    /* If the hash is not a valid modular crypt format (e.g. locked '!' or '*'),
+     * AuthInit intentionally skips it. Reflect that in expected. */
+    if (expected[0] == '\0' || expected[1] == '\0' || expected[1] == '*') {
+        expected[0] = '\0';
+    }
+
+    wolfSSHD_AuthInit();
+
+    WMEMSET(actual, 0, sizeof(actual));
+    wolfSSHD_GetCachedFakeHashForTest(actual, sizeof(actual));
+
+    if (WSTRNCMP(expected, actual, sizeof(expected)) != 0) {
+        printf("EXPECTED: %s\nACTUAL: %s\n", expected, actual);
+        Log("    FAILED: wolfSSHD_AuthInit() did not populate "
+            "cachedFakeHash as expected.\n");
+        ret = WS_FATAL_ERROR;
+    }
+
+    wolfSSHD_SetCachedFakeHashForTest(NULL);
+    wsshd_getspnam_cb = savedGetspnam;
+
+    return ret;
+}
+
+/* test_AuthInit only covers the getspnam("root") success path and skips
+ * when not root. Stub getspnam() to force the degraded-mode branch
+ * regardless of process privileges. */
+static int test_AuthInit_degradedMode(void)
+{
+    int ret = WS_SUCCESS;
+    struct spwd* (*savedGetspnam)(const char*);
+    char actual[256];
+
+    savedGetspnam = wsshd_getspnam_cb;
+    wsshd_getspnam_cb = stub_getspnam_null;
+
+    /* Cache must be empty so AuthInit() reaches the getspnam() fallback. */
+    wolfSSHD_SetCachedFakeHashForTest(NULL);
+
+    Log("    Testing scenario: wolfSSHD_AuthInit() with getspnam() "
+        "failing.");
+    wolfSSHD_AuthInit();
+
+    /* Degraded mode must leave cachedFakeHash empty. */
+    WMEMSET(actual, 0, sizeof(actual));
+    wolfSSHD_GetCachedFakeHashForTest(actual, sizeof(actual));
+    if (actual[0] != '\0') {
+        Log(" FAILED: cachedFakeHash was populated on getspnam() "
+            "failure.\n");
+        ret = WS_FATAL_ERROR;
+    }
+    else {
+        Log(" PASSED.\n");
+    }
+
+    wolfSSHD_SetCachedFakeHashForTest(NULL);
+    wsshd_getspnam_cb = savedGetspnam;
+
+    return ret;
+}
+
+/* getspnam("root") succeeding but with a null sp_pwdp (e.g. NIS/LDAP-backed
+ * root accounts) must also degrade gracefully, not call
+ * GetFakeHashFromTemplate() with a NULL template. */
+static int test_AuthInit_nullPasswordField(void)
+{
+    int ret = WS_SUCCESS;
+    struct spwd* (*savedGetspnam)(const char*);
+    char actual[256];
+
+    savedGetspnam = wsshd_getspnam_cb;
+    wsshd_getspnam_cb = stub_getspnam_nullPassword;
+
+    /* Cache must be empty so AuthInit() reaches the getspnam() fallback. */
+    wolfSSHD_SetCachedFakeHashForTest(NULL);
+
+    Log("    Testing scenario: wolfSSHD_AuthInit() with getspnam(\"root\") "
+        "returning a null sp_pwdp.");
+    wolfSSHD_AuthInit();
+
+    /* Degraded mode must leave cachedFakeHash empty. */
+    WMEMSET(actual, 0, sizeof(actual));
+    wolfSSHD_GetCachedFakeHashForTest(actual, sizeof(actual));
+    if (actual[0] != '\0') {
+        Log(" FAILED: cachedFakeHash was populated when sp_pwdp was "
+            "NULL.\n");
+        ret = WS_FATAL_ERROR;
+    }
+    else {
+        Log(" PASSED.\n");
+    }
+
+    wolfSSHD_SetCachedFakeHashForTest(NULL);
+    wsshd_getspnam_cb = savedGetspnam;
+
+    return ret;
+}
+
+/* Two users sharing a hash template must dedup to one cached entry. */
+static int test_AddShadowLineToFakeHashCache_dedup(void)
+{
+    int ret = WS_SUCCESS;
+    char line1[] = "alice:$6$samesalt$samedigest:19000:0:99999:7:::";
+    char line2[] = "bob:$6$samesalt$samedigest:19000:0:99999:7:::";
+
+    wolfSSHD_SetCachedFakeHashForTest(NULL);
+
+    Log("    Testing scenario: AddShadowLineToFakeHashCache() with two "
+        "users sharing the same hash template.");
+    AddShadowLineToFakeHashCache(line1);
+    AddShadowLineToFakeHashCache(line2);
+
+    if (wolfSSHD_GetCachedFakeHashCountForTest() != 1) {
+        Log(" FAILED: duplicate hash template was cached twice.\n");
+        ret = WS_FATAL_ERROR;
+    }
+    else {
+        Log(" PASSED.\n");
+    }
+
+    wolfSSHD_SetCachedFakeHashForTest(NULL);
+
+    return ret;
+}
+
+/* Distinct hash templates must stop accumulating once the fixed-size
+ * cachedFakeHashes array is full, rather than overrunning it. */
+static int test_AddShadowLineToFakeHashCache_cap(void)
+{
+    int ret = WS_SUCCESS;
+    int i;
+    char line[64];
+    int count;
+
+    wolfSSHD_SetCachedFakeHashForTest(NULL);
+
+    Log("    Testing scenario: AddShadowLineToFakeHashCache() with more "
+        "distinct hashes than the cache can hold.");
+    for (i = 0; i < 20; i++) {
+        WSNPRINTF(line, sizeof(line), "user%d:$6$salt%d$digest%d:::::::",
+            i, i, i);
+        AddShadowLineToFakeHashCache(line);
+    }
+
+    count = wolfSSHD_GetCachedFakeHashCountForTest();
+    if (count <= 0 || count > 8 || count >= 20) {
+        Log(" FAILED: cache count %d did not stay within its fixed "
+            "capacity.\n", count);
+        ret = WS_FATAL_ERROR;
+    }
+    else {
+        Log(" PASSED.\n");
+    }
+
+    wolfSSHD_SetCachedFakeHashForTest(NULL);
+
+    return ret;
+}
+
+/* Drives ScanShadowFile() with a synthetic tmpfile() stream instead of a
+ * real /etc/shadow. */
+static int test_ScanShadowFile_multipleEntries(void)
+{
+    int ret = WS_SUCCESS;
+    WFILE* f;
+
+    wolfSSHD_SetCachedFakeHashForTest(NULL);
+
+    f = tmpfile();
+    if (f == NULL) {
+        Log("    Skipping test: unable to create a tmpfile().\n");
+        return WS_SUCCESS;
+    }
+
+    /* GetFakeHashFromTemplate drops the real salt for plain $N$salt$hash,
+     * so templates only differ by algorithm id ($6$ vs $5$) here. */
+    fputs("alice:$6$saltA$digestA:19000:0:99999:7:::\n", f);
+    fputs("bob:$5$saltB$digestB:19000:0:99999:7:::\n", f);
+    fputs("carol:$6$saltA$digestA:19000:0:99999:7:::\n", f);
+    rewind(f);
+
+    Log("    Testing scenario: ScanShadowFile() over a synthetic multi-user "
+        "shadow stream.");
+    ScanShadowFile(f);
+    fclose(f);
+
+    if (wolfSSHD_GetCachedFakeHashCountForTest() != 2) {
+        Log(" FAILED: expected 2 cached templates, got %d.\n",
+            wolfSSHD_GetCachedFakeHashCountForTest());
+        ret = WS_FATAL_ERROR;
+    }
+    else {
+        Log(" PASSED.\n");
+    }
+
+    wolfSSHD_SetCachedFakeHashForTest(NULL);
+
+    return ret;
+}
+
+/* A line over WSSHD_SHADOW_LINE_SZ must have its remainder drained so the
+ * next line isn't swallowed as its continuation. */
+static int test_ScanShadowFile_truncatedLine(void)
+{
+    int ret = WS_SUCCESS;
+    WFILE* f;
+    char overlong[1024];
+
+    wolfSSHD_SetCachedFakeHashForTest(NULL);
+
+    f = tmpfile();
+    if (f == NULL) {
+        Log("    Skipping test: unable to create a tmpfile().\n");
+        return WS_SUCCESS;
+    }
+
+    WMEMSET(overlong, 'x', sizeof(overlong) - 1);
+    overlong[sizeof(overlong) - 1] = '\0';
+    fputs(overlong, f);
+    fputc('\n', f);
+    fputs("dave:$6$saltD$digestD:19000:0:99999:7:::\n", f);
+    rewind(f);
+
+    Log("    Testing scenario: ScanShadowFile() with a line longer than "
+        "its read buffer.");
+    ScanShadowFile(f);
+    fclose(f);
+
+    if (wolfSSHD_GetCachedFakeHashCountForTest() != 1) {
+        Log(" FAILED: expected 1 cached template after the overlong line, "
+            "got %d.\n", wolfSSHD_GetCachedFakeHashCountForTest());
+        ret = WS_FATAL_ERROR;
+    }
+    else {
+        Log(" PASSED.\n");
+    }
+
+    wolfSSHD_SetCachedFakeHashForTest(NULL);
+
+    return ret;
+}
+#endif /* WOLFSSHD_HAVE_SHADOW */
 #endif /* WOLFSSH_HAVE_LIBCRYPT || WOLFSSH_HAVE_LIBLOGIN */
 
 #ifdef WOLFSSL_BASE64_ENCODE
@@ -2042,6 +2818,41 @@ static void InstallPrivRaiseStubs(int egidRet, int euidRet,
     s_seteuid_arg    = 0;
 }
 
+#if (defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)) && \
+        defined(WOLFSSHD_HAVE_SHADOW)
+/* Fails only its first invocation, then succeeds. RequestAuthentication()
+ * calls wolfSSHD_AuthReducePermissions() unconditionally after every auth
+ * attempt regardless of whether raising permissions succeeded, and a
+ * reduce failure is fatal (exit(1)). A stub that always fails would take
+ * down the test process the moment that unconditional reduce call runs;
+ * this lets the first (raise) call fail as intended while the later
+ * reduce call(s) succeed. */
+static int s_setegidFailOnceCalls;
+
+static int stub_setegid_failOnce(WGID_T egid)
+{
+    s_setegid_called = 1;
+    s_setegid_arg    = egid;
+    s_setegidFailOnceCalls++;
+    return (s_setegidFailOnceCalls == 1) ? -1 : 0;
+}
+
+static void InstallPrivRaiseFailOnceStubs(int (**savedEgid)(WGID_T),
+    int (**savedEuid)(WUID_T))
+{
+    *savedEgid            = wsshd_setegid_cb;
+    *savedEuid            = wsshd_seteuid_cb;
+    wsshd_setegid_cb      = stub_setegid_failOnce;
+    wsshd_seteuid_cb      = stub_seteuid;
+    s_setegidFailOnceCalls = 0;
+    s_seteuid_ret         = 0;
+    s_setegid_called      = 0;
+    s_seteuid_called      = 0;
+    s_setegid_arg         = 0;
+    s_seteuid_arg         = 0;
+}
+#endif
+
 /* Synthetic "sshd" account used so privilege-separation tests don't depend
  * on the host actually having an sshd system user configured. */
 static struct passwd stub_sshd_pw;
@@ -2095,6 +2906,370 @@ static int test_AuthCreateUser_privSepOff(void)
     wolfSSHD_ConfigFree(conf);
     return ret;
 }
+
+#if (defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)) && \
+        defined(WOLFSSHD_HAVE_SHADOW)
+/* PasswordAuthentication no must reject through RequestAuthentication's
+ * DoFakePasswordCheck() branch without ever calling checkPasswordCb. */
+static int test_RequestAuth_pwAuthNoRejectsBeforePasswordCheck(void)
+{
+    int ret = WS_SUCCESS;
+    int rc;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_AUTH* authCtx;
+    WS_UserAuthData authData;
+    struct passwd* (*savedGetpwnam)(const char*);
+    int (*savedGrouplist)(const char*, WGID_T, WGID_T*, int*);
+    int (*savedSetgroups)(int, const WGID_T*);
+    static const byte pw[] = "guessme";
+    static const char line1[] = "UsePrivilegeSeparation no";
+    static const char line2[] = "PasswordAuthentication no";
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL) return WS_MEMORY_E;
+
+    if (ParseConfigLine(&conf, line1, (int)WSTRLEN(line1), 0) != WS_SUCCESS ||
+            ParseConfigLine(&conf, line2, (int)WSTRLEN(line2), 0) !=
+                    WS_SUCCESS) {
+        wolfSSHD_ConfigFree(conf);
+        return WS_FATAL_ERROR;
+    }
+
+    authCtx = wolfSSHD_AuthCreateUser(NULL, conf);
+    if (authCtx == NULL) {
+        wolfSSHD_ConfigFree(conf);
+        return WS_FATAL_ERROR;
+    }
+
+    savedGetpwnam = wsshd_getpwnam_cb;
+    wsshd_getpwnam_cb = stub_getpwnam_shadowUser;
+    InstallGroupStubs(0, &savedGrouplist, &savedSetgroups);
+
+    WMEMSET(&authData, 0, sizeof(authData));
+    authData.type = WOLFSSH_USERAUTH_PASSWORD;
+    authData.username = (const byte*)"shadow_branch_test_user";
+    authData.usernameSz = (word32)WSTRLEN((const char*)authData.username);
+    authData.sf.password.password = pw;
+    authData.sf.password.passwordSz = (word32)(sizeof(pw) - 1);
+
+    Log("    Testing scenario: PasswordAuthentication no rejects.");
+    wolfSSHD_ResetFakePasswordCheckCountForTest();
+    rc = DefaultUserAuth(WOLFSSH_USERAUTH_PASSWORD, &authData, authCtx);
+    if (rc == WOLFSSH_USERAUTH_REJECTED &&
+            wolfSSHD_GetFakePasswordCheckCountForTest() != 0) {
+        Log(" PASSED.\n");
+    }
+    else {
+        Log(" FAILED: got %d, fakeCheckCount=%d.\n", rc,
+            wolfSSHD_GetFakePasswordCheckCountForTest());
+        ret = WS_FATAL_ERROR;
+    }
+
+    wsshd_getpwnam_cb = savedGetpwnam;
+    wsshd_getgrouplist_cb = savedGrouplist;
+    wsshd_setgroups_cb = savedSetgroups;
+    wolfSSHD_AuthFreeUser(authCtx);
+    wolfSSHD_ConfigFree(conf);
+
+    return ret;
+}
+
+/* Test that denying an empty password with PermitEmptyPw=no fakes a
+ * password check to prevent timing leaks. */
+static int test_RequestAuth_permitEmptyPwDeniedFakesPasswordCheck(void)
+{
+    int ret = WS_SUCCESS;
+    int rc;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_AUTH* authCtx;
+    WS_UserAuthData authData;
+    struct passwd* (*savedGetpwnam)(const char*);
+    int (*savedGrouplist)(const char*, WGID_T, WGID_T*, int*);
+    int (*savedSetgroups)(int, const WGID_T*);
+    static const char line1[] = "UsePrivilegeSeparation no";
+    static const char line2[] = "PermitEmptyPasswords no";
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL) return WS_MEMORY_E;
+
+    if (ParseConfigLine(&conf, line1, (int)WSTRLEN(line1), 0) != WS_SUCCESS ||
+            ParseConfigLine(&conf, line2, (int)WSTRLEN(line2), 0) !=
+                    WS_SUCCESS) {
+        wolfSSHD_ConfigFree(conf);
+        return WS_FATAL_ERROR;
+    }
+
+    authCtx = wolfSSHD_AuthCreateUser(NULL, conf);
+    if (authCtx == NULL) {
+        wolfSSHD_ConfigFree(conf);
+        return WS_FATAL_ERROR;
+    }
+
+    savedGetpwnam = wsshd_getpwnam_cb;
+    wsshd_getpwnam_cb = stub_getpwnam_shadowUser;
+    InstallGroupStubs(0, &savedGrouplist, &savedSetgroups);
+
+    WMEMSET(&authData, 0, sizeof(authData));
+    authData.type = WOLFSSH_USERAUTH_PASSWORD;
+    authData.username = (const byte*)"shadow_branch_test_user";
+    authData.usernameSz = (word32)WSTRLEN((const char*)authData.username);
+    authData.sf.password.password = NULL;
+    authData.sf.password.passwordSz = 0;
+
+    Log("    Testing scenario: PermitEmptyPw no denies empty password.");
+    wolfSSHD_ResetFakePasswordCheckCountForTest();
+    rc = DefaultUserAuth(WOLFSSH_USERAUTH_PASSWORD, &authData, authCtx);
+    if (rc == WOLFSSH_USERAUTH_FAILURE &&
+            wolfSSHD_GetFakePasswordCheckCountForTest() != 0) {
+        Log(" PASSED.\n");
+    }
+    else {
+        Log(" FAILED: got %d, fakeCheckCount=%d.\n", rc,
+            wolfSSHD_GetFakePasswordCheckCountForTest());
+        ret = WS_FATAL_ERROR;
+    }
+
+    wsshd_getpwnam_cb = savedGetpwnam;
+    wsshd_getgrouplist_cb = savedGrouplist;
+    wsshd_setgroups_cb = savedSetgroups;
+    wolfSSHD_AuthFreeUser(authCtx);
+    wolfSSHD_ConfigFree(conf);
+
+    return ret;
+}
+
+/* checkPasswordCb returning something other than WSSHD_AUTH_SUCCESS/FAILURE
+ * (e.g. CheckPasswordUnix's oversized-shadow-hash fail-closed path) must
+ * surface as WOLFSSH_USERAUTH_FAILURE through RequestAuthentication, taking
+ * the DoFakePasswordCheck() branch rather than crashing or succeeding. */
+static int test_RequestAuth_checkPasswordCbErrorFailsClosed(void)
+{
+    int ret = WS_SUCCESS;
+    int rc;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_AUTH* authCtx;
+    WS_UserAuthData authData;
+    struct passwd* (*savedGetpwnam)(const char*);
+    struct spwd* (*savedGetspnam)(const char*);
+    int (*savedGrouplist)(const char*, WGID_T, WGID_T*, int*);
+    int (*savedSetgroups)(int, const WGID_T*);
+    static const byte pw[] = "guessme";
+    static const char line1[] = "UsePrivilegeSeparation no";
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL) return WS_MEMORY_E;
+
+    if (ParseConfigLine(&conf, line1, (int)WSTRLEN(line1), 0) != WS_SUCCESS) {
+        wolfSSHD_ConfigFree(conf);
+        return WS_FATAL_ERROR;
+    }
+
+    authCtx = wolfSSHD_AuthCreateUser(NULL, conf);
+    if (authCtx == NULL) {
+        wolfSSHD_ConfigFree(conf);
+        return WS_FATAL_ERROR;
+    }
+
+    savedGetpwnam = wsshd_getpwnam_cb;
+    savedGetspnam = wsshd_getspnam_cb;
+    wsshd_getpwnam_cb = stub_getpwnam_shadowUser;
+    wsshd_getspnam_cb = stub_getspnam_oversizedHash;
+    InstallGroupStubs(0, &savedGrouplist, &savedSetgroups);
+
+    WMEMSET(&authData, 0, sizeof(authData));
+    authData.type = WOLFSSH_USERAUTH_PASSWORD;
+    authData.username = (const byte*)"shadow_branch_test_user";
+    authData.usernameSz = (word32)WSTRLEN((const char*)authData.username);
+    authData.sf.password.password = pw;
+    authData.sf.password.passwordSz = (word32)(sizeof(pw) - 1);
+
+    Log("    Testing scenario: checkPasswordCb error fails closed.");
+    rc = DefaultUserAuth(WOLFSSH_USERAUTH_PASSWORD, &authData, authCtx);
+    if (rc == WOLFSSH_USERAUTH_FAILURE) {
+        Log(" PASSED.\n");
+    }
+    else {
+        Log(" FAILED: got %d.\n", rc);
+        ret = WS_FATAL_ERROR;
+    }
+
+    wsshd_getpwnam_cb = savedGetpwnam;
+    wsshd_getspnam_cb = savedGetspnam;
+    wsshd_getgrouplist_cb = savedGrouplist;
+    wsshd_setgroups_cb = savedSetgroups;
+    wolfSSHD_AuthFreeUser(authCtx);
+    wolfSSHD_ConfigFree(conf);
+
+    return ret;
+}
+
+/* wolfSSHD_AuthRaisePermissions() failing must equalize timing with a fake
+ * crypt() only for password auth; doing so for pubkey auth would itself be a
+ * timing oracle (see the comment on RequestAuthentication's DoCheckUser()
+ * call). Drives both auth types through the same failure so a regression
+ * that re-ungates the pubkey path is caught by an actual call count rather
+ * than by a return code that looks identical either way. */
+static int test_RequestAuth_raisePermissionsFailFakeCheckGating(void)
+{
+    int ret = WS_SUCCESS;
+    int rc;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_AUTH* authCtx;
+    WS_UserAuthData authData;
+    struct passwd* (*savedGetpwnam)(const char*);
+    int (*savedEgid)(WGID_T);
+    int (*savedEuid)(WUID_T);
+    static const byte pw[] = "guessme";
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL) return WS_MEMORY_E;
+
+    /* privilege separation defaults to on; stub getpwnam("sshd") so
+     * AuthCreateUser can resolve the saved uid/gid without a real system
+     * account. */
+    InstallGetpwnamStub(&savedGetpwnam);
+    authCtx = wolfSSHD_AuthCreateUser(NULL, conf);
+    if (authCtx == NULL) {
+        wsshd_getpwnam_cb = savedGetpwnam;
+        wolfSSHD_ConfigFree(conf);
+        return WS_FATAL_ERROR;
+    }
+
+    /* swap to the auth-target stub for the DoCheckUser() lookups below */
+    wsshd_getpwnam_cb = stub_getpwnam_shadowUser;
+    InstallPrivRaiseFailOnceStubs(&savedEgid, &savedEuid);
+
+    WMEMSET(&authData, 0, sizeof(authData));
+    authData.username = (const byte*)"shadow_branch_test_user";
+    authData.usernameSz = (word32)WSTRLEN((const char*)authData.username);
+
+    Log("    Testing scenario: AuthRaisePermissions failure fakes password "
+        "check for PASSWORD auth.");
+    authData.type = WOLFSSH_USERAUTH_PASSWORD;
+    authData.sf.password.password = pw;
+    authData.sf.password.passwordSz = (word32)(sizeof(pw) - 1);
+    wolfSSHD_ResetFakePasswordCheckCountForTest();
+    rc = DefaultUserAuth(WOLFSSH_USERAUTH_PASSWORD, &authData, authCtx);
+    if (rc != WOLFSSH_USERAUTH_FAILURE ||
+            wolfSSHD_GetFakePasswordCheckCountForTest() == 0) {
+        Log(" FAILED: rc=%d, fakeCheckCount=%d.\n", rc,
+            wolfSSHD_GetFakePasswordCheckCountForTest());
+        ret = WS_FATAL_ERROR;
+    }
+    else {
+        Log(" PASSED.\n");
+    }
+
+    Log("    Testing scenario: AuthRaisePermissions failure must not fake "
+        "password check for PUBLICKEY auth.");
+    /* Clear union fields before reinterpreting as sf.publicKey. */
+    WMEMSET(&authData.sf, 0, sizeof(authData.sf));
+    authData.type = WOLFSSH_USERAUTH_PUBLICKEY;
+    wolfSSHD_ResetFakePasswordCheckCountForTest();
+    /* Re-arm the fail-once stub to hit the raise-permissions failure. */
+    s_setegidFailOnceCalls = 0;
+    rc = DefaultUserAuth(WOLFSSH_USERAUTH_PUBLICKEY, &authData, authCtx);
+    if (rc != WOLFSSH_USERAUTH_FAILURE ||
+            wolfSSHD_GetFakePasswordCheckCountForTest() != 0) {
+        Log(" FAILED: rc=%d, fakeCheckCount=%d.\n", rc,
+            wolfSSHD_GetFakePasswordCheckCountForTest());
+        ret = WS_FATAL_ERROR;
+    }
+    else {
+        Log(" PASSED.\n");
+    }
+
+    wsshd_setegid_cb = savedEgid;
+    wsshd_seteuid_cb = savedEuid;
+    wsshd_getpwnam_cb = savedGetpwnam;
+    wolfSSHD_AuthFreeUser(authCtx);
+    wolfSSHD_ConfigFree(conf);
+
+    return ret;
+}
+
+/* Test that AuthGetUserConf() NULL failure fakes a password check for
+ * password auth, using a mocked group failure. */
+static int test_RequestAuth_userConfNullFakeCheckGating(void)
+{
+    int ret = WS_SUCCESS;
+    int rc;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_AUTH* authCtx;
+    WS_UserAuthData authData;
+    struct passwd* (*savedGetpwnam)(const char*);
+    int (*savedGrouplist)(const char*, WGID_T, WGID_T*, int*);
+    int (*savedSetgroups)(int, const WGID_T*);
+    static const byte pw[] = "guessme";
+    static const char line1[] = "UsePrivilegeSeparation no";
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL) return WS_MEMORY_E;
+
+    if (ParseConfigLine(&conf, line1, (int)WSTRLEN(line1), 0) != WS_SUCCESS) {
+        wolfSSHD_ConfigFree(conf);
+        return WS_FATAL_ERROR;
+    }
+
+    authCtx = wolfSSHD_AuthCreateUser(NULL, conf);
+    if (authCtx == NULL) {
+        wolfSSHD_ConfigFree(conf);
+        return WS_FATAL_ERROR;
+    }
+
+    savedGetpwnam = wsshd_getpwnam_cb;
+    wsshd_getpwnam_cb = stub_getpwnam_shadowUser;
+    InstallGroupStubs(0, &savedGrouplist, &savedSetgroups);
+    s_grouplist_always_fail = 1;
+
+    WMEMSET(&authData, 0, sizeof(authData));
+    authData.username = (const byte*)"shadow_branch_test_user";
+    authData.usernameSz = (word32)WSTRLEN((const char*)authData.username);
+
+    Log("    Testing scenario: AuthGetUserConf NULL fakes password check "
+        "for PASSWORD auth.");
+    authData.type = WOLFSSH_USERAUTH_PASSWORD;
+    authData.sf.password.password = pw;
+    authData.sf.password.passwordSz = (word32)(sizeof(pw) - 1);
+    wolfSSHD_ResetFakePasswordCheckCountForTest();
+    rc = DefaultUserAuth(WOLFSSH_USERAUTH_PASSWORD, &authData, authCtx);
+    if (rc != WOLFSSH_USERAUTH_FAILURE ||
+            wolfSSHD_GetFakePasswordCheckCountForTest() == 0) {
+        Log(" FAILED: rc=%d, fakeCheckCount=%d.\n", rc,
+            wolfSSHD_GetFakePasswordCheckCountForTest());
+        ret = WS_FATAL_ERROR;
+    }
+    else {
+        Log(" PASSED.\n");
+    }
+
+    Log("    Testing scenario: AuthGetUserConf NULL must not fake password "
+        "check for PUBLICKEY auth.");
+    /* Clear union fields before reinterpreting as sf.publicKey. */
+    WMEMSET(&authData.sf, 0, sizeof(authData.sf));
+    authData.type = WOLFSSH_USERAUTH_PUBLICKEY;
+    wolfSSHD_ResetFakePasswordCheckCountForTest();
+    rc = DefaultUserAuth(WOLFSSH_USERAUTH_PUBLICKEY, &authData, authCtx);
+    if (rc != WOLFSSH_USERAUTH_FAILURE ||
+            wolfSSHD_GetFakePasswordCheckCountForTest() != 0) {
+        Log(" FAILED: rc=%d, fakeCheckCount=%d.\n", rc,
+            wolfSSHD_GetFakePasswordCheckCountForTest());
+        ret = WS_FATAL_ERROR;
+    }
+    else {
+        Log(" PASSED.\n");
+    }
+
+    wsshd_getgrouplist_cb = savedGrouplist;
+    wsshd_setgroups_cb = savedSetgroups;
+    wsshd_getpwnam_cb = savedGetpwnam;
+    wolfSSHD_AuthFreeUser(authCtx);
+    wolfSSHD_ConfigFree(conf);
+
+    return ret;
+}
+#endif /* (WOLFSSH_HAVE_LIBCRYPT || WOLFSSH_HAVE_LIBLOGIN) &&
+        * WOLFSSHD_HAVE_SHADOW */
 
 /* wolfSSHD_AuthRaisePermissions must not touch setegid/seteuid at all when
  * privilege separation is off, since the process never dropped privileges. */
@@ -2285,6 +3460,174 @@ static int test_AuthRaisePermissions_uidFail(void)
 /* Drives the supplementary-group drop with getgrouplist and setgroups mocked
  * so it is deterministic across platforms; asserts setgroups is invoked with
  * the resolved group count. */
+
+static int test_AuthReducePermissions_offSkipsSyscalls(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_AUTH* auth;
+    int (*savedEgid)(WGID_T);
+    int (*savedEuid)(WUID_T);
+    static const char line[] = "UsePrivilegeSeparation no";
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL) {
+        return WS_MEMORY_E;
+    }
+
+    if (ParseConfigLine(&conf, line, (int)WSTRLEN(line), 0) != WS_SUCCESS) {
+        ret = WS_FATAL_ERROR;
+    }
+
+    if (ret == WS_SUCCESS) {
+        auth = wolfSSHD_AuthCreateUser(NULL, conf);
+        if (auth == NULL) {
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            InstallPrivRaiseStubs(0, 0, &savedEgid, &savedEuid);
+
+            if (wolfSSHD_AuthReducePermissions(auth) != WS_SUCCESS)
+                ret = WS_FATAL_ERROR;
+            if (ret == WS_SUCCESS
+                    && (s_setegid_called || s_seteuid_called))
+                ret = WS_FATAL_ERROR;
+
+            wsshd_setegid_cb = savedEgid;
+            wsshd_seteuid_cb = savedEuid;
+            wolfSSHD_AuthFreeUser(auth);
+        }
+    }
+
+    wolfSSHD_ConfigFree(conf);
+    return ret;
+}
+
+static int test_AuthReducePermissions_separateCallsSyscalls(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_AUTH* auth;
+    int (*savedEgid)(WGID_T);
+    int (*savedEuid)(WUID_T);
+    struct passwd* (*savedGetpwnam)(const char*) = NULL;
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL) {
+        return WS_MEMORY_E;
+    }
+
+    InstallGetpwnamStub(&savedGetpwnam);
+
+    auth = wolfSSHD_AuthCreateUser(NULL, conf);
+    if (auth == NULL) {
+        ret = WS_FATAL_ERROR;
+    }
+    else {
+        InstallPrivRaiseStubs(0, 0, &savedEgid, &savedEuid);
+
+        if (wolfSSHD_AuthReducePermissions(auth) != WS_SUCCESS)
+            ret = WS_FATAL_ERROR;
+        if (ret == WS_SUCCESS && (!s_setegid_called || !s_seteuid_called))
+            ret = WS_FATAL_ERROR;
+
+        wsshd_setegid_cb = savedEgid;
+        wsshd_seteuid_cb = savedEuid;
+        wolfSSHD_AuthFreeUser(auth);
+    }
+
+    wsshd_getpwnam_cb = savedGetpwnam;
+    wolfSSHD_ConfigFree(conf);
+    return ret;
+}
+
+static int test_AuthReducePermissions_nullArg(void)
+{
+    if (wolfSSHD_AuthReducePermissions(NULL) != WS_BAD_ARGUMENT)
+        return WS_FATAL_ERROR;
+    return WS_SUCCESS;
+}
+
+static int test_AuthReducePermissions_gidFailContinuesToUid(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_AUTH* auth;
+    int (*savedEgid)(WGID_T);
+    int (*savedEuid)(WUID_T);
+    struct passwd* (*savedGetpwnam)(const char*) = NULL;
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL) {
+        return WS_MEMORY_E;
+    }
+
+    InstallGetpwnamStub(&savedGetpwnam);
+
+    auth = wolfSSHD_AuthCreateUser(NULL, conf);
+    if (auth == NULL) {
+        ret = WS_FATAL_ERROR;
+    }
+    else {
+        InstallPrivRaiseStubs(-1, 0, &savedEgid, &savedEuid);
+
+        if (wolfSSHD_AuthReducePermissions(auth) != WS_FATAL_ERROR)
+            ret = WS_FATAL_ERROR;
+        if (ret == WS_SUCCESS && !s_setegid_called)
+            ret = WS_FATAL_ERROR;
+        if (ret == WS_SUCCESS && !s_seteuid_called)
+            ret = WS_FATAL_ERROR;
+
+        wsshd_setegid_cb = savedEgid;
+        wsshd_seteuid_cb = savedEuid;
+        wolfSSHD_AuthFreeUser(auth);
+    }
+
+    wsshd_getpwnam_cb = savedGetpwnam;
+    wolfSSHD_ConfigFree(conf);
+    return ret;
+}
+
+static int test_AuthReducePermissions_uidFail(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_AUTH* auth;
+    int (*savedEgid)(WGID_T);
+    int (*savedEuid)(WUID_T);
+    struct passwd* (*savedGetpwnam)(const char*) = NULL;
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL) {
+        return WS_MEMORY_E;
+    }
+
+    InstallGetpwnamStub(&savedGetpwnam);
+
+    auth = wolfSSHD_AuthCreateUser(NULL, conf);
+    if (auth == NULL) {
+        ret = WS_FATAL_ERROR;
+    }
+    else {
+        InstallPrivRaiseStubs(0, -1, &savedEgid, &savedEuid);
+
+        if (wolfSSHD_AuthReducePermissions(auth) != WS_FATAL_ERROR)
+            ret = WS_FATAL_ERROR;
+        if (ret == WS_SUCCESS && !s_setegid_called)
+            ret = WS_FATAL_ERROR;
+        if (ret == WS_SUCCESS && !s_seteuid_called)
+            ret = WS_FATAL_ERROR;
+
+        wsshd_setegid_cb = savedEgid;
+        wsshd_seteuid_cb = savedEuid;
+        wolfSSHD_AuthFreeUser(auth);
+    }
+
+    wsshd_getpwnam_cb = savedGetpwnam;
+    wolfSSHD_ConfigFree(conf);
+    return ret;
+}
+
 static int test_AuthSetGroups_ok(void)
 {
     int ret = WS_SUCCESS;
@@ -4043,17 +5386,49 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_AuthReducePermissionsUser_gid_fail),
     TEST_DECL(test_AuthReducePermissionsUser_uid_fail),
     TEST_DECL(test_AuthCreateUser_privSepOff),
+#if (defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)) && \
+        defined(WOLFSSHD_HAVE_SHADOW)
+    TEST_DECL(test_RequestAuth_pwAuthNoRejectsBeforePasswordCheck),
+    TEST_DECL(test_RequestAuth_permitEmptyPwDeniedFakesPasswordCheck),
+    TEST_DECL(test_RequestAuth_checkPasswordCbErrorFailsClosed),
+    TEST_DECL(test_RequestAuth_raisePermissionsFailFakeCheckGating),
+    TEST_DECL(test_RequestAuth_userConfNullFakeCheckGating),
+#endif
     TEST_DECL(test_AuthRaisePermissions_offSkipsSyscalls),
     TEST_DECL(test_AuthRaisePermissions_separateCallsSyscalls),
     TEST_DECL(test_AuthRaisePermissions_nullArg),
     TEST_DECL(test_AuthRaisePermissions_gidFailSkipsUid),
     TEST_DECL(test_AuthRaisePermissions_uidFail),
+
+    TEST_DECL(test_AuthReducePermissions_offSkipsSyscalls),
+    TEST_DECL(test_AuthReducePermissions_separateCallsSyscalls),
+    TEST_DECL(test_AuthReducePermissions_nullArg),
+    TEST_DECL(test_AuthReducePermissions_gidFailContinuesToUid),
+    TEST_DECL(test_AuthReducePermissions_uidFail),
+
     TEST_DECL(test_AuthSetGroups_ok),
     TEST_DECL(test_AuthSetGroups_setgroups_fail),
     TEST_DECL(test_AuthSetGroups_getgrouplist_fail),
 #endif
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
     TEST_DECL(test_CheckPasswordHashUnix),
+#ifdef WOLFSSHD_HAVE_SHADOW
+    TEST_DECL(test_GetFakeHashFromTemplate),
+    TEST_DECL(test_CachedFakeHashConsumption),
+    TEST_DECL(test_CheckPasswordUnix_shadowLookupFails),
+    TEST_DECL(test_CheckPasswordUnix_shadowHashTooLong),
+    TEST_DECL(test_CheckPasswordUnix_shadowNullPassword),
+    TEST_DECL(test_CheckPasswordUnix_shadowLookupSucceeds),
+    TEST_DECL(test_CheckPasswordUnix_unknownUser),
+    TEST_DECL(test_DoFakePasswordCheck_pubkeyUnionSafety),
+    TEST_DECL(test_AuthInit),
+    TEST_DECL(test_AuthInit_degradedMode),
+    TEST_DECL(test_AuthInit_nullPasswordField),
+    TEST_DECL(test_AddShadowLineToFakeHashCache_dedup),
+    TEST_DECL(test_AddShadowLineToFakeHashCache_cap),
+    TEST_DECL(test_ScanShadowFile_multipleEntries),
+    TEST_DECL(test_ScanShadowFile_truncatedLine),
+#endif
     TEST_DECL(test_DefaultUserAuth_OOBRead),
 #endif
 #if defined(WOLFSSH_OSSH_CERTS) && !defined(_WIN32)
