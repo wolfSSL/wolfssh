@@ -27,6 +27,12 @@
 #define WOLFSSH_USER_GET_STRING(x) #x
 #define WOLFSSH_USER_STRING(x) WOLFSSH_USER_GET_STRING(x)
 
+/* Mirrors the condition auth.c uses to define its (translation-unit-local)
+ * HAVE_SHADOW; kept as a single macro here so the two can't drift apart. */
+#if !defined(_WIN32) && !(defined(__OSX__) || defined(__APPLE__))
+    #define WOLFSSHD_HAVE_SHADOW
+#endif
+
 #if 0
 
 typedef struct USER_NODE USER_NODE;
@@ -69,6 +75,7 @@ typedef int (*CallbackCheckPublicKey)(const char* usr,
                                       const char* authorizedKeysFile,
                                       WOLFSSHD_AUTH* authCtx);
 
+void wolfSSHD_AuthInit(void);
 WOLFSSHD_AUTH* wolfSSHD_AuthCreateUser(void* heap, const WOLFSSHD_CONFIG* conf);
 int wolfSSHD_AuthFreeUser(WOLFSSHD_AUTH* auth);
 int wolfSSHD_AuthReducePermissions(WOLFSSHD_AUTH* auth);
@@ -109,6 +116,9 @@ extern int (*wsshd_setegid_cb)(WGID_T);
 extern int (*wsshd_seteuid_cb)(WUID_T);
 extern struct passwd* (*wsshd_getpwnam_cb)(const char*);
 extern int (*wsshd_setgroups_cb)(int, const WGID_T*);
+#ifdef WOLFSSHD_HAVE_SHADOW
+extern struct spwd* (*wsshd_getspnam_cb)(const char*);
+#endif
 extern int (*wsshd_getgrouplist_cb)(const char*, WGID_T, WGID_T*, int*);
 int wolfSSHD_GetUserGroupNames(void* heap, const char* usr, WGID_T primaryGid,
         char*** outNames, word32* outCount);
@@ -120,6 +130,31 @@ int SearchForPubKey(const char* path, const char* authKeysFile,
 #endif
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
 int CheckPasswordHashUnix(const char* input, const char* stored);
+#endif
+#ifdef WOLFSSHD_HAVE_SHADOW
+void GetFakeHashFromTemplate(const char* tmpl, char* out, word32 outSz);
+#ifdef WOLFSSHD_UNIT_TEST
+/* Pure test hooks under HAVE_SHADOW && WOLFSSHD_UNIT_TEST. */
+void wolfSSHD_SetCachedFakeHashForTest(const char* hash);
+void wolfSSHD_GetCachedFakeHashForTest(char* out, word32 outSz);
+int wolfSSHD_GetCachedFakeHashCountForTest(void);
+/* Parses one "user:hash:..." line into the fake-hash cache. */
+void AddShadowLineToFakeHashCache(char* line);
+/* Reads a shadow file stream line by line into the fake-hash cache. */
+void ScanShadowFile(WFILE* f);
+#endif
+#endif
+/* Not shadow-specific in auth.c, so not excluded on OSX/APPLE. */
+#if !defined(_WIN32) && !defined(WOLFSSH_USE_PAM)
+/* Returns WSSHD_AUTH_* for auth result, or WS_* for system errors. */
+int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz,
+                       WOLFSSHD_AUTH* authCtx);
+#endif
+#ifdef WOLFSSHD_UNIT_TEST
+void DoFakePasswordCheck(WS_UserAuthData* authData);
+/* Pure test hooks under WOLFSSHD_UNIT_TEST. */
+void wolfSSHD_ResetFakePasswordCheckCountForTest(void);
+int wolfSSHD_GetFakePasswordCheckCountForTest(void);
 #endif
 int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
                       word32 keySz);

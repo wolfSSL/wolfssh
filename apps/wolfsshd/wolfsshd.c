@@ -2815,6 +2815,12 @@ static int StartSSHD(int argc, char** argv)
         }
     }
 
+    /* Must run before privilege drop so the shadow file is accessible.
+     * Degrades to a fixed-cost fake hash if the shadow read fails. */
+    if (ret == WS_SUCCESS && !testMode) {
+        wolfSSHD_AuthInit();
+    }
+
     if (ret == WS_SUCCESS) {
         ret = wolfSSHD_ConfigLoad(conf, configFile);
         if (ret != WS_SUCCESS) {
