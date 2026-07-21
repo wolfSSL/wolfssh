@@ -5,7 +5,6 @@
 no_pid=-1
 server_pid=$no_pid
 ready_file=`pwd`/wolfssh_scp_ready$$
-counter=0
 
 [ ! -x ./examples/scpclient/wolfscp ] && echo -e "\n\nwolfscp client doesn't exist" && exit 1
 
@@ -20,6 +19,8 @@ then
 fi
 
 create_port() {
+    # each server gets its own wait budget, the count must not carry over
+    counter=0
     while [ ! -s "$ready_file" ] && [ "$counter" -lt 20 ]; do
         echo -e "waiting for ready file..."
         sleep 0.1
@@ -45,14 +46,32 @@ remove_ready_file() {
     fi
 }
 
-do_cleanup() {
-    echo "in cleanup"
-
+stop_server() {
     if  [ $server_pid != $no_pid ]
     then
         echo "killing server"
-        kill -9 $server_pid
+        kill -9 $server_pid 2>/dev/null
+        wait $server_pid 2>/dev/null
+        server_pid=$no_pid
     fi
+}
+
+# timeout reports 124 when it fires, the shell reports 128+N for a signal.
+# Either way the client did not run to completion, so the checks that follow
+# would be meaningless and must not be allowed to report a pass.
+check_timeout() {
+    if [ "$1" -eq 124 ] || [ "$1" -ge 128 ]
+    then
+        echo -e "\n\nclient did not complete: $2"
+        do_cleanup
+        exit 1
+    fi
+}
+
+do_cleanup() {
+    echo "in cleanup"
+
+    stop_server
     remove_ready_file
     # remove symlink-test artifacts so an early exit (e.g. create_port failure)
     # does not leave a planted secret/symlink behind in the source tree
@@ -69,13 +88,24 @@ trap do_trap INT TERM
 
 [ ! -x ./examples/scpclient/wolfscp ] && echo -e "\n\nClient doesn't exist" && exit 1
 
+# Use timeout in case the server does not respond, so the test does not hang
+if command -v timeout > /dev/null 2>&1; then
+    run_client="timeout 60"
+elif command -v gtimeout > /dev/null 2>&1; then
+    run_client="gtimeout 60"
+else
+    run_client=""
+fi
+
 echo "Test basic copy from server to local"
 ./examples/echoserver/echoserver -1 -R $ready_file &
 server_pid=$!
 create_port
-./examples/scpclient/wolfscp -u jill -P upthehill -p $port -S $PWD/scripts/scp.test:$PWD/scp.test
+$run_client ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -S $PWD/scripts/scp.test:$PWD/scp.test
 RESULT=$?
 remove_ready_file
+stop_server
+check_timeout $RESULT "basic copy from server to local"
 
 if test -e $PWD/scp.test; then
     rm $PWD/scp.test
@@ -89,9 +119,11 @@ echo "Test basic copy from local to server"
 ./examples/echoserver/echoserver -1 -R $ready_file &
 server_pid=$!
 create_port
-./examples/scpclient/wolfscp -u jill -P upthehill -p $port -L $PWD/scripts/scp.test:$PWD/scp.test
+$run_client ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -L $PWD/scripts/scp.test:$PWD/scp.test
 RESULT=$?
 remove_ready_file
+stop_server
+check_timeout $RESULT "basic copy from local to server"
 
 if test -e $PWD/scp.test; then
     rm $PWD/scp.test
@@ -106,10 +138,12 @@ touch $PWD/scripts/empty
 ./examples/echoserver/echoserver -1 -R $ready_file &
 server_pid=$!
 create_port
-./examples/scpclient/wolfscp -u jill -P upthehill -p $port -S $PWD/scripts/empty:$PWD/empty
+$run_client ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -S $PWD/scripts/empty:$PWD/empty
 RESULT=$?
 remove_ready_file
+stop_server
 rm -f $PWD/scripts/empty
+check_timeout $RESULT "getting empty file"
 
 if test -e $PWD/empty ; then
     rm $PWD/empty
@@ -124,10 +158,12 @@ touch $PWD/scripts/empty
 ./examples/echoserver/echoserver -1 -R $ready_file &
 server_pid=$!
 create_port
-./examples/scpclient/wolfscp -u jill -P upthehill -p $port -L $PWD/scripts/empty:$PWD/empty
+$run_client ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -L $PWD/scripts/empty:$PWD/empty
 RESULT=$?
 remove_ready_file
+stop_server
 rm -f $PWD/scripts/empty
+check_timeout $RESULT "sending empty file"
 
 if test -e $PWD/empty ; then
     rm $PWD/empty
@@ -142,10 +178,13 @@ touch $PWD/scripts/empty
 ./examples/echoserver/echoserver -1 -R $ready_file &
 server_pid=$!
 create_port
-./examples/scpclient/wolfscp -u jill -P upthehill -p $port -L $PWD/does-not-exist:$PWD/empty
+$run_client ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -L $PWD/does-not-exist:$PWD/empty
 RESULT=$?
 remove_ready_file
+stop_server
 rm -f $PWD/scripts/empty
+# a timeout is also non-zero, so rule it out before reading the status below
+check_timeout $RESULT "sending a file that does not exist"
 
 if test $RESULT -eq 0; then
     echo -e "\n\nshould fail out sending a file that does not exist"
@@ -184,16 +223,21 @@ else
         ./examples/echoserver/echoserver -1 -R $ready_file &
         server_pid=$!
         create_port
-        ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -S $scp_symlink:$scp_symlink_out
+        $run_client ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -S $scp_symlink:$scp_symlink_out
+        RESULT=$?
         remove_ready_file
+        stop_server
+        # this test passes when no output file appears, which a hung client
+        # would also produce, so a timeout has to fail the script outright
+        check_timeout $RESULT "symlink refusal"
 
         # The server must not deliver the symlink target: no local output file
-        # may be produced from the refused request. The client exit code is not
-        # asserted (as with the other -S cases it does not propagate a
-        # server-side SCP abort); connectivity in this environment is already
-        # proven by the "basic copy from server to local" case above, which uses
-        # the same mechanism and aborts the whole script on failure, so this
-        # cannot pass vacuously.
+        # may be produced from the refused request. The client exit status is
+        # not otherwise asserted (as with the other -S cases it does not
+        # propagate a server-side SCP abort); connectivity in this environment
+        # is already proven by the "basic copy from server to local" case
+        # above, which uses the same mechanism and aborts the whole script on
+        # failure, so this cannot pass vacuously.
         if test -e $scp_symlink_out; then
             rm -f $scp_symlink_out $scp_secret $scp_symlink
             echo -e "\n\nserver followed a symlink, confinement bypass"

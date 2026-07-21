@@ -2375,8 +2375,13 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                 ret = WS_SCP_ABORT;
                 break;
             }
-            /* read file, or file part */
-            bytes = (word32)WFWRITE(ssh->fs, buf, 1, bufSz, fp);
+            /* read file, or file part; an empty file gives a null buffer */
+            if (buf != NULL && bufSz > 0) {
+                bytes = (word32)WFWRITE(ssh->fs, buf, 1, bufSz, fp);
+            }
+            else {
+                bytes = 0;
+            }
             if (bytes != bufSz) {
                 WLOG(WS_LOG_ERROR, scpError, "scp receive callback unable "
                      "to write requested size to file", bytes);
@@ -3433,7 +3438,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             break;
 
         case WOLFSSH_SCP_FILE_PART:
-            /* read file, or file part */
+            /* read file, or file part; an empty file gives a null buffer */
             sz = (bufSz < recvBuffer->bufferSz - recvBuffer->idx) ?
                 bufSz : recvBuffer->bufferSz - recvBuffer->idx;
 
@@ -3445,9 +3450,11 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                 break;
             }
 
-            WMEMCPY(recvBuffer->buffer + recvBuffer->idx, buf, sz);
-            recvBuffer->idx    += sz;
-            recvBuffer->fileSz += sz;
+            if (buf != NULL && sz > 0) {
+                WMEMCPY(recvBuffer->buffer + recvBuffer->idx, buf, sz);
+                recvBuffer->idx    += sz;
+                recvBuffer->fileSz += sz;
+            }
             if (recvBuffer->status) {
                 if (recvBuffer->status(ssh, recvBuffer->name,
                             WOLFSSH_SCP_FILE_PART, recvBuffer) != WS_SUCCESS) {
