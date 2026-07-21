@@ -20461,4 +20461,27 @@ WOLFSSH_API int wolfSSH_TestBuildUserAuthRequestMlDsa(WOLFSSH* ssh,
 
 #endif /* !WOLFSSH_NO_MLDSA */
 
+#ifndef WOLFSSH_NO_AEAD
+
+void wolfSSH_TestAeadIncrementExpIv(byte* iv)
+{
+    AeadIncrementExpIv(iv);
+}
+
+int wolfSSH_TestEncryptAead(WOLFSSH* ssh, byte* cipher,
+        const byte* input, word32 sz,
+        byte* authTag, const byte* auth, word32 authSz)
+{
+    return EncryptAead(ssh, cipher, input, sz, authTag, auth, authSz);
+}
+
+int wolfSSH_TestDecryptAead(WOLFSSH* ssh, byte* plain,
+        const byte* input, word32 sz,
+        const byte* authTag, const byte* auth, word32 authSz)
+{
+    return DecryptAead(ssh, plain, input, sz, authTag, auth, authSz);
+}
+
+#endif /* !WOLFSSH_NO_AEAD */
+
 #endif /* WOLFSSH_TEST_INTERNAL */
