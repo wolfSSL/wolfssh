@@ -1942,7 +1942,7 @@ static int test_AuthRaisePermissions_separateCallsSyscalls(void)
     WOLFSSHD_AUTH* auth;
     int (*savedEgid)(WGID_T);
     int (*savedEuid)(WUID_T);
-    struct passwd* (*savedGetpwnam)(const char*);
+    struct passwd* (*savedGetpwnam)(const char*) = NULL;
 
     conf = wolfSSHD_ConfigNew(NULL);
     if (conf == NULL) {
@@ -1996,7 +1996,7 @@ static int test_AuthRaisePermissions_gidFailSkipsUid(void)
     WOLFSSHD_AUTH* auth;
     int (*savedEgid)(WGID_T);
     int (*savedEuid)(WUID_T);
-    struct passwd* (*savedGetpwnam)(const char*);
+    struct passwd* (*savedGetpwnam)(const char*) = NULL;
 
     conf = wolfSSHD_ConfigNew(NULL);
     if (conf == NULL) {
@@ -2039,7 +2039,7 @@ static int test_AuthRaisePermissions_uidFail(void)
     WOLFSSHD_AUTH* auth;
     int (*savedEgid)(WGID_T);
     int (*savedEuid)(WUID_T);
-    struct passwd* (*savedGetpwnam)(const char*);
+    struct passwd* (*savedGetpwnam)(const char*) = NULL;
 
     conf = wolfSSHD_ConfigNew(NULL);
     if (conf == NULL) {
@@ -2083,14 +2083,19 @@ static int test_AuthSetGroups_ok(void)
     WOLFSSHD_AUTH*   auth = NULL;
     int (*savedGrouplist)(const char*, WGID_T, WGID_T*, int*);
     int (*savedSetgroups)(int, const WGID_T*);
+    struct passwd* (*savedGetpwnam)(const char*) = wsshd_getpwnam_cb;
 
     conf = wolfSSHD_ConfigNew(NULL);
     if (conf == NULL)
         ret = WS_FATAL_ERROR;
     if (ret == WS_SUCCESS) {
+        InstallGetpwnamStub(&savedGetpwnam);
         auth = wolfSSHD_AuthCreateUser(NULL, conf);
-        if (auth == NULL)
-            ret = WS_FATAL_ERROR;
+        if (auth == NULL) {
+            wsshd_getpwnam_cb = savedGetpwnam;
+            wolfSSHD_ConfigFree(conf);
+            return WS_FATAL_ERROR;
+        }
     }
 
     InstallGroupStubs(0, &savedGrouplist, &savedSetgroups);
@@ -2120,6 +2125,7 @@ static int test_AuthSetGroups_ok(void)
 
     wsshd_getgrouplist_cb = savedGrouplist;
     wsshd_setgroups_cb    = savedSetgroups;
+    wsshd_getpwnam_cb     = savedGetpwnam;
     if (auth != NULL)
         (void)wolfSSHD_AuthFreeUser(auth);
     if (conf != NULL)
@@ -2136,14 +2142,19 @@ static int test_AuthSetGroups_setgroups_fail(void)
     WOLFSSHD_AUTH*   auth = NULL;
     int (*savedGrouplist)(const char*, WGID_T, WGID_T*, int*);
     int (*savedSetgroups)(int, const WGID_T*);
+    struct passwd* (*savedGetpwnam)(const char*) = wsshd_getpwnam_cb;
 
     conf = wolfSSHD_ConfigNew(NULL);
     if (conf == NULL)
         ret = WS_FATAL_ERROR;
     if (ret == WS_SUCCESS) {
+        InstallGetpwnamStub(&savedGetpwnam);
         auth = wolfSSHD_AuthCreateUser(NULL, conf);
-        if (auth == NULL)
-            ret = WS_FATAL_ERROR;
+        if (auth == NULL) {
+            wsshd_getpwnam_cb = savedGetpwnam;
+            wolfSSHD_ConfigFree(conf);
+            return WS_FATAL_ERROR;
+        }
     }
 
     InstallGroupStubs(-1, &savedGrouplist, &savedSetgroups);
@@ -2156,6 +2167,7 @@ static int test_AuthSetGroups_setgroups_fail(void)
 
     wsshd_getgrouplist_cb = savedGrouplist;
     wsshd_setgroups_cb    = savedSetgroups;
+    wsshd_getpwnam_cb     = savedGetpwnam;
     if (auth != NULL)
         (void)wolfSSHD_AuthFreeUser(auth);
     if (conf != NULL)
@@ -2172,14 +2184,19 @@ static int test_AuthSetGroups_getgrouplist_fail(void)
     WOLFSSHD_AUTH*   auth = NULL;
     int (*savedGrouplist)(const char*, WGID_T, WGID_T*, int*);
     int (*savedSetgroups)(int, const WGID_T*);
+    struct passwd* (*savedGetpwnam)(const char*) = wsshd_getpwnam_cb;
 
     conf = wolfSSHD_ConfigNew(NULL);
     if (conf == NULL)
         ret = WS_FATAL_ERROR;
     if (ret == WS_SUCCESS) {
+        InstallGetpwnamStub(&savedGetpwnam);
         auth = wolfSSHD_AuthCreateUser(NULL, conf);
-        if (auth == NULL)
-            ret = WS_FATAL_ERROR;
+        if (auth == NULL) {
+            wsshd_getpwnam_cb = savedGetpwnam;
+            wolfSSHD_ConfigFree(conf);
+            return WS_FATAL_ERROR;
+        }
     }
 
     InstallGroupStubs(0, &savedGrouplist, &savedSetgroups);
@@ -2194,6 +2211,7 @@ static int test_AuthSetGroups_getgrouplist_fail(void)
 
     wsshd_getgrouplist_cb = savedGrouplist;
     wsshd_setgroups_cb    = savedSetgroups;
+    wsshd_getpwnam_cb     = savedGetpwnam;
     if (auth != NULL)
         (void)wolfSSHD_AuthFreeUser(auth);
     if (conf != NULL)
