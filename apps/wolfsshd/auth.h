@@ -69,6 +69,7 @@ typedef int (*CallbackCheckPublicKey)(const char* usr,
                                       const char* authorizedKeysFile,
                                       WOLFSSHD_AUTH* authCtx);
 
+void wolfSSHD_AuthInit(void);
 WOLFSSHD_AUTH* wolfSSHD_AuthCreateUser(void* heap, const WOLFSSHD_CONFIG* conf);
 int wolfSSHD_AuthFreeUser(WOLFSSHD_AUTH* auth);
 int wolfSSHD_AuthReducePermissions(WOLFSSHD_AUTH* auth);
@@ -101,6 +102,10 @@ extern int (*wsshd_setegid_cb)(WGID_T);
 extern int (*wsshd_seteuid_cb)(WUID_T);
 extern struct passwd* (*wsshd_getpwnam_cb)(const char*);
 extern int (*wsshd_setgroups_cb)(int, const WGID_T*);
+/* Mirrors auth.c's HAVE_SHADOW condition; only defined there under it. */
+#if !defined(__OSX__) && !defined(__APPLE__)
+extern struct spwd* (*wsshd_getspnam_cb)(const char*);
+#endif
 extern int (*wsshd_getgrouplist_cb)(const char*, WGID_T, WGID_T*, int*);
 int wolfSSHD_GetUserGroupNames(void* heap, const char* usr, WGID_T primaryGid,
         char*** outNames, word32* outCount);
@@ -111,8 +116,24 @@ int SearchForPubKey(const char* path, const char* authKeysFile,
                     WUID_T uid, int strictModes);
 #endif
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
-int CheckPasswordHashUnix(const char* input, char* stored);
+int CheckPasswordHashUnix(const char* input, const char* stored);
 #endif
+/* Mirrors auth.c's HAVE_SHADOW condition; only defined there under it. */
+#if !defined(_WIN32) && !(defined(__OSX__) || defined(__APPLE__))
+void GetFakeHashFromTemplate(const char* tmpl, char* out, word32 outSz);
+void wolfSSHD_SetCachedFakeHashForTest(const char* hash);
+void wolfSSHD_GetCachedFakeHashForTest(char* out, word32 outSz);
+#endif
+/* CheckPasswordUnix and DoFakePasswordCheck are not shadow-specific in
+ * auth.c, so they aren't excluded on OSX/APPLE there. */
+#if !defined(_WIN32) && !defined(WOLFSSH_USE_PAM)
+/* Returns WSSHD_AUTH_SUCCESS/WSSHD_AUTH_FAILURE for a resolved user
+ * (including one unknown to getpwnam()), or a WS_* error code for a
+ * system/config failure (e.g. shadow lookup). */
+int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz,
+                       WOLFSSHD_AUTH* authCtx);
+#endif
+void DoFakePasswordCheck(WS_UserAuthData* authData);
 int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
                       word32 keySz);
 int ResolveAuthKeysPath(const char* homeDir, const char* pattern,

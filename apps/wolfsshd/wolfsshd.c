@@ -2613,6 +2613,10 @@ static int StartSSHD(int argc, char** argv)
         }
     }
 
+    if (ret == WS_SUCCESS && !testMode) {
+        wolfSSHD_AuthInit();
+    }
+
     if (ret == WS_SUCCESS) {
         ret = wolfSSHD_ConfigLoad(conf, configFile);
         if (ret != WS_SUCCESS) {
