@@ -1481,7 +1481,7 @@ static int test_SearchForPubKey(void)
     if (ret == WS_SUCCESS) {
         Log("    Testing scenario: authorized key is accepted.");
         pubKeyCtx.publicKey = keyA;
-        rc = SearchForPubKey(base, keysPath, &pubKeyCtx, uid, 0);
+        rc = SearchForPubKey(base, keysPath, "testuser", &pubKeyCtx, uid, 0);
         if (rc == WSSHD_AUTH_SUCCESS) {
             Log(" PASSED.\n");
         }
@@ -1496,7 +1496,7 @@ static int test_SearchForPubKey(void)
     if (ret == WS_SUCCESS) {
         Log("    Testing scenario: authorized key accepted under StrictModes.");
         pubKeyCtx.publicKey = keyA;
-        rc = SearchForPubKey(base, keysPath, &pubKeyCtx, uid, 1);
+        rc = SearchForPubKey(base, keysPath, "testuser", &pubKeyCtx, uid, 1);
         if (rc == WSSHD_AUTH_SUCCESS) {
             Log(" PASSED.\n");
         }
@@ -1509,7 +1509,7 @@ static int test_SearchForPubKey(void)
     if (ret == WS_SUCCESS) {
         Log("    Testing scenario: unauthorized key is rejected.");
         pubKeyCtx.publicKey = keyB;
-        rc = SearchForPubKey(base, keysPath, &pubKeyCtx, uid, 0);
+        rc = SearchForPubKey(base, keysPath, "testuser", &pubKeyCtx, uid, 0);
         if (rc == WSSHD_AUTH_FAILURE) {
             Log(" PASSED.\n");
         }
@@ -1523,7 +1523,7 @@ static int test_SearchForPubKey(void)
     if (ret == WS_SUCCESS) {
         Log("    Testing scenario: missing keys file returns an error.");
         pubKeyCtx.publicKey = keyA;
-        rc = SearchForPubKey(base, missPath, &pubKeyCtx, uid, 0);
+        rc = SearchForPubKey(base, missPath, "testuser", &pubKeyCtx, uid, 0);
         if (rc < 0) {
             Log(" PASSED.\n");
         }
