@@ -3301,6 +3301,85 @@ done:
     return result;
 }
 
+/* GetString() reserves a byte for the null. A zero-sized destination has
+ * no room for it and must be rejected, not wrap the subtraction. */
+static int test_GetString_zeroDestSz(void)
+{
+    /* SSH string: length 5, then "hello" */
+    static const byte wire[] = { 0x00, 0x00, 0x00, 0x05, 'h','e','l','l','o' };
+    /* SSH string: length 0 */
+    static const byte wireEmpty[] = { 0x00, 0x00, 0x00, 0x00 };
+    char dest[16];
+    word32 destSz;
+    word32 idx;
+    int result = 0;
+    int ret;
+    int i;
+
+    /* NULL args. The zero-size check below dereferences sSz, so it must
+     * stay after this one. */
+    destSz = (word32)sizeof(dest);
+    idx = 0;
+    ret = GetString(NULL, &destSz, wire, (word32)sizeof(wire), &idx);
+    if (ret != WS_BAD_ARGUMENT) { result = -1048; goto done; }
+    idx = 0;
+    ret = GetString(dest, NULL, wire, (word32)sizeof(wire), &idx);
+    if (ret != WS_BAD_ARGUMENT) { result = -1049; goto done; }
+
+    /* zero destination size, non-empty string: reject, touch nothing */
+    WMEMSET(dest, 0xAA, sizeof(dest));
+    destSz = 0;
+    idx = 0;
+    ret = GetString(dest, &destSz, wire, (word32)sizeof(wire), &idx);
+    if (ret != WS_BUFFER_E) { result = -1050; goto done; }
+    if (destSz != 0) { result = -1051; goto done; }
+    if (idx != 0) { result = -1052; goto done; }
+    for (i = 0; i < (int)sizeof(dest); i++) {
+        if ((byte)dest[i] != 0xAA) { result = -1053; goto done; }
+    }
+
+    /* zero destination size, empty string: same rejection */
+    destSz = 0;
+    idx = 0;
+    ret = GetString(dest, &destSz, wireEmpty, (word32)sizeof(wireEmpty), &idx);
+    if (ret != WS_BUFFER_E) { result = -1054; goto done; }
+    if (destSz != 0) { result = -1055; goto done; }
+    for (i = 0; i < (int)sizeof(dest); i++) {
+        if ((byte)dest[i] != 0xAA) { result = -1056; goto done; }
+    }
+
+    /* room for only the null: empty result, no copy */
+    WMEMSET(dest, 0xAA, sizeof(dest));
+    destSz = 1;
+    idx = 0;
+    ret = GetString(dest, &destSz, wire, (word32)sizeof(wire), &idx);
+    if (ret != WS_SUCCESS) { result = -1057; goto done; }
+    if (destSz != 0 || dest[0] != 0) { result = -1058; goto done; }
+
+    /* truncating copy still reserves the null */
+    WMEMSET(dest, 0xAA, sizeof(dest));
+    destSz = 3;
+    idx = 0;
+    ret = GetString(dest, &destSz, wire, (word32)sizeof(wire), &idx);
+    if (ret != WS_SUCCESS) { result = -1059; goto done; }
+    if (destSz != 2 || WSTRCMP(dest, "he") != 0) { result = -1060; goto done; }
+
+    /* whole string fits */
+    WMEMSET(dest, 0xAA, sizeof(dest));
+    destSz = (word32)sizeof(dest);
+    idx = 0;
+    ret = GetString(dest, &destSz, wire, (word32)sizeof(wire), &idx);
+    if (ret != WS_SUCCESS) { result = -1061; goto done; }
+    if (destSz != 5 || WSTRCMP(dest, "hello") != 0) {
+        result = -1062;
+        goto done;
+    }
+    if (idx != (word32)sizeof(wire)) { result = -1063; goto done; }
+
+done:
+    return result;
+}
+
 /* DoChannelWindowAdjust adds the peer's advertised bytes to peerWindowSz.
  * A crafted bytesToAdd that would wrap the word32 must be rejected with
  * WS_OVERFLOW_E and leave the window untouched; a value that fits must be
@@ -9524,6 +9603,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_DoChannelWindowAdjust_overflow();
     printf("DoChannelWindowAdjust_overflow: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_GetString_zeroDestSz();
+    printf("GetString_zeroDestSz: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
