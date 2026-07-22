@@ -208,6 +208,7 @@ Flags:
 static const char sshProtoIdStr[] = "SSH-2.0-wolfSSHv"
                                     LIBWOLFSSH_VERSION_STRING
                                     "\r\n";
+static const char sshProtoIdPrefix[] = "SSH-2.0-";
 static const char OpenSSH[] = "SSH-2.0-OpenSSH";
 
 
@@ -12318,7 +12319,7 @@ int DoProtoId(WOLFSSH* ssh)
 
     if (ssh->inputBuffer.length >= SSH_PROTO_SZ
         && WSTRNCMP((char*)ssh->inputBuffer.buffer,
-                    ssh->ctx->sshProtoIdStr, SSH_PROTO_SZ) == 0) {
+                    sshProtoIdPrefix, SSH_PROTO_SZ) == 0) {
 
         if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER)
             ssh->clientState = CLIENT_VERSION_DONE;
