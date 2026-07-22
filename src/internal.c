@@ -4324,6 +4324,10 @@ int GetString(char* s, word32* sSz, const byte* buf, word32 len, word32 *idx)
     if (s == NULL || sSz == NULL)
         result = WS_BAD_ARGUMENT;
 
+    /* Need room for the null char, and *sSz - 1 must not wrap. */
+    if (result == WS_SUCCESS && *sSz == 0)
+        result = WS_BUFFER_E;
+
     if (result == WS_SUCCESS)
         result = GetStringRef(&strSz, &str, buf, len, idx);
 
