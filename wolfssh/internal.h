@@ -521,7 +521,7 @@ enum NameIdType {
 #define SHA1_96_SZ 12
 #define UINT32_SZ 4
 #define LENGTH_SZ UINT32_SZ
-#define SSH_PROTO_SZ 7 /* "SSH-2.0" */
+#define SSH_PROTO_SZ 8 /* "SSH-2.0-" */
 #define TERMINAL_MODE_SZ 5 /* opcode byte + argument uint32 */
 #define AEAD_IMP_IV_SZ 4
 #define AEAD_EXP_IV_SZ 8

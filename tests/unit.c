@@ -230,6 +230,31 @@ static const ProtoIdTestVector protoIdTestVectors[] = {
     { "server rejects non-SSH protocol",
       "GET / HTTP/1.1\r\n",
       0, WS_VERSION_E, WOLFSSH_ENDPOINT_SERVER },
+
+    /* Protoversion is exactly "2.0" plus a '-'. A 7 byte compare lets
+     * "SSH-2.01-..." pass. (RFC 4253 4.2) */
+    { "protoversion 2.01 rejected",
+      "SSH-2.01-Test\r\n",
+      0, WS_VERSION_E, WOLFSSH_ENDPOINT_CLIENT },
+    { "server rejects protoversion 2.01",
+      "SSH-2.01-Test\r\n",
+      0, WS_VERSION_E, WOLFSSH_ENDPOINT_SERVER },
+
+    /* Protoversion runs into the terminator, no delimiter. */
+    { "protoversion with no delimiter CRLF",
+      "SSH-2.0\r\n",
+      0, WS_VERSION_E, WOLFSSH_ENDPOINT_CLIENT },
+    { "protoversion with no delimiter LF",
+      "SSH-2.0\n",
+      0, WS_VERSION_E, WOLFSSH_ENDPOINT_CLIENT },
+
+    /* Controls. */
+    { "protoversion 2.0 accepted",
+      "SSH-2.0-Test\r\n",
+      0, WS_SUCCESS, WOLFSSH_ENDPOINT_CLIENT },
+    { "server accepts protoversion 2.0",
+      "SSH-2.0-Test\r\n",
+      0, WS_SUCCESS, WOLFSSH_ENDPOINT_SERVER },
 };
 
 static int RecvFromPtr(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
@@ -469,6 +494,45 @@ static int test_DoProtoId(void)
                 failures++;
             }
             wolfSSH_free(ssh);
+        }
+    }
+
+    /* A non-conforming local proto ID doesn't reject a conforming peer. */
+    {
+        static const ProtoIdTestVector customTv = {
+            "custom local proto ID accepts peer",
+            "SSH-2.0-OpenSSH_8.9\r\n",
+            0, WS_SUCCESS, WOLFSSH_ENDPOINT_CLIENT
+        };
+        ProtoIdTestState state;
+
+        state.tv = &customTv;
+        state.offset = 0;
+
+        wolfSSH_SetIORecv(clientCtx, RecvFromPtr);
+        if (wolfSSH_CTX_SetSshProtoIdStr(clientCtx,
+                    "SSH-2.0_NonConforming\r\n") != WS_SUCCESS) {
+            fprintf(stderr, "\t\"%s\" FAIL: SetSshProtoIdStr failed\n",
+                    customTv.name);
+            failures++;
+        }
+        else {
+            ssh = wolfSSH_new(clientCtx);
+            if (ssh == NULL) {
+                fprintf(stderr, "\t\"%s\" FAIL: wolfSSH_new returned NULL\n",
+                        customTv.name);
+                failures++;
+            }
+            else {
+                wolfSSH_SetIOReadCtx(ssh, &state);
+                ret = wolfSSH_TestDoProtoId(ssh);
+                if (ret != customTv.expected) {
+                    fprintf(stderr, "\t\"%s\" FAIL: got %d, expected %d\n",
+                            customTv.name, ret, customTv.expected);
+                    failures++;
+                }
+                wolfSSH_free(ssh);
+            }
         }
     }
 
