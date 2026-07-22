@@ -6424,7 +6424,10 @@ static int certmanLoadFile(const char* fn, byte** buf, word32* bufSz)
         return -1;
     }
 #endif
-    rewind(f);
+    if (fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return -1;
+    }
 
     *buf = (byte*)malloc((size_t)sz);
     if (*buf == NULL) {
@@ -6946,7 +6949,6 @@ static int test_SshResourceFree_zeroesSecrets(void)
     const byte* keysBytes;
     const byte* peerKeysBytes;
     int result = 0;
-    int retainInstalled = 0;
     wolfSSL_Malloc_cb prevMf = NULL;
     wolfSSL_Free_cb prevFf = NULL;
     wolfSSL_Realloc_cb prevRf = NULL;
@@ -6973,10 +6975,8 @@ static int test_SshResourceFree_zeroesSecrets(void)
         result = -702;
         goto out;
     }
-    retainInstalled = 1;
     wolfSSH_free(ssh);
     wolfSSL_SetAllocators(prevMf, prevFf, prevRf);
-    retainInstalled = 0;
 
     if (!IsRetained(ssh)) {
         result = -703;
@@ -7007,8 +7007,6 @@ static int test_SshResourceFree_zeroesSecrets(void)
     }
 
 out:
-    if (retainInstalled)
-        wolfSSL_SetAllocators(prevMf, prevFf, prevRf);
     DrainRetained();
     if (ctx != NULL)
         wolfSSH_CTX_free(ctx);
@@ -7033,7 +7031,6 @@ static int test_KeyAgreeDh_client_zeroesEphemeralPrivKey(void)
     word32 markedSz;
     word32 i;
     int result = 0;
-    int dhInited = 0;
 
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
     if (ctx == NULL)
@@ -7056,7 +7053,6 @@ static int test_KeyAgreeDh_client_zeroesEphemeralPrivKey(void)
         result = -713;
         goto cleanup;
     }
-    dhInited = 1;
 
     markedSz = (word32)sizeof(hs->x);
     WMEMSET(hs->x, 0xA5, markedSz);
@@ -7068,7 +7064,6 @@ static int test_KeyAgreeDh_client_zeroesEphemeralPrivKey(void)
     (void)wolfSSH_TestKeyAgreeDh_client(ssh, WC_HASH_TYPE_SHA256,
             bogusF, (word32)sizeof(bogusF));
     /* wc_FreeDhKey was called inside the test hook; do not free again. */
-    dhInited = 0;
 
     for (i = 0; i < markedSz; i++) {
         if (hs->x[i] != 0) {
@@ -7078,8 +7073,6 @@ static int test_KeyAgreeDh_client_zeroesEphemeralPrivKey(void)
     }
 
 cleanup:
-    if (dhInited)
-        wc_FreeDhKey(&ssh->handshake->privKey.dh);
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
     return result;
