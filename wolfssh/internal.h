@@ -31,6 +31,7 @@
 #include <wolfssh/ssh.h>
 #include <wolfssh/wolfsftp.h>
 
+#include <wolfssl/version.h>
 #include <wolfssl/wolfcrypt/hash.h>
 #include <wolfssl/wolfcrypt/random.h>
 #include <wolfssl/wolfcrypt/aes.h>
@@ -105,7 +106,16 @@ extern "C" {
     #define WOLFSSH_NO_DH
 #endif
 
-#ifndef HAVE_DILITHIUM
+#define WOLFSSL_V5_0_0 0x05000000
+#define WOLFSSL_V5_7_0 0x05007000
+#define WOLFSSL_V5_7_2 0x05007002
+#define WOLFSSL_V5_9_2 0x05009002
+
+/* wc_MlDsaKey_* / WC_MLDSA_* naming replaced the wc_Dilithium_* API in
+ * wolfSSL 5.9.2. HAVE_DILITHIUM alone doesn't distinguish the two, so
+ * require the version that has the new API too. */
+#if !defined(HAVE_DILITHIUM) || \
+    (LIBWOLFSSL_VERSION_HEX < WOLFSSL_V5_9_2)
     #undef WOLFSSH_NO_MLDSA
     #define WOLFSSH_NO_MLDSA
     #undef WOLFSSH_NO_MLDSA44
@@ -1948,11 +1958,6 @@ enum TerminalModes {
     WOLFSSH_TTY_INVALID = 160
 };
 #endif /* WOLFSSH_TERM */
-
-
-#define WOLFSSL_V5_0_0 0x05000000
-#define WOLFSSL_V5_7_0 0x05007000
-#define WOLFSSL_V5_7_2 0x05007002
 
 
 #ifdef __cplusplus

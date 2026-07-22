@@ -1790,12 +1790,18 @@ void wolfSSH_KEY_clean(WS_KeySignature* key)
  * fails try to load it as if ECDSA. Both public and private keys can be
  * decoded. For RSA keys, the key format is described as "ssh-rsa".
  *
+ * Private-only ML-DSA keys are rejected (WS_CRYPTO_FAILED) as public keys
+ * cannot be derived. ECDSA derives and validates the public key here.
+ * Ed25519 allows missing public keys if HAVE_ED25519_MAKE_KEY is defined
+ * (derived later at KEX); otherwise rejected like ML-DSA.
+ *
  * @param in        key to identify
  * @param inSz      size of key
  * @param isPrivate indicates private or public key
  * @param heap      heap to use for memory allocation
  * @param pkey      optionally return populated WS_KeySignature
- * @return          keyId as int, WS_MEMORY_E, WS_UNIMPLEMENTED_E
+ * @return          keyId as int, WS_MEMORY_E, WS_UNIMPLEMENTED_E,
+ *                  WS_CRYPTO_FAILED
  */
 int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
     WS_KeySignature **pkey)
@@ -1804,6 +1810,9 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
     word32 idx;
     int ret;
     int dynType = isPrivate ? DYNTYPE_PRIVKEY : DYNTYPE_PUBKEY;
+    /* Set to WS_CRYPTO_FAILED if ML-DSA key lacks derivable public key.
+     * Prevents Ed25519 fallback decode. */
+    int noPubKeyRet = 0;
 #ifndef WOLFSSH_NO_MLDSA
     byte mlDsaLevel = 0;
     int mlDsaInit = 0;
@@ -1865,6 +1874,8 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
 
                 /* If decode was successful, this is an ECDSA key. */
                 if (ret == 0) {
+                    int curveSupported = 1;
+
                     switch (wc_ecc_get_curve_id(key->ks.ecc.key.idx)) {
                         case ECC_SECP256R1:
                             key->keyId = ID_ECDSA_SHA2_NISTP256;
@@ -1876,8 +1887,29 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
                             key->keyId = ID_ECDSA_SHA2_NISTP521;
                             break;
                         default:
-                            /* Not a supported curve, so free the key */
-                            wc_ecc_free(&key->ks.ecc.key);
+                            curveSupported = 0;
+                            break;
+                    }
+
+                    /* SEC1 allows omitted public point; derive it now so
+                     * an undecodable key is rejected at load time, not
+                     * KEX. */
+                    if (curveSupported && isPrivate &&
+                            key->ks.ecc.key.type == ECC_PRIVATEKEY_ONLY) {
+                        if (wc_ecc_make_pub(&key->ks.ecc.key, NULL) != 0) {
+                            WLOG(WS_LOG_ERROR,
+                                "ECDSA priv-only key rejected; no "
+                                "derivable pubkey");
+                            curveSupported = 0;
+                            ret = WS_CRYPTO_FAILED;
+                            noPubKeyRet = ret;
+                            key->keyId = ID_UNKNOWN;
+                        }
+                    }
+
+                    if (!curveSupported) {
+                        /* Not a supported curve, so free the key */
+                        wc_ecc_free(&key->ks.ecc.key);
                     }
                 } else {
                     wc_ecc_free(&key->ks.ecc.key);
@@ -1886,7 +1918,7 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
         }
 #endif /* WOLFSSH_NO_ECDSA */
 #ifndef WOLFSSH_NO_MLDSA
-        if (key->keyId == ID_UNKNOWN) {
+        if (key->keyId == ID_UNKNOWN && noPubKeyRet == 0) {
             idx = 0;
             mlDsaLevel = 0;
             mlDsaInit = 0;
@@ -1896,6 +1928,17 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
                 if (isPrivate) {
                     ret = wc_MlDsaKey_PrivateKeyDecode(&key->ks.mldsa.key,
                                                        in, inSz, &idx);
+                    if (ret == 0) {
+                        /* Priv-only decode can succeed with no derivable
+                         * public key; reject here instead of at first
+                         * handshake. */
+                        if (!key->ks.mldsa.key.pubKeySet) {
+                            WLOG(WS_LOG_ERROR,
+                                "ML-DSA priv-only key rejected; no derivable pubkey");
+                            ret = WS_CRYPTO_FAILED;
+                            noPubKeyRet = ret;
+                        }
+                    }
                 }
                 else {
                     /* PublicKeyDecode auto-detects level from SPKI OID. */
@@ -1957,7 +2000,9 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
         }
 #endif /* WOLFSSH_NO_MLDSA */
 #if !defined(WOLFSSH_NO_ED25519)
-        if (key->keyId == ID_UNKNOWN) {
+        /* noPubKeyRet == 0 check: don't reinterpret rejected ML-DSA bytes
+         * as Ed25519. */
+        if (key->keyId == ID_UNKNOWN && noPubKeyRet == 0) {
             idx = 0;
             ret = wc_ed25519_init_ex(&key->ks.ed25519.key, heap, INVALID_DEVID);
 
@@ -1965,6 +2010,23 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
                 if (isPrivate) {
                     ret = wc_Ed25519PrivateKeyDecode(in, &idx,
                             &key->ks.ed25519.key, inSz);
+                    if (ret == 0) {
+                        /* No embedded pubkey. SendKexGetSigningKey derives
+                         * it via wc_ed25519_make_public() if available;
+                         * otherwise reject now instead of failing at KEX. */
+                        if (!key->ks.ed25519.key.pubKeySet) {
+#ifdef HAVE_ED25519_MAKE_KEY
+                            WLOG(WS_LOG_WARN,
+                                "Ed25519 priv-only key; pubkey derives at KEX");
+#else
+                            WLOG(WS_LOG_ERROR,
+                                "Ed25519 priv-only key rejected; no "
+                                "derivable pubkey");
+                            ret = WS_CRYPTO_FAILED;
+                            noPubKeyRet = ret;
+#endif /* HAVE_ED25519_MAKE_KEY */
+                        }
+                    }
                 }
                 else {
                     ret = wc_Ed25519PublicKeyDecode(in, &idx,
@@ -1982,7 +2044,8 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
 #endif /* WOLFSSH_NO_ED25519 */
 
         if (key->keyId == ID_UNKNOWN) {
-            ret = WS_UNIMPLEMENTED_E;
+            /* Prefer specific rejection reason over generic fallback. */
+            ret = (noPubKeyRet != 0) ? noPubKeyRet : WS_UNIMPLEMENTED_E;
         }
         else {
             if (pkey != NULL)
@@ -13274,6 +13337,22 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
                     ret = wc_ecc_export_x963(&sigKeyBlock_ptr->sk.ecc.key,
                                              sigKeyBlock_ptr->sk.ecc.q,
                                              &sigKeyBlock_ptr->sk.ecc.qSz);
+                    if (ret != 0 && sigKeyBlock_ptr->sk.ecc.key.type ==
+                            ECC_PRIVATEKEY_ONLY) {
+                        /* Priv-only SEC1 DER: ECDSA public key is derivable
+                         * from private scalar. wc_ecc_make_pub() is
+                         * unconditional and caches result. Retry export. */
+                        sigKeyBlock_ptr->sk.ecc.qSz =
+                                (word32)sizeof(sigKeyBlock_ptr->sk.ecc.q);
+                        ret = wc_ecc_make_pub(&sigKeyBlock_ptr->sk.ecc.key,
+                                NULL);
+                        if (ret == 0) {
+                            ret = wc_ecc_export_x963(
+                                    &sigKeyBlock_ptr->sk.ecc.key,
+                                    sigKeyBlock_ptr->sk.ecc.q,
+                                    &sigKeyBlock_ptr->sk.ecc.qSz);
+                        }
+                    }
                     PRIVATE_KEY_LOCK();
                 }
                 /* Hash in the length of the public key block. */
@@ -13331,10 +13410,27 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
             if (ret == 0)
                 ret = wc_Ed25519PrivateKeyDecode(ssh->ctx->privateKey[keyIdx].key, &scratch, &sigKeyBlock_ptr->sk.ed.key, ssh->ctx->privateKey[keyIdx].keySz);
 
-            if (ret == 0)
+            if (ret == 0) {
                 ret = wc_ed25519_export_public(&sigKeyBlock_ptr->sk.ed.key,
                                                 sigKeyBlock_ptr->sk.ed.q,
                                                 &sigKeyBlock_ptr->sk.ed.qSz );
+#ifdef HAVE_ED25519_MAKE_KEY
+                if (ret != 0 && !sigKeyBlock_ptr->sk.ed.key.pubKeySet) {
+                    /* Priv-only DER: Ed25519 public key is deterministically
+                     * derivable from private seed. */
+                    sigKeyBlock_ptr->sk.ed.qSz = ED25519_PUB_KEY_SIZE;
+                    ret = wc_ed25519_make_public(&sigKeyBlock_ptr->sk.ed.key,
+                            sigKeyBlock_ptr->sk.ed.q, ED25519_PUB_KEY_SIZE);
+                    if (ret == 0) {
+                        /* trusted=1: q derived from same private scalar;
+                         * untrusted path re-verification redundant. */
+                        ret = wc_ed25519_import_public_ex(
+                                sigKeyBlock_ptr->sk.ed.q, ED25519_PUB_KEY_SIZE,
+                                &sigKeyBlock_ptr->sk.ed.key, 1);
+                    }
+                }
+#endif /* HAVE_ED25519_MAKE_KEY */
+            }
 
             /* Hash in the length of the public key block. */
             if (ret == 0) {

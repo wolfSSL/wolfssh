@@ -8769,6 +8769,509 @@ done:
 }
 #endif
 
+#if !defined(WOLFSSH_NO_ECDSA) && defined(HAVE_ECC_KEY_EXPORT)
+/* Private-only SEC1 DER (public point omitted): must succeed as cert may supply
+ * public key later. Shared across P-256/P-384/P-521.
+ * Return codes -667..-674 */
+static int test_IdentifyAsn1Key_EccPrivOnlyDer(int curveSz,
+        int expectedKeyId, const char* curveName)
+{
+    int ret;
+    ecc_key eccKey;
+    WC_RNG eccRng;
+    byte* eccDer = NULL;
+    int eccDerSz;
+
+    WMEMSET(&eccKey, 0, sizeof(eccKey));
+    if (wc_ecc_init(&eccKey) != 0) {
+        return -667;
+    }
+    if (wc_InitRng(&eccRng) != 0) {
+        wc_ecc_free(&eccKey);
+        return -668;
+    }
+    if (wc_ecc_make_key(&eccRng, curveSz, &eccKey) != 0) {
+        wc_FreeRng(&eccRng);
+        wc_ecc_free(&eccKey);
+        return -669;
+    }
+    wc_FreeRng(&eccRng);
+
+    eccDerSz = wc_EccKeyDerSize(&eccKey, 0);
+    if (eccDerSz <= 0) {
+        wc_ecc_free(&eccKey);
+        return -670;
+    }
+    eccDer = (byte*)WMALLOC((word32)eccDerSz, NULL, 0);
+    if (eccDer == NULL) {
+        wc_ecc_free(&eccKey);
+        return -671;
+    }
+    eccDerSz = wc_EccPrivateKeyToDer(&eccKey, eccDer, (word32)eccDerSz);
+    wc_ecc_free(&eccKey);
+    if (eccDerSz <= 0) {
+        WFREE(eccDer, NULL, 0);
+        return -672;
+    }
+
+    ret = IdentifyAsn1Key(eccDer, (word32)eccDerSz, 1, NULL, NULL);
+    if (ret != expectedKeyId) {
+        WFREE(eccDer, NULL, 0);
+        printf("IdentifyAsn1Key: private-only ECC %s DER expected "
+               "keyId %d, got %d\n", curveName, expectedKeyId, ret);
+        return -673;
+    }
+
+    /* Requesting populated WS_KeySignature confirms key object survives. */
+    {
+        WS_KeySignature* eccKeySig = NULL;
+
+        ret = IdentifyAsn1Key(eccDer, (word32)eccDerSz, 1, NULL,
+                &eccKeySig);
+        WFREE(eccDer, NULL, 0);
+        if (ret != expectedKeyId || eccKeySig == NULL ||
+                eccKeySig->keyId != expectedKeyId) {
+            printf("IdentifyAsn1Key: private-only ECC %s DER pkey-out "
+                   "variant failed, ret=%d\n", curveName, ret);
+            if (eccKeySig != NULL) {
+                wolfSSH_KEY_clean(eccKeySig);
+                WFREE(eccKeySig, NULL, DYNTYPE_PRIVKEY);
+            }
+            return -674;
+        }
+        wolfSSH_KEY_clean(eccKeySig);
+        WFREE(eccKeySig, NULL, DYNTYPE_PRIVKEY);
+    }
+
+    return 0;
+}
+
+static int test_IdentifyAsn1Key_EccPrivOnlyDerFailure(int curveSz,
+        const char* curveName)
+{
+    int ret;
+    ecc_key eccKey;
+    WC_RNG eccRng;
+    byte* eccDer = NULL;
+    int eccDerSz;
+    int i;
+
+    WMEMSET(&eccKey, 0, sizeof(eccKey));
+    if (wc_ecc_init(&eccKey) != 0) {
+        return -6932;
+    }
+    if (wc_InitRng(&eccRng) != 0) {
+        wc_ecc_free(&eccKey);
+        return -6933;
+    }
+    if (wc_ecc_make_key(&eccRng, curveSz, &eccKey) != 0) {
+        wc_FreeRng(&eccRng);
+        wc_ecc_free(&eccKey);
+        return -6934;
+    }
+    wc_FreeRng(&eccRng);
+
+    eccDerSz = wc_EccKeyDerSize(&eccKey, 0);
+    if (eccDerSz <= 0) {
+        wc_ecc_free(&eccKey);
+        return -6935;
+    }
+    eccDer = (byte*)WMALLOC((word32)eccDerSz, NULL, 0);
+    if (eccDer == NULL) {
+        wc_ecc_free(&eccKey);
+        return -6936;
+    }
+    eccDerSz = wc_EccPrivateKeyToDer(&eccKey, eccDer, (word32)eccDerSz);
+    wc_ecc_free(&eccKey);
+    if (eccDerSz <= 0) {
+        WFREE(eccDer, NULL, 0);
+        return -6937;
+    }
+
+    /* Corrupt the private scalar to force a wc_ecc_make_pub failure during
+     * pubkey derivation in IdentifyAsn1Key. */
+    for (i = 0; i < eccDerSz - curveSz - 2; i++) {
+        if (eccDer[i] == 0x04 && eccDer[i+1] == curveSz) {
+            WMEMSET(eccDer + i + 2, 0, curveSz);
+            break;
+        }
+    }
+
+    ret = IdentifyAsn1Key(eccDer, (word32)eccDerSz, 1, NULL, NULL);
+    WFREE(eccDer, NULL, 0);
+
+    if (ret != WS_CRYPTO_FAILED) {
+        printf("IdentifyAsn1Key: private-only ECC %s DER fallback derivation "
+               "expected WS_CRYPTO_FAILED, got %d\n", curveName, ret);
+        return -6938;
+    }
+
+    return 0;
+}
+#endif
+
+#if !defined(WOLFSSH_NO_ED25519) && defined(HAVE_ED25519) && \
+    defined(HAVE_ED25519_MAKE_KEY) && defined(HAVE_ED25519_KEY_EXPORT)
+/* Private-only DER: Ed25519 public key is deterministically derivable, so
+ * IdentifyAsn1Key must load it successfully.
+ * Return codes -675..-681 */
+static int test_IdentifyAsn1Key_Ed25519PrivOnlyDer(void)
+{
+    int ret;
+    ed25519_key edKey;
+    WC_RNG edRng;
+    byte* edDer = NULL;
+    int edDerSz;
+
+    if (wc_ed25519_init(&edKey) != 0) {
+        return -675;
+    }
+    if (wc_InitRng(&edRng) != 0) {
+        wc_ed25519_free(&edKey);
+        return -676;
+    }
+    if (wc_ed25519_make_key(&edRng, ED25519_KEY_SIZE, &edKey) != 0) {
+        wc_FreeRng(&edRng);
+        wc_ed25519_free(&edKey);
+        return -677;
+    }
+    wc_FreeRng(&edRng);
+
+    edDerSz = wc_Ed25519PrivateKeyToDer(&edKey, NULL, 0);
+    if (edDerSz <= 0) {
+        wc_ed25519_free(&edKey);
+        return -678;
+    }
+    edDer = (byte*)WMALLOC((word32)edDerSz, NULL, 0);
+    if (edDer == NULL) {
+        wc_ed25519_free(&edKey);
+        return -679;
+    }
+    edDerSz = wc_Ed25519PrivateKeyToDer(&edKey, edDer, (word32)edDerSz);
+    wc_ed25519_free(&edKey);
+    if (edDerSz <= 0) {
+        WFREE(edDer, NULL, 0);
+        return -680;
+    }
+
+    {
+        WS_KeySignature* edKeySig = NULL;
+
+        ret = IdentifyAsn1Key(edDer, (word32)edDerSz, 1, NULL, &edKeySig);
+        WFREE(edDer, NULL, 0);
+        if (ret != ID_ED25519 || edKeySig == NULL ||
+                edKeySig->keyId != ID_ED25519) {
+            printf("IdentifyAsn1Key: private-only Ed25519 DER expected "
+                   "ID_ED25519, got %d\n", ret);
+            if (edKeySig != NULL) {
+                wolfSSH_KEY_clean(edKeySig);
+                WFREE(edKeySig, NULL, DYNTYPE_PRIVKEY);
+            }
+            return -681;
+        }
+        wolfSSH_KEY_clean(edKeySig);
+        WFREE(edKeySig, NULL, DYNTYPE_PRIVKEY);
+    }
+
+    return 0;
+}
+#endif
+
+#if !defined(WOLFSSH_NO_ED25519) && defined(HAVE_ED25519) && \
+    !defined(HAVE_ED25519_MAKE_KEY)
+/* Private-only Ed25519 DER must be rejected if no HAVE_ED25519_MAKE_KEY.
+ * Hardcoded PKCS8 DER since make_key is unavailable. */
+static int test_IdentifyAsn1Key_Ed25519PrivOnlyDerNoMakeKey(void)
+{
+    int ret;
+    /* SEQUENCE { version 0, AlgorithmIdentifier{Ed25519 OID},
+     *            OCTET STRING { OCTET STRING <32-byte seed> } } */
+    static const byte edDer[] = {
+        0x30, 0x2E,
+        0x02, 0x01, 0x00,
+        0x30, 0x05, 0x06, 0x03, 0x2B, 0x65, 0x70,
+        0x04, 0x22,
+            0x04, 0x20,
+                0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+                0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+                0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20
+    };
+    WS_KeySignature* edKeySig = NULL;
+
+    ret = IdentifyAsn1Key(edDer, (word32)sizeof(edDer), 1, NULL, &edKeySig);
+    if (ret != WS_CRYPTO_FAILED) {
+        printf("IdentifyAsn1Key: private-only Ed25519 DER expected "
+               "WS_CRYPTO_FAILED without HAVE_ED25519_MAKE_KEY, got %d\n",
+               ret);
+        if (edKeySig != NULL) {
+            wolfSSH_KEY_clean(edKeySig);
+            WFREE(edKeySig, NULL, DYNTYPE_PRIVKEY);
+        }
+        return -682;
+    }
+    if (edKeySig != NULL) {
+        printf("IdentifyAsn1Key: expected NULL keySig on rejection\n");
+        wolfSSH_KEY_clean(edKeySig);
+        WFREE(edKeySig, NULL, DYNTYPE_PRIVKEY);
+        return -683;
+    }
+
+    return 0;
+}
+#endif
+
+#if !defined(WOLFSSH_NO_ED25519) && defined(HAVE_ED25519) && \
+    defined(HAVE_ED25519_MAKE_KEY) && defined(HAVE_ED25519_KEY_EXPORT) && \
+    defined(HAVE_ED25519_SIGN) && defined(HAVE_ED25519_VERIFY)
+/* Mirrors KEX host-key signing fallback: decode private-only DER, let
+ * export_public fail, derive public key, and confirm signing/verification.
+ * This only proves the underlying wolfCrypt sequence; the real regression
+ * guard for SendKexGetSigningKey's derive fallback (Ed25519 and ECDSA) is
+ * the end-to-end test_pubkey_auth_ed25519_privonly_hostkey /
+ * test_pubkey_auth_ecdsa_privonly_hostkey in tests/auth.c.
+ * Return codes -682..-691. Mutually exclusive with
+ * test_IdentifyAsn1Key_Ed25519PrivOnlyDerNoMakeKey, which reuses -682/-683. */
+static int test_Ed25519KexDeriveFallback(void)
+{
+    ed25519_key edKey;
+    WC_RNG edRng;
+    byte der[128];
+    int derSz;
+    word32 idx = 0;
+    ed25519_key kexKey;
+    byte q[ED25519_PUB_KEY_SIZE];
+    word32 qSz = sizeof(q);
+    byte sig[ED25519_SIG_SIZE];
+    word32 sigSz = sizeof(sig);
+    const byte msg[] = "wolfSSH KEX derive-fallback test message";
+    int verifyRes = 0;
+
+    WMEMSET(&edKey, 0, sizeof(edKey));
+    if (wc_ed25519_init(&edKey) != 0) {
+        return -682;
+    }
+    if (wc_InitRng(&edRng) != 0) {
+        wc_ed25519_free(&edKey);
+        return -683;
+    }
+    if (wc_ed25519_make_key(&edRng, ED25519_KEY_SIZE, &edKey) != 0) {
+        wc_FreeRng(&edRng);
+        wc_ed25519_free(&edKey);
+        return -684;
+    }
+    wc_FreeRng(&edRng);
+    derSz = wc_Ed25519PrivateKeyToDer(&edKey, der, sizeof(der));
+    wc_ed25519_free(&edKey);
+    if (derSz <= 0) {
+        return -685;
+    }
+
+    /* KEX sequence: fresh decode, export_public, then fallback. */
+    WMEMSET(&kexKey, 0, sizeof(kexKey));
+    if (wc_ed25519_init(&kexKey) != 0) {
+        return -686;
+    }
+    if (wc_Ed25519PrivateKeyDecode(der, &idx, &kexKey,
+            (word32)derSz) != 0) {
+        wc_ed25519_free(&kexKey);
+        return -687;
+    }
+    if (wc_ed25519_export_public(&kexKey, q, &qSz) == 0) {
+        /* Public key derived during decode; fallback not needed. */
+        wc_ed25519_free(&kexKey);
+        return 0;
+    }
+    /* trusted=1: matches production (src/internal.c). */
+    if (wc_ed25519_make_public(&kexKey, q, ED25519_PUB_KEY_SIZE) != 0 ||
+            wc_ed25519_import_public_ex(q, ED25519_PUB_KEY_SIZE, &kexKey,
+                    1) != 0) {
+        wc_ed25519_free(&kexKey);
+        printf("test_Ed25519KexDeriveFallback: derive/import failed\n");
+        return -689;
+    }
+
+    if (wc_ed25519_sign_msg(msg, sizeof(msg), sig, &sigSz, &kexKey) != 0) {
+        wc_ed25519_free(&kexKey);
+        printf("test_Ed25519KexDeriveFallback: sign failed\n");
+        return -690;
+    }
+    if (wc_ed25519_verify_msg(sig, sigSz, msg, sizeof(msg), &verifyRes,
+            &kexKey) != 0 || verifyRes != 1) {
+        wc_ed25519_free(&kexKey);
+        printf("test_Ed25519KexDeriveFallback: verify failed\n");
+        return -691;
+    }
+    wc_ed25519_free(&kexKey);
+
+    return 0;
+}
+
+/* Failure path: wc_ed25519_make_public() must fail cleanly (not fabricate
+ * a key) when handed an undersized output buffer.
+ * Return codes -6920..-6926 */
+static int test_Ed25519KexDeriveFallbackFailure(void)
+{
+    ed25519_key edKey;
+    WC_RNG edRng;
+    byte der[128];
+    int derSz;
+    word32 idx = 0;
+    ed25519_key kexKey;
+    byte q[ED25519_PUB_KEY_SIZE];
+    word32 qSz = sizeof(q);
+
+    WMEMSET(&edKey, 0, sizeof(edKey));
+    if (wc_ed25519_init(&edKey) != 0) {
+        return -6920;
+    }
+    if (wc_InitRng(&edRng) != 0) {
+        wc_ed25519_free(&edKey);
+        return -6921;
+    }
+    if (wc_ed25519_make_key(&edRng, ED25519_KEY_SIZE, &edKey) != 0) {
+        wc_FreeRng(&edRng);
+        wc_ed25519_free(&edKey);
+        return -6922;
+    }
+    wc_FreeRng(&edRng);
+    derSz = wc_Ed25519PrivateKeyToDer(&edKey, der, sizeof(der));
+    wc_ed25519_free(&edKey);
+    if (derSz <= 0) {
+        return -6923;
+    }
+
+    WMEMSET(&kexKey, 0, sizeof(kexKey));
+    if (wc_ed25519_init(&kexKey) != 0) {
+        return -6924;
+    }
+    if (wc_Ed25519PrivateKeyDecode(der, &idx, &kexKey,
+            (word32)derSz) != 0) {
+        wc_ed25519_free(&kexKey);
+        return -6925;
+    }
+    if (wc_ed25519_export_public(&kexKey, q, &qSz) == 0) {
+        /* Public key derived during decode; fallback not exercised. */
+        wc_ed25519_free(&kexKey);
+        return 0;
+    }
+
+    if (wc_ed25519_make_public(&kexKey, q, 0) == 0) {
+        wc_ed25519_free(&kexKey);
+        printf("test_Ed25519KexDeriveFallbackFailure: expected failure on "
+               "undersized buffer, got success\n");
+        return -6926;
+    }
+    wc_ed25519_free(&kexKey);
+
+    return 0;
+}
+#endif
+
+#ifndef WOLFSSH_NO_ECDSA
+/* Failure path counterpart for ECDSA: wc_ecc_make_pub() must fail cleanly
+ * when a key has no private scalar loaded, mirroring the guard added in
+ * IdentifyAsn1Key and the fallback in SendKexGetSigningKey.
+ * Return codes -6930..-6931 */
+static int test_ECCKexDeriveFallbackFailure(void)
+{
+    ecc_key eccKey;
+    int ret;
+
+    WMEMSET(&eccKey, 0, sizeof(eccKey));
+    if (wc_ecc_init(&eccKey) != 0) {
+        return -6930;
+    }
+
+    ret = wc_ecc_make_pub(&eccKey, NULL);
+    wc_ecc_free(&eccKey);
+    if (ret == 0) {
+        printf("test_ECCKexDeriveFallbackFailure: expected failure on key "
+               "with no private scalar, got success\n");
+        return -6931;
+    }
+
+    return 0;
+}
+#endif
+
+#if !defined(WOLFSSH_NO_MLDSA) && defined(WOLFSSL_MLDSA_PRIVATE_KEY) && \
+    !defined(WOLFSSL_MLDSA_NO_ASN1) && \
+    !defined(WOLFSSL_MLDSA_NO_MAKE_KEY) && \
+    (!defined(WOLFSSH_NO_MLDSA44) || !defined(WOLFSSH_NO_MLDSA65) || \
+     !defined(WOLFSSH_NO_MLDSA87))
+/* Private-only DER: rejected at decode time. Shared across 44/65/87 levels.
+ * Return codes -692..-699 */
+static int test_IdentifyAsn1Key_MlDsaPrivOnlyDer(byte level,
+        word32 derBufSz, const char* levelName)
+{
+    int ret;
+    MlDsaKey mlKey;
+    WC_RNG mlRng;
+    byte* mlDer = NULL;
+    int mlDerSz;
+
+    WMEMSET(&mlKey, 0, sizeof(mlKey));
+    if (wc_MlDsaKey_Init(&mlKey, NULL, INVALID_DEVID) != 0) {
+        return -692;
+    }
+    if (wc_MlDsaKey_SetParams(&mlKey, level) != 0) {
+        wc_MlDsaKey_Free(&mlKey);
+        return -693;
+    }
+    if (wc_InitRng(&mlRng) != 0) {
+        wc_MlDsaKey_Free(&mlKey);
+        return -694;
+    }
+    if (wc_MlDsaKey_MakeKey(&mlKey, &mlRng) != 0) {
+        wc_FreeRng(&mlRng);
+        wc_MlDsaKey_Free(&mlKey);
+        return -695;
+    }
+    wc_FreeRng(&mlRng);
+
+    mlDer = (byte*)WMALLOC(derBufSz, NULL, 0);
+    if (mlDer == NULL) {
+        wc_MlDsaKey_Free(&mlKey);
+        return -696;
+    }
+    mlDerSz = wc_MlDsaKey_PrivateKeyToDer(&mlKey, mlDer, derBufSz);
+    wc_MlDsaKey_Free(&mlKey);
+    if (mlDerSz <= 0) {
+        WFREE(mlDer, NULL, 0);
+        return -697;
+    }
+
+    ret = IdentifyAsn1Key(mlDer, (word32)mlDerSz, 1, NULL, NULL);
+    if (ret != WS_CRYPTO_FAILED) {
+        WFREE(mlDer, NULL, 0);
+        printf("IdentifyAsn1Key: private-only MlDsa %s DER expected "
+               "WS_CRYPTO_FAILED, got %d\n", levelName, ret);
+        return -698;
+    }
+
+    /* Confirms *pkey stays NULL on rejection path. */
+    {
+        WS_KeySignature* mlKeySig = NULL;
+
+        ret = IdentifyAsn1Key(mlDer, (word32)mlDerSz, 1, NULL,
+                &mlKeySig);
+        WFREE(mlDer, NULL, 0);
+        if (ret != WS_CRYPTO_FAILED || mlKeySig != NULL) {
+            printf("IdentifyAsn1Key: private-only MlDsa %s DER pkey-out "
+                   "variant failed, ret=%d\n", levelName, ret);
+            if (mlKeySig != NULL) {
+                wolfSSH_KEY_clean(mlKeySig);
+                WFREE(mlKeySig, NULL, DYNTYPE_PRIVKEY);
+            }
+            return -699;
+        }
+    }
+
+    return 0;
+}
+#endif
+
 /* IdentifyAsn1Key unit test
  *
  * Exercises every new wc_Free* error-path added in IdentifyAsn1Key:
@@ -8801,6 +9304,18 @@ static int test_IdentifyAsn1Key(void)
         printf("IdentifyAsn1Key: ECC P-256 priv failed, ret=%d\n", ret);
         result = -601; goto done;
     }
+
+#ifdef HAVE_ECC_KEY_EXPORT
+    ret = test_IdentifyAsn1Key_EccPrivOnlyDer(32, ID_ECDSA_SHA2_NISTP256,
+            "P-256");
+    if (ret != 0) {
+        result = ret; goto done;
+    }
+    ret = test_IdentifyAsn1Key_EccPrivOnlyDerFailure(32, "P-256");
+    if (ret != 0) {
+        result = ret; goto done;
+    }
+#endif
 #endif
 
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
@@ -8811,6 +9326,18 @@ static int test_IdentifyAsn1Key(void)
         printf("IdentifyAsn1Key: ECC P-384 priv failed, ret=%d\n", ret);
         result = -602; goto done;
     }
+
+#ifdef HAVE_ECC_KEY_EXPORT
+    ret = test_IdentifyAsn1Key_EccPrivOnlyDer(48, ID_ECDSA_SHA2_NISTP384,
+            "P-384");
+    if (ret != 0) {
+        result = ret; goto done;
+    }
+    ret = test_IdentifyAsn1Key_EccPrivOnlyDerFailure(48, "P-384");
+    if (ret != 0) {
+        result = ret; goto done;
+    }
+#endif
 #endif
 
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
@@ -8821,6 +9348,18 @@ static int test_IdentifyAsn1Key(void)
         printf("IdentifyAsn1Key: ECC P-521 priv failed, ret=%d\n", ret);
         result = -603; goto done;
     }
+
+#ifdef HAVE_ECC_KEY_EXPORT
+    ret = test_IdentifyAsn1Key_EccPrivOnlyDer(66, ID_ECDSA_SHA2_NISTP521,
+            "P-521");
+    if (ret != 0) {
+        result = ret; goto done;
+    }
+    ret = test_IdentifyAsn1Key_EccPrivOnlyDerFailure(66, "P-521");
+    if (ret != 0) {
+        result = ret; goto done;
+    }
+#endif
 #endif
 
 #if !defined(WOLFSSH_NO_ED25519)
@@ -8830,6 +9369,41 @@ static int test_IdentifyAsn1Key(void)
     if (ret != ID_ED25519) {
         printf("IdentifyAsn1Key: Ed25519 priv failed, ret=%d\n", ret);
         result = -604; goto done;
+    }
+
+#if defined(HAVE_ED25519) && defined(HAVE_ED25519_MAKE_KEY) && \
+    defined(HAVE_ED25519_KEY_EXPORT)
+    ret = test_IdentifyAsn1Key_Ed25519PrivOnlyDer();
+    if (ret != 0) {
+        result = ret; goto done;
+    }
+#endif
+
+#if defined(HAVE_ED25519) && !defined(HAVE_ED25519_MAKE_KEY)
+    ret = test_IdentifyAsn1Key_Ed25519PrivOnlyDerNoMakeKey();
+    if (ret != 0) {
+        result = ret; goto done;
+    }
+#endif
+
+#if defined(HAVE_ED25519) && defined(HAVE_ED25519_MAKE_KEY) && \
+    defined(HAVE_ED25519_KEY_EXPORT) && defined(HAVE_ED25519_SIGN) && \
+    defined(HAVE_ED25519_VERIFY)
+    ret = test_Ed25519KexDeriveFallback();
+    if (ret != 0) {
+        result = ret; goto done;
+    }
+    ret = test_Ed25519KexDeriveFallbackFailure();
+    if (ret != 0) {
+        result = ret; goto done;
+    }
+#endif
+#endif
+
+#ifndef WOLFSSH_NO_ECDSA
+    ret = test_ECCKexDeriveFallbackFailure();
+    if (ret != 0) {
+        result = ret; goto done;
     }
 #endif
 
@@ -8889,6 +9463,35 @@ static int test_IdentifyAsn1Key(void)
                    ret);
             result = -611; goto done;
         }
+    }
+
+#if defined(WOLFSSL_MLDSA_PRIVATE_KEY) && !defined(WOLFSSL_MLDSA_NO_ASN1) && \
+    !defined(WOLFSSL_MLDSA_NO_MAKE_KEY)
+    ret = test_IdentifyAsn1Key_MlDsaPrivOnlyDer(WC_ML_DSA_44,
+            WC_MLDSA_44_PRV_KEY_DER_SIZE, "44");
+    if (ret != 0) {
+        result = ret; goto done;
+    }
+#endif
+#endif
+
+#if !defined(WOLFSSH_NO_MLDSA) && !defined(WOLFSSH_NO_MLDSA65) && \
+    defined(WOLFSSL_MLDSA_PRIVATE_KEY) && !defined(WOLFSSL_MLDSA_NO_ASN1) && \
+    !defined(WOLFSSL_MLDSA_NO_MAKE_KEY)
+    ret = test_IdentifyAsn1Key_MlDsaPrivOnlyDer(WC_ML_DSA_65,
+            WC_MLDSA_65_PRV_KEY_DER_SIZE, "65");
+    if (ret != 0) {
+        result = ret; goto done;
+    }
+#endif
+
+#if !defined(WOLFSSH_NO_MLDSA) && !defined(WOLFSSH_NO_MLDSA87) && \
+    defined(WOLFSSL_MLDSA_PRIVATE_KEY) && !defined(WOLFSSL_MLDSA_NO_ASN1) && \
+    !defined(WOLFSSL_MLDSA_NO_MAKE_KEY)
+    ret = test_IdentifyAsn1Key_MlDsaPrivOnlyDer(WC_ML_DSA_87,
+            WC_MLDSA_87_PRV_KEY_DER_SIZE, "87");
+    if (ret != 0) {
+        result = ret; goto done;
     }
 #endif
 

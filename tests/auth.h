@@ -32,6 +32,8 @@ typedef struct thread_args {
     WS_CallbackUserAuth userAuth; /* server userAuth callback; NULL = none */
     const byte* caCert;           /* CA cert for AddRootCert; NULL = skip */
     word32      caCertSz;
+    const byte* hostKeyBuf;     /* server host key; NULL = use load_key() */
+    word32      hostKeyBufSz;
 } thread_args;
 
 #endif /* _WOLFSSH_TESTS_AUTH_H_ */
