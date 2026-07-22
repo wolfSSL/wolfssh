@@ -33,6 +33,12 @@ jobs:
       matrix:
         os: [ ubuntu-latest ]
         wolfssl: ${{ fromJson(needs.create_matrix.outputs['versions']) }}
+        mldsa: [ 'yes', 'no' ]
+        include:
+          - mldsa: 'yes'
+            mldsa_flag: '--enable-mldsa'
+          - mldsa: 'no'
+            mldsa_flag: ''
     name: Build wolfssl
     runs-on: ${{ matrix.os }}
     timeout-minutes: 4
@@ -42,7 +48,7 @@ jobs:
         id: cache-wolfssl
         with:
           path: build-dir/
-          key: wolfssh-sshd-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}
+          key: wolfssh-sshd-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}-mldsa-${{ matrix.mldsa }}-v3
           lookup-only: true
 
       - name: Checkout, build, and install wolfssl
@@ -52,7 +58,7 @@ jobs:
           repository: wolfssl/wolfssl
           ref: ${{ matrix.wolfssl }}
           path: wolfssl
-          configure: --enable-all
+          configure: --enable-all ${{ matrix.mldsa_flag }}
           check: false
           install: true
 
@@ -65,6 +71,7 @@ jobs:
       matrix:
         os: [ ubuntu-latest ]
         wolfssl: ${{ fromJson(needs.create_matrix.outputs['versions']) }}
+        mldsa: [ 'yes', 'no' ]
     name: Build and test wolfsshd
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
@@ -73,7 +80,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: build-dir/
-          key: wolfssh-sshd-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}
+          key: wolfssh-sshd-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}-mldsa-${{ matrix.mldsa }}-v3
           fail-on-cache-miss: true
 
       - uses: actions/checkout@v6
