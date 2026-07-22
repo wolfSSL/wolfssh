@@ -2,24 +2,33 @@
 #
 # SSH Tunnel Test Script
 #
-# Tests an SSH tunnel using wolfSSH and netcat (nc).
+# Tests SSH tunnels using wolfSSH and netcat (nc), one phase per forwarding
+# direction. In both, the nc client sends each line of a Lorem Ipsum paragraph
+# through the tunnel and the nc server echoes it back; both sides verify every
+# line.
 #
-# Architecture:
+# Phase 1, local forwarding (portfwd listens on 12345):
 #
 #   [nc client] --plain--> :12345 [wolfssh client]
 #                                       |
 #                                      SSH
 #                                       |
-#                               [wolfssh server] :ephem --plain--> :11111 [nc server]
+#                               [wolfssh server] --plain--> :11111 [nc server]
 #
-# The nc client sends each line of a Lorem Ipsum paragraph through the tunnel
-# to the nc server one at a time. The server echoes each line back. Both sides
-# verify receipt of every line.
+# Phase 2, reverse forwarding (portfwd -r, the server listens on 12346):
 #
-# Ports used:
-#   11111  - nc server (plain text backend)
-#   12345  - wolfssh client listener (plain text, nc connects here)
-#   22222  - wolfSSH rendezvous (SSH, internal use only)
+#   [nc client] --plain--> :12346 [wolfssh server]
+#                                       |
+#                                      SSH
+#                                       |
+#                               [wolfssh client] --plain--> :11112 [nc server]
+#
+# Phase 3 repeats phase 2 with "-f 0", where the server picks the listener port
+# and reports it in the tcpip-forward reply. Only that reply names the entry
+# port, so the phase covers the port-0 path: request, reply parse, and cancel.
+#
+# The SSH port is OS-allocated (echoserver -R) and each phase uses its own
+# forwarding ports, so no phase waits out the previous one's TIME_WAIT.
 #
 # Requirements: nc (netcat), expect
 
@@ -31,9 +40,10 @@ set timeout 30
 # its select() loop before it ever sends the channel-open. Redirect to
 # regular files instead, and use portfwd's -R ready file for sync.
 set srv_log "/tmp/fwd.test.echoserver.[pid].log"
+set srv_ready "/tmp/fwd.test.echoserver.[pid].ready"
 set clt_log "/tmp/fwd.test.portfwd.[pid].log"
 set clt_ready "/tmp/fwd.test.portfwd.[pid].ready"
-file delete -force $srv_log $clt_log $clt_ready
+file delete -force $srv_log $srv_ready $clt_log $clt_ready
 
 set lorem_lines {
     {Lorem ipsum dolor sit amet, consectetur adipiscing elit,}
@@ -55,7 +65,7 @@ set nc_client_pid   ""
 # --- Cleanup -----------------------------------------------------------------
 proc cleanup {} {
     global nc_client_pid wolfssh_clt_pid wolfssh_srv_pid nc_server_pid
-    global srv_log clt_log clt_ready
+    global srv_log srv_ready clt_log clt_ready
 
     puts "\n--- Cleaning up ---"
     foreach pid [list $nc_client_pid $wolfssh_clt_pid $wolfssh_srv_pid $nc_server_pid] {
@@ -63,15 +73,173 @@ proc cleanup {} {
             catch {exec kill $pid}
         }
     }
-    file delete -force $srv_log $clt_log $clt_ready
+    set nc_client_pid   ""
+    set wolfssh_clt_pid ""
+    set wolfssh_srv_pid ""
+    set nc_server_pid   ""
+    file delete -force $srv_log $srv_ready $clt_log $clt_ready
     puts "Done."
 }
 
 # --- Fail helper -------------------------------------------------------------
+# Dump the logs before cleanup deletes them; they usually name the real cause,
+# where the failure here is often just the resulting timeout.
+proc dump_log {label path} {
+    if {![file exists $path]} {
+        puts "  \[$label\] no log at $path"
+        return
+    }
+    if {[catch {open $path r} f]} {
+        puts "  \[$label\] could not open $path"
+        return
+    }
+    set data [read $f]
+    close $f
+    set lines [split [string trimright $data] "\n"]
+    set n [llength $lines]
+    if {$n > 20} {
+        set lines [lrange $lines end-19 end]
+    }
+    puts "  --- $label (last [llength $lines] of $n lines) ---"
+    foreach line $lines {
+        puts "    $line"
+    }
+}
+
 proc fail {msg} {
+    global srv_log clt_log
+
     puts "\n\[FAIL\] $msg"
+    dump_log "server" $srv_log
+    dump_log "client" $clt_log
     cleanup
     exit 1
+}
+
+# --- Wait for a ready file, and return the port it names ---------------------
+# The file is created before it is written, so wait for content, not existence.
+# Returns 0 on timeout.
+proc wait_for_port {path} {
+    global timeout
+
+    for {set elapsed 0} {$elapsed < $timeout} {incr elapsed} {
+        if {[file exists $path]} {
+            set f [open $path r]
+            set data [string trim [read $f]]
+            close $f
+            if {[string is integer -strict $data] && $data > 0} {
+                return $data
+            }
+        }
+        sleep 1
+    }
+    return 0
+}
+
+# --- Send every line in both directions, verifying each hop ------------------
+proc exchange_lines {} {
+    global lorem_lines nc_client_id nc_server_id timeout
+
+    set n [llength $lorem_lines]
+    set i 0
+    foreach line $lorem_lines {
+        incr i
+        puts "\n    \[$i/$n\] Client sending: \"$line\""
+        send -i $nc_client_id "$line\n"
+
+        expect {
+            -i $nc_server_id
+            -ex $line {
+                puts "       \[PASS\] Server received line $i."
+            }
+            timeout {
+                fail "Server did not receive line $i within ${timeout}s"
+            }
+        }
+
+        send -i $nc_server_id "$line\n"
+
+        expect {
+            -i $nc_client_id
+            -ex $line {
+                puts "       \[PASS\] Client received echo of line $i."
+            }
+            timeout {
+                fail "Client did not receive echo of line $i within ${timeout}s"
+            }
+        }
+    }
+}
+
+# --- Run one forwarding phase ------------------------------------------------
+# Whoever listens on entry_port, the tunnel ends at target_port: reverse == 0
+# means portfwd listens, reverse == 1 means it asks the SSH server to. An
+# entry_port of 0 (reverse only) lets the peer pick, reported via ready file.
+proc run_phase {label reverse entry_port target_port} {
+    global srv_log srv_ready clt_log clt_ready
+    global nc_server_id nc_server_pid nc_client_id nc_client_pid
+    global wolfssh_srv_id wolfssh_srv_pid wolfssh_clt_id wolfssh_clt_pid
+
+    puts "\n=== $label ==="
+    file delete -force $srv_log $srv_ready $clt_log $clt_ready
+
+    puts "\n\[1\] Starting nc server: nc -l $target_port"
+    spawn nc -l $target_port
+    set nc_server_id  $spawn_id
+    set nc_server_pid [exp_pid]
+    puts "    PID $nc_server_pid - waiting for a connection..."
+
+    puts "\n\[2\] Starting wolfssh server..."
+    spawn sh -c "exec ./examples/echoserver/echoserver -1 -f -R $srv_ready >$srv_log 2>&1"
+    set wolfssh_srv_id  $spawn_id
+    set wolfssh_srv_pid [exp_pid]
+
+    # -R implies a dynamic SSH port, written only once the listener is bound.
+    # Waiting for it hands us the port and keeps the client from racing the
+    # listen().
+    set ssh_port [wait_for_port $srv_ready]
+    if {$ssh_port == 0} {
+        fail "$label: timed out waiting for wolfssh server (no port in $srv_ready)"
+    }
+    puts "    PID $wolfssh_srv_pid listening on port $ssh_port."
+
+    if {$reverse} {
+        puts "\n\[3\] Starting wolfssh client (reverse, peer:$entry_port -> $target_port)..."
+        set reverse_flag "-r"
+    } else {
+        puts "\n\[3\] Starting wolfssh client (plain:$entry_port -> $target_port)..."
+        set reverse_flag ""
+    }
+    spawn sh -c "exec ./examples/portfwd/portfwd -u jill -P upthehill -p $ssh_port \
+            $reverse_flag -f $entry_port -t $target_port -R $clt_ready >$clt_log 2>&1"
+    set wolfssh_clt_id  $spawn_id
+    set wolfssh_clt_pid [exp_pid]
+
+    # portfwd writes the entry port once the tunnel can accept connections --
+    # in reverse mode, only after the peer has replied.
+    set ready_port [wait_for_port $clt_ready]
+    if {$ready_port == 0} {
+        fail "$label: timed out waiting for wolfssh client (no port in $clt_ready)"
+    }
+    if {$entry_port != 0 && $ready_port != $entry_port} {
+        fail "$label: asked for entry port $entry_port, client reported $ready_port"
+    }
+    puts "    wolfssh client ready on port $ready_port (PID $wolfssh_clt_pid)."
+
+    puts "\n\[4\] Starting nc client: nc localhost $ready_port"
+    spawn nc localhost $ready_port
+    set nc_client_id  $spawn_id
+    set nc_client_pid [exp_pid]
+    puts "    PID $nc_client_pid"
+
+    # Allow the TCP handshake and SSH negotiation to complete
+    sleep 1
+
+    puts "\n\[5\] Exchanging lines..."
+    exchange_lines
+
+    puts "\n\[6\] $label complete."
+    cleanup
 }
 
 # --- Check prerequisites -----------------------------------------------------
@@ -82,80 +250,11 @@ foreach tool {nc} {
     }
 }
 
-# --- [1] Start nc server -----------------------------------------------------
-puts "\n\[1\] Starting nc server: nc -l 11111"
-spawn nc -l 11111
-set nc_server_id  $spawn_id
-set nc_server_pid [exp_pid]
-puts "    PID $nc_server_pid - waiting for a connection..."
-
-# --- [2] Start wolfssh server ------------------------------------------------
-puts "\n\[2\] Starting wolfssh server..."
-spawn sh -c "exec ./examples/echoserver/echoserver -1 -f >$srv_log 2>&1"
-set wolfssh_srv_id  $spawn_id
-set wolfssh_srv_pid [exp_pid]
-puts "    PID $wolfssh_srv_pid - waiting for a connection..."
-
-# --- [3] Start wolfssh client ------------------------------------------------
-puts "\n\[3\] Starting wolfssh client (plain:12345 -> 11111)..."
-spawn sh -c "exec ./examples/portfwd/portfwd -u jill -P upthehill -f 12345 -t 11111 -R $clt_ready >$clt_log 2>&1"
-set wolfssh_clt_id  $spawn_id
-set wolfssh_clt_pid [exp_pid]
-
-# portfwd writes the listening port to $clt_ready once SSH is up.
-set elapsed 0
-while {![file exists $clt_ready] && $elapsed < $timeout} {
-    sleep 1
-    incr elapsed
-}
-if {![file exists $clt_ready]} {
-    fail "Timed out waiting for wolfssh client to start (no $clt_ready)"
-}
-puts "    wolfssh client ready (PID $wolfssh_clt_pid)."
-
-# --- [4] Start nc client -----------------------------------------------------
-puts "\n\[4\] Starting nc client: nc localhost 12345"
-spawn nc localhost 12345
-set nc_client_id  $spawn_id
-set nc_client_pid [exp_pid]
-puts "    PID $nc_client_pid"
-
-# Allow the TCP handshake and SSH negotiation to complete
-sleep 1
-
-# --- [5] Send each line, verify receipt, echo back, verify echo --------------
-set n [llength $lorem_lines]
-set i 0
-foreach line $lorem_lines {
-    incr i
-    puts "\n\[5.$i/$n\] Client sending: \"$line\""
-    send -i $nc_client_id "$line\n"
-
-    expect {
-        -i $nc_server_id
-        -ex $line {
-            puts "       \[PASS\] Server received line $i."
-        }
-        timeout {
-            fail "Server did not receive line $i within ${timeout}s"
-        }
-    }
-
-    send -i $nc_server_id "$line\n"
-
-    expect {
-        -i $nc_client_id
-        -ex $line {
-            puts "       \[PASS\] Client received echo of line $i."
-        }
-        timeout {
-            fail "Client did not receive echo of line $i within ${timeout}s"
-        }
-    }
-}
+run_phase "Phase 1: local forwarding" 0 12345 11111
+run_phase "Phase 2: remote (reverse) forwarding" 1 12346 11112
+run_phase "Phase 3: reverse forwarding, peer-allocated port" 1 0 11113
 
 # --- Done --------------------------------------------------------------------
 puts "\n=== TEST PASSED ===\n"
 
-cleanup
 exit 0
