@@ -2954,17 +2954,29 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
         WMEMCPY(der, in, inSz);
         derSz = inSz;
     }
-    #ifdef WOLFSSH_CERTS
     else if (format == WOLFSSH_FORMAT_PEM) {
         /* The der size will be smaller than the pem size. */
         der = (byte*)WMALLOC(inSz, heap, dynamicType);
         if (der == NULL)
             return WS_MEMORY_E;
 
-        if (type == BUFTYPE_PRIVKEY)
+        if (type == BUFTYPE_PRIVKEY) {
+            /* Private-key PEM decoding does not depend on WOLFSSH_CERTS;
+             * gating it there rejected PEM private keys (e.g. a PKCS#8 ML-DSA
+             * host key) unless wolfSSH was built with certificate support. */
             ret = wc_KeyPemToDer(in, inSz, der, inSz, NULL);
-        else
+        }
+    #ifdef WOLFSSH_CERTS
+        else {
             ret = wc_CertPemToDer(in, inSz, der, inSz, wcType);
+        }
+    #else
+        else {
+            /* Certificate/CA PEM decoding still requires WOLFSSH_CERTS. */
+            WFREE(der, heap, dynamicType);
+            return WS_UNIMPLEMENTED_E;
+        }
+    #endif /* WOLFSSH_CERTS */
         if (ret < 0) {
             if (type == BUFTYPE_PRIVKEY) {
                 /* wc_KeyPemToDer may have written partial key material;
@@ -2976,7 +2988,6 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
         }
         derSz = (word32)ret;
     }
-    #endif /* WOLFSSH_CERTS */
     else {
         return WS_UNIMPLEMENTED_E;
     }
