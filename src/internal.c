@@ -1695,7 +1695,9 @@ void wolfSSH_KEY_clean(WS_KeySignature* key)
  * @param isPrivate indicates private or public key
  * @param heap      heap to use for memory allocation
  * @param pkey      optionally return populated WS_KeySignature
- * @return          keyId as int, WS_MEMORY_E, WS_UNIMPLEMENTED_E
+ * @return          keyId as int, WS_MEMORY_E, WS_UNIMPLEMENTED_E,
+ *                  WS_CRYPTO_FAILED (ML-DSA/Ed25519 private key decoded
+ *                  with no derivable public key)
  */
 int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
     WS_KeySignature **pkey)
@@ -1704,6 +1706,7 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
     word32 idx;
     int ret;
     int dynType = isPrivate ? DYNTYPE_PRIVKEY : DYNTYPE_PUBKEY;
+    int noPubKeyRet = 0;
 #ifndef WOLFSSH_NO_MLDSA
     byte mlDsaLevel = 0;
     int mlDsaInit = 0;
@@ -1757,6 +1760,28 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
                 if (isPrivate) {
                     ret = wc_EccPrivateKeyDecode(in, &idx,
                             &key->ks.ecc.key, inSz);
+                    if (ret == 0) {
+                        /* SEC1 allows omitting the public point. Not fatal
+                         * here (unlike ML-DSA/Ed25519): the X.509-cert host
+                         * key path never needs it, and we don't yet know if
+                         * a cert will be paired with this key. */
+                        byte pubScratch[257];
+                        word32 pubScratchSz = sizeof(pubScratch);
+
+                        /* ECC-specific: matches wc_ecc_export_x963() usage
+                         * elsewhere in this file (eg SendKexDhReply()); the
+                         * ML-DSA/Ed25519 export calls below are never
+                         * wrapped this way. */
+                        PRIVATE_KEY_UNLOCK();
+                        if (wc_ecc_export_x963(&key->ks.ecc.key,
+                                pubScratch, &pubScratchSz) != 0) {
+                            WLOG(WS_LOG_WARN,
+                                "ECDSA host key decoded but has no "
+                                "derivable public key; this only works if "
+                                "paired with an X.509 certificate");
+                        }
+                        PRIVATE_KEY_LOCK();
+                    }
                 }
                 else {
                     ret = wc_EccPublicKeyDecode(in, &idx,
@@ -1796,6 +1821,23 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
                 if (isPrivate) {
                     ret = wc_MlDsaKey_PrivateKeyDecode(&key->ks.mldsa.key,
                                                        in, inSz, &idx);
+                    if (ret == 0) {
+                        /* Priv-only decode can succeed with no derivable
+                         * public key; reject here instead of at first
+                         * handshake. */
+                        byte pubScratch[MLDSA_MAX_PUB_KEY_SIZE];
+                        word32 pubScratchSz = sizeof(pubScratch);
+
+                        if (wc_MlDsaKey_ExportPubRaw(&key->ks.mldsa.key,
+                                pubScratch, &pubScratchSz) != 0) {
+                            WLOG(WS_LOG_ERROR,
+                                "ML-DSA host key decoded but has no "
+                                "derivable public key; regenerate it with "
+                                "an embedded public key or seed");
+                            ret = WS_CRYPTO_FAILED;
+                            noPubKeyRet = ret;
+                        }
+                    }
                 }
                 else {
                     /* PublicKeyDecode auto-detects level from SPKI OID. */
@@ -1865,6 +1907,23 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
                 if (isPrivate) {
                     ret = wc_Ed25519PrivateKeyDecode(in, &idx,
                             &key->ks.ed25519.key, inSz);
+                    if (ret == 0) {
+                        /* Same gap as ML-DSA/ECDSA: priv-only decode can
+                         * succeed with no derivable public key; reject here
+                         * instead of at first handshake. */
+                        byte pubScratch[ED25519_PUB_KEY_SIZE];
+                        word32 pubScratchSz = sizeof(pubScratch);
+
+                        if (wc_ed25519_export_public(&key->ks.ed25519.key,
+                                pubScratch, &pubScratchSz) != 0) {
+                            WLOG(WS_LOG_ERROR,
+                                "Ed25519 host key decoded but has no "
+                                "derivable public key; regenerate it with "
+                                "an embedded public key");
+                            ret = WS_CRYPTO_FAILED;
+                            noPubKeyRet = ret;
+                        }
+                    }
                 }
                 else {
                     ret = wc_Ed25519PublicKeyDecode(in, &idx,
@@ -1882,7 +1941,9 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
 #endif /* WOLFSSH_NO_ED25519 */
 
         if (key->keyId == ID_UNKNOWN) {
-            ret = WS_UNIMPLEMENTED_E;
+            /* Prefer the specific rejection reason over the generic
+             * fallback. */
+            ret = (noPubKeyRet != 0) ? noPubKeyRet : WS_UNIMPLEMENTED_E;
         }
         else {
             if (pkey != NULL)
