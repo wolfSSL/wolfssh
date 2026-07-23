@@ -38,6 +38,18 @@
 #include <wolfssl/wolfcrypt/logging.h>
 #include <wolfssl/wolfcrypt/asn_public.h>
 
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    #include <windows.h>
+    #include <wincrypt.h>
+    #include <ncrypt.h>
+    #ifndef CERT_SYSTEM_STORE_CURRENT_USER
+        #define CERT_SYSTEM_STORE_CURRENT_USER 0x00010000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE
+        #define CERT_SYSTEM_STORE_LOCAL_MACHINE 0x00020000
+    #endif
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
+
 #define WOLFSSH_TEST_SERVER
 #include <wolfssh/test.h>
 
@@ -342,6 +354,129 @@ static void CleanupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
     (void)conf;
 }
 
+#if defined(WOLFSSH_CERTS) && defined(WOLFSSH_WINDOWS_CERT_STORE)
+/* Add every certificate in the configured Windows store (winUserPvPara name,
+ * winUserDwFlags location) as a trusted root CA. Returns WS_SUCCESS on
+ * success. */
+static int LoadUserCACertsFromStore(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX* ctx,
+        void* heap)
+{
+    int    ret = WS_SUCCESS;
+    char*  storeNameStr;
+    char*  dwFlagsStr;
+    char*  providerStr;
+    word32 dwFlags = CERT_SYSTEM_STORE_CURRENT_USER;
+    wchar_t* wStoreName = NULL;
+    int    wStoreNameLen;
+    HCERTSTORE     hStore = NULL;
+    PCCERT_CONTEXT pCertContext = NULL;
+    word32 loaded = 0;
+
+    storeNameStr = wolfSSHD_ConfigGetWinUserPvPara(conf);
+    dwFlagsStr   = wolfSSHD_ConfigGetWinUserDwFlags(conf);
+    providerStr  = wolfSSHD_ConfigGetWinUserStores(conf);
+    if (storeNameStr == NULL) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] No user CA store name configured");
+        return WS_BAD_ARGUMENT;
+    }
+
+    /* Only the system-store provider is supported here. */
+    if (providerStr != NULL &&
+            WSTRCMP(providerStr, "CERT_STORE_PROV_SYSTEM") != 0) {
+        wolfSSH_Log(WS_LOG_INFO,
+            "[SSHD] wolfSSH_WinUserStores='%s' ignored; only "
+            "CERT_STORE_PROV_SYSTEM is supported", providerStr);
+    }
+
+    if (dwFlagsStr != NULL) {
+        if (WSTRCMP(dwFlagsStr, "CURRENT_USER") == 0 ||
+                WSTRCMP(dwFlagsStr, "CERT_SYSTEM_STORE_CURRENT_USER") == 0) {
+            dwFlags = CERT_SYSTEM_STORE_CURRENT_USER;
+        }
+        else if (WSTRCMP(dwFlagsStr, "LOCAL_MACHINE") == 0 ||
+                WSTRCMP(dwFlagsStr, "CERT_SYSTEM_STORE_LOCAL_MACHINE") == 0) {
+            dwFlags = CERT_SYSTEM_STORE_LOCAL_MACHINE;
+        }
+        else {
+            /* fall back to a raw numeric value; a result of 0 means the string
+             * was not a recognized name or valid number, which is never a
+             * usable store-location flag */
+            dwFlags = (word32)atoi(dwFlagsStr);
+            if (dwFlags == 0) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Unrecognized user CA store flags '%s'", dwFlagsStr);
+                return WS_BAD_ARGUMENT;
+            }
+        }
+    }
+
+    wStoreNameLen = MultiByteToWideChar(CP_UTF8, 0, storeNameStr, -1, NULL, 0);
+    if (wStoreNameLen == 0) {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] Failed to convert user CA store name to wide characters");
+        return WS_BAD_ARGUMENT;
+    }
+    wStoreName = (wchar_t*)WMALLOC(wStoreNameLen * sizeof(wchar_t), heap,
+            DYNTYPE_SSHD);
+    if (wStoreName == NULL) {
+        return WS_MEMORY_E;
+    }
+    MultiByteToWideChar(CP_UTF8, 0, storeNameStr, -1, wStoreName,
+            wStoreNameLen);
+
+    hStore = CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, (HCRYPTPROV_LEGACY)0,
+            dwFlags | CERT_STORE_OPEN_EXISTING_FLAG | CERT_STORE_READONLY_FLAG,
+            wStoreName);
+    if (hStore == NULL) {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] Unable to open user CA cert store '%s', error %lu",
+            storeNameStr, (unsigned long)GetLastError());
+        WFREE(wStoreName, heap, DYNTYPE_SSHD);
+        return WS_FATAL_ERROR;
+    }
+
+    /* Passing the previous context frees it and advances the enumeration. */
+    for (;;) {
+        pCertContext = CertEnumCertificatesInStore(hStore, pCertContext);
+        if (pCertContext == NULL) {
+            break;
+        }
+        if (pCertContext->pbCertEncoded == NULL ||
+                pCertContext->cbCertEncoded == 0) {
+            continue;
+        }
+        if (wolfSSH_CTX_AddRootCert_buffer(ctx,
+                (const byte*)pCertContext->pbCertEncoded,
+                (word32)pCertContext->cbCertEncoded,
+                WOLFSSH_FORMAT_ASN1) != WS_SUCCESS) {
+            /* Skip certs wolfSSH cannot use as a trust anchor. */
+            wolfSSH_Log(WS_LOG_INFO,
+                "[SSHD] Skipping a cert in store '%s' that could not be "
+                "loaded as a root CA", storeNameStr);
+            continue;
+        }
+        loaded++;
+    }
+
+    CertCloseStore(hStore, 0);
+    WFREE(wStoreName, heap, DYNTYPE_SSHD);
+
+    if (loaded == 0) {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] No usable CA certificates found in store '%s'",
+            storeNameStr);
+        ret = WS_FATAL_ERROR;
+    }
+    else {
+        wolfSSH_Log(WS_LOG_INFO,
+            "[SSHD] Loaded %u CA certificate(s) from store '%s'",
+            loaded, storeNameStr);
+    }
+
+    return ret;
+}
+#endif /* WOLFSSH_CERTS && WOLFSSH_WINDOWS_CERT_STORE */
+
 /* Initializes and sets up the WOLFSSH_CTX struct based on the configure options
  * return WS_SUCCESS on success
  */
@@ -384,56 +519,162 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
 
     /* Load in host private key */
     if (ret == WS_SUCCESS) {
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+        char* hostKeyStore = wolfSSHD_ConfigGetHostKeyStore(conf);
+        char* hostKeyStoreSubject = wolfSSHD_ConfigGetHostKeyStoreSubject(conf);
+        char* hostKeyStoreFlags = wolfSSHD_ConfigGetHostKeyStoreFlags(conf);
 
-        char* hostKey = wolfSSHD_ConfigGetHostKeyFile(conf);
+        wolfSSH_Log(WS_LOG_INFO,
+            "[SSHD] Cert store code compiled in. "
+            "hostKeyStore=%s, hostKeyStoreSubject=%s, hostKeyStoreFlags=%s",
+            hostKeyStore ? hostKeyStore : "(null)",
+            hostKeyStoreSubject ? hostKeyStoreSubject : "(null)",
+            hostKeyStoreFlags ? hostKeyStoreFlags : "(null)");
 
-        if (hostKey == NULL) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] No host private key set");
+        if (hostKeyStore != NULL && hostKeyStoreSubject == NULL) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] HostKeyStore set but HostKeyStoreSubject is missing");
             ret = WS_BAD_ARGUMENT;
         }
-        else {
-            byte* data;
-            word32 dataSz = 0;
 
-            /* The host private key is a secret trust anchor: refuse a symlink,
-             * an unsafe owner or path, or a group/world readable/writable
-             * file. */
-            data = getBufferFromFile(hostKey, &dataSz, heap,
-                WOLFSSHD_LOAD_SECRET);
-            if (data == NULL) {
-                /* NULL means the secure gate rejected the file (bad owner,
-                 * symlink, group/world writable/readable; reason already
-                 * logged) or the read failed, so report a file error rather
-                 * than a memory error. */
-                wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] Error reading host key file.");
-                ret = WS_BAD_FILE_E;
+        if (ret == WS_SUCCESS &&
+                hostKeyStore != NULL && hostKeyStoreSubject != NULL) {
+            /* Use cert store host key */
+            wchar_t* wStoreName = NULL;
+            wchar_t* wSubjectName = NULL;
+            word32 dwFlags = CERT_SYSTEM_STORE_CURRENT_USER;
+            int storeNameLen, subjectNameLen;
 
+            /* Parse flags if provided */
+            if (hostKeyStoreFlags != NULL) {
+                if (WSTRCMP(hostKeyStoreFlags, "CURRENT_USER") == 0) {
+                    dwFlags = CERT_SYSTEM_STORE_CURRENT_USER;
+                } else if (WSTRCMP(hostKeyStoreFlags, "LOCAL_MACHINE") == 0) {
+                    dwFlags = CERT_SYSTEM_STORE_LOCAL_MACHINE;
+                } else {
+                    /* fall back to a raw numeric value; a result of 0 means the
+                     * string was not a recognized name or valid number, which
+                     * is never a usable store-location flag */
+                    dwFlags = (word32)atoi(hostKeyStoreFlags);
+                    if (dwFlags == 0) {
+                        wolfSSH_Log(WS_LOG_ERROR,
+                            "[SSHD] Unrecognized host key store flags '%s'",
+                            hostKeyStoreFlags);
+                        ret = WS_BAD_ARGUMENT;
+                    }
+                }
             }
 
-            if (ret == WS_SUCCESS) {
-                if (wc_PemToDer(data, dataSz, PRIVATEKEY_TYPE, &der, NULL,
-                                NULL, NULL) != 0) {
-                    wolfSSH_Log(WS_LOG_DEBUG, "[SSHD] Failed to convert host "
-                                "private key from PEM. Assuming key in DER "
-                                "format.");
-                    privBuf = data;
-                    privBufSz = dataSz;
+            /* Convert to wide strings */
+            storeNameLen = MultiByteToWideChar(CP_UTF8, 0, hostKeyStore, -1,
+                NULL, 0);
+            subjectNameLen = MultiByteToWideChar(CP_UTF8, 0,
+                hostKeyStoreSubject, -1, NULL, 0);
+
+            if (ret != WS_SUCCESS) {
+                /* flag parsing failed; error already logged */
+            }
+            else if (storeNameLen == 0 || subjectNameLen == 0) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Failed to convert cert store strings to wchar");
+                ret = WS_BAD_ARGUMENT;
+            }
+            else {
+                wStoreName = (wchar_t*)WMALLOC(
+                    storeNameLen * sizeof(wchar_t), heap, DYNTYPE_SSHD);
+                wSubjectName = (wchar_t*)WMALLOC(
+                    subjectNameLen * sizeof(wchar_t), heap, DYNTYPE_SSHD);
+
+                if (wStoreName == NULL || wSubjectName == NULL) {
+                    wolfSSH_Log(WS_LOG_ERROR,
+                      "[SSHD] Memory allocation failed for cert store strings");
+                    ret = WS_MEMORY_E;
                 }
                 else {
-                    privBuf = der->buffer;
-                    privBufSz = der->length;
+                    MultiByteToWideChar(CP_UTF8, 0, hostKeyStore, -1,
+                        wStoreName, storeNameLen);
+                    MultiByteToWideChar(CP_UTF8, 0, hostKeyStoreSubject, -1,
+                        wSubjectName, subjectNameLen);
+
+                    ret = wolfSSH_CTX_UsePrivateKey_fromStore(*ctx, wStoreName,
+                        dwFlags, wSubjectName);
+                    if (ret != WS_SUCCESS) {
+                        wolfSSH_Log(WS_LOG_ERROR,
+                       "[SSHD] Failed to load host key from certificate store");
+                    }
                 }
 
-                if (wolfSSH_CTX_UsePrivateKey_buffer(*ctx, privBuf, privBufSz,
-                                                     WOLFSSH_FORMAT_ASN1) < 0) {
+                if (wStoreName != NULL) {
+                    WFREE(wStoreName, heap, DYNTYPE_SSHD);
+                }
+                if (wSubjectName != NULL) {
+                    WFREE(wSubjectName, heap, DYNTYPE_SSHD);
+                }
+            }
+        }
+        else if (ret == WS_SUCCESS)
+#elif defined(WOLFSSH_CERTS)
+        wolfSSH_Log(WS_LOG_INFO,
+            "[SSHD] WOLFSSH_WINDOWS_CERT_STORE not defined - cert store support disabled");
+#else
+        wolfSSH_Log(WS_LOG_INFO,
+            "[SSHD] WOLFSSH_CERTS not defined - cert store support disabled");
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
+        {
+            char* hostKey = wolfSSHD_ConfigGetHostKeyFile(conf);
+
+            wolfSSH_Log(WS_LOG_INFO,
+                "[SSHD] File-based host key path entered. hostKey=%s",
+                hostKey ? hostKey : "(null)");
+
+            if (hostKey == NULL) {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] No host private key set");
+                ret = WS_BAD_ARGUMENT;
+            }
+            else {
+                byte* data;
+                word32 dataSz = 0;
+
+                /* The host private key is a secret trust anchor: refuse a symlink,
+                 * an unsafe owner or path, or a group/world readable/writable
+                 * file. */
+                data = getBufferFromFile(hostKey, &dataSz, heap,
+                    WOLFSSHD_LOAD_SECRET);
+                if (data == NULL) {
+                    /* NULL means the secure gate rejected the file (bad owner,
+                     * symlink, group/world writable/readable; reason already
+                     * logged) or the read failed, so report a file error rather
+                     * than a memory error. */
                     wolfSSH_Log(WS_LOG_ERROR,
-                        "[SSHD] Failed to use host private key.");
-                    ret = WS_BAD_ARGUMENT;
+                        "[SSHD] Error reading host key file.");
+                    ret = WS_BAD_FILE_E;
+
                 }
 
-                freeBufferFromFile(data, heap);
-                wc_FreeDer(&der);
+                if (ret == WS_SUCCESS) {
+                    if (wc_PemToDer(data, dataSz, PRIVATEKEY_TYPE, &der, NULL,
+                                    NULL, NULL) != 0) {
+                        wolfSSH_Log(WS_LOG_DEBUG, "[SSHD] Failed to convert host "
+                                    "private key from PEM. Assuming key in DER "
+                                    "format.");
+                        privBuf = data;
+                        privBufSz = dataSz;
+                    }
+                    else {
+                        privBuf = der->buffer;
+                        privBufSz = der->length;
+                    }
+
+                    if (wolfSSH_CTX_UsePrivateKey_buffer(*ctx, privBuf, privBufSz,
+                                                         WOLFSSH_FORMAT_ASN1) < 0) {
+                        wolfSSH_Log(WS_LOG_ERROR,
+                            "[SSHD] Failed to use host private key.");
+                        ret = WS_BAD_ARGUMENT;
+                    }
+
+                    freeBufferFromFile(data, heap);
+                    wc_FreeDer(&der);
+                }
             }
         }
     }
@@ -487,6 +728,67 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
 #endif /* WOLFSSH_OSSH_CERTS || WOLFSSH_CERTS */
 
 #ifdef WOLFSSH_CERTS
+    /* Load system CA certs from the OS trust store via wolfSSL into a
+     * temporary WOLFSSL_CTX, then import its cert manager. */
+    #ifdef WOLFSSL_SYS_CA_CERTS
+    if (ret == WS_SUCCESS && wolfSSHD_ConfigGetSystemCA(conf)) {
+        WOLFSSL_CTX* sslCtx;
+
+        wolfSSH_Log(WS_LOG_INFO, "[SSHD] Using system CAs");
+        sslCtx = wolfSSL_CTX_new(wolfSSLv23_server_method());
+        if (sslCtx == NULL) {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Unable to create temporary CTX");
+            ret = WS_FATAL_ERROR;
+        }
+
+        if (ret == WS_SUCCESS) {
+            if (wolfSSL_CTX_load_system_CA_certs(sslCtx) != WOLFSSL_SUCCESS) {
+                wolfSSH_Log(WS_LOG_INFO, "[SSHD] Issue loading system CAs");
+                ret = WS_FATAL_ERROR;
+            }
+        }
+
+        if (ret == WS_SUCCESS) {
+            if (wolfSSH_SetCertManager(*ctx,
+                wolfSSL_CTX_GetCertManager(sslCtx)) != WS_SUCCESS) {
+                wolfSSH_Log(WS_LOG_INFO,
+                    "[SSHD] Issue copying over system CAs");
+                ret = WS_FATAL_ERROR;
+            }
+        }
+
+        if (sslCtx != NULL) {
+            wolfSSL_CTX_free(sslCtx);
+        }
+    }
+    #else
+    /* The system CA directive is parsed unconditionally. Fail startup if it
+     * was set but wolfSSL was built without WOLFSSL_SYS_CA_CERTS, rather than
+     * silently running without the configured trust anchors. */
+    if (ret == WS_SUCCESS && wolfSSHD_ConfigGetSystemCA(conf)) {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] wolfSSH_TrustedSystemCAKeys set but wolfSSL was built "
+            "without WOLFSSL_SYS_CA_CERTS.");
+        ret = WS_NOT_COMPILED;
+    }
+    #endif /* WOLFSSL_SYS_CA_CERTS */
+
+    /* Load user CA certs (trust anchors used to verify client X.509 certs)
+     * directly from a Windows certificate store into the cert manager. */
+    #ifdef WOLFSSH_WINDOWS_CERT_STORE
+    if (ret == WS_SUCCESS && wolfSSHD_ConfigGetUserCAStore(conf)) {
+        ret = LoadUserCACertsFromStore(conf, *ctx, heap);
+    }
+    #else
+    if (ret == WS_SUCCESS && wolfSSHD_ConfigGetUserCAStore(conf)) {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] wolfSSH_TrustedUserCAStore set but "
+            "WOLFSSH_WINDOWS_CERT_STORE is not compiled in.");
+        ret = WS_NOT_COMPILED;
+    }
+    #endif /* WOLFSSH_WINDOWS_CERT_STORE */
+
+    /* load in CA certs from file set */
     if (ret == WS_SUCCESS) {
         char* caCert = wolfSSHD_ConfigGetUserCAKeysFile(conf);
         if (caCert != NULL) {
@@ -527,6 +829,14 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
                 freeBufferFromFile(data, heap);
             }
         }
+    }
+#else
+    if (ret == WS_SUCCESS && (wolfSSHD_ConfigGetSystemCA(conf)
+                              || wolfSSHD_ConfigGetUserCAStore(conf))) {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] wolfSSH_TrustedSystemCAKeys/wolfSSH_TrustedUserCAStore set "
+            "but wolfSSH was built without WOLFSSH_CERTS.");
+        ret = WS_NOT_COMPILED;
     }
 #endif
 
@@ -2613,6 +2923,24 @@ static int StartSSHD(int argc, char** argv)
         }
     }
 
+    if (logFile == NULL) {
+        logFile = stderr;
+    }
+#ifdef _WIN32
+    /* The early -D detection (wide-string comparison of cmdArgs before
+     * conversion) may have set ServiceDebugCb even when -D was supplied.
+     * Now that mygetopt has been processed, restore the file-based
+     * callback in any case where output should go to logFile:
+     *   - isDaemon==0  → running interactively, logs to logFile (stderr)
+     *   - isDaemon==1 but -E was used → logs to the specified file
+     * This must happen BEFORE config/SetupCTX so their log messages are
+     * captured in the file (or stderr) rather than lost to
+     * OutputDebugString. */
+    if (!isDaemon || logFile != stderr) {
+        wolfSSH_SetLoggingCb(wolfSSHDLoggingCb);
+    }
+#endif
+
     if (ret == WS_SUCCESS) {
         ret = wolfSSHD_ConfigLoad(conf, configFile);
         if (ret != WS_SUCCESS) {
@@ -2642,10 +2970,6 @@ static int StartSSHD(int argc, char** argv)
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue creating auth struct");
             ret = WS_MEMORY_E;
         }
-    }
-
-    if (logFile == NULL) {
-        logFile = stderr;
     }
 
     /* run as a daemon or service */
