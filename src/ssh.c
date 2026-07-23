@@ -2832,6 +2832,26 @@ int wolfSSH_CTX_AddRootCert_buffer(WOLFSSH_CTX* ctx,
 #endif /* WOLFSSH_CERTS */
 
 
+#ifdef WOLFSSH_OSSH_CERTS
+/* Load an OpenSSH-format host certificate for the server to present during
+ * KEX. Host-side OpenSSH certificate presentation is not implemented yet;
+ * OpenSSH certificate support currently covers user authentication only. */
+int wolfSSH_CTX_UseOsshCert_buffer(WOLFSSH_CTX* ctx,
+        const byte* cert, word32 certSz)
+{
+    WOLFSSH_UNUSED(ctx);
+    WOLFSSH_UNUSED(cert);
+    WOLFSSH_UNUSED(certSz);
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CTX_UseOsshCert_buffer()");
+    WLOG(WS_LOG_DEBUG,
+            "[SSH] OpenSSH host certificates are not implemented");
+
+    return WS_UNIMPLEMENTED_E;
+}
+#endif /* WOLFSSH_OSSH_CERTS */
+
+
 int wolfSSH_CTX_SetWindowPacketSize(WOLFSSH_CTX* ctx,
                                     word32 windowSz, word32 maxPacketSz)
 {

@@ -50,3 +50,8 @@ if BUILD_CERTS
 src_libwolfssh_la_SOURCES += src/certman.c
 src_libwolfssh_test_la_SOURCES += src/certman.c
 endif
+
+# ossh.c holds the OpenSSH binary key-format decoders (always built) and, gated
+# by WOLFSSH_OSSH_CERTS, the OpenSSH certificate code.
+src_libwolfssh_la_SOURCES += src/ossh.c
+src_libwolfssh_test_la_SOURCES += src/ossh.c

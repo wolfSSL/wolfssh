@@ -26,5 +26,13 @@ EXTRA_DIST+= \
             keys/renewcerts.sh keys/renewcerts.cnf \
             keys/server-key-ed25519.der keys/server-key-ed25519.pem \
             keys/server-key-mldsa44.der keys/server-key-mldsa65.der \
-            keys/server-key-mldsa87.der
+            keys/server-key-mldsa87.der \
+            keys/renew-ossh-certs.sh \
+            keys/ossh-ca keys/ossh-ca.pub \
+            keys/ossh-ca-rsa keys/ossh-ca-rsa.pub \
+            keys/ossh-ca-ecdsa keys/ossh-ca-ecdsa.pub \
+            keys/ossh-bad-ca keys/ossh-bad-ca.pub \
+            keys/ossh-user keys/ossh-user.pub \
+            keys/ossh-user-rsa keys/ossh-user-rsa.pub \
+            keys/ossh-user-ecdsa keys/ossh-user-ecdsa.pub
 

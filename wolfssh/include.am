@@ -5,6 +5,7 @@
 nobase_include_HEADERS+= \
                          wolfssh/agent.h \
                          wolfssh/certman.h \
+                         wolfssh/ossh.h \
                          wolfssh/version.h \
                          wolfssh/ssh.h \
                          wolfssh/keygen.h \

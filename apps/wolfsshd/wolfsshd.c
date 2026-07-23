@@ -458,11 +458,22 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
             }
 
             if (ret == WS_SUCCESS) {
-            #ifdef WOLFSSH_OPENSSH_CERTS
+            #ifdef WOLFSSH_OSSH_CERTS
+                /* OpenSSH host-certificate loading is not implemented yet. With
+                 * X.509 host certs also built, log at debug and let that loader
+                 * take over; otherwise fail so the operator can diagnose it. */
                 if (wolfSSH_CTX_UseOsshCert_buffer(*ctx, data, dataSz) < 0) {
-                    wolfSSH_Log(WS_LOG_ERROR,
-                        "[SSHD] Failed to use host certificate.");
+                #ifdef WOLFSSH_CERTS
+                    wolfSSH_Log(WS_LOG_DEBUG,
+                        "[SSHD] Not an OpenSSH host certificate; "
+                        "trying X.509.");
                     ret = WS_BAD_ARGUMENT;
+                #else
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] HostCertFile is set but OpenSSH host "
+                        "certificates are not supported in this build.");
+                    ret = WS_UNIMPLEMENTED_E;
+                #endif
                 }
             #endif
             #ifdef WOLFSSH_CERTS
@@ -513,10 +524,13 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
                         WOLFSSH_FORMAT_ASN1);
                 }
                 if (ret != WS_SUCCESS) {
-                #ifdef WOLFSSH_OPENSSH_CERTS
+                #ifdef WOLFSSH_OSSH_CERTS
+                    /* The file is not X.509; when OpenSSH certificates are also
+                     * built, fall through and let the OpenSSH user-auth path
+                     * consume TrustedUserCAKeys instead of failing startup. */
                     wolfSSH_Log(WS_LOG_INFO,
-                        "[SSHD] Continuing on in case CA is openssh "
-                        "style.");
+                        "[SSHD] CA keys file is not X.509; using it as an "
+                        "OpenSSH-style CA.");
                     ret = WS_SUCCESS;
                 #else
                     wolfSSH_Log(WS_LOG_ERROR,
@@ -573,6 +587,24 @@ static int SetupChroot(WOLFSSHD_CONFIG* usrConf)
     return ret;
 }
 #endif
+
+/* Resolve the force-command in effect for this session. A configured
+ * ForceCommand takes precedence over a certificate's force-command. Returns
+ * NULL when none is set. */
+static const char* GetEffectiveForcedCmd(WOLFSSHD_CONNECTION* conn,
+    WOLFSSHD_CONFIG* usrConf)
+{
+    const char* forcedCmd;
+
+    forcedCmd = wolfSSHD_ConfigGetForcedCmd(usrConf);
+#ifdef WOLFSSH_OSSH_CERTS
+    forcedCmd = wolfSSHD_AuthMergeForcedCmd(forcedCmd,
+        wolfSSHD_AuthGetForcedCmd(conn->auth));
+#else
+    (void)conn;
+#endif
+    return forcedCmd;
+}
 
 #ifdef WOLFSSH_SCP
 static int SCP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
@@ -1332,7 +1364,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 #endif
     byte shellBuffer[WOLFSSHD_SHELL_BUFFER_SZ];
     byte channelBuffer[WOLFSSHD_SHELL_BUFFER_SZ];
-    char* forcedCmd;
+    const char* forcedCmd;
     int   windowFull = 0; /* Contains size of bytes from shellBuffer that did
                            * not get passed on to wolfSSH yet. This happens
                            * with window full errors or when rekeying.  */
@@ -1353,7 +1385,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     stdinPipe[0] = -1;
     stdinPipe[1] = -1;
 
-    forcedCmd = wolfSSHD_ConfigGetForcedCmd(usrConf);
+    forcedCmd = GetEffectiveForcedCmd(conn, usrConf);
 
     ptyReq = SHELL_IsPty(ssh);
     if (ptyReq < 0) {
@@ -1364,7 +1396,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     /* do not overwrite a forced command with 'exec' sub shell. Only set the
      * 'exec' command when no forced command is set */
     if (forcedCmd == NULL) {
-        forcedCmd = (char*)subCmd;
+        forcedCmd = subCmd;
     }
 
     if (forcedCmd != NULL && WSTRCMP(forcedCmd, "internal-sftp") == 0) {
@@ -1982,7 +2014,12 @@ static int LoginGraceExpired(WOLFSSHD_CONNECTION* conn)
 static int UserAuthResult(byte result,
         WS_UserAuthData* authData, void* userAuthResultCtx)
 {
+    int ret = WS_SUCCESS;
+#if defined(WOLFSSH_OSSH_CERTS) && !defined(_WIN32)
+    WOLFSSHD_CONNECTION* conn = (WOLFSSHD_CONNECTION*)userAuthResultCtx;
+#else
     (void)authData;
+#endif
 
     if (result == WOLFSSH_USERAUTH_SUCCESS) {
         /* authentication finished in time, cancel the login grace timer */
@@ -1992,9 +2029,23 @@ static int UserAuthResult(byte result,
         (void)userAuthResultCtx;
         alarm(0);
     #endif
+    #if defined(WOLFSSH_OSSH_CERTS) && !defined(_WIN32)
+        /* Auth (incl. the user signature) has verified, so stash the cert's
+         * force-command now, bound to the authenticated credential. Fail closed
+         * if the copy fails so the session cannot run unrestricted. */
+        if (conn != NULL && authData != NULL &&
+                authData->type == WOLFSSH_USERAUTH_PUBLICKEY &&
+                authData->sf.publicKey.isOsshCert &&
+                authData->sf.publicKey.forceCommand != NULL &&
+                authData->sf.publicKey.forceCommandSz > 0) {
+            ret = wolfSSHD_AuthSetCertForcedCmd(conn->auth,
+                    authData->sf.publicKey.forceCommand,
+                    authData->sf.publicKey.forceCommandSz);
+        }
+    #endif
     }
 
-    return WS_SUCCESS;
+    return ret;
 }
 
 /* handle wolfSSH accept and directing to correct subsystem */
@@ -2031,8 +2082,15 @@ static void* HandleConnection(void* arg)
 
         wolfSSH_set_fd(ssh, conn->fd);
         wolfSSH_SetUserAuthCtx(ssh, conn->auth);
-        /* let UserAuthResult reach this connection to cancel the grace timer */
+        /* let UserAuthResult reach this connection to cancel the grace timer
+         * and to reach conn->auth for the cert force-command */
         wolfSSH_SetUserAuthResultCtx(ssh, conn);
+    #if defined(WOLFSSH_OSSH_CERTS) && !defined(_WIN32)
+        /* Unix-only: each connection is a forked child with its own copy of the
+         * auth struct, so these per-connection cert writes never race. The
+         * Windows threaded path shares one struct and does not enforce certs. */
+        wolfSSHD_AuthSetPeerIp(conn->auth, conn->ip);
+    #endif
 
         /* arm the login grace timer */
         graceTime = wolfSSHD_AuthGetGraceTime(conn->auth);
@@ -2119,6 +2177,7 @@ static void* HandleConnection(void* arg)
         WPASSWD* pPasswd = NULL;
         WOLFSSHD_CONFIG* usrConf;
         char* usr;
+        const char* forcedCmd = NULL;
 
         /* get configuration for user */
         usr     = wolfSSH_GetUsername(ssh);
@@ -2142,7 +2201,6 @@ static void* HandleConnection(void* arg)
     #endif
 
         if (ret != WS_FATAL_ERROR) {
-            /* check for any forced command set for the user */
             switch (wolfSSH_GetSessionType(ssh)) {
                 case WOLFSSH_SESSION_SHELL:
                 #ifdef WOLFSSH_SHELL
@@ -2159,6 +2217,19 @@ static void* HandleConnection(void* arg)
                     break;
 
                 case WOLFSSH_SESSION_SUBSYSTEM:
+                    /* A force-command overrides the requested subsystem.
+                     * "internal-sftp" still permits SFTP; any other command
+                     * denies file transfer (fail closed). */
+                    forcedCmd = GetEffectiveForcedCmd(conn, usrConf);
+                    if (forcedCmd != NULL &&
+                            WSTRCMP(forcedCmd, "internal-sftp") != 0) {
+                        wolfSSH_Log(WS_LOG_ERROR,
+                            "[SSHD] Force-command set for user %s; denying "
+                            "subsystem request", wolfSSH_GetUsername(ssh));
+                        ret = WS_FATAL_ERROR;
+                        break;
+                    }
+
                     /* test for known subsystems */
                     switch (ret) {
                         case WS_SFTP_COMPLETE:
@@ -2172,7 +2243,18 @@ static void* HandleConnection(void* arg)
 
                         case WS_SCP_INIT:
                         #ifdef WOLFSSH_SCP
-                            ret = SCP_Subsystem(conn, ssh, pPasswd, usrConf);
+                            /* any force-command, including internal-sftp,
+                             * denies SCP */
+                            if (forcedCmd != NULL) {
+                                wolfSSH_Log(WS_LOG_ERROR,
+                                    "[SSHD] Force-command set for user %s; "
+                                    "denying SCP", wolfSSH_GetUsername(ssh));
+                                ret = WS_FATAL_ERROR;
+                            }
+                            else {
+                                ret = SCP_Subsystem(conn, ssh, pPasswd,
+                                        usrConf);
+                            }
                         #else
                             err_sys("SCP not compiled in. Please use "
                                     "--enable-scp");
@@ -2203,7 +2285,17 @@ static void* HandleConnection(void* arg)
                     /* SCP can be an exec type */
                     if (ret == WS_SCP_INIT) {
                     #ifdef WOLFSSH_SCP
-                        ret = SCP_Subsystem(conn, ssh, pPasswd, usrConf);
+                        /* any force-command denies SCP */
+                        forcedCmd = GetEffectiveForcedCmd(conn, usrConf);
+                        if (forcedCmd != NULL) {
+                            wolfSSH_Log(WS_LOG_ERROR,
+                                "[SSHD] Force-command set for user %s; denying "
+                                "SCP", wolfSSH_GetUsername(ssh));
+                            ret = WS_FATAL_ERROR;
+                        }
+                        else {
+                            ret = SCP_Subsystem(conn, ssh, pPasswd, usrConf);
+                        }
                     #else
                         err_sys("SCP not compiled in. Please use "
                                 "--enable-scp");
@@ -2784,6 +2876,7 @@ static int StartSSHD(int argc, char** argv)
                     "[SSHD] Failed to malloc memory for connection");
                 break;
             }
+            WMEMSET(conn, 0, sizeof(WOLFSSHD_CONNECTION));
 
             conn->auth = auth;
             conn->listenFd = (int)listenFd;
