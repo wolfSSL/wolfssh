@@ -46,12 +46,22 @@ extern "C" {
 #define WOLFSSH_MLDSAKEY_65       65
 #define WOLFSSH_MLDSAKEY_87       87
 
+/* Traditional algorithm paired with the ML-DSA level; not every pair is
+ * valid -- see WS_GetCompositeParams() in internal.c for the list. */
+#define WOLFSSH_COMPOSITE_TRAD_ECDSA     1
+#define WOLFSSH_COMPOSITE_TRAD_ED25519   2
+#define WOLFSSH_COMPOSITE_TRAD_ED448     3
+
 
 WOLFSSH_API int wolfSSH_MakeRsaKey(byte* out, word32 outSz,
         word32 size, word32 e);
 WOLFSSH_API int wolfSSH_MakeEcdsaKey(byte* out, word32 outSz, word32 size);
 WOLFSSH_API int wolfSSH_MakeEd25519Key(byte* out, word32 outSz, word32 size);
 WOLFSSH_API int wolfSSH_MakeMlDsaKey(byte* out, word32 outSz, word32 level);
+/* Writes an OpenSSH-format PEM key for the given level/trad pairing;
+ * out == NULL queries required size. Returns length or negative WS_*. */
+WOLFSSH_API int wolfSSH_MakeMlDsaCompositeKey(byte* out, word32 outSz,
+        word32 level, word32 tradType);
 
 
 #ifdef __cplusplus
