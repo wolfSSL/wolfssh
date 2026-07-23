@@ -115,6 +115,7 @@ int SearchForPubKey(const char* path, const char* authKeysFile,
                     const char* user,
                     const WS_UserAuthData_PublicKey* pubKeyCtx,
                     WUID_T uid, int strictModes);
+word32 wolfsshd_test_MaxLineSz(void);
 #endif
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
 int CheckPasswordHashUnix(const char* input, char* stored);

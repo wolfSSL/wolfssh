@@ -136,8 +136,8 @@ struct WOLFSSHD_AUTH {
     #ifndef WOLFSSH_NO_MLDSA
         #ifndef WOLFSSH_NO_MLDSA87
             #if defined(WOLFSSH_CERTS)
-                /* x509v3-ssh-mldsa-87: ML-DSA-87 pubkey + CA sig + DER
-                 * overhead, base64-encoded */
+                /* x509v3-ssh-mldsa-87 size (pubkey+CA sig+DER, base64);
+                 * COMPOSITE_MAX_TRAD_PUB_SZ is headroom for a future variant. */
                 #define MAX_LINE_SZ \
                     ((WC_MLDSA_87_PUB_KEY_SIZE + WC_MLDSA_87_SIG_SIZE + \
                       COMPOSITE_MAX_TRAD_PUB_SZ + 1024 + 2) / 3 * 4 + 640)
@@ -170,6 +170,15 @@ struct WOLFSSHD_AUTH {
     #else
         #define MAX_LINE_SZ 900
     #endif
+#endif
+
+#ifdef WOLFSSHD_UNIT_TEST
+/* Exposes MAX_LINE_SZ so tests can size worst-case lines without
+ * duplicating the formula above. */
+word32 wolfsshd_test_MaxLineSz(void)
+{
+    return (word32)MAX_LINE_SZ;
+}
 #endif
 
 #if 0
@@ -268,10 +277,31 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
         #endif
         #endif
     #endif
-    #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519)
+    #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+        "ssh-mldsa44-es256",
+    #endif
+    #if !defined(WOLFSSH_NO_MLDSA65) && \
+            !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && !defined(NO_SHA512)
+        "ssh-mldsa65-es256",
+    #endif
+    #if !defined(WOLFSSH_NO_MLDSA87) && \
+            !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && !defined(NO_SHA512)
+        "ssh-mldsa87-es384",
+    #endif
+    #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519) && \
+            !defined(NO_SHA512)
         "ssh-mldsa44-ed25519@openssh.com",
     #endif
+    #if !defined(WOLFSSH_NO_MLDSA65) && !defined(WOLFSSH_NO_ED25519) && \
+            !defined(NO_SHA512)
+        "ssh-mldsa65-ed25519",
+    #endif
+    #if !defined(WOLFSSH_NO_MLDSA87) && defined(HAVE_ED448)
+        "ssh-mldsa87-ed448",
+    #endif
     };
+    const int NUM_ALLOWED_TYPES =
+        (int)(sizeof(allowedTypes) / sizeof(allowedTypes[0]));
     int typeOk = 0;
     int i;
 
@@ -288,9 +318,8 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
         }
     }
     if (ret == WSSHD_AUTH_SUCCESS) {
-        for (i = 0; i < (int)(sizeof(allowedTypes) / sizeof(allowedTypes[0]));
-                ++i) {
-            if (allowedTypes[i] != NULL && WSTRCMP(type, allowedTypes[i]) == 0) {
+        for (i = 0; i < NUM_ALLOWED_TYPES; ++i) {
+            if (WSTRCMP(type, allowedTypes[i]) == 0) {
                 typeOk = 1;
                 break;
             }
@@ -924,10 +953,8 @@ int wolfSSHD_OpenSecureFile(const char* path, WUID_T ownerUid,
 #endif
 }
 
-/* detects OpenSSH vs ASN1/DER format of a raw host private key buffer;
- * privBuf/privBufSz are set to the buffer to actually load (data, or der's
- * buffer if PEM decoded); returns WOLFSSH_FORMAT_ASN1/WOLFSSH_FORMAT_OPENSSH,
- * or negative on error */
+/* Detects OpenSSH vs ASN1/DER format; sets privBuf/privBufSz to the
+ * buffer to load. Returns WOLFSSH_FORMAT_*, or negative on error. */
 int wolfSSHD_DetectPrivKeyFormat(byte* data, word32 dataSz, DerBuffer** der,
         byte** privBuf, word32* privBufSz)
 {
@@ -943,6 +970,8 @@ int wolfSSHD_DetectPrivKeyFormat(byte* data, word32 dataSz, DerBuffer** der,
         *privBuf = data;
         *privBufSz = dataSz;
 
+        /* wstrnstr() stops at the first NUL, so binary buffers fall
+         * through to the WMEMCMP magic check below. */
         if (WSTRNSTR((const char*)*privBuf,
                 "-----BEGIN OPENSSH PRIVATE KEY-----", *privBufSz) != NULL) {
             keyFormat = WOLFSSH_FORMAT_OPENSSH;

@@ -26,5 +26,8 @@ EXTRA_DIST+= \
             keys/renewcerts.sh keys/renewcerts.cnf \
             keys/server-key-ed25519.der keys/server-key-ed25519.pem \
             keys/server-key-mldsa44.der keys/server-key-mldsa65.der \
-            keys/server-key-mldsa87.der keys/server-key-mldsa44ed25519
+            keys/server-key-mldsa87.der keys/server-key-mldsa44ed25519 \
+            keys/server-key-mldsa44es256 keys/server-key-mldsa65ed25519 \
+            keys/server-key-mldsa65es256 keys/server-key-mldsa87ed448 \
+            keys/server-key-mldsa87es384
 

@@ -1755,11 +1755,9 @@ union wolfSSH_key {
 #endif
 };
 
-static const char* PrivBeginOpenSSH = "-----BEGIN OPENSSH PRIVATE KEY-----";
-static const char* PrivEndOpenSSH = "-----END OPENSSH PRIVATE KEY-----";
-
 #if !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM)
     /* currently only used in wolfSSH_ReadKey_file() */
+    static const char* PrivBeginOpenSSH = "-----BEGIN OPENSSH PRIVATE KEY-----";
     static const char* PrivBeginPrefix = "-----BEGIN ";
     /* static const char* PrivEndPrefix = "-----END "; */
     static const char* PrivSuffix = " PRIVATE KEY-----";
@@ -2101,35 +2099,6 @@ static int DoOpenSshKey(const byte* in, word32 inSz, byte** out,
     int ret = WS_SUCCESS;
     byte* newKey = NULL;
     word32 newKeySz = inSz; /* binary will be smaller than PEM */
-    word32 beginSz = (word32)WSTRLEN(PrivBeginOpenSSH);
-    word32 endSz = (word32)WSTRLEN(PrivEndOpenSSH);
-    const byte* b64 = NULL;
-    const char* footer = NULL;
-    word32 b64Sz = 0;
-
-    /* Reject buffers too small to hold both markers. Without this guard the
-     * subtraction used to locate the base64 region underflows inSz. */
-    if (inSz <= beginSz + endSz) {
-        WLOG(WS_LOG_DEBUG, "OpenSSH private key buffer too small");
-        return WS_PARSE_E;
-    }
-
-    /* The begin marker must lead the buffer. */
-    if (WMEMCMP(in, PrivBeginOpenSSH, beginSz) != 0) {
-        WLOG(WS_LOG_DEBUG, "OpenSSH private key missing begin marker");
-        return WS_PARSE_E;
-    }
-
-    /* Locate the end marker so the base64 region is bounded by the input. */
-    footer = WSTRNSTR((const char*)in + beginSz, PrivEndOpenSSH,
-            inSz - beginSz);
-    if (footer == NULL) {
-        WLOG(WS_LOG_DEBUG, "OpenSSH private key missing end marker");
-        return WS_PARSE_E;
-    }
-
-    b64 = in + beginSz;
-    b64Sz = (word32)(footer - (const char*)b64);
 
     if (*out == NULL) {
         newKey = (byte*)WMALLOC(newKeySz, heap, DYNTYPE_PRIVKEY);
@@ -2146,17 +2115,18 @@ static int DoOpenSshKey(const byte* in, word32 inSz, byte** out,
         newKeySz = *outSz;
     }
 
-    ret = Base64_Decode((byte*)b64, b64Sz, newKey, &newKeySz);
-    if (ret == 0) {
-        ret = WS_SUCCESS;
-    }
-    else {
-        WLOG(WS_LOG_DEBUG, "Base64 decode of public key failed.");
-        ret = WS_PARSE_E;
+    /* locates the begin/end markers and base64-decodes the block between
+     * them; shared with wolfSSH_ProcessBuffer()'s OPENSSH format path */
+    ret = WS_StripOpenSshPem(in, inSz, newKey, &newKeySz);
+    if (ret != WS_SUCCESS) {
+        WLOG(WS_LOG_DEBUG, "OpenSSH private key marker/decode failed.");
     }
 
     if (ret == WS_SUCCESS) {
         ret = IdentifyOpenSshKey(newKey, newKeySz, heap);
+        if (ret <= 0) {
+            WLOG(WS_LOG_DEBUG, "Unable to identify key");
+        }
     }
 
     if (ret > 0) {
@@ -2167,7 +2137,6 @@ static int DoOpenSshKey(const byte* in, word32 inSz, byte** out,
         ret = WS_SUCCESS;
     }
     else {
-        WLOG(WS_LOG_DEBUG, "Unable to identify key");
         WS_FORCEZERO(newKey, newKeySz);
         if (*out == NULL) {
             WFREE(newKey, heap, DYNTYPE_PRIVKEY);

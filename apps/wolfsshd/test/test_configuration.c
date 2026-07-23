@@ -23,6 +23,7 @@
 #endif
 
 #include <wolfssh/ssh.h>
+#include <wolfssh/internal.h>
 #include <wolfssl/wolfcrypt/coding.h>
 #include <configuration.h>
 #include <auth.h>
@@ -1358,8 +1359,8 @@ static int BuildAuthKeysLine(const byte* key, word32 keySz,
 }
 
 /* Confirms every key-type string in CheckAuthKeysLine's allowedTypes[] table
- * is recognized, guarding against allowedTypes[]/NUM_ALLOWED_TYPES drifting
- * out of sync as the ML-DSA/composite/cert #ifdef branches change. */
+ * is recognized, guarding against the table and its recognition logic
+ * drifting out of sync as the ML-DSA/composite/cert #ifdef branches change. */
 static int test_CheckAuthKeysLineTypes(void)
 {
     static const char* types[] = {
@@ -1396,8 +1397,27 @@ static int test_CheckAuthKeysLineTypes(void)
         #endif
         #endif
     #endif
-    #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519)
+    #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+        "ssh-mldsa44-es256",
+    #endif
+    #if !defined(WOLFSSH_NO_MLDSA65) && \
+            !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && !defined(NO_SHA512)
+        "ssh-mldsa65-es256",
+    #endif
+    #if !defined(WOLFSSH_NO_MLDSA87) && \
+            !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && !defined(NO_SHA512)
+        "ssh-mldsa87-es384",
+    #endif
+    #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519) && \
+            !defined(NO_SHA512)
         "ssh-mldsa44-ed25519@openssh.com",
+    #endif
+    #if !defined(WOLFSSH_NO_MLDSA65) && !defined(WOLFSSH_NO_ED25519) && \
+            !defined(NO_SHA512)
+        "ssh-mldsa65-ed25519",
+    #endif
+    #if !defined(WOLFSSH_NO_MLDSA87) && defined(HAVE_ED448)
+        "ssh-mldsa87-ed448",
     #endif
     };
     static const char keyAStr[] = "wolfssh-auth-key-test-A-AAAAAAA";
@@ -1452,6 +1472,110 @@ static int test_CheckAuthKeysLineTypes(void)
 
     return WS_SUCCESS;
 }
+
+#ifndef WOLFSSH_NO_MLDSA
+/* MAX_LINE_SZ is sized off the largest ML-DSA level, not the 32-byte
+ * dummy keys test_CheckAuthKeysLineTypes() uses; build a full-size key
+ * to actually catch a miscalculation there. */
+static int test_CheckAuthKeysLineMaxSz(void)
+{
+    int ret = WS_SUCCESS;
+    int rc;
+    const char* type;
+    word32 keySz;
+    word32 maxLineSz = wolfsshd_test_MaxLineSz();
+    word32 lineBufSz = maxLineSz + 1;
+    byte* key = NULL;
+    char* line = NULL;
+    char* lineCopy = NULL;
+
+#if !defined(WOLFSSH_NO_MLDSA87)
+    keySz = WC_MLDSA_87_PUB_KEY_SIZE + COMPOSITE_MAX_TRAD_PUB_SZ;
+    #if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && !defined(NO_SHA512)
+        type = "ssh-mldsa87-es384";
+    #elif defined(HAVE_ED448)
+        type = "ssh-mldsa87-ed448";
+    #else
+        type = "ssh-mldsa-87";
+        keySz = WC_MLDSA_87_PUB_KEY_SIZE;
+    #endif
+#elif !defined(WOLFSSH_NO_MLDSA65)
+    keySz = WC_MLDSA_65_PUB_KEY_SIZE + COMPOSITE_MAX_TRAD_PUB_SZ;
+    #if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && !defined(NO_SHA512)
+        type = "ssh-mldsa65-es256";
+    #elif !defined(WOLFSSH_NO_ED25519) && !defined(NO_SHA512)
+        type = "ssh-mldsa65-ed25519";
+    #else
+        type = "ssh-mldsa-65";
+        keySz = WC_MLDSA_65_PUB_KEY_SIZE;
+    #endif
+#else
+    keySz = WC_MLDSA_44_PUB_KEY_SIZE + COMPOSITE_MAX_TRAD_PUB_SZ;
+    #if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+        type = "ssh-mldsa44-es256";
+    #elif !defined(WOLFSSH_NO_ED25519) && !defined(NO_SHA512)
+        type = "ssh-mldsa44-ed25519@openssh.com";
+    #else
+        type = "ssh-mldsa-44";
+        keySz = WC_MLDSA_44_PUB_KEY_SIZE;
+    #endif
+#endif
+
+    key = (byte*)WMALLOC(keySz, NULL, DYNTYPE_BUFFER);
+    line = (char*)WMALLOC(lineBufSz, NULL, DYNTYPE_BUFFER);
+    lineCopy = (char*)WMALLOC(lineBufSz, NULL, DYNTYPE_BUFFER);
+    if (key == NULL || line == NULL || lineCopy == NULL) {
+        ret = WS_MEMORY_E;
+    }
+
+    if (ret == WS_SUCCESS) {
+        word32 i;
+        /* Non-repeating pattern so a truncation bug shows up as a
+         * mismatch, not accidental luck. */
+        for (i = 0; i < keySz; i++) {
+            key[i] = (byte)(i * 31 + 7);
+        }
+
+        ret = BuildAuthKeysLineType(type, key, keySz, line, lineBufSz);
+    }
+
+    if (ret == WS_SUCCESS) {
+        word32 lineLen = (word32)WSTRLEN(line);
+
+        Log("    Testing scenario: max-size %s (%u byte key, %u byte line) "
+            "fits within MAX_LINE_SZ (%u) and round-trips.",
+            type, keySz, lineLen, maxLineSz);
+        if (lineLen + 1 > maxLineSz) {
+            Log(" FAILED (line len %u exceeds MAX_LINE_SZ %u).\n",
+                lineLen + 1, maxLineSz);
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            WMEMCPY(lineCopy, line, lineLen + 1);
+            rc = CheckAuthKeysLine(lineCopy, lineLen, key, keySz);
+            if (rc == WSSHD_AUTH_SUCCESS) {
+                Log(" PASSED.\n");
+            }
+            else {
+                Log(" FAILED (rc=%d).\n", rc);
+                ret = WS_FATAL_ERROR;
+            }
+        }
+    }
+
+    if (key != NULL) {
+        WFREE(key, NULL, DYNTYPE_BUFFER);
+    }
+    if (line != NULL) {
+        WFREE(line, NULL, DYNTYPE_BUFFER);
+    }
+    if (lineCopy != NULL) {
+        WFREE(lineCopy, NULL, DYNTYPE_BUFFER);
+    }
+
+    return ret;
+}
+#endif /* !WOLFSSH_NO_MLDSA */
 
 /* Negative-path coverage for CheckAuthKeysLine so mutation of the
  * ConstantCompare clause (the only substantive bytewise check after the
@@ -3255,13 +3379,18 @@ static int test_DetectPrivKeyFormat(void)
         const char* desc;
         const char* file;
         int wantFormat;
+        /* Expected wc_PemToDer() outcome (1 = succeeds, der non-NULL;
+         * 0 = fails, der NULL); pins down which branch each case hits. */
+        int wantDerNonNull;
     } DPK_CASE;
     static const DPK_CASE cases[] = {
-        { "PEM-armored OpenSSH key", "id_ecdsa", WOLFSSH_FORMAT_OPENSSH },
+        { "PEM-armored OpenSSH key", "id_ecdsa", WOLFSSH_FORMAT_OPENSSH, 0 },
         { "raw binary openssh-key-v1 composite ML-DSA key",
-            "server-key-mldsa44ed25519", WOLFSSH_FORMAT_OPENSSH },
+            "server-key-mldsa44ed25519", WOLFSSH_FORMAT_OPENSSH, 0 },
         { "PEM traditional key decodes to DER/ASN1", "server-key-ecc.pem",
-            WOLFSSH_FORMAT_ASN1 },
+            WOLFSSH_FORMAT_ASN1, 1 },
+        { "un-armored raw DER key falls through to ASN1",
+            "server-key-mldsa44.der", WOLFSSH_FORMAT_ASN1, 0 },
     };
     word32 i;
     int ret = WS_SUCCESS;
@@ -3287,6 +3416,30 @@ static int test_DetectPrivKeyFormat(void)
     badGot = wolfSSHD_DetectPrivKeyFormat(NULL, sizeof(dummy), &badDer,
             &badPrivBuf, &badPrivBufSz);
     Log("    Testing scenario: NULL data pointer. %s\n",
+        (badGot == WS_BAD_ARGUMENT) ? "PASSED" : "FAILED");
+    if (badGot != WS_BAD_ARGUMENT) {
+        return WS_FATAL_ERROR;
+    }
+
+    badGot = wolfSSHD_DetectPrivKeyFormat(&dummy, sizeof(dummy), NULL,
+            &badPrivBuf, &badPrivBufSz);
+    Log("    Testing scenario: NULL der pointer. %s\n",
+        (badGot == WS_BAD_ARGUMENT) ? "PASSED" : "FAILED");
+    if (badGot != WS_BAD_ARGUMENT) {
+        return WS_FATAL_ERROR;
+    }
+
+    badGot = wolfSSHD_DetectPrivKeyFormat(&dummy, sizeof(dummy), &badDer,
+            NULL, &badPrivBufSz);
+    Log("    Testing scenario: NULL privBuf pointer. %s\n",
+        (badGot == WS_BAD_ARGUMENT) ? "PASSED" : "FAILED");
+    if (badGot != WS_BAD_ARGUMENT) {
+        return WS_FATAL_ERROR;
+    }
+
+    badGot = wolfSSHD_DetectPrivKeyFormat(&dummy, sizeof(dummy), &badDer,
+            &badPrivBuf, NULL);
+    Log("    Testing scenario: NULL privBufSz pointer. %s\n",
         (badGot == WS_BAD_ARGUMENT) ? "PASSED" : "FAILED");
     if (badGot != WS_BAD_ARGUMENT) {
         return WS_FATAL_ERROR;
@@ -3323,8 +3476,47 @@ static int test_DetectPrivKeyFormat(void)
             ret = WS_FATAL_ERROR;
         }
 
+        Log("    Testing scenario: %s wc_PemToDer branch. %s\n",
+            cases[i].desc,
+            ((der != NULL) == (cases[i].wantDerNonNull != 0)) ?
+                "PASSED" : "FAILED");
+        if ((der != NULL) != (cases[i].wantDerNonNull != 0)) {
+            ret = WS_FATAL_ERROR;
+        }
+
         wc_FreeDer(&der);
         free(data);
+        if (ret != WS_SUCCESS) {
+            return ret;
+        }
+    }
+
+    /* Synthetic case: wc_PemToDer() succeeds but the decoded body starts
+     * with the openssh-key-v1 magic -- forces the "PEM-decoded result may
+     * still be OpenSSH binary" path no file-based case above reaches. */
+    {
+        /* base64 of "openssh-key-v1\0PADPADPADPADPAD" */
+        static const char pemOpenSshBody[] =
+            "-----BEGIN PRIVATE KEY-----\n"
+            "b3BlbnNzaC1rZXktdjEAUEFEUEFEUEFEUEFEUEFE\n"
+            "-----END PRIVATE KEY-----\n";
+        DerBuffer* der = NULL;
+        byte* privBuf = NULL;
+        word32 privBufSz = 0;
+        int gotFormat;
+
+        gotFormat = wolfSSHD_DetectPrivKeyFormat(
+                (byte*)pemOpenSshBody, (word32)(sizeof(pemOpenSshBody) - 1),
+                &der, &privBuf, &privBufSz);
+
+        Log("    Testing scenario: PEM decodes to an OpenSSH blob. %s\n",
+            (gotFormat == WOLFSSH_FORMAT_OPENSSH && der != NULL) ?
+                "PASSED" : "FAILED");
+        if (gotFormat != WOLFSSH_FORMAT_OPENSSH || der == NULL) {
+            ret = WS_FATAL_ERROR;
+        }
+
+        wc_FreeDer(&der);
         if (ret != WS_SUCCESS) {
             return ret;
         }
@@ -3362,6 +3554,9 @@ const TEST_CASE testCases[] = {
 #ifdef WOLFSSL_BASE64_ENCODE
     TEST_DECL(test_CheckAuthKeysLine),
     TEST_DECL(test_CheckAuthKeysLineTypes),
+    #ifndef WOLFSSH_NO_MLDSA
+    TEST_DECL(test_CheckAuthKeysLineMaxSz),
+    #endif
 #endif
 #if defined(WOLFSSL_BASE64_ENCODE) && !defined(_WIN32)
     TEST_DECL(test_SearchForPubKey),
