@@ -396,12 +396,14 @@ else
         run_test "sshd_window_full_test.sh"
         run_test "sshd_empty_password_test.sh"
         run_test "sshd_permitroot_test.sh"
+        run_test "sshd_permitroot_prohibit_password.sh"
+        run_test "sshd_permitroot_forced_cmd.sh"
         run_strictmodes_negative_test
         run_test "sshd_login_grace_test.sh"
         run_test "sshd_privdrop_fail_test.sh"
     else
         printf "Skipping tests that need to setup local SSHD\n"
-        SKIPPED=$((SKIPPED+7))
+        SKIPPED=$((SKIPPED+9))
     fi
 
     # these tests run with X509 sshd-config loaded

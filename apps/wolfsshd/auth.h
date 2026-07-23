@@ -111,7 +111,7 @@ int SearchForPubKey(const char* path, const char* authKeysFile,
                     WUID_T uid, int strictModes);
 #endif
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
-int CheckPasswordHashUnix(const char* input, char* stored);
+int CheckPasswordHashUnix(const char* input, const char* stored);
 #endif
 int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
                       word32 keySz);
