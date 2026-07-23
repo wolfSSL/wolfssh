@@ -387,6 +387,12 @@ static int ScpSourceInit(WOLFSSH* ssh)
     ssh->scpFileBufferSz = DEFAULT_SCP_BUFFER_SZ;
     WMEMSET(ssh->scpFileBuffer, 0, DEFAULT_SCP_BUFFER_SZ);
 
+    /* reset per-file state so a reused connection starts a fresh transfer */
+    ssh->scpFileOffset = 0;
+    ssh->scpBufferedSz = 0;
+    ssh->scpFileHeaderSent = 0;
+    ssh->scpNoProgress = 0;
+
     return WS_SUCCESS;
 }
 
@@ -673,8 +679,10 @@ int DoScpSource(WOLFSSH* ssh)
                     ssh->scpBufferedSz += ssh->scpConfirm;
                     ssh->scpConfirm = WS_SCP_CONTINUE;
 
-                    /* only send timestamp and file header first time */
-                    if (ssh->scpFileOffset == 0) {
+                    /* send timestamp and file header once per file; keying on
+                     * scpFileOffset would resend them when the callback
+                     * returns 0 bytes on its metadata call */
+                    if (!ssh->scpFileHeaderSent) {
                         if (ssh->scpTimestamp == 1) {
                             ssh->scpState = SCP_SEND_TIMESTAMP;
                         } else {
@@ -747,6 +755,7 @@ int DoScpSource(WOLFSSH* ssh)
                     break;
                 }
 
+                ssh->scpFileHeaderSent = 1;
                 ssh->scpState = SCP_RECEIVE_CONFIRMATION;
                 ssh->scpNextState = SCP_SEND_FILE;
                 continue;
@@ -754,44 +763,54 @@ int DoScpSource(WOLFSSH* ssh)
             case SCP_SEND_FILE:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SEND_FILE");
 
-                ret = ScpStreamSend(ssh, ssh->scpFileBuffer,
-                                    ssh->scpBufferedSz);
-                if (ret == WS_WANT_READ || ret == WS_WANT_WRITE) {
-                    /* ScpStreamSend already drove the worker through any rekey
-                     * or full window; a non-blocking want means the socket is
-                     * not ready. Surface it for the caller to retry without
-                     * closing the file mid-transfer. scpBufferedSz and
-                     * scpFileOffset are preserved for the next call. */
-                    break;
-                }
-                if (ret == WS_EXTDATA) {
-                    _DumpExtendedData(ssh);
-                    continue;
-                }
-                if (ret < 0) {
-                #if !defined(NO_FILESYSTEM) && \
-                        !defined(WOLFSSH_SCP_USER_CALLBACKS)
-                    /* if the socket send had a fatal error, try to close any
-                     * open file descriptor before exit */
-                    ScpSendCtx* sendCtx = NULL;
-                    sendCtx = (ScpSendCtx*)wolfSSH_GetScpSendCtx(ssh);
-                    if (sendCtx != NULL) {
-                        WFCLOSE(ssh->fs, sendCtx->fp);
-                        sendCtx->fp = NULL;
+                /* nothing buffered (send callback returned 0 bytes): skip the
+                 * send so no zero-length CHANNEL_DATA goes on the wire; routing
+                 * below handles the empty buffer */
+                if (ssh->scpBufferedSz > 0) {
+                    ret = ScpStreamSend(ssh, ssh->scpFileBuffer,
+                                        ssh->scpBufferedSz);
+                    if (ret == WS_WANT_READ || ret == WS_WANT_WRITE) {
+                        /* ScpStreamSend already drove the worker through any
+                         * rekey or full window; a non-blocking want means the
+                         * socket is not ready. Surface it for the caller to
+                         * retry without closing the file mid-transfer.
+                         * scpBufferedSz and scpFileOffset are preserved for the
+                         * next call. */
+                        break;
                     }
-                #endif
-                    WLOG(WS_LOG_ERROR, scpError, "failed to send file", ret);
-                    break;
-                }
+                    if (ret == WS_EXTDATA) {
+                        _DumpExtendedData(ssh);
+                        continue;
+                    }
+                    if (ret < 0) {
+                    #if !defined(NO_FILESYSTEM) && \
+                            !defined(WOLFSSH_SCP_USER_CALLBACKS)
+                        /* if the socket send had a fatal error, try to close any
+                         * open file descriptor before exit */
+                        ScpSendCtx* sendCtx = NULL;
+                        sendCtx = (ScpSendCtx*)wolfSSH_GetScpSendCtx(ssh);
+                        if (sendCtx != NULL) {
+                            WFCLOSE(ssh->fs, sendCtx->fp);
+                            sendCtx->fp = NULL;
+                        }
+                    #endif
+                        WLOG(WS_LOG_ERROR, scpError, "failed to send file", ret);
+                        break;
+                    }
 
-                ssh->scpFileOffset += ret;
-                if (ret != (int)ssh->scpBufferedSz) {
-                    /* case where not all of buffer was sent */
-                    WMEMMOVE(ssh->scpFileBuffer, ssh->scpFileBuffer + ret,
-                             ssh->scpBufferedSz - ret);
+                    ssh->scpFileOffset += ret;
+                    if (ret > 0) {
+                        /* real forward progress, clear the stall detector */
+                        ssh->scpNoProgress = 0;
+                    }
+                    if (ret != (int)ssh->scpBufferedSz) {
+                        /* case where not all of buffer was sent */
+                        WMEMMOVE(ssh->scpFileBuffer, ssh->scpFileBuffer + ret,
+                                 ssh->scpBufferedSz - ret);
+                    }
+                    ssh->scpBufferedSz -= ret;
+                    ret = WS_SUCCESS;
                 }
-                ssh->scpBufferedSz -= ret;
-                ret = WS_SUCCESS;
 
                 if (ssh->scpBufferedSz > 0) {
                     /* There is still file data in the buffer to send,
@@ -800,6 +819,18 @@ int DoScpSource(WOLFSSH* ssh)
                     continue;
                 }
                 else if (ssh->scpFileOffset < ssh->scpFileSz) {
+                    /* A send callback may hand back 0 bytes once, on the call
+                     * that only fills in metadata. Twice running with file
+                     * data still outstanding means it cannot make progress,
+                     * and looping back to SCP_TRANSFER would spin here with no
+                     * socket I/O at all, so fail instead. */
+                    if (ssh->scpNoProgress) {
+                        WLOG(WS_LOG_ERROR, scpError,
+                             "send callback made no progress", WS_SCP_ABORT);
+                        ret = WS_SCP_ABORT;
+                        break;
+                    }
+                    ssh->scpNoProgress = 1;
                     ssh->scpState = SCP_TRANSFER;
                     ssh->scpRequestType = WOLFSSH_SCP_CONTINUE_FILE_TRANSFER;
 
@@ -808,6 +839,8 @@ int DoScpSource(WOLFSSH* ssh)
                     if (ssh->scpIsRecursive) {
                         ssh->scpFileOffset = 0;
                         ssh->scpBufferedSz = 0;
+                        ssh->scpFileHeaderSent = 0;
+                        ssh->scpNoProgress = 0;
                         ssh->scpATime = 0;
                         ssh->scpMTime = 0;
                         ssh->scpNextState = SCP_TRANSFER;

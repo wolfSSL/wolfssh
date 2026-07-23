@@ -1609,6 +1609,8 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->scpATime        = 0;
     ssh->scpMTime        = 0;
     ssh->scpRequestType  = WOLFSSH_SCP_SINGLE_FILE_REQUEST;
+    ssh->scpFileHeaderSent = 0;
+    ssh->scpNoProgress   = 0;
     ssh->scpIsRecursive  = 0;
     ssh->scpDirection    = WOLFSSH_SCP_DIR_NONE;
     ssh->scpDirDepth     = 0;
