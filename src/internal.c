@@ -8014,6 +8014,11 @@ static int DoUserAuthRequestNone(WOLFSSH* ssh, WS_UserAuthData* authData,
     }
 
     if (ret == WS_SUCCESS) {
+        /* The opening "none" probe every client sends to learn the method list
+         * is exempt from the auth-attempt cap, matching the invalid-method
+         * else-branch in DoUserAuthRequest() and the documented contract. */
+        int countIt = (ssh->authRequests != 1);
+
         authData->type = WOLFSSH_USERAUTH_NONE;
         if (ssh->ctx->userAuthCb != NULL) {
             WLOG(WS_LOG_DEBUG, "DUARN: Calling the userauth callback");
@@ -8029,7 +8034,7 @@ static int DoUserAuthRequestNone(WOLFSSH* ssh, WS_UserAuthData* authData,
                 #ifndef NO_FAILURE_ON_REJECTED
                 /* Count before failing: a send that blocks returns
                  * WS_WANT_WRITE, which isn't fatal on its own. */
-                (void)SendUserAuthFailureCount(ssh, 0, 1);
+                (void)SendUserAuthFailureCount(ssh, 0, countIt);
                 #endif
                 ret = WS_USER_AUTH_E;
             }
@@ -8039,12 +8044,12 @@ static int DoUserAuthRequestNone(WOLFSSH* ssh, WS_UserAuthData* authData,
             }
             else {
                 WLOG(WS_LOG_DEBUG, "DUARN: none check failed, retry");
-                ret = SendUserAuthFailureCount(ssh, 0, 1);
+                ret = SendUserAuthFailureCount(ssh, 0, countIt);
             }
         }
         else {
             WLOG(WS_LOG_DEBUG, "DUARN: No user auth callback");
-            (void)SendUserAuthFailureCount(ssh, 0, 1);
+            (void)SendUserAuthFailureCount(ssh, 0, countIt);
             ret = WS_FATAL_ERROR;
         }
     }
@@ -8202,7 +8207,7 @@ static int DoUserAuthInfoResponse(WOLFSSH* ssh,
         }
     }
     else if (ret == WOLFSSH_USERAUTH_SUCCESS_ANOTHER) {
-        ret = SendUserAuthKeyboardRequest(ssh, &authData, 0);
+        ret = SendUserAuthKeyboardRequest(ssh, &authData);
     }
     else if (ret == WS_SUCCESS) {
         ssh->clientState = CLIENT_USERAUTH_DONE;
@@ -9781,25 +9786,31 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
         ssh->authId = authNameId;
         ssh->authRequests++;
 
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+        /* An outstanding INFO_REQUEST the peer abandons is charged as a failed
+         * attempt no matter which method it switches to next; charging only
+         * inside the keyboard branch below let a peer dodge the cap by
+         * interleaving abandoned keyboard exchanges with other requests. The
+         * new request dispatched below still counts its own failure. */
+        if (ssh->kbSetupPending) {
+            ssh->kbSetupPending = 0;
+            ret = CountUserAuthFailure(ssh);
+        }
+#endif
+
         /* Each method branch counts its own failures; it can't be centralized
          * here since handlers return WS_SUCCESS for both success and
          * failure-sent. */
-        if (authNameId == ID_USERAUTH_PASSWORD)
+        if (ret != WS_SUCCESS) {
+            /* Charging the abandoned keyboard exchange hit the cap and the
+             * disconnect is already sent; don't dispatch this request. */
+            begin = len;
+        }
+        else if (authNameId == ID_USERAUTH_PASSWORD)
             ret = DoUserAuthRequestPassword(ssh, &authData, buf, len, &begin);
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
         else if (authNameId == ID_USERAUTH_KEYBOARD) {
-            int counted = 0;
-
-            /* Restarting before answering the prior INFO_REQUEST counts as a
-             * failure; else a peer loops here without ever responding. Clear
-             * the flag first so the send below doesn't charge it twice. */
-            if (ssh->kbSetupPending) {
-                ssh->kbSetupPending = 0;
-                counted = 1;
-                ret = CountUserAuthFailure(ssh);
-            }
-            if (ret == WS_SUCCESS)
-                ret = SendUserAuthKeyboardRequest(ssh, &authData, counted);
+            ret = SendUserAuthKeyboardRequest(ssh, &authData);
         }
 #endif
 #if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA) \
@@ -16242,8 +16253,7 @@ static int BuildUserAuthRequestKeyboard(WOLFSSH* ssh, byte* output, word32* idx,
     return ret;
 }
 
-int SendUserAuthKeyboardRequest(WOLFSSH* ssh, WS_UserAuthData* authData,
-        int counted)
+int SendUserAuthKeyboardRequest(WOLFSSH* ssh, WS_UserAuthData* authData)
 {
     byte* output;
     word32 idx;
@@ -16279,10 +16289,10 @@ int SendUserAuthKeyboardRequest(WOLFSSH* ssh, WS_UserAuthData* authData,
         else {
             WLOG(WS_LOG_DEBUG, "Issue with keyboard auth setup, try another "
                 "auth type");
-            /* No INFO_REQUEST sent, so charge the rejection here unless the
-             * caller already did; else a peer loops unbounded. */
+            /* No INFO_REQUEST sent, so charge the setup rejection here; else a
+             * peer loops unbounded on rejected setups. */
             ssh->kbSetupPending = 0;
-            return SendUserAuthFailureCount(ssh, 0, !counted);
+            return SendUserAuthFailureCount(ssh, 0, 1);
         }
     }
 

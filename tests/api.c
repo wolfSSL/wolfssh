@@ -4004,6 +4004,18 @@ static void test_wolfSSH_CheckAlgoList(void)
 #ifndef WOLFSSH_ALLOW_NONE_CIPHER
     AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, "none"), WS_INVALID_ALGO_ID);
     AssertIntEQ(wolfSSH_CTX_SetAlgoListMac(ctx, "none"), WS_INVALID_ALGO_ID);
+#else
+    /* With --enable-none-cipher, "none" is a valid cipher/MAC selection (an
+     * insecure, testing-only plaintext transport) and must round-trip through
+     * the setters. The setters store the caller's pointer, so a static literal
+     * is used and a real list restored below before listBuf goes out of scope. */
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, "none"), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListMac(ctx, "none"), WS_SUCCESS);
+    AssertStrEQ(wolfSSH_CTX_GetAlgoListCipher(ctx), "none");
+    AssertStrEQ(wolfSSH_CTX_GetAlgoListMac(ctx), "none");
+    /* "none" mixed into a list is still accepted alongside a real cipher. */
+    WSNPRINTF(listBuf, sizeof(listBuf), "none,%s", validCipher);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, listBuf), WS_SUCCESS);
 #endif
 
     /* Restore a static list; the setters store the caller's pointer and

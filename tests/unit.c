@@ -3783,6 +3783,48 @@ static int UnitAuthAlwaysFail(byte authType, WS_UserAuthData* authData,
     return WOLFSSH_USERAUTH_INVALID_PASSWORD;
 }
 
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+/* Keyboard setup that accepts, sending an INFO_REQUEST with no prompts so the
+ * exchange goes outstanding (kbSetupPending). Every other outcome fails. */
+static int UnitAuthKbSetupOk(byte authType, WS_UserAuthData* authData,
+        void* ctx)
+{
+    (void)ctx;
+    if (authType == WOLFSSH_USERAUTH_KEYBOARD_SETUP) {
+        authData->sf.keyboard.promptCount = 0;
+        return WOLFSSH_USERAUTH_SUCCESS;
+    }
+    return WOLFSSH_USERAUTH_INVALID_PASSWORD;
+}
+
+/* Build a USERAUTH_REQUEST payload for auth method `method` with no method-
+ * specific fields, as DoUserAuthRequest() sees it with the message id already
+ * consumed. The keyboard and none dispatch paths don't parse trailing fields,
+ * so three strings (user, service, method) suffice. Returns the payload size,
+ * 0 on overflow. */
+static word32 BuildAuthMethodRequest(byte* buf, word32 bufSz,
+        const char* method)
+{
+    const char* fields[3];
+    word32 idx = 0, i, fieldSz;
+
+    fields[0] = "jill";
+    fields[1] = "ssh-connection";
+    fields[2] = method;
+
+    for (i = 0; i < 3; i++) {
+        fieldSz = (word32)WSTRLEN(fields[i]);
+        if (idx + UINT32_SZ + fieldSz > bufSz)
+            return 0;
+        PutU32BE(buf + idx, fieldSz);
+        idx += UINT32_SZ;
+        WMEMCPY(buf + idx, fields[i], fieldSz);
+        idx += fieldSz;
+    }
+    return idx;
+}
+#endif /* WOLFSSH_KEYBOARD_INTERACTIVE */
+
 /* Build a "password" USERAUTH_REQUEST payload, as DoUserAuthRequest() sees it
  * with the message id already consumed. Returns the payload size. */
 static word32 BuildAuthPwRequest(byte* buf, word32 bufSz)
@@ -3873,6 +3915,160 @@ static int test_MaxAuthAttempts(void)
         wolfSSH_free(ssh);
         wolfSSH_CTX_free(ctx);
     }
+
+    /* The opening "none" probe clients send to learn the method list is exempt
+     * from the cap. With the limit at 1: the first "none" must leave the
+     * connection up (not counted), and the second must be counted and trip the
+     * cap. This covers the invalid-method else-branch, and DoUserAuthRequestNone
+     * under WOLFSSH_ALLOW_USERAUTH_NONE, both of which share the exemption. */
+    if (result == 0) {
+        WOLFSSH_CTX* ctx = NULL;
+        WOLFSSH* ssh = NULL;
+        byte noneReq[64];
+        word32 noneReqSz = 0;
+        const char* fields[3];
+        word32 idx = 0, f, fieldSz;
+
+        fields[0] = "jill"; fields[1] = "ssh-connection"; fields[2] = "none";
+        for (f = 0; f < 3; f++) {
+            fieldSz = (word32)WSTRLEN(fields[f]);
+            PutU32BE(noneReq + idx, fieldSz);
+            idx += UINT32_SZ;
+            WMEMCPY(noneReq + idx, fields[f], fieldSz);
+            idx += fieldSz;
+        }
+        noneReqSz = idx;
+
+        ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+        if (ctx == NULL) { result = -740; }
+        else {
+            wolfSSH_SetUserAuth(ctx, UnitAuthAlwaysFail);
+            wolfSSH_SetIOSend(ctx, UnitIoSendSink);
+            if (wolfSSH_CTX_SetMaxAuthAttempts(ctx, 1) != WS_SUCCESS)
+                result = -741;
+            ssh = (result == 0) ? wolfSSH_new(ctx) : NULL;
+            if (result == 0 && ssh == NULL)
+                result = -742;
+            if (result == 0) {
+                word32 di = 0;
+                int ret = wolfSSH_TestDoUserAuthRequest(ssh, noneReq,
+                        noneReqSz, &di);
+                if (ret != WS_SUCCESS) {
+                    printf("MaxAuthAttempts[none]: probe ret=%d expected %d\n",
+                           ret, WS_SUCCESS);
+                    result = -743;
+                }
+            }
+            if (result == 0) {
+                word32 di = 0;
+                int ret = wolfSSH_TestDoUserAuthRequest(ssh, noneReq,
+                        noneReqSz, &di);
+                if (ret != WS_USER_AUTH_E) {
+                    printf("MaxAuthAttempts[none]: 2nd ret=%d expected %d\n",
+                           ret, WS_USER_AUTH_E);
+                    result = -744;
+                }
+            }
+            wolfSSH_free(ssh);
+            wolfSSH_CTX_free(ctx);
+        }
+    }
+
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+    /* An abandoned keyboard-interactive exchange is charged no matter which
+     * method the peer switches to next. With the limit at 2: an accepted
+     * keyboard request leaves an INFO_REQUEST outstanding (uncounted), then a
+     * failed password request charges both the abandoned exchange and itself,
+     * tripping the cap on that single password request. Before the fix the
+     * abandoned exchange escaped counting on a non-keyboard follow-up and the
+     * password returned WS_SUCCESS. */
+    if (result == 0) {
+        WOLFSSH_CTX* ctx = NULL;
+        WOLFSSH* ssh = NULL;
+        byte kbReq[64];
+        word32 kbReqSz = BuildAuthMethodRequest(kbReq, (word32)sizeof(kbReq),
+                "keyboard-interactive");
+
+        if (kbReqSz == 0)
+            result = -750;
+
+        ctx = (result == 0) ? wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL)
+                            : NULL;
+        if (result == 0 && ctx == NULL) result = -751;
+        if (result == 0) {
+            wolfSSH_SetUserAuth(ctx, UnitAuthKbSetupOk);
+            wolfSSH_SetIOSend(ctx, UnitIoSendSink);
+            if (wolfSSH_CTX_SetMaxAuthAttempts(ctx, 2) != WS_SUCCESS)
+                result = -752;
+            ssh = (result == 0) ? wolfSSH_new(ctx) : NULL;
+            if (result == 0 && ssh == NULL) result = -753;
+
+            if (result == 0) {
+                word32 di = 0;
+                int ret = wolfSSH_TestDoUserAuthRequest(ssh, kbReq, kbReqSz,
+                        &di);
+                if (ret != WS_SUCCESS) {
+                    printf("MaxAuthAttempts[kb]: setup ret=%d expected %d\n",
+                           ret, WS_SUCCESS);
+                    result = -754;
+                }
+            }
+            if (result == 0) {
+                word32 di = 0;
+                int ret = wolfSSH_TestDoUserAuthRequest(ssh, request,
+                        requestSz, &di);
+                if (ret != WS_USER_AUTH_E) {
+                    printf("MaxAuthAttempts[kb]: pw-after-abandon ret=%d "
+                           "expected %d\n", ret, WS_USER_AUTH_E);
+                    result = -755;
+                }
+            }
+            wolfSSH_free(ssh);
+            wolfSSH_CTX_free(ctx);
+        }
+    }
+
+    /* A rejected keyboard setup (no INFO_REQUEST sent) is charged. With the
+     * limit at 2: the first rejected request leaves the connection up, the
+     * second trips the cap. */
+    if (result == 0) {
+        WOLFSSH_CTX* ctx = NULL;
+        WOLFSSH* ssh = NULL;
+        byte kbReq[64];
+        word32 kbReqSz = BuildAuthMethodRequest(kbReq, (word32)sizeof(kbReq),
+                "keyboard-interactive");
+        int attempt;
+
+        if (kbReqSz == 0)
+            result = -760;
+
+        ctx = (result == 0) ? wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL)
+                            : NULL;
+        if (result == 0 && ctx == NULL) result = -761;
+        if (result == 0) {
+            wolfSSH_SetUserAuth(ctx, UnitAuthAlwaysFail); /* setup rejects */
+            wolfSSH_SetIOSend(ctx, UnitIoSendSink);
+            if (wolfSSH_CTX_SetMaxAuthAttempts(ctx, 2) != WS_SUCCESS)
+                result = -762;
+            ssh = (result == 0) ? wolfSSH_new(ctx) : NULL;
+            if (result == 0 && ssh == NULL) result = -763;
+
+            for (attempt = 1; attempt <= 2 && result == 0; attempt++) {
+                word32 di = 0;
+                int expect = (attempt < 2) ? WS_SUCCESS : WS_USER_AUTH_E;
+                int ret = wolfSSH_TestDoUserAuthRequest(ssh, kbReq, kbReqSz,
+                        &di);
+                if (ret != expect) {
+                    printf("MaxAuthAttempts[kb-reject]: attempt %d ret=%d "
+                           "expected %d\n", attempt, ret, expect);
+                    result = -764 - attempt;
+                }
+            }
+            wolfSSH_free(ssh);
+            wolfSSH_CTX_free(ctx);
+        }
+    }
+#endif /* WOLFSSH_KEYBOARD_INTERACTIVE */
 
     return result;
 }
