@@ -411,7 +411,11 @@ static int CheckPasswordHashUnix(const char* input, char* stored)
 }
 #endif /* WOLFSSH_HAVE_LIBCRYPT || WOLFSSH_HAVE_LIBLOGIN */
 
+#ifdef WOLFSSHD_UNIT_TEST
+int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz, WOLFSSHD_AUTH* authCtx)
+#else
 static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz, WOLFSSHD_AUTH* authCtx)
+#endif
 {
     int ret = WS_SUCCESS;
     char* pwStr = NULL;
