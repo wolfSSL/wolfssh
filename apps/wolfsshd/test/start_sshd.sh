@@ -97,6 +97,13 @@ stop_wolfsshd() {
     printf "Stopping SSHD, killing pid $PID\n"
     sudo kill $PID
 
+    # Wait for the process to actually exit so a subsequent start_wolfsshd on
+    # the same port doesn't race the listening socket's release (EADDRINUSE).
+    for i in $(seq 1 50); do
+        sudo kill -0 $PID 2>/dev/null || break
+        sleep 0.1
+    done
+
     # The temp dir is owned by the invoking user, so its root-owned key copies
     # can be removed without sudo.
     if [ -n "$SSHD_KEYDIR" ]; then

@@ -51,6 +51,7 @@
 #define TPMCS_KEY_AUTH  "ThisIsMyKeyAuth"
 #define TPMCS_CERT_MAX  2048
 #define TPMCS_BUF_SZ    1024
+#define TPMCS_DEFAULT_PORT 22222
 
 static const char* certOutFile = "tpm-server-cert.der";
 
@@ -142,8 +143,16 @@ static int TpmCsMakeKeyAndCert(WOLFTPM2_DEV* dev, WOLFTPM2_KEY* key,
     }
 
     if (rc >= 0) {
-        *certDerSz = (word32)rc;
-        rc = 0;
+        /* wolfTPM2_CSR_Generate_ex returns the generated DER length on
+         * success; sanity-check it against the output buffer capacity
+         * before trusting it as the certificate size. */
+        if (rc == 0 || (word32)rc > *certDerSz) {
+            rc = BUFFER_E;
+        }
+        else {
+            *certDerSz = (word32)rc;
+            rc = 0;
+        }
     }
 
     /* The crypto callback is only needed to self-sign the certificate. Always
@@ -179,15 +188,15 @@ static int TpmCsMakeKeyAndCert(WOLFTPM2_DEV* dev, WOLFTPM2_KEY* key,
 static int TpmCsWriteCert(const char* file, const byte* der, word32 derSz)
 {
     int ret = 0;
-    FILE* f = fopen(file, "wb");
+    WFILE* f;
 
-    if (f == NULL) {
+    if (WFOPEN(NULL, &f, file, "wb") != 0) {
         ret = -1;
     }
     else {
-        if (fwrite(der, 1, derSz, f) != derSz)
+        if (WFWRITE(NULL, der, 1, derSz, f) != derSz)
             ret = -1;
-        fclose(f);
+        WFCLOSE(NULL, f);
     }
 
     return ret;
@@ -232,7 +241,7 @@ int main(int argc, char* argv[])
 {
     int ret;
     int useEcc = 1;
-    word16 port = 22222;
+    word16 port = TPMCS_DEFAULT_PORT;
     int i;
     WOLFTPM2_DEV dev;
     WOLFTPM2_KEY hostKey;
