@@ -1512,6 +1512,11 @@ int ParseScpCommand(WOLFSSH* ssh)
                     case 't':
                         ssh->scpDirection = WOLFSSH_SCP_TO;
                         ssh->scpBasePathSz = cmdSz + WOLFSSH_MAX_FILENAME;
+                        if (ssh->scpBasePathDynamic != NULL) {
+                            WFREE(ssh->scpBasePathDynamic, ssh->ctx->heap,
+                                    DYNTYPE_BUFFER);
+                            ssh->scpBasePathDynamic = NULL;
+                        }
                         ssh->scpBasePathDynamic = (char*)WMALLOC(
                                 ssh->scpBasePathSz,
                                 ssh->ctx->heap, DYNTYPE_BUFFER);
@@ -1539,6 +1544,11 @@ int ParseScpCommand(WOLFSSH* ssh)
                     case 'f':
                         ssh->scpDirection = WOLFSSH_SCP_FROM;
                         ssh->scpBasePathSz = cmdSz + WOLFSSH_MAX_FILENAME;
+                        if (ssh->scpBasePathDynamic != NULL) {
+                            WFREE(ssh->scpBasePathDynamic, ssh->ctx->heap,
+                                    DYNTYPE_BUFFER);
+                            ssh->scpBasePathDynamic = NULL;
+                        }
                         ssh->scpBasePathDynamic = (char*)WMALLOC(
                                 ssh->scpBasePathSz,
                                 ssh->ctx->heap, DYNTYPE_BUFFER);
