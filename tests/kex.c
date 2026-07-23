@@ -236,6 +236,7 @@ static int wolfSSH_KexTest_Connect(const char* kex)
 
     InitTcpReady(&ready);
 
+    WMEMSET(&serverArgs, 0, sizeof(serverArgs));
     ADD_ARG(serverArgv, serverArgc, "echoserver");
     ADD_ARG(serverArgv, serverArgc, "-1");
     ADD_ARG(serverArgv, serverArgc, "-f");
@@ -326,6 +327,7 @@ static int wolfSSH_KexTest_Ed25519HostKey(void)
 
     InitTcpReady(&ready);
 
+    WMEMSET(&serverArgs, 0, sizeof(serverArgs));
     ADD_ARG(serverArgv, serverArgc, "echoserver");
     ADD_ARG(serverArgv, serverArgc, "-1");
     ADD_ARG(serverArgv, serverArgc, "-f");
@@ -401,6 +403,7 @@ static int wolfSSH_KexTest_MlDsaHostKey(const char* keyName)
 
     InitTcpReady(&ready);
 
+    WMEMSET(&serverArgs, 0, sizeof(serverArgs));
     ADD_ARG(serverArgv, serverArgc, "echoserver");
     ADD_ARG(serverArgv, serverArgc, "-1");
     ADD_ARG(serverArgv, serverArgc, "-f");

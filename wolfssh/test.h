@@ -41,6 +41,12 @@
 /*#include <wolfssh/error.h>*/
 #endif
 
+#ifdef WOLFSSH_SCP
+    /* for WS_CallbackScpSend used in func_args; test.h is included by sources
+     * (e.g. testsuite.c) that do not otherwise pull in wolfscp.h */
+    #include <wolfssh/wolfscp.h>
+#endif
+
 #ifdef USE_WINDOWS_API
     #ifndef _WIN32_WCE
         #include <process.h>
@@ -856,6 +862,10 @@ typedef struct func_args {
 #ifdef WOLFSSH_SFTP
     /* callback for example sftp client commands instead of WFGETS */
     WS_CallbackSftpCommand sftp_cb;
+#endif
+#ifdef WOLFSSH_SCP
+    /* override the server's default scp send callback (test injection) */
+    WS_CallbackScpSend scp_send;
 #endif
 } func_args;
 

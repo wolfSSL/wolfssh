@@ -3184,6 +3184,11 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
     wolfSSH_SetUserAuthResult(ctx, wsUserAuthResult);
     wolfSSH_CTX_SetBanner(ctx, echoserverBanner);
+#ifdef WOLFSSH_SCP
+    /* let a test inject a custom scp send callback in place of the default */
+    if (serverArgs->scp_send != NULL)
+        wolfSSH_SetScpSend(ctx, serverArgs->scp_send);
+#endif
 #ifdef WOLFSSH_AGENT
     wolfSSH_CTX_set_agent_cb(ctx, wolfSSH_AGENT_DefaultActions, NULL);
 #endif

@@ -3307,12 +3307,146 @@ static void test_wolfSSH_SCP_ReKey_ToServer_NonBlock(void)
     scp_rekey_test(1, 1);
 }
 
+/* A send callback that returns 0 bytes on its first
+ * WOLFSSH_SCP_SINGLE_FILE_REQUEST (metadata now, data on the following call)
+ * must not make the server send the file header twice. The offset is static
+ * because the one-shot echoserver runs a single transfer. */
+static byte scpZeroFirstData[SCP_REKEY_FILE_SZ];
+static word32 scpZeroFirstOffset;
+
+static int scpSendZeroFirst(WOLFSSH* ssh, int state, const char* peerRequest,
+        char* fileName, word32 fileNameSz, word64* mTime, word64* aTime,
+        int* fileMode, word32 fileOffset, word32* totalFileSz,
+        byte* buf, word32 bufSz, void* ctx)
+{
+    word32 remain, n;
+
+    (void)ssh;
+    (void)peerRequest;
+    (void)fileOffset;
+    (void)ctx;
+
+    switch (state) {
+        case WOLFSSH_SCP_NEW_REQUEST:
+            return WS_SUCCESS;
+
+        case WOLFSSH_SCP_SINGLE_FILE_REQUEST:
+            /* fill metadata, but hand back zero data bytes on this first call */
+            WSTRNCPY(fileName, "scp_hdr_zero.txt", fileNameSz);
+            if (totalFileSz != NULL) *totalFileSz = SCP_REKEY_FILE_SZ;
+            if (mTime != NULL)       *mTime = 0;
+            if (aTime != NULL)       *aTime = 0;
+            if (fileMode != NULL)    *fileMode = 0644;
+            scpZeroFirstOffset = 0;
+            return 0;
+
+        case WOLFSSH_SCP_CONTINUE_FILE_TRANSFER:
+            remain = SCP_REKEY_FILE_SZ - scpZeroFirstOffset;
+            if (remain == 0)
+                return WS_SCP_COMPLETE;
+            n = (remain < bufSz) ? remain : bufSz;
+            WMEMCPY(buf, scpZeroFirstData + scpZeroFirstOffset, n);
+            scpZeroFirstOffset += n;
+            return (int)n;
+
+        default:
+            return WS_SCP_ABORT;
+    }
+}
+
+static void test_wolfSSH_SCP_SendZeroFirst(void)
+{
+    func_args ser;
+    tcp_ready ready;
+    int argsCount;
+    int ret;
+    word32 i;
+    WS_SOCKET_T clientFd;
+#ifdef USE_WINDOWS_API
+    DWORD rcvTimeout = 20000;
+#else
+    struct timeval rcvTimeout;
+#endif
+    const char* args[6];
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    const char* srcName  = "./scp_hdr_src.txt";
+    const char* fromName = "./scp_hdr_from.txt";
+    char srcBuf[32];
+    char fromBuf[32];
+    char cmd[64];
+    THREAD_TYPE serThread;
+
+    WSTRNCPY(srcBuf, srcName, sizeof(srcBuf));
+    WSTRNCPY(fromBuf, fromName, sizeof(fromBuf));
+
+    for (i = 0; i < SCP_REKEY_FILE_SZ; i++)
+        scpZeroFirstData[i] = (byte)((i * 7 + 1) & 0xff);
+    /* The on-disk file only satisfies the server's base-path parsing; the
+     * custom callback supplies the actual bytes, so a duplicated header shows
+     * up as a content mismatch below rather than a missing file. */
+    AssertIntEQ(scpWriteTestFile(srcName, scpZeroFirstData, SCP_REKEY_FILE_SZ),
+            0);
+
+    WMEMSET(&ser, 0, sizeof(func_args));
+    argsCount = 0;
+    args[argsCount++] = ".";
+    args[argsCount++] = "-1";
+    args[argsCount++] = "-p";
+    args[argsCount++] = "0";
+    ser.argv     = (char**)args;
+    ser.argc     = argsCount;
+    ser.signal   = &ready;
+    ser.scp_send = scpSendZeroFirst;
+    InitTcpReady(ser.signal);
+    ThreadStart(echoserver_test, (void*)&ser, &serThread);
+    WaitTcpReady(&ready);
+
+    WSNPRINTF(cmd, sizeof(cmd), "scp -f %s", srcName);
+    scp_client_connect(&ctx, &ssh, ready.port, cmd);
+    AssertNotNull(ctx);
+    AssertNotNull(ssh);
+
+    /* bound the recv so a regression fails the match assert below, not CI */
+    clientFd = wolfSSH_get_fd(ssh);
+#ifdef USE_WINDOWS_API
+    (void)setsockopt(clientFd, SOL_SOCKET, SO_RCVTIMEO,
+            (const char*)&rcvTimeout, sizeof(rcvTimeout));
+#else
+    rcvTimeout.tv_sec = 20;
+    rcvTimeout.tv_usec = 0;
+    (void)setsockopt(clientFd, SOL_SOCKET, SO_RCVTIMEO,
+            &rcvTimeout, sizeof(rcvTimeout));
+#endif
+
+    ret = wolfSSH_SCP_from(ssh, srcBuf, fromBuf);
+    AssertIntEQ(ret, WS_SUCCESS);
+
+    ret = wolfSSH_shutdown(ssh);
+    (void)ret;
+
+    clientFd = wolfSSH_get_fd(ssh);
+    WCLOSESOCKET(clientFd);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    ThreadJoin(serThread);
+    FreeTcpReady(&ready);
+
+    /* a duplicate header would corrupt the stream; an exact match proves the
+     * header was sent once */
+    AssertIntEQ(scpFilesMatch(fromName, scpZeroFirstData, SCP_REKEY_FILE_SZ), 0);
+
+    WREMOVE(NULL, srcName);
+    WREMOVE(NULL, fromName);
+}
+
 #else /* WOLFSSH_SCP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED &&
        * !NO_FILESYSTEM && !WOLFSSH_SCP_USER_CALLBACKS && !WOLFSSH_ZEPHYR */
 static void test_wolfSSH_SCP_ReKey(void) { ; }
 static void test_wolfSSH_SCP_ReKey_NonBlock(void) { ; }
 static void test_wolfSSH_SCP_ReKey_ToServer(void) { ; }
 static void test_wolfSSH_SCP_ReKey_ToServer_NonBlock(void) { ; }
+static void test_wolfSSH_SCP_SendZeroFirst(void) { ; }
 #endif
 
 
@@ -4346,6 +4480,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_SCP_ReKey_NonBlock();
     test_wolfSSH_SCP_ReKey_ToServer();
     test_wolfSSH_SCP_ReKey_ToServer_NonBlock();
+    test_wolfSSH_SCP_SendZeroFirst();
 
     /* SFTP tests */
     test_wolfSSH_SFTP_SendReadPacket();
