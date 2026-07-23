@@ -1099,6 +1099,10 @@ static int doCmds(func_args* args)
             if (pt[0] != '/') {
                 int maxSz = (int)WSTRLEN(workingDir) + sz + 2;
                 f = (char*)WMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                if (f == NULL) {
+                    err_msg("Error malloc'ing");
+                    return -1;
+                }
 
                 f[0] = '\0';
                 WSTRNCAT(f, workingDir, maxSz);
@@ -1187,6 +1191,11 @@ static int doCmds(func_args* args)
             if (to[0] != '/') {
                 int maxSz = (int)WSTRLEN(workingDir) + toSz + 2;
                 fTo = (char*)WMALLOC(maxSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                if (fTo == NULL) {
+                    err_msg("Error malloc'ing");
+                    WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                    return -1;
+                }
 
                 fTo[0] = '\0';
                 WSTRNCAT(fTo, workingDir, maxSz);
