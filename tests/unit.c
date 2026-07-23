@@ -2556,6 +2556,79 @@ static int test_DoUserAuthBanner(void)
     return result;
 }
 
+/* Verify PrepareUserAuthRequestPassword rejects with WS_BUFFER_E instead of
+ * wrapping *payloadSz when it would exceed MAX_PACKET_SZ. */
+static int test_PrepareUserAuthRequestPassword(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    int result = 0;
+    /* BOOLEAN_SZ + LENGTH_SZ, mirrors internal.c's addSz */
+    const word32 addSz = 1 + 4;
+
+    struct {
+        word32 startSz;
+        word32 passwordSz;
+        int    expectRet;
+        const char* label;
+    } cases[] = {
+        { 10,             20,          WS_SUCCESS,  "normal small payload" },
+        { 35000 - 2,      1,           WS_BUFFER_E, "addSz alone overflows" },
+        { 100,            34900,       WS_BUFFER_E, "passwordSz overflows" },
+        { 40000,          0,           WS_BUFFER_E, "payloadSz already exceeds max" },
+        { 35000 - addSz,  0,           WS_SUCCESS,  "exact fit" },
+    };
+    int i;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -320;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -321;
+    }
+
+    for (i = 0; i < (int)(sizeof(cases)/sizeof(cases[0])); i++) {
+        WS_UserAuthData authData;
+        word32 payloadSz = cases[i].startSz;
+        int ret;
+
+        WMEMSET(&authData, 0, sizeof(authData));
+        authData.sf.password.passwordSz = cases[i].passwordSz;
+
+        ret = wolfSSH_TestPrepareUserAuthRequestPassword(ssh, &payloadSz,
+                &authData);
+        if (ret != cases[i].expectRet) {
+            printf("PrepareUserAuthRequestPassword[%s]: ret=%d, expected=%d\n",
+                    cases[i].label, ret, cases[i].expectRet);
+            result = -322 - i;
+            break;
+        }
+        if (ret == WS_SUCCESS &&
+                payloadSz != cases[i].startSz + addSz + cases[i].passwordSz) {
+            printf("PrepareUserAuthRequestPassword[%s]: payloadSz=%u, "
+                    "expected=%u\n", cases[i].label, payloadSz,
+                    cases[i].startSz + addSz + cases[i].passwordSz);
+            result = -330 - i;
+            break;
+        }
+    }
+
+    if (result == 0) {
+        int ret = wolfSSH_TestPrepareUserAuthRequestPassword(NULL, NULL, NULL);
+        if (ret != WS_BAD_ARGUMENT) {
+            printf("PrepareUserAuthRequestPassword[null args]: ret=%d, "
+                    "expected=%d\n", ret, WS_BAD_ARGUMENT);
+            result = -340;
+        }
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
 #if defined(WOLFSSH_TEST_INTERNAL) && defined(WOLFSSH_SCP)
 /* Verify GetScpFileMode strips setuid/setgid/sticky bits from a peer-supplied
  * SCP C/D record mode, matching the masking already done on the send path.
@@ -9328,6 +9401,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #ifdef WOLFSSH_TEST_INTERNAL
     unitResult = test_DoUserAuthBanner();
     printf("DoUserAuthBanner: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_PrepareUserAuthRequestPassword();
+    printf("PrepareUserAuthRequestPassword: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
     unitResult = test_DoChannelRequest();
