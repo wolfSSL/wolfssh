@@ -35,6 +35,7 @@
 #define TPMCC_USER      "jill"
 #define TPMCC_PASSWORD  "upthehill"
 #define TPMCC_BUF_SZ    1024
+#define TPMCC_DEFAULT_PORT 22222
 
 static int TpmCcUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 {
@@ -70,23 +71,31 @@ static int TpmCcHostKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 static int TpmCcLoadFile(const char* file, byte* buf, word32* bufSz)
 {
     int ret = 0;
-    FILE* f = fopen(file, "rb");
-    size_t n;
-    int extra;
+    WFILE* f;
+    word32 fileSz;
+    word32 readSz;
 
-    if (f == NULL) {
+    if (WFOPEN(NULL, &f, file, "rb") != 0) {
         ret = -1;
     }
     else {
-        n = fread(buf, 1, *bufSz, f);
-        /* If the buffer filled exactly, the file may be larger than the buffer;
-         * reject a truncated read rather than loading a partial certificate. */
-        extra = (n == (size_t)*bufSz) ? fgetc(f) : EOF;
-        fclose(f);
-        if (n == 0 || extra != EOF)
+        WFSEEK(NULL, f, 0, WSEEK_END);
+        fileSz = (word32)WFTELL(NULL, f);
+        WREWIND(NULL, f);
+
+        if (fileSz == 0 || fileSz > *bufSz) {
             ret = -1;
-        else
-            *bufSz = (word32)n;
+        }
+        else {
+            readSz = (word32)WFREAD(NULL, buf, 1, fileSz, f);
+            if (readSz != fileSz) {
+                ret = -1;
+            }
+            else {
+                *bufSz = fileSz;
+            }
+        }
+        WFCLOSE(NULL, f);
     }
 
     return ret;
@@ -97,7 +106,7 @@ int main(int argc, char* argv[])
 {
     int ret;
     int i;
-    word16 port = 22222;
+    word16 port = TPMCC_DEFAULT_PORT;
     const char* host = "127.0.0.1";
     const char* caFile = "tpm-server-cert.der";
     WOLFSSH_CTX* ctx = NULL;

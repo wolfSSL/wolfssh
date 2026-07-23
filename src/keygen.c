@@ -276,19 +276,33 @@ int wolfSSH_MakeMlDsaKey(byte* out, word32 outSz, word32 level)
     }
 
     if (ret == WS_SUCCESS) {
-        MlDsaKey key;
+#ifdef WOLFSSH_SMALL_STACK
+        MlDsaKey* key;
+#else
+        MlDsaKey keyBuf;
+        MlDsaKey* key = &keyBuf;
+#endif
         int keyInit = 0;
 
-        if (wc_MlDsaKey_Init(&key, NULL, INVALID_DEVID) != 0)
-            ret = WS_CRYPTO_FAILED;
-        else {
-            keyInit = 1;
-            if (wc_MlDsaKey_SetParams(&key, wc_level) != 0)
+#ifdef WOLFSSH_SMALL_STACK
+        key = (MlDsaKey*)WMALLOC(sizeof(MlDsaKey), NULL, DYNTYPE_PRIVKEY);
+        if (key == NULL) {
+            ret = WS_MEMORY_E;
+        }
+#endif
+
+        if (ret == WS_SUCCESS) {
+            if (wc_MlDsaKey_Init(key, NULL, INVALID_DEVID) != 0)
                 ret = WS_CRYPTO_FAILED;
+            else {
+                keyInit = 1;
+                if (wc_MlDsaKey_SetParams(key, wc_level) != 0)
+                    ret = WS_CRYPTO_FAILED;
+            }
         }
 
         if (ret == WS_SUCCESS) {
-            ret = wc_MlDsaKey_MakeKey(&key, &rng);
+            ret = wc_MlDsaKey_MakeKey(key, &rng);
             if (ret != 0) {
                 WLOG(WS_LOG_DEBUG, "ML-DSA key generation failed");
                 ret = WS_CRYPTO_FAILED;
@@ -300,7 +314,7 @@ int wolfSSH_MakeMlDsaKey(byte* out, word32 outSz, word32 level)
         if (ret == WS_SUCCESS) {
             int keySz;
 
-            keySz = wc_MlDsaKey_KeyToDer(&key, out, outSz);
+            keySz = wc_MlDsaKey_KeyToDer(key, out, outSz);
             if (keySz < 0) {
                 WLOG(WS_LOG_DEBUG, "ML-DSA key to DER failed");
                 ret = WS_CRYPTO_FAILED;
@@ -310,8 +324,14 @@ int wolfSSH_MakeMlDsaKey(byte* out, word32 outSz, word32 level)
         }
 
         if (keyInit) {
-            wc_MlDsaKey_Free(&key);
+            wc_MlDsaKey_Free(key);
         }
+
+#ifdef WOLFSSH_SMALL_STACK
+        if (key != NULL) {
+            WFREE(key, NULL, DYNTYPE_PRIVKEY);
+        }
+#endif
 
         if (wc_FreeRng(&rng) != 0) {
             WLOG(WS_LOG_DEBUG, "Couldn't free RNG");

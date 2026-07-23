@@ -2049,6 +2049,16 @@ static int SetDefaultUserID(WOLFSSHD_AUTH* auth)
     }
 
     pwInfo = getpwnam(WOLFSSH_USER_STRING(WOLFSSH_SSHD_USER));
+#ifdef WOLFSSHD_UNIT_TEST
+    /* Unit tests run wolfSSHD_AuthCreateUser() outside of a real daemon
+     * install, where the dedicated "sshd" system account may not exist.
+     * Fall back to the invoking user so auth-flow tests can exercise
+     * wolfSSHD_AuthCreateUser() without requiring that account. Never
+     * enabled in a production build. */
+    if (pwInfo == NULL) {
+        pwInfo = getpwuid(getuid());
+    }
+#endif
     if (pwInfo == NULL) {
         /* user name not found on system */
         wolfSSH_Log(WS_LOG_INFO, "[SSHD] No %s user found to use",

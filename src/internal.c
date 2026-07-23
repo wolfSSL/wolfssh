@@ -41,9 +41,7 @@
 #endif
 #include <wolfssl/wolfcrypt/curve25519.h>
 #include <wolfssl/wolfcrypt/ed25519.h>
-#ifdef WOLFSSH_CERTS
-    #include <wolfssl/wolfcrypt/error-crypt.h>
-#endif
+#include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfssl/wolfcrypt/hmac.h>
@@ -6285,6 +6283,26 @@ static void FreePubKey(struct wolfSSH_sigKeyBlock *p)
 }
 
 
+/* Returns non-zero when a wolfCrypt error code indicates a local fault
+ * (memory, RNG, hardware, initialisation) rather than a peer-driven
+ * rejection.  Used by the key-agreement helpers to log local faults at
+ * ERROR while keeping peer-driven rejects at DEBUG to prevent a remote
+ * peer from flooding the error log. */
+static WS_MAYBE_UNUSED int IsLocalCryptoFault(int wcRet)
+{
+    switch (wcRet) {
+        case MEMORY_E:
+        case RNG_FAILURE_E:
+        case WC_HW_E:
+        case WC_INIT_E:
+        case BAD_MUTEX_E:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+
 /* KeyAgreeDh_client
  * hashId - wolfCrypt hash type ID used
  * f - peer public key
@@ -6318,7 +6336,10 @@ static int KeyAgreeDh_client(WOLFSSH* ssh, byte hashId,
                          f, fSz);
         PRIVATE_KEY_LOCK();
         if (ret != 0) {
-            WLOG(WS_LOG_ERROR,
+            /* Local faults (RNG, HSM, memory) are logged at ERROR;
+             * peer-driven rejects stay at DEBUG so a remote peer
+             * cannot flood the error log. */
+            WLOG(IsLocalCryptoFault(ret) ? WS_LOG_ERROR : WS_LOG_DEBUG,
                     "Generate DH shared secret failed, %d", ret);
             ret = WS_CRYPTO_FAILED;
         }
@@ -6410,7 +6431,10 @@ static int KeyAgreeEcdh_client(WOLFSSH* ssh, byte hashId,
                 key_ptr, ssh->k, &ssh->kSz);
         PRIVATE_KEY_LOCK();
         if (ret != 0) {
-            WLOG(WS_LOG_ERROR,
+            /* Local faults (RNG, HSM, memory) are logged at ERROR;
+             * peer-driven rejects stay at DEBUG so a remote peer
+             * cannot flood the error log. */
+            WLOG(IsLocalCryptoFault(ret) ? WS_LOG_ERROR : WS_LOG_DEBUG,
                     "Generate ECC shared secret failed, %d", ret);
             ret = WS_CRYPTO_FAILED;
         }
@@ -6470,7 +6494,10 @@ static int KeyAgreeCurve25519_client(WOLFSSH* ssh, byte hashId,
                   ssh->k, &ssh->kSz, EC25519_LITTLE_ENDIAN);
         PRIVATE_KEY_LOCK();
         if (ret != 0) {
-            WLOG(WS_LOG_ERROR,
+            /* Local faults (RNG, HSM, memory) are logged at ERROR;
+             * peer-driven rejects stay at DEBUG so a remote peer
+             * cannot flood the error log. */
+            WLOG(IsLocalCryptoFault(ret) ? WS_LOG_ERROR : WS_LOG_DEBUG,
                     "Gen curve25519 shared secret failed, %d", ret);
             ret = WS_CRYPTO_FAILED;
         }
@@ -6679,7 +6706,10 @@ static int KeyAgreeEcdhMlKem_client(WOLFSSH* ssh, byte hashId,
         ssh->kSz += length_sharedsecret;
     } else {
         ssh->kSz = 0;
-        WLOG(WS_LOG_ERROR,
+        /* Local faults (RNG, HSM, memory) are logged at ERROR;
+         * peer-driven rejects stay at DEBUG so a remote peer
+         * cannot flood the error log. */
+        WLOG(IsLocalCryptoFault(ret) ? WS_LOG_ERROR : WS_LOG_DEBUG,
              "Generate ECC and ML-KEM (decap) shared secret failed, %d",
              ret);
     }
@@ -15922,9 +15952,18 @@ static int PrepareUserAuthRequestPassword(WOLFSSH* ssh, word32* payloadSz,
     if (ssh == NULL || payloadSz == NULL || authData == NULL)
         ret = WS_BAD_ARGUMENT;
 
-    if (ret == WS_SUCCESS)
-        *payloadSz += BOOLEAN_SZ + LENGTH_SZ +
-                authData->sf.password.passwordSz;
+    if (ret == WS_SUCCESS) {
+        word32 addSz = BOOLEAN_SZ + LENGTH_SZ;
+        if (MAX_PACKET_SZ < *payloadSz ||
+            MAX_PACKET_SZ - *payloadSz < addSz ||
+            MAX_PACKET_SZ - *payloadSz - addSz <
+                authData->sf.password.passwordSz) {
+            ret = WS_BUFFER_E;
+        }
+        else {
+            *payloadSz += addSz + authData->sf.password.passwordSz;
+        }
+    }
 
     return ret;
 }
@@ -20101,6 +20140,12 @@ int wolfSSH_TestDoUserAuthBanner(WOLFSSH* ssh, byte* buf, word32 len,
         word32* idx)
 {
     return DoUserAuthBanner(ssh, buf, len, idx);
+}
+
+int wolfSSH_TestPrepareUserAuthRequestPassword(WOLFSSH* ssh,
+        word32* payloadSz, const WS_UserAuthData* authData)
+{
+    return PrepareUserAuthRequestPassword(ssh, payloadSz, authData);
 }
 
 int wolfSSH_TestDoChannelRequest(WOLFSSH* ssh, byte* buf, word32 len,
