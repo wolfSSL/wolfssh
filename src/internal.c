@@ -4312,10 +4312,6 @@ static word32 CountNameList(const byte* buf, word32 len)
                 count++;
             }
         }
-        /* remove leading comma */
-        if (count > 0 && buf[0] == ',') {
-            count--;
-        }
         /* remove trailing comma */
         if (count > 0 && buf[len-1] == ',') {
             count--;
