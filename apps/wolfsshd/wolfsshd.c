@@ -1463,12 +1463,22 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     if (!ptyReq || forcedCmd) {
         if (pipe(stdoutPipe) != 0) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue creating stdout pipe");
+            if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Error lowering permissions level");
+                exit(1);
+            }
             return WS_FATAL_ERROR;
         }
         if (pipe(stderrPipe) != 0) {
             close(stdoutPipe[0]);
             close(stdoutPipe[1]);
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue creating stderr pipe");
+            if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Error lowering permissions level");
+                exit(1);
+            }
             return WS_FATAL_ERROR;
         }
         if (pipe(stdinPipe) != 0) {
@@ -1477,6 +1487,11 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             close(stderrPipe[0]);
             close(stderrPipe[1]);
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue creating stdin pipe");
+            if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Error lowering permissions level");
+                exit(1);
+            }
             return WS_FATAL_ERROR;
         }
     }
@@ -1487,6 +1502,25 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         /* forkpty failed, so return */
         ChildRunning = 0;
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue creating new forkpty");
+        if (!ptyReq || forcedCmd) {
+            close(stdoutPipe[0]);
+            close(stdoutPipe[1]);
+            close(stderrPipe[0]);
+            close(stderrPipe[1]);
+            close(stdinPipe[0]);
+            close(stdinPipe[1]);
+            stdoutPipe[0] = -1;
+            stdoutPipe[1] = -1;
+            stderrPipe[0] = -1;
+            stderrPipe[1] = -1;
+            stdinPipe[0]  = -1;
+            stdinPipe[1]  = -1;
+        }
+        if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Error lowering permissions level");
+            exit(1);
+        }
         return WS_FATAL_ERROR;
     }
     else if (childPid == 0) {
