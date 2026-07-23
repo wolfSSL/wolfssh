@@ -1322,7 +1322,7 @@ WOLFSSH_LOCAL int SendUserAuthKeyboardResponse(WOLFSSH* ssh);
  * caller already charged a failure for this message, so a declined setup
  * callback doesn't charge it twice. */
 WOLFSSH_LOCAL int SendUserAuthKeyboardRequest(WOLFSSH* ssh,
-        WS_UserAuthData* authData, int counted);
+        WS_UserAuthData* authData);
 #endif
 WOLFSSH_LOCAL int SendUserAuthSuccess(WOLFSSH* ssh);
 WOLFSSH_LOCAL int SendUserAuthFailure(WOLFSSH* ssh, byte partialSuccess);
