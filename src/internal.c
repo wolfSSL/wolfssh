@@ -11131,7 +11131,7 @@ static int DoChannelData(WOLFSSH* ssh,
 
     /* Validate dataSz */
     if (ret == WS_SUCCESS) {
-        if (len < begin) {
+        if (dataSz > len - begin) {
             ret = WS_RECV_OVERFLOW_E;
         }
     }
