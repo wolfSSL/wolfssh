@@ -766,7 +766,13 @@ INLINE static int IsMessageAllowedServer(WOLFSSH *ssh, byte msg)
         }
     }
     else {
-        if (msg >= MSGID_USERAUTH_REQUEST && msg < MSGID_GLOBAL_REQUEST) {
+        /* RFC 4252 section 5.1: after SSH_MSG_USERAUTH_SUCCESS, a further
+         * SSH_MSG_USERAUTH_REQUEST is allowed past the gate so DoPacket can
+         * silently discard it instead of tearing down the transport. */
+        if (msg == MSGID_USERAUTH_REQUEST) {
+            return 1;
+        }
+        if (msg > MSGID_USERAUTH_REQUEST && msg < MSGID_GLOBAL_REQUEST) {
             WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
                     msg, "server", "after user authentication");
             return 0;
@@ -9612,6 +9618,37 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
         authNameId = NameToId((const char*)authData.authName, authData.authNameSz);
         ssh->authId = authNameId;
 
+        /* Enforce the advertised auth-type policy as a real gate. The set
+         * returned by userAuthTypesCb (or the compiled-in default) is checked
+         * here, before any application userAuthCb runs, so a method the server
+         * never advertised is rejected outright with USERAUTH_FAILURE instead
+         * of being silently handled. */
+        {
+            int typeAllowed = WOLFSSH_USERAUTH_PASSWORD;
+        #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+            typeAllowed |= WOLFSSH_USERAUTH_KEYBOARD;
+        #endif
+        #if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
+            typeAllowed |= WOLFSSH_USERAUTH_PUBLICKEY;
+        #endif
+            if (ssh->ctx && ssh->ctx->userAuthTypesCb) {
+                typeAllowed = ssh->ctx->userAuthTypesCb(ssh, ssh->userAuthCtx);
+            }
+            if ((authNameId == ID_USERAUTH_PASSWORD &&
+                        !(typeAllowed & WOLFSSH_USERAUTH_PASSWORD))
+        #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+                || (authNameId == ID_USERAUTH_KEYBOARD &&
+                        !(typeAllowed & WOLFSSH_USERAUTH_KEYBOARD))
+        #endif
+                || (authNameId == ID_USERAUTH_PUBLICKEY &&
+                        !(typeAllowed & WOLFSSH_USERAUTH_PUBLICKEY))) {
+                WLOG(WS_LOG_DEBUG,
+                     "DUAR: userauth type not advertised: %s",
+                     IdToName(authNameId));
+                authNameId = ID_UNKNOWN;
+            }
+        }
+
         if (authNameId == ID_USERAUTH_PASSWORD)
             ret = DoUserAuthRequestPassword(ssh, &authData, buf, len, &begin);
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
@@ -10831,33 +10868,57 @@ static int DoChannelRequest(WOLFSSH* ssh,
             WLOG(WS_LOG_DEBUG, "  %s = %s", name, value);
         }
         else if (WSTRNCMP(type, "shell", typeSz) == 0) {
-            channel->sessionType = WOLFSSH_SESSION_SHELL;
-            if (ssh->ctx->channelReqShellCb) {
-                rej = ssh->ctx->channelReqShellCb(channel, ssh->channelReqCtx);
+            if (channel->sessionType != WOLFSSH_SESSION_UNKNOWN) {
+                WLOG(WS_LOG_DEBUG,
+                     "  program-start already accepted, rejecting.");
+                rej = 1;
             }
-            ssh->clientState = CLIENT_DONE;
+            else {
+                channel->sessionType = WOLFSSH_SESSION_SHELL;
+                if (ssh->ctx->channelReqShellCb) {
+                    rej = ssh->ctx->channelReqShellCb(channel,
+                            ssh->channelReqCtx);
+                }
+                ssh->clientState = CLIENT_DONE;
+            }
         }
         else if (WSTRNCMP(type, "exec", typeSz) == 0) {
-            ret = GetStringAlloc(ssh->ctx->heap, &channel->command, NULL,
-                    buf, len, &begin);
-            channel->sessionType = WOLFSSH_SESSION_EXEC;
-            if (ssh->ctx->channelReqExecCb) {
-                rej = ssh->ctx->channelReqExecCb(channel, ssh->channelReqCtx);
+            if (channel->sessionType != WOLFSSH_SESSION_UNKNOWN) {
+                WLOG(WS_LOG_DEBUG,
+                     "  program-start already accepted, rejecting.");
+                rej = 1;
             }
-            ssh->clientState = CLIENT_DONE;
+            else {
+                ret = GetStringAlloc(ssh->ctx->heap, &channel->command, NULL,
+                        buf, len, &begin);
+                channel->sessionType = WOLFSSH_SESSION_EXEC;
+                if (ssh->ctx->channelReqExecCb) {
+                    rej = ssh->ctx->channelReqExecCb(channel,
+                            ssh->channelReqCtx);
+                }
+                ssh->clientState = CLIENT_DONE;
 
-            WLOG(WS_LOG_DEBUG, "  command = %s", channel->command);
+                WLOG(WS_LOG_DEBUG, "  command = %s", channel->command);
+            }
         }
         else if (WSTRNCMP(type, "subsystem", typeSz) == 0) {
-            ret = GetStringAlloc(ssh->ctx->heap, &channel->command, NULL,
-                    buf, len, &begin);
-            channel->sessionType = WOLFSSH_SESSION_SUBSYSTEM;
-            if (ssh->ctx->channelReqSubsysCb) {
-                rej = ssh->ctx->channelReqSubsysCb(channel, ssh->channelReqCtx);
+            if (channel->sessionType != WOLFSSH_SESSION_UNKNOWN) {
+                WLOG(WS_LOG_DEBUG,
+                     "  program-start already accepted, rejecting.");
+                rej = 1;
             }
-            ssh->clientState = CLIENT_DONE;
+            else {
+                ret = GetStringAlloc(ssh->ctx->heap, &channel->command, NULL,
+                        buf, len, &begin);
+                channel->sessionType = WOLFSSH_SESSION_SUBSYSTEM;
+                if (ssh->ctx->channelReqSubsysCb) {
+                    rej = ssh->ctx->channelReqSubsysCb(channel,
+                            ssh->channelReqCtx);
+                }
+                ssh->clientState = CLIENT_DONE;
 
-            WLOG(WS_LOG_DEBUG, "  subsystem = %s", channel->command);
+                WLOG(WS_LOG_DEBUG, "  subsystem = %s", channel->command);
+            }
         }
         #ifdef WOLFSSH_TERM
         else if (WSTRNCMP(type, "pty-req", typeSz) == 0) {
@@ -11169,17 +11230,14 @@ static int PutBuffer(WOLFSSH_BUFFER* buf, byte* data, word32 dataSz)
 {
     int ret;
 
-    /* reset "used" section of buffer back to 0 */
-    buf->length = 0;
-    buf->idx    = 0;
-
-    if (dataSz > buf->bufferSz) {
-        if ((ret = GrowBuffer(buf, dataSz)) != WS_SUCCESS) {
-            return ret;
-        }
+    /* Append dataSz bytes, preserving any unread [idx, length) region.
+     * GrowBuffer compacts the unread region to the front (dropping the
+     * already-consumed head) and guarantees room for dataSz more bytes. */
+    if ((ret = GrowBuffer(buf, dataSz)) != WS_SUCCESS) {
+        return ret;
     }
-    WMEMCPY(buf->buffer, data, dataSz);
-    buf->length = dataSz;
+    WMEMCPY(buf->buffer + buf->length, data, dataSz);
+    buf->length += dataSz;
 
     return WS_SUCCESS;
 }
@@ -11389,8 +11447,19 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
             break;
 
         case MSGID_USERAUTH_REQUEST:
-            WLOG(WS_LOG_DEBUG, "Decoding MSGID_USERAUTH_REQUEST");
-            ret = DoUserAuthRequest(ssh, buf + idx, payloadSz, &payloadIdx);
+            if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER &&
+                    ssh->acceptState >= ACCEPT_SERVER_USERAUTH_SENT) {
+                /* RFC 4252 section 5.1: silently ignore a userauth request
+                 * received after authentication has already succeeded. */
+                WLOG(WS_LOG_DEBUG,
+                        "Ignoring USERAUTH_REQUEST after auth success");
+                payloadIdx = payloadSz;
+                ret = WS_SUCCESS;
+            }
+            else {
+                WLOG(WS_LOG_DEBUG, "Decoding MSGID_USERAUTH_REQUEST");
+                ret = DoUserAuthRequest(ssh, buf + idx, payloadSz, &payloadIdx);
+            }
             break;
 
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
