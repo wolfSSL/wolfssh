@@ -989,6 +989,7 @@ struct WOLFSSH {
     word32 scpFileBufferSz;       /* size of transfer buffer, octets */
     word32 scpFileOffset;         /* current offset into file transfer */
     word32 scpBufferedSz;         /* bytes buffered to send to peer */
+    byte   scpFileHeaderSent;     /* file header already sent for current file */
     word32 scpDirDepth;           /* SCP nested NEW_DIR depth below base path */
 #ifdef WOLFSSL_NUCLEUS
     int    scpFd;            /* SCP receive callback context handle */
