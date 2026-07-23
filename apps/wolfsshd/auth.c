@@ -107,6 +107,10 @@ int (*wsshd_seteuid_cb)(WUID_T) = seteuid;
 struct passwd* (*wsshd_getpwnam_cb)(const char*) = getpwnam;
 #define getpwnam wsshd_getpwnam_cb
 int (*wsshd_setgroups_cb)(int, const WGID_T*) = wsshd_setgroups_default;
+#ifdef HAVE_SHADOW
+struct spwd* (*wsshd_getspnam_cb)(const char*) = getspnam;
+#define getspnam wsshd_getspnam_cb
+#endif
 #endif
 
 struct WOLFSSHD_AUTH {
@@ -299,6 +303,131 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
     return ret;
 }
 
+#ifdef HAVE_SHADOW
+/* Shared sizing for the dummy-hash buffers used to equalize crypt() timing
+ * across real and fake password checks. Also used in CheckPasswordUnix to
+ * size the real shadow hash copy buffer, so raising this changes both the
+ * fake-hash template capacity and the real-hash fail-closed threshold. */
+#define WSSHD_FAKE_HASH_SZ 256
+/* Modular crypt bcrypt format: "$2<variant>$<cost>$" prefix is 7 bytes,
+ * followed by a 22-byte base64-like salt, before the 31-byte digest. */
+#define WSSHD_BCRYPT_PREFIX_LEN 7
+#define WSSHD_BCRYPT_SALT_LEN   22
+/* Must be at least WSSHD_BCRYPT_SALT_LEN characters; indexed modulo its own
+ * length below so a mismatch can't read out of bounds. */
+#define WSSHD_DUMMY_SALT_ALPHABET "ABCDEFGHIJKLMNOPQRSTUV"
+
+static char cachedFakeHash[WSSHD_FAKE_HASH_SZ] = {0};
+
+#ifdef WOLFSSHD_UNIT_TEST
+void GetFakeHashFromTemplate(const char* tmpl, char* out, word32 outSz)
+#else
+static void GetFakeHashFromTemplate(const char* tmpl, char* out, word32 outSz)
+#endif
+{
+    word32 i;
+    word32 dollarCount = 0;
+    word32 lastDollarIdx = 0;
+
+    if (tmpl == NULL || out == NULL || outSz < 3) return;
+
+    /* Output will always be considered a "locked" account by prefixing '!' */
+    out[0] = '!';
+
+    /* If it doesn't look like a modular crypt format, fallback */
+    if (tmpl[0] != '$') {
+        XSTRNCPY(out + 1, "*", outSz - 1);
+        return;
+    }
+
+    if (XSTRNCMP(tmpl, "$2", 2) == 0) {
+        /* bcrypt: copy only prefix+salt, excluding the digest. Legacy
+         * "$2$NN$" has no variant letter, so its prefix is 1 byte shorter
+         * than "$2a$NN$" etc. */
+        word32 prefixLen = (tmpl[2] == '$') ?
+                WSSHD_BCRYPT_PREFIX_LEN - 1 : WSSHD_BCRYPT_PREFIX_LEN;
+        word32 saltEnd = prefixLen + WSSHD_BCRYPT_SALT_LEN;
+        word32 copyLen = (saltEnd < outSz - 1) ? saltEnd : (outSz - 2);
+
+        if (copyLen > XSTRLEN(tmpl)) {
+            copyLen = (word32)XSTRLEN(tmpl);
+        }
+
+        XMEMCPY(out + 1, tmpl, copyLen);
+        out[1 + copyLen] = '\0';
+        for (i = prefixLen; i < copyLen; i++) {
+            /* Overwrite with a dummy alphanumeric salt */
+            out[i + 1] = WSSHD_DUMMY_SALT_ALPHABET[
+                    (i - prefixLen) % (sizeof(WSSHD_DUMMY_SALT_ALPHABET) - 1)];
+        }
+    }
+    else {
+        word32 prevDollarIdx = 0;
+        /* Others (MD5, SHA, yescrypt): salt ends at the last '$' before the hash */
+        for (i = 0; tmpl[i] != '\0'; i++) {
+            if (tmpl[i] == '$') {
+                dollarCount++;
+                prevDollarIdx = lastDollarIdx;
+                lastDollarIdx = i;
+            }
+        }
+
+        /* e.g., $6$rounds=5000$salt$hash -> prevDollarIdx is before 'salt' */
+        if (dollarCount >= 3 && prevDollarIdx + 2 < outSz) {
+            XMEMCPY(out + 1, tmpl, prevDollarIdx + 1);
+            out[prevDollarIdx + 2] = '\0';
+            XSTRNCAT(out, "wolfSSHFakeSalt$", outSz - XSTRLEN(out) - 1);
+        }
+        else {
+            XSTRNCPY(out + 1, "*", outSz - 1);
+        }
+    }
+}
+
+#ifdef WOLFSSHD_UNIT_TEST
+/* Test-only hook to seed cachedFakeHash without a real /etc/shadow entry. */
+void wolfSSHD_SetCachedFakeHashForTest(const char* hash)
+{
+    if (hash == NULL) {
+        cachedFakeHash[0] = '\0';
+    }
+    else {
+        XSTRNCPY(cachedFakeHash, hash, sizeof(cachedFakeHash));
+        cachedFakeHash[sizeof(cachedFakeHash) - 1] = '\0';
+    }
+}
+
+/* Test-only accessor so tests can verify wolfSSHD_AuthInit() actually
+ * populated cachedFakeHash from a real shadow entry. */
+void wolfSSHD_GetCachedFakeHashForTest(char* out, word32 outSz)
+{
+    if (out == NULL || outSz == 0) return;
+    XSTRNCPY(out, cachedFakeHash, outSz);
+    out[outSz - 1] = '\0';
+}
+#endif /* WOLFSSHD_UNIT_TEST */
+#endif /* HAVE_SHADOW */
+
+void wolfSSHD_AuthInit(void)
+{
+#ifdef HAVE_SHADOW
+    struct spwd* rootShadow = getspnam("root");
+    if (rootShadow != NULL && rootShadow->sp_pwdp != NULL) {
+        GetFakeHashFromTemplate(rootShadow->sp_pwdp, cachedFakeHash, sizeof(cachedFakeHash));
+    }
+    else {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] Error getting root password info");
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] Possibly permissions level error?"
+            " i.e SSHD not ran as sudo");
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] Timing side-channel mitigation degraded: using a"
+            " fixed-cost fake hash instead of matching real crypt() cost");
+    }
+#endif
+}
+
 #ifndef _WIN32
 
 #ifdef WOLFSSH_USE_PAM
@@ -368,20 +497,29 @@ static int ExtractSalt(char* hash, char** salt, int saltSz)
 
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
 #ifdef WOLFSSHD_UNIT_TEST
-int CheckPasswordHashUnix(const char* input, char* stored)
+int CheckPasswordHashUnix(const char* input, const char* stored)
 #else
-static int CheckPasswordHashUnix(const char* input, char* stored)
+static int CheckPasswordHashUnix(const char* input, const char* stored)
 #endif
 {
+    /* Use fake hashes for locked/empty accounts to invoke crypt()
+     * and prevent timing side channels. SHA-512 is the primary choice
+     * to match genuine cost; others are fallbacks. */
+    static const char fakeHashSHA512[] =
+        "$6$rounds=5000$wolfSSHdFakeSalt$";
+    static const char fakeHashMD5[] = "$1$wolfSSHd$UkYLseEmSSXHYyxsWDQC80";
+    static const char fakeHashDES[] = "wowolfSSHdUkYLs";
     int ret = WSSHD_AUTH_SUCCESS;
-    char* hashedInput;
+    int locked = 0;
+    char* hashedInput = NULL;
     word32 hashedInputSz = 0, storedSz = 0;
 
     if (input == NULL || stored == NULL) {
         ret = WS_BAD_ARGUMENT;
     }
 
-    /* empty password case */
+    /* Fast return for genuine empty passwords. The dummy caller
+     * never passes an empty stored hash, avoiding a timing oracle. */
     if (ret == WSSHD_AUTH_SUCCESS && stored[0] == 0 && WSTRLEN(input) == 0) {
         wolfSSH_Log(WS_LOG_INFO,
                     "[SSHD] User logged in with empty password");
@@ -389,16 +527,43 @@ static int CheckPasswordHashUnix(const char* input, char* stored)
     }
 
     if (ret == WSSHD_AUTH_SUCCESS) {
-        hashedInput = crypt(input, stored);
+        const char* salt = stored;
+
+        storedSz = (word32)WSTRLEN(stored);
+        locked = (storedSz == 0 || stored[0] == '*' || stored[0] == '!');
+
+        if (locked) {
+            /* Try to reuse the salt from the locked hash if it exists and uses '!' */
+            if (storedSz > 1 && stored[0] == '!') {
+                salt = stored + 1;
+            }
+            else {
+                salt = fakeHashSHA512;
+            }
+        }
+
+        hashedInput = crypt(input, salt);
+        /* glibc signals an unsupported salt with a "*"-prefixed sentinel,
+         * not NULL; check both so the fallback engages on every libc. */
+        if (locked && (hashedInput == NULL || hashedInput[0] == '*')) {
+            salt = fakeHashMD5;
+            hashedInput = crypt(input, salt);
+            if (hashedInput == NULL || hashedInput[0] == '*') {
+                salt = fakeHashDES;
+                hashedInput = crypt(input, salt);
+            }
+        }
+
         if (hashedInput == NULL) {
             ret = WS_FATAL_ERROR;
         }
+        else if (locked) {
+            ret = WSSHD_AUTH_FAILURE;
+        }
         else {
             hashedInputSz = (word32)WSTRLEN(hashedInput);
-            storedSz = (word32)WSTRLEN(stored);
 
-            if (storedSz == 0 || stored[0] == '*' ||
-                    hashedInputSz == 0 || hashedInput[0] == '*' ||
+            if (hashedInputSz == 0 || hashedInput[0] == '*' ||
                     hashedInputSz != storedSz ||
                     ConstantCompare((const byte*)hashedInput,
                         (const byte*)stored, storedSz) != 0) {
@@ -406,12 +571,15 @@ static int CheckPasswordHashUnix(const char* input, char* stored)
             }
         }
     }
-
     return ret;
 }
 #endif /* WOLFSSH_HAVE_LIBCRYPT || WOLFSSH_HAVE_LIBLOGIN */
 
+#ifdef WOLFSSHD_UNIT_TEST
+int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz, WOLFSSHD_AUTH* authCtx)
+#else
 static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz, WOLFSSHD_AUTH* authCtx)
+#endif
 {
     int ret = WS_SUCCESS;
     char* pwStr = NULL;
@@ -420,8 +588,12 @@ static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz, WOLFS
     struct spwd* shadowInfo;
 #endif
     /* The hash of the user's password stored on the system. */
-    char* storedHash;
+    const char* storedHash = "*";
     char* storedHashCpy = NULL;
+#ifdef HAVE_SHADOW
+    char hashBuf[WSSHD_FAKE_HASH_SZ];
+    WMEMSET(hashBuf, 0, sizeof(hashBuf));
+#endif
 
     /* Allow zero length passwords, but not NULL pointers. */
     if (usr == NULL || (pw == NULL && pwSz != 0)) {
@@ -445,36 +617,47 @@ static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz, WOLFS
         pwInfo = getpwnam((const char*)usr);
         if (pwInfo == NULL) {
             /* user name not found on system */
-            ret = WS_FATAL_ERROR;
-            wolfSSH_Log(WS_LOG_ERROR,
+            wolfSSH_Log(WS_LOG_INFO,
                     "[SSHD] User name not found on system");
         }
-    }
-
-    if (ret == WS_SUCCESS) {
-    #ifdef HAVE_SHADOW
-        if (pwInfo->pw_passwd[0] == 'x') {
-        #ifdef WOLFSSH_HAVE_LIBCRYPT
-            shadowInfo = getspnam((const char*)usr);
-        #else
-            shadowInfo = getspnam((char*)usr);
-        #endif
-            if (shadowInfo == NULL) {
-                wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] Error getting user password info");
-                wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] Possibly permissions level error?"
-                    " i.e SSHD not ran as sudo");
-                ret = WS_FATAL_ERROR;
+        else {
+#ifdef HAVE_SHADOW
+            if (pwInfo->pw_passwd[0] == 'x') {
+#ifdef WOLFSSH_HAVE_LIBCRYPT
+                shadowInfo = getspnam((const char*)usr);
+#else
+                shadowInfo = getspnam((char*)usr);
+#endif
+                if (shadowInfo == NULL) {
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Error getting user password info");
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Possibly permissions level error?"
+                        " i.e SSHD not ran as sudo");
+                    /* Fail closed: RequestAuthentication's error-branch
+                     * DoFakePasswordCheck() still equalizes timing for this
+                     * case, same as it does for the oversized-hash case. */
+                    ret = WS_FATAL_ERROR;
+                }
+                else if (WSTRLEN(shadowInfo->sp_pwdp) >= sizeof(hashBuf)) {
+                    /* Fail closed instead of silently truncating the hash. */
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Stored password hash too long for buffer");
+                    ret = WS_FATAL_ERROR;
+                }
+                else {
+                    /* Copy immediately: sp_pwdp points into getspnam()'s static
+                     * buffer which may be overwritten by the next library call. */
+                    XSTRNCPY(hashBuf, shadowInfo->sp_pwdp, sizeof(hashBuf));
+                    hashBuf[sizeof(hashBuf) - 1] = '\0';
+                    storedHash = hashBuf;
+                }
             }
-            else {
-                storedHash = shadowInfo->sp_pwdp;
+            else
+#endif
+            {
+                storedHash = pwInfo->pw_passwd;
             }
-        }
-        else
-    #endif
-        {
-            storedHash = pwInfo->pw_passwd;
         }
     }
     if (ret == WS_SUCCESS) {
@@ -488,6 +671,11 @@ static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz, WOLFS
 
     if (ret == WS_SUCCESS) {
     #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
+        /* For nonexistent users, storedHash is "*", so CheckPasswordHashUnix
+         * already fails; forcing failure here would mask WS_FATAL_ERROR.
+         * DoCheckUser() already filters unknown users on the real request
+         * path (timing there is equalized by DoFakePasswordCheck()), so
+         * this is defense-in-depth for direct callers only. */
         ret = CheckPasswordHashUnix(pwStr, storedHashCpy);
     #else
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] No compiled in password check");
@@ -503,6 +691,9 @@ static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz, WOLFS
         WS_FORCEZERO(storedHashCpy, (word32)WSTRLEN(storedHashCpy) + 1);
         WFREE(storedHashCpy, NULL, DYNTYPE_STRING);
     }
+#ifdef HAVE_SHADOW
+    WS_FORCEZERO(hashBuf, sizeof(hashBuf));
+#endif
 
     WOLFSSH_UNUSED(authCtx);
     return ret;
@@ -1605,6 +1796,54 @@ WOLFSSHD_STATIC int MatchUPNToUser(const char* usr, const char* name,
 #endif /* WOLFSSL_FPKI || WOLFSSHD_UNIT_TEST */
 
 
+/* Runs a fake crypt() to prevent user enumeration via timing attacks.
+ * Uses a dummy password for non-password auth types. */
+#ifdef WOLFSSHD_UNIT_TEST
+void DoFakePasswordCheck(WS_UserAuthData* authData)
+#else
+static void DoFakePasswordCheck(WS_UserAuthData* authData)
+#endif
+{
+#if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
+    char* fakePwStr = NULL;
+    const byte* fakePw = NULL;
+    word32 fakePwSz = 0;
+    const char* fakeHash = "*";
+
+    if (authData->type == WOLFSSH_USERAUTH_PASSWORD) {
+        fakePw = authData->sf.password.password;
+        fakePwSz = authData->sf.password.passwordSz;
+    }
+
+#ifdef HAVE_SHADOW
+    if (cachedFakeHash[0] != '\0') {
+        fakeHash = cachedFakeHash;
+    }
+#endif
+
+    fakePwStr = (char*)WMALLOC(fakePwSz + 1, NULL, DYNTYPE_STRING);
+    if (fakePwStr != NULL) {
+        if (fakePwSz > 0 && fakePw != NULL) {
+            XMEMCPY(fakePwStr, fakePw, fakePwSz);
+        }
+        fakePwStr[fakePwSz] = 0;
+
+        /* Return value intentionally ignored: this is a fake check whose
+         * result must never influence real authentication. */
+        CheckPasswordHashUnix(fakePwStr, fakeHash);
+
+        WS_FORCEZERO(fakePwStr, fakePwSz + 1);
+        WFREE(fakePwStr, NULL, DYNTYPE_STRING);
+    }
+    else {
+        CheckPasswordHashUnix("", fakeHash);
+    }
+#else
+    WOLFSSH_UNUSED(authData);
+#endif
+}
+
+
 /*
  * @TODO this will take a pipe or equivalent to talk to a privileged thread
  * rather than having WOLFSSHD_AUTH directly with privilege separation.
@@ -1647,12 +1886,22 @@ static int RequestAuthentication(WS_UserAuthData* authData,
 
     usr = (const char*)authData->username;
     ret = DoCheckUser(usr, authCtx);
+
+    /* Fake crypt() on early rejections to equalize timing.
+     * Minor syscall timing gap remains; closing it requires unsafe privilege escalation. */
+    if (ret != WOLFSSH_USERAUTH_SUCCESS) {
+        DoFakePasswordCheck(authData);
+    }
+
     /* temporarily elevate permissions */
     if (ret == WOLFSSH_USERAUTH_SUCCESS &&
             wolfSSHD_AuthRaisePermissions(authCtx) != WS_SUCCESS) {
         wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] Failure to raise permissions for auth");
         ret = WOLFSSH_USERAUTH_FAILURE;
+
+        /* Fake crypt() prevents privilege-raise failure timing leak. */
+        DoFakePasswordCheck(authData);
     }
 
     /* Resolve the per-user configuration so that Match block overrides are
@@ -1676,6 +1925,9 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                     "[SSHD] Failure to get user configuration for auth (user=%s)",
                     usr);
             ret = WOLFSSH_USERAUTH_FAILURE;
+
+            /* Fake crypt() prevents user-config failure timing leak. */
+            DoFakePasswordCheck(authData);
         }
     }
 
@@ -1695,7 +1947,9 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                         "configuration!");
             ret = WOLFSSH_USERAUTH_FAILURE;
         }
-        else {
+
+        /* Only run password check when config allows it (avoids leaks). */
+        if (ret == WOLFSSH_USERAUTH_SUCCESS) {
             rc = authCtx->checkPasswordCb(usr, authData->sf.password.password,
                                      authData->sf.password.passwordSz, authCtx);
             if (rc == WSSHD_AUTH_SUCCESS) {
@@ -1715,7 +1969,15 @@ static int RequestAuthentication(WS_UserAuthData* authData,
             else {
                 wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error checking password.");
                 ret = WOLFSSH_USERAUTH_FAILURE;
+
+                /* Fake crypt() prevents this error path (e.g. oversized
+                 * shadow hash) from being distinguishable from a normal
+                 * wrong-password rejection. */
+                DoFakePasswordCheck(authData);
             }
+        }
+        else {
+            DoFakePasswordCheck(authData);
         }
     }
 
