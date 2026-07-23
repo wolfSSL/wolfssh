@@ -121,6 +121,19 @@ typedef int (*WS_CallbackScpRecv)(WOLFSSH* ssh, int state,
                                   int fileMode, word64 mTime, word64 aTime,
                                   word32 totalFileSz, byte* buf, word32 bufSz,
                                   word32 fileOffset, void* ctx);
+/* Send callback. Returns the number of octets placed in "buf", or one of the
+ * WS_SCP_* status codes, or a negative error to abort the transfer.
+ *
+ * "fileNameSz" is the capacity of the "fileName" buffer, not the length of any
+ * name already in it.
+ *
+ * Returning 0 is only valid on the call that fills in metadata (file name,
+ * mode, times, totalFileSz) and has no data ready yet; the library then sends
+ * the file header and calls back with WOLFSSH_SCP_CONTINUE_FILE_TRANSFER. A
+ * second 0 in a row while "fileOffset" is still short of "totalFileSz" is
+ * treated as a stalled callback and aborts the transfer, since there is no
+ * "no data right now" status in this API. Callbacks that can block should do
+ * so rather than returning 0. */
 typedef int (*WS_CallbackScpSend)(WOLFSSH* ssh, int state,
                                   const char* peerRequest, char* fileName,
                                   word32 fileNameSz, word64* mTime,

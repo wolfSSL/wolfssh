@@ -110,6 +110,7 @@ static void wolfSSH_EchoTest(void)
 
     InitTcpReady(&ready);
 
+    WMEMSET(&serverArgs, 0, sizeof(serverArgs));
     WSTRNCPY(serverArgv[serverArgc++], "echoserver", ARGLEN);
     WSTRNCPY(serverArgv[serverArgc++], "-1", ARGLEN);
     WSTRNCPY(serverArgv[serverArgc++], "-f", ARGLEN);
@@ -168,6 +169,7 @@ static void wolfSSH_EchoTest_MultiPubKey(void)
 
     InitTcpReady(&ready);
 
+    WMEMSET(&serverArgs, 0, sizeof(serverArgs));
     WSTRNCPY(serverArgv[serverArgc++], "echoserver", ARGLEN);
     WSTRNCPY(serverArgv[serverArgc++], "-1", ARGLEN);
     WSTRNCPY(serverArgv[serverArgc++], "-f", ARGLEN);
