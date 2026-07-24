@@ -1024,6 +1024,7 @@ struct WOLFSSH {
     word32 rxCount;
     word32 txMsgCount;     /* Packets sent under current keys */
     word32 rxMsgCount;     /* Packets received under current keys */
+    word32 txFlushCount;   /* Output buffer drained, whatever came after */
     word32 highwaterMark;
     word32 msgHighwaterMark; /* Per-key packet limit (RFC 4344 Sec 3.1) */
     byte highwaterFlag;    /* Set when highwater CB called */
@@ -1559,11 +1560,16 @@ WOLFSSH_LOCAL int SendIgnore(WOLFSSH* ssh, const unsigned char* data,
         word32 dataSz);
 WOLFSSH_LOCAL int SendGlobalRequestFwdSuccess(WOLFSSH * ssh, int success,
         word32 port);
+/* The optional sent out-param reports whether the request is on its way to the
+ * peer -- flushed, or still framed for the next flush -- which the return does
+ * not answer: the highwater callback runs after the last byte goes out, so its
+ * failure surfaces as this call's. */
 WOLFSSH_LOCAL int SendGlobalRequest(WOLFSSH * ssh,
-        const unsigned char * data, word32 dataSz, int reply);
+        const unsigned char * data, word32 dataSz, int reply, int* sent);
 #ifdef WOLFSSH_FWD
 WOLFSSH_LOCAL int SendGlobalRequestFwd(WOLFSSH* ssh,
-        const char* bindAddr, word32 bindPort, int isCancel, int wantReply);
+        const char* bindAddr, word32 bindPort, int isCancel, int wantReply,
+        int* sent);
 #endif
 WOLFSSH_LOCAL int SendDebug(WOLFSSH* ssh, byte alwaysDisplay, const char* msg);
 WOLFSSH_LOCAL int SendServiceRequest(WOLFSSH* ssh, byte serviceId);
