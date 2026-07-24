@@ -1426,7 +1426,7 @@ int wolfSSH_global_request(WOLFSSH *ssh, const unsigned char* data, word32 dataS
         return WS_BAD_ARGUMENT;
     if (reply != 0 && reply != 1)
         return WS_BAD_ARGUMENT;
-    return SendGlobalRequest(ssh, data, dataSz, reply);
+    return SendGlobalRequest(ssh, data, dataSz, reply, NULL);
 }
 
 
@@ -3635,7 +3635,8 @@ int wolfSSH_FwdRemoteSetup(WOLFSSH* ssh, const char* bindAddr,
         ret = WS_REKEYING;
 
     if (ret == WS_SUCCESS)
-        ret = SendGlobalRequestFwd(ssh, bindAddr, bindPort, 0, wantReply);
+        ret = SendGlobalRequestFwd(ssh, bindAddr, bindPort, 0, wantReply,
+                NULL);
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_FwdRemoteSetup(), ret = %d", ret);
     return ret;
@@ -3670,7 +3671,8 @@ int wolfSSH_FwdRemoteCancel(WOLFSSH* ssh, const char* bindAddr,
         ret = WS_REKEYING;
 
     if (ret == WS_SUCCESS)
-        ret = SendGlobalRequestFwd(ssh, bindAddr, bindPort, 1, wantReply);
+        ret = SendGlobalRequestFwd(ssh, bindAddr, bindPort, 1, wantReply,
+                NULL);
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_FwdRemoteCancel(), ret = %d", ret);
     return ret;
