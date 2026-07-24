@@ -1547,6 +1547,7 @@ static int CheckPasswordWIN(const char* usr, const byte* pw, word32 pwSz, WOLFSS
     }
 
     if (pwW != NULL) {
+        WS_FORCEZERO(pwW, (word32)((pwWSz * sizeof(WCHAR)) + sizeof(WCHAR)));
         WFREE(pwW, authCtx->heap, DYNTYPE_SSHD);
     }
 
