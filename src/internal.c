@@ -4350,6 +4350,11 @@ int wolfSSH_SendPacket(WOLFSSH* ssh)
      * call a licence to push whatever gets queued next. */
     ssh->disconnectTxd = 0;
 
+    /* Everything framed is on the wire. What runs below can fail, and the
+     * return code alone cannot tell a caller its packet was delivered, so
+     * record the flush first. */
+    ssh->txFlushCount++;
+
     WLOG(WS_LOG_DEBUG, "SB: Shrinking output buffer");
     ShrinkBuffer(&ssh->outputBuffer, 0);
     return HighwaterCheck(ssh, WOLFSSH_HWSIDE_TRANSMIT);
@@ -16995,12 +17000,33 @@ int SendIgnore(WOLFSSH* ssh, const unsigned char* data, word32 dataSz)
     return ret;
 }
 
+/* Will the packet just framed reach the peer? A completed flush says so; the
+ * return does not, since the highwater callback runs after the last byte goes
+ * out and the rekey it starts fails with the same codes a lost send does.
+ * Comparing the flush count across the send tells those apart.
+ *
+ * Short of a flush, WS_WANT_WRITE is the one outcome that keeps the packet
+ * framed for the next one, and reading the buffer instead would call a packet
+ * delivered that a later purge or a discarding error path throws away.
+ * Anything else counts as not sent, which at worst leaves the peer holding a
+ * request this side did not register; guessing the other way would desync the
+ * reply queue for the life of the session. Call before anything else runs,
+ * since a later send flushes this packet and would read as this one's. */
+static INLINE int SendPacketDelivered(WOLFSSH* ssh, word32 flushes, int ret)
+{
+    return ssh->txFlushCount != flushes || ret == WS_WANT_WRITE;
+}
+
+
 int SendGlobalRequest(WOLFSSH* ssh,
-        const unsigned char* data, word32 dataSz, int reply)
+        const unsigned char* data, word32 dataSz, int reply, int* sent)
 {
     byte* output;
     word32 idx = 0;
     int ret = WS_SUCCESS;
+
+    if (sent != NULL)
+        *sent = 0;
 
     if (ssh == NULL || (data == NULL && dataSz > 0))
         ret = WS_BAD_ARGUMENT;
@@ -17029,8 +17055,14 @@ int SendGlobalRequest(WOLFSSH* ssh,
         ret = BundlePacket(ssh);
     }
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
+        word32 flushes = ssh->txFlushCount;
+
         ret = wolfSSH_SendPacket(ssh);
+
+        if (sent != NULL)
+            *sent = SendPacketDelivered(ssh, flushes, ret);
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving SendGlobalRequest(), ret = %d", ret);
 
@@ -17043,7 +17075,8 @@ int SendGlobalRequest(WOLFSSH* ssh,
  * address and port follow the want-reply boolean, an ordering the generic
  * SendGlobalRequest() framing cannot express. RFC 4254 7.1. */
 int SendGlobalRequestFwd(WOLFSSH* ssh,
-        const char* bindAddr, word32 bindPort, int isCancel, int wantReply)
+        const char* bindAddr, word32 bindPort, int isCancel, int wantReply,
+        int* sent)
 {
     byte* output;
     word32 idx = 0;
@@ -17053,6 +17086,9 @@ int SendGlobalRequestFwd(WOLFSSH* ssh,
     int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Entering SendGlobalRequestFwd()");
+
+    if (sent != NULL)
+        *sent = 0;
 
     if (ssh == NULL || bindAddr == NULL)
         ret = WS_BAD_ARGUMENT;
@@ -17088,8 +17124,14 @@ int SendGlobalRequestFwd(WOLFSSH* ssh,
         ret = BundlePacket(ssh);
     }
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
+        word32 flushes = ssh->txFlushCount;
+
         ret = wolfSSH_SendPacket(ssh);
+
+        if (sent != NULL)
+            *sent = SendPacketDelivered(ssh, flushes, ret);
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving SendGlobalRequestFwd(), ret = %d", ret);
 
