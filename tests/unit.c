@@ -7586,7 +7586,7 @@ static int test_DoUserAuthRequestMlDsa_CertPath(const char* keyTypeName)
     const word32 keyTypeNameSz = (word32)WSTRLEN(keyTypeName);
     /* NOTE: pubKeyBlob is an RFC 6187 wire blob, not leaf-cert DER. The real
      * server path calls ParseLeafCert() first to extract DER. This test
-     * exercises ASN.1-invalid rejection rather than cryptographic rejection —
+     * exercises ASN.1-invalid rejection rather than cryptographic rejection,
      * valid for a negative path test, but does not cover the DER-valid case. */
     static const byte junkCert[] = { 0x30, 0x05, 0x00, 0x00, 0x00, 0x00 };
     const word32 junkCertSz = (word32)sizeof(junkCert);
