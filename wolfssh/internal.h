@@ -1611,6 +1611,8 @@ enum WS_MessageIdLimits {
             word32 len, word32* idx);
     WOLFSSH_API int wolfSSH_TestChannelPutData(WOLFSSH_CHANNEL* channel,
             byte* data, word32 dataSz);
+    WOLFSSH_API int wolfSSH_TestBuildNameList(char* buf, word32 bufSz,
+            const byte* src, word32 srcSz);
     WOLFSSH_API int wolfSSH_TestDoUserAuthRequest(WOLFSSH* ssh, byte* buf,
             word32 len, word32* idx);
     WOLFSSH_API int wolfSSH_TestSendUserAuthFailure(WOLFSSH* ssh,
