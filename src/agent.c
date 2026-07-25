@@ -1392,24 +1392,18 @@ static int DoMessage(WOLFSSH_AGENT_CTX* agent,
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_AGENT, "len = %u, idx = %u", len, *idx);
         begin = *idx;
-        if (begin > len) {
+
+        /* GetSize bounds the prefix and the payload; a nonzero payloadSz
+         * then covers the msg id read below. Reject 0: payloadSz - 1 is
+         * used as a length. */
+        if (GetSize(&payloadSz, buf, len, &begin) != WS_SUCCESS) {
             ret = WS_OVERFLOW_E;
         }
-    }
-
-    if (ret == WS_SUCCESS) {
-        if (LENGTH_SZ + MSG_ID_SZ + begin > len) {
-            ret = WS_OVERFLOW_E;
-        }
-    }
-
-    if (ret == WS_SUCCESS) {
-        ato32(buf + begin, &payloadSz);
-        WLOG(WS_LOG_AGENT, "payloadSz = %u", payloadSz);
-        begin += LENGTH_SZ;
-        /* reject 0: payloadSz - 1 is used as a length below */
-        if (payloadSz == 0 || payloadSz > len - begin) {
-            ret = WS_OVERFLOW_E;
+        else {
+            WLOG(WS_LOG_AGENT, "payloadSz = %u", payloadSz);
+            if (payloadSz == 0) {
+                ret = WS_OVERFLOW_E;
+            }
         }
     }
 
