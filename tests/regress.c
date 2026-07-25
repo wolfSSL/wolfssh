@@ -522,6 +522,7 @@ static word32 LoadFileBuffer(const char* path, byte* buf, word32 bufSz)
 /* KEXDH_REPLY mutation modes for the duplex mutator. */
 #define REGRESS_MUTATE_SIG_NAME 0
 #define REGRESS_MUTATE_SIG_DATA 1
+#define REGRESS_MUTATE_SIG_NAME_OVERRUN 2
 
 typedef struct {
     byte data[REGRESS_DUPLEX_QUEUE_SZ];
@@ -772,6 +773,12 @@ static int RewriteSingleKexDhReplyPacket(const byte* packet, word32 packetSz,
             flipIdx = dataStart + LENGTH_SZ;
         }
         innerSig[flipIdx] ^= 0xFF;
+    }
+    else if (mode == REGRESS_MUTATE_SIG_NAME_OVERRUN) {
+        /* Nothing but a name length prefix, so the name it claims runs off
+         * the end of the blob. */
+        innerSigSz = AppendUint32(innerSig, sizeof(innerSig), innerSigSz,
+                sigNameSz);
     }
     else {
         innerSigSz = AppendString(innerSig, sizeof(innerSig), innerSigSz,
@@ -1245,6 +1252,29 @@ static void TestKexDhReplyRejectsEd25519CorruptSig(void)
             REGRESS_SERVER_KEY_ED25519_PATH, WS_ED25519_E);
 }
 #endif
+
+/* A signature blob holding only a name length prefix. The bounded read
+ * rejects it before the name is compared, whatever the host key type. */
+static void TestKexDhReplyRejectsSigNameOverrun(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    InitKexReplyHarnessEx(&harness, REGRESS_DEFAULT_KEY_ALGO,
+            REGRESS_DEFAULT_KEY_PATH, 1,
+            REGRESS_MUTATE_SIG_NAME_OVERRUN, NULL, 0);
+    RunKexReplyHandshake(&harness, &result);
+
+    AssertIntEQ(harness.mutator.parseError, 0);
+    AssertIntEQ(harness.mutator.matchedPackets, 1);
+    AssertIntEQ(harness.mutator.mutatedPackets, 1);
+    AssertFalse(result.clientSuccess);
+    AssertFalse(harness.client->connectState >= CONNECT_KEYED);
+    AssertTrue(result.clientRet == WS_FATAL_ERROR);
+    AssertIntEQ(result.clientErr, WS_BUFFER_E);
+
+    FreeKexReplyHarness(&harness);
+}
 
 #endif /* KEXDH_REPLY_REGRESS_KEX_ALGO */
 
@@ -5276,6 +5306,7 @@ int main(int argc, char** argv)
     #ifndef WOLFSSH_NO_ED25519
     TestKexDhReplyRejectsEd25519CorruptSig();
     #endif
+    TestKexDhReplyRejectsSigNameOverrun();
 #endif
 
 #ifdef WOLFSSH_SFTP

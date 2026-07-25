@@ -20471,6 +20471,12 @@ int wolfSSH_TestChannelPutData(WOLFSSH_CHANNEL* channel, byte* data,
     return ChannelPutData(channel, data, dataSz);
 }
 
+int wolfSSH_TestBuildNameList(char* buf, word32 bufSz,
+        const byte* src, word32 srcSz)
+{
+    return BuildNameList(buf, bufSz, src, srcSz);
+}
+
 int wolfSSH_TestDoChannelSuccess(WOLFSSH* ssh, byte* buf, word32 len,
         word32* idx)
 {

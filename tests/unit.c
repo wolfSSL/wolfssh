@@ -5317,6 +5317,102 @@ done:
     return result;
 }
 
+/* A peer may advertise a maximum packet size of 0 in its CHANNEL_OPEN or
+ * CHANNEL_OPEN_CONFIRMATION. Sending must report WS_WINDOW_FULL, not push
+ * dataSz past the bound and charge it against the window. */
+static int test_SendChannelData_zeroPeerMaxPacket(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    byte             buf[8] = { 0, 1, 2, 3, 4, 5, 6, 7 };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -1400;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1401; goto done; }
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION,
+                    DEFAULT_WINDOW_SZ, DEFAULT_MAX_PACKET_SZ);
+    if (ch == NULL) { result = -1402; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1403;
+        goto done;
+    }
+    ch->openConfirmed = 1;
+
+    /* Window has room, but the peer will not accept a packet of any size. */
+    ch->peerWindowSz = 100;
+    ch->peerMaxPacketSz = 0;
+
+    ret = SendChannelData(ssh, ch->channel, buf, (word32)sizeof(buf));
+    if (ret != WS_WINDOW_FULL) { result = -1410; goto done; }
+    if (ssh->error != WS_WINDOW_FULL) { result = -1411; goto done; }
+    /* Nothing queued, and the window was not charged. */
+    if (ssh->outputBuffer.length != 0) { result = -1412; goto done; }
+    if (ch->peerWindowSz != 100) { result = -1413; goto done; }
+
+    ssh->error = WS_SUCCESS;
+    ret = SendChannelExtendedData(ssh, ch->channel, buf, (word32)sizeof(buf));
+    if (ret != WS_WINDOW_FULL) { result = -1420; goto done; }
+    if (ssh->error != WS_WINDOW_FULL) { result = -1421; goto done; }
+    if (ssh->outputBuffer.length != 0) { result = -1422; goto done; }
+    if (ch->peerWindowSz != 100) { result = -1423; goto done; }
+
+    /* A zero-length send is still allowed through: it charges nothing. */
+    ssh->error = WS_SUCCESS;
+    ret = SendChannelData(ssh, ch->channel, buf, 0);
+    if (ret != 0) { result = -1430; goto done; }
+    if (ch->peerWindowSz != 100) { result = -1431; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* BuildNameList() returns a C string. On an empty id list it must still
+ * terminate the buffer: SendKexInit() measures the result with WSTRLEN
+ * through AlgoListSz() and copies that many bytes into the KEXINIT. */
+static int test_BuildNameList_emptySrc(void)
+{
+    char   buf[64];
+    byte   src[1] = { ID_AES128_GCM };
+    int    ret;
+
+    /* Poison, so a missing terminator is a wrong length rather than luck. */
+    WMEMSET(buf, 'A', sizeof(buf));
+
+    ret = wolfSSH_TestBuildNameList(buf, (word32)sizeof(buf), src, 0);
+    if (ret != 0)
+        return -1440;
+    if (buf[0] != '\0')
+        return -1441;
+    if (WSTRLEN(buf) != 0)
+        return -1442;
+
+    /* The sizing call takes buf == NULL and must not touch anything. */
+    ret = wolfSSH_TestBuildNameList(NULL, 0, src, 0);
+    if (ret != 0)
+        return -1443;
+
+    /* One name still behaves: length excluding the terminator. */
+    WMEMSET(buf, 'A', sizeof(buf));
+    ret = wolfSSH_TestBuildNameList(buf, (word32)sizeof(buf), src, 1);
+    if (ret != (int)WSTRLEN(IdToName(ID_AES128_GCM)))
+        return -1444;
+    if (WSTRLEN(buf) != (size_t)ret)
+        return -1445;
+
+    return 0;
+}
+
 /* Plaintext SSH packet from IoSend (before encryption/MAC): LENGTH_SZ,
  * PAD_LENGTH_SZ, then payload starting with the message ID (RFC 4253;
  * wolfSSH PreparePacket/BundlePacket). Not for encrypted payloads or
@@ -11825,6 +11921,16 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_SendChannelData_eofTxd();
     printf("SendChannelData_eofTxd: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_SendChannelData_zeroPeerMaxPacket();
+    printf("SendChannelData_zeroPeerMaxPacket: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_BuildNameList_emptySrc();
+    printf("BuildNameList_emptySrc: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
 #ifdef WOLFSSH_SFTP
