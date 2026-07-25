@@ -6826,7 +6826,6 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             }
             if (ret == WS_SUCCESS) {
                 sig = sig + begin;
-                /* In the fuzz, sigSz ends up 1 and it has issues. */
                 sigSz = sigBlobSz;
 
                 if (sigKeyBlock_ptr->useRsa) {
