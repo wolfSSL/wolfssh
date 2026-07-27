@@ -537,6 +537,9 @@ enum NameIdType {
 #define LENGTH_SZ UINT32_SZ
 #define SSH_PROTO_SZ 8 /* "SSH-2.0-" */
 #define TERMINAL_MODE_SZ 5 /* opcode byte + argument uint32 */
+#define TERMINAL_MODES_MAX_SZ 4096
+#define TERMINAL_WIDTH_DEFAULT 80 /* used when there is no terminal */
+#define TERMINAL_HEIGHT_DEFAULT 24
 #define AEAD_IMP_IV_SZ 4
 #define AEAD_EXP_IV_SZ 8
 #define AEAD_NONCE_SZ (AEAD_IMP_IV_SZ+AEAD_EXP_IV_SZ)

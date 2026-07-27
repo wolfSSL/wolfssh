@@ -19617,8 +19617,12 @@ int SendChannelRequest(WOLFSSH* ssh, byte* name, word32 nameSz)
 
 #if defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM)
 
+/* out is always a TERMINAL_MODES_MAX_SZ buffer, and one byte is held back
+ * for the terminator CreateMode() appends */
 static void TTYWordSet(word32 flag, int type, byte* out, word32* idx)
 {
+    if (*idx + TERMINAL_MODE_SZ + 1 > TERMINAL_MODES_MAX_SZ)
+        return;
     out[*idx] = type; *idx += 1;
     c32toa(flag, out + *idx); *idx += UINT32_SZ;
 }
@@ -19629,6 +19633,8 @@ static void TTYWordSet(word32 flag, int type, byte* out, word32* idx)
     /* sets terminal mode in buffer and advances idx */
     static void TTYSet(word32 isSet, int type, byte* out, word32* idx)
     {
+        if (*idx + TERMINAL_MODE_SZ + 1 > TERMINAL_MODES_MAX_SZ)
+            return;
         if (isSet) isSet = 1;
         out[*idx] = type; *idx += 1;
         c32toa(isSet, out + *idx); *idx += UINT32_SZ;
@@ -19638,25 +19644,17 @@ static void TTYWordSet(word32 flag, int type, byte* out, word32* idx)
     {
         TTYWordSet((flag & 0xFF), type, out, idx);
     }
-#endif /* !USE_WINDOWS_API && !MICROCHIP_PIC32 && !NO_TERMIOS*/
 
-
-/* create terminal mode string for pseudo-terminal request
- * returns size of buffer */
-static int CreateMode(WOLFSSH* ssh, byte* mode)
-{
-    word32 idx = 0;
-
-    #if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32) && \
-        !defined(NO_TERMIOS)
+    /* fills mode with the terminal settings of stdin
+     * returns size of buffer, or WS_FATAL_ERROR when there is no terminal */
+    static int CreateModeTermios(byte* mode)
     {
         WOLFSSH_TERMIOS term;
         int baud;
+        word32 idx = 0;
 
-        if (tcgetattr(STDIN_FILENO, &term) != 0) {
-            printf("Couldn't get the original terminal settings.\n");
-            return -1;
-        }
+        if (tcgetattr(STDIN_FILENO, &term) != 0)
+            return WS_FATAL_ERROR;
 
         /* get baud rate */
         baud = (int)cfgetospeed(&term);
@@ -19770,18 +19768,44 @@ static int CreateMode(WOLFSSH* ssh, byte* mode)
         TTYSet((term.c_cflag &  CS8), WOLFSSH_CS8, mode, &idx);
         TTYSet((term.c_cflag &  PARENB), WOLFSSH_PARENB, mode, &idx);
         TTYSet((term.c_cflag &  PARODD), WOLFSSH_PARODD, mode, &idx);
+
+        return (int)idx;
     }
-    #else
-    {
-        /* No termios. Just set the bitrate to 38400. */
+#endif /* !USE_WINDOWS_API && !MICROCHIP_PIC32 && !NO_TERMIOS*/
+
+
+/* create terminal mode string for pseudo-terminal request
+ * mode must be a TERMINAL_MODES_MAX_SZ buffer
+ * returns size of buffer, or WS_FATAL_ERROR when it would not fit */
+static int CreateMode(WOLFSSH* ssh, byte* mode)
+{
+    word32 idx = 0;
+    int termRet = WS_FATAL_ERROR;
+    int ret = WS_FATAL_ERROR;
+
+    #if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32) && \
+        !defined(NO_TERMIOS)
+        termRet = CreateModeTermios(mode);
+        if (termRet < 0)
+            WLOG(WS_LOG_INFO, "No terminal settings, using default modes");
+    #endif
+
+    if (termRet < 0) {
+        /* No terminal settings. Just set the bitrate to 38400. */
         TTYWordSet(38400, WOLFSSH_TTY_OP_ISPEED, mode, &idx);
         TTYWordSet(38400, WOLFSSH_TTY_OP_OSPEED, mode, &idx);
     }
-    #endif /* !USE_WINDOWS_API && !MICROCHIP_PIC32 && !NO_TERMIOS */
+    else {
+        idx = (word32)termRet;
+    }
+
+    if (idx + 1 <= TERMINAL_MODES_MAX_SZ) {
+        mode[idx++] = WOLFSSH_TTY_OP_END;
+        ret = (int)idx;
+    }
 
     WOLFSSH_UNUSED(ssh);
-    mode[idx++] = WOLFSSH_TTY_OP_END;
-    return idx;
+    return ret;
 }
 
 
@@ -19856,24 +19880,32 @@ static void GetTerminalInfo(word32* width, word32* height,
 {
 #ifdef HAVE_SYS_IOCTL_H
     struct winsize windowSize = { 0,0,0,0 };
-
-    ioctl(STDOUT_FILENO, TIOCGWINSZ, &windowSize);
-    *width  = (word32)windowSize.ws_col;
-    *height = (word32)windowSize.ws_row;
-    *pixWidth = (word32)windowSize.ws_xpixel;
-    *pixHeight = (word32)windowSize.ws_ypixel;
-    *term = getenv("TERM");
 #elif defined(_MSC_VER)
     CONSOLE_SCREEN_BUFFER_INFO cs;
+#endif
 
+    /* defaults for when there is no terminal to ask, overwritten below by
+     * whatever the platform can actually read */
+    *width  = TERMINAL_WIDTH_DEFAULT;
+    *height = TERMINAL_HEIGHT_DEFAULT;
+    *pixWidth = 0;
+    *pixHeight = 0;
+    *term = NULL;
+
+#ifdef HAVE_SYS_IOCTL_H
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &windowSize) == 0 &&
+            windowSize.ws_col != 0 && windowSize.ws_row != 0) {
+        *width  = (word32)windowSize.ws_col;
+        *height = (word32)windowSize.ws_row;
+        *pixWidth = (word32)windowSize.ws_xpixel;
+        *pixHeight = (word32)windowSize.ws_ypixel;
+    }
+    *term = getenv("TERM");
+#elif defined(_MSC_VER)
     if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &cs) != 0) {
         *width  = cs.srWindow.Right - cs.srWindow.Left + 1;
         *height = cs.srWindow.Bottom - cs.srWindow.Top + 1;
     }
-#else
-    /* sane defaults for terminal size if not yet supported */
-    *width  = 80;
-    *height = 24;
 #endif
 }
 
@@ -19888,22 +19920,31 @@ int SendChannelTerminalRequest(WOLFSSH* ssh)
     WOLFSSH_CHANNEL* channel;
     const char cType[] = "pty-req";
     const char* term = NULL;
-    byte mode[4096];
-    word32 termSz, typeSz, modeSz;
+    byte mode[TERMINAL_MODES_MAX_SZ];
+    word32 termSz = 0, typeSz = 0, modeSz = 0;
     word32 w = 0, h = 0, pxW = 0, pxH = 0;
+    int modeRet;
 
     WLOG(WS_LOG_DEBUG, "Entering SendChannelTerminalRequest()");
 
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
-    GetTerminalInfo(&w, &h, &pxW, &pxH, &term);
-    if (term == NULL) {
-        term = "xterm";
+    if (ret == WS_SUCCESS) {
+        GetTerminalInfo(&w, &h, &pxW, &pxH, &term);
+        if (term == NULL) {
+            term = "xterm";
+        }
+        termSz = (word32)WSTRLEN(term);
+        typeSz = (word32)WSTRLEN(cType);
+
+        /* a negative or oversized result would wrap the packet size */
+        modeRet = CreateMode(ssh, mode);
+        if (modeRet < 0 || (word32)modeRet > (word32)sizeof(mode))
+            ret = WS_FATAL_ERROR;
+        else
+            modeSz = (word32)modeRet;
     }
-    termSz  = (word32)WSTRLEN(term);
-    typeSz = (word32)WSTRLEN(cType);
-    modeSz = CreateMode(ssh, mode);
 
     if (ret == WS_SUCCESS) {
         channel = ChannelFind(ssh,

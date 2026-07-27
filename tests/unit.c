@@ -79,6 +79,21 @@
 #include <unistd.h>
 #endif
 
+/* SendChannelTerminalRequest() reads the terminal settings of stdin, so the
+ * no-tty case needs POSIX file descriptors to point stdin at /dev/null. */
+#if defined(WOLFSSH_TEST_INTERNAL) && defined(WOLFSSH_TERM) && \
+    !defined(NO_FILESYSTEM) && !defined(NO_WOLFSSH_CLIENT) && \
+    !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32) && \
+    !defined(NO_TERMIOS) && !defined(WOLFSSL_NUCLEUS) && \
+    !defined(WOLFSSH_ZEPHYR) && !defined(_WIN32)
+    #define TEST_TERM_REQUEST_NO_TTY
+    /* the test pins TERM and juggles descriptors, so it needs malloc/free
+     * and the environment calls even when the blocks above are not built */
+    #include <stdlib.h>
+    #include <fcntl.h>
+    #include <unistd.h>
+#endif
+
 
 #ifdef WOLFSSH_TEST_INTERNAL
 
@@ -5671,6 +5686,221 @@ done:
     wolfSSH_CTX_free(ctx);
     return result;
 }
+
+#ifdef TEST_TERM_REQUEST_NO_TTY
+
+static word32 CaptureUint32(const byte* buf)
+{
+    return ((word32)buf[0] << 24) | ((word32)buf[1] << 16) |
+           ((word32)buf[2] <<  8) |  (word32)buf[3];
+}
+
+/* Without a tty the terminal settings and window size can't be read. The
+ * request falls back to the default modes and an 80x24 window. */
+static int test_SendChannelTerminalRequestNoTty(void)
+{
+    /* bitrate 38400 is 0x9600, sent in and out, then the terminator */
+    static const byte expectedModes[] = {
+        WOLFSSH_TTY_OP_ISPEED, 0x00, 0x00, 0x96, 0x00,
+        WOLFSSH_TTY_OP_OSPEED, 0x00, 0x00, 0x96, 0x00,
+        WOLFSSH_TTY_OP_END
+    };
+    static const char ptyReq[] = "pty-req";
+    static const char testTerm[] = "vt100";
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    const char*      termEnv;
+    char*            termSave = NULL;
+    int              result = 0;
+    int              ret;
+    int              termPinned = 0;
+    int              stdinCopy = -1;
+    int              stdoutCopy = -1;
+    int              devNull = -1;
+    int              inBack, outBack;
+    word32           termSaveSz;
+    word32           idx, typeSz, termSz, modeSz;
+    word32           width, height, pixWidth, pixHeight;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -1470;
+    wolfSSH_SetIOSend(ctx, CaptureIoSendChanReq);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1471; goto done; }
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION,
+                    DEFAULT_WINDOW_SZ, DEFAULT_MAX_PACKET_SZ);
+    if (ch == NULL) { result = -1472; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1473;
+        goto done;
+    }
+    ch->peerChannel = ch->channel;
+    ssh->defaultPeerChannelId = ch->peerChannel;
+
+    s_chanReqCaptureSz = 0;
+    WMEMSET(s_chanReqCapture, 0, sizeof(s_chanReqCapture));
+
+    /* TERM is echoed into the packet, so pin it rather than let the host
+     * environment decide how big the capture has to be */
+    termEnv = getenv("TERM");
+    if (termEnv != NULL) {
+        termSaveSz = (word32)WSTRLEN(termEnv) + 1;
+        termSave = (char*)malloc(termSaveSz);
+        if (termSave == NULL) { result = -1474; goto done; }
+        WMEMCPY(termSave, termEnv, termSaveSz);
+    }
+    if (setenv("TERM", testTerm, 1) != 0) { result = -1475; goto done; }
+    termPinned = 1;
+
+    /* stdin carries the terminal settings and stdout the window size, so
+     * both are pointed at /dev/null to model a client with no terminal */
+    stdinCopy = dup(STDIN_FILENO);
+    stdoutCopy = dup(STDOUT_FILENO);
+    devNull = open("/dev/null", O_RDWR);
+    if (stdinCopy < 0 || stdoutCopy < 0 || devNull < 0) {
+        result = -1476;
+        goto done;
+    }
+    if (dup2(devNull, STDIN_FILENO) < 0) { result = -1477; goto done; }
+    if (dup2(devNull, STDOUT_FILENO) < 0) { result = -1478; goto done; }
+
+    ret = SendChannelTerminalRequest(ssh);
+
+    /* put the streams back before anything is printed, restoring stdout
+     * even when stdin fails so later tests are not silenced */
+    inBack = dup2(stdinCopy, STDIN_FILENO);
+    outBack = dup2(stdoutCopy, STDOUT_FILENO);
+    if (inBack < 0 || outBack < 0) {
+        result = -1479;
+    }
+    close(stdinCopy);
+    stdinCopy = -1;
+    close(stdoutCopy);
+    stdoutCopy = -1;
+    if (result != 0)
+        goto done;
+
+    if (ret != WS_SUCCESS) {
+        printf("SendChannelTerminalRequest: ret=%d, expected=%d\n",
+                ret, WS_SUCCESS);
+        result = -1480;
+        goto done;
+    }
+    if (s_chanReqCaptureSz == 0 ||
+            s_chanReqCaptureSz >= (word32)sizeof(s_chanReqCapture)) {
+        printf("SendChannelTerminalRequest: capture sz=%u\n",
+                s_chanReqCaptureSz);
+        result = -1481;
+        goto done;
+    }
+    if (CaptureMsgId(s_chanReqCapture, s_chanReqCaptureSz)
+            != MSGID_CHANNEL_REQUEST) {
+        result = -1482;
+        goto done;
+    }
+
+    /* walk the payload, keeping idx inside the capture at every step */
+    idx = LENGTH_SZ + PAD_LENGTH_SZ + MSG_ID_SZ + UINT32_SZ;
+    if (idx + UINT32_SZ > s_chanReqCaptureSz) { result = -1483; goto done; }
+    typeSz = CaptureUint32(s_chanReqCapture + idx);
+    idx += UINT32_SZ;
+    if (typeSz != (word32)(sizeof(ptyReq) - 1) ||
+            typeSz > s_chanReqCaptureSz - idx) {
+        printf("SendChannelTerminalRequest: typeSz=%u\n", typeSz);
+        result = -1484;
+        goto done;
+    }
+    if (WMEMCMP(s_chanReqCapture + idx, ptyReq, typeSz) != 0) {
+        result = -1485;
+        goto done;
+    }
+    idx += typeSz;
+
+    if (BOOLEAN_SZ + UINT32_SZ > s_chanReqCaptureSz - idx) {
+        result = -1486;
+        goto done;
+    }
+    idx += BOOLEAN_SZ;
+    termSz = CaptureUint32(s_chanReqCapture + idx);
+    idx += UINT32_SZ;
+    if (termSz != (word32)(sizeof(testTerm) - 1) ||
+            termSz > s_chanReqCaptureSz - idx) {
+        printf("SendChannelTerminalRequest: termSz=%u\n", termSz);
+        result = -1487;
+        goto done;
+    }
+    if (WMEMCMP(s_chanReqCapture + idx, testTerm, termSz) != 0) {
+        result = -1488;
+        goto done;
+    }
+    idx += termSz;
+
+    /* the window size must never be negotiated as 0x0 */
+    if (UINT32_SZ * 4 > s_chanReqCaptureSz - idx) { result = -1489; goto done; }
+    width     = CaptureUint32(s_chanReqCapture + idx);
+    height    = CaptureUint32(s_chanReqCapture + idx + UINT32_SZ);
+    pixWidth  = CaptureUint32(s_chanReqCapture + idx + (UINT32_SZ * 2));
+    pixHeight = CaptureUint32(s_chanReqCapture + idx + (UINT32_SZ * 3));
+    idx += UINT32_SZ * 4;
+    if (width != TERMINAL_WIDTH_DEFAULT || height != TERMINAL_HEIGHT_DEFAULT ||
+            pixWidth != 0 || pixHeight != 0) {
+        printf("SendChannelTerminalRequest: window %ux%u (%ux%u px)\n",
+                width, height, pixWidth, pixHeight);
+        result = -1490;
+        goto done;
+    }
+
+    /* the modes are the fixed fallback list, not whatever termios left */
+    if (UINT32_SZ > s_chanReqCaptureSz - idx) { result = -1491; goto done; }
+    modeSz = CaptureUint32(s_chanReqCapture + idx);
+    idx += UINT32_SZ;
+    if (modeSz != (word32)sizeof(expectedModes) ||
+            modeSz > s_chanReqCaptureSz - idx) {
+        printf("SendChannelTerminalRequest: modeSz=%u, expected=%u\n",
+                modeSz, (word32)sizeof(expectedModes));
+        result = -1492;
+        goto done;
+    }
+    if (WMEMCMP(s_chanReqCapture + idx, expectedModes, modeSz) != 0) {
+        result = -1493;
+        goto done;
+    }
+
+done:
+    if (stdinCopy >= 0) {
+        if (dup2(stdinCopy, STDIN_FILENO) < 0 && result == 0)
+            result = -1494;
+        close(stdinCopy);
+    }
+    if (stdoutCopy >= 0) {
+        if (dup2(stdoutCopy, STDOUT_FILENO) < 0 && result == 0)
+            result = -1495;
+        close(stdoutCopy);
+    }
+    if (termPinned) {
+        if (termSave != NULL) {
+            if (setenv("TERM", termSave, 1) != 0 && result == 0)
+                result = -1496;
+        }
+        else if (unsetenv("TERM") != 0 && result == 0) {
+            result = -1496;
+        }
+    }
+    if (termSave != NULL)
+        free(termSave);
+    if (devNull >= 0)
+        close(devNull);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+#endif /* TEST_TERM_REQUEST_NO_TTY */
 
 /* IO send that always wants write, the state a peer forces by not reading. */
 static int UnitIoSendWantWrite(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
@@ -11705,6 +11935,13 @@ int wolfSSH_UnitTest(int argc, char** argv)
     unitResult = test_DoChannelSuccess();
     printf("DoChannelSuccess: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#ifdef TEST_TERM_REQUEST_NO_TTY
+    unitResult = test_SendChannelTerminalRequestNoTty();
+    printf("SendChannelTerminalRequestNoTty: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 
     unitResult = test_DoChannelFailure();
     printf("DoChannelFailure: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
