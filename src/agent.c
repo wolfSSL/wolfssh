@@ -712,7 +712,7 @@ static int SignHashRsa(WOLFSSH_AGENT_KEY_RSA* rawKey, enum wc_HashType hashType,
 {
     RsaKey key;
     byte encSig[MAX_ENCODED_SIG_SZ];
-    int encSigSz, ret;
+    int encSigSz, ret, rc;
 
     ret = wc_InitRsaKey(&key, heap);
     if (ret == 0) {
@@ -732,12 +732,15 @@ static int SignHashRsa(WOLFSSH_AGENT_KEY_RSA* rawKey, enum wc_HashType hashType,
     }
     if (ret == 0) {
         WLOG(WS_LOG_INFO, "Signing hash with RSA.");
-        *sigSz = wc_RsaSSL_Sign(encSig, encSigSz, sig, *sigSz, &key, rng);
-        if (*sigSz <= 0) {
+        /* Keep the result signed. Storing it straight into the unsigned
+         * *sigSz would turn a negative error into a huge length. */
+        rc = wc_RsaSSL_Sign(encSig, encSigSz, sig, *sigSz, &key, rng);
+        if (rc <= 0) {
             WLOG(WS_LOG_DEBUG, "Bad RSA Sign");
             ret = WS_RSA_E;
         }
         else {
+            *sigSz = (word32)rc;
             ret = wolfSSH_RsaVerify(sig, *sigSz,
                     encSig, encSigSz, &key, heap, "SignHashRsa");
         }

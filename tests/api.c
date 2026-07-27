@@ -1485,7 +1485,7 @@ static void test_wolfSSH_SCP_SendSymlinkReject(void) { ; }
 #ifdef WOLFSSH_AGENT
 typedef struct AgentTestCtx {
     int partialWrite;
-    byte response[128];
+    byte response[512];
     word32 responseSz;
     int writeCalls;
     int readCalls;
@@ -1684,6 +1684,101 @@ static void test_wolfSSH_agent_signrequest_success(void)
 
     cleanup_agent_test(ctx, ssh);
 }
+
+#ifndef WOLFSSH_NO_RSA_SHA2_256
+/* A hostile agent can answer a sign request with its own messages. An
+ * identity whose modulus exceeds the agent's signature buffer makes
+ * wc_RsaSSL_Sign() fail; pre-fix that over-reads, so run this under ASan. */
+static void test_wolfSSH_agent_signrequest_oversize_rsa_key(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte modulus[384];
+    byte body[512];
+    byte data[16];
+    byte digest[16] = {0};
+    byte keyBlob[8] = {0};
+    byte sig[16];
+    word32 sigSz = sizeof(sig);
+    word32 idx, i;
+    int ret;
+
+    /* 3072-bit modulus. The leading byte must have the sign bit clear or
+     * GetMpint() rejects the value as non-canonical. */
+    memset(modulus, 0xa5, sizeof(modulus));
+    modulus[0] = 0x01;
+    memset(data, 0x5a, sizeof(data));
+    memset(&io, 0, sizeof(io));
+
+    /* MSGID_AGENT_ADD_IDENTITY: ssh-rsa, n, e, then empty d/iqmp/p/q and
+     * comment. The private values are never reached. */
+    idx = 0;
+    put_uint32(body + idx, 7);
+    idx += LENGTH_SZ;
+    memcpy(body + idx, "ssh-rsa", 7);
+    idx += 7;
+    put_uint32(body + idx, sizeof(modulus));
+    idx += LENGTH_SZ;
+    memcpy(body + idx, modulus, sizeof(modulus));
+    idx += sizeof(modulus);
+    put_uint32(body + idx, 3);
+    idx += LENGTH_SZ;
+    body[idx++] = 0x01;
+    body[idx++] = 0x00;
+    body[idx++] = 0x01;
+    for (i = 0; i < 5; i++) {
+        put_uint32(body + idx, 0);
+        idx += LENGTH_SZ;
+    }
+    AssertTrue(idx <= sizeof(body));
+    build_agent_message(io.response, &io.responseSz,
+        MSGID_AGENT_ADD_IDENTITY, body, idx);
+    AssertTrue(io.responseSz <= sizeof(io.response));
+
+    setup_agent_test(&ctx, &ssh, &io);
+
+    /* The agent answers with an add-identity instead of a signature. The
+     * identity is stored, but the caller is told there was no key. */
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_AGENT_NO_KEY_E);
+    AssertNotNull(ssh->agent->idList);
+
+    /* MSGID_AGENT_SIGN_REQUEST for that identity. The key blob is the
+     * n and e pair, matched by its SHA-256 digest. */
+    idx = 0;
+    put_uint32(body + idx, (LENGTH_SZ * 2) + sizeof(modulus) + 3);
+    idx += LENGTH_SZ;
+    put_uint32(body + idx, sizeof(modulus));
+    idx += LENGTH_SZ;
+    memcpy(body + idx, modulus, sizeof(modulus));
+    idx += sizeof(modulus);
+    put_uint32(body + idx, 3);
+    idx += LENGTH_SZ;
+    body[idx++] = 0x01;
+    body[idx++] = 0x00;
+    body[idx++] = 0x01;
+    put_uint32(body + idx, sizeof(data));
+    idx += LENGTH_SZ;
+    memcpy(body + idx, data, sizeof(data));
+    idx += sizeof(data);
+    put_uint32(body + idx, AGENT_SIGN_RSA_SHA2_256);
+    idx += LENGTH_SZ;
+    AssertTrue(idx <= sizeof(body));
+    build_agent_message(io.response, &io.responseSz,
+        MSGID_AGENT_SIGN_REQUEST, body, idx);
+    AssertTrue(io.responseSz <= sizeof(io.response));
+
+    sigSz = sizeof(sig);
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_RSA_E);
+    AssertIntEQ(sigSz, 0);
+
+    cleanup_agent_test(ctx, ssh);
+}
+#endif /* WOLFSSH_NO_RSA_SHA2_256 */
 #endif /* WOLFSSH_AGENT */
 
 
@@ -5119,6 +5214,9 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_agent_signrequest_wrong_message();
     test_wolfSSH_agent_signrequest_signature_too_large();
     test_wolfSSH_agent_signrequest_success();
+#ifndef WOLFSSH_NO_RSA_SHA2_256
+    test_wolfSSH_agent_signrequest_oversize_rsa_key();
+#endif
 #endif
 #ifdef WOLFSSH_OSSH_CERTS
 #ifndef WOLFSSH_NO_ED25519
