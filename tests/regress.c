@@ -67,6 +67,7 @@
 #define AssertTrue(x)    Assert((x), ("%s is true",     #x), (#x " => FALSE"))
 #define AssertFalse(x)   Assert(!(x), ("%s is false",    #x), (#x " => TRUE"))
 #define AssertNotNull(x) Assert((x), ("%s is not null", #x), (#x " => NULL"))
+#define AssertNull(x)    Assert(!(x), ("%s is null",    #x), (#x " => NOT NULL"))
 #define AssertIntEQ(x, y) do { int _x = (int)(x); int _y = (int)(y);           \
     Assert(_x == _y, ("%s == %s", #x, #y), ("%d != %d", _x, _y)); } while (0)
 #define AssertStrEQ(x, y) do { const char* _x = (const char*)(x);              \
@@ -3315,6 +3316,23 @@ static void TestKeyboardResponseNullCtx(WOLFSSH* ssh)
 #define FPF_KEY_GOOD "ssh-rsa"
 #define FPF_KEY_BAD  "rsa-sha2-256"
 
+/* AppendString for one of the library's own canned algorithm lists. Those are
+ * built by concatenating "name," fragments, so they carry a trailing comma
+ * that AlgoListSz() trims before the list goes on the wire. Trim it here too,
+ * or the payload holds a zero-length name that no peer would send. */
+static word32 AppendAlgoList(byte* buf, word32 bufSz, word32 idx,
+        const char* value)
+{
+    word32 valueSz = (word32)WSTRLEN(value);
+
+    if (valueSz > 0 && value[valueSz - 1] == ',') {
+        valueSz--;
+    }
+
+    idx = AppendUint32(buf, bufSz, idx, valueSz);
+    return AppendData(buf, bufSz, idx, (const byte*)value, valueSz);
+}
+
 /* Build a KEXINIT payload using the server ssh's own canned cipher/MAC lists
  * so negotiation succeeds whichever AES/HMAC modes are compiled in. */
 static word32 BuildKexInitPayload(WOLFSSH* ssh, const char* kexList,
@@ -3330,10 +3348,10 @@ static word32 BuildKexInitPayload(WOLFSSH* ssh, const char* kexList,
 
     idx = AppendString(out, outSz, idx, kexList);
     idx = AppendString(out, outSz, idx, keyList);
-    idx = AppendString(out, outSz, idx, ssh->algoListCipher);
-    idx = AppendString(out, outSz, idx, ssh->algoListCipher);
-    idx = AppendString(out, outSz, idx, ssh->algoListMac);
-    idx = AppendString(out, outSz, idx, ssh->algoListMac);
+    idx = AppendAlgoList(out, outSz, idx, ssh->algoListCipher);
+    idx = AppendAlgoList(out, outSz, idx, ssh->algoListCipher);
+    idx = AppendAlgoList(out, outSz, idx, ssh->algoListMac);
+    idx = AppendAlgoList(out, outSz, idx, ssh->algoListMac);
     idx = AppendString(out, outSz, idx, "none");
     idx = AppendString(out, outSz, idx, "none");
     idx = AppendString(out, outSz, idx, "");
@@ -3587,10 +3605,11 @@ static void TestKexInitReservedNonZeroRejected(void)
     wolfSSH_CTX_free(ctx);
 }
 
-/* Run a KEXINIT whose KEX-algorithms field is kexList through DoKexInit. The
- * list uses unknown tokens, so on accept it fails to match
- * (WS_MATCH_KEX_ALGO_E); a list rejected by the caps returns WS_BUFFER_E. */
-static int RunKexInitKexListCase(const char* kexList)
+/* Run a KEXINIT whose KEX-algorithms field is kexList through DoKexInit,
+ * against a local list of FPF_KEX_GOOD. A list of unknown tokens fails to
+ * match (WS_MATCH_KEX_ALGO_E); one rejected by the caps returns WS_BUFFER_E.
+ * kexIdOut, when given, reports the algorithm negotiated or ID_UNKNOWN. */
+static int RunKexInitKexListCase(const char* kexList, byte* kexIdOut)
 {
     WOLFSSH_CTX* ctx;
     WOLFSSH* ssh;
@@ -3613,6 +3632,14 @@ static int RunKexInitKexListCase(const char* kexList)
     payloadSz = BuildKexInitPayload(ssh, kexList, FPF_KEY_GOOD, 0,
             payload, bufSz);
     ret = wolfSSH_TestDoKexInit(ssh, payload, payloadSz, &idx);
+
+    /* The tail (host key/send) errors on this bare ssh, but negotiation runs
+     * first and records the result in handshake->kexId. */
+    if (kexIdOut != NULL) {
+        AssertNotNull(ssh->handshake);
+        *kexIdOut = (ret == WS_MATCH_KEX_ALGO_E)
+            ? ID_UNKNOWN : ssh->handshake->kexId;
+    }
 
     WFREE(payload, NULL, DYNTYPE_BUFFER);
     wolfSSH_free(ssh);
@@ -3666,54 +3693,323 @@ static void TestKexInitNameListCaps(void)
 
     /* Exactly the name-count cap parses (then fails to match). */
     list = BuildTokenListStr(WOLFSSH_MAX_NAMELIST_CNT);
-    AssertIntEQ(RunKexInitKexListCase(list), WS_MATCH_KEX_ALGO_E);
+    AssertIntEQ(RunKexInitKexListCase(list, NULL), WS_MATCH_KEX_ALGO_E);
     WFREE(list, NULL, DYNTYPE_STRING);
 
     /* One past the name-count cap is rejected. */
     list = BuildTokenListStr(WOLFSSH_MAX_NAMELIST_CNT + 1);
-    AssertIntEQ(RunKexInitKexListCase(list), WS_BUFFER_E);
+    AssertIntEQ(RunKexInitKexListCase(list, NULL), WS_BUFFER_E);
     WFREE(list, NULL, DYNTYPE_STRING);
 
     /* Exactly the byte cap parses (then fails to match). */
     list = BuildSingleTokenStr(WOLFSSH_MAX_NAMELIST_SZ);
-    AssertIntEQ(RunKexInitKexListCase(list), WS_MATCH_KEX_ALGO_E);
+    AssertIntEQ(RunKexInitKexListCase(list, NULL), WS_MATCH_KEX_ALGO_E);
     WFREE(list, NULL, DYNTYPE_STRING);
 
     /* One past the byte cap is rejected. */
     list = BuildSingleTokenStr(WOLFSSH_MAX_NAMELIST_SZ + 1);
-    AssertIntEQ(RunKexInitKexListCase(list), WS_BUFFER_E);
+    AssertIntEQ(RunKexInitKexListCase(list, NULL), WS_BUFFER_E);
     WFREE(list, NULL, DYNTYPE_STRING);
 }
 
-/* A peer name list may legally end with a trailing comma. GetNameListRaw
- * used to fold that comma into the final name, yielding ID_UNKNOWN and a
- * failed negotiation. Build a KEXINIT whose KEX list ends in a comma and
- * assert the algorithm still negotiates. */
-static void TestKexInitTrailingComma(void)
+typedef struct {
+    const char* kexList;
+    byte expectId;
+    const char* description;
+} EmptyNameCase;
+
+/* RFC 4251 section 5: a name-list holds zero or more names separated by
+ * commas, and every name has a non-zero length. So an empty element -- what a
+ * leading, doubled, or trailing comma leaves behind -- can't be a name, and
+ * the list ends there. Names past it are dropped rather than rejected, which
+ * is what OpenSSH's match_list() does with a peer proposal. A local list never
+ * arrives here with an empty element: CheckAlgoList() rejects one up front,
+ * except for the single trailing comma that AlgoListSz() strips. */
+static const EmptyNameCase emptyNameCases[] = {
+    /* Nothing before the empty element, so nothing to negotiate with. */
+    { "",                            ID_UNKNOWN, "zero names" },
+    { ",",                           ID_UNKNOWN, "one bare comma" },
+    { ",,",                          ID_UNKNOWN, "two bare commas" },
+    { "," FPF_KEX_GOOD,              ID_UNKNOWN, "leading comma" },
+    { ",," FPF_KEX_GOOD,             ID_UNKNOWN, "two leading commas" },
+
+    /* A usable name before the empty element still negotiates. */
+    { FPF_KEX_GOOD,                  ID_ECDH_SHA2_NISTP256, "no commas" },
+    { FPF_KEX_BAD "," FPF_KEX_GOOD,  ID_ECDH_SHA2_NISTP256, "separators" },
+    { FPF_KEX_GOOD ",",              ID_ECDH_SHA2_NISTP256, "trailing" },
+    { FPF_KEX_GOOD ",,",             ID_ECDH_SHA2_NISTP256, "trailing pair" },
+    { FPF_KEX_GOOD ",," FPF_KEX_BAD, ID_ECDH_SHA2_NISTP256, "doubled" },
+
+    /* The name that would have matched sits past the empty element, so it is
+     * never seen. This is the case that pins the truncation down. */
+    { FPF_KEX_BAD ",," FPF_KEX_GOOD, ID_UNKNOWN, "match past the gap" },
+};
+
+static void TestKexInitEmptyName(void)
+{
+    word32 i;
+
+    for (i = 0; i < sizeof(emptyNameCases)/sizeof(*emptyNameCases); i++) {
+        const EmptyNameCase* tc = &emptyNameCases[i];
+        byte kexId = ID_NONE;
+
+        (void)RunKexInitKexListCase(tc->kexList, &kexId);
+
+        Assert(kexId == tc->expectId,
+                ("kexId == %d (%s)", tc->expectId, tc->description),
+                ("%d != %d", kexId, tc->expectId));
+    }
+}
+
+/* One EXT_INFO carrying a single server-sig-algs extension. */
+static word32 BuildExtInfoSigAlgs(byte* buf, word32 bufSz, const char* sigAlgs)
+{
+    word32 idx = 0;
+
+    idx = AppendUint32(buf, bufSz, idx, 1);
+    idx = AppendString(buf, bufSz, idx, "server-sig-algs");
+    return AppendString(buf, bufSz, idx, sigAlgs);
+}
+
+/* Run one EXT_INFO carrying a single server-sig-algs extension, reporting how
+ * many peer signature algorithms it left recorded. When peerSigIdOut is given,
+ * the recorded IDs are copied out before the ssh is freed, up to
+ * peerSigIdOutSz of them. The payload is heap allocated so a case can hand
+ * over a list at the byte cap. */
+static int RunExtInfoSigAlgsCase(const char* sigAlgs, word32* peerSigIdSz,
+        byte* peerSigIdOut, word32 peerSigIdOutSz)
 {
     WOLFSSH_CTX* ctx;
     WOLFSSH* ssh;
-    byte payload[512];
-    word32 payloadSz;
+    byte* payload;
+    word32 payloadSz = 0;
     word32 idx = 0;
+    int ret;
+    word32 bufSz = WOLFSSH_MAX_NAMELIST_SZ + 2048;
 
-    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
     AssertNotNull(ctx);
     ssh = wolfSSH_new(ctx);
     AssertNotNull(ssh);
-    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, FPF_KEX_GOOD), WS_SUCCESS);
-    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, FPF_KEY_GOOD), WS_SUCCESS);
 
-    /* KEX list carries a trailing comma. */
-    payloadSz = BuildKexInitPayload(ssh, FPF_KEX_GOOD ",", FPF_KEY_GOOD,
-            0, payload, (word32)sizeof(payload));
+    payload = (byte*)WMALLOC(bufSz, NULL, DYNTYPE_BUFFER);
+    AssertNotNull(payload);
 
-    /* The tail (host key/send) errors on this bare ssh, but negotiation
-     * runs first and records the result in handshake->kexId. */
-    (void)wolfSSH_TestDoKexInit(ssh, payload, payloadSz, &idx);
+    payloadSz = BuildExtInfoSigAlgs(payload, bufSz, sigAlgs);
 
-    AssertNotNull(ssh->handshake);
-    AssertIntEQ(ssh->handshake->kexId, ID_ECDH_SHA2_NISTP256);
+    ret = wolfSSH_TestDoExtInfo(ssh, payload, payloadSz, &idx);
+    *peerSigIdSz = ssh->peerSigIdSz;
+
+    if (peerSigIdOut != NULL && ssh->peerSigId != NULL) {
+        word32 copySz = (ssh->peerSigIdSz < peerSigIdOutSz)
+            ? ssh->peerSigIdSz : peerSigIdOutSz;
+
+        WMEMCPY(peerSigIdOut, ssh->peerSigId, copySz);
+    }
+
+    WFREE(payload, NULL, DYNTYPE_BUFFER);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    return ret;
+}
+
+typedef struct {
+    const char* sigAlgs;
+    int expectRet;
+    word32 expectSz;
+    const byte* expectIds;
+    const char* description;
+} ExtInfoEmptyNameCase;
+
+/* Expected ssh->peerSigId contents for the cases that record something. Both
+ * names are compiled into the ID map by the guard around this block, so
+ * NameToId() resolves them in any build that runs these tests. Recording a
+ * name is not the same as accepting it: FPF_KEY_GOOD is in the map either
+ * way, while its place in the client's own accepted list depends on the SHA-1
+ * build flags, so the match has to come from FPF_KEY_BAD. */
+static const byte extInfoIdsOne[] = { ID_RSA_SHA2_256 };
+static const byte extInfoIdsTwo[] = { ID_RSA_SHA2_256, ID_SSH_RSA };
+static const byte extInfoIdsUnknownFirst[] = {
+    ID_UNKNOWN, ID_RSA_SHA2_256, ID_SSH_RSA
+};
+
+/* server-sig-algs is a name-list too, and it is the second caller of
+ * GetNameListRaw(): it parses into a fixed ids[] array rather than DoKexInit's
+ * buffer, and treats an empty result as "no extension" instead of a
+ * negotiation failure. The same parser decides where a list ends, so the
+ * verdicts have to line up with the KEXINIT table above. FPF_KEY_BAD is only
+ * "bad" against the test server list; it is in the client's own accepted
+ * set. */
+static const ExtInfoEmptyNameCase extInfoEmptyNameCases[] = {
+    /* Nothing usable before the empty element. An extension naming no
+     * algorithms is not an error, it just advertises nothing. */
+    { "",                      WS_SUCCESS, 0, NULL, "zero names" },
+    { ",",                     WS_SUCCESS, 0, NULL, "one bare comma" },
+    { ",,",                    WS_SUCCESS, 0, NULL, "two bare commas" },
+    { "," FPF_KEY_BAD,         WS_SUCCESS, 0, NULL, "leading comma" },
+
+    /* Names this build can't sign with. Advisory too, so nothing is recorded
+     * and the connection stays up; userauth fails later if pubkey is tried. */
+    { "bogus",                 WS_SUCCESS, 0, NULL, "all names unknown" },
+    { "bogus,alsobogus",       WS_SUCCESS, 0, NULL, "several unknown" },
+
+    /* A usable name before the empty element is recorded. */
+    { FPF_KEY_BAD,             WS_SUCCESS, 1, extInfoIdsOne, "no commas" },
+    { FPF_KEY_BAD ",",         WS_SUCCESS, 1, extInfoIdsOne, "trailing" },
+    { FPF_KEY_BAD ",,",        WS_SUCCESS, 1, extInfoIdsOne, "trailing pair" },
+    { FPF_KEY_BAD ",,bogus",   WS_SUCCESS, 1, extInfoIdsOne, "doubled" },
+
+    /* More than one name is recorded, in order. These are what cover the copy
+     * out of the parse buffer: a fixed-length copy, or one that keeps only
+     * the first ID, passes every single-name case above. */
+    { FPF_KEY_BAD "," FPF_KEY_GOOD,
+      WS_SUCCESS, 2, extInfoIdsTwo, "two names" },
+
+    /* An unknown name is recorded only when it is the first one, so these two
+     * differ by one ID even though both name the same three algorithms. */
+    { "bogus," FPF_KEY_BAD "," FPF_KEY_GOOD,
+      WS_SUCCESS, 3, extInfoIdsUnknownFirst, "unknown first is kept" },
+    { FPF_KEY_BAD ",bogus," FPF_KEY_GOOD,
+      WS_SUCCESS, 2, extInfoIdsTwo, "unknown in the middle is dropped" },
+
+    /* The name that would have matched sits past the empty element, so it is
+     * never seen and nothing is recorded. Not an error: server-sig-algs is
+     * advisory, and 0 here against 1 for the trailing cases above is what
+     * pins the truncation down. */
+    { "bogus,," FPF_KEY_BAD,   WS_SUCCESS, 0, NULL, "match past the gap" },
+};
+
+static void TestExtInfoEmptyName(void)
+{
+    word32 i;
+
+    for (i = 0; i < sizeof(extInfoEmptyNameCases)/sizeof(*extInfoEmptyNameCases);
+            i++) {
+        const ExtInfoEmptyNameCase* tc = &extInfoEmptyNameCases[i];
+        word32 peerSigIdSz = 0;
+        byte peerSigId[8];
+        int ret;
+
+        WMEMSET(peerSigId, ID_NONE, sizeof(peerSigId));
+        ret = RunExtInfoSigAlgsCase(tc->sigAlgs, &peerSigIdSz,
+                peerSigId, (word32)sizeof(peerSigId));
+
+        Assert(ret == tc->expectRet,
+                ("ret == %d (%s)", tc->expectRet, tc->description),
+                ("%d != %d", ret, tc->expectRet));
+        Assert(peerSigIdSz == tc->expectSz,
+                ("peerSigIdSz == %u (%s)", tc->expectSz, tc->description),
+                ("%u != %u", peerSigIdSz, tc->expectSz));
+
+        if (tc->expectIds != NULL) {
+            word32 j;
+
+            AssertTrue(tc->expectSz <= (word32)sizeof(peerSigId));
+            for (j = 0; j < tc->expectSz; j++) {
+                Assert(peerSigId[j] == tc->expectIds[j],
+                        ("peerSigId[%u] == %d (%s)", j, tc->expectIds[j],
+                         tc->description),
+                        ("%d != %d", peerSigId[j], tc->expectIds[j]));
+            }
+        }
+    }
+}
+
+/* Lock in the name-list boundaries on the ext-info path too. This caller
+ * parses into a fixed ids[WOLFSSH_MAX_NAMELIST_CNT] array, so the name-count
+ * cap is what keeps that array in bounds: it holds at most one ID per name,
+ * and the parser refuses a list longer than the cap. */
+static void TestExtInfoNameListCaps(void)
+{
+    char* list;
+    word32 peerSigIdSz = 0;
+
+    /* Exactly the name-count cap parses. All tokens unknown, so nothing is
+     * recorded, and that is not an error. */
+    list = BuildTokenListStr(WOLFSSH_MAX_NAMELIST_CNT);
+    AssertIntEQ(RunExtInfoSigAlgsCase(list, &peerSigIdSz, NULL, 0), WS_SUCCESS);
+    AssertIntEQ(peerSigIdSz, 0);
+    WFREE(list, NULL, DYNTYPE_STRING);
+
+    /* One past the name-count cap is rejected before ids[] can fill. */
+    list = BuildTokenListStr(WOLFSSH_MAX_NAMELIST_CNT + 1);
+    AssertIntEQ(RunExtInfoSigAlgsCase(list, &peerSigIdSz, NULL, 0),
+            WS_BUFFER_E);
+    AssertIntEQ(peerSigIdSz, 0);
+    WFREE(list, NULL, DYNTYPE_STRING);
+
+    /* Exactly the byte cap parses (recording nothing usable). */
+    list = BuildSingleTokenStr(WOLFSSH_MAX_NAMELIST_SZ);
+    AssertIntEQ(RunExtInfoSigAlgsCase(list, &peerSigIdSz, NULL, 0), WS_SUCCESS);
+    AssertIntEQ(peerSigIdSz, 0);
+    WFREE(list, NULL, DYNTYPE_STRING);
+
+    /* One past the byte cap is rejected. */
+    list = BuildSingleTokenStr(WOLFSSH_MAX_NAMELIST_SZ + 1);
+    AssertIntEQ(RunExtInfoSigAlgsCase(list, &peerSigIdSz, NULL, 0),
+            WS_BUFFER_E);
+    AssertIntEQ(peerSigIdSz, 0);
+    WFREE(list, NULL, DYNTYPE_STRING);
+}
+
+/* RFC 8308 section 2.4 allows a second EXT_INFO, so server-sig-algs can be
+ * recorded twice on one session and the second pass frees the first list.
+ * Shrinking catches a size left behind with the freed buffer. */
+static void TestExtInfoSigAlgsReplace(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    byte payload[256];
+    word32 payloadSz;
+    word32 idx;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    idx = 0;
+    payloadSz = BuildExtInfoSigAlgs(payload, (word32)sizeof(payload),
+            "bogus," FPF_KEY_BAD "," FPF_KEY_GOOD);
+    AssertIntEQ(wolfSSH_TestDoExtInfo(ssh, payload, payloadSz, &idx),
+            WS_SUCCESS);
+    AssertIntEQ(ssh->peerSigIdSz, 3);
+    AssertNotNull(ssh->peerSigId);
+    AssertIntEQ(ssh->peerSigId[1], ID_RSA_SHA2_256);
+
+    idx = 0;
+    payloadSz = BuildExtInfoSigAlgs(payload, (word32)sizeof(payload),
+            FPF_KEY_BAD);
+    AssertIntEQ(wolfSSH_TestDoExtInfo(ssh, payload, payloadSz, &idx),
+            WS_SUCCESS);
+    AssertIntEQ(ssh->peerSigIdSz, 1);
+    AssertIntEQ(ssh->peerSigId[0], ID_RSA_SHA2_256);
+
+    /* A later list naming nothing usable supersedes rather than leaving the
+     * recorded one in place. OpenSSH's kex_ext_info_client_parse() replaces
+     * server_sig_algs on every EXT_INFO, empty value included. */
+    idx = 0;
+    payloadSz = BuildExtInfoSigAlgs(payload, (word32)sizeof(payload), "bogus");
+    AssertIntEQ(wolfSSH_TestDoExtInfo(ssh, payload, payloadSz, &idx),
+            WS_SUCCESS);
+    AssertIntEQ(ssh->peerSigIdSz, 0);
+    AssertNull(ssh->peerSigId);
+
+    /* Same for an empty list, from a good one again. */
+    idx = 0;
+    payloadSz = BuildExtInfoSigAlgs(payload, (word32)sizeof(payload),
+            FPF_KEY_BAD);
+    AssertIntEQ(wolfSSH_TestDoExtInfo(ssh, payload, payloadSz, &idx),
+            WS_SUCCESS);
+    AssertIntEQ(ssh->peerSigIdSz, 1);
+
+    idx = 0;
+    payloadSz = BuildExtInfoSigAlgs(payload, (word32)sizeof(payload), "");
+    AssertIntEQ(wolfSSH_TestDoExtInfo(ssh, payload, payloadSz, &idx),
+            WS_SUCCESS);
+    AssertIntEQ(ssh->peerSigIdSz, 0);
+    AssertNull(ssh->peerSigId);
 
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
@@ -5253,7 +5549,10 @@ int main(int argc, char** argv)
     TestFirstPacketFollows();
     TestKexInitReservedNonZeroRejected();
     TestKexInitNameListCaps();
-    TestKexInitTrailingComma();
+    TestKexInitEmptyName();
+    TestExtInfoEmptyName();
+    TestExtInfoNameListCaps();
+    TestExtInfoSigAlgsReplace();
     TestKexInitLanguageLengthOverflow();
     TestDoKexInitRejectsWhenPeerIsKeying();
 #endif
