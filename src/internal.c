@@ -4439,47 +4439,19 @@ int GetStringRef(word32* strSz, const byte** str,
 }
 
 
-static word32 CountNameList(const byte* buf, word32 len)
-{
-    word32 count = 0;
-
-    if (buf != NULL && len > 0) {
-        word32 i;
-
-        count = 1;
-        for (i = 0; i < len; i++) {
-            if (buf[i] == ',') {
-                count++;
-            }
-        }
-        /* remove leading comma */
-        if (count > 0 && buf[0] == ',') {
-            count--;
-        }
-        /* remove trailing comma */
-        if (count > 0 && buf[len-1] == ',') {
-            count--;
-        }
-    }
-
-    return count;
-}
-
-
+/* Name-list to IDs. *idListSz is capacity in, count out, and bounds every
+ * store. One ID per name at most, and names are capped at
+ * WOLFSSH_MAX_NAMELIST_CNT, so an idList that size never trips the bound. */
 static int GetNameListRaw(byte* idList, word32* idListSz,
         const byte* nameList, word32 nameListSz)
 {
-    const byte* name = nameList;
-    word32 nameSz = 0, nameListIdx = 0, idListIdx = 0, tokenCount = 0;
-    int ret = WS_SUCCESS;
+    word32 begin = 0, i, idListIdx = 0, tokenCount = 0;
 
-    if (idList == NULL || nameList == NULL || idListSz == NULL) {
+    /* GetStringRef() hands back a NULL pointer for an empty string, and that
+     * is the name-list of zero names, not a bad argument. */
+    if (idList == NULL || idListSz == NULL
+            || (nameListSz > 0 && nameList == NULL)) {
         return WS_BAD_ARGUMENT;
-    }
-
-    /* Adjust nameListSz for a trailing comma. */
-    if (nameListSz > 0 && nameList[nameListSz - 1] == ',') {
-        nameListSz--;
     }
 
     /* Reject oversized name-lists to bound the per-token NameToId scan cost.
@@ -4493,17 +4465,23 @@ static int GetNameListRaw(byte* idList, word32* idListSz,
     /*
      * The strings we want are now in the bounds of the message, and the
      * length of the list. Find the commas, or end of list, and then decode
-     * the values.
+     * the values. A name has a non-zero length, RFC 4251 section 5, so an
+     * empty element -- what a leading, doubled, or trailing comma leaves
+     * behind -- ends the list. Names past it are dropped rather than
+     * rejected, which is what OpenSSH's match_list() does with a peer list.
      */
 
-    while (nameListIdx < nameListSz) {
-        nameListIdx++;
-
-        if (nameListIdx == nameListSz)
-            nameSz++;
-
-        if (nameListIdx == nameListSz || name[nameSz] == ',') {
+    for (i = 0; i <= nameListSz; i++) {
+        if (i == nameListSz || nameList[i] == ',') {
+            word32 nameSz = i - begin;
+            const byte* name;
             byte id;
+
+            if (nameSz == 0) {
+                WLOG(WS_LOG_DEBUG, "GNL: zero-length name ends the list");
+                break;
+            }
+            name = nameList + begin;
 
             if (++tokenCount > WOLFSSH_MAX_NAMELIST_CNT) {
                 WLOG(WS_LOG_ERROR, "Too many names in list");
@@ -4529,16 +4507,13 @@ static int GetNameListRaw(byte* idList, word32* idListSz,
                 idList[idListIdx++] = id;
             }
 
-            name += 1 + nameSz;
-            nameSz = 0;
+            begin = i + 1;
         }
-        else
-            nameSz++;
     }
 
     *idListSz = idListIdx;
 
-    return ret;
+    return WS_SUCCESS;
 }
 
 
@@ -5180,7 +5155,10 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
                 (const byte*)ssh->algoListKex, cannedAlgoNamesSz);
     }
     if (ret == WS_SUCCESS) {
-        kexIdGuess = list[0];
+        /* Defensive, not a live fix: an empty list fails to match below, so
+         * the guess is never read. list[] is reused across the fields, so
+         * take ID_UNKNOWN over a stale ID if that ever changes. */
+        kexIdGuess = (listSz > 0) ? list[0] : ID_UNKNOWN;
         algoId = MatchIdLists(side, list, listSz,
                 cannedList, cannedListSz);
         if (algoId == ID_UNKNOWN) {
@@ -5227,7 +5205,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         }
     }
     if (ret == WS_SUCCESS) {
-        pubKeyIdGuess = list[0];
+        pubKeyIdGuess = (listSz > 0) ? list[0] : ID_UNKNOWN;
         algoId = MatchIdLists(side, list, listSz, cannedList, cannedListSz);
         if (algoId == ID_UNKNOWN) {
             WLOG(WS_LOG_DEBUG, "Unable to negotiate Server Host Key Algo");
@@ -8011,50 +7989,65 @@ static int DoServiceAccept(WOLFSSH* ssh,
 }
 
 
+/* RFC 8308 section 2.4 lets a client see a second EXT_INFO. The latest
+ * server-sig-algs wins, as in OpenSSH, so one naming nothing usable clears
+ * what an earlier one recorded. */
+static void ClearPeerSigId(WOLFSSH* ssh)
+{
+    if (ssh->peerSigId != NULL) {
+        WFREE(ssh->peerSigId, ssh->ctx->heap, DYNTYPE_ID);
+        ssh->peerSigId = NULL;
+    }
+    ssh->peerSigIdSz = 0;
+}
+
+
 static int DoExtInfoServerSigAlgs(WOLFSSH* ssh,
         const byte* names, word32 namesSz)
 {
-    byte* peerSigId = NULL;
-    word32 peerSigIdSz;
-    int ret = WS_SUCCESS;
+    byte ids[WOLFSSH_MAX_NAMELIST_CNT];
+    word32 idsSz = (word32)sizeof(ids);
+    int ret;
     byte algoId;
 
-    peerSigIdSz = CountNameList(names, namesSz);
-    if (peerSigIdSz == 0) {
-        /* Treat an empty list as no extension. GetNameListRaw() would reject
-         * the NULL idList and drop the connection. */
+    /* Sized to the cap GetNameListRaw() enforces; the copy is cut to size.
+     * ids[0] may be ID_UNKNOWN by design, inert downstream. */
+    ret = GetNameListRaw(ids, &idsSz, names, namesSz);
+
+    if (ret == WS_SUCCESS && idsSz == 0) {
+        /* No usable names, either an empty list or one that opens with an
+         * empty element. Legal, and it advertises nothing. */
         WLOG(WS_LOG_DEBUG, "DEISSA: peer sent an empty server-sig-algs");
+        ClearPeerSigId(ssh);
         return WS_SUCCESS;
     }
 
-    peerSigId = (byte*)WMALLOC(peerSigIdSz, ssh->ctx->heap, DYNTYPE_ID);
-    if (peerSigId == NULL) {
-        ret = WS_MEMORY_E;
-    }
-
     if (ret == WS_SUCCESS) {
-        ret = GetNameListRaw(peerSigId, &peerSigIdSz, names, namesSz);
-    }
-
-    if (ret == WS_SUCCESS) {
-        algoId = MatchIdLists(ssh->ctx->side,
-                peerSigId, peerSigIdSz,
+        algoId = MatchIdLists(ssh->ctx->side, ids, idsSz,
                 cannedKeyAlgoClient, cannedKeyAlgoClientSz);
 
         if (algoId == ID_UNKNOWN) {
-            ret = WS_MATCH_UA_KEY_ID_E;
+            /* Nothing named here we can sign with. server-sig-algs is
+             * advisory, RFC 8308 section 3.1, so don't drop the connection
+             * over it. Userauth fails later if pubkey is tried. */
+            WLOG(WS_LOG_DEBUG, "DEISSA: no usable peer signature algorithm");
+            ClearPeerSigId(ssh);
+            return WS_SUCCESS;
         }
     }
 
     if (ret == WS_SUCCESS) {
-        if (ssh->peerSigId != NULL) {
-            WFREE(ssh->peerSigId, ssh->ctx->heap, DYNTYPE_ID);
+        byte* peerSigId = (byte*)WMALLOC(idsSz, ssh->ctx->heap, DYNTYPE_ID);
+
+        if (peerSigId == NULL) {
+            ret = WS_MEMORY_E;
         }
-        ssh->peerSigId = peerSigId;
-        ssh->peerSigIdSz = peerSigIdSz;
-    }
-    else {
-        WFREE(peerSigId, ssh->ctx->heap, DYNTYPE_ID);
+        else {
+            WMEMCPY(peerSigId, ids, idsSz);
+            ClearPeerSigId(ssh);
+            ssh->peerSigId = peerSigId;
+            ssh->peerSigIdSz = idsSz;
+        }
     }
 
     return ret;
@@ -20605,6 +20598,11 @@ int wolfSSH_TestDoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 int wolfSSH_TestDoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
     return DoNewKeys(ssh, buf, len, idx);
+}
+
+int wolfSSH_TestDoExtInfo(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
+{
+    return DoExtInfo(ssh, buf, len, idx);
 }
 
 void wolfSSH_TestFreeHandshake(WOLFSSH* ssh)
