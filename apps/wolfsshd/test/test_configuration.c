@@ -1342,6 +1342,65 @@ static int test_CheckPasswordHashUnix(void)
         }
     }
 
+    /* (a) empty input + empty stored hash -> SUCCESS (pins the empty branch). */
+    if (ret == WS_SUCCESS) {
+        char emptyStored[2];
+        emptyStored[0] = 0;
+        Log("    Testing scenario: empty password + empty stored hash authenticates.");
+        rc = CheckPasswordHashUnix("", emptyStored);
+        if (rc == WSSHD_AUTH_SUCCESS) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    /* (b) empty input + real $6$ hash -> FAILURE (kills the && -> || mutant). */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: empty password + real hash is rejected.");
+        rc = CheckPasswordHashUnix("", stored);
+        if (rc == WSSHD_AUTH_FAILURE) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    /* (c) non-empty input + empty stored hash -> FAILURE. */
+    if (ret == WS_SUCCESS) {
+        char emptyStored[2];
+        emptyStored[0] = 0;
+        Log("    Testing scenario: non-empty password + empty stored hash is rejected.");
+        rc = CheckPasswordHashUnix(correct, emptyStored);
+        if (rc == WSSHD_AUTH_FAILURE) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    /* (d) locked account (stored[0]=='*') -> FAILURE (pins the '*' guard). */
+    if (ret == WS_SUCCESS) {
+        char lockedStored[3];
+        lockedStored[0] = '*';
+        lockedStored[1] = 0;
+        Log("    Testing scenario: locked account is rejected.");
+        rc = CheckPasswordHashUnix(correct, lockedStored);
+        if (rc == WSSHD_AUTH_FAILURE) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
     return ret;
 }
 #endif /* WOLFSSH_HAVE_LIBCRYPT || WOLFSSH_HAVE_LIBLOGIN */
