@@ -2747,6 +2747,9 @@ static int test_ConfigSavePID(void)
     void (*prevXfsz)(int);
 #endif
 
+    /* Every path below lives in this directory, which mkdtemp() creates mode
+     * 0700. No other user can traverse it, so none of the path-based checks
+     * here can be raced. */
     if (mkdtemp(base) == NULL) {
         Log("    mkdtemp failed.\n");
         ret = WS_FATAL_ERROR;
@@ -2773,15 +2776,16 @@ static int test_ConfigSavePID(void)
         ret = pidSave(conf, pidPath);
     }
     if (ret == WS_SUCCESS) {
-        if (stat(pidPath, &st) != 0) {
+        /* fstat() the open handle instead of stat()ing the path a second
+         * time, so the mode asserted below belongs to the same file the PID
+         * was read from. */
+        f = fopen(pidPath, "r");
+        if (f == NULL || fstat(fileno(f), &st) != 0) {
+            Log("    Could not open or stat %s.\n", pidPath);
             ret = WS_FATAL_ERROR;
         }
         else {
-            f = fopen(pidPath, "r");
-            rd = (f != NULL) ? fscanf(f, "%ld", &pid) : 0;
-            if (f != NULL) {
-                fclose(f);
-            }
+            rd = fscanf(f, "%ld", &pid);
             ret = smExpect("normal PID file written with our PID",
                 (rd == 1 && pid == (long)getpid()) ? WS_SUCCESS
                                                     : WS_FATAL_ERROR, 1);
@@ -2790,6 +2794,9 @@ static int test_ConfigSavePID(void)
                     (st.st_mode & (S_IWGRP | S_IWOTH)) ? WS_FATAL_ERROR
                                                         : WS_SUCCESS, 1);
             }
+        }
+        if (f != NULL) {
+            fclose(f);
         }
     }
 
@@ -2897,15 +2904,13 @@ static int test_ConfigSavePID(void)
     }
     if (ret == WS_SUCCESS) {
         pid = -1;
-        if (stat(stale, &st) != 0) {
+        f = fopen(stale, "r");
+        if (f == NULL || fstat(fileno(f), &st) != 0) {
+            Log("    Could not open or stat %s.\n", stale);
             ret = WS_FATAL_ERROR;
         }
         else {
-            f = fopen(stale, "r");
-            rd = (f != NULL) ? fscanf(f, "%ld", &pid) : 0;
-            if (f != NULL) {
-                fclose(f);
-            }
+            rd = fscanf(f, "%ld", &pid);
             ret = smExpect("existing PID file rewritten with our PID",
                 (rd == 1 && pid == (long)getpid()) ? WS_SUCCESS
                                                     : WS_FATAL_ERROR, 1);
@@ -2915,6 +2920,9 @@ static int test_ConfigSavePID(void)
                     (st.st_mode & (S_IWGRP | S_IWOTH)) ? WS_FATAL_ERROR
                                                         : WS_SUCCESS, 1);
             }
+        }
+        if (f != NULL) {
+            fclose(f);
         }
     }
 
