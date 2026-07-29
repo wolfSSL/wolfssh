@@ -6374,6 +6374,16 @@ static int SFTP_ClientRecvInit(WOLFSSH* ssh) {
             }
 
             ato32(buf + LENGTH_SZ + MSG_ID_SZ, &version);
+            /* The server is supposed to reply with the lower of its own and
+             * our version, so a value above ours is a non-conforming server. In
+             * that case we continue on with the same v3 version. If the server
+             * replies with a version before v3 then return early here since
+             * there will be SSH_FXP_STATUS incompatibility issues. */
+            if (version < WOLFSSH_SFTP_VERSION) {
+                WLOG(WS_LOG_SFTP, "Unsupported SFTP version from server");
+                return WS_VERSION_E;
+            }
+
             sz = sz - MSG_ID_SZ - UINT32_SZ;
             ssh->sftpExtSz = sz;
             ssh->sftpState = SFTP_EXT;
