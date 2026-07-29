@@ -2773,6 +2773,22 @@ struct WS_DIR_LIST {
 };
 
 
+/* returns 1 when the session already holds the maximum directory handles */
+static int SFTP_DirHandleCapped(WOLFSSH* ssh)
+{
+    WS_DIR_LIST* cur;
+    word32 count = 0;
+
+    for (cur = ssh->dirList; cur != NULL; cur = cur->next) {
+        if (++count >= WOLFSSH_MAX_SFTP_HANDLES) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+
 /* Handles packet to open a directory
  *
  * returns WS_SUCCESS on success
@@ -2792,6 +2808,7 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     byte*  out = NULL;
     byte idFlat[WOLFSSH_HANDLE_ID_SZ];
     char per[] = "Permission denied";
+    char tooMany[] = "Too Many Open Directory Handles";
 
     if (ssh == NULL) {
         return WS_BAD_ARGUMENT;
@@ -2817,6 +2834,13 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
     else if (ret != WS_SUCCESS) {
         return WS_BUFFER_E;
+    }
+
+    /* check the cap before opening, so there is nothing to unwind */
+    if (SFTP_DirHandleCapped(ssh)) {
+        WLOG(WS_LOG_SFTP, "Too many open directory handles for session");
+        rc = SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId, tooMany);
+        return (rc == WS_SUCCESS) ? WS_BAD_FILE_E : rc;
     }
 
     if (WOPENDIR(ssh->fs, ssh->ctx->heap, &ctx, dir) != 0) {
@@ -2905,6 +2929,7 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     char name[MAX_PATH];
     char clean[WOLFSSH_MAX_FILENAME];
     char per[] = "Permission denied";
+    char tooMany[] = "Too Many Open Directory Handles";
 
     if (ssh == NULL) {
         return WS_BAD_ARGUMENT;
@@ -2941,6 +2966,13 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
     else if (ret != WS_SUCCESS) {
         return WS_BUFFER_E;
+    }
+
+    /* check the cap before allocating, so there is nothing to unwind */
+    if (SFTP_DirHandleCapped(ssh)) {
+        WLOG(WS_LOG_SFTP, "Too many open directory handles for session");
+        rc = SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId, tooMany);
+        return (rc == WS_SUCCESS) ? WS_BAD_FILE_E : rc;
     }
 
     /* plus one to make sure is null terminated */
@@ -6359,6 +6391,23 @@ int wolfSSH_SFTP_TestFileHandleCount(WOLFSSH* ssh)
     }
     return count;
 }
+
+#ifndef NO_WOLFSSH_DIR
+/* Return the number of open directory handles tracked for the session. */
+int wolfSSH_SFTP_TestDirHandleCount(WOLFSSH* ssh)
+{
+    WS_DIR_LIST* cur;
+    int count = 0;
+
+    if (ssh == NULL) {
+        return 0;
+    }
+    for (cur = ssh->dirList; cur != NULL; cur = cur->next) {
+        count++;
+    }
+    return count;
+}
+#endif /* NO_WOLFSSH_DIR */
 
 /* Close the underlying descriptor of the head tracked file handle out of band,
  * leaving the node in the list with a now-stale fd. The next RecvClose on that
