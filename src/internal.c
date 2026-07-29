@@ -3111,20 +3111,18 @@ int CheckAlgoList(const char* list, byte type)
                 byte id = NameToIdType(name, nameSz, &tokenType);
 
                 if (id == ID_NONE) {
-                    int noneOk = 0;
-
                     /* "none" names the null cipher/MAC, not a host key. It
                      * disables the transport, so it needs the build flag. */
 #ifdef WOLFSSH_ALLOW_NONE_CIPHER
-                    if (type == TYPE_CIPHER || type == TYPE_MAC) {
-                        noneOk = 1;
-                    }
-#endif
-                    if (!noneOk) {
+                    if (type != TYPE_CIPHER && type != TYPE_MAC) {
                         ret = WS_INVALID_ALGO_ID;
                         break;
                     }
                     usableCount++;
+#else
+                    ret = WS_INVALID_ALGO_ID;
+                    break;
+#endif
                 }
                 else if (id != ID_UNKNOWN) {
                     /* Wrong category is a caller mistake, not a build
