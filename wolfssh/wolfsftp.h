@@ -324,6 +324,9 @@ WOLFSSH_LOCAL void wolfSSH_SFTP_ShowSizes(void);
                 word32* sz);
         WOLFSSH_API void wolfSSH_SFTP_TestRecvStateFree(WOLFSSH* ssh);
         WOLFSSH_API int wolfSSH_SFTP_TestFileHandleCount(WOLFSSH* ssh);
+        #ifndef NO_WOLFSSH_DIR
+            WOLFSSH_API int wolfSSH_SFTP_TestDirHandleCount(WOLFSSH* ssh);
+        #endif
         WOLFSSH_API int wolfSSH_SFTP_TestInvalidateHeadFd(WOLFSSH* ssh);
     #endif
     #if defined(WOLFSSL_NUCLEUS) && !defined(NO_WOLFSSH_MKTIME)

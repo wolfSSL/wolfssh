@@ -3263,6 +3263,98 @@ static void TestSftpHandleLimit(void)
     wolfSSH_CTX_free(ctx);
 }
 
+#ifndef NO_WOLFSSH_DIR
+/* Directory handles live on ssh->dirList, a separate list from the file
+ * handles, so the SFTP_AddFileHandle cap does not apply to them. Without its
+ * own limit a peer could loop on OPENDIR and grow that list without bound.
+ * Same shape as TestSftpHandleLimit: fill to the cap, confirm the next OPENDIR
+ * is refused, close one and confirm a fresh OPENDIR succeeds again. */
+static void TestSftpDirHandleLimit(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    int rid = 400;
+    int reqId;
+    int i;
+    word32 idx;
+    word32 replySz;
+    const byte* reply;
+    const word32 hOff = WOLFSSH_SFTP_HEADER + UINT32_SZ; /* handle in reply */
+    byte handles[WOLFSSH_MAX_SFTP_HANDLES][WOLFSSH_HANDLE_ID_SZ];
+    byte pkt[256];
+    char cwd[WOLFSSH_MAX_FILENAME];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SFTP_TestRecvStateInit(ssh), WS_SUCCESS);
+
+    WMEMSET(cwd, 0, sizeof(cwd));
+    AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
+    AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
+
+    /* open the cap's worth of handles on "."; all must succeed */
+    for (i = 0; i < WOLFSSH_MAX_SFTP_HANDLES; i++) {
+        idx = 0;
+        SftpPutU32(1, pkt + idx); idx += UINT32_SZ;
+        pkt[idx++] = '.';
+        AssertIntEQ(wolfSSH_SFTP_RecvOpenDir(ssh, rid++, pkt, idx), WS_SUCCESS);
+        reply = wolfSSH_SFTP_TestRecvReply(ssh, &replySz);
+        AssertNotNull(reply);
+        AssertTrue(replySz >= hOff + WOLFSSH_HANDLE_ID_SZ);
+        WMEMCPY(handles[i], reply + hOff, WOLFSSH_HANDLE_ID_SZ);
+    }
+    AssertIntEQ(wolfSSH_SFTP_TestDirHandleCount(ssh),
+            WOLFSSH_MAX_SFTP_HANDLES);
+
+    /* one past the cap must be refused, and must not grow the list */
+    idx = 0;
+    SftpPutU32(1, pkt + idx); idx += UINT32_SZ;
+    pkt[idx++] = '.';
+    reqId = rid++;
+    AssertTrue(wolfSSH_SFTP_RecvOpenDir(ssh, reqId, pkt, idx) != WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SFTP_TestDirHandleCount(ssh),
+            WOLFSSH_MAX_SFTP_HANDLES);
+    /* the peer must be told, and told it was a failure rather than silence */
+    AssertSftpStatusReply(ssh, reqId, WOLFSSH_FTP_FAILURE);
+
+    /* free one slot; a fresh OPENDIR must now succeed again */
+    idx = 0;
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, handles[0], WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+    AssertIntEQ(wolfSSH_SFTP_RecvClose(ssh, rid++, pkt, idx), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SFTP_TestDirHandleCount(ssh),
+            WOLFSSH_MAX_SFTP_HANDLES - 1);
+
+    idx = 0;
+    SftpPutU32(1, pkt + idx); idx += UINT32_SZ;
+    pkt[idx++] = '.';
+    AssertIntEQ(wolfSSH_SFTP_RecvOpenDir(ssh, rid++, pkt, idx), WS_SUCCESS);
+    reply = wolfSSH_SFTP_TestRecvReply(ssh, &replySz);
+    AssertNotNull(reply);
+    AssertTrue(replySz >= hOff + WOLFSSH_HANDLE_ID_SZ);
+    WMEMCPY(handles[0], reply + hOff, WOLFSSH_HANDLE_ID_SZ);
+    AssertIntEQ(wolfSSH_SFTP_TestDirHandleCount(ssh),
+            WOLFSSH_MAX_SFTP_HANDLES);
+
+    /* close every handle and clean up */
+    for (i = 0; i < WOLFSSH_MAX_SFTP_HANDLES; i++) {
+        idx = 0;
+        SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+        WMEMCPY(pkt + idx, handles[i], WOLFSSH_HANDLE_ID_SZ);
+        idx += WOLFSSH_HANDLE_ID_SZ;
+        AssertIntEQ(wolfSSH_SFTP_RecvClose(ssh, rid++, pkt, idx), WS_SUCCESS);
+    }
+    AssertIntEQ(wolfSSH_SFTP_TestDirHandleCount(ssh), 0);
+
+    wolfSSH_SFTP_TestRecvStateFree(ssh);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+#endif /* NO_WOLFSSH_DIR */
+
 /* A failed close() must still drop the handle from the session tracking list;
  * otherwise the stale descriptor lingers and is closed a second time when the
  * session is torn down. Open a file, invalidate its descriptor out of band so
@@ -5783,6 +5875,10 @@ int main(int argc, char** argv)
     #endif
     /* open file handles are capped per session */
     TestSftpHandleLimit();
+    #ifndef NO_WOLFSSH_DIR
+    /* open directory handles are capped per session */
+    TestSftpDirHandleLimit();
+    #endif
     /* a failed close still drops the handle from the tracking list */
     TestSftpCloseFailureRemovesHandle();
     #endif
