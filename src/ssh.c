@@ -2113,7 +2113,7 @@ static int DoPemKey(const byte* in, word32 inSz, byte** out,
     }
 
     if (ret == WS_SUCCESS) {
-        ret = IdentifyAsn1Key(newKey, newKeySz, 1, heap, NULL);
+        ret = IdentifyAsn1Key(newKey, newKeySz, isPrivate, heap, NULL);
     }
 
     if (ret > 0) {

@@ -1154,6 +1154,105 @@ static void test_wolfSSH_ReadKey(void)
 }
 
 
+#ifndef WOLFSSH_NO_RSA
+/* SubjectPublicKeyInfo for the same RSA key as serverKeyRsaDer. */
+static const char serverKeyRsaPubPem[] =
+    "-----BEGIN PUBLIC KEY-----\n"
+    "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2l2tJRR2FVnzQP08uGIw\n"
+    "s23A+ezsi4MenkKcykFq04rhUjTgDRNiftQPrlxNBPGN+sWtd6paBcrv+I2r/4op\n"
+    "CUwEwvUZy+0fsbQp08NsqSPfo6DlCN6tjHH5NIhs7Tvwb6UPrFn/azPxcPuMpLNF\n"
+    "Io2dd3rlKV+EFNmZ6urOLVHz41j6WwIPybUqvLJe08Iwuzyxw+9Y81CUKIvEZUr3\n"
+    "ANmX2WtNjZWhimIGtFARIoO06irn0KggR0//Rq7FE+E4i/hUrzpNL/gf14SQ2JMF\n"
+    "BsJ9kNvjnNDEZVoDrQCsWqLN2j+JWDdTvytGeqyJQStaLuh2517jKYWjY+rmhmB8\n"
+    "LQIDAQAB\n"
+    "-----END PUBLIC KEY-----\n";
+/* The same SubjectPublicKeyInfo in DER, what the PEM above decodes to. */
+static const char serverKeyRsaPubDer[] =
+    "30820122300d06092a864886f70d01010105000382010f003082010a02820101"
+    "00da5dad2514761559f340fd3cb86230b36dc0f9ecec8b831e9e429cca416ad3"
+    "8ae15234e00d13627ed40fae5c4d04f18dfac5ad77aa5a05caeff88dabff8a29"
+    "094c04c2f519cbed1fb1b429d3c36ca923dfa3a0e508dead8c71f934886ced3b"
+    "f06fa50fac59ff6b33f170fb8ca4b345228d9d777ae5295f8414d999eaeace2d"
+    "51f3e358fa5b020fc9b52abcb25ed3c230bb3cb1c3ef58f35094288bc4654af7"
+    "00d997d96b4d8d95a18a6206b450112283b4ea2ae7d0a820474fff46aec513e1"
+    "388bf854af3a4d2ff81fd78490d8930506c27d90dbe39cd0c4655a03ad00ac5a"
+    "a2cdda3f89583753bf2b467aac89412b5a2ee876e75ee32985a363eae686607c"
+    "2d0203010001";
+#endif
+
+
+static void test_wolfSSH_ReadPublicKey_pem(void)
+{
+#ifndef WOLFSSH_NO_RSA
+    /* DoPemKey() used to pass a literal 1 for isPrivate when identifying the
+     * decoded key, so a public PEM converted by wc_PubKeyPemToDer() was then
+     * run through the private-key decoders and never identified. */
+    byte* key = NULL;
+    word32 keySz = 0;
+    const byte* keyType = NULL;
+    word32 keyTypeSz = 0;
+    word32 pemSz = (word32)WSTRLEN(serverKeyRsaPubPem);
+    int ret;
+
+    ret = wolfSSH_ReadPublicKey_buffer((const byte*)serverKeyRsaPubPem, pemSz,
+            WOLFSSH_FORMAT_PEM, &key, &keySz, &keyType, &keyTypeSz, NULL);
+
+#ifdef WOLFSSH_TPM
+    /* The public PEM branch of DoPemKey() is only compiled in with TPM
+     * support, so this is the only build where the read can succeed. */
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertNotNull(key);
+    AssertIntGT(keySz, 0);
+    AssertIntLT(keySz, pemSz); /* DER is smaller than the PEM it came from */
+    AssertStrEQ(keyType, "ssh-rsa");
+    AssertIntEQ(keyTypeSz, (word32)WSTRLEN("ssh-rsa"));
+
+    /* The output is the decoded SubjectPublicKeyInfo. Re-reading it as ASN.1
+     * confirms a public key came back, not a mis-tagged private one. */
+    {
+        byte* sshKey = NULL;
+        word32 sshKeySz = 0;
+        const byte* sshKeyType = NULL;
+        word32 sshKeyTypeSz = 0;
+
+        AssertIntEQ(wolfSSH_ReadPublicKey_buffer(key, keySz,
+                    WOLFSSH_FORMAT_ASN1, &sshKey, &sshKeySz,
+                    &sshKeyType, &sshKeyTypeSz, NULL), WS_SUCCESS);
+        AssertNotNull(sshKey);
+        AssertStrEQ(sshKeyType, "ssh-rsa");
+        WFREE(sshKey, NULL, DYNTYPE_PRIVKEY);
+    }
+
+    WFREE(key, NULL, DYNTYPE_PRIVKEY);
+#else
+    /* Without TPM support the branch is compiled out and the read must fail
+     * cleanly, leaving the outputs untouched. */
+    AssertIntEQ(ret, WS_PARSE_E);
+    AssertNull(key);
+    AssertIntEQ(keySz, 0);
+    AssertNull(keyType);
+    AssertIntEQ(keyTypeSz, 0);
+#endif /* WOLFSSH_TPM */
+
+    /* The public PEM branch above only builds with TPM support, so pin the
+     * behavior it depends on here where every build runs it: the decoded
+     * SubjectPublicKeyInfo identifies as ssh-rsa only when isPrivate is 0.
+     * Hardcoding 1, as DoPemKey() once did, cannot identify it. */
+    {
+        byte* der = NULL;
+        word32 derSz = 0;
+
+        AssertIntEQ(ConvertHexToBin(serverKeyRsaPubDer, &der, &derSz,
+                    NULL, NULL, NULL, NULL, NULL, NULL,
+                    NULL, NULL, NULL), 0);
+        AssertIntEQ(IdentifyAsn1Key(der, derSz, 0, NULL, NULL), ID_SSH_RSA);
+        AssertIntLT(IdentifyAsn1Key(der, derSz, 1, NULL, NULL), 0);
+        WFREE(der, NULL, 0);
+    }
+#endif /* WOLFSSH_NO_RSA */
+}
+
+
 static void test_wolfSSH_ReadKey_badPad(void)
 {
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
@@ -5252,6 +5351,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_CTX_SetWindowPacketSize();
     test_wolfSSH_CertMan();
     test_wolfSSH_ReadKey();
+    test_wolfSSH_ReadPublicKey_pem();
     test_wolfSSH_ReadKey_badPad();
     test_wolfSSH_ReadKey_shortBuffer();
     test_wolfSSH_ReadKey_noTrailingNewline();
