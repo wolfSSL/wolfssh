@@ -52,6 +52,7 @@
 
 static byte userPublicKeyBuf[512];
 static byte* userPublicKey = userPublicKeyBuf;
+static byte userPublicKeyAlloc = 0;
 static const byte* userPublicKeyType = NULL;
 static byte userPassword[256];
 static const byte* userPrivateKeyType = NULL;
@@ -284,7 +285,7 @@ static int load_der_file(const char* filename, byte** out, word32* outSz,
     }
     WREWIND(NULL, file);
 
-    in = (byte*)WMALLOC(inSz, heap, 0);
+    in = (byte*)WMALLOC(inSz, heap, DYNTYPE_PRIVKEY);
     if (in == NULL) {
         WFCLOSE(NULL, file);
         return -1;
@@ -293,7 +294,7 @@ static int load_der_file(const char* filename, byte** out, word32* outSz,
     ret = (int)WFREAD(NULL, in, 1, inSz, file);
     if (ret <= 0 || ret != inSz) {
         ret = -1;
-        WFREE(in, heap, 0);
+        WFREE(in, heap, DYNTYPE_PRIVKEY);
         in = 0;
         inSz = 0;
     }
@@ -757,6 +758,15 @@ int ClientUseCert(const char* certName, void* heap)
             userPublicKeyType = publicKeyType;
             userPublicKeyTypeSz = (word32)WSTRLEN((const char*)publicKeyType);
             pubKeyLoaded = 1;
+            userPublicKeyAlloc = 1;
+        }
+        else {
+            /* Defensive: load_der_file() clears its output pointer on the
+             * short-read failure, so put the static buffer back. */
+            userPublicKey = userPublicKeyBuf;
+            userPublicKeySz = 0;
+            userPublicKeyType = NULL;
+            userPublicKeyAlloc = 0;
         }
     #else
         (void)heap;
@@ -860,7 +870,7 @@ exit:
 }
 
 static int wolfSSH_TPM_InitKey(WOLFTPM2_DEV* dev, const char* name,
-    WOLFTPM2_KEY* pTpmKey, const char* tpmKeyAuth)
+    WOLFTPM2_KEY* pTpmKey, const char* tpmKeyAuth, void* heap)
 {
     int rc = 0;
     WOLFTPM2_KEY endorse;
@@ -943,11 +953,14 @@ static int wolfSSH_TPM_InitKey(WOLFTPM2_DEV* dev, const char* name,
 
     /* Read public key from buffer and convert key to OpenSSH format */
     if (rc == 0) {
+        /* Allocate from the caller's heap, ClientFreeBuffers() frees it
+         * with the same one. */
         rc = wolfSSH_ReadPublicKey_buffer(userPublicKey, userPublicKeySz,
             WOLFSSH_FORMAT_ASN1, &p, &userPublicKeySz, &userPublicKeyType,
-            &userPublicKeyTypeSz, NULL);
+            &userPublicKeyTypeSz, heap);
         if (rc == 0) {
             userPublicKey = p;
+            userPublicKeyAlloc = 1;
         } else {
             WLOG(WS_LOG_DEBUG, "Reading public key failed, rc: %d", rc);
         }
@@ -1030,7 +1043,8 @@ int ClientSetPrivateKey(const char* privKeyName, int userEcc,
          */
         WMEMSET(&tpmDev, 0, sizeof(tpmDev));
         WMEMSET(&tpmKey, 0, sizeof(tpmKey));
-        ret = wolfSSH_TPM_InitKey(&tpmDev, privKeyName, &tpmKey, tpmKeyAuth);
+        ret = wolfSSH_TPM_InitKey(&tpmDev, privKeyName, &tpmKey, tpmKeyAuth,
+                heap);
     #elif !defined(NO_FILESYSTEM)
         userPrivateKey = NULL; /* create new buffer based on parsed input */
         userPrivateKeyAlloc = 1;
@@ -1089,6 +1103,13 @@ int ClientUsePubKey(const char* pubKeyName, int userEcc, void* heap)
     #endif /* NO_FILESYSTEM */
         if (ret == 0) {
             pubKeyLoaded = 1;
+            userPublicKeyAlloc = 1;
+        }
+        else {
+            userPublicKey = userPublicKeyBuf;
+            userPublicKeySz = 0;
+            userPublicKeyType = NULL;
+            userPublicKeyAlloc = 0;
         }
     }
 
@@ -1112,7 +1133,7 @@ int ClientLoadCA(WOLFSSH_CTX* ctx, const char* caCert)
                 fprintf(stderr, "Couldn't parse in CA certificate.");
                 ret = WS_PARSE_E;
             }
-            WFREE(der, NULL, 0);
+            WFREE(der, ctx->heap, DYNTYPE_PRIVKEY);
         }
     #else
         (void)ctx;
@@ -1132,11 +1153,16 @@ void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
 #ifdef WOLFSSH_TPM
     wolfSSH_TPM_Cleanup(&tpmDev, &tpmKey);
 #endif
-    if (pubKeyName != NULL && userPublicKey != NULL &&
-        userPublicKey != userPublicKeyBuf) {
+    /* The public key buffer is tracked by userPublicKeyAlloc, not by
+     * pubKeyName: ClientUseCert() allocates one without a public key file
+     * name being given. */
+    (void)pubKeyName;
+
+    if (userPublicKeyAlloc && userPublicKey != NULL) {
         WFREE(userPublicKey, heap, DYNTYPE_PRIVKEY);
         userPublicKey = userPublicKeyBuf;
         userPublicKeySz = 0;
+        userPublicKeyAlloc = 0;
     }
 
     if (privKeyName != NULL && userPrivateKey != NULL) {
