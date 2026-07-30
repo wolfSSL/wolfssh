@@ -1702,6 +1702,11 @@ int wolfSSH_AGENT_worker(WOLFSSH* ssh)
         ret = WS_SSH_NULL_E;
 
     if (ret == WS_SUCCESS) {
+        if (ssh->agent == NULL)
+            ret = WS_AGENT_NULL_E;
+    }
+
+    if (ret == WS_SUCCESS) {
         SendSuccess(NULL);
         DoMessage(NULL, NULL, 0, NULL);
         ssh->agent->state = AGENT_STATE_DONE;
