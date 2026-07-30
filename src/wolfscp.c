@@ -366,6 +366,7 @@ static int ScpSourceInit(WOLFSSH* ssh)
         WFREE(ssh->scpFileName, ssh->ctx->heap, DYNTYPE_STRING);
         ssh->scpFileName = NULL;
         ssh->scpFileNameSz = 0;
+        ssh->scpFileNameCap = 0;
     }
 
     ssh->scpFileName = (char*)WMALLOC(DEFAULT_SCP_FILE_NAME_SZ, ssh->ctx->heap,
@@ -373,17 +374,28 @@ static int ScpSourceInit(WOLFSSH* ssh)
     if (ssh->scpFileName == NULL)
         return WS_MEMORY_E;
 
-    ssh->scpFileNameSz = DEFAULT_SCP_FILE_NAME_SZ;
+    /* The source path uses scpFileName as a fixed-size scratch buffer that the
+     * send callback fills in, so there is no name in it yet. */
+    ssh->scpFileNameCap = DEFAULT_SCP_FILE_NAME_SZ;
+    ssh->scpFileNameSz = 0;
     WMEMSET(ssh->scpFileName, 0, DEFAULT_SCP_FILE_NAME_SZ);
 
     /* file buffer */
+    if (ssh->scpFileBuffer != NULL) {
+        WFREE(ssh->scpFileBuffer, ssh->ctx->heap, DYNTYPE_BUFFER);
+        ssh->scpFileBuffer = NULL;
+        ssh->scpFileBufferSz = 0;
+    }
+
     ssh->scpFileBuffer = (byte*)WMALLOC(DEFAULT_SCP_BUFFER_SZ, ssh->ctx->heap,
                                         DYNTYPE_BUFFER);
     if (ssh->scpFileBuffer == NULL) {
         WFREE(ssh->scpFileName, ssh->ctx->heap, DYNTYPE_STRING);
         ssh->scpFileName = NULL;
+        ssh->scpFileNameCap = 0;
         return WS_MEMORY_E;
     }
+
     ssh->scpFileBufferSz = DEFAULT_SCP_BUFFER_SZ;
     WMEMSET(ssh->scpFileBuffer, 0, DEFAULT_SCP_BUFFER_SZ);
 
@@ -633,9 +645,12 @@ int DoScpSource(WOLFSSH* ssh)
             case SCP_TRANSFER:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_TRANSFER");
 
+                /* the callback writes the name into scpFileName, so it needs
+                 * the buffer capacity, not the current name length */
                 ssh->scpConfirm = ssh->ctx->scpSendCb(ssh,
                         ssh->scpRequestType, ssh->scpBasePath,
-                        ssh->scpFileName, ssh->scpFileNameSz, &(ssh->scpMTime),
+                        ssh->scpFileName, ssh->scpFileNameCap,
+                        &(ssh->scpMTime),
                         &(ssh->scpATime), &(ssh->scpFileMode),
                         ssh->scpFileOffset, &(ssh->scpFileSz),
                         ssh->scpFileBuffer + ssh->scpBufferedSz,
@@ -1258,16 +1273,24 @@ static int GetScpFileName(WOLFSSH* ssh, byte* buf, word32 bufSz,
             }
         }
 
-        if (ssh->scpFileName != NULL) {
-            WFREE(ssh->scpFileName, ssh->ctx->heap, DYNTYPE_STRING);
-            ssh->scpFileName = NULL;
-            ssh->scpFileNameSz = 0;
-        }
+        /* reuse the existing allocation when the name plus its terminator
+         * fits; scpFileNameCap is the allocation size, so this is correct no
+         * matter what the last name length was */
+        if (ssh->scpFileName == NULL || ssh->scpFileNameCap <= len) {
+            if (ssh->scpFileName != NULL) {
+                WFREE(ssh->scpFileName, ssh->ctx->heap, DYNTYPE_STRING);
+                ssh->scpFileName = NULL;
+                ssh->scpFileNameSz = 0;
+                ssh->scpFileNameCap = 0;
+            }
 
-        ssh->scpFileName = (char*)WMALLOC(len + 1, ssh->ctx->heap,
-                                          DYNTYPE_STRING);
-        if (ssh->scpFileName == NULL)
-            ret = WS_MEMORY_E;
+            ssh->scpFileName = (char*)WMALLOC(len + 1, ssh->ctx->heap,
+                                              DYNTYPE_STRING);
+            if (ssh->scpFileName == NULL)
+                ret = WS_MEMORY_E;
+            else
+                ssh->scpFileNameCap = len + 1;
+        }
 
         if (ret == WS_SUCCESS) {
             WMEMCPY(ssh->scpFileName, buf + idx, len);
@@ -1280,6 +1303,14 @@ static int GetScpFileName(WOLFSSH* ssh, byte* buf, word32 bufSz,
 
     return ret;
 }
+
+#ifdef WOLFSSH_TEST_INTERNAL
+int wolfSSH_TestScpGetFileName(WOLFSSH* ssh, byte* buf, word32 bufSz,
+        word32* inOutIdx)
+{
+    return GetScpFileName(ssh, buf, bufSz, inOutIdx);
+}
+#endif /* WOLFSSH_TEST_INTERNAL */
 
 /* Reads timestamp information (access, modification) from beginning
  * of string, expects space to be after each time value:
@@ -1443,10 +1474,12 @@ static int ScpCheckForRename(WOLFSSH* ssh)
     }
 
     sz = sz - idx; /* size of file name */
-    if (ssh->scpFileNameSz < (word32)sz || ssh->scpFileName == NULL) {
+    if (ssh->scpFileName == NULL || ssh->scpFileNameCap <= (word32)sz) {
         if (ssh->scpFileName != NULL) {
             WFREE(ssh->scpFileName, ssh->ctx->heap, DYNTYPE_STRING);
+            ssh->scpFileName = NULL;
             ssh->scpFileNameSz = 0;
+            ssh->scpFileNameCap = 0;
         }
         ssh->scpFileName = (char*)WMALLOC(sz + 1, ssh->ctx->heap,
             DYNTYPE_STRING);
@@ -1456,6 +1489,7 @@ static int ScpCheckForRename(WOLFSSH* ssh)
             ssh->scpBasePath = NULL;
             return WS_MEMORY_E;
         }
+        ssh->scpFileNameCap = sz + 1;
         ssh->scpFileName[0] = '\0'; /* make sure null terminated for check */
     }
 
@@ -3078,7 +3112,8 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
                  DEFAULT_SCP_FILE_NAME_SZ);
             WSTRNCPY(fileName, sendCtx->currentDir->dir.lfname,
                  DEFAULT_SCP_FILE_NAME_SZ);
-            if (wolfSSH_CleanPath(ssh, filePath, DEFAULT_SCP_FILE_NAME_SZ) < 0) {
+            if (wolfSSH_CleanPath(ssh, filePath,
+                        DEFAULT_SCP_FILE_NAME_SZ) < 0) {
                 ret = WS_SCP_ABORT;
             }
         #elif defined(USE_WINDOWS_API)

@@ -1030,6 +1030,8 @@ struct WOLFSSH {
     char*  scpFileName;           /* file name, dynamic */
     char*  scpFileReName;         /* file rename case, points to scpFileName */
     word32 scpFileNameSz;         /* length of fileName, not including \0 */
+    word32 scpFileNameCap;        /* bytes allocated for scpFileName, including
+                                   * room for the terminating \0 */
     byte   scpTimestamp;          /* did peer request timestamp? {0:1} */
     word64 scpATime;              /* scp file access time, secs since epoch */
     word64 scpMTime;              /* scp file modification time, secs epoch */
@@ -1688,6 +1690,8 @@ enum WS_MessageIdLimits {
     WOLFSSH_API int wolfSSH_TestScpGetFileSize(WOLFSSH* ssh, byte* buf,
             word32 bufSz, word32* inOutIdx);
     WOLFSSH_API int wolfSSH_TestScpGetTimestamp(WOLFSSH* ssh, byte* buf,
+            word32 bufSz, word32* inOutIdx);
+    WOLFSSH_API int wolfSSH_TestScpGetFileName(WOLFSSH* ssh, byte* buf,
             word32 bufSz, word32* inOutIdx);
 #if !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
     WOLFSSH_API int wolfSSH_TestScpPushDir(const char* path);

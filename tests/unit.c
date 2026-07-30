@@ -2955,6 +2955,198 @@ static int test_ScpGetTimestamp(void)
     wolfSSH_CTX_free(ctx);
     return result;
 }
+
+/* Drive GetScpFileName directly, covering the reuse-vs-realloc branch added
+ * to avoid a free/WMALLOC pair on every call: a name that fits within the
+ * previous allocation reuses ssh->scpFileName (verified by pointer identity),
+ * while a name too long for it forces a fresh allocation. Each case also
+ * checks scpFileNameCap, which is the allocation size the reuse condition
+ * tests against, so an off-by-one there fails deterministically rather than
+ * only under a heap checker. */
+static int test_ScpGetFileName(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    char* firstAlloc = NULL;
+    char* afterGrow = NULL;
+    char tmp[64];
+    int result = 0;
+    int ret;
+    word32 idx;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -450;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -451;
+    }
+
+    /* first call: nothing allocated yet, must allocate */
+    WSTRNCPY(tmp, "short.txt", sizeof(tmp));
+    idx = 0;
+    ret = wolfSSH_TestScpGetFileName(ssh, (byte*)tmp, (word32)WSTRLEN(tmp),
+            &idx);
+    if (ret != WS_SUCCESS)
+        result = -452;
+    else if (ssh->scpFileName == NULL)
+        result = -453;
+    else if (WSTRNCMP(ssh->scpFileName, "short.txt", 10) != 0)
+        result = -454;
+    else if (ssh->scpFileNameSz != 9)
+        result = -455;
+    else if (ssh->scpFileNameCap != 10)
+        result = -476;
+    firstAlloc = ssh->scpFileName;
+
+    /* second call: shorter name fits in the existing allocation, reuse it */
+    if (result == 0) {
+        WSTRNCPY(tmp, "ab", sizeof(tmp));
+        idx = 0;
+        ret = wolfSSH_TestScpGetFileName(ssh, (byte*)tmp,
+                (word32)WSTRLEN(tmp), &idx);
+        if (ret != WS_SUCCESS)
+            result = -456;
+        else if (ssh->scpFileName != firstAlloc)
+            result = -457;
+        else if (WSTRNCMP(ssh->scpFileName, "ab", 3) != 0)
+            result = -458;
+        else if (ssh->scpFileNameSz != 2)
+            result = -459;
+    }
+
+    /* third call: a name as long as the last one is still reused, because the
+     * check is against the allocation size and not the previous name length */
+    if (result == 0) {
+        WSTRNCPY(tmp, "xy", sizeof(tmp));
+        idx = 0;
+        ret = wolfSSH_TestScpGetFileName(ssh, (byte*)tmp,
+                (word32)WSTRLEN(tmp), &idx);
+        if (ret != WS_SUCCESS)
+            result = -460;
+        else if (ssh->scpFileName != firstAlloc)
+            result = -461;
+        else if (WSTRNCMP(ssh->scpFileName, "xy", 3) != 0)
+            result = -462;
+        else if (ssh->scpFileNameCap != 10)
+            result = -477;
+    }
+
+    /* fourth call: a name longer than the current allocation forces a fresh
+     * WMALLOC */
+    if (result == 0) {
+        WSTRNCPY(tmp, "a-name-considerably-longer-than-before.bin",
+                sizeof(tmp));
+        idx = 0;
+        ret = wolfSSH_TestScpGetFileName(ssh, (byte*)tmp,
+                (word32)WSTRLEN(tmp), &idx);
+        if (ret != WS_SUCCESS)
+            result = -463;
+        else if (WSTRNCMP(ssh->scpFileName,
+                "a-name-considerably-longer-than-before.bin", 43) != 0)
+            result = -464;
+        else if (ssh->scpFileNameSz != 42)
+            result = -465;
+        else if (ssh->scpFileNameCap != 43)
+            result = -478;
+        afterGrow = ssh->scpFileName;
+    }
+
+    /* fifth call: tight-fit boundary. The allocation is exactly 43 bytes
+     * here, so reusing it for a 42-character name puts the NUL on the
+     * buffer's final byte -- catches an off-by-one in the WMALLOC size. */
+    if (result == 0) {
+        WSTRNCPY(tmp, "a-different-name-of-the-very-same-length.b",
+                sizeof(tmp));
+        idx = 0;
+        ret = wolfSSH_TestScpGetFileName(ssh, (byte*)tmp,
+                (word32)WSTRLEN(tmp), &idx);
+        if (ret != WS_SUCCESS)
+            result = -469;
+        else if (ssh->scpFileName != afterGrow)
+            result = -470;
+        else if (WSTRNCMP(ssh->scpFileName,
+                "a-different-name-of-the-very-same-length.b", 43) != 0)
+            result = -471;
+        else if (ssh->scpFileNameSz != 42)
+            result = -472;
+        else if (ssh->scpFileNameCap != 43)
+            result = -479;
+    }
+
+    /* sixth call: grow by exactly one byte. A 43-character name needs 44
+     * bytes, one more than the current allocation, so it must not be reused.
+     * The scpFileNameCap check below is what catches an off-by-one in the
+     * reuse condition itself: a loosened condition would reuse the 43-byte
+     * block and write the NUL one past its end, which the content and
+     * scpFileNameSz checks cannot see. */
+    if (result == 0) {
+        WSTRNCPY(tmp, "another-42-char-name-for-tight-fit-case.bin",
+                sizeof(tmp));
+        idx = 0;
+        ret = wolfSSH_TestScpGetFileName(ssh, (byte*)tmp,
+                (word32)WSTRLEN(tmp), &idx);
+        if (ret != WS_SUCCESS)
+            result = -473;
+        else if (WSTRNCMP(ssh->scpFileName,
+                "another-42-char-name-for-tight-fit-case.bin", 44) != 0)
+            result = -474;
+        else if (ssh->scpFileNameSz != 43)
+            result = -475;
+        else if (ssh->scpFileNameCap != 44)
+            result = -480;
+        afterGrow = ssh->scpFileName;
+    }
+
+    /* seventh call: back to a short name, reuses the grown allocation */
+    if (result == 0) {
+        WSTRNCPY(tmp, "z", sizeof(tmp));
+        idx = 0;
+        ret = wolfSSH_TestScpGetFileName(ssh, (byte*)tmp,
+                (word32)WSTRLEN(tmp), &idx);
+        if (ret != WS_SUCCESS)
+            result = -466;
+        else if (ssh->scpFileName != afterGrow)
+            result = -467;
+        else if (WSTRNCMP(ssh->scpFileName, "z", 2) != 0)
+            result = -468;
+        else if (ssh->scpFileNameCap != 44)
+            result = -481;
+    }
+
+    /* a source-path session sets scpFileNameCap without ever putting a name in
+     * the buffer; a name of exactly that capacity must still reallocate rather
+     * than write its NUL one byte past the end */
+    if (result == 0) {
+        WFREE(ssh->scpFileName, ssh->ctx->heap, DYNTYPE_STRING);
+        ssh->scpFileName = (char*)WMALLOC(8, ssh->ctx->heap, DYNTYPE_STRING);
+        if (ssh->scpFileName == NULL) {
+            result = -482;
+        }
+        else {
+            ssh->scpFileNameCap = 8;
+            ssh->scpFileNameSz = 0;
+
+            WSTRNCPY(tmp, "12345678", sizeof(tmp));
+            idx = 0;
+            ret = wolfSSH_TestScpGetFileName(ssh, (byte*)tmp,
+                    (word32)WSTRLEN(tmp), &idx);
+            if (ret != WS_SUCCESS)
+                result = -483;
+            else if (ssh->scpFileNameCap != 9)
+                result = -484;
+            else if (WSTRNCMP(ssh->scpFileName, "12345678", 9) != 0)
+                result = -485;
+            else if (ssh->scpFileNameSz != 8)
+                result = -486;
+        }
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
 #endif /* WOLFSSH_TEST_INTERNAL && WOLFSSH_SCP */
 
 static int test_ChannelPutData(void)
@@ -13232,6 +13424,10 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_ScpGetTimestamp();
     printf("ScpGetTimestamp: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ScpGetFileName();
+    printf("ScpGetFileName: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
 
