@@ -151,7 +151,7 @@ static long GetConfigInt(const char* in, int inSz, int isTime, void* heap)
             WMEMCPY(num, in, sz);
             num[sz] = '\0';
             ret = atol(num);
-            if (ret == 0 && WSTRCMP(in, "0") != 0) {
+            if (ret == 0 && WSTRCMP(num, "0") != 0) {
                 ret = WS_BAD_ARGUMENT;
             }
             else if (ret > 0) {

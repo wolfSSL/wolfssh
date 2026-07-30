@@ -262,6 +262,10 @@ static int test_ParseConfigLine(void)
         {"Invalid login grace time", "LoginGraceTime wolfsshd", 1},
         {"Bare multiplier m (no digit)", "LoginGraceTime m", 1},
         {"Bare multiplier h (no digit)", "LoginGraceTime h", 1},
+        {"Valid login grace time zero", "LoginGraceTime 0", 0},
+        {"Valid login grace time zero minutes", "LoginGraceTime 0m", 0},
+        {"Valid login grace time zero hours", "LoginGraceTime 0h", 0},
+        {"Invalid zero padded login grace time", "LoginGraceTime 00", 1},
 
         /* Permit empty password tests. */
         {"Permit empty password no", "PermitEmptyPasswords no", 0},
