@@ -423,6 +423,7 @@ static int CheckPasswordHashUnix(const char* input, char* stored)
                         (const byte*)stored, storedSz) != 0) {
                 ret = WSSHD_AUTH_FAILURE;
             }
+            WS_FORCEZERO(hashedInput, hashedInputSz);
         }
     }
 
