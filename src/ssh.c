@@ -1830,7 +1830,7 @@ static int DoSshPubKey(const byte* in, word32 inSz, byte** out,
     c = (char*)WMALLOC(inSz + 1, heap, DYNTYPE_STRING);
     if (c != NULL) {
         WMEMCPY(c, in, inSz);
-        c[inSz-1] = 0;
+        c[inSz] = 0;
         type = WSTRTOK(c, " \n", &last);
         key = WSTRTOK(NULL, " \n", &last);
     }

@@ -1284,8 +1284,62 @@ static void test_wolfSSH_ReadKey_noTrailingNewline(void)
     AssertIntEQ(WMEMCMP(keyTrim, keyRef, keyRefSz), 0);
     AssertStrEQ(keyType, "ssh-rsa");
 
-    WFREE(keyRef, NULL, DYNTYPE_FILE);
-    WFREE(keyTrim, NULL, DYNTYPE_FILE);
+    WFREE(keyRef, NULL, DYNTYPE_PRIVKEY);
+    WFREE(keyTrim, NULL, DYNTYPE_PRIVKEY);
+#endif
+}
+
+
+static void test_wolfSSH_ReadKey_sshNoComment(void)
+{
+#ifndef WOLFSSH_NO_RSA
+    /* An SSH format public key whose buffer ends on the last base64
+     * character, with no comment and no trailing newline, must decode to the
+     * same bytes as the canonical form. DoSshPubKey()'s old "c[inSz-1] = 0"
+     * wrote the null terminator over that last character. */
+    byte* keyRef = NULL;
+    byte* keyTrim = NULL;
+    word32 keyRefSz = 0;
+    word32 keyTrimSz = 0;
+    const byte* keyType = NULL;
+    word32 keyTypeSz = 0;
+    const char* blob;
+    const char* end;
+    word32 fullSz = (word32)WSTRLEN(id_rsa_pub);
+    word32 trimSz;
+    int ret;
+
+    /* Canonical parse, the input has a comment and a trailing newline. */
+    ret = wolfSSH_ReadKey_buffer((const byte*)id_rsa_pub, fullSz,
+            WOLFSSH_FORMAT_SSH, &keyRef, &keyRefSz,
+            &keyType, &keyTypeSz, NULL);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertNotNull(keyRef);
+    AssertIntGT(keyRefSz, 0);
+    AssertStrEQ(keyType, "ssh-rsa");
+
+    /* Length up to the end of the base64 blob, dropping the comment. */
+    blob = WSTRCHR(id_rsa_pub, ' ');    /* end of the "ssh-rsa" type */
+    AssertNotNull(blob);
+    end = WSTRCHR(blob + 1, ' ');       /* end of the base64 blob */
+    AssertNotNull(end);
+    trimSz = (word32)(end - id_rsa_pub);
+    AssertIntLT(trimSz, fullSz);
+
+    keyType = NULL;
+    keyTypeSz = 0;
+    ret = wolfSSH_ReadKey_buffer((const byte*)id_rsa_pub, trimSz,
+            WOLFSSH_FORMAT_SSH, &keyTrim, &keyTrimSz,
+            &keyType, &keyTypeSz, NULL);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertNotNull(keyTrim);
+    /* Must match the canonical decode exactly, not be truncated by a byte. */
+    AssertIntEQ(keyTrimSz, keyRefSz);
+    AssertIntEQ(WMEMCMP(keyTrim, keyRef, keyRefSz), 0);
+    AssertStrEQ(keyType, "ssh-rsa");
+
+    WFREE(keyRef, NULL, DYNTYPE_PRIVKEY);
+    WFREE(keyTrim, NULL, DYNTYPE_PRIVKEY);
 #endif
 }
 
@@ -5201,6 +5255,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_ReadKey_badPad();
     test_wolfSSH_ReadKey_shortBuffer();
     test_wolfSSH_ReadKey_noTrailingNewline();
+    test_wolfSSH_ReadKey_sshNoComment();
     test_wolfSSH_QueryAlgoList();
     test_wolfSSH_SetMaxAuthAttempts();
     test_wolfSSH_AlgoListKeyInSync();
