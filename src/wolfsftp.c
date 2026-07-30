@@ -7168,6 +7168,10 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
                 return NULL;
             }
 
+            /* ret still holds the read length; clear it so a count of 0
+             * doesn't hit the error path below. */
+            ret = WS_SUCCESS;
+
             while (count > 0) {
                 word32 sz;
                 const byte* str;
